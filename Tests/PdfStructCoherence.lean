@@ -1,6 +1,7 @@
 module
 
 public import LeanTex.Core.PdfStruct
+public import Tests.Check
 
 public section
 
@@ -18,8 +19,7 @@ example : ¬ Pdf.Unfilled staleElements := by
     (by simp [staleElements]) 0 0 (by simp)
 
 def pdfStructCoherenceChecks (ref : IO.Ref (List String)) : IO Unit := do
-  let t := fun (name : String) (ok : Bool) =>
-    unless ok do ref.modify (s!"PDF structure coherence: {name}" :: ·)
+  let t (name : String) := check ref s!"PDF structure coherence: {name}"
   let emptyMarks : Array (Array (Nat × Nat)) := #[]
   t "a pre-existing reference survives fill without a parent entry"
     (Pdf.leafKids staleElements == [] &&

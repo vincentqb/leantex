@@ -1,6 +1,7 @@
 module
 
 public import LeanTex.Core.Elab
+public import Tests.Support
 
 public section
 
@@ -9,9 +10,6 @@ open LeanTex.Core LeanTex.Core.Parse
 private def frameAt (p : Pos) (body : Array Raw := #[]) : Raw :=
   .env "frame" body p
 
-private def exactSpan (a b : Span) : Bool :=
-  a == b && a.pos.origins == b.pos.origins && a.pos.command == b.pos.command
-
 private def exactSites (actual expected : Array (Nat × Span)) : Bool :=
   actual.size == expected.size &&
     (actual.zip expected).all fun ((i, a), (j, b)) => i == j && exactSpan a b
@@ -19,7 +17,7 @@ private def exactSites (actual expected : Array (Nat × Span)) : Bool :=
 /-- Frame metadata belongs to the block that survives elaboration, through splicing, macro ownership
 and title-frame flattening. -/
 def elabFrameSourceChecks (ref : IO.Ref (List String)) : IO Unit := do
-  let t (name : String) (ok : Bool) := unless ok do ref.modify (name :: ·)
+  let t := check ref
   let first : Pos := { line := 7, col := 3, command := some "\\begin" }
   let second : Pos := { line := 19, col := 5, command := some "\\begin" }
   let ctx : Elab.Ctx := { file := "frames.tex", slides := true }

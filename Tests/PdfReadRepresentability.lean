@@ -1,4 +1,5 @@
 import LeanTex.Core.PdfReadProof
+import Tests.Check
 
 open LeanTex.Core
 
@@ -122,8 +123,7 @@ private def nestedRejected : List Rejected :=
    ⟨.dict #[("",.null)],rejected_key (by unfold Obj.NameSpelling; decide)⟩]
 
 def runRepresentabilityChecks (ref : IO.Ref (List String)) : IO Unit := do
-  let t := fun (name : String) (ok : Bool) =>
-    unless ok do ref.modify (s!"PDF representability: {name}" :: ·)
+  let t (name : String) := check ref s!"PDF representability: {name}"
   let roundtrip := fun (o : Obj) =>
     (parseVal o.render 0).toOption == some (o,o.render.size)
   for (name,o) in rejected do

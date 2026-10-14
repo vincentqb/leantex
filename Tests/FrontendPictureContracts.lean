@@ -2,6 +2,7 @@ module
 
 public import LeanTex.Core.Elab
 public import LeanTex.Core.PictureCensus
+public import Tests.Check
 
 public section
 
@@ -10,7 +11,7 @@ open LeanTex.Core
 /-- Configuration provenance crosses the production frontend: boundary withdrawal, source erasure,
 diagnostic attribution and tallying. -/
 def frontendPictureCompositionChecks (ref : IO.Ref (List String)) : IO Unit := do
-  let t (name : String) (ok : Bool) := unless ok do ref.modify (name :: ·)
+  let t := check ref
   let settings :=
     "\\tikzset{box/.style={rectangle,draw,minimum width=9mm,minimum height=6mm}}\n" ++
     "\\tikzset{other/.style={box},overlay}\n\\tikzset{sloped,overlay}\n"

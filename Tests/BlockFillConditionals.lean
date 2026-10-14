@@ -5,13 +5,11 @@ import LeanTex.Core.Elab
 import LeanTex.Core.Layout
 import LeanTex.Core.HtmlDoc
 import Tests.LightCss
+import Tests.Support
 
 open LeanTex.Core
 
 namespace Tests.BlockFillConditionals
-
-private def check (ref : IO.Ref (List String)) (label : String) (ok : Bool) : IO Unit :=
-  unless ok do ref.modify (label :: ·)
 
 private def ink : Ir.Color := { r := 0x17, g := 0x3B, b := 0x58 }
 private def paper : Ir.Color := { r := 0xE8, g := 0xED, b := 0xF3 }
@@ -36,9 +34,6 @@ private def artifacts (fonts : Font.FontSet) (src : String) : Artifacts :=
   let (head, tree, hds) := HtmlDoc.emitTree {} doc
   { out, tree, serialized := Html.document "en" head tree, diags := ds ++ out.diags ++ hds }
 
-private def lineText (line : Layout.LineOut) : String :=
-  String.ofList (line.segs.toList.flatMap Layout.Seg.glyphChars)
-
 private def encloses (fill : Layout.Fill) (line : Layout.LineOut) : Bool :=
   match line.regionExtent with
   | none => false
@@ -58,13 +53,6 @@ private structure HtmlInk where
   styles : String
   inBody : Bool
   box : Bool := false
-
-private def property (styles name : String) : Option String :=
-  (styles.splitOn ";").foldl (fun found declaration =>
-    match declaration.splitOn ":" with
-    | [key, value] =>
-      if key.trimAscii.toString == name then some value.trimAscii.toString else found
-    | _ => found) none
 
 mutual
   private def htmlInks (styles : String) (inBody : Bool) (out : Array HtmlInk) :
@@ -87,8 +75,8 @@ mutual
 end
 
 private def bodyPaint (leaf : HtmlInk) : Bool :=
-  leaf.inBody && property leaf.styles "color" == some ink.css &&
-    property leaf.styles "background" == some paper.css
+  leaf.inBody && cssProperty leaf.styles "color" == some ink.css &&
+    cssProperty leaf.styles "background" == some paper.css
 
 /-- Two paragraphs lie inside one positive-area body surface with their ink and foreground, the
 title and the following paragraph outside it, in both artifacts. -/
@@ -97,7 +85,7 @@ private def filledChecks (ref : IO.Ref (List String)) (label : String)
   let lines := actual.out.pages.flatMap (·.lines)
   let leaves := htmlInks "" false #[] actual.tree.toList
   for text in #["BODYFIRST", "BODYLAST"] do
-    let body := lines.filter (lineText · == text)
+    let body := lines.filter (lineText · false == text)
     check ref (label ++ ": PDF " ++ text ++ " once, authored ink and ground")
       (body.size == 1 && body.all linePaint)
     let body := leaves.filter (·.text == text)
@@ -109,14 +97,14 @@ private def filledChecks (ref : IO.Ref (List String)) (label : String)
       fills.size == 1 && fills.any fun fill =>
         fill.w > 0 && fill.h > 0 &&
         #["BODYFIRST", "BODYLAST"].all (fun text =>
-          page.lines.any fun line => lineText line == text && encloses fill line) &&
+          page.lines.any fun line => lineText line false == text && encloses fill line) &&
         #["HEADER", "OUTSIDE"].all (fun text =>
-          page.lines.any fun line => lineText line == text &&
+          page.lines.any fun line => lineText line false == text &&
             (line.y < fill.y || fill.y + fill.h < line.y)))
   let boxes := leaves.filter (·.box)
   check ref (label ++ ": one typed HTML body box with padding")
     (boxes.size == 1 && boxes.all (fun box => bodyPaint box &&
-      property box.styles "padding" ==
+      cssProperty box.styles "padding" ==
         some s!"0 {HtmlDoc.cssLength Ir.titledPadding} {HtmlDoc.cssLength Ir.titledPadding}"))
   for text in #["HEADER", "OUTSIDE"] do
     let outside := leaves.filter (·.text == text)

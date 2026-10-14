@@ -1,6 +1,7 @@
 module
 
 public import LeanTex.Core.ControlContract
+public import Tests.Check
 
 public section
 
@@ -9,7 +10,7 @@ open LeanTex.Core
 /-- Consuming registry rows hold at the compatibility checkpoint and the source frontend, where
 execution stays outside the declarative erasure contract. -/
 def frontendControlContractChecks (ref : IO.Ref (List String)) : IO Unit := do
-  let t (name : String) (ok : Bool) := unless ok do ref.modify (name :: ·)
+  let t := check ref
   let file := "controls.tex"
   let executed := Compat.execute file #[]
   let cursor := Compat.beginRewrite executed

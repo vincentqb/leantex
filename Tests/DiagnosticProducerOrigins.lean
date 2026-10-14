@@ -26,9 +26,7 @@ private def producerParse (file text : String) : Array Parse.Raw :=
   (Parse.parse file (Lex.lex file text).1).1
 
 private def producerAt (d : Diag) (expected : Span) (trigger : String) : Bool :=
-  d.triggerText == some trigger && d.span.any fun actual =>
-    actual == expected && actual.pos.origins == expected.pos.origins &&
-      actual.pos.command == expected.pos.command
+  d.triggerText == some trigger && sameSource d.span expected
 
 private def producerRun (file text : String) : IO (Ir.Doc × Array Diag) := do
   let (tokens, lexDs) := Lex.lex file text

@@ -30,12 +30,6 @@ def source (body : Bool) : String :=
 def document (body : Bool) : Ir.Doc :=
   (Elab.run "palette-text-epoch.tex" (source body)).1
 
-private def property (style key : String) : Option String :=
-  (style.splitOn ";").foldl (fun old decl =>
-    match decl.splitOn ":" with
-    | [k, v] => if k.trimAscii.toString == key then some v.trimAscii.toString else old
-    | _ => old) none
-
 private structure Ink where
   text : String
   color : Option String
@@ -54,7 +48,7 @@ mutual
     | .elem tag attrs kids =>
       let style := (attrs.find? (·.1 == "style")).map (·.2) |>.getD ""
       let vars := styleVars style ++ vars
-      let own := (property style "color").map (lightValue vars)
+      let own := (cssProperty style "color").map (lightValue vars)
       let ownerColor := if ["p", "li", "dt", "dd"].contains tag then own else ownerColor
       htmlInksIn vars (own.or color) ownerColor out kids.toList
     | .style _ | .script .. => out

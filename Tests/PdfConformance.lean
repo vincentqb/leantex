@@ -294,6 +294,7 @@ def featureSpellings : List (Pdf.Feature × String) := [
   (.markedContent, "\nEMC"),
   (.structTree, "/Type /StructTreeRoot")]
 
+/-- The features a PDF reaches by spelling, read off its `pdfText`. -/
 def emittedFeaturesOf (text : ByteArray) : List Pdf.Feature :=
   featureSpellings.filterMap fun (f, spelling) =>
     if bytesContain text spelling then some f else none

@@ -3,6 +3,7 @@ module
 public import LeanTex.Core.PdfRead
 public import LeanTex.Core.PdfNameProof
 public import LeanTex.Core.PdfStringProof
+public import Tests.Check
 
 public section
 
@@ -18,8 +19,7 @@ private def formerPrimitivePremise : PdfRead.Obj → Bool
   | _ => false
 
 def pdfReadRoundtripChecks (ref : IO.Ref (List String)) : IO Unit := do
-  let t := fun (name : String) (ok : Bool) =>
-    unless ok do ref.modify (s!"PDF object round trip: {name}" :: ·)
+  let t (name : String) := check ref s!"PDF object round trip: {name}"
   let witnesses : Array (String × PdfRead.Obj) := #[
     ("non-numeric real prefix", .real "a."),
     ("trailing real bytes", .real "1.x"),

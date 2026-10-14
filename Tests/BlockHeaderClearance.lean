@@ -53,13 +53,6 @@ private def headerBottom (page : Layout.PageOut) : Option Dim.Sp :=
   (page.fills.filter (·.color == headerColor)).foldl
     (fun edge fill => some (edge.map (max (fill.y + fill.h)) |>.getD (fill.y + fill.h))) none
 
-private def property (decls key : String) : Option String :=
-  (decls.splitOn ";").foldl (fun acc decl =>
-    match decl.splitOn ":" with
-    | [name, value] =>
-      if name.trimAscii.toString == key then some value.trimAscii.toString else acc
-    | _ => acc) none
-
 private def styleOf : Html.Node → String
   | .elem _ attrs _ => (HtmlDoc.attrOf? attrs "style").getD ""
   | .text _ | .style _ | .script .. => ""
@@ -159,7 +152,7 @@ private def htmlOpeningClearance (css : String) (stage : Html.Node)
       return hasClass node "frame-body-start" &&
         (margin == some openingMargin ||
           (before == "0pt" && margin == some "var(--frame-body-skip)")) &&
-        (property (styleOf node) "--frame-body-before").getD "0pt" == before).getD false &&
+        (cssProperty (styleOf node) "--frame-body-before").getD "0pt" == before).getD false &&
       (kids.filter (hasClass · "frame-body-start")).size == 1 &&
       !body.isEmpty &&
       cssStageLength ((HtmlDoc.attrOf? attrs "style").getD "")
@@ -214,7 +207,7 @@ private def tokenClearanceChecks (ref : IO.Ref (List String)) (fonts : Font.Font
       let css := treeCssList "" head.toList
       let rootValue := (artCssBlocks css).foldl (fun value (selector, decls) =>
         if selector.trimAscii.toString == ":root" then
-          (property decls "--clearancegap").or value else value) none
+          (cssProperty decls "--clearancegap").or value else value) none
       let stages := (elemNodesList (· == "section") #[] nodes.toList).filter
         (hasClass · "slide")
       let length := s!"{points}pt"
@@ -232,7 +225,7 @@ private def tokenClearanceChecks (ref : IO.Ref (List String)) (fonts : Font.Font
         check ref (name ++ ": epoch declaration remains a length on the opening box")
           ((elemNodesList (fun _ => true) #[] nodes.toList).any fun node =>
             hasClass node "frame-body-start" &&
-              property (styleOf node) "--clearancegap" == some length)
+              cssProperty (styleOf node) "--clearancegap" == some length)
       let out := layoutOf fonts doc
       check ref (name ++ ": native paint includes the sourced gap")
         ((out.pages[0]?).any fun page => (paintedTop fonts page).any fun y =>
@@ -286,7 +279,7 @@ def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
           (!stages.isEmpty && stages.all fun stage => match stage with
             | .elem _ _ kids => ((kids.filter participates)[0]?).any fun node =>
                 hasClass node HtmlDoc.skipClass && hasClass node "frame-body-start" &&
-                ((property (styleOf node) "--skip").bind remMilliOf ==
+                ((cssProperty (styleOf node) "--skip").bind remMilliOf ==
                   some (HtmlDoc.screenMilli doc.page.fontSize (Dim.pt 7) : Int))
             | .text _ | .style _ | .script .. => false)
       if kind == "leading-note" || kind == "note-before" then

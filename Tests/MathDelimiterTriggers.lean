@@ -4,6 +4,7 @@ public import LeanTex.Core.Compat
 import LeanTex.Cli.FontAssembly
 import LeanTex.Cli.FontDiscovery
 import all LeanTex.Cli.Driver
+public import Tests.Check
 
 open LeanTex.Core
 
@@ -39,9 +40,8 @@ private def delimiterFixtures : Array DelimiterFixture := #[
   { name := "mixed", source := "\\(x\\) \\[y\\]"
     sites := #[⟨1, 1, "\\("⟩, ⟨1, 7, "\\["⟩] }]
 
-private def delimiterCheck (ref : IO.Ref (List String)) (name : String)
-    (ok : Bool) : IO Unit := do
-  unless ok do ref.modify (("math delimiter triggers: " ++ name) :: ·)
+private def delimiterCheck (ref : IO.Ref (List String)) (name : String) : Bool → IO Unit :=
+  check ref ("math delimiter triggers: " ++ name)
 
 /-- The source index keeps a math opener's lexical evidence at its exact file, line and column, and
 invents none for synthetic math. -/

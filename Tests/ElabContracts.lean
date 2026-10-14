@@ -1,6 +1,7 @@
 module
 
 public import LeanTex.Core.Elab
+public import Tests.Check
 
 public section
 
@@ -8,7 +9,7 @@ open LeanTex.Core
 
 /-- Site accounting follows reporting calls, not repetitions of source text. -/
 def elabWarningContractChecks (ref : IO.Ref (List String)) : IO Unit := do
-  let t (name : String) (ok : Bool) := unless ok do ref.modify (name :: ·)
+  let t := check ref
   let ctx : Elab.Ctx := { file := "probe.tex" }
   let pos : Pos := { line := 1, col := 1 }
   let first := Elab.warnOnceState ctx "ctrl:zzone" .W0301 "first" pos
@@ -39,7 +40,7 @@ def elabWarningContractChecks (ref : IO.Ref (List String)) : IO Unit := do
 /-- Alias equivalence belongs to the refused title body's read-out; a conditional operand still
 names the command the source wrote. -/
 def elabTitleBoundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
-  let t (name : String) (ok : Bool) := unless ok do ref.modify (name :: ·)
+  let t := check ref
   let style (out : Ir.Doc × Array Diag) : Option Ir.ElementStyle :=
     out.1.styles.find? "titlepage"
   let align (out : Ir.Doc × Array Diag) : Option Ir.HAlign :=
@@ -71,7 +72,7 @@ def elabTitleBoundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
 /-- Unknown-option erasure belongs to the recovery arm, never to bindings, definitions or palette
 roles. -/
 def elabUnknownDispatchChecks (ref : IO.Ref (List String)) : IO Unit := do
-  let t (name : String) (ok : Bool) := unless ok do ref.modify (name :: ·)
+  let t := check ref
   let ctx : Elab.Ctx := { file := "probe.tex" }
   let raws (name option : String) (withOption : Bool) : Array Parse.Raw :=
     #[.ctrl name {line := 1, col := 1}] ++

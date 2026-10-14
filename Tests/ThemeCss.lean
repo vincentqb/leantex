@@ -10,12 +10,6 @@ open LeanTex.Core
 
 namespace Tests.ThemeCss
 
-private def property (styles key : String) : Option String :=
-  (styles.splitOn ";").foldl (fun old decl =>
-    match decl.splitOn ":" with
-    | [k, v] => if k.trimAscii.toString == key then some v.trimAscii.toString else old
-    | _ => old) none
-
 /-- A colour read through the emitted nested `var(--key, fallback)` grammar, refusing anything
 outside it. -/
 private def colorValue (vars : Ir.Palette) (value : String) : Option Ir.Color := do
@@ -56,11 +50,11 @@ private def variables (inherited : Ir.Palette) (style : String) : Ir.Palette :=
 
 /-- The page's own light-scheme `:root` properties, top-level rules only. -/
 private def rootVars (css : String) : Ir.Palette :=
-  variables {} (String.intercalate ";" (cssRulesOf css ":root"))
+  variables {} (String.intercalate ";" (cssTopBlocksFor css ":root"))
 
 private def ruleColor (css selector key : String) (vars : Ir.Palette) :
     Option Ir.Color :=
-  (property (String.intercalate ";" (cssRulesOf css selector)) key).bind
+  (cssProperty (String.intercalate ";" (cssRulesOf css selector)) key).bind
     (colorValue vars)
 
 private def probe (pal : Ir.Palette) : Ir.Doc :=
@@ -122,11 +116,11 @@ public def checks (ref : IO.Ref (List String)) : IO Unit := do
     let styles := (elemStylesList #[] body.toList).map fun (x, style) =>
       (x, lightStyleAll roots style)
     let paints := styles.filterMap fun (_, style) =>
-      (property style "background").map fun bg => (style, bg)
+      (cssProperty style "background").map fun bg => (style, bg)
     let lightPage := Ir.Design.at empty .light .page
     t "theme CSS: removing a flow ground reaches a painted sibling"
       (!paints.isEmpty && paints.all fun (style, _) =>
-        property style (HtmlDoc.roleVar .page) ==
+        cssProperty style (HtmlDoc.roleVar .page) ==
           some (if mode == .own then (lightPage.map HtmlDoc.cssColor).getD "" else "initial"))
     let vars := variables {} (String.intercalate ";" (paints.toList.map (·.1)))
     let expected := if mode == .own then lightPage else none
@@ -135,7 +129,7 @@ public def checks (ref : IO.Ref (List String)) : IO Unit := do
   let doc := probe empty
   t "theme CSS: an undeclared title ground stays unfilled"
     ((cssRulesOf (sheet {} doc) "section.slide.title-page").all fun rule =>
-      (property rule "background").isNone)
+      (cssProperty rule "background").isNone)
   let author := "section.slide.standout { background: #123456; color: #abcdef; }\n"
   let doc := { doc with output := { doc.output with stylesheet := some "author.css" } }
   let (head, _, _) := HtmlDoc.emitTree { stylesheet := some ("author.css", author) } doc
@@ -143,7 +137,7 @@ public def checks (ref : IO.Ref (List String)) : IO Unit := do
     (treeCssList "" head.toList |>.endsWith author)
   let bulma := sheet { css := .bulma } (probe empty)
   t "theme CSS: Bulma's default accent is the native contrast palette"
-    (property (String.intercalate ";" (cssRulesOf bulma ":root")) "--bulma-primary" ==
+    (cssProperty (String.intercalate ";" (cssTopBlocksFor bulma ":root")) "--bulma-primary" ==
         some "var(--primary, var(--ltx-accent))" &&
       ruleColor bulma ":root" "--ltx-accent" empty == Ir.Design.at empty .light .focus)
 
@@ -224,8 +218,8 @@ mutual
       let vars := variables vars style
       let acc := if isStage then
           acc.push { before := treeOccurs kids "BEFORE" > 0
-                     ground := (property style "background").bind (colorValue vars)
-                     ink := (property style "color").bind (colorValue vars) }
+                     ground := (cssProperty style "background").bind (colorValue vars)
+                     ink := (cssProperty style "color").bind (colorValue vars) }
         else acc
       stagePaints css vars acc kids.toList
     | .text _ | .style _ | .script .. => acc
@@ -261,7 +255,7 @@ public def epochChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
     let out := Layout.run (Layout.Geom.ofPage doc.page) fonts none doc
     let (head, body, hd) := HtmlDoc.emitTree {} doc
     let css := treeCssList "" head.toList
-    let root := variables {} (String.intercalate ";" (cssRulesOf css ":root"))
+    let root := variables {} (String.intercalate ";" (cssTopBlocksFor css ":root"))
     let stages := stagePaints css root #[] body.toList
     check ref s!"theme epoch/{name}: clean authored source"
       (ds.all (·.severity == .note) && hd.all (·.severity == .note) &&

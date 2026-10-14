@@ -158,7 +158,7 @@ def tikzPathChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
   t "circle: a filled circle ships one filled ellipse of its radius, no stroke"
     ((lossesOf dot).isEmpty && match (drawsOf oneFace dot).toList with
       | [(.ellipse _ _ rx ry, some fl, none)] =>
-        rx == Dim.pt 2 && ry == Dim.pt 2 && fillColor? fl == some Ir.Color.black
+        rx == Dim.pt 2 && ry == Dim.pt 2 && paintColor? fl.paint == some Ir.Color.black
       | _ => false)
   let oval := picDoc "" "\\draw (0,0) ellipse (1 and 0.5);"
   t "ellipse: two radii, stroked, unfilled"
@@ -174,7 +174,7 @@ def tikzPathChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
   t "filldraw: the fill colour fills and the path's colour strokes"
     ((lossesOf both).isEmpty && match (drawsOf oneFace both).toList with
       | [(.ellipse .., some fl, some st)] =>
-        fillColor? fl == some grid && strokeColor? st == some Ir.Color.black
+        paintColor? fl.paint == some grid && paintColor? st.paint == some Ir.Color.black
       | _ => false)
   let lengthRadius := picDoc ""
     "\\pgfmathsetlengthmacro{\\p}{1.5pt}\\coordinate (z) at (1,0);\\fill (z) circle (\\p);"

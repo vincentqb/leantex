@@ -11,9 +11,6 @@ namespace Tests.BlockGeometry
 /-! A beamer block is the default inner theme's two colour boxes, held to lualatex's distances on
 the invented probe over the shipped pages and the typed HTML tree. -/
 
-/-- Word spaces ship as gaps, not glyphs: a line is found by its letters. -/
-private def letters (text : String) : String := text.replace " " ""
-
 private def titleColor : Ir.Color := { r := 0xC9, g := 0xD6, b := 0xE8 }
 private def bodyColor : Ir.Color := { r := 0xE8, g := 0xEE, b := 0xF6 }
 

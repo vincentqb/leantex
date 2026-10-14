@@ -2,6 +2,7 @@ module
 
 public import LeanTex.Core.Pdf
 public import LeanTex.Core.Image
+public import Tests.Support
 
 public section
 
@@ -105,17 +106,11 @@ private def selectedWrapper (font : Font.Font) (f : { f : PdfRead.Form // f.wf }
       segs := #[.image (some 0) f.val.w f.val.h] }
   Pdf.write {} { fonts := #[font] } #[{ lines := #[line] }] (imgs := imgs)
 
-private def selectionResolve (es : Array PdfRead.Entry) (obj : PdfRead.Obj) :
-    Option PdfRead.Obj :=
-  match obj with
-  | .ref n _ => (es.find? (·.num == n)).map (·.val)
-  | other => some other
-
 /-- The emitted form's resource references, its transitive self-referencing resource form
 included. -/
 private def wrapperResources (es : Array PdfRead.Entry) (obj : PdfRead.Obj)
     (n : Nat) : Option Bool := do
-  let res ← selectionResolve es (← obj.get? "Resources")
+  let res ← entryResolve es (← obj.get? "Resources")
   if n == 2 then return res == .dict #[]
   let state ← if n == 1 then
       pure res
@@ -128,7 +123,7 @@ private def wrapperResources (es : Array PdfRead.Entry) (obj : PdfRead.Obj)
       let unused ← (← tileRes.get? "XObject").get? "Unused"
       if unused != .ref tile 0 then none
       pure tileRes
-  let opacity ← selectionResolve es (← (← state.get? "ExtGState").get? "Opacity")
+  let opacity ← entryResolve es (← (← state.get? "ExtGState").get? "Opacity")
   return opacity.get? "CA" == some (.real "0.75")
 
 private def wrapperMatches (font : Font.Font) (f : { f : PdfRead.Form // f.wf })
@@ -183,8 +178,7 @@ private def selectionErrorHas {α : Type} (result : Except String α)
 /-- Native PDF poster page selection over nested trees, inherited geometry and resources, read back,
 with named refusals. -/
 def pdfPageSelectionChecks (ref : IO.Ref (List String)) : IO Unit := do
-  let t (name : String) (ok : Bool) : IO Unit := do
-    unless ok do ref.modify (s!"PDF page selection: {name}" :: ·)
+  let t (name : String) := check ref s!"PDF page selection: {name}"
   let .ok font := Font.parse
       (← IO.FS.readBinFile "testdata/corpus/fonts/SourceSerifPro-Regular.otf") |
     t "bundled wrapper font parses" false

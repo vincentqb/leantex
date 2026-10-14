@@ -116,17 +116,17 @@ exit 19\n"
       args := #["figure.tex", "-o", (output / "figure.html").toString]
       env := #[("PATH", some (tools.toString ++ ":" ++ path)),
         ("XDG_CACHE_HOME", some (dir / "cache").toString)] }
-    check ref "moving figure: the page builds" (run.exitCode == 0)
+    check ref "moving figure driver: the page builds" (run.exitCode == 0)
     let html ← try IO.FS.readFile (output / "figure.html")
       catch err => throw <| IO.userError s!"{err}\n{run.stdout}{run.stderr}"
     let out := run.stdout ++ run.stderr
-    check ref "moving figure: no loss is reported" (!hasStr out "[W0605]" && !hasStr out "[W0609]")
+    check ref "moving figure driver: no loss is reported" (!hasStr out "[W0605]" && !hasStr out "[W0609]")
     let called ← if ← log.pathExists then pure !(← IO.FS.readFile log).isEmpty else pure false
-    check ref "moving figure: the converter is never called" !called
+    check ref "moving figure driver: the converter is never called" !called
     let (_, primary) ← svgPublishedAsset html output "img" "src"
     let (_, poster) ← svgPublishedAsset html output "source" "srcset"
-    check ref "moving figure: the browser receives the authored animation" (primary == moving)
-    check ref "moving figure: the still face is a static SVG the native judge admits"
+    check ref "moving figure driver: the browser receives the authored animation" (primary == moving)
+    check ref "moving figure driver: the still face is a static SVG the native judge admits"
       (match Svg.judge poster with
         | .ok t => (SvgPoster.tracksOne #[] t).isEmpty && !bytesContain poster "<animate"
         | .error _ => false)

@@ -1426,10 +1426,6 @@ elaborates without complaint — promote it"
     check ref s!"golden {n}: both {n}.md and {n}.tex exist, and the golden set reads only the .md"
       (!(← (dir / s!"{n}.tex").pathExists))
 
-/-- Markup characters no page may ship as ink: in prose `$`, `&`, `^`, `_` and `~` are content, a
-backslash or a brace never. -/
-def inkMarkupWatch : List Char := ['\\', '{', '}']
-
 /-- Fixtures allowed to ship a named markup character as ink, per character, each with its reason. -/
 def inkMarkupExempt : List (String × List Char) := []
 

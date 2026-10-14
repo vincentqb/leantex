@@ -16,12 +16,6 @@ namespace Tests.BlockBody
 private def ink : Ir.Color := { r := 230, g := 240, b := 250 }
 private def ground : Ir.Color := { r := 20, g := 35, b := 50 }
 
-private def check (ref : IO.Ref (List String)) (name : String) (ok : Bool) : IO Unit :=
-  unless ok do ref.modify (name :: ·)
-
-private def lineText (line : Layout.LineOut) : String :=
-  String.ofList (line.segs.toList.flatMap Layout.Seg.glyphChars)
-
 /-- An element's declarations kept separate: backgrounds do not inherit. -/
 private structure HtmlElement where
   tag : String
@@ -32,12 +26,6 @@ private structure HtmlInk where
   text : String
   ancestors : List HtmlElement -- nearest element first
   bodyBox : Bool := false
-
-private def cssProperty (styles name : String) : Option String :=
-  (styles.splitOn ";").foldl (fun value decl =>
-    match decl.splitOn ":" with
-    | [key, val] => if key.trimAscii.toString == name then some val.trimAscii.toString else value
-    | _ => value) none
 
 mutual
   private def htmlInks (ancestors : List HtmlElement) (out : Array HtmlInk) :
@@ -170,7 +158,7 @@ private def generatedSourceChecks (ref : IO.Ref (List String))
         let label := s!"generated block {paper.css}/{env}/{title}"
         check ref (label ++ ": clean source") (diags.all (·.severity == .note))
         let out := layout fonts doc
-        let body := out.pages.flatMap (·.lines) |>.filter (lineText · == "BODY")
+        let body := out.pages.flatMap (·.lines) |>.filter (lineText · false == "BODY")
         check ref (label ++ ": content survives once") (body.size == 1)
         check ref (label ++ ": PDF ink and ground")
           (body.any fun line => line.segs.any fun
@@ -178,7 +166,7 @@ private def generatedSourceChecks (ref : IO.Ref (List String))
             | _ => false)
         check ref (label ++ ": PDF enclosing body fill")
           (out.pages.any fun page => page.lines.any fun line =>
-            lineText line == "BODY" && page.fills.any fun fill =>
+            lineText line false == "BODY" && page.fills.any fun fill =>
               some fill.color == ground && fill.x ≤ line.x &&
               line.x + line.setWidth ≤ fill.x + fill.w &&
               fill.y < line.y && line.y < fill.y + fill.h)
@@ -207,7 +195,7 @@ private def regionChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : I
       (leaves.any fun leaf => leaf.text == text && leaf.epochPaint tag brown.css)
   check ref "block body epoch: PDF replacement ink"
     ((layout fonts epoch).pages.any fun page => page.lines.any fun line =>
-      (lineText line).contains "AFTER" && line.segs.any fun
+      (lineText line false).contains "AFTER" && line.segs.any fun
         | .run _ c _ _ _ _ _ _ _ _ _ => c == brown
         | _ => false)
   let nested : Ir.Doc := {
@@ -234,8 +222,8 @@ private def regionChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : I
   check ref "block body empty: PDF nonzero band between paragraphs"
     ((layout fonts empty).pages.any fun page => page.fills.any fun fill =>
       fill.color == dark && fill.h == pad &&
-        page.lines.any (fun line => lineText line == "BEFORE" && line.y < fill.y) &&
-        page.lines.any (fun line => lineText line == "AFTER" && fill.y + fill.h < line.y))
+        page.lines.any (fun line => lineText line false == "BEFORE" && line.y < fill.y) &&
+        page.lines.any (fun line => lineText line false == "AFTER" && fill.y + fill.h < line.y))
   check ref "block body empty: HTML padded band"
     ((html empty).any fun leaf =>
       leaf.paddedBand dark.css s!"0 {HtmlDoc.cssLength Ir.titledPadding} {HtmlDoc.cssLength Ir.titledPadding}")
@@ -256,7 +244,7 @@ private def regionChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : I
         fill.y + fill.h ≤ spill.page.height)
   check ref "block body spill: every line survives once"
     ((List.range 24).all fun i =>
-      (out.pages.flatMap (·.lines) |>.filter (lineText · == s!"LINE{i}")).size == 1)
+      (out.pages.flatMap (·.lines) |>.filter (lineText · false == s!"LINE{i}")).size == 1)
 
 /-- Filled titled bodies ship their declared ink and an enclosing surface in both artifacts, for
 every kind, titled or not. -/
@@ -268,7 +256,7 @@ public def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
       let label := s!"block body {kind.name}/{title.size}"
       let out := Layout.run (Layout.Geom.ofPage doc.page) fonts none doc
       let lines := out.pages.flatMap (·.lines) |>.filter (!·.furniture)
-      let body := lines.filter (lineText · == "BODY")
+      let body := lines.filter (lineText · false == "BODY")
       check ref (label ++ ": content survives") (body.size == 1)
       check ref (label ++ ": PDF body ink and ground")
         (body.any fun line => line.segs.any fun
@@ -276,7 +264,7 @@ public def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
           | _ => false)
       check ref (label ++ ": PDF fill encloses body")
         (out.pages.any fun page => page.lines.any fun line =>
-          lineText line == "BODY" && page.fills.any fun fill =>
+          lineText line false == "BODY" && page.fills.any fun fill =>
             fill.color == ground && fill.x ≤ line.x &&
             line.x + line.setWidth ≤ fill.x + fill.w &&
             fill.y < line.y && line.y < fill.y + fill.h)

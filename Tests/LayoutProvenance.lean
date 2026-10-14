@@ -1,6 +1,7 @@
 module
 
 public import LeanTex.Core.Layout
+public import Tests.Support
 
 public section
 
@@ -12,14 +13,6 @@ private def provenanceSpan (line id : Nat) : Span :=
   { file := "layout-provenance.tex"
     pos := { line, col := 3, origins := [{ id, name := "framefixture" }],
              command := some "\\begin{frame}" } }
-
-/-- Span equality ignores expansion metadata, so those fields are checked separately. -/
-private def sameSource (actual : Option Span) (expected : Span) : Bool :=
-  match actual with
-  | none => false
-  | some actual =>
-    actual == expected && actual.pos.origins == expected.pos.origins &&
-      actual.pos.command == expected.pos.command
 
 /-- Identical frames that restart numbering, expand overlays and spill still name two distinct
 opening declarations. -/

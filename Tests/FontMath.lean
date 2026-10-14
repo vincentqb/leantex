@@ -1407,8 +1407,8 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
   let sfTree := HtmlDoc.blockNode { fonts := some sfFs } sfDoc.body[0]!
   t "typed HTML carries the sans-serif source scalar, not the host remap"
     (nodeTextOne "" sfTree == String.ofList [sfKept] &&
-      mathvariantOne sfTree == some "normal" &&
-      styleOne sfTree == some "font-family: var(--font-sans)")
+      firstAttrOne "mathvariant" sfTree == some "normal" &&
+      firstAttrOne "style" sfTree == some "font-family: var(--font-sans)")
   t "the unavailable sans-serif alphabet is named once by the IR owner"
     ((sfDiags.filter (fun d => d.code == "N0018" && d.subject == some "math-alpha:sf")).isEmpty)
   t "a text source forces no remap the face cannot cover"
@@ -1548,8 +1548,8 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
     (Elab.run "synthetic.tex" "$\\mathsf{R}$").1)
   let e2eMathsfTree := HtmlDoc.blockNode { fonts := some alphaFs } e2eMathsf.1.body[0]!
   t "mathsf (default text) is a styled sans text slot, no N0018"
-    (mathvariantOne e2eMathsfTree == some "normal" &&
-      styleOne e2eMathsfTree == some "font-family: var(--font-sans)" &&
+    (firstAttrOne "mathvariant" e2eMathsfTree == some "normal" &&
+      firstAttrOne "style" e2eMathsfTree == some "font-family: var(--font-sans)" &&
       (e2eMathsf.2.filter (·.code == "N0018")).isEmpty)
   let e2eSymsf := (Ir.resolveMathAlphas alphaCoverage fira.family
     (Elab.run "synthetic.tex" "$\\symsf{R}$").1)
@@ -1692,8 +1692,8 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
     (warnCodes "$\\textbf{v}+\\textit{w}+\\texttt{m}+\\textsf{s}$" == [] &&
       glyphChars "$\\textbf{v}$" == #['v'] &&
       glyphChars "$\\textit{w}$" == glyphChars "$\\mathit{w}$" &&
-      mathvariantOne bfvTree == some "normal" &&
-      styleOne bfvTree == some "font-family: var(--font-body); font-weight: 700")
+      firstAttrOne "mathvariant" bfvTree == some "normal" &&
+      firstAttrOne "style" bfvTree == some "font-family: var(--font-body); font-weight: 700")
   t "a colour inside math keeps its content without a presentation loss"
     (warnCodes "$\\textcolor{blue}{x}$" == [] &&
       glyphChars "$\\textcolor{blue}{x}$" == glyphChars "$x$")

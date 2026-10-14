@@ -1,6 +1,7 @@
 module
 
 public import LeanTex.Core.Pdf
+public import Tests.Check
 
 public section
 
@@ -153,8 +154,7 @@ private def rasterSameError {α β : Type} (a : Except String α)
 /-- Raster page keys discard exactly: samples, geometry, transparency, losses and PDF bytes are
 unchanged. -/
 def rasterPageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
-  let t (name : String) (ok : Bool) : IO Unit := do
-    unless ok do ref.modify (s!"raster page selection: {name}" :: ·)
+  let t (name : String) := check ref s!"raster page selection: {name}"
   if oneFace.fonts.isEmpty then
     t "wrapper needs its bundled font slot" false
     return

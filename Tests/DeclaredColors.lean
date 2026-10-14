@@ -10,13 +10,6 @@ namespace Tests.DeclaredColors
 
 private def hex (r g b : UInt8) : Ir.Color := { r, g, b }
 
-/-- The inks of every glyph run on a line holding `text`. -/
-private def inksOn (out : Layout.Out) (text : String) : Array Ir.Color :=
-  (allLines out).filter (fun l => hasStr (lineText l) text) |>.flatMap fun l =>
-    l.segs.filterMap fun
-      | .run _ ink _ _ glyphs .. => if glyphs.isEmpty then none else some ink
-      | _ => none
-
 /-- The styles of the HTML elements whose text holds `text`, as the printed page reads them. -/
 private def htmlStyles (doc : Ir.Doc) (text : String) : Array String :=
   let (_, body, _) := emitIn {} doc .print
@@ -38,7 +31,7 @@ public def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
     "\\begin{document}\\textcolor{alert}{Warm word} and plain text.\\end{document}")
   let out := layoutOf fonts doc
   t "declared colours: a failing role ships its declared ink on the page"
-    (let inks := inksOn out "Warm word"
+    (let inks := inksOn out (hasStr · "Warm word")
      !inks.isEmpty && inks.contains orange)
   t "declared colours: the HTML span carries the declared ink"
     ((htmlStyles doc "Warm word").any (hasStr · (HtmlDoc.cssColor orange)))
@@ -54,7 +47,7 @@ public def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
     "\\begin{frame}{An \\textcolor{alert}{urgent} word}Body.\\end{frame}\\end{document}")
   let deckOut := layoutOf fonts deck
   t "declared colours: a role on the frame-title bar ships its declared ink"
-    (let inks := inksOn deckOut "urgent"
+    (let inks := inksOn deckOut (hasStr · "urgent")
      !inks.isEmpty && inks.contains accent)
   t "declared colours: the bar is the declared one"
     (deckOut.pages.any fun p => p.fills.any (·.color == bar))
@@ -71,7 +64,7 @@ public def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
     "\\palette{ fg = #23373B, bg = #FAFAFA }\\begin{document}" ++
     "\\textcolor{fg!60!bg}{Mixed words here.}\\end{document}")
   t "declared colours: a mix ships xcolor's value in the PDF"
-    (let inks := inksOn (layoutOf fonts mixDoc) "Mixed"
+    (let inks := inksOn (layoutOf fonts mixDoc) (hasStr · "Mixed")
      !inks.isEmpty && inks.all (· == mixed))
   t "declared colours: a mix ships xcolor's value in the HTML"
     ((htmlStyles mixDoc "Mixed").any (· == s!"color: {HtmlDoc.cssColor mixed}"))
@@ -225,7 +218,7 @@ public def listingGroundChecks (ref : IO.Ref (List String)) (fonts : Font.FontSe
     t s!"listing ground: {what}: the HTML listing sets the PDF's plain-text colour"
       (let styles := (htmlStyles doc "return").filter (hasStr · "background:")
        !styles.isEmpty && inks.all fun c =>
-         styles.all fun st => cssDeclOf st "color" == some (HtmlDoc.cssColor c))
+         styles.all fun st => cssProperty st "color" == some (HtmlDoc.cssColor c))
     t s!"listing ground: {what}: nothing to report" (reports ds).isEmpty
   let declared := hex 0x22 0x22 0x22
   let (keyDoc, keyDs) := elabStr (listing "article" "\\palette{ codeink = #222222 }" "bgcolor=black")

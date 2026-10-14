@@ -15,13 +15,6 @@ private def source (cls key body : String) : String :=
   "\\documentclass{" ++ cls ++ "}\n\\palette{" ++ key ++ "=#EFECE4}\n" ++
     "\\begin{document}\n" ++ body ++ "\n\\end{document}"
 
-/-- The inks of every glyph run on a line reading `text`. -/
-private def inksOn (out : Layout.Out) (text : String) : Array Ir.Color :=
-  (allLines out).filter (lineText · == text) |>.flatMap fun l =>
-    l.segs.filterMap fun
-      | .run _ ink _ _ glyphs .. => if glyphs.isEmpty then none else some ink
-      | _ => none
-
 /-- A bar's undeclared ink is legible on the bar, read off the shipped glyph runs. -/
 public def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let block := "\\begin{block}{Probe Title}Probe body.\\end{block}"
@@ -37,7 +30,7 @@ public def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
     let diags := ds ++ Contrast.docDiags doc ++ out.diags
     check ref s!"readable bar/{label}: no pairing warning"
       (!diags.any fun d => d.code == "W0315" || d.code == "W0345")
-    let inks := inksOn out "Probe Title"
+    let inks := inksOn out (· == "Probe Title")
     check ref s!"readable bar/{label}: the title ships at 4.5:1 on its bar"
       (!inks.isEmpty && inks.all fun c => Contrast.aaText ≤ Contrast.contrastMilli c pale)
     check ref s!"readable bar/{label}: the bar is the declared one"

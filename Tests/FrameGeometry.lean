@@ -34,7 +34,7 @@ def titleInsetChecks (ref : IO.Ref (List String)) : IO Unit := do
     let css := treeCssList "" head.toList
     t s!"title inset {step}: the web bar pads its title by the inset, in em of the title"
       ((cssBlocksFor css "section.slide > header").any fun decls =>
-        match cssDeclOf decls "padding" with
+        match cssProperty decls "padding" with
         | some v => match v.splitOn " " with
           | [top, side] => top == "0" && cssEmMilli side == some (Ir.frameTitleInset 1000)
           | _ => false
@@ -91,7 +91,7 @@ def sectionMeasureChecks (ref : IO.Ref (List String)) : IO Unit := do
   let css := treeCssList "" head.toList
   -- `min(<share>vh, 100%)`: the stage's share, never past its width.
   let shares (sel : String) : Bool :=
-    (cssBlocksFor css sel).any fun decls => match cssDeclOf decls "width" with
+    (cssBlocksFor css sel).any fun decls => match cssProperty decls "width" with
       | some v => match (v.dropPrefix "min(").toString.splitOn ", " with
         | [share, "100%)"] => cssStageLength s!"width: {share}" "width" measure doc.page.height
         | _ => false
@@ -120,7 +120,7 @@ def titleOpeningChecks (ref : IO.Ref (List String)) : IO Unit := do
   let below := Ir.defaultFrameTitleBelow 1000 doc.page.leading 0
   let step := Ir.scaleStep 1000 Ir.plainFrameTitleStep
   let boxDecl := (cssBlocksFor css "section.slide:not(.title-page):not(.titlebar):has(> header)").findSome?
-    (cssDeclOf · "--frame-title-below")
+    (cssProperty · "--frame-title-below")
   t "title opening: the web title trims to its baseline and the body opens below beamer's box"
     ((cssBlocksFor css "section.slide:not(.title-page):not(.titlebar) > header h2").any
         (hasStr · "text-box: trim-end text alphabetic") &&

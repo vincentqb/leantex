@@ -1,6 +1,7 @@
 module
 
 public import LeanTex.Core.Elab
+public import Tests.Check
 
 public section
 
@@ -21,7 +22,7 @@ private def inputObservations (source : String) : Array InputObservation :=
 /-- The production evaluator's callback arguments: dormant definitions and skipped branches pay for
 no executed load, and a refusal code infers no file request. -/
 def frontendInputRequestChecks (ref : IO.Ref (List String)) : IO Unit := do
-  let t (name : String) (ok : Bool) := unless ok do ref.modify (name :: ·)
+  let t := check ref
   let calls ← pure (inputObservations
     ("\\def\\probeLoad#1{\\usepackage[wide]{#1}}" ++
      "\\def\\probeDormant{\\usepackage{dormant}}" ++

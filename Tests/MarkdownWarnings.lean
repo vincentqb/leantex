@@ -98,7 +98,7 @@ def markdownWarningChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- Long hyphenatable words in both faces make breaks likely in both.
   let some text ← loadTestFont "OpenSans-Regular.ttf"
     | t "markdown log: the text face loads" false
-  let split := monoSlotOf text font
+  let split := slotPairOf 2 text font
   let longWords := ["internationalization", "characterization", "institutionalization",
     "incomprehensibility", "counterrevolutionary", "representativeness"]
   let coded := String.intercalate " " ((List.range 160).map fun k =>

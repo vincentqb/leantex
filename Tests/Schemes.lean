@@ -456,7 +456,7 @@ def ruleGround (rules : List (String × List (String × String))) (tag : String)
     | t' :: need => (t'.isEmpty || t' == t) && (t' == t || !need.isEmpty) && need.all cs.contains
     | [] => false
   rules.foldl (fun acc (sel, decls) =>
-    let fits := (cssSelParts sel).any fun part =>
+    let fits := (cssSelectorParts sel).any fun part =>
       match part.splitOn " > " with
       | [one] => compound one.trimAscii.toString tag classes && (one.splitOn ".").length > 1
       | [up, one] => compound up.trimAscii.toString parent.1 parent.2 &&
@@ -667,7 +667,7 @@ def forcedColorChecks (ref : IO.Ref (List String)) : IO Unit := do
   let css := treeCssList "" head.toList
   let forced := (sheetRules css).toList.filter fun (conds, _, decls) =>
     conds == ["@media (forced-colors: active)"] && hasStr decls "CanvasText"
-  let sels := forced.flatMap fun (_, sel, _) => cssSelParts sel
+  let sels := forced.flatMap fun (_, sel, _) => cssSelectorParts sel
   t s!"forced colours: the bars carry a CanvasText border: {sels}"
     (["section.slide > header", "section.slide.standout", "section.block > header",
       "section.tcolorbox > header"].all sels.contains)

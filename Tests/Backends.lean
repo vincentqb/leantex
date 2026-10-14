@@ -424,7 +424,7 @@ def htmlRhythmChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- A selector reaches what its rightmost compound matches, so both sides are read there.
   let subjects : List String := ([Ir.ListLineage.sizeFile, .beamer, .web].flatMap fun l =>
     (HtmlDoc.blockGapRules l Ir.baseFontSize {}).flatMap fun r => match r with
-    | .boundary sel _ => (cssSelParts sel).filterMap fun part =>
+    | .boundary sel _ => (cssSelectorParts sel).filterMap fun part =>
         let s := selSubject part
         if s == "*" || s.isEmpty then none else some s
     | .reset _ _ => []
@@ -438,7 +438,7 @@ def htmlRhythmChecks (ref : IO.Ref (List String)) : IO Unit := do
     let (doc, _) ← goldenDoc n
     for (sel, decls) in artCssBlocks (HtmlDoc.baseCss {} doc) do
       if !sel.startsWith ":where(" && setsMargin decls &&
-          (cssSelParts sel).any (fun part => subjects.any (compoundOverlaps (selSubject part))) then
+          (cssSelectorParts sel).any (fun part => subjects.any (compoundOverlaps (selSubject part))) then
         shadows := shadows.push s!"{n}: {sel}"
   t "html gap subjects are read off the emitter"
     (["p", "ul", "ol", "li", "h2", "figure.float", ".display", "blockquote"].all subjects.contains)

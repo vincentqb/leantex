@@ -2753,7 +2753,7 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
       (fun b => match b with
         | .picture pic => pic.shapes.any fun s => match s with
             | s => match shapeEdge? s with
-              | some (_, st, _) => strokeColor? st == some { r := 0, g := 0, b := 255 } &&
+              | some (_, st, _) => paintColor? st.paint == some { r := 0, g := 0, b := 255 } &&
                   st.width == Ir.Pic.thickWidth
               | none => false
         | _ => false))
@@ -2797,7 +2797,7 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
       "\\end{tikzpicture}\\end{document}")).1.body.any
       (fun b => match b with
         | .picture pic => (pic.shapes.filterMap fun s =>
-            (shapeEdge? s).bind fun (_, st, _) => strokeColor? st) ==
+            (shapeEdge? s).bind fun (_, st, _) => paintColor? st.paint) ==
               #[{ r := 0, g := 255, b := 0 }, { r := 255, g := 0, b := 0 }]
         | _ => false))
   t "elab every-node style declared on the picture's bracket reaches its nodes"
@@ -2826,7 +2826,7 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
       (fun b => match b with
         | .picture pic => pic.shapes.any fun s => match s with
             | s => match shapeEdge? s with
-              | some (_, st, _) => strokeColor? st == some { r := 0, g := 0, b := 255 } &&
+              | some (_, st, _) => paintColor? st.paint == some { r := 0, g := 0, b := 255 } &&
                   st.width == Ir.Pic.thickWidth
               | none => false
         | _ => false))
@@ -2870,7 +2870,7 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
       (fun b => match b with
         | .picture pic => pic.shapes.any fun s => match s with
             | s => match shapeEdge? s with
-              | some (_, st, _) => strokeColor? st == some { r := 255, g := 0, b := 0 }
+              | some (_, st, _) => paintColor? st.paint == some { r := 255, g := 0, b := 0 }
               | none => false
         | _ => false))
   t "elab append style to an undefined name defines it"
@@ -3277,7 +3277,7 @@ minimum size=8mm] at (0,0) {x};")).map (·.shapes[0]?) ==
     ((picOf (wrap "\\draw[draw=grid] (0,0) -- (1,0);")).map (fun p =>
       p.shapes.any fun s => match s with
         | s => match shapeEdge? s with
-          | some (_, st, _) => strokeColor? st == some { r := 42, g := 111, b := 78 }
+          | some (_, st, _) => paintColor? st.paint == some { r := 42, g := 111, b := 78 }
           | none => false) == some true)
   t "a waypoint coordinate chains segments"
     ((picOf (wrap "\\draw (0,0) -- (1,1) -- (2,0);")).map (fun p =>
@@ -6698,7 +6698,7 @@ def pictureLabelFaceChecks (ref : IO.Ref (List String)) : IO Unit := do
     return (Font.parse (← IO.FS.readBinFile p)).toOption
   let some roman ← load "SourceSerifPro-Regular.otf" | return ()
   let some sans ← load "FiraSans-Regular.otf" | return ()
-  let fs := twoSlotOf roman sans
+  let fs := slotPairOf 1 roman sans
   let src :=
     "\\begin{document}\nA plain body reading.\n\n" ++
     "\\begin{tikzpicture}\n\\node (aa) {Quince};\n\\end{tikzpicture}\n\\end{document}"
@@ -6980,7 +6980,7 @@ def pictureHyphenKeyChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   let opOut := layoutOf oneFace opDoc
   t "an edge operation's own bracket expands a hyphenated bundle"
     ((opOut.pages[0]?.bind fun p => ((pageDraws p)[2]?).bind (·.2.2)).map
-      (fun s => s.dash == #[Dim.pt 3, Dim.pt 3] && strokeColor? s == some { r := 0, g := 255, b := 0 })
+      (fun s => s.dash == #[Dim.pt 3, Dim.pt 3] && paintColor? s.paint == some { r := 0, g := 255, b := 0 })
       == some true)
   t "a bundle on an edge operation is not named as a dropped option"
     (!opDs.any fun d => d.code == DiagCode.W0334.code && hasStr d.message "edge-muted")
@@ -7415,7 +7415,7 @@ def keyedLookupChecks (ref : IO.Ref (List String)) : IO Unit := do
 def frameSpecChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let pageText (src : String) : String := pageTextOf oneFace src
-  let allText (src : String) : String := allTextOf oneFace src
+  let allText (src : String) : String := pageTextOf oneFace src (lines := allLines)
   let pages (src : String) : Nat :=
     let (d, _) := elabStr src
     (layoutOf oneFace d).pages.size
@@ -7483,7 +7483,7 @@ judged on the shipped glyphs. -/
 def boxArgChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let pageText (src : String) : String := pageTextOf oneFace src
-  let allText (src : String) : String := allTextOf oneFace src
+  let allText (src : String) : String := pageTextOf oneFace src (lines := allLines)
   let has := hasStr
   let pb := deck169Frame "\\parbox[t]{.25\\textwidth}{Label one}"
   t "a parbox's width argument is not ink"
@@ -7526,7 +7526,7 @@ carry is named. -/
 def phantomChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let pageText (src : String) : String := pageTextOf oneFace src
-  let allText (src : String) : String := allTextOf oneFace src
+  let allText (src : String) : String := pageTextOf oneFace src (lines := allLines)
   let has := hasStr
   let v := "Garden Gate\\vphantom{qy} counted"
   t "a vphantom's argument is not ink" (!has (allText v) "qy")

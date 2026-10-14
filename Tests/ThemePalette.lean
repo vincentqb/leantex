@@ -2,13 +2,11 @@ module
 
 import LeanTex.Core.SeedPalette
 import LeanTex.Core.Ir
+import Tests.Check
 
 open LeanTex.Core
 
 namespace Tests.ThemePalette
-
-private def check (ref : IO.Ref (List String)) (name : String) (ok : Bool) : IO Unit :=
-  unless ok do ref.modify (name :: ·)
 
 -- Ordinary clients use the contract without a renderer's implementation or a sampled palette's reduction.
 example {s : SeedPalette.Seeds} {t : SeedPalette.Targets} (p : SeedPalette.Generated s t) :

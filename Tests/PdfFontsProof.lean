@@ -1,6 +1,7 @@
 module
 
 public import LeanTex.Core.PdfFontsProof
+public import Tests.Check
 
 public section
 
@@ -19,13 +20,11 @@ private def twoFacePage : Layout.PageOut :=
 
 /-- The checked producer and its census over both font-program dictionary shapes, both PDF versions
 and full and subset names. -/
-def pdfFontsProofChecks (failures : IO.Ref (List String)) : IO Unit := do
-  let check (name : String) (ok : Bool) : IO Unit := do
-    unless ok do failures.modify (name :: ·)
+def pdfFontsProofChecks (ref : IO.Ref (List String)) : IO Unit := do
   let fs : Font.FontSet :=
     { fonts := #[syntheticFace "SyntheticTrueType" false, syntheticFace "SyntheticCff" true] }
   let pages := #[twoFacePage]
-  check "PDF fonts: both synthetic faces contribute glyphs"
+  check ref "PDF fonts: both synthetic faces contribute glyphs"
     (Pdf.keepFaces fs pages == #[0, 1])
   for version in ["1.7", "2.0"] do
     for subset in [false, true] do
@@ -35,33 +34,33 @@ def pdfFontsProofChecks (failures : IO.Ref (List String)) : IO Unit := do
       let programs : Array (ByteArray × Bool) :=
         #[("short program".toUTF8, subset), (⟨Array.replicate 4096 17⟩, subset)]
       let plan := Pdf.prepare {} fs pages info {} outline #[] ⟨#[]⟩ #[] programs
-      check "PDF fonts: ordinary source belongs to the complete checked domain"
+      check ref "PDF fonts: ordinary source belongs to the complete checked domain"
         (decide plan.WithinDomain)
       match Pdf.writeChecked {} fs pages info {} outline #[] ⟨#[]⟩ #[] programs with
-      | .error _ => check "PDF fonts: checked native producer succeeds" false
+      | .error _ => check ref "PDF fonts: checked native producer succeeds" false
       | .ok bytes =>
-        check "PDF fonts: successful production keeps the actual writer bytes"
+        check ref "PDF fonts: successful production keeps the actual writer bytes"
           (bytes == Pdf.write {} fs pages info {} outline #[] ⟨#[]⟩ #[] programs)
-        check "PDF fonts: actual reader counts both embedded font families"
+        check ref "PDF fonts: actual reader counts both embedded font families"
           ((PdfCensus.census bytes).toOption.any fun c =>
             c.fontsEmbedded && c.fonts == 4 && c.type0Fonts == 2)
         match PdfRead.objects bytes with
-        | .error _ => check "PDF fonts: complete object recovery succeeds" false
+        | .error _ => check ref "PDF fonts: complete object recovery succeeds" false
         | .ok objects =>
           for k in [0:2] do
             let program := objects.val.find? (·.num == plan.table.fileId k)
-            check "PDF fonts: actual decoded program equals its selected source"
+            check ref "PDF fonts: actual decoded program equals its selected source"
               (program.any fun e => e.decoded.toOption == some (some programs[k]!.1))
-            check "PDF fonts: compressed and uncompressed transport both exercised"
+            check ref "PDF fonts: compressed and uncompressed transport both exercised"
               (program.any fun e =>
                 (e.val.get? "Filter").isSome == (k == 1))
   for name in ["", "λ"] do
     let bad : Font.FontSet := { fonts := #[syntheticFace name false] }
     let programs := #[("invented program".toUTF8, false)]
     let plan := Pdf.prepare {} bad #[] {} {} #[] #[] ⟨#[]⟩ #[] programs
-    check "PDF fonts: spelling counterexample still fits all numeric bounds"
+    check ref "PDF fonts: spelling counterexample still fits all numeric bounds"
       (decide plan.WithinBounds && !decide plan.Encodable)
-    check "PDF fonts: source spelling refusal names the first offending font object"
+    check ref "PDF fonts: source spelling refusal names the first offending font object"
       (match Pdf.writeChecked {} bad #[] {} {} #[] #[] ⟨#[]⟩ #[] programs with
         | .error (.objectSpelling id) => id == Pdf.ObjTable.type0Id 0
         | _ => false)

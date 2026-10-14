@@ -18,12 +18,6 @@ private def pageFills (doc : Ir.Doc) (out : Layout.Out) : Array Ir.Color :=
   out.pages.flatMap fun page => (page.fills.filter fun f =>
     f.x ≤ 0 && f.y ≤ 0 && f.w ≥ geom.pageW && f.h ≥ geom.pageH).map (·.color)
 
-private def runInks (out : Layout.Out) (text : String) : Array Ir.Color :=
-  (allLines out).filter (lineText · == text) |>.flatMap fun l =>
-    l.segs.filterMap fun
-      | .run _ ink _ _ glyphs .. => if glyphs.isEmpty then none else some ink
-      | _ => none
-
 /-- An author colour binds no role but a code role's: `\definecolor` and `\colorlet` name xcolor
 colours apart from palette roles, while a colour expression reads the author's colour first. -/
 public def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
@@ -46,14 +40,14 @@ public def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
   let (fgDoc, _) := elabStr (article "\\definecolor{fg}{HTML}{1A2B3C}\n" "Probe ink.")
   let fgOut := layoutOf fonts fgDoc
   t "author colours: \\definecolor{fg} sets no text"
-    (!(runInks fgOut "Probe ink.").isEmpty &&
-      (runInks fgOut "Probe ink.").all (· == Ir.Color.black))
+    (!(inksOn fgOut (· == "Probe ink.")).isEmpty &&
+      (inksOn fgOut (· == "Probe ink.")).all (· == Ir.Color.black))
   let (exprDoc, _) := elabStr (article "\\definecolor{bg}{HTML}{224466}\n"
     "\\textcolor{bg}{Probe named.}")
   let exprOut := layoutOf fonts exprDoc
   t "author colours: an expression reads the author's colour"
-    ((runInks exprOut "Probe named.").all (· == { r := 0x22, g := 0x44, b := 0x66 }) &&
-      !(runInks exprOut "Probe named.").isEmpty)
+    ((inksOn exprOut (· == "Probe named.")).all (· == { r := 0x22, g := 0x44, b := 0x66 }) &&
+      !(inksOn exprOut (· == "Probe named.")).isEmpty)
   t "author colours: an expression's run names the author colour"
     (hasStr (Ir.dump exprDoc #[]) "color bg #224466") -- ir tier: the run's name is IR data
   let (alertDoc, _) := elabStr (dvDeck
@@ -64,14 +58,15 @@ public def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
   t "author colours: \\colorlet{alert} leaves the alert role"
     (Ir.Design.declared? alertDoc.palette .alert == some { r := 0x8A, g := 0x1C, b := 0x1C })
   t "author colours: \\textcolor{alert} reads the author colour"
-    ((runInks alertOut line).contains { r := 0, g := 0, b := 255 })
+    ((inksOn alertOut (· == line)).contains { r := 0, g := 0, b := 255 })
   t "author colours: \\alert reads the alert role, whatever a colour named alert holds"
-    ((runInks alertOut line).contains { r := 0x8A, g := 0x1C, b := 0x1C })
+    ((inksOn alertOut (· == line)).contains { r := 0x8A, g := 0x1C, b := 0x1C })
   let (overlayDoc, _) := elabStr (dvDeck
     "\\theme{plain}\n\\palette{alert=#8A1C1C}\n\\colorlet{alert}{blue}\n"
     "\\begin{frame}\nStepped \\alert<1>{one}.\n\\end{frame}")
   t "author colours: an overlay \\alert reads the alert role too"
-    ((runInks (layoutOf fonts overlayDoc) "Stepped one.").contains { r := 0x8A, g := 0x1C, b := 0x1C })
+    ((inksOn (layoutOf fonts overlayDoc) (· == "Stepped one.")).contains
+      { r := 0x8A, g := 0x1C, b := 0x1C })
   -- minted's manual example: a listing set on `\definecolor{bg}`.
   let (mDoc, mDs) := elabStr (article "\\usepackage{minted}\n\\definecolor{bg}{rgb}{.9,.9,.9}\n"
     "Before.\n\n\\begin{minted}[bgcolor=bg]{python}\ndef f(x):\n    return x\n\\end{minted}\n\nAfter.")
@@ -107,7 +102,7 @@ public def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
   let hjCss := (HtmlDoc.emit {} hjDoc).1
   let vars := screenRootVars hjCss
   let ruleColor (sel prop : String) : Option String :=
-    ((cssRulesOf hjCss sel).reverse.findSome? (cssDeclOf · prop)).bind fun v =>
+    ((cssRulesOf hjCss sel).reverse.findSome? (cssProperty · prop)).bind fun v =>
       ((v.splitOn " ").getLast?).bind (chaseCssValue vars)
   for (sel, prop, role, what) in [("body", "background", Ir.Role.page, "page"),
       ("body", "color", .ink, "text"), ("pre", "background", .codeSurface, "code ground"),

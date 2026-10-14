@@ -1161,9 +1161,6 @@ private def measuredX : Array (String × Nat × Mark × Mark × Int) := #[
   ("capitals", 2, .rightEdge, .left alertColor 0, 4000),
   ("capitals", 2, .left alertColor 0, .right alertColor 0, 3000)]
 
-/-- Word spaces ship as gaps, not glyphs: a line is found by its letters. -/
-private def letters (text : String) : String := text.replace " " ""
-
 private def ruleOf (page : Layout.PageOut) (c : Ir.Color) (n : Nat) : Option Layout.Fill :=
   ((page.fills.filter (·.color == c)).qsort (·.y < ·.y))[n]?
 
@@ -1179,11 +1176,6 @@ private def markAt (geom : Layout.Geom) (page : Layout.PageOut) : Mark → Optio
   | .right c n => (ruleOf page c n).map fun f => f.x + f.w
   | .edge => some geom.hmargin
   | .rightEdge => some (geom.hmargin + geom.textWidth)
-
-private def milliOf (d : Dim.Sp) : Int := (d * 1000 + 32768) / 65536
-
-/-- 2 thousandths of a point: the walk's four-decimal TeX points, rounded. -/
-private def tolerance : Int := 2
 
 private def sources : List (String × String) :=
   [("hanging", hanging), ("whole", whole), ("inside", inside), ("armed", armedSource),
@@ -1208,8 +1200,8 @@ private def pageChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
       unless probe == name do continue
       match out.pages[page]?.bind fun p => (markAt geom p a).bind fun ya => (markAt geom p b).map (· - ya) with
       | some d =>
-        check ref s!"block template {name} page {page}: {want} (lualatex) got {milliOf d}"
-          ((milliOf d - want).natAbs ≤ tolerance.toNat)
+        check ref s!"block template {name} page {page}: {want} (lualatex) got {spMilli d}"
+          ((spMilli d - want).natAbs ≤ probeTolerance.toNat)
       | none => check ref s!"block template {name} page {page}: the marks for {want} ship" false
     -- Paint is the rules alone: a page's ground, the frame title's bar, and one fill per rule.
     let edge (f : Layout.Fill) : Bool :=
@@ -1853,7 +1845,7 @@ private def parentChecks (ref : IO.Ref (List String)) : IO Unit := do
     for (title, face, size) in want do
       let faces := ((page.lines.find? fun l => !l.furniture &&
         (lineText l false).startsWith (letters title)).map (lineFaces fs)).getD #[]
-      check ref s!"block title {name}: '{title}' sets in {face} at {milliOf size} ({faces})"
+      check ref s!"block title {name}: '{title}' sets in {face} at {spMilli size} ({faces})"
         (!faces.isEmpty && faces.all (· == (face, size)))
   let (_, diags) := Elab.run "block-title-starred.tex"
     (head ++ "\\setbeamerfont*{block title}{size=\\small}\n" ++ blocks)
@@ -2154,8 +2146,8 @@ private def wholeBarChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
   for (page, a, b, want) in measuredWhole do
     match out.pages[page]?.bind fun p => (markAt geom p a).bind fun ya => (markAt geom p b).map (· - ya) with
     | some d =>
-      check ref s!"whole bar page {page}: {want} (lualatex) got {milliOf d}"
-        ((milliOf d - want).natAbs ≤ tolerance.toNat)
+      check ref s!"whole bar page {page}: {want} (lualatex) got {spMilli d}"
+        ((spMilli d - want).natAbs ≤ probeTolerance.toNat)
     | none => check ref s!"whole bar page {page}: the marks for {want} ship" false
   let rules := out.pages.map fun p => (p.fills.filter (·.color == edgeColor)).size
   check ref s!"whole bar: one rule per titled block, none beside the untitled one ({rules})"
@@ -2166,9 +2158,9 @@ private def wholeBarChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
   | some p, some row =>
     match ruleOf p edgeColor 1 with
     | some bar =>
-      let d := milliOf (bar.y + bar.h - row)
+      let d := spMilli (bar.y + bar.h - row)
       check ref s!"whole bar: the display's rule ends below its last row ({d})"
-        ((d - half).natAbs ≤ tolerance.toNat)
+        ((d - half).natAbs ≤ probeTolerance.toNat)
     | none => check ref "whole bar: the display's rule ships" false
   | _, _ => check ref "whole bar: the display's last row ships" false
   let nested := wholeBarSource.replace "  d &= e\n" "  d &= \\begin{gathered} x \\\\ y \\end{gathered}\n"
@@ -2178,9 +2170,9 @@ private def wholeBarChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
   | some p, some row =>
     match ruleOf p edgeColor 1 with
     | some bar =>
-      let d := milliOf (bar.y + bar.h - row)
+      let d := spMilli (bar.y + bar.h - row)
       check ref s!"whole bar: a display whose last row holds a grid ends its rule below that row ({d})"
-        ((d - half).natAbs ≤ tolerance.toNat)
+        ((d - half).natAbs ≤ probeTolerance.toNat)
     | none => check ref "whole bar: the nested-grid display's rule ships" false
   | _, _ => check ref "whole bar: the nested-grid display's last row ships" false
   match out.pages[2]? with
@@ -2188,7 +2180,7 @@ private def wholeBarChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
     match ruleOf p edgeColor 1, p.inks[0]? with
     | some bar, some k =>
       let bottom := k.claims.foldl (fun m b => max m b.2.2) k.place.dy
-      let d := milliOf (bar.y + bar.h - bottom)
+      let d := spMilli (bar.y + bar.h - bottom)
       check ref s!"whole bar: the picture's rule ends below the picture's baseline ({d})"
         ((d - half).natAbs ≤ 250)
     | _, _ => check ref "whole bar: the picture and its rule ship" false

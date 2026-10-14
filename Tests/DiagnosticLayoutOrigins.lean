@@ -9,12 +9,6 @@ open LeanTex.Core LeanTex.Cli
 
 namespace DiagnosticLayoutOrigins
 
-/-- Location equality, expansion metadata ignored. -/
-private def sameSource (actual : Option Span) (expected : Span) : Bool :=
-  actual.any fun s =>
-    s == expected && s.pos.command == expected.pos.command &&
-      s.pos.origins == expected.pos.origins
-
 private def sourceAt (file : String) (line col : Nat) (command : String) : Span :=
   { file, pos := { line, col, command := some command } }
 
@@ -58,18 +52,18 @@ def diagnosticLayoutOriginChecks (ref : IO.Ref (List String))
   -- An overfull line is a place: its span keeps command and expansion, its header quotes neither.
   t "layout origins: body overflow keeps each line's command and expansion in its span"
     (overfull.size == 2 &&
-      overfull.any (fun d => DiagnosticLayoutOrigins.sameSource d.span first &&
+      overfull.any (fun d => sameSource d.span first &&
         d.trigger.isNone) &&
-      overfull.any (fun d => DiagnosticLayoutOrigins.sameSource d.span second &&
+      overfull.any (fun d => sameSource d.span second &&
         d.trigger.isNone))
   let notes : Ir.Doc := { body := #[.para #[.text "Note", .footnote (some 1) content]] }
   let noteOut := Layout.run geom fs none notes
   let noteDiags := noteOut.diags.filter (·.kind == .W0005)
   t "layout origins: footnote overflow keeps commands after generated mark insertion"
     (noteDiags.size == 2 &&
-      noteDiags.any (fun d => DiagnosticLayoutOrigins.sameSource d.span first &&
+      noteDiags.any (fun d => sameSource d.span first &&
         d.trigger.isNone) &&
-      noteDiags.any (fun d => DiagnosticLayoutOrigins.sameSource d.span second &&
+      noteDiags.any (fun d => sameSource d.span second &&
         d.trigger.isNone))
   t "layout origins: overflow CLI human and JSON stand at the line and quote no token"
     (overfull.any fun d =>
@@ -106,11 +100,11 @@ def diagnosticLayoutOriginChecks (ref : IO.Ref (List String))
   t "layout origins: identical unlabelled pictures keep distinct opening sites"
     (picDs.all (·.severity != .error) && picSites.size == 2 && picDiags.size == 2 &&
       picDiags.any (fun d =>
-        DiagnosticLayoutOrigins.sameSource d.span
+        sameSource d.span
           (DiagnosticLayoutOrigins.sourceAt "picture-origin.tex" 2 1 "\\begin") &&
         d.triggerText == some "\\begin") &&
       picDiags.any (fun d =>
-        DiagnosticLayoutOrigins.sameSource d.span
+        sameSource d.span
           (DiagnosticLayoutOrigins.sourceAt "picture-origin.tex" 3 1 "\\begin") &&
         d.triggerText == some "\\begin"))
   let plainPics := Layout.run picGeom fs none picDoc
@@ -124,7 +118,7 @@ def diagnosticLayoutOriginChecks (ref : IO.Ref (List String))
     (sparseDiags.size == 2 &&
       (sparseDiags.filter fun d => d.span.isNone && d.trigger.isNone).size == 1 &&
       (sparseDiags.filter fun d =>
-        DiagnosticLayoutOrigins.sameSource d.span secondPicture &&
+        sameSource d.span secondPicture &&
         d.triggerText == some "\\begin").size == 1)
   let hidden := { picDoc with body := #[
     .para #[.text "Prefix"], .only #["html"] #[picDoc.body[0]!], picDoc.body[1]!] }
@@ -132,7 +126,7 @@ def diagnosticLayoutOriginChecks (ref : IO.Ref (List String))
   let hiddenDiags := hiddenOut.diags.filter (·.kind == .W0335)
   t "layout origins: PDF filtering preserves authored picture ordinals"
     (hiddenDiags.size == 1 && hiddenDiags.all fun d =>
-      DiagnosticLayoutOrigins.sameSource d.span secondPicture && d.triggerText == some "\\begin")
+      sameSource d.span secondPicture && d.triggerText == some "\\begin")
   let steps := { picDoc with docClass := .slides, body := #[
     .frame #[] false .top false (picDoc.body.push
       (.onSteps { first := 2, last := none } #[.para #[.text "Next step"]]))] }
@@ -142,7 +136,7 @@ def diagnosticLayoutOriginChecks (ref : IO.Ref (List String))
     (stepOut.pages.size == 2 && stepDiags.size == 2 &&
       [2, 3].all fun line =>
         (stepDiags.filter fun d =>
-          DiagnosticLayoutOrigins.sameSource d.span
+          sameSource d.span
             (DiagnosticLayoutOrigins.sourceAt "picture-origin.tex" line 1 "\\begin") &&
           d.triggerText == some "\\begin").size == 1)
   let (picShrinkDoc, picShrinkDs, picShrinkSites, _) := DiagnosticLayoutOrigins.parse fs
@@ -161,7 +155,7 @@ def diagnosticLayoutOriginChecks (ref : IO.Ref (List String))
   t "layout origins: a picture that consumes shrink retains its opening source"
     (picShrinkDs.all (·.severity != .error) && picShrinkOut.pages.size == 1 &&
       picShrinkDiags.size == 1 && picShrinkDiags.all fun d =>
-        DiagnosticLayoutOrigins.sameSource d.span
+        sameSource d.span
           (DiagnosticLayoutOrigins.sourceAt "picture-shrink-origin.tex" 5 1 "\\begin") &&
         d.trigger.isNone)
   let shrinkSource :=

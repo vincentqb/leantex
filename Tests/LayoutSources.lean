@@ -8,11 +8,6 @@ public section
 
 open LeanTex.Core LeanTex.Cli
 
-private def sameOpening (actual : Option Span) (expected : Span) : Bool :=
-  actual.any fun a =>
-    a == expected && a.pos.origins == expected.pos.origins &&
-      a.pos.command == expected.pos.command
-
 /-- Source sites follow the document through citation removal and backend filtering, two identical
 frames naming their own openings. -/
 def layoutSourceChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit := do
@@ -47,4 +42,4 @@ def layoutSourceChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Uni
       (out.pages.size > 2 && spills.size == 2)
     for (_, site) in sites.frames do
       t s!"citation removal preserves opening line {site.pos.line} through actual layout"
-        (spills.any fun d => sameOpening d.span site && d.triggerText == some "\\begin")
+        (spills.any fun d => sameSource d.span site && d.triggerText == some "\\begin")

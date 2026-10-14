@@ -189,12 +189,12 @@ def openingChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "frame opening html: the first line's strut is the page's baselineskip at an em of the line"
     (strut.size == 1 && strut.all fun (sel, d) =>
       hasStr sel "li:first-child" &&
-      ((cssDeclOf d "height").bind cssEmMilli).any (· * size / 1000 == lead))
+      ((cssProperty d "height").bind cssEmMilli).any (· * size / 1000 == lead))
   -- Every frame's last element is marked, and its last line trims to its baseline.
   let (_, body, _) := HtmlDoc.emitTree {} doc
   let classes := attrValuesOf (fun _ => true) "class" (Html.elem "body" body #[])
   let trims := blocks.filter fun (sel, d) =>
-    hasStr sel ".frame-body-end" && cssDeclOf d "text-box" == some "trim-end text alphabetic"
+    hasStr sel ".frame-body-end" && cssProperty d "text-box" == some "trim-end text alphabetic"
   t "frame opening html: a frame's content ends on its last line's baseline"
     (trims.size == 1 && trims.all (fun (sel, _) =>
       hasStr sel "p, ul, ol" && !hasStr sel "pre" && !hasStr sel ".block" && !hasStr sel "figure") &&
@@ -299,7 +299,7 @@ def trivlistOpeningChecks (ref : IO.Ref (List String)) : IO Unit := do
   let root := (cssBlocksFor css ":root").foldl (· ++ ";" ++ ·) ""
   t "trivlist opening html: the deck declares beamer's trivlist and float spaces, the stage's share"
     (cssStageLength root "--topsep" topsep doc.page.height &&
-     cssDeclOf root "--floatsep" == some "calc(var(--topsep) + var(--parskip, 0rem))")
+     cssProperty root "--floatsep" == some "calc(var(--topsep) + var(--parskip, 0rem))")
   t "trivlist opening html: each list level declares its own topsep, the stage's share"
     ((cssBlocksFor css "li, dd, blockquote").any (cssStageLength · "--topsep"
         (Ir.trivlistSkipFor lists doc.tokens size 1).width.sp doc.page.height) &&
@@ -312,9 +312,9 @@ def trivlistOpeningChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((v.splitOn ", ").getLast!.splitOn ")").head!
   t "trivlist opening html: a figure's caption skips are beamer's 7pt, the stage's share"
     ((cssBlocksFor css "figure.float").any fun d =>
-      (cssDeclOf d "--ltx-capsep").any (fun v =>
+      (cssProperty d "--ltx-capsep").any (fun v =>
         cssStageLength ("--c: " ++ innermost v) "--c" (Dim.pt 7) doc.page.height) &&
-      (cssDeclOf d "--ltx-capfar").any (fun v =>
+      (cssProperty d "--ltx-capfar").any (fun v =>
         cssStageLength ("--c: " ++ innermost v) "--c" (Dim.pt 7) doc.page.height))
   let classes := attrValuesOf (fun _ => true) "class" (Html.elem "body" body #[])
   t "trivlist opening html: every trivlist frame opens on its trivlist or its figure"
@@ -353,18 +353,18 @@ def htmlChecks (ref : IO.Ref (List String)) : IO Unit := do
   let height := doc.page.height
   t "frame area html: the stage opens at its top edge, its text area ending on the frame's end spacer"
     ((cssBlocksFor css "section.slide:not(.title-page)").any (fun d =>
-      cssDeclOf d "padding-top" == some "0" && cssDeclOf d "padding-bottom" == some "0") &&
+      cssProperty d "padding-top" == some "0" && cssProperty d "padding-bottom" == some "0") &&
      (cssBlocksFor css "section.slide:not(.title-page)::after").any fun d =>
-      cssDeclOf d "flex" == some s!"{HtmlDoc.printEndGrow} 0 0" &&
+      cssProperty d "flex" == some s!"{HtmlDoc.printEndGrow} 0 0" &&
       cssStageLength d "max-height" Ir.footline.sep height)
   let foot := cssBlocksFor css "section.slide > footer.slide-foot"
   t "frame area html: the footline stands after the end spacer, on the stage's edge, through no padding"
-    (foot.any fun d => cssDeclOf d "order" == some "1" &&
-      cssDeclOf d "margin" == some "0 calc(-1 * var(--safearea, 6vmin))" &&
-      cssDeclOf d "line-height" == some "0")
+    (foot.any fun d => cssProperty d "order" == some "1" &&
+      cssProperty d "margin" == some "0 calc(-1 * var(--safearea, 6vmin))" &&
+      cssProperty d "line-height" == some "0")
   t "frame area html: on paper a frame's end never opens a sheet, its footline kept with its content"
     ((cssBlocksFor css "section.slide > :is(.fill, footer.slide-foot), section.slide::after").any
-      (cssDeclOf · "break-before" == some "avoid"))
+      (cssProperty · "break-before" == some "avoid"))
   t "frame area html: on screen the footline stays on the stage's edge when content overruns it"
     (hasStr css "@media screen { section.slide > footer.slide-foot { position: sticky; bottom: 0; } }")
   -- A value holding the stage's share of the closing skip (`Ir.footline.raise`).
@@ -373,11 +373,11 @@ def htmlChecks (ref : IO.Ref (List String)) : IO Unit := do
       cssStageLength s!"x: {(tok.replace ")" "").replace "(" ""}" "x" Ir.footline.raise height
   t "frame area html: the footline's box is the band's glyph height and depth and its closing skip"
     ((cssBlocksFor css "footer.slide-foot::before").any fun d =>
-      (cssDeclOf d "height").any fun h => raised h &&
+      (cssProperty d "height").any fun h => raised h &&
         hasStr h "var(--foot-h, var(--foot-cap, 1) * 1cap)" && hasStr h "var(--foot-d, 0px)")
   t "frame area html: each slot's baseline stands the band's depth and the closing skip above the edge"
     ((cssBlocksFor css "footer.slide-foot > :is(.band-left, .band-right)::before").any fun d =>
-      (cssDeclOf d "vertical-align").any fun v => raised v && hasStr v "var(--foot-d, 0px)")
+      (cssProperty d "vertical-align").any fun v => raised v && hasStr v "var(--foot-d, 0px)")
   t "frame area html: the slots stand inset from the paper's sides, as moloch's footline"
     ((cssBlocksFor css "footer.slide-foot > .band-left").any (cssStageLength · "left" Ir.footline.left height) &&
      (cssBlocksFor css "footer.slide-foot > .band-right").any (cssStageLength · "right" Ir.footline.right height))
@@ -385,15 +385,15 @@ def htmlChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((cssBlocksFor css "section.slide > header h2::before").any (hasStr · "height: calc(var(--frametitlepadding") &&
      (cssBlocksFor css "section.slide > header h2::after").any (hasStr · "vertical-align: calc(-1 * var(--frametitlepadding"))
   -- The standout type is the frame's (`\usebeamerfont{standout}`); the footline undoes that step.
-  let standoutSize := (cssBlocksFor css "section.slide.standout").findSome? (cssDeclOf · "font-size")
-  let footStep := (cssBlocksFor css s!".size-{Ir.footline.step}").findSome? (cssDeclOf · "font-size")
+  let standoutSize := (cssBlocksFor css "section.slide.standout").findSome? (cssProperty · "font-size")
+  let footStep := (cssBlocksFor css s!".size-{Ir.footline.step}").findSome? (cssProperty · "font-size")
   t "frame area html: a standout frame's type is the whole frame's, its footline keeping its own"
-    ((cssBlocksFor css "section.slide.standout").any (cssDeclOf · "font-weight" == some "600") &&
+    ((cssBlocksFor css "section.slide.standout").any (cssProperty · "font-weight" == some "600") &&
      (cssBlocksFor css "section.slide.standout > p").isEmpty &&
      match standoutSize, footStep with
      | some s, some f =>
        (cssBlocksFor css "section.slide.standout > footer.slide-foot").any
-         (cssDeclOf · "font-size" == some s!"calc({f} / {s.dropEnd 2})")
+         (cssProperty · "font-size" == some s!"calc({f} / {s.dropEnd 2})")
      | _, _ => false)
   let sections := elemAttrsList (· == "section") #[] body.toList
   let slides := sections.filter fun (_, attrs) =>
@@ -406,7 +406,7 @@ def htmlChecks (ref : IO.Ref (List String)) : IO Unit := do
   let pdfStrut := Ir.sectionPageStrut size doc.page.leading
   t "frame area html: a section page closes on its subsection strut below its bar"
     ((cssBlocksFor css "section.section-page::after").any fun d =>
-      ((cssDeclOf d "height").bind fun h =>
+      ((cssProperty d "height").bind fun h =>
         if hasStr h "em - var(--progressheight" then
           cssEmMilli (((h.drop 5).takeWhile (· != ' ')).toString) else none).any fun m =>
         size * m / 1000 - 4 ≤ pdfStrut && pdfStrut ≤ size * m / 1000)
@@ -451,7 +451,7 @@ at one specificity; a pseudo-element's rule styles no element. -/
 private def declaredOn (css key : String) (path : Array ArtElem) : Option String := Id.run do
   let mut best : Option ((Nat × Nat) × String) := none
   for (sel, decls) in artCssBlocks css do
-    if let some v := cssDeclOf decls key then
+    if let some v := cssProperty decls key then
       for part in cssSelectorParts sel do
         if !hasStr part "::" then
           if let some chain := artSelChain part then
@@ -510,7 +510,7 @@ def floatLevelChecks (ref : IO.Ref (List String)) : IO Unit := do
   let roots := cssBlocksFor (treeCssList "" dhead.toList) ":root"
   t "float level: a declared topsep reaches the deck as the stage's share and is noted as the top level's"
     ((roots.any fun d => cssStageLength d "--topsep" (Dim.pt 20) ddoc.page.height) &&
-     !(roots.any fun d => (cssDeclOf d "--topsep").any (·.endsWith "pt")) &&
+     !(roots.any fun d => (cssProperty d "--topsep").any (·.endsWith "pt")) &&
      dds.any fun d => hasStr d.message "which a trivlist outside a list reads")
 
 /-- A Light family's set: the shipped Fira Sans's outlines as a 300 in the

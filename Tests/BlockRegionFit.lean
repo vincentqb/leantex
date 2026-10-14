@@ -3,13 +3,11 @@ module
 public import LeanTex.Core.Font
 import LeanTex.Core.Layout
 import LeanTex.Core.Elab
+import Tests.Support
 
 open LeanTex.Core
 
 namespace Tests.BlockRegionFit
-
-private def check (ref : IO.Ref (List String)) (name : String) (ok : Bool) : IO Unit :=
-  unless ok do ref.modify (name :: ·)
 
 private def outerColor : Ir.Color := { r := 221, g := 238, b := 255 }
 private def innerColor : Ir.Color := { r := 242, g := 211, b := 178 }
@@ -19,15 +17,12 @@ private def brownBar : Ir.Color := { r := 112, g := 64, b := 32 }
 private def isSurface (fill : Layout.Fill) : Bool :=
   #[outerColor, innerColor, blueBar, brownBar].contains fill.color
 
-private def lineText (line : Layout.LineOut) : String :=
-  String.ofList (line.segs.toList.flatMap Layout.Seg.glyphChars)
-
 private def bodyText (out : Layout.Out) : Array String :=
-  (out.pages.flatMap (·.lines) |>.filter (!·.furniture) |>.map lineText).filter
+  (out.pages.flatMap (·.lines) |>.filter (!·.furniture) |>.map (lineText · false)).filter
     (fun text => !text.isEmpty)
 
 private def hasText (page : Layout.PageOut) (text : String) : Bool :=
-  page.lines.any fun line => !line.furniture && lineText line == text
+  page.lines.any fun line => !line.furniture && lineText line false == text
 
 private def insideMedium (geom : Layout.Geom) (fill : Layout.Fill) : Bool :=
   0 < fill.w && 0 < fill.h && 0 ≤ fill.x && 0 ≤ fill.y &&
@@ -191,7 +186,7 @@ public def closedFlushChecks (ref : IO.Ref (List String))
       hasText page text &&
         #[outerColor, innerColor].all fun color =>
           (page.fills.filter (·.color == color)).size == 1 &&
-            page.lines.any fun line => lineText line == text && page.fills.any fun fill =>
+            page.lines.any fun line => lineText line false == text && page.fills.any fun fill =>
               fill.color == color && fill.x ≤ line.x &&
                 line.x + line.setWidth ≤ fill.x + fill.w &&
                 fill.y < line.y && line.y < fill.y + fill.h)
@@ -213,7 +208,7 @@ public def closedFlushChecks (ref : IO.Ref (List String))
             !line.furniture || fill.y + fill.h < line.y)
   check ref "block region flush: following paragraph is outside the closed paint"
     (out.pages.all fun page => page.lines.all fun line =>
-      if !line.furniture && lineText line == "EPILOGUE" then
+      if !line.furniture && lineText line false == "EPILOGUE" then
         (page.fills.filter isSurface).all fun fill => fill.y + fill.h < line.y
       else true)
 
@@ -270,8 +265,8 @@ public def closedColumnRuleChecks (ref : IO.Ref (List String))
         let fills := out.pages.flatMap (·.fills)
         let colors := if nested then #[outerColor, innerColor] else #[outerColor]
         let lines := out.pages.flatMap (·.lines) |>.filter (!·.furniture)
-        let peers := lines.filter (fun line => lineText line == "PEER")
-        let bodies := lines.filter (fun line => lineText line == "BODY")
+        let peers := lines.filter (fun line => lineText line false == "PEER")
+        let bodies := lines.filter (fun line => lineText line false == "BODY")
         let rules := lines.filter (fun line => Layout.ruleOnly line.segs)
         let words := if boxFirst then #["BODY", "PEER", "AFTER"] else #["PEER", "BODY", "AFTER"]
         check ref (label ++ ": source and layout have no loss")

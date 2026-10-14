@@ -5,6 +5,7 @@ public import LeanTex.Core.Struct
 public import LeanTex.Core.Contrast
 public import LeanTex.Core.MarkdownDoc
 public import LeanTex.Core.HtmlDoc
+public import Tests.Check
 
 public section
 
@@ -16,10 +17,6 @@ example (span : Span) (before body after : Array Inline) :
     Ir.eraseLocationInlines (before ++ #[.located span body] ++ after) =
       Ir.eraseLocationInlines (before ++ body ++ after) :=
   Ir.eraseLocationInlines_located_exact span before body after
-
-private def annotationCheck (ref : IO.Ref (List String)) (name : String)
-    (ok : Bool) : IO Unit :=
-  unless ok do ref.modify (name :: ·)
 
 /-- The same content in body, caption, picture and furniture regions. -/
 private def annotationDoc (xs : Array Inline) (source : Option Span) : Doc :=
@@ -46,7 +43,7 @@ private def annotationDoc (xs : Array Inline) (source : Option Span) : Doc :=
 /-- Locations carry diagnostic provenance without adding a semantic leaf, changing backend structure
 or stopping a generic traversal. -/
 def sourceAnnotationChecks (ref : IO.Ref (List String)) : IO Unit := do
-  let t := annotationCheck ref
+  let t := check ref
   let span : Span := { file := "invented.tex", pos := { line := 3, col := 5 } }
   let annotated : Array Inline := #[
     .text "a", .located span #[], .located span #[.text "b",

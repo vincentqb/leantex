@@ -725,7 +725,7 @@ def chromeFooterChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
     ((out.pages[0]?.bind (·.foot)).map (fun f => Ir.plainText (Ir.bandInlines f)) == some "1")
   t "the footer shows the section in force beside the number"
     ((out.pages[2]?.bind (·.foot)).map (fun f => Ir.plainText (Ir.bandInlines f)) == some "Topic2")
-  t "a stepped frame's pages share one footer"
+  t "chrome deck: a stepped frame's pages share one footer"
     (out.pages[2]?.bind (·.foot) == out.pages[3]?.bind (·.foot))
   let font := oneFace.body
   let footSize := Ir.scaleStep geom0.fontSize Ir.footline.step
@@ -843,7 +843,7 @@ def numberingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
     (dDoc.frameCount == 2 && dDoc.frameNumbers.toList.filterMap id == [1, 2])
   let dOut := layoutOf oneFace dDoc
   t "two-sequences deck six pages" (dOut.pages.size == 6)
-  t "a stepped frame's pages share one footer"
+  t "two-sequences deck: a stepped frame's pages share one footer"
     (dOut.pages[1]?.bind (·.foot) == dOut.pages[2]?.bind (·.foot))
   t "the framefoot note sits beside the frame's own number"
     ((dOut.pages[4]?.bind (·.foot)).map (fun f => Ir.plainText (Ir.bandInlines f)) == some "note2")
@@ -2346,7 +2346,7 @@ def deckOverprintUnnumberableChecks (ref : IO.Ref (List String))
   let c := censusOf (coveredColorsOf doc) (layoutOf oneFace doc)
   t "refusing one item leaves the numbered items their step pages"
     (c.size == 3)
-  t "each step page inks exactly one of the three readings"
+  t "with one item refused, each step page inks exactly one of the three readings"
     ((List.range 3).all fun i =>
       (readings.map fun r => pageOccurs c i r) == (List.range 3).map fun j =>
         if i == j then 1 else 0)

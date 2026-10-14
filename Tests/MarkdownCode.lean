@@ -17,22 +17,6 @@ def firstListing (doc : Ir.Doc) : Option Ir.ListingSpec :=
     | .verbatim _ _ spec => some spec
     | _ => none
 
-/-- Where a character first stands on a shipped line. -/
-def glyphX (l : Layout.LineOut) (wanted : Char) : Option Dim.Sp := Id.run do
-  let mut x := l.x
-  for s in l.segs do
-    match s with
-    | .run _ _ _ w glyphs _ _ _ _ _ _ =>
-      let mut pen := x
-      for (_, c, advance) in glyphs do
-        if c == wanted then return some pen
-        pen := pen + advance
-      x := x + w
-    | .gap w _ | .decoratedGap w _ _ | .decoration _ w _ _ _
-    | .rule w _ _ _ | .image _ w _ => x := x + w
-    | .poly _ _ => pure ()
-  return none
-
 /-- Where a shipped line's first non-space glyph stands. -/
 def firstGlyphX (l : Layout.LineOut) : Option Dim.Sp := Id.run do
   let mut x := l.x
@@ -552,7 +536,7 @@ def markdownCodeChecks (ref : IO.Ref (List String)) : IO Unit := do
     | t "markdown code: the text face loads" false
   let some mono ← loadTestFont "SourceCodePro-Regular.otf"
     | t "markdown code: the typewriter face loads" false
-  let fonts := monoSlotOf text mono
+  let fonts := slotPairOf 2 text mono
   let size := Dim.pt 8
   let cell := size * mono.spaceAdvance / mono.unitsPerEm
   let words := "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi \

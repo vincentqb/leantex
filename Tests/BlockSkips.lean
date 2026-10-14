@@ -80,27 +80,12 @@ private def blockGaps : List (String × Int) :=
   [("", 10000), ("\\smallskip", 13001), ("\\medskip", 16001), ("\\bigskip", 22000),
    ("\\vspace{1cm}", 38454)]
 
-/-- 2 thousandths of a point: lualatex's three-decimal big points and their conversion to TeX
-points. -/
-private def tolerance : Int := 2
-
 /-- TeX points in thousandths, in the engine's point (PostScript's). -/
 private def bpMilli (texMilli : Int) : Int := (texMilli * 7200 + 3613) / 7227
 
 private def pagesOf (fonts : Font.FontSet) (src : String) : Array Layout.PageOut × Ir.Doc :=
   let (doc, _) := Elab.run "block-skips.tex" src
   ((Layout.run (Layout.Geom.ofPage doc.page) fonts none doc).pages, doc)
-
-/-- The baseline of a page's first body line whose text opens with `word`,
-any case, past a list's marker. -/
-private def lineY (page : Layout.PageOut) (word : String) : Option Dim.Sp :=
-  (page.lines.find? fun l =>
-    !l.furniture &&
-      (String.ofList ((lineText l).toLower.toList.dropWhile (!·.isAlpha))).startsWith
-        word.toLower).map (·.y)
-
-private def span (page : Layout.PageOut) : Option Dim.Sp := do
-  pure ((← lineY page "omega") - (← lineY page "alpha"))
 
 /-- The empty skips of a document, in document order: the IR values both
 backends read. -/
@@ -117,11 +102,11 @@ private def pdfChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
     check ref s!"block skips ({label}): one page per probe frame"
       (pages.size == 2 * bigskipMoves.length)
     for ((x, y, lua), i) in bigskipMoves.zipIdx do
-      match (pages[2 * i]?.bind span), (pages[2 * i + 1]?.bind span) with
+      match (pages[2 * i]?.bind probeSpan), (pages[2 * i + 1]?.bind probeSpan) with
       | some d0, some d1 =>
         let want := (lua + 500) / 1000
         check ref s!"block skips ({label}): \\bigskip between {x} and {y} moves it {lua} (lualatex), got {spMilli (d1 - d0)}"
-          (d1 - d0 == Dim.pt want && (lua - 1000 * want).natAbs ≤ tolerance.toNat)
+          (d1 - d0 == Dim.pt want && (lua - 1000 * want).natAbs ≤ probeTolerance.toNat)
       | _, _ => check ref s!"block skips ({label}): the {x}/{y} probe's marks ship" false
     let pairs := [("block", "block"), ("paragraph", "paragraph"), ("block", "paragraph"),
       ("paragraph", "block")]
@@ -134,9 +119,9 @@ private def pdfChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
       let width := (skipsOf doc).foldl (fun s g => s + (g.value.resolve size (size / 2)).width) (0 : Dim.Sp)
       let width := width / pairs.length
       check ref s!"block skips ({label}): {name} resolves to lualatex's {lua} TeX points"
-        ((spMilli width - (if physical then bpMilli lua else lua)).natAbs ≤ tolerance.toNat)
+        ((spMilli width - (if physical then bpMilli lua else lua)).natAbs ≤ probeTolerance.toNat)
       for ((x, y), i) in pairs.zipIdx do
-        match (pages[2 * i]?.bind span), (pages[2 * i + 1]?.bind span) with
+        match (pages[2 * i]?.bind probeSpan), (pages[2 * i + 1]?.bind probeSpan) with
         | some d0, some d1 =>
           check ref s!"block skips ({label}): {name} between {x} and {y} moves it by its width, got {spMilli (d1 - d0)}"
             (d1 - d0 == width)
@@ -146,7 +131,8 @@ private def pdfChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
     let frames := tops.flatMap fun y => [frame (below y), frame ("\\bigskip\n\n" ++ below y)]
     let (pages, _) := pagesOf fonts (document pre frames)
     for (y, i) in tops.zipIdx do
-      match (pages[2 * i]?.bind (lineY · "omega")), (pages[2 * i + 1]?.bind (lineY · "omega")) with
+      match (pages[2 * i]?.bind (openingLineY · "omega")),
+          (pages[2 * i + 1]?.bind (openingLineY · "omega")) with
       | some y0, some y1 =>
         check ref s!"block skips ({label}): \\bigskip at a frame's top moves its first {y} 12000 (lualatex), got {spMilli (y1 - y0)}"
           (y1 - y0 == Dim.pt 12)
@@ -159,7 +145,7 @@ private def pdfChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
       let (pages, _) := pagesOf fonts (document pre [frame (head ++ "\n" ++ tail),
         frame (head ++ "\n\\bigskip\n\n" ++ tail)])
       let step := if stepped then 1 else 0
-      match (pages[step]?.bind span), (pages[2 * step + 1]?.bind span) with
+      match (pages[step]?.bind probeSpan), (pages[2 * step + 1]?.bind probeSpan) with
       | some d0, some d1 =>
         check ref s!"block skips ({label}): \\bigskip {name} moves what follows 12000 (lualatex), got {spMilli (d1 - d0)}"
           (d1 - d0 == Dim.pt 12)
@@ -175,7 +161,7 @@ private def pdfChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
     | some b, some t =>
       let want := if skip.startsWith "\\vspace" then 10000 + bpMilli (lua - 10000) else lua
       check ref s!"block skips: '{skip}' sets two blocks {lua} apart (lualatex), got {spMilli (t - b)}"
-        ((spMilli (t - b) - want).natAbs ≤ tolerance.toNat)
+        ((spMilli (t - b) - want).natAbs ≤ probeTolerance.toNat)
     | _, _ => check ref s!"block skips: the '{skip}' blocks ship their boxes" false
 
 /-- TeX's primitive `\vskip` reads its glue unbraced and moves what follows by it, and an element's
@@ -192,7 +178,7 @@ private def vskipChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO
       frame (para ++ skip ++ below "paragraph")]
     let (doc, diags) := Elab.run "block-skips-vskip.tex" src
     let pages := (Layout.run (Layout.Geom.ofPage doc.page) fonts none doc).pages
-    match (pages[0]?.bind span), (pages[1]?.bind span) with
+    match (pages[0]?.bind probeSpan), (pages[1]?.bind probeSpan) with
     | some d0, some d1 =>
       check ref s!"block skips: \\vskip {name} moves what follows {pts} pt (lualatex), got {spMilli (d1 - d0)}"
         (d1 - d0 == Dim.pt pts)
@@ -204,7 +190,8 @@ private def vskipChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO
   let fillOf (skip : String) : Option Dim.Sp :=
     let (doc, _) := Elab.run "block-skips-fill.tex"
       (document "" [frame (para ++ "\n\n" ++ skip ++ "\n\n" ++ below "paragraph")])
-    ((Layout.run (Layout.Geom.ofPage doc.page) fonts none doc).pages[0]?).bind (lineY · "omega")
+    ((Layout.run (Layout.Geom.ofPage doc.page) fonts none doc).pages[0]?).bind
+      (openingLineY · "omega")
   check ref "block skips: \\vskip 0pt plus 1fill stands where \\vfill stands"
     ((fillOf "\\vskip 0pt plus 1fill").isSome && fillOf "\\vskip 0pt plus 1fill" == fillOf "\\vfill")
   check ref "block skips: \\vskip0pt plus1fill stands where \\vfill stands"
@@ -217,7 +204,7 @@ private def vskipChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO
   let topsep := (Ir.trivlistSkipFor doc.docClass.record.lists doc.tokens size 0).width.resolve
     size (size / 2)
   let moved (i : Nat) : Option Dim.Sp := do
-    pure ((← pages[i]?.bind span) - (← pages[0]?.bind span))
+    pure ((← pages[i]?.bind probeSpan) - (← pages[0]?.bind probeSpan))
   check ref s!"block skips: a centred block's space after \\vskip 12pt is the larger, the skip less its own {spMilli topsep}, got {(moved 1).map spMilli}"
     (moved 1 == some (Dim.pt 12 - topsep))
   check ref s!"block skips: a centred block's space after \\vspace\{12pt} adds, 12 pt, got {(moved 2).map spMilli}"
@@ -253,15 +240,16 @@ private def registerChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
     let pages := (Layout.run (Layout.Geom.ofPage doc.page) fonts none doc).pages
     for ((skip, lua0, lua4), i) in registerMoves.zipIdx do
       let lua := if col == 0 then lua0 else lua4
-      match (pages[2 * i]?.bind span), (pages[2 * i + 1]?.bind span) with
+      match (pages[2 * i]?.bind probeSpan), (pages[2 * i + 1]?.bind probeSpan) with
       | some d0, some d1 =>
         check ref s!"block skips ({label}): {skip} moves what follows {lua} (lualatex), got {spMilli (d1 - d0)}"
-          ((spMilli (d1 - d0) - lua).natAbs ≤ tolerance.toNat)
+          ((spMilli (d1 - d0) - lua).natAbs ≤ probeTolerance.toNat)
       | _, _ => check ref s!"block skips ({label}): the {skip} probe ships its marks" false
   let fillOf (skip : String) : Option Dim.Sp :=
     let (doc, _) := Elab.run "block-skips-fill.tex"
       (document "" [frame (para ++ "\n\n" ++ skip ++ "\n\n" ++ below "paragraph")])
-    ((Layout.run (Layout.Geom.ofPage doc.page) fonts none doc).pages[0]?).bind (lineY · "omega")
+    ((Layout.run (Layout.Geom.ofPage doc.page) fonts none doc).pages[0]?).bind
+      (openingLineY · "omega")
   check ref "block skips: \\vspace{0pt plus 1fill} stands where \\vfill stands"
     ((fillOf "\\vspace{0pt plus 1fill}").isSome &&
       fillOf "\\vspace{0pt plus 1fill}" == fillOf "\\vfill")
@@ -338,7 +326,7 @@ private def htmlChecks (ref : IO.Ref (List String)) : IO Unit := do
         | .boundary sel v => some (sel, v)
         | _ => none
       for ((sel, v), i) in bounds.zipIdx do
-        let parts := cssSelParts sel
+        let parts := cssSelectorParts sel
         if parts.all (·.endsWith " + *") && v != "0" then
           let want := ", ".intercalate (parts.map fun p =>
             (p.dropEnd 1).toString ++ s!":is(.vskip, {HtmlDoc.skipCarrier}, .fill, section.block-shaped)")
@@ -400,7 +388,8 @@ private def filOrderChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
   let pageOf (skip : String) : Option Dim.Sp × Array Diag :=
     let (doc, diags) := Elab.run "block-skips-fil.tex"
       (document "" [frame (para ++ "\n\n" ++ skip ++ "\n\n" ++ below "paragraph")])
-    (((Layout.run (Layout.Geom.ofPage doc.page) fonts none doc).pages[0]?).bind (lineY · "omega"), diags)
+    (((Layout.run (Layout.Geom.ofPage doc.page) fonts none doc).pages[0]?).bind
+      (openingLineY · "omega"), diags)
   let (natural, _) := pageOf "\\vskip 0pt"
   for skip in ["\\vskip 0pt plus 1fil", "\\vskip 0pt plus 2fill", "\\vskip 0pt plus 1filll"] do
     let (y, diags) := pageOf skip
@@ -457,7 +446,7 @@ private def sheetChecks (ref : IO.Ref (List String)) : IO Unit := do
       (has fun sel v => hasStr sel "ul:not(.bibliography) + .vskip + p" && v == "var(--parskip, 0rem)")
     -- The rules stand at zero specificity, so the follower's later rule wins.
     let follower := (rules.reverse[1]?).bind fun
-      | .boundary sel v => if v == "0" then some (cssSelParts sel) else none
+      | .boundary sel v => if v == "0" then some (cssSelectorParts sel) else none
       | _ => none
     let carrier := HtmlDoc.skipCarrier
     for (place, edge) in [(":is(h1, h2, h3, h4, h5, h6) + ", ""),
@@ -474,10 +463,10 @@ private def sheetChecks (ref : IO.Ref (List String)) : IO Unit := do
         | _ => false)
     check ref s!"block skips HTML ({lname}): a rule's <hr> carries no margin"
       (rules.any fun
-        | .reset sel m => (cssSelParts sel).contains "hr" && m == "0"
+        | .reset sel m => (cssSelectorParts sel).contains "hr" && m == "0"
         | _ => false)
     check ref s!"block skips HTML ({lname}): the paragraph past two skips after a list pays TeX's \\parskip"
-      (has fun sel v => (cssSelParts sel).contains "ul:not(.bibliography) + .vskip + .vskip + p" &&
+      (has fun sel v => (cssSelectorParts sel).contains "ul:not(.bibliography) + .vskip + .vskip + p" &&
         v == "var(--parskip, 0rem)")
 
 def blockSkipChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do

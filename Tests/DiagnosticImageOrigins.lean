@@ -6,6 +6,7 @@ public import LeanTex.Core.MdDesugar
 public import LeanTex.Cli.Render
 public import Lean.Data.Json
 public import LeanTex.Core.Nfc
+public import Tests.Check
 
 public section
 
@@ -22,8 +23,7 @@ private def imageOriginTex (file text : String) : Ir.Doc × Array Diag × Elab.R
 /-- N0376 quotes the exact authored command at its site, before any macro expansion, and attribution
 keeps its census, span, acceptance and output scope. -/
 def diagnosticImageOriginChecks (ref : IO.Ref (List String)) : IO Unit := do
-  let t (name : String) (ok : Bool) : IO Unit :=
-    unless ok do ref.modify (name :: ·)
+  let t := check ref
   let missing (ds : Array Diag) := ds.filter (·.kind == .N0376)
   let hasTrigger (ds : Array Diag) (trigger : String) :=
     ds.size == 1 && ds.all (·.triggerText == some trigger)

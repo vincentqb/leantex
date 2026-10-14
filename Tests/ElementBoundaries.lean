@@ -50,21 +50,6 @@ private def unit (cls body : String) : String :=
   if cls == "article" then body ++ "\n\\newpage\n"
   else "\\begin{frame}[fragile,t]{F}\n" ++ body ++ "\n\\end{frame}\n"
 
-/-- The baseline of a page's first body line whose text opens with `word`,
-any case, past a list's marker. -/
-private def lineY (page : Layout.PageOut) (word : String) : Option Dim.Sp :=
-  (page.lines.find? fun l =>
-    !l.furniture &&
-      (String.ofList ((lineText l).toLower.toList.dropWhile (!·.isAlpha))).startsWith
-        word.toLower).map (·.y)
-
-private def span (page : Layout.PageOut) : Option Dim.Sp := do
-  pure ((← lineY page "omega") - (← lineY page "alpha"))
-
-/-- 2 thousandths of a point: lualatex's three-decimal big points and their conversion to TeX
-points. -/
-private def tolerance : Int := 2
-
 /-- One measured difference: the probe pair, the pair it is measured against (none: the distance
 itself), and lualatex's difference in thousandths of a TeX point. -/
 private structure Row where
@@ -131,7 +116,7 @@ private def htmlPairChecks (ref : IO.Ref (List String)) : IO Unit := do
   let size := Dim.pt 10
   let rules := HtmlDoc.blockGapRules .beamer size {}
   let bounds := (rules.filterMap fun
-    | .boundary sel v => some (cssSelParts sel, v)
+    | .boundary sel v => some (cssSelectorParts sel, v)
     | _ => none).toArray
   let top := ":not(li, dd, blockquote) > "
   -- The last rule with a top-level part naming the upper element and, after it, the lower.
@@ -189,7 +174,7 @@ private def htmlPairChecks (ref : IO.Ref (List String)) : IO Unit := do
       (!own.isEmpty && own.all fun (_, v) => !hasStr v "parskip")
   -- A templated block's skips are its padding: the element above meets it on its own space.
   let shapedBounds := (HtmlDoc.blockGapRules .beamer size {} (shaped := true)).filterMap fun
-    | .boundary sel v => some (cssSelParts sel, v)
+    | .boundary sel v => some (cssSelectorParts sel, v)
     | _ => none
   check ref "element boundaries (beamer, browser): a templated block meets the list above it on the list's own space"
     (shapedBounds.any fun (parts, v) => parts.any (fun p =>
@@ -223,7 +208,7 @@ private def unframedEndPeChecks (ref : IO.Ref (List String)) (fonts : Font.FontS
       let src := s!"\\documentclass\{{cls}}\n\\usepackage\{minted}\n\\begin\{document}\n" ++
         listing ++ sep ++ display ++ "\n\\end{document}\n"
       let (doc, _) := Elab.run s!"element-boundaries-endpe-{cls}.tex" src
-      ((Layout.run (Layout.Geom.ofPage doc.page) fonts none doc).pages[0]?).bind span
+      ((Layout.run (Layout.Geom.ofPage doc.page) fonts none doc).pages[0]?).bind probeSpan
     let tight := spanOf "\n"
     let blank := spanOf "\n\n"
     check ref s!"element boundaries ({cls}): a display right after a {if listing == minted then "minted" else "verbatim"} stands where it stands across a blank line, got {tight.map spMilli} and {blank.map spMilli}"
@@ -240,8 +225,8 @@ def elementBoundaryChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : 
     let mut idx := 0
     for row in rows do
       let (x, y) := row.pair
-      let d := pages[idx]?.bind span
-      let b : Option Dim.Sp := if row.base.isSome then pages[idx + 1]?.bind span else some 0
+      let d := pages[idx]?.bind probeSpan
+      let b : Option Dim.Sp := if row.base.isSome then pages[idx + 1]?.bind probeSpan else some 0
       idx := idx + (probes row).length
       let against := match row.base with
         | some (bx, bz) => s!" beyond a {bz} under a {bx}"
@@ -249,7 +234,7 @@ def elementBoundaryChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : 
       match d, b with
       | some d, some b =>
         check ref s!"element boundaries ({cls}): a {y} under a {x} stands {row.lua}{against} (lualatex), got {spMilli (d - b)}"
-          ((spMilli (d - b) - row.lua).natAbs ≤ tolerance.toNat)
+          ((spMilli (d - b) - row.lua).natAbs ≤ probeTolerance.toNat)
       | _, _ => check ref s!"element boundaries ({cls}): the {x}/{y} probe ships its marks" false
   htmlPairChecks ref
   unframedEndPeChecks ref fonts

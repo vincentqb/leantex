@@ -58,21 +58,6 @@ def pageSettings (out : Layout.Out) :=
       | .gap _ _ | .decoratedGap _ _ _ | .decoration _ _ _ _ _
       | .rule _ _ _ _ | .poly _ _ | .image _ _ _ => none)
 
-def glyphX (l : Layout.LineOut) (wanted : Char) : Option Dim.Sp := Id.run do
-  let mut x := l.x
-  for s in l.segs do
-    match s with
-    | .run _ _ _ w glyphs _ _ _ _ _ _ =>
-      let mut pen := x
-      for (_, c, advance) in glyphs do
-        if c == wanted then return some pen
-        pen := pen + advance
-      x := x + w
-    | .gap w _ | .decoratedGap w _ _ | .decoration _ w _ _ _
-    | .rule w _ _ _ | .image _ w _ => x := x + w
-    | .poly _ _ => pure ()
-  return none
-
 end MintedSettings
 
 /-- minted settings resolve global < lexer < environment, scoped and per key, as a LuaLaTeX probe
@@ -220,13 +205,13 @@ def mintedSettingsChecks (ref : IO.Ref (List String)) : IO Unit := do
     (!(tabOut.diags.any fun d => d.kind == .E0405))
   t "minted tabs: advance to the next stop, including an exact stop"
     (tabLines.size == 5 &&
-      (tabLines[0]?.bind (MintedSettings.glyphX · 'B')) ==
+      (tabLines[0]?.bind (glyphX · 'B')) ==
         tabLines[0]?.map (fun l => l.x + cell * 4) &&
-      (tabLines[1]?.bind (MintedSettings.glyphX · 'C')) ==
+      (tabLines[1]?.bind (glyphX · 'C')) ==
         tabLines[1]?.map (fun l => l.x + cell * 8) &&
-      (tabLines[2]?.bind (MintedSettings.glyphX · 'D')) ==
+      (tabLines[2]?.bind (glyphX · 'D')) ==
         tabLines[2]?.map (fun l => l.x + cell * 4) &&
-      (tabLines[2]?.bind (MintedSettings.glyphX · 'E')) ==
+      (tabLines[2]?.bind (glyphX · 'E')) ==
         tabLines[2]?.map (fun l => l.x + cell * 8))
   let (tabPres, _) := MintedSettings.html tabs
   t "minted source: typed HTML preserves tabs, blank lines and metacharacters"
@@ -266,7 +251,7 @@ def mintedSettingsChecks (ref : IO.Ref (List String)) : IO Unit := do
   let smallCell := Dim.pt 8 * mono.spaceAdvance / mono.unitsPerEm
   t "minted breaks: kept indentation has its full shipped advance"
     ((indented.zip #['A', 'C', 'E']).all fun (l, c) =>
-      MintedSettings.glyphX l c == some (l.x + 2 * smallCell))
+      glyphX l c == some (l.x + 2 * smallCell))
   let realWrap := rendered (narrowLines "Alpha Bravo Charlie Delta Echo\nFoxtrot\nGolf")
   t "minted breaks: a genuinely split declared line still raises W0386"
     ((bodyLines realWrap).size > 3 && realWrap.diags.any fun d => d.kind == .W0386)
@@ -289,9 +274,9 @@ def mintedSettingsChecks (ref : IO.Ref (List String)) : IO Unit := do
       (code ("fontsize=\\normalsize,breaklines=" ++ wrap) "text" "A   B  C")))
     t s!"minted wrapping: {wrap} keeps repeated spaces at the font's natural width"
       (spaced.size == 1 &&
-        (spaced[0]?.bind (MintedSettings.glyphX · 'B')) ==
+        (spaced[0]?.bind (glyphX · 'B')) ==
           spaced[0]?.map (fun l => l.x + cell * 4) &&
-        (spaced[0]?.bind (MintedSettings.glyphX · 'C')) ==
+        (spaced[0]?.bind (glyphX · 'C')) ==
           spaced[0]?.map (fun l => l.x + cell * 7))
 
   let refused := dvDoc

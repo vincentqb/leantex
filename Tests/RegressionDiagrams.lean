@@ -99,7 +99,7 @@ private def routeNoteChecks (ref : IO.Ref (List String)) (a : Regression.Artifac
         | _ => none
     let nativeShafts := paths.filterMap fun (g, _, st) => do
       let stroke ← st
-      let color ← strokeColor? stroke
+      let color ← paintColor? stroke.paint
       match g with
       | .path subs => match (subpathSegs subs).toList with
         | [.line x y u v] => some (color.css, x, y, u, v)
@@ -107,7 +107,7 @@ private def routeNoteChecks (ref : IO.Ref (List String)) (a : Regression.Artifac
       | _ => none
     let nativeHeads := paths.filterMap fun (g, fl, st) => do
       if !isTipDraw fl st then none else
-      let color ← strokeColor? (← st)
+      let color ← paintColor? (← st).paint
       match g with
       | .path #[{ start := (u, v), segs := #[.cubic _ _ (x, y), .cubic _ _ (w, z)], closed := false }] =>
         some (color.css, x, y, u, v, w, z)

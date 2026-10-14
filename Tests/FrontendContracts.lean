@@ -1,6 +1,7 @@
 module
 
 public import LeanTex.Core.TitleContract
+public import Tests.Check
 
 public section
 
@@ -9,7 +10,7 @@ open LeanTex.Core
 /-- The title reader's boundary is a refused body, across nested declarative syntax and lookahead
 operands. -/
 def frontendTitleContextChecks (ref : IO.Ref (List String)) : IO Unit := do
-  let t (name : String) (ok : Bool) := unless ok do ref.modify (name :: ·)
+  let t := check ref
   let contexts : Array (String × String) :=
     #[("\\centering\\large\\bfseries\\hrule ", "\\hrule"),
       ("{\\large\\bfseries ", "}\\hrule"),

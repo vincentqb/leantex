@@ -3,6 +3,7 @@ module
 public import LeanTex.Core.Pdf
 public import LeanTex.Core.Image
 public import LeanTex.Core.FontSubset
+public import Tests.Support
 
 public section
 
@@ -178,25 +179,19 @@ private def objectWrapper (fonts : Font.FontSet) (programs : Array (ByteArray ×
   Pdf.write { pageW := f.val.w, pageH := f.val.h, hmargin := 0, vmargin := 0 }
     fonts #[{ lines := #[line] }] (imgs := imgs) (programs := programs)
 
-private def objectResolve (es : Array PdfRead.Entry) (obj : PdfRead.Obj) :
-    Option PdfRead.Obj :=
-  match obj with
-  | .ref n _ => (es.find? (·.num == n)).map (·.val)
-  | other => some other
-
 /-- The emitted resource references, a nested form keeping its payload, drawing and graphics
 state. -/
 private def objectResources (es : Array PdfRead.Entry) (obj : PdfRead.Obj)
     (tile : PdfRead.Entry) : Option Bool := do
-  let res ← objectResolve es (← obj.get? "Resources")
-  let states ← objectResolve es (← res.get? "ExtGState")
-  let alpha ← objectResolve es (← states.get? "Alpha")
-  let xobjs ← objectResolve es (← res.get? "XObject")
+  let res ← entryResolve es (← obj.get? "Resources")
+  let states ← entryResolve es (← res.get? "ExtGState")
+  let alpha ← entryResolve es (← states.get? "Alpha")
+  let xobjs ← entryResolve es (← res.get? "XObject")
   let .ref num _ ← xobjs.get? "Tile" | none
   let copied ← es.find? (·.num == num)
-  let tileRes ← objectResolve es (← copied.val.get? "Resources")
-  let tileStates ← objectResolve es (← tileRes.get? "ExtGState")
-  let tileAlpha ← objectResolve es (← tileStates.get? "Alpha")
+  let tileRes ← entryResolve es (← copied.val.get? "Resources")
+  let tileStates ← entryResolve es (← tileRes.get? "ExtGState")
+  let tileAlpha ← entryResolve es (← tileStates.get? "Alpha")
   return alpha.get? "CA" == some (.int 1) && tileAlpha == alpha &&
     copied.stream == tile.stream &&
     copied.val.get? "Filter" == tile.val.get? "Filter" &&
@@ -222,8 +217,7 @@ private def objectErrorIs {α : Type} (result : Except String α) (expected : St
 /-- Representation changes preserve the shipped drawing and resource streams, and malformed chains
 and bootstrap cycles end in a named refusal. -/
 def pdfReadObjectsChecks (ref : IO.Ref (List String)) : IO Unit := do
-  let t (name : String) (ok : Bool) : IO Unit := do
-    unless ok do ref.modify (s!"PDF object forms: {name}" :: ·)
+  let t (name : String) := check ref s!"PDF object forms: {name}"
   let .ok font := Font.parse
       (← IO.FS.readBinFile "testdata/corpus/fonts/SourceSerifPro-Regular.otf") |
     t "bundled wrapper font parses" false

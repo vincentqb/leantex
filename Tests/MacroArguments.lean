@@ -107,7 +107,8 @@ def macroArgumentChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
     t s!"macro arguments {label}: no secondary loss"
       (losses.all fun d => d.code == "W0357" || (called && d.code == "W0301"))
     t s!"macro arguments {label}: refused shipped layout"
-      (ink (allTextOf fonts source) == ink (allTextOf fonts control))
+      (ink (pageTextOf fonts source (lines := allLines)) ==
+      ink (pageTextOf fonts control (lines := allLines)))
     t s!"macro arguments {label}: refused typed HTML"
       (ink (shownTextList "" tree.toList) == ink (shownTextList "" expectedTree.toList))
   for (label, params, replacement, call, expected) in #[

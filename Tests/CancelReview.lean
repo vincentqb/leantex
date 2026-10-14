@@ -8,32 +8,12 @@ open LeanTex.Core
 
 namespace CancelReview
 
-private def rootAttribute (key : String) : Html.Node → String
-  | .elem tag attrs _ => (attrValuesOf (fun _ => true) key (.elem tag attrs #[])).getD 0 ""
-  | _ => ""
-
-private def children : Html.Node → Array Html.Node
-  | .elem _ _ kids => kids
-  | _ => #[]
-
-private def css (key : String) (node : Html.Node) : String :=
-  let fields := ((rootAttribute "style" node).splitOn ";").map fun decl =>
-    let parts := decl.splitOn ":"
-    (parts.headD "" |>.trimAscii.toString,
-      String.intercalate ":" parts.tail |>.trimAscii.toString)
-  (fields.reverse.find? (·.1 == key)).map (·.2) |>.getD ""
-
-private def readEm (em : Int) (s : String) : Option Int := do
-  if s == "0" then return 0
-  if !s.endsWith "em" then none else do
-    let (n, d) ← Decl.parseDecimal (s.dropEnd 2).toString
-    return (n * em + (d : Int) / 2) / d
-
 private def optionalEm (em : Int) (s : String) : Option Int :=
   if s.isEmpty then some 0 else readEm em s
 
 private def margin (em : Int) (logical physical : String) (node : Html.Node) : Option Int :=
-  optionalEm em (if (css logical node).isEmpty then css physical node else css logical node)
+  let own := nodeCss logical node
+  optionalEm em (if own.isEmpty then nodeCss physical node else own)
 
 private def margins (em : Int) (node : Html.Node) : Option (Int × Int) := do
   let left ← margin em "margin-inline-start" "margin-left" node
@@ -45,7 +25,7 @@ private def near (em a b : Int) : Bool :=
 
 /-- The advance a node gives the following atom: its width clamped at zero plus its CSS margins. -/
 private def advance (em : Int) (node : Html.Node) : Option Int := do
-  let w ← readEm em (rootAttribute "width" node)
+  let w ← readEm em (nodeAttr "width" node)
   let (left, right) ← margins em node
   return max 0 w + left + right
 
@@ -58,11 +38,11 @@ private structure Offset where
 /-- A node's placement as Chromium reads it (negative lspace clamped) and as Firefox does, none
 under CSS positioning. -/
 private def offset (em : Int) (node : Html.Node) : Option Offset := do
-  if ["position", "left", "top", "transform"].any (fun key => !(css key node).isEmpty) then
+  if ["position", "left", "top", "transform"].any (fun key => !(nodeCss key node).isEmpty) then
     none
   else do
-    let ls ← optionalEm em (rootAttribute "lspace" node)
-    let y ← optionalEm em (rootAttribute "voffset" node)
+    let ls ← optionalEm em (nodeAttr "lspace" node)
+    let y ← optionalEm em (nodeAttr "voffset" node)
     let (left, _) ← margins em node
     let a ← advance em node
     return { chromiumX := max 0 ls + left, firefoxX := ls + left, y, advance := a }
@@ -105,7 +85,7 @@ private def docWitness (fonts : Font.FontSet) (doc : Ir.Doc) (ds : Array Diag) :
   let #[anchor] := glyphs.filter (·.scalar == '𝑢') | throw "missing native em witness"
   let (left, right) ← CancelAlignment.constructEndpoints out
   let #[node] := (elemNodesList (· == "mpadded") #[] nodes.toList).filter
-    (rootAttribute "data-cancel-metric" · == "measured") | throw "missing measured HTML construct"
+    (nodeAttr "data-cancel-metric" · == "measured") | throw "missing measured HTML construct"
   return {
     em := anchor.size, origin := left, baseline := anchor.y
     nativeAdvance := right - left, line
@@ -134,7 +114,7 @@ private def advanceAgrees (w : Witness) : Bool :=
   (advance w.em w.node).any (near w.em · w.nativeAdvance)
 
 private def targetAgrees (w : Witness) : Bool := (do
-  let value ← (children w.node)[1]?
+  let value ← (nodeKids w.node)[1]?
   let placement ← offset w.em value
   let first ← w.glyphs.find? (fun (g : ShippedGlyph) => g.scalar == '0')
   return near w.em placement.chromiumX (first.x - w.origin) &&
@@ -156,8 +136,8 @@ private def reservation (w : Witness) : Option (Int × Int) := do
   return bounds
 
 private def htmlReservation (w : Witness) : Option (Int × Int) := do
-  let h ← readEm w.em (rootAttribute "height" w.node)
-  let d ← readEm w.em (rootAttribute "depth" w.node)
+  let h ← readEm w.em (nodeAttr "height" w.node)
+  let d ← readEm w.em (nodeAttr "depth" w.node)
   return (h, -d)
 
 private def reachAgrees (w : Witness) : Bool := (do
@@ -180,9 +160,9 @@ private def targetSpacePen (fonts : Font.FontSet) (source : String) :
   return (anchor.size, right - left)
 
 private def targetSpaceAdvance (w : Witness) : Option (Int × Int) := do
-  let placed ← (children w.node)[1]?
-  let styled ← (children placed)[0]?
-  let em ← readEm w.em (css "font-size" styled)
+  let placed ← (nodeKids w.node)[1]?
+  let styled ← (nodeKids placed)[0]?
+  let em ← readEm w.em (nodeCss "font-size" styled)
   let spaces := elemNodesOne (· == "mspace") #[] styled
   if spaces.isEmpty then none else do
     let mut total : Int := 0
@@ -255,8 +235,8 @@ def CancelReview.checks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
         check ref s!"cancel empty {options}/{target}: native advance retained"
           (advanceAgrees w)
         check ref s!"cancel empty {options}/{target}: empty to-value node retained"
-          ((children w.node).size == 3 &&
-            (MathMl.nodeChars #[] ((children w.node)[1]!)).isEmpty)
+          ((nodeKids w.node).size == 3 &&
+            (MathMl.nodeChars #[] ((nodeKids w.node)[1]!)).isEmpty)
         if ["\\,", "\\!", "\\color{red}\\,"].contains target then
           check ref s!"cancel spacing {options}/{target}: native height ignores spacing"
             (empty.any fun e => (reservation e).any fun expected =>

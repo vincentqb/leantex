@@ -35,57 +35,27 @@ private def cancelStyleDepth : MathStyle → Nat
   | .script _ => 1
   | .scriptscript _ => 2
 
-/-- Only the named element's own attribute: a descendant's mask clips nothing above it. -/
-private def cancelAttr (key : String) : Html.Node → String
-  | .elem _ attrs _ => (attrs.find? (·.1 == key)).map (·.2) |>.getD ""
-  | _ => ""
-
-private def cancelKids : Html.Node → Array Html.Node
-  | .elem _ _ kids => kids
-  | _ => #[]
-
-/-- Whether `hay` contains `needle`. -/
-private def cancelHasStr (hay needle : String) : Bool :=
-  (hay.splitOn needle).length > 1
-
-/-- The node's own CSS declaration of `key`. -/
-private def cancelCss (key : String) (node : Html.Node) : String :=
-  let decls := (cancelAttr "style" node).splitOn ";"
-  let fields := decls.map fun decl =>
-    let parts := decl.splitOn ":"
-    (parts.headD "" |>.trimAscii.toString,
-      String.intercalate ":" parts.tail |>.trimAscii.toString)
-  (fields.reverse.find? (·.1 == key)).map (·.2) |>.getD ""
-
 /-- A corner triangle's whole containing rectangle lies in the operand: anchors and percentage caps
 govern both axes, and every polygon coordinate lies inside. -/
 private def cancelHeadPlaced (rule : Nat) (box : Html.Node) : Bool :=
-  let head := (cancelKids box).back?.getD (.text "")
-  let css := cancelAttr "style" head
+  let head := (nodeKids box).back?.getD (.text "")
+  let css := nodeAttr "style" head
   let size := s!"min({MathMl.milliEm (4 * rule)}, 100%)"
-  cancelCss "position" box == "relative" &&
-    cancelCss "position" head == "absolute" &&
-    cancelCss "right" head == "0" && cancelCss "top" head == "0" &&
-    (cancelCss "left" head).isEmpty &&
-    cancelCss "width" head == size && cancelCss "height" head == size &&
-    cancelCss "clip-path" head == "polygon(0 50%, 100% 0, 50% 100%)" &&
-    !cancelHasStr css "offset-" && !cancelHasStr css "transform" &&
-    (cancelKids head).isEmpty
-
-/-- Read a CSS length back into the provider's units, rounding after parsing the decimal; unitless
-zero is legal, other units are not. -/
-private def cancelReadEm (em : Int) (s : String) : Option Int := do
-  if s == "0" then return 0
-  if !s.endsWith "em" then none else do
-    let (n, d) ← Decl.parseDecimal (s.dropEnd 2).toString
-    return (n * em + (d : Int) / 2) / d
+  nodeCss "position" box == "relative" &&
+    nodeCss "position" head == "absolute" &&
+    nodeCss "right" head == "0" && nodeCss "top" head == "0" &&
+    (nodeCss "left" head).isEmpty &&
+    nodeCss "width" head == size && nodeCss "height" head == size &&
+    nodeCss "clip-path" head == "polygon(0 50%, 100% 0, 50% 100%)" &&
+    !hasStr css "offset-" && !hasStr css "transform" &&
+    (nodeKids head).isEmpty
 
 /-- A CSS margin carries a signed offset; MathML lspace stays nonnegative and the balancing margin
 keeps the attachment advance zero. -/
 private def cancelReadOffset (em : Int) (node : Html.Node) : Option Int := do
-  let space ← cancelReadEm em (cancelAttr "lspace" node)
-  let left ← cancelReadEm em (cancelCss "margin-left" node)
-  let right ← cancelReadEm em (cancelCss "margin-right" node)
+  let space ← readEm em (nodeAttr "lspace" node)
+  let left ← readEm em (nodeCss "margin-left" node)
+  let right ← readEm em (nodeCss "margin-right" node)
   if space < 0 || left + right != 0 then none else some (space + left)
 
 private def cancelTag : Html.Node → String
@@ -115,46 +85,46 @@ private structure CancelHtmlRead where
   svg : Html.Node
 
 private def cancelRead (em : Int) (node : Html.Node) : Option CancelHtmlRead := do
-  if cancelTag node != "mpadded" || !(cancelCss "position" node).isEmpty then none else do
-    let boxWidth ← cancelReadEm em (cancelAttr "width" node)
-    let margin ← if (cancelCss "margin-inline-end" node).isEmpty then some 0
-      else cancelReadEm em (cancelCss "margin-inline-end" node)
+  if cancelTag node != "mpadded" || !(nodeCss "position" node).isEmpty then none else do
+    let boxWidth ← readEm em (nodeAttr "width" node)
+    let margin ← if (nodeCss "margin-inline-end" node).isEmpty then some 0
+      else readEm em (nodeCss "margin-inline-end" node)
     let width := boxWidth + margin
-    let top ← cancelReadEm em (cancelAttr "height" node)
-    let depth ← cancelReadEm em (cancelAttr "depth" node)
-    let b ← (cancelKids node)[0]?
-    let v ← (cancelKids node)[1]?
+    let top ← readEm em (nodeAttr "height" node)
+    let depth ← readEm em (nodeAttr "depth" node)
+    let b ← (nodeKids node)[0]?
+    let v ← (nodeKids node)[1]?
     if cancelTag b != "mpadded" || cancelTag v != "mpadded" ||
         (MathMl.nodeChars #[] b) != #['x'] ||
         (MathMl.nodeChars #[] v) != #['7'] then none else do
-      if [b, v].any (fun n => cancelAttr "width" n != "0" ||
-          cancelAttr "height" n != "0" || cancelAttr "depth" n != "0") then none else do
+      if [b, v].any (fun n => nodeAttr "width" n != "0" ||
+          nodeAttr "height" n != "0" || nodeAttr "depth" n != "0") then none else do
         let bx ← cancelReadOffset em b
-        let by_ ← cancelReadEm em (cancelAttr "voffset" b)
+        let by_ ← readEm em (nodeAttr "voffset" b)
         let vx ← cancelReadOffset em v
-        let vy ← cancelReadEm em (cancelAttr "voffset" v)
-        let target ← (cancelKids v)[0]?
-        let overlay ← (cancelKids node)[2]?
-        let text ← (cancelKids overlay)[0]?
-        let svg ← (cancelKids text)[0]?
+        let vy ← readEm em (nodeAttr "voffset" v)
+        let target ← (nodeKids v)[0]?
+        let overlay ← (nodeKids node)[2]?
+        let text ← (nodeKids overlay)[0]?
+        let svg ← (nodeKids text)[0]?
         if cancelTag overlay != "mpadded" || cancelTag text != "mtext" ||
-            cancelTag svg != "svg" || cancelAttr "width" overlay != "0" ||
-            cancelAttr "height" overlay != "0" || cancelAttr "depth" overlay != "0" ||
-            !(cancelCss "position" svg).isEmpty || !(cancelCss "left" svg).isEmpty ||
-            !(cancelCss "top" svg).isEmpty || cancelCss "vertical-align" svg != "baseline" ||
-            cancelCss "overflow" svg != "visible" ||
-            cancelAttr "preserveAspectRatio" svg != "none" then none else do
+            cancelTag svg != "svg" || nodeAttr "width" overlay != "0" ||
+            nodeAttr "height" overlay != "0" || nodeAttr "depth" overlay != "0" ||
+            !(nodeCss "position" svg).isEmpty || !(nodeCss "left" svg).isEmpty ||
+            !(nodeCss "top" svg).isEmpty || nodeCss "vertical-align" svg != "baseline" ||
+            nodeCss "overflow" svg != "visible" ||
+            nodeAttr "preserveAspectRatio" svg != "none" then none else do
           let ox ← cancelReadOffset em overlay
-          let oy ← cancelReadEm em (cancelAttr "voffset" overlay)
-          let sw ← cancelReadEm em (cancelCss "width" svg)
-          let sh ← cancelReadEm em (cancelCss "height" svg)
-          let vb ← ((cancelAttr "viewBox" svg).splitOn " ").mapM String.toInt?
+          let oy ← readEm em (nodeAttr "voffset" overlay)
+          let sw ← readEm em (nodeCss "width" svg)
+          let sh ← readEm em (nodeCss "height" svg)
+          let vb ← ((nodeAttr "viewBox" svg).splitOn " ").mapM String.toInt?
           match vb with
           | [x0, y0, w, h] =>
             if w ≤ 0 || h ≤ 0 || sw ≤ 0 || sh ≤ 0 then none else do
-              let polys ← (cancelKids svg).mapM fun poly => do
-                if cancelTag poly != "polygon" || !(cancelKids poly).isEmpty then none else do
-                  let pts ← ((cancelAttr "points" poly).splitOn " ").mapM fun p => do
+              let polys ← (nodeKids svg).mapM fun poly => do
+                if cancelTag poly != "polygon" || !(nodeKids poly).isEmpty then none else do
+                  let pts ← ((nodeAttr "points" poly).splitOn " ").mapM fun p => do
                     match p.splitOn "," with
                     | [xs, ys] =>
                       let x ← xs.toInt?
@@ -226,8 +196,7 @@ private def cancelContained (metric : CancelMetric) (room : Bool)
 /-- Room allocation never changes a cancellation target's font-size level, read off the emitted
 MathML against the IR's style rule. -/
 def cancelHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
-  let t (name : String) (ok : Bool) : IO Unit := do
-    unless ok do ref.modify (name :: ·)
+  let t := check ref
   let target := Html.Node.elem "mn" #[] #[.text "7"]
   let base := Html.Node.elem "mi" #[] #[.text "x"]
   let same := Html.Node.elem "mrow" #[("scriptlevel", "+0")] #[target]
@@ -257,38 +226,38 @@ def cancelHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
     MathMl.nucNode {} false .ord
       (.cancel mark { room, thick } (if mark == .to then one '7' else .nil) (one 'x'))
   let boxOf (mark : CancelMark) (n : Html.Node) : Html.Node :=
-    if mark == .to then (cancelKids n).getD 0 (.text "") else n
+    if mark == .to then (nodeKids n).getD 0 (.text "") else n
   let ownsBands (mark : CancelMark) (node : Html.Node) : Bool :=
-    let css := cancelAttr "style" (boxOf mark node)
-    cancelHasStr css "padding:" && cancelHasStr css "background-image:" &&
+    let css := nodeAttr "style" (boxOf mark node)
+    hasStr css "padding:" && hasStr css "background-image:" &&
       (css.splitOn "linear-gradient(").length == (if mark == .cross then 3 else 2) &&
-      cancelHasStr css (if mark == .down then "to top right" else "to top left") &&
-      (mark != .cross || cancelHasStr css "to top right")
+      hasStr css (if mark == .down then "to top right" else "to top left") &&
+      (mark != .cross || hasStr css "to top right")
   for mark in [CancelMark.up, .down, .cross, .to] do
     for room in [true, false] do
       for thick in [true, false] do
         let node := emit mark room thick
         let box := boxOf mark node
-        let css := cancelAttr "style" box
+        let css := nodeAttr "style" box
         let label := s!"{repr mark}/room={room}/thick={thick}"
         t s!"cancel HTML: {label} padded operand owns every diagonal band"
           (ownsBands mark node)
         let misplacedBox := Html.Node.elem "mrow" #[] #[box]
         let misplaced := if mark == .to then
-            Html.Node.elem "msup" #[] #[misplacedBox, (cancelKids node).getD 1 (.text "")]
+            Html.Node.elem "msup" #[] #[misplacedBox, (nodeKids node).getD 1 (.text "")]
           else misplacedBox
         t s!"cancel HTML: {label} band judge rejects paint owned by a descendant"
           (!ownsBands mark misplaced)
         t s!"cancel HTML: {label} room mode governs the operand's own margins"
-          (cancelHasStr css "margin-left: -" == !room &&
-            cancelHasStr css "margin-right: -" == !room)
+          (hasStr css "margin-left: -" == !room &&
+            hasStr css "margin-right: -" == !room)
         if mark == .to then
-          let head := (cancelKids box).getD 1 (.text "")
-          let value := (cancelKids node).getD 1 (.text "")
-          let valueRow := if room then value else (cancelKids value).getD 0 (.text "")
+          let head := (nodeKids box).getD 1 (.text "")
+          let value := (nodeKids node).getD 1 (.text "")
+          let valueRow := if room then value else (nodeKids value).getD 0 (.text "")
           t s!"cancel HTML: {label} arrowhead belongs to the struck row"
-            ((cancelKids box).size == 2 &&
-              cancelHasStr (cancelAttr "style" head) "clip-path: polygon")
+            ((nodeKids box).size == 2 &&
+              hasStr (nodeAttr "style" head) "clip-path: polygon")
           let rule := ({} : MathMl.Marks).rule * (if thick then 2 else 1)
           t s!"cancel HTML: {label} arrowhead is bounded at the upper-right corner"
             (cancelHeadPlaced rule box)
@@ -296,16 +265,16 @@ def cancelHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
               "offset-path: shape(from 100% 0%, line to 0% 100%)",
               "transform: translateX(-100%)"] do
             let moved := Html.Node.elem "mspace"
-              #[("style", cancelAttr "style" head ++ "; " ++ bad)] #[]
+              #[("style", nodeAttr "style" head ++ "; " ++ bad)] #[]
             let mutated := Html.Node.elem "mrow" #[("style", css)] #[base, moved]
             t s!"cancel HTML: {label} placement judge rejects {bad}"
               (!cancelHeadPlaced rule mutated)
           t s!"cancel HTML: {label} target owns its clearance and room"
-            (cancelHasStr (cancelAttr "style" valueRow) "padding-left:" &&
-              cancelAttr "width" value == (if room then "" else "0"))
+            (hasStr (nodeAttr "style" valueRow) "padding-left:" &&
+              nodeAttr "width" value == (if room then "" else "0"))
       t s!"cancel HTML: {repr mark}/room={room} thicklines changes the painted band"
-        (cancelAttr "style" (boxOf mark (emit mark room true)) !=
-          cancelAttr "style" (boxOf mark (emit mark room false)))
+        (nodeAttr "style" (boxOf mark (emit mark room true)) !=
+          nodeAttr "style" (boxOf mark (emit mark room false)))
 
   -- Invented asymmetric ink: its baseline and advance are neither its ink centre nor its edge.
   let input : CancelIn := {
@@ -336,32 +305,32 @@ def cancelHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
             t s!"cancel HTML measured {label}: emitted room contains the measured reach"
               (cancelContained metric room r)
             let ts := spec.size.style st
-            let relative := cancelReadEm (Math.sizeFor mk.scales 100 st)
-              (cancelCss "font-size" r.target)
+            let relative := readEm (Math.sizeFor mk.scales 100 st)
+              (nodeCss "font-size" r.target)
             t s!"cancel HTML measured {label}: target sets its size without browser rescaling"
-              (cancelAttr "scriptlevel" r.target == "+0" &&
-                (cancelCss "math-depth" r.target).isEmpty &&
+              (nodeAttr "scriptlevel" r.target == "+0" &&
+                (nodeCss "math-depth" r.target).isEmpty &&
                 relative == some (Math.sizeFor mk.scales 100 ts) &&
                 (elemNodesOne (· == "msup") #[] node).isEmpty)
             let a := HtmlDoc.a11yFacts false false #[node]
             t s!"cancel HTML measured {label}: native text stays visible; SVG is decorative"
               (MathMl.nodeChars #[] node == #['x', '7'] &&
-                cancelAttr "aria-hidden" node != "true" &&
-                cancelAttr "aria-hidden" r.target != "true" &&
-                cancelAttr "aria-hidden" r.svg == "true" &&
-                cancelAttr "focusable" r.svg == "false" &&
+                nodeAttr "aria-hidden" node != "true" &&
+                nodeAttr "aria-hidden" r.target != "true" &&
+                nodeAttr "aria-hidden" r.svg == "true" &&
+                nodeAttr "focusable" r.svg == "false" &&
                 a.svgsUnnamed == 0 && a.hiddenTabStops == 0)
             t s!"cancel HTML measured {label}: ray judge rejects a lowered target"
               (let value := cancelSetAttr "voffset"
-                  (MathMl.measuredEm (r.value.2 - 200) em) (cancelKids node)[1]!
+                  (MathMl.measuredEm (r.value.2 - 200) em) (nodeKids node)[1]!
                let bad := cancelRead em (cancelSetChild 1 value node)
                bad.isSome && !(bad.any (cancelRay em input)))
             t s!"cancel HTML measured {label}: bounds judge rejects clipped height"
               (let bad := cancelRead em (cancelSetAttr "height" "0" node)
                bad.isSome && !(bad.any (cancelContained metric room)))
             let svg := cancelSetAttr "viewBox" s!"0 0 {em} {em}" r.svg
-            let overlay := (cancelKids node)[2]!
-            let text := (cancelKids overlay)[0]!
+            let overlay := (nodeKids node)[2]!
+            let text := (nodeKids overlay)[0]!
             let overlay := cancelSetChild 0 (cancelSetChild 0 svg text) overlay
             t s!"cancel HTML measured {label}: parity judge rejects a changed SVG origin"
               (let bad := cancelRead em (cancelSetChild 2 overlay node)
@@ -382,12 +351,12 @@ def cancelHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
 
   for mu in [-12, -3, 0, 3, 18] do
     let node := MathMl.itemNode {} false (.space mu)
-    let width := cancelReadEm 1800000 (cancelAttr "width" node)
+    let width := readEm 1800000 (nodeAttr "width" node)
     let margin := if mu < 0 then
-        cancelReadEm 1800000 (cancelCss "margin-inline-end" node)
+        readEm 1800000 (nodeCss "margin-inline-end" node)
       else some 0
     t s!"cancel HTML signed mu {mu}: emitted advance keeps sign and precision"
-      (cancelTag node == "mspace" && (cancelKids node).isEmpty &&
+      (cancelTag node == "mspace" && (nodeKids node).isEmpty &&
         width.isSome && margin.isSome &&
         cancelNear 1 (width.getD 0 + margin.getD 0) (mu * 100000) &&
         (mu ≥ 0 || width == some 0))
@@ -427,7 +396,7 @@ def cancelHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
     let mk : MathMl.Marks := { metric := fun _ _ _ _ => some { metric with em } }
     let node := MathMl.nucNode mk false .ord cn
     t s!"cancel HTML nonpositive em {em}: readable explicitly unmeasured fallback"
-      (cancelAttr "data-cancel-metric" node == "unmeasured" &&
+      (nodeAttr "data-cancel-metric" node == "unmeasured" &&
         (elemNodesOne (· == "svg") #[] node).isEmpty &&
         MathMl.nodeChars #[] node == #['x', '7'])
 
@@ -477,16 +446,16 @@ def cancelHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
         let label := s!"{repr ambient}/{repr chosen}/{repr rule}"
         let parentSize := Math.sizeFor scales 100 ambient
         t s!"math HTML fraction {label}: parent uses the resolved style transition"
-          (cancelReadEm parentSize (cancelCss "font-size" node) ==
+          (readEm parentSize (nodeCss "font-size" node) ==
               some (Math.sizeFor scales 100 chosen) &&
-            cancelAttr "scriptlevel" node == "+0" &&
-            (cancelCss "math-depth" node).isEmpty)
+            nodeAttr "scriptlevel" node == "+0" &&
+            (nodeCss "math-depth" node).isEmpty)
         let bars := elemNodesOne (· == "mfrac") #[] node
         t s!"math HTML fraction {label}: one rule scales with its measured em"
           (bars.size == 1 && bars.any fun bar =>
             match rule with
-            | none => (cancelAttr "linethickness" bar).isEmpty
-            | some width => (cancelReadEm em (cancelAttr "linethickness" bar)).any
+            | none => (nodeAttr "linethickness" bar).isEmpty
+            | some width => (readEm em (nodeAttr "linethickness" bar)).any
                 (fun actual => cancelNear (cancelEpsilon em) actual (max 0 width)))
         t s!"math HTML fraction {label}: style and rule preserve readable operands"
           (MathMl.nodeChars #[] node == #['x', 'z'])

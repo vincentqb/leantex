@@ -557,9 +557,6 @@ def ArtPage.bands (p : ArtPage) : Array ArtRect :=
       some { x0 := b.x0, y0 := b.y0, x1 := b.x1, y1 := b.y1 }
     else none
 
-/-- The characters no page may paint as glyph ink, the same three as `inkMarkupWatch`. -/
-def artMarkupWatch : List Char := ['\\', '{', '}']
-
 /-- The structure type content ink sits under, innermost first; none for artifact ink. -/
 def ArtMark.tag? : ArtMark → Option String
   | .artifact _ => none
@@ -674,7 +671,7 @@ def artOffences (r : ArtReading) : ArtProp → Array String
     let mut out : Array String := #[]
     for h : i in [0:r.pages.size] do
       for run in r.pages[i].runs do
-        for c in artMarkupWatch do
+        for c in inkMarkupWatch do
           if run.text.any (· == c) then
             out := out.push s!"p{i + 1} ships '{c}' as ink: {run.text}"
     return out

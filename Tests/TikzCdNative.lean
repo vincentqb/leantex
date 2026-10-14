@@ -115,7 +115,7 @@ def tikzcdNativeChecks (ref : IO.Ref (List String)) (mathSet : Font.FontSet) : I
   let (desc, _) := firstPass (dvDoc ("\\palette{ bg = #202020, fg = #F0F0F0 }\n" ++ pre)
     "\\[\\begin{tikzcd} \\mathrm{Alpha} \\arrow[r, \"f\" description] & \\mathrm{Beta} \\end{tikzcd}\\]")
   let fills := ((layoutOf mathSet desc).pages.flatMap pageDraws).filterMap fun (_, f, _) =>
-    f.bind fillColor?
+    f.bind (paintColor? ·.paint)
   t "diagram description: its label's box is tikz-cd's white, whatever the page's ground"
     (fills.contains Ir.Color.white && !((desc.palette.find? "bg").any fills.contains))
   let bare := "\\begin{tikzcd} \\mathrm{Alpha} \\arrow[r] & \\mathrm{Beta} \\end{tikzcd}"

@@ -7,6 +7,7 @@ public import LeanTex.Core.HtmlDoc
 public import Lean.Data.Json.Parser
 public import Lean.Data.Json.FromToJson.Basic
 public import Tests.LightCss
+public import Tests.Check
 
 public section
 
@@ -17,12 +18,6 @@ instance [BEq ε] [BEq α] : BEq (Except ε α) where
     | .ok a, .ok b => a == b
     | .error a, .error b => a == b
     | _, _ => false
-
-def failures : IO.Ref (List String) → String → IO Unit :=
-  fun ref name => ref.modify (name :: ·)
-
-def check (ref : IO.Ref (List String)) (name : String) (ok : Bool) : IO Unit := do
-  unless ok do failures ref name
 
 /-- The one paint every glyph of a run shares, where they share one. -/
 def onePaint {α : Type} [BEq α] (paint : Option (Array α)) : Option α :=
@@ -711,6 +706,12 @@ def checkXref (pdf : ByteArray) : Except String Nat := do
         throw s!"object {e.num}: {err}"
   return verified
 
+/-- An object with a reference resolved against the read entries, nothing for a dangling one. -/
+def entryResolve (es : Array PdfRead.Entry) (obj : PdfRead.Obj) : Option PdfRead.Obj :=
+  match obj with
+  | .ref n _ => (es.find? (·.num == n)).map (·.val)
+  | other => some other
+
 /-- A fixture file's text as the driver's decoding door reads it. -/
 def fixtureText (path : String) : IO String := do
   let bytes ← IO.FS.readBinFile path
@@ -955,15 +956,8 @@ def pageDraws (p : Layout.PageOut) : Array (Gfx.Geom × Option Gfx.Fill × Optio
   p.inks.flatMap fun k =>
     (nodeDrawsList #[] k.fig.nodes.toList).map fun (g, fl, st) => (g.mapIso k.place, fl, st)
 
-/-- A fill's colour, when it fills with one. -/
-def fillColor? (f : Gfx.Fill) : Option Ir.Color :=
-  match f.paint with
-  | .solid c => some c
-  | .gradient _ => none
-
-/-- A stroke's colour, when it strokes with one. -/
-def strokeColor? (s : Gfx.Stroke) : Option Ir.Color :=
-  match s.paint with
+/-- A paint's colour, when it paints with one. -/
+def paintColor? : Gfx.Paint → Option Ir.Color
   | .solid c => some c
   | .gradient _ => none
 
@@ -1116,6 +1110,13 @@ def censusOf (coveredColors : Array Ir.Color) (out : Layout.Out) (imgs : Image.S
 
 def hasStr (hay needle : String) : Bool := (hay.splitOn needle).length > 1
 
+/-- Span equality with the provenance `==` ignores: the macro origins and the authored token. -/
+def exactSpan (a b : Span) : Bool :=
+  a == b && a.pos.origins == b.pos.origins && a.pos.command == b.pos.command
+
+/-- Whether a site is exactly `expected`, provenance included. -/
+def sameSource (actual : Option Span) (expected : Span) : Bool := actual.any (exactSpan · expected)
+
 /-- A diagnostic's words and its site's particulars, as its log line shows them. -/
 def diagWords (d : Diag) : String := d.message ++ (d.detail.map ("\n" ++ ·)).getD ""
 
@@ -1175,6 +1176,10 @@ def wordCount (text word : String) : Nat :=
 def censusText (c : Array CensusPage) : String :=
   String.intercalate " " (c.toList.map (·.text))
 
+/-- Markup characters no page may ship as ink: in prose `$`, `&`, `^`, `_` and `~` are content, a
+backslash or a brace never. -/
+def inkMarkupWatch : List Char := ['\\', '{', '}']
+
 def pageHas (c : Array CensusPage) (i : Nat) (needle : String) : Bool :=
   (c[i]?.map fun p => hasStr p.text needle).getD false
 
@@ -1215,6 +1220,37 @@ def lineText (l : Layout.LineOut) (gapAsSpace : Bool := true) : String :=
     | .run _ _ _ _ glyphs _ _ _ _ _ _ => glyphs.foldl (fun s (_, c, _) => s.push c) s
     | .gap _ _ | .decoratedGap _ _ _ => if gapAsSpace then s.push ' ' else s
     | _ => s) ""
+
+/-- Word spaces ship as gaps, not glyphs: a line is found by its letters. -/
+def letters (text : String) : String := text.replace " " ""
+
+/-- The baseline of a page's first body line whose text opens with `word`, any case, past a list's
+marker. -/
+def openingLineY (page : Layout.PageOut) (word : String) : Option Dim.Sp :=
+  (page.lines.find? fun l =>
+    !l.furniture &&
+      (String.ofList ((lineText l).toLower.toList.dropWhile (!·.isAlpha))).startsWith
+        word.toLower).map (·.y)
+
+/-- The distance from a probe page's `Alpha` line down to its `Omega` line. -/
+def probeSpan (page : Layout.PageOut) : Option Dim.Sp := do
+  pure ((← openingLineY page "omega") - (← openingLineY page "alpha"))
+
+/-- Where a character first stands on a shipped line. -/
+def glyphX (l : Layout.LineOut) (wanted : Char) : Option Dim.Sp := Id.run do
+  let mut x := l.x
+  for s in l.segs do
+    match s with
+    | .run _ _ _ w glyphs _ _ _ _ _ _ =>
+      let mut pen := x
+      for (_, c, advance) in glyphs do
+        if c == wanted then return some pen
+        pen := pen + advance
+      x := x + w
+    | .gap w _ | .decoratedGap w _ _ | .decoration _ w _ _ _
+    | .rule w _ _ _ | .image _ w _ => x := x + w
+    | .poly _ _ => pure ()
+  return none
 
 /-- A shipped line's runs, left to right: face index, glyphs, left edge and width. -/
 def lineRuns (l : Layout.LineOut) : Array (Nat × String × Dim.Sp × Dim.Sp) := Id.run do
@@ -1289,41 +1325,21 @@ end
 
 mutual
 
-/-- The first `mathvariant` attribute an emitted tree declares, in document order. -/
-def mathvariantOne : Html.Node → Option String
+/-- The first attribute `key` an emitted tree declares, in document order. -/
+def firstAttrOne (key : String) : Html.Node → Option String
   | .text _ => none
   | .style _ => none
   | .script _ _ => none
   | .elem _ attrs kids =>
-    match attrs.find? (fun (k, _) => k == "mathvariant") with
+    match attrs.find? (fun (k, _) => k == key) with
     | some (_, v) => some v
-    | none => mathvariantList kids.toList
+    | none => firstAttrList key kids.toList
 
-def mathvariantList : List Html.Node → Option String
+def firstAttrList (key : String) : List Html.Node → Option String
   | [] => none
-  | k :: rest => match mathvariantOne k with
+  | k :: rest => match firstAttrOne key k with
     | some v => some v
-    | none => mathvariantList rest
-
-end
-
-mutual
-
-/-- The first `style` attribute an emitted tree declares, in document order. -/
-def styleOne : Html.Node → Option String
-  | .text _ => none
-  | .style _ => none
-  | .script _ _ => none
-  | .elem _ attrs kids =>
-    match attrs.find? (fun (k, _) => k == "style") with
-    | some (_, v) => some v
-    | none => styleList kids.toList
-
-def styleList : List Html.Node → Option String
-  | [] => none
-  | k :: rest => match styleOne k with
-    | some v => some v
-    | none => styleList rest
+    | none => firstAttrList key rest
 
 end
 
@@ -1737,6 +1753,13 @@ def allLines (out : Layout.Out) : Array Layout.LineOut :=
 def bodyLines (out : Layout.Out) : Array Layout.LineOut :=
   out.pages.flatMap (·.lines.filter (!·.furniture))
 
+/-- The inks of every glyph run on a line whose text `keep` accepts. -/
+def inksOn (out : Layout.Out) (keep : String → Bool) : Array Ir.Color :=
+  (allLines out).filter (fun l => keep (lineText l)) |>.flatMap fun l =>
+    l.segs.filterMap fun
+      | .run _ ink _ _ glyphs .. => if glyphs.isEmpty then none else some ink
+      | _ => none
+
 /-- A markdown code fence's shipped lines, `lang` its info string. -/
 def codeFenceLines (fonts : Font.FontSet) (lang code : String) : Array Layout.LineOut :=
   bodyLines (layoutOf fonts (elabMd ("```" ++ lang ++ "\n" ++ code ++ "\n```\n")).1)
@@ -1953,19 +1976,12 @@ def inkedScalars (fs : Font.FontSet) (src : String) : Array Char × Array Diag :
     | _ => #[]
   (ink, out.diags)
 
-/-- The glyphs a source's body lines ship, in page order; `geom` defaults to the document's own
-page. -/
-def pageTextOf (fonts : Font.FontSet) (src : String)
-    (geom : Option Layout.Geom := none) : String :=
+/-- The glyphs a source's `lines` ship, in page order: its body lines unless `lines` says otherwise;
+`geom` defaults to the document's own page. -/
+def pageTextOf (fonts : Font.FontSet) (src : String) (geom : Option Layout.Geom := none)
+    (lines : Layout.Out → Array Layout.LineOut := bodyLines) : String :=
   let (d, _) := elabStr src
-  String.join ((bodyLines (layoutOf fonts d (geom.getD (Layout.Geom.ofPage d.page)))).toList.map
-    (lineText ·))
-
-/-- The glyphs every shipped line of a source sets, furniture included. -/
-def allTextOf (fonts : Font.FontSet) (src : String)
-    (geom : Option Layout.Geom := none) : String :=
-  let (d, _) := elabStr src
-  String.join ((allLines (layoutOf fonts d (geom.getD (Layout.Geom.ofPage d.page)))).toList.map
+  String.join ((lines (layoutOf fonts d (geom.getD (Layout.Geom.ofPage d.page)))).toList.map
     (lineText ·))
 
 /-- Both complete artifacts of a source, with diagnostics and visible HTML text. -/
@@ -2018,7 +2034,8 @@ def sourceTextChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet)
   let (_, expectedTree, _) := HtmlDoc.emitTree {} (elabStr control).1
   check ref (label ++ ": no loss") ((ds ++ hds).all (·.severity == .note))
   check ref (label ++ ": shipped layout")
-    (ink (allTextOf fonts source) == ink (allTextOf fonts control))
+    (ink (pageTextOf fonts source (lines := allLines)) ==
+      ink (pageTextOf fonts control (lines := allLines)))
   check ref (label ++ ": typed HTML")
     (ink (shownTextList "" tree.toList) == ink (shownTextList "" expectedTree.toList))
 
@@ -2116,23 +2133,14 @@ def cssEmMilli (v : String) : Option Int := do
 /-- Two lengths within `slack` of each other. -/
 def withinSp (slack a b : Dim.Sp) : Bool := a - b ≤ slack && b - a ≤ slack
 
-/-- Two faces in two slots, roman (0) and sans (1), so a run's face says its family
-(`CensusLine.runFonts`). -/
-def twoSlotOf (roman sans : Font.Font) : Font.FontSet := {
-  fonts := #[roman, sans]
-  index := ((List.range 3).flatMap fun slot =>
-    let f := if slot == 1 then 1 else 0
-    [((slot, 400, false), f), ((slot, 700, false), f),
-     ((slot, 400, true), f), ((slot, 700, true), f)]).toArray
-}
-
-/-- Two faces: the text slots (0 and 1) one file and the typewriter slot (2) another. -/
-def monoSlotOf (text mono : Font.Font) : Font.FontSet := {
-  fonts := #[text, mono]
-  index := ((List.range 3).flatMap fun slot =>
-    let f := if slot == 2 then 1 else 0
-    [((slot, 400, false), f), ((slot, 700, false), f),
-     ((slot, 400, true), f), ((slot, 700, true), f)]).toArray
+/-- Two faces over the three slots (roman 0, sans 1, typewriter 2): `other` in slot `slot` and
+`base` in the rest, so a run's face says which (`CensusLine.runFonts`). -/
+def slotPairOf (slot : Nat) (base other : Font.Font) : Font.FontSet := {
+  fonts := #[base, other]
+  index := ((List.range 3).flatMap fun s =>
+    let f := if s == slot then 1 else 0
+    [((s, 400, false), f), ((s, 700, false), f),
+     ((s, 400, true), f), ((s, 700, true), f)]).toArray
 }
 
 mutual
@@ -2177,22 +2185,38 @@ def molochProgress (_ : Unit) : Ir.Color × Ir.Color :=
 def screenColor (s : Ir.Scheme) (r : Ir.Role) : Ir.Color :=
   (Ir.Design.at {} s r).getD Ir.Color.black
 
-/-- The declarations of every stylesheet rule whose selector is exactly `sel`, in order. -/
-def cssRulesOf (css sel : String) : List String :=
-  (css.splitOn "}").filterMap fun chunk =>
-    match chunk.splitOn "{" with
-    | [s, decls] =>
-      if (s.splitOn "\n").getLast!.trimAscii.toString == sel then some decls else none
-    | _ => none
+/-- The stylesheets a page carries in its `<style>` elements, or the text itself when it carries
+none. -/
+def styleText (page : String) : String :=
+  match page.splitOn "<style" with
+  | _ :: parts@(_ :: _) =>
+    String.join (parts.map fun p =>
+      (((">".intercalate ((p.splitOn ">").drop 1)).splitOn "</style>").headD "") ++ "\n")
+  | _ => page
 
-/-- The declarations of the first stylesheet rule whose selector is exactly `sel`. -/
-def cssRuleOf (css sel : String) : Option String := (cssRulesOf css sel).head?
+/-- Every innermost declaration block of a stylesheet: its at-rule depth, selector and
+declarations. -/
+def artCssRules (css : String) : Array (Nat × String × String) :=
+  (sheetRules css).filterMap fun (conds, sel, decls) =>
+    if decls.contains ':' then some (conds.length, sel, decls) else none
 
-/-- A length in sp as thousandths of a point, rounded to nearest. -/
-def spMilli (d : Dim.Sp) : Int := (d * 1000 + 32768) / 65536
+/-- Every innermost declaration block, as its selector and declarations. -/
+def artCssBlocks (css : String) : Array (String × String) := (artCssRules css).map (·.2)
 
-/-- A selector list's parts, split at its top-level commas. -/
-def cssSelParts (sel : String) : List String := Id.run do
+/-- The blocks outside every at-rule: the light screen's rules. -/
+def artTopCssBlocks (css : String) : Array (String × String) :=
+  (artCssRules css).filterMap fun (d, b) => if d == 0 then some b else none
+
+/-- The declarations of every innermost block for selector `sel` exactly, nested at-rules
+included. -/
+def cssBlocksFor (css sel : String) : List String :=
+  ((artCssBlocks css).toList.filter (·.1 == sel)).map (·.2)
+
+/-- The value of the last declaration of `key` in a declaration list, the one the cascade keeps. -/
+def cssProperty (decls key : String) : Option String := lastDecl (cssDecls decls) key
+
+/-- A selector list's top-level parts, a comma inside parentheses kept in its part. -/
+def cssSelectorParts (sel : String) : List String := Id.run do
   let mut parts : Array String := #[]
   let mut cur := ""
   let mut depth := 0
@@ -2205,6 +2229,26 @@ def cssSelParts (sel : String) : List String := Id.run do
     else cur := cur.push c
   return (parts.push cur.trimAscii.toString).toList
 
+/-- The declarations of every top-level block for selector `sel` exactly, at-rules left out. -/
+def cssTopBlocksFor (css sel : String) : List String :=
+  ((artTopCssBlocks css).toList.filter (·.1 == sel)).map (·.2)
+
+/-- The declarations of every rule for selector `sel` exactly that the light screen applies, in
+order, from a stylesheet or a page carrying one. -/
+def cssRulesOf (css sel : String) : List String :=
+  ((sheetRules (styleText css)).toList.filter fun (conds, s, _) =>
+    s == sel && conds.all (holdsIn .light ·)).map (·.2.2)
+
+/-- The declarations of the first rule for selector `sel` exactly that the light screen applies. -/
+def cssRuleOf (css sel : String) : Option String := (cssRulesOf css sel).head?
+
+/-- A length in sp as thousandths of a point, rounded to nearest. -/
+def spMilli (d : Dim.Sp) : Int := (d * 1000 + 32768) / 65536
+
+/-- 2 thousandths of a point: the rounding a lualatex probe's printed decimals carry into TeX
+points. -/
+def probeTolerance : Int := 2
+
 /-- A CSS length in `rem` as thousandths of a rem, or nothing for any other spelling. -/
 def remMilliOf (value : String) : Option Int := do
   let value := value.trimAscii.toString
@@ -2212,15 +2256,10 @@ def remMilliOf (value : String) : Option Int := do
   let (m, sc) ← Decl.parseDecimal (value.dropEnd 3).toString
   return m * 1000 / (sc : Int)
 
-/-- The custom properties a stylesheet's top-level `:root` rules declare, newest first. -/
+/-- The custom properties the light screen's `:root` rules declare in a stylesheet or a page carrying
+one, newest first, each value read on its light side. -/
 def screenRootVars (css : String) : List (String × String) :=
-  (cssRulesOf css ":root").foldl (fun vars block =>
-    (block.splitOn ";").foldl (fun vars decl =>
-      match decl.splitOn ":" with
-      | [k, v] =>
-        let k := k.trimAscii.toString
-        if k.startsWith "--" then (k, v.trimAscii.toString) :: vars else vars
-      | _ => vars) vars) []
+  (schemeRoot (styleText css) .light).1.map fun (k, v) => (k, lightSide v)
 
 /-- The colour each token class's rule reads (`HtmlDoc.tokenRules`). -/
 def tokenClassColors (css : String) : List (String × String) :=
@@ -2315,7 +2354,6 @@ failure text. -/
 def pdfCensusOf (pdf : ByteArray) : Except String PdfCensus.Census :=
   PdfCensus.census pdf
 
-
 mutual
 
 /-- Every element of a tree whose tag `want` accepts, in document order, as typed nodes. -/
@@ -2389,65 +2427,30 @@ def drawnNodeSource (content : String) : String :=
   "\\begin{tikzpicture}\n\\node[draw] at (0,0) {" ++ content ++
   "};\n\\end{tikzpicture}\n\\end{document}"
 
+/-- An element's own attribute `key`, empty where it declares none. -/
+def nodeAttr (key : String) : Html.Node → String
+  | .elem _ attrs _ => (attrs.find? (·.1 == key)).map (·.2) |>.getD ""
+  | _ => ""
+
+def nodeKids : Html.Node → Array Html.Node
+  | .elem _ _ kids => kids
+  | _ => #[]
+
+/-- An element's own inline declaration of CSS property `key`, empty where it declares none. -/
+def nodeCss (key : String) (node : Html.Node) : String :=
+  (cssProperty (nodeAttr "style" node) key).getD ""
+
+/-- A CSS `em` length scaled to an em of `em` units, rounded after its decimal is read; a unitless
+zero reads, any other unit does not. -/
+def readEm (em : Int) (s : String) : Option Int := do
+  if s == "0" then return 0
+  if !s.endsWith "em" then none else do
+    let (n, d) ← Decl.parseDecimal (s.dropEnd 2).toString
+    return (n * em + (d : Int) / 2) / d
+
 /-- Every value the accepted elements declare for attribute `key`, in document order. -/
 def attrValuesOf (want : String → Bool) (key : String) (n : Html.Node) : Array String :=
   (elemAttrsOne want #[] n).filterMap fun (_, attrs) => (attrs.find? (·.1 == key)).map (·.2)
-
-
-/-- Every innermost declaration block of a stylesheet: its at-rule depth, selector and
-declarations. -/
-def artCssRules (css : String) : Array (Nat × String × String) := Id.run do
-  let mut out : Array (Nat × String × String) := #[]
-  let mut sels : Array String := #[]
-  let mut cur := ""
-  for c in css.toList do
-    if c == '{' then
-      sels := sels.push cur.trimAscii.toString
-      cur := ""
-    else if c == '}' then
-      let decls := cur.trimAscii.toString
-      if decls.contains ':' then
-        out := out.push (sels.size - 1, (sels.back?.getD "").trimAscii.toString, decls)
-      sels := sels.pop
-      cur := ""
-    else
-      cur := cur.push c
-  return out
-
-/-- Every innermost declaration block, as its selector and declarations. -/
-def artCssBlocks (css : String) : Array (String × String) := (artCssRules css).map (·.2)
-
-/-- The blocks outside every at-rule: the light screen's rules. -/
-def artTopCssBlocks (css : String) : Array (String × String) :=
-  (artCssRules css).filterMap fun (d, b) => if d == 0 then some b else none
-
-/-- The declarations of every innermost block for selector `sel` exactly, nested at-rules
-included. -/
-def cssBlocksFor (css sel : String) : List String :=
-  ((artCssBlocks css).toList.filter (·.1 == sel)).map (·.2)
-
-/-- The value of the first declaration of `key` in a declaration list. -/
-def cssDeclOf (decls key : String) : Option String :=
-  (decls.splitOn ";").findSome? fun d =>
-    match d.splitOn ":" with
-    | name :: rest =>
-      if name.trimAscii.toString == key then some (":".intercalate rest).trimAscii.toString
-      else none
-    | [] => none
-
-/-- A selector list's top-level parts, a comma inside parentheses kept in its part. -/
-def cssSelectorParts (sel : String) : List String := Id.run do
-  let mut parts : Array String := #[]
-  let mut cur := ""
-  let mut depth := 0
-  for c in sel.toList do
-    if c == '(' then depth := depth + 1
-    if c == ')' then depth := depth - 1
-    if c == ',' && depth == 0 then
-      parts := parts.push cur.trimAscii.toString
-      cur := ""
-    else cur := cur.push c
-  return (parts.push cur.trimAscii.toString).toList
 
 /-- The bibliography natbib's rows cite, one entry per name shape a citation prints differently. -/
 def natbibBib : String :=
