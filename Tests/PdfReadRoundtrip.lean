@@ -3,7 +3,7 @@ module
 public import LeanTex.Core.PdfRead
 public import LeanTex.Core.PdfNameProof
 public import LeanTex.Core.PdfStringProof
-import Tests.Support.Check
+import Tests.Support
 
 public section
 
@@ -56,3 +56,21 @@ def pdfReadRoundtripChecks (ref : IO.Ref (List String)) : IO Unit := do
     let bytes := o.render
     t s!"name byte {c} remains reversible"
       ((PdfRead.parseVal bytes 0).toOption == some (o, bytes.size))
+
+/-- Arrays and dictionaries of many entries parse whole, each within a hang guard. -/
+def pdfWideContainerChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let count ← IO.mkRef 300000
+  let n ← count.get
+  let arr := ("[" ++ String.join (List.replicate n "1 ") ++ "2]").toUTF8
+  let dict := ("<<" ++ String.join ((List.range n).map fun i => s!"/K{i} {i} ") ++ ">>").toUTF8
+  let arrValue : PdfRead.Obj := .arr ((Array.replicate n (.int 1)).push (.int 2))
+  let dictValue : PdfRead.Obj :=
+    .dict ((Array.range n).map fun (i : Nat) => (s!"K{i}", .int (i : Int)))
+  for (what, bytes, value) in [("an array", arr, arrValue), ("a dictionary", dict, dictValue)] do
+    let t0 ← IO.monoMsNow
+    let read ← IO.lazyPure fun _ => PdfRead.parseVal bytes 0
+    let ms := (← IO.monoMsNow) - t0
+    check ref s!"PDF object reader: {what} of {n} entries reads exactly ({ms} ms)"
+      (read.toOption == some (value, bytes.size))
+    check ref s!"hang guard: {what} of {n} entries within {hangGuardMs 400} ms ({ms} ms)"
+      (ms < hangGuardMs 400)

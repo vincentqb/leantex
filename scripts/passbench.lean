@@ -2,6 +2,7 @@ import LeanTex.Core.Contrast
 import LeanTex.Core.Elab
 import LeanTex.Core.FontDb
 import LeanTex.Core.HtmlDoc
+import LeanTex.Core.PdfObj
 
 /-
 The in-process passes bench.lean judges by growth, compiled so they time the engine's code: one
@@ -63,6 +64,15 @@ def main (args : List String) : IO UInt32 := do
     let doc := colouredRuns s "washed" { r := 0x88, g := 0x88, b := 0x88 }
     timeRuns n "failing" s fun _ =>
       ((Contrast.docDiags doc).filter (·.severity == .warning)).size == 1
+  for s in [100000, 400000] do
+    let arr := ("[" ++ String.join (List.replicate s "1 ") ++ "]").toUTF8
+    let dict := ("<<" ++ String.join ((List.range s).map fun i => s!"/K{i} 1 ") ++ ">>").toUTF8
+    timeRuns n "arrays" s fun _ => match PdfRead.parseVal arr 0 with
+      | .ok (.arr xs, _) => xs.size == s
+      | _ => false
+    timeRuns n "dictionaries" s fun _ => match PdfRead.parseVal dict 0 with
+      | .ok (.dict es, _) => es.size == s
+      | _ => false
   let .ok font := Font.parse (← IO.FS.readBinFile "testdata/corpus/fonts/OpenSans-Regular.ttf")
     | die "OpenSans-Regular.ttf does not parse"
   let g := (font.gid 'q').getD 0

@@ -122,18 +122,17 @@ inductive State where
   | scan (stack : Array Frame) (pos : Nat)
   | result (r : Except String (Obj × Nat))
 
-/-- Delivers a completed value to the enclosing container, or returns it when no frame remains. -/
+/-- Delivers a completed value to the enclosing container, or returns it when no frame remains; the
+container leaves the stack while it grows, so it grows in place. -/
 def accept (stack : Array Frame) (v : Obj) (i : Nat) : ForInStep State :=
   match stack.back? with
   | none => .done (.result (.ok (v,i)))
-  | some (.arr xs) =>
-    .yield (.scan (stack.set! (stack.size-1) (.arr (xs.push v))) i)
+  | some (.arr xs) => .yield (.scan (stack.pop.push (.arr (xs.push v))) i)
   | some (.dct es none) =>
     match v with
-    | .name k => .yield (.scan (stack.set! (stack.size-1) (.dct es (some k))) i)
+    | .name k => .yield (.scan (stack.pop.push (.dct es (some k))) i)
     | _ => .done (.result (.error "malformed PDF: a dictionary key is not a name"))
-  | some (.dct es (some k)) =>
-    .yield (.scan (stack.set! (stack.size-1) (.dct (es.push (k,v)) none)) i)
+  | some (.dct es (some k)) => .yield (.scan (stack.pop.push (.dct (es.push (k,v)) none)) i)
 
 /-- One byte-consuming transition of the reader. -/
 def step (b : ByteArray) : State → ForInStep State

@@ -9,25 +9,21 @@ namespace LeanTex.Core.PdfRead.ObjReader
 theorem accept_empty (v : Obj) (i : Nat) :
     accept #[] v i = .done (.result (.ok (v,i))) := rfl
 
-private theorem set_last_push {α : Type} (xs : Array α) (a b : α) :
-    (xs.push a).set! ((xs.push a).size-1) b = xs.push b := by
-  simp [Array.set!_eq_setIfInBounds, Array.setIfInBounds_def, Array.set_push]
-
 theorem accept_array (stack : Array Frame) (xs : Array Obj) (v : Obj) (i : Nat) :
     accept (stack.push (.arr xs)) v i =
       .yield (.scan (stack.push (.arr (xs.push v))) i) := by
-  simp only [accept, Array.back?_push, set_last_push]
+  simp only [accept, Array.back?_push, Array.pop_push]
 
 theorem accept_key (stack : Array Frame) (es : Array (String × Obj)) (k : String) (i : Nat) :
     accept (stack.push (.dct es none)) (.name k) i =
       .yield (.scan (stack.push (.dct es (some k))) i) := by
-  simp only [accept, Array.back?_push, set_last_push]
+  simp only [accept, Array.back?_push, Array.pop_push]
 
 theorem accept_value (stack : Array Frame) (es : Array (String × Obj))
     (k : String) (v : Obj) (i : Nat) :
     accept (stack.push (.dct es (some k))) v i =
       .yield (.scan (stack.push (.dct (es.push (k,v)) none)) i) := by
-  simp only [accept, Array.back?_push, set_last_push]
+  simp only [accept, Array.back?_push, Array.pop_push]
 
 /-- A finite execution of the transition function, counted in transitions, ending in its last `yield` or `done`. -/
 inductive Runs (b : ByteArray) : State → Nat → ForInStep State → Prop

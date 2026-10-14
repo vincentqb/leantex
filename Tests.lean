@@ -1074,6 +1074,7 @@ def main (args : List String) : IO UInt32 := do
   structChecks ref
   pdfStructCoherenceChecks ref
   pdfReadRoundtripChecks ref
+  pdfWideContainerChecks ref
   pdfReadRepresentabilityChecks ref
   pdfEncodingChecks ref
   pdfBoundsChecks ref
