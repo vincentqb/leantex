@@ -272,7 +272,7 @@ def leanStatementChecks (ref : IO.Ref (List String)) : IO Unit := do
   let chosen := (pageLines fonts chosenDoc).filter fun (mono, ink) => !mono && ink.startsWith "Theorem ("
   t s!"statements: decls selects the statements set, and names one Lean does not hold ({chosen.size})"
     ((pageLines fonts chosenDoc).any (fun (_, ink) => ink.startsWith "Definition (Tide.height).") &&
-      chosen.size == 1 && chosenDs.any (·.subject == some "lean:nothere"))
+      chosen.size == 1 && chosenDs.any (·.subject == some "code:decls:nothere"))
   let (proseDoc, proseDs) := readAs "show = prose"
   t "statements: a view the engine does not set is named, and the page shows code"
     (proseDs.any (fun d => d.kind == .W0110 && d.subject == some "code:show:prose") &&

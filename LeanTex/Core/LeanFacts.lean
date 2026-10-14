@@ -66,13 +66,14 @@ public structure Decl where
   deriving Repr, BEq, Inhabited
 
 /-- A declaration the file writes by name that Lean added nothing for: its name as written, its
-kind, its range and where the command that writes it opens. -/
+kind, its range, where the command that writes it opens, and its value's span. -/
 public structure Failed where
   name : String
   kind : Kind
   start : Nat × Nat
   stop : Nat × Nat
   head : Nat × Nat := start
+  proof : Option ((Nat × Nat) × (Nat × Nat)) := none
   deriving Repr, BEq, Inhabited
 
 /-- An answer: the Lean that gave it, the errors its elaboration logged, the declarations, those
@@ -211,7 +212,8 @@ private def record (facts : Facts) (j : Json) : Except String Facts := do
     let start ← pairOf range 0
     let stop ← pairOf range 2
     let head ← pairOf (← j.getObjValAs? (Array Json) "head") 0
-    return { facts with failed := facts.failed.push { name, kind, start, stop, head } }
+    let proof ← spanOf (j.getObjValD "proof")
+    return { facts with failed := facts.failed.push { name, kind, start, stop, head, proof } }
   | .error _, .error _ =>
     let some kind := kindOf? (← j.getObjValAs? String "kind") | throw "an unknown kind"
     let range ← j.getObjValAs? (Array Json) "range"

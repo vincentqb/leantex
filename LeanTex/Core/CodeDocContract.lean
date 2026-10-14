@@ -277,19 +277,34 @@ private theorem breakRaws_adm (pos : Pos) : Adm (breakRaws pos) := by
   · exact adm_group _ _ (by intro x hx; simp at hx; subst hx; rfl)
 
 private theorem displayRaws_adm (d : LeanFacts.Decl)
-    (formulas : Array (Array LeanNotation.Math × Bool)) (pos : Pos) :
-    Adm (displayRaws d formulas pos) := by
-  have hopen : Adm #[.ctrl "textbf" pos, .group #[.word d.kind.label pos] pos,
-      .space, .word "(" pos, .ctrl "texttt" pos, .group (Md.textRaws d.name pos) pos] := by
+    (formulas : Array (Array LeanNotation.Math × Bool)) (pos : Pos) (link : Option String) :
+    Adm (displayRaws d formulas pos link) := by
+  have hname : Adm #[.ctrl "texttt" pos, .group (Md.textRaws d.name pos) pos] := by
     intro r hr
     simp only [List.mem_toArray, List.mem_cons, List.not_mem_nil, or_false] at hr
-    rcases hr with rfl | rfl | rfl | rfl | rfl | rfl
+    rcases hr with rfl | rfl
+    · simp [Md.Vocab.admits, vocabulary, Md.vocabulary]
+    · exact adm_group _ _ (textRaws_adm' _ _)
+  have hnamed : Adm (nameRaws d pos link) := by
+    unfold nameRaws
+    split
+    · intro r hr
+      simp only [List.mem_toArray, List.mem_cons, List.not_mem_nil, or_false] at hr
+      rcases hr with rfl | rfl | rfl
+      · simp [Md.Vocab.admits, vocabulary, Md.vocabulary]
+      · exact adm_group _ _ (by intro x hx; simp at hx; subst hx; rfl)
+      · exact adm_group _ _ hname
+    · exact hname
+  have hlead : Adm #[.ctrl "textbf" pos, .group #[.word d.kind.label pos] pos,
+      .space, .word "(" pos] := by
+    intro r hr
+    simp only [List.mem_toArray, List.mem_cons, List.not_mem_nil, or_false] at hr
+    rcases hr with rfl | rfl | rfl | rfl
     · simp [Md.Vocab.admits, vocabulary, Md.vocabulary]
     · simp [Md.Vocab.admits, Md.Vocab.admitsList]
     · rfl
     · rfl
-    · simp [Md.Vocab.admits, vocabulary, Md.vocabulary]
-    · exact adm_group _ _ (textRaws_adm' _ _)
+
   have hclose : Adm (if d.kind == .theorem && !d.proved then
       #[.word "," pos, .space, .word "unproved)." pos] else #[.word ")." pos]) := by
     split
@@ -299,7 +314,7 @@ private theorem displayRaws_adm (d : LeanFacts.Decl)
     · intro r hr
       simp only [List.mem_toArray, List.mem_cons, List.not_mem_nil, or_false] at hr
       subst hr; rfl
-  have hhead := adm_append hopen hclose
+  have hhead := adm_append hlead (adm_append hnamed hclose)
   have step : ∀ (st : Array Raw × Bool) (mn : Array LeanNotation.Math × Bool), Adm st.1 →
       Adm (displayStep pos st mn).1 := by
     intro st mn h
@@ -324,47 +339,121 @@ private theorem displayRaws_adm (d : LeanFacts.Decl)
   exact ⟨by simp [vocabulary, Md.vocabulary], (admitsList_iff _ _).mpr fun x hx =>
     hbody x (by simpa using hx)⟩
 
+private theorem piecesRaws_adm (listing : Nat → List Char → Array Raw) (paras : Array (Array Raw))
+    (hl : ∀ start code, Adm (listing start code)) (hp : ∀ p ∈ paras, Adm p) (pieces : Array Piece) :
+    Adm (piecesRaws listing paras pieces) := by
+  unfold piecesRaws
+  rw [← Array.foldl_toList]
+  suffices h : ∀ (l : List Piece) (acc : Array Raw), Adm acc → Adm (l.foldl (fun acc p =>
+      match p with
+      | .code start text => acc.append (listing start text)
+      | .statement i => acc.append (paras.getD i #[])
+      | .prose _ => acc) acc) from h _ _ (by intro r hr; simp at hr)
+  intro l
+  induction l with
+  | nil => intro acc h; exact h
+  | cons p rest ih =>
+    intro acc h
+    apply ih
+    cases p with
+    | code start text => exact adm_append h (hl start text)
+    | statement i =>
+      refine adm_append h ?_
+      simp only [Array.getD_eq_getD_getElem?]
+      cases hi : paras[i]? with
+      | none => intro r hr; simp at hr
+      | some q => exact hp q (Array.mem_of_getElem? hi)
+    | prose _ => exact h
+
+private theorem fileListing_adm (starts : Array Nat) (start : Nat) (code : List Char) :
+    Adm (fileListing starts start code) := by
+  unfold fileListing
+  dsimp only
+  split
+  · intro r hr; simp at hr
+  · intro r hr
+    simp only [List.mem_toArray, List.mem_cons, List.not_mem_nil, or_false] at hr
+    subst hr
+    simp [listingRaw, Md.Vocab.admits, vocabulary, Md.vocabulary]
+
 private theorem codeFor_adm (starts : Array Nat) (src : Array Char) (segs : List Seg)
-    (head stop : Nat × Nat) : Adm (codeFor starts src segs head stop) := by
-  intro r hr
-  unfold codeFor at hr
-  dsimp only at hr
-  split at hr
-  · split at hr
-    · simp at hr
-    · simp only [List.mem_toArray, List.mem_cons, List.not_mem_nil, or_false] at hr
-      subst hr
-      simp [listingRaw, Md.Vocab.admits, vocabulary, Md.vocabulary]
-  · simp at hr
+    (folds : List ProofFold) (paras : Array (Array Raw)) (hp : ∀ p ∈ paras, Adm p)
+    (head stop : Nat × Nat) : Adm (codeFor starts src segs folds paras head stop) := by
+  unfold codeFor
+  exact piecesRaws_adm _ _ (fileListing_adm starts) hp _
 
 private theorem declPara_adm (facts : LeanFacts.Facts) (starts : Array Nat) (src : Array Char)
-    (segs : List Seg) (code wanted : Bool) (d : LeanFacts.Decl) :
-    Adm (declPara facts starts src segs code wanted d) := by
+    (segs : List Seg) (folds : List ProofFold) (paras : Array (Array Raw)) (hp : ∀ p ∈ paras, Adm p)
+    (code wanted : Bool) (link : Option String) (d : LeanFacts.Decl) :
+    Adm (declPara facts starts src segs folds paras code wanted link d) := by
   unfold declPara
   split
   · intro r hr; simp at hr
   · split
-    · exact displayRaws_adm _ _ _
+    · exact displayRaws_adm _ _ _ _
     · split
       · intro r hr; simp at hr
-      · exact codeFor_adm _ _ _ _ _
+      · exact codeFor_adm _ _ _ _ _ hp _ _
+
+private theorem disclosure_adm (summary body : Array Raw) (expanded : Bool) (p : Pos)
+    (hs : Adm summary) (hb : Adm body) : Adm (Md.disclosureRaws summary body expanded p) := by
+  obtain ⟨opts, hd, ho⟩ := Md.disclosureRaws_contract summary body expanded p
+  rw [hd]
+  intro r hr
+  simp only [List.mem_toArray, List.mem_cons, List.not_mem_nil, or_false] at hr
+  subst hr
+  simp only [Md.Vocab.admits, Bool.and_eq_true, List.contains_iff_mem]
+  refine ⟨by simp [vocabulary, Md.vocabulary], (admitsList_iff _ _).mpr fun x hx => ?_⟩
+  have hx' : x ∈ opts ∨ x = .group summary p ∨ x ∈ body := by simpa using hx
+  rcases hx' with hx | rfl | hx
+  · rcases ho with rfl | rfl
+    · simp at hx
+    · simp only [List.mem_toArray, List.mem_cons, List.not_mem_nil, or_false] at hx
+      rcases hx with rfl | rfl | rfl <;> simp [Md.Vocab.admits, vocabulary, Md.vocabulary]
+  · exact adm_group _ _ hs
+  · exact hb x hx
+
+private theorem foldRaws_adm (starts : Array Nat) (src : Array Char) (f : ProofFold) :
+    Adm (foldRaws starts src f) := by
+  unfold foldRaws
+  split
+  · intro r hr; simp at hr
+  apply disclosure_adm
+  · intro r hr; simp at hr; subst hr; rfl
+  · intro r hr
+    simp only [List.mem_toArray, List.mem_cons, List.not_mem_nil, or_false] at hr
+    subst hr
+    simp [listingRaw, Md.Vocab.admits, vocabulary, Md.vocabulary]
 
 private theorem statementsFor_adm (file : String) (starts : Array Nat) (src : Array Char)
-    (segs : List Seg) (showing : Showing) (facts : Option LeanFacts.Facts) :
-    ∀ p ∈ (statementsFor file starts src segs showing facts).1, Adm p := by
+    (segs : List Seg) (showing : Showing) (place : LinkPlace) (folds : List ProofFold)
+    (foldParas : Array (Array Raw)) (hf : ∀ p ∈ foldParas, Adm p) (request : Span)
+    (facts : Option LeanFacts.Facts) :
+    ∀ p ∈ (statementsFor file starts src segs showing place folds foldParas request facts).1,
+      Adm p := by
   cases facts with
   | none => intro p hp; simp [statementsFor] at hp
   | some f =>
+    have h0 : ∀ p ∈ Array.replicate (f.decls.size + f.failed.size) (#[] : Array Raw) ++ foldParas,
+        Adm p := by
+      intro p hp
+      rcases Array.mem_append.mp hp with hp | hp
+      · rw [Array.mem_replicate] at hp
+        rw [hp.2]
+        intro r hr
+        simp at hr
+      · exact hf p hp
     intro p hp
     simp only [statementsFor, statementsOf, Array.mem_append, Array.mem_map] at hp
     rcases hp with ⟨d, _, rfl⟩ | ⟨fl, _, rfl⟩
-    · exact declPara_adm _ _ _ _ _ _ _
-    · have hif : ∀ b : Bool, Adm (if b = true then codeFor starts src segs fl.head fl.stop
+    · exact declPara_adm _ _ _ _ _ _ h0 _ _ _ _
+    · have hif : ∀ b : Bool, Adm (if b = true then codeFor starts src segs folds
+          (Array.replicate (f.decls.size + f.failed.size) #[] ++ foldParas) fl.head fl.stop
           else #[]) := by
         intro b
         cases b
         · intro r hr; simp at hr
-        · simpa using codeFor_adm starts src segs fl.head fl.stop
+        · simpa using codeFor_adm starts src segs folds _ h0 fl.head fl.stop
       exact hif _
 
 private theorem pieceRaws_adm (lang : Ir.CodeLang) (file : String) (starts : Array Nat)
@@ -466,13 +555,23 @@ private theorem titleHeading_adm (t : Array Raw) (p : Pos) (h : Adm t) :
 
 /-- Everything a code file reads into stays inside the reader's declared vocabulary. -/
 public theorem read_vocabulary_mem (lang : Ir.CodeLang) (file text : String)
-    (facts : Option LeanFacts.Facts) :
-    ∀ r ∈ (read lang file text facts).1, vocabulary.admits r = true := by
-  have hplan : ∀ p ∈ (planOf lang file text facts).1.stmts, Adm p := by
+    (facts : Option LeanFacts.Facts) (place : LinkPlace) :
+    ∀ r ∈ (read lang file text facts place).1, vocabulary.admits r = true := by
+  have hplan : ∀ p ∈ (planOf lang file text facts place).1.stmts, Adm p := by
+    have hfold : ∀ (fs : List ProofFold) (p : Array Raw),
+        p ∈ (fs.map (foldRaws (lineStarts text.toList.toArray) text.toList.toArray)).toArray →
+        Adm p := by
+      intro fs p hp
+      simp only [List.mem_toArray, List.mem_map] at hp
+      obtain ⟨fo, _, rfl⟩ := hp
+      exact foldRaws_adm _ _ _
     simp only [planOf]
-    exact statementsFor_adm _ _ _ _ _ _
-  have hacc : Inv (readPieces lang file text (planOf lang file text facts).1
-      (planOf lang file text facts).2.1) :=
+    intro p hp
+    rcases Array.mem_append.mp hp with hp | hp
+    · exact statementsFor_adm _ _ _ _ _ _ _ _ (hfold _) _ _ p hp
+    · exact hfold _ p hp
+  have hacc : Inv (readPieces lang file text (planOf lang file text facts place).1
+      (planOf lang file text facts place).2.1) :=
     foldl_inv lang file _ _ hplan _ {} ⟨by simp [Adm], by simp⟩
   unfold read
   dsimp only

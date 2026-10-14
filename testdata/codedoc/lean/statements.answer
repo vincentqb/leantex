@@ -33,7 +33,7 @@
 {"name":"Tide.total","module":"testdata.codedoc.lean.statements","kind":"def","range":[38,0,38,82],"head":[38,0],"signature":[38,10,38,57],"proof":[38,58,38,82],"proved":true,"doc":null,"type":[["sort","1"],["const","Add"],["bvar",0],["app",1,2],["bvar",1],["const","List"],["bvar",2],["app",5,6],["bvar",3],["pi","xs","d",7,8,0],["pi","zero","d",4,9,0],["pi","inst","c",3,10,0],["pi","α","i",0,11,0]]}
 {"name":"Tide.unfinished","module":"testdata.codedoc.lean.statements","kind":"theorem","range":[84,0,85,22],"head":[84,0],"signature":[84,19,84,40],"proof":[84,41,85,22],"proved":false,"doc":null,"type":[["const","Nat"],["const","Eq"],["const","Nat"],["app",1,2],["const","HAdd.hAdd"],["const","Nat"],["app",4,5],["const","Nat"],["app",6,7],["const","Nat"],["app",8,9],["const","instHAdd"],["const","Nat"],["app",11,12],["const","instAddNat"],["app",13,14],["app",10,15],["bvar",0],["app",16,17],["const","OfNat.ofNat"],["const","Nat"],["app",19,20],["nat","0"],["app",21,22],["const","instOfNatNat"],["nat","0"],["app",24,25],["app",23,26],["app",18,27],["app",3,28],["bvar",0],["app",29,30],["pi","n","d",0,31,0]]}
 {"name":"Tide.depth","module":"testdata.codedoc.lean.statements","kind":"def","range":[46,0,46,28],"head":[46,0],"signature":[46,18,46,23],"proof":[46,24,46,28],"proved":true,"doc":null,"type":[["const","Nat"]]}
-{"failed":"refused","kind":"theorem","range":[91,0,91,55],"head":[91,0]}
+{"failed":"refused","kind":"theorem","range":[91,0,91,55],"head":[91,0],"proof":[91,49,91,55]}
 {"const":"instPowNat","binders":"ic"}
 {"const":"Unit.unit","binders":""}
 {"const":"False","binders":""}

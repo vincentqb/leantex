@@ -1,0 +1,11 @@
+# source: tex/leantex.sty and README.md's "Code files" section: the
+# \inputlean[options]{file} command, whose options are show, decls,
+# proofs and link. Under lualatex the package sets the whole file through
+# minted's \inputminted and warns when an option asks for more.
+# The engine reads the file as a Lean file: show = code with no decls,
+# proofs or link includes it whole, as one listing, and asks Lean nothing;
+# the other options ask the file's project's Lean, which these rows never
+# need. The included file is invented and committed beside the index.
+body impl \inputlean{fixtures/example.lean}
+body impl \inputlean[show = code]{fixtures/example.lean}
+body refuse:W0110 \inputlean[proofs = folded]{fixtures/example.lean}

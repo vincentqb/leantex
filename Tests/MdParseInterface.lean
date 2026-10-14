@@ -26,7 +26,8 @@ example (p : Pos) (inlines : Array Md.Inl) (blocks : Array Md.Blk) : Array Md.Bl
   #[.para inlines p, .heading 2 inlines p, .code "text" "alpha" p,
     .rule p, .quote blocks p, .list true 1 true #[blocks] p,
     .disclosure inlines false blocks p, .disclosure inlines true blocks p,
-    .table #[.none, .left, .right, .center] #[inlines] #[#[inlines]] p]
+    .table #[.none, .left, .right, .center] #[inlines] #[#[inlines]] p,
+    .lean #[("file", "steps.lean"), ("show", "math")] p]
 
 example (node : Md.Inl) : Pos :=
   match node with
@@ -36,7 +37,7 @@ example (node : Md.Inl) : Pos :=
 example (node : Md.Blk) : Pos :=
   match node with
   | .para _ p | .heading _ _ p | .code _ _ p | .rule p
-  | .quote _ p | .disclosure _ _ _ p | .list _ _ _ _ p | .table _ _ _ p => p
+  | .quote _ p | .disclosure _ _ _ p | .list _ _ _ _ p | .table _ _ _ p | .lean _ p => p
 
 example : True := by
   fail_if_success have := Md.Line

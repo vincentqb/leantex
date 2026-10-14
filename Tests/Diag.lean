@@ -380,6 +380,19 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
       { lean := "4.34.1", errors := 0, binders := #[]
         decls := #[{ name := "t", kind := .theorem, start := (2, 0), stop := (2, 26)
                      type := some (.apps (.const "sorryAx") []) }] })).2
+  -- A linked statement in a file whose changes its commit does not hold.
+  | .W0431 => (Surface.readCode .lean "t.lean"
+      "-- leantex: show = math, link = https://github.com/acme/tides\ntheorem t : True := trivial\n"
+      (some { lean := "4.34.1", errors := 0, binders := #[]
+              decls := #[{ name := "t", kind := .theorem, start := (2, 0), stop := (2, 26)
+                           type := some (.apps (.const "True") []) }] })
+      { commit := some "c0ffee", path := some "t.lean", dirty := some true, tracked := true }).2
+  -- A linked statement in a file no repository holds.
+  | .W0432 => (Surface.readCode .lean "t.lean"
+      "-- leantex: show = math, link = https://github.com/acme/tides\ntheorem t : True := trivial\n"
+      (some { lean := "4.34.1", errors := 0, binders := #[]
+              decls := #[{ name := "t", kind := .theorem, start := (2, 0), stop := (2, 26)
+                           type := some (.apps (.const "True") []) }] })).2
   | .W0317 => dvE (w := w) ("\\documentclass{card}\n\\runninghead{name}\n" ++
       "\\begin{document}\nx\n\\end{document}")
   | .W0318 => dvE (w := w) (dvDoc "\\chrome{ footer = { left = \\sectiontitle } }\n" "x")
@@ -1241,6 +1254,8 @@ def repeatFoldUnexercised : List (String × String) :=
      "W0603", "W0604", "W0605", "W0609", "W0701"] ++
   unexercisedAs "one record per Lean declaration, which a file declares once"
     ["W0414"] ++
+  unexercisedAs "one record per Lean file whose link it owes, which a page reads once"
+    ["W0431", "W0432"] ++
   unexercisedAs ("its witness is the emitter's own record, with no source to write twice; the \
 font assembly's records are held by `weightSubstitutionRecordChecks`")
     ["W0366"] ++

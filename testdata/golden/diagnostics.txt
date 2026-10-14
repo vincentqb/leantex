@@ -941,6 +941,14 @@
 ── W0429 (degraded) a .bib field the document's elaborator refuses where an entry stands; the field sets as its text
 ⚠ [W0429]
   the 'note' field of 'k' holds markup this engine sets only between paragraphs; it sets as its text, run into the entry
+── W0431 (degraded) a Lean file's links reach the commit its repository holds it at, from which the file has changed since; the links show the committed text
+⚠ [W0431]
+  the file has changes its commit does not hold; its links show the committed text
+  suggestion: commit the file, or write a `link` that names no `{commit}`
+── W0432 (degraded) a Lean file's link names the file's commit or path in its repository, which the host could not give; its declarations' names are set without links
+⚠ [W0432]
+  a link names the file's commit or path, which git could not give; the names set unlinked
+  suggestion: build the file in the git repository that tracks it, or write a `link` with no `{commit}` or `{path}`
 ── W0435 (degraded) a \qedhere whose QED this engine cannot set where amsthm sets it; the QED stands on a line of its own after the display
 ⚠ [W0435] - \qedhere
   '\qedhere' in '{align*}' does not set its QED where amsthm sets it; the QED stands on a line of its own after the display

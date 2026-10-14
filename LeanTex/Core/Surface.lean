@@ -30,8 +30,8 @@ namespace Surface
 /-- A code file's text as the surface AST, each statement Lean's answer gives set beside its
 declaration's code as the file's directive orders its views. -/
 @[expose] public def readCode (lang : Ir.CodeLang) (file text : String)
-    (facts : Option LeanFacts.Facts) : Array Parse.Raw × Array Diag :=
-  Code.read lang file text facts
+    (facts : Option LeanFacts.Facts) (place : Code.LinkPlace := {}) : Array Parse.Raw × Array Diag :=
+  Code.read lang file text facts place
 
 public theorem read_tex_exact (file text : String) :
     read .tex file text =

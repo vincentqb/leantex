@@ -4,7 +4,7 @@ public import LeanTex.Cli.World
 public import LeanTex.Core.LeanFacts
 public import LeanTex.Core.Diag
 public import LeanTex.Cli.ConvCache
-import LeanTex.Core.CodeDoc
+public import LeanTex.Core.CodeDoc
 import LeanTex.Core.Flate
 import Lean.Data.Json
 
@@ -248,7 +248,8 @@ run_cmd do
   for w in writtens do
     unless seen.contains w.id do
       lines := lines.push (s!"\{\"failed\":{jstr w.name.toString},\"kind\":\"{w.kind}\"," ++
-        s!"\"range\":{spanText (some w.range)},\"head\":[{posText w.head}]}")
+        s!"\"range\":{spanText (some w.range)},\"head\":[{posText w.head}]," ++
+        s!"\"proof\":{spanText w.val}}")
   for c in consts.toList do
     if let some ci := env.find? c then
       lines := lines.push s!"\{\"const\":{jstr (shown c).toString},\"binders\":\"{mask "" ci.type}\"}"
@@ -403,20 +404,21 @@ public theorem silent_retried_exact (e : Ended) (c : Nat) (hc : c ≠ 0)
   simp only [resultOf, hx, h0, hs, Bool.false_eq_true, ite_false]
   split <;> exact ConvCache.inconclusive_retried_exact _ _
 
-/-- The note a file whose statements Lean gave none of carries, once. -/
-public def unread (file why : String) : Diag :=
-  Diag.of .W0414 s!"Lean gave no statements for '{file}': {why}; its code is set without them"
+/-- The note a file Lean gave no answer for carries, once, saying what its page sets instead. -/
+public def unread (file why lost : String) : Diag :=
+  Diag.of .W0414 s!"Lean gave no answer for '{file}': {why}; {lost}"
     (some ⟨file, {}⟩) (subject := some s!"lean:{file}")
 
 /-- What a result gives the page: Lean's answer, or the loss it names. -/
-public def settle (file : String) (r : ConvCache.Result) : Option LeanFacts.Facts × Array Diag :=
+public def settle (file lost : String) (r : ConvCache.Result) :
+    Option LeanFacts.Facts × Array Diag :=
   match r.answer with
   | .ok bytes =>
     match (String.fromUTF8? bytes).map LeanFacts.decode with
     | some (.ok facts) => (some facts, #[])
-    | some (.error why) => (none, #[unread file s!"its answer does not read: {why}"])
-    | none => (none, #[unread file "its answer is not UTF-8"])
-  | .error why => (none, #[unread file why])
+    | some (.error why) => (none, #[unread file s!"its answer does not read: {why}" lost])
+    | none => (none, #[unread file "its answer is not UTF-8" lost])
+  | .error why => (none, #[unread file why lost])
 
 /-- The run that asks Lean about one file, from the file's project root: the file's bytes as
 read, so the answer is of the bytes its key names. -/
@@ -477,12 +479,55 @@ public def moduleOf (root abs : String) : String :=
   let stem := if rel.endsWith ".lean" then (rel.dropEnd 5).toString else rel
   ".".intercalate (stem.splitOn "/")
 
+/-- How long git may take over one question, and how long it has to stop. -/
+public def gitBudgetMs : Nat := 10000
+
+/-- The environment variables that point git at a repository other than the one its working
+directory holds, which a question about a file's repository unsets. -/
+public def gitRepoVars : Array String := #[
+  "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_CONFIG", "GIT_CONFIG_PARAMETERS",
+  "GIT_CONFIG_COUNT", "GIT_OBJECT_DIRECTORY", "GIT_DIR", "GIT_WORK_TREE",
+  "GIT_IMPLICIT_WORK_TREE", "GIT_GRAFT_FILE", "GIT_INDEX_FILE", "GIT_NO_REPLACE_OBJECTS",
+  "GIT_REPLACE_REF_BASE", "GIT_PREFIX", "GIT_SHALLOW_FILE", "GIT_COMMON_DIR", "GIT_NAMESPACE"]
+
+/-- The run that asks git one question about a file's repository, from the file's directory, with
+no repository the caller's environment names. -/
+public def gitAt (dir : String) (args : Array String) (exe : String) : ToolCall :=
+  { tool := exe, args, budgetMs := gitBudgetMs, graceMs, captureLimit := 65536, cwd := some dir
+    env := gitRepoVars.map (·, none) }
+
+/-- Where a file stands in its repository, git asked only for the parts a link's template names:
+the commit `HEAD` names, whether that commit holds the file, the file's path there, and whether
+the file differs from it, none of these where git could not say. -/
+public def placeOf (file template : String) : Prog Code.LinkPlace := do
+  let names (part : String) : Bool := (template.splitOn part).length > 1
+  let joined := match ← ask .cwd with
+    | .ok d => if file.startsWith "/" then file else ToolPath.join d file
+    | .error _ => file
+  let parts := joined.splitOn "/"
+  let dir := "/".intercalate parts.dropLast
+  let base := parts.getLastD file
+  let said (args : Array String) : Prog (Option String) := do
+    match ← ToolPath.probe "git" (gitAt (if dir.isEmpty then "/" else dir) args) with
+    | some (_, e) => pure (if e.ran == .exited 0 then some e.out else none)
+    | none => pure none
+  unless names "{commit}" || names "{path}" do return {}
+  let held ← said #["ls-tree", "-z", "--full-name", "--name-only", "HEAD", "--", base]
+  let path := (held.map fun o => (o.splitOn "\x00").headD "").filter (!·.isEmpty)
+  let commit ← if names "{commit}" then
+      (·.map (·.trimAscii.toString)) <$> said #["rev-parse", "--verify", "HEAD"] else pure none
+  let dirty ← if names "{commit}" then
+      (·.map fun o => !o.trimAscii.toString.isEmpty) <$> said #["status", "--porcelain", "--", base]
+    else pure none
+  return { commit, path := if names "{path}" then path else none, dirty, tracked := path.isSome }
+
 /-- What Lean says about a Lean file, asked of the file's own project or remembered once that
 project's Lean answers who it is, with the loss it names when Lean gives no answer. -/
-public def factsFor (file : String) (bytes : ByteArray) (text : String) :
+public def factsFor (file : String) (bytes : ByteArray) (text : String)
+    (lost : String := "its code is set without statements") :
     Prog (Option LeanFacts.Facts × Array Diag) := do
   let some imports := Code.leanImports? text
-    | return (none, #[unread file "a prelude file elaborates without Init, which the export needs"])
+    | return (none, #[unread file "a prelude file elaborates without Init, which the export needs" lost])
   let joined := match ← ask .cwd with
     | .ok d => if file.startsWith "/" then file else ToolPath.join d file
     | .error _ => file
@@ -494,13 +539,13 @@ public def factsFor (file : String) (bytes : ByteArray) (text : String) :
   let manifest ← bytesOf (ToolPath.join root "lake-manifest.json")
   let missing ← unfetched root manifest
   unless missing.isEmpty do
-    return (none, #[unread file s!"its project's packages {", ".intercalate missing} are not fetched"])
+    return (none, #[unread file s!"its project's packages {", ".intercalate missing} are not fetched" lost])
   let moduleName := moduleOf root abs
   let some (_, said) ← ToolPath.probe "lake" (versionAt root)
-    | return (none, #[unread file "no `lake` is on PATH to ask"])
+    | return (none, #[unread file "no `lake` is on PATH to ask" lost])
   let lean := ((said.out.splitOn "\n").headD "").trimAscii.toString
   unless said.ran == .exited 0 && !lean.isEmpty do
-    return (none, #[unread file s!"`lake env lean --version` gave no version"])
+    return (none, #[unread file s!"`lake env lean --version` gave no version" lost])
   let packages ← match ← ask (.listDir (ToolPath.join root ".lake/packages")) with
     | .ok entries => pure (entries.toList.filter (·.2 == .dir) |>.map (·.1))
     | .error _ => pure []
@@ -521,13 +566,13 @@ public def factsFor (file : String) (bytes : ByteArray) (text : String) :
       let replayed := ConvCache.Result.replay answer
       -- A kept answer this reader no longer reads is no answer: Lean is asked again.
       if replayed.outcome != .drawn || answerReads replayed.bytes then
-        return settle file replayed
+        return settle file lost replayed
   let some (_, ended) ← ToolPath.probe "lake" (callAt root abs moduleName src bytes)
-    | return (none, #[unread file "no `lake` is on PATH to ask"])
+    | return (none, #[unread file "no `lake` is on PATH to ask" lost])
   let result := resultOf ended
   if let some path := slot then
     if let some answer := result.record? then
       discard <| ask (.writeAtomic path (ConvCache.encode answer))
-  return settle file result
+  return settle file lost result
 
 end LeanTex.Cli.LeanExport

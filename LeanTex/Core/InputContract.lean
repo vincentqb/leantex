@@ -543,7 +543,7 @@ public theorem markdownVocabulary_contract :
   · intro n hn
     rcases List.mem_append.mp hn with hn | hn
     · simp only [Md.vocabulary, List.mem_cons, List.not_mem_nil, or_false] at hn
-      rcases hn with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;>
+      rcases hn with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;>
         simp [Compat.lengthRestoreKeys?]
     · obtain ⟨level, _, rfl⟩ := List.mem_map.mp hn
       cases level <;> simp [Parse.headingControl, Compat.lengthRestoreKeys?]

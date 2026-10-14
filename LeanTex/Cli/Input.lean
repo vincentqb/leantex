@@ -121,11 +121,57 @@ public def readInput (dir : System.FilePath) (file name : String) (pos : Pos) :
   let ((raws, ds), log) ← (readInputAt dir file name pos).run {}
   return (raws, log.diags ++ ds)
 
+/-- minted's `\inputminted[options]{lang}{file}`: the file's text as the listing a `minted`
+environment of that language and those options sets. -/
+private def readMinted (dir : System.FilePath) (request : Compat.InputRequest) :
+    ReadM (Array Parse.Raw × Array Diag) := do
+  let name := request.second.trimAscii.toString
+  let path := dir / name
+  unless ← path.pathExists do
+    return (#[], #[DriverDiag.inputMissing name (some ⟨request.file, request.pos⟩) "inputminted"])
+  match ← readSource path.toString with
+  | .error d => return (#[], #[{ d with span := some ⟨request.file, request.pos⟩ }])
+  | .ok bytes =>
+    modify fun log => { log with reads := log.reads.push path.toString }
+    let text := (← decodeOnce path.toString fun _ => Encoding.readMarkdown path.toString bytes).1.text
+    let head := if request.options.isEmpty then "" else "[" ++ request.options ++ "]"
+    let lang := request.name.trimAscii.toString
+    return (#[.verb "minted" (head ++ "{" ++ lang ++ "}\n" ++ text) request.pos], #[])
+
+/-- `\inputlean[options]{file}`: a Lean file included with the views its options ask for, Lean
+asked where they need it and git where its link names the file's commit or path. -/
+private def readLean (dir : System.FilePath) (request : Compat.InputRequest) :
+    ReadM (Array Parse.Raw × Array Diag) := do
+  let name := request.name.trimAscii.toString
+  let path := dir / name
+  let division := Ir.Surface.ofPath request.file == .markdown
+  unless ← path.pathExists do
+    return (#[], #[DriverDiag.inputMissing name (some ⟨request.file, request.pos⟩) "inputlean"
+      (if division then some "the Lean division's file" else none)])
+  match ← readSource path.toString with
+  | .error d => return (#[], #[{ d with span := some ⟨request.file, request.pos⟩ }])
+  | .ok bytes =>
+    modify fun log => { log with reads := log.reads.push path.toString }
+    let text := (← decodeOnce path.toString fun _ => Encoding.readMarkdown path.toString bytes).1.text
+    let showing := Code.showingOfEntries .lean (Decl.splitEntries request.options) (alone := true)
+    let lost := showing.lostIncluded
+    let (facts, factDiags) ← if showing.asks || showing.decls.isSome then
+        Host.runIO (LeanExport.factsFor path.toString bytes text lost) else pure (none, #[])
+    let place ← match showing.link with
+      | some l => if showing.math then
+          Host.runIO (LeanExport.placeOf path.toString (Code.linkTemplate l)) else pure {}
+      | none => pure {}
+    let entry := if division then "the Lean division" else "`\\inputlean`"
+    let (raws, ds) := Code.includeLean path.toString text showing facts place
+      ⟨request.file, request.pos⟩ entry
+    return (raws, ds ++ factDiags)
+
 /-- Fulfil one executed request; a compatible repeat or a cycle back edge of a local style
 reads nothing, and nesting stays within eight files. -/
 private def readAt (dir : System.FilePath) (root : String) (depth : Nat) :
     Compat.InputReader ReadM := fun request context => do
-  let input := ["input", "include", "markdownInput"].contains request.command
+  let input := ["input", "include", "markdownInput", "inputminted", "inputlean"].contains
+    request.command
   if input then
     match depth with
     | 0 =>
@@ -144,6 +190,8 @@ private def readAt (dir : System.FilePath) (root : String) (depth : Nat) :
 the file uses the Markdown document dialect" (some ⟨request.file, request.pos⟩)
               (subject := some "markdownInput:options")
           pure (sub, ds)
+        else if request.command == "inputminted" then readMinted dir request
+        else if request.command == "inputlean" then readLean dir request
         else readInputAt dir request.file request.name request.pos
       modify fun log => { log with diags := log.diags ++ diags }
       let (answer, context) ←
@@ -328,13 +376,18 @@ public def readDocument (file : String) (bytes : ByteArray)
       if phases then phase "md" s!"{raws.size} top-level nodes" (← since t)
       return (raws, ds)
     | .code lang =>
-      let asks := lang == .lean && (Code.showingOf lang text.toList.toArray).math
-      let (facts, factDiags) ← if asks then Host.runIO (LeanExport.factsFor file bytes text)
-        else pure (none, #[])
+      let showing := Code.showingOf lang text.toList.toArray
+      let asks := lang == .lean && showing.asks
+      let (facts, factDiags) ← if asks then
+          Host.runIO (LeanExport.factsFor file bytes text showing.lost) else pure (none, #[])
       if phases && asks then
         phase "lean" s!"{(facts.map (·.decls.size)).getD 0} declarations" (← since t)
+      let place ← match showing.link with
+        | some l => if lang == .lean && showing.math then
+            Host.runIO (LeanExport.placeOf file (Code.linkTemplate l)) else pure {}
+        | none => pure {}
       let t ← IO.monoMsNow
-      let (raws, ds) := Surface.readCode lang file text facts
+      let (raws, ds) := Surface.readCode lang file text facts place
       if phases then phase "code" s!"{raws.size} top-level nodes" (← since t)
       return (raws, ds ++ factDiags)
   let (raws, frontDiags) ← surface first.text true

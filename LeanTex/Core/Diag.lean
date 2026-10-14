@@ -243,6 +243,8 @@ public inductive DiagCode where
   | W0413
   | W0308
   | W0414
+  | W0431
+  | W0432
   deriving Repr, BEq, DecidableEq
 
 /-- The registry: each code's digits, its declared `Loss`, and its one meaning. -/
@@ -461,6 +463,8 @@ private def DiagCode.spec : DiagCode → String × Loss × String
   | .W0412 => ("0412", .degraded, "a listing's language names no lexer the engine or Pygments' registry has; its code is set as plain text")
   | .W0308 => ("0308", .degraded, "a colour scheme the web page offers cannot carry a colour legibly; the page ships without that scheme")
   | .W0414 => ("0414", .degraded, "a Lean declaration's statement is not set as mathematics, Lean having given no faithful one; its code is set without it")
+  | .W0431 => ("0431", .degraded, "a Lean file's links reach the commit its repository holds it at, from which the file has changed since; the links show the committed text")
+  | .W0432 => ("0432", .degraded, "a Lean file's link names the file's commit or path in its repository, which the host could not give; its declarations' names are set without links")
 
 public def DiagCode.digits (c : DiagCode) : String := c.spec.1
 

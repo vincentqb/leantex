@@ -29,7 +29,7 @@ public structure Vocab where
 /-- The vocabulary markdown lowers into. -/
 @[expose] public def vocabulary : Vocab where
   ctrls := ["emph", "textbf", "texttt", "href", "includegraphics", "item", "hypertarget", "\\",
-    "toprule", "midrule", "bottomrule"]
+    "toprule", "midrule", "bottomrule", "inputlean"]
   bridged := [Ir.HeadingLevel.title, .h1, .h2, .h3, .h4, .h5, .h6].map Parse.headingControl
   envs := ["quote", "itemize", "enumerate", Parse.markdownDisclosureEnv, Parse.markdownTableEnv]
   verbs := ["verbatim", "lstlisting"]
@@ -384,6 +384,27 @@ private theorem blkRaws_adm (file : String) : (b : Blk) → Adm (blkRaws file b)
   | .table aligns header rows p => by
     simp only [blkRaws]
     exact tableRaws_adm file aligns header rows p
+  | .lean attrs p => by
+    simp only [blkRaws]
+    refine adm_append (adm_append (adm_lit ?_) ?_) (adm_lit ?_)
+    · intro r hr
+      simp only [List.mem_cons, List.not_mem_nil, or_false] at hr
+      rcases hr with rfl | rfl
+      · rfl
+      · simp [Vocab.admits, vocabulary]
+    · split
+      · exact adm_empty
+      · refine adm_lit ?_
+        intro r hr
+        simp only [List.mem_cons, List.not_mem_nil, or_false] at hr
+        rcases hr with rfl | rfl | rfl
+        · exact sym_mem _ _ (by simp [vocabulary])
+        · rfl
+        · exact sym_mem _ _ (by simp [vocabulary])
+    · intro r hr
+      simp only [List.mem_cons, List.not_mem_nil, or_false] at hr
+      subst hr
+      exact adm_group _ _ (adm_lit (by intro r hr; simp at hr; subst hr; rfl))
 
 private theorem blkListRaws_adm (file : String) : (l : List Blk) → (out : Array Raw) →
     (ds : Array Diag) → Adm out → Adm (blkListRaws file out ds l).1
@@ -470,6 +491,9 @@ private theorem blkRaws_starts (file : String) (b : Blk) : Starts (blkRaws file 
     obtain ⟨body, hbody, _⟩ := tableRaws_contract file aligns header rows p
     rw [hbody]
     exact starts_single (env_start _ _ _ (by simp [vocabulary]))
+  | lean attrs p =>
+    simp only [blkRaws]
+    exact Or.inr ⟨.par p, by simp, Or.inl ⟨p, rfl⟩⟩
 
 private theorem blkListRaws_starts (file : String) : (l : List Blk) → (out : Array Raw) →
     (ds : Array Diag) → Starts out → Starts (blkListRaws file out ds l).1
@@ -496,7 +520,7 @@ public theorem vocabulary_contract :
         Parse.markdownTableEnv, Parse.markdownDisclosureEnv]
   · intro n hn
     simp only [vocabulary, List.mem_cons, List.not_mem_nil, or_false] at hn
-    rcases hn with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;> simp
+    rcases hn with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;> simp
   · intro n hn
     obtain ⟨level, _, rfl⟩ := List.mem_map.mp hn
     cases level <;> simp [Parse.headingControl, Parse.headingControl?]

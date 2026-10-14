@@ -156,6 +156,40 @@ When Lean gives no answer (no `lake` on PATH, packages not fetched, an import
 not built, four minutes passed) the page sets the code alone, whatever `show`
 asks, and the run says so once. The export reads Lean 4.24 and later.
 
+Two more options shape a Lean file's page. `proofs = collapse` folds each
+top-level theorem's proof into a disclosure whose summary is Proof, after its
+signature: from the proof's first character, or the next line after a bare
+`:= by`, through its last line and the comments closing it. A proof written on
+its signature's line stays in place; the disclosure is closed on the web page
+and open in print and in the PDF. `proofs = remove` sets Lean's `⋯` in the
+proof's place. The default is `proofs = show`. `link` makes each statement's name a link to
+its declaration: a GitHub repository's root,
+`link = https://github.com/OWNER/REPO`, reaches its lines at the commit the
+file's repository holds it at, and any other value is a template whose
+`{name}`, `{module}`, `{path}`, `{line}`, `{endline}` and `{commit}` each
+declaration fills, percent-encoded, for instance
+`link = "https://OWNER.github.io/REPO/docs/{module}.html#{name}"`. git is
+asked only for the parts a template names; where it cannot give them (no
+repository, a file the commit does not hold, a state it cannot read) the names
+are set without links, and a file with changes its commit does not hold is
+named, since its links show the committed text. An option a page cannot honour
+(a `link` with no statement to carry it, `proofs` on a Python file, a `decls`
+on a page that shows no statement) is named; an empty `decls` sets every
+declaration, and a key written twice takes its last value.
+
+A document includes a Lean file the same way: in TeX,
+`\inputlean[show = {math, code}, decls = {height_double}, proofs = collapse]{Tide.lean}`
+(`\usepackage{leantex}`, with `tex/leantex.sty` on lualatex's path, gives
+lualatex the same command, which sets the whole file through minted and warns
+when an option asks for more), and in Markdown a fenced division,
+`::: {.lean file="Tide.lean" show="math, code"}` closed by `:::`. With no
+option the whole file is one listing, as `\inputminted{lean4}{Tide.lean}`
+sets it. Showing math or folding or removing proofs asks the file's
+project's Lean, as above, and sets the whole file with each statement at its
+declaration; `decls` sets only the declarations it names (theorems,
+definitions and axioms), each with its views in order. An included file's
+documentation comments are code, as its source has them.
+
 ## Fonts and themes
 
 Use installed `.ttf` or `.otf` fonts, or the faces of a `.ttc` or `.otc`

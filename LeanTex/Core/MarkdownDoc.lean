@@ -504,6 +504,16 @@ private inductive Site where
   | cell
   deriving BEq
 
+/-- Whether content opens on an inline formula, under any source location. -/
+private def opensInlineMath : List Inline → Bool
+  | .math false _ :: _ => true
+  | .formula false _ _ :: _ => true
+  | .located _ body :: _ => match body.toList with
+    | .math false _ :: _ => true
+    | .formula false _ _ :: _ => true
+    | _ => false
+  | _ => false
+
 mutual
 
 /-- Inline content onto `acc`: meaning survives, decoration degrades. -/
@@ -580,10 +590,20 @@ private def inlineInto (site : Site) (acc : String) (after : Bool := true) : Inl
   | .linebreak _ =>
     if site == .flow then acc ++ "\\\n" else acc ++ "<br>"
 
-/-- The sibling walk: a run following a run of its own delimiter reopens it. -/
+/-- The sibling walk: a run following a run of its own delimiter reopens it, and zero glue between
+two formulas is a space, so the second never reads as a display's `$$`. -/
 private def inlinesInto (site : Site) (acc : String) (prev : Option String := none)
     (after : Bool := true) : List Inline → String
   | [] => acc
+  | .hspace e keep :: rest =>
+    let zero := Dim.MeasureValues.horizontal 0 0
+    let g := e.eval (Dim.MeasureValues.find zero)
+    let bare := !g.fil && !e.anyRef (fun _ => true) && g.width.sp == 0 && g.width.em == 0 &&
+      g.width.ex == 0
+    if bare && acc.endsWith "$" && opensInlineMath rest then inlinesInto site (acc ++ " ") prev after rest
+    else
+      let next := inlineInto site acc (closesAfterTag after rest) (.hspace e keep)
+      inlinesInto site next (if next.utf8ByteSize == acc.utf8ByteSize then prev else none) after rest
   | .styled st body :: rest =>
     match styleMark st with
     | some m =>

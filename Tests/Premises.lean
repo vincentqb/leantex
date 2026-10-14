@@ -12,6 +12,7 @@ import Tests.MachineLoss
 import Tests.EngineCache
 import Tests.LeanStatements
 import Tests.PdfNative
+import Tests.LeanViews
 import scripts.LandCore
 
 /-! World premises: one row per assumption leantex makes of the runtime, the host and the programs
@@ -245,6 +246,12 @@ def registry : List Premise := [
     checks := [check% Tests.LeanStatements.leanStatementChecks]
     scripts := ["scripts/leanexport.lean"]
     owed := some "Set each statement of a project's files from the export and from the type the project's own build of the file gives, and require the two to match." },
+  { name := "git-links", residue := .tool "git", reach := .render
+    statement := "git, run in a Lean file's directory with no repository the environment names, says the commit HEAD names, the file's path in its repository and whether the file differs from that commit, which Code.expandLink fills a link's template with and Code.linkNotes names the loss of."
+    guards := [decl% Code.expandLink, decl% Code.linkNotes]
+    sites := [("LeanTex/Cli/LeanExport.lean", "placeOf")]
+    checks := [check% Tests.LeanViews.leanViewChecks]
+    owed := some "Build a linked page from a scratch repository's committed, changed and untracked file, and hold each link to the commit and path git gives there." },
   { name := "rsvg-convert", residue := .tool "rsvg-convert", reach := .fallback
     statement := "rsvg-convert draws the canonical spelling of a judged SVG whose import names a loss, to PDF or SVG, as librsvg draws it, and Image.probePdf, ImageAssets' private finishSvg and HtmlDoc.emitClosed check every file it writes before an artifact holds it."
     guards := [decl% Image.probePdf, decl% HtmlDoc.emitClosed]
@@ -359,9 +366,9 @@ def registry : List Premise := [
 
 /-- Counts held in both directions: tool rows of render reach, unfalsifiable rows, rows owed a
 check. -/
-def renderToolBaseline : Nat := 3
+def renderToolBaseline : Nat := 4
 def uncheckedBaseline : Nat := 8
-def owedBaseline : Nat := 23
+def owedBaseline : Nat := 24
 
 /-- The spawns that are the budget. -/
 def budgetSites : List (String × String) := [("LeanTex/Cli/RunBounded.lean", "runBounded")]

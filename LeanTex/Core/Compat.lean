@@ -37,7 +37,7 @@ public def nativePackages : List String :=
    "appendixnumberbeamer", "natbib",
    "times", "mathptmx", "palatino", "mathpazo", "helvet", "courier",
    "libertine", "carlito", "xspace", "float", "biblatex", "appendix",
-   "cleveref", "listings", "minted", "siunitx",
+   "cleveref", "listings", "minted", "siunitx", "leantex",
    "algorithm2e", "algorithmicx", "algpseudocode", "algorithm", "lineno", "environ", "amsthm",
    "cancel", "animate", "markdown", "ulem", "tikz-cd"]
 
@@ -1270,6 +1270,10 @@ public def takeGroups (raws : Array Raw) (i n : Nat) : Array (Array Raw) × Nat 
 /-- The filename, read from the executed call the local-style reader sees. -/
 @[expose] public def InputRequest.name (request : InputRequest) : String :=
   rawSrc ((takeGroups request.call (takeOpt request.call 1).2 1).1.getD 0 #[])
+
+/-- A request's second group, the file of minted's `\inputminted{lang}{file}`. -/
+@[expose] public def InputRequest.second (request : InputRequest) : String :=
+  rawSrc ((takeGroups request.call (takeOpt request.call 1).2 2).1.getD 1 #[])
 
 /-- The options, read from the executed call the filename is read from. -/
 @[expose] public def InputRequest.options (request : InputRequest) : String :=
@@ -2890,7 +2894,8 @@ private def condLiveRaw (flags : Std.HashMap String Bool)
       (overlayArity? n).isSome ||
       isFlagSetter flags n || loadedTests.any (·.ctrl == n) ||
       (deferredHooks.lookup n).isSome ||
-      ["input", "include", "markdownInput", "documentclass", "usepackage", "RequirePackage",
+      ["input", "include", "markdownInput", "inputminted", "inputlean", "documentclass",
+        "usepackage", "RequirePackage",
         "RequirePackageWithOptions", "PassOptionsToPackage", "PassOptionsToClass"].contains n ||
       (themeAsking.lookup n).isSome ||
       -- Length declarations and mutations execute at each use.
@@ -3932,14 +3937,22 @@ end
 private def inputRequestAt (st : St) (n : String) (pos : Pos)
     (raws : Array Raw) (start : Nat) : Option (InputRequest × Nat) := do
   if st.settling.isSome then none else do
-    let input := ["input", "include", "markdownInput"].contains n
+    let input := ["input", "include", "markdownInput", "inputminted", "inputlean"].contains n
     -- premise: frontendInputRequestChecks — only live execution loads a local style
     let style := !st.condInDoc &&
       (n == "usepackage" || n == "RequirePackage" || (themeAsking.lookup n).isSome)
     if !(input || style) then none else do
-      let (_, k) := if n == "markdownInput" || style then takeOpt raws start else (none, start)
+      let optioned := ["markdownInput", "inputminted", "inputlean"].contains n
+      let (_, k) := if optioned || style then takeOpt raws start else (none, start)
       let j := skipSpaces raws k
       let some (.group _ _) := raws[j]? | none
+      -- minted's file command names its language in a group before the file's.
+      let j ← if n == "inputminted" then
+          let j' := skipSpaces raws (j + 1)
+          match raws[j']? with
+          | some (.group _ _) => some j'
+          | _ => none
+        else some j
       some ({
         command := n
         file := st.file
@@ -4328,9 +4341,11 @@ private theorem packageCall_request_exact (command names : String)
         #[.group #[.word names namePos] groupPos]⟩, 2) := by
   have hp : (command == "usepackage" || command == "RequirePackage") = true := by
     rcases hc with rfl | rfl <;> decide
+  have hm : (command == "inputminted") = false := by rcases hc with rfl | rfl <;> decide
+  have hm' : command ≠ "inputminted" := by rcases hc with rfl | rfl <;> decide
   have ht := (packageCall_readers command names pos groupPos namePos).2.1
   have hj := (packageCall_readers command names pos groupPos namePos).1
-  simp [inputRequestAt, hs, hd, hp, ht, hj]
+  simp [inputRequestAt, hs, hd, hp, ht, hj, hm, hm']
   simp [packageCall]
 
 private def packageLoaded (st : St) (names : String) : St :=

@@ -11,8 +11,9 @@
 # plain source where none answers; a name neither the installed Pygments
 # nor the registry of the release the mirror tracks holds is named (W0412),
 # with the registry's nearest name.
-# \inputminted reads a file — a driver request later; the short forms and
-# external Pygments machinery refuse by name.
+# \inputminted reads its file beside the document, as \input does, into the
+# listing a minted environment of its language and options sets; the short
+# forms and external Pygments machinery refuse by name.
 body impl \begin{minted}{python} print(1) \end{minted}
 body impl \begin{minted}[linenos]{python} print(1) \end{minted}
 body impl \begin{minted}{C++} int x; \end{minted}
@@ -23,7 +24,8 @@ body impl \mintinline{python}|print(1)|
 body impl \mintinline{python}{print(1)}
 body impl \mintinline[fontsize=\small]{python}{print(1)}
 body refuse:W0412 \mintinline{pythn}{print(1)}
-body refuse:W0301 \inputminted{python}{example.py}
+body impl \inputminted{python}{fixtures/example.py}
+body impl \inputminted[linenos]{python}{fixtures/example.py}
 pre inert:binds \setminted{linenos}
 pre inert:binds \setminted[python]{fontsize=\small,tabsize=3,breaklines}
 pre inert:binds \setmintedinline{fontsize=\relax}

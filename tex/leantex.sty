@@ -1,0 +1,45 @@
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{leantex}[2026/10/14 Lean files in LaTeX documents, as leantex reads them]
+\RequirePackage{minted}
+\ExplSyntaxOn
+\tl_new:N \l__leantex_show_tl
+\tl_new:N \l__leantex_decls_tl
+\tl_new:N \l__leantex_proofs_tl
+\tl_new:N \l__leantex_link_tl
+\keys_define:nn { leantex }
+  {
+    show .tl_set:N = \l__leantex_show_tl ,
+    decls .tl_set:N = \l__leantex_decls_tl ,
+    proofs .tl_set:N = \l__leantex_proofs_tl ,
+    link .tl_set:N = \l__leantex_link_tl ,
+    code .code:n = \tl_put_right:Nn \l__leantex_show_tl { , code } ,
+    math .code:n = \tl_put_right:Nn \l__leantex_show_tl { , math } ,
+    unknown .code:n =
+      \PackageWarning { leantex }
+        { \token_to_str:N \inputlean \c_space_tl has ~ no ~ option ~ '\l_keys_key_str' ~ (ignored) } ,
+  }
+\NewDocumentCommand \inputlean { O{} m }
+  {
+    \group_begin:
+    \tl_set:Nn \l__leantex_show_tl { code }
+    \tl_clear:N \l__leantex_decls_tl
+    \tl_set:Nn \l__leantex_proofs_tl { show }
+    \tl_clear:N \l__leantex_link_tl
+    \keys_set:nn { leantex } { #1 }
+    \bool_if:nF
+      {
+        \str_if_eq_p:Vn \l__leantex_show_tl { code }
+        && \tl_if_empty_p:N \l__leantex_decls_tl
+        && \str_if_eq_p:Vn \l__leantex_proofs_tl { show }
+        && \tl_if_empty_p:N \l__leantex_link_tl
+      }
+      {
+        \PackageWarning { leantex }
+          { \token_to_str:N \inputlean { #2 } ~ sets ~ the ~ whole ~ file ~ as ~ code; ~
+            statements, ~ chosen ~ declarations, ~ folded ~ proofs ~ and ~ links ~ need ~ leantex }
+      }
+    \inputminted [ breaklines ] { lean4 } { #2 }
+    \group_end:
+  }
+\ExplSyntaxOff
+\endinput

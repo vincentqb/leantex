@@ -51,6 +51,8 @@ public inductive Blk where
       (pos : Pos)
   | table (aligns : Array TableAlign) (header : Array (Array Inl))
       (rows : Array (Array (Array Inl))) (pos : Pos)
+  /-- A Lean file a fenced `{.lean file="…"}` division includes, with its keys and values. -/
+  | lean (attrs : Array (String × String)) (pos : Pos)
   deriving Repr, BEq
 
 public instance : Inhabited Blk := ⟨.rule {}⟩
@@ -175,6 +177,62 @@ def fenceAt (cs : Array Char) (i : Nat) : Option (Char × Nat × String) := Id.r
   -- An info string on a backtick fence may not contain a backtick.
   if c0 == '`' && info.any (· == '`') then return none
   return some (c0, n, info)
+
+/-- At least three colons from `i`: the index past them. -/
+def colonsAt (cs : Array Char) (i : Nat) : Option Nat := Id.run do
+  let mut j := i
+  for _ in [0:cs.size + 1] do
+    if cs[j]? == some ':' then j := j + 1 else break
+  return if j - i ≥ 3 then some j else none
+
+/-- Pandoc's attribute list, `.class #id key=value key="value"`: its classes and its keys with their
+values, in order; none where a quote is left open or a word is none of these. -/
+def attrsOf (s : String) : Option (Array String × Array (String × String)) := Id.run do
+  let mut toks : Array String := #[]
+  let mut cur := ""
+  let mut quoted := false
+  for c in s.toList do
+    if quoted then
+      cur := cur.push c
+      if c == '"' then quoted := false
+    else if c == '"' then
+      cur := cur.push c
+      quoted := true
+    else if isSpaceOrTab c then
+      unless cur.isEmpty do toks := toks.push cur
+      cur := ""
+    else cur := cur.push c
+  if quoted then return none
+  unless cur.isEmpty do toks := toks.push cur
+  let mut classes : Array String := #[]
+  let mut keys : Array (String × String) := #[]
+  for t in toks do
+    if t.startsWith "." then classes := classes.push (t.drop 1).toString
+    else if !t.startsWith "#" then
+      match t.splitOn "=" with
+      | k :: rest@(_ :: _) =>
+        let v := "=".intercalate rest
+        let v := if v.length ≥ 2 && v.startsWith "\"" && v.endsWith "\"" then
+          ((v.drop 1).dropEnd 1).toString else v
+        keys := keys.push (k, v)
+      | _ => return none
+  return some (classes, keys)
+
+/-- A Lean inclusion's opening fence: three colons or more, then `{.lean file="…" …}` and nothing
+after it; its keys and values. -/
+def leanDivAt (cs : Array Char) (i : Nat) : Option (Array (String × String)) := do
+  let j ← colonsAt cs i
+  let rest := (sliceStr cs j cs.size).trimAscii.toString
+  guard (rest.startsWith "{" && rest.endsWith "}")
+  let (classes, keys) ← attrsOf ((rest.drop 1).dropEnd 1).toString
+  guard (classes.contains "lean" && keys.any (·.1 == "file"))
+  return keys
+
+/-- A colon fence alone on its line. -/
+def closesDiv (cs : Array Char) (i : Nat) : Bool :=
+  match colonsAt cs i with
+  | some j => isBlankFrom cs j
+  | none => false
 
 /-- A closing fence for an open one: at most three spaces of indent, the same
 char at least as long, nothing after it. -/
@@ -1923,6 +1981,8 @@ public def blocksIn (dialect : Dialect) (file : String) (input : String) :
   let mut blankAfterSummary : Option Nat := none
   -- GFM tries a paragraph as a table header once.
   let mut tableVisited : Option Pos := none
+  -- The Lean inclusions whose closing fence is still to come.
+  let mut leanDivs := 0
   for li in [0:lines.size] do
     let some ln := lines[li]? | continue
     let cs := ln.cs
@@ -2267,6 +2327,18 @@ public def blocksIn (dialect : Dialect) (file : String) (input : String) :
       diags := diags ++ ds
       leaf := .none
       acc := acc.push (.rule lpos)
+    else if let some attrs := (if doc && ind ≤ 3 then leanDivAt cs j else none) then
+      let (a, ds) := closePara leaf acc lpos
+      acc := a.push (.lean attrs { lpos with col := j + 1 })
+      diags := diags ++ ds
+      leaf := .none
+      leanDivs := leanDivs + 1
+    else if doc && leanDivs > 0 && ind ≤ 3 && closesDiv cs j then
+      let (a, ds) := closePara leaf acc lpos
+      acc := a
+      diags := diags ++ ds
+      leaf := .none
+      leanDivs := leanDivs - 1
     else if let some (fch, flen, finfo) := fenceAt cs j then
       let (a, ds) := closePara leaf acc lpos
       acc := a

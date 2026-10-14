@@ -41,7 +41,7 @@ example (src : String) (loss : DriverDiag.SvgFaceLoss) :
   DriverDiag.boundarySvgMissing_subject src loss
 example : String → String → Diag := DriverDiag.listingHighlightUnavailable
 example : String → Diag := DriverDiag.htmlResourceUnavailable
-example : String → Option Span → String → Diag := @DriverDiag.inputMissing
+example : String → Option Span → String → Option String → Diag := @DriverDiag.inputMissing
 example : String → String → Option Span → Diag := DriverDiag.bibMissing
 example : String → String → Option Span → Diag := DriverDiag.dataMissing
 example : Diag := DriverDiag.inputTooDeep

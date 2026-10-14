@@ -402,6 +402,12 @@ without a language" p
         "a loose list sets as a tight one: its items' paragraph spacing is not carried" p)
     (#[.env (if ordered then "enumerate" else "itemize") rs p], ds)
   | .table aligns header rows p => tableRaws file aligns header rows p
+  | .lean attrs p =>
+    let file := ((attrs.find? (·.1 == "file")).map (·.2)).getD ""
+    let opts := (attrs.filter (·.1 != "file")).toList.map fun (k, v) => s!"{k} = \{{v}}"
+    let bracket : Array Raw := if opts.isEmpty then #[] else
+      #[.sym '[' p, .word (", ".intercalate opts) p, .sym ']' p]
+    (#[.par p, .ctrl "inputlean" p] ++ bracket ++ #[.group #[.word file p] p], #[])
 
 private def blkListRaws (file : String) (out : Array Raw) (ds : Array Diag) :
     List Blk → Array Raw × Array Diag

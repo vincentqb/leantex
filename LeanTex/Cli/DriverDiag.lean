@@ -311,8 +311,10 @@ public def htmlResourceUnavailable (detail : String) : Diag :=
     (output := some .html)
 
 /-- E0502: an included source file is not there; its content is absent. -/
-public def inputMissing (name : String) (span : Option Span) (command : String := "input") : Diag :=
-  Diag.of .E0502 s!"'\\{command}' file '{name}' is not there; its content is absent" span
+public def inputMissing (name : String) (span : Option Span) (command : String := "input")
+    (spelled : Option String := none) : Diag :=
+  let what := spelled.getD s!"'\\{command}' file"
+  Diag.of .E0502 s!"{what} '{name}' is not there; its content is absent" span
     (help := "\\allow{E0502} accepts the loss")
 
 /-- E0503: a `.bib` file `\bibliography` names is not there; the reference list stays
