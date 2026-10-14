@@ -571,7 +571,8 @@ def invalidated (pages : Nat) (old changed fresh : ByteArray)
 /-- The content answers among cache files, font-discovery metadata excluded. -/
 def answers (files : Array (String × String)) : Array (String × String) :=
   files.filter fun (name, _) =>
-    name.startsWith "imgs/" || name.startsWith "flate/" || name.startsWith "convs/"
+    name.startsWith "imgs/" || name.startsWith "flate/" || name.startsWith "convs/" ||
+      name.startsWith "faces/"
 
 def require (ok : Bool) (why : String) : IO Unit := do
   unless ok do throw (IO.userError s!"slides benchmark: {why}")
@@ -659,7 +660,7 @@ def vector (edited : Bool := false) : ByteArray := Id.run do
 
 def deck (frames : Nat) (edited : Bool := false) : String := Id.run do
   let mut src := "\\documentclass[aspectratio=169]{beamer}\n\\usetheme{moloch}\n" ++
-    "\\usepackage{graphicx}\n" ++
+    "\\palette{ alert = #C2185B }\n\\usepackage{graphicx}\n" ++
     "\\fonts{dir=\"fonts\",body=\"Open Sans\"}\n" ++
     "\\begin{document}\n"
   for i in [:frames] do
@@ -672,6 +673,20 @@ def deck (frames : Nat) (edited : Bool := false) : String := Id.run do
       "\\includegraphics[width=0.18\\textwidth,alt={Invented vector blocks}]{blocks.pdf}\n" ++
       "\\end{frame}\n"
   return src ++ "\\end{document}\n"
+
+/-- The fixture's fonts, copied beside its deck. -/
+def copyFonts (dir : System.FilePath) : IO Unit := do
+  IO.FS.createDirAll (dir / "fonts")
+  for file in ← (System.FilePath.mk "testdata/corpus/fonts").readDir do
+    if file.path.extension == some "otf" || file.path.extension == some "ttf" then
+      IO.FS.writeBinFile (dir / "fonts" / file.fileName) (← IO.FS.readBinFile file.path)
+
+/-- The deck and both assets, all original or all edited. -/
+def writeInputs (dir : System.FilePath) (frames : Nat) (image : Bool → ByteArray)
+    (edited : Bool) : IO Unit := do
+  IO.FS.writeFile (dir / "deck.tex") (deck frames edited)
+  IO.FS.writeBinFile (dir / "grid.png") (image edited)
+  IO.FS.writeBinFile (dir / "blocks.pdf") (vector edited)
 
 def selftest : IO Unit := do
   require (median #[9, 1, 5] == 5 && median #[8, 3, 5, 1, 7] == 5) "median"
@@ -727,7 +742,8 @@ def selftest : IO Unit := do
   require (files != metadataEdit && answers files == answers metadataEdit)
     "answer judge must ignore only metadata changes"
   require (answers files != answers #[("imgs/grid.img", "changed answer")] &&
-    answers files != answers #[("imgs/grid.img", "answer"), ("convs/new.answer", "new")])
+    answers files != answers #[("imgs/grid.img", "answer"), ("convs/new.answer", "new")] &&
+    answers files != answers #[("imgs/grid.img", "answer"), ("faces/new.face", "new")])
     "answer judge hid changed or added content answers"
   require (PngEncode.crc32 "123456789".toUTF8 == 0xcbf43926) "PNG CRC test vector"
   for edit in [false, true] do
@@ -802,6 +818,16 @@ def work (r : Run) (hits : Nat) : IO Unit := do
   let counts ← checked (imageCounts r.report)
   require (counts == (2, hits)) s!"expected 2 unique images / {hits} hits, got {counts}"
 
+/-- What a cold build owes: both images decoded, one alpha decode answer, a private font cache,
+and its format's published answers, page streams for PDF and the vector's face for HTML. -/
+def coldBuild (r : Run) (format : String) : IO Unit := do
+  work r 0
+  require (entries r.cache "imgs" ".img" == 1) "expected one alpha decode answer"
+  require (r.cache.any fun (name, _) => name.startsWith "fontdb-" && name.endsWith ".tsv")
+    "font discovery populated no private cache"
+  let (operation, ext) := if format == "pdf" then ("flate", ".answer") else ("faces", ".face")
+  require (entries r.cache operation ext > 0) s!"no {operation} cache answers"
+
 def printSample (label : String) (r : Run) : IO Unit := do
   let phases := r.report.phases.toList.map fun p => s!"{p.name}={p.ms}"
   say s!"  {label}: wall={r.report.ms} compiler={r.report.compilerMs} ms; {String.intercalate " " phases}"
@@ -825,9 +851,7 @@ def checkEdit (binary dir cache : System.FilePath) (format label : String)
 
 def bench (binary dir : System.FilePath) (n frames : Nat) (format : String)
     (image : Bool → ByteArray := raster) : IO Run := do
-  IO.FS.writeFile (dir / "deck.tex") (deck frames)
-  IO.FS.writeBinFile (dir / "grid.png") (image false)
-  IO.FS.writeBinFile (dir / "blocks.pdf") (vector false)
+  writeInputs dir frames image false
   let cache := dir / "cache"
   let mut cold : Array Run := #[]
   let mut warm : Array Run := #[]
@@ -836,17 +860,12 @@ def bench (binary dir : System.FilePath) (n frames : Nat) (format : String)
     if ← cache.pathExists then IO.FS.removeDirAll cache
     let first ← compile binary dir cache format
     let second ← compile binary dir cache format
-    work first 0
+    coldBuild first format
     work second 1
     replay frames first second
     if let some earlier := cold[0]? then
       require (equivalent frames earlier.report first.report earlier.bytes first.bytes)
         "cold runs changed the workload or artifact"
-    require (entries first.cache "imgs" ".img" == 1) "expected one alpha decode answer"
-    require (first.cache.any fun (name, _) => name.startsWith "fontdb-" && name.endsWith ".tsv")
-      "font discovery populated no private cache"
-    let operation := if format == "pdf" then "flate" else "convs"
-    require (entries first.cache operation ".answer" > 0) s!"no {operation} cache answers"
     printSample s!"pair {i + 1} cold" first
     printSample s!"pair {i + 1} repeat" second
     cold := cold.push first
@@ -861,7 +880,7 @@ def bench (binary dir : System.FilePath) (n frames : Nat) (format : String)
   if coldMs > 0 then
     say s!"  repeat/cold wall={median (warm.map (·.report.ms)) * 100 / coldMs}% (descriptive, no threshold)"
   say s!"  work: alpha decodes 1 -> 0, image hits 0 -> 1; unique requests 2 -> 2"
-  say s!"  inventory: imgs={entries first.cache "imgs" ".img"} flate={entries first.cache "flate" ".answer"} convs={entries first.cache "convs" ".answer"} (published answers; identical on repeat)"
+  say s!"  inventory: imgs={entries first.cache "imgs" ".img"} flate={entries first.cache "flate" ".answer"} faces={entries first.cache "faces" ".face"} convs={entries first.cache "convs" ".answer"} (published answers; identical on repeat)"
   say s!"  artifact={Flate.contentKey first.bytes} bytes={first.bytes.size} pages={first.report.pages} diagnostics={first.report.diagnostics.size}"
   say s!"  font environment: {((first.report.phase? "fontdb").map (·.detail)).getD ""}; {((first.report.phase? "font").map (·.detail)).getD ""}"
   IO.FS.writeBinFile (dir / "grid.png") (image true)
@@ -873,6 +892,31 @@ def bench (binary dir : System.FilePath) (n frames : Nat) (format : String)
   let sourceEdit ← checkEdit binary dir cache format "same-path source edit" frames 1 vectorEdit
   require (entries sourceEdit.cache "imgs" ".img" == 2) "source edit repeated unchanged alpha work"
   return first
+
+/-- Every frame count and PNG workload the bench times, its inputs all original and all edited,
+builds in both formats as a timed cold build must (`compile`, `coldBuild`), a page a frame; each
+failing build is named. -/
+def fixtureCheck : IO Unit := do
+  let binary ← IO.FS.realPath (← compiler)
+  IO.FS.withTempDir fun dir => do
+    copyFonts dir
+    let mut failed := ""
+    let mut built := 0
+    for (frames, png, image) in
+        [(8, "stored", raster), (32, "stored", raster), (8, "compressed", compressedRaster 256)] do
+      for edited in [false, true] do
+        writeInputs dir frames image edited
+        for format in ["pdf", "html"] do
+          let state := s!"{frames} frames, {png} PNG, {if edited then "edited" else "original"}"
+          try
+            let r ← IO.FS.withTempDir fun cache => compile binary dir cache format
+            coldBuild r format
+            require (r.report.pages == frames) s!"{r.report.pages} pages"
+            built := built + 1
+          catch e => failed := failed ++ s!"\n{state}, {format}: {e}"
+    require failed.isEmpty s!"fixtures that do not build clean:{failed}"
+    say s!"slides fixtures: {built} cold builds clean (8 and 32 frames over the stored PNG, \
+8 over the compressed one; original and edited inputs; pdf and html)"
 
 def load : IO String := do
   return ((← (IO.FS.readFile "/proc/loadavg").toBaseIO).toOption.getD "unavailable").trimAscii.toString
@@ -901,10 +945,7 @@ def run (n : Nat) (compressed : Bool := false) : IO Unit := do
   say "Phases overlap: font includes fontdb. Do not sum phase medians. Tool invocations and conversion/compression hits are uninstrumented."
   say s!"host load before: {← load}"
   IO.FS.withTempDir fun dir => do
-    IO.FS.createDirAll (dir / "fonts")
-    for file in ← (System.FilePath.mk "testdata/corpus/fonts").readDir do
-      if file.path.extension == some "otf" || file.path.extension == some "ttf" then
-        IO.FS.writeBinFile (dir / "fonts" / file.fileName) (← IO.FS.readBinFile file.path)
+    copyFonts dir
     let fonts ← inventory (dir / "fonts")
     say s!"inputs: fonts={fingerprint fonts} ({fonts.size} files) png={Flate.contentKey original} pdf={Flate.contentKey (vector false)}; LC_ALL=C TZ=UTC"
     for frames in (if compressed then [8] else [8, 32]) do
@@ -1097,6 +1138,7 @@ def main (args : List String) : IO UInt32 := do
   if args.head? == some "--doc-cost" then return ← docCost args.tail
   if args == ["--slides-selftest"] then
     Slides.selftest
+    Slides.fixtureCheck
     return 0
   let leantex ← compiler
   let n := ((← IO.getEnv "N").bind (·.toNat?)).getD 5

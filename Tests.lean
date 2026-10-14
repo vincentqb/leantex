@@ -186,6 +186,7 @@ import Tests.ColourSolve
 import Tests.ThemePalette
 import Tests.ThemeCss
 import Tests.SlideLabels
+import Tests.SlidesBench
 import Tests.FontMath
 import Tests.FormulaFloor
 import Tests.MathAlphaGeometry
@@ -1015,6 +1016,7 @@ def main (args : List String) : IO UInt32 := do
   argsChecks ref
   renderChecks ref
   runCostChecks ref
+  Tests.slidesBenchChecks ref
   watchDeliveryChecks ref
   diagnosticFormatChecks ref
   diagnosticTriggerChecks ref
