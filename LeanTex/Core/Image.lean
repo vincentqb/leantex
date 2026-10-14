@@ -1158,6 +1158,13 @@ public theorem planParams_serialize_inj (a b : PlanParams)
   cases as_ <;> cases bs <;> cases ai <;> cases bi <;>
     simp_all [PlanParams.serialize]
 
+
+/-- Why a PNG's image data does not inflate: more of it than the header declares, or a stream
+that is no zlib stream. -/
+private def pngInflateWhy : Flate.Error → String
+  | .budget => "corrupt PNG: sample data does not match the declared size"
+  | .malformed why => s!"corrupt PNG: its image data does not inflate ({why})"
+
 /-- The cache-key segment: the serialization in hex. -/
 public def PlanParams.key (p : PlanParams) : String := p.serialize.foldl (· ++ Hex.byte true ·) ""
 
@@ -1220,7 +1227,7 @@ flatten it onto a background and re-export"
     else
       let rowBytes := s.pxW * channels
       match Flate.inflate s.payload (s.pxH * (1 + rowBytes)) with
-      | .error e => .error e
+      | .error e => .error (pngInflateWhy e)
       | .ok raw =>
         if raw.size != s.pxH * (1 + rowBytes) then
           .error "corrupt PNG: sample data does not match the declared size"

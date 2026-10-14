@@ -120,7 +120,7 @@ theorem lengths_contract (freqs : Array Nat) (limit : Nat) (hl : 0 < limit)
       · exact he
       · simp only [getElem?_neg freqs s he, Option.getD_none] at hs
         omega
-  let sorted := syms.qsort fun a b => freqs[a]?.getD 0 < freqs[b]?.getD 0
+  let sorted := (syms.toList.mergeSort fun a b => freqs[a]?.getD 0 ≤ freqs[b]?.getD 0).toArray
   let items := sorted.map fun s => freqs[s]?.getD 0
   let out := if syms.size == 0 then Array.replicate freqs.size 0 else
     if syms.size == 1 then (Array.replicate freqs.size 0).set! (syms[0]?.getD 0) 1 else
@@ -152,7 +152,9 @@ theorem lengths_contract (freqs : Array Nat) (limit : Nat) (hl : 0 < limit)
       have hc := singleton_contract syms freqs.size limit hone hv hl
       exact ⟨hc.1, fun s => (hc.2 s).trans (hmem s)⟩
     · simp only [hone, ite_false]
-      have hp : sorted.Perm syms := qsort_perm_exact syms _
+      have hp : sorted.Perm syms := Array.Perm.of_toList_perm (by
+        simpa only [sorted, List.toList_toArray] using List.mergeSort_perm syms.toList
+          (fun a b => decide (freqs[a]?.getD 0 ≤ freqs[b]?.getD 0)))
       have hn : sorted.toList.Nodup := hp.symm.toList.nodup (live_nodup freqs)
       have hv' : ∀ s ∈ sorted.toList, s < freqs.size := fun s hs =>
         hv s (hp.toList.mem_iff.mp hs)

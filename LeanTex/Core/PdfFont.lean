@@ -5,8 +5,8 @@ public import LeanTex.Core.PdfRead
 public import LeanTex.Core.Ink
 public import Std.Data.HashMap
 import LeanTex.Core.GlyphList
+public import LeanTex.Core.PdfFilters
 import LeanTex.Core.PdfContentLex
-import LeanTex.Core.PdfFilters
 import LeanTex.Core.Font
 
 /-! A PDF figure's fonts read for drawing (ISO 32000-2 §9.5–9.10): codes, glyphs, advances and text. -/
@@ -59,14 +59,25 @@ public structure Loaded where
 /-- A number object as an exact rational. -/
 public def num? (o : Obj) : Option Rat := PdfContentLex.numRat? o
 
-/-- A stream's decoded bytes, or `none`. -/
-public def streamBytes (d : Doc) (o : Obj) : Option ByteArray :=
+/-- A stream object's decoded bytes, or why it does not decode, a filter the reader leaves
+undecoded read as malformed; `none` for an object that is no stream. -/
+public def streamRead (d : Doc) (o : Obj) : Option (Except Flate.Error ByteArray) :=
   match d.stream o with
   | .ok (some (dict, raw)) =>
-    match PdfFilters.decode dict raw with
-    | .ok (.bytes b) => some b
-    | _ => none
+    some (match PdfFilters.decode dict raw with
+      | .ok (.bytes b) => .ok b
+      | .ok _ => .error (.malformed "a filter the reader does not decode")
+      | .error e => .error e)
   | _ => none
+
+/-- A stream's decoded bytes, or `none`. -/
+public def streamBytes (d : Doc) (o : Obj) : Option ByteArray :=
+  (streamRead d o).bind (·.toOption)
+
+/-- What a stream that does not decode costs: its `key` past the reader's budget, else `lost`. -/
+public def undecoded (key : String) (lost : Gfx.Loss) : Flate.Error → Gfx.Loss
+  | .budget => .budget key
+  | .malformed _ => lost
 
 /-- A dictionary's entry as written, the dictionary itself followed one reference. -/
 public def entry (d : Doc) (o : Obj) (k : String) : Option Obj :=
@@ -275,22 +286,25 @@ private def programOf (d : Doc) (desc : Option Obj) : Program × Option Gfx.Loss
     match ds with
     | .dict es => (es.find? (·.1 == k)).map (·.2)
     | _ => none
+  let unread (r : Option (Except Flate.Error ByteArray)) : Gfx.Loss := match r with
+    | some (.error e) => undecoded "font-program" (.font "unreadable") e
+    | _ => .font "unreadable"
   match file "FontFile2" with
   | some f =>
-    match streamBytes d f with
-    | some b => (sfntProgram b, none, some b)
-    | none => (.missing, some (.font "unreadable"), none)
+    match streamRead d f with
+    | some (.ok b) => (sfntProgram b, none, some b)
+    | r => (.missing, some (unread r), none)
   | none =>
     match file "FontFile3" with
     | some f =>
-      match streamBytes d f, (d.stream f).toOption.getD none with
-      | some b, some (dict, _) =>
+      match streamRead d f, (d.stream f).toOption.getD none with
+      | some (.ok b), some (dict, _) =>
         match dict.get? "Subtype" with
         | some (.name "OpenType") => (sfntProgram b, none, some b)
         | _ =>
           let src := Ink.Src.ofCff b
           (.ink src ((src.cffMatrix 0).getD #[mkRat 1 1000, 0, 0, mkRat 1 1000, 0, 0]), none, none)
-      | _, _ => (.missing, some (.font "unreadable"), none)
+      | r, _ => (.missing, some (unread r), none)
     | none =>
       match file "FontFile" with
       | some _ => (.missing, some (.font "type1"), none)
@@ -350,11 +364,10 @@ public def cffNameGlyph (src : Ink.Src) (n : String) : Option Nat :=
 /-- A font's ToUnicode mappings, and the loss when its stream does not decode. -/
 private def toUnicodeOf (d : Doc) (font : Obj) : Std.HashMap Nat String × Array Gfx.Loss :=
   match entry d font "ToUnicode" with
-  | some o => match streamBytes d o with
-    | some b => (toUnicode b, #[])
-    | none =>
-      if ((d.stream o).toOption.getD none).isSome then ({}, #[.font "tounicode-unreadable"])
-      else ({}, #[])
+  | some o => match streamRead d o with
+    | some (.ok b) => (toUnicode b, #[])
+    | some (.error e) => ({}, #[undecoded "tounicode" (.font "tounicode-unreadable") e])
+    | none => ({}, #[])
   | none => ({}, #[])
 
 /-- A simple font read for drawing (§9.6): each code's glyph, width and text. -/
@@ -482,22 +495,23 @@ public def loadComposite (d : Doc) (font : Obj) : Loaded := Id.run do
     | some (.name "Identity-V") => (identity, #[(0, 0xFFFF, 0)], true, none)
     | some (.name n) => (identity, #[(0, 0xFFFF, 0)], false, some (.font s!"cmap-{n}"))
     | some o =>
-      match streamBytes d o with
-      | some b =>
+      match streamRead d o with
+      | some (.ok b) =>
         let (sp, cs) := cmapRanges b
         let vert := match (d.stream o).toOption.getD none with
           | some (dict, _) => dict.get? "WMode" == some (.int 1)
           | none => false
         (if sp.isEmpty then identity else sp, cs, vert, none)
+      | some (.error e) => (identity, #[(0, 0xFFFF, 0)], false,
+        some (undecoded "cmap" (.font "cmap-unreadable") e))
       | none => (identity, #[(0, 0xFFFF, 0)], false, some (.font "cmap-unreadable"))
     | none => (identity, #[(0, 0xFFFF, 0)], false, some (.font "cmap-missing"))
   let (gidOf, gidLoss) : Option ByteArray × Array Gfx.Loss := match entry d cidFont "CIDToGIDMap" with
     | none => (none, #[])
-    | some o => match streamBytes d o with
-      | some b => (some b, #[])
-      | none =>
-        if ((d.stream o).toOption.getD none).isSome then (none, #[.font "cidtogid-unreadable"])
-        else (none, #[])
+    | some o => match streamRead d o with
+      | some (.ok b) => (some b, #[])
+      | some (.error e) => (none, #[undecoded "cidtogid" (.font "cidtogid-unreadable") e])
+      | none => (none, #[])
   let isCff := match program with
     | .ink src _ => src.isCidCff
     | _ => false

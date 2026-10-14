@@ -26,6 +26,25 @@ public theorem bump_monotone (freqs : Array Nat) (symbol index : Nat) :
     · simp [bump, Array.set!_eq_setIfInBounds, hi]
   · simp [bump, Array.set!_eq_setIfInBounds, Ne.symm h]
 
+/-- Two different symbols of positive frequency make two live symbols. -/
+public theorem live_two (freqs : Array Nat) (i j : Nat) (hi : i < freqs.size) (hj : j < freqs.size)
+    (hne : i ≠ j) (hpi : 0 < freqs[i]?.getD 0) (hpj : 0 < freqs[j]?.getD 0) :
+    1 < ((Array.range freqs.size).filter fun s => freqs[s]?.getD 0 > 0).size := by
+  have hm (k : Nat) (hk : k < freqs.size) (hp : 0 < freqs[k]?.getD 0) :
+      k ∈ ((Array.range freqs.size).filter fun s => freqs[s]?.getD 0 > 0).toList := by
+    simp only [Array.mem_toList_iff, Array.mem_filter, Array.mem_range, decide_eq_true_eq]
+    exact ⟨hk, hp⟩
+  have hmi := hm i hi hpi
+  have hmj := hm j hj hpj
+  generalize ((Array.range freqs.size).filter fun s => freqs[s]?.getD 0 > 0) = live at hmi hmj
+  rcases hlv : live.toList with _ | ⟨x, _ | ⟨y, rest⟩⟩
+  · simp [hlv] at hmi
+  · simp only [hlv, List.mem_singleton] at hmi hmj
+    exact absurd (hmi.trans hmj.symm) hne
+  · have := congrArg List.length hlv
+    simp only [Array.length_toList, List.length_cons] at this
+    omega
+
 /-- Counts each entry's symbol in the alphabet `key` selects; `none` skips the entry. -/
 @[specialize] public def count {α : Type} (key : α → Option Nat)
     (entries : Array α) (initial : Array Nat) : Array Nat := Id.run do

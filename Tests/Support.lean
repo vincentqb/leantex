@@ -3,6 +3,7 @@ module
 public import LeanTex.Cli.FontDiscovery
 public import LeanTex.Cli.RunBounded
 public import LeanTex
+public import LeanTex.Core.Flate.BitWriter
 public import LeanTex.Core.HtmlDoc
 public import Lean.Data.Json.Parser
 public import Lean.Data.Json.FromToJson.Basic
@@ -24,6 +25,41 @@ def onePaint {α : Type} [BEq α] (paint : Option (Array α)) : Option α :=
   paint.bind fun p => p[0]?.bind fun first => if p.all (· == first) then some first else none
 
 def bytes (l : List UInt8) : ByteArray := ⟨l.toArray⟩
+
+/-- A zlib stream of one final dynamic block over these code lengths, each written in its canonical
+code, then `data`'s literal/length symbols `(0, s, _)`, distance symbols `(1, s, _)` and raw bits
+`(2, bits, width)`, with no Adler-32. -/
+def zlibDynamic (cl lit dist : Array Nat) (data : Array (Nat × Nat × Nat)) : ByteArray := Id.run do
+  let order := #[16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15]
+  let ordered : Array Nat := order.map fun s => cl[s]?.getD 0
+  let mut n := ordered.size
+  for _ in [0:15] do
+    if n > 4 && ordered[n - 1]?.getD 0 == 0 then n := n - 1
+  let mut w : Flate.Bw := { out := ByteArray.empty, bits := 0, nbits := 0 }
+  w := ((((w.push 1 1).push 2 2).push (lit.size - 257) 5).push (dist.size - 1) 5).push (n - 4) 4
+  for v in ordered.extract 0 n do w := w.push v 3
+  let clCodes := Flate.canonCodes cl
+  for v in lit ++ dist do w := w.push (clCodes[v]?.getD 0) (cl[v]?.getD 0)
+  let litCodes := Flate.canonCodes lit
+  let distCodes := Flate.canonCodes dist
+  for (kind, v, k) in data do
+    w := if kind == 0 then w.push (litCodes[v]?.getD 0) (lit[v]?.getD 0)
+      else if kind == 1 then w.push (distCodes[v]?.getD 0) (dist[v]?.getD 0)
+      else w.push v k
+  return bytes [0x78, 0x01] ++ w.flush
+
+/-- Lengths over `n` symbols, each listed symbol its length and the rest none. -/
+def lengthsOf (n : Nat) (assign : List (Nat × Nat)) : Array Nat :=
+  (Array.range n).map fun s => ((assign.find? (·.1 == s)).map (·.2)).getD 0
+
+/-- A zlib stream that inflates to zeros past `PdfRead.maxDecoded`: one literal, then length-258
+matches one byte back, each two bits. -/
+def overBudgetZeros (_ : Unit) : ByteArray :=
+  let runs := PdfRead.maxDecoded / 258 + 1
+  let data : Array (Nat × Nat × Nat) :=
+    #[(0, 0, 0)] ++ (Array.replicate runs #[(0, 285, 0), (1, 0, 0)]).flatten ++ #[(0, 256, 0)]
+  zlibDynamic (Array.replicate 16 4 ++ #[0, 0, 0]) (lengthsOf 286 [(0, 2), (256, 2), (285, 1)])
+    #[1] data
 
 def svgDocument (body : String) (width : Nat := 20) (height : Nat := 20) : ByteArray :=
   (s!"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{width}\" height=\"{height}\">" ++

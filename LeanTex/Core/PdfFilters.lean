@@ -1,11 +1,12 @@
 module
 
 public import LeanTex.Core.PdfObj
+public import LeanTex.Core.Flate
 import LeanTex.Core.PdfRead
-import LeanTex.Core.Flate
 
 /-! The stream filters of ISO 32000-2 §7.4 a figure's streams may name, chained in order, the
-ASCII85, run-length, LZW and Flate outputs capped at `PdfRead.maxDecoded`. -/
+ASCII85, run-length, LZW and Flate outputs capped at `PdfRead.maxDecoded`, a failure told apart
+as the cap or malformed data (`Flate.Error`). -/
 
 namespace LeanTex.Core.PdfFilters
 
@@ -44,7 +45,7 @@ public def asciiHex (b : ByteArray) : ByteArray := Id.run do
   return out
 
 /-- ASCII85Decode (§7.4.3): five base-85 digits to four bytes, `z` for four zeros, up to `~>`. -/
-public def ascii85 (b : ByteArray) (cap : Nat) : Except String ByteArray := Id.run do
+public def ascii85 (b : ByteArray) (cap : Nat) : Except Flate.Error ByteArray := Id.run do
   let mut out := ByteArray.empty
   let mut group : Array Nat := #[]
   let flush (out : ByteArray) (g : Array Nat) : ByteArray :=
@@ -62,19 +63,21 @@ public def ascii85 (b : ByteArray) (cap : Nat) : Except String ByteArray := Id.r
       group := group.push (c - 33)
       if group.size == 5 then
         let v := group.foldl (fun a d => a * 85 + d) 0
-        if v ≥ 4294967296 then return .error "malformed ASCII85 data: a group exceeds four bytes"
+        if v ≥ 4294967296 then
+          return .error (.malformed "malformed ASCII85 data: a group exceeds four bytes")
         out := flush out group
         group := #[]
     else if PdfLex.isWs c then pure ()
-    else return .error "malformed ASCII85 data: an unexpected character"
-    if out.size > cap then return .error "an ASCII85 stream decodes past the size limit"
-  if group.size == 1 then return .error "malformed ASCII85 data: a final group of one digit"
+    else return .error (.malformed "malformed ASCII85 data: an unexpected character")
+    if out.size > cap then return .error .budget
+  if group.size == 1 then
+    return .error (.malformed "malformed ASCII85 data: a final group of one digit")
   if group.size > 1 then out := flush out group
-  if out.size > cap then return .error "an ASCII85 stream decodes past the size limit"
+  if out.size > cap then return .error .budget
   return .ok out
 
 /-- RunLengthDecode (§7.4.5): a length byte copies `n + 1` bytes or repeats one `257 − n` times; 128 ends. -/
-public def runLength (b : ByteArray) (cap : Nat) : Except String ByteArray := Id.run do
+public def runLength (b : ByteArray) (cap : Nat) : Except Flate.Error ByteArray := Id.run do
   let mut out := ByteArray.empty
   let mut i := 0
   for _ in [0:b.size + 1] do
@@ -88,11 +91,12 @@ public def runLength (b : ByteArray) (cap : Nat) : Except String ByteArray := Id
       let v := (b[i + 1]?).getD 0
       for _ in [0:257 - n] do out := out.push v
       i := i + 2
-    if out.size > cap then return .error "a run-length stream decodes past the size limit"
+    if out.size > cap then return .error .budget
   return .ok out
 
 /-- LZWDecode (§7.4.4): codes of 9 to 12 bits, 256 clearing the table and 257 ending; `early` switches width early. -/
-public def lzw (b : ByteArray) (early : Bool) (cap : Nat) : Except String ByteArray := Id.run do
+public def lzw (b : ByteArray) (early : Bool) (cap : Nat) : Except Flate.Error ByteArray :=
+    Id.run do
   let mut out := ByteArray.empty
   let mut table : Array ByteArray := (Array.range 256).map fun c => ByteArray.empty.push (UInt8.ofNat c)
   table := table.push ByteArray.empty |>.push ByteArray.empty
@@ -118,7 +122,7 @@ public def lzw (b : ByteArray) (early : Bool) (cap : Nat) : Except String ByteAr
         else if code == table.size then prev.map fun p => p.push ((p[0]?).getD 0)
         else none
       match entry? with
-      | none => return .error "malformed LZW data: a code beyond the table"
+      | none => return .error (.malformed "malformed LZW data: a code beyond the table")
       | some entry =>
         out := out ++ entry
         if let some p := prev then
@@ -130,12 +134,11 @@ public def lzw (b : ByteArray) (early : Bool) (cap : Nat) : Except String ByteAr
         else if limit ≥ 1024 then width := 11
         else if limit ≥ 512 then width := 10
         else width := 9
-      if out.size > cap then return .error "an LZW stream decodes past the size limit"
+      if out.size > cap then return .error .budget
   return .ok out
 
-/-- The TIFF predictor (§7.4.4.3, Predictor 2) for 8-bit components. -/
-public def tiffUnpredict (data : ByteArray) (columns colors bpc : Nat) : Except String ByteArray := do
-  if bpc != 8 then throw s!"the TIFF predictor at {bpc} bits per component is not supported"
+/-- The TIFF predictor (§7.4.4.3, Predictor 2) over 8-bit components. -/
+public def tiffUnpredict (data : ByteArray) (columns colors : Nat) : ByteArray := Id.run do
   let row := max 1 (columns * colors)
   let mut out := data
   for r in [0:data.size / row] do
@@ -148,30 +151,34 @@ public def tiffUnpredict (data : ByteArray) (columns colors bpc : Nat) : Except 
 private def parm (p : Option Obj) (k : String) (d : Int) : Int :=
   ((p.bind (·.get? k)).bind Obj.int?).getD d
 
-private def unpredict (p : Option Obj) (data : ByteArray) : Except String ByteArray := do
+/-- A filter's output under its predictor (§7.4.4.4): the TIFF predictor over 8-bit components
+and the PNG predictors; another predictor is refused by name. -/
+private def unpredict (p : Option Obj) (data : ByteArray) : Except Flate.Error Decoded :=
   let pred := parm p "Predictor" 1
-  if pred ≤ 1 then return data
   let columns := (parm p "Columns" 1).toNat
   let colors := (parm p "Colors" 1).toNat
   let bpc := (parm p "BitsPerComponent" 8).toNat
-  if pred == 2 then return ← tiffUnpredict data columns colors bpc
-  if pred ≥ 10 then
+  if pred ≤ 1 then .ok (.bytes data)
+  else if pred == 2 then
+    if bpc == 8 then .ok (.bytes (tiffUnpredict data columns colors))
+    else .ok (.refused s!"tiff-predictor-{bpc}-bit")
+  else if pred ≥ 10 then
     let bpp := max 1 (colors * bpc / 8)
     let rowBytes := max 1 ((columns * colors * bpc + 7) / 8)
     let rows := data.size / (rowBytes + 1)
-    return ← Flate.pngUnfilter data rows rowBytes bpp
-  throw s!"stream predictor {pred} is not supported"
+    match Flate.pngUnfilter data rows rowBytes bpp with
+    | .ok b => .ok (.bytes b)
+    | .error why => .error (.malformed why)
+  else .ok (.refused s!"predictor-{pred}")
 
 private def applyOne (name : String) (p : Option Obj) (data : ByteArray) (cap : Nat) :
-    Except String Decoded := do
+    Except Flate.Error Decoded := do
   match filterName name with
   | "ASCIIHexDecode" => return .bytes (asciiHex data)
   | "ASCII85Decode" => return .bytes (← ascii85 data cap)
   | "RunLengthDecode" => return .bytes (← runLength data cap)
-  | "LZWDecode" => return .bytes (← unpredict p (← lzw data (parm p "EarlyChange" 1 != 0) cap))
-  | "FlateDecode" =>
-    let out ← Flate.inflate data cap
-    return .bytes (← unpredict p out)
+  | "LZWDecode" => unpredict p (← lzw data (parm p "EarlyChange" 1 != 0) cap)
+  | "FlateDecode" => unpredict p (← Flate.inflate data cap)
   | "DCTDecode" => return .dct data
   | "JBIG2Decode" => return .refused "jbig2"
   | "JPXDecode" => return .refused "jpx"
@@ -181,7 +188,7 @@ private def applyOne (name : String) (p : Option Obj) (data : ByteArray) (cap : 
 
 /-- A stream's data through its filter chain (§7.4), each filter with its parameters and each
 expanding filter's output capped at `cap` bytes; a filter after `DCTDecode` is refused. -/
-public def decodeCapped (dict : Obj) (raw : ByteArray) (cap : Nat) : Except String Decoded := do
+public def decodeCapped (dict : Obj) (raw : ByteArray) (cap : Nat) : Except Flate.Error Decoded := do
   let get (k abbr : String) : Option Obj := (dict.get? k).orElse fun _ => dict.get? abbr
   let names : Array String := match get "Filter" "F" with
     | some (.name n) => #[n]
@@ -204,7 +211,7 @@ public def decodeCapped (dict : Obj) (raw : ByteArray) (cap : Nat) : Except Stri
   return cur
 
 /-- A stream's data through its filter chain, capped at `PdfRead.maxDecoded`. -/
-public def decode (dict : Obj) (raw : ByteArray) : Except String Decoded :=
+public def decode (dict : Obj) (raw : ByteArray) : Except Flate.Error Decoded :=
   decodeCapped dict raw PdfRead.maxDecoded
 
 end LeanTex.Core.PdfFilters

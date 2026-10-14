@@ -396,7 +396,8 @@ theorem read_write_bounded_exact (raw : ByteArray) (maxOut : Nat)
     at hread
   have hfinish := hsteps.finish
     (.done (readStep_end_exact _ _ out _ _ maxOut hread))
-  have h := DecodeLoop.run_exact _ _ _ _ (maxOut + 2) "deflate: block did not end"
+  have h := DecodeLoop.run_exact _ _ _ _ (maxOut + 2)
+    (.malformed "deflate: block did not end")
     hfinish (by have := ht.progress; omega)
   simpa only [read, writePayload, hp.complete] using h
 

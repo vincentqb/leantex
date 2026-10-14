@@ -75,7 +75,7 @@ public def lengths (freqs : Array Nat) (limit : Nat) : Array Nat := Id.run do
     return Array.replicate freqs.size 0
   if n == 1 then
     return (Array.replicate freqs.size 0).set! (syms[0]?.getD 0) 1
-  let sorted := syms.qsort fun a b => (freqs[a]?.getD 0) < (freqs[b]?.getD 0)
+  let sorted := (syms.toList.mergeSort fun a b => freqs[a]?.getD 0 ≤ freqs[b]?.getD 0).toArray
   let items := sorted.map fun s => freqs[s]?.getD 0
   return backtrace sorted freqs.size (levels items limit)
 

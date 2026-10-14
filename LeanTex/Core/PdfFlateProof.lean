@@ -20,7 +20,7 @@ private theorem decodeStream_flate (dict : Obj) (raw data : ByteArray)
     decodeStream dict raw = .ok data := by
   unfold decodeStream
   rw [hf, hd, hp]
-  change (Flate.inflate raw maxDecoded >>= fun v =>
+  change ((Flate.inflate raw maxDecoded).mapError (inflateWhy maxDecoded) >>= fun v =>
     if (raw.size < 4 || (raw[raw.size - 4]?.getD 0).toNat * 16777216 +
         (raw[raw.size - 3]?.getD 0).toNat * 65536 +
         (raw[raw.size - 2]?.getD 0).toNat * 256 +
@@ -28,7 +28,7 @@ private theorem decodeStream_flate (dict : Obj) (raw data : ByteArray)
       .error "malformed PDF: a stream's data does not match its Adler-32 checksum"
     else .ok v) = .ok data
   rw [hinflate]
-  simp only [bind, Except.bind]
+  simp only [Except.mapError, bind, Except.bind]
   simp [show ¬ raw.size < 4 by omega, hc]
 
 public theorem decodeStream_deflate_exact (dict : Obj) (data : ByteArray)

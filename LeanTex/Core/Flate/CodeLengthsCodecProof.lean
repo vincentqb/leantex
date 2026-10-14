@@ -4,6 +4,7 @@ import all LeanTex.Core.Flate.CodeLengthsReader
 import all LeanTex.Core.Flate.CodeLengthsWriter
 import all LeanTex.Core.Flate.BitStreamProof
 import all LeanTex.Core.Flate.DecodeLoop
+import LeanTex.Core.Flate.Frequencies
 
 namespace LeanTex.Core.Flate.CodeLengths
 
@@ -16,6 +17,93 @@ theorem frequencies_contract (entries : Array Entry) :
   refine ⟨by simpa only [frequencies, Array.size_replicate] using h.1, ?_⟩
   intro entry he hs
   exact h.2.2 entry he entry.1 rfl (by simpa using hs)
+
+/-- What a covering whose entries all take one symbol spells: that length throughout for a
+literal, zeros for a run of zeros, and from the start nothing for a repeat, which needs a length
+before it. -/
+theorem Covers.one_symbol {seq : Array Nat} {start : Nat} {out : Array Entry} {p : Nat} (s : Nat)
+    (h : Covers seq start out p) (hs : ∀ e ∈ out.toList, e.1 = s) :
+    (s < 16 → ∀ i, start ≤ i → i < p → seq[i]?.getD 0 = s) ∧ (s = 16 → start = 0 → p = 0) ∧
+      (16 < s → ∀ i, start ≤ i → i < p → seq[i]?.getD 0 = 0) := by
+  induction h with
+  | empty _ =>
+    exact ⟨fun _ _ h1 h2 => absurd h2 (by omega), fun _ h0 => h0.symm ▸ rfl,
+      fun _ _ h1 h2 => absurd h2 (by omega)⟩
+  | @push out q q' entry prior step ih =>
+    have hprior := ih (fun e he => hs e (by simp [he]))
+    have he : entry.1 = s := hs entry (by simp)
+    have hle := prior.contract.1
+    cases step with
+    | literal v hv hr =>
+      simp only at he
+      subst he
+      refine ⟨fun _ i h1 hi => ?_, fun h16 => absurd h16 (by omega),
+        fun h16 => absurd h16 (by omega)⟩
+      by_cases hiq : i < q
+      · exact hprior.1 hv i h1 hiq
+      · have heq : i = q := by omega
+        subst heq
+        simpa using hr.2 0 (by omega)
+    | repeat16 count v hc hp prev hr =>
+      simp only at he
+      subst he
+      exact ⟨fun h => absurd h (by omega), fun _ h0 => absurd (hprior.2.1 rfl h0) (by omega),
+        fun h => absurd h (by omega)⟩
+    | zeros17 count hc hr =>
+      simp only at he
+      subst he
+      refine ⟨fun h => absurd h (by omega), fun h => absurd h (by omega), fun _ i h1 hi => ?_⟩
+      by_cases hiq : i < q
+      · exact hprior.2.2 (by omega) i h1 hiq
+      · simpa [show q + (i - q) = i by omega] using hr.2 (i - q) (by omega)
+    | zeros18 count hc hr =>
+      simp only at he
+      subst he
+      refine ⟨fun h => absurd h (by omega), fun h => absurd h (by omega), fun _ i h1 hi => ?_⟩
+      by_cases hiq : i < q
+      · exact hprior.2.2 (by omega) i h1 hiq
+      · simpa [show q + (i - q) = i by omega] using hr.2 (i - q) (by omega)
+
+/-- The code lengths of a sequence that is not constant use two symbols of the code-length
+alphabet, so its code fills its space. -/
+theorem frequencies_two_live (seq : Array Nat) (hv : ∀ i < seq.size, seq[i]?.getD 0 < 16)
+    (hvary : ∃ i j, i < seq.size ∧ j < seq.size ∧ seq[i]?.getD 0 ≠ seq[j]?.getD 0) :
+    1 < ((Array.range (frequencies (encode seq)).size).filter
+      fun s => (frequencies (encode seq))[s]?.getD 0 > 0).size := by
+  have hc := encode_covers seq hv
+  have hf := frequencies_contract (encode seq)
+  obtain ⟨i, j, hi, hj, hne⟩ := hvary
+  have hvalid := hc.contract.2.2
+  have htwo : ∃ e₁ ∈ (encode seq).toList, ∃ e₂ ∈ (encode seq).toList, e₁.1 ≠ e₂.1 := by
+    cases hl : (encode seq).toList with
+    | nil =>
+      exfalso
+      have ho := hc.one_symbol 0 (by simp [hl])
+      have := ho.1 (by omega) i (Nat.zero_le _) hi
+      have := ho.1 (by omega) j (Nat.zero_le _) hj
+      omega
+    | cons e rest =>
+      by_cases hall : ∀ e' ∈ (encode seq).toList, e'.1 = e.1
+      · exfalso
+        have ho := hc.one_symbol e.1 hall
+        have he19 : e.1 < 19 := (hvalid e (by simp [hl])).1
+        by_cases h16 : e.1 < 16
+        · exact hne ((ho.1 h16 i (Nat.zero_le _) hi).trans
+            (ho.1 h16 j (Nat.zero_le _) hj).symm)
+        · by_cases h16' : e.1 = 16
+          · have := ho.2.1 h16' rfl
+            omega
+          · exact hne ((ho.2.2 (by omega) i (Nat.zero_le _) hi).trans
+              (ho.2.2 (by omega) j (Nat.zero_le _) hj).symm)
+      · have hex : ∃ e' ∈ (encode seq).toList, e'.1 ≠ e.1 := by
+          refine Classical.byContradiction fun hno => hall fun e' he' => ?_
+          exact Classical.byContradiction fun hne' => hno ⟨e', he', hne'⟩
+        obtain ⟨e', hm, hne'⟩ := hex
+        exact ⟨e', by simpa [hl] using hm, e, by simp, hne'⟩
+  obtain ⟨e₁, h₁, e₂, h₂, hne₂⟩ := htwo
+  exact Frequencies.live_two _ e₁.1 e₂.1 (by rw [hf.1]; exact (hvalid e₁ h₁).1)
+    (by rw [hf.1]; exact (hvalid e₂ h₂).1) hne₂ (hf.2 e₁ h₁ (hvalid e₁ h₁).1)
+    (hf.2 e₂ h₂ (hvalid e₂ h₂).1)
 
 theorem writeEntry_contract (lengths codes : Array Nat) (w : Bw) (entry : Entry)
     (hw : w.Valid) (hl : lengths[entry.1]?.getD 0 ≤ 16) (he : entry.2.2 ≤ 16) :
@@ -164,7 +252,7 @@ theorem read_write_exact (seq : Array Nat)
           (encode seq) w).position}) :=
     .done (by simp [readStep, hp.1, pure, Except.pure])
   have h := DecodeLoop.run_exact _ _ _ _ (seq.size + 1)
-    "deflate: code lengths overrun their table" (hsteps.finish hd)
+    (.malformed "deflate: code lengths overrun their table") (hsteps.finish hd)
     (by have := hc.contract.1; omega)
   simpa only [read, hp.complete] using h
 

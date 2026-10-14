@@ -61,10 +61,15 @@ theorem codeLengths_contract (litLens distLens : Array Nat) :
     (by decide) (by omega)
   exact ⟨hl.1.size_eq.trans hf, hl.1.width_le⟩
 
-theorem codeLengths_mkHuff?_exact (litLens distLens : Array Nat) :
-    mkHuff? (codeLengths litLens distLens) = some (mkHuff (codeLengths litLens distLens)) := by
+theorem codeLengths_mkHuff?_exact (litLens distLens : Array Nat)
+    (hv : ∀ s < (litLens ++ distLens).size, (litLens ++ distLens)[s]?.getD 0 < 16)
+    (hvary : ∃ i j, i < (litLens ++ distLens).size ∧ j < (litLens ++ distLens).size ∧
+      (litLens ++ distLens)[i]?.getD 0 ≠ (litLens ++ distLens)[j]?.getD 0) :
+    mkHuff? (codeLengths litLens distLens) false =
+      some (mkHuff (codeLengths litLens distLens)) := by
   have hf := (CodeLengths.frequencies_contract (CodeLengths.encode (litLens ++ distLens))).1
-  exact packageMerge_mkHuff?_exact _ 7 ⟨by decide, by decide⟩ (by omega)
+  exact packageMerge_mkHuff?_exact _ 7 false ⟨by decide, by decide⟩ (by omega)
+    (Or.inr (CodeLengths.frequencies_two_live _ hv hvary))
 
 theorem append_width_exact (litLens distLens : Array Nat)
     (hl : ∀ s : Nat, litLens[s]?.getD 0 < 16)
@@ -103,6 +108,8 @@ theorem read_write_exact (litLens distLens : Array Nat) (w : Bw) (data : ByteArr
     (hds : 1 ≤ distLens.size ∧ distLens.size ≤ 30)
     (hl : ∀ s : Nat, litLens[s]?.getD 0 < 16)
     (hd : ∀ s : Nat, distLens[s]?.getD 0 < 16)
+    (hvary : ∃ i j, i < (litLens ++ distLens).size ∧ j < (litLens ++ distLens).size ∧
+      (litLens ++ distLens)[i]?.getD 0 ≠ (litLens ++ distLens)[j]?.getD 0)
     (hr : (write litLens distLens w).Realizes data) :
     read {data, bitPos := w.position} =
       .ok (litLens, distLens, {data, bitPos := (write litLens distLens w).position}) := by
@@ -143,10 +150,15 @@ theorem read_write_exact (litLens distLens : Array Nat) (w : Bw) (data : ByteArr
     omega
   have hnlit : litLens.size - 257 + 257 = litLens.size := by omega
   have hndist : distLens.size - 1 + 1 = distLens.size := by omega
+  have hfit : (decide (litLens.size > 286) || decide (distLens.size > 30)) = false := by
+    simp only [Bool.or_eq_false_iff, decide_eq_false_iff_not]
+    omega
+  have hcl := codeLengths_mkHuff?_exact litLens distLens (append_width_exact litLens distLens hl hd)
+    hvary
   simp only [Array.size_append] at b5
-  dsimp only [w1, w2, w3, w4, values, lengths] at b2 b3 b4 b5 hrestore hsize
-  simp only [read, b1, b2, b3, hsize, hnlit, hndist, b4,
-    hrestore, codeLengths_mkHuff?_exact, bind, Except.bind, pure, Except.pure]
+  dsimp only [w1, w2, w3, w4, values, lengths] at b2 b3 b4 b5 hrestore hsize hcl
+  simp only [read, b1, b2, b3, hsize, hnlit, hndist, hfit, Bool.false_eq_true, ↓reduceIte, b4,
+    hrestore, hcl, bind, Except.bind, pure, Except.pure]
   rw [b5]
   simp only [Array.extract_append_left, Array.extract_append_right, Array.extract_size]
 

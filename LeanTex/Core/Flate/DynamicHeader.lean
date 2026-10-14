@@ -41,15 +41,20 @@ public def write (litLens distLens : Array Nat) (w : Bw) : Bw :=
   let w := FieldStream.write 3 values w
   CodeLengths.write lengths (canonCodes lengths) (CodeLengths.encode (litLens ++ distLens)) w
 
-/-- Reads a dynamic block's literal and distance length arrays. -/
-public def read (r : Br) : Except String (Array Nat × Array Nat × Br) := do
-  let some (hlit, r) := r.bits 5 | .error "deflate: truncated"
-  let some (hdist, r) := r.bits 5 | .error "deflate: truncated"
-  let some (hclen, r) := r.bits 4 | .error "deflate: truncated"
-  let (values, r) ← FieldStream.read 3 (hclen + 4) r
+/-- Reads a dynamic block's literal and distance length arrays, at most 286 and 30 of them, under a
+complete code-length code (RFC 1951 §3.2.7), as zlib's inflate reads them. -/
+public def read (r : Br) : Except Error (Array Nat × Array Nat × Br) := do
+  let some (hlit, r) := r.bits 5 | .error (.malformed "deflate: truncated")
+  let some (hdist, r) := r.bits 5 | .error (.malformed "deflate: truncated")
+  let some (hclen, r) := r.bits 4 | .error (.malformed "deflate: truncated")
   let nlit := hlit + 257
   let ndist := hdist + 1
-  let some table := mkHuff? (restore values) | .error "deflate: over-subscribed code-length code"
+  if nlit > 286 || ndist > 30 then
+    .error (.malformed "deflate: more literal/length or distance codes than the alphabets hold")
+  else
+  let (values, r) ← FieldStream.read 3 (hclen + 4) r
+  let some table := mkHuff? (restore values) false
+    | .error (.malformed "deflate: the code-length code is over-subscribed or incomplete")
   let (lengths, r) ← CodeLengths.read table (nlit + ndist) r
   return (lengths.extract 0 nlit, lengths.extract nlit (nlit + ndist), r)
 

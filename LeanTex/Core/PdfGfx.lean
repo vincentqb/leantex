@@ -142,6 +142,8 @@ public inductive Space where
   | indexed (base : Space) (hival : Nat) (lookup : ByteArray)
   | pattern (under : Option Space)
   | lossy (key : String) (n : Nat)
+  /-- A space whose defining stream decodes past the reader's budget. -/
+  | overBudget (key : String) (n : Nat)
   deriving Inhabited
 
 public def Space.comps : Space → Nat
@@ -151,6 +153,7 @@ public def Space.comps : Space → Nat
   | .indexed _ _ _ => 1
   | .pattern _ => 0
   | .lossy _ n => n
+  | .overBudget _ n => n
 
 /-- A component in [0, 1] as a byte, rounded to the nearest. -/
 public def byteOf (v : Rat) : UInt8 :=
@@ -223,6 +226,7 @@ public def deviceColor (sp : Space) (cs : Array Obj) : Ir.Color :=
   | .indexed _ _ _ => { r := 0, g := 0, b := 0 }
   | .pattern _ => { r := 0, g := 0, b := 0 }
   | .lossy _ _ => { r := 128, g := 128, b := 128 }
+  | .overBudget _ _ => { r := 128, g := 128, b := 128 }
 
 /-- An indexed space's palette as screen colours (§8.6.6.3), a CMYK base previewed. -/
 public def palette (base : Space) (hival : Nat) (lookup : ByteArray) : Array (UInt8 × UInt8 × UInt8) :=
@@ -255,6 +259,7 @@ public def Space.initial (sp : Space) : Array Obj :=
   | .indexed _ _ _ => #[.int 0]
   | .pattern _ => #[]
   | .lossy _ n => Array.replicate n (.int 1)
+  | .overBudget _ n => Array.replicate n (.int 1)
 
 /-- What a fill or stroke paints with: a colour, or a pattern by its
 resource name, with the colour an uncoloured pattern paints in. -/
@@ -518,20 +523,23 @@ private def iccDescription (p : ByteArray) : Option String := do
     some (String.ofList (units.map Char.ofNat))
   else none
 
-private def iccLoss (cx : Ctx) (profileRef : Obj) : Option String :=
+private def iccLoss (cx : Ctx) (profileRef : Obj) : Option Loss :=
   match (cx.doc.stream profileRef).toOption.getD none with
   | some (dict, raw) =>
     let n := ((dict.get? "N").bind Obj.int?).getD 3
-    let profile := match PdfFilters.decode dict raw with
-      | .ok (.bytes b) => b
-      | _ => ByteArray.empty
-    let srgb := n == 3 && profile.extract 16 20 == "RGB ".toUTF8 &&
-      (iccDescription profile).any fun d => (d.splitOn "sRGB").length > 1
-    if srgb then none else some "icc-profile"
-  | none => some "icc-profile"
+    match PdfFilters.decode dict raw with
+    | .error .budget => some (.budget "icc-profile")
+    | decoded =>
+      let profile := match decoded with
+        | .ok (.bytes b) => b
+        | _ => ByteArray.empty
+      let srgb := n == 3 && profile.extract 16 20 == "RGB ".toUTF8 &&
+        (iccDescription profile).any fun d => (d.splitOn "sRGB").length > 1
+      if srgb then none else some (.value "icc-profile")
+  | none => some (.value "icc-profile")
 
-private def spaceApprox (cx : Ctx) (o : Obj) : Option String :=
-  let icc (o : Obj) : Option String := match o with
+private def spaceApprox (cx : Ctx) (o : Obj) : Option Loss :=
+  let icc (o : Obj) : Option Loss := match o with
     | .arr xs =>
       if xs[0]? == some (.name "ICCBased") then iccLoss cx ((xs[1]?).getD .null) else none
     | _ => none
@@ -553,10 +561,11 @@ public def spaceOf (cx : Ctx) (o : Obj) : Space :=
       let base := flatSpace cx (resolveSpace cx ((xs[1]?).getD (.name "DeviceRGB")))
       let hival := (((xs[2]?).bind fun x => (cx.doc.deref x).toOption).bind Obj.int?).getD 0
       let table := (xs[3]?).getD .null
-      match ((cx.doc.deref table).toOption.bind PdfContentLex.strBytes?).orElse
-          fun _ => PdfFont.streamBytes cx.doc table with
-      | some lookup => .indexed base hival.toNat lookup
-      | none => .lossy "indexed-lookup" 1
+      match ((cx.doc.deref table).toOption.bind PdfContentLex.strBytes?).map Except.ok |>.orElse
+          fun _ => PdfFont.streamRead cx.doc table with
+      | some (.ok lookup) => .indexed base hival.toNat lookup
+      | some (.error .budget) => .overBudget "indexed-lookup" 1
+      | _ => .lossy "indexed-lookup" 1
     | some (.name "Pattern") => .pattern ((xs[1]?).map fun b => flatSpace cx (resolveSpace cx b))
     | _ => flatSpace cx (.arr xs)
   | o => flatSpace cx o
@@ -667,25 +676,36 @@ private structure Shade where
   e1 : Bool
   approx : Option String
   bbox : Option Clip
-  spaceLoss : Option String
+  spaceLoss : Option Loss
 
-private def gradientOf (cx : Ctx) (shObj : Obj) : Except String Shade := do
+/-- Whether a shading's function streams, through one stitching level, decode past the budget. -/
+private def fnOverBudget (doc : Doc) (f : Obj) : Bool :=
+  let over (g : Obj) : Bool := PdfFont.streamRead doc g matches some (.error .budget)
+  let fns : Array Obj := match (doc.deref f).toOption with
+    | some (.arr xs) => xs
+    | _ => #[f]
+  fns.any fun g => over g || (stitchFns doc (fnDict doc g).1).any over
+
+private def gradientOf (cx : Ctx) (shObj : Obj) : Except Loss Shade := do
   let sh ← match (cx.doc.stream shObj).toOption.getD none with
     | some (d, _) => pure d
     | none => match (cx.doc.deref shObj).toOption with
       | some d => pure d
-      | none => throw "shading-unreadable"
+      | none => throw (.resource "shading-unreadable")
   let ty := ((sh.get? "ShadingType").bind Obj.int?).getD 0
-  unless ty == 2 || ty == 3 do throw s!"shading-type-{ty}"
+  unless ty == 2 || ty == 3 do throw (.resource s!"shading-type-{ty}")
   let sp := spaceOf cx ((sh.get? "ColorSpace").getD (.name "DeviceRGB"))
   match sp with
-  | .lossy k _ => throw k
-  | .indexed _ _ _ | .pattern _ => throw "shading-space"
+  | .lossy k _ => throw (.resource k)
+  | .overBudget k _ => throw (.budget k)
+  | .indexed _ _ _ | .pattern _ => throw (.resource "shading-space")
   | _ => pure ()
   let coords : Array Rat := match (sh.get? "Coords").bind fun x => (cx.doc.deref x).toOption with
     | some (.arr xs) => xs.filterMap fun x => (cx.doc.deref x).toOption.bind ratOf
     | _ => #[]
-  let some (stops, exact) := shadingStops cx sh sp | throw "shading-function"
+  let some (stops, exact) := shadingStops cx sh sp
+    | throw (if fnOverBudget cx.doc ((sh.get? "Function").getD .null) then .budget "shading-function"
+        else .resource "shading-function")
   let ext : Array Bool := match (sh.get? "Extend").bind fun x => (cx.doc.deref x).toOption with
     | some (.arr xs) => xs.map fun x => x == .bool true
     | _ => #[false, false]
@@ -703,10 +723,10 @@ private def gradientOf (cx : Ctx) (shObj : Obj) : Except String Shade := do
       else none
     | _ => none
   if ty == 2 then
-    unless coords.size == 4 do throw "shading-coords"
+    unless coords.size == 4 do throw (.resource "shading-coords")
     return { g := .linear (c 0, c 1) (c 2, c 3) stops Affine.unit, e0, e1, approx := fnLoss, bbox
              spaceLoss := spaceApprox cx ((sh.get? "ColorSpace").getD (.name "DeviceRGB")) }
-  unless coords.size == 6 do throw "shading-coords"
+  unless coords.size == 6 do throw (.resource "shading-coords")
   let r (i : Nat) : Rat := coords[i]?.getD 0
   let dx := r 3 - r 0
   let dy := r 4 - r 1
@@ -845,19 +865,24 @@ private def grayResampled (w h mw mh bpc : Nat) (data : ByteArray) (decode : Arr
       out := out.push (lut[s.at sy (x * mw / w)]?.getD 255)
   return some out
 
-private def smaskAlpha (cx : Ctx) (o : Obj) (w h : Nat) : Option ByteArray := do
-  let (dict, raw) ← (cx.doc.stream o).toOption.getD none
+private def smaskAlpha (cx : Ctx) (o : Obj) (w h : Nat) : Except Loss ByteArray := do
+  let lost : Loss := .resource "smask-image"
+  let some (dict, raw) := (cx.doc.stream o).toOption.getD none | throw lost
   let mw := ((dict.get? "Width").bind Obj.int?).getD 0 |>.toNat
   let mh := ((dict.get? "Height").bind Obj.int?).getD 0 |>.toNat
   let bpc := ((dict.get? "BitsPerComponent").bind Obj.int?).getD 8 |>.toNat
-  let .ok (.bytes data) := PdfFilters.decode dict raw | none
+  let data ← match PdfFilters.decode dict raw with
+    | .ok (.bytes data) => pure data
+    | .ok _ => throw lost
+    | .error e => throw (PdfFont.undecoded "smask-image" lost e)
   let decode : Array Rat := match (dict.get? "Decode").bind fun x => (cx.doc.deref x).toOption with
     | some (.arr xs) => xs.filterMap ratOf
     | _ => #[]
-  grayResampled w h mw mh bpc data decode
+  let some alpha := grayResampled w h mw mh bpc data decode | throw lost
+  return alpha
 
 private def rasterOf (cx : Ctx) (dict : Obj) (raw : ByteArray) (fill : Option Ir.Color) :
-    Except String Raster := do
+    Except Loss Raster := do
   let get (k abbr : String) : Option Obj :=
     ((dict.get? k).orElse fun _ => dict.get? abbr).bind fun x => (cx.doc.deref x).toOption
   let w := ((get "Width" "W").bind Obj.int?).getD 0 |>.toNat
@@ -866,33 +891,35 @@ private def rasterOf (cx : Ctx) (dict : Obj) (raw : ByteArray) (fill : Option Ir
   let bpc := if isMask then 1 else ((get "BitsPerComponent" "BPC").bind Obj.int?).getD 8 |>.toNat
   let sp := if isMask then Space.gray else spaceOf cx ((get "ColorSpace" "CS").getD (.name "DeviceGray"))
   match sp with
-  | .lossy k _ => throw k
-  | .pattern _ => throw "image-pattern-space"
+  | .lossy k _ => throw (.resource k)
+  | .overBudget k _ => throw (.budget k)
+  | .pattern _ => throw (.resource "image-pattern-space")
   | _ => pure ()
   let decode : Array Rat := match get "Decode" "D" with
     | some (.arr xs) => xs.filterMap fun x => (cx.doc.deref x).toOption.bind ratOf
     | _ => #[]
   let smooth := get "Interpolate" "I" == some (.bool true)
-  if isMask && fill.isNone then throw "stencil-pattern"
-  let alpha := (dict.get? "SMask").bind fun s => smaskAlpha cx s w h
-  if (dict.get? "SMask").isSome && alpha.isNone then throw "smask-image"
+  if isMask && fill.isNone then throw (.resource "stencil-pattern")
+  let alpha ← match dict.get? "SMask" with
+    | some s => some <$> smaskAlpha cx s w h
+    | none => pure none
   -- A matte names colours pre-blended with it (§11.6.5.3), which straight alpha would blend twice.
   if ((dict.get? "SMask").bind fun s => (cx.doc.stream s).toOption.getD none).any
-      fun (md, _) => (md.get? "Matte").isSome then throw "smask-matte"
-  if (get "SMaskInData" "SMaskInData").isSome then throw "smask-in-data"
+      fun (md, _) => (md.get? "Matte").isSome then throw (.resource "smask-matte")
+  if (get "SMaskInData" "SMaskInData").isSome then throw (.resource "smask-in-data")
   let decoded ← match PdfFilters.decode dict raw with
     | .ok d => pure d
-    | .error _ => throw "image-data"
+    | .error e => throw (PdfFont.undecoded "image-data" (.resource "image-data") e)
   match decoded with
-  | .refused f => throw f
+  | .refused f => throw (.resource f)
   | .dct jpeg =>
-    if alpha.isSome || isMask || (dict.get? "Mask").isSome then throw "dct-alpha"
+    if alpha.isSome || isMask || (dict.get? "Mask").isSome then throw (.resource "dct-alpha")
     -- A JPEG's samples stand as they are; a non-identity `Decode` would remap them.
     let identity : Array Rat := (List.replicate sp.comps [(0 : Rat), 1]).flatten.toArray
-    unless decode.isEmpty || decode == identity do throw "dct-decode"
+    unless decode.isEmpty || decode == identity do throw (.resource "dct-decode")
     match sp with
     | .gray | .rgb => return { bytes := jpeg, jpeg := true, pxW := w, pxH := h, smooth }
-    | _ => throw "dct-cmyk"
+    | _ => throw (.resource "dct-cmyk")
   | .bytes data =>
     let parms := (dict.get? "DecodeParms").orElse fun _ => dict.get? "DP"
     let parm (k : String) (d : Int) : Int := ((parms.bind (·.get? k)).bind Obj.int?).getD d
@@ -917,16 +944,18 @@ private def rasterOf (cx : Ctx) (dict : Obj) (raw : ByteArray) (fill : Option Ir
         (dict.get? "Mask").bind fun m => (cx.doc.deref m).toOption with
       | none, some (.arr xs) => some xs
       | _, _ => none
-    if maskRanges.isSome && bpc != 8 then throw "color-key-mask"
-    let alpha := alpha.orElse fun _ => match maskRanges, maskStream with
-      | some ranges, _ =>
+    if maskRanges.isSome && bpc != 8 then throw (.resource "color-key-mask")
+    let maskLost : Loss := .resource "mask-image"
+    let alpha ← match alpha, maskRanges, maskStream with
+      | some a, _, _ => pure (some a)
+      | none, some ranges, _ =>
         -- §8.9.6.4: a pixel whose every component lies in its range is masked.
         let rs := ranges.filterMap fun x => (cx.doc.deref x).toOption.bind Obj.int?
         let comps := sp.comps
         let rowBytes := w * comps
         let lo (j : Nat) : Nat := ((rs[2 * j]?).getD 0).toNat
         let hi (j : Nat) : Nat := ((rs[2 * j + 1]?).getD 255).toNat
-        some <| Id.run do
+        pure <| some <| Id.run do
           let mut out := ByteArray.emptyWithCapacity (w * h)
           for r in [0:h] do
             for x in [0:w] do
@@ -936,7 +965,7 @@ private def rasterOf (cx : Ctx) (dict : Obj) (raw : ByteArray) (fill : Option Ir
                 if v < lo j || v > hi j then inRange := false
               out := out.push (if inRange then 0 else 255)
           return out
-      | none, some (md, mraw) =>
+      | none, none, some (md, mraw) =>
         match PdfFilters.decode md mraw with
         | .ok (.bytes mdata) =>
           -- §8.9.6.3: a stencil mask's 0 samples paint, under its own decoding.
@@ -945,12 +974,14 @@ private def rasterOf (cx : Ctx) (dict : Obj) (raw : ByteArray) (fill : Option Ir
           let inverted := match md.get? "Decode" with
             | some (.arr xs) => (xs[0]?.bind ratOf) == some 1
             | _ => false
-          grayResampled w h mw mh 1 mdata (if inverted then #[0, 1] else #[1, 0])
-        | _ => none
-      | none, none => none
-    if maskStream.isSome && alpha.isNone then throw "mask-image"
+          match grayResampled w h mw mh 1 mdata (if inverted then #[0, 1] else #[1, 0]) with
+          | some a => pure (some a)
+          | none => throw maskLost
+        | .ok _ => throw maskLost
+        | .error e => throw (PdfFont.undecoded "mask-image" maskLost e)
+      | none, none, none => pure none
     let some px := imagePixels sp w h bpc data decode (if isMask then fill else none) alpha
-      | throw "image-samples"
+      | throw (.resource "image-samples")
     return { bytes := PngEncode.encode px.header px.rows px.palette, jpeg := false, pxW := w, pxH := h, smooth }
 
 private def smoothAt (r : Raster) (ctm : Affine) : Raster :=
@@ -1054,34 +1085,36 @@ private def luminosity (sp : Space) (cs : Array Rat) : Option Rat :=
   | .rgb => some ((3 : Rat) / 10 * v 0 + (59 : Rat) / 100 * v 1 + (11 : Rat) / 100 * v 2)
   | _ => none
 
-private def maskConst (cx : Ctx) (sm : Obj) : Option (Alpha × Clip) := do
-  let smd ← (cx.doc.deref sm).toOption
-  guard (smd.get? "S" == some (.name "Luminosity"))
-  guard ((smd.get? "TR").all (· == .name "Identity"))
-  guard ((smd.get? "BC").all fun b => match (cx.doc.deref b).toOption with
+private def maskConst (cx : Ctx) (sm : Obj) : Except Loss (Alpha × Clip) := do
+  let soft : Loss := .property "soft-mask"
+  let some smd := (cx.doc.deref sm).toOption | throw soft
+  unless smd.get? "S" == some (.name "Luminosity") do throw soft
+  unless (smd.get? "TR").all (· == .name "Identity") do throw soft
+  unless (smd.get? "BC").all fun b => match (cx.doc.deref b).toOption with
     | some (.arr xs) => xs.all fun x => ratOf x == some 0
-    | _ => false)
-  let gref ← smd.get? "G"
-  let (gd, graw) ← (cx.doc.stream gref).toOption.getD none
+    | _ => false do throw soft
+  let some gref := smd.get? "G" | throw soft
+  let some (gd, graw) := (cx.doc.stream gref).toOption.getD none | throw soft
   let data ← match PdfFilters.decode gd graw with
-    | .ok (.bytes b) => some b
-    | _ => none
+    | .ok (.bytes b) => pure b
+    | .ok _ => throw soft
+    | .error e => throw (PdfFont.undecoded "soft-mask" soft e)
   -- Luminosity is read in the group's blending space (§11.5.3).
   let blendOk : Bool := match (gd.get? "Group").bind fun x => (cx.doc.deref x).toOption with
     | some grp => match spaceOf cx ((grp.get? "CS").getD (.name "DeviceGray")) with
       | .gray | .rgb => true
       | _ => false
     | none => true
-  guard blendOk
+  unless blendOk do throw soft
   let res := ((gd.get? "Resources").bind fun x => (cx.doc.deref x).toOption).getD cx.res
   let gcx : Ctx := { cx with res }
   let bbox : Array Rat := match (gd.get? "BBox").bind fun x => (cx.doc.deref x).toOption with
     | some (.arr xs) => xs.filterMap fun x => (cx.doc.deref x).toOption.bind ratOf
     | _ => #[]
-  guard (bbox.size == 4)
-  guard (((gd.get? "Matrix").bind fun x => (cx.doc.deref x).toOption).all fun m => match m with
+  unless bbox.size == 4 do throw soft
+  unless ((gd.get? "Matrix").bind fun x => (cx.doc.deref x).toOption).all fun m => match m with
     | .arr xs => (affineOf (xs.filterMap ratOf)) == some Affine.unit
-    | _ => false)
+    | _ => false do throw soft
   let toks := PdfContentLex.scan data
   let mut ops : Array Obj := #[]
   let mut fill : Option Rat := some 0
@@ -1137,8 +1170,8 @@ private def maskConst (cx : Ctx) (sm : Obj) : Option (Alpha × Clip) := do
       else paints := paints + 2
       ops := #[]
     | .inline _ _ => paints := paints + 2
-  guard (paints == 1)
-  let l ← lum
+  unless paints == 1 do throw soft
+  let some l := lum | throw soft
   let a : Alpha := ⟨min 1000 ((l * 1000 + (1 : Rat) / 2).floor.toNat), by omega⟩
   let x0 := spOfRat (min (bbox[0]?.getD 0) (bbox[2]?.getD 0))
   let x1 := spOfRat (max (bbox[0]?.getD 0) (bbox[2]?.getD 0))
@@ -1175,11 +1208,11 @@ private def applyExtG (cx : Ctx) (st : St) (name : String) : St := Id.run do
   | some (.name "None") => st := { st with gs := { st.gs with mask := Alpha.opaque, maskClip := none } }
   | none => pure ()
   | some _ =>
-    match (g.get? "SMask").bind (maskConst cx) with
-    | some (a, clip) => st := { st with gs := { st.gs with mask := a, maskClip := some (st.gs.ctm, clip) } }
-    | none =>
+    match ((g.get? "SMask").map (maskConst cx)).getD (.error (.property "soft-mask")) with
+    | .ok (a, clip) => st := { st with gs := { st.gs with mask := a, maskClip := some (st.gs.ctm, clip) } }
+    | .error l =>
       st := { st with gs := { st.gs with mask := Alpha.opaque, maskClip := none }
-                      store := st.store.lose (.property "soft-mask") }
+                      store := st.store.lose l }
   if val "AIS" == some (.bool true) then
     st := { st with store := st.store.lose (.property "alpha-is-shape") }
   for k in ["TR", "TR2"] do
@@ -1221,12 +1254,12 @@ private def paintOf (cx : Ctx) (st : St) (ink : Ink) : St × Option Painted :=
             | some k => { st with store := st.store.lose (.resource k) }
             | none => st
           let st := match sh.spaceLoss with
-            | some k => { st with store := st.store.lose (.value k) }
+            | some l => { st with store := st.store.lose l }
             | none => st
           let st := if sh.e0 && sh.e1 then st else { st with store := st.store.lose (.resource "shading-unextended") }
           let xf := inv.compose (cx.base.compose m)
           (st, some { paint := .gradient (sh.g.withXf xf), clip := sh.bbox.map (xf, ·) })
-        | .error k, _ => ({ st with store := st.store.lose (.resource k) }, under.map solid)
+        | .error l, _ => ({ st with store := st.store.lose l }, under.map solid)
         | .ok _, none => (st, none)
       else if ty == 1 then ({ st with store := st.store.lose (.resource "tiling-paint") }, under.map solid)
       else ({ st with store := st.store.lose (.resource "pattern-type") }, under.map solid)
@@ -1525,14 +1558,14 @@ private def shadeOp (cx : Ctx) (st : St) : St :=
     | none => { st with store := st.store.lose (.resource "shading-unresolved") }
     | some r =>
       match gradientOf cx r, Affine.inv? st.gs.ctm with
-      | .error k, _ => { st with store := st.store.lose (.resource k) }
+      | .error l, _ => { st with store := st.store.lose l }
       | .ok _, none => st
       | .ok sh, some inv =>
         let st := match sh.approx with
           | some k => { st with store := st.store.lose (.resource k) }
           | none => st
         let st := match sh.spaceLoss with
-          | some k => { st with store := st.store.lose (.value k) }
+          | some l => { st with store := st.store.lose l }
           | none => st
         let area := Box.image inv cx.box
         let all : Geom := .rect area.1.1 area.1.2 (area.2.1 - area.1.1) (area.2.2 - area.1.2)
@@ -1680,7 +1713,7 @@ public theorem type3_marks_exact (isD1 : Bool) (body : Array (Node Run)) (subs :
       · simp at h
     · simp at h
 
-private def imageSpaceLoss (cx : Ctx) (dict : Obj) : Option String :=
+private def imageSpaceLoss (cx : Ctx) (dict : Obj) : Option Loss :=
   let get (k abbr : String) : Option Obj := (dict.get? k).orElse fun _ => dict.get? abbr
   if get "ImageMask" "IM" == some (.bool true) then none
   else (get "ColorSpace" "CS").bind (spaceApprox cx)
@@ -1690,7 +1723,7 @@ private def St.paintRaster (cx : Ctx) (st : St) (dict : Obj) (r : Raster) : St �
   let k := st.store.rasters.size
   let store := { st.store with rasters := st.store.rasters.push r }
   let store := match imageSpaceLoss cx dict with
-    | some key => store.lose (.value key)
+    | some l => store.lose l
     | none => store
   ({ st with store } |>.emit (.image k Affine.unit), k)
 
@@ -1698,7 +1731,7 @@ private def inlineImage (cx : Ctx) (st : St) (dict : Array (String × Obj)) (dat
   if st.hidden > 0 then st else
   match rasterOf cx (.dict dict) data (fillColor st) with
   | .ok r => (st.paintRaster cx (.dict dict) r).1
-  | .error key => { st with store := st.store.lose (.resource key) }
+  | .error l => { st with store := st.store.lose l }
 
 mutual
 
@@ -1798,9 +1831,10 @@ private def stepRest (cx : Ctx) (e : Entered cx.doc) (name : String) (st : St) :
     let space := spaceOf cx spaceObj
     let st := match space with
       | .lossy k _ => { st with store := st.store.lose (.value k) }
+      | .overBudget k _ => { st with store := st.store.lose (.budget k) }
       | _ => st
     let st := match spaceApprox cx spaceObj with
-      | some k => { st with store := st.store.lose (.value k) }
+      | some l => { st with store := st.store.lose l }
       | none => st
     let ink : Ink := match space with
       | .pattern _ => .pattern "" none
@@ -1983,6 +2017,9 @@ private def tileNodes (cx : Ctx) (e : Entered cx.doc) (st : St) (pat : Obj) (reg
             (st, some tiles)
           | _, _ => (st, some #[])
         | none, _ => (st, some #[])
+        | some _, .error e =>
+          ({ st with store := st.store.lose (PdfFont.undecoded "tiling-data" (.resource "tiling-data") e) },
+            none)
         | _, _ => ({ st with store := st.store.lose (.resource "tiling-data") }, none)
     else ({ st with store := st.store.lose (.budget "tiling-recursion") }, none)
   | _ => (st, none)
@@ -2097,6 +2134,10 @@ private def type3Glyph (cx : Ctx) (e : Entered cx.doc) (font : PdfFont.Loaded) (
                   let store := { store with symbols := store.symbols.push body
                                             forms := store.forms.insert symKey store.symbols.size }
                   place { st with store := { store with type3 := store.type3.insert (key, proc) (some r) } } r
+            | .error e =>
+              { st with store := { (st.store.lose
+                  (PdfFont.undecoded "type3-procedure" (.font "type3-procedure") e)) with
+                    type3 := st.store.type3.insert (key, proc) none } }
             | _ => { st with store := { (st.store.lose (.font "type3-procedure")) with
                        type3 := st.store.type3.insert (key, proc) none } }
           | none => st
@@ -2134,8 +2175,8 @@ private def doXObject (cx : Ctx) (e : Entered cx.doc) (xName : String) (st : St)
           | .ok r =>
             let (st, k) := st.paintRaster cx dict r
             { st with store := { st.store with images := st.store.images.insert ikey (some k) } }
-          | .error key =>
-            { st with store := { (st.store.lose (.resource key)) with images := st.store.images.insert ikey none } }
+          | .error l =>
+            { st with store := { (st.store.lose l) with images := st.store.images.insert ikey none } }
       | some (.name "Form") =>
         if h : cx.doc.lists xn = true ∧ xn ∉ e.list then
           let m := match (dict.get? "Matrix").bind fun x => (cx.doc.deref x).toOption with
@@ -2170,6 +2211,8 @@ private def doXObject (cx : Ctx) (e : Entered cx.doc) (xName : String) (st : St)
               let k := store.symbols.size
               let store := { store with symbols := store.symbols.push body, forms := store.forms.insert key k }
               { st with store } |>.emit (.group Affine.unit #[] alpha #[.use k m])
+            | .error e =>
+              { st with store := st.store.lose (PdfFont.undecoded "form-data" (.resource "form-data") e) }
             | _ => { st with store := st.store.lose (.resource "form-data") }
         else { st with store := st.store.lose (.budget "form-recursion") }
       | _ => { st with store := st.store.lose (.resource "xobject-subtype") }

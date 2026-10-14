@@ -1,7 +1,6 @@
 module
 
 import all LeanTex.Core.Flate.PackageMergeProof
-import all LeanTex.Core.Flate.SortProof
 import Init.Data.List.Nat.Pairwise
 import Init.Data.List.Nat.Sum
 

@@ -901,8 +901,9 @@ def pdfStateChecks (ref : IO.Ref (List String)) : IO Unit := do
           near p (mkRat 1 4))
 
 open Tests.PdfNative in
-/-- Each filter's output stops at the cap its chain passes, and a figure names the loss of a stream
-that does not decode: an image's mask, an indexed lookup, a ToUnicode map and a CID-to-glyph map. -/
+/-- Each filter's output stops at the cap its chain passes, a cap hit told from malformed data,
+and a figure names the loss of a stream that does not decode as what stopped it: an image's data,
+a form's content, an image's mask, an indexed lookup, a ToUnicode map and a CID-to-glyph map. -/
 def pdfStreamLossChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let filter (names : List String) : PdfRead.Obj :=
@@ -912,6 +913,34 @@ def pdfStreamLossChecks (ref : IO.Ref (List String)) : IO Unit := do
     | .ok (.bytes b) => some b
     | _ => none
   let zs := "zzzzz~>".toUTF8
+  let isBudget (r : Except Flate.Error PdfFilters.Decoded) : Bool := r matches .error .budget
+  let isMalformed (r : Except Flate.Error PdfFilters.Decoded) : Bool := r matches .error (.malformed _)
+  t "filters: a cap hit is the budget and broken data malformed, in every expanding filter"
+    (isBudget (PdfFilters.decodeCapped (filter ["A85"]) zs 19) &&
+      isBudget (PdfFilters.decodeCapped (filter ["RL"]) (bytes [0xFB, 0x41, 0x80]) 5) &&
+      isBudget (PdfFilters.decodeCapped (filter ["LZW"])
+        (bytes [0x80, 0x10, 0x60, 0x50, 0x38, 0x24, 0x04]) 9) &&
+      isBudget (PdfFilters.decodeCapped (filter ["Fl"]) (Flate.deflate ⟨Array.replicate 32 0⟩) 31) &&
+      isMalformed (PdfFilters.decodeCapped (filter ["A85"]) "x~>".toUTF8 100) &&
+      isMalformed (PdfFilters.decodeCapped (filter ["Fl"]) (bytes [0x78, 0x01, 7]) 100))
+  let page (res ink : String) (extra : Array ByteArray) : ByteArray := syntheticPdfBin (#[
+    "<< /Type /Catalog /Pages 2 0 R >>".toUTF8, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".toUTF8,
+    s!"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Contents 4 0 R /Resources {res} >>".toUTF8,
+    (streamObj ink).toUTF8] ++ extra)
+  let zeros := overBudgetZeros ()
+  let over (dict : String) : ByteArray := streamObjBin zeros dict
+  t "figures: an image whose data inflates past the budget names the budget"
+    (lossesOf (page "<< /XObject << /I1 5 0 R >> >>" "q 20 0 0 10 10 10 cm /I1 Do Q"
+      #[over "/Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceGray \
+        /BitsPerComponent 8 /Filter /FlateDecode "]) == .ok #[.budget "image-data"])
+  t "figures: a form whose content inflates past the budget names the budget"
+    (lossesOf (page "<< /XObject << /X1 5 0 R >> >>" "/X1 Do"
+      #[over "/Type /XObject /Subtype /Form /BBox [0 0 10 10] /Filter /FlateDecode "]) ==
+      .ok #[.budget "form-data"])
+  t "figures: a font whose ToUnicode stream inflates past the budget names the budget"
+    ((lossesOf (page "<< /Font << /F1 5 0 R >> >>" "BT /F1 12 Tf 10 10 Td (A) Tj ET"
+      #["<< /Type /Font /Subtype /TrueType /BaseFont /Placeholder /ToUnicode 6 0 R >>".toUTF8,
+        over "/Filter /FlateDecode "])).toOption.any (·.contains (.budget "tounicode")))
   t "filters: ASCII85 past its cap is refused" ((decoded (filter ["A85"]) zs 19).isNone)
   t "filters: ASCII85 up to its cap decodes"
     (decoded (filter ["A85"]) zs 20 == some ⟨Array.replicate 20 0⟩)

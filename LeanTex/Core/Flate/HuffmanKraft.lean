@@ -119,28 +119,44 @@ end LeanTex.Core.Flate.Canonical
 
 namespace LeanTex.Core.Flate
 
-theorem mkHuff?_some_exact (lengths : Array Nat) (h : Huff) :
-    mkHuff? lengths = some h ↔
-      h = mkHuff lengths ∧ Canonical.kraft lengths.toList 15 ≤ 2 ^ 15 := by
-  have hk := Canonical.start_kraft_exact lengths 15 (Nat.le_refl _)
-  have hfits : (mkHuff lengths).fits = true ↔ Canonical.kraft lengths.toList 15 ≤ 2 ^ 15 := by
-    show decide (Canonical.start (fun k => (huffCounts lengths)[k]?.getD 0) 15 +
-      (huffCounts lengths)[15]?.getD 0 ≤ 2 ^ 15) = true ↔ _
-    rw [decide_eq_true_iff, hk]
-  simp only [mkHuff?]
-  by_cases hp : Canonical.kraft lengths.toList 15 ≤ 2 ^ 15
-  · rw [ite_eq_left (hfits.mpr hp)]
-    exact ⟨fun he => ⟨(Option.some.inj he).symm, hp⟩, fun ⟨he, _⟩ => he ▸ rfl⟩
-  · rw [ite_eq_right (fun hf => hp (hfits.mp hf))]
-    exact ⟨(fun he => by cases he), fun ⟨_, hk'⟩ => absurd hk' hp⟩
+theorem mkHuff_used_exact (lengths : Array Nat) :
+    (mkHuff lengths).used = Canonical.kraft lengths.toList 15 :=
+  Canonical.start_kraft_exact lengths 15 (Nat.le_refl _)
 
-/-- An accepted table decodes each symbol of a nonzero length from its canonical code. -/
-theorem mkHuff?_decode_exact (lengths : Array Nat) (h : Huff) (hh : mkHuff? lengths = some h)
+theorem mkHuff?_some_exact (lengths : Array Nat) (sparse : Bool) (h : Huff) :
+    mkHuff? lengths sparse = some h ↔
+      h = mkHuff lengths ∧ (Canonical.kraft lengths.toList 15 = 2 ^ 15 ∨
+        sparse = true ∧ (Canonical.kraft lengths.toList 15 = 0 ∨
+          Canonical.kraft lengths.toList 15 = 2 ^ 14 ∧ lengths.toList.count 1 = 1)) := by
+  have hc : (mkHuff lengths).counts[1]?.getD 0 = lengths.toList.count 1 := by
+    simpa using (mkHuff_counts_exact lengths).2 1
+  have ha : (mkHuff lengths).admits sparse = true ↔
+      (Canonical.kraft lengths.toList 15 = 2 ^ 15 ∨
+        sparse = true ∧ (Canonical.kraft lengths.toList 15 = 0 ∨
+          Canonical.kraft lengths.toList 15 = 2 ^ 14 ∧ lengths.toList.count 1 = 1)) := by
+    simp only [Huff.admits, mkHuff_used_exact, hc, Bool.or_eq_true, Bool.and_eq_true,
+      beq_iff_eq]
+  simp only [mkHuff?]
+  by_cases hp : (mkHuff lengths).admits sparse = true
+  · rw [ite_eq_left hp]
+    exact ⟨fun he => ⟨(Option.some.inj he).symm, ha.mp hp⟩, fun ⟨he, _⟩ => he ▸ rfl⟩
+  · rw [ite_eq_right (fun hf => hp hf)]
+    exact ⟨(fun he => by cases he), fun ⟨_, hk⟩ => absurd (ha.mpr hk) hp⟩
+
+theorem mkHuff?_fits (lengths : Array Nat) (sparse : Bool) (h : Huff)
+    (hh : mkHuff? lengths sparse = some h) : Canonical.kraft lengths.toList 15 ≤ 2 ^ 15 := by
+  obtain ⟨_, hk⟩ := (mkHuff?_some_exact lengths sparse h).mp hh
+  rcases hk with hk | ⟨_, hk | ⟨hk, _⟩⟩ <;> omega
+
+/-- An admitted table decodes each symbol of a nonzero length from its canonical code. -/
+theorem mkHuff?_decode_exact (lengths : Array Nat) (sparse : Bool) (h : Huff)
+    (hh : mkHuff? lengths sparse = some h)
     (hb : ∀ s < lengths.size, lengths[s]?.getD 0 ≤ 15) (r : Br) (s width : Nat)
     (hs : s < lengths.size) (hw : 0 < width) (hl : lengths[s]?.getD 0 = width)
     (hf : BitField r.data r.bitPos width ((canonCodes lengths)[s]?.getD 0)) :
     h.decode r = some (s, { r with bitPos := r.bitPos + width }) := by
-  obtain ⟨rfl, hk⟩ := (mkHuff?_some_exact lengths h).mp hh
+  have hk := mkHuff?_fits lengths sparse h hh
+  obtain ⟨rfl, _⟩ := (mkHuff?_some_exact lengths sparse h).mp hh
   have hw15 : width ≤ 15 := by have := hb s hs; omega
   exact canonCodes_decode_exact lengths r s width hb hs hw hl
     (Canonical.kraft_code_space_between lengths 15 width (Nat.le_refl _) hw15 hk) hf

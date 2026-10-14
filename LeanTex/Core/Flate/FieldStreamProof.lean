@@ -58,6 +58,7 @@ theorem read_write_exact (width : Nat) (values : Array Nat) (w : Bw) (data : Byt
       (values, {data, bitPos := (write width values w).position}) :=
     .done (by simp only [readStep, ge_iff_le, Nat.le_refl, ite_true])
   have hf := hs.finish hd
-  exact DecodeLoop.run_exact _ _ _ _ (values.size + 1) "deflate: truncated" hf (by omega)
+  exact DecodeLoop.run_exact _ _ _ _ (values.size + 1) (.malformed "deflate: truncated") hf
+    (by omega)
 
 end LeanTex.Core.Flate.FieldStream

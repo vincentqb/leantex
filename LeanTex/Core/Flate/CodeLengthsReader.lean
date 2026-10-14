@@ -16,36 +16,36 @@ def appendRun (out : Array Nat) (value count : Nat) : Array Nat := Id.run do
 
 /-- Read one entry of the dynamic table prelude, including its extra bits. -/
 def readEntry (table : Huff) (state : Array Nat × Br) :
-    Except String (Array Nat × Br) := do
+    Except Error (Array Nat × Br) := do
   let some (symbol, r) := table.decode state.2
-    | .error "deflate: truncated"
+    | .error (.malformed "deflate: truncated")
   if symbol < 16 then
     return (state.1.push symbol, r)
   else if symbol == 16 then
-    let some (extra, r) := r.bits 2 | .error "deflate: truncated"
+    let some (extra, r) := r.bits 2 | .error (.malformed "deflate: truncated")
     let some previous := state.1.back?
-      | .error "deflate: repeat with no previous length"
+      | .error (.malformed "deflate: repeat with no previous length")
     return (appendRun state.1 previous (extra + 3), r)
   else if symbol == 17 then
-    let some (extra, r) := r.bits 3 | .error "deflate: truncated"
+    let some (extra, r) := r.bits 3 | .error (.malformed "deflate: truncated")
     return (appendRun state.1 0 (extra + 3), r)
   else
-    let some (extra, r) := r.bits 7 | .error "deflate: truncated"
+    let some (extra, r) := r.bits 7 | .error (.malformed "deflate: truncated")
     return (appendRun state.1 0 (extra + 11), r)
 
 /-- The state boundary of the bounded dynamic table reader. -/
 def readStep (table : Huff) (count : Nat) (state : Array Nat × Br) :
-    Except String (Sum (Array Nat × Br) (Array Nat × Br)) := do
+    Except Error (Sum (Array Nat × Br) (Array Nat × Br)) := do
   if state.1.size ≥ count then
     if state.1.size = count then return .inl state
-    else .error "deflate: code lengths overrun their table"
+    else .error (.malformed "deflate: code lengths overrun their table")
   else
     return .inr (← readEntry table state)
 
 /-- Reads the `count` code lengths of a dynamic table prelude. -/
-public def read (table : Huff) (count : Nat) (r : Br) : Except String (Array Nat × Br) :=
+public def read (table : Huff) (count : Nat) (r : Br) : Except Error (Array Nat × Br) :=
   DecodeLoop.run (count + 1) (readStep table count) (#[], r)
-    "deflate: code lengths overrun their table"
+    (.malformed "deflate: code lengths overrun their table")
 
 /-- A table prefix, indexed by how many lengths the reader has reconstructed. -/
 def Prefix (seq : Array Nat) (count : Nat) (out : Array Nat) : Prop :=

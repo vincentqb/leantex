@@ -1,6 +1,7 @@
 module
 
 import LeanTex.Core.Flate.BlockStream
+public import LeanTex.Core.Flate.Huffman
 import LeanTex.Core.Flate.BitPacking
 import LeanTex.Core.Flate.BitWriter
 import LeanTex.Core.Flate.Progress
@@ -12,12 +13,15 @@ namespace LeanTex.Core.Flate
 /-! Bounded zlib compression and decompression (RFC 1950 wrapping RFC 1951), and the checksums,
 content keys and PNG scanline unfiltering beside them. -/
 
-/-- Inflates a zlib stream into at most `maxOut` bytes; the Adler-32 trailer is not verified. -/
-public def inflate (data : ByteArray) (maxOut : Nat) : Except String ByteArray := do
-  let some cmf := data[0]? | .error "zlib: empty stream"
-  let some flg := data[1]? | .error "zlib: truncated header"
-  if cmf.toNat % 16 != 8 then .error "zlib: not deflate"
-  else if flg.toNat / 32 % 2 == 1 then .error "zlib: preset dictionary is not supported"
+/-- Inflates a zlib stream into at most `maxOut` bytes, refusing what zlib's inflate refuses but
+for the Adler-32 trailer, which is not verified. -/
+public def inflate (data : ByteArray) (maxOut : Nat) : Except Error ByteArray := do
+  let some cmf := data[0]? | .error (.malformed "zlib: empty stream")
+  let some flg := data[1]? | .error (.malformed "zlib: truncated header")
+  if (cmf.toNat * 256 + flg.toNat) % 31 != 0 then .error (.malformed "zlib: the header check fails")
+  else if cmf.toNat % 16 != 8 then .error (.malformed "zlib: not deflate")
+  else if cmf.toNat / 16 > 7 then .error (.malformed "zlib: a window wider than 32 KiB")
+  else if flg.toNat / 32 % 2 == 1 then .error (.malformed "zlib: a preset dictionary")
   else BlockStream.read {data, bitPos := 16} ByteArray.empty maxOut
 
 /-- Adler-32 (RFC 1950 §8.2). -/

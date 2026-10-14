@@ -72,56 +72,60 @@ def alphaSplitChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "pngUnfilter inverts the forward filter of every type" allInvert
   t "the random rows exercised all five filter types" (sawFilter.all id)
 
-/-- Bits into bytes least significant first, as a deflate stream packs them. -/
-def packDeflateBits (bits : Array Bool) : ByteArray := Id.run do
-  let mut out := ByteArray.empty
-  let mut cur := 0
-  for h : i in [0:bits.size] do
-    if bits[i] then cur := cur + 2 ^ (i % 8)
-    if i % 8 == 7 then
-      out := out.push (UInt8.ofNat cur)
-      cur := 0
-  if bits.size % 8 != 0 then out := out.push (UInt8.ofNat cur)
-  return out
-
-/-- Lengths over `n` symbols giving one bit to `A`, to the end of block and to each of `extra`. -/
-def oneBitLengths (n : Nat) (extra : List Nat) : Array Nat :=
-  (Array.range n).map fun s => if s == 65 || s == 256 || extra.contains s then 1 else 0
-
-/-- A zlib stream of one final dynamic block writing `AA`: the code-length code's lengths `cl` by
-symbol, each literal/length and distance length as the one-bit codeword of its value. -/
-def dynamicBlockAA (cl lit dist : Array Nat) : ByteArray := Id.run do
-  let lsb (v n : Nat) : Array Bool := (Array.range n).map fun i => (v >>> i) % 2 == 1
-  let order := #[16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15]
-  let ordered : Array Nat := order.map fun s => cl[s]?.getD 0
-  let mut bits : Array Bool := #[true] ++ lsb 2 2 ++ lsb (lit.size - 257) 5 ++
-    lsb (dist.size - 1) 5 ++ lsb (ordered.size - 4) 4
-  for v in ordered do bits := bits ++ lsb v 3
-  for v in lit do bits := bits.push (v == 1)
-  for v in dist do bits := bits.push (v == 1)
-  bits := bits ++ #[false, false, true]
-  let adler := Flate.adler32 "AA".toUTF8
-  return bytes [0x78, 0x01] ++ packDeflateBits bits ++
-    bytes ([adler / 16777216 % 256, adler / 65536 % 256, adler / 256 % 256, adler % 256].map
-      UInt8.ofNat)
-
-/-- Inflating refuses a dynamic block whose code-length, literal/length or distance lengths
-over-subscribe their code space, naming the table, and reads the block with complete tables. -/
-def inflateTableChecks (ref : IO.Ref (List String)) : IO Unit := do
+/-- Inflating refuses and reads what zlib's inflate does but for the Adler-32 trailer, and tells
+a stream past its bound from one that breaks the format. -/
+def inflateZlibChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
-  let refuses (z : ByteArray) (table : String) : Bool := match Flate.inflate z 64 with
-    | .ok _ => false
-    | .error e => (e.splitOn "over-subscribed").length > 1 && (e.splitOn table).length > 1
-  let clOver := ((Array.replicate 19 0).set! 0 1 |>.set! 1 1).set! 18 1
-  t "inflate: a dynamic block with complete tables reads its literals"
-    ((Flate.inflate (dynamicBlockAA #[1, 1] (oneBitLengths 257 []) #[0]) 64).toOption ==
-      some "AA".toUTF8)
-  t "inflate: an over-subscribed code-length code is refused"
-    (refuses (dynamicBlockAA clOver (oneBitLengths 257 []) #[0]) "code-length")
-  t "inflate: an over-subscribed literal/length code is refused"
-    (refuses (dynamicBlockAA #[1, 1] (oneBitLengths 258 [257]) #[0]) "literal/length")
-  t "inflate: an over-subscribed distance code is refused"
-    (refuses (dynamicBlockAA #[1, 1] (oneBitLengths 257 []) #[1, 1, 1]) "distance")
+  let refuses (z : ByteArray) (what : String) : Bool := match Flate.inflate z 64 with
+    | .error (.malformed why) => (why.splitOn what).length > 1
+    | _ => false
+  let reads (z : ByteArray) (plain : String) : Bool := Flate.inflate z 64 == .ok plain.toUTF8
+  let flat := Array.replicate 16 4 ++ #[0, 0, 0]
+  let lit (assign : List (Nat × Nat)) := lengthsOf 257 assign
+  let aEnd : Array (Nat × Nat × Nat) := #[(0, 65, 0), (0, 256, 0)]
+  let aRun : Array (Nat × Nat × Nat) := #[(0, 65, 0), (0, 257, 0), (1, 0, 0), (0, 256, 0)]
+  let runLit := lengthsOf 258 [(65, 1), (256, 2), (257, 2)]
+  t "inflate: complete tables read their literals"
+    (reads (zlibDynamic flat (lit [(65, 1), (256, 1)]) #[1] aEnd) "A")
+  t "inflate: no distance code at all is admitted, as zlib admits it"
+    (reads (zlibDynamic flat (lit [(65, 1), (256, 1)]) #[0] aEnd) "A")
+  t "inflate: a lone one-bit distance code is admitted, as zlib admits it"
+    (reads (zlibDynamic flat runLit #[1] aRun) "AAAA")
+  t "inflate: a lone one-bit end of block is admitted, as zlib admits it"
+    (reads (zlibDynamic flat (lit [(256, 1)]) #[0] #[(0, 256, 0)]) "")
+  t "inflate: an incomplete distance code is refused"
+    (refuses (zlibDynamic flat runLit #[2] aRun) "distance code")
+  t "inflate: an incomplete literal/length code is refused"
+    (refuses (zlibDynamic flat (lit [(65, 1), (256, 2)]) #[0] aEnd) "literal/length code")
+  t "inflate: an incomplete code-length code is refused"
+    (refuses (zlibDynamic (lengthsOf 19 [(0, 2), (1, 2)]) (lit [(65, 1), (256, 1)]) #[0] aEnd)
+      "code-length code")
+  t "inflate: a lone one-bit code-length code is refused"
+    (refuses (zlibDynamic (lengthsOf 19 [(0, 1)]) (lit []) #[0] #[]) "code-length code")
+  t "inflate: over-subscribed tables are refused, each named"
+    (refuses (zlibDynamic (lengthsOf 19 [(0, 1), (1, 1), (18, 1)]) (lit [(65, 1), (256, 1)]) #[0]
+        aEnd) "code-length code" &&
+      refuses (zlibDynamic flat (lengthsOf 258 [(65, 1), (256, 1), (257, 1)]) #[0] aEnd)
+        "literal/length code" &&
+      refuses (zlibDynamic flat (lit [(65, 1), (256, 1)]) #[1, 1, 1] aEnd) "distance code")
+  t "inflate: a literal/length code without an end of block is refused"
+    (refuses (zlibDynamic flat (lit [(65, 1), (66, 1)]) #[0] #[(0, 65, 0), (0, 66, 0)])
+      "end-of-block")
+  t "inflate: more literal/length or distance codes than the alphabets hold are refused"
+    (refuses (zlibDynamic flat (lengthsOf 287 [(65, 1), (256, 1)]) #[0] aEnd) "alphabets" &&
+      refuses (zlibDynamic flat (lit [(65, 1), (256, 1)]) (Array.replicate 31 0) aEnd) "alphabets")
+  t "inflate: a stored block whose length its complement contradicts is refused"
+    (refuses (bytes [0x78, 0x01, 1, 2, 0, 0, 0, 65, 66]) "complement" &&
+      reads (bytes [0x78, 0x01, 1, 2, 0, 0xFD, 0xFF, 65, 66]) "AB")
+  t "inflate: a header failing its check or naming a wider window is refused"
+    (refuses (bytes [0x78, 0x00, 3, 0]) "header check" &&
+      refuses (bytes [0x88, 0x1C, 3, 0]) "window" && reads (bytes [0x78, 0x01, 3, 0]) "")
+  let zeros := Flate.deflate ⟨Array.replicate 32 0⟩
+  t "inflate: a stream past its bound is the budget, a broken one malformed"
+    (Flate.inflate zeros 31 == .error .budget && Flate.inflate zeros 32 == .ok ⟨Array.replicate 32 0⟩ &&
+      (match Flate.inflate (zeros.extract 0 6) 32 with
+        | .error (.malformed _) => true
+        | _ => false))
 
 /-- The image decoders over synthetic bytes and the shipped fixtures, the sizing contract on placed
 pages, the placeholder, the PDF embedding and the HTML emit. -/
@@ -160,11 +164,11 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
     (match Image.decode rgbaPng with
      | .ok inf =>
        inf.color == .rgb && inf.filter == .flatePredictor && !(planSoft inf).isEmpty &&
-       ((Flate.inflate inf.data 14).bind fun rows =>
-         Flate.pngUnfilter rows 2 6 3) ==
-         .ok (bytes [10, 20, 30, 40, 50, 60, 5, 5, 5, 6, 7, 8]) &&
-       ((Flate.inflate (planSoft inf) 6).bind fun rows =>
-         Flate.pngUnfilter rows 2 2 1) == .ok (bytes [255, 128, 7, 16])
+       ((Flate.inflate inf.data 14).toOption.bind fun rows =>
+         (Flate.pngUnfilter rows 2 6 3).toOption) ==
+         some (bytes [10, 20, 30, 40, 50, 60, 5, 5, 5, 6, 7, 8]) &&
+       ((Flate.inflate (planSoft inf) 6).toOption.bind fun rows =>
+         (Flate.pngUnfilter rows 2 2 1).toOption) == some (bytes [255, 128, 7, 16])
      | .error _ => false)
   t "png alpha planes keep the source rows' filter bytes"
     (match Image.decode rgbaPng with
@@ -283,11 +287,11 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
     (match alphaInfo with
      | .ok inf =>
        inf.pxW == 48 && inf.pxH == 32 && inf.color == .rgb && !(planSoft inf).isEmpty &&
-       (match (Flate.inflate (planSoft inf) (32 * 49)).bind fun rows =>
-          Flate.pngUnfilter rows 32 48 1 with
-        | .ok mask => mask.size == 48 * 32 && mask[0]?.getD 1 == 0 &&
+       (match (Flate.inflate (planSoft inf) (32 * 49)).toOption.bind fun rows =>
+          (Flate.pngUnfilter rows 32 48 1).toOption with
+        | some mask => mask.size == 48 * 32 && mask[0]?.getD 1 == 0 &&
             (mask[4 * 48 + 4]?.getD 0) == 255 && (mask[4 * 48 + 43]?.getD 0) == 21
-        | .error _ => false)
+        | none => false)
      | .error _ => false)
   -- Reaching the count is the property: a panic would take the run down.
   t "png decode total over truncations"

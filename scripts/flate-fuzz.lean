@@ -1,6 +1,6 @@
 /-
 Fuzz the codec against python3's zlib: inflate inverts deflate on random, adversarial, fixture and
-PDF-writer bytes, and refuses each over-subscribed Huffman table zlib refuses.
+PDF-writer bytes, and refuses and reads exactly what zlib does but the Adler-32 trailer.
 Usage: lake build && lake env lean --run scripts/flate-fuzz.lean
 -/
 import LeanTex
@@ -106,8 +106,56 @@ def foreignInflate (dir : System.FilePath) (z : ByteArray) : IO (Option ByteArra
 
 def refusedByBoth (dir : System.FilePath) (label : String) (z : ByteArray) : IO Unit := do
   if let .ok out := Flate.inflate z 65536 then
-    die s!"{label}: inflate accepted an over-subscribed table ({out.size} bytes out)"
+    die s!"{label}: inflate accepted a stream zlib refuses ({out.size} bytes out)"
   if (← foreignInflate dir z).isSome then die s!"{label}: the foreign inflater accepted it"
+
+/-- What python3's zlib inflates each stream to, `none` where it refuses it, in one run: whole
+zlib streams, or raw deflate when `raw`. -/
+def foreignBatch (dir : System.FilePath) (raw : Bool) (zs : Array ByteArray) :
+    IO (Array (Option ByteArray)) := do
+  let inPath := dir / "batch.in"
+  let outPath := dir / "batch.out"
+  let mut buf := ByteArray.empty
+  for z in zs do buf := buf ++ be32 z.size ++ z
+  IO.FS.writeBinFile inPath buf
+  let script := "import zlib,sys\n" ++
+    "d=open(sys.argv[1],'rb').read(); o=bytearray(); i=0; w=-15 if sys.argv[3]=='raw' else 15\n" ++
+    "while i < len(d):\n" ++
+    "  n=int.from_bytes(d[i:i+4],'big'); z=d[i+4:i+4+n]; i+=4+n\n" ++
+    "  try:\n" ++
+    "    r=zlib.decompress(z,w); o+=b'\\x01'+len(r).to_bytes(4,'big')+r\n" ++
+    "  except Exception:\n" ++
+    "    o+=b'\\x00'\n" ++
+    "open(sys.argv[2],'wb').write(o)\n"
+  let run ← IO.Process.output { cmd := "python3", args := #["-I", "-c", script,
+    inPath.toString, outPath.toString, if raw then "raw" else "zlib"] }
+  if run.exitCode != 0 then die s!"the foreign batch failed: {run.stderr}"
+  let o ← IO.FS.readBinFile outPath
+  let mut out : Array (Option ByteArray) := #[]
+  let mut i := 0
+  for _ in [0:zs.size] do
+    if o[i]?.getD 0 == 1 then
+      let n := (o.extract (i + 1) (i + 5)).foldl (fun a b => a * 256 + b.toNat) 0
+      out := out.push (some (o.extract (i + 5) (i + 5 + n)))
+      i := i + 5 + n
+    else
+      out := out.push none
+      i := i + 1
+  return out
+
+/-- The engine and zlib agree on each stream, refusing it or reading the same bytes; a raw
+stream is read behind the two-byte header `78 01`. -/
+def agree (dir : System.FilePath) (label : String) (raw : Bool) (zs : Array ByteArray) :
+    IO Nat := do
+  let foreign ← foreignBatch dir raw zs
+  let mut read := 0
+  for (z, k) in zs.zipIdx do
+    let own := (Flate.inflate (if raw then ByteArray.mk #[0x78, 0x01] ++ z else z) (1 <<< 22)).toOption
+    unless own == foreign[k]?.join do
+      die s!"{label} #{k}: inflate {if own.isSome then "read" else "refused"} it, zlib \
+{if (foreign[k]?.join).isSome then "read" else "refused"} it ({z.size} bytes)"
+    if own.isSome then read := read + 1
+  return read
 
 /-- Random lengths over `n` symbols, each at most `maxLen`, whose Kraft sum overflows the code
 space, the end of block given a length when `eob`. -/
@@ -162,6 +210,130 @@ def tableChecks (dir : System.FilePath) : IO Unit := do
     refusedByBoth dir s!"random over-subscribed code-length code #{k}"
       (dynamicStream cl bit (oneBit 257) #[0] data aa)
 
+/-- Random lengths over `n` symbols, each at most `maxLen`, leaving the code space incomplete in
+none of the shapes zlib admits: two codes at least, the end of block one of them when `eob`. -/
+def incomplete (s : UInt64) (n maxLen : Nat) (eob : Bool) : Array Nat × UInt64 := Id.run do
+  let mut s := s
+  let mut lens := Array.replicate n 0
+  if eob then lens := lens.set! 256 maxLen
+  let (stop, s0) := rand s (4 * n)
+  s := s0
+  for _ in [0:stop + 2] do
+    let (k, s1) := rand s n
+    let (l, s2) := rand s1 maxLen
+    s := s2
+    let trial := lens.set! k (l + 1)
+    if kraft trial maxLen < 2 ^ maxLen then lens := trial
+  if (lens.filter (· > 0)).size < 2 then
+    lens := lens.set! (if eob then 0 else 1) maxLen
+    lens := if (lens.filter (· > 0)).size < 2 then lens.set! 2 maxLen else lens
+  return (lens, s)
+
+/-- Random lengths over `n` symbols filling the code space, each at most `maxLen`: two one-bit
+codes, the first `first`, then codes split at random. -/
+def complete (s : UInt64) (n maxLen first : Nat) : Array Nat × UInt64 := Id.run do
+  let mut s := s
+  let (other, s0) := rand s n
+  s := s0
+  let second := if other == first then (first + 1) % n else other
+  let mut lens := ((Array.replicate n 0).set! first 1).set! second 1
+  let (splits, s1) := rand s (2 * n)
+  s := s1
+  for _ in [0:splits] do
+    let (a, s2) := rand s n
+    let (b, s3) := rand s2 n
+    s := s3
+    let la := lens[a]?.getD 0
+    if 0 < la && la < maxLen && lens[b]?.getD 0 == 0 then
+      lens := (lens.set! a (la + 1)).set! b (la + 1)
+  return (lens, s)
+
+/-- Each table left incomplete at random, zlib's admitted incomplete shapes, the zlib header's
+every value, stored blocks' lengths, the alphabets' declared sizes and random deflate bodies: the
+engine refuses and reads exactly what zlib does. -/
+def parityChecks (dir : System.FilePath) : IO Unit := do
+  let aa := "AA".toUTF8
+  let data := #[(0, 1), (0, 1), (1, 1)]
+  let bit (v : Nat) : Nat × Nat := (v, 1)
+  let nibble (v : Nat) : Nat × Nat := (v, 4)
+  let flat := Array.replicate 16 4
+  let mut s : UInt64 := 0x6A09E667F3BCC908
+  for k in [0:40] do
+    let (nlit, s1) := rand s 30
+    let (lit, s2) := incomplete s1 (257 + nlit) 15 true
+    let (ndist, s3) := rand s2 28
+    let (dist, s4) := incomplete s3 (ndist + 3) 15 false
+    let (cl, s5) := incomplete s4 19 7 false
+    s := s5
+    refusedByBoth dir s!"random incomplete literal/length code #{k}"
+      (dynamicStream flat nibble lit #[0] #[(0, 16)] aa)
+    refusedByBoth dir s!"random incomplete distance code #{k}"
+      (dynamicStream flat nibble (oneBit 257) dist data aa)
+    refusedByBoth dir s!"random incomplete code-length code #{k}"
+      (dynamicStream cl bit (oneBit 257) #[0] data aa)
+  let only (n : Nat) (assign : List (Nat × Nat)) : Array Nat :=
+    (Array.range n).map fun i => ((assign.find? (·.1 == i)).map (·.2)).getD 0
+  let admitted := #[
+    dynamicStream flat nibble (only 257 [(256, 1)]) #[0] #[(0, 1)] ByteArray.empty,
+    dynamicStream flat nibble (only 258 [(65, 1), (256, 2), (257, 2)]) #[1]
+      #[(0, 1), (3, 2), (0, 1), (2, 2)] "AAAA".toUTF8,
+    dynamicStream flat nibble (only 257 [(65, 1), (256, 1)]) #[0] #[(0, 1), (1, 1)] "A".toUTF8]
+  let readAdmitted ← agree dir "an incomplete shape zlib admits" false admitted
+  unless readAdmitted == admitted.size do die "an incomplete shape zlib admits went unread"
+  let trailer := be32 1
+  let headers := (Array.range 65536).map fun v =>
+    ByteArray.mk #[UInt8.ofNat (v / 256), UInt8.ofNat (v % 256), 3, 0] ++ trailer
+  let readHeaders ← agree dir "a zlib header" false headers
+  let mut stored : Array ByteArray := #[]
+  for k in [0:2000] do
+    let (len, s1) := rand s 24
+    let (noise, s2) := rand s1 65536
+    s := s2
+    let nlen := if k % 2 == 0 then 65535 - len else noise
+    stored := stored.push (ByteArray.mk #[1, UInt8.ofNat len, 0, UInt8.ofNat (nlen % 256),
+      UInt8.ofNat (nlen / 256)] ++ ByteArray.mk (Array.replicate len 66))
+  let readStored ← agree dir "a stored block" true stored
+  let mut sizes : Array ByteArray := #[]
+  for hlit in [0:32] do
+    for hdist in [0:32] do
+      let z := dynamicStream flat nibble (only (257 + hlit) [(65, 1), (256, 1)])
+        (Array.replicate (hdist + 1) 0) #[(0, 1), (1, 1)] "A".toUTF8
+      sizes := sizes.push z
+  let readSizes ← agree dir "a declared alphabet size" false sizes
+  let mut bodies : Array ByteArray := #[]
+  for _ in [0:20000] do
+    let (size, s1) := rand s 300
+    let (first, s2) := rand s1 256
+    s := s2
+    let mut b : Array UInt8 := #[UInt8.ofNat ((first &&& 0xF9) ||| 0x04)]
+    for _ in [0:size] do
+      let (v, s3) := rand s 256
+      s := s3
+      b := b.push (UInt8.ofNat v)
+    bodies := bodies.push (ByteArray.mk b)
+  let readBodies ← agree dir "a random dynamic body" true bodies
+  let mut blocks : Array ByteArray := #[]
+  for _ in [0:5000] do
+    let (nlit, s1) := rand s 30
+    let (lit, s2) := complete s1 (257 + nlit) 15 256
+    let (ndist, s3) := rand s2 30
+    let (dist, s4) := complete s3 (ndist + 1) 15 0
+    let (bits, s5) := rand s4 64
+    s := s5
+    let mut data : Array (Nat × Nat) := #[]
+    for _ in [0:bits] do
+      let (v, s6) := rand s 256
+      s := s6
+      data := data.push (v, 8)
+    blocks := blocks.push (dynamicStream flat nibble lit (if ndist == 0 then #[0] else dist) data
+      ByteArray.empty)
+  let rawBlocks := blocks.map fun z => z.extract 2 (z.size - 4)
+  let readRaw ← agree dir "a random complete block" true rawBlocks
+  IO.println s!"flate-fuzz: zlib parity: {readAdmitted} admitted shapes, \
+{readHeaders} of {headers.size} headers, {readStored} of {stored.size} stored blocks, \
+{readSizes} of {sizes.size} alphabet sizes, {readBodies} of {bodies.size} random bodies and \
+{readRaw} of {rawBlocks.size} random complete blocks read alike, the rest refused alike"
+
 /-- Every `/FlateDecode` stream the engine's PDF writer emitted, inflated back, found by
 the writer's own spelling. -/
 def pdfStreams (pdf : ByteArray) : IO (Array ByteArray) := do
@@ -199,6 +371,7 @@ def main : IO Unit := do
   check dir "text-like" (String.join (List.replicate 2000
     "the quick brown fox jumps over the lazy dog — pack my box. ")).toUTF8
   tableChecks dir
+  parityChecks dir
   -- The shipped alpha fixture's planes: the exact bytes the PDF writer embeds.
   let alpha ← IO.FS.readBinFile "testdata/corpus/rects-alpha.png"
   match Image.decode alpha with

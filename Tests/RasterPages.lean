@@ -69,7 +69,7 @@ private def rasterPlan (b : ByteArray) (page : PdfRead.PageSelection)
   Image.plan params (← Image.probePage b page)
 
 private def rasterSamples (b : ByteArray) (components : Nat) : Except String ByteArray := do
-  let rows ← Flate.inflate b 1024
+  let rows ← (Flate.inflate b 1024).mapError fun _ => "the raster's samples do not inflate"
   Flate.pngUnfilter rows 2 (3 * components) components
 
 private def rasterGeometry (p : Image.Plan) : Bool :=

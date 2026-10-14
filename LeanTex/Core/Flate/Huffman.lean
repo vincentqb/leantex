@@ -6,6 +6,18 @@ import LeanTex.Core.Flate.Progress
 
 namespace LeanTex.Core.Flate
 
+/-- Why a stream does not inflate: its output passes the caller's bound, or its bytes break
+RFC 1950 or RFC 1951 as the reason says. -/
+public inductive Error where
+  | budget
+  | malformed (why : String)
+  deriving Repr, BEq, Inhabited
+
+public instance : ToString Error where
+  toString
+    | .budget => "the stream inflates past its bound"
+    | .malformed why => why
+
 public structure Br where
   data : ByteArray
   bitPos : Nat
@@ -146,15 +158,20 @@ def huffSymbols (lengths : Array Nat) : Array Nat := Id.run do
 public def mkHuff (lengths : Array Nat) : Huff :=
   { counts := huffCounts lengths, symbols := huffSymbols lengths }
 
-/-- Whether the codes fit the code space: the integer Kraft sum at fifteen bits is at most
-`2 ^ 15`. -/
-public def Huff.fits (h : Huff) : Bool :=
-  Canonical.start (fun k => h.counts[k]?.getD 0) 15 + h.counts[15]?.getD 0 ≤ 2 ^ 15
+/-- The code space the codes occupy: their integer Kraft sum at fifteen bits, of `2 ^ 15`. -/
+public def Huff.used (h : Huff) : Nat :=
+  Canonical.start (fun k => h.counts[k]?.getD 0) 15 + h.counts[15]?.getD 0
 
-/-- The canonical table of `lengths`, or `none` when they over-subscribe the code space. -/
-public def mkHuff? (lengths : Array Nat) : Option Huff :=
+/-- Whether zlib's inflate admits the codes: they fill the code space, or, for a payload table
+(`sparse`), they are one one-bit code or none at all. -/
+public def Huff.admits (h : Huff) (sparse : Bool) : Bool :=
+  h.used == 2 ^ 15 ||
+    sparse && (h.used == 0 || h.used == 2 ^ 14 && h.counts[1]?.getD 0 == 1)
+
+/-- The canonical table of `lengths` where zlib's inflate admits it (`Huff.admits`). -/
+public def mkHuff? (lengths : Array Nat) (sparse : Bool) : Option Huff :=
   let h := mkHuff lengths
-  if h.fits then some h else none
+  if h.admits sparse then some h else none
 
 /-- Decode one symbol, MSB-first, bounded by the 15-bit maximum length. -/
 public def Huff.decode (h : Huff) (r : Br) : Option (Nat × Br) := Id.run do

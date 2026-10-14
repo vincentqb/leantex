@@ -17,33 +17,34 @@ def copy (out : ByteArray) (len dist : Nat) : ByteArray := Id.run do
 
 /-- Decodes one symbol, telling the end of block apart from a continuing state. -/
 def readStep (lit dist : Huff) (maxOut : Nat) (state : ByteArray × Br) :
-    Except String (Sum (ByteArray × Br) (ByteArray × Br)) := do
+    Except Error (Sum (ByteArray × Br) (ByteArray × Br)) := do
   let (out, r) := state
-  let some (sym, r) := lit.decode r | .error "deflate: truncated block"
+  let some (sym, r) := lit.decode r | .error (.malformed "deflate: truncated block")
   if sym == 256 then return .inl (out, r)
   else if sym < 256 then
-    if out.size ≥ maxOut then .error "deflate: output exceeds the declared size"
+    if out.size ≥ maxOut then .error .budget
     else return .inr (out.push (UInt8.ofNat sym), r)
   else
     let i := sym - 257
-    let some base := lenBase[i]? | .error "deflate: bad length code"
-    let some extra := lenExtra[i]? | .error "deflate: bad length code"
-    let some (e, r) := r.bits extra | .error "deflate: truncated"
+    let some base := lenBase[i]? | .error (.malformed "deflate: bad length code")
+    let some extra := lenExtra[i]? | .error (.malformed "deflate: bad length code")
+    let some (e, r) := r.bits extra | .error (.malformed "deflate: truncated")
     let len := base + e
-    let some (dsym, r) := dist.decode r | .error "deflate: truncated"
-    let some dbase := distBase[dsym]? | .error "deflate: bad distance code"
-    let some dextra := distExtra[dsym]? | .error "deflate: bad distance code"
-    let some (de, r) := r.bits dextra | .error "deflate: truncated"
+    let some (dsym, r) := dist.decode r | .error (.malformed "deflate: truncated")
+    let some dbase := distBase[dsym]? | .error (.malformed "deflate: bad distance code")
+    let some dextra := distExtra[dsym]? | .error (.malformed "deflate: bad distance code")
+    let some (de, r) := r.bits dextra | .error (.malformed "deflate: truncated")
     let d := dbase + de
-    if d == 0 || d > out.size then .error "deflate: distance before the start of output"
-    else if out.size + len > maxOut then .error "deflate: output exceeds the declared size"
+    if d == 0 || d > out.size then
+      .error (.malformed "deflate: distance before the start of output")
+    else if out.size + len > maxOut then .error .budget
     else return .inr (copy out len d, r)
 
 /-- Decodes the block's symbols, bounded by the declared output size. -/
 public def read (lit dist : Huff) (r : Br) (out : ByteArray) (maxOut : Nat) :
-    Except String (ByteArray × Br) :=
+    Except Error (ByteArray × Br) :=
   DecodeLoop.run (maxOut + 2) (readStep lit dist maxOut) (out, r)
-    "deflate: block did not end"
+    (.malformed "deflate: block did not end")
 
 /-- Writes a match's length code, length extra bits, distance code and distance extra bits. -/
 def writeMatch (litLens litCodes distLens distCodes : Array Nat)
