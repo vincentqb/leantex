@@ -128,8 +128,9 @@ theorem mkHuff?_some_exact (lengths : Array Nat) (sparse : Bool) (h : Huff) :
       h = mkHuff lengths ∧ (Canonical.kraft lengths.toList 15 = 2 ^ 15 ∨
         sparse = true ∧ (Canonical.kraft lengths.toList 15 = 0 ∨
           Canonical.kraft lengths.toList 15 = 2 ^ 14 ∧ lengths.toList.count 1 = 1)) := by
+  have hcf : CountsFor lengths.toList (mkHuff lengths).counts := huffCounts_loop_exact lengths
   have hc : (mkHuff lengths).counts[1]?.getD 0 = lengths.toList.count 1 := by
-    simpa using (mkHuff_counts_exact lengths).2 1
+    simpa using hcf.2 1
   have ha : (mkHuff lengths).admits sparse = true ↔
       (Canonical.kraft lengths.toList 15 = 2 ^ 15 ∨
         sparse = true ∧ (Canonical.kraft lengths.toList 15 = 0 ∨

@@ -200,7 +200,8 @@ def readPng (b : ByteArray) : Except String Raster := Id.run do
     else if kind == PngEncode.tagIEND then break
     i := i + 12 + len
   let some (w, h, chs) := head | return .error "a PNG with no header"
-  match Flate.inflate idat (h * (1 + w * chs)) >>= (Flate.pngUnfilter · h (w * chs) chs) with
+  match (Flate.inflate idat (h * (1 + w * chs))).mapError toString >>=
+      (Flate.pngUnfilter · h (w * chs) chs) with
   | .error e => return .error e
   | .ok px => return .ok (toRgb w h chs px)
 
