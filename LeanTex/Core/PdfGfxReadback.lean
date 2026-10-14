@@ -1060,14 +1060,6 @@ theorem ops_chars : ∀ (l : List Pdf.ContentOp), opsPlain l = true →
 
 end
 
-theorem renderSep_trail : ∀ (ts : List (Tok × UInt8)) (h : ts ≠ []),
-    PdfContentLex.renderSep true ts = PdfContentLex.renderSep false ts ++ ⟨#[(ts.getLast h).2]⟩
-  | [(t, w)], _ => by simp [PdfContentLex.renderSep_cons, PdfContentLex.renderSep_nil, PdfContentLex.sepOf]
-  | (t, w) :: u :: rest, _ => by
-    rw [PdfContentLex.renderSep_cons true t w, PdfContentLex.renderSep_cons false t w,
-      renderSep_trail (u :: rest) (by simp), List.getLast_cons_cons]
-    simp only [PdfContentLex.sepOf, ByteArray.append_assoc]
-
 theorem toUTF8_chars (s : String) : s.toUTF8 = s.toList.utf8Encode := by
   conv => lhs; rw [← String.ofList_toList (s := s)]
   rw [String.toUTF8_eq_toByteArray, String.toByteArray_ofList]
@@ -1614,7 +1606,7 @@ theorem render_bytes (ops : Array Pdf.ContentOp) (h : opsPlain ops.toList = true
     rw [ops_chars ops.toList h] at hc
     have hb : (Pdf.render ops ++ "\n").toUTF8 = (wordsChars (opWordsList ops.toList)).utf8Encode := by
       rw [toUTF8_chars, hc]
-    rw [words_bytes _ (opWordsList_ok ops.toList), renderSep_trail _ hne, hlast] at hb
+    rw [words_bytes _ (opWordsList_ok ops.toList), PdfContentLex.renderSep_true _ hne, hlast] at hb
     rw [String.toUTF8_eq_toByteArray, String.toByteArray_append] at hb
     have hnl : "\n".toByteArray = ⟨#[10]⟩ := rfl
     rw [hnl, ← String.toUTF8_eq_toByteArray] at hb

@@ -120,12 +120,23 @@ public def Spelled : List Tok → Prop
   | .op n => n.toUTF8
   | .inline d data => Tok.renderInto ByteArray.empty (.inline d data)
 
+/-- A run of regular ASCII characters that no number starts: what the
+tokenizer reads as a word at a token's start. -/
+structure Word (w : String) : Prop where
+  ne : w.toList ≠ []
+  ascii : ∀ c ∈ w.toList, c.toNat < 128
+  reg : ∀ c ∈ w.toList, regular c.toNat = true
+  lead : ∀ c, w.toList.head? = some c → numByte c.toNat = false
+
+/-- A byte that ends a token: the stream's end, or white space. -/
+def TermByte (c : Nat) : Prop := c = 256 ∨ isWs c = true
+
 /-- What follows a token: its byte, after the last token only when `trail`. -/
 @[expose] public def sepOf (trail : Bool) (w : UInt8) : List (Tok × UInt8) → ByteArray
   | [] => if trail then ⟨#[w]⟩ else .empty
   | _ :: _ => ⟨#[w]⟩
 
-/-- Tokens each spelled and followed by its byte onto `acc`, the last token's byte only when `trail`. -/
+/-- `renderSep trail` of the tokens, appended to `acc`. -/
 @[expose] public def renderSepInto (trail : Bool) (acc : ByteArray) : List (Tok × UInt8) → ByteArray
   | [] => acc
   | (t, w) :: rest => renderSepInto trail (acc ++ spell t ++ sepOf trail w rest) rest
@@ -152,6 +163,19 @@ public theorem renderSep_cons (trail : Bool) (t : Tok) (w : UInt8) (rest : List 
 
 public theorem sepOf_true (w : UInt8) (rest : List (Tok × UInt8)) : sepOf true w rest = ⟨#[w]⟩ := by
   cases rest <;> rfl
+
+public theorem renderSep_true : ∀ (ts : List (Tok × UInt8)) (h : ts ≠ []),
+    renderSep true ts = renderSep false ts ++ ⟨#[(ts.getLast h).2]⟩
+  | [(t, w)], _ => by simp [renderSep_cons, renderSep_nil, sepOf]
+  | (t, w) :: u :: rest, _ => by
+    rw [renderSep_cons true t w, renderSep_cons false t w, renderSep_true (u :: rest) (by simp),
+      List.getLast_cons_cons]
+    simp only [sepOf, ByteArray.append_assoc]
+
+theorem renderSep_cons_after (Q : ByteArray) (trail : Bool) (t : Tok) (w : UInt8)
+    (rest : List (Tok × UInt8)) :
+    Q ++ renderSep trail ((t, w) :: rest) = Q ++ spell t ++ (sepOf trail w rest ++ renderSep trail rest) := by
+  simp only [renderSep_cons, ByteArray.append_assoc]
 
 theorem renderInto_spell (acc : ByteArray) (t : Tok) (ht : TokSpelled t) :
     t.renderInto acc = acc ++ spell t := by
@@ -237,14 +261,6 @@ theorem objStart_not_regular {c : Nat} (h : regular c = true) : objStart c = fal
   simp only [objStart, Bool.or_eq_false_iff, beq_eq_false_iff_ne, ne_eq]
   simp only [Bool.or_eq_false_iff, beq_eq_false_iff_ne, ne_eq] at h
   omega
-
-/-- A run of regular ASCII characters that no number starts: what the
-tokenizer reads as a word at a token's start. -/
-structure Word (w : String) : Prop where
-  ne : w.toList ≠ []
-  ascii : ∀ c ∈ w.toList, c.toNat < 128
-  reg : ∀ c ∈ w.toList, regular c.toNat = true
-  lead : ∀ c, w.toList.head? = some c → numByte c.toNat = false
 
 theorem OpSpelled.word' {n : String} (h : OpSpelled n) : Word n := ⟨h.ne, h.ascii, h.reg, h.lead⟩
 
@@ -376,9 +392,6 @@ theorem obj_head (o : Obj) (hro : o.Representable) (hb : readByObj o = true) :
   | real _ => simp [readByObj] at hb
   | ref _ _ => simp [readByObj] at hb
 
-/-- A byte that ends a token: the stream's end, or white space. -/
-def TermByte (c : Nat) : Prop := c = 256 ∨ isWs c = true
-
 theorem TermByte.not_regular {c : Nat} (h : TermByte c) : regular c = false := by
   rcases h with rfl | h
   · rfl
@@ -489,13 +502,13 @@ theorem step_bool {P R : ByteArray} (v : Bool) (hT : TermByte (at? R 0)) {q : Na
   | true =>
     have hs : spell (.val (.bool true)) = "true".toUTF8 := by simp [spell, Obj.render, Obj.renderInto]
     rw [hs] at hq ⊢
-    obtain ⟨hsz, hnum, hobj, hreg, hrun, hname, hpos⟩ := word_read (P := P) (R := R) word_true hT
+    obtain ⟨hsz, hnum, hobj, hreg, hrun, hname, -⟩ := word_read (P := P) (R := R) word_true hT
     unfold step
     simp only [hq, hsz, ↓reduceIte, hnum, hobj, hreg, Bool.false_eq_true, hrun, hname, beq_self_eq_true]
   | false =>
     have hs : spell (.val (.bool false)) = "false".toUTF8 := by simp [spell, Obj.render, Obj.renderInto]
     rw [hs] at hq ⊢
-    obtain ⟨hsz, hnum, hobj, hreg, hrun, hname, hpos⟩ := word_read (P := P) (R := R) word_false hT
+    obtain ⟨hsz, hnum, hobj, hreg, hrun, hname, -⟩ := word_read (P := P) (R := R) word_false hT
     unfold step
     simp only [hq, hsz, ↓reduceIte, hnum, hobj, hreg, Bool.false_eq_true, hrun, hname]
     simp
@@ -506,7 +519,7 @@ theorem step_null {P R : ByteArray} (hT : TermByte (at? R 0)) {q : Nat}
       .yield { pos := P.size + (spell (.val .null)).size, out := out.push (.val .null) } := by
   have hs : spell (.val .null) = "null".toUTF8 := by simp [spell, Obj.render, Obj.renderInto]
   rw [hs] at hq ⊢
-  obtain ⟨hsz, hnum, hobj, hreg, hrun, hname, hpos⟩ := word_read (P := P) (R := R) word_null hT
+  obtain ⟨hsz, hnum, hobj, hreg, hrun, hname, -⟩ := word_read (P := P) (R := R) word_null hT
   unfold step
   simp only [hq, hsz, ↓reduceIte, hnum, hobj, hreg, Bool.false_eq_true, hrun, hname]
   simp
@@ -581,12 +594,9 @@ theorem renderSep_head {Q : ByteArray} {trail : Bool} {rest : List (Tok × UInt8
     right
     obtain ⟨u, w⟩ := p
     obtain ⟨c, cs, hcs, hw, hc, hlt, hr⟩ := head_spell u (hs (u, w) (by simp))
-    have e : Q ++ renderSep trail ((u, w) :: rest') =
-        Q ++ spell u ++ (sepOf trail w rest' ++ renderSep trail rest') := by
-      simp only [renderSep_cons, ByteArray.append_assoc]
     have hspan := span_tok Q (spell u) (sepOf trail w rest' ++ renderSep trail rest')
     rw [hcs] at hspan
-    rw [e, hspan.head]
+    rw [renderSep_cons_after, hspan.head]
     refine ⟨hw, hc, hlt, fun h82 => ?_⟩
     obtain ⟨_, d, ds, hd, hreg⟩ := hr h82
     rw [hd] at hspan
@@ -794,10 +804,7 @@ theorem next_not_R {Q : ByteArray} {trail : Bool} {rest : List (Tok × UInt8)} (
     obtain ⟨c, cs, hcs, -, -, -, hr⟩ := head_spell u (hs (u, w) (by simp))
     have hspan := span_tok Q (spell u) (sepOf trail w rest' ++ renderSep trail rest')
     rw [hcs] at hspan
-    have e : Q ++ renderSep trail ((u, w) :: rest') =
-        Q ++ spell u ++ (sepOf trail w rest' ++ renderSep trail rest') := by
-      simp only [renderSep_cons, ByteArray.append_assoc]
-    rw [e, hspan.head]
+    rw [renderSep_cons_after, hspan.head]
     intro h82
     have := (hr h82).1
     rw [hR (u, w) (by simp)] at this
