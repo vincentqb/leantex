@@ -653,6 +653,18 @@ def overlayVisibleChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
               (pageMarks h == pageMarks s && h.inks.map inkMark == s.inks.map inkMark &&
                 h.links == s.links)
         | _, _ => t (label ++ s!": step {k} ships") false
+  -- A picture's label lines hide with the picture they label, step by step.
+  let labelled := "\\begin{tikzpicture}\\draw (0,0) -- (2,0);\\node at (1,0.5) {Label words};" ++
+    "\\end{tikzpicture}"
+  for (faces, fonts) in faceSets do
+    let out := (fittedOf fonts (elabStr (deck169Frame (above ++ "\n\n\\visible<2>{" ++ labelled ++
+      "}\n\n" ++ below))).1).out
+    let labels (k : Nat) : Array Layout.LineOut :=
+      ((out.pages[k]?.map (·.lines)).getD #[]).filter (·.pictureLabel.isSome)
+    t s!"visible, a picture's labels{faces}: both steps place them"
+      (out.pages.size == 2 && !(labels 0).isEmpty && !(labels 1).isEmpty)
+    t s!"visible, a picture's labels{faces}: hidden on the step hiding the picture, shown on the other"
+      ((labels 0).all (·.hidden) && (labels 1).all (!·.hidden))
   -- Outside a frame no step is set, so the argument shows, as beamer's article mode sets it.
   let body := "Lead \\CMD<2>{shown phrase} tail words.\n\n\\CMD<2>{A whole paragraph.}\n\nClosing words."
   let bare := "Lead shown phrase tail words.\n\nA whole paragraph.\n\nClosing words."

@@ -7129,91 +7129,42 @@ private def Spacing.Page.fresh (b : B) : Bool :=
 
 /-- Attach a committed line's notes to the open page, each note whole. -/
 private def Spacing.Page.attachNotes (b : B) (notes : Array NoteBlock) : B :=
-  if notes.isEmpty then b
-  else notes.foldl (fun b nb =>
-    { b with pendingNotes := b.pendingNotes
-               ++ nb.lines.map (fun l => { l with y := l.y + b.notesH })
-             notesH := b.notesH + nb.height
-             notesDepth := nb.depth }) b
+  let acc := notes.foldl (fun (acc : Array LineOut × Sp × Sp) nb =>
+      (acc.1 ++ nb.lines.map (fun l => { l with y := l.y + acc.2.1 }), acc.2.1 + nb.height,
+        nb.depth))
+    (b.pendingNotes, b.notesH, b.notesDepth)
+  { b with pendingNotes := acc.1, notesH := acc.2.1, notesDepth := acc.2.2 }
 
 /-- W0372: the note block and its mark's line reach below the floor even
 on a fresh page, so the note ships whole and the page is overrun. -/
 private def Spacing.Page.warnNoteOverrun (b : B) (y inkBelow : Sp) : B :=
   let over := y + inkBelow - noteFloor b.bottom b.noteGap b.notesH b.noteHang
-  if b.notesH > 0 && over > 0 then
-    { b with diags := b.diags.push (Diag.of .W0372
+  { b with diags := if b.notesH > 0 && over > 0 then
+      b.diags.push (Diag.of .W0372
         "a footnote is taller than the text block; it overruns its page"
         (help := "shorten the note, or raise the text height (\\page{ vmargin = ... })")
-        (detail := some s!"{over.toPtString}pt taller")) }
-  else b
+        (detail := some s!"{over.toPtString}pt taller"))
+    else b.diags }
 
-@[simp] private theorem attachNotes_pages (b : B) (ns : Array NoteBlock) :
-    (b.attachNotes ns).pages = b.pages := by
-  unfold Spacing.Page.attachNotes
-  split
-  · rfl
-  · exact Array.foldl_induction (motive := fun _ (acc : B) => acc.pages = b.pages)
-      rfl (fun _ _ h => h)
-
-@[simp] private theorem attachNotes_noBreak (b : B) (ns : Array NoteBlock) :
-    (b.attachNotes ns).noBreak = b.noBreak := by
-  unfold Spacing.Page.attachNotes
-  split
-  · rfl
-  · exact Array.foldl_induction (motive := fun _ (acc : B) => acc.noBreak = b.noBreak)
-      rfl (fun _ _ h => h)
-
-@[simp] private theorem attachNotes_cur (b : B) (ns : Array NoteBlock) :
-    (b.attachNotes ns).cur = b.cur := by
-  unfold Spacing.Page.attachNotes
-  split
-  · rfl
-  · exact Array.foldl_induction (motive := fun _ (acc : B) => acc.cur = b.cur)
-      rfl (fun _ _ h => h)
+private theorem attachNotes_empty_id (b : B) : b.attachNotes #[] = b := rfl
 
 private theorem attachNotes_mem (b : B) (ns : Array NoteBlock)
     (nb : NoteBlock) (hnb : nb ∈ ns) (l : LineOut) (hl : l ∈ nb.lines) :
     ∃ l' ∈ (b.attachNotes ns).pendingNotes, l'.segs = l.segs := by
-  unfold Spacing.Page.attachNotes
-  split
-  · next hemp =>
-    rw [Array.isEmpty_iff] at hemp
-    subst hemp
-    simp at hnb
-  · obtain ⟨j, hj, hje⟩ := Array.mem_iff_getElem.mp hnb
-    exact Array.foldl_induction
-      (motive := fun n (acc : B) => j < n →
-        ∃ l' ∈ acc.pendingNotes, l'.segs = l.segs)
-      (fun h => absurd h (Nat.not_lt_zero j))
-      (fun i acc ih hji => by
-        rcases Nat.lt_or_ge j i.val with hlt | hge
-        · obtain ⟨l', hl', hseg⟩ := ih hlt
-          exact ⟨l', Array.mem_append.mpr (Or.inl hl'), hseg⟩
-        · have hji' : j = i.val := Nat.le_antisymm (Nat.lt_succ_iff.mp hji) hge
-          refine ⟨{ l with y := l.y + acc.notesH },
-            Array.mem_append.mpr (Or.inr (Array.mem_map.mpr ⟨l, ?_, rfl⟩)), rfl⟩
-          subst hji'
-          exact hje ▸ hl) hj
-
-@[simp] private theorem warnNoteOverrun_pages (b : B) (y d : Sp) :
-    (b.warnNoteOverrun y d).pages = b.pages := by
-  simp only [Spacing.Page.warnNoteOverrun]
-  split <;> rfl
-
-@[simp] private theorem warnNoteOverrun_noBreak (b : B) (y d : Sp) :
-    (b.warnNoteOverrun y d).noBreak = b.noBreak := by
-  simp only [Spacing.Page.warnNoteOverrun]
-  split <;> rfl
-
-@[simp] private theorem warnNoteOverrun_cur (b : B) (y d : Sp) :
-    (b.warnNoteOverrun y d).cur = b.cur := by
-  simp only [Spacing.Page.warnNoteOverrun]
-  split <;> rfl
-
-@[simp] private theorem warnNoteOverrun_pendingNotes (b : B) (y d : Sp) :
-    (b.warnNoteOverrun y d).pendingNotes = b.pendingNotes := by
-  simp only [Spacing.Page.warnNoteOverrun]
-  split <;> rfl
+  obtain ⟨j, hj, hje⟩ := Array.mem_iff_getElem.mp hnb
+  exact Array.foldl_induction
+    (motive := fun n (acc : Array LineOut × Sp × Sp) => j < n →
+      ∃ l' ∈ acc.1, l'.segs = l.segs)
+    (fun h => absurd h (Nat.not_lt_zero j))
+    (fun i acc ih hji => by
+      rcases Nat.lt_or_ge j i.val with hlt | hge
+      · obtain ⟨l', hl', hseg⟩ := ih hlt
+        exact ⟨l', Array.mem_append.mpr (Or.inl hl'), hseg⟩
+      · have hji' : j = i.val := Nat.le_antisymm (Nat.lt_succ_iff.mp hji) hge
+        refine ⟨{ l with y := l.y + acc.2.1 },
+          Array.mem_append.mpr (Or.inr (Array.mem_map.mpr ⟨l, ?_, rfl⟩)), rfl⟩
+        subst hji'
+        exact hje ▸ hl) hj
 
 /-- The note block as it ships: the footnote rule, then every pending note line, bottom-anchored
 at `bodyBottom`; the rule is `\footnoterule` (ltmiscen.dtx) scaled with the body size. -/
@@ -7253,27 +7204,9 @@ private def Spacing.Page.boxDepth (b : B) : Sp :=
 private def Spacing.Page.keepInk (b : B) (ink : Sp) : B :=
   { b with lastInk := some (b.y, b.prevDepth, ink) }
 
-@[simp] private theorem keepInk_cur (b : B) (d : Sp) : (b.keepInk d).cur = b.cur := rfl
-@[simp] private theorem keepInk_pages (b : B) (d : Sp) : (b.keepInk d).pages = b.pages := rfl
-@[simp] private theorem keepInk_noBreak (b : B) (d : Sp) :
-    (b.keepInk d).noBreak = b.noBreak := rfl
-@[simp] private theorem keepInk_pendingNotes (b : B) (d : Sp) :
-    (b.keepInk d).pendingNotes = b.pendingNotes := rfl
-
 /-- Record what the line just set leaves the next one: `texAfter`, `dispShort` and `lineEnd`. -/
 private def Spacing.Page.displayState (b : B) (tex : Bool) (lineEnd : Option Sp) : B :=
   { b with texAfter := tex, lineEnd := lineEnd }
-
-@[simp] private theorem displayState_cur (b : B) (t : Bool) (e : Option Sp) :
-    (b.displayState t e).cur = b.cur := rfl
-@[simp] private theorem displayState_pages (b : B) (t : Bool) (e : Option Sp) :
-    (b.displayState t e).pages = b.pages := rfl
-@[simp] private theorem displayState_noBreak (b : B) (t : Bool) (e : Option Sp) :
-    (b.displayState t e).noBreak = b.noBreak := rfl
-@[simp] private theorem displayState_pendingNotes (b : B) (t : Bool) (e : Option Sp) :
-    (b.displayState t e).pendingNotes = b.pendingNotes := rfl
-@[simp] private theorem displayState_boxDepth (b : B) (t : Bool) (e : Option Sp) :
-    (b.displayState t e).boxDepth = b.boxDepth := rfl
 
 /-- TeX's choice of skip above a display (tex.web §1203), joined
 to the pending glue and remembered for the skip below. -/
@@ -7282,25 +7215,6 @@ private def Spacing.Page.displaySkip (b : B) (dj : DisplayJob) (left size : Sp) 
     (if dj.ctx.inPar then (b.lineEnd.map fun e => decide (left ≤ e + 2 * size)).getD true
      else dj.emptyLine && decide (left ≤ 2 * size))
   { b with skip := b.skip.add (if long then dj.above else dj.aboveShort), dispShort := !long }
-
-@[simp] private theorem displaySkip_pages (b : B) (dj : DisplayJob) (l s : Sp) :
-    (b.displaySkip dj l s).pages = b.pages := rfl
-@[simp] private theorem displaySkip_noBreak (b : B) (dj : DisplayJob) (l s : Sp) :
-    (b.displaySkip dj l s).noBreak = b.noBreak := rfl
-@[simp] private theorem displaySkip_geom (b : B) (dj : DisplayJob) (l s : Sp) :
-    (b.displaySkip dj l s).geom = b.geom := rfl
-@[simp] private theorem displaySkip_docBg (b : B) (dj : DisplayJob) (l s : Sp) :
-    (b.displaySkip dj l s).docBg = b.docBg := rfl
-@[simp] private theorem displaySkip_curFrameOrigin (b : B) (dj : DisplayJob) (l s : Sp) :
-    (b.displaySkip dj l s).curFrameOrigin = b.curFrameOrigin := rfl
-@[simp] private theorem displaySkip_curFrame (b : B) (dj : DisplayJob) (l s : Sp) :
-    (b.displaySkip dj l s).curFrame = b.curFrame := rfl
-@[simp] private theorem displaySkip_curFoot (b : B) (dj : DisplayJob) (l s : Sp) :
-    (b.displaySkip dj l s).curFoot = b.curFoot := rfl
-@[simp] private theorem displaySkip_paragraphBreaks (b : B) (dj : DisplayJob) (l s : Sp) :
-    (b.displaySkip dj l s).paragraphBreaks = b.paragraphBreaks := rfl
-@[simp] private theorem displaySkip_diags (b : B) (dj : DisplayJob) (l s : Sp) :
-    (b.displaySkip dj l s).diags = b.diags := rfl
 
 private theorem keepInk_boxDepth_exact (b : B) (d : Sp) : (b.keepInk d).boxDepth = d := by
   simp [Spacing.Page.keepInk, Spacing.Page.boxDepth]
@@ -7729,14 +7643,13 @@ private def Spacing.Page.overhangs (b : B) (beyond : Sp) : Bool :=
 /-- The ladder's record of how far a marked frame step's content
 reached past its text area, and the least clearance its pages left. -/
 private def Spacing.Page.noteOverrun (b : B) (over : Sp) : B :=
-  if over ≤ 0 then b else
-  match b.ladder, b.curFrameOrigin with
-  | true, some origin =>
-    match b.overruns.findIdx? (·.1 == origin) with
-    | some i => { b with overruns := b.overruns.modify i fun (k, o, c) =>
-        (k, max o over, min c b.clearance) }
-    | none => { b with overruns := b.overruns.push (origin, over, b.clearance) }
-  | _, _ => b
+  { b with overruns := if over ≤ 0 then b.overruns else
+      match b.ladder, b.curFrameOrigin with
+      | true, some origin =>
+        match b.overruns.findIdx? (·.1 == origin) with
+        | some i => b.overruns.modify i fun (k, o, c) => (k, max o over, min c b.clearance)
+        | none => b.overruns.push (origin, over, b.clearance)
+      | _, _ => b.overruns }
 
 /-- W0384: a frame not declared `[allowframebreaks]` is `over` taller than its page
 and continues; a marked frame records its step instead, and flow is silent. -/
@@ -7750,72 +7663,6 @@ private def Spacing.Page.warnSpill (b : B) (over : Sp) : B :=
     -- premise: runFitted_accounts — the ladder names every recorded frame step.
     | _, some o => { b with spilled := b.spilled.push o, spillWarned := true }
   | _, _ => b
-
-@[simp] private theorem noteOverrun_curFrameOrigin (b : B) (o : Sp) :
-    (b.noteOverrun o).curFrameOrigin = b.curFrameOrigin := by
-  unfold Spacing.Page.noteOverrun
-  repeat' split
-  all_goals rfl
-
-@[simp] private theorem noteOverrun_curFrame (b : B) (o : Sp) :
-    (b.noteOverrun o).curFrame = b.curFrame := by
-  unfold Spacing.Page.noteOverrun
-  repeat' split
-  all_goals rfl
-
-@[simp] private theorem noteOverrun_curFoot (b : B) (o : Sp) :
-    (b.noteOverrun o).curFoot = b.curFoot := by
-  unfold Spacing.Page.noteOverrun
-  repeat' split
-  all_goals rfl
-
-@[simp] private theorem noteOverrun_pages (b : B) (o : Sp) :
-    (b.noteOverrun o).pages = b.pages := by
-  unfold Spacing.Page.noteOverrun
-  repeat' split
-  all_goals rfl
-
-@[simp] private theorem noteOverrun_cur (b : B) (o : Sp) :
-    (b.noteOverrun o).cur = b.cur := by
-  unfold Spacing.Page.noteOverrun
-  repeat' split
-  all_goals rfl
-
-@[simp] private theorem noteOverrun_noBreak (b : B) (o : Sp) :
-    (b.noteOverrun o).noBreak = b.noBreak := by
-  unfold Spacing.Page.noteOverrun
-  repeat' split
-  all_goals rfl
-
-@[simp] private theorem noteOverrun_geom (b : B) (o : Sp) :
-    (b.noteOverrun o).geom = b.geom := by
-  unfold Spacing.Page.noteOverrun
-  repeat' split
-  all_goals rfl
-
-@[simp] private theorem noteOverrun_docBg (b : B) (o : Sp) :
-    (b.noteOverrun o).docBg = b.docBg := by
-  unfold Spacing.Page.noteOverrun
-  repeat' split
-  all_goals rfl
-
-@[simp] private theorem noteOverrun_pendingNotes (b : B) (o : Sp) :
-    (b.noteOverrun o).pendingNotes = b.pendingNotes := by
-  unfold Spacing.Page.noteOverrun
-  repeat' split
-  all_goals rfl
-
-@[simp] private theorem noteOverrun_diags (b : B) (o : Sp) :
-    (b.noteOverrun o).diags = b.diags := by
-  unfold Spacing.Page.noteOverrun
-  repeat' split
-  all_goals rfl
-
-@[simp] private theorem noteOverrun_paragraphBreaks (b : B) (o : Sp) :
-    (b.noteOverrun o).paragraphBreaks = b.paragraphBreaks := by
-  unfold Spacing.Page.noteOverrun
-  repeat' split
-  all_goals rfl
 
 @[simp] private theorem warnSpill_pages (b : B) (o : Sp) :
     (b.warnSpill o).pages = b.pages := by
@@ -7831,18 +7678,6 @@ private def Spacing.Page.warnSpill (b : B) (over : Sp) : B :=
 
 @[simp] private theorem warnSpill_docBg (b : B) (o : Sp) :
     (b.warnSpill o).docBg = b.docBg := by
-  unfold Spacing.Page.warnSpill
-  repeat' split
-  all_goals rfl
-
-@[simp] private theorem warnSpill_cur (b : B) (o : Sp) :
-    (b.warnSpill o).cur = b.cur := by
-  unfold Spacing.Page.warnSpill
-  repeat' split
-  all_goals rfl
-
-@[simp] private theorem warnSpill_noBreak (b : B) (o : Sp) :
-    (b.warnSpill o).noBreak = b.noBreak := by
   unfold Spacing.Page.warnSpill
   repeat' split
   all_goals rfl
@@ -7893,35 +7728,30 @@ private theorem spillPage_frame_projects (b : B) (over : Sp) :
 /-- Whether a hidden region is open on the page being built. -/
 private def Spacing.Page.hiding (b : B) : Bool := b.openRegions.any (·.kind matches .hidden)
 
-/-- The rider door: content joining the open page with no vertical negotiation,
-a line sharing the last baseline, and fills and inks painting behind. -/
-private def Spacing.Page.pushSibling (b : B) (line : Option LineOut := none)
-    (fills : Array Fill := #[]) (inks : Array InkOut := #[])
-    (shrink : Option Sp := none) (fils : Option Nat := none) : B :=
-  let b := match line with
-    | some l =>
-      { b with cur := { b.cur with lines := b.cur.lines.push { l with hidden := l.hidden || b.hiding } },
-               shrinkAbove := b.shrinkAbove.push
-                 (shrink.getD (b.shrinkAbove.back?.getD 0))
-               stretchAbove := b.stretchAbove.push b.pageStretch
-               filsAbove := b.filsAbove.push (fils.getD (b.filsAbove.back?.getD 0))
-               lastInk := none }
-    | none => b
-  if fills.isEmpty && inks.isEmpty then b
-  else { b with cur := { b.cur with fills := b.cur.fills ++ fills,
-                                    inks := b.cur.inks ++ inks }
-                fillShrinkAbove := b.fillShrinkAbove ++
-                  .replicate fills.size (shrink.getD b.pageShrink)
-                inkShrinkAbove := b.inkShrinkAbove ++
-                  .replicate inks.size (shrink.getD b.pageShrink)
-                fillStretchAbove := b.fillStretchAbove ++ .replicate fills.size b.pageStretch
-                inkStretchAbove := b.inkStretchAbove ++ .replicate inks.size b.pageStretch
-                fillFilsAbove := b.fillFilsAbove ++ .replicate fills.size (fils.getD b.pageFils)
-                inkFilsAbove := b.inkFilsAbove ++ .replicate inks.size (fils.getD b.pageFils) }
+/-- Paint joining the open page with no vertical negotiation, behind its lines, at `shrink`
+and `fils` or the page's own. -/
+private def Spacing.Page.pushSibling (b : B) (fills : Array Fill := #[])
+    (inks : Array InkOut := #[]) (shrink : Option Sp := none) (fils : Option Nat := none) : B :=
+  { b with cur := { b.cur with fills := b.cur.fills ++ fills, inks := b.cur.inks ++ inks }
+           fillShrinkAbove := b.fillShrinkAbove ++ .replicate fills.size (shrink.getD b.pageShrink)
+           inkShrinkAbove := b.inkShrinkAbove ++ .replicate inks.size (shrink.getD b.pageShrink)
+           fillStretchAbove := b.fillStretchAbove ++ .replicate fills.size b.pageStretch
+           inkStretchAbove := b.inkStretchAbove ++ .replicate inks.size b.pageStretch
+           fillFilsAbove := b.fillFilsAbove ++ .replicate fills.size (fils.getD b.pageFils)
+           inkFilsAbove := b.inkFilsAbove ++ .replicate inks.size (fils.getD b.pageFils) }
 
-/-- Push a picture's label lines as riders on the picture's own shrink and fils. -/
-private def Spacing.Page.pushLabels (b : B) (ls : Array LineOut) (shrink : Sp) (fils : Nat) : B :=
-  ls.foldl (fun b l => b.pushSibling (some l) (shrink := some shrink) (fils := some fils)) b
+/-- A picture's label lines as riders sharing the last baseline, on the picture's own shrink and
+fils. -/
+private def Spacing.Page.pushLabels (b : B) (ls : Array LineOut) (shrink : Sp) (fils : Nat) :
+    B :=
+  let shown := ls.map fun l => { l with hidden := l.hidden || b.hiding }
+  let lineShrinks : Array Sp := .replicate ls.size shrink
+  let lineFils : Array Nat := .replicate ls.size fils
+  { b with cur := { b.cur with lines := b.cur.lines ++ shown }
+           shrinkAbove := b.shrinkAbove ++ lineShrinks
+           stretchAbove := b.stretchAbove ++ .replicate ls.size b.pageStretch
+           filsAbove := b.filsAbove ++ lineFils
+           lastInk := if ls.isEmpty then b.lastInk else none }
 
 private def Spacing.Page.commit (b : B) (line : LineOut) (depth below : Sp)
     (ruleLine : Bool) (consume : Bool) (overflow : Sp) : B :=
@@ -7957,11 +7787,13 @@ private def Spacing.Page.commit (b : B) (line : LineOut) (depth below : Sp)
            opening := false
            skip := {} }
 
-private theorem doc_geometry_uniform (b : B) (l line : LineOut)
-    (depth below : Sp) (ruleLine consume : Bool) (overflow : Sp) :
-    b.finishPage.geom = b.geom ∧ (b.pushSibling (some l)).geom = b.geom ∧
+private theorem doc_geometry_uniform (b : B) (fills : Array Fill) (inks : Array InkOut)
+    (shrink : Option Sp) (fils : Option Nat) (ls : Array LineOut) (sh : Sp) (fl : Nat)
+    (line : LineOut) (depth below : Sp) (ruleLine consume : Bool) (overflow : Sp) :
+    b.finishPage.geom = b.geom ∧ (b.pushSibling fills inks shrink fils).geom = b.geom ∧
+      (b.pushLabels ls sh fl).geom = b.geom ∧
       (b.commit line depth below ruleLine consume overflow).geom = b.geom :=
-  ⟨rfl, rfl, rfl⟩
+  ⟨rfl, rfl, rfl, rfl⟩
 
 public def Seg.advance : Seg → Sp
   | .run _ _ _ w .. => w
@@ -8555,21 +8387,18 @@ private theorem sourceBound_commit {n : Nat} (b : B) (l : LineOut)
   · simpa only [Spacing.Page.commit, Array.size_push] using congrArg (· + 1) hb.ledger
 
 private theorem sourceBound_warnNoteOverrun {n : Nat} (b : B) (y d : Sp)
-    (hb : b.SourceBound n) : (b.warnNoteOverrun y d).SourceBound n := by
-  simp only [Spacing.Page.warnNoteOverrun]
-  split <;> exact hb.of_eq rfl rfl rfl rfl rfl
+    (hb : b.SourceBound n) : (b.warnNoteOverrun y d).SourceBound n :=
+  hb.of_eq rfl rfl rfl rfl rfl
 
 private theorem sourceBound_noteOverrun {n : Nat} (b : B) (o : Sp)
-    (hb : b.SourceBound n) : (b.noteOverrun o).SourceBound n := by
-  unfold Spacing.Page.noteOverrun
-  repeat' split
-  all_goals exact hb.of_eq rfl rfl rfl rfl rfl
+    (hb : b.SourceBound n) : (b.noteOverrun o).SourceBound n :=
+  hb.of_eq rfl rfl rfl rfl rfl
 
 private theorem sourceBound_fitCommit {n : Nat} (b : B) (mk : Sp → LineOut)
     (firstY stepY retryY : B → Sp) (depth below : Sp) (rl : Bool)
     (inkBelow bottom : Sp) (hb : b.SourceBound n) (hl : ∀ y, (mk y).SourceBound n) :
     (b.fitCommit mk firstY stepY retryY depth below rl inkBelow bottom #[]).SourceBound n := by
-  simp only [Spacing.Page.fitCommit, Spacing.Page.fitWith, Spacing.Page.attachNotes, Array.isEmpty_empty, ite_true]
+  simp only [Spacing.Page.fitCommit, Spacing.Page.fitWith, attachNotes_empty_id]
   split
   · exact sourceBound_warnNoteOverrun _ _ _ (sourceBound_commit b _ _ _ _ _ _ hb (hl _))
   · split
@@ -8639,12 +8468,11 @@ private theorem placeLine_gap_exact (fs : FontSet) (b : B) (x size : Sp)
   unfold Spacing.Page.placeLine Spacing.Page.fitCommit Spacing.Page.fitWith
   rw [hle]
   dsimp only
-  simp only [displayState_cur, keepInk_cur]
+  simp only [Spacing.Page.displayState, Spacing.Page.keepInk]
   simp only [Spacing.Page.fresh, PageOut.blank, hcur, hfresh, Bool.false_and, hpr, hrl, hid, Spacing.Page.peerGap, hnn, noteFloor,
     htx, hop, Option.isSome_none, Array.isEmpty_empty, Bool.or_self, Bool.false_eq_true, ite_false,
     ite_true, Int.add_zero, beq_self_eq_true]
-  simp only [hfit, true_or, ite_true, Spacing.Page.commit, Spacing.Page.attachNotes,
-    Array.isEmpty_empty, ite_true]
+  simp only [hfit, true_or, ite_true, Spacing.Page.commit, attachNotes_empty_id]
   simp [Array.back?_push]
 
 private theorem first_baseline_declared (fs : FontSet) (b : B) (x size : Sp)
@@ -8660,8 +8488,9 @@ private theorem first_baseline_declared (fs : FontSet) (b : B) (x size : Sp)
   unfold Spacing.Page.placeLine Spacing.Page.fitCommit Spacing.Page.fitWith
   rw [hle]
   dsimp only
-  simp only [displayState_cur, keepInk_cur]
-  simp [hf, Spacing.Page.commit, Spacing.Page.attachNotes, Array.back?_push]
+  simp only [Spacing.Page.displayState, Spacing.Page.keepInk]
+  simp [hf, Spacing.Page.commit, attachNotes_empty_id, Spacing.Page.warnNoteOverrun,
+    Array.back?_push]
 
 private theorem placeLine_leaf_exact (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w : Sp) (lf : Option Nat) (hf : b.fresh = true) :
@@ -8671,8 +8500,9 @@ private theorem placeLine_leaf_exact (fs : FontSet) (b : B) (x size : Sp)
   unfold Spacing.Page.placeLine Spacing.Page.fitCommit Spacing.Page.fitWith
   rw [hle]
   dsimp only
-  simp only [displayState_cur, keepInk_cur]
-  simp [hf, Spacing.Page.commit, Spacing.Page.attachNotes, Array.back?_push]
+  simp only [Spacing.Page.displayState, Spacing.Page.keepInk]
+  simp [hf, Spacing.Page.commit, attachNotes_empty_id, Spacing.Page.warnNoteOverrun,
+    Array.back?_push]
 
 private theorem placeLine_boxDepth_exact (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool)
@@ -14409,16 +14239,12 @@ private theorem census_commit (pick : Option Nat → Bool → Bool) (b : B) (l :
 
 private theorem census_warnNoteOverrun (pick : Option Nat → Bool → Bool)
     (b : B) (y d : Sp) :
-    Spacing.Page.census pick (Spacing.Page.warnNoteOverrun b y d) = Spacing.Page.census pick b := by
-  unfold Spacing.Page.warnNoteOverrun
-  dsimp only
-  split <;> exact census_of_eq pick b _ rfl rfl
+    Spacing.Page.census pick (Spacing.Page.warnNoteOverrun b y d) = Spacing.Page.census pick b :=
+  census_of_eq pick b _ rfl rfl
 
 private theorem census_noteOverrun (pick : Option Nat → Bool → Bool) (b : B) (o : Sp) :
-    Spacing.Page.census pick (Spacing.Page.noteOverrun b o) = Spacing.Page.census pick b := by
-  unfold Spacing.Page.noteOverrun
-  repeat' split
-  all_goals exact census_of_eq pick b _ rfl rfl
+    Spacing.Page.census pick (Spacing.Page.noteOverrun b o) = Spacing.Page.census pick b :=
+  census_of_eq pick b _ rfl rfl
 
 private theorem census_fitCommit {n : Nat} (pick : Option Nat → Bool → Bool)
     (b : B) (mk : Sp → LineOut) (firstY stepY retryY : B → Sp)
@@ -14426,7 +14252,7 @@ private theorem census_fitCommit {n : Nat} (pick : Option Nat → Bool → Bool)
     (cs : List Char) (hb : Spacing.Page.SourceBound n b) (hm : ∀ y, lineCensus pick (mk y) = cs) :
     Spacing.Page.census pick (Spacing.Page.fitCommit b mk firstY stepY retryY depth below rl inkBelow bottom #[]) =
       Spacing.Page.census pick b ++ cs := by
-  simp only [Spacing.Page.fitCommit, Spacing.Page.fitWith, Spacing.Page.attachNotes, Array.isEmpty_empty, ite_true]
+  simp only [Spacing.Page.fitCommit, Spacing.Page.fitWith, attachNotes_empty_id]
   split
   · rw [census_warnNoteOverrun, census_commit, hm]
   · split
@@ -15352,85 +15178,6 @@ private theorem pagesExtend_congr {b b' c : B} (h : c.pages = b'.pages)
     (he : PagesExtend b b') : PagesExtend b c :=
   he.imp fun _ hs => h ▸ hs
 
-@[simp] private theorem commit_pages (b : B) (l : LineOut) (d bl : Sp)
-    (r c : Bool) (o : Sp) :
-    (b.commit l d bl r c o).pages = b.pages := rfl
-@[simp] private theorem commit_noBreak (b : B) (l : LineOut) (d bl : Sp)
-    (r c : Bool) (o : Sp) :
-    (b.commit l d bl r c o).noBreak = b.noBreak := rfl
-@[simp] private theorem warnOverfull_pages (b : B) (source : Option Span) :
-    (b.warnOverfull source).pages = b.pages := rfl
-@[simp] private theorem warnOverfull_noBreak (b : B) (source : Option Span) :
-    (b.warnOverfull source).noBreak = b.noBreak := rfl
-@[simp] private theorem pushSibling_pages (b : B) (l? : Option LineOut)
-    (fills : Array Fill) (inks : Array InkOut) (shrink : Option Sp)
-    (fl : Option Nat) :
-    (b.pushSibling l? fills inks shrink fl).pages = b.pages := by
-  cases l? <;> simp only [Spacing.Page.pushSibling] <;> split <;> rfl
-@[simp] private theorem pushSibling_noBreak (b : B) (l? : Option LineOut)
-    (fills : Array Fill) (inks : Array InkOut) (shrink : Option Sp)
-    (fl : Option Nat) :
-    (b.pushSibling l? fills inks shrink fl).noBreak = b.noBreak := by
-  cases l? <;> simp only [Spacing.Page.pushSibling] <;> split <;> rfl
-@[simp] private theorem pushLabels_pages (b : B) (ls : Array LineOut) (sh : Sp) (fl : Nat) :
-    (b.pushLabels ls sh fl).pages = b.pages := by
-  unfold Spacing.Page.pushLabels
-  exact Array.foldl_induction (motive := fun _ (acc : B) => acc.pages = b.pages)
-    rfl (fun _ acc h => by rw [pushSibling_pages]; exact h)
-@[simp] private theorem pushLabels_noBreak (b : B) (ls : Array LineOut) (sh : Sp) (fl : Nat) :
-    (b.pushLabels ls sh fl).noBreak = b.noBreak := by
-  unfold Spacing.Page.pushLabels
-  exact Array.foldl_induction (motive := fun _ (acc : B) => acc.noBreak = b.noBreak)
-    rfl (fun _ acc h => by rw [pushSibling_noBreak]; exact h)
-
-@[simp] private theorem commit_geom (b : B) (l : LineOut) (d bl : Sp)
-    (r c : Bool) (o : Sp) : (b.commit l d bl r c o).geom = b.geom := rfl
-@[simp] private theorem commit_docBg (b : B) (l : LineOut) (d bl : Sp)
-    (r c : Bool) (o : Sp) : (b.commit l d bl r c o).docBg = b.docBg := rfl
-@[simp] private theorem pushSibling_geom (b : B) (l? : Option LineOut)
-    (fills : Array Fill) (inks : Array InkOut) (shrink : Option Sp)
-    (fl : Option Nat) :
-    (b.pushSibling l? fills inks shrink fl).geom = b.geom := by
-  cases l? <;> simp only [Spacing.Page.pushSibling] <;> split <;> rfl
-@[simp] private theorem pushSibling_docBg (b : B) (l? : Option LineOut)
-    (fills : Array Fill) (inks : Array InkOut) (shrink : Option Sp)
-    (fl : Option Nat) :
-    (b.pushSibling l? fills inks shrink fl).docBg = b.docBg := by
-  cases l? <;> simp only [Spacing.Page.pushSibling] <;> split <;> rfl
-@[simp] private theorem pushLabels_geom (b : B) (ls : Array LineOut) (sh : Sp) (fl : Nat) :
-    (b.pushLabels ls sh fl).geom = b.geom := by
-  unfold Spacing.Page.pushLabels
-  exact Array.foldl_induction (motive := fun _ (acc : B) => acc.geom = b.geom)
-    rfl (fun _ acc h => by rw [pushSibling_geom]; exact h)
-@[simp] private theorem pushLabels_docBg (b : B) (ls : Array LineOut) (sh : Sp) (fl : Nat) :
-    (b.pushLabels ls sh fl).docBg = b.docBg := by
-  unfold Spacing.Page.pushLabels
-  exact Array.foldl_induction (motive := fun _ (acc : B) => acc.docBg = b.docBg)
-    rfl (fun _ acc h => by rw [pushSibling_docBg]; exact h)
-@[simp] private theorem attachNotes_geom (b : B) (ns : Array NoteBlock) :
-    (b.attachNotes ns).geom = b.geom := by
-  unfold Spacing.Page.attachNotes
-  split
-  · rfl
-  · exact Array.foldl_induction (motive := fun _ (acc : B) => acc.geom = b.geom)
-      rfl (fun _ _ h => h)
-@[simp] private theorem attachNotes_docBg (b : B) (ns : Array NoteBlock) :
-    (b.attachNotes ns).docBg = b.docBg := by
-  unfold Spacing.Page.attachNotes
-  split
-  · rfl
-  · exact Array.foldl_induction (motive := fun _ (acc : B) => acc.docBg = b.docBg)
-      rfl (fun _ _ h => h)
-@[simp] private theorem warnNoteOverrun_geom (b : B) (y d : Sp) :
-    (b.warnNoteOverrun y d).geom = b.geom := by
-  simp only [Spacing.Page.warnNoteOverrun]; split <;> rfl
-@[simp] private theorem warnNoteOverrun_docBg (b : B) (y d : Sp) :
-    (b.warnNoteOverrun y d).docBg = b.docBg := by
-  simp only [Spacing.Page.warnNoteOverrun]; split <;> rfl
-@[simp] private theorem warnOverfull_geom (b : B) (source : Option Span) :
-    (b.warnOverfull source).geom = b.geom := rfl
-@[simp] private theorem warnOverfull_docBg (b : B) (source : Option Span) :
-    (b.warnOverfull source).docBg = b.docBg := rfl
 @[simp] private theorem finishPage_geom (b : B) (o : Sp) (f : Bool) :
     (b.finishPage o f).geom = b.geom := rfl
 @[simp] private theorem finishPage_docBg (b : B) (o : Sp) (f : Bool) :
@@ -15470,23 +15217,23 @@ private theorem fitWith_extends (b : B) (place : B → Sp → Bool → Sp → B)
   simp only [Spacing.Page.fitWith]
   repeat' split
   all_goals first
-    | (refine pagesExtend_of_eq ?_; simp [hp, hs]; done)
+    | (refine pagesExtend_of_eq ?_; simp [hp, hs, Spacing.Page.noteOverrun]; done)
     | (refine pagesExtend_trans (finishPage_extends b (o := 0) (f := b.flushes)) (pagesExtend_of_eq ?_);
-       simp [hp, hs]; done)
+       simp [hp, hs, Spacing.Page.noteOverrun]; done)
 
 private theorem fitCommit_extends (b : B) (mk : Sp → LineOut)
     (firstY stepY retryY : B → Sp) (depth below : Sp) (rl : Bool)
     (inkBelow bottom : Sp) (ns : Array NoteBlock) :
     PagesExtend b
       (b.fitCommit mk firstY stepY retryY depth below rl inkBelow bottom ns) :=
-  fitWith_extends b _ _ firstY stepY retryY inkBelow bottom true (fun _ _ _ _ => by simp)
-    fun _ _ _ => by simp
+  fitWith_extends b _ _ firstY stepY retryY inkBelow bottom true (fun _ _ _ _ => rfl)
+    fun _ _ _ => rfl
 
 private theorem placeAnchor_extends (fs : FontSet) (b : B) (h : AnchorRule) (shift : Sp)
     (paints : Bool) : PagesExtend b (b.placeAnchor fs h shift paints) := by
   simp only [Spacing.Page.placeAnchor]
   split
-  · simp only [PagesExtend, keepInk_pages]
+  · simp only [PagesExtend, Spacing.Page.keepInk]
     exact fitCommit_extends ..
   · exact pagesExtend_of_eq rfl
 
@@ -15501,7 +15248,7 @@ private theorem fitWith_noBreak (b : B) (place : B → Sp → Bool → Sp → B)
   simp only [Spacing.Page.fitWith]
   repeat' split
   all_goals first
-    | (simp [hp, hs, h]; done)
+    | (simp [hp, hs, h, Spacing.Page.noteOverrun]; done)
     | (exfalso; exact ‹¬(_ ∨ _ = true ∨ _)› (Or.inr (Or.inl h)))
 
 private theorem fitCommit_noBreak (b : B) (mk : Sp → LineOut)
@@ -15509,8 +15256,8 @@ private theorem fitCommit_noBreak (b : B) (mk : Sp → LineOut)
     (inkBelow bottom : Sp) (ns : Array NoteBlock) (h : b.noBreak = true) :
     (b.fitCommit mk firstY stepY retryY depth below rl inkBelow bottom ns).pages = b.pages ∧
     (b.fitCommit mk firstY stepY retryY depth below rl inkBelow bottom ns).noBreak = true :=
-  fitWith_noBreak b _ _ firstY stepY retryY inkBelow bottom true (fun _ _ _ _ => by simp)
-    (fun _ _ _ => by simp) h
+  fitWith_noBreak b _ _ firstY stepY retryY inkBelow bottom true (fun _ _ _ _ => ⟨rfl, rfl⟩)
+    (fun _ _ _ => ⟨rfl, rfl⟩) h
 
 private theorem fitCommit_note_with_mark (b : B) (mk : Sp → LineOut)
     (firstY stepY retryY : B → Sp) (depth below : Sp) (rl : Bool)
@@ -15521,21 +15268,14 @@ private theorem fitCommit_note_with_mark (b : B) (mk : Sp → LineOut)
       l'.segs = l.segs := by
   simp only [Spacing.Page.fitCommit, Spacing.Page.fitWith]
   repeat' split
-  all_goals
-    first
-    | (rw [warnNoteOverrun_pendingNotes]
-       exact attachNotes_mem _ ns nb hnb l hl)
-    | exact attachNotes_mem _ ns nb hnb l hl
-    | (rw [noteOverrun_pendingNotes, warnNoteOverrun_pendingNotes]
-       exact attachNotes_mem _ ns nb hnb l hl)
-    | (rw [noteOverrun_pendingNotes]
-       exact attachNotes_mem _ ns nb hnb l hl)
+  all_goals exact attachNotes_mem _ ns nb hnb l hl
 
 private theorem placePicture_extends (fs : FontSet) (imgs : Image.Store)
     (b : B) (x : Sp) (pic : Ir.Pic.Picture) (leaf : Option Nat) (origin : Nat) :
     PagesExtend b (placePicture fs imgs b x pic leaf origin) := by
   simp only [placePicture]
-  exact fitWith_extends b _ _ _ _ _ _ _ _ (fun _ _ _ _ => by simp) fun _ _ _ => rfl
+  exact fitWith_extends b _ _ _ _ _ _ _ _
+    (fun _ _ _ _ => by simp [Spacing.Page.pushLabels, Spacing.Page.pushSibling]) fun _ _ _ => rfl
 
 private theorem placePicture_noBreak (fs : FontSet) (imgs : Image.Store)
     (b : B) (x : Sp) (pic : Ir.Pic.Picture) (leaf : Option Nat) (origin : Nat)
@@ -15543,7 +15283,9 @@ private theorem placePicture_noBreak (fs : FontSet) (imgs : Image.Store)
     (placePicture fs imgs b x pic leaf origin).pages = b.pages ∧
       (placePicture fs imgs b x pic leaf origin).noBreak = true := by
   simp only [placePicture]
-  exact fitWith_noBreak b _ _ _ _ _ _ _ _ (fun _ _ _ _ => by simp) (fun _ _ _ => ⟨rfl, rfl⟩) h
+  exact fitWith_noBreak b _ _ _ _ _ _ _ _
+    (fun _ _ _ _ => by simp [Spacing.Page.pushLabels, Spacing.Page.pushSibling])
+    (fun _ _ _ => ⟨rfl, rfl⟩) h
 
 private theorem placeLine_extends (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool)
@@ -15552,7 +15294,7 @@ private theorem placeLine_extends (fs : FontSet) (b : B) (x size : Sp)
     PagesExtend b
       (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding
         step rs strut) := by
-  simp only [Spacing.Page.placeLine, PagesExtend, displayState_pages, keepInk_pages]
+  simp only [Spacing.Page.placeLine, PagesExtend, Spacing.Page.displayState, Spacing.Page.keepInk]
   exact fitCommit_extends ..
 
 private theorem placeLine_pages_noBreak (fs : FontSet) (b : B) (x size : Sp)
@@ -15562,7 +15304,7 @@ private theorem placeLine_pages_noBreak (fs : FontSet) (b : B) (x size : Sp)
     (h : b.noBreak = true) :
     (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding
       step rs strut).pages = b.pages := by
-  simp only [Spacing.Page.placeLine, displayState_pages, keepInk_pages]
+  simp only [Spacing.Page.placeLine, Spacing.Page.displayState, Spacing.Page.keepInk]
   exact (fitCommit_noBreak (h := h) ..).1
 
 private theorem placeLine_keeps_noBreak (fs : FontSet) (b : B) (x size : Sp)
@@ -15572,7 +15314,7 @@ private theorem placeLine_keeps_noBreak (fs : FontSet) (b : B) (x size : Sp)
     (h : b.noBreak = true) :
     (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op anchors paintPadding
       step rs strut).noBreak = true := by
-  simp only [Spacing.Page.placeLine, displayState_noBreak, keepInk_noBreak]
+  simp only [Spacing.Page.placeLine, Spacing.Page.displayState, Spacing.Page.keepInk]
   exact (fitCommit_noBreak (h := h) ..).2
 
 private theorem placeLine_note_with_mark (fs : FontSet) (b : B) (x size : Sp)
@@ -15583,7 +15325,7 @@ private theorem placeLine_note_with_mark (fs : FontSet) (b : B) (x size : Sp)
     ∃ l' ∈ (b.placeLine fs x size segs w hang ex ns c lf firstBaseline dj op
         (stepLead := step)).pendingNotes,
       l'.segs = l.segs := by
-  simp only [Spacing.Page.placeLine, displayState_pendingNotes, keepInk_pendingNotes]
+  simp only [Spacing.Page.placeLine, Spacing.Page.displayState, Spacing.Page.keepInk]
   exact fitCommit_note_with_mark (hnb := hnb) (hl := hl) ..
 
 private theorem placeLine_extends' (fs : FontSet) (b0 b1 : B)
@@ -15601,7 +15343,7 @@ private theorem placeParaLine_extends (fs : FontSet) (j : ParaJob)
     PagesExtend st.1 (placeParaLine fs j st brk).1 := by
   simp only [placeParaLine, Spacing.Page.withPendingSource]
   exact pagesExtend_congr (placeParaTrailer_pages ..)
-    (placeLine_extends' fs st.1 _ (by split <;> simp) ..)
+    (placeLine_extends' fs st.1 _ (by split <;> simp [Spacing.Page.warnOverfull]) ..)
 
 private theorem placeParaLine_noBreak (fs : FontSet) (j : ParaJob)
     (st : B × Nat × Bool) (brk : Nat) (h : st.1.noBreak = true) :
@@ -15610,9 +15352,9 @@ private theorem placeParaLine_noBreak (fs : FontSet) (j : ParaJob)
   simp only [placeParaLine, Spacing.Page.withPendingSource]
   constructor
   · rw [placeParaTrailer_pages]
-    split <;> rw [placeLine_pages_noBreak] <;> simp [h]
+    split <;> rw [placeLine_pages_noBreak] <;> simp [h, Spacing.Page.warnOverfull]
   · rw [placeParaTrailer_noBreak]
-    split <;> rw [placeLine_keeps_noBreak] <;> simp [h]
+    split <;> rw [placeLine_keeps_noBreak] <;> simp [h, Spacing.Page.warnOverfull]
 
 private theorem placePara_extends (fs : FontSet) (b : B) (j : ParaJob)
     (breaks : Array Nat) : PagesExtend b (placePara fs b j breaks) := by
@@ -15678,7 +15420,7 @@ private theorem stepStaged_extends (fs : FontSet) (imgs : Image.Store)
     exact placePicture_extends ..
   all_goals (simp only [stepStaged, Id.run, Id, pure, Spacing.Page.openBody] <;> repeat' split)
   all_goals first
-    | (refine pagesExtend_of_eq ?_; simp; done)
+    | (refine pagesExtend_of_eq ?_; simp [Spacing.Page.pushSibling, Spacing.Page.displaySkip]; done)
     | exact pagesExtend_of_eq (placeSlot_keeps ..).1
     | exact pagesExtend_of_eq (alignRow_shipped_id ..).1
     | (refine pagesExtend_congr ?_ (finishPage_extends _ (o := st.b.closingOwed) (f := false)); simp; done)
@@ -15691,7 +15433,7 @@ private theorem placeAnchor_noBreak (fs : FontSet) (b : B) (h' : AnchorRule) (sh
       (b.placeAnchor fs h' shift paints).noBreak = true := by
   simp only [Spacing.Page.placeAnchor]
   split
-  · simp only [keepInk_pages, keepInk_noBreak]
+  · simp only [Spacing.Page.keepInk]
     exact fitCommit_noBreak (h := h) ..
   · exact ⟨rfl, h⟩
 
@@ -15756,7 +15498,7 @@ private theorem stepStaged_noBreak (fs : FontSet) (imgs : Image.Store)
     | (exfalso; exact ‹¬(_ ∨ _ = true)› (Or.inr h))
     | exact placeSlot_noBreak (h := h) ..
     | exact alignRow_pages_noBreak (h := h) ..
-    | (refine ⟨?_, ?_⟩ <;> simp [h]; done)
+    | (refine ⟨?_, ?_⟩ <;> simp [h, Spacing.Page.pushSibling, Spacing.Page.displaySkip]; done)
 
 private theorem foldSteps_extends (fs : FontSet) (imgs : Image.Store)
     (group : Array Op) (st : StepSt) :
@@ -15871,18 +15613,18 @@ private theorem bgStep_fitWith (b : B) (place : B → Sp → Bool → Sp → B)
   simp only [Spacing.Page.fitWith]
   repeat' split
   all_goals first
-    | (refine BgStep.of_eq ?_ ?_ ?_ <;> simp [hp, hs]
+    | (refine BgStep.of_eq ?_ ?_ ?_ <;> simp [hp, hs, Spacing.Page.noteOverrun]
        done)
     | (refine (bgStep_finishPage b (o := 0) (f := b.flushes)).trans (BgStep.of_eq ?_ ?_ ?_) <;>
-         simp [hp, hs]
+         simp [hp, hs, Spacing.Page.noteOverrun]
        done)
 
 private theorem bgStep_fitCommit (b : B) (mk : Sp → LineOut)
     (firstY stepY retryY : B → Sp) (depth below : Sp) (rl : Bool)
     (inkBelow bottom : Sp) (ns : Array NoteBlock) :
     BgStep b (b.fitCommit mk firstY stepY retryY depth below rl inkBelow bottom ns) :=
-  bgStep_fitWith b _ _ firstY stepY retryY inkBelow bottom true (fun _ _ _ _ => by simp)
-    fun _ _ _ => by simp
+  bgStep_fitWith b _ _ firstY stepY retryY inkBelow bottom true (fun _ _ _ _ => ⟨rfl, rfl, rfl⟩)
+    fun _ _ _ => ⟨rfl, rfl, rfl⟩
 
 private theorem bgStep_placeAnchor (fs : FontSet) (b : B) (h : AnchorRule) (shift : Sp)
     (paints : Bool) : BgStep b (b.placeAnchor fs h shift paints) := by
@@ -15908,7 +15650,9 @@ private theorem bgStep_placePicture (fs : FontSet) (imgs : Image.Store)
     (b : B) (x : Sp) (pic : Ir.Pic.Picture) (leaf : Option Nat) (origin : Nat) :
     BgStep b (placePicture fs imgs b x pic leaf origin) := by
   simp only [placePicture]
-  exact bgStep_fitWith b _ _ _ _ _ _ _ _ (fun _ _ _ _ => by simp) fun _ _ _ => ⟨rfl, rfl, rfl⟩
+  exact bgStep_fitWith b _ _ _ _ _ _ _ _
+    (fun _ _ _ _ => by simp [Spacing.Page.pushLabels, Spacing.Page.pushSibling])
+    fun _ _ _ => ⟨rfl, rfl, rfl⟩
 
 private theorem bgStep_placeParaLine (fs : FontSet) (j : ParaJob)
     (st : B × Nat × Bool) (brk : Nat) :
@@ -15917,7 +15661,8 @@ private theorem bgStep_placeParaLine (fs : FontSet) (j : ParaJob)
   refine BgStep.trans (BgStep.trans ?_ (bgStep_placeLine ..))
     (BgStep.of_eq (placeParaTrailer_geom ..) (placeParaTrailer_docBg ..)
       (placeParaTrailer_pages ..))
-  split <;> exact BgStep.of_eq (by simp) (by simp) (by simp)
+  split <;> exact BgStep.of_eq (by simp [Spacing.Page.warnOverfull])
+    (by simp [Spacing.Page.warnOverfull]) (by simp [Spacing.Page.warnOverfull])
 
 private theorem bgStep_placePara (fs : FontSet) (b : B) (j : ParaJob)
     (breaks : Array Nat) : BgStep b (placePara fs b j breaks) := by
@@ -15965,7 +15710,7 @@ private theorem bgStep_stepStaged (fs : FontSet) (imgs : Image.Store)
     exact bgStep_placePicture ..
   all_goals simp only [stepStaged, Id.run, Id, pure, Spacing.Page.openBody] <;> repeat' split
   all_goals first
-    | (refine BgStep.of_eq ?_ ?_ ?_ <;> simp
+    | (refine BgStep.of_eq ?_ ?_ ?_ <;> simp [Spacing.Page.pushSibling, Spacing.Page.displaySkip]
        done)
     | exact ⟨rfl, fun _ => h, fun _ _p hp => Or.inl hp⟩
     | exact BgStep.of_eq (placeSlot_keeps ..).2.1 (placeSlot_keeps ..).2.2.1
@@ -16495,47 +16240,9 @@ private theorem frameStep_spillPage (b : B) (over : Sp) :
       ((FrameStep.of_eq (warnSpill_frameStamp ..) (warnSpill_pages ..)).trans
         (FrameStep.of_eq rfl rfl)))
 
-@[simp] private theorem attachNotes_frameStamp (b : B) (ns : Array NoteBlock) :
-    (b.attachNotes ns).frameStamp = b.frameStamp := by
-  unfold Spacing.Page.attachNotes
-  split
-  · rfl
-  · exact Array.foldl_induction
-      (motive := fun _ (acc : B) => acc.frameStamp = b.frameStamp)
-      rfl (fun _ _ h => h)
-
-@[simp] private theorem pushSibling_frameStamp (b : B) (l : Option LineOut)
-    (fills : Array Fill) (inks : Array InkOut) (shrink : Option Sp) (fils : Option Nat) :
-    (b.pushSibling l fills inks shrink fils).frameStamp = b.frameStamp := by
-  cases l <;> simp only [Spacing.Page.pushSibling] <;> split <;> rfl
-
-@[simp] private theorem pushLabels_frameStamp (b : B) (ls : Array LineOut)
-    (shrink : Sp) (fils : Nat) :
-    (b.pushLabels ls shrink fils).frameStamp = b.frameStamp := by
-  unfold Spacing.Page.pushLabels
-  exact Array.foldl_induction
-    (motive := fun _ (acc : B) => acc.frameStamp = b.frameStamp)
-    rfl (fun _ _ h => by rw [pushSibling_frameStamp]; exact h)
-
-@[simp] private theorem pushSibling_frame_fields (b : B) (l : Option LineOut)
-    (fills : Array Fill) (inks : Array InkOut) (shrink : Option Sp) (fils : Option Nat) :
-    (b.pushSibling l fills inks shrink fils).curFrameOrigin = b.curFrameOrigin ∧
-    (b.pushSibling l fills inks shrink fils).curFrame = b.curFrame ∧
-    (b.pushSibling l fills inks shrink fils).curFoot = b.curFoot := by
-  have h := pushSibling_frameStamp b l fills inks shrink fils
-  simpa only [Spacing.Page.frameStamp, Prod.mk.injEq] using h
-
-@[simp] private theorem pushLabels_frame_fields (b : B) (ls : Array LineOut)
-    (shrink : Sp) (fils : Nat) :
-    (b.pushLabels ls shrink fils).curFrameOrigin = b.curFrameOrigin ∧
-    (b.pushLabels ls shrink fils).curFrame = b.curFrame ∧
-    (b.pushLabels ls shrink fils).curFoot = b.curFoot := by
-  have h := pushLabels_frameStamp b ls shrink fils
-  simpa only [Spacing.Page.frameStamp, Prod.mk.injEq] using h
-
 private theorem frameStep_attachNotes (b : B) (ns : Array NoteBlock) :
     FrameStep b (b.attachNotes ns) :=
-  FrameStep.of_eq (attachNotes_frameStamp ..) (attachNotes_pages ..)
+  FrameStep.of_eq rfl rfl
 
 private theorem frameStep_commit (b : B) (l : LineOut) (depth below : Sp)
     (ruleLine consume : Bool) (overflow : Sp) :
@@ -16543,14 +16250,11 @@ private theorem frameStep_commit (b : B) (l : LineOut) (depth below : Sp)
   FrameStep.of_eq rfl rfl
 
 private theorem frameStep_warnNoteOverrun (b : B) (y depth : Sp) :
-    FrameStep b (b.warnNoteOverrun y depth) := by
-  simp only [Spacing.Page.warnNoteOverrun]
-  split <;> exact FrameStep.of_eq rfl rfl
+    FrameStep b (b.warnNoteOverrun y depth) :=
+  FrameStep.of_eq rfl rfl
 
-private theorem frameStep_noteOverrun (b : B) (o : Sp) : FrameStep b (b.noteOverrun o) := by
-  unfold Spacing.Page.noteOverrun
-  repeat' split
-  all_goals exact FrameStep.of_eq rfl rfl
+private theorem frameStep_noteOverrun (b : B) (o : Sp) : FrameStep b (b.noteOverrun o) :=
+  FrameStep.of_eq rfl rfl
 
 private theorem frameStep_fitWith (b : B) (place : B → Sp → Bool → Sp → B)
     (settle : B → Sp → Sp → B) (firstY stepY retryY : B → Sp) (inkBelow bottom : Sp)
@@ -16633,7 +16337,9 @@ private theorem frameStep_placePicture (fs : FontSet) (imgs : Image.Store)
     FrameStep b (placePicture fs imgs b x pic leaf origin) := by
   simp only [placePicture]
   exact frameStep_fitWith b _ _ _ _ _ _ _ _
-    (fun _ _ _ _ => FrameStep.of_eq (by simp [Spacing.Page.frameStamp]) (by simp))
+    (fun _ _ _ _ => FrameStep.of_eq
+      (by simp [Spacing.Page.frameStamp, Spacing.Page.pushLabels, Spacing.Page.pushSibling])
+      (by simp [Spacing.Page.pushLabels, Spacing.Page.pushSibling]))
     fun _ _ _ => FrameStep.refl _
 
 private theorem frameStep_keepHeading (b : B) (j : ParaJob) (n : Nat) :
@@ -16711,7 +16417,8 @@ private theorem stepStaged_frames (fs : FontSet) (imgs : Image.Store)
   | _ =>
     simp only [stepStaged, Id.run, Id, pure, Spacing.Page.openBody]
     repeat' split
-    all_goals refine hb.step (FrameStep.of_eq ?_ ?_) <;> simp [Spacing.Page.frameStamp]
+    all_goals refine hb.step (FrameStep.of_eq ?_ ?_) <;>
+      simp [Spacing.Page.frameStamp, Spacing.Page.pushSibling, Spacing.Page.displaySkip]
 
 private theorem foldSteps_frames (fs : FontSet) (imgs : Image.Store)
     (group : Array Op) (st : StepSt) (openings : Array FrameOpening)
@@ -16923,26 +16630,9 @@ private theorem Spacing.Page.ReflowsNamed.step {a b : B} (ha : a.ReflowsNamed)
   obtain ⟨d, hd, hc, hs⟩ := ha p hp k hk
   exact ⟨d, h.2 d hd, hc, hs⟩
 
-@[simp] private theorem attachNotes_paragraphBreaks (b : B) (ns : Array NoteBlock) :
-    (b.attachNotes ns).paragraphBreaks = b.paragraphBreaks := by
-  unfold Spacing.Page.attachNotes
-  split
-  · rfl
-  · exact Array.foldl_induction
-      (motive := fun _ (acc : B) => acc.paragraphBreaks = b.paragraphBreaks)
-      rfl (fun _ _ h => h)
-
-@[simp] private theorem attachNotes_diags (b : B) (ns : Array NoteBlock) :
-    (b.attachNotes ns).diags = b.diags := by
-  unfold Spacing.Page.attachNotes
-  split
-  · rfl
-  · exact Array.foldl_induction (motive := fun _ (acc : B) => acc.diags = b.diags)
-      rfl (fun _ _ h => h)
-
 private theorem reflowStep_attachNotes (b : B) (ns : Array NoteBlock) :
     ReflowStep b (b.attachNotes ns) :=
-  ReflowStep.of_eq (attachNotes_paragraphBreaks ..) (attachNotes_diags ..)
+  ReflowStep.of_eq rfl rfl
 
 private theorem reflowStep_finishPage (b : B) (owed : Sp) (flush : Bool) :
     ReflowStep b (b.finishPage owed flush) := by
@@ -16978,31 +16668,6 @@ private theorem reflowStep_spillPage (b : B) (over : Sp) :
     ((ReflowStep.of_eq (reopenChrome_paragraphBreaks ..) (reopenChrome_diags ..)).trans
       ((reflowStep_warnSpill ..).trans (ReflowStep.of_eq rfl rfl)))
 
-@[simp] private theorem pushSibling_paragraphBreaks (b : B) (l : Option LineOut)
-    (fills : Array Fill) (inks : Array InkOut) (shrink : Option Sp) (fils : Option Nat) :
-    (b.pushSibling l fills inks shrink fils).paragraphBreaks = b.paragraphBreaks := by
-  cases l <;> simp only [Spacing.Page.pushSibling] <;> split <;> rfl
-
-@[simp] private theorem pushSibling_diags (b : B) (l : Option LineOut)
-    (fills : Array Fill) (inks : Array InkOut) (shrink : Option Sp) (fils : Option Nat) :
-    (b.pushSibling l fills inks shrink fils).diags = b.diags := by
-  cases l <;> simp only [Spacing.Page.pushSibling] <;> split <;> rfl
-
-@[simp] private theorem pushLabels_paragraphBreaks (b : B) (ls : Array LineOut)
-    (shrink : Sp) (fils : Nat) :
-    (b.pushLabels ls shrink fils).paragraphBreaks = b.paragraphBreaks := by
-  unfold Spacing.Page.pushLabels
-  exact Array.foldl_induction
-    (motive := fun _ (acc : B) => acc.paragraphBreaks = b.paragraphBreaks)
-    rfl (fun _ _ h => by rw [pushSibling_paragraphBreaks]; exact h)
-
-@[simp] private theorem pushLabels_diags (b : B) (ls : Array LineOut)
-    (shrink : Sp) (fils : Nat) :
-    (b.pushLabels ls shrink fils).diags = b.diags := by
-  unfold Spacing.Page.pushLabels
-  exact Array.foldl_induction (motive := fun _ (acc : B) => acc.diags = b.diags)
-    rfl (fun _ _ h => by rw [pushSibling_diags]; exact h)
-
 private theorem reflowStep_commit (b : B) (l : LineOut) (depth below : Sp)
     (ruleLine consume : Bool) (overflow : Sp) :
     ReflowStep b (b.commit l depth below ruleLine consume overflow) :=
@@ -17016,7 +16681,7 @@ private theorem reflowStep_warnNoteOverrun (b : B) (y depth : Sp) :
   · exact ReflowStep.refl b
 
 private theorem reflowStep_noteOverrun (b : B) (o : Sp) : ReflowStep b (b.noteOverrun o) :=
-  ReflowStep.of_eq (by simp) (by simp)
+  ReflowStep.of_eq rfl rfl
 
 private theorem reflowStep_fitWith (b : B) (place : B → Sp → Bool → Sp → B)
     (settle : B → Sp → Sp → B) (firstY stepY retryY : B → Sp) (inkBelow bottom : Sp)
@@ -17147,7 +16812,7 @@ private theorem reflowStep_placePicture (fs : FontSet) (imgs : Image.Store)
     ReflowStep b (placePicture fs imgs b x pic leaf origin) := by
   simp only [placePicture]
   exact reflowStep_fitWith b _ _ _ _ _ _ _ _
-    (fun _ _ _ _ => ⟨by simp, fun _ hd => by simpa using Array.mem_append_left _ hd⟩)
+    (fun _ _ _ _ => ⟨rfl, fun _ hd => Array.mem_append_left _ hd⟩)
     fun _ _ _ => ReflowStep.refl _
 
 private theorem reflowStep_keepHeading (b : B) (j : ParaJob) (n : Nat) :
@@ -17192,7 +16857,8 @@ private theorem stepStaged_reflows (fs : FontSet) (imgs : Image.Store)
     exact hb.step (reflowStep_placePicture ..)
   all_goals simp only [stepStaged, Id.run, Id, pure, Spacing.Page.openBody] <;> repeat' split
   all_goals first
-    | (refine hb.step (ReflowStep.of_eq ?_ ?_) <;> simp
+    | (refine hb.step (ReflowStep.of_eq ?_ ?_) <;>
+        simp [Spacing.Page.pushSibling, Spacing.Page.displaySkip]
        done)
     | exact hb.step (reflowStep_placeSlot ..)
     | exact hb.step ((ReflowStep.of_eq rfl rfl).trans (reflowStep_alignRow ..))
@@ -20181,13 +19847,12 @@ private theorem line_placement (r : Context) (b : Page) (x size : Sp)
   unfold shipped baselines Spacing.Page.placeLine Spacing.Page.fitCommit Spacing.Page.fitWith
   rw [hle]
   dsimp only
-  simp only [displayState_cur, keepInk_cur, displayState_pages, keepInk_pages]
+  simp only [Spacing.Page.displayState, Spacing.Page.keepInk]
   simp only [Spacing.Page.fresh, PageOut.blank, hcur, hfresh, Bool.false_and, hpr, hrl, hid, Spacing.Page.peerGap, hnn,
     noteFloor, htx, hop, Option.isSome_none, Array.isEmpty_empty, Bool.or_self,
     Bool.false_eq_true, ite_false, ite_true, Int.add_zero, beq_self_eq_true,
     Option.getD_none]
-  simp only [hfit, true_or, ite_true, Spacing.Page.commit, Spacing.Page.attachNotes,
-    Array.isEmpty_empty, ite_true]
+  simp only [hfit, true_or, ite_true, Spacing.Page.commit, attachNotes_empty_id]
   simp
 
 public theorem place_exact (a : Pending) (r : Context) (b : Page) (x size : Sp)
@@ -20360,7 +20025,7 @@ private theorem ordinary_line (fs : FontSet) (b : B) (x size : Sp)
     noteFloor, ht, Option.isSome_none, Array.isEmpty_empty, Bool.or_self,
     Bool.false_eq_true, ite_false, ite_true, Int.add_zero, beq_self_eq_true]
   simp only [LineFits, nextBaseline] at hf
-  simp only [hf, true_or, ite_true, Spacing.Page.attachNotes, Array.isEmpty_empty]
+  simp only [hf, true_or, ite_true, attachNotes_empty_id]
   rfl
 
 private theorem line_rise (fs : FontSet) (a b : B) (x size : Sp)
@@ -20386,8 +20051,8 @@ private theorem line_rise (fs : FontSet) (a b : B) (x size : Sp)
   · exact h.descent
   · exact h.xHeight
   · simp only [Spacing.Page.displayState, Spacing.Page.keepInk, Spacing.Page.commit, h.geom, h.ascent, h.capHeight, h.descent]
-  · simp only [displayState_boxDepth, keepInk_boxDepth_exact]
-  · simp only [Spacing.Page.previousMath, displayState_cur, keepInk_cur,
+  · simp [Spacing.Page.displayState, Spacing.Page.keepInk, Spacing.Page.boxDepth]
+  · simp only [Spacing.Page.previousMath, Spacing.Page.displayState, Spacing.Page.keepInk,
       Spacing.Page.commit, Array.back?_push, Option.any_some]
   · simpa only [Spacing.Page.displayState, Spacing.Page.keepInk, Spacing.Page.commit, Int.add_zero] using hy
   · simp only [Spacing.Page.displayState, Spacing.Page.keepInk, Spacing.Page.commit, Array.toList_push]
