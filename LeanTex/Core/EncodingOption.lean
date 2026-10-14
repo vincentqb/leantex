@@ -1,5 +1,7 @@
 module
 
+import LeanTex.Core.KeyVal
+
 /-! What an `inputenc` option names, in a leaf so the macro layer imports no decoder. -/
 
 namespace LeanTex.Core.Encoding
@@ -35,8 +37,7 @@ public def sameEncoding (a b : String) : Bool :=
   | x, y => x == y
 
 /-- The option in force in an `inputenc` load's options: the last one, if any. -/
-public def lastOption? (options : String) : Option String :=
-  (((options.splitOn ",").map (·.trimAscii.toString)).filter (!·.isEmpty)).getLast?
+public def lastOption? (options : String) : Option String := (KeyVal.items options).back?
 
 /-- Does an `inputenc` load with these options declare an encoding other than UTF-8? -/
 public def declaresNonUtf8 (options : String) : Bool :=

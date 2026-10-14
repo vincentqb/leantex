@@ -1,6 +1,7 @@
 module
 
 public import LeanTex.Core.Ir
+import LeanTex.Core.KeyVal
 
 namespace LeanTex.Core.BeamerColor
 
@@ -138,23 +139,15 @@ public def State.sourceNames (s : State) : Array String :=
           (fun acc n => if acc.contains n then acc else acc.push n) acc
       | some (.native _) | none => acc) acc) #[]
 
-private def unbrace (s : String) : String :=
-  let s := s.trimAscii.toString
-  if s.startsWith "{" && s.endsWith "}" then
-    ((s.drop 1).dropEnd 1).toString.trimAscii.toString
-  else s
+private def unbrace (s : String) : String := (KeyVal.unbrace s).trimAscii.toString
 
-private def names (s : String) : List String :=
-  ((unbrace s).splitOn ",").map (·.trimAscii.toString) |>.filter (!·.isEmpty)
+private def names (s : String) : List String := (KeyVal.items (unbrace s)).toList
 
 /-- `key=value`, an empty value kept: beamer's `bg=` clears the channel as `bg={}` does. -/
 private def entryOf (entry : String) : Option (String × String) :=
-  match entry.splitOn "=" with
-  | key :: value :: more =>
-    let k := key.trimAscii.toString
-    if k.isEmpty then none
-    else some (k, (String.intercalate "=" (value :: more)).trimAscii.toString)
-  | _ => none
+  match KeyVal.entry entry with
+  | (k, some v) => if k.isEmpty then none else some (k, v)
+  | (_, none) => none
 
 /-- Update only the keys that occur; the starred form first clears both channels and both
 relationships (beamerbasecolor.sty). -/
@@ -164,7 +157,7 @@ public def State.declare (s : State) (name : String) (star : Bool) (src : String
     else { ((s.elements.find? (·.name == name)).getD { name := name }) with
       span := span, declared := true }
   let mut unsupported := []
-  for entry in Decl.splitEntries src do
+  for entry in KeyVal.items src do
     match entryOf entry with
     | some (key, v) =>
       e := { e with sites := e.sites.filter (·.1 != key) ++ [(key, span)] }

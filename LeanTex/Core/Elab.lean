@@ -9,6 +9,7 @@ public import LeanTex.Core.Ir
 import LeanTex.Core.ListMark
 public import LeanTex.Core.Dim
 import LeanTex.Core.Decl
+import LeanTex.Core.KeyVal
 public import LeanTex.Core.Theme
 public import LeanTex.Core.Compat
 import LeanTex.Core.Contrast
@@ -612,11 +613,7 @@ private def listingContentStart (env s : String) : Nat :=
 
 /-- A keyval value without its one surrounding brace group, as listings
 reads it. -/
-private def listingVal (v : String) : String :=
-  let v := v.trimAscii.toString
-  if v.startsWith "{" && v.endsWith "}" && v.length ≥ 2 then
-    ((v.drop 1).dropEnd 1).toString.trimAscii.toString
-  else v
+private def listingVal (v : String) : String := (KeyVal.unbrace v).trimAscii.toString
 
 public abbrev EM := StateM ESt
 
@@ -2638,17 +2635,16 @@ private def citeArm (ctx : Ctx) (raws : Array Raw) (i : Nat) (name : String)
       let mark (o : Bool) : Inline := .cite { cmd := .bracket o } #[]
       return (#[mark true] ++ text ++ #[mark false], ⟨j3 + 1, by omega⟩)
     else
-      let keys := (((argText ctx body).splitOn ",").map (·.trimAscii.toString)).filter
-        (!·.isEmpty)
+      let keys := KeyVal.items (argText ctx body)
       if base.cmd == .nocite then
         -- `\@bsphack`/`\@esphack`: a space before swallows the spaces after.
         let j4 := skipSpaces raws (j3 + 1)
         have hj4 := skipSpaces_ge raws (j3 + 1)
-        return (#[.cite form keys.toArray],
+        return (#[.cite form keys],
           if raws[i - 1]? matches some .space then ⟨j4, by omega⟩ else ⟨j3 + 1, by omega⟩)
       -- Judged in elabDoc: the `\bibliography` may follow the citation.
-      recordCiteSites ctx keys pos
-      return (#[.cite form keys.toArray], ⟨j3 + 1, by omega⟩)
+      recordCiteSites ctx keys.toList pos
+      return (#[.cite form keys], ⟨j3 + 1, by omega⟩)
   | _ =>
     diag ctx .E0304 s!"'\\{name}' needs a \{keys} group" pos
     return (#[], ⟨j3, by omega⟩)
@@ -3037,9 +3033,9 @@ private def readIconLabel (ctx : Ctx) (labelSrc : Option (Array Raw))
     (pos : Pos) : EM (Option String) := do
   let mut label : Option String := none
   if let some optSrc := labelSrc then
-    for e in Decl.splitEntries (rawSrc optSrc) do
-      match Decl.splitEntry e with
-      | some ("label", v) => label := some v.trimAscii.toString
+    for e in KeyVal.items (rawSrc optSrc) do
+      match KeyVal.pair? e with
+      | some ("label", v) => label := some v
       | _ =>
         warnOnce ctx ("faopt:" ++ e) .W0110
           s!"'\\faIcon' option '{e.trimAscii.toString}' is not modelled; ignored" pos
@@ -3806,11 +3802,11 @@ private def splitPictureAlt (body : Array Raw) (pos0 : Pos) : Ir.Alt × Array Ra
   let bodyOf (e : Array Raw) : Array Raw := (e.toList.dropWhile (· matches .space)).toArray
   for e in Parse.rawEntries opts do
     let text := (rawSrc e).trimAscii.toString
-    let key := ((text.splitOn "=").headD "").trimAscii.toString
+    let key := (KeyVal.entry text).1
     if key == "artifact" then
       alt := .decorative
     else if key == "alt" then
-      alt := match Decl.splitEntry text with
+      alt := match KeyVal.pair? text with
         | some (_, v) => Ir.Alt.declare (altValueText v)
         | none => .undeclared
     if key == "artifact" || key == "alt" then
@@ -4057,10 +4053,8 @@ private def sizeCommand? (v : String) : Option String :=
 /-- A `fontsize` entry that keeps the size in force: `auto`, `\relax` or an
 empty value. -/
 private def keepsSize (bare : String) : Bool :=
-  match bare.splitOn "=" with
-  | [key, v] =>
-    key.trimAscii.toString == "fontsize" &&
-      (let v := listingVal v; v.isEmpty || v == "auto" || v == "\\relax")
+  match KeyVal.entry bare with
+  | ("fontsize", some v) => let v := listingVal v; v.isEmpty || v == "auto" || v == "\\relax"
   | _ => false
 
 private def noteFormatcom (ctx : Ctx) (pos : Pos) : EM Unit :=
@@ -4119,11 +4113,8 @@ private def inlineCodeOpts (ctx : Ctx) (opts : String) (pos : Pos) : EM InlineCo
   let unhonoured (msg : String) (help : Option String) : EM Unit :=
     warnOnce ctx ("lstopt:" ++ msg) .W0110 msg pos (help := help)
   let mut o : InlineCodeOpts := {}
-  for entry in Decl.splitEntries opts do
-    let bare := entry.trimAscii.toString
-    if bare.isEmpty then
-      continue
-    let key := ((Decl.splitEntry entry).map (·.1.trimAscii.toString)).getD bare
+  for bare in KeyVal.items opts do
+    let key := ((KeyVal.pair? bare).map (·.1)).getD bare
     if key == "formatcom" || bare.startsWith "formatcom=" then
       noteFormatcom ctx pos
       continue
@@ -4133,7 +4124,7 @@ private def inlineCodeOpts (ctx : Ctx) (opts : String) (pos : Pos) : EM InlineCo
     if keepsSize bare then
       o := { o with size := none }
       continue
-    match Decl.splitEntry entry with
+    match KeyVal.pair? bare with
     | some ("fontsize", v) =>
       let v := listingVal v
       match sizeCommand? v with
@@ -4234,9 +4225,9 @@ display there, or cannot set it" pos
   let (rawLang, opts) : Option String × String :=
     if env == "minted" then (((Parse.mintedLangHead s afterOpt).map (·.1)), opts)
     else if env == "lstlisting" then
-      let entries := Decl.splitEntries opts
-      let isLang (e : String) := ((Decl.splitEntry e).map (·.1.trimAscii.toString)) == some "language"
-      ((entries.find? isLang).bind fun e => (Decl.splitEntry e).map (listingVal ·.2),
+      let entries := (KeyVal.items opts).toList
+      let isLang (e : String) := ((KeyVal.pair? e).map (·.1)) == some "language"
+      ((entries.find? isLang).bind fun e => (KeyVal.pair? e).map (listingVal ·.2),
         ",".intercalate (entries.filter (!isLang ·)))
     else (none, opts)
   warnOnce ctx ("listing-inline:" ++ env) .W0411
@@ -6717,7 +6708,7 @@ private def engineLengthTokens (docClass : Ir.DocClass) (classOptions : String)
     (page : PageSpec) : Array (String × Dim.SymGlue) :=
   let record := docClass.record
   let dflt : PageSpec := {}
-  let opts := (classOptions.splitOn ",").map (·.trimAscii.toString)
+  let opts := (KeyVal.items classOptions).toList
   let whKnown := !(page.width == dflt.width && page.height == dflt.height) ||
     (match record.model with
      | .face => opts.contains "us" || opts.contains "jis" || record.trimDefault.isSome
@@ -6749,7 +6740,7 @@ private theorem engine_tokens_agree (docClass : Ir.DocClass)
     (classOptions : String) (page : PageSpec) :
     ∀ kv ∈ engineLengthTokens docClass classOptions page,
       kv ∈ engineLengthTokensOfPage (classPageDefaults docClass.record
-        ((classOptions.splitOn ",").map (·.trimAscii.toString)) page) := by
+        (KeyVal.items classOptions).toList page) := by
   intro kv h
   exact (Array.mem_filter.mp h).1
 
@@ -6840,8 +6831,8 @@ private def applyBeamerColor (ctx : Ctx) (pal : Palette) (name : String)
       s!"'\\setbeamercolor' key '{key}' on '{name}' is unsupported; the key is dropped" pos
       (trigger := "\\setbeamercolor")
   if let some (fg, bg) := BeamerColor.roles.lookup name then
-    for entry in Decl.splitEntries src do
-      if let some (key, _) := Decl.splitEntry entry then
+    for entry in KeyVal.items src do
+      if let some (key, _) := KeyVal.pair? entry then
         if key == "fg" then noteDocRoles fg.toList
         if key == "bg" then noteDocRoles bg.toList
         if (key == "fg" && fg.isNone) || (key == "bg" && bg.isNone) then
@@ -8421,18 +8412,15 @@ is set as a display listing" pos
   let unhonoured (msg : String) (help : Option String) : EM Unit :=
     warnOnce ctx ("lstopt:" ++ msg) .W0110 msg pos (help := help)
   let langOf (raw : String) : EM (Option Ir.ListingLang) := codeLanguage ctx raw (env == "minted") pos
-  for entry in Decl.splitEntries opts do
-    let bare := entry.trimAscii.toString
-    if bare.isEmpty then
-      continue
-    if env == "minted" && ((Decl.splitEntry entry).map (·.1) == some "formatcom" ||
+  for bare in KeyVal.items opts do
+    if env == "minted" && ((KeyVal.pair? bare).map (·.1) == some "formatcom" ||
         bare == "formatcom" || bare.startsWith "formatcom=") then
       noteFormatcom ctx pos
       continue
     if env == "minted" && keepsSize bare then
       fontSize := inherited
       continue
-    match Decl.splitEntry entry with
+    match KeyVal.pair? bare with
     | some ("caption", v) =>
       let v := listingVal v
       caption := if v.isEmpty then none else some v
@@ -10335,7 +10323,7 @@ private def frameOpts (ctx : Ctx) (body : Array Raw) (pos : Pos) : EM FrameOpts 
     match scanBracketArg body o.next pos with
     | .took k' =>
       let inner := rawSrc (body.extract (j0 + 1) (k' - 1))
-      for opt in (inner.splitOn ",").map (·.trimAscii.toString) do
+      for opt in KeyVal.items inner do
         match opt with
         -- premise: fragileNoopChecks — these spellings change no artifact
         | "fragile" | "fragile=true" => pure ()
@@ -10346,9 +10334,8 @@ private def frameOpts (ctx : Ctx) (body : Array Raw) (pos : Pos) : EM FrameOpts 
         | "c" => o := { o with valign := .center, aligns := o.aligns.push opt }
         | "b" => o := { o with valign := .bottom, aligns := o.aligns.push opt }
         | other =>
-          unless other.isEmpty do
-            warnOnce ctx ("frame:opt:" ++ other) .N0102
-              s!"frame option '{other}' is not modelled; ignored" pos
+          warnOnce ctx ("frame:opt:" ++ other) .N0102
+            s!"frame option '{other}' is not modelled; ignored" pos
       o := { o with next := k' }
     | .unclosed bpos =>
       warnUnclosed ctx "'\\begin{frame}'" bpos
@@ -10390,11 +10377,10 @@ private def columnsOptsArm (ctx : Ctx) (body : Array Raw) (pos : Pos) : EM Nat :
   for _ in [0:body.size] do
     match scanBracketArg body k pos with
     | .took k' =>
-      for o in (bracketSrc body k k').splitOn "," do
-        let o := o.trimAscii.toString
-        if (boxPosOf o).isNone && !o.isEmpty then
-            warnOnce ctx ("columns:option:" ++ o) .N0102
-              s!"'columns' option '{o}' is not modelled; ignored" pos
+      for o in KeyVal.items (bracketSrc body k k') do
+        if (boxPosOf o).isNone then
+          warnOnce ctx ("columns:option:" ++ o) .N0102
+            s!"'columns' option '{o}' is not modelled; ignored" pos
       k := k'
     | .unclosed bpos =>
       warnUnclosed ctx "'\\begin{columns}'" bpos
@@ -11033,8 +11019,7 @@ has nowhere for a float to float" pos
         "content addressed per backend encodes a per-medium decision by hand" pos
         (help := "a construct carries its own medium answer (a nav, a note); \
 prefer the construct or the class, and keep '\\begin{ifbackend}' for the true remainder")
-      let names := (((rawSrc g).splitOn ",").map (·.trimAscii.toString)).filter
-        (!·.isEmpty)
+      let names := Decl.splitEntries (rawSrc g)
       let mut targets : Array String := #[]
       for name in names do
         if Ir.backendNames.contains name then
@@ -14001,9 +13986,7 @@ private def applyAllow (ctx : Ctx) (allow : Array String) (src : String) (pos : 
     Array String × Array PEvent := Id.run do
   let mut allow := allow
   let mut evs : Array PEvent := #[]
-  for entry in src.splitOn "," do
-    let code := entry.trimAscii.toString
-    if code.isEmpty then continue
+  for code in Decl.splitEntries src do
     match DiagCode.ofString? code with
     | some c =>
       unless allow.contains c.code do
@@ -14458,11 +14441,10 @@ convert = none refuses both")
     match body with
     | some src =>
       let mut s := s
-      for entry in src.splitOn "," do
-        let parts := entry.splitOn "="
-        let key := (parts.headD "").trimAscii.toString
+      for entry in KeyVal.items src do
+        let (key, value) := KeyVal.entry entry
         if key.isEmpty then continue
-        let value := (String.intercalate "=" (parts.drop 1)).trimAscii.toString
+        let value := value.getD ""
         let honouredToken ← do
           let tokenOf := [("skip", ("captionsep", "abovecaptionskip")),
             ("aboveskip", ("captionsep", "abovecaptionskip")),
@@ -14642,7 +14624,7 @@ a heading; its numbers stand alone" pos
       return s
   | .cancelOpts src _ =>
     -- Compat named every option the package does not declare at the load.
-    let opts := (src.splitOn ",").map (·.trimAscii.toString) |>.filter (!·.isEmpty)
+    let opts := (KeyVal.items src).toList
     return { s with ctx := { s.ctx with cancel := (Math.CancelSpec.ofOptions opts).1 } }
   | .unknownCmd name unclosed pos =>
     -- Set lines the engine or an open boundary reads are not unknown.
@@ -15356,9 +15338,10 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
       (help := "declare \\documentclass{article} (or slides, card, resume, webpage, poster) to choose it")
   let record := docClass.record
   if page.fontSize == ({} : PageSpec).fontSize then
-    let optSize := (classOptions.splitOn ",").findSome? fun o =>
-      let o := o.trimAscii.toString
-      let o := if o.startsWith "fontsize=" then (o.drop "fontsize=".length).toString else o
+    let optSize := (KeyVal.items classOptions).findSome? fun o =>
+      let o := match KeyVal.entry o with
+        | ("fontsize", some v) => v
+        | (k, _) => k
       if o.endsWith "pt" then
         ((o.dropEnd 2).toString.toNat?).filter (· > 0) |>.map fun n => Dim.pt n
       else none
@@ -15370,7 +15353,7 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
   if page.parskip.isNone then
     if let some g := record.parskip then
       page := { page with parskip := some g }
-  let classOpts := (classOptions.splitOn ",").map (·.trimAscii.toString)
+  let classOpts := (KeyVal.items classOptions).toList
   page := classPageDefaults record classOpts page
   for o in classOpts do
     if o == "twocolumn" then

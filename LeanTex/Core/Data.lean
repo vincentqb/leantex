@@ -2,6 +2,7 @@ module
 
 public import LeanTex.Core.Bib
 public import LeanTex.Core.Parse
+import LeanTex.Core.Decl
 
 /-! Data-driven documents: `@kind{…}` records from a `.bib` file or an inline `\data` group,
 expanded before elaboration through `\val`, `foreach` and `\ifdata` by a bounded fold. -/
@@ -20,14 +21,11 @@ def dataDecl? (body : Array Raw) : Option (String ⊕ String) :=
   let txt := Parse.rawSrc body
   if txt.startsWith "@" then some (.inr txt)
   else
-    match txt.splitOn "=" with
-    | [k, v] =>
-      if k.trimAscii.toString == "file" then
-        let v := v.trimAscii.toString
-        let v := if v.startsWith "\"" && v.endsWith "\"" && v.length ≥ 2 then
-          ((v.drop 1).toString.dropEnd 1).toString else v
-        if v.isEmpty then none else some (.inl v)
-      else none
+    match Decl.splitEntry txt with
+    | some ("file", v) =>
+      let v := if v.startsWith "\"" && v.endsWith "\"" && v.length ≥ 2 then
+        ((v.drop 1).toString.dropEnd 1).toString else v
+      if v.isEmpty then none else some (.inl v)
     | _ => none
 
 /-- A surface scan pairing a command with its operand across input wrappers, which no leaf fold

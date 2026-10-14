@@ -5,6 +5,7 @@ public import LeanTex.Core.BibText
 public import LeanTex.Core.BibUnique
 public import LeanTex.Core.Ir
 import LeanTex.Core.BibStringsData
+import LeanTex.Core.KeyVal
 import Std.Data.HashMap
 
 /-! biblatex's standard bibliography styles, `numeric` and `authoryear`,
@@ -144,14 +145,9 @@ public def bblSorting (decls : Option (Array String)) : String :=
 public def entryOptions (e : Entry) : List (String × String) :=
   match e.field? "options" with
   | none => []
-  | some v =>
-    ((text v).splitOn ",").filterMap fun item =>
-      let item := item.trimAscii.toString
-      if item.isEmpty then none
-      else match item.splitOn "=" with
-        | [k] => some (k.trimAscii.toString, "true")
-        | k :: rest => some (k.trimAscii.toString, ("=".intercalate rest).trimAscii.toString)
-        | [] => none
+  | some v => (KeyVal.items (text v)).toList.map fun item =>
+    let (k, value) := KeyVal.entry item
+    (k, value.getD "true")
 
 /-- The options an entry is set under: the document's, with
 its `options` over them. -/

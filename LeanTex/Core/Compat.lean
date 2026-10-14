@@ -5,6 +5,7 @@ public import LeanTex.Core.Parse
 public import LeanTex.Core.PackageImports
 import LeanTex.Core.Theme
 import LeanTex.Core.Decl
+import LeanTex.Core.KeyVal
 public import LeanTex.Core.Ir
 import LeanTex.Core.BeamerColor
 import LeanTex.Core.TitleTemplate
@@ -261,10 +262,7 @@ public def presentationClasses : List String := ["beamer", "slides"]
 options hold the `noamsthm` key. -/
 public def classPackages (cls : String) (options : List String) : List String :=
   let disabled := options.any fun option =>
-    let key := ((option.splitOn "=").head!).trimAscii.toString
-    let key := if key.startsWith "{" && key.endsWith "}" then
-      ((key.drop 1).toString.dropEnd 1).toString else key
-    String.ofList (key.toList.filter (!·.isWhitespace)) == "noamsthm"
+    String.ofList ((KeyVal.entry option).1.toList.filter (!·.isWhitespace)) == "noamsthm"
   if cls == "beamer" && !disabled then ["amsmath", "amsthm"] else []
 
 public theorem classPackages_ams_agree (cls : String) (options : List String) :
@@ -1016,18 +1014,11 @@ list; an empty value clears its field. -/
 private def beamerFontUpdate (old : List (String × String)) (src : String) :
     List (String × String) := Id.run do
   let mut fields := old
-  for entry in Decl.splitEntries src do
-    match entry.splitOn "=" with
-    | key :: value :: rest =>
-      let key := key.trimAscii.toString
-      let value := (String.intercalate "=" (value :: rest)).trimAscii.toString
-      let value := if key != "size*" then
-          match (braceGroups value).toList with
-          | [inner] => if value == "{" ++ inner ++ "}" then inner.trimAscii.toString else value
-          | _ => value
-        else value
+  for entry in KeyVal.items src do
+    if let (key, some value) := KeyVal.entry entry then
+      let value := if key == "size*" then ((KeyVal.rawEntry entry).2.getD value)
+        else value.trimAscii.toString
       fields := (key, value) :: fields.filter (fun e => beamerFontAxis e.1 != beamerFontAxis key)
-    | _ => pure ()
   return fields
 
 /-- Native font commands selecting the stored fields in beamer's order. -/
@@ -1808,8 +1799,7 @@ private def boundaryLevel (file : String) (raws : Array Raw) (out : BoundaryScan
     if name == "usepackage" || name == "RequirePackage" then
       let (opt, j) := takeOpt raws (i + 1)
       let (args, k) := takeGroups raws j 1
-      let pkgs := ((rawSrc (args.getD 0 #[])).splitOn ",").map (·.trimAscii.toString)
-        |>.filter boundaryRides
+      let pkgs := (KeyVal.items (rawSrc (args.getD 0 #[]))).toList.filter boundaryRides
       let out :=
         if pkgs.isEmpty then out
         else
@@ -1894,8 +1884,8 @@ private def skipStar (raws : Array Raw) (i : Nat) : Nat :=
 /-- `\usepackage[...]{lineno}`'s options, natively the declared page keys. -/
 private def linenoLoad (opt : String) (pos : Pos) : M (Array Raw) := do
   let mut out : Array Raw := #[]
-  for o in (opt.splitOn ",").map (·.trimAscii.toString) do
-    if o.isEmpty || o == "left" || o == "running" || o == "displaymath"
+  for o in KeyVal.items opt do
+    if o == "left" || o == "running" || o == "displaymath"
         || o == "mathlines" then
       pure ()
     else if o == "modulo" then
@@ -1914,14 +1904,13 @@ specification; other options are named. -/
 private def unicodeMathOptions (what opt : String) (pos : Pos) : M (Array Raw) := do
   let mut sources : Array String := #[]
   let mut dropped : Array String := #[]
-  for entry in Decl.splitEntries opt do
-    match Decl.splitEntry entry with
-    | some (key, value) =>
-      match Math.MathAlphabet.sourceKey? key,
-          Math.MathAlphabetSource.ofName? value.trimAscii.toString with
+  for entry in KeyVal.items opt do
+    match KeyVal.entry entry with
+    | (key, some value) =>
+      match Math.MathAlphabet.sourceKey? key, Math.MathAlphabetSource.ofName? value with
       | some _, some source => sources := sources.push s!"{key} = {source.name}"
       | _, _ => dropped := dropped.push entry
-    | none => dropped := dropped.push entry
+    | (_, none) => dropped := dropped.push entry
   unless dropped.isEmpty do
     say .W0101
       s!"unicode-math options without a model were dropped: {String.intercalate ", " dropped.toList}"
@@ -1998,7 +1987,7 @@ citations keep biblatex's default in its place" pos
 /-- `\usepackage[...]{natbib}`: the load, its options as
 declarations in natbib's order. -/
 private def natbibLoad (name opt : String) (pos : Pos) : M (Array Raw) := do
-  let given := (opt.splitOn ",").map (·.trimAscii.toString) |>.filter (!·.isEmpty)
+  let given := (KeyVal.items opt).toList
   let decls := Bib.natbibOptions.foldl (init := #[]) fun acc (o, ds) =>
     if given.contains o then acc.appendList ds else acc
   let dropped := given.filter fun o => !Bib.natbibOptions.any (·.1 == o)
@@ -2042,13 +2031,9 @@ private def biblatexFamily (style : String) : Option String :=
 /-- `\usepackage[...]{biblatex}`: the reference list of biblatex's standard
 styles, read through biber. -/
 private def biblatexLoad (name opt : String) (pos : Pos) : M Unit := do
-  let opts := (opt.splitOn ",").map (·.trimAscii.toString) |>.filter (!·.isEmpty)
-  let kv (o : String) : String × String :=
-    match o.splitOn "=" with
-    | [k] => (k.trimAscii.toString, "true")
-    | k :: rest => (k.trimAscii.toString, (String.intercalate "=" rest).trimAscii.toString)
-    | [] => ("", "")
-  let pairs := opts.map kv
+  let pairs := (KeyVal.items opt).toList.map fun o =>
+    let (k, v) := KeyVal.entry o
+    (k, v.getD "true")
   let pick (key dflt : String) : String := pairs.foldl (init := dflt) fun acc (k, v) =>
     if k == key then v else acc
   let bbx := pick "bibstyle" (pick "style" "numeric")
@@ -5186,10 +5171,9 @@ private def geometry (opts : String) (pos : Pos)
   let mut dropped : Array String := #[]
   let mut droppedExpr : Array String := #[]
   let mut sides : Array (String × String) := #[]
-  for e in Decl.splitEntries opts do
-    match e.splitOn "=" with
-    | [flag] =>
-      let f := flag.trimAscii.toString
+  for e in KeyVal.items opts do
+    match KeyVal.entry e with
+    | (f, none) =>
       if f.endsWith "paper" then
         keys := keys.push s!"size = {(f.dropEnd "paper".length).toString}"
       else if f == "noheadfoot" || f == "nohead" || f == "nofoot" then
@@ -5198,9 +5182,7 @@ private def geometry (opts : String) (pos : Pos)
       -- premise: driverOptionChecks — a driver option ships the page without it
       else if driverOptions.contains f || f == "verbose" then pure ()
       else dropped := dropped.push f
-    | k :: v =>
-      let k := k.trimAscii.toString
-      let v := (String.intercalate "=" v).trimAscii.toString
+    | (k, some v) =>
       -- geometry's width/height size the text block, paperwidth/paperheight the page.
       let k := if k == "paperwidth" then "width" else if k == "paperheight" then "height" else k
       -- premise: driverOptionChecks — a driver option ships the page without it
@@ -5215,7 +5197,6 @@ private def geometry (opts : String) (pos : Pos)
       else if ["top", "bottom", "left", "right"].contains k then
         sides := sides.push (k, lengthOfTeX v)
       else dropped := dropped.push k
-    | [] => pure ()
   -- An equal pair of side margins is the symmetric margin; an unequal or lone side stays named.
   let side (n : String) : Option String :=
     (sides.findRev? (·.1 == n)).map (·.2)
@@ -5247,8 +5228,8 @@ private def crop (opts : String) (pos : Pos)
     M (Array Raw) := do
   let mut mode : Option Bool := none
   let mut dropped : Array String := #[]
-  for e in Decl.splitEntries opts do
-    let o := ((e.splitOn "=").headD "").trimAscii.toString
+  for e in KeyVal.items opts do
+    let o := (KeyVal.entry e).1
     if o == "cam" then mode := some true
     else if o == "off" then mode := some false
     else if o == "noaxes" then pure ()
@@ -5298,21 +5279,20 @@ private def beamerposter (opts : String) (pos : Pos) : M (Array Raw) := do
   let mut customW : Option String := none
   let mut customH : Option String := none
   let mut dropped : Array String := #[]
-  for e in Decl.splitEntries opts do
-    match (e.splitOn "=").map (·.trimAscii.toString) with
-    | ["size", v] => size := v
-    | ["orientation", v] => portrait := v == "portrait"
+  for e in KeyVal.items opts do
+    match KeyVal.entry e with
+    | ("size", some v) => size := v
+    | ("orientation", some v) => portrait := v == "portrait"
     -- A bare `orientation` takes the sty's declared default, portrait.
-    | ["orientation"] => portrait := true
-    | ["scale", v] =>
+    | ("orientation", none) => portrait := true
+    | ("scale", some v) =>
       match Decl.parseDecimal v with
       | some (m, s) => scaleNum := m; scaleDen := s
-      | none => dropped := dropped.push (e.trimAscii.toString)
-    | ["scale"] => pure ()
-    | ["width", v] => customW := some v
-    | ["height", v] => customH := some v
-    | [""] => pure ()
-    | _ => dropped := dropped.push (e.trimAscii.toString)
+      | none => dropped := dropped.push e
+    | ("scale", none) => pure ()
+    | ("width", some v) => customW := some v
+    | ("height", some v) => customH := some v
+    | _ => dropped := dropped.push e
   let mut keys : Array String := #[]
   let mut fontscale : Nat := 100000000
   if size == "custom" then
@@ -5350,19 +5330,14 @@ private def hypersetup (opts : String) (pos : Pos) : M (Array Raw) := do
   let mut keys : Array String := #[]
   let mut links := (← get).links
   let mut linked := false
-  for e in Decl.splitEntries opts do
-    match e.splitOn "=" with
-    | k :: v =>
-      let k := k.trimAscii.toString
-      let v := (String.intercalate "=" v).trimAscii.toString
-      let v := if v.startsWith "{" && v.endsWith "}" then
-        (v.drop 1).dropEnd 1 |>.toString else v
-      for m in ["title", "author", "subject", "keywords"] do
-        if k == "pdf" ++ m then keys := keys.push s!"{m} = \"{v}\""
-      if let some l := links.read k v then
-        links := l
-        linked := true
-    | [] => pure ()
+  for e in KeyVal.items opts do
+    let (k, v) := KeyVal.entry e
+    let v := v.getD ""
+    for m in ["title", "author", "subject", "keywords"] do
+      if k == "pdf" ++ m then keys := keys.push s!"{m} = \"{v}\""
+    if let some l := links.read k v then
+      links := l
+      linked := true
   if linked then write fun st => { st with links }
   let native := s!"\\pdfmeta\{ {String.intercalate ", " keys.toList} }" ++
     (if linked then links.native else "")
@@ -5375,15 +5350,14 @@ private def documentMetadata (opts : String) (pos : Pos) : M (Array Raw) := do
   let mut lang : Option String := none
   let mut version : Option String := none
   let mut dropped : Array String := #[]
-  for e in Decl.splitEntries opts do
-    match Decl.splitEntry e with
-    | some ("lang", v) => lang := some v
-    | some ("pdfversion", v) =>
+  for e in KeyVal.items opts do
+    match KeyVal.entry e with
+    | ("lang", some v) => if v.isEmpty then dropped := dropped.push e else lang := some v
+    | ("pdfversion", some v) =>
       if v == "1.7" || v == "2.0" then version := some v else dropped := dropped.push "pdfversion"
-    | some (key, _) => if !key.isEmpty then dropped := dropped.push key
-    | none =>
-      let key := e.trimAscii.toString
-      if !key.isEmpty then dropped := dropped.push key
+    | (key, some "") => if !key.isEmpty then dropped := dropped.push e
+    | (key, some _) => if !key.isEmpty then dropped := dropped.push key
+    | (_, none) => dropped := dropped.push e
   unless dropped.isEmpty do
     say .W0101 s!"\\DocumentMetadata keys without a native equivalent were \
 dropped: {String.intercalate ", " dropped.toList}" pos
@@ -5832,10 +5806,9 @@ private def molochBlockColors : String → Option (List (String × String))
 colours; every other key is named. -/
 private def molochOptions (cmd src : String) (pos : Pos) : M (Array Raw) := do
   let mut out := #[]
-  for entry in Decl.splitEntries src do
-    match Decl.splitEntry entry with
-    | some (key, value) =>
-      let value := value.trimAscii.toString
+  for entry in KeyVal.items src do
+    match KeyVal.entry entry with
+    | (key, some value) =>
       match key, molochBlockColors value with
       | "block", some decls =>
         became s!"{cmd} block={value}" "moloch's block colours, declared with \\setbeamercolor" pos
@@ -5849,10 +5822,9 @@ private def molochOptions (cmd src : String) (pos : Pos) : M (Array Raw) := do
       | _, _ =>
         sayOnce ("moloch:" ++ key) .W0104
           s!"'{cmd}' option '{key}={value}' is moloch configuration the engine does not have; skipped" pos
-    | none =>
-      unless entry.trimAscii.toString.isEmpty do
-        sayOnce ("moloch:" ++ entry.trimAscii.toString) .W0104
-          s!"'{cmd}' option '{entry.trimAscii.toString}' is moloch configuration the engine does not have; skipped" pos
+    | (key, none) =>
+      sayOnce ("moloch:" ++ key) .W0104
+        s!"'{cmd}' option '{key}' is moloch configuration the engine does not have; skipped" pos
   return out
 
 /-- The finite block-hook grammar: whitespace and the three
@@ -5902,14 +5874,14 @@ additions with an empty before-body and standard skips after 'block begin' are s
 /-- Whether a footline body reads exactly the standout foreground and the
 current canvas background. -/
 private def standoutFootColors (body : Array Raw) : Bool :=
-  let fields := Decl.splitEntries (rawSrc body)
-  let entries := fields.filterMap Decl.splitEntry
+  let fields := (KeyVal.items (rawSrc body)).toList
+  let entries := fields.filterMap fun e => match KeyVal.entry e with
+    | (k, some v) => some (k, v)
+    | (_, none) => none
   fields.length == 3 && entries.length == 3 &&
     entries.lookup "fg" == some "standout.fg" &&
     entries.lookup "bg" == some "background canvas.bg" &&
-    (match (entries.lookup "use").bind Decl.parseValue with
-     | some (.block names) => Decl.splitEntries names == ["standout", "background canvas"]
-     | _ => false)
+    ((entries.lookup "use").map KeyVal.items) == some #["standout", "background canvas"]
 
 /-- Whether an appended body is the supported standout footline restoration. -/
 private def standoutFootBody (body : Array Raw) : Bool :=
@@ -6215,8 +6187,8 @@ private def styOptionsRequest (name : String) (pos : Pos) (raws : Array Raw)
 
 /-- The first share in a two-column `\columnratio` declaration, in per mille. -/
 private def paracolRatio? (src : String) : Option Nat := do
-  let first ← (src.splitOn ",").find? fun s => !s.trimAscii.toString.isEmpty
-  let (m, scale) ← Decl.parseDecimal first.trimAscii.toString
+  let first ← (KeyVal.items src)[0]?
+  let (m, scale) ← Decl.parseDecimal first
   let p := m * 1000 / scale
   guard (0 < p && p < 1000)
   return p.toNat
@@ -6329,10 +6301,9 @@ private def rewriteCtrlLaterNamed (name : String) (pos : Pos) (raws : Array Raw)
     let (args, k) := takeGroups raws j 1
     if h : args.size = 1 then
       let src := (rawSrc args[0]).trimAscii.toString
-      let opts := ((opt.getD "").splitOn ",").map (·.trimAscii.toString)
-      let val (key : String) : Option String := opts.findSome? fun o =>
-        match o.splitOn "=" with
-        | [k, v] => if k.trimAscii.toString == key then some v.trimAscii.toString else none
+      let val (key : String) : Option String := (KeyVal.items (opt.getD "")).findSome? fun o =>
+        match KeyVal.entry o with
+        | (k, some v) => if k == key then some v else none
         | _ => none
       let remote := val "location" == some "remote"
       let format := (val "datatype").filter (· != "bibtex")
@@ -6362,8 +6333,7 @@ private def rewriteCtrlLaterNamed (name : String) (pos : Pos) (raws : Array Raw)
     let (args, k) := takeGroups raws start 1
     match args[0]? with
     | some g =>
-      for part in (rawSrc g).splitOn "," do
-        let src := part.trimAscii.toString
+      for src in KeyVal.items (rawSrc g) do
         let src := if src.endsWith ".bib" then (src.dropEnd 4).toString else src
         unless src.isEmpty || (← get).bibResources.contains src do
           write fun st => { st with bibResources := st.bibResources.push src }
@@ -6583,10 +6553,10 @@ clock, so nothing is inserted" pos
     let (args, k) := takeGroups raws j 1
     let element := rawSrc (args.getD 0 #[])
     let mut keys : Array String := #[]
-    for e in Decl.splitEntries (opt.getD "") do
-      match e.splitOn "=" with
-      | ["beforeskip", v] => keys := keys.push s!"before = {lengthOfTeX v}"
-      | ["afterskip", v] => keys := keys.push s!"after = {lengthOfTeX v}"
+    for e in KeyVal.items (opt.getD "") do
+      match KeyVal.entry e with
+      | ("beforeskip", some v) => keys := keys.push s!"before = {lengthOfTeX v}"
+      | ("afterskip", some v) => keys := keys.push s!"after = {lengthOfTeX v}"
       | _ => pure ()
     if !Ir.styleableElements.contains element then
       say .W0111 s!"'\\RedeclareSectionCommand\{{element}}' names no styleable element; \
@@ -6609,12 +6579,12 @@ native equivalent were dropped: {dropped}" pos
     let element := (opt.getD "itemize").trimAscii.toString
     let mut keys : Array String := #[]
     let mut marker : Option String := none
-    for e in Decl.splitEntries (rawSrc (args.getD 0 #[])) do
-      match e.splitOn "=" with
-      | ["leftmargin", v] => keys := keys.push s!"indent = {lengthOfTeX v}"
-      | ["itemsep", v] => keys := keys.push s!"gap = {lengthOfTeX v}"
-      | ["topsep", v] => keys := keys.push s!"before = {lengthOfTeX v}"
-      | "label" :: v => marker := some (String.intercalate "=" v).trimAscii.toString
+    for e in KeyVal.items (rawSrc (args.getD 0 #[])) do
+      match KeyVal.entry e with
+      | ("leftmargin", some v) => keys := keys.push s!"indent = {lengthOfTeX v}"
+      | ("itemsep", some v) => keys := keys.push s!"gap = {lengthOfTeX v}"
+      | ("topsep", some v) => keys := keys.push s!"before = {lengthOfTeX v}"
+      | ("label", _) => marker := some ((KeyVal.rawEntry e).2.getD "")
       | _ => pure ()
     if let some m := marker then keys := keys.push s!"marker = {m}"
     if !Ir.styleableElements.contains element then
@@ -6642,12 +6612,9 @@ were dropped: {dropped}" pos
     let family := rawSrc (args.getD 0 #[])
     let path : Option String :=
       ([optBefore, optAfter].filterMap id).findSome? fun opts =>
-        (Decl.splitEntries opts).findSome? fun kv =>
-          match Decl.splitEntry kv with
-          | some ("Path", v) =>
-            some (if v.startsWith "{" && v.endsWith "}" then
-              ((v.drop 1).toString.dropEnd 1).toString.trimAscii.toString
-            else v)
+        (KeyVal.items opts).findSome? fun kv =>
+          match KeyVal.entry kv with
+          | ("Path", some v) => some v
           | _ => none
     let dirPart := match path with
       | some d => s!"dir = \"{d}\", "
@@ -7227,11 +7194,10 @@ and 'transparent=<n>' are understood")
     return some (#[], k)
   | "KOMAoptions" =>
     let (args, k) := takeGroups raws start 1
-    let entries := (Decl.splitEntries (rawSrc (args.getD 0 #[]))).map
-      (·.trimAscii.toString) |>.filter (!·.isEmpty)
+    let entries := (KeyVal.items (rawSrc (args.getD 0 #[]))).toList
     let satisfied (e : String) : Bool :=
-      match (e.splitOn "=").map (·.trimAscii.toString) with
-      | [key, v] => (key == "headsepline" || key == "footsepline")
+      match KeyVal.entry e with
+      | (key, some v) => (key == "headsepline" || key == "footsepline")
           && (v == "false" || v == "off" || v == "no")
       | _ => false
     let dropped := entries.filter (!satisfied ·)
@@ -7333,9 +7299,8 @@ private def rewritePackageBody (name p : String) (opt : Option String) (pos : Po
     out := out ++ (← synthAt native pos)
   else if p == "babel" then
     -- babel's last language option is the main one, which becomes document metadata.
-    let names := ((opt.getD "").splitOn ",").map (·.trimAscii.toString)
-      |>.filter (fun o => !o.isEmpty && !o.contains '=')
-    match names.reverse.head? with
+    let names := (KeyVal.items (opt.getD "")).filter fun o => (KeyVal.entry o).2.isNone
+    match names.back? with
     | some main =>
       let tag := Locale.babelTagOf main
       write fun st => { st with babelMain := some main }
@@ -7357,8 +7322,7 @@ captions and patterns stand in" pos
     biblatexLoad name (opt.getD "") pos
   else if let some spec := fontPackages.lookup p then
     -- carlito's `sfdefault` promotes its sans face to the body slot; every other option is named.
-    let opts := ((opt.getD "").splitOn ",").map (·.trimAscii.toString)
-      |>.filter (!·.isEmpty)
+    let opts := (KeyVal.items (opt.getD "")).toList
     let sfdefault := p == "carlito" && opts.contains "sfdefault"
     let spec := if sfdefault then spec ++ ", body = \"Carlito\"" else spec
     let dropped := opts.filter (· != "sfdefault")
@@ -7372,8 +7336,7 @@ dropped: {String.intercalate ", " dropped}" pos
     out := out ++ (← linenoLoad (opt.getD "") pos)
   else if p == "cancel" then
     -- The package's options are the marks' own settings, carried to the elaborator's preamble.
-    let opts := ((opt.getD "").splitOn ",").map (·.trimAscii.toString)
-      |>.filter (!·.isEmpty)
+    let opts := (KeyVal.items (opt.getD "")).toList
     let (_, unknown) := Math.CancelSpec.ofOptions opts
     unless unknown.isEmpty do
       say .W0101 s!"'cancel' options without a native equivalent were \
@@ -7412,14 +7375,11 @@ no package options are supported by the strict native Markdown dialect" pos
     -- hyperref's package options are `\hypersetup`'s keys.
     let mut links := (← get).links
     let mut linked := false
-    for o in (opt.getD "").splitOn "," do
-      match o.splitOn "=" with
-      | k :: v =>
-        if let some l := links.read k.trimAscii.toString
-            (String.intercalate "=" v).trimAscii.toString then
-          links := l
-          linked := true
-      | [] => pure ()
+    for o in KeyVal.items (opt.getD "") do
+      let (k, v) := KeyVal.entry o
+      if let some l := links.read k (v.getD "") then
+        links := l
+        linked := true
     if linked then write fun st => { st with links }
     if linked && links.colorlinks then
       let native := links.native
@@ -7428,9 +7388,7 @@ no package options are supported by the strict native Markdown dialect" pos
     else
       discard s!"\\{name}\{{p}}" "the engine does this itself" s!"{name}:{p}" pos
   else if p == "ulem" then
-    let opts := ((opt.getD "").splitOn ",").map (·.trimAscii.toString)
-      |>.filter (!·.isEmpty)
-    if opts == ["normalem"] then
+    if KeyVal.items (opt.getD "") == #["normalem"] then
       discard s!"\\{name}[normalem]\{{p}}"
         "strikeout is native and normal emphasis remains in force"
         s!"{name}:{p}:normalem" pos
@@ -7644,19 +7602,19 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
     let flow := ((Ir.DocClass.ofString? native).map (·.record.model == .flow)).getD true
     write fun st => { st with
       measureKnown := !flow, flowPage := flow,
-      titlepageReset := !((opt.getD "").splitOn ",").any (·.trimAscii.toString == "twoside") }
+      titlepageReset := !(KeyVal.items (opt.getD "")).contains "twoside" }
     if articleClasses.contains cls || resumeClasses.contains cls then
       let native0 := if resumeClasses.contains cls then "resume" else "article"
       let o := match opt with | some o => s!"[{o}]" | none => ""
       -- A class's `\parskip` is zero unless KOMA's `parskip=` asks for a skip.
-      let komaSkip := (opt.getD "").splitOn "," |>.findSome? fun kv =>
-        match (kv.splitOn "=").map (·.trimAscii.toString) with
-        | ["parskip", v] =>
+      let komaSkip := (KeyVal.items (opt.getD "")).findSome? fun kv =>
+        match KeyVal.entry kv with
+        | ("parskip", some v) =>
           if v.startsWith "full" then some "1.2em plus 0.24em"
           else if v.startsWith "half" then some "0.6em plus 0.12em"
           else if v == "false" || v == "never" then some "0pt"
           else some "0.6em plus 0.12em"
-        | ["parskip"] => some "1.2em plus 0.24em"
+        | ("parskip", none) => some "1.2em plus 0.24em"
         | _ => none
       let native := s!"\\documentclass{o}\{{native0}}\\page\{ parskip = {komaSkip.getD "0pt"} }"
       became s!"\\documentclass\{{cls}}" native pos
@@ -7719,13 +7677,10 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
     -- Only fontspec features that name fonts are kept; shaping features are dropped.
     let feature (k : String) : Option String :=
       ([optBefore, optAfter].filterMap id).findSome? fun opts =>
-        (Decl.splitEntries opts).findSome? fun kv =>
-          (Decl.splitEntry kv).bind fun (key, v) =>
-            if key == k then
-              some (if v.startsWith "{" && v.endsWith "}" then
-                ((v.drop 1).toString.dropEnd 1).toString.trimAscii.toString
-              else v)
-            else none
+        (KeyVal.items opts).findSome? fun kv =>
+          match KeyVal.entry kv with
+          | (key, some v) => if key == k then some v else none
+          | (_, none) => none
     let dirPart := match feature "Path" with
       | some d => s!"dir = \"{d}\", "
       | none => ""
@@ -7740,8 +7695,8 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
         let f := if f.startsWith "*" then family ++ (f.drop 1).toString else f
         parts := parts.push s!"{slot}.{variant} = \"{f}\""
     for opts in [optBefore, optAfter].filterMap id do
-      for kv in Decl.splitEntries opts do
-        if let some ("FontFace", v) := Decl.splitEntry kv then
+      for kv in KeyVal.items opts do
+        if let ("FontFace", some v) := KeyVal.entry kv then
           if let some part := ← fontFacePart family slot v pos then
             parts := parts.push part
     if name == "babelfont" then
@@ -7815,23 +7770,20 @@ face serves every language, so the binding is dropped" pos
     if args.isEmpty then return none
     let mut keys : Array String := #[]
     let mut dropped : Array String := #[]
-    for e in Decl.splitEntries (rawSrc (args.getD 0 #[])) do
-      match e.splitOn "=" with
-      | [] => pure ()
-      | key :: v =>
-        let key := key.trimAscii.toString
-        let v := (String.intercalate "=" v).trimAscii.toString
-        let native := if key == "activate" then ["protrusion", "expansion"]
-          else if key == "protrusion" || key == "expansion" then [key]
-          else []
-        if native.isEmpty then
-          if !key.isEmpty then dropped := dropped.push key
-        else
-          match v with
-          | "" | "true" | "compatibility" | "nocompatibility" =>
-            keys := keys ++ (native.map (s!"{·} = on")).toArray
-          | "false" => keys := keys ++ (native.map (s!"{·} = off")).toArray
-          | _ => dropped := dropped.push key
+    for e in KeyVal.items (rawSrc (args.getD 0 #[])) do
+      let (key, v) := KeyVal.entry e
+      let v := v.getD ""
+      let native := if key == "activate" then ["protrusion", "expansion"]
+        else if key == "protrusion" || key == "expansion" then [key]
+        else []
+      if native.isEmpty then
+        if !key.isEmpty then dropped := dropped.push key
+      else
+        match v with
+        | "" | "true" | "compatibility" | "nocompatibility" =>
+          keys := keys ++ (native.map (s!"{·} = on")).toArray
+        | "false" => keys := keys ++ (native.map (s!"{·} = off")).toArray
+        | _ => dropped := dropped.push key
     unless dropped.isEmpty do
       say .W0101 s!"microtype keys without a native equivalent were dropped: \
 {String.intercalate ", " dropped.toList}" pos
@@ -8107,7 +8059,7 @@ baselineskip = {milliStr ld}pt }" ++
     let src := rawSrc (args.getD 0 #[])
     let mut slots : Array Nat := #[]
     let mut evenOdd := false
-    for e in (opt.getD "LCR").splitOn "," do
+    for e in KeyVal.items (opt.getD "LCR") do
       for c in e.toList do
         let c := c.toUpper
         if c == 'L' && !slots.contains 0 then slots := slots.push 0
@@ -8829,8 +8781,7 @@ every column that declares none. -/
 private def columnsRowPos (body : Array Raw) : Array Raw := Id.run do
   let (o, _) := takeOpt body 0
   let some opts := o | return body
-  let some letter := ((opts.splitOn ",").map (·.trimAscii.toString)).find?
-    (["t", "c", "b", "T"].contains ·) | return body
+  let some letter := (KeyVal.items opts).find? (["t", "c", "b", "T"].contains ·) | return body
   let withPos (r : Raw) : Raw :=
     if let .env "column" cb cp := r then
       if cb[skipSpaces cb 0]? matches some (.sym '[' _) then r
@@ -11566,7 +11517,7 @@ private def resolveStyOptions (passed : List String) (raws : Array Raw) : Array 
         let opts := (rawSrc (args.getD 0 #[])).replace " " ""
         -- TeX's `\@for` skips an empty list but keeps empty items in a nonempty one.
         unless opts.isEmpty do
-          for nm in opts.splitOn "," do
+          for nm in KeyVal.split opts do
             if let some body := styOptionBody declared nm then
               out := out ++ body.map StyOptionStep.raw
         i := max k (i + 1)
@@ -12137,10 +12088,7 @@ private def textList (loc : Locale) (st : TextSt) (raws : Array Raw)
         !st.defined.contains n then
       let (lang, j) := if n == "lstset" then (none, i + 1) else takeOpt raws (i + 1)
       let (args, k) := takeGroups raws j 1
-      let entries := (Decl.splitEntries (rawSrc (args.getD 0 #[]))).filterMap
-        fun e => let e := e.trimAscii.toString
-          if e.isEmpty then none else some e
-      let entries := entries.toArray
+      let entries := KeyVal.items (rawSrc (args.getD 0 #[]))
       let layered (layer : Array (String × Array String)) (lang : String) :=
         let old := ((layer.find? (·.1 == lang)).map (·.2)).getD #[]
         (layer.filter (·.1 != lang)).push (lang, old ++ entries)

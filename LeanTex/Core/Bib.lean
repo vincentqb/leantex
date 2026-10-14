@@ -581,7 +581,7 @@ items split at commas outside braces. -/
 public def parseNameX? (s : String) : Option Name := Id.run do
   let mut n : Name := {}
   let mut extended := false
-  for item in KeyVal.split s do
+  for item in KeyVal.splitBraced (· == ',') s do
     match item.splitOn "=" with
     | k :: v :: rest =>
       let key := k.trimAscii.toString.toLower

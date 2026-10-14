@@ -52,6 +52,7 @@ import Tests.Compression
 import Tests.EngineCache
 import Tests.BrowserFaceBatch
 import Tests.CacheIO
+import Tests.KeyVal
 import Tests.PictureAssets
 import Tests.ToolMemo
 import Tests.World
@@ -900,6 +901,7 @@ def surfaceSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   compatConservationChecks ref
   crefChecks ref
   classOptionChecks ref
+  Tests.keyValChecks ref
   linenoChecks ref
   footnoteChecks ref
   mathChecks ref
