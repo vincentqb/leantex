@@ -167,7 +167,7 @@ private theorem reads_answer (a : Answer) (h : AnswerBounded a) :
       _ (Binary.Reads.nat 1 1 (by decide)) ht
     simpa only [answerBytes, ByteArray.append_assoc] using this
 
-/-- `AnswerBounded`, decided. -/
+/-- A check that implies `AnswerBounded`. -/
 @[expose] public def answerFits : Answer → Bool
   | .error why => decide (why.toUTF8.size < 256 ^ 4)
   | .ok d =>
@@ -206,7 +206,7 @@ public def lookup (key : Array String) (bytes : ByteArray) : Option Answer :=
 @[expose] public def Bounded (key : Array String) (a : Answer) : Prop :=
   KeyedRecord.Bounded format key a
 
-/-- `Bounded`, decided: what the cache checks before it stores. -/
+/-- A check that implies `Bounded`, which the cache runs before it stores. -/
 @[expose] public def storable (key : Array String) (a : Answer) : Bool :=
   KeyedRecord.storable format key a
 

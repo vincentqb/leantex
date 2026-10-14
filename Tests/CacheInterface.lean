@@ -2,7 +2,6 @@ module
 
 import LeanTex.Cli.ConvCache
 import LeanTex.Cli.Compression
-import LeanTex.Core.FigureFace
 import LeanTex.Core.SlotRecord
 
 /-! Cache clients use complete outcomes and source-ordered compression jobs.

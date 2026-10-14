@@ -293,7 +293,6 @@ public def deflate (raw : ByteArray) : ByteArray :=
 /-- The FNV-64 offset basis, the seed of a fingerprint and of a 128-bit key's first pass. -/
 @[expose, inline] public def fnvOffset : UInt64 := 14695981039346656037
 
-/-- The FNV-64 prime. -/
 @[expose, inline] public def fnvPrime : UInt64 := 1099511628211
 
 /-- The seed of a 128-bit key's second pass, which persisted keys and PDF identifiers fix. -/

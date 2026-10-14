@@ -51,7 +51,7 @@ public def lookup (key : Array String) (bytes : ByteArray) : Option ByteArray :=
 @[expose] public def Bounded (key : Array String) (payload : ByteArray) : Prop :=
   KeyedRecord.Bounded format key payload
 
-/-- `Bounded`, decided: what a cache checks before it stores. -/
+/-- A check that implies `Bounded`, which a cache runs before it stores. -/
 @[expose] public def storable (key : Array String) (payload : ByteArray) : Bool :=
   KeyedRecord.storable format key payload
 

@@ -11,7 +11,7 @@ namespace LeanTex.Core.KeyedRecord
 open LeanTex.Core
 
 /-- A record kind: the file's first bytes, and its value's codec with the bound under which the
-value reads back, decided by `fits`. -/
+value reads back and a check that implies it. -/
 public structure Format (α : Type) where
   magic : ByteArray
   write : α → ByteArray
@@ -66,7 +66,7 @@ bits. -/
   (body F key a).size < 256 ^ 4 ∧ key.size < 256 ^ 4 ∧ (∀ s ∈ key, s.toUTF8.size < 256 ^ 4) ∧
     F.Fits a
 
-/-- `Bounded`, decided: what a cache checks before it stores. -/
+/-- A check that implies `Bounded`, which a cache runs before it stores. -/
 @[expose] public def storable (key : Array String) (a : α) : Bool :=
   decide ((body F key a).size < 256 ^ 4) && decide (key.size < 256 ^ 4) &&
     key.all (fun s => decide (s.toUTF8.size < 256 ^ 4)) && F.fits a

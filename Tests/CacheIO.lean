@@ -85,8 +85,7 @@ def cacheIdentityChecks (ref : IO.Ref (List String)) : IO Unit := do
       | .error e => e.toString == (IO.userError "synthetic producer error").toString
       | .ok _ => false)
 
-/-- The cache records' bytes, pinned: a slot and the two kinds of face answer encode as they always
-have, so a cache written by one build reads in the next. -/
+/-- The cache records' bytes for a slot, an empty slot, a refused face and a drawn face. -/
 def cacheRecordChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let hex (b : ByteArray) : String := b.foldl (init := "") fun s x =>
