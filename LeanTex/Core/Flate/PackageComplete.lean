@@ -1,5 +1,6 @@
 module
 
+import all LeanTex.Core.Flate.PackageMergeProof
 import all LeanTex.Core.Flate.PackageKraft
 import all LeanTex.Core.Flate.PackageLengths
 
@@ -8,6 +9,48 @@ namespace LeanTex.Core.Flate.PackageMerge
 /-- Weights that never decrease. -/
 def Ascending (w : Array Nat) : Prop :=
   ∀ i j, i ≤ j → j < w.size → w[i]?.getD 0 ≤ w[j]?.getD 0
+
+/-- What `merge`'s output holds after `a` leaves and `b` packages, over ascending inputs: its
+weights ascend and stay below the heads still to come, a package was taken only below the next
+leaf, and every leaf a prefix holds weighs at most that prefix's last weight. -/
+structure MergeFor (items pairs : Array Nat) (w : Array Nat) (f : Array Bool) (a b : Nat) :
+    Prop where
+  bounds : a ≤ items.size ∧ b ≤ pairs.size
+  sizes : w.size = a + b ∧ f.size = a + b
+  leaves : f.toList.count true = a
+  front : ∀ i < w.size, (a < items.size → w[i]?.getD 0 ≤ items[a]?.getD 0) ∧
+    (b < pairs.size → w[i]?.getD 0 ≤ pairs[b]?.getD 0)
+  asc : Ascending w
+  greedy : ∀ t ≤ f.size, 0 < (f.toList.take t).count false →
+    (f.toList.take t).count true < items.size →
+    pairs[(f.toList.take t).count false - 1]?.getD 0 < items[(f.toList.take t).count true]?.getD 0
+  bound : ∀ t ≤ f.size, ∀ j < (f.toList.take t).count true,
+    items[j]?.getD 0 ≤ w[t - 1]?.getD 0
+
+/-- Each package level's weights and provenance flags, the leaves' level first. -/
+def level (items : Array Nat) : Nat → Array Nat × Array Bool
+  | 0 => (items, Array.replicate items.size true)
+  | k + 1 => merge items (pairWeights (level items k).1)
+
+/-- What every package level holds over ascending leaves: ascending weights beside their flags,
+every leaf once, and every leaf a prefix holds at most that prefix's last weight. -/
+structure LevelShape (items : Array Nat) (w : Array Nat) (f : Array Bool) : Prop where
+  asc : Ascending w
+  size_eq : w.size = f.size
+  leaves : f.toList.count true = items.size
+  bound : ∀ t ≤ f.size, ∀ j < (f.toList.take t).count true, items[j]?.getD 0 ≤ w[t - 1]?.getD 0
+
+/-- The backtrace after `i` levels: the credit balances exactly, and every leaf the next level
+selects has a code exactly `i` bits long. -/
+private structure TraceExact (sorted : Array Nat) (size : Nat) (levels : Array (Array Bool))
+    (i : Nat) (lens : Array Nat) (take : Nat) : Prop where
+  size_eq : lens.size = size
+  enough : i < levels.size → take ≤ capacity sorted.size (levels.size - 1 - i)
+  more : take = 0 ∨ i < levels.size
+  credit : mass levels.size sorted lens + (sorted.size - 1) * 2 ^ levels.size =
+    sorted.size * 2 ^ levels.size + take * 2 ^ (levels.size - 1 - i)
+  shape : i < levels.size → ∀ j < (selected (levels[levels.size - 1 - i]?.getD #[]) take).1,
+    lens[sorted[j]?.getD 0]?.getD 0 = i
 
 theorem pairWeights_get_exact (w : Array Nat) :
     (pairWeights w).size = w.size / 2 ∧
@@ -39,23 +82,6 @@ theorem pairWeights_ascending (w : Array Nat) (hw : Ascending w) : Ascending (pa
   have h2 := hw (2 * i + 1) (2 * j + 1) (by omega) (by omega)
   omega
 
-/-- What `merge`'s output holds after `a` leaves and `b` packages, over ascending inputs: its
-weights ascend and stay below the heads still to come, a package was taken only below the next
-leaf, and every leaf a prefix holds weighs at most that prefix's last weight. -/
-structure MergeFor (items pairs : Array Nat) (w : Array Nat) (f : Array Bool) (a b : Nat) :
-    Prop where
-  bounds : a ≤ items.size ∧ b ≤ pairs.size
-  sizes : w.size = a + b ∧ f.size = a + b
-  leaves : f.toList.count true = a
-  front : ∀ i < w.size, (a < items.size → w[i]?.getD 0 ≤ items[a]?.getD 0) ∧
-    (b < pairs.size → w[i]?.getD 0 ≤ pairs[b]?.getD 0)
-  asc : Ascending w
-  greedy : ∀ t ≤ f.size, 0 < (f.toList.take t).count false →
-    (f.toList.take t).count true < items.size →
-    pairs[(f.toList.take t).count false - 1]?.getD 0 < items[(f.toList.take t).count true]?.getD 0
-  bound : ∀ t ≤ f.size, ∀ j < (f.toList.take t).count true,
-    items[j]?.getD 0 ≤ w[t - 1]?.getD 0
-
 private theorem take_push_le {α : Type} (f : Array α) (x : α) (t : Nat) (ht : t ≤ f.size) :
     (f.push x).toList.take t = f.toList.take t := by
   rw [Array.toList_push, List.take_append_of_le_length (by simpa using ht)]
@@ -74,11 +100,6 @@ private theorem push_get_last (w : Array Nat) (x : Nat) : (w.push x)[w.size]?.ge
   rw [Array.getElem?_push, ite_eq_left rfl]
   rfl
 
-private theorem bool_count (xs : List Bool) : xs.count true + xs.count false = xs.length := by
-  induction xs with
-  | nil => rfl
-  | cons b xs ih => cases b <;> simp <;> omega
-
 private theorem false_count (f : Array Bool) (a : Nat) (h : f.toList.count true = a) :
     f.toList.count false = f.size - a := by
   have := bool_count f.toList
@@ -88,7 +109,8 @@ private theorem false_count (f : Array Bool) (a : Nat) (h : f.toList.count true 
 private theorem take_size_exact {α : Type} (f : Array α) : f.toList.take f.size = f.toList :=
   List.take_of_length_le (by simp)
 
-private theorem mergeFor_push (items pairs : Array Nat) (w : Array Nat) (f : Array Bool) (a b : Nat) (hm : MergeFor items pairs w f a b)
+private theorem mergeFor_push (items pairs : Array Nat) (w : Array Nat) (f : Array Bool) (a b : Nat)
+    (hm : MergeFor items pairs w f a b)
     (x : Nat) (leaf : Bool) (a' b' : Nat)
     (hfront : ∀ i < w.size, w[i]?.getD 0 ≤ x)
     (hnext : (a' < items.size → x ≤ items[a']?.getD 0) ∧ (b' < pairs.size → x ≤ pairs[b']?.getD 0))
@@ -250,7 +272,8 @@ theorem merge_for (items pairs : Array Nat) (hi : Ascending items) (hp : Ascendi
         · omega
       · intro j hj
         have hw0 : 0 < s.1.size := by omega
-        have hb' := hm.bound s.2.1.size (Nat.le_refl _) j (by rw [take_size_exact, hm.leaves]; exact hj)
+        have hb' := hm.bound s.2.1.size (Nat.le_refl _) j
+          (by rw [take_size_exact, hm.leaves]; exact hj)
         rw [show s.2.1.size - 1 = s.1.size - 1 by have := hm.sizes.2; omega] at hb'
         exact Nat.le_trans hb' ((hm.front (s.1.size - 1) (by omega)).2 hpair)
   rcases hp' with ⟨hm, hab⟩
@@ -259,11 +282,6 @@ theorem merge_for (items pairs : Array Nat) (hi : Ascending items) (hp : Ascendi
   have hb : result.2.2.2 = pairs.size := by omega
   rw [ha, hb] at hm
   exact hm
-
-/-- Each package level's weights and provenance flags, the leaves' level first. -/
-def level (items : Array Nat) : Nat → Array Nat × Array Bool
-  | 0 => (items, Array.replicate items.size true)
-  | k + 1 => merge items (pairWeights (level items k).1)
 
 theorem levels_level_exact (items : Array Nat) (limit : Nat) (hl : 0 < limit) :
     ∀ k < limit, (levels items limit)[k]?.getD #[] = (level items k).2 := by
@@ -287,7 +305,8 @@ theorem levels_level_exact (items : Array Nat) (limit : Nat) (hl : 0 < limit) :
     have hsucc : level items i = merge items (pairWeights (level items (i - 1)).1) := by
       conv => lhs; rw [hk]
       rfl
-    refine ⟨by simp only [Nat.add_sub_cancel, hsucc, h1], by simp only [Nat.add_sub_cancel, hsucc, h1],
+    refine ⟨by simp only [Nat.add_sub_cancel, hsucc, h1],
+      by simp only [Nat.add_sub_cancel, hsucc, h1],
       by simp only [Array.size_push, h3, Nat.add_sub_cancel]; omega, ?_⟩
     intro k hk'
     simp only [Nat.add_sub_cancel] at hk'
@@ -305,14 +324,6 @@ theorem levels_level_exact (items : Array Nat) (limit : Nat) (hl : 0 < limit) :
     simp [h2]
   · rw [ite_eq_right he]
     exact h4 k (by omega)
-
-/-- What every package level holds over ascending leaves: ascending weights beside their flags,
-every leaf once, and every leaf a prefix holds at most that prefix's last weight. -/
-structure LevelShape (items : Array Nat) (w : Array Nat) (f : Array Bool) : Prop where
-  asc : Ascending w
-  size_eq : w.size = f.size
-  leaves : f.toList.count true = items.size
-  bound : ∀ t ≤ f.size, ∀ j < (f.toList.take t).count true, items[j]?.getD 0 ≤ w[t - 1]?.getD 0
 
 private theorem take_replicate_true (n t : Nat) (ht : t ≤ n) :
     ((Array.replicate n true).toList.take t).count true = t := by
@@ -333,7 +344,8 @@ theorem level_shape (items : Array Nat) (hi : Ascending items) :
       (merge items (pairWeights (level items k).1)).2
     exact ⟨hm.asc, by rw [hm.sizes.1, hm.sizes.2], hm.leaves, hm.bound⟩
 
-private theorem count_take_le (f : List Bool) (b : Bool) (t : Nat) : (f.take t).count b ≤ f.count b :=
+private theorem count_take_le (f : List Bool) (b : Bool) (t : Nat) :
+    (f.take t).count b ≤ f.count b :=
   (List.take_sublist t f).count_le b
 
 private theorem nested_core (items W' W : Array Nat) (F' F : Array Bool) (t : Nat)
@@ -417,18 +429,6 @@ theorem addBits_mass_exact (sorted lens : Array Nat) (leaves limit i : Nat)
   rw [mass_split limit sorted (addBits sorted lens leaves) leaves,
     mass_split limit sorted lens leaves, ht]
   omega
-
-/-- The backtrace after `i` levels: the credit balances exactly, and every leaf the next level
-selects has a code exactly `i` bits long. -/
-private structure TraceExact (sorted : Array Nat) (size : Nat) (levels : Array (Array Bool))
-    (i : Nat) (lens : Array Nat) (take : Nat) : Prop where
-  size_eq : lens.size = size
-  enough : i < levels.size → take ≤ capacity sorted.size (levels.size - 1 - i)
-  more : take = 0 ∨ i < levels.size
-  credit : mass levels.size sorted lens + (sorted.size - 1) * 2 ^ levels.size =
-    sorted.size * 2 ^ levels.size + take * 2 ^ (levels.size - 1 - i)
-  shape : i < levels.size → ∀ j < (selected (levels[levels.size - 1 - i]?.getD #[]) take).1,
-    lens[sorted[j]?.getD 0]?.getD 0 = i
 
 private theorem mass_whole (n L : Nat) (hn : 0 < n) : n * 2 ^ L = (n - 1) * 2 ^ L + 2 ^ L := by
   calc n * 2 ^ L = ((n - 1) + 1) * 2 ^ L := congrArg (· * 2 ^ L) (by omega)
@@ -582,7 +582,8 @@ theorem lengths_mass_exact (freqs : Array Nat) (limit : Nat) (hl : 0 < limit)
     by_cases he : i = j
     · subst he
       exact Nat.le_refl _
-    · have := List.pairwise_iff_getElem.mp hpw i j (by simpa [sorted] using (by omega : i < sorted.size))
+    · have := List.pairwise_iff_getElem.mp hpw i j
+        (by simpa [sorted] using (by omega : i < sorted.size))
         (by simpa [sorted] using hj') (by omega)
       simp only [le, decide_eq_true_eq] at this
       simp only [items, Array.getElem?_map, getElem?_pos sorted i (by omega),
@@ -603,7 +604,8 @@ theorem lengths_mass_exact (freqs : Array Nat) (limit : Nat) (hl : 0 < limit)
     rw [hlv (k + 1) hk] at ht hf1 ⊢
     rw [hlv k (by omega)] at hf0 ⊢
     have hs1 := selected_exact _ t ht
-    have hpf : (selected (level items (k + 1)).2 t).2 ≤ ((level items (k + 1)).2).toList.count false := by
+    have hpf : (selected (level items (k + 1)).2 t).2 ≤
+        ((level items (k + 1)).2).toList.count false := by
       rw [hs1.2]
       exact count_take_le _ false t
     rw [hf1.2.2, ite_eq_right (by omega), Nat.add_sub_cancel] at hpf

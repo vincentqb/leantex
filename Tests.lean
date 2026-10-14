@@ -392,6 +392,7 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   pdfOptionalContentChecks ref
   pdfStateChecks ref
   pdfStreamLossChecks ref
+  inflateZlibChecks ref
   figureRouteChecks ref
   converterDoorChecks ref
   nativeFaceClosedChecks ref
@@ -785,7 +786,6 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   rhythmChecks ref oneFace
   measureChecks ref oneFace
   imageChecks ref oneFace
-  inflateZlibChecks ref
   svgAssetChecks ref
   svgToolChecks ref oneFace
   Tests.svgNativePdfChecks ref oneFace

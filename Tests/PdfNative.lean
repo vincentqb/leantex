@@ -937,6 +937,48 @@ def pdfStreamLossChecks (ref : IO.Ref (List String)) : IO Unit := do
     (lossesOf (page "<< /XObject << /X1 5 0 R >> >>" "/X1 Do"
       #[over "/Type /XObject /Subtype /Form /BBox [0 0 10 10] /Filter /FlateDecode "]) ==
       .ok #[.budget "form-data"])
+  t "figures: an indexed image whose lookup inflates past the budget names the budget"
+    (lossesOf (page "<< /XObject << /I1 5 0 R >> >>" "q 20 0 0 10 10 10 cm /I1 Do Q"
+      #[(streamObj "\x00\x01" "/Type /XObject /Subtype /Image /Width 2 /Height 1 \
+          /ColorSpace [/Indexed /DeviceRGB 1 6 0 R] /BitsPerComponent 8 ").toUTF8,
+        over "/Filter /FlateDecode "]) == .ok #[.budget "indexed-lookup"])
+  t "figures: a shading whose sampled function inflates past the budget names the budget"
+    (lossesOf (page "<< /Shading << /S1 5 0 R >> >>" "/S1 sh"
+      #["<< /ShadingType 2 /ColorSpace /DeviceRGB /Coords [0 0 100 0] /Function 6 0 R \
+          /Extend [true true] >>".toUTF8,
+        over "/FunctionType 0 /Domain [0 1] /Range [0 1 0 1 0 1] /Size [2] /BitsPerSample 8 \
+          /Filter /FlateDecode "]) == .ok #[.budget "shading-function"])
+  t "figures: a colour space whose ICC profile inflates past the budget names the budget"
+    ((lossesOf (page "<< /ColorSpace << /C1 5 0 R >> >>" "/C1 cs 0.5 0.5 0.5 sc 0 0 10 10 re f"
+      #["[/ICCBased 6 0 R]".toUTF8, over "/N 3 /Filter /FlateDecode "])).toOption.any
+      (·.contains (.budget "icc-profile")))
+  let predicted (parms : String) : ByteArray := page "<< /XObject << /I1 5 0 R >> >>"
+    "q 20 0 0 10 10 10 cm /I1 Do Q"
+    #[streamObjBin (Flate.deflate (bytes [1, 2])) s!"/Type /XObject /Subtype /Image /Width 2 \
+      /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /FlateDecode \
+      /DecodeParms << {parms} >> "]
+  t "figures: an image under a predictor the reader lacks is refused by its name"
+    (lossesOf (predicted "/Predictor 3") == .ok #[.resource "predictor-3"] &&
+      lossesOf (predicted "/Predictor 2 /BitsPerComponent 4 /Colors 1 /Columns 2") ==
+        .ok #[.resource "tiff-predictor-4-bit"])
+  let flateDict (more : List (String × PdfRead.Obj)) : PdfRead.Obj :=
+    .dict (#[("Filter", .name "FlateDecode")] ++ more.toArray)
+  let says (r : Except String ByteArray) (what : String) : Bool := match r with
+    | .error why => hasStr why what
+    | .ok _ => false
+  t "PDF streams: a stream past its /DL is named by its declared length, one past the cap by the cap"
+    (says (PdfRead.decodeStream (flateDict [("DL", .int 10)]) (Flate.deflate ⟨Array.replicate 32 0⟩))
+        "its /DL declares" &&
+      says (PdfRead.decodeStream (flateDict []) zeros) "the reader's limit" &&
+      says (PdfRead.decodeStream (flateDict []) (bytes [0x78, 0x01, 7])) "does not inflate")
+  let alphaPng (idat : ByteArray) : ByteArray :=
+    mkPng (pngChunk "IHDR" (pngIhdr 1 1 8 6 0) ++ pngChunk "IDAT" idat.toList ++ pngChunk "IEND" [])
+  let planWhy (png : ByteArray) (what : String) : Bool := match Image.probe png >>= Image.plan {} with
+    | .error why => hasStr why what
+    | .ok _ => false
+  t "PNG: alpha data past its declared size is named by the size, broken data as not inflating"
+    (planWhy (alphaPng (Flate.deflate (bytes [0, 1, 2, 3, 4, 5]))) "does not match the declared size" &&
+      planWhy (alphaPng (bytes [0x78, 0x01, 7])) "does not inflate")
   t "figures: a font whose ToUnicode stream inflates past the budget names the budget"
     ((lossesOf (page "<< /Font << /F1 5 0 R >> >>" "BT /F1 12 Tf 10 10 Td (A) Tj ET"
       #["<< /Type /Font /Subtype /TrueType /BaseFont /Placeholder /ToUnicode 6 0 R >>".toUTF8,

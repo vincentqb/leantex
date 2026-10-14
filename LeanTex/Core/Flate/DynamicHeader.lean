@@ -53,7 +53,7 @@ public def read (r : Br) : Except Error (Array Nat × Array Nat × Br) := do
     .error (.malformed "deflate: more literal/length or distance codes than the alphabets hold")
   else
   let (values, r) ← FieldStream.read 3 (hclen + 4) r
-  let some table := mkHuff? (restore values) false
+  let some table := mkHuff? (restore values) (sparse := false)
     | .error (.malformed "deflate: the code-length code is over-subscribed or incomplete")
   let (lengths, r) ← CodeLengths.read table (nlit + ndist) r
   return (lengths.extract 0 nlit, lengths.extract nlit (nlit + ndist), r)

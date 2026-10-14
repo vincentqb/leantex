@@ -167,7 +167,7 @@ theorem selected_exact (flags : Array Bool) (take : Nat) (ht : take ≤ flags.si
     change P (i + 1) (s.1 + 1, s.2)
     simp [P, he, ha, hb, hv]
 
-private theorem bool_count (xs : List Bool) :
+theorem bool_count (xs : List Bool) :
     xs.count true + xs.count false = xs.length := by
   induction xs with
   | nil => rfl

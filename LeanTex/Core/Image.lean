@@ -1158,13 +1158,6 @@ public theorem planParams_serialize_inj (a b : PlanParams)
   cases as_ <;> cases bs <;> cases ai <;> cases bi <;>
     simp_all [PlanParams.serialize]
 
-
-/-- Why a PNG's image data does not inflate: more of it than the header declares, or a stream
-that is no zlib stream. -/
-private def pngInflateWhy : Flate.Error → String
-  | .budget => "corrupt PNG: sample data does not match the declared size"
-  | .malformed why => s!"corrupt PNG: its image data does not inflate ({why})"
-
 /-- The cache-key segment: the serialization in hex. -/
 public def PlanParams.key (p : PlanParams) : String := p.serialize.foldl (· ++ Hex.byte true ·) ""
 
@@ -1193,6 +1186,12 @@ private def colorOf (p : PlanParams) (s : Source) (space : Space) : ColorSpaceDe
   | .rgb, true => .rgb
   | .gray, false => .iccBased 1 (iccZlib s)
   | .rgb, false => .iccBased 3 (iccZlib s)
+
+/-- Why a PNG's image data does not inflate to its declared size: more or less of it than the
+header declares, or a stream that is no zlib stream. -/
+private def pngInflateWhy : Flate.Error → String
+  | .budget => "corrupt PNG: sample data does not match the declared size"
+  | .malformed why => s!"corrupt PNG: its image data does not inflate ({why})"
 
 private def planPng (p : PlanParams) (s : Source) : Except String Plan :=
   if s.interlace then .error "interlaced (Adam7) PNG is not supported; re-export without interlacing"
@@ -1230,7 +1229,7 @@ flatten it onto a background and re-export"
       | .error e => .error (pngInflateWhy e)
       | .ok raw =>
         if raw.size != s.pxH * (1 + rowBytes) then
-          .error "corrupt PNG: sample data does not match the declared size"
+          .error (pngInflateWhy .budget)
         else
           let planes := splitPredictedAlpha raw s.pxH s.pxW channels
           .ok { pxW := s.pxW, pxH := s.pxH, dpiX := s.dpiX, dpiY := s.dpiY, bitDepth := 8,

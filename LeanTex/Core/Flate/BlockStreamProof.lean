@@ -40,8 +40,43 @@ private theorem fill_not_constant (m v : Nat) (hm : 257 ≤ m ∧ m ≤ 286) (hv
   · have : 2 ^ 9 ≤ 2 ^ v := Nat.pow_le_pow_right (by decide) (by omega)
     omega
 
-/-- A block's code lengths are never one length throughout: a code over 257 to 286 symbols cannot
-fill its space with one length, and with the end of block alone, symbol zero has none. -/
+/-- Literal/length lengths over 257 to 286 symbols with an end of block are never one length
+throughout: one length cannot fill that code space, and with the end of block alone symbol zero
+has none. -/
+private theorem literal_lengths_vary (freqs : Array Nat) (hs : 257 ≤ freqs.size ∧ freqs.size ≤ 286)
+    (h256 : 0 < freqs[256]?.getD 0) :
+    ∃ j < (PackageMerge.lengths freqs 15).size,
+      (PackageMerge.lengths freqs 15)[j]?.getD 0 ≠ (PackageMerge.lengths freqs 15)[256]?.getD 0 := by
+  have hfit : freqs.size ≤ 2 ^ 15 := Nat.le_trans hs.2 (by decide)
+  have hc := PackageMerge.lengths_contract freqs 15 (by decide) hfit
+  generalize hlens : PackageMerge.lengths freqs 15 = lens at hc ⊢
+  have hsize : lens.size = freqs.size := hc.1.size_eq
+  have hv : 0 < lens[256]?.getD 0 := (hc.2 256).mpr h256
+  have hw : lens[256]?.getD 0 ≤ 15 := hc.1.width_le 256
+  by_cases h0 : 0 < freqs[0]?.getD 0
+  · have hk := packageMerge_kraft_exact freqs 15 (by decide) hfit
+    rw [PackageMerge.lengths_mass_exact freqs 15 (by decide) hfit
+      (Frequencies.live_two freqs 0 256 (by omega) (by omega) (by decide) h0 h256), hlens] at hk
+    refine Classical.byContradiction fun hno => ?_
+    have hall : ∀ x ∈ lens.toList, x = lens[256]?.getD 0 := by
+      intro x hx
+      obtain ⟨j, hj⟩ := Array.mem_iff_getElem?.mp (Array.mem_toList_iff.mp hx)
+      have hjs : j < lens.size := by
+        by_cases h : j < lens.size
+        · exact h
+        · simp [getElem?_neg lens j h] at hj
+      refine Classical.byContradiction fun hne => hno ⟨j, hjs, ?_⟩
+      rw [hj, Option.getD_some]
+      exact hne
+    rw [List.eq_replicate_iff.mpr ⟨rfl, hall⟩, kraft_constant _ _ ⟨hv, hw⟩,
+      Array.length_toList] at hk
+    exact fill_not_constant _ _ ⟨by omega, by omega⟩ ⟨hv, hw⟩ hk
+  · have hz : lens[0]?.getD 0 = 0 := by
+      have := hc.2 0
+      omega
+    exact ⟨0, by omega, by omega⟩
+
+/-- A block's code lengths are never one length throughout (`literal_lengths_vary`). -/
 theorem lengths_vary (tokens : Array UInt32) :
     ∃ i j, i < ((lengths tokens).1 ++ (lengths tokens).2).size ∧
       j < ((lengths tokens).1 ++ (lengths tokens).2).size ∧
@@ -49,49 +84,14 @@ theorem lengths_vary (tokens : Array UInt32) :
         ((lengths tokens).1 ++ (lengths tokens).2)[j]?.getD 0 := by
   have hf := TokenBlock.alphabets_contract tokens
   have hfit : (TokenBlock.alphabets tokens).1.size ≤ 2 ^ 15 := Nat.le_trans hf.1.2 (by decide)
-  have hc := PackageMerge.lengths_contract (TokenBlock.alphabets tokens).1 15 (by decide) hfit
-  have hsize := hc.1.size_eq
-  have h256 : 0 < (lengths tokens).1[256]?.getD 0 := (hc.2 256).mpr hf.2.2.1
-  have hw256 : (lengths tokens).1[256]?.getD 0 ≤ 15 := hc.1.width_le 256
-  suffices hlit : ∃ j < (lengths tokens).1.size,
-      (lengths tokens).1[j]?.getD 0 ≠ (lengths tokens).1[256]?.getD 0 by
-    obtain ⟨j, hj, hne⟩ := hlit
-    have h256s : 256 < (lengths tokens).1.size := by
-      simp only [lengths] at hsize ⊢
-      omega
-    refine ⟨j, 256, by simp only [Array.size_append]; omega,
-      by simp only [Array.size_append]; omega, ?_⟩
-    rw [Array.getElem?_append_left hj, Array.getElem?_append_left h256s]
-    exact hne
-  by_cases h0 : 0 < (TokenBlock.alphabets tokens).1[0]?.getD 0
-  · have hlive := Frequencies.live_two (TokenBlock.alphabets tokens).1 0 256 (by omega)
-      (by omega) (by decide) h0 hf.2.2.1
-    have hk := packageMerge_kraft_exact (TokenBlock.alphabets tokens).1 15 (by decide) hfit
-    rw [PackageMerge.lengths_mass_exact (TokenBlock.alphabets tokens).1 15 (by decide) hfit hlive]
-      at hk
-    refine Classical.byContradiction fun hno => ?_
-    have hall : ∀ x ∈ (lengths tokens).1.toList, x = (lengths tokens).1[256]?.getD 0 := by
-      intro x hx
-      obtain ⟨j, hj⟩ := Array.mem_iff_getElem?.mp (Array.mem_toList_iff.mp hx)
-      have hjs : j < (lengths tokens).1.size := by
-        by_cases h : j < (lengths tokens).1.size
-        · exact h
-        · simp [getElem?_neg (lengths tokens).1 j h] at hj
-      refine Classical.byContradiction fun hne => hno ⟨j, hjs, ?_⟩
-      rw [hj, Option.getD_some]
-      exact hne
-    have hrep := List.eq_replicate_iff.mpr ⟨rfl, hall⟩
-    change Canonical.kraft (lengths tokens).1.toList 15 = 2 ^ 15 at hk
-    rw [hrep, kraft_constant _ _ ⟨h256, hw256⟩] at hk
-    simp only [Array.length_toList] at hk
-    exact fill_not_constant _ _ ⟨by simp only [lengths] at hsize ⊢; omega,
-      by simp only [lengths] at hsize ⊢; omega⟩ ⟨h256, hw256⟩ hk
-  · refine ⟨0, by simp only [lengths] at hsize ⊢; omega, ?_⟩
-    have hz : (lengths tokens).1[0]?.getD 0 = 0 := by
-      have := hc.2 0
-      simp only [lengths] at this ⊢
-      omega
-    omega
+  have hsize := (PackageMerge.lengths_contract _ 15 (by decide) hfit).1.size_eq
+  have hlit : (lengths tokens).1 = PackageMerge.lengths (TokenBlock.alphabets tokens).1 15 := rfl
+  obtain ⟨j, hj, hne⟩ := literal_lengths_vary _ hf.1 hf.2.2.1
+  rw [← hlit] at hj hne hsize
+  refine ⟨j, 256, by simp only [Array.size_append]; omega,
+    by simp only [Array.size_append]; omega, ?_⟩
+  rw [Array.getElem?_append_left hj, Array.getElem?_append_left (by omega)]
+  exact hne
 
 theorem write_contract {raw : ByteArray} {start finish : Nat} {tokens : Array UInt32}
     (ht : TokensFor raw start tokens finish) (w : Bw) (hw : w.Valid) :

@@ -181,9 +181,12 @@ private theorem parseIndirectAt_spelling_span_exact {b : ByteArray} {i : Nat}
   simp only [hskip1, hz, hskip2, hkey, hp]
   rfl
 
-/-- Why a stream does not inflate within `cap` bytes: past that budget, or malformed. -/
-private def inflateWhy (cap : Nat) : Flate.Error → String
-  | .budget => s!"a PDF stream decodes past {cap} bytes, the reader's limit"
+/-- Why a stream does not inflate within `cap` bytes: past the length its `/DL` declares when
+`declared`, else past the reader's limit, or malformed. -/
+private def inflateWhy (declared : Bool) (cap : Nat) : Flate.Error → String
+  | .budget =>
+    if declared then s!"a PDF stream decodes past the {cap} bytes its /DL declares"
+    else s!"a PDF stream decodes past {cap} bytes, the reader's limit"
   | .malformed why => s!"malformed PDF: a stream does not inflate ({why})"
 
 /-- Decodes a stream by its declared filter: none, or `/FlateDecode` with a PNG predictor
@@ -201,10 +204,10 @@ public def decodeStream (dict : Obj) (raw : ByteArray) : Except String ByteArray
     | some (.name f) => throw s!"PDF stream filter /{f} is not supported"
     | some _ => throw "PDF stream filter chains are not supported"
   let _ := flate
-  let cap := match (dict.get? "DL").bind Obj.int? with
-    | some n => if 0 ≤ n && n.toNat ≤ maxDecoded then n.toNat else maxDecoded
-    | none => maxDecoded
-  let data ← (Flate.inflate raw cap).mapError (inflateWhy cap)
+  let (cap, declared) := match (dict.get? "DL").bind Obj.int? with
+    | some n => if 0 ≤ n && n.toNat ≤ maxDecoded then (n.toNat, true) else (maxDecoded, false)
+    | none => (maxDecoded, false)
+  let data ← (Flate.inflate raw cap).mapError (inflateWhy declared cap)
   -- The zlib trailer (RFC 1950) is checked here; `Flate.inflate` leaves it to its callers.
   let n := raw.size
   let stated := (raw[n - 4]?.getD 0).toNat * 16777216 + (raw[n - 3]?.getD 0).toNat * 65536 +

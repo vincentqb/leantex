@@ -561,9 +561,9 @@ public def spaceOf (cx : Ctx) (o : Obj) : Space :=
       let base := flatSpace cx (resolveSpace cx ((xs[1]?).getD (.name "DeviceRGB")))
       let hival := (((xs[2]?).bind fun x => (cx.doc.deref x).toOption).bind Obj.int?).getD 0
       let table := (xs[3]?).getD .null
-      match ((cx.doc.deref table).toOption.bind PdfContentLex.strBytes?).map Except.ok |>.orElse
-          fun _ => PdfFont.streamRead cx.doc table with
-      | some (.ok lookup) => .indexed base hival.toNat lookup
+      match ((cx.doc.deref table).toOption.bind PdfContentLex.strBytes?).map
+          (fun b => .ok (.bytes b)) |>.orElse fun _ => PdfFont.streamRead cx.doc table with
+      | some (.ok (.bytes lookup)) => .indexed base hival.toNat lookup
       | some (.error .budget) => .overBudget "indexed-lookup" 1
       | _ => .lossy "indexed-lookup" 1
     | some (.name "Pattern") => .pattern ((xs[1]?).map fun b => flatSpace cx (resolveSpace cx b))
@@ -694,7 +694,13 @@ private def gradientOf (cx : Ctx) (shObj : Obj) : Except Loss Shade := do
       | none => throw (.resource "shading-unreadable")
   let ty := ((sh.get? "ShadingType").bind Obj.int?).getD 0
   unless ty == 2 || ty == 3 do throw (.resource s!"shading-type-{ty}")
-  let sp := spaceOf cx ((sh.get? "ColorSpace").getD (.name "DeviceRGB"))
+  let csObj := (sh.get? "ColorSpace").getD (.name "DeviceRGB")
+  let family : Option Obj := match resolveSpace cx csObj with
+    | .arr xs => xs[0]?
+    | o => some o
+  if [some (.name "Indexed"), some (.name "I"), some (.name "Pattern")].contains family then
+    throw (.resource "shading-space")
+  let sp := spaceOf cx csObj
   match sp with
   | .lossy k _ => throw (.resource k)
   | .overBudget k _ => throw (.budget k)

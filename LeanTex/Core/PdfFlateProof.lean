@@ -20,7 +20,7 @@ private theorem decodeStream_flate (dict : Obj) (raw data : ByteArray)
     decodeStream dict raw = .ok data := by
   unfold decodeStream
   rw [hf, hd, hp]
-  change ((Flate.inflate raw maxDecoded).mapError (inflateWhy maxDecoded) >>= fun v =>
+  change ((Flate.inflate raw maxDecoded).mapError (inflateWhy false maxDecoded) >>= fun v =>
     if (raw.size < 4 || (raw[raw.size - 4]?.getD 0).toNat * 16777216 +
         (raw[raw.size - 3]?.getD 0).toNat * 65536 +
         (raw[raw.size - 2]?.getD 0).toNat * 256 +

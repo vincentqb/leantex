@@ -1,7 +1,7 @@
 module
 
 import LeanTex.Core.Flate.BlockStream
-public import LeanTex.Core.Flate.Huffman
+public import LeanTex.Core.Flate.Error
 import LeanTex.Core.Flate.BitPacking
 import LeanTex.Core.Flate.BitWriter
 import LeanTex.Core.Flate.Progress
@@ -13,8 +13,8 @@ namespace LeanTex.Core.Flate
 /-! Bounded zlib compression and decompression (RFC 1950 wrapping RFC 1951), and the checksums,
 content keys and PNG scanline unfiltering beside them. -/
 
-/-- Inflates a zlib stream into at most `maxOut` bytes, refusing what zlib's inflate refuses but
-for the Adler-32 trailer, which is not verified. -/
+/-- Inflates a zlib stream into at most `maxOut` bytes, checking its header, stored lengths,
+alphabet sizes and code tables as zlib's inflate checks them; the Adler-32 trailer is not verified. -/
 public def inflate (data : ByteArray) (maxOut : Nat) : Except Error ByteArray := do
   let some cmf := data[0]? | .error (.malformed "zlib: empty stream")
   let some flg := data[1]? | .error (.malformed "zlib: truncated header")

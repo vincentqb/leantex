@@ -45,9 +45,9 @@ def readBody (btype : Nat) (r : Br) (out : ByteArray) (maxOut : Nat) :
     let (litLens, distLens, r) ← DynamicHeader.read r
     if litLens[256]?.getD 0 == 0 then .error (.malformed "deflate: no end-of-block code")
     else
-    let some lit := mkHuff? litLens true
+    let some lit := mkHuff? litLens (sparse := true)
       | .error (.malformed "deflate: the literal/length code is over-subscribed or incomplete")
-    let some dist := mkHuff? distLens true
+    let some dist := mkHuff? distLens (sparse := true)
       | .error (.malformed "deflate: the distance code is over-subscribed or incomplete")
     TokenBlock.read lit dist r out maxOut
   else .error (.malformed "deflate: reserved block type")

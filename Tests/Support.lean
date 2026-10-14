@@ -4,6 +4,7 @@ public import LeanTex.Cli.FontDiscovery
 public import LeanTex.Cli.RunBounded
 public import LeanTex
 public import LeanTex.Core.Flate.BitWriter
+public import LeanTex.Core.Flate.Huffman
 public import LeanTex.Core.HtmlDoc
 public import Lean.Data.Json.Parser
 public import Lean.Data.Json.FromToJson.Basic

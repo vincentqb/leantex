@@ -1,22 +1,11 @@
 module
 
+public import LeanTex.Core.Flate.Error
 import LeanTex.Core.Flate.BitPacking
 import all LeanTex.Core.Flate.Canonical
 import LeanTex.Core.Flate.Progress
 
 namespace LeanTex.Core.Flate
-
-/-- Why a stream does not inflate: its output passes the caller's bound, or its bytes break
-RFC 1950 or RFC 1951 as the reason says. -/
-public inductive Error where
-  | budget
-  | malformed (why : String)
-  deriving Repr, BEq, Inhabited
-
-public instance : ToString Error where
-  toString
-    | .budget => "the stream inflates past its bound"
-    | .malformed why => why
 
 public structure Br where
   data : ByteArray

@@ -293,7 +293,7 @@ def registry : List Premise := [
     tools := ["pdftotext", "pdfinfo", "pdffonts", "pdftoppm", "gs", "magick", "verapdf", "chrome"]
     scripts := ["scripts/pdf-oracles.lean"] },
   { name := "zlib", residue := .oracle "zlib", reach := .oracle
-    statement := "The zlib python3 links inflates a stream as RFC 1950 and RFC 1951 say, so a stream it reads back as the input is a conforming one."
+    statement := "The zlib python3 links, zlib-ng in its zlib-compatible mode, refuses and reads a stream as zlib's inflate does, its table, length and header checks beyond RFC 1950 and RFC 1951 included, so a stream it reads back as the input is one zlib-based readers read, and its verdict on any stream is theirs."
     sites := [("scripts/flate-fuzz.lean", "main")]
     unchecked := some "It is the reference implementation the compressor is held to, so nothing in the tree stands above it." },
   { name := "tex-tree", residue := .dev "TeX tree", reach := .dev
