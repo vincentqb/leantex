@@ -1598,7 +1598,13 @@ def reports : List Report := [
       "the review's guards: twenty assertions fail with its answer's behaviour reverted onto 1526b209, where the hidden heading wrapped word by word under the page's balanced heading wrap and a titled page with a level-one heading of its own was given a second",
       "the seventeen corpus pages the fix changes differ from their parent's HTML by the banner, the three now declaring titles also by their window's name, which read Untitled, and the one page carrying a figure's hidden words by their hiding written inline; each shows no visible difference on screen at arm's length and prints the same sheets with the same text; no corpus PDF changes but those three, by their metadata title alone, each the same on paper",
       "the accessibility tier's level-one heading items rise to its cap on the sixteen pages, the three lowered among them"]
-    state := .guarded "9bed5b00" .before .author }
+    state := .guarded "9bed5b00" .before .author },
+  { id := "R180", date := "2026-10-14"
+    what := "the landing lock went to whichever waiting landing's retry woke first after a landing ended, so one branch was refused for 6.7 hours while five that asked after it landed"
+    pins := [thm% Land.turn_take_exact, thm% Land.turn_first_exact, thm% Land.turn_behind_mem,
+      thm% Land.enter_arrivals_exact, thm% Land.leave_arrivals_exact]
+    accept := ["the landing tool's five queue scenarios fail against the tool built at 1deee4be before the fix: three landings waiting behind a fourth land in the reverse of their arrival, the latest asking most often, a waiter behind one that was killed is refused, a later waiter asking more often lands before an earlier one, the first waiter is refused rather than waiting for the lock, and four waiters entering at one moment get no order; with the fix all five pass, the first waiter landing 0.6 s after the lock frees"]
+    state := .guarded "1deee4be" .before .author }
 ]
 
 /-- The reports guarded but never seen failing, a count held in both directions. -/
