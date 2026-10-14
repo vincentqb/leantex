@@ -356,7 +356,8 @@ private theorem refValue_fold (R : List Char) (hl : Ascii R) (d0 m : Nat) (v : N
     rw [at?_bytesOf R d0 hl, List.getElem?_eq_getElem hd]
     simp
 
-private theorem hexVal_digit (d : Char) (h : 48 ≤ d.toNat ∧ d.toNat ≤ 57) : (Hex.val? d.toNat).getD 0 = d.toNat - 48 := by
+private theorem val?_decimal_exact (d : Char) (h : 48 ≤ d.toNat ∧ d.toNat ≤ 57) :
+    (Hex.val? d.toNat).getD 0 = d.toNat - 48 := by
   unfold Hex.val?
   simp [h.1, h.2]
 
@@ -371,7 +372,7 @@ private theorem fold_digits_value (n : Nat) :
     | cons d rest ih =>
       intro v h
       simp only [List.foldl_cons]
-      rw [hexVal_digit d (h d (by simp))]
+      rw [val?_decimal_exact d (h d (by simp))]
       exact ih _ (fun x hx => h x (by simp [hx]))
   rw [heq _ 0 (toDigits_digit n), foldDigits]
 

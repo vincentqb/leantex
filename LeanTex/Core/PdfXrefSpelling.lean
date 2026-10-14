@@ -19,8 +19,8 @@ private def HexChars (s : String) : Prop :=
 private theorem hex16_chars (x : UInt64) : HexChars (Flate.hex16 x) := by
   intro c hc
   simp only [Flate.hex16, Hex.digits, String.toList_ofList] at hc
-  obtain ⟨k, rfl⟩ := Hex.mem_digitList hc
-  exact ⟨by simp [Hex.val?_spell], Hex.spell_ascii true k⟩
+  obtain ⟨k, rfl⟩ := Hex.digitList_mem hc
+  exact ⟨by simp [Hex.val?_spell_exact], Hex.spell_ascii true k⟩
 
 public theorem hex16_string_exact (x : UInt64) :
     (Obj.str (("<" ++ Flate.hex16 x ++ ">").toUTF8)).Representable := by

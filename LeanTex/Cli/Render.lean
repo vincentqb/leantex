@@ -24,10 +24,7 @@ private def bidiControl (c : Char) : Bool :=
 
 /-- `acc`, then `\u` and the four upper-case hexadecimal digits of `c`. -/
 private def pushEscape (acc : String) (c : Char) : String :=
-  let hex (d : Nat) : Char := Char.ofNat (if d < 10 then 48 + d else 55 + d)
-  let n := c.toNat
-  [hex (n / 4096 % 16), hex (n / 256 % 16), hex (n / 16 % 16), hex (n % 16)].foldl String.push
-    ((acc.push '\\').push 'u')
+  acc ++ s!"\\u{Hex.digits true 4 c.toNat}"
 
 /-- A diagnostic field for the terminal: each newline written as `newline`, and terminal
 controls and bidirectional formatting characters escaped as data. -/

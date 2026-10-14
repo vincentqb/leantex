@@ -6,15 +6,6 @@ import LeanTex.Core.LoopProgress
 
 namespace LeanTex.Core.PdfLex
 
-private theorem char_byte_exact (n : Nat) (h : n < 256) : (Char.ofNat n).toNat = n := by
-  have hv : n.isValidChar := Or.inl (by omega)
-  simp only [Char.ofNat, dite_eq_left hv, Char.ofNatAux, Char.toNat, UInt32.toNat, BitVec.toNat_ofNatLT]
-
-private theorem hexChar_nat (n : Nat) :
-    (Hex.spell true n).toNat = if n%16<10 then 48+n%16 else 55+n%16 := by
-  simp only [Hex.spell, ↓reduceIte]
-  split <;> apply char_byte_exact <;> omega
-
 private theorem keep_char (c : Char) (h : (c.isAlphanum || c == '-' || c == '.') = true) :
     c.toNat < 128 ∧ isWs c.toNat = false ∧ isDelim c.toNat = false ∧ c.toNat ≠ 35 := by
   simp only [Bool.or_eq_true, beq_iff_eq, Char.isAlphanum, Char.isAlpha,
@@ -48,8 +39,8 @@ public theorem nameChars_ascii (c : Char) : ∀ d ∈ nameChars c, d.toNat < 128
     simp only [List.mem_cons, List.not_mem_nil, or_false] at hd
     rcases hd with rfl|rfl|rfl
     · decide
-    · rw [hexChar_nat]; split <;> omega
-    · rw [hexChar_nat]; split <;> omega
+    · exact Hex.spell_ascii true _
+    · exact Hex.spell_ascii true _
 
 private theorem escapeLoop (cs : List Char) (out : String) :
     (forIn cs out (fun c out => if c.isAlphanum || c == '-' || c == '.' then pure (.yield (out.push c))
@@ -107,7 +98,7 @@ private theorem nameStep_exact {b : ByteArray} {i : Nat} (c : Char)
       rw [Nat.mod_eq_of_lt hdiv]
       omega
     have h2' : at? b (i+2) = (Hex.spell true c.toNat).toNat := by simpa [Nat.add_assoc] using h2
-    simp [nameStep, h0, h1, h2', isWs, isDelim, Hex.val?_spell, hv]
+    simp [nameStep, h0, h1, h2', isWs, isDelim, Hex.val?_spell_exact, hv]
 
 private theorem nameSteps_stops {b : ByteArray} {i : Nat} {cs : List Char}
     (h : Span b i ((cs.flatMap nameChars).map Char.toNat))

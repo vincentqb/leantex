@@ -4,6 +4,7 @@ public import LeanTex.Core.Diag
 public import LeanTex.Core.Heading
 import LeanTex.Core.Loop
 import LeanTex.Core.Blank
+import LeanTex.Core.Hex
 import Std.Data.HashMap
 
 /-! The markdown reader: strict CommonMark with GFM tables into an md AST
@@ -1075,9 +1076,8 @@ def entityAt (c : Chars) (i : Nat) : Option (String × Nat) := Id.run do
     let mut n := 0
     for ch in ds do
       let d :=
-        if isAsciiDigit ch then some (ch.toNat - '0'.toNat)
-        else if hex && 'a' ≤ ch && ch ≤ 'f' then some (ch.toNat - 'a'.toNat + 10)
-        else if hex && 'A' ≤ ch && ch ≤ 'F' then some (ch.toNat - 'A'.toNat + 10)
+        if hex then Hex.digit? ch
+        else if isAsciiDigit ch then some (ch.toNat - '0'.toNat)
         else none
       match d with
       | none => return none

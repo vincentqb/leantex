@@ -4,6 +4,7 @@ public import LeanTex.Core.PdfObj
 public import LeanTex.Core.PdfStringProof
 public import LeanTex.Core.PdfNameProof
 import all LeanTex.Core.PdfObj
+public import LeanTex.Core.Hex
 
 namespace LeanTex.Core.PdfRead
 

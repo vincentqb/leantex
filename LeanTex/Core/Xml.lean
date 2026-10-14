@@ -1,7 +1,7 @@
 module
 
 import LeanTex.Core.WhatwgEncoding
-public import LeanTex.Core.Hex
+import LeanTex.Core.Hex
 import Std.Data.HashSet
 
 /-! A total reader and canonical writer of the XML 1.0 an SVG file is written in; what could

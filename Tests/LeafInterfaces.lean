@@ -34,6 +34,8 @@ open LeanTex.Core LeanTex.Cli
 example : Ir.Color → String := Ir.Color.css
 example (c : Ir.Color) :
     c.css = "#" ++ Hex.byte false c.r ++ Hex.byte false c.g ++ Hex.byte false c.b := by rfl
+example : Hex.val? 70 = some 15 := rfl
+example : Hex.digit? 'a' = some 10 := rfl
 example : String → String := Locale.babelTagOf
 example : ByteArray → Utf8.Decoded := Utf8.decode
 example : ByteArray → Utf8.Decoded := Utf8.read

@@ -472,12 +472,8 @@ private def markerColorDecl (c : Ir.Color) (name : Option Ir.ColorRef) : String 
 private def literalColorDecl? (d : String) : Option Ir.Color := do
   guard (d.startsWith "color: #" && d.endsWith ";" && d.length == 15)
   let hex := ((d.drop 8).take 6).toString.toList
-  let digit (c : Char) : Option Nat :=
-    if c.isDigit then some (c.toNat - '0'.toNat)
-    else if 'a' ≤ c && c ≤ 'f' then some (c.toNat - 'a'.toNat + 10) else none
-  let ds ← hex.mapM digit
-  let byte (i : Nat) : UInt8 := (16 * ds.getD i 0 + ds.getD (i + 1) 0).toUInt8
-  return Ir.Color.ofHtml (byte 0) (byte 2) (byte 4)
+  let byte (i : Nat) : Option UInt8 := (Hex.value? ((hex.drop i).take 2)).map (·.toUInt8)
+  return Ir.Color.ofHtml (← byte 0) (← byte 2) (← byte 4)
 
 mutual
 

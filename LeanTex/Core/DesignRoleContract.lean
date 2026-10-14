@@ -101,7 +101,7 @@ private theorem unesc_escChar (c : Char) (rest : List Char) :
       omega
     simp only [hc, Bool.false_eq_true, ite_false, Hex.digitList, List.cons_append,
       List.nil_append]
-    simp only [unesc, beq_self_eq_true, ite_true, Hex.digit?, Hex.val?_spell,
+    simp only [unesc, beq_self_eq_true, ite_true, Hex.digit?, Hex.val?_spell_exact,
       Option.bind_eq_bind, Option.bind_some, hex6_value c.toNat hlt, Char.ofNat_toNat]
 
 private theorem unesc_escape (l : List Char) : unesc (l.flatMap escChar) = some l := by

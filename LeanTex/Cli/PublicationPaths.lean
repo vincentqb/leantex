@@ -3,6 +3,7 @@ module
 import Init.System.IO
 public import LeanTex.Cli.World
 import Std.Data.HashSet
+import LeanTex.Core.Hex
 
 /-! Publication destinations, checked before any artifact is written: apart from each
 other (`conflict`) and from the files the build read (`overwrite`), a preflight rather
@@ -182,8 +183,7 @@ public theorem overwrite_only (destinations : Array (String × String)) (inputs 
 /-- One path segment as a URL reads it back: `%`, `#`, `?`, `\`, `:`, white space and the
 controls percent-encoded as UTF-8 bytes, every other character kept. -/
 private def segmentHref (s : String) : String :=
-  let hex (n : UInt8) : Char := Char.ofNat (if n < 10 then 48 + n.toNat else 55 + n.toNat)
-  let byte (o : String) (b : UInt8) : String := ((o.push '%').push (hex (b >>> 4))).push (hex (b &&& 15))
+  let byte (o : String) (b : UInt8) : String := o ++ s!"%{LeanTex.Core.Hex.byte true b}"
   s.foldl (fun out c =>
     if c.isAlphanum || "-._~!$&'()*+,;=@".contains c || 0xA0 ≤ c.toNat then out.push c
     else (String.singleton c).toUTF8.foldl byte out) ""

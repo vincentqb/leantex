@@ -2101,6 +2101,22 @@ def scannerChecks (ref : IO.Ref (List String)) : IO Unit := do
   optArgChecks ref
   envBoundaryChecks ref
 
+/-- The hex reader and speller at their edges: either case read, an empty run read as zero, a
+width cut to the last digits, and a code point spelled with four digits or as many as it needs. -/
+def hexChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  t "hex reads both cases" ("09afAF".toList.map Hex.digit? == [some 0, some 9, some 10, some 15,
+    some 10, some 15])
+  t "hex refuses a non-digit" (Hex.digit? 'g' == none && Hex.value? "1g".toList == none)
+  t "hex reads an empty run as zero" (Hex.value? [] == some 0)
+  t "hex reads a run" (Hex.value? "10FFFF".toList == some 0x10FFFF)
+  t "hex cuts a width to its last digits" (Hex.digits true 2 0x1AB == "AB")
+  t "hex pads a width" (Hex.digits false 4 0xa == "000a")
+  t "hex spells a byte in either case" (Hex.byte true 0xAB == "AB" && Hex.byte false 0xAB == "ab")
+  for (n, s) in [(0, "0000"), (0xFFFF, "FFFF"), (0x10000, "10000"), (0xFFFFF, "FFFFF"),
+      (0x100000, "100000"), (0x10FFFF, "10FFFF"), (0x1000000, "1000000")] do
+    t s!"hex spells U+{s}" (Hex.scalar n == s)
+
 /-- The decoder substitutes one U+FFFD per maximal subpart (Unicode §3.9, Table 3-8), at its first
 byte's offset. -/
 def utf8Checks (ref : IO.Ref (List String)) : IO Unit := do

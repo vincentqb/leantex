@@ -986,6 +986,7 @@ def main (args : List String) : IO UInt32 := do
   let ref ← IO.mkRef ([] : List String)
 
   utf8Checks ref
+  hexChecks ref
   inputDecodingChecks ref
   argsChecks ref
   renderChecks ref

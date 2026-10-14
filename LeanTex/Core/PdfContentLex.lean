@@ -1,6 +1,7 @@
 module
 
 public import LeanTex.Core.PdfObj
+import LeanTex.Core.Hex
 
 /-! The content-stream tokenizer (ISO 32000-2 §7.8.2), total over arbitrary bytes: operands through
 the object reader, operators, and inline images. -/

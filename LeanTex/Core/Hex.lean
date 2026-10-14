@@ -1,19 +1,19 @@
 module
 
-/-! Hexadecimal digits: the one reader and the one speller of every hex field the engine reads or
-writes. -/
+/-! Hexadecimal digits: the reader and the speller every hex field the engine reads or writes
+shares. -/
 
 namespace LeanTex.Core.Hex
 
 /-- A hexadecimal digit's value from its code point, either case. -/
-@[expose] public def val? (c : Nat) : Option Nat :=
+@[expose, inline] public def val? (c : Nat) : Option Nat :=
   if 48 ≤ c && c ≤ 57 then some (c - 48)
   else if 65 ≤ c && c ≤ 70 then some (c - 55)
   else if 97 ≤ c && c ≤ 102 then some (c - 87)
   else none
 
 /-- A hexadecimal digit's value, either case. -/
-@[expose] public def digit? (c : Char) : Option Nat := val? c.toNat
+@[expose, inline] public def digit? (c : Char) : Option Nat := val? c.toNat
 
 /-- Hexadecimal digits as a number, most significant first. -/
 public def value? (cs : List Char) : Option Nat :=
@@ -24,7 +24,7 @@ public def value? (cs : List Char) : Option Nat :=
   let d := n % 16
   if d < 10 then Char.ofNat (48 + d) else Char.ofNat ((if upper then 55 else 87) + d)
 
-/-- `n`'s last `width` hexadecimal digits, most significant first. -/
+/-- The last hexadecimal digits of a number, as many as asked, most significant first. -/
 @[expose] public def digitList (upper : Bool) : Nat → Nat → List Char
   | 0, _ => []
   | w + 1, n => digitList upper w (n / 16) ++ [spell upper n]
@@ -38,23 +38,34 @@ public def value? (cs : List Char) : Option Nat :=
 
 /-- A code point as Unicode spells it after `U+`: four upper-case digits, more where it needs
 them. -/
-public def scalar (n : Nat) : String :=
-  digits true (if n < 0x10000 then 4 else if n < 0x100000 then 5 else 6) n
+public def scalar (n : Nat) : String := digits true (max 4 (Nat.toDigits 16 n).length) n
+
+private theorem spell_mod (u : Bool) (n : Nat) : spell u n = spell u (n % 16) := by
+  simp only [spell, Nat.mod_mod]
 
 private theorem val?_spell_digit : ∀ u : Bool, ∀ d < 16, val? (spell u d).toNat = some d := by
   decide
 
-public theorem val?_spell (u : Bool) (n : Nat) : val? (spell u n).toNat = some (n % 16) := by
-  have h : spell u n = spell u (n % 16) := by simp only [spell, Nat.mod_mod]
-  rw [h]
+public theorem val?_spell_exact (u : Bool) (n : Nat) :
+    val? (spell u n).toNat = some (n % 16) := by
+  rw [spell_mod]
   exact val?_spell_digit u (n % 16) (Nat.mod_lt _ (by decide))
+
+private theorem char_byte_exact (n : Nat) (h : n < 256) : (Char.ofNat n).toNat = n := by
+  have hv : n.isValidChar := Or.inl (by omega)
+  simp only [Char.ofNat, dite_eq_left hv, Char.ofNatAux, Char.toNat, UInt32.toNat,
+    BitVec.toNat_ofNatLT]
+
+public theorem spell_toNat_exact (u : Bool) (n : Nat) :
+    (spell u n).toNat =
+      if n % 16 < 10 then 48 + n % 16 else (if u then 55 else 87) + n % 16 := by
+  have hm := Nat.mod_lt n (show 16 > 0 by decide)
+  by_cases h : n % 16 < 10 <;> cases u <;>
+    simp only [spell, h, ↓reduceIte, Bool.false_eq_true] <;> exact char_byte_exact _ (by omega)
 
 private theorem spell_inj_digit :
     ∀ u : Bool, ∀ i < 16, ∀ j < 16, spell u i = spell u j → i = j := by
   decide
-
-public theorem spell_mod (u : Bool) (n : Nat) : spell u n = spell u (n % 16) := by
-  simp only [spell, Nat.mod_mod]
 
 public theorem spell_eq_mod {u : Bool} {a b : Nat} (h : spell u a = spell u b) :
     a % 16 = b % 16 := by
@@ -68,13 +79,13 @@ public theorem spell_ascii (u : Bool) (n : Nat) : (spell u n).toNat < 128 := by
   rw [spell_mod]
   exact spell_ascii_digit u _ (Nat.mod_lt _ (by decide))
 
-public theorem mem_digitList {u : Bool} :
+public theorem digitList_mem {u : Bool} :
     ∀ {w n : Nat} {c : Char}, c ∈ digitList u w n → ∃ k, c = spell u k
   | 0, _, _, h => by simp [digitList] at h
   | w + 1, n, c, h => by
     simp only [digitList, List.mem_append, List.mem_singleton] at h
     rcases h with h | rfl
-    · exact mem_digitList h
+    · exact digitList_mem h
     · exact ⟨n, rfl⟩
 
 public theorem byte_inj (u : Bool) (a b : UInt8) (h : byte u a = byte u b) : a = b := by

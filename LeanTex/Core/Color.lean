@@ -4,7 +4,7 @@ public import LeanTex.Core.Hex
 
 namespace LeanTex.Core.Ir
 
-/-! The colour value, in a leaf module so a formula can carry one. -/
+/-! The colour value, in a module small enough for a formula to carry one. -/
 
 /-- The PDF device model a source colour declared, as canonical decimal components. -/
 public inductive PdfColor where

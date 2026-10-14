@@ -1,7 +1,7 @@
 module
 
 import Init.Data.ByteArray.Basic
-public import LeanTex.Core.Hex
+import LeanTex.Core.Hex
 
 namespace LeanTex.Core.PdfLex
 

@@ -119,15 +119,11 @@ def jsStrings (file name text : String) : IO (Array String) := do
       die s!"{file}: {name} holds something other than strings: '{parts[i]}'"
   return out
 
-def hex4 (n : Nat) : String :=
-  let s := String.ofList (Nat.toDigits 16 n)
-  "".pushn '0' (4 - s.length) ++ s.toUpper
-
 def natArray (xs : Array Nat) : String := Id.run do
   let mut s := "#["
   for h : i in [0:xs.size] do
     if i > 0 then s := s ++ (if i % 8 == 0 then ",\n  " else ", ")
-    s := s ++ "0x" ++ hex4 xs[i]
+    s := s ++ "0x" ++ Hex.scalar xs[i]
   return s ++ "]"
 
 def stringArray (xs : Array String) : String := Id.run do
