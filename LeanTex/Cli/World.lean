@@ -173,12 +173,6 @@ public theorem run_map {α β : Type} (w : (q : Ask) → Reply q) (p : Prog α) 
   rw [← bind_pure_comp, run_bind]
   rfl
 
-public theorem asks_bind {α β : Type} (w : (q : Ask) → Reply q) (p : Prog α) (f : α → Prog β) :
-    (p >>= f).asks w = p.asks w ++ (f (p.run w)).asks w := by
-  induction p with
-  | pure _ => rfl
-  | ask q k ih => exact congrArg (q :: ·) (ih (w q))
-
 public theorem run_replay_exact {α : Type} (p : Prog α) (w v : (q : Ask) → Reply q)
     (h : ∀ q ∈ p.asks w, v q = w q) : p.run v = p.run w := by
   induction p with

@@ -600,10 +600,6 @@ public theorem headingsList_acc (out : Array Ir.HeadingLevel) (ns : List Node) :
     headingsList out ns = out ++ headingsList #[] ns := by
   exact foldNodeList_acc headingsAppends out ns
 
-public theorem headingsOne_acc (out : Array Ir.HeadingLevel) (n : Node) :
-    headingsOne out n = out ++ headingsOne #[] n := by
-  exact foldNode_acc headingsAppends out n
-
 public theorem leavesList_append (out : Array (Nat × Leaf)) (a b : List Node) :
     leavesList out (a ++ b) = leavesList (leavesList out a) b := by
   exact foldNodeList_append leavesFold out a b

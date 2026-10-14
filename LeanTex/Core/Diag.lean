@@ -669,12 +669,6 @@ public theorem DiagCode.fieldReading_ships :
       (DiagCode.W0012.loss.severity == .error) = false ∧
       (DiagCode.N0030.loss.severity == .error) = false := ⟨rfl, rfl, rfl⟩
 
-public theorem Diag.of_code_letter (c : DiagCode) (message : String) (span : Option Span)
-    (help : Option String) (subject : Option String) :
-    (Diag.of c message span help subject).code.front =
-      (Diag.of c message span help subject).severity.letter :=
-  c.code_letter
-
 /-- An unscoped diagnostic always applies; a scoped one only when its artifact is built. -/
 public def Diag.appliesTo (outputs : Array Diag.Output) (d : Diag) : Bool :=
   match d.output with

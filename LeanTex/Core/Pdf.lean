@@ -1413,6 +1413,11 @@ private theorem serializeList_offsetBound (rows : List Row) (out : ByteArray)
     · exact Nat.le_trans (h r hr) hsize
     · simpa [hr] using hsize
 
+public theorem serialize_offsets_between (head : ByteArray) (rows : Array Row)
+    (id off : Nat) (h : (id, off) ∈ (serialize head rows).2) :
+    off ≤ (serialize head rows).1.size :=
+  serializeList_offsetBound rows.toList head #[] (by simp) (id, off) h
+
 /-- The xref payload from the serializer's locations and the object-stream position list. -/
 public def writerXrefEntries (t : ObjTable) (locs : Array (Nat × Nat))
     (objects : List (Nat × PdfRead.Obj)) (xrefOff : Nat) : Array Xref.Entry :=

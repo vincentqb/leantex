@@ -312,6 +312,16 @@ private theorem rawPayload_no_terminator (endTag payload : String)
   · exact h
   · next hc => exact Bool.not_eq_true _ ▸ hc
 
+private theorem rawPayload_style_no_terminator (payload : String) :
+    hasTerm "</style".toList
+      ((rawPayload "</style" payload).toList.map Char.toLower) = false :=
+  rawPayload_no_terminator _ _ (by decide)
+
+private theorem rawPayload_script_no_terminator (payload : String) :
+    hasTerm "</script".toList
+      ((rawPayload "</script" payload).toList.map Char.toLower) = false :=
+  rawPayload_no_terminator _ _ (by decide)
+
 mutual
 
 private def renderInto (acc : String) (n : Node) (indent : Nat) : String :=

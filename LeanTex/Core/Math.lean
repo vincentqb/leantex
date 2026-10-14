@@ -406,10 +406,6 @@ public def MathAlphabet.forRange (a : MathAlphabet) (r : MathAlphabetRange) : Ma
     if r == .greekLower then .bfit else .bf
   else a
 
-public theorem MathAlphabet.forRange_fixed_point (a : MathAlphabet) (r : MathAlphabetRange) :
-    (a.forRange r).forRange r = a.forRange r := by
-  cases a <;> cases r <;> rfl
-
 /-- The range an input scalar asks this alphabet to remap, if any. -/
 public def MathAlphabet.rangeOf (a : MathAlphabet) (c0 : Char) : Option MathAlphabetRange :=
   if a == .bm then none
@@ -716,6 +712,10 @@ theorem degrade_go_length (cs : List MathClass) (acc : Array MathClass)
   all_goals simp_all
   all_goals omega
 
+public theorem degrade_length (cs : List MathClass) :
+    (degrade cs).length = cs.length := by
+  simp [degrade, degrade_go_length]
+
 /-- The muskips luatex inserts between two probe atoms, per class pair and style band, read
 from `\showbox` on TeX Live 2026. -/
 public def luatexProbe (scriptish : Bool) : List (List Nat) :=
@@ -813,6 +813,16 @@ public def ColAlign.pad (a : ColAlign) (outer inner : Int) : Int :=
   | .left => 0
   | .right => outer - inner
   | .center => (outer - inner) / 2
+
+public theorem pad_within (a : ColAlign) (outer inner : Int) (_h : inner ≤ outer) :
+    0 ≤ a.pad outer inner ∧ a.pad outer inner + inner ≤ outer := by
+  cases a <;> simp only [ColAlign.pad] <;> omega
+
+public theorem pad_center_symmetric (outer inner : Int) (_h : inner ≤ outer) :
+    0 ≤ outer - (2 * ColAlign.pad .center outer inner + inner) ∧
+    outer - (2 * ColAlign.pad .center outer inner + inner) ≤ 1 := by
+  simp only [ColAlign.pad]
+  omega
 
 /-- The first variant at least `target` tall in the font's increasing ladder, else the last. -/
 public def pickVariant (target : Int) : List (Nat × Int) → Option (Nat × Int)
@@ -2589,6 +2599,10 @@ theorem resolveAlphaList_classes (coverage : MathAlphabetCoverage)
     simp only [resolveAlphaList, resolveAlphaItem, MList.classes,
       resolveAlphaList_classes coverage active rest]
 
+public theorem resolveMathAlphas_classes (coverage : MathAlphabetCoverage) (body : MList) :
+    (resolveMathAlphas coverage body).classes = body.classes :=
+  resolveAlphaList_classes coverage [] body
+
 private theorem optPush_size_congr (o : Option Char) (acc₁ acc₂ : Array Char)
     (h : acc₁.size = acc₂.size) :
     (match o with | some c => acc₁.push c | none => acc₁).size
@@ -2695,6 +2709,11 @@ private theorem resolveAlphaRows_scalars_size (coverage : MathAlphabetCoverage) 
     exact resolveAlphaRow_scalars_size coverage active row acc₁ acc₂ hs
 
 end
+
+public theorem resolveMathAlphas_scalars_size (coverage : MathAlphabetCoverage) (body : MList) :
+    ((resolveMathAlphas coverage body).scalarsList #[]).size
+      = (MList.scalarsList #[] body).size :=
+  resolveAlphaList_scalars_size coverage [] body #[] #[] rfl
 
 public theorem resolveCharStack_forcedSym_exact (coverage : MathAlphabetCoverage)
     (a : MathAlphabet) (rest : List (MathAlphabet × MathAlphabetSource))

@@ -2652,6 +2652,13 @@ public def imagePosterHref (imgs : Image.Store) (req : Image.Request) :
 /-- A length in whole CSS pixels, to nearest, at 1in = 72pt = 96px. -/
 public def cssPxOfSp (l : Int) : Nat := ((4 * l + 3 * spPerPt / 2) / (3 * spPerPt)).toNat
 
+public theorem cssPxOfSp_between (l : Int) (h : 0 ≤ l) :
+    3 * spPerPt * (cssPxOfSp l : Int) ≤ 4 * l + 3 * spPerPt / 2 ∧
+      4 * l + 3 * spPerPt / 2 < 3 * spPerPt * ((cssPxOfSp l : Int) + 1) := by
+  unfold cssPxOfSp
+  simp only [spPerPt]
+  omega
+
 /-- The size an `<img>` declares, in CSS pixels: a raster's grid, or a PDF page's box. -/
 public def intrinsicPx (p : Image.Plan) : Nat × Nat :=
   match p.form with

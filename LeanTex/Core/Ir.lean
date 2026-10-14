@@ -770,10 +770,6 @@ public def listSkips (l : ListLineage) (size : Sp) (level : Nat) : Option ListSk
                 parsep := s.parsep.scale size base.toNat
                 partopsep := s.partopsep.map (·.scale size base.toNat) }
 
-public theorem listSkips_web_exact (size : Sp) (level : Nat) :
-    listSkips .web size level = none := by
-  simp only [listSkips]
-
 /-- The class options a display's size file is read from, each with the
 `\normalsize` its file sets. -/
 private def displayOptions : List (Nat × Sp) :=
@@ -2227,6 +2223,9 @@ public def PageSpec.skipScale (p : PageSpec) : List (String × Nat) :=
 public def scaleStepIn (scale : List (String × Nat)) (base : Sp) (name : String) : Sp :=
   base * ((scale.lookup name).getD 1000) / 1000
 
+public theorem scaleStep_agree (base : Sp) (name : String) :
+    scaleStepIn sizeScale base name = scaleStep base name := by rfl
+
 public def Style.label : Style → String
   | .bold => "bold"
   | .italic => "italic"
@@ -3494,6 +3493,10 @@ flush left, one centred, both flush right. -/
 slack the box leaves. -/
 public def HAlign.boxOffset (h : HAlign) (slack : Int) : Int := slack * h.slackHalves / 2
 
+public theorem HAlign.boxOffset_between (h : HAlign) (s : Int) (hs : 0 ≤ s) :
+    0 ≤ h.boxOffset s ∧ h.boxOffset s ≤ s := by
+  cases h <;> simp only [boxOffset, slackHalves] <;> omega
+
 /-- Which edge of the measure a ragged scope's lines hang from: `\raggedright`
 is flush left, `\raggedleft` flush right. -/
 public inductive FlushSide where
@@ -3816,6 +3819,14 @@ public theorem tableHeaderRows_between (rows : Array (Array (Array Inline)))
   cases firstMidRow rules.toList with
   | none => exact Nat.zero_le _
   | some k => exact Nat.min_le_right _ _
+
+public theorem tableHeaderRows_zero_of_no_mid (rows : Array (Array (Array Inline)))
+    (rules : Array (Nat × TableRule)) (h : ∀ p ∈ rules, p.2 ≠ .mid) :
+    tableHeaderRows rows rules = 0 := by
+  unfold tableHeaderRows
+  rw [firstMidRow_eq_none_of_no_mid rules.toList
+    (fun p hp => h p (Array.mem_toList_iff.mp hp))]
+  rfl
 
 /-- What a float wraps: `{figure}`, `{table}`, or a `{subfigure}`/`{subtable}` box inside one. -/
 public inductive FloatKind where
@@ -6692,6 +6703,9 @@ public def DocClass.ofString? : String → Option DocClass
   | "poster" => some .poster
   | _ => none
 
+public theorem DocClass.ofString?_name (c : DocClass) : ofString? c.name = some c := by
+  cases c <;> rfl
+
 /-- Each class as its record: slides' 11 pt is beamer's, the card's and
 résumé's floor the fluent-reading x-height at hand-held distance. -/
 @[expose] public def DocClass.record : DocClass → ClassRecord
@@ -9527,6 +9541,12 @@ rest of the design. -/
 /-- The printed page alone: `(Design.ofPalette pal).bg`. -/
 @[expose] public def Design.printPage (pal : Palette) : Color :=
   (Design.at pal .print .page).getD Color.white
+
+public theorem Design.printInk_agree (pal : Palette) :
+    (Design.ofPalette pal).fg = Design.printInk pal := rfl
+
+public theorem Design.printPage_agree (pal : Palette) :
+    (Design.ofPalette pal).bg = Design.printPage pal := rfl
 
 /-- The ground a listing stands on in a scheme: its declared `bgcolor`, else
 the verbatim ground the class paints. -/

@@ -494,6 +494,9 @@ name stays an author colour. -/
 @[expose] public def Role.ofXcolor? (k : String) : Option Role :=
   (Role.ofKey? k).filter fun r => (Role.code? r).isSome || r == .alertMark
 
+public theorem Role.code?_ofCode (r : ListingHighlight.Role) : (Role.ofCode r).code? = some r := by
+  cases r <;> rfl
+
 /-- The `\palette` key a code role's colour is declared under. -/
 @[expose] public def codeKey (r : ListingHighlight.Role) : String := (Role.ofCode r).row.key.getD ""
 
