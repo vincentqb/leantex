@@ -1326,7 +1326,7 @@ private def siblingPairs (acc : List (Nat × Nat)) (prev : Option Node) :
 
 /-- Every element's children, pair by adjacent pair. -/
 private def treePairs : Html.Walk Unit (List (Nat × Nat)) where
-  enter _ acc _ _ kids := (siblingPairs acc none kids.toList, some ())
+  enter _ acc _ _ kids := siblingPairs acc none kids.toList
 
 /-- The sorted boundary shapes of an emitted tree, which its sheet's boundaries read through. -/
 public def carrierPairs (nodes : Array Node) : List (Nat × Nat) :=
@@ -2056,12 +2056,11 @@ private def styleRefs (style : String) : Array String × Array (String × Array 
 private def nodeRefs : Html.Walk Unit (Array String × Array (String × Array String)) where
   style _ acc css := ((varReads css).foldl Array.push acc.1, acc.2)
   enter _ acc _ attrs _ :=
-    let acc := match attrs.find? (·.1 == "style") with
-      | some (_, st) =>
-        let (r, e) := styleRefs st
-        (r.foldl Array.push acc.1, e.foldl Array.push acc.2)
-      | none => acc
-    (acc, some ())
+    match attrs.find? (·.1 == "style") with
+    | some (_, st) =>
+      let (r, e) := styleRefs st
+      (r.foldl Array.push acc.1, e.foldl Array.push acc.2)
+    | none => acc
 
 /-- Whether some table gives a role a value in a shipped scheme. -/
 private def roleDeclarable (tables : List (Ir.Scheme × Ir.Palette)) (r : Ir.Role) : Bool :=
@@ -2148,7 +2147,7 @@ private def keepRoleStyle (keep : Ir.Role → Bool) (style : String) : String :=
 /-- An emitted tree with every style attribute kept to the page's roles. -/
 private def keepRoles (keep : Ir.Role → Bool) : Html.Rewrite where
   attrs _ attrs := attrs.map fun (k, v) => if k == "style" then (k, keepRoleStyle keep v) else (k, v)
-  style css := #[.style (resolveRoleVars keep css)]
+  style css := resolveRoleVars keep css
 
 /-- Read-only aliases of the roles under the engine's reader names, and each author colour's own
 name. -/
@@ -4893,7 +4892,7 @@ private def anchorIds : Html.Walk Unit (Array String) where
   enter _ acc _ attrs _ :=
     let ids := attrs.filterMap fun (key, value) =>
       if key == "id" && (GfxSvg.parseId value).isNone then some value else none
-    (acc ++ ids, some ())
+    acc ++ ids
 
 /-- Strip the `id`s listed in `ids`, leaving every other node as it was. -/
 private def unanchor (ids : Array String) : Html.Rewrite where
@@ -6839,9 +6838,9 @@ public def squashSpace (s : String) : String :=
 /-- The words a tree shows a sighted reader, hidden subtrees, styles and scripts left out. -/
 private def shownWords : Html.Walk Unit String where
   text _ acc s := acc ++ s
-  enter _ acc _ attrs _ :=
-    (acc, if attrs.any (fun kv => kv.1 == "hidden" || (kv.1 == "aria-hidden" && kv.2 == "true"))
-      then none else some ())
+  inner _ _ attrs :=
+    if attrs.any (fun kv => kv.1 == "hidden" || (kv.1 == "aria-hidden" && kv.2 == "true"))
+    then none else some ()
   leave _ acc := acc ++ " "
 
 /-- A deck stage's name: its title as its first page shows it, else the words it shows, else
@@ -7701,6 +7700,7 @@ private structure PageFacts where
 /-- A page's facts in document order, each element under the stage that holds it. -/
 private def pageFacts : Html.Walk (Option String) PageFacts where
   script _ acc _ text := { acc with deck := acc.deck || text == deckScript }
+  inner stage _ attrs := some ((attrOf? attrs "data-slide-label").orElse (fun _ => stage))
   enter stage acc tag attrs _ :=
     let stage := (attrOf? attrs "data-slide-label").orElse (fun _ => stage)
     let acc := if attrs.any (·.1 == "data-snap") then
@@ -7714,7 +7714,7 @@ private def pageFacts : Html.Walk (Option String) PageFacts where
       else if kv.1 == "href" && kv.2.startsWith "#" then
         { a with fragmentRefs := a.fragmentRefs.push kv.2 }
       else a
-    (acc, some stage)
+    acc
 
 /-- Whether an `svg`'s children close with a figure's definitions. -/
 private def definesFigure (kids : Array Node) : Bool :=
@@ -7886,10 +7886,9 @@ public def tabbable (tag : String) (attrs : Array (String × String)) : Bool :=
     tag == "iframe" || tag == "summary" ||
     ((tag == "audio" || tag == "video") && (attrOf? attrs "controls").isSome)
 
-/-- Whether a tree holds a tab stop outside a `hidden` subtree. -/
 private def tabStops : Html.Walk Unit Bool where
-  enter _ acc tag attrs _ :=
-    if (attrOf? attrs "hidden").isSome then (acc, none) else (acc || tabbable tag attrs, some ())
+  inner _ _ attrs := if (attrOf? attrs "hidden").isSome then none else some ()
+  enter _ acc tag attrs _ := acc || tabbable tag attrs
 
 /-- Whether a subtree holds a tab stop outside a `hidden` subtree. -/
 public def tabbableOne (n : Node) : Bool := tabStops.node () false n
@@ -7953,10 +7952,9 @@ private def attachLogo (cfg : Config) (node : Node)
 /-- An image-use attribute in tree order, hidden uses included. -/
 private def imageAttrs (name : Option String) : Html.Walk Unit (Array String) where
   enter _ acc tag attrs _ :=
-    let acc := match attrOf? attrs (name.getD (if tag == "img" then "src" else "data-image-src")) with
-      | some s => acc.push s
-      | none => acc
-    (acc, some ())
+    match attrOf? attrs (name.getD (if tag == "img" then "src" else "data-image-src")) with
+    | some s => acc.push s
+    | none => acc
 
 /-- Every image source a node carries, failed-conversion placeholders included. -/
 public def imgSrcsOne (acc : Array String) (node : Node) : Array String :=
@@ -8506,10 +8504,9 @@ public structure A11yFacts where
   summariesUnnamed : Nat := 0
   deriving Repr, BEq, Inhabited
 
-/-- Whether a tree holds non-blank text outside a `hidden` subtree. -/
 private def textHeld : Html.Walk Unit Bool where
   text _ acc s := acc || nonBlank s
-  enter _ acc _ attrs _ := (acc, if (attrOf? attrs "hidden").isSome then none else some ())
+  inner _ _ attrs := if (attrOf? attrs "hidden").isSome then none else some ()
 
 /-- Whether a forest holds non-blank text outside a `hidden` subtree. -/
 public def holdsTextList (ns : List Node) : Bool := textHeld.list () false ns
@@ -8565,14 +8562,16 @@ private def a11yElem (own deck : Bool) (tag : String) (attrs : Array (String × 
 /-- The facts of a tree onto `acc`, each element under its `aria-hidden` and `hidden` ancestor
 flags. -/
 private def a11yWalk (own deck : Bool) : Html.Walk (Bool × Bool) A11yFacts where
+  inner flags _ attrs :=
+    some (flags.1 || attrOf? attrs "aria-hidden" == some "true",
+      flags.2 || (attrOf? attrs "hidden").isSome)
   enter flags acc tag attrs kids :=
     let hid := flags.1 || attrOf? attrs "aria-hidden" == some "true"
     let inert := flags.2 || (attrOf? attrs "hidden").isSome
-    let acc := if !hid then a11yElem own deck tag attrs kids acc
-      else if !inert && tabbable tag attrs then
-        { acc with hiddenTabStops := acc.hiddenTabStops + 1 }
-      else acc
-    (acc, some (hid, inert))
+    if !hid then a11yElem own deck tag attrs kids acc
+    else if !inert && tabbable tag attrs then
+      { acc with hiddenTabStops := acc.hiddenTabStops + 1 }
+    else acc
 
 /-- The facts of a page body under its stylesheet mode and page model. -/
 public def a11yFacts (own deck : Bool) (body : Array Node) : A11yFacts :=

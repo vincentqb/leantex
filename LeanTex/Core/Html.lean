@@ -180,32 +180,52 @@ def phrasingTags : List String :=
   | .style _ => none
   | .script _ _ => none
 
-/-- A walk over a tree in document order: what a text, style or script node adds, and what an
-element adds before its children, with the context they are read under (`none` leaves them
-unread), and after them. -/
+/-- A walk over a tree in document order: what a text, style or script node adds, the context an
+element's children are read under (`none` leaves the element unread), and what an element it reads
+adds before and after its children. -/
 public structure Walk (σ α : Type) where
   text : σ → α → String → α := fun _ acc _ => acc
   style : σ → α → String → α := fun _ acc _ => acc
   script : σ → α → Array (String × String) → String → α := fun _ acc _ _ => acc
-  enter : σ → α → String → Array (String × String) → Array Node → α × Option σ :=
-    fun ctx acc _ _ _ => (acc, some ctx)
+  inner : σ → String → Array (String × String) → Option σ := fun ctx _ _ => some ctx
+  enter : σ → α → String → Array (String × String) → Array Node → α := fun _ acc _ _ _ => acc
   leave : σ → α → α := fun _ acc => acc
+
+/-- A rewrite of a tree: each element's attributes, what each text node becomes, and each style
+sheet. -/
+public structure Rewrite where
+  attrs : String → Array (String × String) → Array (String × String) := fun _ attrs => attrs
+  text : String → Array Node := fun s => #[.text s]
+  style : String → String := fun css => css
 
 mutual
 
-@[specialize] public def Walk.node {σ α : Type} (w : Walk σ α) (ctx : σ) (acc : α) : Node → α
+public def Walk.node {σ α : Type} (w : Walk σ α) (ctx : σ) (acc : α) : Node → α
   | .text s => w.text ctx acc s
   | .style css => w.style ctx acc css
   | .script attrs js => w.script ctx acc attrs js
   | .elem tag attrs kids =>
-    match w.enter ctx acc tag attrs kids with
-    | (acc, some inner) => w.leave ctx (w.list inner acc kids.toList)
-    | (acc, none) => acc
+    match w.inner ctx tag attrs with
+    | some c => w.leave ctx (w.list c (w.enter ctx acc tag attrs kids) kids.toList)
+    | none => acc
 
-@[specialize] public def Walk.list {σ α : Type} (w : Walk σ α) (ctx : σ) (acc : α) :
-    List Node → α
+public def Walk.list {σ α : Type} (w : Walk σ α) (ctx : σ) (acc : α) : List Node → α
   | [] => acc
   | n :: rest => w.list ctx (w.node ctx acc n) rest
+
+end
+
+mutual
+
+public def Rewrite.node (r : Rewrite) (acc : Array Node) : Node → Array Node
+  | .text s => acc.append (r.text s)
+  | .style css => acc.push (.style (r.style css))
+  | .script attrs js => acc.push (.script attrs js)
+  | .elem tag attrs kids => acc.push (.elem tag (r.attrs tag attrs) (r.list #[] kids.toList))
+
+public def Rewrite.list (r : Rewrite) (acc : Array Node) : List Node → Array Node
+  | [] => acc
+  | n :: rest => r.list (r.node acc n) rest
 
 end
 
@@ -217,34 +237,53 @@ public theorem Walk.list_cons_exact {σ α : Type} (w : Walk σ α) (ctx : σ) (
     (rest : List Node) : w.list ctx acc (n :: rest) = w.list ctx (w.node ctx acc n) rest := by
   simp only [Walk.list]
 
+public theorem Walk.node_text_exact {σ α : Type} (w : Walk σ α) (ctx : σ) (acc : α) (s : String) :
+    w.node ctx acc (.text s) = w.text ctx acc s := by
+  simp only [Walk.node]
+
+public theorem Walk.node_style_exact {σ α : Type} (w : Walk σ α) (ctx : σ) (acc : α)
+    (css : String) : w.node ctx acc (.style css) = w.style ctx acc css := by
+  simp only [Walk.node]
+
+public theorem Walk.node_script_exact {σ α : Type} (w : Walk σ α) (ctx : σ) (acc : α)
+    (attrs : Array (String × String)) (js : String) :
+    w.node ctx acc (.script attrs js) = w.script ctx acc attrs js := by
+  simp only [Walk.node]
+
 public theorem Walk.node_elem_exact {σ α : Type} (w : Walk σ α) (ctx : σ) (acc : α)
     (tag : String) (attrs : Array (String × String)) (kids : Array Node) :
     w.node ctx acc (.elem tag attrs kids) =
-      match w.enter ctx acc tag attrs kids with
-      | (acc, some inner) => w.leave ctx (w.list inner acc kids.toList)
-      | (acc, none) => acc := by
+      match w.inner ctx tag attrs with
+      | some c => w.leave ctx (w.list c (w.enter ctx acc tag attrs kids) kids.toList)
+      | none => acc := by
   simp only [Walk.node]
-  rcases w.enter ctx acc tag attrs kids with ⟨_, _ | _⟩ <;> rfl
+  cases w.inner ctx tag attrs <;> rfl
 
-/-- A rewrite of a tree: each element's attributes, and what each text and style node becomes. -/
-public structure Rewrite where
-  attrs : String → Array (String × String) → Array (String × String) := fun _ attrs => attrs
-  text : String → Array Node := fun s => #[.text s]
-  style : String → Array Node := fun css => #[.style css]
+public theorem Rewrite.list_nil_exact (r : Rewrite) (acc : Array Node) : r.list acc [] = acc := by
+  simp only [Rewrite.list]
 
-mutual
+public theorem Rewrite.list_cons_exact (r : Rewrite) (acc : Array Node) (n : Node)
+    (rest : List Node) : r.list acc (n :: rest) = r.list (r.node acc n) rest := by
+  simp only [Rewrite.list]
 
-@[specialize] public def Rewrite.node (r : Rewrite) (acc : Array Node) : Node → Array Node
-  | .text s => acc.append (r.text s)
-  | .style css => acc.append (r.style css)
-  | .script attrs js => acc.push (.script attrs js)
-  | .elem tag attrs kids => acc.push (.elem tag (r.attrs tag attrs) (r.list #[] kids.toList))
+public theorem Rewrite.node_text_exact (r : Rewrite) (acc : Array Node) (s : String) :
+    r.node acc (.text s) = acc.append (r.text s) := by
+  simp only [Rewrite.node]
 
-@[specialize] public def Rewrite.list (r : Rewrite) (acc : Array Node) : List Node → Array Node
-  | [] => acc
-  | n :: rest => r.list (r.node acc n) rest
+public theorem Rewrite.node_style_exact (r : Rewrite) (acc : Array Node) (css : String) :
+    r.node acc (.style css) = acc.push (.style (r.style css)) := by
+  simp only [Rewrite.node]
 
-end
+public theorem Rewrite.node_script_exact (r : Rewrite) (acc : Array Node)
+    (attrs : Array (String × String)) (js : String) :
+    r.node acc (.script attrs js) = acc.push (.script attrs js) := by
+  simp only [Rewrite.node]
+
+public theorem Rewrite.node_elem_exact (r : Rewrite) (acc : Array Node) (tag : String)
+    (attrs : Array (String × String)) (kids : Array Node) :
+    r.node acc (.elem tag attrs kids) =
+      acc.push (.elem tag (r.attrs tag attrs) (r.list #[] kids.toList)) := by
+  simp only [Rewrite.node]
 
 private def attrString (attrs : Array (String × String)) : String :=
   String.join (attrs.toList.map fun (k, v) =>
