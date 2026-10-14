@@ -2447,7 +2447,7 @@ def selftest : IO UInt32 := do
     def c := \"five\\\n  six\" /- seven /- eight -/ nine -/\n"
   unless leanProse src == #[" one", " two", "  three ", " four", "", " seven  eight  nine ", ""] do
     fails.modify (s!"leanProse: {leanProse src}" :: ·)
-  -- Readings the shared lexer gives where the scanners it replaced misread.
+  -- Literals, comments and identifiers as Lean reads them.
   expect "ioInCore through a quote's literal" ioInCore [
     ("  if c == '\"' then IO.println s", true),
     ("  let b := !'\"'.isWhitespace; IO.println b", true),
@@ -2462,16 +2462,22 @@ def selftest : IO UInt32 := do
     ("  let s := r#\"a \"" ++ kwPartial ++ "\" b\"#", false)]
   expect "walkEntry after a one-line docstring" (fun l => (walkEntry l).isSome)
     [("/-- d -/ def w (xs : Array Block) : Array Block := xs", true)]
-  unless codeOnly #["def q := '\"'", "def r := 1"] == #["def q :=  ", "def r := 1"] do
-    fails.modify (s!"codeOnly: a quote's literal: {codeOnly #["def q := '\"'", "def r := 1"]}" :: ·)
-  unless codeOnly #["xs[i]'h'"] == #["xs[i]'h'"] do
-    fails.modify (s!"codeOnly: an index proof's quote: {codeOnly #["xs[i]'h'"]}" :: ·)
-  unless leanProse "def s := r#\"a\"--b\"#" == #[""] do
-    fails.modify (s!"leanProse: a raw string's dashes: {leanProse "def s := r#\"a\"--b\"#"}" :: ·)
+  let quoteLit := #["def q := '\"'", "def r := 1"]
+  unless codeOnly quoteLit == #["def q :=  ", "def r := 1"] do
+    fails.modify (s!"codeOnly: a quote's literal: {codeOnly quoteLit}" :: ·)
+  let indexProof := #["xs[i]'h'"]
+  unless codeOnly indexProof == indexProof do
+    fails.modify (s!"codeOnly: an index proof's quote: {codeOnly indexProof}" :: ·)
+  let rawDashes := "def s := r#\"a\"--b\"#"
+  unless leanProse rawDashes == #[""] do
+    fails.modify (s!"leanProse: a raw string's dashes: {leanProse rawDashes}" :: ·)
   unless lexView "def s := \"a\\\n   b\"" (· == .strText) == #["a", "b"] do
     fails.modify ("lexView: a gap's indentation read as text" :: ·)
-  unless stringsOnly "  let s := \"a\\" == " a" do
-    fails.modify (s!"stringsOnly: a trailing gap: {stringsOnly "  let s := \"a\\"}" :: ·)
+  let trailingGap := "  let s := \"a\\"
+  unless stringsOnly trailingGap == " a" do
+    fails.modify (s!"stringsOnly: a trailing gap: {stringsOnly trailingGap}" :: ·)
+  unless premisePin ("  -- " ++ premiseMark ++ " none — \"why\"") == some (none, "\"why\"") do
+    fails.modify ("premisePin: a quoted reason read as a literal" :: ·)
   -- A stated blind spot: an interpolation's nested string reads as closing its string.
   unless stripComments "  let t := s!\"{g \"--\"} x\"" == "  let t := s!\"{g \"" do
     fails.modify ("stripComments: an interpolation's nested string" :: ·)

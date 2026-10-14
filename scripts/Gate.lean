@@ -76,7 +76,7 @@ private def lexCharLen (cs : Array Char) (i : Nat) : Option Nat :=
 
 /-- Every character of a Lean source classed: nested block comments with their doc markers, line
 comments, strings with escapes and gaps, raw strings, and character literals apart from an
-identifier's primes, an interpolation's braces read as its string's text. -/
+identifier's primes, an interpolation read flat, so a quote inside its braces closes the string. -/
 def lexClasses (text : String) : Array (Char × LexCls) := Id.run do
   let cs := text.toList.toArray
   let chr (k : Nat) : Char := cs[k]?.getD ' '
@@ -201,13 +201,13 @@ private def LexCls.literal : LexCls → Bool
   | .code | .blockOpen | .lineOpen | .blockClose | .mark | .prose | .newline => false
 
 /-- The line with its string, raw string and character literals removed, its comments kept, lexed
-alone, so a string an earlier line opened reads as opening where it closes. -/
+alone, so the text of a string an earlier line opened reads as code. -/
 def stripLiterals (l : String) : String :=
   if l.any fun c => c == '"' || c == '\'' || c == '\n' then (lexView l (!·.literal))[0]?.getD ""
   else l
 
-/-- The line with its comments removed, its literals kept, lexed alone, so a string an earlier line
-opened reads as opening where it closes. -/
+/-- The line with its comments removed, its literals kept, lexed alone, so the text of a string an
+earlier line opened reads as code. -/
 def stripComments (l : String) : String :=
   if containsSub l "--" || containsSub l "/-" || l.any (· == '\n') then
     (lexView l (!·.comment))[0]?.getD ""
@@ -248,6 +248,7 @@ def kwSorry : String := "sor" ++ "ry"
 /-- Shared spelling for the totality convention. -/
 def kwPartial : String := "par" ++ "tial"
 
-/-- A banned keyword as a code token: word-delimited, outside literals and comments. -/
+/-- A banned keyword as a code token: word-delimited, outside literals and comments, its line lexed
+alone. -/
 def bannedWord (kw l : String) : Bool :=
   hasWord (stripComments (stripLiterals l)) kw
