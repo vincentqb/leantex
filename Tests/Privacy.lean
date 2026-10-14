@@ -284,6 +284,11 @@ def privacyGateChecks (ref : IO.Ref (List String)) : IO Unit := do
       tree "README.md" "## Cite\n\n```\nZorblax\n```\n" == #["  README.md:4"] &&
       tree "README.md" "```sh\n## Cite\n\n```bibtex\nZorblax\n```\n" == #["  README.md:5"] &&
       tree "README.md" "~~~\n## Cite\n\n```bibtex\nZorblax\n```\n~~~\n" == #["  README.md:5"])
+  t "a CR anywhere, or an earlier line opening HTML, excuses nothing"
+    (tree "README.md" "## Cite\n\n```bibtex\n}\n```\rZorblax\n```\n" == #["  README.md:5"] &&
+      tree "README.md" "<details>\n## Cite\n```bibtex\nZorblax\n```\n</details>\n" ==
+        #["  README.md:4"] &&
+      tree "README.md" "<!--\n## Cite\n\n```bibtex\nZorblax\n```\n-->\n" == #["  README.md:5"])
   t "the block ends where CommonMark closes it"
     (tree "README.md" "## Cite\n\n```bibtex\nZorblax\n````\nZorblax\n```\n" == #["  README.md:6"] &&
       tree "README.md" "## Cite\n\n```bibtex\nZorblax\n   ```\nZorblax\n" == #["  README.md:6"])

@@ -32,7 +32,8 @@ leantex document.tex --watch             # Rebuild on changes
 
 Declare `\output{formats=pdf,html}` in a document to build both formats.
 `leantex --help` shows all options, and the [guide](docs/guide.md) covers
-TeX and Markdown, code files, fonts and themes, and images and code.
+output and diagnostics, TeX and Markdown, code files, fonts and themes, and
+images and code.
 
 ## Cite
 

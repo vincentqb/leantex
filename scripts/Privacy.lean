@@ -1076,7 +1076,7 @@ def splitFirst (s sep : String) : Option (String × String) :=
 
 /-- A part of a file the citation stands in: all of it, or the lines inside the fenced block that
 three backticks and one info string, exactly, open on the first non-blank line after one `## `
-heading, both outside any other fence. -/
+heading, outside any other fence, in a text with no CR and no earlier line opening with `<`. -/
 inductive Place where
   | whole
   | fenced (heading info : String)
@@ -1111,6 +1111,7 @@ def Place.span (p : Place) (text : String) : Option (Nat × Nat) := Id.run do
   match p with
   | .whole => return some (1, lines.length)
   | .fenced heading info =>
+    if text.contains '\r' then return none
     let mut fence : Option (Char × Nat) := none
     let mut opened : Option Nat := none
     let mut headed := false
@@ -1121,6 +1122,7 @@ def Place.span (p : Place) (text : String) : Option (Nat × Nat) := Id.run do
         if closesFence f l then fence := none
       else if headed && l == "```" ++ info then opened := some k
       else
+        if (String.ofList (l.toList.dropWhile (· == ' '))).startsWith "<" then return none
         if let some (c, n, rest) := fenceRun l then
           if c == '~' || !rest.contains '`' then fence := some (c, n)
         unless l.trimAscii.isEmpty do headed := l == "## " ++ heading
@@ -1136,10 +1138,12 @@ def excused (path text : String) (span : Nat × Nat) : Bool :=
 /-- The commits and paths whose patches add lines to a citation place's file, each once: the
 texts the commit scan reads. -/
 def citedIn (patches : Array (String × String)) : Array (String × String) := Id.run do
+  let mut seen : Std.HashSet (String × String) := {}
   let mut out : Array (String × String) := #[]
   for (sha, patch) in patches do
     for (file, _, _) in addedLines patch do
-      if citationPlaces.any (·.1 == file) && !out.contains (sha, file) then
+      if citationPlaces.any (·.1 == file) && !seen.contains (sha, file) then
+        seen := seen.insert (sha, file)
         out := out.push (sha, file)
   return out
 
@@ -1191,10 +1195,11 @@ a term added and later removed is still found, as a landing would publish it. -/
 def Matcher.commitFindings (m : Matcher) (patches : Array (String × String))
     (paths : Array (String × String)) (blobs : Array ((String × String) × ByteArray))
     (texts : Array ((String × String) × String) := #[]) : Array String := Id.run do
+  let own : Std.HashMap String (Array (String × String)) :=
+    texts.foldl (fun acc ((h, p), t) => acc.insert h ((acc.getD h #[]).push (p, t))) {}
   let mut out : Array String := #[]
   for (sha, patch) in patches do
-    let own := texts.filterMap fun ((h, p), t) => if h == sha then some (p, t) else none
-    out := out.append (m.addedFindings patch (commitLead sha) own)
+    out := out.append (m.addedFindings patch (commitLead sha) (own.getD sha #[]))
   for (sha, p) in paths do
     if m.pathHit p then out := out.push s!"  {commitLead sha}{m.maskPath p} (a path it adds)"
   for ((sha, p), bs) in blobs do

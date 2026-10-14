@@ -9,7 +9,7 @@ what these leave open: read it before designing.
 - Nothing personal or private enters the repository or a commit message: no names, initials, emails,
   career facts, a private document's text, topic, palette, font, spacing or path (`homePathHits`);
   acceptance runs locally on the private corpus, named abstractly, never in CI (review).
-- Only CITATION.cff and README.md's citation hold the author's name and repo URL (`excused`).
+- Only CITATION.cff and README.md's BibTeX hold the author's name and repo URL (review; `excused`).
 - The denylist, info/private-terms in git's common directory (format: `scripts/Privacy.lean`), is
   never committed, printed or quoted; the gates read what a commit adds, the tree and each unpushed
   commit and its message, naming a location, never the term (`privacyTree`, `privacyGateChecks`).

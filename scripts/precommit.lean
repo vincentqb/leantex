@@ -100,6 +100,13 @@ def rangeTip (r : String) : Option String :=
     let t := String.ofList ((parts.getLastD "").toList.dropWhile (· == '.'))
     some (if t.isEmpty then "HEAD" else t)
 
+/-- The prefix that names, with a path, the object a source's diff reads its new side from: `:` the
+index, `<tip>:` a range's tip; none for the tree, whose blobs are their own texts. -/
+def Source.newSide : Source → Option String
+  | .index => some ":"
+  | .range r => (rangeTip r).map (· ++ ":")
+  | .tree => none
+
 def relevant (f : String) : Bool :=
   f.endsWith ".lean" || f == "lakefile.toml" || f == "lakefile.lean"
     || f == "lean-toolchain" || f.startsWith "testdata/golden/"
@@ -298,22 +305,17 @@ def addedNames (sel : Array String) : IO (Array String) := do
   return zPaths (← gitBytes (#["diff", "--name-only", "-z", "--no-relative", "--diff-filter=ACR",
     "-M"] ++ sel))
 
-/-- The citation's places' texts as a diff's new side holds them, which `Privacy.excused` reads:
-the objects `pre` and their paths name (`:` the index, `<rev>:` a tree), else the working
-tree's files. -/
-def citedTexts (pre : Option String) : IO (Array (String × String)) := do
+/-- The citation's places' texts on the new side of a source's diff (`Source.newSide`), which
+`Privacy.excused` reads; none where the source has no such side. -/
+def citedTexts (src : Source) : IO (Array (String × String)) := do
+  let some pre := src.newSide | return #[]
   let cited := Privacy.citationPlaces.map (·.1)
-  match pre with
-  | some p => return cited.zip ((← catBlobs (cited.map (p ++ ·))).map Privacy.textOfBytes)
-  | none => cited.filterMapM fun (f : String) => do
-      let path := System.FilePath.mk f
-      unless ← path.pathExists do return none
-      return some (f, Privacy.textOfBytes (← IO.FS.readBinFile path))
+  return cited.zip ((← catBlobs (cited.map (pre ++ ·))).map Privacy.textOfBytes)
 
 /-- Where the staged changes add a denylisted term, in a line the citation's staged text does not
 excuse (`Privacy.excused`), a path or a blob, located and never quoted. -/
 def privacyStaged (m : Privacy.Matcher) (diff : ByteArray) : IO (Array String) := do
-  let mut out := m.diffFindings diff "" (← citedTexts (some ":"))
+  let mut out := m.diffFindings diff "" (← citedTexts .index)
   out := out.append (m.pathFindings (← addedNames #["--cached"]) "" "its path")
   let binaries := binaryPaths (← git #["diff", "--cached", "--numstat", "-z", "--no-relative",
     "--no-renames", "--diff-filter=AM"])
@@ -354,7 +356,7 @@ def privacyCommits (m : Privacy.Matcher) (revs : Array String := unpushedRange) 
 /-- Where the staged tree and, outside the hook, each unpushed commit name a denylisted term, with
 why a run lacking `refs/remotes/origin/main` is refused. -/
 def privacyTree (m : Privacy.Matcher) : IO (Array String × Option String) := do
-  let staged ← gitBytes #["ls-files", "--stage", "-z"]
+  let staged ← gitBytes #["ls-files", "--stage", "-z", "--full-name"]
   let entriesOf (r : String) : Array (String × String) :=
     (r.splitOn "\x00").toArray.filterMap fun rec =>
       match splitFirst rec "\t" with
@@ -389,7 +391,7 @@ def rangeCommits (r : String) : Array String :=
 /-- Where a range adds a denylisted term, in a line the citation's text at its tip does not excuse
 (`Privacy.excused`), a path or a blob, or one of its commits adds or names one. -/
 def privacyRange (m : Privacy.Matcher) (r : String) (diff : ByteArray) : IO (Array String) := do
-  let mut out := m.diffFindings diff "" (← citedTexts ((rangeTip r).map (· ++ ":")))
+  let mut out := m.diffFindings diff "" (← citedTexts (.range r))
   out := out.append (m.pathFindings (← addedNames #[r]) "" "its path")
   let binaries := binaryPaths (← git #["diff", "--numstat", "-z", "--no-relative", "--no-renames",
     "--diff-filter=AM", r])
@@ -2576,6 +2578,10 @@ def selftest : IO UInt32 := do
   unless [rangeTip "origin/main...HEAD", rangeTip "abc..def", rangeTip "abc..", rangeTip "HEAD"] ==
       [some "HEAD", some "def", some "HEAD", none] do
     fails.modify ("rangeTip misread a revision range" :: ·)
+  unless [Source.index.newSide, (Source.range "origin/main...HEAD").newSide,
+      (Source.range "abc..def").newSide, (Source.range "HEAD").newSide, Source.tree.newSide] ==
+      [some ":", some "HEAD:", some "def:", none, none] do
+    fails.modify ("Source.newSide named the wrong side of a diff for the citation's texts" :: ·)
   expect "looseRuleRef" looseRuleRef [
     ("(AGENTS.md, Conventions)", true),
     ("per AGENTS: a visual bug", true),
