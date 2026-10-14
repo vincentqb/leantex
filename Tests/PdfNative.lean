@@ -1215,26 +1215,28 @@ def pdfOptionalContentShipChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let binary ← IO.FS.realPath ".lake/build/bin/leantex"
   let font ← IO.FS.realPath "testdata/corpus/fonts/OpenSans-Regular.ttf"
-  let page (catalog res ink : String) (more : Array String) : ByteArray := syntheticPdf (#[
+  let page (catalog res ink annots : String) (more : Array String) : ByteArray := syntheticPdf (#[
     catalog, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-    s!"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Contents 4 0 R /Resources {res} >>",
+    s!"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Contents 4 0 R /Resources {res}{annots} >>",
     streamObj ink] ++ more)
   let layers := page "<< /Type /Catalog /Pages 2 0 R /OCProperties << /OCGs [5 0 R 6 0 R] \
       /D << /Order [5 0 R 6 0 R] /OFF [6 0 R] >> >> >>"
     "<< /Properties << /p1 5 0 R /p2 6 0 R >> /XObject << /X1 7 0 R >> >>"
-    "/OC /p1 BDC 1 0 0 rg 0 0 50 100 re f EMC /OC /p2 BDC 0 0 1 rg 50 0 50 50 re f EMC /X1 Do"
-    #["<< /Type /OCG /Name (Layer 1) >>", "<< /Type /OCG /Name (Layer 2) >>",
+    "/OC /p1 BDC 1 0 0 rg 0 0 50 100 re f EMC /OC /p2 BDC 0 0 1 rg 50 0 50 50 re f EMC /X1 Do" ""
+    #["<< /Type /OCG /Name (Layer 1) /Intent /View /Usage << /View << /ViewState /OFF >> >> >>",
+      "<< /Type /OCG /Name (Layer 2) >>",
       streamObj "0 1 0 rg 50 50 50 50 re f" "/Type /XObject /Subtype /Form /BBox [0 0 100 100] \
         /OC 6 0 R "]
   let sameNames := page "<< /Type /Catalog /Pages 2 0 R /OCProperties << /OCGs [5 0 R 6 0 R] \
       /D << /OFF [5 0 R] >> >> >>" "<< /Properties << /p1 5 0 R /p2 6 0 R >> >>"
-    "/OC /p1 BDC 1 0 1 rg 0 0 100 50 re f EMC /OC /p2 BDC 0 1 1 rg 0 50 100 50 re f EMC"
+    "/OC /p1 BDC 1 0 1 rg 0 0 100 50 re f EMC /OC /p2 BDC 0 1 1 rg 0 50 100 50 re f EMC" ""
     #["<< /Type /OCG /Name (Layer 1) >>", "<< /Type /OCG /Name (Layer 2) >>"]
   let unconfigured := page "<< /Type /Catalog /Pages 2 0 R >>" "<< /Properties << /m1 5 0 R >> >>"
-    "/OC /m1 BDC 1 0.5 0 rg 0 0 100 100 re f EMC"
+    "/OC /m1 BDC 1 0.5 0 rg 0 0 100 100 re f EMC" ""
     #["<< /Type /OCMD /OCGs [6 0 R] /P /AnyOn >>", "<< /Type /OCG /Name (Loose) >>"]
   -- One cell per membership: a listed group on; no group, an unlisted one and a missing object, of
-  -- no effect; the off group through an indirect array and beside an unlisted one, hidden.
+  -- no effect; the off group through an indirect array and beside an unlisted one, hidden. Lossy, it
+  -- holds a knockout group and an annotation, whose membership names only an unlisted group.
   let edges (lossy : Bool) : ByteArray := page "<< /Type /Catalog /Pages 2 0 R /OCProperties << \
       /OCGs [5 0 R 6 0 R] /D << /Order [5 0 R 6 0 R] /OFF [7 0 R 6 0 R] >> >> >>"
     ("<< /Properties << /s 5 0 R /e 8 0 R /u 9 0 R /m 10 0 R /i 11 0 R /x 12 0 R >>" ++
@@ -1243,22 +1245,46 @@ def pdfOptionalContentShipChecks (ref : IO.Ref (List String)) : IO Unit := do
       /OC /u BDC 0 0.5 0.5 rg 40 0 16 100 re f EMC /OC /m BDC 0.5 0.5 0 rg 60 0 16 100 re f EMC \
       /OC /i BDC 1 0 0.5 rg 80 0 16 46 re f EMC /OC /x BDC 0 0.5 1 rg 80 54 16 46 re f EMC" ++
       (if lossy then " /K Do" else ""))
+    (if lossy then " /Annots [15 0 R]" else "")
     #["<< /Type /OCG /Name (Shown) >>", "<< /Type /OCG /Name (Hidden) >>",
       "<< /Type /OCG /Name (Loose) >>", "<< /Type /OCMD /OCGs [] /P /AnyOn >>",
       "<< /Type /OCMD /OCGs [7 0 R] /P /AnyOff >>", "<< /Type /OCMD /OCGs [99 0 R] /P /AnyOn >>",
       "<< /Type /OCMD /OCGs 13 0 R /P /AnyOn >>", "<< /Type /OCMD /OCGs [6 0 R 7 0 R] /P /AnyOn >>",
       "[6 0 R]", streamObj "0.5 g 2 2 4 4 re f" "/Type /XObject /Subtype /Form /BBox [0 0 100 100] \
-        /Group << /S /Transparency /K true >> "]
+        /Group << /S /Transparency /K true >> ",
+      "<< /Type /Annot /Subtype /Square /Rect [0 0 16 20] /F 4 /OC 9 0 R /AP << /N 16 0 R >> >>",
+      streamObj "0.5 1 0 rg 0 0 16 20 re f" "/Type /XObject /Subtype /Form /BBox [0 0 16 20] "]
   let noReach := page "<< /Type /Catalog /Pages 2 0 R /OCProperties << /OCGs [5 0 R] \
       /D << /OFF [5 0 R] >> >> >>" "<< /Properties << /m 6 0 R >> >>"
-    "/OC /m BDC 0 0 1 rg 0 0 100 100 re f EMC"
+    "/OC /m BDC 0 0 1 rg 0 0 100 100 re f EMC" ""
     #["<< /Type /OCG /Name (Unused) >>", "<< /Type /OCMD /OCGs [7 0 R] /P /AnyOn >>",
       "<< /Type /OCG /Name (Loose) >>"]
+  let twoPages := syntheticPdf #[
+    "<< /Type /Catalog /Pages 2 0 R /OCProperties << /OCGs [7 0 R 8 0 R] /D << /OFF [8 0 R] >> >> >>",
+    "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Contents 5 0 R /Resources << >> >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Contents 6 0 R \
+      /Resources << /Properties << /a 7 0 R /b 8 0 R >> >> >>",
+    streamObj "0 0 0 rg 0 0 1 1 re f",
+    streamObj "/OC /a BDC 1 0 0 rg 0 0 50 100 re f EMC /OC /b BDC 0 0 1 rg 50 0 50 100 re f EMC",
+    "<< /Type /OCG /Name (Front) >>", "<< /Type /OCG /Name (Back) >>"]
+  -- A lossy figure whose groups and membership dictionary stand at generation 1, shown since its
+  -- only listed group is off.
+  let generations := syntheticPdf (gens := #[0, 0, 0, 0, 0, 1, 1, 1, 0]) #[
+    "<< /Type /Catalog /Pages 2 0 R /OCProperties << /OCGs [6 1 R] /D << /OFF [6 1 R] >> >> >>",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Contents 4 0 R \
+      /Resources << /Properties << /g 8 1 R >> /XObject << /K 9 0 R >> >> >>",
+    streamObj "/OC /g BDC 1 1 0 rg 0 0 100 100 re f EMC /K Do", "<< /Type /OCG /Name (Unused) >>",
+    "<< /Type /OCG /Name (Shown) >>", "<< /Type /OCG /Name (Loose) >>",
+    "<< /Type /OCMD /OCGs [6 1 R 7 1 R] /P /AnyOff >>",
+    streamObj "0.5 g 2 2 4 4 re f" "/Type /XObject /Subtype /Form /BBox [0 0 100 100] \
+      /Group << /S /Transparency /K true >> "]
   let cells : Array ((UInt8 × UInt8 × UInt8) × Bool) := #[
     ((255, 0, 0), true), ((0, 0, 255), false), ((0, 255, 0), false), ((255, 0, 255), false),
     ((0, 255, 255), true), ((255, 128, 0), true), ((255, 255, 0), true), ((128, 0, 255), true),
     ((0, 128, 128), true), ((128, 128, 0), true), ((255, 0, 128), false), ((0, 128, 255), false)]
-  let edgeCells := cells.extract 6 cells.size
+  let lossyCells := (cells.extract 6 cells.size).push ((128, 255, 0), false)
   t "optional content: the copier keeps a configured figure's groups and drops an unconfigured one's"
     ((PdfRead.readForm layers).toOption.any (fun f => f.val.oc.any fun oc =>
         oc.groups.size == 2 && oc.off.size == 1 && oc.groups.contains (oc.off[0]?.getD 99)) &&
@@ -1267,12 +1293,16 @@ def pdfOptionalContentShipChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "optional content: the converter's input reads back with the copy's configuration and dictionaries"
     ((PdfRead.Doc.ofBytes (PdfRead.ocAsCopied (edges true))).toOption.any (fun d =>
         (d.ocConfig.any fun c => c.groups == #[5, 6] && c.off.toList == [6]) &&
-        (d.get 8).toOption.any (·.1 == .dict #[]) && (d.get 12).toOption.any fun (v, _) =>
+        (d.get 8).toOption.any (·.1 == .dict #[]) && (d.get 12).toOption.any (fun (v, _) =>
           v.get? "OCGs" == some (.arr #[.ref 6 0])) &&
+        (d.get 3).toOption.any fun (v, _) => (v.get? "Annots").isNone) &&
+      (PdfRead.Doc.ofBytes (PdfRead.ocAsCopied generations)).toOption.any (fun d =>
+        (d.get 8).toOption.any fun (v, _) => v.get? "OCGs" == some (.arr #[.ref 6 1])) &&
       PdfRead.ocAsCopied unconfigured == unconfigured)
   IO.FS.withTempDir fun dir => do
     let tools := dir / "bin"
     IO.FS.createDirAll tools
+    IO.FS.createDirAll (dir / "sub" / "dir")
     let build (src out : System.FilePath) : IO UInt32 := do
       let r ← IO.Process.output {
         cmd := binary.toString, args := #[src.toString, "-o", out.toString]
@@ -1293,15 +1323,18 @@ def pdfOptionalContentShipChecks (ref : IO.Ref (List String)) : IO Unit := do
       counts.size == want.size && (counts.zip want).all fun (n, _, on) => (n > 0) == on
     IO.FS.writeBinFile (dir / "layers.pdf") layers
     IO.FS.writeBinFile (dir / "same-names.pdf") sameNames
+    IO.FS.writeBinFile (dir / "sub" / "dir" / "nested.pdf") sameNames
     IO.FS.writeBinFile (dir / "unconfigured.pdf") unconfigured
     IO.FS.writeBinFile (dir / "edges.pdf") (edges false)
+    IO.FS.writeBinFile (dir / "two.pdf") twoPages
     IO.FS.writeBinFile (dir / "lossy.pdf") (edges true)
+    IO.FS.writeBinFile (dir / "generations.pdf") generations
     IO.FS.writeBinFile (dir / "no-reach.pdf") noReach
     let doc (figures : List String) : String := String.intercalate "\n" (["\\documentclass{article}",
       "\\begin{document}"] ++ figures.map (fun f =>
         s!"\\includegraphics[width=100pt,alt=\{An invented figure}{f}\n") ++ ["\\end{document}", ""])
     IO.FS.writeFile (dir / "doc.tex") (doc ["]{layers.pdf}", ",page=1]{layers.pdf}", "]{same-names.pdf}",
-      "]{unconfigured.pdf}", "]{edges.pdf}"])
+      "]{unconfigured.pdf}", "]{edges.pdf}", "]{sub/dir/nested.pdf}", ",page=2]{two.pdf}"])
     for ext in ["pdf", "html"] do
       let code ← build (dir / "doc.tex") (dir / s!"doc.{ext}")
       t s!"optional content: the layered document builds its {ext} with nothing on PATH (exit {code})"
@@ -1321,6 +1354,12 @@ def pdfOptionalContentShipChecks (ref : IO.Ref (List String)) : IO Unit := do
       (shipped.bind fun d => (d.deref o).toOption).getD .null
     let config := shipped.bind fun d => (d.get d.root).toOption.bind fun (cat, _) =>
       (cat.get? "OCProperties").map deref
+    let groups := match (config.bind (·.get? "OCGs")).map deref with
+      | some (.arr xs) => xs.map deref
+      | _ => #[]
+    t s!"optional content: the shipped groups name no usage or intent a viewer could apply \
+({groups.size} groups)" (groups.size == 12 && groups.all fun g =>
+        (g.get? "Usage").isNone && (g.get? "Intent").isNone && (g.get? "Name").isSome)
     let order := match ((config.bind (·.get? "D")).map deref).bind (·.get? "Order") with
       | some (.arr xs) => xs
       | _ => #[]
@@ -1332,10 +1371,12 @@ def pdfOptionalContentShipChecks (ref : IO.Ref (List String)) : IO Unit := do
             | _ => none)
         | _ => none
       | _ => none
-    t s!"optional content: each figure's groups stand under its own label ({labelled})"
+    t s!"optional content: each figure's groups stand under its own label, its file's name alone \
+({labelled})"
       (labelled == #[("(layers.pdf)", #["(Layer 1)", "(Layer 2)"]),
         ("(layers.pdf \\(2\\))", #["(Layer 1)", "(Layer 2)"]),
-        ("(same-names.pdf)", #["(Layer 1)", "(Layer 2)"]), ("(edges.pdf)", #["(Shown)", "(Hidden)"])])
+        ("(same-names.pdf)", #["(Layer 1)", "(Layer 2)"]), ("(edges.pdf)", #["(Shown)", "(Hidden)"]),
+        ("(nested.pdf)", #["(Layer 1)", "(Layer 2)"]), ("(two.pdf#page=2)", #["(Front)", "(Back)"])])
     IO.FS.writeFile (dir / "alone.tex") (doc ["]{no-reach.pdf}"])
     let code ← build (dir / "alone.tex") (dir / "alone.pdf")
     let alone := (PdfRead.Doc.ofBytes (← IO.FS.readBinFile (dir / "alone.pdf"))).toOption
@@ -1351,12 +1392,14 @@ def pdfOptionalContentShipChecks (ref : IO.Ref (List String)) : IO Unit := do
 viewBox=\"0 0 10 10\"/>' > \"$last\"\n")
     let mode ← IO.Process.output { cmd := "chmod", args := #["+x", (tools / "pdftocairo").toString] }
     unless mode.exitCode == 0 do throw <| IO.userError "could not prepare the stand-in converter"
-    IO.FS.writeFile (dir / "lossy.tex") (doc ["]{lossy.pdf}"])
-    let code ← build (dir / "lossy.tex") (dir / "lossy.html")
-    let counts ← if ← handed.pathExists then raster handed (edgeCells.map (·.1))
-      else pure (edgeCells.map fun _ => 0)
-    t s!"optional content: the converter is handed a lossy figure's page showing what its copy shows \
-(exit {code}, {counts})" (code == 0 && agrees counts edgeCells)
+    for (name, want) in [("lossy", lossyCells), ("generations", #[((255, 255, 0), true)])] do
+      if ← handed.pathExists then IO.FS.removeFile handed
+      IO.FS.writeFile (dir / s!"{name}.tex") (doc [s!"]\{{name}.pdf}"])
+      let code ← build (dir / s!"{name}.tex") (dir / s!"{name}.html")
+      let counts ← if ← handed.pathExists then raster handed (want.map (·.1))
+        else pure (want.map fun _ => 0)
+      t s!"optional content: the converter is handed the {name} figure's page showing what its copy \
+shows (exit {code}, {counts})" (code == 0 && agrees counts want)
 
 open Tests.PdfNative in
 /-- PDF figures ship native web faces with no converter on the machine, and `\figures{ convert =

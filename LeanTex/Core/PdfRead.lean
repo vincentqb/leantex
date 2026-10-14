@@ -1455,11 +1455,12 @@ public def Doc.ocConfig (doc : Doc) : Option OcConfig := do
              off := Std.HashSet.ofArray ((groups.filter fun n => !on.contains n) ++ off) }
   return { groups, listed, off := Std.HashSet.ofArray off, radio, locked }
 
-/-- The listed groups a membership dictionary's `/OCGs` names (§8.11.2.2): one group's reference
-or an array of them, direct or by reference, unlisted and missing entries ignored. -/
-public def Doc.ocmdGroups (doc : Doc) (cfg : OcConfig) (d : Obj) : Array Nat :=
-  let held (x : Obj) : Option Nat := match x with
-    | .ref k _ => if cfg.listed.contains k then some k else none
+/-- The listed groups a membership dictionary's `/OCGs` names (§8.11.2.2), each by number and
+generation: one group's reference or an array of them, direct or by reference, unlisted and missing
+entries ignored. -/
+public def Doc.ocmdGroups (doc : Doc) (cfg : OcConfig) (d : Obj) : Array (Nat × Nat) :=
+  let held (x : Obj) : Option (Nat × Nat) := match x with
+    | .ref k g => if cfg.listed.contains k then some (k, g) else none
     | _ => none
   match d.get? "OCGs" with
   | some (.ref m g) => match (doc.deref (.ref m g)).toOption with
@@ -1616,21 +1617,23 @@ private def nameOut (n : String) : String := Id.run do
       out := out ++ String.ofList ['#', Hex.spell true (v / 16), Hex.spell true v]
   return out
 
-/-- A copied dictionary as the engine reads its source's optional content: a listed group kept, a
-membership dictionary under a configuration kept with only its listed groups, its policy and an
-array expression, any other group or membership dictionary emptied; whether one was kept. -/
+/-- A copied dictionary as the engine reads its source's optional content: a listed group with only
+its type and name, a membership dictionary under a configuration with only its listed groups, policy
+and array expression, any other group or membership dictionary emptied; whether one was kept. -/
 private def ocNormDict (doc : Doc) (cfg : Option OcConfig) (num : Option Nat)
     (es : Array (String × Obj)) (kept : Bool) : Obj × Bool :=
   let d : Obj := .dict es
   match d.get? "Type", cfg with
   | some (.name "OCG"), _ =>
-    if cfg.any fun c => num.any c.listed.contains then (d, kept) else (.dict #[], false)
+    if cfg.any fun c => num.any c.listed.contains then
+      (.dict (es.filter fun (k, _) => k == "Type" || k == "Name"), kept)
+    else (.dict #[], false)
   | some (.name "OCMD"), none => (.dict #[], false)
   | some (.name "OCMD"), some c =>
     let groups := doc.ocmdGroups c d
     let ve := (d.get? "VE").filter fun v => (doc.deref v).toOption matches some (.arr _)
     if groups.isEmpty && ve.isNone then (.dict #[], false)
-    else (.dict (#[("Type", .name "OCMD"), ("OCGs", .arr (groups.map fun n => .ref n 0)),
+    else (.dict (#[("Type", .name "OCMD"), ("OCGs", .arr (groups.map fun (n, g) => .ref n g)),
       ("P", .name (ocmdPolicy d))] ++ (ve.map fun v => #[("VE", v)]).getD #[]), true)
   | _, _ => (d, kept)
 
@@ -1937,8 +1940,8 @@ private def Doc.genOf (d : Doc) (num : Nat) : Nat :=
   | _ => 0
 
 /-- The file with an incremental update (§7.5.6) declaring its optional content as its copy reads
-it: its configuration's groups, those it turns off, and every dictionary `ocNorm` rewrites; the
-bytes unchanged where the catalog declares none, the file is encrypted or it does not read. -/
+it: the configuration's groups and those it turns off, each dictionary `ocNorm` rewrites, no page
+annotation; unchanged where the catalog declares none, encrypted or unreadable. -/
 public def ocAsCopied (b : ByteArray) : ByteArray := Id.run do
   let .ok r := Doc.ofBytes b | return b
   let .ok (.dict cat, _) := r.get r.root | return b
@@ -1954,11 +1957,13 @@ public def ocAsCopied (b : ByteArray) : ByteArray := Id.run do
   for n in r.objectNumbers.mergeSort (fun a c => decide (a ≤ c)) do
     if n == r.root then continue
     let .ok (v, raw?) := r.get n | continue
-    let w := (ocNorm r cfg (some n) v).1
-    if w == v then continue
-    let w : Obj := match raw?, w with
-      | some raw, .dict es => .dict ((es.filter (·.1 != "Length")).push ("Length", .int raw.size))
-      | _, w => w
+    let normal := (ocNorm r cfg (some n) v).1
+    let annotated := normal.get? "Type" == some (.name "Page") && (normal.get? "Annots").isSome
+    if normal == v && !annotated then continue
+    let keep (k : String) : Bool := !(k == "Annots" && annotated) && !(k == "Length" && raw?.isSome)
+    let w : Obj := if let .dict es := normal then
+        .dict (es.filter (keep ·.1) ++ (raw?.map fun raw => #[("Length", Obj.int raw.size)]).getD #[])
+      else normal
     objs := objs.push (n, w, raw?)
   let digits (width v : Nat) : String :=
     let spelled := toString v

@@ -292,16 +292,20 @@ private def viewerEntry : Array (String × PdfRead.Obj) :=
   #[("ViewerPreferences", .dict #[("DisplayDocTitle", .bool true)])]
 
 /-- The labels copied figures' layers stand under: each file's name without its directories or a
-boundary picture's kind, its page as an RFC 8118 fragment when not the first, and a repeat numbered. -/
+boundary picture's kind, its page as an RFC 8118 fragment when not the first, a label taken numbered. -/
 public def ocLabels (figs : Array (String × Nat)) : Array String := Id.run do
-  let mut raws : Array String := #[]
+  let mut used : Std.HashSet String := {}
   let mut out : Array String := #[]
   for (src, page) in figs do
-    let name := if src.startsWith Ir.picSrcPrefix then "picture" else (src.splitOn "/").getLast?.getD src
-    let label := if page == 1 then name else s!"{name}#page={page}"
-    let seen := raws.count label
-    raws := raws.push label
-    out := out.push (if seen == 0 then label else s!"{label} ({seen + 1})")
+    let file := ((src.splitOn "/").getLast?.getD src).splitOn "\\" |>.getLast?.getD src
+    let name := if src.startsWith Ir.picSrcPrefix then "picture" else file
+    let base := if page == 1 then name else s!"{name}#page={page}"
+    let mut label := base
+    for k in [2:figs.size + 2] do
+      if !used.contains label then break
+      label := s!"{base} ({k})"
+    used := used.insert label
+    out := out.push label
   return out
 
 /-- The copied figures' optional content (§8.11.4) as one default configuration: each figure's
@@ -1920,9 +1924,8 @@ public def prepare (geom : Geom) (fs : FontSet) (pages : Array PageOut)
       let en ← imgs.get? k
       let f ← (← en.info).form
       return ((en.src, f.val.page), ← (t.formBases[n]?).join, ← f.val.oc)
-  let ocNamed := (ocLabels (ocFigs.map (·.1))).zip (ocFigs.map (·.2))
   let catalog := catalogDict outlineRoot t.xmpId info.language t.structTreeRoot
-    (ocEntries (ocNamed.map fun (l, base, oc) => (l, base, oc)))
+    (ocEntries ((ocLabels (ocFigs.map (·.1))).zip (ocFigs.map (·.2))))
   let pagesObj : PdfRead.Obj := .dict
     #[("Type", .name "Pages"),
       ("Kids", .arr ((Array.range np).map fun i => .ref (t.pageId i) 0)),

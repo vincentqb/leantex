@@ -126,25 +126,29 @@ def svgFixtureFiles : IO (Array System.FilePath) := do
       if e.fileName.endsWith ".svg" then out := out.push e.path
   return out
 
-/-- A PDF of the given objects' bytes, numbered from 1 with the first the catalog, under a classic
-cross-reference table. -/
-def syntheticPdfBin (objects : Array ByteArray) (trailerExtra : String := "") : ByteArray := Id.run do
+/-- A PDF of the given objects' bytes, numbered from 1 with the first the catalog, each at the
+generation `gens` gives it or zero, under a classic cross-reference table. -/
+def syntheticPdfBin (objects : Array ByteArray) (trailerExtra : String := "") (gens : Array Nat := #[]) :
+    ByteArray := Id.run do
   let mut out := "%PDF-1.7\n".toUTF8
   let mut offsets : Array Nat := #[]
   for (object, i) in objects.zipIdx do
     offsets := offsets.push out.size
-    out := out ++ s!"{i + 1} 0 obj\n".toUTF8 ++ object ++ "\nendobj\n".toUTF8
+    out := out ++ s!"{i + 1} {gens[i]?.getD 0} obj\n".toUTF8 ++ object ++ "\nendobj\n".toUTF8
   let xref := out.size
   out := out ++ s!"xref\n0 {objects.size + 1}\n0000000000 65535 f \n".toUTF8
-  for offset in offsets do
+  for (offset, i) in offsets.zipIdx do
     let digits := toString offset
-    out := out ++ ("".pushn '0' (10 - digits.length) ++ digits ++ " 00000 n \n").toUTF8
+    let gen := toString (gens[i]?.getD 0)
+    out := out ++ ("".pushn '0' (10 - digits.length) ++ digits ++ " " ++ "".pushn '0' (5 - gen.length) ++
+      gen ++ " n \n").toUTF8
   return out ++ s!"trailer\n<< /Size {objects.size + 1} /Root 1 0 R {trailerExtra}>>\n\
     startxref\n{xref}\n%%EOF\n".toUTF8
 
 /-- `syntheticPdfBin` over the objects' spellings. -/
-def syntheticPdf (objects : Array String) (trailerExtra : String := "") : ByteArray :=
-  syntheticPdfBin (objects.map String.toUTF8) trailerExtra
+def syntheticPdf (objects : Array String) (trailerExtra : String := "") (gens : Array Nat := #[]) :
+    ByteArray :=
+  syntheticPdfBin (objects.map String.toUTF8) trailerExtra gens
 
 /-- A stream object over bytes, `dict` its dictionary's other entries. -/
 def streamObjBin (body : ByteArray) (dict : String := "") : ByteArray :=
@@ -1212,7 +1216,7 @@ def ppmCounts (file : System.FilePath) (colours : Array (UInt8 × UInt8 × UInt8
   for i in [start:bytes.size:3] do
     let px := (bytes[i]?.getD 0, bytes[i + 1]?.getD 0, bytes[i + 2]?.getD 0)
     for (c, k) in colours.zipIdx do
-      if px == c then counts := counts.set! k (counts[k]?.getD 0 + 1)
+      if px == c then counts := counts.modify k (· + 1)
   return counts
 
 /-- A diagnostic's words and its site's particulars, as its log line shows them. -/

@@ -11,6 +11,7 @@ import Tests.World
 import Tests.MachineLoss
 import Tests.EngineCache
 import Tests.LeanStatements
+import Tests.PdfNative
 import scripts.LandCore
 
 /-! World premises: one row per assumption leantex makes of the runtime, the host and the programs
@@ -257,7 +258,7 @@ def registry : List Premise := [
     statement := "pdftocairo renders the selected page of a PDF, its optional content as PdfRead.ocAsCopied declares it, to SVG as Poppler draws it, and ImageAssets' private finishSvg and HtmlDoc.emitClosed check every file it writes before the HTML holds it."
     guards := [decl% HtmlDoc.emitClosed]
     sites := [("LeanTex/Cli/ImageAssets.lean", "pdfSvg"), ("LeanTex/Cli/ImageAssets.lean", "picFace")]
-    checks := [check% htmlContainedSvgColorChecks]
+    checks := [check% htmlContainedSvgColorChecks, check% pdfOptionalContentShipChecks]
     scriptChecks := [("scripts/svg-check.lean", decl% Tests.svgValidationChecks)]
     scripts := ["scripts/html-oracle.lean"] },
   { name := "libxml2-boundary", residue := .oracle "xmllint", reach := .oracle

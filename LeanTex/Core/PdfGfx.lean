@@ -1510,7 +1510,7 @@ in place of its groups and policy, and the losses an expression it cannot decide
 private def ocmdOff (cx : Ctx) (cfg : OcConfig) (memo : VeMemo) (d : Obj) :
     (Bool × Array Loss) × VeMemo :=
   if d.get? "Type" != some (.name "OCMD") then ((false, #[]), memo) else
-  let refs := cx.doc.ocmdGroups cfg d
+  let refs := (cx.doc.ocmdGroups cfg d).map (·.1)
   let pol := PdfRead.ocmdPolicy d
   let byPolicy : Bool :=
     if refs.isEmpty then false
