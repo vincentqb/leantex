@@ -287,11 +287,26 @@ def picSiteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     ((layoutOf oneFace (elabStr (dvDoc ("\\pictures{ tool = none }\n" ++ pre) (pic body))).1).pages[0]?.map
       fun p => (pageDraws p).map fun d => d.2.2.map (·.paint)).getD #[]
   let line := "\\draw (0,0) -- (2,0);\n"
+  let red := strokes "" "\\draw[red] (0,0) -- (1,0);\n"
+  let blue := strokes "" "\\draw[blue] (0,0) -- (1,0);\n"
+  let installed := strokes ("\\newcommand{\\useasboundingbox}{\\draw[red]}\n" ++
+      "\\newcommand{\\scoped}{\\draw[blue] (0,2) -- (3,2);}\n")
+    ("\\useasboundingbox (0,0) rectangle (3,1);\n\\scoped \\draw (0,0) -- (1,1);\n" ++ line)
   t "a document's definitions of commands TikZ installs in every picture do not reach one"
-    (strokes ("\\newcommand{\\useasboundingbox}{\\draw[red]}\n" ++
-        "\\newcommand{\\scoped}{\\draw[blue] (0,2) -- (3,2);}\n\\newcommand{\\pattern}{\\draw[red]}\n")
-      ("\\useasboundingbox (0,0) rectangle (3,1);\n\\scoped \\draw (0,0) -- (1,1);\n" ++
-        "\\pattern (0,0) -- (1,0);\n" ++ line) == strokes "" line)
+    (!red.isEmpty && !blue.isEmpty && (strokes "" line).all installed.contains &&
+      installed.all fun p => !red.contains p && !blue.contains p)
+  let nodeText := censusText (censusOfSrc oneFace (dvDoc
+    "\\pictures{ tool = none }\n\\newcommand{\\pic}{Picx}\n\\newcommand{\\graph}[1]{Gr#1}\n"
+    (pic "\\node at (0,0) {Ub[\\pic] Uc[\\graph{y}]};\n")))
+  t "a document's definitions of commands TikZ installs reach a node's text, where TikZ restores them"
+    (hasStr nodeText "Ub[Picx]" && hasStr nodeText "Uc[Gry]")
+  let provided := censusText (censusOfSrc oneFace (dvDoc
+    ("\\pictures{ tool = none }\n\\providecommand{\\pgfmathsetmacro}[2]{\\def#1{#2}}\n" ++
+      "\\providecommand{\\foreach}{}\n")
+    (pic ("\\pgfmathsetmacro{\\va}{2*3}\\node at (0,0) {Pa[\\va]};\n" ++
+      "\\foreach \\x in {1,2} {\\node at (\\x,1) {Pb[\\x]};}\n"))))
+  t "a document's \\providecommand of a command pgf defines when it loads leaves pgf's"
+    (hasStr provided "Pa[6.0]" && hasStr provided "Pb[1]" && hasStr provided "Pb[2]")
   t "a document's redefinition of a command TikZ does not install reaches its picture"
     (strokes "\\renewcommand{\\textcolor}[2]{#2}\n" ("\\textcolor{red}{" ++ line ++ "}\n") ==
       strokes "" line && strokes "" ("\\textcolor{red}{" ++ line ++ "}\n") != strokes "" line)
@@ -338,8 +353,13 @@ def picNumberTextChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
      ("pgfmathsetmacro", "0-2", "-2.0"), ("pgfmathsetmacro", "100*100", "10000.0"),
      ("pgfmathtruncatemacro", "-2.7", "-2"), ("pgfmathtruncatemacro", "2.50", "2"),
      ("pgfmathsetlengthmacro", "2", "2.0pt"), ("pgfmathsetlengthmacro", "2.50", "2.5pt"),
-     ("pgfmathsetlengthmacro", "2pt*2", "4.0pt")]
-  let tag (k : Nat) : String := "K" ++ String.singleton (Char.ofNat (97 + k))
+     ("pgfmathsetlengthmacro", "2pt*2", "4.0pt"), ("pgfmathsetmacro", "(02)", "2"),
+     ("pgfmathsetmacro", "+02", "2"), ("pgfmathsetmacro", " 02", "2"),
+     ("pgfmathsetmacro", "(007)", "7"), ("pgfmathsetmacro", "(00)", "0"),
+     ("pgfmathsetmacro", "ifthenelse(1,02,3)", "2"), ("pgfmathsetmacro", "(010)", "8"),
+     ("pgfmathsetmacro", "010*1", "8.0"), ("pgfmathsetmacro", "2.", "2.")]
+  let tag (k : Nat) : String :=
+    "K" ++ String.singleton (Char.ofNat (97 + k / 26)) ++ String.singleton (Char.ofNat (97 + k % 26))
   let setPics := String.join (sets.zipIdx.map fun ((cmd, expr, _), k) =>
     pic ("\\" ++ cmd ++ "{\\v}{" ++ expr ++ "}\n\\node at (0,0) {" ++ tag k ++ "[\\v]};\n"))
   let listPics :=
@@ -350,7 +370,14 @@ def picNumberTextChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
     pic "\\node at (0,0) {Le[2.50] Le[007] Le[1,000] Le[3.0] Le[.5] Le[3.14159] Le[0.0001]};\n" ++
     pic "\\foreach \\x in {1pt,2.5cm} {\\node at (0,0) {Lf[\\x]};}\n" ++
     pic "\\foreach \\x in {1pt} {\\pgfmathsetlengthmacro{\\y}{\\x}\\node at (0,0) {Lg[\\y]};}\n" ++
-    pic "\\foreach \\x in {1pt} {\\pgfmathsetmacro{\\y}{\\x}\\node at (0,0) {Lh[\\y]};}\n"
+    pic "\\foreach \\x in {1pt} {\\pgfmathsetmacro{\\y}{\\x}\\node at (0,0) {Lh[\\y]};}\n" ++
+    pic "\\foreach \\x in {2*3,(1),+2,-1} {\\pgfmathsetmacro{\\y}{\\x}\\node at (0,0) {Li[\\y]};}\n" ++
+    pic "\\foreach \\x in {2*3} {\\pgfmathsetmacro{\\y}{ifthenelse(1,\\x,0)}\\node at (0,0) {Lj[\\y]};}\n" ++
+    pic "\\pgfmathtruncatemacro{\\a}{-2.7}\\pgfmathsetmacro{\\b}{\\a}\\node at (0,0) {Lk[\\b]};\n" ++
+    pic "\\foreach \\x in {-1} {\\pgfmathsetmacro{\\y}{(\\x)}\\node at (0,0) {Ll[\\y]};}\n" ++
+    pic "\\foreach \\x in {-2,...,0} {\\pgfmathsetmacro{\\y}{\\x}\\node at (\\x,0) {Lm[\\y]};}\n" ++
+    pic "\\pgfmathsetmacro{\\va}{010}\\pgfmathsetmacro{\\vb}{\\va*1}\\node at (0,0) {Ln[\\va][\\vb]};\n" ++
+    pic "\\foreach \\x in {1 + 1} {\\node at (0,0) {Lo[\\x]};}\n"
   let text := censusText (censusOfSrc oneFace (dvDoc "\\pictures{ tool = none }\n" (setPics ++ listPics)))
   for ((cmd, expr, want), k) in sets.zipIdx do
     t s!"a label sets '\\{cmd}' of '{expr}' as pgfmath spells it, {want}"
@@ -360,7 +387,9 @@ def picNumberTextChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
       ("Lc", "2.0"), ("Lc", "4.0"), ("Lc", "6.0"), ("Ld", "2.50"),
       ("Le", "2.50"), ("Le", "007"), ("Le", "1,000"), ("Le", "3.0"), ("Le", ".5"),
       ("Le", "3.14159"), ("Le", "0.0001"), ("Lf", "1pt"), ("Lf", "2.5cm"), ("Lg", "1.0pt"),
-      ("Lh", "1.0")] do
+      ("Lh", "1.0"), ("Li", "6.0"), ("Li", "1"), ("Li", "2"), ("Li", "-1.0"), ("Lj", "6.0"),
+      ("Lk", "-2.0"), ("Ll", "-1.0"), ("Lm", "-2.0"), ("Lm", "-1.0"), ("Lm", "0"),
+      ("Ln", "010][8.0"), ("Lo", "1 + 1")] do
     t s!"a label sets {want} where lualatex sets it" (hasStr text (label ++ "[" ++ want ++ "]"))
   t "a dimension's points are spelled as TeX's \\the spells them"
     ([1864679, 131072, 21845, 6554, -1, 0, 65535, 98304, 13108, -6554, 1073741823, 1, 32768,

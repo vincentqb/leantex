@@ -1,6 +1,7 @@
 module
 
 import LeanTex.Core.Picture
+import LeanTex.Core.TikzCommands
 
 /-! Ordinary picture clients pass source, styles, measurement callbacks and placements through the
 public API; scanning state stays internal. -/

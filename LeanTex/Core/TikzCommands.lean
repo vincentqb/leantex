@@ -11,6 +11,11 @@ public def installed : List String :=
    "pattern", "fill", "filldraw", "shade", "shadedraw", "clip", "graph", "useasboundingbox",
    "node", "pic", "coordinate", "matrix", "calendar", "datavisualization"]
 
+/-- The commands pgf defines when it loads that a picture walk reads, which a document's
+`\providecommand` leaves as they are. -/
+public def pgfDefined : List String :=
+  ["foreach", "pgfmathsetmacro", "pgfmathtruncatemacro", "pgfmathsetlengthmacro"]
+
 /-- The control words a picture walk keeps from the document's definitions besides the
 conditionals: TikZ's installed commands, and TeX's `\else` and `\fi`, which close the conditionals
 it reads. -/

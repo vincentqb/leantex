@@ -5866,6 +5866,12 @@ public def builtinEnvNames : List String :=
    "algorithm", "algorithm*", "algorithm2e", "algorithmic"] ++
   reservedEnv
 
+/-- The names the engine defines before the document, which a document's `\providecommand` leaves
+as they are. -/
+private def providedNames : List String :=
+  renderedBuiltins ++ structuralNames ++ TikzCommands.pgfDefined ++
+    builtinEnvNames.map Tcolorbox.bindingName
+
 private def _root_.LeanTex.Core.Ir.PageSpec.textWidth (p : PageSpec) : Sp :=
   p.width - 2 * p.hmargin
 
@@ -15452,8 +15458,9 @@ private def macroScanLevel (raws : Array Raw) (out : Array (String × String)) :
     match read? with
     | some (entry, k) =>
       let provide := name == "providecommand" || name == "ProvideDocumentCommand"
-      let kept := if provide && out.any (fun q => q.1 == entry.1) then out
-        else out.push entry
+      let kept := if provide && (out.any (fun q => q.1 == entry.1) ||
+          TikzCommands.pgfDefined.contains entry.1)
+        then out else out.push entry
       macroScanLevel raws kept rest (i + 1) (k - (i + 1))
     | none => macroScanLevel raws out rest (i + 1) 0
   | r :: rest, i, 0 => macroScanLevel raws (macroScanRaw out r) rest (i + 1) 0
@@ -16142,8 +16149,7 @@ public def executeInputs [Monad m] (reader : Compat.InputReader m) (file : Strin
     (raws : Array Raw) : m Compat.Executed :=
   let (raws, splitDiags) := settleSplits file raws
   Compat.executeInputs reader file raws
-    (provideKeeps := renderedBuiltins ++ structuralNames ++
-      builtinEnvNames.map Tcolorbox.bindingName) (diags := splitDiags)
+    (provideKeeps := providedNames) (diags := splitDiags)
 
 /-- Resumes execution with a file answer, after settling its split halves. -/
 public def resumeInput [Monad m] (reader : Compat.InputReader m) (context : Compat.InputContext)
@@ -16214,8 +16220,7 @@ public def prepare (file : String) (raws : Array Raw) : Prepared :=
   let picScan := Compat.boundaryScan file raws
   let picMacros := macroScan raws
   let executed := Compat.execute file raws
-    (provideKeeps := renderedBuiltins ++ structuralNames ++
-      builtinEnvNames.map Tcolorbox.bindingName)
+    (provideKeeps := providedNames)
   prepareRewritten file picScan picMacros executed.sourceTriggers splitDiags
     (Compat.rewriteExecuted executed)
 

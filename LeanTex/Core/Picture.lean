@@ -5,7 +5,7 @@ public import LeanTex.Core.Ir
 import LeanTex.Core.Decl
 import LeanTex.Core.Loop
 import LeanTex.Core.GfxAffine
-public import LeanTex.Core.TikzCommands
+import LeanTex.Core.TikzCommands
 
 /-! The rendered `tikzpicture` and `tikzcd` subsets, evaluated at elaboration into concrete shapes:
 statements, pgfmath arithmetic, loops, colours, paths and nodes. -/
@@ -135,34 +135,22 @@ public def milliString (m : Int) : String :=
     let frs := ("".pushn '0' (3 - frs.length)) ++ frs
     s!"{sign}{ip}.{(frs.dropEndWhile (· == '0')).toString}"
 
-/-- A dimension's points as TeX's `\the` prints them, the unit dropped (`print_scaled`, tex.web §103). -/
-public def texPoints (s : Sp) : String := Id.run do
-  let n := s.natAbs
-  let mut out := (if s < 0 then "-" else "") ++ toString (n / 65536) ++ "."
-  let mut r := 10 * (n % 65536) + 5
-  let mut delta := 10
-  for _ in [0:5] do
-    if delta > 65536 then r := r + 32768 - 50000
-    out := out.push (Nat.digitChar (r / 65536))
-    r := 10 * (r % 65536)
-    delta := delta * 10
-    if r ≤ delta then break
-  return out
+/-- A dimension's points as TeX's `\the` prints them, the unit dropped. -/
+public def texPoints (s : Sp) : String :=
+  let (whole, digits) := Decl.texScaledParts s.natAbs
+  (if s < 0 then "-" else "") ++ toString whole ++ "." ++ String.join (digits.map toString)
 
-/-- The scaled points TeX reads from a decimal given in thousandths (`round_decimals`, tex.web §102). -/
+/-- The scaled points TeX reads from a decimal given in thousandths. -/
 private def milliSp (m : Int) : Sp :=
   let n := m.natAbs
   let fr := n % 1000
-  let a := fr % 10 * 131072 / 10
-  let a := (a + fr / 10 % 10 * 131072) / 10
-  let a := (a + fr / 100 * 131072) / 10
-  let s : Int := (n / 1000 * 65536 + (a + 1) / 2 : Nat)
+  let s : Int := (n / 1000 * 65536 + Decl.roundDecimals [fr / 100, fr / 10 % 10, fr % 10] : Nat)
   if m < 0 then -s else s
 
 /-- A number pgfmath computed, as it prints one: TeX's points of the dimension holding it. -/
 public def Val.computed (m : Int) : Val := .num m (texPoints (milliSp m))
 
-/-- A number pgffor's `...` computed, as it prints one: TeX's points with a trailing `.0` dropped. -/
+/-- A number pgffor's `...` computed, as it prints one: TeX's points, a trailing `.0` dropped. -/
 private def rangeItem (m : Int) : Val :=
   let t := texPoints (milliSp m)
   .num m (if t.endsWith ".0" then (t.dropEnd 2).toString else t)
@@ -218,7 +206,16 @@ private def prec : Rp → Nat
   | .lt | .gt => 1
   | _ => 0
 
-private def evalExpr (env : List (String × Val)) (toks : Array Tok) : Except String Val := Id.run do
+/-- A leading-zero integer as pgfmath's parser reads one: in octal, spelled in decimal. -/
+private def octalLit? (t : String) : Option Val :=
+  let ds := t.toList
+  if ds.length ≥ 2 && ds.head? == some '0' && ds.all (fun c => '0' ≤ c && c ≤ '7') then
+    let v : Nat := ds.foldl (fun a c => a * 8 + (c.toNat - 48)) 0
+    some (.num (v * 1000) (toString v))
+  else none
+
+private def evalTokens (env : List (String × Val)) (toks : Array Tok) :
+    Except String Val := Id.run do
   let mut out : Array Rp := #[]
   let mut ops : Array Rp := #[]  -- operators and '(' markers (calls double as markers)
   let mut marks : Array Bool := #[]  -- per '(': is it a function call
@@ -249,8 +246,8 @@ private def evalExpr (env : List (String × Val)) (toks : Array Tok) : Except St
           | some sp =>
             i := i + 1
             out := out.push (.push (.len sp (text ++ u)))
-          | none => out := out.push (.push (.num m text))
-        | _ => out := out.push (.push (.num m text))
+          | none => out := out.push (.push ((octalLit? text).getD (.num m text)))
+        | _ => out := out.push (.push ((octalLit? text).getD (.num m text)))
         expectOperand := false
       | .ctrl name =>
         match env.lookup name with
@@ -403,6 +400,42 @@ private def evalExpr (env : List (String × Val)) (toks : Array Tok) : Except St
   | [v] => return .ok v
   | [] => return .error "empty expression"
   | _ => return .error "malformed expression"
+
+/-- A macro's text as the walk splits source words. -/
+private def textToks (acc : Array Tok) (s : String) : Array Tok := Id.run do
+  let mut out := acc
+  let mut first := true
+  for w in s.splitOn " " do
+    unless first do out := out.push .space
+    first := false
+    out := splitWord out w
+  return out
+
+/-- An expression as pgfmath reads one, a macro bound to a number standing as its text. -/
+private def spliceNumbers (env : List (String × Val)) (toks : Array Tok) : Array Tok := Id.run do
+  let mut out : Array Tok := #[]
+  for t in toks do
+    match t with
+    | .ctrl n =>
+      match env.lookup n with
+      | some (.num _ text) => out := textToks out text
+      | _ => out := out.push t
+    | _ => out := out.push t
+  return out
+
+/-- pgfmath's fast lane: a number followed by points alone stands as written. -/
+private def fastLane? (toks : Array Tok) : Option Val :=
+  match toks.toList with
+  | .num m t :: rest =>
+    if rest.all (· == .sym '.') then some (.num m (rest.foldl (fun s _ => s.push '.') t)) else none
+  | _ => none
+
+/-- An expression's value as pgfmath computes and spells it. -/
+private def evalExpr (env : List (String × Val)) (toks : Array Tok) : Except String Val :=
+  let toks := spliceNumbers env toks
+  match fastLane? toks with
+  | some v => .ok v
+  | none => evalTokens env toks
 
 private def evalNum (env : List (String × Val)) (toks : Array Tok) : Except String Int :=
   match evalExpr env toks with
@@ -946,6 +979,9 @@ public structure Cx where
   xf : Gfx.Affine := Gfx.Affine.unit
   /-- Whether the document loads arrows.meta, which makes `To` its Computer Modern arrow. -/
   metaArrows : Bool := false
+  /-- A node's text with the document's definitions of TikZ's installed commands applied, as TikZ
+  restores them there (`\tikz@uninstallcommands`). -/
+  nodeText : List Tok → List Tok := id
 
 /-- Picture milli-units to sp: one TikZ unit is 1 cm, times the declared scale. -/
 public def Cx.toSp (cx : Cx) (m : Int) : Sp :=
@@ -3630,7 +3666,7 @@ is dropped")
 is dropped")
     | .ident "node" :: .ident "contents" :: .sym '=' :: rest =>
       let g : List Tok := if let [.group inner] := rest then inner else rest
-      let (ls, ds) := nodeLabel cx env g
+      let (ls, ds) := nodeLabel cx env (cx.nodeText g)
       contents := some ls
       ev := ds.foldl Ev.diag ev
     | .ident "anchor" :: .sym '=' :: rest =>
@@ -3700,7 +3736,7 @@ fits the rest")
         .error (.W0334, s!"'\\node' continues with {tokText ts[i+1]}, \
 outside the rendered picture subset; the label is not drawn")
       else
-        .ok (nodeLabel cx env body)
+        .ok (nodeLabel cx env (cx.nodeText body))
     | _ =>
       match contents with
       | some c => .ok (c, #[])
@@ -4696,7 +4732,7 @@ is outside the rendered picture subset; the lines stay centred")
 the rendered picture subset; the option is dropped")
     match ts[i]? with
     | some (.group body) =>
-      let (lines, mdiags) := nodeLabel cx env body
+      let (lines, mdiags) := nodeLabel cx env (cx.nodeText body)
       ev := mdiags.foldl Ev.diag ev
       let lines := fontLines mstyles lines
       let em := cx.bodySize * (factor : Int) / 1000
@@ -5594,24 +5630,27 @@ private def itemText (env : List (String × Val)) (toks : Array Tok) : String :=
     | .ident s => s
     | .num _ t => t
     | .sym c => String.singleton c
+    | .space => " "
     | _ => "")) ""
 
 private def readItems (env : List (String × Val)) (toks : Array Tok) :
     Except String (Array Item) := Id.run do
   let mut out : Array Item := #[]
-  for part in splitTop toks ',' do
-    let part := part.filter (· != .space)
+  for rawPart in splitTop toks ',' do
+    let part := rawPart.filter (· != .space)
     if part == #[.sym '.', .sym '.', .sym '.'] then
       out := out.push .dots
     else if part.isEmpty then
       pure ()
     else
       let mut vs : Array Val := #[]
-      for sub in splitTop part '/' do
+      for rawSub in splitTop rawPart '/' do
+        let sub := rawSub.filter (· != .space)
+        -- pgffor binds the item's text past its leading spaces; its value is read where it is used.
+        let text := itemText env (rawSub.toList.dropWhile (· == .space)).toArray
         match evalExpr env sub with
-        -- pgffor binds an item's text as written, its value read where it is used.
-        | .ok (.num m _) => vs := vs.push (.num m (itemText env sub))
-        | .ok (.len sp _) => vs := vs.push (.len sp (itemText env sub))
+        | .ok (.num m _) => vs := vs.push (.num m text)
+        | .ok (.len sp _) => vs := vs.push (.len sp text)
         | .ok v => vs := vs.push v
         | .error e =>
           match sub.toList.filter (· != .space) with
@@ -6486,6 +6525,16 @@ private def macroTable (ladder : List (String × Nat)) (declStyles : List (Strin
       if let some m := readMacro line then out := (n, m) :: out
   return out
 
+/-- The document's definitions of TikZ's installed commands, which TikZ restores inside node text. -/
+private def nodeMacroTable (names : Array (String × String)) (ts : Array Tok) :
+    List (String × Macro) := Id.run do
+  let bound := boundNames ts
+  let mut out : List (String × Macro) := []
+  for (n, line) in names do
+    if TikzCommands.installed.contains n && !bound.contains n then
+      if let some m := readMacro line then out := (n, m) :: out
+  return out
+
 private def readBaseline (cx : Cx) (nodes : List (String × NodeGeom)) (toks : List Tok) :
     Except String Sp :=
   let toks := if let [.group body] := toks then body.filter (· != Tok.space) else toks
@@ -6530,6 +6579,7 @@ public def elabPicture (pal : Ir.Palette) (raws : Array Parse.Raw)
     Ir.Pic.Picture × Array PDiag := Id.run do
   let raw := ofRawsAt locate raws
   let toks := expandMacros (macroTable ladder declStyles macros raw) raw
+  let nodeTable := nodeMacroTable macros raw
   let mut scale : Int := 1000
   let mut styles := documentStyles (sets.map ofSetting)
   let mut dist : Sp × Sp := (Dim.mm 10, Dim.mm 10)
@@ -6625,7 +6675,8 @@ public def elabPicture (pal : Ir.Palette) (raws : Array Parse.Raw)
                    bodySize := bodySize
                    decls := outerDecls
                    ink := ink0.getD Ir.Color.black
-                   parseGap := st.bad.any fun d => d.1 == .W0334 }
+                   parseGap := st.bad.any fun d => d.1 == .W0334
+                   nodeText := fun ts => (expandMacros nodeTable ts.toArray).toList }
   let ev := evalFixed cx st.out.toList
   let mut unread : Array PDiag := #[]
   let mut baseline : Option Sp := none

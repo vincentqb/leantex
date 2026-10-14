@@ -60,10 +60,8 @@ def citeForeign : List String :=
    "parse_date",               -- biber's one-sided date reader (Biber::Utils)
    "parse_date_range",         -- biber's date-range reader (Biber::Utils)
    "parse_date_unspecified",   -- biber's unspecified-digit reader (Biber::Utils)
-   "print_scaled",             -- TeX's printer of a scaled real (TeX §103)
    "process_visible_names",    -- biber's name-visibility pass (Biber.pm)
    "resolve_xdata",            -- biber's xdata resolution (Biber::Entry)
-   "round_decimals",           -- TeX's reader of a decimal fraction (TeX §102)
    "sort_list",                -- biber's list sort (Biber.pm)
    "style_for_token",          -- Pygments' resolved style lookup (pygments/style.py)
    "von_name_ends_and_last_name_starts_stuff", -- bibtex.web's name-splitting module

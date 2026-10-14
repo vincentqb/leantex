@@ -69,7 +69,7 @@ public def ColorComponent.xcolorDefined (c : ColorComponent) : ColorComponent :=
 
 /-- TeX's printer of scaled points: the whole part and the
 fraction's decimal digits it prints. -/
-private def texScaledParts (sp : Nat) : Nat × List Nat := Id.run do
+public def texScaledParts (sp : Nat) : Nat × List Nat := Id.run do
   let mut digits : Array Nat := #[]
   let mut rem := 10 * (sp % 65536) + 5
   let mut delta := 10
@@ -94,7 +94,7 @@ private def texScaledComponent (sp : Nat) : ColorComponent :=
   else { num := digits.foldl (fun n d => n * 10 + d) whole, scale := 10 ^ digits.length }
 
 /-- TeX's rounding of a decimal fraction to scaled points. -/
-private def roundDecimals (digits : List Nat) : Nat :=
+public def roundDecimals (digits : List Nat) : Nat :=
   (digits.foldr (fun d a => (a + d * 131072) / 10) 0 + 1) / 2
 
 /-- xcolor's `\rdivide` of two scaled-point values. -/
