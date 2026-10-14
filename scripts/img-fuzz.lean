@@ -161,7 +161,8 @@ def resourcePdf (content inner : String) : ByteArray := fuzzPdf #[
   fuzzStream ("600 0 0 0 600 700 d1 " ++ inner),
   fuzzStream ("600 0 d0 " ++ inner),
   "<< /Type /OCG /Name (Off) >>",
-  "<< /Type /OCMD /OCGs [14 0 R] /P /AnyOn >>"]
+  "<< /Type /OCMD /OCGs [14 0 R] /P /AnyOn /VE [/Or [/Not 14 0 R] 16 0 R] >>",
+  "[/And 16 0 R [/Not 14 0 R]]"]
 
 /-- A page whose font is `font` (a font dictionary as spelled) and whose
 program is the bytes `program` under `key`. -/

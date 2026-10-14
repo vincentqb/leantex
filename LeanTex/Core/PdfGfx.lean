@@ -1359,33 +1359,101 @@ private def stateKey (gs : GState) : String :=
 {gs.dash}|{gs.phase}|{gs.ca.val}|{gs.cA.val}|{gs.mask.val}|{fontKey}|{gs.size}|{gs.charSpace}|{gs.wordSpace}|\
 {gs.hScale}|{gs.leading}|{gs.rise}|{gs.render}"
 
-private def ocOff (cx : Ctx) (o : Obj) : Bool :=
+mutual
+
+/-- A visibility expression's operand (§8.11.2.2): a group, on unless the configuration turns it off,
+or a nested expression, direct or by reference; unknown for anything else. -/
+private def veOperand (cx : Ctx) (e : Entered cx.doc) : Obj → Option Bool
+  | .ref n g =>
+    if cx.off.contains n then some false
+    else if h : cx.doc.lists n = true ∧ n ∉ e.list then
+      match (cx.doc.deref (.ref n g)).toOption.getD .null with
+      | .arr ⟨xs⟩ => veList cx (e.push n h.1 h.2) xs
+      | d => if d.get? "Type" == some (.name "OCG") then some true else none
+    else none
+  | .arr ⟨xs⟩ => veList cx e xs
+  | _ => none
+termination_by o => (e.room, sizeOf o)
+decreasing_by
+  all_goals simp_wf
+  · apply Prod.Lex.left
+    exact Entered.push_room_between e _ _ _
+  · apply Prod.Lex.right
+    omega
+
+/-- A visibility expression's operator and operands: `Not` over one, `And` or `Or` over one or more. -/
+private def veList (cx : Ctx) (e : Entered cx.doc) : List Obj → Option Bool
+  | [.name "Not", x] => (veOperand cx e x).map (!·)
+  | .name "And" :: x :: xs => veFold cx e true (x :: xs)
+  | .name "Or" :: x :: xs => veFold cx e false (x :: xs)
+  | _ => none
+termination_by l => (e.room, sizeOf l)
+decreasing_by
+  all_goals simp_wf
+  all_goals apply Prod.Lex.right
+  all_goals omega
+
+/-- Operands joined by `And` (`all`) or `Or`, unknown only where an unreadable operand could decide. -/
+private def veFold (cx : Ctx) (e : Entered cx.doc) (all : Bool) : List Obj → Option Bool
+  | [] => some all
+  | x :: xs =>
+    let a := veOperand cx e x
+    let b := veFold cx e all xs
+    if a == some !all || b == some !all then some !all
+    else if a.isNone || b.isNone then none
+    else some all
+termination_by l => (e.room, sizeOf l)
+decreasing_by
+  all_goals simp_wf
+  all_goals apply Prod.Lex.right
+  all_goals omega
+
+end
+
+/-- Whether a membership dictionary hides its content (§8.11.2.2), its visibility expression deciding
+in place of its groups and policy, and whether that expression is unreadable where it decides. -/
+private def ocmdOff (cx : Ctx) (d : Obj) : Bool × Bool :=
+  if d.get? "Type" != some (.name "OCMD") then (false, false) else
+  -- `OCGs` is one group's reference or an array of them (§8.11.2.2).
+  let refs : Array Nat := match d.get? "OCGs" with
+    | some (.ref m g) => match (cx.doc.deref (.ref m g)).toOption with
+      | some (.arr xs) => xs.filterMap fun x => match x with
+        | .ref k _ => some k
+        | _ => none
+      | _ => #[m]
+    | some (.arr xs) => xs.filterMap fun x => match x with
+      | .ref k _ => some k
+      | _ => none
+    | _ => #[]
+  let pol := (d.get? "P").getD (.name "AnyOn")
+  let byPolicy : Bool :=
+    if refs.isEmpty then false
+    else if pol == .name "AllOn" then refs.any cx.off.contains
+    else if pol == .name "AnyOff" then refs.all fun r => !cx.off.contains r
+    else if pol == .name "AllOff" then refs.any fun r => !cx.off.contains r
+    else refs.all cx.off.contains
+  let e : Entered cx.doc := { list := [], nodup := List.nodup_nil, listed := fun _ h => by cases h }
+  match (d.get? "VE").map cx.doc.deref with
+  | none | some (.ok .null) => (byPolicy, false)
+  | some (.ok (.arr ⟨xs⟩)) =>
+    match veList cx e xs with
+    | some on => (!on, false)
+    | none => (false, true)
+  | some _ => (byPolicy, true)
+
+/-- Whether optional content is hidden under the default configuration, a group or a membership
+dictionary deciding, and whether a visibility expression on the way is unreadable. -/
+private def ocOff (cx : Ctx) (o : Obj) : Bool × Bool :=
   match o with
   | .ref n _ =>
-    if cx.off.contains n then true else
-    match (cx.doc.deref o).toOption with
-    | some d =>
-      if d.get? "Type" == some (.name "OCMD") then
-        -- `OCGs` is one group's reference or an array of them (§8.11.2.2).
-        let refs : Array Nat := match d.get? "OCGs" with
-          | some (.ref m g) => match (cx.doc.deref (.ref m g)).toOption with
-            | some (.arr xs) => xs.filterMap fun x => match x with
-              | .ref k _ => some k
-              | _ => none
-            | _ => #[m]
-          | some (.arr xs) => xs.filterMap fun x => match x with
-            | .ref k _ => some k
-            | _ => none
-          | _ => #[]
-        let pol := (d.get? "P").getD (.name "AnyOn")
-        if refs.isEmpty then false
-        else if pol == .name "AllOn" then refs.any cx.off.contains
-        else if pol == .name "AnyOff" then refs.all fun r => !cx.off.contains r
-        else if pol == .name "AllOff" then refs.any fun r => !cx.off.contains r
-        else refs.all cx.off.contains
-      else false
-    | none => false
-  | _ => false
+    if cx.off.contains n then (true, false)
+    else ocmdOff cx ((cx.doc.deref o).toOption.getD .null)
+  | _ => ocmdOff cx o
+
+/-- Whether optional content is hidden, an unreadable visibility expression named on the way. -/
+private def St.ocHidden (cx : Ctx) (st : St) (o : Obj) : St × Bool :=
+  let r := ocOff cx o
+  ({ st with store := if r.2 then st.store.lose (.property "visibility-expression") else st.store }, r.1)
 
 private def nodesInk (nodes : Array (Node Run)) (outlines : Array (Array Subpath))
     (symbols : Array (Array (Node Run))) : Option Box :=
@@ -1769,13 +1837,14 @@ private def stepRest (cx : Ctx) (e : Entered cx.doc) (name : String) (st : St) :
   | "d0" | "d1" => st
   | "BMC" => { st with marks := st.marks.push false }
   | "BDC" =>
-    let off := match st.op 0, st.op 1 with
+    let r : St × Bool := match st.op 0, st.op 1 with
       | some (.name "OC"), some (.name prop) =>
         match resource cx "Properties" prop with
-        | some r => ocOff cx r
-        | none => false
-      | _, _ => false
-    { st with marks := st.marks.push off, hidden := if off then st.hidden + 1 else st.hidden }
+        | some o => if st.hidden > 0 then (st, (ocOff cx o).1) else st.ocHidden cx o
+        | none => (st, false)
+      | _, _ => (st, false)
+    let st := r.1
+    { st with marks := st.marks.push r.2, hidden := if r.2 then st.hidden + 1 else st.hidden }
   | "EMC" =>
     match st.marks.back? with
     | some off => { st with marks := st.marks.pop, hidden := if off then st.hidden - 1 else st.hidden }
@@ -2007,7 +2076,11 @@ private def doXObject (cx : Ctx) (e : Entered cx.doc) (xName : String) (st : St)
     match (cx.doc.stream (.ref xn 0)).toOption.getD none with
     | none => { st with store := st.store.lose (.resource "xobject-unresolved") }
     | some (dict, raw) =>
-      if (dict.get? "OC").any (ocOff cx) then st else
+      let r : St × Bool := match dict.get? "OC" with
+        | some o => st.ocHidden cx o
+        | none => (st, false)
+      let st := r.1
+      if r.2 then st else
       match dict.get? "Subtype" with
       | some (.name "Image") =>
         let isMask := dict.get? "ImageMask" == some (.bool true)
@@ -2304,18 +2377,26 @@ public theorem words_exact (cx : Ctx) (e : Entered cx.doc) (s : ByteArray) (st :
       exact ⟨h1, h2⟩
     · simp
 
+/-- The groups the default configuration turns off (§8.11.4.3): those its `OFF` lists, and under a
+base state of `OFF` every group the document lists but those its `ON` lists. -/
 private def offGroups (doc : Doc) : Array Nat :=
+  let refs (o : Option Obj) : Array Nat := match o with
+    | some (.arr xs) => xs.filterMap fun x => match x with
+      | .ref n _ => some n
+      | _ => none
+    | _ => #[]
+  let field (o : Obj) (k : String) : Option Obj := (doc.field o k).toOption.getD none
   match (doc.get doc.root).toOption with
   | some (cat, _) =>
-    match (doc.field cat "OCProperties").toOption.getD none with
+    match field cat "OCProperties" with
     | some ocp =>
-      match (doc.field ocp "D").toOption.getD none with
+      match field ocp "D" with
       | some dflt =>
-        match (doc.field dflt "OFF").toOption.getD none with
-        | some (.arr xs) => xs.filterMap fun x => match x with
-          | .ref n _ => some n
-          | _ => none
-        | _ => #[]
+        let off := refs (field dflt "OFF")
+        if field dflt "BaseState" == some (.name "OFF") then
+          let on := refs (field dflt "ON")
+          (refs (field ocp "OCGs")).filter (fun n => !on.contains n) ++ off
+        else off
       | none => #[]
     | none => #[]
   | none => #[]
