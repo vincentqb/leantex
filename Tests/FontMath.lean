@@ -37,7 +37,7 @@ def weightAxisChecks (ref : IO.Ref (List String)) : IO Unit := do
     (Ir.Weight.ofCss 500 == .m)
 
 /-- The font diagnostics: a missing family suggests its neighbours instead of
-dumping a thousand names, and `families` is linear in the face count. -/
+dumping a thousand names, and `families` names each family once. -/
 def fontDiagChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let fams := #["Nimbus Sans L", "Nimbus Mono", "Latin Modern Roman", "Arial",
@@ -57,7 +57,7 @@ def fontDiagChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- Consumed before the clock is read again: a pure `let` floats to its first use.
   t "families dedupes" (fams'.size == 1000)
   let ms := (← IO.monoMsNow) - t0
-  t s!"families is linear ({ms} ms for {many.size} faces)" (ms < 200)
+  t s!"hang guard: families of {many.size} faces within {hangGuardMs 5} ms" (ms < hangGuardMs 5)
   let light : FontDb.Face := { synthFace "Alpha Sans" "/x/as-l.otf" with
     subfamily := "Light", weight := 300 }
   let lightIt : FontDb.Face := { light with

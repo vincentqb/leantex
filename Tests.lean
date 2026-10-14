@@ -410,7 +410,7 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   Tests.overwritePlanChecks ref
   Tests.publicationInputChecks ref
   Tests.outputNameChecks ref
-  anchorCostChecks ref
+  anchorIdChecks ref
   htmlTokenClosureChecks ref
   htmlRoleClosureChecks ref
   htmlSourcedGapChecks ref

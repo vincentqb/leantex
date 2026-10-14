@@ -3815,9 +3815,8 @@ def htmlAssetChecks (ref : IO.Ref (List String)) : IO Unit := do
        assetDirs.isEmpty)
     IO.FS.removeDirAll dir
 
-/-- Assigned anchor ids are unique, numbered by the documented ladder, and cost their count rather
-than its cube. -/
-def anchorCostChecks (ref : IO.Ref (List String)) : IO Unit := do
+/-- Assigned anchor ids are unique and numbered by the documented ladder. -/
+def anchorIdChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let pageOf (body : String) : String × Array Diag :=
     HtmlDoc.emit {} (elabStr ("\\documentclass{article}\\begin{document}" ++
@@ -3846,5 +3845,5 @@ def anchorCostChecks (ref : IO.Ref (List String)) : IO Unit := do
   t s!"all {n} same-titled sections ship an anchor"
     (hasStr big s!"id=\"topic-{n}\"" && hasStr big "id=\"topic\"")
   let sharedMs := (← IO.monoMsNow) - t0
-  t s!"anchor claiming is not cubic in same-slug sections ({sharedMs} ms for {n})"
-    (sharedMs < 1500)
+  t s!"hang guard: {n} same-titled sections claim their anchors within {hangGuardMs 250} ms"
+    (sharedMs < hangGuardMs 250)

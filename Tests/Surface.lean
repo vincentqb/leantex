@@ -7372,8 +7372,7 @@ def toolProbeChecks (ref : IO.Ref (List String)) : IO Unit := do
 
 
 
-/-- The keyed index answers exactly what the scan answers, and a document's growing store costs its
-size, not its square. -/
+/-- The keyed index answers exactly what the scan answers. -/
 def keyedLookupChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   -- A duplicate key reads first-wins, which makes the index and `find?` the same question.
@@ -7402,7 +7401,6 @@ def keyedLookupChecks (ref : IO.Ref (List String)) : IO Unit := do
   let many := refTexts 3000
   t "three thousand references against three thousand labels all resolve"
     (many.size == 3000 && !many.contains "??" && many[2999]? == some "3000")
-  -- The cost witness: 50,000 labels against 50,000 float rows, where the lookup is the whole measurement.
   let n := 50000
   let labels : Ir.RefTable := ((List.range n).map fun i => (s!"k{i}", none)).toArray
   let rows : Ir.RefTable := ((List.range n).map fun i =>
@@ -7414,8 +7412,8 @@ def keyedLookupChecks (ref : IO.Ref (List String)) : IO Unit := do
     (merged.size == n && merged[7]? == some ("k7", some { num := "7", kind := some .figure })
       && merged[n - 1]? == some (s!"k{n - 1}", some { num := toString (n - 1), kind := some .figure }))
   let mergeMs := (← IO.monoMsNow) - t0
-  t s!"the float merge is linear in the table ({mergeMs} ms for {n} labels x {n} rows)"
-    (mergeMs < 800)
+  t s!"hang guard: the float merge of {n} labels and {n} rows within {hangGuardMs 50} ms"
+    (mergeMs < hangGuardMs 50)
   let dup := (elabStr ("\\documentclass{article}\\begin{document}" ++
     "\\section{A}\\label{k}\\section{B}\\label{k}\\end{document}")).2
   t "a redeclared label key is still refused once"

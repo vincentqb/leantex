@@ -1,11 +1,15 @@
 import Lean.Data.Json
 import LeanTex.Cli.ConvCache
+import LeanTex.Core.Contrast
+import LeanTex.Core.Elab
+import LeanTex.Core.FontDb
+import LeanTex.Core.HtmlDoc
 import LeanTex.Core.Image
 
 /-
 Benchmark leantex against lualatex on the bench corpus, median of `N` runs (default 5), or the
 measurement a flag selects; never a gate. `LEANTEX_BENCH_BINARY` names a saved compiler.
-Usage: lake build && lake env lean --run scripts/bench.lean [--boundary-only | --concurrency-only | --slides-only | --slides-compressed-only | --slides-selftest | --decode-only | --listings-only | --bib-only | --svg-only | --pdf-pages-only <f.pdf> | --faces-only <f.pdf>... | --doc-cost [--record] [--history <path>]]
+Usage: lake build && lake env lean --run scripts/bench.lean [--boundary-only | --concurrency-only | --slides-only | --slides-compressed-only | --slides-selftest | --decode-only | --listings-only | --bib-only | --passes-only | --svg-only | --pdf-pages-only <f.pdf> | --faces-only <f.pdf>... | --doc-cost [--record] [--history <path>]]
 -/
 
 def compiler : IO String := do
@@ -941,13 +945,13 @@ def run (n : Nat) (compressed : Bool := false) : IO Unit := do
 
 end Slides
 
-/-- Four times the input may cost at most eight times the phase (linear 4, quadratic
-16). -/
-def growthBound (label : String) (small big : Nat) : IO Unit := do
+/-- Four times the input may cost at most `bound` times the phase (linear 4, quadratic 16,
+cubic 64). -/
+def growthBound (label : String) (small big : Nat) (bound : Nat := 8) : IO Unit := do
   let ratio := (big * 10 + max small 1 / 2) / max small 1
-  IO.println s!"{padRight s!"leantex  growth, {label}" 42} {padLeft s!"{ratio / 10}.{ratio % 10}" 6} ×  (bound 8.0)"
-  if big > 8 * max small 1 then
-    die s!"{label}: the phase grew {ratio / 10}.{ratio % 10}× for 4× the input (bound 8)"
+  IO.println s!"{padRight s!"leantex  growth, {label}" 42} {padLeft s!"{ratio / 10}.{ratio % 10}" 6} ×  (bound {bound}.0)"
+  if big > bound * max small 1 then
+    die s!"{label}: the phase grew {ratio / 10}.{ratio % 10}× for 4× the input (bound {bound})"
 
 /-- A listing's lexing and setting are linear in its length, in lines and within a
 line. -/
@@ -993,6 +997,98 @@ def benchBibGrowth (n : Nat) : IO Unit := do
     IO.println s!"{padRight s!"leantex  bib growth, {label}, {4 * size} / {size}" 42} {padLeft s!"{ratio / 10}.{ratio % 10}" 6} ×  (bound 8.0)"
     if big > 8 * max small 1 then
       die s!"the reference-list phase ({label}) grew {ratio / 10}.{ratio % 10}× for 4× the entries (bound 8)"
+
+/-- The median milliseconds of `n` runs of an in-process pass, its answer checked before the clock
+is read again. -/
+def passMs (n : Nat) (label : String) (pass : Unit → Bool) : IO Nat := do
+  let mut times : Array Nat := #[]
+  for _ in [0:n] do
+    let t0 ← IO.monoMsNow
+    let right ← IO.lazyPure pass
+    unless right do die s!"{label}: the pass answered wrongly"
+    times := times.push ((← IO.monoMsNow) - t0)
+  let m := median times
+  IO.println s!"{padRight s!"leantex  {label}" 42} {padLeft (toString m) 6} ms (median of {n})"
+  return m
+
+open LeanTex.Core in
+/-- An article of `n` sections all titled alike. -/
+def sameTitled (n : Nat) : Ir.Doc :=
+  (Elab.run "t" ("\\documentclass{article}\\begin{document}" ++
+    String.join (List.replicate n "\\section{Topic}") ++ "\\end{document}")).1
+
+open LeanTex.Core in
+/-- An invented palette entry coloured over `n` paragraphs, one run each. -/
+def colouredRuns (n : Nat) (name : String) (c : Ir.Color) : Ir.Doc :=
+  { palette := { entries := #[((.color name), c)] }
+    body := (List.range n).toArray.map fun i =>
+      Ir.Block.para #[.colored c (some (.color name)) #[.text s!"w{i}"]] }
+
+open LeanTex.Core in
+/-- Passes at a size and four times it, judged by growth: same-titled sections' anchors, each probing
+the ids before it and so bounded as not cubic, font families, the float merge and the contrast judge. -/
+def benchPassGrowth (n : Nat) : IO Unit := do
+  let mut anchors : Array Nat := #[]
+  for s in [600, 2400] do
+    let doc := sameTitled s
+    if doc.body.isEmpty then die "the same-titled article elaborated to nothing"
+    anchors := anchors.push (← passMs n s!"anchors, {s} same-titled" fun _ =>
+      ((HtmlDoc.emit {} doc).1.splitOn s!"id=\"topic-{s}\"").length == 2)
+  growthBound "anchors, 2400 / 600" (anchors[0]?.getD 0) (anchors[1]?.getD 0) 32
+  let mut fams : Array Nat := #[]
+  for s in [3000, 12000] do
+    let faces : Array FontDb.Face := (List.range s).toArray.map fun i =>
+      { path := s!"/x/{i}.otf", family := s!"Family {i / 3}", subfamily := "Regular"
+        bold := false, italic := false, fixedPitch := false, weight := 400 }
+    fams := fams.push (← passMs n s!"families, {s} faces" fun _ =>
+      (FontDb.families faces).size == s / 3)
+  growthBound "families, 12000 / 3000" (fams[0]?.getD 0) (fams[1]?.getD 0)
+  let mut merges : Array Nat := #[]
+  for s in [50000, 200000] do
+    let labels : Ir.RefTable := ((List.range s).map fun i => (s!"k{i}", none)).toArray
+    let rows : Ir.RefTable := ((List.range s).map fun i =>
+      (s!"k{i}", some ({ num := toString i, kind := some .figure } : Ir.RefBinding))).toArray
+    merges := merges.push (← passMs n s!"float merge, {s} keys" fun _ =>
+      let merged := Ir.withFloatRows labels rows
+      merged.size == s && match merged.back? with
+        | some (_, some b) => b.num == toString (s - 1)
+        | _ => false)
+  growthBound "merge, 200000 / 50000" (merges[0]?.getD 0) (merges[1]?.getD 0)
+  let mut legible : Array Nat := #[]
+  for s in [10000, 40000] do
+    let doc := colouredRuns s "dk" { r := 0x10, g := 0x10, b := 0x10 }
+    legible := legible.push (← passMs n s!"contrast, {s} legible runs" fun _ =>
+      (Contrast.docDiags doc).isEmpty)
+  growthBound "contrast, 40000 / 10000" (legible[0]?.getD 0) (legible[1]?.getD 0)
+  let mut failing : Array Nat := #[]
+  for s in [3000, 12000] do
+    let doc := colouredRuns s "washed" { r := 0x88, g := 0x88, b := 0x88 }
+    failing := failing.push (← passMs n s!"contrast, {s} failing uses"
+      fun _ => ((Contrast.docDiags doc).filter (·.severity == .warning)).size == 1)
+  growthBound "failing, 12000 / 3000" (failing[0]?.getD 0) (failing[1]?.getD 0)
+
+open LeanTex.Core in
+/-- A glyph's ink is decoded once and then read from its memo: a read costs at most a tenth of a
+decode. -/
+def benchGlyphInk (n : Nat) : IO Unit := do
+  let .ok font := Font.parse (← IO.FS.readBinFile "testdata/corpus/fonts/OpenSans-Regular.ttf")
+    | die "OpenSans-Regular.ttf does not parse"
+  let g := (font.gid 'q').getD 0
+  let (pos, thick) := font.band
+  let decodes ← passMs n "glyph ink, 1000 decodes" fun _ => Id.run do
+    let mut k := 0
+    for _ in [0:1000] do
+      k := k + ((font.inkSrc.get.inkAt g (pos - thick) pos).map (·.size)).getD 0
+    return k == 1000
+  let reads ← passMs n "glyph ink, 100000 memo reads" fun _ => Id.run do
+    let mut k := 0
+    for _ in [0:100000] do
+      k := k + (font.inkAt g).size
+    return k == 100000
+  let ratio := decodes * 100 / max reads 1
+  IO.println s!"{padRight "leantex  glyph ink, decode / memo read" 42} {padLeft (toString ratio) 6} ×  (bound 10)"
+  if reads > 10 * decodes then
+    die s!"glyph ink: a decode costs {ratio}× a memoized read (bound 10)"
 
 /-- Every page of a PDF embedded, one build per page, warm: the images phase's median of
 `n`. -/
@@ -1079,6 +1175,10 @@ def main (args : List String) : IO UInt32 := do
   if args == ["--bib-only"] then
     benchBibGrowth n
     return 0
+  if args == ["--passes-only"] then
+    benchPassGrowth n
+    benchGlyphInk n
+    return 0
   if args == ["--slides-only"] then
     Slides.run n
     return 0
@@ -1149,4 +1249,6 @@ def main (args : List String) : IO UInt32 := do
   benchListings n 8
   listingGrowth n
   benchBibGrowth n
+  benchPassGrowth n
+  benchGlyphInk n
   return 0

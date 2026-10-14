@@ -1308,14 +1308,14 @@ def underlineChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   let cedInk := font.inkAt (gidOf 'ç')
   t "composite ç ink is the cedilla, not the advance"
     (cedInk.size == 1 && cedInk.all fun (lo, hi) => lo > 0 && hi < cedAdv)
-  -- 100k memoized reads stay far under 100k fresh decodes (tens of µs each).
   let t0 ← IO.monoMsNow
   let mut inkReads := 0
   for _ in [0:100000] do
     inkReads := inkReads + (font.inkAt (gidOf 'q')).size
   let inkMs := (← IO.monoMsNow) - t0
-  t s!"repeated glyph ink is memoized ({inkMs} ms for {inkReads} reads)"
-    (inkReads == 100000 && inkMs < 500)
+  t "100000 repeated glyph ink reads each read the glyph's one interval" (inkReads == 100000)
+  t s!"hang guard: 100000 repeated glyph ink reads within {hangGuardMs 5} ms"
+    (inkMs < hangGuardMs 5)
   let outOf (fs : Font.FontSet) (src : String) : Layout.Out :=
     layoutOf fs (Elab.run "t" src).1 geom
   let rulesOf (fs : Font.FontSet) (src : String) : Array (Dim.Sp × Dim.Sp) :=

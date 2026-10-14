@@ -5,6 +5,7 @@ import Tests.DeclaredColors
 import Tests.ColorNames
 import LeanTex.Core.ControlContract
 import Tests.Surface
+import Tests.Backends
 import Tests.Regress
 import Tests.Census
 import Tests.Conditionals
@@ -1571,7 +1572,14 @@ def reports : List Report := [
     pins := [check% hashCommandChecks]
     accept := ["the guard's twenty-eight assertions fail at 1d0b4eae before the fix: in both styles and both artifacts, every command and `#print`'s word in the ink at regular weight, and `#exit` in the ink; an array's `#[` and the names keep the ink before and after",
       "a presentation deck's Lean listings built by this tree and by its parent: only the pages holding `#` command lines change, each command and a `#print` form's word set bold in the keyword colour in the PDF and in the keyword colour and weight `def` takes in HTML, and no other HTML markup changes"]
-    state := .guarded "1d0b4eae" .before .author }
+    state := .guarded "1d0b4eae" .before .author },
+  { id := "R177", date := "2026-10-14"
+    what := "six of the suite's checks held a pass's wall-clock time to a fixed bound to claim it linear, not cubic or memoized, so a stalled host failed them and with them a commit, where no such bound measures the growth it names"
+    pins := [check% anchorIdChecks, check% fontDiagChecks, check% keyedLookupChecks,
+      check% contrastChecks, check% underlineChecks]
+    accept := ["with the checks' process held stopped six seconds of every 6.1, the checks as 8127ac12 wrote them fail: in three rounds the anchor claim three times at about 12,250 ms against 1,500, the contrast judge twice and the float merge and the failing pairing once each at about 6,050 ms against 1,500, 800 and 400; with the stall's phase drawn at random, the families check nine times in 240 runs at about 6,030 ms against 200, and the glyph ink check once in 300 runs stopped 0.6 s of every 0.61, at 606 ms against 500; the hang guards replacing them pass in every run",
+      "the claims stand as bench rows judged by their growth over four times the input: anchors 12.9 against a bound of 32, since each claim probes the ids before it, families 4.3, the float merge 4.0, the contrast judge 4.0 over legible runs and over one failing pairing, and a glyph ink decode costs 1,108 memoized reads"]
+    state := .guarded "8127ac12" .before .author }
 ]
 
 /-- The reports guarded but never seen failing, a count held in both directions. -/
