@@ -4006,6 +4006,19 @@ def listIndentChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
     "Alpha words.\n\\begin{quote}\nBravo words.\n\\end{quote}\nCharlie."
   t "a declared leftmargini reaches a quotation, as every level-one list reads it"
     (xs declQuote ["Bravo"] == [some (Dim.pt 30)])
+  let tabled (body : String) := doc "{article}" "\\setlength{\\leftmargini}{30pt}\n"
+    ("Alpha words.\n" ++ body)
+  let table := "\n\\begin{tabular}{ll}\na & b \\\\\n\\end{tabular}\n"
+  let listed := tabled ("\\begin{itemize}\n\\item Bravo words.\n" ++ table ++ "\\end{itemize}\n")
+  let quoted := tabled ("\\begin{quote}\nBravo words.\n" ++ table ++ "\\end{quote}\n")
+  let measured (src : String) (inset : Dim.Sp) : Bool :=
+    let d := (elabStr src).1
+    let w := (Layout.Geom.ofPage d.page).textWidth - inset
+    hasStr (HtmlDoc.emit { tableFit := fun avail _ _ _ _ _ => (none, avail == w) } d).1 "bt-overhang"
+  t "the HTML measures a table in a list or a quotation off the margin its page stands them at"
+    (match xs listed ["Bravo"], xs quoted ["Bravo"] with
+     | [some l], [some q] => l == Dim.pt 30 && measured listed l && measured quoted (2 * q)
+     | _, _ => false)
   let sheet (cls : String) : String :=
     (HtmlDoc.emit {} (elabStr (doc cls "" "x")).1).1
   let lv := ":is(li, dd, blockquote) "
@@ -4022,7 +4035,20 @@ def listIndentChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
     (hasStr (sheet "{beamer}") "ul, ol, dd { padding-left: var(--leftmargini, 2em); }" &&
      hasStr (sheet "{beamer}") s!"{lv}ul, {lv}ol, {lv}dd \{ padding-left: var(--leftmarginii, 2em); }")
   t "html a webpage's lists keep the engine's one indent"
-    (hasStr (sheet "{webpage}") "ul, ol, dd { padding-left: var(--leftmargini, 1.35rem); }")
+    (hasStr (sheet "{webpage}") "ul, ol, dd { padding-left: var(--leftmargini, 1.5em); }")
+  let deck := "\\begin{frame}[t]\n" ++ nest ++ "\n\\end{frame}"
+  t "each lineage's sheet hangs every list level where its page stands it"
+    ([("{article}", nest), ("{webpage}", nest), ("{beamer}", deck)].all fun (cls, body) =>
+      let src := doc cls "" body
+      let size := (elabStr src).1.page.fontSize
+      let sheet := (HtmlDoc.emit {} (elabStr src).1).1
+      let pads := (List.range 4).map fun k =>
+        (sheet.splitOn s!"padding-left: var(--{Ir.leftMarginName (k + 1)}, ")[1]?.bind fun rest =>
+          (rest.splitOn ")")[0]?.bind cssEmMilli
+      let depths := (List.range 4).map fun k =>
+        (pads.take (k + 1)).foldl (fun d m => d.bind fun d => m.map (d + size * · / 1000)) (some 0)
+      let placed := xs src (if cls == "{beamer}" then levels.take 2 else levels)
+      placed == depths.take placed.length)
 
 /-- A list right after a heading opens no `\topsep`: its first item stands where a paragraph after
 the heading stands. -/

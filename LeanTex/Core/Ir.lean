@@ -1025,20 +1025,15 @@ public theorem thmSkips_exact :
     thmSkips .web (Dim.pt 10) 1 {} .ams true = none := by
   decide
 
-/-- A list level's `\leftmargin⟨n⟩` in thousandths of an em of the class base. -/
-public def leftMarginMilli : ListLineage → Nat → Option Nat
-  | .sizeFile, 1 => some 2500
-  | .sizeFile, 2 => some 2200
-  | .sizeFile, 3 => some 1870
-  | .sizeFile, 4 => some 1700
-  | .sizeFile, _ => some 1000
-  | .beamer, _ => some 2000
-  | .web, _ => none
-
-/-- A list level's `\leftmargin`: the lineage's stack at the body size and
-nesting level, where the lineage declares one. -/
-public def leftMargin (l : ListLineage) (size : Sp) (level : Nat) : Option Sp :=
-  (leftMarginMilli l (max level 1)).map fun m => size * (m : Int) / 1000
+/-- A list level's `\leftmargin⟨n⟩` in thousandths of an em, the web's 1.5 em at every level. -/
+public def leftMarginMilli : ListLineage → Nat → Nat
+  | .sizeFile, 1 => 2500
+  | .sizeFile, 2 => 2200
+  | .sizeFile, 3 => 1870
+  | .sizeFile, 4 => 1700
+  | .sizeFile, _ => 1000
+  | .beamer, _ => 2000
+  | .web, _ => 1500
 
 /-- The length a level's margin is declared in: `\leftmargini` to
 `\leftmarginvi`, a deeper level reading the sixth. -/
@@ -1046,14 +1041,11 @@ public def leftMarginName (level : Nat) : String :=
   "leftmargin" ++ (match min (max level 1) 6 with
     | 1 => "i" | 2 => "ii" | 3 => "iii" | 4 => "iv" | 5 => "v" | _ => "vi")
 
-public theorem leftMargin_exact :
-    leftMargin .sizeFile (Dim.pt 10) 1 = some (Dim.pt 25) ∧
-    leftMargin .sizeFile (Dim.pt 10) 2 = some (Dim.pt 22) ∧
-    leftMargin .sizeFile (Dim.pt 10) 3 = some (Dim.pt 187 / 10) ∧
-    leftMargin .sizeFile (Dim.pt 10) 4 = some (Dim.pt 17) ∧
-    leftMargin .beamer (Dim.pt 10) 3 = some (Dim.pt 20) ∧
-    leftMargin .web (Dim.pt 10) 1 = none := by
-  decide
+/-- A list or quotation level's `\leftmargin⟨n⟩`: the document's declared length, else the
+lineage's ems. -/
+public def leftMarginFor (l : ListLineage) (tokens : Tokens) (level : Nat) : SymGlue :=
+  (tokens.find? (leftMarginName level)).getD
+    { width := { em := (leftMarginMilli l (max level 1) : Int) } }
 
 /-- The heading's default space above: one full rhythm unit, a token of its
 own rather than a multiple of the parskip. -/

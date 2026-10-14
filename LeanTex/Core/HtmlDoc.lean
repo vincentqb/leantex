@@ -145,12 +145,12 @@ public def Config.measureValues (cfg : Config) : MeasureValues :=
   cfg.measures.getD (MeasureValues.horizontal
     (cfg.page.width - 2 * cfg.page.hmargin) (cfg.page.height - 2 * cfg.page.vmargin))
 
-/-- One list or quotation level deeper: the lineage's left margin, else the page's own 1.5 em
-(`Layout.listIndentFor`), off the measure's start, and for a quotation off its end; a declared
-`\leftmargin⟨n⟩` is not read. -/
+/-- One list or quotation level deeper: the level's left margin (`Ir.leftMarginFor`) at the body
+size off the measure's start, and for a quotation off its end. -/
 public def Config.deeper (cfg : Config) (both : Bool) : Config :=
   let lv := cfg.listDepth + 1
-  let lm := (Ir.leftMargin cfg.lists cfg.page.fontSize lv).getD (cfg.page.fontSize * 3 / 2)
+  let lm := ((Ir.leftMarginFor cfg.lists cfg.tokens lv).resolve cfg.page.fontSize
+    (cfg.page.fontSize / 2)).width
   { cfg with listDepth := lv, inset := cfg.inset + (if both then 2 * lm else lm) }
 
 /-- Enter a box of the given width, at list depth zero. -/
@@ -994,9 +994,7 @@ their length. -/
 public def listIndentCss (l : Ir.ListLineage) : String :=
   String.join ((List.range 6).map fun k =>
     let pre := String.join (List.replicate k itemAncestor)
-    let v := s!"var(--{Ir.leftMarginName (k + 1)}, " ++ (match Ir.leftMarginMilli l (k + 1) with
-      | some m => s!"{decMilli m}em"
-      | none => "1.35rem") ++ ")"
+    let v := s!"var(--{Ir.leftMarginName (k + 1)}, {cssLength (Ir.leftMarginFor l {} (k + 1)).width})"
     s!"{pre}ul, {pre}ol, {pre}dd \{ padding-left: {v}; }\n{pre}blockquote \{ padding: 0 {v}; }\n")
 
 /-- The space rules of theorem-like blocks, on the element their role's class marks. -/

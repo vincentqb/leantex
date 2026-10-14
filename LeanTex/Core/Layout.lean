@@ -24,10 +24,6 @@ namespace LeanTex.Core.Layout
 
 open LeanTex.Core LeanTex.Core.Dim LeanTex.Core.Font LeanTex.Core.Ir
 
-/-- The per-level list indent: 1.5 em of the base size,
-as classes.dtx sets its leftmargin stack in ems. -/
-public def listIndentFor (base : Sp) : Sp := base * 3 / 2
-
 public def frameBodySkip (hasTitle : Bool) (valign : VAlign) (size : Sp) : Sp :=
   (Ir.frameBodySkip hasTitle valign).resolve size 0
 
@@ -47,8 +43,6 @@ public structure Geom where
   /-- The `\parskip` TeX adds after a trivlist's `\topsep`: the
   declared parskip, else the standard classes' `0pt plus 1pt`. -/
   texParskip : SymGlue := Ir.texParskipDefault
-  /-- The list indent of a lineage whose class declares no `\leftmargin` stack. -/
-  listIndent : Sp := listIndentFor Ir.baseFontSize
   leading : Nat := 1000
   hyphenate : Bool := true
   justify : Bool := true
@@ -769,7 +763,6 @@ public def Geom.ofPage (spec : Ir.PageSpec) (base : Geom := {}) : Geom :=
     hmargin := spec.hmargin
     vmargin := spec.vmargin
     fontSize := spec.fontSize
-    listIndent := listIndentFor spec.fontSize
     leading := spec.leading
     parskip := spec.parskip.getD (Ir.parskipDefault spec.fontSize)
     texParskip := spec.parskip.getD base.texParskip
@@ -9272,12 +9265,9 @@ private def Spacing.Pending.openHidden (a : Acc) : Acc := { a with ops := a.ops.
 
 private def Spacing.Pending.closeHidden (a : Acc) : Acc := { a with ops := a.ops.push .regionClose }
 
-/-- A list level's `\leftmargin` at `\@listdepth` `lv`: the
-document's own, else the class's, else the engine's indent. -/
+/-- A list level's `\leftmargin` at `\@listdepth` `lv` (`Ir.leftMarginFor`), at the type in force. -/
 private def Spacing.Context.leftMargin (r : Rd) (lv : Nat) (tokens : Ir.Tokens) : Sp :=
-  match tokens.find? (Ir.leftMarginName lv) with
-  | some g => (r.resolve g).width
-  | none => (Ir.leftMargin r.lists r.geom.fontSize lv).getD r.geom.listIndent
+  (r.resolve (Ir.leftMarginFor r.lists tokens lv)).width
 
 /-- The next line is a peer of the last: the default gap, unless something
 is declared. -/

@@ -305,7 +305,7 @@ def fitStepChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
       " |\n  |---|---|---|---|\n  | " ++ " | ".intercalate cells ++ " |\n"
     let (kdoc, _) := elabMd table
     let kout := layoutOf fonts kdoc
-    let lm := (Ir.leftMargin kdoc.docClass.record.lists kdoc.page.fontSize 1).getD 0
+    let lm := ((Ir.leftMarginFor kdoc.docClass.record.lists kdoc.tokens 1).width.resolve kdoc.page.fontSize 0)
     let kfit := (tableOf? kdoc).map fun (cols, padL, padR, rows, spans) =>
       fitsIn kdoc ((Layout.Geom.ofPage kdoc.page).textWidth - lm) cols padL padR rows spans
     let kright := kdoc.page.width - kdoc.page.hmargin
@@ -329,7 +329,7 @@ the sorter reads every gadget it is handed |\n"
     let nested := "\n".intercalate (((src "sorter").splitOn "\n").filter (!·.isEmpty) |>.map wrap) ++ "\n"
     let (ndoc, _) := elabMd nested
     let nout := layoutOf fonts ndoc
-    let lm := (Ir.leftMargin ndoc.docClass.record.lists ndoc.page.fontSize 1).getD 0
+    let lm := ((Ir.leftMarginFor ndoc.docClass.record.lists ndoc.tokens 1).width.resolve ndoc.page.fontSize 0)
     let avail := (Layout.Geom.ofPage ndoc.page).textWidth - inset * lm
     let nfit := (tableOf? ndoc).map fun (cols, padL, padR, rows, spans) =>
       fitsIn ndoc avail cols padL padR rows spans
