@@ -612,41 +612,41 @@ def overlayVisibleChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
      ("inside a block", ("\\begin{block}{Block title}Lead \\CMD<2>{Hidden} tail words.\\end{block}",
        "\\begin{block}{Block title}Lead Hidden tail words.\\end{block}"), segs, 2, [1])]
   for (faces, fonts) in faceSets do
-  for (label, (body, bare), region, steps, hiddenAt) in cases do
-    let label := "visible, " ++ label ++ faces
-    let doc (b : String) : String := if b.startsWith "\\documentclass" then b else deck169Frame b
-    let spell (cmd : String) : String := doc (("\\" ++ cmd).intercalate (body.splitOn "\\CMD"))
-    let vis := (fittedOf fonts (elabStr (spell "visible")).1).out
-    let plus := (fittedOf fonts (elabStr (spell "onslide+")).1).out
-    let shown := (fittedOf fonts (elabStr (doc bare)).1).out
-    t (label ++ ": one page per step") (vis.pages.size == steps)
-    t (label ++ ": onslide+ ships visible's pages")
-      (plus.pages.map pageMarks == vis.pages.map pageMarks &&
-        plus.pages.map (·.links) == vis.pages.map (·.links))
-    for k in [1:vis.pages.size + 1] do
-      let idx := if shown.pages.size == vis.pages.size then k - 1 else 0
-      match vis.pages[k - 1]?, shown.pages[idx]? with
-      | some h, some s =>
-        if hiddenAt.contains k then
-          let band := regionBand s region
-          let mask := regionMask s region
-          t (label ++ s!": step {k}'s argument inks the page showing it") (regionInks s region)
-          t (label ++ s!": step {k} stands every line where the page showing the argument does, " ++
-              "the argument's ink a gap as wide")
-            (h.lines.size == s.lines.size &&
-              (h.lines.zip s.lines).zipIdx.all fun ((hl, sl), i) =>
-                lineHides hl sl (mask[i]?.getD #[]))
-          t (label ++ s!": step {k} ships that page's fills outside the argument and none inside")
-            (h.fills.map reprStr == (s.fills.filter (!fillIn band ·)).map reprStr)
-          t (label ++ s!": step {k} ships that page's pictures outside the argument and none inside")
-            (h.inks.map inkMark == (s.inks.filter (!inkIn band ·)).map inkMark)
-          t (label ++ s!": step {k} ships that page's links outside the argument and none inside")
-            (h.links == s.links.filter (!linkIn band ·))
-        else
-          t (label ++ s!": step {k} is the page showing the argument")
-            (pageMarks h == pageMarks s && h.inks.map inkMark == s.inks.map inkMark &&
-              h.links == s.links)
-      | _, _ => t (label ++ s!": step {k} ships") false
+    for (label, (body, bare), region, steps, hiddenAt) in cases do
+      let label := "visible, " ++ label ++ faces
+      let doc (b : String) : String := if b.startsWith "\\documentclass" then b else deck169Frame b
+      let spell (cmd : String) : String := doc (("\\" ++ cmd).intercalate (body.splitOn "\\CMD"))
+      let vis := (fittedOf fonts (elabStr (spell "visible")).1).out
+      let plus := (fittedOf fonts (elabStr (spell "onslide+")).1).out
+      let shown := (fittedOf fonts (elabStr (doc bare)).1).out
+      t (label ++ ": one page per step") (vis.pages.size == steps)
+      t (label ++ ": onslide+ ships visible's pages")
+        (plus.pages.map pageMarks == vis.pages.map pageMarks &&
+          plus.pages.map (·.links) == vis.pages.map (·.links))
+      for k in [1:vis.pages.size + 1] do
+        let idx := if shown.pages.size == vis.pages.size then k - 1 else 0
+        match vis.pages[k - 1]?, shown.pages[idx]? with
+        | some h, some s =>
+          if hiddenAt.contains k then
+            let band := regionBand s region
+            let mask := regionMask s region
+            t (label ++ s!": step {k}'s argument inks the page showing it") (regionInks s region)
+            t (label ++ s!": step {k} stands every line where the page showing the argument does, " ++
+                "the argument's ink a gap as wide")
+              (h.lines.size == s.lines.size &&
+                (h.lines.zip s.lines).zipIdx.all fun ((hl, sl), i) =>
+                  lineHides hl sl (mask[i]?.getD #[]))
+            t (label ++ s!": step {k} ships that page's fills outside the argument and none inside")
+              (h.fills.map reprStr == (s.fills.filter (!fillIn band ·)).map reprStr)
+            t (label ++ s!": step {k} ships that page's pictures outside the argument and none inside")
+              (h.inks.map inkMark == (s.inks.filter (!inkIn band ·)).map inkMark)
+            t (label ++ s!": step {k} ships that page's links outside the argument and none inside")
+              (h.links == s.links.filter (!linkIn band ·))
+          else
+            t (label ++ s!": step {k} is the page showing the argument")
+              (pageMarks h == pageMarks s && h.inks.map inkMark == s.inks.map inkMark &&
+                h.links == s.links)
+        | _, _ => t (label ++ s!": step {k} ships") false
   -- Outside a frame no step is set, so the argument shows, as beamer's article mode sets it.
   let body := "Lead \\CMD<2>{shown phrase} tail words.\n\n\\CMD<2>{A whole paragraph.}\n\nClosing words."
   let bare := "Lead shown phrase tail words.\n\nA whole paragraph.\n\nClosing words."
