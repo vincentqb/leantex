@@ -1294,7 +1294,7 @@ def glyphX (l : Layout.LineOut) (wanted : Char) : Option Dim.Sp := Id.run do
         pen := pen + advance
       x := x + w
     | .gap w _ | .decoratedGap w _ _ | .decoration _ w _ _ _
-    | .rule w _ _ _ | .image _ w _ => x := x + w
+    | .rule w _ _ _ | .image _ w _ _ => x := x + w
     | .poly _ _ => pure ()
   return none
 
