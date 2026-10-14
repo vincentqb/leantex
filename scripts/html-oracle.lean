@@ -1,7 +1,7 @@
 /-
 HTML artifact oracle: every corpus page probed in the host's cached Playwright Chromium, one
 cell per feature and fixture × reader in testdata/oracles/html-reader-matrix.txt.
-Usage: lake build && lake env lean --run scripts/html-oracle.lean [--check [path] | --selftest]
+Usage: lake build && lake env lean --run scripts/html-oracle.lean [--check [path] | --selftest | --load-check [probe.cjs]]
 -/
 import LeanTex
 import scripts.Board
@@ -100,6 +100,9 @@ def parseMatrix (text : String) : Except String Matrix := do
   if sections.isEmpty then throw "no sections"
   return { target, sections }
 
+/-- A cell a wait's budget ended: a machine fact, neither a pass nor a failure. -/
+def inconclusive (v : String) : Bool := v.startsWith "inconclusive:"
+
 /-- The gate: every cell under a `target:` reader is `pass`; returns the offending cells,
 a target reader missing from a section's columns among them. -/
 def offences (m : Matrix) : Array String := Id.run do
@@ -132,11 +135,14 @@ def checkFile (path : String) : IO UInt32 := do
       return 0
     IO.println s!"html-oracle: {bad.size} target or browser-face checks not passing in {path}:"
     for b in bad do IO.println s!"  {b}"
+    if bad.any fun b => inconclusive ((b.splitOn " = ").getLastD "") then
+      IO.println "html-oracle: an inconclusive cell is a wait that outran its budget, not a failure: \
+rerun, with a larger HARD_TIMEOUT_MS on a loaded host"
     return 1
 
-/-- The browser-side probe, run by node with the Playwright module in `PW_MODULE`: one
-tab-separated line per (fixture, reader, feature), `pass`, `fail:<reason>` or `na`, read
-off the live page, plus `reader` lines with the tool facts. -/
+/-- The browser-side probe, run by node with the Playwright module in `PW_MODULE`: one line per
+(fixture, reader, feature), `pass`, `fail:<reason>`, `inconclusive:<reason>` or `na`, read off the
+live page, plus `reader` lines with the tool facts and a `budget` or `unfinished` line if it stops. -/
 def probeJs : String := r#"
 const path = require('path');
 const { execFileSync } = require('child_process');
@@ -146,8 +152,27 @@ const fixtures = process.argv.slice(3);
 const out = (...cols) => console.log(cols.join('\t'));
 const clean = (s) => String(s).replace(/\s+/g, ' ').trim();
 
+// The run's budget; each wait has a tenth of it, and one that runs out is inconclusive.
 const HARD_MS = +(process.env.HARD_TIMEOUT_MS || 900000);
-const watchdog = setTimeout(() => { out('error', 'hard timeout'); process.exit(4); }, HARD_MS);
+const STEP_MS = Math.ceil(HARD_MS / 10);
+const watchdog = setTimeout(() => { out('budget', String(HARD_MS)); process.exit(4); }, HARD_MS);
+class Unfinished extends Error {}
+const unfinished = (e) => e instanceof Unfinished || e instanceof pw.errors.TimeoutError;
+const budgeted = (ctx) => {
+  ctx.setDefaultTimeout(STEP_MS);
+  ctx.setDefaultNavigationTimeout(STEP_MS);
+  return ctx;
+};
+// A frame the browser draws, asked again within the step budget while it cannot draw one yet.
+const drawn = async (page) => {
+  const end = Date.now() + STEP_MS;
+  for (;;) {
+    try { return await page.screenshot(); } catch (e) {
+      if (unfinished(e) || page.isClosed() || Date.now() >= end)
+        throw new Unfinished('no frame drawn: ' + clean(String(e.message).split('\n')[0]));
+    }
+  }
+};
 
 const hexToRgb = (h) => {
   const m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(h.trim());
@@ -460,8 +485,8 @@ const mediaChecks = {
 
 // Scripting off, synchronous (no timers run in a page with scripting
 // disabled): the deck's marker is absent and a non-deck page carries no
-// executable script. The scroll is applied here; the read follows a pause
-// on the driver's side so the scroll-driven uncover has had its frame.
+// executable script. The scroll is applied here; the read follows a frame
+// the driver has the browser draw, so the scroll-driven uncover has had it.
 const noScriptScroll = () => {
   const se = document.scrollingElement;
   se.scrollTo({ left: se.scrollWidth, top: se.scrollHeight, behavior: 'instant' });
@@ -478,7 +503,9 @@ const noScriptRead = () => {
     why: `marker=${marker} steps x${steps.length} dim-at-end x${dim}` };
 };
 
-const cell = (r) => r.n === 0 ? 'na' : r.ok ? 'pass' : 'fail:' + clean(r.why);
+const cell = (r) => r.n === 0 ? 'na' : r.ok ? 'pass'
+  : (r.unfinished ? 'inconclusive:' : 'fail:') + clean(r.why);
+const lost = (e) => (unfinished(e) ? 'inconclusive:' : 'fail:') + clean(String(e.message).split('\n')[0]);
 
 // A printed deck loses nothing and wastes nothing. The deck is printed once,
 // as a reader prints it: the sheet the page's own @page size, the size
@@ -852,23 +879,59 @@ const deckLinks = async (page, url) => {
       .filter(({id, i}) => ids.filter(other => other === id).length === 1 &&
         (!routes.has(id) || routes.get(id) === i));
     return {labels, aliases,
+      routes: Object.fromEntries([...routes, ...aliases.map(({id, i}) => [id, i])]),
       stages: stages.map(stage => snaps.flatMap((s, i) => stageOf(s) === stage ? [i] : []))};
   });
   if (!info || info.labels.length === 0) return {n: 0};
-  const hash = async label => page.waitForFunction(h => location.hash === h,
-    '#' + encodeURIComponent(label), {timeout: 2500});
-  const atSnap = async i => page.waitForFunction(i => {
-    const snap = document.querySelectorAll('[data-snap]')[i];
-    if (!snap) return false;
-    const track = snap.closest('.slide-track');
-    const el = snap.getBoundingClientRect().width > 0 ? snap : track.querySelector('section.slide');
-    const step = track ? [...track.querySelectorAll('[data-snap]')].indexOf(snap) + 1 : 0;
-    return Math.abs(el.getBoundingClientRect().left) < 1 &&
-      (!track || track.dataset.snapped === String(step));
-  }, i, {timeout: 2500});
+  // The page at rest: unchanged across two frames, standing at the snap its address names or
+  // still after a scroll seen to end.
+  const restAt = ([routes, i, token]) => {
+    let st = globalThis.ltxRest;
+    if (!st || st.token !== token) {
+      if (st) st.off();
+      const on = {scroll: () => { st.moving = true; st.scrolled = true; },
+        scrollend: () => { st.moving = false; }};
+      st = globalThis.ltxRest = {token, last: null, still: 0, moving: false, scrolled: false,
+        off: () => { for (const [t, f] of Object.entries(on)) removeEventListener(t, f, true); }};
+      for (const [t, f] of Object.entries(on)) addEventListener(t, f, true);
+    }
+    const snaps = document.querySelectorAll('[data-snap]');
+    const shown = k => {
+      const snap = snaps[k];
+      if (!snap) return false;
+      const track = snap.closest('.slide-track');
+      const el = snap.getBoundingClientRect().width > 0 || !track ? snap : track.querySelector('section.slide');
+      const step = track ? [...track.querySelectorAll('[data-snap]')].indexOf(snap) + 1 : 0;
+      return Math.abs(el.getBoundingClientRect().left) < 1 &&
+        (!track || track.dataset.snapped === String(step));
+    };
+    let key = null;
+    try { key = decodeURIComponent(location.hash.slice(1)); } catch (_) {}
+    const named = key !== null && Object.hasOwn(routes, key) ? routes[key] : -1;
+    const marks = [...document.querySelectorAll('.slide-track')].map(t => t.dataset.snapped);
+    st.seen = {named, shown: shown(i), standing: named >= 0 && shown(named), hash: location.hash};
+    const sig = JSON.stringify([scrollX, scrollY, st.seen, marks]);
+    st.still = sig === st.last ? st.still + 1 : 0;
+    st.last = sig;
+    const rest = st.still >= 1 && (named < 0 || st.seen.standing || (st.scrolled && !st.moving));
+    if (rest) st.off();
+    return rest && st.seen;
+  };
+  let rests = 0;
   const expect = async (i, label = info.labels[i]) => {
-    await atSnap(i);
-    await hash(label);
+    const want = '#' + encodeURIComponent(label);
+    let seen;
+    try {
+      seen = await (await page.waitForFunction(restAt, [info.routes, i, ++rests])).jsonValue();
+    } catch (e) {
+      if (!unfinished(e)) throw e;
+      const last = await page.evaluate(() => globalThis.ltxRest && globalThis.ltxRest.seen);
+      throw new Unfinished(`no rest in ${STEP_MS} ms` +
+        (last ? `, last at address ${last.hash} with snap ${i} ${last.shown ? 'shown' : 'not shown'}` : ''));
+    }
+    if (!seen.shown || seen.hash !== want)
+      throw new Error(`came to rest at address ${seen.hash} with snap ${i} ` +
+        `${seen.shown ? 'shown' : 'not shown'}; expected address ${want} with it shown`);
   };
   const visit = async (i, label = info.labels[i], base = url) => {
     await page.goto(base + '#' + encodeURIComponent(label));
@@ -877,6 +940,7 @@ const deckLinks = async (page, url) => {
   const stepped = info.stages.find(s => s.length > 1);
   let phase = 'emitted labels';
   let floorFile = null;
+  let verdict = {ok: true, n: 1};
   try {
     if (info.labels.some(label => typeof label !== 'string' || !label.trim()))
       throw new Error('a snap has no data-slide-label');
@@ -991,21 +1055,24 @@ const deckLinks = async (page, url) => {
       });
       await expect(stepped[1]);
     }
-    return {ok: true, n: 1};
   } catch (e) {
-    return {ok: false, n: 1, why: phase + ': ' + clean(e.message)};
-  } finally {
+    verdict = {ok: false, n: 1, unfinished: unfinished(e), why: phase + ': ' + clean(e.message)};
+  }
+  // A cleanup that fails leaves the verdict standing and the fixture's later checks unmeasured.
+  try {
     if (floorFile) require('fs').unlinkSync(floorFile);
+    await page.evaluate(() => { if (globalThis.ltxRest) globalThis.ltxRest.off(); });
     await page.emulateMedia({reducedMotion: 'no-preference'});
     await page.goto(url);
     await page.evaluate(() => document.fonts.ready);
-  }
+  } catch (e) { verdict.after = e; }
+  return verdict;
 };
 
 async function runReader(name) {
   let browser;
   try {
-    browser = await pw[name].launch({ headless: true,
+    browser = await pw[name].launch({ headless: true, timeout: STEP_MS,
       args: name === 'chromium' ? ['--no-sandbox', '--disable-gpu'] : [] });
   } catch (e) {
     out('reader', name, 'unavailable', clean(String(e && e.message || e).split('\n')[0]));
@@ -1014,7 +1081,8 @@ async function runReader(name) {
   out('reader', name, 'version', browser.version());
   // Both sides of the content/advance distinction, checked with the same
   // live-page judge before any fixture can be credited to this reader.
-  const control = await browser.newPage();
+  const controlCtx = budgeted(await browser.newContext());
+  const control = await controlCtx.newPage();
   try {
     const visible = '<math><mi>x</mi></math>';
     const carrier = '<math style="font-size:0"><mpadded height="0px" depth="0px">' +
@@ -1096,7 +1164,7 @@ async function runReader(name) {
       await control.emulateMedia({ media: 'screen' });
     }
     if (name === 'chromium' && process.env.LT_CODE_PRINT) {
-      await control.goto('file://' + process.env.LT_CODE_PRINT, { waitUntil: 'load', timeout: 30000 });
+      await control.goto('file://' + process.env.LT_CODE_PRINT, { waitUntil: 'load' });
       await control.evaluate(() => document.fonts.ready);
       const engine = await printCode(control, name, 'print-code-engine');
       if (!engine.ok || engine.n !== 1) throw new Error("print-code control: the engine's page " + engine.why);
@@ -1121,7 +1189,7 @@ async function runReader(name) {
         throw new Error('code-wrap control: Thai parted between its letters');
     }
     if (name === 'chromium' && process.env.LT_CODE_NARROW) {
-      await control.goto('file://' + process.env.LT_CODE_NARROW, { waitUntil: 'load', timeout: 30000 });
+      await control.goto('file://' + process.env.LT_CODE_NARROW, { waitUntil: 'load' });
       await control.evaluate(() => document.fonts.ready);
       const wrapped = await codeWrap(control);
       if (!wrapped.ok || wrapped.n !== 1) throw new Error("code-wrap control: the engine's narrow page " + wrapped.why);
@@ -1134,19 +1202,19 @@ async function runReader(name) {
       if (!boxed.ok || boxed.n !== 1) throw new Error("print-code control: the engine's narrow page " + boxed.why);
       await control.emulateMedia({ media: 'screen' });
     }
-  } finally { await control.close(); }
+  } finally { await controlCtx.close(); }
   for (const fx of fixtures) {
     const url = 'file://' + path.join(dir, fx + '.html');
-    const ctx = await browser.newContext({ viewport: { width: 1280, height: 720 }, deviceScaleFactor: 1 });
+    const ctx = budgeted(await browser.newContext({ viewport: { width: 1280, height: 720 }, deviceScaleFactor: 1 }));
     const page = await ctx.newPage();
     const errors = [];
     page.on('pageerror', e => errors.push('pageerror ' + e.message));
     page.on('console', m => { if (m.type() === 'error') errors.push(m.text() + ' ' + ((m.location() || {}).url || '')); });
     page.on('requestfailed', r => errors.push('requestfailed ' + r.url()));
     try {
-      await page.goto(url, { waitUntil: 'load', timeout: 30000 });
+      await page.goto(url, { waitUntil: 'load' });
       await page.evaluate(() => document.fonts.ready);
-      await page.waitForTimeout(100);
+      await page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
       const ready = await page.evaluate(() => document.readyState);
       out(fx, name, 'load', ready === 'complete' && errors.length === 0 ? 'pass'
         : 'fail:' + clean(ready !== 'complete' ? 'readyState ' + ready : errors[0]));
@@ -1154,7 +1222,9 @@ async function runReader(name) {
         out(fx, name, feature, cell(await page.evaluate(fn)));
       }
       out(fx, name, 'stage-fit', cell(await stageFit(page, fx)));
-      out(fx, name, 'deck-links', cell(await deckLinks(page, url)));
+      const links = await deckLinks(page, url);
+      out(fx, name, 'deck-links', cell(links));
+      if (links.after) throw links.after;
       out(fx, name, 'code-wrap', cell(await codeWrap(page)));
       const light = await page.evaluate(readColors);
       await page.evaluate((follows) => { document.documentElement.dataset.ltxFollows = follows; },
@@ -1174,18 +1244,18 @@ async function runReader(name) {
       out(fx, name, 'print-sheets', cell(printed.sheets));
       out(fx, name, 'print-code', cell(light.deck ? { n: 0 } : await printCode(page, name, fx)));
     } catch (e) {
-      out(fx, name, 'error', 'fail:' + clean(String(e.message).split('\n')[0]));
+      out(fx, name, 'error', lost(e));
     }
     await ctx.close();
-    const ctx2 = await browser.newContext({ viewport: { width: 1280, height: 720 }, javaScriptEnabled: false });
+    const ctx2 = budgeted(await browser.newContext({ viewport: { width: 1280, height: 720 }, javaScriptEnabled: false }));
     const p2 = await ctx2.newPage();
     try {
-      await p2.goto(url, { waitUntil: 'load', timeout: 30000 });
+      await p2.goto(url, { waitUntil: 'load' });
       await p2.evaluate(noScriptScroll);
-      await p2.waitForTimeout(200);
+      await drawn(p2);
       out(fx, name, 'no-script', cell(await p2.evaluate(noScriptRead)));
     } catch (e) {
-      out(fx, name, 'no-script', 'fail:' + clean(String(e.message).split('\n')[0]));
+      out(fx, name, 'no-script', lost(e));
     }
     await ctx2.close();
   }
@@ -1195,7 +1265,7 @@ async function runReader(name) {
 (async () => {
   for (const r of process.env.LT_READERS.split(' ')) await runReader(r);
   clearTimeout(watchdog);
-})().catch(e => { out('error', clean(String(e && e.message || e))); process.exit(4); });
+})().catch(e => { out(unfinished(e) ? 'unfinished' : 'error', clean(String(e && e.message || e))); process.exit(4); });
 "#
 
 /-- The numbers of the frames a deck's PDF build continues on a further page: the subjects
@@ -1286,57 +1356,75 @@ structure Probe where
   versions : Array (String × String)
   /-- reader → reason, when it did not. -/
   unavailable : Array (String × String)
+  /-- The loss the probe named when it stopped before its last row. -/
+  unfinished : Option String
 
 def parseProbe (out : String) : Probe := Id.run do
-  let mut p : Probe := { cells := #[], versions := #[], unavailable := #[] }
+  let mut p : Probe := { cells := #[], versions := #[], unavailable := #[], unfinished := none }
   for l in out.splitOn "\n" do
     match l.splitOn "\t" with
     | ["reader", r, "version", v] => p := { p with versions := p.versions.push (r, v) }
     | ["reader", r, "unavailable", why] => p := { p with unavailable := p.unavailable.push (r, why) }
+    | ["budget", ms] => p := { p with unfinished := some s!"the probe's {ms} ms budget ran out" }
+    | ["unfinished", why] => p := { p with unfinished := some why }
     | [fx, r, f, v] => p := { p with cells := p.cells.push { fixture := fx, reader := r, feature := f, value := v } }
     | _ => pure ()
   return p
 
-def reasonOf (v : String) : String := (v.drop "fail:".length).toString
+def reasonOf (v : String) : String :=
+  (v.drop (if inconclusive v then "inconclusive:" else "fail:").length).toString
 
-/-- The cell for one (feature, reader) over every fixture, with the failing fixtures'
-reasons; a fixture the probe abandoned fails every feature it did not report. -/
+/-- What stands for a cell the probe never wrote: its fixture's error row, else the loss the probe
+named, else a failure. -/
+def missingValue (p : Probe) (fixture reader : String) : String :=
+  match p.cells.find? fun c => c.fixture == fixture && c.reader == reader && c.feature == "error" with
+  | some c => (if inconclusive c.value then "inconclusive:" else "fail:") ++ "not measured: " ++ reasonOf c.value
+  | none => match p.unfinished with
+    | some why => s!"inconclusive:not measured: {why}"
+    | none => "fail:not measured: no row from the probe"
+
+/-- The cell for one (feature, reader) over every fixture: the first failing fixture, else the
+first inconclusive one, with each such fixture's reason. -/
 def featureCell (p : Probe) (fixtures : Array String) (feature reader : String) :
     String × Array String := Id.run do
   if (p.versions.find? (·.1 == reader)).isNone then return ("untested", #[])
-  let mut fails : Array (String × String) := #[]
+  let mut acc : Array (String × String × Bool) := #[]
   let mut exercised := 0
   for fx in fixtures do
-    match p.cells.find? fun c => c.fixture == fx && c.reader == reader && c.feature == feature with
-    | some c =>
-      if c.value == "na" then pure ()
-      else
-        exercised := exercised + 1
-        if c.value != "pass" then fails := fails.push (fx, reasonOf c.value)
-    | none =>
-      let err := p.cells.find? fun c => c.fixture == fx && c.reader == reader && c.feature == "error"
-      exercised := exercised + 1
-      fails := fails.push (fx, "not measured: " ++ (err.map (reasonOf ·.value)).getD "no row from the probe")
+    let value := match p.cells.find? fun c => c.fixture == fx && c.reader == reader && c.feature == feature with
+      | some c => c.value
+      | none => missingValue p fx reader
+    if value == "na" then continue
+    exercised := exercised + 1
+    if value != "pass" then acc := acc.push (fx, reasonOf value, inconclusive value)
   if exercised == 0 then return ("untested", #[])
-  if fails.isEmpty then return ("pass", #[])
-  let head := fails[0]!.1
-  let more := if fails.size > 1 then s!"+{fails.size - 1}" else ""
-  return (s!"fail:{head}{more}", fails.map fun (fx, why) => s!"{fx}: {why}")
+  let failing := (acc.filter (!·.2.2)).size
+  let more (n : Nat) : String := if n > 1 then s!"+{n - 1}" else ""
+  let cell := match acc.find? (!·.2.2), acc.find? (·.2.2) with
+    | some (fx, _), _ => s!"fail:{fx}{more failing}"
+    | none, some (fx, _) => s!"inconclusive:{fx}{more (acc.size - failing)}"
+    | none, none => "pass"
+  return (cell, acc.map fun (fx, why, _) => s!"{fx}: {why}")
 
-/-- The cell for one (fixture, reader): the first failing feature, and the features the
-fixture exercises. -/
+/-- The cell for one (fixture, reader): its first failing feature, else its first inconclusive
+one, and the features the fixture exercises. -/
 def fixtureCell (p : Probe) (fixture reader : String) : String × Array String := Id.run do
   if (p.versions.find? (·.1 == reader)).isNone then return ("untested", #[])
   let mut ex : Array String := #[]
   let mut firstFail : Option String := none
+  let mut firstOpen : Option String := none
   for f in features do
-    match p.cells.find? fun c => c.fixture == fixture && c.reader == reader && c.feature == f with
-    | some c =>
-      if c.value != "na" then
-        ex := ex.push f
-        if c.value != "pass" && firstFail.isNone then firstFail := some f
-    | none => if firstFail.isNone then firstFail := some f
-  return (match firstFail with | some f => s!"fail:{f}" | none => "pass", ex)
+    let cell := p.cells.find? fun c => c.fixture == fixture && c.reader == reader && c.feature == f
+    let value := match cell with
+      | some c => c.value
+      | none => missingValue p fixture reader
+    if cell.isSome && value != "na" then ex := ex.push f
+    if inconclusive value then firstOpen := firstOpen <|> some f
+    else if value != "pass" && value != "na" then firstFail := firstFail <|> some f
+  return (match firstFail, firstOpen with
+    | some f, _ => s!"fail:{f}"
+    | none, some f => s!"inconclusive:{f}"
+    | none, none => "pass", ex)
 
 /-- One table line: cells padded to their column, never fewer than two
 spaces apart, no trailing space. -/
@@ -1432,6 +1520,112 @@ def codeNarrowSource : String :=
   "th = \"ภาษาไทยไม่มีช่องว่างระหว่างคำจึงต้องตัดบรรทัดระหว่างคำแทนการเว้นวรรค" ++
   "และสระต้องอยู่กับพยัญชนะ\"\nyear = 2567 # ๒๕๖๗\n\\end{lstlisting}\n\\end{document}\n"
 
+/-- A Playwright module standing in for the host's, `LT_REAL_PW`: the same API, each page's
+renderer held `LT_THROTTLE` times slower from its first `ArrowRight` to its next navigation or
+media change, and with `LT_SWALLOW` set every `ArrowRight` swallowed before the page reads it. -/
+def loadShimJs : String := r#"
+const real = require(process.env.LT_REAL_PW);
+const rate = +(process.env.LT_THROTTLE || 1);
+const swallow = !!process.env.LT_SWALLOW;
+const page = (p) => {
+  let cdp = null, state = 'idle';
+  const hold = async (r) => {
+    cdp = cdp || await p.context().newCDPSession(p);
+    await cdp.send('Emulation.setCPUThrottlingRate', { rate: r });
+  };
+  const press = p.keyboard.press.bind(p.keyboard);
+  p.keyboard.press = async (key, options) => {
+    if (key === 'ArrowRight' && state === 'idle') { state = 'held'; await hold(rate); }
+    return press(key, options);
+  };
+  for (const m of ['goBack', 'goto', 'reload', 'emulateMedia']) {
+    const f = p[m].bind(p);
+    p[m] = async (...a) => {
+      if (state === 'held') { state = 'done'; await hold(1); }
+      return f(...a);
+    };
+  }
+  return p;
+};
+const context = async (c) => {
+  if (swallow) await c.addInitScript(() => addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowRight') { e.preventDefault(); e.stopImmediatePropagation(); }
+  }, true));
+  const newPage = c.newPage.bind(c);
+  c.newPage = async (...a) => page(await newPage(...a));
+  return c;
+};
+const chromium = Object.create(real.chromium);
+chromium.launch = async (options) => {
+  const b = await real.chromium.launch(options);
+  const newContext = b.newContext.bind(b);
+  b.newContext = async (...a) => context(await newContext(...a));
+  const newPage = b.newPage.bind(b);
+  b.newPage = async (...a) => { const p = page(await newPage(...a)); if (swallow) await context(p.context()); return p; };
+  return b;
+};
+module.exports = Object.assign(Object.create(real), { chromium });
+"#
+
+/-- An invented deck of three frames, the second in two steps. -/
+def loadDeckSource : String :=
+  "\\documentclass{beamer}\n\\begin{document}\n" ++
+  "\\begin{frame}{First}\nA placeholder line.\n\\end{frame}\n" ++
+  "\\begin{frame}{Second}\nOne line.\n\\pause\nAnother line.\n\\end{frame}\n" ++
+  "\\begin{frame}{Third}\nA closing line.\n\\end{frame}\n\\end{document}\n"
+
+/-- How much slower the load check holds the renderer: a keyboard step then takes several
+seconds of wall clock to come to rest. -/
+def loadThrottle : Nat := 200
+
+/-- The deck-links cell of one probe run over the invented deck in `dir`, under the shim. -/
+def loadRun (probe shim : System.FilePath) (module : String) (dir : System.FilePath)
+    (throttle : Nat) (swallow : Bool) : IO String := do
+  let out ← IO.Process.output
+    { cmd := "node", args := #[probe.toString, dir.toString, "deck"]
+      env := #[("PW_MODULE", some shim.toString), ("LT_REAL_PW", some module),
+        ("LT_THROTTLE", some (toString throttle)), ("LT_SWALLOW", if swallow then some "1" else none),
+        ("LT_READERS", some "chromium"), ("LT_CODE_TABLES", some codeTables),
+        ("HARD_TIMEOUT_MS", some "1200000")] }
+  let p := parseProbe out.stdout
+  match p.cells.find? fun c => c.fixture == "deck" && c.feature == "deck-links" with
+  | some c => return c.value
+  | none => return missingValue p "deck" "chromium"
+
+/-- The deck-links verdict of a probe, this tree's or one read from a file, holds under load: an
+invented deck passes with its renderer unloaded and held `loadThrottle` times slower through the
+keyboard step, and fails, loaded or not, once its `ArrowRight` is swallowed. -/
+def loadCheck (probePath : Option String) : IO UInt32 := do
+  if !(← System.FilePath.pathExists leantexBin) then
+    return (← die 2 s!"html-oracle: {leantexBin} not found; run lake build first")
+  let some (module, _) ← findChromium "node"
+    | return (← die 2 "html-oracle: the load check needs a Playwright module that launches Chromium")
+  IO.FS.withTempDir fun dir => do
+    IO.FS.writeFile (dir / "deck.tex") loadDeckSource
+    let built ← IO.Process.output
+      { cmd := leantexBin
+        args := #["-q", "build", (dir / "deck.tex").toString, "-o", (dir / "deck.html").toString] }
+    if built.exitCode != 0 then
+      return (← die 2 s!"html-oracle: the load check's deck did not build:\n{built.stdout}{built.stderr}")
+    let probe := dir / "probe.cjs"
+    IO.FS.writeFile probe (← match probePath with
+      | some path => IO.FS.readFile path
+      | none => pure probeJs)
+    let shim := dir / "shim.cjs"
+    IO.FS.writeFile shim loadShimJs
+    let mut bad := 0
+    for (name, rate, swallow, want) in [("unloaded", 1, false, "pass"),
+        (s!"renderer {loadThrottle}× slower through the keyboard step", loadThrottle, false, "pass"),
+        ("ArrowRight swallowed", 1, true, "fail:keyboard next"),
+        (s!"ArrowRight swallowed, renderer {loadThrottle}× slower", loadThrottle, true,
+          "fail:keyboard next")] do
+      let got ← loadRun probe shim module dir rate swallow
+      let ok := got.startsWith want
+      IO.println s!"html-oracle: load check, {name}: deck-links {got}{if ok then "" else s!" (expected {want})"}"
+      unless ok do bad := bad + 1
+    if bad == 0 then IO.println "html-oracle: load check ok"
+    return if bad == 0 then 0 else 1
+
 def regenerate : IO UInt32 := do
   if !(← System.FilePath.pathExists leantexBin) then
     return (← die 2 s!"html-oracle: {leantexBin} not found; run lake build first")
@@ -1488,7 +1682,7 @@ so the matrix would describe pages nothing ties to this tree; nothing written")
           "-o", (control / "code-narrow.html").toString] }
     if narrow.exitCode != 0 then
       return (← die 2 s!"html-oracle: the narrow-box control page did not build:\n{narrow.stdout}{narrow.stderr}")
-    let mut probe : Probe := { cells := #[], versions := #[], unavailable := #[] }
+    let mut probe : Probe := { cells := #[], versions := #[], unavailable := #[], unfinished := none }
     let mut tools := s!"node {nodeVersion}"
     match chromium with
     | none =>
@@ -1541,6 +1735,7 @@ def selftest : IO UInt32 := do
     [("green", green, 0),
      ("target untested", green.replace "load pass untested" "load untested untested", 1),
      ("target fail", green.replace "deck pass untested" "deck fail:load untested", 1),
+     ("target inconclusive", green.replace "deck pass untested" "deck inconclusive:load untested", 1),
      ("non-target moves", green.replace "load pass untested" "load pass fail:x", 0),
      ("target column missing", green.replace "# feature chromium firefox\nload pass untested"
         "# feature firefox\nload untested", 1)]
@@ -1551,6 +1746,35 @@ def selftest : IO UInt32 := do
       | .error _ => 99
     if got != want then
       IO.eprintln s!"FAIL {name}: {got} offences, expected {want}"
+      bad := bad + 1
+  -- A failing fixture outranks an inconclusive one, and a fixture the probe never reached is
+  -- inconclusive only where the probe named its loss.
+  let probeOf (xs : List (String × String)) (unfinished : Option String) : Probe :=
+    { cells := xs.toArray.map fun (fixture, value) =>
+        { fixture, reader := "chromium", feature := "deck-links", value }
+      versions := #[("chromium", "1")], unavailable := #[], unfinished }
+  let cellOf (p : Probe) (xs : Array String) := featureCell p xs "deck-links" "chromium"
+  let budget := (parseProbe "budget\t900000\n").unfinished
+  let errRow : Cell :=
+    { fixture := "b", reader := "chromium", feature := "error", value := "inconclusive:page.goto: Timeout" }
+  for (name, ok) in [
+      ("a failure outranks an inconclusive fixture",
+        cellOf (probeOf [("a", "pass"), ("b", "inconclusive:x"), ("c", "fail:y")] none) #["a", "b", "c"]
+          == ("fail:c", #["b: x", "c: y"])),
+      ("an inconclusive fixture outranks a pass",
+        cellOf (probeOf [("a", "pass"), ("b", "inconclusive:x")] none) #["a", "b"]
+          == ("inconclusive:b", #["b: x"])),
+      ("the probe's budget line names its loss", budget == some "the probe's 900000 ms budget ran out"),
+      ("a fixture past a named loss is inconclusive",
+        (cellOf (probeOf [("a", "pass")] budget) #["a", "b"]).1 == "inconclusive:b"),
+      ("a fixture missing with no named loss fails",
+        (cellOf (probeOf [("a", "pass")] none) #["a", "b"]).1 == "fail:b"),
+      ("a fixture's inconclusive error row stands for its missing cells",
+        (fixtureCell (probeOf [("b", "pass")] none) "b" "chromium").1 == "fail:load" &&
+        (fixtureCell { probeOf [] none with cells := #[errRow] } "b" "chromium").1
+          == "inconclusive:load")] do
+    unless ok do
+      IO.eprintln s!"FAIL cells: {name}"
       bad := bad + 1
   for (name, text) in [("no target", "[feature]\n# feature chromium\nload pass\n"),
                        ("row before header", "target: chromium\n[feature]\nload pass\n"),
@@ -1630,5 +1854,7 @@ def main (args : List String) : IO UInt32 := do
   | ["--selftest"] => selftest
   | ["--check"] => checkFile matrixPath
   | ["--check", path] => checkFile path
+  | ["--load-check"] => loadCheck none
+  | ["--load-check", path] => loadCheck (some path)
   | [] => regenerate
-  | _ => die 3 "usage: html-oracle [--check [path] | --selftest]"
+  | _ => die 3 "usage: html-oracle [--check [path] | --selftest | --load-check [probe.cjs]]"

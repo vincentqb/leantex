@@ -128,6 +128,7 @@ import Tests.DiagFold
 import Tests.InlineCode
 import scripts.LandCore
 import Tests.World
+import Tests.OracleWaits
 import Tests.ProcessRuntime
 import Tests.PaletteFloor
 import Tests.AlertMark
@@ -1611,6 +1612,12 @@ def reports : List Report := [
     accept := ["the guard's probe documents built by the engine at 3c258580 skip the package and its definition command and stop at an unreadable colour; built here, its twenty-seven assertions pass over the PDF bytes and the web page one document ships",
       "the review's guards, added with its answer: a full tint in the boundary standalone, a colorant outside ASCII, a mix in a picture, a gradient and a formula, the rgb and gray alternates, the paper over an ink, a one-ink shading and a figure's ink read back, each failing on the branch's first cut",
       "a private print document under lualatex and here: the separation's colorant and alternate as lualatex writes them, the ink painted at full tint on both faces; with its spot colour declared as a process colour instead, this tree and its parent write byte-identical PDF, and the two documents here show no visible difference on paper at 35 cm"]
+    state := .guarded "3c258580" .before .author },
+  { id := "R182", date := "2026-10-14"
+    what := "the browser oracle failed a deck's keyboard step on a loaded host and passed it on the rerun: it held its deck-link waits to a fixed 2.5 s of wall clock, its page loads to 30 s and two of its reads to fixed sleeps, and reported a wait that ran out as the page's failure"
+    pins := [check% Tests.oracleWaitChecks]
+    accept := ["the guard's three probe assertions fail on the oracle at 3c258580 before the fix: eight fixed waits, two 2,500 ms waits, four 30,000 ms loads and two sleeps, a page opened on no budgeted context, and a launch held to Playwright's implicit default",
+      "the oracle's load check fails against its probe at 3c258580: an invented deck's link check passes with its renderer unloaded and fails on a 2,500 ms wait with the renderer held 200 times slower through the keyboard step; with the fix it passes both ways, and fails, loaded or not, once the arrow key is swallowed before the page reads it, and fails at once on a page that stops scrolling after its first key"]
     state := .guarded "3c258580" .before .author }
 ]
 

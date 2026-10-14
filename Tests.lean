@@ -56,6 +56,7 @@ import Tests.KeyVal
 import Tests.PictureAssets
 import Tests.ToolMemo
 import Tests.World
+import Tests.OracleWaits
 import Tests.TexFontTrees
 import Tests.Surface
 import Tests.ElabContracts
@@ -966,6 +967,7 @@ def surfaceSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   Tests.pictureAssetsChecks ref
   Tests.toolMemoChecks ref
   Tests.World.checks ref
+  Tests.oracleWaitChecks ref
   toolProbeChecks ref
   Tests.texFontTreeChecks ref
   posterChromeCompatChecks ref
