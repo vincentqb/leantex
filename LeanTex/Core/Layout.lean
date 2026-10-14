@@ -8056,7 +8056,9 @@ public theorem Seg.shipped_hides_exact (s s' : Seg) (h : Seg.shipped s = some s'
         cases hd : hiddenRule d.underline <;> simp_all [hiddenRule]
       have hl : hiddenRule (if hiddenRule d.lineThrough then none else d.lineThrough) = false := by
         cases hd : hiddenRule d.lineThrough <;> simp_all [hiddenRule]
-      simp only [Seg.hides, hu, hl, Bool.or_false, ite_self]
+      have hm : hiddenRule (if hiddenRule d.highlight then none else d.highlight) = false := by
+        cases hd : hiddenRule d.highlight <;> simp_all [hiddenRule]
+      simp only [Seg.hides, hu, hl, hm, Bool.or_false, ite_self]
     | _ =>
       simp only [Seg.shipped, hh, Bool.not_true, Bool.false_eq_true, ↓reduceIte,
         Option.some.injEq, reduceCtorEq] at h

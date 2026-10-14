@@ -497,7 +497,7 @@ private def linkIn (band : Option (Dim.Sp × Dim.Sp)) (r : Layout.LinkRect) : Bo
 
 private def segInks : Layout.Seg → Bool
   | .gap .. => false
-  | .decoratedGap _ _ d => d.underline.isSome || d.lineThrough.isSome
+  | .decoratedGap _ _ d => d.underline.isSome || d.lineThrough.isSome || d.highlight.isSome
   | .run .. | .decoration .. | .rule .. | .image .. | .poly .. => true
 
 private def lineGeom (l : Layout.LineOut) : String :=
@@ -540,6 +540,10 @@ def overlayVisibleChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     "\\documentclass[aspectratio=169]{slides}\n\\theme{default}\n\\title{" ++ title ++
       "}\n\\author{Some Writer}\n\\begin{document}\n\\begin{frame}\n\\titlepage\n\\end{frame}\n" ++
       "\\end{document}"
+  let markDeck (body : String) : String :=
+    "\\documentclass[aspectratio=169]{slides}\n\\usepackage{xcolor}\n" ++
+      "\\palette{ alert = #1C1917 }\n\\definecolor{alertmark}{HTML}{FFEE00}\n\\begin{document}\n" ++
+      "\\begin{frame}\n" ++ body ++ "\n\\end{frame}\n\\end{document}"
   -- label, body spelling the command `\CMD`, the body with the argument bare, the argument's
   -- region, the frame's steps and the steps it hides on
   let cases : List (String × (String × String) × ArgRegion × Nat × List Nat) :=
@@ -610,7 +614,9 @@ def overlayVisibleChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
         "\\begin{columns}\\column{.4\\textwidth} Lead Hidden tail.\\column{.4\\textwidth} " ++
          "Right words.\\end{columns}"), segs, 2, [1]),
      ("inside a block", ("\\begin{block}{Block title}Lead \\CMD<2>{Hidden} tail words.\\end{block}",
-       "\\begin{block}{Block title}Lead Hidden tail words.\\end{block}"), segs, 2, [1])]
+       "\\begin{block}{Block title}Lead Hidden tail words.\\end{block}"), segs, 2, [1]),
+     ("an alert's mark", (markDeck "Lead \\CMD<2>{\\alert{Marked phrase}} tail words.",
+       markDeck "Lead \\alert{Marked phrase} tail words."), segs, 2, [1])]
   for (faces, fonts) in faceSets do
     for (label, (body, bare), region, steps, hiddenAt) in cases do
       let label := "visible, " ++ label ++ faces
