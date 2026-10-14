@@ -2187,7 +2187,7 @@ def screenColor (s : Ir.Scheme) (r : Ir.Role) : Ir.Color :=
 
 /-- The stylesheets a page carries in its `<style>` elements, or the text itself when it carries
 none. -/
-def styleText (page : String) : String :=
+def pageSheets (page : String) : String :=
   match page.splitOn "<style" with
   | _ :: parts@(_ :: _) =>
     String.join (parts.map fun p =>
@@ -2229,10 +2229,10 @@ def cssSelectorParts (sel : String) : List String := Id.run do
     else cur := cur.push c
   return (parts.push cur.trimAscii.toString).toList
 
-/-- The declarations of every rule for selector `sel` exactly that every light screen applies,
-whatever it supports, in order, from a stylesheet or a page carrying one. -/
+/-- The declarations of every rule for selector `sel` exactly that `holdsIn .light` keeps, in order,
+from a stylesheet or a page carrying one. -/
 def screenRulesOf (css sel : String) : List String :=
-  ((sheetRules (styleText css)).toList.filter fun (conds, s, _) =>
+  ((sheetRules (pageSheets css)).toList.filter fun (conds, s, _) =>
     s == sel && conds.all (holdsIn .light ·)).map (·.2.2)
 
 /-- The first of `screenRulesOf`'s rules. -/
@@ -2255,7 +2255,7 @@ def remMilliOf (value : String) : Option Int := do
 /-- The custom properties the light screen's `:root` rules declare in a stylesheet or a page carrying
 one, newest first, each value read on its light side. -/
 def screenRootVars (css : String) : List (String × String) :=
-  (schemeRoot (styleText css) .light).1.map fun (k, v) => (k, lightSide v)
+  (schemeRoot (pageSheets css) .light).1.map fun (k, v) => (k, lightSide v)
 
 /-- The colour each token class's rule reads (`HtmlDoc.tokenRules`). -/
 def tokenClassColors (css : String) : List (String × String) :=
@@ -2440,8 +2440,8 @@ def readEm (em : Int) (s : String) : Option Int := do
     let (n, d) ← Decl.parseDecimal (s.dropEnd 2).toString
     return (n * em + (d : Int) / 2) / d
 
-/-- A node's offset in units of `em`, its MathML `lspace` plus its left margin; none when `lspace`
-is negative or the margins do not balance. -/
+/-- A node's offset in units of `em`, its MathML `lspace` plus its left margin; none when either is
+absent or not an em length, `lspace` is negative or the margins do not balance. -/
 def readOffset (em : Int) (node : Html.Node) : Option Int := do
   let space ← readEm em (nodeAttr "lspace" node)
   let left ← readEm em (nodeCss "margin-left" node)

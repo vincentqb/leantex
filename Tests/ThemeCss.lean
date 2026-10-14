@@ -128,7 +128,7 @@ public def checks (ref : IO.Ref (List String)) : IO Unit := do
       (paints.all fun (_, bg) => colorValue vars bg == expected)
   let doc := probe empty
   t "theme CSS: an undeclared title ground stays unfilled"
-    ((screenRulesOf (sheet {} doc) "section.slide.title-page").all fun rule =>
+    ((cssBlocksFor (sheet {} doc) "section.slide.title-page").all fun rule =>
       (cssProperty rule "background").isNone)
   let author := "section.slide.standout { background: #123456; color: #abcdef; }\n"
   let doc := { doc with output := { doc.output with stylesheet := some "author.css" } }

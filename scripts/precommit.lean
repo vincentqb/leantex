@@ -1788,7 +1788,8 @@ def rangeTip (r : String) : Option String :=
 /-- A maintained Lean source, which the documentation rule reads. -/
 def docRuleFile (f : String) : Bool := f.endsWith ".lean" && !f.startsWith "testdata/"
 
-/-- Whether a line of code writes a failure list itself: a check block's own `check`. -/
+/-- Whether a line of code conses onto a list through `.modify`, the shape of a check block writing
+its failure list itself. -/
 def failureListWrite (code : String) : Bool :=
   containsSub code ".modify (" && containsSub code " :: ·)"
 
@@ -3694,8 +3695,8 @@ the privacy check is skipped."
       for (code, row) in (codeOnly lines).zipIdx do
         if failureListWrite code then
           say s!"pre-commit: {f}:{row + 1} writes a failure list itself.
-  A check block records through `check` or `failures` (Tests/Support/Check.lean), so every block
-  shares one way a check fails (AGENTS.md § Repository).
+  A check block records through `check` or `failures` (Tests/Support/Check.lean), the helper every
+  block shares (AGENTS.md § Repository).
   Fix: write `check ref name ok`, or `let t := check ref` for a block's own prefix."
 
   -- A tier producer's selftest is built on `Scoreboard.tierSelftest`.

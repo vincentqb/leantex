@@ -229,7 +229,7 @@ private def substVars (vars : List (String × String)) (v : String) : String := 
 /-- A page's top-level rules outside its root table, their `var()` references read through the light
 screen's. -/
 private def resolvedRules (html : String) : List (String × String) :=
-  let css := styleText html
+  let css := pageSheets html
   let vars := screenRootVars html
   (artTopCssBlocks css).toList.filterMap fun (sel, decls) =>
     if sel == ":root" then none else some (sel, substVars vars decls)
@@ -307,7 +307,7 @@ def exportChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit :
     let rules (d : Ir.Doc) := resolvedRules (HtmlDoc.emit {} d).1
     let (rn, re) := (rules nd, rules ed)
     let differ := (rn.zip re).filter (fun (x, y) => x != y) |>.map (·.1.1)
-    t s!"export {style.name}: the light screen's rules resolve alike but the standout frame's ({differ})"
+    t s!"export {style.name}: the top-level rules resolve alike but the standout frame's ({differ})"
       (rn.length == re.length && rn.length > 100 &&
         differ.all (·.startsWith "section.slide.standout"))
 
