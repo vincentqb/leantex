@@ -2600,7 +2600,7 @@ private def leafScalars (icons math : Array Char) (xs : Array Ir.Inline) :
     Array Char × Array Char :=
   Ir.foldInlines (fun acc x =>
     match x with
-    | .formula _ _ body => (acc.1, Math.MList.scalarsList acc.2 body)
+    | .formula _ _ body => (acc.1, Math.MList.scalarsList true acc.2 body)
     | .icon c _ => (acc.1.push c, acc.2)
     | _ => acc) (icons, math) xs
 
@@ -2754,7 +2754,7 @@ public theorem resolveMathAlphas_layout_agree (coverage : Math.MathAlphabetCover
     (body : Math.MList) :
     docMathScalars { body := #[.para
       #[.formula false "" (Math.resolveMathAlphas coverage body)]] } =
-        Math.MList.scalarsList #[] (Math.resolveMathAlphas coverage body) := by
+        Math.MList.scalarsList true #[] (Math.resolveMathAlphas coverage body) := by
   rfl
 
 public def docScalars (doc : Doc) : Array Char := Id.run do
@@ -4155,7 +4155,7 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
         else rememberGlyph sites .E0405 idx c source) acc.origins
       let acc := { acc with origins := sites }
       -- Substitutions are named as text's (W0009), less scalars the assembly recorded missing.
-      let acc := (Math.MList.mathScalarsList #[] body).foldl (fun acc c =>
+      let acc := (Math.MList.scalarsList (styled := false) #[] body).foldl (fun acc c =>
         if (font.gid c).isNone && !m.contains (idx, c) then
           match fs.fallbackFor c with
           | some fb =>

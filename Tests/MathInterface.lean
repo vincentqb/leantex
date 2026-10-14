@@ -37,15 +37,16 @@ example : List String := MathSymData.amsfonts
 example : List String := MathSymData.amssymb
 example : List String := MathSymData.refused
 
-example (acc : Array Char) : MList.scalarsList acc .nil = acc := by
+example (styled : Bool) (acc : Array Char) : MList.scalarsList styled acc .nil = acc := by
   simp only [MList.scalarsList]
 
 example (f : Ir.Color → Option Ir.ColorRef → Ir.Color) :
     MList.mapInk f .nil = .nil := rfl
 
-example (f : Ir.Color → Option Ir.ColorRef → Ir.Color) (body : MList) (acc : Array Char) :
-    (MList.mapInk f body).scalarsList acc = body.scalarsList acc :=
-  MList.mapInk_scalars f body acc
+example (f : Ir.Color → Option Ir.ColorRef → Ir.Color) (styled : Bool) (body : MList)
+    (acc : Array Char) :
+    (MList.mapInk f body).scalarsList styled acc = body.scalarsList styled acc :=
+  MList.mapInk_scalars f styled body acc
 
 example (a b base : Int) (hb : 0 ≤ base) (style : MathStyle) :
     sizeFor (ScriptScales.clamp a b) base style.sup ≤

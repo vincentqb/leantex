@@ -1356,7 +1356,7 @@ public def parseMath (display : Bool) (raws : Array Parse.Raw) (env : Env := {})
   let (toks, names) ← containUnknown (← flattenList #[] raws.toList)
   let (l, notes) ← parseToks toks none display env
   if let some n := names[0]? then
-    if (MList.scalarsList #[] l).isEmpty then throw n
+    if (MList.scalarsList true #[] l).isEmpty then throw n
   return (l, names.map Note.constructFloored ++ notes)
 
 public theorem mathContain_accounts (display : Bool) (raws : Array Parse.Raw)
@@ -1400,7 +1400,7 @@ public def parseMathRows (kind : GridKind) (raws : Array Parse.Raw) (env : Env :
   let (toks, names) ← containUnknown (← flattenList #[] raws.toList)
   let (l, notes) ← parseToks toks (some kind) true env
   if let some n := names[0]? then
-    if (MList.scalarsList #[] l).isEmpty then throw n
+    if (MList.scalarsList true #[] l).isEmpty then throw n
   return (l, names.map Note.constructFloored ++ notes)
 
 end LeanTex.Core.MathParse

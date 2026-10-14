@@ -1677,28 +1677,29 @@ public def MList.classes : MList → List MathClass
 
 mutual
 
-/-- Every scalar a math item can ask the math face for. -/
-@[expose] public def MItem.scalars (acc : Array Char) : MItem → Array Char
+/-- Every scalar a math item sets, counting a `.styled` nucleus's text-face scalar only when
+`styled`. -/
+@[expose] public def MItem.scalars (styled : Bool) (acc : Array Char) : MItem → Array Char
   | .atom _ nuc sup sub _ =>
-    MList.scalarsList (MList.scalarsList (nuc.scalars acc) sup) sub
+    MList.scalarsList styled (MList.scalarsList styled (nuc.scalars styled acc) sup) sub
   | .space _ => acc
   | .ink _ _ => acc
 
-@[expose] public def MNucleus.scalars (acc : Array Char) : MNucleus → Array Char
+@[expose] public def MNucleus.scalars (styled : Bool) (acc : Array Char) : MNucleus → Array Char
   | .sym c => acc.push c
-  | .styled _ c => acc.push c
+  | .styled _ c => if styled then acc.push c else acc
   | .word s => s.foldl (·.push ·) acc
-  | .list body => MList.scalarsList acc body
-  | .alpha _ _ body => MList.scalarsList acc body
+  | .list body => MList.scalarsList styled acc body
+  | .alpha _ _ body => MList.scalarsList styled acc body
   | .frac spec num den =>
     let acc := match spec.left with
       | some c => acc.push c
       | none => acc
-    let acc := MList.scalarsList (MList.scalarsList acc num) den
+    let acc := MList.scalarsList styled (MList.scalarsList styled acc num) den
     match spec.right with
     | some c => acc.push c
     | none => acc
-  | .rad deg body => MList.scalarsList (MList.scalarsList acc deg) body
+  | .rad deg body => MList.scalarsList styled (MList.scalarsList styled acc deg) body
   | .delim l r body =>
     let acc := match l with
       | some c => acc.push c
@@ -1706,7 +1707,7 @@ mutual
     let acc := match r with
       | some c => acc.push c
       | none => acc
-    MList.scalarsList acc body
+    MList.scalarsList styled acc body
   | .big d _ =>
     match d with
     | some c => acc.push c
@@ -1714,128 +1715,24 @@ mutual
   | .accent mark _ body =>
     -- U+0305 draws as a rule, never asked of the face.
     let acc := if mark == '\u0305' then acc else acc.push mark
-    MList.scalarsList acc body
-  | .grid _ rows => MRows.scalarsRows acc rows
-  | .cancel _ _ value body => MList.scalarsList (MList.scalarsList acc body) value
-
-@[expose] public def MList.scalarsList (acc : Array Char) : MList → Array Char
-  | .nil => acc
-  | .cons x rest => MList.scalarsList (x.scalars acc) rest
-
-@[expose] public def MRow.scalarsRow (acc : Array Char) : MRow → Array Char
-  | .nil => acc
-  | .cons c rest => MRow.scalarsRow (MList.scalarsList acc c) rest
-
-@[expose] public def MRows.scalarsRows (acc : Array Char) : MRows → Array Char
-  | .nil => acc
-  | .cons r rest => MRows.scalarsRows (MRow.scalarsRow acc r) rest
-
-end
-
-mutual
-
-/-- Every scalar a math item asks the selected math face for; a `.styled` nucleus asks none. -/
-def MItem.mathScalars (acc : Array Char) : MItem → Array Char
-  | .atom _ nuc sup sub _ =>
-    MList.mathScalarsList (MList.mathScalarsList (nuc.mathScalars acc) sup) sub
-  | .space _ => acc
-  | .ink _ _ => acc
-
-def MNucleus.mathScalars (acc : Array Char) : MNucleus → Array Char
-  | .sym c => acc.push c
-  | .styled _ _ => acc
-  | .word s => s.foldl (·.push ·) acc
-  | .list body => MList.mathScalarsList acc body
-  | .alpha _ _ body => MList.mathScalarsList acc body
-  | .frac spec num den =>
-    let acc := match spec.left with
-      | some c => acc.push c
-      | none => acc
-    let acc := MList.mathScalarsList (MList.mathScalarsList acc num) den
-    match spec.right with
-    | some c => acc.push c
-    | none => acc
-  | .rad deg body => MList.mathScalarsList (MList.mathScalarsList acc deg) body
-  | .delim l r body =>
-    let acc := match l with
-      | some c => acc.push c
-      | none => acc
-    let acc := match r with
-      | some c => acc.push c
-      | none => acc
-    MList.mathScalarsList acc body
-  | .big d _ =>
-    match d with
-    | some c => acc.push c
-    | none => acc
-  | .accent mark _ body =>
-    let acc := if mark == '\u0305' then acc else acc.push mark
-    MList.mathScalarsList acc body
-  | .grid _ rows => MRows.mathScalarsRows acc rows
+    MList.scalarsList styled acc body
+  | .grid _ rows => MRows.scalarsRows styled acc rows
   | .cancel _ _ value body =>
-    MList.mathScalarsList (MList.mathScalarsList acc body) value
+    MList.scalarsList styled (MList.scalarsList styled acc body) value
 
-public def MList.mathScalarsList (acc : Array Char) : MList → Array Char
+@[expose] public def MList.scalarsList (styled : Bool) (acc : Array Char) : MList → Array Char
   | .nil => acc
-  | .cons x rest => MList.mathScalarsList (x.mathScalars acc) rest
+  | .cons x rest => MList.scalarsList styled (x.scalars styled acc) rest
 
-def MRow.mathScalarsRow (acc : Array Char) : MRow → Array Char
+@[expose] public def MRow.scalarsRow (styled : Bool) (acc : Array Char) : MRow → Array Char
   | .nil => acc
-  | .cons c rest => MRow.mathScalarsRow (MList.mathScalarsList acc c) rest
+  | .cons c rest => MRow.scalarsRow styled (MList.scalarsList styled acc c) rest
 
-def MRows.mathScalarsRows (acc : Array Char) : MRows → Array Char
+@[expose] public def MRows.scalarsRows (styled : Bool) (acc : Array Char) : MRows → Array Char
   | .nil => acc
-  | .cons r rest => MRows.mathScalarsRows (MRow.mathScalarsRow acc r) rest
+  | .cons r rest => MRows.scalarsRows styled (MRow.scalarsRow styled acc r) rest
 
 end
-
-mutual
-
-/-- An alphabet applied through a parsed math list, scripts included, upright words untouched. -/
-def MathAlphabet.remapList (a : MathAlphabet) : MList → MList
-  | .nil => .nil
-  | .cons x rest => .cons (a.remapItem x) (a.remapList rest)
-
-def MathAlphabet.remapItem (a : MathAlphabet) : MItem → MItem
-  | .atom cls nuc sup sub lim =>
-    .atom cls (a.remapNucleus nuc) (a.remapList sup) (a.remapList sub) lim
-  | .space mu => .space mu
-  | .ink c n => .ink c n
-
-def MathAlphabet.remapNucleus (a : MathAlphabet) : MNucleus → MNucleus
-  | .sym c => .sym (a.apply c)
-  | .styled sty c => .styled sty c
-  | .word s => .word s
-  | .list body => .list (a.remapList body)
-  | .alpha b src body => .alpha b src body
-  | .frac spec num den => .frac spec (a.remapList num) (a.remapList den)
-  | .rad deg body => .rad (a.remapList deg) (a.remapList body)
-  | .delim l r body => .delim l r (a.remapList body)
-  | .big d step => .big d step
-  | .accent mark stretch body => .accent mark stretch (a.remapList body)
-  | .grid kind rows => .grid kind (a.remapRows rows)
-  | .cancel mark spec value body =>
-    .cancel mark spec (a.remapList value) (a.remapList body)
-
-def MathAlphabet.remapRow (a : MathAlphabet) : MRow → MRow
-  | .nil => .nil
-  | .cons cell rest => .cons (a.remapList cell) (a.remapRow rest)
-
-def MathAlphabet.remapRows (a : MathAlphabet) : MRows → MRows
-  | .nil => .nil
-  | .cons row rest => .cons (a.remapRow row) (a.remapRows rest)
-
-end
-
-theorem MathAlphabet.remapList_classes_id (a : MathAlphabet) :
-    ∀ l : MList, (a.remapList l).classes = l.classes
-  | .nil => rfl
-  | .cons (.atom _ _ _ _ _) rest => by
-    simp only [remapList, remapItem, MList.classes, remapList_classes_id a rest]
-  | .cons (.space _) rest => by
-    simp only [remapList, remapItem, MList.classes, remapList_classes_id a rest]
-  | .cons (.ink _ _) rest => by
-    simp only [remapList, remapItem, MList.classes, remapList_classes_id a rest]
 
 private def usedInk (ink : Option (Ir.Color × Option Ir.ColorRef))
     (acc : Array (Ir.Color × Option Ir.ColorRef)) : Array (Ir.Color × Option Ir.ColorRef) :=
@@ -1937,60 +1834,69 @@ end
 
 mutual
 
-public theorem MList.mapInk_scalars (f : Ir.Color → Option Ir.ColorRef → Ir.Color) :
-    ∀ (l : MList) (acc : Array Char), (MList.mapInk f l).scalarsList acc = l.scalarsList acc
+public theorem MList.mapInk_scalars (f : Ir.Color → Option Ir.ColorRef → Ir.Color)
+    (styled : Bool) :
+    ∀ (l : MList) (acc : Array Char),
+      (MList.mapInk f l).scalarsList styled acc = l.scalarsList styled acc
   | .nil, _ => rfl
   | .cons x rest, acc => by
-    simp only [MList.mapInk, MList.scalarsList, MItem.mapInk_scalars f x,
-      MList.mapInk_scalars f rest]
+    simp only [MList.mapInk, MList.scalarsList, MItem.mapInk_scalars f styled x,
+      MList.mapInk_scalars f styled rest]
 
-theorem MItem.mapInk_scalars (f : Ir.Color → Option Ir.ColorRef → Ir.Color) :
-    ∀ (x : MItem) (acc : Array Char), (MItem.mapInk f x).scalars acc = x.scalars acc
+theorem MItem.mapInk_scalars (f : Ir.Color → Option Ir.ColorRef → Ir.Color)
+    (styled : Bool) :
+    ∀ (x : MItem) (acc : Array Char), (MItem.mapInk f x).scalars styled acc = x.scalars styled acc
   | .atom _ nuc sup sub _, acc => by
-    simp only [MItem.mapInk, MItem.scalars, MNucleus.mapInk_scalars f nuc,
-      MList.mapInk_scalars f sup, MList.mapInk_scalars f sub]
+    simp only [MItem.mapInk, MItem.scalars, MNucleus.mapInk_scalars f styled nuc,
+      MList.mapInk_scalars f styled sup, MList.mapInk_scalars f styled sub]
   | .space _, _ => rfl
   | .ink _ _, _ => rfl
 
-theorem MNucleus.mapInk_scalars (f : Ir.Color → Option Ir.ColorRef → Ir.Color) :
-    ∀ (n : MNucleus) (acc : Array Char), (MNucleus.mapInk f n).scalars acc = n.scalars acc
+theorem MNucleus.mapInk_scalars (f : Ir.Color → Option Ir.ColorRef → Ir.Color)
+    (styled : Bool) :
+    ∀ (n : MNucleus) (acc : Array Char),
+      (MNucleus.mapInk f n).scalars styled acc = n.scalars styled acc
   | .sym _, _ => rfl
   | .styled _ _, _ => rfl
   | .word _, _ => rfl
   | .list body, acc => by
-    simp only [MNucleus.mapInk, MNucleus.scalars, MList.mapInk_scalars f body]
+    simp only [MNucleus.mapInk, MNucleus.scalars, MList.mapInk_scalars f styled body]
   | .alpha _ _ body, acc => by
-    simp only [MNucleus.mapInk, MNucleus.scalars, MList.mapInk_scalars f body]
+    simp only [MNucleus.mapInk, MNucleus.scalars, MList.mapInk_scalars f styled body]
   | .frac _ num den, acc => by
-    simp only [MNucleus.mapInk, MNucleus.scalars, MList.mapInk_scalars f num,
-      MList.mapInk_scalars f den]
+    simp only [MNucleus.mapInk, MNucleus.scalars, MList.mapInk_scalars f styled num,
+      MList.mapInk_scalars f styled den]
   | .rad deg body, acc => by
-    simp only [MNucleus.mapInk, MNucleus.scalars, MList.mapInk_scalars f deg,
-      MList.mapInk_scalars f body]
+    simp only [MNucleus.mapInk, MNucleus.scalars, MList.mapInk_scalars f styled deg,
+      MList.mapInk_scalars f styled body]
   | .delim _ _ body, acc => by
-    simp only [MNucleus.mapInk, MNucleus.scalars, MList.mapInk_scalars f body]
+    simp only [MNucleus.mapInk, MNucleus.scalars, MList.mapInk_scalars f styled body]
   | .big _ _, _ => rfl
   | .accent _ _ body, acc => by
-    simp only [MNucleus.mapInk, MNucleus.scalars, MList.mapInk_scalars f body]
+    simp only [MNucleus.mapInk, MNucleus.scalars, MList.mapInk_scalars f styled body]
   | .grid _ rows, acc => by
-    simp only [MNucleus.mapInk, MNucleus.scalars, MRows.mapInk_scalars f rows]
+    simp only [MNucleus.mapInk, MNucleus.scalars, MRows.mapInk_scalars f styled rows]
   | .cancel _ _ value body, acc => by
-    simp only [MNucleus.mapInk, MNucleus.scalars, MList.mapInk_scalars f body,
-      MList.mapInk_scalars f value]
+    simp only [MNucleus.mapInk, MNucleus.scalars, MList.mapInk_scalars f styled body,
+      MList.mapInk_scalars f styled value]
 
-theorem MRow.mapInk_scalars (f : Ir.Color → Option Ir.ColorRef → Ir.Color) :
-    ∀ (r : MRow) (acc : Array Char), (MRow.mapInk f r).scalarsRow acc = r.scalarsRow acc
+theorem MRow.mapInk_scalars (f : Ir.Color → Option Ir.ColorRef → Ir.Color)
+    (styled : Bool) :
+    ∀ (r : MRow) (acc : Array Char),
+      (MRow.mapInk f r).scalarsRow styled acc = r.scalarsRow styled acc
   | .nil, _ => rfl
   | .cons c rest, acc => by
-    simp only [MRow.mapInk, MRow.scalarsRow, MList.mapInk_scalars f c,
-      MRow.mapInk_scalars f rest]
+    simp only [MRow.mapInk, MRow.scalarsRow, MList.mapInk_scalars f styled c,
+      MRow.mapInk_scalars f styled rest]
 
-theorem MRows.mapInk_scalars (f : Ir.Color → Option Ir.ColorRef → Ir.Color) :
-    ∀ (rs : MRows) (acc : Array Char), (MRows.mapInk f rs).scalarsRows acc = rs.scalarsRows acc
+theorem MRows.mapInk_scalars (f : Ir.Color → Option Ir.ColorRef → Ir.Color)
+    (styled : Bool) :
+    ∀ (rs : MRows) (acc : Array Char),
+      (MRows.mapInk f rs).scalarsRows styled acc = rs.scalarsRows styled acc
   | .nil, _ => rfl
   | .cons r rest, acc => by
-    simp only [MRows.mapInk, MRows.scalarsRows, MRow.mapInk_scalars f r,
-      MRows.mapInk_scalars f rest]
+    simp only [MRows.mapInk, MRows.scalarsRows, MRow.mapInk_scalars f styled r,
+      MRows.mapInk_scalars f styled rest]
 
 end
 
@@ -2614,8 +2520,8 @@ mutual
 private theorem resolveAlphaList_scalars_size (coverage : MathAlphabetCoverage) :
     ∀ (active : List (MathAlphabet × MathAlphabetSource)) (l : MList) (acc₁ acc₂ : Array Char),
       acc₁.size = acc₂.size →
-      ((resolveAlphaList coverage active l).scalarsList acc₁).size
-        = (MList.scalarsList acc₂ l).size
+      ((resolveAlphaList coverage active l).scalarsList true acc₁).size
+        = (MList.scalarsList true acc₂ l).size
   | _, .nil, _, _, hs => by simp [resolveAlphaList, MList.scalarsList, hs]
   | active, .cons x rest, acc₁, acc₂, hs => by
     simp only [resolveAlphaList, MList.scalarsList]
@@ -2625,8 +2531,8 @@ private theorem resolveAlphaList_scalars_size (coverage : MathAlphabetCoverage) 
 private theorem resolveAlphaItem_scalars_size (coverage : MathAlphabetCoverage) :
     ∀ (active : List (MathAlphabet × MathAlphabetSource)) (item : MItem) (acc₁ acc₂ : Array Char),
       acc₁.size = acc₂.size →
-      ((resolveAlphaItem coverage active item).scalars acc₁).size
-        = (MItem.scalars acc₂ item).size
+      ((resolveAlphaItem coverage active item).scalars true acc₁).size
+        = (MItem.scalars true acc₂ item).size
   | _, .space _, _, _, hs => by simp [resolveAlphaItem, MItem.scalars, hs]
   | _, .ink _ _, _, _, hs => by simp [resolveAlphaItem, MItem.scalars, hs]
   | active, .atom _ nuc sup sub _, acc₁, acc₂, hs => by
@@ -2638,8 +2544,8 @@ private theorem resolveAlphaItem_scalars_size (coverage : MathAlphabetCoverage) 
 private theorem resolveAlphaNucleus_scalars_size (coverage : MathAlphabetCoverage) :
     ∀ (active : List (MathAlphabet × MathAlphabetSource)) (nuc : MNucleus) (acc₁ acc₂ : Array Char),
       acc₁.size = acc₂.size →
-      ((resolveAlphaNucleus coverage active nuc).scalars acc₁).size
-        = (MNucleus.scalars acc₂ nuc).size
+      ((resolveAlphaNucleus coverage active nuc).scalars true acc₁).size
+        = (MNucleus.scalars true acc₂ nuc).size
   | active, .sym c, acc₁, acc₂, hs => by
     simp only [resolveAlphaNucleus]
     cases resolveCharStack coverage active c <;>
@@ -2689,8 +2595,8 @@ private theorem resolveAlphaNucleus_scalars_size (coverage : MathAlphabetCoverag
 private theorem resolveAlphaRow_scalars_size (coverage : MathAlphabetCoverage) :
     ∀ (active : List (MathAlphabet × MathAlphabetSource)) (row : MRow) (acc₁ acc₂ : Array Char),
       acc₁.size = acc₂.size →
-      ((resolveAlphaRow coverage active row).scalarsRow acc₁).size
-        = (MRow.scalarsRow acc₂ row).size
+      ((resolveAlphaRow coverage active row).scalarsRow true acc₁).size
+        = (MRow.scalarsRow true acc₂ row).size
   | _, .nil, _, _, hs => by simp [resolveAlphaRow, MRow.scalarsRow, hs]
   | active, .cons cell rest, acc₁, acc₂, hs => by
     simp only [resolveAlphaRow, MRow.scalarsRow]
@@ -2700,8 +2606,8 @@ private theorem resolveAlphaRow_scalars_size (coverage : MathAlphabetCoverage) :
 private theorem resolveAlphaRows_scalars_size (coverage : MathAlphabetCoverage) :
     ∀ (active : List (MathAlphabet × MathAlphabetSource)) (rows : MRows) (acc₁ acc₂ : Array Char),
       acc₁.size = acc₂.size →
-      ((resolveAlphaRows coverage active rows).scalarsRows acc₁).size
-        = (MRows.scalarsRows acc₂ rows).size
+      ((resolveAlphaRows coverage active rows).scalarsRows true acc₁).size
+        = (MRows.scalarsRows true acc₂ rows).size
   | _, .nil, _, _, hs => by simp [resolveAlphaRows, MRows.scalarsRows, hs]
   | active, .cons row rest, acc₁, acc₂, hs => by
     simp only [resolveAlphaRows, MRows.scalarsRows]
@@ -2711,8 +2617,8 @@ private theorem resolveAlphaRows_scalars_size (coverage : MathAlphabetCoverage) 
 end
 
 public theorem resolveMathAlphas_scalars_size (coverage : MathAlphabetCoverage) (body : MList) :
-    ((resolveMathAlphas coverage body).scalarsList #[]).size
-      = (MList.scalarsList #[] body).size :=
+    ((resolveMathAlphas coverage body).scalarsList true #[]).size
+      = (MList.scalarsList true #[] body).size :=
   resolveAlphaList_scalars_size coverage [] body #[] #[] rfl
 
 public theorem resolveCharStack_forcedSym_exact (coverage : MathAlphabetCoverage)

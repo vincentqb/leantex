@@ -368,13 +368,13 @@ requested for ask exactly the scalars `Layout.docMathScalars` holds. -/
 def mathCensusRegionChecks (ref : IO.Ref (List String)) (n : String) (doc : Ir.Doc) :
     IO Bool := do
   let requested := (Ir.mathRequests .face doc).foldl
-    (fun acc r => Math.MList.scalarsList acc r.body) #[]
+    (fun acc r => Math.MList.scalarsList true acc r.body) #[]
   let census := Layout.docMathScalars doc
   check ref s!"math census {n}: the painted requests ask the scalar census's scalars"
     (requested.all census.contains && census.all requested.contains)
   let scalars := fun (acc : Array Char) (xs : Array Ir.Inline) =>
     Ir.foldInlines (fun acc x => match x with
-      | .formula _ _ body => Math.MList.scalarsList acc body
+      | .formula _ _ body => Math.MList.scalarsList true acc body
       | _ => acc) acc xs
   return !((docPictures doc).foldl (fun acc p => p.labelContents.foldl scalars acc) #[]).isEmpty
 

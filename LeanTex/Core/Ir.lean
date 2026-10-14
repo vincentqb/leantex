@@ -7340,28 +7340,29 @@ private theorem cancellation_length (mark : Math.CancelMark) (value body : Strin
 mutual
 
 private theorem list_length : ∀ (body : Math.MList) (chars : Array Char) (text : String),
-    (Math.MList.scalarsList chars body).size + text.length ≤ (list text body).length + chars.size
+    (Math.MList.scalarsList true chars body).size + text.length ≤
+      (list text body).length + chars.size
   | .nil, _, _ => by simp [list, Math.MList.scalarsList, Nat.add_comm]
   | .cons x rest, chars, text => by
     have hx := item_length x chars
-    have hr := list_length rest (x.scalars chars) (text ++ item x)
+    have hr := list_length rest (x.scalars true chars) (text ++ item x)
     simp only [list, Math.MList.scalarsList, String.length_append] at *
     omega
 
 private theorem item_length : ∀ (x : Math.MItem) (chars : Array Char),
-    (x.scalars chars).size ≤ chars.size + (item x).length
+    (x.scalars true chars).size ≤ chars.size + (item x).length
   | .space _, _ => by simp [item, Math.MItem.scalars]
   | .ink _ _, _ => by simp [item, Math.MItem.scalars]
   | .atom _ n sup sub _, chars => by
     have hn := nucleus_length n chars
-    have hs := list_length sup (n.scalars chars) ""
-    have hb := list_length sub (Math.MList.scalarsList (n.scalars chars) sup) ""
+    have hs := list_length sup (n.scalars true chars) ""
+    have hb := list_length sub (Math.MList.scalarsList true (n.scalars true chars) sup) ""
     have h := scripts_length (nucleus n) (list "" sup) (list "" sub)
     simp only [item, Math.MItem.scalars, String.length_empty, Nat.add_zero] at *
     omega
 
 private theorem nucleus_length : ∀ (n : Math.MNucleus) (chars : Array Char),
-    (n.scalars chars).size ≤ chars.size + (nucleus n).length
+    (n.scalars true chars).size ≤ chars.size + (nucleus n).length
   | .sym c, _ => by simp [Math.MNucleus.scalars, nucleus]
   | .styled _ c, _ => by simp [Math.MNucleus.scalars, nucleus]
   | .word s, _ => by
@@ -7373,7 +7374,7 @@ private theorem nucleus_length : ∀ (n : Math.MNucleus) (chars : Array Char),
   | .frac spec num den, chars => by
     have hn := list_length num (match spec.left with
       | none => chars | some c => chars.push c) ""
-    have hd := list_length den (Math.MList.scalarsList (match spec.left with
+    have hd := list_length den (Math.MList.scalarsList true (match spec.left with
       | none => chars | some c => chars.push c) num) ""
     have h := fraction_length spec (list "" num) (list "" den)
     simp only [Math.MNucleus.scalars, nucleus]
@@ -7381,7 +7382,7 @@ private theorem nucleus_length : ∀ (n : Math.MNucleus) (chars : Array Char),
       simp [hl, hr, optionalChar, String.length_empty] at * <;> omega
   | .rad deg b, chars => by
     have hd := list_length deg chars ""
-    have hb := list_length b (Math.MList.scalarsList chars deg) ""
+    have hb := list_length b (Math.MList.scalarsList true chars deg) ""
     have h := radical_length (list "" deg) (list "" b)
     simp only [Math.MNucleus.scalars, nucleus, String.length_empty, Nat.add_zero] at *
     omega
@@ -7409,28 +7410,28 @@ private theorem nucleus_length : ∀ (n : Math.MNucleus) (chars : Array Char),
     split <;> simp_all <;> omega
   | .cancel mark _ value b, chars => by
     have hb := list_length b chars ""
-    have hv := list_length value (Math.MList.scalarsList chars b) ""
+    have hv := list_length value (Math.MList.scalarsList true chars b) ""
     have h := cancellation_length mark (list "" value) (list "" b)
     simp only [Math.MNucleus.scalars, nucleus, String.length_empty, Nat.add_zero] at *
     omega
 
 private theorem row_length : ∀ (r : Math.MRow) (chars : Array Char) (text : String),
-    (r.scalarsRow chars).size + text.length ≤ (row text r).length + chars.size
+    (r.scalarsRow true chars).size + text.length ≤ (row text r).length + chars.size
   | .nil, _, _ => by simp [row, Math.MRow.scalarsRow, Nat.add_comm]
   | .cons c rest, chars, text => by
     have hc := list_length c chars ""
-    have hr := row_length rest (Math.MList.scalarsList chars c)
+    have hr := row_length rest (Math.MList.scalarsList true chars c)
       (text ++ list "" c ++ (match rest with | .nil => "" | .cons _ _ => ","))
     simp only [row, Math.MRow.scalarsRow, String.length_append, String.length_empty,
       Nat.add_zero] at *
     omega
 
 private theorem rows_length : ∀ (rs : Math.MRows) (chars : Array Char) (text : String),
-    (rs.scalarsRows chars).size + text.length ≤ (rows text rs).length + chars.size
+    (rs.scalarsRows true chars).size + text.length ≤ (rows text rs).length + chars.size
   | .nil, _, _ => by simp [rows, Math.MRows.scalarsRows, Nat.add_comm]
   | .cons r rest, chars, text => by
     have hc := row_length r chars ""
-    have hr := rows_length rest (r.scalarsRow chars)
+    have hr := rows_length rest (r.scalarsRow true chars)
       (text ++ "[" ++ row "" r ++ "]" ++ (match rest with | .nil => "" | .cons _ _ => ","))
     simp only [rows, Math.MRows.scalarsRows, String.length_append, String.length_empty,
       Nat.add_zero] at *
@@ -7501,7 +7502,7 @@ end FormulaText
 public def formulaFloor (body : Math.MList) : String := FormulaText.list "" body
 
 public theorem formulaFloor_content_covers (body : Math.MList) :
-    (Math.MList.scalarsList #[] body).size ≤ (formulaFloor body).length := by
+    (Math.MList.scalarsList true #[] body).size ≤ (formulaFloor body).length := by
   simpa [formulaFloor] using FormulaText.list_length body #[] ""
 
 public theorem formulaFloor_ink_id (f : Color → Option ColorRef → Color) (body : Math.MList) :
@@ -7663,10 +7664,10 @@ public inductive Salvage where
 
 public theorem formulaFloor_covers (c : DiagCode) (h : c.floor.ships) (body : Math.MList) :
     FloorHonest c.floor .translated
-      (Math.MList.scalarsList #[] body).toList (formulaFloor body).toList := by
+      (Math.MList.scalarsList true #[] body).toList (formulaFloor body).toList := by
   refine ⟨fun hn => absurd (h.symm.trans hn) (by decide), fun _ hc hi => ?_,
     fun hn => nomatch hn⟩
-  have hc' : (Math.MList.scalarsList #[] body).size > 0 := by
+  have hc' : (Math.MList.scalarsList true #[] body).size > 0 := by
     simpa [← Array.length_toList, List.length_pos_iff] using hc
   have hi' : (formulaFloor body).length = 0 := by
     simpa [String.length_toList] using congrArg List.length hi
@@ -14388,12 +14389,12 @@ public def missingMathAlphas (coverage : Math.MathAlphabetCoverage)
 
 /-- The first formula needing glyphs, before a face is selected. -/
 public def mathFaceRequest (doc : Doc) : Option MathRequest :=
-  (mathRequests .face doc).find? fun r => !(Math.MList.scalarsList #[] r.body).isEmpty
+  (mathRequests .face doc).find? fun r => !(Math.MList.scalarsList true #[] r.body).isEmpty
 
 public theorem mathFaceRequest_covers (doc : Doc) (request : MathRequest)
     (h : mathFaceRequest doc = some request) :
     request ∈ mathRequests .face doc ∧
-      (Math.MList.scalarsList #[] request.body).isEmpty = false := by
+      (Math.MList.scalarsList true #[] request.body).isEmpty = false := by
   refine ⟨Array.mem_of_find?_eq_some h, ?_⟩
   simpa using Array.find?_some h
 

@@ -1439,9 +1439,9 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((Layout.docScalars styledDoc).contains 'R')
   let oneStyled : Math.MList :=
     .cons (.atom .ord (.styled { slot := .sans } 'R') .nil .nil false) .nil
-  t "mathScalars excludes a styled nucleus that scalarsList keeps"
-    (Math.MList.mathScalarsList #[] oneStyled == #[] &&
-      Math.MList.scalarsList #[] oneStyled == #['R'])
+  t "scalarsList false drops a styled nucleus that scalarsList true keeps"
+    (Math.MList.scalarsList false #[] oneStyled == #[] &&
+      Math.MList.scalarsList true #[] oneStyled == #['R'])
 
   t "IR: text-sourced alphabets carry their typed MathTextStyle"
     (Math.MathAlphabet.textStyle? .rm == some { slot := .body, bold := false, italic := false } &&

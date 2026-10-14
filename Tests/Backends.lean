@@ -120,7 +120,7 @@ def mathmlChecks (ref : IO.Ref (List String)) : IO Unit := do
     | none => failures ref s!"census: no formula elaborated for {src}"
     | some body =>
       let leaf := MathMl.listChars #[] body
-      let pdf := Math.MList.scalarsList #[] body
+      let pdf := Math.MList.scalarsList true #[] body
       t s!"every PDF census scalar reaches the MathML leaf text: {src}"
         (pdf.all leaf.contains)
       t s!"every MathML leaf scalar is a census scalar or the overline: {src}"
