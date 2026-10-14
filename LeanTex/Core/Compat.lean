@@ -4746,7 +4746,7 @@ private def setLength (n src what : String) (pos : Pos) : M (Array Raw) := do
   let st ← get
   -- premise: registerScopeChecks — a scoped assignment leaves later arithmetic unchanged
   unless st.inDef do
-    write fun st => { st with lens := (st.lens.filter (·.1 != n)).push (n, src) }
+    write fun st => { st with lens := Ir.redeclare st.lens n src }
   let preamble ← docPreamble
   let own := s!"\\tokens\{ {n} = {src} }"
   let emit (native : String) : M (Array Raw) := do
@@ -4978,7 +4978,7 @@ private def sizeSkips (body : Array Raw) (start : Nat) (pos : Pos) : M (Array St
       if let some src := (lenValue lens a.value (preamble := true) (measureKnown := known)
           (flowPage := flow)).filter readsAsLength then
         out := out.push s!"{a.name} = {src}"
-        lens := (lens.filter (·.1 != a.name)).push (a.name, src)
+        lens := Ir.redeclare lens a.name src
       else
         let _ ← unreadableLength a.name (rawSrc a.value).trimAscii.toString pos
         pure ()
@@ -5053,7 +5053,7 @@ private def listLevelDef (level : Nat) (what : String) (body : Array Raw) (pos :
   let (assigns, stop) := readAssigns body 0
   if stop < body.size || assigns.isEmpty then return false
   write fun st => { st with
-    listDefs := (st.listDefs.filter (·.1 != level)).push (level, pos, assigns) }
+    listDefs := Ir.redeclare st.listDefs level (pos, assigns) }
   for n in (assigns.map (·.name)).toList.eraseDups do
     if let some (.unmodelled why) := paramSites.lookup n then nameParam n why pos
     else if assigns.any (fun a => a.add && a.name == n) && listCarried.contains n then
@@ -5678,7 +5678,7 @@ private def floatRedef? (envName : String) (raws : Array Raw) (j : Nat) (pos : P
     let mut assigned : Array (String × String) := #[]
     for (r, v) in decls do
       match ← floatSkipValue? assigned v with
-      | some src => assigned := (assigned.filter (·.1 != r)).push (r, src)
+      | some src => assigned := Ir.redeclare assigned r src
       | none => let _ ← unreadableLength r (rawSrc v).trimAscii.toString pos
     let entries := assigned.toList.map fun (r, src) =>
       let tok := if r == "abovecaptionskip" then "captionsep" else "belowcaptionskip"
@@ -6044,7 +6044,7 @@ private def bodyEdges (raws : Array Raw) (j : Nat) : Bool × Bool :=
 `\addtobeamertemplate` appended to the one before. -/
 private def installBlockTemplate (element : String) (body : Array Raw) (pos : Pos) : M Unit :=
   write fun st => { st with
-    beamerTemplates := (st.beamerTemplates.filter (·.1 != element)).push (element, st.file, pos, body)
+    beamerTemplates := Ir.redeclare st.beamerTemplates element (st.file, pos, body)
     beamerBlockBegin := if element == "block begin" then #[] else st.beamerBlockBegin }
 
 /-- The block templates the preamble installed, read in pairs where it ends. -/
@@ -6812,8 +6812,8 @@ is skipped" pos
 only preamble block templates are read" pos
         (help := "define block templates in the preamble")
       return some (#[], k)
-    write fun st => { st with beamerTemplateDefs :=
-      (st.beamerTemplateDefs.filter (·.1 != (element, name))).push ((element, name), body) }
+    write fun st => { st with
+      beamerTemplateDefs := Ir.redeclare st.beamerTemplateDefs (element, name) body }
     if starred then installBlockTemplate element body pos
     became s!"\\defbeamertemplate\{{element}}\{{name}}" "a block template, read where the preamble ends" pos
     return some (#[], k)
@@ -6989,7 +6989,7 @@ defines; those blocks keep beamer's default template" pos
       let fields := beamerFontUpdate previous source
       unless element == "normal text" do
         write fun st => { st with
-          beamerFonts := (st.beamerFonts.filter (·.1 != element)).push (element, fields)
+          beamerFonts := Ir.redeclare st.beamerFonts element fields
           beamerCaptures := st.beamerCaptures + 1 }
       match beamerFontElements.lookup element with
       | none =>
@@ -7108,7 +7108,7 @@ its value is skipped" pos
       if seed.isEmpty then continue
       let fields := themeOver stored seed
       write fun st => { st with
-        beamerFonts := (st.beamerFonts.filter (·.1 != element)).push (element, fields) }
+        beamerFonts := Ir.redeclare st.beamerFonts element fields }
       reseated := reseated.push
         s!"\\style\{{target}}\{ {styleKey} = \{{beamerFontCommands (blockTitleFields element fields)}} }"
     let native := String.intercalate " " (s!"\\theme\{{tname}}" :: reseated.toList)
@@ -8068,9 +8068,9 @@ baselineskip = {milliStr ld}pt }" ++
     write fun st =>
       let st := if st.head.isEmpty && st.foot.isEmpty then { st with runPos := pos } else st
       if name.endsWith "head" then
-        { st with head := (st.head.filter (·.1 != slot)).push (slot, src) }
+        { st with head := Ir.redeclare st.head slot src }
       else
-        { st with foot := (st.foot.filter (·.1 != slot)).push (slot, src) }
+        { st with foot := Ir.redeclare st.foot slot src }
     return some (#[], k)
   | "fancyhead" | "fancyfoot" | "fancyhf" =>
     -- fancyhdr's `[places]`: one page sequence, so even and odd collapse onto the slot letter.
@@ -12099,7 +12099,7 @@ private def textList (loc : Locale) (st : TextSt) (raws : Array Raw)
       let entries := KeyVal.items (rawSrc (args.getD 0 #[]))
       let layered (layer : Array (String × Array String)) (lang : String) :=
         let old := ((layer.find? (·.1 == lang)).map (·.2)).getD #[]
-        (layer.filter (·.1 != lang)).push (lang, old ++ entries)
+        Ir.redeclare layer lang (old ++ entries)
       let st := if n == "lstset" then
           { st with lstOpts := st.lstOpts ++ entries }
         else if n == "setminted" then match lang with
