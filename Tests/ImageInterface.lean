@@ -39,9 +39,6 @@ example (fetched : Array (Image.Request × Image.Fetch)) :
 -- HtmlDoc and Pending use precisely these store and sizing equations.
 example (store : Image.Store) (i : Nat) : store.get? i = store.entries[i]? := rfl
 
-example (store : Image.Store) (src : String) :
-    store.find? src = store.findRequest? { src } := rfl
-
 example (store : Image.Store) (req : Image.Request) :
     store.infoRequest? req =
       (store.entries.find? (·.toRequest == req)).bind (·.info) := rfl

@@ -1741,9 +1741,6 @@ public structure Store where
 @[expose] public def Store.findRequest? (s : Store) (req : Request) : Option Nat :=
   s.entries.findIdx? (·.toRequest == req)
 
-@[expose] public def Store.find? (s : Store) (src : String) : Option Nat :=
-  s.findRequest? { src }
-
 @[expose] public def Store.get? (s : Store) (i : Nat) : Option Loaded :=
   s.entries[i]?
 

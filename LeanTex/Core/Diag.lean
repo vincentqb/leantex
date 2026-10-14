@@ -142,6 +142,9 @@ public def Floor.inks : Floor → Bool
   | .content => true
   | .refuse | .absent | .inert => false
 
+public theorem Floor.inks_ships (f : Floor) (h : f.inks) : f.ships := by
+  cases f <;> simp_all [Floor.inks, Floor.ships]
+
 /-- Every diagnostic code the engine can emit, one constructor per code. -/
 public inductive DiagCode where
   | E0001 | W0002 | E0003 | E0004 | W0004 | E0005 | E0006

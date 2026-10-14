@@ -770,6 +770,10 @@ public def listSkips (l : ListLineage) (size : Sp) (level : Nat) : Option ListSk
                 parsep := s.parsep.scale size base.toNat
                 partopsep := s.partopsep.map (·.scale size base.toNat) }
 
+public theorem listSkips_web_exact (size : Sp) (level : Nat) :
+    listSkips .web size level = none := by
+  simp only [listSkips]
+
 /-- The class options a display's size file is read from, each with the
 `\normalsize` its file sets. -/
 private def displayOptions : List (Nat × Sp) :=
@@ -7006,6 +7010,14 @@ public def Doc.chromeAllowed (doc : Doc) : Bool :=
 edge to `\footheight` above its bottom edge. -/
 public def frameInTextArea (chromeAllowed : Bool) (valign : VAlign) : Bool :=
   chromeAllowed && !(valign matches .golden)
+
+public theorem Doc.frameNumbers_restart_exact (doc : Doc) (p : Nat)
+    (h : doc.frameRestart = some p) :
+    doc.frameNumbers.toList.filterMap id =
+      List.range' 1 (Ir.frameCount (doc.body.extract 0 p)) ++
+        List.range' 1 (Ir.frameCount (doc.body.extract p doc.body.size)) := by
+  simp only [Doc.frameNumbers, h, Array.toList_append, List.filterMap_append,
+    frameNumbers_gapless]
 
 public theorem Doc.frameNumbers_size (doc : Doc) : doc.frameNumbers.size = doc.body.size := by
   unfold Doc.frameNumbers

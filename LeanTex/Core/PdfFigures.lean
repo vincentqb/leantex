@@ -1103,4 +1103,7 @@ private theorem occInto_exact :
 
 end
 
+public theorem occInto_occList_exact (xs : List ContentOp) : occInto #[] xs = (occList xs).toArray := by
+  simpa using occInto_exact xs #[]
+
 end LeanTex.Core.Pdf

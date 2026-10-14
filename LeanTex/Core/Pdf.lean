@@ -1795,7 +1795,6 @@ public def packedMax (packed : List (Nat × ObjectStream)) : Nat :=
 /-- The measured bytes retained for final emission. -/
 public structure WriteMeasurement where
   body : ByteArray
-  offsets : Array (Nat × Nat)
   widths : Xref.Widths
   xrefPayload : ByteArray
   objectPayloadSize : Nat
@@ -1805,7 +1804,7 @@ public def WritePlan.measure (p : WritePlan) : WriteMeasurement :=
   let (body, locs) := serialize p.head (p.direct ++ stmRowsOf p.table packed)
   let entries := writerXrefEntries p.table locs p.compressed body.size
   let widths := Xref.widthsOf entries
-  { body, offsets := locs, widths, xrefPayload := Xref.encode widths entries,
+  { body, widths, xrefPayload := Xref.encode widths entries,
     objectPayloadSize := packedMax packed }
 
 /-- The xref stream's own dictionary, as `bytes` spells it. -/

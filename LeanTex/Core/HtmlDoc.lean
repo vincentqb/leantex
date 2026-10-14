@@ -1548,6 +1548,11 @@ public theorem listGaps_agree (size : Int) (sk : Ir.ListSkips) (pt : SymGlue)
   ⟨screenMilli_between size _ hq h0.1, screenMilli_between size _ hq h0.2.1,
    screenMilli_between size _ hq h0.2.2, screenMilli_between size _ hq hp⟩
 
+public theorem listRules_web_exact (size : Int) (tokens : Ir.Tokens) :
+    listRules .web size tokens = [] := by
+  simp only [listRules, Ir.listSkips_web_exact]
+  rfl
+
 /-- A declared `\parskip`'s natural width in sp, at the body size it was set under. -/
 public def parskipSp (page : Ir.PageSpec) (g : SymGlue) : Dim.Sp :=
   g.width.resolve page.fontSize (page.fontSize / 2)
