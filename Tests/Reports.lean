@@ -1588,7 +1588,7 @@ def reports : List Report := [
   { id := "R178", date := "2026-10-14"
     what := "Mathlib's prefix notations `#s` and `#α` set as bold keywords in a listing, in both artifacts, where Lean's own highlighter, keying on the atom, reads a bare `#` before a name: the `#` command rule read `#` and a name anywhere, not only where a command starts"
     pins := [check% hashCommandChecks]
-    accept := ["twelve of the guard's new assertions fail at 9bed5b00 before the fix: `#s` after `:=` and in parentheses, and `#α`, set bold in the keyword ink in both styles and both artifacts; an indented command and one after `in` keep the keyword before and after"]
+    accept := ["twelve of the guard's new assertions fail at 9bed5b00 before the fix: `#s` after `:=` and in parentheses, and `#α`, set bold in the keyword ink in both styles and both artifacts; a command indented after a line break, one after `in` on its line and one indented on the line after `in` keep the keyword before and after"]
     state := .guarded "9bed5b00" .before .author }
 ]
 

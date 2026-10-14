@@ -105,8 +105,24 @@ colours = {}
 for name in batch['styles']:
     style = get_style_by_name(name)
     colours[name] = {t: colour(style, t) for t in sorted(seen)}
+
+
+def lexed(lexer, text):
+    return [(str(k), v) for _, k, v in lexer.get_tokens_unprocessed(text + '\n') if v]
+
+
+# A departure names texts it must change and texts it must leave as Pygments lexes them.
+misses = []
+for name, states in batch['departures'].items():
+    cls = getattr(importlib.import_module(LEXERS[name][0]), name)
+    options = dict(stripnl=False, stripall=False, ensurenl=False, tabsize=0)
+    stock, ours = cls(**options), departed(cls)(**options)
+    for state, d in states.items():
+        misses += [f'{name} {state} leaves {t!r} as Pygments lexes it' for t in d['fires']
+                   if lexed(stock, t) == lexed(ours, t)]
+        misses += [f'{name} {state} changes {t!r}' for t in d['holds'] if lexed(stock, t) != lexed(ours, t)]
 json.dump({'pygments': pygments.__version__, 'python': sys.version.split()[0],
-           'unicode': unicodedata.unidata_version,
+           'unicode': unicodedata.unidata_version, 'misses': misses,
            'answers': answers, 'colours': colours}, sys.stdout, ensure_ascii=True)
 "#
 
@@ -620,6 +636,7 @@ structure Reply where
   version : String
   python : String
   unicode : String
+  misses : Array String
   answers : Array (Array Tok × Bool)
   colours : Std.HashMap (String × String) String
 
@@ -660,6 +677,7 @@ def runPygments (python : String) (declared : Json) (cases : Array Case) : IO Re
     let version := (json.getObjValAs? String "pygments").toOption.getD "?"
     let py := (json.getObjValAs? String "python").toOption.getD "?"
     let unicode := (json.getObjValAs? String "unicode").toOption.getD "?"
+    let misses := (json.getObjValAs? (Array String) "misses").toOption.getD #[]
     let some answers := (json.getObjVal? "answers").toOption.bind (·.getArr?.toOption)
       | die "the reply has no answers"
     let answers ← answers.mapM fun a => match theirTokens a with
@@ -672,7 +690,7 @@ def runPygments (python : String) (declared : Json) (cases : Array Case) : IO Re
       let .obj kvs := table | die s!"the {st} colours are not an object"
       for (k, v) in kvs.toArray do
         colours := colours.insert (st, k) ((v.getStr?).toOption.getD "")
-    return { version, python := py, unicode, answers, colours }
+    return { version, python := py, unicode, misses, answers, colours }
 
 def selftest : IO UInt32 := do
   let mut fails : Array String := #[]
@@ -792,7 +810,9 @@ def main (args : List String) : IO UInt32 := do
         let src := (Src.ofString (c.source ++ "\n")).chars
         let ctx := String.ofList (src.extract (at_ - min at_ 20) (at_ + 20)).toList
         IO.println s!"highlight-diff: {c.label} ({c.alias}) differs at {level.name} level, scalar {at_}: \"{escape ctx}\"\n  ours:\n{showToks src ours at_}  Pygments:\n{showToks src theirs at_}"
-  let mut failed := false
+  let mut failed := !reply.misses.isEmpty
+  for miss in reply.misses do
+    IO.println s!"highlight-diff: a departure witness fails: {miss}"
   for corpus in ["snippets", "fuzz", "docs"] do
     for l in o.lexers do
       if let some (cs, r, s, col) := tally.get? (corpus, l) then

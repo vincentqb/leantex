@@ -106,12 +106,12 @@ private def expression (ix : Ix) (m : M) : Option M := Id.run do
   return none
 
 /-- Where a command starts, the departure testdata/highlight/pygments-departures.json declares for
-`root`: white space from the text's start or a line break, then blanks, before a `#`; or `in` and its
-white space before one. -/
+`root`: blanks opening the text, or white space through a line break and the blanks after it,
+before a `#`; or `in` and its white space before one. -/
 private def commandLead (ix : Ix) (m : M) : Option M := Id.run do
   let s := ix.s
   let p := m.pos
-  let e := if s.space p then ix.space.read p else p
+  let e := ix.space.read p
   if s.is e '#' then
     let mut q := e
     for _ in [p:e] do
@@ -122,8 +122,8 @@ private def commandLead (ix : Ix) (m : M) : Option M := Id.run do
     if s.is w '#' then return some ((m.tok p (p + 2) Ty.keyword).tok (p + 2) w Ty.whitespace)
   return none
 
-/-- The commands the departure's rules read after their lead, in its order: `#print`'s forms,
-`#exit`, and `#` before a name segment. -/
+/-- The commands the departure's rules read after their lead, at a `#`, in its order: `#print`'s
+forms, `#exit`, and `#` before a name segment. -/
 private def command (ix : Ix) (m : M) : Option M := Id.run do
   let s := ix.s
   let p := m.pos
@@ -135,14 +135,14 @@ private def command (ix : Ix) (m : M) : Option M := Id.run do
     let e := p + print.size
     let w := ix.space.read e
     if w > e then
-      let lead := (m.tok p e Ty.keywordNamespace).tok e w Ty.whitespace
+      let head := (m.tok p e Ty.keywordNamespace).tok e w Ty.whitespace
       if let some f := firstAlt sets.get.printWords s w s.boundaryAt then
-        return some (lead.tok w f Ty.keyword)
+        return some (head.tok w f Ty.keyword)
       if s.lit w tactic then
         let a := w + tactic.size
         let b := ix.space.read a
         if b > a && s.lit b tags && s.boundary (b + tags.size) then
-          return some (((lead.tok w a Ty.keyword).tok a b Ty.whitespace).tok b (b + tags.size)
+          return some (((head.tok w a Ty.keyword).tok a b Ty.whitespace).tok b (b + tags.size)
             Ty.keyword)
   if s.lit p exit && s.boundary (p + exit.size) then
     return some (m.tok p (p + exit.size) Ty.genericError)

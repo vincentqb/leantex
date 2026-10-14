@@ -201,12 +201,14 @@ def departure_rule(rx, *kinds):
 
 def unreached(rx, declared):
     """The words a `\\b`-prefixed list holds that start on a non-word scalar, so that its prefix
-    holds only after a word, and no declared rule of their state reads whole."""
+    holds only after a word, and no declared rule of their state reads whole opening a text and
+    after a line break."""
     if not isinstance(rx, words) or rx.prefix != r'\b':
         return []
     reads = [re.compile(departure_rule(*r)[0]) for r in declared['rules']] if declared else []
+    whole = lambda d, t: (m := d.match(t)) is not None and m.end() == len(t)
     return [w for w in rx.words if not re.match(r'\w', w)
-            and not any((m := d.match(w)) and m.end() == len(w) for d in reads)]
+            and not any(whole(d, w) and whole(d, '\n' + w) for d in reads)]
 
 
 departed = set()
@@ -222,6 +224,9 @@ def structure(cls, names):
             if not because or '\n' in because or not check.isidentifier():
                 raise SystemExit(f'{cls.__name__} {state}: a departure names its reason in one '
                                  'line and the check holding it')
+            if not declared['fires'] or not declared['holds']:
+                raise SystemExit(f'{cls.__name__} {state}: a departure names texts it changes and '
+                                 'texts it leaves')
             out.append(f'    departure held by {check} because {because}')
             for r in declared['rules']:
                 rx, act = departure_rule(*r)

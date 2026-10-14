@@ -158,12 +158,14 @@ def pygmentsLexerChecks (ref : IO.Ref (List String)) : IO Unit := do
   let held := match declared with
     | .obj lexers => lexers.toArray.all fun (_, states) => match states with
       | .obj states => states.toArray.all fun (_, d) =>
+        let sides := ["fires", "holds"].all fun k =>
+          !((d.getObjValAs? (Array String) k).toOption.getD #[]).isEmpty
         match d.getObjValAs? String "check" with
-        | .ok name => !name.isEmpty && hasStr suite s!"  {name} ref\n"
+        | .ok name => sides && !name.isEmpty && hasStr suite s!"  {name} ref\n"
         | .error _ => false
       | _ => false
     | _ => false
-  t "pygments lexers: every departure names a check the suite runs" held
+  t "pygments lexers: every departure names a check the suite runs and texts on each side of it" held
   let json ← match Json.parse (← IO.FS.readFile PygmentsLexers.recorded) with
     | .ok j => pure j
     | .error e => do t s!"pygments lexers: the record does not parse: {e}" false; return

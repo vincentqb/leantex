@@ -130,7 +130,8 @@ def holeDoc (style : Ir.ListingStyle) : Ir.Doc × Array Diag :=
 array, and `#` notations in terms. -/
 def hashSource : String :=
   "#check Nat.succ\n#eval 2 + 2\n#guard 1 + 1 == 2\n#print axioms Nat.add_comm\n#exit\n#[1, 2]\n" ++
-    "#guard_msgs in\n  #reduce 3 * 3\nopen Foo in #check x\ndef size (s : Finset Nat) : Nat := #s\n" ++
+    "  #synth Inhabited Nat\n#guard_msgs in\n  #reduce 3 * 3\nopen Foo in #check x\n" ++
+    "def size (s : Finset Nat) : Nat := #s\n" ++
     "example (s : Finset Nat) : (#s) = size s := rfl\nexample : Cardinal := #α"
 
 def hashDoc (style : Ir.ListingStyle) : Ir.Doc × Array Diag :=
@@ -292,7 +293,7 @@ def hashCommandChecks (ref : IO.Ref (List String)) : IO Unit := do
             | none => p.color.isNone)
     for (context, word, skip) in [("#check Nat", "#check", 0), ("#eval", "#eval", 0),
         ("#guard 1", "#guard", 0), ("#print", "#print", 0), ("axioms", "axioms", 0),
-        ("#guard_msgs", "#guard_msgs", 0), ("#reduce", "#reduce", 0),
+        ("#guard_msgs", "#guard_msgs", 0), ("#synth", "#synth", 0), ("#reduce", "#reduce", 0),
         ("in #check x", "#check", 2)] do
       sets .keyword .keyword context word skip
     sets .error .genericError "#exit" "#exit" 0
