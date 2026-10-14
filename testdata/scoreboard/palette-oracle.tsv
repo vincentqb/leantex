@@ -2,7 +2,7 @@
 # encoding: raw
 # radix: 31 light scales, 3.0.0; scored 31
 # tailwind: 25 palettes, v4.3.3; scored 25
-# gates: 24 palettes from the invented matrix at both depths
+# gates: 36 palettes from the invented matrix at each depth
 # lowered (applied): gates.least-margin 100→0 — a generated colour on a light paper stands at its floor, never 0.10 above it
 # lowered (applied): radix.accent-text 974→955 — the accent's text stands at a document's 4.5:1 floor, not 0.10 above it, and Radix's yellow, whose own text tone is a disliked olive, serves as a container whose text is its ink
 # lowered (applied): tailwind.accent-text 923→900 — the accent's text stands at a document's 4.5:1 floor, not 0.10 above it, a step lighter than Tailwind 700
