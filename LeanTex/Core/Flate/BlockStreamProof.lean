@@ -75,13 +75,6 @@ theorem readStep_write_bounded_exact (raw : ByteArray) (maxOut : Nat)
     Bool.false_eq_true, ↓reduceIte, bh, k1, k2, bp, bind, Except.bind, pure, Except.pure]
   rfl
 
-theorem readStep_write_exact (raw : ByteArray) (tokens : Array UInt32)
-    (ht : TokensFor raw 0 tokens raw.size) (w : Bw) (data : ByteArray) (hw : w.Valid)
-    (hr : (write tokens w).Realizes data) :
-    readStep raw.size (ByteArray.empty, {data, bitPos := w.position}) =
-      .ok (.inl raw) :=
-  readStep_write_bounded_exact raw raw.size (Nat.le_refl _) tokens ht w data hw hr
-
 theorem read_write_bounded_exact (raw : ByteArray) (maxOut : Nat)
     (hmax : raw.size ≤ maxOut) (tokens : Array UInt32)
     (ht : TokensFor raw 0 tokens raw.size) (w : Bw) (data : ByteArray) (hw : w.Valid)

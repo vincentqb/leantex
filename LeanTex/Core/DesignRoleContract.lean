@@ -234,8 +234,4 @@ public theorem CssName.ident_internal (a : CssName) (ha : a.wellFormed) :
       rw [← ht]
       simp
 
-public theorem ColorRef.ofKey_role (r : Role) (k : String) (h : r.row.key = some k) :
-    ColorRef.ofKey k = .role r := by
-  simp [ColorRef.ofKey, Role.ofKey?_key_exact r k h]
-
 end LeanTex.Core.Ir

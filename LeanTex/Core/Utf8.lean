@@ -307,10 +307,6 @@ public theorem decodeWith_bad_between (fb : UInt8 → Option Char) (bs : ByteArr
   · simp at hm
   · exact hr
 
-public theorem decode_bad_between (bs : ByteArray) (x : Nat) (h : x ∈ (decode bs).bad) :
-    x < bs.size :=
-  decodeWith_bad_between noFallback bs x h
-
 public theorem decode_valid_prefix_exact (s : String) (bs : ByteArray) :
     decode (s.toUTF8 ++ bs) =
       ⟨s ++ (decode bs).text, (decode bs).bad.map (s.utf8ByteSize + ·)⟩ := by

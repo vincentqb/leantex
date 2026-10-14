@@ -296,16 +296,6 @@ theorem Bw.Field.flush (w : Bw) (hw : w.Valid) {start width value : Nat}
     have he := congrArg Bool.toNat ((flush_bits_exact w hw _ hi).trans (hf.2 k hk))
     simpa only [Nat.toNat_testBit, Nat.shiftRight_eq_div_pow, Nat.and_one_is_mod] using he
 
-theorem pushU_read_exact (w : Bw) (v n : UInt64) (hw : w.Valid)
-    (hn : n.toNat ≤ 16) (hv : v.toNat < 2 ^ n.toNat) :
-    ({data := (w.pushU v n).flush, bitPos := 8 * w.out.size + w.nbits.toNat} : Br).bits
-        n.toNat =
-      some (v.toNat, { data := (w.pushU v n).flush
-                       bitPos := 8 * w.out.size + w.nbits.toNat + n.toNat }) := by
-  exact bitField_bits_exact _ _ _ (by omega) hv
-    (Bw.Field.flush (w.pushU v n) (pushU_valid w v n hw hn)
-      (pushU_field_exact w v n hw hn))
-
 theorem push_huff_decode_exact (w : Bw) (h : Huff) (width code : Nat)
     (hw : w.Valid) (hwidth : 1 ≤ width ∧ width ≤ 15) (hcode : code < 2 ^ width)
     (hlo : Canonical.first (fun k => h.counts[k]?.getD 0) (width - 1) ≤ code)

@@ -214,10 +214,6 @@ public def posterXHeightFloor : Sp := Dim.mm100 350
 public def Color.sameSource (a b : Color) : Bool :=
   a == b && a.pdfModel == b.pdfModel
 
-public theorem Color.sameSource_pdfModel_exact (a b : Color) :
-    a.sameSource b = true → (a.pdfModel == b.pdfModel) = true := by
-  simp [Color.sameSource]
-
 /-- xcolor's screen projection of one CMYK channel: `1 - min(1, c+k)`, scaled to an HTML byte. -/
 private def Color.cmykPreviewByte (v k : Decl.ColorComponent) : UInt8 :=
   let scale := v.scale * k.scale
@@ -319,13 +315,6 @@ public theorem Color.cmyk_components_kept (c m y k : Nat) :
 public theorem Color.pdfFill_srgb (c : Color) (hm : c.pdfModel = none) (hc : c.cmyk = none) :
     c.pdfFill = s!"{c.pdfComponents} rg" := by
   simp [Color.pdfFill, hm, hc]
-
-public theorem Color.pdf_models_exact (r g b c m y k : Decl.ColorComponent) :
-    (Color.ofRgbUnit r g b).pdfFill = s!"{r.pdfUnit} {g.pdfUnit} {b.pdfUnit} rg" ∧
-    (Color.ofGray r).pdfFill = s!"{r.pdfUnit} g" ∧
-    (Color.ofCmykSource c m y k).pdfFill =
-      s!"{c.pdfUnit} {m.pdfUnit} {y.pdfUnit} {k.pdfUnit} k" := by
-  exact ⟨rfl, rfl, rfl⟩
 
 /-- The reader of `pdfMilli`'s output: `"1"` ↦ 1000, `"0.d…"` ↦ the digits
 padded to three, anything else 0. -/
@@ -811,11 +800,6 @@ public def trivlistSkipFor (l : ListLineage) (tokens : Tokens) (size : Sp) (dept
     if depth == 0 then (tokens.find? trivlistSkipName).getD top
     else ((listSkips .beamer size depth).map (·.topsep)).getD top
   | .sizeFile | .web => trivlistSkip tokens size
-
-public theorem trivlistSkipFor_trivlistSkip_exact (l : ListLineage) (tokens : Tokens)
-    (size : Sp) (depth : Nat) (h : l ≠ .beamer) :
-    trivlistSkipFor l tokens size depth = trivlistSkip tokens size := by
-  cases l <;> simp_all [trivlistSkipFor]
 
 /-- A float's space against the text at its list depth, with whether the
 paragraph gap stands on top of it. -/
@@ -1312,11 +1296,6 @@ public theorem Palette.restore_keeps_others (p opening : Palette) (ref other : C
   | none => exact p.erase_keeps_others ref other h
   | some c => exact p.declare_keeps_others ref other c _ h
 
-public theorem Palette.restore_keeps_covered (p opening : Palette) (ref : ColorRef) :
-    (p.restore opening ref).coveredFraction = p.coveredFraction := by
-  unfold Palette.restore
-  cases opening.lookup ref <;> rfl
-
 public theorem Palette.restore_decorative_exact (p opening : Palette) (ref : ColorRef) :
     (p.restore opening ref).decorative.contains ref =
       ((opening.lookup ref).isSome && opening.decorative.contains ref) := by
@@ -1328,9 +1307,6 @@ public theorem Palette.restore_decorative_exact (p opening : Palette) (ref : Col
         simp [Palette.restore, h, Palette.declare, hd, hp]
     · simp [Palette.restore, h, Palette.declare, hd]
 
-public theorem Palette.declare_keeps_covered (p : Palette) (ref : ColorRef) (c : Color)
-    (d : Bool) : (p.declare ref c d).coveredFraction = p.coveredFraction := by rfl
-
 public theorem declare_decorative_rides (p : Palette) (ref : ColorRef) (c : Color) :
     (p.declare ref c false).decorative.contains ref = false := by
   simp [Palette.declare]
@@ -1339,10 +1315,6 @@ public theorem declare_decorative_names (p : Palette) (ref : ColorRef) (c : Colo
     (p.declare ref c true).decorative.contains ref = true := by
   simp only [Palette.declare, ite_true]
   by_cases h : ref ∈ p.decorative <;> simp [h]
-
-public theorem Palette.find?_color_first (p : Palette) (n : String) (c : Color)
-    (h : p.lookup (.color n) = some c) : p.find? n = some c := by
-  simp [Palette.find?, h]
 
 /-- `pct`% of `x` over the rest of `y`, rounded half up. -/
 private def Color.mixStep (x y pct : Nat) : Nat := (x * pct + y * (100 - pct) + 50) / 100
@@ -1384,12 +1356,6 @@ public theorem Color.mix_model_exact (a b : Color) (pct : Nat) :
 private theorem Color.mix_srgb_id (a b : Color) (pct : Nat) (h : a.cmyk = none) :
     a.mix pct b = a.mixSrgb pct b := by
   simp [Color.mix, h]
-
-private theorem Color.mix_cmyk_exact (a b : Color) (pct : Nat) (q : Nat × Nat × Nat × Nat)
-    (h : a.cmyk = some q) :
-    (a.mix pct b).cmyk = some (mixStep q.1 b.toCmyk.1 pct, mixStep q.2.1 b.toCmyk.2.1 pct,
-      mixStep q.2.2.1 b.toCmyk.2.2.1 pct, mixStep q.2.2.2 b.toCmyk.2.2.2 pct) := by
-  simp [Color.mix, h, Color.mixCmyk, Color.ofCmyk]
 
 public def asciiBlank (c : Char) : Bool := c == ' ' || c == '\t' || c == '\n' || c == '\r'
 
@@ -1476,9 +1442,6 @@ public def Palette.resolveSpec (p : Palette) : Decl.ColorSpec → Option Color
 public def Palette.resolveSource (p : Palette) (model : Option String) (src : String) :
     Except Decl.ColorSpecError (Option Color) := do
   return p.resolveSpec (← Decl.parseColorSpec model src)
-
-public theorem Palette.resolveSpec_named_exact (p : Palette) (expr : String) :
-    p.resolveSpec (.named expr) = p.resolve expr := by rfl
 
 public theorem Palette.resolveSpec_models_exact (p : Palette) (r g b : UInt8)
     (x y z c m k : Decl.ColorComponent) :
@@ -2263,9 +2226,6 @@ public def PageSpec.skipScale (p : PageSpec) : List (String × Nat) :=
 /-- `scaleStep` over a document's ladder; a name off the ladder is the base itself. -/
 public def scaleStepIn (scale : List (String × Nat)) (base : Sp) (name : String) : Sp :=
   base * ((scale.lookup name).getD 1000) / 1000
-
-public theorem scaleStepIn_default (base : Sp) (name : String) :
-    scaleStepIn sizeScale base name = scaleStep base name := by rfl
 
 public def Style.label : Style → String
   | .bold => "bold"
@@ -3534,10 +3494,6 @@ flush left, one centred, both flush right. -/
 slack the box leaves. -/
 public def HAlign.boxOffset (h : HAlign) (slack : Int) : Int := slack * h.slackHalves / 2
 
-public theorem HAlign.boxOffset_between (h : HAlign) (s : Int) (hs : 0 ≤ s) :
-    0 ≤ h.boxOffset s ∧ h.boxOffset s ≤ s := by
-  cases h <;> simp only [boxOffset, slackHalves] <;> omega
-
 /-- Which edge of the measure a ragged scope's lines hang from: `\raggedright`
 is flush left, `\raggedleft` flush right. -/
 public inductive FlushSide where
@@ -3781,12 +3737,6 @@ public def tableColShares (cols : Array ColSpec) (target : TableTarget) : Array 
             if m == tm then some (p * 1000 / tperm) else none
           | .flex _ => some flexShare
 
-public theorem tableColShares_count_exact (cols : Array ColSpec) (target : TableTarget) :
-    (tableColShares cols target).size = cols.size := by
-  unfold tableColShares
-  repeat' split
-  all_goals simp
-
 public theorem tableColShares_natural_exact (cols : Array ColSpec) (target : TableTarget)
     (j : Nat) (c : ColSpec) (hget : cols[j]? = some c) (hc : c.width = .natural) :
     (tableColShares cols target)[j]? = some none := by
@@ -3866,14 +3816,6 @@ public theorem tableHeaderRows_between (rows : Array (Array (Array Inline)))
   cases firstMidRow rules.toList with
   | none => exact Nat.zero_le _
   | some k => exact Nat.min_le_right _ _
-
-public theorem tableHeaderRows_zero_of_no_mid (rows : Array (Array (Array Inline)))
-    (rules : Array (Nat × TableRule)) (h : ∀ p ∈ rules, p.2 ≠ .mid) :
-    tableHeaderRows rows rules = 0 := by
-  unfold tableHeaderRows
-  rw [firstMidRow_eq_none_of_no_mid rules.toList
-    (fun p hp => h p (Array.mem_toList_iff.mp hp))]
-  rfl
 
 /-- What a float wraps: `{figure}`, `{table}`, or a `{subfigure}`/`{subtable}` box inside one. -/
 public inductive FloatKind where
@@ -4078,12 +4020,6 @@ public def AlgLine.rendered (w : AlgWords) (semis : Bool) (muted : Color)
 public def padTableRows (rows : Array (Array (Array Inline))) (n : Nat) :
     Array (Array (Array Inline)) :=
   rows.map fun r => r ++ Array.replicate (n - r.size) #[]
-
-public theorem padTableRows_cells (rows : Array (Array (Array Inline))) (n i : Nat)
-    (h : i < rows.size) :
-    (padTableRows rows n)[i]'(by simpa [padTableRows] using h)
-      = rows[i] ++ Array.replicate (n - rows[i].size) #[] := by
-  simp [padTableRows]
 
 public theorem padTableRows_rectangular (rows : Array (Array (Array Inline))) (n : Nat)
     (h : ∀ r ∈ rows, r.size ≤ n) :
@@ -5418,14 +5354,6 @@ public def CaptionSkip.defaultFor (l : ListLineage) (s : CaptionSkip) (size : Sp
 for: the object side's, then the text side's. -/
 public def captionSides (pos : CaptionPos) (capAbove : Bool) : CaptionSkip × CaptionSkip :=
   if pos.placedTop capAbove == capAbove then (.above, .below) else (.below, .above)
-
-public theorem captionSides_auto_exact (capAbove : Bool) :
-    captionSides .auto capAbove = (.above, .below) := by
-  cases capAbove <;> rfl
-
-public theorem captionSides_declared_exact (pos : CaptionPos) (h : pos ≠ .auto) :
-    captionSides pos true = (captionSides pos false).swap := by
-  cases pos <;> first | rfl | exact absurd rfl h
 
 /-- A listing caption with its number prefix in front, as "Listing 1: text". -/
 -- conserves: none — the prefix is furniture added at emission.
@@ -6764,9 +6692,6 @@ public def DocClass.ofString? : String → Option DocClass
   | "poster" => some .poster
   | _ => none
 
-public theorem DocClass.ofString?_name (c : DocClass) : ofString? c.name = some c := by
-  cases c <;> rfl
-
 /-- Each class as its record: slides' 11 pt is beamer's, the card's and
 résumé's floor the fluent-reading x-height at hand-held distance. -/
 @[expose] public def DocClass.record : DocClass → ClassRecord
@@ -7068,14 +6993,6 @@ edge to `\footheight` above its bottom edge. -/
 public def frameInTextArea (chromeAllowed : Bool) (valign : VAlign) : Bool :=
   chromeAllowed && !(valign matches .golden)
 
-public theorem Doc.frameNumbers_restart_exact (doc : Doc) (p : Nat)
-    (h : doc.frameRestart = some p) :
-    doc.frameNumbers.toList.filterMap id =
-      List.range' 1 (Ir.frameCount (doc.body.extract 0 p)) ++
-        List.range' 1 (Ir.frameCount (doc.body.extract p doc.body.size)) := by
-  simp only [Doc.frameNumbers, h, Array.toList_append, List.filterMap_append,
-    frameNumbers_gapless]
-
 public theorem Doc.frameNumbers_size (doc : Doc) : doc.frameNumbers.size = doc.body.size := by
   unfold Doc.frameNumbers
   split
@@ -7089,10 +7006,6 @@ public def Doc.fontPolicy (doc : Doc) : FontPolicy :=
   match doc.output.contract.fonts with
   | some p => p
   | none => if doc.output.css.isNone then .embedded else .none
-
-public theorem Doc.fontPolicy_exact (doc : Doc) (h : doc.output.contract.fonts = none) :
-    doc.fontPolicy = (if doc.output.css.isNone then .embedded else .none) := by
-  simp [fontPolicy, h]
 
 /-- Whether pages carry the plain page number: the document's own
 `\page{ numbers = ... }`, else its class default. -/
@@ -7895,14 +7808,6 @@ public def Pic.Picture.alternative (pic : Pic.Picture) : Alt :=
   | .undeclared => Alt.declare pic.said
   | .decorative => .decorative
   | .described t => .described t
-
-public theorem Pic.Picture.alternative_fixed_point (pic : Pic.Picture) (h : pic.alt ≠ .undeclared) :
-    pic.alternative = pic.alt := by
-  unfold Pic.Picture.alternative
-  cases hp : pic.alt with
-  | undeclared => exact absurd hp h
-  | decorative => rfl
-  | described _ => rfl
 
 public theorem role_plaintext (n : String) (body : Array Inline) :
     plainTextOne (.role n body) = plainTextList body.toList := by rfl
@@ -9474,9 +9379,6 @@ public theorem SurfaceLook.resolve_contract (look : SurfaceLook) (parent : Color
     (look.resolve parent).bg = look.bg.getD parent.bg := by
   exact ⟨rfl, rfl⟩
 
-public theorem SurfaceLook.undeclared_exact (parent : ColorPair) :
-    (SurfaceLook.mk none none).resolve parent = parent := by rfl
-
 /-- beamer's block colour boxes' `colsep*=.75ex`, shared by a painted title and body. -/
 @[expose] public def titledPadding : Length := { ex := 750 }
 
@@ -9514,11 +9416,6 @@ bindings declare any fill. -/
 @[expose] public def titledBodyLook (pal : Palette) (kind : TitledKind) : SurfaceLook :=
   { fg := Design.declared? pal (Role.bodyInk kind)
     bg := Design.declared? pal (Role.bodyGround kind) }
-
-public theorem titledBodyLook_exact (pal : Palette) (kind : TitledKind) :
-    (titledBodyLook pal kind).fg = Design.declared? pal (Role.bodyInk kind) ∧
-    (titledBodyLook pal kind).bg = Design.declared? pal (Role.bodyGround kind) := by
-  exact ⟨rfl, rfl⟩
 
 /-- A titled block's resolved look: the title's ink, and the bar behind it
 when the palette declares one. -/
@@ -9636,12 +9533,6 @@ the verbatim ground the class paints. -/
 @[expose] public def ListingSpec.groundIn (spec : ListingSpec) (pal : Palette) (s : Scheme) :
     Option (Color × Option ColorRef) :=
   spec.ground.orElse fun _ => (Design.at pal s .codeSurface).map (·, some (.role .codeSurface))
-
-public theorem Design.ofPalette_fg (pal : Palette) :
-    (Design.ofPalette pal).fg = Design.printInk pal := rfl
-
-public theorem Design.ofPalette_bg (pal : Palette) :
-    (Design.ofPalette pal).bg = Design.printPage pal := rfl
 
 private theorem Design.resolve_congr (p q : Palette) (s : Scheme)
     (hd : ∀ r, Design.declared? p r = Design.declared? q r)
@@ -10692,10 +10583,6 @@ public def frameGroundOf (pal : Palette) (standout : Bool) (valign : VAlign) : O
   if standout then some (Design.ofPalette pal).standout.bg
   else (titleGroundOf pal valign).orElse fun _ => Design.declared? pal .page
 
-public theorem frameGround_exact (pal : Palette) (valign : VAlign) (h : ¬ valign = .golden) :
-    frameGroundOf pal false valign = Design.declared? pal .page := by
-  cases valign <;> simp_all [frameGroundOf, titleGroundOf]
-
 /-- The document's resolved design: `ofPalette` over its palette, with the
 two declarations a palette does not carry. -/
 @[expose] public def Design.ofDoc (doc : Doc) : Design :=
@@ -10912,12 +10799,6 @@ public theorem frameSteps_covers (title : Array Inline) (standout : Bool)
     maxStepBlocks body ≤ frameSteps (.frame title standout valign breakable body) := by
   simp only [frameSteps]
   constructor <;> omega
-
-public theorem frameSteps_body_exact (title : Array Inline) (standout : Bool)
-    (valign : VAlign) (breakable : Bool) (body : Array Block)
-    (h : maxStepInlines title ≤ maxStepBlocks body) :
-    frameSteps (.frame title standout valign breakable body) = max 1 (maxStepBlocks body) := by
-  simp [frameSteps, Nat.max_eq_right h]
 
 /-- Alternation groups no step of their own frame inks, counted over the
 document's frames, the handout's under a selector selecting no step aside; zero is the

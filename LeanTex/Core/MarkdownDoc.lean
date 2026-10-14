@@ -1113,17 +1113,6 @@ private theorem append_nil (a : String) : ∃ r, a = a ++ r :=
 private theorem append_chain₂ (a b c : String) : ∃ r, a ++ b ++ c = a ++ r :=
   ⟨b ++ c, by simp [String.append_assoc]⟩
 
-private theorem append_chain₃ (a b c d : String) : ∃ r, a ++ b ++ c ++ d = a ++ r :=
-  ⟨b ++ (c ++ d), by simp [String.append_assoc]⟩
-
-private theorem append_chain₄ (a b c d e : String) :
-    ∃ r, a ++ b ++ c ++ d ++ e = a ++ r :=
-  ⟨b ++ (c ++ (d ++ e)), by simp [String.append_assoc]⟩
-
-private theorem append_chain₅ (a b c d e f : String) :
-    ∃ r, a ++ b ++ c ++ d ++ e ++ f = a ++ r :=
-  ⟨b ++ (c ++ (d ++ (e ++ f))), by simp [String.append_assoc]⟩
-
 private theorem append_chain₆ (a b c d e f g : String) :
     ∃ r, a ++ b ++ c ++ d ++ e ++ f ++ g = a ++ r :=
   ⟨b ++ (c ++ (d ++ (e ++ (f ++ g)))), by simp [String.append_assoc]⟩
@@ -1135,10 +1124,6 @@ private theorem append_chain₇ (a b c d e f g h : String) :
 private theorem append_chain₈ (a b c d e f g h i : String) :
     ∃ r, a ++ b ++ c ++ d ++ e ++ f ++ g ++ h ++ i = a ++ r :=
   ⟨b ++ (c ++ (d ++ (e ++ (f ++ (g ++ (h ++ i)))))), by simp [String.append_assoc]⟩
-
-private theorem extends_trans₃ {f a b c d r : String}
-    (h : f = a ++ b ++ c ++ d ++ r) : ∃ q, f = a ++ q :=
-  ⟨b ++ (c ++ (d ++ r)), by rw [h]; simp [String.append_assoc]⟩
 
 private theorem extends_comp {a g f : String} (h₁ : ∃ r, g = a ++ r)
     (h₂ : ∃ r, f = g ++ r) : ∃ q, f = a ++ q := by

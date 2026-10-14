@@ -250,12 +250,6 @@ private def Frame.close (f : Frame) (body : Array Raw) : Array Raw :=
   | .displayMath => f.outer.push (.math true body f.openPos)
   | .env n => f.outer.push (.env n body f.openPos)
 
-private theorem Frame.close_math_source_exact (f : Frame) (body : Array Raw)
-    (h : f.stop = .math ∨ f.stop = .dollarDisplay ∨
-      f.stop = .parenMath ∨ f.stop = .displayMath) :
-    ∃ display, f.close body = f.outer.push (.math display body f.openPos) := by
-  rcases h with h | h | h | h <;> simp [Frame.close, h]
-
 private def err (file : String) (code : DiagCode) (msg : String) (pos : Pos) : Diag :=
   Diag.of code msg (some ⟨file, pos⟩)
 

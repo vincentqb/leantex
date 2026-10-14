@@ -23,10 +23,6 @@ public abbrev Sp := Int
 public theorem pt_exact (n : Int) : pt n / spPerPt = n := by
   simp [pt, spPerPt]
 
-public theorem inch_eq_72pt (n : Int) : inch n = pt (72 * n) := by
-  simp only [inch, pt, spPerPt]
-  rw [Int.mul_comm n 72]
-
 public theorem mm_eq_inch (n : Int) : mm (254 * n) = inch (10 * n) := by
   have h : 254 * n * 7200 * spPerPt = 2540 * (10 * n * 72 * spPerPt) := by
     simp only [spPerPt]
@@ -118,10 +114,6 @@ public theorem Glue.add_assoc (a b c : Glue) : (a.add b).add c = a.add (b.add c)
   else
     min ((100 * delta.natAbs ^ 3) / total.natAbs ^ 3) 10000
 
-public theorem badness_zero_delta (t : Int) (h : 0 < t) : badness 0 t = 0 := by
-  simp [badness]
-  omega
-
 public theorem badness_le (d t : Int) : badness d t ≤ 10000 := by
   unfold badness
   split
@@ -152,10 +144,6 @@ scaling do (TeX §107). -/
   { sp := (l.sp * num).tdiv den
     em := (l.em * num).tdiv den
     ex := (l.ex * num).tdiv den }
-
-public theorem scale_tdiv_eq_of_nonneg (v num : Int) (den : Nat) (h : 0 ≤ v * num) :
-    (v * num).tdiv den = v * num / den :=
-  Int.tdiv_eq_ediv_of_nonneg h
 
 /-- Resolve against a font size and x-height, both in sp. -/
 @[expose] public def resolve (l : Length) (fontSize xHeight : Sp) : Sp :=

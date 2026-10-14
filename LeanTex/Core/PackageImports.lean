@@ -64,13 +64,6 @@ public theorem admit_compatible_exact (loads : Loads) (name : String)
     simp [compatible o ho]
   rw [empty]
 
-public theorem admit_clash_exact (loads : Loads) (name : String)
-    (options passed first : List String) (h : loads.lookup name = some first) (o : String) :
-    (match (admit loads name options passed).1 with
-      | .load => False
-      | .skip missing => o ∈ missing) ↔ o ∈ options ∧ o ∉ first ++ passed := by
-  simp [admit, h]
-
 public theorem admit_lookup_exact (loads : Loads) (name observed : String)
     (options passed : List String) :
     (admit loads name options passed).2.lookup observed =

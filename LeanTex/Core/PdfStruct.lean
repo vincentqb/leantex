@@ -324,11 +324,6 @@ private theorem Struct.headingsList_out (l : List Struct.Node) (out : Array Ir.H
   rw [Struct.headingsList_acc]
   simp
 
-private theorem Struct.headingsOne_out (n : Struct.Node) (out : Array Ir.HeadingLevel) :
-    (Struct.headingsOne out n).toList = out.toList ++ (Struct.headingsOne #[] n).toList := by
-  rw [Struct.headingsOne_acc]
-  simp
-
 mutual
 
 private theorem skelList_headings : ∀ (l : List Struct.Node) (es : Array StructElem)

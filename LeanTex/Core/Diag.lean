@@ -45,10 +45,6 @@ public def Pos.next (p : Pos) (newline : Bool) : Pos :=
   if newline then { p with line := p.line + 1, col := 1 }
   else { p with col := p.col + 1 }
 
-public theorem Pos.next_origins_exact (p : Pos) (newline : Bool) :
-    (p.next newline).origins = p.origins := by
-  cases newline <;> rfl
-
 public structure Span where
   file : String
   pos : Pos
@@ -145,9 +141,6 @@ public def Floor.ships : Floor → Bool
 public def Floor.inks : Floor → Bool
   | .content => true
   | .refuse | .absent | .inert => false
-
-public theorem Floor.inks_ships (f : Floor) (h : f.inks) : f.ships := by
-  cases f <;> simp_all [Floor.inks, Floor.ships]
 
 /-- Every diagnostic code the engine can emit, one constructor per code. -/
 public inductive DiagCode where
@@ -660,10 +653,6 @@ public theorem Diag.of_subject (c : DiagCode) (message : String) (span : Option 
     (Diag.of c message span help subject refused trigger recovery output detail).subject =
       subject := by
   rfl
-
-public theorem Diag.of_refused (c : DiagCode) (message : String) (span : Option Span)
-    (help subject refused : Option String) :
-    (Diag.of c message span help subject refused).refused = refused := by rfl
 
 public theorem Diag.of_severity (c : DiagCode) (message : String) (span : Option Span)
     (help : Option String) (subject : Option String) :
@@ -1436,10 +1425,6 @@ public def Resolution.append (a b : Resolution) : Resolution :=
     r.append {} = r := by
   cases r
   simp [append]
-
-public theorem Resolution.append_assoc_exact (a b c : Resolution) :
-    (a.append b).append c = a.append (b.append c) := by
-  simp [append, Array.append_assoc, Nat.add_assoc]
 
 private def Resolution.record (r : Resolution) (d : Diag) (accepted : Bool) : Resolution :=
   { diags := r.diags.push d

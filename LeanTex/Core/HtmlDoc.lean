@@ -399,10 +399,6 @@ public theorem cssSourced_projects (g : Ir.Sourced SymGlue) (n : String)
   simp only [toString, String.append_assoc]
   rfl
 
-public theorem cssSourced_bare (g : SymGlue) :
-    cssSourced (Ir.Sourced.bare g) = cssLength g.width := by
-  simp [cssSourced, sourcedIn, Ir.Sourced.bare]
-
 /-- The content measure: text width over the base font size, in `em`. -/
 public def measureEm (page : PageSpec) : String :=
   let textWidth := page.width - 2 * page.hmargin
@@ -434,9 +430,6 @@ to { opacity: 1; visibility: visible } }\n" ++
 animation: ltx-reveal linear both; animation-timeline: scroll(); \
 animation-range: 0 var(--reveal-range, 100vh); } }\n" ++
   revealMotionGuard
-
-public theorem revealCss_guarded : ∃ rule, revealCss = rule ++ revealMotionGuard :=
-  ⟨_, rfl⟩
 
 
 /-- A declared marker as a `::marker` rule: its text and its declarations. -/
@@ -1555,11 +1548,6 @@ public theorem listGaps_agree (size : Int) (sk : Ir.ListSkips) (pt : SymGlue)
   ⟨screenMilli_between size _ hq h0.1, screenMilli_between size _ hq h0.2.1,
    screenMilli_between size _ hq h0.2.2, screenMilli_between size _ hq hp⟩
 
-public theorem listRules_web_exact (size : Int) (tokens : Ir.Tokens) :
-    listRules .web size tokens = [] := by
-  simp only [listRules, Ir.listSkips_web_exact]
-  rfl
-
 /-- A declared `\parskip`'s natural width in sp, at the body size it was set under. -/
 public def parskipSp (page : Ir.PageSpec) (g : SymGlue) : Dim.Sp :=
   g.width.resolve page.fontSize (page.fontSize / 2)
@@ -2546,9 +2534,6 @@ public def profile : Ir.Realization :=
     scripting := .constantGated
     math := .mathmlCore }
 
-public theorem html_default_contract_exact : ({} : Ir.OutputContract).unmet profile = #[] :=
-  Ir.OutputContract.unmet_default_exact profile
-
 /-- Artifact-specific. -/
 public theorem shipFaces_src_shipped (fs : Font.FontSet) :
     ∀ ff ∈ shipFaces fs, fontResource (fs.get ff.index) ∈ fontResources fs := by
@@ -2667,13 +2652,6 @@ public def imagePosterHref (imgs : Image.Store) (req : Image.Request) :
 /-- A length in whole CSS pixels, to nearest, at 1in = 72pt = 96px. -/
 public def cssPxOfSp (l : Int) : Nat := ((4 * l + 3 * spPerPt / 2) / (3 * spPerPt)).toNat
 
-public theorem cssPxOfSp_between (l : Int) (h : 0 ≤ l) :
-    3 * spPerPt * (cssPxOfSp l : Int) ≤ 4 * l + 3 * spPerPt / 2 ∧
-      4 * l + 3 * spPerPt / 2 < 3 * spPerPt * ((cssPxOfSp l : Int) + 1) := by
-  unfold cssPxOfSp
-  simp only [spPerPt]
-  omega
-
 /-- The size an `<img>` declares, in CSS pixels: a raster's grid, or a PDF page's box. -/
 public def intrinsicPx (p : Image.Plan) : Nat × Nat :=
   match p.form with
@@ -2768,13 +2746,6 @@ public theorem img_request_src_shipped (imgs : Image.Store) (req : Image.Request
   refine ⟨Array.mem_append.mpr (.inl (Array.mem_filterMap.mpr ⟨en, ?_, hr⟩)), ?_⟩
   · exact Array.mem_of_getElem? hen
   · simp [imageRequestHref, hk, hen, hr]
-
-public theorem img_src_shipped (imgs : Image.Store) (src : String)
-    {k : Nat} {en : Image.Loaded} {r : HtmlResource.Embedded}
-    (hk : imgs.find? src = some k) (hen : imgs.get? k = some en)
-    (hr : imageResource? en = some r) :
-    r ∈ imageResources imgs ∧ imageHref imgs src = r.uri :=
-  img_request_src_shipped imgs { src } hk hen hr
 
 public theorem imagePosterHref_covers (imgs : Image.Store) (req : Image.Request)
     {k : Nat} {en : Image.Loaded} {r : HtmlResource.Embedded}
@@ -5614,21 +5585,6 @@ private theorem role_use_undeclarable_value (cfg : Config) (acc : Array Node)
   rw [← hv]
   simp [inlineNodeInto, Config.paint]
 
-private theorem role_class_reaches_artifact (cfg : Config) (acc : Array Node)
-    (n : String) (body : Array Inline)
-    (h : Ir.titlePartOf ((cfg.styles.find? "titlepage").getD {}).slots n = none) :
-    inlineNodeInto cfg acc (.role n body) =
-      acc.push (Html.elem "span" (inlineNodesInto cfg #[] body.toList)
-        #[("class", roleClass n)]) := by
-  simp [inlineNodeInto, h]
-
-private theorem link_url_enters_attribute_position (cfg : Config) (acc : Array Node)
-    (url : String) (body : Array Inline) :
-    inlineNodeInto cfg acc (.link url body) =
-      acc.push (Html.elem "a" (inlineNodesInto cfg #[] body.toList)
-        #[("href", url), ("style", "color: inherit")]) := by
-  simp [inlineNodeInto]
-
 private theorem linkLeafAfford_projects (cfg : Config) (acc : Array Node)
     (s : Ir.Styles) (kind : String) (x : Inline) (h : x.bearsLinkText = true) :
     inlineNodeInto cfg acc (s.linkLeafAfford kind x)
@@ -5853,11 +5809,6 @@ public theorem Config.advancePalette_ink_projects (cfg : Config) (p : Ir.Palette
       else some (Design.ofPalette p).fg := by
   rfl
 
-public theorem Config.advancePalette_home_exact (cfg : Config) (p : Ir.Palette)
-    (hhome : (cfg.bodyGround.isNone && p.sameAs cfg.docPal) = true) :
-    (cfg.advancePalette p).epochPaint = "" ∧ (cfg.advancePalette p).listingFg = none := by
-  simp only [Config.advancePalette, hhome, ↓reduceIte, and_self]
-
 /-- Advance the token state; a table length is spelled against the document's basis. -/
 private def Config.advanceTokens (cfg : Config) (tk : Ir.Tokens) : Config :=
   { cfg with tokens := tk
@@ -5883,10 +5834,6 @@ private def Config.afterBlock (cfg : Config) : Block → Config
 
 private def Config.afterBlocks (cfg : Config) (body : Array Block) : Config :=
   Ir.foldCtxBlocks declarationFlow true cfg body
-
-private theorem Config.afterBlock_columns_exact (cfg : Config)
-    (cols : Array (BoxWidth × Array Block)) :
-    cfg.afterBlock (.columns cols) = cfg := rfl
 
 private theorem Config.afterBlock_palette_projects (cfg : Config) (p : Ir.Palette) :
     cfg.afterBlock (.setPalette p) = cfg.advancePalette p := rfl
@@ -6076,12 +6023,6 @@ private def bibItemNode (cfg : Config) (item : Ir.BibItem) : Node :=
         Html.text " ", Html.elem "span" (inlines cfg item.content) #[("class", "bib-entry")]]
     | none => inlines cfg item.content
   Html.elem "li" kids #[("id", Ir.bibAnchor item.key)]
-
-private theorem bibItemNode_key_enters_attribute_position (cfg : Config)
-    (item : Ir.BibItem) :
-    ∃ kids, bibItemNode cfg item =
-      Html.elem "li" kids #[("id", Ir.bibAnchor item.key)] :=
-  ⟨_, rfl⟩
 
 /-- One algorithm line's place in the nesting its declared depths imply. -/
 private inductive AlgTree where

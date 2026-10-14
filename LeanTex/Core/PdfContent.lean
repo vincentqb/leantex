@@ -397,12 +397,6 @@ public theorem place_glyphs_id (wμ : Nat → Int) (tgt : Sp → Int) (glyphs : 
   rw [Array.toList_map, ← Array.foldl_toList, (placeStep_fold_exact ..).1]
   simpa using placeSpec_glyphs_id wμ tgt glyphs.toList adv 0
 
-public theorem place_nums_exact (wμ : Nat → Int) (tgt : Sp → Int) (glyphs : Array (Nat × Char × Sp))
-    (adv : Int) : (glyphs.foldl (placeStep wμ tgt) ⟨#[], #[], adv, 0⟩).nums.toList
-      = (placeSpec wμ tgt adv 0 glyphs.toList).map (·.2) := by
-  rw [← Array.foldl_toList, (placeStep_fold_exact ..).2]
-  simp
-
 public theorem placeSpec_length_exact (wμ : Nat → Int) (tgt : Sp → Int) (gs : List (Nat × Char × Sp))
     (adv : Int) (P : Sp) : (penStarts wμ adv (placeSpec wμ tgt adv P gs)).length = gs.length := by
   induction gs generalizing adv P with
@@ -1065,12 +1059,6 @@ public theorem text_render_exact (ops : Array TextOp) :
   simp only [ContentOp.render, String.append_assoc]
   rw [← Array.foldl_toList, foldl_append_eq, String.append_assoc]
 
-public theorem show_render_exact (items : Array TextItem) :
-    (TextOp.show items).render
-      = "[" ++ String.join (items.toList.map TextItem.render) ++ "] TJ" := by
-  simp only [TextOp.render]
-  rw [← Array.foldl_toList, foldl_append_eq]
-
 public theorem glyphs_render_exact (gids : Array Nat) :
     (TextItem.glyphs gids).render
       = String.singleton '<' ++ String.join (gids.toList.map gidHex) ++ String.singleton '>' := by
@@ -1668,10 +1656,6 @@ private theorem inkGroups_shape (geom : Geom) (ix : GfxPdf.Request → Nat)
   inkGroupsList_shape geom ix tx tags inks.toList (fun k h => hk k (Array.mem_toList_iff.mp h))
     #[] none (by simp) (by simp)
 
-private theorem artifact_runs (k : Option ArtifactKind) (o : ContentOp) :
-    (artifact k o).runs = o.runs := by
-  simp [artifact, ContentOp.runs, ContentOp.runsList]
-
 private theorem artifactBlock_runs (k : Option ArtifactKind) (ops : Array ContentOp) :
     (artifactBlock k ops).toList.flatMap ContentOp.runs = ops.toList.flatMap ContentOp.runs := by
   unfold artifactBlock
@@ -1750,9 +1734,6 @@ private theorem numberMarks_runs_list (ops : Array ContentOp) :
   unfold numberMarks
   rw [ContentOp.numberList_runs]
   simp
-
-public theorem numberMarks_runs (ops : Array ContentOp) : runsOf (numberMarks ops) = runsOf ops :=
-  numberMarks_runs_list ops
 
 private theorem hexDigit_inj : ∀ a, a < 16 → ∀ b, b < 16 → hexDigit a = hexDigit b → a = b := by
   decide
@@ -2913,10 +2894,6 @@ private theorem numberMarks_ink_list (ops : Array ContentOp) :
   unfold numberMarks
   rw [ContentOp.numberList_ink]
   simp [ContentOp.inkList]
-
-public theorem numberMarks_ink (ops : Array ContentOp) : inkOps (numberMarks ops) = inkOps ops := by
-  unfold inkOps
-  rw [numberMarks_ink_list]
 
 public theorem mark_ink_exact (geom : Geom) (remap : Array Nat) (widths : Array (Array Int))
     (imgMap : Array (Option Nat)) (tags : Array (Option String)) (ix : GfxPdf.Request → Nat)

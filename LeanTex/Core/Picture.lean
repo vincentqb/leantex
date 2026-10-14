@@ -1880,11 +1880,6 @@ public def Ev.place (ev : Ev) (coordinate : Bool) (border : Ir.Pic.Box)
     (nodes : List (String × NodeGeom)) : Ev :=
   if coordinate then { ev with nodes } else { ev with borders := ev.borders.push border, nodes }
 
-public theorem coordinate_exact (ev : Ev) (border : Ir.Pic.Box)
-    (nodes : List (String × NodeGeom)) :
-    (ev.place true border nodes).nodes = nodes ∧ (ev.place true border nodes).borders = ev.borders ∧
-      (ev.place false border nodes).borders = ev.borders.push border := ⟨rfl, rfl, rfl⟩
-
 public theorem Ev.labelExtent_covers (ev : Ev) (m : Ir.Pic.LabelMetric)
     (x y : Sp) (content : Array Ir.Inline) (color : Ir.Color)
     (scale : Nat) (align : Ir.Pic.LabelAlign) (baseline : Option Sp)
@@ -3033,21 +3028,6 @@ public theorem placeRight_border_exact (gx ga ownA s : Int) :
   simp [Dir.offset]
   omega
 
-public theorem placeLeft_border_exact (gx ga ownA s : Int) :
-    (gx - ga) - (gx + (Dir.left.offset (0, s + ga + ownA)).1 + ownA) = s := by
-  simp [Dir.offset]
-  omega
-
-public theorem placeAbove_border_exact (gy gb ownB s : Int) :
-    gy + (Dir.above.offset (s + gb + ownB, 0)).2 - ownB - (gy + gb) = s := by
-  simp [Dir.offset]
-  omega
-
-public theorem placeBelow_border_exact (gy gb ownB s : Int) :
-    (gy - gb) - (gy + (Dir.below.offset (s + gb + ownB, 0)).2 + ownB) = s := by
-  simp [Dir.offset]
-  omega
-
 public theorem offset_opposite_exact (s : Sp × Sp) :
     Dir.left.offset s = (-(Dir.right.offset s).1, (Dir.right.offset s).2) ∧
       Dir.above.offset s = ((Dir.below.offset s).1, -(Dir.below.offset s).2) := by
@@ -3059,11 +3039,6 @@ public theorem offset_corners_exact (s : Sp × Sp) :
       Dir.belowLeft.offset s = ((Dir.left.offset s).1, (Dir.below.offset s).2) ∧
       Dir.belowRight.offset s = ((Dir.right.offset s).1, (Dir.below.offset s).2) := by
   simp [Dir.offset]
-
-public theorem offset_mem (d : Dir) (s : Sp × Sp) :
-    ((d.offset s).1 = 0 ∨ (d.offset s).1 = s.2 ∨ (d.offset s).1 = -s.2) ∧
-      ((d.offset s).2 = 0 ∨ (d.offset s).2 = s.1 ∨ (d.offset s).2 = -s.1) := by
-  cases d <;> simp [Dir.offset]
 
 private def nameOfToks (ts : List Tok) : Option String :=
   let s := ts.foldl (fun acc t => acc ++ (match t with
@@ -5748,13 +5723,6 @@ public theorem condFloor_accounts (thenS elseS : List Stmt)
   cases thenS with
   | nil => exact h rfl
   | cons a as => simp
-
-public theorem condFloor_mem (thenS elseS : List Stmt) :
-    condFloor thenS elseS = thenS ∨ condFloor thenS elseS = elseS := by
-  simp only [condFloor]
-  split
-  · exact Or.inl rfl
-  · exact Or.inr rfl
 
 private def scopeKeyXf (cx : Cx) (env : List (String × Val)) (entry : List Tok) :
     Option (Except String Gfx.Affine) :=

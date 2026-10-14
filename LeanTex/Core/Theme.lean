@@ -812,20 +812,6 @@ public theorem apply_styles_keeps_others (th : Theme) (s : Decls) (element : Str
     exact h
   exact installStyles_keeps _ _ _ hall
 
-public theorem apply_chrome_keeps_left (th : Theme) (s : Decls)
-    (h : th.chrome.footerLeft = none) :
-    (apply th s).chrome.footerLeft = s.chrome.footerLeft := by
-  show (th.chrome.footerLeft <|> s.chrome.footerLeft) = _
-  rw [h]
-  rfl
-
-public theorem apply_chrome_keeps_right (th : Theme) (s : Decls)
-    (h : th.chrome.footerRight = none) :
-    (apply th s).chrome.footerRight = s.chrome.footerRight := by
-  show (th.chrome.footerRight <|> s.chrome.footerRight) = _
-  rw [h]
-  rfl
-
 public theorem apply_fixed_point (th : Theme) (s : Decls)
     (h : nodupKeys th.styles.entries.toList = true) :
     apply th (apply th s) = apply th s := by

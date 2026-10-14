@@ -179,11 +179,6 @@ public theorem asks_bind {α β : Type} (w : (q : Ask) → Reply q) (p : Prog α
   | pure _ => rfl
   | ask q k ih => exact congrArg (q :: ·) (ih (w q))
 
-public theorem asks_map {α β : Type} (w : (q : Ask) → Reply q) (p : Prog α) (f : α → β) :
-    (f <$> p).asks w = p.asks w := by
-  rw [← bind_pure_comp, asks_bind]
-  exact List.append_nil _
-
 public theorem run_replay_exact {α : Type} (p : Prog α) (w v : (q : Ask) → Reply q)
     (h : ∀ q ∈ p.asks w, v q = w q) : p.run v = p.run w := by
   induction p with
@@ -193,12 +188,6 @@ public theorem run_replay_exact {α : Type} (p : Prog α) (w v : (q : Ask) → R
     change (k (v q)).run v = (k (w q)).run w
     rw [hq]
     exact ih (w q) fun q' hq' => h q' (List.mem_cons_of_mem q hq')
-
-public theorem runM_exact {α : Type} (p : Prog α) (w : (q : Ask) → Reply q) :
-    p.runM (m := Id) (fun q => Pure.pure (w q)) = p.run w := by
-  induction p with
-  | pure _ => rfl
-  | ask q k ih => exact ih (w q)
 
 public theorem replay_cons {α : Type} (q : Ask) (k : Reply q → Prog α) (r : Reply q)
     (tr : List Fact) : (Prog.ask q k).replay (⟨q, r⟩ :: tr) = (k r).replay tr := by

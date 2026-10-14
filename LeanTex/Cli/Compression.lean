@@ -104,12 +104,6 @@ public theorem storeFonts_size_exact (fontCount : Nat) (done : Array (Nat × Byt
   intro i acc ih
   simpa only [Array.size_setIfInBounds] using ih
 
-public theorem storeFonts_push_exact (fontCount : Nat) (done : Array (Nat × ByteArray))
-    (k : Nat) (z : ByteArray) :
-    storeFonts fontCount (done.push (k, z)) =
-      (storeFonts fontCount done).setIfInBounds k (some z) := by
-  simp only [storeFonts, Array.foldl_push]
-
 private def mapCached (root : Option Cache) (input : α → ByteArray)
     (result : α → ByteArray → β) (jobs : Array α) (limit : Nat)
     (compute : ByteArray → IO ByteArray) : IO (Array β) := do

@@ -289,10 +289,6 @@ public theorem emitLabel_producer_diags_accounts (fs : FontSet) (imgs : Image.St
   repeat' split
   all_goals simp [hm]
 
-/-- Adding a label subject does not replace a producer's source location. -/
-public theorem nameLabelDiag_source_exact (key : String) (d : Diag) :
-    (nameLabelDiag key d).span = d.span := by rfl
-
 /-- Missing outline evidence always emits its own keyed diagnostic, even
 when the same label also wraps or exceeds its reserve. The nominal extent
 used for placement is never substituted for this evidence. -/

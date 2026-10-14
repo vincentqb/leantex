@@ -81,27 +81,6 @@ public def midlineWs (prevLbrace nextRbrace : Bool) (n : Nat) : List Tok :=
   if n = 1 ∧ (prevLbrace = true ∨ nextRbrace = true) then []
   else wsTokens false n
 
-public theorem midlineWs_same_line (p q : Bool) : midlineWs p q 0 = [.space] := by
-  simp [midlineWs, wsTokens]
-
-public theorem midlineWs_par (p q : Bool) (n : Nat) (h : n ≥ 2) :
-    midlineWs p q n = wsTokens false n := by
-  have : ¬ n = 1 := by omega
-  simp [midlineWs, this]
-
-public theorem midlineWs_suppress_iff (p q : Bool) (n : Nat) :
-    midlineWs p q n = [] ↔ (n = 1 ∧ (p = true ∨ q = true)) := by
-  unfold midlineWs
-  split
-  · rename_i hc; exact iff_of_true rfl hc
-  · rename_i hc
-    refine iff_of_false ?_ hc
-    simp [wsTokens]
-
-public theorem midlineWs_conservative (p q : Bool) (n : Nat) (hp : p = false) (hq : q = false) :
-    midlineWs p q n = wsTokens false n := by
-  simp [midlineWs, hp, hq]
-
 private def matchAt (cs : Array Char) (i : Nat) (ps : Array Char) : Bool := Id.run do
   if i + ps.size > cs.size then
     return false

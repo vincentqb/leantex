@@ -463,11 +463,6 @@ public def MathAlphabetCoverage.faceCovers (c : MathAlphabetCoverage)
     (a : MathAlphabet) (r : MathAlphabetRange) : Bool :=
   c.covered.contains (a.forRange r, r)
 
-public theorem MathAlphabetCoverage.faceCovers_forRange_exact (c : MathAlphabetCoverage)
-    (a : MathAlphabet) (r : MathAlphabetRange) :
-    c.faceCovers (a.forRange r) r = c.faceCovers a r := by
-  simp only [faceCovers, MathAlphabet.forRange_fixed_point]
-
 /-- Whether the resolver remaps this range: exactly when the math face carries its anchor. -/
 public def MathAlphabetCoverage.remaps (c : MathAlphabetCoverage)
     (a : MathAlphabet) (r : MathAlphabetRange) : Bool :=
@@ -489,20 +484,6 @@ public def MathAlphabetCoverage.effectiveAlpha (c : MathAlphabetCoverage)
     | .text => (.bf, .text)
     | .sym => (.bfDefault, .sym)
   | _, _ => (a, c.effectiveSource src a)
-
-public theorem MathAlphabetCoverage.effectiveAlpha_sym_exact (c : MathAlphabetCoverage)
-    (a : MathAlphabet) : c.effectiveAlpha .sym a = (a, .sym) := by
-  cases a <;> rfl
-
-public theorem MathAlphabetCoverage.effectiveAlpha_text_exact (c : MathAlphabetCoverage)
-    (a : MathAlphabet) (h : c.sources.get a = .text) :
-    c.effectiveAlpha .doc a = (a, .text) := by
-  cases a <;> simp_all [effectiveAlpha, effectiveSource, MathAlphabetSources.get]
-
-public theorem MathAlphabetCoverage.effectiveAlpha_bf_sym_exact (c : MathAlphabetCoverage)
-    (h : c.sources.bf = .sym) :
-    c.effectiveAlpha .doc .bf = c.effectiveAlpha .sym .bfDefault := by
-  simp [effectiveAlpha, effectiveSource, h]
 
 /-- The Latin letters every alphabet maps. -/
 public def latinLetters : List Char :=
@@ -735,10 +716,6 @@ theorem degrade_go_length (cs : List MathClass) (acc : Array MathClass)
   all_goals simp_all
   all_goals omega
 
-public theorem degrade_length (cs : List MathClass) :
-    (degrade cs).length = cs.length := by
-  simp [degrade, degrade_go_length]
-
 /-- The muskips luatex inserts between two probe atoms, per class pair and style band, read
 from `\showbox` on TeX Live 2026. -/
 public def luatexProbe (scriptish : Bool) : List (List Nat) :=
@@ -836,16 +813,6 @@ public def ColAlign.pad (a : ColAlign) (outer inner : Int) : Int :=
   | .left => 0
   | .right => outer - inner
   | .center => (outer - inner) / 2
-
-public theorem pad_within (a : ColAlign) (outer inner : Int) (_h : inner ≤ outer) :
-    0 ≤ a.pad outer inner ∧ a.pad outer inner + inner ≤ outer := by
-  cases a <;> simp only [ColAlign.pad] <;> omega
-
-public theorem pad_center_symmetric (outer inner : Int) (_h : inner ≤ outer) :
-    0 ≤ outer - (2 * ColAlign.pad .center outer inner + inner) ∧
-    outer - (2 * ColAlign.pad .center outer inner + inner) ≤ 1 := by
-  simp only [ColAlign.pad]
-  omega
 
 /-- The first variant at least `target` tall in the font's increasing ladder, else the last. -/
 public def pickVariant (target : Int) : List (Nat × Int) → Option (Nat × Int)
@@ -1056,18 +1023,6 @@ public theorem CancelIn.box_bounds_contract (i : CancelIn) (room : Bool) :
   simp only [box]
   omega
 
-public theorem CancelIn.box_of_ordered_exact (i : CancelIn) (room : Bool)
-    (hw : 0 ≤ i.w + 2 * i.gap) (hh : i.bot - i.gap ≤ i.top + i.gap) :
-    i.box room =
-      (let x0 := if room then 0 else -i.gap
-       (x0, i.bot - i.gap, x0 + i.w + 2 * i.gap, i.top + i.gap)) := by
-  dsimp [box]
-  apply Prod.ext
-  · dsimp; omega
-  apply Prod.ext
-  · dsimp; omega
-  apply Prod.ext <;> dsimp <;> omega
-
 /-- A diagonal's length, to the sp below. -/
 public def cancelDiag (w h : Int) : Int :=
   Int.ofNat (Nat.sqrt (w.toNat * w.toNat + h.toNat * h.toNat))
@@ -1083,11 +1038,6 @@ public def cancelBand (rising : Bool) (x0 y0 x1 y1 rule : Int) : Array (Int × I
     #[(x0, y0), (x0 + dx, y0), (x1, y1 - dy), (x1, y1), (x1 - dx, y1), (x0, y0 + dy)]
   else
     #[(x0, y1), (x0, y1 - dy), (x1 - dx, y0), (x1, y0), (x1, y0 + dy), (x0 + dx, y1)]
-
-public theorem cancelBand_corners_exact (rising : Bool) (x0 y0 x1 y1 rule : Int) :
-    (cancelBand rising x0 y0 x1 y1 rule)[0]? = some (x0, if rising then y0 else y1) ∧
-    (cancelBand rising x0 y0 x1 y1 rule)[3]? = some (x1, if rising then y1 else y0) := by
-  cases rising <;> exact ⟨rfl, rfl⟩
 
 public theorem cancelBand_between (rising : Bool) (x0 y0 x1 y1 rule : Int)
     (hr : 0 ≤ rule) (hw : x0 ≤ x1) (hh : y0 ≤ y1) :
@@ -2083,15 +2033,6 @@ theorem resolveCharStack_text (coverage : MathAlphabetCoverage)
   subst src
   rfl
 
-theorem resolveCharStack_sym_cover (coverage : MathAlphabetCoverage)
-    (a : MathAlphabet) (src : MathAlphabetSource)
-    (rest : List (MathAlphabet × MathAlphabetSource)) (c : Char) (r : MathAlphabetRange)
-    (hr : a.rangeOf c = some r) (hst : a.textStyle? = none)
-    (hcov : coverage.remaps a r = true) :
-    resolveCharStack coverage ((a, src) :: rest) c = .sym (a.apply c) := by
-  simp [resolveCharStack, MathAlphabet.sourceRangeOf, hr, hst, hcov,
-    Resolved.inAlphabet]
-
 theorem resolveCharStack_sym_covers (coverage : MathAlphabetCoverage)
     (a : MathAlphabet) (rest : List (MathAlphabet × MathAlphabetSource)) (c : Char)
     (ha : a ≠ .bm) :
@@ -2110,9 +2051,6 @@ theorem resolveCharStack_sym_fallback_exact (coverage : MathAlphabetCoverage)
   | some r =>
     have hne : (MathAlphabetSource.sym == MathAlphabetSource.text) = false := rfl
     cases a.textStyle? <;> simp [hcov r hr, hne]
-
-theorem resolveCharStack_nil (coverage : MathAlphabetCoverage) (c : Char) :
-    resolveCharStack coverage [] c = .sym c := rfl
 
 mutual
 
@@ -2651,10 +2589,6 @@ theorem resolveAlphaList_classes (coverage : MathAlphabetCoverage)
     simp only [resolveAlphaList, resolveAlphaItem, MList.classes,
       resolveAlphaList_classes coverage active rest]
 
-public theorem resolveMathAlphas_classes (coverage : MathAlphabetCoverage) (body : MList) :
-    (resolveMathAlphas coverage body).classes = body.classes :=
-  resolveAlphaList_classes coverage [] body
-
 private theorem optPush_size_congr (o : Option Char) (acc₁ acc₂ : Array Char)
     (h : acc₁.size = acc₂.size) :
     (match o with | some c => acc₁.push c | none => acc₁).size
@@ -2761,11 +2695,6 @@ private theorem resolveAlphaRows_scalars_size (coverage : MathAlphabetCoverage) 
     exact resolveAlphaRow_scalars_size coverage active row acc₁ acc₂ hs
 
 end
-
-public theorem resolveMathAlphas_scalars_size (coverage : MathAlphabetCoverage) (body : MList) :
-    ((resolveMathAlphas coverage body).scalarsList #[]).size
-      = (MList.scalarsList #[] body).size :=
-  resolveAlphaList_scalars_size coverage [] body #[] #[] rfl
 
 public theorem resolveCharStack_forcedSym_exact (coverage : MathAlphabetCoverage)
     (a : MathAlphabet) (rest : List (MathAlphabet × MathAlphabetSource))

@@ -346,12 +346,6 @@ def footprintRuns : Nat := 8
 def growthWithin (fixed small big : Nat) : Bool :=
   big - fixed ≤ growthBound * (small - fixed)
 
-theorem growthWithin_monotone {fixed small big big' : Nat} (h : big' ≤ big)
-    (w : growthWithin fixed small big = true) : growthWithin fixed small big' = true := by
-  unfold growthWithin growthBound at *
-  have := of_decide_eq_true w
-  exact decide_eq_true (by omega)
-
 /-- A run's peak, modelled: the largest of its phases' memories, each phase an
 intercept plus a slope times the document's size. -/
 def phasePeak (phases : List (Nat × Nat)) (n : Nat) : Nat :=

@@ -61,12 +61,6 @@ public theorem length_exact :
     (254 / 10 : Rat) * LenUnit.factor .mm = LenUnit.factor .inch ∧
     LenUnit.factor .pt * (pxSp : Rat) = 65536 := by decide +kernel
 
-public theorem length_toPx_exact (v em base : Rat) (u : LenUnit)
-    (hu : u ≠ .em ∧ u ≠ .ex ∧ u ≠ .pct) :
-    Length.toPx { value := v, unit := u } em base = v * u.factor := by
-  obtain ⟨h1, h2, h3⟩ := hu
-  cases u <;> simp_all [Length.toPx]
-
 mutual
 
 -- conserves: none — a census of a tree's nodes.

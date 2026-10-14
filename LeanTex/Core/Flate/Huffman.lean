@@ -156,10 +156,6 @@ public def mkHuff? (lengths : Array Nat) : Option Huff :=
   let h := mkHuff lengths
   if h.fits then some h else none
 
-theorem mkHuff_counts_exact (lengths : Array Nat) :
-    CountsFor lengths.toList (mkHuff lengths).counts := by
-  exact huffCounts_loop_exact lengths
-
 /-- Decode one symbol, MSB-first, bounded by the 15-bit maximum length. -/
 public def Huff.decode (h : Huff) (r : Br) : Option (Nat × Br) := Id.run do
   let mut code := 0

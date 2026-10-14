@@ -53,10 +53,6 @@ public def groundInk (pal : Palette) (ground inherited : Color) : Color :=
   | some c => c
   | none => defaultInk ground inherited
 
-public theorem groundInk_declared_exact (pal : Palette) (ground inherited c : Color)
-    (h : Design.declared? pal .codeInk = some c) : groundInk pal ground inherited = c := by
-  simp [groundInk, h]
-
 /-- A paint's colour on the actual ground: stated colours as stated, derived ones fitted here to the
 palette's code floor. -/
 private def shipped (floor : Nat) (bg : Color) (p : CodeColor.Paint) : Color :=

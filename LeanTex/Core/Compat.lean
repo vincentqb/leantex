@@ -767,20 +767,10 @@ public def dispatchInput [Monad m] (reader : InputReader m) (request : InputRequ
     (context : InputContext) : m (Option (Array Raw) × InputContext) := do
   return finishInput request (← reader request context)
 
-public theorem finishInput_answer_exact (request : InputRequest)
-    (response : Option (Array Raw) × InputContext) :
-    (finishInput request response).1 = response.1 := by rfl
-
 public theorem finishInput_attempts_exact (request : InputRequest)
     (response : Option (Array Raw) × InputContext) :
     (finishInput request response).2.inputAttempts =
       response.2.inputAttempts.push ⟨request, response.1.isSome⟩ := by rfl
-
-public theorem dispatchInput_reader_exact [Monad m] (reader : InputReader m)
-    (request : InputRequest) (context : InputContext) :
-    dispatchInput reader request context = (do
-      let response ← reader request context
-      pure (finishInput request response)) := by rfl
 
 private abbrev EvalM (m : Type → Type) := StateT St m
 
@@ -9078,22 +9068,9 @@ private def overprintAlt (p : Pos) (tail : Array Raw) : List (Raw × Array Raw) 
   | (sp, content) :: rest =>
     #[.ctrl "alt" p, sp, .group content p, .group (overprintAlt p tail rest) p]
 
-private theorem overprintAlt_exact (p : Pos) (tail : Array Raw) (sp : Raw) (content : Array Raw)
-    (rest : List (Raw × Array Raw)) :
-    overprintAlt p tail ((sp, content) :: rest) =
-      #[.ctrl "alt" p, sp, .group content p, .group (overprintAlt p tail rest) p] := by rfl
-
-private theorem overprintAlt_item_exact (p : Pos) (tail : Array Raw) (sp : Raw) (content : Array Raw)
-    (rest : List (Raw × Array Raw)) :
-    (overprintAlt p tail ((sp, content) :: rest))[2]? = some (.group content p) := by rfl
-
 private theorem overprintAlt_spec_id (p : Pos) (tail : Array Raw) (sp : Raw) (content : Array Raw)
     (rest : List (Raw × Array Raw)) :
     (overprintAlt p tail ((sp, content) :: rest))[1]? = some sp := by rfl
-
-private theorem overprintAlt_last_exact (p : Pos) (tail : Array Raw) (sp : Raw)
-    (content : Array Raw) :
-    (overprintAlt p tail [(sp, content)])[3]? = some (.group tail p) := by rfl
 
 /-- The items that can be alternatives, in body order. -/
 private def overprintNumbered (items : Array (Raw × Array Raw)) :
@@ -10983,10 +10960,6 @@ private theorem delimDocument_package_exact (command names : String) (pos gp np 
       redefiners, bind, StateT.bind, get, getThe, MonadStateOf.get, StateT.get,
       hd, write_eq, pure, StateT.pure]
 
-private theorem splitColumns_package_exact (command names : String) (pos gp np : Pos) :
-    (splitColumnsList (packageCall command names pos gp np).toList).toArray =
-      packageCall command names pos gp np := by rfl
-
 private theorem overprint_package_exact (command names : String) (pos gp np : Pos)
     (hc : command = "usepackage" ∨ command = "RequirePackage") (st : St) :
     overprintList (packageCall command names pos gp np).toList #[] 0 st =
@@ -11237,16 +11210,6 @@ public theorem executeInputs_package_refusal_contract (reader : InputReader Id)
       (finishRewritten (#[], after)).2.1
     rw [← atSource_package_exact st pos part.trimAscii.toString]
     exact hfinish
-
-public theorem rewriteExecuted_cursor_exact (executed : Executed) :
-    rewriteExecuted executed = finishRewrite (beginRewrite executed) := by rfl
-
-public theorem finishRewrite_document_exact (cursor : RewriteCursor)
-    (body : Array Raw) (pos : Pos) (rest : List Raw)
-    (hp : cursor.outsidePicture)
-    (hs : cursor.raws.toList.drop cursor.index = .env "document" body pos :: rest) :
-    finishRewrite cursor = finishRewrite (cursor.enterDocument body pos) :=
-  congrArg finishRewritten (rewriteCursor_document_exact cursor body pos rest hp hs)
 
 public theorem finishRewrite_control_exact (cursor : RewriteCursor)
     (name : String) (arity : Nat) (hc : ControlGroupsConsumed name arity)

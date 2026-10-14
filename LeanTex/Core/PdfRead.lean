@@ -808,13 +808,6 @@ private def Reader.valueAt (r : Reader) (num : Nat) :
 private def Reader.intAt (r : Reader) (num : Nat) : Option Int :=
   (r.valueAt num).toOption.bind (fun (v, _) => v.int?)
 
-private theorem Reader.intAt_direct_exact (r : Reader) (num off header j : Nat) (n : Int)
-    (hloc : r.locs.get? num = some (.direct off))
-    (hval : parseIndirectAt r.b off = .ok (header, .int n, j)) :
-    r.intAt num = some n := by
-  simp only [Reader.intAt, Reader.valueAt, hloc, hval]
-  rfl
-
 private theorem Reader.intAt_compressed_exact (r : Reader) (num stm idx first header off j : Nat)
     (n : Int) (data : ByteArray) (pairs : Array (Nat × Nat))
     (hloc : r.locs.get? num = some (.inStm stm idx))
@@ -826,11 +819,6 @@ private theorem Reader.intAt_compressed_exact (r : Reader) (num stm idx first he
   dsimp only [Bind.bind, Except.bind]
   simp only [hidx, hval]
   rfl
-
-private theorem Reader.directIntAt_compressed_exact (r : Reader) (num stm idx : Nat)
-    (hloc : r.locs.get? num = some (.inStm stm idx)) :
-    r.directIntAt num = none := by
-  simp only [Reader.directIntAt, hloc]
 
 private def Reader.get (r : Reader) (num : Nat) :
     Except String (Obj × Option ByteArray) := do
@@ -1514,19 +1502,6 @@ public def Doc.contentParts (r : Doc) (contents : Obj) : Except String (Array Ob
   match ← r.deref contents with
   | .arr xs => return xs
   | _ => return #[contents]
-
-public theorem Doc.contentParts_array_exact (r : Doc) (contents : Obj) (xs : Array Obj)
-    (h : r.deref contents = .ok (.arr xs)) :
-    r.contentParts contents = .ok xs := by
-  simp only [Doc.contentParts, h]
-  rfl
-
-public theorem Doc.contentParts_stream_exact (r : Doc) (num gen : Nat)
-    (es : Array (String × Obj)) (raw : ByteArray)
-    (h : r.get num = .ok (.dict es, some raw)) :
-    r.contentParts (.ref num gen) = .ok #[.ref num gen] := by
-  simp only [Doc.contentParts, Doc.deref, h]
-  rfl
 
 /-- A page's content streams decoded and joined by line feeds (§7.8.2). -/
 public def Doc.content (r : Doc) (page : Page) : Except String ByteArray := do

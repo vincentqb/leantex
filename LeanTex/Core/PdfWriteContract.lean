@@ -168,10 +168,4 @@ public theorem WritePlan.xref_locations_exact (p : WritePlan)
   · rename_i hk
     simp [show p.entries.size ≤ k by omega]
 
-public theorem WritePlan.startxref_exact (p : WritePlan) (h : p.WithinBounds) :
-    PdfRead.readStartxref p.bytes = .ok p.measure.body.size := by
-  unfold WritePlan.bytes WriteMeasurement.bytes
-  apply PdfRead.readStartxref_footer_exact
-  simpa only [p.measure_body_exact] using h.1
-
 end LeanTex.Core.Pdf

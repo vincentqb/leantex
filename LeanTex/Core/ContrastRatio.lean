@@ -30,11 +30,6 @@ search reads before it quantizes a candidate. -/
 public def ratioOf (la lb : Nat) : Nat :=
   ((max la lb + 500000) * 1000) / (min la lb + 500000)
 
-public theorem contrastMilli_ratioOf_exact (a b : Color) :
-    contrastMilli a b = ratioOf (luminance a) (luminance b) := by
-  unfold contrastMilli ratioOf
-  rfl
-
 /-- An arithmetic assessment before a caller's exemption policy, in `contrastMilli`'s units. -/
 public structure PairAssessment where
   ratio : Nat
@@ -69,9 +64,6 @@ public def aaNonText : Nat := 3000
   | .state => aaNonText
   | .decorative => 0
 
-public theorem required_le_aaText (n : Ir.Need) : required n ≤ aaText := by
-  cases n <;> decide
-
 /-- **A medium's text floor is what the judge asks of its text**: the
 ratio text owes at the medium's size (`Need.atStage`). -/
 public theorem depth_text_exact (d : GroundDepth) :
@@ -96,10 +88,6 @@ public def moreNonText : Nat := 4500
     | .state => moreNonText
     | .decorative => 0
   else required n
-
-public theorem requiredIn_plain (s : Ir.Scheme) (h : s.more = false) (n : Ir.Need) :
-    requiredIn s n = required n := by
-  simp [requiredIn, h]
 
 public theorem requiredIn_monotone (s : Ir.Scheme) (n : Ir.Need) : required n ≤ requiredIn s n := by
   unfold requiredIn

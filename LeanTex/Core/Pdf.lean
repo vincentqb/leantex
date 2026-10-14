@@ -1413,11 +1413,6 @@ private theorem serializeList_offsetBound (rows : List Row) (out : ByteArray)
     · exact Nat.le_trans (h r hr) hsize
     · simpa [hr] using hsize
 
-public theorem serialize_offsets_between (head : ByteArray) (rows : Array Row)
-    (id off : Nat) (h : (id, off) ∈ (serialize head rows).2) :
-    off ≤ (serialize head rows).1.size :=
-  serializeList_offsetBound rows.toList head #[] (by simp) (id, off) h
-
 /-- The xref payload from the serializer's locations and the object-stream position list. -/
 public def writerXrefEntries (t : ObjTable) (locs : Array (Nat × Nat))
     (objects : List (Nat × PdfRead.Obj)) (xrefOff : Nat) : Array Xref.Entry :=
@@ -1825,12 +1820,6 @@ public def WritePlan.bytes (p : WritePlan) : ByteArray :=
 public theorem WritePlan.measure_body_exact (p : WritePlan) :
     p.measure.body = p.serialized.1 := by rfl
 
-public theorem WritePlan.measure_offsets_exact (p : WritePlan) :
-    p.measure.offsets = p.serialized.2 := by rfl
-
-public theorem WritePlan.measure_widths_exact (p : WritePlan) :
-    p.measure.widths = p.widths := by rfl
-
 public theorem WritePlan.measure_xref_exact (p : WritePlan) :
     p.measure.xrefPayload = Xref.encode p.widths p.entries := by rfl
 
@@ -2144,13 +2133,6 @@ public def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
     (tree : Struct.Tree := ⟨#[]⟩) (ops : Array (Array ContentOp) := #[])
     (programs : Array (ByteArray × Bool) := #[]) : ByteArray :=
   (prepare geom fs pages info imgs outline streams tree ops programs).bytes
-
-public theorem write_plan_exact (geom : Geom) (fs : FontSet) (pages : Array PageOut)
-    (info : Ir.Meta) (imgs : Image.Store) (outline : Array OutlineEntry)
-    (streams : Array (ByteArray × Option ByteArray)) (tree : Struct.Tree)
-    (ops : Array (Array ContentOp)) (programs : Array (ByteArray × Bool)) :
-    write geom fs pages info imgs outline streams tree ops programs =
-      (prepare geom fs pages info imgs outline streams tree ops programs).bytes := by rfl
 
 private theorem usedImagesOf_loaded (imgs : Image.Store) (pages : Array PageOut) :
     ∀ k ∈ usedImagesOf imgs pages, ((imgs.get? k).bind (·.info)).isSome = true := by

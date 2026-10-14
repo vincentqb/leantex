@@ -150,9 +150,4 @@ public def poster (fs : Font.FontSet) (fig : Figure Shaped) : String :=
   let body := (xmlOne #[] root).foldl (fun s n => s ++ (String.fromUTF8? (Xml.render n)).getD "") ""
   "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" ++ body
 
-public theorem outlined_box_exact (fs : Font.FontSet) (fig : Figure Shaped) :
-    (outlined fs fig).box = fig.box ∧ (outlined fs fig).clipToBox = fig.clipToBox ∧
-      (outlined fs fig).rasters.size = fig.rasters.size := by
-  simp [outlined]
-
 end LeanTex.Core.FigureOutline

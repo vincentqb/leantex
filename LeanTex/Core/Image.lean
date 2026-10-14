@@ -483,11 +483,6 @@ public def colorKeyRanges (space : Space) (bitDepth : Nat) (trns palette : ByteA
       .error "corrupt PNG: tRNS has more entries than the bit depth allows"
     else indexedKey trns
 
-public theorem colorKeyRanges_gray_exact (bitDepth : Nat) (trns palette : ByteArray)
-    (hsz : trns.size = 2) (hv : trnsSample trns 0 < 2 ^ bitDepth) :
-    colorKeyRanges .gray bitDepth trns palette = .ok #[trnsSample trns 0, trnsSample trns 0] := by
-  simp [colorKeyRanges, hsz, Nat.not_le.mpr hv]
-
 public theorem colorKeyRanges_rgb_exact (bitDepth : Nat) (trns palette : ByteArray)
     (hsz : trns.size = 6) (h0 : trnsSample trns 0 < 2 ^ bitDepth)
     (h1 : trnsSample trns 1 < 2 ^ bitDepth) (h2 : trnsSample trns 2 < 2 ^ bitDepth) :
@@ -1718,11 +1713,6 @@ public theorem Loaded.size?_exact (en : Loaded) (inf : Plan) (h : en.info = some
   | some _ => simp [hvec] at hv
   | none => simp [Loaded.size?, h, hvec]
 
-public theorem Loaded.size?_vector_exact (en : Loaded) (fig : Gfx.Figure Gfx.Run)
-    (h : en.vector = some fig) :
-    en.size? = some (fig.box.2.1 - fig.box.1.1, fig.box.2.2 - fig.box.1.2) := by
-  simp [Loaded.size?, h]
-
 public def isSvg (src : String) : Bool := src.toLower.endsWith ".svg"
 
 /-- The names an extensionless source resolves against: graphicx's order under pdfTeX over the
@@ -2007,15 +1997,6 @@ private theorem ediv_within_one (a d : Int) (hd : 0 < d) :
     calc a = a % d + d * (a / d) := h.symm
       _ < d + d * (a / d) := Int.add_lt_add_right h1 _
       _ = d * (a / d) + d := Int.add_comm _ _
-
-public theorem resolveSize_both_exact (w h : Len) (n : Int) (d : Nat) (iW iH textW textH : Sp) :
-    resolveSize { width := some w, height := some h, scaleNum := n, scaleDen := d }
-      iW iH textW textH = (w.resolve textW textH, h.resolve textW textH) := by
-  simp [resolveSize]
-
-public theorem resolveSize_intrinsic (ka : Bool) (iW iH textW textH : Sp) :
-    resolveSize { keepAspect := ka } iW iH textW textH = (iW, iH) := by
-  simp [resolveSize]
 
 public theorem resolveSize_width_keeps_aspect (w : Len) (n : Int) (d : Nat) (ka : Bool)
     (iW iH textW textH : Sp) (hW : 0 < iW) :
