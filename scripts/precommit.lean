@@ -79,13 +79,13 @@ def parseSource : List String → Except String Source
     else if a == "--range" then
       match rest with
       | r :: _ =>
-        if (r.trimAscii.toString).isEmpty then
+        if !containsSub r ".." then
           .error "--range needs a revision range, e.g. --range origin/main...HEAD"
         else .ok (.range r)
       | [] => .error "--range needs a revision range, e.g. --range origin/main...HEAD"
     else if a.startsWith "--range=" then
       let r := (a.drop "--range=".length).toString
-      if (r.trimAscii.toString).isEmpty then
+      if !containsSub r ".." then
         .error "--range needs a revision range, e.g. --range=origin/main...HEAD"
       else .ok (.range r)
     else parseSource rest
@@ -177,6 +177,12 @@ def caseCollisions (paths : Array String) : Array (String × String) := Id.run d
         out := out.push (prior.2, current.2)
     previous := some current
   return out
+
+/-- The collisions an added path takes part in, as one spelling or under one. -/
+def collisionsTouching (added : Array String) (pairs : Array (String × String)) :
+    Array (String × String) :=
+  pairs.filter fun (a, b) => added.any fun p =>
+    p == a || p == b || p.startsWith (a ++ "/") || p.startsWith (b ++ "/")
 
 /-- The spellings a home directory takes, composed so this file's own text carries none. -/
 def dirHome : String := "/ho" ++ "me/"
@@ -308,13 +314,16 @@ def zPaths (names : ByteArray) : Array String :=
   Privacy.uniq ((Privacy.segmentReadings names).foldl
     (fun acc r => acc.append ((r.splitOn "\x00").filter (!·.isEmpty)).toArray) #[])
 
+/-- The paths a diff over `sel` adds, copies or renames to. -/
+def addedNames (sel : Array String) : IO (Array String) := do
+  return zPaths (← gitBytes (#["diff", "--name-only", "-z", "--no-relative", "--diff-filter=ACR",
+    "-M"] ++ sel))
+
 /-- Where the staged changes add a denylisted term, in a line, a path or a blob, located and never
 quoted. -/
 def privacyStaged (m : Privacy.Matcher) (diff : ByteArray) : IO (Array String) := do
   let mut out := m.diffFindings diff ""
-  let names ← gitBytes #["diff", "--cached", "--name-only", "-z", "--no-relative",
-    "--diff-filter=ACR", "-M"]
-  out := out.append (m.pathFindings (zPaths names) "" "its path")
+  out := out.append (m.pathFindings (← addedNames #["--cached"]) "" "its path")
   let binaries := binaryPaths (← git #["diff", "--cached", "--numstat", "-z", "--no-relative",
     "--no-renames", "--diff-filter=AM"])
   let blobs ← catBlobs (binaries.map (":" ++ ·))
@@ -329,8 +338,8 @@ def hookVar : String := "LEANTEX_PRECOMMIT_HOOK"
 `refs/remotes/origin/main`. -/
 def unpushedRange : Array String := #["HEAD", "--not", "refs/remotes/origin/main"]
 
-/-- Where an unpushed commit adds a denylisted term in a line, a path or a blob, or names one in its
-message. -/
+/-- Where a commit among `revs`, the unpushed ones unless named, adds a denylisted term in a line, a
+path or a blob, or names one in its message. -/
 def privacyCommits (m : Privacy.Matcher) (revs : Array String := unpushedRange) :
     IO (Array String) := do
   let mergesFirst := "--diff-merges=first-parent"
@@ -378,8 +387,7 @@ which commits are unpushed is unknown and none was checked against it.
 names one. -/
 def privacyRange (m : Privacy.Matcher) (r : String) (diff : ByteArray) : IO (Array String) := do
   let mut out := m.diffFindings diff ""
-  let names ← gitBytes #["diff", "--name-only", "-z", "--no-relative", "--diff-filter=ACR", "-M", r]
-  out := out.append (m.pathFindings (zPaths names) "" "its path")
+  out := out.append (m.pathFindings (← addedNames #[r]) "" "its path")
   let binaries := binaryPaths (← git #["diff", "--numstat", "-z", "--no-relative", "--no-renames",
     "--diff-filter=AM", r])
   if let some tip := rangeTip r then
@@ -2527,6 +2535,13 @@ def selftest : IO UInt32 := do
     fails.modify ("caseCollisions: different children conceal a directory collision" :: ·)
   if !(caseCollisions #["scripts/land.lean", "scripts/LandCore.lean", "scripts/lands.lean"]).isEmpty then
     fails.modify ("caseCollisions: fired on distinct names" :: ·)
+  let cased := caseCollisions #["Tests/Parser.lean", "tests/Extra.md", "README.md", "readme.md",
+    "A/b.lean", "a/c.lean"]
+  let touched := collisionsTouching #["tests/Extra.md", "readme.md"] cased
+  unless touched == #[("README.md", "readme.md"), ("Tests", "tests")] do
+    fails.modify (s!"collisionsTouching: an added path's own or directory collision: {touched}" :: ·)
+  unless (collisionsTouching #["other.md"] cased).isEmpty do
+    fails.modify ("collisionsTouching: kept a collision no added path takes part in" :: ·)
 
   expect "homePaths" (fun l => !(homePaths l).isEmpty) [
     (dirLocalHome ++ "alice/notes.md", true),
@@ -3045,6 +3060,7 @@ def selftest : IO UInt32 := do
     (["--range=abc123..HEAD"], "range abc123..HEAD"),
     (["--range"], "error --range needs a revision range, e.g. --range origin/main...HEAD"),
     (["--range="], "error --range needs a revision range, e.g. --range=origin/main...HEAD"),
+    (["--range", "origin/main"], "error --range needs a revision range, e.g. --range origin/main...HEAD"),
     (["-q", "--tree"], "tree")]
   for (argv, want) in srcCases do
     let got := srcShow (parseSource argv)
@@ -3299,7 +3315,7 @@ def checkCompiledTree (env : Array (String × Option String) := #[])
       return code
   return 0
 
-/-- The checks that read the whole tree, since a pair they hold may land in different hunks. -/
+/-- The checks that read the whole tree, which a range leaves to lint. -/
 def wholeTreeChecks (say : String → IO Unit) : IO Unit := do
   -- Whole tree: an entry and its index file may land in different hunks.
   if (← System.FilePath.pathExists "LeanTex/Core/Compat.lean") then
@@ -3627,14 +3643,28 @@ def main (args : List String) : IO UInt32 := do
   Fix: git rm --cached -- '<path>' and delete the file; stage files by name,
   never with -A or ."
 
+  -- A range reads its tip; the hook and the tree read the index and the working files.
+  let tip := match src with
+    | .index => some ""
+    | .range r => rangeTip r
+    | .tree => none
+  let judgedBytes (paths : Array String) : IO (Array (String × ByteArray)) := do
+    match src, tip with
+    | .range _, some rev =>
+      let blobs ← catBlobs (paths.map (rev ++ ":" ++ ·))
+      pure ((paths.zip blobs).filter fun (_, b) => !b.isEmpty)
+    | _, _ => paths.filterMapM fun (f : String) => do
+      unless ← System.FilePath.pathExists f do return none
+      return some (f, ← IO.FS.readBinFile f)
   -- From the index, so a staged addition is caught by its own commit.
-  let tracked ← git #["ls-files", "-z"]
+  let tracked ← match src, tip with
+    | .range _, some rev => git #["ls-tree", "-r", "-z", "--name-only", "--full-tree", rev]
+    | _, _ => git #["ls-files", "-z"]
   let addedPaths ← match src with
-    | .range r => pure (zPaths (← gitBytes #["diff", "--name-only", "-z", "--no-relative",
-        "--diff-filter=ACR", "-M", r]))
+    | .range r => addedNames #[r]
     | _ => pure #[]
-  let collisions := (caseCollisions ((tracked.splitOn "\x00").filter (!·.isEmpty)).toArray).filter
-    fun (a, b) => !ranged || addedPaths.contains a || addedPaths.contains b
+  let collisions := caseCollisions ((tracked.splitOn "\x00").filter (!·.isEmpty)).toArray
+  let collisions := if ranged then collisionsTouching addedPaths collisions else collisions
   if !collisions.isEmpty then
     let hits := String.intercalate "\n" (collisions.toList.map fun (a, b) => s!"  {a}\n  {b}")
     say s!"pre-commit: two tracked paths differ only by case:
@@ -3642,23 +3672,14 @@ def main (args : List String) : IO UInt32 := do
   Fix: rename one. A case-insensitive checkout keeps one of the two, and for
   a Lean module the compiled .olean names collide as well."
 
-  -- The rule documents' shape and every section pointer, before the relevance gate; a range reads
-  -- the text at its tip and judges what it changes.
-  let tip := match src with
-    | .index => some ""
-    | .range r => rangeTip r
-    | .tree => none
-  let rangeTexts (paths : Array String) : IO (Array (String × String)) := do
-    match src, tip with
-    | .range _, some rev =>
-      let blobs ← catBlobs (paths.map (rev ++ ":" ++ ·))
-      pure ((paths.zip blobs).filterMap fun (f, b) =>
-        if b.isEmpty then none else some (f, Privacy.textOfBytes b))
-    | _, _ => paths.filterMapM fun (f : String) => do
-      unless ← System.FilePath.pathExists f do return none
-      return some (f, ← sourceText f)
+  -- The rule documents' shape and every section pointer, before the relevance gate; a range judges
+  -- what it changes.
   let mut heads : List (String × List String) := []
-  for (doc, text) in ← rangeTexts sectionDocs.toArray do
+  for (doc, bytes) in ← judgedBytes sectionDocs.toArray do
+    let some text := String.fromUTF8? bytes
+      | say s!"pre-commit: {doc} is not UTF-8.
+  A rule document is read whole as text at the start of every session.
+  Fix: write it in UTF-8."
     heads := (doc, docHeadings text) :: heads
     if !ranged || staged.contains doc then
       for fault in capFaults doc text do
@@ -3673,8 +3694,8 @@ def main (args : List String) : IO UInt32 := do
   A rule states what holds; the day it was learned belongs to the commit that
   learned it (PRINCIPLES.md § Rules are checks).
   Fix: cut the date or the story; it belongs in the commit message."
-  if (!ranged || staged.contains hookPath) && (← System.FilePath.pathExists hookPath) then
-    let skipped ← hookSkippedDocs (← IO.FS.readFile hookPath)
+  for (_, hook) in ← judgedBytes (if !ranged || staged.contains hookPath then #[hookPath] else #[]) do
+    let skipped ← hookSkippedDocs (Privacy.textOfBytes hook)
     unless skipped.isEmpty do
       say s!"pre-commit: {hookPath} lets a commit touching only {String.intercalate " or " skipped} skip this gate:
   its staged-name pattern must match every rule document, or the caps, the
@@ -3685,7 +3706,8 @@ def main (args : List String) : IO UInt32 := do
   let roots := vendoredRoots trackedPaths
   let prose := trackedPaths.filter fun p =>
     (p.endsWith ".lean" || p.endsWith ".md") && !vendored roots p
-  let sources ← rangeTexts (if ranged then prose.filter (staged.contains ·) else prose)
+  let sources := (← judgedBytes (if ranged then prose.filter (staged.contains ·) else prose)).map
+    fun (f, b) => (f, Privacy.textOfBytes b)
   let addedAt : Std.HashSet (String × Nat) :=
     (addedLines fullDiff).foldl (fun acc (f, n, _) => acc.insert (f, n)) {}
   let adds (f : String) (n : Nat) : Bool := !ranged || addedAt.contains (f, n)
