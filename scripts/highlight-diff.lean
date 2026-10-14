@@ -7,7 +7,7 @@ import LeanTex
 import LeanTex.Core.Highlight
 import Lean.Data.Json
 import scripts.GenData
-import Tests.Rand
+import Tests.Support.Rand
 
 open LeanTex.Core
 open LeanTex.Core.Highlight

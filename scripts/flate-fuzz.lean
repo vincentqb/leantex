@@ -4,7 +4,7 @@ PDF-writer bytes, and refuses and reads exactly what zlib does but the Adler-32 
 Usage: lake build && lake env lean --run scripts/flate-fuzz.lean
 -/
 import LeanTex
-import Tests.Rand
+import Tests.Support.Rand
 
 open LeanTex.Core
 

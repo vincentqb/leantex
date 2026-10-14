@@ -10,7 +10,7 @@ public import Lean.Data.Json.Parser
 public import Lean.Data.Json.FromToJson.Basic
 public import Tests.LightCss
 public import Tests.Support.Check
-public import Tests.Rand
+public import Tests.Support.Rand
 
 public section
 

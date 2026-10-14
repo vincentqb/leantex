@@ -4,7 +4,7 @@ minimum.
 Usage: lake env lean --run scripts/kp-fuzz.lean [iterations]
 -/
 import LeanTex
-import Tests.Rand
+import Tests.Support.Rand
 
 open LeanTex.Core LeanTex.Core.Layout
 
