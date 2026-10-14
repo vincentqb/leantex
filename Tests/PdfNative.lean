@@ -302,7 +302,7 @@ def pdfReadbackChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit
   let bare : PdfGfx.Ctx :=
     { doc := { bytes := .empty, locs := {}, memo := {}, memo_ok := fun _ _ h => by simp at h, root := 0
                trailer := .null }
-      res := .dict #[], base := Gfx.Affine.unit, off := #[], box := ((0, 0), (0, 0)) }
+      res := .dict #[], base := Gfx.Affine.unit, off := none, box := ((0, 0), (0, 0)) }
   for (name, fig) in covered do
     let imp := PdfGfx.readStream bare (Pdf.render (emitted fig)).toUTF8
     t s!"readback: {name} reads back as the theorem states"
@@ -459,32 +459,41 @@ def pdfFontChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((lossesOf vertical).toOption.any fun ls => ls.contains (.font "vertical"))
 
 open Tests.PdfNative in
-/-- Optional content shows as the default configuration and its membership dictionary decide, an
-unreadable visibility expression named once where it could decide. -/
+/-- Optional content shows as the default configuration and its membership dictionary decide, a
+malformed visibility expression named once where it could decide. -/
 def pdfOptionalContentChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
-  let ocPdf (config mc props : String) (content : String) (extra : Array String) : ByteArray :=
+  let cfg (dflt : String) : String := s!"/OCProperties << /OCGs [6 0 R 7 0 R] /D << {dflt} >> >>"
+  let ocPdf (ocp mc props : String) (content : String) (extra : Array String) : ByteArray :=
     syntheticPdf (#[
-      s!"<< /Type /Catalog /Pages 2 0 R /OCProperties << /OCGs [6 0 R 7 0 R] /D << {config} >> >> >>",
+      s!"<< /Type /Catalog /Pages 2 0 R {ocp} >>",
       "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
       s!"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 50] /Contents 4 0 R \
-        /Resources << /Properties << /MC0 {mc} >> /XObject << /Fm0 8 0 R >> >> >>",
+        /Resources << /Properties << /MC0 {mc} /MC1 6 0 R >> /XObject << /Fm0 8 0 R >> >> >>",
       streamObj content,
       props,
       "<< /Type /OCG /Name (Off) >>", "<< /Type /OCG /Name (On) >>"] ++ extra)
   let marked := "/OC /MC0 BDC 0 0 10 10 re f EMC"
   let ocDoc (props : String) (extra : Array String) : ByteArray :=
-    ocPdf "/OFF [6 0 R]" "5 0 R" props marked extra
+    ocPdf (cfg "/OFF [6 0 R]") "5 0 R" props marked extra
   let drawn (pdf : ByteArray) : Option Nat := (PdfGfx.importPage pdf).toOption.map (·.figure.marks.size)
-  let unread : Gfx.Loss := .property "visibility-expression"
+  let malformed : Gfx.Loss := .property "malformed-visibility-expression"
   let named (pdf : ByteArray) : Option Nat :=
-    (lossesOf pdf).toOption.map fun ls => (ls.filter (· == unread)).size
+    (lossesOf pdf).toOption.map fun ls => (ls.filter (· == malformed)).size
   for (policy, shown) in [("/AnyOn", true), ("/AllOn", false), ("/AnyOff", true), ("/AllOff", false)] do
     t s!"optional content: under {policy} it is {if shown then "shown" else "hidden"}"
       (drawn (ocDoc s!"<< /Type /OCMD /OCGs [6 0 R 7 0 R] /P {policy} >>" #[]) == some (if shown then 1 else 0))
   t "optional content: a membership dictionary naming one group by reference follows it"
     (drawn (ocDoc "<< /Type /OCMD /OCGs 6 0 R >>" #[]) == some 0 &&
       drawn (ocDoc "<< /Type /OCMD /OCGs 7 0 R >>" #[]) == some 1)
+  let held : List (String × String × Nat) := [
+    ("/AnyOn over a group that is off and one naming no object hides", "/AnyOn", 0),
+    ("/AllOff over a group that is off and one naming no object shows", "/AllOff", 1)]
+  for (what, policy, shown) in held do
+    t s!"optional content: {what}"
+      (drawn (ocDoc s!"<< /Type /OCMD /OCGs [6 0 R 12 0 R] /P {policy} >>" #[]) == some shown)
+  t "optional content: a membership dictionary naming only objects that do not exist has no effect"
+    (drawn (ocDoc "<< /Type /OCMD /OCGs [12 0 R] /P /AllOff >>" #[]) == some 1)
   let ve (expr : String) : String := s!"<< /Type /OCMD /VE {expr} >>"
   let decided : List (String × String × Array String × Nat) := [
     ("Not over the group that is on hides", ve "[/Not 7 0 R]", #[], 0),
@@ -498,6 +507,7 @@ def pdfOptionalContentChecks (ref : IO.Ref (List String)) : IO Unit := do
     ("a nested expression by reference decides", ve "[/Or 9 0 R 6 0 R]",
       #["<< >>", "[/Not 7 0 R]"], 0),
     ("an expression by reference decides", ve "9 0 R", #["<< >>", "[/Not 7 0 R]"], 0),
+    ("an expression read twice is no cycle", ve "[/And 9 0 R 9 0 R]", #["<< >>", "[/Not 6 0 R]"], 1),
     ("the expression hides where the policy shows",
       "<< /Type /OCMD /OCGs [7 0 R] /P /AnyOn /VE [/Not 7 0 R] >>", #[], 0),
     ("the expression shows where the policy hides",
@@ -505,6 +515,10 @@ def pdfOptionalContentChecks (ref : IO.Ref (List String)) : IO Unit := do
   for (what, props, extra, shown) in decided do
     t s!"optional content: {what}"
       (drawn (ocDoc props extra) == some shown && named (ocDoc props extra) == some 0)
+  let chain : Array String := (Array.range 40).map fun i => s!"[/And {i + 10} 0 R {i + 10} 0 R]"
+  let shared := ocDoc (ve "9 0 R") (#["<< >>"] ++ chain ++ #["[/Not 6 0 R]"])
+  t "optional content: forty expressions each naming the next twice read in linear time"
+    (drawn shared == some 1 && named shared == some 0)
   let partly : List (String × String × Nat) := [
     ("And over a group that is off and an unreadable operand hides", ve "[/And 6 0 R 3]", 0),
     ("Or over a group that is on and an unreadable operand shows", ve "[/Or 3 7 0 R]", 1),
@@ -532,16 +546,23 @@ def pdfOptionalContentChecks (ref : IO.Ref (List String)) : IO Unit := do
     let absent := ocDoc s!"<< /Type /OCMD /OCGs [6 0 R] /VE {expr} >>" #[]
     t s!"optional content: an expression that is {what} is absent, the policy deciding"
       (drawn absent == some 0 && named absent == some 0)
-  let twice := ocPdf "/OFF [6 0 R]" "5 0 R" (ve "[/Xor 7 0 R]") (marked ++ " " ++ marked) #[]
-  t "optional content: an unreadable expression met twice is named once"
-    (drawn twice == some 2 && named twice == some 1)
+  let twice (props : String) : ByteArray :=
+    ocPdf (cfg "/OFF [6 0 R]") "5 0 R" props (marked ++ " " ++ marked) #[]
+  t "optional content: a membership dictionary met twice decides both, a malformed one named once"
+    (drawn (twice (ve "[/Not 7 0 R]")) == some 0 && drawn (twice (ve "[/Xor 7 0 R]")) == some 2 &&
+      named (twice (ve "[/Xor 7 0 R]")) == some 1)
+  let within := ocPdf (cfg "/OFF [6 0 R]") "5 0 R" (ve "[/Xor 7 0 R]")
+    "/OC /MC1 BDC /OC /MC0 BDC 0 0 10 10 re f EMC EMC" #[]
+  t "optional content: a malformed expression inside hidden content shows nothing and names nothing"
+    (drawn within == some 0 && named within == some 0 &&
+      drawn (ocDoc (ve "[/Xor 7 0 R]") #[]) == some 1 && named (ocDoc (ve "[/Xor 7 0 R]") #[]) == some 1)
   t "optional content: a membership dictionary written in place decides"
-    (drawn (ocPdf "/OFF [6 0 R]" "<< /Type /OCMD /OCGs [6 0 R] >>" "<< >>" marked #[]) == some 0 &&
-      drawn (ocPdf "/OFF [6 0 R]" "<< /Type /OCMD /VE [/Not 6 0 R] >>" "<< >>" marked #[]) == some 1)
+    (drawn (ocPdf (cfg "/OFF [6 0 R]") "<< /Type /OCMD /OCGs [6 0 R] >>" "<< >>" marked #[]) == some 0 &&
+      drawn (ocPdf (cfg "/OFF [6 0 R]") "<< /Type /OCMD /VE [/Not 6 0 R] >>" "<< >>" marked #[]) == some 1)
   let form (oc : String) : ByteArray :=
-    ocPdf "/OFF [6 0 R]" "5 0 R" "<< >>" "/Fm0 Do"
+    ocPdf (cfg "/OFF [6 0 R]") "5 0 R" "<< >>" "/Fm0 Do"
       #[streamObj "0 0 10 10 re f" s!"/Type /XObject /Subtype /Form /BBox [0 0 100 50] /OC {oc}"]
-  t "optional content: a form's expression decides, and an unreadable one is named"
+  t "optional content: a form's expression decides, and a malformed one is named"
     (drawn (form "<< /Type /OCMD /VE [/Not 7 0 R] >>") == some 0 &&
       drawn (form "<< /Type /OCMD /VE [/Not 6 0 R] >>") == some 1 &&
       drawn (form "<< /Type /OCMD /VE [/Xor 6 0 R] >>") == some 1 &&
@@ -553,10 +574,20 @@ def pdfOptionalContentChecks (ref : IO.Ref (List String)) : IO Unit := do
     ("a base state of ON hides what OFF lists", "/BaseState /ON /OFF [6 0 R]", "6 0 R", #[], 0),
     ("an unchanged base state keeps groups on", "/BaseState /Unchanged", "7 0 R", #[], 1),
     ("a base state of OFF leaves a group the document does not list", "/BaseState /OFF", "9 0 R",
+      #["<< >>", "<< /Type /OCG /Name (Unlisted) >>"], 1),
+    ("OFF leaves a group the document does not list", "/OFF [9 0 R]", "9 0 R",
       #["<< >>", "<< /Type /OCG /Name (Unlisted) >>"], 1)]
-  for (what, config, mc, extra, shown) in based do
+  for (what, dflt, mc, extra, shown) in based do
     t s!"optional content: {what}"
-      (drawn (ocPdf config mc "<< >>" marked extra) == some shown)
+      (drawn (ocPdf (cfg dflt) mc "<< >>" marked extra) == some shown)
+  let unconfigured : List (String × String) := [
+    ("no optional content properties", ""),
+    ("properties with no default configuration", "/OCProperties << /OCGs [6 0 R 7 0 R] >>"),
+    ("properties whose groups are no array", "/OCProperties << /OCGs 6 0 R /D << /OFF [6 0 R] >> >>")]
+  for (what, ocp) in unconfigured do
+    t s!"optional content: under {what} nothing is hidden"
+      (drawn (ocPdf ocp "5 0 R" (ve "[/Not 7 0 R]") marked #[]) == some 1 &&
+        drawn (ocPdf ocp "5 0 R" "<< /Type /OCMD /OCGs [7 0 R] /P /AllOff >>" marked #[]) == some 1)
 
 open Tests.PdfNative in
 /-- The interpreter keeps PDF's meaning where it is subtle, and names the shadings the gradient

@@ -161,7 +161,7 @@ def resourcePdf (content inner : String) : ByteArray := fuzzPdf #[
   fuzzStream ("600 0 0 0 600 700 d1 " ++ inner),
   fuzzStream ("600 0 d0 " ++ inner),
   "<< /Type /OCG /Name (Off) >>",
-  "<< /Type /OCMD /OCGs [14 0 R] /P /AnyOn /VE [/Or [/Not 14 0 R] 16 0 R] >>",
+  "<< /Type /OCMD /OCGs [14 0 R] /P /AnyOn /VE [/And [/Or 14 0 R 16 0 R] 16 0 R 14 0 R] >>",
   "[/And 16 0 R [/Not 14 0 R]]"]
 
 /-- A page whose font is `font` (a font dictionary as spelled) and whose
@@ -217,6 +217,10 @@ def pdfFigureFuzz : IO Unit := do
   | .ok imp => unless imp.figure.losses.contains (.budget "form-recursion") do
       die "a form that paints itself is not named a recursion"
   | .error e => die s!"a form that paints itself refused whole: {e}"
+  match PdfGfx.importPage (resourcePdf "/OC /MC0 BDC 0 0 5 5 re f EMC" "") with
+  | .ok imp => unless imp.figure.marks.isEmpty && imp.figure.losses.isEmpty do
+      die "content a self-referring visibility expression hides is drawn or named"
+  | .error e => die s!"a self-referring visibility expression refused whole: {e}"
   let tally ← IO.mkRef ({} : Tally)
   -- 1. Truncations: evenly spaced cuts of each fixture, at least 10 000 in all.
   let total := fixtures.foldl (fun a b => a + b.size) 0
@@ -239,7 +243,8 @@ def pdfFigureFuzz : IO Unit := do
     let (inner, s2) := randomContent s1 12
     s := s2
     timedImport tally budget "a random content stream" (resourcePdf outer inner)
-  -- 4. Cycles and depth: self-painting forms, cells and procedures, and deep `q`.
+  -- 4. Cycles and depth: self-painting forms, cells and procedures, deep `q`, and a form under a
+  -- visibility expression that refers to itself.
   for k in [0:10000] do
     let (pre, s1) := randomContent s 6
     s := s1
@@ -250,7 +255,7 @@ def pdfFigureFuzz : IO Unit := do
       | 3 => "/X1 Do BT /T3 10 Tf (a) Tj ET"
       | _ => String.join (List.replicate (k % 400) "q ")
     timedImport tally budget "a cycle" (resourcePdf (pre ++ " /X1 Do BT /T3 9 Tf (ab) Tj ET \
-/Pattern cs /P2 scn 0 0 50 50 re f") inner)
+/Pattern cs /P2 scn 0 0 50 50 re f /OC /MC0 BDC /X1 Do 0 0 5 5 re f EMC") inner)
   -- 5. Broken font programs: shipped faces truncated and mutated, and random bytes.
   let otf ← IO.FS.readBinFile "testdata/corpus/fonts/FiraSans-Regular.otf"
   let ttf ← IO.FS.readBinFile "testdata/corpus/fonts/OpenSans-Regular.ttf"

@@ -6,6 +6,7 @@ public import LeanTex.Core.PdfContentLex
 public import LeanTex.Core.PdfFont
 public import LeanTex.Core.PdfOps
 public import Std.Data.HashMap
+public import Std.Data.HashSet
 import LeanTex.Core.GfxAffine
 import LeanTex.Core.PdfGfx.Fn
 import LeanTex.Core.GfxPdf
@@ -329,6 +330,8 @@ public structure Store where
   type3 : Std.HashMap (Nat × String) (Option (Bool × Nat))
   forms : Std.HashMap String Nat
   images : Std.HashMap String (Option Nat)
+  /-- Whether optional content is hidden, by the object number its `/OC` names. -/
+  oc : Std.HashMap Nat Bool
   /-- How many font dictionaries read in place have been keyed; the next key is `directKeyBase` plus
   this count. -/
   direct : Nat
@@ -336,7 +339,7 @@ public structure Store where
 
 public def Store.empty : Store :=
   { outlines := #[], symbols := #[], rasters := #[], losses := #[], fonts := {}, glyphs := {}
-    type3 := {}, forms := {}, images := {}, direct := 0 }
+    type3 := {}, forms := {}, images := {}, oc := {}, direct := 0 }
 
 /-- Where the keys of fonts read in place start: past any object number a PDF can hold (Annex C). -/
 public def directKeyBase : Nat := 2 ^ 32
@@ -368,12 +371,12 @@ public structure St where
   deriving Inhabited
 
 /-- Where a stream is read: the document, its resources, its default space's figure matrix
-(§8.7.2), the hidden optional content, and the figure box. -/
+(§8.7.2), the groups its default configuration turns off, none without one, and the figure box. -/
 public structure Ctx where
   doc : Doc
   res : Obj
   base : Affine
-  off : Array Nat
+  off : Option (Std.HashSet Nat)
   box : Box
 
 private def closeInto (parent : Open) (g : Open) : Open :=
@@ -1359,20 +1362,27 @@ private def stateKey (gs : GState) : String :=
 {gs.dash}|{gs.phase}|{gs.ca.val}|{gs.cA.val}|{gs.mask.val}|{fontKey}|{gs.size}|{gs.charSpace}|{gs.wordSpace}|\
 {gs.hScale}|{gs.leading}|{gs.rise}|{gs.render}"
 
+/-- Visibility expressions read so far by object number, within one membership dictionary's reading. -/
+private abbrev VeMemo := Std.HashMap Nat (Option Bool)
+
 mutual
 
-/-- A visibility expression's operand (§8.11.2.2): a group, on unless the configuration turns it off,
-or a nested expression, direct or by reference; unknown for anything else. -/
-private def veOperand (cx : Ctx) (e : Entered cx.doc) : Obj → Option Bool
+/-- A visibility expression's operand (§8.11.2.2): a group, on unless `off` holds it, or a nested
+expression, direct or by reference; unknown for anything else. -/
+private def veOperand (cx : Ctx) (off : Std.HashSet Nat) (e : Entered cx.doc) (memo : VeMemo) :
+    Obj → Option Bool × VeMemo
   | .ref n g =>
-    if cx.off.contains n then some false
+    if off.contains n then (some false, memo)
+    else if let some v := memo.get? n then (v, memo)
     else if h : cx.doc.lists n = true ∧ n ∉ e.list then
       match (cx.doc.deref (.ref n g)).toOption.getD .null with
-      | .arr ⟨xs⟩ => veList cx (e.push n h.1 h.2) xs
-      | d => if d.get? "Type" == some (.name "OCG") then some true else none
-    else none
-  | .arr ⟨xs⟩ => veList cx e xs
-  | _ => none
+      | .arr ⟨xs⟩ =>
+        let r := veList cx off (e.push n h.1 h.2) memo xs
+        (r.1, r.2.insert n r.1)
+      | d => (if d.get? "Type" == some (.name "OCG") then some true else none, memo)
+    else (none, memo)
+  | .arr ⟨xs⟩ => veList cx off e memo xs
+  | _ => (none, memo)
 termination_by o => (e.room, sizeOf o)
 decreasing_by
   all_goals simp_wf
@@ -1382,11 +1392,14 @@ decreasing_by
     omega
 
 /-- A visibility expression's operator and operands: `Not` over one, `And` or `Or` over one or more. -/
-private def veList (cx : Ctx) (e : Entered cx.doc) : List Obj → Option Bool
-  | [.name "Not", x] => (veOperand cx e x).map (!·)
-  | .name "And" :: x :: xs => veFold cx e true (x :: xs)
-  | .name "Or" :: x :: xs => veFold cx e false (x :: xs)
-  | _ => none
+private def veList (cx : Ctx) (off : Std.HashSet Nat) (e : Entered cx.doc) (memo : VeMemo) :
+    List Obj → Option Bool × VeMemo
+  | [.name "Not", x] =>
+    let r := veOperand cx off e memo x
+    (r.1.map (!·), r.2)
+  | .name "And" :: x :: xs => veFold cx off e true memo (x :: xs)
+  | .name "Or" :: x :: xs => veFold cx off e false memo (x :: xs)
+  | _ => (none, memo)
 termination_by l => (e.room, sizeOf l)
 decreasing_by
   all_goals simp_wf
@@ -1394,14 +1407,16 @@ decreasing_by
   all_goals omega
 
 /-- Operands joined by `And` (`all`) or `Or`, unknown only where an unreadable operand could decide. -/
-private def veFold (cx : Ctx) (e : Entered cx.doc) (all : Bool) : List Obj → Option Bool
-  | [] => some all
+private def veFold (cx : Ctx) (off : Std.HashSet Nat) (e : Entered cx.doc) (all : Bool)
+    (memo : VeMemo) : List Obj → Option Bool × VeMemo
+  | [] => (some all, memo)
   | x :: xs =>
-    let a := veOperand cx e x
-    let b := veFold cx e all xs
-    if a == some !all || b == some !all then some !all
-    else if a.isNone || b.isNone then none
-    else some all
+    let a := veOperand cx off e memo x
+    let b := veFold cx off e all a.2 xs
+    let v := if a.1 == some !all || b.1 == some !all then some !all
+      else if a.1.isNone || b.1.isNone then none
+      else some all
+    (v, b.2)
 termination_by l => (e.room, sizeOf l)
 decreasing_by
   all_goals simp_wf
@@ -1411,49 +1426,61 @@ decreasing_by
 end
 
 /-- Whether a membership dictionary hides its content (§8.11.2.2), its visibility expression deciding
-in place of its groups and policy, and whether that expression is unreadable where it decides. -/
-private def ocmdOff (cx : Ctx) (d : Obj) : Bool × Bool :=
+in place of its groups and policy, and whether that expression has no readable value. -/
+private def ocmdOff (cx : Ctx) (off : Std.HashSet Nat) (d : Obj) : Bool × Bool :=
   if d.get? "Type" != some (.name "OCMD") then (false, false) else
+  let held (x : Obj) : Option Nat := match x with
+    | .ref k _ => if cx.doc.lists k then some k else none
+    | _ => none
   -- `OCGs` is one group's reference or an array of them (§8.11.2.2).
   let refs : Array Nat := match d.get? "OCGs" with
     | some (.ref m g) => match (cx.doc.deref (.ref m g)).toOption with
-      | some (.arr xs) => xs.filterMap fun x => match x with
-        | .ref k _ => some k
-        | _ => none
-      | _ => #[m]
-    | some (.arr xs) => xs.filterMap fun x => match x with
-      | .ref k _ => some k
-      | _ => none
+      | some (.arr xs) => xs.filterMap held
+      | _ => (held (.ref m g)).toArray
+    | some (.arr xs) => xs.filterMap held
     | _ => #[]
   let pol := (d.get? "P").getD (.name "AnyOn")
   let byPolicy : Bool :=
     if refs.isEmpty then false
-    else if pol == .name "AllOn" then refs.any cx.off.contains
-    else if pol == .name "AnyOff" then refs.all fun r => !cx.off.contains r
-    else if pol == .name "AllOff" then refs.any fun r => !cx.off.contains r
-    else refs.all cx.off.contains
+    else if pol == .name "AllOn" then refs.any off.contains
+    else if pol == .name "AnyOff" then refs.all fun r => !off.contains r
+    else if pol == .name "AllOff" then refs.any fun r => !off.contains r
+    else refs.all off.contains
   let e : Entered cx.doc := { list := [], nodup := List.nodup_nil, listed := fun _ h => by cases h }
   match (d.get? "VE").map cx.doc.deref with
   | none | some (.ok .null) => (byPolicy, false)
   | some (.ok (.arr ⟨xs⟩)) =>
-    match veList cx e xs with
+    match (veList cx off e {} xs).1 with
     | some on => (!on, false)
     | none => (false, true)
   | some _ => (byPolicy, true)
 
 /-- Whether optional content is hidden under the default configuration, a group or a membership
-dictionary deciding, and whether a visibility expression on the way is unreadable. -/
+dictionary deciding, and whether a visibility expression on the way has no readable value. -/
 private def ocOff (cx : Ctx) (o : Obj) : Bool × Bool :=
-  match o with
-  | .ref n _ =>
-    if cx.off.contains n then (true, false)
-    else ocmdOff cx ((cx.doc.deref o).toOption.getD .null)
-  | _ => ocmdOff cx o
+  match cx.off with
+  | none => (false, false)
+  | some off =>
+    match o with
+    | .ref n _ =>
+      if off.contains n then (true, false)
+      else ocmdOff cx off ((cx.doc.deref o).toOption.getD .null)
+    | _ => ocmdOff cx off o
 
-/-- Whether optional content is hidden, an unreadable visibility expression named on the way. -/
+/-- Whether optional content is hidden, read once per object, a malformed visibility expression named. -/
 private def St.ocHidden (cx : Ctx) (st : St) (o : Obj) : St × Bool :=
-  let r := ocOff cx o
-  ({ st with store := if r.2 then st.store.lose (.property "visibility-expression") else st.store }, r.1)
+  let key : Option Nat := match o with
+    | .ref n _ => some n
+    | _ => none
+  match key.bind st.store.oc.get? with
+  | some hidden => (st, hidden)
+  | none =>
+    let r := ocOff cx o
+    let store := if r.2 then st.store.lose (.property "malformed-visibility-expression") else st.store
+    let store := match key with
+      | some n => { store with oc := store.oc.insert n r.1 }
+      | none => store
+    ({ st with store }, r.1)
 
 private def nodesInk (nodes : Array (Node Run)) (outlines : Array (Array Subpath))
     (symbols : Array (Array (Node Run))) : Option Box :=
@@ -1840,7 +1867,8 @@ private def stepRest (cx : Ctx) (e : Entered cx.doc) (name : String) (st : St) :
     let r : St × Bool := match st.op 0, st.op 1 with
       | some (.name "OC"), some (.name prop) =>
         match resource cx "Properties" prop with
-        | some o => if st.hidden > 0 then (st, (ocOff cx o).1) else st.ocHidden cx o
+        -- premise: pdfOptionalContentChecks — hidden content shows nothing its own expression could change
+        | some o => if st.hidden > 0 then (st, false) else st.ocHidden cx o
         | none => (st, false)
       | _, _ => (st, false)
     let st := r.1
@@ -2377,29 +2405,26 @@ public theorem words_exact (cx : Ctx) (e : Entered cx.doc) (s : ByteArray) (st :
       exact ⟨h1, h2⟩
     · simp
 
-/-- The groups the default configuration turns off (§8.11.4.3): those its `OFF` lists, and under a
-base state of `OFF` every group the document lists but those its `ON` lists. -/
-private def offGroups (doc : Doc) : Array Nat :=
+/-- The groups the default configuration turns off (§8.11.4.3): of those the document lists, the
+ones `OFF` names, and under a base state of `OFF` all but those `ON` names; none without one. -/
+private def offGroups (doc : Doc) : Option (Std.HashSet Nat) := do
+  let field (o : Obj) (k : String) : Option Obj := (doc.field o k).toOption.getD none
   let refs (o : Option Obj) : Array Nat := match o with
     | some (.arr xs) => xs.filterMap fun x => match x with
       | .ref n _ => some n
       | _ => none
     | _ => #[]
-  let field (o : Obj) (k : String) : Option Obj := (doc.field o k).toOption.getD none
-  match (doc.get doc.root).toOption with
-  | some (cat, _) =>
-    match field cat "OCProperties" with
-    | some ocp =>
-      match field ocp "D" with
-      | some dflt =>
-        let off := refs (field dflt "OFF")
-        if field dflt "BaseState" == some (.name "OFF") then
-          let on := refs (field dflt "ON")
-          (refs (field ocp "OCGs")).filter (fun n => !on.contains n) ++ off
-        else off
-      | none => #[]
-    | none => #[]
-  | none => #[]
+  let (cat, _) ← (doc.get doc.root).toOption
+  let ocp ← field cat "OCProperties"
+  let ocgs ← field ocp "OCGs"
+  let dflt ← field ocp "D"
+  guard (ocgs matches .arr _ && dflt matches .dict _)
+  let listed := Std.HashSet.ofArray (refs (some ocgs))
+  let off := (refs (field dflt "OFF")).filter listed.contains
+  if field dflt "BaseState" == some (.name "OFF") then
+    let on := Std.HashSet.ofArray (refs (field dflt "ON"))
+    return Std.HashSet.ofArray ((listed.toArray.filter fun n => !on.contains n) ++ off)
+  return Std.HashSet.ofArray off
 
 /-- An imported page: its figure and its one-based page number. -/
 public structure Imported where
