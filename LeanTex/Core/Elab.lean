@@ -7174,7 +7174,7 @@ private theorem sliceWeight_zero (a : Array Raw) :
 private theorem slicePars_zero (a : Array Raw) :
     slicePars a 0 = nestedParsList a.toList := by rfl
 
-/-- The measures the block knot reads at a group `raws[j]` read from `i`. -/
+/-- The measures the block knot reads at a group `raws[j]` reached from `i`. -/
 private theorem group_measures {raws g : Array Raw} {i j : Nat} {p : Pos}
     (hg : raws[j]? = some (.group g p)) (hij : i ≤ j) :
     rawWeightList g.toList + 1 ≤ sliceWeight raws j ∧ nestedParsList g.toList ≤ slicePars raws j ∧
@@ -7194,6 +7194,27 @@ private theorem env_measures {raws b : Array Raw} {j : Nat} {n : String} {p : Po
   have hp := elem_pars_le he (Nat.le_refl j)
   simp only [rawWeight, nestedPars] at hw hp
   exact ⟨by omega, hp⟩
+
+/-- The measures the block knot reads when it advances from `raws[i]` to `j`. -/
+private theorem advance_measures (raws : Array Raw) {i j : Nat} (hi : i < raws.size) (hij : i < j) :
+    sliceWeight raws j < sliceWeight raws i ∧ slicePars raws j ≤ slicePars raws i :=
+  ⟨sliceWeight_lt raws hi hij, slicePars_le raws (Nat.le_of_lt hij)⟩
+
+/-- The measures the block knot reads at the rest of a scope from `j`. -/
+private theorem rest_measures (raws : Array Raw) (j : Nat) :
+    rawWeightList (raws.extract j raws.size).toList ≤ sliceWeight raws j ∧
+      nestedParsList (raws.extract j raws.size).toList ≤ slicePars raws j ∧
+      sliceWeight (raws.extract j raws.size) 0 = rawWeightList (raws.extract j raws.size).toList ∧
+      slicePars (raws.extract j raws.size) 0 = nestedParsList (raws.extract j raws.size).toList :=
+  ⟨extract_slice_le .., extract_slice_pars_le .., sliceWeight_zero _, slicePars_zero _⟩
+
+/-- The measures the block knot reads at a body's tail from `k`. -/
+private theorem tail_measures (body : Array Raw) (k : Nat) :
+    rawWeightList (body.extract k body.size).toList ≤ rawWeightList body.toList ∧
+      nestedParsList (body.extract k body.size).toList ≤ nestedParsList body.toList ∧
+      sliceWeight (body.extract k body.size) 0 = rawWeightList (body.extract k body.size).toList ∧
+      slicePars (body.extract k body.size) 0 = nestedParsList (body.extract k body.size).toList :=
+  ⟨extract_weight_le .., extract_nested_le .., sliceWeight_zero _, slicePars_zero _⟩
 
 private theorem trimRaws_weight_le (raws : Array Raw) :
     rawWeightList (trimRaws raws).toList ≤ rawWeightList raws.toList := by
@@ -7786,11 +7807,23 @@ private theorem SliceFits.keep {cur body : Array Raw} {j bound pbound : Nat} {r 
   rw [rawWeightList_push, nestedParsList_push]
   omega
 
-private theorem SliceFits.done {cur body : Array Raw} {j bound pbound : Nat}
-    (hf : SliceFits cur body j bound pbound) (h : body.size ≤ j) :
-    rawWeightList cur.toList ≤ bound ∧ nestedParsList cur.toList ≤ pbound := by
-  have := sliceWeight_end body h
-  have := slicePars_end body h
+private theorem SliceFits.flush {cur body : Array Raw} {j k bound pbound : Nat}
+    (hf : SliceFits cur body j bound pbound) (hk : j ≤ k) : SliceFits #[] body k bound pbound := by
+  have := sliceWeight_le body hk
+  have := slicePars_le body hk
+  have h0 := SliceFits.start body k
+  unfold SliceFits at hf h0 ⊢
+  omega
+
+private theorem SliceFits.whole (body : Array Raw) (j : Nat) :
+    SliceFits #[] body j (rawWeightList body.toList) (nestedParsList body.toList) := by
+  have h := (SliceFits.start body 0).skip (Nat.zero_le j)
+  rwa [sliceWeight_zero, slicePars_zero] at h
+
+private theorem SliceFits.bounds {cur body : Array Raw} {j bound pbound : Nat}
+    (hf : SliceFits cur body j bound pbound) :
+    rawWeightList cur.toList ≤ bound ∧ nestedParsList cur.toList ≤ pbound ∧
+      sliceWeight body j ≤ bound ∧ slicePars body j ≤ pbound := by
   unfold SliceFits at hf
   omega
 
@@ -7822,7 +7855,7 @@ private def frameRestGo (ctx : Ctx) (body : Array Raw) (j : Nat)
     let title := if title.isEmpty || subtitle.isEmpty then title else
       title ++ #[.linebreak {}, .colored (Design.ofPalette ctx.palette).framesubtitle
         (some (.role .frameSubtitleInk)) #[.styled (.size "small") subtitle]]
-    return (title, ⟨rest, hf.done (by omega)⟩)
+    return (title, ⟨rest, hf.bounds.1, hf.bounds.2.1⟩)
 termination_by body.size - j
 
 /-- Splits a subfigure body into its last `\caption`, whether that caption
@@ -7858,7 +7891,7 @@ private def subRestGo (ctx : Ctx) (sn : String) (sbody : Array Raw) (q : Nat)
       subRestGo ctx sn sbody (q + 1) sCaption sCapAbove (sRest.push r') bound pbound
         (hf.keep h hq)
   else
-    return (sCaption, sCapAbove, ⟨sRest, hf.done (by omega)⟩)
+    return (sCaption, sCapAbove, ⟨sRest, hf.bounds.1, hf.bounds.2.1⟩)
 termination_by sbody.size - q
 decreasing_by all_goals omega
 
@@ -10655,10 +10688,7 @@ private def figureGo (ctx : Ctx) (n : String) (kind : Ir.FloatKind)
     (body : Array Raw) (pos : Pos) (j : Nat) (innerBlocks : Array Block)
     (cols : Array (BoxWidth × Array Block)) (rest : Array Raw)
     (caption : Array Inline) (capAbove : Bool) (blocks : Array Block)
-    (hw : rawWeightList rest.toList + sliceWeight body j
-      ≤ rawWeightList body.toList)
-    (hp : nestedParsList rest.toList + slicePars body j
-      ≤ nestedParsList body.toList) :
+    (hf : SliceFits rest body j (rawWeightList body.toList) (nestedParsList body.toList)) :
     EM (Array Block) := do
   if h : j < body.size then
     match hj : body[j] with
@@ -10666,10 +10696,6 @@ private def figureGo (ctx : Ctx) (n : String) (kind : Ir.FloatKind)
       let (⟨j2, hj2⟩, _, _) ← skipOptArg ctx "caption" body (j + 1) cpos
       let j3 := skipSpaces body j2
       have hj3 := skipSpaces_ge body j2
-      have hwa : sliceWeight body j3 ≤ sliceWeight body j :=
-        sliceWeight_le body (by omega)
-      have hpa : slicePars body j3 ≤ slicePars body j :=
-        slicePars_le body (by omega)
       match body[j3]? with
       | some (.group t _) =>
         unless caption.isEmpty do
@@ -10679,41 +10705,29 @@ private def figureGo (ctx : Ctx) (n : String) (kind : Ir.FloatKind)
         let capAbove := innerBlocks.isEmpty && cols.isEmpty
           && rest.all isSpaceOrPar
         figureGo ctx n kind body pos (j3 + 1) innerBlocks cols rest caption
-          capAbove blocks
-          (by have := sliceWeight_le body (show j3 ≤ j3 + 1 by omega); omega)
-          (by have := slicePars_le body (show j3 ≤ j3 + 1 by omega); omega)
+          capAbove blocks (hf.skip (by omega))
       | _ =>
         diag ctx .E0304 "'\\caption' needs a {text} group" cpos
         figureGo ctx n kind body pos j3 innerBlocks cols rest caption
-          capAbove blocks (by omega) (by omega)
+          capAbove blocks (hf.skip (by omega))
     | .ctrl "centering" _ =>
       -- The float centres already; the declaration is satisfied.
       figureGo ctx n kind body pos (j + 1) innerBlocks cols rest caption
-        capAbove blocks
-        (by have := sliceWeight_le body (show j ≤ j + 1 by omega); omega)
-        (by have := slicePars_le body (show j ≤ j + 1 by omega); omega)
+        capAbove blocks (hf.skip (by omega))
     | .ctrl "hfill" _ =>
       -- Between subfigures the fill is the gutter the columns layout sets.
       if !cols.isEmpty && rest.all isSpaceOrPar then
         figureGo ctx n kind body pos (j + 1) innerBlocks cols rest caption
-          capAbove blocks
-          (by have := sliceWeight_le body (show j ≤ j + 1 by omega); omega)
-          (by have := slicePars_le body (show j ≤ j + 1 by omega); omega)
+          capAbove blocks (hf.skip (by omega))
       else
         figureGo ctx n kind body pos (j + 1) innerBlocks cols
-          (rest.push body[j]) caption capAbove blocks
-          (by
-            have h1 := sliceWeight_here body h
-            rw [rawWeightList_push]; omega)
-          (by
-            have h1 := slicePars_here body h
-            have h2 := rawPars_split body[j]
-            rw [nestedParsList_push]; omega)
+          (rest.push body[j]) caption capAbove blocks (hf.keep h rfl)
     | .env sn sbody spos =>
       if sn == "subfigure" || sn == "subtable" then do
         have hbe : body[j]? = some (.env sn sbody spos) := by
           rw [Array.getElem?_eq_getElem h]; exact congrArg some hj
         have hem := env_measures hbe
+        have hb := hf.bounds
         let (innerBlocks, cols) ←
           if rest.any (!isSpaceOrPar ·) then do
             let innerBlocks :=
@@ -10743,15 +10757,8 @@ text width; the box shares the leftover" spos
         else
           diag ctx .E0304 s!"'\\begin\{{sn}}' needs a \{width} group" spos
         let (sCaption, sCapAbove, ⟨sRest, hsr⟩) ← subRestGo ctx sn sbody m
-          #[] false #[] (sliceWeight sbody m) (slicePars sbody m) (SliceFits.start sbody m)
-        have hsw : rawWeightList sRest.toList ≤ sliceWeight sbody m := hsr.1
-        have hsp : nestedParsList sRest.toList ≤ slicePars sbody m := hsr.2
-        have hsw2 : sliceWeight sbody m ≤ rawWeightList sbody.toList := by
-          have := sliceWeight_le sbody (Nat.zero_le m)
-          rw [sliceWeight_zero] at this; omega
-        have hsp2 : slicePars sbody m ≤ nestedParsList sbody.toList := by
-          have := slicePars_le sbody (Nat.zero_le m)
-          rw [slicePars_zero] at this; omega
+          #[] false #[] (rawWeightList sbody.toList) (nestedParsList sbody.toList)
+          (SliceFits.whole sbody m)
         have hsp3 := nestedParsList_le sbody.toList
         have hs0 : sliceWeight sRest 0 = rawWeightList sRest.toList :=
           sliceWeight_zero _
@@ -10762,33 +10769,13 @@ text width; the box shares the leftover" spos
           sInner := Ir.captionAltBlocks sCaption sInner
         figureGo ctx n kind body pos (j + 1) innerBlocks
           (cols.push ({ width with pos := subPos }, #[.float .sub none sCapAbove sInner sCaption]))
-          #[] caption capAbove blocks
-          (by
-            have := sliceWeight_le body (show j ≤ j + 1 by omega)
-            simp [rawWeightList]; omega)
-          (by
-            have := slicePars_le body (show j ≤ j + 1 by omega)
-            simp [nestedParsList]; omega)
+          #[] caption capAbove blocks (hf.flush (by omega))
       else
         figureGo ctx n kind body pos (j + 1) innerBlocks cols
-          (rest.push body[j]) caption capAbove blocks
-          (by
-            have h1 := sliceWeight_here body h
-            rw [rawWeightList_push]; omega)
-          (by
-            have h1 := slicePars_here body h
-            have h2 := rawPars_split body[j]
-            rw [nestedParsList_push]; omega)
+          (rest.push body[j]) caption capAbove blocks (hf.keep h rfl)
     | _ =>
       figureGo ctx n kind body pos (j + 1) innerBlocks cols
-        (rest.push body[j]) caption capAbove blocks
-        (by
-          have h1 := sliceWeight_here body h
-          rw [rawWeightList_push]; omega)
-        (by
-          have h1 := slicePars_here body h
-          have h2 := rawPars_split body[j]
-          rw [nestedParsList_push]; omega)
+        (rest.push body[j]) caption capAbove blocks (hf.keep h rfl)
   else do
     let innerBlocks :=
       if cols.isEmpty then innerBlocks else innerBlocks.push (.columns cols)
@@ -10796,6 +10783,7 @@ text width; the box shares the leftover" spos
       sliceWeight_zero _
     have hr1 : slicePars rest 0 = nestedParsList rest.toList :=
       slicePars_zero _
+    have hb := hf.bounds
     let rb ← elabBlockScope ctx rest
     let mut inner := innerBlocks ++ rb
     unless caption.isEmpty do
@@ -10812,10 +10800,7 @@ and other content stays in place. -/
 private def columnsGo (ctx : Ctx) (body : Array Raw) (j : Nat)
     (cols : Array (BoxWidth × Array Block)) (strayRaws : Array Raw)
     (blocks : Array Block)
-    (hw : rawWeightList strayRaws.toList + sliceWeight body j
-      ≤ rawWeightList body.toList)
-    (hp : nestedParsList strayRaws.toList + slicePars body j
-      ≤ nestedParsList body.toList) :
+    (hf : SliceFits strayRaws body j (rawWeightList body.toList) (nestedParsList body.toList)) :
     EM (Array Block) := do
   if h : j < body.size then
     match hj : body[j] with
@@ -10823,6 +10808,7 @@ private def columnsGo (ctx : Ctx) (body : Array Raw) (j : Nat)
       have hbe : body[j]? = some (.env "column" cbody cpos) := by
         rw [Array.getElem?_eq_getElem h]; exact congrArg some hj
       have hem := env_measures hbe
+      have hb := hf.bounds
       let (cols, blocks) ←
         if strayRaws.any isColumnStray then do
           let blocks := if cols.isEmpty then blocks
@@ -10847,36 +10833,14 @@ private def columnsGo (ctx : Ctx) (body : Array Raw) (j : Nat)
             s!"column width '{src}' is not a fraction of the text width; \
 the column shares the leftover" cpos
             (help := "write a factor like {0.5\\textwidth}")
-      have hce : rawWeightList (cbody.extract m2 cbody.size).toList
-          ≤ rawWeightList cbody.toList := extract_weight_le ..
-      have hcp : nestedParsList (cbody.extract m2 cbody.size).toList
-          ≤ nestedParsList cbody.toList := extract_nested_le ..
+      have hcm := tail_measures cbody m2
       have hcp2 := nestedParsList_le cbody.toList
-      have hc0 : sliceWeight (cbody.extract m2 cbody.size) 0
-          = rawWeightList (cbody.extract m2 cbody.size).toList :=
-        sliceWeight_zero _
-      have hc1 : slicePars (cbody.extract m2 cbody.size) 0
-          = nestedParsList (cbody.extract m2 cbody.size).toList :=
-        slicePars_zero _
       -- A column is a group: beamer sets each in a minipage of its own.
       let cinner ← groupBlocks ctx.palette (elabBlockScope ctx (cbody.extract m2 cbody.size))
       columnsGo ctx body (j + 1) (cols.push ({ width with pos := colPos }, cinner)) #[]
-        blocks
-        (by
-          have := sliceWeight_le body (show j ≤ j + 1 by omega)
-          simp [rawWeightList]; omega)
-        (by
-          have := slicePars_le body (show j ≤ j + 1 by omega)
-          simp [nestedParsList]; omega)
+        blocks (hf.flush (by omega))
     | _ =>
-      columnsGo ctx body (j + 1) cols (strayRaws.push body[j]) blocks
-        (by
-          have h1 := sliceWeight_here body h
-          rw [rawWeightList_push]; omega)
-        (by
-          have h1 := slicePars_here body h
-          have h2 := rawPars_split body[j]
-          rw [nestedParsList_push]; omega)
+      columnsGo ctx body (j + 1) cols (strayRaws.push body[j]) blocks (hf.keep h rfl)
   else do
     let blocks := if cols.isEmpty then blocks else blocks.push (.columns cols)
     if strayRaws.any isColumnStray then
@@ -10884,6 +10848,7 @@ the column shares the leftover" cpos
         sliceWeight_zero _
       have hs1 : slicePars strayRaws 0 = nestedParsList strayRaws.toList :=
         slicePars_zero _
+      have hb := hf.bounds
       let sb ← splicedFrameScope (some blocks.size) (elabBlockScope ctx strayRaws)
       return blocks ++ sb
     else
@@ -10926,14 +10891,8 @@ private def elabEnvArm (ctx : Ctx) (n : String) (scope : Array Raw)
       title ← elabInlines (barCtx frameCtx .frameTitleBar) t
       k := k + 1
     let (title2, ⟨rest, hrf⟩) ← frameRestGo (barCtx frameCtx .frameTitleBar) body k title #[] #[]
-      (sliceWeight body k) (slicePars body k) (SliceFits.start body k)
+      (rawWeightList body.toList) (nestedParsList body.toList) (SliceFits.whole body k)
     title := title2
-    have hrw : rawWeightList rest.toList ≤ sliceWeight body k := hrf.1
-    have hrp : nestedParsList rest.toList ≤ slicePars body k := hrf.2
-    have hrw2 : sliceWeight body k ≤ rawWeightList body.toList := by
-      have := sliceWeight_le body (Nat.zero_le k); omega
-    have hrp2 : slicePars body k ≤ nestedParsList body.toList := by
-      have := slicePars_le body (Nat.zero_le k); omega
     have hr0 : sliceWeight rest 0 = rawWeightList rest.toList := sliceWeight_zero _
     have hr1 : slicePars rest 0 = nestedParsList rest.toList := slicePars_zero _
     -- A note's own frame has no side channel, so its stashed notes are refused.
@@ -11016,14 +10975,7 @@ the text width; the box takes the whole measure" pos
           (help := "write a length like {60pt} or a factor like {0.5\\textwidth}")
     else
       diag ctx .E0304 "'\\begin{minipage}' needs a {width} group" pos
-    have hxw : rawWeightList (body.extract m2 body.size).toList
-        ≤ rawWeightList body.toList := extract_weight_le ..
-    have hxp : nestedParsList (body.extract m2 body.size).toList
-        ≤ nestedParsList body.toList := extract_nested_le ..
-    have hx0 : sliceWeight (body.extract m2 body.size) 0
-        = rawWeightList (body.extract m2 body.size).toList := sliceWeight_zero _
-    have hx1 : slicePars (body.extract m2 body.size) 0
-        = nestedParsList (body.extract m2 body.size).toList := slicePars_zero _
+    have hxm := tail_measures body m2
     blocks := blocks.push
       (.columns #[({ width with pos := boxPos }, ← elabBlockScope ctx (body.extract m2 body.size))])
   else if let some kind := titledKind? n then
@@ -11038,14 +10990,7 @@ the text width; the box takes the whole measure" pos
     | _ =>
       diag ctx .E0304 s!"'\\begin\{{n}}' needs a \{title} group" pos
         (help := "an empty group is an untitled block")
-    have hxw : rawWeightList (body.extract m body.size).toList
-        ≤ rawWeightList body.toList := extract_weight_le ..
-    have hxp : nestedParsList (body.extract m body.size).toList
-        ≤ nestedParsList body.toList := extract_nested_le ..
-    have hx0 : sliceWeight (body.extract m body.size) 0
-        = rawWeightList (body.extract m body.size).toList := sliceWeight_zero _
-    have hx1 : slicePars (body.extract m body.size) 0
-        = nestedParsList (body.extract m body.size).toList := slicePars_zero _
+    have hxm := tail_measures body m
     let ⟨bodyCtx, hb⟩ := titledBodyCtx ctx kind
     have hb1 := hb.1
     have hb2 := hb.2.1
@@ -11055,14 +11000,7 @@ the text width; the box takes the whole measure" pos
     blocks := blocks ++ selectedCover Block.onSteps spec #[.titled kind title inner]
   else if scopedEnv (← get).ctr.thm n then
     let (o, k) ← scopeOpen ctx n body pos
-    have hxw : rawWeightList (body.extract k body.size).toList
-        ≤ rawWeightList body.toList := extract_weight_le ..
-    have hxp : nestedParsList (body.extract k body.size).toList
-        ≤ nestedParsList body.toList := extract_nested_le ..
-    have hx0 : sliceWeight (body.extract k body.size) 0
-        = rawWeightList (body.extract k body.size).toList := sliceWeight_zero _
-    have hx1 : slicePars (body.extract k body.size) 0
-        = nestedParsList (body.extract k body.size).toList := slicePars_zero _
+    have hxm := tail_measures body k
     let inner ← elabBlockScope ctx (body.extract k body.size)
     blocks := blocks ++ (← scopeClose ctx n o inner pos)
   else if n == "quote" || n == "quotation" || n == "verse" || n == "abstract"
@@ -11095,24 +11033,15 @@ has nowhere for a float to float" pos
       sliceWeight_zero _
     have hf1 : slicePars fbody 0 = nestedParsList fbody.toList :=
       slicePars_zero _
-    have hkw : sliceWeight fbody k ≤ rawWeightList fbody.toList := by
-      have := sliceWeight_le fbody (Nat.zero_le k); omega
-    have hkp : slicePars fbody k ≤ nestedParsList fbody.toList := by
-      have := slicePars_le fbody (Nat.zero_le k); omega
     blocks ← figureGo ctx n kind fbody pos k #[] #[] #[] #[] false blocks
-      (by simp [rawWeightList]; omega) (by simp [nestedParsList]; omega)
+      (SliceFits.whole fbody k)
   else if n == "algorithm" || n == "algorithm*" || n == "algorithm2e" then
     blocks ← algorithmArm ctx n body pos blocks
   else if n == "algorithmic" then
     blocks ← algorithmicArm ctx body pos blocks
   else if n == "columns" then
     let k ← columnsOptsArm ctx body pos
-    have hkw : sliceWeight body k ≤ rawWeightList body.toList := by
-      have := sliceWeight_le body (Nat.zero_le k); omega
-    have hkp : slicePars body k ≤ nestedParsList body.toList := by
-      have := slicePars_le body (Nat.zero_le k); omega
-    blocks ← columnsGo ctx body k #[] #[] blocks
-      (by simp [rawWeightList]; omega) (by simp [nestedParsList]; omega)
+    blocks ← columnsGo ctx body k #[] #[] blocks (SliceFits.whole body k)
   else if n == "ifbackend" then
     let j ← pure (skipSpaces body 0)
     match body[j]? with
@@ -11142,16 +11071,7 @@ prefer the construct or the class, and keep '\\begin{ifbackend}' for the true re
 \\allow{E0334} accepts the loss")
       let ⟨backCtx, hm⟩ : MCtx ctx ←
         pure ⟨{ ctx with backendTargets := eff }, rfl, rfl, rfl, rfl⟩
-      have hxw : rawWeightList (body.extract (j + 1) body.size).toList
-          ≤ rawWeightList body.toList := extract_weight_le ..
-      have hxp : nestedParsList (body.extract (j + 1) body.size).toList
-          ≤ nestedParsList body.toList := extract_nested_le ..
-      have hx0 : sliceWeight (body.extract (j + 1) body.size) 0
-          = rawWeightList (body.extract (j + 1) body.size).toList :=
-        sliceWeight_zero _
-      have hx1 : slicePars (body.extract (j + 1) body.size) 0
-          = nestedParsList (body.extract (j + 1) body.size).toList :=
-        slicePars_zero _
+      have hxm := tail_measures body (j + 1)
       let inner ← elabBlockScope backCtx (body.extract (j + 1) body.size)
       blocks := blocks.push (.only targets inner)
     | _ =>
@@ -11164,14 +11084,7 @@ prefer the construct or the class, and keep '\\begin{ifbackend}' for the true re
       let j0 := skipSpaces body 0
       let inner := rawSrc (body.extract (j0 + 1) (k - 1))
       let spec ← navSpecOf ctx inner pos
-      have hxw : rawWeightList (body.extract k body.size).toList
-          ≤ rawWeightList body.toList := extract_weight_le ..
-      have hxp : nestedParsList (body.extract k body.size).toList
-          ≤ nestedParsList body.toList := extract_nested_le ..
-      have hx0 : sliceWeight (body.extract k body.size) 0
-          = rawWeightList (body.extract k body.size).toList := sliceWeight_zero _
-      have hx1 : slicePars (body.extract k body.size) 0
-          = nestedParsList (body.extract k body.size).toList := slicePars_zero _
+      have hxm := tail_measures body k
       blocks := blocks.push (.nav spec (← elabBlockScope ctx (body.extract k body.size)))
     | _ =>
       blocks := blocks.push (.nav {}
@@ -11187,14 +11100,7 @@ prefer the construct or the class, and keep '\\begin{ifbackend}' for the true re
       pure ⟨{ ctx with
         limit := env.cmdLimit, envLimit := ke.1, args := bindings }, rfl⟩
     blocks := blocks ++ (← splicedFrameScope (some blocks.size) (elabBlockScope envCtx env.beginBody))
-    have hxw : rawWeightList (body.extract j body.size).toList
-        ≤ rawWeightList body.toList := extract_weight_le ..
-    have hxp : nestedParsList (body.extract j body.size).toList
-        ≤ nestedParsList body.toList := extract_nested_le ..
-    have hx0 : sliceWeight (body.extract j body.size) 0
-        = rawWeightList (body.extract j body.size).toList := sliceWeight_zero _
-    have hx1 : slicePars (body.extract j body.size) 0
-        = nestedParsList (body.extract j body.size).toList := slicePars_zero _
+    have hxm := tail_measures body j
     blocks := blocks ++ (← splicedFrameScope (some blocks.size)
       (elabBlockScope ctx (body.extract j body.size)))
     blocks := blocks ++ (← splicedFrameScope (some blocks.size) (elabBlockScope envCtx env.endBody))
@@ -11232,10 +11138,7 @@ private def elabCtrlArm (ctx : Ctx) (raws : Array Raw) (i : Nat)
     EM (Array Block × { j : Nat // i < j }) := do
   let sourceName := n
   let n := Compat.overlayName n
-  have hslw : sliceWeight raws (i + 1) < sliceWeight raws i :=
-    sliceWeight_lt raws h (by omega)
-  have hslp : slicePars raws (i + 1) ≤ slicePars raws i :=
-    slicePars_le raws (by omega)
+  have hadv := advance_measures raws h (show i < i + 1 by omega)
   let mut blocks := blocks
   if declCtrl.contains n then
     warnOnce ctx ("ctrl:" ++ n) .W0340
@@ -11388,20 +11291,11 @@ when it is empty — '{}'")
         -- The open form: the rest of the scope steps; a bare `\onslide` ends stepping.
         match spec with
         | some spec =>
-          have hxw : rawWeightList (raws.extract jg raws.size).toList
-              ≤ sliceWeight raws jg := extract_slice_le ..
-          have hxp : nestedParsList (raws.extract jg raws.size).toList
-              ≤ slicePars raws jg := extract_slice_pars_le ..
+          have hxm := rest_measures raws jg
           have hg2 : sliceWeight raws jg < sliceWeight raws i := by
             have := sliceWeight_le raws (show i + 1 ≤ jg by omega); omega
           have hg3 : slicePars raws jg ≤ slicePars raws i := by
             have := slicePars_le raws (show i ≤ jg by omega); omega
-          have h0x : sliceWeight (raws.extract jg raws.size) 0
-              = rawWeightList (raws.extract jg raws.size).toList :=
-            sliceWeight_zero _
-          have h1x : slicePars (raws.extract jg raws.size) 0
-              = nestedParsList (raws.extract jg raws.size).toList :=
-            slicePars_zero _
           let ⟨stepCtx, hm⟩ : MCtx ctx ←
             pure ⟨{ ctx with stepBase := max ctx.stepBase (spec.start - 1) },
               rfl, rfl, rfl, rfl⟩
@@ -11472,10 +11366,7 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
   let (⟨ctx', hfm⟩, blocks, cur) ← blockMacroStep ctx stFlow gen raws i blocks cur
   let gen' ← pure stFlow.flowGen
   if h : i < raws.size then
-    have hadv : sliceWeight raws (i + 1) < sliceWeight raws i :=
-      sliceWeight_lt raws h (by omega)
-    have hadvp : slicePars raws (i + 1) ≤ slicePars raws i :=
-      slicePars_le raws (by omega)
+    have hadv := advance_measures raws h (show i < i + 1 by omega)
     have hpos : 0 < sliceWeight raws i := by omega
     match hr : raws[i] with
     | .group body gpos =>
@@ -11580,10 +11471,7 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
         | none => pure ()
         let ⟨palCtx, hm⟩ : MCtx ctx' ←
           pure ⟨{ ctx' with palette := pal?.getD ctx'.palette }, rfl, rfl, rfl, rfl⟩
-        have ht1 : sliceWeight raws (i + 1) < sliceWeight raws i :=
-          sliceWeight_lt raws h (by omega)
-        have ht2 : slicePars raws (i + 1) ≤ slicePars raws i :=
-          slicePars_le raws (by omega)
+        have hadv := advance_measures raws h (show i < i + 1 by omega)
         return ← elabBlocksGo palCtx raws (i + 1)
           (match pal? with
             | some pal => blocks.push (.setPalette pal)
@@ -11599,16 +11487,7 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
       else if n == "centering" || (Ir.raggedSideOf? n).isSome
           || isDeclBlock ctx' n raws i cur then
         -- The declaration forms of center and flushleft align the rest of the scope.
-        have hxw : rawWeightList (raws.extract (i + 1) raws.size).toList
-            ≤ sliceWeight raws (i + 1) := extract_slice_le ..
-        have hxp : nestedParsList (raws.extract (i + 1) raws.size).toList
-            ≤ slicePars raws (i + 1) := extract_slice_pars_le ..
-        have hx0 : sliceWeight (raws.extract (i + 1) raws.size) 0
-            = rawWeightList (raws.extract (i + 1) raws.size).toList :=
-          sliceWeight_zero _
-        have hx1 : slicePars (raws.extract (i + 1) raws.size) 0
-            = nestedParsList (raws.extract (i + 1) raws.size).toList :=
-          slicePars_zero _
+        have hxm := rest_measures raws (i + 1)
         let (⟨ctx', hrole⟩, blocks) ← closeBlockMacros ctx' blocks
         let saved ← enterBlockDecl ctx' n raws i cur cpos
         let inner ← splicedFrameScope (if (declAlignOf n).isNone then some blocks.size else none)
@@ -11624,16 +11503,7 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
         modify f
         elabBlocksGo ctx' raws (i + 1) blocks #[] gen'
       else if n == "pause" then
-        have hxw : rawWeightList (raws.extract (i + 1) raws.size).toList
-            ≤ sliceWeight raws (i + 1) := extract_slice_le ..
-        have hxp : nestedParsList (raws.extract (i + 1) raws.size).toList
-            ≤ slicePars raws (i + 1) := extract_slice_pars_le ..
-        have hx0 : sliceWeight (raws.extract (i + 1) raws.size) 0
-            = rawWeightList (raws.extract (i + 1) raws.size).toList :=
-          sliceWeight_zero _
-        have hx1 : slicePars (raws.extract (i + 1) raws.size) 0
-            = nestedParsList (raws.extract (i + 1) raws.size).toList :=
-          slicePars_zero _
+        have hxm := rest_measures raws (i + 1)
         let (⟨ctx', hrole⟩, blocks) ← closeBlockMacros ctx' blocks
         let ⟨stepCtx, hm⟩ : MCtx ctx' ←
           pure ⟨{ ctx' with stepBase := ctx'.stepBase + 1 }, rfl, rfl, rfl, rfl⟩
@@ -11671,18 +11541,12 @@ a side channel, never slide content" cpos
             pure ⟨{ ctx' with noteBody := true, notePos := some cpos },
               rfl, rfl, rfl, rfl⟩
           let inner ← elabBlockScope noteCtx nbody
-          have ht1 : sliceWeight raws (j2 + 1) < sliceWeight raws i :=
-            sliceWeight_lt raws h (by omega)
-          have ht2 : slicePars raws (j2 + 1) ≤ slicePars raws i :=
-            slicePars_le raws (by omega)
+          have hadv := advance_measures raws h (show i < j2 + 1 by omega)
           elabBlocksGo ctx' raws (j2 + 1)
             (blocks.push (.note inner)) #[] gen'
         | _ =>
           warnSkippedDecl ctx' "note" cpos
-          have ht1 : sliceWeight raws i2 < sliceWeight raws i :=
-            sliceWeight_lt raws h (by omega)
-          have ht2 : slicePars raws i2 ≤ slicePars raws i :=
-            slicePars_le raws (by omega)
+          have hadv := advance_measures raws h (show i < i2 by omega)
           elabBlocksGo ctx' raws i2 blocks #[] gen'
       else if n == "framefoot" then
         -- beamer's `frame footer`: the footer's left slot from here on; empty clears it.
@@ -11691,10 +11555,7 @@ a side channel, never slide content" cpos
         match raws[j]? with
         | some (.group fbody _) =>
           let blocks := blocks.push (.framefoot (← elabInlines ctx' fbody))
-          have ht1 : sliceWeight raws (j + 1) < sliceWeight raws i :=
-            sliceWeight_lt raws h (by omega)
-          have ht2 : slicePars raws (j + 1) ≤ slicePars raws i :=
-            slicePars_le raws (by omega)
+          have hadv := advance_measures raws h (show i < j + 1 by omega)
           elabBlocksGo ctx' raws (j + 1) blocks #[] gen'
         | _ =>
           diag ctx' .E0304 "'\\framefoot' needs one group of inline content" cpos
@@ -11702,10 +11563,7 @@ a side channel, never slide content" cpos
       else if flowStyleCtrl n then
         let (⟨styleCtx, hm⟩, ⟨j, hj⟩, blocks, nextGen) ←
           flowStyleArm ctx' n raws (i + 1) (by omega) cpos blocks gen'
-        have ht1 : sliceWeight raws j < sliceWeight raws i :=
-          sliceWeight_lt raws h (by omega)
-        have ht2 : slicePars raws j ≤ slicePars raws i :=
-          slicePars_le raws (by omega)
+        have hadv := advance_measures raws h (show i < j by omega)
         elabBlocksGo styleCtx raws j blocks #[] nextGen
       else if n == "define" then
         let ⟨(cmd?, k), hdef⟩ ← takeDefine ctx' raws (i + 1) cpos
@@ -11739,10 +11597,7 @@ a side channel, never slide content" cpos
           elabBlocksGo ctx' raws k blocks #[] gen'
       else if counterCtrl n then
         let ⟨j2, hj2⟩ ← counterArm ctx' raws (i + 1) n cpos
-        have ht1 : sliceWeight raws j2 < sliceWeight raws i :=
-          sliceWeight_lt raws h (by omega)
-        have ht2 : slicePars raws j2 ≤ slicePars raws i :=
-          slicePars_le raws (by omega)
+        have hadv := advance_measures raws h (show i < j2 by omega)
         elabBlocksGo ctx' raws j2 blocks #[] gen'
       else if n == "bibliographystyle" || n == "@natbib" then
         let ⟨j, hjge⟩ : { x : Nat // i + 1 ≤ x } ←
@@ -11755,17 +11610,11 @@ a side channel, never slide content" cpos
                   | .word w _ => some w
                   | _ => none) }
             else { st with bibStyle := some (rawSrc body).trimAscii.toString }
-          have ht1 : sliceWeight raws (j + 1) < sliceWeight raws i :=
-            sliceWeight_lt raws h (by omega)
-          have ht2 : slicePars raws (j + 1) ≤ slicePars raws i :=
-            slicePars_le raws (by omega)
+          have hadv := advance_measures raws h (show i < j + 1 by omega)
           elabBlocksGo ctx' raws (j + 1) blocks #[] gen'
         | some (.word w _) =>
           modify fun st => { st with bibStyle := some w }
-          have ht1 : sliceWeight raws (j + 1) < sliceWeight raws i :=
-            sliceWeight_lt raws h (by omega)
-          have ht2 : slicePars raws (j + 1) ≤ slicePars raws i :=
-            slicePars_le raws (by omega)
+          have hadv := advance_measures raws h (show i < j + 1 by omega)
           elabBlocksGo ctx' raws (j + 1) blocks #[] gen'
         | _ =>
           diag ctx' .E0304 "'\\bibliographystyle' needs a {style} group" cpos
@@ -11782,10 +11631,7 @@ a side channel, never slide content" cpos
           let blocks := blocks.push
             (.section 1 true none #[.text ctx'.locale.references])
           let blocks := blocks.push (.bibliography src style #[])
-          have ht1 : sliceWeight raws (j + 1) < sliceWeight raws i :=
-            sliceWeight_lt raws h (by omega)
-          have ht2 : slicePars raws (j + 1) ≤ slicePars raws i :=
-            slicePars_le raws (by omega)
+          have hadv := advance_measures raws h (show i < j + 1 by omega)
           elabBlocksGo ctx' raws (j + 1) blocks #[] gen'
         | _ =>
           diag ctx' .E0304 "'\\bibliography' needs a {file} group" cpos
@@ -11815,10 +11661,7 @@ a side channel, never slide content" cpos
         | some (.group body _) =>
           have hbm := group_measures hgf (show i ≤ jf by omega)
           let inner ← elabBlockScope ctx' body
-          have ht1 : sliceWeight raws (jf + 1) < sliceWeight raws i :=
-            sliceWeight_lt raws h (by omega)
-          have ht2 : slicePars raws (jf + 1) ≤ slicePars raws i :=
-            slicePars_le raws (by omega)
+          have hadv := advance_measures raws h (show i < jf + 1 by omega)
           elabBlocksGo ctx' raws (jf + 1)
             (pushSkipBlock blocks (.spaced (Ir.Sourced.bare before) inner) primitive) #[] gen'
         | _ =>
@@ -11827,10 +11670,7 @@ a side channel, never slide content" cpos
       else
         let (⟨ctx', hrole⟩, blocks) ← blockControlContext ctx' n raws i blocks
         let (blocks, ⟨j, hij⟩) ← elabCtrlArm ctx' raws i h n cpos blocks
-        have ht1 : sliceWeight raws j < sliceWeight raws i :=
-          sliceWeight_lt raws h hij
-        have ht2 : slicePars raws j ≤ slicePars raws i :=
-          slicePars_le raws (by omega)
+        have hadv := advance_measures raws h hij
         elabBlocksGo ctx' raws j blocks #[] gen'
     | _ =>
       if cur.isEmpty && isSpaceOrPar raws[i] then
