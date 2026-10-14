@@ -3838,6 +3838,21 @@ def anchorIdChecks (ref : IO.Ref (List String)) : IO Unit := do
     (hasStr clash.1 "id=\"data-set\"" && hasStr clash.1 "id=\"data-set-2\"")
   t "and the collision is named W0327"
     ((clash.2.filter (·.code == "W0327")).size == 1)
+  let treeIds (body : Array Html.Node) : Array String :=
+    (elemAttrsList (fun _ => true) #[] body.toList).filterMap fun (_, attrs) =>
+      (HtmlDoc.attrOf? attrs "id").filter (·.startsWith "topic")
+  let (_, early, earlyDs) := HtmlDoc.emitTree {} (elabStr ("\\documentclass{article}" ++
+    "\\begin{document}\\section{Topic 4}" ++ String.join (List.replicate 4 "\\section{Topic}") ++
+    "\\end{document}")).1
+  t s!"a title taking a numbered form first is passed over by its base's claims: {treeIds early}"
+    (treeIds early == #["topic-4", "topic", "topic-2", "topic-3", "topic-5"] &&
+     (earlyDs.filter (·.code == "W0327")).size == 1)
+  let (_, steps, stepDs) := HtmlDoc.emitTree {} (elabStr (dvDeck ""
+    ("\\begin{frame}{Topic}\nx\\only<2>{y}\\only<3>{z}\n\\end{frame}\n" ++
+     "\\begin{frame}{Topic}\nw\n\\end{frame}"))).1
+  t s!"a stepped frame's step anchors are passed over by the next frame of its title: {treeIds steps}"
+    (treeIds steps == #["topic", "topic-1", "topic-2", "topic-3", "topic-4"] &&
+     !stepDs.any (·.code == "W0327"))
   let wide := page (String.join ((List.range 4000).map fun i => s!"\\section\{Topic {i}}"))
   t "the four-thousandth distinct section ships its own anchor, unnumbered"
     (hasStr wide "id=\"topic-3999\"" && !hasStr wide "id=\"topic-3999-2\"")

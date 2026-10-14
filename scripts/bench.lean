@@ -1034,8 +1034,8 @@ def passRuns (n : Nat) : IO (Array (String × Nat × Nat)) := do
 /-- Nanoseconds as milliseconds to a tenth. -/
 def msOf (ns : Nat) : String := s!"{ns / 1000000}.{ns / 100000 % 10}"
 
-/-- Compiled passes at a size and four times it, judged by growth (anchors, each probing the ids
-before it, bounded as not cubic), and a memoized glyph ink read at most a tenth of a decode. -/
+/-- Compiled passes at a size and four times it, judged by growth, and a memoized glyph ink read
+at most a tenth of a decode. -/
 def benchPasses (n : Nat) : IO Unit := do
   let runs ← passRuns n
   let row (label : String) (size : Nat) (what : String) : IO Nat := do
@@ -1045,14 +1045,14 @@ def benchPasses (n : Nat) : IO Unit := do
     let ns := median times
     IO.println s!"{padRight s!"leantex  {what}" 42} {padLeft (msOf ns) 6} ms (median of {n})"
     return ns
-  let growth : List (String × Nat × String × Nat) :=
-    [("anchors", 600, "same-titled", 32), ("families", 30000, "faces", 8),
-     ("merge", 400000, "keys", 8), ("legible", 20000, "runs", 8), ("failing", 6000, "uses", 8),
-     ("arrays", 100000, "elements", 8), ("dictionaries", 100000, "entries", 8)]
-  for (label, size, what, bound) in growth do
+  let growth : List (String × Nat × String) :=
+    [("anchors", 600, "same-titled"), ("families", 30000, "faces"), ("merge", 400000, "keys"),
+     ("legible", 20000, "runs"), ("failing", 6000, "uses"), ("arrays", 100000, "elements"),
+     ("dictionaries", 100000, "entries")]
+  for (label, size, what) in growth do
     let small ← row label size s!"{label}, {size} {what}"
     let big ← row label (4 * size) s!"{label}, {4 * size} {what}"
-    growthBound s!"{label}, {4 * size} / {size}" small big bound
+    growthBound s!"{label}, {4 * size} / {size}" small big
   let decodes ← row "decodes" 2000 "glyph ink, 2000 decodes"
   let reads ← row "reads" 2000000 "glyph ink, 2000000 memo reads"
   let ratio := decodes * 1000 / max reads 1

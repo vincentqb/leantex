@@ -309,6 +309,13 @@ def htmlA11yChecks (ref : IO.Ref (List String)) : IO Unit := do
      "\\begin{frame}{Results}\nsecond\n\\end{frame}"))).1
   t s!"html a11y: two frames of one title are two stage names: {stageMarks twbody}"
     (stageMarks twbody == #[(some "0", some "Results"), (some "0", some "Results (2)")])
+  let (_, numbody, _) := HtmlDoc.emitTree {} (elabStr (dvDeck ""
+    ("\\begin{frame}{Results (2)}\nfirst\n\\end{frame}\n" ++
+     "\\begin{frame}{Results}\nsecond\n\\end{frame}\n" ++
+     "\\begin{frame}{Results}\nthird\n\\end{frame}"))).1
+  t s!"html a11y: a stage name passes over a title spelling its numbered form: {stageMarks numbody}"
+    (stageMarks numbody == #[(some "0", some "Results (2)"), (some "0", some "Results"),
+      (some "0", some "Results (3)")])
   let (_, spbody, _) := HtmlDoc.emitTree {} (elabStr (dvDeck "\\theme{moloch}\n"
     "\\section{Results}\n\\begin{frame}{Results}\nx\n\\end{frame}")).1
   t s!"html a11y: a section page and a frame of one title are two names: {stageMarks spbody}"

@@ -12,6 +12,7 @@ public import LeanTex.Core.GfxSvg
 public import LeanTex.Core.GfxPicture
 public import LeanTex.Core.FigureSvg
 import LeanTex.Core.Listing
+import LeanTex.Core.NameClaim
 import LeanTex.Core.ContrastSolve
 import LeanTex.Core.TitleTemplate
 import LeanTex.Core.ListMark
@@ -7679,49 +7680,34 @@ end
 /-- A page's figures numbered apart, so no two share an id. -/
 public def numberFigures (body : Array Node) : Array Node := (numberFiguresList 0 #[] body.toList).1
 
-/-- The first free anchor among `taken` (`base`, `base-2`, …), and the holder's title when a
-different title collides. -/
-private def claimId (taken : Std.HashMap String String) (base text : String) :
-    String × Option String := Id.run do
-  let mut id := base
-  let mut clash : Option String := none
-  for n in [2 : taken.size + 3] do
-    match taken[id]? with
-    | some holder =>
-      if holder != text && clash.isNone then
-        clash := some holder
-      id := s!"{base}-{n}"
-    | none => break
-  return (id, clash)
-
 /-- The first stage name no earlier stage carries: `name`, then `name (2)`, `name (3)`, and so
 on. -/
-private def claimName (taken : Std.HashSet String) (name : String) : String := Id.run do
-  let mut out := name
-  for n in [2 : taken.size + 3] do
-    if taken.contains out then out := s!"{name} ({n})" else break
-  return out
+private def claimName (named : NameClaim.Claims .parenthesized) (name : String) :
+    String × NameClaim.Claims .parenthesized :=
+  let (got, _, named) := named.claim name name
+  (got, named)
 
 /-- A stage with its accessible name claimed against the earlier stages' names. -/
-private def claimStageName (taken : Std.HashSet String) : Node → Node × Std.HashSet String
+private def claimStageName (named : NameClaim.Claims .parenthesized) :
+    Node → Node × NameClaim.Claims .parenthesized
   | .elem tag attrs kids =>
     match attrOf? attrs "aria-label" with
     | some name =>
-      let got := claimName taken name
+      let (got, named) := claimName named name
       (.elem tag (attrs.map fun kv => if kv.1 == "aria-label" then (kv.1, got) else kv) kids,
-        taken.insert got)
-    | none => (.elem tag attrs kids, taken)
-  | .text s => (.text s, taken)
-  | .style s => (.style s, taken)
-  | .script attrs s => (.script attrs s, taken)
+        named)
+    | none => (.elem tag attrs kids, named)
+  | .text s => (.text s, named)
+  | .style s => (.style s, named)
+  | .script attrs s => (.script attrs s, named)
 
 /-- The snap spacers of a stepped frame's track, one per overlay step, each claiming its aliases. -/
 private def snapWalk (id text label : String) (kids : Array Node)
-    (taken : Std.HashMap String String) (diags : Array Diag) :
-    List Nat → Array Node × Std.HashMap String String × Array Diag
+    (taken : NameClaim.Claims .dashed) (diags : Array Diag) :
+    List Nat → Array Node × NameClaim.Claims .dashed × Array Diag
   | [] => (kids, taken, diags)
   | k :: rest =>
-    let (sid, sclash) := claimId taken s!"{id}-{k}" text
+    let (sid, sclash, taken) := taken.claim s!"{id}-{k}" text
     let diags := match sclash with
       | some holder => diags.push (Diag.of .W0327
           s!"frames share the step anchor '{id}-{k}'; each after the first takes a \
@@ -7734,7 +7720,7 @@ retitle the frames apart, or link to the numbered anchor")
       (kids.push (Html.elem "div" #[]
         #[("class", "snap"), ("id", sid), ("data-snap", ""),
           ("data-slide-label", s!"{label}.{k}")]))
-      (taken.insert sid text) diags rest
+      taken diags rest
 
 private def stepList (steps : Nat) : List Nat :=
   (List.range steps).map (· + 1)
@@ -7744,7 +7730,7 @@ private def stepList (steps : Nat) : List Nat :=
   simp [stepList]
 
 private theorem snapWalk_count (id text label : String) :
-    ∀ (ks : List Nat) (kids : Array Node) (taken : Std.HashMap String String)
+    ∀ (ks : List Nat) (kids : Array Node) (taken : NameClaim.Claims .dashed)
       (diags : Array Diag),
       (snapWalk id text label kids taken diags ks).1.size = kids.size + ks.length
   | [], _, _, _ => rfl
@@ -7755,7 +7741,7 @@ private theorem snapWalk_count (id text label : String) :
     omega
 
 private theorem track_snaps_exact (id text label : String)
-    (taken : Std.HashMap String String) (diags : Array Diag)
+    (taken : NameClaim.Claims .dashed) (diags : Array Diag)
     (frame : Ir.Block) :
     (snapWalk id text label #[] taken diags
         (stepList (Ir.frameSteps frame))).1.size
@@ -7774,7 +7760,7 @@ private def sectionize (cfg : Config) (blocks : Array Block) :
   let mut cur : Array Node := #[]
   let mut openId : Option String := none
   -- each assigned id with the plain text of the title that holds it
-  let mut taken : Std.HashMap String String := {}
+  let mut taken : NameClaim.Claims .dashed := {}
   let mut diags : Array Diag := #[]
   let mut cfg := cfg
   for b in blocks do
@@ -7788,14 +7774,14 @@ private def sectionize (cfg : Config) (blocks : Array Block) :
       let text := Ir.firstPageText title
       let base := slug title
       let base := if base.isEmpty then "section" else base
-      let (id, clash) := claimId taken base text
+      let (id, clash, taken2) := taken.claim base text
       if let some holder := clash then
         diags := diags.push (Diag.of .W0327
           s!"sections share the anchor '{base}'; each after the first takes a numbered anchor"
           (help := some s!"an in-page link '#{base}' reaches only the first; \
 retitle the sections apart, or link to the numbered anchor")
           (detail := some s!"{text.quote} takes '{id}', after {holder.quote}"))
-      taken := taken.insert id text
+      taken := taken2
       openId := some id
       cur := #[cfg.applyEpoch (blockNode cfg b)]
     | _ =>
@@ -8075,8 +8061,8 @@ private def emitTreeCore (cfg : Config) (doc : Doc)
       let mut acc : Array Node := #[]
       let mut walkDiags : Array Diag := #[]
       -- each assigned frame id with the plain title that holds it
-      let mut taken : Std.HashMap String String := {}
-      let mut named : Std.HashSet String := {}
+      let mut taken : NameClaim.Claims .dashed := {}
+      let mut named : NameClaim.Claims .parenthesized := {}
       let mut cfg := cfg
       for h : i in [0:doc.body.size] do
         let b := doc.body[i]
@@ -8120,14 +8106,14 @@ on the web slide"
           let text := Ir.firstPageText title
           let base := slug title
           let base := if base.isEmpty then "slide" else base
-          let (id, clash) := claimId taken base text
+          let (id, clash, taken1) := taken.claim base text
           if let some holder := clash then
             walkDiags := walkDiags.push (Diag.of .W0327
               s!"frames share the anchor '{base}'; each after the first takes a numbered anchor"
               (help := some s!"an in-page link '#{base}' reaches only the first; \
 retitle the frames apart, or link to the numbered anchor")
               (detail := some s!"{text.quote} takes '{id}', after {holder.quote}"))
-          taken := taken.insert id text
+          taken := taken1
           let steps := frameCfg.overlaySteps
           let (spacers, taken2, diags2) :=
             if steps > 1 then
@@ -8180,8 +8166,8 @@ retitle the frames apart, or link to the numbered anchor")
               kids.push (Html.elem "div"
                 #[Html.elem "div" #[] #[("style", s!"width: {done * 100 / total}%")]]
                 #[("class", "progress")])
-            let name := claimName named (sectionPageName title)
-            named := named.insert name
+            let (name, named2) := claimName named (sectionPageName title)
+            named := named2
             acc := acc.push (cfg.applyEpoch
               (attachLogo cfg
                 (Html.elem "section" kids
