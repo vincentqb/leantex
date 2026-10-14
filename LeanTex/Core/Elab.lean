@@ -1325,6 +1325,16 @@ private def trimLead (raws : Array Raw) : Array Raw :=
 private def trimTail (raws : Array Raw) : Array Raw :=
   raws.extract 0 (spanRawsEnd raws isSpaceOrPar)
 
+/-- Discharges a raw walk's termination goals: a group's body is smaller than the group. -/
+macro "raws_dec" : tactic =>
+  `(tactic| (
+    all_goals simp_wf
+    all_goals try omega
+    all_goals
+      (have hb : ∀ a : Array Raw, sizeOf a = 1 + sizeOf a.toList := fun _ => rfl
+       simp only [hb]
+       omega)))
+
 /-- Whether a minted command in `rs` reads parameter `name` as code. -/
 private def referencesParamCode (name : String) : List Raw → Bool
   | [] => false
@@ -1336,11 +1346,7 @@ private def referencesParamCode (name : String) : List Raw → Bool
   | .math _ body _ :: rest => referencesParamCode name body.toList || referencesParamCode name rest
   | _ :: rest => referencesParamCode name rest
 termination_by l => sizeOf l
-decreasing_by
-  all_goals simp_wf
-  all_goals try omega
-  all_goals
-    (have hb : sizeOf body = 1 + sizeOf body.toList := rfl; omega)
+decreasing_by raws_dec
 
 /-- A defined environment from its halves, with the space rules
 `\ignorespaces`, environ and `\ignorespacesafterend` state at its seams. -/
@@ -1441,11 +1447,7 @@ private def expandMathList (user : Array UserCmd) (limit : Nat)
     let tail := expandMathList user limit args rest
     #[r] ++ tail
 termination_by raws => (limit, sizeOf raws)
-decreasing_by
-  all_goals simp_wf
-  all_goals try omega
-  all_goals
-    (have hb : sizeOf body = 1 + sizeOf body.toList := rfl; omega)
+decreasing_by raws_dec
 
 /-- The recovery a degraded formula's warning names: its text content, or a
 placeholder when it has none. -/
@@ -2037,34 +2039,10 @@ private theorem sliceMeas_extract_le (μ : α → Nat) (raws : Array α) (a b : 
   rw [Array.toList_extract]
   exact measList_take_le ..
 
-private theorem sliceMeas_splice_lt {μ : α → Nat} {raws : Array α} {i : Nat}
-    (h : i < raws.size) {seg : Array α}
-    (hseg : measList μ seg.toList < μ raws[i]) :
-    sliceMeas μ (raws.extract 0 i ++ seg ++ raws.extract (i + 1) raws.size) i
-      < sliceMeas μ raws i := by
-  have hlen : (raws.extract 0 i).toList.length = i := by
-    simp [Array.length_toList]; omega
-  have hdrop : (raws.extract 0 i ++ seg
-      ++ raws.extract (i + 1) raws.size).toList.drop i
-      = seg.toList ++ (raws.extract (i + 1) raws.size).toList := by
-    simp only [Array.toList_append, List.append_assoc]
-    rw [List.drop_append_of_le_length (by omega)]
-    rw [List.drop_eq_nil_of_le (by omega)]
-    simp
-  have h1 := sliceMeas_here μ raws h
-  have h3 : measList μ (raws.extract (i + 1) raws.size).toList
-      ≤ measList μ (raws.toList.drop (i + 1)) := by
-    rw [Array.toList_extract]
-    exact measList_take_le ..
-  unfold sliceMeas at h1 ⊢
-  rw [hdrop, measList_append]
-  omega
-
-private theorem sliceMeas_splice_le {μ : α → Nat} {raws : Array α} {i : Nat}
-    (h : i < raws.size) {seg : Array α}
-    (hseg : measList μ seg.toList ≤ μ raws[i]) :
-    sliceMeas μ (raws.extract 0 i ++ seg ++ raws.extract (i + 1) raws.size) i
-      ≤ sliceMeas μ raws i := by
+private theorem sliceMeas_splice {μ : α → Nat} {raws : Array α} {i : Nat}
+    (h : i < raws.size) (seg : Array α) :
+    sliceMeas μ (raws.extract 0 i ++ seg ++ raws.extract (i + 1) raws.size) i + μ raws[i]
+      ≤ sliceMeas μ raws i + measList μ seg.toList := by
   have hlen : (raws.extract 0 i).toList.length = i := by
     simp [Array.length_toList]; omega
   have hdrop : (raws.extract 0 i ++ seg
@@ -2153,10 +2131,10 @@ private theorem sliceWeight_splice {raws : Array Raw} {i : Nat}
     sliceWeight (raws.extract 0 i ++ body.extract keptFrom body.size
       ++ raws.extract (i + 1) raws.size) i < sliceWeight raws i := by
   simp only [sliceWeight_eq]
-  refine sliceMeas_splice_lt h ?_
+  have hs := sliceMeas_splice (μ := rawWeight) h (body.extract keptFrom body.size)
   have h2 := measList_extract_le rawWeight body keptFrom body.size
-  rw [hr]
-  simp only [rawWeight, rawWeightList_eq]
+  rw [hr] at hs
+  simp only [rawWeight, rawWeightList_eq] at hs
   omega
 
 /-- The body measure `f` summed over the user commands below an index: the
@@ -6542,11 +6520,11 @@ private theorem slicePars_splice {raws : Array Raw} {i : Nat}
         ++ splitAtPars ctx body pos ++ raws.extract (i + 1) raws.size) i
       < slicePars raws i := by
   simp only [slicePars_eq]
-  refine sliceMeas_splice_lt h ?_
-  rw [hr]
-  simp only [nestedPars]
-  rw [← nestedParsList_eq]
-  exact splitAtPars_pars_lt ctx body pos hp
+  have hs := sliceMeas_splice (μ := nestedPars) h (splitAtPars ctx body pos)
+  have hl := splitAtPars_pars_lt ctx body pos hp
+  rw [hr] at hs
+  simp only [nestedPars, ← nestedParsList_eq] at hs
+  omega
 
 private def visParsGo (user : Array UserCmd) : Nat → Nat :=
   visGo (fun cmd => rawParsList cmd.body.toList) user
@@ -7345,11 +7323,7 @@ private def authorStrutList (found : Bool) : List Raw → Bool
     authorStrutList (found || strut) rest
   | _ :: rest => authorStrutList found rest
 termination_by l => sizeOf l
-decreasing_by
-  all_goals simp_wf
-  all_goals try omega
-  all_goals
-    (have hb : sizeOf body = 1 + sizeOf body.toList := rfl; omega)
+decreasing_by raws_dec
 
 /-- The size, weight and alignment a refused environment redefinition's
 begin body declares, groups looked through. -/
@@ -7367,11 +7341,7 @@ private def envStyleScanList (st : BarSt) : List Raw → BarSt
     else envStyleScanList st rest
   | _ :: rest => envStyleScanList st rest
 termination_by l => sizeOf l
-decreasing_by
-  all_goals simp_wf
-  all_goals try omega
-  all_goals
-    (have hb : sizeOf body = 1 + sizeOf body.toList := rfl; omega)
+decreasing_by raws_dec
 
 /-- The size a refused environment redefinition's body sets at: the last
 top-level size switch in the begin body, or in an environment that ends it. -/
@@ -7382,11 +7352,7 @@ private def envBodySizeList (acc : Option String) : List Raw → Option String
     envBodySizeList (if sizeCtrlNames.contains n then some n else acc) rest
   | _ :: rest => envBodySizeList acc rest
 termination_by l => sizeOf l
-decreasing_by
-  all_goals simp_wf
-  all_goals try omega
-  all_goals
-    (have hb : sizeOf body = 1 + sizeOf body.toList := rfl; omega)
+decreasing_by raws_dec
 
 /-- latex.ltx commands that set no ink, with how many argument groups each
 takes. -/
@@ -7414,11 +7380,7 @@ private def envHeadWords (acc : Array String) (opt : Bool) (skip : Nat) :
   | .ctrl n _ :: rest => envHeadWords acc opt ((inklessArgs.lookup n).getD 0) rest
   | _ :: rest => envHeadWords acc opt 0 rest
 termination_by l => sizeOf l
-decreasing_by
-  all_goals simp_wf
-  all_goals try omega
-  all_goals
-    (have hb : sizeOf body = 1 + sizeOf body.toList := rfl; omega)
+decreasing_by raws_dec
 
 /-- The font template for a size and a weight; `none` for neither. -/
 private def fontFragment (size : Option String) (bold : Bool) :
@@ -7488,11 +7450,7 @@ private def barScanList (user : Array UserCmd) (bound : Nat) (st : BarSt)
       | none =>
         barScanList user bound st events rest
 termination_by l => (bound, sizeOf l)
-decreasing_by
-  all_goals simp_wf
-  all_goals try omega
-  all_goals
-    (have hb : sizeOf body = 1 + sizeOf body.toList := rfl; omega)
+decreasing_by raws_dec
 
 private theorem barScan_alias_agree (user : Array UserCmd) (bound : Nat) (st : BarSt)
     (events : Array BarEvent) (post : List Raw) (p q : Pos) (b l : String)
@@ -7594,11 +7552,7 @@ private def referencesParam (name : String) : List Raw → Bool
   | .math _ body _ :: rest => referencesParam name body.toList || referencesParam name rest
   | _ :: rest => referencesParam name rest
 termination_by l => sizeOf l
-decreasing_by
-  all_goals simp_wf
-  all_goals try omega
-  all_goals
-    (have hb : sizeOf body = 1 + sizeOf body.toList := rfl; omega)
+decreasing_by raws_dec
 
 /-- Reads `\define \name(sig) {body}` after its head, returning the command
 and the index after its body. -/
@@ -7781,51 +7735,18 @@ private theorem rawWeightList_push (a : Array Raw) (r : Raw) :
     rawWeightList (a.push r).toList = rawWeightList a.toList + rawWeight r := by
   simp [Array.toList_push, rawWeightList_append, rawWeightList]
 
--- conserves: none — a termination measure, not a content walk
-private def itemsW : List (Array Raw) → Nat
-  | [] => 0
-  | it :: rest => rawWeightList it.toList + itemsW rest
+/-- A measure summed over list items, each item's raws measured by `μ`. -/
+private def itemsMeas (μ : List Raw → Nat) (l : List (Array Raw)) : Nat :=
+  measList (fun it => μ it.toList) l
 
--- conserves: none — a termination measure, not a content walk
-private def itemsP : List (Array Raw) → Nat
-  | [] => 0
-  | it :: rest => nestedParsList it.toList + itemsP rest
+private theorem itemsMeas_push (μ : List Raw → Nat) (a : Array (Array Raw)) (it : Array Raw) :
+    itemsMeas μ (a.push it).toList = itemsMeas μ a.toList + μ it.toList :=
+  measList_push ..
 
-private theorem itemsW_eq (l : List (Array Raw)) :
-    itemsW l = measList (fun it => rawWeightList it.toList) l := by
-  induction l with
-  | nil => rfl
-  | cons x xs ih => simp [itemsW, measList, ih]
-
-private theorem itemsP_eq (l : List (Array Raw)) :
-    itemsP l = measList (fun it => nestedParsList it.toList) l := by
-  induction l with
-  | nil => rfl
-  | cons x xs ih => simp [itemsP, measList, ih]
-
-private theorem itemsW_push (a : Array (Array Raw)) (it : Array Raw) :
-    itemsW (a.push it).toList = itemsW a.toList + rawWeightList it.toList := by
-  simp only [itemsW_eq]; exact measList_push ..
-
-private theorem itemsP_push (a : Array (Array Raw)) (it : Array Raw) :
-    itemsP (a.push it).toList = itemsP a.toList + nestedParsList it.toList := by
-  simp only [itemsP_eq]; exact measList_push ..
-
-private theorem itemsW_elem_le {a : Array (Array Raw)} {m : Nat}
-    {it : Array Raw} (h : a[m]? = some it) :
-    rawWeightList it.toList ≤ itemsW a.toList := by
+private theorem itemsMeas_elem_le (μ : List Raw → Nat) {a : Array (Array Raw)} {m : Nat}
+    {it : Array Raw} (h : a[m]? = some it) : μ it.toList ≤ itemsMeas μ a.toList := by
   obtain ⟨hm, hget⟩ := Array.getElem?_eq_some_iff.mp h
-  rw [itemsW_eq]
-  exact measList_mem_le (μ := fun it => rawWeightList it.toList)
-    (hget ▸ Array.getElem_mem_toList hm)
-
-private theorem itemsP_elem_le {a : Array (Array Raw)} {m : Nat}
-    {it : Array Raw} (h : a[m]? = some it) :
-    nestedParsList it.toList ≤ itemsP a.toList := by
-  obtain ⟨hm, hget⟩ := Array.getElem?_eq_some_iff.mp h
-  rw [itemsP_eq]
-  exact measList_mem_le (μ := fun it => nestedParsList it.toList)
-    (hget ▸ Array.getElem_mem_toList hm)
+  exact measList_mem_le (μ := fun it => μ it.toList) (hget ▸ Array.getElem_mem_toList hm)
 
 /-- Splits a frame body into its last `\frametitle`, with any subtitle, and
 the rest in order. -/
@@ -7987,6 +7908,62 @@ decreasing_by
   · simp only [rawWeightList, rawWeight]; omega
   · simp only [rawWeightList]; have := rawWeight_pos r; omega
 
+/-- An item split's bounds: the items so far, the current item and the unread slice fit in
+`bound` by weight and in `pbound` by nested pars. -/
+private def ItemSplitFits (items : Array (Array Raw)) (cur body : Array Raw) (j bound pbound : Nat) :
+    Prop :=
+  itemsMeas rawWeightList items.toList + rawWeightList cur.toList + sliceWeight body j ≤ bound ∧
+    itemsMeas nestedParsList items.toList + nestedParsList cur.toList + slicePars body j ≤ pbound
+
+private theorem ItemSplitFits.skip {items : Array (Array Raw)} {cur body : Array Raw}
+    {j k bound pbound : Nat} (hf : ItemSplitFits items cur body j bound pbound) (h : j < body.size)
+    (hk : j + 1 ≤ k) : ItemSplitFits items cur body k bound pbound := by
+  have := sliceWeight_here body h
+  have := slicePars_here body h
+  have := sliceWeight_le body hk
+  have := slicePars_le body hk
+  unfold ItemSplitFits at hf ⊢
+  omega
+
+private theorem ItemSplitFits.keep {items : Array (Array Raw)} {cur body : Array Raw}
+    {j bound pbound : Nat} (hf : ItemSplitFits items cur body j bound pbound) (h : j < body.size) :
+    ItemSplitFits items (cur.push body[j]) body (j + 1) bound pbound := by
+  have := sliceWeight_here body h
+  have := slicePars_here body h
+  unfold ItemSplitFits at hf ⊢
+  rw [rawWeightList_push, nestedParsList_push]
+  omega
+
+private theorem ItemSplitFits.close {items : Array (Array Raw)} {cur body : Array Raw}
+    {j bound pbound : Nat} (hf : ItemSplitFits items cur body j bound pbound) (h : j < body.size) :
+    ItemSplitFits (items.push cur) #[] body (j + 1) bound pbound := by
+  have := sliceWeight_here body h
+  have := slicePars_here body h
+  unfold ItemSplitFits at hf ⊢
+  rw [itemsMeas_push, itemsMeas_push]
+  simp only [rawWeightList, nestedParsList]
+  omega
+
+private theorem ItemSplitFits.restart {items : Array (Array Raw)} {cur body : Array Raw}
+    {j bound pbound : Nat} (hf : ItemSplitFits items cur body j bound pbound) (h : j < body.size) :
+    ItemSplitFits items #[] body (j + 1) bound pbound := by
+  have := sliceWeight_here body h
+  have := slicePars_here body h
+  unfold ItemSplitFits at hf ⊢
+  simp only [rawWeightList, nestedParsList]
+  omega
+
+private theorem ItemSplitFits.done {items : Array (Array Raw)} {cur body : Array Raw}
+    {j bound pbound : Nat} (hf : ItemSplitFits items cur body j bound pbound) (h : body.size ≤ j) :
+    (itemsMeas rawWeightList (items.push cur).toList ≤ bound ∧
+      itemsMeas nestedParsList (items.push cur).toList ≤ pbound) ∧
+    (itemsMeas rawWeightList items.toList ≤ bound ∧ itemsMeas nestedParsList items.toList ≤ pbound) := by
+  have := sliceWeight_end body h
+  have := slicePars_end body h
+  unfold ItemSplitFits at hf
+  rw [itemsMeas_push, itemsMeas_push]
+  omega
+
 /-- Splits a list body at its `\item`s, each item with its overlay step and
 the `\pause` count before it. -/
 private def itemSplitGo (ctx : Ctx) (body : Array Raw) (pos : Pos) (desc : Bool) (scope : ListScope) (j : Nat)
@@ -7994,12 +7971,10 @@ private def itemSplitGo (ctx : Ctx) (body : Array Raw) (pos : Pos) (desc : Bool)
     (itemPauses : Array Nat) (pauses : Nat) (curItem : Array Raw)
     (curStep : Option Ir.OverlaySpec) (curPauses : Nat)
     (awaitSpec inOpt seen strayDiagged : Bool) (bound pbound : Nat)
-    (hw : itemsW items.toList + rawWeightList curItem.toList
-      + sliceWeight body j ≤ bound)
-    (hp : itemsP items.toList + nestedParsList curItem.toList
-      + slicePars body j ≤ pbound) :
+    (hfit : ItemSplitFits items curItem body j bound pbound) :
     EM { r : Array (Array Raw) × Array (Option Ir.OverlaySpec) × Array Nat × ListScope //
-      itemsW r.1.toList ≤ bound ∧ itemsP r.1.toList ≤ pbound } := do
+      itemsMeas rawWeightList r.1.toList ≤ bound ∧
+        itemsMeas nestedParsList r.1.toList ≤ pbound } := do
   if h : j < body.size then
     match body[j] with
     | .ctrl "item" _ =>
@@ -8007,60 +7982,28 @@ private def itemSplitGo (ctx : Ctx) (body : Array Raw) (pos : Pos) (desc : Bool)
         itemSplitGo ctx body pos desc scope (j + 1) (items.push curItem)
           (steps.push curStep) (itemPauses.push curPauses) pauses #[]
           none pauses true inOpt true strayDiagged bound pbound
-          (by
-            have hwj := sliceWeight_here body h
-            have hw1 := rawWeight_pos body[j]
-            rw [itemsW_push]; simp [rawWeightList]; omega)
-          (by
-            have hpj := slicePars_here body h
-            rw [itemsP_push]; simp [nestedParsList]; omega)
+          (hfit.close h)
       else
         itemSplitGo ctx body pos desc scope (j + 1) items steps itemPauses pauses #[]
           none pauses true inOpt true strayDiagged bound pbound
-          (by
-            have hwj := sliceWeight_here body h
-            have hw1 := rawWeight_pos body[j]
-            simp [rawWeightList]; omega)
-          (by
-            have hpj := slicePars_here body h
-            simp [nestedParsList]; omega)
+          (hfit.restart h)
     | .ctrl "pause" _ =>
       -- Also kept in the item, so a mid-item pause steps the item's rest.
       if seen then
         itemSplitGo ctx body pos desc scope (j + 1) items steps itemPauses (pauses + 1)
           (curItem.push body[j]) curStep curPauses awaitSpec inOpt seen
           strayDiagged bound pbound
-          (by
-            have hwj := sliceWeight_here body h
-            rw [rawWeightList_push]; omega)
-          (by
-            have hpj := slicePars_here body h
-            have h2 := rawPars_split body[j]
-            rw [nestedParsList_push]; omega)
+          (hfit.keep h)
       else
         itemSplitGo ctx body pos desc scope (j + 1) items steps itemPauses (pauses + 1)
           curItem curStep curPauses awaitSpec inOpt seen strayDiagged bound pbound
-          (by
-            have hwj := sliceWeight_here body h
-            have hw1 := rawWeight_pos body[j]
-            omega)
-          (by
-            have hpj := slicePars_here body h
-            have h2 := rawPars_split body[j]
-            omega)
+          (hfit.skip h .refl)
     | item =>
       if inOpt then
         let inOpt := !(item matches .sym ']' _)
         itemSplitGo ctx body pos desc scope (j + 1) items steps itemPauses pauses curItem
           curStep curPauses awaitSpec inOpt seen strayDiagged bound pbound
-          (by
-            have hwj := sliceWeight_here body h
-            have hw1 := rawWeight_pos body[j]
-            omega)
-          (by
-            have hpj := slicePars_here body h
-            have h2 := rawPars_split body[j]
-            omega)
+          (hfit.skip h .refl)
       else
       if seen && awaitSpec && !isSpace item then
         if item matches .sym '[' _ then
@@ -8071,14 +8014,7 @@ private def itemSplitGo (ctx : Ctx) (body : Array Raw) (pos : Pos) (desc : Bool)
               (help := "\\style{itemize}{ marker = {...} } declares a level's marker")
           itemSplitGo ctx body pos desc scope (j + 1) items steps itemPauses pauses curItem
             curStep curPauses false true seen strayDiagged bound pbound
-            (by
-              have hwj := sliceWeight_here body h
-              have hw1 := rawWeight_pos body[j]
-              omega)
-            (by
-              have hpj := slicePars_here body h
-              have h2 := rawPars_split body[j]
-              omega)
+            (hfit.skip h .refl)
         else if let some w := specWord? item then
           let curStep ← match Ir.overlayRange w with
             | some s => pure (some s)
@@ -8087,40 +8023,17 @@ private def itemSplitGo (ctx : Ctx) (body : Array Raw) (pos : Pos) (desc : Bool)
               pure curStep
           itemSplitGo ctx body pos desc scope (j + 1) items steps itemPauses pauses curItem
             curStep curPauses awaitSpec inOpt seen strayDiagged bound pbound
-            (by
-              have hwj := sliceWeight_here body h
-              have hw1 := rawWeight_pos body[j]
-              omega)
-            (by
-              have hpj := slicePars_here body h
-              have h2 := rawPars_split body[j]
-              omega)
+            (hfit.skip h .refl)
         else
           itemSplitGo ctx body pos desc scope (j + 1) items steps itemPauses pauses
             (curItem.push body[j]) curStep curPauses false inOpt seen strayDiagged
             bound pbound
-            (by
-              have hwj := sliceWeight_here body h
-              rw [rawWeightList_push]
-              omega)
-            (by
-              have hpj := slicePars_here body h
-              have h2 := rawPars_split body[j]
-              rw [nestedParsList_push]
-              omega)
+            (hfit.keep h)
       else if seen then
         itemSplitGo ctx body pos desc scope (j + 1) items steps itemPauses pauses
           (curItem.push body[j]) curStep curPauses awaitSpec inOpt seen strayDiagged
           bound pbound
-          (by
-            have hwj := sliceWeight_here body h
-            rw [rawWeightList_push]
-            omega)
-          (by
-            have hpj := slicePars_here body h
-            have h2 := rawPars_split body[j]
-            rw [nestedParsList_push]
-            omega)
+          (hfit.keep h)
       else do
         if let .ctrl c cpos := item then
           if counterCtrl c then
@@ -8128,51 +8041,24 @@ private def itemSplitGo (ctx : Ctx) (body : Array Raw) (pos : Pos) (desc : Bool)
             let ⟨k, hk⟩ ← counterArm ctx body (j + 1) c pos
             return ← itemSplitGo ctx body pos desc scope k items steps itemPauses pauses curItem
               curStep curPauses awaitSpec inOpt seen strayDiagged bound pbound
-              (by
-                have hwj := sliceWeight_here body h
-                have hle := sliceWeight_le body hk
-                omega)
-              (by
-                have hpj := slicePars_here body h
-                have h2 := rawPars_split body[j]
-                have hle := slicePars_le body hk
-                omega)
+              (hfit.skip h hk)
           if let some scope' ← listScopeCtrl ctx body j c cpos scope then
             return ← itemSplitGo ctx body pos desc scope' (j + 1)
               items steps itemPauses pauses curItem curStep curPauses
               awaitSpec inOpt seen strayDiagged bound pbound
-              (by
-                have hwj := sliceWeight_here body h
-                have hw1 := rawWeight_pos body[j]
-                omega)
-              (by
-                have hpj := slicePars_here body h
-                have h2 := rawPars_split body[j]
-                omega)
+              (hfit.skip h .refl)
         if !isSpaceOrPar item && !strayDiagged then
           diag ctx .E0310 s!"content before the first '\\item'" pos
         itemSplitGo ctx body pos desc scope (j + 1) items steps itemPauses pauses curItem
           curStep curPauses awaitSpec inOpt seen
           (strayDiagged || !isSpaceOrPar item) bound pbound
-          (by
-            have hwj := sliceWeight_here body h
-            have hw1 := rawWeight_pos body[j]
-            omega)
-          (by
-            have hpj := slicePars_here body h
-            have h2 := rawPars_split body[j]
-            omega)
+          (hfit.skip h .refl)
   else
-    have h1 := sliceWeight_end body (show body.size ≤ j by omega)
-    have h2 := slicePars_end body (show body.size ≤ j by omega)
+    have hend := hfit.done (show body.size ≤ j by omega)
     if seen then
-      return ⟨(items.push curItem, steps.push curStep, itemPauses.push curPauses, scope),
-        show itemsW (items.push curItem).toList ≤ bound by rw [itemsW_push]; omega,
-        show itemsP (items.push curItem).toList ≤ pbound by rw [itemsP_push]; omega⟩
+      return ⟨(items.push curItem, steps.push curStep, itemPauses.push curPauses, scope), hend.1⟩
     else
-      return ⟨(items, steps, itemPauses, scope),
-        show itemsW items.toList ≤ bound by omega,
-        show itemsP items.toList ≤ pbound by omega⟩
+      return ⟨(items, steps, itemPauses, scope), hend.2⟩
 termination_by body.size - j
 
 /-- `ctx` with the palette and tokens that body declarations earlier in flow
@@ -10324,14 +10210,15 @@ private theorem linkedRowChoice_splice {raws : Array Raw} {i : Nat}
   have hb := (linkedRowChoice body native).property
   constructor
   · simp only [sliceWeight_eq]
-    apply sliceMeas_splice_lt h
-    rw [hr]
-    simp only [rawWeight, ← rawWeightList_eq]
+    have hs := sliceMeas_splice (μ := rawWeight) h (linkedRowChoice body native).val
+    rw [hr] at hs
+    simp only [rawWeight, ← rawWeightList_eq] at hs
     omega
   · simp only [slicePars_eq]
-    apply sliceMeas_splice_le h
-    rw [hr]
-    simpa only [nestedPars, ← nestedParsList_eq] using hb.2
+    have hs := sliceMeas_splice (μ := nestedPars) h (linkedRowChoice body native).val
+    rw [hr] at hs
+    simp only [nestedPars, ← nestedParsList_eq] at hs
+    omega
 
 /-- A group's blocks followed by the epoch its end restores. -/
 @[noinline] private def groupBlocks (base : Palette) (act : EM (Array Block)) :
@@ -10729,14 +10616,15 @@ decreasing_by all_goals blocks_dec
 private def elabItemsGo (ctx : Ctx) (items : Array (Array Raw))
     (steps : Array (Option Ir.OverlaySpec)) (itemPauses : Array Nat)
     (m : Nat) (acc : Array (Array Block)) (bound pbound : Nat)
-    (hb : itemsW items.toList < bound) (hpb : itemsP items.toList ≤ pbound) :
+    (hb : itemsMeas rawWeightList items.toList < bound)
+    (hpb : itemsMeas nestedParsList items.toList ≤ pbound) :
     EM (Array (Array Block)) := do
   if hm : m < items.size then
     let ⟨it, hit, hitp⟩ : { a : Array Raw //
-        rawWeightList a.toList ≤ itemsW items.toList
-          ∧ nestedParsList a.toList ≤ itemsP items.toList } ←
-      pure ⟨items[m], itemsW_elem_le (Array.getElem?_eq_getElem hm),
-        itemsP_elem_le (Array.getElem?_eq_getElem hm)⟩
+        rawWeightList a.toList ≤ itemsMeas rawWeightList items.toList
+          ∧ nestedParsList a.toList ≤ itemsMeas nestedParsList items.toList } ←
+      pure ⟨items[m], itemsMeas_elem_le _ (Array.getElem?_eq_getElem hm),
+        itemsMeas_elem_le _ (Array.getElem?_eq_getElem hm)⟩
     let p := (itemPauses[m]?).getD 0
     have hw1 : sliceWeight it 0 = rawWeightList it.toList := sliceWeight_zero _
     have hp1 : slicePars it 0 = nestedParsList it.toList := slicePars_zero _
@@ -11088,9 +10976,9 @@ private def elabEnvArm (ctx : Ctx) (n : String) (scope : Array Raw)
       (n == "description") {} 0
       #[] #[] #[] 0 #[] none 0 false false false false
       (sliceWeight lbody 0) (slicePars lbody 0)
-      (by simp [itemsW, rawWeightList]) (by simp [itemsP, nestedParsList])
-    have hiw : itemsW items.toList ≤ sliceWeight lbody 0 := hsplit.1
-    have hip : itemsP items.toList ≤ slicePars lbody 0 := hsplit.2
+      ⟨by simp [itemsMeas, measList, rawWeightList], by simp [itemsMeas, measList, nestedParsList]⟩
+    have hiw : itemsMeas rawWeightList items.toList ≤ sliceWeight lbody 0 := hsplit.1
+    have hip : itemsMeas nestedParsList items.toList ≤ slicePars lbody 0 := hsplit.2
     have hl0 : sliceWeight lbody 0 = rawWeightList lbody.toList :=
       sliceWeight_zero _
     have hl1 : slicePars lbody 0 = nestedParsList lbody.toList :=
@@ -12160,16 +12048,15 @@ private theorem elabInlines_group (ctx : Ctx) (body : Array Raw) (p : Pos)
   simp only [hi]
   simp [flushText, hd, elabInlines]
 
-private theorem elabInlines_recovery_group (ctx : Ctx) (name : String)
-    (body : Array Raw) (p gp : Pos)
-    (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles)
-    (hp : p.origins = []) (hgp : gp.origins = [])
-    (hn : recoversInlineName ctx name = true) :
+private theorem elabInlines_recovered_args (ctx : Ctx) (name : String) (body : Array Raw)
+    (p gp : Pos) (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles)
+    (hp : p.origins = []) (hn : recoversInlineName ctx name = true) :
     elabInlines ctx #[.ctrl name p, .group body gp] = (do
       warnUnknownCmd ctx name false p
-      let inner ← elabInlines ctx #[.group body gp]
-      noteSalvage (unknownCmdDiag name {}).1 name (rawSrc #[.group body gp])
-      pure inner) := by
+      let inner ← inlineGroup ctx.palette (elabInlines ctx body)
+      noteSalvage (unknownCmdDiag name (RunShape.one false)).1 name (rawSrc #[.group body gp])
+      let out ← elabInlinesFrom ctx #[.ctrl name p, .group body gp] 2 inner ""
+      pure (if ctx.literalText then out else out.map (mapSmartText ctx.literalWhen))) := by
   let xs : Array Raw := #[.ctrl name p, .group body gp]
   change elabInlines ctx xs = _
   rw [elabInlines_recovered_head ctx name xs p (by simp [xs]) rfl hm hp hn]
@@ -12197,15 +12084,28 @@ private theorem elabInlines_recovery_group (ctx : Ctx) (name : String)
     exact hi _ (by simp only [hs, hstar, ho])
   rw [elabUnknownCtrl]
   simp! only [Nat.reduceAdd, hs, hstar, ho, Prod.fst, Prod.snd]
-  rw [ha, elabInlines_group ctx body gp hm hgp]
+  rw [ha]
   simp only [bind_assoc, pure_bind, Bool.and_false, Bool.false_and, Bool.false_eq_true,
     ↓reduceIte]
+  simp [xs, Parse.rawSrc, Parse.rawSrcList, Parse.rawSrcOne]
+
+private theorem elabInlines_recovery_group (ctx : Ctx) (name : String)
+    (body : Array Raw) (p gp : Pos)
+    (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles)
+    (hp : p.origins = []) (hgp : gp.origins = [])
+    (hn : recoversInlineName ctx name = true) :
+    elabInlines ctx #[.ctrl name p, .group body gp] = (do
+      warnUnknownCmd ctx name false p
+      let inner ← elabInlines ctx #[.group body gp]
+      noteSalvage (unknownCmdDiag name {}).1 name (rawSrc #[.group body gp])
+      pure inner) := by
+  rw [elabInlines_recovered_args ctx name body p gp hm hp hn, elabInlines_group ctx body gp hm hgp]
+  simp only [bind_assoc, pure_bind]
   have hd (inner : Array Inline) :
-      elabInlinesFrom ctx xs 2 inner "" = pure (mergeTexts inner) := by
-    rw [elabInlinesFrom_done_exact _ _ _ _ _ (by simp [xs])]
-    simp [inlineMacroAt, inlineMacroStep, xs, flushText, hm, MacroRoles.empty]
-  simp [hd, xs, Parse.rawSrc, Parse.rawSrcList, Parse.rawSrcOne,
-    unknownCmdDiag_shape_id]
+      elabInlinesFrom ctx #[.ctrl name p, .group body gp] 2 inner "" = pure (mergeTexts inner) := by
+    rw [elabInlinesFrom_done_exact _ _ _ _ _ (by simp)]
+    simp [inlineMacroAt, inlineMacroStep, flushText, hm, MacroRoles.empty]
+  simp [hd, unknownCmdDiag_shape_id]
 
 private theorem elabInlines_recovered_group (ctx : Ctx) (name w : String) (p gp wp : Pos)
     (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles)
@@ -12218,44 +12118,15 @@ private theorem elabInlines_recovered_group (ctx : Ctx) (name w : String) (p gp 
         else #[sourceInline ctx wp (.text w)].map (mapSmartText ctx.literalWhen)
       pure (if ctx.literalText then inner
         else inner.map (mapSmartText ctx.literalWhen))) := by
-  let xs : Array Raw := #[.ctrl name p, .group #[.word w wp] gp]
-  change elabInlines ctx xs = _
-  rw [elabInlines_recovered_head ctx name xs p (by simp [xs]) rfl hm hp hn]
-  have hs : skipSpaces xs 1 = 1 := by rw [skipSpaces]; rfl
-  have hstar : skipStar xs 1 = 1 := by rfl
-  have ho : skipOptionRuns xs 1 p = (1, none) := by
-    rw [skipOptionRuns]
-    have hc : scanBracketArg xs 1 p = .content := by
-      unfold scanBracketArg
-      rw [hs]
-      rfl
-    rw [hc]
-  have ha : elabUnknownArgs ctx xs
-      (skipSpaces xs (skipOptionRuns xs (skipStar xs (skipSpaces xs 1)) p).1)
-      0 #[] "" false = (do
-        let inner ← elabInlines ctx #[.word w wp]
-        pure (inner, "", ⟨2, by simp only [hs, hstar, ho]; omega⟩, 1, false)) := by
-    have hi (j : Nat) (hj : j = 1) :
-        elabUnknownArgs ctx xs j 0 #[] "" false = (do
-          let inner ← elabInlines ctx #[.word w wp]
-          pure (inner, "", ⟨2, by omega⟩, 1, false)) := by
-      subst j
-      rw [elabUnknownArgs_last_group_exact _ _ _ _ _ _ _ _ rfl (by simp [xs]),
-        elabInlines_word ctx w wp hm hwp, inlineGroup_pure]
-      simp [flushText]
-    exact hi _ (by simp only [hs, hstar, ho])
-  rw [elabUnknownCtrl]
-  simp! only [Nat.reduceAdd, hs, hstar, ho, Prod.fst, Prod.snd]
-  rw [ha, elabInlines_word ctx w wp hm hwp]
-  simp only [bind_assoc, pure_bind, Bool.and_false, Bool.false_and, Bool.false_eq_true,
-    ↓reduceIte]
-  rw [elabInlinesFrom_done_exact _ xs 2 _ _ (by simp [xs])]
+  rw [elabInlines_recovered_args ctx name _ p gp hm hp hn, elabInlines_word ctx w wp hm hwp,
+    inlineGroup_pure]
+  simp only [pure_bind]
+  rw [elabInlinesFrom_done_exact _ _ 2 _ _ (by simp)]
   have ms (x : Inline) : mergeTexts #[x] = #[x] := by cases x <;> rfl
-  simp only [inlineMacroAt, inlineMacroStep, show xs[2]? = none from rfl,
-    show ∀ a : Array Inline, flushText a "" = a from fun _ => rfl, hm,
-    MacroRoles.empty]
-  cases hl : ctx.literalText <;>
-    simp [ms, flushText, xs, Parse.rawSrc, Parse.rawSrcList, Parse.rawSrcOne, unknownCmdDiag_shape_id]
+  simp only [inlineMacroAt, inlineMacroStep,
+    show (#[Raw.ctrl name p, .group #[.word w wp] gp])[2]? = none from rfl,
+    show ∀ a : Array Inline, flushText a "" = a from fun _ => rfl, hm, MacroRoles.empty]
+  cases hl : ctx.literalText <;> simp [ms, flushText, unknownCmdDiag_shape_id]
 
 private theorem mapSmartText_literal (ctx : Ctx) (p : Pos) (w : String)
     (hs : smartPunct w = w) :
@@ -15166,7 +15037,6 @@ private theorem applyDecl_allow_none (s : PreState) (pos : Pos) :
     applyDecl s (.allow none pos)
       = stepDone s.ctx (stepMissing s "allow" "a {...} block of diagnostic codes" pos) := by rfl
 
-set_option maxHeartbeats 1000000 in
 /-- Independent adjacent preamble declarations commute up to reporting, in
 both orders. -/
 public theorem applyDecl_comm (s : PreState) (e : ESt) (d₁ d₂ : PDecl)
@@ -16190,41 +16060,30 @@ public def prepareExecuted (file : String) (executed : Compat.Executed) : Prepar
   prepareRewritten file picScan picMacros executed.sourceTriggers #[]
     (Compat.rewriteExecuted executed) executed.inputAttempts
 
-public theorem prepareRewritten_inputAttempts_exact (file : String)
+private theorem prepareRewritten_carries (file : String)
     (scan : Compat.BoundaryScan) (macros : Array (String × String))
     (triggers : Compat.SourceTriggers) (prior : Array Diag)
     (rewritten : Array Raw × Array Diag × Array String)
     (attempts : Array Compat.InputAttempt) :
-    (prepareRewritten file scan macros triggers prior rewritten attempts).inputAttempts =
-      attempts := by
+    (prepareRewritten file scan macros triggers prior rewritten attempts).inputAttempts = attempts ∧
+      (prepareRewritten file scan macros triggers prior rewritten attempts).sourceTriggers =
+        triggers := by
   rcases rewritten with ⟨raws, diags, warned⟩
   unfold prepareRewritten
   cases Compat.rewriteText file raws warned
-  rfl
+  exact ⟨rfl, rfl⟩
 
 attribute [local irreducible] prepareRewritten macroScan in
 public theorem prepareExecuted_inputAttempts_exact (file : String) (executed : Compat.Executed) :
     (prepareExecuted file executed).inputAttempts = executed.inputAttempts := by
   unfold prepareExecuted
-  exact prepareRewritten_inputAttempts_exact file _ _ _ _ _ _
-
-public theorem prepareRewritten_sourceTriggers_exact (file : String)
-    (scan : Compat.BoundaryScan) (macros : Array (String × String))
-    (triggers : Compat.SourceTriggers) (prior : Array Diag)
-    (rewritten : Array Raw × Array Diag × Array String)
-    (attempts : Array Compat.InputAttempt) :
-    (prepareRewritten file scan macros triggers prior rewritten attempts).sourceTriggers =
-      triggers := by
-  rcases rewritten with ⟨raws, diags, warned⟩
-  unfold prepareRewritten
-  cases Compat.rewriteText file raws warned
-  rfl
+  exact (prepareRewritten_carries file _ _ _ _ _ _).1
 
 attribute [local irreducible] prepareRewritten macroScan in
 public theorem prepareExecuted_sourceTriggers_exact (file : String) (executed : Compat.Executed) :
     (prepareExecuted file executed).sourceTriggers = executed.sourceTriggers := by
   unfold prepareExecuted
-  exact prepareRewritten_sourceTriggers_exact file _ _ _ _ _ _
+  exact (prepareRewritten_carries file _ _ _ _ _ _).2
 
 /-- Settles, scans, executes and rewrites a parsed document, once. -/
 public def prepare (file : String) (raws : Array Raw) : Prepared :=

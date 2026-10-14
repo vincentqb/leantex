@@ -20,12 +20,7 @@ private def controlFree : List Parse.Raw → Bool
   | .math _ body _ :: rest => controlFree body.toList && controlFree rest
   | _ :: rest => controlFree rest
 termination_by l => sizeOf l
-decreasing_by
-  all_goals simp_wf
-  all_goals try omega
-  all_goals
-    (have hb : sizeOf body = 1 + sizeOf body.toList := by rfl
-     omega)
+decreasing_by raws_dec
 
 /-- Control words the compatibility pass leaves as they stand in a field. -/
 public def compatInert : List String :=
@@ -54,12 +49,7 @@ private def compatNeeded (inMath : Bool) : List Parse.Raw → Bool
   | .math _ body _ :: rest => compatNeeded true body.toList || compatNeeded inMath rest
   | _ :: rest => compatNeeded inMath rest
 termination_by l => sizeOf l
-decreasing_by
-  all_goals simp_wf
-  all_goals try omega
-  all_goals
-    (have hb : sizeOf body = 1 + sizeOf body.toList := by rfl
-     omega)
+decreasing_by raws_dec
 
 /-- The context a build reads its reference list's fields
 in, computed once per document. -/
@@ -166,12 +156,7 @@ private def textSyms : List Parse.Raw → Bool
   | .env _ body _ :: rest => textSyms body.toList || textSyms rest
   | _ :: rest => textSyms rest
 termination_by l => sizeOf l
-decreasing_by
-  all_goals simp_wf
-  all_goals try omega
-  all_goals
-    (have hb : sizeOf body = 1 + sizeOf body.toList := by rfl
-     omega)
+decreasing_by raws_dec
 
 /-- The note for one reserved character a field sets as itself. -/
 private def reservedNote (span : Span) (c : Char) : Diag :=
