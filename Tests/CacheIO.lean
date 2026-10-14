@@ -5,6 +5,7 @@ public import Tests.Support
 public import LeanTex.Cli.RunBounded
 import LeanTex.Core.SlotRecord
 import LeanTex.Core.FigureFace
+import LeanTex.Core.Hex
 
 public section
 
@@ -88,8 +89,7 @@ def cacheIdentityChecks (ref : IO.Ref (List String)) : IO Unit := do
 /-- The cache records' bytes for a slot, an empty slot, a refused face and a drawn face. -/
 def cacheRecordChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
-  let hex (b : ByteArray) : String := b.foldl (init := "") fun s x =>
-    s ++ (if x < 16 then "0" else "") ++ String.ofList (Nat.toDigits 16 x.toNat)
+  let hex (b : ByteArray) : String := b.foldl (init := "") fun s x => s!"{s}{LeanTex.Core.Hex.byte false x}"
   t "cache records: a slot's bytes" (hex (LeanTex.Core.SlotRecord.encode #["a", "bc"] ⟨#[1, 2, 3]⟩) ==
     "4c54534c4f54310a85f9f7007e8bad890000001600000002000000016100000002626300000003010203")
   t "cache records: an empty slot's bytes" (hex (LeanTex.Core.SlotRecord.encode #[] .empty) ==
