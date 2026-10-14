@@ -35,6 +35,14 @@ def settingsBodies : List (String × String) :=
    ("list4", "\\begin{itemize}\n\\item Alpha\n\\begin{itemize}\n\\item Bravo\n" ++
       "\\begin{itemize}\n\\item Charlie\n\\begin{itemize}\n\\item Delta\n" ++
       "\\end{itemize}\n\\end{itemize}\n\\end{itemize}\n\\end{itemize}"),
+   ("list5", "\\begin{itemize}\n\\item Alpha\n\\begin{enumerate}\n\\item Bravo\n" ++
+      "\\begin{itemize}\n\\item Charlie\n\\begin{description}\n\\item Delta\n" ++
+      "\\begin{quote}\nEcho\n\\end{quote}\n\\end{description}\n\\end{itemize}\n" ++
+      "\\end{enumerate}\n\\end{itemize}"),
+   ("list6", "\\begin{itemize}\n\\item Alpha\n\\begin{enumerate}\n\\item Bravo\n" ++
+      "\\begin{itemize}\n\\item Charlie\n\\begin{description}\n\\item Delta\n" ++
+      "\\begin{quote}\nEcho\n\\begin{quote}\nFoxtrot\n\\end{quote}\n\\end{quote}\n" ++
+      "\\end{description}\n\\end{itemize}\n\\end{enumerate}\n\\end{itemize}"),
    ("display", "Alpha words before.\n\\[ x = y \\]\nBravo words after."),
    ("displaylong", "Alpha words before this display reach past it.\n\\[ x = y \\]\n" ++
       "Bravo words after.")]
@@ -70,20 +78,20 @@ def paramProbes : List (String × String × String × String) :=
      "\\tokens{ belowbottomsep = 9pt }", "table"),
    ("doublerulesep", "\\setlength{\\doublerulesep}{8pt}",
      "\\tokens{ doublerulesep = 8pt }", "rules"),
-   ("leftmargini", "\\setlength{\\leftmargini}{61pt}",
-     "\\style{itemize}{ indent = 61pt }\\style{enumerate}{ indent = 61pt }", "list1"),
-   ("leftmarginii", "\\setlength{\\leftmarginii}{47pt}",
-     "\\style{itemize2}{ indent = 47pt }\\style{enumerate2}{ indent = 47pt }", "list2"),
-   ("leftmarginiii", "\\setlength{\\leftmarginiii}{43pt}",
-     "\\style{itemize3}{ indent = 43pt }\\style{enumerate3}{ indent = 43pt }", "list3"),
-   ("leftmarginiv", "\\setlength{\\leftmarginiv}{41pt}",
-     "\\style{itemize4}{ indent = 41pt }\\style{enumerate4}{ indent = 41pt }", "list4")]
+   ("leftmargini", "\\setlength{\\leftmargini}{61pt}", "\\tokens{ leftmargini = 61pt }", "list1"),
+   ("leftmarginii", "\\setlength{\\leftmarginii}{47pt}", "\\tokens{ leftmarginii = 47pt }", "list2"),
+   ("leftmarginiii", "\\setlength{\\leftmarginiii}{43pt}", "\\tokens{ leftmarginiii = 43pt }",
+     "list3"),
+   ("leftmarginiv", "\\setlength{\\leftmarginiv}{41pt}", "\\tokens{ leftmarginiv = 41pt }", "list4"),
+   ("leftmarginv", "\\setlength{\\leftmarginv}{37pt}", "\\tokens{ leftmarginv = 37pt }", "list5"),
+   ("leftmarginvi", "\\setlength{\\leftmarginvi}{31pt}", "\\tokens{ leftmarginvi = 31pt }",
+     "list6")]
 
 /-- Does a row's site carry the value onto the page: a page key, a token, or a list level the engine
 nests to? -/
 def carried : Compat.ParamSite → Bool
   | .page _ | .token _ => true
-  | .listIndent l => l ≤ 4
+  | .listIndent _ => true
   | .sizeReset _ | .listReset | .unmodelled _ => false
 
 /-- A LaTeX length setting lands where LaTeX's own code puts it, for every `Compat.paramSites` row,
@@ -272,9 +280,8 @@ def listLevelChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
     "\\setlength{\\itemsep}{3pt plus 1pt}\n\\setlength{\\parsep}{2pt plus 1pt}\n" ++
     "\\setlength{\\leftmargin}{40pt}\n\\setlength{\\leftmargini}{\\leftmargin}\n"
   let listi := "\\def\\@listi{\\leftmargin\\leftmargini}\n"
-  let outer := "\\style{itemize}{ indent = 40pt, before = 9pt plus 1pt minus 2pt, " ++
-    "gap = 5pt plus 2pt }\\style{enumerate}{ indent = 40pt, before = 9pt plus 1pt minus 2pt, " ++
-    "gap = 5pt plus 2pt }"
+  let outer := "\\tokens{ leftmargini = 40pt }\\style{itemize}{ before = 9pt plus 1pt minus 2pt, " ++
+    "gap = 5pt plus 2pt }\\style{enumerate}{ before = 9pt plus 1pt minus 2pt, gap = 5pt plus 2pt }"
   let kept := pagesOf oneFace (doc (keep ++ params ++ listi) body)
   t "a kept \\@listi sets the outermost lists the page their native styles set"
     (kept == pagesOf oneFace (doc ("\\page{ fontsize = 10pt, leading = 1 }" ++ outer) body))
@@ -284,8 +291,9 @@ def listLevelChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   let listii := "\\setlength{\\leftmarginii}{30pt}\n\\def\\@listii{\\leftmargin\\leftmarginii\n" ++
     "\\labelwidth\\leftmarginii \\advance\\labelwidth-\\labelsep\n" ++
     "\\topsep 4\\p@ \\@plus 1\\p@ \\parsep 1.5\\p@ \\itemsep \\parsep}\n"
-  let inner := "\\style{itemize2}{ indent = 30pt, before = 4pt plus 1pt, gap = 3pt }" ++
-    "\\style{enumerate2}{ indent = 30pt, before = 4pt plus 1pt, gap = 3pt }"
+  let inner := "\\tokens{ leftmarginii = 30pt }" ++
+    "\\style{itemize2}{ before = 4pt plus 1pt, gap = 3pt }" ++
+    "\\style{enumerate2}{ before = 4pt plus 1pt, gap = 3pt }"
   let second := pagesOf oneFace (doc listii body)
   t "a redefined \\@listii sets the second level the page its native style sets"
     (second == pagesOf oneFace (doc inner body))

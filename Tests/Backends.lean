@@ -553,7 +553,8 @@ def htmlListGapChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- A list level's elements, each reached through one `<li>` or `<dd>` per enclosing list.
   let elems := ["ul:not(.bibliography)", "ol:not(.algorithm):not(.algorithm *)", "blockquote", "dl",
     ".verbatim-list"]
-  let lv (n : Nat) : String := String.join (List.replicate n ":is(li, dd, blockquote) ")
+  let lv (n : Nat) : String :=
+    String.join (List.replicate n ":is(li, dd, blockquote, :where(.abstract)) ")
   let above (n : Nat) := ", ".intercalate (elems.map fun e => s!"{lv n}* + {e}")
   let below (n : Nat) := ", ".intercalate (elems.map fun e => s!"{lv n}{e} + *")
   let items (n : Nat) := s!"{lv n}li + {item}, {lv n}dd + dt"

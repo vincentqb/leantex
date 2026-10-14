@@ -3951,8 +3951,9 @@ def partopsepChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
     (hasStr (Html.document "en" #[] (body inPar))
       s!"<ul class=\"{HtmlDoc.roleClass Ir.inParagraphRole}\">")
 
-/-- A list level stands its class's `\leftmargin⟨n⟩` in, a quotation counts as a level, and a
-declared `\leftmargin⟨n⟩` wins at every `\list` of its level. -/
+/-- A list, quotation or abstract stands its class's `\leftmargin⟨n⟩` for its `\@listdepth` in,
+fixed in the preamble font, a declared one reaching every list that deep, and the HTML hangs and
+measures the same. -/
 def listIndentChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let place (src : String) (w : String) : Option (Dim.Sp × Dim.Sp) := do
@@ -3976,11 +3977,14 @@ def listIndentChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
       [some (Dim.pt 25), some (Dim.pt 47), some l3, some (l3 + Dim.pt 17)])
   t "the first list level follows the type, at 12pt"
     (xs (doc "[12pt]{article}" "" nest) ["Bravo"] == [some (Dim.pt 30)])
-  t "a deck's list levels stand beamer's 2em in"
+  -- lualatex: 27.37498pt and 24.08995pt, 2.5em and 2.2em of size11.clo's 10.95pt; beamer's
+  -- 21.9pt, 2em of the same 10.95pt.
+  let s11 := Dim.pt 1095 / 100
+  t "a deck's list levels stand beamer's 2em of its 10.95pt in"
     (xs (doc "{beamer}" "" ("\\begin{frame}[t]\n" ++ "Alpha words.\n\\begin{itemize}\n" ++
       "\\item Bravo words.\n\\begin{itemize}\n\\item Charlie words.\n\\end{itemize}\n" ++
       "\\end{itemize}\n\\end{frame}")) ["Bravo", "Charlie"] ==
-      [some (Dim.pt 22), some (Dim.pt 44)])
+      [some (2000 * s11 / 1000), some (2 * (2000 * s11 / 1000))])
   t "a quotation's text stands its level's leftmargin in"
     (xs (doc "{article}" "" "Alpha words.\n\\begin{quote}\nBravo words.\n\\end{quote}\nCharlie.")
       ["Bravo"] == [some (Dim.pt 25)])
@@ -4012,36 +4016,99 @@ def listIndentChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
     (match xs listed ["Bravo"], xs quoted ["Bravo"] with
      | [some l], [some q] => l == Dim.pt 30 && measured listed l && measured quoted (2 * q)
      | _, _ => false)
+  -- Measured under lualatex: `\@listdepth` counts every list and quotation, whatever its kind.
+  let mixed := "\\begin{enumerate}\n\\item Alpha words.\n\\begin{itemize}\n\\item Bravo words.\n" ++
+    "\\begin{enumerate}\n\\item Charlie words.\n\\end{enumerate}\n\\end{itemize}\n" ++
+    "\\end{enumerate}\n\\begin{quote}\nDelta words.\n\\begin{itemize}\n\\item Echo words.\n" ++
+    "\\end{itemize}\n\\begin{quote}\nFoxtrot words.\n\\end{quote}\n\\end{quote}"
+  let declared := "\\setlength{\\leftmargini}{20pt}\n\\setlength{\\leftmarginii}{40pt}\n" ++
+    "\\setlength{\\leftmarginiii}{15pt}\n"
+  t "a declared leftmargin reaches every list at its depth, whatever its kind"
+    (xs (doc "{article}" declared mixed) ["Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot"] ==
+      [20, 60, 75, 20, 60, 60].map fun p => some (Dim.pt p))
+  let ex := Dim.pt 10 * 431 / 1000
+  let listii := "\\makeatletter\n\\def\\@listii{\\leftmargin 30pt \\labelwidth\\leftmarginii " ++
+    "\\advance\\labelwidth-\\labelsep \\topsep 4\\p@ \\@plus 1\\p@ \\parsep 1.5\\p@ " ++
+    "\\itemsep \\parsep}\n\\setlength{\\leftmarginiii}{4ex}\n\\makeatother\n"
+  t "a redefined \\@listii's leftmargin reaches every list two deep, and an ex is the class's"
+    (xs (doc "{article}" listii mixed) ["Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot"] ==
+      [some (Dim.pt 25), some (Dim.pt 55), some (Dim.pt 55 + 4 * ex), some (Dim.pt 25),
+        some (Dim.pt 55), some (Dim.pt 55)])
+  let abstract := "\\begin{abstract}\nAlpha words.\n\\begin{itemize}\n\\item Bravo words.\n" ++
+    "\\begin{enumerate}\n\\item Charlie words.\n\\end{enumerate}\n\\end{itemize}\n" ++
+    "Delta words.\n\\end{abstract}\nEcho words."
+  t "a list in the abstract stands the class's lengths in, which its \\small leaves be"
+    (xs (doc "{article}" "" abstract) ["Bravo", "Charlie", "Delta", "Echo"] ==
+      [some (Dim.pt 47), some l3, some (Dim.pt 25), some 0])
+  t "the list margins are the class's, fixed at the 10.95pt its 11pt option sets"
+    (xs (doc "[11pt]{article}" "" nest) ["Bravo", "Charlie"] ==
+      [some (2500 * s11 / 1000), some (2500 * s11 / 1000 + 2200 * s11 / 1000)])
+  let fits (src : String) (avail : Dim.Sp) : Bool :=
+    hasStr (HtmlDoc.emit { tableFit := fun a _ _ _ _ _ => (none, a == avail) }
+      (elabStr src).1).1 "bt-overhang"
+  let width := (Layout.Geom.ofPage (elabStr (doc "{article}" "" "x")).1.page).textWidth
+  let boxed := doc "{article}" "" ("\\begin{itemize}\n\\item Alpha words.\n\n" ++
+    "\\noindent\\begin{minipage}{200pt}\n\\begin{itemize}\n\\item Bravo words.\n" ++ table ++
+    "\\end{itemize}\n\\end{minipage}\n\\end{itemize}")
+  t "the HTML measures a list in a box at the depth its page counts there"
+    (match xs boxed ["Bravo"] with
+     | [some b] => fits boxed (Dim.pt 200 - (b - Dim.pt 25))
+     | _ => false)
+  let inAbstract := doc "{article}" "" ("\\begin{abstract}\nAlpha words.\n\\begin{itemize}\n" ++
+    "\\item Bravo words.\n" ++ table ++ "\\end{itemize}\n\\end{abstract}")
+  t "the HTML measures a list in the abstract off the margins its page stands them at"
+    (fits inAbstract (width - 2 * Dim.pt 25 - Dim.pt 22))
+  let exList := doc "{article}" "\\setlength{\\leftmargini}{4ex}\n"
+    ("\\begin{itemize}\n\\item Bravo words.\n" ++ table ++ "\\end{itemize}")
+  t "the HTML measures an ex in a list margin as the page does, in the class's font"
+    (xs exList ["Bravo"] == [some (4 * ex)] && fits exList (width - 4 * ex))
   let sheet (cls : String) : String :=
     (HtmlDoc.emit {} (elabStr (doc cls "" "x")).1).1
-  let lv := ":is(li, dd, blockquote) "
+  let lv := ":is(li, dd, blockquote, :where(.abstract)) "
   let art := sheet "{article}"
-  t "html each list level's padding is its leftmargin in em, under the length's property"
-    (hasStr art ("ul, ol, dd { padding-left: var(--leftmargini, 2.5em); }\n" ++
-        "blockquote { padding: 0 var(--leftmargini, 2.5em); }") &&
-     hasStr art s!"{lv}ul, {lv}ol, {lv}dd \{ padding-left: var(--leftmarginii, 2.2em); }" &&
+  t "html each list level's padding is its leftmargin in the class's rem, under the length's property"
+    (hasStr art ("ul, ol, dd { padding-left: var(--leftmargini, 2.5rem); }\n" ++
+        ":is(blockquote, :where(.abstract)) { padding: 0 var(--leftmargini, 2.5rem); }") &&
+     hasStr art s!"{lv}ul, {lv}ol, {lv}dd \{ padding-left: var(--leftmarginii, 2.2rem); }" &&
      hasStr art (s!"{lv}{lv}{lv}ul, {lv}{lv}{lv}ol, {lv}{lv}{lv}dd " ++
-       "{ padding-left: var(--leftmarginiv, 1.7em); }"))
-  t "html a declared leftmargini reaches the sheet as its property"
-    (hasStr (HtmlDoc.emit {} (elabStr declQuote).1).1 "--leftmargini: 30pt;")
-  t "html a deck's lists stand beamer's 2em in at every level"
-    (hasStr (sheet "{beamer}") "ul, ol, dd { padding-left: var(--leftmargini, 2em); }" &&
-     hasStr (sheet "{beamer}") s!"{lv}ul, {lv}ol, {lv}dd \{ padding-left: var(--leftmarginii, 2em); }")
+       "{ padding-left: var(--leftmarginiv, 1.7rem); }"))
+  t "html a declared leftmargini reaches the sheet as its property, in the class's rem"
+    (hasStr (HtmlDoc.emit {} (elabStr declQuote).1).1 "--leftmargini: 3rem;")
+  let sections := elemNodesList (· == "section") #[]
+    (docNodesOf (elabStr (doc "{article}" "" abstract)).1).toList
+  t "html the abstract hangs its quotation's margins on both sides, as its page does"
+    (sections.any (fun n => ((nodeAttr "class" n).splitOn " ").contains "abstract") &&
+      hasStr art ":is(blockquote, :where(.abstract)) { padding: 0 var(--leftmargini, 2.5rem); }")
+  let pad (css : String) (k : Nat) : Option String :=
+    (css.splitOn s!"padding-left: var(--{Ir.leftMarginName (k + 1)}, ")[1]?.bind fun rest =>
+      (rest.splitOn ")")[0]?
+  t "html a deck's lists stand one stage length in at its first two levels"
+    (match pad (sheet "{beamer}") 0, pad (sheet "{beamer}") 1 with
+     | some a, some b => a == b && a.endsWith "vh"
+     | _, _ => false)
   t "html a webpage's lists keep the engine's one indent"
-    (hasStr (sheet "{webpage}") "ul, ol, dd { padding-left: var(--leftmargini, 1.5em); }")
+    ((List.range 4).all fun k => (pad (sheet "{webpage}") k).isSome &&
+      pad (sheet "{webpage}") k == pad (sheet "{webpage}") 0)
+  let cssSp (page : Ir.PageSpec) (v : String) : Option Dim.Sp :=
+    match remMilliOf v with
+    | some m => some (m * page.fontSize / 1000)
+    | none => do
+      guard (v.endsWith "vh")
+      let (m, sc) ← Decl.parseDecimal (v.dropEnd 2).toString
+      return m * page.height / (100 * (sc : Int))
   let deck := "\\begin{frame}[t]\n" ++ nest ++ "\n\\end{frame}"
   t "each lineage's sheet hangs every list level where its page stands it"
     ([("{article}", nest), ("{webpage}", nest), ("{beamer}", deck)].all fun (cls, body) =>
       let src := doc cls "" body
-      let size := (elabStr src).1.page.fontSize
+      let page := (elabStr src).1.page
       let sheet := (HtmlDoc.emit {} (elabStr src).1).1
-      let pads := (List.range 4).map fun k =>
-        (sheet.splitOn s!"padding-left: var(--{Ir.leftMarginName (k + 1)}, ")[1]?.bind fun rest =>
-          (rest.splitOn ")")[0]?.bind cssEmMilli
+      let pads := (List.range 4).map fun k => (pad sheet k).bind (cssSp page)
       let depths := (List.range 4).map fun k =>
-        (pads.take (k + 1)).foldl (fun d m => d.bind fun d => m.map (d + size * · / 1000)) (some 0)
+        (pads.take (k + 1)).foldl (fun d m => d.bind fun d => m.map (d + ·)) (some 0)
       let placed := xs src (if cls == "{beamer}" then levels.take 2 else levels)
-      placed == depths.take placed.length)
+      !placed.isEmpty && (placed.zip depths).all fun
+        | (some p, some d) => withinSp (Dim.pt 1 / 20) p d
+        | _ => false)
 
 /-- A list right after a heading opens no `\topsep`: its first item stands where a paragraph after
 the heading stands. -/

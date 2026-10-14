@@ -15629,7 +15629,7 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
       output := output.addFormat f
   if output.md.isNone then
     output := { output with md := record.mdName }
-  let tokens := (Ir.PreambleFace.ofClass record page.fontSize).fixTableLengths tokens
+  let tokens := (Ir.PreambleFace.ofClass record page.fontSize).fixLoadLengths tokens
   ctx := { ctx with slides := record.model == .frame
                     groundDepth := record.groundDepth
                     frameAlign := classFrameAlign classOpts

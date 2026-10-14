@@ -6946,13 +6946,21 @@ at Latin Modern's x-height there. -/
 public def PreambleFace.resolve (face : PreambleFace) (l : Dim.Length) : Sp :=
   l.resolve face.size face.xHeight
 
-/-- The table lengths a preamble declares, fixed as `\setlength` evaluates
+/-- The lengths a class or package fixes as it loads: the table lengths and `\leftmargin⟨n⟩`. -/
+public def loadLength (name : String) : Bool :=
+  (tableLengths.lookup name).isSome || (List.range 6).any fun k => leftMarginName (k + 1) == name
+
+/-- The load-fixed lengths a preamble declares, fixed as `\setlength` evaluates
 them in the preamble's font. -/
-public def PreambleFace.fixTableLengths (face : PreambleFace) (tk : Tokens) : Tokens :=
+public def PreambleFace.fixLoadLengths (face : PreambleFace) (tk : Tokens) : Tokens :=
   { entries := tk.entries.map fun (n, g) =>
-      if (tableLengths.lookup n).isSome then
-        (n, { g with width := Dim.Length.ofSp (face.resolve g.width) })
+      if loadLength n then (n, { g with width := Dim.Length.ofSp (face.resolve g.width) })
       else (n, g) }
+
+/-- A list or quotation level's `\leftmargin⟨n⟩` as its class fixes it, in the preamble font. -/
+public def leftMarginAt (l : ListLineage) (tokens : Tokens) (face : PreambleFace) (level : Nat) :
+    Sp :=
+  face.resolve (leftMarginFor l tokens level).width
 
 /-- The poster's headline band: title, authors, institute, the `\title` family
 read as class furniture. -/

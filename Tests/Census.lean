@@ -1226,9 +1226,9 @@ def censusRows6 :
     ("one frame, one page", c.size == 1),
     ("the quotation ships on the slide",
       pageHas c 0 "Typesetting is invisible until it fails"),
-    ("the slide's quotation indents from the margin",
+    ("the slide's quotation indents from the margin by beamer's \\leftmargini (2em of 10.95pt)",
       (lineXOf c 0 "Typesetting is invisible").any fun x =>
-        decide (x == geom.hmargin + geom.fontSize * 2))]),
+        decide (x == geom.hmargin + 2 * (Dim.pt 1095 / 100)))]),
   ("outline", fun _ c => [
     ("one page", c.size == 1),
     ("the level-0 title ships as the title furniture",

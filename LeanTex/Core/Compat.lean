@@ -5203,8 +5203,6 @@ private def setLength (n src what : String) (pos : Pos) : M (Array Raw) := do
   let named (why : String) : M (Array Raw) := do
     nameParam n why pos
     synthAt own pos
-  let list (level : Nat) (kind : String) : String :=
-    if level == 1 then kind else s!"{kind}{level}"
   -- premise: listBodyChecks — a list-body parameter ships the page without it
   if st.inList && !st.inDef && (listSpent.contains n || listPerItem.contains n) then
     if listSpent.contains n then
@@ -5237,14 +5235,8 @@ every list sets '\\topsep' again from its class's parameters" pos
       synthAt s!"\\tokens\{ {t} = {src} }" pos
     else emit s!"\\tokens\{ {t} = {src} }"
   | _, true => emit own
-  | .listIndent level, false =>
-    if level > 4 then
-      nothing "lists here nest four levels, and a deeper one reuses the fourth's"
-    else if preamble then
-      let styles := s!"\\style\{{list level "itemize"}}\{ indent = {n} }\
-\\style\{{list level "enumerate"}}\{ indent = {n} }"
-      became what s!"\\style\{{list level "itemize"}}\{ indent = {n} }, and enumerate's" pos
-      synthAt (own ++ styles) pos
+  | .listIndent _, false =>
+    if preamble then emit own
     else named "indents the lists after it; a list's indent here is declared in the preamble"
   | .sizeReset body, false =>
     if preamble then
@@ -5518,7 +5510,7 @@ private def flushListLevels : M (Array Raw) := do
   let preamble (n : String) : Option String := if lens.any (·.1 == n) then some n else none
   let mut run : List (String × Option String) := listCarried.map fun n => (n, preamble n)
   let mut out : Array Raw := #[]
-  for level in [1:5] do
+  for level in [1:7] do
     match defOf level with
     | none => run := listCarried.map fun n => (n, none)
     | some (pos, assigns) =>
@@ -5528,18 +5520,22 @@ private def flushListLevels : M (Array Raw) := do
           run := run.map fun (n, o) => if n == a.name then (n, v) else (n, o)
       let op (n : String) : Option String := (run.lookup n).bind id
       let r := (["i", "ii", "iii", "iv"][level - 1]?).getD ""
-      let mut native := ""
+      -- The margin is the depth's, which every kind of list and quotation that deep reads.
+      let mut native := match op "leftmargin" with
+        | some v => if v == Ir.leftMarginName level then "" else
+          s!"\\tokens\{ {Ir.leftMarginName level} = {v} }"
+        | none => ""
       let mut keys : Array String := #[]
-      if let some v := op "leftmargin" then keys := keys.push s!"indent = {v}"
-      if let some v := op "topsep" then keys := keys.push s!"before = {v}"
-      if let (some i, some p) := (op "itemsep", op "parsep") then
-        native := s!"\\tokens\{ itemsep{r} = {i}, parsep{r} = {p} }"
-        keys := keys.push s!"gap = itemsep{r} + parsep{r}"
+      if level ≤ 4 then
+        if let some v := op "topsep" then keys := keys.push s!"before = {v}"
+        if let (some i, some p) := (op "itemsep", op "parsep") then
+          native := native ++ s!"\\tokens\{ itemsep{r} = {i}, parsep{r} = {p} }"
+          keys := keys.push s!"gap = itemsep{r} + parsep{r}"
       unless keys.isEmpty do
         for kind in ["itemize", "enumerate"] do
           let el := if level == 1 then kind else s!"{kind}{level}"
           native := native ++ s!"\\style\{{el}}\{ {String.intercalate ", " keys.toList} }"
-        out := out ++ (← synthAt native pos)
+      unless native.isEmpty do out := out ++ (← synthAt native pos)
   return out
 
 /-- A TeX length from option text: `3\\gapunit` is

@@ -102,6 +102,8 @@ public structure Config where
     Array Ir.ColSpan → Option String × Bool := fun _ _ _ _ _ _ => (none, false)
   /-- The document's list lineage, which list and quotation levels indent by. -/
   lists : Ir.ListLineage := .sizeFile
+  /-- The class's preamble font, in which its list margins are fixed. -/
+  preamble : Ir.PreambleFace := Ir.PreambleFace.ofClass DocClass.article.record Ir.baseFontSize
   /-- The list and quotation levels around this content. -/
   listDepth : Nat := 0
   inset : Sp := 0
@@ -146,18 +148,17 @@ public def Config.measureValues (cfg : Config) : MeasureValues :=
   cfg.measures.getD (MeasureValues.horizontal
     (cfg.page.width - 2 * cfg.page.hmargin) (cfg.page.height - 2 * cfg.page.vmargin))
 
-/-- One list or quotation level deeper: the level's left margin (`Ir.leftMarginFor`) at the body
-size off the measure's start, and for a quotation off its end. -/
+/-- One list or quotation level deeper: the level's left margin (`Ir.leftMarginAt`) off the
+measure's start, and for a quotation off its end. -/
 public def Config.deeper (cfg : Config) (both : Bool) : Config :=
   let lv := cfg.listDepth + 1
-  let lm := ((Ir.leftMarginFor cfg.lists cfg.tokens lv).resolve cfg.page.fontSize
-    (cfg.page.fontSize / 2)).width
+  let lm := Ir.leftMarginAt cfg.lists cfg.tokens cfg.preamble lv
   { cfg with listDepth := lv, inset := cfg.inset + (if both then 2 * lm else lm) }
 
-/-- Enter a box of the given width, at list depth zero. -/
+/-- Enter a box of the given width, at the list depth around it, as the page counts it there. -/
 public def Config.atMeasure (cfg : Config) (width : Sp) : Config :=
   { cfg with measures := some (MeasureValues.horizontal width cfg.measureValues.textHeight)
-             listDepth := 0, inset := 0 }
+             inset := 0 }
 
 @[expose] public def cssColor (c : Color) : String := c.css
 
@@ -366,7 +367,7 @@ public def tableLengthCss : LengthBasis → Length → String
   | .classSize size, l => classLengthCss size l
 
 public def tokenCss (basis : LengthBasis) (name : String) (l : Length) : String :=
-  if (Ir.tableLengths.lookup name).isSome then tableLengthCss basis l else cssLength l
+  if Ir.loadLength name then tableLengthCss basis l else cssLength l
 
 /-- A table length's fallback: the default the page sets an undeclared table by. -/
 @[expose] public def tableLengthFallback (doc : Doc) (name : String) : String :=
@@ -923,8 +924,9 @@ line or an endnote. -/
 private def itemSubject : String :=
   "li:not(.bibliography *):not(.algorithm *):not([role=doc-endnotes] *)"
 
-/-- An enclosing list's item, as `\@listdepth` counts the levels. -/
-private def itemAncestor : String := ":is(li, dd, blockquote) "
+/-- An enclosing list's item, quotation or abstract, as `\@listdepth` counts the levels, at an
+element's specificity. -/
+private def itemAncestor : String := ":is(li, dd, blockquote, :where(.abstract)) "
 
 /-- A list's own space at a boundary: the level's length over the paragraph gap in force. -/
 private def listSpace (m : Nat) : String := s!"calc({milliRem m} + var(--parskip, 0rem))"
@@ -987,12 +989,15 @@ public def squeezeListRules (l : Ir.ListLineage) (size : Int) (tokens : Ir.Token
     | none => []
 
 /-- A lineage's list indents as CSS for the kernel's six levels, under the custom property of
-their length. -/
-public def listIndentCss (l : Ir.ListLineage) : String :=
+their length, each in the page's unit as its class fixes it (`Ir.leftMarginAt`). -/
+public def listIndentCss (l : Ir.ListLineage) (basis : LengthBasis) (face : Ir.PreambleFace) :
+    String :=
   String.join ((List.range 6).map fun k =>
     let pre := String.join (List.replicate k itemAncestor)
-    let v := s!"var(--{Ir.leftMarginName (k + 1)}, {cssLength (Ir.leftMarginFor l {} (k + 1)).width})"
-    s!"{pre}ul, {pre}ol, {pre}dd \{ padding-left: {v}; }\n{pre}blockquote \{ padding: 0 {v}; }\n")
+    let fixed := tableLengthCss basis (.ofSp (Ir.leftMarginAt l {} face (k + 1)))
+    let v := s!"var(--{Ir.leftMarginName (k + 1)}, {fixed})"
+    s!"{pre}ul, {pre}ol, {pre}dd \{ padding-left: {v}; }\n" ++
+      s!"{pre}:is(blockquote, :where(.abstract)) \{ padding: 0 {v}; }\n")
 
 /-- The space rules of theorem-like blocks, on the element their role's class marks. -/
 public def thmRules (l : Ir.ListLineage) (size : Int) : List GapRule :=
@@ -4485,7 +4490,7 @@ public def baseRules (doc : Doc) (pairs : List (Nat × Nat) := []) : String :=
   -- inline code outside tex may break rather than overflow its line, as its page breaks it
   (if doc.surface != .tex then
     ":where(:not(pre) > code) { overflow-wrap: break-word; }\n" else "") ++
-  listIndentCss doc.docClass.record.lists ++
+  listIndentCss doc.docClass.record.lists (lengthBasisOf doc) doc.preambleFace ++
   s!"li::marker \{ color: {roleRef .marker}; }\n" ++
   -- the class-default list marks per nesting level, as classes.dtx sets them
   "ul { list-style-type: disc; }\n" ++
@@ -7376,7 +7381,7 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     fillCarrier cfg (Ir.frameFillsOne cfg.lists cfg.styles .deck 0 b)
       (Html.elem "section"
         (#[Html.elem "h2" #[Html.text cfg.locale.abstract] #[("style", "text-align: center")]] ++
-          blockNodesInto cfg.into #[] body.toList)
+          blockNodesInto (cfg.deeper true).into #[] body.toList)
         #[("class", abstractClass cfg.styles)])
   | .columns cols =>
     let justify := if cols.size == 1 then "var(--ltx-box-justify, start)" else "space-between"
@@ -8108,7 +8113,8 @@ private def emitTreeCore (cfg : Config) (doc : Doc)
                         frameKeys := doc.frameKeys
                         page := doc.page
                         lengthBasis := lengthBasisOf doc
-                        lists := doc.docClass.record.lists }
+                        lists := doc.docClass.record.lists
+                        preamble := doc.preambleFace }
   let hasFrameFoot := doc.body.any fun b => match b with
     | .framefoot xs => !xs.isEmpty
     | _ => false

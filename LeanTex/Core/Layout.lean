@@ -9097,9 +9097,9 @@ private def Spacing.Pending.openHidden (a : Acc) : Acc := { a with ops := a.ops.
 
 private def Spacing.Pending.closeHidden (a : Acc) : Acc := { a with ops := a.ops.push .regionClose }
 
-/-- A list level's `\leftmargin` at `\@listdepth` `lv` (`Ir.leftMarginFor`), at the type in force. -/
+/-- A list level's `\leftmargin` at `\@listdepth` `lv` (`Ir.leftMarginAt`). -/
 private def Spacing.Context.leftMargin (r : Rd) (lv : Nat) (tokens : Ir.Tokens) : Sp :=
-  (r.resolve (Ir.leftMarginFor r.lists tokens lv)).width
+  Ir.leftMarginAt r.lists tokens r.preamble lv
 
 /-- The next line is a peer of the last: the default gap, unless something
 is declared. -/
