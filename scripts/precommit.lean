@@ -1228,8 +1228,8 @@ vendor .sty's own macro names stay full warnings under --werror" },
     pin := none
     why := "the same proxy, at the preamble's unknown-command and refused-set sites" }]
 
-/-- Does the code hold an elapsed `ms`, `elapsed`, `spent` or `…Ms` to a numeral, or a same-line
-`runBounded` budget to one, with neither `hangGuardMs` nor `hostMarginMs` named? -/
+/-- Does the code hold an elapsed `ms`, `elapsed`, `spent` or `…Ms` to a numeral, with neither
+`hangGuardMs` nor `hostMarginMs` named? -/
 def clockBound (l : String) : Bool := Id.run do
   let t := stripLineComment (stripStrings l)
   if containsSub t "hangGuardMs" || containsSub t "hostMarginMs" then return false
@@ -1245,11 +1245,16 @@ def clockBound (l : String) : Bool := Id.run do
       let word := String.ofList (before.toList.reverse.takeWhile isWordChar).reverse
       if elapsedName word && ((after.toString.toList.head?.map Char.isDigit).getD false) then
         return true
-  if containsSub t "runBounded" then
-    let ws := (t.split Char.isWhitespace).toList.map (·.toString) |>.filter (!·.isEmpty)
-    for (a, b) in ws.zip (ws.drop 1) do
-      if a.length ≥ 3 && a.all Char.isDigit && !b.isEmpty && b.all Char.isDigit then return true
   return false
+
+/-- The suite files that run a child directly: the helper itself and the runtime's own checks. -/
+def childRunOwners : List String :=
+  ["Tests/Support.lean", "Tests/World.lean", "Tests/ProcessRuntime.lean"]
+
+/-- Does the code run a child through `RunBounded` itself rather than `childRun`? -/
+def childRunBypass (l : String) : Bool :=
+  let t := stripLineComment (stripStrings l)
+  hasWord t "runBounded" || containsSub t "RunBounded.output {" || containsSub t "RunBounded.output ("
 
 /-- One staged-diff check: the files it reads, the line predicate, the headline and the fix
 paragraph. -/
@@ -1260,6 +1265,12 @@ structure Gate where
   help : String
 
 def gates : List Gate := [
+  { applies := fun f => (f == "Tests.lean" || f.startsWith "Tests/") && !childRunOwners.contains f
+    flag := childRunBypass
+    what := fun f => s!"a child run outside `childRun` in {f}"
+    help := "  A test's child is held to a hang guard over its typical time, which `childRun`
+  (Tests/Support.lean) takes, so a loaded host stalls it without failing the check.
+  Fix: run it with `childRun <typical ms>`, the time a run takes here rounded up." },
   { applies := fun f => f == "Tests.lean" || f.startsWith "Tests/"
     flag := clockBound
     what := fun f => s!"a check decided by a fixed wall-clock bound in {f}"
@@ -2729,16 +2740,25 @@ def selftest : IO UInt32 := do
     ("    (sharedMs < 1500)", true),
     ("  t s!\"families is linear ({ms} ms for {many.size} faces)\" (ms < 200)", true),
     ("    (inkReads == 100000 && inkMs < 500)", true),
+    ("    (mergeMs < 800)", true),
+    ("    (judgeMs < 1500)", true),
+    ("    (paleMs < 400)", true),
     ("      check ref \"bounded\" (elapsed <= 2000)", true),
     ("  t \"answered in time\" (spent ≤ 4000)", true),
-    ("    let r ← RunBounded.runBounded lean.toString #[\"--run\"] dir 30000 100", true),
     ("    (sharedMs < hangGuardMs 250)", false),
     ("  t \"within the budget\" (ms ≤ budget + grace + hostMarginMs)", false),
-    ("    let r ← RunBounded.runBounded lean.toString #[\"--run\"] dir (hangGuardMs 900) 100", false),
     ("  while !finished && (← IO.monoMsNow) < deadline do", false),
     ("  t \"few items\" (items < 3)", false),
     ("  -- the old check read (ms < 200)", false),
     ("  t \"(ms < 200) names the old bound\" true", false)]
+
+  expect "childRunBypass" childRunBypass [
+    ("    let r ← RunBounded.runBounded lean.toString #[\"--run\"] dir 30000 100", true),
+    ("      let result ← RunBounded.output {", true),
+    ("    let r ← childRun 900 lean.toString #[\"--run\", driver.toString] dir", false),
+    ("example : IO.Process.SpawnArgs → IO IO.Process.Output := RunBounded.output", false),
+    ("  -- RunBounded.runBounded holds each run to its budget", false),
+    ("    statement := \"RunBounded.runBounded holds each tool run to a budget\"", false)]
 
   expect "ioInCore" ioInCore [
     ("def scan (roots : List String) : IO (Array Face) := do", true),

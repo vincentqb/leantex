@@ -143,8 +143,7 @@ def legacySlotChecks (ref : IO.Ref (List String)) : IO Unit := do
       "#!/bin/sh\nif [ \"$1\" = --version ]; then printf '%s\\n' 'zz-legacy-tool 1'; exit 0; fi\nexit 3\n"
     let driver := dir / "legacy.lean"
     IO.FS.writeFile driver legacySlotDriver
-    let result ← RunBounded.runBounded lean.toString #["--run", driver.toString, dir.toString] dir
-      (hangGuardMs 900) 100
+    let result ← childRun 900 lean.toString #["--run", driver.toString, dir.toString] dir
       (env := #[("LEAN_PATH", some leanPath), ("XDG_CACHE_HOME", some (dir / "cache").toString)])
     check ref s!"machine loss: a v2 slot holding a run that never started is not read ({repr result.ran}): {result.out}{result.err}"
       (result.complete && result.ran == .exited 0)

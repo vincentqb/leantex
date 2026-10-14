@@ -1012,10 +1012,11 @@ def msOf (ns : Nat) : String := s!"{ns / 1000000}.{ns / 100000 % 10}"
 before it, bounded as not cubic), and a memoized glyph ink read at most a tenth of a decode. -/
 def benchPasses (n : Nat) : IO Unit := do
   let runs ← passRuns n
-  let medianNs (label : String) (size : Nat) : Nat :=
-    median ((runs.filter fun (l, s, _) => l == label && s == size).map (·.2.2))
   let row (label : String) (size : Nat) (what : String) : IO Nat := do
-    let ns := medianNs label size
+    let times := (runs.filter fun (l, s, _) => l == label && s == size).map (·.2.2)
+    unless times.size == n do
+      die s!"passBench printed {times.size} runs of {label} at {size}, not {n}"
+    let ns := median times
     IO.println s!"{padRight s!"leantex  {what}" 42} {padLeft (msOf ns) 6} ms (median of {n})"
     return ns
   let growth : List (String × Nat × String × Nat) :=

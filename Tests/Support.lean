@@ -531,6 +531,11 @@ def hostMarginMs : Nat := 60000
 beside it. -/
 def hangGuardMs (typicalMs : Nat) : Nat := 20 * typicalMs + hostMarginMs
 
+/-- A test's child run, held to a hang guard over the time a run typically takes. -/
+def childRun (typicalMs : Nat) (cmd : String) (args : Array String) (cwd : System.FilePath)
+    (env : Array (String × Option String) := #[]) : IO RunBounded.Ended :=
+  RunBounded.runBounded cmd args cwd (hangGuardMs typicalMs) 100 (env := env)
+
 /-- How long a fixture that only its kill should end sleeps: two margins. -/
 def hangSeconds : Nat := 2 * hostMarginMs / 1000
 
@@ -598,8 +603,7 @@ root. -/
 def paletteScript (args : Array String) : IO RunBounded.Ended := do
   let (lean, leanPath) ← leanChild "the palette script's checks"
   let dir ← IO.FS.realPath (← IO.currentDir)
-  RunBounded.runBounded lean.toString (#["--run", "scripts/palette.lean"] ++ args) dir
-    (hangGuardMs 3000) 100
+  childRun 2400 lean.toString (#["--run", "scripts/palette.lean"] ++ args) dir
     (env := #[("LEAN_PATH", some leanPath)])
 
 /-- The most chroma the gamut holds at a colour's own lightness and hue, at

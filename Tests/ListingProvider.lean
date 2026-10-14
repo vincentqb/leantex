@@ -100,12 +100,10 @@ def main (args : List String) : IO UInt32 := do\n\
       let path := if mode == "absolute" then selected.toString
         else if mode == "relative" then "selected environment"
         else if mode == "decoy" then s!"{dir / "decoy"}:{selected}" else ""
-      let result ← RunBounded.output {
-        cmd := lean.toString, args := #["--run", driver.toString, dir.toString],
-        cwd := if mode == "empty" then selected else dir,
-        env := #[("PATH", some path)] }
-      check ref s!"listing provider/{mode}: {result.stdout}{result.stderr}"
-        (result.exitCode == 0)
+      let result ← childRun 1800 lean.toString #["--run", driver.toString, dir.toString]
+        (if mode == "empty" then selected else dir) (env := #[("PATH", some path)])
+      check ref s!"listing provider/{mode}: {result.out}{result.err}"
+        (result.complete && result.ran == .exited 0)
 
 /-- Checked replies reach real listings in both artifacts, rejected replies ship the plain source,
 and a completed refusal replays its keyed diagnostic. -/

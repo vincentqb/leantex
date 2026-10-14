@@ -256,8 +256,8 @@ def browserFaceBatchChecks (ref : IO.Ref (List String)) : IO Unit := do
         IO.FS.writeFile probe
           "import Tests.BrowserFaceBatch\n\
            def main (args : List String) : IO UInt32 := Tests.BrowserFaceBatch.runChild args\n"
-        let result ← RunBounded.runBounded lean.toString
-          #["--run", probe.toString, toString limit] cwd (hangGuardMs 4000) 100 (env := #[
+        let result ← childRun 4000 lean.toString
+          #["--run", probe.toString, toString limit] cwd (env := #[
             ("PATH", some (dir / "bin").toString), ("LEAN_PATH", some leanPath),
             ("XDG_CACHE_HOME", some (dir / "cache").toString),
             ("LEANTEX_FACE_BATCH_ROOT", some dir.toString),
