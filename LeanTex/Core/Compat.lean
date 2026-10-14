@@ -9039,10 +9039,6 @@ private def overprintAlt (p : Pos) (tail : Array Raw) : List (Raw × Array Raw) 
   | (sp, content) :: rest =>
     #[.ctrl "alt" p, sp, .group content p, .group (overprintAlt p tail rest) p]
 
-private theorem overprintAlt_spec_id (p : Pos) (tail : Array Raw) (sp : Raw) (content : Array Raw)
-    (rest : List (Raw × Array Raw)) :
-    (overprintAlt p tail ((sp, content) :: rest))[1]? = some sp := by rfl
-
 /-- The items that can be alternatives, in body order. -/
 private def overprintNumbered (items : Array (Raw × Array Raw)) :
     Array (Raw × Array Raw) :=
@@ -9052,14 +9048,6 @@ private def overprintNumbered (items : Array (Raw × Array Raw)) :
 private def overprintLoose (items : Array (Raw × Array Raw)) :
     Array (Raw × Array Raw) :=
   items.filter fun it => !specNumbered it.1
-
-private theorem overprintNumbered_mem (items : Array (Raw × Array Raw))
-    (it : Raw × Array Raw) (h : it ∈ overprintNumbered items) : it ∈ items :=
-  (Array.mem_filter.mp h).1
-
-private theorem overprintLoose_mem (items : Array (Raw × Array Raw))
-    (it : Raw × Array Raw) (h : it ∈ overprintLoose items) : it ∈ items :=
-  (Array.mem_filter.mp h).1
 
 /-- An `{overprint}` as alternation with the count of unnumberable items, or
 `none` for a body read as no alternation. -/

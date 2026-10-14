@@ -84,10 +84,6 @@ public theorem ofPicture_ink_id (x y w h r : Sp) (c : Ir.Color) (st : Option Ir.
 public theorem ofPicture_box_exact (m : Ir.Pic.LabelMetric) (pic : Ir.Pic.Picture) :
     (ofPicture m pic).box = pic.box m := rfl
 
-public theorem ofPicture_nodes_exact (m : Ir.Pic.LabelMetric) (pic : Ir.Pic.Picture) (i : Nat) :
-    (ofPicture m pic).nodes[i]? = pic.shapes[i]?.map ofShape := by
-  simp [ofPicture, ofPictureIn]
-
 /-- Whether a shape lowers to exactly one element of a picture's tree: a label, or ink that draws,
 groups, stamps or maps a raster. -/
 @[expose] public def shapeOneEl : Ir.Pic.Shape → Bool

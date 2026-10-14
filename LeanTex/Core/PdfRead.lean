@@ -816,18 +816,6 @@ private def Reader.valueAt (r : Reader) (num : Nat) :
 private def Reader.intAt (r : Reader) (num : Nat) : Option Int :=
   (r.valueAt num).toOption.bind (fun (v, _) => v.int?)
 
-private theorem Reader.intAt_compressed_exact (r : Reader) (num stm idx first header off j : Nat)
-    (n : Int) (data : ByteArray) (pairs : Array (Nat × Nat))
-    (hloc : r.locs.get? num = some (.inStm stm idx))
-    (hstm : r.objStm stm = .ok (data, pairs, first))
-    (hidx : pairs[idx]? = some (header, off))
-    (hval : parseVal data (first + off) = .ok (.int n, j)) :
-    r.intAt num = some n := by
-  simp only [Reader.intAt, Reader.valueAt, hloc, hstm]
-  dsimp only [Bind.bind, Except.bind]
-  simp only [hidx, hval]
-  rfl
-
 private def Reader.get (r : Reader) (num : Nat) :
     Except String (Obj × Option ByteArray) := do
   let (v, after) ← r.valueAt num

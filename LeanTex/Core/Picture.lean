@@ -3007,11 +3007,6 @@ public theorem autoDir_swap_exact (left : Bool) (dx dy : Sp) :
     autoDir (!left) dx dy = autoDir left (-dx) (-dy) := by
   cases left <;> simp [autoDir]
 
-public theorem placeRight_border_exact (gx ga ownA s : Int) :
-    gx + (Dir.right.offset (0, s + ga + ownA)).1 - ownA - (gx + ga) = s := by
-  simp [Dir.offset]
-  omega
-
 public theorem offset_opposite_exact (s : Sp × Sp) :
     Dir.left.offset s = (-(Dir.right.offset s).1, (Dir.right.offset s).2) ∧
       Dir.above.offset s = ((Dir.below.offset s).1, -(Dir.below.offset s).2) := by

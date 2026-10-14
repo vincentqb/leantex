@@ -767,12 +767,6 @@ theorem foldl_append_join {α : Type} (f : α → String) (a : String) (l : List
   | nil => simp [String.join_nil]
   | cons x xs ih => simp [ih, String.join_cons, String.append_assoc]
 
-theorem wordsChars_flatMap {α : Type} (f : α → List Word) (l : List α) :
-    wordsChars (l.flatMap f) = (l.map fun x => wordsChars (f x)).flatten := by
-  induction l with
-  | nil => rfl
-  | cons x xs ih => simp [ih]
-
 theorem segs_chars_list (l : List Pdf.PathOp) :
     (String.join (l.map Pdf.PathOp.render)).toList = wordsChars (l.flatMap pathWords) := by
   induction l with
@@ -1396,9 +1390,6 @@ theorem good_free' (ws : List Word) (hok : ∀ w ∈ ws, WordOk w) (hf : ∀ w �
     (hl : ∀ w, ws.getLast? = some w → ∃ n, w.tok = .op n) : Good ws :=
   good_free ws (fun w hw => (hok w hw).tok) hf hl
 
-theorem ok_tok {ws : List Word} (h : ∀ w ∈ ws, WordOk w) : ∀ w ∈ ws, PdfContentLex.TokSpelled w.tok :=
-  fun w hw => (h w hw).tok
-
 theorem good_opW (n : String) (h : PdfContentLex.OpSpelled n) : Good [opW n] :=
   good_free' _ (by simp only [List.mem_singleton]; rintro w rfl; exact opW_ok n h) (by simp) (by simp [opW])
 
@@ -1762,10 +1753,6 @@ theorem run_append (cx : Ctx) (e : Entered) (st : St) (a b : List Word) :
   simp [run, List.foldl_append]
 
 theorem run_nil (cx : Ctx) (e : Entered) (st : St) : run cx e st [] = st := rfl
-
-theorem spAt_len2 (st : St) (x y : Sp) (h : st.ops = #[lenObj x, lenObj y]) :
-    spAt st 0 = qSp x ∧ spAt st 1 = qSp y := by
-  simp [spAt, h, spOf_lenObj]
 
 theorem run_pathWords (cx : Ctx) (e : Entered) (st : St) (p : Pdf.PathOp) (hops : st.ops = #[]) :
     ∃ c s, run cx e st (pathWords p) = { st with path := st.path.push (pathRead p), cur := c, start := s } := by
@@ -3213,10 +3200,6 @@ theorem draw_plain (ix : GfxPdf.Request → Nat) (fr : GfxPdf.Frame) (hfr : fr.i
 
 /-- The label setter of a `Figure Empty`, which sets none. -/
 @[expose] public def noLabels : GfxPdf.Frame → Empty → Array Pdf.ContentOp := fun _ e => nomatch e
-
-theorem noLabels_unique (f : GfxPdf.Frame → Empty → Array Pdf.ContentOp) : f = noLabels := by
-  funext _ e
-  exact nomatch e
 
 mutual
 

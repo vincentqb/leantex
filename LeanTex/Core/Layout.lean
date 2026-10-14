@@ -361,12 +361,6 @@ public theorem filShare_half_exact (l : Sp) : filShare l 1 2 = VDist.center.abov
   unfold filShare
   split <;> simp
 
-public theorem VDist.top_is_flush (l : Sp) : VDist.top.aboveShare l = 0 := by
-  unfold aboveShare filShare top
-  split
-  · rfl
-  · simp
-
 public theorem VDist.center_split_exact (l : Int) (h : 0 ≤ l) :
     VDist.center.aboveShare l ≤ l - VDist.center.aboveShare l ∧
       l - VDist.center.aboveShare l ≤ VDist.center.aboveShare l + 1 := by
@@ -616,15 +610,6 @@ public def Geom.ground (g : Geom) (c : Ir.Color) : Fill :=
 /-- The ground a page ships: its own frame or title style, else the palette epoch in force. -/
 public def effectivePageGround (page epoch : Option Ir.Color) : Option Ir.Color :=
   page.orElse fun _ => epoch
-
-public theorem effectivePageGround_page_exact (c : Ir.Color) (epoch : Option Ir.Color) :
-    effectivePageGround (some c) epoch = some c := by rfl
-
-public theorem effectivePageGround_epoch_exact (epoch : Option Ir.Color) :
-    effectivePageGround none epoch = epoch := by rfl
-
-public theorem effectivePageGround_clear_exact :
-    effectivePageGround none none = none := by rfl
 
 /-- The eight printer's cut marks of a `trimW × trimH` trim, each
 extending a trim line into the bleed and ending `gap` before the trim. -/
@@ -1613,10 +1598,6 @@ private theorem pushText_toks (st : FlattenSt) (sty : TextStyle) (s : String)
   obtain ⟨hc, hm⟩ := pushTextAttr_toks { st with ctr := st.ctr.take.2 } sty s st.ctr.take.1 hn
   exact ⟨by simp only [pushText]; rw [hc]; exact ha, by simpa [pushText] using hm⟩
 
-private theorem warn_toks (st : FlattenSt) (code : DiagCode) (msg : String) (help : Option String) :
-    (warn st code msg help).toks = st.toks ∧ (warn st code msg help).ctr = st.ctr :=
-  ⟨rfl, rfl⟩
-
 mutual
 
 private theorem flatten_attr_covers (mathOk noteOk : Bool) (st : FlattenSt) (sty : TextStyle)
@@ -1867,12 +1848,6 @@ public theorem kern_measure_exact (box : Array (Nat × Char × Sp))
     change boxWidth box.pop + (padv + ks) + g.2.2
       = boxWidth box.pop + padv + ks + g.2.2
     rw [Int.add_assoc (boxWidth box.pop) padv ks]
-
-public theorem kernVal_head (features : Ir.Features) (size : Sp) (font : Font) (g1 : Nat)
-    (box : Array (Nat × Char × Sp)) (h : box.back? = none) :
-    kernVal features size font box g1 = 0 := by
-  unfold kernVal
-  rw [h]
 
 /-- Fixed-width spaces as a fraction of the em, set as kerns rather than looked up as glyphs. -/
 public def fixedSpace (c : Char) : Option (Nat × Nat) :=
@@ -3956,13 +3931,6 @@ public def cancelMetric (geom : Geom) (fs : FontSet) (styles : Array Ir.Style)
     some { em := e.sizeAt st, input := cancelInput e st spec bs vs
            bodyLeft := bounds.left, bodyRight := bounds.right }
 
-public theorem cancelMetric_fontless_exact (geom : Geom) (fs : FontSet)
-    (styles : Array Ir.Style) (st : Math.MathStyle) (spec : Math.CancelSpec)
-    (body value : Math.MList) (h : fs.mathFont? = none)
-    (measures : Option MeasureValues := none) :
-    cancelMetric geom fs styles st spec body value measures = none := by
-  simp [cancelMetric, MathEnv.forStyles, h]
-
 public theorem cancelMetric_contract (geom : Geom) (fs : FontSet)
     (styles : Array Ir.Style) (st : Math.MathStyle) (spec : Math.CancelSpec)
     (body value : Math.MList) (metric : Math.CancelMetric)
@@ -4489,16 +4457,6 @@ private theorem flatten_sourceChars (mathOk noteOk : Bool) (st : FlattenSt)
   simpa only [flatten, Ir.plainText] using
     flattenList_sourceChars mathOk noteOk sty xs.toList st
       (fun x hx => hp x (by simpa using hx))
-
-private theorem itemsOfTok_plainNotes (pats : Option Hyphen.Patterns) (size xHeight : Sp)
-    (fs : FontSet) (imgs : Image.Store) (textW textH : Sp)
-    (acc : ItemsAcc) (tk : Tk) (owners : Array Attribution)
-    (anchors : Array (String × Nat)) (origins : Array (Option Span))
-    (source : Option Span) (h : tk.Plain) :
-    (itemsOfTok pats size xHeight fs imgs textW textH acc tk owners anchors origins source).notes =
-      acc.notes := by
-  cases tk <;> simp only [Tk.Plain] at h
-  all_goals first | contradiction | rfl
 
 private theorem itemsOfToks_plainNotes (pats : Option Hyphen.Patterns) (size xHeight : Sp)
     (fs : FontSet) (imgs : Image.Store) (textW textH : Sp)
@@ -5957,9 +5915,6 @@ private theorem lineStart_skip (items : Array Item) (start : Nat) (hs : start �
 private def itemSpan (items : Array Item) (a b : Nat) : List Char :=
   (List.range' a (b-a)).flatMap (fun k => (items.getD k default).boxChars)
 
-private theorem itemSpan_self (items : Array Item) (a : Nat) :
-    itemSpan items a a = [] := by simp [itemSpan]
-
 private theorem itemSpan_append (items : Array Item) (a b c : Nat)
     (hab : a ≤ b) (hbc : b ≤ c) :
     itemSpan items a c = itemSpan items a b ++ itemSpan items b c := by
@@ -7375,10 +7330,6 @@ private theorem closingOwed_cancel_exact (b : B) (ht : b.geom.topskip.isSome = t
 its ordinary box end and any painted surface end. -/
 public def regionContentEnd (ordinary : Sp) (painted : Option Sp) : Sp :=
   max ordinary (painted.getD ordinary)
-
-public theorem regionContentEnd_none_exact (ordinary : Sp) :
-    regionContentEnd ordinary none = ordinary := by
-  simp [regionContentEnd]
 
 public theorem regionContentEnd_covers (ordinary painted : Sp) :
     ordinary ≤ regionContentEnd ordinary (some painted) ∧
@@ -9461,19 +9412,6 @@ private def Spacing.Pending.setPalette (a : Acc) (p : Ir.Palette) : Acc :=
 private def Spacing.Pending.setTokens (a : Acc) (tk : Ir.Tokens) : Acc :=
   { a with tokens := tk }
 
-private theorem Spacing.Pending.setPalette_emits_no_content (a : Acc) (p : Ir.Palette) :
-    (a.setPalette p).ops = a.ops.push (.pageGround (Ir.Design.declared? p .page)) ∧
-      (a.setPalette p).owed = a.owed ∧
-      (a.setPalette p).wantDefault = a.wantDefault ∧
-      (a.setPalette p).diags = a.diags :=
-  ⟨rfl, rfl, rfl, rfl⟩
-
-private theorem Spacing.Pending.setTokens_emits_nothing (a : Acc) (tk : Ir.Tokens) :
-    (a.setTokens tk).ops = a.ops ∧ (a.setTokens tk).owed = a.owed ∧
-      (a.setTokens tk).wantDefault = a.wantDefault ∧
-      (a.setTokens tk).diags = a.diags :=
-  ⟨rfl, rfl, rfl, rfl⟩
-
 /-- Capture the frame's source and policy inputs together. -/
 private def Spacing.Pending.frameOpening (a : Acc) (standout : Bool)
     (area : FrameArea := .margins) :
@@ -9686,11 +9624,6 @@ public theorem scaleStep_monotone (base : Int)
     | (show base * 1440 / 1000 < base * 1728 / 1000; omega)
     | (show base * 1728 / 1000 < base * 2074 / 1000; omega)
     | (show base * 2074 / 1000 < base * 2488 / 1000; omega)
-
-public theorem titleSize_monotone (base : Int)
-    (hb : pt 1 ≤ base) : -- 1 pt floor: what strictness costs under integer division (scaleStep_monotone)
-    Ir.titleSize base true < Ir.titleSize base false :=
-  scaleStep_monotone base hb (("Large", 1440), ("LARGE", 1728)) (by decide)
 
 public theorem heading_hierarchy (g : Geom)
     (hfs : pt 1 ≤ g.fontSize) : -- 1 pt floor: what strictness costs under integer division (scaleStep_monotone)
@@ -9932,13 +9865,6 @@ public theorem table_flex_span_width_contract (colsep total fontSize : Int) (col
     (· + ·) 0 ≤ target.resolve total - tablePadding colsep cols.size padL padR) = true
       from by simpa using hf, ↓reduceIte]
   exact Int.add_le_of_le_sub_right (of_decide_eq_true (fit _))
-
-public theorem widenAt_nil (colsep total : Sp) (nats : Array (Array Sp)) (ws : Array Sp)
-    (j : Nat) : widenAt colsep total nats #[] ws j = ws := by
-  simp [widenAt]
-
-public theorem inSpan_nil (i j : Nat) : inSpan #[] i j = false := by
-  simp [inSpan]
 
 public theorem table_natural_width_exact (colsep total fontSize : Sp) (cols : Array Ir.ColSpec)
     (nats : Array (Array Sp)) (padL padR : Bool) :
@@ -10833,23 +10759,6 @@ private def floatPlan (capAbove hasCaption : Bool) (floatSep capSep farSep : Glu
   else
     [.gap floatSep, .object, .gap capSep, .caption, .gap (floatSep.add farSep)]
 
-/-- The gaps a plan pays, in order. -/
-private def FloatSlot.gaps (plan : List FloatSlot) : List Glue :=
-  plan.filterMap fun s => match s with
-    | .gap g => some g
-    | _ => none
-
-private theorem floatPlan_gaps_exact (capAbove : Bool) (floatSep capSep farSep : Glue) :
-    FloatSlot.gaps (floatPlan capAbove true floatSep capSep farSep)
-      = if capAbove then [floatSep.add farSep, capSep, floatSep]
-        else [floatSep, capSep, floatSep.add farSep] := by
-  cases capAbove <;> rfl
-
-private theorem floatPlan_bare_gaps (capAbove : Bool) (floatSep capSep farSep : Glue) :
-    FloatSlot.gaps (floatPlan capAbove false floatSep capSep farSep)
-      = [floatSep, floatSep] := by
-  cases capAbove <;> rfl
-
 /-- Blocks that are pure state changes, which pay no
 peer gap and count as no scope's first content. -/
 private def statefulBlock : Block → Bool
@@ -10900,11 +10809,6 @@ private def collectDisplayPicture (r : Rd) (a : Acc) (anchors : Array Inline)
     | .label name => some (.anchor name)
     | _ => none }
   (collectPicture r a pic indent true (display := some dj)).closeDisplay r
-
-private theorem openDisplay_inPar_exact (a : Acc) (r : Rd) (dj : DisplayJob) (howed : a.owed = #[])
-    (hk : a.anchorAt = none) (hin : r.display.inPar = true) :
-    (a.openDisplay r dj).ops = a.ops := by
-  simp [Spacing.Pending.openDisplay, Spacing.Pending.flushGap, hin, howed, hk]
 
 private def collectParaBlock (r : Rd) (a : Acc) (content : Array Inline) (indent : Sp) : Acc :=
   -- A paragraph of label anchors alone ships no line and no gap.
@@ -12286,14 +12190,6 @@ private def collectFrameOpen (a : Acc) (standout breakable : Bool) (area : Frame
   let a := a.pageBreak
   let opening := a.frameOpening standout area
   { a with ops := a.ops.push (.frameOpen breakable a.frameSource opening) }
-
-private theorem collectFrameOpen_frame_exact (a : Acc) (standout breakable : Bool)
-    (area : FrameArea) :
-    (collectFrameOpen a standout breakable area).ops =
-      a.pageBreak.ops.push
-        (.frameOpen breakable a.frameSource (a.frameOpening standout area)) := by
-  unfold collectFrameOpen Spacing.Pending.pageBreak
-  split <;> rfl
 
 /-- The reader a frame's body is walked with: headings belong to
 the frame, and in beamer's text area `\textheight` is beamer's. -/
@@ -13818,19 +13714,6 @@ public def paragraphBreaksOf (site : Nat) (leaf : Option Nat) (frame : Option Fr
     chosen := breaks
     endFills := breaks.filter (isEndFill items) }
 
-public theorem paragraphBreaksOf_forced_mem (site : Nat) (leaf : Option Nat)
-    (frame : Option FrameOrigin) (items : Array Item) (breaks : Array Nat) (k : Nat) :
-    k ∈ (paragraphBreaksOf site leaf frame true items breaks).forced ↔
-      k < items.size ∧ isForced items k = true := by
-  simp only [paragraphBreaksOf, ↓reduceIte, Array.mem_filter, Array.mem_range]
-
-public theorem paragraphBreaksOf_endFills_mem (site : Nat) (leaf : Option Nat)
-    (frame : Option FrameOrigin) (declares : Bool) (items : Array Item) (breaks : Array Nat)
-    (k : Nat) :
-    k ∈ (paragraphBreaksOf site leaf frame declares items breaks).endFills ↔
-      k ∈ breaks ∧ isEndFill items k = true := by
-  simp [paragraphBreaksOf]
-
 public theorem paragraphBreaksOf_undeclared_exact (site : Nat) (leaf : Option Nat)
     (frame : Option FrameOrigin) (items : Array Item) (breaks : Array Nat) :
     (paragraphBreaksOf site leaf frame false items breaks).reflows = #[] := by
@@ -15030,15 +14913,6 @@ private def ColMark.finish (m : ColMark) (save : ColSave) (b : B) : ColMark :=
              b.prevDepth != save.prevDepth || b.prevBelow != save.prevBelow ||
              b.boxDepth != save.boxDepth
            source := b.lastSource }
-
-private theorem ColMark.finish_unchanged (m : ColMark) (save : ColSave) (b : B)
-    (hp : b.pages.size = save.page)
-    (hl : m.lines = b.cur.lines.size) (hf : m.fills = b.cur.fills.size)
-    (hs : m.inks = b.cur.inks.size) (hy : b.y = save.y)
-    (hd : b.prevDepth = save.prevDepth) (hb : b.prevBelow = save.prevBelow)
-    (hi : b.boxDepth = save.boxDepth) :
-    (m.finish save b).contributes = false := by
-  simp [ColMark.finish, hp, hl, hf, hs, hy, hd, hb, hi]
 
 private def ColSave.finish (save : ColSave) (b : B) : ColSave :=
   let marks := save.marks.modify (save.marks.size - 1) (·.finish save b)

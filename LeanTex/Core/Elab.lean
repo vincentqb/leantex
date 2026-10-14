@@ -311,21 +311,6 @@ public def FrameSources.keepPrefix (s : FrameSources) (n : Nat) : FrameSources :
   | some i => { s with sites := s.sites.filter (·.1 < i) }
   | none => s
 
-public theorem FrameSources.record_spliced_exact (sites : Array (Nat × Span))
-    (base n : Nat) (source : Span) :
-    (FrameSources.record { base := some base, sites } n source).sites =
-      sites.push (base + n, source) := by rfl
-
-public theorem FrameSources.record_wrapped_exact (sites : Array (Nat × Span))
-    (n : Nat) (source : Span) :
-    FrameSources.record { sites } n source = { sites } := by rfl
-
-public theorem FrameSources.keepPrefix_exact (sites : Array (Nat × Span))
-    (base n i : Nat) (source : Span) :
-    (i, source) ∈ (FrameSources.keepPrefix { base := some base, sites } n).sites ↔
-      (i, source) ∈ sites ∧ i < base + n := by
-  simp [FrameSources.keepPrefix, FrameSources.offset]
-
 /-- The spans the reporting layer reads back out of elaboration. -/
 public structure SpanRecords where
   bib : Array (String × Span) := #[]
@@ -392,10 +377,6 @@ public theorem runShape_fold_exact (bs : List Bool) :
   | nil => simp
   | cons b rest ih =>
     cases b <;> simp [RunShape.add, ih, List.any_cons, Bool.or_comm]
-
-public theorem runShape_add_monotone (s : RunShape) (b : Bool) :
-    (s.withRun → (s.add b).withRun) ∧ (s.withoutRun → (s.add b).withoutRun) := by
-  cases b <;> simp [RunShape.add]
 
 /-- The counters the flow keeps, and the heading-number state they render
 through. -/
@@ -638,12 +619,6 @@ public theorem texGroup_scope_id (base : Palette) (act : EM α) (st : ESt)
 
 public theorem texGroup_globals_exact (base : Palette) (act : EM α) (st : ESt) :
     ((texGroup base act).run st).2.scope.globals = (act.run st).2.scope.globals := rfl
-
-public theorem texGroup_epoch_exact (base : Palette) (act : EM α) (st : ESt) :
-    ((texGroup base act).run st).1.2 =
-      let restored := (st.scope.restore base (act.run st).2.scope).palette.current.getD base
-      if ((act.run st).2.scope.palette.current.getD base).sameAs restored then #[]
-      else #[Block.setPalette restored] := rfl
 
 /-- An inline TeX group: the same restore, with no palette epoch. -/
 @[expose] public def inlineGroup (base : Palette) (act : EM α) : EM α := fun st =>
@@ -3088,9 +3063,6 @@ private def defaultSecNum (nums : Nat × Nat × Nat) (inApp : Bool)
   | 1 => base
   | 2 => s!"{base}.{n2}"
   | _ => s!"{base}.{n2}.{n3}"
-
-private theorem defaultSecNum_appendix_exact (n1 n2 n3 : Nat) :
-    defaultSecNum (n1, n2, n3) true 1 = ListMark.AlphN n1 := by rfl
 
 private theorem defaultSecNum_appendix_inj (m n : Nat × Nat × Nat)
     (h : defaultSecNum m true 1 = defaultSecNum n true 1) : m.1 = n.1 :=
@@ -6706,14 +6678,6 @@ private def engineLengthTokens (docClass : Ir.DocClass) (classOptions : String)
     | _ => false
   (engineLengthTokensOfPage (classPageDefaults record opts page)).filter
     (fun kv => offered kv.1)
-
-private theorem engine_tokens_agree (docClass : Ir.DocClass)
-    (classOptions : String) (page : PageSpec) :
-    ∀ kv ∈ engineLengthTokens docClass classOptions page,
-      kv ∈ engineLengthTokensOfPage (classPageDefaults docClass.record
-        (KeyVal.items classOptions).toList page) := by
-  intro kv h
-  exact (Array.mem_filter.mp h).1
 
 /-- Applies a `\tokens{...}` block entry by entry, so an entry may refer to
 an earlier one. -/
@@ -14733,16 +14697,6 @@ public theorem applyDecl_comm (s : PreState) (e : ESt) (d₁ d₂ : PDecl)
                   stepAssert, stepAllow, stepMissing]
                 all_goals rfl))
 
-public theorem sty_is_defaults_tokens (t : Tokens) (k : String) (sty doc : SymGlue) :
-    ((t.declare k sty).declare k doc).find? k = some doc :=
-  Tokens.declare_last_wins _ k doc
-
-public theorem sty_is_defaults_palette (p : Palette) (k : ColorRef) (sty doc : Color)
-    (d d' : Bool) :
-    ((p.declare k sty d).declare k doc d').lookup k = some doc :=
-  Palette.declare_find_exact _ k doc d'
-
-
 /-- The styling a refused `\renewcommand{\maketitle}` body declares around
 `\@title`, read at the preamble's end; `none` once a redefinition won. -/
 public def refusedTitleFragment (s : PreState) (body : Option (Array Raw)) :
@@ -15822,11 +15776,6 @@ public theorem recoveryDiagnostic_subject_exact (item : Ir.Recovered) :
 public theorem recoveryDiagnostic_code_exact (item : Ir.Recovered) :
     (recoveryDiagnostic item).kind = item.code := by
   simp only [recoveryDiagnostic, Diag.of_record_exact]
-
-public theorem recoveryDiagnostic_unlocated_exact (item : Ir.Recovered) :
-    (recoveryDiagnostic item).span = none ∧
-      (recoveryDiagnostic item).help = none := by
-  simp [recoveryDiagnostic, Diag.of_record_exact]
 
 public theorem accountRecoveredItem_replay_exact (diags observed : Array Diag)
     (item : Ir.Recovered)

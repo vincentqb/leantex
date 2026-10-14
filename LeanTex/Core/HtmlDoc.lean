@@ -414,10 +414,6 @@ public def motionCss (sel : String) (ms : Nat) : String :=
   s!"{sel} \{ transition: color {ms}ms, outline-color {ms}ms; }\n" ++
     reducedMotionGuard sel
 
-public theorem motionCss_guarded (sel : String) (ms : Nat) :
-    ∃ rule, motionCss sel ms = rule ++ reducedMotionGuard sel :=
-  ⟨_, rfl⟩
-
 /-- The reveal's reduced-motion guard, which leaves the element visible. -/
 public def revealMotionGuard : String :=
   "@media (prefers-reduced-motion: reduce) \
