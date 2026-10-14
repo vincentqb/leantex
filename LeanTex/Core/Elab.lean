@@ -1733,6 +1733,20 @@ private def bracketInner (raws : Array Raw) (i k : Nat) : Array Raw :=
 
 private def bracketSrc (raws : Array Raw) (i k : Nat) : String := rawSrc (bracketInner raws i k)
 
+/-- An environment body's opening `[...]` where LaTeX's `\@ifnextchar[` finds it: on the opening
+line as `scanBracketArg` takes it, or past the space a line end makes, never a blank line, when
+`admits` reads its text as the option, a bracket the option cannot read being the body's own. -/
+private def scanOpeningArg (raws : Array Raw) (anchor : Pos) (admits : String → Bool) : ArgScan :=
+  match scanBracketArg raws 0 anchor with
+  | .took k => .took k
+  | .unclosed bpos => .unclosed bpos
+  | .content =>
+    let j := skipSpaces raws 0
+    match raws[j]?, closeBracketFrom raws (j + 1) with
+    | some (.sym '[' _), some c =>
+      if admits (bracketSrc raws 0 (c + 1)) then .took (c + 1) else .content
+    | _, _ => .content
+
 /-- The raws inside a complete optional `[...]` argument at `i`, if any. -/
 private def bracketArgRaws? (raws : Array Raw) (i : Nat) (anchor : Pos) :
     Option (Array Raw) :=
@@ -9669,6 +9683,15 @@ private def algA2eIo : List (String × Ir.AlgIo) :=
   [("KwIn", .input), ("KwOut", .output), ("KwData", .data),
    ("KwResult", .result)]
 
+/-- The io line a control opens: the document's `\SetKwInput` or `\SetKwInOut` keyword under its
+declared word, else algorithm2e's own unless the document defines the name another way. -/
+private def algIoOf (kws : Array (String × AlgKwDef)) (acx : Bool) (name : String) :
+    Option Ir.AlgIo :=
+  match ((kws.find? (·.1 == name)).map (·.2) : Option AlgKwDef) with
+  | some (.io label) => some (.named label)
+  | some _ => none
+  | none => if acx then none else algA2eIo.lookup name
+
 /-- algorithm2e display settings the engine does not model, each with the
 group count it consumes. -/
 private def algA2eSettings : List (String × Nat) :=
@@ -9833,6 +9856,21 @@ private def algorithmLines (ctx : Ctx) (acx : Bool) (body : Array Raw)
             else kws := Ir.redeclare kws key (.io (Ir.plainText (← elabInlines ctx val)))
           | _, _ =>
             diag ctx .E0304 s!"'\\{name}' needs its \{name}\{text} groups" p
+        else if let some k := algIoOf kws acx name then
+          let (g1, st1) := algPopGroup stack
+          stack := st1
+          match g1 with
+          | some (g, _) =>
+            segs := algFlush segs depth curKind cur curComment
+            cur := #[]; curKind := .statement; curComment := none
+            segs := segs.push { depth := depth
+                                kind := .io k
+                                content := trimRawEdges g
+                                comment := none }
+          | none =>
+            diag ctx .E0304 s!"'\\{name}' needs its \{text} group" p
+        else if kws.any (·.1 == name) then
+          cur := cur.push (Raw.ctrl name p)
         else if let some (o, hasEnd) :=
             (if acx then none else algA2eBlocks.lookup name) then
           let (g1, st1) := algPopGroup stack
@@ -9905,20 +9943,6 @@ private def algorithmLines (ctx : Ctx) (acx : Bool) (body : Array Raw)
             stack := stack ++ b.reverse.map AlgTok.raw
           | _, _ =>
             diag ctx .E0304 "'\\Repeat' needs its {condition}{body} groups" p
-        else if let some k :=
-            (if acx then none else algA2eIo.lookup name) then
-          let (g1, st1) := algPopGroup stack
-          stack := st1
-          match g1 with
-          | some (g, _) =>
-            segs := algFlush segs depth curKind cur curComment
-            cur := #[]; curKind := .statement; curComment := none
-            segs := segs.push { depth := depth
-                                kind := .io k
-                                content := trimRawEdges g
-                                comment := none }
-          | none =>
-            diag ctx .E0304 s!"'\\{name}' needs its \{text} group" p
         else if name == "Return" || name == "KwRet" then
           segs := algFlush segs depth curKind cur curComment
           cur := #[]; curComment := none
@@ -10095,19 +10119,27 @@ subset; its content is kept as plain lines" p
                           comment := comment }
   return (lines, numbered, semis)
 
-/-- An `{algorithmic}` body in the flat dialect: its lines, whether `[n]` or its own numbering
-numbers them, and whether it ends statements with semicolons. -/
+/-- An `{algorithmic}` `[n]` as a line count, braces around the whole of it removed. -/
+private def algStep? (written : String) : Option Nat := (KeyVal.unbrace written).toNat?
+
+/-- An `{algorithmic}` body in the flat dialect: its lines, whether its own numbering or its `[n]`
+numbers them (every line for 1, none for 0 or a value no line count equals, as the packages compare
+the two), and whether it ends statements with semicolons. -/
 private def algorithmicBody (ctx : Ctx) (body : Array Raw) (pos : Pos) :
     EM (Array Ir.AlgLine × Bool × Bool) := do
   let mut k := 0
   let mut numbered := false
-  match scanBracketArg body 0 pos with
+  -- Text cannot open the body's list before its first step, so any bracket there is the option.
+  match scanOpeningArg body pos fun _ => true with
   | .took k' =>
-    numbered := true
-    let inner := (bracketSrc body 0 k').trimAscii.toString
-    unless inner == "1" do
+    let written := (bracketSrc body 0 k').trimAscii.toString
+    match algStep? written with
+    | some 0 | none => pure ()
+    | some 1 => numbered := true
+    | some _ =>
+      numbered := true
       warnOnce ctx "algorithmic:step" .N0102
-        s!"'[{inner}]' line-number stepping is not modelled; every line \
+        s!"'[{written}]' line-number stepping is not modelled; every line \
 is numbered" pos
     k := k'
   | .unclosed bpos => warnUnclosed ctx "'\\begin{algorithmic}'" bpos
@@ -10122,22 +10154,24 @@ private def algorithmicArm (ctx : Ctx) (body : Array Raw) (pos : Pos)
   let (lines, numbered, semis) ← algorithmicBody ctx body pos
   return blocks.push (.algorithm numbered semis lines)
 
+/-- Whether a float's `[...]` holds LaTeX's placement letters and nothing else. -/
+private def isPlacement (written : String) : Bool :=
+  let t := written.trimAscii.toString
+  !t.isEmpty && t.all fun c => c == 'h' || c == 't' || c == 'b' || c == 'p' || c == 'H' || c == '!'
+
 /-- An `{algorithm}` or `{algorithm2e}` float, its caption set above the lines
 and its placement ignored. -/
 private def algorithmArm (ctx : Ctx) (n : String) (body : Array Raw)
     (pos : Pos) (blocks : Array Block) : EM (Array Block) := do
   let mut k := 0
-  for _ in [0:body.size] do
-    match scanBracketArg body k pos with
-    | .took k' =>
-      warnOnce ctx ("float:placement:" ++ n) .N0102
-        s!"'\{{n}}' [placement] is ignored: a single-pass engine has \
+  match scanOpeningArg body pos isPlacement with
+  | .took k' =>
+    warnOnce ctx ("float:placement:" ++ n) .N0102
+      s!"'\{{n}}' [placement] is ignored: a single-pass engine has \
 nowhere for a float to float" pos
-      k := k'
-    | .unclosed bpos =>
-      warnUnclosed ctx s!"'\\begin\{{n}}'" bpos
-      break
-    | .content => break
+    k := k'
+  | .unclosed bpos => warnUnclosed ctx s!"'\\begin\{{n}}'" bpos
+  | .content => pure ()
   let mut caption : Array Inline := #[]
   let mut anchors : Array Inline := #[]
   let mut rest : Array Raw := #[]

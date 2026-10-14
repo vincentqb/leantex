@@ -244,6 +244,7 @@ import Tests.AmsMath
 import Tests.Refusal
 import Tests.EndInput
 import Tests.Redefine
+import Tests.Algorithm
 import Tests.Settings
 import Tests.Kernel
 import Tests.PicturePaths
@@ -911,6 +912,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   fontSizeAffineChecks ref oneFace
   normalFontChecks ref
   linkColorChecks ref oneFace
+  algorithmReadChecks ref oneFace
 
 /-- The world premises' blocks: the runtime's process boundary, the toolchain's spawners, and the
 registry held to the source. -/

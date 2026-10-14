@@ -4136,7 +4136,6 @@ public def AlgLine.rendered (w : AlgWords) (semis : Bool) (muted : Color)
     semi := !l.content.all (· matches Inline.label _)
   | .io k =>
     out := #[bold (k.word w ++ ":"), .text " "] ++ l.content
-    semi := true
   | .opener o =>
     let (lead, trail) := o.words w
     out := #[bold lead]
