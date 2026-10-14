@@ -159,6 +159,8 @@ inductive Obs where
   | riderRebaseFailed (idx : Nat) (files : Array String)
   /-- The rider's own change and its rebase's, listed as `netDiffs` lists the run's own. -/
   | riderNetDiffs (idx : Nat) (before after : String)
+  /-- What git reported for the rider at this index could not be parsed. -/
+  | riderUnread (idx : Nat) (what : String)
   /-- Each rider's branch re-read after the gates, by index. -/
   | ridersRead (tips : Array Sha)
   /-- The gate tree put back, read back: its `HEAD` and whether it is clean. -/
@@ -204,6 +206,7 @@ def Obs.tag : Obs → String
   | .riderRebaseOk .. => "riderRebaseOk"
   | .riderRebaseFailed .. => "riderRebaseFailed"
   | .riderNetDiffs .. => "riderNetDiffs"
+  | .riderUnread .. => "riderUnread"
   | .ridersRead .. => "ridersRead"
   | .retreed .. => "retreed"
   | .gateOk .. => "gateOk"
@@ -309,7 +312,7 @@ inductive Act where
   /-- List the rider's two net changes, as `netDiff` lists the run's own. -/
   | netRider (idx : Nat) (oldTip newBase newTip : Sha)
   | recheckRiders
-  /-- Put the gate tree back at exactly this commit, detached. -/
+  /-- Put the gate tree back at exactly this commit, detached, what a gate left in it discarded. -/
   | retree (tip : Sha)
   /-- Run the gate at this index of the plan in the gate tree; the name is for the log. -/
   | gate (idx : Nat) (name : String)
@@ -322,8 +325,8 @@ inductive Act where
   | fastForward (tip : Sha)
   | readMain
   | writeLanded
-  /-- Move the member's branch, by name, from exactly `old`, the tip this run read, to exactly
-  `new`, its commit in the landed train, through its worktree. -/
+  /-- Move the member's branch, by name, by compare-and-swap from exactly `old`, the tip this run
+  read, to exactly `new`, its commit in the landed train, its worktree carried along. -/
   | moveBranch (name : String) (old new : Sha)
   /-- Push exactly this commit to the remote's `main` as a fast-forward, never forced and
   never the local `main`. -/
@@ -343,8 +346,9 @@ inductive Writes where
   | mainTo (tip : Sha)
   /-- The remote's `refs/heads/main`, by a push of this commit that is never forced. -/
   | remoteTo (tip : Sha)
-  /-- A branch another party owns, only by compare-and-swap from `old`, the tip this run
-  read. -/
+  /-- A branch another party owns, only by compare-and-swap from `old`, the tip this run read,
+  its worktree and index following by git's index refresh and two-tree merge, which refuse to
+  overwrite a local change. -/
   | branchCas (old new : Sha)
   /-- A ref or a worktree another party owns, written without a compare-and-swap against a
   sha this run read. -/
@@ -495,22 +499,41 @@ def Writes.owned (s : State) : Writes → Bool
   | .queue => true
   | .lockRecord => true
 
+/-- Whether a stage is at or past the fast-forward's verification. -/
+def Stage.pastFF : Stage → Bool
+  | .ledgering | .moving | .pushing | .verifyPush => true
+  | .preMain | .preBranch | .treeing | .rebasing | .netting | .riderPre | .riderRebasing
+  | .riderNetting | .retreeing | .gating | .postGate | .ridersRecheck | .preMerge
+  | .announcing | .ffing | .verifying | .done => false
+
+/-- Whether a stage comes before any gate could have been recorded. -/
+def Stage.preTree : Stage → Bool
+  | .preMain | .preBranch | .treeing | .rebasing | .netting | .riderPre | .riderRebasing
+  | .riderNetting | .retreeing => true
+  | .gating | .postGate | .ridersRecheck | .preMerge | .announcing | .ffing | .verifying
+  | .ledgering | .moving | .pushing | .verifyPush | .done => false
+
+/-- Whether a stage comes past the rebase, the run not yet done. -/
+def Stage.rebased : Stage → Bool
+  | .netting | .riderPre | .riderRebasing | .riderNetting | .retreeing | .gating | .postGate
+  | .ridersRecheck | .preMerge | .announcing | .ffing | .verifying | .ledgering | .moving
+  | .pushing | .verifyPush => true
+  | .preMain | .preBranch | .treeing | .rebasing | .done => false
+
+/-- Whether a step from stage `x` to stage `y`, its gates and gated tip unchanged, keeps the
+pin: neither is `done`, and `y` asks no more of the run than `x` gave. -/
+def Stage.allows (x y : Stage) : Bool :=
+  x != .done && y != .done && (!y.pastFF || x.pastFF) && (!y.preTree || x.preTree)
+    && (!y.rebased || x.rebased)
+
 /-- Is the run at or past the fast-forward's verification? -/
-def State.atOrPastFF (s : State) : Bool :=
-  s.stage == .ledgering || s.stage == .moving || s.stage == .pushing || s.stage == .verifyPush
+def State.atOrPastFF (s : State) : Bool := s.stage.pastFF
 
 /-- Is the run before any gate could have been recorded? -/
-def State.preTree (s : State) : Bool :=
-  s.stage == .preMain || s.stage == .preBranch || s.stage == .treeing
-    || s.stage == .rebasing || s.stage == .netting || s.stage == .riderPre
-    || s.stage == .riderRebasing || s.stage == .riderNetting || s.stage == .retreeing
+def State.preTree (s : State) : Bool := s.stage.preTree
 
 /-- Is the run past the rebase, and not yet done? -/
-def State.rebased (s : State) : Bool :=
-  s.stage == .netting || s.stage == .riderPre || s.stage == .riderRebasing
-    || s.stage == .riderNetting || s.stage == .retreeing || s.stage == .gating
-    || s.stage == .postGate || s.stage == .ridersRecheck || s.stage == .preMerge
-    || s.stage == .announcing || s.stage == .ffing || s.stage == .verifying || s.atOrPastFF
+def State.rebased (s : State) : Bool := s.stage.rebased
 
 /-- Does the run claim a landing? -/
 def State.landedVerdict (s : State) : Bool :=
@@ -688,6 +711,11 @@ index the next observation must carry. -/
 private def record (s : State) (g : GateSpec) (ok : Bool) (head : Sha) (clean : Bool) : State :=
   { s with gates := s.gates.push ⟨g.name, ok, head, clean⟩, gateIdx := s.gateIdx + 1 }
 
+/-- A gate that moved or dirtied the tree fails the run, or a train's falls back to the run's
+own tip, the tree put back. -/
+private def treeFailed (s : State) (why : String) : State × Act :=
+  if s.anyRiding then fallBack s why else gateFailed s why
+
 /-- The gate phase: an observation carries the dispatched index, an absence is permitted
 only where the plan says so, and a gate that moved or dirtied the tree failed. -/
 private def stepGate (s : State) (o : Obs) : State × Act :=
@@ -698,8 +726,8 @@ private def stepGate (s : State) (o : Obs) : State × Act :=
       | none => internal s "a gate answered past the plan"
       | some g =>
         if head != s.gatedTip then
-          gateFailed s s!"gate {g.name} moved the gate tree off the gated tip"
-        else if !clean then gateFailed s s!"gate {g.name} left the gate tree dirty"
+          treeFailed s s!"gate {g.name} moved the gate tree off the gated tip"
+        else if !clean then treeFailed s s!"gate {g.name} left the gate tree dirty"
         else nextGate (record s g true head clean)
   | .gating, .gateFail i head clean =>
     if i != s.gateIdx then internal s "a gate answered out of turn"
@@ -707,7 +735,7 @@ private def stepGate (s : State) (o : Obs) : State × Act :=
       | none => internal s "a gate answered past the plan"
       | some g =>
         if head != s.gatedTip || !clean then
-          gateFailed s s!"gate {g.name} failed, and left the gate tree moved or dirty"
+          treeFailed s s!"gate {g.name} failed, and left the gate tree moved or dirty"
         else if s.anyRiding then fallBack s s!"gate {g.name} failed"
         else gateFailed (record s g false head clean) s!"gate {g.name} failed"
   | .gating, .gateAbsent i =>
@@ -731,26 +759,6 @@ private def moveNext (s : State) : State × Act :=
   match s.moves[s.moveIdx]? with
   | some (n, old, new) => if s.canMove old new then (s, .moveBranch n old new) else moveDone s
   | none => moveDone s
-
-private theorem moveDone_no_move (s : State) (n : String) (old new : Sha) :
-    (moveDone s).2 ≠ .moveBranch n old new := by
-  unfold moveDone
-  repeat' split
-  all_goals simp [gateFailed, succeed]
-
-private theorem moveNext_move (s : State) (n : String) (old new : Sha)
-    (h : (moveNext s).2 = .moveBranch n old new) :
-    (moveNext s).1 = s ∧ s.canMove old new = true ∧ (n, old, new) ∈ s.moves := by
-  unfold moveNext at h ⊢
-  split at h
-  · rename_i m o' n' hm
-    split at h
-    · rename_i hc
-      simp only [Act.moveBranch.injEq] at h
-      obtain ⟨rfl, rfl, rfl⟩ := h
-      exact ⟨by simp [hc], hc, List.mem_of_getElem? hm⟩
-    · exact absurd h (moveDone_no_move s n old new)
-  · exact absurd h (moveDone_no_move s n old new)
 
 /-- The merge half: the two re-reads, the write-ahead row, the fast-forward and the push,
 both mutating actions guarded here alone and both naming `gatedTip`. -/
@@ -792,56 +800,91 @@ private def stepMerge (s : State) (o : Obs) : State × Act :=
     else landedNotPushed s "the remote's main did not read back at the landed tip; main is landed"
   | st, ob => internal s s!"{st.name}: unexpected {ob.tag}"
 
+/-- A rider whose branch is missing leaves the train. -/
+private def rideAbsent (s : State) (i : Nat) (m : BranchMiss) : State × Act :=
+  if i != s.riderIdx then internal s "a rider answered out of turn"
+  else match s.riders[i]? with
+    | none => internal s "a rider answered past the train"
+    | some r => dropRider s i (m.why r.name)
+
+/-- A rider read: it leaves the train unless it is ahead, clean, a sha and not landed, else its
+rebase onto the train's tip starts. -/
+private def rideStatus (s : State) (i ahead : Nat) (clean : Bool) (tip landedFrom landedAs : Sha)
+    (onMain : Bool) : State × Act :=
+  if i != s.riderIdx then internal s "a rider answered out of turn"
+  else match s.riders[i]? with
+    | none => internal s "a rider answered past the train"
+    | some r =>
+      if ahead == 0 then dropRider s i s!"agent/{r.name} is not ahead of main"
+      else if !clean then dropRider s i s!"the worktree of agent/{r.name} is dirty"
+      else if !isSha tip then dropRider s i s!"the tip of agent/{r.name} did not read back as a sha"
+      else if landedBars landedFrom onMain then dropRider s i (landedWhy r.name landedFrom landedAs tip)
+      else if !isSha s.gatedTip then internal s "the train's tip is not a sha"
+      else ({ s with stage := .riderRebasing, riders := s.riders.modify i (fun r => { r with tip := tip }) },
+        .rebaseRider i tip s.gatedTip)
+
+/-- A rider whose git output could not be parsed leaves the train, the tree put back when its
+rebase had moved it. -/
+private def rideUnread (s : State) (i : Nat) (what : String) : State × Act :=
+  if i != s.riderIdx then internal s "a rider answered out of turn"
+  else match s.riders[i]? with
+    | none => internal s "a rider answered past the train"
+    | some r =>
+      if s.stage == .riderNetting then dropRebased s i s!"agent/{r.name} could not be read: {what}"
+      else dropRider s i s!"agent/{r.name} could not be read: {what}"
+
+/-- A rider rebased: its net change is compared next. -/
+private def rideRebased (s : State) (i : Nat) (tip : Sha) (clean : Bool) : State × Act :=
+  if i != s.riderIdx then internal s "a rider answered out of turn"
+  else if !isSha tip then internal s "a rider's rebased tip did not read back as a sha"
+  else if !clean then internal s "the gate tree was dirty or on a branch after a rider's rebase"
+  else match s.riders[i]? with
+    | none => internal s "a rider answered past the train"
+    | some r => ({ s with stage := .riderNetting, pendingTip := tip }, .netRider i r.tip s.gatedTip tip)
+
+/-- A rider whose rebase failed leaves the train. -/
+private def rideConflict (s : State) (i : Nat) (files : Array String) : State × Act :=
+  if i != s.riderIdx then internal s "a rider answered out of turn"
+  else if !files.isEmpty then dropRebased s i s!"rebase conflict: {String.intercalate " " files.toList}"
+  else dropRebased s i "the rebase failed"
+
+/-- A rider compared: kept, its rebased tip the train's, when its net change is unchanged. -/
+private def rideNet (s : State) (i : Nat) (before after : String) : State × Act :=
+  if i != s.riderIdx then internal s "a rider answered out of turn"
+  else if !(netDrift (netOf before) (netOf after)).isEmpty then
+    dropRebased s i s!"the rebase changed the net content of: \
+{String.intercalate " " (netDrift (netOf before) (netOf after)).toList}"
+  else if !isSha s.pendingTip then internal s "a rider's rebased tip is not a sha"
+  else nextRider { s with
+      riders := s.riders.modify i (fun r => { r with rebased := s.pendingTip }),
+      gatedTip := s.pendingTip, pendingTip := "" } (i + 1)
+
+/-- The tree put back at the train's tip after a rider left. -/
+private def rideRetreed (s : State) (head : Sha) (clean : Bool) : State × Act :=
+  if !isSha head then internal s "the gate tree's HEAD did not read back as a sha"
+  else if head != s.gatedTip then internal s "the gate tree did not read back at the train's tip"
+  else if !clean then internal s "the gate tree was dirty when put back"
+  else nextRider s (s.riderIdx + 1)
+
+/-- The riders re-read after the gates: a moved rider cuts the train before it. -/
+private def rideRecheck (s : State) (tips : Array Sha) : State × Act :=
+  match firstMoved s.riders tips with
+  | none => ({ s with stage := .preMerge }, .recheckMain)
+  | some m => cutAt s m
+
 /-- The riders' stages: each rider read, rebased onto the train's tip and compared, the tree put
 back after a rider leaves, and the riders re-read after the gates. -/
 private def stepRide (s : State) (o : Obs) : State × Act :=
   match s.stage, o with
-  | .riderPre, .riderAbsent i m =>
-    if i != s.riderIdx then internal s "a rider answered out of turn"
-    else match s.riders[i]? with
-      | none => internal s "a rider answered past the train"
-      | some r => dropRider s i (m.why r.name)
+  | .riderPre, .riderAbsent i m => rideAbsent s i m
   | .riderPre, .riderStatus i ahead clean tip landedFrom landedAs onMain =>
-    if i != s.riderIdx then internal s "a rider answered out of turn"
-    else match s.riders[i]? with
-      | none => internal s "a rider answered past the train"
-      | some r =>
-        if ahead == 0 then dropRider s i s!"agent/{r.name} is not ahead of main"
-        else if !clean then dropRider s i s!"the worktree of agent/{r.name} is dirty"
-        else if !isSha tip then dropRider s i s!"the tip of agent/{r.name} did not read back as a sha"
-        else if landedBars landedFrom onMain then dropRider s i (landedWhy r.name landedFrom landedAs tip)
-        else if !isSha s.gatedTip then internal s "the train's tip is not a sha"
-        else ({ s with stage := .riderRebasing, riders := s.riders.modify i (fun r => { r with tip := tip }) },
-          .rebaseRider i tip s.gatedTip)
-  | .riderRebasing, .riderRebaseOk i tip clean =>
-    if i != s.riderIdx then internal s "a rider answered out of turn"
-    else if !isSha tip then internal s "a rider's rebased tip did not read back as a sha"
-    else if !clean then internal s "the gate tree was dirty or on a branch after a rider's rebase"
-    else match s.riders[i]? with
-      | none => internal s "a rider answered past the train"
-      | some r => ({ s with stage := .riderNetting, pendingTip := tip }, .netRider i r.tip s.gatedTip tip)
-  | .riderRebasing, .riderRebaseFailed i files =>
-    if i != s.riderIdx then internal s "a rider answered out of turn"
-    else if !files.isEmpty then dropRebased s i s!"rebase conflict: {String.intercalate " " files.toList}"
-    else dropRebased s i "the rebase failed"
-  | .riderNetting, .riderNetDiffs i before after =>
-    if i != s.riderIdx then internal s "a rider answered out of turn"
-    else if !(netDrift (netOf before) (netOf after)).isEmpty then
-      dropRebased s i s!"the rebase changed the net content of: \
-{String.intercalate " " (netDrift (netOf before) (netOf after)).toList}"
-    else if !isSha s.pendingTip then internal s "a rider's rebased tip is not a sha"
-    else nextRider { s with
-        riders := s.riders.modify i (fun r => { r with rebased := s.pendingTip }),
-        gatedTip := s.pendingTip, pendingTip := "" } (i + 1)
-  | .retreeing, .retreed head clean =>
-    if !isSha head then internal s "the gate tree's HEAD did not read back as a sha"
-    else if head != s.gatedTip then internal s "the gate tree did not read back at the train's tip"
-    else if !clean then internal s "the gate tree was dirty when put back"
-    else nextRider s (s.riderIdx + 1)
-  | .ridersRecheck, .ridersRead tips =>
-    match firstMoved s.riders tips with
-    | none => ({ s with stage := .preMerge }, .recheckMain)
-    | some m => cutAt s m
+    rideStatus s i ahead clean tip landedFrom landedAs onMain
+  | .riderRebasing, .riderRebaseOk i tip clean => rideRebased s i tip clean
+  | .riderRebasing, .riderRebaseFailed i files => rideConflict s i files
+  | .riderNetting, .riderNetDiffs i before after => rideNet s i before after
+  | .riderPre, .riderUnread i what | .riderNetting, .riderUnread i what => rideUnread s i what
+  | .retreeing, .retreed head clean => rideRetreed s head clean
+  | .ridersRecheck, .ridersRead tips => rideRecheck s tips
   | st, ob => internal s s!"{st.name}: unexpected {ob.tag}"
 
 /-- Which phase owns a stage, a function of the stage alone. -/
@@ -887,51 +930,446 @@ def pushPlan (landedTip landedGated mainTip : Sha) : Except String Sha :=
 def pushVerdict (pushedOk : Bool) (remote tip : Sha) : Verdict :=
   if pushedOk && isSha remote && remote == tip then .pushed else .landedUnpushed
 
+private theorem pinned_parts (s : State) (h : s.pinned = true) :
+    (!(s.atOrPastFF || s.landedVerdict) || s.landedIsGated) = true
+      ∧ (!s.landedVerdict || s.stage == .done) = true
+      ∧ (!s.preTree || s.gates.isEmpty) = true
+      ∧ s.gates.all (fun g => g.head == s.gatedTip && g.clean) = true
+      ∧ (!s.rebased || isSha s.gatedTip) = true := by
+  simp only [State.pinned, Bool.and_eq_true] at h
+  exact ⟨h.1.1.1.1, h.1.1.1.2, h.1.1.2, h.1.2, h.2⟩
+
+/-- The pin of a state mid-run: not landed, not past the fast-forward, no gate before the
+rebase, every gate at the gated tip, and that tip a sha past the rebase. -/
+private theorem pinned_mid (s : State) (hv : s.landedVerdict = false)
+    (hf : s.atOrPastFF = true → s.landedIsGated = true)
+    (hc : (!s.preTree || s.gates.isEmpty) = true)
+    (hd : s.gates.all (fun g => g.head == s.gatedTip && g.clean) = true)
+    (he : (!s.rebased || isSha s.gatedTip) = true) : s.pinned = true := by
+  cases ha : s.atOrPastFF <;> simp_all [State.pinned]
+
+/-- A run's halt keeps the pin: its gates' evidence is unchanged, and a landing verdict comes
+only with `main` read back at the gated tip. -/
+private theorem pinned_halt (s : State) (v : Verdict) (h : s.pinned = true)
+    (hl : (v == .landed || v == .landedUnpushed) = true → s.landedIsGated = true) :
+    ({ s with stage := .done, verdict := some v } : State).pinned = true := by
+  obtain ⟨-, -, -, hd, -⟩ := pinned_parts s h
+  cases v <;> simp_all [State.pinned, State.atOrPastFF, State.preTree, State.rebased,
+    Stage.pastFF, Stage.preTree, Stage.rebased, State.landedVerdict, State.landedIsGated]
+
+/-- A run not at `done` claims no landing. -/
+private theorem pinned_open (s : State) (h : s.pinned = true) (hs : s.stage ≠ .done) :
+    s.landedVerdict = false := by
+  obtain ⟨-, hb, -⟩ := pinned_parts s h
+  cases hv : s.landedVerdict <;> simp_all
+
+/-- A run past the fast-forward's verification has `main` read back at the gated tip. -/
+private theorem pinned_pastFF (s : State) (h : s.pinned = true) (hs : s.atOrPastFF = true) :
+    s.landedIsGated = true := by
+  obtain ⟨ha, -⟩ := pinned_parts s h
+  simp_all
+
+private theorem refuse_pinned (s : State) (h : s.pinned = true) (why : String) :
+    (refuse s why).1.pinned = true := pinned_halt s .refused h (by simp)
+
+private theorem internal_pinned (s : State) (h : s.pinned = true) (why : String) :
+    (internal s why).1.pinned = true := pinned_halt s .failed h (by simp)
+
+private theorem gateFailed_pinned (s : State) (h : s.pinned = true) (why : String) :
+    (gateFailed s why).1.pinned = true := pinned_halt s .failed h (by simp)
+
+private theorem landedNotPushed_pinned (s : State) (why : String) (h : s.pinned = true)
+    (hs : s.atOrPastFF = true) : (landedNotPushed s why).1.pinned = true :=
+  pinned_halt s .landedUnpushed h fun _ => pinned_pastFF s h hs
+
+private theorem succeed_pinned (s : State) (v : Verdict) (h : s.pinned = true)
+    (hl : (v == .landed || v == .landedUnpushed) = true → s.landedIsGated = true) :
+    (succeed s v).1.pinned = true := pinned_halt s v h hl
+
+private theorem refuse_snd (s : State) (why : String) : (refuse s why).2 = .halt .refused 2 why :=
+  rfl
+
+private theorem internal_snd (s : State) (why : String) : (internal s why).2 = .halt .failed 3 why :=
+  rfl
+
+private theorem gateFailed_snd (s : State) (why : String) :
+    (gateFailed s why).2 = .halt .failed 1 why := rfl
+
+private theorem landedNotPushed_snd (s : State) (why : String) :
+    (landedNotPushed s why).2 = .halt .landedUnpushed 4 why := rfl
+
+private theorem succeed_snd (s : State) (v : Verdict) : (succeed s v).2 = .halt v 0 "" := rfl
+
+/-- Every halt the core proposes writes the ledger, the gate tree and the queue alone. -/
+private theorem halt_quiet (v : Verdict) (c : UInt32) (why : String) :
+    (Act.halt v c why).mutates = false := by
+  simp [Act.mutates, Act.writes, Writes.shared]
+
+private theorem afterGates_mutates (s : State) : (afterGates s).2.mutates = false := by
+  unfold afterGates
+  split
+  · split <;> simp [succeed, Act.mutates, Act.writes, Writes.shared]
+  · simp [gateFailed, Act.mutates, Act.writes, Writes.shared]
+
+private theorem afterGates_rebase (s : State) (t b : Sha) : (afterGates s).2 ≠ .rebase t b := by
+  unfold afterGates
+  split
+  · split <;> simp [succeed]
+  · simp [gateFailed]
+
+private theorem afterGates_pinned (s : State) (h : s.pinned = true) (hs : s.stage = .gating) :
+    (afterGates s).1.pinned = true := by
+  obtain ⟨-, -, -, hd, he⟩ := pinned_parts s h
+  have hv := pinned_open s h (by simp [hs])
+  unfold afterGates
+  split
+  · split
+    · exact succeed_pinned s .checked h (by simp)
+    · apply pinned_mid <;> simp_all [State.atOrPastFF, State.preTree, State.rebased,
+        Stage.pastFF, Stage.preTree, Stage.rebased, State.landedVerdict]
+  · exact gateFailed_pinned s h _
+
+private theorem nextGate_mutates (s : State) : (nextGate s).2.mutates = false := by
+  unfold nextGate
+  split
+  · simp [Act.mutates, Act.writes, Writes.shared]
+  · exact afterGates_mutates s
+
+private theorem nextGate_rebase (s : State) (t b : Sha) : (nextGate s).2 ≠ .rebase t b := by
+  unfold nextGate
+  split
+  · simp
+  · exact afterGates_rebase s t b
+
+private theorem nextGate_pinned (s : State) (h : s.pinned = true) (hs : s.stage = .gating) :
+    (nextGate s).1.pinned = true := by
+  unfold nextGate
+  split
+  · exact h
+  · exact afterGates_pinned s h hs
+
+private theorem nextRider_mutates (s : State) (i : Nat) : (nextRider s i).2.mutates = false := by
+  unfold nextRider
+  split
+  · split
+    · simp [Act.mutates, Act.writes]
+    · exact nextGate_mutates _
+  · exact nextGate_mutates _
+
+private theorem nextRider_rebase (s : State) (i : Nat) (t b : Sha) :
+    (nextRider s i).2 ≠ .rebase t b := by
+  unfold nextRider
+  split
+  · split
+    · simp
+    · exact nextGate_rebase _ t b
+  · exact nextGate_rebase _ t b
+
+/-- Reading the next rider, or starting the gates, keeps the pin of a run with no gate yet and a
+sha for the train's tip. -/
+private theorem nextRider_pinned (s : State) (i : Nat) (hv : s.landedVerdict = false)
+    (hc : s.gates.isEmpty = true) (he : isSha s.gatedTip = true) :
+    (nextRider s i).1.pinned = true := by
+  have hg : ({ s with stage := .gating } : State).pinned = true := by
+    apply pinned_mid <;> simp_all [State.atOrPastFF, State.preTree, State.rebased, Stage.pastFF,
+      Stage.preTree, Stage.rebased, State.landedVerdict]
+  unfold nextRider
+  split
+  · split
+    · apply pinned_mid <;> simp_all [State.atOrPastFF, State.preTree, State.rebased,
+        Stage.pastFF, Stage.preTree, Stage.rebased, State.landedVerdict]
+    · exact nextGate_pinned _ hg rfl
+  · exact nextGate_pinned _ hg rfl
+
+private theorem dropRider_mutates (s : State) (i : Nat) (why : String) :
+    (dropRider s i why).2.mutates = false := nextRider_mutates _ _
+
+private theorem dropRider_rebase (s : State) (i : Nat) (why : String) (t b : Sha) :
+    (dropRider s i why).2 ≠ .rebase t b := nextRider_rebase _ _ t b
+
+private theorem dropRider_pinned (s : State) (i : Nat) (why : String)
+    (hv : s.landedVerdict = false) (hc : s.gates.isEmpty = true) (he : isSha s.gatedTip = true) :
+    (dropRider s i why).1.pinned = true :=
+  nextRider_pinned _ _ (by simpa [setStanding, State.landedVerdict] using hv)
+    (by simpa [setStanding] using hc) (by simpa [setStanding] using he)
+
+private theorem dropRebased_mutates (s : State) (i : Nat) (why : String) :
+    (dropRebased s i why).2.mutates = false := by
+  simp [dropRebased, Act.mutates, Act.writes, Writes.shared]
+
+private theorem dropRebased_rebase (s : State) (i : Nat) (why : String) (t b : Sha) :
+    (dropRebased s i why).2 ≠ .rebase t b := by
+  simp [dropRebased]
+
+private theorem dropRebased_pinned (s : State) (i : Nat) (why : String)
+    (hv : s.landedVerdict = false) (hc : s.gates.isEmpty = true) (he : isSha s.gatedTip = true) :
+    (dropRebased s i why).1.pinned = true := by
+  apply pinned_mid <;> simp_all [dropRebased, setStanding, State.atOrPastFF, State.preTree,
+    State.rebased, Stage.pastFF, Stage.preTree, Stage.rebased, State.landedVerdict]
+
+private theorem regate_pinned (s : State) (rs : Array Rider) (tip : Sha)
+    (hv : s.landedVerdict = false) (ht : isSha tip = true) : (regate s rs tip).1.pinned = true := by
+  apply pinned_mid <;> simp_all [regate, State.atOrPastFF, State.preTree, State.rebased,
+    Stage.pastFF, Stage.preTree, Stage.rebased, State.landedVerdict]
+
+private theorem fallBack_mutates (s : State) (why : String) : (fallBack s why).2.mutates = false := by
+  unfold fallBack
+  split <;> simp [regate, gateFailed, Act.mutates, Act.writes, Writes.shared]
+
+private theorem fallBack_rebase (s : State) (why : String) (t b : Sha) :
+    (fallBack s why).2 ≠ .rebase t b := by
+  unfold fallBack
+  split <;> simp [regate, gateFailed]
+
+private theorem fallBack_pinned (s : State) (why : String) (h : s.pinned = true)
+    (hv : s.landedVerdict = false) : (fallBack s why).1.pinned = true := by
+  unfold fallBack
+  split
+  · exact regate_pinned s _ _ hv ‹_›
+  · exact gateFailed_pinned s h _
+
+private theorem treeFailed_mutates (s : State) (why : String) :
+    (treeFailed s why).2.mutates = false := by
+  unfold treeFailed
+  split
+  · exact fallBack_mutates s why
+  · simp [gateFailed, Act.mutates, Act.writes, Writes.shared]
+
+private theorem treeFailed_rebase (s : State) (why : String) (t b : Sha) :
+    (treeFailed s why).2 ≠ .rebase t b := by
+  unfold treeFailed
+  split
+  · exact fallBack_rebase s why t b
+  · simp [gateFailed]
+
+private theorem treeFailed_pinned (s : State) (why : String) (h : s.pinned = true)
+    (hv : s.landedVerdict = false) : (treeFailed s why).1.pinned = true := by
+  unfold treeFailed
+  split
+  · exact fallBack_pinned s why h hv
+  · exact gateFailed_pinned s h _
+
+private theorem cutAt_mutates (s : State) (m : Nat) : (cutAt s m).2.mutates = false := by
+  unfold cutAt
+  split <;> simp [regate, internal, Act.mutates, Act.writes, Writes.shared]
+
+private theorem cutAt_rebase (s : State) (m : Nat) (t b : Sha) : (cutAt s m).2 ≠ .rebase t b := by
+  unfold cutAt
+  split <;> simp [regate, internal]
+
+private theorem cutAt_pinned (s : State) (m : Nat) (h : s.pinned = true)
+    (hv : s.landedVerdict = false) : (cutAt s m).1.pinned = true := by
+  unfold cutAt
+  split
+  · exact regate_pinned s _ _ hv ‹_›
+  · exact internal_pinned s h _
+
+private theorem moveDone_mutates_gated (s : State) :
+    (moveDone s).2.mutates = true → (moveDone s).1.proven = true := by
+  unfold moveDone
+  split
+  · split
+    · intro _; simp_all [State.proven, State.gatesOk]
+    · simp [gateFailed, Act.mutates, Act.writes, Writes.shared]
+  · simp [succeed, Act.mutates, Act.writes, Writes.shared]
+
+private theorem moveDone_pinned (s : State) (h : s.pinned = true) (hs : s.atOrPastFF = true) :
+    (moveDone s).1.pinned = true := by
+  have hm := pinned_pastFF s h hs
+  have hv := pinned_open s h (by
+    intro hd; simp [State.atOrPastFF, hd, Stage.pastFF] at hs)
+  obtain ⟨-, -, -, hd, he⟩ := pinned_parts s h
+  unfold moveDone
+  split
+  · split
+    · simp_all [State.pinned, State.atOrPastFF, State.preTree, State.rebased, Stage.pastFF,
+        Stage.preTree, Stage.rebased, State.landedVerdict, State.landedIsGated]
+    · exact gateFailed_pinned s h _
+  · exact succeed_pinned s .landed h fun _ => hm
+
+private theorem moveDone_push (s : State) (t : Sha) (h : s.pinned = true) (hs : s.atOrPastFF = true)
+    (ha : (moveDone s).2 = .push t) :
+    t = (moveDone s).1.gatedTip ∧ t = (moveDone s).1.mainAt
+      ∧ (moveDone s).1.gatedAt t = true := by
+  have hm := pinned_pastFF s h hs
+  obtain ⟨-, -, -, hd, -⟩ := pinned_parts s h
+  unfold moveDone at ha ⊢
+  split at ha
+  · split at ha
+    · simp only [Act.push.injEq] at ha
+      subst ha
+      simp_all [State.landedIsGated, State.gatedAt]
+    · simp [gateFailed] at ha
+  · simp [succeed] at ha
+
+private theorem moveDone_quiet (s : State) (t b : Sha) (n : String) (o w : Sha) :
+    (moveDone s).2 ≠ .rebase t b ∧ (moveDone s).2 ≠ .fastForward t
+      ∧ (moveDone s).2 ≠ .moveBranch n o w := by
+  unfold moveDone
+  repeat' split
+  all_goals simp [gateFailed, succeed]
+
+/-- The move step either moves a member's branch, leaving the state as it is, or ends as the
+landing's end does. -/
+private theorem moveNext_cases (s : State) :
+    (∃ n o w, moveNext s = (s, .moveBranch n o w) ∧ s.canMove o w = true ∧ (n, o, w) ∈ s.moves)
+      ∨ moveNext s = moveDone s := by
+  unfold moveNext
+  split
+  · rename_i m o' n' hm
+    split
+    · exact .inl ⟨_, _, _, rfl, ‹_›, List.mem_of_getElem? hm⟩
+    · exact .inr rfl
+  · exact .inr rfl
+
+private theorem moveNext_mutates_gated (s : State) :
+    (moveNext s).2.mutates = true → (moveNext s).1.proven = true := by
+  rcases moveNext_cases s with ⟨n, o, w, he, hc, -⟩ | he <;> rw [he]
+  · intro _; exact State.canMove_proven s _ _ hc
+  · exact moveDone_mutates_gated s
+
+private theorem moveNext_pinned (s : State) (h : s.pinned = true) (hs : s.atOrPastFF = true) :
+    (moveNext s).1.pinned = true := by
+  rcases moveNext_cases s with ⟨n, o, w, he, -, -⟩ | he <;> rw [he]
+  · exact h
+  · exact moveDone_pinned s h hs
+
+private theorem moveNext_push (s : State) (t : Sha) (h : s.pinned = true) (hs : s.atOrPastFF = true)
+    (ha : (moveNext s).2 = .push t) :
+    t = (moveNext s).1.gatedTip ∧ t = (moveNext s).1.mainAt
+      ∧ (moveNext s).1.gatedAt t = true := by
+  rcases moveNext_cases s with ⟨n, o, w, he, -, -⟩ | he <;> rw [he] at ha ⊢
+  · simp at ha
+  · exact moveDone_push s t h hs ha
+
+private theorem moveNext_quiet (s : State) (t b : Sha) :
+    (moveNext s).2 ≠ .rebase t b ∧ (moveNext s).2 ≠ .fastForward t := by
+  rcases moveNext_cases s with ⟨n, o, w, he, -, -⟩ | he <;> rw [he]
+  · simp
+  · exact ⟨(moveDone_quiet s t b "" "" "").1, (moveDone_quiet s t b "" "" "").2.1⟩
+
+private theorem moveNext_move (s : State) (n : String) (old new : Sha)
+    (h : (moveNext s).2 = .moveBranch n old new) :
+    (moveNext s).1 = s ∧ s.canMove old new = true ∧ (n, old, new) ∈ s.moves := by
+  rcases moveNext_cases s with ⟨n', o, w, he, hc, hm⟩ | he <;> rw [he] at h ⊢
+  · simp only [Act.moveBranch.injEq] at h
+    obtain ⟨rfl, rfl, rfl⟩ := h
+    exact ⟨rfl, hc, hm⟩
+  · exact absurd h (moveDone_quiet s "" "" n old new).2.2
+
+private theorem record_stage (s : State) (g : GateSpec) (ok : Bool) (head : Sha) (clean : Bool) :
+    (record s g ok head clean).stage = s.stage := rfl
+
+/-- A step that leaves every field the pin reads as it was keeps it. -/
+private theorem pinned_congr (s s' : State) (h : s.pinned = true) (hs : s'.stage = s.stage)
+    (hv : s'.verdict = s.verdict) (hg : s'.gates = s.gates) (ht : s'.gatedTip = s.gatedTip)
+    (hm : s'.mainAt = s.mainAt) : s'.pinned = true := by
+  have e : s'.pinned = s.pinned := by
+    simp only [State.pinned, State.atOrPastFF, State.preTree, State.rebased, State.landedVerdict,
+      State.landedIsGated, hs, hv, hg, ht, hm]
+  rw [e]; exact h
+
+attribute [irreducible] refuse internal gateFailed landedNotPushed succeed afterGates nextGate
+  nextRider setStanding dropRider dropRebased stayAll regate fallBack treeFailed prefixTip cutAt
+  moveDone moveNext record State.pinned
+
+/-- The stages' simp set for a state a transition builds. -/
+local macro "stage_simp" : tactic =>
+  `(tactic| simp_all [State.atOrPastFF, State.preTree, State.rebased, Stage.pastFF,
+    Stage.preTree, Stage.rebased, State.landedVerdict, State.landedIsGated, record, State.gatedAt])
+
+/-- What the pin gives at a known stage: no gate before the rebase, a sha past it, and no landing
+claimed before `done`. -/
+private theorem pinned_facts {x : Stage} (s : State) (h : s.pinned = true) (hs : s.stage = x) :
+    (x.preTree = true → s.gates.isEmpty = true) ∧ (x.rebased = true → isSha s.gatedTip = true)
+      ∧ (x ≠ .done → s.landedVerdict = false) := by
+  obtain ⟨-, hb, hc, -, he⟩ := pinned_parts s h
+  subst hs
+  refine ⟨fun hp => by simpa [State.preTree, hp] using hc, fun hr => by simpa [State.rebased, hr] using he,
+    fun hd => ?_⟩
+  cases hl : s.landedVerdict <;> simp_all
+
+/-- A step that moves the stage alone among the fields the pin reads keeps it, where the stages
+allow. -/
+private theorem pinned_restage {x y : Stage} (s s' : State) (h : s.pinned = true)
+    (hs : s.stage = x) (hs' : s'.stage = y) (hv : s'.verdict = s.verdict) (hg : s'.gates = s.gates)
+    (ht : s'.gatedTip = s.gatedTip) (hm : s'.mainAt = s.mainAt) (hxy : Stage.allows x y = true) :
+    s'.pinned = true := by
+  obtain ⟨ha, -, -, hd, -⟩ := pinned_parts s h
+  obtain ⟨hc, he, hl⟩ := pinned_facts s h hs
+  simp only [Stage.allows, Bool.and_eq_true, Bool.or_eq_true, Bool.not_eq_true', bne_iff_ne,
+    ne_eq] at hxy
+  obtain ⟨⟨⟨⟨hx, hy⟩, hf⟩, hp⟩, hr⟩ := hxy
+  have hl' := hl hx
+  apply pinned_mid
+  · simpa [State.landedVerdict, hv] using hl'
+  · intro hff
+    have : s.atOrPastFF = true := by
+      simp only [State.atOrPastFF, hs', hs] at hff ⊢; cases hf <;> simp_all
+    have hg' := ha
+    simp only [State.landedVerdict] at hl'
+    simp_all [State.landedIsGated, State.landedVerdict]
+  · cases hp with
+    | inl hp => simp [State.preTree, hs', hp]
+    | inr hp => simp [hg, hc hp]
+  · simpa [hg, ht] using hd
+  · cases hr with
+    | inl hr => simp [State.rebased, hs', hr]
+    | inr hr => simp [ht, he hr]
+
+/-- A step to a stage before any gate that sets a new gated tip, a sha, keeps the pin. -/
+private theorem pinned_retip {x y : Stage} (s s' : State) (h : s.pinned = true) (hs : s.stage = x)
+    (hs' : s'.stage = y) (hv : s'.verdict = s.verdict) (hg : s'.gates = s.gates)
+    (ht : isSha s'.gatedTip = true) (hxy : (x.preTree && y.preTree && x != .done) = true) :
+    s'.pinned = true := by
+  obtain ⟨hc, -, hl⟩ := pinned_facts s h hs
+  simp only [Bool.and_eq_true, bne_iff_ne, ne_eq] at hxy
+  have hl' := hl hxy.2
+  have he := hc hxy.1.1
+  apply pinned_mid
+  · simpa [State.landedVerdict, hv] using hl'
+  · intro hf
+    have hp : y.pastFF = false := by cases y <;> simp_all [Stage.preTree, Stage.pastFF]
+    simp [State.atOrPastFF, hs', hp] at hf
+  · simp [hg, he]
+  · simp [hg, Array.isEmpty_iff.mp he]
+  · simp [ht]
+
+/-- Recording a gate at the gated tip, the tree clean, keeps the pin. -/
+private theorem pinned_record (s : State) (h : s.pinned = true) (hs : s.stage = .gating)
+    (g : GateSpec) (ok : Bool) (head : Sha) (clean : Bool) (hh : head = s.gatedTip)
+    (hc : clean = true) : (record s g ok head clean).pinned = true := by
+  obtain ⟨-, -, -, hd, -⟩ := pinned_parts s h
+  obtain ⟨-, he, hl⟩ := pinned_facts s h hs
+  apply pinned_mid
+  · simpa [record, State.landedVerdict] using hl (by simp)
+  · simp [record, State.atOrPastFF, hs, Stage.pastFF]
+  · simp [record, State.preTree, hs, Stage.preTree]
+  · simp_all [record]
+  · have e : isSha s.gatedTip = true := he rfl
+    simp [record, e]
+
+/-- The step that reads `main` back at the gated tip, a sha, keeps the pin. -/
+private theorem pinned_verified (s s' : State) (h : s.pinned = true) (hs : s.stage = .verifying)
+    (hs' : s'.stage = .ledgering) (hv : s'.verdict = s.verdict) (hg : s'.gates = s.gates)
+    (ht : s'.gatedTip = s.gatedTip) (hm : s'.mainAt = s.gatedTip) (hsha : isSha s.gatedTip = true) :
+    s'.pinned = true := by
+  obtain ⟨-, -, -, hd, -⟩ := pinned_parts s h
+  obtain ⟨-, -, hl⟩ := pinned_facts s h hs
+  apply pinned_mid
+  · simpa [State.landedVerdict, hv] using hl (by simp)
+  · intro _; simp [State.landedIsGated, hm, ht, hsha]
+  · simp [State.preTree, hs', Stage.preTree]
+  · simpa [hg, ht] using hd
+  · simp [ht, hsha]
+
 private theorem stepPre_no_mutate (s : State) (o : Obs) :
     ((stepPre s o).2).mutates = false := by
   unfold stepPre
-  repeat' first
-    | split
-    | (unfold nextGate)
-    | (unfold afterGates)
-    | (unfold nextRider)
-    | (unfold fallBack)
-    | (unfold regate)
-  all_goals
-    simp_all [Act.mutates, Act.writes, Writes.shared, refuse, internal, gateFailed, succeed]
-
-private theorem stepGate_no_mutate (s : State) (o : Obs) :
-    ((stepGate s o).2).mutates = false := by
-  unfold stepGate
-  repeat' first
-    | split
-    | (unfold nextGate)
-    | (unfold afterGates)
-    | (unfold nextRider)
-    | (unfold fallBack)
-    | (unfold regate)
-  all_goals simp_all [Act.mutates, Act.writes, Writes.shared, internal, gateFailed, succeed]
-
-private theorem stepGate_no_rebase (s : State) (o : Obs) (t b : Sha) :
-    (stepGate s o).2 ≠ .rebase t b := by
-  unfold stepGate
-  repeat' first
-    | split
-    | (unfold nextGate)
-    | (unfold afterGates)
-    | (unfold nextRider)
-    | (unfold fallBack)
-    | (unfold regate)
-  all_goals simp_all [internal, gateFailed, succeed]
-
-private theorem stepMerge_no_rebase (s : State) (o : Obs) (t b : Sha) :
-    (stepMerge s o).2 ≠ .rebase t b := by
-  unfold stepMerge
-  repeat' first
-    | split
-    | (unfold moveNext)
-    | (unfold moveDone)
-  all_goals simp_all [refuse, internal, gateFailed, landedNotPushed, succeed]
+  repeat' split
+  all_goals first
+    | exact nextRider_mutates _ _
+    | simp [refuse, internal, Act.mutates, Act.writes, Writes.shared]
 
 private theorem stepPre_rebase_exact (s : State) (o : Obs) (t b : Sha) :
     (stepPre s o).2 = .rebase t b →
@@ -939,125 +1377,266 @@ private theorem stepPre_rebase_exact (s : State) (o : Obs) (t b : Sha) :
         ∧ isSha t = true ∧ isSha b = true := by
   intro h
   unfold stepPre at h ⊢
-  repeat' first
-    | split at h
-    | (unfold nextGate at h)
-    | (unfold afterGates at h)
-    | (unfold nextRider at h)
-    | (unfold fallBack at h)
-    | (unfold regate at h)
-  all_goals simp_all [refuse, internal, gateFailed, succeed]
+  repeat' split at h
+  all_goals first
+    | exact absurd h (nextRider_rebase _ _ t b)
+    | simp_all [refuse, internal]
+
+private theorem stepPre_pinned (s : State) (o : Obs) :
+    s.pinned = true → (stepPre s o).1.pinned = true := by
+  intro h
+  unfold stepPre
+  repeat' split
+  all_goals first
+    | (simp only [refuse_pinned s h, internal_pinned s h]; done)
+    | (obtain ⟨hc, he, hl⟩ := pinned_facts s h (‹s.stage = .netting›)
+       exact nextRider_pinned _ _ (hl (by simp)) (hc rfl) (he rfl))
+    | exact pinned_retip s _ h ‹s.stage = .rebasing› rfl rfl rfl
+        (by simpa using ‹¬(!isSha _) = true›) rfl
+    | exact pinned_restage s _ h ‹_› rfl rfl rfl rfl rfl rfl
+
+private theorem stepGate_no_mutate (s : State) (o : Obs) :
+    ((stepGate s o).2).mutates = false := by
+  unfold stepGate
+  repeat' split
+  all_goals first
+    | exact nextGate_mutates _
+    | exact fallBack_mutates _ _
+    | exact treeFailed_mutates _ _
+    | simp [internal, gateFailed, Act.mutates, Act.writes, Writes.shared]
+
+private theorem stepGate_no_rebase (s : State) (o : Obs) (t b : Sha) :
+    (stepGate s o).2 ≠ .rebase t b := by
+  unfold stepGate
+  repeat' split
+  all_goals first
+    | exact nextGate_rebase _ t b
+    | exact fallBack_rebase _ _ t b
+    | exact treeFailed_rebase _ _ t b
+    | simp [internal, gateFailed]
+
+private theorem stepGate_pinned (s : State) (o : Obs) :
+    s.pinned = true → (stepGate s o).1.pinned = true := by
+  intro h
+  unfold stepGate
+  repeat' split
+  all_goals first
+    | (simp only [internal_pinned s h, gateFailed_pinned s h]; done)
+    | exact gateFailed_pinned _ (pinned_record s h ‹_› _ _ _ _ (by simp_all) (by simp_all)) _
+    | exact fallBack_pinned s _ h ((pinned_facts s h ‹_›).2.2 (by simp))
+    | exact treeFailed_pinned s _ h ((pinned_facts s h ‹_›).2.2 (by simp))
+    | exact nextGate_pinned _ (pinned_record s h ‹_› _ _ _ _ (by simp_all) (by simp_all))
+        ((record_stage s _ _ _ _).trans ‹_›)
+    | exact nextGate_pinned _ (pinned_congr s _ h rfl rfl rfl rfl rfl) ‹_›
+
+private theorem stepMerge_no_rebase (s : State) (o : Obs) (t b : Sha) :
+    (stepMerge s o).2 ≠ .rebase t b := by
+  unfold stepMerge
+  repeat' split
+  all_goals first
+    | exact (moveNext_quiet _ t b).1
+    | simp [refuse, internal, gateFailed, landedNotPushed, succeed]
 
 private theorem stepMerge_mutates_gated (s : State) (o : Obs) :
     ((stepMerge s o).2).mutates = true → (stepMerge s o).1.proven = true := by
   intro h
   unfold stepMerge at h ⊢
-  repeat' first
-    | split at h
-    | (unfold moveNext at h ⊢)
-    | (unfold moveDone at h ⊢)
+  repeat' split at h
   all_goals first
-    | (simp_all [Act.mutates, Act.writes, Writes.shared, refuse, internal, gateFailed,
-        landedNotPushed, succeed, State.proven, State.gatesOk]; done)
-    | simp_all [Act.mutates, Act.writes, Writes.shared, State.proven, State.gatesOk,
-        State.canMove]
+    | (simp only [refuse_snd, internal_snd, gateFailed_snd, landedNotPushed_snd, succeed_snd,
+        halt_quiet] at h; simp at h; done)
+    | (simp only [Act.mutates, Act.writes, Writes.shared, List.any_cons, List.any_nil,
+        Bool.or_false] at h; simp at h; done)
+    | (rw [ite_eq_left ‹_›]; exact ((Bool.and_eq_true _ _).mp ‹_›).1)
+    | exact moveNext_mutates_gated _ h
 
 private theorem stepMerge_move_owned (s : State) (o : Obs) (n : String) (old new : Sha) :
     (stepMerge s o).2 = .moveBranch n old new →
-      (Writes.branchCas old new).owned (stepMerge s o).1 = true := by
+      (n, old, new) ∈ (stepMerge s o).1.moves
+        ∧ (Writes.branchCas old new).owned (stepMerge s o).1 = true := by
   intro h
   unfold stepMerge at h ⊢
-  split at h
+  repeat' split at h
   all_goals first
-    | (simp [refuse, internal, gateFailed, landedNotPushed, succeed] at h; done)
-    | (repeat' split at h) <;> simp [refuse, internal, gateFailed, landedNotPushed, succeed] at h <;> done
     | (obtain ⟨he, hc, hm⟩ := moveNext_move _ n old new h
        rw [he]
+       refine ⟨hm, ?_⟩
        simp only [Writes.owned, hc, Bool.true_and, List.any_eq_true]
        exact ⟨_, hm, by simp⟩)
+    | simp_all [refuse, internal, gateFailed, landedNotPushed, succeed]
 
 private theorem stepMerge_ff_covers (s : State) (o : Obs) (t : Sha) :
     (stepMerge s o).2 = .fastForward t →
       (stepMerge s o).1.gateIdx = (stepMerge s o).1.plan.size := by
   intro h
   unfold stepMerge at h ⊢
-  repeat' first
-    | split at h
-    | (unfold moveNext at h ⊢)
-    | (unfold moveDone at h ⊢)
-  all_goals simp_all [refuse, internal, gateFailed, landedNotPushed, succeed]
+  repeat' split at h
+  all_goals first
+    | exact absurd h (moveNext_quiet _ t t).2
+    | simp_all [refuse, internal, gateFailed, landedNotPushed, succeed]
 
 private theorem stepMerge_ff_exact (s : State) (o : Obs) (t : Sha) (hp : s.pinned = true) :
     (stepMerge s o).2 = .fastForward t →
       t = (stepMerge s o).1.gatedTip ∧ (stepMerge s o).1.gatedAt t = true := by
   intro h
+  obtain ⟨-, -, -, hd, he⟩ := pinned_parts s hp
   unfold stepMerge at h ⊢
-  repeat' first
-    | split at h
-    | (unfold moveNext at h ⊢)
-    | (unfold moveDone at h ⊢)
-  all_goals
-    simp_all +decide [refuse, internal, gateFailed, landedNotPushed, succeed, State.pinned,
-      State.gatedAt, State.rebased, State.atOrPastFF, State.preTree, State.landedVerdict,
-      State.landedIsGated]
+  repeat' split at h
+  all_goals first
+    | exact absurd h (moveNext_quiet _ t t).2
+    | simp_all [refuse, internal, gateFailed, landedNotPushed, succeed, State.gatedAt,
+        State.rebased, Stage.rebased]
 
 private theorem stepMerge_push_exact (s : State) (o : Obs) (t : Sha) (hp : s.pinned = true) :
     (stepMerge s o).2 = .push t →
       t = (stepMerge s o).1.gatedTip ∧ t = (stepMerge s o).1.mainAt
         ∧ (stepMerge s o).1.gatedAt t = true := by
   intro h
+  obtain ⟨ha, hb, hc, hd, he⟩ := pinned_parts s hp
   unfold stepMerge at h ⊢
-  repeat' first
-    | split at h
-    | (unfold moveNext at h ⊢)
-    | (unfold moveDone at h ⊢)
-  all_goals
-    simp_all +decide [refuse, internal, gateFailed, landedNotPushed, succeed, State.pinned,
-      State.gatedAt, State.rebased, State.atOrPastFF, State.preTree, State.landedVerdict,
-      State.landedIsGated]
-
-private theorem stepPre_pinned (s : State) (o : Obs) :
-    s.pinned = true → (stepPre s o).1.pinned = true := by
-  intro _
-  unfold stepPre
-  repeat' first
-    | split
-    | (unfold nextGate)
-    | (unfold afterGates)
-    | (unfold nextRider)
-    | (unfold fallBack)
-    | (unfold regate)
-  all_goals
-    simp_all +decide [refuse, internal, gateFailed, succeed, State.pinned, State.atOrPastFF,
-      State.preTree, State.rebased, State.landedVerdict, State.landedIsGated]
-
-private theorem stepGate_pinned (s : State) (o : Obs) :
-    s.pinned = true → (stepGate s o).1.pinned = true := by
-  intro h
-  unfold stepGate
-  repeat' first
-    | split
-    | (unfold nextGate)
-    | (unfold afterGates)
-    | (unfold nextRider)
-    | (unfold fallBack)
-    | (unfold regate)
-  all_goals
-    simp_all +decide [internal, gateFailed, succeed, record, State.pinned, State.atOrPastFF,
-      State.preTree, State.rebased, State.landedVerdict, State.landedIsGated]
+  repeat' split at h
+  all_goals first
+    | (apply moveNext_push _ t _ (by stage_simp) h
+       simp_all [State.pinned, State.atOrPastFF, State.preTree, State.rebased, Stage.pastFF,
+         Stage.preTree, Stage.rebased, State.landedVerdict, State.landedIsGated])
+    | simp_all [refuse, internal, gateFailed, landedNotPushed, succeed]
 
 private theorem stepMerge_pinned (s : State) (o : Obs) :
     s.pinned = true → (stepMerge s o).1.pinned = true := by
   intro h
   unfold stepMerge
-  repeat' first
-    | split
-    | (unfold moveNext)
-    | (unfold moveDone)
-  all_goals
-    simp_all +decide [refuse, internal, gateFailed, landedNotPushed, succeed, State.pinned,
-      State.atOrPastFF, State.preTree, State.rebased, State.landedVerdict,
-      State.landedIsGated]
+  repeat' split
+  all_goals first
+    | (simp only [refuse_pinned s h, internal_pinned s h, gateFailed_pinned s h]; done)
+    | exact pinned_restage s _ h ‹_› rfl rfl rfl rfl rfl rfl
+    | exact landedNotPushed_pinned s _ h (by simp [State.atOrPastFF, ‹s.stage = _›, Stage.pastFF])
+    | exact succeed_pinned s _ h fun _ =>
+        pinned_pastFF s h (by simp [State.atOrPastFF, ‹s.stage = _›, Stage.pastFF])
+    | exact moveNext_pinned _ (pinned_restage s _ h ‹_› rfl rfl rfl rfl rfl rfl) rfl
+    | exact moveNext_pinned _ (pinned_congr s _ h rfl rfl rfl rfl rfl)
+        (by simp [State.atOrPastFF, ‹s.stage = _›, Stage.pastFF])
+    | exact pinned_verified s _ h ‹_› rfl rfl rfl rfl (by simp_all) (by simp_all)
+
+/-- At a rider stage the run has no gate yet, a sha for the train's tip and no landing. -/
+private theorem pinned_riding (s : State) (h : s.pinned = true) (hp : s.stage.preTree = true)
+    (hr : s.stage.rebased = true) :
+    s.gates.isEmpty = true ∧ isSha s.gatedTip = true ∧ s.landedVerdict = false := by
+  obtain ⟨hc, he, hl⟩ := pinned_facts s h rfl
+  exact ⟨hc hp, he hr, hl fun hd => by simp [hd, Stage.preTree] at hp⟩
+
+private theorem rideAbsent_pinned (s : State) (i : Nat) (m : BranchMiss) (h : s.pinned = true)
+    (hs : s.stage = .riderPre) : (rideAbsent s i m).1.pinned = true := by
+  obtain ⟨hc, he, hl⟩ := pinned_riding s h (by rw [hs]; rfl) (by rw [hs]; rfl)
+  unfold rideAbsent
+  repeat' split
+  all_goals first
+    | exact internal_pinned s h _
+    | exact dropRider_pinned s _ _ hl hc he
+
+private theorem rideStatus_pinned (s : State) (i a : Nat) (c : Bool) (t f g : Sha) (m : Bool)
+    (h : s.pinned = true) (hs : s.stage = .riderPre) :
+    (rideStatus s i a c t f g m).1.pinned = true := by
+  obtain ⟨hc, he, hl⟩ := pinned_riding s h (by rw [hs]; rfl) (by rw [hs]; rfl)
+  unfold rideStatus
+  repeat' split
+  all_goals first
+    | exact internal_pinned s h _
+    | exact dropRider_pinned s _ _ hl hc he
+    | exact pinned_restage s _ h hs rfl rfl rfl rfl rfl rfl
+
+private theorem rideUnread_pinned (s : State) (i : Nat) (w : String) (h : s.pinned = true)
+    (hp : s.stage.preTree = true) (hr : s.stage.rebased = true) :
+    (rideUnread s i w).1.pinned = true := by
+  obtain ⟨hc, he, hl⟩ := pinned_riding s h hp hr
+  unfold rideUnread
+  repeat' split
+  all_goals first
+    | exact internal_pinned s h _
+    | exact dropRebased_pinned s _ _ hl hc he
+    | exact dropRider_pinned s _ _ hl hc he
+
+private theorem rideRebased_pinned (s : State) (i : Nat) (t : Sha) (c : Bool) (h : s.pinned = true)
+    (hs : s.stage = .riderRebasing) : (rideRebased s i t c).1.pinned = true := by
+  unfold rideRebased
+  repeat' split
+  all_goals first
+    | exact internal_pinned s h _
+    | exact pinned_restage s _ h hs rfl rfl rfl rfl rfl rfl
+
+private theorem rideConflict_pinned (s : State) (i : Nat) (fs : Array String) (h : s.pinned = true)
+    (hs : s.stage = .riderRebasing) : (rideConflict s i fs).1.pinned = true := by
+  obtain ⟨hc, he, hl⟩ := pinned_riding s h (by rw [hs]; rfl) (by rw [hs]; rfl)
+  unfold rideConflict
+  repeat' split
+  all_goals first
+    | exact internal_pinned s h _
+    | exact dropRebased_pinned s _ _ hl hc he
+
+private theorem rideNet_pinned (s : State) (i : Nat) (b a : String) (h : s.pinned = true)
+    (hs : s.stage = .riderNetting) : (rideNet s i b a).1.pinned = true := by
+  obtain ⟨hc, he, hl⟩ := pinned_riding s h (by rw [hs]; rfl) (by rw [hs]; rfl)
+  unfold rideNet
+  repeat' split
+  all_goals first
+    | exact internal_pinned s h _
+    | exact dropRebased_pinned s _ _ hl hc he
+    | exact nextRider_pinned _ _ hl hc (by simpa using ‹¬(!isSha s.pendingTip) = true›)
+
+private theorem rideRetreed_pinned (s : State) (t : Sha) (c : Bool) (h : s.pinned = true)
+    (hs : s.stage = .retreeing) : (rideRetreed s t c).1.pinned = true := by
+  obtain ⟨hc, he, hl⟩ := pinned_riding s h (by rw [hs]; rfl) (by rw [hs]; rfl)
+  unfold rideRetreed
+  repeat' split
+  all_goals first
+    | exact internal_pinned s h _
+    | exact nextRider_pinned _ _ hl hc he
+
+private theorem rideRecheck_pinned (s : State) (ts : Array Sha) (h : s.pinned = true)
+    (hs : s.stage = .ridersRecheck) : (rideRecheck s ts).1.pinned = true := by
+  unfold rideRecheck
+  split
+  · exact pinned_restage s _ h hs rfl rfl rfl rfl rfl rfl
+  · exact cutAt_pinned s _ h ((pinned_facts s h hs).2.2 (by simp))
+
+private theorem stepRide_no_mutate (s : State) (o : Obs) :
+    ((stepRide s o).2).mutates = false := by
+  unfold stepRide rideAbsent rideStatus rideUnread rideRebased rideConflict rideNet rideRetreed
+    rideRecheck
+  repeat' split
+  all_goals first
+    | exact dropRider_mutates _ _ _
+    | exact dropRebased_mutates _ _ _
+    | exact nextRider_mutates _ _
+    | exact cutAt_mutates _ _
+    | simp [internal, Act.mutates, Act.writes, Writes.shared]
+
+private theorem stepRide_no_rebase (s : State) (o : Obs) (t b : Sha) :
+    (stepRide s o).2 ≠ .rebase t b := by
+  unfold stepRide rideAbsent rideStatus rideUnread rideRebased rideConflict rideNet rideRetreed
+    rideRecheck
+  repeat' split
+  all_goals first
+    | exact dropRider_rebase _ _ _ t b
+    | exact dropRebased_rebase _ _ _ t b
+    | exact nextRider_rebase _ _ t b
+    | exact cutAt_rebase _ _ t b
+    | simp [internal]
+
+private theorem stepRide_pinned (s : State) (o : Obs) :
+    s.pinned = true → (stepRide s o).1.pinned = true := by
+  intro h
+  unfold stepRide
+  split
+  · exact rideAbsent_pinned s _ _ h ‹_›
+  · exact rideStatus_pinned s _ _ _ _ _ _ _ h ‹_›
+  · exact rideRebased_pinned s _ _ _ h ‹_›
+  · exact rideConflict_pinned s _ _ h ‹_›
+  · exact rideNet_pinned s _ _ _ h ‹_›
+  · exact rideUnread_pinned s _ _ h (by rw [‹s.stage = _›]; rfl) (by rw [‹s.stage = _›]; rfl)
+  · exact rideUnread_pinned s _ _ h (by rw [‹s.stage = _›]; rfl) (by rw [‹s.stage = _›]; rfl)
+  · exact rideRetreed_pinned s _ _ h ‹_›
+  · exact rideRecheck_pinned s _ h ‹_›
+  · exact internal_pinned s h _
 
 private theorem stepPre_unheld (s : State) (a b : Nat) (c : Bool) (t f g : Sha) :
     stepPre s (.branchStatus a b c t f g false)
@@ -1079,51 +1658,6 @@ private theorem stepPre_barred (s : State) (a b : Nat) (t f g : Sha) (m : Bool)
           (stepPre s (.branchStatus a b true t f g m)).2
             = .halt .refused 2 (landedWhy s.name f g t)) := by
   cases hb : landedBars f m <;> simp [stepPre, hs, ha, ht, hb, refuse]
-
-private theorem stepRide_no_mutate (s : State) (o : Obs) :
-    ((stepRide s o).2).mutates = false := by
-  unfold stepRide
-  repeat' first
-    | split
-    | (unfold dropRider)
-    | (unfold dropRebased)
-    | (unfold cutAt)
-    | (unfold regate)
-    | (unfold nextRider)
-    | (unfold nextGate)
-    | (unfold afterGates)
-  all_goals simp_all [Act.mutates, Act.writes, Writes.shared, internal, gateFailed, succeed]
-
-private theorem stepRide_no_rebase (s : State) (o : Obs) (t b : Sha) :
-    (stepRide s o).2 ≠ .rebase t b := by
-  unfold stepRide
-  repeat' first
-    | split
-    | (unfold dropRider)
-    | (unfold dropRebased)
-    | (unfold cutAt)
-    | (unfold regate)
-    | (unfold nextRider)
-    | (unfold nextGate)
-    | (unfold afterGates)
-  all_goals simp_all [internal, gateFailed, succeed]
-
-private theorem stepRide_pinned (s : State) (o : Obs) :
-    s.pinned = true → (stepRide s o).1.pinned = true := by
-  intro h
-  unfold stepRide
-  repeat' first
-    | split
-    | (unfold dropRider)
-    | (unfold dropRebased)
-    | (unfold cutAt)
-    | (unfold regate)
-    | (unfold nextRider)
-    | (unfold nextGate)
-    | (unfold afterGates)
-  all_goals
-    simp_all +decide [internal, gateFailed, succeed, setStanding, State.pinned,
-      State.atOrPastFF, State.preTree, State.rebased, State.landedVerdict, State.landedIsGated]
 
 private theorem stepRide_unheld (s : State) (a b : Nat) (c : Bool) (t f g : Sha) (m : Bool) :
     stepRide s (.branchStatus a b c t f g m) = stepRide s (.branchStatus a b c t "" "" m) := by
@@ -1190,7 +1724,8 @@ private theorem phaseOf_push_exact (st : Stage) (s : State) (o : Obs) (t : Sha)
 private theorem phaseOf_move_owned (st : Stage) (s : State) (o : Obs) (n : String)
     (old new : Sha) :
     (phaseOf st s o).2 = .moveBranch n old new →
-      (Writes.branchCas old new).owned (phaseOf st s o).1 = true := by
+      (n, old, new) ∈ (phaseOf st s o).1.moves
+        ∧ (Writes.branchCas old new).owned (phaseOf st s o).1 = true := by
   intro h
   rcases phaseOf_cases st with e | e | e | e <;> rw [e] at h ⊢
   · have hn := stepPre_no_mutate s o
@@ -1244,8 +1779,7 @@ theorem step_pinned (s : State) (o : Obs) :
   intro h
   unfold step
   split
-  · simp_all +decide [internal, State.pinned, State.atOrPastFF, State.preTree, State.rebased,
-      State.landedVerdict, State.landedIsGated]
+  · exact internal_pinned s h _
   · exact phaseOf_pinned _ _ _ h
 
 private theorem pinned_landed (s : State) (h : s.pinned = true)
@@ -1307,11 +1841,11 @@ theorem step_push_exact (s : State) (o : Obs) (t : Sha) (h : s.pinned = true)
   · simp [internal] at ha
   · exact phaseOf_push_exact _ _ _ _ h ha
 
-/-- A branch is moved only to a landed member's commit in the train, from the tip this run read,
-on a proven run whose `main` read back at the gated tip. -/
+/-- A branch is moved only as a landed member's own move: its name, the tip this run read and its
+commit in the train, on a proven run whose `main` read back at the gated tip. -/
 theorem step_move_owned (s : State) (o : Obs) (n : String) (old new : Sha)
     (h : (step s o).2 = .moveBranch n old new) :
-    (Writes.branchCas old new).owned (step s o).1 = true := by
+    (n, old, new) ∈ (step s o).1.moves ∧ (Writes.branchCas old new).owned (step s o).1 = true := by
   unfold step at h ⊢
   split at h
   · simp [internal] at h
@@ -1345,7 +1879,7 @@ theorem step_writes_owned (s : State) (o : Obs) (h : s.pinned = true) :
   case moveBranch n old new =>
     simp only [Act.writes, List.mem_singleton] at hw
     subst hw
-    exact step_move_owned s o n old new ha
+    exact (step_move_owned s o n old new ha).2
   all_goals
     simp only [Act.writes, List.mem_cons, List.not_mem_nil, or_false] at hw
   all_goals
@@ -1406,10 +1940,10 @@ theorem trace_writes_owned (s : State) (os : List Obs) (h : s.pinned = true) :
     · exact step_writes_owned s o h
     · exact ih (step s o).1 (step_pinned s o h) p hp
 
-theorem init_pinned (name : String) (m : Mode) (plan : Array GateSpec) (p : Bool) :
-    (State.init name m plan p).pinned = true := by
-  simp [State.init, State.pinned, State.atOrPastFF, State.preTree, State.rebased,
-    State.landedVerdict]
+theorem init_pinned (name : String) (m : Mode) (plan : Array GateSpec) (p : Bool)
+    (riders : Array String) : (State.init name m plan p riders).pinned = true := by
+  simp [State.init, State.pinned, State.atOrPastFF, State.preTree, State.rebased, Stage.pastFF,
+    Stage.preTree, Stage.rebased, State.landedVerdict]
 
 theorem pushPlan_exact (lt lg mt t : Sha) (h : pushPlan lt lg mt = .ok t) :
     t = lt ∧ t = lg ∧ t = mt ∧ isSha t = true := by
@@ -1444,13 +1978,18 @@ structure Waiter where
 
 namespace Queue
 
-/-- Enter `w`: a name waiting under another live run stays that run's; one waiting under a dead
-run keeps its place, its arrival and its train and takes `w`'s run, process and fare; a name not
-waiting arrives last. -/
+/-- Whether `w` takes the place of `x`, a waiter under its name: `x` waits under `w`'s run, or
+under a dead one and rides no live train but under `w`'s fare. -/
+def takes (live : String → Bool) (x w : Waiter) : Bool :=
+  x.run == w.run || (!live x.run && (x.train.isEmpty || !live x.train || x.fare == w.fare))
+
+/-- Enter `w`: a name waiting under another live run, or riding a live train under another fare,
+stays as it is; one it takes keeps its place, its arrival and its train and takes `w`'s run,
+process and fare; a name not waiting arrives last. -/
 def enter (q : List Waiter) (live : String → Bool) (w : Waiter) : List Waiter :=
   if q.any (·.name == w.name) then
     q.map fun x =>
-      if x.name == w.name && (x.run == w.run || !live x.run) then
+      if x.name == w.name && takes live x w then
         { x with run := w.run, pid := w.pid, fare := w.fare }
       else x
   else q ++ [w]
@@ -1468,12 +2007,16 @@ def ahead (q : List Waiter) (name : String) : List Waiter := q.takeWhile (·.nam
 /-- Each waiter's name and arrival, in order. -/
 def arrivals (q : List Waiter) : List (String × String) := q.map fun x => (x.name, x.since)
 
-/-- The riders a head entered as `w` takes into its train: the live waiters behind it under its
-fare, in arrival order, `reach - 1` at most; none for a head that rides no train. -/
+/-- The live waiters behind `w`'s name, in arrival order. -/
+def behind (q : List Waiter) (live : String → Bool) (w : Waiter) : List Waiter :=
+  (((waiting q live).dropWhile (·.name != w.name)).drop 1).filter (live ·.run)
+
+/-- The riders a head entered as `w` takes into its train: the live waiters right behind it,
+in arrival order, up to the first under another fare and `reach - 1` at most; none for a head
+that rides no train. -/
 def riders (q : List Waiter) (live : String → Bool) (w : Waiter) (reach : Nat) : List String :=
   if w.fare.isEmpty then []
-  else ((((waiting q live).dropWhile (·.name != w.name)).drop 1).filter fun x =>
-    live x.run && x.fare == w.fare).take (reach - 1) |>.map (·.name)
+  else (((behind q live w).takeWhile (·.fare == w.fare)).take (reach - 1)).map (·.name)
 
 /-- Mark the named waiters as riding the train of run `train`. -/
 def board (q : List Waiter) (rs : List String) (train : String) : List Waiter :=
@@ -1499,7 +2042,8 @@ inductive Turn where
   /-- Refuse with exit 2, the place kept: `head`, live, arrived first, among a train's worth of
   live waiters, and this run's name stands at `place` among those waiting, counted from 1. -/
   | behind (place : Nat) (head : String)
-  /-- Refuse with exit 2: this run's name waits under another live run, `run`. -/
+  /-- Refuse with exit 2: this run's name waits under another live run, or rides its train under
+  another fare, `run`. -/
   | held (run : String)
   /-- Wait for the verdict of the live run `train`, whose train this run's name rides. -/
   | rides (train : String)
@@ -1516,7 +2060,9 @@ def Queue.turn (q : List Waiter) (live : String → Bool) (name run : String) (f
   match q.find? (·.name == name) with
   | none => .gone
   | some w =>
-    if w.run != run then (if live w.run then .held w.run else .gone)
+    if w.run != run then
+      (if live w.run then .held w.run
+       else if !w.train.isEmpty && live w.train then .held w.train else .gone)
     else if !w.train.isEmpty && live w.train then .rides w.train
     else match (Queue.ahead (Queue.waiting q live) name).filter (live ·.run) with
       | [] => if free then .take (Queue.riders q live w reach) else .wait
@@ -1570,13 +2116,13 @@ theorem turn_take_exact (q : List Waiter) (live : String → Bool) (name run : S
     split
     · rename_i hr
       have hne : ¬ w.run = run := by simpa using hr
-      have hnt : (if live w.run = true then Turn.held w.run else Turn.gone) ≠ .take rs := by
-        split <;> simp
-      simp only [hnt, false_iff]
-      rintro ⟨-, w', hw', hr', -⟩
-      rw [hw] at hw'
-      cases hw'
-      exact hne hr'
+      constructor
+      · intro h
+        split at h <;> (try split at h) <;> simp at h
+      · rintro ⟨-, w', hw', hr', -⟩
+        rw [hw] at hw'
+        cases hw'
+        exact absurd hr' hne
     · rename_i hr
       have hr' : w.run = run := by simpa using hr
       split
@@ -1641,7 +2187,7 @@ theorem turn_behind_mem (q : List Waiter) (live : String → Bool) (name run : S
   split at ht
   · simp at ht
   · split at ht
-    · split at ht <;> simp at ht
+    · split at ht <;> (try split at ht) <;> simp at ht
     · split at ht
       · simp at ht
       · split at ht
@@ -1669,39 +2215,42 @@ theorem turn_free_exact (q : List Waiter) (live : String → Bool) (name run : S
   unfold Queue.turn
   split
   · rfl
-  · split
-    · split <;> rfl
+  · rename_i w _
+    split
+    · cases live w.run <;> cases (!w.train.isEmpty && live w.train) <;> rfl
     · split
       · rfl
       · split
         · rfl
         · split <;> rfl
 
-/-- **A train's riders are live waiters that arrived after its head, under its fare, kept in
-arrival order, a train's worth at most.** -/
+/-- **A train's riders are the live waiters right behind its head, in arrival order, under its
+fare, a train's worth at most**: no live waiter between the head and a rider is passed over. -/
 theorem riders_mem (q : List Waiter) (live : String → Bool) (w : Waiter) (reach : Nat) :
     (Queue.riders q live w reach).length + 1 ≤ max reach 1
-      ∧ (Queue.riders q live w reach).Sublist
-          ((((Queue.waiting q live).dropWhile (·.name != w.name)).drop 1).map (·.name))
+      ∧ Queue.riders q live w reach <+: (Queue.behind q live w).map (·.name)
       ∧ ∀ n ∈ Queue.riders q live w reach, w.fare.isEmpty = false ∧
-          ∃ x ∈ ((Queue.waiting q live).dropWhile (·.name != w.name)).drop 1,
-            x.name = n ∧ live x.run = true ∧ x.fare = w.fare := by
+          ∃ x ∈ Queue.behind q live w, x.name = n ∧ live x.run = true ∧ x.fare = w.fare := by
   unfold Queue.riders
   split
-  · simp only [List.length_nil, Nat.zero_add, List.nil_sublist, List.not_mem_nil, false_implies,
+  · simp only [List.length_nil, Nat.zero_add, List.nil_prefix, List.not_mem_nil, false_implies,
       implies_true, and_true]
     omega
   · rename_i hf
     refine ⟨?_, ?_, ?_⟩
     · simp only [List.length_map, List.length_take]
       omega
-    · exact ((List.take_sublist _ _).trans List.filter_sublist).map _
+    · exact ((List.take_prefix _ _).trans (List.takeWhile_prefix _)).map _
     · intro n hn
       simp only [List.mem_map] at hn
       obtain ⟨x, hx, rfl⟩ := hn
-      have hx' := List.mem_of_mem_take hx
-      simp only [List.mem_filter, Bool.and_eq_true, beq_iff_eq] at hx'
-      exact ⟨by simpa using hf, x, hx'.1, rfl, hx'.2.1, hx'.2.2⟩
+      have hw := List.mem_of_mem_take hx
+      have hp := List.all_eq_true.mp (List.all_takeWhile (p := (·.fare == w.fare))) x hw
+      have hb := List.takeWhile_subset _ hw
+      have hl : live x.run = true := by
+        unfold Queue.behind at hb
+        exact (List.mem_filter.mp hb).2
+      exact ⟨by simpa using hf, x, hb, rfl, hl, by simpa using hp⟩
 
 /-- **Entering keeps every waiter's place and arrival, and puts a name not waiting last.** -/
 theorem enter_arrivals_exact (q : List Waiter) (live : String → Bool) (w : Waiter) :
@@ -1716,6 +2265,20 @@ theorem enter_arrivals_exact (q : List Waiter) (live : String → Bool) (w : Wai
     simp only [Function.comp]
     split <;> rfl
   · simp
+
+/-- **Entering leaves a waiter under another run as it was while that run lives, or while it
+rides a live train under another fare.** -/
+theorem enter_kept (q : List Waiter) (live : String → Bool) (w x : Waiter) (hx : x ∈ q)
+    (hr : x.run ≠ w.run)
+    (hl : live x.run = true ∨ (x.train.isEmpty = false ∧ live x.train = true ∧ x.fare ≠ w.fare)) :
+    x ∈ Queue.enter q live w := by
+  have hk : Queue.takes live x w = false := by
+    unfold Queue.takes
+    rcases hl with hl | ⟨he, ht, hf⟩ <;> simp_all
+  unfold Queue.enter
+  split
+  · exact List.mem_map.mpr ⟨x, hx, by simp [hk]⟩
+  · exact List.mem_append_left _ hx
 
 /-- Leaving keeps the others in their order. -/
 theorem leave_arrivals_exact (q : List Waiter) (n : String) :
