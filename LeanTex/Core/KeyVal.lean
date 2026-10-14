@@ -196,4 +196,245 @@ public theorem split_join_id (s : String) :
     String.toList_ofList, List.flatMap_id]
   simpa [List.map_map, Function.comp_def] using hf
 
+/-- One element's step through a scan for a separator outside groups: the depth after it, `none`
+once a separator stands at depth 0. -/
+private def cutStep {α : Type} (opens closes isSep : α → Bool) : Option Nat → α → Option Nat
+  | none, _ => none
+  | some d, x =>
+    if opens x then some (d + 1) else if closes x then some (d - 1)
+    else if d == 0 && isSep x then none else some d
+
+private theorem foldl_cutStep_none {α : Type} (opens closes isSep : α → Bool) :
+    ∀ l : List α, l.foldl (cutStep opens closes isSep) none = none
+  | [] => rfl
+  | _ :: rest => by
+    simp only [List.foldl, cutStep]
+    exact foldl_cutStep_none opens closes isSep rest
+
+private theorem splitGo_uncut {α : Type} (opens closes isSep : α → Bool) (l : List α)
+    (depth : Nat) (cur : Array α) (out : Array (Array α))
+    (h : (l.foldl (cutStep opens closes isSep) (some depth)).isSome) :
+    splitGo opens closes (fun | x :: _ => if isSep x then 1 else 0 | [] => 0) l depth cur out =
+      out.push (cur ++ l.toArray) := by
+  fun_induction splitGo opens closes (fun | x :: _ => if isSep x then 1 else 0 | [] => 0)
+    l depth cur out with
+  | case1 depth cur out => simp
+  | case2 x rest depth cur out hx ih =>
+    rw [ih (by simpa [List.foldl, cutStep, hx] using h)]
+    simp
+  | case3 x rest depth cur out hx hc ih =>
+    rw [ih (by simpa [List.foldl, cutStep, hx, hc] using h)]
+    simp
+  | case4 x rest depth cur out hx hc hsep ih =>
+    exfalso
+    simp only [Bool.and_eq_true, beq_iff_eq, gt_iff_lt] at hsep
+    obtain ⟨hd, hs⟩ := hsep
+    have hsx : isSep x = true := by
+      cases hxs : isSep x
+      · simp [hxs] at hs
+      · rfl
+    simp [List.foldl, cutStep, hx, hc, hd, hsx, foldl_cutStep_none] at h
+  | case5 x rest depth cur out hx hc hsep ih =>
+    have hstep : cutStep opens closes isSep (some depth) x = some depth := by
+      have : ¬(depth == 0 && isSep x) = true := by
+        intro h'
+        apply hsep
+        simp only [Bool.and_eq_true, beq_iff_eq] at h' ⊢
+        exact ⟨h'.1, by simp [h'.2]⟩
+      simp [cutStep, hx, hc, this]
+    rw [ih (by simpa [List.foldl, hstep] using h)]
+    simp
+
+private theorem splitGo_pieces_uncut {α : Type} (opens closes isSep : α → Bool) (l : List α)
+    (depth : Nat) (cur : Array α) (out : Array (Array α))
+    (hout : ∀ p ∈ out.toList, (p.toList.foldl (cutStep opens closes isSep) (some 0)).isSome)
+    (hcur : cur.toList.foldl (cutStep opens closes isSep) (some 0) = some depth) :
+    ∀ p ∈ (splitGo opens closes (fun | x :: _ => if isSep x then 1 else 0 | [] => 0)
+        l depth cur out).toList,
+      (p.toList.foldl (cutStep opens closes isSep) (some 0)).isSome := by
+  fun_induction splitGo opens closes (fun | x :: _ => if isSep x then 1 else 0 | [] => 0)
+    l depth cur out with
+  | case1 depth cur out =>
+    intro p hp
+    simp only [Array.toList_push, List.mem_append, List.mem_singleton] at hp
+    rcases hp with hp | rfl
+    · exact hout p hp
+    · simp [hcur]
+  | case2 x rest depth cur out hx ih =>
+    exact ih hout (by simp [List.foldl_append, hcur, cutStep, hx])
+  | case3 x rest depth cur out hx hc ih =>
+    exact ih hout (by simp [List.foldl_append, hcur, cutStep, hx, hc])
+  | case4 x rest depth cur out hx hc hsep ih =>
+    have hd : depth = 0 := by
+      simp only [Bool.and_eq_true, beq_iff_eq] at hsep
+      exact hsep.1
+    apply ih
+    · intro p hp
+      simp only [Array.toList_push, List.mem_append, List.mem_singleton] at hp
+      rcases hp with hp | rfl
+      · exact hout p hp
+      · simp [hcur]
+    · simp [hd]
+  | case5 x rest depth cur out hx hc hsep ih =>
+    apply ih hout
+    have : ¬(depth == 0 && isSep x) = true := by
+      intro h'
+      apply hsep
+      simp only [Bool.and_eq_true, beq_iff_eq] at h' ⊢
+      exact ⟨h'.1, by simp [h'.2]⟩
+    simp only [Array.toList_push, List.foldl_append, hcur, List.foldl_cons, List.foldl_nil,
+      cutStep, hx, hc, Bool.false_eq_true, ↓reduceIte, this]
+
+/-- A piece `splitTopAt` cuts holds no separator outside its groups: cut again, it is itself. -/
+public theorem splitTopAt_fixed_point {α : Type} (opens closes isSep : α → Bool) (xs : List α) :
+    ∀ p ∈ (splitTopAt opens closes isSep xs).toList,
+      splitTopAt opens closes isSep p.toList = #[p] := by
+  intro p hp
+  unfold splitTopAt splitTopWith at hp ⊢
+  have h := splitGo_pieces_uncut opens closes isSep xs 0 #[] #[] (by simp) (by simp) p hp
+  rw [splitGo_uncut opens closes isSep p.toList 0 #[] #[] h]
+  simp
+
+/-- Whether an atom is one `texAtoms` makes before the last: a control symbol, or a character other
+than a backslash. -/
+private def innerAtom : List Char → Bool
+  | [c, _] => c == '\\'
+  | [c] => c != '\\'
+  | _ => false
+
+/-- Whether atoms are as `texAtoms` makes them: inner atoms, the last possibly a lone backslash. -/
+private def atomsAsMade : List (List Char) → Bool
+  | [] => true
+  | [a] => innerAtom a || a == ['\\']
+  | a :: b :: rest => innerAtom a && atomsAsMade (b :: rest)
+
+private theorem atomsAsMade_append (l2 : List (List Char)) (h2 : atomsAsMade l2 = true) :
+    ∀ l1 : List (List Char), (∀ a ∈ l1, innerAtom a = true) → atomsAsMade (l1 ++ l2) = true
+  | [], _ => h2
+  | a :: l1, h1 => by
+    have ih := atomsAsMade_append l2 h2 l1 (fun b hb => h1 b (List.mem_cons_of_mem _ hb))
+    have ha := h1 a (by simp)
+    rw [List.cons_append]
+    cases hl : (l1 ++ l2) with
+    | nil => simp [atomsAsMade, ha]
+    | cons b r => rw [hl] at ih; simp [atomsAsMade, ha, ih]
+
+private theorem atomsAsMade_prefix :
+    ∀ l1 l2 : List (List Char), atomsAsMade (l1 ++ l2) = true → atomsAsMade l1 = true
+  | [], _, _ => rfl
+  | [a], l2, h => by
+    cases l2 with
+    | nil => simpa using h
+    | cons b r =>
+      simp only [List.cons_append, List.nil_append, atomsAsMade, Bool.and_eq_true] at h
+      simp [atomsAsMade, h.1]
+  | a :: b :: l1, l2, h => by
+    simp only [List.cons_append, atomsAsMade, Bool.and_eq_true] at h ⊢
+    exact ⟨h.1, atomsAsMade_prefix (b :: l1) l2 h.2⟩
+
+private theorem atomsAsMade_suffix :
+    ∀ l1 l2 : List (List Char), atomsAsMade (l1 ++ l2) = true → atomsAsMade l2 = true
+  | [], _, h => h
+  | a :: l1, l2, h => by
+    apply atomsAsMade_suffix l1 l2
+    rw [List.cons_append] at h
+    cases hl : (l1 ++ l2) with
+    | nil => rfl
+    | cons b r =>
+      rw [hl] at h
+      simp only [atomsAsMade, Bool.and_eq_true] at h
+      exact h.2
+
+private theorem atomsAsMade_intercalate (sep : List (List Char)) :
+    ∀ L : List (List (List Char)), atomsAsMade (sep.intercalate L) = true →
+      ∀ p ∈ L, atomsAsMade p = true
+  | [], _ => by simp
+  | [p], h => by simpa [List.intercalate_singleton] using h
+  | p :: q :: rest, h => by
+    rw [List.intercalate_cons_cons, List.append_assoc] at h
+    intro x hx
+    simp only [List.mem_cons] at hx
+    rcases hx with rfl | hx
+    · exact atomsAsMade_prefix _ _ h
+    · have h' := atomsAsMade_suffix _ _ (atomsAsMade_suffix _ _ h)
+      exact atomsAsMade_intercalate sep (q :: rest) h' x (by simpa using hx)
+
+private theorem texAtoms_asMade (cs : List Char) (acc : Array (List Char))
+    (h : ∀ a ∈ acc.toList, innerAtom a = true) : atomsAsMade (texAtoms cs acc).toList = true := by
+  fun_induction texAtoms cs acc with
+  | case1 acc => simpa using atomsAsMade_append [] rfl acc.toList h
+  | case2 c rest acc ih =>
+    apply ih
+    intro a ha
+    simp only [Array.toList_push, List.mem_append, List.mem_singleton] at ha
+    rcases ha with ha | rfl
+    · exact h a ha
+    · simp [innerAtom]
+  | case3 c rest acc hne ih =>
+    by_cases hc : c = '\\'
+    · subst hc
+      cases rest with
+      | cons d r => exact absurd (hne d r rfl rfl) id
+      | nil =>
+        simp only [texAtoms, Array.toList_push]
+        exact atomsAsMade_append [['\\']] (by simp [atomsAsMade, innerAtom]) acc.toList h
+    · apply ih
+      intro a ha
+      simp only [Array.toList_push, List.mem_append, List.mem_singleton] at ha
+      rcases ha with ha | rfl
+      · exact h a ha
+      · simp [innerAtom, hc]
+
+private theorem texAtoms_made (acc : Array (List Char)) :
+    ∀ as : List (List Char), atomsAsMade as = true → texAtoms as.flatten acc = acc ++ as.toArray
+  | [], _ => by simp [texAtoms]
+  | [a], h => by
+    match a, h with
+    | [c, d], h =>
+      simp only [atomsAsMade, innerAtom, Bool.or_eq_true, beq_iff_eq] at h
+      rcases h with rfl | h
+      · simp [texAtoms]
+      · simp at h
+    | [c], _ => simp [texAtoms]
+    | [], h => simp [atomsAsMade, innerAtom] at h
+    | _ :: _ :: _ :: _, h => simp [atomsAsMade, innerAtom] at h
+  | a :: b :: rest, h => by
+    simp only [atomsAsMade, Bool.and_eq_true] at h
+    obtain ⟨ha, hrest⟩ := h
+    match a, ha with
+    | [c, d], ha =>
+      simp only [innerAtom, beq_iff_eq] at ha
+      subst ha
+      have ih := texAtoms_made (acc.push ['\\', d]) (b :: rest) hrest
+      rw [List.flatten_cons] at ih
+      simp only [List.flatten_cons, List.cons_append, List.nil_append]
+      rw [texAtoms.eq_2, ih]
+      simp
+    | [c], ha =>
+      simp only [innerAtom, bne_iff_ne, ne_eq] at ha
+      have ih := texAtoms_made (acc.push [c]) (b :: rest) hrest
+      rw [List.flatten_cons] at ih
+      simp only [List.flatten_cons, List.cons_append, List.nil_append]
+      rw [texAtoms.eq_3 _ _ _ (fun _ _ hc _ => ha hc), ih]
+      simp
+    | [], ha => simp [innerAtom] at ha
+    | _ :: _ :: _ :: _, ha => simp [innerAtom] at ha
+
+/-- An item `split` cuts holds no comma outside braces: split again, it is itself. -/
+public theorem split_fixed_point (s : String) : ∀ p ∈ (split s).toList, split p = #[p] := by
+  intro p hp
+  simp only [split, splitTeX, Array.toList_map, List.mem_map] at hp
+  obtain ⟨piece, hpiece, rfl⟩ := hp
+  have hjoin := splitTopAt_join_id (· == ['{']) (· == ['}']) [','] (texAtoms s.toList #[]).toList
+  have hmade : atomsAsMade piece.toList = true := by
+    refine atomsAsMade_intercalate [[',']] _ ?_ piece.toList (List.mem_map_of_mem hpiece)
+    rw [hjoin]
+    exact texAtoms_asMade s.toList #[] (by simp)
+  have hre : texAtoms (piece.toList.flatMap id) #[] = piece := by
+    rw [List.flatMap_id, texAtoms_made #[] piece.toList hmade]
+    simp
+  simp only [split, splitTeX, String.toList_ofList, hre]
+  rw [splitTopAt_fixed_point _ _ _ _ piece hpiece]
+  simp
+
 end LeanTex.Core.KeyVal

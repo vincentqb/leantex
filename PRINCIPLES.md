@@ -65,8 +65,8 @@ format a producer writes and reads back round-trips its all-empty value (`script
 Generic structure, specific semantics: one traversal per tree type, with identity, fusion and
 census laws proved once; one command and environment registry with argument signatures; one
 key=value reader; one counter model; one cache protocol. A predicate projects the registry,
-never a hand-kept mirror (`Ir.mapInlines_text`, `Ir.mapBlocks_text`; owed (U92); owed (U20):
-`KeyVal.split_unbraced_exact`).
+never a hand-kept mirror (`Ir.mapInlines_text`, `Ir.mapBlocks_text`, `KeyVal.split_fixed_point`;
+owed (U92)).
 
 ## A canvas fits and a flow breaks
 
