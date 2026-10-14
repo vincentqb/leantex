@@ -541,6 +541,20 @@ def fallbackChecks (ref : IO.Ref (List String)) : IO Unit := do
     (osSub && ((osEmb.cmdsAt osE).map (·.size != 0)) == some true &&
       osEmb.cmdsAt osE == osSrc.cmdsAt osE &&
       osEmb.cmdsAt ((osans.gid 'x').getD 0) == some #[] && osProg.size < osans.data.size)
+  let sfntSum (b : ByteArray) : Nat := Id.run do
+    let mut s : UInt32 := 0
+    for i in [0:(b.size + 3) / 4] do
+      s := s + (Ink.u32 b (4 * i)).toUInt32
+    return s.toNat
+  t "subset: an embedded program sums to the sfnt magic, each table to its directory checksum"
+    (sfntSum osProg == 0xB1B0AFBA &&
+      (List.range (Ink.u16 osProg 4)).all fun k =>
+        let e := 12 + 16 * k
+        let o := Ink.u32 osProg (e + 8)
+        let d := osProg.extract o (o + Ink.u32 osProg (e + 12))
+        let d := if osProg.extract e (e + 4) == "head".toUTF8 then
+          (((d.set! 8 0).set! 9 0).set! 10 0).set! 11 0 else d
+        sfntSum d == Ink.u32 osProg (e + 4))
   let sspKeep := "Typesetting".toList.foldl (fun k c =>
     match ssp.gid c with | some g => k.set! g true | none => k)
     ((Array.replicate ssp.numGlyphs false).set! 0 true)

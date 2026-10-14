@@ -34,30 +34,13 @@ private def checksum (b : ByteArray) : Nat := Id.run do
 
 /-- An sfnt of these tables: sorted directory, 4-byte aligned tables with checksums, and
 `head.checkSumAdjustment` set. -/
-def assemble (flavor : Nat) (tables : Array (String × ByteArray)) : ByteArray := Id.run do
+def assemble (flavor : Nat) (tables : Array (String × ByteArray)) : ByteArray :=
   let ts := (tables.qsort fun a b => a.1 < b.1).map fun (tag, d) =>
     (tag, if tag == "head" && d.size ≥ 12 then setU32 d 8 0 else d)
-  let n := ts.size
-  let mut sel := 0
-  for k in [0:16] do
-    if 2 ^ (k + 1) ≤ n then sel := k + 1
-  let range := 2 ^ sel * 16
-  let mut out := pushU32 ByteArray.empty flavor
-  out := pushU16 (pushU16 (pushU16 (pushU16 out n) range) sel) (n * 16 - range)
-  let mut off := 12 + 16 * n
-  let mut headAt : Option Nat := none
-  for (tag, d) in ts do
-    out := out ++ tag.toUTF8
-    out := pushU32 (pushU32 (pushU32 out (checksum d)) off) d.size
-    if tag == "head" && d.size ≥ 12 then headAt := some off
-    off := off + (d.size + 3) / 4 * 4
-  for (_, d) in ts do
-    out := out ++ d
-    for _ in [0:(4 - d.size % 4) % 4] do
-      out := out.push 0
-  match headAt with
-  | some h => return setU32 out (h + 8) ((0xB1B0AFBA + 0x100000000 - checksum out) % 0x100000000)
-  | none => return out
+  let out := Font.assembleSfnt flavor (ts.map fun (tag, d) => (u32 tag.toUTF8 0, checksum d, d))
+  match (findTable out "head").filter (12 ≤ ·.length) with
+  | some h => setU32 out (h.offset + 8) ((0xB1B0AFBA + 0x100000000 - checksum out) % 0x100000000)
+  | none => out
 
 /-- A CFF DICT's integer operands with where each is spelled, `(operator, start, length, value)`. -/
 private def dictOperands (b : ByteArray) (s e : Nat) : Array (Nat × Nat × Nat × Int) := Id.run do
