@@ -625,6 +625,48 @@ def pdfOptionalContentChecks (ref : IO.Ref (List String)) : IO Unit := do
         drawn (ocPdf ocp "5 0 R" "<< /Type /OCMD /OCGs [7 0 R] /P /AllOff >>" marked #[]) == some 1)
 
 open Tests.PdfNative in
+/-- A transform after paint opens a sibling group, not a nested one: a long chain stays shallow and
+paints what its q-nested spelling paints. -/
+def pdfTransformChainChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let figure (ink : String) : ByteArray := syntheticPdf #[
+    "<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Contents 4 0 R \
+      /Resources << /ExtGState << /G << /ca 0.5 >> >> >> >>",
+    streamObj ink]
+  -- Under a clip and a fill alpha set before the chain, which every mark carries.
+  let ground := "0 0 50 50 re W n /G gs 0 0 1 rg "
+  let chain (n : Nat) : String :=
+    ground ++ String.join (List.replicate n "0 0 1 1 re f 1 0 0 1 2 1 cm ") ++ "0 0 1 1 re f"
+  let nested (n : Nat) : String :=
+    ground ++ String.join (List.replicate n "0 0 1 1 re f q 1 0 0 1 2 1 cm ") ++ "0 0 1 1 re f" ++
+      String.join (List.replicate n " Q")
+  let depth (nodes : Array (Gfx.Node Gfx.Run)) : Nat := Id.run do
+    let mut work : List (Gfx.Node Gfx.Run × Nat) := nodes.toList.map (·, 1)
+    let mut deepest := 0
+    for _ in [0:1000000] do
+      match work with
+      | [] => break
+      | (n, d) :: rest =>
+        work := rest
+        deepest := max deepest d
+        if let .group _ _ _ kids := n then work := kids.toList.map (·, d + 1) ++ work
+    return deepest
+  for n in [3, 40] do
+    match PdfGfx.importPage (figure (chain n)), PdfGfx.importPage (figure (nested n)) with
+    | .ok a, .ok b =>
+      t s!"transform chain: {n} transforms after paint paint what their q-nested spelling paints"
+        (a.figure.marks == b.figure.marks && a.figure.marks.size == n + 1 &&
+          a.figure.marks.all fun mk => match mk with
+            | .paint _ _ (some f) _ clips _ => clips.size == 1 && f.alpha != Gfx.Alpha.opaque
+            | _ => false)
+    | _, _ => t s!"transform chain: {n} transforms read" false
+  let long := (PdfGfx.importPage (figure (chain 20000))).toOption
+  let deepest := (long.map fun imp => depth imp.figure.nodes).getD 0
+  t s!"transform chain: twenty thousand transforms after paint stand {deepest} node levels deep"
+    (deepest ≤ 3 && long.any fun imp => imp.figure.marks.size == 20001)
+
+open Tests.PdfNative in
 /-- A reading reads a visibility expression fifty levels deep and nests a hundred objects, past
 each naming its loss, every reading cached at its own depth, and copies an object nested at any
 depth. -/

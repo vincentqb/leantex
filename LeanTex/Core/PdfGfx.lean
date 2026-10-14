@@ -437,13 +437,22 @@ private def St.emit (st : St) (n : Node Run) : St :=
     { st with frames := frames.push { top with kids := top.kids.push n } }
   | none => { st with frames }
 
+/-- A `cm` (§8.4.4): folded into this level's open frame while it holds no clip and paints opaque,
+past what it holds into a sibling it closes beside, else into a frame nested in it. -/
 private def St.concat (st : St) (m : Affine) : St :=
   if m = Affine.unit then st else
   let gs := { st.gs with ctm := st.gs.ctm.compose m }
   match st.frames.back? with
   | some top =>
-    if st.frames.size > st.levelBase && top.kids.isEmpty && top.clips.isEmpty then
-      { st with gs, frames := st.frames.pop.push { top with xf := top.xf.compose m } }
+    if st.frames.size > st.levelBase && top.clips.isEmpty && top.alpha == Alpha.opaque then
+      if top.kids.isEmpty then
+        { st with gs, frames := st.frames.pop.push { top with xf := top.xf.compose m } }
+      else
+        -- Frames are taken out of the state before closing, so the closing happens in place.
+        let frames := st.frames
+        let st := { st with frames := #[] }
+        let frames := (closeTo frames (frames.size - 1)).push { top with xf := top.xf.compose m, kids := #[] }
+        { st with gs, frames }
     else { st with gs, frames := st.frames.push { xf := m, clips := #[], alpha := Alpha.opaque, kids := #[] } }
   | none => st
 
