@@ -291,38 +291,59 @@ public def markedEntry (structTreeRoot : Nat) : Array (String × PdfRead.Obj) :=
 private def viewerEntry : Array (String × PdfRead.Obj) :=
   #[("ViewerPreferences", .dict #[("DisplayDocTitle", .bool true)])]
 
+/-- The label a copied figure's layers stand under: the file as its document names it, and its page
+as an RFC 8118 fragment when not the first. -/
+public def ocLabel (src : String) (page : Nat) : String :=
+  if page == 1 then src else s!"{src}#page={page}"
+
+/-- The copied figures' optional content (§8.11.4) as one default configuration: each figure's
+groups from its copied graph's base, those its own turns off, and each figure's groups under its
+label in the layers' order; nothing where no figure carries a configuration. -/
+public def ocEntries (figs : Array (String × Nat × PdfRead.FormOc)) :
+    Array (String × PdfRead.Obj) :=
+  let refsFrom (base : Nat) (ls : Array Nat) : Array PdfRead.Obj :=
+    ls.map fun l => .ref (base + l) 0
+  let order := figs.filterMap fun (label, base, oc) =>
+    if oc.groups.isEmpty then none
+    else some (PdfRead.Obj.arr (#[litObj (pdfTextString label)] ++ refsFrom base oc.groups))
+  if figs.isEmpty then #[] else
+  #[("OCProperties", .dict #[
+    ("OCGs", .arr (figs.flatMap fun (_, base, oc) => refsFrom base oc.groups)),
+    ("D", .dict #[("Name", litObj (pdfTextString "Default")), ("Order", .arr order),
+      ("OFF", .arr (figs.flatMap fun (_, base, oc) => refsFrom base oc.off))])])]
+
 /-- The document catalog (ISO 32000-2 §7.7.2) as a typed object. -/
 public def catalogDict (outlineRoot : Option Nat) (xmpId : Nat) (lang : Option String)
-    (structTreeRoot : Nat) : PdfRead.Obj :=
+    (structTreeRoot : Nat) (oc : Array (String × PdfRead.Obj)) : PdfRead.Obj :=
   .dict (#[("Type", .name "Catalog"), ("Pages", .ref 2 0)]
     ++ (match outlineRoot with
         | some r => #[("Outlines", PdfRead.Obj.ref r 0)]
         | none => #[])
     ++ #[("Metadata", .ref xmpId 0)]
-    ++ langEntry lang ++ markedEntry structTreeRoot ++ viewerEntry)
+    ++ langEntry lang ++ markedEntry structTreeRoot ++ viewerEntry ++ oc)
 
 public theorem pdf_lang_declared (outlineRoot : Option Nat) (xmpId : Nat) (lang : Option String)
-    (structTreeRoot : Nat) :
-    ∃ pre post, catalogDict outlineRoot xmpId lang structTreeRoot
+    (structTreeRoot : Nat) (oc : Array (String × PdfRead.Obj)) :
+    ∃ pre post, catalogDict outlineRoot xmpId lang structTreeRoot oc
       = .dict (pre ++ langEntry lang ++ post) :=
   ⟨#[("Type", .name "Catalog"), ("Pages", .ref 2 0)]
     ++ (match outlineRoot with
         | some r => #[("Outlines", PdfRead.Obj.ref r 0)]
         | none => #[])
     ++ #[("Metadata", .ref xmpId 0)],
-   markedEntry structTreeRoot ++ viewerEntry, by
+   markedEntry structTreeRoot ++ viewerEntry ++ oc, by
     simp only [catalogDict, Array.append_assoc]⟩
 
 public theorem pdf_marked_declared (outlineRoot : Option Nat) (xmpId : Nat) (lang : Option String)
-    (structTreeRoot : Nat) :
-    ∃ pre post, catalogDict outlineRoot xmpId lang structTreeRoot
+    (structTreeRoot : Nat) (oc : Array (String × PdfRead.Obj)) :
+    ∃ pre post, catalogDict outlineRoot xmpId lang structTreeRoot oc
       = .dict (pre ++ markedEntry structTreeRoot ++ post) :=
   ⟨#[("Type", .name "Catalog"), ("Pages", .ref 2 0)]
     ++ (match outlineRoot with
         | some r => #[("Outlines", PdfRead.Obj.ref r 0)]
         | none => #[])
     ++ #[("Metadata", .ref xmpId 0)] ++ langEntry lang,
-   viewerEntry, by
+   viewerEntry ++ oc, by
     simp only [catalogDict, Array.append_assoc]⟩
 
 private def remapOf (fs : FontSet) (keep : Array Nat) : Array Nat := Id.run do
@@ -1884,7 +1905,11 @@ public def prepare (geom : Geom) (fs : FontSet) (pages : Array PageOut)
   let t := objTable keep imgs usedImgs np nOut es.size (figDictCount figs) (figFormCount figs)
 
   let outlineRoot := if nOut == 0 then none else some t.outlineRootId
-  let catalog := catalogDict outlineRoot t.xmpId info.language t.structTreeRoot
+  let ocFigs : Array (String × Nat × PdfRead.FormOc) := usedImgs.zipIdx.filterMap fun (k, n) => do
+    let en ← imgs.get? k
+    let f ← (← en.info).form
+    return (ocLabel en.src f.val.page, ← (t.formBases[n]?).join, ← f.val.oc)
+  let catalog := catalogDict outlineRoot t.xmpId info.language t.structTreeRoot (ocEntries ocFigs)
   let pagesObj : PdfRead.Obj := .dict
     #[("Type", .name "Pages"),
       ("Kids", .arr ((Array.range np).map fun i => .ref (t.pageId i) 0)),

@@ -1195,6 +1195,108 @@ def pdfStreamLossChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "figures: a font whose CID-to-glyph map is the identity behind a reference names no loss"
     (!names (composite "/Identity") (.font "cidtogid-unreadable"))
 
+/-- How many of a raw RGB raster's pixels, Poppler's PPM, are exactly each colour. -/
+private def ppmCounts (file : System.FilePath) (colours : Array (UInt8 × UInt8 × UInt8)) :
+    IO (Array Nat) := do
+  let bytes ← IO.FS.readBinFile file
+  let mut start := 0
+  let mut lines := 0
+  for i in [:bytes.size] do
+    if bytes[i]?.getD 0 == 10 then lines := lines + 1
+    if lines == 3 then
+      start := i + 1
+      break
+  let mut counts := colours.map fun _ => 0
+  for i in [start:bytes.size:3] do
+    let px := (bytes[i]?.getD 0, bytes[i + 1]?.getD 0, bytes[i + 2]?.getD 0)
+    for (c, k) in colours.zipIdx do
+      if px == c then counts := counts.set! k (counts[k]?.getD 0 + 1)
+  return counts
+
+open Tests.PdfNative in
+/-- The PDF shows what the HTML faces show of figures with optional content: their configurations
+merged in the catalog, same-named groups apart under each figure's label, and a figure without one
+shown whole. -/
+def pdfOptionalContentShipChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let binary ← IO.FS.realPath ".lake/build/bin/leantex"
+  let font ← IO.FS.realPath "testdata/corpus/fonts/OpenSans-Regular.ttf"
+  let page (catalog res ink : String) (more : Array String) : ByteArray := syntheticPdf (#[
+    catalog, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    s!"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Contents 4 0 R /Resources {res} >>",
+    streamObj ink] ++ more)
+  let layers := page "<< /Type /Catalog /Pages 2 0 R /OCProperties << /OCGs [5 0 R 6 0 R] \
+      /D << /Order [5 0 R 6 0 R] /OFF [6 0 R] >> >> >>"
+    "<< /Properties << /p1 5 0 R /p2 6 0 R >> /XObject << /X1 7 0 R >> >>"
+    "/OC /p1 BDC 1 0 0 rg 0 0 50 100 re f EMC /OC /p2 BDC 0 0 1 rg 50 0 50 50 re f EMC /X1 Do"
+    #["<< /Type /OCG /Name (Layer 1) >>", "<< /Type /OCG /Name (Layer 2) >>",
+      streamObj "0 1 0 rg 50 50 50 50 re f" "/Type /XObject /Subtype /Form /BBox [0 0 100 100] \
+        /OC 6 0 R "]
+  let sameNames := page "<< /Type /Catalog /Pages 2 0 R /OCProperties << /OCGs [5 0 R 6 0 R] \
+      /D << /OFF [5 0 R] >> >> >>" "<< /Properties << /p1 5 0 R /p2 6 0 R >> >>"
+    "/OC /p1 BDC 1 0 1 rg 0 0 100 50 re f EMC /OC /p2 BDC 0 1 1 rg 0 50 100 50 re f EMC"
+    #["<< /Type /OCG /Name (Layer 1) >>", "<< /Type /OCG /Name (Layer 2) >>"]
+  let unconfigured := page "<< /Type /Catalog /Pages 2 0 R >>" "<< /Properties << /m1 5 0 R >> >>"
+    "/OC /m1 BDC 1 0.5 0 rg 0 0 100 100 re f EMC"
+    #["<< /Type /OCMD /OCGs [6 0 R] /P /AnyOn >>", "<< /Type /OCG /Name (Loose) >>"]
+  let colours : Array (UInt8 × UInt8 × UInt8) :=
+    #[(255, 0, 0), (0, 0, 255), (0, 255, 0), (255, 0, 255), (0, 255, 255), (255, 128, 0)]
+  let shown : Array Bool := #[true, false, false, false, true, true]
+  t "optional content: the copier keeps a configured figure's groups and drops an unconfigured one's"
+    ((PdfRead.readForm layers).toOption.any (fun f => f.val.oc.any fun oc =>
+        oc.groups.size == 2 && oc.off.size == 1 && oc.groups.contains (oc.off[0]?.getD 99)) &&
+      (PdfRead.readForm unconfigured).toOption.any fun f =>
+        f.val.oc.isNone && f.val.objects.size == 1)
+  IO.FS.withTempDir fun dir => do
+    IO.FS.writeBinFile (dir / "layers.pdf") layers
+    IO.FS.writeBinFile (dir / "same-names.pdf") sameNames
+    IO.FS.writeBinFile (dir / "unconfigured.pdf") unconfigured
+    IO.FS.writeFile (dir / "doc.tex") (String.intercalate "\n" [
+      "\\documentclass{article}", "\\begin{document}",
+      "\\includegraphics[width=100pt,alt={An invented layered figure}]{layers.pdf}", "",
+      "\\includegraphics[width=100pt,alt={A second layered figure}]{same-names.pdf}", "",
+      "\\includegraphics[width=100pt,alt={A figure with no configuration}]{unconfigured.pdf}",
+      "\\end{document}", ""])
+    for ext in ["pdf", "html"] do
+      let r ← IO.Process.output {
+        cmd := binary.toString, args := #[(dir / "doc.tex").toString, "-o", (dir / s!"doc.{ext}").toString]
+        env := #[("LEANTEX_FONT", some font.toString), ("XDG_CACHE_HOME", some (dir / "cache").toString)] }
+      t s!"optional content: the layered document builds its {ext} (exit {r.exitCode})" (r.exitCode == 0)
+    let raster ← IO.Process.output {
+      cmd := "pdftoppm", args := #["-r", "36", "-singlefile", (dir / "doc.pdf").toString,
+        (dir / "page").toString] }
+    t "optional content: the shipped PDF renders" (raster.exitCode == 0)
+    let counts ← if raster.exitCode == 0 then ppmCounts (dir / "page.ppm") colours
+      else pure (colours.map fun _ => 0)
+    t s!"optional content: the PDF shows exactly the layers each figure's configuration shows ({counts})"
+      ((counts.zip shown).all fun (n, on) => (n > 0) == on)
+    let html ← IO.FS.readFile (dir / "doc.html")
+    let faces : Array String := (((html.splitOn "data:image/svg+xml;base64,").drop 1).filterMap
+      fun rest => (Svg.unbase64 ((rest.splitOn "\"")[0]?.getD "")).bind String.fromUTF8?).toArray
+    let fill (c : UInt8 × UInt8 × UInt8) : String := (Ir.Color.css { r := c.1, g := c.2.1, b := c.2.2 })
+    let inFaces (c : UInt8 × UInt8 × UInt8) : Bool := faces.any fun f => hasStr f (fill c)
+    t s!"optional content: the HTML faces show exactly the same layers ({faces.size} faces)"
+      (faces.size == 3 && (colours.zip shown).all fun (c, on) => inFaces c == on)
+    let shipped := (PdfRead.Doc.ofBytes (← IO.FS.readBinFile (dir / "doc.pdf"))).toOption
+    let deref (o : PdfRead.Obj) : PdfRead.Obj :=
+      (shipped.bind fun d => (d.deref o).toOption).getD .null
+    let config := shipped.bind fun d => (d.get d.root).toOption.bind fun (cat, _) =>
+      (cat.get? "OCProperties").map deref
+    let order := match ((config.bind (·.get? "D")).map deref).bind (·.get? "Order") with
+      | some (.arr xs) => xs
+      | _ => #[]
+    let labelled : Array (String × Array String) := order.filterMap fun o => match deref o with
+      | .arr xs => match (xs[0]? : Option PdfRead.Obj) with
+        | some (.str l) => some ((String.fromUTF8? l).getD "", (xs.extract 1 xs.size).filterMap
+          fun g => match (deref g).get? "Name" with
+            | some (.str n) => String.fromUTF8? n
+            | _ => none)
+        | _ => none
+      | _ => none
+    t s!"optional content: each figure's same-named groups stand under its own label ({labelled})"
+      (labelled == #[("(layers.pdf)", #["(Layer 1)", "(Layer 2)"]),
+        ("(same-names.pdf)", #["(Layer 1)", "(Layer 2)"])])
+
 open Tests.PdfNative in
 /-- PDF figures ship native web faces with no converter on the machine, and `\figures{ convert =
 none }` never runs the converter. -/

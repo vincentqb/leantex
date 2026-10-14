@@ -20,7 +20,7 @@ vector figure model, every meaning it cannot give a keyed loss. -/
 namespace LeanTex.Core.PdfGfx
 
 open LeanTex.Core LeanTex.Core.Dim LeanTex.Core.Gfx
-open LeanTex.Core.PdfRead (Obj Doc)
+open LeanTex.Core.PdfRead (Obj Doc OcConfig)
 open LeanTex.Core.PdfContentLex (Tok)
 
 /-- A number operand exactly. -/
@@ -392,12 +392,6 @@ public structure St where
   compat : Nat
   store : Store
   deriving Inhabited
-
-/-- The optional content groups a document lists (§8.11.4.2), and those its default configuration
-turns off. -/
-public structure OcConfig where
-  listed : Std.HashSet Nat
-  off : Std.HashSet Nat
 
 /-- Where a stream is read: the document, its resources, its default space's figure matrix
 (§8.7.2), its optional content configuration, none without one, and the figure box. -/
@@ -2520,28 +2514,6 @@ public theorem words_exact (cx : Ctx) (e : Entered) (s : ByteArray) (st : St) :
       exact ⟨h1, h2⟩
     · simp
 
-/-- A document's optional content configuration (§8.11.4): the groups it lists as dictionaries, and
-of those the ones `OFF` names, or under a base state of `OFF` all but those `ON` names. -/
-private def ocConfig (doc : Doc) : Option OcConfig := do
-  let field (o : Obj) (k : String) : Option Obj := (doc.field o k).toOption.getD none
-  let refs (o : Option Obj) : Array Nat := match o with
-    | some (.arr xs) => xs.filterMap fun x => match x with
-      | .ref n _ => some n
-      | _ => none
-    | _ => #[]
-  let (cat, _) ← (doc.get doc.root).toOption
-  let ocp ← field cat "OCProperties"
-  let ocgs ← field ocp "OCGs"
-  let dflt ← field ocp "D"
-  guard (ocgs matches .arr _ && dflt matches .dict _)
-  let listed := Std.HashSet.ofArray ((refs (some ocgs)).filter fun n =>
-    (doc.deref (.ref n 0)).toOption matches some (.dict _))
-  let off := (refs (field dflt "OFF")).filter listed.contains
-  if field dflt "BaseState" == some (.name "OFF") then
-    let on := Std.HashSet.ofArray (refs (field dflt "ON"))
-    return { listed, off := Std.HashSet.ofArray ((listed.toArray.filter fun n => !on.contains n) ++ off) }
-  return { listed, off := Std.HashSet.ofArray off }
-
 /-- An imported page: its figure and its one-based page number. -/
 public structure Imported where
   figure : Figure Run
@@ -2559,7 +2531,7 @@ public def readStream (cx : Ctx) (content : ByteArray) : Figure Run :=
 
 private def figureOf (doc : Doc) (page : PdfRead.Page) (box : Box) (content : ByteArray) : Figure Run :=
   let res := ((page.resources.map fun r => (doc.deref r).toOption.getD .null)).getD (.dict #[])
-  readStream { doc, res, base := Affine.unit, oc := ocConfig doc, box } content
+  readStream { doc, res, base := Affine.unit, oc := doc.ocConfig, box } content
 
 /-- A PDF page as a figure in its page box, its losses named; a rotated page is refused. -/
 public def importPage (bytes : ByteArray) (sel : PdfRead.PageSelection := .first) :

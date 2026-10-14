@@ -1024,6 +1024,7 @@ def main (args : List String) : IO UInt32 := do
   inputOriginsChecks ref
   imageOriginsChecks ref
   nativeFigureBuildChecks ref
+  pdfOptionalContentShipChecks ref
   lexChecks ref
   braceEolChecks ref
   nfcChecks ref

@@ -5,6 +5,7 @@ public import LeanTex.Core.PdfReadProof
 public import LeanTex.Core.PdfStreamSpelling
 public import LeanTex.Core.PdfXref
 public import Std.Data.HashMap
+public import Std.Data.HashSet
 import LeanTex.Core.PdfFooter
 import LeanTex.Core.Binary
 import LeanTex.Core.Flate
@@ -1412,6 +1413,37 @@ public def trailer (b : ByteArray) : Except String Obj := do
   let x ← readXref b
   return x.trailer.getD (.dict #[])
 
+/-- A document's optional content configuration (§8.11.4): the groups it lists as dictionaries, in
+its order, and of those the ones its default configuration turns off. -/
+public structure OcConfig where
+  groups : Array Nat
+  listed : Std.HashSet Nat
+  off : Std.HashSet Nat
+
+/-- The default configuration (§8.11.4.3): the groups `/OCGs` lists as dictionaries, those its
+`/OFF` names, or under a base state of `OFF` all but those its `/ON` names; none without one. -/
+public def Doc.ocConfig (doc : Doc) : Option OcConfig := do
+  let field (o : Obj) (k : String) : Option Obj := (doc.field o k).toOption.getD none
+  let refs (o : Option Obj) : Array Nat := match o with
+    | some (.arr xs) => xs.filterMap fun x => match x with
+      | .ref n _ => some n
+      | _ => none
+    | _ => #[]
+  let (cat, _) ← (doc.get doc.root).toOption
+  let ocp ← field cat "OCProperties"
+  let ocgs ← field ocp "OCGs"
+  let dflt ← field ocp "D"
+  guard (ocgs matches .arr _ && dflt matches .dict _)
+  let groups := (refs (some ocgs)).foldl (fun acc n =>
+    if !acc.contains n && (doc.deref (.ref n 0)).toOption matches some (.dict _) then acc.push n
+    else acc) #[]
+  let listed := Std.HashSet.ofArray groups
+  let off := (refs (field dflt "OFF")).filter listed.contains
+  if field dflt "BaseState" == some (.name "OFF") then
+    let on := Std.HashSet.ofArray (refs (field dflt "ON"))
+    return { groups, listed, off := Std.HashSet.ofArray ((groups.filter fun n => !on.contains n) ++ off) }
+  return { groups, listed, off := Std.HashSet.ofArray off }
+
 /-- A page selected by its physical, one-based position in `/Kids` order. -/
 public inductive PageSelection where
   | first
@@ -1551,6 +1583,17 @@ private def nameOut (n : String) : String := Id.run do
       out := out ++ String.ofList ['#', Hex.spell true (v / 16), Hex.spell true v]
   return out
 
+/-- Whether a copy drops an optional content dictionary's meaning, writing it as an empty dictionary:
+a group the source's configuration does not list, or under no configuration any group or
+membership dictionary, none of which can decide visibility there. -/
+private def ocDropped (cfg : Option OcConfig) (num : Option Nat) : Obj → Bool
+  | .dict es =>
+    match ((es.find? (·.1 == "Type")).map (·.2) : Option Obj) with
+    | some (.name "OCG") => !(cfg.any fun c => num.any c.listed.contains)
+    | some (.name "OCMD") => cfg.isNone
+    | _ => false
+  | _ => false
+
 /-- What the serializer still owes, in order: an object between two texts, or a text. -/
 private inductive SerWork where
   | obj (before : String) (o : Obj) (after : String)
@@ -1635,9 +1678,18 @@ decreasing_by
 private def serObj (st : SerSt) (out : Array Chunk) (o : Obj) : SerSt × Array Chunk :=
   serWork st out [.obj "" o ""]
 
-/-- A selected page ready to embed: its box in sp, its decoded content, and its `/Resources`
-graph renumbered into `objects`' local space. -/
+/-- A copied page's optional content: the groups its source's configuration lists, in its order,
+and those it turns off, each the local index of its copied object. -/
+public structure FormOc where
+  groups : Array Nat
+  off : Array Nat
+  deriving Inhabited
+
+/-- A selected page ready to embed: its one-based number, its box in sp, its decoded content, its
+`/Resources` graph renumbered into `objects`' local space, and the optional content configuration
+its groups keep, none where its source has none. -/
 public structure Form where
+  page : Nat
   x0 : Sp
   y0 : Sp
   x1 : Sp
@@ -1645,6 +1697,7 @@ public structure Form where
   content : ByteArray
   resources : Array Chunk
   objects : Array XObjOut
+  oc : Option FormOc
   deriving Inhabited
 
 @[expose] public def Form.w (f : Form) : Sp := f.x1 - f.x0
@@ -1656,10 +1709,12 @@ private def chunksWf (n : Nat) (cs : Array Chunk) : Bool :=
     | .ref l => l < n
     | .bytes _ => true
 
-/-- Every hole in the copied graph points into `objects`. -/
+/-- Every hole in the copied graph, and every group the configuration names, points into
+`objects`. -/
 public def Form.wf (f : Form) : Bool :=
   chunksWf f.objects.size f.resources &&
-  f.objects.all (fun o => chunksWf f.objects.size o.chunks)
+  f.objects.all (fun o => chunksWf f.objects.size o.chunks) &&
+  f.oc.all fun oc => (oc.groups ++ oc.off).all (· < f.objects.size)
 
 public theorem resources_closed (f : { f : Form // f.wf }) : f.val.wf = true :=
   f.property
@@ -1711,8 +1766,9 @@ public def Doc.unrotated (r : Doc) (page : Page) : Except String Unit := do
   | rot => throw s!"PDF page /Rotate {rot} is not supported; re-export unrotated"
 
 private def formParts (b : ByteArray) (r : Doc) (page : Page) :
-    Except String (ByteArray × Array Chunk × Array XObjOut) := do
+    Except String (ByteArray × Array Chunk × Array XObjOut × Option FormOc) := do
   let content ← r.content page
+  let cfg := r.ocConfig
   let mut st : SerSt := {}
   let resObj := page.resources.getD (.dict #[])
   let (st1, resChunks) := serObj st #[] resObj
@@ -1727,6 +1783,7 @@ private def formParts (b : ByteArray) (r : Doc) (page : Page) :
     let (v, raw?) ← r.get orig
     match raw? with
     | none =>
+      let v := if ocDropped cfg (some orig) v then .dict #[] else v
       let (st', chunks) := serObj st #[] v
       st := st'
       objects := objects.push { chunks }
@@ -1741,7 +1798,10 @@ private def formParts (b : ByteArray) (r : Doc) (page : Page) :
       objects := objects.push { chunks, stream := some raw }
   if qi < st.queue.size then
     throw "malformed PDF: the resource graph is larger than the file"
-  return (content, resChunks, objects)
+  let oc := cfg.map fun c =>
+    let groups := c.groups.filterMap st.assign.get?
+    { groups, off := (c.groups.filter c.off.contains).filterMap st.assign.get? : FormOc }
+  return (content, resChunks, objects, oc)
 
 /-- A selected page of a PDF read into an embeddable form, page 1 by default; anything the reader
 cannot follow is a named error. -/
@@ -1750,8 +1810,8 @@ public def readForm (b : ByteArray) (page : PageSelection := .first) :
   let (r, selected) ← readPage b page
   let (x0, y0, x1, y1) ← r.pageBox selected.2
   r.unrotated selected.2
-  let (content, resources, objects) ← formParts b r selected.2
-  let f : Form := { x0, y0, x1, y1, content, resources, objects }
+  let (content, resources, objects, oc) ← formParts b r selected.2
+  let f : Form := { page := selected.1, x0, y0, x1, y1, content, resources, objects, oc }
   if h : f.wf then
     return ⟨f, h⟩
   else
@@ -1783,7 +1843,7 @@ public theorem readForm_box_exact (b : ByteArray) (sel : PageSelection) (f : { f
           cases hp : formParts b d sp.2 with
           | error e => simp [hp] at h
           | ok parts =>
-            obtain ⟨content, resources, objects⟩ := parts
+            obtain ⟨content, resources, objects, oc⟩ := parts
             simp only [hp] at h
             split at h
             · simp only [Except.ok.injEq] at h
