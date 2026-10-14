@@ -536,6 +536,10 @@ def overlayVisibleChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     ("Lead \\CMD<2>{" ++ arg ++ "} tail words.", "Lead " ++ arg ++ " tail words.")
   let lines := ArgRegion.lines "Above" "Below"
   let segs := ArgRegion.segs "Lead" "tail"
+  let titlePage (title : String) : String :=
+    "\\documentclass[aspectratio=169]{slides}\n\\theme{default}\n\\title{" ++ title ++
+      "}\n\\author{Some Writer}\n\\begin{document}\n\\begin{frame}\n\\titlepage\n\\end{frame}\n" ++
+      "\\end{document}"
   -- label, body spelling the command `\CMD`, the body with the argument bare, the argument's
   -- region, the frame's steps and the steps it hides on
   let cases : List (String × (String × String) × ArgRegion × Nat × List Nat) :=
@@ -580,15 +584,41 @@ def overlayVisibleChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
      ("an open selector", ("Lead \\CMD<2->{Hidden phrase} tail \\uncover<3>{words.}",
        "Lead Hidden phrase tail \\uncover<3>{words.}"), segs, 3, [1]),
      ("inside a cover", ("\\uncover<3>{Lead \\CMD<2>{Hidden} tail words.}",
-       "\\uncover<3>{Lead Hidden tail words.}"), segs, 3, [1, 3])]
+       "\\uncover<3>{Lead Hidden tail words.}"), segs, 3, [1, 3]),
+     ("an uncover inside", ("Lead \\CMD<2>{Outer \\uncover<3>{inner} words} tail words.",
+       "Lead Outer \\uncover<3>{inner} words tail words."), segs, 3, [1, 3]),
+     ("nested", ("Lead \\CMD<2>{Outer \\CMD<2>{inner} words} tail words.",
+       "Lead Outer inner words tail words."), segs, 2, [1]),
+     ("a block title", ("\\begin{block}{Lead \\CMD<2>{extra} tail}Block words.\\end{block}",
+       "\\begin{block}{Lead extra tail}Block words.\\end{block}"), segs, 2, [1]),
+     ("a figure caption",
+       ("\\begin{figure}\\includegraphics[width=1cm]{absent.png}\\caption{Lead \\CMD<2>{extra} tail}" ++
+         "\\end{figure}",
+        "\\begin{figure}\\includegraphics[width=1cm]{absent.png}\\caption{Lead extra tail}\\end{figure}"),
+       segs, 2, [1]),
+     ("a table caption",
+       ("\\begin{table}\\caption{Lead \\CMD<2>{extra} tail}\\begin{tabular}{ll} a & b \\\\ \\end{tabular}" ++
+         "\\end{table}",
+        "\\begin{table}\\caption{Lead extra tail}\\begin{tabular}{ll} a & b \\\\ \\end{tabular}\\end{table}"),
+       segs, 2, [1]),
+     ("a title page", (titlePage "Lead \\CMD<2>{extra} tail", titlePage "Lead extra tail"), segs, 2, [1]),
+     ("columns", own ("\\begin{columns}\\column{.4\\textwidth} Left words.\\column{.4\\textwidth} " ++
+       "Right words.\\end{columns}"), lines, 2, [1]),
+     ("inside a column",
+       ("\\begin{columns}\\column{.4\\textwidth} Lead \\CMD<2>{Hidden} tail.\\column{.4\\textwidth} " ++
+         "Right words.\\end{columns}",
+        "\\begin{columns}\\column{.4\\textwidth} Lead Hidden tail.\\column{.4\\textwidth} " ++
+         "Right words.\\end{columns}"), segs, 2, [1]),
+     ("inside a block", ("\\begin{block}{Block title}Lead \\CMD<2>{Hidden} tail words.\\end{block}",
+       "\\begin{block}{Block title}Lead Hidden tail words.\\end{block}"), segs, 2, [1])]
   for (faces, fonts) in faceSets do
   for (label, (body, bare), region, steps, hiddenAt) in cases do
     let label := "visible, " ++ label ++ faces
-    let spell (cmd : String) : String :=
-      deck169Frame (("\\" ++ cmd).intercalate (body.splitOn "\\CMD"))
+    let doc (b : String) : String := if b.startsWith "\\documentclass" then b else deck169Frame b
+    let spell (cmd : String) : String := doc (("\\" ++ cmd).intercalate (body.splitOn "\\CMD"))
     let vis := (fittedOf fonts (elabStr (spell "visible")).1).out
     let plus := (fittedOf fonts (elabStr (spell "onslide+")).1).out
-    let shown := (fittedOf fonts (elabStr (deck169Frame bare)).1).out
+    let shown := (fittedOf fonts (elabStr (doc bare)).1).out
     t (label ++ ": one page per step") (vis.pages.size == steps)
     t (label ++ ": onslide+ ships visible's pages")
       (plus.pages.map pageMarks == vis.pages.map pageMarks &&
@@ -617,5 +647,17 @@ def overlayVisibleChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
             (pageMarks h == pageMarks s && h.inks.map inkMark == s.inks.map inkMark &&
               h.links == s.links)
       | _, _ => t (label ++ s!": step {k} ships") false
+  -- Outside a frame no step is set, so the argument shows, as beamer's article mode sets it.
+  let body := "Lead \\CMD<2>{shown phrase} tail words.\n\n\\CMD<2>{A whole paragraph.}\n\nClosing words."
+  let bare := "Lead shown phrase tail words.\n\nA whole paragraph.\n\nClosing words."
+  for (faces, fonts) in faceSets do
+    let article (b : String) : Layout.Out :=
+      (fittedOf fonts (elabStr (dvDoc "\\usepackage{beamerarticle}\n" b)).1).out
+    let shown := article bare
+    for cmd in ["visible", "onslide+"] do
+      let out := article (("\\" ++ cmd).intercalate (body.splitOn "\\CMD"))
+      t s!"visible, outside a frame{faces}: {cmd} ships the page showing its argument"
+        (out.pages.map pageMarks == shown.pages.map pageMarks &&
+          out.pages.map (·.links) == shown.pages.map (·.links))
 
 end Tests

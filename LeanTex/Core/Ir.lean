@@ -2394,6 +2394,10 @@ public def numberedSteps (steps : Nat) (p : Nat → Bool) : List Nat :=
 public def selectedSteps (s : OverlaySpec) (steps : Nat) : List Nat :=
   numberedSteps steps s.selects
 
+/-- Whether invisible content hides on step `k` of a `steps`-step frame: off its steps, and never
+outside a frame, where no step is set. -/
+public def hidesAt (s : OverlaySpec) (k steps : Nat) : Bool := s.invisible && 0 < steps && s.pending k
+
 /-- The numbered steps on which one arm of an alternation shows, in page-order storage. -/
 public def pageSteps (s : OverlaySpec) (steps : Nat) (first : Bool) : List Nat :=
   numberedSteps steps fun k => s.showsFirst k == first
@@ -10694,16 +10698,6 @@ public theorem altShowsFirst_side (n : Nat) (last : Option Nat) (k : Nat) :
     altShowsFirst n last k = (stepPending n last k == altFirstWhenPending n last) := by
   simp [altShowsFirst, altFirstWhenPending, OverlaySpec.showsFirst]
 
-/-- One inline's alternation steps, for `maxAltStepInlines`. -/
-private def altStepLeaf (acc : Nat) : Inline → Nat
-  | .altSteps spec _ _ => max acc spec.maxStep
-  | _ => acc
-
-/-- The steps the alternations in `xs` reach, nested ones included: what a
-title or a caption gives its frame. -/
--- conserves: none — reads selectors through the generic inline fold.
-public def maxAltStepInlines (xs : Array Inline) : Nat := foldInlines altStepLeaf 1 xs
-
 mutual
 
 /-- The last step a frame's body reaches; a frame nested below another block keeps one page. -/
@@ -10722,8 +10716,8 @@ private def maxStepBlock : Block → Nat
   | .ragged _ body => maxStepBlockList body.toList
   | .quote body => maxStepBlockList body.toList
   | .abstract body => maxStepBlockList body.toList
-  | .titled _ title body => max (maxAltStepInlines title) (maxStepBlockList body.toList)
-  | .disclosure _ _ body => maxStepBlockList body.toList
+  | .titled _ title body => max (maxStepInlines title) (maxStepBlockList body.toList)
+  | .disclosure summary _ body => max (maxStepInlines summary) (maxStepBlockList body.toList)
   | .role _ body => maxStepBlockList body.toList
   | .link _ body => maxStepBlockList body.toList
   | .spaced _ body => maxStepBlockList body.toList
@@ -10734,8 +10728,8 @@ private def maxStepBlock : Block → Nat
       (max (maxStepBlockList firstPage.toList) (maxStepBlockList otherPage.toList))
   | .only _ body => maxStepBlockList body.toList
   | .nav _ body => maxStepBlockList body.toList
-  | .section _ _ _ _ => 1
-  | .verbatim _ _ _ => 1
+  | .section _ _ _ title => maxStepInlines title
+  | .verbatim _ _ spec => (spec.caption.map fun (_, cap) => maxStepInlines cap).getD 1
   | .algorithm _ _ lines => maxStepAlgLines lines.toList
   | .note _ => 1
   | .frame _ _ _ _ _ => 1
@@ -10747,7 +10741,7 @@ private def maxStepBlock : Block → Nat
   | .rule _ _ _ => 1
   | .picture _ => 1
   | .table _ _ _ rows _ _ => maxStepTableRows rows.toList
-  | .float _ _ _ body cap => max (maxAltStepInlines cap) (maxStepBlockList body.toList)
+  | .float _ _ _ body cap => max (maxStepInlines cap) (maxStepBlockList body.toList)
   | .bibliography _ _ _ => 1
 
 private def maxStepTableRows : List (Array (Array Inline)) → Nat
@@ -10901,7 +10895,7 @@ private def dimBlock (cover : Cover) (k : Nat) (pending : Bool) : Block → Bloc
       (dimBlockList cover k pending #[] otherPage.toList)
   | .only targets body => .only targets (dimBlockList cover k pending #[] body.toList)
   | .nav spec body => .nav spec (dimBlockList cover k pending #[] body.toList)
-  | .section l st num title => .section l st num title
+  | .section l st num title => .section l st num (dimInlineList cover k pending #[] title.toList)
   | .verbatim c s spec =>
     .verbatim (if pending then some cover.plain else c) s
       { spec with caption := spec.caption.map fun (n, cap) =>
@@ -12188,7 +12182,11 @@ private theorem dimBlock_text (cover : Cover) (k : Nat) (pending : Bool) (b : Bl
     | some p =>
       simp [blockTextOne, ListingSpec.capText, hc, plainText, plainTextList,
         dimInlineList_text cover k pending p.2.toList #[]]
-  | .section _ _ _ _ | .note _ | .frame _ _ _ _ _ | .framefoot _
+  | .section l st num title =>
+    rw [dimBlock]
+    simp [blockTextOne, plainText, dimInlineList_text cover k pending title.toList #[],
+      plainTextList]
+  | .note _ | .frame _ _ _ _ _ | .framefoot _
   | .setPalette _ | .setTokens _
   | .rule _ _ _ | .picture _ | .pagebreak | .bibliography _ _ _ => rfl
   | .algorithm n sm lines =>

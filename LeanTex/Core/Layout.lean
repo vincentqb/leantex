@@ -1297,6 +1297,8 @@ private structure FlattenSt where
   ctr : LeafCtr := .fixed .unattributed
   /-- The overlay step this page sets, which `Ir.altShowsFirst` reads; 1 on unstepped pages. -/
   step : Nat := 1
+  /-- The steps of the frame this page sets (`Ir.frameSteps`); zero outside a frame. -/
+  steps : Nat := 0
 
 private def warn (st : FlattenSt) (code : DiagCode) (msg : String)
     (help : Option String := none) : FlattenSt :=
@@ -1373,7 +1375,7 @@ private def applyStyle (ladder : List (String × Nat)) (sty : TextStyle) :
   | .series w => { sty with weight := w }
   -- NFSS shapes are exclusive (fntguide §2.2): upright clears both.
   | .upright => { sty with italic := false, smallcaps := false }
-  -- `\normalfont` resets family, series and shape (fntguide §4.2), never size or colour.
+  -- `\normalfont` resets family, series and shape, never size or colour, as lualatex sets it.
   | .normal => { sty with slot := 0, weight := .m, italic := false, smallcaps := false }
   | .lang tag => { sty with lang := some tag }
   | .size n => match ladder.lookup n with
@@ -1484,7 +1486,8 @@ OpenType math face; `leantex fonts` lists families") with warnedMath := true }
   -- The PDF dims pending content by recolouring copies before layout, and hides invisible content here.
   | .onSteps spec body =>
     flatten mathOk noteOk st
-      (if spec.invisible && spec.pending st.step then { sty with hidden := true } else sty) body
+      (if spec.hidesAt st.step st.steps then { sty with hidden := true } else sty)
+      body
   | .altSteps spec firstPage otherPage =>
     -- The counter steps over the group the page does not ink, so the inked one keeps `Struct`'s id.
     if spec.showsFirst st.step then
@@ -4307,12 +4310,13 @@ private def itemsOfInlines (pats : Option Hyphen.Patterns) (size xHeight : Sp)
     (cache : Std.HashMap String (Array Nat)) (ctr : LeafCtr) (imgs : Image.Store := {})
     (textW : Sp := 0) (textH : Sp := 0) (noteOk : Bool := false)
     (ladder : List (String × Nat) := Ir.sizeScale) (step : Nat := 1)
-    (roleMetrics : List (String × (Sp × Option Sp)) := []) :
+    (roleMetrics : List (String × (Sp × Option Sp)) := []) (steps : Nat := 0) :
     Array Item × Array Diag × Std.HashMap String (Array Nat) ×
       Std.HashMap Nat Sp × Array (Nat × Nat × Array Inline × Option Nat) ×
       Std.HashMap Nat Sp × Array (String × Nat) × Array (Nat × Span) := Id.run do
   let st := flatten (fs.mathFont?.isSome) noteOk
-    { ladder := ladder, roleMetrics := roleMetrics, ctr := ctr, step := step } baseStyle xs
+    { ladder := ladder, roleMetrics := roleMetrics, ctr := ctr, step := step, steps := steps }
+    baseStyle xs
   let acc := itemsOfToks pats size xHeight fs imgs textW textH { cache := cache } st.toks
   let mut items := acc.items
   -- A paragraph ending in a forced break takes no second one, or the breaker sets no lines.
@@ -4549,11 +4553,12 @@ private theorem itemsOfInlines_plainNotes (pats : Option Hyphen.Patterns) (size 
     (fs : FontSet) (baseStyle : TextStyle) (xs : Array Inline)
     (cache : Std.HashMap String (Array Nat)) (ctr : LeafCtr) (imgs : Image.Store)
     (textW textH : Sp) (noteOk : Bool) (ladder : List (String × Nat)) (step : Nat)
-    (roleMetrics : List (String × (Sp × Option Sp))) (hp : PlainInlines xs) :
+    (roleMetrics : List (String × (Sp × Option Sp))) (steps : Nat) (hp : PlainInlines xs) :
     (itemsOfInlines pats size xHeight fs baseStyle xs cache ctr imgs textW textH
-      noteOk ladder step roleMetrics).2.2.2.2.1 = #[] := by
+      noteOk ladder step roleMetrics steps).2.2.2.2.1 = #[] := by
   have ht := flatten_plain fs.mathFont?.isSome noteOk
-    { ladder := ladder, roleMetrics := roleMetrics, ctr := ctr, step := step }
+    { ladder := ladder, roleMetrics := roleMetrics, ctr := ctr, step := step,
+      steps := steps }
     baseStyle xs hp (by simp)
   have hn := itemsOfToks_plainNotes pats size xHeight fs imgs textW textH
     { cache := cache } _ ht
@@ -4901,16 +4906,18 @@ private theorem itemsOfToks_flatten_none_chars (size xHeight : Sp)
     (cache : Std.HashMap String (Array Nat)) (ctr : LeafCtr)
     (baseStyle : TextStyle) (xs : Array Inline) (noteOk : Bool)
     (ladder : List (String × Nat)) (step : Nat)
-    (roleMetrics : List (String × (Sp × Option Sp)))
+    (roleMetrics : List (String × (Sp × Option Sp))) (steps : Nat)
     (hp : PlainInlines xs) (hs : baseStyle.smallcaps = false) :
     let st := flatten (fs.mathFont?.isSome) noteOk
-      { ladder := ladder, roleMetrics := roleMetrics, ctr := ctr, step := step } baseStyle xs
+      { ladder := ladder, roleMetrics := roleMetrics, ctr := ctr, step := step,
+        steps := steps } baseStyle xs
     let out := itemsOfToks none size xHeight fs imgs textW textH { cache := cache } st.toks
     out.Clean → inkCensus out.chars = inkCensus (Ir.plainText xs).toList := by
   dsimp only
   intro hc
   have ht := flatten_textSource (fs.mathFont?.isSome) noteOk
-    { ladder := ladder, roleMetrics := roleMetrics, ctr := ctr, step := step }
+    { ladder := ladder, roleMetrics := roleMetrics, ctr := ctr, step := step,
+      steps := steps }
     baseStyle xs hp hs (by simp)
   have hitems := (itemsOfToks_none_chars size xHeight fs imgs textW textH
     { cache := cache } _ ht hc).2
@@ -4954,12 +4961,13 @@ private theorem itemsOfInlines_noLoss_clean
     (size xHeight : Sp) (fs : FontSet) (baseStyle : TextStyle) (xs : Array Inline)
     (cache : Std.HashMap String (Array Nat)) (ctr : LeafCtr) (imgs : Image.Store)
     (textW textH : Sp) (noteOk : Bool) (ladder : List (String × Nat)) (step : Nat)
-    (roleMetrics : List (String × (Sp × Option Sp))) :
+    (roleMetrics : List (String × (Sp × Option Sp))) (steps : Nat) :
     let st := flatten (fs.mathFont?.isSome) noteOk
-      { ladder := ladder, roleMetrics := roleMetrics, ctr := ctr, step := step } baseStyle xs
+      { ladder := ladder, roleMetrics := roleMetrics, ctr := ctr, step := step,
+        steps := steps } baseStyle xs
     let out := itemsOfToks none size xHeight fs imgs textW textH { cache := cache } st.toks
     (∀ d ∈ (itemsOfInlines none size xHeight fs baseStyle xs cache ctr imgs textW textH
-      noteOk ladder step roleMetrics).2.1, d.code ≠ "E0405" ∧ d.code ≠ "W0009") → out.Clean := by
+      noteOk ladder step roleMetrics steps).2.1, d.code ≠ "E0405" ∧ d.code ≠ "W0009") → out.Clean := by
   dsimp only
   simp only [itemsOfInlines, bind, pure, Id.run]
   split
@@ -4977,12 +4985,13 @@ private theorem itemsOfInlines_itemChars
     (fs : FontSet) (baseStyle : TextStyle) (xs : Array Inline)
     (cache : Std.HashMap String (Array Nat)) (ctr : LeafCtr) (imgs : Image.Store)
     (textW textH : Sp) (noteOk : Bool) (ladder : List (String × Nat)) (step : Nat)
-    (roleMetrics : List (String × (Sp × Option Sp))) :
+    (roleMetrics : List (String × (Sp × Option Sp))) (steps : Nat) :
     (itemsOfInlines pats size xHeight fs baseStyle xs cache ctr imgs textW textH
-      noteOk ladder step roleMetrics).1.toList.flatMap Item.boxChars =
+      noteOk ladder step roleMetrics steps).1.toList.flatMap Item.boxChars =
     (itemsOfToks pats size xHeight fs imgs textW textH { cache := cache }
       (flatten fs.mathFont?.isSome noteOk
-        { ladder := ladder, roleMetrics := roleMetrics, ctr := ctr, step := step }
+        { ladder := ladder, roleMetrics := roleMetrics, ctr := ctr, step := step,
+          steps := steps }
         baseStyle xs).toks).chars := by
   simp only [itemsOfInlines, bind, pure, Id.run]
   split
@@ -4994,19 +5003,19 @@ private theorem itemsOfInlines_none_chars (size xHeight : Sp)
     (cache : Std.HashMap String (Array Nat)) (ctr : LeafCtr)
     (baseStyle : TextStyle) (xs : Array Inline) (noteOk : Bool)
     (ladder : List (String × Nat)) (step : Nat)
-    (roleMetrics : List (String × (Sp × Option Sp)))
+    (roleMetrics : List (String × (Sp × Option Sp))) (steps : Nat)
     (hp : PlainInlines xs) (hs : baseStyle.smallcaps = false)
     (hd : ∀ d ∈ (itemsOfInlines none size xHeight fs baseStyle xs cache ctr imgs
-      textW textH noteOk ladder step roleMetrics).2.1,
+      textW textH noteOk ladder step roleMetrics steps).2.1,
       d.code ≠ "E0405" ∧ d.code ≠ "W0009") :
     inkCensus ((itemsOfInlines none size xHeight fs baseStyle xs cache ctr imgs
-      textW textH noteOk ladder step roleMetrics).1.toList.flatMap Item.boxChars) =
+      textW textH noteOk ladder step roleMetrics steps).1.toList.flatMap Item.boxChars) =
       inkCensus (Ir.plainText xs).toList := by
   rw [itemsOfInlines_itemChars]
   exact itemsOfToks_flatten_none_chars size xHeight fs imgs textW textH cache ctr
-    baseStyle xs noteOk ladder step roleMetrics hp hs
+    baseStyle xs noteOk ladder step roleMetrics steps hp hs
     (itemsOfInlines_noLoss_clean size xHeight fs baseStyle xs cache ctr imgs
-      textW textH noteOk ladder step roleMetrics hd)
+      textW textH noteOk ladder step roleMetrics steps hd)
 
 public def canBreakAt (items : Array Item) (j : Nat) : Bool :=
   match items[j]? with
@@ -9113,6 +9122,8 @@ public structure Spacing.Context where
   private headline : Option Ir.Headline := none
   /-- The overlay step the page being collected is (`Ir.altShowsFirst`); 1 with no overlay. -/
   private step : Nat := 1
+  /-- The steps of the frame being collected (`Ir.frameSteps`); zero outside a frame. -/
+  private steps : Nat := 0
   /-- Inside a declared title slot (`Ir.TitleSlot`),
   whose part templates already wrap what they set. -/
   private slotTitle : Bool := false
@@ -9248,7 +9259,7 @@ private def Spacing.Context.shown (r : Rd) (c : Ir.Color) : Ir.Color :=
 
 /-- Whether an overlay carrier's content is invisible on the step being collected. -/
 private def Spacing.Context.hides (r : Rd) (spec : Ir.OverlaySpec) : Bool :=
-  spec.invisible && spec.pending r.step
+  spec.hidesAt r.step r.steps
 
 /-- The context a pending overlay step's content is collected in: covered unless it hides. -/
 private def Spacing.Context.pendingStep (r : Rd) (spec : Ir.OverlaySpec) : Rd :=
@@ -9524,6 +9535,7 @@ private def collectPara (r : Rd) (a : Acc)
     itemsOfInlines r.pats size r.xHeight r.fs baseStyle inlines a.hyphCache
       (LeafCtr.of leaf span inlines) r.imgs measure r.geom.textHeight (noteOk := true)
       (ladder := r.geom.scale) (step := r.step) (roleMetrics := r.roleMetrics)
+      (steps := r.steps)
   -- Listings break only at declared whitespace, never at an identifier's hyphen.
   let items := if literalLines then items.map (fun item => match item with
     | .pen w cost flag f c gs =>
@@ -9556,7 +9568,7 @@ private def collectPara (r : Rd) (a : Acc)
       let (nitems0, nds, cache2, _, _, _, nanchors, nsources) :=
         itemsOfInlines r.pats r.geom.fontSize r.xHeight r.fs noteStyle body
           cache (LeafCtr.of noteLeaf (Struct.leafCountInlines body) body) r.imgs r.geom.textWidth
-          r.geom.textHeight (ladder := r.geom.scale) (step := r.step)
+          r.geom.textHeight (ladder := r.geom.scale) (step := r.step) (steps := r.steps)
       ds := ds ++ nds
       cache := cache2
       let (mk, miss) :=
@@ -9607,7 +9619,7 @@ private def collectPara (r : Rd) (a : Acc)
       let (mi, mds, cache, _, _) :=
         itemsOfInlines r.pats size r.xHeight r.fs { color := a.fg, ground := a.ground } m cache
           (.fixed .label) r.imgs measure r.geom.textHeight (ladder := r.geom.scale)
-          (step := r.step)
+          (step := r.step) (steps := r.steps)
       let (segs, w, _, _) := setLine mi (lineStart mi 0) (mi.size - 1) r.geom.textWidth false
       (some (segs, w), ds ++ mds, cache)
     | none => (none, ds, cache)
@@ -9733,7 +9745,7 @@ private def Spacing.Pending.naturalWidth (a : Acc) (r : Rd) (size : Sp) (content
   let (items, _, cache, _) :=
     itemsOfInlines r.pats size r.xHeight r.fs { color := a.fg, ground := a.ground } content
       a.hyphCache (.fixed .unattributed) r.imgs avail r.geom.textHeight
-      (ladder := r.geom.scale) (step := r.step)
+      (ladder := r.geom.scale) (step := r.step) (steps := r.steps)
   (itemsNaturalWidth items, { a with hyphCache := cache })
 
 /-- Whether a forced break stands among the items before their
@@ -10133,7 +10145,7 @@ private def collectTable (r : Rd) (a0 : Acc)
         itemsOfInlines cellPats size r.xHeight r.fs
           { color := a.fg, ground := a.ground, cellCode := web } cell cache
           (.fixed .unattributed) r.imgs r.geom.textWidth r.geom.textHeight
-          (ladder := r.geom.scale) (step := r.step)
+          (ladder := r.geom.scale) (step := r.step) (steps := r.steps)
       cache := c
       rowNats := rowNats.push (itemsLinesWidth items)
       rowBreaks := rowBreaks.push (itemsBreak items)
@@ -10923,7 +10935,7 @@ private def collectEquation (r : Rd) (a : Acc) (num : Array Inline) (content : A
   let (citems, ds1, cache1, extras, _, cOffsets, cAnchors, cSources) :=
     itemsOfInlines r.pats r.geom.fontSize r.xHeight r.fs baseStyle content
       a.hyphCache (LeafCtr.of leaf (Struct.leafCountInlines content) content) r.imgs target
-      r.geom.textHeight (ladder := r.geom.scale) (step := r.step)
+      r.geom.textHeight (ladder := r.geom.scale) (step := r.step) (steps := r.steps)
   let numLeaf := leaf.map (· + Struct.leafCountInlines content)
   let (nitems, ds2, cache2, _, _, nOffsets, nAnchors, nSources) :=
     itemsOfInlines r.pats r.geom.fontSize r.xHeight r.fs baseStyle num
@@ -14291,17 +14303,17 @@ private theorem itemsOfInlines_none_prose (size xHeight : Sp)
     (fs : FontSet) (baseStyle : TextStyle) (xs : Array Inline)
     (cache : Std.HashMap String (Array Nat)) (ctr : LeafCtr) (imgs : Image.Store)
     (textW textH : Sp) (noteOk : Bool) (ladder : List (String × Nat)) (step : Nat)
-    (roleMetrics : List (String × (Sp × Option Sp)))
+    (roleMetrics : List (String × (Sp × Option Sp))) (steps : Nat)
     (hp : PlainInlines xs) (hs : baseStyle.smallcaps = false) :
     ∃ items, ItemsProse items ∧
       (itemsOfInlines none size xHeight fs baseStyle xs cache ctr imgs textW textH
-        noteOk ladder step roleMetrics).1 = paraItems items := by
+        noteOk ladder step roleMetrics steps).1 = paraItems items := by
   let st := flatten fs.mathFont?.isSome noteOk
-    (FlattenSt.mk #[] false #[] ladder roleMetrics ctr step) baseStyle xs
+    (FlattenSt.mk #[] false #[] ladder roleMetrics ctr step steps) baseStyle xs
   let acc := itemsOfToks none size xHeight fs imgs textW textH
     (ItemsAcc.mk #[] #[] #[] #[] #[] #[] #[] #[] {} {} cache 0 0) (FlattenSt.toks st)
   have ht := flatten_textSource fs.mathFont?.isSome noteOk
-    (FlattenSt.mk #[] false #[] ladder roleMetrics ctr step)
+    (FlattenSt.mk #[] false #[] ladder roleMetrics ctr step steps)
     baseStyle xs hp hs (by simp)
   have ha : ItemsProse (ItemsAcc.items acc) :=
     itemsOfToks_none_prose _ _ _ _ _ _ _ _ ht itemsProse_empty
@@ -18244,13 +18256,13 @@ private def collectDocBlock (rd : Rd) (doc : Doc) (cover : Ir.Cover)
                       frameSource := (frameSpans.find? (·.1 == i)).map (·.2) }
     let steps := Ir.frameSteps blk
     if steps ≤ 1 then
-      acc := collectBlock rd acc
+      acc := collectBlock { rd with steps := steps } acc
         (.frame title standout valign breakable
           (Ir.unwrapItemSteps (Ir.dimBlocks cover 1 body))) 0
     else
       let leafStart := acc.leafNext
       for k in [1:steps + 1] do
-        acc := collectBlock { rd with step := k }
+        acc := collectBlock { rd with step := k, steps := steps }
           { acc with leafNext := leafStart, frameOrigin := some ⟨i, k⟩ }
           (.frame title standout valign breakable
             (Ir.unwrapItemSteps (Ir.dimBlocks cover k body))) 0
@@ -18331,9 +18343,9 @@ private theorem itemsOfInlines_empty (pats : Option Hyphen.Patterns) (size xHeig
     (fs : FontSet) (baseStyle : TextStyle) (cache : Std.HashMap String (Array Nat))
     (ctr : LeafCtr) (imgs : Image.Store) (textW textH : Sp) (noteOk : Bool)
     (ladder : List (String × Nat)) (step : Nat)
-    (roleMetrics : List (String × (Sp × Option Sp))) :
+    (roleMetrics : List (String × (Sp × Option Sp))) (steps : Nat) :
     (itemsOfInlines pats size xHeight fs baseStyle #[] cache ctr imgs textW textH
-      noteOk ladder step roleMetrics).1 =
+      noteOk ladder step roleMetrics steps).1 =
       #[.glue { fil := true, parfill := true },
         .pen 0 forcedCost false 0 Ir.Color.black #[]] := by
   rfl
@@ -18364,7 +18376,7 @@ private theorem sourceBound_collectPara {n : Nat} (r : Rd) (a : Acc)
        urlBreaks := r.surface == .markdown } : TextStyle)
     xs (a.flushGap r).hyphCache (LeafCtr.of leaf span xs) r.imgs
     ((a.flushGap r).measure.getD r.geom.textWidth - (indent + 0))
-    r.geom.textHeight true r.geom.scale r.step r.roleMetrics hp
+    r.geom.textHeight true r.geom.scale r.step r.roleMetrics r.steps hp
   simp only [collectPara, show (Color.black == Color.black) = true from rfl,
     BEq.rfl, Bool.false_eq_true, ↓reduceIte]
   rw [hn]
@@ -18381,7 +18393,7 @@ private theorem sourceBound_collectPara {n : Nat} (r : Rd) (a : Acc)
           ({ color := (a.flushGap r).fg, ground := (a.flushGap r).ground } : TextStyle)
           #[] (a.flushGap r).hyphCache (LeafCtr.of leaf span #[]) r.imgs
           ((a.flushGap r).measure.getD r.geom.textWidth - (indent + 0))
-          r.geom.textHeight true r.geom.scale r.step r.roleMetrics).1, it.NoGlyph := by
+          r.geom.textHeight true r.geom.scale r.step r.roleMetrics r.steps).1, it.NoGlyph := by
         rw [itemsOfInlines_empty]
         intro it hi
         simp only [Array.mem_def, List.mem_cons, List.not_mem_nil, or_false] at hi
@@ -18626,15 +18638,15 @@ private theorem collectPara_prose (r : Rd) (a : Acc)
   have hn := itemsOfInlines_plainNotes (Spacing.Context.pats r) (Spacing.Context.geom r).fontSize (Spacing.Context.xHeight r) (Spacing.Context.fs r)
     style xs (Spacing.Pending.hyphCache (a.flushGap r)) (LeafCtr.of leaf span xs) (Spacing.Context.imgs r)
     ((Spacing.Pending.measure (a.flushGap r)).getD (Spacing.Context.geom r).textWidth - (indent + 0))
-    (Spacing.Context.geom r).textHeight true (Spacing.Context.geom r).scale (Spacing.Context.step r) (Spacing.Context.roleMetrics r) hp
+    (Spacing.Context.geom r).textHeight true (Spacing.Context.geom r).scale (Spacing.Context.step r) (Spacing.Context.roleMetrics r) (Spacing.Context.steps r) hp
   have hi := itemsOfInlines_none_prose (Spacing.Context.geom r).fontSize (Spacing.Context.xHeight r) (Spacing.Context.fs r)
     style xs (Spacing.Pending.hyphCache (a.flushGap r)) (LeafCtr.of leaf span xs) (Spacing.Context.imgs r)
     ((Spacing.Pending.measure (a.flushGap r)).getD (Spacing.Context.geom r).textWidth - (indent + 0))
-    (Spacing.Context.geom r).textHeight true (Spacing.Context.geom r).scale (Spacing.Context.step r) (Spacing.Context.roleMetrics r) hp rfl
+    (Spacing.Context.geom r).textHeight true (Spacing.Context.geom r).scale (Spacing.Context.step r) (Spacing.Context.roleMetrics r) (Spacing.Context.steps r) hp rfl
   have hc := itemsOfInlines_none_chars (Spacing.Context.geom r).fontSize (Spacing.Context.xHeight r) (Spacing.Context.fs r) (Spacing.Context.imgs r)
     ((Spacing.Pending.measure (a.flushGap r)).getD (Spacing.Context.geom r).textWidth - (indent + 0))
     (Spacing.Context.geom r).textHeight (Spacing.Pending.hyphCache (a.flushGap r)) (LeafCtr.of leaf span xs)
-    style xs true (Spacing.Context.geom r).scale (Spacing.Context.step r) (Spacing.Context.roleMetrics r) hp rfl
+    style xs true (Spacing.Context.geom r).scale (Spacing.Context.step r) (Spacing.Context.roleMetrics r) (Spacing.Context.steps r) hp rfl
   simp only [collectPara, show (Color.black == Color.black) = true from rfl,
     BEq.rfl, Bool.false_eq_true, ↓reduceIte]
   rw [hn]

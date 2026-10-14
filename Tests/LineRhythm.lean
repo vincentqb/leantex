@@ -1229,15 +1229,24 @@ def visibleScreenChecks (ref : IO.Ref (List String)) : IO Unit := do
       [("inline", "Lead words \\visible<2>{Hidden phrase} tail words.", "Hidden phrase"),
        ("a list", "\\visible<2>{\\begin{itemize}\\item Hidden item\\end{itemize}}\n\nAfter.",
          "Hidden item"),
-       ("an onslide plus", "Lead words \\onslide+<2>{Hidden phrase} tail words.", "Hidden phrase")] do
+       ("an onslide plus", "Lead words \\onslide+<2>{Hidden phrase} tail words.", "Hidden phrase"),
+       ("a paragraph", "Above words.\n\n\\visible<2>{Hidden phrase}\n\nBelow words.", "Hidden phrase"),
+       ("nested", "Lead \\visible<2>{Outer \\visible<2>{Hidden phrase} words} tail.", "Hidden phrase"),
+       ("a table cell", "\\begin{tabular}{ll} Cell & \\visible<2>{Hidden phrase} \\\\ \\end{tabular}",
+         "Hidden phrase"),
+       ("a block title", "\\begin{block}{Heading \\visible<2>{Hidden phrase}}Block words.\\end{block}",
+         "Hidden phrase"),
+       ("a caption", "\\begin{figure}\\includegraphics[width=1cm]{absent.png}" ++
+         "\\caption{Caption \\visible<2>{Hidden phrase}}\\end{figure}", "Hidden phrase")] do
     let (h, n, _) := HtmlDoc.emitTree {} (elabStr (deck169Frame body)).1
     let rules := screenRules (treeCssList "" h.toList)
+    -- The innermost element spelling the argument: its carrier, not a block holding only it.
     let visibility (tree : Array Html.Node) : Option String := Id.run do
       let ct := CTree.of tree
+      let mut found : Option Nat := none
       for i in [0:ct.els.size] do
-        if (ct.el i).text.trimAscii.toString == hidden then
-          return (cascadeInherited ct rules "visibility" i).orElse fun _ => some "visible"
-      return none
+        if (ct.el i).text.trimAscii.toString == hidden then found := some i
+      return found.map fun i => ((cascadeInherited ct rules "visibility" i).getD "visible")
     let scripted (k : Nat) : Array Html.Node :=
       #[Html.elem "html" (snapStateList k n.toList).toArray #[("data-deck-script", "")]]
     t s!"visible, {label}: snap 1 hides the argument" (visibility (scripted 1) == some "hidden")

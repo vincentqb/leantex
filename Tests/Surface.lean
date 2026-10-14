@@ -1937,9 +1937,9 @@ def walkChecks (ref : IO.Ref (List String)) : IO Unit := do
       #[.link "https://example.org" #[.text "x"]])
   t "fillTemplate fills a hole inside a step"
     (Ir.fillTemplate #[.step 2 none #[]] #[.text "x"] == #[.step 2 none #[.text "x"]])
-  -- Furniture sits outside the overlay model, so a step in a section title multiplies no handout page.
-  t "maxStep keeps furniture outside the overlay model"
-    (Ir.maxStepBlocks #[.section 1 false none #[.step 2 none #[.text "t"]]] == 1)
+  -- A heading in a frame is its content, as a title page's title is: its selectors step the frame.
+  t "maxStep reaches a heading's selector inside a frame"
+    (Ir.maxStepBlocks #[.section 1 false none #[.step 2 none #[.text "t"]]] == 2)
 
 /-- An unknown environment's paragraph boundary follows its body's shape, as the `\input` wrapper's
 does (`Parse.inputEnv`). -/
