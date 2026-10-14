@@ -181,8 +181,8 @@ def phrasingTags : List String :=
   | .script _ _ => none
 
 /-- A walk over a tree in document order: what a text, style or script node adds, the context an
-element's children are read under (`none` leaves the element unread), and what an element it reads
-adds before and after its children. -/
+element and its children are read under (`none` leaves the element unread), and what an element it
+reads adds, under that context, before its children and, under its parent's, after them. -/
 public structure Walk (σ α : Type) where
   text : σ → α → String → α := fun _ acc _ => acc
   style : σ → α → String → α := fun _ acc _ => acc
@@ -206,7 +206,7 @@ public def Walk.node {σ α : Type} (w : Walk σ α) (ctx : σ) (acc : α) : Nod
   | .script attrs js => w.script ctx acc attrs js
   | .elem tag attrs kids =>
     match w.inner ctx tag attrs with
-    | some c => w.leave ctx (w.list c (w.enter ctx acc tag attrs kids) kids.toList)
+    | some c => w.leave ctx (w.list c (w.enter c acc tag attrs kids) kids.toList)
     | none => acc
 
 public def Walk.list {σ α : Type} (w : Walk σ α) (ctx : σ) (acc : α) : List Node → α
@@ -254,7 +254,7 @@ public theorem Walk.node_elem_exact {σ α : Type} (w : Walk σ α) (ctx : σ) (
     (tag : String) (attrs : Array (String × String)) (kids : Array Node) :
     w.node ctx acc (.elem tag attrs kids) =
       match w.inner ctx tag attrs with
-      | some c => w.leave ctx (w.list c (w.enter ctx acc tag attrs kids) kids.toList)
+      | some c => w.leave ctx (w.list c (w.enter c acc tag attrs kids) kids.toList)
       | none => acc := by
   simp only [Walk.node]
   cases w.inner ctx tag attrs <;> rfl

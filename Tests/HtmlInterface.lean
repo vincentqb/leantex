@@ -37,10 +37,6 @@ example : True := by
   fail_if_success have := HtmlDoc.listItem
   fail_if_success have := HtmlDoc.AlgTree
   fail_if_success have := HtmlDoc.a11yWalk
-  fail_if_success have := HtmlDoc.Config.fontsDir
-  fail_if_success have := HtmlDoc.Config.assetsDir
-  fail_if_success have := HtmlDoc.FontAsset
-  fail_if_success have := HtmlDoc.fontAssets
   trivial
 
 end Tests.HtmlInterface

@@ -7702,19 +7702,17 @@ private def pageFacts : Html.Walk (Option String) PageFacts where
   script _ acc _ text := { acc with deck := acc.deck || text == deckScript }
   inner stage _ attrs := some ((attrOf? attrs "data-slide-label").orElse (fun _ => stage))
   enter stage acc tag attrs _ :=
-    let stage := (attrOf? attrs "data-slide-label").orElse (fun _ => stage)
     let acc := if attrs.any (·.1 == "data-snap") then
         { acc with slideLabels := acc.slideLabels ++ stage.toArray } else acc
     let acc := if tag == "nav" && attrs.all (·.1 != "aria-label") then
         { acc with navs := acc.navs + 1 } else acc
     let acc := if attrs.any (fun kv => kv.1 == "class" && kv.2 == "reveal-scroll") then
         { acc with reveals := acc.reveals + 1 } else acc
-    let acc := attrs.foldl (init := acc) fun a kv =>
+    attrs.foldl (init := acc) fun a kv =>
       if kv.1 == "id" then { a with ids := a.ids.push (kv.2, stage) }
       else if kv.1 == "href" && kv.2.startsWith "#" then
         { a with fragmentRefs := a.fragmentRefs.push kv.2 }
       else a
-    acc
 
 /-- Whether an `svg`'s children close with a figure's definitions. -/
 private def definesFigure (kids : Array Node) : Bool :=
@@ -8559,17 +8557,15 @@ private def a11yElem (own deck : Bool) (tag : String) (attrs : Array (String × 
                  (if scrollReachable (.elem tag attrs kids) then 0 else 1) }
   else acc
 
-/-- The facts of a tree onto `acc`, each element under its `aria-hidden` and `hidden` ancestor
-flags. -/
+/-- A tree's accessibility facts, each element under its own and its ancestors' `aria-hidden` and
+`hidden` flags. -/
 private def a11yWalk (own deck : Bool) : Html.Walk (Bool × Bool) A11yFacts where
   inner flags _ attrs :=
     some (flags.1 || attrOf? attrs "aria-hidden" == some "true",
       flags.2 || (attrOf? attrs "hidden").isSome)
   enter flags acc tag attrs kids :=
-    let hid := flags.1 || attrOf? attrs "aria-hidden" == some "true"
-    let inert := flags.2 || (attrOf? attrs "hidden").isSome
-    if !hid then a11yElem own deck tag attrs kids acc
-    else if !inert && tabbable tag attrs then
+    if !flags.1 then a11yElem own deck tag attrs kids acc
+    else if !flags.2 && tabbable tag attrs then
       { acc with hiddenTabStops := acc.hiddenTabStops + 1 }
     else acc
 
