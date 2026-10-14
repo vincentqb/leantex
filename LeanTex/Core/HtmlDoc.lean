@@ -1852,7 +1852,8 @@ public def rootText (codeRoot : CodeRoot)
   | some _, some rs => ((rs.lookup r).join).map fun (c, key) => match key with
     | some k => roleRef k
     | none => cssColor c
-  | _, _ => (Ir.Design.cssDecl v s r).map cssDeclValue
+  | _, _ => ((Ir.Design.cssDecl v s r).map cssDeclValue).orElse fun _ =>
+    if r == .alertMark then some "transparent" else none
 
 /-- The custom properties a page declares for its colours, with their texts in one scheme's view. -/
 public def schemeProps (v : Ir.Palette) (s : Ir.Scheme) (roles : List Ir.Role)

@@ -511,6 +511,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   Tests.SeedSeries.seriesScriptChecks ref
   Tests.PaletteFloor.floorChecks ref
   Tests.PaletteFloor.fillChecks ref
+  Tests.PaletteFloor.regionChecks ref
   Tests.AlertMark.containerChecks ref
   Tests.AlertMark.markChecks ref
   Tests.AlertMark.placeChecks ref

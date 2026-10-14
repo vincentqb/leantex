@@ -282,16 +282,19 @@ public def disliked (c : Color) : Bool :=
   decide (dislikedLo ≤ h) && decide (h ≤ dislikedHi) &&
     decide ((36 * 10 ^ 15) * (36 * 10 ^ 15) ≤ Oklab.chromaSq l) && decide (luminance c ≤ 3343000)
 
-/-- `h` outside the disliked region's hues, else a degree past its warm edge, toward orange as a
-darkening yellow turns. -/
+/-- `h` outside the disliked region's hues, else two degrees past its warm edge, toward orange as a
+darkening yellow turns, clear of an 8-bit colour's hue rounding. -/
 public def clearHue (h : Int) : Int :=
-  if dislikedLo ≤ h ∧ h ≤ dislikedHi then dislikedLo - 1000 else h
+  if dislikedLo ≤ h ∧ h ≤ dislikedHi then dislikedLo - 2000 else h
 
 /-- Hue `h`'s band tone at `req`, or, where it stands in the disliked region, the band tone of the
 hue just past its warm edge (`clearHue`), kept only where it stands outside the region. -/
 public def bandClear (req : Nat) (grounds : List Color) (h : Int) : Option Color :=
   (bandOn req grounds h).bind fun c =>
-    if disliked c then (bandOn req grounds (clearHue h)).filter (!disliked ·) else some c
+    if disliked c then
+      ((bandOn req grounds (clearHue h)).filter (!disliked ·)).orElse fun _ =>
+        (bandOn req grounds (clearHue h - 2000)).filter (!disliked ·)
+    else some c
 
 /-- **A cleared band tone clears what it was asked to on every ground and is not disliked.** -/
 public theorem bandClear_contract {req : Nat} {grounds : List Color} {h : Int} {c : Color}
@@ -303,17 +306,47 @@ public theorem bandClear_contract {req : Nat} {grounds : List Color} {h : Int} {
   | some c0 =>
     simp only [hb, Option.bind_some] at hv
     split at hv
-    · cases hc : bandOn req grounds (clearHue h) with
-      | none => simp [hc] at hv
+    · have later : ∀ {h' : Int}, (bandOn req grounds h').filter (!disliked ·) = some c →
+          (∀ g ∈ grounds, req ≤ contrastMilli c g) ∧ disliked c = false := by
+        intro h' hf
+        cases hc : bandOn req grounds h' with
+        | none => simp [hc] at hf
+        | some c1 =>
+          rw [hc, Option.filter_some] at hf
+          split at hf
+          · rename_i hk
+            cases hf
+            exact ⟨bandOn_contract hc, by simpa using hk⟩
+          · cases hf
+      cases h1 : (bandOn req grounds (clearHue h)).filter (!disliked ·) with
       | some c1 =>
-        rw [hc, Option.filter_some] at hv
-        split at hv
-        · rename_i hk
-          cases hv
-          exact ⟨bandOn_contract hc, by simpa using hk⟩
-        · cases hv
+        rw [h1, Option.orElse_some] at hv
+        cases hv
+        exact later h1
+      | none =>
+        rw [h1, Option.orElse_none] at hv
+        exact later hv
     · rename_i hd
       cases hv
       exact ⟨bandOn_contract hb, by simpa using hd⟩
+
+/-- `c` at hue `h`, its lightness and as much of its chroma as the gamut holds kept. -/
+private def atHue (c : Color) (h : Int) : Color :=
+  let l := Oklab.labOf c
+  let dir := Oklab.ofLch 0 (Nat.sqrt (Oklab.chromaSq l).toNat : Int) h
+  (Oklab.Okl.toGamut { L := l.L, a := dir.a, b := dir.b, f := Oklab.fracOne }).toColor
+
+/-- `c` with its hue moved past the disliked region's warm edge where it stands in it, else `c` as
+it stands. -/
+public def undislike (c : Color) : Color :=
+  if !disliked c then c else
+  (([dislikedLo - 2000, dislikedLo - 4000, dislikedLo - 6000].map (atHue c)).find? (!disliked ·)).getD c
+
+/-- `c` with its hue moved past the disliked region's warm edge where its hue stands among the
+region's, so a darker tone of it stays out of the region. -/
+public def turnPast (c : Color) : Color :=
+  let l := Oklab.labOf c
+  let h := Oklab.hueMilli l.a l.b
+  if dislikedLo ≤ h ∧ h ≤ dislikedHi then atHue c (dislikedLo - 2000) else c
 
 end LeanTex.Core.ContrastSolve

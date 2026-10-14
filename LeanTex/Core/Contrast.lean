@@ -44,6 +44,8 @@ private structure Use where
   site : Nat := 0
   /-- The highlighting style whose own colour a listing token carries. -/
   styleName : Option String := none
+  /-- The surface under the use's mark and its role, read where a scheme ships no mark. -/
+  under : Option (Color × Option Role) := none
   deriving BEq
 
 /-- The walk's fold state: the palette in force, the uses, and each design site's epochs. -/
@@ -104,6 +106,8 @@ private structure UseCx where
   sitesOnly : Bool := false
   /-- The document's element styles, whose font templates' colours are uses. -/
   styles : Styles := {}
+  /-- The ground under a mark this content stands on, and its role. -/
+  markUnder : Option (Option Color × Option Role) := none
 
 private def UseCx.atEpoch (cx : UseCx) (pal : Palette) (epoch : Nat) : UseCx :=
   let cx := if cx.inkEpoch.any (· != epoch) then
@@ -156,7 +160,9 @@ private def UseAcc.use (acc : UseAcc) (cx : UseCx) (nm : Option ColorRef)
                    site := match cx.cur with
                      | some (_, _, k) => k
                      | none => acc.runs
-                   styleName }
+                   styleName
+                   under := cx.markUnder.map fun (g, r) =>
+                     (g.getD (surfaceOf acc.pal), if g.isSome then r else some .page) }
   let coveredNames := match nm with
     | some n => if cx.covering then pushUnique acc.coveredNames (acc.pal, n) else acc.coveredNames
     | none => acc.coveredNames
@@ -228,7 +234,8 @@ private def usesInline (cx : UseCx) (acc : UseAcc) : Inline → UseAcc
         | some (.role r) => some r
         | _ => none
       usesInlines { cx with ground := some c, groundName := (role.bind (·.row.noun)).getD "the mark",
-                            groundRole := role } acc body.toList
+                            groundRole := role, markUnder := some (cx.ground, cx.groundRole) }
+        acc body.toList
   | .onSteps spec body =>
     usesInlines { cx with covering := cx.covering || spec.maxStep ≥ 2 } (acc.step spec) body.toList
   -- An alternative is inked at full colour or not at all, so it makes no palette pending.
@@ -620,7 +627,9 @@ private def schemeLosses (s : Scheme) (f : SchemeFrame) (stage : Bool)
     for u in used do
       if u.name.isSome then continue
       let c := Design.literalIn f u.color
-      let (g, on) := p.useGround v f u.surface u.surfaceRole
+      let (surface, role) := if u.surfaceRole == some .alertMark && (Design.at v s .alertMark).isNone
+        then u.under.getD (u.surface, u.surfaceRole) else (u.surface, u.surfaceRole)
+      let (g, on) := p.useGround v f surface role
       let gate := requiredIn s (if u.large then .largeText else .text)
       if contrastMilli c g < gate then
         out := push out { name := .color (hexOf u.color), on, ratio := contrastMilli c g, gate }
@@ -655,9 +664,12 @@ public def schemeJudge (doc : Doc) : SchemeJudgement :=
     (p, uses.filter fun u => !u.exempt && u.pal == p)
   let groundsOf (p : Palette) : List (ColorRef × List (Color × Bool × Option Role)) :=
     ((usesOf.lookup p).getD #[]).foldl (fun acc u => match u.name with
-      | some k => match acc.findIdx? (·.1 == k) with
-        | some i => acc.modify i fun (k, gs) => (k, gs ++ [(u.surface, u.large, u.surfaceRole)])
-        | none => acc.push (k, [(u.surface, u.large, u.surfaceRole)])
+      | some k =>
+        let gs := [(u.surface, u.large, u.surfaceRole)] ++
+          (u.under.map fun (g, r) => [(g, u.large, r)]).getD []
+        match acc.findIdx? (·.1 == k) with
+        | some i => acc.modify i fun (k, gs') => (k, gs' ++ gs)
+        | none => acc.push (k, gs)
       | none => acc) #[] |>.toList
   let judged := doc.requestedSchemes.map fun s =>
     let f := doc.palette.frame s stage

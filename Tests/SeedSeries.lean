@@ -36,6 +36,12 @@ private def warmOf (c : Ir.Color) : Bool :=
   let d := (Oklab.hueMilli l.a l.b - 40000) % 360000
   decide (min d (360000 - d) < 90000)
 
+/-- Whether two colours stand `SeedSeries.minGap` apart for every simulated reader, read here and
+not through the generator's own predicate. -/
+private def apartFor (c c' : Ir.Color) : Bool :=
+  Oklab.Vision.all.all fun v =>
+    decide (SeedSeries.minGap * SeedSeries.minGap ≤ Oklab.distSq (Oklab.labIn v c) (Oklab.labIn v c'))
+
 /-- How far ten series stand apart for the nearest simulated reader, at
 least: 2.5 JNDs (`Oklab.okJnd`), what the invented seeds' tens keep with
 room above the contract's two. -/
@@ -71,7 +77,7 @@ def seriesChecks (ref : IO.Ref (List String)) : IO Unit := do
         (most.all fun c => !dislikedBox c)
       t s!"series, {label}: each pair stands apart, and each but the first from the ink, for every reader"
         ((most.zipIdx.all fun (c, i) => most.zipIdx.all fun (c', j) =>
-            i ≥ j || SeedSeries.apart c c') && (most.drop 1).all fun c => SeedSeries.apart c s.ink)
+            i ≥ j || apartFor c c') && (most.drop 1).all fun c => apartFor c s.ink)
       t s!"series, {label}: ten series stand {tenGap} apart for the nearest reader"
         (tenGap ≤ leastGap most 10)
       let decls := SeedSeries.declarations "Probe" most

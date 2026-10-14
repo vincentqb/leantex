@@ -9665,8 +9665,8 @@ public theorem Palette.defineColor_design_id (pal : Palette) (n : String) (c : C
   Design.resolve_congr _ _ s
     (fun r => Palette.declare_keeps_others pal (.color n) (.role r) c d (by simp)) rfl rfl rfl
 
-/-- The names an xcolor definition of `n` declares: the author colour, and the
-code role of that key. -/
+/-- The names an xcolor definition of `n` declares: the author colour, and the role of that key
+an xcolor name declares, a code role's or the alert's mark. -/
 @[expose] public def Palette.xcolorRefs (n : String) : List ColorRef :=
   .color n :: ((Role.ofXcolor? n).map ColorRef.role).toList
 
@@ -10472,7 +10472,8 @@ public def Palette.inkGrounds (pal : Palette) (f : SchemeFrame)
       [((Design.at p s on).getD ((Design.at p s .page).getD f.page), on,
         Contrast.requiredIn s (r.row.need.atStage f.stage))]
     | .color _ => []
-  row ++ (((used.lookup k).getD []).eraseDups.map fun (g, large, role) =>
+  row ++ ((((used.lookup k).getD []).eraseDups.filter fun (_, _, role) =>
+      role != some .alertMark || (Design.at p s .alertMark).isSome).map fun (g, large, role) =>
     let (g', on) := pal.useGround p f g role
     (g', on, Contrast.requiredIn s ((if large then Need.largeText else .text).atStage f.stage)))
 
@@ -10521,10 +10522,9 @@ public theorem Palette.carryOn_between {pal : Palette} {f : SchemeFrame}
         · exact (Design.adapt_between hcarry).2
     · split at h <;> cases h
 
-/-- A palette as a scheme ships it, with the colours it could not carry. -/
-public def Palette.view (pal : Palette) (f : SchemeFrame)
-    (used : List (ColorRef × List (Color × Bool × Option Role)) := []) : Palette × Array Unrealized :=
-  if f.home then (pal, #[]) else
+/-- A palette carried to a scheme other than its home, with the colours it could not carry. -/
+private def Palette.carried (pal : Palette) (f : SchemeFrame)
+    (used : List (ColorRef × List (Color × Bool × Option Role))) : Palette × Array Unrealized :=
   let s := f.scheme
   let uses (k : ColorRef) : List (Color × Bool × Option Role) := (used.lookup k).getD []
   let carried : Option (Option SeedPalette.SeedState) :=
@@ -10618,6 +10618,14 @@ public def Palette.view (pal : Palette) (f : SchemeFrame)
         (#[], grounds.2)
   let again := undeclaredOn { moved with entries := rejudged.1 } rejudged
   ({ moved with entries := again.1 }, again.2)
+
+/-- A palette as a scheme ships it, with the colours it could not carry; a scheme of the other
+polarity ships no mark, where the accent reads as text. -/
+public def Palette.view (pal : Palette) (f : SchemeFrame)
+    (used : List (ColorRef × List (Color × Bool × Option Role)) := []) : Palette × Array Unrealized :=
+  if f.home then (pal, #[]) else
+  (if f.flip then { pal with entries := pal.entries.filter (·.1 != .role .alertMark) } else pal).carried
+    f used
 
 public theorem Palette.view_home (pal : Palette) (f : SchemeFrame) (h : f.home = true) :
     pal.view f = (pal, #[]) := by

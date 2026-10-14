@@ -81,8 +81,9 @@ def fillChecks (ref : IO.Ref (List String)) : IO Unit := do
   let some fonts ← serifFacesSet | failures ref "fill: the serif faces load"
   let (doc, ds) := elabStr (dvDeck
     "\\palette[seeds]{ ink = #1C1917, paper = #FFFFFF, accent = #F06E00 }\n"
-    ("\\begin{frame}\n\\begin{block}{A block}\nAn \\alert{alerted} word and a " ++
-      "\\textcolor{muted}{quiet} one.\n\\end{block}\nA \\alert{paper} word.\n\\end{frame}"))
+    ("\\begin{frame}\n\\begin{block}{A block}\nAn \\alert{alerted} word, a " ++
+      "\\textcolor{muted}{quiet} one and a \\textcolor{accent-text}{toned} one.\n\\end{block}\n" ++
+      "A \\alert{paper} word.\n\\end{frame}"))
   t "fill: the report finds no pairing short" (ds.all (·.code != "W0315"))
   match doc.palette.seeded with
   | none => t "fill: the deck is seeded" false
@@ -91,10 +92,68 @@ def fillChecks (ref : IO.Ref (List String)) : IO Unit := do
     t "fill: the block's body stands on a fill darker than the paper"
       (decide (Contrast.contrastMilli Ir.Color.black surface < Contrast.contrastMilli Ir.Color.black st.seeds.paper))
     let lines := allLines (layoutOf fonts doc)
-    for w in ["alerted", "quiet"] do
+    for w in ["alerted", "quiet", "toned"] do
       t s!"fill: the {w} run stands at the deck's floor on the block's fill"
         ((wordRun lines w).any fun (c, _) => decide (st.targets.text ≤ Contrast.contrastMilli c surface))
     t "fill: on the paper the alert ships the accent itself, which meets the floor there"
       ((wordRun lines "paper").any (·.1 == st.seeds.accent))
+
+/-- The tones a generated palette derives, its seeds aside. -/
+private def derivedOf (c : SeedPalette.Colors) : List Ir.Color :=
+  [c.surface, c.surfaceStrong, c.rule, c.accentWash, c.accentSoft, c.muted, c.diagramMuted,
+    c.mutedOnInverse, c.accentText, c.accentEdge, c.accentOnInverse, c.alert, c.alertBand,
+    c.exampleBand] ++ c.exampleText.toList
+
+/-- Every tone a palette derives stands out of the disliked region on every page and ground, and
+still generates: a dark page's olive, a light page's yellows carried to a dark one and a dark one's
+gold to a light one, text on the ink, a run on a dark band, and a cleared hue's 8-bit rounding. -/
+def regionChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let gen (label : String) (s : SeedPalette.Seeds) (tg : SeedPalette.Targets) : IO Unit := do
+    match SeedPalette.generate s tg with
+    | .error f => t s!"region, {label}: generates, not fail at {reprStr f.role}" false
+    | .ok g =>
+      t s!"region, {label}: no derived tone is disliked"
+        ((derivedOf g.colors).all fun x => x == s.accent || x == s.ink || !dislikedBox x)
+  let depths := [("a deck", Ir.GroundDepth.decks), ("a document", Ir.GroundDepth.documents)]
+  let olive := Ir.Color.ofHtml 0x80 0x80 0x00
+  for (pname, paper) in [("a navy paper", Ir.Color.ofHtml 0x1B 0x24 0x30),
+      ("a blue-black paper", Ir.Color.ofHtml 0x00 0x2B 0x36)] do
+    let s : SeedPalette.Seeds := { ink := Ir.Color.ofHtml 0xF4 0xF1 0xEA, paper, accent := olive }
+    for (dn, d) in depths do
+      gen s!"an olive accent on {pname}, {dn}" s (s.targets d)
+  for (label, accent) in [("a yellow", Ir.Color.ofHtml 0xFA 0xCC 0x15),
+      ("a lemon", Ir.Color.ofHtml 0xF0 0xE4 0x42), ("a mustard", Ir.Color.ofHtml 0xA6 0x8A 0x00)] do
+    let s : SeedPalette.Seeds := { ink := Ir.Color.ofHtml 0x1C 0x19 0x17, paper := Ir.Color.white, accent }
+    match s.carry true with
+    | none => t s!"region, {label} carried to a dark page: carries" false
+    | some c =>
+      t s!"region, {label} carried to a dark page: its accent is not disliked" (!dislikedBox c.accent)
+      for (dn, d) in depths do
+        gen s!"{label} carried to a dark page, {dn}" c (c.targets d)
+        gen s!"{label} carried to a dark page asking more, {dn}" c ((c.targets d).more)
+  let gold : SeedPalette.Seeds :=
+    { ink := Ir.Color.white, paper := Ir.Color.black, accent := Ir.Color.ofHtml 0xFF 0xD7 0x00 }
+  gen "a gold on a black page, its text on the ink" gold (gold.targets .decks)
+  match gold.carry false with
+  | none => t "region, a gold carried to a light page: carries" false
+  | some c =>
+    t "region, a gold carried to a light page: its accent is not disliked" (!dislikedBox c.accent)
+    gen "a gold carried to a light page" c (c.targets .decks)
+  let dark := Ir.Color.ofHtml 0x7A 0x6A 0x00
+  let mustard : SeedPalette.Seeds := { ink := Ir.Color.black, paper := Ir.Color.white, accent := dark }
+  gen "a dark mustard on a light page, its text on the ink" mustard (mustard.targets .decks)
+  let grey : SeedPalette.Seeds :=
+    { ink := Ir.Color.black, paper := Ir.Color.ofHtml 0xEC 0xE8 0xE6, accent := Ir.Color.ofHtml 0x8A 0x7A 0x00 }
+  gen "a dark yellow asking more on a warm grey paper" grey ((grey.targets .decks).more)
+  let band := Ir.Color.ofHtml 0x2B 0x24 0x40
+  match SeedPalette.generate mustard (mustard.targets .decks) with
+  | .error _ => t "region, a dark mustard's palette generates" false
+  | .ok g =>
+    let st : SeedPalette.SeedState :=
+      { seeds := mustard, targets := mustard.targets .decks, blocks := .tonal, colors := g.colors }
+    t "region, a dark mustard's alert on a dark band takes a tone at its floor there, not disliked"
+      ((st.toneOn .alert band).any fun (c, _) =>
+        decide (st.targets.text ≤ Contrast.contrastMilli c band) && !dislikedBox c)
 
 end Tests.PaletteFloor

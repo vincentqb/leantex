@@ -129,6 +129,9 @@ import Tests.InlineCode
 import scripts.LandCore
 import Tests.World
 import Tests.ProcessRuntime
+import Tests.PaletteFloor
+import Tests.AlertMark
+import Tests.SeedSeries
 
 /-! Every breakage the user reported, as a row whose pins hold it closed; a report closes only as
 `guarded`, and the unwitnessed and owed counts are held both ways. -/
@@ -1549,7 +1552,18 @@ def reports : List Report := [
     what := "a colour missing both as text and as the page ground was named once: whichever use came first silenced the other, and its warning counted both uses in its own words"
     pins := [check% Tests.ColorNames.missingBothWaysChecks]
     accept := ["the guard's thirteen assertions fail at b6e1a170 before the fix: in every order the second use is a note without its help, and the first warning counts two sites"]
-    state := .guarded "b6e1a170" .before .author }
+    state := .guarded "b6e1a170" .before .author },
+  { id := "R175", date := "2026-10-13"
+    what := "a palette generated for a light page set its accent's text, its code and its chart series above the floor their use owes, dark and near one another, so on the paper they read as dull near-blacks barely apart from the ink or from each other; a yellow accent darkened into a disliked olive; and a chart's series stood apart for typical colour vision alone"
+    pins := [check% Tests.PaletteFloor.floorChecks, check% Tests.PaletteFloor.fillChecks,
+      check% seededCodeChecks, check% Tests.SeedSeries.seriesChecks,
+      check% Tests.AlertMark.containerChecks, check% Tests.AlertMark.markChecks,
+      check% Tests.AlertMark.placeChecks, thm% Contrast.depth_text_exact,
+      thm% SeedSeries.generated_series_contract, thm% ContrastSolve.bandClear_contract]
+    accept := ["seventy-three of the guards' assertions fail with the fix's behaviour reverted onto the recorded commit, the guards kept — text and marks on a light page back at 4.6:1 and 3.1:1 whatever the medium, no container, no disliked region, and series picked for typical vision alone: a deck's accent text, muted ink and code, and an orange meeting a deck's floor, stand off the deck's 3:1; series fail their bound for the simulated readers; yellows and a mustard derive disliked tones; and no alert sets on a mark",
+      "the review's guards: thirty assertions fail with its answer's behaviour reverted onto the recorded commit — a tone both of whose hues are disliked kept at its own hue, the container decided at each scheme's text target with the ink at 4.5:1 on its mark, a mark under every alert the palette marks, one per run and space, and the web page's mark element: a lemon, a pure yellow's example and a mustard derive disliked tones; a container falls away in the scheme asking more contrast, and a mark stands under an ink too faint on it; an alert is marked on the ink and after the document redeclares it; and a long alert's lines are marked run by run",
+      "a presentation deck's two brand palettes regenerated and built under lualatex and leantex, PDF and HTML: the accent's text, the muted ink and the code on the paper within 0.03 of the deck's 3:1 floor, the code in one band, a yellow brand's alert in the ink on its mark in both engines and quieted on a covered step as each engine quiets its text, the series at least ΔEOK 0.07 apart for every simulated reader; one build's warnings unchanged, the other's gaining one state-contrast warning, a covered alert against its revealed form, which its accent shipped as given at the floor entails"]
+    state := .guarded "52508293" .revert .author }
 ]
 
 /-- The reports guarded but never seen failing, a count held in both directions. -/

@@ -60,8 +60,8 @@ public structure Targets where
   floor : Nat
   deriving Repr, BEq, Inhabited
 
-/-- How far a generated ink stands above its WCAG 2.2 gate, past `contrastMilli`'s truncation of
-up to 0.007. -/
+/-- How far a generated ink on a dark page, or on the ink, stands above its WCAG 2.2 gate, past
+`contrastMilli`'s truncation of up to 0.007. -/
 public def margin : Nat := 100
 
 /-- A light page: the class's ground depth, text and marks at the medium's floors themselves
@@ -127,6 +127,11 @@ public def neutralFamily (s : Seeds) : Family :=
 
 /-- An accent family: the seed's own hue and chroma. -/
 public def accentFamily (c : Color) : Family := familyOf c (chromaOf c) 0 800
+
+/-- The family an accent's tints take: its own, and on a dark page, whose tints of a yellow-green
+are dark ones of the disliked region, its hue's past the region's warm edge. -/
+public def tintFamily (s : Seeds) : Family :=
+  accentFamily (if s.dark then ContrastSolve.turnPast s.accent else s.accent)
 
 /-- The fraction of the family's direction a chroma is. -/
 private def Family.frac (fam : Family) (c : Int) : Nat :=
@@ -401,7 +406,7 @@ public def hueFloor : Int := 5 * 10 ^ 15
 /-- The grounds, each with its family and the ratio it is solved to. -/
 public def grounds (s : Seeds) (t : Targets) (c : Colors) : List (Ir.Role × Family × Color × Nat) :=
   let n := neutralFamily s
-  let a := accentFamily s.accent
+  let a := tintFamily s
   [(.surface, n, c.surface, t.body), (.surfaceStrong, n, c.surfaceStrong, t.band),
    (.rule, n, c.rule, t.rule), (.accentWash, a, c.accentWash, t.wash),
    (.accentSoft, a, c.accentSoft, t.soft)]
@@ -528,14 +533,15 @@ private def candidate (s : Seeds) (t : Targets) : Except Failure Colors := do
     (solveGround n s.paper dark t.band)
   let rule ← need .rule "no neutral tint reaches the rule's ratio" (solveGround n s.paper dark t.rule)
   let accentWash ← need .accentWash "no accent tint reaches the wash's ratio"
-    (solveGround a s.paper dark t.wash)
+    (solveGround (tintFamily s) s.paper dark t.wash)
   let accentSoft ← need .accentSoft "no accent tint reaches the band's ratio"
-    (solveGround a s.paper dark t.soft)
+    (solveGround (tintFamily s) s.paper dark t.soft)
   let neutralInk := n.inkRaw none
-  let tone (seed : Option Color) (fam : Family) (warm : Option (Int × Int)) (gs : List Color)
-      (target : Nat) : Option Color :=
-    undisliked (solveInk (fam.inkRaw warm) gs target light) (solveInk (fam.inkRaw none) gs target light)
-      fun _ => if light then seed.bind fun c => ContrastSolve.bandClear target gs (hueOf c) else none
+  let toneAt (lightG : Bool) (seed : Option Color) (fam : Family) (warm : Option (Int × Int))
+      (gs : List Color) (target : Nat) : Option Color :=
+    undisliked (solveInk (fam.inkRaw warm) gs target lightG) (solveInk (fam.inkRaw none) gs target lightG)
+      fun _ => seed.bind fun c => ContrastSolve.bandClear target gs (hueOf c)
+  let tone := toneAt light
   let muted ← need .muted "no neutral tone reads on the page and its fills"
     (solveInk neutralInk (facing s [surface, accentWash]) t.text light)
   let diagramMuted ← need .diagramMuted "no neutral tone stands out from the page and its fills"
@@ -552,7 +558,7 @@ private def candidate (s : Seeds) (t : Targets) : Except Failure Colors := do
       (seedOr s.accent (facing s [surface, accentSoft]) t.edge
         (tone (some s.accent) a warmA (facing s [surface, accentSoft]) t.edge))
   let accentOnInverse ← need .accentOnInverse "no accent tone reads on the ink"
-    (seedOr s.accent [s.ink] t.inverse (solveInk (a.inkRaw none) [s.ink] t.inverse dark))
+    (seedOr s.accent [s.ink] t.inverse (toneAt dark (some s.accent) a none [s.ink] t.inverse))
   let alert ← match s.alert with
     | none => pure accentText
     | some al =>
@@ -631,7 +637,8 @@ public def Seeds.carry (s : Seeds) (dark : Bool) : Option Seeds :=
     | none => some none
   match text s.ink, named s.alert, named s.exampleColor with
   | some ink, some alert, some exampleColor =>
-    some { ink, paper, accent := ContrastSolve.reflect s.paper paper s.accent, alert, exampleColor
+    some { ink, paper, accent := ContrastSolve.undislike (ContrastSolve.reflect s.paper paper s.accent)
+           alert := alert.map ContrastSolve.undislike, exampleColor := exampleColor.map ContrastSolve.undislike
            neutral := s.neutral.map (ContrastSolve.reflect s.paper paper) }
   | _, _, _ => none
 
@@ -698,8 +705,8 @@ public theorem generate_seeds_exact (st : SeedState) :
 private def lightGround (g : Color) : Bool :=
   decide (contrastMilli Color.white g < contrastMilli Color.black g)
 
-/-- A generated text role's tone on a ground it does not read on: the inverse ink, or its
-family's quietest legible tone. -/
+/-- A generated text role's tone on a ground it does not read on: the inverse ink, or its family's
+quietest legible tone, out of the disliked region. -/
 public def SeedState.toneOn (st : SeedState) (r : Ir.Role) (g : Color) :
     Option (Color × Option Ir.Role) :=
   let s := st.seeds
@@ -708,7 +715,7 @@ public def SeedState.toneOn (st : SeedState) (r : Ir.Role) (g : Color) :
     let at_ (w : Option (Int × Int)) := solveInk (fam.inkRaw (if light then w else none)) [g]
       st.targets.text light
     undisliked (at_ warm) (at_ none) fun _ =>
-      if light then seed.bind fun c => ContrastSolve.bandClear st.targets.text [g] (hueOf c) else none
+      seed.bind fun c => ContrastSolve.bandClear st.targets.text [g] (hueOf c)
   match r with
   | .alert =>
     if g == s.ink && s.alert.isNone then some (st.colors.accentOnInverse, some .accentOnInverse)
@@ -719,6 +726,9 @@ public def SeedState.toneOn (st : SeedState) (r : Ir.Role) (g : Color) :
     else (solve none (neutralFamily s) none).map fun c => (c, none)
   | .example =>
     (s.exampleColor.bind fun ex => solve (some ex) (accentFamily ex) (warmOf ex)).map fun c => (c, none)
+  | .accentText =>
+    if g == s.ink then some (st.colors.accentOnInverse, some .accentOnInverse)
+    else (solve (some s.accent) (accentFamily s.accent) (warmOf s.accent)).map fun c => (c, none)
   | _ => none
 
 private theorem contract_parts {s : Seeds} {t : Targets} {c : Colors} (h : contract s t c = true) :

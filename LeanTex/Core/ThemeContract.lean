@@ -89,13 +89,17 @@ public theorem moloch_lineage_exact (d : GroundDepth) :
 public theorem builtin_muted_contract :
     (builtin.all fun th => installs.all fun c => shipped.all fun s =>
         match Design.at (installedAt th c) s .muted, Design.at (installedAt th c) s .page with
-        | some m, some p => decide (c.depth.text ≤ Contrast.contrastMilli m p)
+        | some m, some p =>
+          decide (max c.depth.text (Contrast.requiredIn s (Need.text.atStage c.depth.stage)) ≤
+            Contrast.contrastMilli m p)
         | _, _ => true) &&
       (ClassRow.all.all fun row => GroundDepth.all.all fun d =>
         Scheme.all.all fun s =>
           let pal : Palette := { classColors := { row, depth := d } }
           match Design.at pal s .muted, Design.at pal s .page with
-          | some m, some p => decide (d.text ≤ Contrast.contrastMilli m p)
+          | some m, some p =>
+            decide (max d.text (Contrast.requiredIn s (Need.text.atStage d.stage)) ≤
+              Contrast.contrastMilli m p)
           | _, _ => true) = true := by
   decide +kernel
 

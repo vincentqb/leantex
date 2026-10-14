@@ -14,8 +14,8 @@ namespace Tests.AlertMark
 
 def yellow : Ir.Color := Ir.Color.ofHtml 0xFA 0xCC 0x15
 
-/-- Invented seeds, each with whether its accent serves as a container: yellows that do, accents
-that keep their colour as text, and yellows whose alert, example or ink rules a mark out. -/
+/-- Invented seeds, each with whether its accent serves as a container: yellows that do, one with an
+example of its hue, accents that keep their colour as text, and yellows an alert or ink rules out. -/
 def seeds : List (String × SeedPalette.Seeds × Bool) := [
   ("a yellow accent on white",
     { ink := Ir.Color.black, paper := Ir.Color.white, accent := yellow }, true),
@@ -142,10 +142,15 @@ def markChecks (ref : IO.Ref (List String)) : IO Unit := do
   let stream := match (Pdf.pageStreams geom fonts out.pages)[0]? with
     | some b => String.fromUTF8! b
     | none => ""
-  t "mark: the PDF paints the mark before its page's text object"
-    (match stream.splitOn yellow.pdfFill with
-     | before :: _ :: _ => !hasStr before "BT\n" && hasStr stream "BT\n"
-     | _ => false)
+  -- The same deck without the alert paints the accent's other fills, the progress bar among them.
+  let (pdoc, _) := elabStr (dvDeck seedsLine
+    "\\begin{frame}\nPlain words and marked words close.\n\\end{frame}")
+  let plainStream := match (Pdf.pageStreams geom fonts (layoutOf fonts pdoc).pages)[0]? with
+    | some b => String.fromUTF8! b
+    | none => ""
+  let fillsBeforeText (s : String) : Nat := (((s.splitOn "BT\n").headD "").splitOn yellow.pdfFill).length - 1
+  t s!"mark: the PDF paints the alert's one mark before its page's text object ({fillsBeforeText stream}, {fillsBeforeText plainStream})"
+    (hasStr stream "BT\n" && fillsBeforeText stream == fillsBeforeText plainStream + 1)
   let (head, body, _) := HtmlDoc.emitTree {} doc
   let css := treeCssList "" head.toList
   let spans := (elemNodesList (· == "span") #[] body.toList).filter fun n => match n with
@@ -179,9 +184,9 @@ def markChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "mark: and the alert sets on it"
     ((marksUnder xlines "marked").any fun ms => ms.any (·.1 == Ir.Color.ofHtml 0xFF 0xEE 0x00))
 
-/-- Where an alert's mark stands and where not: not on a ground the accent reads on, where the alert
-takes the accent; not under an alert declared after the seeds; quieted on a covered step and only on
-the steps an overlay alerts; never under a picture's label; and an alert short on its mark reported. -/
+/-- Where an alert's mark stands and where not: not on a ground the accent reads on, nor under an
+alert declared after the seeds, nor in a dark scheme; quieted on a covered step, only on the steps an
+overlay alerts, never under a picture's label; and an alert short on its mark reported. -/
 def placeChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let some fonts ← serifFacesSet | failures ref "mark place: the serif faces load"
@@ -203,7 +208,7 @@ def placeChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\begin{frame}\nFirst.\n\n\\uncover<2>{A \\alert{covered} word.}\n\\end{frame}")
   let cout := layoutOf fonts cdoc
   t "mark place: a covered step's mark is quieted with the text it stands behind"
-    ((pageMarks cout 0 "covered").all fun ms => ms.all (· != yellow))
+    ((pageMarks cout 0 "covered").any fun ms => !ms.isEmpty && ms.all (· != yellow))
   t "mark place: and the step that reveals it shows the accent"
     ((pageMarks cout 1 "covered").any fun ms => !ms.isEmpty && ms.all (· == yellow))
   let (odoc, _) := elabStr (dvDeck seedsLine
@@ -216,6 +221,12 @@ def placeChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\begin{frame}\n\\begin{tikzpicture}\n\\node[fill=black!10] {\\alert{label}};\n\\end{tikzpicture}\n\\end{frame}")
   t "mark place: a picture's label ships no mark, as its web page's SVG label sets none"
     (highlightSegs (layoutOf fonts pdoc)).isEmpty
+  let (ddoc, dds) := elabStr (dvDeck (seedsLine ++ "\\output{ schemes = print, light, dark }\n")
+    "\\begin{frame}\nPlain words and \\alert{marked words} close.\n\\end{frame}")
+  let (dhead, _, hds) := HtmlDoc.emitTree {} ddoc
+  let dcss := treeCssList "" dhead.toList
+  t s!"mark place: a deck asking a dark scheme ships it, its mark taken out there ({(dds ++ hds).map (·.code)})"
+    (hasStr dcss "light-dark(#facc15, transparent)" && (dds ++ hds).all (·.code != "W0308"))
   let judged (mark : String) : Array Diag :=
     (elabStr (dvDeck ("\\usepackage{xcolor}\n\\palette{ alert = #1C1917 }\n" ++ mark)
       "\\begin{frame}\nWords and \\alert{marked words}.\n\\end{frame}")).2

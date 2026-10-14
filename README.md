@@ -202,15 +202,15 @@ A palette can be generated from three seeds, an ink, a paper and one accent:
 The seeds ship as given; every other colour is derived from them in Oklab
 and holds what its uses owe: tinted grounds for block titles and bodies (a
 neutral of the ink's or the paper's hue, and the accent's own), a muted ink,
-the accent as text and as an edge on those grounds, and their tones on the
-ink. On a light paper, a colour set on the paper stands at its use's floor
+the accent as text and as an edge, and their tones on the ink. On a light
+paper, a colour set on the paper stands at its use's floor
 in its medium and no further, so it keeps the most colour its hue holds
 there: a deck's text and marks at WCAG 2.2's large-scale 3:1, a document's
 and a poster's text at 4.5:1 and their marks at 3:1, and an accent that
 meets its floor ships as given. Text on the ink stands at 4.6:1; on a dark
 paper, text stands at 6.5:1 and every other colour 0.10 above WCAG 2.2's
-ratios. No colour the seeds derive is one of the dark yellow-greens Material
-3 never ships (its `DislikeAnalyzer`: HCT hue 90–111, chroma above 16, tone
+ratios. No colour the seeds derive, on any page or ground and in any scheme,
+is one of the dark yellow-greens Material 3 never ships (its `DislikeAnalyzer`: HCT hue 90–111, chroma above 16, tone
 below 65). A darkening amber turns toward orange, at most 20°, where that
 keeps it out of them, and a tone that would still stand among them moves
 just past their warm edge; any other hue holds. An accent whose own tone at
@@ -221,17 +221,18 @@ serves every light scheme, as Material's Fidelity scheme keeps a brand
 colour: it never sets as text, and `\alert` sets in the ink on a mark of the
 accent itself, which both the PDF and the page paint behind the text and
 break with it across lines; on a ground the accent reads on, such as the
-standout frame, the alert sets in the accent instead, and an alert the
-document declares sets in its own colour. The mark is the `alertmark` role,
+standout frame, and in a scheme of the other polarity, the alert sets in the
+accent's tone there instead, and an alert the document declares sets in its
+own colour. The mark is the `alertmark` role,
 which any palette may declare. `blocks = tonal` (the
 default) sets block titles in the ink on a tinted band over a lighter body;
 `blocks = strong` sets them on the ink over an accent wash. An `alert`, an
 `example` or a `neutral` seed may be named too. A deck's and a poster's
 grounds stand further from their page than a document's. The rule, the progress bar and the
 title separator are the seeds' too, and a deck that generates its palette
-takes none of its default theme's colours. A generated colour standing on a
-ground it does not read on — a frame-title or block bar, the standout frame —
-takes its family's tone there, and highlighted code takes colours derived
+takes none of its default theme's colours. A generated text colour standing
+on a ground it does not read on — a frame-title or block bar, a block's body,
+the standout frame — takes its family's tone there, and highlighted code takes colours derived
 from the same palette, one tone wherever the listing stands: errors in the
 alert, comments in the muted ink, literals in a named example's colour, and
 otherwise keywords, names and literals each in a hue of its own, a quarter
