@@ -149,16 +149,6 @@ public def decide (src : String) (native : FigureFace.Answer) (answer : Answer)
         | none => iw), route := r, diags := #[], native := false, checked := false }
   | r, .ok _, _ => { bytes := .error "no web face", route := r, diags := #[], native := false, checked := false }
 
-/-- Whether an answer fits the face cache's format under a key. -/
-private def storable (key : Array String) (a : FigureFace.Answer) : Bool :=
-  let fits (n : Nat) : Bool := n < 256 ^ 4
-  fits (FigureFace.body key a).size && fits key.size && key.all (fun k => fits k.toUTF8.size) &&
-    match a with
-    | .error why => fits why.toUTF8.size
-    | .ok d =>
-      fits d.losses.size && fits d.face.size && fits d.words.toUTF8.size &&
-        d.losses.all fun l => fits (FigureFace.lossName l).toUTF8.size
-
 /-- A face's slot, one per figure page: the page's bytes, page and stretch; a later
 engine's answer replaces an earlier one's. -/
 public def slotName (pdf : ByteArray) (page : PdfRead.PageSelection) (stretch : Bool) : String :=
@@ -183,7 +173,7 @@ public def nativeCached (dir : Option System.FilePath) (pdf : ByteArray) (page :
   let path := dir / slotName pdf page stretch
   if let some a := (← (IO.FS.readBinFile path).toBaseIO).toOption.bind (FigureFace.lookup key) then return a
   let a := fresh ()
-  if storable key a then
+  if FigureFace.storable key a then
     discard <| (do IO.FS.createDirAll dir; AtomicFile.write path (FigureFace.encode key a)).toBaseIO
   return a
 

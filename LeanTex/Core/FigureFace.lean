@@ -1,8 +1,7 @@
 module
 
 public import LeanTex.Core.Gfx
-public import LeanTex.Core.Binary
-public import LeanTex.Core.Flate
+public import LeanTex.Core.KeyedRecord
 
 /-! The face cache's record of a PDF figure's import, its drawing or its refusal, kept under the
 key it answers. -/
@@ -88,47 +87,6 @@ public def readAnswer : Binary.Reader Answer := do
   let tag ← Binary.Reader.nat 1
   readTagged tag
 
-/-- A slot's body: the key its answer answers — its parts' count, then each
-— and the answer. -/
-@[expose] public def body (key : Array String) (a : Answer) : ByteArray :=
-  let answer := answerBytes a
-  Binary.natBE 4 key.size ++ Binary.array Binary.str key ++ answer
-
-public def readBody : Binary.Reader (Array String × Answer) := do
-  let n ← Binary.Reader.nat 4
-  let key ← Binary.Reader.many Binary.Reader.str n #[]
-  let a ← readAnswer
-  return (key, a)
-
-/-- The file's first bytes. -/
-@[expose] public def magic : ByteArray := "LTFACE2\n".toUTF8
-
-/-- A body's checksum (FNV-64, `Flate.fnv64`). -/
-@[expose] public def checksum (b : ByteArray) : Nat := (Flate.fnv64 14695981039346656037 b).toNat
-
-/-- An answer as the cache stores it under its key: the magic, the body's checksum and size, the body. -/
-@[expose] public def encode (key : Array String) (a : Answer) : ByteArray :=
-  let b := body key a
-  magic ++ Binary.natBE 8 (checksum b) ++ Binary.natBE 4 b.size ++ b
-
-/-- The last step of reading a file: the body, where its checksum holds. -/
-public def checked (ck : Nat) (b : ByteArray) : Option (Array String × Answer) :=
-  if checksum b == ck then readBody.run b else none
-
-public def readAll : Binary.Reader (Array String × Answer) := do
-  Binary.Reader.expect magic
-  let ck ← Binary.Reader.nat 8
-  let n ← Binary.Reader.nat 4
-  let b ← Binary.Reader.bytes n
-  Binary.Reader.lift (checked ck b)
-
-/-- A stored answer read back with its key; a truncated, corrupted or foreign file is `none`. -/
-public def decode (bytes : ByteArray) : Option (Array String × Answer) := readAll.run bytes
-
-/-- A slot read for a key: the answer stored under that very key, else a miss. -/
-public def lookup (key : Array String) (bytes : ByteArray) : Option Answer :=
-  (decode bytes).bind fun (k, a) => if k == key then some a else none
-
 /-- What an answer's own record needs to fit the format: every length it
 stores fits 32 bits. -/
 @[expose] public def AnswerBounded : Answer → Prop
@@ -136,12 +94,6 @@ stores fits 32 bits. -/
   | .ok d =>
     d.losses.size < 256 ^ 4 ∧ d.face.size < 256 ^ 4 ∧ d.words.toUTF8.size < 256 ^ 4 ∧
       ∀ l ∈ d.losses, (lossName l).toUTF8.size < 256 ^ 4
-
-/-- An answer the format holds under a key: every length it stores fits 32
-bits. -/
-@[expose] public def Bounded (key : Array String) (a : Answer) : Prop :=
-  (body key a).size < 256 ^ 4 ∧ key.size < 256 ^ 4 ∧ (∀ s ∈ key, s.toUTF8.size < 256 ^ 4) ∧
-    AnswerBounded a
 
 private theorem reads_loss (l : Gfx.Loss) (h : (lossName l).toUTF8.size < 256 ^ 4) :
     Binary.Reads readLoss l (encodeLoss l) := by
@@ -215,61 +167,53 @@ private theorem reads_answer (a : Answer) (h : AnswerBounded a) :
       _ (Binary.Reads.nat 1 1 (by decide)) ht
     simpa only [answerBytes, ByteArray.append_assoc] using this
 
-private theorem reads_body (key : Array String) (a : Answer) (h : Bounded key a) :
-    Binary.Reads readBody (key, a) (body key a) := by
-  obtain ⟨_, hk, hks, ha⟩ := h
-  have hans := reads_answer a ha
-  unfold readBody body
-  have hret := Binary.Reads.bind readAnswer
-    (fun a => (pure (key, a) : Binary.Reader (Array String × Answer)))
-    a (key, a) (answerBytes a) .empty hans (Binary.Reads.pure _)
-  rw [ByteArray.append_empty] at hret
-  have hmany := Binary.Reads.many Binary.Reader.str Binary.str key.toList #[]
-    (fun s hm => Binary.Reads.str s (hks s (by simpa using hm)))
-  simp only [Array.empty_append, Array.toArray_toList, Array.length_toList] at hmany
-  have hkey := Binary.Reads.bind (Binary.Reader.many Binary.Reader.str key.size #[])
-    (fun key => readAnswer >>= fun a => (pure (key, a) : Binary.Reader (Array String × Answer)))
-    key (key, a) (Binary.array Binary.str key) (answerBytes a) hmany hret
-  have := Binary.Reads.bind (Binary.Reader.nat 4)
-    (fun n => Binary.Reader.many Binary.Reader.str n #[] >>= fun key => readAnswer >>= fun a =>
-      (pure (key, a) : Binary.Reader (Array String × Answer)))
-    key.size (key, a) (Binary.natBE 4 key.size) _ (Binary.Reads.nat 4 _ hk) hkey
-  simpa only [ByteArray.append_assoc] using this
+/-- `AnswerBounded`, decided. -/
+public def answerFits : Answer → Bool
+  | .error why => decide (why.toUTF8.size < 256 ^ 4)
+  | .ok d =>
+    decide (d.losses.size < 256 ^ 4) && decide (d.face.size < 256 ^ 4) &&
+      decide (d.words.toUTF8.size < 256 ^ 4) &&
+        d.losses.all fun l => decide ((lossName l).toUTF8.size < 256 ^ 4)
 
-public theorem decode_encode_id (key : Array String) (a : Answer) (h : Bounded key a) :
-    decode (encode key a) = some (key, a) := by
-  unfold decode
-  apply Binary.Reads.run_id
-  unfold readAll encode
-  have hrun : readBody.run (body key a) = some (key, a) :=
-    Binary.Reads.run_id readBody (key, a) (body key a) (reads_body key a h)
-  have hlift : Binary.Reads (Binary.Reader.lift (checked (checksum (body key a)) (body key a))) (key, a) .empty :=
-    Binary.Reads.lift _ (key, a) (by simp [checked, hrun])
-  have hb := Binary.Reads.bind (Binary.Reader.bytes (body key a).size)
-    (fun b => Binary.Reader.lift (checked (checksum (body key a)) b)) (body key a) (key, a) (body key a) .empty
-    (Binary.Reads.bytes _) hlift
-  rw [ByteArray.append_empty] at hb
-  have hn := Binary.Reads.bind (Binary.Reader.nat 4)
-    (fun n => Binary.Reader.bytes n >>= fun b => Binary.Reader.lift (checked (checksum (body key a)) b))
-    (body key a).size (key, a) (Binary.natBE 4 (body key a).size) (body key a) (Binary.Reads.nat 4 _ h.1) hb
-  have hck := Binary.Reads.bind (Binary.Reader.nat 8)
-    (fun ck => Binary.Reader.nat 4 >>= fun n => Binary.Reader.bytes n >>= fun b =>
-      Binary.Reader.lift (checked ck b))
-    (checksum (body key a)) (key, a) (Binary.natBE 8 (checksum (body key a))) _
-    (Binary.Reads.nat 8 _ (by
-      have := (Flate.fnv64 14695981039346656037 (body key a)).toNat_lt
-      simpa [checksum] using this)) hn
-  have := Binary.Reads.bind (Binary.Reader.expect magic)
-    (fun _ => Binary.Reader.nat 8 >>= fun ck => Binary.Reader.nat 4 >>= fun n =>
-      Binary.Reader.bytes n >>= fun b => Binary.Reader.lift (checked ck b))
-    () (key, a) magic _ (Binary.Reads.expect magic) hck
-  simpa only [ByteArray.append_assoc] using this
+private theorem answerFits_bounded (a : Answer) (h : answerFits a = true) : AnswerBounded a := by
+  cases a with
+  | error why => simpa [answerFits, AnswerBounded] using h
+  | ok d =>
+    simp only [answerFits, Bool.and_eq_true, decide_eq_true_eq, Array.all_eq_true] at h
+    obtain ⟨⟨⟨hn, hf⟩, hw⟩, hl⟩ := h
+    refine ⟨hn, hf, hw, fun l hm => ?_⟩
+    obtain ⟨i, hi, rfl⟩ := Array.getElem_of_mem hm
+    simpa using hl i hi
+
+/-- The face cache's format: its magic, and an answer's record. -/
+public def format : KeyedRecord.Format Answer where
+  magic := "LTFACE2\n".toUTF8
+  write := answerBytes
+  read := readAnswer
+  Fits := AnswerBounded
+  reads := reads_answer
+
+/-- An answer as the cache stores it under its key. -/
+public def encode (key : Array String) (a : Answer) : ByteArray := KeyedRecord.encode format key a
+
+/-- A slot read for a key: the answer stored under that very key, else a miss. -/
+public def lookup (key : Array String) (bytes : ByteArray) : Option Answer :=
+  KeyedRecord.lookup format key bytes
+
+/-- An answer the format holds under a key: every length it stores fits 32 bits. -/
+@[expose] public def Bounded (key : Array String) (a : Answer) : Prop :=
+  KeyedRecord.Bounded format key a
+
+/-- `Bounded`, decided: what the cache checks before it stores. -/
+public def storable (key : Array String) (a : Answer) : Bool :=
+  KeyedRecord.storable format key a (answerFits a)
+
+public theorem storable_bounded (key : Array String) (a : Answer) (h : storable key a = true) :
+    Bounded key a :=
+  KeyedRecord.storable_bounded format key a _ (answerFits_bounded a) h
 
 public theorem lookup_exact (key : Array String) (a : Answer) (h : Bounded key a) :
-    lookup key (encode key a) = some a ∧ ∀ key', key' ≠ key → lookup key' (encode key a) = none := by
-  have hd := decode_encode_id key a h
-  refine ⟨by simp [lookup, hd], fun key' hne => ?_⟩
-  simp only [lookup, hd, Option.bind_some]
-  exact ite_eq_right_iff.mpr fun e => absurd (beq_iff_eq.mp e).symm hne
+    lookup key (encode key a) = some a ∧ ∀ key', key' ≠ key → lookup key' (encode key a) = none :=
+  KeyedRecord.lookup_exact format key a h
 
 end LeanTex.Core.FigureFace

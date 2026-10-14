@@ -13578,16 +13578,8 @@ public def picFragmentKey (id msg : String) : String := "picture:" ++ id ++ ":" 
 /-- The key a picture in a line of text is named under where it is not drawn. -/
 public def picInlineKey (id : String) : String := "picture:inline:" ++ id
 
-/-- FNV-1a with two seeds, 32 hex digits: a content hash over a picture body
-or a wrapped request. -/
-public def picHash (s : String) : String := Id.run do
-  let hex (x : UInt64) : String := Hex.digits false 16 x.toNat
-  let fnv (seed : UInt64) : UInt64 := Id.run do
-    let mut h := seed
-    for byte in s.toUTF8 do
-      h := (h ^^^ byte.toUInt64) * 1099511628211
-    return h
-  return hex (fnv 14695981039346656037) ++ hex (fnv 1099511628211)
+/-- A picture body's or wrapped request's content key, in lower-case hex. -/
+public def picHash (s : String) : String := (Flate.contentKey s.toUTF8).toLower
 
 /-- xcolor's name grammar: every maximal run of ASCII letters and digits in a
 picture body, deduplicated in first-seen order. -/

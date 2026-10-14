@@ -451,7 +451,7 @@ def browserOf (j : Json) (isPdfium : Bool) : Browser := Id.run do
 /-- The FNV-64 of a file's bytes, as the run record spells a raster. -/
 def fileHash (path : String) : IO String := do
   let b ← IO.FS.readBinFile path
-  return Flate.hex16 (Flate.fnv64 14695981039346656037 b)
+  return Flate.hex16 (Flate.fnv64 Flate.fnvOffset b)
 
 /-- Poppler's rasters of a file at `rasterDpi`, one PNG per page in page
 order (`pdftoppm` pads the page number to the count's width). -/

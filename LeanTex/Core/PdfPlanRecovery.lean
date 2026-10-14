@@ -150,8 +150,8 @@ private theorem WritePlan.xref_reads (p : WritePlan) (ha : p.Allocated) :
         "\nendstream\nendobj\n".toUTF8)) at hs
     simpa only [octets_append, List.append_assoc, ByteArray.append_assoc] using hs
   · have hf := (xrefStreamDict_fields_exact p.table.size p.table.infoId p.measure.widths
-      (Flate.fnv64 14695981039346656037 p.measure.body)
-      (Flate.fnv64 1099511628211 p.measure.body)
+      (Flate.fnv64 Flate.fnvOffset p.measure.body)
+      (Flate.fnv64 Flate.fnvPrime p.measure.body)
       (decide ((Flate.deflate p.measure.xrefPayload).size < p.measure.xrefPayload.size))
       (if (Flate.deflate p.measure.xrefPayload).size < p.measure.xrefPayload.size
         then (Flate.deflate p.measure.xrefPayload).size else p.measure.xrefPayload.size)).1
@@ -375,8 +375,8 @@ public theorem WritePlan.objects_recovered_exact (p : WritePlan)
       intro id hi size hs
       rw [p.readback_metadata.2] at hs
       have hsize := (xrefStreamDict_fields_exact p.table.size p.table.infoId p.measure.widths
-        (Flate.fnv64 14695981039346656037 p.measure.body)
-        (Flate.fnv64 1099511628211 p.measure.body)
+        (Flate.fnv64 Flate.fnvOffset p.measure.body)
+        (Flate.fnv64 Flate.fnvPrime p.measure.body)
         (decide ((Flate.deflate p.measure.xrefPayload).size < p.measure.xrefPayload.size))
         (if (Flate.deflate p.measure.xrefPayload).size < p.measure.xrefPayload.size
           then (Flate.deflate p.measure.xrefPayload).size else p.measure.xrefPayload.size)).2.2.1

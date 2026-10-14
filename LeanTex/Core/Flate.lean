@@ -290,11 +290,17 @@ def deflateWriter (raw : ByteArray) : Bw :=
 public def deflate (raw : ByteArray) : ByteArray :=
   pushBe32 (deflateWriter raw).flush (adler32 raw)
 
+/-- The FNV-64 offset basis, the seed of every single FNV fingerprint. -/
+@[expose] public def fnvOffset : UInt64 := 14695981039346656037
+
+/-- The FNV-64 prime, also the seed of a 128-bit key's second pass. -/
+@[expose] public def fnvPrime : UInt64 := 1099511628211
+
 /-- FNV-1a over bytes, a non-cryptographic fingerprint for change detection. -/
 public def fnv64 (seed : UInt64) (b : ByteArray) : UInt64 := Id.run do
   let mut h := seed
   for byte in b do
-    h := (h ^^^ byte.toUInt64) * 1099511628211
+    h := (h ^^^ byte.toUInt64) * fnvPrime
   return h
 
 /-- Sixteen hex digits of a 64-bit hash. -/
@@ -302,7 +308,7 @@ public def hex16 (x : UInt64) : String := Hex.digits true 16 x.toNat
 
 /-- A 128-bit content key: two independent FNV-64 passes as 32 hex digits. -/
 public def contentKey (b : ByteArray) : String :=
-  hex16 (fnv64 14695981039346656037 b) ++ hex16 (fnv64 1099511628211 b)
+  hex16 (fnv64 fnvOffset b) ++ hex16 (fnv64 fnvPrime b)
 
 /-- The `n`-byte array whose byte `j` is `f` of the `j` bytes before it. -/
 @[specialize] public def build (n : Nat) (f : ByteArray → UInt8) : ByteArray :=
