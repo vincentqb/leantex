@@ -306,6 +306,46 @@ def svgOutputScopeChecks (ref : IO.Ref (List String)) : IO Unit := do
       (namedIn .pdf "N0026" && glyphIn .pdf)
 
 
+/-- A figure's CSS lists are cut only at separators outside nesting and strings, so its diagnostics
+name whole selectors and families, and the rest of its sheet still paints. -/
+def cssListChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let some fs ← threeRoleFonts | check ref "CSS lists: the role faces parse" false
+  let selectors := ["rect[title=\"x, y\"]", "rect[title='p,q']", "rect[title=p,q]", "rect .ok..bad"]
+  let sheet := String.join (selectors.map (· ++ ", circle { fill: red } ")) ++
+    ".keep { fill: blue; shape-rendering: [a;b] } .bang { font-family: \"Bang!\" !important }"
+  let bytes := svgDocument ("<style>" ++ sheet ++ "</style>" ++
+    "<rect class=\"keep\" width=\"5\" height=\"5\"/><circle cx=\"12\" cy=\"12\" r=\"3\"/>" ++
+    "<text x=\"1\" y=\"18\" style=\"font-family: 'Invented Grotesk, Narrow'\">Hi</text>" ++
+    "<text class=\"bang\" x=\"20\" y=\"18\" style=\"font-family: serif\">Ho</text>") 40 20
+  let f ← Driver.svgFetch "lists.svg" bytes .first "en" none
+  let req : Image.Request := { src := "lists.svg" }
+  let (en, _) := Image.fulfilOne req (.decoded "" f.res none none (some bytes) none)
+  let (imgs, shaped) := FigureStore.settle fs (FigureStore.attach { entries := #[en] } #[some f.drawn])
+  let subjects := (f.diags ++ shaped.map (·.2)).filterMap (·.subject)
+  let after (pre : String) (s : String) : Option String :=
+    if s.startsWith pre then some (s.drop pre.length).toString else none
+  let named := subjects.filterMap fun s =>
+    (after "figure:svg:property:style: the selector '" s).map (·.dropEnd 1 |>.toString)
+  check ref s!"CSS lists: each dropped rule names its whole selector ({named})"
+    (named.toList == selectors)
+  let families := subjects.filterMap (after "svg:font:")
+  check ref s!"CSS lists: a quoted family holding a comma is named whole ({families})"
+    (families == #["Invented Grotesk, Narrow", "Bang!"])
+  check ref s!"CSS lists: a semicolon inside brackets ends no declaration ({subjects})"
+    (subjects.all fun s => !hasStr s "the declaration")
+  let fills := ((f.vector.map (·.marks)).getD #[]).filterMap fun m => match m with
+    | .paint _ _ (some fl) _ _ _ => match fl.paint with
+      | .solid c => some (c.r.toNat, c.g.toNat, c.b.toNat)
+      | _ => none
+    | _ => none
+  check ref s!"CSS lists: the sheet's whole rules paint and its dropped ones nothing ({fills})"
+    (fills.contains (0, 0, 255) && !fills.contains (255, 0, 0))
+  let body := svgPage fs imgs "lists.svg"
+  check ref "CSS lists: the lossy figure ships its authored bytes, every list as written"
+    ((HtmlDoc.imageResources imgs).any (·.bytes == bytes) &&
+      (elemAttrsList (· == "svg") #[] body.toList).isEmpty)
+
+
 /-- The corpus's figures ship as the page's own SVG where they can, the moving and raster ones as
 images. -/
 def svgCorpusHtmlChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
@@ -356,6 +396,7 @@ def svgHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
   svgTextPaintLossChecks ref
   svgInvisibleTextChecks ref
   svgOutputScopeChecks ref
+  cssListChecks ref
   svgAstralTextChecks ref
 
 end Tests

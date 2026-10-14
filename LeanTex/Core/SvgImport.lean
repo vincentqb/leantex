@@ -586,15 +586,16 @@ where
   ["serif", "sans-serif", "monospace", "cursive", "fantasy", "system-ui", "ui-serif",
    "ui-sans-serif", "ui-monospace", "ui-rounded", "math", "emoji", "fangsong"]
 
-/-- A `font-family` list: each family unquoted, a generic one lower case. -/
+/-- A `font-family` list, cut at its commas outside strings: each family unquoted, a generic one
+lower case. -/
 public def families? (s : String) : Option (Array String) :=
-  let fams := (s.splitOn ",").map fun f =>
+  let fams := (Css.splitList ',' s).map fun f =>
     let t := f.trimAscii.toString
     let t := if t.length ≥ 2 && (t.startsWith "\"" && t.endsWith "\"" || t.startsWith "'" && t.endsWith "'")
       then ((t.drop 1).dropEnd 1).toString else t
     if generics.contains t.toLower then t.toLower else t
   let fams := fams.filter (!·.isEmpty)
-  if fams.isEmpty then none else some fams.toArray
+  if fams.isEmpty then none else some fams
 
 /-- A `font-weight`: a keyword or a number, `bolder`/`lighter` against the
 parent's (CSS Fonts 4 §2.2's table). -/

@@ -2,6 +2,7 @@ module
 
 public import Std.Data.HashMap
 import Std.Data.HashSet
+import LeanTex.Core.KeyVal
 
 /-! The CSS an SVG file states (SVG 2 §6): declarations, a selector subset, and the cascade
 of CSS Cascading 4 §6 over them. -/
@@ -48,6 +49,40 @@ public structure Rule where
 
 /-- A line end (CSS Syntax 3 §3.3): line feed, carriage return or form feed. -/
 @[expose] public def isLineEnd (c : Char) : Bool := c == '\n' || c == '\r' || c == '\x0c'
+
+/-- CSS text onto `acc` as atoms (CSS Syntax 3 §4.3.5, §4.3.7): a string through its closing quote,
+a line end or the text's end, escapes included, or an escape, a backslash and its next character,
+is one atom, and any other character stands alone. -/
+def atomsGo (acc : Array (List Char)) :
+    Option (Char × Array Char) → List Char → Array (List Char)
+  | none, [] => acc
+  | none, '\\' :: c :: rest => atomsGo (acc.push ['\\', c]) none rest
+  | none, c :: rest =>
+    if c == '"' || c == '\'' then atomsGo acc (some (c, #[c])) rest
+    else atomsGo (acc.push [c]) none rest
+  | some (_, cur), [] => acc.push cur.toList
+  | some (q, cur), '\\' :: c :: rest => atomsGo acc (some (q, (cur.push '\\').push c)) rest
+  | some (q, cur), c :: rest =>
+    if c == q || isLineEnd c then atomsGo (acc.push (cur.push c).toList) none rest
+    else atomsGo acc (some (q, cur.push c)) rest
+
+/-- CSS text as its atoms. -/
+def atoms (s : String) : List (List Char) := (atomsGo #[] none s.toList).toList
+
+/-- An atom opening a block (CSS Syntax 3 §5.5.9). -/
+def opensBlock (a : List Char) : Bool := a == ['('] || a == ['['] || a == ['{']
+
+/-- An atom closing a block. -/
+def closesBlock (a : List Char) : Bool := a == [')'] || a == [']'] || a == ['}']
+
+/-- A piece's atoms as its text. -/
+def pieceText (piece : Array (List Char)) : String :=
+  piece.foldl (fun t a => a.foldl String.push t) ""
+
+/-- CSS text cut at each `sep` outside blocks, strings and escapes, each piece as written: a
+comma-separated list's items (CSS Syntax 3 §5.4.10), or a block's declarations at `;`. -/
+public def splitList (sep : Char) (s : String) : Array String :=
+  (KeyVal.splitTopAt opensBlock closesBlock (· == [sep]) (atoms s)).map pieceText
 
 /-- `s` with its comments removed: `/* … */`, an unterminated one to the end. -/
 public def stripComments (s : String) : String := Id.run do
@@ -173,69 +208,48 @@ public def scanTo (cs : Array Char) (stop : Char) (i : Nat) : Nat := Id.run do
     j := j + 1
   return j
 
+/-- A declaration's value without its trailing `!important`, and whether it held one (CSS Syntax 3
+§5.5.6). -/
+public def importance (value : String) : String × Bool :=
+  if !value.contains '!' then (value, false) else
+  let parts := splitList '!' value
+  match parts.back? with
+  | some imp =>
+    if parts.size ≥ 2 && imp.trimAscii.toString.toLower == "important" then
+      (("!".intercalate parts.pop.toList).trimAscii.toString, true)
+    else (value, false)
+  | none => (value, false)
+
 /-- A declaration block's declarations in order; a malformed one is unsupported, a refused spelling refused. -/
 public def parseDecls (text : String) : Except Problem (Array Decl) := do
   let text := stripComments text
   if let some what := refusedIn text then throw (.refused what)
   let mut out : Array Decl := #[]
-  for part in splitTop text ';' do
+  for part in splitList ';' text do
     let p := part.trimAscii.toString
     if p.isEmpty then continue
     if brokenString part then throw (.unsupported s!"the declaration '{p}', whose string a line end breaks")
     match p.splitOn ":" with
     | prop :: rest@(_ :: _) =>
       let prop := prop.trimAscii.toString.toLower
-      let value := (":".intercalate rest).trimAscii.toString
-      let (value, important) :=
-        match value.splitOn "!" with
-        | [v, imp] =>
-          if imp.trimAscii.toString.toLower == "important" then (v.trimAscii.toString, true)
-          else (value, false)
-        | _ => (value, false)
+      let (value, important) := importance (":".intercalate rest).trimAscii.toString
       if prop.isEmpty || !prop.all (fun c => c.isAlphanum || c == '-') then
         throw (.unsupported s!"the declaration '{p}'")
       out := out.push { prop, value, important }
     | _ => throw (.unsupported s!"the declaration '{p}'")
   return out
-where
-  /-- Split on `sep` outside quotes and parentheses. -/
-  splitTop (s : String) (sep : Char) : Array String := Id.run do
-    let mut parts : Array String := #[]
-    let mut cur := ""
-    let mut depth : Nat := 0
-    let mut quote : Option Char := none
-    for c in s.toList do
-      match quote with
-      | some q =>
-        cur := cur.push c
-        if c == q || isLineEnd c then quote := none
-      | none =>
-        if c == '"' || c == '\'' then
-          quote := some c
-          cur := cur.push c
-        else if c == '(' then
-          depth := depth + 1
-          cur := cur.push c
-        else if c == ')' then
-          depth := depth - 1
-          cur := cur.push c
-        else if c == sep && depth == 0 then
-          parts := parts.push cur
-          cur := ""
-        else cur := cur.push c
-    return parts.push cur
 
 /-- A character of a CSS identifier: a letter, digit, `-`, `_` or non-ASCII. -/
 @[expose] public def identChar (c : Char) : Bool := c.isAlphanum || c == '-' || c == '_' || c.toNat ≥ 128
 
-/-- One compound selector's text, or what in it is outside the subset. -/
-public def parseCompound (s : String) : Except String Compound := do
+/-- One compound selector's text, unless it is outside the subset. -/
+public def parseCompound (s : String) : Option Compound := do
   let cs := s.toList
   let typeChars := cs.takeWhile (fun c => identChar c || c == '*')
   let typ := String.ofList typeChars
   let mut rest := cs.drop typeChars.length
   let type : Option String ← if typ.isEmpty || typ == "*" then pure none
-    else if typ.all identChar then pure (some typ) else throw s!"the selector '{s}'"
+    else if typ.all identChar then pure (some typ) else failure
   let mut classes : Array String := #[]
   let mut ids : Array String := #[]
   for _ in [0:cs.length + 1] do
@@ -243,36 +257,37 @@ public def parseCompound (s : String) : Except String Compound := do
     | [] => break
     | '.' :: more =>
       let name := more.takeWhile identChar
-      if name.isEmpty then throw s!"the selector '{s}'"
+      if name.isEmpty then failure
       classes := classes.push (String.ofList name)
       rest := more.drop name.length
     | '#' :: more =>
       let name := more.takeWhile identChar
-      if name.isEmpty then throw s!"the selector '{s}'"
+      if name.isEmpty then failure
       ids := ids.push (String.ofList name)
       rest := more.drop name.length
-    | _ => throw s!"the selector '{s}'"
-  if type.isNone && classes.isEmpty && ids.isEmpty && typ != "*" then
-    throw s!"the selector '{s}'"
+    | _ => failure
+  if type.isNone && classes.isEmpty && ids.isEmpty && typ != "*" then failure
   return { type, classes, ids }
 
-/-- One complex selector's text: compounds joined by white space
-(descendant) or `>` (child). -/
+/-- One complex selector's text: compounds joined by white space (descendant) or `>` (child); one
+outside the subset is named whole. -/
 public def parseSelector (s : String) : Except String Selector := do
+  let outside := s!"the selector '{s}'"
   let spaced := (s.replace ">" " > ").trimAscii.toString
   let words := (spaced.split isWs).toList.map (·.toString) |>.filter (!·.isEmpty)
   match words with
   | [] => throw "an empty selector"
   | first :: more =>
-    let head ← parseCompound first
+    let some head := parseCompound first | throw outside
     let mut rest : Array (Combinator × Compound) := #[]
     let mut pending := Combinator.descendant
     for w in more do
       if w == ">" then pending := .child
       else
-        rest := rest.push (pending, ← parseCompound w)
+        let some c := parseCompound w | throw outside
+        rest := rest.push (pending, c)
         pending := .descendant
-    if pending == .child then throw s!"the selector '{s}'"
+    if pending == .child then throw outside
     return { head, rest }
 
 /-- How specific a selector is (Selectors 4 §16): its ids, classes, types. -/
@@ -305,9 +320,9 @@ public def parseSheet (text : String) : Except String (Array Rule × Array Strin
     if n ≤ c then
       dropped := dropped.push "an unterminated rule"
       break
-    let sels := ((slice i o).splitOn ",").map (·.trimAscii.toString)
+    let sels := (splitList ',' (slice i o)).map (·.trimAscii.toString)
     match sels.mapM parseSelector, parseDecls (slice (o + 1) c) with
-    | .ok sels, .ok ds => rules := rules.push { selectors := sels.toArray, decls := ds }
+    | .ok sels, .ok ds => rules := rules.push { selectors := sels, decls := ds }
     | .error why, _ => dropped := dropped.push why
     | _, .error (.unsupported why) => dropped := dropped.push why
     | _, .error (.refused why) => throw why
@@ -569,5 +584,282 @@ public theorem cascade_exact (cands : Array (Key × String)) (v : String) (h : c
     rcases winnerList_mem none _ w hw with h0 | hm
     · cases h0
     · simpa using hm
+
+private theorem flatten_intercalate (a : List Char) :
+    ∀ segs : List (List (List Char)),
+      ([a].intercalate segs).flatten = a.intercalate (segs.map List.flatten)
+  | [] => by simp
+  | [x] => by simp [List.intercalate_singleton]
+  | x :: y :: rest => by
+    rw [List.intercalate_cons_cons, List.map_cons, List.map_cons, List.intercalate_cons_cons,
+      ← List.map_cons, ← flatten_intercalate a (y :: rest)]
+    simp
+
+private theorem atomsGo_flatten (acc : Array (List Char)) (st : Option (Char × Array Char))
+    (l : List Char) :
+    (atomsGo acc st l).toList.flatten =
+      acc.toList.flatten ++ ((st.map (·.2.toList)).getD []) ++ l := by
+  fun_induction atomsGo acc st l <;> simp_all
+
+/-- Joined, the atoms of a text are the text. -/
+private theorem atoms_flatten (s : String) : (atoms s).flatten = s.toList := by
+  simp [atoms, atomsGo_flatten]
+
+private theorem notEsc {c : Char} {rest : List Char} (h : c ≠ '\\' ∨ rest = []) :
+    ∀ (c' : Char) (r : List Char), c = '\\' → rest = c' :: r → False := by
+  intro c' r hc hr
+  rcases h with h | h
+  · exact h hc
+  · simp [h] at hr
+
+/-- String text after quote `q` that ends its string at its last character, whatever follows. -/
+private def Ends (q : Char) (b : List Char) : Prop :=
+  ∀ acc cur rest, atomsGo acc (some (q, cur)) (b ++ rest) =
+    atomsGo (acc.push (cur.toList ++ b)) none rest
+
+/-- String text after quote `q` that only the text's end ends. -/
+private def Runs (q : Char) (b : List Char) : Prop :=
+  ∀ acc cur, atomsGo acc (some (q, cur)) b = acc.push (cur.toList ++ b)
+
+/-- A string's text either ends it at a closing quote or a line end, or runs to the text's end. -/
+private theorem strRun (q : Char) (hq : q ≠ '\\') :
+    ∀ l : List Char, (∃ b r, l = b ++ r ∧ Ends q b) ∨ Runs q l
+  | [] => .inr fun acc cur => by simp [atomsGo.eq_4]
+  | c :: rest =>
+    if hc : c = '\\' then
+      match rest with
+      | [] => .inr fun acc cur => by
+          subst hc
+          rw [atomsGo.eq_6 _ _ _ _ _ (notEsc (.inr rfl))]
+          have hne : ('\\' == q || isLineEnd '\\') = false := by
+            simp only [isLineEnd, Bool.or_eq_false_iff, beq_eq_false_iff_ne, ne_eq]
+            exact ⟨fun h => hq h.symm, by decide⟩
+          simp [hne, atomsGo.eq_4]
+      | d :: r =>
+        match strRun q hq r with
+        | .inl ⟨b, r', hr, hb⟩ =>
+          .inl ⟨'\\' :: d :: b, r', by simp [hc, hr], fun acc cur rest' => by
+            simp only [List.cons_append]
+            rw [atomsGo.eq_5, hb]
+            simp⟩
+        | .inr hr => .inr fun acc cur => by
+            subst hc
+            rw [atomsGo.eq_5, hr]
+            simp
+    else
+      if hcl : (c == q || isLineEnd c) = true then
+        .inl ⟨[c], rest, rfl, fun acc cur rest' => by
+          rw [List.cons_append, List.nil_append, atomsGo.eq_6 _ _ _ _ _ (notEsc (.inl hc))]
+          simp [hcl]⟩
+      else
+        match strRun q hq rest with
+        | .inl ⟨b, r', hr, hb⟩ => .inl ⟨c :: b, r', by simp [hr], fun acc cur rest' => by
+            rw [List.cons_append, atomsGo.eq_6 _ _ _ _ _ (notEsc (.inl hc))]
+            simp only [hcl, Bool.false_eq_true, ↓reduceIte]
+            rw [hb]
+            simp⟩
+        | .inr hr => .inr fun acc cur => by
+            rw [atomsGo.eq_6 _ _ _ _ _ (notEsc (.inl hc))]
+            simp only [hcl, Bool.false_eq_true, ↓reduceIte]
+            rw [hr]
+            simp
+
+/-- An atom its own last character ends: an escape, a character standing alone, or a string the
+reader closed. -/
+private def Whole (a : List Char) : Prop :=
+  (∃ x, a = ['\\', x]) ∨ (∃ c, a = [c] ∧ c ≠ '\\' ∧ c ≠ '"' ∧ c ≠ '\'') ∨
+    (∃ q b, a = q :: b ∧ (q = '"' ∨ q = '\'') ∧ Ends q b)
+
+/-- An atom only the text's end ends: a lone backslash, or a string still open. -/
+private def Open (a : List Char) : Prop :=
+  a = ['\\'] ∨ (∃ q b, a = q :: b ∧ (q = '"' ∨ q = '\'') ∧ Runs q b)
+
+/-- Atoms as the reader makes them: each whole but the last, which may be open. -/
+private def Made : List (List Char) → Prop
+  | [] => True
+  | [a] => Whole a ∨ Open a
+  | a :: b :: rest => Whole a ∧ Made (b :: rest)
+
+private theorem quote_ne {q : Char} (h : q = '"' ∨ q = '\'') : q ≠ '\\' := by
+  rcases h with rfl | rfl <;> decide
+
+private theorem whole_reads (acc : Array (List Char)) (a tail : List Char) (h : Whole a) :
+    atomsGo acc none (a ++ tail) = atomsGo (acc.push a) none tail := by
+  rcases h with ⟨x, rfl⟩ | ⟨c, rfl, hb, hd, hs⟩ | ⟨q, b, rfl, hq, hend⟩
+  · simp [atomsGo.eq_2]
+  · rw [List.cons_append, List.nil_append, atomsGo.eq_3 _ _ _ (notEsc (.inl hb))]
+    simp [hd, hs]
+  · rw [List.cons_append, atomsGo.eq_3 _ _ _ (notEsc (.inl (quote_ne hq)))]
+    have hq' : (q == '"' || q == '\'') = true := by rcases hq with rfl | rfl <;> rfl
+    simp only [hq', ↓reduceIte]
+    rw [hend]
+    simp
+
+private theorem open_reads (acc : Array (List Char)) (a : List Char) (h : Open a) :
+    atomsGo acc none a = acc.push a := by
+  rcases h with rfl | ⟨q, b, rfl, hq, hruns⟩
+  · rw [atomsGo.eq_3 _ _ _ (notEsc (.inr rfl))]
+    simp [atomsGo.eq_1]
+  · rw [atomsGo.eq_3 _ _ _ (notEsc (.inl (quote_ne hq)))]
+    have hq' : (q == '"' || q == '\'') = true := by rcases hq with rfl | rfl <;> rfl
+    simp only [hq', ↓reduceIte]
+    rw [hruns]
+    simp
+
+/-- Atoms as the reader makes them read back as themselves. -/
+private theorem made_reads (acc : Array (List Char)) :
+    ∀ L : List (List Char), Made L → atomsGo acc none L.flatten = acc ++ L.toArray
+  | [], _ => by simp [atomsGo.eq_1]
+  | [a], h => by
+    rcases h with hw | ho
+    · simpa [atomsGo.eq_1] using whole_reads acc a [] hw
+    · simpa using open_reads acc a ho
+  | a :: b :: rest, h => by
+    obtain ⟨hw, hrest⟩ := h
+    rw [List.flatten_cons, whole_reads acc a _ hw, made_reads (acc.push a) (b :: rest) hrest]
+    simp
+
+private theorem made_cons (a : List Char) (L : List (List Char)) (ha : Whole a) (h : Made L) :
+    Made (a :: L) := by
+  cases L with
+  | nil => exact .inl ha
+  | cons b rest => exact ⟨ha, h⟩
+
+private theorem made_append :
+    ∀ A L : List (List Char), (∀ a ∈ A, Whole a) → Made L → Made (A ++ L)
+  | [], _, _, h => h
+  | a :: A, L, hA, h =>
+    made_cons a (A ++ L) (hA a (by simp)) (made_append A L (fun x hx => hA x (by simp [hx])) h)
+
+/-- The reader's atoms are as it makes them. -/
+private theorem atomsGo_made (l : List Char) (acc : Array (List Char))
+    (hacc : ∀ a ∈ acc.toList, Whole a) : Made (atomsGo acc none l).toList := by
+  match l with
+  | [] =>
+    rw [atomsGo.eq_1]
+    simpa using made_append acc.toList [] hacc trivial
+  | c :: rest =>
+    if hc : c = '\\' then
+      subst hc
+      match rest with
+      | [] =>
+        rw [atomsGo.eq_3 _ _ _ (notEsc (.inr rfl))]
+        simp only [show ('\\' == '"' || '\\' == '\'') = false by decide, Bool.false_eq_true,
+          ↓reduceIte, atomsGo.eq_1, Array.toList_push]
+        exact made_append acc.toList [['\\']] hacc (.inr (.inl rfl))
+      | d :: r =>
+        rw [atomsGo.eq_2]
+        exact atomsGo_made r _ (by
+          intro a ha
+          simp only [Array.toList_push, List.mem_append, List.mem_singleton] at ha
+          rcases ha with ha | rfl
+          · exact hacc a ha
+          · exact .inl ⟨d, rfl⟩)
+    else
+      rw [atomsGo.eq_3 _ _ _ (notEsc (.inl hc))]
+      if hq : (c == '"' || c == '\'') = true then
+        simp only [hq, ↓reduceIte]
+        have hq2 : c = '"' ∨ c = '\'' := by simpa using hq
+        rcases strRun c (quote_ne hq2) rest with ⟨b, r, rfl, hb⟩ | hruns
+        · rw [hb]
+          exact atomsGo_made r _ (by
+            intro a ha
+            simp only [Array.toList_push, List.mem_append, List.mem_singleton] at ha
+            rcases ha with ha | rfl
+            · exact hacc a ha
+            · exact .inr (.inr ⟨c, b, by simp, hq2, hb⟩))
+        · rw [hruns]
+          simpa using made_append acc.toList [[c] ++ rest] hacc
+            (.inr (.inr ⟨c, rest, by simp, hq2, hruns⟩))
+      else
+        simp only [hq, Bool.false_eq_true, ↓reduceIte]
+        have hq2 : c ≠ '"' ∧ c ≠ '\'' := by simpa using hq
+        exact atomsGo_made rest _ (by
+          intro a ha
+          simp only [Array.toList_push, List.mem_append, List.mem_singleton] at ha
+          rcases ha with ha | rfl
+          · exact hacc a ha
+          · exact .inr (.inl ⟨c, rfl, hc, hq2.1, hq2.2⟩))
+termination_by l.length
+decreasing_by all_goals simp_all <;> omega
+
+private theorem made_prefix : ∀ l1 l2 : List (List Char), Made (l1 ++ l2) → Made l1
+  | [], _, _ => trivial
+  | [a], l2, h => by
+    cases l2 with
+    | nil => simpa using h
+    | cons b r => exact .inl h.1
+  | a :: b :: l1, l2, h => ⟨h.1, made_prefix (b :: l1) l2 h.2⟩
+
+private theorem made_suffix : ∀ l1 l2 : List (List Char), Made (l1 ++ l2) → Made l2
+  | [], _, h => h
+  | a :: l1, l2, h => by
+    apply made_suffix l1 l2
+    rw [List.cons_append] at h
+    cases hl : (l1 ++ l2) with
+    | nil => trivial
+    | cons b r =>
+      rw [hl] at h
+      exact h.2
+
+private theorem made_intercalate (sep : List (List Char)) :
+    ∀ L : List (List (List Char)), Made (sep.intercalate L) → ∀ p ∈ L, Made p
+  | [], _ => by simp
+  | [p], h => by simpa [List.intercalate_singleton] using h
+  | p :: q :: rest, h => by
+    rw [List.intercalate_cons_cons, List.append_assoc] at h
+    intro x hx
+    simp only [List.mem_cons] at hx
+    rcases hx with rfl | hx
+    · exact made_prefix _ _ h
+    · have h' := made_suffix _ _ (made_suffix _ _ h)
+      exact made_intercalate sep (q :: rest) h' x (by simpa using hx)
+
+private theorem foldl_push (a : List Char) (t : String) :
+    (a.foldl String.push t).toList = t.toList ++ a := by
+  induction a generalizing t with
+  | nil => simp
+  | cons c rest ih => simp [ih, String.toList_push]
+
+private theorem pieceText_eq (piece : Array (List Char)) :
+    pieceText piece = String.ofList (piece.toList.flatMap id) := by
+  apply String.toList_inj.mp
+  have h : ∀ (l : List (List Char)) (t : String),
+      (l.foldl (fun t a => a.foldl String.push t) t).toList = t.toList ++ l.flatten := by
+    intro l
+    induction l with
+    | nil => simp
+    | cons a rest ih => intro t; simp [ih, foldl_push]
+  simp [pieceText, ← Array.foldl_toList, h]
+
+/-- Joined at `sep`, the pieces `splitList` cuts are the text it cut. -/
+public theorem splitList_join_id (sep : Char) (s : String) :
+    [sep].intercalate ((splitList sep s).toList.map String.toList) = s.toList := by
+  have h := KeyVal.splitTopAt_join_id opensBlock closesBlock [sep] (atoms s)
+  have hf := congrArg List.flatten h
+  rw [flatten_intercalate, atoms_flatten] at hf
+  simp only [splitList, pieceText_eq, Array.toList_map, List.map_map, Function.comp_def,
+    String.toList_ofList, List.flatMap_id]
+  simpa [List.map_map, Function.comp_def] using hf
+
+/-- A piece `splitList` cuts holds no `sep` outside blocks, strings and escapes: cut again, it is
+itself. -/
+public theorem splitList_fixed_point (sep : Char) (s : String) :
+    ∀ p ∈ (splitList sep s).toList, splitList sep p = #[p] := by
+  intro p hp
+  simp only [splitList, pieceText_eq, Array.toList_map, List.mem_map] at hp
+  obtain ⟨piece, hpiece, rfl⟩ := hp
+  have hjoin := KeyVal.splitTopAt_join_id opensBlock closesBlock [sep] (atoms s)
+  have hmade : Made piece.toList := by
+    refine made_intercalate [[sep]] _ ?_ piece.toList (List.mem_map_of_mem hpiece)
+    rw [hjoin]
+    exact atomsGo_made s.toList #[] (by simp)
+  have hre : atoms (String.ofList (piece.toList.flatMap id)) = piece.toList := by
+    simp only [atoms, String.toList_ofList, List.flatMap_id]
+    rw [made_reads #[] piece.toList hmade]
+    simp
+  simp only [splitList, hre]
+  rw [KeyVal.splitTopAt_fixed_point _ _ _ _ piece hpiece]
+  simp [pieceText_eq]
 
 end LeanTex.Core.Css

@@ -543,6 +543,23 @@ where
   lb : String := "{"
   rb : String := "}"
 
+/-- A CSS list is cut at its separators outside blocks, strings and escapes (CSS Syntax 3 §5.4.10),
+and a declaration's importance is read outside its strings (§5.5.6). -/
+def cssSplitChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let items := [":is(h1, h2) a", ":not(.a, .b)", "a[title=\"x, y\"]", "a[title='x,y']", "a\\,b",
+    "a[title=\"q\\\", r\"]", "c"]
+  check ref "CSS split: a selector list keeps each selector whole"
+    ((Css.splitList ',' (", ".intercalate items)).toList.map (·.trimAscii.toString) == items)
+  check ref "CSS split: a string a line end breaks ends there, and a comma after it separates"
+    (Css.splitList ',' "\"x\ny, z" == #["\"x\ny", " z"])
+  check ref "CSS split: a declaration block is cut at semicolons outside strings and brackets"
+    (Css.splitList ';' "fill: red; font-family: \"a;b\"; grid-area: [a;b]" ==
+      #["fill: red", " font-family: \"a;b\"", " grid-area: [a;b]"])
+  check ref "CSS split: importance is read after the value's strings"
+    (Css.importance "\"Bang!\" !important" == ("\"Bang!\"", true) &&
+      Css.importance "red ! IMPORTANT" == ("red", true) &&
+      Css.importance "\"a!important\"" == ("\"a!important\"", false))
+
 /-- A gradient stop takes its own place in the cascade, its `currentColor` its own. -/
 def svgStopStyleChecks (ref : IO.Ref (List String)) : IO Unit := do
   let stops (ms : Array Mark) : Array (Nat × Nat × Nat) :=
@@ -625,6 +642,7 @@ def svgNativeChecks (ref : IO.Ref (List String)) : IO Unit := do
   svgShadowStyleChecks ref
   svgObjectClipChecks ref
   cssLineEndChecks ref
+  cssSplitChecks ref
   svgStopStyleChecks ref
   svgUndrawnNamedChecks ref
   svgTextSpaceChecks ref

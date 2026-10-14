@@ -16,7 +16,7 @@ import LeanTex.Core.NameClaim
 import LeanTex.Core.ContrastSolve
 import LeanTex.Core.TitleTemplate
 import LeanTex.Core.ListMark
-import LeanTex.Core.KeyVal
+import LeanTex.Core.Css
 import Std.Http.Data.URI.Encoding
 
 namespace LeanTex.Core.HtmlDoc
@@ -1336,10 +1336,9 @@ private def carrierLastLink (disc : String) : String :=
 private def carrierTopUp (disc : String) : String :=
   s!":is(div:is(.step, .step-set, .alt-pair, [data-backend]), {disc})"
 
-/-- `sel`'s parts at the separators `sep` no parenthesis encloses. -/
+/-- `sel`'s parts at the separators `sep` outside its blocks and strings, each trimmed. -/
 private def splitTop (sep : Char) (sel : String) : List String :=
-  ((KeyVal.splitTopAt (· == '(') (· == ')') (· == sep) sel.toList).map
-    (String.ofList ·.toList |>.trimAscii.toString)).toList
+  ((Css.splitList sep sel).map (·.trimAscii.toString)).toList
 
 /-- A boundary member `X + Y` as its descendant prefix and its two compounds. -/
 private def siblingMember? (m : String) : Option (String × String × String) :=
