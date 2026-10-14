@@ -396,6 +396,11 @@ public theorem Color.milli_lt (a : UInt8) : milli a < 1001 := by
 public def Color.registration (printModel : Bool) : Color :=
   if printModel then Color.ofCmyk 1000 1000 1000 1000 else Color.black
 
+/-- Replace-on-redeclare: a later declaration of a key overrides, keeping one entry per key. -/
+public abbrev redeclare {κ α : Type} [BEq κ] (xs : Array (κ × α)) (k : κ) (v : α) :
+    Array (κ × α) :=
+  (xs.filter (·.1 != k)).push (k, v)
+
 /-- Named lengths declared by `\tokens`, in declaration order. -/
 public structure Tokens where
   entries : Array (String × SymGlue) := #[]
@@ -425,12 +430,12 @@ public theorem findSourced?_names (t : Tokens) (name : String) :
     cases h : t.find? name <;> simp [Tokens.findSourced?, h] at hs
     exact hs ▸ rfl
 
-/-- Replace-on-redeclare: a later declaration overrides, keeping one entry per name. -/
+/-- A later declaration of a name overrides, keeping one entry per name. -/
 public def Tokens.declare (t : Tokens) (key : String) (g : SymGlue) : Tokens :=
-  { entries := (t.entries.filter (·.1 != key)).push (key, g) }
+  { entries := redeclare t.entries key g }
 
 public theorem declare_find_eq {κ α : Type} [BEq κ] [LawfulBEq κ] (xs : Array (κ × α)) (k : κ) (v : α) :
-    ((xs.filter (·.1 != k)).push (k, v)).find? (·.1 == k) = some (k, v) := by
+    (redeclare xs k v).find? (·.1 == k) = some (k, v) := by
   have hnone : (xs.filter (·.1 != k)).find? (·.1 == k) = none := by
     rw [Array.find?_eq_none]
     intro x hx
@@ -439,14 +444,15 @@ public theorem declare_find_eq {κ α : Type} [BEq κ] [LawfulBEq κ] (xs : Arra
   rw [Array.find?_push, hnone]
   simp
 
-private theorem declare_collapse {κ α : Type} [BEq κ] [LawfulBEq κ] (xs : Array (κ × α)) (k : κ) (v : α) :
-    ((xs.filter (·.1 != k)).push (k, v)).filter (·.1 != k) = xs.filter (·.1 != k) := by
+private theorem declare_collapse {κ α : Type} [BEq κ] [LawfulBEq κ] (xs : Array (κ × α)) (k : κ)
+    (v v' : α) : redeclare (redeclare xs k v) k v' = redeclare xs k v' := by
+  unfold redeclare
   rw [Array.filter_push]
   simp
 
 public theorem declare_keeps {κ α : Type} [BEq κ] [LawfulBEq κ] (xs : Array (κ × α)) (k k' : κ) (v : α)
     (h : k' ≠ k) :
-    ((xs.filter (·.1 != k)).push (k, v)).find? (·.1 == k') = xs.find? (·.1 == k') := by
+    (redeclare xs k v).find? (·.1 == k') = xs.find? (·.1 == k') := by
   rw [Array.find?_push, Array.find?_filter]
   have hpred : (fun a : κ × α => decide ((a.fst != k) = true ∧ (a.fst == k') = true))
       = (fun a : κ × α => a.fst == k') := by
@@ -468,8 +474,7 @@ public theorem Tokens.declare_last_wins (t : Tokens) (k : String) (g : SymGlue) 
 
 public theorem Tokens.declare_overwrite (t : Tokens) (k : String) (g g' : SymGlue) :
     (t.declare k g).declare k g' = t.declare k g' := by
-  unfold declare
-  rw [declare_collapse]
+  simp only [declare, declare_collapse]
 
 public theorem Tokens.declare_keeps_others (t : Tokens) (k k' : String) (g : SymGlue)
     (h : k' ≠ k) : (t.declare k g).find? k' = t.find? k' := by
@@ -1193,11 +1198,11 @@ public def Palette.find? (p : Palette) (name : String) : Option Color :=
 
 end DesignResolve
 
-/-- Replace-on-redeclare: a later declaration overrides, keeping one entry per name. -/
+/-- A later declaration of a name overrides, keeping one entry per name. -/
 @[expose] public def Palette.declare (p : Palette) (ref : ColorRef) (c : Color)
     (decorative : Bool := false) : Palette :=
   { p with
-    entries := (p.entries.filter (·.1 != ref)).push (ref, c)
+    entries := redeclare p.entries ref c
     decorative := if decorative then
         if p.decorative.contains ref then p.decorative
         else p.decorative.push ref
@@ -1279,9 +1284,7 @@ public theorem Palette.declare_find_exact (p : Palette) (ref : ColorRef)
 
 public theorem Palette.declare_overwrite (p : Palette) (ref : ColorRef) (c c' : Color) :
     (p.declare ref c).declare ref c' = p.declare ref c' := by
-  unfold declare
-  rw [declare_collapse]
-  simp
+  simp [declare, declare_collapse]
 
 public theorem Palette.declare_keeps_others (p : Palette) (ref other : ColorRef) (c : Color)
     (d : Bool) (h : other ≠ ref) : (p.declare ref c d).lookup other = p.lookup other := by
@@ -1524,28 +1527,19 @@ public def FontSpec.declareFamily (s : FontSpec) (name family : String) : FontSp
     { s with families := s.families.map fun (n, f) => if n == name then (n, family) else (n, f) }
   else { s with families := s.families.push (name, family) }
 
-/-- Replace-on-redeclare: a later declaration of the same variant overrides,
-keeping one entry per `(slot, weight, italic)`. -/
+/-- A later declaration of a variant overrides, keeping one entry per `(slot, weight, italic)`. -/
 public def FontSpec.declareFace (s : FontSpec) (variant : Nat × Nat × Bool)
     (face : String) : FontSpec :=
-  { s with faces := (s.faces.filter (·.1 != variant)).push (variant, face) }
+  { s with faces := redeclare s.faces variant face }
 
 public def FontSpec.faceFor (s : FontSpec) (slot weight : Nat) (italic : Bool) : Option String :=
   (s.faces.find? (·.1 == (slot, weight, italic))).map (·.2)
 
 public theorem FontSpec.faceFor_last_declared (s : FontSpec) (v : Nat × Nat × Bool)
     (f : String) : (s.declareFace v f).faceFor v.1 v.2.1 v.2.2 = some f := by
-  have hnone : (s.faces.filter (·.1 != v)).find? (·.1 == (v.1, v.2.1, v.2.2)) = none := by
-    rw [Array.find?_eq_none]
-    intro x hx
-    have hne := (Array.mem_filter.mp hx).2
-    simp only [bne_iff_ne, ne_eq] at hne
-    simp only [beq_iff_eq]
-    intro hcontra
-    exact hne (by simpa using hcontra)
   unfold declareFace faceFor
-  rw [Array.find?_push, hnone]
-  simp
+  rw [show ((v.1, v.2.1, v.2.2) : Nat × Nat × Bool) = v from rfl, declare_find_eq]
+  rfl
 
 /-- What the reader must be able to reach in place of a non-text element. -/
 public inductive AltPolicy where
@@ -1951,9 +1945,13 @@ public inductive Style where
    ("normalsize", 1000), ("large", 1200), ("Large", 1440), ("LARGE", 1728),
    ("huge", 2074), ("Huge", 2488)]
 
-/-- A named step of the scale applied to a base size; a name off the scale is the base itself. -/
-@[expose] public def scaleStep (base : Sp) (name : String) : Sp :=
-  base * ((sizeScale.lookup name).getD 1000) / 1000
+/-- A named step of a size ladder applied to a base size; a name off the ladder is the base
+itself. -/
+@[expose] public def scaleStepIn (scale : List (String × Nat)) (base : Sp) (name : String) : Sp :=
+  base * ((scale.lookup name).getD 1000) / 1000
+
+/-- `scaleStepIn` over the 10pt ladder. -/
+@[expose] public def scaleStep (base : Sp) (name : String) : Sp := scaleStepIn sizeScale base name
 
 /-- Each named step's `\baselineskip`, per mille of the body size:
 size10.clo's `\@setfontsize` second arguments. -/
@@ -2057,7 +2055,7 @@ public theorem stepLead_between (base : Int) (hb : 100 ≤ base) :
   intro p hp
   simp only [sizeScale, List.mem_cons, List.not_mem_nil, or_false] at hp
   rcases hp with h|h|h|h|h|h|h|h|h|h <;> subst h <;>
-    simp only [stepLead, scaleStep, skipBody, sizeSkipScale, sizeScale, List.lookup,
+    simp only [stepLead, scaleStep, scaleStepIn, skipBody, sizeSkipScale, sizeScale, List.lookup,
       leadingFor, leadingMilli] <;> simp <;>
     first
     | (show base * 500 / 1000 < base * 1200 / 1000 * 600 / 1200 ∧
@@ -2142,7 +2140,7 @@ public theorem sectionPageStrut_between (size : Int) :
   -- Spelled `Int`, not `Sp`, so `omega` reads the unfolded steps.
   have hs : ∀ x : Int, sectionPageStrut x = x * 1200 / 1000 * 1200 / 1000 * 1000 / 1000 * 13 / 10 := by
     intro x
-    simp only [sectionPageStrut, leadingFor, scaleStep, leadingMilli, hL]
+    simp only [sectionPageStrut, leadingFor, scaleStep, scaleStepIn, leadingMilli, hL]
     rfl
   rw [hs, hs]
   omega
@@ -2221,13 +2219,6 @@ public def PageSpec.scale (p : PageSpec) : List (String × Nat) :=
 /-- The skip column in force for a document: its own, or size10.clo's. -/
 public def PageSpec.skipScale (p : PageSpec) : List (String × Nat) :=
   p.skips.getD sizeSkipScale
-
-/-- `scaleStep` over a document's ladder; a name off the ladder is the base itself. -/
-public def scaleStepIn (scale : List (String × Nat)) (base : Sp) (name : String) : Sp :=
-  base * ((scale.lookup name).getD 1000) / 1000
-
-public theorem scaleStep_agree (base : Sp) (name : String) :
-    scaleStepIn sizeScale base name = scaleStep base name := by rfl
 
 public def Style.label : Style → String
   | .bold => "bold"
@@ -3503,10 +3494,13 @@ public inductive FlushSide where
   | right
   deriving Repr, BEq, DecidableEq, Inhabited
 
+/-- The declared side as the side its boxes stand on. -/
+@[expose] public def FlushSide.halign : FlushSide → HAlign
+  | .left => .left
+  | .right => .right
+
 /-- The declared side in the `ElementStyle.align` vocabulary both backends read. -/
-@[expose] public def FlushSide.align : FlushSide → String
-  | .left => "left"
-  | .right => "right"
+@[expose] public def FlushSide.align (s : FlushSide) : String := s.halign.align
 
 /-- The declared side as the page's line origin. -/
 public def FlushSide.flushRight : FlushSide → Bool
@@ -3515,17 +3509,7 @@ public def FlushSide.flushRight : FlushSide → Bool
 
 public theorem ragged_sides_agree (s : FlushSide) :
     s.flushRight = true ↔ s.align = "right" := by
-  cases s <;> simp [FlushSide.flushRight, FlushSide.align]
-
-/-- The declared side as the side its boxes stand on. -/
-@[expose] public def FlushSide.halign : FlushSide → HAlign
-  | .left => .left
-  | .right => .right
-
-/-- The dump spelling of a ragged side. -/
-public def FlushSide.label : FlushSide → String
-  | .left => "left"
-  | .right => "right"
+  cases s <;> simp [FlushSide.flushRight, FlushSide.align, FlushSide.halign, HAlign.align]
 
 /-- LaTeX's four ragged-setting spellings and the side each makes flush. -/
 public def raggedSideOf? : String → Option FlushSide
@@ -6286,9 +6270,9 @@ public def Styles.linkInk (s : Styles) (kind : String) (body : Array Inline) : A
   | some (c, n) => #[.colored c n body]
   | none => body
 
-/-- Replace-on-redeclare, one entry per element; what is declared here is the whole record. -/
+/-- A later declaration of an element overrides its whole record, keeping one entry per element. -/
 public def Styles.declare (s : Styles) (element : String) (st : ElementStyle) : Styles :=
-  { entries := (s.entries.filter (·.1 != element)).push (element, st) }
+  { entries := redeclare s.entries element st }
 
 /-- The abstract heading's style: the section heading's, centred. -/
 public def abstractHeadingStyle (styles : Styles) : ElementStyle :=
@@ -9027,7 +9011,7 @@ private def dumpBlock (ind : String) (b : Block) : String :=
     let kind := if ordered then "ordered" else "unordered"
     s!"{ind}list {kind}\n" ++ dumpItems (ind ++ "  ") items.toList
   | .center body => s!"{ind}center\n" ++ dumpBlocks (ind ++ "  ") body
-  | .ragged s body => s!"{ind}ragged {s.label}\n" ++ dumpBlocks (ind ++ "  ") body
+  | .ragged s body => s!"{ind}ragged {s.align}\n" ++ dumpBlocks (ind ++ "  ") body
   | .quote body => s!"{ind}quote\n" ++ dumpBlocks (ind ++ "  ") body
   | .abstract body => s!"{ind}abstract\n" ++ dumpBlocks (ind ++ "  ") body
   | .titled kind title body =>

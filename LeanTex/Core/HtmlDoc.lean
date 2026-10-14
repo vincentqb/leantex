@@ -2792,8 +2792,7 @@ private def tokenVars (cfg : Config) (doc : Doc) (roles : List Ir.Role)
   String.intercalate "\n" (palette ++ tokens ++ fonts)
 
 /-- One scale step as a CSS size, from `Ir.sizeScale`. -/
-private def scaleSize (name : String) (unit : String) : String :=
-  milliFactor ((Ir.sizeScale.lookup name).getD 1000) ++ unit
+private def scaleSize (name : String) (unit : String) : String := stepFactor name ++ unit
 
 /-- The leading a named size step sets, as a unitless CSS line height in milli. -/
 @[expose] public def stepLineHeightMilli (skips : List (String × Nat)) (factor : Nat)
@@ -5017,8 +5016,7 @@ public def pictureAltAttrs (floor : String) : Ir.Alt → Array (String × String
 page. -/
 private def listingLineHeight (page : PageSpec) (spec : Ir.ListingSpec) (step : String) :
     String :=
-  let k := (page.scale.lookup step).getD 1000
-  let size := page.fontSize * (k : Int) / 1000
+  let size := Ir.scaleStepIn page.scale page.fontSize step
   let pitch := Ir.stepSkip (Ir.stepLead page.skipScale step page.fontSize) page.fontSize
     page.leading - spec.lineOverlap
   decMilli (pitch * 1000 / max size 1)

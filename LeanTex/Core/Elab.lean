@@ -1223,55 +1223,38 @@ private def paraUnder (lang : Option String) (inlines : Array Ir.Inline) : Ir.Bl
   | some tag => .para (Ir.langWrap tag inlines)
   | none => .para inlines
 
-private def lookupUserGo (user : Array UserCmd) (name : String) :
-    Nat → Option (Nat × UserCmd)
+/-- The last entry named `want` below the bound, with its index. -/
+@[specialize] private def latestNamed {α : Type} (nameOf : α → String) (xs : Array α)
+    (want : String) :
+    Nat → Option (Nat × α)
   | 0 => none
   | k + 1 =>
-    if h : k < user.size then
-      if user[k].name == name then some (k, user[k]) else lookupUserGo user name k
-    else lookupUserGo user name k
+    if h : k < xs.size then
+      if nameOf xs[k] == want then some (k, xs[k]) else latestNamed nameOf xs want k
+    else latestNamed nameOf xs want k
 
-private def lookupUser (ctx : Ctx) (name : String) : Option (Nat × UserCmd) :=
-  lookupUserGo ctx.user name ctx.limit
-
-private theorem lookupUserGo_lt {user : Array UserCmd} {name : String}
-    {n k : Nat} {cmd : UserCmd} (h : lookupUserGo user name n = some (k, cmd)) :
-    k < n := by
-  fun_induction lookupUserGo user name n with
+private theorem latestNamed_lt {α : Type} {nameOf : α → String} {xs : Array α} {want : String}
+    {n k : Nat} {x : α} (h : latestNamed nameOf xs want n = some (k, x)) : k < n := by
+  fun_induction latestNamed nameOf xs want n with
   | case1 => simp at h
   | case2 m hm heq => simp_all
   | case3 m hm heq ih => exact Nat.lt_succ_of_lt (ih h)
   | case4 m hm ih => exact Nat.lt_succ_of_lt (ih h)
+
+private def lookupUser (ctx : Ctx) (name : String) : Option (Nat × UserCmd) :=
+  latestNamed (·.name) ctx.user name ctx.limit
 
 private theorem lookupUser_lt {ctx : Ctx} {name : String} {k : Nat}
     {cmd : UserCmd} (h : lookupUser ctx name = some (k, cmd)) : k < ctx.limit :=
-  lookupUserGo_lt h
-
-/-- The latest visible definition wins. -/
-private def lookupUserEnvGo (envs : Array UserEnv) (name : String) :
-    Nat → Option (Nat × UserEnv)
-  | 0 => none
-  | k + 1 =>
-    if h : k < envs.size then
-      if envs[k].name == name then some (k, envs[k]) else lookupUserEnvGo envs name k
-    else lookupUserEnvGo envs name k
+  latestNamed_lt h
 
 private def lookupUserEnv (ctx : Ctx) (name : String) : Option (Nat × UserEnv) :=
-  lookupUserEnvGo ctx.userEnvs name ctx.envLimit
-
-private theorem lookupUserEnvGo_lt {envs : Array UserEnv} {name : String}
-    {n k : Nat} {env : UserEnv} (h : lookupUserEnvGo envs name n = some (k, env)) :
-    k < n := by
-  fun_induction lookupUserEnvGo envs name n with
-  | case1 => simp at h
-  | case2 m hm heq => simp_all
-  | case3 m hm heq ih => exact Nat.lt_succ_of_lt (ih h)
-  | case4 m hm ih => exact Nat.lt_succ_of_lt (ih h)
+  latestNamed (·.name) ctx.userEnvs name ctx.envLimit
 
 private theorem lookupUserEnv_lt {ctx : Ctx} {name : String} {k : Nat}
     {env : UserEnv} (h : lookupUserEnv ctx name = some (k, env)) :
     k < ctx.envLimit :=
-  lookupUserEnvGo_lt h
+  latestNamed_lt h
 
 private def isSpace : Raw → Bool
   | .space => true
@@ -1354,17 +1337,6 @@ private def envOfHalves (name : String) (params : Array Param) (b e : Array Raw)
     ignoresLead := lead, trimsTail := environ,
     ignoresAfterEnd := e.any (isCtrl "ignorespacesafterend") }
 
-/-- `lookupUser` over an explicit table and prefix bound. -/
-private def lookupUserIn (user : Array UserCmd) (limit : Nat) (name : String) :
-    Option (Nat × UserCmd) := Id.run do
-  let mut k := limit
-  for _ in [0:limit] do
-    k := k - 1
-    if h : k < user.size then
-      if user[k].name == name then
-        return some (k, user[k])
-  return none
-
 /-- Binds a user command's parameters from raws, each value kept as raws for
 the math parser to read. -/
 private def bindMathArgs (params : Array Param) (rest : Array Raw) :
@@ -1416,7 +1388,7 @@ private def expandMathList (user : Array UserCmd) (limit : Nat)
       -- Compat's colour markers in macro bodies resolve as a direct \color.
       #[Raw.ctrl "color" pos, Raw.group #[Raw.word (n.drop 5).toString pos] pos] ++ tail
     else
-      match lookupUserIn user limit n with
+      match latestNamed (·.name) user n limit with
       | some (k, cmd) =>
         if _h : k < limit then
           let (bindings, rest') := bindMathArgs cmd.params tail
@@ -1747,15 +1719,17 @@ private theorem scanBracketArg_took_lt {raws : Array Raw} {i : Nat}
       next => simp at h
   next => simp at h
 
-/-- The source between the brackets `scanBracketArg` took from `i` to `k`. -/
-private def bracketSrc (raws : Array Raw) (i k : Nat) : String :=
-  rawSrc (raws.extract (skipSpaces raws i + 1) (k - 1))
+/-- The raws between the brackets `scanBracketArg` took from `i` to `k`. -/
+private def bracketInner (raws : Array Raw) (i k : Nat) : Array Raw :=
+  raws.extract (skipSpaces raws i + 1) (k - 1)
+
+private def bracketSrc (raws : Array Raw) (i k : Nat) : String := rawSrc (bracketInner raws i k)
 
 /-- The raws inside a complete optional `[...]` argument at `i`, if any. -/
 private def bracketArgRaws? (raws : Array Raw) (i : Nat) (anchor : Pos) :
     Option (Array Raw) :=
   match scanBracketArg raws i anchor with
-  | .took k => some (raws.extract (skipSpaces raws i + 1) (k - 1))
+  | .took k => some (bracketInner raws i k)
   | _ => none
 
 /-- A box's `[pos]`: latex.ltx's `t`, `c` and `b`, and beamer's `T` for the
@@ -1851,11 +1825,6 @@ private def warnDroppedArgs (ctx : Ctx) (name : String) (dropped : Nat)
 private def warnSkippedDecl (ctx : Ctx) (name : String) (pos : Pos) : EM Unit :=
   diag ctx .W0312 s!"no \{...} group after '\\{name}'; it is skipped" (some pos)
     (help := s!"write \\{name}\{...}")
-
-/-- The index of the next construct after a skipped preamble command's
-malformed arguments. -/
-private def skipMalformedArgs (raws : Array Raw) (i : Nat) (anchor : Pos) : Nat :=
-  malformedRun raws i anchor (groups := true)
 
 /-- The index past consecutive closed `[...]` option runs opened on
 `anchor`'s line, with the `[` of an unclosed one that stops the scan. -/
@@ -2169,10 +2138,10 @@ private theorem visGo_congr {f : UserCmd → Nat} {u v : Array UserCmd} {n : Nat
 private def visWeightGo (user : Array UserCmd) : Nat → Nat :=
   visGo (fun cmd => rawWeightList cmd.body.toList) user
 
-private theorem lookupUserGo_found {user : Array UserCmd} {name : String}
-    {n k : Nat} {cmd : UserCmd}
-    (h : lookupUserGo user name n = some (k, cmd)) : user[k]? = some cmd := by
-  fun_induction lookupUserGo user name n with
+private theorem latestNamed_mem {α : Type} {nameOf : α → String} {xs : Array α}
+    {want : String} {n k : Nat} {x : α}
+    (h : latestNamed nameOf xs want n = some (k, x)) : xs[k]? = some x := by
+  fun_induction latestNamed nameOf xs want n with
   | case1 => simp at h
   | case2 m hm heq =>
     simp only [Option.some.injEq, Prod.mk.injEq] at h
@@ -2184,7 +2153,7 @@ private theorem visGo_expand {f : UserCmd → Nat} {ctx : Ctx} {name : String}
     {k : Nat} {cmd : UserCmd} (h : lookupUser ctx name = some (k, cmd)) :
     f cmd + visGo f ctx.user k ≤ visGo f ctx.user ctx.limit := by
   have hlt := lookupUser_lt h
-  have hfound := lookupUserGo_found h
+  have hfound := latestNamed_mem h
   obtain ⟨hk, hbody⟩ := Array.getElem?_eq_some_iff.mp hfound
   have hstep : visGo f ctx.user (k + 1) = f cmd + visGo f ctx.user k := by
     simp only [visGo, hk, dite_true, hbody]
@@ -2313,14 +2282,16 @@ private def affineLength (ctx : Ctx) (admits : Measure → Bool) (src : String) 
   if e.rigidAbsolute then return e
   throw "rubber and font-relative terms are not available in this length context"
 
-/-- One `p{...}` column width, resolved against the table's local measure. -/
-private def colWidth (ctx : Ctx) (src : String) : Except String Ir.ColWidth := do
-  let e ← affineLength ctx (· != .textHeight) src
-  return .sized e
+/-- A table measure's length: any affine length but one that reads the text height. -/
+private def tableMeasure (ctx : Ctx) (src : String) : Except String (Affine Measure) :=
+  affineLength ctx (· != .textHeight) src
 
-private def tableTarget (ctx : Ctx) (src : String) : Except String Ir.TableTarget := do
-  let e ← affineLength ctx (· != .textHeight) src
-  return .sized e
+/-- One `p{...}` column width, resolved against the table's local measure. -/
+private def colWidth (ctx : Ctx) (src : String) : Except String Ir.ColWidth :=
+  .sized <$> tableMeasure ctx src
+
+private def tableTarget (ctx : Ctx) (src : String) : Except String Ir.TableTarget :=
+  .sized <$> tableMeasure ctx src
 
 /-- An array `>{decl}`/`<{decl}` group's alignment, the last of
 `\raggedright`, `\raggedleft` and `\centering`, with every other effect as a
@@ -3196,7 +3167,7 @@ private def secFmtDefine? (cmd : UserCmd) : Option (Nat × Array SecPart) :=
 private def applySecFmt (lvl : Nat) (parts : Array SecPart) : EM Unit :=
   modify fun st =>
     { st with ctr := { st.ctr with
-        secFmts := (st.ctr.secFmts.filter (·.1 != lvl)).push (lvl, parts) } }
+        secFmts := Ir.redeclare st.ctr.secFmts lvl parts } }
 
 private def counterCtrl (n : String) : Bool :=
   n == "refstepcounter" || n == "stepcounter"
@@ -3351,9 +3322,7 @@ or it is not a number. -/
 private def footnoteOverride (ctx : Ctx) (raws : Array Raw) (i : Nat)
     (pos : Pos) : Option Nat :=
   match scanBracketArg raws i pos with
-  | .took k =>
-    (argText ctx (raws.extract (skipSpaces raws i + 1) (k - 1)))
-      |>.trimAscii.toString.toNat?
+  | .took k => (argText ctx (bracketInner raws i k)).trimAscii.toString.toNat?
   | _ => none
 
 private def hasParRaw (body : Array Raw) : Bool :=
@@ -3458,7 +3427,7 @@ private def bumpRunShape (name key : String) (optionRun : Bool) (st : ESt) : ESt
   | some (_, old, idx) =>
     let new := old.add optionRun
     { st with
-      runShapes := (st.runShapes.filter (·.1 != key)).push (key, new, idx)
+      runShapes := Ir.redeclare st.runShapes key (new, idx)
       diags := if new == old then st.diags else runShapeReword name new idx st.diags }
 
 private theorem bumpRunShape_size_exact (name key : String) (optionRun : Bool) (st : ESt) :
@@ -3858,9 +3827,9 @@ private def pictureSizeInForce : EM (Option String) := do
     | _ => size) none
   return size.filter (· != "normalsize")
 
-/-- A `tikzpicture`'s boundary request: its source and the size in force. -/
-private def pictureSrcAt (body : Array Raw) : EM Ir.PicSrc := do
-  return { kind := .picture, body := Parse.rawSrc body, size := ← pictureSizeInForce }
+/-- A picture's boundary request, of its kind: its source and the size in force. -/
+private def pictureSrcAt (body : Array Raw) (kind : Ir.PicKind := .picture) : EM Ir.PicSrc := do
+  return { kind, body := Parse.rawSrc body, size := ← pictureSizeInForce }
 
 /-- Notes the colour names a picture reads: its body's, and those of each
 picture setting and macro once. -/
@@ -3875,25 +3844,31 @@ private def notePictureReads (ctx : Ctx) (body : Array Raw) : EM Unit := do
   modify fun st => { st with spans := { st.spans with
     pictureContextRead := (ctx.pic.sets.size, ctx.pic.macros.size) } }
 
-/-- Sends a picture to the boundary and returns the image standing for it; a
-block the subset partly draws is recorded as a fallback. -/
-private def routePicture (ctx : Ctx) (body : Array Raw) (pic : Ir.Pic.Picture) (pos : Pos)
-    (block : Bool) : EM Ir.Inline := do
-  let src ← pictureSrcAt body
-  let id := Ir.picHash src.source
+/-- States a boundary request once, the drawing named `what`, and returns the image source that
+stands for it; `fallback` records a drawing the subset makes beside it. -/
+private def boundaryRequest (ctx : Ctx) (src : Ir.PicSrc) (id : String) (pos : Pos)
+    (fallback : Bool) (what help : String) : EM String := do
   let tool := ctx.pic.tool.getD "lualatex"
   let img := Ir.picSrcPrefix ++ id
   modify fun st =>
     let st := if st.pictures.any (fun p => p.1 == id) then st
       else { st with pictures := st.pictures.push (id, src) }
-    if !block || pic.shapes.isEmpty || st.spans.fallbacks.contains id then st
+    if !fallback || st.spans.fallbacks.contains id then st
     else { st with spans := { st.spans with fallbacks := st.spans.fallbacks.push id } }
   recordImageSpan ctx img pos
   warnOnce ctx ("picture:boundary:" ++ id) .N0023
-    s!"this picture is drawn by {tool} at the boundary; its text is not \
-in the document's census" pos
-    (help := "the box is measured and placed by the engine; alt={...} or \
-artifact on the picture, or a figure caption, names it for assistive technology")
+    s!"this {what} is drawn by {tool} at the boundary; its text is not \
+in the document's census" pos (help := help)
+  return img
+
+/-- Sends a picture to the boundary and returns the image standing for it; a
+block the subset partly draws is recorded as a fallback. -/
+private def routePicture (ctx : Ctx) (body : Array Raw) (pic : Ir.Pic.Picture) (pos : Pos)
+    (block : Bool) : EM Ir.Inline := do
+  let src ← pictureSrcAt body
+  let img ← boundaryRequest ctx src (Ir.picHash src.source) pos (block && !pic.shapes.isEmpty)
+    "picture" "the box is measured and placed by the engine; alt={...} or \
+artifact on the picture, or a figure caption, names it for assistive technology"
   return .image img {} pic.alternative
 
 /-- A picture inside a line: the boundary's image where the boundary is open
@@ -3920,19 +3895,24 @@ private def soleTikzcd (body : Array Raw) : Option (Array Raw × Pos) :=
   | [.env "tikzcd" b p] => some (b, p)
   | _ => none
 
+/-- A `tikzcd` body's boundary request and its content key. -/
+private def cdSource (b : Array Raw) : EM (Ir.PicSrc × String) := do
+  let src ← pictureSrcAt b .cd
+  return (src, Ir.picHash src.source)
+
 /-- A diagram's boundary request, its identity, and the native reader's
 drawing with the losses it names. -/
 private def cdReading (ctx : Ctx) (b : Array Raw) :
     EM (Ir.PicSrc × String × Ir.Pic.Picture × Array Picture.PDiag) := do
-  let src : Ir.PicSrc :=
-    { kind := .cd, body := Parse.rawSrc b, size := ← pictureSizeInForce }
+  let (src, id) ← cdSource b
   let (pic, pdiags) := Picture.Cd.elabCd ctx.palette b (pictureMath ctx) ctx.pic.metric
-    ctx.page.fontSize Ir.Color.white ((src.size.bind fun n => ctx.page.scale.lookup n).getD 1000)
+    ctx.page.fontSize Ir.Color.white
+    ((src.size.map fun n => (Ir.scaleStepIn ctx.page.scale 1000 n).toNat).getD 1000)
   let pdiags := if (ctx.pic.preamble.splitOn "\\tikzcdset").length > 1 then
       pdiags.push (.W0334, "the document's '\\tikzcdset' settings are outside the native \
 diagram reader; the diagram is drawn without them")
     else pdiags
-  return (src, Ir.picHash src.source, pic, pdiags)
+  return (src, id, pic, pdiags)
 
 /-- Names the reader's losses where its drawing ships, keyed under the
 picture when its request is withdrawn or declined. -/
@@ -3957,21 +3937,9 @@ or let a boundary tool draw it"
 /-- States a diagram's boundary request once and returns the image source
 that stands for it. -/
 private def cdRequest (ctx : Ctx) (src : Ir.PicSrc) (id : String) (pos : Pos)
-    (fallback : Bool) : EM String := do
-  let tool := ctx.pic.tool.getD "lualatex"
-  let img := Ir.picSrcPrefix ++ id
-  modify fun st =>
-    let st := if st.pictures.any (fun p => p.1 == id) then st
-      else { st with pictures := st.pictures.push (id, src) }
-    if !fallback || st.spans.fallbacks.contains id then st
-    else { st with spans := { st.spans with fallbacks := st.spans.fallbacks.push id } }
-  recordImageSpan ctx img pos
-  warnOnce ctx ("picture:boundary:" ++ id) .N0023
-    s!"this diagram is drawn by {tool} at the boundary; its text is not \
-in the document's census" pos
-    (help := "the box is measured and placed by the engine; a figure caption \
-names it for assistive technology")
-  return img
+    (fallback : Bool) : EM String :=
+  boundaryRequest ctx src id pos fallback "diagram" "the box is measured and placed by the \
+engine; a figure caption names it for assistive technology"
 
 /-- A display's sole `tikzcd` as the native reader draws it, or `none` where
 it draws nothing or the open boundary takes a lossy drawing. -/
@@ -3991,9 +3959,7 @@ boundary is closed or withdrew the request. -/
 private def tikzcdDisplay (ctx : Ctx) (body : Array Raw) (pos : Pos) :
     EM (Option Ir.Inline) := do
   let some (b, _) := soleTikzcd body | return none
-  let src : Ir.PicSrc :=
-    { kind := .cd, body := Parse.rawSrc b, size := ← pictureSizeInForce }
-  let id := Ir.picHash src.source
+  let (src, id) ← cdSource b
   -- premise: tikzcdRouteChecks — a refused diagram keeps its text floor
   if ctx.pic.tool.isNone || ctx.pic.withdrawn.contains id then return none
   let img ← cdRequest ctx src id pos true
@@ -5970,10 +5936,6 @@ private def contentWrapperTakesBlocks (n : String) (raws : Array Raw) (i : Nat) 
   | some (.group _ _), some (.group body _) => bodyIsBlock body
   | _, _ => false
 
-private def linkWrapperTakesBlocks (n : String) (raws : Array Raw) (i : Nat) : Bool :=
-  (n == "href" || n == "link" || n == "hyperlink" || n == "hypertarget")
-    && contentWrapperTakesBlocks n raws i
-
 /-- The number a heading takes, stepped in flow order; `none` when starred,
 past `secnumdepth`, or in a class that does not number. -/
 private def sectionNumber (ctx : Ctx) (level : Nat) (starred : Bool) :
@@ -7007,7 +6969,7 @@ private def applySeeds (ctx : Ctx) (pal : Palette) (src : String) (pos : Pos)
             (help := "blocks = tonal, or blocks = strong")
       else if seedKeys.contains key then
         match ← readColor ctx pal none valueSrc pos with
-        | .resolved c _ => found := (found.filter (·.1 != key)).push (key, c)
+        | .resolved c _ => found := Ir.redeclare found key c
         | .rejected => pure ()
         | .missing =>
           diag ctx .E0321 s!"cannot read seed colour for '{key}': {valueSrc.quote}" pos
@@ -7451,7 +7413,7 @@ private def barScanList (user : Array UserCmd) (bound : Nat) (st : BarSt)
     else if n == "@date" then
       barScanList user bound st (events.push .content) rest
     else
-      match lookupUserIn user bound n with
+      match latestNamed (·.name) user n bound with
       | some (k, cmd) =>
         if _h : k < bound then
           let events := barScanList user k st events cmd.body.toList
@@ -8244,10 +8206,9 @@ private def tabularArm (ctx : Ctx) (n : String) (body : Array Raw)
         rows := rows.push cells
         cells := #[]
         j := j + 1
-        let j0 := skipSpaces body j
         match scanBracketArg body j bpos with
         | .took j' =>
-          let src := Parse.rawSrc (body.extract (j0 + 1) (j' - 1))
+          let src := bracketSrc body j j'
           match Decl.parseLength src with
           | some l => do
             rules := rules.push (rows.size, .gap { width := l })
@@ -9196,6 +9157,11 @@ private def parPrecedes (raws : Array Raw) (i : Nat) : Bool := Id.run do
     | _ => return false
   return false
 
+/-- Whether an environment's `\@endpe` reaches a display at `i`, so TeX sets
+no empty line before it (ltlists.dtx `\@doendpe`). -/
+private def endPeAt (raws : Array Raw) (i : Nat) (inPar : Bool) (flushed : Array Block) : Bool :=
+  !inPar && Ir.lastLeavesEndPe flushed && !parPrecedes raws i
+
 /-- The paragraph state an overlay carrier at `raws[i]` opens in: inside the
 paragraph its text ran on from, right after an environment end that left
 `\@endpe`, and whether its content opens on a paragraph break. -/
@@ -9208,7 +9174,7 @@ private def carrierOpening (raws : Array Raw) (i : Nat) (blocks : Array Block)
     | [] | .par _ :: _ => false
     | _ :: _ => true
   let inPar := opensOnText && ranOn && Ir.flushedText (blocks.size - 1) blocks
-  (inPar, !inPar && Ir.lastLeavesEndPe blocks && !parPrecedes raws i, !opensOnText)
+  (inPar, endPeAt raws i inPar blocks, !opensOnText)
 
 /-- A braced overlay's carrier, stood in its paragraph and before the break
 after its group at `raws[jg]`. -/
@@ -9240,11 +9206,6 @@ private def pauseCarrier (raws : Array Raw) (i : Nat) (blocks : Array Block) (n 
   if inner.isEmpty then blocks else
   let (inPar, endPe, broken) := carrierOpening raws i blocks (raws.extract (i + 1) raws.size)
   blocks.push (.step n none (Ir.carrierDisplays inPar endPe false broken inner))
-
-/-- Whether an environment's `\@endpe` reaches a display at `i`, so TeX sets
-no empty line before it (ltlists.dtx `\@doendpe`). -/
-private def endPeAt (raws : Array Raw) (i : Nat) (inPar : Bool) (flushed : Array Block) : Bool :=
-  !inPar && Ir.lastLeavesEndPe flushed && !parPrecedes raws i
 
 /-- A display formula met between words: the paragraph flushed, and the
 display marked with where it stands in its paragraph. -/
@@ -9378,7 +9339,7 @@ private def stepThmCounter (c : String) : EM String := do
     | some (_, s, v) => if s == snap then v + 1 else 1
     | none => 1
   modify fun st => { st with ctr := { st.ctr with thm := { st.ctr.thm with
-    nums := (st.ctr.thm.nums.filter (·.1 != c)).push (c, snap, v) } } }
+    nums := Ir.redeclare st.ctr.thm.nums c (snap, v) } } }
   return withinNumber st.ctr within v
 
 /-- Opens a theorem-like scope, returning its state and the index where the
@@ -9386,9 +9347,7 @@ body starts. -/
 private def thmOpen (ctx : Ctx) (n : String) (body : Array Raw) (pos : Pos) :
     EM (ThmOpen × Nat) := do
   let (note, k) ← match scanBracketArg body 0 pos with
-    | .took k =>
-      let j := skipSpaces body 0
-      pure (some (← elabInlines ctx (body.extract (j + 1) (k - 1))), k)
+    | .took k => pure (some (← elabInlines ctx (bracketInner body 0 k)), k)
     | .unclosed bpos =>
       warnUnclosed ctx s!"'\\begin\{{n}}'" bpos
       pure (none, 0)
@@ -10287,7 +10246,8 @@ private def isBlockStart (ctx' : Ctx) (n : String) (raws : Array Raw) (i : Nat)
     || (cur.isEmpty && n.startsWith "@lang:")
     || n == BeamerColor.marker || n == BeamerColor.starMarker
     || ((lookupUser ctx' sourceName).isNone && !(ctx'.args.any (·.1 == sourceName)) &&
-      linkWrapperTakesBlocks n raws i)
+      (n == "href" || n == "link" || n == "hyperlink" || n == "hypertarget") &&
+        contentWrapperTakesBlocks n raws i)
     || (n != "note" &&
       ((blockHeading? n).isSome
         || declCtrl.contains n || runningCtrl.contains n || n == "define"
@@ -10324,10 +10284,9 @@ private def classFrameAlign (opts : List String) : VAlign :=
 private def frameOpts (ctx : Ctx) (body : Array Raw) (pos : Pos) : EM FrameOpts := do
   let mut o : FrameOpts := { valign := ctx.frameAlign }
   for _ in [0:body.size] do
-    let j0 := skipSpaces body o.next
     match scanBracketArg body o.next pos with
     | .took k' =>
-      let inner := rawSrc (body.extract (j0 + 1) (k' - 1))
+      let inner := bracketSrc body o.next k'
       for opt in KeyVal.items inner do
         match KeyVal.entry opt with
         -- premise: fragileNoopChecks — these spellings change no artifact
@@ -11054,8 +11013,7 @@ prefer the construct or the class, and keep '\\begin{ifbackend}' for the true re
   else if n == "nav" then
     match scanBracketArg body 0 pos with
     | .took k =>
-      let j0 := skipSpaces body 0
-      let inner := rawSrc (body.extract (j0 + 1) (k - 1))
+      let inner := bracketSrc body 0 k
       let spec ← navSpecOf ctx inner pos
       have hxm := tail_measures body k
       blocks := blocks.push (.nav spec (← elabBlockScope ctx (body.extract k body.size)))
@@ -13860,8 +13818,7 @@ public def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run d
           let mut scope : Option String := none
           match scanBracketArg preamble j pos with
           | .took j' =>
-            let b := skipSpaces preamble j
-            scope := some (rawSrc (preamble.extract (b + 1) (j' - 1))).trimAscii.toString
+            scope := some (bracketSrc preamble j j').trimAscii.toString
             j := j'
           | .unclosed bpos => unclosed := some bpos
           | .content => pure ()
@@ -13954,7 +13911,7 @@ public def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run d
           match unclosed with
           | some bpos =>
             out := out.push (.reserved name code (some bpos) pos)
-            i := skipMalformedArgs preamble i pos
+            i := malformedRun preamble i pos (groups := true)
           | none =>
             out := out.push (.reserved name code none pos)
             i := j
@@ -13974,7 +13931,7 @@ public def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run d
           match unclosed with
           | some bpos =>
             out := out.push (.unknownCmd name (some bpos) pos)
-            i := skipMalformedArgs preamble i pos
+            i := malformedRun preamble i pos (groups := true)
           | none =>
             out := out.push (.unknownCmd name none pos)
             i := j
@@ -14487,7 +14444,7 @@ convert = none refuses both")
         let mut honouredPos := false
         if let some sc := posScope then
           if let some p := Ir.CaptionPos.ofKey? value then
-            s := { s with captionPos := (s.captionPos.filter (·.1 != sc)).push (sc, p) }
+            s := { s with captionPos := Ir.redeclare s.captionPos sc p }
             honouredPos := true
         unless honouredToken || honouredPos do
           let head := match scope with
@@ -14848,7 +14805,7 @@ private def applyRefusedSizeLadder (s : PreState) : EM PreState := do
     let factor : Nat := ((Dim.pt (Int.ofNat sz) + bodySp / 2) / bodySp).toNat
     let skip := (fsArgs[2]?.bind Compat.ptMacroArg).filter (0 < ·) |>.map fun ld =>
       Ir.skipRowOf (Dim.pt (Int.ofNat ld)) bodySp
-    steps := (steps.filter (·.1 != name)).push (name, factor, skip, span)
+    steps := Ir.redeclare steps name (factor, skip, span)
   if steps.isEmpty then return s
   let land (name : String) (factor : Nat) (span : Span) : EM Unit :=
     modify fun st => { st with
@@ -15242,13 +15199,10 @@ public theorem runDocBody_recovered_word_exact (plan : DocBodyPlan) (st : ESt) (
     exact recovered_para_census plan.ctx wordPos word lang ds
   · exact recovered_para_census plan.ctx wordPos word lang ds
 
-private def beginDoc (file : String) (raws : Array Raw) (picPre : String := "")
-    (picSets : Array (Span × Array Raw) := #[])
-    (picMacros : Array (String × String) := #[])
-    (picMetric : Ir.Pic.LabelMetric := fun _ _ => {})
-    (picWithdrawn : Array String := #[])
-    (listingReplies : Array ListingReply.Answer := #[]) :
-    EM DocPreamble := do
+private def beginDoc (file : String) (raws : Array Raw) (picPre : String)
+    (picSets : Array (Span × Array Raw)) (picMacros : Array (String × String))
+    (picMetric : Ir.Pic.LabelMetric) (picWithdrawn : Array String)
+    (listingReplies : Array ListingReply.Answer) : EM DocPreamble := do
   let docIdx := raws.findIdx? fun r =>
     match r with
     | .env "document" _ _ => true
@@ -15576,12 +15530,10 @@ public theorem finishPreamble_run_congr (file : String) (preamble : DocPreamble)
        preamble.trailing s)) : EM _).run st)
   rw [h]
 
-private def elabDocCore (file : String) (raws : Array Raw) (picPre : String := "")
-    (picSets : Array (Span × Array Raw) := #[])
-    (picMacros : Array (String × String) := #[])
-    (picMetric : Ir.Pic.LabelMetric := fun _ _ => {})
-    (picWithdrawn : Array String := #[])
-    (listingReplies : Array ListingReply.Answer := #[]) :
+private def elabDocCore (file : String) (raws : Array Raw) (picPre : String)
+    (picSets : Array (Span × Array Raw)) (picMacros : Array (String × String))
+    (picMetric : Ir.Pic.LabelMetric) (picWithdrawn : Array String)
+    (listingReplies : Array ListingReply.Answer) :
     EM (Doc × Ir.RefTable × PictureReportContext) := do
   let preamble ← beginDoc file raws picPre picSets picMacros picMetric picWithdrawn listingReplies
   finishPreamble file preamble

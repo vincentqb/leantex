@@ -995,7 +995,7 @@ def sealMismatch (lines : Array String) : List String × List String :=
 /-- Deliberately module-final seals, by name. -/
 def sealAllow : List String := ["noteDefs"]
 
-/-- The size-step formula, `sizeScale.lookup … getD`, spelled outside `Ir.scaleStep`. -/
+/-- The size-step formula, `sizeScale.lookup … getD`, spelled outside `Ir.scaleStepIn`. -/
 def scaleStepRespell (l : String) : Bool :=
   let t := stripLineComment (stripStrings l)
   containsSub t "sizeScale.lookup" && containsSub t ".getD"
@@ -1434,11 +1434,12 @@ def gates : List Gate := [
   { applies := fun f => f.startsWith "LeanTex/" && f != "LeanTex/Core/Ir.lean"
     flag := scaleStepRespell
     what := fun f => s!"the size-step formula re-spelled (`sizeScale.lookup … getD`) in {f}"
-    help := "  Ir.scaleStep is the one resolving site for a named step of the size
-  scale (PRINCIPLES.md § One fact in one IR value).
-  Fix: read Ir.scaleStep base name; a genuine Option need (an unknown
-  name must stay none) matches on the lookup without getD, and a theorem
-  naming a raw table value lives beside the table in Ir.lean." },
+    help := "  Ir.scaleStepIn is the one resolving site for a named step of a size
+  ladder (PRINCIPLES.md § One fact in one IR value).
+  Fix: read Ir.scaleStep base name, or Ir.scaleStepIn over a document's own
+  ladder; a genuine Option need (an unknown name must stay none) matches on
+  the lookup without getD, and a theorem naming a raw table value lives
+  beside the table in Ir.lean." },
   { applies := fun f => (f == "Tests.lean" || f.startsWith "Tests/")
       && f != "Tests/Support.lean"
     flag := splitOnIdiom

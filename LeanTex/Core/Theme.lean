@@ -365,7 +365,7 @@ private theorem styleMerge_absorb (a b : ElementStyle) :
 private def installEntries {κ α : Type} [BEq κ] [LawfulBEq κ] (xs : Array (κ × α)) :
     List (κ × α) → Array (κ × α)
   | [] => xs
-  | (k, v) :: es => installEntries ((xs.filter (·.1 != k)).push (k, v)) es
+  | (k, v) :: es => installEntries (redeclare xs k v) es
 
 private theorem installEntries_keeps {κ α : Type} [BEq κ] [LawfulBEq κ] (es : List (κ × α))
     (xs : Array (κ × α)) (k : κ) (h : ∀ e ∈ es, e.1 ≠ k) :

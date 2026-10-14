@@ -8180,7 +8180,7 @@ public theorem bars_clear_descenders (body descMilli : Int)
   have hb' : (65536 : Int) ≤ body := hb
   have hL : ((Ir.sizeScale.lookup "LARGE").getD 1000 : Int) = 1728 := by decide
   have hstep : Ir.scaleStep body "LARGE" = body * 1728 / 1000 := by
-    unfold Ir.scaleStep
+    unfold Ir.scaleStep Ir.scaleStepIn
     rw [hL]
   rw [hstep]
   have ht : (0 : Int) ≤ body * 1728 / 1000 := by omega
@@ -11709,7 +11709,7 @@ public def blockLastBelow (geom : Geom) (fs : FontSet) (b : Option Ir.Block) : O
   | some (.verbatim _ _ spec) =>
     match spec.fontSize with
     | .size n =>
-      let size := geom.fontSize * ((geom.scale.lookup n).getD 1000 : Int) / 1000
+      let size := Ir.scaleStepIn geom.scale geom.fontSize n
       let pitch := Ir.stepSkip (Ir.stepLead geom.skips n geom.fontSize) geom.fontSize
         geom.leading - spec.lineOverlap
       let mono := fs.get (fs.lookup 2 400 false)
