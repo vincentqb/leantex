@@ -5189,14 +5189,21 @@ private def geometry (opts : String) (pos : Pos)
       if driverOptions.contains k || k == "verbose" then pure ()
       else if v.startsWith "\\dimexpr" then
         droppedExpr := droppedExpr.push s!"{k} = {v}"
-      else if ["margin", "vmargin", "hmargin", "width", "height",
-          "textwidth", "textheight", "headsep", "footskip"].contains k then
-        keys := keys.push s!"{k} = {lengthOfTeX v}"
-      else if k == "headheight" then
-        pure ()
-      else if ["top", "bottom", "left", "right"].contains k then
-        sides := sides.push (k, lengthOfTeX v)
-      else dropped := dropped.push k
+      else match k, (KeyVal.items v).toList with
+      | "hmargin", [l, r] => sides := sides ++ #[("left", lengthOfTeX l), ("right", lengthOfTeX r)]
+      | "vmargin", [t, b] => sides := sides ++ #[("top", lengthOfTeX t), ("bottom", lengthOfTeX b)]
+      | "margin", [h, w] =>
+        keys := keys ++ #[s!"hmargin = {lengthOfTeX h}", s!"vmargin = {lengthOfTeX w}"]
+      | _, _ :: _ :: _ => dropped := dropped.push k
+      | _, _ =>
+        if ["margin", "vmargin", "hmargin", "width", "height",
+            "textwidth", "textheight", "headsep", "footskip"].contains k then
+          keys := keys.push s!"{k} = {lengthOfTeX v}"
+        else if k == "headheight" then
+          pure ()
+        else if ["top", "bottom", "left", "right"].contains k then
+          sides := sides.push (k, lengthOfTeX v)
+        else dropped := dropped.push k
   -- An equal pair of side margins is the symmetric margin; an unequal or lone side stays named.
   let side (n : String) : Option String :=
     (sides.findRev? (·.1 == n)).map (·.2)
@@ -5330,15 +5337,21 @@ private def hypersetup (opts : String) (pos : Pos) : M (Array Raw) := do
   let mut keys : Array String := #[]
   let mut links := (← get).links
   let mut linked := false
+  let mut cut : Array String := #[]
   for e in KeyVal.items opts do
     let (k, v) := KeyVal.entry e
     let v := v.getD ""
-    for m in ["title", "author", "subject", "keywords"] do
-      if k == "pdf" ++ m then keys := keys.push s!"{m} = \"{v}\""
+    let metadata := ["title", "author", "subject", "keywords"].filter (k == "pdf" ++ ·)
+    for m in metadata do keys := keys.push s!"{m} = \"{v}\""
     if let some l := links.read k v then
       links := l
       linked := true
+    else if metadata.isEmpty && KeyVal.unbalanced e then cut := cut.push e
   if linked then write fun st => { st with links }
+  unless cut.isEmpty do
+    say .W0101 s!"hyperref keys without a native equivalent were dropped: \
+{String.intercalate ", " cut.toList}" pos
+      (help := "brace a value that holds a comma: key={...}")
   let native := s!"\\pdfmeta\{ {String.intercalate ", " keys.toList} }" ++
     (if linked then links.native else "")
   became "\\hypersetup" native pos
@@ -5354,9 +5367,9 @@ private def documentMetadata (opts : String) (pos : Pos) : M (Array Raw) := do
     match KeyVal.entry e with
     | ("lang", some v) => if v.isEmpty then dropped := dropped.push e else lang := some v
     | ("pdfversion", some v) =>
-      if v == "1.7" || v == "2.0" then version := some v else dropped := dropped.push "pdfversion"
-    | (key, some "") => if !key.isEmpty then dropped := dropped.push e
-    | (key, some _) => if !key.isEmpty then dropped := dropped.push key
+      if v == "1.7" || v == "2.0" then version := some v
+      else dropped := dropped.push (if v.isEmpty then e else "pdfversion")
+    | (key, some v) => dropped := dropped.push (if key.isEmpty || v.isEmpty then e else key)
     | (_, none) => dropped := dropped.push e
   unless dropped.isEmpty do
     say .W0101 s!"\\DocumentMetadata keys without a native equivalent were \
@@ -7154,11 +7167,10 @@ and \\tokens declare the design directly")
   | "setbeamercovered" =>
     let (args, k) := takeGroups raws start 1
     let src := (rawSrc (args.getD 0 #[])).trimAscii.toString
-    let pct? : Option Nat :=
-      if src == "transparent" then some 15
-      else if src.startsWith "transparent=" then
-        ((src.drop "transparent=".length).toString.trimAscii.toString).toNat?
-      else none
+    let pct? : Option Nat := match KeyVal.entry src with
+      | ("transparent", none) => some 15
+      | ("transparent", some v) => v.toNat?
+      | _ => none
     match pct? with
     | some n =>
       if 1 ≤ n && n ≤ 99 then

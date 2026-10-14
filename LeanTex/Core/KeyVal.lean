@@ -55,24 +55,25 @@ private def closesAtEnd : List (List Char) → Nat → Bool
     else if a == ['}'] then depth > 1 && closesAtEnd rest (depth - 1)
     else closesAtEnd rest depth
 
-/-- A key or value as keyval hands it on: trimmed, and the braces around the whole removed. -/
+/-- Text trimmed, with the braces around the whole of it removed: a key or value as kvsetkeys and
+l3keys hand it on. -/
 public def unbrace (s : String) : String :=
   let t := s.trimAscii.toString
   match (texAtoms t.toList #[]).toList with
   | ['{'] :: rest => if closesAtEnd rest 1 then ((t.drop 1).dropEnd 1).toString else t
   | _ => t
 
-/-- A comma list as LaTeX's `\@for` reads it: cut at the commas outside braces, every item kept. -/
+/-- A comma list cut at the commas outside braces, every item kept as written. -/
 public def split (s : String) : Array String := splitTeX ',' s
 
 /-- A key=value list's items: trimmed, the empty ones dropped. -/
 public def items (s : String) : Array String :=
   ((split s).map (·.trimAscii.toString)).filter (!·.isEmpty)
 
-/-- A keyval item cut at its first `=` outside braces: its key and its value as written, both
-trimmed; a bare key has no value. -/
+/-- A keyval item, its braces removed where they hold the whole of it, cut at its first `=` outside
+braces: its key and its value as written, both trimmed; a bare key has no value. -/
 public def rawEntry (item : String) : String × Option String :=
-  match (splitTeX '=' item).toList with
+  match (splitTeX '=' (unbrace item)).toList with
   | [] => ("", none)
   | [k] => (k.trimAscii.toString, none)
   | k :: rest => (k.trimAscii.toString, some ("=".intercalate rest).trimAscii.toString)
@@ -82,10 +83,17 @@ public def entry (item : String) : String × Option String :=
   let (k, v) := rawEntry item
   (unbrace k, v.map unbrace)
 
-/-- A keyval item's key and value where both are nonempty, as `entry` reads them. -/
+/-- An item's key and value where both are written nonempty, each `unbrace`d: `k={}` reads as an
+empty value, `k=` as none. -/
 public def pair? (item : String) : Option (String × String) :=
-  match entry item with
-  | (k, some v) => if k.isEmpty || v.isEmpty then none else some (k, v)
+  match rawEntry item with
+  | (k, some v) => if k.isEmpty || v.isEmpty then none else some (unbrace k, unbrace v)
   | (_, none) => none
+
+/-- Whether an item's parentheses, brackets or double quotes fail to balance, as a piece of a value
+cut at a comma inside them does. -/
+public def unbalanced (item : String) : Bool :=
+  let count (c : Char) := (item.toList.filter (· == c)).length
+  count '(' != count ')' || count '[' != count ']' || count '"' % 2 == 1
 
 end LeanTex.Core.KeyVal

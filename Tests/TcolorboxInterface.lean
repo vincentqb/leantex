@@ -52,9 +52,7 @@ example (options body : Array Raw) (pos : Pos) :
   exact ⟨title, decls, h⟩
 
 example : True := by
-  fail_if_success have := Tcolorbox.trim
   fail_if_success have := Tcolorbox.value
-  fail_if_success have := Tcolorbox.entries
   fail_if_success have := Tcolorbox.entry
   fail_if_success have := Tcolorbox.Settings
   fail_if_success have := Tcolorbox.Settings.refuse

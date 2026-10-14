@@ -991,10 +991,9 @@ private def pageSizes : List (String × (Sp × Sp)) :=
 /-- The slides stage beamer's `aspectratio=` option selects, else beamer's
 default 4:3. -/
 private def slidesStageOf (opts : List String) : Sp × Sp :=
-  (opts.findSome? fun o =>
-    if o.startsWith "aspectratio=" then
-      Ir.slidesStageNamed ((o.drop "aspectratio=".length).toString)
-    else none).getD Ir.slidesStage43
+  (opts.findSome? fun o => match KeyVal.entry o with
+    | ("aspectratio", some v) => Ir.slidesStageNamed v
+    | _ => none).getD Ir.slidesStage43
 
 /-- The picture environments, whose body is never a paragraph's text. -/
 private def reservedEnv : List String :=
@@ -3806,9 +3805,9 @@ private def splitPictureAlt (body : Array Raw) (pos0 : Pos) : Ir.Alt × Array Ra
     if key == "artifact" then
       alt := .decorative
     else if key == "alt" then
-      alt := match KeyVal.pair? text with
-        | some (_, v) => Ir.Alt.declare (altValueText v)
-        | none => .undeclared
+      alt := match KeyVal.rawEntry text with
+        | (_, some v) => if v.isEmpty then .undeclared else Ir.Alt.declare (altValueText v)
+        | (_, none) => .undeclared
     if key == "artifact" || key == "alt" then
       removed := true
       if lead.isNone then lead := some (leadOf e)
@@ -5841,8 +5840,10 @@ private def classPageDefaults (record : Ir.ClassRecord) (opts : List String)
   if record.model == .flow then
     if page.width == dflt.width && page.height == dflt.height then
       let sized := opts.findSome? fun o =>
-        let o := if o.startsWith "paper=" then
-          (o.drop "paper=".length).toString ++ "paper" else o
+        let o := match KeyVal.entry o with
+          | ("paper", some v) => v ++ "paper"
+          | (k, none) => k
+          | _ => o
         if o.endsWith "paper" then
           pageSizes.lookup ((o.dropEnd "paper".length).toString)
         else none
@@ -10324,18 +10325,18 @@ private def frameOpts (ctx : Ctx) (body : Array Raw) (pos : Pos) : EM FrameOpts 
     | .took k' =>
       let inner := rawSrc (body.extract (j0 + 1) (k' - 1))
       for opt in KeyVal.items inner do
-        match opt with
+        match KeyVal.entry opt with
         -- premise: fragileNoopChecks — these spellings change no artifact
-        | "fragile" | "fragile=true" => pure ()
-        | "standout" => o := { o with standout := true }
-        | "allowframebreaks" => o := { o with breakable := true }
-        | "squeeze" => o := { o with squeeze := true }
-        | "t" => o := { o with valign := .top, aligns := o.aligns.push opt }
-        | "c" => o := { o with valign := .center, aligns := o.aligns.push opt }
-        | "b" => o := { o with valign := .bottom, aligns := o.aligns.push opt }
-        | other =>
-          warnOnce ctx ("frame:opt:" ++ other) .N0102
-            s!"frame option '{other}' is not modelled; ignored" pos
+        | ("fragile", none) | ("fragile", some "true") => pure ()
+        | ("standout", none) => o := { o with standout := true }
+        | ("allowframebreaks", none) => o := { o with breakable := true }
+        | ("squeeze", none) => o := { o with squeeze := true }
+        | ("t", none) => o := { o with valign := .top, aligns := o.aligns.push "t" }
+        | ("c", none) => o := { o with valign := .center, aligns := o.aligns.push "c" }
+        | ("b", none) => o := { o with valign := .bottom, aligns := o.aligns.push "b" }
+        | _ =>
+          warnOnce ctx ("frame:opt:" ++ opt) .N0102
+            s!"frame option '{opt}' is not modelled; ignored" pos
       o := { o with next := k' }
     | .unclosed bpos =>
       warnUnclosed ctx "'\\begin{frame}'" bpos
@@ -14946,8 +14947,8 @@ private def xparseDefiner? (raws : Array Raw) (i : Nat) :
       s!"\\DeclareDocumentCommand\{\\{name}}\{{rawSrc sig}}\{{rawSrc body}}"), k + 1)
   | _, _ => none
 
-/-- The control at `i` and the first group within `reach` raws after it: the control's name, the
-raws between, the group's body and the index past it. -/
+/-- The control at `i` and the first group among the `reach - 1` raws after it: the control's name,
+the raws between, the group's body and the index past it. -/
 private def definerHead? (raws : Array Raw) (i reach : Nat) :
     Option (String × Array Raw × Array Raw × Nat) := do
   let some (.ctrl name _) := raws[i]? | none
