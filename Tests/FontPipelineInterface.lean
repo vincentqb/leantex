@@ -118,10 +118,6 @@ example : True := by
   trivial
 
 example : True := by
-  fail_if_success have := FontAssembly.singleFaceIndex
-  trivial
-
-example : True := by
   fail_if_success have := FontAssembly.noFontDiag
   trivial
 

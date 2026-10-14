@@ -142,7 +142,7 @@ private def htmlPairChecks (ref : IO.Ref (List String)) : IO Unit := do
         | _ => false).getLast?.map fun ((_, v), i) => (i, v)
   let below := rem (HtmlDoc.screenMilli size (Dim.pt 3))
   let opened := rem (HtmlDoc.screenMilli size (Dim.pt 3))
-  let above := rem (HtmlDoc.screenMilli size (Dim.pt 6 + Layout.inkClearance))
+  let above := rem (HtmlDoc.screenMilli size (Dim.pt 6 + Ir.inkClearance))
   let par := "var(--parskip, 0rem)"
   let display := s!"var(--{Ir.displaySkipBelow}"
   let blockU := "section.block"

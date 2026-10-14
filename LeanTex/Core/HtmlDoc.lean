@@ -258,14 +258,14 @@ private def decMilli (n : Int) : String :=
   s!"{sign}{a / 1000}" ++ (if frac.isEmpty then "" else "." ++ frac)
 
 /-- A length in CSS: its absolute part spelled by `absolute`, its `em` and `ex` kept as CSS units,
-and zero as `0pt` so it composes in `calc()`. -/
-public def cssLengthIn (absolute : Sp → String) (l : Length) : String :=
+and zero as `zero`, `0pt` unless asked, so it composes in `calc()`. -/
+public def cssLengthIn (absolute : Sp → String) (l : Length) (zero : String := "0pt") : String :=
   let parts :=
     (if l.sp != 0 then [absolute l.sp] else []) ++
     (if l.em != 0 then [s!"{decMilli l.em}em"] else []) ++
     (if l.ex != 0 then [s!"{decMilli l.ex}ex"] else [])
   match parts with
-  | [] => "0pt"
+  | [] => zero
   | [one] => one
   | many => "calc(" ++ String.intercalate " + " many ++ ")"
 
@@ -280,9 +280,13 @@ public theorem cssLength_zero_exact : cssLength ({} : Length) = "0pt" := by
 public def deckStageMilli (x stage : Int) : Int :=
   x * 100000 / stage
 
+/-- A length's share of a deck stage's extent, in `unit`. -/
+private def stageShare (unit : String) (x stage : Int) : String :=
+  s!"{decMilli (deckStageMilli x stage)}{unit}"
+
 /-- A length on a deck's stage: its absolute part as a share of the stage height, in `vh`. -/
 public def stageLengthCss (stage : Sp) (l : Length) : String :=
-  cssLengthIn (fun sp => s!"{decMilli (deckStageMilli sp stage)}vh") l
+  cssLengthIn (stageShare "vh" · stage) l
 
 /-- A length's share of the class size, in thousandths. -/
 public def classShareMilli (x size : Int) : Int :=
@@ -379,23 +383,25 @@ public def tokenVar? (n : String) : Option String :=
   if !n.isEmpty && n.all (fun c => c.isAlphanum || c == '-' || c == '_') then some ("--" ++ n)
   else none
 
-/-- A sourced length in CSS: its declared custom property with the resolved length as fallback,
-or the length alone where it has none. -/
-public def cssSourced (g : Ir.Sourced SymGlue) : String :=
+/-- A sourced length in CSS, spelled by `spell`: its declared custom property with the resolved
+length as fallback, or the length alone where it has none. -/
+private def sourcedIn (spell : Length → String) (g : Ir.Sourced SymGlue) : String :=
   match g.token.bind tokenVar? with
-  | some v => s!"var({v}, {cssLength g.value.width})"
-  | none => cssLength g.value.width
+  | some v => s!"var({v}, {spell g.value.width})"
+  | none => spell g.value.width
+
+public def cssSourced (g : Ir.Sourced SymGlue) : String := sourcedIn cssLength g
 
 public theorem cssSourced_projects (g : Ir.Sourced SymGlue) (n : String)
     (h : g.token = some n) (hn : tokenVar? n = some ("--" ++ n)) :
     cssSourced g = s!"var(--{n}, {cssLength g.value.width})" := by
-  simp only [cssSourced, h, Option.bind_some, hn]
+  simp only [cssSourced, sourcedIn, h, Option.bind_some, hn]
   simp only [toString, String.append_assoc]
   rfl
 
 public theorem cssSourced_bare (g : SymGlue) :
     cssSourced (Ir.Sourced.bare g) = cssLength g.width := by
-  simp [cssSourced, Ir.Sourced.bare]
+  simp [cssSourced, sourcedIn, Ir.Sourced.bare]
 
 /-- The content measure: text width over the base font size, in `em`. -/
 public def measureEm (page : PageSpec) : String :=
@@ -809,6 +815,13 @@ public def screenMilli (size v : Int) : Nat :=
   else (v * ((bodyLeadingMilli / 2 : Nat) : Int) / Ir.rhythmQuantum size).toNat
 
 private def milliRem (m : Nat) : String := milliFactor m ++ "rem"
+
+/-- A stage length as its share of the stage's height, in `vh`. -/
+private def stageVh (page : PageSpec) (x : Sp) : String := stageShare "vh" x page.height
+
+/-- A length in the page's own unit: on a deck the stage's share, elsewhere screen rem. -/
+private def pageLength (deck : Bool) (page : PageSpec) (x : Sp) : String :=
+  if deck then stageVh page x else milliRem (screenMilli page.fontSize x)
 
 public theorem screenMilli_between (size v : Int) (hq : 0 < Ir.rhythmQuantum size) (hv : 0 ≤ v) :
     (screenMilli size v : Int) * Ir.rhythmQuantum size ≤ v * ((bodyLeadingMilli / 2 : Nat) : Int) ∧
@@ -1613,17 +1626,6 @@ private def footCapDecl (scale : List (String × Nat)) (band : Array Ir.BandSlot
   let tallest := band.foldl (fun m s => Ir.foldInlines sizeOf m s.content) step
   if tallest ≤ step then [] else [s!"--foot-cap: {milliFactor (tallest * 1000 / max step 1)};"]
 
-@[expose] public def titledBodyPaint (pal : Ir.Palette) (kind : Ir.TitledKind)
-    (parent : Ir.ColorPair) : Ir.ColorPair :=
-  (Ir.Design.ofPalette pal).titledBodyPaint kind parent
-
-public theorem titledBodyPaint_projects (pal : Ir.Palette) (kind : Ir.TitledKind)
-    (parent : Ir.ColorPair) :
-    titledBodyPaint pal kind parent = (Ir.Design.ofPalette pal).titledBodyPaint kind parent := by
-  rfl
-
-@[expose] public def titledPadding : Length := Ir.titledPadding
-
 /-- A painted block colour box as CSS: `titledPadding` on every side, reaching beyond the
 measure. -/
 public def titledBoxPaint : String :=
@@ -1674,16 +1676,7 @@ public def titleSlotCss (doc : Doc) : String :=
 
 /-- A block template's length in the page's own unit, its `em` and `ex` parts kept. -/
 public def shapeLengthCss (deck : Bool) (page : Ir.PageSpec) (g : SymGlue) : String :=
-  let l := g.width
-  let sp : String := if deck then s!"{decMilli (deckStageMilli l.sp page.height)}vh"
-    else milliRem (screenMilli page.fontSize l.sp)
-  let parts := (if l.sp != 0 then [sp] else []) ++
-    (if l.em != 0 then [s!"{decMilli l.em}em"] else []) ++
-    (if l.ex != 0 then [s!"{decMilli l.ex}ex"] else [])
-  match parts with
-  | [] => "0rem"
-  | [one] => one
-  | many => "calc(" ++ String.intercalate " + " many ++ ")"
+  cssLengthIn (pageLength deck page) g.width "0rem"
 
 public def blockShapeLength (doc : Doc) (g : SymGlue) : String :=
   shapeLengthCss (doc.docClass.record.model == .frame) doc.page g
@@ -2203,14 +2196,9 @@ private def readerAliases (pal : Ir.Palette) (roles : List Ir.Role) (taken : Lis
     (pal.colors.toList.filter fun (n, _) => free n && (tokenVar? n).isSome).map
       fun (n, _) => s!"    --{n}: var({(Ir.ColorRef.color n).property});"
 
-/-- A stage length as its share of the stage's height, in `vh`. -/
-private def stageVh (page : PageSpec) (x : Sp) : String :=
-  s!"{decMilli (deckStageMilli x page.height)}vh"
-
 /-- A length a class's lineage fixes, in the page's own unit. -/
 private def lineageLength (doc : Doc) (x : Sp) : String :=
-  if doc.docClass.record.model == .frame then stageVh doc.page x
-  else milliRem (screenMilli doc.page.fontSize x)
+  pageLength (doc.docClass.record.model == .frame) doc.page x
 
 /-- The trivlist's and the float's spaces at a list depth in beamer's lineage, in the page's
 unit. -/
@@ -4109,23 +4097,6 @@ public theorem deck_root_between (fontSize height : Int) (hh : 0 < height) :
         deckRootMilli fontSize height * height + height :=
   deckStageMilli_share _ height hh
 
-/-- A length on the deck's stage: its absolute part as a share of the stage height. -/
-public def deckLengthCss (stage : Sp) (l : Length) : String :=
-  let parts :=
-    (if l.sp != 0 then [s!"{decMilli (deckStageMilli l.sp stage)}vh"] else []) ++
-    (if l.em != 0 then [s!"{decMilli l.em}em"] else []) ++
-    (if l.ex != 0 then [s!"{decMilli l.ex}ex"] else [])
-  match parts with
-  | [] => "0pt"
-  | [one] => one
-  | many => "calc(" ++ String.intercalate " + " many ++ ")"
-
-/-- `cssSourced` on the deck's stage. -/
-public def deckSourced (stage : Sp) (g : Ir.Sourced SymGlue) : String :=
-  match g.token.bind tokenVar? with
-  | some v => s!"var({v}, {deckLengthCss stage g.value.width})"
-  | none => deckLengthCss stage g.value.width
-
 private def deckType (page : PageSpec) : DeckType :=
   { body := s!"{milliFactor (deckStageMilli page.fontSize page.height).toNat}vh"
     root := s!"{milliFactor (deckRootMilli page.fontSize page.height).toNat}vh"
@@ -5167,10 +5138,7 @@ private def listingLineHeight (page : PageSpec) (spec : Ir.ListingSpec) (step : 
     page.leading - spec.lineOverlap
   decMilli (pitch * 1000 / max size 1)
 
-/-- A length of the page's own: on a deck the stage's share, elsewhere screen rem. -/
-private def stageLength (cfg : Config) (v : Int) : String :=
-  if cfg.deck then s!"{decMilli (deckStageMilli v cfg.page.height)}vh"
-  else milliRem (screenMilli cfg.page.fontSize v)
+private def stageLength (cfg : Config) (v : Int) : String := pageLength cfg.deck cfg.page v
 
 /-- A block that sets no line box in its section's flow. -/
 private def shipsNoLine : Block → Bool
@@ -5236,7 +5204,7 @@ public def imageElement (cfg : Config) (index? : Option Nat) (req : Image.Reques
 private def fontLengthCss (cfg : Config) (e : Affine Measure) : String :=
   if cfg.deck && e.rigidAbsolute && !(e.anyRef fun _ => true) then
     let length := (e.eval fun _ => {}).width.sp
-    s!"{decMilli (deckStageMilli length cfg.page.height)}vh"
+    stageShare "vh" length cfg.page.height
   else Ir.Track.contextCss e
 
 mutual
@@ -5280,7 +5248,7 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
           if isVertical then (cfg.page.height, "dvh") else (cfg.page.width, "vw")
         let textW := cfg.page.width - 2 * cfg.page.hmargin
         let textH := cfg.page.height - 2 * cfg.page.vmargin
-        some (decMilli (deckStageMilli (l.resolve textW textH) stage) ++ unit)
+        some (stageShare unit (l.resolve textW textH) stage)
       else none
     let dim (l : Image.Len) (vertical : Bool) : Option String :=
       if cfg.deck then deckDim l vertical else cssDim l vertical
@@ -5314,7 +5282,7 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
           (loaded?.bind (·.size?)).map fun (iw, _) =>
             let scaled := iw * size.scaleNum / size.scaleDen
             if cfg.deck then
-              s!"width: {decMilli (deckStageMilli scaled cfg.page.width)}vw; height: auto"
+              s!"width: {stageShare "vw" scaled cfg.page.width}; height: auto"
             else
               s!"width: {Dim.Sp.toPtString scaled}pt; height: auto"
         else none
@@ -6896,10 +6864,10 @@ public theorem pictureLabelBaseline_projects (pic : Ir.Pic.Picture) (box : Ir.Pi
 public def pictureBox (cfg : Config) (w h : Dim.Sp) (rise : Dim.Sp := 0) : Array (String × String) :=
   #[("viewBox", s!"0 0 {w.toPtString} {h.toPtString}")] ++
     (if cfg.deck then
-      #[("style", s!"width: {decMilli (deckStageMilli w cfg.page.width)}vw; \
-height: {decMilli (deckStageMilli h cfg.page.height)}dvh" ++
+      #[("style", s!"width: {stageShare "vw" w cfg.page.width}; \
+height: {stageShare "dvh" h cfg.page.height}" ++
         (if rise == 0 then "" else
-          s!"; vertical-align: -{decMilli (deckStageMilli rise cfg.page.height)}dvh"))]
+          s!"; vertical-align: -{stageShare "dvh" rise cfg.page.height}"))]
      else
       #[("width", s!"{w.toPtString}pt"), ("height", s!"{h.toPtString}pt")] ++
         (if rise == 0 then #[] else #[("style", s!"vertical-align: -{rise.toPtString}pt")]))
@@ -7406,7 +7374,7 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     let inherited := cfg.bodyInk.getD (.role .ink, cfg.listingFg.getD d.fg)
     let parent : Ir.ColorPair :=
       { fg := inherited.2, bg := cfg.listingGround.getD d.bg }
-    let paint := titledBodyPaint cfg.pal kind parent
+    let paint := d.titledBodyPaint kind parent
     let role := if look.fg.isSome then .role (Ir.Role.bodyInk kind) else inherited.1
     let titleLook := Ir.titledLook cfg.pal kind
     let read (r : Ir.Role) (c : Ir.Color) : String := colorRead cfg (some (.role r)) c
@@ -7513,7 +7481,7 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     if body.isEmpty then
       skipNode cfg.page.fontSize before (if grows then some Ir.fillUnit else none)
     else
-    let style := s!"margin-top: {if cfg.deck then deckSourced cfg.page.height before
+    let style := s!"margin-top: {if cfg.deck then sourcedIn (stageLengthCss cfg.page.height) before
       else cssSourced before}"
     fillCarrier cfg (Ir.frameFillsOne cfg.lists cfg.styles .deck 0 b)
       (Html.elem "div" (blockNodesInto cfg.into #[] body.toList)

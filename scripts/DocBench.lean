@@ -15,11 +15,6 @@ def vocabulary : Array String :=
 
 def word (i : Nat) : String := vocabulary[i % vocabulary.size]!
 
-def capital (s : String) : String :=
-  match s.toList with
-  | c :: cs => String.ofList (c.toUpper :: cs)
-  | [] => s
-
 /-- `len` words, seeded so neighbouring units differ. -/
 def phrase (seed len : Nat) : String :=
   String.intercalate " " ((List.range len).map fun j => word (seed * 7 + j * 3))
@@ -50,7 +45,7 @@ def tableRows (seed count : Nat) : String := Id.run do
   let mut out := ""
   for k in [0:count] do
     let i := seed + k
-    out := out ++ capital (word i) ++ " & " ++ toString (i * 37 % 1000) ++ " & " ++
+    out := out ++ (word i).capitalize ++ " & " ++ toString (i * 37 % 1000) ++ " & " ++
       toString (i * 13 % 100) ++ "\\% \\\\\n"
   return out
 
@@ -87,7 +82,7 @@ def deckFrame (i : Nat) : String :=
       "\\begin{lstlisting}[language=Python]\n" ++ pythonLines i 5 ++ "\\end{lstlisting}\n\\end{frame}\n"
   | 2 => open_ ++ "\\begin{tabular}{lrr}\n\\toprule\nName & Count & Share \\\\\n\\midrule\n" ++
       tableRows i 4 ++ "\\bottomrule\n\\end{tabular}\n\\end{frame}\n"
-  | _ => open_ ++ capital (phrase i 8) ++ ".\n\n" ++
+  | _ => open_ ++ (phrase i 8).capitalize ++ ".\n\n" ++
       "\\includegraphics[width=0.3\\textwidth,alt={Invented colour grid}]{rects.png}\n\\end{frame}\n"
 
 def deck (n rev : Nat) : Array (String × String) := Id.run do
@@ -102,28 +97,28 @@ def deck (n rev : Nat) : Array (String × String) := Id.run do
 def paperSection (s : Nat) : String :=
   let k := toString s
   "\\section{Invented topic " ++ k ++ "}\\label{sec:" ++ k ++ "}\n" ++
-  capital (phrase s 40) ++ " \\citep{k" ++ toString (3 * s) ++ "}. " ++ capital (phrase (s + 1) 20) ++
+  (phrase s 40).capitalize ++ " \\citep{k" ++ toString (3 * s) ++ "}. " ++ (phrase (s + 1) 20).capitalize ++
   " \\citet{k" ++ toString (3 * s + 1) ++ "} " ++ phrase (s + 2) 12 ++ ".\\footnote{" ++
-  capital (phrase (s + 3) 8) ++ ".}\n\n" ++
+  (phrase (s + 3) 8).capitalize ++ ".}\n\n" ++
   "\\begin{equation}\\label{eq:" ++ k ++ "}\nE_{" ++ k ++ "} = \\sum_{k=1}^{" ++ toString (s + 3) ++
   "} \\frac{a_k}{k^2}\n\\end{equation}\n" ++
   "As \\eqref{eq:" ++ k ++ "} shows for Section~\\ref{sec:" ++ k ++ "}, " ++ phrase (s + 4) 30 ++
   " \\citep{k" ++ toString (3 * s + 2) ++ "}.\n\n" ++
   (if s % 3 == 0 then "\\begin{figure}[t]\n\\centering\n" ++
     "\\includegraphics[width=0.5\\linewidth,alt={Invented colour grid}]{rects.png}\n" ++
-    "\\caption{" ++ capital (phrase (s + 5) 9) ++ ".}\\label{fig:" ++ k ++ "}\n\\end{figure}\n\n"
+    "\\caption{" ++ (phrase (s + 5) 9).capitalize ++ ".}\\label{fig:" ++ k ++ "}\n\\end{figure}\n\n"
    else "") ++
-  (if s == 0 || s % 4 == 1 then "\\begin{table}[t]\n\\centering\n\\caption{" ++ capital (phrase (s + 6) 6) ++
+  (if s == 0 || s % 4 == 1 then "\\begin{table}[t]\n\\centering\n\\caption{" ++ (phrase (s + 6) 6).capitalize ++
     "}\\label{tab:" ++ k ++ "}\n\\begin{tabular}{lrr}\n\\toprule\nName & Count & Share \\\\\n" ++
     "\\midrule\n" ++ tableRows s 5 ++ "\\bottomrule\n\\end{tabular}\n\\end{table}\n\n"
    else "") ++
-  capital (phrase (s + 7) 60) ++ ".\n\n"
+  (phrase (s + 7) 60).capitalize ++ ".\n\n"
 
 def bibEntries (count : Nat) : String := Id.run do
   let mut out := ""
   for i in [0:count] do
-    out := out ++ "@article{k" ++ toString i ++ ",\n  author = {Alex " ++ capital (word i) ++
-      " and Blair " ++ capital (word (i + 11)) ++ "},\n  title = {Invented result number " ++
+    out := out ++ "@article{k" ++ toString i ++ ",\n  author = {Alex " ++ (word i).capitalize ++
+      " and Blair " ++ (word (i + 11)).capitalize ++ "},\n  title = {Invented result number " ++
       toString i ++ "},\n  journal = {Journal of Invented Results},\n  year = {" ++
       toString (2000 + i % 25) ++ "},\n  volume = {" ++ toString (i % 40 + 1) ++ "},\n  pages = {" ++
       toString (i + 1) ++ "--" ++ toString (i + 9) ++ "}\n}\n"
@@ -134,7 +129,7 @@ def paper (n rev : Nat) : Array (String × String) := Id.run do
     "\\usepackage{graphicx}\n\\usepackage{booktabs}\n" ++ fontsDecl "Source Serif Pro" ++
     "\\title{An invented study of orbits}\n\\author{Pat Placeholder}\n\\date{}\n" ++
     "\\bibliographystyle{plainnat}\n\\begin{document}\n\\maketitle\n\\begin{abstract}\n" ++
-    revision rev ++ " " ++ capital (phrase 1 40) ++ ".\n\\end{abstract}\n\n"
+    revision rev ++ " " ++ (phrase 1 40).capitalize ++ ".\n\\end{abstract}\n\n"
   for i in [0:n + 1] do s := s ++ paperSection i
   return #[("paper.tex", s ++ "\\bibliography{refs}\n\\end{document}\n"),
     ("refs.bib", bibEntries (3 * (n + 1)))]
@@ -142,15 +137,15 @@ def paper (n rev : Nat) : Array (String × String) := Id.run do
 def noteBlock (i : Nat) : String :=
   let head := if i % 10 == 0 then "## Invented heading " ++ toString (i / 10 + 1) ++ "\n\n" else ""
   head ++ match i % 6 with
-  | 0 => capital (phrase i 12) ++ " *" ++ word i ++ "* and **" ++ word (i + 1) ++ "** with `" ++
+  | 0 => (phrase i 12).capitalize ++ " *" ++ word i ++ "* and **" ++ word (i + 1) ++ "** with `" ++
       word (i + 2) ++ "` and a [link](https://example.org/" ++ toString i ++ ").\n\n"
   | 1 => "- " ++ phrase i 5 ++ "\n- *" ++ word i ++ "* " ++ phrase (i + 1) 4 ++ "\n- " ++
       phrase (i + 2) 5 ++ "\n\n"
   | 2 => "```python\n" ++ pythonLines i 5 ++ "```\n\n"
-  | 3 => "> " ++ capital (phrase i 14) ++ ".\n\n"
+  | 3 => "> " ++ (phrase i 14).capitalize ++ ".\n\n"
   | 4 => "1. " ++ phrase i 4 ++ "\n2. " ++ phrase (i + 1) 4 ++ "\n3. " ++ phrase (i + 2) 4 ++ "\n\n"
   | _ => if i % 30 == 5 then "![Invented colour grid](rects.png)\n\n"
-      else capital (phrase i 30) ++ ".\n\n"
+      else (phrase i 30).capitalize ++ ".\n\n"
 
 /-- Markdown through its TeX inclusion, inside a document the sealed build can resolve. -/
 def notes (n rev : Nat) : Array (String × String) := Id.run do

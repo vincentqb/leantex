@@ -86,9 +86,6 @@ public structure Geom where
 
 public def Geom.textWidth (g : Geom) : Sp := g.pageW - 2 * g.hmargin
 
-/-- The least gap between a band's ink and the body's, TeX's `\lineskip` (TeXbook p.78). -/
-@[expose] public def inkClearance : Sp := Ir.inkClearance
-
 public def Geom.bodyBottom (g : Geom) : Sp := g.pageH - g.vmargin - g.footBand
 
 public def Geom.bodyTop (g : Geom) : Sp := g.vmargin + g.headBand
@@ -3907,19 +3904,11 @@ public theorem cancelMetric_em_agree (geom : Geom) (fs : FontSet)
 
 public def lineThroughRaise (xHeight : Sp) : Sp := max 0 xHeight * 55 / 100
 
-public def lineThroughThickness : Sp := Ir.lineThroughThickness
-
 public theorem lineThroughRaise_exact (xHeight : Int) (h : 0 ≤ xHeight) :
     lineThroughRaise xHeight = xHeight * 55 / 100 := by
   unfold lineThroughRaise
   have hm : max 0 xHeight = xHeight := by omega
   rw [hm]
-
-@[simp] public theorem lineThroughThickness_exact :
-    lineThroughThickness = Dim.pt 2 / 5 := by rfl -- ulem default rule thickness, 0.4pt
-
-@[simp] public theorem lineThroughThickness_agree :
-    lineThroughThickness = Ir.lineThroughThickness := by rfl
 
 /-- Resolve a command-entry source against the selected face and local measure. -/
 private def DecorationSource.rule (src : DecorationSource) (base xHeight textW textH : Sp)
@@ -11619,16 +11608,6 @@ private def collectRuleBlock (r : Rd) (a : Acc) (color : Ir.Color) (thickness : 
   let a := a.flushGap r
   { a with ops := a.ops.push (.hrule color (r.resolve thickness).width) }
 
-/-- PDF body paint, projected from the shared design at the block's epoch. -/
-@[expose] public def titledBodyPaint (pal : Ir.Palette) (kind : Ir.TitledKind)
-    (parent : Ir.ColorPair) : Ir.ColorPair :=
-  (Ir.Design.ofPalette pal).titledBodyPaint kind parent
-
-public theorem titledBodyPaint_projects (pal : Ir.Palette) (kind : Ir.TitledKind)
-    (parent : Ir.ColorPair) :
-    titledBodyPaint pal kind parent = (Ir.Design.ofPalette pal).titledBodyPaint kind parent := by
-  rfl
-
 /-- Resolve the shared block inset in the body's measured font units. -/
 @[expose] public def titledPadding (fontSize xHeight : Sp) : Sp :=
   Ir.titledPadding.resolve fontSize xHeight
@@ -12460,7 +12439,7 @@ private def collectBlock (r : Rd) (a : Acc)
     let look := d.titledBody kind
     let inherited := a.bodyInk.getD (.role .ink, a.fg)
     let parent : Ir.ColorPair := { fg := inherited.2, bg := a.ground.getD d.bg }
-    let paint := titledBodyPaint a.pal kind parent
+    let paint := d.titledBodyPaint kind parent
     let role := if look.fg.isSome then .role (Ir.Role.bodyInk kind) else inherited.1
     let restore (done : Acc) : Acc :=
       { done with measure := a.measure, bodyGround := a.bodyGround

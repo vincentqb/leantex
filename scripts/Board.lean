@@ -1216,12 +1216,6 @@ namespace Scoreboard.Hermetic
 
 open LeanTex.Core LeanTex.Cli
 
-/-- Every slot and variant on face 0, the one-face set's index. -/
-def oneFaceIndex : Array ((Nat × Nat × Bool) × Nat) :=
-  ((List.range 3).flatMap fun slot =>
-    [((slot, 400, false), 0), ((slot, 700, false), 0),
-     ((slot, 400, true), 0), ((slot, 700, true), 0)]).toArray
-
 /-- A face parsed once per run, however many fixtures load it. -/
 def loadFont (cache : IO.Ref (Array (String × Font.Font))) (path : String) :
     IO (Option Font.Font) := do
@@ -1474,7 +1468,7 @@ def corpusKeys (corpus : System.FilePath) : IO (Except String CorpusKeys) := do
   let cache ← IO.mkRef (#[] : Array (String × Font.Font))
   let some body ← loadFont cache (fontsDir / "OpenSans-Regular.ttf").toString
     | return .error s!"{fontsDir}/OpenSans-Regular.ttf does not parse"
-  let oneFace : Font.FontSet := { fonts := #[body], index := oneFaceIndex }
+  let oneFace := Font.FontSet.ofFace body
   let mut blobs : Array (String × ByteArray) := #[]
   let mut browserSources : Array (String × ByteArray) :=
     #[("conversion-contract", ImageAssets.browserFaceContract.toUTF8)]

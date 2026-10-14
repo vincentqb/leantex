@@ -18,14 +18,6 @@ private theorem run_body_census (geom : Geom) (fs : FontSet)
     (lines_counted_projects geom fs pats doc imgs frameSpans)
   simpa only [Census.bodyPages, Array.toList_map, List.flatMap_map] using h
 
-private theorem attributed_leaf_filter (lines : Array LineOut) (k : Nat) :
-    ((lines.filter fun l => l.leaf.isSome).filter fun l => l.leaf == some k) =
-      lines.filter (fun l => l.leaf == some k) := by
-  rw [Array.filter_filter]
-  apply congrArg (fun p : LineOut → Bool => lines.filter p)
-  funext l
-  cases l.leaf <;> simp
-
 private theorem run_leaf_census (geom : Geom) (fs : FontSet)
     (pats : Option Hyphen.Patterns) (doc : Doc) (imgs : Image.Store)
     (frameSpans : Array (Nat × Span)) (k : Nat) :
@@ -37,7 +29,7 @@ private theorem run_leaf_census (geom : Geom) (fs : FontSet)
         (lines.filter fun l => l.leaf == some k).toList.flatMap LineOut.glyphChars)
     (lines_attributed_projects geom fs pats doc imgs frameSpans)
   simpa only [Census.leafPages, Array.toList_map, List.flatMap_map,
-    attributed_leaf_filter] using h
+    Census.attributed_leaf_filter_exact] using h
 
 private theorem shipment_glyph_clean (geom : Geom) (fs : FontSet)
     (pats : Option Hyphen.Patterns) (doc : Doc) (imgs : Image.Store)

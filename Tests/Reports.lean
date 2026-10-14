@@ -775,7 +775,7 @@ def reports : List Report := [
       check% Tests.BlockRegionFit.checks,
       check% faceCentreChecks, check% fillCentreChecks,
       check% Tests.ThemePalette.checks,
-      thm% Ir.Design.titledBody_projects, thm% HtmlDoc.titledBodyPaint_agree,
+      thm% Ir.Design.titledBody_projects, thm% Ir.Design.titledBodyPaint_contract,
       thm% Layout.closed_box_rule_covers,
       thm% Layout.Spacing.Tail.join_covers, thm% Layout.Spacing.Tail.join_comm,
       thm% Layout.Spacing.Tail.join_assoc,

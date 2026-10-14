@@ -11,19 +11,6 @@ namespace LeanTex.Core.Elab
 
 open Parse Ir
 
-private theorem elabBlocksGo_past (ctx : Ctx) (st : ESt) (raws : Array Raw) (i : Nat)
-    (blocks : Array Block) (gen : Nat)
-    (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles) (hi : raws.size ≤ i) :
-    (elabBlocksGo ctx raws i blocks #[] gen).run st = (blocks, st) := by
-  have hf : (flowCtx ctx st gen).macroRoles = ({file := ""} : Ctx).macroRoles := by
-    unfold flowCtx
-    split <;> exact hm
-  rw [elabBlocksGo, run_get]
-  simp only [show ¬ i < raws.size from Nat.not_lt.mpr hi, ↓reduceDIte]
-  simp [blockMacroStep, flowMCtx, hf, blockMacroKinds, hi, flushPara, carryDecls_empty,
-    closeBlockFrameSources, commonOrigins, moveMacroRuns, closeMacroRuns, MacroRoles.empty]
-  rfl
-
 private theorem pictureInSentence_alone (ctx : Ctx) (n : String) (body : Array Raw) (pos : Pos) :
     pictureInSentence ctx n #[] #[.env n body pos] 0 pos = pure () := by
   simp [pictureInSentence]
@@ -92,7 +79,7 @@ public theorem elabBlocks_env_scope_id (ctx : Ctx) (st : ESt) (n : String) (body
   rw [show (enterBodyScope st).flowGen = st.flowGen from rfl] at hgo
   let act := elabEnvArm ctx n body pos #[]
   let s1 := (envGroup n ctx.palette false false false 0 act).run (enterBodyScope st)
-  have hpast := elabBlocksGo_past ctx s1.2 #[.env n body pos] 1 s1.1 st.flowGen hm (by simp)
+  have hpast := elabBlocksGo_end ctx s1.2 #[.env n body pos] 1 s1.1 st.flowGen hm (by simp)
   have hstate : s1.2 = ((texGroup ctx.palette act).run (enterBodyScope st)).2 :=
     envGroup_state n ctx.palette false false false 0 act (enterBodyScope st) hfile
   have h0 : (elabBlocksGo ctx #[.env n body pos] 0 #[] #[] st.flowGen).run (enterBodyScope st) =
@@ -125,7 +112,7 @@ public theorem elabBlocks_group_scope_id (ctx : Ctx) (st : ESt) (body : Array Ra
   rw [show (enterBodyScope st).flowGen = st.flowGen from rfl] at hgo
   let act := splicedFrameScope (some 0) (elabBlockScope ctx body)
   let s1 := (groupBlocks ctx.palette act).run (enterBodyScope st)
-  have hpast := elabBlocksGo_past ctx s1.2 #[.group body pos] 1 (#[] ++ s1.1) st.flowGen hm
+  have hpast := elabBlocksGo_end ctx s1.2 #[.group body pos] 1 (#[] ++ s1.1) st.flowGen hm
     (by simp)
   have hstate : s1.2 = ((texGroup ctx.palette act).run (enterBodyScope st)).2 :=
     groupBlocks_state ctx.palette act (enterBodyScope st)

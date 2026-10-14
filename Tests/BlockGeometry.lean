@@ -517,7 +517,7 @@ private def skipChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
   let (head, body, _) := HtmlDoc.emitTree {} doc
   let (_, sheet) := listStyles (#[], "") (head.toList ++ body.toList)
   let size := doc.page.fontSize
-  let above := remText (HtmlDoc.screenMilli size (Dim.pt 20 + Layout.inkClearance))
+  let above := remText (HtmlDoc.screenMilli size (Dim.pt 20 + Ir.inkClearance))
   let below := remText (HtmlDoc.screenMilli size (Dim.pt 15))
   check ref s!"block skips HTML: a block's space above is the document's medium skip ({above})"
     (ruleValue sheet ["* + ", "section.block"] == some above)

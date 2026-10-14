@@ -356,7 +356,7 @@ private def htmlChecks (ref : IO.Ref (List String)) : IO Unit := do
   let skip := (boxes[2]?.bind fun attrs => boxMilli ((HtmlDoc.attrOf? attrs "style").getD ""))
   match below, aboveNext, skip with
   | some b, some a, some s =>
-    let page := Dim.pt 3 + Dim.pt 12 + Dim.pt 6 + Layout.inkClearance
+    let page := Dim.pt 3 + Dim.pt 12 + Dim.pt 6 + Ir.inkClearance
     let want := (HtmlDoc.screenMilli size page : Int)
     check ref s!"block skips HTML: two blocks across \\bigskip stand the page's 22 pt, {b} + {s} + {a} milli-rem against {want}"
       ((b + s + a - want).natAbs ≤ 3)

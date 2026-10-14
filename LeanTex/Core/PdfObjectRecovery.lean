@@ -44,12 +44,6 @@ public theorem objectStreamDict_representable_exact (count first : Nat)
     | exact Obj.Representable.int _
     | solve | simp [Obj.NameSpelling]
 
-private theorem push_append (b : ByteArray) (c : UInt8) :
-    b.push c = b ++ ⟨#[c]⟩ := by
-  apply ByteArray.ext
-  rw [ByteArray.data_push, ByteArray.data_append]
-  exact Array.push_eq_append
-
 public theorem objectStreamDict_render_exact (count first : Nat) (filtered : Bool) (len : Nat) :
     (objectStreamDict count first filtered len).render =
       (s!"<< /Type /ObjStm /N {count} /First {first}" ++
@@ -59,7 +53,7 @@ public theorem objectStreamDict_render_exact (count first : Nat) (filtered : Boo
     simp only [objectStreamDict, Bool.false_eq_true, ↓reduceIte,
       Obj.render, Obj.renderInto, Array.toList_append, List.append_nil,
       List.cons_append, List.nil_append, Obj.renderEntries,
-      push_append, utf8_append, ByteArray.append_assoc,
+      Binary.push_eq_append, utf8_append, ByteArray.append_assoc,
       ByteArray.empty_append]
   all_goals apply ByteArray.ext
   all_goals apply Array.toList_inj.mp

@@ -524,7 +524,7 @@ def recipeUlemChecks (ref : IO.Ref (List String))
   t "strikeout covers words and gaps at the shared through-line band"
     (!strikeSegs.isEmpty && strikeWidth == sourceWidth &&
       strikeSegs.all fun (_, w, thickness, raise, color) =>
-        w > 0 && thickness == Layout.lineThroughThickness &&
+        w > 0 && thickness == Ir.lineThroughThickness &&
           raise > 0 && color == Ir.Color.black)
 
   let underlineOut := layoutOf oneFace (elabStr "\\underline{aqa}").1

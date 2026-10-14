@@ -252,13 +252,12 @@ public inductive DateParts where
 
 /-- An entry's date of one type (`DateParts`). -/
 public def Entry.dateParts (months : Array String) (e : Entry) (ty : String) : DateParts :=
-  let nonEmpty (f : String) := (e.field? f).filter fun v => !v.trimAscii.toString.isEmpty
-  let legacy : Option DateParts := (nonEmpty "year").map fun y =>
-    .legacy (text y).trimAscii.toString ((nonEmpty "month").map fun m =>
+  let legacy : Option DateParts := (e.value? "year").map fun y =>
+    .legacy (text y).trimAscii.toString ((e.value? "month").map fun m =>
       match monthNumber months m with
       | some n => toString n
       | none => (text m).trimAscii.toString)
-  match nonEmpty (ty ++ "date") with
+  match e.value? (ty ++ "date") with
   | some v =>
     match DateValue.parse v with
     | some dv => .parsed dv

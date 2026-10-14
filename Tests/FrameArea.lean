@@ -180,7 +180,7 @@ def openingChecks (ref : IO.Ref (List String)) : IO Unit := do
     (out.pages[page]?.bind fun p => p.lines.find? fun l =>
       l.segs.any (· matches .image ..)).map (·.y)
   t "frame opening: an image stands TeX's interline glue below the opening, as lualatex's"
-    ((imageY 3).any (fun y => y == skip + Layout.inkClearance + Dim.pt 40 && near y (ptMilli 46517)) &&
+    ((imageY 3).any (fun y => y == skip + Ir.inkClearance + Dim.pt 40 && near y (ptMilli 46517)) &&
      (imageY 4).any (fun y => y == skip + lead && near y (ptMilli 17624)))
   let (head, _, _) := HtmlDoc.emitTree {} doc
   let css := treeCssList "" head.toList
@@ -256,7 +256,7 @@ def trivlistOpeningChecks (ref : IO.Ref (List String)) : IO Unit := do
       y == skip + topsep + lead && near y (ptMilli 25594))
   t "trivlist opening: a figure's and a center's image stand their topsep and lineskip below the opening, as lualatex's"
     ([3, 4].all fun pg => (imageY pg).any fun y =>
-      y == skip + topsep + Layout.inkClearance + Dim.pt 40 && near (y - Dim.pt 40) (ptMilli 14635))
+      y == skip + topsep + Ir.inkClearance + Dim.pt 40 && near (y - Dim.pt 40) (ptMilli 14635))
   t "trivlist opening: a description's item stands its topsep below the opening, as lualatex's"
     ((lineY 5 "Kilo").any fun y => near y (ptMilli 20613))
   t "trivlist opening: a center between paragraphs stands its topsep above and below, as lualatex's"

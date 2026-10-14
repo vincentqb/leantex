@@ -458,7 +458,7 @@ sides. -/
 def oneFaceSet (cache : IO.Ref (Array (String × Font.Font))) : IO Font.FontSet := do
   let some body ← Hermetic.loadFont cache (fontsDir / "OpenSans-Regular.ttf").toString
     | throw (IO.userError s!"{fontsDir}/OpenSans-Regular.ttf does not parse")
-  return { fonts := #[body], index := Hermetic.oneFaceIndex }
+  return Font.FontSet.ofFace body
 
 /-- Every fixture, by name, in name order. -/
 def fixtureNames : IO (Array String) := do

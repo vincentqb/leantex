@@ -1091,6 +1091,13 @@ public def body (fs : FontSet) : Font := fs.fonts[0]!
 
 public def get (fs : FontSet) (i : Nat) : Font := fs.fonts[i]?.getD fs.body
 
+/-- The set of one face, every slot and variant mapped to it. -/
+public def ofFace (f : Font) : FontSet :=
+  { fonts := #[f]
+    index := ((List.range 3).flatMap fun slot =>
+      [((slot, 400, false), 0), ((slot, 700, false), 0),
+       ((slot, 400, true), 0), ((slot, 700, true), 0)]).toArray }
+
 /-- The math face and its constants, when the document has a usable one. -/
 public def mathFont? (fs : FontSet) : Option (Nat × Font × MathConsts) := do
   let i ← fs.math

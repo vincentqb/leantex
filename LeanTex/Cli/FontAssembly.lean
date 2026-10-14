@@ -18,12 +18,6 @@ namespace LeanTex.Cli.FontAssembly
 
 open LeanTex.Core
 
-/-- Every slot and variant mapped to one face: the shape of a single-font set. -/
-private def singleFaceIndex : Array ((Nat × Nat × Bool) × Nat) :=
-  ((List.range 3).flatMap fun slot =>
-    [((slot, 400, false), 0), ((slot, 700, false), 0),
-     ((slot, 400, true), 0), ((slot, 700, true), 0)]).toArray
-
 /-- The scan produced nothing usable at all. -/
 private def noFontDiag : Diag := DriverDiag.noFont
 
@@ -96,10 +90,7 @@ public def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
       | .ok (f, path) =>
         let coverage := f.mathAlphabetCoverage spec.mathSources
         let (doc, alphaDiags) := Ir.resolveMathAlphas coverage f.family doc
-        let set : Font.FontSet := {
-          fonts := #[f]
-          index := singleFaceIndex
-          mathAlphabets := coverage }
+        let set : Font.FontSet := { Font.FontSet.ofFace f with mathAlphabets := coverage }
         return .ok (set, doc, alphaDiags, #[path])
   let mut diags : Array Diag := scan.diags
   let docDirs := scan.docDirs
@@ -228,10 +219,7 @@ public def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
       | .ok f =>
         let coverage := f.mathAlphabetCoverage spec.mathSources
         let (doc, alphaDiags) := Ir.resolveMathAlphas coverage f.family doc
-        let set : Font.FontSet := {
-          fonts := #[f]
-          index := singleFaceIndex
-          mathAlphabets := coverage }
+        let set : Font.FontSet := { Font.FontSet.ofFace f with mathAlphabets := coverage }
         return .ok (set, doc, diags ++ alphaDiags, #[face.path])
   -- Alphabets resolve before `docScalars`, so a missing one never reaches the fallback.
   let (doc, mathAlphabets, alphaDiags) :=

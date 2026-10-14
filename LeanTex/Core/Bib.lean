@@ -34,6 +34,10 @@ public instance : Inhabited Entry :=
 @[expose] public def Entry.field? (e : Entry) (name : String) : Option String :=
   (e.fields.find? (·.1 == name)).map (·.2)
 
+/-- A field's value when it holds anything but white space, BibTeX's `empty$` false. -/
+public def Entry.value? (e : Entry) (name : String) : Option String :=
+  (e.field? name).filter fun v => !v.trimAscii.toString.isEmpty
+
 /-- The parse result: a malformed entry is recorded and the
 parse resynchronises at the next `@`. -/
 public structure Parsed where

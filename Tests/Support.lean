@@ -2055,12 +2055,7 @@ def dvH (src : String) (w : WitnessRun := {}) : Array Diag :=
   ds ++ (HtmlDoc.emit {} doc).2
 
 /-- A one-face set: every slot and variant maps to index 0. -/
-def oneFaceOf (font : Font.Font) : Font.FontSet := {
-  fonts := #[font]
-  index := ((List.range 3).flatMap fun slot =>
-    [((slot, 400, false), 0), ((slot, 700, false), 0),
-     ((slot, 400, true), 0), ((slot, 700, true), 0)]).toArray
-}
+def oneFaceOf (font : Font.Font) : Font.FontSet := Font.FontSet.ofFace font
 
 /-- The shipped Fira Sans as a one-face set, or `none`. -/
 def shippedFira : IO (Option Font.FontSet) := do

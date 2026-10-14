@@ -124,4 +124,14 @@ public theorem hyphenate_respects_min (pats : Patterns) (word : String) :
     simp [String.length_ofList]
   omega
 
+/-- The word with `-` at each break, the `\showhyphens` format. -/
+public def marked (pats : Patterns) (word : String) : String := Id.run do
+  let breaks := hyphenate pats word
+  let mut out := ""
+  for (c, i) in word.toList.zipIdx do
+    if i > 0 && breaks.contains i then
+      out := out.push '-'
+    out := out.push c
+  return out
+
 end LeanTex.Core.Hyphen

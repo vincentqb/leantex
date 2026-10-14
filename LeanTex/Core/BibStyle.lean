@@ -332,15 +332,9 @@ private def linkPiece (p : CitePunct) (out : Array Ir.Inline) (anchor : String)
       | none => piece))
   else emitLink p (emit out (Ir.plainText before)) anchor (Ir.plainText piece)
 
-/-- The first letter capitalized, natbib's `\NAT@Up`. -/
-private def upFirst (s : String) : String :=
-  match s.toList with
-  | c :: cs => String.ofList (c.toUpper :: cs)
-  | [] => s
-
-/-- `upFirst` over inline content. -/
+/-- The first letter capitalized over inline content, natbib's `\NAT@Up`. -/
 private def upFirstInk (xs : Array Ir.Inline) : Array Ir.Inline :=
-  if let some (Ir.Inline.text t) := xs[0]? then xs.modify 0 fun _ => .text (upFirst t) else xs
+  if let some (Ir.Inline.text t) := xs[0]? then xs.modify 0 fun _ => .text t.capitalize else xs
 
 /-- What natbib's command table sets for a command. -/
 private structure Switches where
@@ -403,7 +397,7 @@ private def citeStep (p : CitePunct) (f : Ir.CiteForm) (s : Switches) (total : N
         | some n => Ir.smartPunct (text n)
         | none => citeAuthors r.entry p.biblatex p.useprefix
     let up := f.up && !s.numeric
-    let names := if up then upFirst names else names
+    let names := if up then names.capitalize else names
     let titled := if f.full then none else match r.namesInk with
       | some inl => some (if up then upFirstInk inl else inl)
       | none => if r.citeNames.isSome then none else r.citeLabel
@@ -578,10 +572,8 @@ private def dashify (v : String) : String := Id.run do
     else break
   return out
 
-/-- Whether a stored value holds anything but white space,
-BibTeX's `empty$` false. -/
-private def Entry.has (e : Entry) (name : String) : Bool :=
-  (e.field? name).any fun v => !v.trimAscii.toString.isEmpty
+/-- Whether a stored value holds anything but white space, BibTeX's `empty$` false. -/
+private def Entry.has (e : Entry) (name : String) : Bool := (e.value? name).isSome
 
 /-- The reference list's writer: the diagnostics its field readings report, and
 the texts read so far. -/
@@ -1001,11 +993,6 @@ private def addPeriod (out : Array Ir.Inline) : Array Ir.Inline :=
   | none => out
   | some c => if c == '.' || c == '?' || c == '!' then out else out.push (.text ".")
 
-private def mergeText (xs : Array Ir.Inline) : Array Ir.Inline :=
-  xs.foldl (fun acc x => match x, acc.back? with
-    | .text b, some (.text a) => acc.pop.push (.text (a ++ b))
-    | _, _ => acc.push x) #[]
-
 /-- One reference-list entry as plainnat.bst's `output` writes it, with its
 field readings' reports. -/
 public def renderEntryCached (cv : FieldText) (nf : NameFormat) (steps : Array Step) (e : Entry)
@@ -1028,7 +1015,7 @@ public def renderEntryCached (cv : FieldText) (nf : NameFormat) (steps : Array S
       | .newSentence => if st == .mid then st := .afterSentence
       | .newBlockIf fs => if st != .beforeAll && fs.any e.has then st := .afterBlock
       | .newSentenceIf fs => if st == .mid && fs.any e.has then st := .afterSentence
-    return mergeText (addPeriod out)
+    return Ir.mergeTexts (addPeriod out)
   let (out, ds, cache) := run.run ({}, cache)
   ((out, ds), cache)
 
@@ -1384,26 +1371,25 @@ private def bblSortKey (template : String) (o : BblOptions) (tl : Collate.Tailor
     (r : Resolved) : Array SortVal := Id.run do
   let e := r.sortEntry
   let oe := o.forEntry e
-  let nonEmpty (f : String) := (e.field? f).filter fun v => !v.trimAscii.toString.isEmpty
   let str (s : String) : SortVal := .str (Collate.keyWith tl s)
-  let titles : SortVal := str (sortText (((nonEmpty "sorttitle").orElse fun _ => nonEmpty "title").getD ""))
+  let titles : SortVal := str (sortText (((e.value? "sorttitle").orElse fun _ => e.value? "title").getD ""))
   let names : SortVal :=
     let used := [("sortname", true), ("author", oe.useauthor), ("editor", oe.useeditor),
       ("translator", oe.usetranslator)]
-    match used.findSome? fun (f, use) => if use then nonEmpty f else none with
+    match used.findSome? fun (f, use) => if use then e.value? f else none with
     | some v =>
       let names := (lists.get? v).getD
         (((splitNames v).filter (· != "others")).map parseNameBiber)
       str (nameSortString lens oe.useprefix r.sortShown names)
     | none => titles
-  let yearOf : Option Int := match (nonEmpty "sortyear") with
+  let yearOf : Option Int := match (e.value? "sortyear") with
     | some y => some (sortIntField y)
     | none => match e.dateParts #[] "" with
       | .parsed dv => some ((dv.start.map (·.year)).getD 2000000000)
       | .legacy y _ => some (sortIntField y)
       | .written _ => some 2000000000
       | .none => none
-  let volume : SortVal := .int ((nonEmpty "volume").map sortIntField |>.getD 0)
+  let volume : SortVal := .int ((e.value? "volume").map sortIntField |>.getD 0)
   let (sets, descending) := bblTemplate template
   let mut out : Array SortVal := #[]
   let mut final : Option String := none
@@ -1413,9 +1399,9 @@ private def bblSortKey (template : String) (o : BblOptions) (tl : Collate.Tailor
         .int (sortInt k) else str k)
     | none =>
       match set with
-      | .presort => out := out.push (str (sortText ((nonEmpty "presort").getD "mm")))
+      | .presort => out := out.push (str (sortText ((e.value? "presort").getD "mm")))
       | .sortkey =>
-        match nonEmpty "sortkey" with
+        match e.value? "sortkey" with
         | some k =>
           final := some (sortText k)
           out := out.push (str "")
@@ -1539,10 +1525,9 @@ private def bblAnnotate (o : BblOptions) (months : Array String) (rs : Array Res
   let lists := (rs.zip opts).map fun (r, oe) => oe.labelName r.entry
   let us := uniqueness uo (lists.map fun l => (l.map (·.2)).getD {})
   ((rs.zip opts).zip (lists.zip us)).map fun ((r, oe), l, u) =>
-    let nonEmpty (f : String) := (r.entry.field? f).filter fun v => !v.trimAscii.toString.isEmpty
     let sortList := [("sortname", true), ("author", oe.useauthor), ("editor", oe.useeditor),
       ("translator", oe.usetranslator)].findSome? fun (f, use) =>
-        if use then (nonEmpty f).map fun v =>
+        if use then (r.entry.value? f).map fun v =>
           (f, match l with
             | some (lf, nl) => if lf == f then nl else NameList.ofValue v
             | none => NameList.ofValue v)
@@ -1555,7 +1540,7 @@ private def bblAnnotate (o : BblOptions) (months : Array String) (rs : Array Res
       sortShown := sortList.map fun (f, nl) =>
         shownCount nl.names.size oe.maxsortnames oe.minsortnames
           (if l.any (·.1 == f) then u.ul else none)
-      shorthand := nonEmpty "shorthand"
+      shorthand := r.entry.value? "shorthand"
       labelYear := some (bblLabelYear months r.entry)
       skipbib := oe.skipbib
       skiplab := oe.skiplab }
@@ -2462,16 +2447,16 @@ private def analyse (sources : Array (String × String)) (doc : Ir.Doc) (rd : Fi
     let mine := (db.own.get? r.key).getD r.entry
     let atEntry : Option Span := (origin.get? r.key).map fun src => ⟨sourceName src, mine.pos⟩
     for f in ["date", "urldate", "eventdate", "origdate"] do
-      if let some v := mine.field? f then
-        if !v.trimAscii.toString.isEmpty && (DateValue.parse v).isNone then
+      if let some v := mine.value? f then
+        if (DateValue.parse v).isNone then
           diags := diags.push (Diag.of .W0420 s!"the {f} '{text v}' of '{r.key}' is not one \
             biblatex reads; it prints as written" atEntry
             (help := s!"write it as YYYY, YYYY-MM or YYYY-MM-DD, a range with '/': \
               '{f} = \{2020-03}'")
             (subject := some s!"bibdate:{r.key}:{f}"))
     if proc == .biber then
-      if let some m := mine.field? "month" then
-        if !m.trimAscii.toString.isEmpty && (monthNumber months m).isNone then
+      if let some m := mine.value? "month" then
+        if (monthNumber months m).isNone then
           diags := diags.push (Diag.of .W0420 s!"the month '{text m}' of '{r.key}' is not one \
             biblatex reads; it prints as written" atEntry
             (help := "write it as a number, 1 to 12, or as a month's name: 'month = {3}'")

@@ -400,7 +400,7 @@ space and no macro cleared it. -/
 private def fld (name : String) : BM (Option String) := do
   modify fun t => if t.read.contains name then t else { t with read := name :: t.read }
   if (← get).cleared.contains name then return none
-  pure (((← read).e.field? name).filter fun v => !v.trimAscii.toString.isEmpty)
+  pure ((← read).e.value? name)
 
 private def clear (name : String) : BM Unit := modify fun t => { t with cleared := name :: t.cleared }
 
@@ -526,11 +526,6 @@ private def bibStringOf (short : Bool) (key : String) : Option (Array BibPiece) 
 private def isBibstring (v : String) : Bool :=
   stringTable.get.contains (text v).trimAscii.toString
 
-private def capFirst (s : String) : String :=
-  match s.toList with
-  | c :: cs => String.ofList (c.toUpper :: cs)
-  | [] => s
-
 /-- A string's pieces printed in place, its first letter
 capitalized after a sentence's end. -/
 private def putPiecesWith (fromLang : BM Unit) (ps : Array BibPiece) : BM Unit := do
@@ -539,7 +534,7 @@ private def putPiecesWith (fromLang : BM Unit) (ps : Array BibPiece) : BM Unit :
   for p in ps do
     match p with
     | .txt s =>
-      putText (if first && cap then capFirst s else s)
+      putText (if first && cap then s.capitalize else s)
       first := false
     | .dot => runOp .dot
     | .comma => runOp .comma
@@ -636,7 +631,7 @@ private def nameTeX (o : BblOptions) (familyFirst : Bool) (n : Name) (cap : Bool
   let pre (p : String) : String := if n.von.isEmpty then "" else p ++ (if prefChar n.von then "" else " ")
   if familyFirst then
     if up && !n.von.isEmpty then
-      pre (if cap then capFirst n.von else n.von) ++ n.last ++ sfx ++
+      pre (if cap then n.von.capitalize else n.von) ++ n.last ++ sfx ++
         (if given.isEmpty then "" else ", " ++ given)
     else
       n.last ++ sfx ++ (if given.isEmpty && n.von.isEmpty then "" else ",") ++
@@ -1621,7 +1616,7 @@ private inductive Head where
 /-- The field a head prints under the options, which
 authoryear's dash compares. -/
 private def Head.field (h : Head) (o : BblOptions) (e : Entry) : Option String :=
-  let has (f : String) := (e.field? f).any fun v => !v.trimAscii.toString.isEmpty
+  let has (f : String) := (e.value? f).isSome
   let au := o.useauthor && has "author"
   let ed := o.useeditor && has "editor"
   let tr := o.usetranslator && has "translator"
@@ -2104,11 +2099,6 @@ private def headOf : String → Head
   | "patent" | "report" | "thesis" | "unpublished" => .author
   | _ => .authorEditorTranslator
 
-private def mergeTexts (xs : Array Ir.Inline) : Array Ir.Inline :=
-  xs.foldl (fun acc x => match x, acc.back? with
-    | .text b, some (.text a) => acc.pop.push (.text (a ++ b))
-    | _, _ => acc.push x) #[]
-
 /-- `\finentry`: the entry's period. -/
 private def finentry : BM Unit := do
   modify fun t => { t with gap := none }
@@ -2125,7 +2115,7 @@ public def renderBbl (opts : BblOptions) (cv : FieldText) (e : Entry) (extra : S
   let ctx : BCtx :=
     { e, opts := opts.forEntry e, cv, extra, dash, labelUl, months, labelDate := e.labelDate months }
   let (_, t) := (run.run ctx).run { cache }
-  ((mergeTexts t.out, t.report, t.read), t.cache)
+  ((Ir.mergeTexts t.out, t.report, t.read), t.cache)
 
 /-- What a field citation prints of an entry under
 biblatex's standard styles. -/
@@ -2151,7 +2141,7 @@ public def bblCiteField (opts : BblOptions) (cv : FieldText) (months : Array Str
     { e, opts := opts.forEntry e, cv, extra, dash := false, labelUl := none, months
       labelDate := e.labelDate months, fullcite := w == .full }
   let (_, t) := (run.run ctx).run {}
-  (mergeTexts t.out, t.report.pictures)
+  (Ir.mergeTexts t.out, t.report.pictures)
 
 /-- What a citation prints for an entry no name list labels,
 in place of its names. -/
@@ -2181,7 +2171,7 @@ public def bblCiteLabel (opts : BblOptions) (cv : FieldText) (months : Array Str
     { e, opts := opts.forEntry e, cv, extra := "", dash := false, labelUl := none, months
       labelDate := e.labelDate months }
   let (_, t) := (run.run ctx).run {}
-  (mergeTexts t.out, t.report.pictures)
+  (Ir.mergeTexts t.out, t.report.pictures)
 
 /-- The name list an authoryear head prints, as its dash
 compares it with the previous entry's. -/

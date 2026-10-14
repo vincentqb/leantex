@@ -1547,10 +1547,10 @@ def displayTexChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
   let deep := linesOf (long ++ "\n\\[ \\sum_{i=1}^{n} x_{i} \\]\nBravo words.")
   t "a display taller than the leading leaves allows stands its box a lineskip below the line"
     (three deep && depth deep[0]! + height deep[1]! > bs &&
-      step deep 0 == w sk.above + depth deep[0]! + Layout.inkClearance + height deep[1]!)
+      step deep 0 == w sk.above + depth deep[0]! + Ir.inkClearance + height deep[1]!)
   t "the line under a deep display stands a lineskip below the display's box"
     (three deep && depth deep[1]! + height deep[2]! > bs &&
-      step deep 1 == w sk.below + depth deep[1]! + Layout.inkClearance + height deep[2]!)
+      step deep 1 == w sk.below + depth deep[1]! + Ir.inkClearance + height deep[2]!)
   t "the baseline distance across a display is TeX's interline rule on both sides"
     (three deep && step deep 0 == w sk.above + Layout.texBaselineGap bs (depth deep[0]!)
         (height deep[1]!) &&
@@ -2214,7 +2214,7 @@ def headBandChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
     if l.y == headY then none else some (l.y - scale font.capHeight)
   t "body ink clears the head's ink by the clearance floor under a tight margin"
     (!bodyInkTops.isEmpty &&
-      bodyInkTops.all fun top => headBottom + Layout.inkClearance ≤ top)
+      bodyInkTops.all fun top => headBottom + Ir.inkClearance ≤ top)
   let dflt (head : Bool) : Option Dim.Sp := Id.run do
     let src := "\\documentclass{article}" ++
       (if head then "\\runninghead{Invented Notes}" else "") ++
@@ -2961,14 +2961,7 @@ def hyphenChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   -- Expectations: luatex `\showhyphens` over the embedded hyph-en-us.tex, hyphenmins 2/3.
   let pats := Hyphen.english.get
-  let hyph (w : String) : String := Id.run do
-    let breaks := Hyphen.hyphenate pats w
-    let mut out := ""
-    for (c, i) in w.toList.zipIdx do
-      if i > 0 && breaks.contains i then
-        out := out.push '-'
-      out := out.push c
-    return out
+  let hyph := Hyphen.marked pats
   t "hyphen patterns loaded" (pats.map.size > 4000)
   t "hyphen incomprehensibility" (hyph "incomprehensibility" == "in-com-pre-hen-si-bil-ity")
   t "hyphen internationalization" (hyph "internationalization" == "in-ter-na-tion-al-iza-tion")
@@ -2987,14 +2980,7 @@ def hyphenChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "hyphen set is ushyphmax (toolchain)" (hyph "toolchain" == "tool-chain")
   -- Expectations are lualatex `\showhyphens` output under [french]{babel}.
   let frp := Hyphen.french.get
-  let hyphFr (w : String) : String := Id.run do
-    let breaks := Hyphen.hyphenate frp w
-    let mut out := ""
-    for (c, i) in w.toList.zipIdx do
-      if i > 0 && breaks.contains i then
-        out := out.push '-'
-      out := out.push c
-    return out
+  let hyphFr := Hyphen.marked frp
   t "hyphen french patterns loaded" (frp.map.size > 1000)
   t "hyphen fr considérablement" (hyphFr "considérablement" == "consi-dé-ra-ble-ment")
   t "hyphen fr constitution" (hyphFr "constitution" == "consti-tu-tion")
@@ -3002,14 +2988,7 @@ def hyphenChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "hyphen fr accented capital folds" (hyphFr "Électricité" == "Élec-tri-cité")
   -- German: hyph-de-1996.tex, hyphenmins 2/2 from the locale record.
   let dep := Hyphen.german.get
-  let hyphDe (w : String) : String := Id.run do
-    let breaks := Hyphen.hyphenate dep w
-    let mut out := ""
-    for (c, i) in w.toList.zipIdx do
-      if i > 0 && breaks.contains i then
-        out := out.push '-'
-      out := out.push c
-    return out
+  let hyphDe := Hyphen.marked dep
   t "hyphen german patterns loaded" (dep.map.size > 30000)
   t "hyphen de wissenschaft" (hyphDe "Wissenschaft" == "Wis-sen-schaft")
   t "hyphen de compound" (hyphDe "Donaudampfschifffahrt" == "Do-nau-dampf-schiff-fahrt")
@@ -3774,7 +3753,7 @@ def fillCentreChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
     (within (skew "\\setlength{\\topskip}{0pt}"
       ("\\nointerlineskip\n" ++ sandwich pic)) 0)
   t "a fill-framed picture stands the class's \\topskip and \\lineskip low, as in lualatex"
-    (within (skew "" (sandwich pic)) (Dim.pt 10 + Layout.inkClearance))
+    (within (skew "" (sandwich pic)) (Dim.pt 10 + Ir.inkClearance))
 
 /-- A block framed by two fills stands centred on its TeX box under the class's and a declared
 `\topskip`, and an untitled frame does too. -/
@@ -3884,10 +3863,10 @@ def vspaceStarChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
         (·.1 == Dim.pt (ts + 20) + lead) |>.getD false)
   t "a first line taller than the leading takes \\lineskip below the kept space"
     ((at? (src "" "\\vspace*{20pt}\n{\\Huge Alpha words}") 0 "Alpha").map
-      (fun (y, h, _) => y == Dim.pt 30 + h + Layout.inkClearance) |>.getD false)
+      (fun (y, h, _) => y == Dim.pt 30 + h + Ir.inkClearance) |>.getD false)
   t "a rule taller than the leading takes \\lineskip below the kept space"
     ((at? (src "" "\\vspace*{20pt}\n\\rule{1pt}{24pt} Alpha words") 0 "Alpha").map
-      (fun (y, h, _) => y == Dim.pt 30 + h + Layout.inkClearance) |>.getD false)
+      (fun (y, h, _) => y == Dim.pt 30 + h + Ir.inkClearance) |>.getD false)
   t "a Huge first line stands Huge's leading below the kept space"
     ((at? (src "" "\\vspace*{20pt}\n{\\Huge Alpha words\\par}") 0 "Alpha").map
       (fun (y, _, _) => y == Dim.pt 60) |>.getD false)

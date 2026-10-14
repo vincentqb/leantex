@@ -110,12 +110,6 @@ public theorem xrefStreamDict_representable_exact (count info : Nat) (w : Xref.W
   all_goals try subst x
   all_goals first | exact Obj.Representable.int _ | exact hex16_string_exact _
 
-private theorem push_append (b : ByteArray) (c : UInt8) :
-    b.push c = b ++ ⟨#[c]⟩ := by
-  apply ByteArray.ext
-  rw [ByteArray.data_push, ByteArray.data_append]
-  exact Array.push_eq_append
-
 set_option maxRecDepth 4096 in
 public theorem xrefStreamDict_render_exact (count info : Nat) (w : Xref.Widths)
     (idA idB : UInt64) (filtered : Bool) (len : Nat) :
@@ -127,7 +121,7 @@ public theorem xrefStreamDict_render_exact (count info : Nat) (w : Xref.Widths)
     simp only [xrefStreamDict, Bool.false_eq_true, ↓reduceIte,
       Obj.render, Obj.renderInto, Array.toList_append, List.append_nil,
       List.cons_append, List.nil_append, Obj.renderEntries,
-      Obj.renderList, push_append, utf8_append, ByteArray.append_assoc,
+      Obj.renderList, Binary.push_eq_append, utf8_append, ByteArray.append_assoc,
       ByteArray.empty_append]
   all_goals apply ByteArray.ext
   all_goals apply Array.toList_inj.mp

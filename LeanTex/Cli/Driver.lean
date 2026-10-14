@@ -1058,16 +1058,6 @@ def dump (ui : Ui) (file : String) : IO UInt32 := do
     IO.print (Ir.dump front.doc front.diags)
     return (if countErrors front.diags > 0 then 1 else 0)
 
-/-- Insert `-` at each hyphenation point, the `hyphenate` command's output format. -/
-def showHyphens (pats : Hyphen.Patterns) (word : String) : String := Id.run do
-  let breaks := Hyphen.hyphenate pats word
-  let mut out := ""
-  for (c, i) in word.toList.zipIdx do
-    if i > 0 && breaks.contains i then
-      out := out.push '-'
-    out := out.push c
-  return out
-
 def hyphenate (ui : Ui) (words : List String) (file : Option String) : IO UInt32 := do
   let mut all := words
   if let some path := file then
@@ -1082,7 +1072,7 @@ def hyphenate (ui : Ui) (words : List String) (file : Option String) : IO UInt32
       if w.isEmpty then none else some w
   let pats := Hyphen.english.get
   for w in all do
-    IO.println (showHyphens pats w)
+    IO.println (Hyphen.marked pats w)
   return 0
 
 /-- Rebuild whenever the source's mtime changes, polled every 200 ms, each rebuild

@@ -7794,6 +7794,18 @@ where
       go rest ((if opening then '‘' else '’') :: prev)
     | c :: rest, prev => go rest (c :: prev)
 
+/-- One run onto a merge: a text run after a text run joins it. -/
+@[expose] public def mergeStep (out : Array Inline) (x : Inline) : Array Inline :=
+  match x, out.back? with
+  | .text s, some (.text t) => out.pop.push (.text (t ++ s))
+  | _, _ => out.push x
+
+@[simp] public theorem mergeStep_empty (x : Inline) : mergeStep #[] x = #[x] := by
+  cases x <;> rfl
+
+/-- Adjacent text runs joined into one, every space kept. -/
+@[expose] public def mergeTexts (xs : Array Inline) : Array Inline := xs.foldl mergeStep #[]
+
 mutual
 
 /-- The characters of inline content with every mark stripped. -/
@@ -11953,6 +11965,31 @@ private theorem plainTextList_append (l1 l2 : List Inline) :
   induction l1 with
   | nil => simp [plainTextList]
   | cons x rest ih => simp [plainTextList, ih, String.append_assoc]
+
+private theorem plainText_push (xs : Array Inline) (x : Inline) :
+    plainText (xs.push x) = plainText xs ++ plainTextOne x := by
+  simp [plainText, Array.toList_push, plainTextList_append, plainTextList]
+
+private theorem mergeStep_text (out : Array Inline) (x : Inline) :
+    plainText (mergeStep out x) = plainText out ++ plainTextOne x := by
+  unfold mergeStep
+  split
+  · rename_i s t hb
+    obtain ⟨ys, rfl⟩ := Array.back?_eq_some_iff.mp hb
+    simp [Array.pop_push, plainText_push, plainTextOne, String.append_assoc]
+  · simp [plainText_push]
+
+public theorem mergeTexts_text : Conserves plainText mergeTexts := fun xs => by
+  have fold : ∀ (l : List Inline) (acc : Array Inline),
+      plainText (l.foldl mergeStep acc) = plainText acc ++ plainTextList l := by
+    intro l
+    induction l with
+    | nil => intro acc; simp [plainTextList]
+    | cons x rest ih =>
+      intro acc
+      simp [List.foldl, ih, mergeStep_text, plainTextList, String.append_assoc]
+  rw [mergeTexts, ← Array.foldl_toList, fold]
+  simp [plainText, plainTextList]
 
 private theorem blockTextList_chain (l1 l2 : List Block) (acc : String) :
     blockTextList acc (l1 ++ l2) = blockTextList (blockTextList acc l1) l2 := by

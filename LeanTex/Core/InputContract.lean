@@ -348,19 +348,6 @@ private theorem elabEnvArm_input_scope (ctx : Ctx) (f : String) (body : Array Ra
   simp [inputEnv_ne_scopeEnv, inputEnvFile?_inputEnv, closeLengthScope]
   rfl
 
-private theorem elabBlocksGo_end (ctx : Ctx) (st : ESt) (raws : Array Raw) (i : Nat)
-    (blocks : Array Block) (gen : Nat)
-    (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles) (hi : raws.size ≤ i) :
-    (elabBlocksGo ctx raws i blocks #[] gen).run st = (blocks, st) := by
-  have hf : (flowCtx ctx st gen).macroRoles = ({file := ""} : Ctx).macroRoles := by
-    unfold flowCtx
-    split <;> exact hm
-  rw [elabBlocksGo, run_get]
-  simp only [show ¬ i < raws.size from Nat.not_lt.mpr hi, ↓reduceDIte]
-  simp [blockMacroStep, flowMCtx, hf, blockMacroKinds, hi, flushPara, carryDecls_empty,
-    closeBlockFrameSources, commonOrigins, moveMacroRuns, closeMacroRuns, MacroRoles.empty]
-  rfl
-
 private theorem elabBlocksGo_blanks_end (raws : Array Raw) (blocks : Array Block) :
     ∀ (n i gen : Nat) (ctx : Ctx) (st : ESt), raws.size - i = n →
       ctx.macroRoles = ({file := ""} : Ctx).macroRoles →

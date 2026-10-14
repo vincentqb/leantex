@@ -11,16 +11,6 @@ def die (code : UInt32) (msg : String) : IO UInt32 := do
   IO.eprintln msg
   return code
 
-/-- `word` with `-` at each admissible break: the `\showhyphens` format. -/
-def showHyphens (pats : Hyphen.Patterns) (word : String) : String := Id.run do
-  let breaks := Hyphen.hyphenate pats word
-  let mut out := ""
-  for (c, i) in word.toList.zipIdx do
-    if i > 0 && breaks.contains i then
-      out := out.push '-'
-    out := out.push c
-  return out
-
 /-- A word list: one word per line, `#` lines and blank lines aside. -/
 def readWordList (path : System.FilePath) : IO (Array String) := do
   let contents ← IO.FS.readFile path
@@ -104,7 +94,7 @@ def main (args : List String) : IO UInt32 := do
     let pats := dl.pats
     let mut mismatches : Array String := #[]
     for (w, i) in words.zipIdx do
-      let ours := showHyphens pats w
+      let ours := Hyphen.marked pats w
       let tex := oracle.getD i ""
       if tex != ours then
         mismatches := mismatches.push s!"  {w}: tex {tex} | leantex {ours}"

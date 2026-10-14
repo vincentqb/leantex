@@ -1702,16 +1702,6 @@ with the mark's place (`qedHereKey`) for the symbol. -/
 private def qedHereRun : Array Inline :=
   #[.strut {}, .fill, .text "\u2003", .label qedHereKey]
 
-/-- Joins adjacent text runs with every space kept, as TeX sets both
-glues when both runs bring one to the seam. -/
-private def mergeText (xs : Array Inline) : Array Inline := Id.run do
-  let mut out : Array Inline := #[]
-  for x in xs do
-    match x, out.back? with
-    | .text s, some (.text t) => out := out.pop.push (.text (t ++ s))
-    | _, _ => out := out.push x
-  return out
-
 /-- What one `[...]` argument scan found. -/
 private inductive ArgScan where
   | took (next : Nat)
@@ -4966,7 +4956,7 @@ no extent is reserved for it" pos
         else
           elabInlinesCtrl ctx raws i acc sb name pos h hadv1
   else
-    return mergeText (flushText acc sb)
+    return mergeTexts (flushText acc sb)
 termination_by (ctx.envLimit, ctx.limit, sliceWeight raws i, 3)
 decreasing_by all_goals knot_dec
 
@@ -5607,7 +5597,7 @@ private theorem elabInlinesFrom_done_exact (ctx : Ctx) (raws : Array Raw) (i : N
     (acc : Array Inline) (sb : String) (h : raws.size ≤ i) :
     elabInlinesFrom ctx raws i acc sb =
       let (_, acc', sb') := inlineMacroAt ctx.macroRoles raws i acc sb
-      pure (mergeText (flushText acc' sb')) := by
+      pure (mergeTexts (flushText acc' sb')) := by
   rw [elabInlinesFrom]
   simp only [show ¬ i < raws.size from Nat.not_lt_of_ge h, dite_false]
 
@@ -5618,7 +5608,7 @@ private theorem elabInlines_word_exact (file w : String) (p : Pos) (hp : p.origi
   simp [inlineMacroAt, inlineMacroStep, MacroRoles.enter, MacroRoles.empty, Raw.origins?,
     relativeOrigins, hp, flushText]
   rw [elabInlinesFrom_done_exact _ _ _ _ _ (by simp)]
-  simp [inlineMacroAt, inlineMacroStep, flushText, mergeText]
+  simp [inlineMacroAt, inlineMacroStep, flushText, mergeTexts]
 
 private theorem elabUnknownArgs_end_exact (ctx : Ctx) (raws : Array Raw)
     (j count : Nat) (acc : Array Inline) (sb : String) (spaceAfter : Bool)
@@ -12113,8 +12103,7 @@ private theorem elabInlines_word (ctx : Ctx) (w : String) (p : Pos)
   simp [inlineMacroAt, inlineMacroStep, MacroRoles.enter, MacroRoles.empty, Raw.origins?,
     relativeOrigins, hp, hm, flushText]
   rw [elabInlinesFrom_done_exact _ _ _ _ _ (by simp)]
-  simp [inlineMacroAt, inlineMacroStep, flushText, mergeText, pure_bind, sourceInline,
-    Ctx.sourceSpan]
+  simp [inlineMacroAt, inlineMacroStep, flushText, mergeTexts, sourceInline, Ctx.sourceSpan]
 
 private theorem elabInlines_recovered_head (ctx : Ctx) (name : String) (raws : Array Raw)
     (pos : Pos) (h : 0 < raws.size) (hr : raws[0] = .ctrl name pos)
@@ -12136,8 +12125,8 @@ private theorem elabInlines_group (ctx : Ctx) (body : Array Raw) (p : Pos)
     (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles) (hp : p.origins = []) :
     elabInlines ctx #[.group body p] = (do
       let inner ← inlineGroup ctx.palette (elabInlines ctx body)
-      pure (if ctx.literalText then mergeText inner
-        else (mergeText inner).map (mapSmartText ctx.literalWhen))) := by
+      pure (if ctx.literalText then mergeTexts inner
+        else (mergeTexts inner).map (mapSmartText ctx.literalWhen))) := by
   have he : ctx.macroRoles.enter = ctx.macroRoles := by rw [hm]; rfl
   have hi : inlineMacroAt ctx.macroRoles #[.group body p] 0 #[] "" =
       (ctx.macroRoles, #[], "") := by
@@ -12146,7 +12135,7 @@ private theorem elabInlines_group (ctx : Ctx) (body : Array Raw) (p : Pos)
       MacroRoles.empty, relativeOrigins, List.map_nil]
     rfl
   have hd (inner : Array Inline) :
-      elabInlinesFrom ctx #[.group body p] 1 inner "" = pure (mergeText inner) := by
+      elabInlinesFrom ctx #[.group body p] 1 inner "" = pure (mergeTexts inner) := by
     rw [elabInlinesFrom_done_exact _ _ _ _ _ (by simp)]
     simp [inlineMacroAt, inlineMacroStep, flushText, hm, MacroRoles.empty]
   rw [elabInlines, elabInlinesCore, he, elabInlinesFrom]
@@ -12194,7 +12183,7 @@ private theorem elabInlines_recovery_group (ctx : Ctx) (name : String)
   simp only [bind_assoc, pure_bind, Bool.and_false, Bool.false_and, Bool.false_eq_true,
     ↓reduceIte]
   have hd (inner : Array Inline) :
-      elabInlinesFrom ctx xs 2 inner "" = pure (mergeText inner) := by
+      elabInlinesFrom ctx xs 2 inner "" = pure (mergeTexts inner) := by
     rw [elabInlinesFrom_done_exact _ _ _ _ _ (by simp [xs])]
     simp [inlineMacroAt, inlineMacroStep, xs, flushText, hm, MacroRoles.empty]
   simp [hd, xs, Parse.rawSrc, Parse.rawSrcList, Parse.rawSrcOne,
@@ -12243,7 +12232,7 @@ private theorem elabInlines_recovered_group (ctx : Ctx) (name w : String) (p gp 
   simp only [bind_assoc, pure_bind, Bool.and_false, Bool.false_and, Bool.false_eq_true,
     ↓reduceIte]
   rw [elabInlinesFrom_done_exact _ xs 2 _ _ (by simp [xs])]
-  have ms (x : Inline) : mergeText #[x] = #[x] := by cases x <;> rfl
+  have ms (x : Inline) : mergeTexts #[x] = #[x] := by cases x <;> rfl
   simp only [inlineMacroAt, inlineMacroStep, show xs[2]? = none from rfl,
     show ∀ a : Array Inline, flushText a "" = a from fun _ => rfl, hm,
     MacroRoles.empty]
@@ -16514,5 +16503,18 @@ public def run (file input : String) : Doc × Array Diag :=
   let (toks, lexDiags) := Lex.lex file input
   let (raws, parseDiags) := Parse.parse file toks
   runRaws file raws (lexDiags ++ parseDiags)
+
+private theorem elabBlocksGo_end (ctx : Ctx) (st : ESt) (raws : Array Raw) (i : Nat)
+    (blocks : Array Block) (gen : Nat)
+    (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles) (hi : raws.size ≤ i) :
+    (elabBlocksGo ctx raws i blocks #[] gen).run st = (blocks, st) := by
+  have hf : (flowCtx ctx st gen).macroRoles = ({file := ""} : Ctx).macroRoles := by
+    unfold flowCtx
+    split <;> exact hm
+  rw [elabBlocksGo, run_get]
+  simp only [show ¬ i < raws.size from Nat.not_lt.mpr hi, ↓reduceDIte]
+  simp [blockMacroStep, flowMCtx, hf, blockMacroKinds, hi, flushPara, carryDecls_empty,
+    closeBlockFrameSources, commonOrigins, moveMacroRuns, closeMacroRuns, MacroRoles.empty]
+  rfl
 
 end LeanTex.Core.Elab

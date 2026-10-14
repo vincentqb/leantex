@@ -20,6 +20,11 @@ namespace LeanTex.Core.Binary
       let lo ← bytes[pos + width]?
       return hi * 256 + lo.toNat
 
+public theorem push_eq_append (b : ByteArray) (c : UInt8) : b.push c = b ++ ⟨#[c]⟩ := by
+  apply ByteArray.ext
+  rw [ByteArray.data_push, ByteArray.data_append]
+  exact Array.push_eq_append
+
 @[simp] public theorem natBE_size (width n : Nat) : (natBE width n).size = width := by
   induction width generalizing n with
   | zero => rfl

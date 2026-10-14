@@ -84,12 +84,6 @@ private theorem repr_natCast (n : Nat) : Int.repr (n : Int) = Nat.repr n := by
   simp [Int.repr_eq_ite]
 
 
-private theorem push_append (b : ByteArray) (c : UInt8) :
-    b.push c = b ++ ⟨#[c]⟩ := by
-  apply ByteArray.ext
-  rw [ByteArray.data_push, ByteArray.data_append]
-  exact Array.push_eq_append
-
 private def StreamPrefix.rendered (p : StreamPrefix) (filtered : Bool) (length : Nat) :
     ByteArray :=
   match p with
@@ -108,7 +102,7 @@ private theorem StreamPrefix.spelling_rendered (p : StreamPrefix) (filtered : Bo
         StreamPrefix.spelling, StreamPrefix.fragment, StreamPrefix.text,
         Bool.false_eq_true, ↓reduceIte, Obj.render, Obj.renderInto,
         Array.toList_append, List.append_nil, List.nil_append, List.cons_append,
-        Obj.renderEntries, Obj.renderList, toString, push_append, String.append_assoc,
+        Obj.renderEntries, Obj.renderList, toString, Binary.push_eq_append, String.append_assoc,
         utf8_append, ByteArray.append_assoc, ByteArray.empty_append]
     all_goals apply ByteArray.ext
     all_goals apply Array.toList_inj.mp
@@ -120,7 +114,7 @@ private theorem StreamPrefix.spelling_rendered (p : StreamPrefix) (filtered : Bo
       StreamPrefix.spelling, StreamPrefix.fragment, StreamPrefix.text,
       Bool.false_eq_true, ↓reduceIte, Obj.paddedDict, Obj.render, Obj.renderInto,
       Array.toList_append, List.append_nil, List.nil_append, List.cons_append,
-      Obj.renderEntries, toString, push_append, String.append_assoc, utf8_append,
+      Obj.renderEntries, toString, Binary.push_eq_append, String.append_assoc, utf8_append,
       ByteArray.append_assoc, ByteArray.empty_append])
   all_goals apply ByteArray.ext
   all_goals apply Array.toList_inj.mp
