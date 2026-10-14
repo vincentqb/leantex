@@ -910,6 +910,26 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "compat hypersetup becomes pdfmeta"
     ((elabStr (pre "\\hypersetup{pdfauthor={A. Doe},pdftitle=T,colorlinks=false}")).1.info.author ==
       some "A. Doe")
+  t "compat hyperref's package options set the metadata hypersetup sets"
+    (let d := (elabStr (pre ("\\usepackage[pdftitle={Alpha, Beta},pdfauthor={Gamma Delta}," ++
+      "pdfsubject=Invented,pdfkeywords={one, two},hidelinks]{hyperref}"))).1
+     d.info.title == some "Alpha, Beta" && d.info.author == some "Gamma Delta" &&
+       d.info.subject == some "Invented" && d.info.keywords == some "one, two")
+  t "compat hyperref's package options keep an unbraced value's spaces, as hypersetup does"
+    ((elabStr (pre "\\usepackage[pdftitle=Two Invented Words]{hyperref}")).1.info.title ==
+      some "Two Invented Words")
+  t "compat hyperref's link-only package options do nothing visible"
+    ((elabStr (pre "\\usepackage[hidelinks]{hyperref}")).2.any fun d =>
+      d.code == "N0100" && hasStr d.message "the engine does this itself")
+  let algorithmic (open_ step close_ : String) : Array Diag :=
+    (elabStr (dvDoc "\\usepackage{algpseudocode}\n"
+      s!"{open_}\\begin\{algorithmic} {step}\n\\State first\n\\end\{algorithmic}{close_}")).2
+  t "algorithmic: a step after a space reads as written, and every line numbered raises nothing"
+    ((algorithmic "" "[1]" "").all (·.code != "N0102") &&
+      (algorithmic "\\begin{algorithm}\\caption{An invented sort}" "[1]" "\\end{algorithm}").all
+        (·.code != "N0102"))
+  t "algorithmic: a step after a space that is not modelled is named as written"
+    ((algorithmic "" "[2]" "").any fun d => d.code == "N0102" && hasStr d.message "'[2]'")
   t "compat scrartcl is article"
     ((elabStr "\\documentclass{scrartcl}\\begin{document}x\\end{document}").1.docClass == .article)
   t "compat moderncv is resume"

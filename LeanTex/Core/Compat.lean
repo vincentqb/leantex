@@ -5349,9 +5349,9 @@ private def beamerposter (opts : String) (pos : Pos) : M (Array Raw) := do
 \\page{ ... } declares anything further")
   synthAt native pos
 
-/-- `\hypersetup` as `\pdfmeta{...}` for its metadata keys and link-kind colour
-styles for its link colours. -/
-private def hypersetup (opts : String) (pos : Pos) : M (Array Raw) := do
+/-- hyperref's keys, as `\hypersetup` and the package options give them: the `\pdfmeta` keys its
+metadata keys set, with its link keys written into the setup and whether one was read. -/
+private def hyperrefKeys (opts : String) (pos : Pos) : M (Array String × Bool) := do
   let mut keys : Array String := #[]
   let mut links := (← get).links
   let mut linked := false
@@ -5370,6 +5370,13 @@ private def hypersetup (opts : String) (pos : Pos) : M (Array Raw) := do
     say .W0101 s!"hyperref keys without a native equivalent were dropped: \
 {String.intercalate ", " cut.toList}" pos
       (help := "brace a value that holds a comma: key={...}")
+  return (keys, linked)
+
+/-- `\hypersetup` as `\pdfmeta{...}` for its metadata keys and link-kind colour
+styles for its link colours. -/
+private def hypersetup (opts : String) (pos : Pos) : M (Array Raw) := do
+  let (keys, linked) ← hyperrefKeys opts pos
+  let links := (← get).links
   let native := s!"\\pdfmeta\{ {String.intercalate ", " keys.toList} }" ++
     (if linked then links.native else "")
   became "\\hypersetup" native pos
@@ -7407,20 +7414,16 @@ no package options are supported by the strict native Markdown dialect" pos
       s!"\\{name}[{opt.getD ""}]\{unicode-math}" (opt.getD "") pos)
   else if p == "hyperref" && opt.isSome then
     -- hyperref's package options are `\hypersetup`'s keys.
-    let mut links := (← get).links
-    let mut linked := false
-    for o in KeyVal.items (opt.getD "") do
-      let (k, v) := KeyVal.entry o
-      if let some l := links.read k (v.getD "") then
-        links := l
-        linked := true
-    if linked then write fun st => { st with links }
-    if linked && links.colorlinks then
-      let native := links.native
+    let (keys, linked) ← hyperrefKeys (opt.getD "") pos
+    let links := (← get).links
+    let native := (if keys.isEmpty then "" else
+        s!"\\pdfmeta\{ {String.intercalate ", " keys.toList} }") ++
+      (if linked then links.native else "")
+    if native.isEmpty then
+      discard s!"\\{name}\{{p}}" "the engine does this itself" s!"{name}:{p}" pos
+    else
       became s!"\\usepackage[{opt.getD ""}]\{hyperref}" native pos
       out := out ++ (← synthAt native pos)
-    else
-      discard s!"\\{name}\{{p}}" "the engine does this itself" s!"{name}:{p}" pos
   else if p == "ulem" then
     if KeyVal.items (opt.getD "") == #["normalem"] then
       discard s!"\\{name}[normalem]\{{p}}"

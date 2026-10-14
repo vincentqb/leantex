@@ -9981,16 +9981,16 @@ subset; its content is kept as plain lines" p
                           comment := comment }
   return (lines, numbered, semis)
 
-/-- A bare `{algorithmic}` environment: an uncaptioned algorithm in the flat
-dialect, `[n]` numbering its lines. -/
-private def algorithmicArm (ctx : Ctx) (body : Array Raw) (pos : Pos)
-    (blocks : Array Block) : EM (Array Block) := do
+/-- An `{algorithmic}` body in the flat dialect: its lines, whether `[n]` or its own numbering
+numbers them, and whether it ends statements with semicolons. -/
+private def algorithmicBody (ctx : Ctx) (body : Array Raw) (pos : Pos) :
+    EM (Array Ir.AlgLine × Bool × Bool) := do
   let mut k := 0
   let mut numbered := false
   match scanBracketArg body 0 pos with
   | .took k' =>
     numbered := true
-    let inner := (Parse.rawSrc (body.extract 1 (k' - 1))).trimAscii.toString
+    let inner := (bracketSrc body 0 k').trimAscii.toString
     unless inner == "1" do
       warnOnce ctx "algorithmic:step" .N0102
         s!"'[{inner}]' line-number stepping is not modelled; every line \
@@ -9998,9 +9998,15 @@ is numbered" pos
     k := k'
   | .unclosed bpos => warnUnclosed ctx "'\\begin{algorithmic}'" bpos
   | .content => pure ()
-  let (lines, n2, semis) ←
-    algorithmLines ctx true (body.extract k body.size) pos
-  return blocks.push (.algorithm (numbered || n2) semis lines)
+  let (lines, n2, semis) ← algorithmLines ctx true (body.extract k body.size) pos
+  return (lines, numbered || n2, semis)
+
+/-- A bare `{algorithmic}` environment: an uncaptioned algorithm in the flat
+dialect, `[n]` numbering its lines. -/
+private def algorithmicArm (ctx : Ctx) (body : Array Raw) (pos : Pos)
+    (blocks : Array Block) : EM (Array Block) := do
+  let (lines, numbered, semis) ← algorithmicBody ctx body pos
+  return blocks.push (.algorithm numbered semis lines)
 
 /-- An `{algorithm}` or `{algorithm2e}` float, its caption set above the lines
 and its placement ignored. -/
@@ -10058,23 +10064,7 @@ nowhere for a float to float" pos
         j := j + 1
     else break
   let (lines, numbered, semis) ← match acxBody with
-    | some (abody, apos) =>
-      let mut m := 0
-      let mut numbered := false
-      match scanBracketArg abody 0 apos with
-      | .took m' =>
-        numbered := true
-        let inner := (Parse.rawSrc (abody.extract 1 (m' - 1))).trimAscii.toString
-        unless inner == "1" do
-          warnOnce ctx "algorithmic:step" .N0102
-            s!"'[{inner}]' line-number stepping is not modelled; every \
-line is numbered" apos
-        m := m'
-      | .unclosed bpos => warnUnclosed ctx "'\\begin{algorithmic}'" bpos
-      | .content => pure ()
-      let (lines, n2, semis) ←
-        algorithmLines ctx true (abody.extract m abody.size) apos
-      pure (lines, numbered || n2, semis)
+    | some (abody, apos) => algorithmicBody ctx abody apos
     | none => algorithmLines ctx false rest pos
   let mut lines := lines
   if !anchors.isEmpty then
