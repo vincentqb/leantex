@@ -2645,7 +2645,6 @@ theorem readStream_render (cx : Ctx) (ops : Array Pdf.ContentOp) (h : opsPlain o
     let fig := readStream cx (Pdf.render ops).toUTF8
     fig.nodes = opsRead ops.toList ∧ fig.losses = #[] ∧ fig.outlines = #[] ∧ fig.symbols = #[] := by
   intro fig
-  have e0 : Entered := Entered.empty
   have hrun : runToks cx Entered.empty
       (PdfContentLex.scan (Pdf.render ops).toUTF8) 0 (St.initial (GState.initial Affine.unit) Store.empty) =
       run cx Entered.empty

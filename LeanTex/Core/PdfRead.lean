@@ -972,15 +972,7 @@ public def Doc.ofBytes (b : ByteArray) : Except String Doc := do
 document's graph is bounded by it. -/
 public def Doc.objectCount (d : Doc) : Nat := d.locs.size
 
-public def Doc.objectNumbers (d : Doc) : List Nat := d.locs.keys
-
 public def Doc.lists (d : Doc) (num : Nat) : Bool := d.locs.contains num
-
-public theorem Doc.lists_mem (d : Doc) (num : Nat) (h : d.lists num = true) :
-    num ∈ d.objectNumbers := by
-  unfold Doc.lists at h
-  unfold Doc.objectNumbers
-  exact Std.HashMap.mem_keys.mpr (Std.HashMap.mem_iff_contains.mpr h)
 
 /-- One listed object, fetched: its table number, the number the file spells beside it, its value
 and its raw stream. -/
@@ -1559,7 +1551,7 @@ private def SerSt.localOf (st : SerSt) (num : Nat) : SerSt × Nat :=
     ({ assign := st.assign.insert num l, queue := st.queue.push num }, l)
 
 private def pushStr (out : Array Chunk) (s : String) : Array Chunk :=
-  out.push (.bytes s.toUTF8)
+  if s.isEmpty then out else out.push (.bytes s.toUTF8)
 
 private def nameOut (n : String) : String := Id.run do
   let mut out := "/"
@@ -1571,39 +1563,89 @@ private def nameOut (n : String) : String := Id.run do
       out := out ++ String.ofList ['#', Hex.spell true (v / 16), Hex.spell true v]
   return out
 
-mutual
-private def serObj (st : SerSt) (out : Array Chunk) : Obj → SerSt × Array Chunk
-  | .null => (st, pushStr out "null")
-  | .bool true => (st, pushStr out "true")
-  | .bool false => (st, pushStr out "false")
-  | .int n => (st, pushStr out (toString n))
-  | .real raw => (st, pushStr out raw)
-  | .str raw => (st, out.push (.bytes raw))
-  | .name n => (st, pushStr out (nameOut n))
-  | .arr xs =>
-    let (st, out) := serList st (pushStr out "[ ") xs.toList
-    (st, pushStr out "]")
-  | .dict es =>
-    let (st, out) := serPairs st (pushStr out "<< ") es.toList
-    (st, pushStr out ">>")
-  | .ref num _ =>
-    let (st, l) := st.localOf num
-    (st, out.push (.ref l))
+/-- What the serializer still owes, in order: an object between two texts, or a text. -/
+private inductive SerWork where
+  | obj (before : String) (o : Obj) (after : String)
+  | text (s : String)
 
-private def serList (st : SerSt) (out : Array Chunk) :
-    List Obj → SerSt × Array Chunk
-  | [] => (st, out)
-  | x :: rest =>
-    let (st, out) := serObj st out x
-    serList st (pushStr out " ") rest
+private noncomputable def SerWork.size : SerWork → Nat
+  | .obj _ o _ => sizeOf o
+  | .text _ => 0
 
-private def serPairs (st : SerSt) (out : Array Chunk) :
-    List (String × Obj) → SerSt × Array Chunk
+/-- An array's elements as owed work, each followed by a space. -/
+private def SerWork.items (xs : List Obj) : List SerWork := xs.map (SerWork.obj "" · " ")
+
+/-- A dictionary's entries as owed work, each value after its key and followed by a space. -/
+private def SerWork.entries (es : List (String × Obj)) : List SerWork :=
+  es.map fun e => SerWork.obj (nameOut e.1 ++ " ") e.2 " "
+
+private theorem items_size_exact (xs : List Obj) :
+    ((SerWork.items xs).map SerWork.size).sum = (xs.map sizeOf).sum ∧
+      (SerWork.items xs).length = xs.length := by
+  simp [SerWork.items, SerWork.size, Function.comp_def]
+
+private theorem entries_size_exact (es : List (String × Obj)) :
+    ((SerWork.entries es).map SerWork.size).sum = (es.map fun e => sizeOf e.2).sum ∧
+      (SerWork.entries es).length = es.length := by
+  simp [SerWork.entries, SerWork.size, Function.comp_def]
+
+private theorem sizeOf_objs_exact (xs : List Obj) :
+    (xs.map sizeOf).sum + xs.length + 1 = sizeOf xs := by
+  induction xs with
+  | nil => rfl
+  | cons x xs ih =>
+    simp only [List.map_cons, List.sum_cons, List.length_cons, List.cons.sizeOf_spec]
+    omega
+
+private theorem sizeOf_entries_between (es : List (String × Obj)) :
+    (es.map fun e => sizeOf e.2).sum + es.length ≤ sizeOf es := by
+  induction es with
+  | nil => simp
+  | cons e es ih =>
+    obtain ⟨k, v⟩ := e
+    simp only [List.map_cons, List.sum_cons, List.length_cons, List.cons.sizeOf_spec,
+      Prod.mk.sizeOf_spec]
+    omega
+
+/-- Serializes the owed work with an explicit stack, so an object's nesting never deepens the call
+stack. -/
+private def serWork (st : SerSt) (out : Array Chunk) : List SerWork → SerSt × Array Chunk
   | [] => (st, out)
-  | (k, v) :: rest =>
-    let (st, out) := serObj st (pushStr (pushStr out (nameOut k)) " ") v
-    serPairs st (pushStr out " ") rest
-end
+  | .text s :: rest => serWork st (pushStr out s) rest
+  | .obj before o after :: rest =>
+    let out := pushStr out before
+    match o with
+    | .null => serWork st (pushStr (pushStr out "null") after) rest
+    | .bool true => serWork st (pushStr (pushStr out "true") after) rest
+    | .bool false => serWork st (pushStr (pushStr out "false") after) rest
+    | .int n => serWork st (pushStr (pushStr out (toString n)) after) rest
+    | .real raw => serWork st (pushStr (pushStr out raw) after) rest
+    | .str raw => serWork st (pushStr (out.push (.bytes raw)) after) rest
+    | .name n => serWork st (pushStr (pushStr out (nameOut n)) after) rest
+    | .arr ⟨xs⟩ => serWork st (pushStr out "[ ") (SerWork.items xs ++ .text ("]" ++ after) :: rest)
+    | .dict ⟨es⟩ =>
+      serWork st (pushStr out "<< ") (SerWork.entries es ++ .text (">>" ++ after) :: rest)
+    | .ref num _ =>
+      let (st, l) := st.localOf num
+      serWork st (pushStr (out.push (.ref l)) after) rest
+termination_by work => 2 * (work.map SerWork.size).sum + work.length
+decreasing_by
+  all_goals simp only [List.map_cons, List.map_append, List.sum_cons, List.sum_append,
+    List.length_cons, List.length_append, SerWork.size]
+  all_goals first
+    | omega
+    | (have h1 := items_size_exact xs
+       have h2 := sizeOf_objs_exact xs
+       simp only [Obj.arr.sizeOf_spec, Array.mk.sizeOf_spec]
+       omega)
+    | (have h1 := entries_size_exact es
+       have h2 := sizeOf_entries_between es
+       simp only [Obj.dict.sizeOf_spec, Array.mk.sizeOf_spec]
+       omega)
+
+/-- An object's serialization, its references holes into the copied graph's local numbering. -/
+private def serObj (st : SerSt) (out : Array Chunk) (o : Obj) : SerSt × Array Chunk :=
+  serWork st out [.obj "" o ""]
 
 /-- A selected page ready to embed: its box in sp, its decoded content, and its `/Resources`
 graph renumbered into `objects`' local space. -/
@@ -1680,25 +1722,11 @@ public def Doc.unrotated (r : Doc) (page : Page) : Except String Unit := do
   | 0 => pure ()
   | rot => throw s!"PDF page /Rotate {rot} is not supported; re-export unrotated"
 
-/-- The deepest a copied object nests, container in container: poppler's parser reads five hundred
-levels and no deeper. -/
-public def copyDepthLimit : Nat := 500
-
-/-- Whether an object nests at most `n` containers deep. -/
-private def nestsWithin : Nat → Obj → Bool
-  | 0, .arr _ => false
-  | 0, .dict _ => false
-  | n + 1, .arr xs => xs.all (nestsWithin n)
-  | n + 1, .dict es => es.all fun e => nestsWithin n e.2
-  | _, _ => true
-
 private def formParts (b : ByteArray) (r : Doc) (page : Page) :
     Except String (ByteArray × Array Chunk × Array XObjOut) := do
   let content ← r.content page
   let mut st : SerSt := {}
   let resObj := page.resources.getD (.dict #[])
-  let deep := s!"malformed PDF: an object nests deeper than {copyDepthLimit} levels"
-  unless nestsWithin copyDepthLimit resObj do throw deep
   let (st1, resChunks) := serObj st #[] resObj
   st := st1
   let mut objects : Array XObjOut := #[]
@@ -1709,7 +1737,6 @@ private def formParts (b : ByteArray) (r : Doc) (page : Page) :
     let some orig := st.queue[qi]? | break
     qi := qi + 1
     let (v, raw?) ← r.get orig
-    unless nestsWithin copyDepthLimit v do throw deep
     match raw? with
     | none =>
       let (st', chunks) := serObj st #[] v

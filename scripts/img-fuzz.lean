@@ -221,7 +221,7 @@ def pdfFigureFuzz : IO Unit := do
   | .ok imp => unless imp.figure.marks.isEmpty && imp.figure.losses.isEmpty do
       die "content a self-referring visibility expression hides is drawn or named"
   | .error e => die s!"a self-referring visibility expression refused whole: {e}"
-  -- Nesting past each limit: shown and named, or refused by name, never followed down.
+  -- Nesting past each limit: shown and named, never followed down; an object copied at any depth.
   let deepVe (ve : String) (extra : Array String) : ByteArray := fuzzPdf (#[
     "<< /Type /Catalog /Pages 2 0 R /OCProperties << /OCGs [6 0 R] /D << /OFF [6 0 R] >> >> >>",
     "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
@@ -265,11 +265,11 @@ def pdfFigureFuzz : IO Unit := do
     fuzzStream "0 0 5 5 re f",
     "<< /Spare " ++ String.join (List.replicate 1000000 "[") ++ "1" ++
       String.join (List.replicate 1000000 "]") ++ " >>"]
-  match Image.probe deepObject with
-  | .error e => unless e == s!"malformed PDF: an object nests deeper than {PdfRead.copyDepthLimit} levels" do
-      die s!"an object nested a million levels refused for another reason: {e}"
-  | .ok _ => die "an object nested a million levels is copied"
-  if (PdfGfx.importPage deepObject).isOk then pure () else die "an unread deep object refuses the page"
+  let t1 ← IO.monoMsNow
+  if let .error e := Image.probe deepObject then die s!"an object nested a million levels is not copied: {e}"
+  unless (PdfGfx.importPage deepObject).isOk do die "an unread deep object refuses the page"
+  let ms := (← IO.monoMsNow) - t1
+  if ms > budget then die s!"an object nested a million levels: copied and read in {ms} ms, over {budget}"
   let tally ← IO.mkRef ({} : Tally)
   -- 1. Truncations: evenly spaced cuts of each fixture, at least 10 000 in all.
   let total := fixtures.foldl (fun a b => a + b.size) 0

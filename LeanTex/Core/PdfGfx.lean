@@ -324,11 +324,18 @@ public structure Open where
   kids : Array (Node Run)
   deriving Inhabited
 
-/-- A visibility expression's value (§8.11.2.2): decided, or undecided through a malformed part or
-one nested past `veDepthLimit`. -/
+/-- Why a visibility expression is undecided: a malformed part, one nested past `veDepthLimit`, or
+both. -/
+public inductive VeWhy where
+  | malformed
+  | deep
+  | both
+  deriving BEq, Inhabited
+
+/-- A visibility expression's value (§8.11.2.2): decided, or undecided and why. -/
 public inductive VeValue where
   | decided (on : Bool)
-  | undecided (malformed deep : Bool)
+  | undecided (why : VeWhy)
   deriving BEq, Inhabited
 
 /-- What the reading builds that outlives one stream: outlines, symbols, rasters, losses and read caches. -/
@@ -339,7 +346,7 @@ public structure Store where
   losses : Array Loss
   fonts : Std.HashMap Nat PdfFont.Loaded
   glyphs : Std.HashMap (Nat × Nat) (Option Nat)
-  type3 : Std.HashMap (Nat × String) (Option (Bool × Nat))
+  type3 : Std.HashMap (Nat × String × Nat) (Option (Bool × Nat))
   forms : Std.HashMap String Nat
   images : Std.HashMap String (Option Nat)
   /-- Whether optional content is hidden, by the object number its `/OC` names. -/
@@ -1031,8 +1038,8 @@ public def outlineOf (cmds : Array Ink.Cmd) : Array Subpath := Id.run do
   if let some s := cur then out := out.push { s with closed := true }
   return out
 
-/-- The most objects a reading nests, form in form, cell in cell or glyph in glyph: poppler draws a
-hundred nested forms and no more. -/
+/-- The most objects a reading's path holds, forms, tiling cells and Type 3 procedures together:
+poppler draws a hundred nested forms and no more. -/
 public def enteredLimit : Nat := 100
 
 /-- The objects a reading entered on its path, at most `enteredLimit` of them. -/
@@ -1410,16 +1417,18 @@ public def veDepthLimit : Nat := 50
 /-- Visibility expressions read so far, by object number and the level each was read at. -/
 private abbrev VeMemo := Std.HashMap (Nat × Nat) VeValue
 
+private def VeWhy.join (a b : VeWhy) : VeWhy := if a == b then a else .both
+
 private def VeValue.not : VeValue → VeValue
   | .decided on => .decided !on
-  | .undecided malformed deep => .undecided malformed deep
+  | .undecided why => .undecided why
 
 /-- The losses a visibility expression's value owes. -/
 private def VeValue.losses : VeValue → Array Loss
   | .decided _ => #[]
-  | .undecided malformed deep =>
-    (if malformed then #[.property "malformed-visibility-expression"] else #[]) ++
-      (if deep then #[.budget "visibility-expression-depth"] else #[])
+  | .undecided .malformed => #[.property "malformed-visibility-expression"]
+  | .undecided .deep => #[.budget "visibility-expression-depth"]
+  | .undecided .both => #[.property "malformed-visibility-expression", .budget "visibility-expression-depth"]
 
 mutual
 
@@ -1433,16 +1442,19 @@ private def veOperand (cx : Ctx) (cfg : OcConfig) (level : Nat) (path : List Nat
     | .ref n g =>
       if cfg.off.contains n then (.decided false, memo)
       else if let some v := memo.get? (n, level) then (v, memo)
-      else if path.contains n then (.undecided true false, memo)
+      else if path.contains n then (.undecided .malformed, memo)
       else
         match (cx.doc.deref (.ref n g)).toOption.getD .null with
         | .arr ⟨xs⟩ =>
           let r := veList cx cfg level h (n :: path) memo xs
           (r.1, r.2.insert (n, level) r.1)
-        | d => (if d.get? "Type" == some (.name "OCG") then .decided true else .undecided true false, memo)
+        | d =>
+          let v : VeValue :=
+            if d.get? "Type" == some (.name "OCG") then .decided true else .undecided .malformed
+          (v, memo.insert (n, level) v)
     | .arr ⟨xs⟩ => veList cx cfg level h path memo xs
-    | _ => (.undecided true false, memo)
-  else (.undecided false true, memo)
+    | _ => (.undecided .malformed, memo)
+  else (.undecided .deep, memo)
 termination_by (veDepthLimit + 1 - level, 1, sizeOf o)
 decreasing_by
   all_goals simp_wf
@@ -1458,9 +1470,9 @@ private def veList (cx : Ctx) (cfg : OcConfig) (level : Nat) (hl : level ≤ veD
   | [.name "Not", x] =>
     let r := veOperand cx cfg (level + 1) path memo x
     (r.1.not, r.2)
-  | .name "And" :: x :: xs => veFold cx cfg level hl path true memo false false false (x :: xs)
-  | .name "Or" :: x :: xs => veFold cx cfg level hl path false memo false false false (x :: xs)
-  | _ => (.undecided true false, memo)
+  | .name "And" :: x :: xs => veFold cx cfg level hl path true memo false none (x :: xs)
+  | .name "Or" :: x :: xs => veFold cx cfg level hl path false memo false none (x :: xs)
+  | _ => (.undecided .malformed, memo)
 termination_by l => (veDepthLimit + 1 - level, 0, sizeOf l)
 decreasing_by
   all_goals simp_wf
@@ -1474,16 +1486,17 @@ decreasing_by
 /-- Operands joined by `And` (`all`) or `Or`, given whether earlier ones met its dominant value and
 why earlier ones were undecided; undecided only where an undecided operand could decide. -/
 private def veFold (cx : Ctx) (cfg : OcConfig) (level : Nat) (hl : level ≤ veDepthLimit)
-    (path : List Nat) (all : Bool) (memo : VeMemo) (dominant malformed deep : Bool) :
+    (path : List Nat) (all : Bool) (memo : VeMemo) (dominant : Bool) (why : Option VeWhy) :
     List Obj → VeValue × VeMemo
   | [] =>
-    (if dominant then .decided !all else if malformed || deep then .undecided malformed deep
-      else .decided all, memo)
+    (if dominant then .decided !all else match why with
+      | some w => .undecided w
+      | none => .decided all, memo)
   | x :: xs =>
     let a := veOperand cx cfg (level + 1) path memo x
     match a.1 with
-    | .decided on => veFold cx cfg level hl path all a.2 (dominant || on == !all) malformed deep xs
-    | .undecided m d => veFold cx cfg level hl path all a.2 dominant (malformed || m) (deep || d) xs
+    | .decided on => veFold cx cfg level hl path all a.2 (dominant || on == !all) why xs
+    | .undecided w => veFold cx cfg level hl path all a.2 dominant (some ((why.map w.join).getD w)) xs
 termination_by l => (veDepthLimit + 1 - level, 0, sizeOf l)
 decreasing_by
   all_goals simp_wf
@@ -2001,7 +2014,7 @@ private def tileNodes (cx : Ctx) (e : Entered) (st : St) (pat : Obj) (region : G
         | some invC, .ok (.bytes data) =>
           if bb.size != 4 || xs == 0 || ys == 0 then (st, none) else
           let q := invC.compose space
-          let key := s!"tile|{pn}"
+          let key := s!"tile|{pn}|{e.list.length}"
           let (st, k) := match st.store.forms.get? key with
             | some k => (st, k)
             | none =>
@@ -2106,11 +2119,11 @@ termination_by (e.room, 1, 0)
 private def type3Glyph (cx : Ctx) (e : Entered) (font : PdfFont.Loaded) (key : Nat)
     (proc : String) (fm : Affine) (st : St) : St :=
   let inherited := { st.gs with ctm := Affine.unit, maskClip := none }
-  let symKey := s!"t3|{key}|{proc}|{stateKey inherited}"
+  let symKey := s!"t3|{key}|{proc}|{e.list.length}|{stateKey inherited}"
   let place (st : St) (r : Bool × Nat) : St :=
     if r.1 then stampGlyph cx st r.2 fm .nonzero
     else st.emit (.use r.2 ((textFrame st).compose fm))
-  let first := st.store.type3.get? (key, proc)
+  let first := st.store.type3.get? (key, proc, e.list.length)
   let cached : Option (Option (Bool × Nat)) := match first with
     | some (some (false, _)) => (st.store.forms.get? symKey).map fun k => some (false, k)
     | some (some (true, _)) | some none | none => first
@@ -2146,28 +2159,28 @@ private def type3Glyph (cx : Ctx) (e : Entered) (font : PdfFont.Loaded) (key : N
               | some subs =>
                 -- A procedure that paints nothing (a space) is a glyph with no ink.
                 if subs.isEmpty then
-                  { st with store := { store with type3 := store.type3.insert (key, proc) none } }
+                  { st with store := { store with type3 := store.type3.insert (key, proc, e.list.length) none } }
                 else
                   let r : Bool × Nat := (true, store.outlines.size)
                   let store := { store with outlines := store.outlines.push subs }
-                  place { st with store := { store with type3 := store.type3.insert (key, proc) (some r) } } r
+                  place { st with store := { store with type3 := store.type3.insert (key, proc, e.list.length) (some r) } } r
               | none =>
                 let inner := runToks cx' (e.push pn h.2.2) toks 0 (St.initial inherited store)
                 let body := inner.finish
                 let store := inner.store
                 if body.isEmpty then
-                  { st with store := { store with type3 := store.type3.insert (key, proc) none } }
+                  { st with store := { store with type3 := store.type3.insert (key, proc, e.list.length) none } }
                 else
                   let r : Bool × Nat := (false, store.symbols.size)
                   let store := { store with symbols := store.symbols.push body
                                             forms := store.forms.insert symKey store.symbols.size }
-                  place { st with store := { store with type3 := store.type3.insert (key, proc) (some r) } } r
-            | .error e =>
+                  place { st with store := { store with type3 := store.type3.insert (key, proc, e.list.length) (some r) } } r
+            | .error err =>
               { st with store := { (st.store.lose
-                  (PdfFont.undecoded "type3-procedure" (.font "type3-procedure") e)) with
-                    type3 := st.store.type3.insert (key, proc) none } }
+                  (PdfFont.undecoded "type3-procedure" (.font "type3-procedure") err)) with
+                    type3 := st.store.type3.insert (key, proc, e.list.length) none } }
             | _ => { st with store := { (st.store.lose (.font "type3-procedure")) with
-                       type3 := st.store.type3.insert (key, proc) none } }
+                       type3 := st.store.type3.insert (key, proc, e.list.length) none } }
           | none => st
         else { st with store := st.store.lose (.budget "type3-recursion") }
       | _ => st
@@ -2215,7 +2228,7 @@ private def doXObject (cx : Ctx) (e : Entered) (xName : String) (st : St) : St :
           let st := if group.any (fun g => g.get? "K" == some (.bool true)) then
               { st with store := st.store.lose (.property "knockout") } else st
           let alpha := if transparency then st.gs.fillAlpha else Alpha.opaque
-          let key := s!"{xn}|{stateKey st.gs}"
+          let key := s!"{xn}|{e.list.length}|{stateKey st.gs}"
           match st.store.forms.get? key with
           | some k => st.emit (.group Affine.unit #[] alpha #[.use k m])
           | none =>
