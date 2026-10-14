@@ -45,7 +45,7 @@ example : Array (Array Tok) → List (String × Array Tok) := documentStyles
 example : List (String × Array Tok) → Array Tok → Array String := unreadKeys
 example : String := nodeFloorPlaceholder
 example : List String := phantomCtrl
-example : List String := walkCtrls
+example : List String := TikzCommands.walkOwned
 example : Sp → Sp := innerSep
 
 example (cx : Cx) (env : List (String × Val)) (toks : List Tok) :

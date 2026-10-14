@@ -5,6 +5,7 @@ public import LeanTex.Core.Ir
 import LeanTex.Core.Decl
 import LeanTex.Core.Loop
 import LeanTex.Core.GfxAffine
+public import LeanTex.Core.TikzCommands
 
 /-! The rendered `tikzpicture` and `tikzcd` subsets, evaluated at elaboration into concrete shapes:
 statements, pgfmath arithmetic, loops, colours, paths and nodes. -/
@@ -6249,14 +6250,8 @@ private structure Macro where
   body : List Tok
   deriving Repr, Inhabited
 
-/-- The control words this walk owns besides the conditionals, which a document's redefinition does
-not reach. -/
-public def walkCtrls : List String :=
-  ["fill", "node", "draw", "path", "foreach", "pgfmathsetmacro",
-   "pgfmathtruncatemacro", "pgfmathsetlengthmacro", "coordinate", "filldraw", "shade",
-   "shadedraw", "clip", "else", "fi"]
-
-private def walkOwns (n : String) : Bool := walkCtrls.contains n || (condKindOf n).isSome
+private def walkOwns (n : String) : Bool :=
+  TikzCommands.walkOwned.contains n || (condKindOf n).isSome
 
 private def boundNames (ts : Array Tok) : List String := Id.run do
   let mut out : List String := []

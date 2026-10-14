@@ -283,8 +283,18 @@ def picSiteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   let occurs (s needle : String) : Nat := (s.splitOn needle).length - 1
   let pic (body : String) : String :=
     "\\begin{tikzpicture}\n" ++ body ++ "\\end{tikzpicture}\n"
-  t "the pass's picture vocabulary is the walk's"
-    (Compat.picWalkCtrls == Picture.walkCtrls)
+  let strokes (pre body : String) : Array (Option Gfx.Paint) :=
+    ((layoutOf oneFace (elabStr (dvDoc ("\\pictures{ tool = none }\n" ++ pre) (pic body))).1).pages[0]?.map
+      fun p => (pageDraws p).map fun d => d.2.2.map (·.paint)).getD #[]
+  let line := "\\draw (0,0) -- (2,0);\n"
+  t "a document's definitions of commands TikZ installs in every picture do not reach one"
+    (strokes ("\\newcommand{\\useasboundingbox}{\\draw[red]}\n" ++
+        "\\newcommand{\\scoped}{\\draw[blue] (0,2) -- (3,2);}\n\\newcommand{\\pattern}{\\draw[red]}\n")
+      ("\\useasboundingbox (0,0) rectangle (3,1);\n\\scoped \\draw (0,0) -- (1,1);\n" ++
+        "\\pattern (0,0) -- (1,0);\n" ++ line) == strokes "" line)
+  t "a document's redefinition of a command TikZ does not install reaches its picture"
+    (strokes "\\renewcommand{\\textcolor}[2]{#2}\n" ("\\textcolor{red}{" ++ line ++ "}\n") ==
+      strokes "" line && strokes "" ("\\textcolor{red}{" ++ line ++ "}\n") != strokes "" line)
   let label := pic "\\node at (0,0) {\\probeLabel};\n"
   let labels := censusText (censusOfSrc oneFace (dvDoc "\\newcommand\\probeLabel{Early}\n"
     (label ++ "\n\\renewcommand\\probeLabel{Late}\n" ++ label)))

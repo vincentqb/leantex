@@ -13,6 +13,7 @@ import LeanTex.Core.BibPunct
 public import LeanTex.Core.Tcolorbox
 import LeanTex.Core.LoopProgress
 import LeanTex.Core.EncodingOption
+public import LeanTex.Core.TikzCommands
 
 namespace LeanTex.Core.Compat
 
@@ -1778,12 +1779,6 @@ private def boundaryRefused (raws0 : Array Raw) : Bool := Id.run do
 
 /-- The picture environments whose bodies go to the boundary verbatim. -/
 public def pictureEnvs : List String := ["tikzpicture", "external"]
-
-/-- The control words the picture walk gives a meaning of its own. -/
-public def picWalkCtrls : List String :=
-  ["fill", "node", "draw", "path", "foreach", "pgfmathsetmacro",
-   "pgfmathtruncatemacro", "pgfmathsetlengthmacro", "coordinate", "filldraw", "shade",
-   "shadedraw", "clip", "else", "fi"]
 
 /-- Whether a package is a theme of the document's class,
 from beamer's theme family. -/
@@ -4050,7 +4045,7 @@ private def condExpandAt [Monad m] (reader : Option (InputReader m))
       return some { raws := #[], stop, tail, box := some .refused }
   let inPic := st.inPicture
   let own := st.picBound.contains n || st.provideKeeps.contains n ||
-    (inPic && picWalkCtrls.contains n)
+    (inPic && TikzCommands.walkOwned.contains n)
   match condValueOf st.binds n with
   | some (some v) =>
     -- premise: Tests.macroDefaultChecks — optional selection changes both artifacts
