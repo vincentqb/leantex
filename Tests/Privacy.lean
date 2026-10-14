@@ -266,65 +266,98 @@ def privacyGateChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "findings are read once each, in the order first seen"
     (Privacy.uniq #["b", "a", "b", "c", "a"] == #["b", "a", "c"] && Privacy.uniq #[] == #[])
   let readme := "# Tool\n\n## Install\n\nZorblax\n\n## Cite\n\n```bibtex\n@software{x,\n" ++
-    "  author = {Zorblax},\n}\n```\n\n```bibtex\nZorblax\n```\n\n```sh\nZorblax\n```\n\n" ++
-    "## Licence\n\nZorblax\n"
-  let cff := "cff-version: 1.2.0\ntitle: tool\nauthors:\n  - family-names: Zorblax\n"
+    "  author = {Zorblax},\n  title  = {Zorblax},\n  note   = {Zorblax},\n" ++
+    "  url    = {https://example.org/zorblax},\n" ++
+    "  url    = {https://example.org/zorblax} % Zorblax\n}\n```\n\n" ++
+    "```bibtex\n  author = {Zorblax},\n```\n\n```sh\nZorblax\n```\n\n## Licence\n\nZorblax\n"
+  let cff := "cff-version: 1.2.0\nmessage: Cite Zorblax.\ntitle: Zorblax\n" ++
+    "abstract: A Zorblax tool.\nauthors:\n  - family-names: Zorblax\n    given-names: Zorblax\n" ++
+    "    email: zorblax@example.org\n" ++
+    "repository-code: https://example.org/zorblax\nurl: https://example.org/zorblax\n" ++
+    "references:\n  - authors:\n      - family-names: Zorblax\npreferred-citation:\n" ++
+    "  title: Zorblax\n  authors:\n    - family-names: Zorblax\n      given-names: Zorblax\n" ++
+    "  notes: Zorblax\n  url: https://example.org/zorblax # Zorblax\n" ++
+    "  repository-code: https://example.org/zorblax\n"
+  let lns (lead f : String) (ns : List Nat) : List String := ns.map fun n => s!"{lead}{f}:{n}"
   let tree (p text : String) : Array String := m.blobFindings p text.toUTF8 ""
   let cited := tree "CITATION.cff" cff ++ tree "README.md" readme
-  t "a term passes in CITATION.cff and in the BibTeX block opening README.md's Cite alone"
-    (cited == #["  README.md:5", "  README.md:16", "  README.md:20", "  README.md:25"])
+  t "a term passes on the citation's name and URL lines alone, its other lines refused"
+    (cited == (lns "  " "CITATION.cff" [2, 3, 4, 8, 13, 15, 19, 20] ++
+      lns "  " "README.md" [5, 12, 13, 15, 20, 24, 29]).toArray)
   t "the citation's text read at any other path is found, docs/guide.md included"
-    (tree "docs/guide.md" readme == #["  docs/guide.md:5", "  docs/guide.md:11",
-        "  docs/guide.md:16", "  docs/guide.md:20", "  docs/guide.md:25"] &&
-      tree "docs/CITATION.cff" cff == #["  docs/CITATION.cff:4"])
+    (tree "docs/guide.md" readme ==
+        (lns "  " "docs/guide.md" [5, 11, 12, 13, 14, 15, 20, 24, 29]).toArray &&
+      tree "docs/CITATION.cff" cff ==
+        (lns "  " "docs/CITATION.cff" [2, 3, 4, 6, 7, 8, 9, 10, 13, 15, 17, 18, 19, 20,
+          21]).toArray)
+  let block (body : String) : String := "## Cite\n\n```bibtex\n" ++ body ++ "\n```\n"
+  t "an author line passes only whole, in the block opening the Cite section"
+    (tree "README.md" (block "  author = {Zorblax},") == #[] &&
+      tree "README.md" (block "  author = {Quintel Varn},") == #[] &&
+      tree "README.md" (block "  author = {Zorblax} and more,") == #["  README.md:4"] &&
+      tree "README.md" (block "  author = {Zorblax\n  },") == #["  README.md:4"] &&
+      tree "README.md" (block "  author = {Quintel},\nVarn") == #["  README.md:4"])
   t "a block under another heading, after text, unclosed, unlabelled or fenced excuses nothing"
-    (tree "README.md" "## Install\n\n```bibtex\nZorblax\n```\n" == #["  README.md:4"] &&
-      tree "README.md" "## Cite\n\nText.\n\n```bibtex\nZorblax\n```\n" == #["  README.md:6"] &&
-      tree "README.md" "## Cite\n\n```bibtex\nZorblax\n" == #["  README.md:4"] &&
-      tree "README.md" "## Cite\n\n```\nZorblax\n```\n" == #["  README.md:4"] &&
-      tree "README.md" "```sh\n## Cite\n\n```bibtex\nZorblax\n```\n" == #["  README.md:5"] &&
-      tree "README.md" "~~~\n## Cite\n\n```bibtex\nZorblax\n```\n~~~\n" == #["  README.md:5"])
-  t "a CR anywhere, or an earlier line opening HTML, excuses nothing"
-    (tree "README.md" "## Cite\n\n```bibtex\n}\n```\rZorblax\n```\n" == #["  README.md:5"] &&
-      tree "README.md" "<details>\n## Cite\n```bibtex\nZorblax\n```\n</details>\n" ==
+    (tree "README.md" "## Install\n\n```bibtex\n  author = {Zorblax},\n```\n" ==
         #["  README.md:4"] &&
-      tree "README.md" "<!--\n## Cite\n\n```bibtex\nZorblax\n```\n-->\n" == #["  README.md:5"])
+      tree "README.md" "## Cite\n\nText.\n\n```bibtex\n  author = {Zorblax},\n```\n" ==
+        #["  README.md:6"] &&
+      tree "README.md" "## Cite\n\n```bibtex\n  author = {Zorblax},\n" == #["  README.md:4"] &&
+      tree "README.md" "## Cite\n\n```\n  author = {Zorblax},\n```\n" == #["  README.md:4"] &&
+      tree "README.md" "```sh\n## Cite\n\n```bibtex\n  author = {Zorblax},\n```\n" ==
+        #["  README.md:5"] &&
+      tree "README.md" "~~~\n## Cite\n\n```bibtex\n  author = {Zorblax},\n```\n~~~\n" ==
+        #["  README.md:5"])
+  t "a CR, a tab in YAML's indentation or an earlier line opening HTML excuses nothing"
+    (tree "README.md" (block "  author = {x\r```\rZorblax},") == #["  README.md:4"] &&
+      tree "CITATION.cff" "authors:\n  - family-names: x\rZorblax: y\n" == #["  CITATION.cff:2"] &&
+      tree "CITATION.cff" "authors:\n\t- family-names: Zorblax\n" == #["  CITATION.cff:2"] &&
+      tree "README.md" "<details>\n## Cite\n```bibtex\n  author = {Zorblax},\n```\n</details>\n" ==
+        #["  README.md:4"] &&
+      tree "README.md" "<!--\n## Cite\n\n```bibtex\n  author = {Zorblax},\n```\n-->\n" ==
+        #["  README.md:5"])
   t "the block ends where CommonMark closes it"
-    (tree "README.md" "## Cite\n\n```bibtex\nZorblax\n````\nZorblax\n```\n" == #["  README.md:6"] &&
-      tree "README.md" "## Cite\n\n```bibtex\nZorblax\n   ```\nZorblax\n" == #["  README.md:6"])
-  t "a phrase wrapped inside the block passes, and one reaching past its fence is found"
-    (tree "README.md" "## Cite\n\n```bibtex\nQuintel\nVarn\n```\n" == #[] &&
-      tree "README.md" "## Cite\n\n```bibtex\nQuintel\n```\nVarn\n" == #["  README.md:4"])
+    (tree "README.md" (block "  author = {Zorblax},\n````\n  author = {Zorblax},") ==
+        #["  README.md:6"] &&
+      tree "README.md" ("## Cite\n\n```bibtex\n  author = {Zorblax},\n   ```\n" ++
+          "  author = {Zorblax},\n") ==
+        #["  README.md:6"])
+  let plus (text : String) : String :=
+    String.join ((text.splitOn "\n").dropLast.map fun l => "+" ++ l ++ "\n")
   let readmeDiff := "diff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n" ++
-    "@@ -0,0 +9,5 @@\n+```bibtex\n+@software{x,\n+  author = {Zorblax},\n+}\n+```\n" ++
-    "@@ -0,0 +25 @@\n+Zorblax\n"
+    "@@ -0,0 +9,9 @@\n" ++ plus ("```bibtex\n@software{x,\n  author = {Zorblax},\n" ++
+      "  title  = {Zorblax},\n  note   = {Zorblax},\n  url    = {https://example.org/zorblax},\n" ++
+      "  url    = {https://example.org/zorblax} % Zorblax\n}\n```\n") ++
+    "@@ -0,0 +29 @@\n+Zorblax\n"
   let citeDiff := readmeDiff ++
     "diff --git a/CITATION.cff b/CITATION.cff\nnew file mode 100644\n--- /dev/null\n" ++
-    "+++ b/CITATION.cff\n@@ -0,0 +1,4 @@\n+cff-version: 1.2.0\n+title: tool\n+authors:\n" ++
-    "+  - family-names: Zorblax\n" ++
+    "+++ b/CITATION.cff\n@@ -0,0 +1,21 @@\n" ++ plus cff ++
     "diff --git a/docs/guide.md b/docs/guide.md\n--- a/docs/guide.md\n+++ b/docs/guide.md\n" ++
     "@@ -0,0 +3 @@\n+  author = {Zorblax},\n"
+  let refused := lns "  " "CITATION.cff" [2, 3, 4, 8, 13, 15, 19, 20]
   let hook := m.diffFindings citeDiff.toUTF8 "" #[("README.md", readme), ("CITATION.cff", cff)]
   t "the hook's scan excuses an added line only by its citation place's staged text"
-    (hook == #["  README.md:25", "  docs/guide.md:3"] &&
-      m.diffFindings citeDiff.toUTF8 "" == #["  README.md:11", "  README.md:25",
-        "  CITATION.cff:4", "  docs/guide.md:3"] &&
+    (hook == (lns "  " "README.md" [12, 13, 15, 29] ++ refused ++ ["  docs/guide.md:3"]).toArray &&
+      m.diffFindings citeDiff.toUTF8 "" == (lns "  " "README.md" [11, 12, 13, 14, 15, 29] ++
+        lns "  " "CITATION.cff" [2, 3, 4, 6, 7, 8, 9, 10, 13, 15, 17, 18, 19, 20, 21] ++
+        ["  docs/guide.md:3"]).toArray &&
       m.diffFindings citeDiff.toUTF8 ""
           #[("README.md", readme.replace "## Cite" "## Notes"), ("CITATION.cff", cff)] ==
-        #["  README.md:11", "  README.md:25", "  docs/guide.md:3"])
+        (lns "  " "README.md" [11, 12, 13, 14, 15, 29] ++ refused ++ ["  docs/guide.md:3"]).toArray)
   let citePatches := #[(shaA, citeDiff), (shaB, readmeDiff)]
   let commits := m.commitFindings citePatches #[] #[]
     #[((shaA, "README.md"), readme), ((shaA, "CITATION.cff"), cff)]
   t "the commit scan excuses a line only by its own commit's text of the citation place"
-    (commits == #[s!"{leadA}README.md:25", s!"{leadA}docs/guide.md:3", s!"{leadB}README.md:11",
-        s!"{leadB}README.md:25"] &&
+    (commits == (lns leadA "README.md" [12, 13, 15, 29] ++
+        lns leadA "CITATION.cff" [2, 3, 4, 8, 13, 15, 19, 20] ++ lns leadA "docs/guide.md" [3] ++
+        lns leadB "README.md" [11, 12, 13, 14, 15, 29]).toArray &&
       Privacy.citedIn citePatches ==
         #[(shaA, "README.md"), (shaA, "CITATION.cff"), (shaB, "README.md")])
   let citeMsgs := m.messageFindings (shaA ++ "\nAdd the citation\n\n" ++ readme) ++
     m.messageFindings (shaA ++ "\n" ++ cff)
-  t "a commit message is read whole, the citation's text in it included"
+  t "a commit message is read whole, the citation's name lines in it included"
     (citeMsgs.contains s!"{leadA}its message, line 13" &&
-      citeMsgs.contains s!"{leadA}its message, line 4")
+      citeMsgs.contains s!"{leadA}its message, line 6")
   let printed := found ++ msgs ++ staged ++ cited ++ hook ++ commits ++ citeMsgs ++
     #[m.maskPath "testdata/zorblax/notes.md", m.redact "x Zorblax y"]
   t "no finding and no masked text names a term"

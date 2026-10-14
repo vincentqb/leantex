@@ -1072,18 +1072,23 @@ def splitFirst (s sep : String) : Option (String × String) :=
   | a :: rest@(_ :: _) => some (a, sep.intercalate rest)
   | _ => none
 
-/-! The citation, the one text that may name the author: places by location, never by term. -/
+/-! The citation, the one text that may name the author: its name and URL fields, by location,
+never by term. -/
 
-/-- A part of a file the citation stands in: all of it, or the lines inside the fenced block that
-three backticks and one info string, exactly, open on the first non-blank line after one `## `
-heading, outside any other fence, in a text with no CR and no earlier line opening with `<`. -/
+/-- Where a file's citation names the author: the lines of a YAML text holding, key and value on
+one line, a key at one of these dotted paths, or the lines holding one BibTeX field of these
+names whole inside the block `fencedSpan` finds after a heading. -/
 inductive Place where
-  | whole
-  | fenced (heading info : String)
+  | yamlKeys (paths : Array String)
+  | bibFields (heading info : String) (fields : Array String)
 
-/-- The citation's places, where a hit is excused (AGENTS.md § Privacy). -/
+/-- The citation's name and URL fields, the only lines where a hit is excused
+(AGENTS.md § Privacy). -/
 def citationPlaces : Array (String × Place) :=
-  #[("CITATION.cff", .whole), ("README.md", .fenced "Cite" "bibtex")]
+  #[("CITATION.cff", .yamlKeys #["authors.family-names", "authors.given-names", "repository-code",
+      "url", "preferred-citation.authors.family-names", "preferred-citation.authors.given-names",
+      "preferred-citation.repository-code", "preferred-citation.url"]),
+    ("README.md", .bibFields "Cite" "bibtex" #["author", "url"])]
 
 /-- The fence run a line opens with (CommonMark 0.31.2 §4.5): after at most three spaces, three
 or more backticks or tildes, with their count and what follows them. -/
@@ -1104,35 +1109,94 @@ def closesFence (f : Char × Nat) (l : String) : Bool :=
   | some (c, n, rest) => c == f.1 && f.2 ≤ n && rest.all fun ch => ch == ' ' || ch == '\t'
   | none => false
 
-/-- The first and last 1-based lines of `text` a place covers; none for a fenced block that is
-missing, empty or never closed. -/
-def Place.span (p : Place) (text : String) : Option (Nat × Nat) := Id.run do
-  let lines := text.splitOn "\n"
-  match p with
-  | .whole => return some (1, lines.length)
-  | .fenced heading info =>
-    if text.contains '\r' then return none
-    let mut fence : Option (Char × Nat) := none
-    let mut opened : Option Nat := none
-    let mut headed := false
-    for (l, k) in lines.zipIdx do
-      if let some a := opened then
-        if closesFence ('`', 3) l then return (if a + 1 < k then some (a + 2, k) else none)
-      else if let some f := fence then
-        if closesFence f l then fence := none
-      else if headed && l == "```" ++ info then opened := some k
-      else
-        if (String.ofList (l.toList.dropWhile (· == ' '))).startsWith "<" then return none
-        if let some (c, n, rest) := fenceRun l then
-          if c == '~' || !rest.contains '`' then fence := some (c, n)
-        unless l.trimAscii.isEmpty do headed := l == "## " ++ heading
-    return none
+/-- The first and last 1-based lines inside the fenced block that three backticks and `info`,
+exactly, open on the first non-blank line after the `## ` heading, outside any other fence; none
+when it is missing, empty or never closed, or a line before it opens with `<`. -/
+def fencedSpan (heading info text : String) : Option (Nat × Nat) := Id.run do
+  let mut fence : Option (Char × Nat) := none
+  let mut opened : Option Nat := none
+  let mut headed := false
+  for (l, k) in (text.splitOn "\n").zipIdx do
+    if let some a := opened then
+      if closesFence ('`', 3) l then return (if a + 1 < k then some (a + 2, k) else none)
+    else if let some f := fence then
+      if closesFence f l then fence := none
+    else if headed && l == "```" ++ info then opened := some k
+    else
+      if (String.ofList (l.toList.dropWhile (· == ' '))).startsWith "<" then return none
+      if let some (c, n, rest) := fenceRun l then
+        if c == '~' || !rest.contains '`' then fence := some (c, n)
+      unless l.trimAscii.isEmpty do headed := l == "## " ++ heading
+  return none
 
-/-- Is a hit on lines `span` of `text`, held at `path`, excused: every line of it inside the
-citation's place there. -/
+/-- Is the text one braced group, from its `{` to the `}` that closes it, with nothing after? -/
+def bracedWhole (v : List Char) : Bool := Id.run do
+  let mut depth := 0
+  let mut closed := false
+  for (c, i) in v.zipIdx do
+    if closed || (i == 0 && c != '{') then return false
+    if c == '{' then depth := depth + 1
+    else if c == '}' then
+      if depth == 0 then return false
+      depth := depth - 1
+      closed := depth == 0
+  return closed
+
+/-- Is the line one whole BibTeX field of these names: `name = {…}`, its braces balanced, and
+nothing after them but a comma? -/
+def bibField (fields : Array String) (l : String) : Bool :=
+  let cs := l.toList.dropWhile fun c => c == ' ' || c == '\t'
+  let name := cs.takeWhile Char.isAlpha
+  match (cs.drop name.length).dropWhile (· == ' ') with
+  | '=' :: v =>
+    let tail := ((v.dropWhile (· == ' ')).reverse.dropWhile fun c => c == ' ' || c == '\t')
+    let value := (match tail with | ',' :: w => w | w => w).reverse
+    fields.contains (String.ofList name) && bracedWhole value
+  | _ => false
+
+/-- The 1-based lines of a YAML text holding, key and value together and no `#`, a key at one of
+`paths`, a sequence's items read through; none when an indentation holds a tab. -/
+def yamlKeyLines (paths : Array String) (text : String) : Array Nat := Id.run do
+  let mut parents : Array (Nat × String) := #[]
+  let mut out : Array Nat := #[]
+  for (l, k) in (text.splitOn "\n").zipIdx do
+    let cs := l.toList
+    let lead := cs.takeWhile fun c => c == ' ' || c == '\t'
+    if lead.contains '\t' then return #[]
+    let rest := cs.drop lead.length
+    if rest.isEmpty || rest.head? == some '#' then continue
+    let (col, body) := if rest.take 2 == ['-', ' '] then (lead.length + 2, rest.drop 2)
+      else (lead.length, rest)
+    parents := parents.filter (·.1 < col)
+    let key := String.ofList (body.takeWhile fun c => c.isAlphanum || c == '-' || c == '_')
+    match body.drop key.length with
+    | ':' :: tail =>
+      let value := (String.ofList tail).trimAscii.toString
+      if value.isEmpty then parents := parents.push (col, key)
+      else if !value.contains '#' &&
+          paths.contains (".".intercalate ((parents.map (·.2)).toList ++ [key])) then
+        out := out.push (k + 1)
+    | _ => pure ()
+  return out
+
+/-- The 1-based lines a place excuses in `text`; none in a text holding a CR. -/
+def Place.lines (p : Place) (text : String) : Array Nat :=
+  if text.contains '\r' then #[] else
+    match p with
+    | .yamlKeys paths => yamlKeyLines paths text
+    | .bibFields heading info fields =>
+      match fencedSpan heading info text with
+      | some (lo, hi) => ((text.splitOn "\n").zipIdx.filterMap fun (l, k) =>
+          if lo ≤ k + 1 && k + 1 ≤ hi && bibField fields l then some (k + 1) else none).toArray
+      | none => #[]
+
+/-- Is a hit on lines `span` of `text`, held at `path`, excused: every line of it one its
+citation place excuses there. -/
 def excused (path text : String) (span : Nat × Nat) : Bool :=
   match citationPlaces.find? (·.1 == path) with
-  | some (_, p) => (p.span text).any fun (lo, hi) => lo ≤ span.1 && span.2 ≤ hi
+  | some (_, p) =>
+    let lines := p.lines text
+    (List.range' span.1 (span.2 + 1 - span.1)).all lines.contains
   | none => false
 
 /-- The commits and paths whose patches add lines to a citation place's file, each once: the
