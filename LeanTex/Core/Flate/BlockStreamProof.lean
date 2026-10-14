@@ -64,10 +64,15 @@ theorem readStep_write_bounded_exact (raw : ByteArray) (maxOut : Nat)
   have bh := DynamicHeader.read_write_exact litLens distLens w2 data h2
     hc.1 hc.2.1 hc.2.2.1 hc.2.2.2 rh
   have bp := TokenBlock.read_write_bounded_exact raw maxOut hmax tokens ht wh data hh.1 hr
+  have hf := TokenBlock.alphabets_contract tokens
+  have k1 := packageMerge_mkHuff?_exact (TokenBlock.alphabets tokens).1 15
+    ⟨by decide, by decide⟩ (Nat.le_trans hf.1.2 (by decide))
+  have k2 := packageMerge_mkHuff?_exact (TokenBlock.alphabets tokens).2 15
+    ⟨by decide, by decide⟩ (Nat.le_trans hf.2.1.2 (by decide))
   dsimp only [w1, w2, wh, litLens, distLens, lengths] at b2 bh bp
   simp only [readStep, b1, b2, readBody, show (2 == 0) = false by decide,
     show (2 == 1) = false by decide, show (2 == 2) = true by decide,
-    Bool.false_eq_true, ↓reduceIte, bh, bp, bind, Except.bind, pure, Except.pure]
+    Bool.false_eq_true, ↓reduceIte, bh, k1, k2, bp, bind, Except.bind, pure, Except.pure]
   rfl
 
 theorem readStep_write_exact (raw : ByteArray) (tokens : Array UInt32)

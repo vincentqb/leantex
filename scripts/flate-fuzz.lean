@@ -1,6 +1,6 @@
 /-
-Fuzz the compressor: inflate inverts deflate on random and adversarial bytes, the fixtures'
-planes and every stream the PDF writer emits, judged by `inflate` and python3's zlib.
+Fuzz the codec against python3's zlib: inflate inverts deflate on random, adversarial, fixture and
+PDF-writer bytes, and refuses each over-subscribed Huffman table zlib refuses.
 Usage: lake build && lake env lean --run scripts/flate-fuzz.lean
 -/
 import LeanTex
@@ -43,6 +43,125 @@ def check (dir : System.FilePath) (label : String) (b : ByteArray) : IO Unit := 
   checkOwn label b
   checkForeign dir label b
 
+def lsbBits (v n : Nat) : Array Bool := (Array.range n).map fun i => (v >>> i) % 2 == 1
+
+def msbBits (code len : Nat) : Array Bool :=
+  (Array.range len).map fun i => (code >>> (len - 1 - i)) % 2 == 1
+
+def packBits (bits : Array Bool) : ByteArray := Id.run do
+  let mut out := ByteArray.empty
+  let mut cur := 0
+  for h : i in [0:bits.size] do
+    if bits[i] then cur := cur + 2 ^ (i % 8)
+    if i % 8 == 7 then
+      out := out.push (UInt8.ofNat cur)
+      cur := 0
+  if bits.size % 8 != 0 then out := out.push (UInt8.ofNat cur)
+  return out
+
+def be32 (v : Nat) : ByteArray :=
+  ByteArray.mk #[UInt8.ofNat (v / 16777216 % 256), UInt8.ofNat (v / 65536 % 256),
+    UInt8.ofNat (v / 256 % 256), UInt8.ofNat (v % 256)]
+
+/-- The integer Kraft sum of `lengths` at `width` bits. -/
+def kraft (lengths : Array Nat) (width : Nat) : Nat :=
+  lengths.foldl (fun acc l => if 0 < l && l ≤ width then acc + 2 ^ (width - l) else acc) 0
+
+/-- A zlib stream of one final dynamic block: the code-length code's lengths `cl` by symbol, each
+literal/length and distance length written as its `clCode` codeword, then the data codewords,
+closed by the Adler-32 of `plain`. -/
+def dynamicStream (cl : Array Nat) (clCode : Nat → Nat × Nat) (lit dist : Array Nat)
+    (data : Array (Nat × Nat)) (plain : ByteArray) : ByteArray := Id.run do
+  let order := #[16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15]
+  let ordered : Array Nat := order.map fun s => cl[s]?.getD 0
+  let mut n := ordered.size
+  for _ in [0:15] do
+    if n > 4 && ordered[n - 1]?.getD 0 == 0 then n := n - 1
+  let mut bits : Array Bool := #[true] ++ lsbBits 2 2 ++ lsbBits (lit.size - 257) 5 ++
+    lsbBits (dist.size - 1) 5 ++ lsbBits (n - 4) 4
+  for v in ordered.extract 0 n do bits := bits ++ lsbBits v 3
+  for v in lit do
+    let (c, l) := clCode v
+    bits := bits ++ msbBits c l
+  for v in dist do
+    let (c, l) := clCode v
+    bits := bits ++ msbBits c l
+  for (c, l) in data do bits := bits ++ msbBits c l
+  return ByteArray.mk #[0x78, 0x01] ++ packBits bits ++ be32 (Flate.adler32 plain)
+
+/-- Lengths over `n` symbols giving one bit to `A`, to the end of block and to each of `extra`. -/
+def oneBit (n : Nat) (extra : List Nat := []) : Array Nat :=
+  (Array.range n).map fun s => if s == 65 || s == 256 || extra.contains s then 1 else 0
+
+/-- What python3's zlib inflates `z` to, or `none` when it refuses it. -/
+def foreignInflate (dir : System.FilePath) (z : ByteArray) : IO (Option ByteArray) := do
+  let zPath := dir / "z.bin"
+  let rPath := dir / "r.bin"
+  IO.FS.writeBinFile zPath z
+  let out ← IO.Process.output { cmd := "python3", args := #["-c",
+    "import zlib,sys; open(sys.argv[2],'wb').write(zlib.decompress(open(sys.argv[1],'rb').read()))",
+    zPath.toString, rPath.toString] }
+  if out.exitCode != 0 then return none
+  return some (← IO.FS.readBinFile rPath)
+
+def refusedByBoth (dir : System.FilePath) (label : String) (z : ByteArray) : IO Unit := do
+  if let .ok out := Flate.inflate z 65536 then
+    die s!"{label}: inflate accepted an over-subscribed table ({out.size} bytes out)"
+  if (← foreignInflate dir z).isSome then die s!"{label}: the foreign inflater accepted it"
+
+/-- Random lengths over `n` symbols, each at most `maxLen`, whose Kraft sum overflows the code
+space, the end of block given a length when `eob`. -/
+def overSubscribed (s : UInt64) (n maxLen : Nat) (eob : Bool) : Array Nat × UInt64 := Id.run do
+  let mut s := s
+  let mut lens := Array.replicate n 0
+  if eob then
+    let (l, s1) := rand s maxLen
+    s := s1
+    lens := lens.set! 256 (l + 1)
+  for _ in [0:4 * n + 64] do
+    if kraft lens maxLen > 2 ^ maxLen then break
+    let (k, s1) := rand s n
+    let (l, s2) := rand s1 maxLen
+    s := s2
+    lens := lens.set! k (l + 1)
+  if kraft lens maxLen ≤ 2 ^ maxLen then lens := ((lens.set! 0 1).set! 1 1).set! 2 1
+  return (lens, s)
+
+/-- Each of a dynamic block's three tables over-subscribed, by hand and at random: the engine
+and zlib both refuse the stream, and the block written with complete tables both inflate. -/
+def tableChecks (dir : System.FilePath) : IO Unit := do
+  let aa := "AA".toUTF8
+  let data := #[(0, 1), (0, 1), (1, 1)]
+  let bit (v : Nat) : Nat × Nat := (v, 1)
+  let complete := dynamicStream #[1, 1] bit (oneBit 257) #[0] data aa
+  unless (Flate.inflate complete 65536).toOption == some aa do
+    die "complete tables: inflate did not read AA"
+  unless (← foreignInflate dir complete) == some aa do
+    die "complete tables: the foreign inflater did not read AA"
+  let clOver := (Array.replicate 19 0).set! 0 1 |>.set! 1 1 |>.set! 18 1
+  refusedByBoth dir "over-subscribed code-length code"
+    (dynamicStream clOver bit (oneBit 257) #[0] data aa)
+  refusedByBoth dir "over-subscribed literal/length code"
+    (dynamicStream #[1, 1] bit (oneBit 258 [257]) #[0] data aa)
+  refusedByBoth dir "over-subscribed distance code"
+    (dynamicStream #[1, 1] bit (oneBit 257) #[1, 1, 1] data aa)
+  let nibble (v : Nat) : Nat × Nat := (v, 4)
+  let flat := Array.replicate 16 4
+  let mut s : UInt64 := 0x2545F4914F6CDD1D
+  for k in [0:40] do
+    let (nlit, s1) := rand s 30
+    let (lit, s2) := overSubscribed s1 (257 + nlit) 15 true
+    let (ndist, s3) := rand s2 28
+    let (dist, s4) := overSubscribed s3 (ndist + 3) 15 false
+    let (cl, s5) := overSubscribed s4 19 7 false
+    s := s5
+    refusedByBoth dir s!"random over-subscribed literal/length code #{k}"
+      (dynamicStream flat nibble lit #[0] #[(0, 16)] aa)
+    refusedByBoth dir s!"random over-subscribed distance code #{k}"
+      (dynamicStream flat nibble (oneBit 257) dist data aa)
+    refusedByBoth dir s!"random over-subscribed code-length code #{k}"
+      (dynamicStream cl bit (oneBit 257) #[0] data aa)
+
 /-- Every `/FlateDecode` stream the engine's PDF writer emitted, inflated back, found by
 the writer's own spelling. -/
 def pdfStreams (pdf : ByteArray) : IO (Array ByteArray) := do
@@ -79,6 +198,7 @@ def main : IO Unit := do
   check dir "ascending" (ByteArray.mk (Array.ofFn (n := 300000) fun i => UInt8.ofNat (i % 256)))
   check dir "text-like" (String.join (List.replicate 2000
     "the quick brown fox jumps over the lazy dog — pack my box. ")).toUTF8
+  tableChecks dir
   -- The shipped alpha fixture's planes: the exact bytes the PDF writer embeds.
   let alpha ← IO.FS.readBinFile "testdata/corpus/rects-alpha.png"
   match Image.decode alpha with

@@ -72,6 +72,57 @@ def alphaSplitChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "pngUnfilter inverts the forward filter of every type" allInvert
   t "the random rows exercised all five filter types" (sawFilter.all id)
 
+/-- Bits into bytes least significant first, as a deflate stream packs them. -/
+def packDeflateBits (bits : Array Bool) : ByteArray := Id.run do
+  let mut out := ByteArray.empty
+  let mut cur := 0
+  for h : i in [0:bits.size] do
+    if bits[i] then cur := cur + 2 ^ (i % 8)
+    if i % 8 == 7 then
+      out := out.push (UInt8.ofNat cur)
+      cur := 0
+  if bits.size % 8 != 0 then out := out.push (UInt8.ofNat cur)
+  return out
+
+/-- Lengths over `n` symbols giving one bit to `A`, to the end of block and to each of `extra`. -/
+def oneBitLengths (n : Nat) (extra : List Nat) : Array Nat :=
+  (Array.range n).map fun s => if s == 65 || s == 256 || extra.contains s then 1 else 0
+
+/-- A zlib stream of one final dynamic block writing `AA`: the code-length code's lengths `cl` by
+symbol, each literal/length and distance length as the one-bit codeword of its value. -/
+def dynamicBlockAA (cl lit dist : Array Nat) : ByteArray := Id.run do
+  let lsb (v n : Nat) : Array Bool := (Array.range n).map fun i => (v >>> i) % 2 == 1
+  let order := #[16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15]
+  let ordered : Array Nat := order.map fun s => cl[s]?.getD 0
+  let mut bits : Array Bool := #[true] ++ lsb 2 2 ++ lsb (lit.size - 257) 5 ++
+    lsb (dist.size - 1) 5 ++ lsb (ordered.size - 4) 4
+  for v in ordered do bits := bits ++ lsb v 3
+  for v in lit do bits := bits.push (v == 1)
+  for v in dist do bits := bits.push (v == 1)
+  bits := bits ++ #[false, false, true]
+  let adler := Flate.adler32 "AA".toUTF8
+  return bytes [0x78, 0x01] ++ packDeflateBits bits ++
+    bytes ([adler / 16777216 % 256, adler / 65536 % 256, adler / 256 % 256, adler % 256].map
+      UInt8.ofNat)
+
+/-- Inflating refuses a dynamic block whose code-length, literal/length or distance lengths
+over-subscribe their code space, naming the table, and reads the block with complete tables. -/
+def inflateTableChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let refuses (z : ByteArray) (table : String) : Bool := match Flate.inflate z 64 with
+    | .ok _ => false
+    | .error e => (e.splitOn "over-subscribed").length > 1 && (e.splitOn table).length > 1
+  let clOver := ((Array.replicate 19 0).set! 0 1 |>.set! 1 1).set! 18 1
+  t "inflate: a dynamic block with complete tables reads its literals"
+    ((Flate.inflate (dynamicBlockAA #[1, 1] (oneBitLengths 257 []) #[0]) 64).toOption ==
+      some "AA".toUTF8)
+  t "inflate: an over-subscribed code-length code is refused"
+    (refuses (dynamicBlockAA clOver (oneBitLengths 257 []) #[0]) "code-length")
+  t "inflate: an over-subscribed literal/length code is refused"
+    (refuses (dynamicBlockAA #[1, 1] (oneBitLengths 258 [257]) #[0]) "literal/length")
+  t "inflate: an over-subscribed distance code is refused"
+    (refuses (dynamicBlockAA #[1, 1] (oneBitLengths 257 []) #[1, 1, 1]) "distance")
+
 /-- The image decoders over synthetic bytes and the shipped fixtures, the sizing contract on placed
 pages, the placeholder, the PDF embedding and the HTML emit. -/
 def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do

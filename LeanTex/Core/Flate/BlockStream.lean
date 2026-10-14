@@ -37,7 +37,9 @@ def readBody (btype : Nat) (r : Br) (out : ByteArray) (maxOut : Nat) :
   else if btype == 1 then TokenBlock.read fixedLit fixedDist r out maxOut
   else if btype == 2 then
     let (litLens, distLens, r) ← DynamicHeader.read r
-    TokenBlock.read (mkHuff litLens) (mkHuff distLens) r out maxOut
+    let some lit := mkHuff? litLens | .error "deflate: over-subscribed literal/length code"
+    let some dist := mkHuff? distLens | .error "deflate: over-subscribed distance code"
+    TokenBlock.read lit dist r out maxOut
   else .error "deflate: reserved block type"
 
 /-- The final bit distinguishes a complete stream from another block. -/

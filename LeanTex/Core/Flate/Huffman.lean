@@ -77,8 +77,7 @@ theorem bitField_bits_exact (r : Br) (n v : Nat) (hn : n < 64)
 
 
 /-- A canonical Huffman table: code counts per length and symbols in canonical order; a code the
-lengths leave unassigned fails at decode, and an over-subscribed set decodes with its excess symbols
-unreachable. -/
+lengths leave unassigned fails at decode. -/
 public structure Huff where
   counts : Array Nat
   symbols : Array Nat
@@ -146,6 +145,16 @@ def huffSymbols (lengths : Array Nat) : Array Nat := Id.run do
 
 public def mkHuff (lengths : Array Nat) : Huff :=
   { counts := huffCounts lengths, symbols := huffSymbols lengths }
+
+/-- Whether the codes fit the code space: the integer Kraft sum at fifteen bits is at most
+`2 ^ 15`. -/
+public def Huff.fits (h : Huff) : Bool :=
+  Canonical.start (fun k => h.counts[k]?.getD 0) 15 + h.counts[15]?.getD 0 ≤ 2 ^ 15
+
+/-- The canonical table of `lengths`, or `none` when they over-subscribe the code space. -/
+public def mkHuff? (lengths : Array Nat) : Option Huff :=
+  let h := mkHuff lengths
+  if h.fits then some h else none
 
 theorem mkHuff_counts_exact (lengths : Array Nat) :
     CountsFor lengths.toList (mkHuff lengths).counts := by

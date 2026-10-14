@@ -49,7 +49,8 @@ public def read (r : Br) : Except String (Array Nat × Array Nat × Br) := do
   let (values, r) ← FieldStream.read 3 (hclen + 4) r
   let nlit := hlit + 257
   let ndist := hdist + 1
-  let (lengths, r) ← CodeLengths.read (mkHuff (restore values)) (nlit + ndist) r
+  let some table := mkHuff? (restore values) | .error "deflate: over-subscribed code-length code"
+  let (lengths, r) ← CodeLengths.read table (nlit + ndist) r
   return (lengths.extract 0 nlit, lengths.extract nlit (nlit + ndist), r)
 
 end LeanTex.Core.Flate.DynamicHeader

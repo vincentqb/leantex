@@ -96,4 +96,53 @@ theorem kraft_code_space_between (lengths : Array Nat) (limit width : Nat)
       2 ^ width * 2 ^ (limit - width) := by rw [← hp]; exact Nat.le_trans hs hk
   exact Nat.le_of_mul_le_mul_right hm (Nat.two_pow_pos _)
 
+private theorem cost_scale_exact (width limit len : Nat) (hw : width ≤ limit) (hl : len ≤ width) :
+    cost limit len = cost width len * 2 ^ (limit - width) := by
+  by_cases hz : len = 0
+  · subst len
+    simp [cost]
+  · have hp : 0 < len ∧ len ≤ width := ⟨by omega, hl⟩
+    have hn : 0 < len ∧ len ≤ limit := ⟨by omega, by omega⟩
+    simp only [cost, hp, hn, and_self, ite_true]
+    rw [← Nat.pow_add, show width - len + (limit - width) = limit - len by omega]
+
+theorem kraft_scale_exact (lengths : List Nat) (width limit : Nat) (hw : width ≤ limit)
+    (hl : ∀ len ∈ lengths, len ≤ width) :
+    kraft lengths limit = kraft lengths width * 2 ^ (limit - width) := by
+  induction lengths with
+  | nil => simp [kraft]
+  | cons len lengths ih =>
+    rw [kraft_cons, kraft_cons, Nat.add_mul, ih (fun l h => hl l (by simp [h])),
+      cost_scale_exact width limit len hw (hl len (by simp))]
+
 end LeanTex.Core.Flate.Canonical
+
+namespace LeanTex.Core.Flate
+
+theorem mkHuff?_some_exact (lengths : Array Nat) (h : Huff) :
+    mkHuff? lengths = some h ↔
+      h = mkHuff lengths ∧ Canonical.kraft lengths.toList 15 ≤ 2 ^ 15 := by
+  have hk := Canonical.start_kraft_exact lengths 15 (Nat.le_refl _)
+  have hfits : (mkHuff lengths).fits = true ↔ Canonical.kraft lengths.toList 15 ≤ 2 ^ 15 := by
+    show decide (Canonical.start (fun k => (huffCounts lengths)[k]?.getD 0) 15 +
+      (huffCounts lengths)[15]?.getD 0 ≤ 2 ^ 15) = true ↔ _
+    rw [decide_eq_true_iff, hk]
+  simp only [mkHuff?]
+  by_cases hp : Canonical.kraft lengths.toList 15 ≤ 2 ^ 15
+  · rw [ite_eq_left (hfits.mpr hp)]
+    exact ⟨fun he => ⟨(Option.some.inj he).symm, hp⟩, fun ⟨he, _⟩ => he ▸ rfl⟩
+  · rw [ite_eq_right (fun hf => hp (hfits.mp hf))]
+    exact ⟨(fun he => by cases he), fun ⟨_, hk'⟩ => absurd hk' hp⟩
+
+/-- An accepted table decodes each symbol of a nonzero length from its canonical code. -/
+theorem mkHuff?_decode_exact (lengths : Array Nat) (h : Huff) (hh : mkHuff? lengths = some h)
+    (hb : ∀ s < lengths.size, lengths[s]?.getD 0 ≤ 15) (r : Br) (s width : Nat)
+    (hs : s < lengths.size) (hw : 0 < width) (hl : lengths[s]?.getD 0 = width)
+    (hf : BitField r.data r.bitPos width ((canonCodes lengths)[s]?.getD 0)) :
+    h.decode r = some (s, { r with bitPos := r.bitPos + width }) := by
+  obtain ⟨rfl, hk⟩ := (mkHuff?_some_exact lengths h).mp hh
+  have hw15 : width ≤ 15 := by have := hb s hs; omega
+  exact canonCodes_decode_exact lengths r s width hb hs hw hl
+    (Canonical.kraft_code_space_between lengths 15 width (Nat.le_refl _) hw15 hk) hf
+
+end LeanTex.Core.Flate

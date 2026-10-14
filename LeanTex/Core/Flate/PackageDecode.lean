@@ -47,6 +47,24 @@ theorem packageMerge_kraft_between (freqs : Array Nat) (limit : Nat)
   simp only [Function.comp_def, he, hsize]
   exact hk
 
+theorem packageMerge_mkHuff?_exact (freqs : Array Nat) (limit : Nat)
+    (hl : 0 < limit ∧ limit ≤ 15) (hfit : freqs.size ≤ 2 ^ limit) :
+    mkHuff? (PackageMerge.lengths freqs limit) =
+      some (mkHuff (PackageMerge.lengths freqs limit)) := by
+  have hc := PackageMerge.lengths_contract freqs limit hl.1 hfit
+  have hw : ∀ len ∈ (PackageMerge.lengths freqs limit).toList, len ≤ limit := by
+    intro len hm
+    obtain ⟨i, hi⟩ := Array.mem_iff_getElem?.mp (Array.mem_toList_iff.mp hm)
+    have := hc.1.width_le i
+    rw [hi, Option.getD_some] at this
+    exact this
+  apply (mkHuff?_some_exact _ _).mpr
+  refine ⟨rfl, ?_⟩
+  rw [Canonical.kraft_scale_exact _ limit 15 hl.2 hw]
+  calc _ ≤ 2 ^ limit * 2 ^ (15 - limit) :=
+        Nat.mul_le_mul_right _ (packageMerge_kraft_between freqs limit hl.1 hfit)
+    _ = 2 ^ 15 := by rw [← Nat.pow_add, Nat.add_sub_of_le hl.2]
+
 theorem packageMerge_decode_exact (freqs : Array Nat) (limit : Nat) (r : Br) (s : Nat)
     (hl : 0 < limit ∧ limit ≤ 15) (hfit : freqs.size ≤ 2 ^ limit)
     (hs : 0 < freqs[s]?.getD 0)

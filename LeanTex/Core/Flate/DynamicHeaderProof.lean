@@ -61,6 +61,11 @@ theorem codeLengths_contract (litLens distLens : Array Nat) :
     (by decide) (by omega)
   exact ⟨hl.1.size_eq.trans hf, hl.1.width_le⟩
 
+theorem codeLengths_mkHuff?_exact (litLens distLens : Array Nat) :
+    mkHuff? (codeLengths litLens distLens) = some (mkHuff (codeLengths litLens distLens)) := by
+  have hf := (CodeLengths.frequencies_contract (CodeLengths.encode (litLens ++ distLens))).1
+  exact packageMerge_mkHuff?_exact _ 7 ⟨by decide, by decide⟩ (by omega)
+
 theorem append_width_exact (litLens distLens : Array Nat)
     (hl : ∀ s : Nat, litLens[s]?.getD 0 < 16)
     (hd : ∀ s : Nat, distLens[s]?.getD 0 < 16) :
@@ -141,7 +146,7 @@ theorem read_write_exact (litLens distLens : Array Nat) (w : Bw) (data : ByteArr
   simp only [Array.size_append] at b5
   dsimp only [w1, w2, w3, w4, values, lengths] at b2 b3 b4 b5 hrestore hsize
   simp only [read, b1, b2, b3, hsize, hnlit, hndist, b4,
-    hrestore, bind, Except.bind, pure, Except.pure]
+    hrestore, codeLengths_mkHuff?_exact, bind, Except.bind, pure, Except.pure]
   rw [b5]
   simp only [Array.extract_append_left, Array.extract_append_right, Array.extract_size]
 

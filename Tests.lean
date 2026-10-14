@@ -773,6 +773,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   rhythmChecks ref oneFace
   measureChecks ref oneFace
   imageChecks ref oneFace
+  inflateTableChecks ref
   svgAssetChecks ref
   svgToolChecks ref oneFace
   Tests.svgNativePdfChecks ref oneFace
