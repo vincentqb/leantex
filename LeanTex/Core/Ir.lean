@@ -8863,7 +8863,7 @@ private def dumpInline (ind : String) (x : Inline) : String :=
       | .underline => "underline"
       | .lineThrough => "line-through"
       | .highlight c name =>
-        let hex := s!"#{Color.hexByte c.r}{Color.hexByte c.g}{Color.hexByte c.b}"
+        let hex := c.hex
         match name with
         | some n => s!"highlight {n.key} {hex}"
         | none => s!"highlight {hex}"

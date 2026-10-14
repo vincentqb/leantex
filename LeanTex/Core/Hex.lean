@@ -96,4 +96,18 @@ public theorem byte_inj (u : Bool) (a b : UInt8) (h : byte u a = byte u b) : a =
 public theorem byte_length_exact (u : Bool) (b : UInt8) : (byte u b).toList.length = 2 := by
   simp [byte, digits, digitList]
 
+public theorem digits_utf8ByteSize_exact (u : Bool) (w n : Nat) :
+    (digits u w n).utf8ByteSize = w := by
+  induction w generalizing n with
+  | zero => simp [digits, digitList]
+  | succ w ih =>
+    have hs : (spell u n).utf8Size = 1 := by
+      rw [Char.utf8Size_eq_one_iff, UInt32.le_iff_toNat_le]
+      have := spell_ascii u n
+      show (spell u n).toNat ≤ 127
+      omega
+    have h := ih (n / 16)
+    simp only [digits, digitList, String.ofList_append] at h ⊢
+    simp [h, hs]
+
 end LeanTex.Core.Hex
