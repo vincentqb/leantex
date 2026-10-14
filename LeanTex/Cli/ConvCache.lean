@@ -45,7 +45,8 @@ public theorem refusal_replays_exact (why : String) (h : why.isEmpty = false) (b
     Result.record? ⟨.refused why, bytes⟩ = some (.error why) := by
   simp [Result.record?, h]
 
-/-- A boundary run's result, read off how the run ended, the bytes it drew and its log. -/
+/-- A boundary run's result, read off how it ended, the bytes it drew, its log and its tool's last
+words. -/
 public def Result.ofRun (ran : PicCache.Ran) (log : PicCache.Log) (said : String)
     (bytes : ByteArray) : Result :=
   { outcome := PicCache.annotate (PicCache.outcome ran (!bytes.isEmpty) log) log said, bytes }
@@ -54,7 +55,7 @@ public theorem record?_some_exact (ran : PicCache.Ran) (log : PicCache.Log) (sai
     (bytes : ByteArray) (a : Except String ByteArray) :
     (Result.ofRun ran log said bytes).record? = some a ↔
       (ran = .exited 0 ∧ a = if bytes.isEmpty then .error "no PDF was produced" else .ok bytes) ∨
-      ∃ c tail, ran = .exited (c + 1) ∧ log = .says tail ∧
+      ∃ c tail, ran = .exited (c + 1) ∧ c + 1 < 126 ∧ log = .says tail ∧
         a = .error (if tail.isEmpty then s!"exit code {c + 1}" else tail) := by
   have hi (why : String) :
       Result.record? ⟨PicCache.annotate (.inconclusive why) log said, bytes⟩ = none := by
@@ -70,8 +71,12 @@ public theorem record?_some_exact (ran : PicCache.Ran) (log : PicCache.Log) (sai
       · simpa [Result.ofRun, PicCache.outcome, PicCache.annotate, Result.record?, hb]
           using eq_comm
     | succ n =>
+      by_cases hs : 126 ≤ n + 1
+      · have hlt : ¬n + 1 < 126 := by omega
+        simp [Result.ofRun, PicCache.outcome, hs, hi, hlt]
+      have hlt : n + 1 < 126 := by omega
       cases log with
-      | absent => simp [Result.ofRun, PicCache.outcome, hi]
+      | absent => simp [Result.ofRun, PicCache.outcome, hs, hi]
       | says tail =>
         by_cases ht : tail.isEmpty
         · have he : tail = "" := by
@@ -80,11 +85,11 @@ public theorem record?_some_exact (ran : PicCache.Ran) (log : PicCache.Log) (sai
           have hc : (s!"exit code {n + 1}").isEmpty = false := by
             simp [String.isEmpty, String.utf8ByteSize_append]
           simpa [Result.ofRun, PicCache.outcome, PicCache.annotate, Result.record?,
-            PicCache.Log.tail, hc] using eq_comm
+            PicCache.Log.tail, hc, hs, hlt] using eq_comm
         · have he : tail ≠ "" := by
             simpa [String.isEmpty, String.utf8ByteSize_eq_zero_iff] using ht
           simpa [Result.ofRun, PicCache.outcome, PicCache.annotate, Result.record?,
-            PicCache.Log.tail, ht, he] using eq_comm
+            PicCache.Log.tail, ht, he, hs, hlt] using eq_comm
   | overran s => simp [Result.ofRun, PicCache.outcome, hi]
   | unstarted e => simp [Result.ofRun, PicCache.outcome, hi]
 
@@ -172,6 +177,13 @@ public theorem decode_encode_record_id (r : Result) (a : Except String ByteArray
       rw [decode_envelope_exact "E" why.toUTF8 rfl hp, Binary.fromUTF8?_toUTF8]
       simp [String.append_assoc]
   | inconclusive why => simp [Result.record?] at h
+
+public theorem envelope_replay_exact (r : Result) (a : Except String ByteArray)
+    (h : r.record? = some a) :
+    (decode (encode a)).map (fun x => ((Result.replay x).outcome, (Result.replay x).answer)) =
+      some (r.outcome, r.answer) := by
+  obtain ⟨ho, ha⟩ := replay_record_exact r a h
+  simp [decode_encode_record_id r a h, ho, ha]
 
 public theorem replay_decode_exact (bytes : ByteArray) (a : Except String ByteArray)
     (h : decode bytes = some a) : (Result.replay a).answer = a := by

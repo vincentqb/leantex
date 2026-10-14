@@ -402,6 +402,8 @@ def boundaryUnfinishedChecks (ref : IO.Ref (List String)) : IO Unit := do
       w.standing.all fun (s, d) => s == src && d.code == "W0382" && d.subject == some src
   let endings : List (String × PicCache.Ran × PicCache.Log) :=
     [("exits 3 and leaves no log", .exited 3, .absent),
+     ("is ended by a signal after writing its log", .exited 137,
+       .says "LaTeX Font Info:    Checking defa"),
      ("overruns its budget", .overran 120, .says "! Emergency stop."),
      ("never starts", .unstarted "no such file", .absent)]
   for (what, ran, log) in endings do

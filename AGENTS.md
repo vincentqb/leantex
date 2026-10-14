@@ -91,10 +91,10 @@ export LIBRARY_PATH="$(lean --print-prefix)/lib:$(lean --print-prefix)/lib/lean"
   or a subjectDebt row only falling (`subjectCensusChecks`, `subjectDoorChecks`).
 - A gate naming, silencing or demoting a loss: the check falsifying its premise, beside it
   (`premiseSite`), and two builds differing by its condition (`pictureKeyGateChecks`).
-- A path where a machine fact (a tool absent, killed or unable to start, a check unfinished) stops a
-  conversion, a face or a check: a degraded artifact, never a refused one, its loss named once,
-  nothing cached, but a refusal is, and replays as the same loss (`machineLossChecks`,
-  `boundaryUnfinishedChecks`, `record?_some_exact`, `decode_encode_record_id`).
+- A path where a machine fact (a tool absent, killed or unstarted, a check unfinished) stops a
+  conversion, face or check: a degraded artifact, never refused, its loss named once, nothing cached
+  but a refusal, replayed as that loss (`machineLossChecks`, `boundaryUnfinishedChecks`,
+  `record?_some_exact`, `inconclusive_retried_exact`, `envelope_replay_exact`).
 - A design constant: a token, or its source where it stands (`dimLiteral`); a token: one resolving
   site, held over every bundle (`builtin_palettes_contract`); a colour role: a `Role.row` arm read
   only through its resolver (`roleReads`, `roleRowWildcards`), the stylesheet its projection

@@ -7213,6 +7213,10 @@ def picCacheChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a spawn that raised is no answer about the request"
     (PicCache.outcome (.unstarted "no such file") false .absent ==
       .inconclusive "no such file")
+  t "an exit of 126 or more is no answer about the request, whatever its log says"
+    (PicCache.outcome (.exited 137) false (.says says) == .inconclusive "exit code 137" &&
+     PicCache.outcome (.exited 126) false (.says says) == .inconclusive "exit code 126" &&
+     PicCache.outcome (.exited 125) false (.says says) == .refused says)
   -- What the cache keeps: a verdict the tool reached, and nothing the machine did
   -- (`ConvCache.record?_some_exact`).
   let kept (ran : PicCache.Ran) (log : PicCache.Log) (bytes : ByteArray := .empty) :=
@@ -7230,6 +7234,8 @@ def picCacheChecks (ref : IO.Ref (List String)) : IO Unit := do
     (kept (.unstarted "boom") .absent == none)
   t "a missing tool is not kept, so installing it is enough"
     (kept (.exited 127) .absent == none)
+  t "a run a signal ended is not kept, though it left a log"
+    (kept (.exited 137) (.says says) == none)
   -- The slot gives back what it was given (`ConvCache.decode_encode_record_id`).
   let fresh := ConvCache.Result.ofRun (.exited 1) (.says says) "" .empty
   let replayed := fresh.record?.bind fun a =>

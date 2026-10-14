@@ -682,6 +682,11 @@ the base carries)"] },
      extra := [("testdata/scoreboard/zz-dir.tsv/inner", "an invented file\n")]
      edit := fun d _ => IO.FS.removeDirAll (d / "testdata/scoreboard/zz-dir.tsv")
      exit := 1, says := fun s => [s!"scoreboard: base={s} tier=zz-dir result=fault"] },
+   -- The binary under test runs only where the guard allows: a remote the run did not make stops it.
+   { label := "the binary under test does not start beside a remote the run did not make"
+     extra := []
+     edit := fun d _ => discard <| harnessGit d #["remote", "add", "origin", "https://example.org/probe.git"]
+     exit := 126, says := fun _ => [] },
    -- A producer the harness starts reaches git with no network transport.
    { label := "a producer's git cannot use a network transport"
      extra := [(tsvPath "zz-nonet", "# encoding: raw\nalpha\t1\n"),
@@ -874,8 +879,8 @@ def keyUnderHosts (dir : System.FilePath) : IO (Except String (String × String)
   finally
     IO.FS.removeDirAll host
 
-/-- This binary's `--selftest` with its scratch parent inside a checkout made under `root`:
-why it did not refuse to start or left the checkout or the parent changed; `none` when it held. -/
+/-- Run this binary's `--selftest` with its scratch parent inside a checkout under `root`: `none`
+when it refused to start and left both as they were, else why not. -/
 def enclosedRootFailure (root : System.FilePath) : IO (Option String) := do
   let bin ← match ← selfBinary with
     | .ok b => pure b
@@ -1362,10 +1367,10 @@ followed to the end, and the key)"
       IO.FS.removeDirAll dir
   return (if bad == 0 then 0 else 1)
 
-/-- The selftest under a fresh scratch root no repository encloses, in `SCOREBOARD_SCRATCH_DIR`
-(else `/tmp`); exit 2 when none can be made. -/
+/-- The selftest under a fresh scratch root no repository encloses, in `SCOREBOARD_SCRATCH_DIR`,
+else `TMPDIR`, else `/tmp`; exit 2 when none can be made. -/
 def selftest : IO UInt32 := do
-  let parent := (← IO.getEnv "SCOREBOARD_SCRATCH_DIR").getD "/tmp"
+  let parent := ((← IO.getEnv "SCOREBOARD_SCRATCH_DIR") <|> (← IO.getEnv "TMPDIR")).getD "/tmp"
   match ← guardRoot parent "scoreboard-selftest" with
   | .error (.unmade p) =>
     IO.eprintln s!"scoreboard: no fresh scratch root could be made under {p}"

@@ -176,9 +176,10 @@ def registry : List Premise := [
     sites := [("LeanTex/Cli/World.lean", "version"), ("LeanTex/Cli/ToolProbe.lean", "identify")]
     owed := some "Start each tool the engine asks a version of by its bare name and by its resolved path, and require the same first line." },
   { name := "tool-exits", residue := .host "tools", reach := .render
-    statement := "No converter the engine runs exits 126 or above for a verdict of its own, as pdftocairo documents and rsvg-convert shows, so ImageAssets.runChecked reads 126 and 127 as a run that never started and 128 and above as an attempt that reached no verdict, and remembers neither."
-    sites := [("LeanTex/Cli/ImageAssets.lean", "runChecked")]
-    owed := some "Run each converter on malformed and missing input, and require every exit below 126." },
+    statement := "No converter or picture tool the engine runs exits 126 or above for a verdict of its own, as pdftocairo documents, rsvg-convert shows and lualatex ends a refused document with 1, so ImageAssets.runChecked and PicCache.outcome read 126 and 127 as a run that never started and 128 and above as an attempt that reached no verdict, and remember neither."
+    transfers := [thm% ConvCache.record?_some_exact]
+    sites := [("LeanTex/Cli/ImageAssets.lean", "runChecked"), ("LeanTex/Cli/PicCache.lean", "outcome")]
+    owed := some "Run each converter and picture tool on malformed and missing input, and require every exit below 126." },
   { name := "process-group", residue := .host "process", reach := .render
     statement := "A tool's descendants stay in the process group its setsid spawn starts, so the runtime's Child.kill, which sends SIGKILL to that whole group, ends them, and a tool finishes its writers before it exits."
     transfers := [thm% ConvCache.inconclusive_retried_exact, thm% ConvCache.record?_some_exact]

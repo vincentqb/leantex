@@ -1481,11 +1481,12 @@ def selftest : IO UInt32 := do
     bad := bad + 1
     say "selftest" "fail"
       [("case", "strict maintained-source build, conventions, test and lint")]
-  let conventions := gateList.filter (·.name == "conventions")
-  if conventions.size == 1 && conventions[0]!.cmd == ".lake/build/bin/precommit" &&
-      conventions[0]!.args == #["--range", "{main}...{tip}", "--conventions"] &&
-      gateArgs "m" "t" conventions[0]!.args == #["--range", "m...t", "--conventions"] &&
-      gateArgs "m" "t" #["--base", "{main}"] == #["--base", "m"] then
+  let conventions := match (gateList.filter (·.name == "conventions")).toList with
+    | [g] => g.cmd == ".lake/build/bin/precommit" &&
+      g.args == #["--range", "{main}...{tip}", "--conventions"] &&
+      gateArgs "m" "t" g.args == #["--range", "m...t", "--conventions"]
+    | _ => false
+  if conventions && gateArgs "m" "t" #["--base", "{main}"] == #["--base", "m"] then
     say "selftest" "ok" [("case", "the conventions gate reads the lines the landing adds")]
   else
     bad := bad + 1
@@ -1912,29 +1913,124 @@ of them makes a run, takes the lock or writes the ledger"
          , detail := s!"wrong=[{String.intercalate "; " wrong.toList}] land-dir={made} \
 main={before}->{after}" }
 
-/-- Copy every file under `src` but `.git` and `.lake` into `dst` at its relative path. -/
-def copySources (src dst : System.FilePath) : IO Unit := do
-  let skip (p : System.FilePath) : Bool := p.fileName == some ".git" || p.fileName == some ".lake"
-  for p in ← src.walkDir (fun d => pure !(skip d)) do
-    if skip p || (← p.isDir) then continue
-    let rel := (p.toString.drop (src.toString.length + 1)).toString
-    let target := dst / rel
-    if let some parent := target.parent then IO.FS.createDirAll parent
-    IO.FS.writeBinFile target (← IO.FS.readBinFile p)
+/-- The regular files a git index (versions 2 to 4, SHA-1 names) holds at stage 0, in order, each
+with whether it is executable; `none` for bytes that do not read as one. -/
+def indexFiles (b : ByteArray) : Option (Array (String × Bool)) := Id.run do
+  let byte (i : Nat) : Nat := (b[i]?.getD 0).toNat
+  let u16 (i : Nat) : Nat := byte i * 256 + byte (i + 1)
+  let u32 (i : Nat) : Nat := u16 i * 65536 + u16 (i + 2)
+  if b.size < 12 || b.extract 0 4 != "DIRC".toUTF8 then return none
+  let version := u32 4
+  if version < 2 || version > 4 then return none
+  let mut pos := 12
+  let mut prev : ByteArray := .empty
+  let mut out : Array (String × Bool) := #[]
+  for _ in [0:u32 8] do
+    if pos + 62 > b.size then return none
+    let mode := u32 (pos + 24)
+    let flags := u16 (pos + 60)
+    let start := pos + 62 + (if version ≥ 3 && flags &&& 0x4000 != 0 then 2 else 0)
+    let mut p := start
+    let mut strip := 0
+    if version == 4 then
+      let mut c := byte p
+      p := p + 1
+      strip := c &&& 127
+      for _ in [0:9] do
+        if c &&& 128 == 0 then break
+        c := byte p
+        p := p + 1
+        strip := ((strip + 1) <<< 7) + (c &&& 127)
+      if strip > prev.size then return none
+    let mut nul := b.size
+    for k in [p:b.size] do
+      if byte k == 0 then
+        nul := k
+        break
+    if nul ≥ b.size then return none
+    let suffix := b.extract p nul
+    let path := if version != 4 then suffix else prev.extract 0 (prev.size - strip) ++ suffix
+    let some name := String.fromUTF8? path | return none
+    if (flags >>> 12) &&& 3 == 0 && mode &&& 0xF000 == 0x8000 then
+      out := out.push (name, mode &&& 0o111 != 0)
+    prev := path
+    pos := if version == 4 then nul + 1 else pos + (nul - pos + 8) / 8 * 8
+  return some out
 
-/-- A branch whose commit adds a comment telling history, made without the hook, fails the
-shipped conventions gate over a copy of the tree under test, while a clean commit lands. -/
+/-- The index of the checkout at `tree`, whose `.git` is a directory or names one. -/
+def indexOf (tree : System.FilePath) : IO ByteArray := do
+  let dotGit := tree / ".git"
+  let dir ← if ← dotGit.isDir then pure dotGit else do
+    let line := trimWs (← IO.FS.readFile dotGit)
+    let some named := line.dropPrefix? "gitdir: " | throw (IO.userError s!"{dotGit} names no gitdir")
+    let d := System.FilePath.mk named.toString
+    pure (if d.isAbsolute then d else tree / d)
+  IO.FS.readBinFile (dir / "index")
+
+/-- Copy the regular files the index of `src` stages into `dst`, keeping their executable bit; a
+path that is no longer a regular file is skipped. -/
+def copyTracked (src dst : System.FilePath) : IO (Except String Nat) := do
+  let some files := indexFiles (← indexOf src) | return .error s!"the index of {src} does not read"
+  let mut n := 0
+  for (path, exec) in files do
+    let from_ := src / path
+    let md? ← try some <$> from_.symlinkMetadata catch _ => pure none
+    unless md?.any (·.type == .file) do continue
+    let target := dst / path
+    if let some parent := target.parent then IO.FS.createDirAll parent
+    IO.FS.writeBinFile target (← IO.FS.readBinFile from_)
+    if exec then
+      IO.setAccessRights target
+        { user := ⟨true, true, true⟩, group := ⟨true, false, true⟩, other := ⟨true, false, true⟩ }
+    n := n + 1
+  return .ok n
+
+/-- `indexFiles` against git's own listing of an index it wrote, in versions 2 and 4: regular and
+executable files, a symlink, a nested and a non-ASCII name. -/
+def indexReaderFailure (root : String) : IO (Option String) := do
+  let repo := s!"{root}/narrative/index-oracle"
+  IO.FS.createDirAll s!"{repo}/sub/deeper"
+  hgitOk #["init", "-q", "-b", "main", "."] repo
+  IO.FS.writeFile s!"{repo}/plain.txt" "plain\n"
+  writeExe s!"{repo}/run.sh" "#!/bin/sh\nexit 0\n"
+  IO.FS.writeFile s!"{repo}/sub/deeper/nested-é.lean" "def nested : Nat := 3\n"
+  let _ ← hrun "ln" #["-s", "plain.txt", s!"{repo}/link.txt"] none
+  hgitOk #["add", "-A"] repo
+  let want := #[("plain.txt", false), ("run.sh", true), ("sub/deeper/nested-é.lean", false)]
+  for v in ["2", "4"] do
+    hgitOk #["update-index", "--index-version", v] repo
+    let got := indexFiles (← IO.FS.readBinFile s!"{repo}/.git/index")
+    unless got == some want do
+      return some s!"index v{v} read as {repr got}, wanted {repr want}"
+  return none
+
+/-- A branch whose commit adds a comment telling history, made without the hook, fails the shipped
+conventions gate over a copy of the tracked files of the checkout under test, which a plain commit
+passes. -/
 def scenarioNarrative (self root : String) : IO Outcome := do
   let label := "a commit telling history in a comment, made without the hook, fails the \
-conventions gate, and a clean one lands"
+conventions gate, and a plain one lands"
+  let fail (detail : String) : IO Outcome := pure { label, ok := false, detail }
+  if let some why ← indexReaderFailure root then return ← fail why
   let bin := (System.FilePath.mk self).parent.getD "."
   let tree := ((bin.parent.bind (·.parent)).bind (·.parent)).getD "."
-  let some g := gateList.find? (·.name == "conventions")
-    | return { label, ok := false, detail := "the shipped list has no conventions gate" }
-  let spec := s!"{g.name}={bin / "precommit"} {String.intercalate " " g.args.toList}"
+  let precommit := tree / ".lake" / "build" / "bin" / "precommit"
+  let real (p : System.FilePath) : IO String := do
+    try pure (← IO.FS.realPath p).toString catch _ => pure ""
+  let layout := (← (tree / "lakefile.toml").pathExists) && (← (tree / "scripts" / "land.lean").pathExists)
+    && (← precommit.pathExists)
+  let same := !(← real self).isEmpty && (← real (tree / ".lake" / "build" / "bin" / "land")) == (← real self)
+  unless layout && same do
+    return ← fail s!"{self} is not the build of a checkout at {tree}"
+  let some gate := defaultGates.find? (·.startsWith "conventions=")
+    | return ← fail "the shipped list has no conventions gate"
   let repo := s!"{root}/narrative/repo"
   IO.FS.createDirAll repo
-  copySources tree repo
+  match ← copyTracked tree repo with
+  | .error why => return ← fail why
+  | .ok _ => pure ()
+  IO.FS.createDirAll s!"{repo}/.lake/build/bin"
+  let _ ← hrun "ln" #["-s", ← real precommit, s!"{repo}/.lake/build/bin/precommit"] none
   hgitOk #["init", "-q", "-b", "main", "."] repo
   hgitOk #["config", "user.name", "Scratch"] repo
   hgitOk #["config", "user.email", "scratch@example.org"] repo
@@ -1950,9 +2046,9 @@ conventions gate, and a clean one lands"
   branch "told" "Told.lean" "-- Previously this file used to hold a parser.\ndef told : Nat := 2\n"
   branch "plain" "Plain.lean" "def plain : Nat := 1\n"
   let before ← revOf repo "refs/heads/main"
-  let (told, toldOut) ← landIn self repo #["told"] spec
+  let (told, toldOut) ← landIn self repo #["told"] gate
   let afterTold ← revOf repo "refs/heads/main"
-  let (plain, _) ← landIn self repo #["plain"] spec
+  let (plain, _) ← landIn self repo #["plain"] gate
   let afterPlain ← revOf repo "refs/heads/main"
   let plainTip ← revOf repo "refs/heads/agent/plain"
   let runDir := ((toldOut.splitOn "\n").find? (·.startsWith "land: step=run ")).bind fun l =>
@@ -2421,7 +2517,8 @@ def scratchSelftest : IO UInt32 := do
     sayFinal .checked [("scenarios", "0")]
     return 0
   let starting : List (String × (String → String → IO Outcome)) :=
-    [("hookdir", scenarioHookGitDir), ("incheckout", scenarioRootInCheckout)]
+    [("hookdir", scenarioHookGitDir), ("incheckout", scenarioRootInCheckout),
+     ("narrative", scenarioNarrative)]
   let scenarios : List (String × (String → String → IO Outcome)) :=
     [ ("lands", scenarioLands), ("latin1", scenarioLatin1), ("moves", scenarioBranchMoves)
     , ("leaves", scenarioMainLeaves)
@@ -2441,8 +2538,7 @@ def scratchSelftest : IO UInt32 := do
     , ("putback", scenarioMainPutBack)
     , ("retireb", scenarioRetireRebased), ("pushlater", scenarioPushLater)
     , ("pushungated", scenarioPushUngated), ("guard", scenarioGuardRefuses)
-    , ("nonet", scenarioNoNetwork), ("narrative", scenarioNarrative) ]
-    ++ (if nested then [] else starting)
+    , ("nonet", scenarioNoNetwork) ] ++ (if nested then [] else starting)
   let mut outcomes : Array Outcome := #[]
   for (key, sc) in scenarios do
     -- A fixture that could not be built fails its scenario, named, and the rest still run.

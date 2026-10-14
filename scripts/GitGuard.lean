@@ -24,8 +24,7 @@ def wsSplit (s : String) : List String := Id.run do
   return out.reverse
 
 /-- The variables that point git at another repository, index, object store, ref namespace
-or config: git's own list plus `GIT_NAMESPACE`; the driver also asks git for its current
-list. -/
+or config: git's own list plus `GIT_NAMESPACE`. -/
 def repoVarsFixed : Array String := #[
   "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_CONFIG", "GIT_CONFIG_PARAMETERS",
   "GIT_CONFIG_COUNT", "GIT_OBJECT_DIRECTORY", "GIT_DIR", "GIT_WORK_TREE",
@@ -187,15 +186,16 @@ inductive RootFault where
   | unmade (parent : String)
   | enclosed (root why : String)
 
-/-- A fresh directory under `parent`, named by its real path since the guard compares the paths
-git names, refused and removed when a repository encloses it, else installed as the guard's
-root. -/
+/-- A fresh directory under `parent` only its owner may read, named by its real path since the
+guard compares the paths git names, refused and removed when a repository encloses it, else
+installed as the guard's root. -/
 -- premise: scenarioRootInCheckout — an enclosed root is refused before any command runs
 def guardRoot (parent label : String) : IO (Except RootFault String) := do
   let made ← try
       IO.FS.createDirAll parent
       let d := s!"{parent}/{label}-{← IO.Process.getPID}-{← IO.monoNanosNow}"
       IO.FS.createDir d
+      IO.setAccessRights d { user := ⟨true, true, true⟩ }
       pure (some (← IO.FS.realPath d).toString)
     catch _ => pure none
   let some root := made | return .error (.unmade parent)

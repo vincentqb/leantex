@@ -13,8 +13,7 @@ public inductive Ran where
   | unstarted (err : String)
   deriving BEq, Repr
 
-/-- What the tool left of one attempt: its log's last words, or no log, the evidence that
-the tool reached an answer. -/
+/-- What the tool left of one attempt: its log's last words, or no log. -/
 public inductive Log where
   | absent
   | says (tail : String)
@@ -33,14 +32,15 @@ public inductive Outcome where
   | inconclusive (says : String)
   deriving BEq, Repr
 
-/-- One attempt read as a verdict: an exit the tool chose and left a log for is one; a
-kill, a failed spawn or a nonzero exit without a log is inconclusive. -/
+/-- One attempt read as the tool's verdict where it reached one, a clean exit or a failing exit
+below 126 that left a log, and as inconclusive otherwise. -/
 @[expose] public def outcome (ran : Ran) (drew : Bool) (log : Log) : Outcome :=
   let said (fallback : String) : String :=
     if log.tail.isEmpty then fallback else log.tail
   match ran with
   | .exited 0 => if drew then .drawn else .refused "no PDF was produced"
   | .exited c =>
+    if c ≥ 126 then .inconclusive s!"exit code {c}" else
     match log with
     | .absent => .inconclusive s!"exit code {c}"
     | .says _ => .refused (said s!"exit code {c}")

@@ -23,7 +23,7 @@ public def keyed (wrapped : String) (inputs : Array (String × ByteArray)) : Str
 public def key (wrapped : String) : String := Flate.contentKey wrapped.toUTF8
 
 public def slotName (wrapped tool stamp version : String) : String :=
-  ConvCache.slotName wrapped.toUTF8 "standalone-picture"
+  ConvCache.slotName wrapped.toUTF8 "standalone-picture-v2"
     (String.intercalate "\u0000" [tool, stamp, version])
 
 /-- An input's leading `..` steps and remaining components relative to the standalone, or

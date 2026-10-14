@@ -36,12 +36,17 @@ example (ran : PicCache.Ran) (log : PicCache.Log) (said : String) (bytes : ByteA
     (a : Except String ByteArray) :
     (ConvCache.Result.ofRun ran log said bytes).record? = some a ↔
       (ran = .exited 0 ∧ a = if bytes.isEmpty then .error "no PDF was produced" else .ok bytes) ∨
-      ∃ c tail, ran = .exited (c + 1) ∧ log = .says tail ∧
+      ∃ c tail, ran = .exited (c + 1) ∧ c + 1 < 126 ∧ log = .says tail ∧
         a = .error (if tail.isEmpty then s!"exit code {c + 1}" else tail) :=
   ConvCache.record?_some_exact ran log said bytes a
 example (r : ConvCache.Result) (a : Except String ByteArray) (h : r.record? = some a) :
     ConvCache.decode (ConvCache.encode a) = some a :=
   ConvCache.decode_encode_record_id r a h
+example (r : ConvCache.Result) (a : Except String ByteArray) (h : r.record? = some a) :
+    (ConvCache.decode (ConvCache.encode a)).map
+        (fun x => ((ConvCache.Result.replay x).outcome, (ConvCache.Result.replay x).answer)) =
+      some (r.outcome, r.answer) :=
+  ConvCache.envelope_replay_exact r a h
 
 example (input : ByteArray) (compute : ByteArray → IO ByteArray) :
     Compression.deflateCachedAt none input compute = compute input :=

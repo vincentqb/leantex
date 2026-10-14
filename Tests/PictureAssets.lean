@@ -190,7 +190,19 @@ def pictureAssetsChecks (ref : IO.Ref (List String)) : IO Unit :=
     t "picture assets: a remembered refusal is not a previous captured PDF"
       ((← PictureAssets.previous retryCache (PictureAssets.key pictureAssetWrapped)) == none)
 
+    -- A slot of the first picture variant may hold a signal's ending as a refusal, so none is read.
     IO.FS.writeFile (root / "mode") "draw"
+    let legacyCache := root / "legacy"
+    IO.FS.createDir legacyCache
+    let legacyName := ConvCache.slotName pictureAssetWrapped.toUTF8 "standalone-picture"
+      (String.intercalate "\u0000" [tool, stamp, version])
+    IO.FS.writeBinFile (legacyCache / legacyName) (ConvCache.encode (.error "exit code 137"))
+    let rendered := (← pictureAssetLines calls).count "render"
+    let fresh ← PictureAssets.fulfil (some legacyCache) tool stamp version pictureAssetWrapped
+    t "picture assets: a slot of the first picture variant is never read"
+      (legacyName != name && pictureAssetDrawn fresh expected false &&
+        (← pictureAssetLines calls).count "render" == rendered + 1)
+
     let blocked := root / "cache-is-a-file"
     IO.FS.writeFile blocked "a regular file cannot contain cache records"
     let got ← PictureAssets.fulfil (some blocked) tool stamp version pictureAssetWrapped
