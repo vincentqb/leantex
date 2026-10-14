@@ -81,6 +81,16 @@ theorem long_sum (a b c d e f g h i j k l m n o p q r : Nat) :
     a + b + c + d + e + f + g + h + i + j + k + l + m + n + o + p + q + r =
       r + q + p + o + n + m + l + k + j + i + h + g + f + e + d + c + b + a := by omega
 
+theorem ge_zero (n : Nat) : n ≥ 0 := Nat.zero_le n
+
+theorem ordered_pair : ∃ a b : Nat, a < b := ⟨0, 1, Nat.one_pos⟩
+
+theorem refl_any (α : Type) (a : α) : a = a := rfl
+
+theorem not_lt_self (n : Nat) : ¬n < n := Nat.lt_irrefl n
+
+theorem inhabited_nonempty (h : ∀ (α : Type) [Inhabited α], Nonempty α) : True := trivial
+
 theorem unfinished (n : Nat) : n + 0 = n := by
   exact Nat.zero_add n
 

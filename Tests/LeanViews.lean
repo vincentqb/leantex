@@ -64,8 +64,8 @@ def gitWorld (files : List (String × ByteArray)) (commit path status : Option S
 
 def leanViewChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
-  let src ← fixtureText Tests.LeanStatements.fixture
-  let answer ← IO.FS.readFile Tests.LeanStatements.answerFile
+  let src ← fixtureText leanFixture
+  let answer ← IO.FS.readFile leanAnswer
   let facts ← match LeanFacts.decode answer with
     | .ok f => pure f
     | .error why => do t s!"views: the committed answer reads ({why})" false; return
@@ -163,7 +163,8 @@ def leanViewChecks (ref : IO.Ref (List String)) : IO Unit := do
     "  decide -- by computation\n\ntheorem with_calc (a b c : Nat) (h1 : a = b) (h2 : b = c) : " ++
     "a = c := by\n  calc a = b := h1\n    _ = c := h2\n"
   let mk (name : String) (start stop : Nat × Nat) (proof : (Nat × Nat) × (Nat × Nat)) :
-      LeanFacts.Decl := { name, kind := .theorem, start, stop, type := none, proof := some proof }
+      LeanFacts.Decl :=
+    { name, kind := .theorem, start, stop, type := none, proof := some proof, prop := true }
   let edgeDecls : Array LeanFacts.Decl := #[mk "one_line" (1, 0) (1, 35) ((1, 29), (1, 35)),
     mk "eqn_style" (3, 0) (5, 16) ((4, 2), (5, 16)),
     mk "commented" (7, 0) (8, 8) ((7, 30), (8, 8)),
@@ -251,7 +252,7 @@ def leanViewChecks (ref : IO.Ref (List String)) : IO Unit := do
   let fonts ← mathSetOf (slotPairOf 2 text mono)
   let (edgeDoc, _) := (fun (r : Array Parse.Raw × Array Diag) => Elab.runRaws "edge2.lean" r.1 r.2)
     (Surface.readCode .lean "edge2.lean" edge2 (some facts2))
-  let edgeLines := Tests.LeanStatements.pageLines fonts edgeDoc
+  let edgeLines := codePageLines fonts edgeDoc
   let afterProof := (edgeLines.zipIdx.filter fun ((mono, ink), _) =>
     !mono && ink.trimAscii.toString == "Proof").map fun (_, i) =>
       ((edgeLines[i + 1]?.map (ink ·.2)).getD "")
@@ -277,7 +278,7 @@ def leanViewChecks (ref : IO.Ref (List String)) : IO Unit := do
     (summaries.size == folds.length && summaries.all (· == "Proof") &&
       (elemAttrsList (· == "details") #[] (docNodesOf folded).toList).all fun (_, attrs) =>
         (HtmlDoc.attrOf? attrs "open").isNone)
-  let lines := Tests.LeanStatements.pageLines fonts folded
+  let lines := codePageLines fonts folded
   let proofAt := lines.findIdx? fun (mono, ink) => !mono && ink.trimAscii.toString == "Proof"
   t "views: the printed page sets a folded proof open, its summary then its code"
     (proofAt.any fun i => (lines[i - 1]?.any (·.1)) && (lines[i + 1]?.any (·.1)))
@@ -301,6 +302,19 @@ def leanViewChecks (ref : IO.Ref (List String)) : IO Unit := do
   t s!"views: each statement's name links to its declaration's lines at the file's commit ({hrefs.size})"
     (hrefs.contains "https://github.com/acme/tides/blob/c0ffee/testdata/codedoc/lean/statements.lean#L11-L13" &&
       !linkedDs.any fun d => d.kind == .W0431 || d.kind == .W0432)
+  let (worded, wordedDs) := readWith "show = prose, code, link = https://github.com/acme/tides"
+    { commit := some "c0ffee", path := some "testdata/codedoc/lean/statements.lean"
+      dirty := some false, tracked := true }
+  t "views: a statement said in words links its name as its mathematics does"
+    (Tests.CodeDoc.hrefs worded == hrefs && !wordedDs.any fun d => d.kind == .W0431 || d.kind == .W0432)
+  let (foldedMath, _) := readWith "show = math, prose, code, proofs = collapse"
+  let foldedMathLines := codePageLines fonts foldedMath
+  t s!"views: a page that sets statements folds each proof into a disclosure of its own code ({(disclosures foldedMath).size})"
+    ((disclosures foldedMath).size == folds.length &&
+      (disclosures foldedMath).all (· == ("Proof", false)) &&
+      ink (String.join (listingTexts foldedMath).toList) ==
+        ink (String.ofList (Code.codeOf (Code.segmentsOf .lean src))) &&
+      foldedMathLines.any (fun (_, l) => l.startsWith "Theorem (Tide.le_or_gt). For"))
   let twin := MarkdownDoc.emit linked
   t "views: the markdown twin keeps a broken statement's formulas apart, so none reads as a display"
     ((twin.splitOn "$$").length == 1 && (twin.splitOn "**Theorem** (").length > 20)
@@ -341,7 +355,7 @@ def leanViewChecks (ref : IO.Ref (List String)) : IO Unit := do
     (listingTexts whole == #["\n" ++ (String.ofList ((src.toList.reverse.dropWhile Code.isWhite).reverse))] &&
       !wholeDs.any fun d => d.kind == .W0110 || d.kind == .W0414)
   let (chosen, chosenDs) := docOf (incl "show = {math, code}, decls = {height_double, nothere}, proofs = remove" (some facts))
-  let chosenLines := Tests.LeanStatements.pageLines fonts chosen
+  let chosenLines := codePageLines fonts chosen
   let codeAfter (i : Nat) : String :=
     String.join (((chosenLines.extract (i + 1) chosenLines.size).filter (·.1)).map (·.2)).toList
   let statementAt := chosenLines.findIdx? fun (mono, ink) =>
@@ -351,6 +365,15 @@ def leanViewChecks (ref : IO.Ref (List String)) : IO Unit := do
       (listingTexts chosen).size == 1 &&
       ((listingTexts chosen).all fun c => (c.splitOn "2 * height rise n := ⋯").length == 2) &&
       chosenDs.any (·.subject == some "code:decls:nothere"))
+  let (spoken, _) := docOf (incl "show = {prose, code}, decls = {le_or_gt}" (some facts))
+  let spokenLines := codePageLines fonts spoken
+  t "views: an included declaration says its statement in words, then sets its code"
+    ((spokenLines.findIdx? fun (_, l) => l.startsWith "Theorem (Tide.le_or_gt). For").any fun i =>
+      ((spokenLines.extract (i + 1) spokenLines.size).filter (·.1)).any fun (_, l) =>
+        (l.splitOn "theorem le_or_gt").length == 2)
+  let (_, phrasedDs) := docOf (incl "show = prose, phrase.zz = \"#1 is void\"" (some facts))
+  t s!"views: an inclusion's phrase is refused at the request that declares it ({phrasedDs.map (·.subject)})"
+    (phrasedDs.any fun d => d.kind == .W0416 && d.span == some request)
   let (strange, strangeDs) := docOf (incl "caption = x, proofs = folded" none)
   let strangeNotes := strangeDs.filter fun (d : Diag) => d.kind == .W0110
   t "views: an inclusion names, at its request, a key no option has and a value no mode has, and includes the file whole"
@@ -368,7 +391,7 @@ def leanViewChecks (ref : IO.Ref (List String)) : IO Unit := do
         (fun w => (allText.splitOn w).length > 1) &&
       (disclosures all).size == folds.length &&
       ink allText == ink src &&
-      (Tests.LeanStatements.pageLines fonts all).any (fun (_, ink) =>
+      (codePageLines fonts all).any (fun (_, ink) =>
         ink.startsWith "Theorem (Tide.height_double).") &&
       !allDs.any (·.kind == .W0110))
   -- The fenced division markdown includes a Lean file by.

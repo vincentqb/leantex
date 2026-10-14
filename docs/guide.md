@@ -127,14 +127,40 @@ When Lean gives no answer (no `lake` on PATH, packages not fetched, an import
 not built, four minutes passed) the page sets the code alone, whatever `show`
 asks, and the run says so once. The export reads Lean 4.24 and later.
 
+`show = prose` says each statement in words instead, its terms as formulas:
+**Theorem** (`Tide.le_or_gt`). For all natural numbers a and b, either a is at
+most b or b is less than a. An explicit binder reads as a quantifier over its
+type's noun (natural number, integer, rational, real or complex number,
+proposition, type, else an element of the type), consecutive ones over one
+noun as one, plural; a binder whose type is a proposition, or an instance one
+below the top, as a hypothesis, `if …, then …`; `∃` as there is; `∧ ∨ ↔ ¬` as
+both … and, either … or, if and only if, and it is not the case that;
+`= ≠ < ≤ > ≥ ∣ ∈` as is equal to, is not equal to, is less than, is at most,
+is greater than, is at least, divides and is an element of; every other
+proposition stays a formula, and parentheses group what the words do not. The
+words parse back to the statement they say, implicit arguments hidden as in the
+math view. A declaration whose type is no proposition, or a statement the words
+cannot say (a hypothesis the rest names, a `let`), is set as mathematics, once
+on a page that also shows the math view, and the run says so. A directive may
+give a constant its own words, `#k` standing for its k-th explicit argument:
+`phrase.Tide.height = "the height after #2 steps of #1"` says its terms, and a
+phrase that opens with a slot, `phrase.Calm = "#1 is calm"`, its propositions,
+each in place of the core wording of its kind. The run names each phrase it
+does not take (for no constant, or several, a second for one constant, for a
+connective, with other slots than the explicit arguments, with a comma or a
+parenthesis, or words that would not read back) and each no sentence on the
+page uses, as on a page that says nothing in words. Views combine in the order
+given, as `show = prose, code`, `show = code, prose` or
+`show = math, prose, code`.
+
 Two more options shape a Lean file's page. `proofs = collapse` folds each
 top-level theorem's proof into a disclosure whose summary is Proof, after its
 signature: from the proof's first character, or the next line after a bare
 `:= by`, through its last line and the comments closing it. A proof written on
 its signature's line stays in place; the disclosure is closed on the web page
 and open in print and in the PDF. `proofs = remove` sets Lean's `⋯` in the
-proof's place. The default is `proofs = show`. `link` makes each statement's name a link to
-its declaration: a GitHub repository's root,
+proof's place. The default is `proofs = show`. `link` makes each statement's
+name a link to its declaration: a GitHub repository's root,
 `link = https://github.com/OWNER/REPO`, reaches its lines at the commit the
 file's repository holds it at, and any other value is a template whose
 `{name}`, `{module}`, `{path}`, `{line}`, `{endline}` and `{commit}` each

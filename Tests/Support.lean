@@ -2922,3 +2922,34 @@ def svgTerminalAccepted : List (String × String × String) :=
     ("whitespace around M/L coordinates",
       path (track "d" (pathStart ++ ";M 16 , 0 L 32 , 0 L 32 , 16 L 16 , 16") linear),
       s!"<path fill=\"red\" d=\"{pathEnd}\"/>")]
+
+/-- The listings a document's body holds, in order: their language and their content. -/
+def listings (doc : Ir.Doc) : Array (Option String × String) :=
+  doc.body.filterMap fun b => match b with
+    | .verbatim _ content spec => some (spec.langToken, content)
+    | _ => none
+
+/-- Whether a shipped line is set in the typewriter face alone, as a listing's lines are. -/
+def monoLine (l : Layout.LineOut) : Bool :=
+  let runs := lineRuns l
+  !runs.isEmpty && runs.all (·.1 == 1)
+
+/-- The invented Lean file the statement views read, and the answer Lean gave for it. -/
+def leanFixture : String := "testdata/codedoc/lean/statements.lean"
+def leanAnswer : String := "testdata/codedoc/lean/statements.answer"
+
+/-- The source line a statement stands just before: the line its declaration's command opens on,
+or past the docstring that line opens. -/
+def headLine (src : String) (line : Nat) : String :=
+  let ls := (src.splitOn "\n").drop (line - 1)
+  match ls with
+  | first :: _ =>
+    if first.trimAscii.toString.startsWith "/--" then
+      let rest := ls.dropWhile fun l => (l.splitOn "-/").length < 2
+      (rest.drop 1).headD ""
+    else first
+  | [] => ""
+
+/-- A page's shipped lines: whether each is set in the typewriter face alone, and its ink. -/
+def codePageLines (fonts : Font.FontSet) (doc : Ir.Doc) : Array (Bool × String) :=
+  (bodyLines (layoutOf fonts doc)).map fun l => (monoLine l, lineInk l)

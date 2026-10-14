@@ -14,9 +14,6 @@ says. -/
 
 namespace Tests.LeanStatements
 
-def fixture : String := "testdata/codedoc/lean/statements.lean"
-def answerFile : String := "testdata/codedoc/lean/statements.answer"
-
 /-- A declaration's statement formulas as TeX source, each with whether a word space follows it. -/
 def spacedFormulasOf (facts : LeanFacts.Facts) (name : String) : Array (String × Bool) :=
   match facts.decls.find? (·.name == name) with
@@ -41,18 +38,6 @@ def texOf (t : LeanFacts.Term) (ctx : List String)
   let lk : LeanStatement.Lookup :=
     { binders := fun c => binders.lookup c, shown := id, collectionFirst := true }
   Parse.rawSrc (LeanStatement.Math.listRaws {} #[] (LeanStatement.render lk ctx t).math.toList)
-
-/-- The source line a statement stands just before: the line its declaration's command opens on,
-or past the docstring that line opens. -/
-def headLine (src : String) (line : Nat) : String :=
-  let ls := (src.splitOn "\n").drop (line - 1)
-  match ls with
-  | first :: _ =>
-    if first.trimAscii.toString.startsWith "/--" then
-      let rest := ls.dropWhile fun l => (l.splitOn "-/").length < 2
-      (rest.drop 1).headD ""
-    else first
-  | [] => ""
 
 /-- A world for the export's program: files by path, a `lake` on PATH or not, the version the
 project's Lean gives, and one reply to every export run. -/
@@ -88,19 +73,15 @@ def writes (qs : List Ask) : List String := qs.filterMap fun
   | .writeAtomic path _ => some path
   | _ => none
 
-/-- A page's shipped lines: whether each is set in the typewriter face alone, and its ink. -/
-def pageLines (fonts : Font.FontSet) (doc : Ir.Doc) : Array (Bool × String) :=
-  (bodyLines (layoutOf fonts doc)).map fun l => (Tests.CodeDoc.monoLine l, lineInk l)
-
 def leanStatementChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
-  let src ← fixtureText fixture
-  let answer ← IO.FS.readFile answerFile
+  let src ← fixtureText leanFixture
+  let answer ← IO.FS.readFile leanAnswer
   let facts ← match LeanFacts.decode answer with
     | .ok f => pure f
     | .error why => do t s!"statements: the committed answer reads ({why})" false; return
   t "statements: the committed answer holds every declaration the file writes, and the one Lean refused"
-    (facts.decls.size == 34 && facts.errors == 4 && facts.failed.map (·.name) == #["refused"])
+    (facts.decls.size == 39 && facts.errors == 4 && facts.failed.map (·.name) == #["refused"])
   let rows := (← IO.FS.readFile "testdata/codedoc/lean/answers.tsv").splitOn "\n"
   t "statements: the committed answer was asked through this export, of this file, by its Lean"
     ((Code.leanImports? src).any fun imports => rows.contains
@@ -150,7 +131,8 @@ def leanStatementChecks (ref : IO.Ref (List String)) : IO Unit := do
   let exImplicit := app "Exists" [app "Nat" [], .lam "n" .explicit (app "Nat" [])
     (.pi "m" .implicit false (app "Nat" []) (app "LE.le" [app "Nat" [], app "instLENat" [], var 0, var 1]))]
   let exDecl : LeanFacts.Decl :=
-    { name := "ex_implicit", kind := .theorem, start := (1, 0), stop := (1, 0), type := some exImplicit }
+    { name := "ex_implicit", kind := .theorem, start := (1, 0), stop := (1, 0), type := some exImplicit
+      prop := true }
   t "statements: an implicit binder inside an existential's body is a quantifier there, not hidden"
     (((LeanStatement.statementMath facts exDecl exImplicit).map fun (m, _) =>
         Parse.rawSrc (LeanStatement.Math.listRaws {} #[] m.toList)) ==
@@ -207,12 +189,12 @@ def leanStatementChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (doc, ds) := readAs "show = math, code"
   let codeOnly := Code.codeOf (Code.segmentsOf .lean src)
   t "statements: the listings hold the file's code exactly, statements between them"
-    (String.join ((Tests.CodeDoc.listings doc).toList.map fun (_, c) => (c.drop 1).toString) ==
+    (String.join ((listings doc).toList.map fun (_, c) => (c.drop 1).toString) ==
       String.ofList codeOnly)
   t s!"statements: each statement Lean did not give is named once, in source order ({ds.map (·.subject)})"
     ((ds.filter (·.kind == .W0414)).map (·.subject) == #[some "lean:Tide.placeholder", some "lean:refused"])
   let out := layoutOf fonts doc
-  let lines := (bodyLines out).map fun l => (Tests.CodeDoc.monoLine l, lineInk l)
+  let lines := (bodyLines out).map fun l => (monoLine l, lineInk l)
   let shown := facts.decls.filter fun d => (d.type.map (·.elaborated)).getD false
   let opening (ink : String) : List String := (ink.trimAscii.toString.splitOn " ").take 2
   for d in shown do
@@ -245,11 +227,11 @@ def leanStatementChecks (ref : IO.Ref (List String)) : IO Unit := do
     (mathElems == (shown.toList.map fun d => (formulasOf facts d.name).size).sum)
   let (codeDoc, codeDs) := readAs "show = code"
   t "statements: a page that shows code alone sets no statement and names no loss, whatever Lean said"
-    (!(pageLines fonts codeDoc).any (fun (_, ink) => ink.startsWith "Theorem (") &&
+    (!(codePageLines fonts codeDoc).any (fun (_, ink) => ink.startsWith "Theorem (") &&
       !codeDs.any (·.kind == .W0414))
   let (mathDoc, mathDs) := readAs "show = math"
-  let mathLines := pageLines fonts mathDoc
-  let fallback := (Tests.CodeDoc.listings mathDoc).map (·.2.trimAscii.toString)
+  let mathLines := codePageLines fonts mathDoc
+  let fallback := (listings mathDoc).map (·.2.trimAscii.toString)
   t s!"statements: a page that shows math alone sets statements, its title, no prose, and the code of each declaration Lean gave no statement for in its place ({fallback})"
     (mathLines.any (fun (_, ink) => ink.startsWith "Theorem (Tide.height_double).") &&
       mathDoc.info.title == some "Tide arithmetic" &&
@@ -260,35 +242,35 @@ def leanStatementChecks (ref : IO.Ref (List String)) : IO Unit := do
         (d.message.splitOn "in place of a statement").length == 2)
   let (unansweredDoc, unansweredDs) := readWith "show = math" none
   t "statements: a page that shows math alone shows the file's code when Lean gave no answer"
-    ((Tests.CodeDoc.listings unansweredDoc).size == (Tests.CodeDoc.listings codeDoc).size &&
-      !(pageLines fonts unansweredDoc).any (fun (_, ink) => ink.startsWith "Theorem (") &&
+    ((listings unansweredDoc).size == (listings codeDoc).size &&
+      !(codePageLines fonts unansweredDoc).any (fun (_, ink) => ink.startsWith "Theorem (") &&
       !unansweredDs.any (·.kind == .W0414))
-  let afterLines := pageLines fonts (readAs "show = code, math").1
+  let afterLines := codePageLines fonts (readAs "show = code, math").1
   t "statements: code before math sets each statement after its declaration's last line"
     ((afterLines.findIdx? fun (mono, ink) => !mono && ink.startsWith "Theorem (Tide.height_double).").any
       fun i => (afterLines[i - 1]?.map fun (mono, ink) =>
         mono && ink.trimAscii.toString.startsWith "unfold height; exact").getD false)
   let (chosenDoc, chosenDs) := readAs "show = math, code, decls = Tide.height, swap_and, nothere"
-  let chosen := (pageLines fonts chosenDoc).filter fun (mono, ink) => !mono && ink.startsWith "Theorem ("
+  let chosen := (codePageLines fonts chosenDoc).filter fun (mono, ink) => !mono && ink.startsWith "Theorem ("
   t s!"statements: decls selects the statements set, and names one Lean does not hold ({chosen.size})"
-    ((pageLines fonts chosenDoc).any (fun (_, ink) => ink.startsWith "Definition (Tide.height).") &&
+    ((codePageLines fonts chosenDoc).any (fun (_, ink) => ink.startsWith "Definition (Tide.height).") &&
       chosen.size == 1 && chosenDs.any (·.subject == some "code:decls:nothere"))
-  let (proseDoc, proseDs) := readAs "show = prose"
+  let (unknownDoc, unknownDs) := readAs "show = summary"
   t "statements: a view the engine does not set is named, and the page shows code"
-    (proseDs.any (fun d => d.kind == .W0110 && d.subject == some "code:show:prose") &&
-      (pageLines fonts proseDoc).any (·.1))
+    (unknownDs.any (fun d => d.kind == .W0110 && d.subject == some "code:show:summary") &&
+      (codePageLines fonts unknownDoc).any (·.1))
   -- The answer, read whole or refused whole.
   let refused (body : String) : Bool := (LeanFacts.decode body).toOption.isNone
-  let header := "{\"leantex-lean-export\":1,\"lean\":\"4.34.1\",\"errors\":0}\n"
+  let header := "{\"leantex-lean-export\":2,\"lean\":\"4.34.1\",\"errors\":0}\n"
   t "statements: an answer with no declarations reads as none"
     ((LeanFacts.decode (header ++ "{\"leantex-lean-export-end\":0}\n")).toOption.map (·.decls.size) == some 0)
   let record (type : String) : String :=
     header ++ "{\"name\":\"a\",\"module\":\"\",\"kind\":\"theorem\",\"range\":[1,0,1,1],\"head\":[1,0]," ++
-      "\"signature\":null,\"proof\":null,\"proved\":true,\"type\":" ++ type ++ "}\n" ++
+      "\"signature\":null,\"proof\":null,\"proved\":true,\"prop\":true,\"type\":" ++ type ++ "}\n" ++
       "{\"leantex-lean-export-end\":1}\n"
   t "statements: an answer cut short, miscounted, of another schema, with a node read twice or a binder marked neither way is refused"
     (refused header && refused (header ++ "{\"leantex-lean-export-end\":1}\n") &&
-      refused ("{\"leantex-lean-export\":2,\"lean\":\"x\",\"errors\":0}\n{\"leantex-lean-export-end\":0}\n") &&
+      refused ("{\"leantex-lean-export\":1,\"lean\":\"x\",\"errors\":0}\n{\"leantex-lean-export-end\":0}\n") &&
       refused (record "[[\"const\",\"True\"],[\"app\",0,0]]") &&
       refused (record "[[\"const\",\"True\"],[\"const\",\"True\"],[\"pi\",\"x\",\"d\",0,1,2]]") &&
       !refused (record "[[\"const\",\"True\"],[\"const\",\"True\"],[\"pi\",\"x\",\"d\",0,1,1]]"))

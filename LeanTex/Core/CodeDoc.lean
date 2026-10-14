@@ -4,6 +4,7 @@ public import LeanTex.Core.MdDesugar
 public import LeanTex.Core.Parse
 public import LeanTex.Core.Ir
 public import LeanTex.Core.LeanStatement
+public import LeanTex.Core.LeanProse
 import LeanTex.Core.Decl
 import LeanTex.Core.Hex
 
@@ -118,6 +119,7 @@ public structure Acc where
 public inductive View where
   | code
   | math
+  | prose
   deriving Repr, BEq, DecidableEq, Inhabited
 
 /-- What a page does with a theorem's proof: shows it, folds it into a disclosure, or sets Lean's
@@ -129,7 +131,8 @@ public inductive Proofs where
   deriving Repr, BEq, DecidableEq, Inhabited
 
 /-- What a page is asked to show: its views in order, the declarations it selects, what it does
-with proofs, the link a declaration's name reaches, and each value it cannot read. -/
+with proofs, the link a declaration's name reaches, each value it cannot read, and the phrases it
+declares by name and template. -/
 public structure Showing where
   views : List View := [.code]
   decls : Option (List String) := none
@@ -142,6 +145,7 @@ public structure Showing where
   strange : List String := []
   /-- The keys written. -/
   written : List String := []
+  phrases : List (String × String) := []
   deriving Repr, Inhabited
 
 /-- A proof a page folds or removes: its source offsets, and the paragraph standing for it where
@@ -421,15 +425,30 @@ public def keyedEntries (entries : List String) : List (String × List String) :
 /-- The keys a directive takes for what its page shows, which no declaration reads. -/
 public def showKeys : List String := ["show", "decls", "proofs", "link"]
 
+/-- The prefix of the directive keys that declare a constant's phrase. -/
+public def phraseKey : String := "phrase."
+
+/-- Whether a directive key says what its page shows, which no declaration reads. -/
+public def showKey (k : String) : Bool := showKeys.contains k || k.startsWith phraseKey
+
 /-- Whether a page shows the mathematics view. -/
 public def Showing.math (s : Showing) : Bool := s.views.contains .math
 
 public def Showing.code (s : Showing) : Bool := s.views.contains .code
 
-public def Showing.mathFirst (s : Showing) : Bool :=
-  match s.views with
-  | .math :: _ => true
-  | _ => false
+public def Showing.prose (s : Showing) : Bool := s.views.contains .prose
+
+/-- Whether a page sets a declaration's statement, which Lean is asked for. -/
+public def Showing.statements (s : Showing) : Bool := s.math || s.prose
+
+/-- The views that set a declaration's statement before its code, and those after it. -/
+public def Showing.around (s : Showing) : List View × List View :=
+  (s.views.takeWhile (· != .code), (s.views.dropWhile (· != .code)).filter (· != .code))
+
+/-- A directive value with the double quotes around it removed. -/
+private def unquote (v : String) : String :=
+  if v.length ≥ 2 && v.startsWith "\"" && v.endsWith "\"" then ((v.drop 1).dropEnd 1).toString
+  else v
 
 /-- A value with its surrounding quotes or braces taken off. -/
 public def unwrapValue (v : String) : String :=
@@ -438,8 +457,8 @@ public def unwrapValue (v : String) : String :=
   then ((t.drop 1).dropEnd 1).trimAscii.toString else t
 
 /-- What option entries ask a page of a file of `lang` to show: its `show` views, `code` where it
-names none the language has, its `decls`, `proofs` and `link`; `alone` where nothing else reads the
-entries, so any other key is strange. -/
+names none the language has, its `decls`, `proofs`, `link` and phrases; `alone` where nothing else
+reads the entries, so any other key is strange. -/
 public def showingOfEntries (lang : Ir.CodeLang) (entries : List String) (alone : Bool := false) :
     Showing :=
   let groups := keyedEntries entries
@@ -448,7 +467,10 @@ public def showingOfEntries (lang : Ir.CodeLang) (entries : List String) (alone 
     (vs.flatMap fun v => (unwrapValue v).splitOn ",").map (·.trimAscii.toString) |>.filter (!·.isEmpty)
   let named := listed ((values "show").getD [])
   let viewOf? (n : String) : Option View :=
-    if n == "code" then some .code else if n == "math" && lang == .lean then some .math else none
+    if n == "code" then some .code
+    else if lang == .lean && n == "math" then some .math
+    else if lang == .lean && n == "prose" then some .prose
+    else none
   let views := (named.filterMap viewOf?).eraseDups
   let decls := ((values "decls").map listed).filter (!·.isEmpty)
   let proofs := (values "proofs").map fun vs => unwrapValue (", ".intercalate vs)
@@ -462,9 +484,13 @@ public def showingOfEntries (lang : Ir.CodeLang) (entries : List String) (alone 
     link := (values "link").map fun vs => unwrapValue (",".intercalate vs)
     unknown := named.filter fun n => (viewOf? n).isNone
     strange := if alone then groups.filterMap fun (k, vs) =>
-        if showKeys.contains k then none else some (if k.isEmpty then vs.headD "" else k)
+        if showKey k then none else some (if k.isEmpty then vs.headD "" else k)
       else []
-    written := groups.map (·.1) }
+    written := groups.map (·.1)
+    phrases := groups.filterMap fun (k, vs) =>
+      if k.startsWith phraseKey then
+        some ((k.drop phraseKey.length).toString, unquote (", ".intercalate vs))
+      else none }
 
 /-- What a file's directive asks its page to show. -/
 public def showingOf (lang : Ir.CodeLang) (src : Array Char) : Showing :=
@@ -485,13 +511,13 @@ public def Showing.idle (s : Showing) (lang : Ir.CodeLang) (request : Span) (pag
   let foreign := if lang == .lean then [] else
     (["decls", "proofs", "link"].filter s.written.contains).map fun k =>
       note k "is read only on a Lean file's page" "delete it, or write it in a Lean file's directive"
-  let unlinked := if lang == .lean && s.link.isSome && !s.math then
+  let unlinked := if lang == .lean && s.link.isSome && !s.statements then
       [note "link" "links statements' names, and none is set" "write `show = math, code`"]
     else []
   let empty := if lang == .lean && s.written.contains "decls" && s.decls.isNone then
       [note "decls" "names no declaration" "name one, or delete `decls` to set every one"]
     else []
-  let unchosen := if page && lang == .lean && s.decls.isSome && !s.math then
+  let unchosen := if page && lang == .lean && s.decls.isSome && !s.statements then
       [note "decls" "chooses the declarations whose statements a page sets, and it sets none"
         "write `show = math, code`"]
     else []
@@ -499,14 +525,14 @@ public def Showing.idle (s : Showing) (lang : Ir.CodeLang) (request : Span) (pag
 
 /-- What a page that asked Lean sets when Lean gave no answer. -/
 public def Showing.lost (s : Showing) : String :=
-  match s.math, s.proofs != .show with
+  match s.statements, s.proofs != .show with
   | true, true => "its code is set without statements and its proofs as written"
   | true, false => "its code is set without statements"
   | false, _ => "its proofs are set as written"
 
 /-- Whether a page asks Lean: it shows statements, or folds or removes proofs, whose places only
 Lean's syntax tree gives. -/
-public def Showing.asks (s : Showing) : Bool := s.math || s.proofs != .show
+public def Showing.asks (s : Showing) : Bool := s.statements || s.proofs != .show
 
 /-- What an inclusion sets when Lean gave no answer: the whole file, in place of the declarations a
 `decls` chooses, without statements and with its proofs as written where it asked for either. -/
@@ -514,7 +540,7 @@ public def Showing.lostIncluded (s : Showing) : String :=
   match s.decls with
   | none => if s.asks then s.lost else "it is included whole"
   | some _ =>
-    let parts := (if s.math then [", without statements"] else []) ++
+    let parts := (if s.statements then [", without statements"] else []) ++
       (if s.proofs != .show then [", its proofs as written"] else [])
     let said := String.join parts
     "it is included whole in place of the declarations `decls` names" ++ said
@@ -1198,7 +1224,7 @@ one `\output`. -/
 public def directiveRaws (value : String) (p : Pos) : Array Raw :=
   let entries := (Decl.splitEntries value).foldl (fun (acc : Array String × Bool) e =>
     match Decl.splitEntry e with
-    | some (k, _) => if showKeys.contains k then (acc.1, true) else (acc.1.push e, false)
+    | some (k, _) => if showKey k then (acc.1, true) else (acc.1.push e, false)
     | none => if acc.2 then acc else (acc.1.push e, false)) (#[], false) |>.1.toList
   let isTheme (e : String) : Bool := (Decl.splitEntry e).map (·.1) == some "theme"
   let themes := entries.filterMap fun e =>
@@ -1514,12 +1540,16 @@ public theorem pagePieces_code_exact (lang : Ir.CodeLang) (text : String) (folds
 /-- A line free to break, and no space: zero glue. -/
 public def breakRaws (pos : Pos) : Array Raw := #[.ctrl "hspace" pos, .group #[.word "0pt" pos] pos]
 
+/-- One formula as inline mathematics. -/
+@[expose] public def formulaRaw (pos : Pos) (m : Array LeanNotation.Math) : Raw :=
+  .math false (LeanStatement.Math.listRaws pos #[] m.toList) pos
+
 /-- One formula after a paragraph's raws, a word space before it where the one before asks for
 it, else a bare break; and whether the next asks for one. -/
 @[expose] public def displayStep (pos : Pos) (st : Array Raw × Bool)
     (formula : Array LeanNotation.Math × Bool) : Array Raw × Bool :=
-  ((st.1.append (if st.2 then #[.space] else breakRaws pos)).push
-    (.math false (LeanStatement.Math.listRaws pos #[] formula.1.toList) pos), formula.2)
+  ((st.1.append (if st.2 then #[.space] else breakRaws pos)).push (formulaRaw pos formula.1),
+    formula.2)
 
 /-- Where a file stands for its links: the commit its repository holds it at, its path there, and
 whether it differs from that commit, each where the host could say. -/
@@ -1583,16 +1613,50 @@ public def expandLink (template : String) (d : LeanFacts.Decl) (place : LinkPlac
   | some url => #[.ctrl "href" pos, .group #[.word url pos] pos, .group name pos]
   | none => name
 
-/-- The paragraph a declaration's statement sets as, ragged right: its kind in bold, its name as
-code, a link where one is given, marked when Lean holds a theorem unproved, then its formulas, each
-after a word space where the one before asks for it, else after a bare break. -/
-public def displayRaws (d : LeanFacts.Decl) (formulas : Array (Array LeanNotation.Math × Bool))
-    (pos : Pos) (link : Option String := none) : Array Raw :=
+/-- A declaration's head: its kind in bold and its name as code, linked where a link is given,
+marked when Lean holds a theorem unproved. -/
+public def headRaws (d : LeanFacts.Decl) (pos : Pos) (link : Option String := none) : Array Raw :=
   let close : Array Raw := if d.kind == .theorem && !d.proved then
       #[.word "," pos, .space, .word "unproved)." pos] else #[.word ")." pos]
-  let head : Array Raw := #[.ctrl "textbf" pos, .group #[.word d.kind.label pos] pos,
-    .space, .word "(" pos] ++ nameRaws d pos link ++ close
-  #[.env "flushleft" (formulas.foldl (displayStep pos) (head, true)).1 pos]
+  #[.ctrl "textbf" pos, .group #[.word d.kind.label pos] pos, .space, .word "(" pos] ++
+    nameRaws d pos link ++ close
+
+/-- The paragraph a declaration's statement sets as, ragged right: its head, then its formulas,
+each after a word space where the one before asks for it, else after a bare break. -/
+public def displayRaws (d : LeanFacts.Decl) (formulas : Array (Array LeanNotation.Math × Bool))
+    (pos : Pos) (link : Option String := none) : Array Raw :=
+  #[.env "flushleft" (formulas.foldl (displayStep pos) (headRaws d pos link, true)).1 pos]
+
+/-- A leaf's formulas as inline mathematics, a line free to break between them. -/
+public def leafRaws (pos : Pos) : LeanProse.Leaf → Array Raw
+  | [] => #[]
+  | m :: rest => rest.foldl (fun acc q => (acc ++ breakRaws pos).push (formulaRaw pos q))
+      #[formulaRaw pos m]
+
+/-- A token's raws, its word capitalized while the sentence still opens, and whether it still
+opens after it: past an opening parenthesis it does. -/
+public def tokRaws (pos : Pos) (opening : Bool) : LeanProse.Tok LeanProse.Leaf → Array Raw × Bool
+  | .w "(" => (#[.word "(" pos], opening)
+  | .w s => (#[.word (if opening then s.capitalize else s) pos], false)
+  | .leaf l => (leafRaws pos l, false)
+
+/-- A sentence's tokens as text, its opening word capitalized, each leaf as inline mathematics, a
+word space between tokens but where they join, and a full stop. -/
+public def sentenceRaws (pos : Pos) (toks : List (LeanProse.Tok LeanProse.Leaf)) : Array Raw :=
+  let step (acc : Array Raw × Option (LeanProse.Tok LeanProse.Leaf) × Bool)
+      (t : LeanProse.Tok LeanProse.Leaf) :
+      Array Raw × Option (LeanProse.Tok LeanProse.Leaf) × Bool :=
+    let gap : Array Raw :=
+      if acc.2.1.isNone || LeanProse.Tok.joins acc.2.1 t then #[] else #[.space]
+    let r := tokRaws pos acc.2.2 t
+    (acc.1 ++ gap ++ r.1, some t, r.2)
+  (toks.foldl step (#[], none, true)).1.push (.word "." pos)
+
+/-- The paragraph a declaration's statement sets as in words, ragged right: its head, then its
+sentence, a line free to break between words. -/
+public def wordsRaws (d : LeanFacts.Decl) (s : LeanProse.Stmt LeanProse.Leaf) (pos : Pos)
+    (link : Option String := none) : Array Raw :=
+  #[.env "flushleft" ((headRaws d pos link).push .space ++ sentenceRaws pos (LeanProse.render s)) pos]
 
 /-- Why a declaration's statement is not set, when it is not. -/
 private def unset? (d : LeanFacts.Decl) : Option String :=
@@ -1636,16 +1700,87 @@ public def codeFor (starts : Array Nat) (src : Array Char) (segs : List Seg)
   let hi := starts.getD stop.1 src.size
   piecesRaws (fileListing starts) paras (assemble (withFolds folds (clipCode segs lo hi)))
 
-/-- What a page sets for one declaration Lean answered for, when it is chosen: its statement where
-Lean gave one, its name linked where a link is given, else, on a page that shows no code, its code
-in the statement's place. -/
-public def declPara (facts : LeanFacts.Facts) (starts : Array Nat) (src : Array Char)
-    (segs : List Seg) (folds : List ProofFold) (paras : Array (Array Raw)) (code wanted : Bool)
-    (link : Option String) (d : LeanFacts.Decl) : Array Raw :=
-  if !wanted then #[] else
+/-- Where a file's directive stands, as a diagnostic's position, else the file's start. -/
+public def directivePos (lang : Ir.CodeLang) (src : Array Char) : Pos :=
+  match directive? lang src with
+  | some (cut, _) => let (line, col) := lineCol (lineStarts src) cut.start; { line, col }
+  | none => {}
+
+/-- Why a declared phrase is refused, as its note says it, with its help. -/
+private def refusalWords (name : String) : LeanProse.Refusal → String × String
+  | .unknown => (s!"'phrase.{name}' names no constant a statement of this file names; the \
+phrase is not used", "write the constant's name as a statement uses it after `phrase.`")
+  | .ambiguous => (s!"'phrase.{name}' names more than one constant; the phrase is not used",
+    "write the constant's full name after `phrase.`")
+  | .twice => (s!"'phrase.{name}' gives its constant a second phrase; the first stands",
+    "keep one `phrase.` entry for each constant")
+  | .shape => (s!"'phrase.{name}' is no template the prose view reads; its constant is set as \
+mathematics", "number its slots `#1`, `#2`, … once each, write no comma or parenthesis, and open \
+it with a word, or a slot then a word, the grammar keeps for itself none of, as `if`, `and`, `both`")
+  | .arity _ _ => (s!"the slots of 'phrase.{name}' are not its constant's explicit arguments; its \
+constant is set as mathematics", "write one slot `#k` for the k-th explicit argument, for each")
+  | .clash => (s!"the words of 'phrase.{name}' open as another template's do; its constant is \
+set as mathematics", "open it with words no other `phrase.` entry or relation opens with")
+  | .connective => (s!"'phrase.{name}' names a connective or quantifier the prose view says \
+itself; the phrase is not used", "drop this `phrase.` entry")
+  | .unused => (s!"no sentence this page sets uses 'phrase.{name}'; the phrase changes nothing",
+    "check its constant's name and explicit arguments, or drop this `phrase.` entry")
+  | .unshown true => (s!"'phrase.{name}' stands on a page that says no statement in words; the \
+phrase is not used", "add `prose` to `show`, or drop this `phrase.` entry")
+  | .unshown false => (s!"'phrase.{name}' stands in a file whose statements are never said in \
+words; the phrase is not used", "drop this `phrase.` entry: only a Lean file's statements are")
+
+/-- The note naming a declared phrase a page refuses, at the directive. -/
+public def refusalNote (file : String) (pos : Pos) (name : String) (r : LeanProse.Refusal) :
+    Diag :=
+  let (msg, help) := refusalWords name r
+  let detail := match r with
+    | .arity slots args => some s!"slots: {slots}; explicit arguments: {args}"
+    | .unknown | .ambiguous | .twice | .shape | .clash | .connective | .unused | .unshown _ => none
+  Diag.of .W0416 msg (some ⟨file, pos⟩) (help := help) (subject := some s!"code:phrase:{name}")
+    (detail := detail)
+
+/-- Why a declaration's statement is not said in words, as its note says it. -/
+private def unsaidWhy : LeanProse.Unsaid → String
+  | .named h => s!"refers to its hypothesis '{h}'"
+  | .local n => s!"defines '{n}' locally"
+  | .function => "is a function"
+  | .notProp => "is no proposition"
+
+/-- The note naming a declaration whose statement words cannot say. -/
+public def unsaidNote (file : String) (d : LeanFacts.Decl) (u : LeanProse.Unsaid) : Diag :=
+  Diag.of .W0415 s!"words cannot say '{d.name}', which {unsaidWhy u}; it is set as mathematics"
+    (some ⟨file, posOf d⟩) (subject := some s!"prose:{d.name}")
+
+/-- A view's paragraph for a declaration whose statement Lean gave, the note when its words fall
+back to its mathematics, which a page that shows the math view sets once, and the templates its
+words use. -/
+public def viewPara (file : String) (facts : LeanFacts.Facts) (tb : LeanProse.Table)
+    (withMath : Bool) (link : Option String) (d : LeanFacts.Decl) (t : LeanFacts.Term) :
+    View → Array Raw × Array Diag × Array LeanProse.Template
+  | .code => (#[], #[], #[])
+  | .math => (displayRaws d (LeanStatement.statementMath facts d t) (posOf d) link, #[], #[])
+  | .prose =>
+    match LeanProse.proseOf facts tb d t with
+    | .ok s => (wordsRaws d s (posOf d) link, #[], s.templates #[])
+    | .error u =>
+      (if withMath then #[] else displayRaws d (LeanStatement.statementMath facts d t) (posOf d) link,
+        #[unsaidNote file d u], #[])
+
+/-- What a page sets for one declaration Lean answered for, when it is chosen, in the views given:
+each view's paragraph where Lean gave a statement, its name linked where a link is given, else, on
+a page that shows no code, its code in the statement's place; its views' notes and templates. -/
+public def declPara (file : String) (facts : LeanFacts.Facts) (tb : LeanProse.Table)
+    (starts : Array Nat) (src : Array Char) (segs : List Seg) (folds : List ProofFold)
+    (paras : Array (Array Raw)) (code withMath wanted : Bool) (views : List View)
+    (link : Option String) (d : LeanFacts.Decl) :
+    Array Raw × Array Diag × Array LeanProse.Template :=
+  if !wanted || views.isEmpty then (#[], #[], #[]) else
     match d.type, unset? d with
-    | some t, none => displayRaws d (LeanStatement.statementMath facts d t) (posOf d) link
-    | _, _ => if code then #[] else codeFor starts src segs folds paras d.head d.stop
+    | some t, none => views.foldl (fun acc v =>
+        let p := viewPara file facts tb withMath link d t v
+        (acc.1 ++ p.1, acc.2.1 ++ p.2.1, acc.2.2 ++ p.2.2)) (#[], #[], #[])
+    | _, _ => (if code then #[] else codeFor starts src segs folds paras d.head d.stop, #[], #[])
 
 /-- Where a statement stands before its declaration's code: the line the command that writes it
 opens on, or the code after the documentation that line holds. -/
@@ -1691,13 +1826,14 @@ public def unnamedNotes (showing : Showing) (facts : LeanFacts.Facts) (request :
 answer; nothing is set for it" (some request) (subject := some s!"code:decls:{n}")
         (help := "name a theorem, definition or axiom the file declares")
 
-/-- Each declaration's paragraph by index, then each failed one's, the anchors set and a note per
-statement asked for and not set, in source order; a page with no code sets a declaration's code,
-its folds cut out, where its statement cannot stand, and a link's notes once a statement is set. -/
+/-- Each declaration's paragraphs before and after its code by index, then each failed one's, the
+anchors set and the notes, in source order; a page with no code sets a declaration's code, folds cut
+out, where its statement cannot stand, and a link's notes once a statement is set. -/
 public def statementsOf (file : String) (starts : Array Nat) (src : Array Char) (segs : List Seg)
-    (showing : Showing) (facts : LeanFacts.Facts) (place : LinkPlace := {})
-    (folds : List ProofFold := []) (foldParas : Array (Array Raw) := #[])
+    (showing : Showing) (declared : LeanProse.Declared) (facts : LeanFacts.Facts)
+    (place : LinkPlace := {}) (folds : List ProofFold := []) (foldParas : Array (Array Raw) := #[])
     (request : Span := ⟨file, {}⟩) : Array (Array Raw) × List (Nat × Nat) × Array Diag :=
+  let tb := declared.table
   let ds := facts.decls
   let chosen (n : String) : Bool := match showing.decls with
     | none => true
@@ -1707,17 +1843,35 @@ public def statementsOf (file : String) (starts : Array Nat) (src : Array Char) 
   let code := showing.code
   let linkOf (d : LeanFacts.Decl) : Option String := showing.link.bind fun l =>
     if placeGives (linkTemplate l) place then expandLink (linkTemplate l) d place else none
-  let paras0 := Array.replicate (ds.size + facts.failed.size) (#[] : Array Raw) ++ foldParas
-  let paras := ds.map fun d => declPara facts starts src segs folds paras0 code (wanted d) (linkOf d) d
+  let paras0 := Array.replicate (2 * ds.size + facts.failed.size) (#[] : Array Raw) ++ foldParas
+  let before := showing.around.1
+  let after := showing.around.2
+  let para (views : List View) (d : LeanFacts.Decl) :
+      Array Raw × Array Diag × Array LeanProse.Template :=
+    declPara file facts tb starts src segs folds paras0 code showing.math (wanted d) views (linkOf d) d
+  let befores := ds.map (para before)
+  let afters := ds.map (para after)
+  let paras := befores.map (·.1) ++ afters.map (·.1)
   let failedParas := facts.failed.map fun f =>
     if chosen f.name && !code then codeFor starts src segs folds paras0 f.head f.stop else #[]
-  let anchorOf (head stop : Nat × Nat) : Option Nat :=
-    if showing.mathFirst then beforeAnchor starts segs head else some (afterAnchor src starts stop)
   let anchors := ds.zipIdx.filterMap fun (d, i) =>
-    if wanted d && ((unset? d).isNone || !code) then (anchorOf d.head d.stop).map (·, i)
+    if wanted d && !before.isEmpty && ((unset? d).isNone || !code) then
+      (beforeAnchor starts segs d.head).map fun off => ([off, 1, d.start.1, d.start.2], i)
+    else none
+  let afterAnchors := ds.zipIdx.filterMap fun (d, i) =>
+    if wanted d && !after.isEmpty && (unset? d).isNone then
+      some ([afterAnchor src starts d.stop, 0, d.start.1, d.start.2], ds.size + i)
     else none
   let failedAnchors := facts.failed.zipIdx.filterMap fun (f, j) =>
-    if chosen f.name && !code then (anchorOf f.head f.stop).map (·, ds.size + j) else none
+    if chosen f.name && !code then
+      (beforeAnchor starts segs f.head).map fun off => ([off, 1, f.start.1, f.start.2], 2 * ds.size + j)
+    else none
+  let viewNotes := (ds.zip (befores.zip afters)).toList.flatMap fun (d, b, a) =>
+    (b.2.1 ++ a.2.1).toList.map (d.start, ·)
+  let used := (befores ++ afters).foldl (fun acc p => acc ++ p.2.2) #[]
+  let unused := declared.phrases.filterMap fun (name, t) =>
+    if showing.prose && !used.contains t then some (refusalNote request.file request.pos name .unused)
+    else none
   let instead := if code then "its code is set without it" else "its code is set in its place"
   let insteadOfNone := if code then "its code is set without a statement"
     else "its code is set in place of a statement"
@@ -1731,20 +1885,20 @@ public def statementsOf (file : String) (starts : Array Nat) (src : Array Char) 
       Diag.of .W0414 s!"Lean added nothing for '{f.name}'; {insteadOfNone}"
         (some ⟨file, posAt f.start⟩) (subject := some s!"lean:{f.name}"))
     else none
-  let notes := (unsetNotes ++ failedNotes).qsort fun a b =>
+  let notes := (unsetNotes ++ failedNotes ++ viewNotes.toArray).qsort fun a b =>
     a.1.1 < b.1.1 || (a.1.1 == b.1.1 && a.1.2 < b.1.2)
   let set := ds.any fun d => wanted d && (unset? d).isNone
   let links := if set then linkNotes request showing place else #[]
-  let all := anchors ++ failedAnchors
-  (paras ++ failedParas, (all.qsort (·.1 < ·.1)).toList,
-    unnamedNotes showing facts request ++ notes.map (·.2) ++ links)
+  let all := (anchors ++ afterAnchors ++ failedAnchors).qsort fun a b => decide (a.1 < b.1)
+  (paras ++ failedParas, (all.map fun (key, i) => (key.headD 0, i)).toList,
+    unused ++ unnamedNotes showing facts request ++ notes.map (·.2) ++ links)
 
 /-- What a page sets from Lean's answer, when it has one. -/
 @[expose] public def statementsFor (file : String) (starts : Array Nat) (src : Array Char)
-    (segs : List Seg) (showing : Showing) (place : LinkPlace) (folds : List ProofFold)
-    (foldParas : Array (Array Raw)) (request : Span) :
+    (segs : List Seg) (showing : Showing) (declared : LeanProse.Declared) (place : LinkPlace)
+    (folds : List ProofFold) (foldParas : Array (Array Raw)) (request : Span) :
     Option LeanFacts.Facts → Array (Array Raw) × List (Nat × Nat) × Array Diag
-  | some f => statementsOf file starts src segs showing f place folds foldParas request
+  | some f => statementsOf file starts src segs showing declared f place folds foldParas request
   | none => (#[], [], #[])
 
 /-- The first offset at or after `i` that holds no white space. -/
@@ -1922,8 +2076,19 @@ public theorem readPieces_body_exact (lang : Ir.CodeLang) (file text : String)
     (pagePieces lang text page.folds anchors).toList {}
   exact ⟨opens, by simpa using hlen, by simpa [readPieces] using hbody⟩
 
+/-- The prose view's table a page or an inclusion reads its phrases into, from Lean's answer where
+its statements have one, with each phrase a page that says nothing in words refuses. -/
+public def declaredFor (lang : Ir.CodeLang) (showing : Showing) (stated : Option LeanFacts.Facts) :
+    LeanProse.Declared :=
+  let unshown : Array (String × LeanProse.Refusal) := if showing.prose then #[] else
+    (showing.phrases.map fun e => (e.1, .unshown (lang == .lean))).toArray
+  match stated with
+  | some f => if showing.prose then LeanProse.tableFor f showing.phrases
+    else ⟨LeanProse.coreTable f.collectionFirst, [], unshown, #[]⟩
+  | none => ⟨LeanProse.coreTable true, [], unshown, #[]⟩
+
 /-- What a page sets from a file and Lean's answer: what it shows, where each paragraph Lean's
-answer gives stands, and the notes; a page asked for mathematics Lean gave no answer for shows the
+answer gives stands, and the notes; a page asked for statements Lean gave no answer for shows the
 file's code. -/
 @[expose] public def planOf (lang : Ir.CodeLang) (file text : String)
     (facts : Option LeanFacts.Facts) (place : LinkPlace := {}) :
@@ -1932,17 +2097,19 @@ file's code. -/
   let starts := lineStarts src
   let showing := showingOf lang src
   let answer := if showing.asks then facts else none
-  let stated := if showing.math then answer else none
-  let first := (stated.map fun f => f.decls.size + f.failed.size).getD 0
+  let stated := if showing.statements then answer else none
+  let first := (stated.map fun f => 2 * f.decls.size + f.failed.size).getD 0
   let folds := match answer with
     | some f => if showing.proofs != .show then foldsOf starts src showing.proofs f first else []
     | none => []
   let foldParas := (folds.map (foldRaws starts src)).toArray
-  let st := statementsFor file starts src (segmentsOf lang text) showing place folds foldParas
-    ⟨file, (directive? lang src).map (fun (cut, _) =>
-      let lc := lineCol starts cut.start; ({ line := lc.1, col := lc.2 } : Pos)) |>.getD {}⟩ stated
+  let declared := declaredFor lang showing stated
+  let refused := declared.refused.map fun (name, r) =>
+    refusalNote file (directivePos lang src) name r
+  let st := statementsFor file starts src (segmentsOf lang text) showing declared place folds foldParas
+    ⟨file, directivePos lang src⟩ stated
   ({ stmts := st.1 ++ foldParas, code := showing.code || answer.isNone
-     folds := if showing.code then folds else [] }, st.2.1, st.2.2)
+     folds := if showing.code then folds else [] }, st.2.1, refused ++ st.2.2)
 
 /-- Code as an included listing, wrapping its long lines, whose first line stands at `start`, its
 trailing white space aside. -/
@@ -1971,7 +2138,7 @@ public def includeLean (file text : String) (showing : Showing) (facts : Option 
       (subject := some s!"code:option:{k}")
   let views := showing.unknown.toArray.map fun n =>
     Diag.of .W0110 s!"`show` names '{n}', which is no view of a Lean file; it is included without \
-it" (some request) (help := "name `code` or `math`") (subject := some s!"code:show:{n}")
+it" (some request) (help := "name `code`, `math` or `prose`") (subject := some s!"code:show:{n}")
   let idle := showing.idle .lean request (page := false)
   let notes := views ++ unread ++ strange ++ idle
   let wrap (raws : Array Raw) : Array Raw := #[.env (Parse.inputEnv file) raws request.pos]
@@ -1979,11 +2146,14 @@ it" (some request) (help := "name `code` or `math`") (subject := some s!"code:sh
   match (if showing.asks || showing.decls.isSome then facts else none) with
   | none => (wrap (listingAt starts 0 text.toList), notes)
   | some f =>
-    let stated := if showing.math then some f else none
-    let first := (stated.map fun f => f.decls.size + f.failed.size).getD 0
+    let stated := if showing.statements then some f else none
+    let first := (stated.map fun f => 2 * f.decls.size + f.failed.size).getD 0
     let folds := if showing.proofs != .show then foldsOf starts src showing.proofs f first else []
     let foldParas := (folds.map (foldRaws starts src)).toArray
-    let st := statementsFor file starts src whole showing place folds foldParas request stated
+    let declared := declaredFor .lean showing stated
+    let refused := declared.refused.map fun (name, r) => refusalNote request.file request.pos name r
+    let st := statementsFor file starts src whole showing declared place folds foldParas request
+      stated
     let paras := st.1 ++ foldParas
     let code (head stop : Nat × Nat) : Array Raw :=
       piecesRaws (listingAt starts) paras (assemble (withFolds folds (clipCode whole
@@ -1994,20 +2164,19 @@ it" (some request) (help := "name `code` or `math`") (subject := some s!"code:sh
       let pieces := assemble (withStatements starts st.2.1 (withFolds shown whole))
       let body := piecesRaws (fun s t => if showing.code then listingAt starts s t else #[]) paras
         pieces
-      (wrap body, notes ++ st.2.2)
+      (wrap body, notes ++ refused ++ st.2.2)
     | some _ =>
       let ds := f.decls.qsort fun a b => offsetOf starts a.start < offsetOf starts b.start
       let chosen (n : String) : Bool := (showing.decls.getD []).any (namedAs n)
-      let one (d : LeanFacts.Decl) (i : Nat) : Array Raw := showing.views.foldl (fun acc v =>
-        match v with
-        | .code => acc ++ code d.head d.stop
-        | .math => acc ++ paras.getD i #[]) #[]
+      let around (k : Nat) : Array Raw := if stated.isSome then paras.getD k #[] else #[]
+      let one (d : LeanFacts.Decl) (i : Nat) : Array Raw :=
+        around i ++ (if showing.code then code d.head d.stop else #[]) ++ around (f.decls.size + i)
       let index (d : LeanFacts.Decl) : Nat := (f.decls.findIdx? (· == d)).getD 0
       let items := (ds.filter (chosen ·.name)).map (fun d => (offsetOf starts d.head, one d (index d))) ++
         (f.failed.filter (chosen ·.name)).map fun fl => (offsetOf starts fl.head, code fl.head fl.stop)
       let body := (items.qsort (·.1 < ·.1)).foldl (fun acc (_, raws) => acc ++ raws) #[]
-      let named := if showing.math then #[] else unnamedNotes showing f request
-      (wrap body, notes ++ st.2.2 ++ named)
+      let named := if showing.statements then #[] else unnamedNotes showing f request
+      (wrap body, notes ++ refused ++ st.2.2 ++ named)
 
 /-- With no answer from Lean, a page shows the file's code, whatever its directive asks. -/
 public theorem planOf_unanswered_exact (lang : Ir.CodeLang) (file text : String) :
@@ -2040,18 +2209,16 @@ the preamble's declarations, the file's name the title where no description open
 '#!'; this one stays as written" (some ⟨file, { line, col }⟩)
       (help := s!"move it to the file's first line, or the line after `#!`: `{directiveMarker lang} …`")
       (subject := some "code:directive")
-  let dirPos : Pos := match directive? lang src with
-    | some (cut, _) => let (line, col) := lineCol starts cut.start; { line, col }
-    | none => origin
   let views := showing.unknown.toArray.map fun n =>
     Diag.of .W0110 s!"`show` names '{n}', which is no view of this file; the page sets without it"
-      (some ⟨file, dirPos⟩) (help := "name `code`, or for a Lean file `math`")
+      (some ⟨file, directivePos lang src⟩)
+      (help := "name `code`, or for a Lean file `math` or `prose`")
       (subject := some s!"code:show:{n}")
   let unread := showing.unread.toArray.map fun (k, v) =>
     Diag.of .W0110 s!"`{k}` takes no value '{v}'; the page sets as if it were not written"
-      (some ⟨file, dirPos⟩) (help := "write `proofs = show`, `collapse` or `remove`")
+      (some ⟨file, directivePos lang src⟩) (help := "write `proofs = show`, `collapse` or `remove`")
       (subject := some s!"code:{k}:{v}")
-  let idle := showing.idle lang ⟨file, dirPos⟩
+  let idle := showing.idle lang ⟨file, directivePos lang src⟩
   (preamble.push (.env "document" body origin),
     views ++ unread ++ idle ++ acc.diags ++ plan.2.2 ++ stray.toArray)
 

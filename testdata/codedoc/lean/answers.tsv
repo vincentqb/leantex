@@ -1,2 +1,2 @@
 # Each fixture's answer, as the export the engine ships asked Lean for it: case, export key, file key, the Lean that answered. Written only by scripts/leanexport.lean.
-statements.lean	2810A7B7BDA5711EB6C3A30B0836A7B8	E8292DA73B2ACDE18A6CF25E98550BEB	4.34.1
+statements.lean	9B0D9320EBD6B7AAEBD6BD83DE6865C8	BFE5E8E0BE27D6285A3FBBE3AFA7A296	4.34.1

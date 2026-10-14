@@ -247,6 +247,8 @@ public inductive DiagCode where
   | W0432
   | W0440
   | W0441
+  | W0415
+  | W0416
   deriving Repr, BEq, DecidableEq
 
 /-- The registry: each code's digits, its declared `Loss`, and its one meaning. -/
@@ -469,6 +471,8 @@ private def DiagCode.spec : DiagCode → String × Loss × String
   | .W0432 => ("0432", .degraded, "a Lean file's link names the file's commit or path in its repository, which the host could not give; its declarations' names are set without links")
   | .W0440 => ("0440", .degraded, "a mix of an ink with a colour other than the paper or a tint of the ink; it prints as a process colour, the ink's alternate standing in for it")
   | .W0441 => ("0441", .degraded, "an ink declared again with another alternate; a colorant names one ink, and its first alternate stands")
+  | .W0415 => ("0415", .degraded, "a Lean declaration's statement the prose view cannot say in words is set as mathematics")
+  | .W0416 => ("0416", .degraded, "a phrase a Lean file's directive declares is refused, or used by no sentence; the page says its statements without it")
 
 public def DiagCode.digits (c : DiagCode) : String := c.spec.1
 

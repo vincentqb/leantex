@@ -218,7 +218,7 @@ run_cmd do
   modify fun s => { s with messages := saved, scopes := savedScopes }
   let env ← getEnv
   let mut lines : Array String :=
-    #[s!"\{\"leantex-lean-export\":1,\"lean\":{jstr Lean.versionString},\"errors\":{errors}}"]
+    #[s!"\{\"leantex-lean-export\":2,\"lean\":{jstr Lean.versionString},\"errors\":{errors}}"]
   let mut consts : NameSet := {}
   let mut decls := 0
   let mut seen : Array Position := #[]
@@ -234,6 +234,7 @@ run_cmd do
       | continue
     let doc ← findDocString? env name
     let (_, e) ← liftTermElabM <| (emit info.type #[]).run {}
+    let prop ← liftTermElabM <| try Meta.isProp info.type catch _ => pure false
     let type := if e.over then "null" else s!"[{",".intercalate e.nodes.toList}]"
     unless e.over do consts := e.consts.foldl (fun acc c => acc.insert c) consts
     let proved ← if info matches .thmInfo _ then
@@ -242,6 +243,7 @@ run_cmd do
     lines := lines.push (s!"\{\"name\":{jstr user.toString},\"module\":{jstr moduleName}," ++
       s!"\"kind\":\"{kind}\",\"range\":{spanText (some w.range)},\"head\":[{posText w.head}]," ++
       s!"\"signature\":{spanText w.sig},\"proof\":{spanText w.val},\"proved\":{proved}," ++
+      s!"\"prop\":{prop}," ++
       s!"\"doc\":{(doc.map jstr).getD "null"}," ++
       s!"\"type\":{type}}")
     decls := decls + 1

@@ -276,9 +276,8 @@ private theorem breakRaws_adm (pos : Pos) : Adm (breakRaws pos) := by
   · simp [Md.Vocab.admits, vocabulary]
   · exact adm_group _ _ (by intro x hx; simp at hx; subst hx; rfl)
 
-private theorem displayRaws_adm (d : LeanFacts.Decl)
-    (formulas : Array (Array LeanNotation.Math × Bool)) (pos : Pos) (link : Option String) :
-    Adm (displayRaws d formulas pos link) := by
+private theorem headRaws_adm (d : LeanFacts.Decl) (pos : Pos) (link : Option String) :
+    Adm (headRaws d pos link) := by
   have hname : Adm #[.ctrl "texttt" pos, .group (Md.textRaws d.name pos) pos] := by
     intro r hr
     simp only [List.mem_toArray, List.mem_cons, List.not_mem_nil, or_false] at hr
@@ -304,7 +303,6 @@ private theorem displayRaws_adm (d : LeanFacts.Decl)
     · simp [Md.Vocab.admits, Md.Vocab.admitsList]
     · rfl
     · rfl
-
   have hclose : Adm (if d.kind == .theorem && !d.proved then
       #[.word "," pos, .space, .word "unproved)." pos] else #[.word ")." pos]) := by
     split
@@ -314,23 +312,33 @@ private theorem displayRaws_adm (d : LeanFacts.Decl)
     · intro r hr
       simp only [List.mem_toArray, List.mem_cons, List.not_mem_nil, or_false] at hr
       subst hr; rfl
-  have hhead := adm_append hlead (adm_append hnamed hclose)
+  unfold headRaws
+  exact adm_append (adm_append hlead hnamed) hclose
+
+private theorem formulaRaw_adm (pos : Pos) (m : Array LeanNotation.Math) :
+    vocabulary.admits (formulaRaw pos m) = true := by
+  simp only [formulaRaw, Md.Vocab.admits, Bool.and_eq_true]
+  exact ⟨rfl, by simpa using listRaws_adm pos m.toList #[] (by simp [Md.Vocab.mathAdmitsList])⟩
+
+/-- A fold whose step keeps its raws inside the vocabulary keeps them there. -/
+private theorem foldl_adm {β γ : Type} (f : Array Raw × β → γ → Array Raw × β)
+    (hf : ∀ acc x, Adm acc.1 → Adm (f acc x).1) :
+    ∀ (l : List γ) (acc : Array Raw × β), Adm acc.1 → Adm (l.foldl f acc).1
+  | [], _, h => h
+  | x :: rest, acc, h => foldl_adm f hf rest _ (hf acc x h)
+
+private theorem displayRaws_adm (d : LeanFacts.Decl)
+    (formulas : Array (Array LeanNotation.Math × Bool)) (pos : Pos) (link : Option String) :
+    Adm (displayRaws d formulas pos link) := by
   have step : ∀ (st : Array Raw × Bool) (mn : Array LeanNotation.Math × Bool), Adm st.1 →
       Adm (displayStep pos st mn).1 := by
     intro st mn h
-    refine adm_push (adm_append h ?_) ?_
-    · split
-      · intro r hr; simp at hr; subst hr; rfl
-      · exact breakRaws_adm pos
-    · simp only [Md.Vocab.admits, Bool.and_eq_true]
-      exact ⟨rfl, by simpa using listRaws_adm pos mn.1.toList #[] (by simp [Md.Vocab.mathAdmitsList])⟩
-  have hfold : ∀ (l : List (Array LeanNotation.Math × Bool)) (st : Array Raw × Bool), Adm st.1 →
-      Adm (l.foldl (displayStep pos) st).1 := by
-    intro l
-    induction l with
-    | nil => intro st h; exact h
-    | cons m rest ih => intro st h; exact ih _ (step st m h)
-  have hbody := hfold formulas.toList (_, true) hhead
+    refine adm_push (adm_append h ?_) (formulaRaw_adm pos mn.1)
+    split
+    · intro r hr; simp at hr; subst hr; rfl
+    · exact breakRaws_adm pos
+  have hbody := foldl_adm (displayStep pos) step formulas.toList (headRaws d pos link, true)
+    (headRaws_adm d pos link)
   rw [Array.foldl_toList] at hbody
   intro r hr
   simp only [displayRaws, List.mem_toArray, List.mem_cons, List.not_mem_nil, or_false] at hr
@@ -338,6 +346,64 @@ private theorem displayRaws_adm (d : LeanFacts.Decl)
   simp only [Md.Vocab.admits, Bool.and_eq_true, List.contains_iff_mem]
   exact ⟨by simp [vocabulary, Md.vocabulary], (admitsList_iff _ _).mpr fun x hx =>
     hbody x (by simpa using hx)⟩
+
+private theorem leafRaws_adm (pos : Pos) (l : LeanProse.Leaf) : Adm (leafRaws pos l) := by
+  cases l with
+  | nil => intro r hr; simp [leafRaws] at hr
+  | cons m rest =>
+    simp only [leafRaws]
+    have h : ∀ (l : List (Array LeanNotation.Math)) (acc : Array Raw), Adm acc →
+        Adm (l.foldl (fun acc q => (acc ++ breakRaws pos).push (formulaRaw pos q)) acc) := by
+      intro l
+      induction l with
+      | nil => intro acc h; exact h
+      | cons q rest ih =>
+        intro acc h
+        exact ih _ (adm_push (adm_append h (breakRaws_adm pos)) (formulaRaw_adm pos q))
+    exact h rest _ (by intro r hr; simp at hr; subst hr; exact formulaRaw_adm pos m)
+
+private theorem tokRaws_adm (pos : Pos) (opening : Bool) (t : LeanProse.Tok LeanProse.Leaf) :
+    Adm (tokRaws pos opening t).1 := by
+  unfold tokRaws
+  split
+  · intro r hr; simp at hr; subst hr; rfl
+  · intro r hr; simp at hr; subst hr; rfl
+  · exact leafRaws_adm pos _
+
+private theorem sentenceRaws_adm (pos : Pos) (toks : List (LeanProse.Tok LeanProse.Leaf)) :
+    Adm (sentenceRaws pos toks) := by
+  unfold sentenceRaws
+  refine adm_push (foldl_adm _ ?_ toks (#[], none, true) (by intro r hr; simp at hr)) rfl
+  intro acc t h
+  refine adm_append (adm_append h ?_) (tokRaws_adm pos _ t)
+  split
+  · intro r hr; simp at hr
+  · intro r hr; simp at hr; subst hr; rfl
+
+private theorem wordsRaws_adm (d : LeanFacts.Decl) (s : LeanProse.Stmt LeanProse.Leaf)
+    (pos : Pos) (link : Option String) : Adm (wordsRaws d s pos link) := by
+  have hbody := adm_append (adm_push (r := .space) (headRaws_adm d pos link) rfl)
+    (sentenceRaws_adm pos (LeanProse.render s))
+  intro r hr
+  simp only [wordsRaws, List.mem_toArray, List.mem_cons, List.not_mem_nil, or_false] at hr
+  subst hr
+  simp only [Md.Vocab.admits, Bool.and_eq_true, List.contains_iff_mem]
+  exact ⟨by simp [vocabulary, Md.vocabulary], (admitsList_iff _ _).mpr fun x hx =>
+    hbody x (by simpa [or_assoc] using hx)⟩
+
+private theorem viewPara_adm (file : String) (facts : LeanFacts.Facts) (tb : LeanProse.Table)
+    (withMath : Bool) (link : Option String) (d : LeanFacts.Decl) (t : LeanFacts.Term) (v : View) :
+    Adm (viewPara file facts tb withMath link d t v).1 := by
+  cases v with
+  | code => intro r hr; simp [viewPara] at hr
+  | math => exact displayRaws_adm _ _ _ _
+  | prose =>
+    simp only [viewPara]
+    split
+    · exact wordsRaws_adm _ _ _ _
+    · split
+      · intro r hr; simp at hr
+      · exact displayRaws_adm _ _ _ _
 
 private theorem piecesRaws_adm (listing : Nat → List Char → Array Raw) (paras : Array (Array Raw))
     (hl : ∀ start code, Adm (listing start code)) (hp : ∀ p ∈ paras, Adm p) (pieces : Array Piece) :
@@ -382,15 +448,17 @@ private theorem codeFor_adm (starts : Array Nat) (src : Array Char) (segs : List
   unfold codeFor
   exact piecesRaws_adm _ _ (fileListing_adm starts) hp _
 
-private theorem declPara_adm (facts : LeanFacts.Facts) (starts : Array Nat) (src : Array Char)
-    (segs : List Seg) (folds : List ProofFold) (paras : Array (Array Raw)) (hp : ∀ p ∈ paras, Adm p)
-    (code wanted : Bool) (link : Option String) (d : LeanFacts.Decl) :
-    Adm (declPara facts starts src segs folds paras code wanted link d) := by
+private theorem declPara_adm (file : String) (facts : LeanFacts.Facts) (tb : LeanProse.Table)
+    (starts : Array Nat) (src : Array Char) (segs : List Seg) (folds : List ProofFold)
+    (paras : Array (Array Raw)) (hp : ∀ p ∈ paras, Adm p) (code withMath wanted : Bool)
+    (views : List View) (link : Option String) (d : LeanFacts.Decl) :
+    Adm (declPara file facts tb starts src segs folds paras code withMath wanted views link d).1 := by
   unfold declPara
   split
   · intro r hr; simp at hr
   · split
-    · exact displayRaws_adm _ _ _ _
+    · exact foldl_adm _ (fun acc v h => adm_append h (viewPara_adm file facts tb withMath link d _ v))
+        views (#[], #[], #[]) (by intro r hr; simp at hr)
     · split
       · intro r hr; simp at hr
       · exact codeFor_adm _ _ _ _ _ hp _ _
@@ -426,16 +494,16 @@ private theorem foldRaws_adm (starts : Array Nat) (src : Array Char) (f : ProofF
     simp [listingRaw, Md.Vocab.admits, vocabulary, Md.vocabulary]
 
 private theorem statementsFor_adm (file : String) (starts : Array Nat) (src : Array Char)
-    (segs : List Seg) (showing : Showing) (place : LinkPlace) (folds : List ProofFold)
-    (foldParas : Array (Array Raw)) (hf : ∀ p ∈ foldParas, Adm p) (request : Span)
-    (facts : Option LeanFacts.Facts) :
-    ∀ p ∈ (statementsFor file starts src segs showing place folds foldParas request facts).1,
-      Adm p := by
+    (segs : List Seg) (showing : Showing) (declared : LeanProse.Declared) (place : LinkPlace)
+    (folds : List ProofFold) (foldParas : Array (Array Raw)) (hf : ∀ p ∈ foldParas, Adm p)
+    (request : Span) (facts : Option LeanFacts.Facts) :
+    ∀ p ∈ (statementsFor file starts src segs showing declared place folds foldParas request
+      facts).1, Adm p := by
   cases facts with
   | none => intro p hp; simp [statementsFor] at hp
   | some f =>
-    have h0 : ∀ p ∈ Array.replicate (f.decls.size + f.failed.size) (#[] : Array Raw) ++ foldParas,
-        Adm p := by
+    have h0 : ∀ p ∈ Array.replicate (2 * f.decls.size + f.failed.size) (#[] : Array Raw) ++
+        foldParas, Adm p := by
       intro p hp
       rcases Array.mem_append.mp hp with hp | hp
       · rw [Array.mem_replicate] at hp
@@ -445,10 +513,11 @@ private theorem statementsFor_adm (file : String) (starts : Array Nat) (src : Ar
       · exact hf p hp
     intro p hp
     simp only [statementsFor, statementsOf, Array.mem_append, Array.mem_map] at hp
-    rcases hp with ⟨d, _, rfl⟩ | ⟨fl, _, rfl⟩
-    · exact declPara_adm _ _ _ _ _ _ h0 _ _ _ _
+    rcases hp with (⟨_, ⟨d, _, rfl⟩, rfl⟩ | ⟨_, ⟨d, _, rfl⟩, rfl⟩) | ⟨fl, _, rfl⟩
+    · exact declPara_adm _ _ _ _ _ _ _ _ h0 _ _ _ _ _ _
+    · exact declPara_adm _ _ _ _ _ _ _ _ h0 _ _ _ _ _ _
     · have hif : ∀ b : Bool, Adm (if b = true then codeFor starts src segs folds
-          (Array.replicate (f.decls.size + f.failed.size) #[] ++ foldParas) fl.head fl.stop
+          (Array.replicate (2 * f.decls.size + f.failed.size) #[] ++ foldParas) fl.head fl.stop
           else #[]) := by
         intro b
         cases b
@@ -568,7 +637,7 @@ public theorem read_vocabulary_mem (lang : Ir.CodeLang) (file text : String)
     simp only [planOf]
     intro p hp
     rcases Array.mem_append.mp hp with hp | hp
-    · exact statementsFor_adm _ _ _ _ _ _ _ _ (hfold _) _ _ p hp
+    · exact statementsFor_adm _ _ _ _ _ _ _ _ _ (hfold _) _ _ p hp
     · exact hfold _ p hp
   have hacc : Inv (readPieces lang file text (planOf lang file text facts place).1
       (planOf lang file text facts place).2.1) :=

@@ -11,12 +11,6 @@ listings, every source character in one segment and every code character shipped
 
 namespace Tests.CodeDoc
 
-/-- The listings a document's body holds, in order: their language and their content. -/
-def listings (doc : Ir.Doc) : Array (Option String × String) :=
-  doc.body.filterMap fun b => match b with
-    | .verbatim _ content spec => some (spec.langToken, content)
-    | _ => none
-
 /-- The listings a source assembles into, in page order. -/
 def codePieces (lang : Ir.CodeLang) (src : String) : Array String :=
   (Code.assemble (Code.segmentsOf lang src)).filterMap fun p => (Code.Piece.code? p).map String.ofList
@@ -25,11 +19,6 @@ def codePieces (lang : Ir.CodeLang) (src : String) : Array String :=
 def prosePieces (lang : Ir.CodeLang) (src : String) : Array String :=
   (Code.assemble (Code.segmentsOf lang src)).filterMap fun p =>
     (Code.Piece.prose? p).map (String.ofList ·.text)
-
-/-- Whether a shipped line is set in the typewriter face alone, as a listing's lines are. -/
-def monoLine (l : Layout.LineOut) : Bool :=
-  let runs := lineRuns l
-  !runs.isEmpty && runs.all (·.1 == 1)
 
 /-- The lines a listing ships: its content's lines, an empty one as the one no-break space that
 holds its height. -/

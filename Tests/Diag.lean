@@ -378,25 +378,39 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
   | .W0414 => (Surface.readCode .lean "t.lean"
       "-- leantex: show = math, code\ntheorem t : True := trivial\n" (some
       { lean := "4.34.1", errors := 0, binders := #[]
-        decls := #[{ name := "t", kind := .theorem, start := (2, 0), stop := (2, 26)
+        decls := #[{ name := "t", kind := .theorem, prop := true, start := (2, 0), stop := (2, 26)
                      type := some (.apps (.const "sorryAx") []) }] })).2
   -- A linked statement in a file whose changes its commit does not hold.
   | .W0431 => (Surface.readCode .lean "t.lean"
       "-- leantex: show = math, link = https://github.com/acme/tides\ntheorem t : True := trivial\n"
       (some { lean := "4.34.1", errors := 0, binders := #[]
-              decls := #[{ name := "t", kind := .theorem, start := (2, 0), stop := (2, 26)
+              decls := #[{ name := "t", kind := .theorem, prop := true, start := (2, 0), stop := (2, 26)
                            type := some (.apps (.const "True") []) }] })
       { commit := some "c0ffee", path := some "t.lean", dirty := some true, tracked := true }).2
   -- A linked statement in a file no repository holds.
   | .W0432 => (Surface.readCode .lean "t.lean"
       "-- leantex: show = math, link = https://github.com/acme/tides\ntheorem t : True := trivial\n"
       (some { lean := "4.34.1", errors := 0, binders := #[]
-              decls := #[{ name := "t", kind := .theorem, start := (2, 0), stop := (2, 26)
+              decls := #[{ name := "t", kind := .theorem, prop := true, start := (2, 0), stop := (2, 26)
                            type := some (.apps (.const "True") []) }] })).2
   | .W0440 => dvE (w := w) (dvDoc "\\usepackage{colorspace}\n\\definespotcolor{ink}{Probe Ink}{0,.5,1,0}\n"
       "\\textcolor{ink!50!black}{x}")
   | .W0441 => dvE (w := w) (dvDoc "\\usepackage{colorspace}\n\\definespotcolor{one}{Probe Ink}{0,.5,1,0}\n"
       "\\definespotcolor{two}{Probe Ink}{1,0,0,0}x")
+  -- A theorem whose statement names its hypothesis after it, which words do not say.
+  | .W0415 => (Surface.readCode .lean "t.lean"
+      "-- leantex: show = prose\ntheorem t (h : True) : h = h := rfl\n" (some
+      { lean := "4.34.1", errors := 0, binders := #[]
+        decls := #[{ name := "t", kind := .theorem, prop := true, start := (2, 0), stop := (2, 35)
+                     type := some (.pi "h" .explicit true (.apps (.const "True") [])
+                       (.apps (.const "Eq") [.apps (.const "True") [], .apps (.bvar 0) [],
+                         .apps (.bvar 0) []])) }] })).2
+  -- A phrase for a constant no statement names.
+  | .W0416 => (Surface.readCode .lean "t.lean"
+      "-- leantex: show = prose, phrase.zz = \"#1 is void\"\ntheorem t : True := trivial\n" (some
+      { lean := "4.34.1", errors := 0, binders := #[]
+        decls := #[{ name := "t", kind := .theorem, prop := true, start := (2, 0), stop := (2, 26)
+                     type := some (.apps (.const "True") []) }] })).2
   | .W0317 => dvE (w := w) ("\\documentclass{card}\n\\runninghead{name}\n" ++
       "\\begin{document}\nx\n\\end{document}")
   | .W0318 => dvE (w := w) (dvDoc "\\chrome{ footer = { left = \\sectiontitle } }\n" "x")
@@ -1257,7 +1271,9 @@ def repeatFoldUnexercised : List (String × String) :=
     ["W0006", "W0013", "W0378", "W0382", "W0391", "W0393", "W0394", "W0396", "W0601", "W0602",
      "W0603", "W0604", "W0605", "W0609", "W0701"] ++
   unexercisedAs "one record per Lean declaration, which a file declares once"
-    ["W0414"] ++
+    ["W0414", "W0415"] ++
+  unexercisedAs "one record per declared phrase, in the directive a file reads once"
+    ["W0416"] ++
   unexercisedAs "one record per Lean file whose link it owes, which a page reads once"
     ["W0431", "W0432"] ++
   unexercisedAs ("its witness is the emitter's own record, with no source to write twice; the \

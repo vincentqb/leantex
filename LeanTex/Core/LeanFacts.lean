@@ -63,6 +63,8 @@ public structure Decl where
   signature : Option ((Nat × Nat) × (Nat × Nat)) := none
   proof : Option ((Nat × Nat) × (Nat × Nat)) := none
   proved : Bool := true
+  /-- Whether its type is a proposition. -/
+  prop : Bool
   deriving Repr, BEq, Inhabited
 
 /-- A declaration the file writes by name that Lean added nothing for: its name as written, its
@@ -87,7 +89,7 @@ public structure Facts where
   deriving Repr, BEq, Inhabited
 
 /-- The schema's version, which an answer's first line names. -/
-public def schemaVersion : Nat := 1
+public def schemaVersion : Nat := 2
 
 /-- The most bytes an answer may hold, and the most nodes one type may. -/
 public def maxAnswerBytes : Nat := 16 * 1024 * 1024
@@ -228,7 +230,9 @@ private def record (facts : Facts) (j : Json) : Except String Facts := do
     let signature ← spanOf (j.getObjValD "signature")
     let proof ← spanOf (j.getObjValD "proof")
     let proved ← j.getObjValAs? Bool "proved"
-    let decl : Decl := { name, kind, start, stop, type, head, moduleName, signature, proof, proved }
+    let prop ← j.getObjValAs? Bool "prop"
+    let decl : Decl :=
+      { name, kind, start, stop, type, head, moduleName, signature, proof, proved, prop }
     return { facts with decls := facts.decls.push decl }
 
 /-- An answer, whole or refused whole. -/

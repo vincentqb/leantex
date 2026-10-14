@@ -193,7 +193,7 @@ private def sortMath (level : String) : Array Math :=
   | none, none => (opMath "Sort").append (levelMath level)
 
 /-- The explicit arguments among a constant's arguments, by its leading binders. -/
-private def shownArgs (lk : Lookup) (c : String) (args : List Rendered) : List Rendered :=
+public def shownArgs {β : Type} (lk : Lookup) (c : String) (args : List β) : List β :=
   match lk.binders c with
   | some bs => (args.zipIdx.filter fun (_, k) => (bs[k]?.map Binder.shows).getD true).map (·.1)
   | none => args
@@ -306,6 +306,10 @@ public def renderApps (lk : Lookup) (ctx : List String) (h : Head) (args : List 
 
 end
 
+/-- A term's formulas where it stands alone, a line free to break between them. -/
+public def formulasOf (lk : Lookup) (ctx : List String) (t : Term) : List (Array Math) :=
+  piecesAt (render lk ctx t) 0
+
 /-- A piece of a statement's top level: one quantified variable and its type, a quantifier's head,
 which a word space follows, or a formula, which a line may break after. -/
 public inductive Chunk where
@@ -382,17 +386,18 @@ public def shownNames (decl : String) (consts : Array String) (c : String) : Str
   let r := relative decl c
   if consts.any fun d => d != c && (relative decl d == r || d == r) then c else r
 
+/-- What a declaration's statement reads its constants by, from Lean's answer. -/
+public def lookupOf (facts : Facts) (d : Decl) (type : Term) : Lookup :=
+  { binders := fun c => (facts.binders.find? (·.1 == c)).map (·.2)
+    shown := shownNames d.name (type.consts #[])
+    collectionFirst := facts.collectionFirst }
+
 /-- A declaration's statement as formulas, each with whether a word space, rather than a bare
-break, follows it: a definition opens on its name and a colon. -/
+break, follows it: a declaration whose type is no proposition opens on its name and a colon. -/
 public def statementMath (facts : Facts) (d : Decl) (type : Term) : Array (Array Math × Bool) :=
-  let consts := type.consts #[]
-  let lk : Lookup :=
-    { binders := fun c => (facts.binders.find? (·.1 == c)).map (·.2)
-      shown := shownNames d.name consts
-      collectionFirst := facts.collectionFirst }
-  let opening : Array (Array Math × Bool) := match d.kind with
-    | .definition => #[((opMath ((d.name.splitOn ".").getLastD d.name)).push (.word ":"), true)]
-    | .theorem | .axiom => #[]
+  let lk := lookupOf facts d type
+  let opening : Array (Array Math × Bool) := if d.prop then #[] else
+    #[((opMath ((d.name.splitOn ".").getLastD d.name)).push (.word ":"), true)]
   mergeBinders opening (chunksOf lk [] false true type)
 
 mutual

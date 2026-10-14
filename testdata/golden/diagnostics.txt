@@ -880,6 +880,13 @@
 ── W0414 (degraded) a Lean declaration's statement is not set as mathematics, Lean having given no faithful one; its code is set without it
 ⚠ [W0414]
   the statement of 't' did not elaborate in Lean; its code is set without it
+── W0415 (degraded) a Lean declaration's statement the prose view cannot say in words is set as mathematics
+⚠ [W0415]
+  words cannot say 't', which refers to its hypothesis 'h'; it is set as mathematics
+── W0416 (degraded) a phrase a Lean file's directive declares is refused, or used by no sentence; the page says its statements without it
+⚠ [W0416]
+  'phrase.zz' names no constant a statement of this file names; the phrase is not used
+  suggestion: write the constant's name as a statement uses it after `phrase.`
 ── W0419 (degraded) a picture the boundary did not draw is drawn in part by the rendered subset; what it leaves out is named in the line
 ⚠ [W0419] - \begin
   the rendered subset draws this picture in part: '\pattern' is outside the rendered picture subset; not drawn

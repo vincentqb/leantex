@@ -158,7 +158,7 @@ private def readLean (dir : System.FilePath) (request : Compat.InputRequest) :
     let (facts, factDiags) ← if showing.asks || showing.decls.isSome then
         Host.runIO (LeanExport.factsFor path.toString bytes text lost) else pure (none, #[])
     let place ← match showing.link with
-      | some l => if showing.math then
+      | some l => if showing.statements then
           Host.runIO (LeanExport.placeOf path.toString (Code.linkTemplate l)) else pure {}
       | none => pure {}
     let entry := if division then "the Lean division" else "`\\inputlean`"
@@ -383,7 +383,7 @@ public def readDocument (file : String) (bytes : ByteArray)
       if phases && asks then
         phase "lean" s!"{(facts.map (·.decls.size)).getD 0} declarations" (← since t)
       let place ← match showing.link with
-        | some l => if lang == .lean && showing.math then
+        | some l => if lang == .lean && showing.statements then
             Host.runIO (LeanExport.placeOf file (Code.linkTemplate l)) else pure {}
         | none => pure {}
       let t ← IO.monoMsNow
