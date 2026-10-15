@@ -207,8 +207,8 @@ def sizeCommandChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
   t "a redefined \\normalsize copying a skip it does not set builds"
     (!cds.any (·.severity == .error))
   t "a \\normalsize copying a skip it does not set names the copy once"
-    ((cds.filter (·.code == "W0104")).map (·.subject) ==
-      #[some "ctrl:setlength:belowdisplayskip:value"])
+    ((cds.filter (·.code == "W0107")).map (·.subject) ==
+      #[some "length:belowdisplayskip"])
   t "a \\normalsize copying a skip it does not set ships the page without it"
     (pagesOf oneFace copy == pagesOf oneFace (doc (redef "") body))
 
@@ -338,7 +338,8 @@ def unreadableLengthChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     "\\begin{tabular}{ll}\nFoxtrot & Golf\n\\end{tabular}"
   let bare := pagesOf oneFace (doc "" body)
   let fine (ds : Array Diag) : Bool :=
-    !ds.any fun d => d.severity == .error || d.code == "W0104" || d.code == "W0301"
+    !ds.any fun d => d.severity == .error || d.code == "W0104" || d.code == "W0107" ||
+      d.code == "W0301"
   let read : List (String × String) :=
     [("\\newlength{\\probegap}\\setlength{\\probegap}{7pt}\\setlength{\\parskip}{-\\probegap}",
        "\\setlength{\\parskip}{-7pt}"),
@@ -378,8 +379,8 @@ def unreadableLengthChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     let ds := dvE src
     t s!"'{pre}' builds" (!ds.any (·.severity == .error))
     t s!"'{pre}' is named once, on its parameter"
-      ((ds.filter fun d => d.code == "W0104").map (·.subject) ==
-        #[some s!"ctrl:setlength:{n}:value"])
+      ((ds.filter fun d => d.code == "W0107").map (·.subject) ==
+        #[some s!"length:{n}"])
     t s!"'{pre}' ships the page the document ships without it" (pagesOf oneFace src == bare)
   -- A definition's body runs where the command is used, so nothing in it is judged where it is defined.
   for pre in ["\\newcommand{\\probesize}{\\setlength{\\belowdisplayskip}{\\abovedisplayskip}}",
@@ -532,23 +533,23 @@ def kernelLengthChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
   let fails (ds : Array Diag) : Bool := ds.any (·.severity == .error)
   let line := doc "article" "\\setlength{\\leftmargini}{0.1\\linewidth}" list
   t "a measure the page settles later builds, named once on its value"
-    (!fails (dvE line) && ((dvE line).filter (·.code == "W0104")).map (·.subject) ==
-      #[some "ctrl:setlength:leftmargini:value"])
+    (!fails (dvE line) && ((dvE line).filter (·.code == "W0107")).map (·.subject) ==
+      #[some "length:leftmargini"])
   t "a measure the page settles later ships the page without the setting"
     (pagesOf oneFace line == pagesOf oneFace (doc "article" "" list))
   let par := doc "article" "\\setlength{\\parindent}{0.05\\textwidth}" list
   t "a paragraph indent of the unsettled measure builds, named once"
-    (!fails (dvE par) && ((dvE par).filter (·.code == "W0104")).size == 1)
+    (!fails (dvE par) && ((dvE par).filter (·.code == "W0107")).size == 1)
   let margin := "\\usepackage[margin=2cm]{geometry}"
   let geo := doc "article" (margin ++ "\\setlength{\\leftmargini}{0.1\\linewidth}") list
   t "a flow page's '\\linewidth' is the class's, not the engine's: named once on its value"
-    (!fails (dvE geo) && ((dvE geo).filter (·.code == "W0104")).map (·.subject) ==
-      #[some "ctrl:setlength:leftmargini:value"])
+    (!fails (dvE geo) && ((dvE geo).filter (·.code == "W0107")).map (·.subject) ==
+      #[some "length:leftmargini"])
   let frame (pre : String) : String :=
     doc "beamer" pre ("\\begin{frame}{Alpha}\n" ++ list ++ "\n\\end{frame}")
   let fixed := frame "\\setlength{\\leftmargini}{0.1\\linewidth}"
   t "a class that fixes its text block reads '\\linewidth' as its '\\textwidth'"
-    (!fails (dvE fixed) && !(dvE fixed).any (·.code == "W0104") &&
+    (!fails (dvE fixed) && !(dvE fixed).any (·.code == "W0107") &&
       pagesOf oneFace fixed == pagesOf oneFace (frame "\\setlength{\\leftmargini}{0.1\\textwidth}"))
   t "a class that fixes its text block: '\\linewidth' moves the page"
     (pagesOf oneFace fixed != pagesOf oneFace (frame ""))
@@ -557,8 +558,8 @@ def kernelLengthChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
       !fails (dvE (doc "article" "\\page{ hmargin = 2cm }\\tokens{ probe = 0.1 * textwidth }" list)))
   let body := doc "article" "" ("\\newlength{\\probew}\\setlength{\\probew}{0.1\\linewidth}\n" ++ list)
   t "a body '\\linewidth', its scope's width, builds, named once on its value"
-    (!fails (dvE body) && ((dvE body).filter (·.code == "W0104")).map (·.subject) ==
-      #[some "ctrl:setlength:probew:value"])
+    (!fails (dvE body) && ((dvE body).filter (·.code == "W0107")).map (·.subject) ==
+      #[some "length:probew"])
   let head (pre : String) : String :=
     doc "article" ("\\runninghead{Alpha head}" ++ pre) "Alpha words.\n\nBravo words."
   t "'\\headsep' moves a running head's page"

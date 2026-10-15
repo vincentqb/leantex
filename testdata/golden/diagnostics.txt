@@ -423,6 +423,9 @@
 ── W0106 (config) expl3 code skipped
 ⚠ [W0106] - \ExplSyntaxOn
   code between '\ExplSyntaxOn' and '\ExplSyntaxOff' is not supported; skipped
+── W0107 (degraded) a length value the engine cannot read; the setting is skipped and the length keeps its value
+⚠ [W0107] - \setlength
+  '\parskip' is set to 'foo', a value this engine cannot read: skipped, and the length keeps its value
 ── W0108 (degraded) \centering is inert inside an argument
 ⚠ [W0108] - \centering
   '\centering' centres nothing inside an argument; content stays left-aligned

@@ -6008,7 +6008,6 @@ changes nothing"
      ("twoside=false", "the page is one-sided, as without the option"),
      ("onecolumn", "the text is set in one column, as without the option"),
      final,
-     ("notitlepage", "the title opens the first page, as without the option"),
      ("reqno", "equation numbers stand on the right, as without the option"),
      ("openany", opensNoPage), ("open=any", opensNoPage), ("headings=openany", opensNoPage),
      ("titlepage=false", "the title opens the first page, as without the option"),
@@ -6025,12 +6024,15 @@ public def classOptionFlags : List (Ir.PageModel × List String) :=
   [(.flow, ["landscape", "twoside"]), (.frame, ["t", "slidestop", "noamsthm"]),
    (.face, ["us", "jis"])]
 
+/-- The class options the abstract's form reads in the flow model (`abstractFormUnder`). -/
+public def abstractFormOptions : List String := ["titlepage", "notitlepage"]
+
 /-- The paper sizes a class option names, each as `<size>paper`. -/
 public def classPaperOptions : List String := pageSizes.map (·.1 ++ "paper")
 
 /-- Whether a reader here reads a class option under a page model: a body size; in the flow model
-a paper size, `landscape` and `twoside`'s title-page folio; in the frame model the slide stage, its
-alignment and beamer's `noamsthm`; in the face model a card standard. -/
+a paper size, `landscape`, `twoside` and the abstract's title-page options; in the frame model the
+slide stage, its alignment and `noamsthm`; in the face model a card standard. -/
 public def classOptionRead (model : Ir.PageModel) (o : String) : Bool :=
   let sized (v : String) : Bool := v.endsWith "pt" && ((v.dropEnd 2).toString.toNat?.any (0 < ·))
   let paper (v : String) : Bool := (pageSizes.lookup v).isSome
@@ -6038,7 +6040,7 @@ public def classOptionRead (model : Ir.PageModel) (o : String) : Bool :=
   | ("fontsize", some v), _ => sized v
   | (k, none), .flow =>
     sized k || (k.endsWith "paper" && paper (k.dropEnd "paper".length).toString) ||
-      (classOptionFlags.lookup .flow).any (·.contains k)
+      (classOptionFlags.lookup .flow).any (·.contains k) || abstractFormOptions.contains k
   | (k, none), m => sized k || (classOptionFlags.lookup m).any (·.contains k)
   | (k, some v), .flow => (k == "paper" && paper v) || (k == "twoside" && v == "true")
   | (k, some v), .frame => k == "aspectratio" && (Ir.slidesStageNamed v).isSome

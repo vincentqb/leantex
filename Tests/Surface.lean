@@ -459,7 +459,7 @@ def posterCompatChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\setlength{\\x}{0.5\\textwidth}\n\\begin{document}\nx\n\\end{document}")
   t "a flow class's preamble textwidth is named once, never an error"
     (!da.any (·.severity == .error) &&
-      (da.filter (·.code == "W0104")).map (·.subject) == #[some "ctrl:setlength:x:value"])
+      (da.filter (·.code == "W0107")).map (·.subject) == #[some "length:x"])
   let (_, db) := elabStr ("\\documentclass{article}\n\\begin{document}\n" ++
     "\\setlength{\\y}{0.5\\textwidth}\nx\n\\end{document}")
   t "a body \\setlength resolves textwidth from the finished page"

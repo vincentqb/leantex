@@ -167,12 +167,12 @@ def captionScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
   let builds (pre : String) : Bool :=
     !((dvE (dvDoc pre body)).any (·.severity == .error))
   let reads (v lit : String) : Bool :=
-    builds (redef v) && !((dvE (dvDoc (redef v) body)).any (·.code == "W0104")) &&
+    builds (redef v) && !((dvE (dvDoc (redef v) body)).any (·.code == "W0107")) &&
       shippedLines fonts (dvDoc (redef v) body) == shippedLines fonts (dvDoc (redef lit) body)
   let named (pre : String) : Bool :=
     builds pre &&
-      ((dvE (dvDoc pre body)).filter (·.code == "W0104")).map (·.subject) ==
-        #[some "ctrl:setlength:abovecaptionskip:value"]
+      ((dvE (dvDoc pre body)).filter (·.code == "W0107")).map (·.subject) ==
+        #[some "length:abovecaptionskip"]
   t "a kernel skip amount in the float-core idiom reads as its value"
     (reads "\\smallskipamount" "3pt plus 1pt minus 1pt")
   t "a dimexpr in the float-core idiom reads as its value"

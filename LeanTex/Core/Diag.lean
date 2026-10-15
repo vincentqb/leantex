@@ -260,6 +260,7 @@ public inductive DiagCode where
   | W0446
   | W0447
   | N0448
+  | W0107
   deriving Repr, BEq, DecidableEq
 
 /-- The registry: each code's digits, its declared `Loss`, and its one meaning. -/
@@ -341,6 +342,7 @@ private def DiagCode.spec : DiagCode → String × Loss × String
   | .W0104 => ("0104", .config, "unsupported TeX construct skipped")
   | .W0105 => ("0105", .degraded, "overlay specification does not name a step")
   | .W0106 => ("0106", .config, "expl3 code skipped")
+  | .W0107 => ("0107", .degraded, "a length value the engine cannot read; the setting is skipped and the length keeps its value")
   | .W0108 => ("0108", .degraded, "\\centering is inert inside an argument")
   | .W0110 => ("0110", .degraded, "unsupported command option; ignored")
   | .W0201 => ("0201", .standard, "measure outside the readable band")

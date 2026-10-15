@@ -333,18 +333,23 @@ def hypersetupRow : Row :=
       fun o => article "" ("\\usepackage[colorlinks]{hyperref}" ++
         (o.map (s!"\\hypersetup\{{·}}")).getD "") ""] }
 
+/-- A class's document holding an abstract, whose form the title-page options set. -/
+def abstracted (cls : String) (o : Option String) : String :=
+  s!"\\documentclass{bracketed o}\{{cls}}\n\\begin\{document}\n\\begin\{abstract}Abstract words.\\end\{abstract}\n" ++
+    "Body words.\n\\end{document}\n"
+
 /-- The class options: each model's reads, the inert and refused ones, and others, in an article,
-a deck and a card. -/
+a deck, a card and the abstracts of an article and a report. -/
 def classRow : Row :=
   { reader := "\\documentclass"
     settings := ["8pt", "10pt", "11pt", "12pt", "fontsize=12pt", "paper=a5", "b5paper",
-      "twocolumn", "draft", "titlepage", "leqno", "fleqn", "openright", "openbib", "parskip=half",
+      "twocolumn", "draft", "leqno", "fleqn", "openright", "openbib", "parskip=half",
       "aspectratio=169", "handout", "compress"] ++ Elab.classPaperOptions ++
       Elab.classOptionFlags.flatMap (·.2) ++ Elab.classOptionsInert.flatMap (·.2.map (·.1)) ++
-      [invented]
+      Elab.abstractFormOptions ++ [invented]
     docs := [fun o => article (bracketed o) "" "", fun o => deck (bracketed o) "",
       fun o => s!"\\documentclass{bracketed o}\{card}\n\\begin\{document}\nCard words.\n" ++
-        "\\end{document}\n"] }
+        "\\end{document}\n", abstracted "article", abstracted "report"] }
 
 /-- The kernel's length parameters, set in the preamble and in the body. -/
 def lengthRow : Row :=
@@ -549,6 +554,22 @@ def paramSilenceChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
   t "an unreadable length value keeps the length, is named, and the page ships"
     ([foo1, foo2].all fun src =>
       (elabStr src).2.all (!·.code.startsWith "E") && warnsOf src "parskip")
+  let operand (n src : String) : Bool :=
+    let ds := (elabStr src).2
+    ds.all (!·.code.startsWith "E") && !ds.any (fun d => d.code == "W0104" && names n d) &&
+      (ds.filter fun d => d.code == "W0107" && !d.demoted).map (·.subject) ==
+        #[some ("length:" ++ n)]
+  let word := plain "" "\\setlength{\\zzprobe}{y}"
+  t "an unreadable length value is one degraded operand, keyed by its length, never a setting \
+nothing reads"
+    (operand "parskip" foo1 && operand "parskip" foo2 && operand "zzprobe" word &&
+      operand "parskip" (plain "" "\\addtolength{\\parskip}{y}"))
+  t "a word as a length value keeps the translation the door made"
+    ((elabStr word).2.any (·.code == "N0100") && (elabStr foo2).2.any (·.code == "N0100"))
+  t "the abstract's title-page options and report's own are read, never named"
+    ([abstracted "report" none, abstracted "report" (some "notitlepage"),
+        abstracted "article" (some "titlepage"), abstracted "book" none].all fun src =>
+      !(elabStr src).2.any (·.code == "W0356"))
   let geo (pre : String) : String :=
     s!"\\documentclass\{article}\n\\usepackage[margin=1in]\{geometry}\n{pre}\n\\begin\{document}\n" ++
       "Alpha words.\n\\end{document}\n"

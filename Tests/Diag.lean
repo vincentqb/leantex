@@ -376,6 +376,7 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
        "\\setbeamercovered{transparent}", "\\titlegraphic{}"] ++ "\n") "x")
   | .W0105 => dvE (w := w) "\\uncover<zz>{x}"
   | .W0106 => dvE (w := w) (dvDoc "\\ExplSyntaxOn \\cs_new:Npn \\x { } \\ExplSyntaxOff\n" "x")
+  | .W0107 => dvE (w := w) (dvDoc "" "x \\setlength{\\parskip}{foo}")
   | .W0108 => dvE (w := w) "\\textbf{\\centering x}"
   | .W0110 => dvE (w := w) "\\includegraphics[angle=45]{x.png}"
   | .W0111 => dvE (w := w) (dvDoc "\\setkomafont{banana}{\\bfseries}\n" "x")
@@ -870,7 +871,8 @@ def siteAccountingProbes : List (String × String) :=
       "{Label: \\inserttitle};\\end{tikzpicture}}\\title{Probe}\n") "\\titlepage",
     "a mixed title-page node beside a readable full-page ground"),
    (dvDoc "\\definecolor{codestring}{HTML}{AA0000}\n" "Sierra.",
-    "a translated colour declaration of a retired listing key")]
+    "a translated colour declaration of a retired listing key"),
+   (dvDoc "\\setlength{\\parskip}{foo}\n" "Tango.", "a length set to a word")]
 
 /-- Sources the site audit lays out, elaborated with their locations kept. -/
 def layoutSiteAccountingProbes : List (String × String) :=
@@ -904,7 +906,10 @@ its translation note stands beside the refusal of the definition it produced; th
 as the row above, one class"),
    ("W0334", "W0362", "LeanTex/Core/Elab.lean, the picture diagnostics loop: each refused \
 construct is reported at the picture's position, where W0362 already names the picture's \
-placeholder; name the constructs in W0362, or report each at its own span")]
+placeholder; name the constructs in W0362, or report each at its own span"),
+   ("N0100", "W0107", "LeanTex/Core/Compat.lean, the length door: a \\setlength given a word, or a \
+package option given an unreadable length, keeps its translation note beside the refusal of the \
+value it carried, one construct accounted twice; say the translation in the refusal")]
 
 /-- Independent facts at one source site, witnessed by varying each separately; not merge debt. -/
 def independentSiteFacts : List (String × String) :=

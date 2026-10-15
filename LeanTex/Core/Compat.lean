@@ -5406,25 +5406,37 @@ spaced per level, in the preamble"
 /-- The one warning for a length assignment the door cannot read, the length
 keeping what it held. -/
 private def unreadableLength (n shown : String) (pos : Pos) : M (Array Raw) := do
-  sayOnce ("ctrl:setlength:" ++ n ++ ":value") .W0104
+  sayOnce ("length:" ++ n) .W0107
     s!"'\\{n}' is set to '{shown}', a value this engine cannot read: skipped, and \
 the length keeps its value" pos
     -- premise: unreadableLengthChecks — an unreadable spelling warns once
     (demote := packageFile (← get).file)
   return #[]
 
+/-- A length value as the native declaration spells it, a LaTeX word included. -/
+private def spelledValue? (value : Array Raw) : M (Option String) := do
+  let st ← get
+  return (lenValue st.lens value st.inDef (!st.inDoc && !st.seam) st.measureKnown
+    st.flowPage).filter readsAsLength
+
 /-- A length value as the assignment door reads it; `none`
 for one it cannot read. -/
 private def doorValue? (value : Array Raw) : M (Option String) := do
-  let st ← get
-  return (lenValue st.lens value st.inDef (!st.inDoc && !st.seam) st.measureKnown
-    st.flowPage).filter fun src => readsAsLength src && texWordsOnly (rawSrc value)
+  return (← spelledValue? value).filter fun _ => texWordsOnly (rawSrc value)
 
-/-- A length assignment from its value's raws, landed by
-`setLength` or named and skipped. -/
-private def assignLength (n : String) (value : Array Raw) (what : String) (pos : Pos) :
-    M (Array Raw) := do
+/-- The native declaration a length assignment translates to. -/
+private def lengthNative (n src : String) : String :=
+  match paramSites.lookup n with
+  | some (.page key) => s!"\\page\{ {key} = {src} }"
+  | _ => s!"\\tokens\{ {n} = {src} }"
+
+/-- A length assignment from its value's raws, landed by `setLength` or named and skipped; a
+`\setlength` whose value is a word keeps the translation it spells. -/
+private def assignLength (n : String) (value : Array Raw) (what : String) (pos : Pos)
+    (noted : Bool := false) : M (Array Raw) := do
   if let some src ← doorValue? value then return ← setLength n src what pos
+  if noted then
+    if let some src ← spelledValue? value then became what (lengthNative n src) pos
   unreadableLength n (rawSrc value).trimAscii.toString pos
 
 /-- A document macro used in a list's body whose definition is only length
@@ -9395,7 +9407,7 @@ arithmetic truncates toward zero as TeX's '\\divide' does" pos
           discard s!"\\setlength\{{target}}" "a register only the block templates assign and read"
             s!"setlength:{n}" pos
           return some (#[], k)
-        return some (← assignLength n args[1] s!"\\setlength\{{target}}" pos, k)
+        return some (← assignLength n args[1] s!"\\setlength\{{target}}" pos (noted := true), k)
       | none => return none
     else return none
   | "addtolength" =>
@@ -9415,7 +9427,7 @@ arithmetic truncates toward zero as TeX's '\\divide' does" pos
         let expr := s!"({p}) + {v}"
         if Decl.readsAsLengthExpr expr then
           return some (← setLength n expr s!"\\addtolength\{\\{n}}" pos, k)
-        sayOnce "ctrl:addtolength" .W0104
+        sayOnce ("length:" ++ n) .W0107
           s!"'\\addtolength' on a value the length grammar cannot compose ('{expr}'): \
 skipped, and the length keeps its value" pos
           (demote := styInternal (← get).file name)
@@ -9468,7 +9480,7 @@ skipped, and the length keeps its value" pos
       | some expr =>
         if Decl.readsAsLengthExpr expr then
           return some (← setLength tgt expr s!"\\{name}\\{tgt}" pos, k)
-        sayOnce ("ctrl:" ++ name) .W0104
+        sayOnce ("length:" ++ tgt) .W0107
           s!"'\\{name}' on a value the length grammar cannot compose ('{expr}'): \
 skipped, and the length keeps its value" pos
           (demote := styInternal (← get).file name)

@@ -246,4 +246,4 @@ def composedLengthChecks (ref : IO.Ref (List String)) : IO Unit := do
     let ds := dvE src
     t s!"'{arith}' on glue builds" (ds.all (·.severity != .error))
     t s!"and is named where the grammar cannot read the sum ('{arith}')"
-      (ds.any (·.code == "W0104"))
+      (ds.any (·.code == "W0107"))
