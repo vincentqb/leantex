@@ -65,7 +65,26 @@ def checks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
     if l.furniture && lineText l == "1" then some l.size else none
   t "declared ladder: the footline sets at the declared \\tiny, 6.6 pt"
     (!foot.isEmpty && foot.all (· == Dim.pt 33 / 5))
-  t "declared ladder: the judge reads the footline at the size the page ships"
+  t "declared ladder: the footline sets at Ir.footlineSize, the one size the judge also reads"
     (foot.all (· == Ir.footlineSize mdoc.page.scale mdoc.page.fontSize))
+  -- A heading the declared ladder sets below large-scale text owes the ordinary text threshold.
+  let judged (decl : String) : Array Diag :=
+    Contrast.docDiags (elabStr ("\\documentclass{article}\n\\usepackage{xcolor}\n" ++ decl ++
+      "\\definecolor{mid}{HTML}{808080}\n\\begin{document}\n" ++
+      "\\section{\\textcolor{mid}{Kilo heading}}\nLima words.\n\\end{document}\n")).1
+  let small := "\\makeatletter\n\\renewcommand{\\Large}{\\@setfontsize\\Large{12}{14}}\n\\makeatother\n"
+  let script := "\\documentclass{article}\n\\makeatletter\n" ++
+    "\\renewcommand{\\scriptsize}{\\@setfontsize\\scriptsize{5}{6}}\n\\makeatother\n" ++
+    "\\begin{document}\nKilo words.\\footnote{Lima note.}\n\\end{document}\n"
+  let marks := ((layoutOf oneFace (elabStr script).1).pages.flatMap (·.lines)).flatMap fun l =>
+    if hasStr (lineText l) "Kilo words" then l.segs.filterMap fun s => match s with
+      | .run _ _ _ _ glyphs size _ _ _ _ _ =>
+        if String.ofList (glyphs.toList.map (·.2.1)) == "1" then some size else none
+      | _ => none
+    else #[]
+  t "declared ladder: a note mark keeps the script size a declared \\scriptsize does not move"
+    (marks == #[Ir.noteMarkSize (Dim.pt 10)])
+  t "declared ladder: the contrast judge reads a heading at the size the declared ladder sets it"
+    ((judged small).any (·.code == "W0315") && !(judged "").any (·.code == "W0315"))
 
 end Tests.DeclaredLadder

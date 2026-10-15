@@ -6629,6 +6629,10 @@ contrast judge read. -/
 @[expose] public def footlineSize (scale : List (String × Nat)) (base : Sp) : Sp :=
   scaleStepIn scale base footline.step
 
+/-- A note mark's size: the default ladder's script step, near LaTeX's math script size, which a
+declared `\scriptsize` does not move. -/
+@[expose] public def noteMarkSize (base : Sp) : Sp := scaleStepIn sizeScale base "scriptsize"
+
 mutual
 
 /-- The walk of `fillTemplate`: any body-carrying wrapper may hold the template's hole. -/

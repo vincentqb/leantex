@@ -3775,8 +3775,7 @@ private def markBox (fs : FontSet) (sty : TextStyle) (around : Sp)
   let attr : Attribution := .noteMark num
   let idx := fs.lookup sty.slot sty.weight.css sty.italic
   let font := fs.get idx
-  -- LaTeX's math script size (`\sf@size`), which a declared `\scriptsize` does not move.
-  let markSize := Ir.scaleStepIn Ir.sizeScale around "scriptsize"
+  let markSize := Ir.noteMarkSize around
   let raise := around * Ir.markRaise / 1000
   let mut gs : Array (Nat × Char × Sp) := #[]
   let mut w : Sp := 0
@@ -6997,6 +6996,9 @@ public structure Spacing.Page where
   /-- The next line opens at the page top though lines already
   stand there: a later column rewound to a fresh page's start. -/
   private freshStart : Bool := false
+  /-- A later column rewound onto a page its row's earlier columns, or the content above the row,
+  already hold, so a band that does not fit breaks with the row. -/
+  private rewound : Bool := false
   /-- `\vspace*`'s zero rule stands on the page with no box below it
   yet, so the glue after it stays and `\topskip` stands above it. -/
   private anchored : Bool := false
@@ -7118,6 +7120,12 @@ private def Spacing.Page.noteHang (b : B) (depth : Option Sp := none) : Sp :=
 /-- Nothing stands on the page that the next band must be spaced below. -/
 private def Spacing.Page.fresh (b : B) : Bool :=
   (b.cur.blank && !b.opened) || b.freshStart
+
+/-- The open page holds nothing but its pinned chrome, such as a frame's title, and no row's
+earlier columns. -/
+private def Spacing.Page.holdsNothing (b : B) : Bool :=
+  b.cur.lines.size ≤ b.pinnedLines && b.cur.fills.size ≤ b.pinnedFills &&
+    b.cur.inks.size ≤ b.pinnedInks && !b.rewound
 
 /-- Attach a committed line's notes to the open page, each note whole. -/
 private def Spacing.Page.attachNotes (b : B) (notes : Array NoteBlock) : B :=
@@ -7422,7 +7430,7 @@ private def Spacing.Page.finishPage (b : B) (owed : Sp := 0) (flush : Bool := fa
            pinnedLines := 0, pinnedFills := 0, pinnedInks := 0, anchored := false,
            openRegions := b.openRegions.map RegionStart.nextPage, closedRegions := #[],
            pendingNotes := #[], notesH := 0, notesDepth := 0, opened := false, freshStart := false,
-           diags := diags, needs := b.neededOverrun }
+           rewound := false, diags := diags, needs := b.neededOverrun }
 
 private theorem finishPage_lifecycle_projects (b : B) (owed : Sp) (flush : Bool) :
     ((b.finishPage owed flush).pages.back?.map (·.pageState)) = some b.pageState ∧
@@ -7632,16 +7640,18 @@ private def Spacing.Page.noteOverrun (b : B) (over : Sp) : B :=
         | none => b.overruns.push (origin, over, b.clearance)
       | _, _ => b.overruns }
 
-/-- What a band no break can help leaves past the page's floor, named: the note block's overrun
-(W0372), else ink past the page's shrink, which the ladder records within its clearance and
-W0358 names beyond it. -/
+/-- What a band no break can help leaves past the page's floor, named once: a note block that alone
+pushes it past (W0372), else ink past the page's shrink, which the ladder records within its
+clearance and W0358 names beyond it; a float's replay, which `runFloat` names whole, names nothing. -/
 private def Spacing.Page.warnOverrun (b : B) (y inkBelow : Sp) : B :=
   let over := y + inkBelow - noteFloor b.bottom b.noteGap b.notesH b.noteHang
   let beyond := over - b.pageShrink
-  let recorded := b.notesH == 0 && 0 < beyond && b.ladder && beyond ≤ b.clearance
+  let byNotes := b.notesH > 0 && y + inkBelow - b.bottom ≤ b.pageShrink
+  let recorded := !b.noBreak && b.notesH == 0 && 0 < beyond && b.ladder && beyond ≤ b.clearance
   let who := if b.frameBreak.isSome then s!"{frameWho b.curFrameLabel}: " else ""
   let named : Option Diag :=
-    if b.notesH > 0 then
+    if b.noBreak then none
+    else if byNotes then
       if over > 0 then some (Diag.of .W0372
         "a footnote is taller than the text block; it overruns its page"
         (help := "shorten the note, or raise the text height (\\page{ vmargin = ... })")
@@ -8249,8 +8259,8 @@ private def Spacing.Page.fitWith (b : B) (place : B → Sp → Bool → Sp → B
     let above := b.pageShrink + b.skip.shrink
     if overflow ≤ above ∨ b.noBreak then
       place b y true (min overflow above)
-    -- An opened page with nothing on it holds a band: a break would ship an empty frame page.
-    else if holdsBlank && b.cur.blank then
+    -- A page holding nothing but its chrome holds a band: a break would ship an empty page.
+    else if holdsBlank && b.holdsNothing then
       settle (place b y true above) y (inkBelow + b.surfaceBottom)
     -- A frame the ladder stands overfull, as beamer sets it on its one page.
     else if b.overhangs (overflow - above) then
@@ -15833,6 +15843,7 @@ private def restartColumn (start latest : B) : B :=
                stretchAbove := #[], filsAbove := #[]
                pinnedLines := 0, pinnedFills := 0, pinnedInks := 0, pendingNotes := #[]
                opened := !start.fresh, freshStart := start.fresh
+               rewound := !start.holdsNothing
                openRegions := start.openRegions.map RegionStart.nextPage, closedRegions := #[]
                diags := latest.diags
                paragraphBreaks := latest.paragraphBreaks

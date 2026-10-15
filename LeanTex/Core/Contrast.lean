@@ -179,13 +179,6 @@ private def headingCx (scale : List (String × Nat)) (slides : Bool) (base : Sp)
   | 0 => { base, scale, size := Ir.titleSize scale base slides, bold := true }
   | l => { base, scale, size := Ir.headingSize scale base l, bold := true }
 
-private theorem contrast_judges_what_layout_sets (scale : List (String × Nat)) (slides : Bool)
-    (base : Sp) :
-    (headingCx scale slides base .title).size = Ir.titleSize scale base slides ∧
-      ∀ l : Ir.HeadingLevel, l ≠ .title →
-        (headingCx scale slides base l).size = Ir.headingSize scale base l :=
-  ⟨rfl, fun l h => by cases l <;> first | exact absurd rfl h | rfl⟩
-
 mutual
 
 private def usesInlines (cx : UseCx) (acc : UseAcc) (xs : List Inline) :

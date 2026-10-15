@@ -12606,7 +12606,7 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
     | "parskip", .glue g => spec := { spec with parskip := some g }
     | "parskip", .dim d => spec := { spec with parskip := some { width := Dim.Length.ofSp d } }
     | "fontsize", .dim d =>
-      -- The floor `Layout.heading_hierarchy` covers: the hierarchy holds from 1pt.
+      -- From 1pt the default ladder's headings stand in order (`Layout.heading_hierarchy`).
       if d ≥ Dim.pt 1 then
         spec := { spec with fontSize := d }
       else

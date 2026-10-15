@@ -869,7 +869,7 @@ placeholder; name the constructs in W0362, or report each at its own span")]
 
 /-- Independent facts at one source site, witnessed by varying each separately; not merge debt. -/
 def independentSiteFacts : List (String × String) :=
-  [("N0100", "W0315"), ("N0100", "W0387"), ("W0005", "W0386")]
+  [("N0100", "W0315"), ("N0100", "W0387"), ("W0005", "W0386"), ("W0358", "W0384")]
 
 def sitePairClassified (pair : String × String) : Bool :=
   independentSiteFacts.contains pair ||
@@ -945,6 +945,24 @@ def siteAccountingChecks (ref : IO.Ref (List String)) : IO Unit := do
     (written.any (·.kind == .W0386) && written.any (·.kind == .W0005) &&
       siteCollisions written == #[])
   independentWitnesses := independentWitnesses ++ siteCollisions both
+  -- A frame that continues and a band no page can hold are two losses at the frame's site.
+  let framed (body : String) : Array Diag :=
+    let (doc, ds) := elabLocated "t" ("\\documentclass{beamer}\n\\begin{document}\n" ++
+      "\\begin{frame}\n" ++ body ++ "\n\\end{frame}\n\\end{document}\n")
+    let site : Span := { file := "t", pos := {} }
+    let spans := doc.body.zipIdx.filterMap fun (b, i) => match b with
+      | .frame .. => some (i, site)
+      | _ => none
+    ds ++ (Layout.runFitted (Layout.Geom.ofPage doc.page) (oneFaceOf macroFace) none doc {}
+      spans).out.diags
+  let continues := framed (String.join (List.replicate 40 "Kilo words.\n\n"))
+  let overruns := framed "\\rule{1cm}{12cm}"
+  let frameBoth := framed "Lima words.\n\n\\rule{1cm}{12cm}"
+  t "independent site facts W0358/W0384: the continuation stands alone without the overrun"
+    (continues.any (·.kind == .W0384) && !continues.any (·.kind == .W0358))
+  t "independent site facts W0358/W0384: the overrun stands alone without the continuation"
+    (overruns.any (·.kind == .W0358) && !overruns.any (·.kind == .W0384))
+  independentWitnesses := independentWitnesses ++ siteCollisions frameBoth
   t "site accounting: another information-code pair remains unclassified"
     (!sitePairClassified ("N0100", "N0200"))
   for pair in independentSiteFacts do
