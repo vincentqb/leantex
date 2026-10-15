@@ -12,11 +12,11 @@
 # given. A \BODY inside a group (a box around the whole body) or placed twice
 # has no begin and end to split into: refused where it stands (W0104). The
 # two settings stay refused by name. An absent optional argument takes the
-# definition's default, and a definition in the document body is ignored
-# (W0340), as the engine reads environment definitions in the preamble.
+# definition's default. A definition in the document body is not applied yet
+# (W0104), its uses setting their arguments and body plainly: owed.
 pre impl \NewEnviron{placeholder}{Lead \BODY}\AtBeginDocument{\begin{placeholder}y\end{placeholder}}
 pre impl \NewEnviron{placeholder}[1][Lead]{#1 \BODY}\AtBeginDocument{\begin{placeholder}y\end{placeholder}}
-body refuse:W0340 \NewEnviron{placeholder}{Lead \BODY}
+body refuse:W0104 \NewEnviron{placeholder}{Lead \BODY}
 pre impl \RenewEnviron{placeholder}{\BODY Tail}\AtBeginDocument{\begin{placeholder}y\end{placeholder}}
 pre impl \NewEnviron{placeholder}{Lead}\AtBeginDocument{\begin{placeholder}y\end{placeholder}}
 pre refuse:W0104 \NewEnviron{placeholder}{\fbox{\BODY}}

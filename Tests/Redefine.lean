@@ -279,8 +279,8 @@ def environScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
       (shipped src == shipped (doc "\\usepackage{amsthm}\n" (if eats then eaten
         else para fun _ => "{}")))
     t s!"a body definition is one warning, no error: {definer "placeholder"}"
-      ((ds.filter (·.severity != .note)).all (·.code == "W0340") &&
-        ds.any (fun d => d.code == "W0340" && !d.demoted) && ds.all (·.severity != .error))
+      ((ds.filter (·.severity != .note)).all (·.code == "W0104") &&
+        ds.any (fun d => d.code == "W0104" && !d.demoted) && ds.all (·.severity != .error))
   let inline := doc "" "Charlie \\textbf{delta \\newcommand{\\probecmd}{Probe words} echo} foxtrot."
   t "a definition inside inline content sets nothing of itself"
     (shipped inline == shipped (doc "" "Charlie \\textbf{delta {} echo} foxtrot.") &&
@@ -306,12 +306,65 @@ def environScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
   t "a redefinition without a default leaves none" (sets defaults "M (q/r)Inner N")
   t "an optional argument on the line after the begin is the argument"
     (sets defaults "O (s/q)Inner P")
-  let grouped := doc ("\\NewEnviron{placeholder}{[\\BODY]}\n{\\RenewEnviron{placeholder}{}}\n" ++
+  let grouped := doc ("\\allow{E0313}\n\\NewEnviron{placeholder}{[\\BODY]}\n{\\RenewEnviron{placeholder}{}}\n" ++
       "\\newenvironment{probeold}[1]{(#1)}{}\n{\\renewenvironment{probeold}[1][Gdflt]{(#1)}{}}\n")
     ("Alpha \\begin{placeholder}Inner words\\end{placeholder} omega.\n\n" ++
       "Beta \\begin{probeold}{q}Inner\\end{probeold} gamma.")
   t "an environment definition inside a group ends with the group"
-    (sets grouped "Alpha [Inner words]omega." && sets grouped "Beta (q)Inner gamma.")
+    (sets grouped "Alpha [Inner words]omega." && sets grouped "Beta (q)Inner gamma." &&
+      (dvE grouped).all fun d => d.severity != .error || d.code == "E0313")
+  let builtins := doc ("\\usepackage{amsthm}\n\\renewenvironment{quote}[1][Qdflt]{(#1:}{)}\n" ++
+      "\\renewenvironment{center}[1][Cdflt]{<#1:}{>}\n" ++
+      "\\renewenvironment{proof}[1][\\proofname]{\\par\\noindent\\textbf{#1.} }{\\qed\\par}\n")
+    ("A \\begin{quote}x\\end{quote} B\n\nC \\begin{center}y\\end{center} D\n\n" ++
+      "\\begin{proof}Proof words.\\end{proof}")
+  let builtinText := pageTextOf fonts builtins
+  t "a built-in's ignored definition gives none of its default to the built-in"
+    (!hasStr builtinText "Qdflt" && !hasStr builtinText "Cdflt" && hasStr builtinText "AxB" &&
+      hasStr builtinText "Proof.Proof words." &&
+      (dvE builtins).all (·.code != "W0301"))
+  let walked := dvDoc ("\\usepackage{csquotes}\n\\usepackage{environ}\n" ++
+      "\\newenvironment{probequote}[1][\\enquote{Qd}]{(#1:}{)}\n" ++
+      "\\NewEnviron{probebar}[1][Bx\\textbar y]{[#1/\\BODY]}\n" ++
+      "\\newenvironment{probememo}[1][\\today]{(#1:}{)}\n")
+    "E \\begin{probequote}x\\end{probequote} F I \\begin{probebar}x\\end{probebar}J M \\begin{probememo}x\\end{probememo} N"
+  t "a default is rewritten where its definition stands, as a given argument is"
+    (sets walked "E (“Qd”:x) F" && sets walked "I [Bx|y/x]J" &&
+      (dvE walked).any (·.code == "W0104") && (dvE walked).all (·.code != "W0301"))
+  let late := dvDoc ("\\newenvironment{probeold}[1][Adflt]{(#1:}{)}\n" ++
+      "\\newcommand{\\probeuse}{\\begin{probeold}x\\end{probeold}}\n" ++
+      "\\renewenvironment{probeold}[1][Bdflt]{(#1:}{)}\n" ++
+      "\\newenvironment{probelate}[1]{<#1:}{>}\n" ++
+      "\\newcommand{\\probeusel}{\\begin{probelate}{q}x\\end{probelate}}\n" ++
+      "\\renewenvironment{probelate}[1][Ldflt]{<#1:}{>}\n")
+    "A \\probeuse{} B\n\nE \\probeusel{} F"
+  t "a use through a macro takes the default of the definition in force at its use"
+    (sets late "A (Bdflt:x) B" && sets late "E <Ldflt:qx> F")
+  let hooked := dvDoc ("\\usepackage{etoolbox}\n" ++
+      "\\AtBeginDocument{\\newenvironment{probeold}[1][Hd]{(#1:}{)}\\newtheorem{probethm}{Probe}}\n" ++
+      "\\AtEndPreamble{\\newenvironment{probeend}[1][Ed]{<#1:}{>}}\n")
+    "A \\begin{probeold}x\\end{probeold} B \\begin{probeend}y\\end{probeend} C\n\n\\begin{probethm}Theorem words.\\end{probethm}"
+  t "a definition a hook makes stands as the preamble's, its default with it"
+    (sets hooked "A (Hd:x) B <Ed:y> C" && sets hooked "Probe 1Theorem words." &&
+      (dvE hooked).all fun d => d.code != "W0104" && d.code != "W0302")
+  let reached := doc ("\\newcommand{\\mkthm}{\\newtheorem{probethm}{Probe}}\n" ++
+      "\\newcommand{\\mkenv}{\\newenvironment{probeenv}{(}{)}}\n")
+    ("Alpha \\mkthm{} bravo.\n\nCharlie \\mkenv{} delta.\n\n" ++
+      "Echo words.\n\\theoremstyle{definition}\\newtheorem{probedef}{Probe}[section]\nFoxtrot words.")
+  let reachedText := pageTextOf fonts reached
+  t "a body definition a macro or a theorem style leads to sets no text of itself"
+    (hasStr reachedText "Alpha  bravo." && hasStr reachedText "Charlie  delta." &&
+      hasStr reachedText "Foxtrot words." && !hasStr reachedText "robe" &&
+      !hasStr reachedText "definition")
+  let unapplied := doc ""
+    ("Alpha words.\n\n\\newenvironment{probenote}[1]{\\textbf{#1:} }{}\n\\NewEnviron{probehide}{}\n" ++
+      "\\newtheorem{probethm}{Probe}\n\n\\begin{probenote}{Note}words here\\end{probenote}\n\n" ++
+      "\\begin{probehide}Hidden words\\end{probehide}\n\n\\begin{probethm}Theorem words\\end{probethm}")
+  let unappliedText := pageTextOf fonts unapplied
+  t "an unapplied body definition's uses ship their arguments and body plainly, or nothing it discards"
+    (hasStr unappliedText "Note words here" && hasStr unappliedText "Theorem words" &&
+      !hasStr unappliedText "Hidden" &&
+      (dvE unapplied).all fun d => d.severity != .error && d.code != "W0302")
 
 /-- environ's `\NewEnviron` defines the environment it names, as the kernel spelling with the body
 at `\BODY`. -/

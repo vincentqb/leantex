@@ -42,6 +42,8 @@ public structure Param where
   referenced : Bool := true
   /-- A minted command in the replacement reads this parameter as code. -/
   code : Bool := false
+  /-- The text an absent optional argument takes: its definition's `[default]`. -/
+  default : Option (Array Raw) := none
   deriving Repr, BEq
 
 public structure UserCmd where
@@ -4337,42 +4339,36 @@ private def bindParam (p : Param) (v : Array Inline) (source : Unit → String)
   if p.code then bindings.push (p.name ++ " source", some #[.text (source ())]) else bindings
 
 /-- The index past the first `{...}` group at or after `k`, or `k` when none follows. -/
-private def pastGroupFrom (raws : Array Raw) (k : Nat) : Nat :=
-  (((List.range' k (raws.size - k)).find? fun j => raws[j]? matches some (.group _ _)).map
-    (· + 1)).getD k
+private def pastGroupFrom (raws : Array Raw) (k : Nat) : Nat := Id.run do
+  for j in [k:raws.size] do
+    if raws[j]? matches some (.group _ _) then return j + 1
+  return k
 
-/-- The index past the operands of a `\define` or `\defineenv` from `i`: the name, the signature
-and the code groups, environ's one code and optional final code where its mark stands among them. -/
+/-- Whether a command defines what the body cannot hold: a command, an environment or a theorem
+environment, or a theorem style. -/
+private def bodyDefiner (name : String) : Bool :=
+  name == "define" || name == "defineenv" || name == "newtheorem" || name == "theoremstyle"
+
+/-- The index past a body definer's operands from `i`. -/
 private def definerEnd (raws : Array Raw) (name : String) (i : Nat) : Nat :=
-  let j := skipSpaces raws i
   if name == "define" then
+    let j := skipSpaces raws i
     if raws[j]? matches some (.ctrl _ _) then pastGroupFrom raws (j + 1) else i
-  else if raws[j]? matches some (.group _ _) then
-    let k := pastGroupFrom raws (j + 1)
-    let marked := (raws.extract (j + 1) k).any fun r => match r with
-      | .ctrl n _ => n == Compat.environBodyMark
-      | _ => false
-    let f := skipSpaces raws k
-    if marked then
-      if raws[f]? matches some (.sym '[' _) then
-        ((closeBracketFrom raws (f + 1)).map (· + 1)).getD k
-      else k
-    else if raws[f]? matches some (.group _ _) then f + 1 else k
-  else i
+  else if name == "defineenv" then Compat.defineEnvEnd raws i
+  else Compat.theoremDeclEnd raws name i
 
 /-- A block-level command reached as inline content, named, and the index past what it takes: a
 definer's whole form, any other command's word alone. -/
 private def inlineBlockOnly (ctx : Ctx) (raws : Array Raw) (name : String) (i : Nat) (pos : Pos) :
     EM { k : Nat // i + 1 ≤ k } := do
-  if name == "defineenv" then
-    warnOnce ctx "ctrl:defineenv:body" .W0340
-      "an environment definition in the document body is ignored" pos
-      (help := "define the environment in the preamble, before '\\begin{document}'")
-  else
+  if name == "defineenv" || name == "newtheorem" then
+    warnOnce ctx ("ctrl:" ++ name ++ ":body") .W0104 Compat.bodyEnvDefMessage pos
+      (help := Compat.bodyEnvDefHelp)
+  else if name != "theoremstyle" then
     diag ctx .E0312 s!"'\\{name}' is not allowed here" pos
       (help := "it is a block-level command: use it between paragraphs, " ++
         "not inside inline content")
-  if name == "define" || name == "defineenv" then
+  if bodyDefiner name then
     return ⟨max (i + 1) (definerEnd raws name (i + 1)), Nat.le_max_left _ _⟩
   return ⟨i + 1, Nat.le_refl _⟩
 
@@ -4592,6 +4588,18 @@ private def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
             omega
           let acc := flushText acc sb
           let (bindings, ⟨j, _⟩) ← takeArgsFrom ctx env.params 0 name body 0 pos #[]
+          -- An absent optional argument takes its definition's default, read where the halves read.
+          let bindings ← match env.params[0]?, bindings[0]? with
+            | some p, some (b, none) =>
+              match p.default with
+              | some d =>
+                if b == p.name && p.referenced then do
+                  let dctx : Ctx := { ctx with limit := env.cmdLimit, envLimit := k, args := bindings }
+                  let v ← elabInlinesCore { dctx with argBody := true } d
+                  pure (bindings.modify 0 fun _ => (b, some v))
+                else pure bindings
+              | none => pure bindings
+            | _, _ => pure bindings
           let envCtx : Ctx := { ctx with
             limit := env.cmdLimit, envLimit := k, args := bindings }
           let ⟨inner, _⟩ : { a : Array Raw // rawWeightList a.toList < sliceWeight raws i } :=
@@ -5427,11 +5435,11 @@ a side channel, never slide content" pos
     have _ : sliceWeight raws jr.1 < sliceWeight raws i :=
       sliceWeight_lt raws h (by omega)
     elabInlinesFrom ctx raws jr.1 acc sb
-  else if blockOnly.contains name then
+  else if blockOnly.contains name || bodyDefiner name then
     let ⟨k, hge⟩ ← inlineBlockOnly ctx raws name i pos
     have hadv : sliceWeight raws k < sliceWeight raws i := sliceWeight_lt raws h (by omega)
     -- A definer's place keeps the spaces around it apart, as `{}` does.
-    if name == "define" || name == "defineenv" then
+    if bodyDefiner name then
       elabInlinesFrom ctx raws k (flushText acc sb) ""
     else elabInlinesFrom ctx raws k acc sb
   else if Compat.nativeReadCtrls.contains name ||
@@ -5537,7 +5545,7 @@ public def recoversInlineName (ctx : Ctx) (name : String) : Bool :=
   !(overlayCtrls.contains name) && (Ir.raggedSideOf? name).isNone &&
   (reservedCtrl.lookup name).isNone &&
   !(declCtrl.contains name || runningCtrl.contains name) &&
-  !(blockOnly.contains name) &&
+  !(blockOnly.contains name || bodyDefiner name) &&
   !(Compat.nativeReadCtrls.contains name ||
     (ctx.pic.tool.isSome && Compat.boundaryCtrls.contains name)) &&
   !((unknownCmdDiag name {}).1 == .W0301 && Compat.packageFile ctx.file &&
@@ -11207,6 +11215,18 @@ prefer the construct or the class, and keep '\\begin{ifbackend}' for the true re
     have _ : ke.1 < ctx.envLimit := lookupUserEnv_lt hle2
     let env := ke.2
     let (bindings, j) ← takeArgs ctx env.params n body 0 pos
+    -- An absent optional argument takes its definition's default, read where the halves read.
+    let bindings ← match env.params[0]?, bindings[0]? with
+      | some p, some (b, none) =>
+        match p.default with
+        | some d =>
+          if b == p.name && p.referenced then do
+            let dctx : Ctx := { ctx with limit := env.cmdLimit, envLimit := ke.1, args := bindings }
+            let v ← elabInlinesCore { dctx with argBody := true } d
+            pure (bindings.modify 0 fun _ => (b, some v))
+          else pure bindings
+        | none => pure bindings
+      | _, _ => pure bindings
     let ⟨envCtx, _⟩ : { c : Ctx // c.envLimit = ke.1 } ←
       pure ⟨{ ctx with
         limit := env.cmdLimit, envLimit := ke.1, args := bindings }, rfl⟩
@@ -13673,7 +13693,7 @@ public inductive PDecl where
   | pictures (src : Option String) (pos : Pos)
   | figures (src : Option String) (pos : Pos)
   | defineCmd (decl : Array Raw) (pos : Pos)
-  | defineEnv (name : Option (String × Pos)) (sig : String)
+  | defineEnv (name : Option (String × Pos)) (sig : String) (dflt : Option (Array Raw))
       (beginB : Option (Array Raw)) (endB : Option (Array Raw)) (pos : Pos)
   | fileMark (f : String)
   | running (name : String) (opts : Option (Array Raw))
@@ -13855,6 +13875,7 @@ public def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run d
         | some (.group nameRaws npos) =>
           let envName := (rawSrc nameRaws).trimAscii.toString
           let mut sigRaws : Array Raw := #[]
+          let mut dflt : Option (Array Raw) := none
           let mut k := j + 1
           let mut beginRaws : Option (Array Raw) := none
           for _ in [k:preamble.size] do
@@ -13863,6 +13884,15 @@ public def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run d
               beginRaws := some b
               k := k + 1
               break
+            | some (.sym '[' _) =>
+              -- The default an absent optional argument takes stands before the codes.
+              match closeBracketFrom preamble (k + 1) with
+              | some c =>
+                dflt := some (preamble.extract (k + 1) c)
+                k := c + 1
+              | none =>
+                sigRaws := sigRaws.push (.sym '[' pos)
+                k := k + 1
             | some r' =>
               sigRaws := sigRaws.push r'
               k := k + 1
@@ -13887,17 +13917,17 @@ public def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run d
               | some (bb, ee) => (bb.push (.ctrl Compat.environBodyMark pos), ee)
               | none => (#[], code)
             i := kf
-            out := out.push (.defineEnv (some (envName, npos)) (rawSrc sigRaws)
+            out := out.push (.defineEnv (some (envName, npos)) (rawSrc sigRaws) dflt
               (some bb) (some (ee ++ final.getD #[.ctrl "ignorespacesafterend" pos])) pos)
           | _, _ =>
             let endRaws : Option (Array Raw) := match preamble[k2]? with
               | some (.group e _) => some e
               | _ => none
             i := if endRaws.isSome then k2 + 1 else k
-            out := out.push (.defineEnv (some (envName, npos)) (rawSrc sigRaws)
+            out := out.push (.defineEnv (some (envName, npos)) (rawSrc sigRaws) dflt
               beginRaws endRaws pos)
         | _ =>
-          out := out.push (.defineEnv none "" none none pos)
+          out := out.push (.defineEnv none "" none none none pos)
           i := j + 1
       | .ctrl name pos =>
         i := i + 1
@@ -14301,7 +14331,7 @@ public def applyDecl (s : PreState) (d : PDecl) : EM PreState := do
     | some cmd =>
       return { s with ctx := bindCmd s.ctx cmd }
     | none => return s
-  | .defineEnv name sig beginB endB pos =>
+  | .defineEnv name sig dflt beginB endB pos =>
     match name with
     | some (envName, npos) =>
       if builtinEnvNames.contains envName then
@@ -14341,6 +14371,9 @@ the built-in's heading and margins stand{replaced}"
         match beginB, endB with
         | some b, some e =>
           let params ← parseSig s.ctx sig pos
+          let params := match dflt with
+            | some d => params.modify 0 fun p => if p.optional then { p with default := some d } else p
+            | none => params
           return { s with ctx := { s.ctx with
             userEnvs := s.ctx.userEnvs.push (envOfHalves envName params b e s.ctx.limit)
             envLimit := s.ctx.userEnvs.size + 1 } }

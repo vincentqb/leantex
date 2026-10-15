@@ -523,6 +523,13 @@ public structure InputAttempt where
   answered : Bool
   deriving Repr, BEq
 
+/-- The walk's place relative to an environment definition's `[default]`. -/
+private inductive DefaultAt where
+  | none
+  | awaiting
+  | inside
+  deriving Repr, BEq, Inhabited
+
 private structure St where
   file : String
   diags : Array Diag := #[]
@@ -542,8 +549,12 @@ private structure St where
   /-- environ's environments whose code never places
   `\BODY`, with their argument signatures. -/
   discardEnvs : Array (String × String) := #[]
-  /-- The defaults of the environments whose first argument is optional. -/
-  envDefaults : Array (String × Array Raw) := #[]
+  /-- Where the walk stands with an environment definition's default, whose groups are no body of
+  the definition. -/
+  defaultAt : DefaultAt := .none
+  /-- The environments a body definition left unapplied: the signature their uses' arguments
+  follow, and whether the definition discards the body. -/
+  refusedEnvs : Array (String × String × Bool) := #[]
   /-- The first of paracol's two column shares, in per mille. -/
   paracolRatio : Nat := 500
   /-- Inside a paracol flow, whose close splits its switching commands. -/
@@ -816,7 +827,7 @@ private theorem write_eq (f : St → St) :
     write f = fun st => ((), { f st with writes := st.writes + 1 }) := by rfl
 
 /-- Restores the definitions a group or environment scopes at its close: beamer's fonts and
-templates, and the environments' discarded bodies and defaults. -/
+templates, and the environments whose bodies are discarded or whose body definitions are unapplied. -/
 private def closeScope (saved : St) (result : α × St) : α × St :=
   (result.1, (write fun st => { st with
     beamerFonts := saved.beamerFonts
@@ -825,10 +836,16 @@ private def closeScope (saved : St) (result : α × St) : α × St :=
     beamerTemplates := saved.beamerTemplates
     beamerTemplateDefs := saved.beamerTemplateDefs
     discardEnvs := saved.discardEnvs
-    envDefaults := saved.envDefaults }) result.2 |>.2)
+    refusedEnvs := saved.refusedEnvs
+    defaultAt := saved.defaultAt }) result.2 |>.2)
 
 private def withScope (act : M α) : M α := fun st =>
   closeScope st (act st)
+
+/-- A group's walk, told whether the group stands inside a definition's default, whose groups are
+no body of the definition, and the bodies the walk still awaits. -/
+private def withGroupScope (act : Bool → Nat → M α) : M α := fun st =>
+  closeScope st (act (st.defaultAt == .inside) st.bodyNext { st with defaultAt := .none })
 
 /-- Enters the document body: `\normalsize` resets the size-owned lengths. -/
 private def openDocumentBody : M Unit :=
@@ -6277,33 +6294,75 @@ public def bodySlot? (code : Array Raw) : Option (Array Raw × Array Raw) :=
 elaborator splits its begin half. -/
 public def environBodyMark : String := "@environ:BODY"
 
+/-- The words naming an environment definition the document body holds. -/
+public def bodyEnvDefMessage : String :=
+  "an environment definition in the document body is not applied; its uses set no begin or end code"
+
+public def bodyEnvDefHelp : String := "define the environment in the preamble, before '\\begin{document}'"
+
 /-- An environment definer in the document body, outside a macro's replacement text, named as
-ignored. -/
-private def refusedEnvDef (name : String) (pos : Pos) : M Bool := do
+unapplied, its uses following `spec` for their arguments and dropping the body when it `discards`. -/
+private def refusedEnvDef (name env spec : String) (discards : Bool) (pos : Pos) : M Bool := do
   let st ← get
   if !st.inDoc || st.inDef then return false
-  sayOnce ("ctrl:" ++ name ++ ":body") .W0340
-    "an environment definition in the document body is ignored" pos
-    (help := "define the environment in the preamble, before '\\begin{document}'")
+  sayOnce ("ctrl:" ++ name ++ ":body") .W0104 bodyEnvDefMessage pos (help := bodyEnvDefHelp)
+  unless name.startsWith "re" || name.startsWith "Re" do
+    write fun st => { st with
+      refusedEnvs := Ir.redeclare st.refusedEnvs env.trimAscii.toString (spec, discards) }
   return true
 
-/-- The environment defaults once `env` is defined with `dflt` as its optional argument's default,
-or with none. -/
-private def defaultsAfter (defaults : Array (String × Array Raw)) (env : String)
-    (dflt : Option (Array Raw)) : Array (String × Array Raw) :=
-  match dflt with
-  | some d => Ir.redeclare defaults env d
-  | none => defaults.filter (·.1 != env)
+/-- The arguments `spec` reads at a use's start, their contents each followed by a space, and the
+index past them. -/
+private def plainArgs (spec : String) (body : Array Raw) : Array Raw × Nat :=
+  spec.toList.foldl (fun (out, k) c =>
+    if c == 'o' then
+      match takeRawOpt body k with
+      | (some a, k') => ((out ++ a).push .space, k')
+      | (none, _) => (out, k)
+    else
+      let j := skipSpaces body k
+      match body[j]? with
+      | some (.group g _) => ((out ++ g).push .space, j + 1)
+      | _ => (out, k)) (#[], 0)
 
-/-- The optional argument an environment's use takes from its definition's default when the body
-gives none, read past spaces as `\@ifnextchar[` reads; nothing otherwise. -/
-private def envDefaultArg (defaults : Array (String × Array Raw)) (env : String)
-    (body : Array Raw) (pos : Pos) : Array Raw :=
-  match defaults.find? (·.1 == env) with
-  | some (_, d) =>
-    if body[skipSpaces body 0]? matches some (.sym '[' _) then #[]
-    else #[Raw.sym '[' pos] ++ d ++ #[Raw.sym ']' pos]
-  | none => #[]
+/-- The index past a native `\defineenv`'s operands from `i`: its name, its signature and
+`[default]`, and its two codes, or environ's one code and optional final code. -/
+public def defineEnvEnd (raws : Array Raw) (i : Nat) : Nat := Id.run do
+  let j := skipSpaces raws i
+  unless raws[j]? matches some (.group _ _) do return i
+  let mut k := j + 1
+  let mut environ := false
+  for _ in [k:raws.size] do
+    match raws[k]? with
+    | some (.group _ _) => break
+    | some (.sym '[' _) =>
+      match takeRawOpt raws k with
+      | (some _, k') => k := k'
+      | (none, _) => return raws.size
+    | some r =>
+      match r with
+      | .ctrl n _ => if n == environBodyMark then environ := true
+      | _ => pure ()
+      k := k + 1
+    | none => break
+  unless raws[k]? matches some (.group _ _) do return k
+  let f := skipSpaces raws (k + 1)
+  if environ then return (takeRawOpt raws (k + 1)).2.max (k + 1)
+  if raws[f]? matches some (.group _ _) then return f + 1
+  return k + 1
+
+/-- The index past a `\newtheorem`'s operands from `i`, or a `\theoremstyle`'s group. -/
+public def theoremDeclEnd (raws : Array Raw) (name : String) (i : Nat) : Nat :=
+  if name == "theoremstyle" then (takeGroups raws i 1).2 else
+    let i0 := skipStar raws i
+    let (_, j) := takeGroups raws i0 1
+    let (shared, j) := takeOpt raws j
+    let (_, j) := takeGroups raws j 1
+    -- A numbered definition without a shared counter tests for a numbering-within argument,
+    -- reading past spaces.
+    if i0 != i || shared.isSome then j else match takeOpt raws j with
+      | (some _, k) => k
+      | (none, _) => skipSpaces raws j
 
 /-- The caption-skip declarations standing in front of a float's kernel core,
 when they are the whole begin body. -/
@@ -7453,42 +7512,41 @@ the definition is skipped" pos
     let (args, j) := takeGroups raws (skipStar raws start) 1
     let envName := rawSrc (args.getD 0 #[])
     let (count, j) := takeOpt raws j
-    let (dflt, j) := takeRawOpt raws j
-    if ← refusedEnvDef name pos then return some (#[.group #[] pos], (takeGroups raws j 2).2)
-    if name == "renewenvironment" && count.isNone && dflt.isNone then
-      -- premise: captionScopeChecks — the float-core idiom reads as its native kind
-      if let some (out, k) ← floatRedef? envName.trimAscii.toString raws j pos then
-        return some (out, k)
+    let (dflt, jd) := takeRawOpt raws j
     let n := (count.bind String.toNat?).getD 0
     let spec := if dflt.isSome then "o" ++ String.ofList (List.replicate (n - 1) 'm')
       else String.ofList (List.replicate n 'm')
+    if ← refusedEnvDef name envName spec false pos then
+      return some (#[.group #[] pos], (takeGroups raws jd 2).2)
+    if name == "renewenvironment" && count.isNone && dflt.isNone then
+      -- premise: captionScopeChecks — the float-core idiom reads as its native kind
+      if let some (out, k) ← floatRedef? envName.trimAscii.toString raws jd pos then
+        return some (out, k)
     let native := s!"\\defineenv\{{envName}}({signature spec})"
-    became s!"\\{name}\{{envName}}" (native ++ " {begin} {end}") pos
-    write fun st => { st with bodyNext := 2 }
+    became s!"\\{name}\{{envName}}"
+      (native ++ (if dflt.isSome then " [default]" else "") ++ " {begin} {end}") pos
+    -- The default stays in the walk, rewritten where it stands, its groups no body.
+    write fun st => { st with bodyNext := 2, defaultAt := if dflt.isSome then .awaiting else .none }
     unless (← get).inDef do
-      write fun st => { st with
-        discardEnvs := st.discardEnvs.filter (·.1 != envName.trimAscii.toString)
-        envDefaults := defaultsAfter st.envDefaults envName.trimAscii.toString dflt }
+      write fun st => { st with discardEnvs := st.discardEnvs.filter (·.1 != envName.trimAscii.toString) }
     return some (← synthAt native pos, j)
   | "newtheorem" =>
-    unless ← refusedEnvDef name pos do return none
-    let i := skipStar raws start
-    let (_, j) := takeGroups raws i 1
-    let (shared, j) := takeOpt raws j
-    let (_, j) := takeGroups raws j 1
-    -- A numbered definition without a shared counter tests for a numbering-within argument,
-    -- reading past spaces.
-    let k := if i != start || shared.isSome then j else match takeOpt raws j with
-      | (some _, k) => k
-      | (none, _) => skipSpaces raws j
-    return some (#[.group #[] pos], k)
+    let (env, _) := takeGroups raws (skipStar raws start) 1
+    unless ← refusedEnvDef name (rawSrc (env.getD 0 #[])) "o" false pos do return none
+    return some (#[.group #[] pos], theoremDeclEnd raws name start)
   | "NewEnviron" | "RenewEnviron" =>
     let (args, j) := takeGroups raws (skipStar raws start) 1
     let envName := rawSrc (args.getD 0 #[])
-    let (count, j) := takeOpt raws j
-    let (dflt, j) := takeRawOpt raws j
+    let (count, j0) := takeOpt raws j
+    let (dflt, j) := takeRawOpt raws j0
     let b := skipSpaces raws j
-    if ← refusedEnvDef name pos then
+    let n := (count.bind String.toNat?).getD 0
+    let spec := if dflt.isSome then "o" ++ String.ofList (List.replicate (n - 1) 'm')
+      else String.ofList (List.replicate n 'm')
+    let discards := match raws[b]? with
+      | some (.group code _) => (bodySlot? code).isNone && !mentionsBody code.toList
+      | _ => false
+    if ← refusedEnvDef name envName spec discards pos then
       -- environ's test for a final code reads past the spaces after a definition without one.
       let k := if raws[b]? matches some (.group _ _) then
           match takeRawOpt raws (b + 1) with
@@ -7496,25 +7554,22 @@ the definition is skipped" pos
           | (none, _) => skipSpaces raws (b + 1)
         else j
       return some (#[.group #[] pos], k)
-    let n := (count.bind String.toNat?).getD 0
-    let spec := if dflt.isSome then "o" ++ String.ofList (List.replicate (n - 1) 'm')
-      else String.ofList (List.replicate n 'm')
     let native := s!"\\defineenv\{{envName}}({signature spec})"
     match raws[b]? with
     | some (.group code _) =>
       let slot := (bodySlot? code).isSome
       if slot || !mentionsBody code.toList then
-        became s!"\\{name}\{{envName}}" (native ++ (if slot
-          then " {code before \\BODY} {code after it}" else " {} {code}, its body discarded")) pos
-        write fun st => { st with bodyNext := 1 }
+        became s!"\\{name}\{{envName}}" (native ++ (if dflt.isSome then " [default]" else "") ++
+          (if slot then " {code before \\BODY} {code after it}"
+            else " {} {code}, its body discarded")) pos
+        write fun st => { st with bodyNext := 1, defaultAt := if dflt.isSome then .awaiting else .none }
         let env := envName.trimAscii.toString
         unless (← get).inDef do
           write fun st => { st with
             discardEnvs := if slot then st.discardEnvs.filter (·.1 != env)
-              else Ir.redeclare st.discardEnvs env spec
-            envDefaults := defaultsAfter st.envDefaults env dflt }
+              else Ir.redeclare st.discardEnvs env spec }
         let mark := if (← get).inDoc then #[] else #[Raw.ctrl environBodyMark pos]
-        return some ((← synthAt native pos) ++ mark, j)
+        return some ((← synthAt native pos) ++ mark, j0)
       else
         let (_, k) := takeOpt raws (b + 1)
         sayOnce ("ctrl:" ++ name) .W0104
@@ -10742,11 +10797,11 @@ private def rewriteList (inBody : Bool) (raws : Array Raw) (out : Array Raw) :
 
 /-- Descends into a group or environment. -/
 private def rewriteRaw (inBody : Bool) : Raw → M Raw
-  | .group body p => withScope do
+  | .group body p => withGroupScope fun inDefault outer => do
     if (← get).inPicture then
       return .group (← rewriteList inBody body #[] body.toList 0 0) p
     -- A group is a macro body when a definition announced one.
-    let saved := (← get).bodyNext
+    let saved := if inDefault then 0 else outer
     let savedDef := (← get).inDef
     let savedGroup := (← get).inGroup
     let savedLens := (← get).lens
@@ -10766,7 +10821,8 @@ private def rewriteRaw (inBody : Bool) : Raw → M Raw
       write fun st => { st with diags := st.diags.extract 0 said, warned := warned }
     let restores := restoreLengths (← get).localLengths p
     -- A group's assignments end with it.
-    write fun st => { st with bodyNext := saved - 1, inDef := savedDef, inGroup := savedGroup,
+    write fun st => { st with bodyNext := if inDefault then outer else saved - 1, inDef := savedDef,
+                              inGroup := savedGroup,
                               lens := savedLens, localLengths := savedLengths,
                               tableTop := savedTop, defTop := savedDefTop,
                               bound := if saved > 0 then savedBound else st.bound }
@@ -10845,9 +10901,14 @@ steps come from its body" p
           else #[Raw.ctrl "pagebreak" p]
         return .group (#[Raw.ctrl "pagebreak" p, Raw.ctrl Ir.titlePageBeginRole p] ++
           body' ++ close ++ restores) p
+      else if let some (spec, discards) := ((← get).refusedEnvs.find? (·.1 == n)).map (·.2) then
+        -- An unapplied body definition's use sets its arguments and body plainly, or nothing.
+        if discards then return .group #[] p
+        let body' ← rewriteList inBody body #[] body.toList 0 0
+        let (args, k) := plainArgs spec body'
+        return .group (args ++ body'.extract k body'.size) p
       else if let some spec := ((← get).discardEnvs.find? (·.1 == n)).map (·.2) then
         -- environ's discarding environment keeps only the arguments its signature reads.
-        let body := envDefaultArg (← get).envDefaults n body p ++ body
         let k := spec.foldl (fun k c =>
           if c == 'o' then (takeOpt body k).2 else (takeGroups body k 1).2) 0
         return .env n (body.extract 0 k) p
@@ -10857,8 +10918,7 @@ steps come from its body" p
         write fun st => { st with inList := st.inList || listEnvs.contains n,
                                   tableTop := tableEnvs.contains n, defTop := false,
                                   inParacol := n == "paracol", localLengths := #[] }
-        let body' := envDefaultArg st0.envDefaults n body p ++
-          (← rewriteList inBody body #[] body.toList 0 0)
+        let body' ← rewriteList inBody body #[] body.toList 0 0
         let restores := restoreLengths (← get).localLengths p
         write fun st => { st with lens := st0.lens, localLengths := st0.localLengths,
                                   inList := st0.inList,
@@ -10867,6 +10927,12 @@ steps come from its body" p
         if n == "paracol" then
           paracolEnv st0.paracolRatio body' p restores
         else return .env n (body' ++ restores) p
+  | .sym '[' p => do
+    if (← get).defaultAt == .awaiting then write fun st => { st with defaultAt := .inside }
+    pure (.sym '[' p)
+  | .sym ']' p => do
+    if (← get).defaultAt == .inside then write fun st => { st with defaultAt := .none }
+    pure (.sym ']' p)
   | r => pure r
 
 end
@@ -11548,6 +11614,11 @@ private def seamSplit (raws : Array Raw) : List Raw → Nat → Nat →
       let (_, k) := takeGroups raws j (if name == "style" then 2 else 1)
       seamSplit raws rest (i + 1) (k - (i + 1))
         (pre ++ raws.extract i k, body)
+    else if name == "defineenv" || name == "newtheorem" || name == "theoremstyle" then
+      -- A definition a hook makes at the seam is the preamble's, as LaTeX's stands from there.
+      let k := if name == "defineenv" then defineEnvEnd raws (i + 1)
+        else theoremDeclEnd raws name (i + 1)
+      seamSplit raws rest (i + 1) (k - (i + 1)) (pre ++ raws.extract i k, body)
     else
       seamSplit raws rest (i + 1) 0 (pre, body.push (.ctrl name pos))
   | r :: rest, i, 0, (pre, body) =>
