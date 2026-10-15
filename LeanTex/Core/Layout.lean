@@ -8909,6 +8909,8 @@ public structure Spacing.Context where
   private locale : Locale := Locale.en
   /-- The `slides` class: frames and out-of-frame sections open fresh pages. -/
   private slides : Bool := false
+  /-- The abstract is a quotation (`Ir.Doc.abstractQuoted`). -/
+  private abstractQuoted : Bool := true
   /-- A frame body owns its headings: they neither open section dividers
   nor replace the enclosing top-level section or its footer. -/
   private inFrame : Bool := false
@@ -12494,9 +12496,11 @@ private def collectBlock (r : Rd) (a : Acc)
     let small := Ir.scaleStepIn r.geom.scale r.geom.fontSize (Ir.abstractBodySize r.styles)
     let a := collectAbstractHead r a indent
     let saved := a.measure
-    let lm := r.leftMargin (a.itemDepth + a.enumDepth + a.quoteDepth + 1) a.tokens
-    let sub := { a with
+    let lm := if r.abstractQuoted then r.leftMargin (a.itemDepth + a.enumDepth + a.quoteDepth + 1)
+      a.tokens else 0
+    let sub := if r.abstractQuoted then { a with
       measure := some ((a.measure.getD r.geom.textWidth) - lm), quoteDepth := a.quoteDepth + 1 }
+      else a
     let sub := collectBlocks { (r.within blk) with geom := { r.geom with fontSize := small } }
       sub body (indent + lm)
     { sub with measure := saved, quoteDepth := a.quoteDepth }
@@ -18523,6 +18527,7 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
                    captionPos := doc.captionPos
                    locale := doc.info.locale
                    slides := doc.docClass.record.model == .frame
+                   abstractQuoted := doc.abstractQuoted
                    lists := doc.docClass.record.lists
                    frameKeys := doc.frameKeys
                    frameLabels := doc.frameLabels

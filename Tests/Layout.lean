@@ -4064,13 +4064,13 @@ def listIndentChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
     (xs exList ["Bravo"] == [some (4 * ex)] && fits exList (width - 4 * ex))
   let sheet (cls : String) : String :=
     (HtmlDoc.emit {} (elabStr (doc cls "" "x")).1).1
-  let lv := ":is(li, dd, blockquote, :where(.abstract)) "
+  let lv := ":is(li, dd, blockquote, :where(.abstract.quoted)) "
   let art := sheet "{article}"
   t "html each list level's padding is its leftmargin in the class's rem, under the length's property"
-    (hasStr art ("ul, ol, dd { padding-left: var(--leftmargini, 2.5rem); }\n" ++
-        ":is(blockquote, :where(.abstract)) { padding: 0 var(--leftmargini, 2.5rem); }") &&
-     hasStr art s!"{lv}ul, {lv}ol, {lv}dd \{ padding-left: var(--leftmarginii, 2.2rem); }" &&
-     hasStr art (s!"{lv}{lv}{lv}ul, {lv}{lv}{lv}ol, {lv}{lv}{lv}dd " ++
+    (hasStr art (":where(ul, ol, dd) { padding-left: var(--leftmargini, 2.5rem); }\n" ++
+        ":where(:is(blockquote, .abstract.quoted)) { padding: 0 var(--leftmargini, 2.5rem); }") &&
+     hasStr art s!":where({lv}ul, {lv}ol, {lv}dd) \{ padding-left: var(--leftmarginii, 2.2rem); }" &&
+     hasStr art (s!":where({lv}{lv}{lv}ul, {lv}{lv}{lv}ol, {lv}{lv}{lv}dd) " ++
        "{ padding-left: var(--leftmarginiv, 1.7rem); }"))
   t "html a declared leftmargini reaches the sheet as its property, in the class's rem"
     (hasStr (HtmlDoc.emit {} (elabStr declQuote).1).1 "--leftmargini: 3rem;")
@@ -4078,7 +4078,7 @@ def listIndentChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
     (docNodesOf (elabStr (doc "{article}" "" abstract)).1).toList
   t "html the abstract hangs its quotation's margins on both sides, as its page does"
     (sections.any (fun n => ((nodeAttr "class" n).splitOn " ").contains "abstract") &&
-      hasStr art ":is(blockquote, :where(.abstract)) { padding: 0 var(--leftmargini, 2.5rem); }")
+      hasStr art ":where(:is(blockquote, .abstract.quoted)) { padding: 0 var(--leftmargini, 2.5rem); }")
   let pad (css : String) (k : Nat) : Option String :=
     (css.splitOn s!"padding-left: var(--{Ir.leftMarginName (k + 1)}, ")[1]?.bind fun rest =>
       (rest.splitOn ")")[0]?
@@ -4107,8 +4107,67 @@ def listIndentChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
         (pads.take (k + 1)).foldl (fun d m => d.bind fun d => m.map (d + ·)) (some 0)
       let placed := xs src (if cls == "{beamer}" then levels.take 2 else levels)
       !placed.isEmpty && (placed.zip depths).all fun
-        | (some p, some d) => withinSp (Dim.pt 1 / 20) p d
+        | (some p, some d) => withinSp (Dim.pt 1 / 200) p d
         | _ => false)
+
+/-- A list's margin where a body length, a level macro naming another level's or none, a declared
+indent or the class's abstract decides it, and a deep level's spacing named. -/
+def listReviewChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let place (src : String) (w : String) : Option Dim.Sp := do
+    let (d, _) := elabStr src
+    let g := Layout.Geom.ofPage d.page
+    let l ← (bodyLines (layoutOf oneFace d { g with protrude := false })).find? fun l =>
+      hasStr (lineText l) w
+    let r ← (lineRuns l).find? fun r => r.2.1.startsWith w
+    pure (r.2.2.1 - g.hmargin)
+  let doc (pre body : String) : String :=
+    "\\documentclass{article}" ++ pre ++ "\\begin{document}" ++ body ++ "\n\\end{document}"
+  let html (src : String) : String := (HtmlDoc.emit {} (elabStr src).1).1
+  let inAbstract := "\\begin{abstract}\nAlpha words.\n\\begin{itemize}\n\\item Bravo words.\n" ++
+    "\\end{itemize}\n\\end{abstract}\nCharlie words."
+  let bodySet := doc "" ("\\setlength{\\leftmargini}{3em}\n\\setlength{\\leftmarginii}{40pt}\n" ++
+    inAbstract)
+  t "a body em margin is fixed as the page fixes it, and the stylesheet ships that value"
+    (place bodySet "Alpha" == some (Dim.pt 30) && place bodySet "Bravo" == some (Dim.pt 70) &&
+      hasStr (html bodySet) "--leftmargini: 3rem" && !hasStr (html bodySet) "--leftmargini: 3em")
+  t "a body leftmargin both artifacts honour is not named as a loss"
+    ((elabStr bodySet).2.all fun d => !(d.code == "W0104" && hasStr d.message "leftmargin"))
+  let native := doc "" ("\\tokens{ leftmargini = 3em, leftmarginii = 4ex }\n" ++
+    "\\begin{itemize}\n\\item Alpha words.\n\\begin{itemize}\n\\item Bravo words.\n" ++
+    "\\end{itemize}\n\\end{itemize}")
+  let ex4 := 4 * (Dim.pt 10 * 431 / 1000)
+  t "a native body em and ex margin ship as the page sets them"
+    (place native "Alpha" == some (Dim.pt 30) && place native "Bravo" == some (Dim.pt 30 + ex4) &&
+      hasStr (html native) "--leftmargini: 3rem" && hasStr (html native) "--leftmarginii: 1.724rem")
+  let three := "\\begin{itemize}\n\\item Alpha words.\n\\begin{itemize}\n\\item Bravo words.\n" ++
+    "\\begin{itemize}\n\\item Charlie words.\n\\end{itemize}\n\\end{itemize}\n\\end{itemize}"
+  let refd := doc "\\makeatletter\n\\def\\@listii{\\leftmargin\\leftmargini \\topsep 2pt}\n\\makeatother\n" three
+  t "a level macro's margin may name another level's"
+    (place refd "Bravo" == some (Dim.pt 50))
+  let carried := doc "\\makeatletter\n\\def\\@listii{\\topsep 2pt}\n\\makeatother\n" three
+  t "a level macro that sets no margin keeps the enclosing list's, as LaTeX's list does"
+    (place carried "Bravo" == some (Dim.pt 50) &&
+      place carried "Charlie" == some (Dim.pt 50 + Dim.pt 187 / 10))
+  let declared := doc "\\usepackage{enumitem}\n\\setlist[itemize]{leftmargin=40pt}\n" inAbstract
+  let sheet := html declared
+  t "a declared indent is its type's at its level, in the page's unit, over the depth's default"
+    (place declared "Bravo" == some (Dim.pt 65) &&
+      hasStr sheet "ul:not(ul ul) { padding-left: 4rem; }" &&
+      hasStr sheet ":where(ul, ol, dd) { padding-left: var(--leftmargini, 2.5rem); }")
+  let deep := (elabStr (doc "\\makeatletter\n\\def\\@listv{\\leftmargin 10pt \\topsep 3pt}\n\\makeatother\n"
+    "Words.")).2
+  t "a fifth level macro's spacing is named as no list five deep reads it"
+    (deep.any fun d => d.code == "W0104" && hasStr d.message "topsep")
+  let report := "\\documentclass{report}\\begin{document}" ++ inAbstract ++ "\n\\end{document}"
+  t "a report's abstract stands on its title page as no quotation, its lists one level deep"
+    (place report "Alpha" == some 0 && place report "Bravo" == some (Dim.pt 25) &&
+      !hasStr (html report) "quoted\"" && hasStr (html report) "class=\"abstract")
+  let s11 := Dim.pt 1095 / 100
+  let deck := "\\documentclass{beamer}\\begin{document}\\begin{frame}[t]\n" ++ inAbstract ++
+    "\n\\end{frame}\n\\end{document}"
+  t "a deck's abstract is no list level: its lists stand one level deep"
+    (place deck "Bravo" == some (2000 * s11 / 1000))
 
 /-- A list right after a heading opens no `\topsep`: its first item stands where a paragraph after
 the heading stands. -/

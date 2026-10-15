@@ -691,6 +691,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   flushBottomChecks ref oneFace
   partopsepChecks ref oneFace
   listIndentChecks ref oneFace
+  listReviewChecks ref oneFace
   afterHeadingListChecks ref oneFace
   headingKeepChecks ref oneFace
   frameBodyChecks ref oneFace

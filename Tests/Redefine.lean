@@ -49,9 +49,9 @@ def abstractRedefChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO
       abstractSkipsOwed)
   let html (src : String) : String := (HtmlDoc.emit {} (elabStr src).1).1
   t "a redefined abstract's HTML region sets its body at normal size"
-    (hasStr (html (venue (heading ++ "\\begin{quote}"))) "class=\"abstract size-normalsize\"")
+    (hasStr (html (venue (heading ++ "\\begin{quote}"))) "class=\"abstract size-normalsize quoted\"")
   t "the built-in abstract's HTML body is small, as on the page"
-    (hasStr (html ("\\documentclass{article}" ++ body)) "class=\"abstract size-small\"")
+    (hasStr (html ("\\documentclass{article}" ++ body)) "class=\"abstract size-small quoted\"")
   let (bad, badDs) := elabStr ("\\documentclass{article}\\style{abstract}{ body-size = big }" ++ body)
   t "an unknown body size is named and leaves the built-in's"
     (Ir.abstractBodySize bad.styles == "small" && badDs.any (·.code == "E0323"))

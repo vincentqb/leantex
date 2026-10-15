@@ -6,6 +6,7 @@ public import LeanTex.Core.SurfaceKind
 public import LeanTex.Core.Dim
 public import LeanTex.Core.Gfx
 public import LeanTex.Core.Decl
+import LeanTex.Core.KeyVal
 public import LeanTex.Core.Image
 public import LeanTex.Core.Math
 public import LeanTex.Core.LocaleContract
@@ -6941,6 +6942,9 @@ public def PreambleFace.ofClass (rec : ClassRecord) (size : Sp) : PreambleFace :
   let size := optionNormalSize size
   { size, xHeight := size * (if rec.preambleSans then 444 else 431) / 1000 }
 
+/-- The article class's preamble font at its default size. -/
+public def PreambleFace.article : PreambleFace := PreambleFace.ofClass DocClass.article.record baseFontSize
+
 /-- A length as the preamble font fixes it: its em at the class size, its ex
 at Latin Modern's x-height there. -/
 public def PreambleFace.resolve (face : PreambleFace) (l : Dim.Length) : Sp :=
@@ -7148,6 +7152,11 @@ public def Doc.frameLabels (doc : Doc) : Array (Option String) := Id.run do
 /-- The document's preamble font, at its class size. -/
 public def Doc.preambleFace (doc : Doc) : PreambleFace :=
   PreambleFace.ofClass doc.docClass.record doc.page.fontSize
+
+/-- Whether the abstract is a quotation, as article.cls sets it: a level of its margins on both
+sides; a title page's abstract (`titlepage`, report's default) and a deck's are not. -/
+public def Doc.abstractQuoted (doc : Doc) : Bool :=
+  doc.docClass.record.model == .flow && !(KeyVal.items doc.classOptions).contains "titlepage"
 
 /-- Where a deck's chrome may stand: a class whose record draws it, with no
 `\runningfoot` owning the foot. -/

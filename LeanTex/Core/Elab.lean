@@ -210,6 +210,8 @@ public structure Ctx where
   surface : Ir.Surface := .tex
   /-- The class's list lineage, which a listing's frame reads. -/
   lists : Ir.ListLineage := .sizeFile
+  /-- The class's preamble font, in which a length the class fixes at load is fixed. -/
+  preamble : Ir.PreambleFace := Ir.PreambleFace.article
   /-- The engine's length tokens, resolved from the final page. -/
   engineTokens : Array (String × Dim.SymGlue) := #[]
   /-- Element styles declared so far (`\style`, theme bundles). -/
@@ -6800,6 +6802,10 @@ named. -/
 private def noteDeclared (ctx : Ctx) (decl key : String) : EM Unit :=
   modify fun st => applyEvent ctx st (.declared decl key)
 
+/-- The `\leftmargin⟨n⟩` the class fixes as it loads, which a length may name. -/
+private def classMarginTokens (l : Ir.ListLineage) : Array (String × Dim.SymGlue) :=
+  (List.range 6).toArray.map fun k => (Ir.leftMarginName (k + 1), Ir.leftMarginFor l {} (k + 1))
+
 private def engineLengthTokensOfPage (page : PageSpec) :
     Array (String × Dim.SymGlue) :=
   #[("paperwidth", { width := Dim.Length.ofSp page.width }),
@@ -6842,7 +6848,7 @@ private def engineLengthTokens (docClass : Ir.DocClass) (classOptions : String)
     | "baselineskip" | "parskip" => false
     | _ => false
   (engineLengthTokensOfPage (classPageDefaults record opts page)).filter
-    (fun kv => offered kv.1)
+    (fun kv => offered kv.1) ++ classMarginTokens record.lists
 
 /-- Applies a `\tokens{...}` block entry by entry, so an entry may refer to
 an earlier one. -/
@@ -9216,7 +9222,9 @@ private def flowStyleArm (ctx : Ctx) (n : String) (raws : Array Raw)
     have hj := skipSpaces_ge raws start
     match raws[j]? with
     | some (.group body _) =>
-      let tk ← applyTokens ctx ctx.tokens (rawSrc body) pos (engine := ctx.engineTokens)
+      -- A length the class fixes at load stays fixed as the preamble's are, one value per backend.
+      let tk := ctx.preamble.fixLoadLengths
+        (← applyTokens ctx ctx.tokens (rawSrc body) pos (engine := ctx.engineTokens))
       modify fun st => { st with flowTokens := some tk, flowGen := st.flowGen + 1 }
       return (⟨{ ctx with tokens := tk }, rfl, rfl, rfl, rfl⟩,
         ⟨j + 1, by omega⟩, blocks.push (.setTokens tk), (← get).flowGen)
@@ -15629,14 +15637,16 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
       output := output.addFormat f
   if output.md.isNone then
     output := { output with md := record.mdName }
-  let tokens := (Ir.PreambleFace.ofClass record page.fontSize).fixLoadLengths tokens
+  let face := Ir.PreambleFace.ofClass record page.fontSize
+  let tokens := face.fixLoadLengths tokens
   ctx := { ctx with slides := record.model == .frame
                     groundDepth := record.groundDepth
                     frameAlign := classFrameAlign classOpts
                     face := record.model == .face
                     numberHeadings := record.numberHeadings, styles := styles
                     page := page, tokens := tokens, surface := surface, lists := record.lists
-                    engineTokens := engineLengthTokensOfPage page }
+                    preamble := face
+                    engineTokens := engineLengthTokensOfPage page ++ classMarginTokens record.lists }
   let opening : Array Raw := decls.filterMap fun d =>
     match d with
     | .bodyStart m p => some (.ctrl m p)

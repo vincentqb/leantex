@@ -74,6 +74,9 @@ private def beamerFontKeys : List String := ["size", "shape", "series", "family"
 private def articleClasses : List String :=
   ["scrartcl", "scrreprt", "scrbook", "report", "book", "memoir", "letter"]
 
+/-- The article-like classes whose default is a title page. -/
+private def titlepageClasses : List String := ["report", "book"]
+
 /-- Résumé classes, mapped onto the native `resume` class. -/
 private def resumeClasses : List String :=
   ["moderncv", "res"]
@@ -5235,9 +5238,7 @@ every list sets '\\topsep' again from its class's parameters" pos
       synthAt s!"\\tokens\{ {t} = {src} }" pos
     else emit s!"\\tokens\{ {t} = {src} }"
   | _, true => emit own
-  | .listIndent _, false =>
-    if preamble then emit own
-    else named "indents the lists after it; a list's indent here is declared in the preamble"
+  | .listIndent _, false => emit own
   | .sizeReset body, false =>
     if preamble then
       nothing "'\\begin{document}' runs '\\normalsize', which sets it again"
@@ -5469,7 +5470,12 @@ private def listLevelDef (level : Nat) (what : String) (body : Array Raw) (pos :
     else if assigns.any (fun a => a.add && a.name == n) && listCarried.contains n then
       sayOnce "ctrl:advance" .W0104
         s!"TeX register arithmetic ('\\advance') is not supported; skipped" pos
-  became what s!"the level-{level} list parameters, set where a list that deep opens" pos
+  let spacing := ["topsep", "itemsep", "parsep"].filter fun n => assigns.any (·.name == n)
+  if level > 4 && !spacing.isEmpty then
+    let why := s!"spaces the lists {level} deep, a depth whose spacing no level macro sets here"
+    for n in spacing do nameParam n why pos
+    became what s!"the level-{level} list margin, set where a list that deep opens" pos
+  else became what s!"the level-{level} list parameters, set where a list that deep opens" pos
   return true
 
 /-- A list-level value as one native operand; `none` for anything else. -/
@@ -5480,7 +5486,10 @@ private def listOperand (run : List (String × Option String)) (lens : Array (St
     if valueCtrl r then some (lengthSrc value)
     else match run.lookup r with
       | some o => o
-      | none => if lens.any (·.1 == r) then some r else none
+      | none =>
+        if lens.any (·.1 == r) || (List.range 6).any fun k => Ir.leftMarginName (k + 1) == r then
+          some r
+        else none
   | vs =>
     if vs.all (fun x => match x with | .ctrl c _ => valueCtrl c | _ => true)
     then some (lengthSrc value) else none
@@ -5508,11 +5517,16 @@ private def flushListLevels : M (Array Raw) := do
   if st.listDefs.isEmpty then return #[]
   let lens := st.preLens.getD st.lens
   let preamble (n : String) : Option String := if lens.any (·.1 == n) then some n else none
-  let mut run : List (String × Option String) := listCarried.map fun n => (n, preamble n)
+  -- The class sets `\leftmargin` to `\leftmargini` as it loads, and its own level macros each to
+  -- their depth's.
+  let classMargin (level : Nat) (n : String) : Option String :=
+    if n == "leftmargin" then some (Ir.leftMarginName level) else none
+  let mut run : List (String × Option String) :=
+    listCarried.map fun n => (n, (preamble n).orElse fun _ => classMargin 1 n)
   let mut out : Array Raw := #[]
   for level in [1:7] do
     match defOf level with
-    | none => run := listCarried.map fun n => (n, none)
+    | none => run := listCarried.map fun n => (n, classMargin level n)
     | some (pos, assigns) =>
       for a in assigns do
         if listCarried.contains a.name then
@@ -8513,6 +8527,11 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
         KeyVal.entry o matches ("twoside", none) | ("twoside", some "true") }
     if articleClasses.contains cls || resumeClasses.contains cls then
       let native0 := if resumeClasses.contains cls then "resume" else "article"
+      -- report.cls and book.cls default to `titlepage`, where the abstract is no quotation.
+      let opt := if titlepageClasses.contains cls &&
+          !(KeyVal.items (opt.getD "")).any (fun o => o == "titlepage" || o == "notitlepage") then
+          some (match opt with | some o => o ++ ",titlepage" | none => "titlepage")
+        else opt
       let o := match opt with | some o => s!"[{o}]" | none => ""
       -- A class's `\parskip` is zero unless KOMA's `parskip=` asks for a skip.
       let komaSkip := (KeyVal.items (opt.getD "")).findSome? fun kv =>

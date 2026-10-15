@@ -232,8 +232,7 @@ private def statesShare (doc : Ir.Doc) (v : String) (want : Dim.Sp) : Bool :=
   match HtmlDoc.lengthBasisOf doc with
   | .stage h => (milliOf v "vh").any fun m =>
     m * h ≤ want * 100000 && want * 100000 < (m + 1) * h
-  | .classSize s => (milliOf v "rem").any fun m =>
-    m * s ≤ want * 1000 && want * 1000 < (m + 1) * s
+  | .classSize s => (milliOf v "rem").any fun m => 2 * (want * 1000 - m * s).natAbs ≤ s
 
 /-- A table's lengths are lualatex's in both artifacts (`Layout.tableLength`,
 `Pdf.table_length_agree`), preamble em and ex lengths fixed in the preamble's font. -/

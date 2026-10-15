@@ -138,6 +138,7 @@ import Tests.AlertMark
 import Tests.SeedSeries
 import Tests.MetaEscape
 import Tests.Algorithm
+import Tests.Layout
 
 /-! Every breakage the user reported, as a row whose pins hold it closed; a report closes only as
 `guarded`, and the unwitnessed and owed counts are held both ways. -/
@@ -1671,7 +1672,13 @@ def reports : List Report := [
       "the browser oracle's math-line judge, counting a collapsed space as lost, fails the text fixture and the deck fixture on the pages 3dc4692e builds: the text fixture's long reason parts at 320 and 360 px and its condition's trailing space collapses at every width, and the deck's two reasons part at 320 and 360 px; on the pages built here every math text run keeps its line and its spaces at 320, 360, 600 and 900 px; its controls part a narrowed run and collapse a run's edge spaces under nowrap, and keep both under pre",
       "a presentation deck built by 3dc4692e and here: in a 16:10 window of 1280 by 800 an alignment's reasons showed only their first words before and show whole after, inside the stage; at visualdiff's 1920 by 1080 the two builds show no visible difference on any slide",
       "of the corpus pages the fix changes, the deck, the Greek and the math pages show no visible difference at 1920 by 1080, and the text page's one visible difference is its condition, which reads if x where it read ifx, the space TeX and the PDF set"]
-    state := .guarded "3dc4692e" .revert .author }
+    state := .guarded "3dc4692e" .revert .author },
+  { id := "R189", date := "2026-10-15"
+    what := "a nested list stood its own kind's level of margin, not its depth's, so a list in a list of another kind or in a quotation stood short of where LaTeX sets it; an article abstract's list took its margins at the abstract's small size; the web page measured lists at the body size with an ex of half of it, counted no depth inside boxes and hung no margin on the abstract; and a margin set in the body, a level macro's margin naming another level or none, a declared list indent inside the abstract and the deep levels' spacing each shipped or claimed a margin the other artifact or LaTeX does not"
+    pins := [check% listIndentChecks, check% listReviewChecks]
+    accept := ["the first cut's guards fail at bcb532b0 before the fix: declared margins at 20, 40 and 80 points where lualatex sets 20, 60 and 75; a redefined second level at 22 where it sets 55; an abstract's lists at 44.8 and 61.63 where it sets 47 and 65.7; the 11 point class at 27.5 and 24.2 where it sets 27.375 and 24.09; the web page's measure in a box, in the abstract and of an ex, and its abstract unhung",
+      "the review's guards: seven of its nine assertions fail at 763f4e70, the first cut, the two class abstracts measured on its build: a body margin in ems left to the browser's font, a native body ex too, a body margin named as a loss both artifacts honour, a level macro's margin naming another level dropped and one setting none not kept, a declared indent lost to the depth's rule in the page and its unit, the fifth level's spacing claimed set, a report's abstract hung as a quotation with its lists two deep, and a deck's lists in its abstract two deep"]
+    state := .guarded "bcb532b0" .before .author }
 ]
 
 /-- The reports guarded but never seen failing, a count held in both directions. -/

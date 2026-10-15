@@ -104,6 +104,8 @@ public structure Config where
   lists : Ir.ListLineage := .sizeFile
   /-- The class's preamble font, in which its list margins are fixed. -/
   preamble : Ir.PreambleFace := Ir.PreambleFace.ofClass DocClass.article.record Ir.baseFontSize
+  /-- The abstract is a quotation (`Ir.Doc.abstractQuoted`). -/
+  abstractQuoted : Bool := true
   /-- The list and quotation levels around this content. -/
   listDepth : Nat := 0
   inset : Sp := 0
@@ -291,9 +293,9 @@ private def stageShare (unit : String) (x stage : Int) : String :=
 public def stageLengthCss (stage : Sp) (l : Length) : String :=
   cssLengthIn (stageShare "vh" · stage) l
 
-/-- A length's share of the class size, in thousandths. -/
+/-- A length's share of the class size, in thousandths, rounded to the nearest. -/
 public def classShareMilli (x size : Int) : Int :=
-  x * 1000 / size
+  if 0 ≤ x then (x * 1000 + size / 2) / size else -((-x * 1000 + size / 2) / size)
 
 /-- A length on a page whose body text is 1 rem: its absolute part as a share of the class size. -/
 public def classLengthCss (size : Sp) (l : Length) : String :=
@@ -685,6 +687,16 @@ public theorem markerCss?_text (m : Array Inline) (r : MarkerCss)
 public def cssString (s : String) : String :=
   (s.replace "\\" "\\\\").replace "\"" "\\\""
 
+/-- A list type's selector at its type's level alone: `ul ul` not inside a third `ul`. -/
+private def typeLevelSel (tag : String) : String :=
+  let parts := tag.splitOn " "
+  match parts with
+  | base :: _ =>
+    if (base == "ul" || base == "ol") && parts.all (· == base) && parts.length < 4 then
+      s!"{tag}:not({tag} {base})"
+    else tag
+  | [] => tag
+
 /-- `\style` declarations as CSS rules, with a diagnostic for each marker `::marker` cannot
 express. -/
 public def styleRules (doc : Doc) (lit : Ir.Color → String := cssColor) : String × Array Diag :=
@@ -718,7 +730,6 @@ public def styleRules (doc : Doc) (lit : Ir.Color → String := cssColor) : Stri
     let decls :=
       (st.before.map fun g => s!"margin-top: {cssLength g.width};").toList ++
       (st.after.map fun g => s!"margin-bottom: {cssLength g.width};").toList ++
-      (st.indent.map fun g => s!"padding-left: {cssLength g.width};").toList ++
       (st.rule.map fun (c, n) =>
         let color := match n with
           | some name => s!"var({name.property}, {cssColor c})"
@@ -764,9 +775,13 @@ an overlay step does not"))
     let ruleCss := if ruleDecls.isEmpty then "" else
       s!"{tag}.ruled::after \{ {String.intercalate " " ruleDecls} }\n"
     let own := if decls.isEmpty then "" else s!"{tag} \{ {String.intercalate " " decls} }\n"
+    -- A declared indent is its list type's at that type's level alone, in the page's unit.
+    let indentCss := match st.indent with
+      | some g => s!"{typeLevelSel tag} \{ padding-left: {tableLengthCss (lengthBasisOf doc) g.width}; }\n"
+      | none => ""
     let liCss := String.join liDecls
     let interCss := String.join interDecls
-    css := css ++ own ++ ruleCss ++ liCss ++ interCss
+    css := css ++ own ++ indentCss ++ ruleCss ++ liCss ++ interCss
   return (css, diags)
 
 /-- A per-mille factor as CSS text: 1440 → `1.440`. -/
@@ -926,7 +941,7 @@ private def itemSubject : String :=
 
 /-- An enclosing list's item, quotation or abstract, as `\@listdepth` counts the levels, at an
 element's specificity. -/
-private def itemAncestor : String := ":is(li, dd, blockquote, :where(.abstract)) "
+private def itemAncestor : String := ":is(li, dd, blockquote, :where(.abstract.quoted)) "
 
 /-- A list's own space at a boundary: the level's length over the paragraph gap in force. -/
 private def listSpace (m : Nat) : String := s!"calc({milliRem m} + var(--parskip, 0rem))"
@@ -989,15 +1004,16 @@ public def squeezeListRules (l : Ir.ListLineage) (size : Int) (tokens : Ir.Token
     | none => []
 
 /-- A lineage's list indents as CSS for the kernel's six levels, under the custom property of
-their length, each in the page's unit as its class fixes it (`Ir.leftMarginAt`). -/
+their length, each in the page's unit as its class fixes it (`Ir.leftMarginAt`), at no specificity
+so a declared indent wins. -/
 public def listIndentCss (l : Ir.ListLineage) (basis : LengthBasis) (face : Ir.PreambleFace) :
     String :=
   String.join ((List.range 6).map fun k =>
     let pre := String.join (List.replicate k itemAncestor)
     let fixed := tableLengthCss basis (.ofSp (Ir.leftMarginAt l {} face (k + 1)))
     let v := s!"var(--{Ir.leftMarginName (k + 1)}, {fixed})"
-    s!"{pre}ul, {pre}ol, {pre}dd \{ padding-left: {v}; }\n" ++
-      s!"{pre}:is(blockquote, :where(.abstract)) \{ padding: 0 {v}; }\n")
+    s!":where({pre}ul, {pre}ol, {pre}dd) \{ padding-left: {v}; }\n" ++
+      s!":where({pre}:is(blockquote, .abstract.quoted)) \{ padding: 0 {v}; }\n")
 
 /-- The space rules of theorem-like blocks, on the element their role's class marks. -/
 public def thmRules (l : Ir.ListLineage) (size : Int) : List GapRule :=
@@ -7381,8 +7397,8 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     fillCarrier cfg (Ir.frameFillsOne cfg.lists cfg.styles .deck 0 b)
       (Html.elem "section"
         (#[Html.elem "h2" #[Html.text cfg.locale.abstract] #[("style", "text-align: center")]] ++
-          blockNodesInto (cfg.deeper true).into #[] body.toList)
-        #[("class", abstractClass cfg.styles)])
+          blockNodesInto (if cfg.abstractQuoted then cfg.deeper true else cfg).into #[] body.toList)
+        #[("class", abstractClass cfg.styles ++ (if cfg.abstractQuoted then " quoted" else ""))])
   | .columns cols =>
     let justify := if cols.size == 1 then "var(--ltx-box-justify, start)" else "space-between"
     let total := cfg.measureValues.lineWidth
@@ -8114,6 +8130,7 @@ private def emitTreeCore (cfg : Config) (doc : Doc)
                         page := doc.page
                         lengthBasis := lengthBasisOf doc
                         lists := doc.docClass.record.lists
+                        abstractQuoted := doc.abstractQuoted
                         preamble := doc.preambleFace }
   let hasFrameFoot := doc.body.any fun b => match b with
     | .framefoot xs => !xs.isEmpty
