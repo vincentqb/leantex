@@ -568,10 +568,10 @@ public structure LabelSetter where
 public def pageLabels (geom : Geom) (remap : Array Nat) (widths : Array (Array Int))
     (imgMap : Array (Option Nat)) (tags : Array (Option String)) (page : PageOut) :
     LabelSetter :=
-  let keys := inkLabelKeys page.inks
-  let route := routesLabels page.inks
-  let held := page.lines.toList.filter (heldBy route keys)
-  ⟨if route then labelText geom remap widths imgMap tags held else fun _ => none⟩
+  if routesLabels page.inks then
+    ⟨labelText geom remap widths imgMap tags
+      (page.lines.toList.filter (heldBy true (inkLabelKeys page.inks)))⟩
+  else ⟨fun _ => none⟩
 
 /-- A picture's ink as operators in the page's PDF space, each label set where its node stands. -/
 @[expose] public def inkPaint (geom : Geom) (ix : GfxPdf.Request → Nat)

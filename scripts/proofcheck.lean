@@ -195,6 +195,10 @@ private def shiftBy (n : Nat) : Nat → Nat :=
 private def offsetBy (n : Nat) : Nat → Nat :=
   let m := n + 1
   Nat.add m
+private abbrev Step := Nat → Nat
+private def stepBy (n : Nat) : Step :=
+  let m := n + 1
+  Nat.add m
 "
   (_, failures) ← (expect "returned-function fixture did not compile"
     (hoisted.exitCode == 0)).run failures
@@ -234,7 +238,7 @@ public def Shift.apply (s : Shift) (k : Nat) : Nat := s.amount + k
   let hoistedAudit := dir / "HoistedAudit.lean"
   IO.FS.writeFile hoistedAudit (wrapper dir #["Hoisted"] allFixtures)
   let hoistedOut ← compile hoistedAudit #["-R", dir.toString] (some dir)
-  for decl in ["shiftBy", "offsetBy"] do
+  for decl in ["shiftBy", "offsetBy", "stepBy"] do
     (_, failures) ← (expect s!"the audit missed a let before a returned function: {decl}"
       (hoistedOut.exitCode != 0 && (hoistedOut.stdout ++ hoistedOut.stderr).contains
         s!"{decl} binds a let before the function it returns")).run failures

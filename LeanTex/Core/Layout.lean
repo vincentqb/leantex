@@ -927,16 +927,16 @@ public def ParagraphBreaks.Splits (p : ParagraphBreaks) (k : Nat) : Prop :=
 
 /-- A paragraph's forced ends, read once: the last interior one, and every break that ends
 a segment. -/
-public structure SegmentEnds where
+private structure SegmentEnds where
   top : Nat
   ends : Std.HashSet Nat
 
-public def ParagraphBreaks.segmentEnds (p : ParagraphBreaks) : SegmentEnds :=
+private def ParagraphBreaks.segmentEnds (p : ParagraphBreaks) : SegmentEnds :=
   { top := p.forced.pop.foldl max 0
     ends := Std.HashSet.ofList (p.forced.toList ++ p.endFills.toList) }
 
 /-- Whether a break splits an authored segment, as `Splits` reads a chosen one. -/
-public def SegmentEnds.splits (e : SegmentEnds) (k : Nat) : Bool :=
+private def SegmentEnds.splits (e : SegmentEnds) (k : Nat) : Bool :=
   decide (k < e.top) && !e.ends.contains k
 
 /-- The chosen breaks that split an authored segment. -/
@@ -10513,8 +10513,7 @@ public def emitLabel (fs : FontSet) (imgs : Image.Store) (geom : Geom)
 layout: the one function placement and elaboration both read. -/
 public def labelMetric (geom : Geom) (fs : FontSet) (imgs : Image.Store := {}) :
     Ir.Pic.LabelMetric :=
-  let font := fs.body
-  picMetric fs imgs geom (font.xHeight * geom.fontSize / font.unitsPerEm)
+  picMetric fs imgs geom (fs.body.xHeight * geom.fontSize / fs.body.unitsPerEm)
 
 /-- The box a picture occupies on the page:
 `Ir.Pic.Picture.box` under layout's label measurement. -/

@@ -23,13 +23,12 @@ meta def projectModule (root : System.FilePath) (name : Name) : IO Bool := do
 meta def unexpectedAxioms (axioms : Array Name) : Array Name :=
   axioms.filter fun ax => !#[`Quot.sound, `Classical.choice, `propext].contains ax
 
-/-- Whether a definition binds a `let` before a function it returns: the compiler eta-expands
-a definition to its type's arity, so that `let` runs on every call of the function. -/
-meta def letBeforeLambda (type value : Expr) : Bool :=
+/-- Whether a definition of the given arity binds a `let` before a function it returns. -/
+meta def letBeforeLambda (arity : Nat) (value : Expr) : Bool :=
   let (params, body) := lambdas value
   match lets body with
   | (0, _) => false
-  | (_, rest) => rest.isLambda || params < foralls type
+  | (_, rest) => rest.isLambda || params < arity
 where
   lambdas : Expr → Nat × Expr
     | .lam _ _ body _ => let (n, e) := lambdas body; (n + 1, e)
@@ -39,10 +38,6 @@ where
     | .letE _ _ _ body _ => let (n, e) := lets body; (n + 1, e)
     | .mdata _ e => lets e
     | e => (0, e)
-  foralls : Expr → Nat
-    | .forallE _ _ body _ => foralls body + 1
-    | .mdata _ e => foralls e
-    | _ => 0
 
 /-- The `example` commands of a parse, not words in comments, strings or syntax
 quotations. -/
@@ -171,7 +166,9 @@ elab "#audit_proofs" "[" modules:str,* "]" "from" root:str
         logError m!"proof audit: {name}: {decl} depends on {unexpected}"
         failures := failures + 1
       if let some (.defnInfo d) := env.find? decl then
-        if !isNoncomputable env decl && letBeforeLambda d.type d.value then
+        let arity ← liftTermElabM <| withCurrHeartbeats <| Meta.withReducible <|
+          Meta.forallTelescopeReducing d.type fun xs _ => pure xs.size
+        if !isNoncomputable env decl && letBeforeLambda arity d.value then
           logError m!"proof audit: {name}: {decl} binds a let before the function it returns, \
 so the let runs on every call; return what it binds as a structure"
           failures := failures + 1
