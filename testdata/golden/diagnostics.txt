@@ -964,7 +964,6 @@
 ⚠ [W0433]
   the facts for 'Tide' at '/p/.lake/build/leantex/Tide.facts' no longer line up with it; its code is set without statements
   suggestion: run `lake exe leantex-export Tide` again in a project that requires leantex-export
-── W0434 (degraded) leanblueprint's dependency graph is not drawn; each statement's web page names the statements it uses and proves
 ── W0434 (degraded) leanblueprint's dependency graph is not drawn, nor the proof buttons its showmore option asks for; the web page names beside each statement what it uses and proves
 ⚠ [W0434] - \usepackage
   leanblueprint's dependency graph is not drawn; the web page names beside each statement what it uses and proves

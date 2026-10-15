@@ -5011,7 +5011,7 @@ private def elabInlinesCtrl (ctx : Ctx) (raws : Array Raw) (i : Nat)
   else if let some m := Blueprint.Mark.ofName? name then
     if blueprintMarksOn ctx then
       let ⟨j, hj⟩ ← blueprintMarkArm ctx raws i m pos
-      have hadv : sliceWeight raws j < sliceWeight raws i := sliceWeight_lt raws h hj
+      have _ : sliceWeight raws j < sliceWeight raws i := sliceWeight_lt raws h hj
       elabInlinesFrom ctx raws j acc sb
     else elabUnknownCtrl ctx raws i acc sb name pos h
   else if name == "pagenumber" then
