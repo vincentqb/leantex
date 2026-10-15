@@ -76,7 +76,7 @@ example (raws : Array Raw) :
 example (raw : Raw) (raws : List Raw) :
     rawSrcList (raw :: raws) = rawSrcOne raw ++ rawSrcList raws := by rfl
 example (name : String) (p : Pos) :
-    rawSrcOne (.ctrl name p) = if name.length == 1 && !Lex.nameChar name.front
+    rawSrcOne (.ctrl name p) = if name.length == 1 && !Lex.nameChar name.front && name != " "
       then "\\" ++ name else "\\" ++ name ++ " " := by rfl
 example (raws : Array Raw) (i : Nat) (h : raws.size ≤ i) : skipSpaces raws i = i := by
   rw [skipSpaces.eq_def]

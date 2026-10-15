@@ -221,7 +221,7 @@ def metaEscapeChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
     (infoText metaPdf "Title" == none &&
       catalogText metaPdf "Lang" == some "en\", title = \"Injected")
   let read (pre : String) : Option String := infoText (pdfOf geom fonts (surface pre).1) "Title"
-  t "hyperref: a value reads as hyperref's PDF strings read it, a tie a space and a footnote, label or thanks no text"
+  t "hyperref: a value reads as its text: the PDF argument, a box's content, a tie a space, and no footnote, label or thanks"
     (read "\\hypersetup{pdftitle={A\\mbox{Widget}B \\texorpdfstring{TEX}{PDF} C\\footnote{Note.}D\\label{x}E\\thanks{F}~G}}\n"
       == some "AWidgetB PDF CDE G")
   t "hyperref: an author list's separator reads as a semicolon, and quotes as the page sets them"
@@ -252,12 +252,40 @@ def metaEscapeChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
       | _ => none).toList
     t s!"fontspec: a quote in a {what} sets no other slot"
       (css.all fun s => !hasStr s "\"Evil\"")
+  t "hyperref: the reading holds at every depth, an author list's edges standing bare"
+    (read "\\hypersetup{pdftitle={A{\\footnote{N.}\\mbox{B}}\\texorpdfstring{T} {P}{\\texorpdfstring{x}{y}}}}\n" ==
+        some "ABPy" &&
+      infoText (pdfOf geom fonts (surface "\\hypersetup{pdfauthor={\\and Ann \\and Bo\\and}}\n").1)
+        "Author" == some "Ann; Bo")
+  let titled := elabStr (dvDoc ("\\title{The Real Title}\n\\author{Someone}\n\\usepackage{hyperref}\n" ++
+    "\\makeatletter\\AtBeginDocument{\\hypersetup{pdftitle={\\@title}, pdfauthor={\\@author}, " ++
+    "pdfsubject={}}}\\makeatother\n") "Words.")
+  let titledPdf := pdfOf geom fonts titled.1
+  t "hyperref: the title and author LaTeX keeps are the document's, and an empty value leaves its field to them"
+    (infoText titledPdf "Title" == some "The Real Title" && infoText titledPdf "Author" == some "Someone" &&
+      infoText titledPdf "Subject" == none && titled.2.all (·.code != "W0301"))
+  let (french, frenchDiags) := elabStr (dvDoc "\\usepackage[french]{babel}\n\\usepackage{hyperref}\n\\hypersetup{pdftitle={Le \\foreignlanguage{english}{workshop} {\\ul{deux}} \\raisebox{1pt}{R}}}\n" "Mots.")
+  t "hyperref: a value is the body's TeX, rewritten as the body is"
+    (infoText (pdfOf geom fonts french) "Title" == some "Le workshop deux R" &&
+      frenchDiags.all fun d => d.code != "W0301" && d.code != "W0104")
+  let spaced := (surface "\\hypersetup{pdftitle={A\\ }, pdfsubject={B}}\n").1
+  t "hyperref: a value ending in a control space keeps its key's neighbour"
+    (infoText (pdfOf geom fonts spaced) "Subject" == some "B")
+  let refDiags := (elabStr (dvDoc "\\usepackage{hyperref}\n\\hypersetup{pdftitle={See \\ref{sec:a}}}\n"
+    "\\section{Alpha}\\label{sec:a}Words.")).2
+  t "hyperref: a reference in a value, which metadata reads before the page numbers it, is named"
+    (refDiags.any fun d => d.code == "W0349" && hasStr d.message "pdftitle")
+  t "hyperref: the carrier's mark holds a character no control word holds"
+    (Compat.metaTextMark.any (!Lex.nameChar ·))
   let colourSrc := dvDoc ("\\usepackage{xcolor}\n\\definecolor{ink, accent = HTML(FF0000), x}{HTML}{112233}\n" ++
     "\\colorlet{brand}{blue, fg = red}\n\\linespread{1.0, fontsize = 20pt}\n")
     "Alpha \\textcolor{accent}{words} and more words."
   t "xcolor: a colour's name or value, or a line spread, sets no other key on the page"
     (!bytesContain (pdfText (pdfOf geom fonts (elabStr colourSrc).1)) "1 0 0 rg" &&
       lineSizeOf (censusOfSrc fonts colourSrc) 0 "Alpha" == some (Dim.pt 10))
+  let hyphened := elabStr (dvDoc "\\usepackage{xcolor}\n\\definecolor{light-grey}{gray}{0.95}\n" "Words.")
+  t "xcolor: a colour name no palette key spells is named and the document ships"
+    (hyphened.2.any (·.code == "W0102") && hyphened.2.all (·.severity != .error))
   let linkDiags := (surface ("\\usepackage{hyperref}\n" ++
     "\\hypersetup{colorlinks, linkcolor={blue, font = \\bfseries}}\n")).2
   t "hyperref: a link colour no palette entry reads is named, not spliced"

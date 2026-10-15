@@ -13405,16 +13405,16 @@ private def applyOutput (ctx : Ctx) (o0 : OutputSpec) (src : String) (pos : Pos)
           (help := "css: own (the engine's sheet), bulma (Bulma's class names, styled by the sheet stylesheet = ... declares, within the page's CSS subset), none (markup only)")
     | some ("stylesheet", v) =>
       inList := none
-      let v := if v.startsWith "\"" && v.endsWith "\"" && v.length ≥ 2 then
-          String.ofList (v.toList.drop 1).dropLast
-        else v
+      let v := match Decl.stringBody? v.toList with
+        | some body => String.ofList body
+        | none => v
       o := { o with stylesheet := some v }
       evs := evs.push (.scalar "output" "stylesheet" v pos)
     | some ("md", v) =>
       inList := none
-      let v := if v.startsWith "\"" && v.endsWith "\"" && v.length ≥ 2 then
-          String.ofList (v.toList.drop 1).dropLast
-        else v
+      let v := match Decl.stringBody? v.toList with
+        | some body => String.ofList body
+        | none => v
       o := { o with md := some v }
       evs := evs.push (.scalar "output" "md" v pos)
     | some ("alternatives", v) =>
@@ -14477,11 +14477,26 @@ convert = none refuses both")
     let mut evs : Array PEvent := #[]
     let mut said : Array String := #[]
     for (key, raws) in pairs do
-      -- A value's reserved characters are its text; only its diagnostics reach the document.
+      -- A value is body TeX read as text, its reserved characters text, its report alone kept.
       let saved ← get
+      let inherited := (s.ctx.user.extract 0 s.ctx.limit).toList.map (·.name)
+      let (raws, ds, _) := Compat.rewrite s.ctx.file raws (warned := saved.warnedUnknown)
+        (inherited := inherited)
+      modify fun st => { st with diags := st.diags ++ ds.filter (·.severity != .note) }
       let xs ← elabInlines { s.ctx with argBody := true } raws
-      modify fun st => { saved with diags := st.diags }
+      modify fun st => { saved with
+        diags := st.diags, warnedUnknown := st.warnedUnknown, runShapes := st.runShapes
+        spans := { saved.spans with recoveryDiags := st.spans.recoveryDiags } }
       let text := Ir.metaText xs
+      let unresolved := xs.any fun x =>
+        Ir.foldInline (fun b y => b || y matches .ref .. || y matches .cite ..) false x
+      if unresolved then
+        modify fun st => { st with diags := st.diags.push (diagOf s.ctx .W0349
+          s!"pdf{key.name} holds a reference or citation, which metadata reads before the page \
+numbers it; set as '??' or '?'" (some pos)
+          (help := "write the number or the source as text in the metadata value")
+          (subject := some s!"pdf{key.name}")) }
+      if text.trimAscii.isEmpty then continue
       info := match key with
         | .title => { info with title := some text }
         | .author => { info with author := some text }
@@ -14489,7 +14504,9 @@ convert = none refuses both")
         | .keywords => { info with keywords := some text }
       evs := evs.push (.scalar "pdfmeta" key.name text pos)
       said := said.push s!"{key.name} = {Decl.quote text}"
-    diag s.ctx .N0100 s!"'{what}' → \\pdfmeta\{ {String.intercalate ", " said.toList} }{links}" pos
+    let native := (if said.isEmpty then "" else
+      s!"\\pdfmeta\{ {String.intercalate ", " said.toList} }") ++ links
+    diag s.ctx .N0100 s!"'{what}' → {if native.isEmpty then "nothing: its values are empty" else native}" pos
     emitEvents s.ctx evs
     return { s with info }
   | .urlstyle v pos =>

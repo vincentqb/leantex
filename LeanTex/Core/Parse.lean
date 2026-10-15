@@ -560,6 +560,19 @@ public def rawEntries (rs : Array Raw) : Array (Array Raw) := Id.run do
     | _ => current := current.push r
   return out.push current
 
+@[expose] public def isBlankRaw : Raw → Bool
+  | .space | .par _ => true
+  | _ => false
+
+@[expose] public def isCtrlSpace : Raw → Bool
+  | .ctrl n _ => n == " "
+  | _ => false
+
+/-- Whether a list's last token past its blanks is a control space, whose name a trim would cut. -/
+@[expose] public def endsCtrlSpace : List Raw → Bool
+  | [] => false
+  | r :: rest => if rest.all isBlankRaw then isCtrlSpace r else endsCtrlSpace rest
+
 mutual
 
 @[expose] public def rawSrc (raws : Array Raw) : String :=
@@ -576,13 +589,14 @@ mutual
   | .space => " "
   | .par _ => " "
   | .sym c _ => String.ofList [c]
-  | .ctrl n _ => if n.length == 1 && !Lex.nameChar n.front then "\\" ++ n else "\\" ++ n ++ " "
-  | .group body _ => "{" ++ rawSrc body ++ "}"
+  | .ctrl n _ =>
+    if n.length == 1 && !Lex.nameChar n.front && n != " " then "\\" ++ n else "\\" ++ n ++ " "
+  | .group body _ => "{" ++ rawSrc body ++ (if endsCtrlSpace body.toList then " " else "") ++ "}"
   | .math d body _ =>
     let inner := rawSrc body
     if d then s!"\\[{inner}\\]" else s!"${inner}$"
   | .env n body _ =>
-    if n == scopeEnv then "{" ++ rawSrc body ++ "}"
+    if n == scopeEnv then "{" ++ rawSrc body ++ (if endsCtrlSpace body.toList then " " else "") ++ "}"
     else s!"\\begin\{{n}}" ++ rawSrc body ++ s!"\\end\{{n}}"
   | .verb env s _ =>
     if env == "verb" then
@@ -596,6 +610,20 @@ end
 public theorem scopeEnv_source_exact (body : Array Raw) (p : Pos) :
     rawSrcOne (.env scopeEnv body p) = rawSrcOne (.group body p) := by
   simp only [rawSrcOne, BEq.rfl, ↓reduceIte]
+
+private theorem endsCtrlSpace_map (origin : MacroOrigin) (rs : List Raw) :
+    endsCtrlSpace (rs.map (markMacro origin)) = endsCtrlSpace rs := by
+  induction rs with
+  | nil => rfl
+  | cons r rest ih =>
+    have hb : isBlankRaw ∘ markMacro origin = isBlankRaw := by
+      funext x; cases x <;> rfl
+    have hr : isCtrlSpace (markMacro origin r) = isCtrlSpace r := by cases r <;> rfl
+    simp only [List.map_cons, endsCtrlSpace, List.all_map, hb, hr, ih]
+
+private theorem endsCtrlSpace_markMacro (origin : MacroOrigin) (rs : List Raw) :
+    endsCtrlSpace (markMacroList origin #[] rs).toList = endsCtrlSpace rs := by
+  rw [markMacroList_toList, Array.toList_empty, List.nil_append, endsCtrlSpace_map]
 
 mutual
 
@@ -614,7 +642,7 @@ public theorem markMacroList_source_exact (origin : MacroOrigin) (rs : List Raw)
 
 public theorem markMacro_source_exact (origin : MacroOrigin) (r : Raw) :
     rawSrcOne (markMacro origin r) = rawSrcOne r := by
-  cases r <;> simp only [markMacro, rawSrcOne, markMacroArray_source_exact]
+  cases r <;> simp only [markMacro, rawSrcOne, markMacroArray_source_exact, endsCtrlSpace_markMacro]
 
 end
 

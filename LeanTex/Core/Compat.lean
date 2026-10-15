@@ -1158,6 +1158,19 @@ private def rebaseList (mapPos : Pos → Pos) (groups : Bool) : List Raw → Lis
 
 end
 
+private theorem endsCtrlSpace_rebase (mapPos : Pos → Pos) (groups : Bool) (rs : List Raw) :
+    endsCtrlSpace (rebaseList mapPos groups rs) = endsCtrlSpace rs := by
+  induction rs with
+  | nil => rfl
+  | cons r rest ih =>
+    have hall : ∀ l : List Raw, (rebaseList mapPos groups l).all isBlankRaw = l.all isBlankRaw := by
+      intro l
+      induction l with
+      | nil => rfl
+      | cons x xs ihx => cases x <;> simp [rebaseList, rebase, isBlankRaw, ihx]
+    have hr : isCtrlSpace (rebase mapPos groups r) = isCtrlSpace r := by cases r <;> rfl
+    simp only [rebaseList, endsCtrlSpace, hall, hr, ih]
+
 mutual
 
 private theorem rebaseArray_source (mapPos : Pos → Pos) (groups : Bool) (raws : Array Raw) :
@@ -1178,8 +1191,8 @@ private theorem rebase_source (mapPos : Pos → Pos) (groups : Bool) (r : Raw) :
   cases r with
   | env n body p =>
     simp only [rebase]
-    split <;> simp only [rawSrcOne, rebaseArray_source]
-  | _ => simp only [rebase, rawSrcOne, rebaseArray_source]
+    split <;> simp only [rawSrcOne, rebaseArray_source, endsCtrlSpace_rebase]
+  | _ => simp only [rebase, rawSrcOne, rebaseArray_source, endsCtrlSpace_rebase]
 
 end
 
@@ -5688,7 +5701,7 @@ private def oneEntry (v : String) : Bool := (Decl.splitEntries ("k = " ++ v)).le
 
 /-- Whether a name spells a key of a native declaration. -/
 private def nativeName (n : String) : Bool :=
-  !n.isEmpty && n.all fun c => Decl.isIdentChar c || c == '-'
+  !n.isEmpty && n.all Decl.isIdentChar
 
 /-- The metadata keys hyperref's options set, each as its `\pdfmeta` key. -/
 public inductive MetaKey where
@@ -5707,6 +5720,9 @@ public def MetaKey.name : MetaKey → String
 public def MetaKey.all : List MetaKey := [.title, .author, .subject, .keywords]
 
 public def MetaKey.ofName? (n : String) : Option MetaKey := MetaKey.all.find? (·.name == n)
+
+public theorem MetaKey.ofName?_name (k : MetaKey) : MetaKey.ofName? k.name = some k := by
+  cases k <;> rfl
 
 /-- hyperref's keys, as `\hypersetup` and the package options give them: its metadata keys with
 their TeX values, with its link keys written into the setup and whether one was read. -/
@@ -5742,21 +5758,35 @@ private def hyperrefKeys (opts : String) (pos : Pos) : M (Array (MetaKey × Stri
 lowers, then each key's group and its value's group. -/
 public def metaTextMark : String := "pdfmeta text"
 
-/-- TeX as hyperref's PDF strings read it at its top level (hyperref manual §4.1), onto `out`:
-`\texorpdfstring`'s second argument, `\label`, `\index`, `\footnote` and `\thanks` dropped with
-their argument, `\mbox` and `\hbox` their content, and `\and` a separator. -/
+private theorem toList_sizeOf_lt (b : Array Raw) : sizeOf b.toList < sizeOf b := by
+  cases b; simp
+
+/-- A metadata value's TeX read as its text at every depth, onto `out`: `\texorpdfstring` as its
+PDF argument, `\@title` and `\@author` as the declared title and author, a box as its content, `\and` as a separator between names, and `\label`, `\index`, `\footnote` and
+`\thanks` as no text, a footnote being no part of the words it marks (`metaEscapeChecks`). -/
 private def pdfStringList (out : Array Raw) : List Raw → Array Raw
   | [] => out
-  | .ctrl "texorpdfstring" _ :: .group _ _ :: .group b _ :: rest => pdfStringList (out ++ b) rest
+  | .ctrl "texorpdfstring" _ :: .group _ _ :: .group b _ :: rest
+  | .ctrl "texorpdfstring" _ :: .group _ _ :: .space :: .group b _ :: rest =>
+    pdfStringList (pdfStringList out b.toList) rest
   | .ctrl "label" _ :: .group _ _ :: rest | .ctrl "index" _ :: .group _ _ :: rest
   | .ctrl "footnote" _ :: .group _ _ :: rest | .ctrl "thanks" _ :: .group _ _ :: rest =>
     pdfStringList out rest
-  | .ctrl "mbox" _ :: .group b _ :: rest | .ctrl "hbox" _ :: .group b _ :: rest =>
-    pdfStringList (out ++ b) rest
+  | .ctrl "mbox" _ :: .group b _ :: rest | .ctrl "hbox" _ :: .group b _ :: rest
+  | .ctrl "raisebox" _ :: .group _ _ :: .group b _ :: rest =>
+    pdfStringList (pdfStringList out b.toList) rest
+  | .ctrl "@title" p :: rest => pdfStringList (out.push (.ctrl "inserttitle" p)) rest
+  | .ctrl "@author" p :: rest => pdfStringList (out.push (.ctrl "insertauthor" p)) rest
   | .ctrl "and" p :: rest =>
-    pdfStringList (((if out.back? matches some .space then out.pop else out).push
-      (.word ";" p)).push .space) rest
+    let out := if out.back? matches some .space then out.pop else out
+    pdfStringList (if out.isEmpty || rest.all (· matches .space) then out
+      else (out.push (.word ";" p)).push .space) rest
+  | .group b p :: rest => pdfStringList (out.push (.group (pdfStringList #[] b.toList) p)) rest
   | r :: rest => pdfStringList (out.push r) rest
+termination_by l => sizeOf l
+decreasing_by
+  all_goals simp_wf
+  all_goals first | omega | (have := toList_sizeOf_lt b; omega)
 
 /-- hyperref's metadata and link styles lowered, the metadata as TeX the elaborator sets as text
 and names in its note. -/
@@ -6102,7 +6132,7 @@ is defined" pos (help := "write \\definespotcolor{name}{colorant}{c,m,y,k}")
   let n := (rawSrc n).trimAscii.toString
   unless nativeName n do
     say .W0102 s!"'\\definespotcolor\{{n}}' names a colour no palette entry spells; the colour is \
-not defined" pos (help := "name the colour with letters, digits, '.', '_' or '-'")
+not defined" pos (help := "name the colour with ASCII letters, digits, '.' or '_'")
     return some (#[], k)
   let flat := String.ofList ((rawSrc colorant).toList.map fun c => if c.isWhitespace then ' ' else c)
   let ink := " ".intercalate ((flat.splitOn " ").filter (!·.isEmpty))
@@ -8441,7 +8471,7 @@ face serves every language, so the binding is dropped" pos
       let modeled := modeledColorSource (some model) (rawSrc args[2])
       unless nativeName n && oneEntry modeled do
         say .W0102 s!"'\\definecolor\{{n}}' gives a name or a value no palette entry spells; \
-the colour is not defined" pos (help := "name the colour with letters, digits, '.', '_' or '-'")
+the colour is not defined" pos (help := "name the colour with ASCII letters, digits, '.' or '_'")
         return some (#[], k)
       let native := s!"\\palette\{ {n} = {modeled} }"
       let carried := s!"\\palette\{ {n} = {Decl.xcolorDefinitionPrefix}{modeled} }"
@@ -8459,7 +8489,7 @@ the colour is not defined" pos (help := "name the colour with letters, digits, '
         else rawSrc args[1]
       unless nativeName (rawSrc args[0]) && oneEntry src do
         say .W0102 s!"'\\colorlet\{{rawSrc args[0]}}' gives a name or a colour no palette entry \
-spells; the colour is not defined" pos (help := "name the colour with letters, digits, '.', '_' or '-'")
+spells; the colour is not defined" pos (help := "name the colour with ASCII letters, digits, '.' or '_'")
         return some (#[], k)
       let native := s!"\\palette\{ {rawSrc args[0]} = {src} }"
       let carried := s!"\\palette\{ {rawSrc args[0]} = {Decl.xcolorDefinitionPrefix}{src} }"
@@ -12882,7 +12912,9 @@ private def declaredTagList : List Raw → Option String
       match (Decl.splitEntries (rawSrc g)).findSome? (fun e =>
           match Decl.splitEntry e with
           | some ("language", v) =>
-            some (((v.replace "\"" "").trimAscii).toString)
+            match Decl.parseValue v with
+            | some (.str tag) => some tag
+            | _ => some (((v.replace "\"" "").trimAscii).toString)
           | _ => none) with
       | some tag => some tag
       | none => declaredTagList rest
