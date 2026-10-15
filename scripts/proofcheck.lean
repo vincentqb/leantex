@@ -295,11 +295,12 @@ public def readMatch : Nat → String → Nat
     (modernOut.exitCode != 0 &&
       (modernOut.stdout ++ modernOut.stderr).contains "legacy audit wrapper")).run failures
   let sourceRoot := dir / "discovery"
-  for name in ["LeanTex", "Tests", "scripts", "NewLibrary", "tests", "testdata", ".lake"] do
+  for name in ["LeanTex", "Tests", "scripts", "NewLibrary", "tests", "testdata", ".lake", "nested"] do
     IO.FS.createDirAll (sourceRoot / name)
   for name in ["LeanTex.lean", "LeanTex/Unimported.lean", "Tests/Private.lean",
       "scripts/tool.lean", "ExtraProofs.lean", "NewLibrary/Unregistered.lean",
-      "tests/Unimported.lean", "testdata/fixture.lean", ".lake/Generated.lean"] do
+      "tests/Unimported.lean", "testdata/fixture.lean", ".lake/Generated.lean",
+      "lakefile.toml", "nested/lakefile.toml", "nested/Main.lean"] do
     IO.FS.writeFile (sourceRoot / name) ""
   let discovered ← sources sourceRoot
   (_, failures) ← (expect "source discovery omitted an unimported module"

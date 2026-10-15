@@ -126,29 +126,52 @@ sets each top-level declaration's statement as mathematics above its code,
 **Theorem** (`Tide.height_double`). ∀ rise, n ∈ ℕ, height(rise, 2 · n) = 2 ·
 height(rise, n); `show = code, math` sets it after the code, `show = math` sets
 the statements alone, and `decls = height, height_double` chooses which. The
-default is `show = code`, which never runs Lean. A statement is Lean's own: a
-small export that ships with leantex runs as `lake env lean` from the file's
-project (the nearest directory holding a lakefile, else the file's own), under
-the toolchain elan picks there, and elaborates the file command by command, as
-`lean` would with Lean's frontend imported beside the file's imports, so the
-file's `#eval` and macros run as they would under `lean`, and lake may write the
-project's manifest. Each elaborated type sets through one notation table
-(arithmetic, relations, logic, existence, ℕ ℤ ℚ ℝ ℂ and numerals), each
-outermost implicit binder the rest of the statement refers to hidden, an
-instance binder and a binder whose type is a proposition set as hypotheses,
-every implicit argument hidden, a string as Lean writes it, and every other
-constant upright by its name; a line may break after each operator of a
-statement's top level, between the names a quantifier binds, and after each
+default is `show = code`. leantex never runs Lean: a statement is Lean's own,
+read from the file's facts, which the exporter writes, a small Lake package in
+this repository's `export/` directory that the file's project requires and runs
+before leantex reads the file (see below). Each elaborated type sets through one
+notation table (arithmetic, relations, logic, existence, ℕ ℤ ℚ ℝ ℂ and
+numerals), each outermost implicit binder the rest of the statement refers to
+hidden, an instance binder and a binder whose type is a proposition set as
+hypotheses, every implicit argument hidden, a string as Lean writes it, and
+every other constant upright by its name; a line may break after each operator
+of a statement's top level, between the names a quantifier binds, and after each
 comma of an application's arguments, with no change to the spacing. A theorem
 Lean holds unproved, or that rests on one, is marked so; a statement Lean
 elaborated around an error is not set, and a page that shows math alone sets
-that declaration's code in its place. Lean's whole answer is kept under
-`~/.cache/leantex/lean`, keyed by the file's bytes and path, the Lean the
-project runs, its manifest and lakefile, and the Lake trace of each module the
-file imports; a refusal of the export is kept the same way. When Lean gives no
-answer (no `lake` on PATH, packages not fetched, an import not built, four
-minutes passed) the page sets the code alone, whatever `show` asks, and the run
-says so once. The export reads Lean 4.24 and later.
+that declaration's code in its place. A file whose page asks for statements and
+has no facts sets its code alone, with one note; facts that no longer line up
+with the file, a declaration moved or renamed or the file grown or cut since the
+export, set the code alone too, with one warning to run the exporter again.
+
+The exporter runs in the Lean project, under the project's own toolchain; it
+builds and runs on Lean 4.24 and later. Require it in the project's lakefile,
+with this repository's clone URL in place of `<repository-url>`:
+
+```toml
+[[require]]
+name = "leantex-export"
+git = "<repository-url>"
+rev = "main"
+subDir = "export"
+```
+
+Then build the project, export the modules a document shows, and run leantex:
+
+```sh
+lake build
+lake exe leantex-export Tide Tide.Basic
+leantex Tide.lean -o Tide.pdf
+```
+
+The exporter elaborates each module command by command, as `lean` would with
+Lean's frontend imported beside the module's imports, so a file's `#eval` and
+macros run as they would under `lean`, and writes the module's facts beneath
+the project's `.lake/build/leantex`, the file's place under the project with
+`.lean` made `.facts`, where leantex reads them for that file. `facts = <path>`
+in a directive, on `\inputlean` or on a Markdown division names another facts
+file instead, beside the Lean file on a page and beside the document in an
+inclusion.
 
 `show = prose` says each statement in words instead, its terms as formulas:
 **Theorem** (`Tide.le_or_gt`). For all natural numbers a and b, either a is at
@@ -204,8 +227,8 @@ lualatex the same command, which sets the whole file through minted and warns
 when an option asks for more), and in Markdown a fenced division,
 `::: {.lean file="Tide.lean" show="math, code"}` closed by `:::`. With no
 option the whole file is one listing, as `\inputminted{lean4}{Tide.lean}`
-sets it. Showing math or folding or removing proofs asks the file's
-project's Lean, as above, and sets the whole file with each statement at its
+sets it. Showing math or prose, or folding or removing proofs, reads the
+file's facts, as above, and sets the whole file with each statement at its
 declaration; `decls` sets only the declarations it names (theorems,
 definitions and axioms), each with its views in order; `phrase.` entries
 give constants their words there as a directive's do. An included file's

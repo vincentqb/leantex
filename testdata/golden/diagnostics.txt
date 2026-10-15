@@ -271,6 +271,10 @@
 ℹ [N0031]
   'DejaVu Sans Mono' has no italic face; italic code sets upright in it
   suggestion: install the family's italic faces, or declare a typewriter family that has them: \fonts{ mono = "<family>" }
+── N0032 (info) a Lean file whose page asks for its facts has no facts file where its project's exporter writes one, or where the document declares it; its page sets the file's code alone
+ℹ [N0032]
+  no facts for 'Tide' stand at '/p/.lake/build/leantex/Tide.facts'; its code is set without statements
+  suggestion: run `lake exe leantex-export Tide` in its project, or declare `facts = <path>`
 ── N0100 (info) LaTeX idiom translated to its native declaration
 ℹ [N0100] - \usepackage
   '\usepackage{geometry}' → \page{ margin = 1in }
@@ -956,6 +960,10 @@
 ⚠ [W0432]
   a link names the file's commit or path, which git could not give; the names set unlinked
   suggestion: build the file in the git repository that tracks it, or write a `link` with no `{commit}` or `{path}`
+── W0433 (degraded) a Lean file's facts file no longer lines up with its source, or does not read; its page sets the file's code alone
+⚠ [W0433]
+  the facts for 'Tide' at '/p/.lake/build/leantex/Tide.facts' no longer line up with it; its code is set without statements
+  suggestion: run `lake exe leantex-export Tide` in its project again
 ── W0435 (degraded) a \qedhere whose QED this engine cannot set where amsthm sets it; the QED stands on a line of its own after the display
 ⚠ [W0435] - \qedhere
   '\qedhere' in '{align*}' does not set its QED where amsthm sets it; the QED stands on a line of its own after the display

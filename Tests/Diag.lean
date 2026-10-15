@@ -3,6 +3,7 @@ module
 public import LeanTex.Core.FigureLoss
 public import LeanTex.Cli.FontDiscovery
 public import LeanTex.Cli.FontAssembly
+public import LeanTex.Cli.LeanFactsFile
 public import Tests.Support
 public import Tests.CorpusStore
 public import Tests.LayoutInkContracts
@@ -380,6 +381,11 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
       { lean := "4.34.1", errors := 0, binders := #[]
         decls := #[{ name := "t", kind := .theorem, prop := true, start := (2, 0), stop := (2, 26)
                      type := some (.apps (.const "sorryAx") []) }] })).2
+  -- A Lean file's facts written for another text of it, and a file whose facts were never written.
+  | .W0433 => #[LeanFactsFile.stale "Tide" "/p/.lake/build/leantex/Tide.facts"
+      "lake exe leantex-export Tide" "no longer line up with it" "its code is set without statements"]
+  | .N0032 => #[LeanFactsFile.missing "Tide" "/p/.lake/build/leantex/Tide.facts"
+      "lake exe leantex-export Tide" "its code is set without statements"]
   -- A linked statement in a file whose changes its commit does not hold.
   | .W0431 => (Surface.readCode .lean "t.lean"
       "-- leantex: show = math, link = https://github.com/acme/tides\ntheorem t : True := trivial\n"
@@ -1278,6 +1284,8 @@ def repeatFoldUnexercised : List (String × String) :=
     ["W0416"] ++
   unexercisedAs "one record per Lean file whose link it owes, which a page reads once"
     ["W0431", "W0432"] ++
+  unexercisedAs "one record per Lean file whose facts a page reads, which it reads once"
+    ["W0433"] ++
   unexercisedAs ("its witness is the emitter's own record, with no source to write twice; the \
 font assembly's records are held by `weightSubstitutionRecordChecks`")
     ["W0366"] ++

@@ -139,6 +139,8 @@ public structure Showing where
   unknown : List String := []
   proofs : Proofs := .show
   link : Option String := none
+  /-- The facts file the document declares for the file, else the exporter's own. -/
+  facts : Option String := none
   /-- Each option value the page cannot read, as its key and value. -/
   unread : List (String × String) := []
   /-- Each key no option of the page's names, where nothing else reads the entries. -/
@@ -423,7 +425,7 @@ public def keyedEntries (entries : List String) : List (String × List String) :
       | none => acc.push ("", [e.trimAscii.toString])) #[]).toList
 
 /-- The keys a directive takes for what its page shows, which no declaration reads. -/
-public def showKeys : List String := ["show", "decls", "proofs", "link"]
+public def showKeys : List String := ["show", "decls", "proofs", "link", "facts"]
 
 /-- The prefix of the directive keys that declare a constant's phrase. -/
 public def phraseKey : String := "phrase."
@@ -477,6 +479,7 @@ public def showingOfEntries (lang : Ir.CodeLang) (entries : List String) (alone 
   { views := if views.isEmpty then [.code] else views
     decls, proofs, unread
     link := (values "link").map fun vs => unwrapValue (",".intercalate vs)
+    facts := (values "facts").map fun vs => unwrapValue (",".intercalate vs)
     unknown := named.filter fun n => (viewOf? n).isNone
     strange := if alone then groups.filterMap fun (k, vs) =>
         if showKey k then none else some (if k.isEmpty then vs.headD "" else k)
@@ -504,7 +507,7 @@ public def Showing.idle (s : Showing) (lang : Ir.CodeLang) (request : Span) (pag
     Diag.of .W0110 s!"`{key}` {what}; {sets}" (some request) (help := help)
       (subject := some s!"code:{key}")
   let foreign := if lang == .lean then [] else
-    (["decls", "proofs", "link"].filter s.written.contains).map fun k =>
+    (["decls", "proofs", "link", "facts"].filter s.written.contains).map fun k =>
       note k "is read only on a Lean file's page" "delete it, or write it in a Lean file's directive"
   let unlinked := if lang == .lean && s.link.isSome && !s.statements then
       [note "link" "links statements' names, and none is set" "write `show = math, code`"]
@@ -659,36 +662,6 @@ private def leanHeaderLine (line : String) : Bool :=
     let lead := words.takeWhile (· ∈ ["public", "private", "meta", "noncomputable", "@[expose]"])
     ((words.drop lead.length).head?.map (["import", "section", "namespace", "open",
       "set_option", "universe", "variable"].contains ·)).getD false
-
-/-- The modules a Lean file's header imports, in order; `none` for a `prelude` file, whose
-statements elaborate without `Init`. -/
-public def leanImports? (text : String) : Option (Array String) := Id.run do
-  let src := text.toList.toArray
-  let mut out : Array String := #[]
-  let mut i := 0
-  let mut expectModule := false
-  for _ in [0:src.size + 1] do
-    if i ≥ src.size then break
-    let c := src.getD i ' '
-    if isWhite c then i := i + 1
-    else if c == '-' && at? src (i + 1) '-' then i := lineEnd src i
-    else if c == '/' && at? src (i + 1) '-' && !at? src (i + 2) '!' && !at? src (i + 2) '-' then
-      i := (leanBlockEnd src (i + 2)).getD src.size
-    else
-      let mut j := i
-      for _ in [i:src.size] do
-        if isWhite (src.getD j ' ') then break
-        j := j + 1
-      let word := String.ofList (src.extract i j).toList
-      i := j
-      if expectModule then
-        if word != "all" then
-          out := out.push word
-          expectModule := false
-      else if word == "prelude" then return none
-      else if word == "import" then expectModule := true
-      else if !["module", "public", "private", "meta"].contains word then break
-  return some out
 
 /-- Past the `»` closing a guillemet name opened at `i`, or past the `«` when none closes it. -/
 private def guillemetEnd (src : Array Char) (i : Nat) : Nat := Id.run do
@@ -2140,7 +2113,7 @@ public def includeLean (file text : String) (showing : Showing) (facts : Option 
     let what := if valueless then s!"`{k}` is written without a value" else s!"{entry} has no option '{k}'"
     Diag.of .W0110 s!"{what}; the file is included as if it were not written" (some request)
       (help := if valueless then s!"write `{k} = …`"
-        else "name `show`, `decls`, `proofs`, `link` or a `phrase.` entry")
+        else "name `show`, `decls`, `proofs`, `link`, `facts` or a `phrase.` entry")
       (subject := some s!"code:option:{k}")
   let views := showing.unknown.toArray.map fun n =>
     Diag.of .W0110 s!"`show` names '{n}', which is no view of a Lean file; it is included without \

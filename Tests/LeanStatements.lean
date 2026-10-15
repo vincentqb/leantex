@@ -2,15 +2,15 @@ module
 
 public import Tests.Support
 public import Tests.CodeDoc
-public import LeanTex.Cli.LeanExport
+public import LeanTex.Cli.LeanFactsFile
 
 public section
 
 open LeanTex.Core LeanTex.Cli LeanTex.Cli.World
 
-/-! Lean statements, on invented words: a core-only file's committed answer read whole, each view a
-directive declares, every listing exact, the table's spellings, and the export's cache as the policy
-says. -/
+/-! Lean statements, on invented words: a core-only file's committed facts read whole, each view a
+directive declares, every listing exact, the table's spellings, and the facts file read where the
+exporter writes it or a document declares it, never asked of Lean. -/
 
 namespace Tests.LeanStatements
 
@@ -39,14 +39,12 @@ def texOf (t : LeanFacts.Term) (ctx : List String)
     { binders := fun c => binders.lookup c, shown := id, collectionFirst := true }
   Parse.rawSrc (LeanStatement.Math.listRaws {} #[] (LeanStatement.render lk ctx t).math.toList)
 
-/-- A world for the export's program: files by path, a `lake` on PATH or not, the version the
-project's Lean gives, and one reply to every export run. -/
-def world (files : List (String × ByteArray)) (lake : Bool) (version : Ended)
-    (run : ToolCall → Ended) : (q : Ask) → Reply q
-  | .env name => if name == "PATH" then some "/bin" else if name == "HOME" then some "/h" else none
+/-- A world holding files by path, `/work` its working directory, and nothing to run. -/
+def factsWorld (files : List (String × ByteArray)) : (q : Ask) → Reply q
+  | .env _ => none
   | .cwd => .ok "/work"
   | .stat path =>
-    if (lake && path == "/bin/lake") || files.any (·.1 == path) then
+    if files.any (·.1 == path) then
       .ok { kind := .file, size := 0, mtimeSec := 0, mtimeNsec := 0, real := path }
     else .error .absent
   | .metadata _ => .error .absent
@@ -54,7 +52,7 @@ def world (files : List (String × ByteArray)) (lake : Bool) (version : Ended)
     | some b => .ok b
     | none => .error .absent
   | .listDir _ => .error .absent
-  | .run call => if call.args.contains "--version" then version else run call
+  | .run _ => { ran := .exited 1, out := "", err := "", complete := true, outputs := #[] }
   | .writeAtomic _ _ => .ok ()
   | .createDirAll _ => .ok ()
 
@@ -62,30 +60,29 @@ def world (files : List (String × ByteArray)) (lake : Bool) (version : Ended)
 def ended (code : Nat) (out : String) (answer : Option ByteArray) : Ended :=
   { ran := .exited code, out, err := "", complete := true, outputs := #[("answer.jsonl", answer)] }
 
-def versionSaid (v : String) : Ended := ended 0 s!"Lean (version {v}, x86_64, commit c, Release)\n" none
-
-def exportRuns (qs : List Ask) : Nat :=
-  (qs.filter fun q => match q with
-    | .run call => !call.args.contains "--version"
-    | _ => false).length
-
-def writes (qs : List Ask) : List String := qs.filterMap fun
-  | .writeAtomic path _ => some path
-  | _ => none
+/-- Whether a program's questions run a tool. -/
+def runs (qs : List Ask) : Bool := qs.any fun q => match q with
+  | .run _ => true
+  | _ => false
 
 def leanStatementChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let src ← fixtureText leanFixture
-  let answer ← IO.FS.readFile leanAnswer
+  let answer ← IO.FS.readFile leanFacts
   let facts ← match LeanFacts.decode answer with
     | .ok f => pure f
-    | .error why => do t s!"statements: the committed answer reads ({why})" false; return
-  t "statements: the committed answer holds every declaration the file writes, and the one Lean refused"
+    | .error why => do t s!"statements: the committed facts read ({why})" false; return
+  t "statements: the committed facts hold every declaration the file writes, and the one Lean refused"
     (facts.decls.size == 39 && facts.errors == 4 && facts.failed.map (·.name) == #["refused"])
   let rows := (← IO.FS.readFile "testdata/codedoc/lean/answers.tsv").splitOn "\n"
-  t "statements: the committed answer was asked through this export, of this file, by its Lean"
-    ((Code.leanImports? src).any fun imports => rows.contains
-      s!"statements.lean\t{Flate.contentKey (LeanExport.source imports).toUTF8}\t{Flate.contentKey src.toUTF8}\t{facts.lean}")
+  let mut exporter := ""
+  for f in ["export/LeantexExport/Program.lean", "export/LeantexExport/Header.lean", "export/Main.lean"] do
+    exporter := exporter ++ (← IO.FS.readFile f) ++ "\u0000"
+  t "statements: the committed facts were written by this exporter, of this file, by their Lean"
+    (rows.contains
+      s!"statements.lean\t{Flate.contentKey exporter.toUTF8}\t{Flate.contentKey src.toUTF8}\t{facts.lean}")
+  t "statements: the committed facts line up with the file they were written of"
+    (LeanFacts.alignedWith facts src)
   t "statements: the answer carries each declaration's module, signature and proof spans"
     ((facts.decls.find? (·.name == "Tide.height")).any fun d =>
       d.moduleName == "testdata.codedoc.lean.statements" && d.signature == some ((9, 11), (9, 31)) &&
@@ -274,92 +271,56 @@ def leanStatementChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "statements: a view the engine does not set is named, and the page shows code"
     (unknownDs.any (fun d => d.kind == .W0110 && d.subject == some "code:show:summary") &&
       (codePageLines fonts unknownDoc).any (·.1))
-  -- The answer, read whole or refused whole.
+  -- The facts, read whole or refused whole.
   let refused (body : String) : Bool := (LeanFacts.decode body).toOption.isNone
-  let header := "{\"leantex-lean-export\":2,\"lean\":\"4.34.1\",\"errors\":0}\n"
-  t "statements: an answer with no declarations reads as none"
-    ((LeanFacts.decode (header ++ "{\"leantex-lean-export-end\":0}\n")).toOption.map (·.decls.size) == some 0)
+  let header := "{\"leantex-lean-export\":3,\"lean\":\"4.34.1\",\"errors\":0}\n"
+  let tail (n : Nat) : String := s!"\{\"leantex-lean-export-end\":{n},\"end\":[1,0]}\n"
+  let ended0 := tail 0
+  let ended1 := tail 1
+  t "statements: facts with no declarations read as none"
+    ((LeanFacts.decode (header ++ ended0)).toOption.map (·.decls.size) == some 0)
   let record (type : String) : String :=
     header ++ "{\"name\":\"a\",\"module\":\"\",\"kind\":\"theorem\",\"range\":[1,0,1,1],\"head\":[1,0]," ++
-      "\"signature\":null,\"proof\":null,\"proved\":true,\"prop\":true,\"type\":" ++ type ++ "}\n" ++
-      "{\"leantex-lean-export-end\":1}\n"
-  t "statements: an answer cut short, miscounted, of another schema, with a node read twice or a binder marked neither way is refused"
-    (refused header && refused (header ++ "{\"leantex-lean-export-end\":1}\n") &&
-      refused ("{\"leantex-lean-export\":1,\"lean\":\"x\",\"errors\":0}\n{\"leantex-lean-export-end\":0}\n") &&
+      "\"id\":[1,8],\"written\":\"a\",\"signature\":null,\"proof\":null,\"proved\":true,\"prop\":true," ++
+      "\"type\":" ++ type ++ "}\n" ++ ended1
+  t "statements: facts cut short, miscounted, of another schema, with a node read twice or a binder marked neither way are refused"
+    (refused header && refused (header ++ ended1) &&
+      refused ("{\"leantex-lean-export\":2,\"lean\":\"x\",\"errors\":0}\n" ++ ended0) &&
+      refused (header ++ "{\"leantex-lean-export-end\":0}\n") &&
       refused (record "[[\"const\",\"True\"],[\"app\",0,0]]") &&
       refused (record "[[\"const\",\"True\"],[\"const\",\"True\"],[\"pi\",\"x\",\"d\",0,1,2]]") &&
       !refused (record "[[\"const\",\"True\"],[\"const\",\"True\"],[\"pi\",\"x\",\"d\",0,1,1]]"))
-  -- The cache, as the policy says.
-  let bytes := src.toUTF8
-  let program := LeanExport.factsFor "statements.lean" bytes src
-  let good := ended 0 "" (some answer.toUTF8)
-  let v := versionSaid "4.34.1"
-  let cold := world [] true v fun _ => good
-  t "cache: a cold file asks Lean once, keeps the answer, and reads it"
-    (exportRuns (program.asks cold) == 1 && (writes (program.asks cold)).length == 1 &&
-      (program.run cold).1 == some facts)
-  let slot := (writes (program.asks cold)).headD ""
-  let warm := world [(slot, ConvCache.encode (.ok answer.toUTF8))] true v fun _ => good
-  t "cache: a kept answer serves once Lean says who it is, with no export run and the same facts"
-    (exportRuns (program.asks warm) == 0 && (program.run warm).1 == some facts)
-  let stale := world [(slot, ConvCache.encode (.ok "{\"leantex".toUTF8))] true v fun _ => good
-  t "cache: a kept answer this reader no longer reads is asked again, and the new answer kept"
-    (exportRuns (program.asks stale) == 1 && (writes (program.asks stale)) == [slot] &&
-      (program.run stale).1 == some facts)
-  let otherLean := world [] true (versionSaid "4.33.1") fun _ => good
-  t "cache: another Lean keeps its answer apart"
-    (writes (program.asks otherLean) != writes (program.asks cold))
-  let moved := LeanExport.factsFor "elsewhere.lean" bytes src
-  t "cache: the same bytes at another path keep their answer apart"
-    (writes (moved.asks cold) != writes (program.asks cold))
-  let said := "<scratch>/export.lean:2:0: error: unknown module prefix 'Zz'"
-  let refusing := world [] true v fun _ => ended 1 said none
-  let (none, refusalDs) := program.run refusing | t "cache: a refusal gives no facts" false
-  t s!"cache: Lean's refusal of the export is kept and named once in Lean's words ({refusalDs.map (·.message)})"
-    ((writes (program.asks refusing)).length == 1 && refusalDs.size == 1 &&
-      refusalDs.all fun d => d.kind == .W0414 && (d.message.splitOn "unknown module prefix 'Zz'").length == 2 &&
-        (d.message.splitOn "<scratch>").length == 1)
-  let replayed := world [(slot, ConvCache.encode (.error "unknown module prefix 'Zz'"))] true v
-    fun _ => good
-  t "cache: a kept refusal replays the identical note with no export run"
-    (exportRuns (program.asks replayed) == 0 &&
-      (program.run replayed).2.map (·.message) == refusalDs.map (·.message))
-  for (label, reply) in [
-      ("a stopped run", { good with ran := .overran 240, outputs := #[("answer.jsonl", none)] }),
-      ("a run that never started", { good with ran := .unstarted "spawn failed", outputs := #[("answer.jsonl", none)] }),
-      ("an exit the machine forced", ended 137 said none),
-      ("an export that could not read or write a file", ended 127 "" none),
-      ("a failed exit with no error of the export's", ended 1 "warning: a line\n" none),
-      ("a clean exit whose answer does not read", ended 0 "" (some "{\"leantex".toUTF8))] do
-    let w := world [] true v fun _ => reply
-    t s!"cache: {label} is named and kept nowhere"
-      ((writes (program.asks w)).isEmpty && (program.run w).1.isNone && (program.run w).2.size == 1)
-  t "cache: the export stops apart, with an exit no refusal reads, when it cannot read the file or write its answer"
-    ((LeanExport.program.splitOn "IO.Process.exit 127").length == 3)
-  let silent := world [] true (ended 1 "" none) fun _ => good
-  t "cache: a Lean that will not say who it is is never asked about the file, and nothing is read or kept"
-    (exportRuns (program.asks silent) == 0 && (writes (program.asks silent)).isEmpty &&
-      (program.run silent).2.map (·.kind) == #[.W0414])
-  let nolake := world [] false v fun _ => good
-  t "cache: with no lake on PATH the code stands alone, named once, nothing kept"
-    (exportRuns (program.asks nolake) == 0 && (writes (program.asks nolake)).isEmpty &&
-      (program.run nolake).2.map (·.kind) == #[.W0414])
-  let projectSrc := "import Tide.Base\n" ++ src
-  let projectProgram := LeanExport.factsFor "statements.lean" projectSrc.toUTF8 projectSrc
-  let unbuilt := world [("/work/lakefile.toml", "name = \"t\"".toUTF8)] true v fun _ => good
-  t "cache: a file importing a project module with no build trace is asked, and its answer not kept"
-    (exportRuns (projectProgram.asks unbuilt) == 1 && (writes (projectProgram.asks unbuilt)).isEmpty)
-  let manifest := "{\"packages\":[{\"name\":\"tidelib\"}]}".toUTF8
-  let unfetched := world [("/work/lakefile.toml", "name = \"t\"".toUTF8),
-    ("/work/lake-manifest.json", manifest)] true v fun _ => good
-  t "cache: a project whose packages are not fetched is not asked"
-    (exportRuns (program.asks unfetched) == 0 && (program.run unfetched).2.map (·.kind) == #[.W0414])
-  for (name, lakefile) in [("lakefile.toml", "name = \"t\"\n\n[[require]]\nname = \"tidelib\"\n"),
-      ("lakefile.lean", "import Lake\nopen Lake DSL\n\nrequire tidelib from git \"../tidelib\"\n")] do
-    let unresolved := world [(s!"/work/{name}", lakefile.toUTF8)] true v fun _ => good
-    t s!"cache: a project whose {name} requires a package and that has no manifest is not asked, so nothing is fetched"
-      (exportRuns (program.asks unresolved) == 0 && (program.asks unresolved).all (fun q => match q with
-        | .run _ => false
-        | _ => true) && (program.run unresolved).2.map (·.kind) == #[.W0414])
+  -- The facts file, where the exporter writes it or the document declares it.
+  let facts3 := answer.toUTF8
+  let lakefile := ("/work/lakefile.toml", "name = \"t\"".toUTF8)
+  let standard := ("/work/.lake/build/leantex/statements.facts", facts3)
+  let program := LeanFactsFile.factsFor "statements.lean" src none
+  let found := factsWorld [lakefile, ("/work/statements.lean", src.toUTF8), standard]
+  t "facts: a file's facts are read from beneath its project's .lake/build/leantex, and nothing runs"
+    ((program.run found).1 == some facts && (program.run found).2.isEmpty && !runs (program.asks found))
+  let declared := LeanFactsFile.factsFor "proj/statements.lean" src (some "out/tide.facts")
+  let elsewhere := factsWorld [("/work/proj/lakefile.toml", "name = \"t\"".toUTF8),
+    ("/work/proj/.lake/build/leantex/statements.facts", "{}".toUTF8), ("/work/out/tide.facts", facts3)]
+  t "facts: a declared facts file is read in place of the exporter's, where its document places it"
+    ((declared.run elsewhere).1 == some facts && (declared.run elsewhere).2.isEmpty &&
+      !runs (declared.asks elsewhere))
+  let none0 := factsWorld [lakefile]
+  t s!"facts: with no facts file the page sets its code, and one note names the exporter to run ({(program.run none0).2.map (·.message)})"
+    ((program.run none0).1.isNone && (program.run none0).2.map (·.kind) == #[.N0032] &&
+      (program.run none0).2.all (fun d => d.help.any (hasStr · "lake exe leantex-export statements")) &&
+      !runs (program.asks none0))
+  let edited := "-- a line added after the export\n" ++ src
+  let editedProgram := LeanFactsFile.factsFor "statements.lean" edited none
+  t "facts: facts that no longer line up with the file are named once, and its code stands"
+    ((editedProgram.run found).1.isNone && (editedProgram.run found).2.map (·.kind) == #[.W0433] &&
+      !LeanFacts.alignedWith facts edited)
+  let renamed := src.replace "theorem height_double" "theorem height_dpuble"
+  t "facts: a declaration renamed in place no longer lines up, though every span keeps its length"
+    (renamed.length == src.length && !LeanFacts.alignedWith facts renamed &&
+      LeanFacts.alignedWith facts src)
+  let old := factsWorld [lakefile, ("/work/.lake/build/leantex/statements.facts",
+    ("{\"leantex-lean-export\":2,\"lean\":\"4.34.1\",\"errors\":0}\n" ++ ended0).toUTF8)]
+  t "facts: facts of another schema are named as not reading, and the code stands"
+    ((program.run old).1.isNone && (program.run old).2.map (·.kind) == #[.W0433])
 
 end Tests.LeanStatements

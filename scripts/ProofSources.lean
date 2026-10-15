@@ -10,14 +10,19 @@ public section
 def sourcePath (parts : List String) : Bool :=
   parts.all (!·.startsWith ".") && parts.head? != some "testdata"
 
-/-- The maintained Lean sources, sorted and relative to the canonical source root, links
-excluded. -/
+/-- Whether a directory holds a Lake package of its own, which its own build holds. -/
+def ownPackage (dir : System.FilePath) : IO Bool := do
+  return (← (dir / "lakefile.toml").pathExists) || (← (dir / "lakefile.lean").pathExists)
+
+/-- The maintained Lean sources, sorted and relative to the canonical source root, links and the
+sources of a nested package excluded. -/
 def sources (root : System.FilePath) : IO (Array System.FilePath) := do
   let root ← IO.FS.realPath root
   let relative := fun (path : System.FilePath) =>
     path.normalize.components.drop root.normalize.components.length
   let paths ← root.walkDir fun path => do
-    return (← path.symlinkMetadata).type == .dir && sourcePath (relative path)
+    return (← path.symlinkMetadata).type == .dir && sourcePath (relative path) &&
+      ((relative path).isEmpty || !(← ownPackage path))
   let mut found := #[]
   for path in paths do
     let parts := relative path

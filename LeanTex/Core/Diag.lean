@@ -251,6 +251,8 @@ public inductive DiagCode where
   | W0416
   | W0442
   | W0443
+  | W0433
+  | N0032
   deriving Repr, BEq, DecidableEq
 
 /-- The registry: each code's digits, its declared `Loss`, and its one meaning. -/
@@ -477,6 +479,8 @@ private def DiagCode.spec : DiagCode → String × Loss × String
   | .W0416 => ("0416", .degraded, "a phrase a Lean file's directive declares is refused, or used by no sentence; the page says its statements without it")
   | .W0442 => ("0442", .degraded, "a declared page box outside the page's medium or with no area there; the PDF writes it inside the medium, or not at all")
   | .W0443 => ("0443", .degraded, "a page attribute the engine does not write: an entry other than a page box, a box that is not four numbers, or text that is not literal PDF")
+  | .W0433 => ("0433", .degraded, "a Lean file's facts file no longer lines up with its source, or does not read; its page sets the file's code alone")
+  | .N0032 => ("0032", .info, "a Lean file whose page asks for its facts has no facts file where its project's exporter writes one, or where the document declares it; its page sets the file's code alone")
 
 public def DiagCode.digits (c : DiagCode) : String := c.spec.1
 

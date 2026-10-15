@@ -45,8 +45,7 @@ public structure Metadata where
   deriving DecidableEq, Repr
 
 /-- One bounded tool run with a scratch directory of its own, `inputs` written there and `outputs`
-read back from it; `env` changes the inherited environment, and `cwd` runs the tool elsewhere,
-`<scratch>` in its arguments and environment naming the scratch directory. -/
+read back from it; `env` changes the inherited environment, and `cwd` runs the tool elsewhere. -/
 public structure ToolCall where
   tool : String
   args : Array String

@@ -126,6 +126,8 @@ def registry : List AuditRow :=
    ⟨.W0306, .keep, .degraded, check% Tests.SeedPalette.failureChecks⟩,
    ⟨.W0308, .keep, .degraded, check% Tests.Schemes.dropChecks⟩,
    ⟨.W0414, .keep, .degraded, check% Tests.LeanStatements.leanStatementChecks⟩,
+   ⟨.W0433, .keep, .degraded, check% Tests.LeanStatements.leanStatementChecks⟩,
+   ⟨.N0032, .keep, .rewritten, check% Tests.LeanStatements.leanStatementChecks⟩,
    ⟨.W0431, .keep, .degraded, check% Tests.LeanViews.leanViewChecks⟩,
    ⟨.W0432, .keep, .degraded, check% Tests.LeanViews.leanViewChecks⟩,
    ⟨.W0440, .keep, .degraded, check% Tests.SpotColor.checks⟩,

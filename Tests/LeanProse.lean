@@ -120,7 +120,7 @@ def paragraphOf (lines : Array (Bool × String)) (label : String) : Option Strin
 def leanProseChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let src ← fixtureText leanFixture
-  let facts ← match LeanFacts.decode (← IO.FS.readFile leanAnswer) with
+  let facts ← match LeanFacts.decode (← IO.FS.readFile leanFacts) with
     | .ok f => pure f
     | .error why => do t s!"prose: the committed answer reads ({why})" false; return
   -- The round trip, over the committed answer and over random statements.

@@ -12,7 +12,8 @@ import LeanTex.Core.BibStyle
 public import LeanTex.Core.BibText
 import LeanTex.Core.Data
 import LeanTex.Cli.DriverDiag
-import LeanTex.Cli.LeanExport
+import LeanTex.Cli.LeanFactsFile
+import LeanTex.Cli.LeanLinks
 import LeanTex.Cli.Host
 
 /-! The driver's file frontend: the document's own bytes and the `\input`/`\include`,
@@ -138,8 +139,8 @@ private def readMinted (dir : System.FilePath) (request : Compat.InputRequest) :
     let lang := request.name.trimAscii.toString
     return (#[.verb "minted" (head ++ "{" ++ lang ++ "}\n" ++ text) request.pos], #[])
 
-/-- `\inputlean[options]{file}`: a Lean file included with the views its options ask for, Lean
-asked where they need it and git where its link names the file's commit or path. -/
+/-- `\inputlean[options]{file}`: a Lean file included with the views its options ask for, its facts
+read where they need them and git asked where its link names the file's commit or path. -/
 private def readLean (dir : System.FilePath) (request : Compat.InputRequest) :
     ReadM (Array Parse.Raw × Array Diag) := do
   let name := request.name.trimAscii.toString
@@ -155,11 +156,12 @@ private def readLean (dir : System.FilePath) (request : Compat.InputRequest) :
     let text := (← decodeOnce path.toString fun _ => Encoding.readMarkdown path.toString bytes).1.text
     let showing := Code.showingOfEntries .lean (Decl.splitEntries request.options) (alone := true)
     let lost := showing.lostIncluded
+    let declared := showing.facts.map fun p => (dir / p).toString
     let (facts, factDiags) ← if showing.asks || showing.decls.isSome then
-        Host.runIO (LeanExport.factsFor path.toString bytes text lost) else pure (none, #[])
+        Host.runIO (LeanFactsFile.factsFor path.toString text declared lost) else pure (none, #[])
     let place ← match showing.link with
       | some l => if showing.statements then
-          Host.runIO (LeanExport.placeOf path.toString (Code.linkTemplate l)) else pure {}
+          Host.runIO (LeanLinks.placeOf path.toString (Code.linkTemplate l)) else pure {}
       | none => pure {}
     let entry := if division then "the Lean division" else "`\\inputlean`"
     let (raws, ds) := Code.includeLean path.toString text showing facts place
@@ -379,12 +381,14 @@ public def readDocument (file : String) (bytes : ByteArray)
       let showing := Code.showingOf lang text.toList.toArray
       let asks := lang == .lean && showing.asks
       let (facts, factDiags) ← if asks then
-          Host.runIO (LeanExport.factsFor file bytes text showing.lost) else pure (none, #[])
+          Host.runIO (LeanFactsFile.factsFor file text (showing.facts.map fun p =>
+            ((System.FilePath.mk file).parent.getD "." / p).toString) showing.lost)
+        else pure (none, #[])
       if phases && asks then
         phase "lean" s!"{(facts.map (·.decls.size)).getD 0} declarations" (← since t)
       let place ← match showing.link with
         | some l => if lang == .lean && showing.statements then
-            Host.runIO (LeanExport.placeOf file (Code.linkTemplate l)) else pure {}
+            Host.runIO (LeanLinks.placeOf file (Code.linkTemplate l)) else pure {}
         | none => pure {}
       let t ← IO.monoMsNow
       let (raws, ds) := Surface.readCode lang file text facts place

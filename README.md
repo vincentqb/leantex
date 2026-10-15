@@ -30,7 +30,10 @@ leantex Module.lean -o Module.html       # A Lean, Python or shell file
 leantex document.tex --watch             # Rebuild on changes
 ```
 
-Declare `\output{formats=pdf,html}` in a document to build both formats.
+Declare `\output{formats=pdf,html}` in a document to build both formats. A Lean
+file's statements come from the facts its project writes with
+`lake exe leantex-export`, a small Lake package in `export/`; leantex never runs
+Lean.
 `leantex --help` shows all options, and the [guide](docs/guide.md) covers
 output and diagnostics, TeX and Markdown, code files, fonts and themes, and
 images and code.

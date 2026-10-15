@@ -191,13 +191,9 @@ def faultChecks (ref : IO.Ref (List String)) (dir : System.FilePath) : IO Unit :
     (← endsWithin (dir / "hung.pid") hostMarginMs)
   t s!"world/host: a run past its budget is answered after it, before its grace and the host's margin end ({spent} ms)"
     (answeredAtBudget hangCall spent)
-  let placed ← Host.answer (.run { call "/bin/sh" #["-c", "pwd; cat \"$1\" > <scratch>/seen", "sh",
-      "<scratch>/given"] 10000 with
-    inputs := #[("given", "given bytes".toUTF8)], outputs := #["seen"], cwd := some dir.toString
-    env := #[("PLACE", some "<scratch>")] })
-  t "world/host: a run with a working directory starts there, its scratch named by `<scratch>`"
-    (placed.ran == .exited 0 && placed.out.trimAscii.toString == (← IO.FS.realPath dir).toString &&
-      placed.outputs == #[("seen", some "given bytes".toUTF8)])
+  let placed ← Host.answer (.run { call "/bin/sh" #["-c", "pwd"] 10000 with cwd := some dir.toString })
+  t "world/host: a run with a working directory starts there"
+    (placed.ran == .exited 0 && placed.out.trimAscii.toString == (← IO.FS.realPath dir).toString)
   let noisyCall := call "/bin/sh" #["-c", "printf 'out\\376'; printf '\\377 tail' >&2; exit 3"] 10000
   let noisyStart ← IO.monoMsNow
   let noisy ← Host.answer (.run noisyCall)

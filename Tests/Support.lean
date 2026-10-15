@@ -2933,9 +2933,9 @@ def monoLine (l : Layout.LineOut) : Bool :=
   let runs := lineRuns l
   !runs.isEmpty && runs.all (·.1 == 1)
 
-/-- The invented Lean file the statement views read, and the answer Lean gave for it. -/
+/-- The invented Lean file the statement views read, and the facts its exporter wrote of it. -/
 def leanFixture : String := "testdata/codedoc/lean/statements.lean"
-def leanAnswer : String := "testdata/codedoc/lean/statements.answer"
+def leanFacts : String := "testdata/codedoc/lean/statements.facts"
 
 /-- The source line a statement stands just before: the line its declaration's command opens on,
 or past the docstring that line opens. -/

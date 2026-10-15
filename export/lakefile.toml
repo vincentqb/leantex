@@ -1,0 +1,9 @@
+name = "leantex-export"
+defaultTargets = ["leantex-export"]
+
+[[lean_lib]]
+name = "LeantexExport"
+
+[[lean_exe]]
+name = "leantex-export"
+root = "Main"
