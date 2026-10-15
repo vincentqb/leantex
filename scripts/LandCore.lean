@@ -1144,7 +1144,7 @@ private theorem afterLanded_pinned (s : State) (h : s.pinned = true) (hs : s.atO
   have hm := pinned_pastFF s h hs
   have hv := pinned_open s h (by
     intro hd; simp [State.atOrPastFF, hd, Stage.pastFF] at hs)
-  obtain ⟨-, -, -, hd, he⟩ := pinned_parts s h
+  obtain ⟨-, -, -, hd, -⟩ := pinned_parts s h
   unfold afterLanded
   split
   · split
@@ -1217,14 +1217,13 @@ private theorem pinned_restage {x y : Stage} (s s' : State) (h : s.pinned = true
   obtain ⟨hc, he, hl⟩ := pinned_facts s h hs
   simp only [Stage.allows, Bool.and_eq_true, Bool.or_eq_true, Bool.not_eq_true', bne_iff_ne,
     ne_eq] at hxy
-  obtain ⟨⟨⟨⟨hx, hy⟩, hf⟩, hp⟩, hr⟩ := hxy
+  obtain ⟨⟨⟨⟨hx, -⟩, hf⟩, hp⟩, hr⟩ := hxy
   have hl' := hl hx
   apply pinned_mid
   · simpa [State.landedVerdict, hv] using hl'
   · intro hff
     have : s.atOrPastFF = true := by
       simp only [State.atOrPastFF, hs', hs] at hff ⊢; cases hf <;> simp_all
-    have hg' := ha
     simp only [State.landedVerdict] at hl'
     simp_all [State.landedIsGated, State.landedVerdict]
   · cases hp with
@@ -1395,7 +1394,7 @@ private theorem stepMerge_push_exact (s : State) (o : Obs) (t : Sha) (hp : s.pin
       t = (stepMerge s o).1.gatedTip ∧ t = (stepMerge s o).1.mainAt
         ∧ (stepMerge s o).1.gatedAt t = true := by
   intro h
-  obtain ⟨ha, hb, hc, hd, he⟩ := pinned_parts s hp
+  obtain ⟨_, _, _, hd, _⟩ := pinned_parts s hp
   unfold stepMerge at h ⊢
   repeat' split at h
   all_goals first
@@ -1759,7 +1758,6 @@ theorem step_writes_owned (s : State) (o : Obs) (h : s.pinned = true) :
   all_goals
     first
       | (subst hw; rfl)
-      | (rcases hw with rfl | rfl <;> rfl)
       | (rcases hw with rfl | rfl | rfl <;> rfl)
 
 /-- A landing is a landing of the gated commit. -/
