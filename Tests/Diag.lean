@@ -963,6 +963,10 @@ def siteAccountingChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "independent site facts W0358/W0384: the overrun stands alone without the continuation"
     (overruns.any (·.kind == .W0358) && !overruns.any (·.kind == .W0384))
   independentWitnesses := independentWitnesses ++ siteCollisions frameBoth
+  sources := sources.push ("a frame's box past its page on one step and overhang on another",
+    sitedFitDiags (oneFaceOf macroFace) ("\\documentclass{beamer}\n\\begin{document}\n" ++
+      "\\begin{frame}\n\\only<1>{\\rule{1cm}{263pt}}\n\\only<2>{\\rule{1cm}{300pt}}\n" ++
+      "\\end{frame}\n\\end{document}\n"))
   t "site accounting: another information-code pair remains unclassified"
     (!sitePairClassified ("N0100", "N0200"))
   for pair in independentSiteFacts do

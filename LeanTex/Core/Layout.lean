@@ -6999,6 +6999,9 @@ public structure Spacing.Page where
   /-- A later column rewound onto a page its row's earlier columns, or the content above the row,
   already hold, so a band that does not fit breaks with the row. -/
   private rewound : Bool := false
+  /-- Pages below this index carry the frame's chrome an earlier column's flow drew, so a later
+  column reopening one keeps the chrome's offset and none of its ink. -/
+  private inkedPages : Nat := 0
   /-- `\vspace*`'s zero rule stands on the page with no box below it
   yet, so the glue after it stays and `\topskip` stands above it. -/
   private anchored : Bool := false
@@ -7040,8 +7043,8 @@ public structure Spacing.Page where
   /-- The declared gap between the footline's ink and the
   text area, else beamer's 4 pt (`Ir.footline.sep`). -/
   private footGap : Sp := Ir.footline.sep
-  /-- A frame opened its body on this page (`openBody`), so
-  the next band is spaced as below a box of depth zero. -/
+  /-- Something the next band is spaced below opened on this page though `cur` may hold none of it:
+  a frame's body (`openBody`), or the page another column's flow holds for a later column. -/
   private opened : Bool := false
   /-- Inside a frame, whether the author declared `[allowframebreaks]`; `none` outside a frame. -/
   private frameBreak : Option Bool := none
@@ -7121,11 +7124,15 @@ private def Spacing.Page.noteHang (b : B) (depth : Option Sp := none) : Sp :=
 private def Spacing.Page.fresh (b : B) : Bool :=
   (b.cur.blank && !b.opened) || b.freshStart
 
-/-- The open page holds nothing but its pinned chrome, such as a frame's title, and no row's
-earlier columns. -/
+/-- The open page past its pinned chrome, such as a frame's title. -/
+private def Spacing.Page.unpinned (b : B) : PageOut :=
+  { b.cur with lines := b.cur.lines.extract b.pinnedLines b.cur.lines.size
+               fills := b.cur.fills.extract b.pinnedFills b.cur.fills.size
+               inks := b.cur.inks.extract b.pinnedInks b.cur.inks.size }
+
+/-- The open page shows nothing past its pinned chrome and holds no row's earlier columns. -/
 private def Spacing.Page.holdsNothing (b : B) : Bool :=
-  b.cur.lines.size ≤ b.pinnedLines && b.cur.fills.size ≤ b.pinnedFills &&
-    b.cur.inks.size ≤ b.pinnedInks && !b.rewound
+  b.unpinned.blank && !b.rewound
 
 /-- Attach a committed line's notes to the open page, each note whole. -/
 private def Spacing.Page.attachNotes (b : B) (notes : Array NoteBlock) : B :=
@@ -7278,6 +7285,20 @@ public def overfullDiag (label : Option String) (span : Option Span) (o : Sp) : 
     (span := span)
     (help := "shorten the frame, or declare `[allowframebreaks]` on it to accept a break")
     (detail := some s!"{frameWho label}: {o.toPtString}pt past")
+
+/-- A W0358 named at a frame's site, joined by the frame's overhang `o` past its text area on
+another overlay step, whose W0400 it carries. -/
+public def boxPastJoined (d : Diag) (o : Sp) : Diag :=
+  { d with message := d.message ++
+             ", and on another overlay step the frame stands past its text area, in the gap below it"
+           detail := d.detail.map (· ++ s!", {o.toPtString}pt past on another step")
+           carries := d.carries ++ [.W0400] }
+
+/-- W0372: a note block pushes its band `over` past the page's floor. -/
+private def noteOverrunDiag (over : Sp) : Diag :=
+  Diag.of .W0372 "a footnote is taller than the text block; it overruns its page"
+    (help := "shorten the note, or raise the text height (\\page{ vmargin = ... })")
+    (detail := some s!"{over.toPtString}pt taller")
 
 /-- The overflow ladder's account of a frame (`Ir.frameFit`): W0400 where
 it stood overfull, W0384 where it continued, nothing where it fit. -/
@@ -7575,26 +7596,30 @@ private theorem sourceBound_finishPage {n : Nat} (b : B) (owed : Sp) (flush : Bo
     obtain ⟨l', hl', hk⟩ := Array.mem_map.mp hm
     exact sourceBound_of_sourceSegs hk.symm (hb.current l' hl')
 
-/-- Reopen the frame's page-top chrome on a fresh page: the pinned
-title lines and bar fills repeat, and content resumes below them. -/
+/-- Reopen the frame's page-top chrome on a fresh page: the pinned title lines and bar fills repeat,
+or on a page an earlier column's flow drew them on only their offset stands, and content resumes
+below them. -/
 private def Spacing.Page.reopenChrome (b : B) : B :=
   match b.chrome with
   | some c =>
-    { b with cur := { lines := c.lines, fills := c.fills }
+    let drawn := decide (b.pages.size < b.inkedPages)
+    let ink : PageOut := if drawn then {} else { lines := c.lines, fills := c.fills }
+    { b with cur := ink
              openRegions := b.openRegions.map fun s =>
-               { s with lines := c.lines.size, fills := c.fills.size, inks := 0, first := false }
-             pinnedLines := c.lines.size
-             pinnedFills := c.fills.size
+               { s with lines := ink.lines.size, fills := ink.fills.size, inks := 0, first := false }
+             pinnedLines := ink.lines.size
+             pinnedFills := ink.fills.size
              pinnedInks := 0
-             shrinkAbove := .replicate c.lines.size 0
-             fillShrinkAbove := .replicate c.fills.size 0
+             shrinkAbove := .replicate ink.lines.size 0
+             fillShrinkAbove := .replicate ink.fills.size 0
              inkShrinkAbove := #[]
-             fillStretchAbove := .replicate c.fills.size 0
+             fillStretchAbove := .replicate ink.fills.size 0
              inkStretchAbove := #[]
-             fillFilsAbove := .replicate c.fills.size 0
+             fillFilsAbove := .replicate ink.fills.size 0
              inkFilsAbove := #[]
-             stretchAbove := .replicate c.lines.size 0
-             filsAbove := .replicate c.lines.size 0
+             stretchAbove := .replicate ink.lines.size 0
+             filsAbove := .replicate ink.lines.size 0
+             opened := b.opened || drawn
              y := c.y
              prevDepth := c.depth
              prevBelow := c.below
@@ -7641,27 +7666,24 @@ private def Spacing.Page.noteOverrun (b : B) (over : Sp) : B :=
       | _, _ => b.overruns }
 
 /-- What a band no break can help leaves past the page's floor, named once: a note block that alone
-pushes it past (W0372), else ink past the page's shrink, which the ladder records within its
-clearance and W0358 names beyond it; a float's replay, which `runFloat` names whole, names nothing. -/
+pushes it past (W0372), else its own ink past the page's shrink, recorded by the ladder within its
+clearance and named W0358 beyond it; a float's replay, named whole by `runFloat`, names nothing. -/
 private def Spacing.Page.warnOverrun (b : B) (y inkBelow : Sp) : B :=
   let over := y + inkBelow - noteFloor b.bottom b.noteGap b.notesH b.noteHang
   let beyond := over - b.pageShrink
-  let byNotes := b.notesH > 0 && y + inkBelow - b.bottom ≤ b.pageShrink
+  let own := y + inkBelow - b.bottom - b.pageShrink
+  let byNotes := b.notesH > 0 && own ≤ 0
   let recorded := !b.noBreak && b.notesH == 0 && 0 < beyond && b.ladder && beyond ≤ b.clearance
   let who := if b.frameBreak.isSome then s!"{frameWho b.curFrameLabel}: " else ""
   let named : Option Diag :=
     if b.noBreak then none
     else if byNotes then
-      if over > 0 then some (Diag.of .W0372
-        "a footnote is taller than the text block; it overruns its page"
-        (help := "shorten the note, or raise the text height (\\page{ vmargin = ... })")
-        (detail := some s!"{over.toPtString}pt taller"))
-      else none
+      if over > 0 then some (noteOverrunDiag over) else none
     else if 0 < beyond && !recorded then some (Diag.of .W0358
       "a box is taller than the text block; it overruns its page"
       (span := b.lastSource <|> b.frameSource) (subject := b.curFrameLabel)
       (help := "shrink the box, or raise the text height (\\page{ vmargin = ... })")
-      (detail := some s!"{who}{beyond.toPtString}pt taller"))
+      (detail := some s!"{who}{own.toPtString}pt taller"))
     else none
   { b with diags := (named.map b.diags.push).getD b.diags
            overruns := if recorded then (b.noteOverrun beyond).overruns else b.overruns }
@@ -8267,7 +8289,7 @@ private def Spacing.Page.fitWith (b : B) (place : B → Sp → Bool → Sp → B
       (place b y true above).noteOverrun (overflow - above)
     else
       let s := b.spillPage (overflow - above)
-      (if s.cur.blank then
+      (if s.fresh then
         settle (place s (firstY s + s.surfaceTop) false 0) (firstY s + s.surfaceTop)
           (inkBelow + s.surfaceBottom)
       else
@@ -15143,28 +15165,31 @@ private theorem brk_ships_exact (fs : FontSet) (imgs : Image.Store)
   · simp [stepStaged, hb, Spacing.Page.finishPage]
     split <;> simp
 
-/-- Place a float group whole: tried where it stands, else replayed on a fresh page
-under `noBreak`; a group taller than the text block ships alone, named (W0358). -/
+/-- Place a float group whole: tried where it stands, else replayed under `noBreak` on a page
+holding nothing else; a group taller than the text block ships alone, named (W0358), and a note
+block it alone pushes past the floor is named as the note (W0372). -/
 private def runFloat (fs : FontSet) (imgs : Image.Store) (st : StepSt)
     (group : Array Op) : StepSt :=
   let attempt := group.foldl (stepStaged fs imgs) st
   if attempt.b.pages.size == st.b.pages.size then attempt
   else
-    -- Close the page and give the group the next one whole; the pending glue dies with it.
-    let b := if st.b.cur.blank then st.b
+    -- Close the page unless it holds nothing, and give the group the page whole; the pending glue
+    -- dies with a closed page.
+    let b := if st.b.holdsNothing then st.b
       else st.b.finishPage
     let st2 := group.foldl (stepStaged fs imgs)
       { st with b := { b with noBreak := true } }
     let b2 := st2.b
-    let overrun := b2.y + b2.prevDepth - noteFloor b2.bottom b2.noteGap b2.notesH b2.noteHang
-    let b2 := if overrun > b2.pageShrink then
-        { b2 with diags := b2.diags.push (Diag.of .W0358
-          "a figure or table is taller than the text block; it overruns its page"
-          (help := "shrink the float's content, or raise the text height \
-(\\page{ vmargin = ... })")
-          (detail := some s!"{(overrun - b2.pageShrink).toPtString}pt taller")) }
-      else b2
-    { st2 with b := { b2 with noBreak := false } }
+    let own := b2.y + b2.prevDepth - b2.bottom - b2.pageShrink
+    let over := b2.y + b2.prevDepth - noteFloor b2.bottom b2.noteGap b2.notesH b2.noteHang
+    let named : Option Diag :=
+      if 0 < own then some (Diag.of .W0358
+        "a figure or table is taller than the text block; it overruns its page"
+        (help := "shrink the float's content, or raise the text height (\\page{ vmargin = ... })")
+        (detail := some s!"{own.toPtString}pt taller"))
+      else if 0 < b2.notesH && 0 < over then some (noteOverrunDiag over)
+      else none
+    { st2 with b := { b2 with diags := (named.map b2.diags.push).getD b2.diags, noBreak := false } }
 
 /-- The shipped pages only grow from `b` to `b'`. -/
 private def PagesExtend (b b' : B) : Prop := ∃ s, b'.pages = b.pages ++ s
@@ -15737,14 +15762,14 @@ private theorem bgStep_runFloat (fs : FontSet) (imgs : Image.Store)
   simp only [LeanTex.Core.Layout.runFloat]
   split
   · exact bgStep_foldSteps fs imgs group st hg
-  · have h1 : BgStep st.b (if st.b.cur.blank
+  · have h1 : BgStep st.b (if st.b.holdsNothing
         then st.b else st.b.finishPage) := by
       split
       · exact BgStep.refl _
       · exact bgStep_finishPage _
     have h2 := bgStep_foldSteps fs imgs group
       { st with b :=
-        { (if st.b.cur.blank then st.b
+        { (if st.b.holdsNothing then st.b
            else st.b.finishPage) with noBreak := true } } hg
     refine (h1.trans ((BgStep.of_eq rfl rfl rfl).trans
       (h2.trans (BgStep.of_eq ?_ ?_ ?_))))
@@ -15835,15 +15860,16 @@ private structure FlowSt where
   placed : StepSt
   columns : List ColumnFlow := []
 
-/-- The next column owns new ink, starting at the row's original cursor. -/
-private def restartColumn (start latest : B) : B :=
+/-- The next column owns new ink, starting at the row's original cursor, the pages below `inked`
+already carrying the frame's chrome. -/
+private def restartColumn (start latest : B) (inked : Nat) : B :=
   { start with cur := {}, shrinkAbove := #[], fillShrinkAbove := #[], inkShrinkAbove := #[]
                fillStretchAbove := #[], inkStretchAbove := #[]
                fillFilsAbove := #[], inkFilsAbove := #[]
                stretchAbove := #[], filsAbove := #[]
                pinnedLines := 0, pinnedFills := 0, pinnedInks := 0, pendingNotes := #[]
                opened := !start.fresh, freshStart := start.fresh
-               rewound := !start.holdsNothing
+               rewound := !start.holdsNothing, inkedPages := max start.inkedPages inked
                openRegions := start.openRegions.map RegionStart.nextPage, closedRegions := #[]
                diags := latest.diags
                paragraphBreaks := latest.paragraphBreaks
@@ -15958,7 +15984,8 @@ private def stepFlow (fs : FontSet) (imgs : Image.Store) (st : FlowSt)
     if save.completed.isNone && st.placed.b.pages.size == save.start.pages.size then
       { st with placed := placed }
     else
-      { placed := { placed with b := restartColumn save.start st.placed.b }
+      { placed := { placed with
+          b := restartColumn save.start st.placed.b ((save.add st.placed.b).pages.size + 1) }
         columns := { save with completed := some (save.add st.placed.b) } :: rest }
   | .colClose, save :: rest =>
     { placed := stepStaged fs imgs (columnEnd save st.placed) .colClose, columns := rest }
@@ -16438,31 +16465,28 @@ private theorem runFloat_frames (fs : FontSet) (imgs : Image.Store)
     (hb : FramesFooted openings st.b)
     (ho : ∀ op ∈ group, ∀ f ∈ op.frameOpening?, f ∈ openings) :
     FramesFooted openings (runFloat fs imgs st group).b := by
-  have finish : ∀ (b : B) (c : Prop) [Decidable c] (d : Diag),
-      FramesFooted openings b →
+  have finish : ∀ (b : B) (named : Option Diag), FramesFooted openings b →
       FramesFooted openings
-        ({ (if c then { b with diags := b.diags.push d } else b) with
-          noBreak := false } : B) := by
-    intro b c inst d h
-    split <;> exact h.step (FrameStep.of_eq rfl rfl)
+        ({ b with diags := (named.map b.diags.push).getD b.diags, noBreak := false } : B) :=
+    fun _ _ h => h.step (FrameStep.of_eq rfl rfl)
   simp only [LeanTex.Core.Layout.runFloat]
   split
   · exact foldSteps_frames fs imgs group st openings hb ho
   · have hc : FramesFooted openings
-        (if st.b.cur.blank
+        (if st.b.holdsNothing
           then st.b else st.b.finishPage) := by
       split
       · exact hb
       · exact hb.step (frameStep_finishPage ..)
     have hr := foldSteps_frames fs imgs group
       { st with b :=
-        { (if st.b.cur.blank then st.b
+        { (if st.b.holdsNothing then st.b
            else st.b.finishPage) with noBreak := true } } openings
       (hc.step (FrameStep.of_eq rfl rfl)) ho
-    exact finish _ _ _ hr
+    exact finish _ _ hr
 
-private theorem frameStep_restartColumn (start latest : B) :
-    FrameStep start (restartColumn start latest) :=
+private theorem frameStep_restartColumn (start latest : B) (inked : Nat) :
+    FrameStep start (restartColumn start latest inked) :=
   FrameStep.of_eq rfl rfl
 
 private theorem mergeColumnPages_frames (g : Geom) (first : Nat) (a b : Array PageOut)
@@ -16883,30 +16907,29 @@ private theorem foldSteps_reflows (fs : FontSet) (imgs : Image.Store)
 private theorem runFloat_reflows (fs : FontSet) (imgs : Image.Store)
     (st : StepSt) (group : Array Op) (hb : st.b.ReflowsNamed) :
     (runFloat fs imgs st group).b.ReflowsNamed := by
-  have finish : ∀ (b : B) (c : Prop) [Decidable c] (d : Diag), b.ReflowsNamed →
-      ({ (if c then { b with diags := b.diags.push d } else b) with
-          noBreak := false } : B).ReflowsNamed := by
-    intro b c inst d h
-    split
-    · exact h.step ⟨rfl, fun _ hm => Array.mem_push.mpr (Or.inl hm)⟩
+  have finish : ∀ (b : B) (named : Option Diag), b.ReflowsNamed →
+      ({ b with diags := (named.map b.diags.push).getD b.diags, noBreak := false } : B).ReflowsNamed := by
+    intro b named h
+    cases named
     · exact h.step (ReflowStep.of_eq rfl rfl)
+    · exact h.step ⟨rfl, fun _ hm => Array.mem_push.mpr (Or.inl hm)⟩
   simp only [LeanTex.Core.Layout.runFloat]
   split
   · exact foldSteps_reflows fs imgs group st hb
-  · have hc : (if st.b.cur.blank
+  · have hc : (if st.b.holdsNothing
         then st.b else st.b.finishPage).ReflowsNamed := by
       split
       · exact hb
       · exact hb.step (reflowStep_finishPage ..)
     have hr := foldSteps_reflows fs imgs group
       { st with b :=
-        { (if st.b.cur.blank then st.b
+        { (if st.b.holdsNothing then st.b
            else st.b.finishPage) with noBreak := true } }
       (hc.step (ReflowStep.of_eq rfl rfl))
-    exact finish _ _ _ hr
+    exact finish _ _ hr
 
-private theorem reflowStep_restartColumn (start latest : B) :
-    ReflowStep latest (restartColumn start latest) :=
+private theorem reflowStep_restartColumn (start latest : B) (inked : Nat) :
+    ReflowStep latest (restartColumn start latest inked) :=
   ReflowStep.of_eq rfl rfl
 
 private theorem reflowStep_joinColumn (first : Nat) (a b : B) :
@@ -17006,7 +17029,7 @@ private theorem runFloat_whole (fs : FontSet) (imgs : Image.Store) (st : StepSt)
   ·
     have hfold := foldSteps_noBreak fs imgs group
       { st with b :=
-        { (if st.b.cur.blank then st.b
+        { (if st.b.holdsNothing then st.b
            else st.b.finishPage) with noBreak := true } } rfl hg
     split at hfold
     · left
@@ -19110,6 +19133,78 @@ public theorem frameAccount_covers (steps : List (FrameOrigin × Ir.FrameFit))
           simp only [frameEntry, hcont, hover]
         exact ⟨_, entry _ he, rfl, fun h => absurd h (by simp [Ir.FrameFit.continues])⟩
 
+/-- Frame `k`'s opening site, from the driver's spans by the frame's index in the PDF's view. -/
+public def frameSite (frameSpans : Array (Nat × Span)) (k : Nat) : Option Span :=
+  (frameSpans.find? (·.1 == k)).map (·.2)
+
+/-- Whether `d` names a box past frame `k`'s page (W0358) at the frame's own site. -/
+public def boxPastAt (labels : Array (Option String)) (frameSpans : Array (Nat × Span)) (k : Nat)
+    (d : Diag) : Bool :=
+  d.kind == .W0358 && d.subject == labels[k]?.getD none && d.span == frameSite frameSpans k
+
+/-- The ladder's diagnostics over its setting `final`: the setting's own, a box past a frame's page
+at the frame's site joined by the frame's overhang on another step, and one account per other frame
+it moved. -/
+public def ladderDiags (labels : Array (Option String)) (frameSpans : Array (Nat × Span))
+    (first final : Out) : Array Diag :=
+  let entries := (frameAccount (fitAccount first final).toList).toArray
+  let overhang (d : Diag) : Option Sp := entries.findSome? fun (k, fit, _) =>
+    match fit with
+    | .overfull o => if boxPastAt labels frameSpans k d then some o else none
+    | .natural | .shrunk | .continued _ => none
+  final.diags.map (fun d => (overhang d).elim d (boxPastJoined d)) ++
+    entries.filterMap fun (k, fit, also) =>
+      if (fit matches .overfull _) && final.diags.any (boxPastAt labels frameSpans k) then none
+      else fitDiag fit (labels[k]?.getD none) (frameSite frameSpans k) also
+
+private theorem joined_keeps (x : Option Sp) (d : Diag) :
+    (x.elim d (boxPastJoined d)).kind = d.kind ∧ (x.elim d (boxPastJoined d)).span = d.span ∧
+      (x.elim d (boxPastJoined d)).subject = d.subject := by
+  cases x <;> exact ⟨rfl, rfl, rfl⟩
+
+/-- The ladder keeps the setting's diagnostics in order, each its kind, site and subject, and
+appends its accounts. -/
+public theorem ladderDiags_projects (labels : Array (Option String))
+    (frameSpans : Array (Nat × Span)) (first final : Out) :
+    ∃ (fold : Diag → Diag) (account : Array Diag),
+      ladderDiags labels frameSpans first final = final.diags.map fold ++ account ∧
+        ∀ d, (fold d).kind = d.kind ∧ (fold d).span = d.span ∧ (fold d).subject = d.subject :=
+  ⟨_, _, rfl, fun d => joined_keeps _ d⟩
+
+/-- Every frame step the ladder moved is named under the frame's label, a continued one by W0384. -/
+public theorem ladderDiags_accounts (labels : Array (Option String))
+    (frameSpans : Array (Nat × Span)) (first final : Out) (o : FrameOrigin) (fit : Ir.FrameFit)
+    (hs : (o, fit) ∈ fitAccount first final) (hm : fit.moved) :
+    ∃ d ∈ ladderDiags labels frameSpans first final,
+      d.subject = labels[o.source]?.getD none ∧ (fit.continues → d.kind = .W0384) := by
+  obtain ⟨e, he, hk, hc⟩ := frameAccount_covers _ o fit (Array.mem_toList_iff.mpr hs) hm
+  have hmv := frameAccount_moved _ e he
+  obtain ⟨k, f, also⟩ := e
+  simp only at hk hc hmv
+  subst hk
+  have entry := List.mem_toArray.mpr he
+  unfold ladderDiags
+  cases f with
+  | natural => simp [Ir.FrameFit.moved] at hmv
+  | shrunk => simp [Ir.FrameFit.moved] at hmv
+  | continued c =>
+    exact ⟨_, Array.mem_append.mpr (Or.inr (Array.mem_filterMap.mpr ⟨_, entry, rfl⟩)), rfl,
+      fun _ => rfl⟩
+  | overfull v =>
+    have still : ¬ fit.continues := fun h => absurd (hc h) (by simp [Ir.FrameFit.continues])
+    by_cases hb : final.diags.any (boxPastAt labels frameSpans o.source) = true
+    · obtain ⟨d, hd, hbox⟩ := Array.any_eq_true'.mp hb
+      have hsub : d.subject = labels[o.source]?.getD none := by
+        simp only [boxPastAt, Bool.and_eq_true, beq_iff_eq] at hbox
+        exact hbox.1.2
+      exact ⟨_, Array.mem_append.mpr (Or.inl (Array.mem_map_of_mem hd)),
+        (joined_keeps _ d).2.2.trans hsub, fun h => absurd h still⟩
+    · simp only [Bool.not_eq_true] at hb
+      refine ⟨overfullDiag (labels[o.source]?.getD none) (frameSite frameSpans o.source) v,
+        Array.mem_append.mpr (Or.inr (Array.mem_filterMap.mpr ⟨_, entry, ?_⟩)), rfl,
+        fun h => absurd h still⟩
+      simp [hb, fitDiag]
+
 /-- The overflow ladder's result: the pages, the IR document they set,
 each frame step's decision, and the frames the web deck squeezes. -/
 public structure Fitted where
@@ -19130,10 +19225,6 @@ public def runFitted (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns
   let setting := if first.overruns.isEmpty then measured else fittedDoc doc decisions
   let final := if first.overruns.isEmpty then first
     else run geom fs pats setting imgs frameSpans pictureSpans
-  let labels := (pdfView doc).frameLabels
-  let account := (frameAccount (fitAccount first final).toList).toArray.filterMap
-    fun (k, fit, also) =>
-      fitDiag fit (labels[k]?.getD none) ((frameSpans.find? (·.1 == k)).map (·.2)) also
   let webSqueeze := ((decisions.filterMap fun (o, fit) =>
     match fit with
     | .natural => none
@@ -19142,7 +19233,8 @@ public def runFitted (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns
         | some (.frame _ _ _ _ fbody) =>
           if Ir.frameSqueeze fbody == .none && Ir.holdsList fbody then some i else none
         | some _ | none => none).toList.eraseDups).toArray
-  { out := { final with pages := final.pages.map PageOut.shipped, diags := final.diags ++ account },
+  { out := { final with pages := final.pages.map PageOut.shipped
+                        diags := ladderDiags (pdfView doc).frameLabels frameSpans first final },
     setting, decisions, webSqueeze }
 
 public theorem runFitted_projects (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
@@ -19150,12 +19242,14 @@ public theorem runFitted_projects (geom : Geom) (fs : FontSet) (pats : Option Hy
     let f := runFitted geom fs pats doc imgs frameSpans pictureSpans
     f.out.pages = (run geom fs pats f.setting imgs frameSpans pictureSpans).pages.map
         PageOut.shipped ∧
-      ∃ account, f.out.diags = (run geom fs pats f.setting imgs frameSpans pictureSpans).diags ++
-        account := by
+      ∃ (fold : Diag → Diag) (account : Array Diag),
+        f.out.diags = (run geom fs pats f.setting imgs frameSpans pictureSpans).diags.map fold ++
+          account ∧
+        ∀ d, (fold d).kind = d.kind ∧ (fold d).span = d.span ∧ (fold d).subject = d.subject := by
   simp only [runFitted]
   split
-  · exact ⟨rfl, _, rfl⟩
-  · exact ⟨rfl, _, rfl⟩
+  · exact ⟨rfl, ladderDiags_projects ..⟩
+  · exact ⟨rfl, ladderDiags_projects ..⟩
 
 public theorem runFitted_accounts (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
     (doc : Doc) (imgs : Image.Store) (frameSpans pictureSpans : Array (Nat × Span))
@@ -19170,31 +19264,9 @@ public theorem runFitted_accounts (geom : Geom) (fs : FontSet) (pats : Option Hy
     ∃ d ∈ (runFitted geom fs pats doc imgs frameSpans pictureSpans).out.diags,
       d.subject = (pdfView doc).frameLabels[o.source]?.getD none ∧
         (fit.continues → d.kind = .W0384) := by
-  have named : ∀ first final : Out, (o, fit) ∈ fitAccount first final →
-      ∃ d ∈ (frameAccount (fitAccount first final).toList).toArray.filterMap
-          (fun (e : Nat × Ir.FrameFit × Option Sp) =>
-            fitDiag e.2.1 ((pdfView doc).frameLabels[e.1]?.getD none)
-              ((frameSpans.find? (·.1 == e.1)).map (·.2)) e.2.2),
-        d.subject = (pdfView doc).frameLabels[o.source]?.getD none ∧
-          (fit.continues → d.kind = .W0384) := by
-    intro first final h
-    obtain ⟨e, he, hk, hc⟩ := frameAccount_covers _ o fit (Array.mem_toList_iff.mpr h) hm
-    have hmv := frameAccount_moved _ e he
-    obtain ⟨k, f, also⟩ := e
-    simp only at hk hc hmv
-    subst hk
-    cases f with
-    | natural => simp [Ir.FrameFit.moved] at hmv
-    | shrunk => simp [Ir.FrameFit.moved] at hmv
-    | overfull v =>
-      refine ⟨_, Array.mem_filterMap.mpr ⟨_, List.mem_toArray.mpr he, rfl⟩, rfl, fun h => ?_⟩
-      exact absurd (hc h) (by simp [Ir.FrameFit.continues])
-    | continued c =>
-      exact ⟨_, Array.mem_filterMap.mpr ⟨_, List.mem_toArray.mpr he, rfl⟩, rfl, fun _ => rfl⟩
   simp only [runFitted] at hs ⊢
   split at hs <;> simp only [*, ite_true, ite_false, Bool.false_eq_true] <;>
-    · obtain ⟨d, hd, hsub, hk⟩ := named _ _ hs
-      exact ⟨d, Array.mem_append.mpr (Or.inr hd), hsub, hk⟩
+    exact ladderDiags_accounts _ _ _ _ o fit hs hm
 
 private theorem keepFor_plain_body (backend : String) (body : Array Block)
     (h : ∀ b ∈ body, ∃ xs, b = .para xs ∧ PlainInlines xs) :

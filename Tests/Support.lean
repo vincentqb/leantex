@@ -1796,6 +1796,14 @@ def fittedOf (fonts : Font.FontSet) (doc : Ir.Doc)
   let f := Layout.runFitted geom fonts pats doc imgs
   { f with out := { f.out with diags := alphaDiags ++ f.out.diags } }
 
+/-- A source's elaboration and overflow-ladder diagnostics as a build names them, each frame at the
+site its environment opens. -/
+def sitedFitDiags (fonts : Font.FontSet) (src : String) : Array Diag :=
+  let prepared := Elab.prepare "t" (Parse.parse "t" (Lex.lex "t" src).1).1
+  let (doc, ds, sites) := Elab.runPrepared "t" prepared
+  ds ++ (Layout.runFitted (Layout.Geom.ofPage doc.page) fonts none doc {}
+    (Layout.frameSpansForPdf doc sites.frames)).out.diags
+
 /-- The font set a golden fixture lays out under: `oneFace`, the math face a build would resolve,
 and fallback faces for icon scalars. -/
 def fixtureFontSet (oneFace mathSet : Font.FontSet) (shipped : Array FontDb.Face)

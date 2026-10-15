@@ -26,8 +26,8 @@ private def runSizesOf (out : Layout.Out) (word : String) : Array Dim.Sp :=
       if hasStr (String.ofList (glyphs.toList.map (·.2.1))) word then some size else none
     | _ => none
 
-/-- Every named size step a document's class furniture sets resolves on the ladder the document
-declares, in Layout's pages, the HTML stylesheet and the contrast judge alike. -/
+/-- The headings, plain frame titles, standout and footline a document's class sets, and its inline
+size switches, resolve on the ladder it declares, in the pages, the stylesheet and the contrast judge. -/
 def checks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let article := "\\documentclass{article}\n" ++ ladder "16" "5" ++ "\\begin{document}\n" ++
