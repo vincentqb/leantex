@@ -168,7 +168,7 @@ private def textOnly : Seg → Bool
 /-- A conservative uniform background for a PDF page's text, or `none`: every rectangle covers
 the medium and nothing else paints. -/
 public def uniformTextGround? (geom : Geom) (page : PageOut) : Option Color :=
-  if page.inks.any (fun ink => !ink.fig.marks.isEmpty) ||
+  if page.inks.any (fun ink => !ink.fig.marks.isEmpty) || !page.front.isEmpty ||
       !(page.lines.all fun line => line.segs.all textOnly) ||
       !(page.fills.all fun fill =>
         fill.x ≤ -geom.bleed && fill.y ≤ -geom.bleed &&

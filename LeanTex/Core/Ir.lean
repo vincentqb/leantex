@@ -67,16 +67,55 @@ public def cutMarkThickness : Sp := pt 1 / 2
 /-- The line-through rule thickness both backends draw: ulem's default `\ULthickness`. -/
 @[expose] public def lineThroughThickness : Sp := pt 2 / 5
 
-/-- One rule a document draws on every page from a shipout hook: its box in
-medium coordinates, x right and y down from the top-left corner, and its
-palette name. -/
+/-- One rule a shipout hook draws on every printed sheet, so the PDF's alone: its box in medium
+coordinates, x right and y down from the top-left corner, its palette name, and whether it paints
+over the content, as `shipout/foreground` draws. -/
 public structure DrawnRule where
   x : Sp
   y : Sp
   w : Sp
   h : Sp
   color : String
+  front : Bool
   deriving Repr, BEq, Inhabited
+
+/-- A PDF page box (ISO 32000-2 §14.11.2). -/
+public inductive BoxKind where
+  | crop
+  | bleed
+  | trim
+  | art
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+/-- The page dictionary key a box is written under. -/
+@[expose] public def BoxKind.key : BoxKind → String
+  | .crop => "CropBox"
+  | .bleed => "BleedBox"
+  | .trim => "TrimBox"
+  | .art => "ArtBox"
+
+/-- A page box a document declares, in PDF user space: x right and y up from the medium's
+lower-left corner, lower-left corner first, and where it was declared. -/
+public structure PageBox where
+  kind : BoxKind
+  x0 : Sp
+  y0 : Sp
+  x1 : Sp
+  y1 : Sp
+  span : Option Span
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+/-- The box within a medium `w` by `h`, each corner moved inside it. -/
+@[expose] public def PageBox.clampTo (b : PageBox) (w h : Sp) : PageBox :=
+  let c (lo hi v : Sp) : Sp := max lo (min hi v)
+  { b with x0 := c 0 w b.x0, y0 := c 0 h b.y0, x1 := c 0 w b.x1, y1 := c 0 h b.y1 }
+
+@[expose] public def PageBox.hasArea (b : PageBox) : Bool := b.x0 < b.x1 && b.y0 < b.y1
+
+/-- The declared boxes a medium `w` by `h` ships: each moved inside it, one with no area there
+dropped. -/
+@[expose] public def PageBox.shipped (boxes : Array PageBox) (w h : Sp) : Array PageBox :=
+  (boxes.map (·.clampTo w h)).filter (·.hasArea)
 
 /-- Page geometry, as declared by `\page`. -/
 public structure PageSpec where
@@ -143,10 +182,51 @@ public structure PageSpec where
   flushBottom : Option Bool := none
   /-- The rules the document draws on every page, in the order drawn. -/
   drawn : Array DrawnRule := #[]
-  /-- Whether the document declares page boxes the engine cannot evaluate, so
-  its drawn cut marks declare the trim in their place. -/
-  trimMarked : Bool := false
+  /-- The page boxes the document declares, one per kind, the last declaration standing. -/
+  boxes : Array PageBox := #[]
   deriving Repr, BEq, Inhabited
+
+/-- The medium a page spec ships on: its page and the bleed on every side. -/
+@[expose] public def PageSpec.medium (spec : PageSpec) : Sp × Sp :=
+  (spec.width + 2 * spec.bleed, spec.height + 2 * spec.bleed)
+
+public theorem PageBox.clampTo_inside (b : PageBox) (w h : Sp) (hw : 0 ≤ w) (hh : 0 ≤ h) :
+    0 ≤ (b.clampTo w h).x0 ∧ (b.clampTo w h).x0 ≤ w ∧ 0 ≤ (b.clampTo w h).y0 ∧
+      (b.clampTo w h).y0 ≤ h ∧ 0 ≤ (b.clampTo w h).x1 ∧ (b.clampTo w h).x1 ≤ w ∧
+      0 ≤ (b.clampTo w h).y1 ∧ (b.clampTo w h).y1 ≤ h := by
+  simp only [PageBox.clampTo]
+  exact ⟨Int.le_max_left _ _, Int.max_le.mpr ⟨hw, Int.min_le_left _ _⟩,
+    Int.le_max_left _ _, Int.max_le.mpr ⟨hh, Int.min_le_left _ _⟩,
+    Int.le_max_left _ _, Int.max_le.mpr ⟨hw, Int.min_le_left _ _⟩,
+    Int.le_max_left _ _, Int.max_le.mpr ⟨hh, Int.min_le_left _ _⟩⟩
+
+/-- Every box the medium ships lies inside it and encloses some area. -/
+public theorem PageBox.shipped_inside (boxes : Array PageBox) (w h : Sp) (hw : 0 ≤ w)
+    (hh : 0 ≤ h) : ∀ b ∈ PageBox.shipped boxes w h,
+      0 ≤ b.x0 ∧ b.x0 < b.x1 ∧ b.x1 ≤ w ∧ 0 ≤ b.y0 ∧ b.y0 < b.y1 ∧ b.y1 ≤ h := by
+  intro b hb
+  simp only [PageBox.shipped, Array.mem_filter, Array.mem_map] at hb
+  obtain ⟨⟨c, _, rfl⟩, ha⟩ := hb
+  have hi := PageBox.clampTo_inside c w h hw hh
+  simp only [PageBox.hasArea, Bool.and_eq_true, decide_eq_true_eq] at ha
+  exact ⟨hi.1, ha.1, hi.2.2.2.2.2.1, hi.2.2.1, ha.2, hi.2.2.2.2.2.2.2⟩
+
+/-- W0442 for each declared page box the PDF cannot write as declared: one reaching past the medium
+is written inside it, and one with no area there is not written. -/
+public def boxDiags (spec : PageSpec) : Array Diag :=
+  let (w, h) := spec.medium
+  let medium := s!"[0 0 {w.toPtString} {h.toPtString}]"
+  spec.boxes.filterMap fun b =>
+    let c := b.clampTo w h
+    let diag (msg : String) : Diag := Diag.of .W0442 msg b.span
+      (help := some s!"keep the box within the medium, '{medium}' in PDF points")
+      (subject := some s!"pagebox:{b.kind.key}") (output := some .pdf)
+      (detail := some s!"[{b.x0.toPtString} {b.y0.toPtString} {b.x1.toPtString} \
+{b.y1.toPtString}] against the medium's {medium}")
+    if !c.hasArea then
+      some (diag s!"the {b.kind.key} has no area inside the page's medium; it is not written")
+    else if c == b then none
+    else some (diag s!"the {b.kind.key} reaches past the page's medium; it is written inside it")
 
 public def texParskipOf (spec : PageSpec) : SymGlue := spec.parskip.getD texParskipDefault
 
@@ -16895,7 +16975,10 @@ public def dump (doc : Doc) (diags : Array Diag) : String :=
       | none => "") ++
     (if doc.page.bleed != 0 then s!" bleed {doc.page.bleed.toPtString}" else "") ++
     String.join (doc.page.drawn.toList.map fun r =>
-      s!" drawn {r.x.toPtString} {r.y.toPtString} {r.w.toPtString} {r.h.toPtString} {r.color}") ++
+      s!" drawn {r.x.toPtString} {r.y.toPtString} {r.w.toPtString} {r.h.toPtString} {r.color}" ++
+        (if r.front then " front" else "")) ++
+    String.join (doc.page.boxes.toList.map fun b =>
+      s!" box {b.kind.key} {b.x0.toPtString} {b.y0.toPtString} {b.x1.toPtString} {b.y1.toPtString}") ++
     (if doc.page.marks then " marks cut" else "") ++
     (if doc.page.markGap != cutMarkGap
       then s!" mark-gap {doc.page.markGap.toPtString}" else "") ++

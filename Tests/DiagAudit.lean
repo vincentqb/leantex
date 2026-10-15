@@ -20,6 +20,7 @@ import Tests.PdfNative
 import Tests.SeedPalette
 import Tests.Schemes
 import Tests.SpotColor
+import Tests.PageBoxes
 import Tests.SvgRoute
 import scripts.Rung
 import Tests.MonoDefault
@@ -131,6 +132,8 @@ def registry : List AuditRow :=
    ⟨.W0441, .keep, .degraded, check% Tests.SpotColor.checks⟩,
    ⟨.W0415, .keep, .degraded, check% Tests.LeanProse.leanProseChecks⟩,
    ⟨.W0416, .keep, .degraded, check% Tests.LeanProse.leanProseChecks⟩,
+   ⟨.W0442, .keep, .degraded, check% Tests.PageBoxes.checks⟩,
+   ⟨.W0443, .keep, .degraded, check% Tests.PageBoxes.checks⟩,
    ⟨.W0394, .keep, .degraded, check% layoutInkChecks⟩,
    ⟨.E0395, .keep, .fails, check% layoutInkChecks⟩,
    ⟨.W0396, .keep, .degraded, check% layoutInkChecks⟩,

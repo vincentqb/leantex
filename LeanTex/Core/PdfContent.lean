@@ -782,9 +782,11 @@ public def contentOps (geom : Geom) (remap : Array Nat) (widths : Array (Array I
   let images := st.images.map (imageOp ix figs)
   let rules := st.rules.map fun (c, x, y, w, h) => ContentOp.fill c x y w h
   let marks := st.marks.map fun (c, x, y, w, h) => ContentOp.fill c x y w h
+  let front := page.front.map fun f =>
+    ContentOp.fill f.color (geom.bleed + f.x) (geom.bleed + geom.pageH - f.y - f.h) f.w f.h
   let middle := numberMarks ((paths.push (.text st.ops)) ++ images)
   ((artifactBlock none fills ++ artifactBlock (some .layout) marks) ++ middle) ++
-    artifactBlock (some .layout) (rules ++ st.polys.map polyOp)
+    artifactBlock (some .layout) ((rules ++ st.polys.map polyOp) ++ front)
 
 /-- `contentOps` with no marked content. -/
 public def contentOpsPlain (geom : Geom) (remap : Array Nat) (widths : Array (Array Int))
@@ -798,8 +800,10 @@ public def contentOpsPlain (geom : Geom) (remap : Array Nat) (widths : Array (Ar
   let images := st.images.map (imageOpPlain ix figs)
   let rules := st.rules.map fun (c, x, y, w, h) => ContentOp.fill c x y w h
   let marks := st.marks.map fun (c, x, y, w, h) => ContentOp.fill c x y w h
+  let front := page.front.map fun f =>
+    ContentOp.fill f.color (geom.bleed + f.x) (geom.bleed + geom.pageH - f.y - f.h) f.w f.h
   let body := ((fills ++ marks) ++ paths).push (.text st.ops)
-  (body ++ images) ++ (rules ++ st.polys.map polyOp)
+  (body ++ images) ++ ((rules ++ st.polys.map polyOp) ++ front)
 
 private def TextItem.runs : TextItem → List (Array Nat)
   | .glyphs gids => [gids]
@@ -2916,7 +2920,9 @@ public theorem mark_ink_exact (geom : Geom) (remap : Array Nat) (widths : Array 
       ContentOp.fill t.1 t.2.1 t.2.2.1 t.2.2.2.1 t.2.2.2.2) _ (fun t => by simp [ContentOp.ink]),
     inkList_map _ (fun (t : Ir.Color × Sp × Sp × Sp × Sp) =>
       ContentOp.fill t.1 t.2.1 t.2.2.1 t.2.2.2.1 t.2.2.2.2) _ (fun t => by simp [ContentOp.ink]),
-    inkList_map _ polyOp _ (fun p => by simp [polyOp, ContentOp.ink])]
+    inkList_map _ polyOp _ (fun p => by simp [polyOp, ContentOp.ink]),
+    inkList_map _ (fun f => ContentOp.fill f.color (geom.bleed + f.x)
+      (geom.bleed + geom.pageH - f.y - f.h) f.w f.h) _ (fun f => by simp [ContentOp.ink])]
   apply Array.toList_inj.mp
   simp [Array.toList_append, Array.toList_push, Array.toList_map, Array.toList_flatMap]
 
@@ -3394,14 +3400,17 @@ public theorem mcids_partition_covers (geom : Geom) (remap : Array Nat) (widths 
       obtain ⟨f, _, rfl⟩ := ho
       exact Or.inl ⟨_, _, _, _, _, rfl⟩)
   have hC := fillBlock_contentOpens (some .layout)
-    ((((bodyLines page).foldl (stepLine geom remap imgMap tags) { widths }).rules.map
+    (((((bodyLines page).foldl (stepLine geom remap imgMap tags) { widths }).rules.map
       fun (c, x, y, w, h) => ContentOp.fill c x y w h) ++
-      ((bodyLines page).foldl (stepLine geom remap imgMap tags) { widths }).polys.map polyOp)
+      ((bodyLines page).foldl (stepLine geom remap imgMap tags) { widths }).polys.map polyOp) ++
+      page.front.map fun f =>
+        ContentOp.fill f.color (geom.bleed + f.x) (geom.bleed + geom.pageH - f.y - f.h) f.w f.h)
     (fun o ho => by
       simp only [Array.mem_append, Array.mem_map] at ho
-      rcases ho with ⟨t, _, rfl⟩ | ⟨p, _, rfl⟩
+      rcases ho with (⟨t, _, rfl⟩ | ⟨p, _, rfl⟩) | ⟨f, _, rfl⟩
       · exact Or.inl ⟨_, _, _, _, _, rfl⟩
-      · exact Or.inr ⟨_, _, _, _, rfl⟩)
+      · exact Or.inr ⟨_, _, _, _, rfl⟩
+      · exact Or.inl ⟨_, _, _, _, _, rfl⟩)
   have hK := fillBlock_contentOpens (some .layout)
     (((bodyLines page).foldl (stepLine geom remap imgMap tags) { widths }).marks.map
       fun (c, x, y, w, h) => ContentOp.fill c x y w h)

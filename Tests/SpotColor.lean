@@ -41,6 +41,9 @@ def checks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   t "the ink at full tint paints its separation at tint 1, and no device colour stands in"
     (bytesContain pdf "/Ink.Probe#20Ink cs 1 scn" && !bytesContain pdf "0 0.5 1 0 k")
   t "the web page shows the alternate's preview" (hasStr html "#ff8000")
+  let (ods, _, ohtml) := artifacts oneFace (probe "" "A \\textoverprint{\\mbox{Over}} B")
+  t "an overprinted text is kept and read as any text is, its overprint alone named"
+    (codes ods .W0104 == 1 && codes ods .W0301 == 0 && hasStr ohtml "A Over B")
   -- Each expression alone on its page, so the tint it ships is its own.
   let tintOf (pre expr : String) : ByteArray × String :=
     let (_, p, h) := artifacts oneFace (probe pre s!"\\textcolor\{{expr}}\{Alpha}")

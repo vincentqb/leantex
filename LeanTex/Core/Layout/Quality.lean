@@ -262,7 +262,7 @@ public def offMediumCount (geom : Geom) (fs : Font.FontSet) (pages : Array PageO
   pages.foldl (fun n p =>
     n + (p.lines.filter (offMedium geom fs)).size +
       p.inks.foldl (fun m k => m + (k.claims.filter (claimOffMedium geom)).size) 0 +
-      (p.fills.filter (fillOffMedium geom)).size) 0
+      (p.fills.filter (fillOffMedium geom)).size + (p.front.filter (fillOffMedium geom)).size) 0
 
 /-- The largest overflow any body line runs past the text area, in whole
 points, rounding up: a hair over the edge is a point. -/

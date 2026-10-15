@@ -83,7 +83,8 @@ public theorem completePrepared_reports_contract (file : String) (p : Prepared)
         (Array.mem_append.mpr (Or.inl
           (Array.mem_append.mpr (Or.inl
             (Array.mem_append.mpr (Or.inl
-              (Array.mem_append.mpr (Or.inl h)))))))))))))
+              (Array.mem_append.mpr (Or.inl
+                (Array.mem_append.mpr (Or.inl h)))))))))))))))
 
 public theorem runPrepared_reports_contract (file : String) (p : Prepared)
     (earlier : Array Diag) (metric : Ir.Pic.LabelMetric) (withdrawn : Array String)

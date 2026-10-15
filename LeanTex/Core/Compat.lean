@@ -14,6 +14,7 @@ import LeanTex.Core.BibPunct
 public import LeanTex.Core.Tcolorbox
 import LeanTex.Core.LoopProgress
 import LeanTex.Core.EncodingOption
+import LeanTex.Core.PdfObj
 public import LeanTex.Core.TikzCommands
 
 namespace LeanTex.Core.Compat
@@ -358,11 +359,13 @@ state, with what it replaced. -/
 private inductive CondUndo where
   | bind (n : String) (prev : Option (Option CondVal))
   | flag (n : String) (prev : Option Bool)
+  | len (n : String) (prev : Option Rat)
 
 /-- Where the definition state stood when a group or environment opened. -/
 private structure CondMark where
   undo : Nat
   globals : Nat
+  lens : Nat
   picBound : Nat
   primitives : Nat
 
@@ -623,11 +626,13 @@ private structure St where
   /-- `\newif` flags by base name, with the value the last
   `\Xtrue`/`\Xfalse` gave. -/
   flags : Std.HashMap String Bool := {}
-  /-- The save stack: each change to `binds` and `flags` with what it replaced,
+  /-- The save stack: each change to `binds`, `flags` and `exactLens` with what it replaced,
   undone when its group closes. -/
   undo : Array CondUndo := #[]
   /-- Every global definition, in the order made. -/
   globals : Array (String × Option CondVal) := #[]
+  /-- Every global length assignment, in the order made. -/
+  lenGlobals : Array (String × Option Rat) := #[]
   /-- Live primitive group pairs, whose save marks cross
   macro and input boundaries. -/
   primitiveScopes : Array (String × CondMark) := #[]
@@ -679,8 +684,20 @@ private structure St where
   fileTop : Bool := false
   /-- The value source each length holds as the rewrite last set it. -/
   lens : Array (String × String) := #[]
+  /-- Each allocated length's exact value in inches where the conditional pass stands, scoped as
+  TeX scopes it, and absent where the pass cannot follow its last assignment. -/
+  exactLens : Std.HashMap String Rat := {}
+  /-- The length registers the document allocates with `\newlength`, the only ones the conditional
+  pass follows. -/
+  newLengths : Std.HashSet String := {}
+  /-- The controls each document environment's code assigns, which run where it opens. -/
+  envAssigns : Std.HashMap String (Array String) := {}
   /-- The dimen registers the document allocates with `\newdimen`. -/
   allocated : Array String := #[]
+  /-- The page boxes the page-attribute assignments leave, by native key. -/
+  pageBoxes : Array (String × String) := #[]
+  /-- Their native declaration, which goes out once at the preamble's end. -/
+  pageAttr : Array Raw := #[]
   /-- Token sites assigned directly in this scope. -/
   localLengths : Array String := #[]
   /-- Command names the rewrite walk has bound so far, in document order. -/
@@ -927,10 +944,11 @@ public theorem atSource_record_exact (sources : SourceTriggers) (file : String)
 the loss's census key. -/
 private def say (code : DiagCode) (msg : String) (pos : Pos) (help : Option String := none)
     (demote : Bool := false) (subject : Option String := none)
-    (refused : Option String := none) : M Unit :=
+    (refused : Option String := none) (output : Option Diag.Output := none) : M Unit :=
   modify fun st => { st with
     diags := st.diags.push (
-      let d := atSource st pos (Diag.of code msg (some ⟨st.file, pos⟩) help subject refused)
+      let d := atSource st pos
+        (Diag.of code msg (some ⟨st.file, pos⟩) help subject refused (output := output))
       if demote then d.demote else d) }
 
 /-- A diagnostic said once per namespaced key (`ctrl:`, `spec:`, `beamer:`); a
@@ -2209,6 +2227,17 @@ private def setBind (n : String) (v : Option CondVal) : M Unit :=
     let prev := st.binds[n]?
     { st with undo := st.undo.push (.bind n prev), binds := st.binds.insert n v }
 
+/-- Set length `n`'s exact value, or forget it, recording what it replaced on the save stack, and
+in the global log when `global`. -/
+private def setExactLen (n : String) (v : Option Rat) (global : Bool) : M Unit := do
+  write fun st =>
+    let prev := st.exactLens[n]?
+    { st with undo := st.undo.push (.len n prev),
+              exactLens := match v with
+                | some x => st.exactLens.insert n x
+                | none => st.exactLens.erase n }
+  if global then write fun st => { st with lenGlobals := st.lenGlobals.push (n, v) }
+
 /-- Set the flag `x`, recording what it replaced on the save stack. -/
 private def setFlag (x : String) (b : Bool) : M Unit :=
   write fun st =>
@@ -3099,6 +3128,138 @@ private def definerPrefixes (raws : Array Raw) (i : Nat) : List String := Id.run
     | _ => break
   return out
 
+/-- The most steps an `\edef` expansion takes, each raw it walks and each call it makes, past which
+it stays refused. -/
+private def edefCap : Nat := 65536
+
+/-- Where a `\dimexpr`'s text ends: the index of its own `\relax` among `rs`. -/
+private def dimexprEnd : List Raw → Nat → Nat → Option Nat
+  | [], _, _ => none
+  | .ctrl "relax" _ :: rest, depth, i => if depth == 0 then some i else dimexprEnd rest (depth - 1) (i + 1)
+  | .ctrl "dimexpr" _ :: rest, depth, i => dimexprEnd rest (depth + 1) (i + 1)
+  | _ :: rest, depth, i => dimexprEnd rest depth (i + 1)
+
+/-- The dimen e-TeX reads after `\the`, `\number` or `\strip@pt`: a length register, or a
+`\dimexpr` over lengths and numbers up to its `\relax`; its exact value in inches and the raws
+it took. -/
+private def edefDimen (lenOf : String → Option Rat) (rs : List Raw) : Option (Rat × Nat) :=
+  let lead := (rs.takeWhile (· matches .space)).length
+  match rs.drop lead with
+  | .ctrl "dimexpr" _ :: rest =>
+    (dimexprEnd rest 0 0).bind fun i =>
+      (Decl.exactLength lenOf (rawSrc (rest.take i).toArray)).map (·, lead + i + 2)
+  | .ctrl r _ :: _ => (lenOf r).map (·, lead + 1)
+  | _ => none
+
+/-- A length as TeX prints it: its scaled points rounded half away from zero, then the fewest
+decimals that read back to them, with `pt` for `\the`, as a whole number for `\number`. -/
+private def edefPrint (cmd : String) (v : Rat) : String :=
+  let x := v * 7227 / 100 * 65536
+  let sp : Int := if x < 0 then -((-x + 1 / 2).floor) else (x + 1 / 2).floor
+  let (whole, digits) := Decl.texScaledParts sp.natAbs
+  let sign := if sp < 0 then "-" else ""
+  let frac := String.join (digits.map toString)
+  if cmd == "number" then toString sp
+  else if cmd == "the" then s!"{sign}{whole}.{frac}pt"
+  else if digits == [0] then s!"{sign}{whole}" else s!"{sign}{whole}.{frac}"
+
+/-- A definition's undelimited arguments: `n` brace groups or single control words, spaces
+before each skipped; the arguments and the raws they took. -/
+private def edefArgs : Nat → List Raw → Nat → Array (Array Raw) → Option (Array (Array Raw) × Nat)
+  | 0, _, used, acc => some (acc, used)
+  | k + 1, .space :: rest, used, acc => edefArgs (k + 1) rest (used + 1) acc
+  | k + 1, .group body _ :: rest, used, acc => edefArgs k rest (used + 1) (acc.push body)
+  | k + 1, .ctrl n p :: rest, used, acc => edefArgs k rest (used + 1) (acc.push #[.ctrl n p])
+  | _ + 1, _, _, _ => none
+
+private theorem sizeOf_drop_le (l : List Raw) : ∀ k, sizeOf (l.drop k) ≤ sizeOf l := by
+  induction l with
+  | nil => intro k; cases k <;> simp
+  | cons x xs ih =>
+    intro k
+    cases k with
+    | zero => simp
+    | succ k =>
+      have := ih k
+      simp only [List.drop_succ_cons, List.cons.sizeOf_spec]
+      omega
+
+/-- An `\edef` text expanded left to right in `budget` steps, with the steps left: text, groups and a
+control after `\noexpand` stand, `\the`, `\number` and `\strip@pt` print a length or a `\dimexpr`,
+and another control is a call `call` expands. -/
+private def edefWalk (call : String → Pos → List Raw → Nat → Option (Array Raw × Nat × Nat))
+    (lenOf : String → Option Rat) (l : List Raw) (acc : Array Raw) (budget : Nat) :
+    Option (Array Raw × Nat) :=
+  if budget == 0 then none else
+  match l with
+  | [] => some (acc, budget)
+  | .space :: rest => edefWalk call lenOf rest (acc.push .space) (budget - 1)
+  | .word w p :: rest => edefWalk call lenOf rest (acc.push (.word w p)) (budget - 1)
+  | .sym c p :: rest => edefWalk call lenOf rest (acc.push (.sym c p)) (budget - 1)
+  | .group body p :: rest =>
+    (edefWalk call lenOf body.toList #[] (budget - 1)).bind fun (inner, left) =>
+      edefWalk call lenOf rest (acc.push (.group inner p)) left
+  | .ctrl "noexpand" _ :: .ctrl m q :: rest =>
+    edefWalk call lenOf rest (acc.push (.ctrl m q)) (budget - 1)
+  | .ctrl n p :: rest =>
+    if n == "the" || n == "number" || n == "strip@pt" then
+      (edefDimen lenOf rest).bind fun (v, used) =>
+        edefWalk call lenOf (rest.drop used) (acc.push (.word (edefPrint n v) p)) (budget - 1)
+    else
+      (call n p rest (budget - 1)).bind fun (text, used, left) =>
+        edefWalk call lenOf (rest.drop used) (acc ++ text) left
+  | .par _ :: _ | .math .. :: _ | .env .. :: _ | .verb .. :: _ => none
+termination_by sizeOf l
+decreasing_by
+  all_goals simp_wf
+  all_goals first
+    | (have := sizeOf_drop_le rest used; omega)
+    | raws_dec
+
+/-- An `\edef` text expanded where it is defined: a call of a definition in `defs` expands its text
+with that definition unavailable below it, so the calls form no cycle, and a control `stands` names
+is left as written. -/
+private def edefExpand (defs : List (String × CondVal)) (stands : String → Bool)
+    (lenOf : String → Option Rat) (l : List Raw) (budget : Nat) : Option (Array Raw × Nat) :=
+  edefWalk (fun n p rest left =>
+    match _h : defs.find? (·.1 == n) with
+    | some d =>
+      (edefArgs d.2.arity rest 0 #[]).bind fun (args, used) =>
+        (edefExpand (defs.eraseP (·.1 == n)) stands lenOf
+          (bindRawArgsList args #[] d.2.raws.toList).toList left).map fun (text, rest) =>
+            (text, used, rest)
+    | none => if stands n then some (#[.ctrl n p], 0, left) else Option.none) lenOf l #[] budget
+termination_by defs.length
+decreasing_by
+  have hm := List.mem_of_find?_eq_some _h
+  rw [List.length_eraseP_of_mem hm (List.find?_some _h)]
+  have := List.length_pos_of_mem hm
+  omega
+
+/-- The definitions an `\edef` text can call, each looked up once: every name it or a text it reaches
+mentions that is bound to a readable text with no optional argument and no `\protected` prefix;
+`none` past the cap. -/
+private def edefReach (binds : Std.HashMap String (Option CondVal)) (body : Array Raw) :
+    Option (List (String × CondVal)) := Id.run do
+  let mut todo : Array (Array Raw) := #[body]
+  let mut seen : Std.HashSet String := {}
+  let mut defs : Array (String × CondVal) := #[]
+  for _ in [0:edefCap] do
+    let some rs := todo.back? | return some defs.toList
+    todo := todo.pop
+    for r in rs do
+      match r with
+      | .ctrl n _ =>
+        unless seen.contains n do
+          seen := seen.insert n
+          if let some (some c) := binds[n]? then
+            if c.optional.isNone && !c.prot then
+              defs := defs.push (n, c)
+              todo := todo.push c.raws
+      | .group inner _ => todo := todo.push inner
+      | _ => pure ()
+  return none
+
 /-- The value the definer `d` at `raws[i]` gives the name it binds: body,
 undelimited arity and prefixes. -/
 private def definedValue (st : St) (raws : Array Raw) (i : Nat) (d : String) :
@@ -3120,17 +3281,16 @@ private def definedValue (st : St) (raws : Array Raw) (i : Nat) (d : String) :
     let j := skipSpaces raws (i + 1)
     match raws[j]?, raws[j + 1]? with
     | some (.ctrl _ _), some (.group body gp) =>
-      if body.all fun r => !(r matches .ctrl _ _) then
-        return some { raws := body, long, prot, edges := (gp.openEol, gp.closeEol) }
-      match (body.filter fun r => !(r matches .space)).toList with
-      | [.ctrl m _] =>
-        match condValueOf st.binds m with
-        | some (some v) =>
-          if v.arity == 0 && v.raws.all fun r => !(r matches .ctrl _ _) then
-            return some { raws := v.raws, long, prot }
-          return none
-        | _ => return none
-      | _ => return none
+      -- `\edef` leaves `\relax`, a length register and a `\protected` definition unexpanded.
+      let stands (m : String) : Bool := m == "relax" || st.newLengths.contains m ||
+        match st.binds[m]? with
+        | some (some c) => c.prot
+        | _ => false
+      let text := (edefReach st.binds body).bind fun defs =>
+        edefExpand defs stands (fun m => st.exactLens[m]?) body.toList edefCap
+      -- Its text is final, so each use expands to it where the pass meets the use.
+      return text.map fun (text, _) =>
+        { raws := text, long, prot, live := true, edges := (gp.openEol, gp.closeEol) }
     | _, _ => return none
   if d == "let" then
     let j := skipSpaces raws (i + 1)
@@ -3239,8 +3399,8 @@ end
 private def condMark : M CondMark := do
   let st ← get
   return {
-    undo := st.undo.size, globals := st.globals.size, picBound := st.picBound.size
-    primitives := st.primitiveScopes.size }
+    undo := st.undo.size, globals := st.globals.size, lens := st.lenGlobals.size
+    picBound := st.picBound.size, primitives := st.primitiveScopes.size }
 
 /-- Sets whether the pass reads a spliced file's top level,
 returning the value it replaces. -/
@@ -3275,14 +3435,21 @@ private def condUnwind (m : CondMark) : M Unit := do
         flags := match prev with
           | some b => st.flags.insert x b
           | none => st.flags.erase x }
+    | some (.len x prev) =>
+      write fun st => { st with
+        exactLens := match prev with
+          | some v => st.exactLens.insert x v
+          | none => st.exactLens.erase x }
     | none => pure ()
 
 /-- Closes a TeX group: the save stack unwinds to its mark and only its global
-definitions outlive it. -/
+definitions and length assignments outlive it. -/
 private def condClose (m : CondMark) : M Unit := do
   let made := (← get).globals.extract m.globals (← get).globals.size
+  let lens := (← get).lenGlobals.extract m.lens (← get).lenGlobals.size
   condUnwind m
   for (n, v) in made do setBind n v
+  for (n, v) in lens do setExactLen n v false
 
 /-- Ends the document's opening space scan at a nonexpandable token. -/
 private def condStopSpaces : M Unit := do
@@ -3464,6 +3631,172 @@ private def noteTemplateDrift : M Unit := do
     (serialOf st.binds x != serialOf st.templateBinds x ||
       (testedFlag st.flags st.templateFlags x).any fun f => st.flags[f]? != st.templateFlags[f]?)
   unless drift.isEmpty do write fun st => { st with templateDrift := st.templateDrift ++ drift }
+
+/-- Whether a control word is a unit or glue keyword inside
+a value rather than a register. -/
+private def valueCtrl (n : String) : Bool :=
+  n == "p@" || n == "z@" || n == "@plus" || n == "@minus"
+
+/-- The raw standing before index `i`, spaces skipped. -/
+private def rawBefore (raws : Array Raw) (i : Nat) : Option Raw := Id.run do
+  let mut k := i
+  for _ in [0:i] do
+    k := k - 1
+    match raws[k]? with
+    | some .space => pure ()
+    | r => return r
+  return none
+
+/-- Whether the raw before a register reads it as an
+operand, so no assignment opens there. -/
+private def readsOperand : Option Raw → Bool
+  | some (.ctrl c _) => ["hskip", "vskip", "kern", "mskip", "mkern", "the", "showthe",
+      "advance", "multiply", "divide", "ifdim", "ifnum", "ifodd", "ifcase", "dimexpr",
+      "glueexpr", "numexpr", "muexpr", "raise", "lower", "moveleft", "moveright"].contains c
+  | some (.word w _) =>
+    ["by", "plus", "minus", "to", "spread", "width", "height", "depth", "=", "<", ">"].contains w ||
+      (!w.isEmpty && w.toList.all fun ch => ch.isDigit || ch == '.' || ch == '-' || ch == '+')
+  | some (.sym c _) => "=<>+-*/(".toList.contains c
+  | _ => false
+
+/-- The LaTeX length assignments the conditional pass reads. -/
+private def lengthAssigns : List String :=
+  ["newlength", "setlength", "addtolength", "settowidth", "settoheight", "settodepth",
+   "settototalheight"]
+
+/-- The TeX register arithmetic, whose target is the next control word. -/
+private def lengthArith : List String := ["advance", "multiply", "divide"]
+
+/-- The environment definers, whose code runs where each environment opens. -/
+private def envDefiners : List String :=
+  ["newenvironment", "renewenvironment", "provideenvironment", "NewDocumentEnvironment",
+   "RenewDocumentEnvironment", "ProvideDocumentEnvironment", "DeclareDocumentEnvironment"]
+
+/-- Whether the register at `raws[i]` is assigned there, as TeX's main loop reads a register token:
+not after an operand reader (`readsOperand`), and before a value, which at a list's start must be
+`=` or a number, since a register opening an argument is read. -/
+private def assignsAt (regs : String → Bool) (raws : Array Raw) (i : Nat) : Bool :=
+  let j := skipSpaces raws (i + 1)
+  match rawBefore raws i with
+  | none => match raws[j]? with
+    | some (.word w _) => w.front == '=' || w.front == '.' || w.front.isDigit
+    | some (.sym '=' _) => true
+    | _ => false
+  | before =>
+    !readsOperand before && match raws[j]? with
+      | some (.word w _) => w.front == '=' || w.front == '.' || w.front == '-' || w.front.isDigit
+      | some (.sym c _) => c == '=' || c == '-' || c == '+'
+      | some (.ctrl c _) => valueCtrl c || regs c || (paramSites.lookup c).isSome
+      | _ => false
+
+/-- The register a length assignment or arithmetic at `raws[i]` targets: the next control word,
+braced or not. -/
+private def lengthTarget (raws : Array Raw) (i : Nat) : Option String :=
+  match raws[skipSpaces raws (i + 1)]? with
+  | some (.ctrl m _) => some m
+  | some (.group rs _) => match (rs.filter (!· matches .space)).toList with
+    | [.ctrl m _] => some m
+    | _ => none
+  | _ => none
+
+/-- The controls a text assigns when it runs, in its groups too: the targets of its length
+assignments and arithmetic and each control `regs` names that it assigns bare, `\global` among them
+when it assigns globally; `none` past the cap. -/
+private def assignedIn (regs : String → Bool) (rs : Array Raw) : Option (Array String) := Id.run do
+  let mut todo : Array (Array Raw) := #[rs]
+  let mut out : Array String := #[]
+  for _ in [0:edefCap] do
+    let some cur := todo.back? | return some out
+    todo := todo.pop
+    for k in [0:cur.size] do
+      match cur[k]? with
+      | some (.ctrl n _) =>
+        if n == "global" || n == "gdef" || n == "xdef" then out := out.push "global"
+        else if lengthAssigns.contains n || lengthArith.contains n then
+          if let some t := lengthTarget cur k then out := out.push t
+        else if regs n && assignsAt regs cur k then out := out.push n
+      | some (.group inner _) => todo := todo.push inner
+      | some (.env _ inner _) => todo := todo.push inner
+      | _ => pure ()
+  return none
+
+/-- The texts a call of `n` can run, each looked up once: its definition's and every definition
+they mention; `none` past the cap. -/
+private def runReach (binds : Std.HashMap String (Option CondVal)) (n : String) :
+    Option (Array (Array Raw)) := Id.run do
+  let mut todo : Array String := #[n]
+  let mut seen : Std.HashSet String := {}
+  let mut texts : Array (Array Raw) := #[]
+  for _ in [0:edefCap] do
+    let some m := todo.back? | return some texts
+    todo := todo.pop
+    unless seen.contains m do
+      seen := seen.insert m
+      if let some (some c) := binds[m]? then
+        texts := texts.push c.raws
+        let mut groups : Array (Array Raw) := #[c.raws]
+        for _ in [0:c.raws.size + 1] do
+          let some g := groups.back? | break
+          groups := groups.pop
+          for r in g do
+            match r with
+            | .ctrl k _ => todo := todo.push k
+            | .group inner _ => groups := groups.push inner
+            | _ => pure ()
+  return none
+
+/-- Forgets each tracked length in `names`, which code the pass does not run assigns: in the current
+group, or everywhere when `names` holds `\global`. -/
+private def forgetLengths (names : Array String) : M Unit := do
+  let global := names.contains "global"
+  for t in names do
+    if (← get).exactLens.contains t then setExactLen t none global
+
+/-- The controls the environment an environment definer at `raws[i]` defines assigns in its code,
+which runs where the environment opens. -/
+private def condNoteEnv (raws : Array Raw) (i : Nat) : M Unit := do
+  let j := skipSpaces raws (skipStar raws (i + 1))
+  let (_, k) := takeOpt raws (j + 1)
+  let (_, k) := takeOpt raws k
+  let (codes, _) := takeGroups raws k 2
+  let envName? : Option String := match raws[j]? with
+    | some (.group #[.word w _] _) => some w
+    | _ => none
+  let some name := envName? | return
+  let assigned := (codes.toList.filterMap (assignedIn (fun _ => true))).foldl (· ++ ·) #[]
+  write fun st => { st with envAssigns := st.envAssigns.insert name assigned }
+
+/-- The control at `raws[i]` on the lengths the pass follows: `\newlength` allocates one at zero,
+`\setlength` and `\addtolength` evaluate it, and any other assignment, one undecided, or code the
+pass does not run that assigns one forgets it. -/
+private def condNoteLength (raws : Array Raw) (i : Nat) (n : String) (undecided : Bool) :
+    M Unit := do
+  let st ← get
+  let look (m : String) : Option Rat := st.exactLens[m]?
+  let global := (definerPrefixes raws i).contains "global"
+  if lengthAssigns.contains n || lengthArith.contains n then
+    let some target := lengthTarget raws i | return
+    if n == "newlength" then
+      write fun st => { st with newLengths := st.newLengths.insert target }
+      setExactLen target (if undecided then none else some 0) true
+    else if st.newLengths.contains target then
+      let operand : Option Rat := match raws[skipSpaces raws (skipSpaces raws (i + 1) + 1)]? with
+        | some (.group v _) => Decl.exactLength look (rawSrc v)
+        | _ => none
+      let value : Option Rat := if undecided then none else match n with
+        | "setlength" => operand
+        | "addtolength" => (look target).bind fun old => operand.map (old + ·)
+        | _ => none
+      setExactLen target value global
+  else if envDefiners.contains n then condNoteEnv raws i
+  else if st.exactLens.contains n then
+    if assignsAt st.exactLens.contains raws i then setExactLen n none global
+  else if let some (some v) := st.binds[n]? then
+    unless v.live do
+      let texts := (runReach st.binds n).getD #[]
+      let assigned := texts.toList.filterMap (assignedIn st.exactLens.contains)
+      if assigned.length < texts.size then forgetLengths (st.exactLens.keys.toArray.push "global")
+      else forgetLengths (assigned.foldl (· ++ ·) #[])
 
 mutual
 
@@ -3714,6 +4047,7 @@ private def condList [Monad m]
       else condList ex [] raws following (out.push (.ctrl n pos)) stack rest (i + 1) 0
     else if condDefiners.contains n then
       condStopSpaces
+      if envDefiners.contains n then condNoteEnv raws i
       let bound := if definesNext.contains n then
           (rest.dropWhile isSpaceOrStar).head?.bind boundName
         else none
@@ -3797,13 +4131,22 @@ setting or another definition, which TeX executes where it is used; this engine 
 execute this definition there, so that part of the text is skipped whole")
             (site.getD pos)
             (help := "use \\def with undelimited arguments or \\newcommand")
-        condList ex [] raws following ((out.push (.ctrl n pos)) ++ ops) stack rest (i + 1) (sh.stop - (i + 1))
+        -- An `\edef` the pass expanded is done: its uses expand to its text, so it goes out as nothing.
+        let j := skipSpaces raws (i + 1)
+        if (n == "edef" || n == "xdef") && expands then
+          became s!"\\{n}\\{bound.getD n}" "its text, expanded where it stands and used at each call"
+            (site.getD pos) (subject := bound)
+          return ← condList ex [] raws following out stack rest (i + 1) (j + 1 - i)
+        condList ex [] raws following ((out.push (.ctrl n pos)) ++ ops) stack rest (i + 1)
+          (sh.stop - (i + 1))
     else if condNoExpand.contains n then
       condStopSpaces
       match rest with
       | r :: _ => condList ex [] raws following ((out.push (.ctrl n pos)).push r) stack rest (i + 1) 1
       | [] => condList ex [] raws following (out.push (.ctrl n pos)) stack rest (i + 1) 0
     else
+      if (lengthAssigns ++ lengthArith ++ envDefiners).contains n || !st.exactLens.isEmpty then
+        condNoteLength raws i n (stack.any (· matches .opaque))
       if !st.condInDoc then recordLoad raws n i
       -- premise: Tests.overlayInputChecks — a selector reads macro fragments at its use
       if out.scan.opened then
@@ -3878,6 +4221,7 @@ private def condOne [Monad m]
       else condStopSpaces
       if (← get).condInDoc && overlayTitled (overlayName n) then noteTemplateDrift
       let m ← condMark
+      if let some names := (← get).envAssigns[n]? then forgetLengths names
       let inPic := (← get).inPicture
       if pictureEnvs.contains n then
         let names := condBoundLevel #[] body.toList
@@ -4187,7 +4531,7 @@ private theorem condList_word_exact
 
 private theorem condClose_current_exact (st : St) :
     condClose {
-      undo := st.undo.size, globals := st.globals.size
+      undo := st.undo.size, globals := st.globals.size, lens := st.lenGlobals.size
       picBound := st.picBound.size, primitives := st.primitiveScopes.size } st =
       ((), { st with writes := st.writes + 1 }) := by
   simp [condClose, condUnwind, bind, StateT.bind, get, getThe,
@@ -4241,7 +4585,7 @@ private theorem condList_package_read_step
     (out : OverlayPrefix) (first : Raw) (rest : List Raw) (i : Nat) (st after : St)
     (hc : name = "usepackage" ∨ name = "RequirePackage")
     (hp : st.primitiveScopes = #[]) (hd : st.condInDoc = false)
-    (hflags : st.flags = {})
+    (hflags : st.flags = {}) (hlens : st.exactLens = {})
     (ho : out.scan.opened = false)
     (he : ex name pos (raws ++ following) (i + 1)
       (recordLoad raws name i st).2 = (none, after))
@@ -4289,6 +4633,11 @@ private theorem condList_package_read_step
     rcases hc with rfl | rfl <;> decide
   have htpl : (name == "defbeamertemplate" || name == "setbeamertemplate") = false := by
     rcases hc with rfl | rfl <;> decide
+  have hlen : ((lengthAssigns ++ lengthArith ++ envDefiners).contains name ||
+      !st.exactLens.isEmpty) = false := by
+    have h : (lengthAssigns ++ lengthArith ++ envDefiners).contains name = false := by
+      rcases hc with rfl | rfl <;> decide
+    simp only [h, hlens, Std.HashMap.isEmpty_empty, Bool.not_true, Bool.or_false]
   rw [condList.eq_16]
   all_goals try solve | simp_all
   simp only [bind, StateT.bind, get, getThe, MonadStateOf.get, StateT.get,
@@ -4298,7 +4647,7 @@ private theorem condList_package_read_step
     Bool.not_true, Bool.false_eq_true, hg, hp, Array.back?_empty,
     Option.any_none, hh, hn.2.2.2.2.2.2.1, hl, Option.bind_none,
     hn.2.2.2.2.2.2.2.1, ht, hf,
-    hbox, htcb, hdef, hno, hd, Bool.not_false, ho, htpl]
+    hbox, htcb, hdef, hno, hd, Bool.not_false, ho, htpl, hlen]
   cases hload : recordLoad raws name i st with
   | mk tick loaded =>
     cases tick
@@ -4389,7 +4738,7 @@ private theorem condList_package_failed_exact (reader : InputReader Id)
     (command names : String) (pos gp np : Pos) (st : St)
     (hc : command = "usepackage" ∨ command = "RequirePackage")
     (hp : st.primitiveScopes = #[]) (hd : st.condInDoc = false)
-    (hflags : st.flags = {}) (hi : st.ignoreSpaces = false)
+    (hflags : st.flags = {}) (hlens : st.exactLens = {}) (hi : st.ignoreSpaces = false)
     (hsettling : st.settling = none)
     (hv : condValueOf st.binds command = none)
     (hr : ∀ request context, reader request context = (none, context)) :
@@ -4425,7 +4774,7 @@ private theorem condList_package_failed_exact (reader : InputReader Id)
   change condList _ [] _ #[] _ [] (.ctrl command pos ::
     [.group #[.word names np] gp]) 0 0 st = _
   rw [condList_package_read_step _ command pos _ #[] _ _ [] 0 st attempted
-    hc hp hd hflags rfl hex hi]
+    hc hp hd hflags hlens rfl hex hi]
   rw [condList_literal_group_exact _ names np gp _ #[] _ 1 attempted hi]
   simp [OverlayPrefix.push, OverlayPrefix.ofArray, packageFailed,
     attempted, loaded, packageLoaded, packageRequest, packageCall, Nat.add_assoc]
@@ -4449,7 +4798,7 @@ private def condSandbox [Monad m] (act : EvalM m CondRun) : EvalM m (Array Raw) 
   let r ← act
   condUnwind m
   write fun st => { st with
-    globals := st.globals.shrink m.globals
+    globals := st.globals.shrink m.globals, lenGlobals := st.lenGlobals.shrink m.lens
     loads := saved.loads, deferred := saved.deferred, ignoreSpaces := saved.ignoreSpaces }
   return r.raws
 
@@ -4582,7 +4931,7 @@ private theorem condDocument_package_failed_exact (reader : InputReader Id)
     (command names : String) (pos gp np : Pos) (st : St)
     (hc : command = "usepackage" ∨ command = "RequirePackage")
     (hp : st.primitiveScopes = #[]) (hd : st.condInDoc = false)
-    (hflags : st.flags = {}) (hi : st.ignoreSpaces = false)
+    (hflags : st.flags = {}) (hlens : st.exactLens = {}) (hi : st.ignoreSpaces = false)
     (hsettling : st.settling = none) (hdeferred : st.deferred = #[])
     (hv : condValueOf st.binds command = none)
     (hr : ∀ request context, reader request context = (none, context)) :
@@ -4595,7 +4944,7 @@ private theorem condDocument_package_failed_exact (reader : InputReader Id)
   rw [condDocument_without_seam_exact (some reader) _ st _
     { raws := packageCall command names pos gp np, stop := 2 } hs
     (condList_package_failed_exact reader command names pos gp np st
-      hc hp hd hflags hi hsettling hv hr) hdeferred]
+      hc hp hd hflags hlens hi hsettling hv hr) hdeferred]
   simp [packageFailed, packageLoaded, Nat.add_assoc, hdeferred]
 
 /-- The dimension spelled past a glue keyword run into it,
@@ -4897,11 +5246,6 @@ private def lenOperand (lens : Array (String × String)) : List Raw → Option S
   | [.word "-" _, .ctrl y _] => (lens.find? (·.1 == y)).map fun (_, v) => s!"-({v})"
   | _ => none
 
-/-- Whether a control word is a unit or glue keyword inside
-a value rather than a register. -/
-private def valueCtrl (n : String) : Bool :=
-  n == "p@" || n == "z@" || n == "@plus" || n == "@minus"
-
 private def isSign : Raw → Bool
   | .sym '-' _ | .sym '+' _ | .word "-" _ | .word "+" _ => true
   | _ => false
@@ -5007,28 +5351,6 @@ private def sizeSkips (body : Array Raw) (start : Nat) (pos : Pos) : M (Array St
         let _ ← unreadableLength a.name (rawSrc a.value).trimAscii.toString pos
         pure ()
   return out
-
-/-- The raw standing before index `i`, spaces skipped. -/
-private def rawBefore (raws : Array Raw) (i : Nat) : Option Raw := Id.run do
-  let mut k := i
-  for _ in [0:i] do
-    k := k - 1
-    match raws[k]? with
-    | some .space => pure ()
-    | r => return r
-  return none
-
-/-- Whether the raw before a register reads it as an
-operand, so no assignment opens there. -/
-private def readsOperand : Option Raw → Bool
-  | some (.ctrl c _) => ["hskip", "vskip", "kern", "mskip", "mkern", "the", "showthe",
-      "advance", "multiply", "divide", "ifdim", "ifnum", "ifodd", "ifcase", "dimexpr",
-      "glueexpr", "numexpr", "muexpr", "raise", "lower", "moveleft", "moveright"].contains c
-  | some (.word w _) =>
-    ["by", "plus", "minus", "to", "spread", "width", "height", "depth", "=", "<", ">"].contains w ||
-      (!w.isEmpty && w.toList.all fun ch => ch.isDigit || ch == '.' || ch == '-' || ch == '+')
-  | some (.sym c _) => "=<>+-*/(".toList.contains c
-  | _ => false
 
 /-- TeX's own assignment to a kernel parameter, when the
 control word `name` opens one. -/
@@ -5424,13 +5746,105 @@ private def addToHook (pos : Pos) : M Unit :=
     "'\\AddToHook' registers code on a kernel hook; the engine has no \
 hook machinery; skipped" pos
 
-/-- Whether hook code assigns a page attribute. -/
-private def assignsPageAttr (code : Array Raw) : Bool :=
-  let toks := code.filter fun r => !(r matches .space)
-  toks.any (· matches .ctrl "pdfpageattr" _) ||
-    (List.range toks.size).any fun i => match toks[i]?, toks[i + 1]? with
-      | some (.ctrl "pdfvariable" _), some (.word "pageattr" _) => true
-      | _, _ => false
+/-- The page attribute code assigns with `\pdfvariable pageattr` or `\pdfpageattr`: its text when
+literal, and whether it keeps the attribute in force, as `\expandafter{\the\pdfvariable pageattr …}`
+does; `none` for any other code. -/
+private def pageAttrText (look : String → Option (Array Raw)) (code : Array Raw) :
+    Option (Option String × Bool) :=
+  let literal (rs : List Raw) : Option String :=
+    if rs.any (· matches .ctrl _ _ | .group _ _ | .env .. | .math .. | .verb ..) then none
+    else some (rawSrc rs.toArray)
+  -- After `\expandafter`, a leading `\the` of the attribute expands to the attribute in force.
+  let expanded (rs : Array Raw) : Option String × Bool :=
+    match rs.toList.dropWhile (· matches .space) with
+    | .ctrl "the" _ :: .ctrl "pdfpageattr" _ :: rest => (literal rest, true)
+    | .ctrl "the" _ :: .ctrl "pdfvariable" _ :: rest =>
+      match rest.dropWhile (· matches .space) with
+      | .word "pageattr" _ :: more => (literal more, true)
+      | _ => (none, false)
+    | rest => (literal rest, false)
+  let arg : List Raw → Option String × Bool
+    | [.group body _] => (literal body.toList, false)
+    | [.ctrl "expandafter" _, .group body _] =>
+      match (body.filter (!· matches .space)).toList with
+      | [.ctrl m _] => ((look m).map fun t => (literal t.toList, false)).getD (none, false)
+      | _ => expanded body
+    | _ => (none, false)
+  match (code.filter (!· matches .space)).toList with
+  | .ctrl "pdfvariable" _ :: .word "pageattr" _ :: rest => some (arg rest)
+  | .ctrl "pdfpageattr" _ :: rest => some (arg rest)
+  | _ => none
+
+/-- Where a page-attribute assignment starting at `raws[i]` ends: past its braces, after the
+`pageattr` word for `\pdfvariable`. -/
+private def pageAttrEnd (raws : Array Raw) (i : Nat) : Option Nat :=
+  let j := match raws[i]? with
+    | some (.ctrl "pdfvariable" _) => match raws[skipSpaces raws (i + 1)]? with
+      | some (.word "pageattr" _) => some (skipSpaces raws (i + 1) + 1)
+      | _ => none
+    | some (.ctrl "pdfpageattr" _) => some (i + 1)
+    | _ => none
+  j.bind fun j =>
+    let k := skipSpaces raws j
+    match raws[k]? with
+    | some (.group _ _) => some (k + 1)
+    | some (.ctrl "expandafter" _) =>
+      let g := skipSpaces raws (k + 1)
+      if raws[g]? matches some (.group _ _) then some (g + 1) else none
+    | _ => none
+
+/-- The four corners of a page box a page attribute writes, as written, when it is an array of
+four numbers. -/
+private def boxCorners : PdfRead.Obj → Option (List String)
+  | .arr xs =>
+    let nums := xs.toList.filterMap fun o => match o with
+      | .int n => some (toString n)
+      | .real r => if (Decl.parseDecimal r).isSome then some r else none
+      | _ => none
+    if xs.size == 4 && nums.length == 4 then some nums else none
+  | _ => none
+
+/-- A page-attribute assignment read into the page's boxes, declared once at the preamble's end: its
+four-number `/TrimBox`, `/BleedBox`, `/ArtBox` and `/CropBox` replace the boxes in force, or join
+them when it keeps the attribute, and each entry it cannot write is named lost. -/
+private def pageAttrBoxes (text : Option String) (keep : Bool) (what : String) (pos : Pos) :
+    M Unit := do
+  let lost (msg help subject : String) : M Unit :=
+    say .W0443 msg pos (help := help) (subject := some subject) (output := some .pdf)
+  let entries : Option (Array (String × PdfRead.Obj)) := text.bind fun t =>
+    match (PdfRead.parseVal ("<< " ++ t ++ " >>").toUTF8 0).toOption with
+    | some (.dict es, _) => some es
+    | _ => none
+  if entries.isNone then
+    lost "the page attribute is not literal PDF entries; none of it is written, and it replaces \
+the boxes before it" "write the entries themselves: '/TrimBox [9 9 261 153]'" "pageattr"
+  let mut keys : Array (String × String) := #[]
+  for (k, v) in entries.getD #[] do
+    let native? := match k with
+      | "TrimBox" => some "trimbox"
+      | "BleedBox" => some "bleedbox"
+      | "ArtBox" => some "artbox"
+      | "CropBox" => some "cropbox"
+      | _ => none
+    match native?, boxCorners v with
+    | some key, some cs => keys := keys.push (key, s!"\"{" ".intercalate cs}\"")
+    | some _, none =>
+      lost s!"the page attribute /{k} is not four numbers; the engine writes no {k}"
+        "write the box as '[llx lly urx ury]' in PDF points" s!"pageattr:{k}"
+    | none, _ =>
+      lost s!"the page attribute /{k} is not a page box; the engine writes the page \
+dictionary itself, without it"
+        "a page attribute's '/TrimBox', '/BleedBox', '/ArtBox' and '/CropBox' are written; \
+'\\page' declares the rest of the page" s!"pageattr:{k}"
+  let old := (← get).pageBoxes
+  let boxes := ["trimbox", "bleedbox", "artbox", "cropbox"].filterMap fun key =>
+    match (keys.filter (·.1 == key)).back? with
+    | some e => some e
+    | none => if keep then old.find? (·.1 == key) else none
+  let native := s!"\\page\{ {", ".intercalate (boxes.map fun (k, v) => s!"{k} = {v}")} }"
+  became what (if boxes.isEmpty then "no page box" else native) pos
+  let declared ← if boxes.isEmpty then pure #[] else synthAt native pos
+  write fun st => { st with pageBoxes := boxes.toArray, pageAttr := declared }
 
 /-- A shipout picture flattened to a token stream with its
 group and environment brackets explicit. -/
@@ -5668,11 +6082,11 @@ colour it paints; skipped" pos
     return some (#[], k)
   | "textoverprint" =>
     let (_, j) := takeOpt raws j
-    let (args, k) := takeGroups raws j 1
-    let some body := args[0]? | return none
+    let g := skipSpaces raws j
+    unless raws[g]? matches some (.group _ _) do return none
     say .W0104 "'\\textoverprint' overprints its text; the engine knocks it out, and the \
 text is kept" pos
-    return some (#[Raw.group body pos], k)
+    return some (#[], g)
   | _ => return none
 
 /-- colorspace's options: the overprint mode and a Lab alternate's illuminant, which the engine
@@ -6809,9 +7223,10 @@ were dropped: {String.intercalate ", " dropped.toList}" pos
         let demote := styInternal (← get).file name
         if expanding then
           sayOnce ("ctrl:" ++ name) .W0357
-            s!"'\\{name}' defines by expanding at definition time; the engine has no \
-expansion step, so the definition is skipped" pos
-            (help := "\\define \\name(...) {body} declares typed commands") demote
+            s!"'\\{name}' expands its text where it is defined; this text reaches past what the \
+engine expands, so it is skipped" pos
+            (help := "an edef expands text, lengths, '\\the', '\\number', '\\strip@pt', \
+'\\dimexpr' and the document's macros; \\define \\name(...) {body} declares the rest") demote
         else
           sayOnce "ctrl:def-delimited" .W0357
             s!"'\\{name}' with a delimited parameter text is a TeX scanning program; \
@@ -7938,6 +8353,15 @@ face serves every language, so the binding is dropped" pos
     if h : args.size = 1 then
       return some (← documentMetadata (rawSrc args[0]) pos, k)
     else return none
+  | "pdfvariable" | "pdfpageattr" =>
+    let some k := pageAttrEnd raws (start - 1) | return none
+    let st ← get
+    let look (n : String) : Option (Array Raw) := match st.binds[n]? with
+      | some (some v) => if v.arity == 0 then some v.raws else none
+      | _ => none
+    let some (text, keep) := pageAttrText look (raws.extract (start - 1) k) | return none
+    pageAttrBoxes text keep s!"\\{name} pageattr" pos
+    return some (#[], k)
   | "AddToHook" =>
     let (hookArgs, j) := takeGroups raws start 1
     let (_, j) := takeOpt raws j
@@ -7953,15 +8377,20 @@ face serves every language, so the binding is dropped" pos
         | _ => none
       match shipoutRules look lengths (codeArgs.getD 0 #[]) with
       | some rules =>
-        let entries := rules.map fun (x, y, w, h, c) => s!"rule = \"{x}; {y}; {w}; {h}; {c}\""
+        let key := if hook == "shipout/foreground" then "front-rule" else "rule"
+        let entries := rules.map fun (x, y, w, h, c) => s!"{key} = \"{x}; {y}; {w}; {h}; {c}\""
         let native := s!"\\page\{ {String.intercalate ", " entries.toList} }"
         became s!"\\AddToHook\{{hook}}" native pos
         return some (← synthAt native pos, k)
       | none => pure ()
-    -- A page attribute assigned at shipout is not evaluated: the hook is skipped and named.
-    if hook == "shipout/before" && assignsPageAttr (codeArgs.getD 0 #[]) then
-      addToHook pos
-      return some (← synthAt "\\page{ trim = marks }" pos, k)
+    if hook == "shipout/before" then
+      let st ← get
+      let look (n : String) : Option (Array Raw) := match st.binds[n]? with
+        | some (some v) => if v.arity == 0 then some v.raws else none
+        | _ => none
+      if let some (text, keep) := pageAttrText look (codeArgs.getD 0 #[]) then
+        pageAttrBoxes text keep s!"\\AddToHook\{{hook}}" pos
+        return some (#[], k)
     addToHook pos
     return some (#[], k)
   | "setcounter" | "addtocounter" | "stepcounter" | "refstepcounter" =>
@@ -9016,8 +9445,9 @@ private theorem state_array_forIn_inv {α β : Type} (P : St → Prop)
 
 private theorem say_tailDiag (d : Diag) (code : DiagCode) (msg : String)
     (pos : Pos) (help : Option String) (demote : Bool)
-    (subject refused : Option String) (st : St) (h : TailDiag d st) :
-    TailDiag d (say code msg pos help demote subject refused st).2 :=
+    (subject refused : Option String) (output : Option Diag.Output) (st : St)
+    (h : TailDiag d st) :
+    TailDiag d (say code msg pos help demote subject refused output st).2 :=
   ⟨h.1, Array.mem_push.mpr (Or.inl h.2)⟩
 
 private theorem sayOnce_minipage_tailDiag (d : Diag) (code : DiagCode)
@@ -9032,7 +9462,7 @@ private theorem sayOnce_minipage_tailDiag (d : Diag) (code : DiagCode)
   all_goals
     first
     | exact hs
-    | intro _ s' hs'; exact say_tailDiag d _ _ _ _ _ _ _ _ hs'
+    | intro _ s' hs'; exact say_tailDiag d _ _ _ _ _ _ _ _ _ hs'
 
 private theorem boxRowEmit_tailDiag (rs : Array Raw) (d : Diag) (st : St)
     (h : TailDiag d st) : TailDiag d (boxRowEmit rs st).2 := by
@@ -9046,7 +9476,7 @@ private theorem boxRowEmit_tailDiag (rs : Array Raw) (d : Diag) (st : St)
     cases pic <;> dsimp only
     all_goals
       apply state_bind_inv (TailDiag d)
-      · exact say_tailDiag d _ _ _ _ _ _ _ _ hs
+      · exact say_tailDiag d _ _ _ _ _ _ _ _ _ hs
       · intro _ s' hs'
         cases opts
         · exact hs'
@@ -10997,7 +11427,7 @@ private theorem executeInputs_package_failed_exact (reader : InputReader Id)
   rw [executeInputs_condDocument_exact]
   have heq := condDocument_package_failed_exact reader command names pos gp np
     (packageInitialState file command names pos gp np keeps ds)
-    hc rfl rfl rfl rfl rfl rfl hv hr
+    hc rfl rfl rfl rfl rfl rfl rfl hv hr
   change condDocument (some reader) (packageCall command names pos gp np)
     (withSpaceBinding (executionState true file
       (packageCall command names pos gp np) keeps #[] ds)) = _ at heq
@@ -11142,7 +11572,7 @@ private def finishDeclarations (out : Array Raw) : M (Array Raw) := do
       preSide := preSide ++ wrap p
       bodySide := bodySide ++ wrap b
   let (footerPre, footerBody) ← flushBeamerFootline
-  preSide := preSide ++ footerPre ++ (← flushBeamerBlocks)
+  preSide := preSide ++ footerPre ++ (← flushBeamerBlocks) ++ (← get).pageAttr
   let footerBody ← rewriteList false footerBody #[] footerBody.toList 0 0
   bodySide := footerBody ++ bodySide
   write fun st => { st with inDoc := saved, file := savedFile, seam := false }

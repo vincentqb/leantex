@@ -62,6 +62,28 @@ named where it stands. Bytes that are not text, U+0000 among them, become
 U+FFFD, and one warning per file lists their offsets. The document still
 builds, as long as one of its fonts has a glyph for U+FFFD.
 
+`\edef` expands its text where it stands, from the definitions and lengths
+in force there as TeX scopes them: text, the document's own macros, and
+`\the`, `\number` or `\strip@pt` of a length or a `\dimexpr` over lengths;
+a `\protected` macro, `\relax`, a length register and a control after
+`\noexpand` stand, and each use of the definition expands to its text. Only
+lengths the document allocates with `\newlength` are read, followed through
+`\setlength` and `\addtolength`; one that another assignment changes, or code
+the engine does not run may change, is not read (but for a bare assignment
+opening a brace group, `{\len-1in …}`, which reads as an argument), and
+anything else the expansion meets is named and the definition skipped. Lengths are exact, their units
+read as leantex reads them everywhere (a `pt` is a big point here), and
+`\the` prints them in TeX points rounded once, so a box computed in big
+points comes out exact: `\the` of `3.5truein` prints `252.945pt`, where TeX,
+rounding each step, prints `252.94499pt`. A `\pdfvariable pageattr{…}` (or
+`\pdfpageattr`) assignment, in a `shipout/before` hook or not, writes its
+`/TrimBox`, `/BleedBox`, `/ArtBox` and `/CropBox` on every page, each inside
+the paper, the last assignment standing as in TeX, and names any other
+entry; `\expandafter{\the\pdfvariable pageattr …}` adds to the attribute in
+force. `shipout/background` and `shipout/foreground` hooks draw their rules
+under and over every page from its top-left corner. Boxes, bleed and marks
+belong to the printed sheet, so the web page shows none of them.
+
 See the [example documents](../testdata/corpus) and
 [package compatibility index](../testdata/compat-index) for supported syntax.
 

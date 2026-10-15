@@ -941,7 +941,8 @@ private def pageKeys : List String :=
    "textwidth", "textheight", "leading", "baselineskip", "parskip",
    "measure", "fontsize", "bleed", "hyphenate", "justify", "protrusion",
    "expansion", "numbers", "marks", "mark-gap", "mark-thickness", "linenumbers", "modulo",
-   "furnituregap", "headsep", "footskip", "rule", "trim", "bottom"]
+   "furnituregap", "headsep", "footskip", "rule", "front-rule", "cropbox", "bleedbox", "trimbox",
+   "artbox", "bottom"]
 
 /-- The `\page` keys that declare the page's physical extent, and so claim
 the page as declared. -/
@@ -12369,6 +12370,15 @@ private def composeLeading (spec : PageSpec) : PageSpec :=
       leading := ((ld * (spec.spread : Int) * 1000 + sz * 600) / (sz * 1200)).toNat
       skips := some (Ir.setSkip spec.skipScale "normalsize" (Ir.skipRowOf (d * 1000) body)) }
 
+/-- A page box from four numbers in PDF points, its lower-left corner first however written. -/
+private def pageBoxOf (kind : BoxKind) (s : String) (span : Option Span) : Option PageBox := do
+  let toSp (m : Int) (sc : Nat) : Int :=
+    let v := ((m.natAbs * 65536 * 2 + sc) / (2 * max 1 sc) : Nat)
+    if m < 0 then -(v : Int) else v
+  let nums ← ((s.splitOn " ").filter (!·.isEmpty)).mapM Decl.parseDecimal
+  let [a, b, c, d] := nums.map fun (m, sc) => toSp m sc | none
+  some { kind, x0 := min a c, y0 := min b d, x1 := max a c, y1 := max b d, span }
+
 private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
     (pos : Pos) (tokens : Array (String × SymGlue) := #[]) : PageSpec × Array PEvent := Id.run do
   -- A page dimension may be glue over tokens with nothing font-relative in it.
@@ -12481,20 +12491,30 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
         evs := evs.push
           (.say (Decl.wrongType ctx.file "page" "mark-thickness" "a dimension" v pos))
     -- `rule` reads y up from the page's top-left; it is stored y down.
-    | "rule", .str s =>
+    | "rule", .str s | "front-rule", .str s =>
       match s.splitOn ";" |>.map (·.trimAscii.toString) with
       | [x, y, w, h, c] =>
         match [x, y, w, h].map fun p => (Decl.parseValue p tokens).bind asDim with
         | [some x, some y, some w, some h] =>
-          spec := { spec with drawn := spec.drawn.push ⟨x, -(y + h), w, h, c⟩ }
-        | _ => evs := say evs .E0323 s!"'rule' in '\\page' expects four dimensions, got '{s}'"
+          spec := { spec with drawn := spec.drawn.push ⟨x, -(y + h), w, h, c, e.key == "front-rule"⟩ }
+        | _ => evs := say evs .E0323 s!"'{e.key}' in '\\page' expects four dimensions, got '{s}'"
       | _ =>
-        let msg := s!"'rule' in '\\page' expects \"x; y; width; height; colour\", got '{s}'"
+        let msg := s!"'{e.key}' in '\\page' expects \"x; y; width; height; colour\", got '{s}'"
         evs := say evs .E0323 msg
-    | "trim", .ident v =>
+    | "cropbox", v | "bleedbox", v | "trimbox", v | "artbox", v =>
+      let kind : BoxKind := match e.key with
+        | "cropbox" => .crop
+        | "bleedbox" => .bleed
+        | "trimbox" => .trim
+        | _ => .art
       match v with
-      | "marks" => spec := { spec with trimMarked := true }
-      | _ => evs := say evs .E0323 s!"'trim' in '\\page' expects 'marks', got '{v}'"
+      | .str s =>
+        match pageBoxOf kind s (some ⟨ctx.file, pos⟩) with
+        | some b => spec := { spec with boxes := (spec.boxes.filter (·.kind != kind)).push b }
+        | none =>
+          evs := say evs .E0323 s!"'{e.key}' in '\\page' expects four numbers in PDF points, got '{s}'"
+      | v => evs := evs.push (.say (Decl.wrongType ctx.file "page" e.key
+          "four quoted numbers in PDF points" v pos))
     | "hyphenate", .ident v =>
       match v with
       | "on" | "true" => spec := { spec with hyphenate := some true }
@@ -12562,6 +12582,7 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
           else if key == "marks" then "'cut' or 'none'"
           else if key == "modulo" then "a count of at least 1"
           else if key == "bottom" then "'flush' or 'ragged'"
+          else if key == "rule" || key == "front-rule" then "\"x; y; width; height; colour\""
           else if key == "hyphenate" || key == "justify" || key == "protrusion"
             || key == "expansion" || key == "numbers"
             || key == "linenumbers" then "on or off"
@@ -12572,9 +12593,10 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
         evs := evs.push (.say (Decl.unknownKey ctx.file "page" key
           (pageKeys.filter
             (!["headsep", "footskip", "textwidth", "textheight", "baselineskip",
-               "mark-gap", "mark-thickness", "modulo", "rule", "trim", "bottom"].contains ·)) pos))
+               "mark-gap", "mark-thickness", "modulo", "rule", "front-rule", "cropbox", "bleedbox",
+               "trimbox", "artbox", "bottom"].contains ·)) pos))
     -- A clean count means the entry applied; a `rule` adds, so it overwrites nothing.
-    if evs.size == before && e.key != "rule" then
+    if evs.size == before && e.key != "rule" && e.key != "front-rule" then
       evs := evs.push (.scalar "page" e.key (renderValue e.value) pos)
   return (composeLeading spec, evs)
 
@@ -15858,7 +15880,7 @@ public def completePrepared (file : String) (p : Prepared) (earlier : Array Diag
       st.spans.colorReads) st.spans.tokenKeys
   (doc, Diag.tallySites ((accountRecovered doc.salvage
     (earlier ++ p.compatDiags ++ st.diags ++ contrast ++ outline ++ alt ++ links ++ sequences ++
-      unread)
+      unread ++ Ir.boxDiags doc.page)
     st.spans.recoveryDiags).map p.sourceTriggers.attribute),
     { inputAttempts := p.inputAttempts
       bib := st.spans.bib

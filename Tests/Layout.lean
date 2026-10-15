@@ -3323,13 +3323,11 @@ def drawnMarkChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   let hair := Dim.pt 1 / 4
   let want := Layout.cutMarks (Dim.inch 7 / 2) (Dim.inch 2) bl (bl - Dim.mm 1) hair
     (Ir.Color.ofCmyk 1000 1000 1000 1000)
-  t "a drawn picture's rules are read; the page attribute is the one hook named"
-    (doc.page.drawn.size == 8 && doc.page.trimMarked &&
-      (ds.filter fun d => d.code == DiagCode.W0104.code).size == 1)
-  t "rules that are a trim's cut marks declare the trim, inside the medium"
-    (Layout.drawnTrim doc.page == some (bl, bl - Dim.mm 1, hair) &&
-     geom.trimInset == bl && geom.bleed == 0 &&
-     geom.pageW == Dim.inch 7 / 2 + 2 * bl && geom.pageH == Dim.inch 2 + 2 * bl)
+  t "a drawn picture's rules and the page attribute's box are read, no hook skipped"
+    (doc.page.drawn.size == 8 && doc.page.boxes.size == 1 &&
+      !(ds.any fun d => d.code == DiagCode.W0104.code))
+  t "the medium is the declared paper, with no bleed of its own"
+    (geom.bleed == 0 && geom.pageW == Dim.inch 7 / 2 + 2 * bl && geom.pageH == Dim.inch 2 + 2 * bl)
   t "the drawn marks ship on every page where they were drawn, in their ink"
     (out.pages.size ≥ 1 && out.pages.all fun p =>
       want.all fun f => p.fills.any fun g =>
@@ -3338,25 +3336,20 @@ def drawnMarkChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   t "the text keeps the margin the geometry measured from the medium"
     (lineXOf (censusOf #[] out) 0 "Placeholder" == some (Dim.mm 8))
   let pdf := pdfText (Pdf.write geom oneFace out.pages doc.info)
-  let (media, bleedBox, trim) := Pdf.pageBoxes (Dim.inch 7 / 2) (Dim.inch 2) bl
-  t "the file names the trim the marks cut"
-    (bytesContain pdf s!"/TrimBox {trim.render}" &&
-     bytesContain pdf s!"/BleedBox {bleedBox.render}" &&
-     bytesContain pdf s!"/ArtBox {trim.render}" &&
-     bytesContain pdf s!"/MediaBox {media.render}")
+  let (media, _, _) := Pdf.pageBoxes (Dim.inch 7 / 2) (Dim.inch 2) bl
+  t "the file writes the declared TrimBox and no box it did not declare, as lualatex's does"
+    (bytesContain pdf "/TrimBox [8.5 8.5 260.5 152.5]" && !bytesContain pdf "/BleedBox" &&
+     !bytesContain pdf "/ArtBox" && bytesContain pdf s!"/MediaBox {media.render}")
   let (bare, bareDs) := elabStr (pre marks)
   let bareGeom := Layout.Geom.ofPage bare.page
   let barePdf := pdfText (Pdf.write bareGeom oneFace (layoutOf oneFace bare bareGeom).pages bare.info)
   t "marks drawn with no declared page box declare no trim, as lualatex's file has none"
-    (bare.page.drawn.size == 8 && !bare.page.trimMarked && Layout.drawnTrim bare.page == none &&
-     bareGeom.trimInset == 0 && !bytesContain barePdf "/TrimBox" &&
+    (bare.page.drawn.size == 8 && bare.page.boxes.isEmpty && !bytesContain barePdf "/TrimBox" &&
      !(bareDs.any fun d => d.code == DiagCode.W0104.code))
   let (lone, _) := elabStr (pre ("\\AddToHook{shipout/background}" ++
     "{\\put(0pt,-\\paperh){\\color{allplates}\\put(\\bl,\\bl){\\rule{\\stub}{\\hair}}}}"))
   let loneGeom := Layout.Geom.ofPage lone.page
-  t "a drawing that marks no trim declares none"
-    (Layout.drawnTrim lone.page == none && loneGeom.trimInset == 0)
-  t "and ships as drawn, from the medium's corner"
+  t "a lone drawn rule ships as drawn, from the medium's corner"
     ((layoutOf oneFace lone loneGeom).pages.all fun p => p.fills.any fun f =>
       f.x == bl && f.w == Dim.mm 1 && f.h == hair && f.y == lone.page.height - bl - hair)
   let stub (ink : String) : String := pre ("\\AddToHook{shipout/background}" ++

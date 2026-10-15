@@ -892,6 +892,135 @@ private def exprParse (toks : Array ETok) : Except String LenExpr := do
   | some (.scalar _ _), 1 => throw "a bare number in a length expression needs a unit"
   | _, _ => throw "malformed expression"
 
+/-- Inches per unit, exactly as the engine reads the unit everywhere (`unitScale`), so a point is a
+big point; `none` for a font-relative or unknown unit. -/
+public def unitInches (u : String) : Option Rat :=
+  (unitScale u).map fun (n, d) => (n : Rat) / ((d : Rat) * 72 * (spPerPt : Rat))
+
+/-- An operand of an exact evaluation: a bare number, or a length in inches. -/
+private inductive XVal where
+  | scalar (v : Rat)
+  | len (v : Rat)
+
+private def xApply (op : Char) (a b : XVal) : Option XVal :=
+  match op, a, b with
+  | '+', .len x, .len y => some (.len (x + y))
+  | '-', .len x, .len y => some (.len (x - y))
+  | '+', .scalar x, .scalar y => some (.scalar (x + y))
+  | '-', .scalar x, .scalar y => some (.scalar (x - y))
+  | '*', .scalar x, .len y => some (.len (x * y))
+  | '*', .len x, .scalar y => some (.len (x * y))
+  | '*', .scalar x, .scalar y => some (.scalar (x * y))
+  | '/', .len x, .scalar y => if y == 0 then none else some (.len (x / y))
+  | '/', .scalar x, .scalar y => if y == 0 then none else some (.scalar (x / y))
+  | _, _, _ => none
+
+private def xPop (vals : Array XVal) (op : Char) : Option (Array XVal) :=
+  if op == 'u' then
+    vals.back?.map fun x => match x with
+      | .scalar v => vals.pop.push (.scalar (-v))
+      | .len v => vals.pop.push (.len (-v))
+  else
+    match vals.back?, vals.pop.back? with
+    | some b, some a => (xApply op a b).map fun v => vals.pop.pop.push v
+    | _, _ => none
+
+/-- Stacks `c` after applying every stacked operator binding at least as tightly. -/
+private def xPush (vals : Array XVal) (ops : Array Char) (c : Char) :
+    Option (Array XVal × Array Char) := do
+  let mut vals := vals
+  let mut ops := ops
+  for _ in [0:ops.size + 1] do
+    match ops.back? with
+    | some top =>
+      if top != '(' && top != 'd' && opPrec top ≥ opPrec c then
+        vals ← xPop vals top
+        ops := ops.pop
+      else break
+    | none => break
+  return (vals, ops.push c)
+
+/-- Applies stacked operators down to the bracket `stop`, which it removes. -/
+private def xClose (vals : Array XVal) (ops : Array Char) (stop : Char) :
+    Option (Array XVal × Array Char) := do
+  let mut vals := vals
+  let mut ops := ops
+  for _ in [0:ops.size + 1] do
+    match ops.back? with
+    | some top =>
+      ops := ops.pop
+      if top == stop then return (vals, ops)
+      if top == '(' || top == 'd' then failure
+      vals ← xPop vals top
+    | none => failure
+  failure
+
+/-- A length expression's exact value in inches, every unit as `unitInches` reads it and every name
+through `look`, with no rounding at any step; `none` outside the grammar `exprParse` reads or at a
+font-relative unit. -/
+public def exactLength (look : String → Option Rat) (s : String) : Option Rat := do
+  let toks ← exprToks s.trimAscii.toString
+  let mut vals : Array XVal := #[]
+  let mut ops : Array Char := #[]
+  let mut prev := false
+  for t in toks do
+    match t with
+    | .num m sc =>
+      if prev then failure
+      vals := vals.push (.scalar ((m : Rat) / (sc : Rat)))
+      prev := true
+    | .ident n =>
+      match vals.back?, prev with
+      | some (.scalar v), true =>
+        match unitInches n with
+        | some u => vals := vals.pop.push (.len (v * u))
+        | none => vals := vals.pop.push (.len (v * (← look n)))
+      | _, true => failure
+      | _, false =>
+        vals := vals.push (.len (← look n))
+        prev := true
+    | .dimexpr =>
+      if prev then failure
+      ops := ops.push 'd'
+    | .relax =>
+      unless prev do failure
+      let (v, o) ← xClose vals ops 'd'
+      vals := v
+      ops := o
+    | .plus | .minus =>
+      if prev then
+        let (v, o) ← xPush vals ops (if t == ETok.minus then '-' else '+')
+        vals := v
+        ops := o
+        prev := false
+      else if t == ETok.minus then ops := ops.push 'u'
+    | .times | .divide =>
+      unless prev do failure
+      let (v, o) ← xPush vals ops (if t == ETok.times then '*' else '/')
+      vals := v
+      ops := o
+      prev := false
+    | .lparen =>
+      if prev then failure
+      ops := ops.push '('
+    | .rparen =>
+      unless prev do failure
+      let (v, o) ← xClose vals ops '('
+      vals := v
+      ops := o
+  unless prev do failure
+  for _ in [0:ops.size + 1] do
+    match ops.back? with
+    | some '(' => failure
+    | some 'd' => ops := ops.pop
+    | some top =>
+      vals ← xPop vals top
+      ops := ops.pop
+    | none => break
+  match vals.toList with
+  | [.len v] => return v
+  | _ => failure
+
 /-- Parses one length expression without resolving its references. -/
 public def parseLengthSyntax (s : String) : Except String LenExpr := do
   let some toks := exprToks s.trimAscii.toString

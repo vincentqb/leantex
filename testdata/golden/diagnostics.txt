@@ -673,8 +673,8 @@
   class option 'draft' asks for a proofing mode the engine does not have; the document is rendered in full
 ── W0357 (config) a definition is expansion-time TeX; refused by design
 ⚠ [W0357] - \edef
-  '\edef' defines by expanding at definition time; the engine has no expansion step, so the definition is skipped
-  suggestion: \define \name(...) {body} declares typed commands
+  '\edef' expands its text where it is defined; this text reaches past what the engine expands, so it is skipped
+  suggestion: an edef expands text, lengths, '\the', '\number', '\strip@pt', '\dimexpr' and the document's macros; \define \name(...) {body} declares the rest
 ⚠ [W0357] - \def
   '\def' with a delimited parameter text is a TeX scanning program; the definition is skipped
   suggestion: \define \name(...) {body} declares typed commands
@@ -968,6 +968,15 @@
 ⚠ [W0441] - \definespotcolor
   the ink 'Probe Ink' is declared again with another alternate; its first alternate stands
   suggestion: a colorant names one ink: give each ink its own colorant, as \definespotcolor{name}{Other Ink}{c,m,y,k}
+── W0442 (degraded) a declared page box outside the page's medium or with no area there; the PDF writes it inside the medium, or not at all
+⚠ [W0442] - \page
+  the TrimBox reaches past the page's medium; it is written inside it
+  [9 9 700 400] against the medium's [0 0 612 792]
+  suggestion: keep the box within the medium, '[0 0 612 792]' in PDF points
+── W0443 (degraded) a page attribute the engine does not write: an entry other than a page box, a box that is not four numbers, or text that is not literal PDF
+⚠ [W0443] - \AddToHook
+  the page attribute /Rotate is not a page box; the engine writes the page dictionary itself, without it
+  suggestion: a page attribute's '/TrimBox', '/BleedBox', '/ArtBox' and '/CropBox' are written; '\page' declares the rest of the page
 ── W0601 (degraded) image unreadable or not found; placeholder box placed
 ⚠ [W0601]
   image file not found: 'figures/plot.png'; a placeholder box holds its place

@@ -216,7 +216,7 @@ def packageOptionChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
         (ds.all fun d => d.severity == .note && d.refused.isNone)
 
     for (name, body, code) in [
-        ("expanding-definition", "\\edef\\optionprobe{Unused}", "W0357"),
+        ("expanding-definition", "\\edef\\optionprobe{\\csname x\\endcsname}", "W0357"),
         ("package-error", "\\PackageError{pkgoptionsprobe}{Unused}{Unused}", "W0387"),
         ("lua", "\\directlua{error('unused')}", "W0104")] do
       let decl := "\\DeclareOption*{" ++ body ++ "}\\ProcessOptions*\\relax"

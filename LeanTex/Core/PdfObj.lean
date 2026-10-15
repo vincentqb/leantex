@@ -106,7 +106,14 @@ def readToken (b : ByteArray) (i : Nat) : Except String (Token × Nat) := do
     let (raw,j) := PdfLex.scanNumber b i
     if raw.contains '.' then return (.value (.real raw), j)
     match raw.toInt? with
-    | none => throw s!"malformed PDF: unreadable number '{raw}'"
+    | none =>
+      -- An integer may lead with a plus sign (§7.3.3).
+      match raw.toList with
+      | '+' :: ds@(_ :: _) =>
+        if ds.all Char.isDigit then
+          return (.value (.int (ds.foldl (fun n c => n * 10 + (c.toNat - 48)) 0 : Nat)), j)
+        else throw s!"malformed PDF: unreadable number '{raw}'"
+      | _ => throw s!"malformed PDF: unreadable number '{raw}'"
     | some n =>
       if n ≥ 0 then
         match PdfLex.tryRef b j with

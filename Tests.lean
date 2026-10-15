@@ -92,6 +92,7 @@ import Tests.PaletteData
 import Tests.PaletteDefaults
 import Tests.Schemes
 import Tests.SpotColor
+import Tests.PageBoxes
 import Tests.DeclaredColors
 import Tests.BlockBody
 import Tests.BlockRegionFit
@@ -627,6 +628,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   cutMarkChecks ref oneFace
   drawnMarkChecks ref oneFace
   Tests.SpotColor.checks ref oneFace
+  Tests.PageBoxes.checks ref oneFace
   pdfVersionChecks ref oneFace
   driverOptionChecks ref oneFace
   posterChecks ref oneFace

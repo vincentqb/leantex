@@ -59,9 +59,8 @@ public structure Geom where
   marks : Bool := false
   markGap : Sp := Ir.cutMarkGap
   markThick : Sp := Ir.cutMarkThickness
-  /-- How far inside the medium the trim cut by the
-  document's own drawn marks lies (`drawnTrim`). -/
-  trimInset : Sp := 0
+  /-- The page boxes the document declares, written as declared within the medium. -/
+  boxes : Array Ir.PageBox := #[]
   /-- The band a page footer reserves above the bottom margin
   (`furnitureBand`); zero when the margin holds it. -/
   footBand : Sp := 0
@@ -722,23 +721,6 @@ public theorem cutmarks_symmetric_mem (W H b g t : Int) (c : Ir.Color) :
       (.tail _ (.tail _ (.tail _ (.tail _ (.tail _ (.tail _ (.head _))))))),
       h.2.2.2, rfl, rfl, rfl⟩
 
-/-- The trim a `trimMarked` page with no declared bleed declares by
-drawing exactly `cutMarks` of one trim: its inset, gap and thickness. -/
-public def drawnTrim (spec : Ir.PageSpec) : Option (Sp × Sp × Sp) := do
-  guard (spec.bleed == 0 && spec.trimMarked && spec.drawn.size == 8)
-  let lead ← spec.drawn.foldl (fun m r =>
-    if r.y == 0 && r.w < r.h && m.all (r.x < ·.x) then some r else m) none
-  let t := lead.w
-  let b := lead.x + t / 2
-  let g := b - lead.h
-  guard (t % 2 == 0 && 0 < t && 0 ≤ g && t ≤ 2 * g && g < b)
-  let marks := cutMarks (spec.width - 2 * b) (spec.height - 2 * b) b g t Ir.Color.black
-  let same (r : Ir.DrawnRule) (f : Fill) : Bool :=
-    r.x == f.x + b && r.y == f.y + b && r.w == f.w && r.h == f.h
-  guard (spec.drawn.all fun r => marks.any (same r ·))
-  guard (marks.all fun f => spec.drawn.any (same · f))
-  return (b, g, t)
-
 /-- Resolve a document's `\page` declaration into layout
 geometry, the one source layout reads geometry from. -/
 public def Geom.ofPage (spec : Ir.PageSpec) (base : Geom := {}) : Geom :=
@@ -760,7 +742,7 @@ public def Geom.ofPage (spec : Ir.PageSpec) (base : Geom := {}) : Geom :=
     marks := spec.marks
     markGap := spec.markGap
     markThick := spec.markThickness
-    trimInset := ((drawnTrim spec).map (·.1)).getD 0
+    boxes := spec.boxes
     scale := spec.scale
     skips := spec.skipScale
     raggedFil := spec.raggedFil }
@@ -995,6 +977,8 @@ public structure PageOut where
   links : Array LinkRect := #[]
   /-- Picture ink, one per picture, painted after the fills and before the text. -/
   inks : Array InkOut := #[]
+  /-- The rules a foreground hook draws, painted over everything else. -/
+  front : Array Fill := #[]
   /-- The chrome footer's slots this page carries, resolved at
   collection; `none` where the page carries no declared furniture. -/
   foot : Option (Array Ir.BandSlot) := none
@@ -1022,7 +1006,7 @@ public structure PageOut where
 /-- A page that shows nothing: no line, no fill and no
 placed picture ink; every emptiness test reads this. -/
 @[expose] public def PageOut.blank (p : PageOut) : Bool :=
-  p.lines.isEmpty && p.fills.isEmpty && p.inks.isEmpty
+  p.lines.isEmpty && p.fills.isEmpty && p.inks.isEmpty && p.front.isEmpty
 
 public def PageOut.frameStamp (p : PageOut) : FrameStamp :=
   (p.frameOrigin, p.frame, p.foot)
@@ -17659,15 +17643,23 @@ private theorem sourceBound_runPost {n : Nat} (sh : Shipped)
     exact h p hp l hl
 
 /-- Append the derived cut-mark fills after every shipped
-page's own fills, so the marks paint over any background. -/
-public def addMarks (out : Out) (m : Array Fill) : Out :=
-  { out with pages := out.pages.map fun p => { p with fills := p.fills ++ m } }
+page's own fills, so the marks paint over any background, and the rules a foreground hook draws
+over everything. -/
+public def addMarks (out : Out) (m : Array Fill) (front : Array Fill := #[]) : Out :=
+  { out with pages := out.pages.map fun p => { p with fills := p.fills ++ m, front := p.front ++ front } }
 
-public theorem addMarks_mem (out : Out) (m : Array Fill) (p : PageOut)
-    (hp : p ∈ (addMarks out m).pages) :
+public theorem addMarks_mem (out : Out) (m front : Array Fill) (p : PageOut)
+    (hp : p ∈ (addMarks out m front).pages) :
     ∃ q ∈ out.pages, p.fills = q.fills ++ m := by
   obtain ⟨q, hq, rfl⟩ := Array.mem_map.mp hp
   exact ⟨q, hq, rfl⟩
+
+/-- The rules a document draws on each page, under the content or over it as `front` asks. -/
+private def drawnFills (geom : Geom) (doc : Doc) (front : Bool) : Array Fill :=
+  (doc.page.drawn.filter (·.front == front)).map fun r =>
+    ({ x := r.x - geom.bleed, y := r.y - geom.bleed, w := r.w, h := r.h,
+       color := (doc.palette.resolve r.color).getD Ir.Color.black }
+      : Fill)
 
 /-- The mark fills a document's pages take: the derived eight when marks are declared
 and fit the bleed, in the registration colour, then the rules the document drew. -/
@@ -17676,10 +17668,9 @@ private def markFillsOf (geom : Geom) (doc : Doc) : Array Fill :=
       cutMarks geom.pageW geom.pageH geom.bleed geom.markGap geom.markThick
         (Ir.Color.registration (doc.palette.entries.any (·.2.cmyk.isSome)))
     else #[]
-  marks ++ doc.page.drawn.map fun r =>
-    ({ x := r.x - geom.bleed, y := r.y - geom.bleed, w := r.w, h := r.h,
-       color := (doc.palette.resolve r.color).getD Ir.Color.black }
-      : Fill)
+  let drawn := drawnFills geom doc false
+  marks ++ drawn
+
 
 /-- W0304 for each colour a drawn rule names that resolves to nothing, once per name. -/
 public def drawnInkDiags (doc : Doc) : Array Diag :=
@@ -18830,7 +18821,7 @@ private theorem census_close {n : Nat} (pick : Option Nat → Bool → Bool)
     have he : (Spacing.Page.cur b).lines = #[] := by
       have hb := (Bool.or_eq_false_iff.mp (Bool.eq_false_iff.mpr hn)).1
       simp only [PageOut.blank, Bool.not_eq_false', Bool.and_eq_true, Array.isEmpty_iff] at hb
-      exact hb.1.1
+      exact hb.1.1.1
     simp only [Spacing.Page.census, pageCensus, he, Array.toList_empty, List.flatMap_nil, List.append_nil]
 
 private theorem clean_close (b : B) :
@@ -18972,6 +18963,7 @@ public def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc
     (pictureSpans : Array (Nat × Span) := #[]) : Out :=
   let (doc, diags) := resolveDocMath fs doc
   let out := addMarks (runCore geom fs pats doc imgs frameSpans pictureSpans) (markFillsOf geom doc)
+    (drawnFills geom doc true)
   { out with diags := diags ++ out.diags }
 
 /-- The body index of the `k`-th block `pdfView` keeps, inverting `frameSpansForPdf`. -/
@@ -19671,10 +19663,12 @@ public theorem page_background_survives
           f.h = geom.pageH + 2 * geom.bleed := by
   intro p hp
   change p ∈ (addMarks (runCore geom fs pats (resolveDocMath fs doc).1 imgs)
-    (markFillsOf geom (resolveDocMath fs doc).1)).pages at hp
+    (markFillsOf geom (resolveDocMath fs doc).1)
+    (drawnFills geom (resolveDocMath fs doc).1 true)).pages at hp
   obtain ⟨p0, hp0, hpf⟩ := addMarks_mem
     (runCore geom fs pats (resolveDocMath fs doc).1 imgs)
-    (markFillsOf geom (resolveDocMath fs doc).1) p hp
+    (markFillsOf geom (resolveDocMath fs doc).1)
+    (drawnFills geom (resolveDocMath fs doc).1 true) p hp
   obtain ⟨f, hf, hx, hy, hw, hh⟩ := runCore_bg geom fs pats (resolveDocMath fs doc).1 imgs hbg hepoch p0 hp0
   have hf0 : f ∈ p0.fills := Array.mem_toList_iff.mp hf
   have hfp : f ∈ p.fills.toList := by

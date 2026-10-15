@@ -2049,13 +2049,17 @@ public def prepare (geom : Geom) (fs : FontSet) (pages : Array PageOut)
     (t.figDictId j, (figDictObj (nameRes figs r)).getD .null)
   let pageDict (i : Nat) : PdfRead.Obj :=
     let b := geom.bleed
-    -- A trim the document's own marks cut lies the inset inside the page.
-    let inset := if b == 0 then geom.trimInset else 0
-    let (media, bleedBox, trim) :=
-      if 0 < inset then pageBoxes (geom.pageW - 2 * inset) (geom.pageH - 2 * inset) inset
-      else pageBoxes geom.pageW geom.pageH b
-    let boxes : Array (String × PdfRead.Obj) := if b == 0 && !(0 < inset) then #[] else
-      #[("TrimBox", trim.obj), ("BleedBox", bleedBox.obj), ("ArtBox", trim.obj)]
+    let (media, bleedBox, trim) := pageBoxes geom.pageW geom.pageH b
+    -- A declared box stands for its kind inside the medium; a bleed derives the rest, the art the trim.
+    let declared := Ir.PageBox.shipped geom.boxes media.x1 media.y1
+    let rect (k : Ir.BoxKind) : Option Rect :=
+      (declared.find? (·.kind == k)).map fun c => ⟨c.x0, c.y0, c.x1, c.y1⟩
+    let bled (r : Rect) : Option Rect := if b == 0 then none else some r
+    let trimR := (rect .trim).orElse fun _ => bled trim
+    let boxes : Array (String × PdfRead.Obj) :=
+      #[("TrimBox", trimR), ("BleedBox", (rect .bleed).orElse fun _ => bled bleedBox),
+        ("ArtBox", (rect .art).orElse fun _ => trimR.bind bled), ("CropBox", rect .crop)].filterMap
+        fun (k, r) => r.map ((k, ·.obj))
     -- `/StructParents` (§14.7.5.4): the page's key in the parent tree.
     let ann := annots i
     .dict (#[("Type", PdfRead.Obj.name "Page"), ("Parent", .ref 2 0), ("MediaBox", media.obj)]

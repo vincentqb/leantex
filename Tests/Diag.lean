@@ -411,6 +411,8 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
       { lean := "4.34.1", errors := 0, binders := #[]
         decls := #[{ name := "t", kind := .theorem, prop := true, start := (2, 0), stop := (2, 26)
                      type := some (.apps (.const "True") []) }] })).2
+  | .W0442 => dvE (w := w) (dvDoc "\\page{ trimbox = \"9 9 700 400\" }\n" "x")
+  | .W0443 => dvE (w := w) (dvDoc "\\AddToHook{shipout/before}{\\pdfvariable pageattr{/Rotate 90}}\n" "x")
   | .W0317 => dvE (w := w) ("\\documentclass{card}\n\\runninghead{name}\n" ++
       "\\begin{document}\nx\n\\end{document}")
   | .W0318 => dvE (w := w) (dvDoc "\\chrome{ footer = { left = \\sectiontitle } }\n" "x")
@@ -596,7 +598,7 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
     dvE (w := w) ("\\documentclass{beamer}\n\\usepackage[debug,size=a1]{beamerposter}\n" ++
       "\\begin{document}\n\\begin{frame}{T}\nx\n\\end{frame}\n\\end{document}")
   | .W0357 =>
-    dvE (w := w) (dvDoc "\\edef\\x{y}\n" "x") ++
+    dvE (w := w) (dvDoc "\\edef\\x{\\csname y\\endcsname}\n" "x") ++
     dvE (w := w) (dvDoc "\\def\\pair#1.#2{#1 and #2}\n" "x")
   | .W0361 =>
     dvE (w := w) (dvDoc "\\title{T}\\newcommand{\\maketitle}{\\venuetitlebox}\n" "\\maketitle")
@@ -1264,7 +1266,7 @@ def repeatFoldUnexercised : List (String × String) :=
     ["W0007", "W0101", "W0102", "W0103", "W0104", "W0106", "W0111", "W0202", "W0303", "W0306",
      "W0312", "W0316", "W0317", "W0318", "W0319", "W0328", "W0329", "W0330", "W0331", "W0342",
      "W0343", "W0348", "W0354", "W0355", "W0357", "W0361", "W0363", "W0367", "W0368", "W0369",
-     "W0373", "W0387", "W0398"] ++
+     "W0373", "W0387", "W0398", "W0442", "W0443"] ++
   unexercisedAs "its construct is a class option, which the repetition does not write twice"
     ["W0356"] ++
   unexercisedAs "its witness is the emitter's own record, with no source to write twice"

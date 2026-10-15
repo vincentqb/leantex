@@ -1321,13 +1321,17 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
       ["W0104"])
   t "compat def defines through its body"
     (errCodes (pre "\\makeatletter\\def\\verbatim@font{\\footnotesize\\ttfamily}\\makeatother") == [])
-  -- A plain `\def` with undelimited parameters rewrites onto `\define`; `\edef` and delimited parameters are refused (W0357).
+  -- A plain `\def` with undelimited parameters rewrites onto `\define`; an `\edef` past the expanded subset and delimited parameters are refused (W0357).
   t "compat plain def with parameters expands at its uses"
     ((elabStr ("\\documentclass{article}\\def\\both#1#2{#1 and #2}" ++
       "\\begin{document}\\both{a}{b}\\end{document}")).1.body ==
       #[.para #[.role "both" #[.text "a and b"]]])
-  t "compat edef is refused by name"
-    (warnCodes (pre "\\edef\\x{y}") == ["W0357"])
+  t "compat edef past what the engine expands is refused by name"
+    (warnCodes (pre "\\edef\\x{\\csname y\\endcsname}") == ["W0357"])
+  t "compat edef of text defines its text"
+    (warnCodes (pre "\\edef\\x{y}") == [] &&
+      (elabStr ("\\documentclass{article}\\edef\\x{y}" ++
+        "\\begin{document}\\x\\end{document}")).1.body == #[.para #[.text "y"]])
   t "compat delimited def is refused by name"
     (warnCodes (pre "\\def\\pair#1.#2{#1 and #2}") == ["W0357"])
   t "compat providecommand keeps the existing definition"
