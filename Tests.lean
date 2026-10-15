@@ -806,6 +806,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   alertOverlayChecks ref oneFace
   deckStepChecks ref oneFace
   deckRangeEndChecks ref oneFace
+  deckStillChecks ref
   deckAltChecks ref oneFace
   deckOverprintChecks ref oneFace
   deckOverprintDegradeChecks ref oneFace

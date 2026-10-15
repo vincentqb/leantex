@@ -2150,9 +2150,11 @@ def deckStepChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
      count ".snap { flex: 0 0 100vw; height: 100dvh; }" == 1 &&
      count "[data-snap] { scroll-snap-align: start; scroll-snap-stop: always; }" == 1 &&
      count "ltx-push" == 0)
-  t "the covered from-state has its explicit active endpoint"
-    (count ("@keyframes ltx-uncover { to { opacity: 100%; transform: none } " ++
-       "from { opacity: 31%; transform: translateX(var(--motiondistance, 1rem)); } }") == 1)
+  t "the covered from-state has its explicit active endpoint, a fade alone"
+    (count "@keyframes ltx-uncover { to { opacity: 100% } from { opacity: 31%; } }" == 1)
+  t s!"no step keyframe moves content: each a step runs sets opacity alone ({stepAnimations html})"
+    (stepAnimations html == ["ltx-uncover", "ltx-recover"] && stepsStandStill html &&
+      count "motiondistance" == 0)
   t "no view(): the floor covers only under script and uncovers by data-snapped"
     (count ("@supports not (animation-timeline: view()) {\n" ++
        "html[data-deck-script] .step:not([data-step=\"1\"]) { opacity: 31%; }") == 1 &&
@@ -2172,6 +2174,18 @@ def deckStepChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
      count ".step { opacity: 100%; }" == 1 &&
      (((html.splitOn "@media print").drop 1).all fun s =>
       ((((s.splitOn "\n}\n").headD "").splitOn "ltx-uncover").length == 1)))
+
+/-- Every corpus deck's steps fade in and out where they stand, at their share or from nothing. -/
+def deckStillChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let mut stepped := 0
+  for name in goldenNames do
+    let (doc, _) ← goldenDoc name
+    if doc.docClass != .slides then continue
+    let (html, _) := HtmlDoc.emit {} doc
+    if !(stepAnimations html).isEmpty then stepped := stepped + 1
+    check ref s!"still steps: {name}'s step keyframes set opacity alone ({stepAnimations html})"
+      (stepsStandStill html)
+  check ref s!"still steps: the corpus ships stepped decks ({stepped})" (0 < stepped)
 
 /-- A range's end is honoured in both artifacts: `\uncover<2-3>` is pending on steps 1 and 4. -/
 def deckRangeEndChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
@@ -2198,6 +2212,8 @@ def deckRangeEndChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
         attrs.contains ("class", "step") && attrs.contains ("data-step", "2") &&
         attrs.contains ("data-step-last", "3") && attrs.contains ("style", "--step: 2") &&
         attrs.contains ("data-steps", "2 3")))
+  t s!"the range's steps fade in and out where they stand ({stepAnimations html})"
+    (stepAnimations html == ["ltx-uncover", "ltx-recover"] && stepsStandStill html)
   t "the end carrier dims again past the range, on both paths"
     (has "@keyframes ltx-recover { from { opacity: 100% } to { opacity: " &&
      has ".step-end { animation: ltx-recover linear both; animation-timeline: --frame;" &&

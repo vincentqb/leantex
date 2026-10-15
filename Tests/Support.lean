@@ -1188,6 +1188,38 @@ def censusOf (coveredColors : Array Ir.Color) (out : Layout.Out) (imgs : Image.S
 
 def hasStr (hay needle : String) : Bool := (hay.splitOn needle).length > 1
 
+/-- The animations a stylesheet's step rules run: each `animation:` of a rule whose selector names
+a step, `none` aside. -/
+def stepAnimations (css : String) : List String :=
+  ((css.splitOn "\n").filterMap fun l =>
+    if !hasStr ((l.splitOn "{").headD "") ".step" then none
+    else match (l.splitOn "animation: ").drop 1 with
+      | rest :: _ =>
+        let n := (rest.takeWhile fun c => c.isAlphanum || c == '-').toString
+        if n.isEmpty || n == "none" then none else some n
+      | [] => none).eraseDups
+
+/-- The properties a stylesheet's `@keyframes` block of that name sets, in order. -/
+def keyframeProps (css name : String) : Option (List String) := do
+  let rest ← ((css.splitOn s!"@keyframes {name} ").drop 1).head?
+  let (_, body, _) := rest.toList.foldl (init := ((0 : Nat), "", false)) fun (depth, acc, done) c =>
+    if done then (depth, acc, done)
+    else if c == '{' then (depth + 1, acc.push c, false)
+    else if c == '}' then (depth - 1, acc.push c, depth == 1)
+    else (depth, acc.push c, false)
+  let (segs, last) := body.toList.foldl (init := (([] : List String), "")) fun (out, cur) c =>
+    if c == '{' || c == '}' || c == ';' then (cur :: out, "") else (out, cur.push c)
+  pure ((last :: segs).reverse.filterMap fun seg =>
+    match seg.splitOn ":" with
+    | p :: _ :: _ => some p.trimAscii.toString
+    | _ => none)
+
+/-- Whether every keyframes a stylesheet's steps run sets opacity alone, so a step fades where it
+stands. -/
+def stepsStandStill (css : String) : Bool :=
+  (stepAnimations css).all fun n =>
+    (keyframeProps css n).any fun ps => !ps.isEmpty && ps.all (· == "opacity")
+
 /-- Span equality with the provenance `==` ignores: the macro origins and the authored token. -/
 def exactSpan (a b : Span) : Bool :=
   a == b && a.pos.origins == b.pos.origins && a.pos.command == b.pos.command

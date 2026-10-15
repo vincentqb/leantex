@@ -3092,12 +3092,10 @@ private def stepSnapSize : DeckRule :=
     decls := [("flex", "0 0 100vw"), ("height", "100dvh")]
     requires := .supported .viewTimeline }
 
-/-- The uncover's keyframes: a covered step dimmed and offset, the `to` frame fully restored. -/
+/-- The uncover's keyframes: a covered step fades in from its covered share, standing still. -/
 private def stepKeyframes (coveredPct : Nat) : DeckRule :=
-  { selector := [.lit "@keyframes ltx-uncover \
-{ to { opacity: 100%; transform: none } from"]
-    decls := [("opacity", s!"{coveredPct}%"),
-      ("transform", "translateX(var(--motiondistance, 1rem))")]
+  { selector := [.lit "@keyframes ltx-uncover { to { opacity: 100% } from"]
+    decls := [("opacity", s!"{coveredPct}%")]
     requires := .supported .viewTimeline }
 
 /-- The steps' uncover: each step fades in during the scroll to its snap. -/
