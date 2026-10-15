@@ -6816,6 +6816,14 @@ private def engineLengthTokensOfPage (page : PageSpec) :
     ("baselineskip", { width := Dim.Length.ofSp (Ir.baselineSkipOf page) }),
     ("parskip", Ir.texParskipOf page)]
 
+/-- A class's abstract form under its options: `titlepage` moves a quotation onto a title page,
+`notitlepage` winning as the classes declare it last. -/
+private def abstractFormUnder (form : Ir.AbstractForm) (opts : List String) : Ir.AbstractForm :=
+  if form == .inset then form
+  else if opts.contains "notitlepage" then .quotation
+  else if opts.contains "titlepage" then .titlePage
+  else form
+
 /-- The engine length tokens the preamble may read: those whose value the
 declared page or the class already fixes. -/
 private def engineLengthTokens (docClass : Ir.DocClass) (classOptions : String)
@@ -7465,6 +7473,15 @@ private def envBodySizeList (acc : Option String) : List Raw → Option String
   | _ :: rest => envBodySizeList acc rest
 termination_by l => sizeOf l
 decreasing_by raws_dec
+
+/-- Whether a redefined environment's begin body leaves a quotation open for its end body to
+close, as `\begin{quote}` or `\quotation` does. -/
+private def opensQuotation : List Raw → Bool
+  | [] => false
+  | .env n _ _ :: rest =>
+    ["quote", "quotation"].any (some · == Parse.splitOpen? n) || opensQuotation rest
+  | .ctrl n _ :: rest => n == "quote" || n == "quotation" || opensQuotation rest
+  | _ :: rest => opensQuotation rest
 
 /-- latex.ltx commands that set no ink, with how many argument groups each
 takes. -/
@@ -9222,8 +9239,8 @@ private def flowStyleArm (ctx : Ctx) (n : String) (raws : Array Raw)
     have hj := skipSpaces_ge raws start
     match raws[j]? with
     | some (.group body _) =>
-      -- A length the class fixes at load stays fixed as the preamble's are, one value per backend.
-      let tk := ctx.preamble.fixLoadLengths
+      -- A list margin stays fixed as the preamble's are, one value per backend.
+      let tk := ctx.preamble.fixLengths Ir.leftMarginNamed
         (← applyTokens ctx ctx.tokens (rawSrc body) pos (engine := ctx.engineTokens))
       modify fun st => { st with flowTokens := some tk, flowGen := st.flowGen + 1 }
       return (⟨{ ctx with tokens := tk }, rfl, rfl, rfl, rfl⟩,
@@ -13797,6 +13814,8 @@ public structure PreState where
   sawTheme : Bool := false
   /-- The frame-alignment keys the installed theme sets. -/
   frameKeys : Ir.FrameKeys := .beamer
+  /-- The form a refused abstract redefinition sets its body in, where it opens a quotation. -/
+  abstractForm : Option Ir.AbstractForm := none
 
 /-- An optional `[...]` run at `j` and the index past it; an unclosed run
 reaches the end. -/
@@ -14361,18 +14380,26 @@ public def applyDecl (s : PreState) (d : PDecl) : EM PreState := do
           ((beginB.map fun b => envHeadWords #[] false 0 b.toList).getD #[]).toList
         let replaced := if written.isEmpty || written == word then ""
           else s!"; its heading reads '{word}', not '{written}'"
+        let quoted := envName == "abstract" && beginB.any (opensQuotation ·.toList)
         modify fun st => { st with diags := st.diags.push (Diag.of .W0303
-          (match est, heading with
-           | some _, some _ =>
+          (match est, heading, quoted with
+           | some _, some _, true =>
+             s!"'\{{envName}}' is built in; this definition's heading, body size and quotation \
+margins style it, the built-in's body font and vertical skips stand{replaced}"
+           | some _, some _, false =>
              s!"'\{{envName}}' is built in; this definition's heading and body size style it, \
 the built-in's margins, body font and vertical skips stand{replaced}"
-           | some _, none =>
+           | some _, none, true =>
+             s!"'\{{envName}}' is built in; of this definition only its body size and quotation \
+margins are read, the built-in's heading stands{replaced}"
+           | some _, none, false =>
              s!"'\{{envName}}' is built in; of this definition only its body size is read, \
 the built-in's heading and margins stand{replaced}"
-           | none, _ =>
+           | none, _, _ =>
             s!"'\{{envName}}' is built in; this definition is ignored")
           (some ⟨s.ctx.file, npos⟩)
           (help := "the built-in already does this; \\define it under another name")) }
+        let s := if quoted then { s with abstractForm := some .quotation } else s
         match est with
         | some est =>
           let merged := Theme.styleMerge ((s.styles.find? "abstract").getD {}) est
@@ -15772,6 +15799,7 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
       docClass := docClass
       surface := surface
       classOptions := classOptions
+      abstractForm := s.abstractForm.getD (abstractFormUnder record.abstractForm classOpts)
       page := page
       fonts := fonts
       palette := palette

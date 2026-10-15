@@ -4112,7 +4112,7 @@ def listIndentChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
 
 /-- A list's margin where a body length, a level macro naming another level's or none, a declared
 indent or the class's abstract decides it, and a deep level's spacing named. -/
-def listReviewChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+def listMarginChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let place (src : String) (w : String) : Option Dim.Sp := do
     let (d, _) := elabStr src
@@ -4153,21 +4153,94 @@ def listReviewChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
   let sheet := html declared
   t "a declared indent is its type's at its level, in the page's unit, over the depth's default"
     (place declared "Bravo" == some (Dim.pt 65) &&
-      hasStr sheet "ul:not(ul ul) { padding-left: 4rem; }" &&
+      hasStr sheet "\nul { padding-left: 4rem; }" &&
       hasStr sheet ":where(ul, ol, dd) { padding-left: var(--leftmargini, 2.5rem); }")
+  let typed := html (doc "\\style{itemize}{ indent = 30pt }\n\\style{itemize2}{ indent = 15pt }\n"
+    "\\begin{itemize}\n\\item Alpha.\n\\end{itemize}")
+  t "a first level's declared indent reaches every level no deeper declaration takes, as the page's"
+    (hasStr typed "\nul { padding-left: 3rem; }" &&
+      hasStr typed "\nul ul:not(ul ul ul) { padding-left: 1.5rem; }" &&
+      !hasStr typed "ul:not(ul ul) {")
+  let tabular := doc "" ("{\\small\\setlength{\\tabcolsep}{2em}\n" ++
+    "\\begin{tabular}{ll}Alpha & Bravo\\\\\\end{tabular}}")
+  t "a body table length keeps its em for the font in force, as LaTeX evaluates it there"
+    (hasStr (html tabular) "--tabcolsep: 2em" && !hasStr (html tabular) "--tabcolsep: 2rem")
   let deep := (elabStr (doc "\\makeatletter\n\\def\\@listv{\\leftmargin 10pt \\topsep 3pt}\n\\makeatother\n"
     "Words.")).2
   t "a fifth level macro's spacing is named as no list five deep reads it"
     (deep.any fun d => d.code == "W0104" && hasStr d.message "topsep")
+
+/-- The abstract sets in its class's form (`Ir.AbstractForm`): article's quotation, a title page's
+full measure, beamer's inset beside its own paragraphs alone, and a redefinition's quote. -/
+def abstractFormChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let lineOf (src : String) (w : String) : Option (Layout.Geom × Layout.LineOut) := do
+    let (d, _) := elabStr src
+    let g := Layout.Geom.ofPage d.page
+    let l ← (bodyLines (layoutOf oneFace d { g with protrude := false })).find? fun l =>
+      hasStr (lineText l) w
+    pure (g, l)
+  let place (src : String) (w : String) : Option Dim.Sp := do
+    let (g, l) ← lineOf src w
+    let r ← (lineRuns l).find? fun r => r.2.1.startsWith w
+    pure (r.2.2.1 - g.hmargin)
+  -- How far short of the measure's right edge a line's last glyph ends.
+  let short (src : String) (w : String) : Option Dim.Sp := do
+    let (g, l) ← lineOf src w
+    let r ← (lineRuns l).back?
+    pure (g.hmargin + g.textWidth - (r.2.2.1 + r.2.2.2))
+  let html (src : String) : String := (HtmlDoc.emit {} (elabStr src).1).1
+  let inAbstract := "\\begin{abstract}\nAlpha words.\n\\begin{itemize}\n\\item Bravo words.\n" ++
+    "\\end{itemize}\n\\end{abstract}\nCharlie words."
   let report := "\\documentclass{report}\\begin{document}" ++ inAbstract ++ "\n\\end{document}"
   t "a report's abstract stands on its title page as no quotation, its lists one level deep"
     (place report "Alpha" == some 0 && place report "Bravo" == some (Dim.pt 25) &&
       !hasStr (html report) "quoted\"" && hasStr (html report) "class=\"abstract")
-  let s11 := Dim.pt 1095 / 100
-  let deck := "\\documentclass{beamer}\\begin{document}\\begin{frame}[t]\n" ++ inAbstract ++
-    "\n\\end{frame}\n\\end{document}"
-  t "a deck's abstract is no list level: its lists stand one level deep"
-    (place deck "Bravo" == some (2000 * s11 / 1000))
+  let article := "\\documentclass{article}\\begin{document}" ++ inAbstract ++ "\n\\end{document}"
+  let passed := "\\PassOptionsToClass{notitlepage}{report}\n" ++ report
+  t "a notitlepage passed to report sets its abstract as the article's quotation"
+    (place article "Alpha" == some (Dim.pt 25) && place passed "Alpha" == some (Dim.pt 25) &&
+      place passed "Bravo" == place article "Bravo")
+  -- beamer's template, `\leftskip2em\rightskip2em plus 1fill` at the class's 10.95pt.
+  let em2 := 2 * (Dim.pt 1095 / 100)
+  let deck := "\\documentclass{beamer}\\begin{document}\\begin{frame}[t]\nZulu reference line " ++
+    "with enough words to run across the whole frame and wrap onto the next line.\n" ++
+    "\\begin{abstract}\nAlpha words in the abstract paragraph which runs long enough to wrap " ++
+    "across several lines of the frame.\n\\begin{itemize}\n\\item Bravo words in a list item " ++
+    "which also runs long enough to wrap across the frame here.\n\\begin{itemize}\n" ++
+    "\\item Charlie words.\n\\end{itemize}\n\\end{itemize}\nDelta words after the list in the " ++
+    "abstract which runs long enough to wrap across the frame.\n\\end{abstract}\n\\end{frame}\n" ++
+    "\\end{document}"
+  t "a deck's abstract text stands 2em in from both sides as beamer's, its lists at their own margins"
+    (place deck "Zulu" == some 0 && place deck "Alpha" == some em2 &&
+      place deck "Bravo" == some em2 && place deck "Charlie" == some (2 * em2) &&
+      place deck "Delta" == some em2 && ((short deck "Alpha").map (decide <| em2 ≤ ·)).getD false)
+  let deckDoc := (elabStr deck).1
+  let insetCss := HtmlDoc.tableLengthCss (HtmlDoc.lengthBasisOf deckDoc) (.ofSp em2)
+  t "a deck page insets its abstract's paragraphs as the deck does, and not its lists"
+    (hasStr (html deck) "class=\"abstract size-small inset" &&
+      hasStr (html deck) s!".abstract.inset > p \{ padding: 0 {insetCss}; }" &&
+      !hasStr (html deck) "quoted\"")
+  let poster := "\\documentclass{poster}\\begin{document}\\begin{frame}{An Invented Poster Probe}\n" ++
+    "Zulu reference line with enough words to run across the whole face and wrap onto the next " ++
+    "line of the poster board here and further.\n\\begin{abstract}\nAlpha words in the abstract " ++
+    "paragraph which runs long enough to wrap across several lines of the board.\n" ++
+    "\\begin{itemize}\n\\item Bravo words.\n\\end{itemize}\n\\end{abstract}\n\\end{frame}\n" ++
+    "\\end{document}"
+  let posterEm2 := 2 * (Dim.pt 2488 / 100)
+  let off (src w : String) : Option Dim.Sp := do pure ((← place src w) - (← place src "Zulu"))
+  t "a poster's abstract text stands 2em of its class size in, as beamer's template sets it"
+    (off poster "Alpha" == some posterEm2 && off poster "Bravo" == some posterEm2)
+  let redefined := "\\documentclass{report}\n\\renewenvironment{abstract}{\\vskip 0.1in" ++
+    "\\centerline{\\large\\bf Abstract}\\vspace{1ex}\\begin{quote}}{\\par\\end{quote}" ++
+    "\\vskip 2ex}\n\\begin{document}\n\\noindent Zulu reference words in the body.\n" ++
+    "\\begin{abstract}\nAlpha words in the abstract paragraph which runs long enough to wrap " ++
+    "across several lines of the page, so the measure shows on both sides of it here.\n" ++
+    "\\end{abstract}\n\\end{document}"
+  t "a report's abstract redefined on a quote keeps the quote's margins, as its refusal names"
+    (place redefined "Alpha" == some (Dim.pt 25) &&
+      ((short redefined "Alpha").map (decide <| Dim.pt 25 ≤ ·)).getD false &&
+      (elabStr redefined).2.any fun d => d.code == "W0303" && hasStr d.message "quotation margins")
 
 /-- A list right after a heading opens no `\topsep`: its first item stands where a paragraph after
 the heading stands. -/

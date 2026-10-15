@@ -5472,7 +5472,8 @@ private def listLevelDef (level : Nat) (what : String) (body : Array Raw) (pos :
         s!"TeX register arithmetic ('\\advance') is not supported; skipped" pos
   let spacing := ["topsep", "itemsep", "parsep"].filter fun n => assigns.any (·.name == n)
   if level > 4 && !spacing.isEmpty then
-    let why := s!"spaces the lists {level} deep, a depth whose spacing no level macro sets here"
+    let why := s!"spaces the lists {level} deep; past the fourth level a level macro's \
+spacing is not read"
     for n in spacing do nameParam n why pos
     became what s!"the level-{level} list margin, set where a list that deep opens" pos
   else became what s!"the level-{level} list parameters, set where a list that deep opens" pos
@@ -5487,7 +5488,7 @@ private def listOperand (run : List (String × Option String)) (lens : Array (St
     else match run.lookup r with
       | some o => o
       | none =>
-        if lens.any (·.1 == r) || (List.range 6).any fun k => Ir.leftMarginName (k + 1) == r then
+        if lens.any (·.1 == r) || Ir.leftMarginNamed r then
           some r
         else none
   | vs =>
@@ -8527,11 +8528,14 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
         KeyVal.entry o matches ("twoside", none) | ("twoside", some "true") }
     if articleClasses.contains cls || resumeClasses.contains cls then
       let native0 := if resumeClasses.contains cls then "resume" else "article"
-      -- report.cls and book.cls default to `titlepage`, where the abstract is no quotation.
-      let opt := if titlepageClasses.contains cls &&
-          !(KeyVal.items (opt.getD "")).any (fun o => o == "titlepage" || o == "notitlepage") then
-          some (match opt with | some o => o ++ ",titlepage" | none => "titlepage")
-        else opt
+      -- A title-page option passed to the class is its own; report.cls and book.cls default to
+      -- `titlepage`, where the abstract is no quotation.
+      let titleOpts := ["titlepage", "notitlepage"]
+      let passed := (← get).loads.rewriteClassPassed.toList.flatMap fun (name, options) =>
+        if name == cls then options.toList.filter titleOpts.contains else []
+      let given := (KeyVal.items (opt.getD "")).any titleOpts.contains || !passed.isEmpty
+      let extra := passed ++ (if titlepageClasses.contains cls && !given then ["titlepage"] else [])
+      let opt := if extra.isEmpty then opt else some (",".intercalate (opt.toList ++ extra))
       let o := match opt with | some o => s!"[{o}]" | none => ""
       -- A class's `\parskip` is zero unless KOMA's `parskip=` asks for a skip.
       let komaSkip := (KeyVal.items (opt.getD "")).findSome? fun kv =>

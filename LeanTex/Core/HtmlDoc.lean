@@ -103,9 +103,9 @@ public structure Config where
   /-- The document's list lineage, which list and quotation levels indent by. -/
   lists : Ir.ListLineage := .sizeFile
   /-- The class's preamble font, in which its list margins are fixed. -/
-  preamble : Ir.PreambleFace := Ir.PreambleFace.ofClass DocClass.article.record Ir.baseFontSize
-  /-- The abstract is a quotation (`Ir.Doc.abstractQuoted`). -/
-  abstractQuoted : Bool := true
+  preamble : Ir.PreambleFace := Ir.PreambleFace.article
+  /-- How the abstract's body sets (`Ir.Doc.abstractForm`). -/
+  abstractForm : Ir.AbstractForm := .quotation
   /-- The list and quotation levels around this content. -/
   listDepth : Nat := 0
   inset : Sp := 0
@@ -687,12 +687,14 @@ public theorem markerCss?_text (m : Array Inline) (r : MarkerCss)
 public def cssString (s : String) : String :=
   (s.replace "\\" "\\\\").replace "\"" "\\\""
 
-/-- A list type's selector at its type's level alone: `ul ul` not inside a third `ul`. -/
+/-- A list type's selector for its declared indent: the first level's at every level no deeper
+declaration takes, as the page reads it, a second or third at its level alone. -/
 private def typeLevelSel (tag : String) : String :=
   let parts := tag.splitOn " "
   match parts with
   | base :: _ =>
-    if (base == "ul" || base == "ol") && parts.all (· == base) && parts.length < 4 then
+    if (base == "ul" || base == "ol") && parts.all (· == base) && 1 < parts.length &&
+        parts.length < 4 then
       s!"{tag}:not({tag} {base})"
     else tag
   | [] => tag
@@ -775,7 +777,7 @@ an overlay step does not"))
     let ruleCss := if ruleDecls.isEmpty then "" else
       s!"{tag}.ruled::after \{ {String.intercalate " " ruleDecls} }\n"
     let own := if decls.isEmpty then "" else s!"{tag} \{ {String.intercalate " " decls} }\n"
-    -- A declared indent is its list type's at that type's level alone, in the page's unit.
+    -- A declared indent is its list type's, in the page's unit (`typeLevelSel`).
     let indentCss := match st.indent with
       | some g => s!"{typeLevelSel tag} \{ padding-left: {tableLengthCss (lengthBasisOf doc) g.width}; }\n"
       | none => ""
@@ -1014,6 +1016,11 @@ public def listIndentCss (l : Ir.ListLineage) (basis : LengthBasis) (face : Ir.P
     let v := s!"var(--{Ir.leftMarginName (k + 1)}, {fixed})"
     s!":where({pre}ul, {pre}ol, {pre}dd) \{ padding-left: {v}; }\n" ++
       s!":where({pre}:is(blockquote, .abstract.quoted)) \{ padding: 0 {v}; }\n")
+
+/-- beamer's abstract inset as CSS on the abstract's own paragraphs, in the page's unit as the
+preamble's font fixes it. -/
+public def abstractInsetCss (basis : LengthBasis) (face : Ir.PreambleFace) : String :=
+  s!".abstract.inset > p \{ padding: 0 {tableLengthCss basis (.ofSp (face.resolve Ir.abstractInset))}; }\n"
 
 /-- The space rules of theorem-like blocks, on the element their role's class marks. -/
 public def thmRules (l : Ir.ListLineage) (size : Int) : List GapRule :=
@@ -4507,6 +4514,8 @@ public def baseRules (doc : Doc) (pairs : List (Nat × Nat) := []) : String :=
   (if doc.surface != .tex then
     ":where(:not(pre) > code) { overflow-wrap: break-word; }\n" else "") ++
   listIndentCss doc.docClass.record.lists (lengthBasisOf doc) doc.preambleFace ++
+  (if doc.abstractForm == .inset then abstractInsetCss (lengthBasisOf doc) doc.preambleFace
+   else "") ++
   s!"li::marker \{ color: {roleRef .marker}; }\n" ++
   -- the class-default list marks per nesting level, as classes.dtx sets them
   "ul { list-style-type: disc; }\n" ++
@@ -6932,6 +6941,13 @@ public theorem pictureViewBox_projects (cfg : Config) (pic : Ir.Pic.Picture) :
   rcases h : pic.box cfg.labelMetric with ⟨⟨x0, y0⟩, ⟨x1, y1⟩⟩
   simp [pictureSvg, pictureBoxOf, h, Html.elem, pictureBox, attrOf?]
 
+/-- The abstract region's class for its form: a quotation's margins, or an inset beside its
+paragraphs alone. -/
+public def abstractFormClass : Ir.AbstractForm → String
+  | .quotation => " quoted"
+  | .titlePage => ""
+  | .inset => " inset"
+
 /-- The abstract region's classes: the engine's hook and its body's size step. -/
 public def abstractClass (styles : Ir.Styles) : String :=
   let step := Ir.abstractBodySize styles
@@ -7397,8 +7413,9 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     fillCarrier cfg (Ir.frameFillsOne cfg.lists cfg.styles .deck 0 b)
       (Html.elem "section"
         (#[Html.elem "h2" #[Html.text cfg.locale.abstract] #[("style", "text-align: center")]] ++
-          blockNodesInto (if cfg.abstractQuoted then cfg.deeper true else cfg).into #[] body.toList)
-        #[("class", abstractClass cfg.styles ++ (if cfg.abstractQuoted then " quoted" else ""))])
+          blockNodesInto (if cfg.abstractForm == .quotation then cfg.deeper true else cfg).into #[]
+            body.toList)
+        #[("class", abstractClass cfg.styles ++ abstractFormClass cfg.abstractForm)])
   | .columns cols =>
     let justify := if cols.size == 1 then "var(--ltx-box-justify, start)" else "space-between"
     let total := cfg.measureValues.lineWidth
@@ -8130,7 +8147,7 @@ private def emitTreeCore (cfg : Config) (doc : Doc)
                         page := doc.page
                         lengthBasis := lengthBasisOf doc
                         lists := doc.docClass.record.lists
-                        abstractQuoted := doc.abstractQuoted
+                        abstractForm := doc.abstractForm
                         preamble := doc.preambleFace }
   let hasFrameFoot := doc.body.any fun b => match b with
     | .framefoot xs => !xs.isEmpty

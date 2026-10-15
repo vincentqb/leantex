@@ -6,7 +6,6 @@ public import LeanTex.Core.SurfaceKind
 public import LeanTex.Core.Dim
 public import LeanTex.Core.Gfx
 public import LeanTex.Core.Decl
-import LeanTex.Core.KeyVal
 public import LeanTex.Core.Image
 public import LeanTex.Core.Math
 public import LeanTex.Core.LocaleContract
@@ -1131,6 +1130,10 @@ public def leftMarginMilli : ListLineage → Nat → Nat
 public def leftMarginName (level : Nat) : String :=
   "leftmargin" ++ (match min (max level 1) 6 with
     | 1 => "i" | 2 => "ii" | 3 => "iii" | 4 => "iv" | 5 => "v" | _ => "vi")
+
+/-- Whether a length is a level's `\leftmargin⟨n⟩`. -/
+public def leftMarginNamed (name : String) : Bool :=
+  (List.range 6).any fun k => leftMarginName (k + 1) == name
 
 /-- A list or quotation level's `\leftmargin⟨n⟩`: the document's declared length, else the
 lineage's ems. -/
@@ -6762,6 +6765,21 @@ public inductive PagesBound where
   | faces
   deriving Repr, BEq
 
+/-- How a class sets its abstract's body. -/
+public inductive AbstractForm where
+  /-- article.cls's: `quotation`'s margins on both sides, its lists a level deeper. -/
+  | quotation
+  /-- A title page's, report.cls's default: the full measure. -/
+  | titlePage
+  /-- beamer's template: `abstractInset` beside its paragraphs, ragged right, a list at its own
+  margins as `\@trivlist` resets `\leftskip`. -/
+  | inset
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+/-- beamer's abstract `\leftskip2em` and `\rightskip2em`, in the preamble's font
+(beamerinnerthemedefault.sty:325). -/
+public def abstractInset : Dim.Length := { em := 2000 }
+
 /-- A document class as a record over one of the kernel's page models:
 defaults, furniture flags, implied assertions, build intent. -/
 public structure ClassRecord where
@@ -6813,6 +6831,8 @@ public structure ClassRecord where
   formats : Array String := #[]
   /-- The markdown twin's default file name, when the class has one. -/
   mdName : Option String := none
+  /-- How the class sets its abstract, before its title-page options. -/
+  abstractForm : AbstractForm := .quotation
   deriving Repr, BEq
 
 /-- The document's class, closed: a class `ofString?` does not answer never enters the IR. -/
@@ -6868,9 +6888,11 @@ résumé's floor the fluent-reading x-height at hand-held distance. -/
       chrome := true
       groundDepth := .decks
       colorRow := .stage
-      schemes := .own }
+      schemes := .own
+      abstractForm := .inset }
   | .card =>
     { model := .face
+      abstractForm := .inset
       colorRow := .stage
       schemes := .own
       runningFurniture := false
@@ -6903,6 +6925,7 @@ distance (Legge & Bigelow 2011); declare \\assert{ text.xheight >= ... } to take
       mdName := some "llms.txt" }
   | .poster =>
     { model := .face
+      abstractForm := .inset
       fontSize := some posterFontSize
       lists := .beamer
       colorRow := .stage
@@ -6952,14 +6975,18 @@ public def PreambleFace.resolve (face : PreambleFace) (l : Dim.Length) : Sp :=
 
 /-- The lengths a class or package fixes as it loads: the table lengths and `\leftmargin⟨n⟩`. -/
 public def loadLength (name : String) : Bool :=
-  (tableLengths.lookup name).isSome || (List.range 6).any fun k => leftMarginName (k + 1) == name
+  (tableLengths.lookup name).isSome || leftMarginNamed name
 
-/-- The load-fixed lengths a preamble declares, fixed as `\setlength` evaluates
-them in the preamble's font. -/
-public def PreambleFace.fixLoadLengths (face : PreambleFace) (tk : Tokens) : Tokens :=
+/-- The lengths `fixes` names, fixed as `\setlength` evaluates them in the preamble's font. -/
+public def PreambleFace.fixLengths (face : PreambleFace) (fixes : String → Bool) (tk : Tokens) :
+    Tokens :=
   { entries := tk.entries.map fun (n, g) =>
-      if loadLength n then (n, { g with width := Dim.Length.ofSp (face.resolve g.width) })
+      if fixes n then (n, { g with width := Dim.Length.ofSp (face.resolve g.width) })
       else (n, g) }
+
+/-- The load-fixed lengths a preamble declares, fixed in the preamble's font. -/
+public def PreambleFace.fixLoadLengths (face : PreambleFace) (tk : Tokens) : Tokens :=
+  face.fixLengths loadLength tk
 
 /-- A list or quotation level's `\leftmargin⟨n⟩` as its class fixes it, in the preamble font. -/
 public def leftMarginAt (l : ListLineage) (tokens : Tokens) (face : PreambleFace) (level : Nat) :
@@ -7032,6 +7059,9 @@ public structure Doc where
   docClass : DocClass := .article
   surface : Surface := .tex
   classOptions : String := ""
+  /-- How the abstract's body sets: its class's form under the title-page options, or a
+  redefinition's quotation. -/
+  abstractForm : AbstractForm := .quotation
   page : PageSpec := {}
   fonts : FontSpec := {}
   palette : Palette := {}
@@ -7152,11 +7182,6 @@ public def Doc.frameLabels (doc : Doc) : Array (Option String) := Id.run do
 /-- The document's preamble font, at its class size. -/
 public def Doc.preambleFace (doc : Doc) : PreambleFace :=
   PreambleFace.ofClass doc.docClass.record doc.page.fontSize
-
-/-- Whether the abstract is a quotation, as article.cls sets it: a level of its margins on both
-sides; a title page's abstract (`titlepage`, report's default) and a deck's are not. -/
-public def Doc.abstractQuoted (doc : Doc) : Bool :=
-  doc.docClass.record.model == .flow && !(KeyVal.items doc.classOptions).contains "titlepage"
 
 /-- Where a deck's chrome may stand: a class whose record draws it, with no
 `\runningfoot` owning the foot. -/

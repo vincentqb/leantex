@@ -301,7 +301,7 @@ def abstractChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\begin{document}\\begin{abstract}Words.\\end{abstract}\\end{document}")
   t "a refused abstract redefinition says the built-in stands styled"
     (vDs.any fun d => d.code == "W0303" &&
-      (d.message.splitOn "heading and body size style it").length > 1)
+      (d.message.splitOn "heading, body size and quotation margins style it").length > 1)
   t "the refused redefinition's large bold centreline lands on the heading"
     ((Ir.abstractHeadingStyle vDoc.styles).font ==
       some #[.styled (.size "large") #[.styled .bold #[]]] &&

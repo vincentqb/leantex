@@ -8909,8 +8909,8 @@ public structure Spacing.Context where
   private locale : Locale := Locale.en
   /-- The `slides` class: frames and out-of-frame sections open fresh pages. -/
   private slides : Bool := false
-  /-- The abstract is a quotation (`Ir.Doc.abstractQuoted`). -/
-  private abstractQuoted : Bool := true
+  /-- How the abstract's body sets (`Ir.Doc.abstractForm`). -/
+  private abstractForm : Ir.AbstractForm := .quotation
   /-- A frame body owns its headings: they neither open section dividers
   nor replace the enclosing top-level section or its footer. -/
   private inFrame : Bool := false
@@ -12124,6 +12124,27 @@ private def collectBlockList (r : Rd) (a : Acc)
     let a := if prevRule then { a with declaredSkip := false } else a
     collectBlockList r a rest indent false (ruleBlock blk)
 
+/-- An inset abstract's body as `collectBlockList` walks it: its paragraphs `inset` from both
+sides through `ri`, and every other block at its own margins, as `\@trivlist` resets `\leftskip`. -/
+private def collectInsetList (r ri : Rd) (a : Acc) (blocks : List Block) (indent inset : Sp)
+    (first prevRule : Bool) : Acc :=
+  match blocks with
+  | [] => a
+  | blk :: rest =>
+    if statefulBlock blk then
+      collectInsetList r ri (collectBlock r a blk indent) rest indent inset first prevRule
+    else
+    let a := if first || a.frameTop then a else a.wantGap
+    let a := if ruleBlock blk then { a with declaredSkip := false } else a
+    let a := match blk with
+      | .para _ =>
+        let saved := a.measure
+        { collectBlock ri { a with measure := some ((a.measure.getD r.geom.textWidth) - inset) }
+            blk (indent + inset) with measure := saved }
+      | _ => collectBlock r a blk indent
+    let a := if prevRule then { a with declaredSkip := false } else a
+    collectInsetList r ri a rest indent inset false (ruleBlock blk)
+
 /-- The title frame's body when the title page declares slots: each
 slot set as one box from the shared start and pinned where declared. -/
 private def collectSlots (r : Rd) (a : Acc) (slots : Array Ir.TitleSlot)
@@ -12492,18 +12513,22 @@ private def collectBlock (r : Rd) (a : Acc)
     -- `\vskip\smallskipamount`; a paragraph after it spends its own `\parskip`.
     (restore done).vskip (r.resolve (Ir.skipAmount done.tokens "smallskipamount"))
   | .abstract body =>
-    -- article.cls's abstract: `\small`, a centred bold heading, then the body on quotation margins.
+    -- A centred bold heading, then the body at its size in the class's form (`Ir.AbstractForm`).
     let small := Ir.scaleStepIn r.geom.scale r.geom.fontSize (Ir.abstractBodySize r.styles)
     let a := collectAbstractHead r a indent
-    let saved := a.measure
-    let lm := if r.abstractQuoted then r.leftMargin (a.itemDepth + a.enumDepth + a.quoteDepth + 1)
-      a.tokens else 0
-    let sub := if r.abstractQuoted then { a with
-      measure := some ((a.measure.getD r.geom.textWidth) - lm), quoteDepth := a.quoteDepth + 1 }
-      else a
-    let sub := collectBlocks { (r.within blk) with geom := { r.geom with fontSize := small } }
-      sub body (indent + lm)
-    { sub with measure := saved, quoteDepth := a.quoteDepth }
+    let rs := { (r.within blk) with geom := { r.geom with fontSize := small } }
+    match r.abstractForm with
+    | .quotation =>
+      let saved := a.measure
+      let lm := r.leftMargin (a.itemDepth + a.enumDepth + a.quoteDepth + 1) a.tokens
+      let sub := { a with
+        measure := some ((a.measure.getD r.geom.textWidth) - lm), quoteDepth := a.quoteDepth + 1 }
+      { collectBlocks rs sub body (indent + lm) with measure := saved, quoteDepth := a.quoteDepth }
+    | .titlePage => collectBlocks rs a body indent
+    | .inset =>
+      let g := { rs.geom with justify := false, flushRight := false, raggedFil := true }
+      let ri := { rs with geom := g }
+      collectInsetList rs ri a body.toList indent (r.preamble.resolve Ir.abstractInset) true false
   | .columns cols =>
     -- Declared widths resolve against the measure; the rest goes to widthless boxes or gutters.
     let a := a.flushGap r
@@ -18527,7 +18552,7 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
                    captionPos := doc.captionPos
                    locale := doc.info.locale
                    slides := doc.docClass.record.model == .frame
-                   abstractQuoted := doc.abstractQuoted
+                   abstractForm := doc.abstractForm
                    lists := doc.docClass.record.lists
                    frameKeys := doc.frameKeys
                    frameLabels := doc.frameLabels
