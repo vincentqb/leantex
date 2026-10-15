@@ -12,35 +12,92 @@ namespace LeanTex.Core.Blueprint
 
 open LeanTex.Core LeanTex.Core.Ir
 
-/-- What one statement or proof declares, each list in source order. -/
+/-- A command a statement or proof marks itself with. -/
+public inductive Mark where
+  | lean
+  | leanok
+  | uses
+  | proves
+  | notready
+  | mathlibok
+  | discussion
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+public def Mark.name : Mark → String
+  | .lean => "lean"
+  | .leanok => "leanok"
+  | .uses => "uses"
+  | .proves => "proves"
+  | .notready => "notready"
+  | .mathlibok => "mathlibok"
+  | .discussion => "discussion"
+
+public def Mark.all : List Mark := [.lean, .leanok, .uses, .proves, .notready, .mathlibok, .discussion]
+
+/-- The mark a control word names. -/
+public def Mark.ofName? (n : String) : Option Mark := Mark.all.find? (·.name == n)
+
+/-- Whether a mark takes a group: the names, labels or issue it reads. -/
+public def Mark.takesGroup : Mark → Bool
+  | .lean | .uses | .proves | .discussion => true
+  | .leanok | .notready | .mathlibok => false
+
+/-- Whether the print macros end a mark with `\ignorespaces`. -/
+public def Mark.ignoresSpaces : Mark → Bool
+  | .uses | .proves => true
+  | .lean | .leanok | .notready | .mathlibok | .discussion => false
+
+/-- What one statement or proof marks, each list in first-written order without repeats. -/
 public structure Marks where
   names : Array String := #[]
   leanok : Bool := false
   mathlibok : Bool := false
   notready : Bool := false
   uses : Array String := #[]
-  proves : Option String := none
+  proves : Array String := #[]
   issue : Option String := none
   deriving Repr, BEq, Inhabited
 
-/-- Where a blueprint's names and discussions link: `\dochome`'s API documentation and `\github`'s
-repository. -/
+/-- A blueprint's site declaration, which its links read. -/
+public inductive SiteKey where
+  /-- `\usepackage{blueprint}` itself, which makes the marks the package's. -/
+  | package
+  | github
+  | dochome
+  /-- The package's `link` option: a Lean file's link template. -/
+  | link
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+public def SiteKey.name : SiteKey → String
+  | .package => "package"
+  | .github => "github"
+  | .dochome => "dochome"
+  | .link => "link"
+
+public def SiteKey.ofName? (n : String) : Option SiteKey :=
+  [SiteKey.package, .github, .dochome, .link].find? (·.name == n)
+
+/-- What a blueprint's links read: whether it loads the package, `\github`'s repository,
+`\dochome`'s API documentation and the `link` template. -/
 public structure Site where
-  dochome : Option String := none
+  loaded : Bool := false
   github : Option String := none
+  dochome : Option String := none
+  link : Option String := none
   deriving Repr, BEq, Inhabited
+
+public def Site.declare (s : Site) (key : SiteKey) (url : String) : Site :=
+  match key with
+  | .package => { s with loaded := true }
+  | .github => { s with github := some url }
+  | .dochome => { s with dochome := some url }
+  | .link => { s with link := some url }
 
 /-- The marks the innermost open statement or proof collects, and whether one is open. -/
 public structure Scope where
   inside : Bool := false
   marks : Marks := {}
   deriving Repr, BEq, Inhabited
-
-/-- The commands a statement or proof marks itself with, by the groups each takes. -/
-public def markArity? : String → Option Nat
-  | "lean" | "uses" | "proves" | "discussion" => some 1
-  | "leanok" | "notready" | "mathlibok" => some 0
-  | _ => none
 
 /-- A comma list's entries as leanblueprint's list arguments read them: trimmed, empties dropped. -/
 public def entries (s : String) : Array String :=
@@ -50,26 +107,25 @@ public def entries (s : String) : Array String :=
 public def issueOf (s : String) : String :=
   (s.trimAscii.toString.dropWhile (· == '#')).trimAscii.toString
 
-/-- The labels one command's group refers to: `\uses`'s list, or the label `\proves` names. -/
-public def keys (name arg : String) : Array String :=
-  match name with
-  | "uses" => entries arg
-  | "proves" => let k := arg.trimAscii.toString; if k.isEmpty then #[] else #[k]
-  | _ => #[]
+/-- The labels a mark's group refers to: `\uses`'s and `\proves`'s lists. -/
+public def Mark.keys (m : Mark) (arg : String) : Array String :=
+  match m with
+  | .uses | .proves => entries arg
+  | .lean | .leanok | .notready | .mathlibok | .discussion => #[]
+
+private def joinNew (xs ys : Array String) : Array String :=
+  ys.foldl (fun acc y => if acc.contains y then acc else acc.push y) xs
 
 /-- The marks after one command, read from its group's text. -/
-public def Marks.mark (m : Marks) (name arg : String) : Marks :=
-  match name with
-  | "lean" => { m with names := m.names ++ entries arg }
-  | "leanok" => { m with leanok := true }
-  | "mathlibok" => { m with mathlibok := true }
-  | "notready" => { m with notready := true }
-  | "uses" => { m with uses := m.uses ++ keys name arg }
-  | "proves" => match (keys name arg)[0]? with
-    | some k => { m with proves := some k }
-    | none => m
-  | "discussion" => if (issueOf arg).isEmpty then m else { m with issue := some (issueOf arg) }
-  | _ => m
+public def Marks.mark (m : Marks) (k : Mark) (arg : String) : Marks :=
+  match k with
+  | .lean => { m with names := joinNew m.names (entries arg) }
+  | .leanok => { m with leanok := true }
+  | .mathlibok => { m with mathlibok := true }
+  | .notready => { m with notready := true }
+  | .uses => { m with uses := joinNew m.uses (k.keys arg) }
+  | .proves => { m with proves := joinNew m.proves (k.keys arg) }
+  | .discussion => if (issueOf arg).isEmpty then m else { m with issue := some (issueOf arg) }
 
 /-- A status its author marks a statement or proof with, in the web blueprint's precedence. -/
 public inductive Status where
@@ -84,20 +140,31 @@ public def Marks.status (m : Marks) : Option Status :=
   else if m.notready then some .notReady
   else none
 
-/-- The words a status sets: the author's mark, never a verdict. -/
-public def Status.words : Status → String
+/-- The words a status sets on a statement or a proof: its author's mark, never a verdict. -/
+public def Status.words (proof : Bool) : Status → String
   | .mathlib => "marked in Mathlib"
-  | .formalized => "marked formalized"
-  | .notReady => "marked not ready to formalize"
+  | .formalized => if proof then "proof marked formalized" else "statement marked formalized"
+  | .notReady =>
+    if proof then "proof marked not ready to formalize" else "statement marked not ready to formalize"
 
 private def unslashed (url : String) : String :=
   if url.endsWith "/" then (url.dropEnd 1).toString else url
 
-/-- A Lean name's link: leanblueprint's `{dochome}/find/#doc/{name}`, its name filled as a Lean
-file's link template fills it; none without a `\dochome`. -/
+/-- The parts a `link` template names that a Lean name alone cannot fill. -/
+public def Site.unfilled (s : Site) : List String :=
+  match s.link with
+  | some l =>
+    let t := Code.linkTemplate l
+    Code.templateParts.filter fun p => p != "{name}" && (t.splitOn p).length > 1
+  | none => []
+
+/-- A Lean name's link: the `link` template's `{name}` filled as a Lean file's link fills it, else
+leanblueprint's `{dochome}/find/#doc/{name}`; none without either, or where `link` names a part a
+name cannot fill. -/
 public def nameLink (site : Site) (name : String) : Option String :=
-  site.dochome.bind fun d =>
-    Code.expandParts (unslashed d ++ "/find/#doc/{name}") [("{name}", some (Code.urlPart false name))]
+  match site.link with
+  | some l => Code.expandName l name
+  | none => site.dochome.bind fun d => Code.expandName (unslashed d ++ "/find/#doc/{name}") name
 
 /-- A discussion's link: the issue in `\github`'s repository, none without one. -/
 public def issueLink (site : Site) (issue : String) : Option String :=
@@ -108,9 +175,11 @@ private def joined (sep : String) (parts : Array (Array Inline)) : Array Inline 
   parts.foldl (init := #[]) fun acc p => (if acc.isEmpty then acc else acc.push (.text sep)) ++ p
 
 /-- The line a statement's or proof's marks set, parts apart by semicolons: its Lean names as code,
-linked where a `\dochome` declares their documentation, its status, what it proves and uses, and
-its discussion; empty where it marks nothing. -/
-public def line (styles : Styles) (site : Site) (m : Marks) : Array Inline :=
+linked through its site, its status, what it proves and uses, and its discussion, the words in
+English, marked so where the page's language is another; empty where it marks nothing. -/
+public def line (styles : Styles) (site : Site) (proof english : Bool) (m : Marks) :
+    Array Inline :=
+  let words (s : String) : Inline := if english then .text s else .styled (.lang "en") #[.text s]
   let ref (key : String) : Array Inline := styles.linkInk "link" #[.ref key .headed "??" none]
   let names : Array (Array Inline) := m.names.map fun n =>
     let code : Inline := .styled .mono #[.text n]
@@ -119,16 +188,15 @@ public def line (styles : Styles) (site : Site) (m : Marks) : Array Inline :=
     | none => #[code]
   let parts : Array (Option (String × Array Inline)) :=
     #[if names.isEmpty then none else some ("Lean: ", joined ", " names),
-      m.status.map fun s => (s.words, #[]),
-      m.proves.map fun key => ("proves ", ref key),
+      m.status.map fun s => (s.words proof, #[]),
+      if m.proves.isEmpty then none else some ("proves ", joined ", " (m.proves.map ref)),
       if m.uses.isEmpty then none else some ("uses ", joined ", " (m.uses.map ref)),
       m.issue.map fun i =>
-        let words : Array Inline := #[.text s!"issue {i}"]
+        let said : Array Inline := #[words s!"issue {i}"]
         ("discussed in ", match issueLink site i with
-          | some url => #[.link url (styles.linkInk "url" words)]
-          | none => words)]
-  let kept := parts.filterMap id
-  joined "; " (kept.mapIdx fun k (lead, rest) =>
-    #[Inline.text (if k == 0 then lead.capitalize else lead)] ++ rest)
+          | some url => #[.link url (styles.linkInk "url" said)]
+          | none => said)]
+  joined "; " ((parts.filterMap id).mapIdx fun k (lead, rest) =>
+    #[words (if k == 0 then lead.capitalize else lead)] ++ rest)
 
 end LeanTex.Core.Blueprint

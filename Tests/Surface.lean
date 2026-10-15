@@ -1723,12 +1723,15 @@ fails with {String.intercalate ", " (errors.map (·.code)).toList}"
   else
     match row.refusalCode? with
     | some code =>
-      check ref s!"compat index {pkg}: '{call}' does not fire {code}"
-        (codes.contains code)
+      let (_, base) ← elabInputSrc "testdata/compat-index/probe.tex" (compatRowBase pkg place call)
+      let fired (xs : Array Diag) : Nat := (xs.filter (·.code == code)).size
+      check ref s!"compat index {pkg}: '{call}' does not fire {code} beyond its scaffold"
+        (fired ds > fired base)
     | none => failures ref s!"compat index {pkg}: unreadable annotation in: {line}"
 
 /-- Every package in `Compat.nativePackages` ships its index file, and every row's annotation holds:
-`impl` changes the document, `inert:<why>` does not, `refuse:<code>` fires its code. -/
+`impl` changes the document, `inert:<why>` does not, `refuse:<code>` fires its code more often than
+the scaffold without the call does. -/
 def compatIndexChecks (ref : IO.Ref (List String)) : IO Unit := do
   let judge (pkg : String) (row : IndexRow) : IO (List String) := do
     let found ← IO.mkRef []
@@ -1786,6 +1789,11 @@ def compatIndexChecks (ref : IO.Ref (List String)) : IO Unit := do
       (hasStr src s!"\\usepackage\{{pkg}}" == loads)
     check ref s!"compat judge: {pkg} accepts a working frame probe"
       ((← judge pkg row).isEmpty)
+  check ref "compat judge: a refusal the scaffold alone fires is not the call's"
+    (!(← judge "blueprint"
+      { place := "pre", verdict := "refuse:W0434", call := "\\zzgraphcolor{a}{b}{c}" }).isEmpty &&
+     (← judge "blueprint"
+      { place := "pre", verdict := "refuse:W0434", call := "\\graphcolor{a}{b}{c}" }).isEmpty)
   let stated : IndexRow := { place := "statement", verdict := "impl", call := "\\emph{Stated text}" }
   let (sdoc, sds) ← elabInputSrc "testdata/compat-index/probe.tex"
     (compatRowSrc "xcolor" stated.place stated.call)

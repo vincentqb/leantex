@@ -1537,21 +1537,6 @@ public structure LinkPlace where
   tracked : Bool := false
   deriving Repr, BEq, Inhabited
 
-/-- A link written as a GitHub repository's root, `https://github.com/OWNER/REPO` with or without
-`.git` or a last `/`, reaches each declaration's lines at the commit the file stands at; any other
-link is a template. -/
-public def linkTemplate (link : String) : String :=
-  let plain (c : Char) : Bool := c.isAlphanum || c == '-' || c == '_' || c == '.'
-  let body := if link.startsWith "https://github.com/" then some (link.drop 19).toString
-    else if link.startsWith "http://github.com/" then some (link.drop 18).toString else none
-  match body.map fun b => (if b.endsWith "/" then (b.dropEnd 1).toString else b).splitOn "/" with
-  | some [owner, repo] =>
-    let repo := if repo.endsWith ".git" then (repo.dropEnd 4).toString else repo
-    if !owner.isEmpty && !repo.isEmpty && owner.all plain && repo.all plain then
-      s!"https://github.com/{owner}/{repo}/blob/\{commit}/\{path}#L\{line}-L\{endline}"
-    else link
-  | _ => link
-
 /-- Whether a file's place gives every part a template names that git answers: the commit only
 with the file's state there and the commit holding it, the path only as the commit holds it. -/
 public def placeGives (template : String) (place : LinkPlace) : Bool :=
@@ -1561,9 +1546,9 @@ public def placeGives (template : String) (place : LinkPlace) : Bool :=
 
 /-- A template's parts and what each declaration fills them with. -/
 private def linkParts (d : LeanFacts.Decl) (place : LinkPlace) : List (String × Option String) :=
-  [("{name}", some (urlPart false d.name)), ("{module}", some (urlPart false d.moduleName)),
-   ("{path}", place.path.map (urlPart true)), ("{line}", some (toString d.start.1)),
-   ("{endline}", some (toString d.stop.1)), ("{commit}", place.commit.map (urlPart false))]
+  templateParts.zip [some (urlPart false d.name), some (urlPart false d.moduleName),
+    place.path.map (urlPart true), some (toString d.start.1), some (toString d.stop.1),
+    place.commit.map (urlPart false)]
 
 /-- A template's link for one declaration, none where it names a part the file's place lacks. -/
 public def expandLink (template : String) (d : LeanFacts.Decl) (place : LinkPlace) :

@@ -84,19 +84,22 @@ force. `shipout/background` and `shipout/foreground` hooks draw their rules
 under and over every page from its top-left corner. Boxes, bleed and marks
 belong to the printed sheet, so the web page shows none of them.
 
-A leanblueprint blueprint builds as written. In a statement or proof,
-`\lean`, `\leanok`, `\uses`, `\proves`, `\notready`, `\mathlibok` and
-`\discussion` set nothing in the PDF, as the package's print macros set
-nothing. The web page and the Markdown twin set one line after the
-statement or proof: its Lean names as code, each linked to the documentation
-`\dochome{D}` declares at `D/find/#doc/<name>`, as the web blueprint links
-it, and unlinked without a `\dochome`; its status in its author's words,
-marked formalized, in Mathlib or not ready to formalize, which leantex never
-checks; the statements it proves and uses, as cross-references such as
-Lemma 2; and its discussion, linked to the issue in `\github`'s repository.
-A document's own definition of one of these commands stands, as a
-blueprint's print macros define them. The dependency graph is not drawn,
-and the run says so once.
+leanblueprint's commands set as its print macros set them: in a statement or
+proof, `\lean`, `\leanok`, `\uses`, `\proves`, `\notready`, `\mathlibok` and
+`\discussion` set nothing in the PDF. The web page and the Markdown twin set
+one line after the statement or proof: its Lean names as code, each linked
+through the load's `link` option, a Lean file's link template whose `{name}`
+it fills (`\usepackage[link={https://OWNER.github.io/REPO/docs/find/\#doc/{name}}]{blueprint}`),
+else as the web blueprint links them, at `D/find/#doc/<name>` for a
+`\dochome{D}`, and unlinked without either; its status in its author's words
+(statement or proof marked formalized, marked in Mathlib, or marked not ready
+to formalize), which leantex never checks; the statements it proves and
+uses, as cross-references such as Lemma 2; and its discussion, linked to the
+issue in `\github`'s repository. The commands are the package's where the
+document loads it or defines one of them, as a blueprint's print macros do;
+a document's own definition stands, though one written in expl3 is skipped,
+so the built-in stands in its place. The dependency graph is not drawn, and
+a web page's build says so once.
 
 See the [example documents](../testdata/corpus) and
 [package compatibility index](../testdata/compat-index) for supported syntax.

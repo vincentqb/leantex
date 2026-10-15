@@ -16463,11 +16463,11 @@ public inductive RefKind where
   deriving Repr, BEq
 
 /-- One label's binding: the number it bound to, with the kind of the numbered
-thing when elaboration made one and the heading word of the statement it numbers. -/
+thing when elaboration made one, and the statement it stands in: its heading and its own number. -/
 public structure RefBinding where
   kind : Option RefKind
   num : String
-  heading : Option String := none
+  statement : Option (String × Option String) := none
   deriving Repr, BEq
 
 private def indexStep {α : Type} (m : Std.HashMap String (String × α))
@@ -16584,8 +16584,9 @@ public def refText (loc : Locale) (form : RefForm) (b : RefBinding) : String :=
     | some k => if cap then (crefNameOf loc k).capOne else (crefNameOf loc k).one
     | none => b.num
   | .headed =>
-    match b.heading, b.kind with
-    | some h, _ => h ++ "\u00a0" ++ b.num
+    match b.statement, b.kind with
+    | some (h, some n), _ => h ++ "\u00a0" ++ n
+    | some (h, none), _ => h
     | none, some k => (crefNameOf loc k).capOne ++ "\u00a0" ++ numText
     | none, none => b.num
 

@@ -6828,11 +6828,39 @@ private def blueprintLoaded : M Bool := do
 /-- Names leanblueprint's dependency graph, which the engine does not draw, at one site asking for
 it, the site's particulars its detail. -/
 private def blueprintGraph (pos : Pos) (detail : Option String) : M Unit :=
-  say .W0434 "leanblueprint's dependency graph is not drawn; each statement's web page names the \
-statements it uses and proves" pos
+  say .W0434 "leanblueprint's dependency graph is not drawn; the web page names beside each \
+statement what it uses and proves" pos
     (help := some "each statement's uses stand as cross-references beside it; \\allow{W0434} \
 accepts the loss")
-    (subject := some "package:blueprint") (detail := detail)
+    (subject := some "package:blueprint") (detail := detail) (output := some .html)
+
+/-- A URL's text as hyperref reads it: a TeX special escaped with a backslash is the character, and
+a space none, since a URL holds none. -/
+private def urlText (raws : Array Raw) : String :=
+  raws.foldl (init := "") fun acc r =>
+    let piece := match r with
+      | .word w _ => w
+      | .sym c _ => String.singleton c
+      | .ctrl n _ => if ["#", "%", "&", "_", "~", "$"].contains n then n else "\\" ++ n
+      | .space | .par _ => ""
+      | .group .. | .math .. | .env .. | .verb .. => rawSrcOne r
+    acc ++ piece
+
+/-- An option value's URL as hyperref reads it, its one brace group and the specials TeX escapes
+undone, a space dropped. -/
+private def urlOption (v : String) : String :=
+  let (out, _) := (KeyVal.unbrace v).foldl (init := ("", false)) fun (acc, esc) c =>
+    if esc then
+      if "#%&_~$".contains c then (acc.push c, false)
+      else if c == ' ' then (acc ++ "\\", false) else ((acc ++ "\\").push c, false)
+    else if c == '\\' then (acc, true)
+    else if c == ' ' then (acc, false)
+    else (acc.push c, false)
+  out
+
+/-- The site mark one declaration leaves for the preamble's reader. -/
+private def blueprintSiteRaws (key : String) (url : String) (pos : Pos) : Array Raw :=
+  #[.ctrl blueprintSiteMark pos, .group #[.word key pos] pos, .group #[.word url pos] pos]
 
 /-- leanblueprint's `\graphcolor{type}{colour}{description}`, a colour of the dependency graph,
 named with that graph. -/
@@ -6860,7 +6888,7 @@ private def blueprintSiteArm (name : String) (pos : Pos) (raws : Array Raw) (sta
   if name == "home" then
     discard "\\home" "the web blueprint links nothing to the project's home page" "home" pos
     return some (#[], k)
-  return some (#[.ctrl blueprintSiteMark pos, .group #[.word name pos] pos, .group url pos], k)
+  return some (blueprintSiteRaws name (urlText url) pos, k)
 
 private def rewriteCtrlLaterNamed (name : String) (pos : Pos) (raws : Array Raw)
     (start : Nat) : M (Option (Array Raw × Nat)) := do
@@ -8008,11 +8036,17 @@ its rule paddings are measured in Latin Modern" pos
       (help := some s!"load booktabs before '{cmd}', where LaTeX measures them in Latin Modern too")
       (subject := some "package:booktabs")
   else if p == "blueprint" then
-    -- Its options draw its web page's graph and proof buttons; every other one reads nothing.
-    let showmore := (KeyVal.items (opt.getD "")).any fun o => (KeyVal.entry o).1 == "showmore"
+    -- Its options draw its web page's graph and proof buttons, and `link` its names' links.
+    let opts := (KeyVal.items (opt.getD "")).map KeyVal.entry
+    let showmore := opts.any (·.1 == "showmore")
     blueprintGraph pos (if showmore then
       some "'showmore' asks for buttons showing or hiding every proof, which are not drawn either"
       else none)
+    let link := opts.findSome? fun (k, v) => if k == "link" then v.map urlOption else none
+    out := blueprintSiteRaws "package" "" pos ++
+      (match link with
+       | some l => blueprintSiteRaws "link" l pos
+       | none => #[])
   else if p == "inputenc" && Encoding.declaresNonUtf8 (opt.getD "") then
     -- premise: inputDecodingChecks — the driver's one note names each governed file
     recordInputenc (opt.getD "")
@@ -9516,7 +9550,7 @@ private theorem sayOnce_minipage_tailDiag (d : Diag) (code : DiagCode)
   all_goals
     first
     | exact hs
-    | intro _ s' hs'; exact say_tailDiag d _ _ _ _ _ _ _ _ _ hs'
+    | intro _ s' hs'; exact say_tailDiag d _ _ _ _ _ _ _ _ _ _ hs'
 
 private theorem boxRowEmit_tailDiag (rs : Array Raw) (d : Diag) (st : St)
     (h : TailDiag d st) : TailDiag d (boxRowEmit rs st).2 := by
@@ -9530,7 +9564,7 @@ private theorem boxRowEmit_tailDiag (rs : Array Raw) (d : Diag) (st : St)
     cases pic <;> dsimp only
     all_goals
       apply state_bind_inv (TailDiag d)
-      · exact say_tailDiag d _ _ _ _ _ _ _ _ _ hs
+      · exact say_tailDiag d _ _ _ _ _ _ _ _ _ _ hs
       · intro _ s' hs'
         cases opts
         · exact hs'

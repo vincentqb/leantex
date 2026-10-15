@@ -424,6 +424,9 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
   | .W0442 => dvE (w := w) (dvDoc "\\page{ trimbox = \"9 9 700 400\" }\n" "x")
   | .W0443 => dvE (w := w) (dvDoc "\\AddToHook{shipout/before}{\\pdfvariable pageattr{/Rotate 90}}\n" "x")
   | .W0434 => dvE (w := w) (dvDoc "\\usepackage{blueprint}\n" "x")
+  | .W0436 => dvE (w := w) (dvDoc ("\\usepackage{amsthm}\n" ++
+      "\\usepackage[link=https://github.com/example/widgets]{blueprint}\n\\newtheorem{lemma}{Lemma}\n")
+      "\\begin{lemma}\\lean{Example.Widget} x\\end{lemma}")
   | .W0317 => dvE (w := w) ("\\documentclass{card}\n\\runninghead{name}\n" ++
       "\\begin{document}\nx\n\\end{document}")
   | .W0318 => dvE (w := w) (dvDoc "\\chrome{ footer = { left = \\sectiontitle } }\n" "x")

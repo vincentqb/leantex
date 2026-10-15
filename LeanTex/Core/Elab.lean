@@ -2779,33 +2779,44 @@ private def hspaceArm (ctx : Ctx) (raws : Array Raw) (i : Nat) (pos : Pos) :
 /-- One blueprint command at `raws[i]`: its mark on the innermost open statement or proof and its
 references' sites recorded, and after `\uses` and `\proves` the spaces their print macros ignore
 skipped; outside a statement or proof it marks nothing and is named. -/
-private def blueprintMarkArm (ctx : Ctx) (raws : Array Raw) (i : Nat) (name : String)
-    (arity : Nat) (pos : Pos) : EM { j : Nat // i < j } := do
+private def blueprintMarkArm (ctx : Ctx) (raws : Array Raw) (i : Nat) (m : Blueprint.Mark)
+    (pos : Pos) : EM { j : Nat // i < j } := do
   let j0 := skipSpaces raws (i + 1)
   have hj0 := skipSpaces_ge raws (i + 1)
   let mut arg := ""
   let mut next : { j : Nat // i < j } := ⟨i + 1, by omega⟩
-  if arity != 0 then
+  if m.takesGroup then
     match raws[j0]? with
     | some (.group g _) =>
       arg := argText ctx g
       next := ⟨j0 + 1, by omega⟩
     | _ =>
-      diag ctx .E0304 s!"'\\{name}' needs a \{...} group" pos
+      diag ctx .E0304 s!"'\\{m.name}' needs a \{...} group" pos
       return next
   let ⟨j, hj⟩ := next
   let scope := (← get).blueprint
   if scope.inside then
-    let sites := (Blueprint.keys name arg).map fun k => (k, Ir.RefForm.headed, pos)
-    modify fun st => { st with blueprint := { scope with marks := scope.marks.mark name arg }
+    let sites := (m.keys arg).map fun k => (k, Ir.RefForm.headed, pos)
+    modify fun st => { st with blueprint := { scope with marks := scope.marks.mark m arg }
                                refSites := st.refSites ++ sites }
+    -- premise: blueprintChecks — a name a template cannot fill is set unlinked
+    if m == .lean && !ctx.blueprint.unfilled.isEmpty then
+      warnOnce ctx "blueprint:link" .W0436
+        "the link template names a part a Lean name alone cannot fill; its names are set without links"
+        pos (help := "name only `{name}` in the template, or declare '\\dochome'")
+        (output := some .html) (detail := some s!"it names {", ".intercalate ctx.blueprint.unfilled}")
   else
-    warnOnce ctx ("blueprint:outside:" ++ name) .W0387
-      s!"'\\{name}' stands outside any statement or proof, so it marks nothing" pos
+    warnOnce ctx ("blueprint:outside:" ++ m.name) .W0387
+      s!"'\\{m.name}' stands outside any statement or proof, so it marks nothing" pos
       (help := "move it into the statement or proof it marks, after its '\\begin'")
-  if name == "uses" || name == "proves" then
+  if m.ignoresSpaces then
     return ⟨skipSpaces raws j, Nat.lt_of_lt_of_le hj (skipSpaces_ge raws j)⟩
   return ⟨j, hj⟩
+
+/-- Whether the blueprint marks are the package's: loaded, or named by a definition of the
+document's, as a blueprint's print macros define them. -/
+private def blueprintMarksOn (ctx : Ctx) : Bool :=
+  ctx.blueprint.loaded || Blueprint.Mark.all.any fun m => (lookupUser ctx m.name).isSome
 
 /-- One rigid dimension through the shared affine parser. -/
 private def readInlineDim (ctx : Ctx) (command role : String)
@@ -4997,10 +5008,12 @@ private def elabInlinesCtrl (ctx : Ctx) (raws : Array Raw) (i : Nat)
   else if let some e := FaIcons.byMacro.get[name]? then
     elabInlinesFrom ctx raws (i + 1)
       ((flushText acc sb).push (.icon e.scalar e.label)) ""
-  else if let some arity := Blueprint.markArity? name then
-    let ⟨j, hj⟩ ← blueprintMarkArm ctx raws i name arity pos
-    have hadv : sliceWeight raws j < sliceWeight raws i := sliceWeight_lt raws h hj
-    elabInlinesFrom ctx raws j acc sb
+  else if let some m := Blueprint.Mark.ofName? name then
+    if blueprintMarksOn ctx then
+      let ⟨j, hj⟩ ← blueprintMarkArm ctx raws i m pos
+      have hadv : sliceWeight raws j < sliceWeight raws i := sliceWeight_lt raws h hj
+      elabInlinesFrom ctx raws j acc sb
+    else elabUnknownCtrl ctx raws i acc sb name pos h
   else if name == "pagenumber" then
     elabInlinesFrom ctx raws (i + 1) ((flushText acc sb).push .pageNumber) ""
   else if name == "pagecount" then
@@ -5457,7 +5470,7 @@ public def recoversInlineName (ctx : Ctx) (name : String) : Bool :=
   (Lex.textSymbols.lookup name).isNone && (modifierStyle? name).isNone &&
   (decorationCtrls.lookup name).isNone && (phantomAxes.lookup name).isNone &&
   (refCtrlForm? name).isNone && (Ir.natbibCites.lookup name).isNone &&
-  (FaIcons.byMacro.get[name]?).isNone && (Blueprint.markArity? name).isNone &&
+  (FaIcons.byMacro.get[name]?).isNone && (Blueprint.Mark.ofName? name).isNone &&
   (if name.startsWith "insertshort" then
       TitleDatum.ofName? (name.drop "insertshort".length).copy
     else if name.startsWith "insert" then
@@ -9407,9 +9420,14 @@ private def thmOpen (ctx : Ctx) (n : String) (body : Array Raw) (pos : Pos) :
       let num ← match d.counter with
         | some c => pure (some (← stepThmCounter c))
         | none => pure none
-      if let some nm := num then
+      let heading := Ir.plainText d.heading
+      match num with
+      | some nm =>
         modify fun st => { st with
-          refTarget := some { kind := none, num := nm, heading := some (Ir.plainText d.heading) } }
+          refTarget := some { kind := none, num := nm, statement := some (heading, some nm) } }
+      | none =>
+        modify fun st => { st with
+          refTarget := st.refTarget.map ({ · with statement := some (heading, none) }) }
       pure (thmHead d.style d.heading num note, d.style == .plain || d.style == .kernel, false,
         d.style.space)
     | none =>
@@ -9472,7 +9490,8 @@ private def thmClose (ctx : Ctx) (n : String) (o : ThmOpen) (inner : Array Block
       pure (appendLastPara inner q)
     else pure inner
   -- The web page and its twin set the marks after the QED; the PDF, as the print macros, none.
-  let line := Blueprint.line ctx.styles ctx.blueprint marks
+  let lang := (← get).scope.lang.getD ctx.locale.tag
+  let line := Blueprint.line ctx.styles ctx.blueprint o.qed (lang.startsWith "en") marks
   let inner := if line.isEmpty then inner
     else inner.push (.only #["html", "md"] #[.para #[.styled (.size "small") line]])
   return #[.role (Ir.thmSpaceRole o.space) #[.role n inner]]
@@ -13591,8 +13610,8 @@ public inductive PDecl where
   | numberwithin (fmt : Option String) (counter : Option (String × String)) (pos : Pos)
   /-- A cancel package load's options, as written. -/
   | cancelOpts (src : String) (pos : Pos)
-  /-- A blueprint's `\github` or `\dochome`: the root its discussions or its Lean names link into. -/
-  | blueprintSite (name url : String) (pos : Pos)
+  /-- A blueprint's site declaration: its package load, `\github`, `\dochome` or `link`. -/
+  | blueprintSite (key : Blueprint.SiteKey) (url : String) (pos : Pos)
   | stray
 
 /-- The preamble fold's state. -/
@@ -13843,7 +13862,8 @@ public def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run d
           match preamble[i]?, preamble[i + 1]? with
           | some (.group key _), some (.group url _) =>
             i := i + 2
-            out := out.push (.blueprintSite (rawSrc key) (rawSrc url).trimAscii.toString pos)
+            if let some k := Blueprint.SiteKey.ofName? (rawSrc key) then
+              out := out.push (.blueprintSite k (rawSrc url) pos)
           | _, _ => pure ()
         else if declCtrl.contains name then
           let j := skipSpaces preamble i
@@ -14647,11 +14667,8 @@ a heading; its numbers stand alone" pos
     -- Compat named every option the package does not declare at the load.
     let opts := (KeyVal.items src).toList
     return { s with ctx := { s.ctx with cancel := (Math.CancelSpec.ofOptions opts).1 } }
-  | .blueprintSite name url _ =>
-    let site := s.ctx.blueprint
-    let site := if name == "github" then { site with github := some url }
-      else { site with dochome := some url }
-    return { s with ctx := { s.ctx with blueprint := site } }
+  | .blueprintSite key url _ =>
+    return { s with ctx := { s.ctx with blueprint := s.ctx.blueprint.declare key url } }
   | .unknownCmd name unclosed pos =>
     -- Set lines the engine or an open boundary reads are not unknown.
     if Compat.nativeReadCtrls.contains name ||

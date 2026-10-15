@@ -1,20 +1,28 @@
 # source: leanblueprint's README ("Editing the blueprint" and "Blueprint
 # configuration"): \lean, \leanok, \uses, \proves, \notready, \discussion and
 # \mathlibok in a statement or proof; \home, \github, \dochome and \graphcolor
-# in the web version's preamble. The package's print macros set nothing for
-# \lean, \leanok, \notready, \mathlibok and \discussion, and an invisible \ref
-# for each \uses and \proves label, so lualatex's PDF of an invented
-# blueprint shows none of them, and neither does this engine's. A
-# statement's or proof's marks set one line on its web page and Markdown
-# twin: its Lean names as code, each linked as \dochome{D} links it,
-# D/find/#doc/{name}, through a Lean file's link template, and unlinked
-# without one; its status in its author's words, never a check; the labels
-# it proves and uses, as cross-references; its discussion, linked to
-# \github's issue. \home links nothing on the web page either. The dependency
-# graph is not drawn: one loss (W0434) over the load and each \graphcolor.
-# A statement row stands in an amsthm lemma labelled lem:probe.
+# in the web version's preamble; the thms load option. The package's print
+# macros set nothing for \lean, \leanok, \notready, \mathlibok and
+# \discussion, and an invisible \ref for each \uses and \proves label, so
+# lualatex's PDF of an invented blueprint shows none of them, and neither
+# does this engine's; where such a phantom ends a paragraph lualatex sets the
+# statement's head on a line alone, and this engine, as the README says,
+# nothing. A statement's or proof's marks set one line on its web page and
+# Markdown twin: its Lean names as code, linked through the load's link
+# option, a Lean file's link template, else as \dochome{D} links them,
+# D/find/#doc/{name}, else unlinked; its status in its author's words,
+# never a check; the labels it proves and uses, as cross-references; its
+# discussion, linked to \github's issue. A mark written twice, or a second
+# \lean or \uses, adds what the first did not name. \home links nothing on
+# the web page either. A declaration binds what a later statement links
+# (inert:binds, its links witnessed by blueprintChecks). The dependency
+# graph and showmore's proof buttons are not drawn: one loss (W0434), on the
+# web page alone, over the load and each \graphcolor. A statement row stands
+# in an amsthm lemma labelled lem:probe.
 pre refuse:W0434 \usepackage{blueprint}
 pre refuse:W0434 \usepackage[showmore, dep_graph]{blueprint}
+pre refuse:W0434 \usepackage[thms=definition+lemma+theorem]{blueprint}
+pre inert:binds \usepackage[link={https://example.org/api/\#{name}}]{blueprint}
 pre inert:binds \dochome{https://example.org/docs}
 pre inert:binds \github{https://github.com/example/widgets}
 pre inert:shown-nowhere \home{https://example.org}

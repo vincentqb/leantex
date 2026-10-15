@@ -1241,10 +1241,10 @@ def labelled (tag : String) : Bool :=
 def compatRowSelfLoads (pkg call : String) : Bool :=
   hasStr call "\\usepackage" && hasStr call ("{" ++ pkg ++ "}")
 
-/-- The document a compat-index row elaborates as: the call at its place, its package loaded unless
-the call loads it; a `statement` call stands in an amsthm lemma labelled `lem:probe`. -/
-def compatRowSrc (pkg place call : String) : String :=
-  let load := if compatRowSelfLoads pkg call then "" else s!"\\usepackage\{{pkg}}\n"
+/-- The scaffold a compat-index row's call stands in at its place, its package loaded where `load`;
+a `statement` call stands in an amsthm lemma labelled `lem:probe`. -/
+def compatRowScaffold (load : Bool) (pkg place call : String) : String :=
+  let load := if load then s!"\\usepackage\{{pkg}}\n" else ""
   if place == "statement" then
     s!"\\documentclass\{article}\n\\usepackage\{amsthm}\n{load}\\newtheorem\{lemma}\{Lemma}\n\
 \\begin\{document}\n\\begin\{lemma}\\label\{lem:probe}\n{call}\nx\n\\end\{lemma}\n\\end\{document}"
@@ -1257,6 +1257,16 @@ def compatRowSrc (pkg place call : String) : String :=
     s!"\\documentclass\{{cls}}\n{load}\\begin\{document}\n\\begin\{frame}\n{call}\n\\end\{frame}\n\\end\{document}"
   else
     s!"\\documentclass\{article}\n{load}\\begin\{document}\n{call}\n\\end\{document}"
+
+/-- The document a compat-index row elaborates as: the call at its place, its package loaded unless
+the call loads it. -/
+def compatRowSrc (pkg place call : String) : String :=
+  compatRowScaffold (!compatRowSelfLoads pkg call) pkg place call
+
+/-- The document a compat-index row elaborates as with its call taken out, its package's load with
+it where the call was the load. -/
+def compatRowBase (pkg place call : String) : String :=
+  compatRowScaffold (!compatRowSelfLoads pkg call) pkg place ""
 
 /-- Whole-name occurrences of `word` whose preceding source passes `keep`. -/
 def wordCountWhere (text word : String) (keep : String → Bool) : Nat := Id.run do
