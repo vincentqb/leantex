@@ -10601,8 +10601,7 @@ termination_by (ctx.envLimit, 1, 0, 0, 0, stash.length)
 decreasing_by all_goals blocks_dec
 
 /-- Elaborates each list item under its accumulated `\pause` base. -/
-private def elabItemsGo (ctx : Ctx) (items : Array (Array Raw))
-    (steps : Array (Option Ir.OverlaySpec)) (itemPauses : Array Nat)
+private def elabItemsGo (ctx : Ctx) (items : Array (Array Raw)) (itemPauses : Array Nat)
     (m : Nat) (acc : Array (Array Block)) (bound pbound : Nat)
     (hb : itemsMeas rawWeightList items.toList < bound)
     (hpb : itemsMeas nestedParsList items.toList ≤ pbound) :
@@ -10620,7 +10619,7 @@ private def elabItemsGo (ctx : Ctx) (items : Array (Array Raw))
       pure ⟨{ ctx with stepBase := ctx.stepBase + p }, rfl, rfl, rfl, rfl⟩
     let inner ← elabBlockScope stepCtx it
     let acc := acc.push inner
-    elabItemsGo ctx items steps itemPauses (m + 1) acc bound pbound hb hpb
+    elabItemsGo ctx items itemPauses (m + 1) acc bound pbound hb hpb
   else return acc
 termination_by (ctx.envLimit, noteFlag ctx,
   visParsGo ctx.user ctx.limit + pbound,
@@ -10630,7 +10629,7 @@ decreasing_by all_goals blocks_dec
 /-- Walks a float body: captions, subfigure columns and their gutters, and
 the rest elaborated in place. -/
 private def figureGo (ctx : Ctx) (n : String) (kind : Ir.FloatKind)
-    (body : Array Raw) (pos : Pos) (j : Nat) (innerBlocks : Array Block)
+    (body : Array Raw) (j : Nat) (innerBlocks : Array Block)
     (cols : Array (BoxWidth × Array Block)) (rest : Array Raw)
     (caption : Array Inline) (capAbove : Bool) (blocks : Array Block)
     (hf : SliceFits rest body j (rawWeightList body.toList) (nestedParsList body.toList)) :
@@ -10649,23 +10648,23 @@ private def figureGo (ctx : Ctx) (n : String) (kind : Ir.FloatKind)
         let caption ← elabInlines ctx t
         let capAbove := innerBlocks.isEmpty && cols.isEmpty
           && rest.all isSpaceOrPar
-        figureGo ctx n kind body pos (j3 + 1) innerBlocks cols rest caption
+        figureGo ctx n kind body (j3 + 1) innerBlocks cols rest caption
           capAbove blocks (hf.skip (by omega))
       | _ =>
         diag ctx .E0304 "'\\caption' needs a {text} group" cpos
-        figureGo ctx n kind body pos j3 innerBlocks cols rest caption
+        figureGo ctx n kind body j3 innerBlocks cols rest caption
           capAbove blocks (hf.skip (by omega))
     | .ctrl "centering" _ =>
       -- The float centres already; the declaration is satisfied.
-      figureGo ctx n kind body pos (j + 1) innerBlocks cols rest caption
+      figureGo ctx n kind body (j + 1) innerBlocks cols rest caption
         capAbove blocks (hf.skip (by omega))
     | .ctrl "hfill" _ =>
       -- Between subfigures the fill is the gutter the columns layout sets.
       if !cols.isEmpty && rest.all isSpaceOrPar then
-        figureGo ctx n kind body pos (j + 1) innerBlocks cols rest caption
+        figureGo ctx n kind body (j + 1) innerBlocks cols rest caption
           capAbove blocks (hf.skip (by omega))
       else
-        figureGo ctx n kind body pos (j + 1) innerBlocks cols
+        figureGo ctx n kind body (j + 1) innerBlocks cols
           (rest.push body[j]) caption capAbove blocks (hf.keep h rfl)
     | .env sn sbody spos =>
       if sn == "subfigure" || sn == "subtable" then do
@@ -10712,14 +10711,14 @@ text width; the box shares the leftover" spos
         let mut sInner ← elabBlockScope ctx sRest
         unless sCaption.isEmpty do
           sInner := Ir.captionAltBlocks sCaption sInner
-        figureGo ctx n kind body pos (j + 1) innerBlocks
+        figureGo ctx n kind body (j + 1) innerBlocks
           (cols.push ({ width with pos := subPos }, #[.float .sub none sCapAbove sInner sCaption]))
           #[] caption capAbove blocks (hf.flush (by omega))
       else
-        figureGo ctx n kind body pos (j + 1) innerBlocks cols
+        figureGo ctx n kind body (j + 1) innerBlocks cols
           (rest.push body[j]) caption capAbove blocks (hf.keep h rfl)
     | _ =>
-      figureGo ctx n kind body pos (j + 1) innerBlocks cols
+      figureGo ctx n kind body (j + 1) innerBlocks cols
         (rest.push body[j]) caption capAbove blocks (hf.keep h rfl)
   else do
     let innerBlocks :=
@@ -10890,7 +10889,7 @@ private def elabEnvArm (ctx : Ctx) (n : String) (scope : Array Raw)
     let ⟨itemCtx, _⟩ : MCtx ctx ← pure ⟨{ ctx with literalText := literal },
       rfl, rfl, rfl, rfl⟩
     let elabItems ← withBlockDecls scope.decls do
-      let elabItems ← elabItemsGo itemCtx items steps itemPauses 0 #[]
+      let elabItems ← elabItemsGo itemCtx items itemPauses 0 #[]
         (rawWeightList lbody.toList + 1) (nestedParsList lbody.toList)
         (by omega) (by omega)
       if n == "description" then descItems itemCtx lbody elabItems
@@ -10978,7 +10977,7 @@ has nowhere for a float to float" pos
       sliceWeight_zero _
     have _ : slicePars fbody 0 = nestedParsList fbody.toList :=
       slicePars_zero _
-    blocks ← figureGo ctx n kind fbody pos k #[] #[] #[] #[] false blocks
+    blocks ← figureGo ctx n kind fbody k #[] #[] #[] #[] false blocks
       (SliceFits.whole fbody k)
   else if n == "algorithm" || n == "algorithm*" || n == "algorithm2e" then
     blocks ← algorithmArm ctx n body pos blocks

@@ -3,6 +3,8 @@ module
 public meta import Lean.Elab.Command
 public meta import Lean.Server.InfoUtils
 public meta import Lean.Compiler.NoncomputableAttr
+public meta import Lean.Elab.PreDefinition.Structural.Eqns
+public meta import Lean.Elab.PreDefinition.WF.Eqns
 meta import Lean.Util.CollectAxioms
 meta import Lean.Util.Path
 
@@ -123,6 +125,80 @@ meta initialize
           logError m!"proof audit: {← getFileName}: anonymous proof audit failed"
       return checked)
 
+/-- For each argument of an application spine, right to left, whether it fills a slot of a
+recursive call that `dead` marks. -/
+meta def spineSlots (dead : NameMap (Array Bool)) (e : Expr) : List Bool :=
+  let n := e.getAppNumArgs
+  match e.getAppFn with
+  | .const g _ => match dead.find? g with
+    | some slots => ((List.range n).map fun j => slots.getD j false).reverse
+    | none => List.replicate n false
+  | _ => List.replicate n false
+
+/-- Whether `e` reads `x` anywhere but in the slots `dead` marks on recursive calls; `slots`
+carries the marks of the spine an argument is peeled from. -/
+meta def readsOutside (dead : NameMap (Array Bool)) (x : FVarId) :
+    Expr → Option (List Bool) → Bool
+  | e@(.app f a), some (d :: rest) =>
+    e.hasFVar && ((!d && readsOutside dead x a none) || readsOutside dead x f (some rest))
+  | e@(.app f a), some [] => e.hasFVar && (readsOutside dead x a none || readsOutside dead x f none)
+  | e@(.app f a), none => e.hasFVar && match spineSlots dead e with
+    | d :: rest => (!d && readsOutside dead x a none) || readsOutside dead x f (some rest)
+    | [] => readsOutside dead x a none || readsOutside dead x f none
+  | e@(.lam _ t b _), _ | e@(.forallE _ t b _), _ =>
+    e.hasFVar && (readsOutside dead x t none || readsOutside dead x b none)
+  | e@(.letE _ t v b _), _ =>
+    e.hasFVar && (readsOutside dead x t none || readsOutside dead x v none ||
+      readsOutside dead x b none)
+  | .mdata _ b, _ | .proj _ _ b, _ => readsOutside dead x b none
+  | .fvar y, _ => y == x
+  | _, _ => false
+
+/-- A recursive declaration's block: every name defined with it and their bodies before
+the recursion was compiled away. -/
+meta def recursiveBlock (env : Environment) (decl : Name) : Option (Array Name × Array Expr) :=
+  let value (n : Name) : Option Expr :=
+    ((Elab.Structural.eqnInfoExt.find? env n).map (·.value)).orElse fun _ =>
+      (Elab.WF.eqnInfoExt.find? env n).map (·.value)
+  let names := ((Elab.Structural.eqnInfoExt.find? env decl).map (·.declNames)).orElse fun _ =>
+    (Elab.WF.eqnInfoExt.find? env decl).map (·.declNames)
+  names.bind fun names => (names.mapM value).map (names, ·)
+
+/-- The data parameters of a recursive block that nothing reads but its own recursive calls,
+each as its declaration, position and name: the greatest set closed under passing. -/
+meta def threadedParams (names : Array Name) (bodies : Array Expr) :
+    MetaM (Array (Name × Nat × Name)) := do
+  let arities ← bodies.mapM fun v => Meta.lambdaTelescope v fun xs _ => pure xs.size
+  let mut dead : NameMap (Array Bool) := {}
+  for (n, k) in names.zip arities do dead := dead.insert n (Array.replicate k true)
+  for _ in [0:arities.foldl (· + ·) 1] do
+    let mut changed := false
+    for (n, v) in names.zip bodies do
+      let before := (dead.find? n).getD #[]
+      let marks := dead
+      let after ← Meta.lambdaTelescope v fun xs body => do
+        let types ← xs.mapM Meta.inferType
+        let result ← Meta.inferType body
+        let mut slots := before
+        for (x, i) in xs.zipIdx do
+          let some id := x.fvarId? | continue
+          if slots.getD i false then
+            let live := (← Meta.isProp (types.getD i x)) ||
+              (types.extract (i + 1) types.size).any (·.containsFVar id) ||
+              result.containsFVar id || readsOutside marks id body none
+            if live then slots := slots.setIfInBounds i false
+        return slots
+      if after != before then
+        dead := dead.insert n after
+        changed := true
+    unless changed do break
+  let mut out := #[]
+  for (n, v) in names.zip bodies do
+    let users ← Meta.lambdaTelescope v fun xs _ => xs.mapM fun x => return (← Meta.getFVarLocalDecl x).userName
+    for (b, i) in ((dead.find? n).getD #[]).zipIdx do
+      if b then out := out.push (n, i, users.getD i .anonymous)
+  return out
+
 /-- Audit the compiled declarations of an explicit source manifest, private and unused
 ones included, against the accepted foundation (quotient soundness, classical choice and
 propositional extensionality) and for a `let` bound before a returned function. -/
@@ -145,6 +221,7 @@ elab "#audit_proofs" "[" modules:str,* "]" "from" root:str
     if !covered.contains name && (← projectModule root name) then
       throwError "proof audit: imported project module {name} is missing from the source manifest; move hidden or linked sources into a maintained directory and register their Lake target"
   let mut seen : NameSet := {}
+  let mut threaded : NameSet := {}
   let mut count : Nat := 0
   let mut failures : Nat := 0
   for name in expected do
@@ -172,6 +249,12 @@ elab "#audit_proofs" "[" modules:str,* "]" "from" root:str
           logError m!"proof audit: {name}: {decl} binds a let before the function it returns, \
 so the let runs on every call; return what it binds as a structure"
           failures := failures + 1
+      if let some (block, bodies) := recursiveBlock env decl then
+        unless threaded.contains decl do
+          for m in block do threaded := threaded.insert m
+          for (d, i, x) in ← liftTermElabM (withCurrHeartbeats (threadedParams block bodies)) do
+            logError m!"proof audit: {name}: {d} passes its parameter {x} (#{i + 1}) only to its own recursive calls; nothing reads it"
+            failures := failures + 1
       count := count + 1
   if failures == 0 then
     logInfo m!"proof audit: {expected.size} modules, {count} declarations checked"

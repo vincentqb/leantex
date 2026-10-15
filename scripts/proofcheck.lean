@@ -212,8 +212,24 @@ public def Shift.apply (s : Shift) (k : Nat) : Nat := s.amount + k
 "
   (_, failures) ← (expect "structure fixture did not compile"
     (structured.exitCode == 0)).run failures
+  let threaded ← probe "Threaded" "module
+public def threadedSum (acc : Nat) (unused : String) : List Nat → Nat
+  | [] => acc
+  | x :: xs => threadedSum (acc + x) unused xs
+"
+  (_, failures) ← (expect "threaded-parameter fixture did not compile"
+    (threaded.exitCode == 0)).run failures
+  let threading ← probe "Threading" "module
+public def countdown (n step : Nat) (h : 0 < step) : List Nat :=
+  if n < step then [n] else n :: countdown (n - step) step h
+termination_by n
+decreasing_by omega
+"
+  (_, failures) ← (expect "read-parameter fixture did not compile"
+    (threading.exitCode == 0)).run failures
   let allFixtures := #["Valid", "Hyphenated-Module", "Visible", "Hidden", "Foreign", "Foundation",
-    "Bridge", "Consumer", "AxiomBridge", "AxiomConsumer", "Hoisted", "Structured", "Unimported"]
+    "Bridge", "Consumer", "AxiomBridge", "AxiomConsumer", "Hoisted", "Structured", "Threaded",
+    "Threading", "Unimported"]
   for (label, imports, manifest, okay) in [
       ("valid compiled proof", #["Valid"], #["Valid"], true),
       ("hyphenated compiled module", #["Valid", "Hyphenated-Module"],
@@ -224,6 +240,8 @@ public def Shift.apply (s : Shift) (k : Nat) : Nat := s.amount + k
       ("transitive unfinished proof", #["Consumer"], #["Consumer"], false),
       ("transitive project axiom", #["AxiomConsumer"], #["AxiomConsumer"], false),
       ("bindings returned as a structure", #["Structured"], #["Structured"], true),
+      ("parameter only its recursive calls read", #["Threaded"], #["Threaded"], false),
+      ("recursive parameters read, a termination fact", #["Threading"], #["Threading"], true),
       ("empty manifest", #["Valid"], #[], false),
       ("duplicate manifest", #["Valid"], #["Valid", "Valid"], false),
       ("missing module", #["Valid"], #["Unimported"], false)] do
@@ -235,6 +253,10 @@ public def Shift.apply (s : Shift) (k : Nat) : Nat := s.amount + k
     let out ← compile file #["-R", dir.toString] (some dir)
     (_, failures) ← (expect label ((out.exitCode == 0) == okay)).run failures
     if (out.exitCode == 0) != okay then IO.eprint (out.stdout ++ out.stderr)
+    if imports == #["Threaded"] then
+      (_, failures) ← (expect "the audit did not name the threaded parameter"
+        ((out.stdout ++ out.stderr).contains "threadedSum passes its parameter unused (#2)")).run
+          failures
   let hoistedAudit := dir / "HoistedAudit.lean"
   IO.FS.writeFile hoistedAudit (wrapper dir #["Hoisted"] allFixtures)
   let hoistedOut ← compile hoistedAudit #["-R", dir.toString] (some dir)
