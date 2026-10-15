@@ -3,6 +3,7 @@ module
 public import Std.Data.HashMap
 import Std.Data.HashSet
 import LeanTex.Core.KeyVal
+import LeanTex.Core.Hex
 
 /-! The CSS an SVG file states (SVG 2 §6): declarations, a selector subset, and the cascade
 of CSS Cascading 4 §6 over them. -/
@@ -57,7 +58,7 @@ structure Scan where
   quote : Option Char
 
 /-- The closer that mirrors a block's opener (CSS Syntax 3 §5.5.9). -/
-def mirror (c : Char) : Option Char :=
+@[expose] public def mirror (c : Char) : Option Char :=
   if c == '(' then some ')' else if c == '[' then some ']' else if c == '{' then some '}' else none
 
 /-- The scan a character opens: a string at a quote, a block at an opener. -/
@@ -118,14 +119,14 @@ def noGroup (_ : List Char) : Bool := false
 def pieceText (piece : Array (List Char)) : String :=
   piece.foldl (fun t a => a.foldl String.push t) ""
 
-/-- CSS text, its comments removed, cut at each `sep` outside blocks, strings and escapes, each piece
-as written: a comma-separated list's items (CSS Syntax 3 §5.4.10), or a block's declarations at
-`;`. -/
+/-- CSS text with no comments in it (`stripComments` first) cut at each `sep` outside blocks,
+strings and escapes, each piece as written: a list's items at `,` (CSS Syntax 3 §5.4.10), a block's
+declarations at `;`. -/
 public def splitList (sep : Char) (s : String) : Array String :=
   (KeyVal.splitTopAt noGroup noGroup (· == [sep]) (atoms s)).map pieceText
 
-/-- Whether an atom is whole: a string or block its mirror closed, or any other atom but a lone
-backslash. -/
+/-- Whether an atom is whole: a string its quote or a line end ended, a block its mirror closed, or
+any other atom but a lone backslash. -/
 public def closedAtom : List Char → Bool
   | c :: b =>
     match opening c with
@@ -241,9 +242,37 @@ public def refusedIn (s : String) : Option String := Id.run do
     | none => if c == '"' || c == '\'' then quote := some c
   return false
 
-/-- Text on one line, each run of white space one blank, as a diagnostic names it. -/
-public def oneLine (s : String) : String :=
-  " ".intercalate ((s.split isWs).toList.map (·.toString) |>.filter (!·.isEmpty))
+/-- Text on one line as a diagnostic names it: each run of white space outside strings one blank,
+a string as written, a line end that breaks one a blank. -/
+public def oneLine (s : String) : String := Id.run do
+  let mut out := ""
+  let mut quote : Option Char := none
+  let mut gap := false
+  let mut esc := false
+  for c in s.toList do
+    if esc && !isLineEnd c then
+      out := out.push c
+      esc := false
+      continue
+    esc := false
+    match quote with
+    | some q =>
+      if isLineEnd c then
+        quote := none
+        gap := true
+      else
+        out := out.push c
+        if c == '\\' then esc := true
+        else if c == q then quote := none
+    | none =>
+      if isWs c then gap := true
+      else
+        if gap && !out.isEmpty then out := out.push ' '
+        gap := false
+        out := out.push c
+        if c == '\\' then esc := true
+        else if c == '"' || c == '\'' then quote := some c
+  return out
 
 /-- A declaration's value without its trailing `!important`, and whether it held one (CSS Syntax 3
 §5.5.6). -/
@@ -279,6 +308,100 @@ public def parseDecls (text : String) : Except Problem (Array Decl) := do
 
 /-- A character of a CSS identifier: a letter, digit, `-`, `_` or non-ASCII. -/
 @[expose] public def identChar (c : Char) : Bool := c.isAlphanum || c == '-' || c == '_' || c.toNat ≥ 128
+
+/-- Text past the one blank that may end a hex escape. -/
+def dropBlank : List Char → List Char
+  | w :: more => if isWs w then more else w :: more
+  | [] => []
+
+private theorem dropBlank_length (l : List Char) : (dropBlank l).length ≤ l.length := by
+  cases l with
+  | nil => simp [dropBlank]
+  | cons w more => simp only [dropBlank]; split <;> simp
+
+/-- Escaped text's characters (CSS Syntax 3 §4.3.7): one to six hex digits and a blank after them as
+their code point, U+FFFD for none, a surrogate or one past Unicode; an escaped line end as nothing
+(§4.3.5); any other escaped character as itself. -/
+public def unescape : List Char → List Char
+  | [] => []
+  | '\\' :: c :: rest =>
+    if isLineEnd c then unescape rest
+    else if (Hex.digit? c).isSome then
+      let more := (rest.takeWhile (Hex.digit? · |>.isSome)).take 5
+      let n := (c :: more).foldl (fun n d => n * 16 + (Hex.digit? d).getD 0) 0
+      let ch := if n == 0 || (0xD800 ≤ n && n ≤ 0xDFFF) || n > 0x10FFFF then '\uFFFD' else Char.ofNat n
+      ch :: unescape (dropBlank (rest.drop more.length))
+    else c :: unescape rest
+  | ['\\'] => ['\uFFFD']
+  | c :: rest => c :: unescape rest
+termination_by l => l.length
+decreasing_by
+  all_goals simp_wf
+  all_goals first
+    | omega
+    | (have := dropBlank_length (rest.drop (List.take 5 (List.takeWhile
+        (fun x => (Hex.digit? x).isSome) rest)).length); simp at this ⊢; omega)
+
+/-- Text's words, cut at white space outside escapes, a hex escape's ending blank its own (§4.3.7). -/
+public def words (s : String) : List String := Id.run do
+  let cs := s.toList.toArray
+  let mut out : Array String := #[]
+  let mut cur := ""
+  let mut i := 0
+  for _ in [0:cs.size + 1] do
+    if h : i < cs.size then
+      let c := cs[i]
+      if c == '\\' && i + 1 < cs.size then
+        cur := (cur.push c).push (cs[i + 1]?.getD c)
+        let mut j := i + 2
+        if (Hex.digit? (cs[i + 1]?.getD ' ')).isSome then
+          for _ in [0:5] do
+            if j < cs.size && (Hex.digit? (cs[j]?.getD ' ')).isSome then
+              cur := cur.push (cs[j]?.getD ' ')
+              j := j + 1
+          if j < cs.size && isWs (cs[j]?.getD 'x') then
+            cur := cur.push ' '
+            j := j + 1
+        i := j
+      else if isWs c then
+        unless cur.isEmpty do out := out.push cur
+        cur := ""
+        i := i + 1
+      else
+        cur := cur.push c
+        i := i + 1
+  unless cur.isEmpty do out := out.push cur
+  return out.toList
+
+/-- Whether text is one CSS identifier (CSS Syntax 3 §4.3.11): identifier characters or escapes, not
+starting with a digit, a `-` followed by a digit, or a lone `-`. -/
+public def identifier (cs : List Char) : Bool :=
+  let units : Option (List (Bool × Char)) := go cs
+  match units with
+  | some ((false, c) :: more) =>
+    !c.isDigit && (c != '-' || match more with
+      | (esc, d) :: _ => esc || !d.isDigit
+      | [] => false)
+  | some ((true, _) :: _) => true
+  | _ => false
+where
+  go : List Char → Option (List (Bool × Char))
+    | [] => some []
+    | '\\' :: c :: rest =>
+      if isLineEnd c then none
+      else if (Hex.digit? c).isSome then
+        let more := (rest.takeWhile (Hex.digit? · |>.isSome)).take 5
+        ((true, c) :: ·) <$> go (dropBlank (rest.drop more.length))
+      else ((true, c) :: ·) <$> go rest
+    | ['\\'] => none
+    | c :: rest => if identChar c then ((false, c) :: ·) <$> go rest else none
+  termination_by l => l.length
+  decreasing_by
+    all_goals simp_wf
+    all_goals first
+      | omega
+      | (have := dropBlank_length (rest.drop (List.take 5 (List.takeWhile
+          (fun x => (Hex.digit? x).isSome) rest)).length); simp at this ⊢; omega)
 
 /-- One compound selector's text, unless it is outside the subset. -/
 public def parseCompound (s : String) : Option Compound := do
@@ -334,9 +457,9 @@ public def parseSelector (s : String) : Except String Selector := do
   (all.foldl (fun n c => n + c.ids.size) 0, all.foldl (fun n c => n + c.classes.size) 0,
     all.foldl (fun n c => n + (if c.type.isSome then 1 else 0)) 0)
 
-/-- A style sheet's rules in order, those outside the subset dropped and named; a refused
-spelling refuses the sheet. A rule is the text before a `{` block and the block (CSS Syntax 3
-§5.4.3). -/
+/-- A style sheet's rules in order, each the text before a `{` block and the block, the end of the
+text closing a block still open (CSS Syntax 3 §5.5.3, §5.5.9), a rule outside the subset dropped and
+named and a refused spelling refusing the sheet. -/
 public def parseSheet (text : String) : Except String (Array Rule × Array String) := do
   let text := stripComments text
   if let some what := refusedIn text then throw what
@@ -346,13 +469,10 @@ public def parseSheet (text : String) : Except String (Array Rule × Array Strin
   for a in atoms text do
     if a.head? != some '{' then
       prelude := a.foldl String.push prelude
-    else if !closedAtom a then
-      dropped := dropped.push "an unterminated rule"
-      prelude := ""
-      break
     else
+      let body := if closedAtom a then (a.drop 1).dropLast else a.drop 1
       let sels := (splitList ',' prelude).map (·.trimAscii.toString)
-      match sels.mapM parseSelector, parseDecls (String.ofList (a.drop 1).dropLast) with
+      match sels.mapM parseSelector, parseDecls (String.ofList body) with
       | .ok sels, .ok ds => rules := rules.push { selectors := sels, decls := ds }
       | .error why, _ => dropped := dropped.push why
       | _, .error (.unsupported why) => dropped := dropped.push why
@@ -894,5 +1014,130 @@ public theorem splitList_atoms_exact (sep : Char) (s : String) :
   simp only [splitList, Array.toList_map, List.map_map]
   exact List.map_congr_left fun piece hpiece => by
     simpa [Function.comp_def] using piece_atoms sep s piece hpiece
+
+/-- A scan inside a block whose outermost closer is `m`. -/
+private def InBlock (m : Char) (st : Scan) : Prop := st.closers ≠ [] ∧ st.closers.getLast? = some m
+
+/-- A step inside a block stays inside it, or ends the atom at the block's mirror. -/
+private theorem scanStep_inBlock (m : Char) (st : Scan) (c : Char) (h : InBlock m st) :
+    (∀ st', scanStep st c = some st' → InBlock m st') ∧ (scanStep st c = none → c = m) := by
+  obtain ⟨hne, hlast⟩ := h
+  rcases st with ⟨closers, quote⟩
+  have hempty : closers.isEmpty = false := by
+    cases closers with
+    | nil => exact absurd rfl hne
+    | cons _ _ => rfl
+  cases quote with
+  | some q =>
+    constructor
+    · intro st' hs
+      simp only [scanStep] at hs
+      split at hs
+      · simp only [hempty, Bool.false_eq_true, ↓reduceIte, Option.some.injEq] at hs
+        subst hs
+        exact ⟨hne, hlast⟩
+      · simp only [Option.some.injEq] at hs
+        subst hs
+        exact ⟨hne, hlast⟩
+    · intro hs
+      simp only [scanStep] at hs
+      split at hs
+      · simp [hempty] at hs
+      · simp at hs
+  | none =>
+    constructor
+    · intro st' hs
+      simp only [scanStep] at hs
+      split at hs
+      · simp only [Option.some.injEq] at hs
+        subst hs
+        exact ⟨hne, hlast⟩
+      · split at hs
+        · next m' _ =>
+          simp only [Option.some.injEq] at hs
+          subst hs
+          refine ⟨List.cons_ne_nil _ _, ?_⟩
+          simp only
+          rw [List.getLast?_cons, hlast]
+          rfl
+        · split at hs
+          · next top more =>
+            split at hs
+            · split at hs
+              · simp at hs
+              · next hmore =>
+                simp only [Option.some.injEq] at hs
+                subst hs
+                have hm : more ≠ [] := by
+                  intro h0
+                  subst h0
+                  simp at hmore
+                refine ⟨hm, ?_⟩
+                simp only
+                cases more with
+                | nil => exact absurd rfl hm
+                | cons x xs => rwa [List.getLast?_cons_cons] at hlast
+            · simp only [Option.some.injEq] at hs
+              subst hs
+              exact ⟨hne, hlast⟩
+          · simp at hs
+    · intro hs
+      simp only [scanStep] at hs
+      split at hs
+      · simp at hs
+      · split at hs
+        · simp at hs
+        · split at hs
+          · next top more =>
+            split at hs
+            · next htop =>
+              split at hs
+              · next hmore =>
+                have h0 : more = [] := by simpa using hmore
+                subst h0
+                simp only [List.getLast?_singleton, Option.some.injEq] at hlast
+                have : c = top := by simpa using htop
+                rw [this, hlast]
+              · simp at hs
+            · simp at hs
+          · exact absurd rfl hne
+
+/-- Where a scan inside a block ends, the character there is the block's mirror. -/
+private theorem scanLen_inBlock (m : Char) (st : Scan) (l : List Char) (n k : Nat)
+    (h : scanLen st l n = some k) (hb : InBlock m st) : l[k - n - 1]? = some m := by
+  fun_induction scanLen st l n generalizing k with
+  | case1 => simp at h
+  | case2 => simp at h
+  | case3 st x rest n ih =>
+    have hbd := scanLen_bound st rest (n + 2) k h
+    have hk : k - n - 1 = (k - (n + 2) - 1) + 2 := by omega
+    rw [hk]
+    simpa using ih k h hb
+  | case4 st c rest n _ _ hs =>
+    simp only [Option.some.injEq] at h
+    subst h
+    have := (scanStep_inBlock m st c hb).2 hs
+    simp [this]
+  | case5 st c rest n _ _ st' hs ih =>
+    have hbd := scanLen_bound st' rest (n + 1) k h
+    have hk : k - n - 1 = (k - (n + 1) - 1) + 1 := by omega
+    rw [hk]
+    simpa using ih k h ((scanStep_inBlock m st c hb).1 st' hs)
+
+/-- A block the reader closes ends at its opener's mirror, never at another kind's closer. -/
+public theorem closedAtom_mirror (c m : Char) (b : List Char) (hm : mirror c = some m)
+    (h : closedAtom (c :: b) = true) : (c :: b).getLast? = some m := by
+  have hq : c ≠ '"' ∧ c ≠ '\'' := by
+    constructor <;> (intro hc; subst hc; simp [mirror] at hm)
+  have ho : opening c = some ⟨[m], none⟩ := by
+    simp [opening, hq.1, hq.2, hm]
+  simp only [closedAtom, ho, beq_iff_eq] at h
+  have hidx := scanLen_inBlock m ⟨[m], none⟩ b 0 b.length h ⟨by simp, by simp⟩
+  have hpos := scanLen_bound ⟨[m], none⟩ b 0 b.length h
+  cases b with
+  | nil => simp at hpos
+  | cons x xs =>
+    rw [List.getLast?_cons_cons, List.getLast?_eq_getElem?]
+    simpa using hidx
 
 end LeanTex.Core.Css

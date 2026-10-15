@@ -367,6 +367,19 @@ def cssListChecks (ref : IO.Ref (List String)) : IO Unit := do
     (blockNamed == #["rect[title=x), y]", "rect .ok..bad"])
   check ref s!"CSS lists: a family list CSS reads whole or drops names no family it lacks ({blockSubjects})"
     (blockSubjects.all fun s => !s.startsWith "svg:font:")
+  let openSvg := svgDocument ("<style>.m { fill: lime } .a { fill: blue; stroke-dasharray: [2 }</style>" ++
+    "<style>.b { fill: yellow; x: { } .c { fill: red }</style><style>.d { fill: aqua; x: [{]}</style>" ++
+    "<style>.e { fill: fuchsia; x: [ [ ]</style><style>.f { fill: white</style>" ++
+    String.join ((["m", "a", "b", "c", "d", "e", "f"].zipIdx).map fun (c, i) =>
+      s!"<rect class=\"{c}\" x=\"{10 * i}\" width=\"5\" height=\"5\"/>")) 70 10
+  let of ← Driver.svgFetch "open.svg" openSvg .first "en" none
+  let (oen, _) := Image.fulfilOne { src := "open.svg" } (.decoded "" of.res none none (some openSvg) none)
+  let (openStore, _) := FigureStore.settle fs (FigureStore.attach { entries := #[oen] } #[some of.drawn])
+  let openDoc := (elabStr "\\includegraphics[width=200pt]{open.svg}").1
+  let openPdf := pdfText (Pdf.write geom fs (layoutOf fs openDoc geom none openStore).pages {} openStore)
+  check ref "CSS lists: a block the sheet's end closes keeps its rule's paint, as CSS and rsvg paint it"
+    (["0 1 0 rg", "0 0 1 rg", "1 1 0 rg", "0 1 1 rg", "1 0 1 rg", "1 1 1 rg"].all (bytesContain openPdf ·) &&
+      !bytesContain openPdf "1 0 0 rg")
 
 
 /-- The corpus's figures ship as the page's own SVG where they can, the moving and raster ones as

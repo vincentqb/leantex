@@ -586,25 +586,29 @@ where
   ["serif", "sans-serif", "monospace", "cursive", "fantasy", "system-ui", "ui-serif",
    "ui-sans-serif", "ui-monospace", "ui-rounded", "math", "emoji", "fangsong"]
 
-/-- One family of a `font-family` list (CSS Fonts 4 §2.1): a string its quote closes, its text, or
-identifiers joined by single blanks, a generic family's keyword in lower case; `none` for anything
-else. -/
+/-- The keywords no unquoted family name may hold (CSS Values 4 §4.2, CSS Fonts 4 §2.1). -/
+@[expose] public def reservedFamilyWords : List String :=
+  ["inherit", "initial", "unset", "revert", "revert-layer", "default"]
+
+/-- One family of a `font-family` list (CSS Fonts 4 §2.1): a string its quote closes, its text
+unescaped, or identifiers joined by single blanks, unescaped, a generic family's keyword in lower
+case; `none` for anything else. -/
 public def family? (t : String) : Option String :=
   match Css.atoms t with
   | [q :: body] =>
     if (q == '"' || q == '\'') && Css.closedAtom (q :: body) && body.getLast? == some q then
-      some (String.ofList body.dropLast)
+      some (String.ofList (Css.unescape body.dropLast))
     else ident? t
   | _ => ident? t
 where
   ident? (t : String) : Option String :=
-    let words := (t.split Css.isWs).toList.map (·.toString) |>.filter (!·.isEmpty)
-    let isIdent (w : String) : Bool :=
-      w.all Css.identChar && !(w.front.isDigit)
-    if words.isEmpty || !words.all isIdent then none
-    else match words with
-      | [w] => some (if generics.contains w.toLower then w.toLower else w)
-      | _ => some (" ".intercalate words)
+    let words := Css.words t
+    let names := words.map fun w => String.ofList (Css.unescape w.toList)
+    if words.isEmpty || !words.all (Css.identifier ·.toList) ||
+        names.any (reservedFamilyWords.contains ·.toLower) then none
+    else match names with
+      | [n] => some (if generics.contains n.toLower then n.toLower else n)
+      | _ => some (" ".intercalate names)
 
 /-- A `font-family` list, its comments removed and cut at its commas outside strings and blocks,
 each family as `family?` reads it; `none` when one is no family, as CSS then drops the

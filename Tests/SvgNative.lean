@@ -569,6 +569,18 @@ def cssSplitChecks (ref : IO.Ref (List String)) : IO Unit := do
       Svg.families? "\"Two, Words\", Times  New Roman, SERIF" ==
         some #["Two, Words", "Times New Roman", "serif"] &&
       Svg.families? "\"Open, serif" == none && Svg.families? "3D, serif" == none)
+  check ref "CSS families: reserved words, an identifier a digit opens, and escapes read as CSS reads them"
+    (Svg.families? "Foo, inherit" == none && Svg.families? "Foo, default" == none &&
+      Svg.families? "-3D, serif" == none && Svg.families? "a\\,b, serif" == some #["a,b", "serif"] &&
+      Svg.families? "\"a\\\"b\", monospace" == some #["a\"b", "monospace"] &&
+      Svg.families? "\\31 23, monospace" == some #["123", "monospace"])
+  check ref "CSS one line: white space outside strings is one blank, a string as written"
+    (Css.oneLine "rect[title=\"a   b\"]\n\t .ok" == "rect[title=\"a   b\"] .ok")
+  check ref "CSS sheet: a block the sheet's end closes keeps its rule"
+    (match Css.parseSheet ".m { fill: lime } .a { fill: blue; stroke-dasharray: [2 }" with
+      | .ok (rules, dropped) => rules.size == 2 && dropped.isEmpty &&
+          (rules[1]?.map (·.decls.any (·.value == "blue"))).getD false
+      | .error _ => false)
   check ref "CSS split: importance is read after the value's strings"
     (Css.importance "\"Bang!\" !important" == ("\"Bang!\"", true) &&
       Css.importance "red ! IMPORTANT" == ("red", true) &&
