@@ -140,6 +140,7 @@ def registry : List AuditRow :=
    ⟨.W0442, .keep, .degraded, check% Tests.PageBoxes.checks⟩,
    ⟨.W0443, .keep, .degraded, check% Tests.PageBoxes.checks⟩,
    ⟨.W0434, .keep, .degraded, check% Tests.Blueprint.blueprintChecks⟩,
+   ⟨.W0109, .keep, .degraded, check% compatChecks⟩,
    ⟨.W0436, .keep, .degraded, check% Tests.Blueprint.blueprintChecks⟩,
    ⟨.W0444, .keep, .degraded, check% Tests.PrintX4.checks⟩,
    ⟨.W0445, .keep, .degraded, check% Tests.PrintX4.checks⟩,

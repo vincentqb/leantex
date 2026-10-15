@@ -1098,13 +1098,15 @@ private def say (code : DiagCode) (msg : String) (pos : Pos) (help : Option Stri
 /-- A diagnostic said once per namespaced key (`ctrl:`, `spec:`, `beamer:`); a
 repeat is accounted as a write. -/
 private def sayOnce (key : String) (code : DiagCode) (msg : String) (pos : Pos)
-    (help : Option String := none) (demote : Bool := false) : M Unit := do
+    (help : Option String := none) (demote : Bool := false) (detail : Option String := none) :
+    M Unit := do
   let first := !(← get).warned.contains key
   if first then
     write fun st => { st with warned := st.warned.push key }
   else
     write id
   say code msg pos (if first then help else none) (demote || !first) (subject := some key)
+    (detail := detail)
 
 /-- The one line a `\multicolumn` that does not open a tabular cell prints. -/
 public def multicolumnMisplaced : String :=
@@ -8531,15 +8533,18 @@ and \\tokens declare the design directly")
       -- In the body the palette reader names the cover it ignores, once.
       if (← get).inDoc then return some (← synthAt native pos, k)
       if 99 < n then
-        sayOnce "beamer:setbeamercovered" .W0104
-          s!"'\\setbeamercovered\{{src}}' asks for undimmed covered content; it is covered at 99%" pos
-          (help := "\\palette{ covered = <n>% } sets the covered share")
+        sayOnce ("param:setbeamercovered:" ++ src) .W0109
+          s!"'\\setbeamercovered\{{src}}' asks for undimmed covered content; it covers at the \
+largest share the engine sets" pos
+          (help := "\\palette{ covered = <n>% } sets the covered share") (detail := some "99%")
       else if src.startsWith "dynamic" || src.startsWith "highly dynamic" then
-        sayOnce "beamer:setbeamercovered" .W0104
-          s!"'\\setbeamercovered\{{src}}' fades each step by its distance; every pending step is \
-covered at beamer's transparent 15%" pos
+        sayOnce ("param:setbeamercovered:" ++ src) .W0109
+          s!"'\\setbeamercovered\{{src}}' fades each step by its distance; every pending step \
+covers at beamer's transparent share" pos
           (help := "\\palette{ covered = <n>% } sets the covered share")
-      became "\\setbeamercovered" native pos
+          (detail := some s!"{Ir.transparentShare}%")
+      else
+        became "\\setbeamercovered" native pos (subject := some (paramSubject "setbeamercovered" src))
       return some (← synthAt native pos, k)
     | none =>
       sayOnce "beamer:setbeamercovered" .W0104
@@ -10440,7 +10445,7 @@ private theorem say_tailDiag (d : Diag) (code : DiagCode) (msg : String)
 private theorem sayOnce_minipage_tailDiag (d : Diag) (code : DiagCode)
     (msg : String) (pos : Pos) (help : Option String) (demote : Bool)
     (st : St) (h : TailDiag d st) :
-    TailDiag d (sayOnce "env:minipage-row-options" code msg pos help demote st).2 := by
+    TailDiag d (sayOnce "env:minipage-row-options" code msg pos help demote none st).2 := by
   unfold sayOnce
   apply state_bind_inv (TailDiag d) _ _ st h
   intro observed s hs

@@ -397,12 +397,14 @@ def listRow : Row :=
       "resume", invented]
     docs := [list "enumerate", list "itemize", list "description"] }
 
-/-- beamer's covered-content setting. -/
+/-- beamer's covered-content setting, tried bare and over a share already in force. -/
 def coveredRow : Row :=
+  let covered (o : Option String) : String := (o.map (s!"\\setbeamercovered\{{·}}")).getD ""
   { reader := "\\setbeamercovered"
     settings := ["transparent", "transparent=30", "invisible", "dynamic", "highly dynamic", invented]
     keyOf := id
-    docs := [fun o => deck "" ((o.map (s!"\\setbeamercovered\{{·}}")).getD "")] }
+    docs := [fun o => deck "" (covered o),
+      fun o => deck "" ("\\setbeamercovered{transparent=40}\n" ++ covered o)] }
 
 /-- A theme's options, moloch's own and another shipped theme's; an unknown theme's are its loss. -/
 def themeRows : List Row :=

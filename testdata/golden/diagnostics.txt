@@ -414,6 +414,9 @@
 ⚠ [W0104] - \usecolortheme
   '\usecolortheme' is beamer configuration the engine does not have; skipped
   suggestion: \theme{name} selects a token bundle; \palette overrides its entries
+⚠ [W0104] - \setbeamercovered
+  '\setbeamercovered{again covered}' is not modelled; covered content keeps the share in force, hidden unless one is declared
+  suggestion: \palette{ covered = <n>% } sets the covered share; 'invisible', 'transparent' and 'transparent=<n>' are understood
 ⚠ [W0104] - \titlegraphic
   '\titlegraphic{}' clears beamer configuration the engine does not have; skipped
 ── W0105 (degraded) overlay specification does not name a step
@@ -430,6 +433,11 @@
 ⚠ [W0108] - \centering
   '\centering' centres nothing inside an argument; content stays left-aligned
   suggestion: move '\centering' to the start of the group or environment body
+── W0109 (degraded) a beamer covering set approximately: every pending step covers at one share, the nearest the engine sets
+⚠ [W0109] - \setbeamercovered
+  '\setbeamercovered{dynamic}' fades each step by its distance; every pending step covers at beamer's transparent share
+  15%
+  suggestion: \palette{ covered = <n>% } sets the covered share
 ── W0110 (degraded) unsupported command option; ignored
 ⚠ [W0110] - \includegraphics
   '\includegraphics' option 'angle=45' is not modelled; ignored

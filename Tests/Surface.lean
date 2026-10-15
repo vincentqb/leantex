@@ -844,19 +844,24 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   let barePre (decls : String) : String :=
     "\\documentclass{beamer}\n\\usetheme{default}\n" ++ decls ++
     "\n\\begin{document}\\begin{frame}x\\end{frame}\\end{document}"
-  t "compat setbeamercovered transparent=100 covers at 99%, warning of the rest"
+  t "compat setbeamercovered transparent=100 covers at 99%, named as the approximation it is"
     ((elabStr (barePre "\\setbeamercovered{transparent=100}")).1.palette.coveredFraction
       == some 99 &&
-     (warnCodes (barePre "\\setbeamercovered{transparent=100}")).contains "W0104")
+     warnCodes (barePre "\\setbeamercovered{transparent=100}") == ["W0109"])
   t "compat setbeamercovered transparent=0 hides, as beamer's opaqueness 0 does"
     ((elabStr (barePre "\\setbeamercovered{transparent=0}")).1.palette.coveredFraction
       == some 0)
   t "compat setbeamercovered invisible hides, warning nothing"
     (warnCodes (themedPre "\\setbeamercovered{invisible}") == [] &&
      (elabStr (themedPre "\\setbeamercovered{invisible}")).1.palette.coveredFraction == some 0)
-  t "compat setbeamercovered dynamic covers at beamer's transparent share, warning of the grading"
-    (warnCodes (themedPre "\\setbeamercovered{dynamic}") == ["W0104"] &&
-     (elabStr (themedPre "\\setbeamercovered{dynamic}")).1.palette.coveredFraction == some 15)
+  t "compat setbeamercovered dynamic and highly dynamic cover at beamer's transparent share, named as the approximation"
+    (["dynamic", "highly dynamic"].all fun m =>
+      warnCodes (themedPre s!"\\setbeamercovered\{{m}}") == ["W0109"] &&
+      (elabStr (themedPre s!"\\setbeamercovered\{{m}}")).1.palette.coveredFraction == some 15)
+  t "compat setbeamercovered names each setting it reads, keyed by the setting"
+    (["invisible", "transparent", "transparent=25"].all fun m =>
+      (elabStr (themedPre s!"\\setbeamercovered\{{m}}")).2.any fun d =>
+        d.code == "N0100" && d.subject == some (Compat.paramSubject "setbeamercovered" m))
   -- `professionalfonts` and `hide notes` ask for what the engine already does, so both agree.
   t "compat usefonttheme professionalfonts agrees, warning nothing"
     (warnCodes (themedPre "\\usefonttheme{professionalfonts}") == [])

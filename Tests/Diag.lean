@@ -373,7 +373,7 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
       ["\\directlua{tex.print('x')}", "\\raggedright",
        "\\sloppy", "\\selectlanguage{german}", "\\pagestyle{headings}",
        "\\ifx\\x\\y\\fi", "\\usecolortheme{dove}",
-       "\\setbeamercovered{transparent}", "\\titlegraphic{}"] ++ "\n") "x")
+       "\\setbeamercovered{again covered}", "\\titlegraphic{}"] ++ "\n") "x")
   | .W0105 => dvE (w := w) "\\uncover<zz>{x}"
   | .W0106 => dvE (w := w) (dvDoc "\\ExplSyntaxOn \\cs_new:Npn \\x { } \\ExplSyntaxOff\n" "x")
   | .W0107 => dvE (w := w) (dvDoc "" "x \\setlength{\\parskip}{foo}")
@@ -459,6 +459,7 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
   | .W0442 => dvE (w := w) (dvDoc "\\page{ trimbox = \"9 9 700 400\" }\n" "x")
   | .W0443 => dvE (w := w) (dvDoc "\\AddToHook{shipout/before}{\\pdfvariable pageattr{/Rotate 90}}\n" "x")
   | .W0434 => dvE (w := w) (dvDoc "\\usepackage{blueprint}\n" "x")
+  | .W0109 => dvE (w := w) (dvDoc "\\setbeamercovered{dynamic}\n" "x")
   | .W0436 => dvE (w := w) (dvDoc ("\\usepackage{amsthm}\n" ++
       "\\usepackage[link=https://github.com/example/widgets]{blueprint}\n\\newtheorem{lemma}{Lemma}\n")
       "\\begin{lemma}\\lean{Example.Widget} x\\end{lemma}")
@@ -1346,7 +1347,7 @@ def repeatFoldUnexercised : List (String × String) :=
     ["W0007", "W0101", "W0102", "W0103", "W0104", "W0106", "W0111", "W0202", "W0303", "W0306",
      "W0312", "W0316", "W0317", "W0318", "W0319", "W0328", "W0329", "W0330", "W0331", "W0342",
      "W0343", "W0348", "W0354", "W0355", "W0357", "W0361", "W0363", "W0367", "W0368", "W0369",
-     "W0373", "W0387", "W0398", "W0434", "W0442", "W0443"] ++
+     "W0373", "W0387", "W0398", "W0434", "W0442", "W0443", "W0109"] ++
   unexercisedAs "its construct is a class option, which the repetition does not write twice"
     ["W0356"] ++
   unexercisedAs "its witness is the emitter's own record, with no source to write twice"
