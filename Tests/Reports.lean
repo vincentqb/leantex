@@ -41,6 +41,7 @@ import Tests.Redefine
 import Tests.NestedLedgers
 import Tests.DeclaredLadder
 import Tests.PageOverrun
+import Tests.ParamCensus
 import Tests.Images
 import Tests.SvgImages
 import Tests.SvgTools
@@ -1704,7 +1705,14 @@ def reports : List Report := [
     pins := [check% Tests.MetaEscape.templateArgChecks]
     accept := ["thirteen of the guard's assertions fail at 22525202 before the fix: a definition through two macros, a colour let, a spot colour, a language span and switch, a font series, a length setting, two uses with two values and a nested definition's doubled parameter each raised at the definition a warning its text written out does not, and a name with a space its expansion spells drew a second warning, where its macro was defined, naming the parameter; a page style, a language environment and a beamer template no use reaches were judged where their macros were defined too",
       "the fix's first cut left each such command as written in a body the elaborator expands, so an environment setting a colour, a language, a span's language, a length or the PDF title from its argument, or calling a colour or language macro, printed the argument on the page and the web page; here no argument reaches either, and each setting an environment takes from its argument is named once where the environment is defined, no use applying it"]
-    state := .guarded "22525202" .before .author }
+    state := .guarded "22525202" .before .author },
+  { id := "R193", date := "2026-10-15"
+    what := "a setting a document declared could be accepted and then read by nothing and named by nothing: package options, hyperref's keys, class options, a list's own options and a theme's options shipped the page the document without them ships, with no word that they were dropped"
+    pins := [check% Tests.ParamCensus.paramCensusChecks]
+    accept := ["the census over the readers as 3c258580 has them, its tables kept, reports 226 of its 391 settings across 61 readers read by nothing and named by nothing; here none",
+      "a mutant dropping geometry's margin in silence and one silencing the package-option fallback each make the census fail, naming geometry's margin=3cm and the invented option on every native package tried",
+      "the corpus's PDFs and web pages are byte-identical to its parent's and its warnings unchanged"]
+    state := .guarded "3c258580" .revert .author }
 ]
 
 /-- The reports guarded but never seen failing, a count held in both directions. -/
