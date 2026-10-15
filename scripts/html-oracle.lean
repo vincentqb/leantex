@@ -100,7 +100,8 @@ def parseMatrix (text : String) : Except String Matrix := do
   if sections.isEmpty then throw "no sections"
   return { target, sections }
 
-/-- A cell a wait's budget ended: a machine fact, neither a pass nor a failure. -/
+/-- A cell whose wait's budget ended while the page still changed, or whose tool or probe the
+machine stopped: neither a pass nor a failure. -/
 def inconclusive (v : String) : Bool := v.startsWith "inconclusive:"
 
 /-- The gate: every cell under a `target:` reader is `pass`; returns the offending cells,
@@ -136,8 +137,8 @@ def checkFile (path : String) : IO UInt32 := do
     IO.println s!"html-oracle: {bad.size} target or browser-face checks not passing in {path}:"
     for b in bad do IO.println s!"  {b}"
     if bad.any fun b => inconclusive ((b.splitOn " = ").getLastD "") then
-      IO.println "html-oracle: an inconclusive cell is a wait that outran its budget, not a failure: \
-rerun, with a larger HARD_TIMEOUT_MS on a loaded host"
+      IO.println "html-oracle: an inconclusive cell is a page still changing when its wait's budget \
+ended, or a tool the machine stopped: rerun on a quieter host or with a larger HARD_TIMEOUT_MS"
     return 1
 
 /-- The browser-side probe, run by node with the Playwright module in `PW_MODULE`: one line per
@@ -170,7 +171,16 @@ const drawn = async (page) => {
     try { return await page.screenshot(); } catch (e) {
       if (unfinished(e) || page.isClosed() || Date.now() >= end)
         throw new Unfinished('no frame drawn: ' + clean(String(e.message).split('\n')[0]));
+      await new Promise(r => setTimeout(r, STEP_MS / 100));
     }
+  }
+};
+// A tool's text output, or a loss that is the machine's when the tool outran the step budget.
+const toolText = (cmd, args) => {
+  try { return execFileSync(cmd, args, { encoding: 'utf8', timeout: STEP_MS }); } catch (e) {
+    const why = cmd + ': ' + clean(String(e.message).split('\n')[0]);
+    if (e.code === 'ETIMEDOUT' || e.signal) throw new Unfinished(why);
+    throw new Error(why);
   }
 };
 
@@ -570,9 +580,9 @@ const printDeck = async (page, name, fx) => {
   const pdf = path.join(dir, fx + '.printed.pdf');
   await page.pdf({ path: pdf, preferCSSPageSize: true });
   let paper;
-  try { paper = execFileSync('pdftotext', ['-enc', 'UTF-8', pdf, '-'], { encoding: 'utf8' }); }
+  try { paper = toolText('pdftotext', ['-enc', 'UTF-8', pdf, '-']); }
   catch (e) {
-    const bad = { ok: false, n: 1, why: 'pdftotext: ' + clean(String(e.message).split('\n')[0]) };
+    const bad = { ok: false, n: 1, unfinished: unfinished(e), why: clean(e.message) };
     return { spill: bad, sheets: bad };
   }
   const sheets = paper.split('\f').slice(0, -1);
@@ -803,8 +813,8 @@ const printCode = async (page, name, fx) => {
     margin: { top: '0.4in', bottom: '0.4in', left: '0.4in', right: '0.4in' } });
   await page.setViewportSize({ width: 1280, height: 720 });
   let paper;
-  try { paper = execFileSync('pdftotext', ['-enc', 'UTF-8', pdf, '-'], { encoding: 'utf8' }); }
-  catch (e) { return { ok: false, n: 1, why: 'pdftotext: ' + clean(String(e.message).split('\n')[0]) }; }
+  try { paper = toolText('pdftotext', ['-enc', 'UTF-8', pdf, '-']); }
+  catch (e) { return { ok: false, n: 1, unfinished: unfinished(e), why: clean(e.message) }; }
   const want = census(laid.text), got = census(paper);
   const short = [...want].reduce((a, [c, k]) => a + Math.max(0, k - (got.get(c) || 0)), 0);
   return { ok: laid.past <= 1 && laid.over.length === 0 && short === 0, n: 1,
@@ -884,7 +894,7 @@ const deckLinks = async (page, url) => {
   });
   if (!info || info.labels.length === 0) return {n: 0};
   // The page at rest: unchanged across two frames, standing at the snap its address names or
-  // still after a scroll seen to end.
+  // still after a scroll seen to end; or unchanged for ten frames with no scroll in flight.
   const restAt = ([routes, i, token]) => {
     let st = globalThis.ltxRest;
     if (!st || st.token !== token) {
@@ -913,7 +923,8 @@ const deckLinks = async (page, url) => {
     const sig = JSON.stringify([scrollX, scrollY, st.seen, marks]);
     st.still = sig === st.last ? st.still + 1 : 0;
     st.last = sig;
-    const rest = st.still >= 1 && (named < 0 || st.seen.standing || (st.scrolled && !st.moving));
+    const rest = (st.still >= 1 && (named < 0 || st.seen.standing || (st.scrolled && !st.moving))) ||
+      (st.still >= 10 && !st.moving);
     if (rest) st.off();
     return rest && st.seen;
   };
@@ -1072,7 +1083,7 @@ const deckLinks = async (page, url) => {
 async function runReader(name) {
   let browser;
   try {
-    browser = await pw[name].launch({ headless: true, timeout: STEP_MS,
+    browser = await pw[name].launch({ headless: true, timeout: 2 * STEP_MS,
       args: name === 'chromium' ? ['--no-sandbox', '--disable-gpu'] : [] });
   } catch (e) {
     out('reader', name, 'unavailable', clean(String(e && e.message || e).split('\n')[0]));
@@ -1520,13 +1531,14 @@ def codeNarrowSource : String :=
   "th = \"ภาษาไทยไม่มีช่องว่างระหว่างคำจึงต้องตัดบรรทัดระหว่างคำแทนการเว้นวรรค" ++
   "และสระต้องอยู่กับพยัญชนะ\"\nyear = 2567 # ๒๕๖๗\n\\end{lstlisting}\n\\end{document}\n"
 
-/-- A Playwright module standing in for the host's, `LT_REAL_PW`: the same API, each page's
-renderer held `LT_THROTTLE` times slower from its first `ArrowRight` to its next navigation or
-media change, and with `LT_SWALLOW` set every `ArrowRight` swallowed before the page reads it. -/
+/-- A Playwright module standing in for the host's, `LT_REAL_PW`: each page's renderer held
+`LT_THROTTLE` times slower from its first `ArrowRight` to its next navigation, every `ArrowRight`
+swallowed under `LT_SWALLOW`, and no scroll after the first key under `LT_STUCK`. -/
 def loadShimJs : String := r#"
 const real = require(process.env.LT_REAL_PW);
 const rate = +(process.env.LT_THROTTLE || 1);
 const swallow = !!process.env.LT_SWALLOW;
+const stuck = !!process.env.LT_STUCK;
 const page = (p) => {
   let cdp = null, state = 'idle';
   const hold = async (r) => {
@@ -1551,6 +1563,12 @@ const context = async (c) => {
   if (swallow) await c.addInitScript(() => addEventListener('keydown', (e) => {
     if (e.key === 'ArrowRight') { e.preventDefault(); e.stopImmediatePropagation(); }
   }, true));
+  if (stuck) await c.addInitScript(() => {
+    let keyed = false;
+    addEventListener('keydown', () => { keyed = true; }, true);
+    const scroll = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = function (...a) { if (!keyed) scroll.apply(this, a); };
+  });
   const newPage = c.newPage.bind(c);
   c.newPage = async (...a) => page(await newPage(...a));
   return c;
@@ -1580,11 +1598,12 @@ def loadThrottle : Nat := 200
 
 /-- The deck-links cell of one probe run over the invented deck in `dir`, under the shim. -/
 def loadRun (probe shim : System.FilePath) (module : String) (dir : System.FilePath)
-    (throttle : Nat) (swallow : Bool) : IO String := do
+    (throttle : Nat) (swallow stuck : Bool) : IO String := do
   let out ← IO.Process.output
     { cmd := "node", args := #[probe.toString, dir.toString, "deck"]
       env := #[("PW_MODULE", some shim.toString), ("LT_REAL_PW", some module),
         ("LT_THROTTLE", some (toString throttle)), ("LT_SWALLOW", if swallow then some "1" else none),
+        ("LT_STUCK", if stuck then some "1" else none),
         ("LT_READERS", some "chromium"), ("LT_CODE_TABLES", some codeTables),
         ("HARD_TIMEOUT_MS", some "1200000")] }
   let p := parseProbe out.stdout
@@ -1614,12 +1633,14 @@ def loadCheck (probePath : Option String) : IO UInt32 := do
     let shim := dir / "shim.cjs"
     IO.FS.writeFile shim loadShimJs
     let mut bad := 0
-    for (name, rate, swallow, want) in [("unloaded", 1, false, "pass"),
-        (s!"renderer {loadThrottle}× slower through the keyboard step", loadThrottle, false, "pass"),
-        ("ArrowRight swallowed", 1, true, "fail:keyboard next"),
-        (s!"ArrowRight swallowed, renderer {loadThrottle}× slower", loadThrottle, true,
-          "fail:keyboard next")] do
-      let got ← loadRun probe shim module dir rate swallow
+    for (name, rate, swallow, stuck, want) in [("unloaded", 1, false, false, "pass"),
+        (s!"renderer {loadThrottle}× slower through the keyboard step", loadThrottle, false, false,
+          "pass"),
+        ("ArrowRight swallowed", 1, true, false, "fail:keyboard next"),
+        (s!"ArrowRight swallowed, renderer {loadThrottle}× slower", loadThrottle, true, false,
+          "fail:keyboard next"),
+        ("no scroll after the first key", 1, false, true, "fail:keyboard next")] do
+      let got ← loadRun probe shim module dir rate swallow stuck
       let ok := got.startsWith want
       IO.println s!"html-oracle: load check, {name}: deck-links {got}{if ok then "" else s!" (expected {want})"}"
       unless ok do bad := bad + 1
@@ -1705,6 +1726,10 @@ so the matrix would describe pages nothing ties to this tree; nothing written")
       if out.exitCode != 0 then
         IO.eprintln s!"html-oracle: the probe exited {out.exitCode}:\n{out.stderr}"
       probe := parseProbe out.stdout
+      if out.exitCode != 0 && probe.unfinished.isNone &&
+          !(out.stdout.splitOn "\n").any (·.startsWith "error\t") then
+        probe := { probe with
+          unfinished := some s!"the probe stopped with exit {out.exitCode}, naming no loss" }
       let pwv ← moduleVersion m
       for r in readers do
         match probe.versions.find? (·.1 == r) with
@@ -1717,9 +1742,18 @@ so the matrix would describe pages nothing ties to this tree; nothing written")
     tools := tools ++ s!"  {← toolVersion "rsvg-convert" #["--version"]}"
     tools := tools ++ s!"  {← toolVersion "pdftocairo" #["-v"]}"
     tools := tools ++ s!"  {← pdftotextVersion}"
+    let text := renderMatrix probe fixtures unbuilt tools date keys.html keys.browserFaceSource
+      browserFaces
+    let lost : Array String := match parseMatrix text with
+      | .ok m => (offences m).filter fun (b : String) => inconclusive ((b.splitOn " = ").getLastD "")
+      | .error _ => #[]
+    unless lost.isEmpty do
+      IO.println s!"html-oracle: {lost.size} target cells inconclusive, so {matrixPath} stays as \
+committed:"
+      for b in lost do IO.println s!"  {b}"
+      return 1
     IO.FS.createDirAll "testdata/oracles"
-    IO.FS.writeFile matrixPath
-      (renderMatrix probe fixtures unbuilt tools date keys.html keys.browserFaceSource browserFaces)
+    IO.FS.writeFile matrixPath text
     IO.println s!"html-oracle: wrote {matrixPath} — {fixtures.size} fixtures, {tools}"
   finally
     IO.FS.removeDirAll work

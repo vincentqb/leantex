@@ -32,49 +32,87 @@ def lastArgument (call : String) : String := Id.run do
         acc := c :: acc
   return ""
 
-/-- The fixed wall-clock waits in a browser script's text: a `timeout` option or a `setTimeout`
-delay given as a number, and every `waitForTimeout` sleep. -/
+/-- A browser script's text with its comments and every string and template literal's
+contents blanked. -/
+def jsCode (js : String) : String := Id.run do
+  let mut quote : Option Char := none
+  let mut escaped := false
+  let mut line := false
+  let mut block := false
+  let mut prev := ' '
+  let mut acc : List Char := []
+  for c in js.toList do
+    if line then
+      if c == '\n' then line := false; acc := c :: acc else acc := ' ' :: acc
+    else if block then
+      if prev == '*' && c == '/' then block := false
+      acc := (if c == '\n' then c else ' ') :: acc
+    else match quote with
+      | some q =>
+        if c == '\n' then
+          if q != '`' then quote := none
+          escaped := false
+        else if escaped then escaped := false
+        else if c == '\\' then escaped := true
+        else if c == q then quote := none
+        acc := (if quote.isNone || c == '\n' then c else ' ') :: acc
+      | none =>
+        if prev == '/' && c == '/' then line := true; acc := ' ' :: ' ' :: acc.drop 1
+        else if prev == '/' && c == '*' then block := true; acc := ' ' :: ' ' :: acc.drop 1
+        else
+          if c == '"' || c == '\'' || c == '`' then quote := some c
+          acc := c :: acc
+    prev := c
+  return String.ofList acc.reverse
+
+/-- The waits in a browser script whose time its run's budget does not set: a `timeout` option, a
+delay or default timeout not written in `STEP_MS` or `HARD_MS`, a numeric `polling`, a
+`networkidle` wait, and every `waitForTimeout` sleep. -/
 def fixedWaits (js : String) : Array String := Id.run do
+  let budgeted (e : String) : Bool := hasStr e "STEP_MS" || hasStr e "HARD_MS"
   let rest (s : String) : List Char := s.toList.dropWhile (· == ' ')
-  let numeric (cs : List Char) : Bool :=
-    match cs.dropWhile (· == ' ') with
-    | c :: _ => c.isDigit
-    | [] => false
+  let code := jsCode js
   let mut acc : Array String := #[]
-  for piece in (js.splitOn "timeout").drop 1 do
+  for piece in (code.splitOn "timeout").drop 1 do
     if let ':' :: cs := rest piece then
-      if numeric cs then
-        acc := acc.push s!"timeout:{(String.ofList ((cs.takeWhile (· != '}')).take 12)).trimAsciiEnd}"
+      let value := String.ofList (cs.takeWhile fun c => c != ',' && c != '}' && c != ')' && c != '\n')
+      unless budgeted value do acc := acc.push s!"timeout:{value.trimAscii}"
+  for name in ["setTimeout", "setInterval", "setDefaultTimeout", "setDefaultNavigationTimeout"] do
+    for piece in (code.splitOn name).drop 1 do
+      if let '(' :: cs := rest piece then
+        let delay := lastArgument (String.ofList cs)
+        unless budgeted delay do acc := acc.push s!"{name}(…, {delay})"
+  for piece in (code.splitOn "polling").drop 1 do
+    if let ':' :: cs := rest piece then
+      if (cs.dropWhile (· == ' ')).head?.any Char.isDigit then acc := acc.push "polling"
+  for _ in (js.splitOn "networkidle").drop 1 do
+    acc := acc.push "networkidle"
   for _ in (js.splitOn "waitForTimeout").drop 1 do
     acc := acc.push "waitForTimeout"
-  for piece in (js.splitOn "setTimeout").drop 1 do
-    if let '(' :: cs := rest piece then
-      let delay := lastArgument (String.ofList cs)
-      if numeric delay.toList then acc := acc.push s!"setTimeout(…, {delay})"
   return acc
 
-/-- The body of the raw string a source binds after `opener`, up to the first `"#`. -/
-def rawStringAfter (src opener : String) : String :=
-  match src.splitOn opener with
-  | _ :: rest :: _ => (rest.splitOn "\"#").headD ""
-  | _ => ""
+/-- The bodies of every raw string literal in a source, in order. -/
+def rawStrings (src : String) : Array String :=
+  ((src.splitOn "r#\"").drop 1).toArray.map fun piece => (piece.splitOn "\"#").headD ""
 
 /-- The browser oracle's probe judges a page by its events under budgets its run declares: no
 wait in it is a fixed wall-clock time, each context it opens takes its waits' budget, and its
 browser's launch is held to the same. -/
 def oracleWaitChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
-  let probe := rawStringAfter (← IO.FS.readFile "scripts/html-oracle.lean") "def probeJs : String := r#\""
+  let src ← IO.FS.readFile "scripts/html-oracle.lean"
+  let probe := ((src.splitOn "def probeJs : String := ").getD 1 "" |> rawStrings).getD 0 ""
+  let js := String.intercalate "\n" (rawStrings src).toList
   t "oracle waits: the probe is found" (hasStr probe "deckLinks")
-  t s!"oracle waits: no wait in the probe is a fixed wall-clock time ({fixedWaits probe})"
-    (fixedWaits probe).isEmpty
+  t s!"oracle waits: no wait in the oracle's browser scripts is a fixed wall-clock time ({fixedWaits js})"
+    ((fixedWaits js).isEmpty && hasStr js probe)
   let count (needle : String) : Nat := (probe.splitOn needle).length - 1
   t "oracle waits: every context the probe opens takes its waits' budget"
     (count "newContext(" > 0 && count "newContext(" == count "budgeted(await browser.newContext(" &&
       count "browser.newPage(" == 0 && hasStr probe "ctx.setDefaultTimeout(STEP_MS);" &&
       hasStr probe "ctx.setDefaultNavigationTimeout(STEP_MS);")
   t "oracle waits: the browser's launch is held to the waits' budget"
-    (count ".launch(" == 1 && count "launch({ headless: true, timeout: STEP_MS," == 1)
+    (count ".launch(" == 1 && count "launch({ headless: true, timeout: 2 * STEP_MS," == 1)
   for (js, want) in [
       ("page.waitForFunction(f, x, {timeout: 2500});", 1),
       ("page.goto(u, { waitUntil: 'load', timeout:30000 });", 1),
@@ -85,7 +123,13 @@ def oracleWaitChecks (ref : IO.Ref (List String)) : IO Unit := do
       ("out('error', 'hard timeout'); out('x', 'a timeout: of 9');", 0),
       ("setTimeout(() => { out('budget', String(HARD_MS)); }, HARD_MS);", 0),
       ("pw.chromium.launch({ headless: true, timeout: STEP_MS });", 0),
-      ("clearTimeout(watchdog); ctx.setDefaultTimeout(STEP_MS);", 0)] do
+      ("clearTimeout(watchdog); ctx.setDefaultTimeout(STEP_MS);", 0),
+      ("page.setDefaultTimeout(2500); ctx.setDefaultNavigationTimeout(30000);", 2),
+      ("const T = 2500; page.waitForFunction(f, x, {timeout: T});", 1),
+      ("setInterval(f, 100); setTimeout(r, .5);", 2),
+      ("page.waitForFunction(f, x, {polling: 2500});", 1),
+      ("page.goto(u, {waitUntil: 'networkidle'});", 1),
+      ("setTimeout(r, STEP_MS / 100); out('t', `timeout: ${n}`);", 0)] do
     t s!"oracle waits: the judge finds {want} fixed waits in {js}" ((fixedWaits js).size == want)
 
 end Tests
