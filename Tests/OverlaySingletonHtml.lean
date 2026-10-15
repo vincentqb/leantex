@@ -52,7 +52,7 @@ def overlaySingletonHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
           ".step-set:not([data-steps~=\"1\"]) { opacity: ")).length == 2)
       t (label ++ " reduced motion restores full ink")
         ((html.splitOn ("html[data-deck-script] [data-snapped] " ++
-          ".step-set[data-steps] { opacity: 100%; }")).length == 2)
+          ".step-set[data-steps] { opacity: 100%; visibility: inherit; }")).length == 2)
       t (label ++ " body preserved once") (treeOccurs tree "Marker" == 1)
 
 end Tests

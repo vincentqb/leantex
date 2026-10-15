@@ -1188,19 +1188,20 @@ def censusOf (coveredColors : Array Ir.Color) (out : Layout.Out) (imgs : Image.S
 
 def hasStr (hay needle : String) : Bool := (hay.splitOn needle).length > 1
 
-/-- The animations a stylesheet's step rules run: each `animation:` of a rule whose selector names
-a step, `none` aside. -/
+/-- The animations a stylesheet's step rules run: each name an `animation:` lists in a rule whose
+selector names a step, `none` aside. -/
 def stepAnimations (css : String) : List String :=
-  ((css.splitOn "\n").filterMap fun l =>
-    if !hasStr ((l.splitOn "{").headD "") ".step" then none
+  ((css.splitOn "\n").flatMap fun l =>
+    if !hasStr ((l.splitOn "{").headD "") ".step" then []
     else match (l.splitOn "animation: ").drop 1 with
       | rest :: _ =>
-        let n := (rest.takeWhile fun c => c.isAlphanum || c == '-').toString
-        if n.isEmpty || n == "none" then none else some n
-      | [] => none).eraseDups
+        (((rest.splitOn ";").headD "").splitOn ",").filterMap fun item =>
+          let n := (item.trimAscii.toString.takeWhile fun c => c.isAlphanum || c == '-').toString
+          if n.isEmpty || n == "none" then none else some n
+      | [] => []).eraseDups
 
-/-- The properties a stylesheet's `@keyframes` block of that name sets, in order. -/
-def keyframeProps (css name : String) : Option (List String) := do
+/-- The declarations a stylesheet's `@keyframes` block of that name sets, frame by frame in order. -/
+def keyframeDecls (css name : String) : Option (List (String × String)) := do
   let rest ← ((css.splitOn s!"@keyframes {name} ").drop 1).head?
   let (_, body, _) := rest.toList.foldl (init := ((0 : Nat), "", false)) fun (depth, acc, done) c =>
     if done then (depth, acc, done)
@@ -1211,14 +1212,37 @@ def keyframeProps (css name : String) : Option (List String) := do
     if c == '{' || c == '}' || c == ';' then (cur :: out, "") else (out, cur.push c)
   pure ((last :: segs).reverse.filterMap fun seg =>
     match seg.splitOn ":" with
-    | p :: _ :: _ => some p.trimAscii.toString
+    | p :: v :: _ => some (p.trimAscii.toString, v.trimAscii.toString)
     | _ => none)
 
-/-- Whether every keyframes a stylesheet's steps run sets opacity alone, so a step fades where it
-stands. -/
-def stepsStandStill (css : String) : Bool :=
+/-- The properties a stylesheet's `@keyframes` block of that name sets, in order. -/
+def keyframeProps (css name : String) : Option (List String) :=
+  (keyframeDecls css name).map (·.map (·.1))
+
+/-- Whether every keyframes a stylesheet's steps run sets only `props`. -/
+def stepKeyframesSet (css : String) (props : List String) : Bool :=
   (stepAnimations css).all fun n =>
-    (keyframeProps css n).any fun ps => !ps.isEmpty && ps.all (· == "opacity")
+    (keyframeProps css n).any fun ps => !ps.isEmpty && ps.all props.contains
+
+/-- Whether no keyframes a stylesheet's steps run moves content: each fades or reaches, nothing
+else, the fades setting opacity alone and the reaches visibility alone. -/
+def stepsStandStill (css : String) : Bool :=
+  stepKeyframesSet css ["opacity", "visibility"] &&
+    ["ltx-uncover", "ltx-recover"].all (fun n =>
+      (keyframeProps css n).all fun ps => ps.all (· == "opacity")) &&
+    ["ltx-unhide", "ltx-rehide"].all fun n =>
+      (keyframeProps css n).all fun ps => ps.all (· == "visibility")
+
+/-- Whether a stylesheet's steps fade from nothing, as a deck hiding its pending steps covers. -/
+def stepsFadeFromNothing (css : String) : Bool :=
+  (keyframeDecls css "ltx-uncover").any (·.contains ("opacity", "0%"))
+
+/-- Whether a stylesheet keeps a step out of reach while it is pending: the reveal opens on a hidden
+step where `view()` timelines run, and the floor's covered default hides it where they do not. -/
+def pendingStepsOutOfReach (css : String) : Bool :=
+  (stepAnimations css).contains "ltx-unhide" &&
+    (keyframeDecls css "ltx-unhide").any (·.contains ("visibility", "hidden")) &&
+    hasStr css "html[data-deck-script] .step:not([data-step=\"1\"]) { opacity: 0%; visibility: hidden; }"
 
 /-- Span equality with the provenance `==` ignores: the macro origins and the authored token. -/
 def exactSpan (a b : Span) : Bool :=

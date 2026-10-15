@@ -2141,9 +2141,10 @@ def deckStepChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
      (chtml.splitOn "id=\"steps-1-2\"").length - 1 == 1)
   t "the uncover rides the frame's view timeline between snap points"
     (count "view-timeline: --frame x" == 1 &&
-     count "animation-timeline: --frame;" == 2 &&
+     count "animation-timeline: --frame, --frame;" == 2 &&
      count (".step.step-end:not([data-step=\"1\"]) { animation: ltx-uncover linear both, " ++
-       "ltx-recover linear forwards; animation-timeline: --frame, --frame;") == 1 &&
+       "ltx-recover linear forwards, ltx-unhide linear both, ltx-rehide linear forwards; " ++
+       "animation-timeline: --frame, --frame, --frame, --frame;") == 1 &&
      count ".step:not([data-step=\"1\"])" == 3 &&
      count ("animation-range: contain calc((var(--step) - 2) / (var(--steps) - 1) * 100%) " ++
        "contain calc((var(--step) - 1) / (var(--steps) - 1) * 100%)") == 2)
@@ -2154,21 +2155,28 @@ def deckStepChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
      count "ltx-push" == 0)
   t "the covered from-state has its explicit active endpoint, a fade alone"
     (count "@keyframes ltx-uncover { to { opacity: 100% } from { opacity: 31%; } }" == 1)
-  t s!"no step keyframe moves content: each a step runs sets opacity alone ({stepAnimations html})"
-    (stepAnimations html == ["ltx-uncover", "ltx-recover"] && stepsStandStill html &&
-      count "motiondistance" == 0)
+  t s!"no step keyframe moves content: each fades opacity alone or reaches visibility alone \
+({stepAnimations html})"
+    (stepAnimations html == ["ltx-uncover", "ltx-unhide", "ltx-recover", "ltx-rehide"] &&
+      stepsStandStill html && count "motiondistance" == 0)
+  t "at a covered share a pending step stays in reach, its reveal's visibility its parent's"
+    (count "@keyframes ltx-unhide { to { visibility: inherit } from { visibility: inherit; } }" == 1 &&
+      !stepsFadeFromNothing html && !pendingStepsOutOfReach html)
   t "no view(): the floor covers only under script and uncovers by data-snapped"
     (count ("@supports not (animation-timeline: view()) {\n" ++
-       "html[data-deck-script] .step:not([data-step=\"1\"]) { opacity: 31%; }") == 1 &&
+       "html[data-deck-script] .step:not([data-step=\"1\"]) { opacity: 31%; visibility: inherit; }")
+       == 1 &&
      count (".slide-track[data-snapped=\"2\"] " ++
-       ":is(.step[data-step=\"2\"]) { opacity: 100%; }") == 1 &&
+       ":is(.step[data-step=\"2\"]) { opacity: 100%; visibility: inherit; }") == 1 &&
      count (".slide-track[data-snapped=\"3\"] " ++
-       ":is(.step[data-step=\"2\"], .step[data-step=\"3\"]) { opacity: 100%; }") == 1 &&
+       ":is(.step[data-step=\"2\"], .step[data-step=\"3\"]) { opacity: 100%; visibility: inherit; }")
+       == 1 &&
      count ".slide-track { scroll-snap-align: start; scroll-snap-stop: always; }" == 2 &&
      count ".slide-track > section.slide { scroll-snap-align: start;" == 0)
   t "reduced motion is the plain row at full colour, one page per frame"
     (count ".step { opacity: 100%; animation: none; }" == 1 &&
-     count "html[data-deck-script] .step:not([data-step=\"1\"]) { opacity: 100%; }" == 1 &&
+     count "html[data-deck-script] .step:not([data-step=\"1\"]) { opacity: 100%; visibility: inherit; }"
+       == 1 &&
      count ".slide-track { width: 100vw; flex: 0 0 100vw; }" == 1)
   t "print shows every step uncovered on its stage's sheet, spacers hidden"
     (count ".snap { display: none; }" == 3 &&
@@ -2215,10 +2223,12 @@ def deckRangeEndChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
         attrs.contains ("data-step-last", "3") && attrs.contains ("style", "--step: 2") &&
         attrs.contains ("data-steps", "2 3")))
   t s!"the range's steps fade in and out where they stand ({stepAnimations html})"
-    (stepAnimations html == ["ltx-uncover", "ltx-recover"] && stepsStandStill html)
+    (stepAnimations html == ["ltx-uncover", "ltx-unhide", "ltx-recover", "ltx-rehide"] &&
+      stepsStandStill html)
   t "the end carrier dims again past the range, on both paths"
     (has "@keyframes ltx-recover { from { opacity: 100% } to { opacity: " &&
-     has ".step-end { animation: ltx-recover linear both; animation-timeline: --frame;" &&
+     has (".step-end { animation: ltx-recover linear both, ltx-rehide linear forwards; " ++
+       "animation-timeline: --frame, --frame;") &&
      has ("html[data-deck-script] .slide-track[data-snapped=\"4\"] " ++
        ":is(.step-end[data-step-last=\"1\"], .step-end[data-step-last=\"2\"], " ++
        ".step-end[data-step-last=\"3\"]) { opacity: "))

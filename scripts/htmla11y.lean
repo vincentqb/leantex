@@ -1,5 +1,5 @@
 /-
-The htmla11y tier: per golden fixture's HTML page, the six deficits `HtmlDoc.a11yFacts` counts,
+The htmla11y tier: per golden fixture's HTML page, the seven deficits `HtmlDoc.a11yFacts` counts,
 as headroom; hermetic.
 Usage: lake env lean --run scripts/htmla11y.lean [--check | --selftest]
 -/
@@ -69,6 +69,18 @@ def a11ySelftest : IO UInt32 := tierSelftest "htmla11y" fun no => do
     ((facts #[hide #[a11yEl "span" #[("tabindex", "0")]]]).hiddenTabStops == 1)
   no "hidden-focus: an anchor with no href takes no focus"
     ((facts #[hide #[a11yEl "a" #[] #[.text "x"]]]).hiddenTabStops == 0)
+  -- pending-focus: a tab stop inside a step a later snap uncovers is one to keep out of reach.
+  let step (n : String) (kids : Array Html.Node) :=
+    a11yEl "span" #[("class", "step"), ("data-step", n)] kids
+  no "pending-focus: a link inside a later step is a step tab stop"
+    ((facts #[step "2" #[link]]).stepTabStops == 1)
+  no "pending-focus: a link inside the first step is not"
+    ((facts #[step "1" #[link]]).stepTabStops == 0)
+  no "pending-focus: a link inside a set of steps is one"
+    ((facts #[a11yEl "span" #[("class", "step-set"), ("data-steps", "1 3")] #[link]]).stepTabStops
+      == 1)
+  no "pending-focus: a link outside every step is not"
+    ((facts #[link]).stepTabStops == 0)
   no "hidden-focus: tabindex=-1 takes focus from script only"
     ((facts #[hide #[a11yEl "a" #[("href", "#x"), ("tabindex", "-1")]]]).hiddenTabStops == 0)
   no "hidden-focus: a hidden subtree is not rendered, so nothing in it takes focus"

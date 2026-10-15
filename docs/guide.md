@@ -377,8 +377,11 @@ meets its floor ships as given. A deck hides a pending overlay step, its
 place kept, unless its preamble declares a share, as beamer's default
 `invisible` covering does, and a cover declared in the body is ignored
 with `W0340`; `\setbeamercovered{transparent}` covers it at beamer's 15%,
-and `transparent=<n>` or `\palette{ covered = <n>\% }` at that share. A
-seed or a declared colour ships as given at any share, and `W0345` names
+and `transparent=<n>` or `\palette{ covered = <n>\% }` at that share, while
+`dynamic`, which grades each step by its distance, and a share past 99%
+cover at the nearest share set, named with `W0107`. On the web page a step
+fades in where it stands, from its share; a hidden one takes no focus or
+pointer until its reveal starts. A seed or a declared colour ships as given at any share, and `W0345` names
 the ink, or an alert or example a covered step sets, whose covered form
 stands under 3:1 from it, or a declared `covered` colour under 3:1 from the
 ink, unless `\palette[decorative]{ covered = <n>\% }` declares the covered

@@ -37,15 +37,28 @@ containers. -/
 def a11yFactsOf (doc : Ir.Doc) (body : Array Html.Node) : HtmlDoc.A11yFacts :=
   HtmlDoc.a11yFacts (a11yCssOf doc == .own) (doc.docClass.record.model == .frame) body
 
+/-- The style sheets a page's head carries. -/
+def headCss (head : Array Html.Node) : String :=
+  String.join (head.toList.filterMap fun
+    | .style c => some c
+    | .elem .. | .text _ | .script .. => none)
+
+/-- The tab stops a page leaves in reach inside pending steps it hides: those inside its overlay
+steps where its stylesheet fades them from nothing yet keeps them in reach while pending. -/
+def pendingTabStops (head : Array Html.Node) (f : HtmlDoc.A11yFacts) : Nat :=
+  let css := headCss head
+  if stepsFadeFromNothing css && !pendingStepsOutOfReach css then f.stepTabStops else 0
+
 /-- A page's accessibility deficits, one count per check (`contrast`, `h1`, `hidden-focus`, `img`,
-`scroll`, `svg`), sorted by check name. -/
-def a11yDeficits (doc : Ir.Doc) (body : Array Html.Node) :
+`pending-focus`, `scroll`, `svg`), sorted by check name. -/
+def a11yDeficits (doc : Ir.Doc) (head body : Array Html.Node) :
     List (String × Nat) :=
   let f := a11yFactsOf doc body
   [("contrast", (HtmlDoc.schemeFailures (a11yCssOf doc == .own) doc).length),
    ("h1", if f.h1s == 1 then 0 else 1),
    ("hidden-focus", f.hiddenTabStops),
    ("img", f.imgsUnnamed),
+   ("pending-focus", pendingTabStops head f),
    ("scroll", f.scrollsUnreachable),
    ("svg", f.svgsUnnamed)]
 
@@ -54,8 +67,8 @@ only: no browser, no network, no tool. -/
 def a11yCorpus : IO (Array (String × List (String × Nat))) := do
   let mut out := #[]
   for n in goldenNames do
-    let (doc, _, _, body, _) ← a11yCorpusPage n
-    out := out.push (n, a11yDeficits doc body)
+    let (doc, _, head, body, _) ← a11yCorpusPage n
+    out := out.push (n, a11yDeficits doc head body)
   return out
 
 /-- The `aria-label` of every `<svg>` a body carries. -/
@@ -154,6 +167,31 @@ def htmlA11yChecks (ref : IO.Ref (List String)) : IO Unit := do
       (names.all fun nm => (names.filter (· == nm)).size == 1)
     -- Every `<img src>` is a format a browser decodes, by its bytes, or a diagnostic names it.
     undecodableSeen := undecodableSeen + (← browserImageChecks ref n store body diags)
+  -- A pending step a deck hides is out of reach, its link included; at a covered share it shows,
+  -- so in reach.
+  let frame := "\\begin{frame}\nFirst words.\n\n\\uncover<2>{Second words " ++
+    "\\href{https://example.org}{linked}.}\n\n\\pause\nThird \\href{https://example.org}{words}.\n" ++
+    "\\end{frame}"
+  for (label, pre, hides) in [("no share declared", "", true), ("beamer's invisible",
+      "\\setbeamercovered{invisible}\n", true), ("beamer's transparent",
+      "\\setbeamercovered{transparent}\n", false)] do
+    let doc := (elabStr (dvDeck pre frame)).1
+    let (head, body, _) := HtmlDoc.emitTree {} doc
+    let f := HtmlDoc.a11yFacts true true body
+    let css := headCss head
+    t s!"html a11y, {label}: the pending steps' links are step tab stops ({f.stepTabStops})"
+      (f.stepTabStops == 2)
+    let what := if hides then "fades from nothing, out of reach" else "covers at its share, in reach"
+    t s!"html a11y, {label}: a pending step {what} until its reveal"
+      (stepsFadeFromNothing css == hides && pendingStepsOutOfReach css == hides &&
+        pendingTabStops head f == 0)
+    t s!"html a11y, {label}: no step keyframe moves content" (stepsStandStill css)
+    if hides then
+      let reachable := head.map fun n => match n with
+        | .style c => Html.Node.style ((c.splitOn "ltx-unhide").foldl (· ++ ·) "")
+        | other => other
+      t s!"html a11y, {label}: a stylesheet whose reveal opens in reach leaves both links in reach"
+        (pendingTabStops reachable f == 2)
   t s!"html a11y: the corpus ships inline pictures ({svgsSeen})" (0 < svgsSeen)
   t s!"html a11y: the corpus ships scroll containers ({scrollsSeen})" (0 < scrollsSeen)
   t s!"html a11y: the corpus ships disclosures ({summariesSeen})" (0 < summariesSeen)
