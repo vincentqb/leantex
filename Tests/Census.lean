@@ -668,14 +668,15 @@ def censusRows2 :
     ("the next step page shows them", pageHas c 1 "Metrics are queryable"),
     ("the final step page has nothing covered", pageAllRevealed c 2)]),
   ("deck", fun _ c => [
-    ("a page per frame, divider, and step", c.size == 8),
+    ("a page per frame and step, the section opening none under a theme with no section page",
+      c.size == 7),
     ("the step page covers its pending item at the deck's declared transparent share",
-      pageCovered c 2 "Frames are page boundaries" && pageAllRevealed c 3),
+      pageCovered c 1 "Frames are page boundaries" && pageAllRevealed c 2),
     ("the title frame ships the title", pageHas c 0 "A Certified Deck"),
-    ("the standout frame fills its background", (c[7]?.map (·.fills == 1)).getD false),
-    ("the standout content ships", pageHas c 7 "Questions?"),
+    ("the standout frame fills its background", (c[6]?.map (·.fills == 1)).getD false),
+    ("the standout content ships", pageHas c 6 "Questions?"),
     ("the alignment's reasons ship whole beside their steps",
-      pageHas c 6 "the first odd number" && pageHas c 6 "two odd numbers")]),
+      pageHas c 5 "the first odd number" && pageHas c 5 "two odd numbers")]),
   ("tables-deck", fun _ c => [
     ("the title page, then a page per step of the table frame: no continuation page",
       c.size == 3 && pageHas c 0 "An Invented Table Deck"),
@@ -1342,9 +1343,10 @@ def censusRows7 :
       (c[0]?.map fun p => decide (7 ≤ p.fills)).getD false),
     ("the listing ships", pageHas c 1 "synthetic")]),
   ("trio-deck", fun _ c => [
-    ("pages", c.size == 4),
+    ("a page per frame, the section opening none under a theme with no section page",
+      c.size == 3),
     ("the title ships", pageHas c 0 "Cardamom Press"),
-    ("the divider draws the section rule", (c[2]?.map (·.rules == 1)).getD false)]),
+    ("the section's frame follows the first", pageHas c 2 "Editions of 64")]),
   ("trio-card", fun geom c => [
     ("two faces, two pages", c.size == 2),
     ("the front ships the name", pageHas c 0 "Pat Placeholder"),
@@ -1386,7 +1388,20 @@ def censusRows7 :
         let ys := (p.decorations.filter fun d => match d.1 with
           | .highlight col _ => col == Ir.Color.ofHtml 0xFA 0xCC 0x15
           | .underline | .lineThrough => false).map (·.2.1)
-        decide (3 ≤ (ys.toList.eraseDups).length)).getD false)])]
+        decide (3 ≤ (ys.toList.eraseDups).length)).getD false)]),
+  ("deck-sections", fun _ c => [
+    ("a page per frame and one for the text outside every frame, none for a section",
+      c.size == 6),
+    ("each page holds its own frame's or the outside text's words, in order",
+      [(0, "Sections Without Pages"), (1, "kettle fills"), (2, "spout of"), (3, "Cups follow"),
+        (4, "stands on a page"), (5, "dries the cups")].all fun (i, w) => pageHas c i w),
+    ("a reference to a section and a subsection shows beamer's number",
+      pageHas c 1 "2 pours" && pageHas c 2 "1 sets" && pageHas c 3 "1 said"),
+    ("the footline names the section in force on every frame",
+      pageHas c 1 "Kettles" && pageHas c 2 "Kettles" && pageHas c 3 "Cups" &&
+        pageHas c 5 "Washing up"),
+    ("the text outside every frame shares its page with no frame",
+      !pageHas c 4 "Serving" && !pageHas c 4 "Drying")])]
 
 /-- Whether `a` ships above `b` on page 0. -/
 def shipsAbove (c : Array CensusPage) (a b : String) : Bool :=

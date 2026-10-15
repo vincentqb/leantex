@@ -1166,7 +1166,7 @@ def slideChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   let (dDoc, dDs) := elabStr threeFrames
   t "deck source clean" dDs.isEmpty
   let out := layoutOf oneFace dDoc
-  t "one page per frame, one per section divider" (out.pages.size == 4)
+  t "one page per frame, none for a section with no section page" (out.pages.size == 3)
   t "every slide leads with its title at the heading size"
     (out.pages.all fun p =>
       p.lines.any (·.size == Layout.sectionSize (Layout.Geom.ofPage dDoc.page) 1))

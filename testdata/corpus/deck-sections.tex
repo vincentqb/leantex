@@ -1,0 +1,51 @@
+% Invented deck: sections between frames under beamer's default theme, which
+% declares no section page, so each one names navigation alone: its anchor and
+% label land on the frame set next and its title reaches the footline. A
+% subsection, a starred section, references to them, and text set outside every
+% frame, which stands on a page of its own as beamer sets it. Nothing here
+% derives from any private document.
+\documentclass[aspectratio=169]{beamer}
+
+\usetheme{default}
+\chrome{ footer = { left = \sectiontitle, right = \framenumber } }
+
+\fonts{
+  dir = "fonts",
+  body = "Open Sans",
+}
+
+\title{Sections Without Pages}
+\author{Pat Placeholder}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section{Kettles}\label{sec:kettles}
+
+\begin{frame}{Filling}
+  A kettle fills to its line, and Section~\ref{sec:cups} pours it.
+\end{frame}
+
+\subsection{Spouts}\label{sec:spouts}
+
+\begin{frame}{Pouring}
+  The spout of subsection~\ref{sec:spouts} sets the pour.
+\end{frame}
+
+\section{Cups}\label{sec:cups}
+
+\begin{frame}{Serving}
+  Cups follow kettles, as Section~\ref{sec:kettles} said.
+\end{frame}
+
+A note set outside every frame stands on a page of its own.
+
+\section*{Washing up}
+
+\begin{frame}{Drying}
+  The last frame dries the cups.
+\end{frame}
+
+\end{document}

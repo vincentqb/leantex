@@ -144,6 +144,7 @@ import Tests.OverlayInputs
 import Tests.OverlaySingleton
 import Tests.OverlaySingletonHtml
 import Tests.FrameHeadingScope
+import Tests.SectionPages
 import Tests.Census
 import Tests.GfxRegression
 import Tests.GfxMatrix
@@ -904,6 +905,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   overlaySingletonChecks ref oneFace
   overlaySingletonHtmlChecks ref
   frameHeadingScopeChecks ref oneFace
+  sectionPageChecks ref oneFace
   nestedStageChecks ref oneFace arts
   refusedEnvChecks ref oneFace
   splitPairingOwedChecks ref

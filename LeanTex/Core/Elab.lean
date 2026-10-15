@@ -6145,7 +6145,9 @@ past `secnumdepth`, or in a class that does not number. -/
 private def sectionNumber (ctx : Ctx) (level : Nat) (starred : Bool) :
     EM (Option String) := do
   let st ← get
-  if starred || !ctx.numberHeadings || level == 0 || level > 3 ||
+  -- beamer steps every section's counter for `\ref`, a starred one's too, and prints no number
+  let deck := ctx.slides
+  if (starred && !deck) || (!ctx.numberHeadings && !deck) || level == 0 || level > 3 ||
       (level : Int) > st.ctr.secDepth then
     return none
   let (s1, s2, s3) := st.ctr.secNums
@@ -6153,10 +6155,13 @@ private def sectionNumber (ctx : Ctx) (level : Nat) (starred : Bool) :
     | 1 => (s1 + 1, 0, 0)
     | 2 => (s1, s2 + 1, 0)
     | _ => (s1, s2, s3 + 1)
-  let num := renderSecLevel st.ctr.secFmts nums st.ctr.inAppendix secFmtFuel level
+  -- beamer's `\thesubsection` is `\arabic{subsection}` alone, its parent unprinted
+  let num := if deck && (st.ctr.secFmts.findRev? (·.1 == level)).isNone then
+      ListMark.arabicN (counterAt nums level)
+    else renderSecLevel st.ctr.secFmts nums st.ctr.inAppendix secFmtFuel level
   modify fun st => { st with ctr := { st.ctr with secNums := nums, runNums := (0, 0) }
                              refTarget := some { kind := some .heading, num := num } }
-  return some num
+  return if deck then none else some num
 
 /-- Whether a raw sets a style, size, alignment or colour for its group. -/
 private def isDeclaration (ctx : Ctx) : Raw → Bool

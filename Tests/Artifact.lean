@@ -1671,7 +1671,7 @@ def artStagesOne (inl : Option String) (acc : Array (Option String)) :
     let inl := own.orElse fun _ => inl
     let cs := (((attrs.find? (·.1 == "class")).map (·.2)).getD "").splitOn " "
     let acc := if t == "section" && cs.contains "slide" && !cs.contains "standout" &&
-        !cs.contains "title-page" then acc.push inl else acc
+        !cs.contains "title-page" && !cs.contains "loose" then acc.push inl else acc
     artStagesList inl acc kids.toList
 
 def artStagesList (inl : Option String) (acc : Array (Option String)) :

@@ -321,8 +321,8 @@ def footerChecks (fs : FontSet) : Array (String × Bool) :=
       (pdfFoots stepped).size == 3 &&
       (pdfFoots stepped).all (· == ("Note", "1")) &&
       htmlFooters steppedDoc == #[("Note", "1"), ("Note", "1")]),
-    ("section dividers clear frame ownership and following frames select their own section",
-      noDroppedGlyph divided && divided.pages.size == 4 &&
+    ("sections with no section page open none, and following frames select their own section",
+      noDroppedGlyph divided && divided.pages.size == 2 &&
       selectedFooters geom fs dividedDoc divided &&
       pdfFoots divided == #[("Outer", ""), ("Next", "")] &&
       htmlFooters dividedDoc == #[("Outer", ""), ("Next", "")]),

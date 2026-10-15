@@ -1,0 +1,60 @@
+class slides [aspectratio=169]
+page 453.543x255.118 vmargin 26.4 hmargin 28.346 fontsize 11 parskip 0 justify off
+font dir "fonts"
+font body "Open Sans"
+chrome footer left sectiontitle right framenumber
+meta title "Sections Without Pages"
+meta author "Pat Placeholder"
+frame golden
+  center
+    section* 0
+      text "Sections Without Pages"
+    para
+      text "Pat Placeholder"
+section 1
+  text "Kettles"
+para
+  label "sec:kettles"
+frame
+  title
+    text "Filling"
+  para
+    text "A kettle fills to its line, and Section "
+    ref "sec:cups" shows "2" -> #sec:cups
+    text " pours it."
+section 2
+  text "Spouts"
+para
+  label "sec:spouts"
+frame
+  title
+    text "Pouring"
+  para
+    text "The spout of subsection "
+    ref "sec:spouts" shows "1" -> #sec:spouts
+    text " sets the pour."
+section 1
+  text "Cups"
+para
+  label "sec:cups"
+frame
+  title
+    text "Serving"
+  para
+    text "Cups follow kettles, as Section "
+    ref "sec:kettles" shows "1" -> #sec:kettles
+    text " said."
+para
+  text "A note set outside every frame stands on a page of its own."
+section* 1
+  text "Washing up"
+frame
+  title
+    text "Drying"
+  para
+    text "The last frame dries the cups."
+-- diagnostics
+note[N0100] 7:1 '\documentclass{beamer}' → \documentclass[aspectratio=169]{slides}
+note[N0100] 7:1 '\RequirePackage{amsmath}' → nothing: the engine does this itself
+note[N0100] 7:1 '\usepackage{amsthm}' → \theoremstyle{plain}
+note[N0100] 9:1 '\usetheme' → \theme{default}

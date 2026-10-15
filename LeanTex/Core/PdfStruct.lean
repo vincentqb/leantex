@@ -262,6 +262,21 @@ public theorem fill_size_exact (es : Array StructElem) (lp : Array (Array (Nat �
     (fill es lp).size = es.size := by
   simp only [fill, Array.size_map]
 
+/-- A heading no page inks, as a deck's section on no page of its own, named by its words as its
+replacement text (ISO 32000-2 §14.9.4), its skeleton's leaf placeholders read through the tree. -/
+public def nameUninked (t : Struct.Tree) (sk es : Array StructElem) : Array StructElem :=
+  es.mapIdx fun i e =>
+    if e.heading.isNone || !e.kids.isEmpty then e else
+    let words := String.join (((sk[i]?).map (·.kids)).getD #[] |>.toList.filterMap fun k =>
+      match k with
+      | .leaf j => (t.leaves[j]?).bind fun (id, l) => if id == j then some l.census else none
+      | .elem _ | .mcid _ _ => none)
+    if words.trimAscii.isEmpty then e else { e with actualText := some words }
+
+public theorem nameUninked_size_exact (t : Struct.Tree) (sk es : Array StructElem) :
+    (nameUninked t sk es).size = es.size := by
+  simp only [nameUninked, Array.size_mapIdx]
+
 /-- The parent tree (§14.7.5.4) page by page: entry `m` of page `p` is the element holding the
 leaf that identifier `m` paints. -/
 public def parentTreeOf (marks : Array (Array (Nat × Nat))) (owners : Array (Option Nat)) :

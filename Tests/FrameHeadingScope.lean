@@ -7,12 +7,12 @@ public section
 open LeanTex.Core
 
 /-! An explicit IR heading inside a frame belongs to that frame's body, under its ground,
-distribution and footer; only headings outside frames open slide dividers. -/
+distribution and footer; only a section outside frames under a section-page design opens a divider. -/
 
 namespace FrameHeadingScope
 
-/-- Synthetic IR, shared with the rendered-PDF acceptance probe: three local headings under both the
-progress-divider path and its fallback. -/
+/-- Synthetic IR, shared with the rendered-PDF acceptance probe: three local headings under a design
+with a section page and one without. -/
 def doc (progress footer : Bool) (valign : Ir.VAlign)
     (levels : Array Ir.HeadingLevel := #[1, 2, 3]) : Ir.Doc :=
   let base := (elabStr (deck169 "\\theme{moloch}" "")).1
@@ -150,12 +150,19 @@ def frameHeadingScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) 
         .section level true none #[.text "Divider"],
         .frame #[] false .center false #[.para #[.text "Second frame"]]] }
       let out := layoutOf fonts doc
-      t s!"frame heading scope preserves top-level divider {progress}/{level}"
-        (out.pages.size == 3 && out.pages[0]!.frame == some 1 &&
-         out.pages[1]!.frame.isNone && out.pages[1]!.foot.isNone &&
-         out.pages[2]!.frame == some 2 &&
-         (out.pages[1]!.lines.map fun line => (lineText line).trimAscii.toString) == #["Divider"] &&
-         pdfFoots out == #[("Frame footer", "1"), ("Frame footer", "2")])
+      -- a top-level heading opens a divider only as a section under a design with a section page
+      if progress && level == 1 then
+        t s!"frame heading scope preserves top-level divider {progress}/{level}"
+          (out.pages.size == 3 && out.pages[0]!.frame == some 1 &&
+           out.pages[1]!.frame.isNone && out.pages[1]!.foot.isNone &&
+           out.pages[2]!.frame == some 2 &&
+           (out.pages[1]!.lines.map fun line => (lineText line).trimAscii.toString) == #["Divider"] &&
+           pdfFoots out == #[("Frame footer", "1"), ("Frame footer", "2")])
+      else
+        t s!"frame heading scope opens no page for a top-level heading {progress}/{level}"
+          (out.pages.size == 2 && out.pages[0]!.frame == some 1 && out.pages[1]!.frame == some 2 &&
+           !(allLines out).any (fun line => (lineText line).trimAscii.toString == "Divider") &&
+           pdfFoots out == #[("Frame footer", "1"), ("Frame footer", "2")])
   -- A local heading must not leak `ChromeSlot.sectionTitle` state into the following frame.
   let base := FrameHeadingScope.doc true true .center
   let doc := { base with

@@ -19,10 +19,11 @@ private structure Stage where
 private def classesOf (attrs : Array (String × String)) : List String :=
   ((HtmlDoc.attrOf? attrs "class").getD "").splitOn " "
 
-/-- A stage's record, its title the first `h2` it carries (the header's). -/
+/-- A stage's record, its title the first `h2` its header carries. -/
 private def stageOf (anchor : Option String) (attrs : Array (String × String))
     (kids : Array Html.Node) (snaps : Array String) : Option Stage :=
-  match elemNodesList (· == "h2") #[] kids.toList with
+  let header := kids.filter fun k => k matches .elem "header" ..
+  match elemNodesList (· == "h2") #[] header.toList with
   | #[] => none
   | hs => match hs[0]! with
     | .elem _ _ hk => some { anchor, name := HtmlDoc.attrOf? attrs "aria-label"

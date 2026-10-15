@@ -187,11 +187,11 @@ private def sectionChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : 
   let body :=
     "\\section{RepeatSection}\n\\begin{frame}{One}FirstBody\\end{frame}\n" ++
     "\\section{RepeatSection}\n\\begin{frame}{Two}SecondBody\\end{frame}"
-  -- Without sectionProgress these headings ship ink but are no snap stages.
+  -- Without a section page these sections ship no ink and open no stage, as beamer's.
   verify ref fonts "sections without progress" (elabStr (deck169 "\\theme{default}" body)) {
     snaps := #[("one", "1"), ("two", "2")]
-    pageMarkers := #["RepeatSection", "FirstBody", "RepeatSection", "SecondBody"]
-    pageFooters := #[none, none, none, none]
+    pageMarkers := #["FirstBody", "SecondBody"]
+    pageFooters := #[none, none]
     htmlFooters := #[]
   }
   verify ref fonts "sections with progress" (elabStr (deck169 "\\theme{moloch}" body)) {
@@ -208,9 +208,8 @@ private def sectionChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : 
      "\\section{RepeatSection}\n\\begin{frame}{Two}SecondBody\\end{frame}"))) {
     snaps := #[("one", "1"), ("", "section-0"), ("aside", "standout"), ("", "section-1"),
       ("two", "2")]
-    pageMarkers := #["UnmarkedSection", "FirstBody", "RepeatSection", "AsideBody",
-      "RepeatSection", "SecondBody"]
-    pageFooters := #[none, none, none, none, none, none]
+    pageMarkers := #["FirstBody", "RepeatSection", "AsideBody", "RepeatSection", "SecondBody"]
+    pageFooters := #[none, none, none, none, none]
     htmlFooters := #[]
   }
 

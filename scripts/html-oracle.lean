@@ -277,19 +277,25 @@ const checks = {
     return { ok: mains === 1 && h1 <= 1, n: 1, why: `main x${mains} h1 x${h1}` };
   },
   // A deck: the snap points the stylesheet declares are exactly the ones
-  // the browser computes, and the scroll space is one viewport per snap.
+  // the browser computes, each on the pager's grid of whole viewports, and
+  // the scroll space is exactly one viewport per snap: anything else in the
+  // row, as a heading between two stages, moves every later stage off it.
   snaps: async () => {
     const root = getComputedStyle(document.documentElement);
     if (!/mandatory/.test(root.scrollSnapType)) return { ok: true, n: 0, why: '' };
     await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
     const declared = document.querySelectorAll('[data-snap]').length;
-    const computed = [...document.querySelectorAll('*')]
+    const points = [...document.querySelectorAll('*')]
       .filter(e => /^start/.test(getComputedStyle(e).scrollSnapAlign)
-        && getComputedStyle(e).display !== 'none').length;
-    const se = document.scrollingElement;
-    const pages = Math.round(se.scrollWidth / window.innerWidth);
-    const ok = declared > 0 && computed === declared && pages === declared;
-    return { ok, n: 1, why: `data-snap x${declared} computed-start x${computed} pages x${pages}` };
+        && getComputedStyle(e).display !== 'none');
+    const vw = window.innerWidth;
+    const off = points.map(e => e.getBoundingClientRect().left + window.scrollX)
+      .filter(x => Math.abs(x - Math.round(x / vw) * vw) > 0.5);
+    const spare = document.scrollingElement.scrollWidth - declared * vw;
+    const ok = declared > 0 && points.length === declared && off.length === 0 &&
+      Math.abs(spare) <= 1;
+    return { ok, n: 1, why: `data-snap x${declared} computed-start x${points.length} ` +
+      `off-grid x${off.length} spare ${Math.round(spare)}px` };
   },
   // A box its scope sets stands on the scope's side, as TeX sets a box in a
   // line — a table or a lone minipage under `.centered` on the scope's

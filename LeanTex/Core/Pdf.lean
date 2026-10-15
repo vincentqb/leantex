@@ -2123,7 +2123,7 @@ public def prepare (geom : Geom) (fs : FontSet) (pages : Array PageOut)
       namedPageOps geom pages docFigs
         (pages.map (contentOps geom remap wt imgMap tags figureNames docFigs))
   let marks := ops.map pageMarks
-  let es := fill sk (leafPagesOf nLeaves marks)
+  let es := nameUninked tree sk (fill sk (leafPagesOf nLeaves marks))
   let parentTree := parentTreeOf marks (leafOwners sk nLeaves)
   let figs := figureTable geom pages docFigs
   let figDicts := figs.filter fun r => !r.isForm
@@ -2512,7 +2512,7 @@ public theorem prepare_table_exact (geom : Geom) (fs : FontSet) (pages : Array P
     (prepare geom fs pages info imgs outline streams tree ops programs).table =
       tableOf geom fs pages imgs outline tree := by
   unfold prepare tableOf
-  simp only [Id.run, pure, bind, keepFaces, docFigs, fill_size_exact]
+  simp only [Id.run, pure, bind, keepFaces, docFigs, nameUninked_size_exact, fill_size_exact]
 
 public theorem prepare_compressed_ids_exact (geom : Geom) (fs : FontSet) (pages : Array PageOut) (info : Ir.Meta)
     (imgs : Image.Store) (outline : Array OutlineEntry)
@@ -2533,9 +2533,10 @@ public theorem prepare_compressed_ids_exact (geom : Geom) (fs : FontSet) (pages 
   dsimp only
   simp only [prepare, Id.run, pure, bind, List.map_append, List.map_cons,
     List.map_nil, List.map_flatMap, FontObjects.rows, List.map_map, Function.comp_def,
-    List.append_assoc, fill_size_exact]
+    List.append_assoc, nameUninked_size_exact, fill_size_exact]
   simp only [apply_ite, List.map_nil, List.map_cons, List.map_map, Function.comp_def]
-  simp only [map_zipIdx_snd, apply_ite, Array.length_toList, fill_size_exact, ite_self]
+  simp only [map_zipIdx_snd, apply_ite, Array.length_toList, nameUninked_size_exact,
+    fill_size_exact, ite_self]
   rfl
 private theorem forIn_ids {α β : Type} (ids : β → List Nat)
     (f : α → β → Id (ForInStep β)) (emits : α → List Nat)
@@ -2659,7 +2660,7 @@ public theorem prepare_direct_ids_exact (geom : Layout.Geom) (fs : Font.FontSet)
       p.table.metaIds.toList := by
   let t := tableOf geom fs pages imgs outline tree
   dsimp only
-  simp only [prepare, Id.run, bind, pure, fill_size_exact]
+  simp only [prepare, Id.run, bind, pure, nameUninked_size_exact, fill_size_exact]
   simp only [Array.toList_append, Array.toList_push, List.map_append, List.map_cons, List.map_nil,
     xmpRow_id, iccRows_ids]
   rw [forIn_range_ids (ids := fun rs : Array Row => rs.toList.map Row.id)

@@ -5055,8 +5055,9 @@ def leafAttributionChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     let standoutTitles := Ir.foldBlocks (fun out b => match b with
       | .frame title true _ _ _ => out.push (Ir.plainText title)
       | _ => out) (fun out _ => out) (#[] : Array String) doc.body
+    let navLeaves := navSectionLeaves doc
     let excluded (r : LeafRow) : Bool :=
-      unshippedKind r || (match r.leaf with
+      unshippedKind r || navLeaves.contains r.id || (match r.leaf with
         | .text s => iconAlts.contains s || numberedCode.contains s || standoutTitles.contains s
         | _ => false)
     -- A glyph no face covers is dropped and named (E0405), so only covered characters are compared.
@@ -5237,8 +5238,9 @@ def inlineAttributionChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet
         | some (_, cap) => out.push (Ir.plainText cap)
         | none => out
       | _ => out) (fun out _ => out) (#[] : Array String) doc.body
+    let navLeaves := navSectionLeaves doc
     let excluded (r : LeafRow) : Bool :=
-      unshippedKind r || r.path.contains .bibEntry || (match r.leaf with
+      unshippedKind r || navLeaves.contains r.id || r.path.contains .bibEntry || (match r.leaf with
         | .text s => iconAlts.contains s || flatBlocks.contains s
         | _ => false)
     let mut exactFail : Option String := none

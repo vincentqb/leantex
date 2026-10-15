@@ -4575,6 +4575,10 @@ public def inParagraph (b : Block) : Block :=
   | .role n body => body.isEmpty && pageMarkerRole n
   | _ => false
 
+/-- A paragraph of label anchors alone, which sets no line. -/
+@[expose] public def anchorsOnly (content : Array Inline) : Bool :=
+  !content.isEmpty && content.all (· matches .label _)
+
 /-- Mark the block an environment arm pushed past `k` as opened inside a
 paragraph when `inPar` says so. -/
 public def markInParagraph (inPar : Bool) (k : Nat) (blocks : Array Block) : Array Block :=
@@ -9817,6 +9821,11 @@ public structure Design where
 
 /-- The print design, which the PDF paints and the contrast judge reads. -/
 @[expose] public def Design.ofPalette (pal : Palette) : Design := Design.resolve pal .print
+
+/-- Whether a deck's section outside every frame stands on a page of its own: a section under a
+design with a section page, as a theme's `\AtBeginSection` sets one; any other names navigation only. -/
+@[expose] public def Design.sectionPageFor (d : Design) (level : HeadingLevel) : Bool :=
+  level == 1 && d.sectionProgress.isSome
 
 /-- The printed ink alone: `(Design.ofPalette pal).fg` without resolving the
 rest of the design. -/

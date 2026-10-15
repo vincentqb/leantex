@@ -10780,7 +10780,7 @@ private def collectDisplayPicture (r : Rd) (a : Acc) (anchors : Array Inline)
 
 private def collectParaBlock (r : Rd) (a : Acc) (content : Array Inline) (indent : Sp) : Acc :=
   -- A paragraph of label anchors alone ships no line and no gap.
-  if !content.isEmpty && content.all (fun x => x matches .label _) then
+  if Ir.anchorsOnly content then
     { a with ops := a.ops ++ content.filterMap (fun x => match x with
         | .label name => some (.anchor name)
         | _ => none) }
@@ -10864,7 +10864,7 @@ private def collectSection (r : Rd) (a : Acc) (level : Ir.HeadingLevel) (num : O
   let (a, leaf) := a.leafRange span
   let design := Ir.Design.ofPalette a.pal
   let divider := r.slides && !r.inFrame
-  if divider && level == 1 && design.sectionProgress.isSome then
+  if divider && design.sectionPageFor level then
     let a := a.pageBreak
     -- A divider is moloch's `\frame[plain,c,noframenumbering]`: a plain frame's text area.
     let area : FrameArea := if a.footAllowed then .paper else .margins
@@ -10902,11 +10902,9 @@ private def collectSection (r : Rd) (a : Acc) (level : Ir.HeadingLevel) (num : O
           { width := Ir.sectionPageStrut r.geom.scale r.geom.fontSize r.geom.leading - thick }) }
       else a
     (a.pageBreak).pushOp .frameClose
+  -- Without a section page a deck's section inks nothing: its anchor rides the next line set.
+  else if divider then a
   else
-  -- Only a section outside a frame opens a divider.
-  let a := if divider then a.pageBreak else a
-  let a := if !r.inFrame && a.footAllowed then
-      { a with ops := a.ops.push .frameClose } else a
   let st := r.style level.element
   -- The number stands before the title with a `\quad` kern (classes.dtx `\@seccntformat`).
   let marked := markContent title
@@ -10938,8 +10936,7 @@ private def collectSection (r : Rd) (a : Acc) (level : Ir.HeadingLevel) (num : O
       collectDisplay r a title indent false (sectionSize r.geom level)
         (baseStyle := { weight := .b }) (rule := rule)
         (leaf := leaf) (span := span) (keepNext := keep)
-  let a := { a.vskip after with afterHeading := true, fg := savedFg }
-  if divider then a.pageBreak else a
+  { a.vskip after with afterHeading := true, fg := savedFg }
 
 private def collectBibliography (r : Rd) (a : Acc) (items : Array Ir.BibItem) (indent : Sp) : Acc :=
   -- natbib's `thebibliography`: labels right-aligned in a column as wide as the widest.
@@ -18200,7 +18197,7 @@ private theorem collectParaBlock_plain (r : Rd) (a : Acc) (xs : Array Inline)
   · rename_i h
     have hall := (Bool.and_eq_true_iff.mp h).2
     by_cases he : xs = #[]
-    · simp [he] at h
+    · simp [he, anchorsOnly] at h
     · obtain ⟨x, hx⟩ := Array.exists_mem_of_ne_empty xs he
       obtain ⟨s, rfl⟩ := hp x hx
       have hh := (Array.all_eq_true_iff_forall_mem.mp hall) (.text s) hx
