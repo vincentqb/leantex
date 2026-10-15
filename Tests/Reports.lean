@@ -140,6 +140,8 @@ import Tests.SeedSeries
 import Tests.MetaEscape
 import Tests.Algorithm
 import Tests.Layout
+import Tests.SeedPalette
+import Tests.PaletteCover
 
 /-! Every breakage the user reported, as a row whose pins hold it closed; a report closes only as
 `guarded`, and the unwitnessed and owed counts are held both ways. -/
@@ -1717,7 +1719,19 @@ def reports : List Report := [
       "the second review's guards, each failing on the second cut: standard settings LuaLaTeX ships the same page with and without (csquotes' english=american, microtype's tracking, kerning and spacing off, amsmath's nointlimits and centertags, cleveref's english, siunitx's decimal point, fontspec's no-math, KOMA's version=last, titlepage=false, footinclude=false, open=any and headings=openany, beamer's unicode and presentation) or whose ask the engine already answers (hyperref's pdfencoding=auto, hyperfootnotes=false, pdfpagelabels=false and pdfpagemode=UseNone) were named unread and are noted, and an invented KOMA thesis preamble of them warned 18 times and warns of nothing; a class option a loaded package declares reaches it as LaTeX offers it (english to babel, usenames to xcolor) and one no package takes is named; bibsep, belowcaptionskip, topskip and bibhang were named unread though the engine reads them, and every token name an engine site reads by literal now stands in Ir.engineTokenNames; a text height under geometry's 1in margins moved the first line from 84.4 to 158.4 bp (500pt) and 348.4 bp (120pt), where LuaLaTeX keeps 84.9, and now leaves it at 84.4, named; an unreadable length literal and a language without a locale were named twice and are named once; an unreadable value stopped the build and now ships the page, named; geometry's nofoot with footskip=1cm named the page declaration and now the later key wins; a list's [<+->] is named an overlay specification; an unknown class's or theme's options were named again and are not",
       "the keys geometry, crop, natbib, biblatex, cancel, the font packages and the KOMA and microtype setups dropped, listed under one W0101, are each named W0104 keyed by the key; biblatex's hyperref=true, which asks for citation links nothing writes, and a main fontenc encoding that sets Latin input in another script's glyphs (OT2, T3, LGR, OML, OMS, OMX) were noted as losing nothing and are named",
       "the guards added on the landing pre-check, each failing on 36a5f348: a length value the door cannot read was named W0104 as a setting nothing reads, and a word given as the value lost the door's translation note, so the coverage probe read setlength as unknown; it is named once W0107, a degraded operand keyed by its length, beside the translation, and the page ships; report's own title page, an article's titlepage and a report's notitlepage, which set the abstract's form, were named unread class options and are read"]
-    state := .guarded "3c258580" .before .author }
+    state := .guarded "3c258580" .before .author },
+  { id := "R193", date := "2026-10-15"
+    what := "a deck covered its pending overlay steps at the engine's own 38%, and each bundle at a share of its own, where beamer hides them unless the document declares how it covers, so a deck's PDF and web page showed steps lualatex never shows; and a covered share declared decorative was still judged"
+    pins := [check% Tests.PaletteCover.coverChecks, check% Tests.PaletteCover.deckChecks,
+      check% Tests.PaletteCover.hiddenChecks, check% Tests.SeedSeries.seriesScriptChecks,
+      check% Tests.SeedPalette.scriptChecks, thm% SeedPalette.generated_cover_contract]
+    accept := ["beamer under lualatex, on a probe of invented words: a deck declaring nothing and one declaring `invisible` ship no pending word on its first step, `transparent` ships it at 15% of the ink over the page and `transparent=40` at 40%; leantex ships the same steps in PDF and HTML, its PDF mixing in Oklab, so its covered word stands about 0.02 darker than beamer's",
+      "twelve of the guards' assertions fail with the hidden default reverted onto the recorded commit, the engine's 38% and the bundles' shares back: a deck declaring no share judges and ships its pending step, and eight corpus census facts see the pending content on the step pages that now hide it",
+      "twenty fail with the seeds bound by the cover again and a decorative share judged: a seed meeting its floor moves at fifteen shares and schemes, the deck's alert leaves the accent and reports nothing, and the decorative deck reports its alert",
+      "forty-four fail with the derived tones unbound, a hidden word's gap shipped as a word gap and a decorative share judged: thirty derived tones lose the covered-state contract or a browser's alpha, the light accent's alert neither darkens nor keeps it at a declared share, the export's first series and alert follow, and seven corpus decks ship word gaps beside no ink",
+      "the corpus decks declaring no share change visibly against main on the step pages whose pending content is now hidden, in PDF and HTML alike: footer-mixed, furniture, lists-deck, overlays-blocks, overlays, tables-deck, talk and themed; the rest ship as before",
+      "a private deck declaring its covered steps decorative, built under lualatex -Werror and leantex, PDF and HTML: its colours and every page as before, and its leantex builds report no covered-state loss where they reported one each"]
+    state := .guarded "0d395bd7" .revert .author }
 ]
 
 /-- The reports guarded but never seen failing, a count held in both directions. -/
