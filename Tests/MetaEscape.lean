@@ -305,11 +305,14 @@ def templateArgChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   let t := check ref
   let said (ds : Array Diag) : List (String × String) :=
     (ds.filter (·.severity != .note)).toList.map fun d => (d.code, d.message)
-  let ships (src : String) : Array UInt8 × String :=
+  let ships (src : String) : Array UInt8 × String × String :=
     let doc := (elabStr src).1
-    let (head, _, _) := HtmlDoc.emitTree {} doc
-    ((pdfOf geom fonts doc).data, Html.document "en" head #[])
+    let (head, tree, _) := HtmlDoc.emitTree {} doc
+    ((pdfOf geom fonts doc).data, Html.document "en" head #[], shownTextList "" tree.toList)
   let lines := String.intercalate " " (List.replicate 40 "Words set at the leading the spread asks for.")
+  let deckSrc (pre : String) : String :=
+    "\\documentclass{beamer}\n" ++ pre ++
+      "\\begin{document}\n\\begin{frame}{Alpha}\nWords.\n\\end{frame}\n\\end{document}"
   let colour := "\\usepackage{xcolor}\n"
   let babel := "\\usepackage[french,english]{babel}\n"
   let pairs : List (String × String × String) := [
@@ -381,7 +384,20 @@ def templateArgChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
     ("a parameter of a nested definition",
       dvDoc (colour ++ "\\newcommand\\mkouter[1]{\\newcommand\\mkinner[1]{\\definecolor{##1}{HTML}{#1}}}\n" ++
         "\\mkouter{8B0000}\n\\mkinner{probenest}\n") "Alpha \\textcolor{probenest}{words}.",
-      dvDoc (colour ++ "\\definecolor{probenest}{HTML}{8B0000}\n") "Alpha \\textcolor{probenest}{words}.")]
+      dvDoc (colour ++ "\\definecolor{probenest}{HTML}{8B0000}\n") "Alpha \\textcolor{probenest}{words}."),
+    ("a page style",
+      dvDoc "\\newcommand\\ps[1]{\\pagestyle{#1}}\n\\ps{empty}\n" "Words.",
+      dvDoc "\\pagestyle{empty}\n" "Words."),
+    ("a language environment",
+      dvDoc (babel ++ "\\newcommand\\ola[2]{\\begin{otherlanguage}{#1}#2\\end{otherlanguage}}\n")
+        "Alpha \\ola{french}{mot} words.",
+      dvDoc babel "Alpha \\begin{otherlanguage}{french}mot\\end{otherlanguage} words."),
+    ("a beamer template",
+      deckSrc "\\newcommand\\se[1]{\\setbeamertemplate{navigation symbols}{#1}}\n\\se{}\n",
+      deckSrc "\\setbeamertemplate{navigation symbols}{}\n"),
+    ("a beamer template no use reaches",
+      deckSrc "\\newcommand\\se[1]{\\setbeamertemplate{navigation symbols}{#1}}\n",
+      deckSrc "")]
   for (what, tpl, written) in pairs do
     t s!"template: {what} raises what its text written out raises, nothing where it is defined"
       (said (elabStr tpl).2 == said (elabStr written).2)
@@ -404,5 +420,40 @@ def templateArgChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
     "\\mk{bad name}{8B0000}\n") "Words.")).2.filter (·.code == "W0102")
   t "template: a name its expansion spells with a space is named once, at the use"
     (spaced.size == 1 && spaced.all fun d => d.sites == 1 && d.span.map (·.pos.line) == some 4)
+  let envCases : List (String × String × String × List String × Option String) := [
+    ("a colour definition",
+      colour ++ "\\newenvironment{probeenv}[1]{\\definecolor{probeenvc}{HTML}{#1}}{}\n",
+      "\\begin{probeenv}{8B0000}\nAlpha words.\n\\end{probeenv}", ["8B0000", "probeenvc", "HTML"],
+      some "definecolor"),
+    ("a language switch", babel ++ "\\newenvironment{inlang}[1]{\\selectlanguage{#1}}{}\n",
+      "Alpha.\n\\begin{inlang}{french}\nMot.\n\\end{inlang}", ["french"], some "selectlanguage"),
+    ("a span's language", babel ++ "\\newenvironment{fl}[2]{\\foreignlanguage{#1}{#2}}{}\n",
+      "\\begin{fl}{french}{mot}\nAlpha.\n\\end{fl}", ["french"], some "foreignlanguage"),
+    ("a length", "\\newenvironment{ind}[1]{\\setlength{\\parindent}{#1}}{}\n",
+      "\\begin{ind}{3em}\nAlpha words.\n\nBeta words.\n\\end{ind}", ["3em"], some "setlength"),
+    ("a metadata value", "\\usepackage{hyperref}\n\\newenvironment{probemeta}[1]{\\hypersetup{pdftitle={#1}}}{}\n",
+      "\\begin{probemeta}{Probe Title}\nWords.\n\\end{probemeta}", ["Probe", "pdftitle"],
+      some "hypersetup"),
+    ("a colour macro its code calls",
+      colour ++ "\\newcommand\\mk[2]{\\definecolor{#1}{HTML}{#2}}\n" ++
+        "\\newenvironment{red}{\\mk{probered}{8B0000}\\color{probered}}{}\n",
+      "\\begin{red}\nAlpha words.\n\\end{red}", ["8B0000", "probered", "HTML"], none),
+    ("a language macro its begin and end code call",
+      babel ++ "\\newcommand\\sel[1]{\\selectlanguage{#1}}\n\\newenvironment{fr}{\\sel{french}}{\\sel{english}}\n",
+      "Alpha.\n\\begin{fr}\nMot.\n\\end{fr}", ["french", "english"], none)]
+  for (what, pre, body, words, cmd) in envCases do
+    let src := dvDoc pre body
+    let (ds, _, _, shown) := sourceArtifacts fonts src
+    let page := pageTextOf fonts src
+    t s!"template: {what} in an environment's code prints no argument on the page"
+      (!page.isEmpty && words.all fun w => !hasStr page w)
+    t s!"template: {what} in an environment's code prints no argument on the web page"
+      (!shown.isEmpty && words.all fun w => !hasStr shown w)
+    if let some c := cmd then
+      t s!"template: {what} in an environment's code is named once, where it stands"
+        ((ds.filter (·.subject == some ("envcode:" ++ c))).size == 1)
+  t "template: a span's language in an environment's code keeps the span's text"
+    (hasStr (pageTextOf fonts (dvDoc (babel ++ "\\newenvironment{fl}[2]{\\foreignlanguage{#1}{#2}}{}\n")
+      "\\begin{fl}{french}{mot}\nAlpha.\n\\end{fl}")) "mot")
 
 end Tests.MetaEscape

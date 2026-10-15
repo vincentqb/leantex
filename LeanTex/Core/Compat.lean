@@ -597,6 +597,10 @@ private structure St where
   /-- Inside a definition body, where a construct's meaning
   is decided at its use. -/
   inDef : Bool := false
+  /-- Inside an environment's begin or end code, which the elaborator expands at each use. -/
+  envCode : Bool := false
+  /-- Upcoming groups that are an environment's begin or end code. -/
+  envNext : Nat := 0
   /-- Replaying a `\begin{document}` hook body, whose
   content goes to the body side. -/
   seam : Bool := false
@@ -5777,30 +5781,36 @@ private def nativeName (n : String) : Bool :=
 mutual
 
 /-- Whether raws hold a macro parameter token: `#` before a digit or another `#`. -/
-private def paramIn : List Raw → Bool
+private def holdsParam : List Raw → Bool
   | [] => false
   | .sym '#' _ :: .sym '#' _ :: _ => true
-  | .sym '#' _ :: .word w _ :: rest => w.toList.head?.any Char.isDigit || paramIn rest
-  | r :: rest => paramInRaw r || paramIn rest
+  | .sym '#' _ :: .word w _ :: rest => w.toList.head?.any Char.isDigit || holdsParam rest
+  | r :: rest => holdsParamRaw r || holdsParam rest
 
-private def paramInRaw : Raw → Bool
-  | .group b _ | .env _ b _ | .math _ b _ => paramIn b.toList
+private def holdsParamRaw : Raw → Bool
+  | .group b _ | .env _ b _ | .math _ b _ => holdsParam b.toList
   | .word .. | .space | .par _ | .ctrl .. | .sym .. | .verb .. => false
 
 end
 
-/-- Whether source text holds a macro parameter token outside a control symbol. -/
-private def srcParam : List Char → Bool
-  | '\\' :: _ :: rest => srcParam rest
-  | '#' :: tl@(c :: _) => c.isDigit || c == '#' || srcParam tl
-  | _ :: rest => srcParam rest
-  | [] => false
-
-/-- Whether a definition body's arguments are a template its expansion reads, which nothing judges,
-quotes or rewrites where it is defined. -/
-private def template (args : Array (Array Raw)) (opts : List (Option String) := []) : M Bool := do
+/-- Whether, in a definition body, an argument or option holds a parameter, whose value only each
+use gives. -/
+private def paramArgs (args : Array (Array Raw)) (opts : Array (Option (Array Raw)) := #[]) :
+    M Bool := do
+  -- premise: templateArgChecks — a parameter's value is judged where each use gives it
   return (← get).inDef &&
-    (args.any (paramIn ·.toList) || opts.any fun o => o.any (srcParam ·.toList))
+    (args.any (holdsParam ·.toList) || opts.any (·.any (holdsParam ·.toList)))
+
+/-- Accounts a setting whose value is a parameter: named in an environment's code, which the
+elaborator expands without substituting it, and noted in a macro body, whose uses are rewritten
+with their values. -/
+private def unappliedParam (cmd stands : String) (pos : Pos) : M Unit := do
+  if (← get).envCode then
+    sayOnce ("envcode:" ++ cmd) .W0104
+      s!"'\\{cmd}' in an environment's code takes its value from the environment's arguments, \
+which this engine does not substitute there; skipped, and {stands}" pos
+      (help := s!"write '\\{cmd}' with its value where the environment is used")
+  else became s!"\\{cmd}" "a rewrite at each use, where its parameters hold their values" pos
 
 /-- The metadata keys hyperref's options set, each as its `\pdfmeta` key. -/
 public inductive MetaKey where
@@ -6372,9 +6382,12 @@ with its CMYK alternate as xcolor stores it, converted from the model as `cmyk:<
 private def defineSpotColor (raws : Array Raw) (start : Nat) (pos : Pos) :
     M (Option (Array Raw × Nat)) := do
   let (names, j) := takeGroups raws start 2
-  let (model, j) := takeOpt raws j
+  let (modelRaws, j) := takeRawOpt raws j
+  let model := modelRaws.map rawSrc
   let (vals, k) := takeGroups raws j 1
-  if (← template (names ++ vals) [model]) then return none
+  if ← paramArgs (names ++ vals) #[modelRaws] then
+    unappliedParam "definespotcolor" "the colour is not defined" pos
+    return some (#[], k)
   let (some n, some colorant, some v) := (names[0]?, names[1]?, vals[0]?)
     | say .W0102 "'\\definespotcolor' needs a colour name, a colorant and its values; nothing \
 is defined" pos (help := "write \\definespotcolor{name}{colorant}{c,m,y,k}")
@@ -7335,7 +7348,10 @@ private def rewriteCtrlLaterNamed (name : String) (pos : Pos) (raws : Array Raw)
   | "linespread" | "setstretch" =>
     -- setspace's parameterised form is `\linespread` by another name.
     let (args, k) := takeGroups raws start 1
-    if args.isEmpty || (← template args) then return none
+    if args.isEmpty then return none
+    if ← paramArgs args then
+      unappliedParam name "the leading keeps its value" pos
+      return some (#[], k)
     unless oneEntry (rawSrc (args.getD 0 #[])) do
       sayOnce ("ctrl:" ++ name) .W0104 s!"'\\{name}' is given a factor this engine cannot read; \
 skipped, and the leading keeps its value" pos (help := "give a number, such as \\linespread{1.2}")
@@ -7444,7 +7460,10 @@ were dropped: {o}" pos
   | "fontseries" =>
     -- The series' weight half rides the `@series:` marker; its width half has no engine axis.
     let (args, k) := takeGroups raws start 1
-    if args.isEmpty || (← template args) then return none
+    if args.isEmpty then return none
+    if ← paramArgs args then
+      unappliedParam "fontseries" "the weight in force stands" pos
+      return some (#[], k)
     let code := (rawSrc (args.getD 0 #[])).trimAscii.toString
     match Ir.Weight.parseSeries code with
     | some (w, width) =>
@@ -7469,7 +7488,10 @@ the weight in force stands" pos
     linenoCtrl name pos raws start
   | "selectlanguage" =>
     let (args, k) := takeGroups raws start 1
-    if args.isEmpty || (← template args) then return none
+    if args.isEmpty then return none
+    if ← paramArgs args then
+      unappliedParam "selectlanguage" "the language in force stands" pos
+      return some (#[], k)
     let lname := rawSrc (args.getD 0 #[])
     -- premise: compatMarkerChecks — a top-level discard leaves the Doc without it
     if ← preambleProper then
@@ -7490,7 +7512,9 @@ and patterns stand in" pos
     let (_, j) := takeOpt raws start
     let (args, k) := takeGroups raws j 2
     if h : args.size = 2 then
-      if (← template #[args[0]]) then return none
+      if ← paramArgs #[args[0]] then
+        unappliedParam "foreignlanguage" "its text keeps the language in force" pos
+        return some (#[], (takeGroups raws j 1).2)
       let lname := rawSrc args[0]
       let tag := Locale.babelTagOf lname
       if (Locale.forTag tag).isNone then
@@ -7678,10 +7702,13 @@ were dropped: {String.intercalate ", " dropped.toList}" pos
     let (args, k) := takeGroups raws j 1
     return some (← sectionRule (rawSrc (args.getD 0 #[])) pos, k)
   | "setmathfont" =>
-    let (optBefore, j) := takeOpt raws start
+    let (beforeRaws, j) := takeRawOpt raws start
     let (args, k) := takeGroups raws j 1
-    let (optAfter, k) := takeOpt raws k
-    if (← template args [optBefore, optAfter]) then return none
+    let (afterRaws, k) := takeRawOpt raws k
+    if ← paramArgs args #[beforeRaws, afterRaws] then
+      unappliedParam "setmathfont" "the math face in force stands" pos
+      return some (#[], k)
+    let (optBefore, optAfter) := (beforeRaws.map rawSrc, afterRaws.map rawSrc)
     let family := rawSrc (args.getD 0 #[])
     let path : Option String :=
       ([optBefore, optAfter].filterMap id).findSome? fun opts =>
@@ -7781,7 +7808,8 @@ the definition is skipped" pos
     became s!"\\{name}\{{envName}}"
       (native ++ (if dflt.isSome then " [default]" else "") ++ " {begin} {end}") pos
     -- The default stays in the walk, rewritten where it stands, its groups no body.
-    write fun st => { st with bodyNext := 2, defaultAt := if dflt.isSome then .awaiting else .none }
+    write fun st => { st with
+      bodyNext := 2, envNext := 2, defaultAt := if dflt.isSome then .awaiting else .none }
     unless (← get).inDef do
       write fun st => { st with
         discardEnvs := st.discardEnvs.filter (·.1 != envName.trimAscii.toString) }
@@ -7827,7 +7855,7 @@ the definition is skipped" pos
           (if slot then " {code before \\BODY} {code after it}"
             else " {} {code}, its body discarded")) pos
         write fun st => { st with
-          bodyNext := 1, defaultAt := if dflt.isSome then .awaiting else .none }
+          bodyNext := 1, envNext := 1, defaultAt := if dflt.isSome then .awaiting else .none }
         let env := envName.trimAscii.toString
         unless (← get).inDef do
           write fun st => { st with
@@ -8017,6 +8045,9 @@ defines; those blocks keep beamer's default template" pos
     else
       let (_, j) := takeOpt raws j
       let (bodyArgs, k) := takeGroups raws j 1
+      if ← paramArgs bodyArgs then
+        unappliedParam "setbeamertemplate" "beamer's template stands" pos
+        return some (#[], k)
       if (rawSrc (bodyArgs.getD 0 #[])).trimAscii.toString.isEmpty then
         sayOnce "beamer:setbeamertemplate" .W0104
           "'\\setbeamertemplate' is beamer configuration the engine does not have; skipped" pos
@@ -8767,12 +8798,16 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
       else none
     if (name.endsWith "fontfamily" || name.endsWith "fontface") && declared.isNone then return none
     let start := if declared.isSome then skipSpaces raws start + 1 else start
-    let (langOpt, j0) := if name == "babelfont" then takeOpt raws start else (none, start)
+    let (langRaws, j0) := if name == "babelfont" then takeRawOpt raws start else (none, start)
     let (slotArgs, j) := if name == "babelfont" then takeGroups raws j0 1 else (#[], start)
-    let (optBefore, j) := takeOpt raws j
+    let (beforeRaws, j) := takeRawOpt raws j
     let (args, k) := takeGroups raws j 1
-    let (optAfter, k) := takeOpt raws k
-    if (← template (slotArgs ++ args) [langOpt, optBefore, optAfter]) then return none
+    let (afterRaws, k) := takeRawOpt raws k
+    if ← paramArgs (slotArgs ++ args) #[langRaws, beforeRaws, afterRaws] then
+      unappliedParam name "the face in force stands" pos
+      return some (#[], k)
+    let (langOpt, optBefore, optAfter) :=
+      (langRaws.map rawSrc, beforeRaws.map rawSrc, afterRaws.map rawSrc)
     let st0 ← get
     let defined := match declared with
       | some c => st0.bound.contains c || st0.fontFamilies.contains c
@@ -8847,7 +8882,9 @@ face serves every language, so the binding is dropped" pos
   | "definecolor" =>
     let (args, k) := takeGroups raws start 3
     if h : args.size = 3 then
-      if (← template args) then return none
+      if ← paramArgs args then
+        unappliedParam "definecolor" "the colour is not defined" pos
+        return some (#[], k)
       let n := rawSrc args[0]
       let model := rawSrc args[1]
       let modeled := modeledColorSource (some model) (rawSrc args[2])
@@ -8866,7 +8903,9 @@ the colour is not defined" pos (help := "name the colour with ASCII letters, dig
   | "colorlet" =>
     let (args, k) := takeGroups raws start 2
     if h : args.size = 2 then
-      if (← template args) then return none
+      if ← paramArgs args then
+        unappliedParam "colorlet" "the colour is not defined" pos
+        return some (#[], k)
       -- xcolor's `.` names the current colour, black in the preamble.
       let src := if (rawSrc args[1]).trimAscii.toString == "." then "#000000"
         else rawSrc args[1]
@@ -9001,7 +9040,9 @@ spells; the colour is not defined" pos (help := "name the colour with ASCII lett
   | "setlength" =>
     let (args, k) := takeGroups raws start 2
     if h : args.size = 2 then
-      if (← template #[args[1]]) then return none
+      if ← paramArgs args then
+        unappliedParam "setlength" "the length keeps its value" pos
+        return some (#[], k)
       -- e-TeX's `\dimexpr` division rounds where the native language truncates, so it is refused.
       if (args[1].any fun r => match r with | .ctrl "dimexpr" _ => true | _ => false)
           && (lengthSrc args[1]).toList.contains '/' then
@@ -9024,8 +9065,9 @@ arithmetic truncates toward zero as TeX's '\\divide' does" pos
     -- `\addtolength` sums the held value and the operand where both are known.
     let (args, k) := takeGroups raws start 2
     if h : args.size = 2 then
-      if (← template #[args[1]]) then return none
-
+      if ← paramArgs args then
+        unappliedParam "addtolength" "the length keeps its value" pos
+        return some (#[], k)
       let some n := ctrlName args[0] | return none
       let st ← get
       -- premise: registerArithChecks — a length this rewrite set holds its recorded value
@@ -9192,9 +9234,10 @@ baselineskip = {milliStr ld}pt }" ++
     return some (head.push (.group #[.ctrl "operatorname" pos, .group body pos] pos), k)
   | "hypersetup" =>
     let (args, k) := takeGroups raws start 1
-    if (← template args) then return none
+    if ← paramArgs args then
+      unappliedParam "hypersetup" "hyperref's settings stand" pos
+      return some (#[], k)
     return some (← hypersetup (rawSrc (args.getD 0 #[])) pos, k)
-
   | "ihead" | "chead" | "ohead" | "ifoot" | "cfoot" | "ofoot"
   | "lhead" | "rhead" | "lfoot" | "rfoot" =>
     let (args, k) := takeGroups raws start 1
@@ -9244,6 +9287,9 @@ baselineskip = {milliStr ld}pt }" ++
     return some (#[], start)
   | "pagestyle" =>
     let (args, k) := takeGroups raws start 1
+    if ← paramArgs args then
+      unappliedParam "pagestyle" "the page style in force stands" pos
+      return some (#[], k)
     let v := (rawSrc (args.getD 0 #[])).trimAscii.toString
     match v with
     | "fancy" | "scrheadings" =>
@@ -11092,19 +11138,22 @@ private def rewriteRaw (inBody : Bool) (arg : Bool) : Raw → M Raw
     let savedDefTop := (← get).defTop
     let savedBound := (← get).bound
     let savedCaptures := (← get).beamerCaptures
+    let envBody := saved > 0 && (← get).envNext > 0
+    let (savedEnvCode, savedEnvNext) := ((← get).envCode, (← get).envNext)
     -- premise: templateCodeChecks — a template macro names its losses at its use
     let quiet := saved > 0 && (← get).quietNext
     let (said, warned) := ((← get).diags.size, (← get).warned)
     write fun st => { st with bodyNext := 0, inDef := st.inDef || saved > 0, inGroup := true,
                               tableTop := false, defTop := saved > 0, localLengths := #[]
-                              quietNext := false }
+                              quietNext := false, envCode := st.envCode || envBody, envNext := 0 }
     let body' ← rewriteList (inBody || saved > 0) body #[] body.toList 0 0
     if quiet then
       write fun st => { st with diags := st.diags.extract 0 said, warned := warned }
     let restores := restoreLengths (← get).localLengths p
     -- A group's assignments end with it.
     write fun st => { st with bodyNext := if inDefault then outer else saved - 1, inDef := savedDef,
-                              inGroup := savedGroup,
+                              inGroup := savedGroup, envCode := savedEnvCode,
+                              envNext := if envBody then savedEnvNext - 1 else savedEnvNext,
                               lens := savedLens, localLengths := savedLengths,
                               tableTop := savedTop, defTop := savedDefTop,
                               bound := if saved > 0 then savedBound else st.bound }
@@ -11133,12 +11182,16 @@ private def rewriteRaw (inBody : Bool) (arg : Bool) : Raw → M Raw
         write fun st => { st with inPicture := saved }
         return .env n body' p
       else if n == "otherlanguage" || n == "otherlanguage*" then
+        let held ← paramArgs (takeGroups body 0 1).1
         let savedTop := (← get).tableTop
         let savedDefTop := (← get).defTop
         write fun st => { st with tableTop := false, defTop := false }
         let body' ← rewriteList inBody body #[] body.toList 0 0
         write fun st => { st with tableTop := savedTop, defTop := savedDefTop }
         let (langArg, j) := takeGroups body' 0 1
+        if held then
+          unappliedParam s!"begin\{{n}}" "its text keeps the language in force" p
+          return .group (body'.extract j body'.size) p
         let lname := rawSrc (langArg.getD 0 #[])
         let tag := Locale.babelTagOf lname
         if (Locale.forTag tag).isNone then
