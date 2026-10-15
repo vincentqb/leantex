@@ -3984,7 +3984,8 @@ public inductive AlgIo where
   | output
   | data
   | result
-  | named (label : String)
+  /-- The document's declared word, with the use site its ink is reported at. -/
+  | named (label : String) (site : Option Span)
   deriving Repr, BEq, Inhabited
 
 /-- The block forms an algorithm line can open, onto which algorithm2e and
@@ -4087,7 +4088,7 @@ public def AlgIo.word (w : AlgWords) : AlgIo → String
   | .output => w.outputKw
   | .data => w.dataKw
   | .result => w.resultKw
-  | .named label => label
+  | .named label _ => label
 
 /-- The opener's dump spelling, for goldens. -/
 public def AlgOpen.name : AlgOpen → String
@@ -4107,7 +4108,7 @@ public def AlgIo.name : AlgIo → String
   | .output => "output"
   | .data => "data"
   | .result => "result"
-  | .named label => s!"named {label.quote}"
+  | .named label _ => s!"named {label.quote}"
 
 /-- The line kind's dump spelling, for goldens. -/
 public def AlgKind.name : AlgKind → String
@@ -4129,7 +4130,10 @@ public def AlgLine.rendered (w : AlgWords) (semis : Bool) (muted : Color)
     out := l.content
     semi := !l.content.all (· matches Inline.label _)
   | .io k =>
-    out := #[bold (k.word w ++ ":"), .text " "] ++ l.content
+    let label := bold (k.word w ++ ":")
+    out := #[(match k with
+      | .named _ (some site) => .located site #[label]
+      | _ => label), .text " "] ++ l.content
   | .opener o =>
     let (lead, trail) := o.words w
     out := #[bold lead]

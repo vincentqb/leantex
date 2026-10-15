@@ -106,6 +106,34 @@ def algorithmReadChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO
   let twice := dvDoc "" "\\begin{figure}[h][t]\ncharlie words\n\\caption{An invented caption}\n\\end{figure}"
   t "floats: a float takes one placement, a second bracket its text"
     ((floatLines twice).any (hasStr · "[t] charlie words"))
+  let centred := dvDoc "" ("\\begin{figure}\n\\begin{center}\n[ht] alpha words\n\\end{center}\n" ++
+    "\\caption{An invented caption}\n\\end{figure}\n\\begin{figure}\\begin{center}[b] bravo words\n" ++
+    "\\end{center}\n\\caption{Another invented caption}\n\\end{figure}\n\\begin{table}\n" ++
+    "\\begin{center}\n[] charlie words\n\\end{center}\n\\caption{A third invented caption}\n" ++
+    "\\end{table}")
+  t "floats: a bracket opening a spliced centre is the centre's text, never the float's placement"
+    (let ls := floatLines centred
+     let html := shownTextList "" (docNodesOf (elabStr centred).1).toList
+     (["[ht] alpha words", "[b] bravo words", "[] charlie words"].all fun w =>
+       ls.any (hasStr · w) && hasStr html w) && !floatNotes centred)
+  let spaced := dvDoc "" "\\begin{figure}\n[h t]\necho words\n\\caption{An invented caption}\n\\end{figure}"
+  t "floats: a placement's letters may stand apart, as LaTeX reads them"
+    (!(floatLines spaced).any (hasStr · "[h t]") && (floatLines spaced).any (hasStr · "echo words"))
+  let bare := a2e "\\SetKwInOut{Input}{Given}\n"
+    "\\begin{algorithm}\n\\Input G\n\\KwIn H\nalpha words\\;\n\\end{algorithm}"
+  t "algorithm2e: an io keyword without braces reads one token as TeX reads its argument"
+    (let (ls, lists, ds) := algArtifacts fonts bare
+     ls.contains "Given: G" && ls.contains "Input: H" &&
+       lists.map (·.2) == #[#["Given: G", "Input: H", "alpha words;"]] && ds.all (·.code != "E0304"))
+  let deck := "\\documentclass{beamer}\n\\begin{document}\n" ++
+    ("\\begin{frame}\n[t]\n\\frametitle{An invented title}\nAlpha words.\n" ++
+    "\\end{frame}\n\\begin{frame}\n\\begin{columns}\n[T]\n\\column{0.5\\textwidth} Bravo words.\n" ++
+    "\\column{0.5\\textwidth} Charlie words.\n\\end{columns}\n\\begin{minipage}\n[t]{0.4\\textwidth}\n" ++
+    "Delta words.\n\\end{minipage}\n\\end{frame}") ++ "\n\\end{document}"
+  t "frames, columns and boxes: an option past a line end is theirs, never ink"
+    (let (ls, _, ds) := algArtifacts fonts deck
+     !ls.any (fun l => hasStr l "[t]" || hasStr l "[T]") && ls.any (hasStr · "Delta words") &&
+       ds.all (·.code != "E0304"))
   let empty := a2e "" "\\begin{algorithm}\n[]\ndelta words\\;\n\\end{algorithm}"
   t "floats: an empty placement past a line end is the float's option"
     (shipsLines empty #[#["delta words;"]])
@@ -156,6 +184,10 @@ def algLabelFaceChecks (ref : IO.Ref (List String))
       let shipped ← out.pathExists
       t s!"label faces: the {ext} ships, the label's glyph set from the face holding it ({r.exitCode})"
         (r.exitCode == 0 && shipped && !hasStr r.stdout "E0405")
+      if ext == "pdf" then
+        t "label faces: the label's replaced glyph is reported at its use"
+          ((r.stdout.splitOn "\n").any fun l =>
+            hasStr l "\"code\":\"W0009\"" && hasStr l "U+2200" && hasStr l "\"line\":7")
       if ext == "html" && shipped then
         let page ← IO.FS.readFile out
         t "label faces: the page sets the declared word and ships a fallback face in the body's stack"

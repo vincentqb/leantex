@@ -9683,12 +9683,12 @@ private def algA2eIo : List (String × Ir.AlgIo) :=
   [("KwIn", .input), ("KwOut", .output), ("KwData", .data),
    ("KwResult", .result)]
 
-/-- The io line a control opens: the document's `\SetKwInput` or `\SetKwInOut` keyword under its
-declared word, else algorithm2e's own unless the document defines the name another way. -/
-private def algIoOf (kws : Array (String × AlgKwDef)) (acx : Bool) (name : String) :
+/-- The io line a control at `site` opens: the document's `\SetKwInput` or `\SetKwInOut` keyword
+under its declared word, else algorithm2e's own unless the document defines the name another way. -/
+private def algIoOf (kws : Array (String × AlgKwDef)) (acx : Bool) (name : String) (site : Span) :
     Option Ir.AlgIo :=
   match ((kws.find? (·.1 == name)).map (·.2) : Option AlgKwDef) with
-  | some (.io label) => some (.named label)
+  | some (.io label) => some (.named label (some site))
   | some _ => none
   | none => if acx then none else algA2eIo.lookup name
 
@@ -9790,6 +9790,27 @@ private def algPopGroup (stack : Array AlgTok) :
     | _ => return (none, stack)
   return (none, stack)
 
+/-- Pops the next undelimited argument off the walk's stack as TeX reads one, skipping spaces: a
+`{...}` group, or one token, a word's first character leaving the rest. -/
+private def algPopArg (stack : Array AlgTok) : Option (Array Raw × Pos) × Array AlgTok := Id.run do
+  let mut stack := stack
+  for _ in [0:stack.size + 1] do
+    match stack.back? with
+    | some (.raw .space) => stack := stack.pop
+    | some (.raw (.par _)) => stack := stack.pop
+    | some (.raw (.group g gp)) => return (some (g, gp), stack.pop)
+    | some (.raw (.word w wp)) =>
+      match w.toList with
+      | c :: rest =>
+        let rest' := if rest.isEmpty then stack.pop
+          else stack.pop.push (.raw (.word (String.ofList rest) wp))
+        return (some (#[.word (String.singleton c) wp], wp), rest')
+      | [] => stack := stack.pop
+    | some (.raw (.ctrl n cp)) => return (some (#[.ctrl n cp], cp), stack.pop)
+    | some (.raw (.sym c sp)) => return (some (#[.sym c sp], sp), stack.pop)
+    | _ => return (none, stack)
+  return (none, stack)
+
 /-- An algorithm's lines with its numbering and semicolon flags, from one
 bounded pass over a work stack. -/
 private def algorithmLines (ctx : Ctx) (acx : Bool) (body : Array Raw)
@@ -9836,6 +9857,7 @@ private def algorithmLines (ctx : Ctx) (acx : Bool) (body : Array Raw)
       | .raw (.par _) =>
         pure ()
       | .raw (.ctrl name p) =>
+        let site := ctx.sourceSpan p
         if name == "SetKw" || name == "SetKwInOut" || name == "SetKwInput"
             || name == "SetKwFunction" || name == "SetKwData" then
           let (g1, st1) := algPopGroup stack
@@ -9860,8 +9882,8 @@ private def algorithmLines (ctx : Ctx) (acx : Bool) (body : Array Raw)
             else kws := Ir.redeclare kws key (.io (Ir.plainText (← elabInlines ctx val)))
           | _, _ =>
             diag ctx .E0304 s!"'\\{name}' needs its \{name}\{text} groups" p
-        else if let some k := algIoOf kws acx name then
-          let (g1, st1) := algPopGroup stack
+        else if let some k := algIoOf kws acx name site then
+          let (g1, st1) := algPopArg stack
           stack := st1
           match g1 with
           | some (g, _) =>
@@ -10165,8 +10187,8 @@ private def algorithmicArm (ctx : Ctx) (body : Array Raw) (pos : Pos)
 
 /-- Whether a float's `[...]` holds only LaTeX's placement letters, an empty one LaTeX's empty spec. -/
 private def isPlacement (written : String) : Bool :=
-  written.trimAscii.toString.all fun c =>
-    c == 'h' || c == 't' || c == 'b' || c == 'p' || c == 'H' || c == '!'
+  written.all fun c =>
+    c.isWhitespace || c == 'h' || c == 't' || c == 'b' || c == 'p' || c == 'H' || c == '!'
 
 /-- A float's opening `[placement]`, named as ignored: the index past it. -/
 private def floatPlacement (ctx : Ctx) (n : String) (body : Array Raw) (pos : Pos) : EM Nat := do
@@ -10401,10 +10423,18 @@ private def classFrameAlign (opts : List String) : VAlign :=
     else if o == "c" || o == "slidescentered" then .center
     else v) .center
 
+/-- Whether every item of a bracket's text names a key `\setkeys{beamerframe}` reads: beamer's own
+and metropolis's `standout`. -/
+private def frameKeysOnly (src : String) : Bool :=
+  (KeyVal.items src).all fun opt => #["allowdisplaybreaks", "allowframebreaks", "b", "c",
+    "containsverbatim", "environment", "fragile", "label", "noframenumbering", "plain", "relabel",
+    "s", "shrink", "squeeze", "standout", "t", "typeset second"].contains (KeyVal.entry opt).1
+
 private def frameOpts (ctx : Ctx) (body : Array Raw) (pos : Pos) : EM FrameOpts := do
   let mut o : FrameOpts := { valign := ctx.frameAlign }
   for _ in [0:body.size] do
-    match scanBracketArg body o.next pos with
+    match (if o.next == 0 then scanOpeningArg body pos frameKeysOnly
+      else scanBracketArg body o.next pos) with
     | .took k' =>
       let inner := bracketSrc body o.next k'
       for opt in KeyVal.items inner do
@@ -10440,7 +10470,8 @@ private def boxOptsArm (ctx : Ctx) (body : Array Raw) (pos : Pos) (what : String
   let mut k := 0
   let mut boxPos : Ir.BoxPos := .top
   for arg in [0:3] do
-    match scanBracketArg body k pos with
+    match (if arg == 0 then scanOpeningArg body pos fun _ => true
+      else scanBracketArg body k pos) with
     | .took k' =>
       match (if arg == 0 then boxPosOf (bracketSrc body k k') else none) with
       | some p => boxPos := p
@@ -10454,12 +10485,18 @@ private def boxOptsArm (ctx : Ctx) (body : Array Raw) (pos : Pos) (what : String
     | .content => break
   return (boxPos, k)
 
+/-- Whether every item of a bracket's text names a key beamer's `beamer@col` family reads. -/
+private def columnsKeysOnly (src : String) : Bool :=
+  (KeyVal.items src).all fun opt =>
+    #["b", "c", "height", "onlytextwidth", "t", "T", "totalwidth"].contains (KeyVal.entry opt).1
+
 /-- The index past `\begin{columns}`'s options, naming each that is not a
 position. -/
 private def columnsOptsArm (ctx : Ctx) (body : Array Raw) (pos : Pos) : EM Nat := do
   let mut k := 0
   for _ in [0:body.size] do
-    match scanBracketArg body k pos with
+    match (if k == 0 then scanOpeningArg body pos columnsKeysOnly
+      else scanBracketArg body k pos) with
     | .took k' =>
       for o in KeyVal.items (bracketSrc body k k') do
         if (boxPosOf o).isNone then
@@ -11060,13 +11097,15 @@ the text width; the box takes the whole measure" pos
   else if n == "figure" || n == "figure*" || n == "table" || n == "table*" then
     let kind : Ir.FloatKind :=
       if n == "table" || n == "table*" then .table else .figure
-    -- A `center` child is spliced first, so its `\caption` and `\label` are the float's.
-    let ⟨fbody, _, _⟩ ← pure (spliceCenterGo body.toList #[]
+    -- The placement is the float's own; a `center` child after it is spliced, so its
+    -- `\caption` and `\label` are the float's.
+    let k ← floatPlacement ctx n body pos
+    have hxm := tail_measures body k
+    let ⟨fbody, _, _⟩ ← pure (spliceCenterGo (body.extract k body.size).toList #[]
       (rawWeightList body.toList) (nestedParsList body.toList)
-      (by simp [rawWeightList]) (by simp [nestedParsList]))
-    let k ← floatPlacement ctx n fbody pos
-    blocks ← figureGo ctx n kind fbody k #[] #[] #[] #[] false blocks
-      (SliceFits.whole fbody k)
+      (by simpa [rawWeightList] using hxm.1) (by simpa [nestedParsList] using hxm.2.1))
+    blocks ← figureGo ctx n kind fbody 0 #[] #[] #[] #[] false blocks
+      (SliceFits.whole fbody 0)
   else if n == "algorithm" || n == "algorithm*" || n == "algorithm2e" then
     blocks ← algorithmArm ctx n body pos blocks
   else if n == "algorithmic" then
