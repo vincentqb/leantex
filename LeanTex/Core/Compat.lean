@@ -8863,6 +8863,8 @@ its rule paddings are measured in Latin Modern" pos
       (match link with
        | some l => blueprintSiteRaws "link" l pos
        | none => #[])
+    out := out ++ (← packageOptions name p (given.filter fun o =>
+      !["showmore", "link"].contains (KeyVal.entry o).1) pos)
   else if p == "inputenc" && Encoding.declaresNonUtf8 (opt.getD "") then
     -- premise: inputDecodingChecks — the driver's one note names each governed file
     recordInputenc (opt.getD "")
