@@ -4539,7 +4539,6 @@ private def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
         match hu : lookupUser ctx name with
         | some (k, cmd) =>
           have _ : k < ctx.limit := lookupUser_lt hu
-          have _ : sliceWeight raws (i + 1) < sliceWeight raws i := hadv1
           let acc := flushText acc sb
           let (bindings, ⟨j, hj⟩) ← takeArgsFrom ctx cmd.params 0 name raws (i + 1) pos #[]
           let callCtx : Ctx := { ctx.atCall name pos with limit := k, args := bindings }
@@ -4661,7 +4660,6 @@ private def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
           let argCtx := { ctx with literalText := literal.1, literalWhen := literal.2 }
           match hj : raws[j]? with
           | some (.group body _) =>
-            have _ := getElem?_lt hj
             have hw : rawWeightList body.toList < sliceWeight raws i :=
               body_lt_slice hj (by simp only [rawWeight]; omega) (by omega)
             let acc := flushText acc sb
@@ -4675,7 +4673,6 @@ private def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
             let active ← modifierInlines ctx name style (edges body.toList raws[next]?) inner pos
             elabInlinesFrom ctx raws next (pushModifier acc spec active inner) ""
           | some (.word s p) =>
-            have _ := getElem?_lt hj
             have _ : sliceWeight raws next < sliceWeight raws i :=
               sliceWeight_lt raws h (by omega)
             let inner := wordInlines argCtx s p
@@ -4817,7 +4814,6 @@ no extent is reserved for it" pos
           have hj2ge := skipSpaces_ge raws (j + 1)
           match hj : raws[j]?, hj2 : raws[j2]? with
           | some (.group keyRaw _), some (.group body _) =>
-            have _ := getElem?_lt hj2
             have _ : rawWeightList body.toList < sliceWeight raws i :=
               body_lt_slice hj2 (by simp only [rawWeight]; omega) (by omega)
             let key := argText ctx keyRaw
@@ -4946,7 +4942,6 @@ private def elabInlinesCtrl (ctx : Ctx) (raws : Array Raw) (i : Nat)
     let label ← readIconLabel ctx labelSrc pos
     match hg : raws[j]? with
     | some (.group nameRaw _) =>
-      have _ := getElem?_lt hg
       let iconName := (argText ctx nameRaw).trimAscii.toString
         ++ (if alt then "-alt" else "")
       have _ : sliceWeight raws (j + 1) < sliceWeight raws i :=
@@ -4984,7 +4979,6 @@ private def elabInlinesCtrl (ctx : Ctx) (raws : Array Raw) (i : Nat)
     have hj2ge := skipSpaces_ge raws (j + 1)
     match hj : raws[j]?, hj2 : raws[j2]? with
     | some (.group cname _), some (.group body _) =>
-      have _ := getElem?_lt hj2
       have _ : rawWeightList body.toList < sliceWeight raws i :=
         body_lt_slice hj2 (by simp only [rawWeight]; omega) (by omega)
       have _ : sliceWeight raws (j2 + 1) < sliceWeight raws i :=
@@ -5102,7 +5096,6 @@ private def elabInlinesCtrl2 (ctx : Ctx) (raws : Array Raw) (i : Nat)
     have hj2ge := skipSpaces_ge raws (j + 1)
     match hj : raws[j]?, hj2 : raws[j2]? with
     | some (.group cond _), some (.group tmpl _) =>
-      have _ := getElem?_lt hj2
       have _ : rawWeightList tmpl.toList < sliceWeight raws i :=
         body_lt_slice hj2 (by simp only [rawWeight]; omega) (by omega)
       have _ : sliceWeight raws (j2 + 1) < sliceWeight raws i :=
@@ -5173,7 +5166,6 @@ private def elabInlinesCtrl2 (ctx : Ctx) (raws : Array Raw) (i : Nat)
       have hj3ge := skipSpaces_ge raws (j2 + 1)
       match hj2 : raws[j2]?, hj3 : raws[j3]? with
       | some (.group ga _), some (.group gb _) =>
-        have _ := getElem?_lt hj3
         have _ : rawWeightList ga.toList < sliceWeight raws i :=
           body_lt_slice hj2 (by simp only [rawWeight]; omega) (by omega)
         have _ : rawWeightList gb.toList < sliceWeight raws i :=
@@ -5201,7 +5193,6 @@ when it is empty — '{}'")
       have hj3ge := skipSpaces_ge raws (j + 1)
       match hj2 : raws[j]?, hj3 : raws[j3]? with
       | some (.group ga _), some (.group _ _) =>
-        have _ := getElem?_lt hj3
         have _ : rawWeightList ga.toList < sliceWeight raws i :=
           body_lt_slice hj2 (by simp only [rawWeight]; omega) (by omega)
         have _ : sliceWeight raws (j3 + 1) < sliceWeight raws i :=
@@ -5300,7 +5291,6 @@ a side channel, never slide content" pos
     have hjge := skipSpaces_ge raws (i + 1)
     match hj : raws[j]? with
     | some (.group body _) =>
-      have _ := getElem?_lt hj
       have _ : rawWeightList body.toList < sliceWeight raws i :=
         body_lt_slice hj (by simp only [rawWeight]; omega) (by omega)
       let acc := flushText acc sb
@@ -10827,7 +10817,7 @@ private def elabEnvArm (ctx : Ctx) (n : String) (scope : Array Raw)
   else if n == "frame" then
     -- A paragraph break before the title group makes it content, as in LaTeX.
     let opts ← frameOpts ctx body pos
-    let (⟨frameCtx, hm⟩, frameBlocks, aliasScope) ← openStandoutPalette ctx opts.standout blocks
+    let (⟨frameCtx, _⟩, frameBlocks, aliasScope) ← openStandoutPalette ctx opts.standout blocks
     blocks := frameBlocks
     let mut k := skipSpaces body opts.next
     let mut title : Array Inline := #[]
@@ -10851,8 +10841,7 @@ private def elabEnvArm (ctx : Ctx) (n : String) (scope : Array Raw)
           ctx.notePos
           (help := "move the inner '\\note' out of the enclosing '\\note', beside its frame")
     else
-      have hnf : noteFlag ctx = 2 := by simp [noteFlag, hnb]
-      have _ : noteFlag frameCtx = 2 := hm.2.1.trans hnf
+      have _ : noteFlag ctx = 2 := by simp [noteFlag, hnb]
       inner ← drainNotesGo frameCtx stash.toList inner
     -- A frame nests no frame: an inner title frame flattens into this one.
     blocks ← closeFramePalette ctx pos blocks title opts inner aliasScope
@@ -10935,11 +10924,7 @@ the text width; the box takes the whole measure" pos
       diag ctx .E0304 s!"'\\begin\{{n}}' needs a \{title} group" pos
         (help := "an empty group is an untitled block")
     have _ := tail_measures body m
-    let ⟨bodyCtx, hb⟩ := titledBodyCtx ctx kind
-    have _ := hb.1
-    have _ := hb.2.1
-    have _ := hb.2.2.1
-    have _ := hb.2.2.2
+    let ⟨bodyCtx, _⟩ := titledBodyCtx ctx kind
     let inner ← elabBlockScope bodyCtx (body.extract m body.size)
     blocks := blocks ++ selectedCover Block.onSteps spec #[.titled kind title inner]
   else if scopedEnv (← get).ctr.thm n then
@@ -10973,10 +10958,6 @@ has nowhere for a float to float" pos
         warnUnclosed ctx s!"'\\begin\{{n}}'" bpos
         break
       | .content => break
-    have _ : sliceWeight fbody 0 = rawWeightList fbody.toList :=
-      sliceWeight_zero _
-    have _ : slicePars fbody 0 = nestedParsList fbody.toList :=
-      slicePars_zero _
     blocks ← figureGo ctx n kind fbody k #[] #[] #[] #[] false blocks
       (SliceFits.whole fbody k)
   else if n == "algorithm" || n == "algorithm*" || n == "algorithm2e" then
@@ -11157,10 +11138,6 @@ private def elabCtrlArm (ctx : Ctx) (raws : Array Raw) (i : Nat)
       rw [slicePars_zero]; exact nestedParsList_le _
     have _ : sliceWeight cmd.body 0 = rawWeightList cmd.body.toList :=
       sliceWeight_zero _
-    have _ : 0 < sliceWeight raws i := by
-      have := sliceWeight_here raws h
-      have := rawWeight_pos raws[i]
-      omega
     let expanded ← splicedFrameScope (if cmd.params.isEmpty then some blocks.size else none)
       (elabBlockScope callCtx cmd.body)
     if cmd.params.isEmpty then
@@ -11275,7 +11252,6 @@ when it is empty — '{}'")
       | some (.word "*" _) => ⟨i + 2, by omega⟩
       | _ => ⟨i + 1, by omega⟩
     let i1 := i1p.1
-    have _ : i + 1 ≤ i1 := i1p.2
     if let .took _ := scanBracketArg raws i1 pos then
       warnOnce ctx ("section:short:" ++ n) .N0103
         s!"'\\{n}[short]' short title is unused: nothing consumes it yet" pos
@@ -11308,8 +11284,7 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
   let (⟨ctx', _⟩, blocks, cur) ← blockMacroStep ctx stFlow gen raws i blocks cur
   let gen' ← pure stFlow.flowGen
   if h : i < raws.size then
-    have hadv := advance_measures raws h (show i < i + 1 by omega)
-    have _ : 0 < sliceWeight raws i := by omega
+    have _ := advance_measures raws h (show i < i + 1 by omega)
     match hr : raws[i] with
     | .group body gpos =>
       have hre : raws[i]? = some (.group body gpos) := by
@@ -11320,11 +11295,7 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
         -- A group holding a paragraph end splices open, save a size scope ending one.
         have hpp2 : body.any isParRaw = true := by
           simp only [Bool.and_eq_true] at hpp; exact hpp.1.1.1
-        have hdec := slicePars_splice h hr hpp2 ctx' gpos
-        have _ : slicePars (raws.extract 0 i
-            ++ (splitAtPars ctx' body gpos ++ raws.extract (i + 1) raws.size)) i
-            < slicePars raws i := by
-          rw [← Array.append_assoc]; exact hdec
+        have _ := slicePars_splice h hr hpp2 ctx' gpos
         elabBlocksGo ctx' (raws.extract 0 i
           ++ splitAtPars ctx' body gpos ++ raws.extract (i + 1) raws.size) i
           blocks cur gen'
@@ -11413,7 +11384,6 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
         | none => pure ()
         let ⟨palCtx, _⟩ : MCtx ctx' ←
           pure ⟨{ ctx' with palette := pal?.getD ctx'.palette }, rfl, rfl, rfl, rfl⟩
-        have _ := advance_measures raws h (show i < i + 1 by omega)
         return ← elabBlocksGo palCtx raws (i + 1)
           (match pal? with
             | some pal => blocks.push (.setPalette pal)
@@ -11590,7 +11560,6 @@ a side channel, never slide content" cpos
               | some c => ⟨(raws.extract (j0 + 1) c, c + 1), by
                   have := closeBracketFrom_ge hc; omega⟩
               | none => ⟨(raws.extract (j0 + 1) raws.size, raws.size), by omega⟩
-            have _ : i + 1 ≤ k := hk
             let opt ← blockOptions ctx' optSrc cpos
             pure ⟨(opt, skipSpaces raws k), by
               have := skipSpaces_ge raws k
@@ -11598,7 +11567,6 @@ a side channel, never slide content" cpos
               omega⟩
           else
             pure ⟨(({}, false), j0), hj0⟩
-        have _ : i + 1 ≤ jf := hjf
         match hgf : raws[jf]? with
         | some (.group body _) =>
           have hbm := group_measures hgf (show i ≤ jf by omega)

@@ -216,6 +216,9 @@ public def Shift.apply (s : Shift) (k : Nat) : Nat := s.amount + k
 public def threadedSum (acc : Nat) (unused : String) : List Nat → Nat
   | [] => acc
   | x :: xs => threadedSum (acc + x) unused xs
+public def threadedMatch : Nat → String → Nat
+  | 0, _ => 0
+  | n + 1, s => threadedMatch n s
 "
   (_, failures) ← (expect "threaded-parameter fixture did not compile"
     (threaded.exitCode == 0)).run failures
@@ -224,6 +227,9 @@ public def countdown (n step : Nat) (h : 0 < step) : List Nat :=
   if n < step then [n] else n :: countdown (n - step) step h
 termination_by n
 decreasing_by omega
+public def readMatch : Nat → String → Nat
+  | 0, s => s.length
+  | n + 1, s => readMatch n s
 "
   (_, failures) ← (expect "read-parameter fixture did not compile"
     (threading.exitCode == 0)).run failures
@@ -254,9 +260,10 @@ decreasing_by omega
     (_, failures) ← (expect label ((out.exitCode == 0) == okay)).run failures
     if (out.exitCode == 0) != okay then IO.eprint (out.stdout ++ out.stderr)
     if imports == #["Threaded"] then
-      (_, failures) ← (expect "the audit did not name the threaded parameter"
-        ((out.stdout ++ out.stderr).contains "threadedSum passes its parameter unused (#2)")).run
-          failures
+      for named in ["threadedSum passes its parameter unused (#2)",
+          "threadedMatch passes its parameter"] do
+        (_, failures) ← (expect s!"the audit did not name the threaded parameter: {named}"
+          ((out.stdout ++ out.stderr).contains named)).run failures
   let hoistedAudit := dir / "HoistedAudit.lean"
   IO.FS.writeFile hoistedAudit (wrapper dir #["Hoisted"] allFixtures)
   let hoistedOut ← compile hoistedAudit #["-R", dir.toString] (some dir)

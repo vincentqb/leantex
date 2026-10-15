@@ -5,6 +5,8 @@ public meta import Lean.Server.InfoUtils
 public meta import Lean.Compiler.NoncomputableAttr
 public meta import Lean.Elab.PreDefinition.Structural.Eqns
 public meta import Lean.Elab.PreDefinition.WF.Eqns
+public meta import Lean.Meta.Match.MatchEqsExt
+meta import Lean.Meta.Match.MatchEqs
 meta import Lean.Util.CollectAxioms
 meta import Lean.Util.Path
 
@@ -135,8 +137,8 @@ meta def spineSlots (dead : NameMap (Array Bool)) (e : Expr) : List Bool :=
     | none => List.replicate n false
   | _ => List.replicate n false
 
-/-- Whether `e` reads `x` anywhere but in the slots `dead` marks on recursive calls; `slots`
-carries the marks of the spine an argument is peeled from. -/
+/-- Whether `e` reads `x` anywhere but in the slots `dead` marks on recursive calls, given the
+marks of the spine an argument is peeled from. -/
 meta def readsOutside (dead : NameMap (Array Bool)) (x : FVarId) :
     Expr → Option (List Bool) → Bool
   | e@(.app f a), some (d :: rest) =>
@@ -153,6 +155,55 @@ meta def readsOutside (dead : NameMap (Array Bool)) (x : FVarId) :
   | .mdata _ b, _ | .proj _ _ b, _ => readsOutside dead x b none
   | .fvar y, _ => y == x
   | _, _ => false
+
+/-- Per discriminant of a matcher and per alternative, the field the alternative's pattern binds
+the discriminant to; `none` for a discriminant some pattern inspects. -/
+meta def matchAliases (m : Name) (info : Meta.MatcherInfo) :
+    MetaM (Array (Option (Array (Option Nat)))) := do
+  let eqns ← Meta.Match.getEquationsFor m
+  let mut per : Array (Option (Array (Option Nat))) := Array.replicate info.numDiscrs (some #[])
+  for eqn in eqns.eqnNames do
+    let row ← Meta.forallTelescope (← Meta.inferType (← mkConstWithLevelParams eqn)) fun xs body => do
+      let some (_, lhs, rhs) := body.eq? | return Array.replicate info.numDiscrs none
+      let lhsArgs := lhs.getAppArgs
+      let rhsArgs := rhs.getAppArgs
+      return (Array.range info.numDiscrs).map fun j =>
+        let pat := lhsArgs.getD (info.numParams + 1 + j) default
+        if pat.isFVar && xs.contains pat then some (rhsArgs.findIdx? (· == pat)) else none
+    per := (per.zip row).map fun
+      | (some acc, some t) => some (acc.push t)
+      | _ => none
+  return per
+
+/-- Whether `body` reads `x` outside the slots `marks` makes dead, a root match that binds `x`
+only to variables passing it to the alternatives that bind it. -/
+meta def readsThrough (marks : NameMap (Array Bool)) (x : FVarId) (body : Expr) : MetaM Bool := do
+  let body := body.consumeMData
+  let some m := body.getAppFn.constName? | return readsOutside marks x body none
+  let some info ← Meta.getMatcherInfo? m | return readsOutside marks x body none
+  let args := body.getAppArgs
+  let np := info.numParams
+  let nd := info.numDiscrs
+  let na := info.altInfos.size
+  if args.size < np + 1 + nd + na then return readsOutside marks x body none
+  let js := (List.range nd).filter fun j => args.getD (np + 1 + j) default == .fvar x
+  if js.isEmpty then return readsOutside marks x body none
+  let aliases ← try matchAliases m info catch _ => return true
+  if js.any fun j => (aliases.getD j none).isNone then return true
+  let mut read := false
+  for (a, k) in args.zipIdx do
+    if np + 1 ≤ k && k < np + 1 + nd && js.contains (k - np - 1) then continue
+    if np + 1 + nd ≤ k && k < np + 1 + nd + na then
+      let i := k - np - 1 - nd
+      let alt := info.altInfos.getD i default
+      let fields := alt.numFields + (if alt.hasUnitThunk then 1 else 0)
+      let viaAlt ← Meta.lambdaBoundedTelescope a fields fun ys altBody => do
+        let bound := js.filterMap fun j => (((aliases.getD j none).getD #[]).getD i none).bind
+          fun t => (ys.getD t default).fvarId?
+        return readsOutside marks x altBody none || bound.any (readsOutside marks · altBody none)
+      read := read || viaAlt
+    else read := read || readsOutside marks x a none
+  return read
 
 /-- A recursive declaration's block: every name defined with it and their bodies before
 the recursion was compiled away. -/
@@ -185,7 +236,7 @@ meta def threadedParams (names : Array Name) (bodies : Array Expr) :
           if slots.getD i false then
             let live := (← Meta.isProp (types.getD i x)) ||
               (types.extract (i + 1) types.size).any (·.containsFVar id) ||
-              result.containsFVar id || readsOutside marks id body none
+              result.containsFVar id || (← readsThrough marks id body)
             if live then slots := slots.setIfInBounds i false
         return slots
       if after != before then
@@ -253,7 +304,8 @@ so the let runs on every call; return what it binds as a structure"
         unless threaded.contains decl do
           for m in block do threaded := threaded.insert m
           for (d, i, x) in ← liftTermElabM (withCurrHeartbeats (threadedParams block bodies)) do
-            logError m!"proof audit: {name}: {d} passes its parameter {x} (#{i + 1}) only to its own recursive calls; nothing reads it"
+            logError m!"proof audit: {name}: {privateToUserName d} passes its parameter \
+{x.eraseMacroScopes} (#{i + 1}) only to its own recursive calls; nothing reads it"
             failures := failures + 1
       count := count + 1
   if failures == 0 then

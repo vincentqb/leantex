@@ -110,15 +110,43 @@ def bare (options : Json) : Json :=
 def disables (l : String) : Option String :=
   let named := probes.toList.flatMap fun p => [p.option, p.note]
   let rec go : List String → Option String
-    | "set_option" :: o :: "false" :: _ =>
-      if named.contains o || o.startsWith "linter.unusedVariables" then some o else none
+    | "set_option" :: o :: "false" :: rest =>
+      if named.contains o || o.startsWith "linter.unusedVariables" then some o else go rest
     | _ :: rest => go rest
     | [] => none
   go ((l.splitOn " ").filter (!·.isEmpty))
 
+/-- Whether every file a module's setup imports from still exists. -/
+def intact (setup : Json) : IO Bool := do
+  let arts := ((setup.getObjValD "importArts").getObj?.toOption.map (·.toList)).getD []
+  for (_, groups) in arts do
+    for group in (groups.getArr?.toOption.getD #[]) do
+      for path in (group.getArr?.toOption.getD #[]) do
+        if let .ok p := path.getStr? then
+          unless ← System.FilePath.pathExists p do return false
+  return true
+
+/-- The lakefile's lines naming a linter outside its `leanOptions` array. -/
+def strayLinterLines (lakefile : String) : Array Nat := Id.run do
+  let mut inside := false
+  let mut out := #[]
+  for (l, k) in (lakefile.splitOn "\n").zipIdx do
+    let t := l.trimAscii.toString
+    if t.startsWith "leanOptions = [" then inside := true
+    else if inside && t == "]" then inside := false
+    else if !inside && (t.splitOn "linter.").length > 1 && !t.startsWith "#" then out := out.push (k + 1)
+  return out
+
+/-- The maintained Lean sources: every `.lean` file outside hidden directories and testdata. -/
+def sources : IO (Array System.FilePath) := do
+  let keep (p : System.FilePath) : Bool :=
+    p.components.all fun c => !(c.startsWith "." && c != ".") && c != "testdata"
+  let all ← System.FilePath.walkDir "." fun p => return keep p
+  return all.filter fun p => keep p && p.extension == some "lean"
+
 /-- Every compiled module ran exactly the probed linters: each probe warns under them and not
 with its option off, an unused parameter added to each library's smallest module draws exactly
-that warning, and no source turns one off. -/
+that warning, and neither a source nor the lakefile turns one off elsewhere. -/
 def linters : IO UInt32 := do
   let dir : System.FilePath := ".lake/build/lint"
   IO.FS.createDirAll dir
@@ -133,9 +161,12 @@ def linters : IO UInt32 := do
       bad := bad.push s!"{src} was compiled with linter options {(Json.mkObj got).compress}, \
         not {(Json.mkObj expected).compress}"
   let on := (setups[0]?.map (optionsOf ·.2)).getD (Json.mkObj expected)
+  let onList := (on.getObj?.toOption.map (·.toList)).getD []
+  let offWith (o : String) : Json := Json.mkObj <|
+    (onList.filter (·.1 != o)) ++ [(o, Json.bool false)]
   let runs ← probes.zipIdx.mapM fun (p, i) => IO.asTask do
     let a ← compile dir s!"probe{i}" p.source (bare on)
-    let b ← compile dir s!"probe{i}off" p.source (bare (on.setObjVal! p.option (Json.bool false)))
+    let b ← compile dir s!"probe{i}off" p.source (bare (offWith p.option))
     return (p, a, b)
   for r in runs do
     match r.get with
@@ -148,7 +179,7 @@ def linters : IO UInt32 := do
   for lib in ["LeanTex/", "Tests/", "scripts/"] do
     let mut least : Option (String × Json × Nat) := none
     for (src, j) in setups do
-      if src.startsWith lib then
+      if src.startsWith lib && (← intact j) then
         let n := (← IO.FS.readFile src).length
         if least.all (n < ·.2.2) then least := some (src, j, n)
     let some (src, j, _) := least
@@ -158,12 +189,11 @@ def linters : IO UInt32 := do
     unless count out ": warning: " == 1 && count out (noteOf "linter.unusedVariables") == 1
         && count out "`unused`" ≥ 1 do
       bad := bad.push s!"{src} with an unused parameter added drew not just that warning:\n{out}"
-  let mut sources : Array System.FilePath := #["Main.lean"]
-  for root in ["LeanTex", "Tests", "scripts"] do
-    sources := sources ++ (← System.FilePath.walkDir root).filter (·.toString.endsWith ".lean")
-  for f in sources do
+  for f in ← sources do
     for (l, k) in ((← IO.FS.readFile f).splitOn "\n").zipIdx do
       if let some o := disables l then bad := bad.push s!"{f}:{k + 1} turns {o} off"
+  for k in strayLinterLines (← IO.FS.readFile "lakefile.toml") do
+    bad := bad.push s!"lakefile.toml:{k} sets a linter outside leanOptions, which this check reads"
   if bad.isEmpty then
     IO.println s!"lint: linters live in {setups.size} modules: {probes.size} probes, 3 mutants"
     return 0
