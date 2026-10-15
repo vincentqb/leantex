@@ -4338,6 +4338,21 @@ private def bindParam (p : Param) (v : Array Inline) (source : Unit → String)
   let bindings := bindings.push (p.name, some v)
   if p.code then bindings.push (p.name ++ " source", some #[.text (source ())]) else bindings
 
+/-- The first parameter and its definition's default when its optional argument is absent and the
+replacement reads it. -/
+private def absentDefault? (params : Array Param)
+    (bindings : Array (String × Option (Array Inline))) : Option (Param × Array Raw) := do
+  let p ← params[0]?
+  let d ← p.default
+  let some (b, none) := bindings[0]? | none
+  if b == p.name && p.referenced then some (p, d) else none
+
+/-- The bindings with the first parameter bound to its default's reading `v`, as a given argument
+binds. -/
+private def bindDefault (p : Param) (d : Array Raw) (v : Array Inline)
+    (bindings : Array (String × Option (Array Inline))) : Array (String × Option (Array Inline)) :=
+  bindParam p v (fun _ => rawSrc d) #[] ++ bindings.extract 1 bindings.size
+
 /-- The index past the first `{...}` group at or after `k`, or `k` when none follows. -/
 private def pastGroupFrom (raws : Array Raw) (k : Nat) : Nat := Id.run do
   for j in [k:raws.size] do
@@ -4589,17 +4604,11 @@ private def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
           let acc := flushText acc sb
           let (bindings, ⟨j, _⟩) ← takeArgsFrom ctx env.params 0 name body 0 pos #[]
           -- An absent optional argument takes its definition's default, read where the halves read.
-          let bindings ← match env.params[0]?, bindings[0]? with
-            | some p, some (b, none) =>
-              match p.default with
-              | some d =>
-                if b == p.name && p.referenced then do
-                  let dctx : Ctx := { ctx with limit := env.cmdLimit, envLimit := k, args := bindings }
-                  let v ← elabInlinesCore { dctx with argBody := true } d
-                  pure (bindings.modify 0 fun _ => (b, some v))
-                else pure bindings
-              | none => pure bindings
-            | _, _ => pure bindings
+          let bindings ← match absentDefault? env.params bindings with
+            | some (p, d) => do
+              let dctx : Ctx := { ctx with limit := env.cmdLimit, envLimit := k, args := bindings }
+              pure (bindDefault p d (← elabInlinesCore { dctx with argBody := true } d) bindings)
+            | none => pure bindings
           let envCtx : Ctx := { ctx with
             limit := env.cmdLimit, envLimit := k, args := bindings }
           let ⟨inner, _⟩ : { a : Array Raw // rawWeightList a.toList < sliceWeight raws i } :=
@@ -5437,7 +5446,7 @@ a side channel, never slide content" pos
     elabInlinesFrom ctx raws jr.1 acc sb
   else if blockOnly.contains name || bodyDefiner name then
     let ⟨k, hge⟩ ← inlineBlockOnly ctx raws name i pos
-    have hadv : sliceWeight raws k < sliceWeight raws i := sliceWeight_lt raws h (by omega)
+    have _ : sliceWeight raws k < sliceWeight raws i := sliceWeight_lt raws h (by omega)
     -- A definer's place keeps the spaces around it apart, as `{}` does.
     if bodyDefiner name then
       elabInlinesFrom ctx raws k (flushText acc sb) ""
@@ -11216,17 +11225,11 @@ prefer the construct or the class, and keep '\\begin{ifbackend}' for the true re
     let env := ke.2
     let (bindings, j) ← takeArgs ctx env.params n body 0 pos
     -- An absent optional argument takes its definition's default, read where the halves read.
-    let bindings ← match env.params[0]?, bindings[0]? with
-      | some p, some (b, none) =>
-        match p.default with
-        | some d =>
-          if b == p.name && p.referenced then do
-            let dctx : Ctx := { ctx with limit := env.cmdLimit, envLimit := ke.1, args := bindings }
-            let v ← elabInlinesCore { dctx with argBody := true } d
-            pure (bindings.modify 0 fun _ => (b, some v))
-          else pure bindings
-        | none => pure bindings
-      | _, _ => pure bindings
+    let bindings ← match absentDefault? env.params bindings with
+      | some (p, d) => do
+        let dctx : Ctx := { ctx with limit := env.cmdLimit, envLimit := ke.1, args := bindings }
+        pure (bindDefault p d (← elabInlinesCore { dctx with argBody := true } d) bindings)
+      | none => pure bindings
     let ⟨envCtx, _⟩ : { c : Ctx // c.envLimit = ke.1 } ←
       pure ⟨{ ctx with
         limit := env.cmdLimit, envLimit := ke.1, args := bindings }, rfl⟩
@@ -14371,8 +14374,14 @@ the built-in's heading and margins stand{replaced}"
         match beginB, endB with
         | some b, some e =>
           let params ← parseSig s.ctx sig pos
+          if dflt.isSome && !(params[0]?.any (·.optional)) then
+            warnOnce s.ctx ("defineenv:default:" ++ envName) .W0110
+              s!"'\\defineenv \{{envName}}' gives a default, but its first parameter is not \
+optional; the default is ignored" pos
+              (help := "mark the first parameter optional, as in (title?: content)")
           let params := match dflt with
-            | some d => params.modify 0 fun p => if p.optional then { p with default := some d } else p
+            | some d =>
+              params.modify 0 fun p => if p.optional then { p with default := some d } else p
             | none => params
           return { s with ctx := { s.ctx with
             userEnvs := s.ctx.userEnvs.push (envOfHalves envName params b e s.ctx.limit)

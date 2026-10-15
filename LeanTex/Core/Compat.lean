@@ -527,7 +527,8 @@ public structure InputAttempt where
 private inductive DefaultAt where
   | none
   | awaiting
-  | inside
+  /-- Inside the default, its text replacement text as a body's is; `outerDef` the walk's own. -/
+  | inside (outerDef : Bool)
   deriving Repr, BEq, Inhabited
 
 private structure St where
@@ -555,6 +556,8 @@ private structure St where
   /-- The environments a body definition left unapplied: the signature their uses' arguments
   follow, and whether the definition discards the body. -/
   refusedEnvs : Array (String × String × Bool) := #[]
+  /-- The environments the preamble's definitions lowered here define. -/
+  definedEnvs : Array String := #[]
   /-- The first of paracol's two column shares, in per mille. -/
   paracolRatio : Nat := 500
   /-- Inside a paracol flow, whose close splits its switching commands. -/
@@ -827,7 +830,7 @@ private theorem write_eq (f : St → St) :
     write f = fun st => ((), { f st with writes := st.writes + 1 }) := by rfl
 
 /-- Restores the definitions a group or environment scopes at its close: beamer's fonts and
-templates, and the environments whose bodies are discarded or whose body definitions are unapplied. -/
+templates, and the environments defined, discarding their bodies or left unapplied. -/
 private def closeScope (saved : St) (result : α × St) : α × St :=
   (result.1, (write fun st => { st with
     beamerFonts := saved.beamerFonts
@@ -837,15 +840,44 @@ private def closeScope (saved : St) (result : α × St) : α × St :=
     beamerTemplateDefs := saved.beamerTemplateDefs
     discardEnvs := saved.discardEnvs
     refusedEnvs := saved.refusedEnvs
+    definedEnvs := saved.definedEnvs
     defaultAt := saved.defaultAt }) result.2 |>.2)
 
 private def withScope (act : M α) : M α := fun st =>
   closeScope st (act st)
 
+/-- Restores at an argument's close what every group's close restores but the environment
+definitions, which an argument's braces do not scope. -/
+private def closeArgScope (saved : St) (result : α × St) : α × St :=
+  (result.1, (write fun st => { st with
+    beamerFonts := saved.beamerFonts
+    beamerFootline := saved.beamerFootline
+    beamerScopes := saved.beamerScopes
+    beamerTemplates := saved.beamerTemplates
+    beamerTemplateDefs := saved.beamerTemplateDefs
+    defaultAt := saved.defaultAt }) result.2 |>.2)
+
 /-- A group's walk, told whether the group stands inside a definition's default, whose groups are
-no body of the definition, and the bodies the walk still awaits. -/
-private def withGroupScope (act : Bool → Nat → M α) : M α := fun st =>
-  closeScope st (act (st.defaultAt == .inside) st.bodyNext { st with defaultAt := .none })
+no body of the definition, and the bodies the walk still awaits; an argument's group scopes no
+environment definition. -/
+private def withGroupScope (arg : Bool) (act : Bool → Nat → M α) : M α := fun st =>
+  (if arg then closeArgScope else closeScope) st
+    (act (st.defaultAt matches .inside _) st.bodyNext { st with defaultAt := .none })
+
+/-- Whether a group the walk reaches after `out` may be an argument, whose braces TeX does not
+scope: past blanks and at most nine groups the output so far ends with an optional argument or a
+passed control word, neither an engine mark nor one of TeX's grouping primitives. -/
+private def argGroupAt (out : Array Raw) : Bool := Id.run do
+  let mut k := out.size
+  for _ in [0:20] do
+    if k == 0 then return false
+    match out[k - 1]? with
+    | some .space | some (.group _ _) => k := k - 1
+    | some (.ctrl n _) =>
+      return !n.contains ':' && !["begingroup", "endgroup", "bgroup", "egroup", "relax"].contains n
+    | some (.sym ']' _) => return true
+    | _ => return false
+  return false
 
 /-- Enters the document body: `\normalsize` resets the size-owned lengths. -/
 private def openDocumentBody : M Unit :=
@@ -3000,6 +3032,10 @@ private def definerShape (raws : Array Raw) (i : Nat) (d : String)
       match raws[j]? with
       | some (.group _ _) => return some j
       | some (.par _) => return none
+      | some (.sym '[' _) =>
+        match takeRawOpt raws j with
+        | (some _, j') => j := j'
+        | (none, _) => j := j + 1
       | some _ => j := j + 1
       | none => return none
     return none
@@ -6296,20 +6332,36 @@ public def environBodyMark : String := "@environ:BODY"
 
 /-- The words naming an environment definition the document body holds. -/
 public def bodyEnvDefMessage : String :=
-  "an environment definition in the document body is not applied; its uses set no begin or end code"
+  "an environment definition in the document body is not applied"
 
-public def bodyEnvDefHelp : String := "define the environment in the preamble, before '\\begin{document}'"
+public def bodyEnvDefHelp : String :=
+  "define the environment in the preamble, before '\\begin{document}'"
 
 /-- An environment definer in the document body, outside a macro's replacement text, named as
-unapplied, its uses following `spec` for their arguments and dropping the body when it `discards`. -/
+unapplied, the uses of an undefined name following `spec` for their arguments and dropping the body
+when it `discards`; a preamble definition outside one records its name. -/
 private def refusedEnvDef (name env spec : String) (discards : Bool) (pos : Pos) : M Bool := do
   let st ← get
-  if !st.inDoc || st.inDef then return false
+  let env := env.trimAscii.toString
+  if st.inDef then return false
+  if !st.inDoc then
+    write fun st => { st with definedEnvs := st.definedEnvs.push env }
+    return false
   sayOnce ("ctrl:" ++ name ++ ":body") .W0104 bodyEnvDefMessage pos (help := bodyEnvDefHelp)
-  unless name.startsWith "re" || name.startsWith "Re" do
-    write fun st => { st with
-      refusedEnvs := Ir.redeclare st.refusedEnvs env.trimAscii.toString (spec, discards) }
+  unless name.startsWith "re" || name.startsWith "Re" || st.definedEnvs.contains env ||
+      st.provideKeeps.contains (Tcolorbox.bindingName env) do
+    write fun st => { st with refusedEnvs := Ir.redeclare st.refusedEnvs env (spec, discards) }
   return true
+
+/-- The arguments a use of a native environment reads, from its definition's text past the name:
+an optional one for a parameter marked `?`. -/
+private def nativeEnvSpec (sig : String) : String :=
+  let sig := sig.trimAscii.toString
+  if !sig.startsWith "(" then "" else
+  let inner := String.ofList ((sig.toList.drop 1).takeWhile (· != ')'))
+  String.ofList ((inner.splitOn ",").filterMap fun part =>
+    let nm := ((part.splitOn ":").getD 0 "").trimAscii.toString
+    if nm.isEmpty then none else some (if nm.endsWith "?" then 'o' else 'm'))
 
 /-- The arguments `spec` reads at a use's start, their contents each followed by a space, and the
 index past them. -/
@@ -7528,12 +7580,21 @@ the definition is skipped" pos
     -- The default stays in the walk, rewritten where it stands, its groups no body.
     write fun st => { st with bodyNext := 2, defaultAt := if dflt.isSome then .awaiting else .none }
     unless (← get).inDef do
-      write fun st => { st with discardEnvs := st.discardEnvs.filter (·.1 != envName.trimAscii.toString) }
+      write fun st => { st with
+        discardEnvs := st.discardEnvs.filter (·.1 != envName.trimAscii.toString) }
     return some (← synthAt native pos, j)
   | "newtheorem" =>
     let (env, _) := takeGroups raws (skipStar raws start) 1
     unless ← refusedEnvDef name (rawSrc (env.getD 0 #[])) "o" false pos do return none
     return some (#[.group #[] pos], theoremDeclEnd raws name start)
+  | "defineenv" =>
+    let j := skipSpaces raws start
+    let some (.group env _) := raws[j]? | return none
+    let stop := defineEnvEnd raws start
+    unless ← refusedEnvDef name (rawSrc env) (nativeEnvSpec (rawSrc (raws.extract (j + 1) stop)))
+        false pos do
+      return none
+    return some (#[.group #[] pos], stop)
   | "NewEnviron" | "RenewEnviron" =>
     let (args, j) := takeGroups raws (skipStar raws start) 1
     let envName := rawSrc (args.getD 0 #[])
@@ -7562,7 +7623,8 @@ the definition is skipped" pos
         became s!"\\{name}\{{envName}}" (native ++ (if dflt.isSome then " [default]" else "") ++
           (if slot then " {code before \\BODY} {code after it}"
             else " {} {code}, its body discarded")) pos
-        write fun st => { st with bodyNext := 1, defaultAt := if dflt.isSome then .awaiting else .none }
+        write fun st => { st with
+          bodyNext := 1, defaultAt := if dflt.isSome then .awaiting else .none }
         let env := envName.trimAscii.toString
         unless (← get).inDef do
           write fun st => { st with
@@ -10793,11 +10855,12 @@ private def rewriteList (inBody : Bool) (raws : Array Raw) (out : Array Raw) :
       let out := if tail.isEmpty then out.push param else (out.push param).push (.word tail wp)
       rewriteList inBody raws out rest (i + 2) 0
   | r :: rest, i, 0 => do
-    rewriteList inBody raws (pushRewritten out r (← rewriteRaw inBody r)) rest (i + 1) 0
+    rewriteList inBody raws (pushRewritten out r (← rewriteRaw inBody (argGroupAt out) r)) rest
+      (i + 1) 0
 
-/-- Descends into a group or environment. -/
-private def rewriteRaw (inBody : Bool) : Raw → M Raw
-  | .group body p => withGroupScope fun inDefault outer => do
+/-- Descends into a group or environment; `arg` when the group is a control word's argument. -/
+private def rewriteRaw (inBody : Bool) (arg : Bool) : Raw → M Raw
+  | .group body p => withGroupScope arg fun inDefault outer => do
     if (← get).inPicture then
       return .group (← rewriteList inBody body #[] body.toList 0 0) p
     -- A group is a macro body when a definition announced one.
@@ -10901,9 +10964,12 @@ steps come from its body" p
           else #[Raw.ctrl "pagebreak" p]
         return .group (#[Raw.ctrl "pagebreak" p, Raw.ctrl Ir.titlePageBeginRole p] ++
           body' ++ close ++ restores) p
+      -- premise: environScopeChecks — only a name nothing defines registers a body definition
       else if let some (spec, discards) := ((← get).refusedEnvs.find? (·.1 == n)).map (·.2) then
         -- An unapplied body definition's use sets its arguments and body plainly, or nothing.
         if discards then return .group #[] p
+        sayOnce ("env:" ++ n) .W0302 s!"unknown environment '\{{n}}'; its body is kept" p
+          (help := bodyEnvDefHelp)
         let body' ← rewriteList inBody body #[] body.toList 0 0
         let (args, k) := plainArgs spec body'
         return .group (args ++ body'.extract k body'.size) p
@@ -10928,10 +10994,12 @@ steps come from its body" p
           paracolEnv st0.paracolRatio body' p restores
         else return .env n (body' ++ restores) p
   | .sym '[' p => do
-    if (← get).defaultAt == .awaiting then write fun st => { st with defaultAt := .inside }
+    if (← get).defaultAt == .awaiting then
+      write fun st => { st with defaultAt := .inside st.inDef, inDef := true }
     pure (.sym '[' p)
   | .sym ']' p => do
-    if (← get).defaultAt == .inside then write fun st => { st with defaultAt := .none }
+    if let .inside outerDef := (← get).defaultAt then
+      write fun st => { st with defaultAt := .none, inDef := outerDef }
     pure (.sym ']' p)
   | r => pure r
 
@@ -11479,9 +11547,9 @@ public def RewriteCursor.enterDocument (cursor : RewriteCursor)
       cursor.complete (rewriteList cursor.inBody cursor.raws (cursor.out.push raw)
         (cursor.raws.toList.drop (cursor.index + 1)) (cursor.index + 1) 0 st) }
 
-private theorem rewriteRaw_document_exact (inBody : Bool) (body : Array Raw)
+private theorem rewriteRaw_document_exact (inBody arg : Bool) (body : Array Raw)
     (pos : Pos) (st : St) (hp : st.inPicture = false) :
-    rewriteRaw inBody (.env "document" body pos) st =
+    rewriteRaw inBody arg (.env "document" body pos) st =
       closeScope st
         (rewriteDocumentBody (rewriteList inBody body #[] body.toList 0 0) pos st) := by
   rw [rewriteRaw]
@@ -11502,7 +11570,7 @@ private theorem rewriteCursor_document_exact (cursor : RewriteCursor)
   case x_3 => simp
   case x_4 => simp
   case x_5 => simp
-  simp only [bind, StateT.bind, rewriteRaw_document_exact _ _ _ _ hp,
+  simp only [bind, StateT.bind, rewriteRaw_document_exact _ _ _ _ _ hp,
     RewriteCursor.enterDocument, List.drop_zero, ht, rewriteDocumentBody, closeScope,
     closeDocumentBody, pushRewritten]
 

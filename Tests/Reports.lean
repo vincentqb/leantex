@@ -1656,7 +1656,13 @@ def reports : List Report := [
       "the corpus built by this tree and its parent: every PDF and HTML byte-identical and every run's diagnostics the same; a declared-ladder probe's heading sets at the declared 16 pt, as lualatex sets it, a visible change on the page and the screen, and the overrun and column probes ship identical bytes with their losses named",
       "the first review's guards: six assertions fail with its answer's behaviour reverted onto its parent commit — a long tabular, a tabular in a frame with declared breaks and two minipages at a page's foot named a box taller than the text block and split a row's cells across two pages, a tall float was named twice, a frame's rule under a footnote was named as the note, and a titled frame's rule continued onto a page holding only the title; and the judge's heading check fails with the judge reading the default ladder",
       "the second review's guards: thirteen assertions fail with its answer's layout reverted, the guards alone added — a tabular, a moloch frame's, a three-column one, tabulars in beamer columns and paragraphs in beamer columns breaking in a titled frame drew its title twice or more on a continuation page, in the lines and the tagged title's marked content; a titled and an untitled frame's box past its page on one step and overhang on another were named as two lines at one site, which the site audit now probes; a float whose footnote alone overruns its page named the float; a box past its page under a note was named with the note's height; and a titled frame's tall float shipped a page holding only the title"]
-    state := .guarded "3c258580" .before .author }
+    state := .guarded "3c258580" .before .author },
+  { id := "R187", date := "2026-10-15"
+    what := "an environment definition in the document body stopped the build or set its text on the page, a definition's optional argument default was dropped, and a definition made inside a brace group outlived it"
+    pins := [check% environScopeChecks]
+    accept := ["nineteen of the guard's first twenty-two assertions fail on the engine at e2bef615 before the fix: each body definer's page and its one warning, a definition inside inline content, an absent optional argument's default and a definition inside a group",
+      "the review's guards fail on the branch's first answer at 1e048315: a solution environment a skipped conditional's argument hides shows its body in five spellings, an unused default holding a length assignment moves the next paragraph down 4 cm, a second body definition of a theorem, an environment or a built-in strips its heading or stops the build, and a native body definition's use with an argument ships nothing"]
+    state := .guarded "e2bef615" .before .author }
 ]
 
 /-- The reports guarded but never seen failing, a count held in both directions. -/
