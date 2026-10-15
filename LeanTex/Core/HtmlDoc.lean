@@ -7697,6 +7697,9 @@ private def descItemsInto (cfg : Config) (acc : Array Node) : List (Array Block)
 -- a one-paragraph item keeps its epoch on the `li` or `dd` it elides the `p` into
 private def listItem (cfg : Config) (tag : String) : List Block → Node
   | [.para content] => cfg.applyEpoch (stepNode cfg tag content)
+  -- an item its step selects carries the step itself, so its marker fades and hides with it
+  | [.onSteps spec body] =>
+    cfg.applyEpoch (overlayNode tag cfg.overlaySteps spec (blockNodesInto cfg.into #[] body.toList))
   | [] => cfg.applyEpoch (Html.elem tag #[])
   | .logo _ :: rest => listItem cfg tag rest
   | .setPalette p :: rest =>

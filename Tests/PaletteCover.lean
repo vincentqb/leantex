@@ -171,7 +171,7 @@ def deckChecks (ref : IO.Ref (List String)) : IO Unit := do
       Ir.Design.declared? lightWide.palette .ink == Ir.Design.declared? lightNone.palette .ink)
   let (day, _) := elabStr (dvDeck "\\theme{daylight}\n\\palette{ covered = 50\\% }\n" frame)
   t s!"cover deck, a bundle at a declared share: its seeds ship as given, each reported once ({coverLosses day})"
-    ((coverLosses day).all (· == some "covered:alert") && (coverLosses day).size ≤ 1 &&
+    (coverLosses day == #[some "covered:alert"] &&
       Ir.Design.declared? day.palette .accent == some Theme.daylightSeeds.accent)
   let (before, _) := elabStr (dvDeck "\\setbeamercovered{transparent}\n\\theme{daylight}\n" frame)
   t "cover deck: a share declared before a theme binds the bundle it installs"
@@ -193,6 +193,20 @@ def deckChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "cover deck: a bundle the body regenerates for an accent keeps the share the renderers cover at"
     (!(bodyPalettes bodyAccent).isEmpty && (bodyPalettes bodyAccent).all fun p =>
       p.seeded.all fun st => st.targets.cover == some Ir.transparentShare)
+  let (bodyHides, bodyDiags) := elabStr (dvDeck pre ("\\setbeamercovered{transparent}\n" ++ frame))
+  t s!"cover deck, a share in the body: named once, pending steps hidden as the preamble keeps them ({coverLosses bodyHides})"
+    ((bodyDiags.filter (·.code == "W0340")).size == 1 && (Ir.Design.ofDoc bodyHides).cover.hidden &&
+      (bodyPalettes bodyHides).all (fun p => p.coveredFraction == none) && (coverLosses bodyHides).isEmpty)
+  let (bodyKeeps, keepDiags) := elabStr (dvDeck ("\\setbeamercovered{transparent}\n" ++ pre)
+    ("\\setbeamercovered{invisible}\n" ++ frame))
+  t s!"cover deck, a body share against the preamble's: named, the preamble's share judged ({coverLosses bodyKeeps})"
+    ((keepDiags.filter (·.code == "W0340")).size == 1 &&
+      (bodyPalettes bodyKeeps).all (fun p => p.coveredFraction == some 15) &&
+      coverLosses bodyKeeps == #[some "covered:alert"])
+  let (bodySame, sameDiags) := elabStr (dvDeck ("\\setbeamercovered{transparent}\n" ++ pre)
+    ("\\setbeamercovered{transparent}\n" ++ frame))
+  t "cover deck, a body share agreeing with the preamble's names nothing"
+    ((sameDiags.filter (·.code == "W0340")).isEmpty && (bodyPalettes bodySame).all (·.coveredFraction == some 15))
   let art := "\\documentclass{article}\n" ++ light ++ "\\palette{ covered = 15\\% }\n" ++
     "\\begin{document}\nA word.\n\\end{document}"
   let (doc, _) := elabStr art
@@ -239,22 +253,36 @@ def hiddenChecks (ref : IO.Ref (List String)) : IO Unit := do
     let (html, _) := HtmlDoc.emit {} doc
     t s!"hidden, {label}: the web page covers the pending step at the share, none hidden"
       (hasStr html s!"from \{ opacity: {share.getD 0}%;")
-  -- What a hidden step ships: no ink on the pending item's line, its marker's, image's and link's
-  -- included, and no ground of a block it holds, nothing painted in the hidden paint.
-  let item := "\\begin{frame}\n\\begin{itemize}\n\\item First words.\n" ++
-    "\\item<2> Kilo words \\includegraphics[height=0.3cm]{absent.png} " ++
-    "\\href{https://example.org}{linked words}.\n\\end{itemize}\n\\end{frame}"
-  let out := layoutOf fonts (elabStr (dvDeck "" item)).1
-  let kilo := out.pages[1]?.bind fun p => p.lines.find? fun l => (wordRun #[l] "Kilo").isSome
-  t "hidden item: the step showing it inks its line, its image and its link"
-    (kilo.any fun l => l.segs.any (· matches .image _ _ _ true) &&
-      l.segs.any fun sg => match sg with
-        | .run _ _ link .. => link == some "https://example.org"
-        | _ => false)
-  t "hidden item: the step hiding it inks nothing on that line, its marker, image and link included"
-    (out.pages[0]?.any fun p =>
-      let at_ := p.lines.filter fun l => some l.y == kilo.map (·.y)
-      !at_.isEmpty && at_.all fun l => l.segs.all (!·.inks))
+  -- What a hidden step ships: no ink on a pending item's line, its marker's, image's and link's
+  -- included, whatever its marker, and no ground of a block it holds, nothing in the hidden paint.
+  let items := "\\item<2> Kilo words \\includegraphics[height=0.3cm]{absent.png} " ++
+    "\\href{https://example.org}{linked words}.\n\\item<2> Lima words.\n"
+  let markers : List (String × String × String) := [
+    ("a bullet", "", "itemize"),
+    ("a numbered item", "", "enumerate"),
+    ("a coloured marker", "\\style{itemize}{ marker = {\\textcolor{red}{$\\star$}} }\n", "itemize"),
+    ("an image marker", "\\style{itemize}{ marker = {\\includegraphics[height=0.2cm]{absent.png}} }\n",
+      "itemize")]
+  for (label, pre, env) in markers do
+    let src := dvDeck pre (s!"\\begin\{frame}\n\\begin\{{env}}\n\\item First words.\n" ++ items ++
+      s!"\\end\{{env}}\n\\end\{frame}")
+    let out := layoutOf fonts (elabStr src).1
+    let lineOf (w : String) := out.pages[1]?.bind fun p => p.lines.find? fun l => (wordRun #[l] w).isSome
+    let ys := [lineOf "Kilo", lineOf "Lima"].filterMap (·.map (·.y))
+    t s!"hidden item, {label}: the step showing it inks its lines, its image and its link"
+      (ys.length == 2 && (lineOf "Kilo").any fun l => l.segs.any (· matches .image _ _ _ true) &&
+        l.segs.any fun sg => match sg with
+          | .run _ _ link .. => link == some "https://example.org"
+          | _ => false)
+    t s!"hidden item, {label}: the step hiding them inks nothing on their lines, marker, image and link included"
+      (out.pages[0]?.any fun p =>
+        let at_ := p.lines.filter fun l => ys.contains l.y
+        at_.size ≥ 2 && at_.all fun l => l.segs.all (!·.inks))
+    let (_, tree, _) := HtmlDoc.emitTree {} (elabStr src).1
+    let stepped := (elemAttrsList (· == "li") #[] tree.toList).filter fun (_, attrs) =>
+      attrs.contains ("class", "step") && attrs.contains ("data-step", "2")
+    t s!"hidden item, {label}: the web page steps each pending item whole, its marker with it"
+      (stepped.size == 2)
   let block := "\\begin{frame}\nFirst words.\n\n\\pause\n\n" ++
     "\\begin{block}{Block title}Block words.\\end{block}\n\\end{frame}"
   let out := layoutOf fonts (elabStr (dvDeck "\\theme{daylight}\n" block)).1

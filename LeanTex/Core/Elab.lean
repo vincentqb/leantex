@@ -7101,7 +7101,7 @@ private def reseedCovered (ctx : Ctx) (pos : Pos) (pal : Palette) (depth : Groun
   if targets.cover == st.targets.cover then return pal
   match ← generated st.seeds targets with
   | .error f =>
-    seedFailure ctx pos f "the covered share's palette" "the palette generated before stands"
+    seedFailure ctx pos f "'\\palette[seeds]' at the covered share" "the palette generated before stands"
     return pal
   | .ok colors =>
     let st' := { st with targets, colors }
@@ -7127,13 +7127,21 @@ private def applyPaletteEntry (ctx : Ctx) (pal : Palette) (key valueSrc entry : 
     match (digits.trimAscii.toString).toNat? with
     | some n =>
       if n ≤ 99 then
-        pal := { pal with coveredFraction := some n
-                          decorative := if decorative && !pal.decorative.contains (.role .covered)
+        pal := { pal with decorative := if decorative && !pal.decorative.contains (.role .covered)
                             then pal.decorative.push (.role .covered) else pal.decorative }
-        logGlobal (.covered (some n))
-        noteDeclared ctx "palette" "covered"
         -- The renderers cover at the share in force when the body opens.
-        if !inBody then pal ← reseedCovered ctx pos pal depth n
+        let inForce := (Design.ofPalette pal).coveredFraction
+        if inBody then
+          if n != inForce then
+            warnOnce ctx "palette:covered:body" .W0340
+              (s!"a covered share in the body is ignored; pending steps keep the preamble's " ++
+                (if inForce == 0 then "hiding" else s!"{inForce}% cover")) pos
+              (help := "declare the share in the preamble, before '\\begin{document}'")
+        else
+          pal := { pal with coveredFraction := some n }
+          logGlobal (.covered (some n))
+          noteDeclared ctx "palette" "covered"
+          pal ← reseedCovered ctx pos pal depth n
       else
         diag ctx .E0332 s!"covered fraction must be 0–99 percent, got '{valueSrc}'" pos
           (help := "the fraction of each covered colour kept over the page; 0\\%, the default, hides it")

@@ -11139,6 +11139,13 @@ private def hiddenLead (hid : OverlaySpec) (p : Array Inline) : Array Inline :=
     else #[.colored hiddenPaint none #[.onSteps hid p]]
   | _ => #[.colored hiddenPaint none #[.onSteps hid p]]
 
+/-- The invisible region an item's leading paragraph hides in where `hiddenLead` set it, which its
+marker hides in too. -/
+public def hiddenLeadSpec? (content : Array Inline) : Option OverlaySpec :=
+  match content with
+  | #[.colored c none #[.onSteps s _]] => if c == hiddenPaint && s.invisible then some s else none
+  | _ => none
+
 /-- Under a hidden cover, a dimmed item whose step the cover hides keeps its leading paragraph
 hidden where `flattenLeadStep` lifts it out of the step, its marker with it. -/
 private def hideLead (cover : Cover) (k : Nat) (item dimmed : Array Block) : Array Block :=

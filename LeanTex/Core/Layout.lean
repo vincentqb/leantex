@@ -1104,7 +1104,6 @@ public structure Out where
   | .image st w h ink => .image st w h ink
   | .poly pts c => .poly pts c
 
-/-- Whether a segment is a word gap. -/
 @[expose] public def Seg.isWordGap : Seg → Bool
   | .gap _ word | .decoratedGap _ word _ => word
   | .run .. | .decoration .. | .rule .. | .image .. | .poly .. => false
@@ -12309,10 +12308,12 @@ private def collectItem (r : Rd) (a : Acc)
           collectPara r a content (indent - hang) false r.geom.fontSize
             (leaf := leaf) (span := Struct.leafCountInlines content) (hangIndent := hang)
         else
-        -- A covered item is one colour wrapper; its marker dims with it, as beamer's cover.
-        let marker := match content with
-          | #[.colored c none _] => #[Ir.Inline.colored c none marker]
-          | _ => marker
+        -- A covered item is one colour wrapper; its marker dims with it, as beamer's cover, or
+        -- hides in the region its hidden step's lead hides in.
+        let marker := match Ir.hiddenLeadSpec? content, content with
+          | some s, _ => #[Ir.Inline.onSteps s marker]
+          | none, #[.colored c none _] => #[Ir.Inline.colored c none marker]
+          | none, _ => marker
         let (a, leaf) := a.leafRange (Struct.leafCountInlines content)
         collectPara r a content indent false r.geom.fontSize
           (marker := some marker) (leaf := leaf) (span := Struct.leafCountInlines content)
