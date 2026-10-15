@@ -2429,8 +2429,8 @@ public theorem familiesOf_ne_nil (fs : Font.FontSet) (i : Nat) : familiesOf fs i
 /-- A slot's font stack: its own family, every other family in face order, then the generic. -/
 private def stackFor (fs : Font.FontSet) (own generic : String) : String :=
   let rest := (((List.range fs.fonts.size).flatMap fun i =>
-    familiesOf fs i).eraseDups.filter (· != own)).map fun f => s!"\"{f}\""
-  String.intercalate ", " ([s!"\"{own}\""] ++ rest ++ [generic])
+    familiesOf fs i).eraseDups.filter (· != own)).map fun f => s!"\"{cssString f}\""
+  String.intercalate ", " ([s!"\"{cssString own}\""] ++ rest ++ [generic])
 
 /-- The face's file name: its index and its PostScript name's safe characters. -/
 private def fontFileName (i : Nat) (f : Font) : String :=
@@ -2719,7 +2719,7 @@ public theorem imagePosterHref_covers (imgs : Image.Store) (req : Image.Request)
   · simp [imagePosterHref, hk, hen, hr]
 
 private def fontFaceRule (fs : Font.FontSet) (ff : FontFace) : String :=
-  s!"@font-face \{ font-family: \"{ff.family}\"; font-weight: {ff.weight}; " ++
+  s!"@font-face \{ font-family: \"{cssString ff.family}\"; font-weight: {ff.weight}; " ++
   s!"font-style: {if ff.italic then "italic" else "normal"}; " ++
   s!"src: url(\"{(fontResource (fs.get ff.index)).uri}\") format(\"{ff.format}\"); }\n"
 
@@ -2775,13 +2775,13 @@ private def tokenVars (cfg : Config) (doc : Doc) (roles : List Ir.Role)
        else [])
     | none =>
       (match doc.fonts.body with
-       | some f => [s!"    --font-body: \"{f}\", Georgia, serif;"]
+       | some f => [s!"    --font-body: \"{cssString f}\", Georgia, serif;"]
        | none => []) ++
       (match doc.fonts.sans with
-       | some f => [s!"    --font-sans: \"{f}\", system-ui, sans-serif;"]
+       | some f => [s!"    --font-sans: \"{cssString f}\", system-ui, sans-serif;"]
        | none => []) ++
       (match doc.fonts.mono with
-       | some f => [s!"    --font-mono: \"{f}\", ui-monospace, monospace;"]
+       | some f => [s!"    --font-mono: \"{cssString f}\", ui-monospace, monospace;"]
        | none => [])
   String.intercalate "\n" (palette ++ tokens ++ fonts)
 

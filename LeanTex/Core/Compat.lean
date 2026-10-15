@@ -1118,7 +1118,7 @@ is skipped" pos
       -- fontspec's `*` stands for the family name, as in `UprightFont`.
       let f := if f.startsWith "*" then family ++ (f.drop 1).toString else f
       let ext := if ital then ".italic" else ""
-      return some s!"{slot}.{w.series}{ext} = \"{f}\""
+      return some s!"{slot}.{w.series}{ext} = {Decl.quote f}"
     | none, _ =>
       sayOnce ("fontface:series:" ++ code) .W0104
         s!"'FontFace = \{{code}}...' names no NFSS series; \
@@ -5682,18 +5682,18 @@ private def beamerposter (opts : String) (pos : Pos) : M (Array Raw) := do
 \\page{ ... } declares anything further")
   synthAt native pos
 
-/-- hyperref's keys, as `\hypersetup` and the package options give them: the `\pdfmeta` keys its
-metadata keys set, with its link keys written into the setup and whether one was read. -/
-private def hyperrefKeys (opts : String) (pos : Pos) : M (Array String × Bool) := do
-  let mut keys : Array String := #[]
+/-- hyperref's keys, as `\hypersetup` and the package options give them: its metadata keys with
+their TeX values, with its link keys written into the setup and whether one was read. -/
+private def hyperrefKeys (opts : String) (pos : Pos) : M (Array (String × String) × Bool) := do
+  let mut metadata : Array (String × String) := #[]
   let mut links := (← get).links
   let mut linked := false
   let mut cut : Array String := #[]
   for e in KeyVal.items opts do
     let (k, value) := KeyVal.entry e
     let v := value.getD ""
-    let metadata := ["title", "author", "subject", "keywords"].filter (k == "pdf" ++ ·)
-    for m in metadata do keys := keys.push s!"{m} = \"{v}\""
+    if let some m := ["title", "author", "subject", "keywords"].find? (k == "pdf" ++ ·) then
+      metadata := metadata.push (m, v)
     if let some l := links.read k v then
       links := l
       linked := true
@@ -5703,17 +5703,34 @@ private def hyperrefKeys (opts : String) (pos : Pos) : M (Array String × Bool) 
     say .W0101 s!"hyperref keys without a native equivalent were dropped: \
 {String.intercalate ", " cut.toList}" pos
       (help := "brace a value that holds a comma: key={...}")
-  return (keys, linked)
+  return (metadata, linked)
 
-/-- `\hypersetup` as `\pdfmeta{...}` for its metadata keys and link-kind colour
-styles for its link colours. -/
+/-- The mark opening a `\pdfmeta` group of TeX values: the construct and the link styles it
+lowers, then each key's group and its value's group. -/
+public def metaTextMark : String := "pdfmeta text"
+
+/-- hyperref's metadata and link styles lowered, the metadata as TeX the elaborator sets as text
+and names in its note. -/
+private def hyperrefLowered (what : String) (metadata : Array (String × String)) (linked : Bool)
+    (pos : Pos) : M (Array Raw) := do
+  let setup := (← get).links
+  let links := if linked then setup.native else ""
+  let styles ← if links.isEmpty then pure #[] else synthAt links pos
+  if metadata.isEmpty then
+    if links.isEmpty then discard what "the engine does this itself" "hypersetup" pos
+    else became what links pos
+    return styles
+  let mut body : Array Raw :=
+    #[.ctrl metaTextMark pos, .group #[.word what pos] pos, .group #[.word links pos] pos]
+  for (k, v) in metadata do
+    body := (body.push (.group #[.word k pos] pos)).push (.group (← synthAt v pos) pos)
+  return #[Raw.ctrl "pdfmeta" pos, .group body pos] ++ styles
+
+/-- `\hypersetup` as `\pdfmeta` for its metadata keys and link-kind colour styles for its link
+colours. -/
 private def hypersetup (opts : String) (pos : Pos) : M (Array Raw) := do
-  let (keys, linked) ← hyperrefKeys opts pos
-  let links := (← get).links
-  let native := s!"\\pdfmeta\{ {String.intercalate ", " keys.toList} }" ++
-    (if linked then links.native else "")
-  became "\\hypersetup" native pos
-  synthAt native pos
+  let (metadata, linked) ← hyperrefKeys opts pos
+  hyperrefLowered "\\hypersetup" metadata linked pos
 
 /-- `\DocumentMetadata{...}`: `lang` and `pdfversion` land
 on the native `\pdfmeta` keys. -/
@@ -5734,8 +5751,8 @@ private def documentMetadata (opts : String) (pos : Pos) : M (Array Raw) := do
 dropped: {String.intercalate ", " dropped.toList}" pos
       (help := "the engine writes PDF 2.0, or 1.7 when 'pdfversion=1.7' asks; \
 standard and compression keys have no effect here")
-  let keys := (lang.map fun tag => s!"language = \"{tag}\"").toArray ++
-    (version.map fun v => s!"version = \"{v}\"").toArray
+  let keys := (lang.map fun tag => s!"language = {Decl.quote tag}").toArray ++
+    (version.map fun v => s!"version = {Decl.quote v}").toArray
   if keys.isEmpty then return #[]
   let native := s!"\\pdfmeta\{ {String.intercalate ", " keys.toList} }"
   became "\\DocumentMetadata" native pos
@@ -7239,9 +7256,9 @@ were dropped: {String.intercalate ", " dropped.toList}" pos
           | ("Path", some v) => some v
           | _ => none
     let dirPart := match path with
-      | some d => s!"dir = \"{d}\", "
+      | some d => s!"dir = {Decl.quote d}, "
       | none => ""
-    let native := s!"\\fonts\{ {dirPart}math = \"{family}\" }"
+    let native := s!"\\fonts\{ {dirPart}math = {Decl.quote family} }"
     became "\\setmathfont" native pos
     return some (← synthAt native pos, k)
   | "unimathsetup" =>
@@ -7939,7 +7956,7 @@ private def rewritePackageBody (name p : String) (opt : Option String) (pos : Po
       write fun st => { st with babelMain := some main }
       if (← get).biblatexLoaded then natbibDefer #[s!"mainlang={main}"] pos
       if (Locale.forTag tag).isSome then
-        let native := s!"\\pdfmeta\{ language = \"{tag}\" }"
+        let native := s!"\\pdfmeta\{ language = {Decl.quote tag} }"
         became s!"\\usepackage[{main}]\{babel}" native pos
         write fun st => { st with mainLang := tag }
         out := out ++ (← synthAt native pos)
@@ -8006,16 +8023,12 @@ no package options are supported by the strict native Markdown dialect" pos
       s!"\\{name}[{opt.getD ""}]\{unicode-math}" (opt.getD "") pos)
   else if p == "hyperref" && opt.isSome then
     -- hyperref's package options are `\hypersetup`'s keys.
-    let (keys, linked) ← hyperrefKeys (opt.getD "") pos
-    let links := (← get).links
-    let native := (if keys.isEmpty then "" else
-        s!"\\pdfmeta\{ {String.intercalate ", " keys.toList} }") ++
-      (if linked then links.native else "")
-    if native.isEmpty then
+    let (metadata, linked) ← hyperrefKeys (opt.getD "") pos
+    if metadata.isEmpty && !linked then
       discard s!"\\{name}\{{p}}" "the engine does this itself" s!"{name}:{p}" pos
     else
-      became s!"\\usepackage[{opt.getD ""}]\{hyperref}" native pos
-      out := out ++ (← synthAt native pos)
+      out := out ++ (← hyperrefLowered s!"\\usepackage[{opt.getD ""}]\{hyperref}" metadata
+        linked pos)
   else if p == "ulem" then
     if KeyVal.items (opt.getD "") == #["normalem"] then
       discard s!"\\{name}[normalem]\{{p}}"
@@ -8324,18 +8337,18 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
           | (key, some v) => if key == k then some v else none
           | (_, none) => none
     let dirPart := match feature "Path" with
-      | some d => s!"dir = \"{d}\", "
+      | some d => s!"dir = {Decl.quote d}, "
       | none => ""
-    let mut parts := #[s!"{slot} = \"{family}\""]
+    let mut parts := #[s!"{slot} = {Decl.quote family}"]
     if name.endsWith "fontface" then
       for variant in ["bold", "italic", "bolditalic"] do
-        parts := parts.push s!"{slot}.{variant} = \"{family}\""
+        parts := parts.push s!"{slot}.{variant} = {Decl.quote family}"
     for (opt, variant) in [("UprightFont", "upright"), ("BoldFont", "bold"),
         ("ItalicFont", "italic"), ("BoldItalicFont", "bolditalic")] do
       if let some f := feature opt then
         -- fontspec's `*` stands for the family name.
         let f := if f.startsWith "*" then family ++ (f.drop 1).toString else f
-        parts := parts.push s!"{slot}.{variant} = \"{f}\""
+        parts := parts.push s!"{slot}.{variant} = {Decl.quote f}"
     for opts in [optBefore, optAfter].filterMap id do
       for kv in KeyVal.items opts do
         if let ("FontFace", some v) := KeyVal.entry kv then
@@ -8466,7 +8479,7 @@ face serves every language, so the binding is dropped" pos
       match shipoutRules look lengths (codeArgs.getD 0 #[]) with
       | some rules =>
         let key := if hook == "shipout/foreground" then "front-rule" else "rule"
-        let entries := rules.map fun (x, y, w, h, c) => s!"{key} = \"{x}; {y}; {w}; {h}; {c}\""
+        let entries := rules.map fun (x, y, w, h, c) => s!"{key} = {Decl.quote s!"{x}; {y}; {w}; {h}; {c}"}"
         let native := s!"\\page\{ {String.intercalate ", " entries.toList} }"
         became s!"\\AddToHook\{{hook}}" native pos
         return some (← synthAt native pos, k)

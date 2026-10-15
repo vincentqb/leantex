@@ -146,6 +146,7 @@ import Tests.PdfFigures
 import Tests.PdfNative
 import Tests.GfxPaint
 import Tests.Backends
+import Tests.MetaEscape
 import Tests.Images
 import Tests.ImageCodec
 import Tests.SvgImages
@@ -471,6 +472,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   let arts ← goldenArts oneFace
   pdfFaceChecks ref geom oneFace font
   webMetaChecks ref geom oneFace
+  Tests.MetaEscape.metaEscapeChecks ref geom oneFace
   sizeLadderChecks ref oneFace
 
   lineChecks ref geom oneFace

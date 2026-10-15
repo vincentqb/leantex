@@ -133,6 +133,7 @@ import Tests.ProcessRuntime
 import Tests.PaletteFloor
 import Tests.AlertMark
 import Tests.SeedSeries
+import Tests.MetaEscape
 
 /-! Every breakage the user reported, as a row whose pins hold it closed; a report closes only as
 `guarded`, and the unwitnessed and owed counts are held both ways. -/
@@ -1625,7 +1626,15 @@ def reports : List Report := [
     accept := ["twenty-eight of the guard's checks, judged over the PDF, the web page, the dump and the diagnostics of their probe documents built by the engine at e2bef615, fail there, where the edefs are refused, the hook skipped and an overprinted text's commands left unread; built here, all pass, and the two foreground checks, ink off the medium and paint over the text, hold in both",
       "the reviews' guards: an edef reads the definitions and lengths in force where it stands as TeX scopes them, inline as well as in the preamble, its uses expanding to its text; only allocated lengths are read, refused after register arithmetic, a measuring, primitive, signed or register assignment, an environment's or a macro's code the pass does not run, and for a kernel length, kept after the, a comparison or a global setlength; a protected definition and a control after noexpand stand; an expansion past the step cap is refused; a length's units read as the paper's; a later page-attribute assignment replaces an earlier one, one expanding the attribute in force first keeps it, an unexpanded one is named, and a box whose numbers do not read is named; an attribute outside a hook is read; a box with no area is dropped and named, the art box follows a declared trim",
       "a private print document under lualatex and here: its edefs and its hook read with no skip, its declared boxes written as lualatex writes them up to its rounding, and its PDF byte-identical to its parent's, whose guess from the cut marks named the same boxes"]
-    state := .guarded "e2bef615" .before .author }
+    state := .guarded "e2bef615" .before .author },
+  { id := "R184", date := "2026-10-15"
+    what := "a value the compatibility layer copied into a native declaration was spliced into its string unescaped, so a quote in an author's metadata set the subject, one in a font family's name set the typewriter slot, and one in a declared language set the title; hyperref's metadata reached the PDF's information and XMP and the web page's head as its TeX, an escaped ampersand a backslash and a blank beside the ampersand; a return in the information read back as a line feed, and the XMP packet held characters XML refuses"
+    pins := [check% Tests.MetaEscape.metaEscapeChecks, thm% Decl.parseValue_quote,
+      thm% PdfRead.textString_representable, thm% PdfRead.literal_representable,
+      thm% PdfRead.xmpText_admitted]
+    accept := ["nine of the guard's assertions fail at 3c258580 before the fix: a quoted value read back with its quotes doubled; a return in the information's strings read back as a line feed and the XMP packet holding a return or a control character did not read back; a quote in hyperref's author set the subject; the escaped title read back as written in both lowerings; and a quote in the declared language and in a font family's name set the title and the typewriter slot",
+      "the corpus built by this tree and by 3c258580, PDF and HTML: 221 of 224 artifacts byte-identical, the deck, math and math-text pages' HTML differing in a formula's TeX attribute alone, with no visible difference"]
+    state := .guarded "3c258580" .before .author }
 ]
 
 /-- The reports guarded but never seen failing, a count held in both directions. -/

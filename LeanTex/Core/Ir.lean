@@ -7956,6 +7956,11 @@ end
 /-- The text the first page of an overlay sequence shows. -/
 public def firstPageText (xs : Array Inline) : String := firstPageTextList "" xs.toList
 
+/-- The text a metadata field holds of inline content: its first page's, a tie a space, as
+hyperref's PDF strings read `~`. -/
+public def metaText (xs : Array Inline) : String :=
+  (firstPageText xs).map fun c => if c == '\u00A0' then ' ' else c
+
 /-- The words a picture's labels set, in shape order, joined: what a sighted
 reader reads in the drawing. -/
 public def Pic.Picture.said (pic : Pic.Picture) : String :=

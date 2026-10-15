@@ -12,6 +12,7 @@ public import LeanTex.Core.Flate.DynamicHeaderProof
 public import LeanTex.Core.Flate.RoundtripProof
 public import LeanTex.Core.PdfRead
 public import LeanTex.Core.PdfReadProof
+public import LeanTex.Core.PdfTextProof
 public import LeanTex.Core.PdfCensus
 public import LeanTex.Core.PdfContract
 public import LeanTex.Core.Image

@@ -13581,6 +13581,8 @@ public inductive PDecl where
   | page (src : Option String) (pos : Pos)
   | fonts (src : Option String) (pos : Pos)
   | pdfmeta (src : Option String) (pos : Pos)
+  /-- hyperref's metadata lowered by Compat: the construct, its link styles, each key's TeX. -/
+  | pdfmetaText (what links : String) (pairs : Array (String × Array Raw)) (pos : Pos)
   | captionsetup (scope : Option String) (unclosed : Option Pos) (body : Option String) (pos : Pos)
   /-- url.sty's `\urlstyle`: the family `\url` and `\nolinkurl` set in. -/
   | urlstyle (v : Option String) (pos : Pos)
@@ -13656,6 +13658,23 @@ private def takeOptRun (preamble : Array Raw) (j : Nat) :
     | some c => (some (preamble.extract (j + 1) c), c + 1)
     | none => (some (preamble.extract (j + 1) preamble.size), preamble.size)
   else (none, j)
+
+/-- Each key's group and its value's group, from a lowered metadata group. -/
+private def metaTextPairs : List Raw → Array (String × Array Raw) → Array (String × Array Raw)
+  | .group k _ :: .group v _ :: rest, acc => metaTextPairs rest (acc.push (rawSrc k, v))
+  | _, acc => acc
+
+/-- The `\pdfmeta` group at `j` when Compat lowered it from TeX values (`Compat.metaTextMark`). -/
+private def metaTextAt (raws : Array Raw) (j : Nat) :
+    Option (String × String × Array (String × Array Raw) × Nat) :=
+  match raws[j]? with
+  | some (.group body _) =>
+    match body.toList with
+    | .ctrl m _ :: .group what _ :: .group links _ :: rest =>
+      if m == Compat.metaTextMark then some (rawSrc what, rawSrc links, metaTextPairs rest #[], j + 1)
+      else none
+    | _ => none
+  | _ => none
 
 /-- Segments the preamble into declaration values, `\input` wrappers
 spliced open between file markers. -/
@@ -13865,6 +13884,10 @@ public def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run d
             if let some k := Blueprint.SiteKey.ofName? (rawSrc key) then
               out := out.push (.blueprintSite k (rawSrc url) pos)
           | _, _ => pure ()
+        else if let some (what, links, pairs, k) :=
+            (if name == "pdfmeta" then metaTextAt preamble (skipSpaces preamble i) else none) then
+          i := k
+          out := out.push (.pdfmetaText what links pairs pos)
         else if declCtrl.contains name then
           let j := skipSpaces preamble i
           let src : Option String := match preamble[j]? with
@@ -14445,6 +14468,22 @@ convert = none refuses both")
       return s
   | .pdfmeta (some src) pos => stepDone s.ctx (stepPdfmeta s src pos)
   | .pdfmeta none pos => stepDone s.ctx (stepMissing s "pdfmeta" "a {...} block" pos)
+  | .pdfmetaText what links pairs pos =>
+    let mut info := s.info
+    let mut evs : Array PEvent := #[]
+    let mut said : Array String := #[]
+    for (key, raws) in pairs do
+      let text := Ir.metaText (← elabInlines s.ctx raws)
+      info := match key with
+        | "title" => { info with title := some text }
+        | "author" => { info with author := some text }
+        | "subject" => { info with subject := some text }
+        | _ => { info with keywords := some text }
+      evs := evs.push (.scalar "pdfmeta" key text pos)
+      said := said.push s!"{key} = {Decl.quote text}"
+    diag s.ctx .N0100 s!"'{what}' → \\pdfmeta\{ {String.intercalate ", " said.toList} }{links}" pos
+    emitEvents s.ctx evs
+    return { s with info }
   | .urlstyle v pos =>
     -- The family is read before the fold (`urlFamily0`); this arm only reports.
     match v with
@@ -15528,7 +15567,7 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
       | some s => some s
       | none =>
         src.bind fun xs =>
-          let t := Ir.firstPageText xs
+          let t := Ir.metaText xs
           if t.isEmpty then none else some t
     info := { info with
       title := fallback info.title st.title

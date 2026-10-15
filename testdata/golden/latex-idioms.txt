@@ -128,7 +128,6 @@ note[N0100] 40:1 '\NewDocumentCommand{\boatsep}' → \define \boatsep() {...}
 note[N0100] 41:1 '\NewDocumentCommand{\fixture}' → \define \fixture(a1: content, a2: content, a3: content, a4?: content) {...}
 note[N0100] 45:1 '\usepackage{hyperref}' → nothing: the engine does this itself
 note[N0100] 46:1 '\usepackage{soul}' → nothing: the engine does this itself
-note[N0100] 47:1 '\hypersetup' → \pdfmeta{ title = "Spring Bulletin", author = "Harbour Rowing Club" }
 note[N0100] 53:1 '\thispagestyle{empty}' → \runninghead[from = 2]{...}
 note[N0100] 56:1 '\color{deepwater}' → \deepwater
 note[N0100] 60:5 '\vspace' → \block[before = 2 * stroke]{}
@@ -138,4 +137,5 @@ note[N0100] 83:1 '\noindent' → nothing: no paragraph carries a first-line inde
 note[N0100] 85:1 '\ul' → \underline
 note[N0100] 85:33 '\varul' → \underline
 note[N0100] 27:1 '\ihead / \chead / \ohead' → \runninghead[from = 2]{\itshape Harbour Rowing Club \hfill  \hfill \thepage}
+note[N0100] 47:1 '\hypersetup' → \pdfmeta{ title = "Spring Bulletin", author = "Harbour Rowing Club" }
 note[N0100] 83:24 '\vphantom' → nothing: a line's height and depth are its fonts' declared metrics, so the prop is already in force

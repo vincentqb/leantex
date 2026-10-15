@@ -5,9 +5,9 @@ import LeanTex.Core.Flate
 import LeanTex.Core.FigureLoss
 public import LeanTex.Core.Font
 import LeanTex.Core.FontSubset
-import LeanTex.Core.Html
 public import LeanTex.Core.Layout
 import LeanTex.Core.Loop
+import LeanTex.Core.PdfText
 public import LeanTex.Core.PdfContent
 public import LeanTex.Core.PdfFigures
 public import LeanTex.Core.PdfStruct
@@ -64,14 +64,6 @@ public def pdf17Role (s : String) : Option String :=
   else if s == "Aside" then some "Div"
   else if s.startsWith "H" && ((s.drop 1).toString.toNat?.any (6 < ·)) then some "H6"
   else none
-
-private def utf16Hex (c : Char) : String :=
-  let n := c.toNat
-  if n < 0x10000 then
-    Hex.digits true 4 n
-  else
-    let v := n - 0x10000
-    Hex.digits true 4 (0xD800 + v / 1024) ++ Hex.digits true 4 (0xDC00 + v % 1024)
 
 private def litObj (s : String) : PdfRead.Obj := .str s.toUTF8
 
@@ -216,7 +208,7 @@ endcodespacerange
     remaining := remaining.drop 100
     s := s ++ s!"{chunk.length} beginbfchar\n"
     for (g, c) in chunk do
-      s := s ++ s!"<{Hex.digits true 4 g}> <{utf16Hex c}>\n"
+      s := s ++ s!"<{Hex.digits true 4 g}> <{PdfRead.utf16Hex c}>\n"
     s := s ++ "endbfchar\n"
   s := s ++ "endcmap
 CMapName currentdict /CMap defineresource pop
@@ -233,27 +225,15 @@ private def widthObj (μ : Int) : PdfRead.Obj :=
 private def wArray (font : Font) (used : Array (Nat × Char)) : PdfRead.Obj :=
   .arr (used.flatMap fun (g, _) => #[PdfRead.Obj.int g, .arr #[widthObj (pdfWidthμ font g)]])
 
-private def pdfString (s : String) : String := Id.run do
-  let mut out := ""
-  for c in s.toList do
-    if c == '(' || c == ')' || c == '\\' then
-      out := out.push '\\'
-    out := out.push c
-  return out
-
-private def pdfTextString (s : String) : String :=
-  if s.toList.all (fun c => c.toNat < 0x80) then s!"({pdfString s})"
-  else s.toList.foldl (· ++ utf16Hex ·) "<FEFF" ++ ">"
-
 private def xmpPacket (info : Ir.Meta) : String :=
   let elem (tag : String) (v : Option String) : String :=
     match v with
     | some s =>
-      s!"        <{tag}><rdf:Alt><rdf:li xml:lang=\"x-default\">{Html.escapeText s}</rdf:li></rdf:Alt></{tag}>\n"
+      s!"        <{tag}><rdf:Alt><rdf:li xml:lang=\"x-default\">{PdfRead.xmpText s}</rdf:li></rdf:Alt></{tag}>\n"
     | none => ""
   let seqElem (tag : String) (v : Option String) : String :=
     match v with
-    | some s => s!"        <{tag}><rdf:Seq><rdf:li>{Html.escapeText s}</rdf:li></rdf:Seq></{tag}>\n"
+    | some s => s!"        <{tag}><rdf:Seq><rdf:li>{PdfRead.xmpText s}</rdf:li></rdf:Seq></{tag}>\n"
     | none => ""
   "<?xpacket begin=\"\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\n" ++
   "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\">\n" ++
@@ -267,10 +247,10 @@ private def xmpPacket (info : Ir.Meta) : String :=
   elem "dc:description" info.subject ++
   -- The canonical URL as dc:identifier (XMP Specification Part 1 §8.3), simple Text.
   (match info.url with
-   | some u => s!"        <dc:identifier>{Html.escapeText u}</dc:identifier>\n"
+   | some u => s!"        <dc:identifier>{PdfRead.xmpText u}</dc:identifier>\n"
    | none => "") ++
   (match info.keywords with
-   | some k => s!"        <pdf:Keywords>{Html.escapeText k}</pdf:Keywords>\n"
+   | some k => s!"        <pdf:Keywords>{PdfRead.xmpText k}</pdf:Keywords>\n"
    | none => "") ++
   "        <pdf:Producer>leantex</pdf:Producer>\n" ++
   "    </rdf:Description>\n" ++
@@ -280,7 +260,7 @@ private def xmpPacket (info : Ir.Meta) : String :=
 
 /-- The catalog's `/Lang` from the declared language tag (ISO 32000-2 §14.9.2.2), none when undeclared. -/
 public def langEntry : Option String → Array (String × PdfRead.Obj)
-  | some tag => #[("Lang", .str s!"({pdfString tag})".toUTF8)]
+  | some tag => #[("Lang", PdfRead.textString tag)]
   | none => #[]
 
 /-- The catalog's tagging entries, `/MarkInfo << /Marked true >>` and the structure tree root,
@@ -319,11 +299,11 @@ public def ocEntries (figs : Array (String × Nat × PdfRead.FormOc)) :
     .arr (figs.flatMap fun (_, base, oc) => refsFrom base (pick oc))
   let order := figs.filterMap fun (label, base, oc) =>
     if oc.groups.isEmpty then none
-    else some (PdfRead.Obj.arr (#[litObj (pdfTextString label)] ++ refsFrom base oc.groups))
+    else some (PdfRead.Obj.arr (#[PdfRead.textString label] ++ refsFrom base oc.groups))
   let radio := figs.flatMap fun (_, base, oc) => oc.radio.map fun set => .arr (refsFrom base set)
   if figs.isEmpty then #[] else
   #[("OCProperties", .dict #[("OCGs", all (·.groups)),
-    ("D", .dict #[("Name", litObj (pdfTextString "Default")), ("Order", .arr order),
+    ("D", .dict #[("Name", PdfRead.textString "Default"), ("Order", .arr order),
       ("OFF", all (·.off)), ("RBGroups", .arr radio), ("Locked", all (·.locked))])])]
 
 /-- The document catalog (ISO 32000-2 §7.7.2) as a typed object. -/
@@ -2019,9 +1999,9 @@ public def prepare (geom : Geom) (fs : FontSet) (pages : Array PageOut)
           ptObj (line.x + geom.bleed),
           ptObj (geom.pageH + geom.bleed - (line.y - above)), .null])
       | none =>
-        ("A", .dict #[("S", .name "GoTo"), ("D", litObj (pdfTextString name))])
+        ("A", .dict #[("S", .name "GoTo"), ("D", PdfRead.textString name)])
     else
-      ("A", .dict #[("S", .name "URI"), ("URI", litObj s!"({pdfString url})")])
+      ("A", .dict #[("S", .name "URI"), ("URI", PdfRead.literal url.toUTF8)])
   let annots (i : Nat) : Array (String × PdfRead.Obj) :=
     let rects := linkRects geom pages[i]!
     if rects.isEmpty then #[] else
@@ -2070,7 +2050,7 @@ public def prepare (geom : Geom) (fs : FontSet) (pages : Array PageOut)
   -- Metadata is a text string (§7.9.2.2), never raw UTF-8, which a reader decodes as PDFDocEncoding.
   let infoEntry (key : String) (v : Option String) : Array (String × PdfRead.Obj) :=
     match v with
-    | some s => #[(key, litObj (pdfTextString s))]
+    | some s => #[(key, PdfRead.textString s)]
     | none => #[]
   let infoDict : PdfRead.Obj := .dict
     (infoEntry "Title" info.title ++ infoEntry "Author" info.author ++
@@ -2091,10 +2071,10 @@ public def prepare (geom : Geom) (fs : FontSet) (pages : Array PageOut)
         let target : Array (String × PdfRead.Obj) := match e.page, e.url with
           | some p, _ =>
             #[("Dest", .arr #[.ref (t.pageId p) 0, .name "XYZ", .null, .null, .null])]
-          | none, some u => #[("A", .dict #[("S", .name "URI"), ("URI", litObj s!"({pdfString u})")])]
+          | none, some u => #[("A", .dict #[("S", .name "URI"), ("URI", PdfRead.literal u.toUTF8)])]
           | none, none => #[]
         (t.outlineItemId k, PdfRead.Obj.dict
-          (#[("Title", litObj (pdfTextString e.title)),
+          (#[("Title", PdfRead.textString e.title),
              ("Parent", PdfRead.Obj.ref t.outlineRootId 0)] ++ prev ++ next ++ target))
   let elemRef (i : Nat) : PdfRead.Obj := .ref (t.structElemId i) 0
   -- A PDF 1.7 file role-maps its 2.0-only types onto 1.7's and has no namespace objects.
@@ -2119,7 +2099,7 @@ public def prepare (geom : Geom) (fs : FontSet) (pages : Array PageOut)
     | .mcid p m => #[.dict #[("Type", .name "MCR"), ("Pg", .ref (t.pageId p) 0), ("MCID", .int m)]]
     | .leaf _ => #[]
   let optText (key : String) : Option String → Array (String × PdfRead.Obj)
-    | some v => #[(key, litObj (pdfTextString v))]
+    | some v => #[(key, PdfRead.textString v)]
     | none => #[]
   let structElemObj (e : StructElem) : PdfRead.Obj :=
     let parentRef : PdfRead.Obj := match e.parent with

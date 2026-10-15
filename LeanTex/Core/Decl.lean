@@ -1101,10 +1101,33 @@ private def isRatioName (s : String) : Bool :=
       a.toList.all (·.isDigit) && b.toList.all (·.isDigit)
   | _ => false
 
+/-- A string's characters as a string literal's body: each quote doubled. -/
+public def doubleQuotes : List Char → List Char
+  | [] => []
+  | c :: rest => if c == '"' then '"' :: '"' :: doubleQuotes rest else c :: doubleQuotes rest
+
+/-- A string literal's body read back: a doubled quote is one quote. -/
+public def undoubleQuotes : List Char → List Char
+  | '"' :: '"' :: rest => '"' :: undoubleQuotes rest
+  | c :: rest => c :: undoubleQuotes rest
+  | [] => []
+
+/-- `s` as a declaration string literal, which `parseValue` reads back as `s` (`parseValue_quote`). -/
+public def quote (s : String) : String := String.ofList ('"' :: doubleQuotes s.toList ++ ['"'])
+
+/-- The text of a string literal trimmed as `trimAscii` trims, when it is one. -/
+public def stringBody? (cs : List Char) : Option (List Char) :=
+  match ((cs.dropWhile Char.isWhitespace).reverse.dropWhile Char.isWhitespace) with
+  | '"' :: rev =>
+    match rev.reverse with
+    | '"' :: body => some (undoubleQuotes body)
+    | _ => none
+  | _ => none
+
 public def parseValue (raw : String) (tokens : Array (String × SymGlue) := #[]) : Option Value :=
   let s := raw.trimAscii.toString
-  if s.startsWith "\"" && s.endsWith "\"" && s.length ≥ 2 then
-    some (.str (String.ofList (s.toList.drop 1).dropLast))
+  if let some body := stringBody? raw.toList then
+    some (.str (String.ofList body))
   else if s.startsWith "#" || (wrappedColor s).isSome || spotSource s then
     parseModeledValue s
   else if s.startsWith "{" && s.endsWith "}" && s.length ≥ 2 then
@@ -1137,6 +1160,31 @@ public def parseValue (raw : String) (tokens : Array (String × SymGlue) := #[])
     | _, _ =>
       if looksLikeExpr s then (parseLengthExpr tokens s).toOption.map .glue
       else if !s.isEmpty && s.toList.all isIdentChar then some (.ident s) else none
+
+private theorem undoubleQuotes_cons (c : Char) (h : c ≠ '"') (x : List Char) :
+    undoubleQuotes (c :: x) = c :: undoubleQuotes x := by
+  cases x with
+  | nil => simp [undoubleQuotes]
+  | cons d y => simp [undoubleQuotes, h]
+
+private theorem undoubleQuotes_doubleQuotes (cs : List Char) :
+    undoubleQuotes (doubleQuotes cs) = cs := by
+  induction cs with
+  | nil => rfl
+  | cons c rest ih =>
+    by_cases h : c = '"'
+    · subst h
+      simp only [doubleQuotes, BEq.rfl, ↓reduceIte, undoubleQuotes, ih]
+    · have hb : (c == '"') = false := by simpa using h
+      simp only [doubleQuotes, hb, Bool.false_eq_true, ↓reduceIte, undoubleQuotes_cons c h, ih]
+
+private theorem stringBody?_quote (s : String) : stringBody? (quote s).toList = some s.toList := by
+  have hq : ¬ Char.isWhitespace '"' = true := by decide
+  simp [stringBody?, quote, hq, List.reverse_append, undoubleQuotes_doubleQuotes]
+
+public theorem parseValue_quote (s : String) (tokens : Array (String × SymGlue)) :
+    parseValue (quote s) tokens = some (.str s) := by
+  simp only [parseValue, stringBody?_quote, String.ofList_toList]
 
 /-- Parses a `key = value, ...` block, reporting malformed entries. -/
 public def parseBlock (file : String) (src : String) (pos : Pos) (what : String)
