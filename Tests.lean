@@ -1085,6 +1085,7 @@ def main (args : List String) : IO UInt32 := do
   diagSiteCountChecks ref
   Tests.DiagFold.foldChecks ref
   Tests.DiagFold.reflowAccountChecks ref
+  Tests.DiagFold.frameOverfullChecks ref
   Tests.DiagFold.subjectDoorChecks ref
   elabWarningContractChecks ref
   elabTitleBoundaryChecks ref

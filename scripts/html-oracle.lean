@@ -10,6 +10,7 @@ import scripts.Playwright
 open LeanTex.Core
 
 def matrixPath : String := "testdata/oracles/html-reader-matrix.txt"
+def shapesPath : String := "testdata/oracles/stage-shapes.txt"
 def leantexBin : String := ".lake/build/bin/leantex"
 
 /-- The readers the matrix declares as targets, declared by the file, not by what a host
@@ -921,6 +922,114 @@ const stageFit = async (page, fx) => {
     why: r.over.length ? `${r.over.length}/${r.n} stages run past their foot: ${r.over.join(', ')}` : '' };
 };
 
+// The window shapes a reader brings besides the deck's own are reported, never
+// gated, as the shape is the reader's: per stage in the snap state a reader
+// lands on, the outermost element its scrollport clips by more than a pixel
+// and each text block set on more lines than at the deck's own aspect.
+const readerShapes = [['16:10', 1440, 900], ['4:3', 1024, 768], ['phone', 390, 844]];
+const textBlocks = 'p, li, dt, dd, h1, h2, h3, h4, h5, h6, figcaption, caption, td, th, pre, summary';
+const shapeRead = (textBlocks) => {
+  const name = (el) => {
+    const t = [...(el.textContent || '').replace(/\s+/g, ' ').trim()].slice(0, 32).join('');
+    return el.tagName.toLowerCase() + (t ? ' ' + JSON.stringify(t) : '');
+  };
+  const extent = (el) => {
+    if (el.matches('img, svg, canvas, video')) return el.getBoundingClientRect();
+    const r = document.createRange();
+    r.selectNodeContents(el);
+    return r.getBoundingClientRect();
+  };
+  // A line is a run of its text's fragments whose middles stand inside one band, so a
+  // raised script or a taller run shares its line and a child box counts no line of its own.
+  const lines = (el) => {
+    const qs = [];
+    const walk = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    for (let t = walk.nextNode(); t; t = walk.nextNode()) {
+      if (!t.data.trim()) continue;
+      const r = document.createRange();
+      r.selectNodeContents(t);
+      for (const q of r.getClientRects()) if (q.width > 0 && q.height > 0) qs.push(q);
+    }
+    qs.sort((a, b) => a.top - b.top);
+    let n = 0, bottom = -Infinity;
+    for (const q of qs) {
+      if ((q.top + q.bottom) / 2 > bottom) { n++; bottom = q.bottom; } else bottom = Math.max(bottom, q.bottom);
+    }
+    return n;
+  };
+  const inks = (el) => el.matches('img, svg, math, canvas, video') ||
+    [...el.childNodes].some(n => n.nodeType === 3 && n.data.trim());
+  const frames = [];
+  for (const s of document.querySelectorAll('section.slide, section.section-page')) {
+    const track = s.closest('.slide-track');
+    const label = s.id || (track && track.id) || s.dataset.frameNumber || s.dataset.slideLabel || '-';
+    const box = s.getBoundingClientRect();
+    const left = box.left + s.clientLeft, top = box.top + s.clientTop;
+    const right = left + s.clientWidth, bottom = top + s.clientHeight;
+    const past = (el) => {
+      const r = extent(el);
+      if (r.width === 0 && r.height === 0) return [];
+      return [['right', r.right - right], ['below', r.bottom - bottom], ['left', left - r.left]]
+        .filter(([, d]) => d > 1);
+    };
+    const clipped = [];
+    let held = null;
+    for (const el of s.querySelectorAll('*')) {
+      if (held && held.contains(el)) continue;
+      if (!el.checkVisibility() || !inks(el) || past(el).length === 0) continue;
+      let top = el;
+      while (top.parentElement && top.parentElement !== s && past(top.parentElement).length) top = top.parentElement;
+      clipped.push(name(top) + ' ' + past(top).map(([w, d]) => Math.round(d) + 'px ' + w).join(' '));
+      held = top;
+    }
+    const counts = [...s.querySelectorAll(textBlocks)]
+      .map(el => [name(el), el.checkVisibility() ? lines(el) : 0]);
+    frames.push({ label, clipped, counts });
+  }
+  return frames;
+};
+
+// One deck's report rows: per shape, `fits` or each stage's clipped and newly
+// wrapped elements, the deck's own aspect first.
+const stageShapes = async (page) => {
+  const deck = await page.evaluate(() =>
+    /mandatory/.test(getComputedStyle(document.documentElement).scrollSnapType));
+  if (!deck) return [];
+  const pt = /^([\d.]+)pt ([\d.]+)pt$/.exec((await pageSizeOf(page)).trim());
+  if (!pt) return [['own', '-', 'unmeasured: no @page size in points']];
+  const read = async (w, h) => {
+    await page.setViewportSize({ width: w, height: h });
+    await page.evaluate(() => document.fonts.ready);
+    await page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
+    return page.evaluate(shapeRead, textBlocks);
+  };
+  const ownH = Math.round(1280 * +pt[2] / +pt[1]);
+  const rows = [];
+  try {
+    const own = await read(1280, ownH);
+    for (const [shape, w, h] of [['own', 1280, ownH], ...readerShapes]) {
+      const frames = shape === 'own' ? own : await read(w, h);
+      const at = `${shape} ${w}x${h}`;
+      let any = false;
+      frames.forEach((f, i) => {
+        const base = (own[i] || { counts: [] }).counts;
+        const wrapped = f.counts.flatMap(([n, k], j) =>
+          base[j] && k > base[j][1] ? [`${n} ${base[j][1]}→${k} lines`] : []);
+        if (f.clipped.length === 0 && wrapped.length === 0) return;
+        any = true;
+        rows.push([at, f.label, [f.clipped.length ? 'clipped: ' + f.clipped.join('; ') : '',
+          wrapped.length ? 'wrapped: ' + wrapped.join('; ') : ''].filter(Boolean).join('  ')]);
+      });
+      if (!any) rows.push([at, '-', 'fits']);
+    }
+  } catch (e) {
+    rows.push(['-', '-', 'unmeasured: ' + clean(String(e.message).split('\n')[0])]);
+  } finally {
+    await page.setViewportSize({ width: 1280, height: 720 });
+  }
+  return rows;
+};
+
 const deckLinks = async (page, url) => {
   const info = await page.evaluate(() => {
     if (!document.documentElement.hasAttribute('data-deck-script')) return null;
@@ -1182,6 +1291,29 @@ async function runReader(name) {
     if ((await control.evaluate(mathLineJudge)).ok) throw new Error('math-line control: collapsed edge spaces');
     await control.setContent(edged(' style="white-space: pre"'));
     if (!(await control.evaluate(mathLineJudge)).ok) throw new Error('math-line control: kept edge spaces');
+    // The shape report names what a narrow window costs a stage and nothing at
+    // the deck's own aspect, a held run it clips and a line it re-wraps, or says
+    // its control failed, a report the gate never reads.
+    try {
+      const stagePage = '<style>html { scroll-snap-type: x mandatory } section.slide { width: 100vw; ' +
+        'height: 100dvh; overflow: auto } p { font-size: 4vh; margin: 0 }</style><section class="slide" ' +
+        'id="s1"><p>an invented line the deck holds</p><p style="white-space: nowrap">a held invented ' +
+        'run wider than a phone</p></section>';
+      await control.setViewportSize({ width: 1280, height: 720 });
+      await control.setContent(stagePage);
+      const ownShape = await control.evaluate(shapeRead, textBlocks);
+      await control.setViewportSize({ width: 390, height: 844 });
+      const narrowShape = await control.evaluate(shapeRead, textBlocks);
+      const ok = ownShape.length === 1 && ownShape[0].clipped.length === 0 &&
+        narrowShape[0].clipped.some(c => c.startsWith('p "a held')) &&
+        narrowShape[0].counts[0][1] > ownShape[0].counts[0][1];
+      if (!ok) out('shape', '-', name, 'control', '-', 'unmeasured: the control reads ' +
+        clean(JSON.stringify([ownShape[0], narrowShape[0]])));
+    } catch (e) {
+      out('shape', '-', name, 'control', '-', 'unmeasured: ' + clean(String(e.message).split('\n')[0]));
+    } finally {
+      await control.setViewportSize({ width: 1280, height: 720 });
+    }
     // Both disclosure judges break once: a closed body forced into view on
     // screen, and a closed body printed with no print rule to show it.
     const closed = '<details><summary>A</summary><p>B</p></details>';
@@ -1300,6 +1432,9 @@ async function runReader(name) {
       }
       out(fx, name, 'math-line', cell(await mathLine(page)));
       out(fx, name, 'stage-fit', cell(await stageFit(page, fx)));
+      for (const [shape, frame, what] of await stageShapes(page).catch(e =>
+          [['-', '-', 'unmeasured: ' + clean(String(e.message).split('\n')[0])]]))
+        out('shape', fx, name, shape, frame, clean(what));
       const links = await deckLinks(page, url);
       out(fx, name, 'deck-links', cell(links));
       if (links.after) throw links.after;
@@ -1436,15 +1571,20 @@ structure Probe where
   unavailable : Array (String × String)
   /-- The loss the probe named when it stopped before its last row. -/
   unfinished : Option String
+  /-- (fixture, reader, shape, frame, what) for each deck's reported window shapes. -/
+  shapes : Array (String × String × String × String × String)
 
 def parseProbe (out : String) : Probe := Id.run do
-  let mut p : Probe := { cells := #[], versions := #[], unavailable := #[], unfinished := none }
+  let mut p : Probe :=
+    { cells := #[], versions := #[], unavailable := #[], unfinished := none, shapes := #[] }
   for l in out.splitOn "\n" do
     match l.splitOn "\t" with
     | ["reader", r, "version", v] => p := { p with versions := p.versions.push (r, v) }
     | ["reader", r, "unavailable", why] => p := { p with unavailable := p.unavailable.push (r, why) }
     | ["budget", ms] => p := { p with unfinished := some s!"the probe's {ms} ms budget ran out" }
     | ["unfinished", why] => p := { p with unfinished := some why }
+    | ["shape", fx, r, shape, frame, what] =>
+      p := { p with shapes := p.shapes.push (fx, r, shape, frame, what) }
     | [fx, r, f, v] => p := { p with cells := p.cells.push { fixture := fx, reader := r, feature := f, value := v } }
     | _ => pure ()
   return p
@@ -1714,6 +1854,22 @@ def loadCheck (probePath : Option String) : IO UInt32 := do
     if bad == 0 then IO.println "html-oracle: load check ok"
     return if bad == 0 then 0 else 1
 
+/-- The window-shape report: per deck, reader and shape, each frame its stage clips or re-wraps,
+or `fits`; the gate never reads it, since the window's shape is the reader's. -/
+def renderShapes (p : Probe) (date srcKey : String) : String := Id.run do
+  let mut out := "# generated by scripts/html-oracle.lean — a report, never a gate: the window's \
+shape is the reader's\n"
+  out := out ++ "# per deck and window shape, each stage that clips an element or sets a text \
+block on more lines than at the deck's own aspect, in the snap state a reader lands on\n"
+  out := out ++ s!"date: {date}\nsrc-key: {srcKey}\n"
+  for (r, v) in p.versions do out := out ++ s!"reader: {r} {v}\n"
+  let fixtures := p.shapes.foldl (fun acc (fx, _) => if acc.contains fx then acc else acc.push fx) #[]
+  for fx in fixtures do
+    out := out ++ s!"\n[{fx}]\n"
+    for (f, r, shape, frame, what) in p.shapes do
+      if f == fx then out := out ++ s!"{r}  {shape}  {frame}  {what}\n"
+  return out
+
 def regenerate : IO UInt32 := do
   if !(← System.FilePath.pathExists leantexBin) then
     return (← die 2 s!"html-oracle: {leantexBin} not found; run lake build first")
@@ -1770,7 +1926,8 @@ so the matrix would describe pages nothing ties to this tree; nothing written")
           "-o", (control / "code-narrow.html").toString] }
     if narrow.exitCode != 0 then
       return (← die 2 s!"html-oracle: the narrow-box control page did not build:\n{narrow.stdout}{narrow.stderr}")
-    let mut probe : Probe := { cells := #[], versions := #[], unavailable := #[], unfinished := none }
+    let mut probe : Probe :=
+      { cells := #[], versions := #[], unavailable := #[], unfinished := none, shapes := #[] }
     let mut tools := s!"node {nodeVersion}"
     match chromium with
     | none =>
@@ -1821,7 +1978,8 @@ committed:"
       return 1
     IO.FS.createDirAll "testdata/oracles"
     IO.FS.writeFile matrixPath text
-    IO.println s!"html-oracle: wrote {matrixPath} — {fixtures.size} fixtures, {tools}"
+    IO.FS.writeFile shapesPath (renderShapes probe date keys.html)
+    IO.println s!"html-oracle: wrote {matrixPath} and {shapesPath} — {fixtures.size} fixtures, {tools}"
   finally
     IO.FS.removeDirAll work
   checkFile matrixPath
@@ -1853,7 +2011,7 @@ def selftest : IO UInt32 := do
   let probeOf (xs : List (String × String)) (unfinished : Option String) : Probe :=
     { cells := xs.toArray.map fun (fixture, value) =>
         { fixture, reader := "chromium", feature := "deck-links", value }
-      versions := #[("chromium", "1")], unavailable := #[], unfinished }
+      versions := #[("chromium", "1")], unavailable := #[], unfinished, shapes := #[] }
   let cellOf (p : Probe) (xs : Array String) := featureCell p xs "deck-links" "chromium"
   let budget := (parseProbe "budget\t900000\n").unfinished
   let errRow : Cell :=

@@ -838,6 +838,8 @@ public structure FrameOpening where
   palette : Ir.Palette
   area : FrameArea := .margins
   fit : FrameFitMode := .spill
+  /-- Whether the web page sets the frame as a stage of its own, as a deck's frames and dividers. -/
+  stage : Bool := false
   deriving Repr, Inhabited
 
 public def FrameOpening.footer (f : FrameOpening) : Option (Array Ir.BandSlot) :=
@@ -890,7 +892,10 @@ public structure ParagraphBreaks where
   key : Option Span := none
   /-- Each declared line of it that re-flowed, in order. -/
   lines : Array ReflowedLine := #[]
-  frameNumber : Option Nat := none
+  /-- The label of the frame its page shows (`FrameOpening.label`). -/
+  frameLabel : Option String := none
+  /-- Whether its page is a stage the web page sets too (`FrameOpening.stage`). -/
+  stage : Bool := false
   deriving Repr, Inhabited
 
 /-- A paragraph's re-flow census key: its structure leaf, else
@@ -7034,6 +7039,8 @@ public structure Spacing.Page where
   private curFrameLabel : Option String := none
   /-- The source frame and overlay opened by `.frameOpen`. -/
   private curFrameOrigin : Option FrameOrigin := none
+  /-- Whether the frame opened by `.frameOpen` is a stage the web page sets too. -/
+  private curStage : Bool := false
   /-- The footline band's box for pages closed from here on, the one
   value the text-area floor and the band's baseline both read. -/
   private footBox : Option (Sp × Sp) := none
@@ -7085,6 +7092,9 @@ public structure Spacing.Page where
   private notesH : Sp := 0
   private diags : Array Diag := #[]
   private paragraphBreaks : Array ParagraphBreaks := #[]
+  /-- Per located overfull line's census key, its detail's lead and the furthest it ran, which
+  the postlude states once (`mergeOverfull`). -/
+  private overfullMost : Std.HashMap String (String × Sp) := {}
 
 private abbrev B := Spacing.Page
 
@@ -8647,11 +8657,33 @@ def overfullSubject : Option Span → String
   | some s => s!"overfull:{s.file}:{s.pos.line}:{s.pos.col}"
   | none => "overfull:unlocated"
 
-private def Spacing.Page.warnOverfull (b : B) (source : Option Span) : B :=
+/-- How far an overfull line runs, after its frame's name on a stage. -/
+private def overfullDetail (lead : String) (excess : Sp) : String :=
+  lead ++ s!"{excess.toPtString}pt too wide"
+
+/-- W0005 for a line set `excess` past its measure: a stage sets that measure in both artifacts,
+in its own words and with its frame, while a flow page's lines are the PDF's. -/
+private def Spacing.Page.warnOverfull (b : B) (source : Option Span) (excess : Option Sp) : B :=
+  let subject := overfullSubject source
+  let lead := if b.curStage then s!"{frameWho b.curFrameLabel}: " else ""
+  let most := match source, excess with
+    | some _, some e => b.overfullMost.insert subject
+        (match b.overfullMost.get? subject with
+          | some (l, m) => if m < e then (lead, e) else (l, m)
+          | none => (lead, e))
+    | _, _ => b.overfullMost
   { b with
     diags := b.diags.push
-      (Diag.of .W0005 "overfull line; no feasible break" (span := source)
-        (subject := some (overfullSubject source)) (output := some .pdf)) }
+      (Diag.of .W0005
+        (if b.curStage then "a frame's line runs past its measure; no feasible break"
+          else "overfull line; no feasible break") (span := source)
+        (subject := some subject)
+        (detail := match source, excess with
+          | some _, some e => some (overfullDetail lead e)
+          | none, _ => if b.curStage then some (frameWho b.curFrameLabel) else none
+          | some _, none => none)
+        (output := if b.curStage then none else some .pdf))
+    overfullMost := most }
 
 /-- First located item of the line actually set, found by halving over the sites in item order. -/
 private def lineSource (sources : Array (Nat × Span)) (first last : Nat) : Option Span := Id.run do
@@ -10773,7 +10805,7 @@ private def collectSection (r : Rd) (a : Acc) (level : Ir.HeadingLevel) (num : O
     -- A divider is moloch's `\frame[plain,c,noframenumbering]`: a plain frame's text area.
     let area : FrameArea := if a.footAllowed then .paper else .margins
     let opening := { a.frameOpening false area with
-      origin := none, number := none, label := none, allowed := false }
+      origin := none, number := none, label := none, allowed := false, stage := true }
     let a := { a with ops := (a.ops.push .frameClose).push (.frameOpen false none opening) }
     let ground := Ir.frameGroundOf a.pal false .center
     let a := { a with ops := a.ops.push (.pageStyle ground VDist.center) }
@@ -12059,9 +12091,9 @@ public def footBandBox (geom : Geom) (fs : FontSet) (imgs : Image.Store) (n : Na
 
 /-- A frame opens a page: the boundary, the `frameOpen` marker, and the frame's
 footer; title and standout pages carry none (beamerinnerthememoloch.dtx). -/
-private def collectFrameOpen (a : Acc) (standout breakable : Bool) (area : FrameArea) : Acc :=
+private def collectFrameOpen (a : Acc) (standout breakable stage : Bool) (area : FrameArea) : Acc :=
   let a := a.pageBreak
-  let opening := a.frameOpening standout area
+  let opening := { a.frameOpening standout area with stage }
   { a with ops := a.ops.push (.frameOpen breakable a.frameSource opening) }
 
 /-- The reader a frame's body is walked with: headings belong to
@@ -12634,7 +12666,7 @@ private def collectBlock (r : Rd) (a : Acc)
     let a := { a with frameFit := fit }
     -- With chrome allowed, every frame but the title page takes beamer's text area.
     let area := frameAreaFor a.footAllowed valign
-    let a := collectFrameOpen a standout breakable area
+    let a := collectFrameOpen a standout breakable r.slides area
     let r := frameReader r a standout area
     -- A standout frame shows its body alone, so its title's leaves are stepped over.
     let titleSpan := Struct.leafCountInlines title
@@ -13552,6 +13584,17 @@ private def texBoxBaseline (fs : FontSet) (b : B) (j : ParaJob) (tb : TexBox) (s
   let top := if tb.more then b.boxDepth + inkClearance else texBoxTop bsOut b.boxDepth height
   top + rise + tb.inset + h1
 
+/-- How far a paragraph's line sets past its measure, where its overrun flag is set. -/
+private def lineOverrunBy (j : ParaJob) (first : Bool) (prev brk : Nat) : Option Sp :=
+  let lead := if first then j.hangIndent else 0
+  let width := j.target + lead
+  let a := j.lineStart first prev
+  let shrinks := j.rightFil && width < (measure j.items a brk).natural
+  let set := setLine j.items a brk width
+      (setsToMeasure (!j.center && !j.flushRight && j.justify) j.items a brk || shrinks)
+      (j.protrude && !shrinks) (j.expand && !shrinks) j.wordOffsets
+  if set.2.2.1 then some (set.2.1 - width) else none
+
 /-- One break of a paragraph placed, the fold step `placePara` runs over its breaks. -/
 private def placeParaLine (fs : FontSet) (j : ParaJob)
     (st : B × Nat × Bool) (brk : Nat) : B × Nat × Bool :=
@@ -13560,6 +13603,7 @@ private def placeParaLine (fs : FontSet) (j : ParaJob)
   -- premise: reflowAccountChecks — every overrun line is named once, by W0005 or its re-flow.
   let b1 := if g.2.2.2.1 && !(j.carried[brk]?.getD false) then
       b0.warnOverfull (lineSource j.itemSources (j.lineStart st.2.2 st.2.1) brk)
+        (lineOverrunBy j st.2.2 st.2.1 brk)
     else b0
   -- The notes whose marks this line carries ride with it through fit and spill.
   let ns := if j.notes.isEmpty then #[] else
@@ -13625,14 +13669,12 @@ private def placesSaid (file : Option String) (sites : Array Span) : String :=
 
 /-- A paragraph's re-flow diagnostic (W0386) from its re-flowed
 declared lines, the one maker placement and the postlude share. -/
-private def reflowRecord (subject : String) (frame : Option Nat) (lines : Array ReflowedLine) :
-    Diag :=
+private def reflowRecord (subject : String) (frame : Option String) (inFrame : Bool)
+    (lines : Array ReflowedLine) : Diag :=
   let site := lines.findSome? (·.site)
   let over := lines.foldl (fun acc l => acc ++ l.over) #[]
   let ships := lines.foldl (fun n l => n + l.ships) 0
-  let loc := match frame with
-    | some n => s!"in frame {n}: "
-    | none => ""
+  let loc := if inFrame then s!"in {frameWho frame}: " else ""
   let shape := if lines.size == 1 then s!"it ships as {ships} lines"
     else s!"{lines.size} declared lines ship as {ships} lines"
   let widest := over.foldl (fun m o => max m o.excess) 0
@@ -13646,14 +13688,14 @@ by up to {widest.toPtString}pt" ++ (if places.isEmpty then "" else s!", at {plac
 still runs past the measure") site
     (help := "shorten the declared line, reduce \\page{ hmargin = ... } \
 to widen the measure, or declare a narrower face")
-    (detail := some (loc ++ shape ++ past)) (output := some .pdf)
+    (detail := some (loc ++ shape ++ past)) (output := if inFrame then none else some .pdf)
     (carries := if over.isEmpty then [] else [.W0005])
 
 /-- W0386: a declared line ended where the author meant it and re-flowed,
 named rather than refused; silent where nothing was declared. -/
 private def Spacing.Page.warnReflow (b : B) (p : ParagraphBreaks) (reflowed : Bool) : B :=
   if reflowed then
-    { b with diags := b.diags.push (reflowRecord p.subject p.frameNumber p.lines) }
+    { b with diags := b.diags.push (reflowRecord p.subject p.frameLabel p.stage p.lines) }
   else b
 
 @[simp] private theorem warnReflow_pages (b : B) (q : ParagraphBreaks) (r : Bool) :
@@ -13686,17 +13728,6 @@ private theorem warnReflow_accounts (b : B) (q : ParagraphBreaks) (reflowed : Bo
       b.diags.size + (if reflowed then 1 else 0) := by
   unfold Spacing.Page.warnReflow
   split <;> simp_all
-
-/-- How far a paragraph's line sets past its measure, where its overrun flag is set. -/
-private def lineOverrunBy (j : ParaJob) (first : Bool) (prev brk : Nat) : Option Sp :=
-  let lead := if first then j.hangIndent else 0
-  let width := j.target + lead
-  let a := j.lineStart first prev
-  let shrinks := j.rightFil && width < (measure j.items a brk).natural
-  let set := setLine j.items a brk width
-      (setsToMeasure (!j.center && !j.flushRight && j.justify) j.items a brk || shrinks)
-      (j.protrude && !shrinks) (j.expand && !shrinks) j.wordOffsets
-  if set.2.2.1 then some (set.2.1 - width) else none
 
 private theorem paraLineGeom_overruns (fs : FontSet) (j : ParaJob) (b : B) (first : Bool)
     (prev brk : Nat) :
@@ -13753,7 +13784,8 @@ private def paragraphRecord (b : B) (j : ParaJob) (breaks : Array Nat) : Paragra
   let p := paragraphBreaksOf b.paragraphBreaks.size j.leaf b.curFrameOrigin j.declaresLines j.items breaks
   if p.reflows.isEmpty then p else
     let lines := (reflowWalk j p).2
-    { p with key := lines.findSome? (·.site), lines := lines, frameNumber := b.curFrame }
+    { p with key := lines.findSome? (·.site), lines := lines, frameLabel := b.curFrameLabel
+             stage := b.curStage }
 
 /-- The job as its lines are placed: a reaching TeX box learns
 its last line's depth first, and re-flowed lines are marked. -/
@@ -14395,7 +14427,9 @@ private theorem paraLineGeom_chars {n : Nat} (fs : FontSet) (j : ParaJob)
         (Spacing.Paragraph.wordOffsets j) hp
 
 private theorem census_warnOverfull (pick : Option Nat → Bool → Bool) (b : B)
-    (source : Option Span) : Spacing.Page.census pick (Spacing.Page.warnOverfull b source) = Spacing.Page.census pick b := rfl
+    (source : Option Span) (excess : Option Sp) :
+    Spacing.Page.census pick (Spacing.Page.warnOverfull b source excess) =
+      Spacing.Page.census pick b := rfl
 
 private theorem census_openDisplayAt (pick : Option Nat → Bool → Bool) (b : B) (j : ParaJob)
     (first : Bool) (x : Sp) (segs : Array Seg) :
@@ -14949,13 +14983,13 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
     b := { b with frameBreak := some br, frameSource := source, spillWarned := false,
                   curFit := opening.fit,
                   curFrame := opening.number, curFrameLabel := opening.label
-                  curFrameOrigin := opening.origin
+                  curFrameOrigin := opening.origin, curStage := opening.stage
                   curFoot := opening.footer, curFootLook := some opening.look
                   footBox := opening.footer.map
                     (bandBox fs imgs b.geom b.xHeight (b.pages.size + 1))
                   frameArea := opening.area }
   | .frameClose =>
-    b := { b with curFrame := none, curFrameLabel := none, curFrameOrigin := none,
+    b := { b with curFrame := none, curFrameLabel := none, curFrameOrigin := none, curStage := false,
                   curFoot := none, footBox := none, curFootLook := none,
                   frameArea := .margins }
   | .pageOpening opening => b := { b with pageState := b.pageState.applyOpening opening }
@@ -15902,6 +15936,7 @@ private def restartColumn (start latest : B) (inked : Nat) : B :=
                openRegions := start.openRegions.map RegionStart.nextPage, closedRegions := #[]
                diags := latest.diags
                paragraphBreaks := latest.paragraphBreaks
+               overfullMost := latest.overfullMost
                pendingAnchors := latest.pendingAnchors }
 
 /-- Join ink on a physical page, a second flow's ground preceding both flows' ink. -/
@@ -15968,6 +16003,12 @@ private def joinColumnCurrent (a b : B) : B :=
       { s with lines := cur.lines.size, fills := cur.fills.size, inks := cur.inks.size,
                first := false }) }
 
+/-- Two columns' furthest runs per overfull line, the further of each kept. -/
+private def mergeMost (x y : Std.HashMap String (String × Sp)) : Std.HashMap String (String × Sp) :=
+  y.fold (fun acc k v => match acc.get? k with
+    | some w => if w.2 < v.2 then acc.insert k v else acc
+    | none => acc.insert k v) x
+
 /-- Join completed pages by physical index, the last page left open for the furthest column. -/
 private def joinColumn (first : Nat) (a b : B) : B :=
   let left := if a.pages.size < b.pages.size then a.finishPage else a
@@ -15984,6 +16025,7 @@ private def joinColumn (first : Nat) (a b : B) : B :=
     geom := b.geom, docBg := b.docBg
     pendingAnchors := b.pendingAnchors
     paragraphBreaks := b.paragraphBreaks
+    overfullMost := mergeMost a.overfullMost b.overfullMost
     diags := b.diags ++ left.diags.extract a.diags.size left.diags.size ++
       right.diags.extract b.diags.size right.diags.size }
 
@@ -16786,8 +16828,8 @@ private theorem reflowStep_placeLine (fs : FontSet) (b : B) (x size : Sp)
   apply ReflowStep.keepInk
   exact reflowStep_fitCommit ..
 
-private theorem reflowStep_warnOverfull (b : B) (source : Option Span) :
-    ReflowStep b (b.warnOverfull source) :=
+private theorem reflowStep_warnOverfull (b : B) (source : Option Span) (excess : Option Sp) :
+    ReflowStep b (b.warnOverfull source excess) :=
   ⟨rfl, fun _ h => Array.mem_push.mpr (Or.inl h)⟩
 
 private theorem reflowStep_openDisplayAt (b : B) (j : ParaJob) (first : Bool)
@@ -17080,6 +17122,8 @@ public structure Shipped where
   /-- The diagnostics as of shipping, the builder's own and the measure band's. -/
   diags : Array Diag
   paragraphBreaks : Array ParagraphBreaks := #[]
+  /-- The builder's furthest run per located overfull line (`Spacing.Page.overfullMost`). -/
+  overfullMost : Std.HashMap String (String × Sp) := {}
   labelRequests : Array LabelAudit.Request := #[]
   doc : Doc
   geom : Geom
@@ -17249,7 +17293,7 @@ private def diagKey (d : Diag) : DiagKey :=
 /-- The one record the unlocated overfull lines collapse into,
 worded as their summary with the count in its detail. -/
 private def summarizeOverfull (overfull : Nat) (d : Diag) : Diag :=
-  if d.code == "W0005" && d.span.isNone && overfull > 1 then
+  if d.code == "W0005" && d.span.isNone && d.output == some .pdf && overfull > 1 then
     { d with message := "overfull lines that no source site names; no feasible break"
              detail := some s!"{overfull} overfull lines" }
   else d
@@ -17258,7 +17302,7 @@ private def summarizeOverfull (overfull : Nat) (d : Diag) : Diag :=
 distinct declarations with their provenance. -/
 private def uniqueDiags (diags : Array Diag) : Array Diag := Id.run do
   let overfull := diags.foldl (fun n d =>
-    if d.code == "W0005" && d.span.isNone then n + 1 else n) 0
+    if d.code == "W0005" && d.span.isNone && d.output == some .pdf then n + 1 else n) 0
   let mut st : Std.HashSet DiagKey × Array Diag := ({}, #[])
   for d in diags do
     st := if st.1.contains (diagKey d) then st
@@ -17285,7 +17329,7 @@ private theorem uniqueDiags_covers (diags : Array Diag) :
   unfold uniqueDiags
   simp only [Array.forIn_pure_yield_eq_foldl]
   let overfull := diags.foldl (fun n d =>
-    if d.code == "W0005" && d.span.isNone then n + 1 else n) 0
+    if d.code == "W0005" && d.span.isNone && d.output == some .pdf then n + 1 else n) 0
   have h := Array.foldl_induction (as := diags)
     (motive := fun i (st : Std.HashSet DiagKey × Array Diag) =>
       (∀ key ∈ st.1, diagReported st.2 key.1 key.2.2.1) ∧
@@ -17385,17 +17429,17 @@ private def mergeReflowLines (a b : Array ReflowedLine) : Array ReflowedLine := 
 census key overlay steps of one frame each named. -/
 private def reflowsMerged (ps : Array ParagraphBreaks) : Std.HashMap String Diag := Id.run do
   let mut groups : Std.HashMap String
-      (Option Nat × Array ReflowedLine × Array (Option FrameOrigin) × Bool) := {}
+      (Option String × Bool × Array ReflowedLine × Array (Option FrameOrigin) × Bool) := {}
   for p in ps do
     unless p.lines.isEmpty do
       let s := p.subject
       groups := groups.insert s <| match groups.get? s with
-        | some (f, ls, steps, apart) =>
-          (f, mergeReflowLines ls p.lines, steps.push p.frame, apart && !steps.contains p.frame)
-        | none => (p.frameNumber, p.lines, #[p.frame], p.frame.isSome)
+        | some (f, st, ls, steps, apart) =>
+          (f, st, mergeReflowLines ls p.lines, steps.push p.frame, apart && !steps.contains p.frame)
+        | none => (p.frameLabel, p.stage, p.lines, #[p.frame], p.frame.isSome)
   let mut out : Std.HashMap String Diag := {}
-  for (s, f, ls, steps, apart) in groups do
-    if apart && steps.size > 1 then out := out.insert s (reflowRecord s f ls)
+  for (s, f, st, ls, steps, apart) in groups do
+    if apart && steps.size > 1 then out := out.insert s (reflowRecord s f st ls)
   return out
 
 /-- A W0386 record as its census key's merged record says it. -/
@@ -17414,17 +17458,36 @@ private theorem mergeReflow_names (merged : Std.HashMap String Diag) (d : Diag) 
   · split <;> exact ⟨rfl, rfl⟩
   · exact ⟨rfl, rfl⟩
 
-/-- One report per problem: re-flows merged
-(`mergeReflow`), then repeats dropped (`uniqueDiags`). -/
-private def reportOnce (ps : Array ParagraphBreaks) (diags : Array Diag) : Array Diag :=
-  uniqueDiags (diags.map (mergeReflow (reflowsMerged ps)))
+/-- A located overfull line's record states the furthest any setting of its line ran. -/
+private def mergeOverfull (most : Std.HashMap String (String × Sp)) (d : Diag) : Diag :=
+  if d.kind == .W0005 && d.span.isSome then
+    match d.subject.bind most.get? with
+    | some (lead, e) => { d with detail := some (overfullDetail lead e) }
+    | none => d
+  else d
 
-private theorem reportOnce_covers (ps : Array ParagraphBreaks) (diags : Array Diag) :
-    ∀ d ∈ diags, diagReported (reportOnce ps diags) d.code d.subject := by
+private theorem mergeOverfull_names (most : Std.HashMap String (String × Sp)) (d : Diag) :
+    (mergeOverfull most d).code = d.code ∧ (mergeOverfull most d).subject = d.subject := by
+  unfold mergeOverfull
+  split
+  · split <;> exact ⟨rfl, rfl⟩
+  · exact ⟨rfl, rfl⟩
+
+/-- One report per problem: re-flows merged (`mergeReflow`), overfull lines stated at their
+furthest (`mergeOverfull`), then repeats dropped (`uniqueDiags`). -/
+private def reportOnce (ps : Array ParagraphBreaks) (most : Std.HashMap String (String × Sp))
+    (diags : Array Diag) : Array Diag :=
+  uniqueDiags (diags.map fun d => mergeOverfull most (mergeReflow (reflowsMerged ps) d))
+
+private theorem reportOnce_covers (ps : Array ParagraphBreaks)
+    (most : Std.HashMap String (String × Sp)) (diags : Array Diag) :
+    ∀ d ∈ diags, diagReported (reportOnce ps most diags) d.code d.subject := by
   intro d hd
-  obtain ⟨e, he, hc, hs⟩ :=
-    uniqueDiags_covers _ _ (Array.mem_map_of_mem (f := mergeReflow (reflowsMerged ps)) hd)
-  exact ⟨e, he, hc.trans (mergeReflow_names _ d).1, hs.trans (mergeReflow_names _ d).2⟩
+  obtain ⟨e, he, hc, hs⟩ := uniqueDiags_covers _ _
+    (Array.mem_map_of_mem (f := fun d => mergeOverfull most (mergeReflow (reflowsMerged ps) d)) hd)
+  refine ⟨e, he, ?_, ?_⟩
+  · exact hc.trans ((mergeOverfull_names _ _).1.trans (mergeReflow_names _ d).1)
+  · exact hs.trans ((mergeOverfull_names _ _).2.trans (mergeReflow_names _ d).2)
 
 /-- The postlude: running furniture per page (`furnishFrom`),
 one report per problem, and the resolved outline. -/
@@ -17636,7 +17699,7 @@ slot yields in place: shorten the content or drop a slot")
   let fout := furnishFrom (furnishStep fs furnishPage) pages (sh.diags, sh.hyphCache, 0) 0
   let out := fout.1
   let diags := fout.2.1
-  let unique := reportOnce sh.paragraphBreaks diags
+  let unique := reportOnce sh.paragraphBreaks sh.overfullMost diags
   -- An in-document outline target resolves against finalized lines, as a PDF link annotation does.
   let outline := sh.navEntries.map fun (title, target) =>
     if target.startsWith "#" then
@@ -18654,6 +18717,7 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
       spilled := b.spilled
       diags := shipDiags
       paragraphBreaks := b.paragraphBreaks
+      overfullMost := b.overfullMost
       labelRequests := stagedLabelRequests accF.ops
       doc := doc
       geom := geom

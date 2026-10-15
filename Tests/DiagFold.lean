@@ -336,6 +336,60 @@ carry it ({oReflows.map (·.message)})"
       sReflows.all (fun d => d.detail.any (hasStr · "2 declared lines ship as")) &&
       (headLines sErr "W0386").length == 1 && !hasStr sErr "sites)")
 
+/-- A stage's line past its measure, overfull or re-flowed, is named by an HTML build too, once per
+site at the furthest any step set it, as TeX's Overfull \hbox states how far; a poster's are the PDF's. -/
+def frameOverfullChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let some font ← loadTestFont "OpenSans-Regular.ttf"
+    | t "frame overfull: the face loads" false
+  let fs := oneFaceOf font
+  let file := "frame-overfull.tex"
+  let wide := String.ofList (List.replicate 90 'w')
+  let prose (n : Nat) := String.intercalate " " (List.replicate n "alpha beta gamma delta")
+  let located (src : String) : Ir.Doc := (elabLocated file src).1
+  let plain : Config := { cmd := .build file, color := .never }
+  let deckDoc := located (String.intercalate "\n" [
+    "\\documentclass{slides}", "\\begin{document}", "\\begin{frame}", "Opening.", "",
+    wide ++ "\\only<2>{www}", "\\end{frame}", "\\begin{frame}", "Opening.\\\\", prose 6 ++ ".\\\\",
+    "Closing.", "\\end{frame}", "\\end{document}"])
+  let deck := layoutOf fs deckDoc
+  let flowDoc := located (String.intercalate "\n" [
+    "\\documentclass{article}", "\\page{ width = 220pt, margin = 20pt }", "\\begin{document}",
+    "Opening.", "", wide, "\\end{document}"])
+  let flow := layoutOf fs flowDoc
+  let poster := layoutOf fs (located (String.intercalate "\n" [
+    "\\documentclass{poster}", "\\begin{document}", wide ++ wide ++ wide, "\\end{document}"]))
+  let overfull (o : Layout.Out) := o.diags.filter (·.kind == .W0005)
+  let furthest (o : Layout.Out) (right : Dim.Sp) : Dim.Sp :=
+    (bodyLines o).foldl (fun m l => if hasStr (lineText l) wide then max m (l.x + l.setWidth - right)
+      else m) 0
+  let (deckHtml, _, _) ← sink plain #[] deck.diags #[.html]
+  let deckRight := deckDoc.page.width - deckDoc.page.hmargin
+  t s!"frame overfull: a stage's line past its measure is one record for both artifacts, in its own \
+words, at the furthest its steps set it ({(overfull deck).map (·.detail)}, \
+{(furthest deck deckRight).toPtString})"
+    ((overfull deck).size == 1 && (overfull deck).all fun d =>
+      d.output.isNone && d.message.startsWith "a frame's line runs past its measure" &&
+      d.detail == some s!"frame 1: {(furthest deck deckRight).toPtString}pt too wide")
+  t "frame overfull: an HTML build of the deck prints it once"
+    ((headLines deckHtml "W0005").length == 1 && hasStr deckHtml "frame 1: " &&
+      hasStr deckHtml "pt too wide")
+  t s!"frame overfull: a stage's re-flowed declared line is named for both artifacts \
+({(deck.diags.filter (·.kind == .W0386)).map (·.output.map (·.label))})"
+    ((deck.diags.filter (·.kind == .W0386)).size == 1 &&
+      (deck.diags.filter (·.kind == .W0386)).all (fun d =>
+        d.output.isNone && d.detail.any (·.startsWith "in frame 2: ")) &&
+      (headLines deckHtml "W0386").length == 1)
+  let flowRight := flowDoc.page.width - flowDoc.page.hmargin
+  t s!"frame overfull: a flow page's overfull line states how far it runs and names no frame \
+({(overfull flow).map (·.detail)}, {(furthest flow flowRight).toPtString})"
+    ((overfull flow).size == 1 && (overfull flow).all fun d =>
+      d.message == "overfull line; no feasible break" &&
+      d.detail == some s!"{(furthest flow flowRight).toPtString}pt too wide")
+  t s!"frame overfull: a poster, a face the web page re-flows, keeps its lines the PDF's \
+({(overfull poster).map (·.output.map (·.label))})"
+    (!(overfull poster).isEmpty && (overfull poster).all (·.output == some .pdf))
+
 /-- The doors a diagnostic is made through, by their call heads, with whether each takes a subject. -/
 def receiverDoors : List (String × Bool) := [("diag", false), ("diagOf", true), ("warn", false)]
 
