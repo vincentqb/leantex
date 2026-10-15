@@ -361,7 +361,7 @@ private theorem nested_core (items W' W : Array Nat) (F' F : Array Bool) (t : Na
     have := hpw.1
     omega
   have hg := hm.greedy t ht
-  generalize ha : (F.toList.take t).count true = a at hg ⊢
+  generalize (F.toList.take t).count true = a at hg ⊢
   generalize hp : (F.toList.take t).count false = p at hg hpf ⊢
   by_cases hp0 : p = 0
   · subst hp0

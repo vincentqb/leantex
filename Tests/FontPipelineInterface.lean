@@ -45,23 +45,23 @@ example : True := by
 
 -- The scan and filesystem remain explicit inputs to the effect boundary.
 example : IO FontEnv.Cache := FontEnv.Cache.mk'
-example : FontEnv.Cache → String → IO (Except String Font.Font) := FontEnv.Cache.parse
+example : FontEnv.Cache → String → IO (Except String Font) := FontEnv.Cache.parse
 example : FontEnv.Cache → Array FontDb.Face → String → Option String → Nat → Bool →
     IO (Option (FontDb.Face × Option FontDb.Substituted)) :=
   FontEnv.Cache.resolveWeight
-example : String → IO (Except Diag (Font.Font × String)) := FontEnv.loadOverride
+example : String → IO (Except Diag (Font × String)) := FontEnv.loadOverride
 example : String → Array String → IO (List String × Array Diag) := FontEnv.resolveDocDirs
 example : Array FontDb.Face → Option String → Option String → Bool →
-    Array Font.Font → Array String → Array String → Option FontEnv.Cache →
+    Array Font → Array String → Array String → Option FontEnv.Cache →
     IO FontEnv.MathFace :=
   fun faces declared body wantsMath fonts paths missing cache =>
     FontEnv.resolveMath faces declared body wantsMath fonts paths missing cache
 example : Array FontDb.Face → Option String → Option String → Bool →
-    Array Font.Font → Array String → Array String → IO FontEnv.MathFace :=
+    Array Font → Array String → Array String → IO FontEnv.MathFace :=
   fun faces declared body wantsMath fonts paths missing =>
     FontEnv.resolveMath faces declared body wantsMath fonts paths missing
 example (answer : FontEnv.MathFace) :
-    Array Font.Font × Array String × Option Nat × Array String × Array Diag :=
+    Array Font × Array String × Option Nat × Array String × Array Diag :=
   (answer.fonts, answer.paths, answer.index, answer.missing, answer.diags)
 
 example : FontAssembly.FaceScan := { faces := #[], docDirs := [], dirs := #[], diags := #[] }
@@ -121,7 +121,7 @@ example : True := by
   fail_if_success have := FontAssembly.noFontDiag
   trivial
 
-example (_parsed : IO.Ref (Array (String × Font.Font)))
+example (_parsed : IO.Ref (Array (String × Font)))
     (_answers : IO.Ref (Array ((String × Option String × Nat × Bool) ×
       Option (FontDb.Face × Option FontDb.Substituted)))) : True := by
   fail_if_success have : FontEnv.Cache := ⟨_parsed, _answers⟩

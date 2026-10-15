@@ -7,8 +7,8 @@ public section
 
 open LeanTex.Core
 
-private def syntheticFace (name : String) (cff : Bool) : Font.Font :=
-  { (default : Font.Font) with
+private def syntheticFace (name : String) (cff : Bool) : Font :=
+  { (default : Font) with
     psName := name, isCff := cff, unitsPerEm := 1000,
     numGlyphs := 2, widths := #[500, 500] }
 

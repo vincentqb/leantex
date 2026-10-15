@@ -85,7 +85,7 @@ def bruteBest (items : Array Layout.Item) (target : Dim.Sp) : Option Int := Id.r
 /-- List markers reach the positioned page: enumerate order and nesting, itemize depth,
 overlay-stepped items, declared markers, and depth past four. -/
 def listChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
-    (font : Font.Font) : IO Unit := do
+    (font : Font) : IO Unit := do
   let t := check ref
   let geom : Layout.Geom := {}
   let runOn (src : String) : Array Layout.LineOut × Array Diag :=
@@ -1276,7 +1276,7 @@ def linkSignalChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
     | _ => false)
 
 def underlineChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
-    (oneFace : Font.FontSet) (font : Font.Font) : IO Unit := do
+    (oneFace : Font.FontSet) (font : Font) : IO Unit := do
   let t := check ref
   t "underline ir shape" ((elabStr "\\underline{a}").1.body ==
     #[.para #[.decorated .underline #[.text "a"]]])
@@ -1622,7 +1622,7 @@ def displayTexChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
 
 /-- Vertical spacing is TeX's, checked on the placed lines. -/
 def spacingChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
-    (oneFace : Font.FontSet) (font : Font.Font) : IO Unit := do
+    (oneFace : Font.FontSet) (font : Font) : IO Unit := do
   let t := check ref
   let ysOf (g : Layout.Geom) (src : String) : Array Dim.Sp :=
     -- Text lines only: an underline rule rides a sibling line at the same y.
@@ -1790,7 +1790,7 @@ def spacingChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
 /-- Title bars stand their declared gap from the type's body: the cap line above the text, the
 baseline below it. -/
 def titleBarChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
-    (oneFace : Font.FontSet) (font : Font.Font) : IO Unit := do
+    (oneFace : Font.FontSet) (font : Font) : IO Unit := do
   let t := check ref
   let src (last : String) := "\\documentclass{article}" ++
     "\\style{titlepage}{ rule-above = 4pt, rule-above-gap = 18pt, " ++

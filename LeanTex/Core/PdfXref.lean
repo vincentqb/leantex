@@ -92,7 +92,7 @@ theorem encodeList_append (w : Widths) (out : ByteArray) (xs ys : List Entry) :
     encodeList w out (xs ++ ys) = encodeList w (encodeList w out xs) ys := by
   induction xs generalizing out with
   | nil => rfl
-  | cons e es ih => exact ih _
+  | cons e _ ih => exact ih _
 
 theorem encodeList_size (w : Widths) (out : ByteArray) (es : List Entry) :
     (encodeList w out es).size = out.size + w.row * es.length := by

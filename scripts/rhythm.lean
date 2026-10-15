@@ -436,7 +436,7 @@ def engineSource (file : String) : IO Input.Source := do
 
 /-- The engine's pages for a fixture, built as the driver builds one over the shipped
 faces only. -/
-def engineOut (cache : IO.Ref (Array (String × Font.Font))) (faces : Array FontDb.Face)
+def engineOut (cache : IO.Ref (Array (String × Font))) (faces : Array FontDb.Face)
     (oneFace : Font.FontSet) (file : String) : IO (Layout.Out × Array Diag × Nat) := do
   let src ← engineSource file
   let prepared := Elab.prepareExecuted file src.executed
@@ -456,7 +456,7 @@ def engineOut (cache : IO.Ref (Array (String × Font.Font))) (faces : Array Font
 
 /-- The shipped body face and its one-face set, which every fixture's text sets in on both
 sides. -/
-def oneFaceSet (cache : IO.Ref (Array (String × Font.Font))) : IO Font.FontSet := do
+def oneFaceSet (cache : IO.Ref (Array (String × Font))) : IO Font.FontSet := do
   let some body ← Hermetic.loadFont cache (fontsDir / "OpenSans-Regular.ttf").toString
     | throw (IO.userError s!"{fontsDir}/OpenSans-Regular.ttf does not parse")
   return Font.FontSet.ofFace body
@@ -488,7 +488,7 @@ def Measured.near (m : Measured) : Bool := m.within nearMilliBp
 
 /-- A fixture measured, or the fault that stops it: no reference, a reference of another
 source, a failed premise. -/
-def measureFixture (cache : IO.Ref (Array (String × Font.Font))) (faces : Array FontDb.Face)
+def measureFixture (cache : IO.Ref (Array (String × Font))) (faces : Array FontDb.Face)
     (oneFace : Font.FontSet) (name : String) : IO (Except String (Array Measured)) := do
   let file := s!"{rhythmDir}/{name}.tex"
   let src ← IO.FS.readFile file
@@ -703,7 +703,7 @@ const path = require('path');
 
 /-- A fixture's HTML page, emitted as a corpus page is but with no error gate, with the
 image bytes it names. -/
-def engineHtml (cache : IO.Ref (Array (String × Font.Font))) (faces : Array FontDb.Face)
+def engineHtml (cache : IO.Ref (Array (String × Font))) (faces : Array FontDb.Face)
     (oneFace : Font.FontSet) (name : String) : IO (String × Array (String × ByteArray)) := do
   let file := s!"{rhythmDir}/{name}.tex"
   let src ← engineSource file

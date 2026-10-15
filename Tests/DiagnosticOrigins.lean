@@ -12,7 +12,7 @@ namespace Tests
 scalar, and locating a fallback never changes its ink. -/
 def diagnosticOriginChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
-  let load (name : String) : IO Font.Font := do
+  let load (name : String) : IO Font := do
     match Font.parse (← IO.FS.readBinFile (testFonts ++ "/" ++ name)) with
     | .ok f => pure f
     | .error e => throw (IO.userError s!"origins: {name}: {e}")

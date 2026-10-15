@@ -14,14 +14,14 @@ open LeanTex.Core.Ir
 
 namespace Tests.PresentationInterfaces
 
-example : List Theme.Theme := Theme.builtin
-example : String → Option Theme.Theme := Theme.find?
+example : List Theme := Theme.builtin
+example : String → Option Theme := Theme.find?
 example : List String := Theme.names
 example : ElementStyle → ElementStyle → ElementStyle := Theme.styleMerge
-example : Theme.Theme → Theme.Decls → Theme.Decls := Theme.apply
-example : Theme.Theme → Theme.Decls → Theme.Decls := Theme.applyUnder
-example : Theme.Theme → Ir.GroundDepth → Array (Theme.DeclSurface × String) := Theme.declares
-example : Theme.Theme → Theme.Decls → Array (Theme.DeclSurface × String) := Theme.replaces
+example : Theme → Theme.Decls → Theme.Decls := Theme.apply
+example : Theme → Theme.Decls → Theme.Decls := Theme.applyUnder
+example : Theme → Ir.GroundDepth → Array (Theme.DeclSurface × String) := Theme.declares
+example : Theme → Theme.Decls → Array (Theme.DeclSurface × String) := Theme.replaces
 
 example : BeamerColor.State → String → Bool → String → Span →
     BeamerColor.State × List String := BeamerColor.State.declare

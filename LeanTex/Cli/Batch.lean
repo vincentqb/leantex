@@ -113,7 +113,7 @@ public theorem plan_bounded [DecidableEq κ] (extra : Nat) (key : α → κ) (xs
     ∀ batch ∈ plan extra key xs, batch.length ≤ extra + 1 := by
   induction xs using (plan.induct extra key) with
   | case1 => simp [plan]
-  | case2 x xs cut ih =>
+  | case2 x xs _ ih =>
     rw [plan]
     intro batch h
     rcases List.mem_cons.mp h with rfl | h
@@ -124,7 +124,7 @@ public theorem plan_keys_nodup [DecidableEq κ] (extra : Nat) (key : α → κ) 
     ∀ batch ∈ plan extra key xs, (batch.map key).Nodup := by
   induction xs using (plan.induct extra key) with
   | case1 => simp [plan]
-  | case2 x xs cut ih =>
+  | case2 x xs _ ih =>
     rw [plan]
     intro batch h
     rcases List.mem_cons.mp h with rfl | h

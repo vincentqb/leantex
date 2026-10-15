@@ -240,11 +240,11 @@ public structure ImgOut where
 
 private def widthμOf (upem units : Nat) : Int := ((units * 1000000 + upem / 2) / upem : Nat)
 
-public def pdfWidthμ (font : Font.Font) (g : Nat) : Int :=
+public def pdfWidthμ (font : Font) (g : Nat) : Int :=
   widthμOf font.unitsPerEm (font.widths[g]?.getD 0)
 
 /-- The embedded faces' `/W` widths in millionths of the em, by layout face index; other faces have none. -/
-public def widthTable (fonts : Array Font.Font) (keep : Array Nat) : Array (Array Int) :=
+public def widthTable (fonts : Array Font) (keep : Array Nat) : Array (Array Int) :=
   fonts.mapIdx fun k f => if keep.contains k then f.widths.map (widthμOf f.unitsPerEm) else #[]
 
 
@@ -1188,7 +1188,7 @@ private theorem emitList_figureOnly {L : Type} (ix : GfxPdf.Request → Nat)
       (∀ o ∈ acc, o.figureOnly = true) →
       ∀ o ∈ GfxPdf.emitList ix labelOps outlines bodyOps fr acc xs,
         o.figureOnly = true
-  | [], _, acc, ha => ha
+  | [], _, _, ha => ha
   | n :: rest, fr, acc, ha => by
     simp only [GfxPdf.emitList]
     exact emitList_figureOnly ix labelOps hl outlines bodyOps hb rest fr _
@@ -1484,7 +1484,7 @@ private theorem foldl_lines_items (geom : Geom) (remap : Array Nat) (imgMap : Ar
     (lines.foldl (stepLine geom remap imgMap tags) st).items = #[] := by
   induction lines generalizing st with
   | nil => exact h
-  | cons l rest ih => exact ih _ (stepLine_items ..)
+  | cons l _ ih => exact ih _ (stepLine_items ..)
 
 /-- The store index an image segment places, as a one-entry list. -/
 public def segStores : Seg → List (Option Nat)
@@ -1683,7 +1683,7 @@ private theorem TextOp.number_runs : ∀ (o : TextOp) (n : Nat), (TextOp.number 
 private theorem TextOp.numberList_runs : ∀ (l : List TextOp) (n : Nat) (acc : Array TextOp),
     (TextOp.numberList n acc l).1.toList.flatMap TextOp.runs
       = acc.toList.flatMap TextOp.runs ++ l.flatMap TextOp.runs
-  | [], n, acc => by simp [TextOp.numberList]
+  | [], _, acc => by simp [TextOp.numberList]
   | o :: rest, n, acc => by
     rw [TextOp.numberList]
     simp [TextOp.numberList_runs rest, Array.toList_push, TextOp.number_runs o n]
@@ -1721,7 +1721,7 @@ private theorem ContentOp.number_runs : ∀ (o : ContentOp) (n : Nat),
 private theorem ContentOp.numberList_runs : ∀ (l : List ContentOp) (n : Nat) (acc : Array ContentOp),
     (ContentOp.numberList n acc l).1.toList.flatMap ContentOp.runs
       = acc.toList.flatMap ContentOp.runs ++ l.flatMap ContentOp.runs
-  | [], n, acc => by simp [ContentOp.numberList]
+  | [], _, acc => by simp [ContentOp.numberList]
   | o :: rest, n, acc => by
     rw [ContentOp.numberList]
     simp [ContentOp.numberList_runs rest, Array.toList_push, ContentOp.number_runs o n]
@@ -1792,8 +1792,8 @@ public theorem render_not_inj : ∃ a b : Array ContentOp, a ≠ b ∧ render a 
           #[.rect 0 0 1 1]).render
       rw [paint_render_exact]
       simp [ContentOp.render, PathOp.render, fillState, strokeState, gsState, paintOp,
-        pdfPaintFill, String.append_assoc] <;>
-        rfl⟩
+        pdfPaintFill, String.append_assoc]
+      rfl⟩
 
 private theorem joinTail_append_singleton (a : List Line) (x : Line) :
     joinLines.joinTail (a ++ [x]) = joinLines.joinTail a ++ ("\n" ++ x.render) := by
@@ -2178,7 +2178,7 @@ private theorem foldl_stepLinePlain_resp (geom : Geom) (remap : Array Nat) (imgM
       = (ls.foldl (stepLinePlain geom remap imgMap tags) st').plain := by
   induction ls generalizing st st' with
   | nil => exact h
-  | cons l rest ih => exact ih (stepLinePlain_resp geom remap imgMap tags h l)
+  | cons l _ ih => exact ih (stepLinePlain_resp geom remap imgMap tags h l)
 
 private theorem foldl_stepLine_plain (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat))
     (tags : Array (Option String)) (ls : List LineOut) (st : TextSt) :
@@ -2267,7 +2267,7 @@ private theorem foldl_segs_plainOps (remap : Array Nat) (imgMap : Array (Option 
       = (segs.foldl (stepSeg remap imgMap ls y og) st).ops := by
   induction segs generalizing st with
   | nil => exact h
-  | cons s rest ih => exact ih _ (stepSeg_plainOps _ _ _ _ _ _ _ h)
+  | cons s _ ih => exact ih _ (stepSeg_plainOps _ _ _ _ _ _ _ h)
 
 private theorem lineSt_plainOps (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat))
     (og : Origin) (st : TextSt) (l : LineOut) :
@@ -2294,7 +2294,7 @@ private theorem foldl_stepLinePlain_plainOps (geom : Geom) (remap : Array Nat)
       = (ls.foldl (stepLinePlain geom remap imgMap tags) st).ops := by
   induction ls generalizing st with
   | nil => exact h
-  | cons l rest ih => exact ih _ (stepLinePlain_plainOps _ _ _ _ _ _ h)
+  | cons l _ ih => exact ih _ (stepLinePlain_plainOps _ _ _ _ _ _ h)
 
 private theorem artifact_ink (k : Option ArtifactKind) (o : ContentOp) : (artifact k o).ink = o.ink := by
   simp [artifact, ContentOp.ink, ContentOp.inkList]
@@ -2830,7 +2830,7 @@ private theorem TextOp.number_ink : ∀ (o : TextOp) (n : Nat), (TextOp.number n
 private theorem TextOp.numberList_ink : ∀ (l : List TextOp) (n : Nat) (acc : Array TextOp),
     TextOp.inkList (TextOp.numberList n acc l).1.toList
       = TextOp.inkList acc.toList ++ (TextOp.inkList l)
-  | [], n, acc => by simp [TextOp.numberList, TextOp.inkList]
+  | [], _, acc => by simp [TextOp.numberList, TextOp.inkList]
   | o :: rest, n, acc => by
     rw [TextOp.numberList]
     rw [TextOp.numberList_ink rest, Array.toList_push, TextOp.inkList_append, TextOp.inkList,
@@ -2869,7 +2869,7 @@ private theorem ContentOp.number_ink : ∀ (o : ContentOp) (n : Nat), (ContentOp
 private theorem ContentOp.numberList_ink : ∀ (l : List ContentOp) (n : Nat) (acc : Array ContentOp),
     ContentOp.inkList (ContentOp.numberList n acc l).1.toList
       = ContentOp.inkList acc.toList ++ (ContentOp.inkList l)
-  | [], n, acc => by simp [ContentOp.numberList, ContentOp.inkList]
+  | [], _, acc => by simp [ContentOp.numberList, ContentOp.inkList]
   | o :: rest, n, acc => by
     rw [ContentOp.numberList]
     rw [ContentOp.numberList_ink rest, Array.toList_push, ContentOp.inkList_append,
@@ -3019,7 +3019,7 @@ private theorem foldl_lines_marked (geom : Geom) (remap : Array Nat) (imgMap : A
     ∀ o ∈ (lines.foldl (stepLine geom remap imgMap tags) st).ops, o.isMarked = true := by
   induction lines generalizing st with
   | nil => exact h
-  | cons l rest ih => exact ih _ (stepLine_marked geom remap imgMap tags st l h)
+  | cons l _ ih => exact ih _ (stepLine_marked geom remap imgMap tags st l h)
 
 private theorem flushGroup_wrapped (tags : Array (Option String)) (out : Array ContentOp)
     (cur : Option (Option Nat × Array ContentOp)) (ho : ∀ o ∈ out, o.wrapped = true) :
@@ -3521,7 +3521,7 @@ public theorem furniture_covers (geom : Geom) (remap : Array Nat) (imgMap : Arra
     | cons l rest ih =>
       intro st
       simp only [List.foldl_cons, ih, stepLine_textArtifacts, List.filter_cons]
-      split <;> simp <;> omega
+      split <;> simp; omega
   rw [← Array.foldl_toList, h, ← Array.length_toList, Array.toList_filter]
   simp [textArtifacts, TextOp.linesList]
 

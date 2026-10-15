@@ -91,14 +91,14 @@ public theorem Iso.compose_apply_exact (s t : Iso) (p : Pt) :
   have tf : ∀ a b c : Int, c - b - a = c - (a + b) := by intro a b c; omega
   have tt : ∀ a b c : Int, a + (c - b) = c - (b - a) := by intro a b c; omega
   cases fs <;> cases ft
-  · simp only [Iso.compose, Iso.apply, bne_self_eq_false, Bool.false_eq_true, ↓reduceIte] <;>
-      exact Prod.ext (hx x tx sx) (ff y ty sy)
-  · simp only [Iso.compose, Iso.apply, Bool.false_bne, ↓reduceIte, Bool.false_eq_true] <;>
-      exact Prod.ext (hx x tx sx) (ft' y ty sy)
-  · simp only [Iso.compose, Iso.apply, Bool.bne_false, ↓reduceIte, Bool.false_eq_true] <;>
-      exact Prod.ext (hx x tx sx) (tf y ty sy)
-  · simp only [Iso.compose, Iso.apply, bne_self_eq_false, ↓reduceIte, Bool.false_eq_true] <;>
-      exact Prod.ext (hx x tx sx) (tt y ty sy)
+  · simp only [Iso.compose, Iso.apply, bne_self_eq_false, Bool.false_eq_true, ↓reduceIte]
+    exact Prod.ext (hx x tx sx) (ff y ty sy)
+  · simp only [Iso.compose, Iso.apply, Bool.false_bne, ↓reduceIte, Bool.false_eq_true]
+    exact Prod.ext (hx x tx sx) (ft' y ty sy)
+  · simp only [Iso.compose, Iso.apply, Bool.bne_false, ↓reduceIte, Bool.false_eq_true]
+    exact Prod.ext (hx x tx sx) (tf y ty sy)
+  · simp only [Iso.compose, Iso.apply, bne_self_eq_false, ↓reduceIte, Bool.false_eq_true]
+    exact Prod.ext (hx x tx sx) (tt y ty sy)
 
 public theorem Iso.inv_compose_unit_id (t : Iso) :
     t.inv.toAffine.compose t.toAffine = Affine.unit := by
@@ -113,10 +113,10 @@ public theorem Iso.rect_inv_id (t : Iso) (x y w h : Sp) :
   have hx : ∀ a b : Int, a + b + -b = a := by intro a b; omega
   have hy : ∀ a b c : Int, b - (b - (a + c) + c) = a := by intro a b c; omega
   cases fl
-  · simp only [Iso.inv, Iso.rect, Bool.false_eq_true, ↓reduceIte] <;>
-      exact Prod.ext (hx x dx) (Prod.ext (hx y dy) rfl)
-  · simp only [Iso.inv, Iso.rect, ↓reduceIte] <;>
-      exact Prod.ext (hx x dx) (Prod.ext (hy y dy h) rfl)
+  · simp only [Iso.inv, Iso.rect, Bool.false_eq_true, ↓reduceIte]
+    exact Prod.ext (hx x dx) (Prod.ext (hx y dy) rfl)
+  · simp only [Iso.inv, Iso.rect, ↓reduceIte]
+    exact Prod.ext (hx x dx) (Prod.ext (hy y dy h) rfl)
 
 private theorem Seg.map_inv_id (t : Iso) (s : Seg) : (s.map t.apply).map t.inv.apply = s := by
   cases s <;> simp [Seg.map, Iso.inv_apply_id]
@@ -279,7 +279,7 @@ public theorem Node.expandList_useFree {L : Type} (done : Array (Array (Node L))
     (hdone : ∀ b ∈ done, Node.useFreeList b.toList = true) :
     ∀ (xs : List (Node L)) (acc : Array (Node L)), Node.useFreeList acc.toList = true →
       Node.useFreeList (Node.expandList done bound acc xs).toList = true
-  | [], acc, ha => ha
+  | [], _, ha => ha
   | n :: rest, acc, ha => by
     simp only [Node.expandList]
     exact Node.expandList_useFree done bound hdone rest _ (Node.expandOne_useFree done bound hdone n acc ha)
@@ -526,7 +526,7 @@ private theorem hullOf_list_mono {α : Type} (f g : α → Option Box) (hfg : �
       (xs.foldl (fun acc x => Box.joinOpt acc (g x)) b) := by
   induction xs generalizing a b with
   | nil => exact hab
-  | cons x rest ih => exact ih _ _ (Box.joinOpt_mono hab (hfg x))
+  | cons x _ ih => exact ih _ _ (Box.joinOpt_mono hab (hfg x))
 
 public theorem hullOf_mem {α : Type} (f : α → Option Box) (xs : Array α) (x : α) (h : x ∈ xs) :
     Box.leOpt (f x) (hullOf f xs) := by
@@ -545,7 +545,7 @@ private theorem ptsHull_ordered (acc : Option Box)
     ∀ b, ptsHull acc ps = some b → b.1.1 ≤ b.2.1 ∧ b.1.2 ≤ b.2.2 := by
   induction ps generalizing acc with
   | nil => exact hacc
-  | cons p rest ih =>
+  | cons p _ ih =>
     apply ih
     intro b hb
     cases acc with

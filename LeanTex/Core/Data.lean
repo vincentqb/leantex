@@ -160,11 +160,11 @@ private theorem optArg_le (l : List Raw) :
   split
   · rename_i r1
     have := bracketSplit_le r1
-    simp <;> omega
+    simp; omega
   · rename_i r1
     have := bracketSplit_le r1
-    simp <;> omega
-  · cases l <;> simp <;> omega
+    simp; omega
+  · cases l <;> simp; omega
 
 /-- The arguments at the head of a `foreach` body — `{var}{kind}` and the
 optional `[sep]` — with the iteration body; `none` when malformed. -/

@@ -393,8 +393,6 @@ public theorem Color.pdfMilli_decode : ∀ v < 1001, decodeMilli (pdfMilli v) = 
         omega
 
 public theorem Color.milli_inj (a b : UInt8) (h : milli a = milli b) : a = b := by
-  have ha : a.toNat < 256 := a.toNat_lt
-  have hb : b.toNat < 256 := b.toNat_lt
   simp only [milli] at h
   exact UInt8.toNat_inj.mp (by omega)
 
@@ -1155,7 +1153,7 @@ public theorem rhythm_table_exact (size : Sp) :
   refine ⟨?_, ?_, ?_, ?_, ?_, by decide⟩ <;>
     simp [rhythmGapQuanta, parskipDefault, captionSepDefault, floatSepDefault,
       headingBeforeDefault, trivlistSkipDefault, Dim.Length.ofSp,
-      List.lookup] <;> omega
+      List.lookup]; omega
 
 /-- The key a pairing is reported under: its name, colour and ground, as its
 contrast warning's `subject`. -/
@@ -6255,7 +6253,7 @@ private theorem axesOne_sorted (x : Inline) :
     split at h
     · exact ih _ _ (FontAxes.select_sorted acc st hacc) h
     · simp at h
-  | mk xs ih =>
+  | mk _ ih =>
     rename_i acc out hacc h
     exact ih acc out hacc h
   | nil =>
@@ -12869,15 +12867,15 @@ private theorem textLeavesOne_acc (acc : List String) (b : Block) :
   match b with
   | .para c => simp [textLeavesOne]
   | .equation _ c => simp [textLeavesOne]
-  | .section l st num title => simp [textLeavesOne]
+  | .section _ _ _ title => simp [textLeavesOne]
   | .verbatim c s sp => cases hc : sp.caption <;> simp [textLeavesOne, hc]
   | .logo c => simp [textLeavesOne]
   | .framefoot c => simp [textLeavesOne]
-  | .setPalette pal => simp [textLeavesOne]
-  | .setTokens tk => simp [textLeavesOne]
+  | .setPalette _ => simp [textLeavesOne]
+  | .setTokens _ => simp [textLeavesOne]
   | .pagebreak => simp [textLeavesOne]
-  | .rule c n th => simp [textLeavesOne]
-  | .picture p => simp [textLeavesOne]
+  | .rule _ _ _ => simp [textLeavesOne]
+  | .picture _ => simp [textLeavesOne]
   | .algorithm n sm lines =>
     rw [textLeavesOne, textLeavesOne]
     exact algTextLeaves_acc acc lines.toList
@@ -16579,7 +16577,7 @@ public theorem resolveOneRef_exact (loc : Locale) (table : RefTable) (key : Stri
       .ref key form (refText loc form b)
         (some (labelAnchor key)) := by
   rw [resolveOneRef_scan]
-  obtain ⟨e, hmem, hkey, hval⟩ := h
+  obtain ⟨e, hmem, hkey, _⟩ := h
   have hfind : ∃ f, table.find? (·.1 == key) = some f := by
     have : (table.find? (·.1 == key)).isSome := by
       rw [Array.find?_isSome]

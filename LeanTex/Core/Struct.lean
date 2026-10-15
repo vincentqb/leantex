@@ -1128,7 +1128,7 @@ theorem numberList_leafCount_aux (k : Nat) (ns : List Node) :
   match ns with
   | [] => simp [numberList, leavesList_nil_exact]
   | n :: rest =>
-    obtain ⟨h1, h2⟩ := numberList_acc (numberOne k n).2 (#[].push (numberOne k n).1) rest
+    obtain ⟨h1, _⟩ := numberList_acc (numberOne k n).2 (#[].push (numberOne k n).1) rest
     simp only [numberList]
     rw [h1, Array.toList_append, leavesList_append, leavesList_acc, Array.size_append,
       Array.toList_push, leavesList_cons_exact, leavesList_acc (leavesOne #[] n) rest,

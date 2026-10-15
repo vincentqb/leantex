@@ -32,7 +32,7 @@ public def decodeCached (cache : Option Engine.Cache) (params : Image.PlanParams
   let src ← match Image.probe bytes with
     | .error e => return (.error e, false)
     | .ok src => pure src
-  unless Image.Plan.recodes params src do return (Image.plan params src, false)
+  unless Image.Plan.recodes src do return (Image.plan params src, false)
   let slot := cache.map fun c => (cachePath c.dir params bytes, slotKey c.engine params bytes)
   if let some (path, key) := slot then
     if let .ok blob ← (IO.FS.readBinFile path).toBaseIO then

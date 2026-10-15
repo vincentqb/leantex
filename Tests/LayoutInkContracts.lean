@@ -57,7 +57,7 @@ def boundaryWitness (fs : Font.FontSet) (code : DiagCode) : Array Diag :=
   | _ => #[]
 
 /-- Checks over shipped pages, with fonts from the committed fixture corpus. -/
-def layoutInkChecks (record : String → Bool → IO Unit) (serif sans : Font.Font) : IO Unit := do
+def layoutInkChecks (record : String → Bool → IO Unit) (serif sans : Font) : IO Unit := do
   let fs : Font.FontSet := { fonts := #[serif, sans], index := #[((1, 400, false), 1)] }
   let geom : Layout.Geom := {}
   let run (fonts : Font.FontSet) (content : Array Ir.Inline) :=
@@ -80,7 +80,7 @@ def layoutInkChecks (record : String → Bool → IO Unit) (serif sans : Font.Fo
   record "the accented label ships one measured line"
     ((bodyLines out).size == 1 && !(named out .W0394 accent))
 
-  let unresolved : Font.Font := { serif with inkExtent := Thunk.mk fun _ => #[] }
+  let unresolved : Font := { serif with inkExtent := Thunk.mk fun _ => #[] }
   let unknownFonts := { fs with fonts := #[unresolved, sans] }
   let unknown := run unknownFonts accent
   record "a shipped unresolved glyph has W0394 with its label subject"
@@ -290,7 +290,7 @@ def pictureOriginChecks (record : String → Bool → IO Unit) (fs : Font.FontSe
 
 /-- Load the committed fonts and run the shipped-page and guard checks. -/
 def fixtureChecks (ref : IO.Ref (List String)) : IO Unit := do
-  let load (name : String) : IO Font.Font := do
+  let load (name : String) : IO Font := do
     match Font.parse (← IO.FS.readBinFile (testFonts ++ "/" ++ name)) with
     | .ok f => return f
     | .error e => throw (IO.userError e)

@@ -59,7 +59,7 @@ private theorem keyFold_preserves (ctx : Ctx) (site : Span) (keys : List String)
     PictureKeyNamed (keys.foldl (pictureKeyState ctx site) st).diags key := by
   induction keys generalizing st with
   | nil => exact h
-  | cons k rest ih => exact ih _ (keyState_preserves ctx site st k key h)
+  | cons k _ ih => exact ih _ (keyState_preserves ctx site st k key h)
 
 private theorem keyFold_names (ctx : Ctx) (site : Span) (keys : List String)
     (st : ESt) (key : String) (h : key ∈ keys) :
@@ -93,7 +93,7 @@ private theorem settingFold_preserves (ctx : Ctx) (sets : List (Span × Array Ra
     PictureKeyNamed (sets.foldl (pictureSettingState ctx) acc).2.diags key := by
   induction sets generalizing acc with
   | nil => exact h
-  | cons setting rest ih => exact ih _ (settingState_preserves ctx acc setting key h)
+  | cons setting _ ih => exact ih _ (settingState_preserves ctx acc setting key h)
 
 private theorem settingFold_styles (ctx : Ctx) (sets : List (Span × Array Raw))
     (acc : List (String × Array Picture.Tok) × ESt) :

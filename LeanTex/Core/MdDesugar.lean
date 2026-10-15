@@ -296,7 +296,7 @@ private theorem laterCellsRaws_tableTop (file : String) (p : Pos) (cells : List 
     ∀ (out : Array Raw) (ds : Array Diag), (∀ x ∈ out, TableTop p x) →
       ∀ x ∈ (laterCellsRaws file p out ds cells).1, TableTop p x := by
   induction cells with
-  | nil => intro out ds h; exact h
+  | nil => intro out _ h; exact h
   | cons cell rest ih =>
     intro out ds h
     unfold laterCellsRaws
@@ -323,7 +323,7 @@ private theorem rowsRaws_tableTop (file : String) (p : Pos) (rows : List (Array 
     ∀ (out : Array Raw) (ds : Array Diag), (∀ x ∈ out, TableTop p x) →
       ∀ x ∈ (rowsRaws file p out ds rows).1, TableTop p x := by
   induction rows with
-  | nil => intro out ds h; exact h
+  | nil => intro out _ h; exact h
   | cons row rest ih =>
     intro out ds h
     unfold rowsRaws

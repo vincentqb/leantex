@@ -1415,7 +1415,7 @@ private theorem indexObjectsList_append {α : Type} (before after : List (Nat ×
       indexObjectsList (indexObjectsList out before) after := by
   induction before generalizing out with
   | nil => rfl
-  | cons r rest ih => exact ih _
+  | cons r _ ih => exact ih _
 
 private theorem indexObjectsList_absent {α : Type} (rows : List (Nat × α))
     (out : Array (Option α)) (id : Nat)
@@ -1496,7 +1496,7 @@ private theorem serializeList_offsetBound (rows : List Row) (out : ByteArray)
       r.2 ≤ (serializeList out locs rows).1.size := by
   induction rows generalizing out locs with
   | nil => exact h
-  | cons row rest ih =>
+  | cons row _ ih =>
     apply ih
     have hsize : out.size ≤ (rowInto out row.id row.body).size := by
       rw [rowInto_bytes, ByteArray.size_append]
@@ -1585,7 +1585,7 @@ private theorem objectStreamList_append (s : ObjectStream) (before after : List 
       objectStreamList (objectStreamList s before) after := by
   induction before generalizing s with
   | nil => rfl
-  | cons r rest ih => exact ih _
+  | cons r _ ih => exact ih _
 
 private theorem objectStreamList_header (objects : List (Nat × PdfRead.Obj))
     (header : String) (payload : ByteArray) :

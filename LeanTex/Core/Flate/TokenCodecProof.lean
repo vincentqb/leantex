@@ -19,7 +19,7 @@ theorem TokensFor.progress {raw : ByteArray} {start finish : Nat} {tokens : Arra
   induction h with
   | empty hi => simpa using And.intro (Nat.le_refl start) hi
   | literal prior hi ih => simp only [Array.size_push]; omega
-  | backref prior hlen href ih =>
+  | backref _ hlen href ih =>
     have := href.2.resolve_left (by omega)
     simp only [Array.size_push]
     omega
@@ -48,14 +48,14 @@ theorem symbols_between {raw : ByteArray} {start finish : Nat} {tokens : Array U
       ∀ s, (symbols t).2 = some s → s < 30 := by
   induction ht with
   | empty => simp
-  | @literal i tokens prior hi ih =>
+  | @literal i tokens _ _ ih =>
     intro t hm
     simp only [Array.toList_push, List.mem_append, List.mem_singleton] at hm
     rcases hm with hm | rfl
     · exact ih t hm
     · rw [symbols_literal_exact]
       exact ⟨by have := (raw[i]?.getD 0).toNat_lt; omega, by simp⟩
-  | @backref i len dist tokens prior hlen href ih =>
+  | @backref i len dist tokens _ hlen href ih =>
     intro t hm
     simp only [Array.toList_push, List.mem_append, List.mem_singleton] at hm
     rcases hm with hm | rfl
@@ -130,7 +130,7 @@ theorem write_contract {raw : ByteArray} {start finish : Nat} {tokens : Array UI
     rw [write, BitStream.write_push_exact, writeEntry_literal_exact]
     exact ⟨push_valid _ _ _ ih.1 (hl _),
       (push_extends_exact _ _ _ ih.1 (hl _)).trans ih.2⟩
-  | @backref i len dist tokens prior hlen href ih =>
+  | @backref i len dist tokens _ hlen href ih =>
     have hp := href.2.resolve_left (by omega)
     have hdist : 1 ≤ dist ∧ dist ≤ 32768 := ⟨hp.1, href.1⟩
     have hls := length_symbol_contract len hlen

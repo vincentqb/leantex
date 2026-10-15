@@ -60,8 +60,6 @@ private theorem icbrtGo_spec (fuel n lo hi : Nat) (h1 : lo ^ 3 ≤ n) (h2 : n < 
     have : hi = lo + 1 := by simp at hf; omega
     exact ⟨h1, this ▸ h2⟩
   | succ fuel ih =>
-    have hp : 2 ^ (fuel + 1) = 2 ^ fuel + 2 ^ fuel := by
-      rw [Nat.pow_succ]; omega
     simp only [icbrtGo]
     split
     · next h =>
@@ -234,7 +232,7 @@ public theorem toward_surface (f : Nat) (hf : f ≤ 100) (c s : Lab) (h : s.L �
   have h1 : 0 ≤ (f : Int) * (c.L - s.L) := Int.mul_nonneg (by omega) (by omega)
   have h2 : (f : Int) * (c.L - s.L) ≤ 100 * (c.L - s.L) :=
     Int.mul_le_mul_of_nonneg_right (by omega) (by omega)
-  generalize hp : (f : Int) * (c.L - s.L) = p at h1 h2
+  generalize (f : Int) * (c.L - s.L) = p at h1 h2
   omega
 
 public theorem toward_surface_light (f : Nat) (hf : f ≤ 100) (c s : Lab) (h : c.L ≤ s.L) :
@@ -246,7 +244,7 @@ public theorem toward_surface_light (f : Nat) (hf : f ≤ 100) (c s : Lab) (h : 
     have hc : c.L - s.L ≤ 0 := by omega
     have hf' : (f : Int) ≤ 100 := by omega
     exact Int.mul_le_mul_of_nonpos_right hf' hc
-  generalize hp : (f : Int) * (c.L - s.L) = p at h1 h2
+  generalize (f : Int) * (c.L - s.L) = p at h1 h2
   omega
 
 /-- The scale of `Okl.f`: `f = fracOne` is the direction's whole length. -/

@@ -516,7 +516,7 @@ def floatLevelChecks (ref : IO.Ref (List String)) : IO Unit := do
 /-- A Light family's set: the shipped Fira Sans's outlines as a 300 in the
 regular slot and as a 400 in the bold one, the shape of a deck that sets a
 Light family with its Regular for bold. -/
-private def lightSet (f : Font.Font) : Font.FontSet :=
+private def lightSet (f : Font) : Font.FontSet :=
   { fonts := #[{ f with weight := 300 }, f]
     index := ((List.range 3).flatMap fun slot =>
       [((slot, 400, false), 0), ((slot, 700, false), 1),

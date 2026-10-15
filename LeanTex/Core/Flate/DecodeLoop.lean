@@ -89,7 +89,7 @@ theorem Steps.finish {ε σ α : Type} {step : σ → Except ε (Sum α σ)}
     Finishes step initial (rest + count) answer := by
   induction h generalizing rest with
   | refl => simpa using hf
-  | snoc earlier he ih =>
+  | snoc _ he ih =>
     simpa only [Nat.add_assoc, Nat.add_comm, Nat.add_left_comm] using
       ih (.next he hf)
 

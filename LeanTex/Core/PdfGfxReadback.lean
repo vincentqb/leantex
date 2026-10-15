@@ -201,7 +201,7 @@ theorem spOf_lenObj (x : Sp) : spOf (lenObj x) = some (qSp x) := by
     congr 1
     rw [digitsVal_toDigits]
     generalize hL : (fracDigits 3 (x.toPtMilli.natAbs % 1000)).length = L at hlen hval hne
-    generalize hdv : digitsVal (fracDigits 3 (x.toPtMilli.natAbs % 1000)) = dv at hval
+    generalize digitsVal (fracDigits 3 (x.toPtMilli.natAbs % 1000)) = dv at hval
     have hL1 : 1 ≤ L := by
       rcases Nat.eq_zero_or_pos L with h0 | h0
       · subst h0
@@ -357,7 +357,7 @@ theorem ratOf_real (p q : Int) (hf : ¬ ratV p q % 1000000000 = 0) :
       · rw [ite_eq_right (fun h => hp h.1), ite_eq_right (by simpa using hp)]
     rw [e]
   have hfr := fracDigits_value_exact 9 (ratV p q % 1000000000) (Nat.mod_lt _ (by decide)) hf
-  obtain ⟨hne, hlen, hval⟩ := hfr
+  obtain ⟨_, hlen, hval⟩ := hfr
   have hp := numParts_decimal (ratString p q) (decide (p < 0))
     (Nat.toDigits 10 (ratV p q / 1000000000)) (fracDigits 9 (ratV p q % 1000000000))
     hs (toDigits_digits _) Nat.toDigits_ne_nil (fracDigits_digits 9 _)
@@ -457,7 +457,7 @@ theorem ratOf_milliObj (v : Nat) (hv : v ≤ 1000) : ratOf (milliObj v) = some (
       exact congrArg some this.symm
     · rw [milliObj, ite_eq_right h0, ite_eq_right h1, ratOf_eq, PdfContentLex.numRat?_parts]
       have hfr := fracDigits_value_exact 3 v (by omega) h0
-      obtain ⟨hne, hlen, hval⟩ := hfr
+      obtain ⟨_, hlen, hval⟩ := hfr
       have hp := numParts_decimal (Ir.Color.pdfMilli v) false ['0'] (fracDigits 3 v)
         (milli_chars v (by omega) (by omega)) (by decide) (by decide) (fracDigits_digits 3 _)
       rw [hp, Option.map_some]
@@ -1198,7 +1198,6 @@ theorem pathWords_ok (p : Pdf.PathOp) : ∀ w ∈ pathWords p, WordOk w := by
     first
     | exact lenW_ok _
     | exact opW_ok _ (by opspelled)
-    | exact absurd hw (by simp)
 
 theorem flatMap_ok {α : Type} (f : α → List Word) (l : List α) (h : ∀ a ∈ l, ∀ w ∈ f a, WordOk w) :
     ∀ w ∈ l.flatMap f, WordOk w := by
@@ -1445,11 +1444,11 @@ theorem good_strokeWords (st : Option Pdf.PaintStroke) : Good (strokeWords st) :
         · rw [hc]; simp [miterWords]
         · rw [hc]; simp [miterWords, opW]
     have hdash : Good (dashWords k.dash) := by
-      rcases hc : k.dash with _ | ⟨d, p⟩
+      rcases k.dash with _ | ⟨d, p⟩
       · exact good_nil
       · show Good [dashW d, lenW p, opW "d"]
         have hd : PdfContentLex.OpSpelled "d" := by opspelled
-        refine ⟨⟨(dashW_ok d).tok, fun o h _ u hu => ?_, (lenW_ok p).tok, fun o h hr => ?_,
+        refine ⟨⟨(dashW_ok d).tok, fun o _ _ u hu => ?_, (lenW_ok p).tok, fun o h hr => ?_,
           hd, (fun o h => by cases h), trivial⟩, by simp [opW]⟩
         · simp [lenW] at hu
           subst hu
@@ -2951,7 +2950,6 @@ theorem marks_op : ∀ (o : Pdf.ContentOp) (cx : Gfx.Ctx) (rs : GfxPdf.RState) (
         rfl
       · rw [ite_eq_right hk]
         simp only [Node.marksList, Node.marksOne]
-        have he : (Alpha.opaque == Alpha.opaque) = true := by decide
         exact hih
   | .fill _ _ _ _ _, _, _, _, _, h, _, _ | .text _, _, _, _, _, h, _, _
   | .image _ _ _ _ _, _, _, _, _, h, _, _ | .imageMissing _ _ _ _, _, _, _, _, h, _, _

@@ -1257,8 +1257,8 @@ namespace Scoreboard.Hermetic
 open LeanTex.Core LeanTex.Cli
 
 /-- A face parsed once per run, however many fixtures load it. -/
-def loadFont (cache : IO.Ref (Array (String × Font.Font))) (path : String) :
-    IO (Option Font.Font) := do
+def loadFont (cache : IO.Ref (Array (String × Font))) (path : String) :
+    IO (Option Font) := do
   if let some (_, f) := (← cache.get).find? (·.1 == path) then return some f
   match (← FontDiscovery.faceBytes path) >>= Font.parse with
   | .ok f =>
@@ -1280,7 +1280,7 @@ def shippedFaces (dir : System.FilePath) : IO (Array FontDb.Face) := do
 
 /-- The font set a fixture's page is keyed under: the suite's shape over the shipped faces
 only. -/
-def fontSetFor (cache : IO.Ref (Array (String × Font.Font))) (oneFace : Font.FontSet)
+def fontSetFor (cache : IO.Ref (Array (String × Font))) (oneFace : Font.FontSet)
     (faces : Array FontDb.Face) (fontsDir : System.FilePath) (doc : Ir.Doc) :
     IO Font.FontSet := do
   let withMath (path : String) : IO Font.FontSet := do
@@ -1455,7 +1455,7 @@ def corpusDocs (corpus : System.FilePath) : IO (Array (String × System.FilePath
 
 /-- One fixture's page as the driver builds it, or `none` where the driver would refuse to
 write one. -/
-def pageFor (cache : IO.Ref (Array (String × Font.Font))) (oneFace : Font.FontSet)
+def pageFor (cache : IO.Ref (Array (String × Font))) (oneFace : Font.FontSet)
     (faces : Array FontDb.Face) (fontsDir : System.FilePath) (name : String)
     (path : System.FilePath) : IO (Option PageOutput) := do
   let corpus := path.parent.getD "."
@@ -1507,7 +1507,7 @@ def corpusKeys (corpus : System.FilePath) : IO (Except String CorpusKeys) := do
   if !(← corpus.isDir) then return .error s!"{corpus} is not a directory"
   if !(← fontsDir.isDir) then return .error s!"{fontsDir} is not a directory"
   let faces ← shippedFaces fontsDir
-  let cache ← IO.mkRef (#[] : Array (String × Font.Font))
+  let cache ← IO.mkRef (#[] : Array (String × Font))
   let some body ← loadFont cache (fontsDir / "OpenSans-Regular.ttf").toString
     | return .error s!"{fontsDir}/OpenSans-Regular.ttf does not parse"
   let oneFace := Font.FontSet.ofFace body

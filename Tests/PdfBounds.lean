@@ -13,7 +13,7 @@ open LeanTex.Core
 domain. -/
 def pdfBoundsChecks (ref : IO.Ref (List String)) : IO Unit := do
   let fs : Font.FontSet :=
-    { fonts := #[{ (default : Font.Font) with psName := "Synthetic" }] }
+    { fonts := #[{ (default : Font) with psName := "Synthetic" }] }
   let small := Pdf.prepare {} fs #[]
   check ref "PDF bounds: ordinary writer plan accepted" (decide small.WithinBounds)
   check ref "PDF bounds: checked bytes are the actual writer bytes"
@@ -68,7 +68,7 @@ def pdfBoundsChecks (ref : IO.Ref (List String)) : IO Unit := do
     (match Pdf.writeChecked {} fs #[] {} {} outline, largeChecked with
       | .ok a, .ok b => a == b
       | _, _ => false)
-  let bad : Font.FontSet := { fonts := #[{ (default : Font.Font) with
+  let bad : Font.FontSet := { fonts := #[{ (default : Font) with
     psName := "λ", unitsPerEm := 1000, numGlyphs := 2, widths := #[500, 500] }] }
   match Pdf.writeChecked {} bad #[] {} {} #[] #[] ⟨#[]⟩ #[] #[("invented program".toUTF8, false)] with
   | .ok _ => check ref "PDF bounds: the producer refuses an unspellable face name" false

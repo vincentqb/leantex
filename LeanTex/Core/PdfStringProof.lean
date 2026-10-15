@@ -42,7 +42,7 @@ private theorem literalBody_yields {cs : List Nat} (hc : LiteralBody cs)
         .yield (LiteralState.mk (i+1) (depth+1) none) := by
       simp [literalStep, h.head, hn1, hn2, hn3, show c ≠ 256 by omega]
     simpa [Nat.add_assoc, Nat.add_comm, Nat.add_left_comm] using Loop.Yields.cons (step := fun s => pure (literalStep b s)) hs ht
-  | @escape c cs hc _ ih =>
+  | @escape c cs _ _ ih =>
     obtain ⟨n, hn, ht⟩ := ih h.tail.tail depth
     refine ⟨n+1, by simp; omega, ?_⟩
     have hs : literalStep b (LiteralState.mk i (depth+1) none) =

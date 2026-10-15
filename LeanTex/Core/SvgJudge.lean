@@ -190,13 +190,13 @@ private theorem judge_tree (bytes : ByteArray) (t : Xml.Item) (h : judge bytes =
     judgeTree t = none := by
   unfold judge at h
   cases hp : Xml.parse bytes with
-  | error r => simp [hp] at h <;> cases h
+  | error r => simp [hp] at h; cases h
   | ok n =>
     cases hr : Xml.resolve n with
-    | error w => simp [hp, hr] at h <;> cases h
+    | error w => simp [hp, hr] at h; cases h
     | ok t' =>
       cases hj : judgeTree t' with
-      | some r => simp [hp, hr, hj] at h <;> cases h
+      | some r => simp [hp, hr, hj] at h
       | none =>
         simp [hp, hr, hj] at h
         cases h

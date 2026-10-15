@@ -1124,7 +1124,7 @@ private theorem read_emitOne_free {L : Type} (ix : Request → Nat)
   | .label l, cx, fr, rs, acc, _, _ => by
     simp only [emitOne, Array.empty_append, Node.marksOne]
     exact hl fr l rs acc
-  | .words _, cx, fr, rs, acc, _, _ => by
+  | .words _, _, fr, rs, acc, _, _ => by
     simp [emitOne, readList, Node.marksOne]
 
 private theorem read_emitList_free {L : Type} (ix : Request → Nat)
@@ -1451,9 +1451,9 @@ public theorem steps_projects {L : Type} (ix : Request → Nat) (tx : L → Opti
     (place : Iso) (fig : Figure L) (h : fig.labelsTop = true) :
     readSteps place (emit ix (fun _ l => (tx l).toArray.map textGroup) place fig) =
       fig.steps.flatMap (Step.labelsBy fun l => (tx l).toArray) := by
-  have hl : ∀ (fr : Frame) (l : L) (rs : RState) (acc : Array Mark),
+  have hl : ∀ (_ : Frame) (l : L) (rs : RState) (acc : Array Mark),
       readList rs acc ((tx l).toArray.map textGroup).toList = acc := by
-    intro fr l rs acc
+    intro _ l rs acc
     cases tx l with
     | none => simp [readList]
     | some t => simp [readList, readOne, textGroup]

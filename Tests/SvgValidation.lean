@@ -68,13 +68,13 @@ def svgCompanionDriverChecks (ref : IO.Ref (List String)) : IO Unit := do
           ("XDG_CACHE_HOME", some (dir / "cache").toString)] }
       check ref s!"SVG companion {name}: the driver builds" (run.exitCode == 0)
       let html ← IO.FS.readFile (output / "figure.html")
-      let (primarySrc, primary) ← svgPublishedAsset html output "img" "src"
+      let (primarySrc, primary) ← svgPublishedAsset html "img" "src"
       let published ← output.readDir
       check ref s!"SVG companion {name}: one HTML file contains all rendering resources"
         (published.map (·.fileName) == #["figure.html"])
       match expected with
       | some bytes =>
-        let (posterSrc, poster) ← svgPublishedAsset html output "source" "srcset"
+        let (posterSrc, poster) ← svgPublishedAsset html "source" "srcset"
         check ref s!"SVG companion {name}: original animation bytes publish"
           (primary == bytes && !poster.isEmpty)
         check ref s!"SVG companion {name}: the static media fallback is reachable"
@@ -123,8 +123,8 @@ exit 19\n"
     check ref "moving figure driver: no loss is reported" (!hasStr out "[W0605]" && !hasStr out "[W0609]")
     let called ← if ← log.pathExists then pure !(← IO.FS.readFile log).isEmpty else pure false
     check ref "moving figure driver: the converter is never called" !called
-    let (_, primary) ← svgPublishedAsset html output "img" "src"
-    let (_, poster) ← svgPublishedAsset html output "source" "srcset"
+    let (_, primary) ← svgPublishedAsset html "img" "src"
+    let (_, poster) ← svgPublishedAsset html "source" "srcset"
     check ref "moving figure driver: the browser receives the authored animation" (primary == moving)
     check ref "moving figure driver: the still face is a static SVG the native judge admits"
       (match Svg.judge poster with
@@ -173,7 +173,7 @@ def svgDoctypeDriverChecks (ref : IO.Ref (List String)) : IO Unit := do
           (run.exitCode == 0 && (log.splitOn "W0602").length == 1 &&
             (log.splitOn "W0605").length == 1)
       let html ← IO.FS.readFile (output / "figure.html")
-      let (_, published) ← svgPublishedAsset html output "img" "src"
+      let (_, published) ← svgPublishedAsset html "img" "src"
       check ref s!"SVG doctype {name}: original browser source publishes"
         (published == bytes)
       check ref s!"SVG doctype {name}: the page links its visible figure"

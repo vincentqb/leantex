@@ -18,19 +18,19 @@ example (top below : Sp) (unknown : Bool) : Measurement :=
   { extent := (top, below), unresolved := unknown }
 example : Measurement → Measurement → Measurement := Measurement.join
 
-example (font : Font.Font) (size raise : Sp) (gid : Nat) (lo hi : Int)
+example (font : Font) (size raise : Sp) (gid : Nat) (lo hi : Int)
     (known : font.yExtent gid = some (lo, hi)) :
     glyph font size raise gid =
       { extent := (hi * size / (font.unitsPerEm : Int) + raise,
           (-lo) * size / (font.unitsPerEm : Int) - raise) } :=
   glyph_known_exact font size raise gid lo hi known
 
-example (font : Font.Font) (size raise : Sp) (gid : Nat) :
+example (font : Font) (size raise : Sp) (gid : Nat) :
     (glyph font size raise gid).unresolved = true ↔ font.yExtent gid = none :=
   glyph_unresolved_exact font size raise gid
 
 -- Layout's agreement proof unfolds both branches, the nominal fallback included.
-example (font : Font.Font) (size raise : Sp) (gid : Nat) :
+example (font : Font) (size raise : Sp) (gid : Nat) :
     (glyph font size raise gid).extent =
       match font.yExtent gid with
       | some (lo, hi) =>

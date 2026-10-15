@@ -154,7 +154,7 @@ def runContrastContractChecks (ref : IO.Ref (List String)) : IO Unit := do
   let .ok boldFont := Font.parse boldData |
     throw (IO.userError "contrast contract bold fixture failed to parse")
   let geom := Layout.Geom.ofPage ordinary.page
-  let atSize := fun size (face : Font.Font) =>
+  let atSize := fun size (face : Font) =>
     Layout.run geom (oneFaceOf face) none
       { ordinary with body := #[.para #[.styled
         (.fontSize (.lit { width := { sp := size } })

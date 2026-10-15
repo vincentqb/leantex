@@ -1263,7 +1263,7 @@ public def plan (p : PlanParams) (s : Source) : Except String Plan :=
   | .jpx => .error jpxRefusedMsg
 
 /-- Whether planning this source inflates, splits or recompresses: exactly for PNG colour types 4 and 6. -/
-public def Plan.recodes (_p : PlanParams) (s : Source) : Bool :=
+public def Plan.recodes (s : Source) : Bool :=
   match s.format, pngSpace s.colorType with
   | .png, some (_, some _) => true
   | _, _ => false
@@ -1388,7 +1388,7 @@ public theorem plan_losses_accounts (p : PlanParams) (s : Source) (pl : Plan)
   · exact absurd h (by simp)
 
 public theorem recodes_iff (p : PlanParams) (s : Source) (pl : Plan) (h : plan p s = .ok pl) :
-    pl.recoded = true ↔ Plan.recodes p s = true := by
+    pl.recoded = true ↔ Plan.recodes s = true := by
   unfold plan at h
   unfold Plan.recodes
   split at h

@@ -99,14 +99,14 @@ def pictureFontChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
 
 
 /-- The depth of the TeX box a word set in `font` at `size` makes. -/
-def wordDepth (font : Font.Font) (size : Dim.Sp) (word : String) : Dim.Sp :=
+def wordDepth (font : Font) (size : Dim.Sp) (word : String) : Dim.Sp :=
   word.toList.foldl (fun d c =>
     match (font.gid c).bind font.yExtent with
     | some (lo, _) => max d (-lo * size / (font.unitsPerEm : Int))
     | none => d) 0
 
 /-- The height of the TeX box a word set in `font` at `size` makes. -/
-def wordHeight (font : Font.Font) (size : Dim.Sp) (word : String) : Dim.Sp :=
+def wordHeight (font : Font) (size : Dim.Sp) (word : String) : Dim.Sp :=
   word.toList.foldl (fun d c =>
     match (font.gid c).bind font.yExtent with
     | some (_, hi) => max d (hi * size / (font.unitsPerEm : Int))

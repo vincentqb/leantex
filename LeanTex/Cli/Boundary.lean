@@ -226,7 +226,7 @@ private theorem placeLine_keeps (accepted : String → Bool) (p : String × Line
   intro xs
   induction xs with
   | nil => intro acc hd; exact hd
-  | cons x rest ih =>
+  | cons x _ ih =>
     intro acc hd
     apply ih
     unfold placeLine

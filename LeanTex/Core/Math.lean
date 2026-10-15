@@ -178,7 +178,7 @@ public theorem sizeFor_mono_rank (a b base : Int) (hb : 0 ≤ base) (s s' : Math
     simp only [MathStyle.rank] at h <;>
     first
       | omega
-      | (simp only [sizeFor] <;>
+      | (simp only [sizeFor]
          first
            | exact Int.le_refl _
            | exact hbase
@@ -814,11 +814,11 @@ public def ColAlign.pad (a : ColAlign) (outer inner : Int) : Int :=
   | .right => outer - inner
   | .center => (outer - inner) / 2
 
-public theorem pad_within (a : ColAlign) (outer inner : Int) (_h : inner ≤ outer) :
+public theorem pad_within (a : ColAlign) (outer inner : Int) (h : inner ≤ outer) :
     0 ≤ a.pad outer inner ∧ a.pad outer inner + inner ≤ outer := by
   cases a <;> simp only [ColAlign.pad] <;> omega
 
-public theorem pad_center_symmetric (outer inner : Int) (_h : inner ≤ outer) :
+public theorem pad_center_symmetric (outer inner : Int) :
     0 ≤ outer - (2 * ColAlign.pad .center outer inner + inner) ∧
     outer - (2 * ColAlign.pad .center outer inner + inner) ≤ 1 := by
   simp only [ColAlign.pad]
@@ -1231,7 +1231,6 @@ private theorem roundRay_le (n step k : Int) (hs : 0 < step) (hn : n ≤ 2 * ste
 
 private theorem roundRay_center_nonneg (n d s : Int) (hd : 0 < d)
     (hn : 0 ≤ n + d * s) : 0 ≤ 2 * roundRay n d + s := by
-  have hm := Int.emod_nonneg (n + d) (by omega : 2 * d ≠ 0)
   have hl := Int.emod_lt_of_pos (n + d) (by omega : 0 < 2 * d)
   have he := Int.emod_add_mul_ediv (n + d) (2 * d)
   have hr : -d < 2 * d * roundRay n d - n := by
@@ -1264,13 +1263,13 @@ public theorem inkRayOrigin_translation_exact (dx dy gap left bottom right top s
       simp only [Int.mul_add, Int.mul_assoc]
       omega
     rw [he, roundRay_translation_exact _ _ _ (by omega)]
-    apply Prod.ext <;> dsimp <;> omega
+    apply Prod.ext <;> dsimp; omega
   · have he : (top - bottom + 2 * max 0 gap) * dx - max 1 dy * (right + sx + (left + sx)) =
         (top - bottom + 2 * max 0 gap) * dx - max 1 dy * (right + left) - 2 * max 1 dy * sx := by
       simp only [Int.mul_add, Int.mul_assoc]
       omega
     rw [he, roundRay_translation_exact _ _ _ (by omega)]
-    apply Prod.ext <;> dsimp <;> omega
+    apply Prod.ext <;> dsimp; omega
 
 public theorem inkRayOrigin_clears_between (dx dy gap left bottom right top : Int)
     (hx : 0 ≤ dx) (hy : 0 ≤ dy) (hw : left ≤ right) (hh : bottom ≤ top) :

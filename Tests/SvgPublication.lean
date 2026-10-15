@@ -52,7 +52,7 @@ def svgPublicationChecks (ref : IO.Ref (List String)) : IO Unit := do
       let target := output / "figure.html"
       let _ ← publish none (some (target.toString, page)) none none
       let html ← IO.FS.readFile target
-      let (_, got) ← svgPublishedAsset html output "img" "src"
+      let (_, got) ← svgPublishedAsset html "img" "src"
       check ref s!"boundary {name}: publication writes the checked serialization"
         (html == page.render)
       check ref s!"boundary {name}: publication uses the prepared SVG snapshot"

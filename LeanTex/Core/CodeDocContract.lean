@@ -418,7 +418,7 @@ private theorem piecesRaws_adm (listing : Nat → List Char → Array Raw) (para
   intro l
   induction l with
   | nil => intro acc h; exact h
-  | cons p rest ih =>
+  | cons p _ ih =>
     intro acc h
     apply ih
     cases p with

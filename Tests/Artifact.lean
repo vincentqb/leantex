@@ -991,7 +991,7 @@ def formGlyphOffences (pdf : ByteArray) (fs : Font.FontSet)
       | _ => #[])
     let some bx0 := bb[0]? | throw "a form has no /BBox"
     let (by0, bx1, by1) := (bb[1]?.getD 0, bb[2]?.getD 0, bb[3]?.getD 0)
-    let mut fonts : Std.HashMap String (ArtFont × Option Font.Font) := {}
+    let mut fonts : Std.HashMap String (ArtFont × Option Font) := {}
     if let .dict fd := deref ((deref ((e.val.get? "Resources").getD .null)).get? "Font" |>.getD .null) then
       for (nm, v) in fd do
         let o := deref v
@@ -1008,7 +1008,7 @@ def formGlyphOffences (pdf : ByteArray) (fs : Font.FontSet)
     let mut tm := PdfMat.unit
     let mut size : Rat := 0
     let mut th : Rat := 1
-    let mut font : Option (ArtFont × Option Font.Font) := none
+    let mut font : Option (ArtFont × Option Font) := none
     let mut penX : Rat := 0
     for t in scanContent data do
       match t with
@@ -1963,7 +1963,7 @@ def artifactPitchChecks (ref : IO.Ref (List String)) : IO Unit := do
 
 /-- A kerning face and its italic in every slot: Source Serif Pro, whose "Ta" pair is −41/1000 em. -/
 def artKernSet : IO Font.FontSet := do
-  let load (f : String) : IO Font.Font := do
+  let load (f : String) : IO Font := do
     match Font.parse (← IO.FS.readBinFile (testFonts ++ "/" ++ f)) with
     | .ok font => pure font
     | .error e => throw (IO.userError s!"{f}: {e}")

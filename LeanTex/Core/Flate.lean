@@ -164,7 +164,7 @@ private theorem bestMatch_run (raw : ByteArray) (tab : Array Nat) (mask i limit 
       · exact ⟨best, dist, rfl, Nat.le_refl _, hbest, hmatch⟩
       · rename_i hgo
         dsimp only
-        generalize hlonger : (if h : i + best < raw.size then
+        generalize (if h : i + best < raw.size then
           raw[c + best]'(by omega) == raw[i + best] else false) = longer
         split
         · split

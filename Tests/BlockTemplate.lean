@@ -1494,7 +1494,7 @@ private def chainChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO
       (rules == want)
 
 /-- A shipped line's first glyph run: the face and size it sets in. -/
-private def firstRun (fs : Font.FontSet) (l : Layout.LineOut) : Option (Font.Font × Dim.Sp) :=
+private def firstRun (fs : Font.FontSet) (l : Layout.LineOut) : Option (Font × Dim.Sp) :=
   l.segs.findSome? fun s => match s with
     | .run idx _ _ _ gs size _ _ _ _ _ =>
       if gs.isEmpty then none else some (fs.get idx, if size == 0 then l.size else size)
@@ -1552,7 +1552,7 @@ private def lastStageTerm (rule key : String) (height : Dim.Sp) : Option Dim.Sp 
 /-- The rules beside a page's titles in one colour, each with its title's
 first and last lines and the face and size its first run sets in. -/
 private def titleBars (fonts : Font.FontSet) (p : Layout.PageOut) (c : Ir.Color) :
-    Array (Layout.Fill × Layout.LineOut × Layout.LineOut × Font.Font × Dim.Sp) :=
+    Array (Layout.Fill × Layout.LineOut × Layout.LineOut × Font × Dim.Sp) :=
   ((p.fills.filter (·.color == c)).qsort (·.y < ·.y)).filterMap fun bar =>
     let title := linesBeside p bar
     match title[0]?, title.back?, title[0]?.bind (firstRun fonts) with
@@ -1583,7 +1583,7 @@ private def titleRuleHtmlChecks (ref : IO.Ref (List String)) (fonts : Font.FontS
   let (_, plain, _) := layout fonts s!"{name}-boxed" (boxedRules src)
   let tol : Nat := (2 * doc.page.height / 100000 + 2).toNat
   let strut := fonts.get (fonts.lookup 0 700 false)
-  let leaded (f : Font.Font) (size : Dim.Sp) : Dim.Sp × Dim.Sp :=
+  let leaded (f : Font) (size : Dim.Sp) : Dim.Sp × Dim.Sp :=
     let sc (u : Int) : Dim.Sp := ((u.toNat * size.toNat / f.unitsPerEm : Nat) : Int)
     Layout.leadedBox (sc f.ascent) (sc (-f.descent)) (Ir.leadingFor size doc.page.leading)
   let distance (out : Layout.Out) (page : Nat) (a b : String) : Option Dim.Sp :=

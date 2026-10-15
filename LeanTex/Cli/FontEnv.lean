@@ -17,7 +17,7 @@ open LeanTex.Core
 index. -/
 public structure Cache where
   private mk ::
-  private ref : IO.Ref (Array (String × Font.Font))
+  private ref : IO.Ref (Array (String × Font))
   /-- Face resolution answers, keyed by the question. -/
   private weights : IO.Ref (Array ((String × Option String × Nat × Bool) ×
     Option (FontDb.Face × Option FontDb.Substituted)))
@@ -42,7 +42,7 @@ public def Cache.resolveWeight (c : Cache) (faces : Array FontDb.Face) (family :
 public def Cache.readPaths (c : Cache) : IO (Array String) := c.read.get
 
 /-- Parse a face, or return the parse already made for that path. -/
-public def Cache.parse (c : Cache) (path : String) : IO (Except String Font.Font) := do
+public def Cache.parse (c : Cache) (path : String) : IO (Except String Font) := do
   if let some f := (← c.ref.get).find? (·.1 == path) then
     return .ok f.2
   let file := FontDb.faceFile path
@@ -56,14 +56,14 @@ public def Cache.parse (c : Cache) (path : String) : IO (Except String Font.Font
 /-- Parse through the cache when the caller holds one; the answer is the same without
 it. -/
 private def parseFace (cache : Option Cache) (path : String) :
-    IO (Except String Font.Font) := do
+    IO (Except String Font) := do
   match cache with
   | some c => c.parse path
   | none => return (← FontDiscovery.faceBytes path) >>= Font.parse
 
 /-- `LEANTEX_FONT`'s face for a document declaring no `\fonts`, with its path, or the
 E0402 naming why the path yields none. -/
-public def loadOverride (path : String) : IO (Except Diag (Font.Font × String)) := do
+public def loadOverride (path : String) : IO (Except Diag (Font × String)) := do
   if ← System.FilePath.pathExists path then
     let data ← IO.FS.readBinFile path
     match Font.parse data with
@@ -91,7 +91,7 @@ public def resolveDocDirs (file : String) (dirs : Array String) :
 /-- What the math-face decision leaves: the faces and paths it loaded, the set's math
 slot, the families already named, and its diagnostics. -/
 public structure MathFace where
-  fonts : Array Font.Font
+  fonts : Array Font
   paths : Array String
   index : Option Nat
   missing : Array String
@@ -102,7 +102,7 @@ only with an OpenType MATH table (else W0011), and a face the document did not d
 named by N0016. -/
 public def resolveMath (faces : Array FontDb.Face) (declared : Option String)
     (body : Option String) (wantsMath : Bool)
-    (fonts : Array Font.Font) (paths : Array String)
+    (fonts : Array Font) (paths : Array String)
     (missing : Array String) (cache : Option Cache := none)
     (source : Option Span := none) : IO MathFace := do
   let mut fonts := fonts
@@ -110,8 +110,8 @@ public def resolveMath (faces : Array FontDb.Face) (declared : Option String)
   let mut missing := missing
   let mut diags : Array Diag := #[]
   let mut mathIdx : Option Nat := none
-  let loadFace (fonts : Array Font.Font) (paths : Array String) (path : String) :
-      IO (Option (Nat × Font.Font) × Array Font.Font × Array String × Option Diag) := do
+  let loadFace (fonts : Array Font) (paths : Array String) (path : String) :
+      IO (Option (Nat × Font) × Array Font × Array String × Option Diag) := do
     match paths.findIdx? (· == path) with
     | some i =>
       match fonts[i]? with

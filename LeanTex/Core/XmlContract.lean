@@ -160,8 +160,6 @@ private theorem State.give_inv (bud : Budget) (s : State) (n : Node) (h : Inv bu
     rw [hsplit, framesFit_append] at hfit
     refine ⟨?_, ?_, h.root, ?_⟩
     · show (s.stack.pop.push _).size ≤ bud.depth
-      have hne : s.stack.size ≠ 0 := by
-        intro h0; have := congrArg List.length hsplit; simp [h0] at this
       rw [Array.size_push, Array.size_pop]; have := h.depth; omega
     · show framesFit bud.depth 0 (s.stack.pop.push _).toList
       rw [Array.toList_push, framesFit_append]

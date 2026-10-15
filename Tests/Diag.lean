@@ -265,7 +265,7 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
   | .W0016 =>
     match withMath.fonts[1]? with
     | some fira =>
-      let noBB : Font.Font := { fira with
+      let noBB : Font := { fira with
         cmap := fira.cmap.filter fun r => !(r.1.toNat ≤ 0x1D538 && 0x1D538 ≤ r.2.1.toNat) }
       let fs : Font.FontSet := { withMath with fonts := #[withMath.fonts[0]!, noBB] }
       dvL (w := w) fs "$\\mathbb{A}$"
@@ -1177,7 +1177,7 @@ def monoSlotChecks (ref : IO.Ref (List String)) : IO Unit := do
     (twoSel == titled ("\\author{A. Person \\url{https://example.org/me}}\n\\urlstyle{same}\n") &&
       famRuns .sans twoSel == 0)
   -- One face in every slot is the no-mono default; a distinct face in slot 2 is a declared mono.
-  let load (name : String) : IO (Option Font.Font) := do
+  let load (name : String) : IO (Option Font) := do
     match Font.parse (← IO.FS.readBinFile (testFonts ++ "/" ++ name)) with
     | .ok f => pure (some f)
     | .error _ => pure none
@@ -1394,7 +1394,7 @@ def diagVoiceChecks (ref : IO.Ref (List String)) (update : Bool) : IO Unit := do
       (ds.any (·.code == c.code))
   let probeOf (c : DiagCode) : Array Diag :=
     ((probed.find? (·.1 == c)).map (·.2)).getD #[]
-  let load (name : String) : IO (Option Font.Font) := do
+  let load (name : String) : IO (Option Font) := do
     match Font.parse (← IO.FS.readBinFile (testFonts ++ "/" ++ name)) with
     | .ok f => pure (some f)
     | .error _ => pure none

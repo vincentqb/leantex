@@ -82,7 +82,7 @@ def citePhantomKnown : List PhantomRow :=
    -- A frame's overflow is claimed named; `Layout` does not state it.
    ⟨"Layout.spill_accounts", "LeanTex/Core/Ir.lean", "LeanTex.Core.Ir.Block.frame"⟩,
    -- The attachment point is claimed covered for every base (`Font.topAccentX`).
-   ⟨"Math.accentAttach_covers", "LeanTex/Core/Font.lean", "LeanTex.Core.Font.Font.topAccentX"⟩,
+   ⟨"Math.accentAttach_covers", "LeanTex/Core/Font.lean", "LeanTex.Core.Font.topAccentX"⟩,
    -- A picture label's face is claimed to agree across backends.
    ⟨"Picture.labelFace_agree", "Tests/Support.lean", "CensusLine.runFonts"⟩,
    ⟨"Picture.labelFace_agree", "Tests/Surface.lean", "pictureLabelFaceChecks"⟩,

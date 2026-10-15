@@ -362,7 +362,7 @@ theorem phasePeak_between (phases : List (Nat × Nat)) (n : Nat) :
     intro ps
     induction ps with
     | nil => intro a a' h₁ h₂; exact ⟨h₁, h₂⟩
-    | cons p ps ih =>
+    | cons p _ ih =>
       intro a a' h₁ h₂
       have e : p.2 * (4 * n) = 4 * (p.2 * n) := Nat.mul_left_comm _ _ _
       apply ih

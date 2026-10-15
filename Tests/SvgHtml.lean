@@ -21,7 +21,7 @@ open LeanTex.Core LeanTex.Cli
 
 /-- A face set with the serif body, sans and mono roles apart. -/
 def threeRoleFonts : IO (Option Font.FontSet) := do
-  let load (name : String) : IO (Option Font.Font) := do
+  let load (name : String) : IO (Option Font) := do
     let bytes ← IO.FS.readBinFile ("testdata/corpus/fonts/" ++ name)
     return (Font.parse bytes).toOption
   let some body ← load "SourceSerifPro-Regular.otf" | return none

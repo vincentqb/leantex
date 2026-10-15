@@ -37,7 +37,7 @@ def firstGlyphX (l : Layout.LineOut) : Option Dim.Sp := Id.run do
 def bare (s : String) : String := (s.replace "\u00a0" "").replace " " ""
 
 /-- Inline code breaks where url.sty's `\path` breaks, and a tex `\texttt` never breaks. -/
-def inlineCodeChecks (ref : IO.Ref (List String)) (text : Font.Font)
+def inlineCodeChecks (ref : IO.Ref (List String)) (text : Font)
     (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
   let codes := ["alpha_beta_gamma_delta_epsilon_zeta_eta_theta_iota_kappa_lambda_mu",
@@ -443,7 +443,7 @@ def htmlCodeAtomChecks (ref : IO.Ref (List String)) : IO Unit := do
 
 /-- The typewriter face with invented advances for the Thai, CJK and Hangul characters a code line
 here writes; it draws nothing. -/
-def scriptMono (mono : Font.Font) : Font.Font := Id.run do
+def scriptMono (mono : Font) : Font := Id.run do
   let cell := mono.spaceAdvance
   let blocks : Array (Nat × Nat × Nat) :=
     #[(0x0E00, 0x0E7F, 1), (0x3000, 0x30FF, 2), (0x4E00, 0x9FFF, 2), (0xAC00, 0xD7A3, 2)]

@@ -225,7 +225,7 @@ private theorem splitGo_uncut {α : Type} (opens closes isSep : α → Bool) (l 
   | case3 x rest depth cur out hx hc ih =>
     rw [ih (by simpa [List.foldl, cutStep, hx, hc] using h)]
     simp
-  | case4 x rest depth cur out hx hc hsep ih =>
+  | case4 x rest depth cur out hx hc hsep _ =>
     exfalso
     simp only [Bool.and_eq_true, beq_iff_eq, gt_iff_lt] at hsep
     obtain ⟨hd, hs⟩ := hsep
@@ -260,11 +260,11 @@ private theorem splitGo_pieces_uncut {α : Type} (opens closes isSep : α → Bo
     rcases hp with hp | rfl
     · exact hout p hp
     · simp [hcur]
-  | case2 x rest depth cur out hx ih =>
+  | case2 x _ depth cur out hx ih =>
     exact ih hout (by simp [List.foldl_append, hcur, cutStep, hx])
-  | case3 x rest depth cur out hx hc ih =>
+  | case3 x _ depth cur out hx hc ih =>
     exact ih hout (by simp [List.foldl_append, hcur, cutStep, hx, hc])
-  | case4 x rest depth cur out hx hc hsep ih =>
+  | case4 x rest depth cur out _ _ hsep ih =>
     have hd : depth = 0 := by
       simp only [Bool.and_eq_true, beq_iff_eq] at hsep
       exact hsep.1
@@ -363,7 +363,7 @@ private theorem texAtoms_asMade (cs : List Char) (acc : Array (List Char))
     (h : ∀ a ∈ acc.toList, innerAtom a = true) : atomsAsMade (texAtoms cs acc).toList = true := by
   fun_induction texAtoms cs acc with
   | case1 acc => simpa using atomsAsMade_append [] rfl acc.toList h
-  | case2 c rest acc ih =>
+  | case2 c _ acc ih =>
     apply ih
     intro a ha
     simp only [Array.toList_push, List.mem_append, List.mem_singleton] at ha

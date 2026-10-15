@@ -36,7 +36,7 @@ public theorem inconclusive_retried_exact (why : String) (bytes : ByteArray) :
 public theorem annotate_record_exact (o : PicCache.Outcome) (log : PicCache.Log) (said : String)
     (bytes : ByteArray) :
     Result.record? ⟨PicCache.annotate o log said, bytes⟩ = Result.record? ⟨o, bytes⟩ := by
-  cases o <;> cases log <;> simp only [PicCache.annotate] <;> (try split) <;> rfl
+  cases o <;> cases log <;> simp only [PicCache.annotate]; (try split) <;> rfl
 
 public theorem empty_retried_exact :
     Result.record? ⟨.drawn, ByteArray.empty⟩ = none := by rfl

@@ -411,7 +411,7 @@ def cancelHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
         if ss == expected then (accepts (.text false)).metric st sp b v else none }
     t s!"cancel HTML {name}: provider receives ordered ambient style history"
       ((elemNodesOne (· == "svg") #[] (HtmlDoc.blockNode cfg (.para #[content]))).size == 1)
-  let font : Font.Font := { (default : Font.Font) with
+  let font : Font := { (default : Font) with
     unitsPerEm := 1000
     math := some { (default : Font.MathConsts) with scales := { script := 73, scriptscript := 47 } } }
   let cfg : HtmlDoc.Config := {

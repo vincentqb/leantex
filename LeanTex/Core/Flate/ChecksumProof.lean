@@ -40,7 +40,7 @@ private theorem adler32_bound (data : ByteArray) : Flate.adler32 data < 256 ^ 4 
     · change AdlerWords 1
       unfold AdlerWords
       decide
-    · intro j hlo hhi p hp
+    · intro j _ _ p _
       exact reduced_words _
   · intro p hp
     change ((p.1 >>> 32) * 65536 + (p.1 &&& 0xFFFFFFFF)).toNat < 256^4

@@ -167,7 +167,7 @@ public theorem run_bind {α β : Type} (w : (q : Ask) → Reply q) (p : Prog α)
     (p >>= f).run w = (f (p.run w)).run w := by
   induction p with
   | pure _ => rfl
-  | ask q k ih => exact ih (w q)
+  | ask q _ ih => exact ih (w q)
 
 public theorem run_map {α β : Type} (w : (q : Ask) → Reply q) (p : Prog α) (f : α → β) :
     (f <$> p).run w = f (p.run w) := by
@@ -231,7 +231,7 @@ public theorem Only.map {α β : Type} {P : Ask → Prop} {p : Prog α} (f : α 
 public theorem Only.asks {α : Type} {P : Ask → Prop} {p : Prog α} (h : p.Only P)
     (w : (q : Ask) → Reply q) : ∀ q ∈ p.asks w, P q := by
   induction h with
-  | pure a => simp [Prog.asks]
+  | pure _ => simp [Prog.asks]
   | ask q k hq _ ih =>
     intro q' hq'
     rcases List.mem_cons.mp hq' with rfl | hq'

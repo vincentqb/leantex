@@ -330,7 +330,7 @@ private theorem skelList_headings : ∀ (l : List Struct.Node) (es : Array Struc
     (parent holder : Nat) (inline : Bool) (openList : Option Nat),
     headingsOf (skelList es parent holder inline openList l)
       = headingsOf es ++ (Struct.headingsList #[] l).toList
-  | [], es, parent, holder, inline, openList => by
+  | [], es, _, _, _, _ => by
     simp [skelList, Struct.headingsList_nil_exact]
   | n :: rest, es, parent, holder, inline, openList => by
     rw [skelList, skelList_headings rest, skelStep_headings n, Struct.headingsList_cons_exact,

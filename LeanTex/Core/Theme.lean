@@ -18,7 +18,7 @@ public structure Decls where
   deriving Repr, BEq
 
 /-- A theme: the values of the four surfaces a `\theme` installs as defaults, and a name. -/
-public structure Theme extends Decls where
+public structure _root_.LeanTex.Core.Theme extends Decls where
   name : String
   /-- The frame-alignment keys the bundle's inner theme sets. -/
   frameKeys : Ir.FrameKeys := .beamer
@@ -30,17 +30,17 @@ public structure Theme extends Decls where
   reported : List Ir.Role := []
 
 /-- The palette a bundle's seeds generate at a depth, derived afresh. -/
-public def Theme.generatedFresh (th : Theme) (d : GroundDepth) : Option SeedPalette.Colors :=
+public def generatedFresh (th : Theme) (d : GroundDepth) : Option SeedPalette.Colors :=
   th.seeds.bind fun (s, _) => ((SeedPalette.generate s (s.targets d)).toOption).map (·.colors)
 
 /-- The colour a bundle derives for a role, derived afresh; `seed` itself where nothing derives. -/
-public def Theme.derivedFresh (th : Theme) (r : Ir.Role) (seed : Color) : Color :=
+public def derivedFresh (th : Theme) (r : Ir.Role) (seed : Color) : Color :=
   let page := Design.printPage th.palette
   if r == .muted then (SeedPalette.mutedFor seed page).getD seed
   else (ContrastSolve.realizeNearest (Contrast.aaText + SeedPalette.margin) page seed).getD seed
 
 /-- The palette a bundle's seeds generate at a depth: kept in `PaletteData`, else derived. -/
-public def Theme.generated (th : Theme) (d : GroundDepth) : Option SeedPalette.Colors :=
+public def generated (th : Theme) (d : GroundDepth) : Option SeedPalette.Colors :=
   th.seeds.bind fun (s, _) =>
     match PaletteData.bundleGenerated.find? (fun e => e.1 == s && e.2.1 == d && e.2.2.1 == .light) with
     | some e => some e.2.2.2
@@ -48,13 +48,13 @@ public def Theme.generated (th : Theme) (d : GroundDepth) : Option SeedPalette.C
 
 /-- The colour a bundle derives for a role: the realization kept in
 `PaletteData`, else derived as asked. -/
-public def Theme.derivedColor (th : Theme) (r : Ir.Role) (seed : Color) : Color :=
+public def derivedColor (th : Theme) (r : Ir.Role) (seed : Color) : Color :=
   match PaletteData.bundleDerived.find? (fun e => e.1 == th.name && e.2.1 == r) with
   | some e => e.2.2
   | none => th.derivedFresh r seed
 
 /-- What a bundle declares at a depth: its generated palette, own entries and derived colours. -/
-public def Theme.realize (th : Theme) (d : GroundDepth) : Palette :=
+public def realize (th : Theme) (d : GroundDepth) : Palette :=
   let gen : Palette := match th.seeds, th.generated d with
     | some (seeds, blocks), some colors =>
       ({} : Palette).applySeeds { seeds, targets := seeds.targets d, blocks, colors, bundle := true }

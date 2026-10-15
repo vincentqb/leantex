@@ -457,7 +457,7 @@ def htmlContainedSvgColorChecks (ref : IO.Ref (List String)) : IO Unit := do
           let target := output / "page.html"
           let _ ← publish none (some (target.toString, page)) none none
           let html ← IO.FS.readFile target
-          let (_, captured) ← svgPublishedAsset html output
+          let (_, captured) ← svgPublishedAsset html
             (if isPoster then "source" else "img") (if isPoster then "srcset" else "src")
           t ("contained SVG color: exact published bytes for " ++ name) (captured == svg)
           t ("contained SVG color: single-file publication for " ++ name)

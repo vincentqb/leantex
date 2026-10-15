@@ -51,7 +51,6 @@ private theorem findStartxref_last_exact (b : ByteArray) (pos : Nat)
   let lo := b.size - min b.size 2048
   let target := lo+(b.size-1-pos)
   let f := fun k => lo+(b.size-1-k)
-  have hlo : lo ≤ pos := hl
   have ht : lo ≤ target := by dsimp only [target]; omega
   have hb : target < b.size := by dsimp only [target]; omega
   have hft : f target = pos := by dsimp only [f, target]; omega

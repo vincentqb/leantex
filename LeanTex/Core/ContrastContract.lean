@@ -21,7 +21,7 @@ open LeanTex.Core.Ir LeanTex.Core.Dim
 public theorem pdf_default_aa : contrastMilli Color.black Color.white ≥ aaText := by
   decide +kernel
 
-private theorem every_depth (P : Theme.Theme → Palette → Bool)
+private theorem every_depth (P : Theme → Palette → Bool)
     (hdecks : Theme.builtin.all (fun th => P th (th.realize .decks)) = true)
     (hdocs : Theme.builtin.all (fun th => th.seeds.isNone || P th (th.realize .documents)) = true)
     (hposters : Theme.builtin.all (fun th => th.seeds.isNone || P th (th.realize .posters)) = true) :
@@ -42,7 +42,7 @@ private theorem every_depth (P : Theme.Theme → Palette → Bool)
 
 /-- A contract judged at the medium's size holds at every depth where it holds on a document's
 page, a deck's stage, and for seeded bundles a poster's board (`Theme.realize_depth_exact`). -/
-private theorem every_medium (P : Theme.Theme → Bool → Palette → Bool)
+private theorem every_medium (P : Theme → Bool → Palette → Bool)
     (hdocs : Theme.builtin.all (fun th => P th false (th.realize .documents)) = true)
     (hdecks : Theme.builtin.all (fun th => P th true (th.realize .decks)) = true)
     (hposters :

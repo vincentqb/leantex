@@ -22,7 +22,7 @@ regular, bold, italic and bold italic file, a missing style falling to the
 role's regular. -/
 def facesIn (dir : System.FilePath) (roles : Array (Array (Option String))) :
     IO (Except String Font.FontSet) := do
-  let mut fonts : Array Font.Font := #[]
+  let mut fonts : Array Font := #[]
   let mut index : Array ((Nat × Nat × Bool) × Nat) := #[]
   let keys := #[(400, false), (700, false), (400, true), (700, true)]
   for (styles, slot) in roles.zipIdx do

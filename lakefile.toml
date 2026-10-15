@@ -5,20 +5,14 @@ lintDriver = "lint"
 # Every compiled project declaration must be free of unfinished proofs. The lint
 # driver additionally audits compiled axioms and proofs erased after elaboration.
 moreLeanArgs = ["-E", "hasSorry"]
-
-[leanOptions]
-weak."linter.extra" = true
-weak."linter.extra.dupNamespace" = true
-weak."linter.extra.unnecessarySeqFocus" = true
-weak."linter.extra.unreachableTactic" = true
-weak."linter.redundantVisibility" = true
-weak."linter.extra.unusedDecidableInType" = true
-weak."linter.indexVariables" = true
-weak."linter.listVariables" = true
-weak."linter.omit" = true
-weak."linter.tacticCheckInstances" = true
-weak."linter.unusedVariables.analyzeTactics" = true
-weak."linter.loopingSimpArgs" = true
+# Each name is an option Lean registers, so a linter a toolchain renames or drops fails
+# the build instead of going quiet.
+leanOptions = [
+  ["linter.unusedVariables", true],
+  ["linter.unusedVariables.analyzeTactics", true],
+  ["linter.extra", true],
+  ["linter.omit", true],
+]
 
 [[lean_lib]]
 name = "LeanTex"

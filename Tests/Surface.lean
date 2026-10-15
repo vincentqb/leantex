@@ -1649,7 +1649,7 @@ def hookSeamChecks (ref : IO.Ref (List String)) : IO Unit := do
 link. -/
 def urlFaceChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
-  let load (p : String) : IO Font.Font := do
+  let load (p : String) : IO Font := do
     match Font.parse (← IO.FS.readBinFile (testFonts ++ "/" ++ p)) with
     | .ok f => pure f
     | .error e => throw (IO.userError s!"url face fixture: {p}: {e}")
@@ -6731,7 +6731,7 @@ def pictureAnchorChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
 equality of the two shipped faces. -/
 def pictureLabelFaceChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
-  let load (n : String) : IO (Option Font.Font) := do
+  let load (n : String) : IO (Option Font) := do
     let p := testFonts ++ "/" ++ n
     unless ← System.FilePath.pathExists p do return none
     return (Font.parse (← IO.FS.readBinFile p)).toOption

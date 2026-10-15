@@ -1635,7 +1635,7 @@ private theorem marksList_notWords {L : Type} (os : Array (Array Subpath)) (cx :
   | nil => rfl
   | cons n rest ih =>
     cases n <;> simp only [Node.marksList, List.filter_cons, notWords, Bool.false_eq_true,
-      ↓reduceIte] <;> first | exact ih _ | (simp only [Node.marksOne]; exact ih _)
+      ↓reduceIte] <;> exact ih _
 
 /-- What a `d1` Type 3 procedure stamps (§9.6.4): the outline of its one nonzero fill, if that is all it paints. -/
 public def type3Stamp? (isD1 : Bool) (body : Array (Node Run)) : Option (Array Subpath) :=

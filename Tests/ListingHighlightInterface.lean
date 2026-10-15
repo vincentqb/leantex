@@ -9,7 +9,7 @@ open LeanTex.Core
 
 namespace Tests.ListingHighlightInterface
 
-example : String → Array ListingReply.Request →
+example : Array ListingReply.Request →
     IO (Array ListingReply.Answer × Array Diag) := LeanTex.Cli.ListingHighlight.fulfil
 example (language source : String) : ListingReply.Request := { language, source }
 example (request : ListingReply.Request) (tokens : Array (Array ListingHighlight.Token)) :

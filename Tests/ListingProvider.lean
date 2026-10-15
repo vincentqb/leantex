@@ -49,7 +49,7 @@ def invocationProbe (dir : System.FilePath) : IO (List String) := do
   let ref ← IO.mkRef ([] : List String)
   let request := ListingReply.Request.ofSource "fish" "sample"
   let expect (label : String) (kind : LeanTex.Core.ListingHighlight.Kind) : IO Unit := do
-    let (answers, ds) ← LeanTex.Cli.ListingHighlight.fulfil "listing.tex" #[request]
+    let (answers, ds) ← LeanTex.Cli.ListingHighlight.fulfil #[request]
     check ref label (ds.isEmpty && answers.size == 1 && answers.all fun answer =>
       answer.request == request && answer.tokens == #[#[{ kind, text := "sample" }]])
   let selected := dir / "selected environment"
@@ -57,7 +57,7 @@ def invocationProbe (dir : System.FilePath) : IO (List String) := do
   IO.FS.writeFile (selected / "reply.json") (invocationReply "Token.Name.Builtin")
   expect "same request observes changed environment" .nameBuiltin
   IO.FS.removeFile (selected / "reply.json")
-  let (answers, ds) ← LeanTex.Cli.ListingHighlight.fulfil "listing.tex" #[request]
+  let (answers, ds) ← LeanTex.Cli.ListingHighlight.fulfil #[request]
   check ref "missing provider returns no answer and one keyed warning"
     (answers.isEmpty && ds.size == 1 &&
       ds.all fun d => d.code == "W0393" && d.subject == some "listing-language:fish")

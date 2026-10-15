@@ -198,7 +198,7 @@ def glyfDrop (b : ByteArray) (keep : Array Bool) :
 
 /-- The program a PDF embeds for a face whose pages paint `used`, and whether it is a subset;
 the face's own bytes where subsetting is not certain. -/
-public def program (font : Font.Font) (used : Array Nat) : ByteArray × Bool := Id.run do
+public def program (font : Font) (used : Array Nat) : ByteArray × Bool := Id.run do
   let data := font.data
   if data.size < 12 || (findTable data "fvar").isSome || (findTable data "CFF2").isSome then
     return (data, false)

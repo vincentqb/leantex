@@ -679,7 +679,7 @@ def frontend (ui : Ui) (file : String) : IO (Option Front) := do
       pure (doc, diags, reqSpans, prepared, earlier)
     else do
       let t ← IO.monoMsNow
-      let (replies, listingDiags) ← LeanTex.Cli.ListingHighlight.fulfil file requests
+      let (replies, listingDiags) ← LeanTex.Cli.ListingHighlight.fulfil requests
       ui.phase "highlight" s!"{replies.size} of {requests.size} listings" (← since t)
       let prepared := { prepared with listingReplies := replies }
       let earlier := earlier ++ listingDiags
@@ -1131,7 +1131,7 @@ public def main (argv : List String) : IO UInt32 := do
     | .fonts =>
       -- `fonts`: one family per line, its installed math companion indented beneath.
       let faces ← FontDiscovery.scan (cfg.fontDirs.toList ++ (← texFontDirs))
-      let load (path : String) : IO (Option Font.Font) := do
+      let load (path : String) : IO (Option Font) := do
         return ((← FontDiscovery.faceBytes path) >>= Font.parse).toOption
       for fam in FontDb.families faces do
         IO.println fam
@@ -1140,10 +1140,10 @@ public def main (argv : List String) : IO UInt32 := do
             let bodyPath := (FontDb.resolve faces fam {}).map (·.1.path)
             match ← bodyPath.mapM load, ← load cFace.path with
             | some (some b), some c =>
-              let perMille (f : Font.Font) (v : Nat) : Nat := v * 1000 / f.unitsPerEm
+              let perMille (f : Font) (v : Nat) : Nat := v * 1000 / f.unitsPerEm
               let xh := s!"x-height {perMille b b.xHeightOptical} vs \
 {perMille c c.xHeightOptical}"
-              let stem (f : Font.Font) : Option Nat := do
+              let stem (f : Font) : Option Nat := do
                 let g ← f.gid 'l'
                 let src := Ink.Src.make f.data f.isCff f.numGlyphs
                 let y := (f.xHeightOptical : Int) / 2

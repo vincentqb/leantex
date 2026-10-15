@@ -174,7 +174,7 @@ public theorem digitRun_length : ∀ (r : Run) (cs : List Char),
 
 public theorem expDigits_length_le : ∀ (v n : Nat) (cs : List Char),
     (expDigits v n cs).2.2.length ≤ cs.length
-  | v, n, [] => by simp [expDigits]
+  | _, _, [] => by simp [expDigits]
   | v, n, c :: rest => by
     simp only [expDigits]
     split

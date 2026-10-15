@@ -275,7 +275,7 @@ def iconChecks (ref : IO.Ref (List String)) : IO Unit := do
   let md := (MarkdownDoc.emit doc)
   t "markdown renders the text alternative, never the raw scalar"
     ((md.splitOn "GitHub").length ≥ 2 && (md.splitOn "\uF09B").length == 1)
-  let load (name : String) : IO Font.Font := do
+  let load (name : String) : IO Font := do
     match Font.parse (← IO.FS.readBinFile (testFonts ++ "/" ++ name)) with
     | .ok f => pure f
     | .error e => throw (IO.userError s!"icons: {name} unparsable: {e}")
@@ -289,13 +289,13 @@ def iconChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- Every fixture face has a space glyph, so the fallback arms run on cmap-filtered copies.
   t "spaceAdvance is the space glyph's advance where one exists"
     (sans.spaceAdvance == sans.advance ' ' && sans.advance ' ' > 0)
-  let noSpace : Font.Font :=
+  let noSpace : Font :=
     { sans with cmap := sans.cmap.filter fun r => r.1 > 32 || r.2.1 < 32 }
   t "a face without a space glyph takes half the em dash"
     (noSpace.advance ' ' == 0 &&
      noSpace.spaceAdvance == noSpace.advance '—' / 2 && noSpace.spaceAdvance > 0)
   let dash := '—'.toNat.toUInt32
-  let noDash : Font.Font :=
+  let noDash : Font :=
     { noSpace with cmap := noSpace.cmap.filter fun r => r.1 > dash || r.2.1 < dash }
   t "a face without space or em dash takes half the em"
     (noDash.advance '—' == 0 && noDash.spaceAdvance == noDash.unitsPerEm / 2)
@@ -326,7 +326,7 @@ def iconChecks (ref : IO.Ref (List String)) : IO Unit := do
 composed map is uniform. -/
 def smallCapsGsubChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
-  let load (name : String) : IO Font.Font := do
+  let load (name : String) : IO Font := do
     match Font.parse (← IO.FS.readBinFile (testFonts ++ "/" ++ name)) with
     | .ok f => pure f
     | .error e => throw (IO.userError s!"smallcaps: {name} unparsable: {e}")
@@ -354,7 +354,7 @@ def smallCapsGsubChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((← features "ExampleIcons-Regular.ttf") == (false, false, false))
   let serif ← load "SourceSerifPro-Regular.otf"
   let fira ← load "FiraSans-Regular.otf"
-  let uniform (f : Font.Font) : Bool := Id.run do
+  let uniform (f : Font) : Bool := Id.run do
     for i in [0:26] do
       let up := (f.gid (Char.ofNat ('A'.toNat + i))).getD 0
       let low := (f.gid (Char.ofNat ('a'.toNat + i))).getD 0
@@ -373,7 +373,7 @@ def smallCapsGsubChecks (ref : IO.Ref (List String)) : IO Unit := do
   let allVariants (slot idx : Nat) : List ((Nat × Nat × Bool) × Nat) :=
     [((slot, 400, false), idx), ((slot, 700, false), idx),
      ((slot, 400, true), idx), ((slot, 700, true), idx)]
-  let set (f : Font.Font) : Font.FontSet := {
+  let set (f : Font) : Font.FontSet := {
     fonts := #[f]
     index := (allVariants 0 0 ++ allVariants 1 0 ++ allVariants 2 0).toArray }
   let drawn (fs : Font.FontSet) (src : String) : Array (Array (Nat × Char × Dim.Sp) × Dim.Sp) :=
@@ -429,7 +429,7 @@ and named once per family and glyph, an uncovered one is E0405, and a covered do
 byte-identical. -/
 def fallbackChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
-  let load (name : String) : IO Font.Font := do
+  let load (name : String) : IO Font := do
     match Font.parse (← IO.FS.readBinFile (testFonts ++ "/" ++ name)) with
     | .ok f => pure f
     | .error e => throw (IO.userError s!"fallback: {name} unparsable: {e}")
@@ -574,7 +574,7 @@ def fallbackChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "kern: pairs behind an extension lookup answer hb-shape's values"
     (fk 'T' 'e' == -55 && fk 'A' 'V' == -14 && fk 'L' 'T' == -83 && fk 'a' 'a' == -5 &&
       fk 'H' 'H' == 0)
-  let spaceMemoExact (f : Font.Font) : Bool :=
+  let spaceMemoExact (f : Font) : Bool :=
     match f.gid ' ' with
     | some sp => (List.range (f.numGlyphs + 2)).all fun g =>
         f.spaceKernAdv true g == f.kernAdv g sp && f.spaceKernAdv false g == f.kernAdv sp g
@@ -583,7 +583,7 @@ def fallbackChecks (ref : IO.Ref (List String)) : IO Unit := do
     (spaceMemoExact ssp && spaceMemoExact firaSans && spaceMemoExact osans &&
       (List.range ssp.numGlyphs).any (ssp.spaceKernAdv true · != 0) &&
       (List.range ssp.numGlyphs).any (ssp.spaceKernAdv false · != 0))
-  let boundedSpaceLookup (f : Font.Font) : Bool :=
+  let boundedSpaceLookup (f : Font) : Bool :=
     match f.spaceKerns.get with
     | none => false
     | some cache =>
@@ -1226,7 +1226,7 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
   mathSymbolResetChecks ref
   mathSymbolResetAccountingChecks ref
   let t := check ref
-  let load (name : String) : IO Font.Font := do
+  let load (name : String) : IO Font := do
     match Font.parse (← IO.FS.readBinFile (testFonts ++ "/" ++ name)) with
     | .ok f => pure f
     | .error e => throw (IO.userError s!"math: {name} unparsable: {e}")
@@ -1324,7 +1324,7 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- Fira has no script range and the synthetic host does, so resolution must keep the host out.
   let scriptO := UInt32.ofNat '𝒪'.toNat
   let fakeGid := UInt32.ofNat ((serif.gid 'O').getD 0)
-  let fakeHost : Font.Font := { serif with
+  let fakeHost : Font := { serif with
     family := "Synthetic Host Arsenal"
     psName := "SyntheticHostArsenal"
     cmap := (serif.cmap.push (scriptO, scriptO, fakeGid)).qsort (fun a b => a.1 < b.1) }
@@ -1393,7 +1393,7 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
   let sansScalar : Char := Char.ofNat 0x1D5B1
   let sansR : UInt32 := UInt32.ofNat 0x1D5B1
   let sansGid : UInt32 := UInt32.ofNat ((serif.gid 'R').getD 0)
-  let sansHost : Font.Font := { serif with
+  let sansHost : Font := { serif with
     family := "Synthetic Host Sans"
     psName := "SyntheticHostSans"
     cmap := (serif.cmap.push (sansR, sansR, sansGid)).qsort (fun a b => a.1 < b.1) }
@@ -1435,7 +1435,7 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
       alphaCoverage.faceCovers .tt .latinUpper && alphaCoverage.remaps .tt .latinUpper)
 
   let rc : UInt32 := (Char.toNat 'R').toUInt32
-  let noR : Font.Font := { fira with
+  let noR : Font := { fira with
     cmap := fira.cmap.filter (fun r => !(r.1 ≤ rc && rc ≤ r.2.1)) }
   t "the synthetic math face genuinely lacks R" ((noR.gid 'R').isNone)
   let noRfs : Font.FontSet := {
@@ -1895,7 +1895,7 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a covered alphabet stays silent"
     ((layoutOf mfs (Elab.run "t" "$\\mathbb{R}$").1 geom).diags.all
       (·.code != "N0018"))
-  let noBBFira : Font.Font := { fira with
+  let noBBFira : Font := { fira with
     cmap := fira.cmap.filter fun r => !(r.1.toNat ≤ 0x1D538 && 0x1D538 ≤ r.2.1.toNat) }
   let noBBSet : Font.FontSet := { mfs with fonts := #[serif, noBBFira] }
   let bbOut := layoutOf noBBSet (Elab.run "t" "$\\mathbb{A}$").1 geom
@@ -2027,7 +2027,7 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
 `remaps` bit, two builds apart. -/
 def isolatedHoleChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
-  let load (name : String) : IO Font.Font := do
+  let load (name : String) : IO Font := do
     match Font.parse (← IO.FS.readBinFile (testFonts ++ "/" ++ name)) with
     | .ok f => pure f
     | .error e => throw (IO.userError s!"isolatedHole: {name} unparsable: {e}")
@@ -2048,7 +2048,7 @@ def isolatedHoleChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((calOut.diags.filter (·.code == "N0018")).map (·.subject) ==
         #[some "math-alpha:cal"] &&
       !calOut.diags.any (·.code == "W0016"))
-  let noBBFira2 : Font.Font := { fira with
+  let noBBFira2 : Font := { fira with
     cmap := fira.cmap.filter fun r => !(r.1.toNat ≤ 0x1D538 && 0x1D538 ≤ r.2.1.toNat) }
   let noBBSet2 : Font.FontSet := { mfs with fonts := #[serif, noBBFira2] }
   let bbOut2 := layoutOf noBBSet2 (Elab.run "t" "$\\mathbb{A}$").1 geom
@@ -2410,7 +2410,7 @@ def slotLossChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((SlotLoss.slotsUsed ((elabStr ("\\documentclass{article}\n" ++
       "\\runninghead{A \\texttt{head} run}\n\\begin{document}\nx\n\\end{document}")).1)).contains 2)
   -- `collapsed`: one face in every slot; `declared`: a distinct mono in slot 2.
-  let load (name : String) : IO (Option Font.Font) := do
+  let load (name : String) : IO (Option Font) := do
     match Font.parse (← IO.FS.readBinFile (testFonts ++ "/" ++ name)) with
     | .ok f => pure (some f)
     | .error _ => pure none

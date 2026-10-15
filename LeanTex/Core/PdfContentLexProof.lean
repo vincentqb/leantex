@@ -550,9 +550,6 @@ theorem step_number {P R : ByteArray} {raw : String} {o : Obj}
   have hpos1 : raw.toUTF8.size ≥ 1 := by rw [hlen, hcs]; simp
   have hsz : ¬ (P ++ raw.toUTF8 ++ R).size ≤ P.size := by
     rw [size_tok]; omega
-  have hpos : P.size < P.size + raw.toList.length := by
-    have : raw.toList.length ≥ 1 := by rw [hcs]; simp
-    omega
   unfold step
   simp only [hq, hsz, ↓reduceIte, hhead, hnum, hscan, String.ofList_toList, ho, hlen]
   congr

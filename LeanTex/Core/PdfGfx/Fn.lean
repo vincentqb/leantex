@@ -217,7 +217,6 @@ private theorem back_between (lo hi e0 e1 a b d : Rat) (hhl : hi ≠ lo) (he : e
   generalize hua : e0 + (a - lo) * (e1 - e0) / (hi - lo) = ua at hd
   generalize hub : e0 + (b - lo) * (e1 - e0) / (hi - lo) = ub at hd
   generalize hq : (hi - lo) / (e1 - e0) = q
-  have hΔ : hi - lo ≠ 0 := by grind
   have hε : e1 - e0 ≠ 0 := by grind
   have hq0 : q ≠ 0 := by
     intro h0
@@ -228,13 +227,9 @@ private theorem back_between (lo hi e0 e1 a b d : Rat) (hhl : hi ≠ lo) (he : e
     rw [← hq, Rat.div_def, Rat.div_def]; grind
   have ia : a - (lo + (d - e0) * q) = ua * q - d * q := by
     rw [← hua, ← hq, Rat.div_def, Rat.div_def]
-    have h1 := Rat.mul_inv_cancel _ hΔ
-    have h2 := Rat.mul_inv_cancel _ hε
     grind
   have ib : b - (lo + (d - e0) * q) = ub * q - d * q := by
     rw [← hub, ← hq, Rat.div_def, Rat.div_def]
-    have h1 := Rat.mul_inv_cancel _ hΔ
-    have h2 := Rat.mul_inv_cancel _ hε
     grind
   rw [hts]
   by_cases hneg : q < 0

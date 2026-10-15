@@ -97,7 +97,7 @@ private def selectedResources (f : PdfRead.Form) (n : Nat) : Bool :=
     (f.objects.filterMap (·.stream)) == (if n == 3 then #[tileInk.toUTF8] else #[])
 
 /-- The writer keeps face zero even on an image-only page, so a parsed bundled face is supplied. -/
-private def selectedWrapper (font : Font.Font) (f : { f : PdfRead.Form // f.wf }) :
+private def selectedWrapper (font : Font) (f : { f : PdfRead.Form // f.wf }) :
     ByteArray :=
   let plan : Image.Plan := { pxW := 0, pxH := 0, form := some f }
   let imgs : Image.Store := { entries := #[{ src := "poster.pdf", info := some plan }] }
@@ -126,7 +126,7 @@ private def wrapperResources (es : Array PdfRead.Entry) (obj : PdfRead.Obj)
   let opacity ← entryResolve es (← (← state.get? "ExtGState").get? "Opacity")
   return opacity.get? "CA" == some (.real "0.75")
 
-private def wrapperMatches (font : Font.Font) (f : { f : PdfRead.Form // f.wf })
+private def wrapperMatches (font : Font) (f : { f : PdfRead.Form // f.wf })
     (cropped : Bool) (n : Nat) : Bool :=
   let bytes := selectedWrapper font f
   match PdfRead.objects bytes with

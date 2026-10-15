@@ -1929,7 +1929,7 @@ private theorem resolveBlocks_size_exact (p : CitePunct) (find : Resolver)
   | nil => simp [resolveBlocks]
   | cons b bs ih =>
     rw [resolveBlocks, ih, resolveBlock_size_exact]
-    cases hk : keepsBlock b <;> simp [hk] <;> omega
+    cases hk : keepsBlock b <;> simp [hk]; omega
 
 /-- Metadata of surviving top-level blocks, reindexed to the output document. -/
 public def remapSources {α : Type} (doc : Ir.Doc) (sites : Array (Nat × α)) :

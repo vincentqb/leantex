@@ -104,7 +104,7 @@ private def failed (requests : Array ListingReply.Request)
 
 /-- Fulfil content-keyed requests in one bounded run of the first `python3` on PATH; an
 empty batch starts no tool, and no answer returns before its reconstruction is checked. -/
-public def fulfil (_file : String) (requests : Array ListingReply.Request) :
+public def fulfil (requests : Array ListingReply.Request) :
     IO (Array ListingReply.Answer × Array Diag) := do
   if requests.isEmpty then return (#[], #[])
   if !ListingReply.withinBudget requests then return failed requests .budget

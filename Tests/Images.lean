@@ -816,16 +816,16 @@ def planChecks (ref : IO.Ref (List String)) : IO Unit := do
   let agrees (b : ByteArray) : Bool :=
     match Image.probe b with
     | .ok s => (match Image.plan default s with
-      | .ok pl => pl.recoded == Image.Plan.recodes default s
+      | .ok pl => pl.recoded == Image.Plan.recodes s
       | .error _ => false)
     | .error _ => false
   t "recodes agrees with the planner on every fixture"
     (agrees pngData && agrees jpgData && agrees alphaData && agrees rgbaPng && agrees pngIccp)
   t "only the alpha PNGs recode"
-    ((Image.probe alphaData).toOption.map (Image.Plan.recodes default) == some true &&
-     (Image.probe rgbaPng).toOption.map (Image.Plan.recodes default) == some true &&
-     (Image.probe pngData).toOption.map (Image.Plan.recodes default) == some false &&
-     (Image.probe jpgData).toOption.map (Image.Plan.recodes default) == some false)
+    ((Image.probe alphaData).toOption.map Image.Plan.recodes == some true &&
+     (Image.probe rgbaPng).toOption.map Image.Plan.recodes == some true &&
+     (Image.probe pngData).toOption.map Image.Plan.recodes == some false &&
+     (Image.probe jpgData).toOption.map Image.Plan.recodes == some false)
   t "an interlaced alpha PNG is refused, so the gate's answer never reaches a cache"
     ((planOf (mkPng (chunk "IHDR" (ihdr 2 2 8 6 1) ++
       chunk "IDAT" (Flate.deflateStored rgbaRaw).toList ++ chunk "IEND" []))).isOk == false)

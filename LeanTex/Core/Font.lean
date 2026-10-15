@@ -489,7 +489,7 @@ public def SpaceKernCache.lookup? (cache : SpaceKernCache) (g : Nat) :
   if g < cache.size then some (spaceKernLookup cache.depth cache.root g) else none
 
 /-- A parsed sfnt font: the layout metrics, the char→glyph map, and the raw bytes to embed. -/
-public structure Font where
+public structure _root_.LeanTex.Core.Font where
   data : ByteArray
   isCff : Bool
   unitsPerEm : Nat
@@ -936,16 +936,16 @@ public def parse (data : ByteArray) : Except String Font := do
   }
 
 /-- A face's ink above the baseline in font units: its cap height, else its ascent. -/
-public def Font.inkAscent (f : Font) : Int :=
+public def inkAscent (f : Font) : Int :=
   if f.capHeight > 0 then f.capHeight else f.ascent
 
 /-- Glyph id for a scalar, or `none` (missing glyph). -/
-public def Font.gid (f : Font) (c : Char) : Option Nat :=
+public def gid (f : Font) (c : Char) : Option Nat :=
   gidIn f.cmap c
 
 /-- The math face's alphabet-range coverage, read at each range's first scalar as unicode-math
 does. -/
-public def Font.mathAlphabetCoverage (f : Font)
+public def mathAlphabetCoverage (f : Font)
     (sources : Math.MathAlphabetSources) : Math.MathAlphabetCoverage :=
   { sources
     covered := (Math.allAlphabets.flatMap fun a =>
@@ -953,16 +953,16 @@ public def Font.mathAlphabetCoverage (f : Font)
         if (f.gid (a.apply r.anchor)).isSome then some (a, r) else none).toArray }
 
 /-- The small-caps form of glyph `g`, or `g` when the face maps it nowhere. -/
-public def Font.smallCapGid (f : Font) (g : Nat) : Nat :=
+public def smallCapGid (f : Font) (g : Nat) : Nat :=
   substGid f.smallCaps g
 
 /-- The pair kern between two adjacent glyphs in font units, 0 when the face has none. -/
-public def Font.kernAdv (f : Font) (g1 g2 : Nat) : Int :=
+public def kernAdv (f : Font) (g1 g2 : Nat) : Int :=
   pairAdv f.data f.kernData.get g1 g2
 
 /-- Glyph `g`'s kern with the space glyph in font units: `(g, space)` when `after`, else
 `(space, g)`. -/
-public def Font.spaceKernAdv (f : Font) (after : Bool) (g : Nat) : Int :=
+public def spaceKernAdv (f : Font) (after : Bool) (g : Nat) : Int :=
   match f.spaceKerns.get with
   | none => 0
   | some cache =>
@@ -979,14 +979,14 @@ public def cmapRanges (data : ByteArray) : Array (UInt32 × UInt32 × UInt32) :=
   | none => #[]
 
 /-- Advance width of a scalar in font units (0 when the glyph is missing). -/
-public def Font.advance (f : Font) (c : Char) : Nat :=
+public def advance (f : Font) (c : Char) : Nat :=
   match f.gid c with
   | some g => f.widths[g]?.getD 0
   | none => 0
 
 /-- The interword space in font units: the space glyph's advance, as LuaTeX's `\fontdimen2`,
 else half the em dash, else half the em (LuaTeX's fallbacks less its `averagewidth` step). -/
-public def Font.spaceAdvance (f : Font) : Nat :=
+public def spaceAdvance (f : Font) : Nat :=
   let sp := f.advance ' '
   if sp > 0 then sp
   else
@@ -994,17 +994,17 @@ public def Font.spaceAdvance (f : Font) : Nat :=
     if em > 0 then em / 2 else f.unitsPerEm / 2
 
 /-- The x-intervals in font units where glyph `g`'s ink crosses the underline band. -/
-public def Font.inkAt (f : Font) (g : Nat) : Array (Int × Int) :=
+public def inkAt (f : Font) (g : Nat) : Array (Int × Int) :=
   match f.underlineInk.get[g]? with
   | some t => t.get
   | none => #[]
 
 /-- Glyph `g`'s ink hull in font units; `none` when undecodable or past the table. -/
-public def Font.bounds (f : Font) (g : Nat) : Option Ink.Bounds :=
+public def bounds (f : Font) (g : Nat) : Option Ink.Bounds :=
   (f.inkExtent.get[g]?).bind (·.get)
 
 /-- The height of the glyph for `c` in font units, as `\fontcharht` reads its ink hull. -/
-public def Font.charHeight (f : Font) (c : Char) : Int :=
+public def charHeight (f : Font) (c : Char) : Int :=
   match f.gid c with
   | none => 0
   | some g =>
@@ -1013,7 +1013,7 @@ public def Font.charHeight (f : Font) (c : Char) : Int :=
     | none => f.capHeight
 
 /-- The depth of the glyph for `c` in font units, as `\fontchardp` reads its ink hull. -/
-public def Font.charDepth (f : Font) (c : Char) : Int :=
+public def charDepth (f : Font) (c : Char) : Int :=
   match f.gid c with
   | none => 0
   | some g =>
@@ -1021,12 +1021,12 @@ public def Font.charDepth (f : Font) (c : Char) : Int :=
     | some b => max 0 (-b.bottom)
     | none => 0
 
-public def Font.yExtent (f : Font) (g : Nat) : Option (Int × Int) :=
+public def yExtent (f : Font) (g : Nat) : Option (Int × Int) :=
   (f.bounds g).map fun b => (b.bottom, b.top)
 
 /-- The x-height optical size matching trusts: the measured 'x' ink top, else `xHeight`, in
 `(0, upem]`. -/
-public def Font.xHeightOptical (f : Font) : Nat :=
+public def xHeightOptical (f : Font) : Nat :=
   let declared := f.xHeight.toNat
   let measured := match f.xInkTop.get with
     | some hi => if 0 < hi then hi.toNat else declared
@@ -1034,39 +1034,39 @@ public def Font.xHeightOptical (f : Font) : Nat :=
   (measured.min f.unitsPerEm).max 1
 
 /-- The vertical size variants of glyph `g`, in increasing size; empty when none. -/
-public def Font.vertVariants (f : Font) (g : Nat) : Array (Nat × Int) :=
+public def vertVariants (f : Font) (g : Nat) : Array (Nat × Int) :=
   match f.mathVariants.find? (·.1 == g) with
   | some (_, vs) => vs
   | none => #[]
 
 /-- The horizontal size variants of glyph `g`, in increasing size; empty when none. -/
-public def Font.horizVariants (f : Font) (g : Nat) : Array (Nat × Int) :=
+public def horizVariants (f : Font) (g : Nat) : Array (Nat × Int) :=
   match f.mathHorizVariants.find? (·.1 == g) with
   | some (_, vs) => vs
   | none => #[]
 
 /-- Where a top accent attaches on glyph `g`, in design units clamped into its advance: the
 bound `Math.accentAttach_covers` quantifies over. -/
-public def Font.topAccentX (f : Font) (g : Nat) : Int :=
+public def topAccentX (f : Font) (g : Nat) : Int :=
   let w : Int := f.widths[g]?.getD 0
   match f.mathTopAccent.find? (·.1 == g) with
   | some (_, x) => min (max x 0) w
   | none => w / 2
 
-public theorem Font.topAccentX_covers (f : Font) (g : Nat) :
+public theorem topAccentX_covers (f : Font) (g : Nat) :
     0 ≤ f.topAccentX g ∧ f.topAccentX g ≤ (f.widths[g]?.getD 0 : Int) := by
   unfold Font.topAccentX
   dsimp only
   split <;> omega
 
 /-- The accent mark's own attachment x, unclamped; half the advance where uncovered. -/
-public def Font.markAttachX (f : Font) (g : Nat) : Int :=
+public def markAttachX (f : Font) (g : Nat) : Int :=
   match f.mathTopAccent.find? (·.1 == g) with
   | some (_, x) => x
   | none => (f.widths[g]?.getD 0 : Int) / 2
 
 /-- This face's normalized underline band `(position, thickness)`, in font units. -/
-public def Font.band (f : Font) : Int × Int :=
+public def band (f : Font) : Int × Int :=
   underlineBand (f.unitsPerEm : Int) f.descent f.underlinePosition
     f.underlineThickness
 

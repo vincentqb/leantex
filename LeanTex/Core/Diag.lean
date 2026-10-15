@@ -1224,7 +1224,6 @@ private theorem Diag.foldRepeats_getElem? (ds : Array Diag) (i : Nat) (h : i < d
     (Diag.foldRepeats ds)[i]? =
       some (Diag.foldOne ((ds.toList.mapIdx (Diag.repeatCarrier ds.toList)).count i)
         (!ds[i].severity.isWarning || Diag.repeatCarrier ds.toList i ds[i] == i) ds[i]) := by
-  have hl : i < ds.toList.length := by simpa using h
   simp only [Diag.foldRepeats, Array.getElem?_mapIdx, Array.getElem?_eq_getElem h, Option.map_some]
   rw [Diag.countsOf_count ds.size _ i h]
   simp [List.getElem?_mapIdx, Array.getElem?_eq_getElem h]
@@ -1357,7 +1356,7 @@ public theorem Diag.foldRepeats_wording_between (ds : Array Diag) (j : Nat) (hj 
   have hjl : j < ds.toList.length := by simpa using hj
   have hwl : ds.toList[j].severity.isWarning = true := by simpa using hw
   obtain ⟨hs, hle, hsl, hsW, hss⟩ := Diag.lineOf_spec ds.toList j hjl hwl
-  generalize hseq : Diag.lineOf ds.toList ds.toList[j] = s at hs hle hsl hsW hss
+  generalize Diag.lineOf ds.toList ds.toList[j] = s at hs hle hsl hsW hss
   have hs' : s < ds.size := by simpa using hs
   have hsW' : ds[s].severity.isWarning = true := by simpa using hsW
   have hss' : Diag.lineOf ds.toList ds[s] = s := by simpa using hss

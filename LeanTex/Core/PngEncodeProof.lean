@@ -91,7 +91,7 @@ public theorem probe_encode_exact (h : Header) (z : ByteArray) (hh : h.Plain)
       (space == Image.Space.indexed) = false ∧
       (space == Image.Space.rgb && alpha.isNone && decide (h.bitDepth < 8)) = false ∧
       (alpha.isSome && decide (h.bitDepth < 8)) = false := by
-    rcases hc with ⟨hc, hd⟩ | ⟨hc, hd⟩
+    rcases hc with ⟨hc, _⟩ | ⟨hc, hd⟩
     · exact ⟨.gray, none, by simp [hc, Image.pngSpace], rfl, rfl, rfl⟩
     · simp at hd
       have h8 : decide (h.bitDepth < 8) = false := by simp; omega

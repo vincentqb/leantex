@@ -20,7 +20,7 @@ private def listingSourceExact (file source text : String) (d : Diag) : Bool := 
 endings and paint, quote no code, and leave layout and bytes unchanged. -/
 def diagnosticListingOriginChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
-  let load (name : String) : IO Font.Font := do
+  let load (name : String) : IO Font := do
     match Font.parse (← IO.FS.readBinFile (testFonts ++ "/" ++ name)) with
     | .ok font => pure font
     | .error err => throw (IO.userError s!"listing origins: {name}: {err}")

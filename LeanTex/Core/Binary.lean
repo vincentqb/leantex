@@ -107,7 +107,7 @@ public theorem Reads.pure (value : α) : Reads (pure value) value .empty := by
 public theorem Reads.lift (answer : Option α) (value : α) (h : answer = some value) :
     Reads (Reader.lift answer) value .empty := by
   subst h
-  intro pre post
+  intro pre _
   simp [Reader.lift]
 
 public theorem Reads.bind (read : Reader α) (next : α → Reader β)

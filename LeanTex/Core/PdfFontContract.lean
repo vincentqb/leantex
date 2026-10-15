@@ -7,7 +7,7 @@ import all LeanTex.Core.PdfCensus
 
 namespace LeanTex.Core.Pdf
 
-private theorem fontObjects_embedded (t : ObjTable) (k : Nat) (font : Font.Font)
+private theorem fontObjects_embedded (t : ObjTable) (k : Nat) (font : Font)
     (baseFont : String) (widths : PdfRead.Obj) (es : Array PdfRead.Entry)
     (e : PdfRead.Entry)
     (hval : e.val = (fontObjects t k font baseFont widths).type0 ∨
@@ -29,7 +29,7 @@ private theorem fontObjects_embedded (t : ObjTable) (k : Nat) (font : Font.Font)
       cases hcff : font.isCff <;> simp_all
 
 public theorem fontObjects_rows_embedded_exact (t : ObjTable) (k : Nat)
-    (font : Font.Font) (baseFont : String) (widths : PdfRead.Obj)
+    (font : Font) (baseFont : String) (widths : PdfRead.Obj)
     (es : Array PdfRead.Entry) (e : PdfRead.Entry)
     (he : (e.num, e.val) ∈ (fontObjects t k font baseFont widths).rows k)
     (hf : PdfCensus.kindOf e.val = .font)
@@ -45,7 +45,7 @@ public theorem fontObjects_rows_embedded_exact (t : ObjTable) (k : Nat)
     change PdfCensus.Kind.fontDescriptor = .font at hf
     contradiction
 
-public theorem fontObjects_census_contract (t : ObjTable) (font : Nat → Font.Font)
+public theorem fontObjects_census_contract (t : ObjTable) (font : Nat → Font)
     (baseFont : Nat → String) (widths : Nat → PdfRead.Obj)
     (trailer : PdfRead.Obj) (es : Array PdfRead.Entry)
     (hfonts : ∀ e ∈ PdfCensus.fontEntries es, ∃ k, k < t.nf ∧

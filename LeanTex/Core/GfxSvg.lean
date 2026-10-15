@@ -1502,9 +1502,9 @@ private theorem read_treeOne_free {L : Type} (labelEl : SFrame → L → Html.No
   | .image k xf, cx, fr, ss, acc, _, h => by
     simp only [treeOne, Array.toList_push, List.nil_append, readList, readOne, Node.marksOne,
       cm_lift_frameCtm place cx fr ss h xf, h.hclips, h.halphas]
-  | .label l, cx, fr, ss, acc, _, _ => by
+  | .label l, _, fr, ss, acc, _, _ => by
     simp [treeOne, readList, readOne, Node.marksOne]
-  | .words _, cx, fr, ss, acc, _, _ => by
+  | .words _, _, fr, ss, acc, _, _ => by
     simp [treeOne, readList, Node.marksOne]
 
 private theorem read_treeList_free {L : Type} (labelEl : SFrame → L → Html.Node)

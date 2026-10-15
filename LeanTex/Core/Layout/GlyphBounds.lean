@@ -19,7 +19,7 @@ public structure Measurement where
 placement value and carries its missing evidence in the same result.
 The equation is exposed for layout's agreement proof, including its
 nominal branch; the fallback scaler stays local to that branch. -/
-@[expose] public def glyph (font : Font.Font) (size raise : Sp) (gid : Nat) : Measurement :=
+@[expose] public def glyph (font : Font) (size raise : Sp) (gid : Nat) : Measurement :=
   match font.yExtent gid with
   | some (lo, hi) =>
     { extent := (hi * size / (font.unitsPerEm : Int) + raise,
@@ -33,7 +33,7 @@ nominal branch; the fallback scaler stays local to that branch. -/
 
 /-- Known outline coordinates are scaled in their own run's face, size and
 raise, with no substitution of the paragraph face or a nominal height. -/
-public theorem glyph_known_exact (font : Font.Font) (size raise : Sp)
+public theorem glyph_known_exact (font : Font) (size raise : Sp)
     (gid : Nat) (lo hi : Int) (h : font.yExtent gid = some (lo, hi)) :
     glyph font size raise gid =
       { extent := (hi * size / (font.unitsPerEm : Int) + raise,
@@ -42,7 +42,7 @@ public theorem glyph_known_exact (font : Font.Font) (size raise : Sp)
 
 /-- The unresolved flag records exactly the font reader's failure to
 provide an outline extent, even when the nominal fallback is nonzero. -/
-public theorem glyph_unresolved_exact (font : Font.Font) (size raise : Sp)
+public theorem glyph_unresolved_exact (font : Font) (size raise : Sp)
     (gid : Nat) :
     (glyph font size raise gid).unresolved = true ↔ font.yExtent gid = none := by
   cases h : font.yExtent gid <;> simp [glyph, h]

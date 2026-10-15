@@ -1528,7 +1528,7 @@ def pdfStreamChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
 
 /-- Every face and size survives into the content stream. -/
 def pdfFaceChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
-    (oneFace : Font.FontSet) (font : Font.Font) : IO Unit := do
+    (oneFace : Font.FontSet) (font : Font) : IO Unit := do
   let t := check ref
   let twoFace : Font.FontSet := {
     fonts := #[font, font]
@@ -1758,7 +1758,7 @@ def linkHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
 referenced file written, the generic keyword read from the face's OS/2 class. -/
 def fontShipChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
-  let load (name : String) : IO (Option Font.Font) := do
+  let load (name : String) : IO (Option Font) := do
     try
       match Font.parse (← IO.FS.readBinFile s!"{testFonts}/{name}") with
       | .ok f => pure (some f)
@@ -1817,8 +1817,8 @@ def fontShipChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((htmlMath.splitOn ".math { font-family: var(--font-math,").length == 2)
   t "font ship: a config with no set ships no rules"
     (((HtmlDoc.emit {} doc).1.splitOn "@font-face").length == 1)
-  let mkF (cls : Nat) (fixed : Bool) : Font.Font :=
-    { (default : Font.Font) with familyClass := cls, isFixedPitch := fixed }
+  let mkF (cls : Nat) (fixed : Bool) : Font :=
+    { (default : Font) with familyClass := cls, isFixedPitch := fixed }
   t "generic keyword: class 8 is sans-serif"
     (HtmlDoc.genericFor (oneFaceOf (mkF 8 false)) 0 "serif" == "sans-serif")
   t "generic keyword: classes 1-7 are serif"

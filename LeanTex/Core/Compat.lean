@@ -8993,7 +8993,7 @@ private theorem state_forIn_inv {α β : Type} (P : St → Prop)
       P ((forIn xs init step : M β) st).2 := by
   intro xs
   induction xs with
-  | nil => intro init st h _; exact h
+  | nil => intro _ st h _; exact h
   | cons a rest ih =>
     intro init st h hs
     have ha := hs a (by simp) init st h
@@ -9041,7 +9041,7 @@ private theorem boxRowEmit_tailDiag (rs : Array Raw) (d : Diag) (st : St)
   rcases result with ⟨out, rows⟩
   apply state_bind_inv (TailDiag d)
   · apply state_array_forIn_inv (TailDiag d) _ rows () st h
-    intro entry _ init s hs
+    intro entry _ _ s hs
     rcases entry with ⟨p, opts, pic⟩
     cases pic <;> dsimp only
     all_goals
@@ -10446,7 +10446,7 @@ private theorem rewriteList_skip_exact (inBody : Bool) (raws out : Array Raw)
   | cons x taken ih =>
     simp only [List.cons_append, List.length_cons]
     rw [rewriteList, ih]
-    congr 1 <;> omega
+    congr 1; omega
 
 /-- Literal material surrounding an ordinary body control. -/
 public inductive LiteralRaws : List Raw → Prop where
@@ -11522,7 +11522,7 @@ private theorem styCandRaw_monotone (out : Array String) (r : Raw) (nm : String)
   | env name body pos =>
     simp only [styCandRaw]
     split
-    · have hb : sizeOf body = 1 + sizeOf body.toList := by rfl
+    · have _ : sizeOf body = 1 + sizeOf body.toList := by rfl
       exact styCandList_monotone body out body.toList 0 0 nm hm
     · exact hm
   | word w pos | ctrl cn pos | sym c pos | group body pos | math display body pos | verb name body pos | par pos | space => exact hm

@@ -103,8 +103,7 @@ def htmlDataDecode (href : String) : IO (String × ByteArray) := do
     return (mime, data)
 
 /-- The bytes of the page's inline SVG reference, decoded independently. -/
-def svgPublishedAsset (html : String) (_output : System.FilePath)
-    (tag attr : String) : IO (String × ByteArray) := do
+def svgPublishedAsset (html tag attr : String) : IO (String × ByteArray) := do
   let [_, tail] := html.splitOn ("<" ++ tag ++ " ") |
     throw <| IO.userError s!"expected exactly one <{tag}> in the emitted page"
   let attrs :: _ :: _ := tail.splitOn ">" |
@@ -712,7 +711,7 @@ def fakeConverter (svg : System.FilePath) : String :=
   "/bin/cp " ++ shQuote svg.toString ++ " \"$3\" || exit 3\n"
 
 /-- One of the suite's shipped faces by file name, parsed, or `none`. -/
-def loadTestFont (file : String) : IO (Option Font.Font) := do
+def loadTestFont (file : String) : IO (Option Font) := do
   let p := testFonts ++ "/" ++ file
   unless ← System.FilePath.pathExists p do return none
   match Font.parse (← IO.FS.readBinFile p) with
@@ -1402,7 +1401,7 @@ def lineInk (l : Layout.LineOut) : String := l.segs.foldl (fun s seg => match se
   | _ => s) ""
 
 /-- The head and foot furniture baselines a geometry owes under `font`'s ink and a declared gap. -/
-def furnYs (font : Font.Font) (geom : Layout.Geom)
+def furnYs (font : Font) (geom : Layout.Geom)
     (gap : Option Dim.Sp := none) : Dim.Sp × Dim.Sp :=
   let scale (u : Int) : Dim.Sp := u * geom.fontSize / (font.unitsPerEm : Int)
   let band := Layout.furnitureBand geom.vmargin
@@ -1832,7 +1831,7 @@ def mathSetOf (oneFace : Font.FontSet) : IO Font.FontSet := do
 /-- The four shipped Source Serif faces in slots 0–3 and Fira Math in 4, so a run's face index says
 its weight, slant and whether it is maths. -/
 def serifFacesSet : IO (Option Font.FontSet) := do
-  let mut loaded : Array Font.Font := #[]
+  let mut loaded : Array Font := #[]
   for n in #["SourceSerifPro-Regular.otf", "SourceSerifPro-Bold.otf",
       "SourceSerifPro-RegularIt.otf", "SourceSerifPro-BoldIt.otf", "FiraMath-Regular.otf"] do
     let p := testFonts ++ "/" ++ n
@@ -2198,7 +2197,7 @@ def dvH (src : String) (w : WitnessRun := {}) : Array Diag :=
   ds ++ (HtmlDoc.emit {} doc).2
 
 /-- A one-face set: every slot and variant maps to index 0. -/
-def oneFaceOf (font : Font.Font) : Font.FontSet := Font.FontSet.ofFace font
+def oneFaceOf (font : Font) : Font.FontSet := Font.FontSet.ofFace font
 
 /-- The shipped Fira Sans as a one-face set, or `none`. -/
 def shippedFira : IO (Option Font.FontSet) := do
@@ -2207,7 +2206,7 @@ def shippedFira : IO (Option Font.FontSet) := do
   | .error _ => pure none
 
 /-- The shipped Fira Sans as a face, or `none`. -/
-def shippedFiraFont : IO (Option Font.Font) := do
+def shippedFiraFont : IO (Option Font) := do
   match Font.parse (← IO.FS.readBinFile (testFonts ++ "/FiraSans-Regular.otf")) with
   | .ok f => pure (some f)
   | .error _ => pure none
@@ -2238,7 +2237,7 @@ def withinSp (slack a b : Dim.Sp) : Bool := a - b ≤ slack && b - a ≤ slack
 
 /-- Two faces over the three slots (roman 0, sans 1, typewriter 2): `other` in slot `slot` and
 `base` in the rest, so a run's face says which (`CensusLine.runFonts`). -/
-def slotPairOf (slot : Nat) (base other : Font.Font) : Font.FontSet := {
+def slotPairOf (slot : Nat) (base other : Font) : Font.FontSet := {
   fonts := #[base, other]
   index := ((List.range 3).flatMap fun s =>
     let f := if s == slot then 1 else 0
@@ -2276,7 +2275,7 @@ def hueGap (h h' : Int) : Int :=
   if d < 0 then -d else d
 
 /-- A shipped bundle's palette as a deck installs it (`Theme.realize`). -/
-def deckBundle (th : Theme.Theme) : Ir.Palette := th.realize .decks
+def deckBundle (th : Theme) : Ir.Palette := th.realize .decks
 
 /-- moloch's progress bar as a deck installs it: its fill and its track. -/
 def molochProgress (_ : Unit) : Ir.Color × Ir.Color :=

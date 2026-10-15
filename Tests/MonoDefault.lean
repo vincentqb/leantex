@@ -435,9 +435,9 @@ beside them.\n\n\\begin{verbatim}\nfenced code\n\\end{verbatim}"))).1
 x-height, within the declared bound. -/
 def companionDepartureChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
-  let thousandths (f : Font.Font) : Option Nat :=
+  let thousandths (f : Font) : Option Nat :=
     f.xInkTop.get.map fun ink => (ink.toNat * 1000 + f.unitsPerEm / 2) / f.unitsPerEm
-  let read (name : String) : IO (Option Font.Font) := do
+  let read (name : String) : IO (Option Font) := do
     match Font.parse (← IO.FS.readBinFile (testFonts ++ "/" ++ name)) with
     | .ok f => return some f
     | .error _ => return none
@@ -491,7 +491,7 @@ def fontCollectionChecks (ref : IO.Ref (List String)) : IO Unit := do
   let ttc := packCollection #[regular, bold]
   t "a packed collection counts its faces" (Font.collectionCount ttc == some 2)
   t "a standalone font is no collection" (Font.collectionCount regular == none)
-  let same (a b : Font.Font) : Bool :=
+  let same (a b : Font) : Bool :=
     a.family == b.family && a.weight == b.weight && a.isBold == b.isBold
       && a.unitsPerEm == b.unitsPerEm && a.numGlyphs == b.numGlyphs
       && "Quartz glyphs 0123".toList.all fun c => a.advance c == b.advance c
@@ -599,7 +599,7 @@ def fontCollectionChecks (ref : IO.Ref (List String)) : IO Unit := do
 
 /-- A face set whose every key is its own face, so a shipped run's face index reads back to the key
 it asked, and those keys. -/
-def keyedFaces (font : Font.Font) : Font.FontSet × Array (Nat × Nat × Bool) :=
+def keyedFaces (font : Font) : Font.FontSet × Array (Nat × Nat × Bool) :=
   let keys := ((List.range 3).flatMap fun slot =>
     ([100, 200, 300, 400, 500, 600, 700, 800, 900] : List Nat).flatMap fun w =>
       [(slot, w, false), (slot, w, true)]).toArray

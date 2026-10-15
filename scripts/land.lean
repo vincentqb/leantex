@@ -294,7 +294,8 @@ def parseGates (spec : String) : Except GateSpecError (Array Gate) := do
 the sha of `main` the run read and `{tip}` for the gated tip; none may be absent, and
 `--wfail` fails a build on any warning. -/
 def defaultGates : List String := [
-  "build=lake build --wfail LeanTex leantex Tests precommit proofcheck lint cites land scoreboard",
+  "build=lake build --wfail LeanTex TestsModules ScriptsModules leantex Tests precommit proofcheck \
+lint cites land scoreboard",
   "conventions=.lake/build/bin/precommit --range {main}...{tip} --conventions",
   "test=lake test",
   "lint=lake lint",
@@ -1632,7 +1633,7 @@ def selftest : IO UInt32 := do
     | build :: conventions :: test :: lint :: _ =>
       build.cmd == "lake" && build.args[0]? == some "build"
         && build.args.contains "--wfail"
-        && #["LeanTex", "leantex", "Tests", "precommit",
+        && #["LeanTex", "TestsModules", "ScriptsModules", "leantex", "Tests", "precommit",
             "proofcheck", "lint", "cites", "land", "scoreboard"].all
           (build.args.contains ·)
         && conventions.name == "conventions"

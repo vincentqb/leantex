@@ -10,7 +10,7 @@ open LeanTex.Core
 
 namespace Tests.FontSubsetInterface
 
-example : Font.Font → Array Nat → ByteArray × Bool := FontSubset.program
+example : Font → Array Nat → ByteArray × Bool := FontSubset.program
 example : ByteArray → Ink.Table → Array Bool → Ink.Src → (Nat → Bool) →
     Option ByteArray := FontSubset.cffDrop
 

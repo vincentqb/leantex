@@ -110,7 +110,7 @@ public def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
                     ((2, c.1.1, c.1.2), c.2)).toArray }
     | none => spec
   let mut italicCode : Option Bool := none
-  let mut fonts : Array Font.Font := #[]
+  let mut fonts : Array Font := #[]
   let mut paths : Array String := #[]
   let mut index : Array ((Nat × Nat × Bool) × Nat) := #[]
   let mut missing : Array String := #[]

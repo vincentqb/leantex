@@ -92,9 +92,9 @@ public theorem picture_marks_agree (ix : GfxPdf.Request → Nat) (pdfPlace svgPl
         (GfxPdf.emit ix (fun _ k => (tx k).toArray.map GfxPdf.textGroup) pdfPlace
           (ofPictureKeyed id box pic)) =
       GfxSvg.readMarks svgPlace (GfxSvg.tree labelEl #[] svgPlace (ofPictureIn box pic)) := by
-  have hl : ∀ (fr : GfxPdf.Frame) (k : Nat × Nat) (rs : GfxPdf.RState) (acc : Array Mark),
+  have hl : ∀ (_ : GfxPdf.Frame) (k : Nat × Nat) (rs : GfxPdf.RState) (acc : Array Mark),
       GfxPdf.readList rs acc ((tx k).toArray.map GfxPdf.textGroup).toList = acc := by
-    intro fr k rs acc
+    intro _ k rs acc
     cases tx k with
     | none => simp [GfxPdf.readList]
     | some t => simp [GfxPdf.readList, GfxPdf.readOne, GfxPdf.textGroup]

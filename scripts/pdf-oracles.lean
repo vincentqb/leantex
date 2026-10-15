@@ -64,7 +64,7 @@ def fontSetFor (faces : Array FontDb.Face) (doc : Ir.Doc) : IO (Option Font.Font
   let spec := doc.fonts
   let named := spec.body.orElse fun _ => spec.sans.orElse fun _ => spec.mono
   let some family := named.orElse fun _ => FontDb.defaultFamily faces | return none
-  let mut fonts : Array Font.Font := #[]
+  let mut fonts : Array Font := #[]
   let mut paths : Array String := #[]
   let mut index : Array ((Nat × Nat × Bool) × Nat) := #[]
   let pick := if spec.mono.isNone then

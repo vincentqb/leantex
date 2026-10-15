@@ -180,9 +180,9 @@ public theorem Iso.inv_apply_id (t : Iso) (p : Pt) : t.inv.apply (t.apply p) = p
   have hx : ∀ a b : Int, a + b + -b = a := by intro a b; omega
   have hy : ∀ a b : Int, b - (b - a) = a := by intro a b; omega
   cases fl
-  · simp only [Iso.inv, Iso.apply, Bool.false_eq_true, ↓reduceIte, Prod.mk.injEq] <;>
-      exact ⟨hx x dx, hx y dy⟩
-  · simp only [Iso.inv, Iso.apply, ↓reduceIte, Prod.mk.injEq] <;> exact ⟨hx x dx, hy y dy⟩
+  · simp only [Iso.inv, Iso.apply, Bool.false_eq_true, ↓reduceIte, Prod.mk.injEq]
+    exact ⟨hx x dx, hx y dy⟩
+  · simp only [Iso.inv, Iso.apply, ↓reduceIte, Prod.mk.injEq]; exact ⟨hx x dx, hy y dy⟩
 
 public theorem Iso.apply_inv_id (t : Iso) (p : Pt) : t.apply (t.inv.apply p) = p := by
   obtain ⟨fl, dx, dy⟩ := t
@@ -190,9 +190,9 @@ public theorem Iso.apply_inv_id (t : Iso) (p : Pt) : t.apply (t.inv.apply p) = p
   have hx : ∀ a b : Int, a + -b + b = a := by intro a b; omega
   have hy : ∀ a b : Int, b - (b - a) = a := by intro a b; omega
   cases fl
-  · simp only [Iso.inv, Iso.apply, Bool.false_eq_true, ↓reduceIte, Prod.mk.injEq] <;>
-      exact ⟨hx x dx, hx y dy⟩
-  · simp only [Iso.inv, Iso.apply, ↓reduceIte, Prod.mk.injEq] <;> exact ⟨hx x dx, hy y dy⟩
+  · simp only [Iso.inv, Iso.apply, Bool.false_eq_true, ↓reduceIte, Prod.mk.injEq]
+    exact ⟨hx x dx, hx y dy⟩
+  · simp only [Iso.inv, Iso.apply, ↓reduceIte, Prod.mk.injEq]; exact ⟨hx x dx, hy y dy⟩
 
 /-- An axis-aligned rectangle (min corner, extents) carried by the isometry. -/
 @[expose] public def Iso.rect (t : Iso) (x y w h : Sp) : Sp × Sp × Sp × Sp :=

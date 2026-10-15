@@ -1102,7 +1102,7 @@ public def twinBody (doc : Doc) : Array Block := Ir.keepFor "md" (Ir.eraseLocati
 
 /-- The `[^k]: …` definitions, one per footnote in flow
 order; empty without notes. -/
-private def noteDefs (_loc : Locale) (body : Array Block) : String := Id.run do
+private def noteDefs (body : Array Block) : String := Id.run do
   let notes := Ir.footnotesOf body
   if notes.isEmpty then return ""
   let mut out := ""
@@ -1122,7 +1122,7 @@ public def emit (doc : Doc) : String :=
     | none => ""
   let preamble := title ++ (if bodyTitled then "" else summary)
   tighten (preamble ++ blocksInto doc.info.locale summary "" "" none doc.body.toList)
-    ++ noteDefs doc.info.locale doc.body
+    ++ noteDefs doc.body
 
 -- Sealed so unification cannot unfold the collection walk.
 seal noteDefs
@@ -1448,9 +1448,9 @@ public theorem emit_meta_title_first (doc : Doc) (t s : String)
     (blocksInto doc.info.locale ("> " ++ summaryLine s ++ "\n\n") "" "" none
       (twinBody doc).toList)
     (fun c hc => (titleLine_contract t c hc).1) (fun c hc => (summaryLine_contract s c hc).1)
-  refine ⟨q ++ noteDefs doc.info.locale (twinBody doc), ?_⟩
+  refine ⟨q ++ noteDefs (twinBody doc), ?_⟩
   simp only [emit, ht, hs, hbody]
-  exact (congrArg (· ++ noteDefs doc.info.locale (twinBody doc)) hq).trans
+  exact (congrArg (· ++ noteDefs (twinBody doc)) hq).trans
     (String.append_assoc ..)
 
 public theorem emit_body_title_first (doc : Doc) (s : String) (st : Bool)
@@ -1476,17 +1476,17 @@ public theorem emit_body_title_first (doc : Doc) (s : String) (st : Bool)
     ("# " ++ headingText ttl ++ "\n\n" ++ ("> " ++ summaryLine s ++ "\n\n")) none rest
   obtain ⟨q, hq⟩ := tighten_head (headingText ttl) (summaryLine s) w
     (fun c hc => (headingText_contract ttl c hc).1) (fun c hc => (summaryLine_contract s c hc).1)
-  refine ⟨q ++ noteDefs doc.info.locale (twinBody doc), ?_⟩
+  refine ⟨q ++ noteDefs (twinBody doc), ?_⟩
   cases hT : doc.info.title with
   | some t =>
     simp only [emit, hs, hbt, hT, ite_true, String.empty_append]
     rw [hfirst, hw]
-    exact (congrArg (· ++ noteDefs doc.info.locale (twinBody doc)) hq).trans
+    exact (congrArg (· ++ noteDefs (twinBody doc)) hq).trans
       (String.append_assoc ..)
   | none =>
     simp only [emit, hs, hbt, hT, ite_true, String.empty_append]
     rw [hfirst, hw]
-    exact (congrArg (· ++ noteDefs doc.info.locale (twinBody doc)) hq).trans
+    exact (congrArg (· ++ noteDefs (twinBody doc)) hq).trans
       (String.append_assoc ..)
 
 end LeanTex.Core.MarkdownDoc

@@ -24,8 +24,6 @@ public theorem viewBox_exact (vb : ViewBox) (vx vy vw vh : Rat) (hw : vb.w ≠ 0
     m.apply (vb.x * (pxSp : Rat), vb.y * (pxSp : Rat)) = (vx * (pxSp : Rat), vy * (pxSp : Rat)) ∧
       m.apply ((vb.x + vb.w) * (pxSp : Rat), (vb.y + vb.h) * (pxSp : Rat)) =
         ((vx + vw) * (pxSp : Rat), (vy + vh) * (pxSp : Rat)) := by
-  have h1 : vw / vb.w * vb.w = vw := Rat.div_mul_cancel hw
-  have h2 : vh / vb.h * vb.h = vh := Rat.div_mul_cancel hh
   simp only [viewMap, viewScale, Affine.apply]
   refine ⟨?_, ?_⟩
   · simp only [Prod.mk.injEq]; constructor <;> grind

@@ -13,7 +13,7 @@ namespace Tests.InlineCode
 /-- A face set whose run faces tell slot, weight and slant apart: serif indices 0–3 and mono 4–7,
 each regular, bold, italic and both. -/
 def facesSet : IO (Option Font.FontSet) := do
-  let mut loaded : Array Font.Font := #[]
+  let mut loaded : Array Font := #[]
   for n in #["SourceSerifPro-Regular.otf", "SourceSerifPro-Bold.otf",
       "SourceSerifPro-RegularIt.otf", "SourceSerifPro-BoldIt.otf",
       "SourceCodePro-Regular.otf"] do

@@ -4103,14 +4103,14 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
   | .note num sty body bodyLeaf =>
     let (around, _) := sty.metrics size xHeight textW textH
     let decorations := sty.resolvedDecorations size xHeight textW textH fs
-    let (mk, miss) := markBox fs sty around decorations num
+    let (markItem, miss) := markBox fs sty around decorations num
     let acc := miss.foldl (fun acc m =>
       if acc.dropped.contains m then acc
       else { acc with dropped := acc.dropped.push m
                       origins := rememberGlyph acc.origins .E0405 m.1 m.2 source }) acc
     let at_ := acc.items.size
     { acc with notes := acc.notes.push (at_, num, body, bodyLeaf)
-               items := acc.items.push mk }
+               items := acc.items.push markItem }
   | .formula display sty body attr =>
     -- `flatten` pushes a formula only when a math face with constants is present.
     match fs.mathFont? with
@@ -6011,7 +6011,7 @@ private theorem kpSums_forced_zero (items : Array Item)
       (show P items.size st from by simpa only [Nat.zero_add] using h))
     apply range_yields_progress P
     · simp [P]
-    · intro i _ hi st hp
+    · intro i _ _ st hp
       rcases st with ⟨pw, ps, pk, pf, pforced, pb, btot⟩
       have hs : pforced.size = i+1 := hp.1
       have next : (pforced.push ((pforced.getD i 0) + if isForced items i then 1 else 0)).size = i+1+1 ∧
@@ -6044,13 +6044,13 @@ private theorem KpChain.spans {items : Array Item} {last : Nat} {breaks : List N
     (h : KpChain items last breaks) :
     breakSpans items breaks = (itemSpan items 0 (last+1), last) := by
   induction h with
-  | @first j hj hb ha =>
+  | @first j _ hb ha =>
     have ha' : lineStart items 0 ≤ j := by simpa [kpStart] using ha
     simp only [breakSpans, List.foldl_cons, List.foldl_nil, List.nil_append]
     rw [itemSpan_break items 0 j (by omega) hb,
       itemSpan_lineStart items 0 j (by omega) ha']
     simp [kpStart]
-  | @next p j bs chain hpj hj hb ha ih =>
+  | @next p j bs _ hpj hj hb ha ih =>
     have hp : p < items.size := by omega
     have ha' : lineStart items (p+1) ≤ j := by simpa [kpStart, Nat.ne_of_lt hp] using ha
     change List.foldl _ _ (bs ++ [j]) = _
@@ -6269,12 +6269,12 @@ private theorem trimLineGaps_mem (segs : Array Seg) (width : Sp) :
   rw [Lean.Loop.forIn_eq_of_monadTail]
   dsimp only
   split
-  · rename_i w word h
+  · rename_i w word _
     intro s hs
     have hp := trimLineGaps_mem segs.pop (width - w) s hs
     obtain ⟨i, hi, he⟩ := Array.mem_iff_getElem.mp hp
     exact Array.mem_of_getElem (by simpa only [Array.getElem_pop] using he)
-  · rename_i w word decorations h
+  · rename_i w word decorations _
     intro s hs
     have hp := trimLineGaps_mem segs.pop (width - w) s hs
     obtain ⟨i, hi, he⟩ := Array.mem_iff_getElem.mp hp
@@ -7695,7 +7695,7 @@ private theorem warnSpill_accounts (b : B) (o : Sp) :
       b.diags.size + b.spilled.size +
         (if b.frameBreak = some false ∧ b.spillWarned = false then 1 else 0) := by
   unfold Spacing.Page.warnSpill
-  rcases h : b.frameBreak with _ | (_ | _) <;> rcases hw : b.spillWarned
+  rcases b.frameBreak with _ | (_ | _) <;> rcases b.spillWarned
   all_goals first
     | (simp; done)
     | (simp only [and_self, ite_true]; split <;> simp only [Array.size_push] <;> omega)
@@ -9339,13 +9339,13 @@ private def collectPara (r : Rd) (a : Acc)
           r.geom.textHeight (ladder := r.geom.scale) (step := r.step) (steps := r.steps)
       ds := ds ++ nds
       cache := cache2
-      let (mk, miss) :=
+      let (markItem, miss) :=
         markBox r.fs { color := a.fg, ground := a.ground } noteSize {} num
       for (idx, c) in miss do
         ds := ds.push (Diag.of .E0405
           s!"'{(r.fs.get idx).family}' has no glyph for '{c}'"
           (trigger := String.singleton c) (recovery := some .skipped) (output := some .pdf))
-      let nitems := #[mk] ++ nitems0
+      let nitems := #[markItem] ++ nitems0
       let nsources := nsources.map (fun (i, span) => (i + 1, span))
       let nitems := if r.geom.justify then nitems else raggedItems nitems
       let breaks := kpTwoPass nitems target
@@ -11085,7 +11085,7 @@ private theorem codeScan_any_between (rank : Nat → Nat) (fit : Nat → Bool) (
       exact codeScan_any_monotone rank fit n (b + 1) _ _ b rfl (by omega) hb
     · simp only [dite_eq_ite] at ih
       exact ih (by omega) (fun k hk hkc => hfit k (by omega) hkc)
-  | case2 b top any hb hf =>
+  | case2 b top any _ hf =>
     intro hbc hfit
     exact absurd (hfit b (Nat.le_refl _) hbc) hf
   | case3 b top any hb =>
@@ -11110,7 +11110,7 @@ private theorem codeScan_top_between (rank : Nat → Nat) (fit : Nat → Bool) (
       exact codeScan_top_monotone rank fit n (b + 1) _ _ b rfl (by omega) hb
     · simp only [dite_eq_ite] at ih
       exact ih (by omega) (fun k hk hkc => hfit k (by omega) hkc)
-  | case2 b top any hb hf =>
+  | case2 b top any _ hf =>
     intro hbc hfit
     exact absurd (hfit b (Nat.le_refl _) hbc) hf
   | case3 b top any hb =>
@@ -12673,7 +12673,7 @@ public theorem subtract_bounds (obs : List (Int × Int)) (cur hi : Int) :
   | nil =>
     intro s hs
     simp only [subtract] at hs
-    split at hs <;> simp_all <;> omega
+    split at hs <;> simp_all
   | cons o rest ih =>
     intro s hs
     simp only [subtract] at hs
@@ -12729,7 +12729,7 @@ public theorem underline_covers_gaps (obs : List (Int × Int)) (cur hi x : Int)
     · exfalso
       omega
   | cons a rest ih =>
-    obtain ⟨hne, hsep, hrest⟩ := hch
+    obtain ⟨_, _, hrest⟩ := hch
     rcases hout a (List.mem_cons_self ..) with hlt | hge
     · refine ⟨(cur, min a.1 hi), ?_, by dsimp only; omega⟩
       simp only [subtract]
@@ -13188,7 +13188,7 @@ private theorem underlinePieces_noGlyph (paint : DecorationRule) (hi cur : Int)
     rcases Array.mem_push.mp hs with hs | rfl
     · exact h s hs
     · trivial
-  | cons span rest ih =>
+  | cons span _ ih =>
     apply ih
     intro s hs
     rcases Array.mem_push.mp hs with hs | rfl
@@ -13216,7 +13216,7 @@ private theorem underlineSegs_noGlyph (fs : FontSet) (size : Sp) (segs : Array S
   split
   · apply Loop.forIn_array_inv (fun st : Sp × Array Seg => ∀ s ∈ st.2, s.NoGlyph)
     · simp
-    · intro seg hseg st hst
+    · intro seg _ st hst
       exact appendUnderline_noGlyph _ _ _ _ _ _ hst
   · simp
 
@@ -13454,34 +13454,30 @@ private def reachDepth (j : ParaJob) (brk : Nat) (b : B) : B :=
 
 /-- What follows a placed paragraph line: a forced break's
 extra skip and the depth a box's rule leaves (`reachDepth`). -/
-private def placeParaTrailer (_fs : FontSet) (j : ParaJob) (brk : Nat)
-    (_segs : Array Seg) (b : B) : B :=
+private def placeParaTrailer (j : ParaJob) (brk : Nat) (b : B) : B :=
   let tex := j.texBox.isSome || b.texAfter
   let b := reachDepth j brk b
   match j.extras[brk]? with
   | some extra => { b with skip := { b.skip with width := b.skip.width + extra }, texAfter := tex }
   | none => { b with texAfter := tex }
 
-@[simp] private theorem placeParaTrailer_pages (fs : FontSet) (j : ParaJob)
-    (brk : Nat) (segs : Array Seg) (b : B) :
-    (placeParaTrailer fs j brk segs b).pages = b.pages := by
+@[simp] private theorem placeParaTrailer_pages (j : ParaJob) (brk : Nat) (b : B) :
+    (placeParaTrailer j brk b).pages = b.pages := by
   simp only [placeParaTrailer, reachDepth]
   repeat' split
-  all_goals first | rfl | simp
+  all_goals rfl
 
-@[simp] private theorem placeParaTrailer_noBreak (fs : FontSet) (j : ParaJob)
-    (brk : Nat) (segs : Array Seg) (b : B) :
-    (placeParaTrailer fs j brk segs b).noBreak = b.noBreak := by
+@[simp] private theorem placeParaTrailer_noBreak (j : ParaJob) (brk : Nat) (b : B) :
+    (placeParaTrailer j brk b).noBreak = b.noBreak := by
   simp only [placeParaTrailer, reachDepth]
   repeat' split
-  all_goals first | rfl | simp
+  all_goals rfl
 
-private theorem decoration_no_growth (fs : FontSet) (j : ParaJob)
-    (brk : Nat) (segs : Array Seg) (b : B) :
-    (placeParaTrailer fs j brk segs b).y = b.y ∧
-      (placeParaTrailer fs j brk segs b).prevDepth = b.prevDepth ∧
-      (placeParaTrailer fs j brk segs b).prevBelow = b.prevBelow ∧
-      (placeParaTrailer fs j brk segs b).needed = b.needed := by
+private theorem decoration_no_growth (j : ParaJob) (brk : Nat) (b : B) :
+    (placeParaTrailer j brk b).y = b.y ∧
+      (placeParaTrailer j brk b).prevDepth = b.prevDepth ∧
+      (placeParaTrailer j brk b).prevBelow = b.prevBelow ∧
+      (placeParaTrailer j brk b).needed = b.needed := by
   simp only [placeParaTrailer, reachDepth]
   repeat' split
   all_goals exact ⟨rfl, rfl, rfl, rfl⟩
@@ -13524,7 +13520,7 @@ private def placeParaLine (fs : FontSet) (j : ParaJob)
     | none => if st.2.2 then j.firstBaseline else none
   let b1 := b1.openDisplayAt j st.2.2 g.2.1 g.1
   let b1 := b1.withPendingSource (lineSource j.itemSources (j.lineStart st.2.2 st.2.1) brk)
-  (placeParaTrailer fs j brk g.1
+  (placeParaTrailer j brk
     (b1.placeLine fs g.2.1 j.size g.1 g.2.2.1 g.2.2.2.2.1 g.2.2.2.2.2 ns
       (counted := !j.inFloat) (leaf := j.leaf) (firstBaseline := firstBaseline)
       (display := j.display) (opens := st.2.2)
@@ -13748,9 +13744,9 @@ private theorem sourceBound_openDisplayAt {n : Nat} (b : B) (j : ParaJob)
   unfold Spacing.Page.openDisplayAt
   split <;> exact hb.of_eq rfl rfl rfl rfl rfl
 
-private theorem sourceBound_placeParaTrailer {n : Nat} (fs : FontSet) (j : ParaJob)
-    (brk : Nat) (segs : Array Seg) (b : B) (hb : b.SourceBound n) :
-    (placeParaTrailer fs j brk segs b).SourceBound n := by
+private theorem sourceBound_placeParaTrailer {n : Nat} (j : ParaJob) (brk : Nat) (b : B)
+    (hb : b.SourceBound n) :
+    (placeParaTrailer j brk b).SourceBound n := by
   unfold placeParaTrailer reachDepth
   repeat' split
   all_goals exact hb.of_eq rfl rfl rfl rfl rfl
@@ -14309,7 +14305,7 @@ private theorem KpChain.members_lt {items : Array Item} {last : Nat} {breaks : L
     (h : KpChain items last breaks) : ∀ k ∈ breaks, k < items.size := by
   induction h with
   | first hj _ _ => simpa using hj
-  | next chain _ hj _ _ ih =>
+  | next _ _ hj _ _ ih =>
     intro k hk
     rcases List.mem_append.mp hk with hk | hk
     · exact ih k hk
@@ -14353,9 +14349,9 @@ private theorem census_openDisplayAt (pick : Option Nat → Bool → Bool) (b : 
   unfold Spacing.Page.openDisplayAt
   split <;> rfl
 
-private theorem census_placeParaTrailer (pick : Option Nat → Bool → Bool) (fs : FontSet)
-    (j : ParaJob) (brk : Nat) (segs : Array Seg) (b : B) :
-    Spacing.Page.census pick (placeParaTrailer fs j brk segs b) = Spacing.Page.census pick b := by
+private theorem census_placeParaTrailer (pick : Option Nat → Bool → Bool) (j : ParaJob)
+    (brk : Nat) (b : B) :
+    Spacing.Page.census pick (placeParaTrailer j brk b) = Spacing.Page.census pick b := by
   unfold placeParaTrailer reachDepth
   repeat' split
   all_goals rfl
@@ -15198,18 +15194,16 @@ private theorem pagesExtend_congr {b b' c : B} (h : c.pages = b'.pages)
 @[simp] private theorem spillPage_docBg (b : B) (o : Sp) :
     (b.spillPage o).docBg = b.docBg := by
   simp [Spacing.Page.spillPage]
-@[simp] private theorem placeParaTrailer_geom (fs : FontSet) (j : ParaJob)
-    (brk : Nat) (segs : Array Seg) (b : B) :
-    (placeParaTrailer fs j brk segs b).geom = b.geom := by
+@[simp] private theorem placeParaTrailer_geom (j : ParaJob) (brk : Nat) (b : B) :
+    (placeParaTrailer j brk b).geom = b.geom := by
   simp only [placeParaTrailer, reachDepth]
   repeat' split
-  all_goals first | rfl | simp
-@[simp] private theorem placeParaTrailer_docBg (fs : FontSet) (j : ParaJob)
-    (brk : Nat) (segs : Array Seg) (b : B) :
-    (placeParaTrailer fs j brk segs b).docBg = b.docBg := by
+  all_goals rfl
+@[simp] private theorem placeParaTrailer_docBg (j : ParaJob) (brk : Nat) (b : B) :
+    (placeParaTrailer j brk b).docBg = b.docBg := by
   simp only [placeParaTrailer, reachDepth]
   repeat' split
-  all_goals first | rfl | simp
+  all_goals rfl
 
 private theorem finishPage_extends (b : B) {o : Sp} {f : Bool} :
     PagesExtend b (b.finishPage o f) :=
@@ -15424,14 +15418,12 @@ private theorem stepStaged_extends (fs : FontSet) (imgs : Image.Store)
   case picture x pic leaf origin =>
     rw [stepStaged_picture_b]
     exact placePicture_extends ..
-  all_goals (simp only [stepStaged, Id.run, Id, pure, Spacing.Page.openBody] <;> repeat' split)
+  all_goals (simp only [stepStaged, Id.run, Id, pure, Spacing.Page.openBody]; repeat' split)
   all_goals first
     | (refine pagesExtend_of_eq ?_; simp [Spacing.Page.pushSibling, Spacing.Page.displaySkip]; done)
     | exact pagesExtend_of_eq (placeSlot_keeps ..).1
     | exact pagesExtend_of_eq (alignRow_shipped_id ..).1
     | (refine pagesExtend_congr ?_ (finishPage_extends _ (o := st.b.closingOwed) (f := false)); simp; done)
-    | (refine pagesExtend_congr ?_
-        (pagesExtend_trans (finishPage_extends _ (o := st.b.closingOwed) (f := false)) (pagesExtend_of_eq ?_)) <;> simp <;> done)
 
 private theorem placeAnchor_noBreak (fs : FontSet) (b : B) (h' : AnchorRule) (shift : Sp)
     (paints : Bool) (h : b.noBreak = true) :
@@ -15497,7 +15489,7 @@ private theorem stepStaged_noBreak (fs : FontSet) (imgs : Image.Store)
   case picture x pic leaf origin =>
     rw [stepStaged_picture_b]
     exact placePicture_noBreak _ _ _ _ _ _ _ h
-  all_goals (simp only [stepStaged, Id.run, Id, pure, Spacing.Page.openBody] <;> repeat' split)
+  all_goals (simp only [stepStaged, Id.run, Id, pure, Spacing.Page.openBody]; repeat' split)
   all_goals first
     | exact absurd rfl hs
     | (exfalso; exact ‹¬(_ ∨ _ = true ∨ _)› (Or.inr (Or.inl h)))
@@ -15714,7 +15706,7 @@ private theorem bgStep_stepStaged (fs : FontSet) (imgs : Image.Store)
   case picture x pic leaf origin =>
     rw [stepStaged_picture_b]
     exact bgStep_placePicture ..
-  all_goals simp only [stepStaged, Id.run, Id, pure, Spacing.Page.openBody] <;> repeat' split
+  all_goals (simp only [stepStaged, Id.run, Id, pure, Spacing.Page.openBody]; repeat' split)
   all_goals first
     | (refine BgStep.of_eq ?_ ?_ ?_ <;> simp [Spacing.Page.pushSibling, Spacing.Page.displaySkip]
        done)
@@ -15830,7 +15822,7 @@ private def keepAt (b : B) (fs : FontSet) (imgs : Image.Store) (staged : Array O
 private theorem keepAt_preservesGround (b : B) (fs : FontSet) (imgs : Image.Store)
     (staged : Array Op) (si : Nat) (s : Op) :
     (keepAt b fs imgs staged si s).preservesGround = s.preservesGround := by
-  cases s <;> simp only [keepAt] <;> first | rfl | (split <;> rfl)
+  cases s <;> simp only [keepAt]; first | rfl | (split <;> rfl)
 
 /-- A column row's opening cursor and its completed flows, for a row that overflows its page. -/
 private structure ColumnFlow where
@@ -16311,8 +16303,8 @@ private theorem frameStep_openDisplayAt (b : B) (j : ParaJob) (first : Bool)
   unfold Spacing.Page.openDisplayAt
   split <;> exact FrameStep.of_eq rfl rfl
 
-private theorem frameStep_placeParaTrailer (fs : FontSet) (j : ParaJob) (k : Nat)
-    (segs : Array Seg) (b : B) : FrameStep b (placeParaTrailer fs j k segs b) := by
+private theorem frameStep_placeParaTrailer (j : ParaJob) (k : Nat) (b : B) :
+    FrameStep b (placeParaTrailer j k b) := by
   unfold placeParaTrailer reachDepth
   repeat' split
   all_goals exact FrameStep.of_eq rfl rfl
@@ -16372,7 +16364,7 @@ private def Op.frameOpening? : Op → Option FrameOpening
 private theorem keepAt_frameOpening (b : B) (fs : FontSet) (imgs : Image.Store)
     (staged : Array Op) (si : Nat) (op : Op) :
     (keepAt b fs imgs staged si op).frameOpening? = op.frameOpening? := by
-  cases op <;> simp only [keepAt] <;> first | rfl | (split <;> rfl)
+  cases op <;> simp only [keepAt]; first | rfl | (split <;> rfl)
 
 private theorem stepStaged_frames (fs : FontSet) (imgs : Image.Store)
     (st : StepSt) (op : Op) (openings : Array FrameOpening)
@@ -16576,7 +16568,7 @@ private theorem placeFlowFrom_frames (fs : FontSet) (imgs : Image.Store)
   rw [placeFlowFrom]
   split
   · rename_i hi
-    have hj : si + 1 ≤ matchingClose staged (si + 1) 1 :=
+    have _ : si + 1 ≤ matchingClose staged (si + 1) 1 :=
       matchingClose_ge staged (si + 1) 1
     split
     · have hgroup : ∀ op ∈ staged.extract (si + 1) (matchingClose staged (si + 1) 1),
@@ -16666,7 +16658,6 @@ private theorem reflowStep_warnSpill (b : B) (over : Sp) :
   all_goals first
     | exact ⟨rfl, fun _ h => Array.mem_push.mpr (Or.inl h)⟩
     | exact ⟨rfl, fun _ h => h⟩
-    | exact ReflowStep.refl b
 
 private theorem reflowStep_spillPage (b : B) (over : Sp) :
     ReflowStep b (b.spillPage over) :=
@@ -16742,8 +16733,8 @@ private theorem reflowStep_openDisplayAt (b : B) (j : ParaJob) (first : Bool)
   unfold Spacing.Page.openDisplayAt
   split <;> exact ReflowStep.of_eq rfl rfl
 
-private theorem reflowStep_placeParaTrailer (fs : FontSet) (j : ParaJob) (k : Nat)
-    (segs : Array Seg) (b : B) : ReflowStep b (placeParaTrailer fs j k segs b) := by
+private theorem reflowStep_placeParaTrailer (j : ParaJob) (k : Nat) (b : B) :
+    ReflowStep b (placeParaTrailer j k b) := by
   unfold placeParaTrailer reachDepth
   repeat' split
   all_goals exact ReflowStep.of_eq rfl rfl
@@ -16861,7 +16852,7 @@ private theorem stepStaged_reflows (fs : FontSet) (imgs : Image.Store)
   case picture x pic leaf origin =>
     rw [stepStaged_picture_b]
     exact hb.step (reflowStep_placePicture ..)
-  all_goals simp only [stepStaged, Id.run, Id, pure, Spacing.Page.openBody] <;> repeat' split
+  all_goals (simp only [stepStaged, Id.run, Id, pure, Spacing.Page.openBody]; repeat' split)
   all_goals first
     | (refine hb.step (ReflowStep.of_eq ?_ ?_) <;>
         simp [Spacing.Page.pushSibling, Spacing.Page.displaySkip]
@@ -16937,7 +16928,7 @@ private theorem placeFlowFrom_reflows (fs : FontSet) (imgs : Image.Store)
     (placeFlowFrom fs imgs staged st si).placed.b.ReflowsNamed := by
   rw [placeFlowFrom]
   split
-  · have hj : si + 1 ≤ matchingClose staged (si + 1) 1 :=
+  · have _ : si + 1 ≤ matchingClose staged (si + 1) 1 :=
       matchingClose_ge staged (si + 1) 1
     split
     · exact placeFlowFrom_reflows _ _ _ _ _ (runFloat_reflows _ _ _ _ hb)
@@ -16958,7 +16949,7 @@ private theorem placeFlowFrom_ground (fs : FontSet) (imgs : Image.Store)
   rw [placeFlowFrom]
   split
   · rename_i h
-    have hj : si + 1 ≤ matchingClose staged (si + 1) 1 :=
+    have _ : si + 1 ≤ matchingClose staged (si + 1) 1 :=
       matchingClose_ge staged (si + 1) 1
     split
     · have hgroup : ∀ op ∈ staged.extract (si + 1) (matchingClose staged (si + 1) 1),
@@ -17156,10 +17147,10 @@ private theorem sourceBound_furnishLines {n : Nat} (fs : FontSet)
   intro l hl hf
   rcases Array.mem_append.mp hl with hl | hl
   · rcases Array.mem_append.mp hl with hl | hl
-    · obtain ⟨r, hr, rfl⟩ := Array.mem_map.mp hl
+    · obtain ⟨r, _, rfl⟩ := Array.mem_map.mp hl
       simp [furnitureLine] at hf
     · exact h l hl hf
-  · obtain ⟨r, hr, rfl⟩ := Array.mem_map.mp hl
+  · obtain ⟨r, _, rfl⟩ := Array.mem_map.mp hl
     simp [furnitureLine] at hf
 
 private theorem furnishFrom_pagesInv {σ : Type}
@@ -17826,7 +17817,7 @@ private theorem Spacing.Paragraph.SourceBound.mono {n m : Nat} {j : ParaJob}
 private theorem Op.SourceBound.mono {n m : Nat} {op : Op}
     (h : op.SourceBound n) (hn : n ≤ m) : op.SourceBound m := by
   cases op <;> simp only [Op.SourceBound] at h ⊢
-  all_goals first | exact h.mono hn | exact h
+  all_goals exact h.mono hn
 
 private def Spacing.Pending.SourceBound (n : Nat) (a : Acc) : Prop :=
   ∀ op ∈ a.ops, op.SourceBound n
@@ -18262,14 +18253,14 @@ private def Spacing.Pending.census (pick : Option Nat → Bool → Bool) (a : Ac
   (Spacing.Pending.ops a).toList.flatMap (Op.census pick)
 
 private theorem Op.Gap.prose {op : Op} (h : op.Gap) : op.Prose := by
-  cases op <;> simp only [Op.Gap, Op.Prose] at h ⊢ <;> trivial
+  cases op <;> simp only [Op.Gap, Op.Prose] at h ⊢
 
 private theorem Op.Gap.clean {op : Op} (h : op.Gap) : op.Clean := by
-  cases op <;> simp only [Op.Gap, Op.Clean] at h ⊢ <;> trivial
+  cases op <;> simp only [Op.Gap, Op.Clean] at h ⊢
 
 private theorem Op.Gap.census {op : Op} (h : op.Gap) (pick : Option Nat → Bool → Bool) :
     op.census pick = [] := by
-  cases op <;> simp only [Op.Gap, Op.census] at h ⊢ <;> trivial
+  cases op <;> simp only [Op.Gap, Op.census] at h ⊢
 
 private theorem Spacing.Pending.GapAppend.prose {a b : Acc} (h : a.GapAppend b)
     (ha : a.Prose) : b.Prose := by
@@ -18870,10 +18861,10 @@ private theorem shipCore_census (geom : Geom) (fs : FontSet)
       sourceInkPrefix pick (pdfView doc).body 0 true (pdfView doc).body.size := by
   unfold shipCore withLayoutOps
   dsimp (config := { zeta := false }) only [Id.run, bind, pure, Id]
-  extract_lets d ps font scale footAllowed plainFoot footSize runInk corr xHeight
-    tokenLen headsep footskip gapTop gapBot latexFoot headFurn footFurn g1 g2 g
-    design cover footGap rd acc0 acc accF preDiags1 preDiags2 preDiags b0
-    alphabet l45 l65 cpl10 dir post
+  extract_lets d ps _ _ _ _ _ _ _ _
+    _ _ _ _ _ _ _ _ _ _ _
+    _ cover _ rd acc0 acc accF _ _ _ b0
+    alphabet _ _ cpl10 dir post
   have hacc := collectDocBody_census rd d cover frameSpans acc0 hp
     (by rcases hh with hh | hh <;>
       simp only [rd, ps, hh, Bool.false_eq_true, ↓reduceIte, ite_self])
@@ -20082,9 +20073,8 @@ private theorem reachDepth_rise (j : ParaJob) (brk : Nat) (a b : B) (h : PageRis
     · exact h
   · exact h
 
-private theorem trailer_rise (fs : FontSet) (j : ParaJob) (brk : Nat)
-    (segs : Array Seg) (a b : B) (h : PageRise a b) :
-    PageRise (placeParaTrailer fs j brk segs a) (placeParaTrailer fs j brk segs b) := by
+private theorem trailer_rise (j : ParaJob) (brk : Nat) (a b : B) (h : PageRise a b) :
+    PageRise (placeParaTrailer j brk a) (placeParaTrailer j brk b) := by
   have h' := reachDepth_rise j brk a b h
   unfold placeParaTrailer
   dsimp only
@@ -20284,7 +20274,7 @@ private theorem furniture_ink_empty (fs : FontSet) (lines : Array LineOut) :
   simp only [Array.toList_map, List.flatMap_map,
     List.filter_flatMap]
   apply List.flatMap_eq_nil_iff.mpr
-  intro l hl
+  intro l _
   simp only [List.filter_append, List.filter_cons, inkLine, furnitureLine, Bool.not_true,
     Bool.false_and, Bool.false_eq_true, reduceIte, List.append_eq_nil_iff]
   constructor

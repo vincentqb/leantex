@@ -39,7 +39,7 @@ private def preStyleOf (doc : Ir.Doc) : Option String :=
 
 def verbatimAmbientChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
-  let load (n : String) : IO (Option Font.Font) := do
+  let load (n : String) : IO (Option Font) := do
     let p := testFonts ++ "/" ++ n
     unless ← System.FilePath.pathExists p do return none
     match Font.parse (← IO.FS.readBinFile p) with

@@ -1982,9 +1982,23 @@ def roleRowWildcards (lines : Array String) : Array Nat := Id.run do
       out := out.push i
   return out
 
+/-- The hook's compiled stages: every library and the tools built failing on any warning,
+then the test and lint drivers. -/
+def compiledStages : Array (String × Array String) := #[
+  ("lake", #["build", "--wfail", "LeanTex", "TestsModules", "ScriptsModules", "leantex", "Tests",
+    "precommit", "proofcheck", "lint", "cites", "land"]),
+  ("lake", #["test"]),
+  ("lake", #["lint"])]
+
 /-- Every case a gate predicate must catch and every legal spelling it must pass. -/
 def selftest : IO UInt32 := do
   let fails ← IO.mkRef ([] : List String)
+  match compiledStages[0]? with
+  | some ("lake", args) =>
+    unless args[0]? == some "build" && args.contains "--wfail" &&
+        #["LeanTex", "TestsModules", "ScriptsModules", "leantex", "Tests"].all args.contains do
+      fails.modify ("the hook's build does not fail every library on a warning" :: ·)
+  | _ => fails.modify ("the hook's first stage is not lake build" :: ·)
   let expect (name : String) (p : String → Bool) (cases : List (String × Bool)) : IO Unit := do
     for (line, want) in cases do
       if p line != want then
@@ -3182,12 +3196,7 @@ those whose name says their text is compressed" :: ·)
 output redacted. -/
 def checkCompiledTree (env : Array (String × Option String) := #[])
     (redact : String → String := id) : IO UInt32 := do
-  let stages := #[
-    ("lake", #["build", "--wfail", "LeanTex", "leantex", "Tests",
-      "precommit", "proofcheck", "lint", "cites", "land"]),
-    ("lake", #["test"]),
-    ("lake", #["lint"])]
-  for (cmd, args) in stages do
+  for (cmd, args) in compiledStages do
     let (code, out, err) ← runBytes cmd args env
     if code != 0 then
       IO.eprintln s!"pre-commit: {cmd} {String.intercalate " " args.toList} failed:"

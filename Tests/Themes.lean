@@ -550,11 +550,11 @@ def chromeDeclChecks (ref : IO.Ref (List String)) : IO Unit := do
     oDoc.chrome.footerLeft == none &&
     oDoc.chrome.footerRight == some .frameNumber)
   -- Only a single-slot bundle can observe a wholesale chrome install.
-  let leftOnly : Theme.Theme := { name := "left-only"
-                                  palette := {}
-                                  tokens := {}
-                                  styles := {}
-                                  chrome := { footerLeft := some .sectionTitle } }
+  let leftOnly : Theme := { name := "left-only"
+                            palette := {}
+                            tokens := {}
+                            styles := {}
+                            chrome := { footerLeft := some .sectionTitle } }
   t "a bundle's chrome fills only the slots it declares"
     ((Theme.apply leftOnly { chrome := { footerRight := some .frameNumber } }).chrome ==
       { footerLeft := some .sectionTitle, footerRight := some .frameNumber })
@@ -652,7 +652,7 @@ def styleMergeChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let ink : Ir.Color := { r := 0x12, g := 0x34, b := 0x56 }
   let linked : Ir.ElementStyle := { color := some (ink, none) }
-  let probe : Theme.Theme := { name := "probe", styles := { entries := #[("link", linked)] } }
+  let probe : Theme := { name := "probe", styles := { entries := #[("link", linked)] } }
   t "a bundle's link colour survives the install"
     (((Theme.apply probe {}).styles.find? "link").bind (·.color) == some (ink, none))
   t "every style field survives a merge onto an empty entry"
@@ -665,7 +665,7 @@ def styleMergeChecks (ref : IO.Ref (List String)) : IO Unit := do
       { styles := ({} : Ir.Styles).declare "link" { color := some (Ir.Color.black, none) } }
       == #[(.style, "link")])
   let exemptPalette := ({} : Ir.Palette).declareKey "alert" ink (decorative := true)
-  let exempt : Theme.Theme := { name := "exempt", palette := exemptPalette }
+  let exempt : Theme := { name := "exempt", palette := exemptPalette }
   let doc : Theme.Decls := { palette := ({} : Ir.Palette).declareKey "alert" Ir.Color.black }
   t "a class default does not re-exempt a key the document redeclared"
     (!(Theme.applyUnder exempt doc).palette.decorative.contains (.role .alert))

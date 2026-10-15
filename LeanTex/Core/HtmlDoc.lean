@@ -2433,12 +2433,12 @@ private def stackFor (fs : Font.FontSet) (own generic : String) : String :=
   String.intercalate ", " ([s!"\"{own}\""] ++ rest ++ [generic])
 
 /-- The face's file name: its index and its PostScript name's safe characters. -/
-private def fontFileName (i : Nat) (f : Font.Font) : String :=
+private def fontFileName (i : Nat) (f : Font) : String :=
   let safe := f.psName.toList.filter fun c =>
     c.isAlphanum || c == '-' || c == '_' || c == '.'
   s!"f{i}-{String.ofList safe}." ++ (if f.isCff then "otf" else "ttf")
 
-public def fontResource (f : Font.Font) : HtmlResource.Embedded :=
+public def fontResource (f : Font) : HtmlResource.Embedded :=
   { media := if f.isCff then .otf else .ttf, bytes := f.data }
 
 public def fontResources (fs : Font.FontSet) : Array HtmlResource.Embedded :=
@@ -3990,8 +3990,8 @@ public theorem deckStageMilli_share (x stage : Int) (hs : 0 < stage) :
   have heq := Int.mul_ediv_add_emod (x * 100000) stage
   unfold deckStageMilli
   rw [Int.mul_comm (x * 100000 / stage) stage]
-  generalize hr : x * 100000 % stage = r at hmod hlt heq
-  generalize hp : stage * (x * 100000 / stage) = p at heq ⊢
+  generalize x * 100000 % stage = r at hmod hlt heq
+  generalize stage * (x * 100000 / stage) = p at heq ⊢
   generalize ha : x * 100000 = a at heq ⊢
   omega
 

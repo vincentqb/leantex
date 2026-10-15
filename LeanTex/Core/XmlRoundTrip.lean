@@ -704,8 +704,6 @@ private theorem readValue_ok (R : List Char) (hl : Ascii R) (bud : Budget) (i : 
       show ((38 : Nat) == 60) = false from rfl, show ((38 : Nat) == 38) = true from rfl,
       Bool.false_eq_true, ↓reduceIte]
     rw [readReference_ref R hl j c tail hj hc]
-    have hbud' : out.utf8ByteSize + c.utf8Size ≤ bud.text := by
-      rw [String.utf8ByteSize_push] at hbud; exact hbud
     have hnb : ¬ ((out.push c).utf8ByteSize > bud.text) := by omega
     simp only [bind, Except.bind, hnb, ↓reduceIte]
     rfl
@@ -908,7 +906,7 @@ private theorem readStartTag_ok (R : List Char) (hl : Ascii R) (bud : Budget) (i
     (fun x => by simp [Std.HashSet.contains_empty]) (by rw [hj0, List.append_assoc]) hfit]
   case attr =>
     intro as seen j kv more hj hok hnot
-    obtain ⟨⟨c, cs, hc, hstart⟩, hbytes, _⟩ := hok.1
+    obtain ⟨⟨c, cs, hc, hstart⟩, _, _⟩ := hok.1
     have hk : skipSpace (bytesOf R) j = j + 1 := by
       apply skipSpace_one R hl j c (cs ++ ('=' :: '"' :: (escL kv.2.toList ++ ('"' :: more))))
       · rw [hj, hc]; rfl
@@ -916,7 +914,7 @@ private theorem readStartTag_ok (R : List Char) (hl : Ascii R) (bud : Budget) (i
     have hck : at? (bytesOf R) (j + 1) = c.toNat := by
       apply at?_of_drop R hl (j + 1) c (cs ++ ('=' :: '"' :: (escL kv.2.toList ++ ('"' :: more))))
       rw [drop_succ_of R j ' ' _ hj, hc]; rfl
-    obtain ⟨h1, h2, h3⟩ := nameStart_not c hstart
+    obtain ⟨_, h2, h3⟩ := nameStart_not c hstart
     have hjk : R.drop (j + 1) = kv.1.toList ++ ('=' :: '"' :: (escL kv.2.toList ++ ('"' :: more))) :=
       drop_succ_of R j ' ' _ hj
     have han := readName_ok R hl bud (j + 1) kv.1 _ hjk hok.1 hok.2.1 (by intro x hx; simp at hx; subst hx; decide)
@@ -1550,7 +1548,7 @@ private theorem text_node_reads (R : List Char) (hl : Ascii R) (bud : Budget) (t
     NodeReads R bud (.text t) := by
   unfold NodeReads
   intro s rest hR hc htext _ _ hnodes
-  obtain ⟨hne, hx, hb⟩ := hc
+  obtain ⟨_, hx, hb⟩ := hc
   obtain ⟨⟨stk, f, hs, hf⟩, hnext⟩ := htext rfl
   simp only [Node.ticks] at hnodes
   have hlen : t.toList.length = t.length := String.length_toList
