@@ -6002,15 +6002,22 @@ private def classPageDefaults (record : Ir.ClassRecord) (opts : List String)
 /-- Class options asking for what a page model's class already is, each with why. -/
 public def classOptionsInert : List (Ir.PageModel × List (String × String)) :=
   let final := ("final", "the document is rendered in full, as without the option")
+  let opensNoPage := "a part or chapter here opens no page of its own, so where one would open \
+changes nothing"
   [(.flow, [("oneside", "the page is one-sided, as without the option"),
      ("twoside=false", "the page is one-sided, as without the option"),
      ("onecolumn", "the text is set in one column, as without the option"),
      final,
      ("notitlepage", "the title opens the first page, as without the option"),
      ("reqno", "equation numbers stand on the right, as without the option"),
-     ("openany", "a part or chapter opens on the next page, as without the option")]),
+     ("openany", opensNoPage), ("open=any", opensNoPage), ("headings=openany", opensNoPage),
+     ("titlepage=false", "the title opens the first page, as without the option"),
+     ("version=last", "the layout is KOMA-Script's current one, as without the option"),
+     ("footinclude=false", "the foot stands below the text block, as without the option")]),
    (.frame, [final, ("c", "frames are centred vertically, as without the option"),
-     ("slidescentered", "frames are centred vertically, as without the option")]),
+     ("slidescentered", "frames are centred vertically, as without the option"),
+     ("unicode", "the PDF's text strings are Unicode, as without the option"),
+     ("presentation", "the slides are set for presenting, as without the option")]),
    (.face, [final])]
 
 /-- The bare class options each page model's readers read beside a body size and a paper size. -/
@@ -11130,10 +11137,14 @@ private def elabEnvArm (ctx : Ctx) (n : String) (scope : Array Raw)
     | .took k' =>
       for o in KeyVal.items (bracketSrc body 0 k') do
         let key := (KeyVal.entry o).1
-        unless key.isEmpty do
+        if key.startsWith "<" then
+          warnOnce ctx ("param:" ++ n ++ ":" ++ key) .W0104
+            s!"'\{{n}}' default overlay specification '{key}' is not read; its items show as \
+their own specifications say" pos
+            (help := "give each item a numbered specification, as \\item<1-> and \\item<2->")
+        else unless key.isEmpty do
           warnOnce ctx ("param:" ++ n ++ ":" ++ key) .W0104
             s!"'\{{n}}' option '{key}' is not honoured per list; the declared list style stands" pos
-            (help := s!"\\setlist[{n}]\{...} styles every list of its kind")
       bodyFrom := k'
     | .unclosed bpos =>
       warnUnclosed ctx s!"'\\begin\{{n}}'" bpos
@@ -13879,6 +13890,8 @@ public structure PreState where
   ctx : Ctx
   docClass : Ir.DocClass := .article
   sawClass : Bool := false
+  /-- The class named is not one the engine has, whose error accounts for its options. -/
+  classUnknown : Bool := false
   classOptions : String := ""
   page : PageSpec := {}
   sawPage : Bool := false
@@ -14435,7 +14448,7 @@ public def applyDecl (s : PreState) (d : PDecl) : EM PreState := do
       | none =>
         diag s.ctx .E0309 s!"unknown document class '{named}'" pos
           (help := "classes: article, slides, card, resume, webpage")
-        return s
+        return { s with classUnknown := true }
     | none =>
       diag s.ctx .E0304 "'\\documentclass' needs a {class}" pos
       return s
@@ -15740,7 +15753,7 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
   let classSay (code : DiagCode) (o msg : String) : EM Unit := do
     let d := diagOf ctx code msg none (subject := some (Compat.paramSubject "documentclass" o))
     modify fun st => { st with diags := st.diags.push d }
-  for o in classOpts do
+  for o in if s.classUnknown then [] else classOpts do
     let key := (KeyVal.entry o).1
     if KeyVal.entry o matches ("twocolumn", none) | ("twocolumn", some "true") then
       classSay .W0356 key

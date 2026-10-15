@@ -18,6 +18,8 @@ structure Shipped where
   html : String
   /-- The HTML body without its custom-property declarations. -/
   body : String
+  /-- The head's style sheets without the custom-property declarations no `var()` reads. -/
+  css : String
   md : String
   diags : Array Diag
 
@@ -105,6 +107,9 @@ def shipped (fonts : Font.FontSet) (src : String) : Shipped :=
     (dropUnreadNodes reads #[] tree.toList)
   { pdf := (driverPdf fonts (Layout.Geom.ofPage doc.page) doc out).data, html
     body := Html.render (Html.elem "div" (plainNodes #[] tree.toList)) 0
+    css := String.join ((dropUnreadNodes reads #[] head.toList).toList.filterMap fun
+      | .style c => some c
+      | _ => none)
     md := MarkdownDoc.emit doc, diags := ds ++ out.diags ++ hds }
 
 /-- Whether `key` stands in `msg` as a whole token, not inside a longer name. -/
@@ -144,7 +149,7 @@ def judge (fonts : Font.FontSet) (base : Shipped) (src key : String) : Bool × B
   let changed := w.pdf != base.pdf || w.html != base.html || w.md != base.md
   let fresh := w.diags.filter fun d =>
     !base.diags.any fun b => b.code == d.code && b.message == d.message && b.subject == d.subject
-  let shows := w.pdf != base.pdf || w.body != base.body
+  let shows := w.pdf != base.pdf || w.body != base.body || w.css != base.css
   let naming := fresh.filter (names key)
   -- A setting noted as changing nothing that changes an artifact is read, so its note is false.
   let inert := !naming.isEmpty && naming.all fun d => d.code == "N0100" && hasStr d.message "→ nothing:"
@@ -350,16 +355,19 @@ def lengthRow : Row :=
     if o == "footins" then "\\setlength{\\skip\\footins}{61pt}" else
     (if o == "censusprobelength" then "\\newlength{\\censusprobelength}" else "") ++
       s!"\\setlength\{\\{o}}\{{sample o}}"
-  let pre := "\\usepackage{booktabs}\\usepackage{paracol}\\runninghead{Head words}"
+  let pre := "\\usepackage{natbib}\\usepackage{booktabs}\\usepackage{paracol}\\runninghead{Head words}"
   let body := "\\begin{tabular}{|l|l|}\\hline A & B\\\\ \\hline\\hline C & D\\\\ \\hline\\end{tabular} " ++
     "\\begin{tabular}{ll}\\toprule A & B\\\\ \\midrule C & D\\\\ \\cmidrule(lr){1-2} E & F\\\\ " ++
     "\\bottomrule\\end{tabular} \\fbox{Boxed} " ++
     "$\\begin{array}{cc}a & b\\end{array}$\\begin{align}x &= y\\\\ z &= w\\end{align}" ++
     "\\begin{picture}(10,10)\\put(0,0){\\line(1,1){5}}\\end{picture}" ++
-    "\\begin{paracol}{2}Left column words.\\switchcolumn Right column words.\\end{paracol}"
+    "\\begin{paracol}{2}Left column words.\\switchcolumn Right column words.\\end{paracol}" ++
+    "Before skips.\\smallskip After small.\\medskip After medium.\\bigskip After big."
   { reader := "\\setlength"
     settings := Compat.paramSites.map (·.1) ++
-      ["emergencystretch", "columnseprule", "marginparwidth", "linewidth", "censusprobelength"]
+      ["emergencystretch", "columnseprule", "marginparwidth", "linewidth", "censusprobelength",
+       "bibsep", "bibhang", "belowcaptionskip", "topskip", "smallskipamount", "medskipamount",
+       "bigskipamount"]
     keyOf := id
     docs := [fun o => article "" (pre ++ (o.map setting).getD "") body,
       fun o => article "" pre ((o.map setting).getD "" ++ body)] }
@@ -391,16 +399,16 @@ def coveredRow : Row :=
     keyOf := id
     docs := [fun o => deck "" ((o.map (s!"\\setbeamercovered\{{·}}")).getD "")] }
 
-/-- A theme's options, moloch's own and another theme's. -/
+/-- A theme's options, moloch's own and another shipped theme's; an unknown theme's are its loss. -/
 def themeRows : List Row :=
   [{ reader := "\\usetheme{moloch}"
      settings := ["block=fill", "block=transparent", "progressbar=frametitle", "numbering=fraction",
        invented]
      docs := [fun o => deck "" s!"\\usetheme{bracketed o}\{moloch}",
        fun o => deck "" s!"\\usepackage{bracketed o}\{beamerthememoloch}"] },
-   { reader := "\\usetheme{Madrid}"
+   { reader := "\\usetheme{gemini}"
      settings := ["secheader", invented]
-     docs := [fun o => deck "" s!"\\usetheme{bracketed o}\{Madrid}"] }]
+     docs := [fun o => deck "" s!"\\usetheme{bracketed o}\{gemini}"] }]
 
 /-- Every census row. -/
 def rows : List Row :=
@@ -475,6 +483,112 @@ def paramTruthChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
     (warnsOf (len "\\newlength{\\gapprobe}\\setlength{\\gapprobe}{2pt}" "Words.") "gapprobe" &&
       !warnsOf (len "\\newlength{\\gapprobe}\\setlength{\\gapprobe}{2pt}" "Words\\hspace{\\gapprobe}.") "gapprobe" &&
       warnsOf (len "\\setlength{\\emergencystretch}{3em}" "Words.") "emergencystretch")
+
+/-- The diagnostics of a source that name a setting. -/
+def namingOf (src key : String) : Array Diag := (elabStr src).2.filter (names key)
+
+/-- The first baseline on a source's first page. -/
+def firstY (fonts : Font.FontSet) (src : String) : Option Dim.Sp :=
+  ((pageLines fonts src)[0]?.bind (·[0]?)).map (·.1)
+
+/-- Standard settings are silent where LuaLaTeX ships the same page with and without them or the
+engine already does what they ask, one loss is named once, and a message names what was written. -/
+def paramSilenceChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let pkg (p o : String) : String := plain "" s!"\\usepackage[{o}]\{{p}}"
+  let standard : List (String × String) :=
+    [("csquotes", "english=american"), ("hyperref", "pdfencoding=auto"),
+     ("hyperref", "pdfencoding=unicode"), ("hyperref", "hyperfootnotes=false"),
+     ("hyperref", "pdfpagelabels=false"), ("hyperref", "pdfpagemode=UseNone"),
+     ("microtype", "tracking=false"), ("microtype", "kerning=false"), ("microtype", "spacing=false"),
+     ("amsmath", "nointlimits"), ("amsmath", "centertags"), ("cleveref", "english"),
+     ("siunitx", "output-decimal-marker={.}"), ("minted", "outputdir=build"), ("xurl", "hyphens"),
+     ("fontspec", "no-math")]
+  let loud := standard.filter fun (p, o) => warnsOf (pkg p o) (KeyVal.entry o).1
+  t s!"silence: standard package settings name nothing unread {loud}" loud.isEmpty
+  let cls (c o pre : String) : String :=
+    s!"\\documentclass[{o}]\{{c}}\n{pre}\n\\begin\{document}\nProbe words.\n\\end\{document}\n"
+  let classes : List (String × String × String) :=
+    [("scrartcl", "version=last", ""), ("scrartcl", "titlepage=false", ""),
+     ("scrartcl", "footinclude=false", ""), ("scrreprt", "open=any", ""),
+     ("scrreprt", "headings=openany", ""), ("scrreprt", "openany", ""), ("report", "openany", ""),
+     ("article", "usenames", "\\usepackage{xcolor}"),
+     ("article", "english", "\\usepackage{babel}"), ("beamer", "unicode", ""),
+     ("beamer", "presentation", "")]
+  let loudClass := classes.filter fun (c, o, pre) => warnsOf (cls c o pre) (KeyVal.entry o).1
+  t s!"silence: standard class options, and those a package takes, name nothing unread {loudClass}"
+    loudClass.isEmpty
+  t "global options: a class's language option reaches babel, and one no package takes is named"
+    ((elabStr (cls "article" "french" "\\usepackage{babel}")).1.info.language == some "fr" &&
+      warnsOf (cls "article" "english" "") "english")
+  let thesis := "\\documentclass[12pt,a4paper,version=last,titlepage=false,footinclude=false," ++
+    "open=any,headings=openany,english]{scrreprt}\n\\usepackage{babel}\n\\usepackage[T1]{fontenc}\n" ++
+    "\\usepackage[english=american]{csquotes}\n\\usepackage[nointlimits,centertags]{amsmath}\n" ++
+    "\\usepackage[tracking=false,kerning=false,spacing=false]{microtype}\n" ++
+    "\\usepackage[usenames]{xcolor}\n\\usepackage[output-decimal-marker={.}]{siunitx}\n" ++
+    "\\usepackage[pdfencoding=auto,hyperfootnotes=false,pdfpagelabels=false,pdfpagemode=UseNone]" ++
+    "{hyperref}\n\\usepackage[english]{cleveref}\n\\begin{document}\n\\section{Opening}\\label{s:o}\n" ++
+    "Words \\enquote{quoted} and \\cref{s:o}.\n\\end{document}\n"
+  let thesisLoud := (elabStr thesis).2.filter fun d => d.code.startsWith "W" || d.code.startsWith "E"
+  t s!"silence: a KOMA thesis preamble of standard settings warns of nothing \
+{thesisLoud.map (·.message)}" thesisLoud.isEmpty
+  let babelTwice := "\\documentclass{article}\n\\usepackage[spanish,english]{babel}\n" ++
+    "\\begin{document}\nWords. \\selectlanguage{spanish} Palabras.\n\\end{document}\n"
+  t "one accounting: a language without a locale is named once, where the body selects it"
+    (((elabStr babelTwice).2.filter (·.code == "W0368")).size == 1 &&
+      !warnsOf (plain "" "\\usepackage[spanish,english]{babel}") "spanish")
+  let skips := ["\\setlength{\\leftskip}{0pt plus 1fill}", "\\setlength{\\rightskip}{0pt plus 1fill}",
+    "\\setlength{\\parfillskip}{0pt plus 1fil}"]
+  let twice := skips.filter fun a => (namingOf (plain "" a) ((a.drop 12).takeWhile (· != '}')).toString).size != 1
+  t s!"one accounting: an unreadable length literal is named once {twice}" twice.isEmpty
+  let foo1 := "\\documentclass{article}\n\\usepackage[skip=foo]{parskip}\n\\begin{document}\n" ++
+    "Alpha words.\n\nBravo words.\n\\end{document}\n"
+  let foo2 := plain "" "\\setlength{\\parskip}{foo}"
+  t "an unreadable length value keeps the length, is named, and the page ships"
+    ([foo1, foo2].all fun src =>
+      (elabStr src).2.all (!·.code.startsWith "E") && warnsOf src "parskip")
+  let geo (pre : String) : String :=
+    s!"\\documentclass\{article}\n\\usepackage[margin=1in]\{geometry}\n{pre}\n\\begin\{document}\n" ++
+      "Alpha words.\n\\end{document}\n"
+  t "textheight: the top margin stands, and the length the page cannot carry is named"
+    (firstY fonts (geo "\\setlength{\\textheight}{500pt}") == firstY fonts (geo "") &&
+      firstY fonts (geo "\\setlength{\\textheight}{120pt}") == firstY fonts (geo "") &&
+      warnsOf (geo "\\setlength{\\textheight}{500pt}") "textheight")
+  let body := plain "" "" |>.replace "Probe words." "Words. \\setlength{\\textheight}{500pt} More."
+  let geoKeys (o : String) : String := plain "" s!"\\usepackage[{o}]\{geometry}"
+  let pageNamed (src : String) : Bool := (elabStr src).2.any fun d =>
+    (d.code == "W0340" || d.code == "W0343") && hasStr d.message "\\page"
+  t "messages name what the author wrote, and geometry's later key wins"
+    (!pageNamed body && !pageNamed (geoKeys "nofoot,footskip=1cm") &&
+      !pageNamed (geoKeys "footskip=1cm,nofoot") && !pageNamed (geoKeys "nohead,headsep=1cm"))
+  let overlay := deck "" "" |>.replace "\\begin{itemize}\\item<2-> one"
+    "\\begin{itemize}[<+->]\\item one"
+  t "a list's default overlay specification is named as one, its help no \\setlist"
+    ((elabStr overlay).2.any fun d => d.code == "W0104" && hasStr d.message "overlay" &&
+      !(d.help.any (hasStr · "setlist")))
+  t "an unknown class or theme accounts for its options"
+    (!((elabStr (cls "nosuchclass" "draft,twocolumn" "")).2.any (·.code == "W0356")) &&
+      !warnsOf (deck "" "\\usetheme[secheader]{Madrid}") "secheader")
+
+/-- Every token name an engine site reads by literal stands in the engine's vocabulary, and the
+lengths natbib, caption and the kernel set that the engine reads are not named unread. -/
+def engineTokenChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let mut missing : Array String := #[]
+  for e in ← System.FilePath.readDir "LeanTex/Core" do
+    if e.path.extension != some "lean" then continue
+    let src ← IO.FS.readFile e.path
+    for pre in ["tokens.find? \"", "tokens.findSourced? \"", "tokenLen \"", ".tokens \"",
+        ".tokens kind \""] do
+      for piece in (src.splitOn pre).drop 1 do
+        let n := String.ofList (piece.toList.takeWhile (· != '"'))
+        unless Ir.engineTokenNames.contains n || missing.contains n do missing := missing.push n
+  check ref s!"engine tokens: each name an engine site reads stands in the vocabulary {missing}"
+    missing.isEmpty
+  let src := "\\documentclass{article}\n\\usepackage{natbib}\n\\setlength{\\bibsep}{0pt}\n" ++
+    "\\setlength{\\belowcaptionskip}{6pt}\n\\setlength{\\topskip}{30pt}\n\\setlength{\\bibhang}{2em}\n" ++
+    "\\begin{document}\nWords.\n\\end{document}\n"
+  let named := ["bibsep", "belowcaptionskip", "topskip", "bibhang"].filter (warnsOf src ·)
+  check ref s!"engine tokens: lengths the engine reads are not named unread {named}" named.isEmpty
 
 /-- A bare class option a page model's readers read changes that model's document: a flag listed read
 that changes nothing is a drop the other models' documents cannot hide. -/

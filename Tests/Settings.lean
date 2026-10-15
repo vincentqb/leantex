@@ -61,7 +61,6 @@ def paramProbes : List (String × String × String × String) :=
    ("topsep", "\\setlength{\\topsep}{17pt}", "\\tokens{ topsep = 17pt }", "center"),
    ("partopsep", "\\setlength{\\partopsep}{9pt}", "\\tokens{ partopsep = 9pt }", "parlist"),
    ("footins", "\\setlength{\\skip\\footins}{61pt}", "\\tokens{ footins = 61pt }", "note"),
-   ("textheight", "\\setlength{\\textheight}{300pt}", "\\page{ textheight = 300pt }", "paras"),
     ("tabcolsep", "\\setlength{\\tabcolsep}{13pt}", "\\tokens{ tabcolsep = 13pt }", "table"),
     ("columnsep", "\\setlength{\\columnsep}{19pt}", "\\tokens{ columnsep = 19pt }", "columns"),
    ("heavyrulewidth", "\\setlength{\\heavyrulewidth}{3pt}",

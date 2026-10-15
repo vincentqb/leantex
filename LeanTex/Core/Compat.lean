@@ -64,7 +64,8 @@ public def packageOptionsInert : List (String × List (String × String)) :=
    ("csquotes", [("autostyle", "quotes follow the language in force, as the option asks"),
      ("autostyle=true", "quotes follow the language in force, as the option asks"),
      ("autostyle=try", "quotes follow the language in force, as the option asks"),
-     ("german=quotes", "German quotes are set as „…“, the style the option names")]),
+     ("german=quotes", "German quotes are set as „…“, the style the option names"),
+     ("english=american", "English quotes take their American form, as without the option")]),
    ("babel", [("shorthands=off", "the engine reads no shorthand characters, as the option asks")]),
    ("parskip", [("indent=0pt", "paragraphs are set flush, as without the option")]),
    ("graphicx", ("final", "images are drawn, as without the option") ::
@@ -76,11 +77,18 @@ public def packageOptionsInert : List (String × List (String × String)) :=
    ("color", ("usenames", "the option has no effect") :: drivers "the engine writes its own output"),
    ("amsmath", [("reqno", "equation numbers stand on the right, as without the option"),
      ("sumlimits", "a sum's limits stand above and below it, as without the option"),
-     ("namelimits", "an operator name's limits stand below it, as without the option")]),
+     ("namelimits", "an operator name's limits stand below it, as without the option"),
+     ("nointlimits", "an integral's limits stand beside it, as without the option"),
+     ("centertags", "a split equation's number is centred on it, as without the option")]),
    ("amssymb", [("psamsfonts", "the symbols are set from the math face")]),
    ("amsfonts", [("psamsfonts", "the symbols are set from the math face")]),
    ("url", [("hyphens", "a URL breaks after its hyphens here")]),
-   ("fontspec", [("quiet", "the engine writes no TeX log")]),
+   ("xurl", [("hyphens", "a URL breaks after its hyphens here")]),
+   ("fontspec", [("quiet", "the engine writes no TeX log"),
+     ("no-math", "the math faces stand as declared, as the option asks")]),
+   ("cleveref", [("english", "references are named in English, as without the option")]),
+   ("siunitx", [("output-decimal-marker=.", "the decimal marker is a point, as without the option"),
+     ("output-decimal-marker={.}", "the decimal marker is a point, as without the option")]),
    ("microtype", [("final", "the document is set in final mode, as without the option"),
      ("draft", "the features stay on: only 'disable=ifdraft' reads the flag"),
      ("disable=ifdraft", "the features stay on: the flag disables them only beside 'draft'"),
@@ -88,12 +96,16 @@ public def packageOptionsInert : List (String × List (String × String)) :=
      ("activate", "the features stay on, as without the option"),
      ("activate=true", "the features stay on, as without the option"),
      ("activate=true,nocompatibility", "the features stay on, as without the option"),
+     ("tracking=false", "no letterspacing is set, as without the option"),
+     ("kerning=false", "no extra kerning is set, as without the option"),
+     ("spacing=false", "interword spaces stay as the face sets them, as without the option"),
      ("verbose", "the engine writes no TeX log")]),
    ("listings", [("final", "listings are set, as without the option")]),
    ("minted", [("newfloat", "a listing float is set as without the option"),
      ("cache=false", "the engine keeps no minted cache"),
      ("finalizecache", "the engine keeps no minted cache"),
-     ("frozencache", "the engine keeps no minted cache")]),
+     ("frozencache", "the engine keeps no minted cache"),
+     ("outputdir=*", "the engine writes no minted temporaries")]),
    ("nicefrac", [("nice", "the fraction is set as without the option")]),
    ("algorithm2e", [("english", "the keywords are English, as without the option")])]
 
@@ -246,7 +258,8 @@ name is a length of the document's own. -/
 public def paramSites : List (String × ParamSite) :=
   [("parskip", .page "parskip"),
    ("textwidth", .page "textwidth"),
-   ("textheight", .page "textheight"),
+   ("textheight", .unmodelled "sets the text block's height under its top margin; the page here \
+keeps its top and bottom margins equal"),
    ("headsep", .page "headsep"),
    ("footskip", .page "footskip"),
    ("abovecaptionskip", .token "captionsep"),
@@ -637,6 +650,9 @@ private structure St where
   /-- The declared class produces a presentation, which a beamer mode
   specification is read against. -/
   deck : Bool := false
+  /-- The class options the class leaves to the packages that take them, as LaTeX offers global
+  options. -/
+  globalOffered : Array String := #[]
   /-- The font slots a fontspec or babel declaration has
   named so far, in preamble order. -/
   facesDeclared : Array String := #[]
@@ -5256,6 +5272,39 @@ private def lengthNames (s : String) : Array String := Id.run do
       cur := ""
   return out
 
+/-- TeX's units and keywords, the only letters a length's spelling holds outside its control
+words. -/
+private def texLengthWords : List String :=
+  ["filll", "fill", "fil", "true", "plus", "minus", "pt", "pc", "in", "bp", "cm", "mm", "dd", "cc",
+   "nd", "nc", "sp", "em", "ex", "px", "mu"]
+
+/-- Whether a run of letters splits into TeX's length keywords, each place the run reaches marked as
+the keywords before it are read. -/
+private def keywordRun (cs : List Char) : Bool := Id.run do
+  let a := cs.toArray
+  let mut reach := (Array.replicate (a.size + 1) false).modify 0 fun _ => true
+  for i in [0:a.size] do
+    if reach.getD i false then
+      for w in texLengthWords do
+        if (a.extract i (i + w.length)).toList == w.toList then
+          reach := reach.modify (i + w.length) fun _ => true
+  return reach.getD a.size false
+
+/-- Whether a length's TeX spelling holds letters only in its control words and TeX's keywords. -/
+private def texWordsOnly (s : String) : Bool := Id.run do
+  let mut ctrl := false
+  let mut run : Array Char := #[]
+  let mut ok := true
+  for c in s.toList ++ [' '] do
+    if ctrl && (c.isAlpha || c == '@') then continue
+    ctrl := false
+    if c.isAlpha then run := run.push c.toLower
+    else
+      if !run.isEmpty && !keywordRun run.toList then ok := false
+      run := #[]
+      if c == '\\' then ctrl := true
+  return ok
+
 /-- Whether the declaration reader takes `s` as a length. -/
 private def readsAsLength (s : String) : Bool :=
   match Decl.parseValue s ((lengthNames s).map fun n => (n, {})) with
@@ -5365,7 +5414,7 @@ for one it cannot read. -/
 private def doorValue? (value : Array Raw) : M (Option String) := do
   let st ← get
   return (lenValue st.lens value st.inDef (!st.inDoc && !st.seam) st.measureKnown
-    st.flowPage).filter readsAsLength
+    st.flowPage).filter fun src => readsAsLength src && texWordsOnly (rawSrc value)
 
 /-- A length assignment from its value's raws, landed by
 `setLength` or named and skipped. -/
@@ -5758,8 +5807,12 @@ private def geometry (opts : String) (pos : Pos)
     | some _, none => dropped := dropped.push a
     | none, some _ => dropped := dropped.push b
     | none, none => pure ()
-  let native := s!"\\page\{ {String.intercalate ", " keys.toList} }"
-  if keys.any fun k => ["margin =", "hmargin =", "textwidth ="].any (k.startsWith ·) then
+  -- geometry reads its keys in order, a later value of a key replacing the earlier one.
+  let read := keys.foldl (init := #[]) fun acc kv =>
+    let name := (kv.splitOn " = ").headD kv
+    (acc.filter fun e => (e.splitOn " = ").headD e != name).push kv
+  let native := s!"\\page\{ {String.intercalate ", " read.toList} }"
+  if read.any fun k => ["margin =", "hmargin =", "textwidth ="].any (k.startsWith ·) then
     write fun st => { st with measureKnown := true }
   became spelling native pos
   unless dropped.isEmpty do
@@ -5990,7 +6043,13 @@ public def hyperrefInert : List (String × String) :=
   ["dvips", "dvipdfm", "dvipdfmx", "dvisvgm", "pdftex", "luatex", "xetex", "hypertex", "vtex"].map
     (·, "the engine writes its own output") ++
   [("verbose", "the engine writes no TeX log"), ("debug", "the engine writes no TeX log"),
-   ("pdfborder=0 0 0", "links are written without a border")]
+   ("pdfborder=0 0 0", "links are written without a border"),
+   ("pdfencoding=auto", "text strings are written in PDFDocEncoding where it holds them and in \
+UTF-16 otherwise, as the option asks"),
+   ("pdfencoding=unicode", "text strings read as the same Unicode text in either encoding"),
+   ("hyperfootnotes=false", "a footnote mark carries no link here, as the option asks"),
+   ("pdfpagelabels=false", "the PDF carries no page labels, as the option asks"),
+   ("pdfpagemode=UseNone", "the PDF names no page mode, which a viewer reads as UseNone")]
 
 /-- hyperref's keys, as `\hypersetup` and the package options give them, with its link keys
 written into the setup. -/
@@ -6972,6 +7031,7 @@ private def molochOptions (cmd src : String) (pos : Pos) : M (Array Raw) := do
 spelled `load`. -/
 private def themeOptions (cmd load tname opts : String) (pos : Pos) : M (Array Raw) := do
   if tname == "moloch" then return ← molochOptions cmd opts pos
+  if (Theme.find? tname).isNone then return #[]
   for o in KeyVal.items opts do
     unreadParam s!"usetheme:{tname}" (KeyVal.entry o).1 s!"'{load}' option '{o}'" pos
   return #[]
@@ -8563,19 +8623,59 @@ public def frameRestartMark : String := "appendix restart"
 its option list in the group after it. -/
 public def cancelOptionsMark : String := "cancel options"
 
+/-- babel's language options beyond those whose locale ships, which a class option offers it. -/
+private def babelLanguageNames : List String :=
+  Locale.babelNames.map (·.1) ++
+    ["spanish", "italian", "portuguese", "brazilian", "dutch", "polish", "russian", "swedish",
+     "danish", "norsk", "nynorsk", "finnish", "catalan", "czech", "greek", "turkish", "ukrainian",
+     "hungarian", "latin", "romanian", "croatian", "slovak", "slovene", "estonian", "icelandic",
+     "irish", "welsh", "basque", "galician", "bulgarian", "serbian", "hebrew", "indonesian"]
+
+/-- Whether package `p` declares option `o`, so takes it from the class's options as LaTeX offers
+them. -/
+public def packageTakes (p o : String) : Bool :=
+  let spelled := optionSpelling o
+  ((packageOptionNatives.lookup p).any (·.any (·.1 == spelled))) ||
+    ((packageOptionsInert.lookup p).any (·.any (·.1 == spelled))) ||
+    (p == "babel" && (KeyVal.entry o).2.isNone && babelLanguageNames.contains (KeyVal.entry o).1)
+
+/-- The packages a preamble loads from index `start` on, in order. -/
+private def preamblePackages (raws : Array Raw) (start : Nat) : Array String := Id.run do
+  let mut out : Array String := #[]
+  for i in [start:raws.size] do
+    match raws[i]? with
+    | some (.ctrl "usepackage" _) | some (.ctrl "RequirePackage" _) =>
+      let (_, j) := takeOpt raws (i + 1)
+      let (args, _) := takeGroups raws j 1
+      for p in (rawSrc (args.getD 0 #[])).splitOn "," do
+        let p := p.trimAscii.toString
+        unless p.isEmpty || out.contains p do out := out.push p
+    | _ => pure ()
+  return out
+
+/-- The class options a loaded package takes and the class leaves to it: every one but the draft and
+final modes, which the class reads too. -/
+private def offeredOptions (raws : Array Raw) (start : Nat) (opts : List String) : List String :=
+  let pkgs := preamblePackages raws start
+  opts.filter fun o =>
+    let k := (KeyVal.entry o).1
+    k != "draft" && k != "final" && pkgs.any (packageTakes · o)
+
 /-- The options of a package the loading branch does not read: each a native declaration, machinery
 the engine already answers, or a setting nothing reads. -/
-private def packageOptions (name p : String) (opts : List String) (pos : Pos) :
-    M (Array Raw) := do
+private def packageOptions (name p : String) (opts : List String) (pos : Pos)
+    (shown : String → String := id) : M (Array Raw) := do
   let mut out : Array Raw := #[]
   for o in opts do
     let spelled := optionSpelling o
     let key := (KeyVal.entry o).1
-    let what := s!"\\{name}[{o}]\{{p}}"
+    let what := s!"\\{name}[{shown o}]\{{p}}"
     if let some native := (packageOptionNatives.lookup p).bind (·.lookup spelled) then
       became what native pos (subject := some (paramSubject s!"usepackage:{p}" key))
       out := out ++ (← synthAt native pos)
-    else if let some why := (packageOptionsInert.lookup p).bind (·.lookup spelled) then
+    else if let some why := (packageOptionsInert.lookup p).bind fun rows =>
+        (rows.lookup spelled).orElse fun _ =>
+          if (KeyVal.entry o).2.isSome then rows.lookup (key ++ "=*") else none then
       inertParam s!"usepackage:{p}" key what why pos
     else unless key.isEmpty do
       unreadParam s!"usepackage:{p}" key s!"'{p}' option '{o}'" pos
@@ -8585,7 +8685,10 @@ private def packageOptions (name p : String) (opts : List String) (pos : Pos) :
 private def rewritePackageBody (name p : String) (opt : Option String) (pos : Pos) :
     M (Array Raw) := do
   let mut out : Array Raw := #[]
-  let given := (KeyVal.items (opt.getD "")).toList
+  let own := (KeyVal.items (opt.getD "")).toList
+  let offered := (← get).globalOffered.toList.filter fun o =>
+    packageTakes p o && !own.any fun g => (KeyVal.entry g).1 == (KeyVal.entry o).1
+  let given := offered ++ own
   if p == "geometry" then
     out := out ++ (← geometry (opt.getD "") pos)
   else if p == "crop" then
@@ -8597,9 +8700,9 @@ private def rewritePackageBody (name p : String) (opt : Option String) (pos : Po
   else if p == "parskip" then
     -- The package sets `\parskip` to half a line plus 2pt, or to its `skip` as `\setlength` reads
     -- it, and drops the indent.
-    let skip := given.findSome? fun o => match KeyVal.entry o with
+    let skip := (given.filterMap fun o => match KeyVal.entry o with
       | ("skip", some v) => some v
-      | _ => none
+      | _ => none).getLast?
     let read ← match skip with
       | some v => doorValue? (← synthAt v pos)
       | none => pure none
@@ -8626,9 +8729,9 @@ private def rewritePackageBody (name p : String) (opt : Option String) (pos : Po
   else if p == "babel" then
     -- babel's `main` key, else its last language option, is the main one, which becomes metadata.
     let names := given.filter fun o => (KeyVal.entry o).2.isNone
-    let declared := given.findSome? fun o => match KeyVal.entry o with
+    let declared := (given.filterMap fun o => match KeyVal.entry o with
       | ("main", some v) => some v
-      | _ => none
+      | _ => none).getLast?
     let main? := declared.orElse fun _ => names.getLast?
     -- A further language is one the body may select, read where it does.
     for o in names do
@@ -8638,9 +8741,8 @@ private def rewritePackageBody (name p : String) (opt : Option String) (pos : Po
           inertParam "usepackage:babel" k s!"\\{name}[{k}]\{babel}"
             "the body may select the language, whose locale the engine ships" pos
         else
-          sayOnce ("param:usepackage:babel:" ++ k) .W0368 s!"no locale for language '{k}'; where \
-the body selects it, English captions and patterns stand in" pos
-            (help := "the engine ships locale records for: en, fr, de")
+          inertParam "usepackage:babel" k s!"\\{name}[{k}]\{babel}"
+            "the body may select the language, and where it does that site names the locale it lacks" pos
     out := out ++ (← packageOptions name p (given.filter fun o =>
       match KeyVal.entry o with
       | ("main", some _) => false
@@ -8764,17 +8866,17 @@ its rule paddings are measured in Latin Modern" pos
   else if nativePackages.contains p then
     if p == "inputenc" then recordInputenc (opt.getD "")
     discard s!"\\{name}\{{p}}" "the engine does this itself" s!"{name}:{p}" pos
-    -- microtype's `disable=ifdraft` disables its features exactly when `draft` is given too.
     -- microtype's `disable=ifdraft` disables its features when `draft` stands before it, the class's included.
     let classDraft := ((← get).loads.cls.map fun (_, os) => os.any (optionSpelling · == "draft")).getD false
-    let given := if p == "microtype" then
+    let read := if p == "microtype" then
         (given.foldl (init := (classDraft, #[])) fun (draft, acc) o =>
           let sp := optionSpelling o
-          if sp == "draft" then (true, acc.push o)
-          else if sp == "disable=ifdraft" && draft then (draft, acc.push "disable")
-          else (draft, acc.push o)).2.toList
-      else given
-    out := out ++ (← packageOptions name p given pos)
+          if sp == "draft" then (true, acc.push (o, o))
+          else if sp == "disable=ifdraft" && draft then (draft, acc.push ("disable", o))
+          else (draft, acc.push (o, o))).2.toList
+      else given.map fun o => (o, o)
+    out := out ++ (← packageOptions name p (read.map (·.1)) pos
+      (shown := fun o => ((read.find? (·.1 == o)).map (·.2)).getD o))
   else if boundaryPkgs.contains p && (← get).boundaryOpen then
     -- A picture package's load belongs to the boundary standalone.
     became s!"\\{name}\{{p}}"
@@ -8957,6 +9059,10 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
     let (opt, j) := takeOpt raws start
     let (args, k) := takeGroups raws j 1
     let cls := rawSrc (args.getD 0 #[])
+    -- A package takes the class options it declares, and the class reads the rest.
+    let offered := offeredOptions raws k (KeyVal.items (opt.getD "")).toList
+    unless offered.isEmpty do write fun st => { st with globalOffered := offered.toArray }
+    let keptItems := (KeyVal.items (opt.getD "")).toList.filter (!offered.contains ·)
     if presentationClasses.contains cls then
       write fun st => { st with deck := true }
     let native := if articleClasses.contains cls then "article"
@@ -8977,8 +9083,8 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
       let given := (KeyVal.items (opt.getD "")).any titleOpts.contains || !passed.isEmpty
       let extra := passed ++ (if titlepageClasses.contains cls && !given then ["titlepage"] else [])
       let opt := if extra.isEmpty then opt else some (",".intercalate (opt.toList ++ extra))
-      -- KOMA's `parskip` is read here, so the class reads the others.
-      let kept := (KeyVal.items (opt.getD "")).toList.filter fun kv => (KeyVal.entry kv).1 != "parskip"
+      -- KOMA's `parskip` is read here.
+      let kept := (keptItems ++ extra).filter fun kv => (KeyVal.entry kv).1 != "parskip"
       let o := if kept.isEmpty then "" else s!"[{String.intercalate "," kept}]"
       -- A class's `\parskip` is zero unless KOMA's `parskip=` asks for a skip.
       let komaSkip := (KeyVal.items (opt.getD "")).findSome? fun kv =>
@@ -8994,7 +9100,9 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
       became s!"\\documentclass\{{cls}}" native pos
       return some (← synthAt native pos, k)
     else if cls == "beamer" then
-      let o := match opt with | some o => s!"[{o}]" | none => ""
+      let o := match opt with
+        | some _ => if keptItems.isEmpty then "" else s!"[{String.intercalate "," keptItems}]"
+        | none => ""
       became "\\documentclass{beamer}" s!"\\documentclass{o}\{slides}" pos
       let passed := (← get).loads.rewriteClassPassed.toList.flatMap fun (name, options) =>
         if name == cls then options.toList else []
@@ -9002,7 +9110,12 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
       let declaration ← synthAt s!"\\documentclass{o}\{slides}" pos
       let dependencies ← rewritePackages "RequirePackage" packages none pos
       return some (declaration ++ dependencies, k)
-    else return none
+    else if offered.isEmpty then return none
+    else
+      let o := if keptItems.isEmpty then "" else s!"[{String.intercalate "," keptItems}]"
+      let native := s!"\\documentclass{o}\{{cls}}"
+      became s!"\\documentclass[{opt.getD ""}]\{{cls}}" native pos
+      return some (← synthAt native pos, k)
   | "babelfont" | "setmainfont" | "setsansfont" | "setmonofont"
   | "newfontfamily" | "setfontfamily" | "renewfontfamily" | "providefontfamily"
   | "newfontface" | "setfontface" | "renewfontface" | "providefontface" =>
@@ -12682,10 +12795,6 @@ public theorem finishRewrite_configSkip_document_exact (cursor : RewriteCursor)
 /-- The commands whose first argument names the length they assign. -/
 private def lengthAssigners : List String := ["setlength", "addtolength"]
 
-/-- The token names the engine reads by name beside the parameter sites. -/
-private def engineReadTokens : List String :=
-  ["frametitlepadding", "progressheight", "algindent", "algnumindent"]
-
 /-- A raw walk's tally: each control word's occurrences, each length declaration's or assignment's
 target, and the file and place of a target's first assignment to a literal value. -/
 private structure LengthTally where
@@ -12711,11 +12820,13 @@ private def assignedLength : List Raw → Option (String × List Raw)
     | _ => none
   | _ => none
 
-/-- Whether an assignment's value is a braced literal, which the length door reads without naming
-it. -/
+/-- Whether an assignment's value is a braced literal the length door reads, so names nothing
+itself. -/
 private def literalValue : List Raw → Bool
   | .space :: rest => literalValue rest
-  | .group g _ :: _ => g.all fun r => !(r matches .ctrl ..)
+  | .group g _ :: _ =>
+    let src := (rawSrc g).trimAscii.toString
+    g.all (fun r => !(r matches .ctrl ..)) && readsAsLength src && texWordsOnly src
   | _ => false
 
 mutual
@@ -12750,7 +12861,7 @@ assignment. -/
 public def unusedLengths (file : String) (raws : Array Raw) : Array Diag :=
   let t := tallyList file {} raws.toList
   t.first.filterMap fun (n, f, p) =>
-    if (paramSites.lookup n).isSome || engineReadTokens.contains n ||
+    if (paramSites.lookup n).isSome || Ir.engineTokenNames.contains n ||
         t.seen.getD n 0 > t.targets.getD n 0 then none
     else some (Diag.of .W0104
       s!"'\\{n}' is set, but nothing in the document or the engine reads it; the setting changes nothing"

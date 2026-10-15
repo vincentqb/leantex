@@ -5554,6 +5554,18 @@ public def CaptionSkip.defaultFor (l : ListLineage) (s : CaptionSkip) (size : Sp
   | .beamer => { width := { sp := Dim.pt 7 } }
   | .sizeFile | .web => s.default size
 
+/-- Every token name an engine site reads, the names a document's length reaches the engine by. -/
+public def engineTokenNames : List String :=
+  let kinds : List FloatKind := [.figure, .table, .sub, .algorithm]
+  [trivlistSkipName, "partopsep", "floatsep", "footins", bibHangName, bibSepName,
+   displaySkipAbove, displaySkipBelow, displaySkipAboveShort, displaySkipBelowShort,
+   "smallskipamount", "medskipamount", "bigskipamount", "headsep", "footskip", "topskip",
+   "progressheight", "frametitlepadding", "algindent", "algnumindent", "subtitlegap",
+   "separatorheight", "separatorgap", "authorgap", "institutegap", "captionmargin"] ++
+    ([1, 2, 3, 4, 5, 6].map leftMarginName) ++ tableLengths.map (·.1) ++
+    kinds.map (·.captionScope ++ "captionmargin") ++
+    [CaptionSkip.above, CaptionSkip.below].flatMap fun s => kinds.flatMap s.keys
+
 /-- A caption's two skips, by the side it stands on and the side it is placed
 for: the object side's, then the text side's. -/
 public def captionSides (pos : CaptionPos) (capAbove : Bool) : CaptionSkip × CaptionSkip :=
