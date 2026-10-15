@@ -1416,6 +1416,7 @@ private def flattenOne (mathOk noteOk : Bool) (st : FlattenSt) (sty : TextStyle)
   | .label name => { st with toks := st.toks.push (.anchor name) }
   | .ref _ _ text _ => pushText st sty text
   | .cite _ keys => pushText st sty (Ir.citeMarks keys)
+  | .cited _ _ ink => flatten mathOk noteOk st sty ink
   -- Without a note apparatus (furniture, markers, captions, a card face) the body stays inline.
   | .footnote num body =>
     if noteOk then
@@ -1660,6 +1661,7 @@ private theorem flattenOne_attr_covers (mathOk noteOk : Bool) (st : FlattenSt) (
     · subst hm; exact Or.inr rfl
   | .ref _ _ text _ => exact pushText_toks st sty text h
   | .cite _ keys => exact pushText_toks st sty (Ir.citeMarks keys) h
+  | .cited _ _ ink => exact flatten_attr_covers mathOk noteOk st sty ink h
   | .footnote num body =>
     simp only [flattenOne]
     split
@@ -2805,6 +2807,7 @@ private def weightKeysInline (corners : Bool) (acc : Array (Nat × Nat × Bool))
   | .colored _ _ body => weightKeysInlineList corners acc sty body.toList
   | .role _ body => weightKeysInlineList corners acc sty body.toList
   | .link _ body => weightKeysInlineList corners acc sty body.toList
+  | .cited _ _ ink => weightKeysInlineList corners acc sty ink.toList
   | .decorated _ body => weightKeysInlineList corners acc sty body.toList
   | .onSteps _ body => weightKeysInlineList corners acc sty body.toList
   | .altSteps _ active otherwise =>

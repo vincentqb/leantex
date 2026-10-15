@@ -1,0 +1,64 @@
+class article
+page 612x792 vmargin 72 hmargin 150
+font dir "fonts"
+font body "Source Serif Pro"
+font mono "Source Code Pro"
+para
+  text "Placeholder prose citing "
+  cited citep "roe2020"
+    text "["
+    link "#ref-roe2020"
+      text "1"
+    text "]"
+  text " before the included file."
+section* 1
+  text "Included placeholder findings"
+para
+  text "The included notes cite "
+  cited citep "poe2022"
+    text "["
+    link "#ref-poe2022"
+      text "2"
+    text "]"
+  text " and "
+  cited citet post "p. 42" "doe2024"
+    text "Doe and Hale ["
+    link "#ref-doe2024"
+      text "3"
+    text ", p. 42]"
+  text ", numbered with the article’s own citations."
+para
+  text "Placeholder prose citing "
+  cited citet "vale2016"
+    text "Vale ["
+    link "#ref-vale2016"
+      text "4"
+    text "]"
+  text " after it."
+section* 1
+  text "References"
+bibliography "md-cite" style "unsrtnat"
+  [1] "roe2020"
+    text "Sam Roe. Notes on placeholder text. Online, 2020. URL "
+    link "https://example.org/notes"
+      styled mono
+        text "https://example.org/notes"
+    text "."
+  [2] "poe2022"
+    text "Kim Poe. On synthetic examples. In "
+    styled emph
+      text "Proceedings of the Example Workshop"
+    text ", pages 101–110, 2022."
+  [3] "doe2024"
+    text "Alex B. Doe and Bo Hale. A survey of placeholder results. "
+    styled emph
+      text "Journal of Invented Findings"
+    text ", 7(2):41–58, 2024."
+  [4] "vale2016"
+    text "Rin Vale. "
+    styled emph
+      text "An Uncited Handbook"
+    text ". Example Press, 2016."
+-- diagnostics
+note[N0100] 7:1 '\usepackage[numbers]{natbib}' → natbib's citation punctuation, read at \begin{document}
+note[N0100] 8:1 '\usepackage{markdown}' → nothing: native Markdown fragments are read at each '\markdownInput' command

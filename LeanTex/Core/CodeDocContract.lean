@@ -191,7 +191,7 @@ private theorem adm_group (body : Array Raw) (p : Pos) (h : Adm body) :
 private theorem title_ctrl_adm (p : Pos) :
     vocabulary.admits (.ctrl (Parse.headingControl .title) p) = true := by
   simp only [Md.Vocab.admits, Bool.or_eq_true, List.contains_iff_mem]
-  exact Or.inr (List.mem_map.mpr ⟨.title, by simp, rfl⟩)
+  exact Or.inr (List.mem_append.mpr (Or.inl (List.mem_map.mpr ⟨.title, by simp, rfl⟩)))
 
 private theorem retitle_adm : (l : List Raw) → (∀ r ∈ l, vocabulary.admits r = true) →
     ∀ r ∈ retitle l, vocabulary.admits r = true
@@ -618,7 +618,7 @@ private theorem titleHeading_adm (t : Array Raw) (p : Pos) (h : Adm t) :
   simp only [List.mem_toArray, List.mem_cons, List.not_mem_nil, or_false] at hr
   rcases hr with rfl | rfl | rfl
   · simp only [Md.Vocab.admits, Bool.or_eq_true, List.contains_iff_mem]
-    exact Or.inr (List.mem_map.mpr ⟨.title, by simp, rfl⟩)
+    exact Or.inr (List.mem_append.mpr (Or.inl (List.mem_map.mpr ⟨.title, by simp, rfl⟩)))
   · rfl
   · exact adm_group _ _ h
 

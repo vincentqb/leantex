@@ -494,7 +494,7 @@ def deck169Frame (body : String) : String :=
 
 /-- The golden set's markdown fixtures, `testdata/corpus/<n>.md`. -/
 def mdGoldenNames : List String :=
-  ["md-code", "md-emphasis", "md-headings", "md-images", "md-links", "md-lists",
+  ["md-cite", "md-code", "md-emphasis", "md-headings", "md-images", "md-links", "md-lists",
    "md-quotes", "md-readme", "md-rules", "md-table"]
 
 /-- The golden set's code fixtures: `testdata/corpus/<n>.<ext>`, read by the code-file reader
@@ -531,7 +531,7 @@ def goldenNames : List String :=
    "redefine", "titlebars", "titleground", "daylight", "blocks", "poster", "poster-headline", "listings",
    "algorithm", "lineno", "lineno-modulo",
    "cond-newif", "cond-ifdefined", "cond-ifx", "cond-ifnum", "cond-loaded",
-   "md-include", "md-include-deck", "palette-seeds", "alert-mark"] ++
+   "md-include", "md-include-deck", "md-cite-include", "palette-seeds", "alert-mark"] ++
   mdGoldenNames ++ codeGoldenNames.map (·.1)
 
 /-- A TikZ picture of `body`, its environment on lines of their own. -/
@@ -885,15 +885,38 @@ def goldenFile (n : String) : String :=
     | none => if mdGoldenNames.contains n then "md" else "tex"
   s!"testdata/corpus/{n}.{ext}"
 
+/-- Markdown citations in Pandoc's syntax, each with what the markdown twin spells it as. -/
+def mdCiteTwinCases : List (String × String) :=
+  [("[@a]", "[@a]"), ("[see @a, p. 33]", "[see @a, p. 33]"), ("[@a; @b, p. 2]", "[@a; @b, p. 2]"),
+   ("[see @a, pp. 1-3; @b]", "[see @a, pp. 1-3; @b]"), ("@a says", "@a says"),
+   ("@a [p. 4] says", "@a [p. 4] says"), ("@a [p. 4; @b] says", "@a [p. 4; @b] says"),
+   ("@a [@b] says", "@a [@b] says"), ("[-@a, p. 3]", "[-@a, p. 3]"),
+   ("[@a; -@b]", "[@a; -@b]"), ("@Foo_bar.baz. ends", "@{Foo_bar.baz}. ends"),
+   ("@{a;b} ends", "@{a;b} ends"), ("[@a, x\\; y]", "[@a, x\\; y]"),
+   ("[@a, x \\@b]", "[@a, x \\@b]")]
+
+/-- A markdown fixture elaborated as the driver builds it: its bibliography read beside it. -/
+def elabMdFixture (n src : String) : IO (Ir.Doc × Array Diag) := do
+  let file := s!"{n}.md"
+  let (raws, ds) := Md.read file src
+  let (doc, diags) := Elab.runRaws file raws ds
+  if (Ir.bibRefs doc).isEmpty then return (doc, diags)
+  let prepared := Elab.prepareExecuted file (Elab.executeInputs nullReader file raws)
+  let (doc, diags) := Elab.runPreparedFinal file prepared ds (fun _ _ => {})
+  let mut sources : Array (String × String) := #[]
+  for srcName in Ir.bibRefs doc do
+    let path := s!"testdata/corpus/{Bib.sourceName srcName}"
+    if ← System.FilePath.pathExists path then
+      sources := sources.push (srcName, ← fixtureText path)
+  let (doc, bibDiags) := Bib.resolve file prepared sources doc
+  return (Ir.eraseLocations doc, diags ++ bibDiags)
+
 /-- A golden fixture elaborated through its own surface's reader. -/
 def goldenDoc (n : String) : IO (Ir.Doc × Array Diag) := do
   let src ← fixtureText (goldenFile n)
   if let some lang := codeGoldenNames.lookup n then
     return elabCode s!"{n}.{lang.extension}" src
-  else if mdGoldenNames.contains n then
-    let file := s!"{n}.md"
-    let (raws, ds) := Md.read file src
-    return Elab.runRaws file raws ds
+  else if mdGoldenNames.contains n then elabMdFixture n src
   else elabFixture n src
 
 /-- The corpus documents a markdown twin is measured over, each as the driver elaborates it, by

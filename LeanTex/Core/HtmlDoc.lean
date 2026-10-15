@@ -506,6 +506,7 @@ private def markerTextOne (acc : String) : Inline → Option String
   | .label _ => none
   | .ref _ _ _ _ => none
   | .cite _ _ => none
+  | .cited _ _ _ => none
   | .footnote _ _ => none
 
 private def markerTextInto (acc : String) : List Inline → Option String
@@ -549,6 +550,7 @@ private def markerCssOne (scale : List (String × Nat)) (decls : Array String) :
   | .label _ => none
   | .ref _ _ _ _ => none
   | .cite _ _ => none
+  | .cited _ _ _ => none
   | .footnote _ _ => none
 
 private def markerCorr : Inline → Bool
@@ -583,7 +585,7 @@ private theorem markerTextOne_text (x : Inline) (acc t : String)
   | .decorated _ _ | .fill | .hspace _ _ | .rule _ _ _
   | .strut _ | .pageNumber | .pageCount | .linebreak _
   | .onSteps _ _ | .altSteps _ _ _ | .image _ _ _ | .icon _ _
-  | .label _ | .ref _ _ _ _ | .cite _ _ | .footnote _ _ =>
+  | .label _ | .ref _ _ _ _ | .cite _ _ | .cited _ _ _ | .footnote _ _ =>
     simp [markerTextOne] at h
 
 private theorem markerTextInto_text (xs : List Inline) (acc t : String)
@@ -645,7 +647,7 @@ private theorem markerCssOne_text (scale : List (String × Nat)) (decls : Array 
   | .math _ _ | .formula _ _ _ | .link _ _ | .decorated _ _ | .fill
   | .hspace _ _ | .rule _ _ _ | .strut _ | .italicCorr _ | .pageNumber | .pageCount
   | .linebreak _ | .onSteps _ _ | .image _ _ _ | .icon _ _ | .label _ | .ref _ _ _ _
-  | .cite _ _ | .footnote _ _ =>
+  | .cite _ _ | .cited _ _ _ | .footnote _ _ =>
     simp [markerCssOne] at h
   | .altSteps _ _ _ => simp [markerCssOne] at h
 
@@ -5489,6 +5491,7 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
   | .italicCorr _ => acc
   -- an unresolved citation shows its marks, already diagnosed
   | .cite _ keys => acc.push (Html.text (Ir.citeMarks keys))
+  | .cited _ _ ink => inlineNodesInto cfg acc ink.toList
   -- the mark links to the note's endnote entry (DPUB-ARIA `doc-noteref`)
   | .footnote num _ =>
     let n := num.getD 0
@@ -5541,7 +5544,7 @@ private def contextUnitLeaf (found : Bool) : Inline → Bool
   | .text _ | .math _ _ | .formula _ _ _ | .colored _ _ _ | .located _ _ | .role _ _
   | .link _ _ | .decorated _ _ | .onSteps _ _ | .altSteps _ _ _ | .fill
   | .hspace _ _ | .strut _ | .italicCorr _ | .pageNumber | .pageCount
-  | .icon _ _ | .label _ | .ref _ _ _ _ | .cite _ _ | .footnote _ _
+  | .icon _ _ | .label _ | .ref _ _ _ _ | .cite _ _ | .cited _ _ _ | .footnote _ _
   | .linebreak _ => found
 
 private def usesContextUnit (xs : Array Inline) : Bool :=
@@ -6549,7 +6552,7 @@ public def labelNodesOne (f : LabelFace) (acc : Array Node) (x : Inline)
   | .italicCorr _ => acc
   | .link _ _ | .decorated _ _ | .onSteps _ _ | .altSteps _ _ _ | .fill | .hspace _ _ | .rule _ _ _ | .strut _
   | .pageNumber | .pageCount | .linebreak _ | .image _ _ _ | .icon _ _ | .label _
-  | .ref _ _ _ _ | .cite _ _ | .footnote _ _ => acc.push (f.run (labelPiece x) native)
+  | .ref _ _ _ _ | .cite _ _ | .cited _ _ _ | .footnote _ _ => acc.push (f.run (labelPiece x) native)
 
 public def labelNodesList (f : LabelFace) (acc : Array Node) (xs : List Inline)
     (mathCfg : Option Config := none) : Array Node :=
@@ -6616,7 +6619,7 @@ public theorem labelNodesOne_mathFree_contract (f : LabelFace) (acc : Array Node
   | .italicCorr _ => simpa only [labelNodesOne] using ha
   | .link _ _ | .decorated _ _ | .onSteps _ _ | .altSteps _ _ _ | .fill | .hspace _ _
   | .rule _ _ _ | .strut _ | .pageNumber | .pageCount | .linebreak _ | .image _ _ _
-  | .icon _ _ | .label _ | .ref _ _ _ _ | .cite _ _ | .footnote _ _ =>
+  | .icon _ _ | .label _ | .ref _ _ _ _ | .cite _ _ | .cited _ _ _ | .footnote _ _ =>
     simp only [labelNodesOne, MathMl.tagFreeList_push, ha, labelRun_mathFree, Bool.and_self]
 
 /-- Artifact-specific. -/
@@ -6667,7 +6670,7 @@ public theorem labelNodesOne_linesHeld_contract (f : LabelFace) (acc : Array Nod
   | .italicCorr _ => simpa only [labelNodesOne] using ha
   | .link _ _ | .decorated _ _ | .onSteps _ _ | .altSteps _ _ _ | .fill | .hspace _ _
   | .rule _ _ _ | .strut _ | .pageNumber | .pageCount | .linebreak _ | .image _ _ _
-  | .icon _ _ | .label _ | .ref _ _ _ _ | .cite _ _ | .footnote _ _ =>
+  | .icon _ _ | .label _ | .ref _ _ _ _ | .cite _ _ | .cited _ _ _ | .footnote _ _ =>
     simp only [labelNodesOne, Option.isSome_some, MathMl.linesHeldList_push, ha,
       labelRun_linesHeld, Bool.and_self]
 

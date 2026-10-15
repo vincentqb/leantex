@@ -1,0 +1,21 @@
+% Invented fixture: an article whose included markdown file cites into the
+% article's own bibliography, one numbering and one reference list across
+% both surfaces. Nothing here derives from any private document.
+\documentclass{article}
+
+\fonts{ dir = "fonts", body = "Source Serif Pro", mono = "Source Code Pro" }
+\usepackage[numbers]{natbib}
+\usepackage{markdown}
+
+\begin{document}
+
+Placeholder prose citing \citep{roe2020} before the included file.
+
+\markdownInput{md-cite-include/part.md}
+
+Placeholder prose citing \citet{vale2016} after it.
+
+\bibliographystyle{unsrtnat}
+\bibliography{md-cite}
+
+\end{document}

@@ -246,6 +246,7 @@ private def usesInline (cx : UseCx) (acc : UseAcc) : Inline → UseAcc
     match cx.cur with
     | some (nm, c, _) => acc.use cx nm c
     | none => acc
+  | .cited _ _ ink => usesInlines cx acc ink.toList
 
 private def usesBlocks (cx : UseCx) (acc : UseAcc) (xs : List Block) :
     UseAcc :=

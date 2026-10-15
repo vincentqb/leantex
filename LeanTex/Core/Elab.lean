@@ -2664,7 +2664,7 @@ private def mapSmartText (when? : Option OverlaySpec) : Inline → Inline
   | x@(.decorated ..) | x@(.fill) | x@(.hspace ..) | x@(.rule ..)
   | x@(.pageNumber) | x@(.pageCount) | x@(.linebreak ..) | x@(.strut ..)
   | x@(.italicCorr ..) | x@(.onSteps ..) | x@(.altSteps ..)
-  | x@(.image ..) | x@(.icon ..) | x@(.cite ..) | x@(.footnote ..) => x
+  | x@(.image ..) | x@(.icon ..) | x@(.cite ..) | x@(.cited ..) | x@(.footnote ..) => x
 
 private def mapSmartTextList (when? : Option OverlaySpec) (acc : Array Inline) :
     List Inline → Array Inline
@@ -6077,7 +6077,8 @@ rule reads it. -/
 private def bodyIsBlockOne : Raw → Bool
   | .ctrl n _ =>
     n == "block" || n == "par" || n == "framefoot" || n == "pagebreak"
-      || n == "bibliography" || n == "bibliographystyle" || n == "@natbib"
+      || n == "bibliography" || n == Parse.markdownBibControl || n == "bibliographystyle"
+      || n == "@natbib"
       -- Definitions and counter commands expand only through the block walk.
       || n == "define" || counterCtrl n
       || (Compat.lengthRestoreKeys? n).isSome
@@ -6681,7 +6682,7 @@ private def trimParaOne (leading : Bool) : Inline → Array Inline × Bool
   | x@(.fill) | x@(.hspace ..) | x@(.rule ..) | x@(.pageNumber)
   | x@(.pageCount) | x@(.strut ..) | x@(.italicCorr ..)
   | x@(.onSteps ..) | x@(.altSteps ..) | x@(.image ..)
-  | x@(.icon ..) | x@(.cite ..) | x@(.footnote ..) => (#[x], false)
+  | x@(.icon ..) | x@(.cite ..) | x@(.cited ..) | x@(.footnote ..) => (#[x], false)
 
 private def trimParaList (leading : Bool) (acc : Array Inline) :
     List Inline → Array Inline × Bool
@@ -10597,7 +10598,8 @@ private def isBlockStart (ctx' : Ctx) (n : String) (raws : Array Raw) (i : Nat)
     || (Ir.pageOpeningOfRole? n).isSome
     -- `\prevdepth` is vertical mode's: TeX refuses it mid-paragraph.
     || (n == "nointerlineskip" && cur.isEmpty)
-    || n == "bibliography" || n == "bibliographystyle" || n == "@natbib"
+    || n == "bibliography" || n == Parse.markdownBibControl || n == "bibliographystyle"
+    || n == "@natbib"
     || (n == "note" && cur.isEmpty)
     || isDeclBlock ctx' n raws i cur
     -- Mid-paragraph these markers stay inline: splitting there would move text.
@@ -11909,6 +11911,16 @@ a side channel, never slide content" cpos
         | _ =>
           diag ctx' .E0304 "'\\bibliographystyle' needs a {style} group" cpos
           elabBlocksGo ctx' raws (i + 1) blocks #[] gen'
+      else if n == Parse.markdownBibControl then
+        -- A markdown list: its style and sources, and no heading.
+        match raws[i + 1]?, raws[i + 2]? with
+        | some (.group styleBody _), some (.group body _) =>
+          let src := (rawSrc body).trimAscii.toString
+          recordBibSpan ctx' src cpos
+          let blocks := blocks.push (.bibliography src (some (rawSrc styleBody).trimAscii.toString) #[])
+          have hadv := advance_measures raws h (show i < i + 3 by omega)
+          elabBlocksGo ctx' raws (i + 3) blocks #[] gen'
+        | _, _ => elabBlocksGo ctx' raws (i + 1) blocks #[] gen'
       else if n == "bibliography" then
         -- classes.dtx: the list opens with an unnumbered `\refname` section.
         let ⟨j, hjge⟩ : { x : Nat // i + 1 ≤ x } ←
@@ -15925,12 +15937,13 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
               (help := "reference it with \\ref, or move the \\label after the numbered thing it should name")
     if (Ir.bibRefsBlocks blocks).isEmpty && (Ir.ownBibItemsBlocks blocks).isEmpty then
       for (key, span) in stRefs.spans.cites do
+        let help := if ctx.surface == .markdown then
+            "the document declares no bibliography; its metadata's 'bibliography: refs.bib' names \
+the .bib file"
+          else "the document declares no bibliography; \\bibliography{file} names the .bib file"
         modify fun st => { st with diags := st.diags.push (Diag.of .W0351
           s!"citation '{key}' has no bibliography to resolve against; it shows as '?'"
-          (some span)
-          (help := "the document declares no bibliography; \\bibliography{file} \
-  names the .bib file")
-          (subject := some key)) }
+          (some span) (help := help) (subject := some key)) }
     -- The final flow palette only judges shadowing; the document keeps epoch 0.
     let stBody ← get
     let finalPalette := stBody.scope.palette.current.getD palette

@@ -518,6 +518,10 @@ public def markdownTableEnv : String := "markdown tabular"
 /-- The environment a markdown disclosure desugars to. -/
 public def markdownDisclosureEnv : String := "markdown details"
 
+/-- The control a markdown reference list desugars to: `\bibliography` without LaTeX's `\refname`
+heading, unforgeable because it holds a space. -/
+public def markdownBibControl : String := "markdown bibliography"
+
 /-- Whether an environment is one only the markdown reader writes. -/
 @[expose] public def markdownEnv (name : String) : Bool :=
   name == markdownTableEnv || name == markdownDisclosureEnv

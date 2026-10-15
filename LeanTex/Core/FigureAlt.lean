@@ -19,7 +19,7 @@ open LeanTex.Core LeanTex.Core.Ir
   | .text _ | .math _ _ | .formula _ _ _ | .styled _ _ | .colored _ _ _ | .located _ _
   | .role _ _ | .link _ _ | .label _ | .ref _ _ _ _ | .decorated _ _ | .fill | .hspace _ _
   | .rule _ _ _ | .pageNumber | .pageCount | .linebreak _ | .strut _ | .italicCorr _
-  | .onSteps _ _ | .altSteps _ _ _ | .icon _ _ | .cite _ _ | .footnote _ _ => x
+  | .onSteps _ _ | .altSteps _ _ _ | .icon _ _ | .cite _ _ | .cited _ _ _ | .footnote _ _ => x
 
 /-- Every image of the body and the running head and foot whose alternative is undeclared and whose
 source names a title takes it, a picture's labels aside; logos stay decorative. -/

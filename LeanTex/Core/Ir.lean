@@ -2742,6 +2742,8 @@ public inductive Inline where
   /-- A citation (`\cite`, natbib's `\citep`/`\citet` and family): one
   citation group's keys as written, and its form. -/
   | cite (form : CiteForm) (keys : Array String)
+  /-- A citation the bibliography resolved: its form and keys, and the ink its style sets. -/
+  | cited (form : CiteForm) (keys : Array String) (ink : Array Inline)
   /-- `\footnote{...}`: a note set at the foot of the page its mark lands on;
   `num` is the resolved mark number. -/
   | footnote (num : Option Nat) (body : Array Inline)
@@ -6736,6 +6738,7 @@ private def fillOne (content : Array Inline) : Inline → Inline
   | .pageCount => .pageCount
   | .linebreak e => .linebreak e
   | .cite t ks => .cite t ks
+  | .cited t ks ink => .cited t ks ink
   | .footnote n body => .footnote n body
 
 private def fillList (content : Array Inline) : List Inline → List Inline
@@ -8029,6 +8032,7 @@ mutual
   | .label _ => ""
   | .ref _ _ text _ => text
   | .cite _ keys => citeMarks keys
+  | .cited _ _ ink => plainTextList ink.toList
   -- The note body is document text; its mark digit is generated ink.
   | .footnote _ body => plainTextList body.toList
   | .linebreak _ => " "
@@ -8048,7 +8052,7 @@ public def firstPageTextOne (acc : String) (x : Inline) : String :=
       firstPageTextList acc otherPage.toList
     else firstPageTextList acc firstPage.toList
   | .styled _ body | .colored _ _ body | .located _ body | .role _ body
-  | .link _ body | .decorated _ body | .onSteps _ body | .footnote _ body =>
+  | .link _ body | .decorated _ body | .onSteps _ body | .footnote _ body | .cited _ _ body =>
     firstPageTextList acc body.toList
   | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _ | .label _
   | .ref _ _ _ _ | .cite _ _ | .fill | .hspace _ _ | .rule _ _ _ | .strut _
@@ -8111,6 +8115,7 @@ node in document order, a node before its content. -/
   | .altSteps _ firstPage otherPage =>
     foldInlineList fi (foldInlineList fi (fi acc x) firstPage.toList) otherPage.toList
   | .footnote _ body => foldInlineList fi (fi acc x) body.toList
+  | .cited _ _ ink => foldInlineList fi (fi acc x) ink.toList
   | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
   | .label _ | .ref _ _ _ _ | .cite _ _
   | .fill | .hspace _ _ | .rule _ _ _ | .strut _ | .italicCorr _ | .pageNumber | .pageCount | .linebreak _ => fi acc x
@@ -8134,7 +8139,7 @@ public def inlineSource (content : Array Inline) : Option Span :=
       | .ref _ _ _ _ | .decorated _ _ | .fill | .hspace _ _
       | .rule _ _ _ | .pageNumber | .pageCount | .linebreak _
       | .strut _ | .italicCorr _ | .onSteps _ _ | .altSteps _ _ _
-      | .image _ _ _ | .icon _ _ | .cite _ _ | .footnote _ _ => source)
+      | .image _ _ _ | .icon _ _ | .cite _ _ | .cited _ _ _ | .footnote _ _ => source)
     none content
 
 @[expose] public def foldTableCells (fi : α → Inline → α) (acc : α) : List (Array Inline) → α
@@ -8273,6 +8278,9 @@ public def foldCtxInline (w : CtxFold γ α) (ctx : γ) (acc : α) (x : Inline) 
   | .footnote _ body =>
     let r := w.openInline ctx acc x
     w.closeInline ctx (foldCtxInlineList w r.2 r.1 body.toList) x
+  | .cited _ _ ink =>
+    let r := w.openInline ctx acc x
+    w.closeInline ctx (foldCtxInlineList w r.2 r.1 ink.toList) x
   | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
   | .label _ | .ref _ _ _ _ | .cite _ _
   | .fill | .hspace _ _ | .rule _ _ _ | .strut _ | .italicCorr _ | .pageNumber | .pageCount | .linebreak _ =>
@@ -8487,6 +8495,10 @@ public theorem foldCtxInline_covers (fb : α → Block → α) (fi : α → Inli
     simp only [foldCtxInline, foldInline, CtxFold.ofFold_openInline,
       CtxFold.ofFold_closeInline]
     exact foldCtxInlineList_covers fb fi _ body.toList
+  | .cited _ _ ink =>
+    simp only [foldCtxInline, foldInline, CtxFold.ofFold_openInline,
+      CtxFold.ofFold_closeInline]
+    exact foldCtxInlineList_covers fb fi _ ink.toList
   | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
   | .label _ | .ref _ _ _ _ | .cite _ _
   | .fill | .hspace _ _ | .rule _ _ _ | .strut _ | .italicCorr _ | .pageNumber | .pageCount | .linebreak _ =>
@@ -8697,7 +8709,7 @@ public theorem foldCtxBlocks_covers (fb : α → Block → α) (fi : α → Inli
 
 /-- An inline that emits an HTML anchor now or after reference and citation resolution. -/
 public def Inline.anchorBearing : Inline → Bool
-  | .link _ _ | .ref _ _ _ _ | .cite _ _ | .footnote _ _ => true
+  | .link _ _ | .ref _ _ _ _ | .cite _ _ | .cited _ _ _ | .footnote _ _ => true
   | .text _ | .math _ _ | .formula _ _ _ | .styled _ _ | .colored _ _ _
   | .located _ _ | .role _ _ | .decorated _ _ | .fill | .hspace _ _ | .rule _ _ _
   | .strut _ | .italicCorr _
@@ -8716,7 +8728,7 @@ public def Inline.bearsLinkText : Inline → Bool
   | .image _ _ _ | .label _ | .fill | .hspace _ _ | .rule _ _ _
   | .strut _ | .italicCorr _ | .linebreak _
   | .styled _ _ | .colored _ _ _ | .located _ _ | .role _ _ | .link _ _ | .decorated _ _
-  | .onSteps _ _ | .altSteps _ _ _ | .footnote _ _ => false
+  | .onSteps _ _ | .altSteps _ _ _ | .footnote _ _ | .cited _ _ _ => false
 
 /-- One link-body leaf given its kind's affordance: a text-bearing leaf is
 underlined and set in the kind's declared ink. -/
@@ -8752,7 +8764,7 @@ public theorem Styles.linkLeafAfford_text (s : Styles) (kind : String) (x : Inli
 private def blockLinkInlineReading (acc : String) (x : Inline) : String :=
   match x with
   | .styled _ _ | .colored _ _ _ | .located _ _ | .role _ _ | .link _ _ | .decorated _ _
-  | .onSteps _ _ | .altSteps _ _ _ | .footnote _ _ => acc
+  | .onSteps _ _ | .altSteps _ _ _ | .footnote _ _ | .cited _ _ _ => acc
   | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
   | .label _ | .ref _ _ _ _ | .cite _ _ | .fill | .hspace _ _ | .rule _ _ _
   | .strut _ | .italicCorr _
@@ -8962,7 +8974,7 @@ private def navLinkInline (out : Array (String × String)) : Inline → Array (S
   | .altSteps _ firstPage otherPage =>
     navLinkInlineList (navLinkInlineList out firstPage.toList) otherPage.toList
   | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
-  | .label _ | .ref _ _ _ _ | .cite _ _
+  | .label _ | .ref _ _ _ _ | .cite _ _ | .cited _ _ _
   | .footnote _ _
   | .fill | .hspace _ _ | .rule _ _ _ | .strut _ | .italicCorr _ | .pageNumber | .pageCount | .linebreak _ => out
 
@@ -9090,6 +9102,12 @@ private def dumpMathRest (acc : String) (l : Math.MList) : String :=
 
 end
 
+/-- A citation's dump line after its tag: the command, its notes, its keys. -/
+private def dumpCiteHead (form : CiteForm) (keys : Array String) : String :=
+  let note (tag s : String) := if s.isEmpty then "" else s!" {tag} {s.quote}"
+  s!"{form.command}{if form.full then "*" else ""}{note "pre" form.pre}\
+{note "post" form.post} {String.intercalate " " (keys.toList.map (·.quote))}"
+
 mutual
 
 private def dumpInlines (ind : String) (xs : Array Inline) : String :=
@@ -9181,10 +9199,9 @@ private def dumpInline (ind : String) (x : Inline) : String :=
     s!"{ind}image {src.quote}{parts}\n"
   | .icon c label =>
     s!"{ind}icon {(String.ofList [c]).quote} label {label.quote}\n"
-  | .cite form keys =>
-    let note (tag s : String) := if s.isEmpty then "" else s!" {tag} {s.quote}"
-    s!"{ind}cite {form.command}{if form.full then "*" else ""}{note "pre" form.pre}\
-{note "post" form.post} {String.intercalate " " (keys.toList.map (·.quote))}\n"
+  | .cite form keys => s!"{ind}cite {dumpCiteHead form keys}\n"
+  | .cited form keys ink =>
+    s!"{ind}cited {dumpCiteHead form keys}\n" ++ dumpInlines (ind ++ "  ") ink
   | .footnote num body =>
     let tag := match num with
       | some n => s!" {n}"
@@ -11069,6 +11086,7 @@ private def maxStepInline : Inline → Nat
   | .link _ body => maxStepInlineList body.toList
   | .decorated _ body => maxStepInlineList body.toList
   | .footnote _ body => maxStepInlineList body.toList
+  | .cited _ _ ink => maxStepInlineList ink.toList
   | .onSteps spec body => max (spec.maxStep) (maxStepInlineList body.toList)
   | .altSteps spec firstPage otherPage =>
     max (spec.maxStep)
@@ -11119,7 +11137,8 @@ public def altUnreachable (doc : Doc) : Nat :=
           | .located _ _ | .role _ _ | .link _ _ | .label _ | .ref _ _ _ _
           | .decorated _ _ | .fill | .hspace _ _ | .rule _ _ _
           | .pageNumber | .pageCount | .linebreak _ | .strut _ | .italicCorr _
-          | .onSteps _ _ | .image _ _ _ | .icon _ _ | .cite _ _ | .footnote _ _ => k)
+          | .onSteps _ _ | .image _ _ _ | .icon _ _ | .cite _ _ | .cited _ _ _
+          | .footnote _ _ => k)
         0 body
     | .para _ | .section _ _ _ _ | .list _ _ | .center _ | .ragged _ _
     | .spaced _ _ | .role _ _ | .link _ _ | .quote _ | .abstract _
@@ -11334,6 +11353,7 @@ private def dimInline (cover : Cover) (k : Nat) (pending : Bool) : Inline → In
   | .pageCount => .pageCount
   | .linebreak e => .linebreak e
   | .cite t keys => .cite t keys
+  | .cited t keys ink => .cited t keys (dimInlineList cover k pending #[] ink.toList)
   | .footnote n body => .footnote n (dimInlineList cover k pending #[] body.toList)
 
 end
@@ -11987,6 +12007,7 @@ private def footnoteInlineOne (out : Array (Option Nat × Array Inline)) :
   | .located _ body => footnoteInlineList out body.toList
   | .role _ body => footnoteInlineList out body.toList
   | .link _ body => footnoteInlineList out body.toList
+  | .cited _ _ ink => footnoteInlineList out ink.toList
   | .decorated _ body => footnoteInlineList out body.toList
   | .onSteps _ body => footnoteInlineList out body.toList
   | .altSteps _ firstPage otherPage =>
@@ -12025,6 +12046,9 @@ public def numberNotesInline (k : Nat) (x : Inline) : Nat × Inline :=
   | .link t body =>
     let r := numberNotesList k #[] body.toList
     (r.1, .link t r.2)
+  | .cited f ks ink =>
+    let r := numberNotesList k #[] ink.toList
+    (r.1, .cited f ks r.2)
   | .decorated d body =>
     let r := numberNotesList k #[] body.toList
     (r.1, .decorated d r.2)
@@ -12322,6 +12346,9 @@ private theorem dimInline_text (cover : Cover) (k : Nat) (pending : Bool) (x : I
   | .link u body =>
     rw [dimInline]
     simp [plainTextOne, dimInlineList_text cover k pending body.toList #[], plainTextList]
+  | .cited f ks ink =>
+    rw [dimInline]
+    simp [plainTextOne, dimInlineList_text cover k pending ink.toList #[], plainTextList]
   | .decorated kind body =>
     rw [dimInline]
     simp [plainTextOne, dimInlineList_text cover k pending body.toList #[], plainTextList]
@@ -13898,7 +13925,7 @@ private def imageRequestPush (out : Array Image.Request) : Inline → Array Imag
   | .located _ _ | .role _ _ | .link _ _ | .label _ | .ref _ _ _ _ | .decorated _ _ | .fill
   | .hspace _ _ | .rule _ _ _ | .pageNumber | .pageCount | .linebreak _
   | .strut _ | .italicCorr _ | .onSteps _ _ | .altSteps _ _ _ | .icon _ _
-  | .cite _ _ | .footnote _ _ => out
+  | .cite _ _ | .cited _ _ _ | .footnote _ _ => out
 
 public def imageRequests (doc : Doc) : Array Image.Request :=
   foldDoc imageRequestPush #[] doc
@@ -14486,6 +14513,7 @@ nodes, `finish` combines each completed sibling array. -/
     .altSteps spec (mapInlineList f #[] firstPage.toList finish)
       (mapInlineList f #[] otherPage.toList finish)
   | .footnote n body => .footnote n (mapInlineList f #[] body.toList finish)
+  | .cited tx keys ink => .cited tx keys (mapInlineList f #[] ink.toList finish)
   | .text s => f (.text s)
   | .math d src => f (.math d src)
   | .formula d src body => f (.formula d src body)
@@ -14654,6 +14682,7 @@ end
   | .label key => .label key
   | .ref key form text target => .ref key form text target
   | .cite text keys => .cite text keys
+  | .cited text keys ink => .cited text keys ink
   | .fill => .fill
   | .hspace g keep => .hspace g keep
   | .rule w h raise => .rule w h raise
@@ -14696,7 +14725,7 @@ private def mathRequestInlines : CtxFold (Option Span × Bool) (Array MathReques
     | .text _ | .math _ _ | .styled _ _ | .colored _ _ _ | .role _ _
     | .link _ _ | .decorated _ _ | .onSteps _ _ | .altSteps _ _ _
     | .footnote _ _ | .image _ _ _ | .icon _ _ | .label _ | .ref _ _ _ _
-    | .cite _ _ | .fill | .hspace _ _ | .rule _ _ _ | .strut _ | .italicCorr _
+    | .cite _ _ | .cited _ _ _ | .fill | .hspace _ _ | .rule _ _ _ | .strut _ | .italicCorr _
     | .pageNumber | .pageCount | .linebreak _ => (out, ctx)
   closeInline := fun _ out _ => out
 
@@ -14837,7 +14866,8 @@ private theorem mapMathInline_fixed_point (coverage : Math.MathAlphabetCoverage)
   | .link u body
   | .decorated kind body
   | .onSteps spec body
-  | .footnote n body =>
+  | .footnote n body
+  | .cited f ks body =>
     simp only [mapInline]; congr 1; apply Array.toList_inj.mp
     simp [mapInlineList_toList, mapMathInlineElems_fixed_point coverage body.toList]
   | .altSteps spec firstPage otherPage =>
@@ -15176,7 +15206,7 @@ private theorem requestsInline_resolve_covers (coverage : Math.MathAlphabetCover
     RequestsFree (foldCtxInline w ctx out (mapInline (resolveMathAlphaInline coverage) x)) := by
   match x with
   | .styled _ body | .colored _ _ body | .located _ body | .role _ body | .link _ body
-  | .decorated _ body | .onSteps _ body | .footnote _ body =>
+  | .decorated _ body | .onSteps _ body | .footnote _ body | .cited _ _ body =>
     simp only [mapInline, foldCtxInline, ho, hc, mathRequestInlines, mapInlineList_toList,
       List.nil_append]
     exact requestsInlineList_resolve_covers coverage w ho hc _ out body.toList h
@@ -15521,6 +15551,10 @@ public theorem mapInlineFinish_text (f : Inline → Inline)
     show plainTextList (mapInlineList (finish := finish) f #[] body.toList).toList = _
     rw [mapInlineListFinish_text f hf finish hfinish body.toList #[]]
     simp [plainTextList, plainTextOne]
+  | .cited t ks ink =>
+    show plainTextList (mapInlineList (finish := finish) f #[] ink.toList).toList = _
+    rw [mapInlineListFinish_text f hf finish hfinish ink.toList #[]]
+    simp [plainTextList, plainTextOne]
   | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
   | .label _ | .ref _ _ _ _ | .cite _ _ | .fill | .hspace _ _ | .rule _ _ _ | .strut _ | .italicCorr _
   | .pageNumber | .pageCount | .linebreak _ => exact hf _
@@ -15616,6 +15650,9 @@ public theorem foldInline_or (p : Inline → Bool) (b : Bool) (x : Inline) :
   | .footnote n body =>
     rw [foldInline, foldInline, foldInlineList_or, foldInlineList_or p (false || p _)]
     simp [Bool.or_assoc]
+  | .cited t ks ink =>
+    rw [foldInline, foldInline, foldInlineList_or, foldInlineList_or p (false || p _)]
+    simp [Bool.or_assoc]
   | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
   | .label _ | .ref _ _ _ _ | .cite _ _ | .fill | .hspace _ _ | .rule _ _ _ | .strut _ | .italicCorr _
   | .pageNumber | .pageCount | .linebreak _ => simp [foldInline]
@@ -15687,6 +15724,11 @@ public theorem mapInline_id (f : Inline → Inline) (p : Inline → Bool)
     rw [foldInline, foldInlineList_or] at h
     rcases Bool.or_eq_false_iff.mp h with ⟨-, h2⟩
     rw [mapInline, mapInlineList_id f p hf body.toList #[] h2]
+    simp
+  | .cited t ks ink =>
+    rw [foldInline, foldInlineList_or] at h
+    rcases Bool.or_eq_false_iff.mp h with ⟨-, h2⟩
+    rw [mapInline, mapInlineList_id f p hf ink.toList #[] h2]
     simp
   | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
   | .label _ | .ref _ _ _ _ | .cite _ _ | .fill | .hspace _ _ | .rule _ _ _ | .strut _ | .italicCorr _
@@ -15990,7 +16032,7 @@ private def pushLocationText (out : List Inline) (x : Inline) : List Inline :=
   | .role _ _ | .link _ _ | .label _ | .ref _ _ _ _ | .decorated _ _
   | .fill | .hspace _ _ | .rule _ _ _ | .pageNumber | .pageCount | .linebreak _
   | .strut _ | .italicCorr _ | .onSteps _ _ | .altSteps _ _ _ | .image _ _ _
-  | .icon _ _ | .cite _ _ | .footnote _ _ => x :: out
+  | .icon _ _ | .cite _ _ | .cited _ _ _ | .footnote _ _ => x :: out
 
 private def joinLocationBody (out : List Inline) : List Inline → List Inline
   | [] => out
@@ -16003,7 +16045,7 @@ private def spliceLocationOne (out : List Inline) (x : Inline) : List Inline :=
   | .role _ _ | .link _ _ | .label _ | .ref _ _ _ _ | .decorated _ _
   | .fill | .hspace _ _ | .rule _ _ _ | .pageNumber | .pageCount | .linebreak _
   | .strut _ | .italicCorr _ | .onSteps _ _ | .altSteps _ _ _ | .image _ _ _
-  | .icon _ _ | .cite _ _ | .footnote _ _ => pushLocationText out x
+  | .icon _ _ | .cite _ _ | .cited _ _ _ | .footnote _ _ => pushLocationText out x
 
 private def spliceLocations (out : List Inline) : List Inline → List Inline
   | [] => out
@@ -16256,7 +16298,8 @@ public def paraStepOne (x : Inline) : Option String :=
   | .text _ | .math _ _ | .formula _ _ _ | .role _ _ | .link _ _ | .label _
   | .ref _ _ _ _ | .decorated _ _ | .fill | .hspace _ _ | .rule _ _ _ | .pageNumber
   | .pageCount | .linebreak _ | .strut _ | .italicCorr _ | .onSteps _ _
-  | .altSteps _ _ _ | .image _ _ _ | .icon _ _ | .cite _ _ | .footnote _ _ => none
+  | .altSteps _ _ _ | .image _ _ _ | .icon _ _ | .cite _ _ | .cited _ _ _
+  | .footnote _ _ => none
 
 end
 
@@ -16321,6 +16364,7 @@ public def liftParaStepOne (x : Inline) : Array Inline :=
   | .image src size alt => #[.image src size alt]
   | .icon c label => #[.icon c label]
   | .cite f keys => #[.cite f keys]
+  | .cited f keys ink => #[.cited f keys ink]
   | .footnote n body => #[.footnote n body]
 
 end
@@ -16358,7 +16402,7 @@ private theorem liftParaStepOne_text (x : Inline) :
   | .text _ | .math _ _ | .formula _ _ _ | .role _ _ | .link _ _ | .label _
   | .ref _ _ _ _ | .decorated _ _ | .fill | .hspace _ _ | .rule _ _ _ | .pageNumber
   | .pageCount | .linebreak _ | .strut _ | .italicCorr _ | .onSteps _ _
-  | .altSteps _ _ _ | .image _ _ _ | .icon _ _ | .cite _ _ | .footnote _ _ =>
+  | .altSteps _ _ _ | .image _ _ _ | .icon _ _ | .cite _ _ | .cited _ _ _ | .footnote _ _ =>
     rw [liftParaStepOne]; simp [plainText, plainTextList]
 
 end
@@ -16555,6 +16599,7 @@ public def textUnder (p : Style → Bool) (x : Inline) : String :=
   | .altSteps _ firstPage otherPage =>
     textUnderList p (textUnderList p "" firstPage.toList) otherPage.toList
   | .footnote _ body => textUnderList p "" body.toList
+  | .cited _ _ ink => textUnderList p "" ink.toList
   | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
   | .label _ | .ref _ _ _ _ | .cite _ _ | .fill | .hspace _ _ | .rule _ _ _ | .strut _ | .italicCorr _
   | .pageNumber | .pageCount | .linebreak _ => ""

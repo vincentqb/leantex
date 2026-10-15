@@ -292,6 +292,7 @@ mutual
 /-- Inline content carrying no citation, anywhere in its tree. -/
 private def citeFreeOne : Ir.Inline → Bool
   | .cite _ _ => false
+  | .cited _ _ ink => citeFreeList ink.toList
   | .styled _ body => citeFreeList body.toList
   | .colored _ _ body => citeFreeList body.toList
   | .located _ body => citeFreeList body.toList
@@ -1672,13 +1673,14 @@ public theorem sortResolved_sorted_citation (xs : List Resolved) :
 mutual
 
 /-- The citation rewrite: every `.cite` node becomes its rendering under the
-document's punctuation. -/
+document's punctuation, beside the citation it renders; a `\nocite` sets nothing. -/
 -- conserves: none — resolution rewrites citation marks
 private def resolveInline (p : CitePunct) (find : Resolver)
     (out : Array Ir.Inline) : Ir.Inline → Array Ir.Inline
   | .cite form keys =>
-    let rendered := renderCite p form (keys.map find)
-    out ++ rendered
+    if form.cmd == .nocite then out
+    else out.push (.cited form keys (renderCite p form (keys.map find)))
+  | .cited form keys ink => out.push (.cited form keys (resolveInlines p find #[] ink.toList))
   | .styled st body => out.push (.styled st (resolveInlines p find #[] body.toList))
   | .colored c nm body => out.push (.colored c nm (resolveInlines p find #[] body.toList))
   | .located nm body => out.push (.located nm (resolveInlines p find #[] body.toList))
@@ -1732,9 +1734,10 @@ where
       (out : Array Ir.Inline) (x : Ir.Inline) :
       resolveInline p find out x = out ++ resolveInline p find #[] x := by
     match x with
-    | .cite _ _ => simp [resolveInline]
+    | .cite _ _ => simp only [resolveInline]; split <;> simp
     | .styled _ body | .colored _ _ body | .located _ body | .role _ body | .link _ body
-    | .decorated kind body | .onSteps _ body | .footnote _ body => simp [resolveInline]
+    | .decorated kind body | .onSteps _ body | .footnote _ body | .cited _ _ body =>
+      simp [resolveInline]
     | .altSteps _ _ _ => simp [resolveInline]
     | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
     | .label _ | .ref _ _ _ _
@@ -1762,6 +1765,9 @@ private theorem resolveInline_id (p : CitePunct) (find : Resolver)
   | .link u body =>
     rw [citeFreeOne] at h
     rw [resolveInline, resolveInlines_id p find body.toList h]
+  | .cited f ks ink =>
+    rw [citeFreeOne] at h
+    rw [resolveInline, resolveInlines_id p find ink.toList h]
   | .decorated kind body =>
     rw [citeFreeOne] at h
     rw [resolveInline, resolveInlines_id p find body.toList h]
@@ -2471,11 +2477,13 @@ private def analyse (sources : Array (String × String)) (doc : Ir.Doc) (rd : Fi
         let atEntry : Option Span := if shown.contains k then none else
           (citedBy.get? k).bind fun e => (origin.get? e).map fun src =>
             ⟨sourceName src, (positions.get? e).getD {}⟩
+        -- The fix is spelled in the document's own surface.
+        let spelling := if doc.surface == .markdown then s!"@{k}" else s!"\\{cmd}"
         diags := diags.push (Diag.of .W0351 s!"citation '{k}' has no entry in the \
           bibliography; {loss}" atEntry
           (help := if own.isEmpty then s!"add an entry with key '{k}' to the .bib file, \
-            or fix the spelling in \\{cmd}"
-            else s!"add \\bibitem\{{k}} to the reference list, or fix the spelling in \\{cmd}")
+            or fix the spelling in {spelling}"
+            else s!"add \\bibitem\{{k}} to the reference list, or fix the spelling in {spelling}")
           (subject := some k))
   let pictures := resolved.foldl (init := rendered.foldl (init := #[]) fun acc (_, rep) =>
       acc ++ rep.pictures) fun acc r =>
@@ -2620,7 +2628,7 @@ private theorem citeFree_census (x : Ir.Inline) (h : citeFreeOne x = true) :
       q ∈ Ir.foldInline Ir.pendingStep acc x → q ∈ acc ∨ q.isCite = false := by
   match x with
   | .styled _ body | .colored _ _ body | .located _ body | .role _ body | .link _ body
-  | .decorated _ body | .onSteps _ body | .footnote _ body =>
+  | .decorated _ body | .onSteps _ body | .footnote _ body | .cited _ _ body =>
     intro acc q hq
     simp only [citeFreeOne] at h
     simp only [Ir.foldInline, Ir.pendingStep, Ir.pendingLeaf, Array.append_empty] at hq
@@ -2789,7 +2797,7 @@ private theorem resolveInline_pending (p : CitePunct) (find : Resolver) (x : Ir.
       q ∈ acc ∨ q.isCite = false := by
   match x with
   | .styled _ body | .colored _ _ body | .located _ body | .role _ body | .link _ body
-  | .decorated kind body | .onSteps _ body | .footnote _ body =>
+  | .decorated kind body | .onSteps _ body | .footnote _ body | .cited _ _ body =>
     intro acc q h
     simp only [resolveInline, Array.toList_push, List.nil_append,
       Ir.foldInlineList, Ir.foldInline, Ir.pendingStep, Ir.pendingLeaf,
@@ -2805,8 +2813,12 @@ private theorem resolveInline_pending (p : CitePunct) (find : Resolver) (x : Ir.
     · exact .inr hc
   | .cite form keys =>
     intro acc q h
-    simp only [resolveInline, Array.empty_append] at h
-    exact renderCite_pending p form (keys.map find) acc q h
+    simp only [resolveInline] at h
+    split at h
+    · exact .inl (by simpa [Ir.foldInlineList] using h)
+    · simp only [Array.toList_push, List.nil_append, Ir.foldInlineList, Ir.foldInline,
+        Ir.pendingStep, Ir.pendingLeaf, Array.append_empty] at h
+      exact renderCite_pending p form (keys.map find) acc q h
   | .ref key form text target =>
     intro acc q h
     simp only [resolveInline, Array.toList_push, List.nil_append,

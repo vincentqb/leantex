@@ -5,6 +5,7 @@ public import LeanTex.Core.Heading
 import LeanTex.Core.Loop
 import LeanTex.Core.Blank
 import LeanTex.Core.Hex
+import LeanTex.Core.CiteKey
 import Std.Data.HashMap
 
 /-! The markdown reader: strict CommonMark with GFM tables into an md AST
@@ -14,6 +15,18 @@ code and lazy continuation (E0390), and a code file's documentation's dialect. -
 namespace LeanTex.Core.Md
 
 open LeanTex.Core
+
+/-- How a citation names its work: Pandoc's citation modes. -/
+public inductive CiteMode where
+  /-- `[@key]`: the work inside the citation's brackets. -/
+  | normal
+  /-- `[-@key]` or `-@key`: the work without its author. -/
+  | suppressAuthor
+  /-- `@key`: the author in the sentence, the work after it. -/
+  | authorInText
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+mutual
 
 /-- An inline node; `pos` is its position in the `.md` source. -/
 public inductive Inl where
@@ -26,9 +39,45 @@ public inductive Inl where
   | anchor (key : String) (pos : Pos)
   | soft (pos : Pos)
   | hard (pos : Pos)
+  /-- One citation group in Pandoc's syntax: its works in order. -/
+  | cite (items : Array CiteItem) (pos : Pos)
   deriving Repr, BEq
 
+/-- One cited work: its key, its mode, and the prefix and suffix written around it. -/
+public inductive CiteItem where
+  | mk (key : String) (mode : CiteMode) (pre : Array Inl) (post : Array Inl)
+  deriving Repr, BEq
+
+end
+
 public instance : Inhabited Inl := ⟨.soft {}⟩
+
+public def CiteItem.key : CiteItem → String
+  | .mk k _ _ _ => k
+
+public def CiteItem.mode : CiteItem → CiteMode
+  | .mk _ m _ _ => m
+
+public def CiteItem.pre : CiteItem → Array Inl
+  | .mk _ _ pre _ => pre
+
+public def CiteItem.post : CiteItem → Array Inl
+  | .mk _ _ _ post => post
+
+/-- A metadata value as the reader's YAML subset reads it: a scalar, a sequence of scalars, or a
+value outside the subset. -/
+public inductive MetaValue where
+  | scalar (s : String)
+  | list (items : Array String)
+  | unread
+  deriving Repr, BEq, Inhabited
+
+/-- One top-level key of a metadata block, with its value and the key's position. -/
+public structure MetaField where
+  key : String
+  value : MetaValue
+  pos : Pos
+  deriving Repr, BEq
 
 /-- A table column's alignment as its GFM delimiter cell spells it. -/
 public inductive TableAlign where
@@ -53,6 +102,10 @@ public inductive Blk where
       (rows : Array (Array (Array Inl))) (pos : Pos)
   /-- A Lean file a fenced `{.lean file="…"}` division includes, with its keys and values. -/
   | lean (attrs : Array (String × String)) (pos : Pos)
+  /-- The document's YAML metadata block, as Pandoc reads one: its top-level fields in order. -/
+  | metadata (fields : Array MetaField) (pos : Pos)
+  /-- Where a `::: {#refs}` division places the reference list: after the division's own blocks. -/
+  | refs (pos : Pos)
   deriving Repr, BEq
 
 public instance : Inhabited Blk := ⟨.rule {}⟩
@@ -233,6 +286,220 @@ def closesDiv (cs : Array Char) (i : Nat) : Bool :=
   match colonsAt cs i with
   | some j => isBlankFrom cs j
   | none => false
+
+/-- Pandoc's reference-list division's opening fence: three colons or more, then `{#refs}` and
+nothing after it. -/
+def refsDivAt (cs : Array Char) (i : Nat) : Bool :=
+  match colonsAt cs i with
+  | some j =>
+    let rest := (sliceStr cs j cs.size).trimAscii.toString
+    rest.startsWith "{" && rest.endsWith "}" &&
+      ((rest.drop 1).dropEnd 1).trimAscii.toString == "#refs"
+  | none => false
+
+/-- A YAML flow scalar the metadata reader reads, `none` outside its subset: a quoted scalar with
+its escapes, or a plain one with its comment off. -/
+def yamlScalar? (s : String) : Option String := Id.run do
+  let t := s.trimAscii.toString
+  let cs := t.toList.toArray
+  match cs[0]? with
+  | none => return some ""
+  | some '"' =>
+    let mut out := ""
+    let mut k := 1
+    let mut closed := false
+    for _ in [0:cs.size + 1] do
+      match cs[k]? with
+      | none => break
+      | some '"' =>
+        closed := true
+        k := k + 1
+        break
+      | some '\\' =>
+        match cs[k + 1]? with
+        | some 'n' => out := out.push '\n'
+        | some 't' => out := out.push '\t'
+        | some '\\' => out := out.push '\\'
+        | some '"' => out := out.push '"'
+        | some '/' => out := out.push '/'
+        | some ' ' => out := out.push ' '
+        | _ => return none
+        k := k + 2
+      | some ch =>
+        out := out.push ch
+        k := k + 1
+    let tail := (String.ofList (cs.extract k cs.size).toList).trimAscii.toString
+    return if closed && (tail.isEmpty || tail.startsWith "#") then some out else none
+  | some '\'' =>
+    let mut out := ""
+    let mut k := 1
+    let mut closed := false
+    for _ in [0:cs.size + 1] do
+      match cs[k]? with
+      | none => break
+      | some '\'' =>
+        if cs[k + 1]? == some '\'' then
+          out := out.push '\''
+          k := k + 2
+        else
+          closed := true
+          k := k + 1
+          break
+      | some ch =>
+        out := out.push ch
+        k := k + 1
+    let tail := (String.ofList (cs.extract k cs.size).toList).trimAscii.toString
+    return if closed && (tail.isEmpty || tail.startsWith "#") then some out else none
+  | some c0 =>
+    if "[]{}&*!|>%@`,".any (· == c0) then return none
+    if c0 == '-' && (cs[1]?.all isSpaceOrTab) then return none
+    -- A plain scalar ends at a comment; `: ` would make it a mapping.
+    let mut out := ""
+    let mut prev := ' '
+    for ch in cs do
+      if ch == '#' && isSpaceOrTab prev then break
+      if prev == ':' && isSpaceOrTab ch then return none
+      out := out.push ch
+      prev := ch
+    if out.endsWith ":" then return none
+    return some out.trimAscii.toString
+
+/-- A YAML flow sequence of scalars on one line, `[a, 'b c', "d"]`; `none` outside the subset. -/
+def yamlFlowList? (s : String) : Option (Array String) := Id.run do
+  let t := s.trimAscii.toString
+  unless t.startsWith "[" && t.endsWith "]" do return none
+  let inner := ((t.drop 1).dropEnd 1).toString
+  let mut items : Array String := #[]
+  let mut cur := ""
+  let mut quote : Option Char := none
+  for ch in inner.toList do
+    match quote with
+    | some q =>
+      cur := cur.push ch
+      if ch == q then quote := none
+    | none =>
+      if ch == '"' || ch == '\'' then
+        quote := some ch
+        cur := cur.push ch
+      else if ch == '[' || ch == ']' || ch == '{' || ch == '}' then return none
+      else if ch == ',' then
+        match yamlScalar? cur with
+        | some v => items := items.push v
+        | none => return none
+        cur := ""
+      else cur := cur.push ch
+  if quote.isSome then return none
+  unless cur.trimAscii.isEmpty do
+    match yamlScalar? cur with
+    | some v => items := items.push v
+    | none => return none
+  return some items
+
+/-- A line's indentation in spaces, `none` for a line holding a tab before its first character. -/
+def yamlIndent (cs : Array Char) : Option Nat := Id.run do
+  let mut n := 0
+  for ch in cs do
+    if ch == ' ' then n := n + 1
+    else if ch == '\t' then return none
+    else break
+  return some n
+
+/-- One metadata value from what follows its key on the key's line and the lines its value holds;
+`unread` outside the reader's subset. -/
+def yamlValue (inline : String) (body : Array (Array Char)) : MetaValue := Id.run do
+  let content := body.filter fun cs => !(isBlankFrom cs 0) &&
+    !((sliceStr cs 0 cs.size).trimAscii.startsWith "#")
+  let t := inline.trimAscii.toString
+  if t.startsWith "|" || t.startsWith ">" then
+    let header := (t.drop 1).toString.trimAscii.toString
+    unless header.all (fun ch => ch == '-' || ch == '+' || ch.isDigit) do return .unread
+    let lines := body.map fun cs => sliceStr cs 0 cs.size
+    let ind := (content[0]?.bind yamlIndent).getD 0
+    if ind == 0 then return if content.isEmpty then .scalar "" else .unread
+    let texts := lines.map fun l => (l.drop ind).toString
+    let joined := if t.startsWith "|" then "\n".intercalate texts.toList
+      else " ".intercalate (texts.toList.filter (!·.trimAscii.isEmpty))
+    return .scalar joined.trimAscii.toString
+  if t.isEmpty then
+    if content.isEmpty then return .scalar ""
+    let mut items : Array String := #[]
+    let ind := (content[0]?.bind yamlIndent).getD 0
+    for cs in content do
+      unless yamlIndent cs == some ind && cs[ind]? == some '-' && (cs[ind + 1]?.all isSpaceOrTab) do
+        return .unread
+      match yamlScalar? (sliceStr cs (ind + 1) cs.size) with
+      | some v => items := items.push v
+      | none => return .unread
+    return .list items
+  if t.startsWith "[" then
+    unless content.isEmpty do return .unread
+    return match yamlFlowList? t with
+      | some items => .list items
+      | none => .unread
+  match yamlScalar? t with
+  | some v =>
+    if content.isEmpty then return .scalar v
+    if t.startsWith "\"" || t.startsWith "'" then return .unread
+    -- A plain scalar folds its more-indented continuation lines.
+    let mut out := v
+    for cs in content do
+      unless (yamlIndent cs).any (· > 0) do return .unread
+      match yamlScalar? (sliceStr cs 0 cs.size) with
+      | some w => out := out ++ " " ++ w
+      | none => return .unread
+    return .scalar out
+  | none => return .unread
+
+/-- A metadata block's fields, Pandoc's YAML object read over a declared subset: top-level keys,
+each with a scalar, a sequence of scalars or an unread value; `none` where the lines hold no
+mapping, so they stay markdown. -/
+def metaFields (lines : Array Line) : Option (Array MetaField) := Id.run do
+  let mut fields : Array MetaField := #[]
+  let mut cur : Option (String × String × Pos × Array (Array Char)) := none
+  for ln in lines do
+    let cs := ln.cs
+    let blank := isBlankFrom cs 0
+    let comment := (sliceStr cs 0 cs.size).trimAscii.startsWith "#"
+    let topLevel := !blank && cs[0]?.any (fun ch => ch != ' ' && ch != '\t')
+    let seqItem := cs[0]? == some '-' && (cs[1]?.all isSpaceOrTab)
+    if blank || comment || !topLevel || (seqItem && cur.any (·.2.1.trimAscii.isEmpty)) then
+      match cur with
+      | some (k, v, p, body) => cur := some (k, v, p, body.push cs)
+      | none => if blank || comment then continue else return none
+      continue
+    -- A key line: a key, then `:` and a space or the line's end.
+    let s := sliceStr cs 0 cs.size
+    let colon := Id.run do
+      let mut k := 0
+      for ch in s.toList do
+        if ch == ':' then
+          if (cs[k + 1]?.all isSpaceOrTab) then return some k
+        k := k + 1
+      return none
+    let some c := colon | return none
+    let key := (sliceStr cs 0 c).trimAscii.toString
+    if key.isEmpty || key.startsWith "-" || key.startsWith "\"" || key.startsWith "'"
+      || key.startsWith "?" then return none
+    if let some (k, v, p, body) := cur then
+      fields := fields.push { key := k, value := yamlValue v body, pos := p }
+    cur := some (key, sliceStr cs (c + 1) cs.size, { line := ln.no, col := 1 }, #[])
+  if let some (k, v, p, body) := cur then
+    fields := fields.push { key := k, value := yamlValue v body, pos := p }
+  return if fields.isEmpty then none else some fields
+
+/-- A metadata block at the document's first line, Pandoc's YAML metadata block: `---`, then no
+blank line, the mapping, and `---` or `...`; its fields and the index of the line after it. -/
+def metadataAt (lines : Array Line) : Option (Array MetaField × Nat) := do
+  let first ← lines[0]?
+  guard (rstrip (sliceStr first.cs 0 first.cs.size) == "---")
+  let second ← lines[1]?
+  guard !(isBlankFrom second.cs 0)
+  let closer ← (List.range lines.size).find? fun k => k > 0 &&
+    (lines[k]?.any fun l =>
+      let t := rstrip (sliceStr l.cs 0 l.cs.size)
+      t == "---" || t == "...")
+  let fields ← metaFields (lines.extract 1 closer)
+  return (fields, closer + 1)
 
 /-- A closing fence for an open one: at most three spaces of indent, the same
 char at least as long, nothing after it. -/
@@ -860,13 +1127,15 @@ inductive ITok where
   | run (ch : Char) (len : Nat) (canOpen canClose : Bool) (pos : Pos)
   | bopen (image : Bool) (pos : Pos)
   | bclose (pos : Pos)
+  /-- An author-in-text citation's key, its citation in the scan's citation pairs. -/
+  | ckey (pos : Pos)
   deriving Repr
 
 instance : Inhabited ITok := ⟨.soft {}⟩
 
 def ITok.pos : ITok → Pos
   | .txt _ p | .code _ p | .soft p | .hard p | .auto _ _ p
-  | .anchor _ p | .run _ _ _ _ p | .bopen _ p | .bclose p => p
+  | .anchor _ p | .run _ _ _ _ p | .bopen _ p | .bclose p | .ckey p => p
 
 /-- A resolved link or image: its bracket token indices, whether it is an image,
 and its destination and title. -/
@@ -1152,6 +1421,213 @@ def entityAt (c : Chars) (i : Nat) : Option (String × Nat) := Id.run do
     return some (String.singleton (Char.ofNat cp), j + 1)
   | _ => return none
 
+/-- The index of the first character of the `ch` run ending at `i`. -/
+def runStart (c : Chars) (i : Nat) (ch : Char) : Nat := Id.run do
+  let mut k := i
+  for _ in [0:i + 1] do
+    if k > 0 && c.at? (k - 1) == some ch then k := k - 1 else break
+  return k
+
+/-- Whether a citation may open at `i`: not after a letter, a digit or a `.` of a word, nor after
+an emphasis run that can close, Pandoc's rule that keeps an e-mail address text. -/
+def citeMayOpen (c : Chars) (i : Nat) : Bool :=
+  match (if i == 0 then none else c.at? (i - 1)) with
+  | none => true
+  | some p =>
+    if CiteKey.isAlnum p || p == '.' then false
+    else if p == '*' || p == '_' then
+      let s := runStart c (i - 1) p
+      match (if s == 0 then none else c.at? (s - 1)) with
+      | none => true
+      | some q => isMdSpace q
+    else true
+
+/-- A citation key at `i`, Pandoc's `citeKey`: whether a `-` before the `@` suppresses the author,
+the key without its braces, and the index past it. -/
+def citeKeyAt (c : Chars) (i : Nat) : Option (Bool × String × Nat) := Id.run do
+  unless citeMayOpen c i do return none
+  let (suppress, j) := if c.at? i == some '-' then (true, i + 1) else (false, i)
+  unless c.at? j == some '@' do return none
+  let k := j + 1
+  if c.at? k == some '{' then
+    let mut depth := 1
+    let mut m := k + 1
+    let mut key := ""
+    for _ in [0:c.size + 1] do
+      match c.at? m with
+      | none => return none
+      | some ch =>
+        if isMdSpace ch then return none
+        if ch == '{' then depth := depth + 1
+        if ch == '}' then
+          depth := depth - 1
+          if depth == 0 then break
+        key := key.push ch
+        m := m + 1
+    unless c.at? m == some '}' && !key.isEmpty do return none
+    return some (suppress, key, m + 1)
+  let some first := c.at? k | return none
+  unless CiteKey.isAlnum first || first == '_' do return none
+  let mut key := String.singleton first
+  let mut m := k + 1
+  let reg (d : Option Char) : Bool := d.any fun d => CiteKey.isAlnum d || d == '_'
+  for _ in [0:c.size + 1] do
+    match c.at? m with
+    | none => break
+    | some ch =>
+      if CiteKey.isAlnum ch || ch == '_' then
+        key := key.push ch
+        m := m + 1
+      else if CiteKey.internal ch && reg (c.at? (m + 1)) then
+        key := key.push ch
+        m := m + 1
+      else if (ch == ':' || ch == '/') && c.at? (m + 1) == some '/' then
+        key := key.push ch
+        m := m + 1
+      else break
+  return some (suppress, key, m)
+
+/-- The index past what the citation grammar steps over whole at `k`: an escape, a code span or a
+backtick run, a character reference, an autolink, or a bracket the scan already matched. -/
+def citeSkipAt (c : Chars) (ticks : Std.HashMap Nat (Array Nat))
+    (closeOf : Std.HashMap Nat Nat) (k : Nat) : Option Nat :=
+  match c.at? k with
+  | some '\\' => if (escaped? c k).isSome then some (k + 2) else none
+  | some '`' =>
+    let n := tickRun c k
+    match codeSpanAt c ticks k n with
+    | some (_, next) => some next
+    | none => some (k + n)
+  | some '&' => (entityAt c k).map (·.2)
+  | some '<' => (autolinkAt c k).map (·.2.2)
+  | some '[' => (closeOf.get? k).map (· + 1)
+  | _ => none
+
+/-- Spaces, then one line ending at most, then spaces: Pandoc's `spnl`. -/
+def citeSpnl (c : Chars) (i b : Nat) : Nat := Id.run do
+  let mut j := i
+  let mut broke := false
+  for _ in [0:b - i + 1] do
+    match c.at? j with
+    | some ' ' | some '\t' => j := j + 1
+    | some '\n' =>
+      if broke then break
+      broke := true
+      j := j + 1
+    | _ => break
+  return min j b
+
+/-- One citation of a bracketed list: its key and mode, and the index ranges of its prefix and
+suffix. -/
+structure CiteSpan where
+  key : String
+  mode : CiteMode
+  preFrom : Nat
+  preTo : Nat
+  postFrom : Nat
+  postTo : Nat
+  deriving Inhabited
+
+/-- Whether emphasis opened in a citation's prefix would close in its suffix: then the key stands
+inside the emphasis, not in the list, as Pandoc's inline reading has it. -/
+def citeEmphasisSpans (c : Chars) (s : CiteSpan) : Bool := Id.run do
+  let mut opener : Option Char := none
+  for k in [s.preFrom:s.preTo] do
+    match c.at? k with
+    | some ch =>
+      if (ch == '*' || ch == '_') && !(k > s.preFrom && c.at? (k - 1) == some ch) then
+        let mut e := k
+        for _ in [k:s.preTo] do
+          if c.at? e == some ch then e := e + 1 else break
+        let (left, right) := flanking (if k == 0 then none else c.at? (k - 1)) (c.at? e)
+        if right && opener == some ch then opener := none
+        else if left then opener := some ch
+    | none => pure ()
+  let some ch := opener | return false
+  for k in [s.postFrom:s.postTo] do
+    if c.at? k == some ch then
+      let (_, right) := flanking (if k == 0 then none else c.at? (k - 1)) (c.at? (k + 1))
+      if right then return true
+  return false
+
+/-- Pandoc's bracketed citation list over `c[a, b)`, a bracket's content: each citation's prefix,
+key and suffix, separated by `;`; `none` where the content is no such list. -/
+def citeListAt (c : Chars) (ticks : Std.HashMap Nat (Array Nat))
+    (closeOf : Std.HashMap Nat Nat) (a b : Nat) : Option (Array CiteSpan) := Id.run do
+  let mut items : Array CiteSpan := #[]
+  let mut j := citeSpnl c a b
+  for _ in [0:b - a + 1] do
+    let preFrom := j
+    let mut k := j
+    let mut found : Option (Bool × String × Nat) := none
+    for _ in [0:b - a + 1] do
+      if k ≥ b then break
+      match citeSkipAt c ticks closeOf k with
+      | some next => k := next
+      | none =>
+        match c.at? k with
+        | some ';' => return none
+        | some ch =>
+          if ch == '@' || (ch == '-' && c.at? (k + 1) == some '@') then
+            match citeKeyAt c k with
+            | some hit =>
+              found := some hit
+              break
+            | none => k := k + 1
+          else k := k + 1
+        | none => break
+    let some (suppress, key, past) := found | return none
+    if past > b then return none
+    let mut m := past
+    for _ in [0:b - a + 1] do
+      if m ≥ b then break
+      match citeSkipAt c ticks closeOf m with
+      | some next => m := next
+      | none =>
+        if c.at? m == some ';' then break
+        m := m + 1
+    let stop := min m b
+    let mode : CiteMode := if suppress then .suppressAuthor else .normal
+    let span : CiteSpan :=
+      { key := key, mode := mode, preFrom := preFrom, preTo := k, postFrom := past, postTo := stop }
+    if citeEmphasisSpans c span then return none
+    items := items.push span
+    if stop ≥ b then return some items
+    j := citeSpnl c (stop + 1) b
+    if j ≥ b then return none
+  return none
+
+/-- The suffix of an author-in-text citation's bracket over `c[a, b)` (Pandoc's `bareloc`): a
+suffix, then optionally `;` and a list; `none` where the content is no such tail. -/
+def citeTailAt (c : Chars) (ticks : Std.HashMap Nat (Array Nat))
+    (closeOf : Std.HashMap Nat Nat) (a b : Nat) : Option ((Nat × Nat) × Array CiteSpan) := Id.run do
+  if c.at? a == some '^' then return none
+  let mut m := a
+  for _ in [0:b - a + 1] do
+    if m ≥ b then break
+    match citeSkipAt c ticks closeOf m with
+    | some next => m := next
+    | none =>
+      if c.at? m == some ';' then break
+      m := m + 1
+  let stop := min m b
+  if stop ≥ b then return some ((a, b), #[])
+  match citeListAt c ticks closeOf (stop + 1) b with
+  | some rest => return some ((a, stop), rest)
+  | none => return none
+
+/-- The characters of `c[a, b)`, each with its position. -/
+def Chars.slice (c : Chars) (a b : Nat) : Chars :=
+  { cs := c.cs.extract a b, ps := c.ps.extract a b }
+
+/-- One citation group the scan read: the tokens it spans, from its bracket or its in-text key to
+its closing bracket, and its citations. -/
+structure CPair where
+  openTok : Nat
+  closeTok : Nat
+  spans : Array CiteSpan
+  pos : Pos
+
 /-- A fenced block's info string with its backslash escapes
 and character references resolved. -/
 def decodeInfo (s : String) : String := Id.run do
@@ -1318,15 +1794,21 @@ theorem htmlInlineAt_covers {file : String} {cs : Array Char} {i next : Nat} {p 
 
 /-- The scan: characters to a flat token array, brackets resolved against a
 stack and refusals raised where seen. -/
-def scanInlines (file : String) (c : Chars) (dialect : Dialect := .document) :
-    Array ITok × Array BPair × Array Diag := Id.run do
+def scanInlines (file : String) (c : Chars) (dialect : Dialect := .document)
+    (cites : Bool := false) : Array ITok × Array BPair × Array CPair × Array Diag := Id.run do
   let mut toks : Array ITok := #[]
   let mut pairs : Array BPair := #[]
+  let mut cpairs : Array CPair := #[]
   let mut diags : Array Diag := #[]
-  let mut stack : Array (Nat × Bool) := #[]   -- token index, image
+  -- token index, image, character index, and the in-text citation a bracket may close on
+  let mut stack : Array (Nat × Bool × Nat × Option Nat) := #[]
   -- Link openers below this stack depth are inactive (§6.3).
   let mut inactiveBelow : Nat := 0
   let ticks := tickIndex c
+  -- Each bracket the scan matched, by its opening character's index.
+  let mut closeOf : Std.HashMap Nat Nat := {}
+  -- The in-text citation whose bracket may follow, and the token count after its key.
+  let mut tailFor : Option (Nat × Nat) := none
   let mut hmemo : HtmlMemo := {}
   let mut pending := ""
   let mut pendingPos : Pos := {}
@@ -1340,6 +1822,11 @@ def scanInlines (file : String) (c : Chars) (dialect : Dialect := .document) :
     match c.at? i with
     | none => break
     | some ch =>
+      -- An in-text citation's bracket follows it after spaces and one line ending at most.
+      if let some (_, n) := tailFor then
+        let quiet := toks.size == n || (toks.size == n + 1 && toks.back? matches some (.soft _))
+        unless quiet && (pending.all isSpaceOrTab) && (ch == ' ' || ch == '\t' || ch == '\n' || ch == '[') do
+          tailFor := none
       if ch == '\\' then
         match escaped? c i with
         | some d =>
@@ -1411,13 +1898,14 @@ def scanInlines (file : String) (c : Chars) (dialect : Dialect := .document) :
       else if ch == '!' && c.at? (i + 1) == some '[' then
         toks := flush toks pending pendingPos
         pending := ""
-        stack := stack.push (toks.size, true)
+        stack := stack.push (toks.size, true, i + 1, none)
         toks := toks.push (.bopen true p)
         i := i + 2
       else if ch == '[' then
         toks := flush toks pending pendingPos
         pending := ""
-        stack := stack.push (toks.size, false)
+        stack := stack.push (toks.size, false, i, tailFor.map (·.1))
+        tailFor := none
         toks := toks.push (.bopen false p)
         i := i + 1
       else if ch == ']' then
@@ -1425,10 +1913,11 @@ def scanInlines (file : String) (c : Chars) (dialect : Dialect := .document) :
         | none =>
           pending := pending.push ']'
           i := i + 1
-        | some (openTok, image) =>
+        | some (openTok, image, openAt, tail) =>
           let active := image || stack.size - 1 ≥ inactiveBelow
           stack := stack.pop
           inactiveBelow := min inactiveBelow stack.size
+          closeOf := closeOf.insert openAt i
           match (if active then linkTailAt c (i + 1) else none) with
           | some (dest, title, next) =>
             toks := flush toks pending pendingPos
@@ -1441,7 +1930,39 @@ def scanInlines (file : String) (c : Chars) (dialect : Dialect := .document) :
             unless image do inactiveBelow := stack.size
             i := next
           | none =>
-            pending := pending.push ']'
+            -- premise: mdCiteChecks — a bracket is a citation group only where Pandoc reads one
+            let after := c.at? (i + 1)
+            let free := !(after == some '[' || after == some '{')
+            let tailFree := free && after != some '('
+            let normal := if cites && !image && free then citeListAt c ticks closeOf (openAt + 1) i
+              else none
+            let closeTok := toks.size + (if pending.isEmpty then 0 else 1)
+            let joined : Option (Nat × CPair) := match tail.bind (fun k => (cpairs[k]?).map (k, ·)) with
+              | some (k, cp) =>
+                match normal with
+                | some list => some (k, { cp with closeTok, spans := cp.spans ++ list })
+                | none =>
+                  if !cites || !tailFree then none
+                  else match citeTailAt c ticks closeOf (openAt + 1) i, cp.spans[0]? with
+                    | some ((a, b), rest), some first =>
+                      some (k, { cp with closeTok
+                                         spans := #[{ first with postFrom := a, postTo := b }] ++ rest })
+                    | _, _ => none
+              | _ => none
+            match joined, normal with
+            | some (k, cp), _ =>
+              toks := flush toks pending pendingPos
+              pending := ""
+              toks := toks.push (.bclose p)
+              cpairs := cpairs.modify k fun _ => cp
+            | none, some list =>
+              toks := flush toks pending pendingPos
+              pending := ""
+              toks := toks.push (.bclose p)
+              cpairs := cpairs.push { openTok, closeTok, spans := list,
+                                      pos := (toks[openTok]?.map ITok.pos).getD p }
+            | none, none =>
+              pending := pending.push ']'
             i := i + 1
       else if ch == '*' || ch == '_' then
         let mut n := 0
@@ -1461,11 +1982,26 @@ def scanInlines (file : String) (c : Chars) (dialect : Dialect := .document) :
         pending := ""
         toks := toks.push (.run ch n canOpen canClose p)
         i := k
+      else if cites && (ch == '@' || (ch == '-' && c.at? (i + 1) == some '@')) then
+        match citeKeyAt c i with
+        | some (suppress, key, next) =>
+          toks := flush toks pending pendingPos
+          pending := ""
+          let t := toks.size
+          toks := toks.push (.ckey p)
+          cpairs := cpairs.push { openTok := t, closeTok := t, pos := p, spans := #[
+            { key, mode := if suppress then .suppressAuthor else .authorInText,
+              preFrom := i, preTo := i, postFrom := next, postTo := next }] }
+          tailFor := some (cpairs.size - 1, toks.size)
+          i := next
+        | none =>
+          pending := pending.push ch
+          i := i + 1
       else
         pending := pending.push ch
         i := i + 1
   toks := flush toks pending pendingPos
-  return (toks, pairs, diags)
+  return (toks, pairs, cpairs, diags)
 
 /-- The innermost resolved link or image region of each token, `0` outside every
 one, and the region count. -/
@@ -1587,8 +2123,8 @@ private def OFrame.close (f : OFrame) (body : Array Inl) : Array Inl :=
 
 /-- The tree from the token array and the two pair tables, in one left-to-right
 pass with a frame stack. -/
-def buildInlines (toks : Array ITok) (bpairs : Array BPair) (epairs : Array EPair)
-    (leftover : Array Nat) : Array Inl := Id.run do
+def buildInlines (toks : Array ITok) (bpairs : Array BPair) (cites : Array (Nat × Nat × Inl))
+    (epairs : Array EPair) (leftover : Array Nat) : Array Inl := Id.run do
   let mut closingAt : Array (Array EPair) := Array.replicate toks.size #[]
   let mut openingAt : Array (Array EPair) := Array.replicate toks.size #[]
   for e in epairs do
@@ -1601,11 +2137,21 @@ def buildInlines (toks : Array ITok) (bpairs : Array BPair) (epairs : Array EPai
   for bp in bpairs do
     if bp.openTok < bopenAt.size then bopenAt := bopenAt.set! bp.openTok (some bp)
     if bp.closeTok < bcloseAt.size then bcloseAt := bcloseAt.set! bp.closeTok true
+  let mut citeAt : Array (Option (Nat × Inl)) := Array.replicate toks.size none
+  for (o, cl, node) in cites do
+    if o < citeAt.size then citeAt := citeAt.modify o fun _ => some (cl, node)
   let mut frames : Array OFrame := #[]
   let mut acc : Array Inl := #[]
+  -- A citation group's tokens are its node's, read once at its first token.
+  let mut resume := 0
   for i in [0:toks.size] do
+    if i < resume then continue
     let some t := toks[i]? | continue
     let p := t.pos
+    if let some (cl, node) := (citeAt[i]?).getD none then
+      acc := acc.push node
+      resume := cl + 1
+      continue
     -- Closes: emphasis innermost first, then a bracket pair.
     let closingE := ((closingAt[i]?).getD #[]).qsort (·.born < ·.born)
     for _ in closingE do
@@ -1619,6 +2165,7 @@ def buildInlines (toks : Array ITok) (bpairs : Array BPair) (epairs : Array EPai
     | .hard _ => acc := acc.push (.hard p)
     | .auto dest text _ => acc := acc.push (.link dest "" #[.text text p] p)
     | .anchor key _ => acc := acc.push (.anchor key p)
+    | .ckey _ => pure ()
     | .bclose _ =>
       if (bcloseAt[i]?).getD false then
         if let some f := frames.back? then
@@ -1651,13 +2198,47 @@ def buildInlines (toks : Array ITok) (bpairs : Array BPair) (epairs : Array EPai
       acc := f.close acc
   return acc
 
-/-- Inline structure for one stretch of text, in three passes. -/
-def inlines (file : String) (c : Chars) (dialect : Dialect := .document) :
+/-- Inline structure for one stretch of text, in three passes, every `@` read as text. -/
+def inlinesPlain (file : String) (c : Chars) (dialect : Dialect := .document) :
     Array Inl × Array Diag :=
-  let (toks, bpairs, diags) := scanInlines file c dialect
+  let (toks, bpairs, _, diags) := scanInlines file c dialect
   let (reg, nRegions) := regions toks bpairs
   let (epairs, leftover) := matchEmphasis toks reg nRegions
-  (buildInlines toks bpairs epairs leftover, diags)
+  (buildInlines toks bpairs #[] epairs leftover, diags)
+
+/-- Inline content without the white space and line endings it opens and closes on. -/
+def trimInl (xs : Array Inl) : Array Inl :=
+  let blank : Inl → Bool
+    | .soft _ | .hard _ => true
+    | .text s _ => s.all isMdSpace
+    | _ => false
+  let ys := (xs.toList.dropWhile blank).reverse.dropWhile blank |>.reverse
+  let ys := match ys with
+    | .text s p :: rest => Inl.text s.trimAsciiStart.toString p :: rest
+    | _ => ys
+  let ys := match ys.reverse with
+    | .text s p :: rest => (Inl.text s.trimAsciiEnd.toString p :: rest).reverse
+    | _ => ys
+  ys.toArray
+
+/-- A citation's prefix or suffix: the plain reading of `c[a, b)`, its surrounding white space off;
+the main scan already raised what the range holds. -/
+def citeNote (file : String) (c : Chars) (dialect : Dialect) (a b : Nat) : Array Inl :=
+  if b ≤ a then #[] else trimInl (inlinesPlain file (c.slice a b) dialect).1
+
+/-- Inline structure for one stretch of text, in three passes, Pandoc's citations read. -/
+def inlines (file : String) (c : Chars) (dialect : Dialect := .document) :
+    Array Inl × Array Diag :=
+  let (toks, bpairs, cpairs, diags) := scanInlines file c dialect (cites := true)
+  let grouped := (cpairs.filter fun cp => cp.openTok < cp.closeTok).map fun cp =>
+    ({ openTok := cp.openTok, closeTok := cp.closeTok, image := false, dest := "", title := "" } :
+      BPair)
+  let (reg, nRegions) := regions toks (bpairs ++ grouped)
+  let (epairs, leftover) := matchEmphasis toks reg nRegions
+  let cites := cpairs.map fun cp => (cp.openTok, cp.closeTok, Inl.cite (cp.spans.map fun s =>
+    .mk s.key s.mode (citeNote file c dialect s.preFrom s.preTo)
+      (citeNote file c dialect s.postFrom s.postTo)) cp.pos)
+  (buildInlines toks bpairs cites epairs leftover, diags)
 
 /-- The characters of a run of paragraph lines,
 newline-separated, each with its source position. -/
@@ -1974,6 +2555,11 @@ public def blocksIn (dialect : Dialect) (file : String) (input : String) :
   let lines := splitLines input
   let mut frames : Array Frame := #[]
   let mut acc : Array Blk := #[]
+  -- premise: mdMetadataChecks — only a mapping at the first line is metadata
+  let (meta?, firstLine) := match (if doc then metadataAt lines else none) with
+    | some (fields, next) => (some fields, next)
+    | none => (none, 0)
+  if let some fields := meta? then acc := acc.push (.metadata fields { line := 1, col := 1 })
   let mut leaf : Leaf := .none
   let mut diags : Array Diag := #[]
   let mut sawBlank := false
@@ -1981,9 +2567,10 @@ public def blocksIn (dialect : Dialect) (file : String) (input : String) :
   let mut blankAfterSummary : Option Nat := none
   -- GFM tries a paragraph as a table header once.
   let mut tableVisited : Option Pos := none
-  -- The Lean inclusions whose closing fence is still to come.
-  let mut leanDivs := 0
+  -- The divisions whose closing fence is still to come, each a reference list's or not.
+  let mut divs : Array Bool := #[]
   for li in [0:lines.size] do
+    if li < firstLine then continue
     let some ln := lines[li]? | continue
     let cs := ln.cs
     let lpos : Pos := { line := ln.no, col := 1 }
@@ -2332,13 +2919,19 @@ public def blocksIn (dialect : Dialect) (file : String) (input : String) :
       acc := a.push (.lean attrs { lpos with col := j + 1 })
       diags := diags ++ ds
       leaf := .none
-      leanDivs := leanDivs + 1
-    else if doc && leanDivs > 0 && ind ≤ 3 && closesDiv cs j then
+      divs := divs.push false
+    else if doc && ind ≤ 3 && refsDivAt cs j then
       let (a, ds) := closePara leaf acc lpos
       acc := a
       diags := diags ++ ds
       leaf := .none
-      leanDivs := leanDivs - 1
+      divs := divs.push true
+    else if doc && !divs.isEmpty && ind ≤ 3 && closesDiv cs j then
+      let (a, ds) := closePara leaf acc lpos
+      acc := if divs.back? == some true then a.push (.refs { lpos with col := j + 1 }) else a
+      diags := diags ++ ds
+      leaf := .none
+      divs := divs.pop
     else if let some (fch, flen, finfo) := fenceAt cs j then
       let (a, ds) := closePara leaf acc lpos
       acc := a
@@ -2400,5 +2993,25 @@ public def blocksIn (dialect : Dialect) (file : String) (input : String) :
 /-- Blocks for one markdown document, and the diagnostics the reader raised. -/
 public def blocks (file : String) (input : String) : Array Blk × Array Diag :=
   blocksIn .document file input
+
+/-- The citation keys a text names, Pandoc's `nocite` reading: each `@key`, and `@*` for every
+entry. -/
+public def citeKeys (s : String) : Array String := Id.run do
+  let c := charsOfOne s {}
+  let mut out : Array String := #[]
+  let mut i := 0
+  for _ in [0:c.size + 1] do
+    if i ≥ c.size then break
+    if c.at? i == some '@' && c.at? (i + 1) == some '*' && citeMayOpen c i then
+      out := out.push "*"
+      i := i + 2
+    else if c.at? i == some '@' then
+      match citeKeyAt c i with
+      | some (_, key, next) =>
+        out := out.push key
+        i := next
+      | none => i := i + 1
+    else i := i + 1
+  return out
 
 end LeanTex.Core.Md

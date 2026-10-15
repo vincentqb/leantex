@@ -543,11 +543,17 @@ public theorem markdownVocabulary_contract :
       simp [builtinEnvNames, blockEnvs, Parse.markdownTableEnv, Parse.markdownDisclosureEnv]
   · intro n hn
     rcases List.mem_append.mp hn with hn | hn
-    · simp only [Md.vocabulary, List.mem_cons, List.not_mem_nil, or_false] at hn
-      rcases hn with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;>
+    · simp only [Md.vocabulary, Md.citeCtrls, List.cons_append, List.nil_append, List.mem_cons,
+        List.not_mem_nil, or_false] at hn
+      rcases hn with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl |
+        rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;>
         simp [Compat.lengthRestoreKeys?]
-    · obtain ⟨level, _, rfl⟩ := List.mem_map.mp hn
-      cases level <;> simp [Parse.headingControl, Compat.lengthRestoreKeys?]
+    · rcases List.mem_append.mp hn with hn | hn
+      · obtain ⟨level, _, rfl⟩ := List.mem_map.mp hn
+        cases level <;> simp [Parse.headingControl, Compat.lengthRestoreKeys?]
+      · simp only [List.mem_cons, List.not_mem_nil, or_false] at hn
+        subst hn
+        simp [Parse.markdownBibControl, Compat.lengthRestoreKeys?]
 
 private theorem bodyIsBlockList_of_mem : (l : List Raw) → (r : Raw) → r ∈ l →
     bodyIsBlockOne r = true → bodyIsBlockList l = true
@@ -562,8 +568,12 @@ private theorem bodyIsBlockOne_of_blockStart (r : Raw) (h : Md.BlockStart r) :
     bodyIsBlockOne r = true := by
   rcases h with ⟨p, rfl⟩ | ⟨n, p, rfl, hn⟩ | ⟨e, s, p, rfl, he⟩ | ⟨n, b, p, rfl, hn⟩
   · simp [bodyIsBlockOne]
-  · obtain ⟨level, _, rfl⟩ := List.mem_map.mp hn
-    cases level <;> simp [bodyIsBlockOne, blockHeading?, Parse.headingControl, Parse.headingControl?]
+  · rcases List.mem_append.mp hn with hn | hn
+    · obtain ⟨level, _, rfl⟩ := List.mem_map.mp hn
+      cases level <;> simp [bodyIsBlockOne, blockHeading?, Parse.headingControl, Parse.headingControl?]
+    · simp only [List.mem_cons, List.not_mem_nil, or_false] at hn
+      subst hn
+      simp [bodyIsBlockOne]
   · simp only [Md.vocabulary, List.mem_cons, List.not_mem_nil, or_false] at he
     rcases he with rfl | rfl <;> simp [bodyIsBlockOne]
   · simp only [Md.vocabulary, List.mem_cons, List.not_mem_nil, or_false] at hn
@@ -579,28 +589,29 @@ private theorem bodyIsBlock_of_blockStart (body : Array Raw) (h : ∃ r ∈ body
 
 private theorem markdownInput_splice (ctx : Ctx) (f t : String) (pos : Pos)
     (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles) (hp : pos.origins = [])
-    (hne : (Surface.read .markdown f t).1 ≠ #[]) :
-    InputSplice ctx (Surface.read .markdown f t).1 pos := by
-  have hread : (Surface.read .markdown f t).1 = (Md.desugar f t).1 := by
-    simp [Surface.read, Md.read_desugar_exact]
+    (hne : (Md.readIncluded f t).1 ≠ #[]) :
+    InputSplice ctx (Md.readIncluded f t).1 pos := by
+  have hread : (Md.readIncluded f t).1 = (Md.desugar f t .document .included).1 := by
+    rw [Md.readIncluded_desugar_exact]
   rw [hread] at hne ⊢
-  refine ⟨hm, hp, bodyIsBlock_of_blockStart _ (Md.desugar_blockStart_contract f t hne), ?_⟩
+  refine ⟨hm, hp, bodyIsBlock_of_blockStart _
+    (Md.desugar_blockStart_contract f t .document .included hne), ?_⟩
   intro n p hback
-  have hmem : Raw.ctrl n p ∈ (Md.desugar f t).1 := by
+  have hmem : Raw.ctrl n p ∈ (Md.desugar f t .document .included).1 := by
     rw [Array.back?_eq_getElem?] at hback
     exact Array.mem_of_getElem? hback
-  have hadm := Md.desugar_vocabulary_mem f t .document _ hmem
+  have hadm := Md.desugar_vocabulary_mem f t .document .included _ hmem
   simp only [Md.Vocab.admits, Bool.or_eq_true, List.contains_iff_mem] at hadm
   exact markdownVocabulary_contract.2 n (List.mem_append.mpr hadm)
 
 private theorem markdownInput_scope_exact (ctx : Ctx) (f t : String) (pre post : Array Raw)
     (pos : Pos) (st : ESt)
     (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles) (hp : pos.origins = [])
-    (hne : (Surface.read .markdown f t).1 ≠ #[])
+    (hne : (Md.readIncluded f t).1 ≠ #[])
     (hpre : pre.all sourceBlank = true) (hpost : post.all sourceBlank = true) :
     (elabBlockScope ctx (pre ++ (Surface.fragment .markdown f t pos).1 ++ post)).run st =
       let r := (elabBlockScope { ctx with file := f, callSite := none }
-        (Surface.read .markdown f t).1).run st
+        (Md.readIncluded f t).1).run st
       (Ir.markDisplay false (post.any (· matches .par _)) false 0 r.1, r.2) :=
   elabBlockScope_input_exact ctx f _ pre post pos st (markdownInput_splice ctx f t pos hm hp hne)
     hpre hpost
@@ -608,11 +619,11 @@ private theorem markdownInput_scope_exact (ctx : Ctx) (f t : String) (pre post :
 public theorem markdownInput_blocks_exact (ctx : Ctx) (f t : String) (pre post : Array Raw)
     (pos : Pos) (st : ESt)
     (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles) (hp : pos.origins = [])
-    (hne : (Surface.read .markdown f t).1 ≠ #[])
+    (hne : (Md.readIncluded f t).1 ≠ #[])
     (hpre : pre.all sourceBlank = true) (hpost : post.all sourceBlank = true) :
     (elabBlocks ctx (pre ++ (Surface.fragment .markdown f t pos).1 ++ post)).run st =
       let r := (elabBlocks { ctx with file := f, callSite := none }
-        (Surface.read .markdown f t).1).run st
+        (Md.readIncluded f t).1).run st
       (Ir.markDisplay false (post.any (· matches .par _)) false 0 r.1, r.2) := by
   rw [elabBlocks_run, elabBlocks_run]
   exact markdownInput_scope_exact ctx f t pre post pos _ hm hp hne hpre hpost
@@ -620,12 +631,12 @@ public theorem markdownInput_blocks_exact (ctx : Ctx) (f t : String) (pre post :
 public theorem markdownInput_blocks_text (ctx : Ctx) (f t : String) (pre post : Array Raw)
     (pos : Pos) (st : ESt)
     (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles) (hp : pos.origins = [])
-    (hne : (Surface.read .markdown f t).1 ≠ #[])
+    (hne : (Md.readIncluded f t).1 ≠ #[])
     (hpre : pre.all sourceBlank = true) (hpost : post.all sourceBlank = true) :
     Ir.blocksText
         ((elabBlocks ctx (pre ++ (Surface.fragment .markdown f t pos).1 ++ post)).run st).1 =
       Ir.blocksText ((elabBlocks { ctx with file := f, callSite := none }
-        (Surface.read .markdown f t).1).run st).1 := by
+        (Md.readIncluded f t).1).run st).1 := by
   rw [markdownInput_blocks_exact ctx f t pre post pos st hm hp hne hpre hpost]
   exact Ir.markDisplay_text false _ false 0 _
 

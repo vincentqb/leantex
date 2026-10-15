@@ -1,0 +1,86 @@
+class article
+page 612x792 vmargin 72 hmargin 114
+section* h1
+  text "Citations in Markdown"
+para
+  text "A first claim "
+  cited citep "roe2020"
+    text "["
+    link "#ref-roe2020"
+      text "Roe, 2020"
+    text "]"
+  text ", and one by name: "
+  cited citet "doe2024"
+    text "Doe and Hale ["
+    link "#ref-doe2024"
+      text "2024"
+    text "]"
+  text " showed it first. A grouped citation "
+  cited NAT@open 
+    text "["
+  cited citealp pre "see" post "pp. 101-110" "poe2022"
+    text "see "
+    link "#ref-poe2022"
+      text "Poe, 2022"
+    text ", pp. 101-110"
+  text "; "
+  cited citealp "roe2020"
+    link "#ref-roe2020"
+      text "Roe, 2020"
+  cited NAT@close 
+    text "]"
+  text " keeps one bracket, and the year stands alone where the author is named already: Roe "
+  cited citeyearpar "roe2020"
+    text "["
+    link "#ref-roe2020"
+      text "2020"
+    text "]"
+  text " wrote it down."
+para
+  text "An in-text citation takes a locator, "
+  cited citet post "p. 46" "doe2024"
+    text "Doe and Hale ["
+    link "#ref-doe2024"
+      text "2024"
+    text ", p. 46]"
+  text ", and a second citation of one work adds no entry "
+  cited citep post "chap. 2" "doe2024"
+    text "["
+    link "#ref-doe2024"
+      text "Doe and Hale, 2024"
+    text ", chap. 2]"
+  text ". An unknown key "
+  cited citep "ghost"
+    text "[?]"
+  text " shows its mark, while an e-mail address such as someone@example.org, a code span "
+  styled mono
+    italicCorr maybe
+    text "@roe2020"
+  italicCorr maybe
+  text " and an escaped @roe2020 stay text."
+section* h1
+  text "Works cited"
+bibliography "md-cite.bib" style "plainnat"
+  "doe2024"
+    text "Alex B. Doe and Bo Hale. A survey of placeholder results. "
+    styled emph
+      text "Journal of Invented Findings"
+    text ", 7(2):41–58, 2024."
+  "poe2022"
+    text "Kim Poe. On synthetic examples. In "
+    styled emph
+      text "Proceedings of the Example Workshop"
+    text ", pages 101–110, 2022."
+  "roe2020"
+    text "Sam Roe. Notes on placeholder text. Online, 2020. URL "
+    link "https://example.org/notes"
+      styled mono
+        text "https://example.org/notes"
+    text "."
+  "vale2016"
+    text "Rin Vale. "
+    styled emph
+      text "An Uncited Handbook"
+    text ". Example Press, 2016."
+-- diagnostics
+warning[W0351] - citation 'ghost' has no entry in the bibliography; it shows as '?' | help: add an entry with key 'ghost' to the .bib file, or fix the spelling in @ghost

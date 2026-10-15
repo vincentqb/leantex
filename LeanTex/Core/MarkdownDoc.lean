@@ -1,6 +1,7 @@
 module
 
 public import LeanTex.Core.Ir
+import LeanTex.Core.CiteKey
 
 /-! The markdown backend: the llms.txt twin of the IR the HTML and PDF backends
 read, written to read back as the same document. -/
@@ -9,40 +10,49 @@ namespace LeanTex.Core.MarkdownDoc
 
 open LeanTex.Core LeanTex.Core.Ir
 
-/-- Escapes the characters that would read as markup anywhere in a line. -/
-private def escapeChars (pipes : Bool) : List Char → List Char
+/-- Whether an `@` would open a citation on reading back: not after a letter, a digit or a `.`,
+and before a key's first character or its brace. -/
+private def citeOpens (prev : Option Char) (rest : List Char) : Bool :=
+  !(prev.any fun p => CiteKey.isAlnum p || p == '.') &&
+    (rest.head?.any fun d => CiteKey.regular d || d == '{')
+
+/-- Escapes the characters that would read as markup anywhere in a line, after `prev`. -/
+private def escapeCharsFrom (pipes : Bool) (prev : Option Char) : List Char → List Char
   | [] => []
   | c :: rest =>
     if c == '\\' || c == '`' || c == '*' || c == '_' || c == '[' || c == ']'
-        || (pipes && c == '|') || c == '<' || c == '&' then
-      '\\' :: c :: escapeChars pipes rest
+        || (pipes && c == '|') || c == '<' || c == '&' || (c == '@' && citeOpens prev rest) then
+      '\\' :: c :: escapeCharsFrom pipes (some c) rest
     -- A line ending inside text has no other spelling.
-    else if c == '\n' then '&' :: '#' :: '1' :: '0' :: ';' :: escapeChars pipes rest
-    else if c == '\r' then '&' :: '#' :: '1' :: '3' :: ';' :: escapeChars pipes rest
-    else c :: escapeChars pipes rest
+    else if c == '\n' then '&' :: '#' :: '1' :: '0' :: ';' :: escapeCharsFrom pipes (some c) rest
+    else if c == '\r' then '&' :: '#' :: '1' :: '3' :: ';' :: escapeCharsFrom pipes (some c) rest
+    else c :: escapeCharsFrom pipes (some c) rest
+
+/-- Escapes the characters that would read as markup anywhere in a line. -/
+private def escapeChars (pipes : Bool) (l : List Char) : List Char := escapeCharsFrom pipes none l
 
 private def escapeText (pipes : Bool) (s : String) : String :=
   String.ofList (escapeChars pipes s.toList)
 
-private theorem escapeChars_line (pipes : Bool) :
-    (l : List Char) → ∀ x ∈ escapeChars pipes l, x ≠ '\n' ∧ x ≠ '\r'
-  | [], x, hx => by simp [escapeChars] at hx
-  | c :: rest, x, hx => by
-    have ih := escapeChars_line pipes rest x
+private theorem escapeCharsFrom_line (pipes : Bool) :
+    (prev : Option Char) → (l : List Char) → ∀ x ∈ escapeCharsFrom pipes prev l, x ≠ '\n' ∧ x ≠ '\r'
+  | _, [], x, hx => by simp [escapeCharsFrom] at hx
+  | prev, c :: rest, x, hx => by
+    have ih := escapeCharsFrom_line pipes (some c) rest x
     by_cases hn : c = '\n'
     · subst hn
-      simp [escapeChars] at hx
+      simp [escapeCharsFrom, citeOpens] at hx
       rcases hx with rfl | rfl | rfl | rfl | rfl | hx
       all_goals first | decide | exact ih hx
     · by_cases hr : c = '\r'
       · subst hr
-        simp [escapeChars] at hx
+        simp [escapeCharsFrom, citeOpens] at hx
         rcases hx with rfl | rfl | rfl | rfl | rfl | hx
         all_goals first | decide | exact ih hx
       · have hn' : (c == '\n') = false := by simpa using hn
         have hr' : (c == '\r') = false := by simpa using hr
-        have hmem : x = '\\' ∨ x = c ∨ x ∈ escapeChars pipes rest := by
-          unfold escapeChars at hx
+        have hmem : x = '\\' ∨ x = c ∨ x ∈ escapeCharsFrom pipes (some c) rest := by
+          unfold escapeCharsFrom at hx
           simp only [hn', hr', Bool.false_eq_true, ↓reduceIte] at hx
           split at hx
           · simp only [List.mem_cons] at hx
@@ -58,6 +68,10 @@ private theorem escapeChars_line (pipes : Bool) :
         · decide
         · exact ⟨hn, hr⟩
         · exact ih hx
+
+private theorem escapeChars_line (pipes : Bool) (l : List Char) :
+    ∀ x ∈ escapeChars pipes l, x ≠ '\n' ∧ x ≠ '\r' :=
+  escapeCharsFrom_line pipes none l
 
 /-- Whether the rest of a line is a space, a tab or nothing, as must follow a
 list marker or an ATX opening. -/
@@ -504,6 +518,120 @@ private inductive Site where
   | cell
   deriving BEq
 
+/-- A citation note as the reader reads it back inside a citation's brackets. -/
+private def citeNote (pipes : Bool) (s : String) : String :=
+  String.join (s.toList.map fun c =>
+    if c == ';' || c == '@' then "\\" ++ c.toString else String.ofList (escapeChars pipes [c]))
+
+/-- One work of a bracketed citation, `prefix -@key, suffix`; `none` where its key has no
+spelling. -/
+private def bracketWork (pipes : Bool) (pre post : String) (suppress : Bool) (key : String) :
+    Option String := do
+  let k ← CiteKey.spelling? key none
+  let preNote := citeNote pipes pre
+  let postNote := citeNote pipes post
+  let pre := if pre.isEmpty then "" else preNote ++ " "
+  let post := if post.isEmpty then "" else ", " ++ postNote
+  return pre ++ (if suppress then "-" else "") ++ k ++ post
+
+/-- Whether an author-in-text citation may open after what the twin wrote: not inside a word, after
+its `.`, an emphasis run or a backslash. -/
+private def inTextAfter (acc : String) : Bool :=
+  match acc.back? with
+  | some c => !(CiteKey.isAlnum c || c == '.' || c == '*' || c == '_' || c == '\\')
+  | none => true
+
+/-- Whether the text after a citation would read as part of it: a bracket, a parenthesis or a brace
+opening on it. -/
+private def opensOn (after : String) : Bool :=
+  after.startsWith "(" || after.startsWith "[" || after.startsWith "{"
+
+/-- A citation group's Pandoc spelling, `[see @a, p. 3; @b]`, `@a [p. 3]` or `[-@a]`, where the
+form has one that reads back to it; `none` elsewhere. -/
+private def citeSpelling (pipes : Bool) (f : CiteForm) (keys : Array String) (acc after : String) :
+    Option String :=
+  if f.full || f.up then none else
+  match f.cmd, keys.toList with
+  | .paren, _ :: _ =>
+    if opensOn after then none else
+    let n := keys.size
+    let works := keys.toList.zipIdx.mapM fun (k, i) =>
+      bracketWork pipes (if i == 0 then f.pre else "") (if i + 1 == n then f.post else "") false k
+    works.map fun ws => "[" ++ "; ".intercalate ws ++ "]"
+  | .yearPar, [k] =>
+    if opensOn after then none else (bracketWork pipes f.pre f.post true k).map fun w => "[" ++ w ++ "]"
+  | .textual, [k] =>
+    if !f.pre.isEmpty || !inTextAfter acc then none
+    else if f.post.isEmpty then
+      if (after.dropWhile (· == ' ')).startsWith "[" then none
+      else CiteKey.spelling? k after.front?
+    else if opensOn after then none
+    else (CiteKey.spelling? k none).map fun s => s ++ " [" ++ citeNote pipes f.post ++ "]"
+  | _, _ => none
+
+/-- A citation node's form and keys, resolved or not. -/
+private def citeOf? : Inline → Option (CiteForm × Array String)
+  | .cite f ks => some (f, ks)
+  | .cited f ks _ => some (f, ks)
+  | _ => none
+
+/-- The works of a `\citetext` group after its opening mark, each its own command's single key
+separated by `; `, to the closing mark: their spellings and the nodes read, the closing mark's
+included. -/
+private def groupWorks (pipes : Bool) (out : Array String) (n : Nat) :
+    List Inline → Option (Array String × Nat)
+  | [] => none
+  | x :: rest =>
+    match citeOf? x with
+    | some (f, ks) =>
+      if f.cmd == .bracket false then if out.isEmpty then none else some (out, n + 1)
+      else if f.full || f.up then none
+      else match f.cmd, ks.toList with
+        | .alp, [k] | .year, [k] =>
+          match bracketWork pipes f.pre f.post (f.cmd == .year) k, rest with
+          | some w, .text "; " :: more => groupWorks pipes (out.push w) (n + 2) more
+          | some w, more => groupWorks pipes (out.push w) (n + 1) more
+          | _, _ => none
+        | _, _ => none
+    | _ => none
+
+/-- The spelling a citation run takes at the head of `x :: rest`, and the siblings after `x` it
+reads: one citation, a `\citetext` group, or an author before a group; `none` where it has none. -/
+private def citeRun (pipes : Bool) (acc : String) (x : Inline) (rest : List Inline) :
+    Option (String × Nat) :=
+  let afterOf (l : List Inline) : String := (l.head?.map Ir.plainTextOne).getD ""
+  match citeOf? x with
+  | some (f, ks) =>
+    if f.cmd == .bracket true then
+      match groupWorks pipes #[] 0 rest with
+      | some (ws, n) =>
+        if opensOn (afterOf (rest.drop n)) then none
+        else some ("[" ++ "; ".intercalate ws.toList ++ "]", n)
+      | _ => none
+    else if f.cmd == .author && !f.full && !f.up && f.pre.isEmpty && f.post.isEmpty then
+      match ks.toList, rest with
+      | [k], .text " " :: g :: more =>
+        match citeOf? g with
+        | some (gf, _) =>
+          if gf.cmd != .bracket true || !inTextAfter acc then none
+          else match more with
+            | y :: _ =>
+              match citeOf? y, groupWorks pipes #[] 0 more with
+              | some (yf, yks), some (ws, n) =>
+                if yf.cmd != .year || yks != #[k] || !yf.pre.isEmpty || opensOn (afterOf (more.drop n))
+                then none
+                else
+                  let tail := if yf.post.isEmpty then ws.toList.drop 1
+                    else (citeNote pipes yf.post) :: ws.toList.drop 1
+                  (CiteKey.spelling? k none).map fun s =>
+                    (s ++ " [" ++ "; ".intercalate tail ++ "]", n + 2)
+              | _, _ => none
+            | [] => none
+        | _ => none
+      | _, _ => none
+    else (citeSpelling pipes f ks acc (afterOf rest)).map (·, 0)
+  | _ => none
+
 /-- Whether content opens on an inline formula, under any source location. -/
 private def opensInlineMath : List Inline → Bool
   | .math false _ :: _ => true
@@ -543,25 +671,25 @@ private def inlineInto (site : Site) (acc : String) (after : Bool := true) : Inl
     match st with
     | .mono => monoInto acc #[] body.toList
     | _ =>
-      let inner := inlinesInto site "" none after body.toList
+      let inner := inlinesInto site "" none after 0 body.toList
       match styleMark st with
       | some m =>
         let (lead, core, trail) := spaceSplit inner
         if core.isEmpty then acc ++ lead ++ trail else acc ++ lead ++ m ++ core ++ m ++ trail
       | none => acc ++ inner
-  | .colored _ _ body => inlinesInto site acc none after body.toList
-  | .located _ body => inlinesInto site acc none after body.toList
-  | .role _ body => inlinesInto site acc none after body.toList
+  | .colored _ _ body => inlinesInto site acc none after 0 body.toList
+  | .located _ body => inlinesInto site acc none after 0 body.toList
+  | .role _ body => inlinesInto site acc none after 0 body.toList
   | .link url body =>
     if bareLink url body && autolinkable url then acc ++ "<" ++ url ++ ">"
     else
-      let inner := inlinesInto site "" none true body.toList
+      let inner := inlinesInto site "" none true 0 body.toList
       let dest := linkDest url
       acc ++ "[" ++ inner ++ "](" ++ dest ++ ")"
-  | .decorated _ body => inlinesInto site acc none after body.toList
-  | .onSteps _ body => inlinesInto site acc none after body.toList
+  | .decorated _ body => inlinesInto site acc none after 0 body.toList
+  | .onSteps _ body => inlinesInto site acc none after 0 body.toList
   | .altSteps _ active otherwise =>
-    inlinesInto site (inlinesInto site acc none false active.toList) none after otherwise.toList
+    inlinesInto site (inlinesInto site acc none false 0 active.toList) none after 0 otherwise.toList
   -- `\hfill` renders as a spaced em dash: text has no margin.
   | .fill =>
     let acc := if acc.endsWith " " then (acc.dropEnd 1).toString else acc
@@ -585,6 +713,7 @@ private def inlineInto (site : Site) (acc : String) (after : Bool := true) : Inl
   | .cite _ keys =>
     let marks := Ir.citeMarks keys
     acc ++ marks
+  | .cited _ _ ink => inlinesInto site acc none after 0 ink.toList
   -- The mark in footnote syntax; the body is a `[^k]: ...` definition after the document.
   | .footnote num _ => acc ++ s!"[^{num.getD 0}]"
   | .linebreak _ =>
@@ -592,48 +721,57 @@ private def inlineInto (site : Site) (acc : String) (after : Bool := true) : Inl
 
 /-- The sibling walk: a run following a run of its own delimiter reopens it, and zero glue between
 two formulas is a space, so the second never reads as a display's `$$`. -/
-private def inlinesInto (site : Site) (acc : String) (prev : Option String := none)
-    (after : Bool := true) : List Inline → String
+private def inlinesInto (site : Site) (acc : String) (prev : Option String)
+    (after : Bool) (skip : Nat) : List Inline → String
   | [] => acc
-  | .hspace e keep :: rest =>
-    let zero := Dim.MeasureValues.horizontal 0 0
-    let g := e.eval (Dim.MeasureValues.find zero)
-    let bare := !g.fil && !e.anyRef (fun _ => true) && g.width.sp == 0 && g.width.em == 0 &&
-      g.width.ex == 0
-    if bare && acc.endsWith "$" && opensInlineMath rest then inlinesInto site (acc ++ " ") prev after rest
-    else
-      let next := inlineInto site acc (closesAfterTag after rest) (.hspace e keep)
-      inlinesInto site next (if next.utf8ByteSize == acc.utf8ByteSize then prev else none) after rest
-  | .styled st body :: rest =>
-    match styleMark st with
-    | some m =>
-      let closes := closesAfterTag after rest
-      let (lead, core, trail) := spaceSplit (inlinesInto site "" none closes body.toList)
-      -- A paragraph's run keeps closing breaks inside as `<br>` where its closer still closes.
-      let (lead, core, trail) := if site == .flow then
-          match closingBreaks trail closes with
-          | some brs => (lead, core ++ brs, "")
-          | none => (lead, core, trail)
-        else
-          let (opening, core) := leadingTags core
-          let (core, closing) := if closes then (core, "") else trailingTags core
-          (lead ++ opening, core, closing ++ trail)
-      let ends := if trail.isEmpty then some m else none
-      if core.isEmpty then
-        inlinesInto site (acc ++ lead ++ trail) (if (lead ++ trail).isEmpty then prev else none)
-          after rest
-      else if prev == some m then
-        inlinesInto site ((acc.dropEnd m.length).toString ++ lead ++ core ++ m ++ trail) ends
-          after rest
-      else inlinesInto site (acc ++ lead ++ m ++ core ++ m ++ trail) ends after rest
-    | none =>
-      inlinesInto site (inlineInto site acc (closesAfterTag after rest) (.styled st body)) none
-        after rest
   | x :: rest =>
-    -- An inline that writes nothing leaves the run it follows open to the next.
-    let next := inlineInto site acc (closesAfterTag after rest) x
-    inlinesInto site next (if next.utf8ByteSize == acc.utf8ByteSize then prev else none) after
-      rest
+    -- The siblings a citation's spelling already read write nothing of their own.
+    if skip > 0 then inlinesInto site acc prev after (skip - 1) rest else
+    match citeRun (site == .cell) acc x rest with
+    | some (spelled, n) => inlinesInto site (acc ++ spelled) none after n rest
+    | none =>
+    match x with
+    | .hspace e keep =>
+      let zero := Dim.MeasureValues.horizontal 0 0
+      let g := e.eval (Dim.MeasureValues.find zero)
+      let bare := !g.fil && !e.anyRef (fun _ => true) && g.width.sp == 0 && g.width.em == 0 &&
+        g.width.ex == 0
+      if bare && acc.endsWith "$" && opensInlineMath rest then
+        inlinesInto site (acc ++ " ") prev after 0 rest
+      else
+        let next := inlineInto site acc (closesAfterTag after rest) (.hspace e keep)
+        inlinesInto site next (if next.utf8ByteSize == acc.utf8ByteSize then prev else none) after 0
+          rest
+    | .styled st body =>
+      match styleMark st with
+      | some m =>
+        let closes := closesAfterTag after rest
+        let (lead, core, trail) := spaceSplit (inlinesInto site "" none closes 0 body.toList)
+        -- A paragraph's run keeps closing breaks inside as `<br>` where its closer still closes.
+        let (lead, core, trail) := if site == .flow then
+            match closingBreaks trail closes with
+            | some brs => (lead, core ++ brs, "")
+            | none => (lead, core, trail)
+          else
+            let (opening, core) := leadingTags core
+            let (core, closing) := if closes then (core, "") else trailingTags core
+            (lead ++ opening, core, closing ++ trail)
+        let ends := if trail.isEmpty then some m else none
+        if core.isEmpty then
+          inlinesInto site (acc ++ lead ++ trail) (if (lead ++ trail).isEmpty then prev else none)
+            after 0 rest
+        else if prev == some m then
+          inlinesInto site ((acc.dropEnd m.length).toString ++ lead ++ core ++ m ++ trail) ends
+            after 0 rest
+        else inlinesInto site (acc ++ lead ++ m ++ core ++ m ++ trail) ends after 0 rest
+      | none =>
+        inlinesInto site (inlineInto site acc (closesAfterTag after rest) (.styled st body)) none
+          after 0 rest
+    | x =>
+      -- An inline that writes nothing leaves the run it follows open to the next.
+      let next := inlineInto site acc (closesAfterTag after rest) x
+      inlinesInto site next (if next.utf8ByteSize == acc.utf8ByteSize then prev else none) after 0
+        rest
 
 end
 
@@ -646,7 +784,7 @@ private def closeHash (s : String) : String :=
 
 /-- The markdown spelling of inline content in a paragraph's flow. -/
 public def inlineText (xs : Array Inline) : String :=
-  closeHash (inlinesInto .flow "" none true xs.toList)
+  closeHash (inlinesInto .flow "" none true 0 xs.toList)
 
 /-- Line endings as spaces. -/
 private def oneLine (s : String) : String :=
@@ -654,11 +792,11 @@ private def oneLine (s : String) : String :=
 
 /-- A heading's text: one line, its trailing `#` escaped. -/
 public def headingText (xs : Array Inline) : String :=
-  closeHash (oneLine (inlinesInto .line "" none true xs.toList))
+  closeHash (oneLine (inlinesInto .line "" none true 0 xs.toList))
 
 /-- A pipe table cell's text: one line, its pipes bare. -/
 public def cellText (xs : Array Inline) : String :=
-  oneLine (inlinesInto .cell "" none true xs.toList)
+  oneLine (inlinesInto .cell "" none true 0 xs.toList)
 
 private theorem oneLine_mem (s : String) : ∀ x ∈ (oneLine s).toList, x ≠ '\n' ∧ x ≠ '\r' := by
   intro x hx

@@ -42,7 +42,9 @@ public theorem read_tex_exact (file text : String) :
 `Parse.inputEnv` at the including call's position. -/
 @[expose] public def fragment (s : Ir.Surface) (path text : String) (pos : Pos) :
     Array Parse.Raw × Array Diag :=
-  let (sub, ds) := read s path text
+  let (sub, ds) := match s with
+    | .markdown => Md.readIncluded path text
+    | s => read s path text
   (#[.env (Parse.inputEnv path) sub pos], ds)
 
 end Surface

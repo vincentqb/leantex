@@ -81,6 +81,14 @@ def corpusRows (emit : Ir.Doc → String) (docs : Array Ir.Doc) : Array Row × N
   return (#[{ item := "corpus.reread-clean", value := (clean : Int) },
     { item := "corpus.twin-stable", value := (stable : Int) }], clean, stable)
 
+/-- The citation rows: Pandoc's citations whose twin re-reads to the same IR body. -/
+def citeRows (emit : Ir.Doc → String) (cases : List String) : Array Row × Nat := Id.run do
+  let mut exact := 0
+  for md in cases do
+    let (d, _) := elabMd (md ++ "\n")
+    if (reread emit d).1.body == d.body then exact := exact + 1
+  return (#[{ item := "cite.reread-exact", value := (exact : Int) }], exact)
+
 /-- Every corpus document as the driver elaborates it (`corpusTwinDocs`). -/
 def corpusDocs : IO (Array (String × Ir.Doc)) := corpusTwinDocs
 
@@ -89,10 +97,14 @@ def measureWith (emit : Ir.Doc → String) : IO (Array String × Array Row) := d
   let (cm, accepted, exact) := cmRows emit cases
   let docs ← corpusDocs
   let (corpus, clean, stable) := corpusRows emit (docs.map (·.2))
+  let citeCases := mdCiteTwinCases.map (·.1)
+  let (cite, citeExact) := citeRows emit citeCases
   return (#[s!"# source: {cases.size} CommonMark 0.31.2 examples, {accepted} accepted by the \
 reader, {exact} of them re-read from their twin to the same IR body",
     s!"# source: {docs.size} corpus documents, {clean} twins re-read with no error, \
-{stable} a fixed point of the round trip"], cm ++ corpus)
+{stable} a fixed point of the round trip",
+    s!"# source: {citeCases.length} Pandoc citations, {citeExact} re-read from their twin to the \
+same IR body"], cm ++ corpus ++ cite)
 
 /-- A twin that writes `*` unescaped: the round trip it fails is the one a
 lost escape loses. -/
@@ -117,6 +129,12 @@ def mdtwinSelftest : IO UInt32 := tierSelftest "mdtwin" fun no => do
   let (_, _, planted) := cmRows droppedEscapes cases
   no s!"planted: a writer that drops escapes lowers reread-exact ({exact} → {planted})"
     (planted < exact)
+  -- A writer that escapes every at sign is seen: its citations read back as text.
+  let citeCases := mdCiteTwinCases.map (·.1)
+  let (_, spelled) := citeRows MarkdownDoc.emit citeCases
+  let (_, escaped) := citeRows (fun d => (MarkdownDoc.emit d).replace "@" "\\@") citeCases
+  no s!"planted: a writer that escapes at signs lowers cite.reread-exact ({spelled} → {escaped})"
+    (escaped < spelled)
   -- An error in the re-read is what reread-clean counts.
   let (_, clean, _) := corpusRows (fun _ => "<div>raw html</div>\n") #[italic]
   no "planted: a twin the reader refuses is not clean" (clean == 0)

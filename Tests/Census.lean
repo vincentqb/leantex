@@ -102,6 +102,21 @@ def booktabsBrackets (c : Array CensusPage) (rules : List (Dim.Sp × Dim.Sp))
 /-- The markdown fixtures' census rows, read off `Layout.Out`. -/
 def censusMdRows :
     List (String × (Layout.Geom → Array CensusPage → List (String × Bool))) := [
+  ("md-cite", fun _ c => [
+    ("one page", c.size == 1),
+    ("each citation ships in plainnat's author-year marks, its notes inside them",
+      ["A first claim [Roe, 2020]", "by name: Doe and Hale [2024]",
+        "[see Poe, 2022, pp. 101-110; Roe, 2020]", "Roe [2020] wrote",
+        "Doe and Hale [2024, p. 46]", "[Doe and Hale, 2024, chap. 2]", "key [?] shows"].all
+        (hasStr (censusProse c) ·)),
+    ("what is not a citation ships as written",
+      ["someone@example.org", "@roe2020 and an escaped @roe2020"].all (hasStr (censusProse c) ·)),
+    ("the list ships under its declared title, sorted, the nocite entry among them",
+      ((lineYOf c 0 "Works cited").bind fun h => (lineYOf c 0 "Alex B. Doe").bind fun d =>
+        (lineYOf c 0 "Kim Poe").bind fun p => (lineYOf c 0 "Sam Roe").bind fun r =>
+          (lineYOf c 0 "Rin Vale").map fun v => decide (h < d ∧ d < p ∧ p < r ∧ r < v)).getD false),
+    ("no metadata reaches the page",
+      !["bibliography", "md-cite.bib", "plainnat", "underscore"].any (hasStr (censusText c) ·))]),
   ("md-code", fun geom c => [
     ("one page", c.size == 1),
     ("the code span ships inside its sentence",
@@ -302,6 +317,14 @@ def censusRows0 :
       ((lineYOf c 0 "standing before").bind fun a =>
         (lineYOf c 0 "Included placeholder notes").bind fun h =>
           (lineYOf c 0 "standing after").map fun b => decide (a < h ∧ h < b)).getD false)]),
+  ("md-cite-include", fun _ c => [
+    ("one page", c.size == 1),
+    ("the article's and its markdown file's citations ship in one numbering",
+      ["citing [1] before", "cite [2] and Doe and Hale [3, p. 42]", "citing Vale [4] after"].all
+        (hasStr (censusProse c) ·)),
+    ("one reference list ships all four entries, once each",
+      ["[1] Sam Roe", "[2] Kim Poe", "[3] Alex B. Doe", "[4] Rin Vale"].all
+        (fun s => pageOccurs c 0 s == 1) && pageOccurs c 0 "References" == 1)]),
   ("md-include-deck", fun _ c => [
     ("a title page and one frame page", c.size == 2),
     ("the frame's included list and quotation reach its page below the title",

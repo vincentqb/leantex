@@ -49,6 +49,34 @@ line breaks from the TeX document around it. Include one with:
 \markdownInput{notes.md}
 ```
 
+Markdown cites as Pandoc does: `[@key]`, `[see @key, p. 33; @other]`,
+`[-@key]` without the author's name, and `@key` or `@key [p. 33]` within a
+sentence. A key is letters, digits and `_` with single punctuation marks
+inside it (`:.#$%&-+?<>~/`), or anything braced, `@{https://example.org/x}`;
+an e-mail address, code and `\@` stay text. The document declares its
+bibliography in a YAML metadata block on its first lines, as Pandoc reads one:
+
+```markdown
+---
+bibliography: refs.bib
+biblio-style: plainnat
+natbiboptions: numbers
+nocite: '@uncited'
+reference-section-title: References
+---
+```
+
+`bibliography` names one `.bib` file or a list of them, beside the document;
+`biblio-style` takes a BibTeX style (plainnat by default, author and year in
+brackets), `natbiboptions` natbib's options, `nocite` lists entries to include
+uncited (`@*` for all), and `reference-section-title` heads the list, which
+stands in a `::: {#refs}` division, else at the end. Citations set as Pandoc's
+LaTeX writer sets them under natbib, with the numbering, list, styles and
+diagnostics of TeX's `\cite`; the web page links each to its entry, and the
+markdown twin writes them back in Pandoc's syntax. Every other metadata key is
+named as not read, `csl` among them, since no CSL processor runs. A Markdown
+file included in TeX cites into the TeX document's bibliography.
+
 Source files are read as UTF-8 unless a byte-order mark says UTF-16, and a
 line ends at LF, CR LF or a CR alone. A TeX document that declares
 `\usepackage[latin1]{inputenc}` (or `latin9`, `cp1252`, `ansinew`,

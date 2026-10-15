@@ -151,6 +151,7 @@ mutual
   | .image src _ alt => out.push (.leaf 0 (.image src alt))
   | .icon _ label => out.push (.leaf 0 (.text label))
   | .cite _ keys => out.push (.leaf 0 (.text (citeMarks keys)))
+  | .cited _ _ ink => inlinesRaw out ink.toList
   | .footnote _ body => out.push (.node .note (inlinesRaw #[] body.toList))
 
 end
@@ -357,6 +358,7 @@ private structure Sim (F : NodeFold α) (G : Census α) : Prop where
   iImage : ∀ a src size alt, G.inline a (.image src size alt) = F.leaf a 0 (.image src alt)
   iIcon : ∀ a sc label, G.inline a (.icon sc label) = F.leaf a 0 (.text label)
   iCite : ∀ a tx keys, G.inline a (.cite tx keys) = F.leaf a 0 (.text (citeMarks keys))
+  iCited : ∀ a tx keys ink, G.inline a (.cited tx keys ink) = G.inlines a ink.toList
   iFootnote : ∀ a n body, G.inline a (.footnote n body) = F.node a .note (G.inlines · body.toList)
   cellsNil : ∀ a, G.cells a [] = a
   cellsCons : ∀ a c rest, G.cells a (c :: rest) = G.cells (F.node a .cell (G.inlines · c.toList)) rest
@@ -659,6 +661,7 @@ private theorem inlineRaw_fold_exact (h : Sim F G) (a : α) (out : Array Node) (
   | .image src size alt => simp only [inlineRaw, foldNodeList_push, h.iImage]; rfl
   | .icon sc label => simp only [inlineRaw, foldNodeList_push, h.iIcon]; rfl
   | .cite tx keys => simp only [inlineRaw, foldNodeList_push, h.iCite]; rfl
+  | .cited tx keys ink => rw [h.iCited]; exact inlinesRaw_fold_exact h a out ink.toList
   | .footnote n body =>
     simp only [inlineRaw, foldNodeList_push, foldNode_node, h.iFootnote]
     exact congrArg (F.node _ _) (funext fun a' => inlinesRaw_fold_exact h a' #[] body.toList)
@@ -1039,6 +1042,9 @@ theorem inlineRaw_acc (out : Array Node) (x : Inline) :
   | .image src size alt => simp [inlineRaw]
   | .icon sc label => simp [inlineRaw]
   | .cite tx keys => simp [inlineRaw]
+  | .cited tx keys ink =>
+    simp only [inlineRaw]
+    exact inlinesRaw_acc out ink.toList
   | .footnote num body => simp [inlineRaw]
 
 end
