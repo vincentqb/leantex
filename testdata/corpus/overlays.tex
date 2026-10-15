@@ -1,7 +1,8 @@
 % Invented fixture: overlays under no declared share, which hide. Item specs, an
 % inline \uncover, and \pause — the PDF handout gets one page per step with
 % pending content hidden in place; HTML keeps one slide with step data.
-% \visible keeps its argument's place and ships none of it off its steps.
+% \visible keeps its argument's place and ships none of it off its steps. Links
+% in pending steps, a set and an item covered again ship only where they show.
 \documentclass[aspectratio=169]{slides}
 
 \begin{document}
@@ -24,6 +25,15 @@ After the pause.
 
 \begin{frame}{Kept in place}
 Before the reveal \visible<2>{a phrase kept in place} and after it.
+\end{frame}
+
+\begin{frame}{Linked steps}
+Read \href{https://example.org/first}{the first page}.
+\begin{itemize}
+\item<-2> Early \href{https://example.org/early}{note}.
+\item<1,3> Every other \href{https://example.org/other}{beat}.
+\end{itemize}
+\uncover<2->{Later \href{https://example.org/later}{reading}.}
 \end{frame}
 
 \end{document}

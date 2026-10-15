@@ -3111,7 +3111,7 @@ private def stepUnhideKeyframes (coveredPct : Nat) : DeckRule :=
 
 /-- The steps' uncover: each step fades in during the scroll to its snap. -/
 private def stepUncoverRule : DeckRule :=
-  { selector := [.lit ".step:not([data-step=\"1\"])"]
+  { selector := [.lit "html[data-deck-script] .step:not([data-step=\"1\"])"]
     decls := [("animation", "ltx-uncover linear both, ltx-unhide linear both"),
       ("animation-timeline", "--frame, --frame"),
       ("animation-range",
@@ -3167,7 +3167,7 @@ private def stepRehideKeyframes (coveredPct : Nat) : DeckRule :=
 
 /-- A declared end's carrier dims over the snap interval after the range's last step. -/
 private def stepRecoverRule : DeckRule :=
-  { selector := [.lit ".step-end"]
+  { selector := [.lit "html[data-deck-script] .step-end"]
     decls := [("animation", "ltx-recover linear both, ltx-rehide linear forwards"),
       ("animation-timeline", "--frame, --frame"),
       ("animation-range",
@@ -3179,7 +3179,7 @@ contain calc(var(--step-last) / (var(--steps) - 1) * 100%)")]
 
 /-- A carrier that both uncovers and recovers runs both, the recover only from its own range on. -/
 private def stepBothRule : DeckRule :=
-  { selector := [.lit ".step.step-end:not([data-step=\"1\"])"]
+  { selector := [.lit "html[data-deck-script] .step.step-end:not([data-step=\"1\"])"]
     decls := [("animation", "ltx-uncover linear both, ltx-recover linear forwards, \
 ltx-unhide linear both, ltx-rehide linear forwards"),
       ("animation-timeline", "--frame, --frame, --frame, --frame"),
@@ -3196,7 +3196,7 @@ contain calc(var(--step-last) / (var(--steps) - 1) * 100%)")]
 
 /-- `stepBothRule`'s reduced-motion guard. -/
 private def stepBothGuard : DeckRule :=
-  { selector := [.lit ".step.step-end"]
+  { selector := [.lit "html[data-deck-script] .step.step-end"]
     decls := [("opacity", "100%"), ("animation", "none")]
     part := .reduce }
 
@@ -3217,7 +3217,7 @@ private def stepRecovered (coveredPct maxSteps : Nat) : List DeckRule :=
 
 /-- The end carrier's reduced-motion guard: no animation, full colour. -/
 private def stepRecoverGuard : DeckRule :=
-  { selector := [.lit ".step-end"]
+  { selector := [.lit "html[data-deck-script] .step-end"]
     decls := [("opacity", "100%"), ("animation", "none")]
     part := .reduce }
 
@@ -3273,7 +3273,7 @@ private def stepGuard : DeckRule :=
 /-- The covered default's reduced-motion counterpart, at its exact selector. -/
 private def stepCoveredGuard : DeckRule :=
   { selector := [.lit "html[data-deck-script] .step:not([data-step=\"1\"])"]
-    decls := [("opacity", "100%"), ("visibility", "inherit")]
+    decls := [("opacity", "100%"), ("visibility", "inherit"), ("animation", "none")]
     part := .reduce }
 
 /-- The track's reduced-motion reverts: one page per stepped frame. -/
@@ -3772,7 +3772,7 @@ public def targetsContent (r : DeckRule) : Bool :=
     (r.selector.flatMap SelChunk.lits).any fun s => hasFrag s frag
 
 /-- No rule hides a frame or a step's content but behind the deck script's marker. -/
-public theorem floor_hides_nothing (v : DeckType) (pg : String) (cp ms : Nat) :
+public theorem content_hidden_behind_script (v : DeckType) (pg : String) (cp ms : Nat) :
     ∀ r ∈ deckRules v pg cp ms,
       (!(targetsContent r) || scriptGated r ||
         (!(r.decls.contains ("display", "none")) &&
@@ -3857,11 +3857,23 @@ public theorem floor_covered_script_gated (v : DeckType) (pg : String) (cp ms : 
     (setRules_cases rfl rfl rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
       (fun _ => rfl) (fun _ => rfl)) (fun _ => rfl) (by decide)
 
-/-- A rule hiding what a step carries opens on the deck script's attribute, or is a keyframe a
-step runs only where the script stands (`coverStaticFloor`), so no floor hides it. -/
+/-- A rule hiding what a step carries opens on the deck script's attribute, or is a keyframe, which
+only rules opening on that attribute run (`animations_script_gated`), so no floor hides it. -/
 public theorem hidden_script_gated (v : DeckType) (pg : String) (cp ms : Nat) :
     ∀ r ∈ deckRules v pg cp ms,
       (keyframesRule r || scriptGated r || !(r.decls.contains ("visibility", "hidden"))) = true :=
+  deckRules_check v pg cp ms
+    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
+    (by decide) rfl rfl rfl rfl rfl (by decide) (fun _ => rfl) (fun _ => rfl)
+    (by decide) (fun _ => altSnapRules_cases rfl rfl rfl rfl)
+    (setRules_cases rfl rfl rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
+      (fun _ => rfl) (fun _ => rfl)) (fun _ => rfl) (by decide)
+
+/-- Every rule that runs an animation opens on the deck script's attribute, so no keyframe styles a
+page the script does not run. -/
+public theorem animations_script_gated (v : DeckType) (pg : String) (cp ms : Nat) :
+    ∀ r ∈ deckRules v pg cp ms,
+      (scriptGated r || r.decls.all fun d => d.1 != "animation" || d.2 == "none") = true :=
   deckRules_check v pg cp ms
     (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
     (by decide) rfl rfl rfl rfl rfl (by decide) (fun _ => rfl) (fun _ => rfl)
@@ -3930,7 +3942,7 @@ public theorem guards_by_construction (v : DeckType) (pg : String) (cp ms : Nat)
     rcases hr with rfl
     rfl
   · intro hms r hr
-    have hstep : stepGuard ∈ deckRules v pg cp ms :=
+    have hstep : stepCoveredGuard ∈ deckRules v pg cp ms :=
       mem_deckRules_step hms (mem_stepRules_fixed (by decide))
     have hend : stepRecoverGuard ∈ deckRules v pg cp ms :=
       mem_deckRules_step hms (mem_stepRules_fixed (by decide))
@@ -3941,7 +3953,7 @@ public theorem guards_by_construction (v : DeckType) (pg : String) (cp ms : Nat)
       rfl | rfl | rfl | rfl | rfl
     case inr.inr.inr.inl =>
       exact motionGuarded_of_guard hstep (by
-        simp only [guardCovers, renderSel, stepGuard, stepUncoverRule,
+        simp only [guardCovers, renderSel, stepCoveredGuard, stepUncoverRule,
           List.map_cons, List.map_nil, SelChunk.render, String.join_cons,
           String.join_nil, String.append_empty, String.toList_append]
         decide)
@@ -8345,7 +8357,8 @@ retitle the frames apart, or link to the numbered anchor")
           let node := if steps > 1 then
               Html.elem "div" (#[node] ++ spacers)
                 (#[("class", "slide-track"), ("style", s!"--steps: {steps}"),
-                  ("id", id), ("data-slide-label", s!"{label}.1")] ++ numberAttrs)
+                  ("id", id), ("data-snapped", "1"), ("data-slide-label", s!"{label}.1")] ++
+                  numberAttrs)
             else match node with
               | .elem tag attrs kids =>
                 Node.elem tag (attrs ++ #[("id", id), ("data-snap", ""), ("data-snapped", "1"),
@@ -8685,10 +8698,12 @@ private def a11yElem (own deck : Bool) (tag : String) (attrs : Array (String × 
                  (if scrollReachable (.elem tag attrs kids) then 0 else 1) }
   else acc
 
-/-- Whether an element carries an overlay step a later snap uncovers, or a set of steps. -/
+/-- Whether an element carries an overlay step a later snap uncovers, a step covered again past its
+range's end, or a set of steps. -/
 public def pendingCarrier (attrs : Array (String × String)) : Bool :=
   let cls := classTokens attrs
-  (cls.contains "step" && attrOf? attrs "data-step" != some "1") || cls.contains "step-set"
+  (cls.contains "step" && attrOf? attrs "data-step" != some "1") || cls.contains "step-end" ||
+    (attrOf? attrs "data-step-last").isSome || cls.contains "step-set"
 
 /-- A tree's accessibility facts, each element under its own and its ancestors' `aria-hidden`,
 `hidden` and overlay-step flags. -/

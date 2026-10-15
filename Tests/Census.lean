@@ -1245,7 +1245,11 @@ def censusRows6 :
       hasStr (censusText c) "Field Notes" &&
         hasStr (censusText c) "A Detail Too Deep")]),
   ("overlays", fun _ c => [
-    ("one handout page per step", c.size == 7),
+    ("one handout page per step", c.size == 10),
+    ("a pending step, a set and an item covered again ship only where they show",
+      pageHas c 7 "Early" && pageHas c 7 "Every other" && !pageHas c 7 "Later" &&
+      pageHas c 8 "Early" && !pageHas c 8 "Every other" && pageHas c 8 "Later" &&
+      !pageHas c 9 "Early" && pageHas c 9 "Every other" && pageHas c 9 "Later"),
     ("step one hides the later beats", !pageHas c 0 "Second beat." && !pageHas c 0 "Third beat."),
     ("each later step shows its beat", pageHas c 1 "Second beat." && pageHas c 2 "Third beat."),
     ("the last step reveals everything", pageAllRevealed c 2),

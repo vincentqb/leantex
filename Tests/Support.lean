@@ -1237,12 +1237,17 @@ def stepsStandStill (css : String) : Bool :=
 def stepsFadeFromNothing (css : String) : Bool :=
   (keyframeDecls css "ltx-uncover").any (·.contains ("opacity", "0%"))
 
-/-- Whether a stylesheet keeps a step out of reach while it is pending: the reveal opens on a hidden
-step where `view()` timelines run, and the floor's covered default hides it where they do not. -/
+/-- Whether a stylesheet keeps a step out of reach while it is pending: where `view()` timelines
+run, its reveal opens on a hidden step and its recover closes on one, and every rule outside a
+keyframe that covers a step from nothing hides it too. -/
 def pendingStepsOutOfReach (css : String) : Bool :=
-  (stepAnimations css).contains "ltx-unhide" &&
+  let runs := stepAnimations css
+  runs.contains "ltx-unhide" && runs.contains "ltx-rehide" &&
     (keyframeDecls css "ltx-unhide").any (·.contains ("visibility", "hidden")) &&
-    hasStr css "html[data-deck-script] .step:not([data-step=\"1\"]) { opacity: 0%; visibility: hidden; }"
+    (keyframeDecls css "ltx-rehide").any (·.contains ("visibility", "hidden")) &&
+    (css.splitOn "\n").all fun l =>
+      l.trimAscii.toString.startsWith "@keyframes" || !hasStr l "opacity: 0%" ||
+        hasStr l "visibility: hidden"
 
 /-- Span equality with the provenance `==` ignores: the macro origins and the authored token. -/
 def exactSpan (a b : Span) : Bool :=

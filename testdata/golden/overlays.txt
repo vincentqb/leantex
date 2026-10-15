@@ -79,5 +79,35 @@ frame
     step 2-2 invisible
       text "a phrase kept in place"
     text " and after it."
+frame
+  title
+    text "Linked steps"
+  para
+    text "Read "
+    link "https://example.org/first"
+      text "the first page"
+    text "."
+  role in-paragraph
+    list unordered
+      item
+        step 1-2
+          para
+            text "Early "
+            link "https://example.org/early"
+              text "note"
+            text "."
+      item
+        step 1-1,3-3
+          para
+            text "Every other "
+            link "https://example.org/other"
+              text "beat"
+            text "."
+  para
+    step 2
+      text "Later "
+      link "https://example.org/later"
+        text "reading"
+      text "."
 -- diagnostics
 (none)

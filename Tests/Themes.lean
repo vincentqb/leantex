@@ -2175,8 +2175,8 @@ def deckStepChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
      count ".slide-track > section.slide { scroll-snap-align: start;" == 0)
   t "reduced motion is the plain row at full colour, one page per frame"
     (count ".step { opacity: 100%; animation: none; }" == 1 &&
-     count "html[data-deck-script] .step:not([data-step=\"1\"]) { opacity: 100%; visibility: inherit; }"
-       == 1 &&
+     count ("html[data-deck-script] .step:not([data-step=\"1\"]) { opacity: 100%; " ++
+       "visibility: inherit; animation: none; }") == 1 &&
      count ".slide-track { width: 100vw; flex: 0 0 100vw; }" == 1)
   t "print shows every step uncovered on its stage's sheet, spacers hidden"
     (count ".snap { display: none; }" == 3 &&

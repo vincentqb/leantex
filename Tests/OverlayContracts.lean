@@ -50,9 +50,8 @@ private def overlayBoundaryContractChecks (ref : IO.Ref (List String)) (fonts : 
           (rules.any fun rule => rule.1 == selector && !rule.2.isEmpty)
 
 private def contractRule (rules : Array (String × String)) (selector key : String) :
-    Option String := do
-  let (_, decls) ← rules.find? (·.1 == selector)
-  cssProperty decls key
+    Option String :=
+  (rules.filter (·.1 == selector)).findSome? fun (_, decls) => cssProperty decls key
 
 private def contractIsRule (rules : Array (String × String))
     (scope compound key : String) : Option String := do
