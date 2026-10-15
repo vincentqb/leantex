@@ -1412,8 +1412,8 @@ def gates : List Gate := [
     what := fun f => s!"the size-step formula re-spelled (`sizeScale.lookup … getD`) in {f}"
     help := "  Ir.scaleStepIn is the one resolving site for a named step of a size
   ladder (PRINCIPLES.md § One fact in one IR value).
-  Fix: read Ir.scaleStep base name, or Ir.scaleStepIn over a document's own
-  ladder; a genuine Option need (an unknown name must stay none) matches on
+  Fix: read Ir.scaleStepIn over the document's own ladder (Ir.PageSpec.scale,
+  Layout's geom.scale); a genuine Option need (an unknown name must stay none) matches on
   the lookup without getD, and a theorem naming a raw table value lives
   beside the table in Ir.lean." },
   { applies := fun f => (f == "Tests.lean" || f.startsWith "Tests/")
@@ -2192,7 +2192,7 @@ def selftest : IO UInt32 := do
     ("  let markSize := around * ((Ir.sizeScale.lookup \"scriptsize\").getD 700) / 1000", true),
     ("  milliFactor ((Ir.sizeScale.lookup name).getD 1000) ++ unit", true),
     ("  | .size n => match Ir.sizeScale.lookup n with", false),
-    ("  let s := Ir.scaleStep base n", false),
+    ("  let s := Ir.scaleStepIn ladder base n", false),
     ("  -- sizeScale.lookup … .getD quoted in a comment", false),
     ("  say s!\"a message naming sizeScale.lookup and .getD\"", false)]
 

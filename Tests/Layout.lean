@@ -2108,10 +2108,10 @@ def vdistChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   let deckTitleSrc := "\\documentclass[aspectratio=169]{slides}\n\\theme{moloch}\n" ++
     "\\begin{document}\n\\title{Alpha Beta}\\author{Pat Placeholder}\n" ++
     "\\maketitle\n\\end{document}"
-  let deckTitleSize := Ir.scaleStep geom.fontSize "Large"
+  let deckTitleSize := Ir.scaleStepIn Ir.sizeScale geom.fontSize "Large"
   t "a deck title sets at the bundle's declared step, not the flow fallback"
     ((linesOf deckTitleSrc).any (·.size == deckTitleSize) &&
-      !(linesOf deckTitleSrc).any (·.size == Ir.scaleStep geom.fontSize "LARGE"))
+      !(linesOf deckTitleSrc).any (·.size == Ir.scaleStepIn Ir.sizeScale geom.fontSize "LARGE"))
   -- The share is scale-free, so it is read from how fast the block moves as its height grows.
   let titleBlock (extra : String) : Option (Dim.Sp × Dim.Sp) := do
     let ls := (linesOf ("\\documentclass[aspectratio=169]{slides}\n\\theme{moloch}\n" ++
@@ -4203,7 +4203,7 @@ def footlineChecks (ref : IO.Ref (List String)) : IO Unit := do
      "\\begin{frame}[t]{Foxtrot}\nAlpha words.\n\\end{frame}\n" ++
      "\\begin{frame}\nBravo words.\n\\end{frame}\n")
   t "footline: the frame number is set at the tiny step, as moloch's footline font"
-    ([0, 1, 2].all fun i => ((number out i).map (·.size == Ir.scaleStep geom.fontSize "tiny")).getD false)
+    ([0, 1, 2].all fun i => ((number out i).map (·.size == Ir.scaleStepIn Ir.sizeScale geom.fontSize "tiny")).getD false)
   t "footline: the number's baseline stands where lualatex's does, a round digit's higher"
     ([(0, 3985), (1, 3985), (2, 4045)].all fun (i, up) =>
       ((number out i).map fun l => near (geom.pageH - l.y) (bp up) (Dim.pt 1 / 20)).getD false)
@@ -5196,7 +5196,7 @@ def declBlockChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
     "gamma & delta\n\\end{tabular}\n\\normalsize\nBody text after the table."
   let (doc, diags) := Elab.run "t" src
   let c := censusOf #[] (layoutOf oneFace doc geom)
-  let small := Ir.scaleStep geom.fontSize "footnotesize"
+  let small := Ir.scaleStepIn Ir.sizeScale geom.fontSize "footnotesize"
   t "decl between blocks: the fixture elaborates clean" (diags.all (·.code.startsWith "N"))
   t "decl between blocks: the table's cells set at the footnotesize step"
     (lineSizeOf c 0 "alpha" == some small && lineSizeOf c 0 "gamma" == some small)

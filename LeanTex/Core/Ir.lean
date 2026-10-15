@@ -2093,9 +2093,6 @@ itself. -/
 @[expose] public def scaleStepIn (scale : List (String × Nat)) (base : Sp) (name : String) : Sp :=
   base * ((scale.lookup name).getD 1000) / 1000
 
-/-- `scaleStepIn` over the 10pt ladder. -/
-@[expose] public def scaleStep (base : Sp) (name : String) : Sp := scaleStepIn sizeScale base name
-
 /-- Each named step's `\baselineskip`, per mille of the body size:
 size10.clo's `\@setfontsize` second arguments. -/
 @[expose] public def sizeSkipScale : List (String × Nat) :=
@@ -2194,11 +2191,11 @@ public theorem stepLead_ratio_between (skips : List (String × Nat)) (step : Str
 
 public theorem stepLead_between (base : Int) (hb : 100 ≤ base) :
     ∀ p ∈ sizeScale, ∃ l, stepLead sizeSkipScale p.1 base = some l ∧
-      scaleStep base p.1 < l ∧ 7 * l ≤ 9 * scaleStep base p.1 + 9 := by
+      scaleStepIn sizeScale base p.1 < l ∧ 7 * l ≤ 9 * scaleStepIn sizeScale base p.1 + 9 := by
   intro p hp
   simp only [sizeScale, List.mem_cons, List.not_mem_nil, or_false] at hp
   rcases hp with h|h|h|h|h|h|h|h|h|h <;> subst h <;>
-    simp only [stepLead, scaleStep, scaleStepIn, skipBody, sizeSkipScale, sizeScale, List.lookup,
+    simp only [stepLead, scaleStepIn, skipBody, sizeSkipScale, sizeScale, List.lookup,
       leadingFor, leadingMilli] <;> simp <;>
     first
     | (show base * 500 / 1000 < base * 1200 / 1000 * 600 / 1200 ∧
@@ -2257,33 +2254,35 @@ public theorem skipRowOf_between (milli body : Int) (hs : 0 ≤ milli) (hb : 0 <
   exact ⟨Int.ediv_mul_le _ (Int.ne_of_gt hb), Int.lt_ediv_add_one_mul_self _ hb⟩
 
 /-- The size a document title sets at when no `titlepage` font template
-declares one: `\LARGE` on a flow page, `\Large` on a deck. -/
-@[expose] public def titleSize (base : Sp) (slides : Bool) : Sp :=
-  scaleStep base (if slides then "Large" else "LARGE")
+declares one: `\LARGE` on a flow page, `\Large` on a deck, on the document's ladder. -/
+@[expose] public def titleSize (scale : List (String × Nat)) (base : Sp) (slides : Bool) : Sp :=
+  scaleStepIn scale base (if slides then "Large" else "LARGE")
 
 @[expose] public def inkClearance : Sp := Dim.pt 1 -- TeXbook p.78: `\lineskip=1pt`, TeX's own floor
 
 /-- Heading display sizes from the type scale: `\section` in `\Large`,
 `\subsection` in `\large`, `\subsubsection` in `\normalsize`. -/
-@[expose] public def headingSize (base : Sp) : HeadingLevel → Sp
-  | .title | .h1 => scaleStep base "LARGE"
-  | .h2 => scaleStep base "Large"
-  | .h3 => scaleStep base "large"
+@[expose] public def headingSize (scale : List (String × Nat)) (base : Sp) : HeadingLevel → Sp
+  | .title | .h1 => scaleStepIn scale base "LARGE"
+  | .h2 => scaleStepIn scale base "Large"
+  | .h3 => scaleStepIn scale base "large"
   | .h4 | .h5 | .h6 => base
 
 /-- The reach below its bar's top of the section-page template's last line,
-the subsection title's strut. -/
-public def sectionPageStrut (size : Int) (factor : Nat := 1000) : Int :=
-  leadingFor (scaleStep size "large") factor * 13 / 10
+the subsection title's strut, at the document's `\large`. -/
+public def sectionPageStrut (scale : List (String × Nat)) (size : Int) (factor : Nat := 1000) :
+    Int :=
+  leadingFor (scaleStepIn scale size "large") factor * 13 / 10
 
 public theorem sectionPageStrut_between (size : Int) :
-    size * sectionPageStrut 1000 / 1000 - 4 ≤ sectionPageStrut size ∧
-      sectionPageStrut size ≤ size * sectionPageStrut 1000 / 1000 := by
+    size * sectionPageStrut sizeScale 1000 / 1000 - 4 ≤ sectionPageStrut sizeScale size ∧
+      sectionPageStrut sizeScale size ≤ size * sectionPageStrut sizeScale 1000 / 1000 := by
   have hL : ((sizeScale.lookup "large").getD 1000 : Int) = 1200 := by decide
   -- Spelled `Int`, not `Sp`, so `omega` reads the unfolded steps.
-  have hs : ∀ x : Int, sectionPageStrut x = x * 1200 / 1000 * 1200 / 1000 * 1000 / 1000 * 13 / 10 := by
+  have hs : ∀ x : Int,
+      sectionPageStrut sizeScale x = x * 1200 / 1000 * 1200 / 1000 * 1000 / 1000 * 13 / 10 := by
     intro x
-    simp only [sectionPageStrut, leadingFor, scaleStep, scaleStepIn, leadingMilli, hL]
+    simp only [sectionPageStrut, leadingFor, scaleStepIn, leadingMilli, hL]
     rfl
   rw [hs, hs]
   omega
@@ -6625,6 +6624,11 @@ public def footline : Footline :=
     raise := Dim.pt 4   -- beamerouterthememoloch.sty:123, \vskip4pt
     sep := Dim.pt 4 }   -- beamerbaseframecomponents.sty:167, \advance\footheight by 4pt
 
+/-- The footline's size: its step of `base` on the document's ladder, which both backends and the
+contrast judge read. -/
+@[expose] public def footlineSize (scale : List (String × Nat)) (base : Sp) : Sp :=
+  scaleStepIn scale base footline.step
+
 mutual
 
 /-- The walk of `fillTemplate`: any body-carrying wrapper may hold the template's hole. -/
@@ -6678,10 +6682,10 @@ public def fillTemplate (template content : Array Inline) : Array Inline :=
   if template.isEmpty then content else (fillList content template.toList).toArray
 
 /-- The size a font template sets its content at: the outermost `.size`
-wrapper's step of the base, else the base. -/
-public def templateSize (base : Sp) (tpl : Array Inline) : Sp :=
+wrapper's step of the base on the document's ladder, else the base. -/
+public def templateSize (scale : List (String × Nat)) (base : Sp) (tpl : Array Inline) : Sp :=
   if let some (Inline.styled (Style.size s) _) := (tpl[0]? : Option Inline)
-  then scaleStep base s else base
+  then scaleStepIn scale base s else base
 
 /-- The `\baselineskip` each named size sets under a class option, in
 milli-points, from its size file's `\@setfontsize`. -/
@@ -6712,15 +6716,15 @@ private def sizeFileLeadings : Nat → List (String × Nat)
       ("huge", 52000), ("Huge", 63000)]
   | _ => []
 
-/-- The `\baselineskip` a named size sets: the size file's where the body is
-an option's size, else the engine's leading of the size. -/
+/-- The `\baselineskip` a named size of the engine's ladder sets: the size file's where the
+body is an option's size, else the engine's leading of the size. -/
 public def sizeFileLeading (body : Sp) (leading : Nat) (name : String) : Sp :=
   match displayOptions.find? fun o => Dim.pt o.1 == body || o.2 == body with
   | some (opt, _) =>
     match (sizeFileLeadings opt).lookup name with
     | some milli => Dim.pt 1 * (milli : Int) / 1000 * (leading : Int) / 1000
-    | none => leadingFor (scaleStep body name) leading
-  | none => leadingFor (scaleStep body name) leading
+    | none => leadingFor (scaleStepIn sizeScale body name) leading
+  | none => leadingFor (scaleStepIn sizeScale body name) leading
 
 /-- A block title's `\baselineskip`, from the size its font template sets outermost. -/
 public def blockTitleLeading (scale : List (String × Nat)) (body : Sp) (leading : Nat)
@@ -6733,8 +6737,8 @@ public def blockTitleLeading (scale : List (String × Nat)) (body : Sp) (leading
   | _ => .ofSp (leadingFor body leading)
 
 public theorem frameTitlePadding_exact :
-    frameTitlePadding.width.resolve (scaleStep slidesFontSize "large") 0 =
-      frameTitleStrut (scaleStep slidesFontSize "large") := by
+    frameTitlePadding.width.resolve (scaleStepIn sizeScale slidesFontSize "large") 0 =
+      frameTitleStrut (scaleStepIn sizeScale slidesFontSize "large") := by
   decide
 
 /-- The kernel's page models: how content maps onto the surfaces the paged backends draw. -/

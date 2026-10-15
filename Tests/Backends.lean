@@ -1238,7 +1238,8 @@ def deckCssChecks (ref : IO.Ref (List String)) : IO Unit := do
        has page "section.slide { border:")
 
   -- Each rule renders on one line, so the parse is line-local.
-  let rules := HtmlDoc.deckRules { body := "4.311vh", root := "3.568vh", leading := "1.200" }
+  let rules := HtmlDoc.deckRules
+    { body := "4.311vh", root := "3.568vh", leading := "1.200", scale := Ir.sizeScale }
     "453.543pt 255.118pt" 38 3
   let typed := rules.flatMap fun r => r.decls.map fun d => d.1 ++ ": " ++ d.2
   let emitted := ((HtmlDoc.emitDeckRules rules).splitOn "\n").flatMap fun l =>

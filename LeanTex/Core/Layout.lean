@@ -3775,7 +3775,8 @@ private def markBox (fs : FontSet) (sty : TextStyle) (around : Sp)
   let attr : Attribution := .noteMark num
   let idx := fs.lookup sty.slot sty.weight.css sty.italic
   let font := fs.get idx
-  let markSize := Ir.scaleStep around "scriptsize"
+  -- LaTeX's math script size (`\sf@size`), which a declared `\scriptsize` does not move.
+  let markSize := Ir.scaleStepIn Ir.sizeScale around "scriptsize"
   let raise := around * Ir.markRaise / 1000
   let mut gs : Array (Nat × Char × Sp) := #[]
   let mut w : Sp := 0
@@ -7126,17 +7127,6 @@ private def Spacing.Page.attachNotes (b : B) (notes : Array NoteBlock) : B :=
     (b.pendingNotes, b.notesH, b.notesDepth)
   { b with pendingNotes := acc.1, notesH := acc.2.1, notesDepth := acc.2.2 }
 
-/-- W0372: the note block and its mark's line reach below the floor even
-on a fresh page, so the note ships whole and the page is overrun. -/
-private def Spacing.Page.warnNoteOverrun (b : B) (y inkBelow : Sp) : B :=
-  let over := y + inkBelow - noteFloor b.bottom b.noteGap b.notesH b.noteHang
-  { b with diags := if b.notesH > 0 && over > 0 then
-      b.diags.push (Diag.of .W0372
-        "a footnote is taller than the text block; it overruns its page"
-        (help := "shorten the note, or raise the text height (\\page{ vmargin = ... })")
-        (detail := some s!"{over.toPtString}pt taller"))
-    else b.diags }
-
 private theorem attachNotes_empty_id (b : B) : b.attachNotes #[] = b := rfl
 
 private theorem attachNotes_mem (b : B) (ns : Array NoteBlock)
@@ -7641,6 +7631,30 @@ private def Spacing.Page.noteOverrun (b : B) (over : Sp) : B :=
         | some i => b.overruns.modify i fun (k, o, c) => (k, max o over, min c b.clearance)
         | none => b.overruns.push (origin, over, b.clearance)
       | _, _ => b.overruns }
+
+/-- What a band no break can help leaves past the page's floor, named: the note block's overrun
+(W0372), else ink past the page's shrink, which the ladder records within its clearance and
+W0358 names beyond it. -/
+private def Spacing.Page.warnOverrun (b : B) (y inkBelow : Sp) : B :=
+  let over := y + inkBelow - noteFloor b.bottom b.noteGap b.notesH b.noteHang
+  let beyond := over - b.pageShrink
+  let recorded := b.notesH == 0 && 0 < beyond && b.ladder && beyond ≤ b.clearance
+  let who := if b.frameBreak.isSome then s!"{frameWho b.curFrameLabel}: " else ""
+  let named : Option Diag :=
+    if b.notesH > 0 then
+      if over > 0 then some (Diag.of .W0372
+        "a footnote is taller than the text block; it overruns its page"
+        (help := "shorten the note, or raise the text height (\\page{ vmargin = ... })")
+        (detail := some s!"{over.toPtString}pt taller"))
+      else none
+    else if 0 < beyond && !recorded then some (Diag.of .W0358
+      "a box is taller than the text block; it overruns its page"
+      (span := b.lastSource <|> b.frameSource) (subject := b.curFrameLabel)
+      (help := "shrink the box, or raise the text height (\\page{ vmargin = ... })")
+      (detail := some s!"{who}{beyond.toPtString}pt taller"))
+    else none
+  { b with diags := (named.map b.diags.push).getD b.diags
+           overruns := if recorded then (b.noteOverrun beyond).overruns else b.overruns }
 
 /-- W0384: a frame not declared `[allowframebreaks]` is `over` taller than its page
 and continues; a marked frame records its step instead, and flow is silent. -/
@@ -8150,12 +8164,12 @@ public theorem title_bars_symmetric (skip prevDepth prevBelow : Int)
 public theorem bars_clear_descenders (body descMilli : Int)
     (hb : Dim.pt 1 ≤ body) -- 1 pt: the rhythm family's floor hypothesis, not a design value
     (hm : descMilli ≤ 1000) :
-    Ir.scaleStep body "LARGE" * descMilli / 1000
+    Ir.scaleStepIn Ir.sizeScale body "LARGE" * descMilli / 1000
       < 3 * Ir.rhythmQuantum body := by
   have hb' : (65536 : Int) ≤ body := hb
   have hL : ((Ir.sizeScale.lookup "LARGE").getD 1000 : Int) = 1728 := by decide
-  have hstep : Ir.scaleStep body "LARGE" = body * 1728 / 1000 := by
-    unfold Ir.scaleStep Ir.scaleStepIn
+  have hstep : Ir.scaleStepIn Ir.sizeScale body "LARGE" = body * 1728 / 1000 := by
+    unfold Ir.scaleStepIn
     rw [hL]
   rw [hstep]
   have ht : (0 : Int) ≤ body * 1728 / 1000 := by omega
@@ -8233,9 +8247,11 @@ private def Spacing.Page.fitWith (b : B) (place : B → Sp → Bool → Sp → B
     let y := stepY b + b.surfaceTop
     let overflow := y + inkBelow + b.surfaceBottom - bottom
     let above := b.pageShrink + b.skip.shrink
-    -- An opened page with nothing on it holds a line: a break would ship an empty frame page.
-    if overflow ≤ above ∨ b.noBreak ∨ (holdsBlank && b.cur.blank) then
+    if overflow ≤ above ∨ b.noBreak then
       place b y true (min overflow above)
+    -- An opened page with nothing on it holds a band: a break would ship an empty frame page.
+    else if holdsBlank && b.cur.blank then
+      settle (place b y true above) y (inkBelow + b.surfaceBottom)
     -- A frame the ladder stands overfull, as beamer sets it on its one page.
     else if b.overhangs (overflow - above) then
       (place b y true above).noteOverrun (overflow - above)
@@ -8253,7 +8269,7 @@ private def Spacing.Page.fitCommit (b : B) (mk : Sp → LineOut) (firstY stepY r
     (depth below : Sp) (rl : Bool) (inkBelow bottom : Sp)
     (notes : Array NoteBlock := #[]) : B :=
   b.fitWith (fun b y consume over => (b.commit (mk y) depth below rl consume over).attachNotes notes)
-    Spacing.Page.warnNoteOverrun firstY stepY retryY inkBelow bottom true
+    Spacing.Page.warnOverrun firstY stepY retryY inkBelow bottom true
 
 /-- TeX's interline rule for the first box below `\vspace*`'s zero
 rule, from the depth saved before the rule (latex.ltx `\@vspacer`). -/
@@ -8377,12 +8393,12 @@ private theorem sourceBound_commit {n : Nat} (b : B) (l : LineOut)
     · exact hl
   · simpa only [Spacing.Page.commit, Array.size_push] using congrArg (· + 1) hb.ledger
 
-private theorem sourceBound_warnNoteOverrun {n : Nat} (b : B) (y d : Sp)
-    (hb : b.SourceBound n) : (b.warnNoteOverrun y d).SourceBound n :=
-  hb.of_eq rfl rfl rfl rfl rfl
-
 private theorem sourceBound_noteOverrun {n : Nat} (b : B) (o : Sp)
     (hb : b.SourceBound n) : (b.noteOverrun o).SourceBound n :=
+  hb.of_eq rfl rfl rfl rfl rfl
+
+private theorem sourceBound_warnOverrun {n : Nat} (b : B) (y d : Sp)
+    (hb : b.SourceBound n) : (b.warnOverrun y d).SourceBound n :=
   hb.of_eq rfl rfl rfl rfl rfl
 
 private theorem sourceBound_fitCommit {n : Nat} (b : B) (mk : Sp → LineOut)
@@ -8391,20 +8407,22 @@ private theorem sourceBound_fitCommit {n : Nat} (b : B) (mk : Sp → LineOut)
     (b.fitCommit mk firstY stepY retryY depth below rl inkBelow bottom #[]).SourceBound n := by
   simp only [Spacing.Page.fitCommit, Spacing.Page.fitWith, attachNotes_empty_id]
   split
-  · exact sourceBound_warnNoteOverrun _ _ _ (sourceBound_commit b _ _ _ _ _ _ hb (hl _))
+  · exact sourceBound_warnOverrun _ _ _ (sourceBound_commit b _ _ _ _ _ _ hb (hl _))
   · split
     · exact sourceBound_commit b _ _ _ _ _ _ hb (hl _)
     · split
-      · exact sourceBound_noteOverrun _ _ (sourceBound_commit b _ _ _ _ _ _ hb (hl _))
-      · have hs := sourceBound_spillPage b
-          (stepY b + b.surfaceTop + inkBelow + b.surfaceBottom - bottom -
-            (b.pageShrink + b.skip.shrink)) hb
-        apply sourceBound_noteOverrun
-        split
-        · exact sourceBound_warnNoteOverrun _ _ _
-            (sourceBound_commit _ _ _ _ _ _ _ hs (hl _))
-        · exact sourceBound_warnNoteOverrun _ _ _
-            (sourceBound_commit _ _ _ _ _ _ _ hs (hl _))
+      · exact sourceBound_warnOverrun _ _ _ (sourceBound_commit b _ _ _ _ _ _ hb (hl _))
+      · split
+        · exact sourceBound_noteOverrun _ _ (sourceBound_commit b _ _ _ _ _ _ hb (hl _))
+        · have hs := sourceBound_spillPage b
+            (stepY b + b.surfaceTop + inkBelow + b.surfaceBottom - bottom -
+              (b.pageShrink + b.skip.shrink)) hb
+          apply sourceBound_noteOverrun
+          split
+          · exact sourceBound_warnOverrun _ _ _
+              (sourceBound_commit _ _ _ _ _ _ _ hs (hl _))
+          · exact sourceBound_warnOverrun _ _ _
+              (sourceBound_commit _ _ _ _ _ _ _ hs (hl _))
 
 private theorem sourceBound_keepInk {n : Nat} (b : B) (d : Sp)
     (hb : b.SourceBound n) : (b.keepInk d).SourceBound n :=
@@ -8480,7 +8498,7 @@ private theorem first_baseline_declared (fs : FontSet) (b : B) (x size : Sp)
   rw [hle]
   dsimp only
   simp only [Spacing.Page.displayState, Spacing.Page.keepInk]
-  simp [hf, Spacing.Page.commit, attachNotes_empty_id, Spacing.Page.warnNoteOverrun,
+  simp [hf, Spacing.Page.commit, attachNotes_empty_id, Spacing.Page.warnOverrun,
     Array.back?_push]
 
 private theorem placeLine_leaf_exact (fs : FontSet) (b : B) (x size : Sp)
@@ -8492,7 +8510,7 @@ private theorem placeLine_leaf_exact (fs : FontSet) (b : B) (x size : Sp)
   rw [hle]
   dsimp only
   simp only [Spacing.Page.displayState, Spacing.Page.keepInk]
-  simp [hf, Spacing.Page.commit, attachNotes_empty_id, Spacing.Page.warnNoteOverrun,
+  simp [hf, Spacing.Page.commit, attachNotes_empty_id, Spacing.Page.warnOverrun,
     Array.back?_push]
 
 private theorem placeLine_boxDepth_exact (fs : FontSet) (b : B) (x size : Sp)
@@ -9007,6 +9025,16 @@ public structure Spacing.Pending where
 
 private abbrev Acc := Spacing.Pending
 
+/-- A walk nested in `a` against its own right edge, on ops and owed glue of its own. -/
+private def Spacing.Pending.nested (a : Acc) (edge : Sp) : Acc :=
+  { a with measure := some edge, ops := #[], wantDefault := false, owed := #[], anchorAt := none
+           dispAlt := none }
+
+/-- `a` after a nested walk ended at `sub`: its ops after `a`'s, and every ledger the walk threads. -/
+private def Spacing.Pending.absorb (a sub : Acc) : Acc :=
+  { a with ops := a.ops ++ sub.ops, hyphCache := sub.hyphCache, diags := sub.diags
+           navEntries := sub.navEntries, leafNext := sub.leafNext, pictures := sub.pictures }
+
 /-- Claim the next `n` leaves for one block of set text: its first
 leaf, `none` when it owns none, and the counter past them. -/
 private def Spacing.Pending.leafRange (a : Acc) (n : Nat) : Acc × Option Nat :=
@@ -9422,14 +9450,14 @@ private def collectPara (r : Rd) (a : Acc)
 relating to the stroke weight of the text it cuts (Hochuli). -/
 private def headingRuleWeight (base : Sp) : Sp := base * 6 / 100
 
-/-- Heading display sizes at the page's body size, the type scale's steps (`Ir.headingSize`). -/
+/-- Heading display sizes at the page's body size, the steps of its ladder (`Ir.headingSize`). -/
 @[expose] public def sectionSize (geom : Geom) : Ir.HeadingLevel → Sp :=
-  Ir.headingSize geom.fontSize
+  Ir.headingSize geom.scale geom.fontSize
 
 public theorem scaleStep_monotone (base : Int)
     (hb : pt 1 ≤ base) : -- 1 pt floor: what strictness costs under integer division
     ∀ q ∈ Ir.sizeScale.zip Ir.sizeScale.tail,
-      Ir.scaleStep base q.1.1 < Ir.scaleStep base q.2.1 := by
+      Ir.scaleStepIn Ir.sizeScale base q.1.1 < Ir.scaleStepIn Ir.sizeScale base q.2.1 := by
   have hb' : (65536 : Int) ≤ base := hb
   intro q hq
   simp only [Ir.sizeScale, List.tail_cons, List.zip_cons_cons, List.zip_nil_right,
@@ -9446,17 +9474,19 @@ public theorem scaleStep_monotone (base : Int)
     | (show base * 1728 / 1000 < base * 2074 / 1000; omega)
     | (show base * 2074 / 1000 < base * 2488 / 1000; omega)
 
-public theorem heading_hierarchy (g : Geom)
+public theorem heading_hierarchy (g : Geom) (hs : g.scale = Ir.sizeScale)
     (hfs : pt 1 ≤ g.fontSize) : -- 1 pt floor: what strictness costs under integer division (scaleStep_monotone)
     sectionSize g 1 > sectionSize g 2 ∧ sectionSize g 2 ≥ g.fontSize := by
   have h12 := scaleStep_monotone g.fontSize hfs
     (("large", 1200), ("Large", 1440)) (by decide)
   have h01 := scaleStep_monotone g.fontSize hfs
     (("normalsize", 1000), ("large", 1200)) (by decide)
-  have e0 : Ir.scaleStep g.fontSize "normalsize" = g.fontSize := by
+  have e0 : Ir.scaleStepIn Ir.sizeScale g.fontSize "normalsize" = g.fontSize := by
     show g.fontSize * 1000 / 1000 = g.fontSize
     exact Int.mul_ediv_cancel _ (by decide)
   rw [e0] at h01
+  unfold sectionSize
+  rw [hs]
   exact ⟨h12, Int.le_of_lt h01⟩
 
 /-- Display type: headings, frame titles, section-page and standout
@@ -9531,7 +9561,7 @@ private def collectTitle (r : Rd) (a : Acc) (title : Array Inline)
       (leaf := leaf) (span := Struct.leafCountInlines title)
   | none =>
     collectDisplay r a title indent center
-      (Ir.titleSize r.geom.fontSize r.slides)
+      (Ir.titleSize r.geom.scale r.geom.fontSize r.slides)
       (baseStyle := { weight := .b }) (leaf := leaf) (span := Struct.leafCountInlines title)
 
 /-- Whether cell `(i, j)` lies inside a `\multicolumn`, which enters no single column's maximum. -/
@@ -10030,14 +10060,7 @@ private def collectTable (r : Rd) (a0 : Acc)
         let cell := row[j]!
         let strut := some (cellStrut r.geom.skips r.geom.scale size r.geom.leading cell)
         unless cell.isEmpty do
-          let sub := { a with
-            measure := some (x + measureW)
-            ops := #[]
-            wantDefault := false
-            owed := #[]
-            anchorAt := none
-            dispAlt := none }
-          let (sub, leaf) := sub.leafRange (Struct.leafCountInlines cell)
+          let (sub, leaf) := (a.nested (x + measureW)).leafRange (Struct.leafCountInlines cell)
           let span := Struct.leafCountInlines cell
           -- A natural cell its narrowed column cannot hold wraps as a browser's does.
           let nat := ((nats[i]?).bind (·[j]?)).getD 0
@@ -10070,12 +10093,7 @@ private def collectTable (r : Rd) (a0 : Acc)
             | .left =>
               collectPara rc sub cell x false size (baseStyle := { cellCode := web }) (leaf := leaf)
                 (span := span) (rowStrut := strut) (urlBreaks := false)
-          a := { a with
-            ops := a.ops ++ sub.ops
-            hyphCache := sub.hyphCache
-            diags := sub.diags
-            leafNext := sub.leafNext
-            pictures := sub.pictures }
+          a := a.absorb sub
         let closer : Op := if j + 1 == row.size then .colClose else .colNext
         a := { a with ops := a.ops.push closer }
       if row.isEmpty then
@@ -10736,7 +10754,7 @@ private def collectSection (r : Rd) (a : Acc) (level : Ir.HeadingLevel) (num : O
         collectDisplay r a (Ir.fillTemplate tpl title) indent false r.geom.fontSize
           (leaf := leaf) (span := span)
       | none =>
-        collectDisplay r a title indent false (Ir.scaleStep r.geom.fontSize "Large")
+        collectDisplay r a title indent false (Ir.scaleStepIn r.geom.scale r.geom.fontSize "Large")
           (baseStyle := { weight := .b }) (leaf := leaf) (span := span)
     let a := { a with fg := saved.1, ground := saved.2 }
     let thick := ((a.tokens.find? "progressheight").map
@@ -10751,7 +10769,7 @@ private def collectSection (r : Rd) (a : Acc) (level : Ir.HeadingLevel) (num : O
     -- The subsection title's strut ends the content box beamer centres (`Ir.sectionPageStrut`).
     let a := if area == .paper then
         { a with ops := a.ops.push (.skip
-          { width := Ir.sectionPageStrut r.geom.fontSize r.geom.leading - thick }) }
+          { width := Ir.sectionPageStrut r.geom.scale r.geom.fontSize r.geom.leading - thick }) }
       else a
     (a.pageBreak).pushOp .frameClose
   else
@@ -11844,7 +11862,7 @@ private def collectBoxClose (r : Rd) (done : Acc) (bodyBg : Option Ir.Color) : A
 /-- The abstract's heading word, generated as the HTML's `<h2>` is, in
 the section heading's style centred (`Ir.abstractHeadingStyle`). -/
 private def collectAbstractHead (r : Rd) (a : Acc) (indent : Sp) : Acc :=
-  let small := Ir.scaleStep r.geom.fontSize "small"
+  let small := Ir.scaleStepIn r.geom.scale r.geom.fontSize "small"
   let hst := Ir.abstractHeadingStyle r.styles
   let hcenter := hst.align != some .left && hst.align != some .right
   let rh := if hst.align == some .right
@@ -11887,9 +11905,9 @@ private def collectHeadlineBand (r : Rd) (a : Acc) : Acc :=
         collectDisplay rt a (Ir.fillTemplate tpl hl.title) 0 center r.geom.fontSize
       | none =>
         collectDisplay rt a hl.title 0 center
-          (Ir.scaleStep r.geom.fontSize "Huge") (baseStyle := { weight := .b })
+          (Ir.scaleStepIn r.geom.scale r.geom.fontSize "Huge") (baseStyle := { weight := .b })
     let a := if hl.author.isEmpty then a else
-      collectDisplay rt a hl.author 0 center (Ir.scaleStep r.geom.fontSize "Large")
+      collectDisplay rt a hl.author 0 center (Ir.scaleStepIn r.geom.scale r.geom.fontSize "Large")
     let a := if hl.institute.isEmpty then a else
       collectDisplay rt a hl.institute 0 center r.geom.fontSize
     let a := match bar with
@@ -11924,7 +11942,7 @@ private def collectFrameTitle (r : Rd) (a : Acc) (title : Array Inline)
     let a := { a with fg := bar.fg, ground := some barBg }
     let st := r.style "frametitle"
     let titleSize := match st.font with
-      | some tpl => Ir.templateSize r.geom.fontSize tpl
+      | some tpl => Ir.templateSize r.geom.scale r.geom.fontSize tpl
       | none => sectionSize r.geom 1
     -- moloch's bar spans the paper, the title inset from either edge (`Ir.frameTitleInset`).
     let inset := if (a.tokens.find? "frametitlepadding").isSome then
@@ -11950,7 +11968,8 @@ private def collectFrameTitle (r : Rd) (a : Acc) (title : Array Inline)
   | none =>
     let savedFg := a.fg
     let a := { a with fg := (Ir.Design.ofPalette a.pal).frameTitleFg }
-    let a := collectDisplay r a title 0 false (Ir.scaleStep r.geom.fontSize Ir.plainFrameTitleStep)
+    let a := collectDisplay r a title 0 false
+      (Ir.scaleStepIn r.geom.scale r.geom.fontSize Ir.plainFrameTitleStep)
       (baseStyle := { weight := .b }) (leaf := titleLeaf) (span := titleSpan)
       (inserted := true)
     { a with wantDefault := true, fg := savedFg }
@@ -11977,7 +11996,7 @@ private def setBandSlot (pats : Option Hyphen.Patterns) (fs : FontSet)
   -- A named size inside a slot is the body's step, as TeX's size commands are absolute.
   let (items, ds, cache, _) :=
     itemsOfInlines pats geom.fontSize xHeight fs
-      { style with scale := (Ir.scaleStep 1000 Ir.footline.step).toNat }
+      { style with scale := (Ir.footlineSize geom.scale 1000).toNat }
       content cache (.fixed .unattributed) imgs geom.textWidth geom.textHeight
       (ladder := geom.scale)
   let breaks := kp items geom.textWidth
@@ -12082,7 +12101,7 @@ private def collectSlots (r : Rd) (a : Acc) (slots : Array Ir.TitleSlot)
       | some (sl, i) =>
         let partSize (p : Ir.TitlePart) : Sp :=
           let explicit := p.size.map fun g => (r.resolve g).width
-          let templated := p.font.map fun tpl => Ir.templateSize r.geom.fontSize tpl
+          let templated := p.font.map fun tpl => Ir.templateSize r.geom.scale r.geom.fontSize tpl
           max 1 ((explicit <|> templated).getD r.geom.fontSize)
         let roleMetrics := sl.parts.zipIdx.toList.filterMap fun (p, k) =>
           p.size.map fun g =>
@@ -12215,19 +12234,8 @@ private def collectColumns (r : Rd) (a : Acc)
   | [] => a
   | (w, body) :: rest =>
     let wi := (w.resolve total).getD shareW
-    let sub := { a with
-      measure := some (x0 + wi)
-      ops := #[]
-      wantDefault := false
-      owed := #[]
-      anchorAt := none
-      dispAlt := none }
-    let sub := collectBlocks r sub body x0
-    let a := { a with
-      ops := a.ops ++ sub.ops ++ (if rest.isEmpty then #[] else #[Op.colNext])
-      hyphCache := sub.hyphCache
-      leafNext := sub.leafNext
-      pictures := sub.pictures }
+    let a := a.absorb (collectBlocks r (a.nested (x0 + wi)) body x0)
+    let a := if rest.isEmpty then a else a.pushOp .colNext
     collectColumns r a rest (x0 + wi + gutter) shareW gutter total
 
 /-- A standout frame's content: paragraphs centre and
@@ -12245,7 +12253,7 @@ private def collectStandout (r : Rd) (a : Acc)
           collectDisplay r a (Ir.fillTemplate tpl content) indent true r.geom.fontSize
             (leaf := leaf) (span := Struct.leafCountInlines content)
         | none =>
-          collectDisplay r a content indent true (Ir.scaleStep r.geom.fontSize "Large")
+          collectDisplay r a content indent true (Ir.scaleStepIn r.geom.scale r.geom.fontSize "Large")
             (baseStyle := { weight := .b }) (leaf := leaf) (span := Struct.leafCountInlines content)
       | _ => collectBlock r a blk indent
     collectStandout r (if rest.isEmpty || statefulBlock blk then a else a.wantGap)
@@ -12600,7 +12608,7 @@ private def collectBlock (r : Rd) (a : Acc)
       -- A title with no bar stands in beamer's default frametitle box.
       let box := if (Ir.Design.ofPalette a.pal).frametitle.isSome then none
         else
-          let size := Ir.scaleStep r.geom.fontSize Ir.plainFrameTitleStep
+          let size := Ir.scaleStepIn r.geom.scale r.geom.fontSize Ir.plainFrameTitleStep
           some (Ir.defaultFrameTitleBelow size r.geom.leading (r.xHeight * size / r.geom.fontSize))
       { a with ops := (a.ops.push .pin).push (.bodyOpen g box), wantDefault := false,
                frameTop := true }
@@ -14222,9 +14230,9 @@ private theorem census_commit (pick : Option Nat → Bool → Bool) (b : B) (l :
       Spacing.Page.census pick b ++ lineCensus pick l := by
   simp [Spacing.Page.census, pageCensus, Spacing.Page.commit, lineCensus, List.append_assoc]
 
-private theorem census_warnNoteOverrun (pick : Option Nat → Bool → Bool)
+private theorem census_warnOverrun (pick : Option Nat → Bool → Bool)
     (b : B) (y d : Sp) :
-    Spacing.Page.census pick (Spacing.Page.warnNoteOverrun b y d) = Spacing.Page.census pick b :=
+    Spacing.Page.census pick (Spacing.Page.warnOverrun b y d) = Spacing.Page.census pick b :=
   census_of_eq pick b _ rfl rfl
 
 private theorem census_noteOverrun (pick : Option Nat → Bool → Bool) (b : B) (o : Sp) :
@@ -14239,14 +14247,16 @@ private theorem census_fitCommit {n : Nat} (pick : Option Nat → Bool → Bool)
       Spacing.Page.census pick b ++ cs := by
   simp only [Spacing.Page.fitCommit, Spacing.Page.fitWith, attachNotes_empty_id]
   split
-  · rw [census_warnNoteOverrun, census_commit, hm]
+  · rw [census_warnOverrun, census_commit, hm]
   · split
     · rw [census_commit, hm]
     · split
-      · rw [census_noteOverrun, census_commit, hm]
-      · rw [census_noteOverrun]
-        split <;> rw [census_warnNoteOverrun, census_commit, hm,
-          census_spillPage pick b _ hb]
+      · rw [census_warnOverrun, census_commit, hm]
+      · split
+        · rw [census_noteOverrun, census_commit, hm]
+        · rw [census_noteOverrun]
+          split <;> rw [census_warnOverrun, census_commit, hm,
+            census_spillPage pick b _ hb]
 
 private theorem filter_zeroRule_chars (segs : Array Seg) :
     (segs.filter fun s => match s with | .rule w _ _ _ => w != 0 | _ => true).toList.flatMap
@@ -15232,7 +15242,7 @@ private theorem fitWith_noBreak (b : B) (place : B → Sp → Bool → Sp → B)
   repeat' split
   all_goals first
     | (simp [hp, hs, h, Spacing.Page.noteOverrun]; done)
-    | (exfalso; exact ‹¬(_ ∨ _ = true ∨ _)› (Or.inr (Or.inl h)))
+    | (exfalso; exact ‹¬(_ ∨ _ = true)› (Or.inr h))
 
 private theorem fitCommit_noBreak (b : B) (mk : Sp → LineOut)
     (firstY stepY retryY : B → Sp) (depth below : Sp) (rl : Bool)
@@ -15475,7 +15485,6 @@ private theorem stepStaged_noBreak (fs : FontSet) (imgs : Image.Store)
   all_goals (simp only [stepStaged, Id.run, Id, pure, Spacing.Page.openBody]; repeat' split)
   all_goals first
     | exact absurd rfl hs
-    | (exfalso; exact ‹¬(_ ∨ _ = true ∨ _)› (Or.inr (Or.inl h)))
     | (exfalso; exact ‹¬(_ ∨ _ = true)› (Or.inr h))
     | exact placeSlot_noBreak (h := h) ..
     | exact alignRow_pages_noBreak (h := h) ..
@@ -16230,11 +16239,11 @@ private theorem frameStep_commit (b : B) (l : LineOut) (depth below : Sp)
     FrameStep b (b.commit l depth below ruleLine consume overflow) :=
   FrameStep.of_eq rfl rfl
 
-private theorem frameStep_warnNoteOverrun (b : B) (y depth : Sp) :
-    FrameStep b (b.warnNoteOverrun y depth) :=
+private theorem frameStep_noteOverrun (b : B) (o : Sp) : FrameStep b (b.noteOverrun o) :=
   FrameStep.of_eq rfl rfl
 
-private theorem frameStep_noteOverrun (b : B) (o : Sp) : FrameStep b (b.noteOverrun o) :=
+private theorem frameStep_warnOverrun (b : B) (y depth : Sp) :
+    FrameStep b (b.warnOverrun y depth) :=
   FrameStep.of_eq rfl rfl
 
 private theorem frameStep_fitWith (b : B) (place : B → Sp → Bool → Sp → B)
@@ -16248,9 +16257,11 @@ private theorem frameStep_fitWith (b : B) (place : B → Sp → Bool → Sp → 
   · split
     · exact hp ..
     · split
-      · exact (hp ..).trans (frameStep_noteOverrun ..)
-      · refine FrameStep.trans ?_ (frameStep_noteOverrun ..)
-        split <;> exact (frameStep_spillPage b _).trans ((hp ..).trans (hs ..))
+      · exact (hp ..).trans (hs ..)
+      · split
+        · exact (hp ..).trans (frameStep_noteOverrun ..)
+        · refine FrameStep.trans ?_ (frameStep_noteOverrun ..)
+          split <;> exact (frameStep_spillPage b _).trans ((hp ..).trans (hs ..))
 
 private theorem frameStep_fitCommit (b : B) (mk : Sp → LineOut)
     (firstY stepY retryY : B → Sp) (depth below : Sp) (rl : Bool)
@@ -16258,7 +16269,7 @@ private theorem frameStep_fitCommit (b : B) (mk : Sp → LineOut)
     FrameStep b (b.fitCommit mk firstY stepY retryY depth below rl inkBelow bottom ns) :=
   frameStep_fitWith b _ _ firstY stepY retryY inkBelow bottom true
     (fun _ _ _ _ => (frameStep_commit ..).trans (frameStep_attachNotes ..))
-    fun _ _ _ => frameStep_warnNoteOverrun ..
+    fun _ _ _ => frameStep_warnOverrun ..
 
 private theorem frameStep_placeAnchor (fs : FontSet) (b : B) (h : AnchorRule) (shift : Sp)
     (paints : Bool) : FrameStep b (b.placeAnchor fs h shift paints) := by
@@ -16653,15 +16664,18 @@ private theorem reflowStep_commit (b : B) (l : LineOut) (depth below : Sp)
     ReflowStep b (b.commit l depth below ruleLine consume overflow) :=
   ReflowStep.of_eq rfl rfl
 
-private theorem reflowStep_warnNoteOverrun (b : B) (y depth : Sp) :
-    ReflowStep b (b.warnNoteOverrun y depth) := by
-  simp only [Spacing.Page.warnNoteOverrun]
-  split
-  · exact ⟨rfl, fun _ h => Array.mem_push.mpr (Or.inl h)⟩
-  · exact ReflowStep.refl b
-
 private theorem reflowStep_noteOverrun (b : B) (o : Sp) : ReflowStep b (b.noteOverrun o) :=
   ReflowStep.of_eq rfl rfl
+
+private theorem mem_pushed {α : Type} (xs : Array α) (o : Option α) (x : α) (h : x ∈ xs) :
+    x ∈ (o.map xs.push).getD xs := by
+  cases o with
+  | none => exact h
+  | some _ => exact Array.mem_push.mpr (Or.inl h)
+
+private theorem reflowStep_warnOverrun (b : B) (y depth : Sp) :
+    ReflowStep b (b.warnOverrun y depth) :=
+  ⟨rfl, fun d h => mem_pushed b.diags _ d h⟩
 
 private theorem reflowStep_fitWith (b : B) (place : B → Sp → Bool → Sp → B)
     (settle : B → Sp → Sp → B) (firstY stepY retryY : B → Sp) (inkBelow bottom : Sp)
@@ -16674,9 +16688,11 @@ private theorem reflowStep_fitWith (b : B) (place : B → Sp → Bool → Sp →
   · split
     · exact hp ..
     · split
-      · exact (hp ..).trans (reflowStep_noteOverrun ..)
-      · refine ReflowStep.trans ?_ (reflowStep_noteOverrun ..)
-        split <;> exact (reflowStep_spillPage b _).trans ((hp ..).trans (hs ..))
+      · exact (hp ..).trans (hs ..)
+      · split
+        · exact (hp ..).trans (reflowStep_noteOverrun ..)
+        · refine ReflowStep.trans ?_ (reflowStep_noteOverrun ..)
+          split <;> exact (reflowStep_spillPage b _).trans ((hp ..).trans (hs ..))
 
 private theorem reflowStep_fitCommit (b : B) (mk : Sp → LineOut)
     (firstY stepY retryY : B → Sp) (depth below : Sp) (rl : Bool)
@@ -16684,7 +16700,7 @@ private theorem reflowStep_fitCommit (b : B) (mk : Sp → LineOut)
     ReflowStep b (b.fitCommit mk firstY stepY retryY depth below rl inkBelow bottom ns) :=
   reflowStep_fitWith b _ _ firstY stepY retryY inkBelow bottom true
     (fun _ _ _ _ => (reflowStep_commit ..).trans (reflowStep_attachNotes ..))
-    fun _ _ _ => reflowStep_warnNoteOverrun ..
+    fun _ _ _ => reflowStep_warnOverrun ..
 
 private theorem reflowStep_placeAnchor (fs : FontSet) (b : B) (h : AnchorRule) (shift : Sp)
     (paints : Bool) : ReflowStep b (b.placeAnchor fs h shift paints) := by
@@ -17369,7 +17385,7 @@ public def runPost (sh : Shipped) : Out := Id.run do
   -- Margin line numbers: muted furniture at the footnotesize step, left of the measure.
   let lineNumbersOn := doc.lineNumbersOn
   let lineModulo := doc.lineModulo
-  let numSize := Ir.scaleStep geom.fontSize "footnotesize"
+  let numSize := Ir.scaleStepIn geom.scale geom.fontSize "footnotesize"
   let numRight := match doc.page.furnitureGap with
     | some g => geom.hmargin - g
     | none => geom.hmargin / 2
@@ -18438,7 +18454,7 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
   let footAllowed := doc.chromeAllowed
   let plainFoot := doc.foot.isNone && doc.pageNumbersOn
   -- The chrome footer's size is the footline's step (`Ir.footline`) and its colour a palette key.
-  let footSize := Ir.scaleStep geom.fontSize Ir.footline.step
+  let footSize := Ir.footlineSize geom.scale geom.fontSize
   -- One `furnitureBand` per side from one ink and gap (`furniture_symmetric`).
   let runInk := scale font.ascent + scale (-font.descent)
   let corr := scale (-font.descent)

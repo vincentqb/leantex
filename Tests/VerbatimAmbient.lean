@@ -58,8 +58,8 @@ def verbatimAmbientChecks (ref : IO.Ref (List String)) : IO Unit := do
        ((slot, 400, true), f), ((slot, 700, true), f)]).toArray }
   let geom : Layout.Geom := {}
   let base := geom.fontSize
-  let footStep := Ir.scaleStep base "footnotesize"
-  let smallStep := Ir.scaleStep base "small"
+  let footStep := Ir.scaleStepIn Ir.sizeScale base "footnotesize"
+  let smallStep := Ir.scaleStepIn Ir.sizeScale base "small"
 
   t "verbatim ambient: a top-level bare verbatim inherits normalsize"
     ((firstListingSpec (dvDoc "" "\\begin{verbatim}\nx\n\\end{verbatim}")).map (·.fontSize)

@@ -78,6 +78,8 @@ private def surfaceOf (pal : Palette) : Color :=
 private structure UseCx where
   base : Sp
   size : Sp
+  /-- The document's size ladder, on which a named size resolves (`Ir.PageSpec.scale`). -/
+  scale : List (String × Nat)
   /-- Inside overlay content some handout page covers. -/
   covering : Bool := false
   slides : Bool := false
@@ -126,8 +128,8 @@ private def UseCx.style (cx : UseCx) : Style → UseCx
   | .medium => { cx with bold := false }
   | .series w => { cx with bold := w.isBold }
   | .normal => { cx with bold := false }
-  | .size n => match sizeScale.lookup n with
-    | some k => { cx with size := cx.base * k / 1000 }
+  | .size n => match cx.scale.lookup n with
+    | some _ => { cx with size := Ir.scaleStepIn cx.scale cx.base n }
     | none => cx
   | .fontSize size _ =>
     -- premise: contrastChecks — a font-relative size keeps the ordinary threshold
@@ -171,17 +173,18 @@ private def UseAcc.step (acc : UseAcc) (spec : Ir.OverlaySpec) : UseAcc :=
     { acc with pendingPals := pushUnique acc.pendingPals acc.pal }
   else acc
 
-/-- The context a heading's title sets: bold, at the type scale's size for its level. -/
-private def headingCx (base : Sp) : Ir.HeadingLevel → UseCx
-  | 0 => { base, size := scaleStep base "LARGE"
-           bold := true }
-  | l => { base, size := Ir.headingSize base l, bold := true }
+/-- The context a heading's title sets: bold, at its level's size on the document's ladder. -/
+private def headingCx (scale : List (String × Nat)) (slides : Bool) (base : Sp) :
+    Ir.HeadingLevel → UseCx
+  | 0 => { base, scale, size := Ir.titleSize scale base slides, bold := true }
+  | l => { base, scale, size := Ir.headingSize scale base l, bold := true }
 
-private theorem contrast_judges_what_layout_sets (base : Sp) :
-    ∀ l : Ir.HeadingLevel, l ≠ .title →
-      (headingCx base l).size = Ir.headingSize base l
-  | .title, h => absurd rfl h
-  | .h1, _ | .h2, _ | .h3, _ | .h4, _ | .h5, _ | .h6, _ => rfl
+private theorem contrast_judges_what_layout_sets (scale : List (String × Nat)) (slides : Bool)
+    (base : Sp) :
+    (headingCx scale slides base .title).size = Ir.titleSize scale base slides ∧
+      ∀ l : Ir.HeadingLevel, l ≠ .title →
+        (headingCx scale slides base l).size = Ir.headingSize scale base l :=
+  ⟨rfl, fun l h => by cases l <;> first | exact absurd rfl h | rfl⟩
 
 mutual
 
@@ -269,7 +272,7 @@ private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
     let title := match st.font with
       | some tpl => Ir.fillTemplate tpl title
       | none => title
-    let hc := { headingCx cx.base level with cur := cx.cur, styles := cx.styles }
+    let hc := { headingCx cx.scale cx.slides cx.base level with cur := cx.cur, styles := cx.styles }
     let (hc, acc) := if cx.slides && level == 1 then
       match Design.declared? acc.pal .sectionTitleInk with
       | some c => ({ hc with cur := some (some (.role .sectionTitleInk), c, acc.runs) },
@@ -440,7 +443,8 @@ private def docWalk (doc : Doc) (sitesOnly : Bool := false) : UseAcc :=
     | .framefoot xs => !xs.isEmpty
     | _ => false
   let cx : UseCx :=
-    { base := doc.page.fontSize, size := doc.page.fontSize, sitesOnly, styles := doc.styles
+    { base := doc.page.fontSize, size := doc.page.fontSize, scale := doc.page.scale, sitesOnly
+      styles := doc.styles
       slides := stageOf doc
       chromeFoot := doc.docClass.record.chrome && doc.foot.isNone &&
         (doc.chrome.hasFooter || hasFrameFoot) }
@@ -452,13 +456,14 @@ private def docWalk (doc : Doc) (sitesOnly : Bool := false) : UseAcc :=
 
 /-- The body walk's uses plus the running heads, feet and chrome footer. -/
 private def docUses (doc : Doc) (walk : UseAcc) : UseAcc := Id.run do
-  let base : UseCx := { base := doc.page.fontSize, size := doc.page.fontSize, slides := stageOf doc }
+  let base : UseCx := { base := doc.page.fontSize, size := doc.page.fontSize, scale := doc.page.scale
+                        slides := stageOf doc }
   let mut acc := { walk with pal := doc.palette }
   for pal in walk.footPals do
     let look := (Design.ofPalette pal).footline
     let key : ColorRef := if (Design.declared? pal .muted).isSome then .role .muted else .role .ink
     let cx := { base with
-      size := Ir.scaleStep doc.page.fontSize Ir.footline.step
+      size := Ir.footlineSize doc.page.scale doc.page.fontSize
       ground := look.bar, groundName := look.bar.map (fun _ => "the footline")
       groundRole := look.bar.map fun _ => .footBand }
     acc := { acc with pal := pal }

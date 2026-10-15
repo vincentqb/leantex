@@ -15452,7 +15452,6 @@ private def beginDoc (file : String) (raws : Array Raw) (picPre : String)
 
 private def prepareStyledBody (file : String) (decls : Array PDecl)
     (body trailing : Array Raw) (s : PreState) : EM DocBodyPlan := do
-  let s ← applyRefusedSizeLadder s
   let mut ctx := s.ctx
   let docClass := s.docClass
   let sawClass := s.sawClass
@@ -15517,6 +15516,8 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
     | none =>
       if let some d := record.fontSize then
         page := { page with fontSize := d }
+  -- A declared size is absolute, so its step is read against the body size the class settles.
+  page := (← applyRefusedSizeLadder { s with page }).page
   if page.parskip.isNone then
     if let some g := record.parskip then
       page := { page with parskip := some g }

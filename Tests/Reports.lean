@@ -38,6 +38,9 @@ import Tests.HtmlTokens
 import Tests.HtmlContained
 import Tests.Settings
 import Tests.Redefine
+import Tests.NestedLedgers
+import Tests.DeclaredLadder
+import Tests.PageOverrun
 import Tests.Images
 import Tests.SvgImages
 import Tests.SvgTools
@@ -1644,7 +1647,14 @@ def reports : List Report := [
     accept := ["six of the guard's assertions fail at bcb532b0 before the fix: the io lines' words and semicolons, the body-local keywords, the next-line and comment-line step, the braced and zero steps, a next-line bracket holding no step, and the next-line float placement",
       "the first review's twelve guards, nine in the reading checks and three over the label's face, fail at b2e42c6b with only the guards added: a step named in its words, a spaced or zero-led step numbering every line, a function keyword unknown in the next algorithm, a declared io word absent from the font census, a figure's next-line placement and a table's after a comment line set as text, a float's second bracket swallowed, a next-line empty placement set as text, a theorem's next-line note set as text, a list's next-line options refused before its first item, and the label's face missing from both artifacts, the PDF refused",
       "the second review's five guards fail at 182af134 with only the guards added: a bracket opening a float's spliced centre taken as its placement and dropped, a placement's letters standing apart set as text, an io keyword without braces refusing the build, a frame's, columns' and minipage's options on the next line set as ink or refused, and the label's replaced glyph reported with no site"]
-    state := .guarded "bcb532b0" .before .author }
+    state := .guarded "bcb532b0" .before .author },
+  { id := "R186", date := "2026-10-15"
+    what := "a column's or a minipage's diagnostics were dropped, so a picture wider than its column and a list nested too deep inside one went unnamed and a menu inside a minipage left the outline; a box taller than its page on a page holding nothing else overran it silently, an untitled frame's and a flow page's alike; and a size a document declared for a named step reached inline text alone, its headings, frame titles, standout, footline and stylesheet kept the ten-point steps, and the contrast judge read the footline there too"
+    pins := [check% Tests.NestedLedgers.checks, check% Tests.DeclaredLadder.checks,
+      check% Tests.PageOverrun.checks]
+    accept := ["seventeen of the guards' assertions fail at 3c258580 before the fix, the guards alone added: a list nested five deep goes unnamed in a minipage, in the second of two and in a beamer column; a picture wider than its column or its minipage is unnamed and a minipage's menu misses the outline; a heading, a twelve-point article's heading, a plain frame title and a standout set at the ten-point steps against the declared ones, in the page and the stylesheet, as does the footline; and an untitled frame's rule, a titled frame's continued one and a flow page's rule taller than the text block, the first one opening the document, are named by nothing",
+      "the corpus built by this tree and its parent: every PDF and HTML byte-identical and every run's diagnostics the same; a declared-ladder probe's heading sets at the declared 16 pt, as lualatex sets it, a visible change on the page and the screen, and the overrun and column probes ship identical bytes with their losses named"]
+    state := .guarded "3c258580" .before .author }
 ]
 
 /-- The reports guarded but never seen failing, a count held in both directions. -/

@@ -24,7 +24,7 @@ def titleInsetChecks (ref : IO.Ref (List String)) : IO Unit := do
       "\\begin{document}\n\\begin{frame}{Alpha words}\nKilo words.\n\\end{frame}\n\\end{document}\n")
     let out := layoutOf fira doc (Layout.Geom.ofPage doc.page)
     let title := ((out.pages[0]?.map (·.lines)).getD #[]).find? fun l => hasStr (lineText l) "Alpha"
-    let inset := Ir.frameTitleInset (Ir.scaleStep doc.page.fontSize step)
+    let inset := Ir.frameTitleInset (Ir.scaleStepIn Ir.sizeScale doc.page.fontSize step)
     t s!"title inset {step}: the deck elaborates clean" (ds.all (·.severity != .error))
     t s!"title inset {step}: the title starts the bar's inset from the paper's left edge"
       (title.map (·.x) == some inset)
@@ -118,7 +118,7 @@ def titleOpeningChecks (ref : IO.Ref (List String)) : IO Unit := do
   let css := treeCssList "" head.toList
   -- The box below the title's baseline in the title's em and ex at its step, each number the IR's.
   let below := Ir.defaultFrameTitleBelow 1000 doc.page.leading 0
-  let step := Ir.scaleStep 1000 Ir.plainFrameTitleStep
+  let step := Ir.scaleStepIn Ir.sizeScale 1000 Ir.plainFrameTitleStep
   let boxDecl := (cssBlocksFor css "section.slide:not(.title-page):not(.titlebar):has(> header)").findSome?
     (cssProperty · "--frame-title-below")
   t "title opening: the web title trims to its baseline and the body opens below beamer's box"

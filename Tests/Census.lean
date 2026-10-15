@@ -51,7 +51,7 @@ here, where lineno's default is not (the recorded divergence)",
    ("the numbers set at the footnotesize step, right-aligned with the \
 undeclared column hanging from half the margin",
      (margin.toList.all fun ml => ml.toList.all fun m =>
-       m.size == Ir.scaleStep geom.fontSize "footnotesize" &&
+       m.size == Ir.scaleStepIn Ir.sizeScale geom.fontSize "footnotesize" &&
        m.x + m.width == geom.hmargin / 2) &&
      margin.toList.any (!·.isEmpty))]
 
@@ -675,14 +675,14 @@ def censusRows2 :
     ("the frame-title bar fills", (c[2]?.map fun p => decide (p.fills ≥ 1)).getD false),
     -- moloch's frametitle bar: a full-width fill, `2·pad + strut` tall at `\large`.
     ("the frame-title bar is moloch's box: 2·pad + strut at the title step",
-      let titleSize := Ir.scaleStep geom.fontSize "large"
+      let titleSize := Ir.scaleStepIn Ir.sizeScale geom.fontSize "large"
       let pad := Ir.frameTitlePadding.width.resolve titleSize 0
       let strut := Ir.frameTitleStrut titleSize
       let h := Layout.frameBarHeight pad (pad + strut) 0
       (c[2]?.map fun p => p.fillRects.any fun (x, y, w, fh) =>
         x == 0 && y == 0 && w == geom.pageW && fh == h).getD false),
     ("the frame title's baseline stands one pad and one strut below the page top",
-      let titleSize := Ir.scaleStep geom.fontSize "large"
+      let titleSize := Ir.scaleStepIn Ir.sizeScale geom.fontSize "large"
       lineYOf c 2 "A theme is data" ==
         some (Ir.frameTitlePadding.width.resolve titleSize 0 + Ir.frameTitleStrut titleSize)),
     ("the covered step dims the alert and example beats in place",

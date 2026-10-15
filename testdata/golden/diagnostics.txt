@@ -682,7 +682,7 @@
 ⚠ [W0357] - \def
   '\def' with a delimited parameter text is a TeX scanning program; the definition is skipped
   suggestion: \define \name(...) {body} declares typed commands
-── W0358 (degraded) a float taller than the text block overruns its page
+── W0358 (degraded) a float or box taller than the text block overruns its page
 ⚠ [W0358]
   a figure or table is taller than the text block; it overruns its page
   289.409pt taller

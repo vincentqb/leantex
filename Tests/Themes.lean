@@ -727,7 +727,7 @@ def chromeFooterChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
   t "chrome deck: a stepped frame's pages share one footer"
     (out.pages[2]?.bind (·.foot) == out.pages[3]?.bind (·.foot))
   let font := oneFace.body
-  let footSize := Ir.scaleStep geom0.fontSize Ir.footline.step
+  let footSize := Ir.footlineSize Ir.sizeScale geom0.fontSize
   let descent : Dim.Sp := (-font.descent) * geom0.fontSize / (font.unitsPerEm : Int)
   -- A flat digit's band has no depth: its baseline stands moloch's closing `\vskip4pt` above the paper's edge.
   let footY := Layout.footBaseline geom0.pageH 0

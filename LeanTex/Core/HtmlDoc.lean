@@ -1574,9 +1574,9 @@ private def slideBorderPx : Nat := 1
 /-- The deck's safe area, 6vmin by default: the middle of the 5–7% Keynote's themes keep clear. -/
 private def safeareaVar : String := "var(--safearea, 6vmin)"
 
-/-- A named size step as a CSS factor, read through `Ir.scaleStep`. -/
-private def stepFactor (name : String) : String :=
-  milliFactor (Ir.scaleStep (1000 : Dim.Sp) name).toNat
+/-- A named size step of the document's ladder as a CSS factor, read through `Ir.scaleStepIn`. -/
+private def stepFactor (scale : List (String × Nat)) (name : String) : String :=
+  milliFactor (Ir.scaleStepIn scale (1000 : Dim.Sp) name).toNat
 
 /-- A standout frame's size step, `\Large`. -/
 private def standoutStep : String := "Large"
@@ -1584,7 +1584,7 @@ private def standoutStep : String := "Large"
 /-- The tallest type a footline band's slots set, per mille of the band's own step. -/
 private def footCapDecl (scale : List (String × Nat)) (band : Array Ir.BandSlot) :
     List String :=
-  let step := (Ir.scaleStepIn scale 1000 Ir.footline.step).toNat
+  let step := (Ir.footlineSize scale 1000).toNat
   let sizeOf (m : Nat) (x : Inline) : Nat := match x with
     | .styled (.size n) _ => max m (Ir.scaleStepIn scale 1000 n).toNat
     | _ => m
@@ -2190,8 +2190,8 @@ private def footBoxDecls (page : PageSpec) : Option (Sp × Sp) → List String
 /-- The frame title's size step: the `frametitle` font template's, else Large. -/
 private def frameTitleStep (doc : Doc) : String :=
   match (doc.styles.find? "frametitle").bind (·.font) with
-  | some tpl => milliFactor (Ir.templateSize (1000 : Dim.Sp) tpl).toNat
-  | none => stepFactor "Large"
+  | some tpl => milliFactor (Ir.templateSize doc.page.scale (1000 : Dim.Sp) tpl).toNat
+  | none => stepFactor doc.page.scale "Large"
 
 /-- moloch's frame-title box on the stage, as the PDF builds it. -/
 private def frameTitleStrutCss (hdr : String := "section.slide > header") : String :=
@@ -2204,13 +2204,13 @@ private def frameTitleStrutCss (hdr : String := "section.slide > header") : Stri
 /-- moloch's footline (beamerouterthememoloch.sty), standing on the stage's bottom edge. -/
 private def footlineCss (page : PageSpec) : String :=
   let raise := stageVh page Ir.footline.raise
-  let step := milliFactor (Ir.scaleStepIn page.scale 1000 Ir.footline.step).toNat
+  let step := milliFactor (Ir.footlineSize page.scale 1000).toNat
   "section.slide > footer.slide-foot { position: relative; order: 1;\n" ++
   s!"  margin: 0 calc(-1 * {safeareaVar}); line-height: 0;\n" ++
   "  font-weight: var(--ltx-body-weight, normal);\n" ++
   s!"  color: {roleRef .footInk}; background: {roleRefOr .footBand "transparent"}; }\n" ++
   s!"section.slide.standout > footer.slide-foot \{ font-size: calc({step}em / \
-{stepFactor standoutStep}); }\n" ++
+{stepFactor page.scale standoutStep}); }\n" ++
   "footer.slide-foot::before { content: \"\"; display: inline-block;\n" ++
   s!"  height: calc(var(--foot-h, var(--foot-cap, 1) * 1cap) + var(--foot-d, 0px) + {raise}); }\n" ++
   s!"footer.slide-foot > .band-left \{ position: absolute; left: {stageVh page Ir.footline.left};\n" ++
@@ -2239,7 +2239,7 @@ public def themeCss (doc : Doc)
     s!"{hdr} \{ background: {roleRef .frameTitleBar};\n" ++
     s!"  color: {roleRef .frameTitleInk};\n" ++
     -- the bar sets at the title's step, so `frametitlepadding` resolves at the title's size
-    s!"  font-size: {stepFactor "Large"}rem;\n" ++
+    s!"  font-size: {stepFactor doc.page.scale "Large"}rem;\n" ++
     s!"  margin: -{slidePadV} -{slidePadH} 0;\n" ++
     s!"  padding: var(--frametitlepadding, {quantaRem 1}) {slidePadH};\n" ++
     s!"  border-radius: {slideRadiusPx - slideBorderPx}px {slideRadiusPx - slideBorderPx}px 0 0; }\n" ++
@@ -2283,7 +2283,7 @@ public def themeCss (doc : Doc)
       "section.slide:not(.title-page):not(.titlebar) > header h2 \
 { text-box: trim-end text alphabetic; }\n" ++
       s!"section.slide:not(.title-page):not(.titlebar):has(> header) \{ --frame-title-below: \
-calc({stepFactor Ir.plainFrameTitleStep} * \
+calc({stepFactor doc.page.scale Ir.plainFrameTitleStep} * \
 ({decMilli (Ir.defaultFrameTitleBelow 1000 doc.page.leading 0)}em - 1ex)); }\n"
      else "") ++
     (if declares .frameTitleBar then barRules "section.slide.titlebar > header" else "")) ++
@@ -2338,7 +2338,7 @@ calc({stepFactor Ir.plainFrameTitleStep} * \
     -- moloch's section page closes on the subsection title's strut below its bar
     (if doc.chromeAllowed then
       s!"section.section-page::after \{ content: \"\"; flex: none; \
-height: calc({decMilli (Ir.sectionPageStrut 1000 doc.page.leading)}em - var(--progressheight, 1pt)); }\n"
+height: calc({decMilli (Ir.sectionPageStrut doc.page.scale 1000 doc.page.leading)}em - var(--progressheight, 1pt)); }\n"
      else "") ++
     -- the deck's progress hairline, scroll-driven where supported, screen only
     (if doc.docClass == .slides && d.progress.isSome then
@@ -2360,7 +2360,7 @@ to { transform: scaleX(1) } }\n" ++
         | _ => false) then
     footlineCss doc.page ++
     -- a named size inside a slot is the body's step, as TeX's size commands are absolute
-    (let step := (Ir.scaleStepIn doc.page.scale 1000 Ir.footline.step).toNat
+    (let step := (Ir.footlineSize doc.page.scale 1000).toNat
      String.join (doc.page.scale.map fun (name, k) =>
        s!"footer.slide-foot .size-{name} \{ font-size: \
 {milliFactor (k * 1000 / max step 1)}em; }\n")) else "")
@@ -2785,8 +2785,9 @@ private def tokenVars (cfg : Config) (doc : Doc) (roles : List Ir.Role)
        | none => [])
   String.intercalate "\n" (palette ++ tokens ++ fonts)
 
-/-- One scale step as a CSS size, from `Ir.sizeScale`. -/
-private def scaleSize (name : String) (unit : String) : String := stepFactor name ++ unit
+/-- One step of the document's ladder as a CSS size. -/
+private def scaleSize (scale : List (String × Nat)) (name : String) (unit : String) : String :=
+  stepFactor scale name ++ unit
 
 /-- The leading a named size step sets, as a unitless CSS line height in milli. -/
 @[expose] public def stepLineHeightMilli (skips : List (String × Nat)) (factor : Nat)
@@ -2996,6 +2997,8 @@ public structure DeckType where
   body : String
   root : String
   leading : String
+  /-- The document's size ladder, on which the deck's heading steps resolve. -/
+  scale : List (String × Nat)
 
 /-- The deck's base screen rules, which no feature gates. -/
 private def deckBase (ty : DeckType) : List DeckRule :=
@@ -3015,17 +3018,17 @@ private def deckBase (ty : DeckType) : List DeckRule :=
     { selector := [.lit "section.section-page"]
       decls := [("justify-content", "center"), ("align-items", "center")]
       part := .stage },
-    { selector := [.lit "h1"], decls := [("font-size", scaleSize "LARGE" "em")]
+    { selector := [.lit "h1"], decls := [("font-size", scaleSize ty.scale "LARGE" "em")]
       part := .stage },
-    { selector := [.lit "h2"], decls := [("font-size", scaleSize "Large" "em")]
+    { selector := [.lit "h2"], decls := [("font-size", scaleSize ty.scale "Large" "em")]
       part := .stage },
-    { selector := [.lit "h3"], decls := [("font-size", scaleSize "large" "em")]
+    { selector := [.lit "h3"], decls := [("font-size", scaleSize ty.scale "large" "em")]
       part := .stage },
     -- the band keeps its title and padding even when the body overflows
     { selector := [.lit "section.slide > header"]
       decls := [("flex-shrink", "0")], part := .stage },
     { selector := [.lit "section.slide > header h2"]
-      decls := [("font-size", scaleSize "Large" "em")], part := .stage },
+      decls := [("font-size", scaleSize ty.scale "Large" "em")], part := .stage },
     -- the root size the sheet's rem gaps read: the stage's rhythm unit
     { selector := [.lit "html"], decls := [("font-size", ty.root)], part := .stage },
     -- a listing on the stage takes no padding or ground of its own, as on the page
@@ -3610,16 +3613,16 @@ private theorem deckBase_cases {P : DeckRule → Prop} {v : DeckType}
     (h7 : P { selector := [.lit "section.section-page"]
               decls := [("justify-content", "center"), ("align-items", "center")]
               part := .stage })
-    (h8 : P { selector := [.lit "h1"], decls := [("font-size", scaleSize "LARGE" "em")]
+    (h8 : P { selector := [.lit "h1"], decls := [("font-size", scaleSize v.scale "LARGE" "em")]
               part := .stage })
-    (h9 : P { selector := [.lit "h2"], decls := [("font-size", scaleSize "Large" "em")]
+    (h9 : P { selector := [.lit "h2"], decls := [("font-size", scaleSize v.scale "Large" "em")]
               part := .stage })
-    (h10 : P { selector := [.lit "h3"], decls := [("font-size", scaleSize "large" "em")]
+    (h10 : P { selector := [.lit "h3"], decls := [("font-size", scaleSize v.scale "large" "em")]
                part := .stage })
     (h11 : P { selector := [.lit "section.slide > header"]
                decls := [("flex-shrink", "0")], part := .stage })
     (h12 : P { selector := [.lit "section.slide > header h2"]
-               decls := [("font-size", scaleSize "Large" "em")], part := .stage })
+               decls := [("font-size", scaleSize v.scale "Large" "em")], part := .stage })
     (h13 : P { selector := [.lit "html"], decls := [("font-size", v.root)], part := .stage })
     (h14 : P { selector := [.lit "pre"], decls := [("padding", "0"), ("background", "none")],
                part := .stage }) :
@@ -4030,7 +4033,8 @@ private def deckType (page : PageSpec) : DeckType :=
   { body := s!"{milliFactor (deckStageMilli page.fontSize page.height).toNat}vh"
     root := s!"{milliFactor (deckRootMilli page.fontSize page.height).toNat}vh"
     leading := milliFactor
-      (stepLineHeightMilli page.skipScale page.leading page.fontSize "normalsize" 1000) }
+      (stepLineHeightMilli page.skipScale page.leading page.fontSize "normalsize" 1000)
+    scale := page.scale }
 
 public theorem image_share_agrees (l : Image.Len) (iW iH textW textH stage : Int)
     (hs : 0 < stage) :
@@ -4302,7 +4306,7 @@ private def slideCss (doc : Doc) : String :=
     s!"* + section.slide \{ margin-top: {slidePadV}; }\n"
   -- inside this split, so the deck's screen override stands after it
   let headerH2 :=
-    s!"section.slide > header h2 \{ font-size: {scaleSize "Large" "rem"}; }\n"
+    s!"section.slide > header h2 \{ font-size: {scaleSize doc.page.scale "Large" "rem"}; }\n"
   if doc.docClass == .slides then
     let maxSteps := doc.body.foldl (fun n b => max n (Ir.frameSteps b)) 1
     -- the covered shade is the PDF cover's own fraction (`Ir.Design.cover`)
@@ -4471,11 +4475,11 @@ public def baseRules (doc : Doc) (pairs : List (Nat × Nat) := []) : String :=
   s!"  line-height: {milliFactor Ir.leadingMilli};\n" ++
   "  text-wrap: balance;\n" ++
   "}\n" ++
-  s!"h1 \{ font-size: {scaleSize "LARGE" "rem"}; }\n" ++
-  s!"h2 \{ font-size: {scaleSize "Large" "rem"}; }\n" ++
-  s!"h3 \{ font-size: {scaleSize "large" "rem"}; }\n" ++
+  s!"h1 \{ font-size: {scaleSize doc.page.scale "LARGE" "rem"}; }\n" ++
+  s!"h2 \{ font-size: {scaleSize doc.page.scale "Large" "rem"}; }\n" ++
+  s!"h3 \{ font-size: {scaleSize doc.page.scale "large" "rem"}; }\n" ++
   -- the deeper ranks share the body size, in `em` to follow the local scale
-  s!"h4, h5, h6 \{ font-size: {scaleSize "normalsize" "em"}; }\n" ++
+  s!"h4, h5, h6 \{ font-size: {scaleSize doc.page.scale "normalsize" "em"}; }\n" ++
   -- hyphenation follows the declared language; a ragged or unhyphenated page hyphenates nothing
   s!"p \{ hyphens: {if autoHyphens doc.page then "auto" else "manual"}; }\n" ++
   -- inline code outside tex may break rather than overflow its line, as its page breaks it
@@ -4609,7 +4613,7 @@ public def baseRules (doc : Doc) (pairs : List (Nat × Nat) := []) : String :=
   -- a standout frame inverts, at the scale's Large step for the whole frame
   s!"section.slide.standout \{ background: {roleRef .standoutGround};\n" ++
   s!"  color: {roleRef .standoutInk}; text-align: center;\n" ++
-  s!"  font-size: {scaleSize standoutStep "em"}; font-weight: 600;\n" ++
+  s!"  font-size: {scaleSize doc.page.scale standoutStep "em"}; font-weight: 600;\n" ++
   "  display: flex; flex-direction: column; justify-content: center; }\n" ++
   deckAreaCss doc ++
   (if doc.docClass == .slides then frameOpeningCss doc ++ fillBeforeCss else "") ++

@@ -377,7 +377,7 @@ private def DiagCode.spec : DiagCode → String × Loss × String
   | .W0336 => ("0336", .degraded, "node labels overlap; a relative placement parts centres, not text")
   | .W0337 => ("0337", .degraded, "table row disagrees with its column spec; padded to the grid")
   | .W0338 => ("0338", .degraded, "table is wider than the measure")
-  | .W0358 => ("0358", .degraded, "a float taller than the text block overruns its page")
+  | .W0358 => ("0358", .degraded, "a float or box taller than the text block overruns its page")
   | .W0340 => ("0340", .config, "a declaration in the document body is ignored")
   | .W0342 => ("0342", .degraded, "a definition shadows a palette role; the role is frozen where it is used")
   | .W0343 => ("0343", .config, "one setting is given two different values; the later declaration wins")

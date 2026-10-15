@@ -403,7 +403,7 @@ def htmlChecks (ref : IO.Ref (List String)) : IO Unit := do
       ((attrs.find? (·.1 == "style")).map (hasStr ·.2 "--frame-body-skip")).getD false)
   -- The strut's em is the page's own at the section page's body, less the bar above it.
   let size := doc.page.fontSize
-  let pdfStrut := Ir.sectionPageStrut size doc.page.leading
+  let pdfStrut := Ir.sectionPageStrut doc.page.scale size doc.page.leading
   t "frame area html: a section page closes on its subsection strut below its bar"
     ((cssBlocksFor css "section.section-page::after").any fun d =>
       ((cssProperty d "height").bind fun h =>
