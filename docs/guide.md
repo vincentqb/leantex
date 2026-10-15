@@ -375,20 +375,20 @@ there: a deck's text and marks at WCAG 2.2's large-scale 3:1, a document's
 and a poster's text at 4.5:1 and their marks at 3:1, and an accent that
 meets its floor ships as given. A deck hides a pending overlay step, its
 place kept, unless its preamble declares a share, as beamer's default
-`invisible` covering does, and a share declared in the body is ignored with
-`W0340`; `\setbeamercovered{transparent}` covers it at
-beamer's 15%, and `transparent=<n>` or `\palette{ covered = <n>\% }` at
-that share. A seed or a declared colour ships as given at any share, and
-`W0345` names the ink, or an alert or example a covered step sets, whose
-covered form stands under 3:1 from it, or a declared `covered` colour under
-3:1 from the ink, unless `\palette[decorative]{ covered = <n>\% }` declares
-the covered steps decorative; a text tone the generator derives keeps the
-covered-state contract there in every scheme, each covered form, mixed
-toward the page in Oklab as the PDF covers and in sRGB as beamer and a web
-page's opacity do, quieter on the page and 3:1 from it (SC 1.4.11). A share at which black on
-a light page, or white on a dark one, would break the contract binds nothing. Text on the
-ink stands at 4.6:1; on a dark paper, text stands at 6.5:1 and every other
-colour 0.10 above WCAG 2.2's
+`invisible` covering does, and a cover declared in the body is ignored
+with `W0340`; `\setbeamercovered{transparent}` covers it at beamer's 15%,
+and `transparent=<n>` or `\palette{ covered = <n>\% }` at that share. A
+seed or a declared colour ships as given at any share, and `W0345` names
+the ink, or an alert or example a covered step sets, whose covered form
+stands under 3:1 from it, or a declared `covered` colour under 3:1 from the
+ink, unless `\palette[decorative]{ covered = <n>\% }` declares the covered
+steps decorative; a text tone the generator derives keeps the covered-state
+contract there in every scheme, each covered form, mixed toward the page
+in Oklab as the PDF covers and in sRGB as beamer and a web page's opacity
+do, quieter on the page and 3:1 from it (SC 1.4.11). A share at which black
+on a light page, or white on a dark one, would break the contract binds
+nothing. Text on the ink stands at 4.6:1; on a dark
+paper, text stands at 6.5:1 and every other colour 0.10 above WCAG 2.2's
 ratios. No colour the seeds derive, on any page or ground and in any scheme,
 is one of the dark yellow-greens Material 3 never ships (its `DislikeAnalyzer`: HCT hue 90–111, chroma above 16, tone
 below 65). A darkening amber turns toward orange, at most 20°, where that

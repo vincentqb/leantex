@@ -8528,6 +8528,8 @@ and \\tokens declare the design directly")
     match pct? with
     | some n =>
       let native := s!"\\palette\{ covered = {min n 99}\\% }"
+      -- In the body the palette reader names the cover it ignores, once.
+      if (← get).inDoc then return some (← synthAt native pos, k)
       if 99 < n then
         sayOnce "beamer:setbeamercovered" .W0104
           s!"'\\setbeamercovered\{{src}}' asks for undimmed covered content; it is covered at 99%" pos

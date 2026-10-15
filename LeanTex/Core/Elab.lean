@@ -7101,7 +7101,7 @@ private def reseedCovered (ctx : Ctx) (pos : Pos) (pal : Palette) (depth : Groun
   if targets.cover == st.targets.cover then return pal
   match ← generated st.seeds targets with
   | .error f =>
-    seedFailure ctx pos f "'\\palette[seeds]' at the covered share" "the palette generated before stands"
+    seedFailure ctx pos f "the seeds at the covered share" "the palette generated before stands"
     return pal
   | .ok colors =>
     let st' := { st with targets, colors }
@@ -7109,6 +7109,17 @@ private def reseedCovered (ctx : Ctx) (pos : Pos) (pal : Palette) (depth : Groun
     noteSeeded ctx pos pal out (declared := false)
     logGlobal (.seeded (some st'))
     return out
+
+/-- The report of a cover the body declares, which the deck's covering, set once before the body,
+does not take. -/
+private def coverInBody (ctx : Ctx) (pos : Pos) : EM Unit :=
+  let share := (Design.ofPalette ctx.basePalette).coveredFraction
+  let how := if share == 0 then "hiding its pending steps"
+    else s!"covering its pending steps at {share}%"
+  warnOnce ctx "palette:covered:body" .W0340
+    ("a cover declared in the body is ignored; the deck keeps the covering its body opens " ++
+      s!"with, {how}") pos
+    (help := "a deck's covering is set once, before '\\begin{document}'")
 
 private def applyPaletteEntry (ctx : Ctx) (pal : Palette) (key valueSrc entry : String)
     (pos : Pos) (decorative : Bool := false) (aliasOnly : Bool := false) (inBody : Bool := false)
@@ -7130,13 +7141,9 @@ private def applyPaletteEntry (ctx : Ctx) (pal : Palette) (key valueSrc entry : 
         pal := { pal with decorative := if decorative && !pal.decorative.contains (.role .covered)
                             then pal.decorative.push (.role .covered) else pal.decorative }
         -- The renderers cover at the share in force when the body opens.
-        let inForce := (Design.ofPalette pal).coveredFraction
         if inBody then
-          if n != inForce then
-            warnOnce ctx "palette:covered:body" .W0340
-              (s!"a covered share in the body is ignored; pending steps keep the preamble's " ++
-                (if inForce == 0 then "hiding" else s!"{inForce}% cover")) pos
-              (help := "declare the share in the preamble, before '\\begin{document}'")
+          if n != (Design.ofPalette ctx.basePalette).coveredFraction then
+            coverInBody ctx pos
         else
           pal := { pal with coveredFraction := some n }
           logGlobal (.covered (some n))
@@ -7148,6 +7155,8 @@ private def applyPaletteEntry (ctx : Ctx) (pal : Palette) (key valueSrc entry : 
     | none =>
       diag ctx .E0321 s!"cannot read covered fraction: {valueSrc.quote}" pos
         (help := "a percentage like: covered = 38\\%")
+  else if inBody && !aliasOnly && key == "covered" then
+    coverInBody ctx pos
   else
     let xcolor := valueSrc.trimAscii.toString.startsWith Decl.xcolorDefinitionPrefix
     let ref : ColorRef := if aliasOnly || xcolor then .color key else ColorRef.ofKey key

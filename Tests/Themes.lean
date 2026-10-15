@@ -2142,9 +2142,11 @@ def deckStepChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
   t "the uncover rides the frame's view timeline between snap points"
     (count "view-timeline: --frame x" == 1 &&
      count "animation-timeline: --frame;" == 2 &&
+     count (".step.step-end:not([data-step=\"1\"]) { animation: ltx-uncover linear both, " ++
+       "ltx-recover linear forwards; animation-timeline: --frame, --frame;") == 1 &&
      count ".step:not([data-step=\"1\"])" == 3 &&
      count ("animation-range: contain calc((var(--step) - 2) / (var(--steps) - 1) * 100%) " ++
-       "contain calc((var(--step) - 1) / (var(--steps) - 1) * 100%)") == 1)
+       "contain calc((var(--step) - 1) / (var(--steps) - 1) * 100%)") == 2)
   t "the stage is sticky over its spacers, snap on the door only"
     (count ".slide-track > section.slide { position: sticky; left: 0; margin-right: -100vw; }" == 1 &&
      count ".snap { flex: 0 0 100vw; height: 100dvh; }" == 1 &&

@@ -3156,6 +3156,24 @@ private def stepRecoverRule : DeckRule :=
 contain calc(var(--step-last) / (var(--steps) - 1) * 100%)")]
     requires := .supported .viewTimeline }
 
+/-- A carrier that both uncovers and recovers runs both, the recover only from its own range on. -/
+private def stepBothRule : DeckRule :=
+  { selector := [.lit ".step.step-end:not([data-step=\"1\"])"]
+    decls := [("animation", "ltx-uncover linear both, ltx-recover linear forwards"),
+      ("animation-timeline", "--frame, --frame"),
+      ("animation-range",
+        "contain calc((var(--step) - 2) / (var(--steps) - 1) * 100%) \
+contain calc((var(--step) - 1) / (var(--steps) - 1) * 100%), \
+contain calc((var(--step-last) - 1) / (var(--steps) - 1) * 100%) \
+contain calc(var(--step-last) / (var(--steps) - 1) * 100%)")]
+    requires := .supported .viewTimeline }
+
+/-- `stepBothRule`'s reduced-motion guard. -/
+private def stepBothGuard : DeckRule :=
+  { selector := [.lit ".step.step-end"]
+    decls := [("opacity", "100%"), ("animation", "none")]
+    part := .reduce }
+
 /-- The `data-step-last` values snap `k` stands past, read off `Ir.stepPending`. -/
 public def endedBy (maxSteps k : Nat) : List Nat :=
   ((List.range maxSteps).map (· + 1)).filter fun u => Ir.stepPending 1 (some u) k
@@ -3317,7 +3335,7 @@ private def stepFixed : List DeckRule :=
   [stepTrackRule, stepStageRule, stepSnapSize, stepUncoverRule,
    stepRecoverRule, stepSnapHide, stepTrackFloorSnap, stepGuard,
    stepRecoverGuard, stepCoveredGuard, stepRecoverFloorGuard,
-   stepTrackWidthReduce, stepSnapReduceHide, stepTrackSnapReduce]
+   stepTrackWidthReduce, stepSnapReduceHide, stepTrackSnapReduce, stepBothRule, stepBothGuard]
 
 private def stepRules (coveredPct maxSteps : Nat) : List DeckRule :=
   stepKeyframes coveredPct :: stepRecoverKeyframes coveredPct ::
@@ -3745,7 +3763,7 @@ public theorem floor_opacity_mem (v : DeckType) (pg : String) (cp ms : Nat) :
   · intro _ r hr
     simp only [stepFixed, List.mem_cons, List.not_mem_nil, or_false] at hr
     rcases hr with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl |
-      rfl | rfl | rfl <;>
+      rfl | rfl | rfl | rfl | rfl <;>
       first
         | exact fun o ho => Or.inl (List.mem_singleton.mp ho)
         | exact fun o ho => nomatch ho
@@ -3872,9 +3890,11 @@ public theorem guards_by_construction (v : DeckType) (pg : String) (cp ms : Nat)
       mem_deckRules_step hms (mem_stepRules_fixed (by decide))
     have hend : stepRecoverGuard ∈ deckRules v pg cp ms :=
       mem_deckRules_step hms (mem_stepRules_fixed (by decide))
+    have hboth : stepBothGuard ∈ deckRules v pg cp ms :=
+      mem_deckRules_step hms (mem_stepRules_fixed (by decide))
     simp only [stepFixed, List.mem_cons, List.not_mem_nil, or_false] at hr
     rcases hr with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl |
-      rfl | rfl | rfl
+      rfl | rfl | rfl | rfl | rfl
     case inr.inr.inr.inl =>
       exact motionGuarded_of_guard hstep (by
         simp only [guardCovers, renderSel, stepGuard, stepUncoverRule,
@@ -3884,6 +3904,12 @@ public theorem guards_by_construction (v : DeckType) (pg : String) (cp ms : Nat)
     case inr.inr.inr.inr.inl =>
       exact motionGuarded_of_guard hend (by
         simp only [guardCovers, renderSel, stepRecoverGuard, stepRecoverRule,
+          List.map_cons, List.map_nil, SelChunk.render, String.join_cons,
+          String.join_nil, String.append_empty, String.toList_append]
+        decide)
+    case inr.inr.inr.inr.inr.inr.inr.inr.inr.inr.inr.inr.inr.inr.inl =>
+      exact motionGuarded_of_guard hboth (by
+        simp only [guardCovers, renderSel, stepBothGuard, stepBothRule,
           List.map_cons, List.map_nil, SelChunk.render, String.join_cons,
           String.join_nil, String.append_empty, String.toList_append]
         decide)
@@ -3952,7 +3978,7 @@ public theorem print_lifts_stage_bounds_covers (v : DeckType) (pg : String) (cp 
   · intro _ r hr
     simp only [stepFixed, List.mem_cons, List.not_mem_nil, or_false] at hr
     rcases hr with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl |
-      rfl | rfl | rfl <;> rfl
+      rfl | rfl | rfl | rfl | rfl <;> rfl
   · intro r hr
     have hr2 := deckPrint_subset r hr
     simp only [deckPrint, List.mem_append] at hr2
@@ -4812,6 +4838,18 @@ public def overlayNode (tag : String) (steps : Nat) (spec : Ir.OverlaySpec)
   else
     Html.elem tag kids #[("class", if spec.invisible then "step-set step-hide" else "step-set"),
       ("data-steps", overlayStepTokens spec steps)]
+
+/-- A list item's carrier for its selector: the item element itself, so its marker steps with it,
+a declared end on the same element. -/
+public def overlayItemNode (tag : String) (steps : Nat) (spec : Ir.OverlaySpec)
+    (kids : Array Node) : Node :=
+  match overlayUsesRange steps spec, spec.last with
+  | true, some u =>
+    Html.elem tag kids
+      #[("class", "step step-end"), ("data-step", toString spec.first),
+        ("data-step-last", toString u), ("style", s!"--step: {spec.first}; --step-last: {u}"),
+        ("data-steps", overlayStepTokens spec steps)]
+  | true, none | false, _ => overlayNode tag steps spec kids
 
 /-- Both alternatives, declared once each in page order. -/
 public def overlayAltNode (tag : String) (steps : Nat) (spec : Ir.OverlaySpec)
@@ -7697,9 +7735,14 @@ private def descItemsInto (cfg : Config) (acc : Array Node) : List (Array Block)
 -- a one-paragraph item keeps its epoch on the `li` or `dd` it elides the `p` into
 private def listItem (cfg : Config) (tag : String) : List Block → Node
   | [.para content] => cfg.applyEpoch (stepNode cfg tag content)
-  -- an item its step selects carries the step itself, so its marker fades and hides with it
+  -- an item its step covers carries the step itself, so its marker fades and hides with it
   | [.onSteps spec body] =>
-    cfg.applyEpoch (overlayNode tag cfg.overlaySteps spec (blockNodesInto cfg.into #[] body.toList))
+    if spec.invisible then
+      cfg.applyEpoch (Html.elem tag
+        #[cfg.into.applyEpoch (blockNode cfg.into (.onSteps spec body))])
+    else
+      cfg.applyEpoch
+        (overlayItemNode tag cfg.overlaySteps spec (blockNodesInto cfg.into #[] body.toList))
   | [] => cfg.applyEpoch (Html.elem tag #[])
   | .logo _ :: rest => listItem cfg tag rest
   | .setPalette p :: rest =>

@@ -203,6 +203,20 @@ def deckChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((keepDiags.filter (·.code == "W0340")).size == 1 &&
       (bodyPalettes bodyKeeps).all (fun p => p.coveredFraction == some 15) &&
       coverLosses bodyKeeps == #[some "covered:alert"])
+  let (bodyColour, colourDiags) := elabStr (dvDeck pre ("\\palette{ covered = #000000 }\n" ++ frame))
+  t s!"cover deck, a covered colour in the body: named once, nothing judged where steps hide ({coverLosses bodyColour})"
+    ((colourDiags.filter (·.code == "W0340")).size == 1 && (coverLosses bodyColour).isEmpty &&
+      (bodyPalettes bodyColour).all fun p => (Ir.Design.declared? p .covered).isNone)
+  let (bodyColourT, colourTDiags) := elabStr (dvDeck ("\\setbeamercovered{transparent}\n" ++ pre)
+    ("\\palette{ covered = #000000 }\n" ++ frame))
+  t s!"cover deck, a covered colour in the body over a share: named, the share judged ({coverLosses bodyColourT})"
+    ((colourTDiags.filter (·.code == "W0340")).size == 1 && coverLosses bodyColourT == #[some "covered:alert"])
+  let (bodySeq, seqDiags) := elabStr (dvDeck pre ("\\palette{ covered = #777777 }\n" ++
+    "\\palette{ covered = 0\\% }\n\\setbeamercovered{transparent}\n" ++ frame))
+  t "cover deck, covers declared in the body in turn: each named against the preamble's hiding, none kept"
+    ((seqDiags.filter (·.code == "W0340")).foldl (fun n d => n + d.sites) 0 == 2 &&
+      ((seqDiags.filter (·.code == "W0340")).all fun d => hasStr d.message "hiding") &&
+      (bodyPalettes bodySeq).all fun p => p.coveredFraction == none && (Ir.Design.declared? p .covered).isNone)
   let (bodySame, sameDiags) := elabStr (dvDeck ("\\setbeamercovered{transparent}\n" ++ pre)
     ("\\setbeamercovered{transparent}\n" ++ frame))
   t "cover deck, a body share agreeing with the preamble's names nothing"
@@ -280,9 +294,30 @@ def hiddenChecks (ref : IO.Ref (List String)) : IO Unit := do
         at_.size ≥ 2 && at_.all fun l => l.segs.all (!·.inks))
     let (_, tree, _) := HtmlDoc.emitTree {} (elabStr src).1
     let stepped := (elemAttrsList (· == "li") #[] tree.toList).filter fun (_, attrs) =>
-      attrs.contains ("class", "step") && attrs.contains ("data-step", "2")
+      (((HtmlDoc.attrOf? attrs "class").getD "").splitOn " ").contains "step" &&
+        attrs.contains ("data-step", "2")
     t s!"hidden item, {label}: the web page steps each pending item whole, its marker with it"
       (stepped.size == 2)
+  let shapes := "\\begin{frame}\n\\begin{itemize}\n\\item First words.\n\\item<2> Kilo words.\n" ++
+    "\\item<2-> Lima words.\n\\item<1,3> Mike words.\n\\item<2-3> Nova words.\n\\end{itemize}\n" ++
+    "\\begin{enumerate}\n\\item<2> One words.\n\\item Two words.\n\\end{enumerate}\n" ++
+    "\\begin{description}\n\\item<3>[Term] Defining words.\n\\end{description}\n\\end{frame}"
+  let (_, shapeTree, _) := HtmlDoc.emitTree {} (elabStr (dvDeck "" shapes)).1
+  let liNodes := elemNodesList (· == "li") #[] shapeTree.toList
+  let liAttrs := elemAttrsList (· == "li") #[] shapeTree.toList
+  let carries (cls step : String) (last : Option String) : Bool :=
+    liAttrs.any fun (_, attrs) => attrs.contains ("class", cls) && attrs.contains ("data-step", step) &&
+      last.all fun u => attrs.contains ("data-step-last", u)
+  t "hidden item shapes: no list item stands inside another"
+    (liNodes.size == 8 && liNodes.all fun n => match n with
+      | .elem _ _ kids => kids.all fun k => !(k matches .elem "li" _ _)
+      | .text _ | .style _ | .script .. => true)
+  t "hidden item shapes: each stepped item carries its selector on its own element"
+    (carries "step step-end" "2" (some "2") && carries "step" "2" none &&
+      carries "step step-end" "2" (some "3") && carries "step step-end" "2" (some "2") &&
+      carries "step step-end" "3" (some "3") &&
+      liAttrs.any fun (_, attrs) => attrs.contains ("class", "step-set") &&
+        attrs.contains ("data-steps", "1 3"))
   let block := "\\begin{frame}\nFirst words.\n\n\\pause\n\n" ++
     "\\begin{block}{Block title}Block words.\\end{block}\n\\end{frame}"
   let out := layoutOf fonts (elabStr (dvDeck "\\theme{daylight}\n" block)).1
