@@ -893,10 +893,10 @@ def selftest : IO UInt32 := Scoreboard.tierSelftest "coverage" fun expect => do
   | some (p, own) =>
     expect "the dimension-operand place owns its width complaint"
       (own.contains "env:minipage-width")
-    let ds := (Elab.run "p" (p.doc "\\newenvironment{x}{y}")).2
+    let ds := (Elab.run "p" (p.doc "\\enquote{x}")).2
     expect "a rewrite beside the place's own complaint does not count"
-      (rungOfProbe "newenvironment" own ds == .unprobed
-        && rungOfProbe "newenvironment" #[] ds == .rewritten)
+      (rungOfProbe "enquote" own ds == .unprobed
+        && rungOfProbe "enquote" #[] ds == .rewritten)
   expect "no other place owns a complaint"
     (measured.all fun (p, own) => p.label == "length-argument" || own.isEmpty)
   expect "an operand complaint is evidence of dispatch"

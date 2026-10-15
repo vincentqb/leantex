@@ -42,7 +42,7 @@ para
 role display-veao
   center
     para
-      formula display "a + b &= b + a && \\text {by the placeholder rule that swaps two terms} \\\\  &= c && \\text {by an invented lemma}"
+      formula display "a + b &= b + a && \\text {by the placeholder rule that swaps two terms} \\\\ &= c && \\text {by an invented lemma}"
         ord:align[(|ord:𝑎 bin:+ ord:𝑏|ord:{} rel:= ord:𝑏 bin:+ ord:𝑎||ord:{} ord:"by the placeholder rule that swaps two terms")(||ord:{} rel:= ord:𝑐||ord:{} ord:"by an invented lemma")]
 para
   text "A run keeps the spaces it writes, as in a condition:"
