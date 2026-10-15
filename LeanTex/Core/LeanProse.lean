@@ -1186,7 +1186,7 @@ public theorem render_inj {lex : Lexicon} (hlex : lex.wf = true) {s s' : Stmt α
   rw [h, parse_render_exact hlex s' hs'] at this
   exact (Option.some.inj this).symm
 
-/-! ## Statements from Lean's answer -/
+/-! ## Statements from a file's facts -/
 
 public def Table.lexicon (tb : Table) : Lexicon := ⟨tb.rels.map (·.2), tb.phrases.map (·.2)⟩
 

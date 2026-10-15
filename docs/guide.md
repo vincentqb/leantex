@@ -141,8 +141,11 @@ Lean holds unproved, or that rests on one, is marked so; a statement Lean
 elaborated around an error is not set, and a page that shows math alone sets
 that declaration's code in its place. A file whose page asks for statements and
 has no facts sets its code alone, with one note; facts that no longer line up
-with the file, a declaration moved or renamed or the file grown or cut since the
-export, set the code alone too, with one warning to run the exporter again.
+with the file set the code alone too, with one warning to run the exporter
+again. The facts quote every command Lean read, so any command edited, moved,
+added or cut since the export, a statement, a proof or an `open` alike, no
+longer lines up, while a comment or a module's documentation edited within its
+lines still does.
 
 The exporter runs in the Lean project, under the project's own toolchain; it
 builds and runs on Lean 4.24 and later. Require it in the project's lakefile,
@@ -156,22 +159,26 @@ rev = "main"
 subDir = "export"
 ```
 
-Then build the project, export the modules a document shows, and run leantex:
+Then build the project, export the files or modules a document shows, and run
+leantex:
 
 ```sh
 lake build
-lake exe leantex-export Tide Tide.Basic
+lake exe leantex-export Tide.lean Tide/Basic.lean
 leantex Tide.lean -o Tide.pdf
 ```
 
-The exporter elaborates each module command by command, as `lean` would with
-Lean's frontend imported beside the module's imports, so a file's `#eval` and
-macros run as they would under `lean`, and writes the module's facts beneath
-the project's `.lake/build/leantex`, the file's place under the project with
-`.lean` made `.facts`, where leantex reads them for that file. `facts = <path>`
-in a directive, on `\inputlean` or on a Markdown division names another facts
-file instead, beside the Lean file on a page and beside the document in an
-inclusion.
+The exporter takes a file by its path, or a module by its name (`Tide.Basic`).
+It elaborates each command by command, as `lean` would with Lean's frontend
+imported beside the file's imports, so a file's `#eval` and macros run as they
+would under `lean`, and writes the file's facts beneath the `.lake/build/leantex`
+of the nearest directory above it that holds a lakefile, the file's place there
+with `.lean` made `.facts`, where leantex reads them for that file; a note for a
+missing or stale facts file names the command to run. `facts = <path>` in a
+directive, on `\inputlean` or on a Markdown division names another facts file
+instead, beside the Lean file on a page and beside the document in an inclusion,
+for a copy of what the exporter wrote; `facts` with no statement or folded proof
+to read it for is named and ignored.
 
 `show = prose` says each statement in words instead, its terms as formulas:
 **Theorem** (`Tide.le_or_gt`). For all natural numbers a and b, either a is at

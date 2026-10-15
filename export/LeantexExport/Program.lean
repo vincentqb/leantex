@@ -1,11 +1,12 @@
 /-! The export the exporter hands the project's own `lean`: it elaborates a file command by
-command and writes each declaration the file writes by name, with its spans and type. -/
+command and writes each declaration the file writes by name, with its spans and type, and each
+command's span and text. -/
 
 namespace LeantexExport
 
 /-- The export, run as `lean` elaborates a file: it elaborates the bytes `LEANTEX_LEAN_SOURCE`
-holds as the file `LEANTEX_LEAN_FILE`, command by command, then writes each declaration it wrote by
-name, with its spans and type, to `LEANTEX_LEAN_ANSWER`. -/
+holds as the file `LEANTEX_LEAN_FILE`, command by command, then writes to `LEANTEX_LEAN_ANSWER`
+each declaration it wrote by name, with its spans and type, and each command's span and text. -/
 def program : String := r#"open Lean Elab Command
 
 namespace LeantexExport
@@ -158,6 +159,17 @@ def namedBy (n written : Name) : Bool :=
 
 def posText (p : Position) : String := s!"{p.line},{p.column}"
 
+/-- The text between two positions of a source whose lines are `lines`. -/
+def between (lines : Array (List Char)) (a b : Position) : String := Id.run do
+  let mut out := ""
+  for l in [a.line:b.line + 1] do
+    let cs := lines[l - 1]?.getD []
+    let cs := if l == b.line then cs.take b.column else cs
+    let cs := if l == a.line then cs.drop a.column else cs
+    out := cs.foldl String.push out
+    if l != b.line then out := out.push '\n'
+  return out
+
 def spanText : Option (Position × Position) → String
   | some (a, b) => s!"[{posText a},{posText b}]"
   | none => "null"
@@ -177,31 +189,37 @@ run_cmd do
   let input ← match ← (IO.FS.readFile source).toBaseIO with
     | .ok text => pure text
     | .error _ => IO.Process.exit 127
+  -- Lean reads the source with its line ends made `\n`, and so do the positions it gives.
   let ictx := Parser.mkInputContext input file
-  let (_, st0, _) ← Parser.parseHeader ictx
+  let text := ictx.inputString
+  let textLines : Array (List Char) := (text.splitOn "\n").toArray.map String.toList
+  let (header, st0, _) ← Parser.parseHeader ictx
   let saved := (← get).messages
   let savedScopes := (← get).scopes
   let opts := (← getScope).opts
   modify fun s => { s with scopes := [{ header := "", opts }] }
-  let (errors, writtens) ← withReader (fun ctx => { ctx with fileName := file, fileMap := ictx.fileMap }) do
+  let (errors, writtens, read) ← withReader (fun ctx => { ctx with fileName := file, fileMap := ictx.fileMap }) do
     let mut st := st0
     let mut errors := 0
     let mut writtens : Array Written := #[]
-    for _ in [0:input.utf8ByteSize + 1] do
-      if st.pos.byteIdx ≥ input.utf8ByteSize then break
+    let mut read : Array (Position × Position) := (spanOf ictx.fileMap header).toArray
+    for _ in [0:text.utf8ByteSize + 1] do
+      if st.pos.byteIdx ≥ text.utf8ByteSize then break
       let scope ← getScope
       let pmctx : Parser.ParserModuleContext :=
         { env := ← getEnv, options := scope.opts, currNamespace := scope.currNamespace,
           openDecls := scope.openDecls }
       let (cmd, st', msgs) := Parser.parseCommand ictx pmctx st {}
       st := st'
+      unless cmd.getKind == ``Lean.Parser.Command.moduleDoc do
+        if let some r := spanOf ictx.fileMap cmd then read := read.push r
       errors := errors + (msgs.toList.filter (·.severity == .error)).length
       if cmd.getKind == ``Lean.Parser.Command.exit then break
       writtens := writtens ++ writtenIn ictx.fileMap cmd
       modify fun s => { s with messages := {} }
       elabCommandTopLevel cmd
       errors := errors + ((← get).messages.toList.filter (·.severity == .error)).length
-    return (errors, writtens)
+    return (errors, writtens, read)
   modify fun s => { s with messages := saved, scopes := savedScopes }
   let env ← getEnv
   let mut lines : Array String :=
@@ -229,7 +247,6 @@ run_cmd do
       else pure true
     lines := lines.push (s!"\{\"name\":{jstr user.toString},\"module\":{jstr moduleName}," ++
       s!"\"kind\":\"{kind}\",\"range\":{spanText (some w.range)},\"head\":[{posText w.head}]," ++
-      s!"\"id\":[{posText w.id}],\"written\":{jstr w.name.toString}," ++
       s!"\"signature\":{spanText w.sig},\"proof\":{spanText w.val},\"proved\":{proved}," ++
       s!"\"prop\":{prop}," ++
       s!"\"doc\":{(doc.map jstr).getD "null"}," ++
@@ -238,12 +255,13 @@ run_cmd do
   for w in writtens do
     unless seen.contains w.id do
       lines := lines.push (s!"\{\"failed\":{jstr w.name.toString},\"kind\":\"{w.kind}\"," ++
-        s!"\"range\":{spanText (some w.range)},\"head\":[{posText w.head}]," ++
-        s!"\"id\":[{posText w.id}],\"written\":{jstr w.name.toString},\"proof\":{spanText w.val}}")
+        s!"\"range\":{spanText (some w.range)},\"head\":[{posText w.head}],\"proof\":{spanText w.val}}")
   for c in consts.toList do
     if let some ci := env.find? c then
       lines := lines.push s!"\{\"const\":{jstr (shown c).toString},\"binders\":\"{mask "" ci.type}\"}"
-  let stop := ictx.fileMap.toPosition ⟨input.utf8ByteSize⟩
+  for (a, b) in read do
+    lines := lines.push s!"\{\"command\":{spanText (some (a, b))},\"text\":{jstr (between textLines a b)}}"
+  let stop := ictx.fileMap.toPosition ⟨text.utf8ByteSize⟩
   lines := lines.push s!"\{\"leantex-lean-export-end\":{decls},\"end\":[{posText stop}]}"
   match ← (IO.FS.writeFile answer ("\n".intercalate lines.toList ++ "\n")).toBaseIO with
   | .ok () => pure ()

@@ -382,10 +382,14 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
         decls := #[{ name := "t", kind := .theorem, prop := true, start := (2, 0), stop := (2, 26)
                      type := some (.apps (.const "sorryAx") []) }] })).2
   -- A Lean file's facts written for another text of it, and a file whose facts were never written.
-  | .W0433 => #[LeanFactsFile.stale "Tide" "/p/.lake/build/leantex/Tide.facts"
-      "lake exe leantex-export Tide" "no longer line up with it" "its code is set without statements"]
-  | .N0032 => #[LeanFactsFile.missing "Tide" "/p/.lake/build/leantex/Tide.facts"
-      "lake exe leantex-export Tide" "its code is set without statements"]
+  | .W0433 => (LeanFacts.judge "Tide" "/p/.lake/build/leantex/Tide.facts" "theorem t : True := trivial\n"
+      "its code is set without statements" (LeanFactsFile.helpFor "lake exe leantex-export Tide"
+        "/p/.lake/build/leantex/Tide.facts" false)
+      (some ("{\"leantex-lean-export\":3,\"lean\":\"4.34.1\",\"errors\":0}\n" ++
+        "{\"leantex-lean-export-end\":0,\"end\":[9,0]}\n").toUTF8)).2
+  | .N0032 => (LeanFacts.judge "Tide" "/p/.lake/build/leantex/Tide.facts" "theorem t : True := trivial\n"
+      "its code is set without statements" (LeanFactsFile.helpFor "lake exe leantex-export Tide"
+        "/p/.lake/build/leantex/Tide.facts" false) none).2
   -- A linked statement in a file whose changes its commit does not hold.
   | .W0431 => (Surface.readCode .lean "t.lean"
       "-- leantex: show = math, link = https://github.com/acme/tides\ntheorem t : True := trivial\n"
@@ -1284,7 +1288,7 @@ def repeatFoldUnexercised : List (String × String) :=
     ["W0416"] ++
   unexercisedAs "one record per Lean file whose link it owes, which a page reads once"
     ["W0431", "W0432"] ++
-  unexercisedAs "one record per Lean file whose facts a page reads, which it reads once"
+  unexercisedAs "its witness is the facts reader's own record, with no source to write twice"
     ["W0433"] ++
   unexercisedAs ("its witness is the emitter's own record, with no source to write twice; the \
 font assembly's records are held by `weightSubstitutionRecordChecks`")

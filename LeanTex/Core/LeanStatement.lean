@@ -387,7 +387,7 @@ public def shownNames (decl : String) (consts : Array String) (c : String) : Str
   let r := relative decl c
   if consts.any fun d => d != c && (relative decl d == r || d == r) then c else r
 
-/-- What a declaration's statement reads its constants by, from Lean's answer. -/
+/-- What a declaration's statement reads its constants by, from the file's facts. -/
 public def lookupOf (facts : Facts) (d : Decl) (type : Term) : Lookup :=
   { binders := fun c => (facts.binders.find? (·.1 == c)).map (·.2)
     shown := shownNames d.name (type.consts #[])

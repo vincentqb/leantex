@@ -4,8 +4,8 @@ import Lean.Data.Json
 
 /-! # What Lean says about a Lean file
 
-The answer Lean's own export gives for one file: each declaration it elaborated, by name, kind,
-source range and type, in a small schema read whole or refused whole. -/
+The facts a project's exporter writes for one file: each declaration Lean elaborated by name, kind,
+range and type, and each command it read by span and text, read whole or refused whole. -/
 
 namespace LeanTex.Core.LeanFacts
 
@@ -65,9 +65,6 @@ public structure Decl where
   proved : Bool := true
   /-- Whether its type is a proposition. -/
   prop : Bool
-  /-- Where its name stands and the name as the file writes it. -/
-  id : Nat × Nat := start
-  written : String := ""
   deriving Repr, BEq, Inhabited
 
 /-- A declaration the file writes by name that Lean added nothing for: its name as written, its
@@ -79,19 +76,25 @@ public structure Failed where
   stop : Nat × Nat
   head : Nat × Nat := start
   proof : Option ((Nat × Nat) × (Nat × Nat)) := none
-  id : Nat × Nat := start
-  written : String := ""
+  deriving Repr, BEq, Inhabited
+
+/-- A command Lean read, a module's documentation aside: its span and its text there. -/
+public structure Command where
+  start : Nat × Nat
+  stop : Nat × Nat
+  text : String
   deriving Repr, BEq, Inhabited
 
 /-- An answer: the Lean that gave it, the errors its elaboration logged, the declarations, those
-that failed, the leading binders of every constant their types name, and where the source it read
-ends. -/
+that failed, the leading binders of every constant their types name, the commands it read, and
+where the source it read ends. -/
 public structure Facts where
   lean : String
   errors : Nat
   decls : Array Decl
   binders : Array (String × Array Binder)
   failed : Array Failed := #[]
+  commands : Array Command := #[]
   sourceEnd : Nat × Nat := (1, 0)
   deriving Repr, BEq, Inhabited
 
@@ -206,8 +209,12 @@ private def spanOf (j : Json) : Except String (Option ((Nat × Nat) × (Nat × N
     let b ← pairOf arr 2
     return some (a, b)
 
-/-- One record line: a declaration, one that failed, or a constant's binders. -/
+/-- One record line: a command, a declaration, one that failed, or a constant's binders. -/
 private def record (facts : Facts) (j : Json) : Except String Facts := do
+  if let .ok span := j.getObjValAs? (Array Json) "command" then
+    let text ← j.getObjValAs? String "text"
+    let command := { start := ← pairOf span 0, stop := ← pairOf span 2, text }
+    return { facts with commands := facts.commands.push command }
   match j.getObjValAs? String "const", j.getObjValAs? String "failed" with
   | .ok c, _ =>
     let mask ← j.getObjValAs? String "binders"
@@ -222,10 +229,7 @@ private def record (facts : Facts) (j : Json) : Except String Facts := do
     let stop ← pairOf range 2
     let head ← pairOf (← j.getObjValAs? (Array Json) "head") 0
     let proof ← spanOf (j.getObjValD "proof")
-    let id ← pairOf (← j.getObjValAs? (Array Json) "id") 0
-    let written ← j.getObjValAs? String "written"
-    return { facts with
-      failed := facts.failed.push { name, kind, start, stop, head, proof, id, written } }
+    return { facts with failed := facts.failed.push { name, kind, start, stop, head, proof } }
   | .error _, .error _ =>
     let some kind := kindOf? (← j.getObjValAs? String "kind") | throw "an unknown kind"
     let range ← j.getObjValAs? (Array Json) "range"
@@ -241,10 +245,8 @@ private def record (facts : Facts) (j : Json) : Except String Facts := do
     let proof ← spanOf (j.getObjValD "proof")
     let proved ← j.getObjValAs? Bool "proved"
     let prop ← j.getObjValAs? Bool "prop"
-    let id ← pairOf (← j.getObjValAs? (Array Json) "id") 0
-    let written ← j.getObjValAs? String "written"
     let decl : Decl :=
-      { name, kind, start, stop, type, head, moduleName, signature, proof, proved, prop, id, written }
+      { name, kind, start, stop, type, head, moduleName, signature, proof, proved, prop }
     return { facts with decls := facts.decls.push decl }
 
 /-- An answer, whole or refused whole. -/
@@ -268,41 +270,29 @@ public def decode (body : String) : Except String Facts := do
   if facts.decls.size != count then throw "an answer that does not hold the declarations it counts"
   return { facts with sourceEnd }
 
-/-- Whether a character continues a name, so a name written before it is not the whole name. -/
-private def continuesName (c : Char) : Bool :=
-  c.isAlphanum || c == '_' || c == '\'' || c == '!' || c == '?' || c.toNat > 127
-
-/-- Whether the source at `off` spells `written`, guillemets aside, as a whole name. -/
-private def spellsAt (src : Array Char) (off : Nat) (written : String) : Bool := Id.run do
-  let want := written.toList.filter fun c => c != '«' && c != '»'
-  let mut k := off
-  for c in want do
-    for _ in [0:src.size] do
-      if src[k]? == some '«' || src[k]? == some '»' then k := k + 1 else break
-    if src[k]? != some c then return false
-    k := k + 1
-  for _ in [0:src.size] do
-    if src[k]? == some '»' then k := k + 1 else break
-  match src[k]? with
-  | some '.' => return src[k + 1]? == some '{'
-  | some c => return !continuesName c
-  | none => return true
+/-- Whether one position comes at or before another. -/
+private def atOrBefore (a b : Nat × Nat) : Bool := a.1 < b.1 || (a.1 == b.1 && a.2 ≤ b.2)
 
 /-- Whether an answer lines up with a source text: the text ends where the source the answer was
-read from ended, and each declaration's name stands where the answer places it. -/
+read from ended, each command it read stands in the text as it quotes it, and each declaration lies
+in one of them. -/
 public def alignedWith (facts : Facts) (text : String) : Bool := Id.run do
   let src := text.toList.toArray
   let mut starts : Array Nat := #[0]
   for h : i in [0:src.size] do
     if src[i] == '\n' then starts := starts.push (i + 1)
-  let offset (p : Nat × Nat) : Option Nat :=
-    if p.1 == 0 then none else (starts[p.1 - 1]?).map (· + p.2)
+  let offset (p : Nat × Nat) : Option Nat := (starts[p.1 - 1]?).bind fun s =>
+    let lineEnd := (starts[p.1]?.map (· - 1)).getD src.size
+    if p.1 ≥ 1 && s + p.2 ≤ lineEnd then some (s + p.2) else none
   let stop := (starts.size, src.size - starts.back?.getD 0)
   if facts.sourceEnd != stop then return false
-  let named := facts.decls.map (fun d => (d.id, d.written)) ++ facts.failed.map fun f => (f.id, f.written)
-  return named.all fun (p, w) => match offset p with
-    | some off => spellsAt src off w
-    | none => false
+  let quoted := facts.commands.all fun c => match offset c.start, offset c.stop with
+    | some i, some j => i ≤ j && (src.extract i j).toList == c.text.toList
+    | _, _ => false
+  let within (head stop : Nat × Nat) : Bool :=
+    facts.commands.any fun c => atOrBefore c.start head && atOrBefore stop c.stop
+  return quoted && facts.decls.all (fun d => within d.head d.stop) &&
+    facts.failed.all fun f => within f.head f.stop
 
 /-- Whether a term names a constant anywhere in it. -/
 public def Term.names (c : String) : Term → Bool

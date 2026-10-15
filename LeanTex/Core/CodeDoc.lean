@@ -36,7 +36,7 @@ public inductive Kind where
   | directive
   /-- White space beside prose or a directive, or ending a code run, which ships nowhere. -/
   | blank
-  /-- Where a paragraph Lean's answer gives stands beside the code it is of, by its index; it
+  /-- Where a paragraph the file's facts give stands beside the code it is of, by its index; it
   holds no character. -/
   | statement (index : Nat)
   deriving Repr, BEq, DecidableEq, Inhabited
@@ -71,7 +71,8 @@ public inductive Piece where
   | prose (seg : Seg)
   /-- A listing: where its first code run starts, and the code runs it joins, in source order. -/
   | code (start : Nat) (text : List Char)
-  /-- A paragraph Lean's answer gives, by its index: a statement, or code in a statement's place. -/
+  /-- A paragraph the file's facts give, by its index: a statement, or code in a statement's
+  place. -/
   | statement (index : Nat)
   deriving Repr, BEq, Inhabited
 
@@ -440,7 +441,7 @@ public def Showing.code (s : Showing) : Bool := s.views.contains .code
 
 public def Showing.prose (s : Showing) : Bool := s.views.contains .prose
 
-/-- Whether a page sets a declaration's statement, which Lean is asked for. -/
+/-- Whether a page sets a declaration's statement, which its facts give. -/
 public def Showing.statements (s : Showing) : Bool := s.math || s.prose
 
 /-- The views that set a declaration's statement before its code, and those after it. -/
@@ -496,9 +497,13 @@ public def showingOf (lang : Ir.CodeLang) (src : Array Char) : Showing :=
   | none => {}
   | some (_, value) => showingOfEntries lang (Decl.splitEntries value)
 
-/-- The notes for options a page, or an inclusion where `page` is false, cannot honour: a link with
-no statement to carry it, keys only a Lean file's page reads written for another language, a
-`decls` that names nothing, and on a page a `decls` with no statement to choose. -/
+/-- Whether a page reads its facts: it shows statements, or folds or removes proofs, whose places
+only Lean's syntax tree gives. -/
+public def Showing.asks (s : Showing) : Bool := s.statements || s.proofs != .show
+
+/-- The notes for options a page, or an inclusion (`page` false), cannot honour: a link with no
+statement to carry it, facts nothing reads, keys only a Lean file's page reads written for another
+language, a `decls` naming nothing, and on a page a `decls` with no statement to choose. -/
 public def Showing.idle (s : Showing) (lang : Ir.CodeLang) (request : Span) (page : Bool := true) :
     Array Diag :=
   let sets := if page then "the page sets as if it were not written"
@@ -512,6 +517,11 @@ public def Showing.idle (s : Showing) (lang : Ir.CodeLang) (request : Span) (pag
   let unlinked := if lang == .lean && s.link.isSome && !s.statements then
       [note "link" "links statements' names, and none is set" "write `show = math, code`"]
     else []
+  let unread := if lang == .lean && s.facts.isSome && !s.asks && (page || s.decls.isNone) then
+      [note "facts"
+        "names the file statements and proofs' places are read from, and nothing reads them"
+        "write `show = math, code`, or delete `facts`"]
+    else []
   let empty := if lang == .lean && s.written.contains "decls" && s.decls.isNone then
       [note "decls" "names no declaration" "name one, or delete `decls` to set every one"]
     else []
@@ -519,21 +529,17 @@ public def Showing.idle (s : Showing) (lang : Ir.CodeLang) (request : Span) (pag
       [note "decls" "chooses the declarations whose statements a page sets, and it sets none"
         "write `show = math, code`"]
     else []
-  (foreign ++ unlinked ++ empty ++ unchosen).toArray
+  (foreign ++ unlinked ++ unread ++ empty ++ unchosen).toArray
 
-/-- What a page that asked Lean sets when Lean gave no answer. -/
+/-- What a page that reads its facts sets when it has none that line up. -/
 public def Showing.lost (s : Showing) : String :=
   match s.statements, s.proofs != .show with
   | true, true => "its code is set without statements and its proofs as written"
   | true, false => "its code is set without statements"
   | false, _ => "its proofs are set as written"
 
-/-- Whether a page asks Lean: it shows statements, or folds or removes proofs, whose places only
-Lean's syntax tree gives. -/
-public def Showing.asks (s : Showing) : Bool := s.statements || s.proofs != .show
-
-/-- What an inclusion sets when Lean gave no answer: the whole file, in place of the declarations a
-`decls` chooses, without statements and with its proofs as written where it asked for either. -/
+/-- What an inclusion sets with no facts that line up: the whole file, in place of the declarations
+a `decls` chooses, without statements and with its proofs as written where it asked for either. -/
 public def Showing.lostIncluded (s : Showing) : String :=
   match s.decls with
   | none => if s.asks then s.lost else "it is included whole"
@@ -1721,7 +1727,7 @@ public def unsaidNote (file : String) (d : LeanFacts.Decl) (u : LeanProse.Unsaid
   Diag.of .W0415 s!"words cannot say '{d.name}', which {unsaidWhy u}; it is set as mathematics"
     (some ⟨file, posOf d⟩) (subject := some s!"prose:{d.name}")
 
-/-- A view's paragraph for a declaration whose statement Lean gave, the note when its words fall
+/-- A view's paragraph for a declaration whose statement the facts give, the note when its words fall
 back to its mathematics, which a page that shows the math view sets once, and the templates its
 words use. -/
 public def viewPara (file : String) (facts : LeanFacts.Facts) (tb : LeanProse.Table)
@@ -1736,8 +1742,8 @@ public def viewPara (file : String) (facts : LeanFacts.Facts) (tb : LeanProse.Ta
       (if withMath then #[] else displayRaws d (LeanStatement.statementMath facts d t) (posOf d) link,
         #[unsaidNote file d u], #[])
 
-/-- What a page sets for one declaration Lean answered for, when it is chosen, in the views given:
-each view's paragraph where Lean gave a statement, its name linked where a link is given, else, on
+/-- What a page sets for one declaration the facts hold, when it is chosen, in the views given:
+each view's paragraph where the facts give a statement, its name linked where a link is given, else, on
 a page that shows no code, its code in the statement's place; its views' notes and templates. -/
 public def declPara (file : String) (facts : LeanFacts.Facts) (tb : LeanProse.Table)
     (starts : Array Nat) (src : Array Char) (segs : List Seg) (folds : List ProofFold)
@@ -1785,14 +1791,14 @@ no `{commit}` or `{path}`"
 /-- Whether a declaration's name is a name `decls` gives: the whole name, or its last parts. -/
 private def namedAs (n named : String) : Bool := n == named || n.endsWith ("." ++ named)
 
-/-- One note for each name `decls` gives that Lean's answer holds no theorem, definition or axiom
+/-- One note for each name `decls` gives that the facts hold no theorem, definition or axiom
 by, at the request. -/
 public def unnamedNotes (showing : Showing) (facts : LeanFacts.Facts) (request : Span) :
     Array Diag :=
   ((showing.decls.getD []).filter fun n =>
     !facts.decls.any (namedAs ·.name n) && !facts.failed.any (namedAs ·.name n)).toArray.map fun n =>
-      Diag.of .W0110 s!"`decls` names '{n}', which is no theorem, definition or axiom in Lean's \
-answer; nothing is set for it" (some request) (subject := some s!"code:decls:{n}")
+      Diag.of .W0110 s!"`decls` names '{n}', which is no theorem, definition or axiom in the \
+file's facts; nothing is set for it" (some request) (subject := some s!"code:decls:{n}")
         (help := "name a theorem, definition or axiom the file declares")
 
 /-- Each declaration's paragraphs before and after its code by index, then each failed one's, the
@@ -1862,7 +1868,7 @@ public def statementsOf (file : String) (starts : Array Nat) (src : Array Char) 
   (paras ++ failedParas, (all.map fun (key, i) => (key.headD 0, i)).toList,
     unused ++ unnamedNotes showing facts request ++ notes.map (·.2) ++ links)
 
-/-- What a page sets from Lean's answer, when it has one. -/
+/-- What a page sets from the file's facts, when it has them. -/
 @[expose] public def statementsFor (file : String) (starts : Array Nat) (src : Array Char)
     (segs : List Seg) (showing : Showing) (declared : LeanProse.Declared) (place : LinkPlace)
     (folds : List ProofFold) (foldParas : Array (Array Raw)) (request : Span) :
@@ -2054,8 +2060,8 @@ public theorem readPieces_body_exact (lang : Ir.CodeLang) (file text : String)
     (pagePieces lang text page.folds anchors).toList {}
   exact ⟨opens, by simpa using hlen, by simpa [readPieces] using hbody⟩
 
-/-- The prose view's table a page or an inclusion reads its phrases into, from Lean's answer where
-its statements have one, with each phrase a page that says nothing in words refuses. -/
+/-- The prose view's table a page or an inclusion reads its phrases into, from the file's facts where
+its statements have them, with each phrase a page that says nothing in words refuses. -/
 public def declaredFor (lang : Ir.CodeLang) (showing : Showing) (stated : Option LeanFacts.Facts) :
     LeanProse.Declared :=
   let unshown : Array (String × LeanProse.Refusal) := if showing.prose then #[] else
@@ -2065,9 +2071,9 @@ public def declaredFor (lang : Ir.CodeLang) (showing : Showing) (stated : Option
     else ⟨LeanProse.coreTable f.collectionFirst, [], unshown, #[]⟩
   | none => ⟨LeanProse.coreTable true, [], unshown, #[]⟩
 
-/-- What a page sets from a file and Lean's answer: what it shows, where each paragraph Lean's
-answer gives stands, and the notes; a page asked for statements Lean gave no answer for shows the
-file's code. -/
+/-- What a page sets from a file and its facts: what it shows, where each paragraph the facts
+give stands, and the notes; a page asked for statements it has no facts for shows the file's
+code. -/
 @[expose] public def planOf (lang : Ir.CodeLang) (file text : String)
     (facts : Option LeanFacts.Facts) (place : LinkPlace := {}) :
     PageSet × List (Nat × Nat) × Array Diag :=
@@ -2097,8 +2103,8 @@ trailing white space aside. -/
   if body.isEmpty then #[] else
     #[.verb "lstlisting" (head ++ "\n" ++ String.ofList body) { line := (lineCol starts start).1 - 1 }]
 
-/-- A Lean file included at `request`, which `entry` names: one listing where nothing asks Lean or
-Lean gave no answer; with no `decls`, the whole file with each statement at its declaration and
+/-- A Lean file included at `request`, which `entry` names: one listing where nothing reads facts or
+none line up; with no `decls`, the whole file with each statement at its declaration and
 its folds cut out; else each chosen declaration's views in order. -/
 public def includeLean (file text : String) (showing : Showing) (facts : Option LeanFacts.Facts)
     (place : LinkPlace) (request : Span) (entry : String) : Array Raw × Array Diag :=

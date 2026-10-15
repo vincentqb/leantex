@@ -95,11 +95,11 @@ def sentenceWords (s : Stmt Leaf) : List String :=
 def theoremAt (name : String) (line : Nat) (type : LeanFacts.Term) : LeanFacts.Decl :=
   { name, kind := .theorem, prop := true, start := (line, 0), stop := (line, 25), type }
 
-/-- `n = n` for a numeral `n`, as Lean's answer gives it. -/
+/-- `n = n` for a numeral `n`, as a facts file gives it. -/
 def selfEq (n : Nat) : LeanFacts.Term :=
   .apps (.const "Eq") [.apps (.const "Nat") [], .apps (.nat n) [], .apps (.nat n) []]
 
-/-- Equality's leading binders, as Lean's answer gives them. -/
+/-- Equality's leading binders, as a facts file gives them. -/
 def eqBinders : Array (String × Array LeanFacts.Binder) := #[("Eq", #[.implicit, .explicit, .explicit])]
 
 /-- Whether `words` occur in `text` in order. -/
@@ -242,7 +242,7 @@ def leanProseChecks (ref : IO.Ref (List String)) : IO Unit := do
     let (raws, ds) := Surface.readCode .lean "statements.lean" (withShow views) given
     Elab.runRaws "statements.lean" raws ds
   let readAs (views : String) : Ir.Doc × Array Diag := readWith views (some facts)
-  t "prose: a page that shows prose asks Lean, alone or beside the other views"
+  t "prose: a page that shows prose reads its facts, alone or beside the other views"
     (["show = prose", "show = prose, code", "show = code, prose", "show = math, prose"].all fun v =>
       (Code.showingOf .lean (withShow v).toList.toArray).statements)
   let (doc, ds) := readAs "show = prose, code"
@@ -316,7 +316,7 @@ def leanProseChecks (ref : IO.Ref (List String)) : IO Unit := do
         i < j && !(stacked.extract i j).any (·.1))
   let (aloneDoc, aloneDs) := readAs "show = prose"
   let alone := codePageLines fonts aloneDoc
-  t s!"prose: a page that shows prose alone sets sentences, its title, no documentation, and in place of each statement Lean gave none for its code ({(listings aloneDoc).map (·.2.trimAscii.toString)})"
+  t s!"prose: a page that shows prose alone sets sentences, its title, no documentation, and in place of each statement its facts give none for its code ({(listings aloneDoc).map (·.2.trimAscii.toString)})"
     (alone.any (fun (_, ink) => ink.startsWith "Theorem (Tide.le_or_gt). For all") &&
       aloneDoc.info.title == some "Tide arithmetic" &&
       !alone.any (fun (_, ink) => ink.startsWith "Rising twice") &&
@@ -325,7 +325,7 @@ def leanProseChecks (ref : IO.Ref (List String)) : IO Unit := do
           "theorem refused (n : Nat) : n + (1 : String) = n := rfl"] &&
       (aloneDs.filter (·.kind == .W0415)).size == 7)
   let (noneDoc, noneDs) := readWith "show = prose" none
-  t "prose: a page that shows prose alone shows the file's code when Lean gave no answer"
+  t "prose: a page that shows prose alone shows the file's code when it has no facts"
     ((listings noneDoc).size == (listings (readAs "show = code").1).size &&
       !(codePageLines fonts noneDoc).any (fun (_, ink) => ink.startsWith "Theorem (") &&
       !noneDs.any (fun d => d.kind == .W0415 || d.kind == .W0416))

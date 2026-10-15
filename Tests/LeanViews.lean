@@ -113,7 +113,7 @@ def leanViewChecks (ref : IO.Ref (List String)) : IO Unit := do
         "its proofs are set as written")
   t "views: a directive's other keys belong to its other declarations and are never strange"
     ((Code.showingOfEntries .lean (Decl.splitEntries "theme = gemini, show = math")).strange.isEmpty)
-  t "views: only statements and folded or removed proofs ask Lean"
+  t "views: only statements and folded or removed proofs read facts"
     (!(Code.showingOfEntries .lean ["link = https://e.org"]).asks &&
       (Code.showingOfEntries .lean ["proofs = remove"]).asks &&
       (Code.showingOfEntries .lean ["show = math"]).asks)
@@ -354,6 +354,16 @@ def leanViewChecks (ref : IO.Ref (List String)) : IO Unit := do
       idle "decls = {a}" == #[some "code:decls"] && idle "show = math, decls = {a}" == #[] &&
       ((Code.showingOfEntries .lean (Decl.splitEntries "decls = {a}")).idle .lean ⟨"t", {}⟩
         (page := false)).isEmpty)
+  let idleIncluded (dir : String) : Array (Option String) :=
+    ((Code.showingOfEntries .lean (Decl.splitEntries dir)).idle .lean ⟨"t", {}⟩ (page := false)).map
+      fun (d : Diag) => d.subject
+  t "views: a facts path nothing reads is named, on a page and an inclusion, and one a view reads is not"
+    (idle "facts = t.facts" == #[some "code:facts"] &&
+      idle "show = code, facts = t.facts" == #[some "code:facts"] &&
+      idle "show = math, facts = t.facts" == #[] && idle "proofs = remove, facts = t.facts" == #[] &&
+      idleIncluded "facts = t.facts" == #[some "code:facts"] &&
+      idleIncluded "decls = {a}, facts = t.facts" == #[] &&
+      idle "facts = t.facts" .python == #[some "code:facts"])
   let theorems (dir : String) : Nat := ((MarkdownDoc.emit (readWith dir).1).splitOn "**Theorem** (").length
   t "views: a page whose decls names nothing sets every statement, as the note says"
     (theorems "show = math, code, decls = {}" == theorems "show = math, code" &&
@@ -367,7 +377,7 @@ def leanViewChecks (ref : IO.Ref (List String)) : IO Unit := do
   let docOf (rs : Array Parse.Raw × Array Diag) : Ir.Doc × Array Diag :=
     Elab.runRaws "host.tex" (#[.env "document" rs.1 {}]) rs.2
   let (whole, wholeDs) := docOf (incl "" none)
-  t "views: a file included with nothing that asks Lean is one listing of the whole file"
+  t "views: a file included with nothing that reads facts is one listing of the whole file"
     (listingTexts whole == #["\n" ++ (String.ofList ((src.toList.reverse.dropWhile Code.isWhite).reverse))] &&
       !wholeDs.any fun d => d.kind == .W0110 || d.kind == .W0414)
   let (chosen, chosenDs) := docOf (incl "show = {math, code}, decls = {height_double, nothere}, proofs = remove" (some facts))
@@ -440,46 +450,54 @@ def leanViewChecks (ref : IO.Ref (List String)) : IO Unit := do
       !allDs.any (·.kind == .W0110))
   -- The driver reads a Lean file's facts from disk, beneath its project or where the document
   -- declaring them places them, and never runs Lean.
-  let tmp ← IO.FS.createTempDir
-  let proj := tmp / "proj"
-  IO.FS.createDirAll (proj / ".lake/build/leantex")
-  IO.FS.writeFile (proj / "lakefile.toml") "name = \"t\"\n"
-  IO.FS.writeFile (proj / "statements.lean") src
-  IO.FS.writeFile (proj / ".lake/build/leantex/statements.facts") answer
-  IO.FS.writeFile (tmp / "alt.facts") answer
-  let readAt (path text : String) : IO (Ir.Doc × Array Diag) := do
-    IO.FS.writeFile path text
-    let read ← Input.readDocument path text.toUTF8
-    return Elab.runExecuted path read.executed read.diags
-  let stated (doc : Ir.Doc) : Bool :=
-    (codePageLines fonts doc).any (·.2.startsWith "Theorem (Tide.height_double).")
-  let quiet (ds : Array Diag) : Bool := !ds.any fun d => d.kind == .N0032 || d.kind == .W0433
-  let pagePath := (proj / "statements.lean").toString
-  let (pageDoc, pageDs) ← readAt pagePath src
-  t "views: a Lean page through the driver reads its facts beneath its project's .lake/build/leantex"
-    (stated pageDoc && quiet pageDs)
-  let (texDoc, texDs) ← readAt (tmp / "doc.tex").toString
-    ("\\documentclass{article}\n\\begin{document}\n" ++
-      "\\inputlean[show = math, facts = alt.facts]{proj/statements.lean}\n\\end{document}\n")
-  t "views: an inclusion reads the facts file it declares, beside the including document"
-    (stated texDoc && quiet texDs)
-  let declaring := src.replace "-- leantex: show = math, code"
-    "-- leantex: show = math, code, facts = \"../alt.facts\""
-  IO.FS.removeFile (proj / ".lake/build/leantex/statements.facts")
-  let (declaredDoc, declaredDs) ← readAt (proj / "declaring.lean").toString declaring
-  t "views: a page reads the facts file its directive declares, beside the page"
-    (declaring != src && stated declaredDoc && quiet declaredDs)
-  let (bareDoc, bareDs) ← readAt pagePath src
-  t s!"views: a page whose facts were never written sets its code, with one note ({bareDs.map (·.code)})"
-    (!stated bareDoc && (bareDs.filter (·.kind == .N0032)).size == 1 &&
-      !(listingTexts bareDoc).isEmpty)
-  IO.FS.writeFile (proj / ".lake/build/leantex/statements.facts") answer
-  let lines := src.splitOn "\n"
-  let edited := "\n".intercalate (lines.take 1 ++ ["-- an edit since the export"] ++ lines.drop 1)
-  let (editedDoc, editedDs) ← readAt pagePath edited
-  t "views: a page edited since its export sets its code, with one warning to export again"
-    (!stated editedDoc && (editedDs.filter (·.kind == .W0433)).size == 1)
-  IO.FS.removeDirAll tmp
+  IO.FS.withTempDir fun tmp => do
+    let proj := tmp / "proj"
+    IO.FS.createDirAll (proj / ".lake/build/leantex")
+    IO.FS.writeFile (proj / "lakefile.toml") "name = \"t\"\n"
+    IO.FS.writeFile (proj / "statements.lean") src
+    IO.FS.writeFile (proj / ".lake/build/leantex/statements.facts") answer
+    IO.FS.writeFile (tmp / "alt.facts") answer
+    let readAt (path text : String) : IO (Ir.Doc × Array Diag) := do
+      IO.FS.writeFile path text
+      let read ← Input.readDocument path text.toUTF8
+      return Elab.runExecuted path read.executed read.diags
+    let readsOf (path text : String) : IO (Array String) := do
+      IO.FS.writeFile path text
+      return (← Input.readDocument path text.toUTF8).reads
+    let stated (doc : Ir.Doc) : Bool :=
+      (codePageLines fonts doc).any (·.2.startsWith "Theorem (Tide.height_double).")
+    let quiet (ds : Array Diag) : Bool := !ds.any fun d => d.kind == .N0032 || d.kind == .W0433
+    let pagePath := (proj / "statements.lean").toString
+    let (pageDoc, pageDs) ← readAt pagePath src
+    t "views: a Lean page through the driver reads its facts beneath its project's .lake/build/leantex"
+      (stated pageDoc && quiet pageDs)
+    t "views: the facts file a page reads is among the files its build reads"
+      ((← readsOf pagePath src).any (·.endsWith "/proj/.lake/build/leantex/statements.facts"))
+    IO.FS.writeFile (proj / ".lake/build/leantex/crlf.facts") answer
+    let (crlfDoc, crlfDs) ← readAt (proj / "crlf.lean").toString (src.replace "\n" "\r\n")
+    t "views: a page saved with CRLF line ends reads the facts Lean gives its text, line ends made LF"
+      (stated crlfDoc && quiet crlfDs)
+    let (texDoc, texDs) ← readAt (tmp / "doc.tex").toString
+      ("\\documentclass{article}\n\\begin{document}\n" ++
+        "\\inputlean[show = math, facts = alt.facts]{proj/statements.lean}\n\\end{document}\n")
+    t "views: an inclusion reads the facts file it declares, beside the including document"
+      (stated texDoc && quiet texDs)
+    let declaring := src.replace "-- leantex: show = math, code"
+      "-- leantex: show = math, code, facts = \"../alt.facts\""
+    IO.FS.removeFile (proj / ".lake/build/leantex/statements.facts")
+    let (declaredDoc, declaredDs) ← readAt (proj / "declaring.lean").toString declaring
+    t "views: a page reads the facts file its directive declares, beside the page"
+      (declaring != src && stated declaredDoc && quiet declaredDs)
+    let (bareDoc, bareDs) ← readAt pagePath src
+    t s!"views: a page whose facts were never written sets its code, with one note ({bareDs.map (·.code)})"
+      (!stated bareDoc && (bareDs.filter (·.kind == .N0032)).size == 1 &&
+        !(listingTexts bareDoc).isEmpty)
+    IO.FS.writeFile (proj / ".lake/build/leantex/statements.facts") answer
+    let lines := src.splitOn "\n"
+    let edited := "\n".intercalate (lines.take 1 ++ ["-- an edit since the export"] ++ lines.drop 1)
+    let (editedDoc, editedDs) ← readAt pagePath edited
+    t "views: a page edited since its export sets its code, with one warning to export again"
+      (!stated editedDoc && (editedDs.filter (·.kind == .W0433)).size == 1)
   -- The fenced division markdown includes a Lean file by.
   let (blks, _) := Md.blocks "d.md" "Before.\n\n::: {.lean file=\"F.lean\" show=\"math, code\"}\n:::\n\nAfter.\n"
   t s!"views: a fenced division of class lean reads as one inclusion between its neighbours ({repr blks})"

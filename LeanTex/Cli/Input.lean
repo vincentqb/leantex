@@ -157,8 +157,10 @@ private def readLean (dir : System.FilePath) (request : Compat.InputRequest) :
     let showing := Code.showingOfEntries .lean (Decl.splitEntries request.options) (alone := true)
     let lost := showing.lostIncluded
     let declared := showing.facts.map fun p => (dir / p).toString
-    let (facts, factDiags) ← if showing.asks || showing.decls.isSome then
-        Host.runIO (LeanFactsFile.factsFor path.toString text declared lost) else pure (none, #[])
+    let (facts, factDiags, factsRead) ← if showing.asks || showing.decls.isSome then
+        Host.runIO (LeanFactsFile.factsFor path.toString text declared lost)
+      else pure (none, #[], none)
+    if let some p := factsRead then modify fun log => { log with reads := log.reads.push p }
     let place ← match showing.link with
       | some l => if showing.statements then
           Host.runIO (LeanLinks.placeOf path.toString (Code.linkTemplate l)) else pure {}
@@ -363,7 +365,7 @@ public def readDocument (file : String) (bytes : ByteArray)
   let (first, guess) := if tex then Encoding.readDocument file bytes
     else (Encoding.readMarkdown file bytes, none)
   phase "decode" s!"{first.text.utf8ByteSize} bytes of text" (← since t)
-  let surface (text : String) (phases : Bool) : IO (Array Parse.Raw × Array Diag) := do
+  let surface (text : String) (phases : Bool) : IO (Array Parse.Raw × Array Diag × Array String) := do
     let t ← IO.monoMsNow
     match Ir.Surface.ofPath file with
     | .tex =>
@@ -372,18 +374,18 @@ public def readDocument (file : String) (bytes : ByteArray)
       let t ← IO.monoMsNow
       let (raws, parseDiags) := Surface.texParse file toks
       if phases then phase "parse" s!"{raws.size} top-level nodes" (← since t)
-      return (raws, lexDiags ++ parseDiags)
+      return (raws, lexDiags ++ parseDiags, #[])
     | .markdown =>
       let (raws, ds) := Surface.read .markdown file text
       if phases then phase "md" s!"{raws.size} top-level nodes" (← since t)
-      return (raws, ds)
+      return (raws, ds, #[])
     | .code lang =>
       let showing := Code.showingOf lang text.toList.toArray
       let asks := lang == .lean && showing.asks
-      let (facts, factDiags) ← if asks then
+      let (facts, factDiags, factsRead) ← if asks then
           Host.runIO (LeanFactsFile.factsFor file text (showing.facts.map fun p =>
             ((System.FilePath.mk file).parent.getD "." / p).toString) showing.lost)
-        else pure (none, #[])
+        else pure (none, #[], none)
       if phases && asks then
         phase "lean" s!"{(facts.map (·.decls.size)).getD 0} declarations" (← since t)
       let place ← match showing.link with
@@ -393,8 +395,8 @@ public def readDocument (file : String) (bytes : ByteArray)
       let t ← IO.monoMsNow
       let (raws, ds) := Surface.readCode lang file text facts place
       if phases then phase "code" s!"{raws.size} top-level nodes" (← since t)
-      return (raws, ds ++ factDiags)
-  let (raws, frontDiags) ← surface first.text true
+      return (raws, ds ++ factDiags, factsRead.toArray)
+  let (raws, frontDiags, surfaceReads) ← surface first.text true
   let t ← IO.monoMsNow
   let seeded (read : Encoding.FileText) (under : Option Encoding.Declared) : Encoding.Ledger :=
     if tex then { reads := #[read.read file under] } else {}
@@ -406,7 +408,7 @@ public def readDocument (file : String) (bytes : ByteArray)
     else
       let again := Encoding.readTex settled file bytes
       let (raws, frontDiags) ← if again.text == first.text then pure (raws, frontDiags)
-        else surface again.text false
+        else (fun (r, d, _) => (r, d)) <$> surface again.text false
       let (executed, log) ← executeWith file raws
         { fixed := some settled, ledger := seeded again settled }
       let ledger := { log.ledger with declared := settled }
@@ -417,6 +419,6 @@ public def readDocument (file : String) (bytes : ByteArray)
            executed := executed.withRaws raws
            diags := read.diags ++ frontDiags ++ log.diags ++ dataDiags
            spliced := log.spliced, ledger,
-           reads := (firstReads ++ log.reads ++ dataReads).toList.eraseDups.toArray }
+           reads := (surfaceReads ++ firstReads ++ log.reads ++ dataReads).toList.eraseDups.toArray }
 
 end LeanTex.Cli.Input

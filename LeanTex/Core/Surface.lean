@@ -27,7 +27,7 @@ namespace Surface
   | .markdown, file, text => Md.read file text
   | .code lang, file, text => Code.read lang file text
 
-/-- A code file's text as the surface AST, each statement Lean's answer gives set beside its
+/-- A code file's text as the surface AST, each statement its facts give set beside its
 declaration's code as the file's directive orders its views. -/
 @[expose] public def readCode (lang : Ir.CodeLang) (file text : String)
     (facts : Option LeanFacts.Facts) (place : Code.LinkPlace := {}) : Array Parse.Raw × Array Diag :=

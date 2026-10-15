@@ -244,7 +244,7 @@ def leanStatementChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (mathDoc, mathDs) := readAs "show = math"
   let mathLines := codePageLines fonts mathDoc
   let fallback := (listings mathDoc).map (·.2.trimAscii.toString)
-  t s!"statements: a page that shows math alone sets statements, its title, no prose, and the code of each declaration Lean gave no statement for in its place ({fallback})"
+  t s!"statements: a page that shows math alone sets statements, its title, no prose, and the code of each declaration its facts give no statement for in its place ({fallback})"
     (mathLines.any (fun (_, ink) => ink.startsWith "Theorem (Tide.height_double).") &&
       mathDoc.info.title == some "Tide arithmetic" &&
       !mathLines.any (fun (_, ink) => ink.startsWith "Rising twice") &&
@@ -253,7 +253,7 @@ def leanStatementChecks (ref : IO.Ref (List String)) : IO Unit := do
       (mathDs.filter (·.kind == .W0414)).all fun d => (d.message.splitOn "in its place").length == 2 ||
         (d.message.splitOn "in place of a statement").length == 2)
   let (unansweredDoc, unansweredDs) := readWith "show = math" none
-  t "statements: a page that shows math alone shows the file's code when Lean gave no answer"
+  t "statements: a page that shows math alone shows the file's code when it has no facts"
     ((listings unansweredDoc).size == (listings codeDoc).size &&
       !(codePageLines fonts unansweredDoc).any (fun (_, ink) => ink.startsWith "Theorem (") &&
       !unansweredDs.any (·.kind == .W0414))
@@ -281,7 +281,7 @@ def leanStatementChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((LeanFacts.decode (header ++ ended0)).toOption.map (·.decls.size) == some 0)
   let record (type : String) : String :=
     header ++ "{\"name\":\"a\",\"module\":\"\",\"kind\":\"theorem\",\"range\":[1,0,1,1],\"head\":[1,0]," ++
-      "\"id\":[1,8],\"written\":\"a\",\"signature\":null,\"proof\":null,\"proved\":true,\"prop\":true," ++
+      "\"signature\":null,\"proof\":null,\"proved\":true,\"prop\":true," ++
       "\"type\":" ++ type ++ "}\n" ++ ended1
   t "statements: facts cut short, miscounted, of another schema, with a node read twice or a binder marked neither way are refused"
     (refused header && refused (header ++ ended1) &&
@@ -296,31 +296,66 @@ def leanStatementChecks (ref : IO.Ref (List String)) : IO Unit := do
   let standard := ("/work/.lake/build/leantex/statements.facts", facts3)
   let program := LeanFactsFile.factsFor "statements.lean" src none
   let found := factsWorld [lakefile, ("/work/statements.lean", src.toUTF8), standard]
-  t "facts: a file's facts are read from beneath its project's .lake/build/leantex, and nothing runs"
-    ((program.run found).1 == some facts && (program.run found).2.isEmpty && !runs (program.asks found))
+  t "facts: a file's facts are read from beneath its project's .lake/build/leantex, the path read named, and nothing runs"
+    ((program.run found).1 == some facts && (program.run found).2.1.isEmpty &&
+      (program.run found).2.2 == some "/work/.lake/build/leantex/statements.facts" &&
+      !runs (program.asks found))
   let declared := LeanFactsFile.factsFor "proj/statements.lean" src (some "out/tide.facts")
   let elsewhere := factsWorld [("/work/proj/lakefile.toml", "name = \"t\"".toUTF8),
     ("/work/proj/.lake/build/leantex/statements.facts", "{}".toUTF8), ("/work/out/tide.facts", facts3)]
   t "facts: a declared facts file is read in place of the exporter's, where its document places it"
-    ((declared.run elsewhere).1 == some facts && (declared.run elsewhere).2.isEmpty &&
-      !runs (declared.asks elsewhere))
+    ((declared.run elsewhere).1 == some facts && (declared.run elsewhere).2.1.isEmpty &&
+      (declared.run elsewhere).2.2 == some "/work/out/tide.facts" && !runs (declared.asks elsewhere))
   let none0 := factsWorld [lakefile]
-  t s!"facts: with no facts file the page sets its code, and one note names the exporter to run ({(program.run none0).2.map (·.message)})"
-    ((program.run none0).1.isNone && (program.run none0).2.map (·.kind) == #[.N0032] &&
-      (program.run none0).2.all (fun d => d.help.any (hasStr · "lake exe leantex-export statements")) &&
-      !runs (program.asks none0))
-  let edited := "-- a line added after the export\n" ++ src
-  let editedProgram := LeanFactsFile.factsFor "statements.lean" edited none
-  t "facts: facts that no longer line up with the file are named once, and its code stands"
-    ((editedProgram.run found).1.isNone && (editedProgram.run found).2.map (·.kind) == #[.W0433] &&
-      !LeanFacts.alignedWith facts edited)
+  let absent := (program.run none0).2.1
+  t s!"facts: with no facts file the page sets its code, and one note names the exporter to run on the file ({absent.map (·.help)})"
+    ((program.run none0).1.isNone && absent.map (·.kind) == #[.N0032] &&
+      absent.all (fun d => d.help.any (hasStr · "lake exe leantex-export statements.lean")) &&
+      (program.run none0).2.2.isNone && !runs (program.asks none0))
+  let declaredAbsent := (declared.run (factsWorld [("/work/proj/lakefile.toml", "".toUTF8)])).2.1
+  t "facts: a declared facts file absent names the exporter and the copy that puts its facts there"
+    (declaredAbsent.map (·.kind) == #[.N0032] && declaredAbsent.all fun d => d.help.any fun h =>
+      hasStr h "lake exe leantex-export statements.lean" &&
+        hasStr h "copy '/work/proj/.lake/build/leantex/statements.facts' to the declared path")
+  -- What lines up: each command the exporter read, as it read it, and where the source ends.
+  let stale (text : String) : Bool :=
+    !LeanFacts.alignedWith facts text &&
+      ((LeanFactsFile.factsFor "statements.lean" text none).run found).2.1.map (·.kind) == #[.W0433]
+  t "facts: facts that line up with the file are read, and every declaration lies in a command they quote"
+    (LeanFacts.alignedWith facts src && !facts.commands.isEmpty)
+  t "facts: a line added since the export no longer lines up, named once, and its code stands"
+    (stale ("-- a line added after the export\n" ++ src))
+  let inPlace := [("theorem height_double", "theorem height_dpuble"),
+    ("(hr : 0 < rise) (hn : 0 < n) : 0 < height rise n", "(hr : 1 < rise) (hn : 0 < n) : 0 < height rise n"),
+    ("exact Nat.mul_pos hr hn", "exact Nat.mul_pos hr  hn"), ("universe u", "universe v"),
+    ("open Nat in\ntheorem succ_pos'", "open Int in\ntheorem succ_pos'")]
+  t "facts: a name, a statement or a proof edited in place, or a command a statement reads, no longer lines up"
+    (inPlace.all fun (a, b) => src.replace a b != src && stale (src.replace a b))
+  let untouched := [("Invented facts about tides", "Invented notes on tides!"),
+    ("-- leantex: show = math, code", "-- leantex: show = prose, code")]
+  t "facts: a module's documentation or a comment edited within its lines still lines up"
+    (untouched.all fun (a, b) => src.replace a b != src && LeanFacts.alignedWith facts (src.replace a b))
   let renamed := src.replace "theorem height_double" "theorem height_dpuble"
   t "facts: a declaration renamed in place no longer lines up, though every span keeps its length"
-    (renamed.length == src.length && !LeanFacts.alignedWith facts renamed &&
-      LeanFacts.alignedWith facts src)
+    (renamed.length == src.length && !LeanFacts.alignedWith facts renamed)
+  let shifted : LeanFacts.Facts := { facts with
+    commands := facts.commands.map fun c => { c with start := (c.start.1, c.start.2 + 400) } }
+  t "facts: a command placed past its line's end does not line up"
+    (!LeanFacts.alignedWith shifted src)
+  let uncovered : LeanFacts.Facts :=
+    { facts with commands := facts.commands.filter fun c => !hasStr c.text "def height" }
+  t "facts: a declaration no quoted command holds does not line up"
+    (uncovered.commands.size + 1 == facts.commands.size && !LeanFacts.alignedWith uncovered src)
   let old := factsWorld [lakefile, ("/work/.lake/build/leantex/statements.facts",
     ("{\"leantex-lean-export\":2,\"lean\":\"4.34.1\",\"errors\":0}\n" ++ ended0).toUTF8)]
-  t "facts: facts of another schema are named as not reading, and the code stands"
-    ((program.run old).1.isNone && (program.run old).2.map (·.kind) == #[.W0433])
+  let oldDs := (program.run old).2.1
+  t s!"facts: facts of another schema are named, the exporter's update named, and the code stands ({oldDs.map (·.message)})"
+    ((program.run old).1.isNone && oldDs.map (·.kind) == #[.W0433] &&
+      oldDs.all fun d => d.help.any (hasStr · "lake update leantex-export"))
+  let torn := factsWorld [lakefile, ("/work/.lake/build/leantex/statements.facts",
+    (facts3.extract 0 (facts3.size / 2)))]
+  t "facts: facts cut short are named as not reading, the exporter to run again named, and the code stands"
+    ((program.run torn).1.isNone && (program.run torn).2.1.map (·.kind) == #[.W0433] &&
+      (program.run torn).2.1.all fun d => d.help.any (hasStr · "in its project again"))
 
 end Tests.LeanStatements

@@ -1,6 +1,6 @@
 /- The exporter's oracle: runs `lake exe leantex-export` in a scratch project requiring export/ on
-each invented file in testdata/codedoc/lean; `--selftest` holds each committed facts file to what it
-writes now, byte for byte, and `--check` to its source and the exporter, running no Lean. -/
+each invented file in testdata/codedoc/lean; `--selftest` holds the committed facts to what it writes
+and leantex's reader to every layout's, and `--check` holds them to their sources, running no Lean. -/
 import LeanTex
 
 open LeanTex.Core LeanTex.Cli
@@ -34,24 +34,80 @@ def moduleOf (name : String) : String := ".".intercalate ((s!"{fixtureDir}/{stem
 def row (key name : String) (bytes : ByteArray) (lean : String) : String :=
   s!"{name}\t{key}\t{Flate.contentKey bytes}\t{lean}"
 
-/-- Every fixture's facts as the exporter writes them now, in a scratch project requiring it. -/
-def runExporter : IO (Except String (Array (String × ByteArray))) := do
+/-- A scratch project requiring the exporter in export/, holding every fixture. -/
+def scratch (dir : System.FilePath) : IO (Array (String × ByteArray)) := do
   let repo ← IO.FS.realPath (← IO.currentDir)
-  let dir ← IO.FS.createTempDir
   IO.FS.writeFile (dir / "lean-toolchain") (← IO.FS.readFile "lean-toolchain")
   IO.FS.writeFile (dir / "lakefile.toml") ("name = \"oracle\"\n\n[[require]]\n" ++
     s!"name = \"leantex-export\"\npath = \"{repo / "export"}\"\n")
   IO.FS.createDirAll (dir / fixtureDir)
   let fs ← fixtures
   for (name, bytes) in fs do IO.FS.writeBinFile (dir / fixtureDir / name) bytes
-  let modules := fs.map (moduleOf ·.1)
-  let ran ← IO.Process.output { cmd := "lake", args := #["exe", "leantex-export"] ++ modules, cwd := dir }
+  return fs
+
+/-- The exporter run in a scratch project on `args`, as from a shell outside any Lake
+environment, or why it failed. -/
+def exportIn (dir : System.FilePath) (args : Array String) : IO (Except String Unit) := do
+  let ran ← IO.Process.output {
+    cmd := "lake", args := #["exe", "leantex-export"] ++ args, cwd := dir
+    env := #[("LEAN_PATH", none), ("LEAN_SRC_PATH", none)] }
   if ran.exitCode != 0 then
     return .error s!"lake exe leantex-export exited with {ran.exitCode}\n{ran.stdout}{ran.stderr}"
-  let mut out := #[]
-  for (name, _) in fs do
-    out := out.push (name, ← IO.FS.readBinFile (dir / ".lake/build/leantex" / s!"{fixtureDir}/{stem name}.facts"))
-  return .ok out
+  return .ok ()
+
+/-- Every fixture's facts as the exporter writes them now, in a scratch project requiring it. -/
+def runExporter : IO (Except String (Array (String × ByteArray))) :=
+  IO.FS.withTempDir fun dir => do
+    let fs ← scratch dir
+    match ← exportIn dir (fs.map (moduleOf ·.1)) with
+    | .error why => return .error why
+    | .ok () =>
+      let mut out := #[]
+      for (name, _) in fs do
+        out := out.push (name, ← IO.FS.readBinFile
+          (dir / ".lake/build/leantex" / s!"{fixtureDir}/{stem name}.facts"))
+      return .ok out
+
+/-- Whether leantex's own reader finds a file's facts where the exporter wrote them, lined up. -/
+def readBack (file : System.FilePath) : IO (Option LeanFacts.Facts) := do
+  let text := (Encoding.readMarkdown file.toString (← IO.FS.readBinFile file)).text
+  let (facts, ds, _) ← Host.runIO (LeanFactsFile.factsFor file.toString text none)
+  return if ds.isEmpty then facts else none
+
+/-- A fact file's records with its module named nowhere, to compare two exports of one text. -/
+def unnamed (f : LeanFacts.Facts) : LeanFacts.Facts :=
+  { f with decls := f.decls.map fun d => { d with moduleName := "" } }
+
+/-- The layouts leantex must find an export in: a fixture with CRLF line ends, a module named
+`Main` beside the exporter's own, and a nested package's file, each read back through leantex. -/
+def layouts : IO (Array String) :=
+  IO.FS.withTempDir fun dir => do
+    let fs ← scratch dir
+    let mut faults := #[]
+    let some (name, bytes) := fs[0]? | return #["no fixture"]
+    let lf := (String.fromUTF8? bytes).getD ""
+    IO.FS.writeFile (dir / fixtureDir / "crlfCopy.lean") (lf.replace "\n" "\r\n")
+    IO.FS.writeFile (dir / "Main.lean") "theorem main_true : True := trivial\n"
+    IO.FS.createDirAll (dir / "sub/Sub")
+    IO.FS.writeFile (dir / "sub/lakefile.toml") "name = \"sub\"\n"
+    IO.FS.writeFile (dir / "sub/Sub/Thing.lean") "theorem thing : 1 = 1 := rfl\n"
+    let args := #[moduleOf name, s!"{fixtureDir}/crlfCopy.lean", "Main", "sub/Sub/Thing.lean"]
+    if let .error why ← exportIn dir args then return #[why]
+    let real ← IO.FS.realPath dir
+    let original ← readBack (real / fixtureDir / name)
+    match original, ← readBack (real / fixtureDir / "crlfCopy.lean") with
+    | some a, some b =>
+      unless unnamed a == unnamed b do
+        faults := faults.push "a CRLF copy's facts differ from its LF original's"
+    | _, _ => faults := faults.push "a fixture or its CRLF copy has no facts leantex reads lined up"
+    match ← readBack (real / "Main.lean") with
+    | some f =>
+      unless f.decls.map (·.name) == #["main_true"] && f.decls.all (·.moduleName == "Main") do
+        faults := faults.push "the module Main exported another file than the project's"
+    | none => faults := faults.push "the project's Main has no facts leantex reads lined up"
+    if (← readBack (real / "sub/Sub/Thing.lean")).isNone then
+      faults := faults.push "a nested package's file has no facts where leantex reads them"
+    return faults
 
 def check : IO UInt32 := do
   let key ← exporterKey
@@ -98,7 +154,11 @@ def selftest : IO UInt32 := do
       if facts != (← IO.FS.readBinFile (factsPath name)) then
         IO.eprintln s!"leanexport --selftest: {name}: the exporter writes other facts than the committed ones"
         status := 1
-    if status == 0 then IO.println s!"leanexport --selftest: {written.size} facts files as committed"
+    for fault in ← layouts do
+      IO.eprintln s!"leanexport --selftest: {fault}"
+      status := 1
+    if status == 0 then
+      IO.println s!"leanexport --selftest: {written.size} facts files as committed, and every layout read back"
     return status
 
 def main (args : List String) : IO UInt32 :=

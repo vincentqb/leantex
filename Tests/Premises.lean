@@ -240,9 +240,9 @@ def registry : List Premise := [
     sites := [("LeanTex/Cli/ListingHighlight.lean", "fulfil")]
     owed := some "Compare the installed Pygments' classification of each corpus listing with the reference build's, token by token." },
   { name := "lake-export", residue := .oracle "lake", reach := .oracle
-    statement := "lake exe leantex-export, built and run under a Lean project's own toolchain, elaborates each module's commands as that project's lean elaborates them, but for Lean's frontend imported beside the module's own imports and the lakefile's options left unapplied, and writes facts LeanFacts.decode reads whole and LeanFacts.alignedWith holds to the source before a statement reaches the IR."
-    guards := [decl% LeanFacts.decode, decl% LeanFacts.alignedWith]
-    sites := [("scripts/leanexport.lean", "runExporter")]
+    statement := "lake exe leantex-export, built and run under a Lean project's own toolchain, elaborates each file's commands as that project's lean elaborates them, but for Lean's frontend imported beside the file's own imports and the lakefile's options left unapplied, and writes facts, where leantex reads them, that LeanFacts.decode reads whole and LeanFacts.judge keeps only where LeanFacts.alignedWith holds them to the source, before a statement reaches the IR."
+    guards := [decl% LeanFacts.decode, decl% LeanFacts.alignedWith, decl% LeanFacts.judge]
+    sites := [("scripts/leanexport.lean", "exportIn")]
     tools := ["lake"]
     scripts := ["scripts/leanexport.lean"]
     owed := some "Set each statement of a project's files from the exporter and from the type the project's own build of the file gives, and require the two to match." },
