@@ -4069,12 +4069,6 @@ public def algWords (tag : String) : AlgWords :=
       resultKw := "Result", functionKw := "Function"
       procedureKw := "Procedure" }
 
-/-- Every word a keyword table can generate, for font coverage. -/
-public def AlgWords.all (w : AlgWords) : List String :=
-  [w.forKw, w.foreachKw, w.whileKw, w.doKw, w.ifKw, w.thenKw, w.elseIfKw,
-   w.elseKw, w.repeatKw, w.untilKw, w.endKw, w.returnKw, w.inputKw,
-   w.outputKw, w.dataKw, w.resultKw, w.functionKw, w.procedureKw]
-
 /-- The opener's keyword pair: the word before the condition and the word after it. -/
 public def AlgOpen.words (w : AlgWords) : AlgOpen → String × Option String
   | .forLoop => (w.forKw, some w.doKw)

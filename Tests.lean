@@ -1040,6 +1040,7 @@ def main (args : List String) : IO UInt32 := do
   diagnosticPipelineOriginChecks ref
   pictureShipChecks ref
   Tests.boundaryFaceRetryChecks ref
+  algLabelFaceChecks ref
   Tests.graphicsPathChecks ref
   bibFieldShipChecks ref
   bibFuzzShipChecks ref

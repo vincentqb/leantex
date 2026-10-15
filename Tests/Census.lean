@@ -403,6 +403,8 @@ def censusRows0 :
       hasStr (censusText c) "Algorithm 2: The same exchange sort, algorithmicx spelling."),
     ("the io lines ship their generated labels",
       hasStr (censusText c) "Input:" && hasStr (censusText c) "Output:"),
+    ("a declared io keyword ships its line under its own word",
+      hasStr (censusText c) "Bound: every weight between one and nine"),
     ("the generated keywords ship around the declared content",
       hasStr (censusText c) "for" && hasStr (censusText c) "do"
         && hasStr (censusText c) "end"),

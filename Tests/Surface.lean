@@ -928,8 +928,8 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((algorithmic "" "[1]" "").all (·.code != "N0102") &&
       (algorithmic "\\begin{algorithm}\\caption{An invented sort}" "[1]" "\\end{algorithm}").all
         (·.code != "N0102"))
-  t "algorithmic: a step after a space that is not modelled is named as written"
-    ((algorithmic "" "[2]" "").any fun d => d.code == "N0102" && hasStr d.message "'[2]'")
+  t "algorithmic: a step after a space that is not modelled is named, its spelling the detail"
+    ((algorithmic "" "[2]" "").any fun d => d.code == "N0102" && d.detail == some "[2]")
   t "compat scrartcl is article"
     ((elabStr "\\documentclass{scrartcl}\\begin{document}x\\end{document}").1.docClass == .article)
   t "compat moderncv is resume"

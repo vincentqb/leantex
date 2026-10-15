@@ -134,6 +134,7 @@ import Tests.PaletteFloor
 import Tests.AlertMark
 import Tests.SeedSeries
 import Tests.MetaEscape
+import Tests.Algorithm
 
 /-! Every breakage the user reported, as a row whose pins hold it closed; a report closes only as
 `guarded`, and the unwitnessed and owed counts are held both ways. -/
@@ -1636,7 +1637,13 @@ def reports : List Report := [
       "the corpus built by this tree and by 3c258580, PDF and HTML: 221 of 224 artifacts byte-identical, the deck, math and math-text pages' HTML differing in a formula's TeX attribute alone, with no visible difference",
       "the review's guards fail on the branch's first cut: an underscore, a caret or an ampersand in a value stopped the build; a value's footnote renumbered the body's and its label took the body's; the PDF string reading set the second argument's alternative, a dropped footnote and the author list's separator as their TeX; a control character spelled in a literal string a reader decodes otherwise; and a colour's name, a colour's value, a line spread or a link colour set another key, the first stopping the build",
       "the second review's guards fail at its tip, 09783a787: the title and author LaTeX keeps read as unknown commands and an empty value set an empty title; a value's body TeX read as unknown or warned; a control space ending a braced value took the next key; the reading held at the top level alone; a reference in a value read as question marks unnamed; and a hyphenated colour name stopped the build"]
-    state := .guarded "3c258580" .before .author }
+    state := .guarded "3c258580" .before .author },
+  { id := "R185", date := "2026-10-15"
+    what := "algorithm2e's keyword definitions lost to the package's own words and an io keyword ran into the next line; an option written on the line after an algorithmic, algorithm, figure, table, theorem or list opening was set as text or refused the build; a braced or spaced step was refused or misread; a function keyword was forgotten after its algorithm; and a declared io word's characters reached no font, so a word the faces lacked stopped the PDF"
+    pins := [check% algorithmReadChecks, check% algLabelFaceChecks]
+    accept := ["six of the guard's assertions fail at bcb532b0 before the fix: the io lines' words and semicolons, the body-local keywords, the next-line and comment-line step, the braced and zero steps, a next-line bracket holding no step, and the next-line float placement",
+      "the review's guards: eleven assertions fail at a515848e with only the guards added: a step named in its words, a spaced or zero-led step numbering every line, a function keyword unknown in the next algorithm, a declared io word absent from the font census, a figure's next-line placement and a table's after a comment line set as text, a float's second bracket swallowed, a next-line empty placement set as text, a theorem's next-line note set as text, a list's next-line options refused before its first item, and the label's face missing from both artifacts, the PDF refused"]
+    state := .guarded "bcb532b0" .before .author }
 ]
 
 /-- The reports guarded but never seen failing, a count held in both directions. -/

@@ -9422,7 +9422,7 @@ private def stepThmCounter (c : String) : EM String := do
 body starts. -/
 private def thmOpen (ctx : Ctx) (n : String) (body : Array Raw) (pos : Pos) :
     EM (ThmOpen × Nat) := do
-  let (note, k) ← match scanBracketArg body 0 pos with
+  let (note, k) ← match scanOpeningArg body pos fun _ => true with
     | .took k => pure (some (← elabInlines ctx (bracketInner body 0 k)), k)
     | .unclosed bpos =>
       warnUnclosed ctx s!"'\\begin\{{n}}'" bpos
@@ -9851,7 +9851,11 @@ private def algorithmLines (ctx : Ctx) (acx : Bool) (body : Array Raw)
             cur := algSubstList kws #[] cur.toList
             curComment := curComment.map fun c => algSubstList kws #[] c.toList
             if name == "SetKw" then kws := Ir.redeclare kws key (.word val)
-            else if name == "SetKwFunction" then kws := Ir.redeclare kws key (.func val)
+            else if name == "SetKwFunction" then
+              kws := Ir.redeclare kws key (.func val)
+              -- algorithm2e defines a function keyword with \gdef, so it holds past its algorithm.
+              modify fun st => { st with alg := { st.alg with
+                kws := Ir.redeclare st.alg.kws key (.func val) } }
             else if name == "SetKwData" then kws := Ir.redeclare kws key (.data val)
             else kws := Ir.redeclare kws key (.io (Ir.plainText (← elabInlines ctx val)))
           | _, _ =>
@@ -10119,8 +10123,15 @@ subset; its content is kept as plain lines" p
                           comment := comment }
   return (lines, numbered, semis)
 
-/-- An `{algorithmic}` `[n]` as a line count, braces around the whole of it removed. -/
-private def algStep? (written : String) : Option Nat := (KeyVal.unbrace written).toNat?
+/-- An `{algorithmic}` `[n]` as both packages compare it with the line count: digits alone, or alone
+in one group, written as the count is. -/
+private def algStep? (inner : Array Raw) : Option Nat :=
+  let value := match inner with
+    | #[.group g _] => g
+    | _ => inner
+  match value with
+  | #[.word w _] => if w == "0" || (w.all Char.isDigit && !w.startsWith "0") then w.toNat? else none
+  | _ => none
 
 /-- An `{algorithmic}` body in the flat dialect: its lines, whether its own numbering or its `[n]`
 numbers them (every line for 1, none for 0 or a value no line count equals, as the packages compare
@@ -10129,18 +10140,16 @@ private def algorithmicBody (ctx : Ctx) (body : Array Raw) (pos : Pos) :
     EM (Array Ir.AlgLine × Bool × Bool) := do
   let mut k := 0
   let mut numbered := false
-  -- Text cannot open the body's list before its first step, so any bracket there is the option.
   match scanOpeningArg body pos fun _ => true with
   | .took k' =>
-    let written := (bracketSrc body 0 k').trimAscii.toString
-    match algStep? written with
+    match algStep? (bracketInner body 0 k') with
     | some 0 | none => pure ()
     | some 1 => numbered := true
     | some _ =>
       numbered := true
       warnOnce ctx "algorithmic:step" .N0102
-        s!"'[{written}]' line-number stepping is not modelled; every line \
-is numbered" pos
+        "a line-number step above 1 is not modelled; every line is numbered" pos
+        (detail := some s!"[{bracketSrc body 0 k'}]")
     k := k'
   | .unclosed bpos => warnUnclosed ctx "'\\begin{algorithmic}'" bpos
   | .content => pure ()
@@ -10154,24 +10163,29 @@ private def algorithmicArm (ctx : Ctx) (body : Array Raw) (pos : Pos)
   let (lines, numbered, semis) ← algorithmicBody ctx body pos
   return blocks.push (.algorithm numbered semis lines)
 
-/-- Whether a float's `[...]` holds LaTeX's placement letters and nothing else. -/
+/-- Whether a float's `[...]` holds only LaTeX's placement letters, an empty one LaTeX's empty spec. -/
 private def isPlacement (written : String) : Bool :=
-  let t := written.trimAscii.toString
-  !t.isEmpty && t.all fun c => c == 'h' || c == 't' || c == 'b' || c == 'p' || c == 'H' || c == '!'
+  written.trimAscii.toString.all fun c =>
+    c == 'h' || c == 't' || c == 'b' || c == 'p' || c == 'H' || c == '!'
+
+/-- A float's opening `[placement]`, named as ignored: the index past it. -/
+private def floatPlacement (ctx : Ctx) (n : String) (body : Array Raw) (pos : Pos) : EM Nat := do
+  match scanOpeningArg body pos isPlacement with
+  | .took k =>
+    warnOnce ctx ("float:placement:" ++ n) .N0102
+      s!"'\{{n}}' [placement] is ignored: a single-pass engine has \
+nowhere for a float to float" pos
+    return k
+  | .unclosed bpos =>
+    warnUnclosed ctx s!"'\\begin\{{n}}'" bpos
+    return 0
+  | .content => return 0
 
 /-- An `{algorithm}` or `{algorithm2e}` float, its caption set above the lines
 and its placement ignored. -/
 private def algorithmArm (ctx : Ctx) (n : String) (body : Array Raw)
     (pos : Pos) (blocks : Array Block) : EM (Array Block) := do
-  let mut k := 0
-  match scanOpeningArg body pos isPlacement with
-  | .took k' =>
-    warnOnce ctx ("float:placement:" ++ n) .N0102
-      s!"'\{{n}}' [placement] is ignored: a single-pass engine has \
-nowhere for a float to float" pos
-    k := k'
-  | .unclosed bpos => warnUnclosed ctx s!"'\\begin\{{n}}'" bpos
-  | .content => pure ()
+  let k ← floatPlacement ctx n body pos
   let mut caption : Array Inline := #[]
   let mut anchors : Array Inline := #[]
   let mut rest : Array Raw := #[]
@@ -10951,7 +10965,7 @@ private def elabEnvArm (ctx : Ctx) (n : String) (scope : Array Raw)
     blocks ← closeFramePalette ctx pos blocks title opts inner aliasScope
   else if n == "itemize" || n == "enumerate" || n == "description" then
     let mut bodyFrom := 0
-    match scanBracketArg body 0 pos with
+    match scanOpeningArg body pos fun _ => true with
     | .took k' =>
       warnOnce ctx ("env:" ++ n ++ ":opts") .N0102
         s!"'\{{n}}' [options] are not modelled per instance; the declared list style stands"
@@ -11050,18 +11064,7 @@ the text width; the box takes the whole measure" pos
     let ⟨fbody, _, _⟩ ← pure (spliceCenterGo body.toList #[]
       (rawWeightList body.toList) (nestedParsList body.toList)
       (by simp [rawWeightList]) (by simp [nestedParsList]))
-    let mut k := 0
-    for _ in [0:fbody.size] do
-      match scanBracketArg fbody k pos with
-      | .took k' =>
-        warnOnce ctx ("float:placement:" ++ n) .N0102
-          s!"'\{{n}}' [placement] is ignored: a single-pass engine \
-has nowhere for a float to float" pos
-        k := k'
-      | .unclosed bpos =>
-        warnUnclosed ctx s!"'\\begin\{{n}}'" bpos
-        break
-      | .content => break
+    let k ← floatPlacement ctx n fbody pos
     blocks ← figureGo ctx n kind fbody k #[] #[] #[] #[] false blocks
       (SliceFits.whole fbody k)
   else if n == "algorithm" || n == "algorithm*" || n == "algorithm2e" then

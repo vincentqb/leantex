@@ -2644,20 +2644,19 @@ private def scalarTextOne (out : ScalarAcc) (itemD enumD : Nat) :
     scalarTextList (textAndMath out title) itemD enumD body.toList
   | .framefoot content => textAndMath out content
   | .table _ _ _ rows _ _ => scalarTextTableRows out rows.toList
-  | .algorithm numbered _ lines =>
-    let words := Ir.algWords out.locale.tag
-    let texts := (out.texts ++ (Ir.AlgWords.all words).toArray).push ":; /**/"
-    let texts := if numbered then texts.push "0123456789" else texts
-    scalarTextAlgLines { out with texts := texts } lines.toList
+  | .algorithm numbered semis lines =>
+    let out := if numbered then { out with texts := out.texts.push "0123456789" } else out
+    scalarTextAlgLines (Ir.algWords out.locale.tag) semis out lines.toList
   | .float _ _ _ body caption =>
     scalarTextList (textAndMath out caption) itemD enumD body.toList
 
-private def scalarTextAlgLines (out : ScalarAcc) : List Ir.AlgLine → ScalarAcc
+/-- Each line's text as every backend sets it (`Ir.AlgLine.rendered`), its declared words included. -/
+private def scalarTextAlgLines (words : Ir.AlgWords) (semis : Bool) (out : ScalarAcc) :
+    List Ir.AlgLine → ScalarAcc
   | [] => out
   | l :: rest =>
-    scalarTextAlgLines (match l.comment with
-      | some c => textAndMath (textAndMath out l.content) c
-      | none => textAndMath out l.content) rest
+    scalarTextAlgLines words semis
+      (textAndMath out (Ir.AlgLine.rendered words semis Ir.Color.black l)) rest
 
 private def scalarTextTableRows (out : ScalarAcc) :
     List (Array (Array Inline)) → ScalarAcc

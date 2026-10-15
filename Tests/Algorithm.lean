@@ -70,9 +70,12 @@ def algorithmReadChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO
   t "algorithmic: a bracket past a line end that holds no step is still the option, numbering none"
     (unnumbered "\n[an invented note]" &&
       !(algArtifacts fonts (acx "\n[an invented note]")).1.any (hasStr · "invented note"))
-  t "algorithmic: a step the engine does not model is named as written"
+  t "algorithmic: a step the engine does not model is named, its spelling the detail"
     ((algArtifacts fonts (acx "[{2}]")).2.2.any fun d =>
-      d.code == "N0102" && hasStr d.message "'[{2}]'")
+      d.code == "N0102" && d.detail == some "[{2}]" && !hasStr d.message "[{2}]")
+  t "algorithmic: a step is the count only as written, braces around the whole of it aside"
+    (numbered "[1]" && numbered "[{1}]" && unnumbered "[ {1} ]" && unnumbered "[1 ]" &&
+      unnumbered "[ 1]" && unnumbered "[01]" && unnumbered "[{ 1}]")
   t "algorithm2e: a placement past a line end is the float's option, never a line"
     (shipsLines (a2e "" ("Before words.\n\\begin{algorithm}\n[H]\n\\caption{An invented caption}\n" ++
         "alpha words\\;\n\\end{algorithm}\nAfter words."))
@@ -81,3 +84,81 @@ def algorithmReadChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO
   t "algorithm2e: a bracket past a line end that names no placement is the first line's text"
     (shipsLines bracketLine #[#["[alpha, bravo] words;"]] &&
       !(algArtifacts fonts bracketLine).2.2.any (·.code == "N0102"))
+  let fnGlobal := a2e ""
+    ("\\begin{algorithm}\n\\SetKwFunction{FnProbe}{Zulu}\n\\FnProbe{echo}\\;\n\\end{algorithm}\n" ++
+      "\\begin{algorithm}\n\\FnProbe{foxtrot}\\;\n\\end{algorithm}")
+  t "algorithm2e: a function keyword holds past its algorithm, as the package's \\gdef does"
+    (let (lines, lists, ds) := algArtifacts fonts fnGlobal
+     lists.map (·.2) == #[#["Zulu(echo);"], #["Zulu(foxtrot);"]] &&
+       lines.any (hasStr · "(foxtrot);") && !ds.any (·.code == "W0301"))
+  let labelled := a2e "\\SetKwInput{KwIn}{∀ alpha}\n" "\\begin{algorithm}\n\\KwIn{bravo words}\n\\end{algorithm}"
+  t "algorithm2e: a declared io word's characters reach the font census"
+    ((Layout.docScalars (elabStr labelled).1).contains '∀')
+  let floatLines (src : String) : Array String := (algArtifacts fonts src).1
+  let floatNotes (src : String) : Bool :=
+    (algArtifacts fonts src).2.2.any fun d => d.code == "N0102" && hasStr d.message "[placement]"
+  let figure := dvDoc "" ("\\begin{figure}\n[ht]\nalpha words\n\\caption{An invented caption}\n" ++
+    "\\end{figure}\n\\begin{table}\n% an invented remark\n[!b]\nbravo words\n" ++
+    "\\caption{Another invented caption}\n\\end{table}")
+  t "floats: a placement past a line end or a comment line is the float's option, never text"
+    (!(floatLines figure).any (fun l => hasStr l "[ht]" || hasStr l "[!b]") &&
+      (floatLines figure).any (hasStr · "alpha words") && floatNotes figure)
+  let twice := dvDoc "" "\\begin{figure}[h][t]\ncharlie words\n\\caption{An invented caption}\n\\end{figure}"
+  t "floats: a float takes one placement, a second bracket its text"
+    ((floatLines twice).any (hasStr · "[t] charlie words"))
+  let empty := a2e "" "\\begin{algorithm}\n[]\ndelta words\\;\n\\end{algorithm}"
+  t "floats: an empty placement past a line end is the float's option"
+    (shipsLines empty #[#["delta words;"]])
+  let thm := dvDoc "\\newtheorem{theorem}{Theorem}\n"
+    ("\\begin{theorem}\n[An invented note]\nAlpha words.\n\\end{theorem}\n" ++
+      "\\begin{theorem}\n% an invented remark\n[Another note]\nBravo words.\n\\end{theorem}\n" ++
+      "\\begin{theorem}\n\n[Kept text] Charlie words.\n\\end{theorem}")
+  t "theorems: a note past a line end or a comment line is the note, one past a blank line text"
+    (let ls := floatLines thm
+     ls.any (hasStr · "(An invented note)") && ls.any (hasStr · "(Another note)") &&
+       !ls.any (hasStr · "[An invented note]") && ls.any (hasStr · "[Kept text] Charlie words"))
+  let listed := dvDoc "\\usepackage{enumitem}\n"
+    "\\begin{itemize}\n[label=--]\n\\item Delta words.\n\\end{itemize}"
+  t "lists: options past a line end are the list's, never content before its first item"
+    (let (ls, _, ds) := algArtifacts fonts listed
+     ls.any (hasStr · "Delta words") && !ls.any (hasStr · "label") && !ds.any (·.code == "E0310"))
+
+/-- A declared io word the slots' faces lack sets from the face the document ships for it, in both
+artifacts, through the driver's own fallback assembly. -/
+def algLabelFaceChecks (ref : IO.Ref (List String))
+    (binary : System.FilePath := ".lake/build/bin/leantex") : IO Unit := do
+  let t := check ref
+  let binary ← IO.FS.realPath binary
+  let corpus ← IO.FS.realPath testFonts
+  let sans ← match Font.parse (← IO.FS.readBinFile (corpus / "OpenSans-Regular.ttf")) with
+    | .ok f => pure f
+    | .error e => throw (IO.userError s!"label faces: Open Sans unparsable: {e}")
+  let code ← match Font.parse (← IO.FS.readBinFile (corpus / "SourceCodePro-Regular.otf")) with
+    | .ok f => pure f
+    | .error e => throw (IO.userError s!"label faces: Source Code Pro unparsable: {e}")
+  t "label faces: coverage premise, only the code face has U+2200"
+    ((sans.gid '∀').isNone && (code.gid '∀').isSome)
+  IO.FS.withTempDir fun dir => do
+    IO.FS.createDirAll (dir / "fonts")
+    for f in ["OpenSans-Regular.ttf", "OpenSans-Bold.ttf", "OpenSans-Italic.ttf",
+        "OpenSans-BoldItalic.ttf", "SourceCodePro-Regular.otf"] do
+      IO.FS.writeBinFile (dir / "fonts" / f) (← IO.FS.readBinFile (corpus / f))
+    IO.FS.writeFile (dir / "doc.tex") ("\\documentclass{article}\n" ++
+      "\\fonts{ dir = \"fonts\", body = \"Open Sans\", sans = \"Open Sans\", mono = \"Open Sans\" }\n" ++
+      "\\usepackage[ruled]{algorithm2e}\n\\SetKwInput{KwIn}{∀ alpha}\n\\begin{document}\n" ++
+      "\\begin{algorithm}\n\\KwIn{bravo words}\ncharlie words\\;\n\\end{algorithm}\n\\end{document}\n")
+    for ext in ["pdf", "html"] do
+      let out := dir / s!"doc.{ext}"
+      let r ← IO.Process.output {
+        cmd := binary.toString
+        args := #["build", (dir / "doc.tex").toString, "-o", out.toString, "--porcelain"]
+        env := sealedRunEnv dir }
+      let shipped ← out.pathExists
+      t s!"label faces: the {ext} ships, the label's glyph set from the face holding it ({r.exitCode})"
+        (r.exitCode == 0 && shipped && !hasStr r.stdout "E0405")
+      if ext == "html" && shipped then
+        let page ← IO.FS.readFile out
+        t "label faces: the page sets the declared word and ships a fallback face in the body's stack"
+          (let stack := ((page.splitOn "--font-body: \"ltx-body\"").getD 1 "").takeWhile (· != ';')
+           hasStr page "∀ alpha:" && hasStr page "font-family: \"ltx-fb" &&
+             hasStr stack.toString "ltx-fb")

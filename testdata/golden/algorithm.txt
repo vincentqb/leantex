@@ -103,5 +103,11 @@ float algorithm 2 caption-above
     line 0 return
       formula inline "L"
         ord:𝐿
+float algorithm caption-above
+  algorithm
+    line 0 io named "Bound"
+      text "every weight between one and nine"
+    line 0 statement
+      text "check each weight against the bound"
 -- diagnostics
 (none)
