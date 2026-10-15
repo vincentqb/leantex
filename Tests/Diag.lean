@@ -1307,7 +1307,7 @@ def subjectDebt : List String :=
    "W0310", "W0311", "W0312", "W0319", "W0320",
    "W0321", "W0325", "W0326", "W0327", "W0328", "W0330", "W0331", "W0332",
    "W0333", "W0335", "W0336", "W0338", "W0342", "W0352",
-   "W0353", "W0356", "W0358", "W0364", "W0366", "W0368", "W0369", "W0372",
+   "W0353", "W0358", "W0364", "W0366", "W0368", "W0369", "W0372",
    "W0377", "W0379", "W0380", "W0381", "W0388"]
 
 /-- Every counted loss can be counted: a censused code's witness fires with a subject, or the code

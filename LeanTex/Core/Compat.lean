@@ -43,6 +43,47 @@ public def nativePackages : List String :=
    "algorithm2e", "algorithmicx", "algpseudocode", "algorithm", "lineno", "environ", "amsthm",
    "cancel", "animate", "markdown", "ulem", "tikz-cd", "colorspace", "blueprint"]
 
+/-- An option item as one spelling, `key` or `key=value`, its braces and spaces removed. -/
+public def optionSpelling (item : String) : String :=
+  match KeyVal.entry item with
+  | (k, some v) => s!"{k}={v}"
+  | (k, none) => k
+
+/-- Options of a native package without an option reader of its own that configure machinery the
+engine runs as they ask, each with why; every other such option is a setting nothing reads. -/
+public def packageOptionsInert : List (String × List (String × String)) :=
+  let drivers (why : String) : List (String × String) :=
+    ["dvips", "dvipdfm", "dvipdfmx", "dvisvgm", "pdftex", "luatex", "xetex"].map (·, why)
+  [("inputenc", ["utf8", "utf8x", "ascii"].map (·, "the input is read as UTF-8")),
+   ("fontenc", ["T1", "OT1", "LY1", "TS1", "T2A", "LGR"].map
+     (·, "text is set from Unicode faces, whatever 8-bit encoding is named")),
+   ("graphicx", ("final", "images are drawn, as without the option") ::
+     drivers "the engine writes its own output"),
+   ("xcolor", [("natural", "colours ship in the model they are declared in"),
+     ("hyperref", "link colours are read from hyperref's own keys"),
+     ("usenames", "the option has had no effect since xcolor 2.11")] ++
+     drivers "the engine writes its own output"),
+   ("color", ("usenames", "the option has no effect") :: drivers "the engine writes its own output"),
+   ("amsmath", [("reqno", "equation numbers stand on the right, as without the option"),
+     ("sumlimits", "a sum's limits stand above and below it, as without the option"),
+     ("namelimits", "an operator name's limits stand below it, as without the option")]),
+   ("amssymb", [("psamsfonts", "the symbols are set from the math face")]),
+   ("amsfonts", [("psamsfonts", "the symbols are set from the math face")]),
+   ("url", [("hyphens", "a URL breaks after its hyphens here")]),
+   ("fontspec", [("quiet", "the engine writes no TeX log")]),
+   ("microtype", [("final", "the document is set in final mode, as without the option"),
+     ("draft", "the features stay on: only 'disable=ifdraft' reads the flag"),
+     ("disable=ifdraft", "the features stay on: the flag disables them only beside 'draft'"),
+     ("disable=false", "the features stay on, as without the option"),
+     ("verbose", "the engine writes no TeX log")]),
+   ("listings", [("final", "listings are set, as without the option")]),
+   ("minted", [("newfloat", "a listing float is set as without the option"),
+     ("cache=false", "the engine keeps no minted cache"),
+     ("finalizecache", "the engine keeps no minted cache"),
+     ("frozencache", "the engine keeps no minted cache")]),
+   ("nicefrac", [("nice", "the fraction is set as without the option")]),
+   ("algorithm2e", [("english", "the keywords are English, as without the option")])]
+
 /-- Beamer's colour elements, each mapped onto the palette roles its `fg=` and
 `bg=` declare; an empty role is a side the engine names rather than drops. -/
 private def beamerColorRoles : List (String × Option Ir.Role × Option Ir.Role) :=
@@ -414,17 +455,22 @@ private structure LinkSetup where
   cite : String := "green"
   deriving Repr
 
+/-- hyperref's link keys, each with how it reads its value into the setup. -/
+private def linkKeys : List (String × (LinkSetup → String → LinkSetup)) :=
+  [("colorlinks", fun l v => { l with colorlinks := v != "false" }),
+   ("hidelinks", fun l _ => { l with colorlinks := false }),
+   ("linkcolor", fun l v => { l with link := v }),
+   ("urlcolor", fun l v => { l with url := v }),
+   ("citecolor", fun l v => { l with cite := v }),
+   ("allcolors", fun l v => { l with link := v, url := v, cite := v })]
+
+/-- The hyperref link keys the setup reads. -/
+public def hyperrefLinkKeys : List String := linkKeys.map (·.1)
+
 /-- One hyperref key read into the setup; `none` for a key
 that sets no link colour. -/
 private def LinkSetup.read (l : LinkSetup) (k v : String) : Option LinkSetup :=
-  match k with
-  | "colorlinks" => some { l with colorlinks := v != "false" }
-  | "hidelinks" => some { l with colorlinks := false }
-  | "linkcolor" => some { l with link := v }
-  | "urlcolor" => some { l with url := v }
-  | "citecolor" => some { l with cite := v }
-  | "allcolors" => some { l with link := v, url := v, cite := v }
-  | _ => none
+  (linkKeys.lookup k).map (· l v)
 
 /-- The setup as native declarations: each link kind's colour style under
 `colorlinks`, nothing otherwise. -/
@@ -1044,6 +1090,18 @@ private def became (what native : String) (pos : Pos)
 `ctrl:nothing:<key>`, naming the reason. -/
 private def discard (what why key : String) (pos : Pos) : M Unit :=
   became what s!"nothing: {why}" pos (subject := some ("ctrl:nothing:" ++ key))
+
+/-- The census subject of a declared setting: its reader and its name. -/
+public def paramSubject (reader name : String) : String := s!"param:{reader}:{name}"
+
+/-- A declared setting no engine site reads, named once where it is set. -/
+private def unreadParam (reader name what : String) (pos : Pos) : M Unit :=
+  sayOnce ("param:" ++ reader ++ ":" ++ name) .W0104 s!"{what} is not honoured; skipped" pos
+    (help := "\\allow{W0104} accepts the skip")
+
+/-- A declared setting the engine's own machinery already answers, named in its note. -/
+private def inertParam (reader name what why : String) (pos : Pos) : M Unit :=
+  became what s!"nothing: {why}" pos (subject := some (paramSubject reader name))
 
 /-- Log controls' accounting, read from their descriptor,
 never their arguments. -/
@@ -1987,7 +2045,8 @@ private def linenoLoad (opt : String) (pos : Pos) : M (Array Raw) := do
   for o in KeyVal.items opt do
     if o == "left" || o == "running" || o == "displaymath"
         || o == "mathlines" then
-      pure ()
+      inertParam "usepackage:lineno" o s!"\\usepackage[{o}]\{lineno}"
+        "every galley line, display math's too, is numbered in the left margin, running on" pos
     else if o == "modulo" then
       let native := "\\page{ modulo = 5 }"
       became "\\usepackage[modulo]{lineno}" native pos
@@ -2139,6 +2198,10 @@ private def biblatexLoad (name opt : String) (pos : Pos) : M Unit := do
   let bbx := pick "bibstyle" (pick "style" "numeric")
   let cbx := pick "citestyle" (pick "style" "numeric")
   let dropped := pairs.filter fun (k, _) => !biblatexRead.contains k && !biblatexInert.contains k
+  for (k, v) in pairs do
+    if biblatexInert.contains k then
+      inertParam "usepackage:biblatex" k s!"\\{name}[{k}={v}]\{biblatex}"
+        "the engine reads the bibliography and sets its citations itself" pos
   unless dropped.isEmpty do
     say .W0101 s!"'biblatex' options without a native equivalent were dropped: \
 {String.intercalate ", " (dropped.map fun (k, v) => if v == "true" then k else s!"{k}={v}")}" pos
@@ -5596,8 +5659,18 @@ private def signature (spec : String) : String := Id.run do
 
 /-- The output drivers geometry and crop choose among, which
 change nothing this engine sets. -/
-private def driverOptions : List String :=
+public def driverOptions : List String :=
   ["dvips", "dvipdfm", "dvipdfmx", "dvisvgm", "pdftex", "luatex", "xetex", "vtex", "driver"]
+
+/-- The geometry keys read as the `\page` key of the same name. -/
+public def geometryPageKeys : List String :=
+  ["margin", "vmargin", "hmargin", "width", "height", "textwidth", "textheight", "headsep", "footskip"]
+
+/-- The geometry keys read as one side's margin, which its opposite side's equal value completes. -/
+public def geometrySideKeys : List String := ["top", "bottom", "left", "right"]
+
+/-- geometry's flags asking for a page without running furniture, the page the engine starts from. -/
+public def geometryNoFurniture : List String := ["noheadfoot", "nohead", "nofoot"]
 
 /-- `\usepackage[opts]{geometry}`, `\geometry{...}` and
 `\newgeometry{...}` as `\page{...}`. -/
@@ -5612,17 +5685,20 @@ private def geometry (opts : String) (pos : Pos)
     | (f, none) =>
       if f.endsWith "paper" then
         keys := keys.push s!"size = {(f.dropEnd "paper".length).toString}"
-      else if f == "noheadfoot" || f == "nohead" || f == "nofoot" then
-        -- Asks for no running furniture, the state the engine starts from.
-        pure ()
+      else if geometryNoFurniture.contains f then
+        inertParam "geometry" f spelling "the page carries no running head or foot until one is declared" pos
       -- premise: driverOptionChecks — a driver option ships the page without it
-      else if driverOptions.contains f || f == "verbose" then pure ()
+      else if driverOptions.contains f then
+        inertParam "geometry" f spelling "the engine writes its own output" pos
+      else if f == "verbose" then inertParam "geometry" f spelling "the engine writes no TeX log" pos
       else dropped := dropped.push f
     | (k, some v) =>
       -- geometry's width/height size the text block, paperwidth/paperheight the page.
       let k := if k == "paperwidth" then "width" else if k == "paperheight" then "height" else k
       -- premise: driverOptionChecks — a driver option ships the page without it
-      if driverOptions.contains k || k == "verbose" then pure ()
+      if driverOptions.contains k then
+        inertParam "geometry" k spelling "the engine writes its own output" pos
+      else if k == "verbose" then inertParam "geometry" k spelling "the engine writes no TeX log" pos
       else if v.startsWith "\\dimexpr" then
         droppedExpr := droppedExpr.push s!"{k} = {v}"
       else match k, (KeyVal.items v).toList with
@@ -5635,12 +5711,12 @@ private def geometry (opts : String) (pos : Pos)
         else dropped := dropped.push k
       | _, _ :: _ :: _ => dropped := dropped.push k
       | _, _ =>
-        if ["margin", "vmargin", "hmargin", "width", "height",
-            "textwidth", "textheight", "headsep", "footskip"].contains k then
+        if geometryPageKeys.contains k then
           keys := keys.push s!"{k} = {lengthOfTeX v}"
         else if k == "headheight" then
-          pure ()
-        else if ["top", "bottom", "left", "right"].contains k then
+          inertParam "geometry" k spelling
+            "the running head takes its content's height, and the text block stays where the margins put it" pos
+        else if geometrySideKeys.contains k then
           sides := sides.push (k, lengthOfTeX v)
         else dropped := dropped.push k
   -- An equal pair of side margins is the symmetric margin; an unequal or lone side stays named.
@@ -5678,9 +5754,11 @@ private def crop (opts : String) (pos : Pos)
     let o := (KeyVal.entry e).1
     if o == "cam" then mode := some true
     else if o == "off" then mode := some false
-    else if o == "noaxes" then pure ()
+    else if o == "noaxes" then
+      inertParam "crop" o spelling "the cut marks stand without axis marks, as drawn" pos
     -- premise: driverOptionChecks — a driver option ships the page without it
-    else if driverOptions.contains o then pure ()
+    else if driverOptions.contains o then
+      inertParam "crop" o spelling "the engine writes its own output" pos
     else if !o.isEmpty then dropped := dropped.push o
   unless dropped.isEmpty do
     say .W0101 s!"crop options without a native equivalent were dropped: \
@@ -5688,7 +5766,7 @@ private def crop (opts : String) (pos : Pos)
   match mode with
   | some on =>
     let native := s!"\\page\{ marks = {if on then "cut" else "none"} }"
-    became spelling native pos
+    became spelling native pos (subject := some (paramSubject "crop" (if on then "cam" else "off")))
     synthAt native pos
   | none =>
     discard spelling "crop draws no marks until an option asks for them" key pos
@@ -5869,6 +5947,23 @@ private structure HyperrefRead where
   linked : Bool
   warned : Bool
 
+/-- hyperref's settings, spelled `key` or `key=value`, whose meaning the engine's own output already
+carries, each with why. -/
+public def hyperrefInert : List (String × String) :=
+  let either (k why : String) : List (String × String) := [(k, why), (k ++ "=true", why)]
+  let any (k why : String) : List (String × String) :=
+    [(k, why), (k ++ "=true", why), (k ++ "=false", why)]
+  either "unicode" "the PDF's text strings are Unicode" ++
+  either "final" "links are written, as without the option" ++
+  either "bookmarks" "the PDF's outline is written from the headings" ++
+  either "breaklinks" "a link's text breaks across lines as other text does" ++
+  either "pdfusetitle" "the title and author fall back to the document's own" ++
+  either "pdfdisplaydoctitle" "the viewer shows the document's title" ++
+  any "hypertexnames" "anchors are named by the engine" ++
+  any "naturalnames" "anchors are named by the engine" ++
+  any "plainpages" "anchors are named by the engine" ++
+  [("pdfborder=0 0 0", "links are written without a border")]
+
 /-- hyperref's keys, as `\hypersetup` and the package options give them, with its link keys
 written into the setup. -/
 private def hyperrefKeys (opts : String) (pos : Pos) : M HyperrefRead := do
@@ -5892,9 +5987,17 @@ private def hyperrefKeys (opts : String) (pos : Pos) : M HyperrefRead := do
     if ["linkcolor", "urlcolor", "citecolor", "allcolors"].contains k && !oneEntry v then
       unread := unread.push s!"'{e}'"
     else if let some l := links.read k v then
+      -- A colour style an earlier setup declared stands, so turning colouring off is not read.
+      if (← get).links.colorlinks && !l.colorlinks then
+        unreadParam "hyperref" k s!"hyperref key '{e}' after an earlier setup coloured links" pos
       links := l
       linked := true
     else if value.isNone && KeyVal.unbalanced e then cut := cut.push s!"'{e}'"
+    else if (MetaKey.all.find? (k == "pdf" ++ ·.name)).isNone &&
+        (MetaWord.all.find? (k == ·.hyperref)).isNone then
+      match hyperrefInert.lookup (optionSpelling e) with
+      | some why => inertParam "hyperref" k e why pos
+      | none => unreadParam "hyperref" k s!"hyperref key '{e}'" pos
   if linked then write fun st => { st with links }
   let dropped := cut ++ misread
   unless dropped.isEmpty do
@@ -6787,6 +6890,19 @@ private def simpleNative : List (String × String) :=
    ("onehalfspacing", "\\page{ leading = 1.25 }"),
    ("doublespacing", "\\page{ leading = 1.667 }")]
 
+/-- Options of a native package without an option reader of its own whose meaning is one native
+declaration: setspace's spacings as its commands read, and microtype's switches. -/
+public def packageOptionNatives : List (String × List (String × String)) :=
+  [("setspace", ["singlespacing", "onehalfspacing", "doublespacing"].filterMap fun o =>
+     (simpleNative.lookup o).map (o, ·)),
+   ("microtype", [("protrusion", "\\page{ protrusion = on }"),
+     ("protrusion=true", "\\page{ protrusion = on }"),
+     ("protrusion=false", "\\page{ protrusion = off }"),
+     ("expansion", "\\page{ expansion = on }"), ("expansion=true", "\\page{ expansion = on }"),
+     ("expansion=false", "\\page{ expansion = off }"),
+     ("disable", "\\page{ protrusion = off, expansion = off }"),
+     ("disable=true", "\\page{ protrusion = off, expansion = off }")])]
+
 /-- moloch's `block` option values as the theme's own block
 colour declarations. -/
 private def molochBlockColors : String → Option (List (String × String))
@@ -6822,6 +6938,14 @@ private def molochOptions (cmd src : String) (pos : Pos) : M (Array Raw) := do
       sayOnce ("moloch:" ++ key) .W0104
         s!"'{cmd}' option '{key}' is moloch configuration the engine does not have; skipped" pos
   return out
+
+/-- A beamer theme's options: moloch's read as its own, any other theme's named unread at the load
+spelled `load`. -/
+private def themeOptions (cmd load tname opts : String) (pos : Pos) : M (Array Raw) := do
+  if tname == "moloch" then return ← molochOptions cmd opts pos
+  for o in KeyVal.items opts do
+    unreadParam s!"usetheme:{tname}" (KeyVal.entry o).1 s!"'{load}' option '{o}'" pos
+  return #[]
 
 /-- The finite block-hook grammar: whitespace and the three
 standard skip commands. -/
@@ -8234,8 +8358,7 @@ its value is skipped" pos
     write fun st => { st with themeNamed := true }
     if (Theme.find? tname).isSome then
       write fun st => { st with themed := true, beamerTheme := tname }
-    let options ← if tname == "moloch" then molochOptions "\\usetheme" (opt.getD "") pos
-      else pure #[]
+    let options ← themeOptions "\\usetheme" s!"\\usetheme\{{tname}}" tname (opt.getD "") pos
     return some ((← synthAt native pos) ++ options, k)
   | "molochset" =>
     let (args, k) := takeGroups raws start 1
@@ -8411,10 +8534,29 @@ public def frameRestartMark : String := "appendix restart"
 its option list in the group after it. -/
 public def cancelOptionsMark : String := "cancel options"
 
+/-- The options of a package the loading branch does not read: each a native declaration, machinery
+the engine already answers, or a setting nothing reads. -/
+private def packageOptions (name p : String) (opts : List String) (pos : Pos) :
+    M (Array Raw) := do
+  let mut out : Array Raw := #[]
+  for o in opts do
+    let spelled := optionSpelling o
+    let key := (KeyVal.entry o).1
+    let what := s!"\\{name}[{o}]\{{p}}"
+    if let some native := (packageOptionNatives.lookup p).bind (·.lookup spelled) then
+      became what native pos (subject := some (paramSubject s!"usepackage:{p}" key))
+      out := out ++ (← synthAt native pos)
+    else if let some why := (packageOptionsInert.lookup p).bind (·.lookup spelled) then
+      inertParam s!"usepackage:{p}" key what why pos
+    else unless key.isEmpty do
+      unreadParam s!"usepackage:{p}" key s!"'{p}' option '{o}'" pos
+  return out
+
 /-- One package interpreted in the loading call's declared order. -/
 private def rewritePackageBody (name p : String) (opt : Option String) (pos : Pos) :
     M (Array Raw) := do
   let mut out : Array Raw := #[]
+  let given := (KeyVal.items (opt.getD "")).toList
   if p == "geometry" then
     out := out ++ (← geometry (opt.getD "") pos)
   else if p == "crop" then
@@ -8424,24 +8566,50 @@ private def rewritePackageBody (name p : String) (opt : Option String) (pos : Po
   else if p == "beamerposter" then
     out := out ++ (← beamerposter (opt.getD "") pos)
   else if p == "parskip" then
-    -- The package sets `\parskip` to half a line plus 2pt and drops the indent.
-    let native := "\\page{ parskip = 0.6em plus 2pt }"
-    became "\\usepackage{parskip}" native pos
+    -- The package sets `\parskip` to half a line plus 2pt, or to its `skip`, and drops the indent.
+    let skip := given.findSome? fun o => match KeyVal.entry o with
+      | ("skip", some v) => some (lengthOfTeX v)
+      | _ => none
+    let native := s!"\\page\{ parskip = {skip.getD "0.6em plus 2pt"} }"
+    became (if skip.isSome then s!"\\usepackage[{opt.getD ""}]\{parskip}" else "\\usepackage{parskip}")
+      native pos
     out := out ++ (← synthAt native pos)
+    out := out ++ (← packageOptions name p (given.filter fun o => (KeyVal.entry o).1 != "skip") pos)
   else if p == "amsthm" then
     -- amsthm's documented default style is plain.
     let native := "\\theoremstyle{plain}"
     became "\\usepackage{amsthm}" native pos
     out := out ++ (← synthAt native pos)
+    out := out ++ (← packageOptions name p given pos)
   else if (p == "caption" || p == "subcaption") && opt.isSome then
     -- The package options are `\captionsetup` keys, judged at that one site.
     let native := s!"\\captionsetup\{{opt.getD ""}}"
     became s!"\\usepackage[{opt.getD ""}]\{{p}}" native pos
     out := out ++ (← synthAt native pos)
   else if p == "babel" then
-    -- babel's last language option is the main one, which becomes document metadata.
-    let names := (KeyVal.items (opt.getD "")).filter fun o => (KeyVal.entry o).2.isNone
-    match names.back? with
+    -- babel's `main` key, else its last language option, is the main one, which becomes metadata.
+    let names := given.filter fun o => (KeyVal.entry o).2.isNone
+    let declared := given.findSome? fun o => match KeyVal.entry o with
+      | ("main", some v) => some v
+      | _ => none
+    let main? := declared.orElse fun _ => names.getLast?
+    -- A further language is one the body may select, read where it does.
+    for o in names do
+      let k := (KeyVal.entry o).1
+      if main? != some k then
+        if (Locale.forTag (Locale.babelTagOf k)).isSome then
+          inertParam "usepackage:babel" k s!"\\{name}[{k}]\{babel}"
+            "the body may select the language, whose locale the engine ships" pos
+        else
+          sayOnce ("param:usepackage:babel:" ++ k) .W0368 s!"no locale for language '{k}'; where \
+the body selects it, English captions and patterns stand in" pos
+            (help := "the engine ships locale records for: en, fr, de")
+    out := out ++ (← packageOptions name p (given.filter fun o =>
+      match KeyVal.entry o with
+      | ("main", some _) => false
+      | (_, none) => false
+      | _ => true) pos)
+    match main? with
     | some main =>
       let tag := Locale.babelTagOf main
       write fun st => { st with babelMain := some main }
@@ -8521,10 +8689,11 @@ no package options are supported by the strict native Markdown dialect" pos
       out := out ++ (← hyperrefLowered s!"\\usepackage[{opt.getD ""}]\{hyperref}"
         s!"{name}:{p}" r pos)
   else if p == "ulem" then
-    if KeyVal.items (opt.getD "") == #["normalem"] then
+    if given.contains "normalem" then
       discard s!"\\{name}[normalem]\{{p}}"
         "strikeout is native and normal emphasis remains in force"
         s!"{name}:{p}:normalem" pos
+      out := out ++ (← packageOptions name p (given.filter (· != "normalem")) pos)
     else
       say .W0103 "package 'ulem' without only the 'normalem' option changes \\emph; skipped"
         pos (help := "use \\usepackage[normalem]{ulem} for native \\sout")
@@ -8539,6 +8708,7 @@ no package options are supported by the strict native Markdown dialect" pos
 its rule paddings are measured in Latin Modern" pos
       (help := some s!"load booktabs before '{cmd}', where LaTeX measures them in Latin Modern too")
       (subject := some "package:booktabs")
+    out := out ++ (← packageOptions name p given pos)
   else if p == "blueprint" then
     -- Its options draw its web page's graph and proof buttons, and `link` its names' links.
     let opts := (KeyVal.items (opt.getD "")).map KeyVal.entry
@@ -8557,6 +8727,11 @@ its rule paddings are measured in Latin Modern" pos
   else if nativePackages.contains p then
     if p == "inputenc" then recordInputenc (opt.getD "")
     discard s!"\\{name}\{{p}}" "the engine does this itself" s!"{name}:{p}" pos
+    -- microtype's `disable=ifdraft` disables its features exactly when `draft` is given too.
+    let given := if p == "microtype" && given.contains "draft" then
+        given.map fun o => if optionSpelling o == "disable=ifdraft" then "disable" else o
+      else given
+    out := out ++ (← packageOptions name p given pos)
   else if boundaryPkgs.contains p && (← get).boundaryOpen then
     -- A picture package's load belongs to the boundary standalone.
     became s!"\\{name}\{{p}}"
@@ -8571,7 +8746,7 @@ rendered subset is drawn whole at the boundary" pos
       write fun st => { st with themeNamed := true }
       if (Theme.find? nm).isSome then
         write fun st => { st with themed := true }
-      out := out ++ (← synthAt native pos)
+      out := out ++ (← synthAt native pos) ++ (← themeOptions s!"\\{name}\{{p}}" s!"\\{name}\{{p}}" nm (opt.getD "") pos)
     else
       -- The four sub-theme slots have no bundle of their own here.
       sayOnce ("beamer:" ++ slot) .W0104
@@ -8759,7 +8934,9 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
       let given := (KeyVal.items (opt.getD "")).any titleOpts.contains || !passed.isEmpty
       let extra := passed ++ (if titlepageClasses.contains cls && !given then ["titlepage"] else [])
       let opt := if extra.isEmpty then opt else some (",".intercalate (opt.toList ++ extra))
-      let o := match opt with | some o => s!"[{o}]" | none => ""
+      -- KOMA's `parskip` is read here, so the class reads the others.
+      let kept := (KeyVal.items (opt.getD "")).toList.filter fun kv => (KeyVal.entry kv).1 != "parskip"
+      let o := if kept.isEmpty then "" else s!"[{String.intercalate "," kept}]"
       -- A class's `\parskip` is zero unless KOMA's `parskip=` asks for a skip.
       let komaSkip := (KeyVal.items (opt.getD "")).findSome? fun kv =>
         match KeyVal.entry kv with

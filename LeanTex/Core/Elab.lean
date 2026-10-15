@@ -5999,6 +5999,30 @@ private def classPageDefaults (record : Ir.ClassRecord) (opts : List String)
       page := { page with justify := some false }
   return page
 
+/-- Class options asking for what a page model's class already is, each with why. -/
+public def classOptionsInert : List (Ir.PageModel × List (String × String)) :=
+  [(.flow, [("oneside", "the page is one-sided, as without the option"),
+     ("onecolumn", "the text is set in one column, as without the option"),
+     ("final", "the document is rendered in full, as without the option"),
+     ("notitlepage", "the title opens the first page, as without the option")])]
+
+/-- Whether a reader here reads a class option under a page model: a body size; in the flow model
+a paper size, `landscape` and `twoside`'s title-page folio; in the frame model the slide stage, its
+alignment and beamer's `noamsthm`; in the face model a card standard. -/
+public def classOptionRead (model : Ir.PageModel) (o : String) : Bool :=
+  let sized (v : String) : Bool := v.endsWith "pt" && ((v.dropEnd 2).toString.toNat?.any (0 < ·))
+  let paper (v : String) : Bool := (pageSizes.lookup v).isSome
+  match KeyVal.entry o, model with
+  | ("fontsize", some v), _ => sized v
+  | (k, none), .flow =>
+    sized k || (k.endsWith "paper" && paper (k.dropEnd "paper".length).toString) ||
+      ["landscape", "twoside"].contains k
+  | (k, none), .frame => sized k || ["t", "c", "slidestop", "slidescentered", "noamsthm"].contains k
+  | (k, none), .face => sized k || ["us", "jis"].contains k
+  | (k, some v), .flow => (k == "paper" && paper v) || (k == "twoside" && v == "true")
+  | (k, some v), .frame => k == "aspectratio" && (Ir.slidesStageNamed v).isSome
+  | (_, some _), .face => false
+
 /-- A box's declared width: a length, a fraction of the enclosing measure,
 or a parameterless command's body read once; `none` when unreadable. -/
 private def columnWidth (ctx : Ctx) (src : String) : Option Ir.BoxWidth := Id.run do
@@ -11090,9 +11114,12 @@ private def elabEnvArm (ctx : Ctx) (n : String) (scope : Array Raw)
     let mut bodyFrom := 0
     match scanOpeningArg body pos fun _ => true with
     | .took k' =>
-      warnOnce ctx ("env:" ++ n ++ ":opts") .N0102
-        s!"'\{{n}}' [options] are not modelled per instance; the declared list style stands"
-        pos
+      for o in KeyVal.items (bracketSrc body 0 k') do
+        let key := (KeyVal.entry o).1
+        unless key.isEmpty do
+          warnOnce ctx ("param:" ++ n ++ ":" ++ key) .W0104
+            s!"'\{{n}}' option '{key}' is not honoured per list; the declared list style stands" pos
+            (help := s!"\\setlist[{n}]\{...} styles every list of its kind")
       bodyFrom := k'
     | .unclosed bpos =>
       warnUnclosed ctx s!"'\\begin\{{n}}'" bpos
@@ -15696,15 +15723,21 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
       page := { page with parskip := some g }
   let classOpts := (KeyVal.items classOptions).toList
   page := classPageDefaults record classOpts page
+  let classSay (code : DiagCode) (o msg : String) : EM Unit := do
+    let d := diagOf ctx code msg none (subject := some (Compat.paramSubject "documentclass" o))
+    modify fun st => { st with diags := st.diags.push d }
   for o in classOpts do
+    let key := (KeyVal.entry o).1
     if KeyVal.entry o matches ("twocolumn", none) | ("twocolumn", some "true") then
-      diag ctx .W0356
+      classSay .W0356 key
         "class option 'twocolumn' asks for a two-column page; the text is set in one column"
-        none
     else if KeyVal.entry o matches ("draft", none) | ("draft", some "true") then
-      diag ctx .W0356
+      classSay .W0356 key
         "class option 'draft' asks for a proofing mode the engine does not have; the document is rendered in full"
-        none
+    else if let some why := (classOptionsInert.lookup record.model).bind (·.lookup o) then
+      classSay .N0100 key s!"'\\documentclass[{o}]' → nothing: {why}"
+    else unless classOptionRead record.model o || key.isEmpty do
+      classSay .W0356 key s!"class option '{o}' is not honoured; the document renders without it"
   let surface := Ir.Surface.ofPath file
   if record.model == .flow && !sawPage then
     page := { page with hmargin := (page.width - surface.textBlock) / 2 }

@@ -249,6 +249,7 @@ import Tests.Refusal
 import Tests.EndInput
 import Tests.Redefine
 import Tests.Algorithm
+import Tests.ParamCensus
 import Tests.Settings
 import Tests.Kernel
 import Tests.PicturePaths
@@ -895,6 +896,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   environScopeChecks ref oneFace
   environChecks ref oneFace
   algKeywordChecks ref oneFace
+  Tests.ParamCensus.paramCensusChecks ref oneFace
   seamChecks ref oneFace
   abstractSkipChecks ref oneFace
   paramSiteChecks ref oneFace

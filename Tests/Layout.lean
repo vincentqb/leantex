@@ -3325,7 +3325,7 @@ def drawnMarkChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
     (Ir.Color.ofCmyk 1000 1000 1000 1000)
   t "a drawn picture's rules and the page attribute's box are read, no hook skipped"
     (doc.page.drawn.size == 8 && doc.page.boxes.size == 1 &&
-      !(ds.any fun d => d.code == DiagCode.W0104.code))
+      !(ds.any fun d => d.code == DiagCode.W0104.code && d.subject == some "ctrl:AddToHook"))
   t "the medium is the declared paper, with no bleed of its own"
     (geom.bleed == 0 && geom.pageW == Dim.inch 7 / 2 + 2 * bl && geom.pageH == Dim.inch 2 + 2 * bl)
   t "the drawn marks ship on every page where they were drawn, in their ink"
@@ -3345,7 +3345,7 @@ def drawnMarkChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   let barePdf := pdfText (Pdf.write bareGeom oneFace (layoutOf oneFace bare bareGeom).pages bare.info)
   t "marks drawn with no declared page box declare no trim, as lualatex's file has none"
     (bare.page.drawn.size == 8 && bare.page.boxes.isEmpty && !bytesContain barePdf "/TrimBox" &&
-     !(bareDs.any fun d => d.code == DiagCode.W0104.code))
+     !(bareDs.any fun d => d.code == DiagCode.W0104.code && d.subject == some "ctrl:AddToHook"))
   let (lone, _) := elabStr (pre ("\\AddToHook{shipout/background}" ++
     "{\\put(0pt,-\\paperh){\\color{allplates}\\put(\\bl,\\bl){\\rule{\\stub}{\\hair}}}}"))
   let loneGeom := Layout.Geom.ofPage lone.page

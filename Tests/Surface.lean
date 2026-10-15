@@ -1349,7 +1349,7 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "list instance options are consumed and named, never E0310"
     (let src := "\\documentclass{article}\\begin{document}\\begin{itemize}[leftmargin=2em]" ++
       "\\item a\\end{itemize}\\end{document}"
-     errCodes src == [] && (elabStr src).2.any (fun d => d.code == "N0102"))
+     errCodes src == [] && (elabStr src).2.any (fun d => d.code == "W0104" && hasStr d.message "leftmargin"))
   t "item marker override is consumed and named"
     (let (doc, ds) := elabStr ("\\documentclass{article}\\begin{document}\\begin{itemize}" ++
       "\\item[--] a\\end{itemize}\\end{document}")
@@ -2530,7 +2530,8 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "elab itemize" (d5.isEmpty && doc5.body ==
     #[.list false #[#[.para #[.text "a"]], #[.para #[.text "b"]]]])
   let (doc6, d6) := elabStr "\\documentclass[x=1]{article}\n\\begin{document}\nhi\n\\end{document}"
-  t "elab documentclass" (d6.isEmpty && doc6.docClass == .article && doc6.classOptions == "x=1")
+  t "elab documentclass, an option nothing reads named once"
+    (d6.map (·.code) == #["W0356"] && doc6.docClass == .article && doc6.classOptions == "x=1")
   -- The assumed class is named once on the .tex surface, and only when no `\documentclass` stands.
   let dcl (f s : String) : Array Diag := (Elab.run f s).2
   t "a classless .tex notes the assumed article page model"
