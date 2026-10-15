@@ -29,6 +29,12 @@ def sameTitled (n : Nat) : Ir.Doc :=
   (Elab.run "t" ("\\documentclass{article}\\begin{document}" ++
     String.join (List.replicate n "\\section{Topic}") ++ "\\end{document}")).1
 
+/-- A deck of `n` frames all titled alike, each stepped once. -/
+def sameTitledDeck (n : Nat) : Ir.Doc :=
+  (Elab.run "t" ("\\documentclass{slides}\\begin{document}" ++
+    String.join (List.replicate n "\\begin{frame}{Topic}\nx\\only<2>{y}\n\\end{frame}\n") ++
+    "\\end{document}")).1
+
 /-- An invented palette entry coloured over `n` paragraphs, one run each. -/
 def colouredRuns (n : Nat) (name : String) (c : Ir.Color) : Ir.Doc :=
   { palette := { entries := #[((.color name), c)] }
@@ -43,6 +49,11 @@ def main (args : List String) : IO UInt32 := do
     if doc.body.isEmpty then die "the same-titled article elaborated to nothing"
     timeRuns n "anchors" s fun _ =>
       ((HtmlDoc.emit {} doc).1.splitOn s!"id=\"topic-{s}\"").length == 2
+  for s in [600, 2400] do
+    let doc := sameTitledDeck s
+    if doc.body.isEmpty then die "the same-titled deck elaborated to nothing"
+    timeRuns n "frames" s fun _ =>
+      ((HtmlDoc.emit {} doc).1.splitOn s!"aria-label=\"Topic ({s})\"").length == 2
   for s in [30000, 120000] do
     let faces : Array FontDb.Face := (List.range s).toArray.map fun i =>
       { path := s!"/x/{i}.otf", family := s!"Family {i / 3}", subfamily := "Regular"

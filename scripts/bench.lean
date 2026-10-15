@@ -967,13 +967,13 @@ def run (n : Nat) (compressed : Bool := false) : IO Unit := do
 
 end Slides
 
-/-- Four times the input may cost at most `bound` times the phase (linear 4, quadratic 16,
+/-- Four times the input may cost at most eight times the phase (linear 4, quadratic 16,
 cubic 64). -/
-def growthBound (label : String) (small big : Nat) (bound : Nat := 8) : IO Unit := do
+def growthBound (label : String) (small big : Nat) : IO Unit := do
   let ratio := (big * 10 + max small 1 / 2) / max small 1
-  IO.println s!"{padRight s!"leantex  growth, {label}" 42} {padLeft s!"{ratio / 10}.{ratio % 10}" 6} ×  (bound {bound}.0)"
-  if big > bound * max small 1 then
-    die s!"{label}: the phase grew {ratio / 10}.{ratio % 10}× for 4× the input (bound {bound})"
+  IO.println s!"{padRight s!"leantex  growth, {label}" 42} {padLeft s!"{ratio / 10}.{ratio % 10}" 6} ×  (bound 8.0)"
+  if big > 8 * max small 1 then
+    die s!"{label}: the phase grew {ratio / 10}.{ratio % 10}× for 4× the input (bound 8)"
 
 /-- A listing's lexing and setting are linear in its length, in lines and within a
 line. -/
@@ -1046,8 +1046,9 @@ def benchPasses (n : Nat) : IO Unit := do
     IO.println s!"{padRight s!"leantex  {what}" 42} {padLeft (msOf ns) 6} ms (median of {n})"
     return ns
   let growth : List (String × Nat × String) :=
-    [("anchors", 600, "same-titled"), ("families", 30000, "faces"), ("merge", 400000, "keys"),
-     ("legible", 20000, "runs"), ("failing", 6000, "uses"), ("arrays", 100000, "elements"),
+    [("anchors", 600, "same-titled"), ("frames", 600, "same-titled frames"),
+     ("families", 30000, "faces"), ("merge", 400000, "keys"), ("legible", 20000, "runs"),
+     ("failing", 6000, "uses"), ("arrays", 100000, "elements"),
      ("dictionaries", 100000, "entries")]
   for (label, size, what) in growth do
     let small ← row label size s!"{label}, {size} {what}"

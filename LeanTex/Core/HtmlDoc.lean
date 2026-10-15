@@ -7707,20 +7707,20 @@ private def snapWalk (id text label : String) (kids : Array Node)
     List Nat → Array Node × NameClaim.Claims .dashed × Array Diag
   | [] => (kids, taken, diags)
   | k :: rest =>
-    let (sid, sclash, taken) := taken.claim s!"{id}-{k}" text
-    let diags := match sclash with
+    let r := taken.claim s!"{id}-{k}" text
+    let diags := match r.2.1 with
       | some holder => diags.push (Diag.of .W0327
           s!"frames share the step anchor '{id}-{k}'; each after the first takes a \
 numbered anchor"
           (help := some s!"an in-page link '#{id}-{k}' reaches only the first; \
 retitle the frames apart, or link to the numbered anchor")
-          (detail := some s!"{text.quote} takes '{sid}', after {holder.quote}"))
+          (detail := some s!"{text.quote} takes '{r.1}', after {holder.quote}"))
       | none => diags
     snapWalk id text label
       (kids.push (Html.elem "div" #[]
-        #[("class", "snap"), ("id", sid), ("data-snap", ""),
+        #[("class", "snap"), ("id", r.1), ("data-snap", ""),
           ("data-slide-label", s!"{label}.{k}")]))
-      taken diags rest
+      r.2.2 diags rest
 
 private def stepList (steps : Nat) : List Nat :=
   (List.range steps).map (· + 1)

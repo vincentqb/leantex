@@ -62,7 +62,7 @@ private def stagesList (acc : Array Stage) : List Html.Node → Array Stage
 end
 
 /-- Whether a frame's anchor and name read what its title shows: the shown words' slug (numbered as
-`claimId` ladders it), and a stepped frame's snaps its anchor and step. -/
+`NameClaim.probe` ladders it), and a stepped frame's snaps its anchor and step. -/
 private def stageFaithful (s : Stage) : Bool :=
   let words := HtmlDoc.squashSpace s.shown
   let base := Ir.slug #[.text s.shown]

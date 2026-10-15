@@ -14,7 +14,7 @@ public structure Spelling where
   spell_ne : ∀ base n, 2 ≤ n → spell base n ≠ base
 
 /-- The `n`th form of `base`: `base` itself, then `s.spell base n` from the second. -/
-@[expose] public def formAt (s : Spelling) (base : String) (n : Nat) : String :=
+public def formAt (s : Spelling) (base : String) (n : Nat) : String :=
   if n ≤ 1 then base else s.spell base n
 
 /-- The first free form of `base` among `taken` (`base`, then its second form, …), and the
@@ -38,18 +38,18 @@ public structure Holders where
   other : Option String := none
 
 /-- The run's holders after one more form held by `title`. -/
-@[expose] public def Holders.note (h : Holders) (title : String) : Holders :=
+public def Holders.note (h : Holders) (title : String) : Holders :=
   match h.first with
   | none => { first := some title }
   | some f => if h.other.isNone && f != title then { h with other := some title } else h
 
 /-- The holder of the run met first whose title is not `text`. -/
-@[expose] public def Holders.clash (h : Holders) (text : String) : Option String :=
+public def Holders.clash (h : Holders) (text : String) : Option String :=
   h.first.bind fun f => if f != text then some f else h.other
 
 /-- From the `k`th form of `base`, probing at most `left` forms: the index of the first free
 one, and the holders of the forms before it noted onto `held`. -/
-@[expose] public def scanFrom (s : Spelling) (taken : Std.HashMap String String) (base : String) :
+public def scanFrom (s : Spelling) (taken : Std.HashMap String String) (base : String) :
     Nat → Nat → Holders → Nat × Holders
   | k, 0, held => (k, held)
   | k, left + 1, held =>
@@ -63,25 +63,25 @@ public structure Ledger where
   taken : Std.HashMap String String := {}
   next : Std.HashMap String (Nat × Holders) := {}
 
-/-- Claim `base`'s first free form for a title `text`: the form, the holder met first whose
-title differs, and the ledger holding it. -/
+/-- One claim over a ledger, probing from the memo's index for `base`: the form, the holder met
+first whose title differs from `text`, and the ledger holding the form. -/
 @[expose] public def Ledger.claim (c : Ledger) (s : Spelling) (base text : String) :
     String × Option String × Ledger :=
-  let (start, held) := (c.next.get? base).getD (1, {})
-  let (k, held) := scanFrom s c.taken base start (c.taken.size + 2 - start) held
-  let id := formAt s base k
-  (id, held.clash text,
-    { taken := c.taken.insert id text, next := c.next.insert base (k + 1, held.note text) })
+  let e := (c.next.get? base).getD (1, {})
+  let r := scanFrom s c.taken base e.1 (c.taken.size + 2 - e.1) e.2
+  let id := formAt s base r.1
+  (id, r.2.clash text,
+    { taken := c.taken.insert id text, next := c.next.insert base (r.1 + 1, r.2.note text) })
 
 /-- The holders of `base`'s forms `1` to `k` in `taken`, or `none` when one of them is free. -/
-@[expose] public def heldRun (s : Spelling) (taken : Std.HashMap String String) (base : String) :
+public def heldRun (s : Spelling) (taken : Std.HashMap String String) (base : String) :
     Nat → Option Holders
   | 0 => some {}
   | k + 1 => (heldRun s taken base k).bind fun h => (taken[formAt s base (k + 1)]?).map h.note
 
 /-- Every memo entry is a lower bound: the forms of its base before its index are held, by the
 titles it notes. -/
-@[expose] public def Ledger.Inv (c : Ledger) (s : Spelling) : Prop :=
+public def Ledger.Inv (c : Ledger) (s : Spelling) : Prop :=
   ∀ base k held, c.next.get? base = some (k, held) →
     1 ≤ k ∧ heldRun s c.taken base (k - 1) = some held
 
@@ -297,54 +297,61 @@ public theorem Ledger.empty_pinned (s : Spelling) : ({} : Ledger).Inv s := by
   intro base k held h
   simp at h
 
+theorem Ledger.entry_held {c : Ledger} {s : Spelling} (hc : c.Inv s) (base : String) :
+    1 ≤ ((c.next.get? base).getD (1, {})).1 ∧
+      heldRun s c.taken base (((c.next.get? base).getD (1, {})).1 - 1) =
+        some ((c.next.get? base).getD (1, {})).2 := by
+  cases hn : c.next.get? base with
+  | none => exact ⟨Nat.le_refl 1, rfl⟩
+  | some e => exact hc base e.1 e.2 hn
+
 theorem Ledger.claim_exact {c : Ledger} {s : Spelling} (hc : c.Inv s) (base text : String) :
     ((c.claim s base text).1, (c.claim s base text).2.1) = probe s c.taken base text := by
   rw [probe_scan_exact]
-  obtain ⟨start, held, hk, hr⟩ : ∃ start held, (c.next.get? base).getD (1, {}) = (start, held) ∧
-      1 ≤ start ∧ heldRun s c.taken base (start - 1) = some held := by
-    cases hn : c.next.get? base with
-    | none => exact ⟨1, {}, rfl, Nat.le_refl 1, rfl⟩
-    | some e => exact ⟨e.1, e.2, rfl, hc base e.1 e.2 hn⟩
-  have hle := heldRun_le_size hr.2
-  have := scanFrom_restart (start - 1) 1 (c.taken.size + 1) {} held (Nat.le_refl 1) (by omega)
-    rfl (by simpa using hr.2)
-  rw [this]
-  simp only [Ledger.claim, hk]
-  rw [show 1 + (start - 1) = start by omega,
-    show c.taken.size + 1 - (start - 1) = c.taken.size + 2 - start by omega]
+  obtain ⟨h1, hr⟩ := c.entry_held hc base
+  unfold Ledger.claim
+  generalize (c.next.get? base).getD (1, {}) = e at h1 hr ⊢
+  have hle := heldRun_le_size hr
+  have := scanFrom_restart (e.1 - 1) 1 (c.taken.size + 1) {} e.2 (Nat.le_refl 1) (by omega)
+    rfl (by simpa using hr)
+  rw [this, show 1 + (e.1 - 1) = e.1 by omega,
+    show c.taken.size + 1 - (e.1 - 1) = c.taken.size + 2 - e.1 by omega]
+
+public theorem Ledger.claim_fresh {c : Ledger} {s : Spelling} (hc : c.Inv s) (base text : String) :
+    c.taken[(c.claim s base text).1]? = none := by
+  obtain ⟨h1, hr⟩ := c.entry_held hc base
+  unfold Ledger.claim
+  generalize (c.next.get? base).getD (1, {}) = e at h1 hr ⊢
+  obtain ⟨_, hs2, hs3, hs4⟩ := scanFrom_free (c.taken.size + 2 - e.1) e.1 e.2 h1 hr
+  by_cases hlt : (scanFrom s c.taken base e.1 (c.taken.size + 2 - e.1) e.2).1 <
+      e.1 + (c.taken.size + 2 - e.1)
+  · exact hs3 hlt
+  · have := heldRun_le_size hs2
+    omega
 
 public theorem Ledger.claim_pinned {c : Ledger} {s : Spelling} (hc : c.Inv s) (base text : String) :
     (c.claim s base text).2.2.Inv s := by
-  obtain ⟨start, held, hk, h1, hr⟩ : ∃ start held, (c.next.get? base).getD (1, {}) = (start, held) ∧
-      1 ≤ start ∧ heldRun s c.taken base (start - 1) = some held := by
-    cases hn : c.next.get? base with
-    | none => exact ⟨1, {}, rfl, Nat.le_refl 1, rfl⟩
-    | some e => exact ⟨e.1, e.2, rfl, hc base e.1 e.2 hn⟩
-  obtain ⟨hs1, hs2, hs3, hs4⟩ :=
-    scanFrom_free (c.taken.size + 2 - start) start held h1 hr
-  generalize hsc : scanFrom s c.taken base start (c.taken.size + 2 - start) held = r at hs1 hs2 hs3 hs4
-  obtain ⟨k, held'⟩ := r
-  dsimp only at hs1 hs2 hs3 hs4
-  have hfree : c.taken[formAt s base k]? = none := by
-    by_cases hlt : k < start + (c.taken.size + 2 - start)
-    · exact hs3 hlt
-    · have := heldRun_le_size hs2
-      omega
+  have hfree := c.claim_fresh hc base text
+  obtain ⟨h1, hr⟩ := c.entry_held hc base
+  unfold Ledger.claim at hfree ⊢
+  dsimp only at hfree ⊢
+  generalize (c.next.get? base).getD (1, {}) = e at h1 hr hfree ⊢
+  obtain ⟨hs1, hs2, _, _⟩ := scanFrom_free (c.taken.size + 2 - e.1) e.1 e.2 h1 hr
+  generalize scanFrom s c.taken base e.1 (c.taken.size + 2 - e.1) e.2 = r at hs1 hs2 hfree ⊢
   have hmono : ∀ b m h, heldRun s c.taken b m = some h →
-      heldRun s (c.taken.insert (formAt s base k) text) b m = some h := by
+      heldRun s (c.taken.insert (formAt s base r.1) text) b m = some h := by
     intro b m
     induction m with
     | zero => intro h hm; simpa [heldRun] using hm
     | succ m ih =>
       intro h hm
       obtain ⟨h₀, t, h0, ht, rfl⟩ := heldRun_succ hm
-      have hne : (formAt s base k == formAt s b (m + 1)) = false := by
+      have hne : (formAt s base r.1 == formAt s b (m + 1)) = false := by
         rw [beq_eq_false_iff_ne]
         intro heq
         rw [heq, ht] at hfree
         cases hfree
       simp [heldRun, ih h₀ h0, Std.HashMap.getElem?_insert, hne, ht]
-  simp only [Ledger.claim, hk, hsc]
   intro b k' h' hb
   rw [Std.HashMap.get?_eq_getElem?, Std.HashMap.getElem?_insert] at hb
   split at hb
@@ -353,7 +360,8 @@ public theorem Ledger.claim_pinned {c : Ledger} {s : Spelling} (hc : c.Inv s) (b
     subst hbb
     cases hb
     refine ⟨by omega, ?_⟩
-    obtain ⟨j, rfl⟩ : ∃ j, k = j + 1 := ⟨k - 1, by omega⟩
+    obtain ⟨j, hj⟩ : ∃ j, r.1 = j + 1 := ⟨r.1 - 1, by omega⟩
+    rw [hj] at hs2 hmono ⊢
     simp only [Nat.add_sub_cancel] at hs2 ⊢
     simp [heldRun, hmono _ _ _ hs2]
   · obtain ⟨hk1, hkr⟩ := hc b k' h' (by rw [Std.HashMap.get?_eq_getElem?]; exact hb)
@@ -383,5 +391,10 @@ public theorem Claims.claim_exact {s : Spelling} (c : Claims s) (base text : Str
 public theorem Claims.claim_taken {s : Spelling} (c : Claims s) (base text : String) :
     (c.claim base text).2.2.ledger.taken = c.ledger.taken.insert (c.claim base text).1 text :=
   rfl
+
+/-- A claim's form is none of the names claimed before it. -/
+public theorem Claims.claim_fresh {s : Spelling} (c : Claims s) (base text : String) :
+    c.ledger.taken[(c.claim base text).1]? = none :=
+  Ledger.claim_fresh c.pinned base text
 
 end LeanTex.Core.NameClaim
