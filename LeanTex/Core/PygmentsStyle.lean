@@ -7,7 +7,8 @@ import LeanTex.Core.PygmentsStyleData
 public import Std.Data.HashMap
 
 /-! Pygments' style model over `PygmentsStyleData`: `Resolved`, Pygments' inheritance
-(`style_for_token`), and `Look`, what minted's LaTeX formatter ships under lualatex. -/
+(`style_for_token`, pygments/style.py), and `Look`, what minted's LaTeX formatter ships under
+lualatex (pygments/formatters/latex.py); BSD-licensed: testdata/highlight/LICENSE-Pygments. -/
 namespace LeanTex.Core.PygmentsStyle
 
 open Ir ListingHighlight

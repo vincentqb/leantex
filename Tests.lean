@@ -275,7 +275,8 @@ import Tests.LinkColor
 import Tests.Privacy
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
-open Tests (mintedSettingsChecks listingHighlightChecks pygmentsLexerChecks pygmentsLinearChecks
+open Tests (mintedSettingsChecks listingHighlightChecks pygmentsLexerChecks pygmentsDataChecks
+  pygmentsLinearChecks
   svgAssetChecks svgToolChecks
   shellReplyChecks shellHighlightChecks listingProviderChecks listingStyleTableChecks codeRoleChecks codeExportChecks
   seededCodeChecks definitionNameChecks hashCommandChecks
@@ -350,6 +351,7 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   mintedSettingsChecks ref
   listingHighlightChecks ref
   pygmentsLexerChecks ref
+  pygmentsDataChecks ref
   pygmentsLinearChecks ref
   shellReplyChecks ref
   shellHighlightChecks ref

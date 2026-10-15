@@ -79,48 +79,79 @@ pygments.plugin.iter_entry_points = lambda group: ()
 /-- The Pygments release the generated lexer and style data are read from. -/
 def pygmentsRelease : String := "2.21.0"
 
-/-- Pygments' licence as that release ships it, named by every module derived from it. -/
+/-- The Python the generated lexer data are read under, whose `re` classes and Unicode they record. -/
+def pygmentsPython : String := "3.13.14"
+
+/-- Pygments' licence as that release ships it, named by every module generated from or porting it. -/
 def pygmentsLicence : String := "testdata/highlight/LICENSE-Pygments"
 
-/-- `pygmentsLoader`, refusing a Pygments other than `pygmentsRelease` before a lexer or style is
-read. -/
-def pygmentsPinned : String :=
-  pygmentsLoader ++ s!"pinned = '{pygmentsRelease}'\n" ++ r#"if pygments.__version__ != pinned:
+/-- `pygmentsLoader`, refusing first any Python but `python` when one is given, then any Pygments
+but `release`, each refusal naming what to make instead. -/
+def pinnedLoader (python : Option String := none) (release : String := pygmentsRelease) : String :=
+  let pinnedPython := (python.map fun v => "'" ++ v ++ "'").getD "None"
+  s!"pinned = '{release}'\npinned_python = {pinnedPython}\n" ++ r#"if pinned_python is not None and sys.version.split()[0] != pinned_python:
+    raise SystemExit(f'Python {sys.version.split()[0]} ({sys.executable}) is not {pinned_python}, '
+                     'the Python the committed data were generated under: pass --python naming a '
+                     f'Python {pinned_python} that imports Pygments {pinned}, such as DIR/bin/python3 '
+                     f'after python{pinned_python.rsplit(".", 1)[0]} -m venv DIR and DIR/bin/pip '
+                     f'install pygments=={pinned}')
+"# ++ pygmentsLoader ++ r#"if pygments.__version__ != pinned:
     raise SystemExit(f'Pygments {pygments.__version__} ({pygments.__file__}) is not {pinned}, the '
-                     'release the data are read from: pass --python naming an interpreter that imports '
-                     'it, such as DIR/bin/python3 after python3 -m venv DIR and DIR/bin/pip install '
-                     f'pygments=={pinned}')
+                     'release the committed data were generated from: pass --python naming an '
+                     'interpreter that imports it, such as DIR/bin/python3 after '
+                     f'{sys.executable} -m venv DIR and DIR/bin/pip install pygments=={pinned}')
 "#
 
-/-- A generator's `--selftest`: its bridge, run under a Python whose only Pygments is a stub of
-another release, refuses it naming both releases. -/
-def pinSelftest (name bridge : String) : IO UInt32 := do
-  let dir ← IO.FS.createTempDir
-  try
+/-- A generator's `--selftest`: under a venv whose only Pygments is a stub, `pinnedLoader` passes
+exactly its own release and Python, and the generator's bridge refuses the stub by its pins. -/
+def pinSelftest (name bridge : String) (python : Option String := none) : IO UInt32 :=
+  IO.FS.withTempDir fun dir => do
     let venv := dir / "venv"
     let made ← IO.Process.output
       { cmd := "python3", args := #["-m", "venv", "--without-pip", venv.toString] }
-    let python := (venv / "bin" / "python3").toString
+    let exe := (venv / "bin" / "python3").toString
     let site ← if made.exitCode == 0 then
-        IO.Process.output
-          { cmd := python, args := #["-I", "-c", "import sysconfig; print(sysconfig.get_path('purelib'))"] }
+        IO.Process.output { cmd := exe, args := #["-I", "-c",
+          "import sys, sysconfig; print(sysconfig.get_path('purelib')); print(sys.version.split()[0])"] }
       else pure made
-    let lib := site.stdout.trimAscii.toString
+    let (lib, own) := match site.stdout.trimAscii.toString.splitOn "\n" with
+      | [lib, own] => (lib, own)
+      | _ => ("", "")
     unless site.exitCode == 0 && lib.startsWith venv.toString do
       IO.eprintln s!"{name} --selftest: python3 made no venv to stub:\n{site.stderr}"
       return 1
     let stub := System.FilePath.mk lib / "pygments"
     IO.FS.createDirAll stub
-    IO.FS.writeFile (stub / "__init__.py") "__version__ = '0.0.0'\n"
+    IO.FS.writeFile (stub / "__init__.py") "__version__ = '1.0.0'\n"
     IO.FS.writeFile (stub / "plugin.py") ""
-    let out ← IO.Process.output { cmd := python, args := #["-I", "-B", "-c", bridge] }
-    let says (s : String) := (out.stderr.splitOn s).length > 1
-    if out.exitCode != 0 && says "Pygments 0.0.0" && says s!"is not {pygmentsRelease}" then
-      IO.println s!"{name} --selftest: ok (Pygments 0.0.0 refused for {pygmentsRelease})"
-      return 0
-    IO.eprintln s!"{name} --selftest: Pygments 0.0.0 was not refused for {pygmentsRelease}:\n{out.stderr}"
-    return 1
-  finally
-    IO.FS.removeDirAll dir
+    let run (code : String) := IO.Process.output { cmd := exe, args := #["-I", "-B", "-c", code] }
+    let preamble := "import pathlib\nimport shutil\nimport sys\n"
+    let passes (code : String) : IO Bool := do
+      let o ← run (preamble ++ code ++ "print('read')\n")
+      return o.exitCode == 0 && o.stdout == "read\n"
+    let refuses (code found pin : String) : IO Bool := do
+      let o ← run code
+      return o.exitCode != 0 && (o.stderr.splitOn found).length > 1 &&
+        (o.stderr.splitOn s!"is not {pin}").length > 1
+    let (found, pin) := match python with
+      | some v => if v != own then (s!"Python {own}", v) else ("Pygments 1.0.0", pygmentsRelease)
+      | none => ("Pygments 1.0.0", pygmentsRelease)
+    let mut ok := true
+    let mut count := 0
+    for (what, held) in [("its own release passes", ← passes (pinnedLoader none "1.0.0")),
+        ("an older release is refused",
+          ← refuses (preamble ++ pinnedLoader none "1.0.1") "Pygments 1.0.0" "1.0.1"),
+        ("a newer release is refused",
+          ← refuses (preamble ++ pinnedLoader none "0.9.9") "Pygments 1.0.0" "0.9.9"),
+        ("its own Python passes", ← passes (pinnedLoader (some own) "1.0.0")),
+        ("another Python is refused",
+          ← refuses (preamble ++ pinnedLoader (some "0.0.0") "1.0.0") s!"Python {own}" "0.0.0"),
+        (s!"the bridge refuses the stub naming {found} and {pin}", ← refuses bridge found pin)] do
+      count := count + 1
+      unless held do
+        IO.eprintln s!"{name} --selftest: not so: {what}"
+        ok := false
+    if ok then IO.println s!"{name} --selftest: ok ({count} cases)"
+    return if ok then 0 else 1
 
 end GenData
