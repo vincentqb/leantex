@@ -38,9 +38,23 @@ role display-veao
       formula display "\\textcolor {blue}{\\textbf {\\sum _k}} a_k &= b \\\\ &= \\text {\\textbf {bound} above}"
         ord:align[(|ord:{ink:#0000FF ord:alpha:bf{op:lim:∑_{ord:𝑘}}} ord:𝑎_{ord:𝑘}|ord:{} rel:= ord:𝑏)(||ord:{} rel:= ord:"bound above")]
 para
+  text "An alignment’s reasons are words, each kept on one line however narrow the column:"
+role display-veao
+  center
+    para
+      formula display "a + b &= b + a && \\text {by the placeholder rule that swaps two terms} \\\\  &= c && \\text {by an invented lemma}"
+        ord:align[(|ord:𝑎 bin:+ ord:𝑏|ord:{} rel:= ord:𝑏 bin:+ ord:𝑎||ord:{} ord:"by the placeholder rule that swaps two terms")(||ord:{} rel:= ord:𝑐||ord:{} ord:"by an invented lemma")]
+para
+  text "A run keeps the spaces it writes, as in a condition:"
+role display-pefo
+  center
+    para
+      formula display "f(x) = 1 \\quad \\text {if} x > 0, \\qquad f(x) = 0 \\quad \\text {otherwise}"
+        ord:𝑓 open:( ord:𝑥 close:) rel:= ord:1 mu:18 ord:"if " ord:𝑥 rel:> ord:0 punct:, mu:36 ord:𝑓 open:( ord:𝑥 close:) rel:= ord:0 mu:18 ord:"otherwise"
+para
   text "What the engine still does not model degrades to content: "
   math inline "\\overset {?}{=}"
   text " sets its characters and names the construct, and no control sequence reaches the page."
 -- diagnostics
 warning[W0385] 24:1 '{align*}': '\textbf' inside math sets in the surrounding style
-warning[W0012] 29:59 math with \overset is not rendered yet; the formula sets as its text content
+warning[W0012] 40:59 math with \overset is not rendered yet; the formula sets as its text content

@@ -462,7 +462,8 @@ def amsModChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit := d
       (w > 0 && w - d ≤ 2 && d - w ≤ 2)
   t "amsmath mod: the HTML sets the upright word and fixed parentheses"
     (let h := (HtmlDoc.emit {} (elabStr (dvDoc "" "$a \\pmod{b}$")).1).1
-     hasStr h "<mi>mod</mi>" && hasStr h "<mo stretchy=\"false\">(</mo>")
+     hasStr h "<mi style=\"white-space: pre\">mod</mi>" &&
+       hasStr h "<mo stretchy=\"false\">(</mo>")
   let squash (s : String) := String.ofList (s.toList.filter (!·.isWhitespace))
   for (cmd, glyph) in [("dotsc", '…'), ("dotso", '…'), ("dotsb", '\u22EF'),
       ("dotsm", '\u22EF')] do

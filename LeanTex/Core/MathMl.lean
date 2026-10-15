@@ -16,6 +16,10 @@ def charText (c : Char) : String := String.ofList [c]
 /-- The overline operator U+0305 renders as: U+203E, stretchy in MathML Core's dictionary. -/
 public def overlineChar : Char := '\u203E'
 
+/-- The declaration that sets a math text run as TeX sets a box: its spaces as written, its line
+unbroken. -/
+public def keepLineCss : String := "white-space: pre"
+
 /-- The token element a lone scalar sets in by its TeX class: `mo`, else `mn` for a digit, else
 `mi` (MathML Core §3.2). -/
 public def leafTag (cls : MathClass) (c : Char) : String :=
@@ -393,7 +397,7 @@ public def nucNode (mk : Marks) (disp : Bool) (cls : MathClass) : MNucleus → H
         if text > 0 && math > 0 then s!"; font-size: calc({measuredEm text math})" else ""
       | _, _ => ""
     .elem tag (base.push ("style", style.css ++ sizing)) #[.text (charText c)]
-  | .word s => .elem "mi" #[] #[.text s]
+  | .word s => .elem "mi" #[("style", keepLineCss)] #[.text s]
   | .list body => .elem "mrow" #[] (listNodes mk disp none #[] body)
   | .alpha _ _ body =>
     -- An unresolved alphabet is an `merror` around its content.
@@ -1324,5 +1328,280 @@ public theorem formula_merrorFree_contract (display : Bool) (body : MList) (mk :
     tagFreeList (· == "merror") (formulaKids display body mk).toList = true :=
   listNodes_tagFree (· == "merror") (contentTags_beq_false (by simp [contentTags]))
     _ _ none body #[] (fun _ => h) rfl
+
+/-- Whether a style's last declaration is `keepLineCss`, the one CSS reads last. -/
+@[expose] public def keepsValue (v : String) : Bool :=
+  v == keepLineCss || ("; " ++ keepLineCss).toList.isSuffixOf v.toList
+
+/-- Whether an element's style keeps its line (`keepsValue`). -/
+@[expose] public def keepsLine (attrs : Array (String × String)) : Bool :=
+  attrs.any fun (k, v) => k == "style" && keepsValue v
+
+mutual
+
+/-- Every text of the tree longer than one scalar stands under an element keeping its line. -/
+@[expose] public def linesHeld : Html.Node → Bool
+  | .text s => decide (s.length ≤ 1)
+  | .elem _ attrs kids => keepsLine attrs || linesHeldList kids.toList
+  | .style _ => true
+  | .script _ _ => true
+
+/-- `linesHeld` over a list of trees. -/
+@[expose] public def linesHeldList : List Html.Node → Bool
+  | [] => true
+  | n :: rest => linesHeld n && linesHeldList rest
+
+end
+
+public theorem linesHeldList_append (l1 l2 : List Html.Node) :
+    linesHeldList (l1 ++ l2) = (linesHeldList l1 && linesHeldList l2) := by
+  induction l1 with
+  | nil => simp [linesHeldList]
+  | cons n rest ih => simp [linesHeldList, ih, Bool.and_assoc]
+
+public theorem linesHeldList_push (acc : Array Html.Node) (n : Html.Node) :
+    linesHeldList (acc.push n).toList = (linesHeldList acc.toList && linesHeld n) := by
+  simp [Array.toList_push, linesHeldList_append, linesHeldList]
+
+theorem charText_held (t : String) (attrs : Array (String × String)) (c : Char) :
+    linesHeld (.elem t attrs #[.text (charText c)]) = true := by
+  simp [linesHeld, linesHeldList, charText]
+
+theorem keepsLine_push (attrs : Array (String × String)) (a : String × String)
+    (h : keepsLine attrs = true) : keepsLine (attrs.push a) = true := by
+  unfold keepsLine at h ⊢
+  rw [Array.any_push, h, Bool.true_or]
+
+public theorem keepsValue_tint (pre v : String) (h : keepsValue v = true) :
+    keepsValue (pre ++ "; " ++ v) = true := by
+  unfold keepsValue at h ⊢
+  simp only [Bool.or_eq_true, beq_iff_eq, List.isSuffixOf_iff_suffix] at h ⊢
+  right
+  rcases h with rfl | hs
+  · simp only [String.toList_append, List.append_assoc]
+    exact List.suffix_append _ _
+  · simp only [String.toList_append, List.append_assoc] at hs ⊢
+    exact hs.trans ((List.suffix_append _ _).trans (List.suffix_append _ _))
+
+theorem keepsLine_modify (attrs : Array (String × String)) (i : Nat)
+    (f : String × String → String × String)
+    (hf : ∀ p, (f p).1 = p.1 ∧ (keepsValue p.2 = true → keepsValue (f p).2 = true))
+    (h : keepsLine attrs = true) :
+    keepsLine (attrs.modify i f) = true := by
+  simp only [keepsLine, Array.any_eq_true, Bool.and_eq_true, beq_iff_eq] at h ⊢
+  obtain ⟨j, hj, hk, hs⟩ := h
+  refine ⟨j, by simpa using hj, ?_⟩
+  rw [Array.getElem_modify]
+  split
+  · exact ⟨(hf _).1.trans hk, (hf _).2 hs⟩
+  · exact ⟨hk, hs⟩
+
+theorem paint_held (ink : Option String) (n : Html.Node) (h : linesHeld n = true) :
+    linesHeld (paint ink n) = true := by
+  cases n with
+  | elem t attrs kids =>
+    cases ink with
+    | none => exact h
+    | some css =>
+      simp only [linesHeld, Bool.or_eq_true] at h
+      simp only [paint]
+      split
+      · simp only [linesHeld, Bool.or_eq_true]
+        refine h.imp (keepsLine_modify attrs _ _ ?_) id
+        intro p
+        exact ⟨rfl, keepsValue_tint _ _⟩
+      · simp only [linesHeld, Bool.or_eq_true]
+        exact h.imp (keepsLine_push attrs _) id
+  | text s => exact h
+  | style s => exact h
+  | script a j => exact h
+
+theorem scriptNode_held (limits : Bool) (base : Html.Node) (sub sup : Array Html.Node)
+    (subAttrs supAttrs : Array (String × String)) (hb : linesHeld base = true)
+    (hs : linesHeldList sub.toList = true) (hu : linesHeldList sup.toList = true) :
+    linesHeld (scriptNode limits base sub sup subAttrs supAttrs) = true := by
+  unfold scriptNode
+  cases limits <;> cases sup.isEmpty <;> cases sub.isEmpty <;>
+    simp [linesHeld, linesHeldList, hb, hs, hu]
+
+theorem radNode_held (body deg : Array Html.Node) (degAttrs : Array (String × String))
+    (hb : linesHeldList body.toList = true) (hd : linesHeldList deg.toList = true) :
+    linesHeld (radNode body deg degAttrs) = true := by
+  unfold radNode
+  cases deg.isEmpty <;> simp [linesHeld, linesHeldList, hb, hd]
+
+theorem fracNode_held (mk : Marks) (disp : Bool) (spec : FracSpec)
+    (num den : Array Html.Node) (hn : linesHeldList num.toList = true)
+    (hd : linesHeldList den.toList = true) :
+    linesHeld (fracNode mk disp spec num den) = true := by
+  rcases spec with ⟨l, r, rule, style⟩
+  cases l <;> cases r <;> cases style <;>
+    simp [fracNode, fracKids, sizedMo, linesHeld, linesHeldList, hn, hd, charText]
+
+theorem accentNode_held (mark : Char) (stretch : Bool) (body : Array Html.Node)
+    (hb : linesHeldList body.toList = true) :
+    linesHeld (accentNode mark stretch body) = true := by
+  cases h : mark == '̅' <;>
+    simp [accentNode, h, linesHeld, linesHeldList, hb, charText]
+
+theorem cancelNode_held (mk : Marks) (disp : Bool) (mark : CancelMark) (spec : CancelSpec)
+    (struck vals : Array Html.Node) (shown : Bool) (hs : linesHeldList struck.toList = true)
+    (hv : linesHeldList vals.toList = true) :
+    linesHeld (cancelNode mk disp mark spec struck vals shown) = true := by
+  unfold cancelNode
+  cases hm : mark == .to <;> cases shown <;> cases spec.room <;>
+    simp [linesHeld, linesHeldList, linesHeldList_append, hs, hv]
+
+theorem cancelPolygons_held (ink : String) (pad : Int) (ps : List (Array (Int × Int))) :
+    linesHeldList (ps.map (cancelPolygon ink pad)) = true := by
+  induction ps with
+  | nil => rfl
+  | cons q ps ih => simp [cancelPolygon, linesHeld, linesHeldList, ih]
+
+theorem measuredCancelNode_held (mk : Marks) (metric : CancelMetric) (mark : CancelMark)
+    (spec : CancelSpec) (struck vals : Array Html.Node) (shown : Bool)
+    (hs : linesHeldList struck.toList = true) (hv : linesHeldList vals.toList = true) :
+    linesHeld (measuredCancelNode mk metric mark spec struck vals shown) = true := by
+  have hp : ∀ ink : Option String, linesHeld (paint ink
+      (.elem "mstyle" (relativeStyle mk (spec.size.style mk.style)) vals)) = true :=
+    fun ink => paint_held ink _ (by simp [linesHeld, hv])
+  cases hm : mark == .to <;> cases shown <;>
+    simp [measuredCancelNode, hm, cancelAt, linesHeld, linesHeldList, Array.toList_map,
+      cancelPolygons_held, hp, hs]
+
+theorem cancelWithMetric_held (mk : Marks) (disp : Bool) (mark : CancelMark)
+    (spec : CancelSpec) (body value : MList) (struck vals : Array Html.Node) (shown : Bool)
+    (hs : linesHeldList struck.toList = true) (hv : linesHeldList vals.toList = true) :
+    linesHeld (cancelWithMetric mk disp mark spec body value struck vals shown) = true := by
+  unfold cancelWithMetric
+  split
+  · split
+    · exact measuredCancelNode_held _ _ _ _ _ _ _ hs hv
+    · exact cancelNode_held _ _ _ _ _ _ _ hs hv
+  · exact cancelNode_held _ _ _ _ _ _ _ hs hv
+
+theorem delimMo_held (c : Char) : linesHeld (delimMo c) = true :=
+  charText_held _ _ c
+
+mutual
+
+theorem listNodes_held (mk : Marks) (disp : Bool) :
+    ∀ (ink : Option String) (ml : MList) (acc : Array Html.Node),
+      linesHeldList acc.toList = true →
+      linesHeldList (listNodes mk disp ink acc ml).toList = true
+  | _, .nil, _, ha => ha
+  | _, .cons (.ink co n) rest, acc, ha => listNodes_held mk disp _ rest acc ha
+  | ink, .cons (.space mu) rest, acc, ha => by
+    show linesHeldList (listNodes mk disp ink
+      (acc.push (paint ink (itemNode mk disp (.space mu)))) rest).toList = true
+    apply listNodes_held mk disp ink rest
+    rw [linesHeldList_push, ha, paint_held ink _ (itemNode_held mk disp (.space mu))]
+    rfl
+  | ink, .cons (.atom cls nuc sup sub lim) rest, acc, ha => by
+    show linesHeldList (listNodes mk disp ink
+      (acc.push (paint ink (itemNode mk disp (.atom cls nuc sup sub lim)))) rest).toList = true
+    apply listNodes_held mk disp ink rest
+    rw [linesHeldList_push, ha, paint_held ink _ (itemNode_held mk disp _)]
+    rfl
+
+theorem itemNode_held (mk : Marks) (disp : Bool) :
+    ∀ (x : MItem), linesHeld (itemNode mk disp x) = true
+  | .space _ => by simp [itemNode, linesHeld, linesHeldList]
+  | .ink _ _ => by simp [itemNode, linesHeld, linesHeldList]
+  | .atom cls nuc sup sub lim => by
+    show linesHeld (scriptNode (lim && disp) (nucNode mk disp cls nuc)
+        (listNodes { mk with style := mk.style.sub } false none #[] sub)
+        (listNodes { mk with style := mk.style.sup } false none #[] sup) _ _) = true
+    exact scriptNode_held _ _ _ _ _ _ (nucNode_held mk disp cls nuc)
+      (listNodes_held _ false none sub #[] rfl) (listNodes_held _ false none sup #[] rfl)
+
+theorem nucNode_held (mk : Marks) (disp : Bool) (cls : MathClass) :
+    ∀ (nuc : MNucleus), linesHeld (nucNode mk disp cls nuc) = true
+  | .sym c => by
+    simp only [nucNode]
+    exact charText_held _ _ c
+  | .styled _ c => by
+    simp only [nucNode]
+    exact charText_held _ _ c
+  | .word _ => by simp [nucNode, linesHeld, keepsLine, keepsValue]
+  | .list body => by
+    simp only [nucNode, linesHeld]
+    rw [listNodes_held mk disp none body #[] rfl, Bool.or_true]
+  | .alpha _ _ body => by
+    simp only [nucNode, linesHeld]
+    rw [listNodes_held mk disp none body #[] rfl, Bool.or_true]
+  | .frac spec num den => by
+    simp only [nucNode]
+    exact fracNode_held _ _ _ _ _ (listNodes_held _ false none num #[] rfl)
+      (listNodes_held _ false none den #[] rfl)
+  | .rad deg body => by
+    simp only [nucNode]
+    exact radNode_held _ _ _ (listNodes_held _ disp none body #[] rfl)
+      (listNodes_held _ false none deg #[] rfl)
+  | .delim l r body => by
+    cases l with
+    | none =>
+      have hb := listNodes_held mk disp none body #[] rfl
+      cases r <;> simp only [nucNode, linesHeld, linesHeldList_push, hb, delimMo_held,
+        Bool.and_true, Bool.or_true]
+    | some c =>
+      have hb := listNodes_held mk disp none body #[delimMo c]
+        (by simp [linesHeldList, delimMo_held])
+      cases r <;> simp only [nucNode, linesHeld, linesHeldList_push, hb, delimMo_held,
+        Bool.and_true, Bool.or_true]
+  | .big d _ => by
+    cases d <;> simp [nucNode, sizedMo, linesHeld, linesHeldList, charText]
+  | .accent mark stretch body => by
+    simp only [nucNode]
+    exact accentNode_held _ _ _ (listNodes_held _ disp none body #[] rfl)
+  | .grid kind rows => by
+    simp only [nucNode, linesHeld]
+    rw [rowsNodes_held _ _ kind rows #[] rfl, Bool.or_true]
+  | .cancel mark spec value body => by
+    simp only [nucNode]
+    exact cancelWithMetric_held _ _ _ _ _ _ _ _ _
+      (listNodes_held _ disp none body #[] rfl) (listNodes_held _ _ none value #[] rfl)
+
+theorem rowNodes_held (mk : Marks) (disp : Bool) (kind : GridKind) :
+    ∀ (row : MRow) (k : Nat) (acc : Array Html.Node),
+      linesHeldList acc.toList = true →
+      linesHeldList (rowNodes mk disp kind k acc row).toList = true
+  | .nil, _, _, ha => ha
+  | .cons cell rest, k, acc, ha => by
+    simp only [rowNodes]
+    apply rowNodes_held mk disp kind rest (k + 1)
+    rw [linesHeldList_push, ha]
+    simp only [linesHeld]
+    rw [listNodes_held mk disp none cell #[] rfl, Bool.or_true, Bool.true_and]
+
+theorem rowsNodes_held (mk : Marks) (disp : Bool) (kind : GridKind) :
+    ∀ (rows : MRows) (acc : Array Html.Node),
+      linesHeldList acc.toList = true →
+      linesHeldList (rowsNodes mk disp kind acc rows).toList = true
+  | .nil, _, ha => ha
+  | .cons row rest, acc, ha => by
+    simp only [rowsNodes]
+    apply rowsNodes_held mk disp kind rest
+    rw [linesHeldList_push, ha]
+    simp only [linesHeld]
+    rw [rowNodes_held mk disp kind row 0 #[] rfl, Bool.or_true, Bool.true_and]
+
+end
+
+/-- A fact of the artifact: a formula sets every text run longer than one scalar under a style
+keeping its line, as TeX sets a word in one box. -/
+public theorem formulaKids_linesHeld_contract (display : Bool) (body : MList) (mk : Marks) :
+    linesHeldList (formulaKids display body mk).toList = true :=
+  listNodes_held _ display none body #[] rfl
+
+/-- A fact of the artifact: a formula's `math` element keeps the line of every text run it sets. -/
+public theorem formula_linesHeld_contract (display : Bool) (extra : Array (String × String))
+    (body : MList) (mk : Marks) : linesHeld (formula display extra body mk) = true := by
+  simp only [formula, linesHeld, formulaKids_linesHeld_contract, Bool.or_true]
+
+/-- A fact of the artifact: a formula row keeps the line of every text run it sets. -/
+public theorem formulaRow_linesHeld_contract (display : Bool) (extra : Array (String × String))
+    (body : MList) (mk : Marks) : linesHeld (formulaRow display extra body mk) = true := by
+  simp only [formulaRow, linesHeld, formulaKids_linesHeld_contract, Bool.or_true]
 
 end LeanTex.Core.MathMl

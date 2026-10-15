@@ -6347,8 +6347,23 @@ public def LabelFace.run (f : LabelFace) (s : String) (nativeMath : Bool := fals
       else none
     Html.elem "mtext" #[Html.text s]
       ((a.filter fun (k, _) => k != "style" && k != "font-weight" && k != "font-style").push
-        ("style", "; ".intercalate ("white-space: pre" :: css)))
+        ("style", "; ".intercalate (css ++ [MathMl.keepLineCss])))
   else if a.isEmpty then Html.text s else Html.elem "tspan" #[Html.text s] a
+
+/-- A native label's text run keeps its line, as a formula's word does. -/
+theorem labelRun_linesHeld (f : LabelFace) (s : String) :
+    MathMl.linesHeld (f.run s true) = true := by
+  have hs : ∀ css : List String,
+      MathMl.keepsValue ("; ".intercalate (css ++ [MathMl.keepLineCss])) = true := by
+    intro css
+    cases css with
+    | nil => simp [MathMl.keepsValue]
+    | cons c cs =>
+      rw [String.intercalate_append_of_ne_nil (by simp) (by simp), String.intercalate_singleton]
+      exact MathMl.keepsValue_tint _ _ (by simp [MathMl.keepsValue])
+  simp only [LabelFace.run, ↓reduceIte, Html.elem, MathMl.linesHeld, MathMl.keepsLine,
+    Array.any_push, Bool.or_eq_true]
+  exact Or.inl (Or.inr (by simpa using hs _))
 
 mutual
 
@@ -6460,6 +6475,57 @@ public theorem labelNodesList_mathFree_contract (f : LabelFace) (acc : Array Nod
     simp only [labelNodesList]
     exact labelNodesList_mathFree_contract f _ rest mathCfg
       (labelNodesOne_mathFree_contract f acc x mathCfg ha)
+
+end
+
+mutual
+
+/-- A native label keeps the line of every text run it sets, as its formulas do. -/
+public theorem labelNodesOne_linesHeld_contract (f : LabelFace) (acc : Array Node) (x : Inline)
+    (cfg : Config) (ha : MathMl.linesHeldList acc.toList = true) :
+    MathMl.linesHeldList (labelNodesOne f acc x (some cfg)).toList = true := by
+  match x with
+  | .text s =>
+    simp only [labelNodesOne, Option.isSome_some, MathMl.linesHeldList_push, ha,
+      labelRun_linesHeld, Bool.and_self]
+  | .formula display src body =>
+    simp only [labelNodesOne, MathMl.linesHeldList_push, ha,
+      MathMl.formulaRow_linesHeld_contract, Bool.and_self]
+  | .math _ _ =>
+    simp only [labelNodesOne, Option.isSome_some, MathMl.linesHeldList_push, ha,
+      labelRun_linesHeld, Bool.and_self]
+  | .styled st body =>
+    simp only [labelNodesOne, Option.map_some]
+    exact labelNodesList_linesHeld_contract _ acc body.toList _ ha
+  | .colored c name body =>
+    have hk := labelNodesList_linesHeld_contract f #[] body.toList cfg rfl
+    cases name <;>
+      simp only [labelNodesOne, Option.isSome_some, ↓reduceIte, MathMl.linesHeldList_push, ha,
+        Html.elem, MathMl.linesHeld, hk, Bool.or_true, Bool.and_self]
+  | .role n body =>
+    have hk := labelNodesList_linesHeld_contract f #[] body.toList cfg rfl
+    simp only [labelNodesOne, Option.isSome_some, ↓reduceIte, MathMl.linesHeldList_push, ha,
+      Html.elem, MathMl.linesHeld, hk, Bool.or_true, Bool.and_self]
+  | .located _ body =>
+    simp only [labelNodesOne]
+    exact labelNodesList_linesHeld_contract f acc body.toList cfg ha
+  | .italicCorr _ => simpa only [labelNodesOne] using ha
+  | .link _ _ | .decorated _ _ | .onSteps _ _ | .altSteps _ _ _ | .fill | .hspace _ _
+  | .rule _ _ _ | .strut _ | .pageNumber | .pageCount | .linebreak _ | .image _ _ _
+  | .icon _ _ | .label _ | .ref _ _ _ _ | .cite _ _ | .footnote _ _ =>
+    simp only [labelNodesOne, Option.isSome_some, MathMl.linesHeldList_push, ha,
+      labelRun_linesHeld, Bool.and_self]
+
+/-- `labelNodesOne_linesHeld_contract` over a label's inlines. -/
+public theorem labelNodesList_linesHeld_contract (f : LabelFace) (acc : Array Node)
+    (xs : List Inline) (cfg : Config) (ha : MathMl.linesHeldList acc.toList = true) :
+    MathMl.linesHeldList (labelNodesList f acc xs (some cfg)).toList = true := by
+  match xs with
+  | [] => simpa only [labelNodesList] using ha
+  | x :: rest =>
+    simp only [labelNodesList]
+    exact labelNodesList_linesHeld_contract f _ rest cfg
+      (labelNodesOne_linesHeld_contract f acc x cfg ha)
 
 end
 

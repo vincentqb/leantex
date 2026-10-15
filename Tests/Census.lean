@@ -648,7 +648,9 @@ def censusRows2 :
     ("a page per frame, divider, and step", c.size == 8),
     ("the title frame ships the title", pageHas c 0 "A Certified Deck"),
     ("the standout frame fills its background", (c[7]?.map (·.fills == 1)).getD false),
-    ("the standout content ships", pageHas c 7 "Questions?")]),
+    ("the standout content ships", pageHas c 7 "Questions?"),
+    ("the alignment's reasons ship whole beside their steps",
+      pageHas c 6 "the first odd number" && pageHas c 6 "two odd numbers")]),
   ("tables-deck", fun _ c => [
     ("the title page, then a page per step of the table frame: no continuation page",
       c.size == 3 && pageHas c 0 "An Invented Table Deck"),
@@ -1150,6 +1152,10 @@ def censusRows5 :
       hasStr (censusText c) "first…last"),
     ("the coloured styled alignment ships its operator and its word",
       hasStr (censusText c) "∑" && hasStr (censusText c) "bound above"),
+    ("an alignment's reasons ship whole",
+      hasStr (censusText c) "by the placeholder rule that swaps two terms" &&
+        hasStr (censusText c) "by an invented lemma"),
+    ("a condition ships its words", hasStr (censusText c) "otherwise"),
     ("the unmodelled construct ships its content", hasStr (censusText c) "?="),
     ("no page of this fixture ships a control sequence",
       !hasStr (censusText c) "overset" && !hasStr (censusText c) "textcolor"

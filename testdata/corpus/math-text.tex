@@ -26,6 +26,17 @@ An alignment carries all of it at once:
                                     &= \text{\textbf{bound} above}
 \end{align*}
 
+An alignment's reasons are words, each kept on one line however narrow the
+column:
+
+\begin{align*}
+  a + b &= b + a && \text{by the placeholder rule that swaps two terms} \\
+        &= c     && \text{by an invented lemma}
+\end{align*}
+
+A run keeps the spaces it writes, as in a condition:
+\[ f(x) = 1 \quad \text{if } x > 0, \qquad f(x) = 0 \quad \text{otherwise} \]
+
 What the engine still does not model degrades to content: $\overset{?}{=}$
 sets its characters and names the construct, and no control sequence
 reaches the page.

@@ -21,7 +21,8 @@ def readers : List String := ["chromium", "firefox"]
 
 /-- The feature rows, in the order the probe emits them. -/
 def features : List String :=
-  ["load", "images", "fonts", "mathml", "mathAlpha", "lang", "landmarks", "snaps", "box-side",
+  ["load", "images", "fonts", "mathml", "mathAlpha", "math-line", "lang", "landmarks", "snaps",
+   "box-side",
    "affine-screen", "affine-print", "color-scheme", "reduced-motion", "print", "print-spill",
    "print-sheets", "no-script", "code-height", "stage-fit", "deck-links", "disclosure",
    "print-disclosure", "code-wrap", "print-code"]
@@ -758,13 +759,63 @@ const codeWrapJudge = (tables) => {
 const codeTables = JSON.parse(process.env.LT_CODE_TABLES ||
   '{"apart":[],"words":[],"before":[],"after":[],"short":3}');
 
+// The narrow screen widths both line judges read.
+const narrowWidths = [320, 360, 600, 900];
+
+// A formula's text run keeps its line, as TeX sets a word in one box: at
+// every narrow width, where a column too narrow for its formula would part a
+// breakable run, each scalar of each shown math token of two or more scalars
+// has a box, all on its first scalar's line, and each of its spaces a width,
+// so none collapses as the box keeps it.
+const mathLineJudge = () => {
+  const runs = [];
+  for (const el of document.querySelectorAll('math :is(mi, mn, mo, mtext, ms)')) {
+    if (!el.checkVisibility()) continue;
+    for (const t of el.childNodes)
+      if (t.nodeType === 3 && [...t.data].length > 1) runs.push(t);
+  }
+  const bad = [];
+  for (const t of runs) {
+    const tops = [];
+    let at = 0, lost = false;
+    for (const ch of t.data) {
+      const r = document.createRange();
+      r.setStart(t, at);
+      r.setEnd(t, at + ch.length);
+      const q = r.getBoundingClientRect();
+      if ((q.width === 0 && q.height === 0) || (ch === ' ' && q.width === 0)) lost = true;
+      else tops.push(q.top);
+      at += ch.length;
+    }
+    if (lost || Math.max(...tops) - Math.min(...tops) > 1) bad.push(JSON.stringify([...t.data.trim()].slice(0, 40).join('')));
+  }
+  return { ok: bad.length === 0, n: runs.length,
+    why: bad.length ? `${bad.length}/${runs.length} math text runs leave their line: ${bad.slice(0, 3).join(', ')}` : '' };
+};
+
+const mathLine = async (page) => {
+  const off = [];
+  let n = 0;
+  try {
+    for (const w of narrowWidths) {
+      await page.setViewportSize({ width: w, height: 720 });
+      await page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
+      const r = await page.evaluate(mathLineJudge);
+      n = Math.max(n, r.n);
+      if (!r.ok) off.push(w + ' px: ' + r.why);
+    }
+  } finally {
+    await page.setViewportSize({ width: 1280, height: 720 });
+  }
+  return { ok: off.length === 0, n, why: off.join('; ') };
+};
+
 // The judge at narrow screens, where long lines wrap — from the 320 CSS px
 // WCAG 2.2's reflow criterion sets (SC 1.4.10) — and on paper.
 const codeWrap = async (page) => {
-  const widths = [320, 360, 600, 900];
   const runs = [];
   try {
-    for (const w of widths) {
+    for (const w of narrowWidths) {
       await page.setViewportSize({ width: w, height: 720 });
       await page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
       runs.push(['screen ' + w, await page.evaluate(codeWrapJudge, codeTables)]);
@@ -1116,6 +1167,21 @@ async function runReader(name) {
       document.querySelector('math').replaceWith(wrong);
     });
     if ((await control.evaluate(checks.mathml)).ok) throw new Error('mathml control: namespace');
+    // The math-line judge breaks twice: a run its column narrows parts at a
+    // space, and a run's edge spaces collapse; the same runs kept pass.
+    const narrowRun = (style) => '<div style="width: 120px"><math display="block"><mtable><mtr><mtd>' +
+      '<mi' + style + '>by an invented placeholder reason</mi></mtd></mtr></mtable></math></div>';
+    await control.setContent(narrowRun(''));
+    const parted = await control.evaluate(mathLineJudge);
+    if (parted.ok || parted.n !== 1) throw new Error('math-line control: a parted run');
+    await control.setContent(narrowRun(' style="white-space: pre"'));
+    const kept = await control.evaluate(mathLineJudge);
+    if (!kept.ok || kept.n !== 1) throw new Error('math-line control: a kept run');
+    const edged = (style) => '<math><mi' + style + '> if </mi></math>';
+    await control.setContent(edged(' style="white-space: nowrap"'));
+    if ((await control.evaluate(mathLineJudge)).ok) throw new Error('math-line control: collapsed edge spaces');
+    await control.setContent(edged(' style="white-space: pre"'));
+    if (!(await control.evaluate(mathLineJudge)).ok) throw new Error('math-line control: kept edge spaces');
     // Both disclosure judges break once: a closed body forced into view on
     // screen, and a closed body printed with no print rule to show it.
     const closed = '<details><summary>A</summary><p>B</p></details>';
@@ -1232,6 +1298,7 @@ async function runReader(name) {
       for (const [feature, fn] of Object.entries(checks)) {
         out(fx, name, feature, cell(await page.evaluate(fn)));
       }
+      out(fx, name, 'math-line', cell(await mathLine(page)));
       out(fx, name, 'stage-fit', cell(await stageFit(page, fx)));
       const links = await deckLinks(page, url);
       out(fx, name, 'deck-links', cell(links));

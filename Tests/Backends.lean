@@ -101,7 +101,7 @@ def mathmlChecks (ref : IO.Ref (List String)) : IO Unit := do
     (hasAttrs "$a\\! b$" "mspace"
       #[("width", "0"), ("style", "margin-inline-end: -0.166667em")])
   t "a function name is a multi-character upright mi"
-    (has "$\\sin x$" "<mi>sin</mi>")
+    (has "$\\sin x$" "<mi style=\"white-space: pre\">sin</mi>")
   t "an unparsed construct stays source text with its data-tex hook"
     (let p := page "$\\overset{?}{=}$"
      ((p.splitOn "<span class=\"math\" data-tex=").length ≥ 2))
@@ -125,6 +125,69 @@ def mathmlChecks (ref : IO.Ref (List String)) : IO Unit := do
         (pdf.all leaf.contains)
       t s!"every MathML leaf scalar is a census scalar or the overline: {src}"
         (leaf.all fun c => pdf.contains c || c == MathMl.overlineChar)
+
+mutual
+
+/-- The texts of a tree longer than one scalar, each with whether an element keeps its line. -/
+private def heldRunsOne (held : Bool) (acc : Array (String × Bool)) :
+    Html.Node → Array (String × Bool)
+  | .elem _ attrs kids => heldRunsList (held || MathMl.keepsLine attrs) acc kids.toList
+  | .text s => if s.length > 1 then acc.push (s, held) else acc
+  | .style _ => acc
+  | .script _ _ => acc
+
+private def heldRunsList (held : Bool) (acc : Array (String × Bool)) :
+    List Html.Node → Array (String × Bool)
+  | [] => acc
+  | n :: rest => heldRunsList held (heldRunsOne held acc n) rest
+
+end
+
+/-- A formula's text runs keep their lines in the web page, as TeX sets each in one box: however
+narrow the column, a reason, a word in a script, a function name or a label's words never wrap,
+and a run's own spaces stand as written. -/
+def mathLineChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let runs (src : String) : Array (String × Bool) :=
+    let (_, nodes, _) := HtmlDoc.emitTree {} (elabStr src).1
+    (elemNodesList (· == "math") #[] nodes.toList).foldl (heldRunsOne false) #[]
+  let cases : List (String × String × List String) := [
+    ("an alignment's reasons column",
+      dvDoc "" ("\\begin{align*}\n  a + b &= b + a && \\text{by the placeholder rule of swaps} \\\\\n" ++
+        "  &= c && \\text{by an invented lemma}\n\\end{align*}"),
+      ["by the placeholder rule of swaps", "by an invented lemma"]),
+    ("an inline formula's words", dvDoc "" "Inline: $x = \\text{one long invented phrase}$ ends.",
+      ["one long invented phrase"]),
+    ("a box and an upright run",
+      dvDoc "" "$\\mbox{two words} + \\textrm{three more words}$",
+      ["two words", "three more words"]),
+    ("function and operator names",
+      dvDoc "" "$\\sin x + \\log y + \\operatorname{argmax} z + a \\bmod b$",
+      ["sin", "log", "argmax", "mod"]),
+    ("a run's own spaces at its edges", dvDoc "" "$x \\text{ if } y$", [" if "]),
+    ("a hyphenated run", dvDoc "" "$\\text{well-known}$", ["well-known"]),
+    ("words in a script and a fraction",
+      dvDoc "" "$x^{\\text{two words}} + \\frac{\\text{an invented}}{2}$",
+      ["two words", "an invented"]),
+    ("a coloured run", dvDoc "" "$\\textcolor{red}{\\text{a b}}$", ["a b"]),
+    ("a cases column",
+      dvDoc "" ("\\[ f(x) = \\begin{cases} 1 & \\text{if } x > 0 \\\\ 0 & \\text{otherwise}" ++
+        " \\end{cases} \\]"),
+      ["if ", "otherwise"]),
+    ("a struck run", dvDoc "\\usepackage{cancel}" "$\\cancel{\\text{two words}}$",
+      ["two words"]),
+    ("a frame's reasons column",
+      deck169Frame ("\\begin{align*}\n  a &= b && \\text{by the invented step}\n\\end{align*}"),
+      ["by the invented step"]),
+    ("a picture label's formula",
+      dvDoc "\\usepackage{tikz}" (tikzPicture "\\node {$\\text{two words}$};"),
+      ["two words"])]
+  for (what, src, want) in cases do
+    let got := runs src
+    let loose := got.filter (!·.2) |>.map (·.1)
+    t s!"{what}: every text run of the formula keeps its line ({loose})" loose.isEmpty
+    t s!"{what}: the runs the source writes reach the formula as written ({got.map (·.1)})"
+      (want.all fun w => got.any (·.1 == w))
 
 /-- A named wrapper the author declares survives into the artifact as an addressable annotation. -/
 def classHookChecks (ref : IO.Ref (List String)) : IO Unit := do

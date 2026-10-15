@@ -1662,7 +1662,16 @@ def reports : List Report := [
     pins := [check% environScopeChecks]
     accept := ["nineteen of the guard's first twenty-two assertions fail on the engine at e2bef615 before the fix: each body definer's page and its one warning, a definition inside inline content, an absent optional argument's default and a definition inside a group",
       "the review's guards fail on the branch's first answer at 1e048315: a solution environment a skipped conditional's argument hides shows its body in five spellings, an unused default holding a length assignment moves the next paragraph down 4 cm, a second body definition of a theorem, an environment or a built-in strips its heading or stops the build, and a native body definition's use with an argument ships nothing"]
-    state := .guarded "e2bef615" .before .author }
+    state := .guarded "e2bef615" .before .author },
+  { id := "R188", date := "2026-10-15"
+    what := "a formula's text runs wrapped in the web page where TeX sets each as one unbreakable box: a deck's alignment of steps and their reasons, in a window narrower than the deck, showed each reason's first word and lost the rest to a line the page never drew, and a run's own spaces at its edges fell away"
+    pins := [check% mathLineChecks, thm% MathMl.formula_linesHeld_contract,
+      thm% HtmlDoc.labelNodesList_linesHeld_contract]
+    accept := ["twelve of the guard's assertions fail with the fix reverted onto 3dc4692e, the guard kept: an alignment's reasons, an inline run, a box and an upright run, function and operator names, a run's edge spaces, a hyphenated run, runs in a script and a fraction, a coloured run, a cases column, a struck run, a frame's reasons and a picture label's formula each set a text run nothing keeps on its line",
+      "the browser oracle's math-line judge, counting a collapsed space as lost, fails the text fixture and the deck fixture on the pages 3dc4692e builds: the text fixture's long reason parts at 320 and 360 px and its condition's trailing space collapses at every width, and the deck's two reasons part at 320 and 360 px; on the pages built here every math text run keeps its line and its spaces at 320, 360, 600 and 900 px; its controls part a narrowed run and collapse a run's edge spaces under nowrap, and keep both under pre",
+      "a presentation deck built by 3dc4692e and here: in a 16:10 window of 1280 by 800 an alignment's reasons showed only their first words before and show whole after, inside the stage; at visualdiff's 1920 by 1080 the two builds show no visible difference on any slide",
+      "of the corpus pages the fix changes, the deck, the Greek and the math pages show no visible difference at 1920 by 1080, and the text page's one visible difference is its condition, which reads if x where it read ifx, the space TeX and the PDF set"]
+    state := .guarded "3dc4692e" .revert .author }
 ]
 
 /-- The reports guarded but never seen failing, a count held in both directions. -/
