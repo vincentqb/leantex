@@ -107,7 +107,7 @@ def coverChecks (ref : IO.Ref (List String)) : IO Unit := do
       p.colors.accentText != amber.accent &&
         (SeedPalette.generate amber (amber.targetsAt .decks (some 15))).toOption.any fun q =>
           q.colors.accentText != p.colors.accentText)
-  let th : Theme.Theme := { Theme.daylightWith amber with
+  let th : Theme := { Theme.daylightWith amber with
     palette := { (Theme.daylightWith amber).palette with coveredFraction := some 15 } }
   let real := th.realize .decks
   t "cover: a bundle generates its derived tones at its own share"
@@ -274,7 +274,7 @@ def hiddenChecks (ref : IO.Ref (List String)) : IO Unit := do
   let markers : List (String × String × String) := [
     ("a bullet", "", "itemize"),
     ("a numbered item", "", "enumerate"),
-    ("a coloured marker", "\\style{itemize}{ marker = {\\textcolor{red}{$\\star$}} }\n", "itemize"),
+    ("a coloured marker", "\\style{itemize}{ marker = {\\textcolor{red}{*}} }\n", "itemize"),
     ("an image marker", "\\style{itemize}{ marker = {\\includegraphics[height=0.2cm]{absent.png}} }\n",
       "itemize")]
   for (label, pre, env) in markers do
@@ -283,11 +283,16 @@ def hiddenChecks (ref : IO.Ref (List String)) : IO Unit := do
     let out := layoutOf fonts (elabStr src).1
     let lineOf (w : String) := out.pages[1]?.bind fun p => p.lines.find? fun l => (wordRun #[l] w).isSome
     let ys := [lineOf "Kilo", lineOf "Lima"].filterMap (·.map (·.y))
-    t s!"hidden item, {label}: the step showing it inks its lines, its image and its link"
-      (ys.length == 2 && (lineOf "Kilo").any fun l => l.segs.any (· matches .image _ _ _ true) &&
+    let red := Ir.Color.ofHtml 0xFF 0x00 0x00
+    t s!"hidden item, {label}: the step showing it inks its lines, its marker, image and link"
+      (ys.length == 2 && (lineOf "Kilo").any (fun l => l.segs.any (· matches .image _ _ _ true) &&
         l.segs.any fun sg => match sg with
           | .run _ _ link .. => link == some "https://example.org"
-          | _ => false)
+          | _ => false) &&
+        [lineOf "Kilo", lineOf "Lima"].all fun l? => l?.any fun l => (l.segs[0]?.any (·.inks)) &&
+          (label != "a coloured marker" || l.segs.any fun sg => match sg with
+            | .run _ c .. => c == red
+            | _ => false))
     t s!"hidden item, {label}: the step hiding them inks nothing on their lines, marker, image and link included"
       (out.pages[0]?.any fun p =>
         let at_ := p.lines.filter fun l => ys.contains l.y
