@@ -209,10 +209,21 @@ run_cmd do
       let pmctx : Parser.ParserModuleContext :=
         { env := ← getEnv, options := scope.opts, currNamespace := scope.currNamespace,
           openDecls := scope.openDecls }
+      let begin := st.pos
+      let recovering := st.recovering
       let (cmd, st', msgs) := Parser.parseCommand ictx pmctx st {}
       st := st'
-      unless cmd.getKind == ``Lean.Parser.Command.moduleDoc do
-        if let some r := spanOf ictx.fileMap cmd then read := read.push r
+      let failed := msgs.toList.any (·.severity == .error)
+      let span := spanOf ictx.fileMap cmd
+      -- A command a parse error cuts short, and the text the next skips, are quoted whole.
+      if failed || recovering then
+        let stop := match span, failed with
+          | some (_, b), false => b
+          | _, _ => ictx.fileMap.toPosition st'.pos
+        read := read.push (ictx.fileMap.toPosition begin, stop)
+      else if cmd.getKind != ``Lean.Parser.Command.moduleDoc then
+        if let some r := span then read := read.push r
+      if cmd.getKind == ``Lean.Parser.Command.eoi then break
       errors := errors + (msgs.toList.filter (·.severity == .error)).length
       if cmd.getKind == ``Lean.Parser.Command.exit then break
       writtens := writtens ++ writtenIn ictx.fileMap cmd
@@ -261,8 +272,7 @@ run_cmd do
       lines := lines.push s!"\{\"const\":{jstr (shown c).toString},\"binders\":\"{mask "" ci.type}\"}"
   for (a, b) in read do
     lines := lines.push s!"\{\"command\":{spanText (some (a, b))},\"text\":{jstr (between textLines a b)}}"
-  let stop := ictx.fileMap.toPosition ⟨text.utf8ByteSize⟩
-  lines := lines.push s!"\{\"leantex-lean-export-end\":{decls},\"end\":[{posText stop}]}"
+  lines := lines.push s!"\{\"leantex-lean-export-end\":{decls}}"
   match ← (IO.FS.writeFile answer ("\n".intercalate lines.toList ++ "\n")).toBaseIO with
   | .ok () => pure ()
   | .error _ => IO.Process.exit 127

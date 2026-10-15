@@ -78,8 +78,9 @@ def readBack (file : System.FilePath) : IO (Option LeanFacts.Facts) := do
 def unnamed (f : LeanFacts.Facts) : LeanFacts.Facts :=
   { f with decls := f.decls.map fun d => { d with moduleName := "" } }
 
-/-- The layouts leantex must find an export in: a fixture with CRLF line ends, a module named
-`Main` beside the exporter's own, and a nested package's file, each read back through leantex. -/
+/-- The layouts leantex must find an export in, each read back through leantex: a fixture with CRLF
+line ends, a module named `Main` beside the exporter's own, a nested package's file, a command a
+parse error cuts short, and text past an `#exit`. -/
 def layouts : IO (Array String) :=
   IO.FS.withTempDir fun dir => do
     let fs ← scratch dir
@@ -91,7 +92,10 @@ def layouts : IO (Array String) :=
     IO.FS.createDirAll (dir / "sub/Sub")
     IO.FS.writeFile (dir / "sub/lakefile.toml") "name = \"sub\"\n"
     IO.FS.writeFile (dir / "sub/Sub/Thing.lean") "theorem thing : 1 = 1 := rfl\n"
-    let args := #[moduleOf name, s!"{fixtureDir}/crlfCopy.lean", "Main", "sub/Sub/Thing.lean"]
+    IO.FS.writeFile (dir / "Broken.lean") "theorem bad : 1 = := rfl junk more\n\ntheorem good : True := trivial\n"
+    IO.FS.writeFile (dir / "Exits.lean") "theorem before : True := trivial\n#exit\nnot Lean at all :=\n"
+    let args := #[moduleOf name, s!"{fixtureDir}/crlfCopy.lean", "Main", "sub/Sub/Thing.lean",
+      "Broken.lean", "Exits.lean"]
     if let .error why ← exportIn dir args then return #[why]
     let real ← IO.FS.realPath dir
     let original ← readBack (real / fixtureDir / name)
@@ -107,6 +111,10 @@ def layouts : IO (Array String) :=
     | none => faults := faults.push "the project's Main has no facts leantex reads lined up"
     if (← readBack (real / "sub/Sub/Thing.lean")).isNone then
       faults := faults.push "a nested package's file has no facts where leantex reads them"
+    unless ((← readBack (real / "Broken.lean")).map (·.decls.any (·.name == "good"))) == some true do
+      faults := faults.push "a file with a parse error has no facts leantex reads lined up"
+    unless ((← readBack (real / "Exits.lean")).map (·.decls.map (·.name))) == some #["before"] do
+      faults := faults.push "a file past its #exit has no facts leantex reads lined up"
     return faults
 
 def check : IO UInt32 := do

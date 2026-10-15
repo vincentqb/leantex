@@ -1,2 +1,2 @@
 # Each fixture's facts, as the exporter in export/ wrote them: case, exporter key, file key, the Lean that answered. Written only by scripts/leanexport.lean.
-statements.lean	D64E6C213998DB8DD9D244DA882BD0D7	BFE5E8E0BE27D6285A3FBBE3AFA7A296	4.34.1
+statements.lean	B42C83EB861792EBA5060C138BCC4199	BFE5E8E0BE27D6285A3FBBE3AFA7A296	4.34.1

@@ -274,7 +274,7 @@ def leanStatementChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- The facts, read whole or refused whole.
   let refused (body : String) : Bool := (LeanFacts.decode body).toOption.isNone
   let header := "{\"leantex-lean-export\":3,\"lean\":\"4.34.1\",\"errors\":0}\n"
-  let tail (n : Nat) : String := s!"\{\"leantex-lean-export-end\":{n},\"end\":[1,0]}\n"
+  let tail (n : Nat) : String := s!"\{\"leantex-lean-export-end\":{n}}\n"
   let ended0 := tail 0
   let ended1 := tail 1
   t "statements: facts with no declarations read as none"
@@ -286,7 +286,7 @@ def leanStatementChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "statements: facts cut short, miscounted, of another schema, with a node read twice or a binder marked neither way are refused"
     (refused header && refused (header ++ ended1) &&
       refused ("{\"leantex-lean-export\":2,\"lean\":\"x\",\"errors\":0}\n" ++ ended0) &&
-      refused (header ++ "{\"leantex-lean-export-end\":0}\n") &&
+      refused (header ++ "{\"leantex-lean-export-end\":\"0\"}\n") &&
       refused (record "[[\"const\",\"True\"],[\"app\",0,0]]") &&
       refused (record "[[\"const\",\"True\"],[\"const\",\"True\"],[\"pi\",\"x\",\"d\",0,1,2]]") &&
       !refused (record "[[\"const\",\"True\"],[\"const\",\"True\"],[\"pi\",\"x\",\"d\",0,1,1]]"))
@@ -310,12 +310,12 @@ def leanStatementChecks (ref : IO.Ref (List String)) : IO Unit := do
   let absent := (program.run none0).2.1
   t s!"facts: with no facts file the page sets its code, and one note names the exporter to run on the file ({absent.map (·.help)})"
     ((program.run none0).1.isNone && absent.map (·.kind) == #[.N0032] &&
-      absent.all (fun d => d.help.any (hasStr · "lake exe leantex-export statements.lean")) &&
+      absent.all (fun d => d.help.any (hasStr · "lake exe leantex-export /work/statements.lean")) &&
       (program.run none0).2.2.isNone && !runs (program.asks none0))
   let declaredAbsent := (declared.run (factsWorld [("/work/proj/lakefile.toml", "".toUTF8)])).2.1
   t "facts: a declared facts file absent names the exporter and the copy that puts its facts there"
     (declaredAbsent.map (·.kind) == #[.N0032] && declaredAbsent.all fun d => d.help.any fun h =>
-      hasStr h "lake exe leantex-export statements.lean" &&
+      hasStr h "lake exe leantex-export /work/proj/statements.lean" &&
         hasStr h "copy '/work/proj/.lake/build/leantex/statements.facts' to the declared path")
   -- What lines up: each command the exporter read, as it read it, and where the source ends.
   let stale (text : String) : Bool :=
@@ -332,9 +332,27 @@ def leanStatementChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "facts: a name, a statement or a proof edited in place, or a command a statement reads, no longer lines up"
     (inPlace.all fun (a, b) => src.replace a b != src && stale (src.replace a b))
   let untouched := [("Invented facts about tides", "Invented notes on tides!"),
-    ("-- leantex: show = math, code", "-- leantex: show = prose, code")]
-  t "facts: a module's documentation or a comment edited within its lines still lines up"
+    ("-- leantex: show = math, code", "-- leantex: show = prose, code"),
+    ("rise * n\n\n/-- Rising", "rise * n\n-- a note on a blank line\n/-- Rising"),
+    ("end Tide\n", "end Tide\n-- a closing note\n/- and a block one -/\n")]
+  t "facts: a module's documentation or a comment edited or added within its lines still lines up"
     (untouched.all fun (a, b) => src.replace a b != src && LeanFacts.alignedWith facts (src.replace a b))
+  let between := [("rise * n\n\n/-- Rising", "rise * n\nvariable (k : Nat)\n/-- Rising"),
+    ("\n\ntheorem exists_step : ∃ n : Nat, n + 2 = 5 := ⟨3, rfl⟩\n\n",
+      "\n/-\ntheorem exists_step : ∃ n : Nat, n + 2 = 5 := ⟨3, rfl⟩\n-/\n"),
+    ("end Tide\n", "end Tide\ntheorem extra : True := trivial\n")]
+  t "facts: a command written between the quoted ones, after them, or a quoted one commented out no longer lines up"
+    (between.all fun (a, b) => src.replace a b != src && stale (src.replace a b))
+  let exitOnly : LeanFacts.Facts :=
+    { lean := "4.34.1", errors := 0, decls := #[], binders := #[]
+      commands := #[{ start := (1, 0), stop := (1, 5), text := "#exit" }] }
+  t "facts: nothing after a quoted #exit is read, and the commands before it are"
+    (LeanFacts.alignedWith exitOnly "#exit\nanything at all := after it\n" &&
+      !LeanFacts.alignedWith exitOnly "x\n#exit\n")
+  let gap (s : String) : Bool := LeanFacts.trivia s.toList.toArray 0 s.length
+  t "facts: white space and comments, nested block comments read, are all that stands between commands"
+    (gap " \n-- a\n/- b /- c -/ d -/\t\n" && gap "" && !gap "/- open" && !gap "/- a -/ x" &&
+      !gap "- -" && gap "/-! a module's words -/ /-- a doc -/")
   let renamed := src.replace "theorem height_double" "theorem height_dpuble"
   t "facts: a declaration renamed in place no longer lines up, though every span keeps its length"
     (renamed.length == src.length && !LeanFacts.alignedWith facts renamed)
@@ -349,13 +367,19 @@ def leanStatementChecks (ref : IO.Ref (List String)) : IO Unit := do
   let old := factsWorld [lakefile, ("/work/.lake/build/leantex/statements.facts",
     ("{\"leantex-lean-export\":2,\"lean\":\"4.34.1\",\"errors\":0}\n" ++ ended0).toUTF8)]
   let oldDs := (program.run old).2.1
-  t s!"facts: facts of another schema are named, the exporter's update named, and the code stands ({oldDs.map (·.message)})"
+  t s!"facts: facts of an older schema are named, the exporter's update named, and the code stands ({oldDs.map (·.message)})"
     ((program.run old).1.isNone && oldDs.map (·.kind) == #[.W0433] &&
       oldDs.all fun d => d.help.any (hasStr · "lake update leantex-export"))
+  let newer := factsWorld [lakefile, ("/work/.lake/build/leantex/statements.facts",
+    ("{\"leantex-lean-export\":4,\"lean\":\"4.34.1\",\"errors\":0}\n" ++ ended0).toUTF8)]
+  let newerDs := (program.run newer).2.1
+  t "facts: facts of a newer schema name leantex's update or the exporter's pin, never the exporter's update"
+    ((program.run newer).1.isNone && newerDs.map (·.kind) == #[.W0433] &&
+      newerDs.all fun d => d.help.any fun h => hasStr h "update leantex" && !hasStr h "lake update")
   let torn := factsWorld [lakefile, ("/work/.lake/build/leantex/statements.facts",
     (facts3.extract 0 (facts3.size / 2)))]
   t "facts: facts cut short are named as not reading, the exporter to run again named, and the code stands"
     ((program.run torn).1.isNone && (program.run torn).2.1.map (·.kind) == #[.W0433] &&
-      (program.run torn).2.1.all fun d => d.help.any (hasStr · "in its project again"))
+      (program.run torn).2.1.all fun d => d.help.any (hasStr · "again in a project that requires"))
 
 end Tests.LeanStatements

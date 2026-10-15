@@ -48,7 +48,7 @@ public inductive Kind where
   deriving Repr, BEq, DecidableEq, Inhabited
 
 /-- One declaration: its name, kind, source range (lines from one, columns in characters from
-zero) and type, `none` where the type is larger than an answer carries. -/
+zero) and type, `none` where the type is larger than a facts file carries. -/
 public structure Decl where
   name : String
   kind : Kind
@@ -86,8 +86,7 @@ public structure Command where
   deriving Repr, BEq, Inhabited
 
 /-- An answer: the Lean that gave it, the errors its elaboration logged, the declarations, those
-that failed, the leading binders of every constant their types name, the commands it read, and
-where the source it read ends. -/
+that failed, the leading binders of every constant their types name, and the commands it read. -/
 public structure Facts where
   lean : String
   errors : Nat
@@ -95,7 +94,6 @@ public structure Facts where
   binders : Array (String × Array Binder)
   failed : Array Failed := #[]
   commands : Array Command := #[]
-  sourceEnd : Nat × Nat := (1, 0)
   deriving Repr, BEq, Inhabited
 
 /-- The schema's version, which an answer's first line names. -/
@@ -181,7 +179,7 @@ private def node (built : Array (Option Term)) (j : Json) :
 
 /-- A type from its post-order nodes: a tree whose every node but the last is read once. -/
 private def termOf (nodes : Array Json) : Except String Term := do
-  if nodes.size > maxTypeNodes then throw "a type larger than an answer may carry"
+  if nodes.size > maxTypeNodes then throw "a type larger than a facts file may carry"
   let mut built : Array (Option Term) := #[]
   for j in nodes do
     let (t, b) ← node built j
@@ -251,31 +249,54 @@ private def record (facts : Facts) (j : Json) : Except String Facts := do
 
 /-- An answer, whole or refused whole. -/
 public def decode (body : String) : Except String Facts := do
-  if body.utf8ByteSize > maxAnswerBytes then throw "an answer larger than an answer may be"
+  if body.utf8ByteSize > maxAnswerBytes then throw "facts larger than a facts file may be"
   let lines := (body.splitOn "\n").filter (!·.isEmpty)
   let some head := lines.head? | throw "an empty answer"
   let h ← Json.parse head
   if (← h.getObjValAs? Nat "leantex-lean-export") != schemaVersion then
-    throw "an answer in another schema"
+    throw "facts of another schema"
   let lean ← h.getObjValAs? String "lean"
   let errors ← h.getObjValAs? Nat "errors"
   let mut facts : Facts := { lean, errors, decls := #[], binders := #[] }
   let some last := lines.getLast? | throw "an empty answer"
-  if lines.length < 2 then throw "an answer with no end"
+  if lines.length < 2 then throw "facts with no end"
   let tail ← Json.parse last
   let count ← tail.getObjValAs? Nat "leantex-lean-export-end"
-  let sourceEnd ← pairOf (← tail.getObjValAs? (Array Json) "end") 0
   for line in (lines.drop 1).dropLast do
     facts ← record facts (← Json.parse line)
-  if facts.decls.size != count then throw "an answer that does not hold the declarations it counts"
-  return { facts with sourceEnd }
+  if facts.decls.size != count then throw "facts that do not hold the declarations they count"
+  return facts
 
 /-- Whether one position comes at or before another. -/
 private def atOrBefore (a b : Nat × Nat) : Bool := a.1 < b.1 || (a.1 == b.1 && a.2 ≤ b.2)
 
-/-- Whether an answer lines up with a source text: the text ends where the source the answer was
-read from ended, each command it read stands in the text as it quotes it, and each declaration lies
-in one of them. -/
+/-- Whether the source from `i` to `j` holds only white space and Lean's comments, each block
+comment, nested ones read, closing before `j`. -/
+public def trivia (src : Array Char) (i j : Nat) : Bool := Id.run do
+  let mut k := i
+  let mut line := false
+  let mut depth := 0
+  for _ in [i:j] do
+    if k ≥ j then break
+    let c := src[k]?.getD ' '
+    let d := src[k + 1]?.getD ' '
+    let two := k + 1 < j
+    if line then
+      if c == '\n' then line := false
+      k := k + 1
+    else if depth > 0 then
+      if two && c == '/' && d == '-' then depth := depth + 1; k := k + 2
+      else if two && c == '-' && d == '/' then depth := depth - 1; k := k + 2
+      else k := k + 1
+    else if c == ' ' || c == '\t' || c == '\n' || c == '\r' then k := k + 1
+    else if two && c == '-' && d == '-' then line := true; k := k + 2
+    else if two && c == '/' && d == '-' then depth := 1; k := k + 2
+    else return false
+  return depth == 0
+
+/-- Whether an answer lines up with a source text: each command it read stands in the text where
+and as it quotes it, nothing but white space and comments between them up to the end or a quoted
+`#exit`, and each declaration lies in one of them. -/
 public def alignedWith (facts : Facts) (text : String) : Bool := Id.run do
   let src := text.toList.toArray
   let mut starts : Array Nat := #[0]
@@ -284,15 +305,21 @@ public def alignedWith (facts : Facts) (text : String) : Bool := Id.run do
   let offset (p : Nat × Nat) : Option Nat := (starts[p.1 - 1]?).bind fun s =>
     let lineEnd := (starts[p.1]?.map (· - 1)).getD src.size
     if p.1 ≥ 1 && s + p.2 ≤ lineEnd then some (s + p.2) else none
-  let stop := (starts.size, src.size - starts.back?.getD 0)
-  if facts.sourceEnd != stop then return false
-  let quoted := facts.commands.all fun c => match offset c.start, offset c.stop with
-    | some i, some j => i ≤ j && (src.extract i j).toList == c.text.toList
-    | _, _ => false
+  let mut prev := 0
+  let mut exited := false
+  for c in facts.commands do
+    let some i := offset c.start | return false
+    let some j := offset c.stop | return false
+    if i < prev || j < i || !trivia src prev i then return false
+    if (src.extract i j).toList != c.text.toList then return false
+    prev := j
+    if c.text == "#exit" then
+      exited := true
+      break
+  if !exited && !trivia src prev src.size then return false
   let within (head stop : Nat × Nat) : Bool :=
     facts.commands.any fun c => atOrBefore c.start head && atOrBefore stop c.stop
-  return quoted && facts.decls.all (fun d => within d.head d.stop) &&
-    facts.failed.all fun f => within f.head f.stop
+  return facts.decls.all (fun d => within d.head d.stop) && facts.failed.all fun f => within f.head f.stop
 
 /-- Whether a term names a constant anywhere in it. -/
 public def Term.names (c : String) : Term → Bool

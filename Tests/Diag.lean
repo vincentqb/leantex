@@ -386,7 +386,7 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
       "its code is set without statements" (LeanFactsFile.helpFor "lake exe leantex-export Tide"
         "/p/.lake/build/leantex/Tide.facts" false)
       (some ("{\"leantex-lean-export\":3,\"lean\":\"4.34.1\",\"errors\":0}\n" ++
-        "{\"leantex-lean-export-end\":0,\"end\":[9,0]}\n").toUTF8)).2
+        "{\"leantex-lean-export-end\":0}\n").toUTF8)).2
   | .N0032 => (LeanFacts.judge "Tide" "/p/.lake/build/leantex/Tide.facts" "theorem t : True := trivial\n"
       "its code is set without statements" (LeanFactsFile.helpFor "lake exe leantex-export Tide"
         "/p/.lake/build/leantex/Tide.facts" false) none).2

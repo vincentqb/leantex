@@ -36,14 +36,17 @@ public def standardPath (root abs : String) : String :=
   let stem := if rel.endsWith ".lean" then (rel.dropEnd 5).toString else rel
   ToolPath.join root s!".lake/build/leantex/{stem}.facts"
 
-/-- What a page's notes tell its author to run: the exporter on the file, and where the document
-declares its own path, a copy of what the exporter writes to it. -/
+/-- What a page's notes tell its author to run: the exporter on the file, from a project that
+requires it, and where the document declares its own path, a copy of what it writes there. -/
 public def helpFor (cmd standard : String) (declared : Bool) : LeanFacts.Help :=
   let copy := if declared then s!", and copy '{standard}' to the declared path" else ""
-  { absent := if declared then s!"run `{cmd}` in its project{copy}"
-      else s!"run `{cmd}` in its project, or declare `facts = <path>`"
-    again := s!"run `{cmd}` in its project again{copy}"
-    update := s!"run `lake update leantex-export`, then `{cmd}`, in its project{copy}" }
+  let there := "in a project that requires leantex-export"
+  { absent := if declared then s!"run `{cmd}` {there}{copy}"
+      else s!"run `{cmd}` {there}, or declare `facts = <path>`"
+    again := s!"run `{cmd}` again {there}{copy}"
+    update := s!"run `lake update leantex-export`, then `{cmd}`, {there}{copy}"
+    newer := "update leantex, or pin `leantex-export` in the project's lakefile to the revision \
+of this leantex" }
 
 /-- A Lean file's facts, from the file `declared` names, placed by its declaring document, or the
 exporter's standard one, with the note or warning `LeanFacts.judge` owes and the path read. -/
@@ -61,7 +64,7 @@ public def factsFor (file text : String) (declared : Option String)
   let root := (← findUp ["lakefile.lean", "lakefile.toml"] dirs).getD (dirs.headD "/")
   let standard := standardPath root abs
   let path := (declared.map placed).getD standard
-  let help := helpFor s!"lake exe leantex-export {placeOf root abs}" standard declared.isSome
+  let help := helpFor s!"lake exe leantex-export {abs}" standard declared.isSome
   let read := (← ask (.readFile path)).toOption
   let (facts, ds) := LeanFacts.judge file path text lost help read
   return (facts, ds, read.map fun _ => path)

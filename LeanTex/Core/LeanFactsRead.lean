@@ -11,11 +11,13 @@ namespace LeanTex.Core.LeanFacts
 
 open Lean (Json)
 
-/-- What to run where a page's facts stand absent, no longer line up, or are of another schema. -/
+/-- What to run where a page's facts stand absent, no longer line up, or are of an older or a newer
+schema than this leantex reads. -/
 public structure Help where
   absent : String
   again : String
   update : String
+  newer : String
   deriving Repr, Inhabited
 
 /-- The note a page owes when no facts file stands where its facts are read from. -/
@@ -48,26 +50,23 @@ public def judge (file path text lost : String) (help : Help) (read : Option Byt
         if alignedWith facts text then (some facts, #[])
         else (none, #[stale file path "no longer line up with it" help.again lost])
       | .error why =>
-        if (schemaOf body).any (· != schemaVersion) then
-          (none, #[stale file path s!"are not of schema {schemaVersion}, the one this leantex reads"
-            help.update lost])
-        else (none, #[stale file path s!"do not read: {why}" help.again lost])
+        match schemaOf body with
+        | some n =>
+          if n < schemaVersion then
+            (none, #[stale file path s!"are of schema {n}, older than this leantex's {schemaVersion}"
+              help.update lost])
+          else if n > schemaVersion then
+            (none, #[stale file path s!"are of schema {n}, newer than this leantex's {schemaVersion}"
+              help.newer lost])
+          else (none, #[stale file path s!"do not read: {why}" help.again lost])
+        | none => (none, #[stale file path s!"do not read: {why}" help.again lost])
 
 /-- A page keeps facts only where they line up with its text. -/
 public theorem judge_aligned {file path text lost : String} {help : Help}
     {read : Option ByteArray} {f : Facts} (h : (judge file path text lost help read).1 = some f) :
     alignedWith f text = true := by
   unfold judge at h
-  split at h
-  · simp at h
-  · split at h
-    · simp at h
-    · split at h
-      · split at h
-        · simp at h
-          subst h
-          assumption
-        · simp at h
-      · split at h <;> simp at h
+  repeat' split at h
+  all_goals simp_all
 
 end LeanTex.Core.LeanFacts

@@ -150,4 +150,4 @@
 {"command":[99,0,99,58],"text":"theorem placeholder (n : Nat) : n = Nat.notAThing n := rfl"}
 {"command":[101,0,101,55],"text":"theorem refused (n : Nat) : n + (1 : String) = n := rfl"}
 {"command":[103,0,103,8],"text":"end Tide"}
-{"leantex-lean-export-end":39,"end":[104,0]}
+{"leantex-lean-export-end":39}

@@ -475,7 +475,7 @@ def leanViewChecks (ref : IO.Ref (List String)) : IO Unit := do
       ((← readsOf pagePath src).any (·.endsWith "/proj/.lake/build/leantex/statements.facts"))
     IO.FS.writeFile (proj / ".lake/build/leantex/crlf.facts") answer
     let (crlfDoc, crlfDs) ← readAt (proj / "crlf.lean").toString (src.replace "\n" "\r\n")
-    t "views: a page saved with CRLF line ends reads the facts Lean gives its text, line ends made LF"
+    t "views: a page saved with CRLF line ends lines up with the facts of its text as Lean reads it, line ends made LF"
       (stated crlfDoc && quiet crlfDs)
     let (texDoc, texDs) ← readAt (tmp / "doc.tex").toString
       ("\\documentclass{article}\n\\begin{document}\n" ++
