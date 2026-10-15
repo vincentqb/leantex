@@ -4162,12 +4162,6 @@ private structure InlineCodeOpts where
   tabSize : Nat := 8
   breakLines : Bool := false
 
-/-- minted's keys that configure a display alone, read for no inline code. -/
-private def displayOnlyKeys : List String :=
-  ["linenos", "numbers", "firstnumber", "stepnumber", "numbersep", "numberblanklines",
-   "numberfirstline", "frame", "framerule", "framesep", "rulecolor", "label",
-   "labelposition", "xleftmargin", "xrightmargin", "resetmargins", "samepage", "vspace",
-   "listparameters", "firstline", "lastline", "highlightlines", "highlightcolor"]
 
 /-- Inline code's options as minted reads them there; a key inline code does
 not honour is named. -/
@@ -4181,7 +4175,7 @@ private def inlineCodeOpts (ctx : Ctx) (opts : String) (pos : Pos) : EM InlineCo
       noteFormatcom ctx pos
       continue
     -- premise: inlineCodeChecks — display keys leave inline code unchanged
-    if displayOnlyKeys.contains key then
+    if Compat.mintedDisplayKeys.contains key then
       continue
     if keepsSize bare then
       o := { o with size := none }
@@ -7218,6 +7212,17 @@ the page's {what} colour is the '{role}' key" (span := some span)
         (help := some s!"declare \\palette\{ {role} = ... } for the page's {what}, or name \
 '{key}' where it is used"))
 
+/-- Names a frame-title font the document declares where no frame-title bar sets it: a frame title
+without a themed bar keeps the engine's bold title. -/
+private def unreadFrameTitleFont (doc : Doc) (declared : Array (String × String)) : Array Diag :=
+  if doc.docClass.record.model == .frame && declared.contains ("style", "frametitle") &&
+      ((doc.styles.find? "frametitle").bind (·.font)).isSome &&
+      (Design.ofPalette doc.palette).frametitle.isNone then
+    #[Diag.of .W0104 "the frame title's declared font is read only under a themed title bar; \
+these frame titles keep the bold title" (subject := some "param:\\style:frametitle")
+      (help := some "a theme with a frame-title bar, such as moloch, sets the declared font")]
+  else #[]
+
 private def seedKeys : List String := ["ink", "paper", "accent", "alert", "example", "neutral"]
 
 /-- Installs the palette generated from `\palette[seeds]{…}`; seeds that
@@ -8660,7 +8665,11 @@ is set as a display listing" pos
 does not draw; lines keep no numbers" "numbers=left draws them"
     | some ("linenos", v) =>
       numbers := v.trimAscii.toString != "false"
-    | some ("language", v) => language ← langOf (listingVal v)
+    | some ("language", v) =>
+      if env == "minted" then
+        unhonoured "minted has no key 'language'; the language argument names the lexer"
+          "name the language in \\begin{minted}{python}"
+      else language ← langOf (listingVal v)
     | some ("style", v) =>
       let v := listingVal v
       if env == "minted" then
@@ -16396,6 +16405,7 @@ public def completePrepared (file : String) (p : Prepared) (earlier : Array Diag
   let unread := if st.spans.tokenKeys.isEmpty then #[]
     else unreadPaletteKeys (doc.page.drawn.foldl (fun acc r => acc ++ Ir.colorNames r.color)
       st.spans.colorReads) st.spans.tokenKeys
+  let unread := unread ++ unreadFrameTitleFont doc st.declaredKeys
   (doc, Diag.tallySites ((accountRecovered doc.salvage
     (earlier ++ p.compatDiags ++ st.diags ++ contrast ++ outline ++ alt ++ links ++ sequences ++
       unread ++ Ir.boxDiags doc.page)

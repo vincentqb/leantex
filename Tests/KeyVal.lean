@@ -51,7 +51,7 @@ def keyValChecks (ref : IO.Ref (List String)) : IO Unit := do
       "Words.")).2.all (·.code != "W0101"))
   let listed := elabStr (dvDoc "\\usepackage{enumitem}\n\\setlist[itemize]{itemsep=9pt, label=(\\alph*, x)}\n" "Words.")
   t "keyval: a list key cut inside parentheses names its piece"
-    (listed.2.any fun d => d.code == "W0101" && hasStr d.message "x)")
+    (listed.2.any fun d => d.code == "W0104" && hasStr d.message "x)")
   t "keyval: a blank icon label keeps the icon's own name"
     ((elabStr (dvDoc "\\usepackage{fontawesome5}\n" "\\faIcon[label={}]{star}")).2.any
       fun d => d.code == "W0110" && hasStr d.message "blank")

@@ -42,6 +42,7 @@ import Tests.NestedLedgers
 import Tests.DeclaredLadder
 import Tests.PageOverrun
 import Tests.ParamCensus
+import Tests.ParamCensusDecl
 import Tests.Images
 import Tests.SvgImages
 import Tests.SvgTools
@@ -1757,7 +1758,13 @@ def reports : List Report := [
     accept := ["three of the guard's four assertions fail on main at 26720a07: its stylesheet declares no mark for a focused stage nor a ring of its own in forced colours, and its pager leaves every stage a tab stop; the fourth, that a stage marks in its ink so a focus colour no link ships is not judged, holds both ways",
       "the browser oracle's stage-focus row fails on every corpus deck the engine at 26720a07 builds: under the pager each stage stays a tab stop, and read without it each draws the browser's auto outline and no mark, focusing one changing the viewport's outermost pixels; on every deck built here no stage is a tab stop under the pager, and read without it every stage draws no outline but its mark, focusing one stage of each kind changing two bands of pixels a rule wide inside its side margins and none at the viewport's edges or in its band, footline or logo, at the deck's own aspect at 1x and 2x and at 16:10, 4:3 and a portrait phone, the bands holding still as a stage that spills scrolls, and in forced colours a focused stage still shows its focus; its controls fail a stage keeping the browser's ring, a mark run into a footline, a mark that scrolls with its stage, a mark forced colours drop and a stage left a tab stop under the pager",
       "a presentation deck opened at a frame's address in 16:9 and 16:10 windows at 1x, 1.5x and 2x and paged with the arrow keys: before, the address focused the frame, whose browser ring drew along the window's edges and ran between slides as it scrolled away; after, the address, a click in a margin and the keys focus no stage, no ring or mark shows, and each of the 20 snaps from the frame on shows one slide alone"]
-    state := .guarded "26720a07" .before .author }
+    state := .guarded "26720a07" .before .author },
+  { id := "R197", date := "2026-10-15"
+    what := "settings a document declared through listing defaults, list styles, boxes and beamer's templates, sizes and fonts could be read by nothing with no word, or named only in aggregate: beamer's size setting, a box setup and a new counter were unknown commands, a template's predefined and empty forms went unnamed, inline code's display keys and minted's language key changed nothing, and a frame-title font no bar sets was dropped"
+    pins := [check% Tests.ParamCensus.declCensusChecks]
+    accept := ["the declaration census over the engine as 7940ddbe has it reports 24 settings across 6 readers read by nothing and named by nothing (beamer templates 10, beamer sizes 6, inline code defaults 4, beamer fonts 2, minted defaults 1, a new counter 1); here none",
+      "a mutant silencing the list setup's per-key names and the beamer size reader's makes the census fail on both readers, naming nosep, align=left and the invented option, and text margin left=2cm"]
+    state := .guarded "47b07e39" .before .author }
 ]
 
 /-- The reports guarded but never seen failing, a count held in both directions. -/

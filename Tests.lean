@@ -251,6 +251,7 @@ import Tests.EndInput
 import Tests.Redefine
 import Tests.Algorithm
 import Tests.ParamCensus
+import Tests.ParamCensusDecl
 import Tests.Settings
 import Tests.Kernel
 import Tests.PicturePaths
@@ -906,6 +907,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   Tests.ParamCensus.paramTruthChecks ref oneFace
   Tests.ParamCensus.paramSilenceChecks ref oneFace
   Tests.ParamCensus.engineTokenChecks ref
+  Tests.ParamCensus.declCensusChecks ref oneFace
   seamChecks ref oneFace
   abstractSkipChecks ref oneFace
   paramSiteChecks ref oneFace

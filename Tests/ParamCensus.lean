@@ -153,8 +153,9 @@ def judge (fonts : Font.FontSet) (base : Shipped) (src key : String) : Bool × B
   let naming := fresh.filter (names key)
   -- A setting noted as changing nothing that changes an artifact is read, so its note is false.
   let inert := !naming.isEmpty && naming.all fun d => d.code == "N0100" && hasStr d.message "→ nothing:"
-  (changed, !naming.isEmpty,
-    (shows && naming.any fun d => unreadCodes.contains d.code) || (inert && shows))
+  -- A key named as applied in part is read, so only a claim that it is unread contradicts a change.
+  let unread := naming.any fun d => unreadCodes.contains d.code && !hasStr d.message "not fully applied"
+  (changed, !naming.isEmpty, (shows && unread) || (inert && shows))
 
 /-- Each setting of a row with its verdict in each document, every build spawned at once. -/
 def rowJudged (fonts : Font.FontSet) (row : Row) : List (String × List (Task (Bool × Bool × Bool))) :=
