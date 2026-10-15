@@ -453,13 +453,15 @@ def parseSample (log : String) : Except String Sample := do
   let some (pages, compilerMs) := summary | throw "no output summary"
   return { pages, compilerMs, diagnostics, phases }
 
-def sample (binary input output cache : System.FilePath) (verbose : Bool := false) : IO Sample := do
+def sample (binary input output cache : System.FilePath) (verbose : Bool := false)
+    (env : Array (String × Option String) := #[]) : IO Sample := do
   let start ← IO.monoMsNow
   let out ← IO.Process.output {
     cmd := binary.toString
     args := #["build", input.toString, "-o", output.toString, "--porcelain"] ++
       (if verbose then #["-v"] else #[])
-    env := #[("XDG_CACHE_HOME", some cache.toString), ("LC_ALL", some "C"), ("TZ", some "UTC")] }
+    env := #[("XDG_CACHE_HOME", some cache.toString), ("LC_ALL", some "C"), ("TZ", some "UTC")] ++
+      env }
   let ms := (← IO.monoMsNow) - start
   if out.exitCode != 0 then
     throw (IO.userError s!"benchmark compile failed:\n{out.stdout}{out.stderr}")
@@ -524,7 +526,7 @@ def benchConcurrent (n requests : Nat) (images : Bool) : IO Unit := do
     IO.FS.writeFile input (source ++ finish)
     benchCached n requests
       (if images then s!"{requests} PDF images (HTML)" else s!"{requests} page streams (PDF)")
-      binary input output cache (if images then "convs" else "flate")
+      binary input output cache (if images then "faces" else "flate")
 
 namespace Slides
 
@@ -570,9 +572,7 @@ def invalidated (pages : Nat) (old changed fresh : ByteArray)
 
 /-- The content answers among cache files, font-discovery metadata excluded. -/
 def answers (files : Array (String × String)) : Array (String × String) :=
-  files.filter fun (name, _) =>
-    name.startsWith "imgs/" || name.startsWith "flate/" || name.startsWith "convs/" ||
-      name.startsWith "faces/"
+  files.filter fun (name, _) => !name.startsWith "fontdb-"
 
 def require (ok : Bool) (why : String) : IO Unit := do
   unless ok do throw (IO.userError s!"slides benchmark: {why}")
@@ -593,15 +593,6 @@ def binaryHash (binary : System.FilePath) : IO String := do
   require (result.exitCode == 0 && key.length == 64 &&
     key.toList.all fun c => c.isDigit || ('a' ≤ c && c ≤ 'f')) "could not SHA-256 the compiler"
   return key
-
-def toolVersions : IO (Array (String × String)) := do
-  let mut versions := #[]
-  for (tool, args) in [("pdftocairo", #["-v"])] do
-    let result ← IO.Process.output { cmd := tool, args }
-    let version := (result.stdout ++ result.stderr).trimAscii.toString
-    require (result.exitCode == 0 && !version.isEmpty) s!"could not read {tool}'s version"
-    versions := versions.push (tool, version)
-  return versions
 
 def png (width height : Nat) (compressed : ByteArray) : ByteArray :=
   PngEncode.signature ++
@@ -743,7 +734,8 @@ def selftest : IO Unit := do
     "answer judge must ignore only metadata changes"
   require (answers files != answers #[("imgs/grid.img", "changed answer")] &&
     answers files != answers #[("imgs/grid.img", "answer"), ("convs/new.answer", "new")] &&
-    answers files != answers #[("imgs/grid.img", "answer"), ("faces/new.face", "new")])
+    answers files != answers #[("imgs/grid.img", "answer"), ("faces/new.face", "new")] &&
+    answers files != answers #[("imgs/grid.img", "answer"), ("unnamed/new.answer", "new")])
     "answer judge hid changed or added content answers"
   require (PngEncode.crc32 "123456789".toUTF8 == 0xcbf43926) "PNG CRC test vector"
   for edit in [false, true] do
@@ -792,10 +784,11 @@ structure Run where
   cache : Array (String × String)
 
 /-- One timed child compiler run; everything else is outside the measurement. -/
-def compile (binary dir cache : System.FilePath) (format : String) : IO Run := do
+def compile (binary dir cache : System.FilePath) (format : String)
+    (env : Array (String × Option String) := #[]) : IO Run := do
   let output := dir / ("deck." ++ format)
   if ← output.pathExists then IO.FS.removeFile output
-  let report ← sample binary (dir / "deck.tex") output cache true
+  let report ← sample binary (dir / "deck.tex") output cache true env
   for name in ["read", "prepare", "elab", "fontdb", "font", "images", "layout", format] do
     require ((report.phase? name).isSome) s!"missing phase {name}"
   require (!report.diagnostics.isEmpty) "fixture must exercise diagnostic replay"
@@ -819,7 +812,7 @@ def work (r : Run) (hits : Nat) : IO Unit := do
   require (counts == (2, hits)) s!"expected 2 unique images / {hits} hits, got {counts}"
 
 /-- What a cold build owes: both images decoded, one alpha decode answer, a private font cache,
-and its format's published answers, page streams for PDF and the vector's face for HTML. -/
+and its format's published answers, page streams for PDF and the vector's native face for HTML. -/
 def coldBuild (r : Run) (format : String) : IO Unit := do
   work r 0
   require (entries r.cache "imgs" ".img" == 1) "expected one alpha decode answer"
@@ -827,6 +820,10 @@ def coldBuild (r : Run) (format : String) : IO Unit := do
     "font discovery populated no private cache"
   let (operation, ext) := if format == "pdf" then ("flate", ".answer") else ("faces", ".face")
   require (entries r.cache operation ext > 0) s!"no {operation} cache answers"
+  if format == "html" then
+    let faces := ((r.report.phase? "faces").map (·.detail)).getD ""
+    require (faces == "1 native, 0 native with losses named, 0 by the converter, 0 placeholders")
+      s!"the vector figure was not drawn natively: {faces}"
 
 def printSample (label : String) (r : Run) : IO Unit := do
   let phases := r.report.phases.toList.map fun p => s!"{p.name}={p.ms}"
@@ -894,12 +891,14 @@ def bench (binary dir : System.FilePath) (n frames : Nat) (format : String)
   return first
 
 /-- Every frame count and PNG workload the bench times, its inputs all original and all edited,
-builds in both formats as a timed cold build must (`compile`, `coldBuild`), a page a frame; each
-failing build is named. -/
+builds in both formats as a timed cold build must (`compile`, `coldBuild`), sealed from the host's
+tools, fonts and home; the first state repeats from its cache unchanged; each failure is named. -/
 def fixtureCheck : IO Unit := do
   let binary ← IO.FS.realPath (← compiler)
   IO.FS.withTempDir fun dir => do
     copyFonts dir
+    let sealed := #[("HOME", some (dir / "home").toString), ("PATH", some (dir / "no-tools").toString),
+      ("LEANTEX_FONT", none), ("LEANTEX_FONT_PATH", none)]
     let mut failed := ""
     let mut built := 0
     for (frames, png, image) in
@@ -909,14 +908,19 @@ def fixtureCheck : IO Unit := do
         for format in ["pdf", "html"] do
           let state := s!"{frames} frames, {png} PNG, {if edited then "edited" else "original"}"
           try
-            let r ← IO.FS.withTempDir fun cache => compile binary dir cache format
-            coldBuild r format
-            require (r.report.pages == frames) s!"{r.report.pages} pages"
+            IO.FS.withTempDir fun cache => do
+              let r ← compile binary dir cache format sealed
+              coldBuild r format
+              require (r.report.pages == frames) s!"{r.report.pages} pages"
+              if built < 2 then
+                let again ← compile binary dir cache format sealed
+                work again 1
+                replay frames r again
             built := built + 1
           catch e => failed := failed ++ s!"\n{state}, {format}: {e}"
     require failed.isEmpty s!"fixtures that do not build clean:{failed}"
     say s!"slides fixtures: {built} cold builds clean (8 and 32 frames over the stored PNG, \
-8 over the compressed one; original and edited inputs; pdf and html)"
+8 over the compressed one; original and edited inputs; pdf and html; the first state repeated)"
 
 def load : IO String := do
   return ((← (IO.FS.readFile "/proc/loadavg").toBaseIO).toOption.getD "unavailable").trimAscii.toString
@@ -924,7 +928,6 @@ def load : IO String := do
 def run (n : Nat) (compressed : Bool := false) : IO Unit := do
   require (n ≥ 3) "N must be at least 3 for slide medians"
   selftest
-  let versions ← toolVersions
   let binary ← IO.FS.realPath (← compiler)
   let binaryKey ← binaryHash binary
   let comparison ← match ← IO.getEnv "LEANTEX_BENCH_COMPARE_BINARY" with
@@ -939,8 +942,6 @@ def run (n : Nat) (compressed : Bool := false) : IO Unit := do
   let image := fun edit => if edit then edited else original
   say s!"slides runtime benchmark v1; N={n}; binary={binary}; sha256={binaryKey}"
   say s!"PNG workload: {if compressed then "256x256 dynamic-Huffman" else "128x80 stored"}"
-  for (tool, version) in versions do
-    say s!"tool {tool}: {(Lean.Json.str version).compress}"
   say "Application-cache cold; OS caches uncontrolled. Shared-host timings are provisional; rerun on a quiet host for before/after claims."
   say "Phases overlap: font includes fontdb. Do not sum phase medians. Tool invocations and conversion/compression hits are uninstrumented."
   say s!"host load before: {← load}"
@@ -961,7 +962,6 @@ def run (n : Nat) (compressed : Bool := false) : IO Unit := do
           say "compiler comparison: byte-identical artifact and ordered diagnostics"
     require ((← inventory (dir / "fonts")) == fonts) "font bytes changed during the benchmark"
   require ((← binaryHash binary) == binaryKey) "compiler changed during the benchmark"
-  require ((← toolVersions) == versions) "external tool versions changed during the benchmark"
   say s!"host load after: {← load}"
   say "slides sanity passed: deterministic artifacts/diagnostics, bounded repeated image work, source/asset invalidation."
 
@@ -1178,8 +1178,6 @@ def main (args : List String) : IO UInt32 := do
     benchDecode n
     return 0
   if args == ["--concurrency-only"] then
-    unless ← hasCmd "pdftocairo" #["-v"] do
-      die "HTML vector benchmark needs pdftocairo"
     for count in [8, 32] do benchConcurrent n count false
     for count in [8, 16] do benchConcurrent n count true
     return 0
