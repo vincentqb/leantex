@@ -67,48 +67,59 @@ def listingRows : List Row :=
          s!"\\begin\{minted}\{python}{code}\\end\{minted}See listing~\\ref\{lst:probe}.",
        fun o => article "" (pre ++ (o.map (s!"\\setminted\{{·}}")).getD "") ""] },
    { reader := "\\setmintedinline"
-     settings := listingSettings
+     settings := Compat.mintedDisplayKeys.map (· ++ "=2") ++ listingSettings
      docs := [fun o => article "" (pre ++ (o.map (s!"\\setmintedinline\{{·}}")).getD "")
          "Inline \\mintinline{python}{probe(x)\treturn} code.",
        fun o => article "" (pre ++ (o.map (s!"\\setmintedinline\{{·}}")).getD "") ""] }]
 
-/-- enumitem's keys, set for one kind of list, for one level of a kind, and for every list. -/
+/-- enumitem's keys, the length keys and label the reader's table translates and keys it names,
+set for a kind, a kind's deeper level, a level of every kind, and every list, each before another
+preamble line, in nested lists of every kind. -/
 def setlistRow : Row :=
-  let lists := "\\begin{itemize}\\item Alpha\\item Beta\\end{itemize}" ++
-    "\\begin{enumerate}\\item Alpha\\item Beta\\end{enumerate}" ++
+  let nested (env : String) : String :=
+    s!"\\begin\{{env}}\\item Alpha\\begin\{{env}}\\item Beta\\begin\{{env}}\\item Gamma" ++
+      s!"\\end\{{env}}\\end\{{env}}\\end\{{env}}"
+  let lists := nested "itemize" ++ nested "enumerate" ++
     "\\begin{description}\\item[Term] Alpha\\item[Other] Beta\\end{description}"
   let doc (scope : String) (o : Option String) : String :=
-    article "\\usepackage{enumitem}" ((o.map (s!"\\setlist{scope}\{{·}}")).getD "") lists
+    article "" ("\\usepackage{enumitem}" ++ (o.map (s!"\\setlist{scope}\{{·}}")).getD "" ++
+      "\n\\newcommand{\\probeword}{x}") lists
   { reader := "\\setlist"
-    settings := ["leftmargin=3em", "itemsep=0pt", "topsep=0pt", "label=(\\alph*)", "nosep",
-      "noitemsep", "align=left", "font=\\bfseries", "labelsep=1em", "parsep=0pt", "start=3",
-      invented]
-    docs := [doc "[itemize]", doc "[enumerate,1]", doc ""] }
+    settings := (Compat.setlistLengthKeys.map (·.1 ++ "=3em")) ++ ["label=x", "label=(\\alph*)",
+      "nosep", "noitemsep", "align=left", "font=\\bfseries", "labelsep=1em", "parsep=0pt",
+      "start=3", invented]
+    docs := [doc "[itemize]", doc "[enumerate,2]", doc "[2]", doc ""] }
 
 /-- tcolorbox's keys, each reader held apart: a box's own options, `\\tcbset` standing before a
-box, and a defined box's options. -/
+box, and a defined box's options; the keys the reader reads and keys it refuses. -/
 def tcolorboxRows : List Row :=
-  let keys := ["title=Probe title", "fonttitle=\\bfseries", "fontupper=\\itshape", "coltext=red",
-    "coltitle=red", "colback=red!5", "colframe=blue", "before skip=24pt", "width=5cm", "arc=2mm",
-    "boxrule=2pt", "sharp corners", "breakable", invented]
+  let sample (k : String) : String :=
+    if k == "title" then "title=Probe title"
+    else if k.startsWith "font" then k ++ "=\\bfseries"
+    else if k.endsWith "skip" then k ++ "=24pt"
+    else if k == "boxed title style" then k ++ "={colframe=blue}"
+    else k ++ "=red!50"
+  let keys := (Tcolorbox.readKeys.map sample) ++ ["width=5cm", "arc=2mm", "boxrule=2pt",
+    "sharp corners", "breakable", invented]
+  let pre := "\\usepackage{tcolorbox}"
   let box := "\\begin{tcolorbox}Boxed words.\\end{tcolorbox}"
   let titled := "\\begin{tcolorbox}[title=Box title]Boxed words.\\end{tcolorbox}"
   [{ reader := "\\begin{tcolorbox}"
      settings := keys
-     docs := [fun o => article "\\usepackage{tcolorbox}" ""
+     docs := [fun o => article "" pre
          s!"\\begin\{tcolorbox}{bracketed o}Boxed words.\\end\{tcolorbox}",
-       fun o => article "\\usepackage{tcolorbox}" ""
+       fun o => article "" pre
          s!"\\begin\{tcolorbox}[title=Box title{(o.map ("," ++ ·)).getD ""}]Boxed words.\\end\{tcolorbox}"] },
    { reader := "\\tcbset"
      settings := keys
-     docs := [fun o => article "\\usepackage{tcolorbox}" ((o.map (s!"\\tcbset\{{·}}")).getD "") box,
-       fun o => article "\\usepackage{tcolorbox}" ((o.map (s!"\\tcbset\{{·}}")).getD "") titled] },
+     docs := [fun o => article "" (pre ++ (o.map (s!"\\tcbset\{{·}}")).getD "") box,
+       fun o => article "" (pre ++ (o.map (s!"\\tcbset\{{·}}")).getD "") titled] },
    { reader := "\\newtcolorbox"
      settings := keys
-     docs := [fun o => article "\\usepackage{tcolorbox}"
-         s!"\\newtcolorbox\{probebox}\{{o.getD ""}}" "\\begin{probebox}Boxed words.\\end{probebox}",
-       fun o => article "\\usepackage{tcolorbox}"
-         s!"\\newtcolorbox\{probebox}\{title=Box title{(o.map ("," ++ ·)).getD ""}}"
+     docs := [fun o => article "" (pre ++
+         s!"\\newtcolorbox\{probebox}\{{o.getD ""}}") "\\begin{probebox}Boxed words.\\end{probebox}",
+       fun o => article "" (pre ++
+         s!"\\newtcolorbox\{probebox}\{title=Box title{(o.map ("," ++ ·)).getD ""}}")
          "\\begin{probebox}Boxed words.\\end{probebox}"] }]
 
 /-- An element's name before its options or body. -/
@@ -121,6 +132,12 @@ def elementSplit (s : String) : String × String :=
   | [e, v] => (e, v)
   | _ => (s, "")
 
+/-- A `\\setbeamerfont` setting written `element|fields`, followed by another preamble line. -/
+def fontOf (o : Option String) : String :=
+  (o.map fun s =>
+    let (e, v) := elementSplit s
+    s!"\\setbeamerfont\{{e}}\{{v}}\n\\newcommand\{\\probeword}\{x}").getD ""
+
 /-- beamer's template, size, font and colour settings, in a deck that shows their elements. -/
 def beamerRows : List Row :=
   [{ reader := "\\setbeamertemplate"
@@ -131,25 +148,32 @@ def beamerRows : List Row :=
      keyOf := elementOf
      docs := [fun o => paintedDeck "" ((o.map fun s =>
        let e := elementOf s
+       s!"\\setbeamertemplate\{{e}}{(s.drop e.length).toString}\n\\newcommand\{\\probeword}\{x}").getD ""),
+       fun o => paintedDeck "" ("\\usetheme{moloch}" ++ (o.map fun s =>
+       let e := elementOf s
        s!"\\setbeamertemplate\{{e}}{(s.drop e.length).toString}").getD "")] },
    { reader := "\\setbeamersize"
      settings := ["text margin left=2cm", "text margin right=2cm", "sidebar width left=2cm",
        "description width=2cm", "mini frame size=2pt", invented]
      docs := [fun o => paintedDeck "" ((o.map (s!"\\setbeamersize\{{·}}")).getD "")] },
    { reader := "\\setbeamerfont"
-     settings := ["title|size=\\Huge", "frametitle|series=\\bfseries", "frametitle|shape=\\itshape",
-       "block title|size=\\large", "normal text|family=\\rmfamily", "footline|size=\\tiny",
-       "item|size=\\small", "censusprobeelement|size=\\tiny"]
+     settings := Compat.beamerFontElements.map (fun (e, _) => e ++ "|size=\\tiny") ++
+       ["frametitle|series=\\bfseries", "frametitle|shape=\\itshape", "normal text|family=\\rmfamily",
+        "footline|size=\\tiny", "item|size=\\small", "censusprobeelement|size=\\tiny"]
+     keyOf := fun s => (elementSplit s).1
+     docs := [fun o => paintedDeck "" (fontOf o), fun o => paintedDeck "" ("\\usetheme{moloch}" ++ fontOf o),
+       fun o => paintedDeck "" (fontOf o ++ "\\setbeamercolor{frametitle}{bg=blue,fg=white}"),
+       fun o => s!"\\documentclass\{beamer}\n{fontOf o}\n\\begin\{document}\n\\begin\{frame}" ++
+         "\\begin{abstract}Abstract words.\\end{abstract}\\end{frame}\n\\end{document}\n"] },
+   { reader := "\\setbeamercolor"
+     settings := (BeamerColor.roles.flatMap fun (e, fg, bg) =>
+       (if fg.isSome then [e ++ "|fg=red"] else []) ++ (if bg.isSome then [e ++ "|bg=blue"] else [])) ++
+       ["censusprobeelement|fg=red"]
      keyOf := fun s => (elementSplit s).1
      docs := [fun o => paintedDeck "" ((o.map fun s =>
        let (e, v) := elementSplit s
-       s!"\\setbeamerfont\{{e}}\{{v}}").getD "")] },
-   { reader := "\\setbeamercolor"
-     settings := ["frametitle|fg=red", "frametitle|bg=blue", "title|fg=red", "block title|bg=blue",
-       "normal text|fg=red", "structure|fg=red", "alerted text|fg=red", "item|fg=red",
-       "censusprobeelement|fg=red"]
-     keyOf := fun s => (elementSplit s).1
-     docs := [fun o => paintedDeck "" ((o.map fun s =>
+       s!"\\setbeamercolor\{{e}}\{{v}}").getD ""),
+       fun o => paintedDeck "" ("\\usetheme{moloch}" ++ (o.map fun s =>
        let (e, v) := elementSplit s
        s!"\\setbeamercolor\{{e}}\{{v}}").getD "")] }]
 

@@ -119,7 +119,7 @@ private def beamerColorRoles : List (String × Option Ir.Role × Option Ir.Role)
 
 /-- Beamer's font elements, each mapped onto the styleable element and the
 `\style` key that carries its font. -/
-private def beamerFontElements : List (String × String × String) :=
+public def beamerFontElements : List (String × String × String) :=
   [("frametitle", "frametitle", "font"),
    ("standout", "standout", "font"),
    ("section title", "sectionpage", "font"),
@@ -853,6 +853,8 @@ private structure St where
   /-- The families declared beside the three slots, in the
   order the elaborator assigns them. -/
   fontFamilies : Array String := #[]
+  /-- enumitem's stored settings by scope (kind, level) as native style entries. -/
+  setlists : Array ((Option String × Option Nat) × Array (String × String)) := #[]
 
 private abbrev M := StateM St
 
@@ -1130,9 +1132,10 @@ private def discard (what why key : String) (pos : Pos) : M Unit :=
 public def paramSubject (reader name : String) : String := s!"param:{reader}:{name}"
 
 /-- A declared setting no engine site reads, named once where it is set. -/
-private def unreadParam (reader name what : String) (pos : Pos) : M Unit :=
+private def unreadParam (reader name what : String) (pos : Pos)
+    (help : String := "\\allow{W0104} accepts the skip") : M Unit :=
   sayOnce ("param:" ++ reader ++ ":" ++ name) .W0104 s!"{what} is not honoured; skipped" pos
-    (help := "\\allow{W0104} accepts the skip")
+    (help := help)
 
 /-- minted's keys that configure a display alone, read for no inline code. -/
 public def mintedDisplayKeys : List String :=
@@ -1141,18 +1144,36 @@ public def mintedDisplayKeys : List String :=
    "labelposition", "xleftmargin", "xrightmargin", "resetmargins", "samepage", "vspace",
    "listparameters", "firstline", "lastline", "highlightlines", "highlightcolor"]
 
-/-- The list elements a `\\setlist` scope styles, its kinds and levels as enumitem reads them
-(every kind and level where it names none), and the kinds it names that no element styles. -/
-private def setlistElements (scope : String) : List String × List String :=
+/-- A `\\setlist` scope as enumitem reads its optional argument: names are list kinds and numbers
+levels, none of either standing for every kind or level. -/
+private def setlistScope (scope : String) : List String × List Nat :=
   let parts := (scope.splitOn ",").map (·.trimAscii.toString) |>.filter (!·.isEmpty)
-  let levels := parts.filterMap (·.toNat?)
-  let kinds := parts.filter (·.toNat?.isNone)
-  let kinds := if kinds.isEmpty then ["itemize", "enumerate"] else kinds
-  let levels := if levels.isEmpty then [1, 2, 3, 4] else levels
-  let styled := kinds.filter fun kd => kd == "itemize" || kd == "enumerate"
-  (styled.flatMap fun kd => levels.filterMap fun l =>
-      if l == 1 then some kd else if l ≤ 4 then some s!"{kd}{l}" else none,
-    kinds.filter fun kd => kd != "itemize" && kd != "enumerate")
+  (parts.filter (·.toNat?.isNone), parts.filterMap (·.toNat?))
+
+/-- The list kinds a `\\setlist` scope styles through an element. -/
+private def setlistKinds : List String := ["itemize", "enumerate"]
+
+/-- enumitem's length keys a `\\setlist` reads, each with the native style key it sets. -/
+public def setlistLengthKeys : List (String × String) :=
+  [("leftmargin", "indent"), ("itemsep", "gap"), ("topsep", "before")]
+
+/-- The native entries one list level takes from enumitem's stored scopes, applied as enumitem
+applies them: every list, the level, the kind, then the kind at the level, a later key winning. -/
+private def setlistRecord (stored : Array ((Option String × Option Nat) × Array (String × String)))
+    (kind : String) (level : Option Nat) : Array (String × String) :=
+  let scopes : List (Option String × Option Nat) := match level with
+    | none => [(none, none), (some kind, none)]
+    | some l => [(none, none), (none, some l), (some kind, none), (some kind, some l)]
+  scopes.foldl (fun acc sc =>
+    match stored.find? (·.1 == sc) with
+    | some (_, entries) => entries.foldl (fun a e => Ir.redeclare a e.1 e.2) acc
+    | none => acc) #[]
+
+/-- The style element of a list kind at a level, the kind's own standing for its first level and
+every level no deeper element takes. -/
+private def setlistElement (kind : String) : Option Nat → String
+  | some l => s!"{kind}{l}"
+  | none => kind
 
 /-- An optional argument as written, brackets and all, or nothing. -/
 private def bracketed (s : String) : String := if s.isEmpty then "" else s!"[{s}]"
@@ -2096,6 +2117,25 @@ private def skipStar (raws : Array Raw) (i : Nat) : Nat :=
   match raws[i]? with
   | some (.word "*" _) => i + 1
   | _ => i
+
+/-- The end of a predefined beamer template's arguments: its further options and a brace group
+standing right after them, never a control word on the next line. -/
+private def predefinedEnd (raws : Array Raw) (i : Nat) : Nat :=
+  let (_, j) := takeOpts raws i 2
+  match raws[j]? with
+  | some (.group _ _) => j + 1
+  | _ => j
+
+/-- Whether a document's source after a `\\newcounter` reads the counter: a counter command, a
+counter's representation or value, or a theorem numbered with or within it. -/
+private def counterRead (src counter : String) : Bool :=
+  let braced := "{" ++ counter ++ "}"
+  ["counter", "\\value", "\\arabic", "\\roman", "\\Roman", "\\alph", "\\Alph",
+    "\\fnsymbol"].any (fun c => (src.splitOn (c ++ braced)).length > 1) ||
+    (src.splitOn ("\\the" ++ counter)).length > 1 || (src.splitOn ("[" ++ counter ++ "]")).length > 1
+
+/-- beamer's templates whose default draws nothing, which an empty body asks for again. -/
+private def emptyByDefaultTemplates : List String := ["headline", "background"]
 
 /-- lineno's options naming the numbering the engine sets once `\linenumbers` turns it on. -/
 public def linenoInert : List String := ["left", "running", "displaymath", "mathlines"]
@@ -7918,30 +7958,87 @@ native equivalent were dropped: {dropped}" pos
     became s!"\\RedeclareSectionCommand\{{element}}" native pos
     return some (← synthAt native pos, k)
   | "setlist" =>
-    let (opt, j) := takeOpt raws start
+    let j0 := skipStar raws start
+    let (opt, j) := takeOpt raws j0
     let (args, k) := takeGroups raws j 1
     let scope := (opt.getD "").trimAscii.toString
-    let (elements, unstyled) := setlistElements scope
-    let mut keys : Array String := #[]
-    let mut marker : Option String := none
-    for e in KeyVal.items (rawSrc (args.getD 0 #[])) do
+    let what := s!"\\setlist{if j0 != start then "*" else ""}{bracketed scope}"
+    -- premise: setlistChecks — a body declaration leaves no ink
+    if (← get).inDoc then
+      sayOnce "ctrl:setlist" .W0340 s!"'{what}' is read in the preamble; in the body it is ignored"
+        pos (help := "declare it in the preamble, before '\\begin{document}'")
+      return some (#[], k)
+    let (kinds, levels) := setlistScope scope
+    let kindsIn : List (Option String) :=
+      if kinds.isEmpty then [none] else (kinds.filter setlistKinds.contains).map some
+    let levelsIn : List (Option Nat) :=
+      if levels.isEmpty then [none] else (levels.filter fun l => 2 ≤ l && l ≤ 4).map some
+    let scopes := kindsIn.flatMap fun kd => levelsIn.map fun l => (kd, l)
+    -- The parts of the scope no element styles, each with what its keys would need.
+    let listHelp := "\\style{element}{ indent = ..., gap = ... } styles the lists the engine draws"
+    let firstHelp := "\\setlist[itemize]{...} styles every level of a kind, \\setlist[itemize,2]{...} \
+a deeper level apart"
+    let unstyled : List (String × String × String) :=
+      (kinds.filter (!setlistKinds.contains ·)).map (fun kd =>
+          (kd, s!"'{what}' for '{kd}' lists", listHelp)) ++
+        levels.filterMap fun l =>
+          if l == 1 then some ("1", s!"'{what}', a first level alone,", firstHelp)
+          else if l == 0 || 4 < l then some (toString l, s!"'{what}' at level {l}",
+            "lists nest four levels")
+          else none
+    let mut entries : Array (String × String) := #[]
+    let items := KeyVal.items (rawSrc (args.getD 0 #[]))
+    for e in items do
+      if scopes.isEmpty then
+        let key := (KeyVal.entry e).1
+        unreadParam "\\setlist" key s!"'{what}' key '{key}'" pos
+          (help := ((unstyled.head?.map (·.2.2)).getD listHelp))
+        continue
       match KeyVal.entry e with
-      | ("leftmargin", some v) => keys := keys.push s!"indent = {lengthOfTeX v}"
-      | ("itemsep", some v) => keys := keys.push s!"gap = {lengthOfTeX v}"
-      | ("topsep", some v) => keys := keys.push s!"before = {lengthOfTeX v}"
-      | ("label", _) => marker := some ((KeyVal.rawEntry e).2.getD "")
-      | (key, _) =>
-        unreadParam "\\setlist" key s!"'\\setlist' key '{key}'" pos
-    if let some m := marker then keys := keys.push s!"marker = {m}"
-    for u in unstyled do
-      unreadParam "\\setlist" u s!"'\\setlist[{scope}]' for '{u}' lists" pos
-    if keys.isEmpty || elements.isEmpty then return some (#[], k)
-    let decls := String.intercalate ", " keys.toList
-    let native := String.join (elements.map fun el => s!"\\style\{{el}}\{ {decls} }")
-    became s!"\\setlist{bracketed scope}" native pos
+      | (key, some v) =>
+        if let some native := setlistLengthKeys.lookup key then
+          if v.contains '*' then
+            unreadParam "\\setlist" key s!"'{what}' key '{key}={v}'" pos
+              (help := "the widest label is not measured; give the margin a length")
+          else entries := Ir.redeclare entries native (lengthOfTeX v)
+        else if key == "label" then
+          let v := (KeyVal.rawEntry e).2.getD ""
+          if v.contains '*' then
+            unreadParam "\\setlist" "label" s!"'{what}' key 'label={v}', a label counting its items,"
+              pos (help := "a declared marker is the same on every item; the list keeps its numbering")
+          else entries := Ir.redeclare entries "marker" v
+        else unreadParam "\\setlist" key s!"'{what}' key '{key}'" pos
+      | (key, none) =>
+        unreadParam "\\setlist" key s!"'{what}' key '{key}'" pos
+    -- A scope part no element styles is named once, its keys standing for the parts styled.
+    unless scopes.isEmpty && !items.isEmpty do
+      for (name, part, help) in unstyled do
+        unreadParam "\\setlist" name part pos (help := help)
+    let star := j0 != start
+    for sc in scopes do
+      write fun st =>
+        let old := ((st.setlists.find? (·.1 == sc)).map (·.2)).getD #[]
+        let new := if star then entries.foldl (fun a e => Ir.redeclare a e.1 e.2) old else entries
+        { st with setlists := Ir.redeclare st.setlists sc new }
+    let stored := (← get).setlists
+    let declaredLevels (kind : String) : List Nat := [2, 3, 4].filter fun l =>
+      stored.any fun (sc, _) => sc == (some kind, some l) || sc == (none, some l)
+    let touched : List (String × Option Nat) := scopes.flatMap fun (kd, l) =>
+      (match kd with | some k => [k] | none => setlistKinds).flatMap fun k =>
+        match l with
+        | some n => [(k, some n)]
+        | none => (k, none) :: (declaredLevels k).map fun n => (k, some n)
+    let mut natives : Array String := #[]
+    for (kind, level) in touched do
+      let entriesAt := setlistRecord stored kind level
+      let native := s!"\\style\{{setlistElement kind level}}\{ {", ".intercalate
+        (entriesAt.toList.map fun e => s!"{e.1} = {e.2}")} }"
+      unless entriesAt.isEmpty || natives.contains native do natives := natives.push native
+    if natives.isEmpty then return some (#[], k)
+    became what (String.join natives.toList) pos
     let mut out : Array Raw := #[]
-    for el in elements do
-      out := out ++ (← synthAt s!"\\style\{{el}}\{ {decls} }" pos)
+    for native in natives do
+      out := out ++ (← synthAt native pos)
     return some (out, k)
   | "sectionlinesformat" =>
     let (_, j) := takeOpt raws start
@@ -8225,7 +8322,7 @@ defines; those blocks keep beamer's default template" pos
       if let some name := predefined then
         unreadParam "\\setbeamertemplate" element
           s!"'\\setbeamertemplate\{{element}}[{name.trimAscii.toString}]' predefined template" pos
-        return some (#[], past)
+        return some (#[], predefinedEnd raws past)
       let (bodyArgs, k) := takeGroups raws j 1
       if bodyArgs.size != 1 then return none
       let marker := rawSrc (bodyArgs.getD 0 #[])
@@ -8236,12 +8333,11 @@ defines; those blocks keep beamer's default template" pos
     else if element == "footline" &&
         (← get).wholeDoc && !(← get).inDoc && !(← get).inDef then
       let (variant, k) := takeOpt raws j
-      let (bodyArgs, k) := takeGroups raws k 1
       if let some name := variant then
-        if bodyArgs.isEmpty then
-          unreadParam "\\setbeamertemplate" element
-            s!"'\\setbeamertemplate\{{element}}[{name.trimAscii.toString}]' predefined template" pos
-          return some (#[], k)
+        unreadParam "\\setbeamertemplate" element
+          s!"'\\setbeamertemplate\{{element}}[{name.trimAscii.toString}]' predefined template" pos
+        return some (#[], predefinedEnd raws k)
+      let (bodyArgs, k) := takeGroups raws k 1
       if bodyArgs.size != 1 then return none
       let body := bodyArgs.getD 0 #[]
       if (numberedFootline? body).isSome then
@@ -8260,7 +8356,15 @@ defines; those blocks keep beamer's default template" pos
           (help := beamerNative.lookup "setbeamertemplate")
       return some (#[], k)
     else if element == "title page" then
-      let (_, j) := takeOpt raws j
+      let (rawPredefined, _) := takeRawOpt raws j
+      let (predefined, j) := takeOpt raws j
+      if let some name := predefined then
+        if ← paramArgs #[] #[rawPredefined] then
+          unappliedParam "setbeamertemplate" "beamer's template stands" pos
+          return some (#[], predefinedEnd raws j)
+        unreadParam "\\setbeamertemplate" element
+          s!"'\\setbeamertemplate\{{element}}[{name.trimAscii.toString}]' predefined template" pos
+        return some (#[], predefinedEnd raws j)
       -- A title-page template of the overlay shape is read as the engine's own title page.
       let (bodyArgs, k) := takeGroups raws j 1
       let fonts := (← get).beamerFonts.toList.map fun (n, fields) =>
@@ -8299,15 +8403,27 @@ defines; those blocks keep beamer's default template" pos
       write fun st => { st with bodyNext := 1 }
       return some (← synthAt "\\define \\maketitle()" pos, j)
     else
-      let (_, j) := takeOpt raws j
+      let (rawPredefined, _) := takeRawOpt raws j
+      let (predefined, j) := takeOpt raws j
+      if let some name := predefined then
+        if ← paramArgs #[] #[rawPredefined] then
+          unappliedParam "setbeamertemplate" "beamer's template stands" pos
+          return some (#[], predefinedEnd raws j)
+        unreadParam "\\setbeamertemplate" element
+          s!"'\\setbeamertemplate\{{element}}[{name.trimAscii.toString}]' predefined template" pos
+        return some (#[], predefinedEnd raws j)
       let (bodyArgs, k) := takeGroups raws j 1
       if ← paramArgs bodyArgs then
         unappliedParam "setbeamertemplate" "beamer's template stands" pos
         return some (#[], k)
-      if element == "navigation symbols" && bodyArgs.size == 1 &&
-          (rawSrc (bodyArgs.getD 0 #[])).trimAscii.toString.isEmpty then
+      let emptyBody := bodyArgs.size == 1 && (rawSrc (bodyArgs.getD 0 #[])).trimAscii.toString.isEmpty
+      -- premise: emptyTemplateChecks — a deck draws no navigation symbols, headline or background
+      if emptyBody && element == "navigation symbols" then
         inertParam "\\setbeamertemplate" element s!"\\setbeamertemplate\{{element}}\{}"
           "the engine draws no navigation symbols" pos
+      else if emptyBody && emptyByDefaultTemplates.contains element then
+        inertParam "\\setbeamertemplate" element s!"\\setbeamertemplate\{{element}}\{}"
+          s!"beamer's default {element} is empty, and the engine draws none" pos
       else if (rawSrc (bodyArgs.getD 0 #[])).trimAscii.toString.isEmpty then
         sayOnce ("param:\\setbeamertemplate:" ++ element) .W0104
           s!"'\\setbeamertemplate\{{element}}' is beamer configuration the engine does not have; \
@@ -8332,8 +8448,11 @@ skipped" pos
     let (_, k) := takeOpt raws j
     if args.isEmpty then return none
     let counter := (rawSrc (args.getD 0 #[])).trimAscii.toString
-    sayOnce ("param:\\newcounter:" ++ counter) .W0104
-      s!"counter '{counter}' is not modelled; '\\newcounter' allocates nothing" pos
+    -- A use names its own loss, so only a counter nothing in the document reads is named here.
+    unless counterRead (rawSrc (raws.extract k raws.size)) counter do
+      sayOnce ("param:\\newcounter:" ++ counter) .W0104
+        s!"counter '{counter}' is not modelled, and nothing reads it; '\\newcounter' allocates \
+nothing" pos (help := "the engine numbers its own environments; a counter nothing reads can go")
     return some (#[], k)
   | "setbeamercolor" =>
     -- A later parent declaration changes its children, so nothing is flattened here.
@@ -13798,6 +13917,7 @@ private def textList (loc : Locale) (st : TextSt) (raws : Array Raw)
       if n == "setmintedinline" then
         for e in entries do
           let key := (KeyVal.entry e).1
+          -- premise: inlineDisplayChecks — lualatex sets inline code alike under each display key
           if mintedDisplayKeys.contains key then
             inertParam "\\setmintedinline" key s!"\\setmintedinline\{{e}}"
               "it configures a display, and inline code reads none" pos

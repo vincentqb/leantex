@@ -43,6 +43,7 @@ import Tests.DeclaredLadder
 import Tests.PageOverrun
 import Tests.ParamCensus
 import Tests.ParamCensusDecl
+import Tests.DeclSettings
 import Tests.Images
 import Tests.SvgImages
 import Tests.SvgTools
@@ -1761,8 +1762,11 @@ def reports : List Report := [
     state := .guarded "26720a07" .before .author },
   { id := "R197", date := "2026-10-15"
     what := "settings a document declared through listing defaults, list styles, boxes and beamer's templates, sizes and fonts could be read by nothing with no word, or named only in aggregate: beamer's size setting, a box setup and a new counter were unknown commands, a template's predefined and empty forms went unnamed, inline code's display keys and minted's language key changed nothing, and a frame-title font no bar sets was dropped"
-    pins := [check% Tests.ParamCensus.declCensusChecks]
+    pins := [check% Tests.ParamCensus.declCensusChecks, check% Tests.DeclSettings.setlistChecks,
+      check% Tests.DeclSettings.frameTitleKeyChecks, check% Tests.DeclSettings.emptyTemplateChecks,
+      check% Tests.DeclSettings.counterReadChecks]
     accept := ["the declaration census over the engine as 7940ddbe has it reports 24 settings across 6 readers read by nothing and named by nothing (beamer templates 10, beamer sizes 6, inline code defaults 4, beamer fonts 2, minted defaults 1, a new counter 1); here none",
+      "the list, frame-title, template and counter checks fail on the first cut's engine (1b697752): a first level's label styled every level and a counting label printed (*), level 0 stopped the build, a later kind scope overwrote a level's margin, one list setup warned four to eight times, a frame-title font nobody declared was named with no site, a predefined template took the next line as its body and stopped the build, and a counter a theorem shares was named twice; here they pass, positions as lualatex sets them",
       "a mutant silencing the list setup's per-key names and the beamer size reader's makes the census fail on both readers, naming nosep, align=left and the invented option, and text margin left=2cm"]
     state := .guarded "47b07e39" .before .author }
 ]

@@ -76,13 +76,21 @@ private def gap? (rs : Array Raw) : Option String :=
   | some (.dim _) | some (.glue _) => some s
   | _ => none
 
-/-- The keys read (tcolorbox 6.9.0 manual): `title`, `fontupper`, `fonttitle`,
-`colupper`/`coltext`, `coltitle`, `before`/`after skip`, last write winning. -/
+/-- The box keys `settings` reads (tcolorbox 6.9.0 manual), every other key refused. -/
+public def readKeys : List String :=
+  ["title", "fontupper", "fonttitle", "colupper", "coltext", "coltitle", "before skip",
+   "after skip", "beforeafter skip", "colback", "colframe", "colbacktitle", "boxed title style"]
+
+/-- The keys read: `title`, `fontupper`, `fonttitle`, `colupper`/`coltext`, `coltitle`,
+`before`/`after skip`, last write winning. -/
 private def settings (options : Array Raw) : Settings := Id.run do
   let mut s : Settings := {}
   for raw in rawEntries options do
     if (rawSrc raw).isEmpty then continue
     let (key, v) := entry raw
+    if !readKeys.contains key then
+      s := s.refuse (if key.isEmpty then rawSrc raw else key)
+      continue
     match key with
     | "title" => s := { s with title := v }
     | "fontupper" => s := { s with fontUpper := v }

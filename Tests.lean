@@ -252,6 +252,7 @@ import Tests.Redefine
 import Tests.Algorithm
 import Tests.ParamCensus
 import Tests.ParamCensusDecl
+import Tests.DeclSettings
 import Tests.Settings
 import Tests.Kernel
 import Tests.PicturePaths
@@ -908,6 +909,11 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   Tests.ParamCensus.paramSilenceChecks ref oneFace
   Tests.ParamCensus.engineTokenChecks ref
   Tests.ParamCensus.declCensusChecks ref oneFace
+  Tests.DeclSettings.setlistChecks ref oneFace font
+  Tests.DeclSettings.frameTitleKeyChecks ref oneFace
+  Tests.DeclSettings.emptyTemplateChecks ref oneFace
+  Tests.DeclSettings.counterReadChecks ref
+  Tests.DeclSettings.inlineDisplayChecks ref
   seamChecks ref oneFace
   abstractSkipChecks ref oneFace
   paramSiteChecks ref oneFace

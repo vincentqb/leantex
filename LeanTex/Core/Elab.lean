@@ -346,6 +346,8 @@ public structure SpanRecords where
   frames : FrameSources := {}
   /-- The log at the last content-recovery emission. -/
   recoveryDiags : Array Diag := #[]
+  /-- The first site a document declares the frame title's font. -/
+  frameTitleFont : Option Span := none
   /-- Each `\palette[seeds]` generation by seeds and targets, with its colours
   or its failure. -/
   seedPalettes : Array (SeedPalette.Seeds × SeedPalette.Targets ×
@@ -7212,16 +7214,24 @@ the page's {what} colour is the '{role}' key" (span := some span)
         (help := some s!"declare \\palette\{ {role} = ... } for the page's {what}, or name \
 '{key}' where it is used"))
 
-/-- Names a frame-title font the document declares where no frame-title bar sets it: a frame title
-without a themed bar keeps the engine's bold title. -/
-private def unreadFrameTitleFont (doc : Doc) (declared : Array (String × String)) : Array Diag :=
-  if doc.docClass.record.model == .frame && declared.contains ("style", "frametitle") &&
-      ((doc.styles.find? "frametitle").bind (·.font)).isSome &&
-      (Design.ofPalette doc.palette).frametitle.isNone then
-    #[Diag.of .W0104 "the frame title's declared font is read only under a themed title bar; \
-these frame titles keep the bold title" (subject := some "param:\\style:frametitle")
-      (help := some "a theme with a frame-title bar, such as moloch, sets the declared font")]
-  else #[]
+/-- Names a frame-title font the document declares where no frame carries a frame-title bar, the
+one place its font is read. -/
+private def unreadFrameTitleFont (doc : Doc) (site : Option Span) : Array Diag :=
+  let barred (p : Palette) : Bool := (Design.ofPalette p).frametitle.isSome
+  let anyBar := barred doc.palette || Ir.foldBlocks (fun a b => a || match b with
+    | .setPalette p => barred p
+    | _ => false) (fun a _ => a) false doc.body
+  match site with
+  | some span =>
+    -- premise: frameTitleKeyChecks — a frame title without a bar reads no declared font
+    if doc.docClass.record.model == .frame && !anyBar then
+      #[Diag.of .W0104 "the frame title's declared font is read only under a frame-title bar, \
+which no frame here has; the titles keep the bold title" (span := some span)
+          (subject := some "param:\\style:frametitle:font")
+          (help := some "declare a frame-title bar, as \\setbeamercolor{frametitle}{bg=...} does, \
+or a theme with one, such as moloch")]
+    else #[]
+  | none => #[]
 
 private def seedKeys : List String := ["ink", "paper", "accent", "alert", "example", "neutral"]
 
@@ -8668,7 +8678,7 @@ does not draw; lines keep no numbers" "numbers=left draws them"
     | some ("language", v) =>
       if env == "minted" then
         unhonoured "minted has no key 'language'; the language argument names the lexer"
-          "name the language in \\begin{minted}{python}"
+          s!"name the language in \\begin\{minted}\{{(listingVal v).trimAscii.toString}}"
       else language ← langOf (listingVal v)
     | some ("style", v) =>
       let v := listingVal v
@@ -13307,6 +13317,15 @@ private def applyStyle (ctx : Ctx) (styles : Styles) (element src : String) (pos
         warnOnce ctx ("style:titlepage:" ++ key) .W0104
           s!"'{key}' has no meaning on the title page; the title is set without it" pos
           (help := "draw rules around the title with rule-above, rule-below or separator")
+      -- premise: frameTitleKeyChecks — no frame-title site reads these keys
+      if element == "frametitle" && styleKeys.contains key && key != "font" then
+        warnOnce ctx ("style:frametitle:" ++ key) .W0104
+          s!"'{key}' has no meaning on a frame title; the title is set without it" pos
+          (help := "a frame title reads its font, under a frame-title bar")
+        continue
+      if element == "frametitle" && key == "font" then
+        modify fun st => { st with spans := { st.spans with
+          frameTitleFont := st.spans.frameTitleFont <|> some (ctx.sourceSpan pos) } }
       -- premise: blockStyleKeyChecks — no block site reads these keys
       if Ir.blockStyleElements.contains element && styleKeys.contains key &&
           !Ir.blockStyleKeys.contains key && key != "slot" then
@@ -14694,6 +14713,13 @@ optional; the default is ignored" pos
   | .style args pos =>
     match args with
     | some (elem, body) =>
+      -- premise: frameTitleKeyChecks — only the frame model draws a frame title
+      if elem.trimAscii.toString == "frametitle" && s.docClass.record.model != .frame then
+        warnOnce s.ctx "style:frametitle" .W0104
+          s!"'\\style\{frametitle}' styles frame titles, which the {s.docClass.name} class never \
+draws; skipped" pos
+          (help := "a frame title is set by a presentation class, such as beamer")
+        return s
       let ctx := { s.ctx with
         engineTokens := engineLengthTokens s.docClass s.classOptions s.page }
       let styles ← applyStyle ctx s.styles elem body pos
@@ -16405,7 +16431,7 @@ public def completePrepared (file : String) (p : Prepared) (earlier : Array Diag
   let unread := if st.spans.tokenKeys.isEmpty then #[]
     else unreadPaletteKeys (doc.page.drawn.foldl (fun acc r => acc ++ Ir.colorNames r.color)
       st.spans.colorReads) st.spans.tokenKeys
-  let unread := unread ++ unreadFrameTitleFont doc st.declaredKeys
+  let unread := unread ++ unreadFrameTitleFont doc st.spans.frameTitleFont
   (doc, Diag.tallySites ((accountRecovered doc.salvage
     (earlier ++ p.compatDiags ++ st.diags ++ contrast ++ outline ++ alt ++ links ++ sequences ++
       unread ++ Ir.boxDiags doc.page)

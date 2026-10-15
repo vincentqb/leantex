@@ -1853,8 +1853,7 @@ def compatConservationChecks (ref : IO.Ref (List String)) : IO Unit := do
       wrap "" "\\href{https://example.org}{{\\ttfamily https://example.org}}"),
     ("enquote", wrap "" "\\enquote{x}", wrap "" "“x”"),
     ("setlist", wrap "\\setlist[itemize]{leftmargin=2em}" "x",
-      wrap ("\\style{itemize}{ indent = 2em }\\style{itemize2}{ indent = 2em }" ++
-        "\\style{itemize3}{ indent = 2em }\\style{itemize4}{ indent = 2em }") "x"),
+      wrap "\\style{itemize}{ indent = 2em }" "x"),
     ("setlist level", wrap "\\setlist[enumerate,2]{itemsep=3pt}" "x",
       wrap "\\style{enumerate2}{ gap = 3pt }" "x"),
     ("fontface", wrap "\\setmainfont{Alpha Serif}[FontFace={l}{n}{Alpha Serif Light}]" "x",
