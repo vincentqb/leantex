@@ -640,9 +640,9 @@ def censusRows2 :
           "Widgets Ltd")]),
   ("talk", fun _ c => [
     ("a page per overlay step plus one per remaining frame", c.size == 6),
-    ("the first step page dims the pending lines in place",
-      pageCovered c 0 "Metrics are queryable"),
-    ("the dimmed text still ships", pageHas c 0 "Metrics are queryable"),
+    ("the first step page hides the pending lines, as beamer does by default",
+      !pageHas c 0 "Metrics are queryable" && !pageCovered c 0 "Metrics are queryable"),
+    ("the next step page shows them", pageHas c 1 "Metrics are queryable"),
     ("the final step page has nothing covered", pageAllRevealed c 2)]),
   ("deck", fun _ c => [
     ("a page per frame, divider, and step", c.size == 8),
@@ -662,8 +662,8 @@ def censusRows2 :
         lineXOf c 1 "Short label" == lineXOf c 1 "A placeholder row with a longer label"),
     ("the count column's cells end at one right edge",
       (lineRightOf c 1 "1,204").isSome && lineRightOf c 1 "1,204" == lineRightOf c 1 "2,274"),
-    ("the later columns ship covered on the first step and revealed on the second",
-      pageCovered c 1 "15.97" && pageHas c 2 "15.97" && pageAllRevealed c 2)]),
+    ("the later columns are hidden on the first step and shown on the second",
+      !pageHas c 1 "15.97" && !pageCovered c 1 "15.97" && pageHas c 2 "15.97" && pageAllRevealed c 2)]),
   ("deck1610", fun geom c => [
     ("one page, the frame", c.size == 1),
     -- aspectratio=1610 is beamer's 160×100 mm row (user guide §8.1).
@@ -687,9 +687,9 @@ def censusRows2 :
       let titleSize := Ir.scaleStepIn Ir.sizeScale geom.fontSize "large"
       lineYOf c 2 "A theme is data" ==
         some (Ir.frameTitlePadding.width.resolve titleSize 0 + Ir.frameTitleStrut titleSize)),
-    ("the covered step dims the alert and example beats in place",
-      pageCovered c 3 "alert beat" && pageCovered c 3 "teal example beat"),
-    ("the covered beats still ship", pageHas c 3 "alert beat"),
+    ("the pending step hides the alert and example beats",
+      !pageHas c 3 "alert beat" && !pageHas c 3 "teal example beat"),
+    ("the second step shows them", pageHas c 4 "alert beat" && pageHas c 4 "teal example beat"),
     ("the second step reveals them", pageAllRevealed c 4),
     -- The continuation page repeats the title line and the bar fill (page ground + bar ≥ 2 fills).
     ("the tall frame spills onto a continuation page",
@@ -764,16 +764,16 @@ def censusRows3 :
             decide (y1 == y2 && y2 == y3)).getD false)]),
   ("overlays-blocks", fun _ c => [
     ("a page per step across all frames", c.size == 12),
-    ("a list revealed whole is covered whole",
-      pageCovered c 0 "Placeholder point one." && pageCovered c 0 "Placeholder point two."),
-    ("the covered list still ships its markers", pageHas c 0 "• Placeholder point one."),
+    ("a list revealed whole is hidden whole",
+      !pageHas c 0 "Placeholder point one." && !pageHas c 0 "Placeholder point two."),
+    ("the step revealing it ships its markers with it", pageHas c 1 "• Placeholder point one."),
     ("alt inks its first beat alone on the first step",
       pageOccurs c 9 "The first beat." == 1 && !pageHas c 9 "The second beat."),
     ("alt replaces it with the second beat on the later step",
       pageOccurs c 10 "The second beat." == 1 && !pageHas c 10 "The first beat."),
     ("an alternative is inked at full colour, never covered",
       !pageCovered c 9 "The first beat." && !pageCovered c 10 "The second beat."),
-    ("a pause inside a column dims below it", pageCovered c 7 "Below the pause.")]),
+    ("a pause inside a column hides below it", !pageHas c 7 "Below the pause." && pageHas c 8 "Below the pause.")]),
   ("chrome", fun geom c => [
     ("pages", c.size == 5),
     -- The title page is `[plain,noframenumbering]`, so the first content frame is 1.
@@ -833,7 +833,7 @@ def censusRows3 :
       !pageHas c 0 "• An item" && !pageHas c 0 "– An item")]),
   ("lists-deck", fun _ c => [
     ("pages", c.size == 4),
-    ("nesting shows through the theme", pageHas c 1 "– Nested under the stepped item"),
+    ("nesting shows through the theme", pageHas c 2 "– Nested under the stepped item"),
     ("ordered marks on a slide", pageHas c 3 "1. First placeholder")])]
 
 def censusRows4 :
@@ -1244,11 +1244,10 @@ def censusRows6 :
         hasStr (censusText c) "A Detail Too Deep")]),
   ("overlays", fun _ c => [
     ("one handout page per step", c.size == 7),
-    ("step one dims the later beats in place",
-      pageCovered c 0 "Second beat." && pageCovered c 0 "Third beat."),
-    ("the dimmed beats still ship", pageHas c 0 "Second beat."),
+    ("step one hides the later beats", !pageHas c 0 "Second beat." && !pageHas c 0 "Third beat."),
+    ("each later step shows its beat", pageHas c 1 "Second beat." && pageHas c 2 "Third beat."),
     ("the last step reveals everything", pageAllRevealed c 2),
-    ("pause dims what follows it", pageCovered c 3 "After the pause."),
+    ("pause hides what follows it", !pageHas c 3 "After the pause." && pageHas c 4 "After the pause."),
     ("visible ships none of its argument off its step",
       !pageHas c 5 "a phrase kept in place" && !pageCovered c 5 "a phrase kept in place"),
     ("its line stands where its step sets it, as wide, the phrase inked there",
@@ -1296,7 +1295,7 @@ frame number holds across each frame's step pages",
     ("pages", c.size == 6),
     ("the title ships", pageHas c 0 "Frame Furniture"),
     ("the centred line ships", hasStr (censusText c) "This line is centred."),
-    ("the step page dims its pending beats", pageCovered c 3 "Second beat."),
+    ("the step page hides its pending beats", !pageHas c 3 "Second beat." && pageHas c 4 "Second beat."),
     ("the narrow column ships", hasStr (censusText c) "The narrow column.")]),
   ("trio-page", fun _ c => [
     ("one page", c.size == 1),

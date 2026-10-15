@@ -15,7 +15,6 @@ palette standoutfg #FAFAFA
 palette standoutbg #23373B
 palette muted #61777C
 palette alert #C2185B
-palette covered 31%
 token progressheight 1pt
 token frametitlepadding 840/1000em
 token separatorheight 0.5pt

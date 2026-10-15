@@ -213,7 +213,7 @@ def overlayChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
       | .run _ c _ _ _ _ _ _ _ _ _ => some c
       | _ => none
   let colorSrc := "\\documentclass[aspectratio=169]{slides}\n" ++
-    "\\palette{ hot = #AA0000 }\n\\begin{document}\n\\begin{frame}\n" ++
+    "\\palette{ hot = #AA0000, covered = 38\\% }\n\\begin{document}\n\\begin{frame}\n" ++
     "opening\n\n\\pause\n\\hot{closing beat}\n\\end{frame}\n\\end{document}"
   let (cDoc, cDs) := elabStr colorSrc
   let cOut := layoutOf oneFace cDoc
@@ -634,9 +634,11 @@ def layerDiagChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a replaced chrome slot is named as its slot"
     ((ds "\\chrome{ footer = { right = \\framefraction } }\\theme{moloch}").any fun d =>
       d.code == "W0348" && (d.message.splitOn "footer.right").length == 2)
-  t "a replaced covered fraction is named"
-    ((ds "\\palette{ covered = 50\\% }\\theme{moloch}").any fun d =>
-      d.code == "W0348" && (d.message.splitOn "'covered'").length == 2)
+  t "a theme declares no covered share, so the document's stands, replaced by nothing"
+    (!(ds "\\palette{ covered = 50\\% }\\theme{moloch}").any (fun d =>
+      d.code == "W0348" && (d.message.splitOn "'covered'").length == 2) &&
+     (elabStr ("\\documentclass{slides}\\palette{ covered = 50\\% }\\theme{moloch}" ++
+       "\\begin{document}x\\end{document}")).1.palette.coveredFraction == some 50)
   t "a replaced element style is named"
     ((ds "\\style{frametitle}{ font = {\\small} }\\theme{moloch}").any fun d =>
       d.code == "W0348" && (d.message.splitOn "frametitle").length == 2)
@@ -1330,7 +1332,7 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
     (!Contrast.coveredContract
       { deckBundle Theme.moloch with coveredFraction := some 38 })
   let quietingHolds := Id.run do
-    let cov := (Ir.Design.ofDoc {}).cover
+    let cov := (Ir.Design.ofDoc { palette := { coveredFraction := some 38 } }).cover
     let mut seed : Nat := 1
     for _ in [0:400] do
       seed := (seed * 1103515245 + 12345) % 2147483648
@@ -1828,10 +1830,10 @@ def designChecks (ref : IO.Ref (List String)) : IO Unit := do
     (bare.frametitle.isNone && bare.progress.isNone)
   t "bare design standout inverts the page"
     (bare.standout == { fg := Ir.Color.white, bg := Ir.Color.black })
-  t "bare design declares no covered constant and takes the 38% fraction"
-    (bare.covered == none && bare.coveredFraction == Ir.coveredFractionDefault)
-  t "bare design covers plain runs to 38% of black over white"
-    (bare.cover.plain == { r := 0x86, g := 0x86, b := 0x86 })
+  t "bare design declares no covered constant and hides its pending steps"
+    (bare.covered == none && bare.coveredFraction == Ir.coveredFractionDefault && bare.cover.hidden)
+  t "a design declaring 38% covers plain runs to 38% of black over white"
+    ((designOf "\\theme{default}\\palette{ covered = 38\\% }").cover.plain == { r := 0x86, g := 0x86, b := 0x86 })
   t "bare design mutes to the ink" (bare.muted == bare.fg)
   t "bare design separator defaults to the ink" (bare.separator == bare.fg)
   t "bare design progress bar is 1pt thick"
@@ -2084,7 +2086,8 @@ the PDF that plus its step pages. -/
 def deckStepChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let (doc, ds) := elabStr (deck169
-    "\\theme{moloch}\\chrome{ footer = { left = \\sectiontitle } }\\title{T}\\author{A}"
+    ("\\theme{moloch}\\palette{ covered = 31\\% }\\chrome{ footer = { left = \\sectiontitle } }" ++
+      "\\title{T}\\author{A}")
     ("\\maketitle\n\\section{S}\n" ++
      "\\begin{frame}{Steps}\n\\label{fr:steps}first\n\n\\pause\n" ++
      "\\alert{second}\n\n\\pause\nthird\n\\end{frame}\n" ++

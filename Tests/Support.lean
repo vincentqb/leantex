@@ -486,7 +486,7 @@ def deck169 (pre body : String) : String :=
     "\n\\begin{document}\n" ++ body ++ "\n\\end{document}"
 
 def deck169Body (body : String) : String :=
-  "\\documentclass[aspectratio=169]{slides}\n\\theme{default}\n" ++
+  "\\documentclass[aspectratio=169]{slides}\n\\theme{default}\n\\palette{ covered = 38\\% }\n" ++
     "\\begin{document}\n" ++ body ++ "\n\\end{document}"
 
 def deck169Frame (body : String) : String :=
@@ -1388,6 +1388,16 @@ def dislikedBox (c : Ir.Color) : Bool :=
   let h := Oklab.hueMilli l.a l.b
   decide (86700 ≤ h) && decide (h ≤ 110400) &&
     decide ((36 * 10 ^ 15) * (36 * 10 ^ 15) ≤ Oklab.chromaSq l) && decide (Contrast.luminance c ≤ 3343000)
+
+/-- A colour `pct`% over a ground per 8-bit sRGB channel, rounded, as a browser composites opacity
+and xcolor mixes, restated here. -/
+def srgbOver (pct : Nat) (ground c : Ir.Color) : Ir.Color :=
+  let ch (x y : UInt8) : UInt8 := UInt8.ofNat ((x.toNat * pct + y.toNat * (100 - pct) + 50) / 100)
+  { r := ch c.r ground.r, g := ch c.g ground.g, b := ch c.b ground.b }
+
+/-- A text colour's covered forms at a share on a page: mixed toward it in Oklab and in sRGB. -/
+def coverForms (share : Nat) (page c : Ir.Color) : List Ir.Color :=
+  [Oklab.cover share page c, srgbOver share page c]
 
 /-- The colour of the run setting exactly `word`, with the ground it stands on. -/
 def wordRun (lines : Array Layout.LineOut) (word : String) : Option (Ir.Color × Option Ir.Color) :=

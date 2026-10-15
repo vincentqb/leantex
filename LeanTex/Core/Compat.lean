@@ -8518,27 +8518,29 @@ and \\tokens declare the design directly")
   | "setbeamercovered" =>
     let (args, k) := takeGroups raws start 1
     let src := (rawSrc (args.getD 0 #[])).trimAscii.toString
+    -- beamerbaseoverlay.sty: `invisible` hides, `transparent` keeps 15% unless given a share.
     let pct? : Option Nat := match KeyVal.entry src with
-      | ("transparent", none) => some 15
+      | ("invisible", none) => some 0
+      | ("transparent", none) => some Ir.transparentShare
       | ("transparent", some v) => v.toNat?
       | _ => none
     match pct? with
     | some n =>
-      if 1 ≤ n && n ≤ 99 then
+      if n ≤ 99 then
         let native := s!"\\palette\{ covered = {n}\\% }"
         became "\\setbeamercovered" native pos
         return some (← synthAt native pos, k)
       else
         sayOnce "beamer:setbeamercovered" .W0104
-          s!"'\\setbeamercovered\{{src}}' asks for {if n == 0 then "invisible" else "undimmed"} \
-covered content; the engine always dims (dim-not-hide)" pos
-          (help := "\\palette{ covered = <n>% } sets the covered fraction")
+          s!"'\\setbeamercovered\{{src}}' asks for undimmed covered content; covered content \
+keeps the share in force" pos
+          (help := "\\palette{ covered = <n>% } sets the covered share")
         return some (#[], k)
     | none =>
       sayOnce "beamer:setbeamercovered" .W0104
-        s!"'\\setbeamercovered\{{src}}' is not modelled; covered content always \
-dims (dim-not-hide), it is never hidden" pos
-        (help := "\\palette{ covered = <n>% } sets the covered fraction; 'transparent' \
+        s!"'\\setbeamercovered\{{src}}' is not modelled; covered content keeps the share in force, \
+hidden unless one is declared" pos
+        (help := "\\palette{ covered = <n>% } sets the covered share; 'invisible', 'transparent' \
 and 'transparent=<n>' are understood")
       return some (#[], k)
   | "inputencoding" =>

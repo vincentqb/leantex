@@ -7033,8 +7033,85 @@ private def finishBeamerColors (ctx : Ctx) : EM Unit := do
         s!"'\\setbeamercolor' element '{e.name}' has no supported paint site or inheriting element; its colours are unused" e.span.pos
         (help := Compat.beamerNative.lookup "setbeamercolor") (trigger := "\\setbeamercolor")
 
+/-- The palette the seeds generate at their targets, memoised per document. -/
+private def generated (seeds : SeedPalette.Seeds) (targets : SeedPalette.Targets) :
+    EM (Except SeedPalette.Failure SeedPalette.Colors) := do
+  let memo := (← get).spans.seedPalettes
+  match memo.find? fun (s, t, _, _) => s == seeds && t == targets with
+  | some (_, _, some colors, _) => return .ok colors
+  | some (_, _, none, some f) => return .error f
+  | _ =>
+    let result := (SeedPalette.generate seeds targets).map (·.colors)
+    let entry := match result with
+      | .ok colors => (seeds, targets, some colors, none)
+      | .error f => (seeds, targets, none, some f)
+    modify fun st => { st with spans := { st.spans with seedPalettes := memo.push entry } }
+    return result
+
+private def seedHelp (f : SeedPalette.Failure) : String :=
+  if f.cmyk then "declare the seed in sRGB: #RRGGBB or oklch(L C H)"
+  else if [Role.surface, .surfaceStrong, .rule, .accentWash, .accentSoft].contains f.role then
+    "move the paper further from the ink, so its tints have room to stand apart: \
+\\palette[seeds]{ ink = #1E1B2E, paper = #FFFFFF, accent = #E85D2A }"
+  else
+    "move the ink and the paper further apart, so every tone derived between them reads: \
+\\palette[seeds]{ ink = #1E1B2E, paper = #FFFFFF, accent = #E85D2A }"
+
+/-- The report of seeds that generate no palette, the palette standing as `stands` says. -/
+private def seedFailure (ctx : Ctx) (pos : Pos) (f : SeedPalette.Failure) (stands : String) :
+    EM Unit := do
+  let what := match f.role with
+    | .ink => "ink"
+    | .page => "paper"
+    | .accent => "accent"
+    | r => (ColorRef.role r).key
+  modify fun st => { st with diags := st.diags.push (diagOf ctx .W0306
+    s!"'\\palette[seeds]' generates no palette: its {what} fails its check; {stands}"
+    (some pos) (help := some (seedHelp f))
+    (subject := some s!"palette:seeds:{what}") (detail := some f.detail)) }
+
+/-- Each role a generated palette changes from `before`, its colour's source `pos`, a declaration
+of the document's where `declared`, and logged. -/
+private def noteSeeded (ctx : Ctx) (pos : Pos) (before after : Palette) (declared : Bool := true) :
+    EM Unit := do
+  for r in Role.all do
+    if let some c := Design.declared? after r then
+      if Design.declared? before r != some c then
+        if declared then noteDeclared ctx "palette" (ColorRef.role r).key
+        recordColorDeclaration (ColorRef.role r).key c (ctx.sourceSpan pos)
+        modify fun st => { st with scope := { st.scope with
+          palette := st.scope.palette.native r c } }
+        logGlobal (.entry (.role r) (some c) false true)
+
+/-- A generated palette installed over `pal`, the roles `keep` names left as declared. -/
+private def installSeeded (ctx : Ctx) (pos : Pos) (pal : Palette) (keep : Role → Bool)
+    (st : SeedPalette.SeedState) : EM Palette := do
+  let out := pal.applySeedsUnder st keep
+  noteSeeded ctx pos pal out
+  logGlobal (.seeded (some st))
+  return out
+
+/-- A generated palette, a bundle's or the document's seeds', generated again at a cover share the
+preamble declares after it, each role still at its generated colour moving with it. -/
+private def reseedCovered (ctx : Ctx) (pos : Pos) (pal : Palette) (depth : GroundDepth) (n : Nat) :
+    EM Palette := do
+  let some st := pal.seeded | return pal
+  let targets := { st.targets with cover := (st.seeds.targetsAt depth (some n)).cover }
+  if targets.cover == st.targets.cover then return pal
+  match ← generated st.seeds targets with
+  | .error f =>
+    seedFailure ctx pos f "the palette generated before stands"
+    return pal
+  | .ok colors =>
+    let st' := { st with targets, colors }
+    let out := pal.replaceGenerated (← get).spans.docRoles.contains st st'
+    noteSeeded ctx pos pal out (declared := false)
+    logGlobal (.seeded (some st'))
+    return out
+
 private def applyPaletteEntry (ctx : Ctx) (pal : Palette) (key valueSrc entry : String)
-    (pos : Pos) (decorative : Bool := false) (aliasOnly : Bool := false) : EM Palette := do
+    (pos : Pos) (decorative : Bool := false) (aliasOnly : Bool := false) (inBody : Bool := false)
+    (depth : GroundDepth := .documents) : EM Palette := do
   let mut pal := pal
   if !key.toList.all Decl.isIdentChar then
     diag ctx .E0320 s!"invalid key in '\\palette': {entry.quote}" pos
@@ -7048,13 +7125,17 @@ private def applyPaletteEntry (ctx : Ctx) (pal : Palette) (key valueSrc entry : 
       else (valueSrc.dropEnd 1).toString
     match (digits.trimAscii.toString).toNat? with
     | some n =>
-      if 1 ≤ n && n ≤ 99 then
-        pal := { pal with coveredFraction := some n }
+      if n ≤ 99 then
+        pal := { pal with coveredFraction := some n
+                          decorative := if decorative && !pal.decorative.contains (.role .covered)
+                            then pal.decorative.push (.role .covered) else pal.decorative }
         logGlobal (.covered (some n))
         noteDeclared ctx "palette" "covered"
+        -- The renderers cover at the share in force when the body opens.
+        if !inBody then pal ← reseedCovered ctx pos pal depth n
       else
-        diag ctx .E0332 s!"covered fraction must be 1–99 percent, got '{valueSrc}'" pos
-          (help := "the fraction of each covered colour kept over the page; the default is 38\\%")
+        diag ctx .E0332 s!"covered fraction must be 0–99 percent, got '{valueSrc}'" pos
+          (help := "the fraction of each covered colour kept over the page; 0\\%, the default, hides it")
     | none =>
       diag ctx .E0321 s!"cannot read covered fraction: {valueSrc.quote}" pos
         (help := "a percentage like: covered = 38\\%")
@@ -7119,36 +7200,12 @@ the page's {what} colour is the '{role}' key" (span := some span)
         (help := some s!"declare \\palette\{ {role} = ... } for the page's {what}, or name \
 '{key}' where it is used"))
 
-/-- The palette the seeds generate at their targets, memoised per document. -/
-private def generated (seeds : SeedPalette.Seeds) (targets : SeedPalette.Targets) :
-    EM (Except SeedPalette.Failure SeedPalette.Colors) := do
-  let memo := (← get).spans.seedPalettes
-  match memo.find? fun (s, t, _, _) => s == seeds && t == targets with
-  | some (_, _, some colors, _) => return .ok colors
-  | some (_, _, none, some f) => return .error f
-  | _ =>
-    let result := (SeedPalette.generate seeds targets).map (·.colors)
-    let entry := match result with
-      | .ok colors => (seeds, targets, some colors, none)
-      | .error f => (seeds, targets, none, some f)
-    modify fun st => { st with spans := { st.spans with seedPalettes := memo.push entry } }
-    return result
-
-private def seedHelp (f : SeedPalette.Failure) : String :=
-  if f.cmyk then "declare the seed in sRGB: #RRGGBB or oklch(L C H)"
-  else if [Role.surface, .surfaceStrong, .rule, .accentWash, .accentSoft].contains f.role then
-    "move the paper further from the ink, so its tints have room to stand apart: \
-\\palette[seeds]{ ink = #1E1B2E, paper = #FFFFFF, accent = #E85D2A }"
-  else
-    "move the ink and the paper further apart, so every tone derived between them reads: \
-\\palette[seeds]{ ink = #1E1B2E, paper = #FFFFFF, accent = #E85D2A }"
-
 private def seedKeys : List String := ["ink", "paper", "accent", "alert", "example", "neutral"]
 
 /-- Installs the palette generated from `\palette[seeds]{…}`; seeds that
 generate none stand as the page's text, ground and accent. -/
 private def applySeeds (ctx : Ctx) (pal : Palette) (src : String) (pos : Pos)
-    (depth : GroundDepth) : EM Palette := do
+    (depth : GroundDepth) (inBody : Bool := false) : EM Palette := do
   let mut found : Array (String × Color) := #[]
   let mut blocks := SeedPalette.Blocks.tonal
   for entry in Decl.splitEntries src do
@@ -7180,40 +7237,20 @@ private def applySeeds (ctx : Ctx) (pal : Palette) (src : String) (pos : Pos)
   let seeds : SeedPalette.Seeds :=
     { ink, paper, accent, alert := seed "alert", exampleColor := seed "example",
       neutral := seed "neutral" }
-  let targets := seeds.targets depth
+  -- The renderers cover at the share in force when the body opens.
+  let share := if inBody then ctx.basePalette.coveredFraction else pal.coveredFraction
+  let targets := seeds.targetsAt depth share
   -- The document's own role colours outrank the generated ones.
   let docRoles := (← get).spans.docRoles
   let keep (r : Role) : Bool := docRoles.contains r
-  let note (before after : Palette) : EM Unit := do
-    for r in Role.all do
-      if let some c := Design.declared? after r then
-        if Design.declared? before r != some c then
-          noteDeclared ctx "palette" (ColorRef.role r).key
-          recordColorDeclaration (ColorRef.role r).key c (ctx.sourceSpan pos)
-          modify fun st => { st with scope := { st.scope with
-            palette := st.scope.palette.native r c } }
-          logGlobal (.entry (.role r) (some c) false true)
   noteDocRoles [.ink, .page, .accent]
   match ← generated seeds targets with
-  | .ok colors =>
-    let st : SeedPalette.SeedState := { seeds, targets, blocks, colors }
-    let out := pal.applySeedsUnder st keep
-    note pal out
-    logGlobal (.seeded (some st))
-    resolveBeamerColors ctx out
+  | .ok colors => resolveBeamerColors ctx (← installSeeded ctx pos pal keep { seeds, targets, blocks, colors })
   | .error f =>
-    let what := match f.role with
-      | .ink => "ink"
-      | .page => "paper"
-      | .accent => "accent"
-      | r => (ColorRef.role r).key
-    modify fun st => { st with diags := st.diags.push (diagOf ctx .W0306
-      s!"'\\palette[seeds]' generates no palette: its {what} fails its check; the seeds stand as given"
-      (some pos) (help := some (seedHelp f))
-      (subject := some s!"palette:seeds:{what}") (detail := some f.detail)) }
+    seedFailure ctx pos f "the seeds stand as given"
     let out := [(Role.page, paper), (.ink, ink), (.accent, accent)].foldl
       (fun p (r, c) => p.declare (.role r) c) pal
-    note pal out
+    noteSeeded ctx pos pal out
     resolveBeamerColors ctx out
 where
   missingSeed : EM Palette := do
@@ -7224,8 +7261,8 @@ where
 
 private def applyPalette (ctx : Ctx) (pal : Palette) (src : String)
     (pos : Pos) (decorative : Bool := false) (seeds : Bool := false)
-    (depth : GroundDepth := .documents) : EM Palette := do
-  if seeds then return ← applySeeds ctx pal src pos depth
+    (depth : GroundDepth := .documents) (inBody : Bool := false) : EM Palette := do
+  if seeds then return ← applySeeds ctx pal src pos depth inBody
   let mut pal := pal
   for entry in Decl.splitEntries src do
     match Decl.splitEntry entry with
@@ -7233,7 +7270,7 @@ private def applyPalette (ctx : Ctx) (pal : Palette) (src : String)
       diag ctx .E0320 s!"invalid entry in '\\palette': {entry.quote}" pos
         (help := "entries look like: name = #RRGGBB")
     | some (key, valueSrc) =>
-      pal ← applyPaletteEntry ctx pal key valueSrc entry pos decorative
+      pal ← applyPaletteEntry ctx pal key valueSrc entry pos decorative (inBody := inBody) (depth := depth)
   resolveBeamerColors ctx pal
 
 
@@ -9330,7 +9367,7 @@ private def flowStyleArm (ctx : Ctx) (n : String) (raws : Array Raw)
       | some (.group body _) =>
         let pal? ← if skipBlock then pure none else
           some <$> applyPalette ctx ctx.palette (rawSrc body) pos (decorative := decorative)
-            (seeds := seeds) (depth := ctx.groundDepth)
+            (seeds := seeds) (depth := ctx.groundDepth) (inBody := true)
         pure ⟨(pal?, jf + 1), by omega⟩
       | _ =>
         diag ctx .E0304 "'\\palette' needs a {...} block" pos
@@ -10767,7 +10804,7 @@ private def openStandoutPalette (ctx : Ctx) (standout : Bool) (blocks : Array Bl
   for alias in aliases do
     let origin := { ctx with file := alias.span.file, callSite := none }
     pal ← applyPaletteEntry origin pal alias.name alias.source alias.name
-      alias.span.pos (aliasOnly := true)
+      alias.span.pos (aliasOnly := true) (inBody := true)
     pal ← resolveBeamerColors origin pal
   modify fun st => { st with scope := { st.scope with palette := { st.scope.palette with current := some pal } },
                              flowGen := st.flowGen + 1 }

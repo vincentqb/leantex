@@ -1407,11 +1407,6 @@ public theorem declare_decorative_names (p : Palette) (ref : ColorRef) (c : Colo
 /-- `pct`% of `x` over the rest of `y`, rounded half up. -/
 private def Color.mixStep (x y pct : Nat) : Nat := (x * pct + y * (100 - pct) + 50) / 100
 
-/-- xcolor's `!` mix in sRGB: per 8-bit channel, rounded. -/
-private def Color.mixSrgb (a : Color) (pct : Nat) (b : Color) : Color :=
-  let ch (x y : UInt8) : UInt8 := UInt8.ofNat (mixStep x.toNat y.toNat pct)
-  { r := ch a.r b.r, g := ch a.g b.g, b := ch a.b b.b }
-
 /-- A colour's components in the CMYK model: its own when declared there, else
 xcolor's rgb→cmy→cmyk conversion. -/
 private def Color.toCmyk (c : Color) : Nat × Nat × Nat × Nat :=
@@ -9452,10 +9447,6 @@ private def dumpBlock (ind : String) (b : Block) : String :=
 
 end
 
-/-- The fraction pending overlay content covers to unless the document
-declares `covered`: Material's disabled-state 38% opacity. -/
-public def coveredFractionDefault : Nat := 38
-
 section DesignResolve
 
 public def Design.declared? (pal : Palette) (r : Role) : Option Color :=
@@ -9780,7 +9771,8 @@ public structure Design where
     bg := bg
     fgDeclared := (Design.declared? pal .ink).isSome
     bgDeclared := (Design.declared? pal .page).isSome
-    coveredFraction := pal.coveredFraction.getD coveredFractionDefault
+    coveredFraction := pal.coveredFraction.getD
+      (if (res .covered).isSome then transparentShare else coveredFractionDefault)
     covered := res .covered
     muted := muted
     frametitle := (res .frameTitleBar).map fun barBg =>
@@ -10375,8 +10367,19 @@ public def Palette.yieldGrounds (pal : Palette) (keep : Role → Bool) : Palette
 private def Color.darkGround (c : Color) : Bool :=
   decide (Contrast.contrastMilli c Color.black < Contrast.contrastMilli c Color.white)
 
-/-- A bundle's generated palette regenerated from the seeds the document's
-page, ink and accent now declare. -/
+/-- A palette's generated roles moved from one generated state to the next, each role a declaration
+or `keep` holds off its generated colour left as it stands. -/
+public def Palette.replaceGenerated (pal : Palette) (keep : Role → Bool)
+    (st st' : SeedPalette.SeedState) : Palette :=
+  let roles := (SeedPalette.entries st).map (·.1) ++ (SeedPalette.bound st).map (·.1)
+  roles.foldl (fun p r =>
+    if keep r || Design.declared? p r != Design.installed st r then p else
+    match Design.installed st' r with
+    | some c => p.declare (.role r) c
+    | none => p) { pal with seeded := some st' }
+
+/-- A bundle's generated palette regenerated, at the cover share it was generated at, from the seeds
+the document's page, ink and accent now declare. -/
 public def Palette.reseed (pal : Palette) (keep : Role → Bool) : Palette :=
   match pal.seeded with
   | none => pal
@@ -10391,17 +10394,10 @@ public def Palette.reseed (pal : Palette) (keep : Role → Bool) : Palette :=
       else st.seeds.accent
     let seeds := { st.seeds with paper, ink, accent }
     if seeds == st.seeds then pal else
-    let d := pal.classColors.depth
-    match SeedPalette.generate seeds (seeds.targets d) with
+    let targets := { seeds.targets pal.classColors.depth with cover := st.targets.cover }
+    match SeedPalette.generate seeds targets with
     | .error _ => pal
-    | .ok g =>
-      let st' := { st with seeds, targets := seeds.targets d, colors := g.colors }
-      let roles := (SeedPalette.entries st).map (·.1) ++ (SeedPalette.bound st).map (·.1)
-      roles.foldl (fun p r =>
-        if keep r || Design.declared? p r != Design.installed st r then p else
-        match Design.installed st' r with
-        | some c => p.declare (.role r) c
-        | none => p) { pal with seeded := some st' }
+    | .ok g => pal.replaceGenerated keep st { st with seeds, targets, colors := g.colors }
 
 private theorem Palette.installDerived_keeps (keep : Role → Bool) (es : List (Role × Color))
     (p : Palette) (r : Role) (h : ∀ e ∈ es, e.1 ≠ r) :
@@ -10540,23 +10536,25 @@ public theorem Palette.groundRun_text (pal : Palette) (g : Color) (x : Inline) :
 @[expose] public def Palette.homeScreen (pal : Palette) : Scheme :=
   if pal.darkPage then .dark else .light
 
-/-- The palette a generated palette's seeds generate in a scheme. -/
-public def Design.generatedIn (seeds : SeedPalette.Seeds) (d : GroundDepth) (s : Scheme) :
-    Option SeedPalette.Colors :=
-  match PaletteData.bundleGenerated.find? (fun e => e.1 == seeds && e.2.1 == d && e.2.2.1 == s) with
-  | some e => some e.2.2.2
-  | none => ((SeedPalette.generate seeds (seeds.targetsIn d s)).toOption).map (·.colors)
+/-- The palette a generated palette's seeds generate in a scheme at a cover share: kept in
+`PaletteData` where no share binds, else derived. -/
+public def Design.generatedIn (seeds : SeedPalette.Seeds) (d : GroundDepth) (s : Scheme)
+    (cover : Option Nat) : Option SeedPalette.Colors :=
+  let kept := (PaletteData.bundleGenerated.find? fun e => e.1 == seeds && e.2.1 == d && e.2.2.1 == s).bind
+    fun e => if cover.isNone then some e.2.2.2 else none
+  kept.orElse fun _ =>
+    ((SeedPalette.generate seeds { seeds.targetsIn d s with cover }).toOption).map (·.colors)
 
 /-- A generated palette in a scheme: its seeds carried to the other polarity
-where the scheme's flips the document's. -/
+where the scheme's flips the document's, at the document's cover share. -/
 public def Design.carrySeeds (st : SeedPalette.SeedState) (d : GroundDepth)
     (s : Scheme) (flip : Bool) : Option SeedPalette.SeedState := do
   let carried ← st.seeds.carry (st.seeds.dark != flip)
   let ink ← if !s.more then some carried.ink
     else ContrastSolve.realizeNearest (Contrast.requiredIn s .text) carried.paper carried.ink
   let seeds := { carried with ink }
-  let colors ← Design.generatedIn seeds d s
-  pure { st with seeds, targets := seeds.targetsIn d s, colors }
+  let colors ← Design.generatedIn seeds d s st.targets.cover
+  pure { st with seeds, targets := { seeds.targetsIn d s with cover := st.targets.cover }, colors }
 
 /-- What a document's colours are carried by in one scheme: the scheme,
 whether its polarity flips, and the document's page there. -/
@@ -10930,12 +10928,21 @@ per-colour cover of a coloured one. -/
 public structure Cover where
   plain : Color
   of : Color → Color
+  /-- A share of none: pending content takes the hidden paint, its place kept, shipping nothing. -/
+  hidden : Bool
 
-/-- Covering: the per-colour cover at the design's fraction toward its
-surface, and the plain cover for runs with no colour. -/
+/-- The paint of ink that keeps its place and ships nothing, its CMYK rider outside every
+document's range. -/
+@[expose] public def hiddenPaint : Color :=
+  { r := 0, g := 0, b := 0, cmyk := some (1001, 1001, 1001, 1001) }
+
+/-- Covering: the per-colour cover at the design's fraction toward its surface, and the plain
+cover for runs with no colour; a share of none hides every colour, as beamer's `invisible` does. -/
 public def Design.cover (d : Design) : Cover :=
-  let of := Oklab.coverOver d.coveredFraction (Oklab.labOf d.bg)
-  { plain := d.covered.getD (of d.fg), of := of }
+  if d.coveredFraction == 0 then { plain := hiddenPaint, of := fun _ => hiddenPaint, hidden := true }
+  else
+    let of := Oklab.coverOver d.coveredFraction (Oklab.labOf d.bg)
+    { plain := d.covered.getD (of d.fg), of := of, hidden := false }
 
 /-- One component of a numbered overlay: a number, a closed range or an open range. -/
 private def overlayInterval (w : String) : Option (Nat × Option Nat) := do

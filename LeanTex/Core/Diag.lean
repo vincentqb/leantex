@@ -302,7 +302,7 @@ private def DiagCode.spec : DiagCode → String × Loss × String
   | .E0329 => ("0329", .dropped, "unknown diagnostic code in \\allow")
   | .E0330 => ("0330", .dropped, "layout assertion failed against the shipped pages")
   | .E0331 => ("0331", .dropped, "unreadable length")
-  | .E0332 => ("0332", .dropped, "covered fraction outside 1–99 percent")
+  | .E0332 => ("0332", .dropped, "covered fraction outside 0–99 percent")
   | .E0401 => ("0401", .dropped, "no usable font found on the host")
   | .E0402 => ("0402", .dropped, "LEANTEX_FONT is unusable")
   | .E0403 => ("0403", .dropped, "no installed font family by that name")

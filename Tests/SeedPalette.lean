@@ -399,8 +399,8 @@ def failureChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\palette[seeds]{ ink = #2B2440, paper = #FFFFFF, accent = #E85D2A, blocks = loud }\n" "Text.")
   t "seeds failure: an unknown block style is unreadable" (style.any (·.code == "E0321"))
 
-/-- The script names every exported role, and its `--check` exits 0 on its own include and 1 on a
-stale one. -/
+/-- The script names every exported role, its `--check` exits 0 on its own include and 1 on a stale
+one, and a covered share binds a deck's derived text and is refused where nothing covers. -/
 def scriptChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let tmp := (← IO.FS.realPath (← IO.currentDir)) / ".lake" / "seed-script-check"
@@ -420,5 +420,13 @@ def scriptChecks (ref : IO.Ref (List String)) : IO Unit := do
   let stale ← run #["--beamer-blocks", "--check", (tmp / "stale.tex").toString, "seed", "2B2440",
     "FFFFFF", "E85D2A"]
   t s!"palette script: --check fails a stale include ({stale.err})" (stale.ran == .exited 1)
+  let hexIn (out name : String) : Option String :=
+    ((out.splitOn ("\\definecolor{seed" ++ name ++ "}{HTML}{"))[1]?).map (·.take 6 |>.toString)
+  let wide ← run #["--covered", "15", "seed", "1C1917", "FFFFFF", "F2A541"]
+  let dflt ← run #["seed", "1C1917", "FFFFFF", "F2A541"]
+  t s!"palette script: a deck's covered share binds a derived alert ({wide.err})"
+    (wide.ran == .exited 0 && (hexIn wide.out "Alert").isSome && hexIn wide.out "Alert" != hexIn dflt.out "Alert")
+  let off ← run #["--covered", "15", "--depth", "documents", "seed", "2B2440", "FFFFFF", "E85D2A"]
+  t "palette script: a covered share is refused at a depth that never covers" (off.ran == .exited 2)
 
 end Tests.SeedPalette

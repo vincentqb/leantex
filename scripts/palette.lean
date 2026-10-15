@@ -33,6 +33,7 @@ private structure Flags where
   pygments : Option String := none
   series : Option Nat := none
   check : Option String := none
+  covered : Option Nat := none
 
 private meta def flags : Flags → List String → Except String (Flags × List String)
   | f, "--beamer-blocks" :: rest => flags { f with blocks := true } rest
@@ -53,6 +54,12 @@ private meta def flags : Flags → List String → Except String (Flags × List 
       else flags { f with series := some k } rest
     | none => .error s!"a series count is a number from 1 to {SeedSeries.maxCount}, not '{n}'"
   | f, "--check" :: path :: rest => flags { f with check := some path } rest
+  | f, "--covered" :: n :: rest =>
+    match n.toNat? with
+    | some k =>
+      if k ≤ 99 then flags { f with covered := some k } rest
+      else .error s!"a covered share is a percentage from 0 to 99, not '{n}'"
+    | none => .error s!"a covered share is a percentage from 0 to 99, not '{n}'"
   | f, rest => .ok (f, rest)
 
 /-- Export TeX colour declarations from three RGB seeds (`Prefix INK PAPER ACCENT` or
@@ -78,7 +85,7 @@ public meta def main (args : List String) : IO UInt32 := do
     | _ => pure args
   let [stem, ink, paper, accent] := args
     | IO.eprintln ("usage: palette.lean [--beamer-blocks] [--blocks tonal|strong] " ++
-        "[--depth documents|decks|posters] [--pygments STYLE] [--series N] [--check FILE] Prefix " ++
+        "[--depth documents|decks|posters] [--covered N] [--pygments STYLE] [--series N] [--check FILE] Prefix " ++
         "(INK PAPER ACCENT | --seeds colors.json)")
       return 2
   if stem.isEmpty || !(stem.toList.all fun c => c.isAlpha && c.toNat < 128) then
@@ -88,7 +95,13 @@ public meta def main (args : List String) : IO UInt32 := do
   let some paper := rgb paper | IO.eprintln "invalid paper RGB"; return 2
   let some accent := rgb accent | IO.eprintln "invalid accent RGB"; return 2
   let seeds : SeedPalette.Seeds := { ink, paper, accent }
-  let targets := seeds.targets f.depth
+  if f.covered.isSome && !f.depth.stage then
+    IO.eprintln "a covered share applies where the medium covers its steps: --depth decks"
+    return 2
+  let targets := seeds.targetsAt f.depth f.covered
+  if f.covered.isSome && (seeds.coverOf targets).isNone then
+    IO.eprintln "the covered share binds no derived text tone: it hides the steps, or black's covered \
+form stands under 3:1 there"
   let palette ← match SeedPalette.generate seeds targets with
     | .ok p => pure p
     | .error failure =>
@@ -103,14 +116,21 @@ use contrasting ink and paper with a distinct accent"
         | IO.eprintln s!"unknown highlighting style '{name}'; use default or friendly"
           return 2
       pure (CodeExport.texDeclarations stem (({} : Ir.Palette).applySeeds st) style)
+  -- The covered-state contract binds text, not marks: a chart's series read the palette without it.
+  let bare := { targets with cover := none }
   let series ← match f.series with
     | none => pure ""
     | some n =>
-      match SeedSeries.generate seeds targets palette n with
-      | .ok g => pure (SeedSeries.declarations stem g.series)
-      | .error message =>
-        IO.eprintln s!"could not derive the series: {message}"
+      match SeedPalette.generate seeds bare with
+      | .error failure =>
+        IO.eprintln s!"could not derive the series: {(Ir.ColorRef.role failure.role).key}: {failure.detail}"
         return 1
+      | .ok plain =>
+        match SeedSeries.generate seeds bare plain n with
+        | .ok g => pure (SeedSeries.declarations stem g.series)
+        | .error message =>
+          IO.eprintln s!"could not derive the series: {message}"
+          return 1
   let out := (if f.blocks then SeedPalette.beamerDeclarations stem st
     else SeedPalette.declarations stem st) ++ code ++ series
   match f.check with

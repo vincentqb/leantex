@@ -29,9 +29,10 @@ public structure _root_.LeanTex.Core.Theme extends Decls where
   /-- The roles the lineage declares short of their need, shipped as declared and reported. -/
   reported : List Ir.Role := []
 
-/-- The palette a bundle's seeds generate at a depth, derived afresh. -/
-public def generatedFresh (th : Theme) (d : GroundDepth) : Option SeedPalette.Colors :=
-  th.seeds.bind fun (s, _) => ((SeedPalette.generate s (s.targets d)).toOption).map (·.colors)
+/-- The palette a bundle's seeds generate at a depth and cover share, derived afresh. -/
+public def generatedFresh (th : Theme) (d : GroundDepth)
+    (share : Option Nat := th.palette.coveredFraction) : Option SeedPalette.Colors :=
+  th.seeds.bind fun (s, _) => ((SeedPalette.generate s (s.targetsAt d share)).toOption).map (·.colors)
 
 /-- The colour a bundle derives for a role, derived afresh; `seed` itself where nothing derives. -/
 public def derivedFresh (th : Theme) (r : Ir.Role) (seed : Color) : Color :=
@@ -39,12 +40,17 @@ public def derivedFresh (th : Theme) (r : Ir.Role) (seed : Color) : Color :=
   if r == .muted then (SeedPalette.mutedFor seed page).getD seed
   else (ContrastSolve.realizeNearest (Contrast.aaText + SeedPalette.margin) page seed).getD seed
 
-/-- The palette a bundle's seeds generate at a depth: kept in `PaletteData`, else derived. -/
-public def generated (th : Theme) (d : GroundDepth) : Option SeedPalette.Colors :=
+/-- The palette a bundle's seeds generate at a depth and cover share: kept in `PaletteData` where
+no share binds, else derived. -/
+public def generated (th : Theme) (d : GroundDepth)
+    (share : Option Nat := th.palette.coveredFraction) : Option SeedPalette.Colors :=
   th.seeds.bind fun (s, _) =>
-    match PaletteData.bundleGenerated.find? (fun e => e.1 == s && e.2.1 == d && e.2.2.1 == .light) with
+    let kept := if (s.targetsAt d share).cover.isNone then
+        PaletteData.bundleGenerated.find? (fun e => e.1 == s && e.2.1 == d && e.2.2.1 == .light)
+      else none
+    match kept with
     | some e => some e.2.2.2
-    | none => th.generatedFresh d
+    | none => th.generatedFresh d share
 
 /-- The colour a bundle derives for a role: the realization kept in
 `PaletteData`, else derived as asked. -/
@@ -53,11 +59,14 @@ public def derivedColor (th : Theme) (r : Ir.Role) (seed : Color) : Color :=
   | some e => e.2.2
   | none => th.derivedFresh r seed
 
-/-- What a bundle declares at a depth: its generated palette, own entries and derived colours. -/
-public def realize (th : Theme) (d : GroundDepth) : Palette :=
-  let gen : Palette := match th.seeds, th.generated d with
+/-- What a bundle declares at a depth and cover share: its generated palette, own entries and
+derived colours. -/
+public def realize (th : Theme) (d : GroundDepth)
+    (share : Option Nat := th.palette.coveredFraction) : Palette :=
+  let gen : Palette := match th.seeds, th.generated d share with
     | some (seeds, blocks), some colors =>
-      ({} : Palette).applySeeds { seeds, targets := seeds.targets d, blocks, colors, bundle := true }
+      ({} : Palette).applySeeds
+        { seeds, targets := seeds.targetsAt d share, blocks, colors, bundle := true }
     | _, _ => {}
   let lit := th.palette.entries.foldl (fun p e => p.declare e.1 e.2) gen
   let full := th.derived.foldl (fun p e => p.declare (.role e.1) (th.derivedColor e.1 e.2)) lit
@@ -108,9 +117,7 @@ public def moloch : Theme :=
         (.role .frameTitleInk, bg), (.role .frameTitleBar, fg),
         (.role .progressFill, lineage), (.role .progressTrack, progressbg),
         (.role .separator, lineage),
-        (.role .standoutInk, bg), (.role .standoutGround, fg)]
-      -- 31%: the largest fraction where every text role clears SC 1.4.11's 3:1.
-      coveredFraction := some 31 }
+        (.role .standoutInk, bg), (.role .standoutGround, fg)] }
     -- The lineage declares no secondary ink.
     derived := [(.muted, fg)]
     reported := [.alert, .alertTitleInk]
@@ -137,9 +144,7 @@ public def plain : Theme :=
         (.role .progressFill, fg.mix 60 .white),                     -- fg!60
         (.role .progressTrack, fg.mix 15 .white),                     -- fg!15
         (.role .separator, fg.mix 40 .white),                      -- fg!40
-        (.role .standoutInk, bg), (.role .standoutGround, fg)]
-      -- 38%: Material's disabled-state opacity; every text role clears SC 1.4.11's 3:1.
-      coveredFraction := some 38 }
+        (.role .standoutInk, bg), (.role .standoutGround, fg)] }
     derived := [(.muted, fg)]
     tokens := { entries := #[("progressheight", pt1)] }
     styles := { entries := #[
@@ -159,8 +164,7 @@ public def daylightWith (seeds : SeedPalette.Seeds) : Theme :=
   { name := "daylight"
     seeds := some (seeds, .tonal)
     palette := {
-      entries := #[(.role .standoutInk, seeds.paper), (.role .standoutGround, seeds.accent)]
-      coveredFraction := some 38 }
+      entries := #[(.role .standoutInk, seeds.paper), (.role .standoutGround, seeds.accent)] }
     tokens := lineageTokens
     styles := { entries := #[
       -- No frame-title bar: the title sets as a plain bold heading.
@@ -194,9 +198,7 @@ public def gemini : Theme :=
         (.role .alertTitleInk, lightgray), (.role .alertTitleBar, blue),   -- block alerted title
         (.role .exampleTitleInk, blue), (.role .exampleTitleBar, lightgray), -- block example title
         (.role .standoutInk, bg), (.role .standoutGround, fg),                -- palette tertiary bg=black,fg=white
-        (.role .separator, darkblue)]                               -- headline rule bg=darkblue
-      -- 30%: the largest fraction where every text role clears SC 1.4.11's 3:1.
-      coveredFraction := some 30 }
+        (.role .separator, darkblue)] }                             -- headline rule bg=darkblue
     -- gemini declares no secondary ink.
     derived := [(.muted, fg)]
     styles := { entries := #[
@@ -265,10 +267,12 @@ public def apply (th : Theme) (s : Decls) : Decls :=
     styles := installStyles s.styles th.styles.entries.toList
     chrome := chromeApply th.chrome s.chrome }
 
-/-- A class-default bundle installed under the document: the document's declarations win per key. -/
+/-- A class-default bundle installed under the document: the document's declarations win per key,
+its cover share the one the bundle generates at. -/
 public def applyUnder (th : Theme) (s : Decls) : Decls :=
   { palette :=
       let real := th.realize s.palette.classColors.depth
+        (s.palette.coveredFraction <|> th.palette.coveredFraction)
       let pal := installPalette real s.palette.entries.toList
       { pal with
         coveredFraction := s.palette.coveredFraction <|> real.coveredFraction
@@ -734,10 +738,11 @@ public theorem resolve_find_exact (pal : Palette) (n : String) (c : Color)
 
 public theorem applyUnder_decorative_exact (th : Theme) (s : Decls) (k : ColorRef) :
     k ∈ (applyUnder th s).palette.decorative ↔
-      (k ∈ s.palette.decorative ∨ (k ∈ (th.realize s.palette.classColors.depth).decorative ∧
+      (k ∈ s.palette.decorative ∨ (k ∈ (th.realize s.palette.classColors.depth
+        (s.palette.coveredFraction <|> th.palette.coveredFraction)).decorative ∧
         s.palette.lookup k = none)) := by
-  show k ∈ s.palette.decorative ++ (installPalette (th.realize s.palette.classColors.depth)
-    s.palette.entries.toList).decorative ↔ _
+  show k ∈ s.palette.decorative ++ (installPalette (th.realize s.palette.classColors.depth
+    (s.palette.coveredFraction <|> th.palette.coveredFraction)) s.palette.entries.toList).decorative ↔ _
   rw [Array.mem_append, installPalette_decorative, Array.mem_filter]
   have hnone : (!(s.palette.entries.toList.any fun e => k == e.1)) = true ↔
       s.palette.lookup k = none := by

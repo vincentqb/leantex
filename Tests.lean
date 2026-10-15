@@ -189,6 +189,7 @@ import Tests.Themes
 import Tests.SeedPalette
 import Tests.SeedSeries
 import Tests.PaletteFloor
+import Tests.PaletteCover
 import Tests.AlertMark
 import Tests.ColourSolve
 import Tests.ThemePalette
@@ -545,6 +546,9 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   Tests.PaletteFloor.floorChecks ref
   Tests.PaletteFloor.fillChecks ref
   Tests.PaletteFloor.regionChecks ref
+  Tests.PaletteCover.coverChecks ref
+  Tests.PaletteCover.deckChecks ref
+  Tests.PaletteCover.hiddenChecks ref
   Tests.AlertMark.containerChecks ref
   Tests.AlertMark.markChecks ref
   Tests.AlertMark.placeChecks ref

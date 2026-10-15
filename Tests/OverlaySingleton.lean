@@ -58,7 +58,7 @@ def overlaySingletonChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
   let seed := (elabStr (deck169Frame "")).1
   let design := Ir.Design.ofDoc seed
   let hot : Ir.Color := { r := 0xAA, g := 0, b := 0 }
-  let pre := "\\theme{default}\n\\palette[decorative]{ singlePlain = " ++
+  let pre := "\\theme{default}\n\\palette{ covered = 38\\% }\n\\palette[decorative]{ singlePlain = " ++
     design.cover.plain.hex ++ ", singleHot = " ++ (design.cover.of hot).hex ++
     ", hot = " ++ hot.hex ++ " }\n"
   let witness := singletonWitness ref fonts pre

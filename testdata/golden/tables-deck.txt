@@ -38,7 +38,6 @@ palette progressbg #CAE1FF
 palette separator #0B66C2
 palette standoutfg #FDFCF9
 palette standoutbg #0B66C2
-palette covered 38%
 token progressheight 1pt
 token frametitlepadding 840/1000em
 token separatorheight 0.5pt

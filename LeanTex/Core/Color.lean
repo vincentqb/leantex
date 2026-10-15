@@ -92,4 +92,13 @@ itself in the PDF. -/
 /-- The colour as CSS serializes it: `#rrggbb`, lowercase. -/
 @[expose] public def Color.css (c : Color) : String := c.hex (upper := false)
 
+/-- `num`/`den` of `a` over the rest of `b` per 8-bit sRGB channel, rounded half up, as a browser
+composites an opacity and xcolor mixes. -/
+@[expose] public def Color.overSrgb (a : Color) (num den : Nat) (b : Color) : Color :=
+  let ch (x y : UInt8) : UInt8 := UInt8.ofNat ((x.toNat * num + y.toNat * (den - num) + den / 2) / den)
+  { r := ch a.r b.r, g := ch a.g b.g, b := ch a.b b.b }
+
+/-- xcolor's `!` mix in sRGB: `pct`% of `a` over the rest of `b`. -/
+@[expose] public def Color.mixSrgb (a : Color) (pct : Nat) (b : Color) : Color := a.overSrgb pct 100 b
+
 end LeanTex.Core.Ir

@@ -513,7 +513,10 @@ private def lineHides (h s : Layout.LineOut) (mask : Array Bool) : Bool :=
   lineGeom h == lineGeom s && h.segs.size == kept.size &&
     (h.segs.zip kept).all fun (hs, ss, inR) =>
       if inR && segInks ss then (match hs with | .gap w _ => w == ss.advance | _ => false)
-      else segMark hs == segMark ss
+      else match hs, ss with
+        -- A word gap with no ink left on one side ships as a plain gap as wide.
+        | .gap w _, .gap w' _ => w == w'
+        | _, _ => segMark hs == segMark ss
 
 /-- The region the shown page inks, so a check over it is not vacuous. -/
 private def regionInks (s : Layout.PageOut) (r : ArgRegion) : Bool :=

@@ -40,7 +40,6 @@ palette standoutfg #FDFCF9
 palette standoutbg #0B66C2
 palette titlepagebg #101822
 palette titlepagefg #F4F6F8
-palette covered 38%
 token progressheight 1pt
 token frametitlepadding 840/1000em
 token separatorheight 0.5pt

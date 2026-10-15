@@ -1046,10 +1046,8 @@ public structure Out where
   /-- The document outline, one entry per unpinned-nav link in document order. -/
   outline : Array OutlineEntry := #[]
 
-/-- The paint of ink that keeps its place and ships nothing, its CMYK rider outside every
-document's range. -/
-@[expose] public def hiddenPaint : Ir.Color :=
-  { r := 0, g := 0, b := 0, cmyk := some (1001, 1001, 1001, 1001) }
+/-- The paint of ink that keeps its place and ships nothing (`Ir.hiddenPaint`). -/
+@[expose] public def hiddenPaint : Ir.Color := Ir.hiddenPaint
 
 /-- Is a decoration band painted in the hidden paint? -/
 @[expose] public def hiddenRule (r : Option DecorationRule) : Bool := r.any (·.color == hiddenPaint)
@@ -1090,6 +1088,29 @@ document's range. -/
   | .gap w word => some (.gap w word)
   | .run _ _ _ w .. | .decoration _ w .. | .rule w .. | .image _ w .. => some (.gap w false)
 
+/-- Whether a shipped segment sets ink: a run's glyphs or an image. -/
+@[expose] public def Seg.inks : Seg → Bool
+  | .run _ _ _ _ gs .. => !gs.isEmpty
+  | .image .. => true
+  | .gap .. | .decoratedGap .. | .decoration .. | .rule .. | .poly .. => false
+
+/-- A word gap as its line ships it: a word gap only where `between`, else a plain gap as wide. -/
+@[expose] public def Seg.demoteWord (between : Bool) : Seg → Seg
+  | .gap w word => .gap w (word && between)
+  | .decoratedGap w word d => .decoratedGap w (word && between) d
+  | .run f c l w gs sz m d r g a => .run f c l w gs sz m d r g a
+  | .decoration k w t r c => .decoration k w t r c
+  | .rule w t r c => .rule w t r c
+  | .image st w h ink => .image st w h ink
+  | .poly pts c => .poly pts c
+
+/-- A shipped line's segments, each word gap kept only between ink the line sets, so hidden words
+leave no word gap of their own. -/
+@[expose] public def wordGapsInInk (segs : Array Seg) : Array Seg :=
+  match segs.findIdx? Seg.inks, segs.reverse.findIdx? Seg.inks with
+  | some lo, some back => segs.mapIdx fun i s => s.demoteWord (decide (lo < i ∧ i + back + 1 < segs.size))
+  | _, _ => segs.map (Seg.demoteWord false)
+
 /-- The elements whose index `drop` does not list. -/
 @[expose] public def keepUnlisted {α : Type} (xs : Array α) (drop : Array Nat) : Array α :=
   if drop.isEmpty then xs else (xs.zipIdx.filter fun (_, i) => !drop.contains i).map (·.1)
@@ -1098,7 +1119,8 @@ document's range. -/
 @[expose] public def PageOut.shipped (p : PageOut) : PageOut :=
   { p with
     lines := p.lines.map fun l =>
-      { l with segs := (if l.hidden then l.segs.map Seg.hide else l.segs).filterMap Seg.shipped }
+      let shown := (if l.hidden then l.segs.map Seg.hide else l.segs).filterMap Seg.shipped
+      { l with segs := wordGapsInInk shown }
     fills := keepUnlisted p.fills p.hidden.fills
     inks := keepUnlisted p.inks p.hidden.inks
     links := keepUnlisted p.links p.hidden.links
@@ -7909,6 +7931,34 @@ private theorem shipped_advance_sum (segs : List Seg) :
       simp only [hs, Option.map_some, Option.getD_some] at h
       simp [hs, ih, h]
 
+private theorem Seg.demoteWord_advance (b : Bool) (s : Seg) : (s.demoteWord b).advance = s.advance := by
+  cases s <;> rfl
+
+private theorem Seg.demoteWord_hides (b : Bool) (s : Seg) : (s.demoteWord b).hides = s.hides := by
+  cases s <;> rfl
+
+private theorem wordGapsInInk_advance (segs : Array Seg) :
+    (wordGapsInInk segs).toList.map Seg.advance = segs.toList.map Seg.advance := by
+  unfold wordGapsInInk
+  split
+  · apply List.ext_getElem
+    · simp
+    · intro i h1 h2
+      simp [Seg.demoteWord_advance]
+  · simp [List.map_map, Function.comp_def, Seg.demoteWord_advance]
+
+private theorem wordGapsInInk_hides (segs : Array Seg) (h : ∀ s ∈ segs, s.hides = false) :
+    ∀ s ∈ wordGapsInInk segs, s.hides = false := by
+  intro s hs
+  unfold wordGapsInInk at hs
+  split at hs
+  · obtain ⟨i, hi, rfl⟩ := Array.mem_mapIdx.mp hs
+    rw [Seg.demoteWord_hides]
+    exact h _ (Array.getElem_mem hi)
+  · obtain ⟨s0, hs0, rfl⟩ := Array.mem_map.mp hs
+    rw [Seg.demoteWord_hides]
+    exact h s0 hs0
+
 /-- A shipped page stands every line where it stood, its segments as wide in all. -/
 public theorem PageOut.shipped_lines_exact (p : PageOut) :
     p.shipped.lines.map (fun l => (l.x, l.y, l.size, l.setWidth, (l.segs.toList.map Seg.advance).sum)) =
@@ -7917,7 +7967,7 @@ public theorem PageOut.shipped_lines_exact (p : PageOut) :
   congr 1
   funext l
   simp only [Function.comp_apply, Prod.mk.injEq, true_and]
-  rw [Array.toList_filterMap, shipped_advance_sum]
+  rw [wordGapsInInk_advance, Array.toList_filterMap, shipped_advance_sum]
   split
   · simp [Array.toList_map, List.map_map, Function.comp_def, Seg.hide_advance_exact]
   · rfl
@@ -7928,8 +7978,10 @@ public theorem PageOut.shipped_hides_exact (p : PageOut) :
   intro l hl s hs
   simp only [PageOut.shipped, Array.mem_map] at hl
   obtain ⟨l0, _, rfl⟩ := hl
-  obtain ⟨s0, _, h⟩ := Array.mem_filterMap.mp hs
-  exact Seg.shipped_hides_exact s0 s h
+  refine wordGapsInInk_hides _ ?_ s hs
+  intro s1 hs1
+  obtain ⟨s0, _, h⟩ := Array.mem_filterMap.mp hs1
+  exact Seg.shipped_hides_exact s0 s1 h
 
 /-- A run emptied of its glyph payload, every metric field kept. -/
 public def Seg.stripGlyphs : Seg → Seg

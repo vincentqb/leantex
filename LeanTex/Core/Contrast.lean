@@ -719,13 +719,16 @@ private def pendingCoverDiags (site : ColorSite) (doc : Doc) (pending : Array Pa
     if pal.decorative.contains (.role .covered) then continue
     let d := Design.ofDoc { doc with palette := pal }
     let cov := d.cover
+    -- Hidden content shows no covered form to judge.
+    if cov.hidden then continue
     let coverHelp := some ("a cover is a declaration too: lower " ++
       "'covered = <n>%', or declare \\palette{ covered = ... } " ++
       "quieter than the ink it stands for")
     let judge (nm : String) (active covered : Color) : Array Diag :=
       let origin := (site pal (some "covered") covered).orElse fun _ =>
         site pal (some nm) active
-      if contrastMilli covered d.bg ≥ contrastMilli active d.bg then
+      if coverHolds d.bg active covered then #[]
+      else if contrastMilli covered d.bg ≥ contrastMilli active d.bg then
         #[Diag.of .W0345
           (s!"covering '{nm}' does not quiet it: the covered form " ++
             "reads as loud on the page as the active one")
@@ -996,19 +999,20 @@ public def listingContract (pal : Palette) : Bool :=
 public def coveredContract (pal : Palette) (reported : List Role := []) : Bool :=
   let d := Design.ofDoc { palette := pal }
   let cov := d.cover
+  cov.hidden ||
   let visiblyCovered (r : Role) (c : Color) : Bool :=
-    contrastMilli (cov.of c) d.bg < contrastMilli c d.bg
-      && (reported.contains r || contrastMilli c (cov.of c) ≥ aaNonText)
+    if reported.contains r then contrastMilli (cov.of c) d.bg < contrastMilli c d.bg
+    else coverHolds d.bg c (cov.of c)
   visiblyCovered .ink d.fg
     && (match Design.declared? pal .alert with | some c => visiblyCovered .alert c | none => true)
     && (match Design.declared? pal .example with | some c => visiblyCovered .example c | none => true)
-    && contrastMilli cov.plain d.bg < contrastMilli d.fg d.bg
-    && contrastMilli d.fg cov.plain ≥ aaNonText
+    && coverHolds d.bg d.fg cov.plain
 
 /-- Covering twice quiets further, for every text role the bundle ships. -/
 public def coverMonotone (pal : Palette) : Bool :=
   let d := Design.ofDoc { palette := pal }
   let cov := d.cover
+  cov.hidden ||
   let quieter (c : Color) : Bool :=
     contrastMilli (cov.of (cov.of c)) d.bg < contrastMilli (cov.of c) d.bg
   quieter d.fg

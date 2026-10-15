@@ -52,7 +52,7 @@ def runContrastContractChecks (ref : IO.Ref (List String)) : IO Unit := do
   let ordinaryRuns := observedContrastRuns ordinaryOut
   t "ordinary body paint is in the document plan"
     (ordinaryRuns.any fun r => r.1 == "Ordinary" && !unplannedContrastRun ordinary r)
-  let pending : Ir.Doc := { body := #[
+  let pending : Ir.Doc := { palette := { coveredFraction := some 38 }, body := #[
     .frame #[] false .center false #[
       .para #[.text "Shown ", .step 2 none #[.text "Pending"]]]] }
   let pendingOut := render pending
@@ -67,7 +67,7 @@ def runContrastContractChecks (ref : IO.Ref (List String)) : IO Unit := do
     (pendingRuns.any fun r =>
       r.1 == "Pending" && r.2.1 == Ir.Color.black && !unplannedContrastRun pending r)
   let red : Ir.Color := { r := 200, g := 0, b := 0 }
-  let colored : Ir.Doc := { body := #[
+  let colored : Ir.Doc := { palette := { coveredFraction := some 38 }, body := #[
     .frame #[] false .center false #[
       .para #[.step 2 none #[.colored red none #[.text "Red"]]]]] }
   let coloredOut := render colored

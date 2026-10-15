@@ -373,8 +373,20 @@ paper, a colour set on the paper stands at its use's floor
 in its medium and no further, so it keeps the most colour its hue holds
 there: a deck's text and marks at WCAG 2.2's large-scale 3:1, a document's
 and a poster's text at 4.5:1 and their marks at 3:1, and an accent that
-meets its floor ships as given. Text on the ink stands at 4.6:1; on a dark
-paper, text stands at 6.5:1 and every other colour 0.10 above WCAG 2.2's
+meets its floor ships as given. A deck hides a pending overlay step, its
+place kept, unless its preamble declares a share, as beamer's default
+`invisible` covering does; `\setbeamercovered{transparent}` covers it at
+beamer's 15%, and `transparent=<n>` or `\palette{ covered = <n>\% }` at
+that share. A seed or a declared colour ships as given at any share, and
+`W0345` names one whose covered form stands under 3:1 from it, unless
+`\palette[decorative]{ covered = <n>\% }` declares the covered steps
+decorative; a text tone the generator derives keeps the covered-state
+contract there in every scheme, each covered form, mixed toward the page
+in Oklab as the PDF covers and in sRGB as beamer and a web page's opacity
+do, quieter on the page and 3:1 from it (SC 1.4.11). A share black on a
+light page, or white on a dark one, cannot keep binds nothing. Text on the
+ink stands at 4.6:1; on a dark paper, text stands at 6.5:1 and every other
+colour 0.10 above WCAG 2.2's
 ratios. No colour the seeds derive, on any page or ground and in any scheme,
 is one of the dark yellow-greens Material 3 never ships (its `DislikeAnalyzer`: HCT hue 90–111, chroma above 16, tone
 below 65). A darkening amber turns toward orange, at most 20°, where that
@@ -455,7 +467,11 @@ does: the export names the mark `alertmark` too, which leantex reads as the
 role. `--blocks strong` picks the
 strong block style, `--depth documents` a document's lighter grounds and
 text floor, and `--depth posters` a deck's grounds with a document's text
-floor, as a poster takes them.
+floor, as a poster takes them. `--covered N` holds a deck's derived text
+tones to the covered-state contract at the share N% it covers at, 15 under
+`\setbeamercovered{transparent}`, and is refused at a depth that never
+covers; without it nothing binds, as a deck declaring no share hides its
+pending steps.
 For a saved palette, replace the three RGB arguments with `--seeds
 colors.json`, where the JSON object has exactly `ink`, `paper` and `accent`
 hex strings. `--check colors.tex` prints nothing and exits 1 when the file
@@ -478,9 +494,12 @@ or names the exported colours under the code roles' own keys
 
 Add `--series N`, from 1 to 16, to export colours for a chart's N series,
 `SlideSeries1` to `SlideSeriesN`, at the depth `--depth` names. The first is
+the accent's text tone with no share binding it: where nothing covers it is
 `SlideAccentText`, which is `SlideAlert`, so a chart's subject stands in the
 colour of the page's alerts (the ink, where the accent serves as a
-container). Each next one is, of every hue at its tone at the marks' floor
+container); the covered-state contract binds text, not marks, so where a
+share darkens a derived text tone the first series keeps that tone. Each
+next one is, of every hue at its tone at the marks' floor
 and three steps beyond it, away from the yellow-greens (on a light paper
 the yellows too, olives at a mark's floor) and pure red, the one
 farthest from every series before it and from the ink as

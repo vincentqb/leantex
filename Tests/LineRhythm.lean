@@ -892,7 +892,8 @@ private def agree3 (a b : Array (String × String × Option String)) : Bool :=
 
 /-- One frame of a deck whose paragraphs stand a declared `\parskip` apart. -/
 private def gapDeck (body : String) : String :=
-  "\\documentclass{beamer}\n\\setlength{\\parskip}{6pt}\n\\begin{document}\n" ++
+  "\\documentclass{beamer}\n\\setlength{\\parskip}{6pt}\n\\setbeamercovered{transparent}\n" ++
+    "\\begin{document}\n" ++
     "\\begin{frame}{Overlay gaps}\n" ++ body ++ "\n\\end{frame}\n\\end{document}"
 
 /-- The margin-top the sheet gives the first element whose text is `text`,

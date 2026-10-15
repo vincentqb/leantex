@@ -246,21 +246,34 @@ private def lightFirst (grounds : List Color) : Bool :=
   | g :: _ => decide (contrastMilli Color.white g < contrastMilli Color.black g)
   | [] => true
 
-/-- The lightness of the gamut-edge tone of hue `h` nearest the paper that clears `req`: the floor
-sets the tone, the gamut the chroma (Material 3's tonal rule at Leonardo's contrast target). -/
-public def bandL (req : Nat) (grounds : List Color) (h : Int) : Int :=
-  let pass (L : Int) : Bool := (clearing req grounds (edgeAt h L)).isSome
+/-- The lightness of the gamut-edge tone of hue `h` nearest the paper that clears `req` and passes
+`ok`: the floor and `ok` set the tone, the gamut the chroma (Material 3's tonal rule at Leonardo's
+contrast target). -/
+public def bandL (req : Nat) (grounds : List Color) (h : Int) (ok : Color → Bool := fun _ => true) :
+    Int :=
+  let pass (L : Int) : Bool := (clearing req grounds (edgeAt h L)).any ok
   if lightFirst grounds then bisect pass 60 Oklab.lightTop 0 else bisect pass 60 0 Oklab.lightTop
 
-/-- Hue `h`'s tone at the floor `req` on every ground, so hues at one floor share a lightness band
-as Solarized's accents do (https://ethanschoonover.com/solarized/). -/
-public def bandOn (req : Nat) (grounds : List Color) (h : Int) : Option Color :=
-  clearing req grounds (edgeAt h (bandL req grounds h))
+/-- Hue `h`'s tone at the floor `req` on every ground passing `ok`, so hues at one floor share a
+lightness band as Solarized's accents do (https://ethanschoonover.com/solarized/). -/
+public def bandOn (req : Nat) (grounds : List Color) (h : Int) (ok : Color → Bool := fun _ => true) :
+    Option Color :=
+  (clearing req grounds (edgeAt h (bandL req grounds h ok))).filter ok
 
-/-- **A band tone clears what it was asked to on every ground.** -/
-public theorem bandOn_contract {req : Nat} {grounds : List Color} {h : Int} {c : Color}
-    (hv : bandOn req grounds h = some c) : ∀ g ∈ grounds, req ≤ contrastMilli c g :=
-  clearing_contract hv
+/-- **A band tone clears what it was asked to on every ground and passes `ok`.** -/
+public theorem bandOn_contract {req : Nat} {grounds : List Color} {h : Int} {ok : Color → Bool}
+    {c : Color} (hv : bandOn req grounds h ok = some c) :
+    (∀ g ∈ grounds, req ≤ contrastMilli c g) ∧ ok c = true := by
+  unfold bandOn at hv
+  cases hc : clearing req grounds (edgeAt h (bandL req grounds h ok)) with
+  | none => simp [hc] at hv
+  | some c0 =>
+    rw [hc, Option.filter_some] at hv
+    split at hv
+    · rename_i hk
+      cases hv
+      exact ⟨clearing_contract hc, by simpa using hk⟩
+    · cases hv
 
 /-! ## The disliked region -/
 
@@ -284,36 +297,38 @@ public def clearHue (h : Int) : Int :=
 
 /-- Hue `h`'s band tone at `req`, or, where it stands in the disliked region, the band tone of the
 hue just past its warm edge (`clearHue`), kept only where it stands outside the region. -/
-public def bandClear (req : Nat) (grounds : List Color) (h : Int) : Option Color :=
-  (bandOn req grounds h).bind fun c =>
+public def bandClear (req : Nat) (grounds : List Color) (h : Int)
+    (ok : Color → Bool := fun _ => true) : Option Color :=
+  (bandOn req grounds h ok).bind fun c =>
     if disliked c then
-      ((bandOn req grounds (clearHue h)).filter (!disliked ·)).orElse fun _ =>
-        (bandOn req grounds (clearHue h - 2000)).filter (!disliked ·)
+      ((bandOn req grounds (clearHue h) ok).filter (!disliked ·)).orElse fun _ =>
+        (bandOn req grounds (clearHue h - 2000) ok).filter (!disliked ·)
     else some c
 
-/-- **A cleared band tone clears what it was asked to on every ground and is not disliked.** -/
-public theorem bandClear_contract {req : Nat} {grounds : List Color} {h : Int} {c : Color}
-    (hv : bandClear req grounds h = some c) :
-    (∀ g ∈ grounds, req ≤ contrastMilli c g) ∧ disliked c = false := by
+/-- **A cleared band tone clears what it was asked to on every ground, is not disliked and passes
+`ok`.** -/
+public theorem bandClear_contract {req : Nat} {grounds : List Color} {h : Int} {ok : Color → Bool}
+    {c : Color} (hv : bandClear req grounds h ok = some c) :
+    (∀ g ∈ grounds, req ≤ contrastMilli c g) ∧ disliked c = false ∧ ok c = true := by
   unfold bandClear at hv
-  cases hb : bandOn req grounds h with
+  cases hb : bandOn req grounds h ok with
   | none => simp [hb] at hv
   | some c0 =>
     simp only [hb, Option.bind_some] at hv
     split at hv
-    · have later : ∀ {h' : Int}, (bandOn req grounds h').filter (!disliked ·) = some c →
-          (∀ g ∈ grounds, req ≤ contrastMilli c g) ∧ disliked c = false := by
+    · have later : ∀ {h' : Int}, (bandOn req grounds h' ok).filter (!disliked ·) = some c →
+          (∀ g ∈ grounds, req ≤ contrastMilli c g) ∧ disliked c = false ∧ ok c = true := by
         intro h' hf
-        cases hc : bandOn req grounds h' with
+        cases hc : bandOn req grounds h' ok with
         | none => simp [hc] at hf
         | some c1 =>
           rw [hc, Option.filter_some] at hf
           split at hf
           · rename_i hk
             cases hf
-            exact ⟨bandOn_contract hc, by simpa using hk⟩
+            exact ⟨(bandOn_contract hc).1, by simpa using hk, (bandOn_contract hc).2⟩
           · cases hf
-      cases h1 : (bandOn req grounds (clearHue h)).filter (!disliked ·) with
+      cases h1 : (bandOn req grounds (clearHue h) ok).filter (!disliked ·) with
       | some c1 =>
         rw [h1, Option.orElse_some] at hv
         cases hv
@@ -323,7 +338,7 @@ public theorem bandClear_contract {req : Nat} {grounds : List Color} {h : Int} {
         exact later hv
     · rename_i hd
       cases hv
-      exact ⟨bandOn_contract hb, by simpa using hd⟩
+      exact ⟨(bandOn_contract hb).1, by simpa using hd, (bandOn_contract hb).2⟩
 
 /-- `c` at hue `h`, its lightness and as much of its chroma as the gamut holds kept. -/
 private def atHue (c : Color) (h : Int) : Color :=

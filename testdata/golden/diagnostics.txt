@@ -124,10 +124,10 @@
 ✖ [E0331] - \includegraphics
   cannot read a length from 'banana'
   suggestion: image sizes look like 3cm or 0.8\textwidth
-── E0332 (dropped) covered fraction outside 1–99 percent
+── E0332 (dropped) covered fraction outside 0–99 percent
 ✖ [E0332] - \palette
-  covered fraction must be 1–99 percent, got '100\%'
-  suggestion: the fraction of each covered colour kept over the page; the default is 38\%
+  covered fraction must be 0–99 percent, got '100\%'
+  suggestion: the fraction of each covered colour kept over the page; 0\%, the default, hides it
 ── E0333 (dropped) picture expression unreadable or unresolvable; its shape is not drawn
 ✖ [E0333] - \begin
   in '\fill', unknown macro '\nope'; the shape is not drawn

@@ -704,7 +704,7 @@ def listingHighlightChecks (ref : IO.Ref (List String)) : IO Unit := do
        glyphs.all (fun (_, color) =>
          Contrast.contrastMilli color ground ≥ CodeColor.codeFloor (deckBundle theme) ground))
     let doc := { ListingHighlight.sourceDoc "python" "def value(): return \"x\""
-      with palette := deckBundle theme }
+      with palette := { deckBundle theme with coveredFraction := some 38 } }
     let active := layoutOf fonts doc
     let coveredBody := doc.body.map fun b => match b with
       | .verbatim _ source spec =>

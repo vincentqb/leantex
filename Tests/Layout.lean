@@ -127,7 +127,7 @@ def listChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   t "adjacent itemize levels differ"
     (marks[0]! != marks[1]! && marks[1]! != marks[2]! && marks[2]! != marks[3]!)
   let (stepLines, _) := runOn ("\\documentclass{beamer}\n\\usetheme{default}\n" ++
-    "\\begin{document}\n" ++
+    "\\setbeamercovered{transparent=38}\n\\begin{document}\n" ++
     "\\begin{frame}\\begin{itemize}\\item<1-> alpha\\item<2-> beta" ++
     "\\end{itemize}\\end{frame}\n\\end{document}")
   t "stepped items keep their markers on every page"
@@ -137,8 +137,15 @@ def listChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     | some (Layout.Seg.run _ c _ _ _ _ _ _ _ _ _) => some c
     | _ => none
   t "a covered item's marker dims with it"
-    (markerColor stepLines[1]! == some (Ir.Design.ofDoc {}).cover.plain &&
+    (markerColor stepLines[1]! == some (Ir.Design.ofDoc { palette := { coveredFraction := some 38 } }).cover.plain &&
      markerColor stepLines[0]! == some Ir.Color.black)
+  let (hiddenLines, _) := runOn ("\\documentclass{beamer}\n\\usetheme{default}\n" ++
+    "\\begin{document}\n" ++
+    "\\begin{frame}\\begin{itemize}\\item<1-> alpha\\item<2-> beta" ++
+    "\\end{itemize}\\end{frame}\n\\end{document}")
+  t "a hidden item keeps its line's place and ships neither its marker nor its words"
+    (hiddenLines.size == 4 && (hiddenLines.map markerOf) == #["•", "", "•", "•"] &&
+     hiddenLines[1]!.segs.all (fun s => match s with | .run .. => false | _ => true))
   let (ovLines, _) := runOn ("\\documentclass{article}\n" ++
     "\\style{itemize}{ marker = {x} }\n\\begin{document}\n" ++
     "\\begin{itemize}\\item a\\begin{itemize}\\item b\\end{itemize}\\end{itemize}\n" ++
@@ -2766,7 +2773,7 @@ def tableChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
       tag ++ " " ++ toString i ++ " " ++
         String.join (List.replicate reps "band of body text ") ++ "\n\n")
   let altFrame (body : String) : String :=
-    deck169 "\\theme{moloch}"
+    deck169 "\\theme{moloch}\\palette{ covered = 31\\% }"
       ("\\begin{frame}{Alternating}\n" ++ body ++ "\n\\end{frame}")
   let altSrc (a b : String) : String :=
     altFrame ("\\alt<2>{" ++ a ++ "}{" ++ b ++ "}")

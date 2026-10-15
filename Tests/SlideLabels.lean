@@ -176,10 +176,11 @@ private def standoutNoteChecks (ref : IO.Ref (List String))
     }
     let census := censusOf (coveredColorsOf input.1) (layoutOf fonts input.1)
     let compact (s : String) := String.ofList (s.toList.filter (!·.isWhitespace))
-    let focusText := "FocusAlphaFocusBeta" ++ if restored then "StandoutNote" else ""
+    let noted (words : String) := words ++ if restored then "StandoutNote" else ""
     check ref ("slide labels / standout note " ++ toString restored ++
         " / shipped standout ink contains the explicit note only, never a number")
-      ([1, 2].all (fun i => (census[i]?.map (compact ∘ CensusPage.text)) == some focusText) &&
+      ([(1, "FocusAlpha"), (2, "FocusAlphaFocusBeta")].all (fun (i, words) =>
+          (census[i]?.map (compact ∘ CensusPage.text)) == some (noted words)) &&
         (census[4]?.map (compact ∘ CensusPage.text)) == some "EmptyBody")
 
 private def sectionChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do

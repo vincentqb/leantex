@@ -204,11 +204,15 @@ def placeChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((highlightSegs rout).isEmpty && (wordRun (allLines rout) "declared").any (·.1 == red))
   let pageMarks (out : Layout.Out) (k : Nat) (word : String) : Option (Array Ir.Color) :=
     (out.pages[k]?.bind fun p => marksUnder p.lines word).map (·.map (·.1))
-  let (cdoc, _) := elabStr (dvDeck seedsLine
+  let (cdoc, _) := elabStr (dvDeck (seedsLine ++ "\\setbeamercovered{transparent}\n")
     "\\begin{frame}\nFirst.\n\n\\uncover<2>{A \\alert{covered} word.}\n\\end{frame}")
   let cout := layoutOf fonts cdoc
   t "mark place: a covered step's mark is quieted with the text it stands behind"
     ((pageMarks cout 0 "covered").any fun ms => !ms.isEmpty && ms.all (· != yellow))
+  let (hdoc, _) := elabStr (dvDeck seedsLine
+    "\\begin{frame}\nFirst.\n\n\\uncover<2>{A \\alert{covered} word.}\n\\end{frame}")
+  t "mark place: a hidden step's mark ships nothing with its text"
+    ((pageMarks (layoutOf fonts hdoc) 0 "covered").all (·.isEmpty))
   t "mark place: and the step that reveals it shows the accent"
     ((pageMarks cout 1 "covered").any fun ms => !ms.isEmpty && ms.all (· == yellow))
   let (odoc, _) := elabStr (dvDeck seedsLine

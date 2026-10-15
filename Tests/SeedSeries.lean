@@ -89,8 +89,8 @@ def seriesChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "series: a count of none is refused" (generated s 0 |>.toOption).isNone
   t "series: a count past the most is refused" (generated s (SeedSeries.maxCount + 1) |>.toOption).isNone
 
-/-- The script writes the series asked for after the palette, its `--check` holds, and an
-ungeneratable count is a usage error. -/
+/-- The script writes the series asked for after the palette, as marks no covered share binds, its
+`--check` holds, and an ungeneratable count is a usage error. -/
 def seriesScriptChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let tmp := (← IO.FS.realPath (← IO.currentDir)) / ".lake" / "seed-series-check"
@@ -105,6 +105,14 @@ def seriesScriptChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((made.out.splitOn ("\\definecolor{" ++ name ++ "}{HTML}{"))[1]?).map (·.take 6 |>.toString)
   t "series script: the first series is the accent's text tone, the page's alert"
     (hexOf "seedSeries1" |>.any fun h => hexOf "seedAccentText" == some h && hexOf "seedAlert" == some h)
+  let covered ← paletteScript #["--series", "3", "--covered", "15", "seed", "1C1917", "FFFFFF", "F2A541"]
+  let coveredHex (name : String) : Option String :=
+    ((covered.out.splitOn ("\\definecolor{" ++ name ++ "}{HTML}{"))[1]?).map (·.take 6 |>.toString)
+  let amber : SeedPalette.Seeds :=
+    { ink := Ir.Color.ofHtml 0x1C 0x19 0x17, paper := Ir.Color.white, accent := Ir.Color.ofHtml 0xF2 0xA5 0x41 }
+  let bare := (SeedPalette.generate amber (amber.targets .decks)).toOption.map (·.colors.accentText.hex (hash := false))
+  t "series script: under a covered share the first series keeps the accent's uncovered text tone"
+    (coveredHex "seedSeries1" == bare && coveredHex "seedAlert" != coveredHex "seedSeries1")
   IO.FS.writeFile (tmp / "fresh.tex") made.out
   let fresh ← paletteScript #["--series", "10", "--check", (tmp / "fresh.tex").toString, "seed",
     "2B2440", "FFFFFF", "E85D2A"]

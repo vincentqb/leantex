@@ -8,7 +8,7 @@ import LeanTex.Core.ContrastSolve
 
 /-! A palette generated from its seeds: ink, paper and accent shipped exactly, every other role
 derived in Oklab by stated rules (Radix's gray pairing, Tailwind's chroma growth, Material 3's
-tonal rule) at its use's floor in its medium on a light paper (WCAG 2.2), checked against it. -/
+tonal rule) at its use's floor in its medium, or its cover's edge (WCAG 2.2), checked against it. -/
 
 namespace LeanTex.Core.SeedPalette
 
@@ -45,8 +45,8 @@ public def Blocks.name : Blocks → String
   | .strong => "strong"
 
 /-- The ratios a palette is generated to, ×1000: its grounds' to the page, a band's to its body,
-text's on the page (`text`) and on the ink (`inverse`), marks' (`edge`), and the medium's text floor
-the more scheme leaves standing (`floor`). -/
+text's on the page (`text`) and on the ink (`inverse`), marks' (`edge`), the medium's text floor the
+more scheme leaves standing (`floor`), and the share its medium covers pending steps at (`cover`). -/
 public structure Targets where
   body : Nat
   band : Nat
@@ -58,6 +58,7 @@ public structure Targets where
   inverse : Nat
   edge : Nat
   floor : Nat
+  cover : Option Nat := none
   deriving Repr, BEq, Inhabited
 
 /-- How far a generated ink on a dark page, or on the ink, stands above its WCAG 2.2 gate, past
@@ -211,21 +212,67 @@ private def solveGround (fam : Family) (page : Color) (dark : Bool) (target : Na
   search (fam.tint lp) want (!dark) (fun c => decide (target ≤ contrastMilli c page)) lp far
     (ContrastSolve.greyLightness want)
 
-/-- The quietest tone meeting `target` on every ground, searched from white (`light`) or black. -/
-private def solveInk (raw : Int → Okl) (grounds : List Color) (target : Nat) (light : Bool) :
-    Option Color :=
+/-- The quietest tone meeting `target` on every ground and passing `ok`, searched from white
+(`light`) or black. -/
+private def solveInk (raw : Int → Okl) (grounds : List Color) (target : Nat) (light : Bool)
+    (ok : Color → Bool := fun _ => true) : Option Color :=
   let (f, p) : Int × Int := if light then (lightTop, 0) else (0, lightTop)
   let wants := grounds.map fun g => ContrastSolve.luminanceAt g target (!light)
   let want := if light then wants.foldl min 10000000 else wants.foldl max 0
   let guess := ContrastSolve.greyLightness want
   let cap := (raw guess).toGamut.f
   let at_ := fun L => let o := raw L; ({ o with f := min o.f cap } : Okl).toGamut
-  search at_ want light (fun c => grounds.all fun g => decide (target ≤ contrastMilli c g)) f p guess
+  search at_ want light (fun c => (grounds.all fun g => decide (target ≤ contrastMilli c g)) && ok c)
+    f p guess
 
-/-- A seed where it already passes on every ground, else its family's tone. -/
+/-- A seed where it already passes on every ground, shipped exactly, else its family's tone. -/
 private def seedOr (seed : Color) (grounds : List Color) (target : Nat)
     (tone : Option Color) : Option Color :=
   if grounds.all fun g => decide (target ≤ contrastMilli seed g) then some seed else tone
+
+/-- The ratio the ink reads at on a container's mark: the more scheme's text target, so one mark
+reads in every light scheme. -/
+public def markInk : Nat := aaaText + margin
+
+/-- Whether the accent serves a light page as a container, as Material 3's Fidelity keeps its source
+colour: no alert seed is named, the accent fails the medium's text floor on the paper, its own tone
+there would be disliked or keep under half its chroma, and the ink reads on it at `markInk`. -/
+public def Seeds.container (s : Seeds) (t : Targets) : Bool :=
+  !s.dark && s.alert.isNone && !decide (t.floor ≤ contrastMilli s.accent s.paper) &&
+    decide (markInk ≤ contrastMilli s.ink s.accent) &&
+    match solveInk ((accentFamily s.accent).inkRaw none) [s.paper] t.floor true with
+    | some c => ContrastSolve.disliked c || decide (2 * chromaOf c < chromaOf s.accent)
+    | none => true
+
+/-- How far a text tone's sRGB covered forms stand above 3:1, for the channel rounding a renderer
+composites them with. -/
+public def srgbSlack : Nat := 10
+
+/-- The 8-bit alpha a browser composites an opacity of `pct`% with. -/
+public def alphaOf (pct : Nat) : Nat := (pct * 255 + 50) / 100
+
+/-- Whether a text tone keeps the covered-state contract at a cover share on a page in each covered
+form the artifacts show: mixed toward the page in Oklab, as the PDF covers and `W0345` judges, and
+in sRGB, as beamer's transparency and a browser's 8-bit opacity cover, `srgbSlack` above. -/
+public def coverKept (share : Option Nat) (page c : Color) : Bool :=
+  share.all fun f => coverHolds page c (Oklab.cover f page c) &&
+    coverHolds page c (c.mixSrgb f page) (aaNonText + srgbSlack) &&
+    coverHolds page c (c.overSrgb (alphaOf f) 255 page) (aaNonText + srgbSlack)
+
+/-- The targets at a depth under the cover share a document declares, where its medium covers
+pending steps and the share shows them. -/
+@[expose] public def Seeds.targetsAt (s : Seeds) (d : GroundDepth) (share : Option Nat) : Targets :=
+  { s.targets d with cover := if d.stage then share.filter (0 < ·) else none }
+
+/-- The cover share a palette's derived text keeps: its targets', where the tone search's passing
+end, black on a light page and white on a dark one, keeps it. -/
+public def Seeds.coverOf (s : Seeds) (t : Targets) : Option Nat :=
+  let far := if s.dark then Color.white else Color.black
+  if coverKept t.cover s.paper far then t.cover else none
+
+/-- Whether a colour is one of the seeds a palette ships exactly as text. -/
+public def Seeds.textSeed (s : Seeds) (c : Color) : Bool :=
+  c == s.ink || c == s.accent || s.alert == some c || s.exampleColor == some c
 
 /-- Every derived colour of a generated palette. -/
 public structure Colors where
@@ -438,14 +485,20 @@ public def groundOk (page : Color) (fam : Family) (g : Color) (target : Nat) : B
   decide (target ≤ contrastMilli g page) && decide (contrastMilli g page ≤ target + groundSlack target) &&
     decide (floorAt fam page g - chromaStep ≤ chromaOf g) && hueOk fam page g
 
-/-- The contract a generated palette carries: every site meets its target, every block pair
-reads, every ground stands in its band. -/
+/-- The text tones the cover binds: the accent's text, the alert and the example's text where the
+generator derives them, a seed shipping as given. -/
+public def coverTones (s : Seeds) (c : Colors) : List Color :=
+  ([c.accentText, c.alert] ++ c.exampleText.toList).filter (!s.textSeed ·)
+
+/-- The contract a generated palette carries: every site meets its target, every block pair reads,
+every ground stands in its band, and the covered text keeps its cover's contract. -/
 public def contract (s : Seeds) (t : Targets) (c : Colors) : Bool :=
   (sites s t c).all (fun (_, i, g, r) => decide (r ≤ contrastMilli i g)) &&
   (Blocks.all.all fun b => (blockPairs s t c b).all fun (i, g) => decide (t.text ≤ contrastMilli i g)) &&
   (grounds s t c).all (fun (_, fam, g, r) => groundOk s.paper fam g r) &&
   decide (t.pair ≤ contrastMilli c.surfaceStrong c.surface) &&
-  decide (t.pair ≤ contrastMilli c.accentSoft c.accentWash)
+  decide (t.pair ≤ contrastMilli c.accentSoft c.accentWash) &&
+  (coverTones s c).all (coverKept (s.coverOf t) s.paper)
 
 /-- A generated palette: its colours and the proof they meet the contract. -/
 public structure Generated (s : Seeds) (t : Targets) where
@@ -489,21 +542,12 @@ private def firstFailure (s : Seeds) (t : Targets) (c : Colors) : Option Failure
       else if !(Blocks.all.all fun b => (blockPairs s t c b).all fun (i, g) =>
           decide (t.text ≤ contrastMilli i g)) then
         some { role := .alertTitleBar, detail := "a block title does not read on its bar" }
-      else none
-
-/-- The ratio the ink reads at on a container's mark: the more scheme's text target, so one mark
-reads in every light scheme. -/
-public def markInk : Nat := aaaText + margin
-
-/-- Whether the accent serves a light page as a container, as Material 3's Fidelity keeps its source
-colour: no alert seed is named, the accent fails the medium's text floor on the paper, its own tone
-there would be disliked or keep under half its chroma, and the ink reads on it at `markInk`. -/
-public def Seeds.container (s : Seeds) (t : Targets) : Bool :=
-  !s.dark && s.alert.isNone && !decide (t.floor ≤ contrastMilli s.accent s.paper) &&
-    decide (markInk ≤ contrastMilli s.ink s.accent) &&
-    match solveInk ((accentFamily s.accent).inkRaw none) [s.paper] t.floor true with
-    | some c => ContrastSolve.disliked c || decide (2 * chromaOf c < chromaOf s.accent)
-    | none => true
+      else
+        let tones := [(Ir.Role.accentText, some c.accentText), (.alert, some c.alert),
+          (.example, c.exampleText)]
+        let fails (x : Color) : Bool := !s.textSeed x && !coverKept (s.coverOf t) s.paper x
+        (tones.find? fun (_, x) => x.any fails).map fun (role, _) =>
+          { role, detail := "its covered form stands under 3:1 from it, or as loud on the page" }
 
 /-- A colour's OKLCH hue, in millidegrees. -/
 private def hueOf (c : Color) : Int :=
@@ -534,10 +578,13 @@ private def candidate (s : Seeds) (t : Targets) : Except Failure Colors := do
     (solveGround (tintFamily s) s.paper dark t.soft)
   let neutralInk := n.inkRaw none
   let toneAt (lightG : Bool) (seed : Option Color) (fam : Family) (warm : Option (Int × Int))
-      (gs : List Color) (target : Nat) : Option Color :=
-    undisliked (solveInk (fam.inkRaw warm) gs target lightG) (solveInk (fam.inkRaw none) gs target lightG)
-      fun _ => seed.bind fun c => ContrastSolve.bandClear target gs (hueOf c)
+      (gs : List Color) (target : Nat) (ok : Color → Bool) : Option Color :=
+    undisliked (solveInk (fam.inkRaw warm) gs target lightG ok)
+      (solveInk (fam.inkRaw none) gs target lightG ok)
+      fun _ => seed.bind fun c => ContrastSolve.bandClear target gs (hueOf c) ok
   let tone := toneAt light
+  let any : Color → Bool := fun _ => true
+  let kept := coverKept (s.coverOf t) s.paper
   let muted ← need .muted "no neutral tone reads on the page and its fills"
     (solveInk neutralInk (facing s [surface, accentWash]) t.text light)
   let diagramMuted ← need .diagramMuted "no neutral tone stands out from the page and its fills"
@@ -548,13 +595,13 @@ private def candidate (s : Seeds) (t : Targets) : Except Failure Colors := do
   let accentText ← if container then pure s.ink else
     need .accentText "no accent tone reads on the page and its fills"
       (seedOr s.accent (facing s [surface, accentWash]) t.text
-        (tone (some s.accent) a warmA (facing s [surface, accentWash]) t.text))
+        (tone (some s.accent) a warmA (facing s [surface, accentWash]) t.text kept))
   let accentEdge ← if container then pure s.ink else
     need .accentEdge "no accent tone stands out from the page and its fills"
       (seedOr s.accent (facing s [surface, accentSoft]) t.edge
-        (tone (some s.accent) a warmA (facing s [surface, accentSoft]) t.edge))
+        (tone (some s.accent) a warmA (facing s [surface, accentSoft]) t.edge any))
   let accentOnInverse ← need .accentOnInverse "no accent tone reads on the ink"
-    (seedOr s.accent [s.ink] t.inverse (toneAt dark (some s.accent) a none [s.ink] t.inverse))
+    (seedOr s.accent [s.ink] t.inverse (toneAt dark (some s.accent) a none [s.ink] t.inverse any))
   let alert ← match s.alert with
     | none => pure accentText
     | some al =>
@@ -562,25 +609,25 @@ private def candidate (s : Seeds) (t : Targets) : Except Failure Colors := do
       let warm := if dark then none else warmOf al
       need .alert "no alert tone reads on the page and its fills"
         (seedOr al (facing s [surface, accentWash]) t.text
-          (tone (some al) fam warm (facing s [surface, accentWash]) t.text))
+          (tone (some al) fam warm (facing s [surface, accentWash]) t.text kept))
   let alertFam := (s.alert.map accentFamily).getD a
   let alertWarm := if dark then none else warmOf (s.alert.getD s.accent)
   let alertBand ← if container then pure s.ink else
     need .alertBandInk "no alert tone reads on the accent's band"
       (seedOr alert [accentSoft] t.text
-        (tone (some (s.alert.getD s.accent)) alertFam alertWarm [accentSoft] t.text))
+        (tone (some (s.alert.getD s.accent)) alertFam alertWarm [accentSoft] t.text any))
   let exampleText ← match s.exampleColor with
     | none => pure none
     | some ex =>
       let fam := accentFamily ex
       let warm := if dark then none else warmOf ex
       some <$> need .example "no example tone reads on the page and its fills"
-        (seedOr ex (facing s [surface]) t.text (tone (some ex) fam warm (facing s [surface]) t.text))
+        (seedOr ex (facing s [surface]) t.text (tone (some ex) fam warm (facing s [surface]) t.text kept))
   let exampleFam := (s.exampleColor.map accentFamily).getD n
   let exampleWarm := if dark then none else s.exampleColor.bind warmOf
   let exampleBand ← need .exampleBandInk "no example tone reads on the band"
     (seedOr (exampleText.getD muted) [surfaceStrong] t.text
-      (tone s.exampleColor exampleFam exampleWarm [surfaceStrong] t.text))
+      (tone s.exampleColor exampleFam exampleWarm [surfaceStrong] t.text any))
   return { surface, surfaceStrong, rule, accentWash, accentSoft, muted, diagramMuted,
            mutedOnInverse, accentText, accentEdge, accentOnInverse, alert, alertBand, exampleText,
            exampleBand, alertMark := if container then some s.accent else none }
@@ -735,7 +782,15 @@ private theorem contract_parts {s : Seeds} {t : Targets} {c : Colors} (h : contr
     t.pair ≤ contrastMilli c.surfaceStrong c.surface ∧
     t.pair ≤ contrastMilli c.accentSoft c.accentWash := by
   simp only [contract, Bool.and_eq_true, decide_eq_true_eq] at h
-  exact ⟨h.1.1.1.1, h.1.1.1.2, h.1.1.2, h.1.2, h.2⟩
+  exact ⟨h.1.1.1.1.1, h.1.1.1.1.2, h.1.1.1.2, h.1.1.2, h.1.2⟩
+
+/-- **A generated palette's derived text tones keep the covered-state contract** in each covered
+form, at the share its targets cover at wherever that share binds (`Seeds.coverOf`). -/
+public theorem generated_cover_contract {s : Seeds} {t : Targets} (p : Generated s t) :
+    ∀ x ∈ coverTones s p.colors, coverKept (s.coverOf t) s.paper x = true := by
+  have h := p.valid
+  simp only [contract, Bool.and_eq_true] at h
+  exact List.all_eq_true.mp h.2
 
 public theorem generated_sites_contract {s : Seeds} {t : Targets} (p : Generated s t) :
     (∀ x ∈ sites s t p.colors, x.2.2.2 ≤ contrastMilli x.2.1 x.2.2.1) ∧

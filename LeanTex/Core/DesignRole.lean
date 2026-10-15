@@ -113,6 +113,14 @@ board, whose text the judge holds as a page's. -/
 /-- The depths the classes stand at, each once. -/
 @[expose] public def GroundDepth.all : List GroundDepth := [.documents, .decks, .posters]
 
+/-- The share pending overlay content covers to unless the document declares one: none, so it
+is hidden with its place kept, as beamer's default `invisible` covering hides it. -/
+@[expose] public def coveredFractionDefault : Nat := 0
+
+/-- beamer's `transparent` share, which `\setbeamercovered{transparent}` declares and a declared
+cover colour's own coloured runs take. -/
+@[expose] public def transparentShare : Nat := 15
+
 /-- What a class asks of colours nothing declares: LaTeX's classes print secondary ink in the
 ink, the web's keep a quieter one and tinted verbatim. -/
 public inductive ClassRow where

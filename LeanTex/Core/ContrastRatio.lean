@@ -51,6 +51,12 @@ public def aaLargeText : Nat := 3000
 /-- SC 1.4.11 (AA), non-text UI information: 3:1. -/
 public def aaNonText : Nat := 3000
 
+/-- Whether a covered form keeps the covered-state contract on its ground: quieter there than the
+active colour, and `floor`, 3:1 unless asked more, from it (SC 1.4.11). -/
+@[expose] public def coverHolds (ground active covered : Color) (floor : Nat := aaNonText) : Bool :=
+  decide (contrastMilli covered ground < contrastMilli active ground) &&
+    decide (floor ≤ contrastMilli active covered)
+
 /-- The ratio a role's need owes, in `contrastMilli`'s units. -/
 @[expose] public def required : Ir.Need → Nat
   | .text => aaText
