@@ -337,8 +337,7 @@ inductive Writes where
   | mainTo (tip : Sha)
   /-- The remote's `refs/heads/main`, by a push of this commit that is never forced. -/
   | remoteTo (tip : Sha)
-  /-- A ref or a worktree another party owns, written without a compare-and-swap against a
-  sha this run read. -/
+  /-- A ref or a worktree another party owns. -/
   | foreign
   /-- The landing queue's file in the common directory, rewritten whole under the queue's own
   lock. -/

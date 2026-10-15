@@ -5,6 +5,7 @@ Usage: land new <name> | check <name> | <name> [--push] | push | retire <name> |
 -/
 import scripts.LandCore
 import scripts.GitGuard
+import Std.Data.HashMap
 import Std.Data.HashSet
 
 open Land
@@ -363,8 +364,13 @@ def jsonField (line key : String) : Option String :=
   | none => none
   | some rest => (rest.splitOn "\"").head?
 
-/-- The landed rows a write-ahead row owes when its run died after the fast-forward: the run's own
-branch at its commit, then each rider the row names at its commit in the train. -/
+/-- The write-ahead row's riders: each name, read tip and commit in the train, which no ref name
+can split. -/
+def ridersField (rs : List (String × Sha × Sha)) : String :=
+  String.intercalate " " (rs.map fun (n, t, c) => s!"{n}:{t}:{c}")
+
+/-- The landed rows a write-ahead row names, as `writeLanded` writes them: the run's own branch at
+its commit, then each rider at its commit in the train. -/
 def owedRows (row : String) : List String :=
   let f (k : String) := (jsonField row k).getD ""
   let riders := (f "riders").splitOn " " |>.filterMap fun m =>
@@ -378,27 +384,42 @@ def owedRows (row : String) : List String :=
   landed (f "name") ((jsonField row "tip").getD (f "gated")) (f "branch")
     :: riders.map fun (n, t, c) => landed n c t
 
-/-- The ledger's rows, each write-ahead row a run wrote last, whose gated tip `main` holds,
-followed by the landed rows it owes. -/
+/-- Whether `main` holds each gated tip asked about, once per run. -/
+initialize heldTips : IO.Ref (Std.HashMap String Bool) ← IO.mkRef {}
+
+/-- Whether `main` holds commit `g`; a commit git cannot place reads as not held. -/
+def mainHolds (e : Env) (g : Sha) : IO Bool := do
+  if let some held := (← heldTips.get)[g]? then return held
+  let ctr ← IO.mkRef 0
+  let held ← try
+      pure ((← git e ctr "ledger" #["merge-base", "--is-ancestor", g, "refs/heads/main"]
+        (some e.mainWt)).code == 0)
+    catch _ => pure false
+  heldTips.modify (·.insert g held)
+  return held
+
+/-- The ledger's rows, each write-ahead row of a run that died after its fast-forward followed by
+the landed rows it names and the run did not write: its run halted on no other verdict and no
+longer runs, and `main` holds its gated tip. -/
 def ledgerLines (e : Env) : IO (List String) := do
   let txt ← IO.FS.readFile (ledgerPath e)
   let ls := (txt.splitOn "\n").filter (!·.isEmpty)
-  -- An abandoned row names the dead run, but another run wrote it.
-  let closed : Std.HashSet String := ls.foldl (init := {}) fun acc l =>
-    match jsonField l "verdict", jsonField l "run" with
-    | some "landing", _ | some "abandoned", _ | _, none => acc
-    | _, some run => acc.insert run
-  let ctr ← IO.mkRef 0
+  let field (l k : String) := (jsonField l k).getD ""
+  let landed : Std.HashSet (String × String) := ls.foldl (init := {}) fun acc l =>
+    if jsonField l "verdict" == some "landed" then acc.insert (field l "run", field l "name") else acc
+  let halted : Std.HashSet String := ls.foldl (init := {}) fun acc l =>
+    if (jsonField l "verdict").any (["refused", "failed", "landedUnpushed", "checked"].contains ·)
+    then acc.insert (field l "run") else acc
   let mut out : Array String := #[]
   for l in ls do
     out := out.push l
-    let run := (jsonField l "run").getD ""
-    if jsonField l "verdict" == some "landing" && !closed.contains run then
-      let g := (jsonField l "gated").getD ""
-      if isSha g then
-        let r ← git e ctr "ledger" #["merge-base", "--is-ancestor", g, "refs/heads/main"]
-          (some e.mainWt)
-        if r.code == 0 then out := out ++ (owedRows l).toArray
+    if jsonField l "verdict" == some "landing" then
+      let run := field l "run"
+      let owed := (owedRows l).filter fun r => !landed.contains (run, field r "name")
+      if !owed.isEmpty && !halted.contains run && isSha (field l "gated")
+          && !((← runProbe s!"{e.common}/land/{run}").getD false)
+          && (← mainHolds e (field l "gated")) then
+        out := out ++ owed.toArray
   return out.toList
 
 /-- The last ledger row for `name`. -/
@@ -891,8 +912,8 @@ def landLoop (e : Env) (ctr : IO.Ref Nat) (treeLive : IO.Ref Bool) (name : Strin
         let ok ← writeLedger e
           ([("ts", e.ts), ("run", e.runId), ("name", name), ("verdict", "landing"),
            ("gated", st.gatedTip), ("prev", st.prevMainTip), ("branch", st.branchTip)]
-           ++ (if riding.isEmpty then [] else [("tip", st.headTip), ("riders",
-             String.intercalate " " (riding.map fun r => s!"{r.name}:{r.tip}:{r.rebased}"))])
+           ++ (if riding.isEmpty then [] else [("tip", st.headTip),
+             ("riders", ridersField (riding.map fun r => (r.name, r.tip, r.rebased)))])
            ++ [("gateset", gateset), ("ms", toString (t1 - t0)), ("dir", e.runDir)])
         say "announce" (if ok then "ok" else "fail") [("gated", st.gatedTip)]
         pure (if ok then .ledgerOk else .ledgerFail)
@@ -1144,11 +1165,16 @@ def withTurn (e : Env) (name : String) (fare : String) (act : List String → IO
       sayFinal .refused [("name", name), ("train", t), ("why", fld "why")]
       return some 2
     return none
+  let mut consulted : List String := []
   for i in [0:turnBeats] do
-    if let some t := rode then
-      if !(← runLiveAt e.common t) then
+    -- The trains this run saw itself ride, or its place boarded, once each is over.
+    let boarded := (((← try readQueueAt e.common catch _ => pure []).find? (·.name == name)).map
+      (·.train)).filter (!·.isEmpty)
+    for t in (rode.toList ++ boarded.toList).eraseDups do
+      if !consulted.contains t && !(← runLiveAt e.common t) then
         if let some code ← trainVerdict t then return code
-        rode := none
+        consulted := consulted ++ [t]
+        if rode == some t then rode := none
     let asked ← try pure (Except.ok (← askTurn e qh h me (i == 0) holds reach))
       catch ex => pure (Except.error (toString ex))
     match asked with
@@ -2126,6 +2152,18 @@ not own")]
     say "selftest" "fail" [("case", "guard: made repositories and the scratch root"),
       ("why", "wrong answer")]
   else say "selftest" "ok" [("case", "guard: made repositories and the scratch root")]
+  -- The write-ahead row's riders read back as the landed rows it names, the run's own first.
+  let ahead := ledgerLine [("run", "r"), ("name", "head"), ("verdict", "landing"),
+    ("gated", sha7s), ("branch", sha2s), ("tip", sha3s),
+    ("riders", ridersField [("r1", sha4s, sha5s), ("r2", sha6s, sha7s)])]
+  let owed := (owedRows ahead).map fun l =>
+    ((jsonField l "name").getD "", (jsonField l "tip").getD "", (jsonField l "branch").getD "",
+      (jsonField l "verdict").getD "", (jsonField l "gated").getD "")
+  if owed != [("head", sha3s, sha2s, "landed", sha7s), ("r1", sha5s, sha4s, "landed", sha7s),
+      ("r2", sha7s, sha6s, "landed", sha7s)] then
+    bad := bad + 1
+    say "selftest" "fail" [("case", "the write-ahead row's members"), ("why", s!"{owed}")]
+  else say "selftest" "ok" [("case", "the write-ahead row's members")]
   if bad == 0 then sayFinal .checked [("cases", toString cases.length)]; return 0
   else sayFinal .failed [("cases", toString cases.length), ("bad", toString bad)]; return 1
 
@@ -3222,6 +3260,9 @@ def scenarioTrainUntouched (self root : String) : IO Outcome := do
   hgitOk #["add", "-f", "local.cfg"] s!"{s.root}/lt-first"
   hgitOk #["commit", "-qm", "first tracks local.cfg"] s!"{s.root}/lt-first"
   IO.FS.writeFile s!"{s.root}/lt-rider/local.cfg" "the rider owner's local settings\n"
+  -- Rewritten unchanged a second after its commit, a git status that refreshes would write the index.
+  IO.sleep 1100
+  IO.FS.writeFile s!"{s.root}/lt-rider/rider.txt" "rider\n"
   let before ← names.mapM (memberState s)
   let (ready, outs) ← runTrain self s names (← trainGate s "train")
   let after ← names.mapM (memberState s)
@@ -3257,6 +3298,18 @@ others land"
              && order == ["Base", "Add holder", "Add first", "Add mid"]
          , detail := s!"ready={ready} exits={outs.map (·.1)} main={order}" }
 
+/-- Stop the live run waiting under `name`, holding the queue's lock so that it is never stopped
+holding it; the pid stopped, if any. -/
+def stopWaiter (s : Scratch) (name : String) : IO (Option Nat) := do
+  let some w := (← queueOf s).find? (·.name == name) | return none
+  if w.pid == 0 || !(← waiterLiveAt s!"{s.repo}/.git" w) then return none
+  let ql ← IO.FS.Handle.mk s!"{s.repo}/.git/land/queue.lock" .append
+  ql.lock
+  try
+    let (c, _) ← hrun "kill" #["-STOP", toString w.pid] none
+    return if c == 0 then some w.pid else none
+  finally ql.unlock
+
 /-- A rider whose run is stopped across its whole train is told the train's verdict once it runs
 again: landed, with exit 0. -/
 def scenarioTrainRiderStopped (self root : String) : IO Outcome := do
@@ -3269,21 +3322,21 @@ def scenarioTrainRiderStopped (self root : String) : IO Outcome := do
   let _ ← awaitQueued s "first"
   let tr ← landAsync self s.repo #["rider"] "t=true"
   let live ← awaitLive s names
-  let pid := toString ((((← queueOf s).find? (·.name == "rider")).map (·.pid)).getD 0)
-  let (stopped, _) ← hrun "kill" #["-STOP", pid] none
+  let stopped ← if live then stopWaiter s "rider" else pure none
   let (cf, landed) ← try
       release s "holder"
       let _ ← awaitRun th
       let (cf, _) ← awaitRun tf
       pure (cf, (← mainSubjects s.repo).contains "Add rider")
     finally
-      let _ ← hrun "kill" #["-CONT", pid] none
+      if let some pid := stopped then
+        let _ ← hrun "kill" #["-CONT", toString pid] none
   let (cr, or_) ← awaitRun tr
   return { label := "a rider stopped across its whole train is told it landed once it runs again"
-         , ok := held && live && stopped == 0 && cf == 0 && landed && cr == 0
+         , ok := held && live && stopped.isSome && cf == 0 && landed && cr == 0
              && says or_ "result=landed"
-         , detail := s!"held={held} live={live} stopped={stopped} head={cf} rider-on-main={landed} \
-rider={cr}" }
+         , detail := s!"held={held} live={live} stopped={stopped.isSome} head={cf} \
+rider-on-main={landed} rider={cr}" }
 
 /-- A train's gate that dirties the tree once falls back to the head, which lands, and the rider,
 queued again, lands after. -/
@@ -3748,6 +3801,35 @@ def scenarioTrainKilledAfterRows (self root : String) : IO Outcome := do
              && (← mainSubjects s.repo) == ["Base", "Add holder", "Add first", "Add rider"]
          , detail := s!"ready={ready} fired={fired} exits={outs.map (·.1)}" }
 
+/-- A rider stopped across its whole train, whose head is killed after its landed rows before it
+settles the rider's place, is told it landed once it runs again. -/
+def scenarioTrainStoppedKilled (self root : String) : IO Outcome := do
+  let s ← mkScratch s!"{root}/stoppedkilled" "holder"
+  let names := ["first", "rider"]
+  for n in names do addAgent s n
+  let wrap ← gitWrapper s "[ \"$1\" = worktree ] && [ \"$2\" = remove ]" "  kill -KILL $PPID"
+  let env := #[("PATH", some wrap)]
+  let th ← landAsync self s.repo #["holder"] (← holdGate s "holder")
+  let held ← awaitTrue (System.FilePath.pathExists s!"{s.root}/held-holder")
+  let tf ← landAsync self s.repo #["first"] "t=true" env
+  let _ ← awaitQueued s "first"
+  let tr ← landAsync self s.repo #["rider"] "t=true" env
+  let live ← awaitLive s names
+  let stopped ← if live then stopWaiter s "rider" else pure none
+  let cf ← try
+      release s "holder"
+      let _ ← awaitRun th
+      pure (← awaitRun tf).1
+    finally
+      if let some pid := stopped then
+        let _ ← hrun "kill" #["-CONT", toString pid] none
+  let (cr, or_) ← awaitRun tr
+  return { label := "a rider stopped across its train, whose head dies after its landed rows, is \
+told it landed"
+         , ok := held && live && stopped.isSome && cf != 0 && cr == 0 && says or_ "result=landed"
+             && (← mainSubjects s.repo) == ["Base", "Add holder", "Add first", "Add rider"]
+         , detail := s!"held={held} live={live} stopped={stopped.isSome} head={cf} rider={cr}" }
+
 /-- A train's head killed right after its fast-forward, before any landed row: the write-ahead row
 lands each member, its rider told so, and each lands as already landed and retires. -/
 def scenarioTrainKilledAfterFF (self root : String) : IO Outcome := do
@@ -3769,6 +3851,26 @@ write-ahead row, and each retires"
          , ok := ready && fired && (outs.headD (0, "")).1 != 0 && cr == 0 && says or_ "result=landed"
              && again && (← mainSubjects s.repo) == ["Base", "Add holder", "Add first", "Add rider"]
          , detail := s!"ready={ready} fired={fired} exits={outs.map (·.1)} again={again}" }
+
+/-- A train whose run ended after its own landed row and before a rider's, its rider's row missing,
+lands that rider by its write-ahead row: asked again it answers landed, and it retires. -/
+def scenarioTrainPartialRows (self root : String) : IO Outcome := do
+  let s ← mkScratch s!"{root}/partialrows" "holder"
+  let names := ["first", "rider"]
+  for n in names do addAgent s n
+  let (ready, outs) ← runTrain self s names (← trainGate s "train")
+  let ledger := s!"{s.repo}/.git/land/ledger.jsonl"
+  let rows ← IO.FS.readFile ledger
+  let kept := (rows.splitOn "\n").filter fun l =>
+    !(says l "\"name\":\"rider\"" && says l "\"verdict\":\"landed\"")
+  IO.FS.writeFile ledger (String.intercalate "\n" kept)
+  let (c1, o1) ← landIn self s.repo #["rider"] "t=true"
+  let (c2, o2) ← landIn self s.repo #["retire", "rider"] "t=true"
+  return { label := "a rider whose landed row its train never wrote is landed by the write-ahead \
+row, and retires"
+         , ok := ready && outs.all (·.1 == 0) && kept.length < (rows.splitOn "\n").length
+             && c1 == 0 && says o1 "already=yes" && c2 == 0 && says o2 "landed-as="
+         , detail := s!"ready={ready} exits={outs.map (·.1)} again={c1} retire={c2}" }
 
 /-- A landing killed right after its fast-forward, before its landed row, is landed by its
 write-ahead row: asked again it answers landed, and it retires. -/
@@ -3839,7 +3941,8 @@ def scratchSelftest : IO UInt32 := do
     , ("trainpush", scenarioTrainPushHeld), ("landeddirty", scenarioLandedDirty)
     , ("vanished", scenarioRiderVanished), ("untouched", scenarioTrainUntouched)
     , ("riderdirty", scenarioTrainRiderDirty), ("riderstopped", scenarioTrainRiderStopped)
-    , ("killedrows", scenarioTrainKilledAfterRows), ("killedff", scenarioTrainKilledAfterFF)
+    , ("killedrows", scenarioTrainKilledAfterRows), ("stoppedkilled", scenarioTrainStoppedKilled)
+    , ("killedff", scenarioTrainKilledAfterFF), ("partialrows", scenarioTrainPartialRows)
     , ("soloff", scenarioKilledAfterFF), ("gatedirtied", scenarioTrainGateDirtied)
     , ("ownerbefore", fun self root => scenarioOwnerCommitsBeforeRebase self root false)
     , ("ownerbefore-rebase", fun self root => scenarioOwnerCommitsBeforeRebase self root true)
