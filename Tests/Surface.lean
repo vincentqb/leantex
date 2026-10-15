@@ -1705,7 +1705,7 @@ private def checkCompatRow (ref : IO.Ref (List String)) (pkg : String)
     check ref s!"compat index {pkg}: '{call}' is marked {ann} but its source \
 fails with {String.intercalate ", " (errors.map (·.code)).toList}"
       errors.isEmpty
-  if place != "pre" && place != "body" && place != "frame" then
+  if place != "pre" && place != "body" && place != "frame" && place != "statement" then
     failures ref s!"compat index {pkg}: unreadable place in: {line}"
   else if ann == "impl" then
     check ref s!"compat index {pkg}: '{call}' is marked impl but warns unknown"
@@ -1786,6 +1786,14 @@ def compatIndexChecks (ref : IO.Ref (List String)) : IO Unit := do
       (hasStr src s!"\\usepackage\{{pkg}}" == loads)
     check ref s!"compat judge: {pkg} accepts a working frame probe"
       ((← judge pkg row).isEmpty)
+  let stated : IndexRow := { place := "statement", verdict := "impl", call := "\\emph{Stated text}" }
+  let (sdoc, sds) ← elabInputSrc "testdata/compat-index/probe.tex"
+    (compatRowSrc "xcolor" stated.place stated.call)
+  check ref "compat scaffold: a statement probe sets its call in an amsthm lemma, with no error"
+    (sds.all (·.severity != .error) && sdoc.body.any fun b => match b with
+      | .role _ #[.role "lemma" _] => true
+      | _ => false)
+  check ref "compat judge: accepts a working statement probe" ((← judge "xcolor" stated).isEmpty)
   let dir : System.FilePath := "testdata/compat-index"
   for pkg in Compat.nativePackages do
     let found ← (dir / (pkg ++ ".txt")).pathExists

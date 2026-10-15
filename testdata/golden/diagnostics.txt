@@ -964,6 +964,10 @@
 ⚠ [W0433]
   the facts for 'Tide' at '/p/.lake/build/leantex/Tide.facts' no longer line up with it; its code is set without statements
   suggestion: run `lake exe leantex-export Tide` again in a project that requires leantex-export
+── W0434 (degraded) leanblueprint's dependency graph is not drawn; each statement's web page names the statements it uses and proves
+⚠ [W0434] - \usepackage
+  leanblueprint's dependency graph is not drawn; each statement's web page names the statements it uses and proves
+  suggestion: each statement's uses stand as cross-references beside it; \allow{W0434} accepts the loss
 ── W0435 (degraded) a \qedhere whose QED this engine cannot set where amsthm sets it; the QED stands on a line of its own after the display
 ⚠ [W0435] - \qedhere
   '\qedhere' in '{align*}' does not set its QED where amsthm sets it; the QED stands on a line of its own after the display

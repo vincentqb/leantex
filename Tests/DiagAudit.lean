@@ -27,6 +27,7 @@ import Tests.MonoDefault
 import Tests.LeanStatements
 import Tests.LeanViews
 import Tests.LeanProse
+import Tests.Blueprint
 
 /-! The diagnostics audit: each code's decided verdict, the construct rung it aims at, and the pin
 that fails when the decision regresses; `scripts/diagaudit.lean` ratchets the codes no row binds. -/
@@ -136,6 +137,7 @@ def registry : List AuditRow :=
    ⟨.W0416, .keep, .degraded, check% Tests.LeanProse.leanProseChecks⟩,
    ⟨.W0442, .keep, .degraded, check% Tests.PageBoxes.checks⟩,
    ⟨.W0443, .keep, .degraded, check% Tests.PageBoxes.checks⟩,
+   ⟨.W0434, .keep, .degraded, check% Tests.Blueprint.blueprintChecks⟩,
    ⟨.W0394, .keep, .degraded, check% layoutInkChecks⟩,
    ⟨.E0395, .keep, .fails, check% layoutInkChecks⟩,
    ⟨.W0396, .keep, .degraded, check% layoutInkChecks⟩,

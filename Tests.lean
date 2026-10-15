@@ -125,6 +125,7 @@ import Tests.CodeDoc
 import Tests.LeanStatements
 import Tests.LeanViews
 import Tests.LeanProse
+import Tests.Blueprint
 import Tests.MarkdownInput
 import Tests.MarkdownDoors
 import Tests.MarkdownTwin
@@ -349,6 +350,7 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   Tests.LeanStatements.leanStatementChecks ref
   Tests.LeanViews.leanViewChecks ref
   Tests.LeanProse.leanProseChecks ref
+  Tests.Blueprint.blueprintChecks ref
   algorithmBackendChecks ref
   listingLanguageChecks ref
   mintedSettingsChecks ref

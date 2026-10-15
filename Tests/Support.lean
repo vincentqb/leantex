@@ -1242,10 +1242,13 @@ def compatRowSelfLoads (pkg call : String) : Bool :=
   hasStr call "\\usepackage" && hasStr call ("{" ++ pkg ++ "}")
 
 /-- The document a compat-index row elaborates as: the call at its place, its package loaded unless
-the call loads it. -/
+the call loads it; a `statement` call stands in an amsthm lemma labelled `lem:probe`. -/
 def compatRowSrc (pkg place call : String) : String :=
   let load := if compatRowSelfLoads pkg call then "" else s!"\\usepackage\{{pkg}}\n"
-  if place == "pre" then
+  if place == "statement" then
+    s!"\\documentclass\{article}\n\\usepackage\{amsthm}\n{load}\\newtheorem\{lemma}\{Lemma}\n\
+\\begin\{document}\n\\begin\{lemma}\\label\{lem:probe}\n{call}\nx\n\\end\{lemma}\n\\end\{document}"
+  else if place == "pre" then
     s!"\\documentclass\{article}\n{load}{call}\n\\begin\{document}\nx\n\\end\{document}"
   else if place == "frame" then
     let isClass := Compat.presentationClasses.contains pkg

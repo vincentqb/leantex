@@ -5,6 +5,7 @@ public import LeanTex.Core.Parse
 public import LeanTex.Core.Ir
 public import LeanTex.Core.LeanStatement
 public import LeanTex.Core.LeanProse
+public import LeanTex.Core.CodeLink
 import LeanTex.Core.Decl
 import LeanTex.Core.Hex
 
@@ -1558,16 +1559,6 @@ public def placeGives (template : String) (place : LinkPlace) : Bool :=
   (!names "{commit}" || (place.commit.isSome && place.dirty.isSome && place.tracked)) &&
     (!names "{path}" || place.path.isSome)
 
-/-- A link part as a URL carries it: each character but an unreserved one, and `/` in a path, as
-its UTF-8 bytes in percent escapes. -/
-public def urlPart (path : Bool) (s : String) : String :=
-  s.foldl (fun acc c =>
-    if (c.isAlphanum && c.toNat < 128) || c == '-' || c == '.' || c == '_' || c == '~' ||
-        (path && c == '/') then acc.push c
-    else (String.singleton c).toUTF8.foldl (fun out b =>
-      let pair := Hex.byte true b
-      out.push '%' ++ pair) acc) ""
-
 /-- A template's parts and what each declaration fills them with. -/
 private def linkParts (d : LeanFacts.Decl) (place : LinkPlace) : List (String × Option String) :=
   [("{name}", some (urlPart false d.name)), ("{module}", some (urlPart false d.moduleName)),
@@ -1577,8 +1568,7 @@ private def linkParts (d : LeanFacts.Decl) (place : LinkPlace) : List (String ×
 /-- A template's link for one declaration, none where it names a part the file's place lacks. -/
 public def expandLink (template : String) (d : LeanFacts.Decl) (place : LinkPlace) :
     Option String :=
-  (linkParts d place).foldlM (fun (acc : String) (key, value) =>
-    if (acc.splitOn key).length > 1 then value.map (acc.replace key ·) else some acc) template
+  expandParts template (linkParts d place)
 
 /-- A declaration's name as code, linked where a link is given. -/
 @[expose] public def nameRaws (d : LeanFacts.Decl) (pos : Pos) (link : Option String) : Array Raw :=

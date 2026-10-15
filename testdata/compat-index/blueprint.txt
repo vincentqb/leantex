@@ -1,0 +1,32 @@
+# source: leanblueprint's README ("Editing the blueprint" and "Blueprint
+# configuration"): \lean, \leanok, \uses, \proves, \notready, \discussion and
+# \mathlibok in a statement or proof; \home, \github, \dochome and \graphcolor
+# in the web version's preamble. The package's print macros set nothing for
+# \lean, \leanok, \notready, \mathlibok and \discussion, and an invisible \ref
+# for each \uses and \proves label, so lualatex's PDF of an invented
+# blueprint shows none of them, and neither does this engine's. A
+# statement's or proof's marks set one line on its web page and Markdown
+# twin: its Lean names as code, each linked as \dochome{D} links it,
+# D/find/#doc/{name}, through a Lean file's link template, and unlinked
+# without one; its status in its author's words, never a check; the labels
+# it proves and uses, as cross-references; its discussion, linked to
+# \github's issue. \home links nothing on the web page either. The dependency
+# graph is not drawn: one loss (W0434) over the load and each \graphcolor.
+# A statement row stands in an amsthm lemma labelled lem:probe.
+pre refuse:W0434 \usepackage{blueprint}
+pre refuse:W0434 \usepackage[showmore, dep_graph]{blueprint}
+pre inert:binds \dochome{https://example.org/docs}
+pre inert:binds \github{https://github.com/example/widgets}
+pre inert:shown-nowhere \home{https://example.org}
+pre refuse:W0434 \graphcolor{proved}{green}{Green}
+statement impl \lean{Example.Widget}
+statement impl \lean{Example.Widget, Example.Widget.double}
+statement impl \leanok
+statement impl \uses{lem:probe}
+statement impl \proves{lem:probe}
+statement impl \notready
+statement impl \mathlibok
+statement impl \discussion{12}
+body refuse:W0387 \lean{Example.Widget}
+body refuse:W0387 \leanok
+body refuse:W0340 \dochome{https://example.org/docs}

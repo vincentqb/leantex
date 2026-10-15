@@ -2382,7 +2382,7 @@ public def Style.label : Style → String
 
 
 /-- What a resolved cross-reference renders: `\ref`'s bare number, `\eqref`'s
-parenthesised one, or a cleveref form. -/
+parenthesised one, a cleveref form, or a blueprint's statement heading and number. -/
 public inductive RefForm where
   | plain
   | paren
@@ -2390,6 +2390,7 @@ public inductive RefForm where
   | crefRange (cap : Bool)
   | labelOnly
   | name (cap : Bool)
+  | headed
   deriving Repr, BEq
 
 /-- What a field citation prints of its entry instead of its label (biblatex manual §3.8.4). -/
@@ -9033,6 +9034,7 @@ private def dumpInline (ind : String) (x : Inline) : String :=
       | .labelOnly => "labelcref"
       | .name false => "namecref"
       | .name true => "nameCref"
+      | .headed => "headed"
     let tgt := match target with
       | some a => s!" -> #{a}"
       | none => ""
@@ -16461,10 +16463,11 @@ public inductive RefKind where
   deriving Repr, BEq
 
 /-- One label's binding: the number it bound to, with the kind of the numbered
-thing when elaboration made one. -/
+thing when elaboration made one and the heading word of the statement it numbers. -/
 public structure RefBinding where
   kind : Option RefKind
   num : String
+  heading : Option String := none
   deriving Repr, BEq
 
 private def indexStep {α : Type} (m : Std.HashMap String (String × α))
@@ -16580,6 +16583,11 @@ public def refText (loc : Locale) (form : RefForm) (b : RefBinding) : String :=
     match b.kind with
     | some k => if cap then (crefNameOf loc k).capOne else (crefNameOf loc k).one
     | none => b.num
+  | .headed =>
+    match b.heading, b.kind with
+    | some h, _ => h ++ "\u00a0" ++ b.num
+    | none, some k => (crefNameOf loc k).capOne ++ "\u00a0" ++ numText
+    | none, none => b.num
 
 public def resolveOneRefWith (loc : Locale)
     (look : String → Option (String × Option RefBinding)) (key : String)

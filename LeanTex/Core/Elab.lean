@@ -22,6 +22,7 @@ public import LeanTex.Core.ListingReply
 import LeanTex.Core.Listing
 import LeanTex.Core.LexerName
 public import LeanTex.Core.BeamerColor
+public import LeanTex.Core.Blueprint
 
 namespace LeanTex.Core.Elab
 
@@ -195,6 +196,8 @@ public structure Ctx where
   basePalette : Palette := {}
   /-- The cancel package's load options: the marks every formula draws. -/
   cancel : Math.CancelSpec := {}
+  /-- Where a blueprint's Lean names and discussions link, from its `\dochome` and `\github`. -/
+  blueprint : Blueprint.Site := {}
   /-- The document's main locale, which generated furniture is worded in. -/
   locale : Locale := Locale.en
   /-- Named lengths from `\tokens`. -/
@@ -547,6 +550,8 @@ public structure ESt where
   /-- The colorants the document declared, each with its first alternate. -/
   inks : Array Ink := #[]
   alg : AlgSt := {}
+  /-- The blueprint marks the innermost open statement or proof collects. -/
+  blueprint : Blueprint.Scope := {}
 
 /-- The declared title datum, empty when undeclared. -/
 public def ESt.titlePart (st : ESt) : TitleDatum → Array Inline
@@ -2771,6 +2776,37 @@ private def hspaceArm (ctx : Ctx) (raws : Array Raw) (i : Nat) (pos : Pos) :
     diag ctx .E0304 "missing argument 'length' for '\\hspace'" pos
     return (none, ⟨i + 1, by omega⟩)
 
+/-- One blueprint command at `raws[i]`: its mark on the innermost open statement or proof and its
+references' sites recorded, and after `\uses` and `\proves` the spaces their print macros ignore
+skipped; outside a statement or proof it marks nothing and is named. -/
+private def blueprintMarkArm (ctx : Ctx) (raws : Array Raw) (i : Nat) (name : String)
+    (arity : Nat) (pos : Pos) : EM { j : Nat // i < j } := do
+  let j0 := skipSpaces raws (i + 1)
+  have hj0 := skipSpaces_ge raws (i + 1)
+  let mut arg := ""
+  let mut next : { j : Nat // i < j } := ⟨i + 1, by omega⟩
+  if arity != 0 then
+    match raws[j0]? with
+    | some (.group g _) =>
+      arg := argText ctx g
+      next := ⟨j0 + 1, by omega⟩
+    | _ =>
+      diag ctx .E0304 s!"'\\{name}' needs a \{...} group" pos
+      return next
+  let ⟨j, hj⟩ := next
+  let scope := (← get).blueprint
+  if scope.inside then
+    let sites := (Blueprint.keys name arg).map fun k => (k, Ir.RefForm.headed, pos)
+    modify fun st => { st with blueprint := { scope with marks := scope.marks.mark name arg }
+                               refSites := st.refSites ++ sites }
+  else
+    warnOnce ctx ("blueprint:outside:" ++ name) .W0387
+      s!"'\\{name}' stands outside any statement or proof, so it marks nothing" pos
+      (help := "move it into the statement or proof it marks, after its '\\begin'")
+  if name == "uses" || name == "proves" then
+    return ⟨skipSpaces raws j, Nat.lt_of_lt_of_le hj (skipSpaces_ge raws j)⟩
+  return ⟨j, hj⟩
+
 /-- One rigid dimension through the shared affine parser. -/
 private def readInlineDim (ctx : Ctx) (command role : String)
     (body : Array Raw) (pos : Pos) : EM (Affine Measure) := do
@@ -3773,7 +3809,7 @@ private def refCtrlForm? (name : String) : Option Ir.RefForm :=
 
 private def refFormNeedsKind : Ir.RefForm → Bool
   | .cref _ | .crefRange _ | .name _ => true
-  | .plain | .paren | .labelOnly => false
+  | .plain | .paren | .labelOnly | .headed => false
 
 -- Sealed so the knot's fixpoint never unfolds their string code.
 seal footnoteOverride hasParRaw footnoteWarnPar footnoteWarnFace
@@ -4961,6 +4997,10 @@ private def elabInlinesCtrl (ctx : Ctx) (raws : Array Raw) (i : Nat)
   else if let some e := FaIcons.byMacro.get[name]? then
     elabInlinesFrom ctx raws (i + 1)
       ((flushText acc sb).push (.icon e.scalar e.label)) ""
+  else if let some arity := Blueprint.markArity? name then
+    let ⟨j, hj⟩ ← blueprintMarkArm ctx raws i name arity pos
+    have hadv : sliceWeight raws j < sliceWeight raws i := sliceWeight_lt raws h hj
+    elabInlinesFrom ctx raws j acc sb
   else if name == "pagenumber" then
     elabInlinesFrom ctx raws (i + 1) ((flushText acc sb).push .pageNumber) ""
   else if name == "pagecount" then
@@ -5417,7 +5457,7 @@ public def recoversInlineName (ctx : Ctx) (name : String) : Bool :=
   (Lex.textSymbols.lookup name).isNone && (modifierStyle? name).isNone &&
   (decorationCtrls.lookup name).isNone && (phantomAxes.lookup name).isNone &&
   (refCtrlForm? name).isNone && (Ir.natbibCites.lookup name).isNone &&
-  (FaIcons.byMacro.get[name]?).isNone &&
+  (FaIcons.byMacro.get[name]?).isNone && (Blueprint.markArity? name).isNone &&
   (if name.startsWith "insertshort" then
       TitleDatum.ofName? (name.drop "insertshort".length).copy
     else if name.startsWith "insert" then
@@ -9322,6 +9362,8 @@ private structure ThmOpen where
   outerPlaced : Bool
   target : Option Ir.RefBinding
   decls : List Ir.Decl
+  /-- The enclosing statement's blueprint marks, restored at the `\end`. -/
+  outer : Blueprint.Scope
 
 /-- The body of the last `\qedsymbol` redefinition at a proof body's top
 level. -/
@@ -9366,7 +9408,8 @@ private def thmOpen (ctx : Ctx) (n : String) (body : Array Raw) (pos : Pos) :
         | some c => pure (some (← stepThmCounter c))
         | none => pure none
       if let some nm := num then
-        modify fun st => { st with refTarget := some { kind := none, num := nm } }
+        modify fun st => { st with
+          refTarget := some { kind := none, num := nm, heading := some (Ir.plainText d.heading) } }
       pure (thmHead d.style d.heading num note, d.style == .plain || d.style == .kernel, false,
         d.style.space)
     | none =>
@@ -9381,10 +9424,11 @@ private def thmOpen (ctx : Ctx) (n : String) (body : Array Raw) (pos : Pos) :
   if qed then
     modify fun s => { s with ctr := { s.ctr with thm := { s.ctr.thm with
       proofs := s.ctr.thm.proofs + 1, qedPlaced := false } } }
+  modify fun s => { s with blueprint := { inside := true } }
   return ({ head := Ir.wrapDecls st.scope.blockDecls head, space, qed,
             qedDef := if qed then bodyQedDef? body else none,
             outerPlaced := st.ctr.thm.qedPlaced, target := st.refTarget,
-            decls := st.scope.blockDecls }, k)
+            decls := st.scope.blockDecls, outer := st.blueprint }, k)
 
 /-- Appends `q` to the last paragraph before any trailing epoch, or sets it as
 a paragraph of its own. -/
@@ -9400,7 +9444,9 @@ opened with the head, a proof ended with its QED, the whole set as its
 trivlist. -/
 private def thmClose (ctx : Ctx) (n : String) (o : ThmOpen) (inner : Array Block)
     (pos : Pos) : EM (Array Block) := do
-  modify fun st => { st with refTarget := o.target, scope := { st.scope with blockDecls := o.decls } }
+  let marks := (← get).blueprint.marks
+  modify fun st => { st with refTarget := o.target, scope := { st.scope with blockDecls := o.decls }
+                             blueprint := o.outer }
   let inner : Array Block := match inner[0]? with
     | some (Block.para c) => inner.modify 0 fun _ => .para (o.head ++ c)
     | _ => #[Block.para o.head] ++ inner
@@ -9425,6 +9471,10 @@ private def thmClose (ctx : Ctx) (n : String) (o : ThmOpen) (inner : Array Block
       let q : Array Inline := #[.strut {}, .fill, .text "\u2003"] ++ shown
       pure (appendLastPara inner q)
     else pure inner
+  -- The web page and its twin set the marks after the QED; the PDF, as the print macros, none.
+  let line := Blueprint.line ctx.styles ctx.blueprint marks
+  let inner := if line.isEmpty then inner
+    else inner.push (.only #["html", "md"] #[.para #[.styled (.size "small") line]])
   return #[.role (Ir.thmSpaceRole o.space) #[.role n inner]]
 
 /-- A markdown disclosure's head: whether `[open]` stands first, and where its
@@ -13541,6 +13591,8 @@ public inductive PDecl where
   | numberwithin (fmt : Option String) (counter : Option (String × String)) (pos : Pos)
   /-- A cancel package load's options, as written. -/
   | cancelOpts (src : String) (pos : Pos)
+  /-- A blueprint's `\github` or `\dochome`: the root its discussions or its Lean names link into. -/
+  | blueprintSite (name url : String) (pos : Pos)
   | stray
 
 /-- The preamble fold's state. -/
@@ -13787,6 +13839,12 @@ public def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run d
             i := i + 1
             out := out.push (.cancelOpts (rawSrc body) pos)
           | _ => out := out.push (.cancelOpts "" pos)
+        else if name == Compat.blueprintSiteMark then
+          match preamble[i]?, preamble[i + 1]? with
+          | some (.group key _), some (.group url _) =>
+            i := i + 2
+            out := out.push (.blueprintSite (rawSrc key) (rawSrc url).trimAscii.toString pos)
+          | _, _ => pure ()
         else if declCtrl.contains name then
           let j := skipSpaces preamble i
           let src : Option String := match preamble[j]? with
@@ -14589,6 +14647,11 @@ a heading; its numbers stand alone" pos
     -- Compat named every option the package does not declare at the load.
     let opts := (KeyVal.items src).toList
     return { s with ctx := { s.ctx with cancel := (Math.CancelSpec.ofOptions opts).1 } }
+  | .blueprintSite name url _ =>
+    let site := s.ctx.blueprint
+    let site := if name == "github" then { site with github := some url }
+      else { site with dochome := some url }
+    return { s with ctx := { s.ctx with blueprint := site } }
   | .unknownCmd name unclosed pos =>
     -- Set lines the engine or an open boundary reads are not unknown.
     if Compat.nativeReadCtrls.contains name ||

@@ -40,7 +40,7 @@ public def nativePackages : List String :=
    "libertine", "carlito", "xspace", "float", "biblatex", "appendix",
    "cleveref", "listings", "minted", "siunitx", "leantex",
    "algorithm2e", "algorithmicx", "algpseudocode", "algorithm", "lineno", "environ", "amsthm",
-   "cancel", "animate", "markdown", "ulem", "tikz-cd", "colorspace"]
+   "cancel", "animate", "markdown", "ulem", "tikz-cd", "colorspace", "blueprint"]
 
 /-- Beamer's colour elements, each mapped onto the palette roles its `fg=` and
 `bg=` declare; an empty role is a side the engine names rather than drops. -/
@@ -944,11 +944,13 @@ public theorem atSource_record_exact (sources : SourceTriggers) (file : String)
 the loss's census key. -/
 private def say (code : DiagCode) (msg : String) (pos : Pos) (help : Option String := none)
     (demote : Bool := false) (subject : Option String := none)
-    (refused : Option String := none) (output : Option Diag.Output := none) : M Unit :=
+    (refused : Option String := none) (output : Option Diag.Output := none)
+    (detail : Option String := none) : M Unit :=
   modify fun st => { st with
     diags := st.diags.push (
       let d := atSource st pos
-        (Diag.of code msg (some ⟨st.file, pos⟩) help subject refused (output := output))
+        (Diag.of code msg (some ⟨st.file, pos⟩) help subject refused (output := output)
+          (detail := detail))
       if demote then d.demote else d) }
 
 /-- A diagnostic said once per namespaced key (`ctrl:`, `spec:`, `beamer:`); a
@@ -6816,6 +6818,50 @@ private def biblatexMulticiteArm (name : String) (pos : Pos) (raws : Array Raw) 
     else #[.ctrl "citetext" pos, .group body pos]
   return some (out, j)
 
+/-- The mark a blueprint's `\github` or `\dochome` leaves in the preamble, its command's name and
+its URL in the groups after it. -/
+public def blueprintSiteMark : String := "blueprint site"
+
+private def blueprintLoaded : M Bool := do
+  return (← get).loads.pkgs.any (·.1 == "blueprint")
+
+/-- Names leanblueprint's dependency graph, which the engine does not draw, at one site asking for
+it, the site's particulars its detail. -/
+private def blueprintGraph (pos : Pos) (detail : Option String) : M Unit :=
+  say .W0434 "leanblueprint's dependency graph is not drawn; each statement's web page names the \
+statements it uses and proves" pos
+    (help := some "each statement's uses stand as cross-references beside it; \\allow{W0434} \
+accepts the loss")
+    (subject := some "package:blueprint") (detail := detail)
+
+/-- leanblueprint's `\graphcolor{type}{colour}{description}`, a colour of the dependency graph,
+named with that graph. -/
+private def blueprintGraphColorArm (pos : Pos) (raws : Array Raw) (start : Nat) :
+    M (Option (Array Raw × Nat)) := do
+  unless ← blueprintLoaded do return none
+  let (args, k) := takeGroups raws start 3
+  if args.size != 3 then return none
+  blueprintGraph pos (some s!"'\\graphcolor\{{(rawSrc (args.getD 0 #[])).trimAscii.toString}}' colours \
+that graph")
+  return some (#[], k)
+
+/-- leanblueprint's preamble declarations: `\home`, which its web page links nothing to, and
+`\github` and `\dochome`, the roots its discussions and Lean names link into. -/
+private def blueprintSiteArm (name : String) (pos : Pos) (raws : Array Raw) (start : Nat) :
+    M (Option (Array Raw × Nat)) := do
+  unless ← blueprintLoaded do return none
+  let (args, k) := takeGroups raws start 1
+  let some url := args[0]? | return none
+  if (← get).inDoc then
+    sayOnce ("ctrl:" ++ name) .W0340
+      s!"'\\{name}' is read in the preamble; in the body it is ignored" pos
+      (help := "declare it in the preamble, before '\\begin{document}'")
+    return some (#[], k)
+  if name == "home" then
+    discard "\\home" "the web blueprint links nothing to the project's home page" "home" pos
+    return some (#[], k)
+  return some (#[.ctrl blueprintSiteMark pos, .group #[.word name pos] pos, .group url pos], k)
+
 private def rewriteCtrlLaterNamed (name : String) (pos : Pos) (raws : Array Raw)
     (start : Nat) : M (Option (Array Raw × Nat)) := do
   match name with
@@ -7763,6 +7809,8 @@ and 'transparent=<n>' are understood")
       say .W0101 s!"'\\KOMAoptions' entries without a native equivalent were \
 dropped: {String.intercalate ", " dropped}" pos
     return some (#[], k)
+  | "graphcolor" => blueprintGraphColorArm pos raws start
+  | "home" | "github" | "dochome" => blueprintSiteArm name pos raws start
   | "column" =>
     let (_, k) := takeGroups raws start 1
     sayOnce "ctrl:column" .W0104
@@ -7959,6 +8007,12 @@ no package options are supported by the strict native Markdown dialect" pos
 its rule paddings are measured in Latin Modern" pos
       (help := some s!"load booktabs before '{cmd}', where LaTeX measures them in Latin Modern too")
       (subject := some "package:booktabs")
+  else if p == "blueprint" then
+    -- Its options draw its web page's graph and proof buttons; every other one reads nothing.
+    let showmore := (KeyVal.items (opt.getD "")).any fun o => (KeyVal.entry o).1 == "showmore"
+    blueprintGraph pos (if showmore then
+      some "'showmore' asks for buttons showing or hiding every proof, which are not drawn either"
+      else none)
   else if p == "inputenc" && Encoding.declaresNonUtf8 (opt.getD "") then
     -- premise: inputDecodingChecks — the driver's one note names each governed file
     recordInputenc (opt.getD "")
@@ -9445,9 +9499,9 @@ private theorem state_array_forIn_inv {α β : Type} (P : St → Prop)
 
 private theorem say_tailDiag (d : Diag) (code : DiagCode) (msg : String)
     (pos : Pos) (help : Option String) (demote : Bool)
-    (subject refused : Option String) (output : Option Diag.Output) (st : St)
+    (subject refused detail : Option String) (output : Option Diag.Output) (st : St)
     (h : TailDiag d st) :
-    TailDiag d (say code msg pos help demote subject refused output st).2 :=
+    TailDiag d (say code msg pos help demote subject refused output detail st).2 :=
   ⟨h.1, Array.mem_push.mpr (Or.inl h.2)⟩
 
 private theorem sayOnce_minipage_tailDiag (d : Diag) (code : DiagCode)
