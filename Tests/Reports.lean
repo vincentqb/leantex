@@ -1720,7 +1720,7 @@ def reports : List Report := [
       "the keys geometry, crop, natbib, biblatex, cancel, the font packages and the KOMA and microtype setups dropped, listed under one W0101, are each named W0104 keyed by the key; biblatex's hyperref=true, which asks for citation links nothing writes, and a main fontenc encoding that sets Latin input in another script's glyphs (OT2, T3, LGR, OML, OMS, OMX) were noted as losing nothing and are named",
       "the guards added on the landing pre-check, each failing on 36a5f348: a length value the door cannot read was named W0104 as a setting nothing reads, and a word given as the value lost the door's translation note, so the coverage probe read setlength as unknown; it is named once W0107, a degraded operand keyed by its length, beside the translation, and the page ships; report's own title page, an article's titlepage and a report's notitlepage, which set the abstract's form, were named unread class options and are read"]
     state := .guarded "3c258580" .before .author },
-  { id := "R193", date := "2026-10-15"
+  { id := "R194", date := "2026-10-15"
     what := "a deck covered its pending overlay steps at the engine's own 38%, and each bundle at a share of its own, where beamer hides them unless the document declares how it covers, so a deck's PDF and web page showed steps lualatex never shows; and a covered share declared decorative was still judged"
     pins := [check% Tests.PaletteCover.coverChecks, check% Tests.PaletteCover.deckChecks,
       check% Tests.PaletteCover.hiddenChecks, check% overlayVisibleChecks,
@@ -1745,7 +1745,7 @@ def reports : List Report := [
       "the corpus decks declaring no share change visibly against main on the step pages whose pending content is now hidden, in PDF and HTML alike: footer-mixed, furniture, lists-deck, overlays-blocks, overlays, tables-deck, talk and themed; deck, which declares beamer's transparent share, changes only on its web page, where its pending step no longer slides in; the rest ship as before",
       "a private deck declaring its covered steps decorative, built under lualatex -Werror and leantex, PDF and HTML: its colours and every page as before, and its leantex builds report no covered-state loss where they reported one each"]
     state := .guarded "5139d571" .revert .author },
-  { id := "R194", date := "2026-10-15"
+  { id := "R195", date := "2026-10-15"
     what := "a deck's web page slid each step in by a rem as it faded in, so a revealed step's text moved, where it should only fade"
     pins := [check% deckStepChecks, check% deckRangeEndChecks, check% deckStillChecks]
     accept := ["in Chromium 151.0.7922.34, on an invented stepped deck, the second step's box stands at x 43.19 px at its fade's start, middle and end, its opacity 0, 0.5 and 1 where steps hide and 0.15, 0.575 and 1 at beamer's transparent share; with the slide-in restored it starts 25.69 px, one rem, to the right and moves",
