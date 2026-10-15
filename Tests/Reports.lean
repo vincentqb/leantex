@@ -1723,15 +1723,27 @@ def reports : List Report := [
   { id := "R193", date := "2026-10-15"
     what := "a deck covered its pending overlay steps at the engine's own 38%, and each bundle at a share of its own, where beamer hides them unless the document declares how it covers, so a deck's PDF and web page showed steps lualatex never shows; and a covered share declared decorative was still judged"
     pins := [check% Tests.PaletteCover.coverChecks, check% Tests.PaletteCover.deckChecks,
-      check% Tests.PaletteCover.hiddenChecks, check% Tests.SeedSeries.seriesScriptChecks,
+      check% Tests.PaletteCover.hiddenChecks, check% overlayVisibleChecks,
+      check% Tests.AlertMark.placeChecks, check% Tests.SeedSeries.seriesScriptChecks,
       check% Tests.SeedPalette.scriptChecks, thm% SeedPalette.generated_cover_contract]
     accept := ["beamer under lualatex, on a probe of invented words: a deck declaring nothing and one declaring `invisible` ship no pending word on its first step, `transparent` ships it at 15% of the ink over the page and `transparent=40` at 40%; leantex ships the same steps in PDF and HTML, its PDF mixing in Oklab, so its covered word stands about 0.02 darker than beamer's",
-      "twelve of the guards' assertions fail with the hidden default reverted onto the recorded commit, the engine's 38% and the bundles' shares back: a deck declaring no share judges and ships its pending step, and eight corpus census facts see the pending content on the step pages that now hide it",
-      "twenty fail with the seeds bound by the cover again and a decorative share judged: a seed meeting its floor moves at fifteen shares and schemes, the deck's alert leaves the accent and reports nothing, and the decorative deck reports its alert",
+      "a hundred and seventy-one of the guards' assertions fail with the hidden default reverted onto the recorded commit, the engine's 38% and the bundles' shares back: an uncover and an onslide in a deck declaring no share leave visible's pages in every overlay shape, a deck declaring no share judges and ships its pending step, items, block and alert mark, a share declared before a theme gives way to the bundle's, and eight corpus census facts see the pending content on the step pages that now hide it",
+      "twelve fail with the hidden cover recolouring what it covers and leaving a lifted item lead as it stands: an uncover in a kerned face where colours meet or ligatures cross them, and one over a description list, no longer ships visible's pages, and a hidden item's image and markers show",
+      "two fail with a hidden item's marker outside its lead's region: a marker in its own colour and an image marker ship on the step hiding their items",
+      "five fail with a stepped item's step inside its li on the web page, its marker outside the step",
+      "two fail with a closed range's declared end carried as a second li inside the item's: a list item stands inside another, and an item no longer carries its selector on its own element",
+      "five fail with a cover declared in the body reaching the judge alone: nothing names it, and the judge reads a share or a colour no page covers with",
+      "twenty-three fail with the seeds bound by the cover again and a decorative share judged: a seed meeting its floor moves at fifteen shares and schemes, the deck's alert leaves the accent and reports nothing, and the decorative deck reports its alert",
       "forty-four fail with the derived tones unbound, a hidden word's gap shipped as a word gap and a decorative share judged: thirty derived tones lose the covered-state contract or a browser's alpha, the light accent's alert neither darkens nor keeps it at a declared share, the export's first series and alert follow, and seven corpus decks ship word gaps beside no ink",
-      "the corpus decks declaring no share change visibly against main on the step pages whose pending content is now hidden, in PDF and HTML alike: footer-mixed, furniture, lists-deck, overlays-blocks, overlays, tables-deck, talk and themed; the rest ship as before",
+      "the corpus decks declaring no share change visibly against main on the step pages whose pending content is now hidden, in PDF and HTML alike: footer-mixed, furniture, lists-deck, overlays-blocks, overlays, tables-deck, talk and themed; deck, which declares beamer's transparent share, changes only on its web page, where its pending step no longer slides in; the rest ship as before",
       "a private deck declaring its covered steps decorative, built under lualatex -Werror and leantex, PDF and HTML: its colours and every page as before, and its leantex builds report no covered-state loss where they reported one each"]
-    state := .guarded "0d395bd7" .revert .author }
+    state := .guarded "5139d571" .revert .author },
+  { id := "R194", date := "2026-10-15"
+    what := "a deck's web page slid each step in by a rem as it faded in, so a revealed step's text moved, where it should only fade"
+    pins := [check% deckStepChecks, check% deckRangeEndChecks, check% deckStillChecks]
+    accept := ["in Chromium 151.0.7922.34, on an invented stepped deck, the second step's box stands at x 43.19 px at its fade's start, middle and end, its opacity 0, 0.5 and 1 where steps hide and 0.15, 0.575 and 1 at beamer's transparent share; with the slide-in restored it starts 25.69 px, one rem, to the right and moves",
+      "thirteen of the guards' assertions fail with the slide-in restored onto the recorded commit: the uncover's keyframes and the still-steps check of both step decks, and ten stepped corpus decks'"]
+    state := .guarded "5139d571" .revert .author }
 ]
 
 /-- The reports guarded but never seen failing, a count held in both directions. -/
