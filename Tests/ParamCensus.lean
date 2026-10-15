@@ -444,6 +444,9 @@ def paramTruthChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
       firstGap fonts (parskip "10pt plus1pt") == some (Dim.pt 22) &&
       firstGap fonts (parskip "\\medskipamount") == some (Dim.pt 18))
   let hyper (o : String) : String := plain "" s!"\\usepackage[{o}]\{hyperref}"
+  let titled := "\\usepackage{hyperref}\\hypersetup{pdftitle={Probe}, " ++ invented ++ "=1}"
+  t "hyperref: a key after a metadata key is read as one before it"
+    (warnsOf (plain "" titled) invented)
   t "hyperref: the outline it asks for is named, and the none it asks for is not"
     (warnsOf (hyper "bookmarks") "bookmarks" && warnsOf (hyper "bookmarks=true") "bookmarks" &&
       !warnsOf (hyper "bookmarks=false") "bookmarks")
