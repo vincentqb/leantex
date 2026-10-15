@@ -767,11 +767,11 @@ private theorem scanLen_bound (st : Scan) (l : List Char) (n m : Nat)
     have := ih m h
     simp only [List.length_cons]
     omega
-  | case4 st c rest n _ _ hs =>
+  | case4 _ c rest n _ _ _ =>
     simp only [Option.some.injEq] at h
     simp only [List.length_cons]
     omega
-  | case5 st c rest n _ _ st' hs ih =>
+  | case5 _ c rest n _ _ st' _ ih =>
     have := ih m h
     simp only [List.length_cons]
     omega
@@ -901,7 +901,7 @@ private theorem atomsGo_made (acc : Array (List Char)) (l : List Char)
     (hacc : ∀ a ∈ acc.toList, Whole a) : Made (atomsGo acc l).toList := by
   fun_induction atomsGo acc l with
   | case1 acc => simpa using made_append acc.toList [] hacc trivial
-  | case2 acc c rest ih => exact ih (push_whole hacc (.inl ⟨c, rfl⟩))
+  | case2 acc c _ ih => exact ih (push_whole hacc (.inl ⟨c, rfl⟩))
   | case3 acc c rest hesc ho ih =>
     by_cases hc : c = '\\'
     · subst hc
