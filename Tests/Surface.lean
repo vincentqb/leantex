@@ -1558,7 +1558,7 @@ def linenoChecks (ref : IO.Ref (List String)) : IO Unit := do
       "\\begin{document}x\\end{document}") == ["E0323", "E0323"])
   t "the pagewise option is refused named"
     ((warnCodes ("\\documentclass{article}\\usepackage[pagewise]{lineno}" ++
-      "\\begin{document}x\\end{document}")) == ["W0101"])
+      "\\begin{document}x\\end{document}")) == ["W0104"])
   t "no class turns line numbers on"
     ((pageOf "").linenumbers == none &&
      !(elabStr "\\documentclass{article}\\begin{document}x\\end{document}").1.lineNumbersOn)

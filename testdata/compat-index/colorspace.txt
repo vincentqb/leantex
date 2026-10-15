@@ -18,8 +18,8 @@ pre inert:native-resources \resetpagecolorspace
 body refuse:W0104 \overprintstate{1}
 body refuse:W0104 \textoverprint{x}
 body refuse:W0104 \textoverprint[1]{x}
-pre refuse:W0101 \usepackage[overprint]{colorspace}
-pre refuse:W0101 \usepackage[knockout]{colorspace}
-pre refuse:W0101 \usepackage[opm=0]{colorspace}
+pre refuse:W0104 \usepackage[overprint]{colorspace}
+pre refuse:W0104 \usepackage[knockout]{colorspace}
+pre refuse:W0104 \usepackage[opm=0]{colorspace}
 pre inert:default \usepackage[opm=1]{colorspace}
 pre inert:lab-only \usepackage[illuminant=d65]{colorspace}

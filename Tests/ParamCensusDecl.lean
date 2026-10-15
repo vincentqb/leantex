@@ -41,6 +41,7 @@ def paletteRow : Row :=
   { reader := "\\palette"
     settings := Ir.Role.keyed.toList.map (·.1)
     keyOf := id
+    anyDoc := true
     docs := [fun o => article "" (decl o) paintedBody, fun o => paintedDeck "" (decl o),
       fun o => paintedDeck "" ("\\usetheme{moloch}" ++ decl o),
       fun o => paintedDeck "" (s!"\\palette\{ titlepagebg = #F5F0E6 }" ++ decl o)] }
@@ -59,18 +60,16 @@ def listingRows : List Row :=
   [{ reader := "\\lstset"
      settings := listingSettings
      docs := [fun o => article "" (pre ++ (o.map (s!"\\lstset\{{·}}")).getD "")
-         s!"\\begin\{lstlisting}{code}\\end\{lstlisting}See listing~\\ref\{lst:probe}.",
-       fun o => article "" (pre ++ (o.map (s!"\\lstset\{{·}}")).getD "") ""] },
+         s!"\\begin\{lstlisting}{code}\\end\{lstlisting}See listing~\\ref\{lst:probe}."] },
    { reader := "\\setminted"
      settings := listingSettings
      docs := [fun o => article "" (pre ++ (o.map (s!"\\setminted\{{·}}")).getD "")
-         s!"\\begin\{minted}\{python}{code}\\end\{minted}See listing~\\ref\{lst:probe}.",
-       fun o => article "" (pre ++ (o.map (s!"\\setminted\{{·}}")).getD "") ""] },
+         s!"\\begin\{minted}\{python}{code}\\end\{minted}See listing~\\ref\{lst:probe}."] },
    { reader := "\\setmintedinline"
      settings := Compat.mintedDisplayKeys.map (· ++ "=2") ++ listingSettings
+     inert := fun s => Compat.mintedDisplayKeys.contains (KeyVal.entry s).1
      docs := [fun o => article "" (pre ++ (o.map (s!"\\setmintedinline\{{·}}")).getD "")
-         "Inline \\mintinline{python}{probe(x)\treturn} code.",
-       fun o => article "" (pre ++ (o.map (s!"\\setmintedinline\{{·}}")).getD "") ""] }]
+         "Inline \\mintinline{python}{probe(x)\treturn} code."] }]
 
 /-- enumitem's keys, the length keys and label the reader's table translates and keys it names,
 set for a kind, a kind's deeper level, a level of every kind, and every list, each before another
@@ -106,16 +105,19 @@ def tcolorboxRows : List Row :=
   let titled := "\\begin{tcolorbox}[title=Box title]Boxed words.\\end{tcolorbox}"
   [{ reader := "\\begin{tcolorbox}"
      settings := keys
+     tries := fun s i => i == 1 || !hasStr (KeyVal.entry s).1 "title"
      docs := [fun o => article "" pre
          s!"\\begin\{tcolorbox}{bracketed o}Boxed words.\\end\{tcolorbox}",
        fun o => article "" pre
          s!"\\begin\{tcolorbox}[title=Box title{(o.map ("," ++ ·)).getD ""}]Boxed words.\\end\{tcolorbox}"] },
    { reader := "\\tcbset"
      settings := keys
+     tries := fun s i => i == 1 || !hasStr (KeyVal.entry s).1 "title"
      docs := [fun o => article "" (pre ++ (o.map (s!"\\tcbset\{{·}}")).getD "") box,
        fun o => article "" (pre ++ (o.map (s!"\\tcbset\{{·}}")).getD "") titled] },
    { reader := "\\newtcolorbox"
      settings := keys
+     tries := fun s i => i == 1 || !hasStr (KeyVal.entry s).1 "title"
      docs := [fun o => article "" (pre ++
          s!"\\newtcolorbox\{probebox}\{{o.getD ""}}") "\\begin{probebox}Boxed words.\\end{probebox}",
        fun o => article "" (pre ++
@@ -146,6 +148,7 @@ def beamerRows : List Row :=
        "frametitle{\\insertframetitle}", "background{}", "blocks[rounded]",
        "section in toc[sections numbered]", "censusprobetemplate{}"]
      keyOf := elementOf
+     inert := fun s => s.endsWith "{}" && Compat.emptyTemplates.contains (elementOf s)
      docs := [fun o => paintedDeck "" ((o.map fun s =>
        let e := elementOf s
        s!"\\setbeamertemplate\{{e}}{(s.drop e.length).toString}\n\\newcommand\{\\probeword}\{x}").getD ""),
@@ -161,6 +164,7 @@ def beamerRows : List Row :=
        ["frametitle|series=\\bfseries", "frametitle|shape=\\itshape", "normal text|family=\\rmfamily",
         "footline|size=\\tiny", "item|size=\\small", "censusprobeelement|size=\\tiny"]
      keyOf := fun s => (elementSplit s).1
+     anyDoc := true
      docs := [fun o => paintedDeck "" (fontOf o), fun o => paintedDeck "" ("\\usetheme{moloch}" ++ fontOf o),
        fun o => paintedDeck "" (fontOf o ++ "\\setbeamercolor{frametitle}{bg=blue,fg=white}"),
        fun o => s!"\\documentclass\{beamer}\n{fontOf o}\n\\begin\{document}\n\\begin\{frame}" ++
@@ -186,6 +190,7 @@ def counterDeclRows : List Row :=
      settings := ["secnumdepth", "tocdepth", "page", "section", "subsection", "equation", "figure",
        "table", "footnote", "enumi", "censusprobecounter"]
      keyOf := id
+     anyDoc := true
      docs := [fun o => article "" "\\newcounter{censusprobecounter}"
        ((o.map (s!"\\addtocounter\{{·}}\{2}")).getD "" ++ numbered),
        fun o => article "" "" ("\\section{Early words}" ++

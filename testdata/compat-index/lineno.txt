@@ -39,4 +39,4 @@ pre refuse:W0301 \linenumberdisplaymath
 pre refuse:W0301 \nolinenumberdisplaymath
 body refuse:W0301 \linelabel{k}
 body refuse:W0302 \begin{linenomath}x\end{linenomath}
-pre refuse:W0101 \usepackage[pagewise]{lineno}
+pre refuse:W0104 \usepackage[pagewise]{lineno}

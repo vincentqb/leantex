@@ -88,9 +88,9 @@ def tcolorboxChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Uni
     "\\block[before=6pt]{}\\begin{block}{Gap}SpacedBody\\end{block}\\block[before=3pt]{}"
   t "tcolorbox: declared gaps use the native spacing blocks"
     (samePages fonts skipped skippedNative)
-  t "tcolorbox: unsupported gap collision semantics remain accounted"
-    ((lowered "before skip=6pt,after skip=3pt" "").unsupported ==
-      #["before skip", "after skip"])
+  t "tcolorbox: gaps the native block spaces are accounted as applied in part"
+    ((lowered "before skip=6pt,after skip=3pt" "").inPart == #["before skip", "after skip"] &&
+      (lowered "before skip=6pt,after skip=3pt" "").unsupported.isEmpty)
   let invalidGap := lowered "before skip={3pt],title={Injected}}" "SafeBody"
   let (invalidGapDoc, _) := Elab.runRaws "probe" (wrap invalidGap.raws)
   t "tcolorbox: invalid spacing cannot escape into native syntax"
@@ -163,13 +163,13 @@ def tcolorboxEffectChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
     "\\newtcolorbox{panel}{title={Heading},unknown={\\global\\def\\hiddenprobe{Leaked}}}"
     ("\\begin{panel}" ++ defined ++ "\\end{panel}" ++ defined)
     "\\begin{block}{Heading}Inert\\end{block}Inert"
-    (some .W0110) (some "\\begin") (some "panel")
+    (some .W0104) (some "\\begin") (some "param:\\begin{panel}:unknown")
   sourceCaseChecks ref fonts "unsupported local flag cannot choose body"
     ("\\newif\\ifchoiceprobe" ++
       "\\newtcolorbox{panel}{title={Heading},unknown=\\choiceprobetrue}")
     ("\\begin{panel}" ++ chosen ++ "\\end{panel}" ++ chosen)
     "\\begin{block}{Heading}Default\\end{block}Default"
-    (some .W0110) (some "\\begin") (some "panel")
+    (some .W0104) (some "\\begin") (some "param:\\begin{panel}:unknown")
   for (key, initial, final, title, body) in [
       ("title", "\\global\\def\\hiddenprobe{Leaked}Discarded", "Heading",
         "Heading", "Inert"),
@@ -392,7 +392,7 @@ def tcolorboxScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
       ("\\begin{panel}Body\\end{panel}" ++
         "\\ifdefined\\hiddenprobe Leaked\\else Inert\\fi")
       "\\begin{block}{Heading}Body\\end{block}Inert"
-      (some .W0110) (some "\\begin") (some "panel")
+      (some .W0104) (some "\\begin") (some s!"param:\\begin\{panel}:{key}")
   for (label, pre, body, control, command) in [
       ("builtin declaration refused",
         "\\newtcolorbox{itemize}{title={Discarded},fontupper=\\small}",

@@ -144,6 +144,11 @@ private def beamerFontKeys : List String := ["size", "shape", "series", "family"
 private def articleClasses : List String :=
   ["scrartcl", "scrreprt", "scrbook", "report", "book", "memoir", "letter"]
 
+/-- Whether written class options ask for title pages, `notitlepage` winning as the classes declare
+it last. -/
+private def asksTitlePage (opts : List String) : Bool :=
+  !opts.contains "notitlepage" && opts.contains "titlepage"
+
 /-- The article-like classes whose default is a title page. -/
 private def titlepageClasses : List String := ["report", "book"]
 
@@ -255,6 +260,9 @@ public def tableEnvs : List String := ["tabular", "tabular*", "tabularx"]
 /-- Math-mode entry environments, whose bodies belong to the math parser. -/
 private def mathEnvs : List String :=
   ["equation", "equation*", "displaymath", "align", "align*", "gather", "gather*"]
+
+/-- The tokens the page reads once, from the preamble's value. -/
+private def pageTokens : List String := ["footins", "topskip", "partopsep"]
 
 /-- The kernel and booktabs length parameters, each with its site; any other
 name is a length of the document's own. -/
@@ -2134,8 +2142,15 @@ private def counterRead (src counter : String) : Bool :=
     "\\fnsymbol"].any (fun c => (src.splitOn (c ++ braced)).length > 1) ||
     (src.splitOn ("\\the" ++ counter)).length > 1 || (src.splitOn ("[" ++ counter ++ "]")).length > 1
 
-/-- beamer's templates whose default draws nothing, which an empty body asks for again. -/
-private def emptyByDefaultTemplates : List String := ["headline", "background"]
+/-- Whether a template body prints only its element's own text, beamer's `\\insert` command of that
+name, which the engine draws in its own element. -/
+private def insertsOwn (element body : String) : Bool :=
+  let kept := body.toList.filter fun c => !c.isWhitespace && c != '{' && c != '}'
+  String.ofList kept == "\\insert" ++ String.ofList (element.toList.filter (· != ' '))
+
+/-- The templates an empty body leaves as the engine draws them: no navigation symbols, and beamer's
+empty headline and background. -/
+public def emptyTemplates : List String := ["navigation symbols", "headline", "background"]
 
 /-- lineno's options naming the numbering the engine sets once `\linenumbers` turns it on. -/
 public def linenoInert : List String := ["left", "running", "displaymath", "mathlines"]
@@ -2154,8 +2169,8 @@ private def linenoLoad (opt : String) (pos : Pos) : M (Array Raw) := do
       became s!"\\usepackage[{o}]\{lineno}" native pos (subject := some (paramSubject "usepackage:lineno" o))
       out := out ++ (← synthAt native pos)
     else
-      say .W0101 s!"lineno option '{o}' selects a numbering mode the \
-engine does not have; continuous numbers in the left margin stand" pos
+      sayOnce ("param:usepackage:lineno:" ++ o) .W0104 s!"lineno option '{o}' selects a numbering mode \
+the engine does not have; continuous numbers in the left margin stand" pos
   discard "\\usepackage{lineno}" "\\page{ linenumbers = on } turns line numbers on"
     "usepackage:lineno" pos
   return out
@@ -2172,10 +2187,9 @@ private def unicodeMathOptions (what opt : String) (pos : Pos) : M (Array Raw) :
       | some _, some source => sources := sources.push s!"{key} = {source.name}"
       | _, _ => dropped := dropped.push entry
     | (_, none) => dropped := dropped.push entry
-  unless dropped.isEmpty do
-    say .W0101
-      s!"unicode-math options without a model were dropped: {String.intercalate ", " dropped.toList}"
-      pos (subject := some "usepackage:unicode-math:options")
+  for e in dropped do
+    unreadParam "usepackage:unicode-math" (KeyVal.entry e).1 s!"unicode-math option '{e}'" pos
+      (help := "the math alphabets' source keys (mathrm=sym, ...) carry over")
   if sources.isEmpty then
     discard what "the engine keeps its existing math-source policy"
       "usepackage:unicode-math" pos
@@ -4484,11 +4498,13 @@ private def condOne [Monad m]
         | some (.ready prepared) => do
           let lowered := prepared.lower body'.raws p
           became s!"\\begin\{{n}}" "a native block" p
-          unless lowered.unsupported.isEmpty do
-            say .W0110
-              s!"these box keys are not fully applied: {String.intercalate ", " lowered.unsupported.toList}"
-              p (help := "use native block styles for portable decoration")
-              (subject := some ("tcolorbox:" ++ n))
+          for key in lowered.inPart do
+            sayOnce ("partial:\\begin{" ++ n ++ "}:" ++ key) .W0110
+              s!"'\\begin\{{n}}' key '{key}' is not fully applied: the native block spaces the box" p
+              (help := "use native block styles for portable decoration")
+          for key in lowered.unsupported do
+            unreadParam s!"\\begin\{{n}}" key s!"'\\begin\{{n}}' key '{key}'" p
+              (help := "use native block styles for portable decoration")
           pure (Raw.env Parse.scopeEnv lowered.raws p)
         | some .refused => pure (.group (body'.raws.extract head.size body'.raws.size) p)
         | none => pure (.env n (body'.raws.extract head.size body'.raws.size) p)
@@ -5428,6 +5444,9 @@ private def setLength (n src what : String) (pos : Pos) : M (Array Raw) := do
     if st.inDoc && !st.inDef && key == "textwidth" then
       return ← nothing "'\\begin{document}' set the lines' measure from it, and no later value \
 moves a line" (tokens := false)
+    -- premise: paramCensusChecks — a page setting in the body ships the page without it
+    if st.inDoc && !st.inDef then
+      return ← named "sets the page, which the body leaves as the preamble declared it"
     emit s!"\\page\{ {key} = {src} }"
   | .token t, _ =>
     unless st.inDef do
@@ -5437,6 +5456,9 @@ moves a line" (tokens := false)
     if !st.inDef && !preamble && !st.inList && reachesLists st n then
       named "opens the lists after it, whose level macro leaves it be; a list here opens \
 with the space its level sets in the preamble, and only the trivlists after it read it"
+    -- premise: paramCensusChecks — a page-level token in the body ships the page without it
+    else if !st.inDef && !preamble && !st.inList && pageTokens.contains t then
+      named "is read where the preamble sets it; the body leaves the page as declared"
     -- A preamble `\topsep` reaches only a trivlist outside every list.
     else if !st.inDef && preamble && n == Ir.trivlistSkipName then
       became what s!"\\tokens\{ {t} = {src} }, which a trivlist outside a list reads; \
@@ -5997,9 +6019,9 @@ private def beamerposter (opts : String) (pos : Pos) : M (Array Raw) := do
   keys := keys.push s!"fontsize = {ptTenThousandths (2488 * cents)}"
   let native := s!"\\documentclass\{poster}\\page\{ {String.intercalate ", " keys.toList} }"
   became "\\usepackage{beamerposter}" native pos
-  unless dropped.isEmpty do
-    say .W0367 s!"beamerposter options outside the poster model: \
-{String.intercalate ", " dropped.toList}; ignored" pos
+  for o in dropped do
+    sayOnce ("param:usepackage:beamerposter:" ++ (KeyVal.entry o).1) .W0367
+      s!"beamerposter option '{o}' is outside the poster model; ignored" pos
       (help := "size, orientation, scale, and custom width/height carry over; \
 \\page{ ... } declares anything further")
   synthAt native pos
@@ -6734,8 +6756,9 @@ private def colorspaceOptions (opts : String) (pos : Pos) : M Unit := do
     discard "\\usepackage{colorspace}" "the engine writes each ink's separation itself"
       "usepackage:colorspace" pos
   else
-    say .W0101 s!"colorspace options without a native equivalent were dropped: \
-{String.intercalate ", " given.toList}" pos
+    for o in given do
+      unreadParam "usepackage:colorspace" (KeyVal.entry o).1 s!"colorspace option '{o}'" pos
+        (help := "the engine writes each ink's separation itself")
 
 /-- The marker for xcolor's global page-ground reset, unforgeable because `@` is
 no surface control-word character. -/
@@ -8421,13 +8444,18 @@ defines; those blocks keep beamer's default template" pos
       if emptyBody && element == "navigation symbols" then
         inertParam "\\setbeamertemplate" element s!"\\setbeamertemplate\{{element}}\{}"
           "the engine draws no navigation symbols" pos
-      else if emptyBody && emptyByDefaultTemplates.contains element then
+      else if emptyBody && emptyTemplates.contains element then
         inertParam "\\setbeamertemplate" element s!"\\setbeamertemplate\{{element}}\{}"
           s!"beamer's default {element} is empty, and the engine draws none" pos
       else if (rawSrc (bodyArgs.getD 0 #[])).trimAscii.toString.isEmpty then
         sayOnce ("param:\\setbeamertemplate:" ++ element) .W0104
           s!"'\\setbeamertemplate\{{element}}' is beamer configuration the engine does not have; \
 skipped" pos
+          (help := beamerNative.lookup "setbeamertemplate")
+      else if insertsOwn element (rawSrc (bodyArgs.getD 0 #[])) then
+        sayOnce ("param:\\setbeamertemplate:" ++ element) .W0104
+          s!"'\\setbeamertemplate\{{element}}' prints only the {element}, without beamer's \
+template around it; the engine's own {element} stands" pos
           (help := beamerNative.lookup "setbeamertemplate")
       else
         say .E0111
@@ -8713,7 +8741,7 @@ covers at its next steps' share" pos
       else became "\\setbeamercovered" native pos
       return some (← synthAt native pos, k)
     | none =>
-      sayOnce "beamer:setbeamercovered" .W0104
+      sayOnce ("param:setbeamercovered:" ++ src) .W0104
         s!"'\\setbeamercovered\{{src}}' is not modelled; covered content keeps the share in force, \
 hidden unless one is declared" pos
         (help := "\\palette{ covered = <n>% } sets the covered share; 'invisible', 'transparent' \
@@ -8954,8 +8982,8 @@ private def rewritePackageBody (name p : String) (opt : Option String) (pos : Po
         write fun st => { st with mainLang := tag }
         out := out ++ (← synthAt native pos)
       else
-        say .W0368 s!"no locale for language '{main}'; English \
-captions and patterns stand in" pos
+        sayOnce ("param:usepackage:babel:" ++ main) .W0368 s!"no locale for language '{main}'; \
+English captions and patterns stand in" pos
           (help := "the engine ships locale records for: en, fr, de")
     | none =>
       discard s!"\\{name}\{{p}}" "the engine does this itself" s!"{name}:{p}" pos
@@ -8994,9 +9022,10 @@ captions and patterns stand in" pos
         "whole multipage animations are read at each '\\animategraphics' command"
         s!"{name}:{p}" pos
     else
-      sayOnce "animate:package-options" .W0110
-        s!"'animate' package options '{opts}' are not applied" pos
-        (help := "put poster and size options on each '\\animategraphics'; playback settings remain unsupported")
+      for o in KeyVal.items opts do
+        sayOnce ("param:usepackage:animate:" ++ (KeyVal.entry o).1) .W0110
+          s!"'animate' package option '{o}' is not applied" pos
+          (help := "put poster and size options on each '\\animategraphics'; playback settings remain unsupported")
   else if p == "markdown" then
     -- premise: markdownInputChecks — the driver reads native fragments
     let opts := (opt.getD "").trimAscii.toString
@@ -9005,10 +9034,11 @@ captions and patterns stand in" pos
         "native Markdown fragments are read at each '\\markdownInput' command"
         s!"{name}:{p}" pos
     else
-      sayOnce "markdown:package-options" .W0110
-        s!"'markdown' package options '{opts}' are not applied; \
+      for o in KeyVal.items opts do
+        sayOnce ("param:usepackage:markdown:" ++ (KeyVal.entry o).1) .W0110
+          s!"'markdown' package option '{o}' is not applied; \
 no package options are supported by the strict native Markdown dialect" pos
-        (help := "remove the package options")
+          (help := "remove the package options")
   else if p == "unicode-math" && opt.isSome then
     out := out ++ (← unicodeMathOptions
       s!"\\{name}[{opt.getD ""}]\{unicode-math}" (opt.getD "") pos)
@@ -9258,6 +9288,11 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
     let offered := offeredOptions raws k (KeyVal.items (opt.getD "")).toList
     unless offered.isEmpty do write fun st => { st with globalOffered := offered.toArray }
     let keptItems := (KeyVal.items (opt.getD "")).toList.filter (!offered.contains ·)
+    -- premise: paramCensusChecks — an article's titlepage gives LaTeX's title a page of its own
+    if cls == "article" && asksTitlePage keptItems then
+      sayOnce "partial:\\documentclass:titlepage" .W0110
+        "class option 'titlepage' is read for the abstract alone: '\\maketitle' keeps the title \
+above the text, where LaTeX gives it a page of its own" pos
     if presentationClasses.contains cls then
       write fun st => { st with deck := true }
     let native := if articleClasses.contains cls then "article"

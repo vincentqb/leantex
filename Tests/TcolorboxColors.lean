@@ -92,11 +92,11 @@ private def caseChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet)
     (reprStr actual.pages == reprStr expected.pages)
   t s!"tcolorbox colors: {label}: typed HTML" (html == expectedHtml)
   t s!"tcolorbox colors: {label}: only declared loss"
-    (ds.all fun d => d.severity == .note || (!refused.isEmpty && d.kind == .W0110))
+    (ds.all fun d => d.severity == .note || (!refused.isEmpty && d.kind == .W0104))
   for key in refused do
     t s!"tcolorbox colors: {label}: {key} loss named"
-      (ds.any fun d => d.kind == .W0110 && d.subject == some "tcolorbox:panel" &&
-        d.triggerText == some "\\begin" && hasStr d.message key)
+      (ds.any fun d => d.kind == .W0104 && d.subject == some s!"param:\\begin\{panel}:{key}" &&
+        d.triggerText == some "\\begin")
 
 /-- tcolorbox captures colour keys at each use before its font hooks, so a hook's explicit colour
 wins, as LuaLaTeX probes pin. -/

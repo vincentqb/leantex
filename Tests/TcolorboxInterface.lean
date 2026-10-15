@@ -15,15 +15,16 @@ example : String → Option String := boundName?
 example : Repr Lowered := inferInstance
 example : Repr Prepared := inferInstance
 
-example (raws : Array Raw) (unsupported : Array String) : Lowered :=
-  { raws, unsupported }
+example (raws : Array Raw) (unsupported inPart : Array String) : Lowered :=
+  { raws, unsupported, inPart }
 example (title bodyDecls : Array Raw) (before after : Option String)
-    (unsupported : Array String) : Prepared :=
-  { title, bodyDecls, before, after, unsupported }
+    (unsupported inPart : Array String) : Prepared :=
+  { title, bodyDecls, before, after, unsupported, inPart }
 example (s : Prepared) :
-    Array Raw × Array Raw × Option String × Option String × Array String :=
-  (s.title, s.bodyDecls, s.before, s.after, s.unsupported)
-example (s : Lowered) : Array Raw × Array String := (s.raws, s.unsupported)
+    Array Raw × Array Raw × Option String × Option String × Array String × Array String :=
+  (s.title, s.bodyDecls, s.before, s.after, s.unsupported, s.inPart)
+example (s : Lowered) : Array Raw × Array String × Array String :=
+  (s.raws, s.unsupported, s.inPart)
 
 example : Array Raw → Pos → Prepared := prepare
 example {m : Type → Type} [Monad m]

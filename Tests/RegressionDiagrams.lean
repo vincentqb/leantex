@@ -325,15 +325,15 @@ private def fieldSheetChecks (ref : IO.Ref (List String)) (a : Regression.Artifa
       t s!"PDF retains link destination {url}"
         (uris.contains (.str ("(" ++ url ++ ")").toUTF8))
   let skipped := a.diags.filter (·.kind == .W0103)
-  let decoration := a.diags.filter (·.kind == .W0110)
+  let decoration := a.diags.filter (·.kind == .W0104)
   t "only the unsupported tcolorbox package declaration is allowlisted"
     (skipped.size == 1 && skipped.all fun d =>
       d.triggerText == some "\\usepackage" &&
         d.message == "package 'tcolorbox' is not supported; skipped")
-  t "only the four requested box decoration keys are allowlisted"
-    (decoration.size == 1 && decoration.all fun d =>
-      d.subject == some "tcolorbox:fieldpanel" && d.triggerText == some "\\begin" &&
-        d.message == "these box keys are not fully applied: enhanced, arc, colback, colframe")
+  t "only the four requested box decoration keys are named, one each"
+    (decoration.size == 4 && decoration.all fun d => d.triggerText == some "\\begin" &&
+      ["enhanced", "arc", "colback", "colframe"].any fun k =>
+        d.subject == some s!"param:\\begin\{fieldpanel}:{k}")
 
 end Tests.RegressionDiagrams
 
@@ -341,4 +341,4 @@ def Tests.RegressionDiagrams.cases : Array Tests.Regression.Case := #[
   { path := "testdata/regression/diagrams/route-note.tex"
     check := Tests.RegressionDiagrams.routeNoteChecks },
   { path := "testdata/regression/diagrams/field-sheet.tex"
-    warnings := #[.W0103, .W0110], check := Tests.RegressionDiagrams.fieldSheetChecks }]
+    warnings := #[.W0103, .W0104], check := Tests.RegressionDiagrams.fieldSheetChecks }]

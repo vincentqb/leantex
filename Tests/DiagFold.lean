@@ -59,8 +59,8 @@ def foldChecks (ref : IO.Ref (List String)) : IO Unit := do
     (String.join (List.replicate 5 listing)))
   let w0110 := ds.filter (·.kind == .W0110)
   t s!"a listing key's five sites are five records ({w0110.size})" (w0110.size == 5)
-  t "a listing key's sites carry their words as their subject"
-    (w0110.all fun d => d.subject == some ("lstopt:" ++ d.message))
+  t "a listing key's sites carry their words and their key as their subject"
+    (w0110.all fun d => d.subject.any (·.startsWith ("lstopt:" ++ d.message ++ ":")))
   t "the census counts a listing key's sites on its first record"
     ((w0110.map (·.sites)).toList == [5, 0, 0, 0, 0])
   let (err, _, _) ← sink plain #[] ds

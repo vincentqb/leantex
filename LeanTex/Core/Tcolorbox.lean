@@ -26,6 +26,8 @@ public theorem boundName?_exact (name : String) :
 public structure Lowered where
   raws : Array Raw
   unsupported : Array String
+  /-- The keys applied in part, through the native block's spacing. -/
+  inPart : Array String
   deriving Repr
 
 private def value (rs : Array Raw) : Array Raw :=
@@ -64,10 +66,14 @@ private structure Settings where
   before : Option String := none
   after : Option String := none
   unsupported : Array String := #[]
+  inPart : Array String := #[]
 
 private def Settings.refuse (s : Settings) (key : String) : Settings :=
   if s.unsupported.contains key then s
   else { s with unsupported := s.unsupported.push key }
+
+private def Settings.partly (s : Settings) (key : String) : Settings :=
+  if s.inPart.contains key then s else { s with inPart := s.inPart.push key }
 
 /-- A spacing value through the native glue reader. -/
 private def gap? (rs : Array Raw) : Option String :=
@@ -98,12 +104,12 @@ private def settings (options : Array Raw) : Settings := Id.run do
     | "colupper" | "coltext" => s := { s with textInk := some (key, v) }
     | "coltitle" => s := { s with titleInk := some v }
     | "before skip" | "after skip" | "beforeafter skip" =>
-      s := s.refuse key
       match gap? v with
       | some g =>
+        s := s.partly key
         if key != "after skip" then s := { s with before := some g }
         if key != "before skip" then s := { s with after := some g }
-      | none => pure ()
+      | none => s := s.refuse key
     | "colback" => s := { s.refuse key with bodyGround := true }
     | "colframe" | "colbacktitle" | "boxed title style" =>
       s := { s.refuse key with titleGround := true }
@@ -136,6 +142,7 @@ public structure Prepared where
   before : Option String
   after : Option String
   unsupported : Array String
+  inPart : Array String
   deriving Repr
 
 /-- tcolorbox 6.9.0 selects its `.colorlet` colours before the font hooks, so a hook's explicit
@@ -148,7 +155,8 @@ private def Settings.prepared (s : Settings) (pos : Pos) : Prepared :=
     bodyDecls := ink (s.textInk.map (·.2)) pos ++ s.fontUpper
     before := s.before
     after := s.after
-    unsupported := s.unsupported }
+    unsupported := s.unsupported
+    inPart := s.inPart }
 
 /-- Select the last assignments before executing any key's value. -/
 public def prepare (options : Array Raw) (pos : Pos) : Prepared :=
@@ -175,7 +183,8 @@ public theorem prepareM_identity_exact (options : Array Raw) (pos : Pos) :
   unfold prepareM prepare
   generalize settings options = s
   cases s with
-  | mk title fontTitle fontUpper textInk titleInk bodyGround titleGround before after unsupported =>
+  | mk title fontTitle fontUpper textInk titleInk bodyGround titleGround before after unsupported
+      inPart =>
     cases textInk <;> cases titleInk <;> rfl
 
 /-- Assemble the already-selected fields around the original body. -/
@@ -185,7 +194,8 @@ public def Prepared.lower (s : Prepared) (body : Array Raw) (pos : Pos) : Lowere
   let before := gap s.before pos
   let after := gap s.after pos
   { raws := before.push block ++ after
-    unsupported := s.unsupported }
+    unsupported := s.unsupported
+    inPart := s.inPart }
 
 /-- Lower already-bound options and an untouched body through native block semantics. -/
 public def lower (options body : Array Raw) (pos : Pos) : Lowered :=

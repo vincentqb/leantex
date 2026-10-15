@@ -216,12 +216,11 @@ def animatedGraphicsChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
   let globalDefaults := page "\\usepackage[poster=last,controls]{animate}\n" (animate "" "" "")
   t "unsupported package defaults are named and do not masquerade as local selection"
     (globalDefaults.images == native.images && imageSrcs globalDefaults == imageSrcs native &&
-      globalDefaults.diags.any (fun d => d.code == "W0110" &&
-        d.subject == some "animate:package-options" &&
-        hasStr d.message "poster=last,controls") &&
+      ["poster", "controls"].all (fun k => globalDefaults.diags.any fun d => d.code == "W0110" &&
+        d.subject == some s!"param:usepackage:animate:{k}" && hasStr d.message k) &&
       globalDefaults.diags.all fun d => d.severity == .note ||
         (d.code == "W0110" &&
-          (d.subject == some "animate:package-options" ||
+          ((d.subject.any (·.startsWith "param:usepackage:animate:")) ||
             d.subject == some "animategraphics:playback")))
   let unknown := page "\\usepackage{animate}\n" "\\UnknownAnimationProbe{Kept}Tail"
   t "native animate does not silence arbitrary unknown commands or their arguments"

@@ -126,54 +126,90 @@ def spells (msg key : String) : Bool := Id.run do
         return true
   return false
 
-/-- The codes that say a setting is not read. -/
-def unreadCodes : List String := ["W0101", "W0103", "W0104", "W0110", "W0354", "W0356", "W0367"]
-
-/-- Whether a diagnostic names a setting: its subject is keyed by it, or, past a translation note
+/-- Whether a diagnostic mentions a setting: its subject is keyed by it, or, past a translation note
 that only echoes the source, its message spells it. -/
 def names (key : String) (d : Diag) : Bool :=
   d.subject.any (·.endsWith (":" ++ key)) || (d.code != "N0100" && spells d.message key)
 
+/-- Whether a subject is keyed by a setting: the setting's name is one of its colon-separated parts
+past the first. -/
+def keyedBy (key subject : String) : Bool :=
+  subject.endsWith (":" ++ key) || hasStr subject (":" ++ key ++ ":")
+
+/-- Whether a diagnostic is a warning keyed by a setting. -/
+def warnsKeyed (key : String) (d : Diag) : Bool :=
+  d.severity == .warning && d.subject.any (keyedBy key)
+
+/-- The codes that say a setting is not read. -/
+def unreadCodes : List String :=
+  ["W0101", "W0103", "W0104", "W0110", "W0340", "W0354", "W0356", "W0367"]
+
+/-- Whether a keyed warning says the setting is applied in part, which a change bears out. -/
+def inPart (d : Diag) : Bool := d.subject.any (·.startsWith "partial:")
+
+/-- Whether a diagnostic is a translation note keyed by a setting: a site read it into a native
+spelling, which may be what the document already does. -/
+def translates (key : String) (d : Diag) : Bool :=
+  d.code == "N0100" && !hasStr d.message "→ nothing:" && d.subject.any (keyedBy key)
+
+/-- Whether a diagnostic is the note an inert row gives a setting, keyed by it. -/
+def notesInert (key : String) (d : Diag) : Bool :=
+  d.code == "N0100" && hasStr d.message "→ nothing:" && d.subject.any (keyedBy key)
+
 /-- One reader's vocabulary: each setting as the document writes it, the documents it is tried in
-(`none` without it), and the name its diagnostics carry. -/
+(`none` without it), the name its diagnostics carry, and whether a setting is an inert row of the
+reader's own table, whose premise its note stands on. -/
 structure Row where
   reader : String
   settings : List String
   docs : List (Option String → String)
   keyOf : String → String := fun s => (KeyVal.entry s).1
+  inert : String → Bool := fun _ => false
+  /-- Whether a setting is tried in the document of that index: a document holding nothing it acts
+  on, or already asking for it, tries nothing. -/
+  tries : String → Nat → Bool := fun _ _ => true
+  /-- Whether the documents are alternative grounds, a setting read where its element stands: one
+  a document without that element leaves unread is a document's own unused setting. -/
+  anyDoc : Bool := false
 
-/-- A setting's verdict in one document: whether the artifacts changed, whether a fresh diagnostic
-names it, and whether one names it unread although the PDF or the HTML body changed. -/
-def judge (fonts : Font.FontSet) (base : Shipped) (src key : String) : Bool × Bool × Bool :=
+/-- A setting's verdict in one document: whether the artifacts changed, whether a warning keyed by
+it or its inert row's note names it, and whether one names it unread although the PDF or the page
+changed. -/
+def judge (fonts : Font.FontSet) (base : Shipped) (src key : String) (inert : Bool) :
+    Bool × Bool × Bool :=
   let w := shipped fonts src
-  let changed := w.pdf != base.pdf || w.html != base.html || w.md != base.md
   let fresh := w.diags.filter fun d =>
     !base.diags.any fun b => b.code == d.code && b.message == d.message && b.subject == d.subject
+  let changed := w.pdf != base.pdf || w.html != base.html || w.md != base.md ||
+    fresh.any (translates key)
   let shows := w.pdf != base.pdf || w.body != base.body || w.css != base.css
-  let naming := fresh.filter (names key)
-  -- A setting noted as changing nothing that changes an artifact is read, so its note is false.
-  let inert := !naming.isEmpty && naming.all fun d => d.code == "N0100" && hasStr d.message "→ nothing:"
-  -- A key named as applied in part is read, so only a claim that it is unread contradicts a change.
-  let unread := naming.any fun d => unreadCodes.contains d.code && !hasStr d.message "not fully applied"
-  (changed, !naming.isEmpty, (shows && unread) || (inert && shows))
+  let warned := fresh.filter (warnsKeyed key)
+  let noted := if inert then fresh.filter (notesInert key) else #[]
+  let unread := warned.any (fun d => unreadCodes.contains d.code && !inPart d) ||
+    (warned.isEmpty && !noted.isEmpty)
+  (changed, !warned.isEmpty || !noted.isEmpty, shows && unread)
 
 /-- Each setting of a row with its verdict in each document, every build spawned at once. -/
 def rowJudged (fonts : Font.FontSet) (row : Row) : List (String × List (Task (Bool × Bool × Bool))) :=
-  let bases := row.docs.map fun d => (d, Task.spawn fun _ => shipped fonts (d none))
+  let bases := row.docs.zipIdx.map fun (d, i) => (d, i, Task.spawn fun _ => shipped fonts (d none))
   row.settings.map fun s =>
     let key := row.keyOf s
-    (s, bases.map fun (d, b) => b.bind fun base => Task.spawn fun _ => judge fonts base (d (some s)) key)
+    let inert := row.inert s
+    (s, (bases.filter fun (_, i, _) => row.tries s i).map fun (d, _, b) => b.bind fun base =>
+      Task.spawn fun _ => judge fonts base (d (some s)) key inert)
 
-/-- The settings of a row read by nothing and named by nothing, and those named unread although
-they change an artifact. -/
+/-- The settings of a row some document reads by nothing and names by nothing, and those named
+unread although they change an artifact. -/
 def rowFaults (row : Row) (judged : List (String × List (Task (Bool × Bool × Bool)))) :
     List String :=
   judged.filterMap fun (s, tasks) =>
     let verdicts := tasks.map Task.get
     if verdicts.any (·.2.2) then
       some s!"{row.reader} '{s}': named unread or as changing nothing, yet it changes an artifact"
-    else if verdicts.any fun (c, n, _) => c || n then none
-    else some s!"{row.reader} '{s}': read by nothing and named by nothing"
+    else if (if row.anyDoc then verdicts.any else verdicts.all) fun (c, n, _) => c || n then none
+    else
+      let silent := (verdicts.zipIdx.filter fun ((c, n, _), _) => !c && !n).map (·.2)
+      some s!"{row.reader} '{s}': read by nothing and named by nothing in documents {silent}"
 
 /-- An option no reader declares, which every reader must name. -/
 def invented : String := "censusprobeoption"
@@ -200,9 +236,9 @@ def articleBody : String :=
 /-- The bibliography an article prints: bibtex's by default. -/
 def bibtexList : String := "\\bibliographystyle{plainnat}\\bibliography{refs}"
 
-def article (opts pre body : String) (list : String := bibtexList) : String :=
+def article (opts pre body : String) (list : String := bibtexList) (lead : String := "") : String :=
   s!"\\documentclass{opts}\{article}\n\\title\{Probe title}\\author\{Probe author}\n{pre}\n" ++
-    s!"\\begin\{document}\n\\maketitle\n{articleBody}{body}\n{list}\n\\end\{document}\n"
+    s!"\\begin\{document}\n\\maketitle\n{lead}{articleBody}{body}\n{list}\n\\end\{document}\n"
 
 /-- An article whose settings need no body to read them. -/
 def plain (opts pre : String) : String :=
@@ -318,18 +354,60 @@ def packageDocs (p : String) : List (Option String → String) :=
   else if (packageVocabulary p).isEmpty then [fun o => plain "" (pre o)]
   else [fun o => article "" (pre o) (packageBody p)]
 
+/-- Whether a package's setting is a row of an inert table its reader reads. -/
+def packageInert (p s : String) : Bool :=
+  let key := (KeyVal.entry s).1
+  ((Compat.packageOptionsInert.lookup p).getD []).any (·.1 == s) ||
+    (p == "hyperref" && Compat.hyperrefInert.any (·.1 == s)) ||
+    (p == "crop" && Compat.cropInert.any (·.1 == s)) ||
+    (p == "lineno" && Compat.linenoInert.contains s) ||
+    (p == "biblatex" && Compat.biblatexInert.contains key) ||
+    (p == "geometry" && (Compat.driverOptions.contains key || key == "verbose" || key == "headheight"))
+
+/-- hyperref's colour settings act only where links are coloured, the colouring itself only where
+they are not yet. -/
+def hyperrefTries (s : String) (i : Nat) : Bool :=
+  let k := (KeyVal.entry s).1
+  if k == "colorlinks" && s != "colorlinks=false" then i == 0
+  else if k.endsWith "color" || k == "allcolors" || k == "hidelinks" || s == "colorlinks=false" then
+    i == 1
+  else true
+
+/-- natbib's documents: author-year, numbers and round brackets, each with the choices it already
+makes, which its own setting asks for again. -/
+def natbibAsked : List (List String) :=
+  [["authoryear", "round", "semicolon", "colon"], ["numbers", "square", "comma"],
+   ["round", "authoryear", "semicolon", "colon"]]
+
+/-- Whether a package's setting is tried in a document: one a document already asks for, a head
+key in a document without a running head, or numbers' compression in an author-year document, is
+not. -/
+def packageTries (p s : String) (i : Nat) : Bool :=
+  let k := (KeyVal.entry s).1
+  if p == "hyperref" then hyperrefTries s i
+  else if p == "geometry" then i == 1 || !(k.startsWith "head" || k == "nohead")
+  else if p == "natbib" then
+    !((natbibAsked[i]?).getD []).contains k && (i == 1 || !(k == "compress" || k == "sort&compress")) &&
+      !(k == "bibstyle" && i == 0) && !(k == "nobibstyle" && i != 0)
+  else true
+
 /-- Every native package's options: its native and inert tables, the settings its own reader takes,
 and an invented option, which only `inputenc`'s decoder names, as the driver reads the file. -/
 def packageRows : List Row :=
   Compat.nativePackages.map fun p =>
     { reader := s!"\\usepackage\{{p}}"
       settings := packageVocabulary p ++ (if p == "inputenc" then [] else [invented])
-      docs := packageDocs p }
+      docs := packageDocs p
+      inert := packageInert p
+      tries := packageTries p }
+
 
 /-- `\hypersetup` reads the package's keys. -/
 def hypersetupRow : Row :=
   { reader := "\\hypersetup"
     settings := packageSettings.hyperrefSettings ++ [invented]
+    inert := fun s => Compat.hyperrefInert.any (·.1 == s)
+    tries := hyperrefTries
     docs := [fun o => article "" ("\\usepackage{hyperref}" ++ (o.map (s!"\\hypersetup\{{·}}")).getD "") "",
       fun o => article "" ("\\usepackage[colorlinks]{hyperref}" ++
         (o.map (s!"\\hypersetup\{{·}}")).getD "") ""] }
@@ -338,6 +416,12 @@ def hypersetupRow : Row :=
 def abstracted (cls : String) (o : Option String) : String :=
   s!"\\documentclass{bracketed o}\{{cls}}\n\\begin\{document}\n\\begin\{abstract}Abstract words.\\end\{abstract}\n" ++
     "Body words.\n\\end{document}\n"
+
+/-- The class options an article, a deck, a card and the two abstracts' classes already take, or
+give nothing to act on: a one-page abstract has no facing page. -/
+def classSkipped : List (List String) :=
+  [["10pt", "letterpaper", "notitlepage"], ["11pt"], ["10pt"],
+   ["10pt", "letterpaper", "notitlepage", "twoside"], ["10pt", "letterpaper", "titlepage", "twoside"]]
 
 /-- The class options: each model's reads, the inert and refused ones, and others, in an article,
 a deck, a card and the abstracts of an article and a report. -/
@@ -348,6 +432,8 @@ def classRow : Row :=
       "aspectratio=169", "handout", "compress"] ++ Elab.classPaperOptions ++
       Elab.classOptionFlags.flatMap (·.2) ++ Elab.classOptionsInert.flatMap (·.2.map (·.1)) ++
       Elab.abstractFormOptions ++ [invented]
+    inert := fun s => Elab.classOptionsInert.any (·.2.any (·.1 == s))
+    tries := fun s i => !((classSkipped[i]?).getD []).contains s
     docs := [fun o => article (bracketed o) "" "", fun o => deck (bracketed o) "",
       fun o => s!"\\documentclass{bracketed o}\{card}\n\\begin\{document}\nCard words.\n" ++
         "\\end{document}\n", abstracted "article", abstracted "report"] }
@@ -370,13 +456,16 @@ def lengthRow : Row :=
     "\\begin{paracol}{2}Left column words.\\switchcolumn Right column words.\\end{paracol}" ++
     "Before skips.\\smallskip After small.\\medskip After medium.\\bigskip After big."
   { reader := "\\setlength"
+    inert := fun n => n == "textwidth" || match Compat.paramSites.lookup n with
+      | some (.sizeReset _) | some .listReset => true
+      | _ => false
     settings := Compat.paramSites.map (·.1) ++
       ["emergencystretch", "columnseprule", "marginparwidth", "linewidth", "censusprobelength",
        "bibsep", "bibhang", "belowcaptionskip", "topskip", "smallskipamount", "medskipamount",
        "bigskipamount"]
     keyOf := id
     docs := [fun o => article "" (pre ++ (o.map setting).getD "") body,
-      fun o => article "" pre ((o.map setting).getD "" ++ body)] }
+      fun o => article "" pre body (lead := (o.map setting).getD "")] }
 
 /-- The counters a document sets, before what they number. -/
 def counterRow : Row :=
