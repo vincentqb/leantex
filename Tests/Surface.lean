@@ -577,16 +577,16 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   let adv := dvDoc "\\advance \\footskip by \\ht\\strutbox\n" "x"
   t "register arithmetic is skipped whole, named W0104"
     (errCodes adv == [] && (warnCodes adv).contains "W0104")
-  -- An equal pair of geometry side margins is the symmetric margin; unequal or lone sides stay named (W0101).
+  -- An equal pair of geometry side margins is the symmetric margin; unequal or lone sides stay named (W0104).
   let folded := dvDoc "\\usepackage[top=0.7in, bottom=0.7in, left=0.7in, right=0.7in]{geometry}\n" "x"
   let direct := dvDoc "\\page{ vmargin = 0.7in, hmargin = 0.7in }\n" "x"
   t "equal geometry sides fold to the symmetric margins"
-    (!(warnCodes folded).contains "W0101" &&
+    (!(warnCodes folded).contains "W0104" &&
       (elabStr folded).1.page.vmargin == (elabStr direct).1.page.vmargin &&
       (elabStr folded).1.page.hmargin == (elabStr direct).1.page.hmargin)
   t "unequal geometry sides stay named"
     ((warnCodes (dvDoc "\\usepackage[top=1in, bottom=0.7in]{geometry}\n" "x")).contains
-      "W0101")
+      "W0104")
   let pre (decls : String) : String :=
     "\\documentclass{article}\n" ++ decls ++ "\n\\begin{document}x\\end{document}"
   let (geoDoc, geoDs) := elabStr (pre "\\usepackage[a4paper,vmargin=0.6in,hmargin=0.9in,headsep=1in]{geometry}")
@@ -600,10 +600,10 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "compat geometry pairs equal one-sided margins"
     (pairDoc.page.vmargin == Dim.inch 3 / 4 && pairDoc.page.hmargin == Dim.inch 3 / 4 &&
      pairDoc.page.footskip == some (Dim.inch 3 / 10) &&
-     pairDs.all (·.code != "W0101"))
+     pairDs.all (·.code != "W0104"))
+  let unequal := (elabStr (pre "\\usepackage[top=1in,bottom=0.5in]{geometry}")).2
   t "compat geometry drops an unequal pair named"
-    ((elabStr (pre "\\usepackage[top=1in,bottom=0.5in]{geometry}")).2.any fun d =>
-      d.code == "W0101" && hasStr d.message "top" && hasStr d.message "bottom")
+    (["top", "bottom"].all fun k => unequal.any fun d => d.code == "W0104" && hasStr d.message k)
   -- A `\dimexpr` value is arithmetic the mapping cannot carry: a named drop, never an unreadable `\page` value.
   let dimexprDs := (elabStr
     (pre "\\usepackage[footskip=\\dimexpr 0.3in + \\dp\\strutbox\\relax]{geometry}")).2
@@ -616,7 +616,7 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- Dropped geometry keys change the page, so they warn.
   t "compat geometry names what it dropped as a warning"
     ((elabStr (pre "\\usepackage[voffset=1in]{geometry}")).2.any fun d =>
-      d.code == "W0101" && d.severity == .warning && d.message.endsWith "voffset")
+      d.code == "W0104" && d.severity == .warning && hasStr d.message "'voffset'")
   t "compat known package is a note, unknown a warning"
     ((elabStr (pre "\\usepackage{hyperref}")).2.all (·.severity == .note) &&
      warnCodes (pre "\\usepackage{nosuchpkg}") == ["W0103"])
@@ -727,7 +727,7 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
      (fontsOf "\\usepackage[sfdefault]{carlito}").body == some "Carlito")
   t "compat helvet names its dropped scale option"
     ((elabStr (pre "\\usepackage[scaled=0.9]{helvet}")).2.any fun d =>
-      d.code == "W0101" && hasStr d.message "scaled")
+      d.code == "W0104" && hasStr d.message "scaled")
   -- `\xspace` is a space unless punctuation follows; the lexer already ate the typed space after it.
   let paraText (body : String) : String :=
     match (elabStr ("\\documentclass{article}\n\\begin{document}\n" ++ body ++

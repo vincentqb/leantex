@@ -3420,7 +3420,7 @@ def driverOptionChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
   t "crop's driver options ship the page without them"
     (pdfOf cropDriven == pdfOf cropBare)
   t "an option with meaning is still named"
-    ((warnCodes (src "\\usepackage[showframe]{geometry}")).contains "W0101")
+    ((warnCodes (src "\\usepackage[showframe]{geometry}")).contains "W0104")
 
 /-- The poster's legibility floor, judged over the shipped pages, passes the class's own default
 body and fails an unscaled article body. -/

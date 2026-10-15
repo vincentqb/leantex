@@ -49,6 +49,9 @@ public def optionSpelling (item : String) : String :=
   | (k, some v) => s!"{k}={v}"
   | (k, none) => k
 
+/-- The encodings that, as `fontenc`'s main one, set Latin input in another script's glyphs. -/
+public def glyphEncodings : List String := ["OT2", "T3", "LGR", "OML", "OMS", "OMX"]
+
 /-- The font encodings LaTeX's `fontenc` loads, Unicode's included. -/
 public def fontencEncodings : List String :=
   ["TU", "T1", "OT1", "OT2", "OT3", "OT4", "OT6", "LY1", "TS1", "TS3", "T2A", "T2B", "T2C", "X2",
@@ -2184,9 +2187,8 @@ private def natbibLoad (name opt : String) (pos : Pos) : M (Array Raw) := do
   let decls := Bib.natbibOptions.foldl (init := #[]) fun acc (o, ds) =>
     if given.contains o then acc.appendList ds else acc
   let dropped := given.filter fun o => !Bib.natbibOptions.any (·.1 == o)
-  unless dropped.isEmpty do
-    say .W0101 s!"'natbib' options without a native equivalent were dropped: \
-{String.intercalate ", " dropped}" pos (subject := some "usepackage:natbib")
+  for o in dropped do
+    unreadParam "usepackage:natbib" (KeyVal.entry o).1 s!"'natbib' option '{o}'" pos
   became (if given.isEmpty then s!"\\{name}\{natbib}" else s!"\\{name}[{opt}]\{natbib}")
     "natbib's citation punctuation, read at \\begin{document}" pos
   natbibDefer decls pos
@@ -2233,13 +2235,15 @@ private def biblatexLoad (name opt : String) (pos : Pos) : M Unit := do
   let cbx := pick "citestyle" (pick "style" "numeric")
   let dropped := pairs.filter fun (k, _) => !biblatexRead.contains k && !biblatexInert.contains k
   for (k, v) in pairs do
-    if biblatexInert.contains k then
+    if k == "hyperref" && v != "false" then
+      unreadParam "usepackage:biblatex" k s!"'biblatex' option '{k}={v}', linking each citation \
+to its entry," pos
+    else if biblatexInert.contains k then
       inertParam "usepackage:biblatex" k s!"\\{name}[{k}={v}]\{biblatex}"
         "the engine reads the bibliography and sets its citations itself" pos
-  unless dropped.isEmpty do
-    say .W0101 s!"'biblatex' options without a native equivalent were dropped: \
-{String.intercalate ", " (dropped.map fun (k, v) => if v == "true" then k else s!"{k}={v}")}" pos
-      (subject := some "usepackage:biblatex")
+  for (k, v) in dropped do
+    unreadParam "usepackage:biblatex" k
+      s!"'biblatex' option '{if v == "true" then k else s!"{k}={v}"}'" pos
   let what := match biblatexFamily bbx, biblatexFamily cbx with
     | none, none => some (if bbx == cbx then s!"style '{bbx}'" else s!"styles '{bbx}' and '{cbx}'",
         "its reference list and its citations are set as biblatex's numeric ones")
@@ -5815,9 +5819,8 @@ private def geometry (opts : String) (pos : Pos)
   if read.any fun k => ["margin =", "hmargin =", "textwidth ="].any (k.startsWith ·) then
     write fun st => { st with measureKnown := true }
   became spelling native pos
-  unless dropped.isEmpty do
-    say .W0101 s!"geometry keys without a native equivalent were dropped: \
-{String.intercalate ", " dropped.toList}" pos
+  for k in dropped do
+    unreadParam "usepackage:geometry" (KeyVal.entry k).1 s!"geometry key '{k}'" pos
   unless droppedExpr.isEmpty do
     say .W0101 s!"geometry values the engine cannot evaluate were dropped: \
 {String.intercalate ", " droppedExpr.toList}" pos
@@ -5837,9 +5840,8 @@ private def crop (opts : String) (pos : Pos)
     -- premise: driverOptionChecks — a driver option ships the page without it
     else if let some why := cropInert.lookup o then inertParam "crop" o spelling why pos
     else if !o.isEmpty then dropped := dropped.push o
-  unless dropped.isEmpty do
-    say .W0101 s!"crop options without a native equivalent were dropped: \
-{String.intercalate ", " dropped.toList}" pos
+  for o in dropped do
+    unreadParam "usepackage:crop" (KeyVal.entry o).1 s!"crop option '{o}'" pos
   match mode with
   | some on =>
     let native := s!"\\page\{ marks = {if on then "cut" else "none"} }"
@@ -8554,8 +8556,8 @@ and 'transparent=<n>' are understood")
       unless entries.isEmpty do
         discard "\\KOMAoptions" "no head or foot separation rule is drawn" "KOMAoptions" pos
     else
-      say .W0101 s!"'\\KOMAoptions' entries without a native equivalent were \
-dropped: {String.intercalate ", " dropped}" pos
+      for e in dropped do
+        unreadParam "KOMAoptions" (KeyVal.entry e).1 s!"'\\KOMAoptions' entry '{e}'" pos
     return some (#[], k)
   | "graphcolor" => blueprintGraphColorArm pos raws start
   | "home" | "github" | "dochome" => blueprintSiteArm name pos raws start
@@ -8670,7 +8672,10 @@ private def packageOptions (name p : String) (opts : List String) (pos : Pos)
     let spelled := optionSpelling o
     let key := (KeyVal.entry o).1
     let what := s!"\\{name}[{shown o}]\{{p}}"
-    if let some native := (packageOptionNatives.lookup p).bind (·.lookup spelled) then
+    if p == "fontenc" && opts.getLast? == some o && glyphEncodings.contains spelled then
+      unreadParam s!"usepackage:{p}" key s!"'fontenc' main encoding '{o}', which sets Latin input \
+in its own script's glyphs," pos
+    else if let some native := (packageOptionNatives.lookup p).bind (·.lookup spelled) then
       became what native pos (subject := some (paramSubject s!"usepackage:{p}" key))
       out := out ++ (← synthAt native pos)
     else if let some why := (packageOptionsInert.lookup p).bind fun rows =>
@@ -8774,9 +8779,8 @@ captions and patterns stand in" pos
     let sfdefault := p == "carlito" && opts.contains "sfdefault"
     let spec := if sfdefault then spec ++ ", body = \"Carlito\"" else spec
     let dropped := opts.filter (· != "sfdefault")
-    unless dropped.isEmpty do
-      say .W0101 s!"'{p}' options without a native equivalent were \
-dropped: {String.intercalate ", " dropped}" pos
+    for o in dropped do
+      unreadParam s!"usepackage:{p}" (KeyVal.entry o).1 s!"'{p}' option '{o}'" pos
     let native := s!"\\fonts\{ {spec} }"
     became s!"\\usepackage\{{p}}" native pos
     out := out ++ (← synthAt native pos)
@@ -8786,9 +8790,8 @@ dropped: {String.intercalate ", " dropped}" pos
     -- The package's options are the marks' own settings, carried to the elaborator's preamble.
     let opts := (KeyVal.items (opt.getD "")).toList
     let (_, unknown) := Math.CancelSpec.ofOptions opts
-    unless unknown.isEmpty do
-      say .W0101 s!"'cancel' options without a native equivalent were \
-dropped: {String.intercalate ", " unknown}" pos
+    for o in unknown do
+      unreadParam "usepackage:cancel" (KeyVal.entry o).1 s!"'cancel' option '{o}'" pos
     became s!"\\usepackage\{cancel}"
       "the cancel marks, drawn from the math font's own rule constants" pos
     out := (out.push (.ctrl cancelOptionsMark pos)).push
@@ -9293,9 +9296,8 @@ spells; the colour is not defined" pos (help := "name the colour with ASCII lett
           keys := keys ++ (native.map (s!"{·} = on")).toArray
         | "false" => keys := keys ++ (native.map (s!"{·} = off")).toArray
         | _ => dropped := dropped.push key
-    unless dropped.isEmpty do
-      say .W0101 s!"microtype keys without a native equivalent were dropped: \
-{String.intercalate ", " dropped.toList}" pos
+    for k in dropped do
+      unreadParam "microtypesetup" (KeyVal.entry k).1 s!"microtype key '{k}'" pos
     if keys.isEmpty then return some (#[], k)
     let native := s!"\\page\{ {String.intercalate ", " keys.toList} }"
     became "\\microtypesetup" native pos

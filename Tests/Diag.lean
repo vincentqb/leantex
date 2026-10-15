@@ -366,7 +366,7 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
   | .W0014 => dvE (w := w) "\\begin{align*}a &= b \\\\ c\\end{align*}" ++
     dvE (w := w) "$\\begin{array}{c}a & b\\end{array}$"
   | .W0015 => dvE (w := w) "\\begin{align}a &= b\\end{align}"
-  | .W0101 => dvE (w := w) (dvDoc "\\usepackage[voffset=1in]{geometry}\n" "x")
+  | .W0101 => dvE (w := w) (dvDoc "\\usepackage{natbib}\n\\bibpunct{(}{)}{;}{s}{,}{,}\n" "x")
   | .W0102 => dvE (w := w) (dvDoc "\\definecolor{c}{hsb}{0.5,0.5,0.5}\n" "x")
   | .W0103 => dvE (w := w) (dvDoc "\\usepackage{nosuchpkg}\n" "x")
   | .W0104 => dvE (w := w) (dvDoc (String.intercalate "\n"

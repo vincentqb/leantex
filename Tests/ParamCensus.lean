@@ -470,7 +470,9 @@ def paramTruthChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
       !warnsOf (deck "[final]" "") "final" && warnsOf (cls "leqno" "Words.") "leqno")
   let pkg (p o : String) : String := plain "" s!"\\usepackage[{o}]\{{p}}"
   t "packages: settings the engine already answers are silent, and an unread one still named"
-    (["TU", "T5", "X2", "OT2", "T3", "OML"].all (fun e => !warnsOf (pkg "fontenc" e) e) &&
+    (["TU", "T5", "X2"].all (fun e => !warnsOf (pkg "fontenc" e) e) &&
+      !warnsOf (pkg "fontenc" "LGR,T1") "LGR" && !warnsOf (pkg "fontenc" "OT2,T2A") "OT2" &&
+      Compat.glyphEncodings.all (fun e => warnsOf (pkg "fontenc" e) e) &&
       !warnsOf (pkg "csquotes" "autostyle=true") "autostyle" &&
       !warnsOf (pkg "csquotes" "german=quotes") "german" &&
       warnsOf (pkg "csquotes" "german=guillemets") "german" &&

@@ -11,7 +11,7 @@ pre impl \microtypesetup{protrusion=true}
 pre impl \microtypesetup{protrusion=false}
 pre impl \microtypesetup{expansion=false}
 pre impl \microtypesetup{activate=true}
-pre refuse:W0101 \microtypesetup{kerning=true}
+pre refuse:W0104 \microtypesetup{kerning=true}
 pre refuse:W0301 \SetProtrusion{encoding = *}{. = {,700}}
 pre refuse:W0301 \SetExpansion{encoding = *}{}
 pre refuse:W0301 \SetExtraKerning{encoding = *}{}

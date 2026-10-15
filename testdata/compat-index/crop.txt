@@ -9,15 +9,15 @@ pre impl \usepackage[cam]{crop}
 pre impl \crop[cam]
 pre inert:default \crop[off]
 pre impl \crop
-pre refuse:W0101 \usepackage[cross]{crop}
-pre refuse:W0101 \usepackage[frame]{crop}
-pre refuse:W0101 \usepackage[a4]{crop}
-pre refuse:W0101 \usepackage[center]{crop}
-pre refuse:W0101 \usepackage[noinfo]{crop}
-pre refuse:W0101 \usepackage[mirror]{crop}
-pre refuse:W0101 \usepackage[rotate]{crop}
-pre refuse:W0101 \usepackage[invert]{crop}
-pre refuse:W0101 \crop[cross]
+pre refuse:W0104 \usepackage[cross]{crop}
+pre refuse:W0104 \usepackage[frame]{crop}
+pre refuse:W0104 \usepackage[a4]{crop}
+pre refuse:W0104 \usepackage[center]{crop}
+pre refuse:W0104 \usepackage[noinfo]{crop}
+pre refuse:W0104 \usepackage[mirror]{crop}
+pre refuse:W0104 \usepackage[rotate]{crop}
+pre refuse:W0104 \usepackage[invert]{crop}
+pre refuse:W0104 \crop[cross]
 # `off` names the state the document is already in — no marks — so it moves
 # no ink where it stands (inert:default); the two cam rows above carry the
 # drawn evidence.

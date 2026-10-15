@@ -43,7 +43,7 @@
 # an entry's options (useprefix, skipbib, dataonly, the name counts, the
 # use and identifier options) and the load's useauthor, useeditor,
 # usetranslator, abbreviate, datecirca and dateuncertain are read; a
-# mergedate other than compact is W0101. A remote or non-BibTeX resource
+# mergedate other than compact is W0104. A remote or non-BibTeX resource
 # is W0104, skipped; the legacy preamble \bibliography{refs} is
 # \addbibresource{refs.bib}. The resources land on \bibliography, as
 # BibTeX's list of files, at the \printbibliography site; \printbibliography
@@ -55,7 +55,7 @@ pre impl \usepackage[style=numeric]{biblatex}
 pre impl \usepackage[style=numeric,sorting=none]{biblatex}
 pre impl \usepackage[style=numeric,sorting=ydnt]{biblatex}
 pre impl \usepackage[style=authoryear,abbreviate=false,usetranslator=true]{biblatex}
-pre refuse:W0101 \usepackage[style=authoryear,mergedate=basic]{biblatex}
+pre refuse:W0104 \usepackage[style=authoryear,mergedate=basic]{biblatex}
 pre refuse:W0104 \addbibresource[location=remote]{https://example.org/refs.bib}
 pre impl \usepackage[style=authoryear]{biblatex}
 pre impl \usepackage[style=authoryear,uniquename=init,uniquelist=false,maxnames=2]{biblatex}
