@@ -646,6 +646,8 @@ def censusRows2 :
     ("the final step page has nothing covered", pageAllRevealed c 2)]),
   ("deck", fun _ c => [
     ("a page per frame, divider, and step", c.size == 8),
+    ("the step page covers its pending item at the deck's declared transparent share",
+      pageCovered c 2 "Frames are page boundaries" && pageAllRevealed c 3),
     ("the title frame ships the title", pageHas c 0 "A Certified Deck"),
     ("the standout frame fills its background", (c[7]?.map (·.fills == 1)).getD false),
     ("the standout content ships", pageHas c 7 "Questions?"),

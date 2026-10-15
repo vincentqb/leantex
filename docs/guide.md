@@ -378,12 +378,13 @@ place kept, unless its preamble declares a share, as beamer's default
 `invisible` covering does; `\setbeamercovered{transparent}` covers it at
 beamer's 15%, and `transparent=<n>` or `\palette{ covered = <n>\% }` at
 that share. A seed or a declared colour ships as given at any share, and
-`W0345` names one whose covered form stands under 3:1 from it, unless
-`\palette[decorative]{ covered = <n>\% }` declares the covered steps
-decorative; a text tone the generator derives keeps the covered-state
-contract there in every scheme, each covered form, mixed toward the page
-in Oklab as the PDF covers and in sRGB as beamer and a web page's opacity
-do, quieter on the page and 3:1 from it (SC 1.4.11). A share black on a
+`W0345` names the ink, or an alert or example a covered step sets, whose
+covered form stands under 3:1 from it, or a declared `covered` colour under
+3:1 from the ink, unless `\palette[decorative]{ covered = <n>\% }` declares
+the covered steps decorative; a text tone the generator derives keeps the
+covered-state contract there in every scheme, each covered form, mixed
+toward the page in Oklab as the PDF covers and in sRGB as beamer and a web
+page's opacity do, quieter on the page and 3:1 from it (SC 1.4.11). A share black on a
 light page, or white on a dark one, cannot keep binds nothing. Text on the
 ink stands at 4.6:1; on a dark paper, text stands at 6.5:1 and every other
 colour 0.10 above WCAG 2.2's

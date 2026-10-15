@@ -10928,7 +10928,7 @@ per-colour cover of a coloured one. -/
 public structure Cover where
   plain : Color
   of : Color → Color
-  /-- A share of none: pending content takes the hidden paint, its place kept, shipping nothing. -/
+  /-- A share of none: a pending step is invisible, as `\visible` sets it, its place kept. -/
   hidden : Bool
 
 /-- The paint of ink that keeps its place and ships nothing, its CMYK rider outside every
@@ -10937,7 +10937,8 @@ document's range. -/
   { r := 0, g := 0, b := 0, cmyk := some (1001, 1001, 1001, 1001) }
 
 /-- Covering: the per-colour cover at the design's fraction toward its surface, and the plain
-cover for runs with no colour; a share of none hides every colour, as beamer's `invisible` does. -/
+cover for runs with no colour; a share of none hides the step instead, as beamer's `invisible`
+does. -/
 public def Design.cover (d : Design) : Cover :=
   if d.coveredFraction == 0 then { plain := hiddenPaint, of := fun _ => hiddenPaint, hidden := true }
   else
@@ -11128,6 +11129,29 @@ public def altUnreachable (doc : Doc) : Nat :=
     | .rule _ _ _ | .picture _ | .table _ _ _ _ _ _ | .float _ _ _ _ _
     | .bibliography _ _ _ => n
 
+/-- An item's leading paragraph hidden on this step where the marker lifts it out of its step's
+region: a description's label and text each invisible, else the text invisible under the hidden
+paint its marker takes. -/
+private def hiddenLead (hid : OverlaySpec) (p : Array Inline) : Array Inline :=
+  match p.toList with
+  | .role n label :: rest =>
+    if n == descLabelRole then #[.role n #[.onSteps hid label], .onSteps hid rest.toArray]
+    else #[.colored hiddenPaint none #[.onSteps hid p]]
+  | _ => #[.colored hiddenPaint none #[.onSteps hid p]]
+
+/-- Under a hidden cover, a dimmed item whose step the cover hides keeps its leading paragraph
+hidden where `flattenLeadStep` lifts it out of the step, its marker with it. -/
+private def hideLead (cover : Cover) (k : Nat) (item dimmed : Array Block) : Array Block :=
+  if let some (Block.onSteps spec _) := item[0]? then
+    if cover.hidden && !spec.invisible && spec.pending k then
+      if let .onSteps hid body :: more := dimmed.toList then
+        if let .para p :: rest := body.toList then
+          (Block.onSteps hid (Block.para (hiddenLead hid p) :: rest).toArray :: more).toArray
+        else dimmed
+      else dimmed
+    else dimmed
+  else dimmed
+
 /-- A decoration as a covered step shows it: a mark quieted by the cover, as
 the text it stands behind is; a rule as it is, in the run's covered ink. -/
 private def Decoration.dimmed (d : Decoration) (cover : Cover) (pending : Bool) : Decoration :=
@@ -11171,10 +11195,12 @@ private def dimBlock (cover : Cover) (k : Nat) (pending : Bool) : Block → Bloc
   | .link target body => .link target (dimBlockList cover k pending #[] body.toList)
   | .spaced g body => .spaced g (dimBlockList cover k pending #[] body.toList)
   | .columns cols => .columns (dimColumns cover k pending #[] cols.toList)
-  -- Invisible content brings no cover of its own: layout keeps its place and ships none of it.
+  -- Invisible content brings no cover of its own: layout keeps its place and ships none of it,
+  -- as it does of every pending step under a hidden cover.
   | .onSteps spec body =>
-    .onSteps spec (dimBlockList cover k (pending || (!spec.invisible && spec.pending k)) #[]
-      body.toList)
+    .onSteps (if cover.hidden then { spec with invisible := true } else spec)
+      (dimBlockList cover k (pending || (!cover.hidden && !spec.invisible && spec.pending k)) #[]
+        body.toList)
   | .altSteps spec firstPage otherPage =>
     .altSteps spec (dimBlockList cover k pending #[] firstPage.toList)
       (dimBlockList cover k pending #[] otherPage.toList)
@@ -11227,7 +11253,8 @@ private def dimItems (cover : Cover) (k : Nat) (pending : Bool) (out : Array (Ar
     List (Array Block) → Array (Array Block)
   | [] => out
   | item :: rest =>
-    dimItems cover k pending (out.push (dimBlockList cover k pending #[] item.toList)) rest
+    dimItems cover k pending
+      (out.push (hideLead cover k item (dimBlockList cover k pending #[] item.toList))) rest
 
 private def dimColumns (cover : Cover) (k : Nat) (pending : Bool)
     (out : Array (BoxWidth × Array Block)) :
@@ -11275,7 +11302,9 @@ private def dimInline (cover : Cover) (k : Nat) (pending : Bool) : Inline → In
   | .decorated kind body => .decorated (kind.dimmed cover pending) (dimInlineList cover k pending #[] body.toList)
   -- A pending inline step brings its own cover; a covered paragraph's comes from its block.
   | .onSteps spec body =>
-    if !spec.invisible && !pending && spec.pending k then
+    if cover.hidden then
+      .onSteps { spec with invisible := true } (dimInlineList cover k pending #[] body.toList)
+    else if !spec.invisible && !pending && spec.pending k then
       .onSteps spec #[.colored cover.plain none (dimInlineList cover k true #[] body.toList)]
     else .onSteps spec (dimInlineList cover k pending #[] body.toList)
   | .altSteps spec firstPage otherPage =>
@@ -12291,10 +12320,12 @@ private theorem dimInline_text (cover : Cover) (k : Nat) (pending : Bool) (x : I
     simp [plainTextOne, dimInlineList_text cover k pending body.toList #[], plainTextList]
   | .onSteps spec body =>
     rw [dimInline]
+    by_cases hc : cover.hidden = true
+    · simp [hc, plainTextOne, dimInlineList_text cover k pending body.toList #[], plainTextList]
     by_cases h : (!spec.invisible && !pending && spec.pending k) = true
-    · simp [h, plainTextOne, plainTextList,
+    · simp [hc, h, plainTextOne, plainTextList,
         dimInlineList_text cover k true body.toList #[]]
-    · simp [h, plainTextOne, dimInlineList_text cover k pending body.toList #[],
+    · simp [hc, h, plainTextOne, dimInlineList_text cover k pending body.toList #[],
         plainTextList]
   | .altSteps spec firstPage otherPage =>
     rw [dimInline]
@@ -12377,6 +12408,32 @@ private theorem dimTableRows_text (cover : Cover) (k : Nat) (pending : Bool)
     simp [blockTextTableRows, blockTextTableRows_chain,
       dimTableCells_text cover k pending row.toList #[], blockTextTableCells]
 
+private theorem hiddenLead_text (hid : OverlaySpec) (p : Array Inline) :
+    plainText (hiddenLead hid p) = plainText p := by
+  unfold hiddenLead plainText
+  split
+  · rename_i n label rest h
+    split
+    · simp [h, plainTextList, plainTextOne]
+    · simp [plainTextList, plainTextOne]
+  · simp [plainTextList, plainTextOne]
+
+private theorem hideLead_text (cover : Cover) (k : Nat) (item dimmed : Array Block)
+    (acc : String) :
+    blockTextList acc (hideLead cover k item dimmed).toList = blockTextList acc dimmed.toList := by
+  unfold hideLead
+  split
+  · split
+    · split
+      · rename_i hid body more hd
+        split
+        · rename_i p rest hb
+          simp [hd, hb, blockTextList, blockTextOne, hiddenLead_text]
+        · rfl
+      · rfl
+    · rfl
+  · rfl
+
 mutual
 
 private theorem dimBlockList_text (cover : Cover) (k : Nat) (pending : Bool)
@@ -12447,8 +12504,8 @@ private theorem dimBlock_text (cover : Cover) (k : Nat) (pending : Bool) (b : Bl
   | .onSteps spec body =>
     rw [dimBlock]
     simp [blockTextOne,
-      dimBlockList_text cover k (pending || (!spec.invisible && spec.pending k)) body.toList #[]
-        acc, blockTextList]
+      dimBlockList_text cover k (pending || (!cover.hidden && !spec.invisible && spec.pending k))
+        body.toList #[] acc, blockTextList]
   | .altSteps spec firstPage otherPage =>
     rw [dimBlock]
     simp [blockTextOne, dimBlockList_text cover k pending firstPage.toList #[],
@@ -12505,7 +12562,7 @@ private theorem dimItems_text (cover : Cover) (k : Nat) (pending : Bool)
   | [] => simp [dimItems, blockTextItems]
   | item :: rest =>
     rw [dimItems, dimItems_text cover k pending rest]
-    simp [blockTextItems, blockTextItems_chain,
+    simp [blockTextItems, blockTextItems_chain, hideLead_text,
       dimBlockList_text cover k pending item.toList #[], blockTextList]
 
 private theorem dimColumns_text (cover : Cover) (k : Nat) (pending : Bool)

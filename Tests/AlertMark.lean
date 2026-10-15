@@ -211,8 +211,14 @@ def placeChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((pageMarks cout 0 "covered").any fun ms => !ms.isEmpty && ms.all (· != yellow))
   let (hdoc, _) := elabStr (dvDeck seedsLine
     "\\begin{frame}\nFirst.\n\n\\uncover<2>{A \\alert{covered} word.}\n\\end{frame}")
+  let hout := layoutOf fonts hdoc
   t "mark place: a hidden step's mark ships nothing with its text"
-    ((pageMarks (layoutOf fonts hdoc) 0 "covered").all (·.isEmpty))
+    ((hout.pages[0]?.map fun p => p.lines.all fun l => l.segs.all fun s => match s with
+        | .decoration (.highlight _ _) .. => false
+        | _ => true).getD false &&
+     (hout.pages[1]?.map fun p => p.lines.any fun l => l.segs.any fun s => match s with
+        | .decoration (.highlight _ _) .. => true
+        | _ => false).getD false)
   t "mark place: and the step that reveals it shows the accent"
     ((pageMarks cout 1 "covered").any fun ms => !ms.isEmpty && ms.all (· == yellow))
   let (odoc, _) := elabStr (dvDeck seedsLine

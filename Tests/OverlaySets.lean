@@ -507,16 +507,18 @@ private def lineGeom (l : Layout.LineOut) : String :=
 private def inkMark (k : Layout.InkOut) : String := reprStr (k.fig, k.place)
 
 /-- Does the hidden step's line stand where the shown one does, segment by segment as wide, the
-region's ink a gap and its polygons gone, and everything else as the shown line inks it? -/
+region's ink a gap, a marked word gap still a word gap, and its polygons gone, everything else as
+the shown line inks it, word gaps kept only between ink? -/
 private def lineHides (h s : Layout.LineOut) (mask : Array Bool) : Bool :=
   let kept := (s.segs.zip mask).filter fun (sg, inR) => !(inR && sg matches .poly ..)
-  lineGeom h == lineGeom s && h.segs.size == kept.size &&
-    (h.segs.zip kept).all fun (hs, ss, inR) =>
-      if inR && segInks ss then (match hs with | .gap w _ => w == ss.advance | _ => false)
-      else match hs, ss with
-        -- A word gap with no ink left on one side ships as a plain gap as wide.
-        | .gap w _, .gap w' _ => w == w'
-        | _, _ => segMark hs == segMark ss
+  let shipped := Layout.wordGapsInInk (kept.map fun (ss, inR) =>
+    if !(inR && segInks ss) then ss
+    else match ss with
+      | .decoratedGap w word _ => Layout.Seg.gap w word
+      | .gap .. | .run .. | .decoration .. | .rule .. | .image .. | .poly .. =>
+        Layout.Seg.gap ss.advance false)
+  lineGeom h == lineGeom s && h.segs.size == shipped.size &&
+    (h.segs.zip shipped).all fun (hs, es) => segMark hs == segMark es
 
 /-- The region the shown page inks, so a check over it is not vacuous. -/
 private def regionInks (s : Layout.PageOut) (r : ArgRegion) : Bool :=
@@ -656,6 +658,20 @@ def overlayVisibleChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
               (pageMarks h == pageMarks s && h.inks.map inkMark == s.inks.map inkMark &&
                 h.links == s.links)
         | _, _ => t (label ++ s!": step {k} ships") false
+  -- A deck declaring no share hides what it covers, as beamer's default `invisible` does.
+  for (faces, fonts) in faceSets do
+    for (label, (body, _), _, _, _) in cases do
+      let label := "visible, a deck declaring no share, " ++ label ++ faces
+      let doc (b : String) : String := if b.startsWith "\\documentclass" then b
+        else deck169 "\\theme{default}" ("\\begin{frame}\n" ++ b ++ "\n\\end{frame}")
+      let spell (cmd : String) : String := doc (("\\" ++ cmd).intercalate (body.splitOn "\\CMD"))
+      let vis := (fittedOf fonts (elabStr (spell "visible")).1).out
+      for cmd in ["uncover", "onslide"] do
+        let out := (fittedOf fonts (elabStr (spell cmd)).1).out
+        t (label ++ s!": {cmd} ships visible's pages, its marks, pictures and links")
+          (out.pages.map pageMarks == vis.pages.map pageMarks &&
+            out.pages.map (·.inks.map inkMark) == vis.pages.map (·.inks.map inkMark) &&
+            out.pages.map (·.links) == vis.pages.map (·.links))
   -- A picture's label lines hide with the picture they label, step by step.
   let labelled := "\\begin{tikzpicture}\\draw (0,0) -- (2,0);\\node at (1,0.5) {Label words};" ++
     "\\end{tikzpicture}"

@@ -68,23 +68,29 @@ public theorem builtin_palettes_contract :
   every_medium (fun th stage pal => paletteContract pal th.reported stage) (by decide +kernel)
     (by decide +kernel) (by decide +kernel)
 
-public theorem default_covered : coveredContract {} = true := by decide +kernel
+/-- A palette covering at beamer's `transparent` share, where a deck declaring none hides. -/
+@[expose] public def atTransparent (pal : Palette) : Palette :=
+  { pal with coveredFraction := some transparentShare }
 
-public theorem default_cover_monotone : coverMonotone {} = true := by decide +kernel
+public theorem default_covered : coveredContract (atTransparent {}) = true := by decide +kernel
+
+public theorem default_cover_monotone : coverMonotone (atTransparent {}) = true := by decide +kernel
 
 public theorem builtin_covers_monotone :
-    ∀ th ∈ Theme.builtin, ∀ d ∈ GroundDepth.all, coverMonotone (th.realize d) = true :=
-  every_depth (fun _ => coverMonotone) (by decide +kernel) (by decide +kernel) (by decide +kernel)
+    ∀ th ∈ Theme.builtin, ∀ d ∈ GroundDepth.all, coverMonotone (atTransparent (th.realize d)) = true :=
+  every_depth (fun _ pal => coverMonotone (atTransparent pal)) (by decide +kernel) (by decide +kernel)
+    (by decide +kernel)
 
 public theorem builtin_designs_covered :
-    ∀ th ∈ Theme.builtin, ∀ d ∈ GroundDepth.all, coveredContract (th.realize d) th.reported = true :=
-  every_depth (fun th pal => coveredContract pal th.reported) (by decide +kernel)
+    ∀ th ∈ Theme.builtin, ∀ d ∈ GroundDepth.all,
+      coveredContract (atTransparent (th.realize d)) th.reported = true :=
+  every_depth (fun th pal => coveredContract (atTransparent pal) th.reported) (by decide +kernel)
     (by decide +kernel) (by decide +kernel)
 
 public theorem builtin_palette_contract_engine :
     (Theme.builtin.all fun t =>
       paletteContract (Theme.apply t {}).palette t.reported &&
-      coveredContract (Theme.apply t {}).palette t.reported) = true := by
+      coveredContract (atTransparent (Theme.apply t {}).palette) t.reported) = true := by
   decide +kernel
 
 public theorem default_sites_contract :

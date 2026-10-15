@@ -8523,19 +8523,22 @@ and \\tokens declare the design directly")
       | ("invisible", none) => some 0
       | ("transparent", none) => some Ir.transparentShare
       | ("transparent", some v) => v.toNat?
+      | ("dynamic", none) | ("highly dynamic", none) => some Ir.transparentShare
       | _ => none
     match pct? with
     | some n =>
-      if n ≤ 99 then
-        let native := s!"\\palette\{ covered = {n}\\% }"
-        became "\\setbeamercovered" native pos
-        return some (← synthAt native pos, k)
-      else
+      let native := s!"\\palette\{ covered = {min n 99}\\% }"
+      if 99 < n then
         sayOnce "beamer:setbeamercovered" .W0104
-          s!"'\\setbeamercovered\{{src}}' asks for undimmed covered content; covered content \
-keeps the share in force" pos
+          s!"'\\setbeamercovered\{{src}}' asks for undimmed covered content; it is covered at 99%" pos
           (help := "\\palette{ covered = <n>% } sets the covered share")
-        return some (#[], k)
+      else if src.startsWith "dynamic" || src.startsWith "highly dynamic" then
+        sayOnce "beamer:setbeamercovered" .W0104
+          s!"'\\setbeamercovered\{{src}}' fades each step by its distance; every pending step is \
+covered at beamer's transparent 15%" pos
+          (help := "\\palette{ covered = <n>% } sets the covered share")
+      became "\\setbeamercovered" native pos
+      return some (← synthAt native pos, k)
     | none =>
       sayOnce "beamer:setbeamercovered" .W0104
         s!"'\\setbeamercovered\{{src}}' is not modelled; covered content keeps the share in force, \

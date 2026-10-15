@@ -631,11 +631,11 @@
 ── W0345 (standard) a themed element's resolved colour pairing is illegible (WCAG 2.2)
 ⚠ [W0345] - \palette
   covering 'covered' does not quiet it: the covered form reads as loud on the page as the active one
-  suggestion: a cover is a declaration too: lower 'covered = <n>%', or declare \palette{ covered = ... } quieter than the ink it stands for
+  suggestion: a cover is a declaration too: lower 'covered = <n>%', declare \palette{ covered = ... } quieter than the ink it stands for, or declare the covered steps decorative: \palette[decorative]{ covered = <n>% }
 ⚠ [W0345]
   covered 'fg' reads against its active form below the contrast WCAG 2.2 asks of a state change (SC 1.4.11)
   #4E4A49 against #292524: 1.73:1, below 3.00:1
-  suggestion: a cover is a declaration too: lower 'covered = <n>%', or declare \palette{ covered = ... } quieter than the ink it stands for
+  suggestion: a cover is a declaration too: lower 'covered = <n>%', declare \palette{ covered = ... } quieter than the ink it stands for, or declare the covered steps decorative: \palette[decorative]{ covered = <n>% }
 ── W0346 (config) a declaration inside inline content is ignored
 ⚠ [W0346] - \palette
   '\palette' is a declaration; inside inline content it is ignored

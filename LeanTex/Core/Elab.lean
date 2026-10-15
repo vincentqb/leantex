@@ -7057,8 +7057,9 @@ private def seedHelp (f : SeedPalette.Failure) : String :=
     "move the ink and the paper further apart, so every tone derived between them reads: \
 \\palette[seeds]{ ink = #1E1B2E, paper = #FFFFFF, accent = #E85D2A }"
 
-/-- The report of seeds that generate no palette, the palette standing as `stands` says. -/
-private def seedFailure (ctx : Ctx) (pos : Pos) (f : SeedPalette.Failure) (stands : String) :
+/-- The report of seeds that generate no palette, read where `source` asked for it, the palette
+standing as `stands` says. -/
+private def seedFailure (ctx : Ctx) (pos : Pos) (f : SeedPalette.Failure) (source stands : String) :
     EM Unit := do
   let what := match f.role with
     | .ink => "ink"
@@ -7066,7 +7067,7 @@ private def seedFailure (ctx : Ctx) (pos : Pos) (f : SeedPalette.Failure) (stand
     | .accent => "accent"
     | r => (ColorRef.role r).key
   modify fun st => { st with diags := st.diags.push (diagOf ctx .W0306
-    s!"'\\palette[seeds]' generates no palette: its {what} fails its check; {stands}"
+    s!"{source} generates no palette: its {what} fails its check; {stands}"
     (some pos) (help := some (seedHelp f))
     (subject := some s!"palette:seeds:{what}") (detail := some f.detail)) }
 
@@ -7100,7 +7101,7 @@ private def reseedCovered (ctx : Ctx) (pos : Pos) (pal : Palette) (depth : Groun
   if targets.cover == st.targets.cover then return pal
   match ← generated st.seeds targets with
   | .error f =>
-    seedFailure ctx pos f "the palette generated before stands"
+    seedFailure ctx pos f "the covered share's palette" "the palette generated before stands"
     return pal
   | .ok colors =>
     let st' := { st with targets, colors }
@@ -7247,7 +7248,7 @@ private def applySeeds (ctx : Ctx) (pal : Palette) (src : String) (pos : Pos)
   match ← generated seeds targets with
   | .ok colors => resolveBeamerColors ctx (← installSeeded ctx pos pal keep { seeds, targets, blocks, colors })
   | .error f =>
-    seedFailure ctx pos f "the seeds stand as given"
+    seedFailure ctx pos f "'\\palette[seeds]'" "the seeds stand as given"
     let out := [(Role.page, paper), (.ink, ink), (.accent, accent)].foldl
       (fun p (r, c) => p.declare (.role r) c) pal
     noteSeeded ctx pos pal out
@@ -14724,6 +14725,10 @@ optional; the default is ignored" pos
             modify fun st => { st with scope := { st.scope with
               palette := st.scope.palette.native r c } }
         let pal ← resolveBeamerColors s.ctx ds.palette
+        -- A share the preamble declared before the theme binds the bundle it installs.
+        let pal ← match pal.coveredFraction with
+          | some n => reseedCovered s.ctx pos pal s.docClass.record.groundDepth n
+          | none => pure pal
         return { s with
           palette := pal
           tokens := ds.tokens

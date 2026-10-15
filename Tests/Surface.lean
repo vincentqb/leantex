@@ -844,9 +844,9 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   let barePre (decls : String) : String :=
     "\\documentclass{beamer}\n\\usetheme{default}\n" ++ decls ++
     "\n\\begin{document}\\begin{frame}x\\end{frame}\\end{document}"
-  t "compat setbeamercovered transparent=100 never reaches the fraction"
+  t "compat setbeamercovered transparent=100 covers at 99%, warning of the rest"
     ((elabStr (barePre "\\setbeamercovered{transparent=100}")).1.palette.coveredFraction
-      == none &&
+      == some 99 &&
      (warnCodes (barePre "\\setbeamercovered{transparent=100}")).contains "W0104")
   t "compat setbeamercovered transparent=0 hides, as beamer's opaqueness 0 does"
     ((elabStr (barePre "\\setbeamercovered{transparent=0}")).1.palette.coveredFraction
@@ -854,8 +854,9 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "compat setbeamercovered invisible hides, warning nothing"
     (warnCodes (themedPre "\\setbeamercovered{invisible}") == [] &&
      (elabStr (themedPre "\\setbeamercovered{invisible}")).1.palette.coveredFraction == some 0)
-  t "compat setbeamercovered dynamic keeps the honest warning"
-    (warnCodes (themedPre "\\setbeamercovered{dynamic}") == ["W0104"])
+  t "compat setbeamercovered dynamic covers at beamer's transparent share, warning of the grading"
+    (warnCodes (themedPre "\\setbeamercovered{dynamic}") == ["W0104"] &&
+     (elabStr (themedPre "\\setbeamercovered{dynamic}")).1.palette.coveredFraction == some 15)
   -- `professionalfonts` and `hide notes` ask for what the engine already does, so both agree.
   t "compat usefonttheme professionalfonts agrees, warning nothing"
     (warnCodes (themedPre "\\usefonttheme{professionalfonts}") == [])

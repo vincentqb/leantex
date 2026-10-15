@@ -719,11 +719,12 @@ private def pendingCoverDiags (site : ColorSite) (doc : Doc) (pending : Array Pa
     if pal.decorative.contains (.role .covered) then continue
     let d := Design.ofDoc { doc with palette := pal }
     let cov := d.cover
-    -- Hidden content shows no covered form to judge.
+    -- premise: Tests.PaletteCover.hiddenChecks — a hidden step ships none of its ink to judge
     if cov.hidden then continue
     let coverHelp := some ("a cover is a declaration too: lower " ++
-      "'covered = <n>%', or declare \\palette{ covered = ... } " ++
-      "quieter than the ink it stands for")
+      "'covered = <n>%', declare \\palette{ covered = ... } " ++
+      "quieter than the ink it stands for, or declare the covered steps decorative: " ++
+      "\\palette[decorative]{ covered = <n>% }")
     let judge (nm : String) (active covered : Color) : Array Diag :=
       let origin := (site pal (some "covered") covered).orElse fun _ =>
         site pal (some nm) active

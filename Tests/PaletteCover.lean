@@ -173,6 +173,10 @@ def deckChecks (ref : IO.Ref (List String)) : IO Unit := do
   t s!"cover deck, a bundle at a declared share: its seeds ship as given, each reported once ({coverLosses day})"
     ((coverLosses day).all (· == some "covered:alert") && (coverLosses day).size ≤ 1 &&
       Ir.Design.declared? day.palette .accent == some Theme.daylightSeeds.accent)
+  let (before, _) := elabStr (dvDeck "\\setbeamercovered{transparent}\n\\theme{daylight}\n" frame)
+  t "cover deck: a share declared before a theme binds the bundle it installs"
+    (before.palette.coveredFraction == some 15 && seededAtShare before.palette &&
+      before.palette.seeded.any (·.targets.cover == some 15))
   let blue := Ir.Color.ofHtml 0x0F 0x5F 0xA8
   let (declared, _) := elabStr (dvDeck (light ++ "\\palette{ accent = #0F5FA8 }\n" ++
     "\\setbeamercovered{transparent}\n") frame)
@@ -235,5 +239,30 @@ def hiddenChecks (ref : IO.Ref (List String)) : IO Unit := do
     let (html, _) := HtmlDoc.emit {} doc
     t s!"hidden, {label}: the web page covers the pending step at the share, none hidden"
       (hasStr html s!"from \{ opacity: {share.getD 0}%;")
+  -- What a hidden step ships: no ink on the pending item's line, its marker's, image's and link's
+  -- included, and no ground of a block it holds, nothing painted in the hidden paint.
+  let item := "\\begin{frame}\n\\begin{itemize}\n\\item First words.\n" ++
+    "\\item<2> Kilo words \\includegraphics[height=0.3cm]{absent.png} " ++
+    "\\href{https://example.org}{linked words}.\n\\end{itemize}\n\\end{frame}"
+  let out := layoutOf fonts (elabStr (dvDeck "" item)).1
+  let kilo := out.pages[1]?.bind fun p => p.lines.find? fun l => (wordRun #[l] "Kilo").isSome
+  t "hidden item: the step showing it inks its line, its image and its link"
+    (kilo.any fun l => l.segs.any (· matches .image _ _ _ true) &&
+      l.segs.any fun sg => match sg with
+        | .run _ _ link .. => link == some "https://example.org"
+        | _ => false)
+  t "hidden item: the step hiding it inks nothing on that line, its marker, image and link included"
+    (out.pages[0]?.any fun p =>
+      let at_ := p.lines.filter fun l => some l.y == kilo.map (·.y)
+      !at_.isEmpty && at_.all fun l => l.segs.all (!·.inks))
+  let block := "\\begin{frame}\nFirst words.\n\n\\pause\n\n" ++
+    "\\begin{block}{Block title}Block words.\\end{block}\n\\end{frame}"
+  let out := layoutOf fonts (elabStr (dvDeck "\\theme{daylight}\n" block)).1
+  let fills (k : Nat) : Array Layout.Fill := (out.pages[k]?.map (·.fills)).getD #[]
+  t "hidden block: the step showing it paints its grounds"
+    (out.pages.size == 2 && (fills 0).size < (fills 1).size)
+  t "hidden block: the step hiding it paints none of them, nothing in the hidden paint"
+    ((fills 0).all (·.color != Layout.hiddenPaint) &&
+      (fills 0).all fun f => (fills 1).any fun g => reprStr g == reprStr f)
 
 end Tests.PaletteCover
