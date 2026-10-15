@@ -1698,7 +1698,12 @@ def reports : List Report := [
       "the port onto the quoted declarations: with its quoting reverted, the guards kept, a quote in a declared profile's name sets the title and one in the profile description's value drops the key, and the rest of the guard passes",
       "the port's review guards fail on its first cut, 3657b570b: a setup's dates and trapping stood as a second declaration, so its note named two and a setup in the body was named twice; a dropped date and a cut value were two warnings and a setup whose every entry dropped had a note saying the engine did it; a brace pair or a command in a profile description's value broke its declaration, refusing the file or setting the title; and a date's short field was read; with the description's values in quotes but unescaped, the guards kept, a quote in one sets the registry",
       "the second review's guards fail at its tip, 956040199: a setup or a profile description in the body dropped the next group and split its paragraph, an offset of ninety-nine minutes was read, and the judge read a metadata date spelled as the Info's and an Info date spelled as the metadata's"]
-    state := .guarded "3c258580" .before .author }
+    state := .guarded "3c258580" .before .author },
+  { id := "R192", date := "2026-10-15"
+    what := "a document defining its colours through its own macros was warned at each definition that a colour name or value no palette entry spells left the colour undefined, though every use defined it as written: a macro parameter handed to a colour, colour-let or spot colour definition was judged where the macro was defined, as one handed to a language switch or span, a font series or a length setting was; each such warning named a loss no use has, and beside a hostile value's warning at its use stood one at the definition naming the parameter"
+    pins := [check% Tests.MetaEscape.templateArgChecks]
+    accept := ["thirteen of the guard's assertions fail at 22525202 before the fix: a definition through two macros, a colour let, a spot colour, a language span and switch, a font series, a length setting, two uses with two values and a nested definition's doubled parameter each raised at the definition a warning its text written out does not, and a name with a space its expansion spells drew a second warning, where its macro was defined, naming the parameter"]
+    state := .guarded "22525202" .before .author }
 ]
 
 /-- The reports guarded but never seen failing, a count held in both directions. -/

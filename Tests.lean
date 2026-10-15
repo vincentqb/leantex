@@ -479,6 +479,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   pdfFaceChecks ref geom oneFace font
   webMetaChecks ref geom oneFace
   Tests.MetaEscape.metaEscapeChecks ref geom oneFace
+  Tests.MetaEscape.templateArgChecks ref geom oneFace
   sizeLadderChecks ref oneFace
 
   lineChecks ref geom oneFace

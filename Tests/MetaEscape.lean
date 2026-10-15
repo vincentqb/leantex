@@ -298,4 +298,111 @@ def metaEscapeChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
     (css.all (fun s => !hasStr s "--font-mono: \"Evil\"") &&
       css.any fun s => hasStr s "--font-body: \"Foo\\\", mono = \\\"Evil\", Georgia, serif;")
 
+/-- A macro body's argument holding a parameter is a template: the macro ships what its expansion
+written out ships and raises what that text raises, at the use, nothing where it is defined. -/
+def templateArgChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
+    (fonts : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let said (ds : Array Diag) : List (String × String) :=
+    (ds.filter (·.severity != .note)).toList.map fun d => (d.code, d.message)
+  let ships (src : String) : Array UInt8 × String :=
+    let doc := (elabStr src).1
+    let (head, _, _) := HtmlDoc.emitTree {} doc
+    ((pdfOf geom fonts doc).data, Html.document "en" head #[])
+  let lines := String.intercalate " " (List.replicate 40 "Words set at the leading the spread asks for.")
+  let colour := "\\usepackage{xcolor}\n"
+  let babel := "\\usepackage[french,english]{babel}\n"
+  let pairs : List (String × String × String) := [
+    ("a definition through two macros",
+      dvDoc (colour ++ "\\makeatletter\n\\def\\probe@define#1#2#3{\\definecolor{#3}{#1}{#2}}\n" ++
+        "\\newcommand\\probe@use[1]{\\probe@define{HTML}{8B0000}{#1}}\n\\probe@use{probered}\n" ++
+        "\\makeatother\n") "Alpha \\textcolor{probered}{words}.",
+      dvDoc (colour ++ "\\definecolor{probered}{HTML}{8B0000}\n") "Alpha \\textcolor{probered}{words}."),
+    ("a colour let",
+      dvDoc (colour ++ "\\newcommand\\mklet[2]{\\colorlet{#1}{#2}}\n\\mklet{probelet}{blue!50!black}\n")
+        "Alpha \\textcolor{probelet}{words}.",
+      dvDoc (colour ++ "\\colorlet{probelet}{blue!50!black}\n") "Alpha \\textcolor{probelet}{words}."),
+    ("a spot colour",
+      dvDoc (colour ++ "\\newcommand\\mkspot[2]{\\definespotcolor{#1}{#2}{0,0.8,1,0.4}}\n" ++
+        "\\mkspot{probespot}{Probe Ink}\n") "Alpha \\textcolor{probespot}{words}.",
+      dvDoc (colour ++ "\\definespotcolor{probespot}{Probe Ink}{0,0.8,1,0.4}\n")
+        "Alpha \\textcolor{probespot}{words}."),
+    ("a line spread",
+      dvDoc "\\newcommand\\spread[1]{\\linespread{#1}}\n\\spread{1.6}\n" lines,
+      dvDoc "\\linespread{1.6}\n" lines),
+    ("a metadata value",
+      dvDoc "\\usepackage{hyperref}\n\\newcommand\\settitle[1]{\\hypersetup{pdftitle={#1}}}\n\\settitle{Probe Title}\n"
+        "Words.",
+      dvDoc "\\usepackage{hyperref}\n\\hypersetup{pdftitle={Probe Title}}\n" "Words."),
+    ("a link colour",
+      dvDoc (colour ++ "\\usepackage{hyperref}\n\\newcommand\\links[1]{\\hypersetup{colorlinks, linkcolor=#1}}\n" ++
+        "\\links{teal}\n") "\\section{Alpha}\\label{s:a}Words and \\ref{s:a}.",
+      dvDoc (colour ++ "\\usepackage{hyperref}\n\\hypersetup{colorlinks, linkcolor=teal}\n")
+        "\\section{Alpha}\\label{s:a}Words and \\ref{s:a}."),
+    ("a family name and its path",
+      dvDoc "\\usepackage{fontspec}\n\\newcommand\\setbody[2]{\\setmainfont[Path=#1]{#2}}\n\\setbody{./faces/}{Probe Serif}\n"
+        "Words.",
+      dvDoc "\\usepackage{fontspec}\n\\setmainfont[Path=./faces/]{Probe Serif}\n" "Words."),
+    ("a math family",
+      dvDoc "\\usepackage{unicode-math}\n\\newcommand\\mathf[1]{\\setmathfont{#1}}\n\\mathf{Probe Math}\n"
+        "Alpha $x+y$.",
+      dvDoc "\\usepackage{unicode-math}\n\\setmathfont{Probe Math}\n" "Alpha $x+y$."),
+    ("a language for a span",
+      dvDoc (babel ++ "\\newcommand\\inlang[2]{\\foreignlanguage{#1}{#2}}\n") "Alpha \\inlang{french}{mot} words.",
+      dvDoc babel "Alpha \\foreignlanguage{french}{mot} words."),
+    ("a language switch",
+      dvDoc (babel ++ "\\newcommand\\sel[1]{\\selectlanguage{#1}}\n") "Alpha.\n\n\\sel{french} Mot.",
+      dvDoc babel "Alpha.\n\n\\selectlanguage{french} Mot."),
+    ("a font series",
+      dvDoc "\\newcommand\\ser[2]{{\\fontseries{#1}\\selectfont #2}}\n" "Alpha \\ser{b}{bold words}.",
+      dvDoc "" "Alpha {\\fontseries{b}\\selectfont bold words}."),
+    ("a length",
+      dvDoc "\\newcommand\\ind[1]{\\setlength{\\parindent}{#1}}\n\\ind{3em}\n" "Alpha words.\n\nBeta words.",
+      dvDoc "\\setlength{\\parindent}{3em}\n" "Alpha words.\n\nBeta words."),
+    ("a length added to",
+      dvDoc "\\newcommand\\addind[1]{\\addtolength{\\parindent}{#1}}\n\\addind{1em}\n" "Alpha words.\n\nBeta words.",
+      dvDoc "\\addtolength{\\parindent}{1em}\n" "Alpha words.\n\nBeta words."),
+    ("a name its expansion spells with a space",
+      dvDoc (colour ++ "\\newcommand\\mk[2]{\\definecolor{#1}{HTML}{#2}}\n\\mk{bad name}{8B0000}\n") "Words.",
+      dvDoc (colour ++ "\\definecolor{bad name}{HTML}{8B0000}\n") "Words."),
+    ("a value its expansion spells with a quote",
+      dvDoc (colour ++ "\\newcommand\\mk[2]{\\definecolor{#1}{HTML}{#2}}\n\\mk{probeq}{8B0000\", x = \"y}\n")
+        "Words.",
+      dvDoc (colour ++ "\\definecolor{probeq}{HTML}{8B0000\", x = \"y}\n") "Words."),
+    ("a link colour its expansion spells with another key",
+      dvDoc ("\\usepackage{hyperref}\n\\newcommand\\lk[1]{\\hypersetup{colorlinks, linkcolor=#1}}\n" ++
+        "\\lk{{blue, font = \\bfseries}}\n") "Words.",
+      dvDoc "\\usepackage{hyperref}\n\\hypersetup{colorlinks, linkcolor={blue, font = \\bfseries}}\n" "Words."),
+    ("two uses with two values",
+      dvDoc (colour ++ "\\newcommand\\mk[2]{\\definecolor{#1}{HTML}{#2}}\n\\mk{probeone}{8B0000}\n" ++
+        "\\mk{probetwo}{00008B}\n") "Alpha \\textcolor{probeone}{one} \\textcolor{probetwo}{two}.",
+      dvDoc (colour ++ "\\definecolor{probeone}{HTML}{8B0000}\n\\definecolor{probetwo}{HTML}{00008B}\n")
+        "Alpha \\textcolor{probeone}{one} \\textcolor{probetwo}{two}."),
+    ("a parameter of a nested definition",
+      dvDoc (colour ++ "\\newcommand\\mkouter[1]{\\newcommand\\mkinner[1]{\\definecolor{##1}{HTML}{#1}}}\n" ++
+        "\\mkouter{8B0000}\n\\mkinner{probenest}\n") "Alpha \\textcolor{probenest}{words}.",
+      dvDoc (colour ++ "\\definecolor{probenest}{HTML}{8B0000}\n") "Alpha \\textcolor{probenest}{words}.")]
+  for (what, tpl, written) in pairs do
+    t s!"template: {what} raises what its text written out raises, nothing where it is defined"
+      (said (elabStr tpl).2 == said (elabStr written).2)
+    t s!"template: {what} ships the page and the web page's head its text written out ships"
+      (ships tpl == ships written)
+  let repro := (pairs.headD ("", "", "")).2.1
+  let spanLang := (elabStr (dvDoc (babel ++ "\\newcommand\\inlang[2]{\\foreignlanguage{#1}{#2}}\n")
+    "Alpha \\inlang{french}{mot} words.")).1
+  t "template: a language for a span marks the span on the web page"
+    (hasStr (HtmlDoc.emit {} spanLang).1 "<span lang=\"fr\">mot</span>")
+  t "template: the colour a definition through two macros sets is painted"
+    (bytesContain (pdfText (pdfOf geom fonts (elabStr repro).1)) "0.5451 0 0 rg")
+  let twoUses := (elabStr (dvDoc (colour ++ "\\newcommand\\mk[2]{\\definecolor{#1}{HTML}{#2}}\n" ++
+    "\\mk{probeone}{8B0000}\n\\mk{probetwo}{00008B}\n")
+    "Alpha \\textcolor{probeone}{one} \\textcolor{probetwo}{two}.")).1
+  let twoText := pdfText (pdfOf geom fonts twoUses)
+  t "template: two uses with two values paint each its own colour"
+    (bytesContain twoText "0.5451 0 0 rg" && bytesContain twoText "0 0 0.5451 rg")
+  let spaced := (elabStr (dvDoc (colour ++ "\\newcommand\\mk[2]{\\definecolor{#1}{HTML}{#2}}\n" ++
+    "\\mk{bad name}{8B0000}\n") "Words.")).2.filter (·.code == "W0102")
+  t "template: a name its expansion spells with a space is named once, at the use"
+    (spaced.size == 1 && spaced.all fun d => d.sites == 1 && d.span.map (·.pos.line) == some 4)
+
 end Tests.MetaEscape

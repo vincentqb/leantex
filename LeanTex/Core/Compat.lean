@@ -5774,6 +5774,34 @@ private def oneEntry (v : String) : Bool := (Decl.splitEntries ("k = " ++ v)).le
 private def nativeName (n : String) : Bool :=
   !n.isEmpty && n.all Decl.isIdentChar
 
+mutual
+
+/-- Whether raws hold a macro parameter token: `#` before a digit or another `#`. -/
+private def paramIn : List Raw → Bool
+  | [] => false
+  | .sym '#' _ :: .sym '#' _ :: _ => true
+  | .sym '#' _ :: .word w _ :: rest => w.toList.head?.any Char.isDigit || paramIn rest
+  | r :: rest => paramInRaw r || paramIn rest
+
+private def paramInRaw : Raw → Bool
+  | .group b _ | .env _ b _ | .math _ b _ => paramIn b.toList
+  | .word .. | .space | .par _ | .ctrl .. | .sym .. | .verb .. => false
+
+end
+
+/-- Whether source text holds a macro parameter token outside a control symbol. -/
+private def srcParam : List Char → Bool
+  | '\\' :: _ :: rest => srcParam rest
+  | '#' :: tl@(c :: _) => c.isDigit || c == '#' || srcParam tl
+  | _ :: rest => srcParam rest
+  | [] => false
+
+/-- Whether a definition body's arguments are a template its expansion reads, which nothing judges,
+quotes or rewrites where it is defined. -/
+private def template (args : Array (Array Raw)) (opts : List (Option String) := []) : M Bool := do
+  return (← get).inDef &&
+    (args.any (paramIn ·.toList) || opts.any fun o => o.any (srcParam ·.toList))
+
 /-- The metadata keys hyperref's options set, each as its `\pdfmeta` key. -/
 public inductive MetaKey where
   | title
@@ -6346,6 +6374,7 @@ private def defineSpotColor (raws : Array Raw) (start : Nat) (pos : Pos) :
   let (names, j) := takeGroups raws start 2
   let (model, j) := takeOpt raws j
   let (vals, k) := takeGroups raws j 1
+  if (← template (names ++ vals) [model]) then return none
   let (some n, some colorant, some v) := (names[0]?, names[1]?, vals[0]?)
     | say .W0102 "'\\definespotcolor' needs a colour name, a colorant and its values; nothing \
 is defined" pos (help := "write \\definespotcolor{name}{colorant}{c,m,y,k}")
@@ -7306,7 +7335,7 @@ private def rewriteCtrlLaterNamed (name : String) (pos : Pos) (raws : Array Raw)
   | "linespread" | "setstretch" =>
     -- setspace's parameterised form is `\linespread` by another name.
     let (args, k) := takeGroups raws start 1
-    if args.isEmpty then return none
+    if args.isEmpty || (← template args) then return none
     unless oneEntry (rawSrc (args.getD 0 #[])) do
       sayOnce ("ctrl:" ++ name) .W0104 s!"'\\{name}' is given a factor this engine cannot read; \
 skipped, and the leading keeps its value" pos (help := "give a number, such as \\linespread{1.2}")
@@ -7415,7 +7444,7 @@ were dropped: {o}" pos
   | "fontseries" =>
     -- The series' weight half rides the `@series:` marker; its width half has no engine axis.
     let (args, k) := takeGroups raws start 1
-    if args.isEmpty then return none
+    if args.isEmpty || (← template args) then return none
     let code := (rawSrc (args.getD 0 #[])).trimAscii.toString
     match Ir.Weight.parseSeries code with
     | some (w, width) =>
@@ -7440,7 +7469,7 @@ the weight in force stands" pos
     linenoCtrl name pos raws start
   | "selectlanguage" =>
     let (args, k) := takeGroups raws start 1
-    if args.isEmpty then return none
+    if args.isEmpty || (← template args) then return none
     let lname := rawSrc (args.getD 0 #[])
     -- premise: compatMarkerChecks — a top-level discard leaves the Doc without it
     if ← preambleProper then
@@ -7461,6 +7490,7 @@ and patterns stand in" pos
     let (_, j) := takeOpt raws start
     let (args, k) := takeGroups raws j 2
     if h : args.size = 2 then
+      if (← template #[args[0]]) then return none
       let lname := rawSrc args[0]
       let tag := Locale.babelTagOf lname
       if (Locale.forTag tag).isNone then
@@ -7651,6 +7681,7 @@ were dropped: {String.intercalate ", " dropped.toList}" pos
     let (optBefore, j) := takeOpt raws start
     let (args, k) := takeGroups raws j 1
     let (optAfter, k) := takeOpt raws k
+    if (← template args [optBefore, optAfter]) then return none
     let family := rawSrc (args.getD 0 #[])
     let path : Option String :=
       ([optBefore, optAfter].filterMap id).findSome? fun opts =>
@@ -8736,17 +8767,18 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
       else none
     if (name.endsWith "fontfamily" || name.endsWith "fontface") && declared.isNone then return none
     let start := if declared.isSome then skipSpaces raws start + 1 else start
+    let (langOpt, j0) := if name == "babelfont" then takeOpt raws start else (none, start)
+    let (slotArgs, j) := if name == "babelfont" then takeGroups raws j0 1 else (#[], start)
+    let (optBefore, j) := takeOpt raws j
+    let (args, k) := takeGroups raws j 1
+    let (optAfter, k) := takeOpt raws k
+    if (← template (slotArgs ++ args) [langOpt, optBefore, optAfter]) then return none
     let st0 ← get
     let defined := match declared with
       | some c => st0.bound.contains c || st0.fontFamilies.contains c
       | none => false
     if let some c := declared then
       write fun st => { st with bound := if st.bound.contains c then st.bound else st.bound.push c }
-    let (langOpt, j0) := if name == "babelfont" then takeOpt raws start else (none, start)
-    let (slotArgs, j) := if name == "babelfont" then takeGroups raws j0 1 else (#[], start)
-    let (optBefore, j) := takeOpt raws j
-    let (args, k) := takeGroups raws j 1
-    let (optAfter, k) := takeOpt raws k
     -- The provide forms define the command only where it is undefined.
     if name.startsWith "provide" && defined then
       let c := declared.getD ""
@@ -8815,6 +8847,7 @@ face serves every language, so the binding is dropped" pos
   | "definecolor" =>
     let (args, k) := takeGroups raws start 3
     if h : args.size = 3 then
+      if (← template args) then return none
       let n := rawSrc args[0]
       let model := rawSrc args[1]
       let modeled := modeledColorSource (some model) (rawSrc args[2])
@@ -8833,6 +8866,7 @@ the colour is not defined" pos (help := "name the colour with ASCII letters, dig
   | "colorlet" =>
     let (args, k) := takeGroups raws start 2
     if h : args.size = 2 then
+      if (← template args) then return none
       -- xcolor's `.` names the current colour, black in the preamble.
       let src := if (rawSrc args[1]).trimAscii.toString == "." then "#000000"
         else rawSrc args[1]
@@ -8967,6 +9001,7 @@ spells; the colour is not defined" pos (help := "name the colour with ASCII lett
   | "setlength" =>
     let (args, k) := takeGroups raws start 2
     if h : args.size = 2 then
+      if (← template #[args[1]]) then return none
       -- e-TeX's `\dimexpr` division rounds where the native language truncates, so it is refused.
       if (args[1].any fun r => match r with | .ctrl "dimexpr" _ => true | _ => false)
           && (lengthSrc args[1]).toList.contains '/' then
@@ -8989,6 +9024,8 @@ arithmetic truncates toward zero as TeX's '\\divide' does" pos
     -- `\addtolength` sums the held value and the operand where both are known.
     let (args, k) := takeGroups raws start 2
     if h : args.size = 2 then
+      if (← template #[args[1]]) then return none
+
       let some n := ctrlName args[0] | return none
       let st ← get
       -- premise: registerArithChecks — a length this rewrite set holds its recorded value
@@ -9155,7 +9192,9 @@ baselineskip = {milliStr ld}pt }" ++
     return some (head.push (.group #[.ctrl "operatorname" pos, .group body pos] pos), k)
   | "hypersetup" =>
     let (args, k) := takeGroups raws start 1
+    if (← template args) then return none
     return some (← hypersetup (rawSrc (args.getD 0 #[])) pos, k)
+
   | "ihead" | "chead" | "ohead" | "ifoot" | "cfoot" | "ofoot"
   | "lhead" | "rhead" | "lfoot" | "rfoot" =>
     let (args, k) := takeGroups raws start 1
