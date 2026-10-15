@@ -121,6 +121,10 @@ is hidden with its place kept, as beamer's default `invisible` covering hides it
 cover colour's own coloured runs take. -/
 @[expose] public def transparentShare : Nat := 15
 
+/-- beamer's `dynamic` share for the steps next to show, which its graded covering sets ahead of
+fainter ones (beamerbaseoverlay.sty). -/
+@[expose] public def dynamicShare : Nat := 10
+
 /-- What a class asks of colours nothing declares: LaTeX's classes print secondary ink in the
 ink, the web's keep a quieter one and tinted verbatim. -/
 public inductive ClassRow where

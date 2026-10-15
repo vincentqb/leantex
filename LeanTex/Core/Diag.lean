@@ -345,7 +345,7 @@ private def DiagCode.spec : DiagCode → String × Loss × String
   | .W0106 => ("0106", .config, "expl3 code skipped")
   | .W0107 => ("0107", .degraded, "a length value the engine cannot read; the setting is skipped and the length keeps its value")
   | .W0108 => ("0108", .degraded, "\\centering is inert inside an argument")
-  | .W0109 => ("0109", .degraded, "a beamer covering set approximately: every pending step covers at one share, the nearest the engine sets")
+  | .W0109 => ("0109", .degraded, "a beamer covering set at one share: a covering graded by each step's distance at its next steps' share, a share past 99% at 99%")
   | .W0110 => ("0110", .degraded, "unsupported command option; ignored")
   | .W0201 => ("0201", .standard, "measure outside the readable band")
   | .W0202 => ("0202", .standard, "heading sets more space below than above")

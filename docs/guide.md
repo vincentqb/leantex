@@ -378,19 +378,20 @@ place kept, unless its preamble declares a share, as beamer's default
 `invisible` covering does, and a cover declared in the body is ignored
 with `W0340`; `\setbeamercovered{transparent}` covers it at beamer's 15%,
 and `transparent=<n>` or `\palette{ covered = <n>\% }` at that share, while
-`dynamic`, which grades each step by its distance, and a share past 99%
-cover at the nearest share set, named with `W0107`. On the web page a step
-fades in where it stands, from its share; a hidden one takes no focus or
-pointer until its reveal starts. A seed or a declared colour ships as given at any share, and `W0345` names
-the ink, or an alert or example a covered step sets, whose covered form
-stands under 3:1 from it, or a declared `covered` colour under 3:1 from the
-ink, unless `\palette[decorative]{ covered = <n>\% }` declares the covered
-steps decorative; a text tone the generator derives keeps the covered-state
-contract there in every scheme, each covered form, mixed toward the page
-in Oklab as the PDF covers and in sRGB as beamer and a web page's opacity
-do, quieter on the page and 3:1 from it (SC 1.4.11). A share at which black
-on a light page, or white on a dark one, would break the contract binds
-nothing. Text on the ink stands at 4.6:1; on a dark
+`dynamic` and `highly dynamic`, which grade each step by its distance, cover
+every pending step at its next steps' share, and a share past 99% at 99%,
+each named with `W0109`. On the web page a step fades in where it stands,
+from its share; a hidden one takes no focus or pointer until its reveal
+starts. A seed or a declared colour ships as given at any share, and
+`W0345` names the ink, or an alert or example a covered step sets, whose
+covered form stands under 3:1 from it, or a declared `covered` colour under
+3:1 from the ink, unless `\palette[decorative]{ covered = <n>\% }` declares
+the covered steps decorative; a text tone the generator derives keeps the
+covered-state contract there in every scheme, each covered form, mixed
+toward the page in Oklab as the PDF covers and in sRGB as beamer and a web
+page's opacity do, quieter on the page and 3:1 from it (SC 1.4.11). A share
+at which black on a light page, or white on a dark one, would break the
+contract binds nothing. Text on the ink stands at 4.6:1; on a dark
 paper, text stands at 6.5:1 and every other colour 0.10 above WCAG 2.2's
 ratios. No colour the seeds derive, on any page or ground and in any scheme,
 is one of the dark yellow-greens Material 3 never ships (its `DislikeAnalyzer`: HCT hue 90–111, chroma above 16, tone

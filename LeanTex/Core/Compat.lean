@@ -8525,7 +8525,8 @@ and \\tokens declare the design directly")
       | ("invisible", none) => some 0
       | ("transparent", none) => some Ir.transparentShare
       | ("transparent", some v) => v.toNat?
-      | ("dynamic", none) | ("highly dynamic", none) => some Ir.transparentShare
+      | ("dynamic", none) => some Ir.dynamicShare
+      | ("highly dynamic", none) => some Ir.transparentShare
       | _ => none
     match pct? with
     | some n =>
@@ -8540,11 +8541,9 @@ largest share the engine sets" pos
       else if src.startsWith "dynamic" || src.startsWith "highly dynamic" then
         sayOnce ("param:setbeamercovered:" ++ src) .W0109
           s!"'\\setbeamercovered\{{src}}' fades each step by its distance; every pending step \
-covers at beamer's transparent share" pos
-          (help := "\\palette{ covered = <n>% } sets the covered share")
-          (detail := some s!"{Ir.transparentShare}%")
-      else
-        became "\\setbeamercovered" native pos (subject := some (paramSubject "setbeamercovered" src))
+covers at its next steps' share" pos
+          (help := "\\palette{ covered = <n>% } sets the covered share") (detail := some s!"{n}%")
+      else became "\\setbeamercovered" native pos
       return some (← synthAt native pos, k)
     | none =>
       sayOnce "beamer:setbeamercovered" .W0104

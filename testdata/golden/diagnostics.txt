@@ -433,10 +433,10 @@
 ⚠ [W0108] - \centering
   '\centering' centres nothing inside an argument; content stays left-aligned
   suggestion: move '\centering' to the start of the group or environment body
-── W0109 (degraded) a beamer covering set approximately: every pending step covers at one share, the nearest the engine sets
+── W0109 (degraded) a beamer covering set at one share: a covering graded by each step's distance at its next steps' share, a share past 99% at 99%
 ⚠ [W0109] - \setbeamercovered
-  '\setbeamercovered{dynamic}' fades each step by its distance; every pending step covers at beamer's transparent share
-  15%
+  '\setbeamercovered{dynamic}' fades each step by its distance; every pending step covers at its next steps' share
+  10%
   suggestion: \palette{ covered = <n>% } sets the covered share
 ── W0110 (degraded) unsupported command option; ignored
 ⚠ [W0110] - \includegraphics

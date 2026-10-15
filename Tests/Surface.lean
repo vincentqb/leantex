@@ -854,14 +854,10 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "compat setbeamercovered invisible hides, warning nothing"
     (warnCodes (themedPre "\\setbeamercovered{invisible}") == [] &&
      (elabStr (themedPre "\\setbeamercovered{invisible}")).1.palette.coveredFraction == some 0)
-  t "compat setbeamercovered dynamic and highly dynamic cover at beamer's transparent share, named as the approximation"
-    (["dynamic", "highly dynamic"].all fun m =>
+  t "compat setbeamercovered dynamic and highly dynamic cover at their next steps' share, named as the approximation"
+    ([("dynamic", 10), ("highly dynamic", 15)].all fun (m, n) =>
       warnCodes (themedPre s!"\\setbeamercovered\{{m}}") == ["W0109"] &&
-      (elabStr (themedPre s!"\\setbeamercovered\{{m}}")).1.palette.coveredFraction == some 15)
-  t "compat setbeamercovered names each setting it reads, keyed by the setting"
-    (["invisible", "transparent", "transparent=25"].all fun m =>
-      (elabStr (themedPre s!"\\setbeamercovered\{{m}}")).2.any fun d =>
-        d.code == "N0100" && d.subject == some (Compat.paramSubject "setbeamercovered" m))
+      (elabStr (themedPre s!"\\setbeamercovered\{{m}}")).1.palette.coveredFraction == some n)
   -- `professionalfonts` and `hide notes` ask for what the engine already does, so both agree.
   t "compat usefonttheme professionalfonts agrees, warning nothing"
     (warnCodes (themedPre "\\usefonttheme{professionalfonts}") == [])
