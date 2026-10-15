@@ -357,7 +357,7 @@ private theorem leafRaws_adm (pos : Pos) (l : LeanProse.Leaf) : Adm (leafRaws po
       intro l
       induction l with
       | nil => intro acc h; exact h
-      | cons q rest ih =>
+      | cons q _ ih =>
         intro acc h
         exact ih _ (adm_push (adm_append h (breakRaws_adm pos)) (formulaRaw_adm pos q))
     exact h rest _ (by intro r hr; simp at hr; subst hr; exact formulaRaw_adm pos m)
