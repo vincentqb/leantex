@@ -332,6 +332,18 @@ entries of the other files" span
     (help := s!"put the file at {looked}, or drop '{name}' from the list of files")
     (subject := some ("bibfile:" ++ name))
 
+/-- E0503 or W0424 as a markdown document's metadata names its bibliography, where no `\allow` is
+written. -/
+public def bibMissingMarkdown (among : Bool) (name looked : String) (span : Option Span) : Diag :=
+  if among then
+    Diag.of .W0424 s!"the bibliography file '{name}' is not there; the reference list holds the \
+entries of the other files" span
+      (help := s!"put the file at {looked}, or drop '{name}' from 'bibliography:'")
+      (subject := some ("bibfile:" ++ name))
+  else
+    Diag.of .E0503 s!"the bibliography file '{name}' is not there; the reference list is empty"
+      span (help := s!"put the file at {looked}")
+
 /-- E0365: a `.bib` file `\data` names is not there; its records are absent and every read
 of them stays unresolved. -/
 public def dataMissing (name looked : String) (span : Option Span) : Diag :=

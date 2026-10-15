@@ -178,13 +178,25 @@ private def NotesAdm (cs : List CiteRaws) : Prop := ∀ c ∈ cs, Adm c.pre ∧ 
 private theorem textCmd_mem (m : CiteMode) : textCmd m ∈ citeCtrls := by
   cases m <;> simp [textCmd, citeCtrls]
 
+private theorem workText_adm (c : CiteRaws) (p : Pos) (hc : Adm c.pre ∧ Adm c.post) :
+    Adm (workText c p) := by
+  unfold workText
+  refine adm_append (adm_append ?_ (adm_lit (by simp [Vocab.admits]))) ?_
+  · split
+    · exact adm_empty
+    · exact adm_push hc.1 rfl
+  · split
+    · exact adm_empty
+    · exact adm_append (adm_lit (by simp [Vocab.admits])) hc.2
+
 private theorem citeTextRaws_adm (items : List CiteRaws) (p : Pos) (h : NotesAdm items) :
     Adm (citeTextRaws items p) := by
   unfold citeTextRaws
   have fold : ∀ (l : List CiteRaws) (acc : Array Raw), Adm acc → NotesAdm l →
       Adm (l.foldl (init := acc) fun acc c =>
         (if acc.isEmpty then acc else acc ++ #[.word ";" p, .space]) ++
-          citeCmdRaws (textCmd c.mode) c.pre c.post #[c.key] p) := by
+          (if keyCrosses c.key then citeCmdRaws (textCmd c.mode) c.pre c.post #[c.key] p
+           else workText c p)) := by
     intro l
     induction l with
     | nil => intro acc ha _; simpa using ha
@@ -193,10 +205,13 @@ private theorem citeTextRaws_adm (items : List CiteRaws) (p : Pos) (h : NotesAdm
       simp only [List.foldl_cons]
       refine ih _ ?_ (fun d hd => hl d (List.mem_cons_of_mem _ hd))
       have hc := hl c (List.mem_cons_self ..)
-      refine adm_append ?_ (citeCmdRaws_adm _ _ _ _ _ (textCmd_mem _) hc.1 hc.2)
-      split
-      · exact ha
-      · exact adm_append ha (adm_lit (by simp [Vocab.admits]))
+      refine adm_append ?_ ?_
+      · split
+        · exact ha
+        · exact adm_append ha (adm_lit (by simp [Vocab.admits]))
+      · split
+        · exact citeCmdRaws_adm _ _ _ _ _ (textCmd_mem _) hc.1 hc.2
+        · exact workText_adm c p hc
   exact adm_lit (by
     intro x hx
     simp only [List.mem_cons, List.not_mem_nil, or_false] at hx
@@ -362,10 +377,27 @@ private theorem inlRaws_adm (file : String) : (x : Inl) → Adm (inlRaws file x)
   | .cite items p => by
     simp only [inlRaws]
     have hn := citeItemsRaws_adm file items.toList #[] #[] (by intro c hc; simp at hc)
+    have hl : NotesAdm (citeItemsRaws file #[] #[] items.toList).1.toList :=
+      fun c hc => hn c (Array.mem_toList_iff.mp hc)
     unfold citeGroupRaws
+    dsimp only
     split
-    · exact natbibRaws_adm _ p (fun c hc => hn c (Array.mem_toList_iff.mp hc))
-    · exact adm_text _ p
+    · exact natbibRaws_adm _ p hl
+    · split
+      · next first hfirst =>
+        have h1 : Adm first.pre ∧ Adm first.post :=
+          hn first (Array.mem_of_getElem? hfirst)
+        split
+        · split
+          · refine adm_append (adm_append (citeCmdRaws_adm _ _ _ _ _ (by simp [citeCtrls])
+              adm_empty adm_empty) (adm_lit (by simp [Vocab.admits]))) (citeTextRaws_adm _ p ?_)
+            intro c hc
+            rcases List.mem_cons.mp hc with rfl | hc
+            · exact h1
+            · exact hl c (List.mem_of_mem_drop hc)
+          · exact adm_text _ p
+        · exact citeTextRaws_adm _ p hl
+      · exact adm_empty
 
 private theorem inlListRaws_adm (file : String) : (l : List Inl) → (out : Array Raw) →
     (ds : Array Diag) → Adm out → Adm (inlListRaws file out ds l).1
@@ -616,7 +648,7 @@ private theorem prelude_adm (m : MetaRead) : Adm m.prelude := by
   · exact adm_empty
   · exact adm_push (opening_adm m) rfl
 
-private theorem list_adm (m : MetaRead) : Adm m.list := by
+private theorem list_adm (m : MetaRead) (cited : Bool) : Adm (m.list cited) := by
   unfold MetaRead.list
   split
   · exact adm_empty
@@ -629,10 +661,10 @@ private theorem list_adm (m : MetaRead) : Adm m.list := by
       · exact adm_group _ _ (adm_lit (by intro y hy; simp at hy; subst hy; rfl))
       · exact adm_group _ _ (adm_lit (by intro y hy; simp at hy; subst hy; rfl)))
 
-private theorem titleRaws_adm (m : MetaRead) : Adm m.titleRaws := by
+private theorem titleRaws_adm (file : String) (m : MetaRead) : Adm (m.titleRaws file) := by
   unfold MetaRead.titleRaws
   split
-  · next tp _ =>
+  · next title q _ =>
     simp only [Parse.headingRaws_contract]
     exact adm_lit (by
       intro r hr
@@ -640,10 +672,11 @@ private theorem titleRaws_adm (m : MetaRead) : Adm m.titleRaws := by
       rcases hr with rfl | rfl | rfl
       · exact heading_mem _ _
       · rfl
-      · exact adm_group _ _ (adm_text tp.1 tp.2))
+      · exact adm_group _ _ (inlListRaws_adm file title.toList #[] #[] adm_empty))
   · exact adm_empty
 
-private theorem tail_adm (m : MetaRead) (placed : Bool) : Adm (m.tail placed) := by
+private theorem tail_adm (file : String) (m : MetaRead) (cited placed : Bool) :
+    Adm (m.tail file cited placed) := by
   unfold MetaRead.tail
   refine adm_append ?_ ?_
   · split
@@ -651,14 +684,14 @@ private theorem tail_adm (m : MetaRead) (placed : Bool) : Adm (m.tail placed) :=
     · exact adm_push (nociteRaws_adm m) rfl
   · split
     · exact adm_empty
-    · exact adm_append (titleRaws_adm m) (list_adm m)
+    · exact adm_append (titleRaws_adm file m) (list_adm m cited)
 
 public theorem desugar_vocabulary_mem (file input : String) (dialect : Dialect := .document)
     (role : Role := .document) :
     ∀ r ∈ (desugar file input dialect role).1, vocabulary.admits r = true := by
   unfold desugar
-  exact adm_append (adm_append (prelude_adm _) (blkListRaws_adm file _ (list_adm _) _ #[] #[]
-    adm_empty)) (tail_adm _ _)
+  exact adm_append (adm_append (prelude_adm _) (blkListRaws_adm file _ (list_adm _ _) _ #[] #[]
+    adm_empty)) (tail_adm _ _ _ _)
 
 public theorem read_desugar_exact (file input : String) : read file input = desugar file input := by
   unfold read
@@ -747,7 +780,7 @@ private theorem blkListRaws_starts (file : String) (refs : Array Raw) (hrefs : S
     exact blkListRaws_starts file refs hrefs rest _ _
       (starts_append h (blkRaws_starts file refs hrefs b))
 
-private theorem list_starts (m : MetaRead) : Starts m.list := by
+private theorem list_starts (m : MetaRead) (cited : Bool) : Starts (m.list cited) := by
   unfold MetaRead.list
   split
   · exact Or.inl rfl
@@ -759,7 +792,8 @@ private theorem prelude_starts (m : MetaRead) : Starts m.prelude := by
   · exact Or.inl rfl
   · exact Or.inr ⟨.par m.bibPos, Array.mem_push_self, Or.inl ⟨_, rfl⟩⟩
 
-private theorem tail_starts (m : MetaRead) (placed : Bool) : Starts (m.tail placed) := by
+private theorem tail_starts (file : String) (m : MetaRead) (cited placed : Bool) :
+    Starts (m.tail file cited placed) := by
   unfold MetaRead.tail
   refine starts_append ?_ ?_
   · split
@@ -768,7 +802,7 @@ private theorem tail_starts (m : MetaRead) (placed : Bool) : Starts (m.tail plac
   · split
     · exact Or.inl rfl
     · next hc =>
-      rcases list_starts m with he | ⟨r, hr, hs⟩
+      rcases list_starts m cited with he | ⟨r, hr, hs⟩
       · simp [he] at hc
       · exact Or.inr ⟨r, Array.mem_append.mpr (Or.inr hr), hs⟩
 
@@ -777,7 +811,8 @@ public theorem desugar_blockStart_contract (file input : String) (dialect : Dial
     ∃ r ∈ (desugar file input dialect role).1, BlockStart r := by
   unfold desugar at h ⊢
   exact (starts_append (starts_append (prelude_starts _)
-    (blkListRaws_starts file _ (list_starts _) _ #[] #[] (Or.inl rfl))) (tail_starts _ _)).resolve_left h
+    (blkListRaws_starts file _ (list_starts _ _) _ #[] #[] (Or.inl rfl)))
+    (tail_starts _ _ _ _)).resolve_left h
 
 public theorem vocabulary_contract :
     (∀ n ∈ vocabulary.envs, Parse.inputEnvFile? n = none ∧ n ≠ Parse.scopeEnv ∧

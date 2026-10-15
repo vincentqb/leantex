@@ -6,8 +6,6 @@ nocite: '@vale2016'
 note_: an underscore key that nothing reads
 ---
 
-# Citations in Markdown
-
 A first claim [@roe2020], and one by name: @doe2024 showed it first. A
 grouped citation [see @poe2022, pp. 101-110; @roe2020] keeps one bracket,
 and the year stands alone where the author is named already: Roe

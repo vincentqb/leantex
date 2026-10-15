@@ -2472,13 +2472,14 @@ private def analyse (sources : Array (String × String)) (doc : Ir.Doc) (rd : Fi
   unless requested.isEmpty && own.isEmpty do
     for k in cited do
       if (find k).isNone then
+        let md := doc.surface == .markdown
         let (cmd, loss) := if shown.contains k || citedBy.contains k then ("cite", "it shows as '?'")
-          else ("nocite", "\\nocite adds nothing for it")
+          else ("nocite", if md then "its 'nocite' adds nothing" else "\\nocite adds nothing for it")
         let atEntry : Option Span := if shown.contains k then none else
           (citedBy.get? k).bind fun e => (origin.get? e).map fun src =>
             ⟨sourceName src, (positions.get? e).getD {}⟩
         -- The fix is spelled in the document's own surface.
-        let spelling := if doc.surface == .markdown then s!"@{k}" else s!"\\{cmd}"
+        let spelling := if md then s!"@{k}" else s!"\\{cmd}"
         diags := diags.push (Diag.of .W0351 s!"citation '{k}' has no entry in the \
           bibliography; {loss}" atEntry
           (help := if own.isEmpty then s!"add an entry with key '{k}' to the .bib file, \

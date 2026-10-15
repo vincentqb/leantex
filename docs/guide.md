@@ -53,8 +53,10 @@ Markdown cites as Pandoc does: `[@key]`, `[see @key, p. 33; @other]`,
 `[-@key]` without the author's name, and `@key` or `@key [p. 33]` within a
 sentence. A key is letters, digits and `_` with single punctuation marks
 inside it (`:.#$%&-+?<>~/`), or anything braced, `@{https://example.org/x}`;
-an e-mail address, code and `\@` stay text. The document declares its
-bibliography in a YAML metadata block on its first lines, as Pandoc reads one:
+an e-mail address, code and `\@` stay text. Citations are read only in a
+document that declares its bibliography, in a YAML metadata block on its
+first line, as Pandoc's CommonMark reader reads one; without it an `@name`
+stays text, and so it does in a code file's documentation:
 
 ```markdown
 ---
@@ -69,13 +71,19 @@ reference-section-title: References
 `bibliography` names one `.bib` file or a list of them, beside the document;
 `biblio-style` takes a BibTeX style (plainnat by default, author and year in
 brackets), `natbiboptions` natbib's options, `nocite` lists entries to include
-uncited (`@*` for all), and `reference-section-title` heads the list, which
-stands in a `::: {#refs}` division, else at the end. Citations set as Pandoc's
-LaTeX writer sets them under natbib, with the numbering, list, styles and
-diagnostics of TeX's `\cite`; the web page links each to its entry, and the
-markdown twin writes them back in Pandoc's syntax. Every other metadata key is
-named as not read, `csl` among them, since no CSL processor runs. A Markdown
-file included in TeX cites into the TeX document's bibliography.
+uncited (`@*` for all), and `reference-section-title` heads the list where it
+sets at the end. The list stands in the first `::: {#refs}` division, else at
+the end, and only where something is cited. Citations set as Pandoc's LaTeX
+writer sets them under natbib, with the numbering, list, styles and
+diagnostics of TeX's `\cite`; the web page links each to its entry. A
+citation inside another's note sets as its text, named. The markdown twin
+writes citations back in Pandoc's syntax under a metadata block naming the
+bibliography, with every listed entry as `nocite` and the list's division,
+where the document's citation setup is one markdown metadata states; else it
+sets each citation as its marks, linked to the entries it writes. Every other
+metadata key is named as not read, `csl` among them, since no CSL processor
+runs. A Markdown file included in TeX cites into the TeX document's
+bibliography.
 
 Source files are read as UTF-8 unless a byte-order mark says UTF-16, and a
 line ends at LF, CR LF or a CR alone. A TeX document that declares

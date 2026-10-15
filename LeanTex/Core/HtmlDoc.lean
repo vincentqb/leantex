@@ -144,6 +144,8 @@ public structure Config where
   mathStyles : Array Ir.Style := #[]
   /-- Inside a fill row's group, where a text-width fraction is a fraction of the row. -/
   inFillRow : Bool := false
+  /-- Inside a link's text, where a link or a reference sets its text alone: HTML nests no anchor. -/
+  inLink : Bool := false
 
 /-- The current text area: the local context, else the page's. -/
 public def Config.measureValues (cfg : Config) : MeasureValues :=
@@ -5440,7 +5442,8 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
       #[("style", "color: " ++ cfg.paint name c)])
   | .located _ body => inlineNodesInto cfg acc body.toList
   | .link url body =>
-    acc.push (Html.elem "a" (inlineNodesInto cfg #[] body.toList)
+    if cfg.inLink then inlineNodesInto cfg acc body.toList
+    else acc.push (Html.elem "a" (inlineNodesInto { cfg with inLink := true } #[] body.toList)
       #[("href", url), ("style", "color: inherit")])
   | .label key =>
     acc.push (Html.elem "span" #[] #[("id", Ir.labelAnchor key)])
@@ -5448,7 +5451,8 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
   | .ref _ _ text target =>
     match target with
     | some a =>
-      acc.push (Html.elem "a" #[Html.text text]
+      if cfg.inLink then acc.push (Html.text text)
+      else acc.push (Html.elem "a" #[Html.text text]
         #[("href", "#" ++ a), ("style", "color: inherit")])
     | none => acc.push (Html.text text)
   | .decorated kind body =>

@@ -7,6 +7,7 @@ import LeanTex.Core.Decl
 import LeanTex.Core.Loop
 import LeanTex.Core.BibPunct
 import LeanTex.Core.KeyVal
+import Std.Data.HashMap
 
 /-! # Markdown's meaning
 
@@ -218,11 +219,23 @@ private def textCmd : CiteMode → String
   | .suppressAuthor => "citeyear"
   | .normal => "citealp"
 
-/-- `\citetext` around each citation's own command, joined by `; `. -/
+/-- Whether a key crosses natbib's comma-separated key list as itself. -/
+public def keyCrosses (key : String) : Bool := KeyVal.items key == #[key]
+
+/-- A work whose key cannot cross natbib's key list, as its text: its prefix, its braced key and its
+suffix. -/
+private def workText (c : CiteRaws) (p : Pos) : Array Raw :=
+  let pre := if c.pre.isEmpty then #[] else c.pre.push .space
+  let post := if c.post.isEmpty then #[] else #[Raw.word "," p, .space] ++ c.post
+  pre ++ #[.word ("@{" ++ c.key ++ "}") p] ++ post
+
+/-- `\citetext` around each citation's own command, joined by `; `, a work whose key cannot cross
+natbib's key list set as its text. -/
 private def citeTextRaws (items : List CiteRaws) (p : Pos) : Array Raw :=
   let body := items.foldl (init := #[]) fun acc c =>
     (if acc.isEmpty then acc else acc ++ #[.word ";" p, .space]) ++
-      citeCmdRaws (textCmd c.mode) c.pre c.post #[c.key] p
+      (if keyCrosses c.key then citeCmdRaws (textCmd c.mode) c.pre c.post #[c.key] p
+       else workText c p)
   #[.ctrl "citetext" p, .group body p]
 
 /-- A citation group as Pandoc's LaTeX writer sets it under natbib (`citationsToNatbib`): one
@@ -247,21 +260,24 @@ public def natbibRaws (items : List CiteRaws) (p : Pos) : Array Raw :=
         citeTextRaws ({ first with mode := .suppressAuthor } :: rest) p
     else citeTextRaws (first :: rest) p
 
-/-- Whether a key crosses natbib's comma-separated key list as itself. -/
-public def keyCrosses (key : String) : Bool := KeyVal.items key == #[key]
-
 /-- A citation group's raws: natbib's commands, or, where a key cannot cross natbib's key list,
-its keys as text with the loss named. -/
+`\citetext` with that work as its text and the loss named; an author-in-text work's own text. -/
 private def citeGroupRaws (file : String) (items : Array CiteRaws) (p : Pos) :
     Array Raw × Array Diag :=
-  match items.find? (!keyCrosses ·.key) with
-  | none => (natbibRaws items.toList p, #[])
-  | some bad =>
-    (textRaws (" ".intercalate (items.toList.map fun c => "@" ++ c.key)) p,
-     #[routeDegraded file "cite-key"
-        s!"the citation key '{bad.key}' holds a comma or a brace no bibliography key can hold: \
-the citation sets as its keys" p
-        (help := some "spell the key as its .bib entry writes it")])
+  let bad := items.filter (!keyCrosses ·.key)
+  if bad.isEmpty then (natbibRaws items.toList p, #[]) else
+  let diags := bad.map fun c => routeDegraded file "cite-key"
+    s!"the citation key '{c.key}' holds a comma or a brace no bibliography key can hold: the \
+work sets as its key, uncited" p (help := some "spell the key as its .bib entry writes it")
+  match items[0]? with
+  | some first =>
+    if first.mode == .authorInText then
+      if keyCrosses first.key then
+        (citeCmdRaws "citeauthor" #[] #[] #[first.key] p ++ #[.space] ++
+          citeTextRaws ({ first with mode := .suppressAuthor } :: items.toList.drop 1) p, diags)
+      else (textRaws (" ".intercalate (items.toList.map fun c => "@{" ++ c.key ++ "}")) p, diags)
+    else (citeTextRaws items.toList p, diags)
+  | none => (#[], diags)
 
 /-- An empty group, TeX's own end of a command's arguments, when `rs` opens on a word an
 overlay-aware command before it would read as its `<…>` selector. -/
@@ -528,10 +544,7 @@ without a language" p
     (#[.par p, .ctrl "inputlean" p] ++ bracket ++ #[.group #[.word file p] p], #[])
   -- The metadata block is read whole by `desugar`, before the blocks.
   | .metadata _ _ => (#[], #[])
-  | .refs p =>
-    (refs, if refs.isEmpty then
-      #[route file "refs" "a '::: {#refs}' division places the reference list, and no list is \
-declared for this file: nothing sets there" p] else #[])
+  | .refs _ => (refs, #[])
 
 private def blkListRaws (file : String) (refs : Array Raw) (out : Array Raw) (ds : Array Diag) :
     List Blk → Array Raw × Array Diag
@@ -552,21 +565,63 @@ end
 
 mutual
 
-/-- Whether a block holds a reference-list division anywhere. -/
-private def holdsRefsOne : Blk → Bool
-  | .refs _ => true
-  | .quote body _ => holdsRefs body.toList
-  | .disclosure _ _ body _ => holdsRefs body.toList
-  | .list _ _ _ items _ => holdsRefsItems items.toList
-  | .para .. | .heading .. | .code .. | .rule _ | .table .. | .lean .. | .metadata .. => false
+/-- Where a block holds its first reference-list division. -/
+private def refsAtOne : Blk → Option Pos
+  | .refs p => some p
+  | .quote body _ => refsAt body.toList
+  | .disclosure _ _ body _ => refsAt body.toList
+  | .list _ _ _ items _ => refsAtItems items.toList
+  | .para .. | .heading .. | .code .. | .rule _ | .table .. | .lean .. | .metadata .. => none
 
-private def holdsRefs : List Blk → Bool
-  | [] => false
-  | b :: rest => holdsRefsOne b || holdsRefs rest
+private def refsAt : List Blk → Option Pos
+  | [] => none
+  | b :: rest => (refsAtOne b).orElse fun _ => refsAt rest
 
-private def holdsRefsItems : List (Array Blk) → Bool
+private def refsAtItems : List (Array Blk) → Option Pos
+  | [] => none
+  | it :: rest => (refsAt it.toList).orElse fun _ => refsAtItems rest
+
+end
+
+mutual
+
+/-- Whether inline content holds a citation. -/
+private def citesInl : Inl → Bool
+  | .cite _ _ => true
+  | .emph body _ => citesInls body.toList
+  | .strong body _ => citesInls body.toList
+  | .link _ _ body _ => citesInls body.toList
+  | .image _ _ alt _ => citesInls alt.toList
+  | .text .. | .code .. | .anchor .. | .soft _ | .hard _ => false
+
+private def citesInls : List Inl → Bool
   | [] => false
-  | it :: rest => holdsRefs it.toList || holdsRefsItems rest
+  | x :: rest => citesInl x || citesInls rest
+
+end
+
+/-- Whether a table's cells hold a citation. -/
+private def citesCells (cells : List (Array Inl)) : Bool := cells.any fun c => citesInls c.toList
+
+mutual
+
+/-- Whether a block holds a citation anywhere. -/
+private def citesBlk : Blk → Bool
+  | .para body _ => citesInls body.toList
+  | .heading _ body _ => citesInls body.toList
+  | .quote body _ => citesBlks body.toList
+  | .disclosure summary _ body _ => citesInls summary.toList || citesBlks body.toList
+  | .list _ _ _ items _ => citesItems items.toList
+  | .table _ header rows _ => citesCells header.toList || rows.toList.any (citesCells ·.toList)
+  | .code .. | .rule _ | .lean .. | .metadata .. | .refs _ => false
+
+private def citesBlks : List Blk → Bool
+  | [] => false
+  | b :: rest => citesBlk b || citesBlks rest
+
+private def citesItems : List (Array Blk) → Bool
+  | [] => false
+  | it :: rest => citesBlks it.toList || citesItems rest
 
 end
 
@@ -583,7 +638,7 @@ public structure MetaRead where
   style : Option String := none
   decls : Array String := #[]
   nocite : Option (Array String × Pos) := none
-  title : Option (String × Pos) := none
+  title : Option (Array Inl × Pos) := none
   diags : Array Diag := #[]
 
 /-- A metadata value's text, a sequence's items joined by `, `. -/
@@ -607,15 +662,22 @@ public def metaKeys : List (String × Role) :=
    ("link-citations", .document), ("link-citations", .included)]
 
 /-- What a metadata block's fields declare for citations, read as Pandoc reads them; every other
-key is named, a key written twice taking its last value and a key ending in `_` ignored. -/
+key is named, as is a key written twice, which takes its last value, and in a document a citation
+key with no bibliography to act on; a key ending in `_` is ignored. -/
 public def metaRead (file : String) (role : Role) (fields : Array MetaField) : MetaRead := Id.run do
-  let fields := fields.filter fun f =>
-    !f.key.endsWith "_" && (fields.findRev? (·.key == f.key)).any (·.pos == f.pos)
+  let mut last : Std.HashMap String Nat := {}
+  for (f, k) in fields.zipIdx do last := last.insert f.key k
+  let declared := bibDeclared fields
   let unread (f : MetaField) (why : String) (help : Option String := none) : Diag :=
     Diag.of .W0307 s!"the metadata key '{f.key}' is not read: {why}" (some ⟨file, f.pos⟩) help
       (subject := some ("md:meta:" ++ f.key))
   let mut out : MetaRead := {}
-  for f in fields do
+  for (f, k) in fields.zipIdx do
+    if f.key.endsWith "_" then continue
+    if last.get? f.key != some k then
+      out := { out with diags := out.diags.push (routeDegraded file ("meta-twice:" ++ f.key)
+        s!"the metadata key '{f.key}' is written again below: its last value is read" f.pos) }
+      continue
     let known := metaKeys.any fun (k, r) => k == f.key && r == role
     if !known then
       let csl := f.key == "csl" || f.key == "citation-style"
@@ -627,6 +689,10 @@ public def metaRead (file : String) (role : Role) (fields : Array MetaField) : M
           some "declare 'biblio-style:' with plainnat, unsrtnat, abbrvnat, plain, unsrt, abbrv or alpha"
         else none
       out := { out with diags := out.diags.push (unread f why help) }
+      continue
+    if role == .document && !declared && f.key != "bibliography" then
+      out := { out with diags := out.diags.push (unread f "the document declares no bibliography"
+        (some "name the .bib file the citations take, as 'bibliography: refs.bib'")) }
       continue
     match f.key, f.value with
     | "bibliography", v =>
@@ -654,10 +720,12 @@ without a comma" (some ⟨file, f.pos⟩) (some "convert the entries to a .bib f
         | .scalar s => (KeyVal.items s).toList
         | .list items => items.toList.map fun (o : String) => o.trimAscii.toString
         | .unread => []
+      -- natbib processes its options in its own declaration order, as its load in TeX does.
+      let decls := Bib.natbibOptions.foldl (init := #[]) fun acc (o, ds) =>
+        if given.contains o then acc.appendList ds else acc
+      out := { out with decls := out.decls ++ decls }
       for o in given do
-        match Bib.natbibOptions.lookup o with
-        | some ds => out := { out with decls := out.decls ++ ds.toArray }
-        | none =>
+        unless Bib.natbibOptions.any (·.1 == o) do
           let d := Diag.of .W0307 s!"the natbib option '{o}' is not read: natbib reads no such option"
             (some ⟨file, f.pos⟩) (subject := some ("md:meta:natbiboptions:" ++ o))
           out := { out with diags := out.diags.push d }
@@ -667,8 +735,10 @@ without a comma" (some ⟨file, f.pos⟩) (some "convert the entries to a .bib f
         let keys := citeKeys t
         if !keys.isEmpty then out := { out with nocite := some (keys, f.pos) }
       | none => out := { out with diags := out.diags.push (unread f "its value is not text") }
-    | "reference-section-title", .scalar s =>
-      out := { out with title := some (s.trimAscii.toString, f.pos) }
+    | "reference-section-title", .scalar t =>
+      let (title, ds) := metaInlines file t.trimAscii.toString f.pos
+      let lowered := inlListRaws file #[] #[] title.toList
+      out := { out with title := some (title, f.pos), diags := out.diags ++ ds ++ lowered.2 }
     | "link-citations", v =>
       if v.bool? == some false then
         let d := routeDegraded file "link-citations"
@@ -693,24 +763,27 @@ public def MetaRead.prelude (m : MetaRead) : Array Raw :=
   if m.opening.isEmpty then #[] else m.opening.push (.par m.bibPos)
 
 /-- The reference list's raws in its declared style, plainnat by Pandoc's default; empty where no
-bibliography is declared. -/
-public def MetaRead.list (m : MetaRead) : Array Raw :=
-  if m.sources.isEmpty then #[] else
+bibliography is declared, or where nothing is cited, as Pandoc's citation processing sets none. -/
+public def MetaRead.list (m : MetaRead) (cited : Bool) : Array Raw :=
+  if m.sources.isEmpty || !(cited || m.nocite.isSome) then #[] else
     #[.par m.bibPos, .ctrl Parse.markdownBibControl m.bibPos,
       .group #[.word (m.style.getD "plainnat") m.bibPos] m.bibPos,
       .group #[.word (",".intercalate m.sources.toList) m.bibPos] m.bibPos]
 
 /-- The heading over a reference list set at the file's end: `reference-section-title`. -/
-public def MetaRead.titleRaws (m : MetaRead) : Array Raw :=
+public def MetaRead.titleRaws (file : String) (m : MetaRead) : Array Raw :=
   match m.title with
-  | some tp => Parse.headingRaws .h1 (textRaws tp.1 tp.2) tp.2
+  | some (title, q) => Parse.headingRaws .h1 (inlListRaws file #[] #[] title.toList).1 q
   | none => #[]
 
 /-- What a file ends with: the `nocite` keys, after every citation as Pandoc's LaTeX template sets
 them, and the reference list with its title where no division placed it. -/
-public def MetaRead.tail (m : MetaRead) (placed : Bool) : Array Raw :=
+public def MetaRead.tail (file : String) (m : MetaRead) (cited placed : Bool) : Array Raw :=
   let nocite := if m.nociteRaws.isEmpty then #[] else m.nociteRaws.push (.par m.bibPos)
-  nocite ++ if placed || m.list.isEmpty then #[] else m.titleRaws ++ m.list
+  let list := m.list cited
+  let title := m.titleRaws file
+  let titled := title ++ list
+  nocite ++ if placed || list.isEmpty then #[] else titled
 
 /-- A document's metadata fields, and the blocks after its metadata block. -/
 public def splitMetadata (bs : Array Blk) : Array MetaField × Array Blk :=
@@ -720,14 +793,23 @@ public def splitMetadata (bs : Array Blk) : Array MetaField × Array Blk :=
 
 /-- The whole document: markdown source to the surface AST, with the reader's
 own diagnostics carrying `.md` spans; its metadata opens it, and its reference list stands in
-each `::: {#refs}` division, else at its end, as Pandoc places it. -/
+its first `::: {#refs}` division, else at its end, as Pandoc places it. -/
 public def desugar (file : String) (input : String) (dialect : Dialect := .document)
     (role : Role := .document) : Array Raw × Array Diag :=
-  let read := blocksIn dialect file input
+  let read := blocksIn dialect file input (included := role == .included)
   let split := splitMetadata read.1
   let m := metaRead file role split.1
-  let body := blkListRaws file m.list #[] #[] split.2.toList
-  (m.prelude ++ body.1 ++ m.tail (holdsRefs split.2.toList), read.2 ++ m.diags ++ body.2)
+  let blocks := split.2.toList
+  let cited := citesBlks blocks
+  let body := blkListRaws file (m.list cited) #[] #[] blocks
+  let placed := refsAt blocks
+  -- premise: mdMetadataChecks — a division with no bibliography to place is named
+  let unplaced := match placed with
+    | some p => if m.sources.isEmpty then
+        #[route file "refs" "a '::: {#refs}' division places the reference list, and no \
+bibliography is declared for this file: nothing sets there" p] else #[]
+    | none => #[]
+  (m.prelude ++ body.1 ++ m.tail file cited placed.isSome, read.2 ++ m.diags ++ body.2 ++ unplaced)
 
 /-- The frontend a `.md` path selects: the reader plus the desugaring. -/
 public def read (file input : String) : Array Raw × Array Diag := desugar file input

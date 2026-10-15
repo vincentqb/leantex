@@ -306,7 +306,9 @@ public def resolveBibliography (file : String) (doc : Ir.Doc) (cv : Bib.FieldRea
     else
       missing := missing.push (src, path.toString)
   let missingDiags := missing.map fun (src, looked) =>
-    if sources.isEmpty then DriverDiag.bibMissing src looked (spanOf src)
+    if doc.surface == .markdown then
+      DriverDiag.bibMissingMarkdown (!sources.isEmpty) src looked (spanOf src)
+    else if sources.isEmpty then DriverDiag.bibMissing src looked (spanOf src)
     else DriverDiag.bibMissingAmong src looked (spanOf src)
   let (doc, applyDiags) := Bib.apply sources doc cv
   return (Bib.resolveListRefs labels doc, diags ++ missingDiags ++ applyDiags, ledger)

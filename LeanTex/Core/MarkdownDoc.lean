@@ -2,6 +2,8 @@ module
 
 public import LeanTex.Core.Ir
 import LeanTex.Core.CiteKey
+import LeanTex.Core.BibPunct
+import Std.Data.HashSet
 
 /-! The markdown backend: the llms.txt twin of the IR the HTML and PDF backends
 read, written to read back as the same document. -/
@@ -16,29 +18,32 @@ private def citeOpens (prev : Option Char) (rest : List Char) : Bool :=
   !(prev.any fun p => CiteKey.isAlnum p || p == '.') &&
     (rest.head?.any fun d => CiteKey.regular d || d == '{')
 
-/-- Escapes the characters that would read as markup anywhere in a line, after `prev`. -/
-private def escapeCharsFrom (pipes : Bool) (prev : Option Char) : List Char → List Char
+/-- Escapes the characters that would read as markup anywhere in a line, after `prev`; an `@` that
+would open a citation where `ats` says the twin reads citations. -/
+private def escapeCharsFrom (pipes ats : Bool) (prev : Option Char) : List Char → List Char
   | [] => []
   | c :: rest =>
     if c == '\\' || c == '`' || c == '*' || c == '_' || c == '[' || c == ']'
-        || (pipes && c == '|') || c == '<' || c == '&' || (c == '@' && citeOpens prev rest) then
-      '\\' :: c :: escapeCharsFrom pipes (some c) rest
+        || (pipes && c == '|') || c == '<' || c == '&' || (c == '@' && ats && citeOpens prev rest) then
+      '\\' :: c :: escapeCharsFrom pipes ats (some c) rest
     -- A line ending inside text has no other spelling.
-    else if c == '\n' then '&' :: '#' :: '1' :: '0' :: ';' :: escapeCharsFrom pipes (some c) rest
-    else if c == '\r' then '&' :: '#' :: '1' :: '3' :: ';' :: escapeCharsFrom pipes (some c) rest
-    else c :: escapeCharsFrom pipes (some c) rest
+    else if c == '\n' then '&' :: '#' :: '1' :: '0' :: ';' :: escapeCharsFrom pipes ats (some c) rest
+    else if c == '\r' then '&' :: '#' :: '1' :: '3' :: ';' :: escapeCharsFrom pipes ats (some c) rest
+    else c :: escapeCharsFrom pipes ats (some c) rest
 
 /-- Escapes the characters that would read as markup anywhere in a line. -/
-private def escapeChars (pipes : Bool) (l : List Char) : List Char := escapeCharsFrom pipes none l
+private def escapeChars (pipes ats : Bool) (l : List Char) : List Char :=
+  escapeCharsFrom pipes ats none l
 
-private def escapeText (pipes : Bool) (s : String) : String :=
-  String.ofList (escapeChars pipes s.toList)
+private def escapeText (pipes ats : Bool) (s : String) : String :=
+  String.ofList (escapeChars pipes ats s.toList)
 
-private theorem escapeCharsFrom_line (pipes : Bool) :
-    (prev : Option Char) → (l : List Char) → ∀ x ∈ escapeCharsFrom pipes prev l, x ≠ '\n' ∧ x ≠ '\r'
+private theorem escapeCharsFrom_line (pipes ats : Bool) :
+    (prev : Option Char) → (l : List Char) →
+      ∀ x ∈ escapeCharsFrom pipes ats prev l, x ≠ '\n' ∧ x ≠ '\r'
   | _, [], x, hx => by simp [escapeCharsFrom] at hx
   | prev, c :: rest, x, hx => by
-    have ih := escapeCharsFrom_line pipes (some c) rest x
+    have ih := escapeCharsFrom_line pipes ats (some c) rest x
     by_cases hn : c = '\n'
     · subst hn
       simp [escapeCharsFrom, citeOpens] at hx
@@ -51,7 +56,7 @@ private theorem escapeCharsFrom_line (pipes : Bool) :
         all_goals first | decide | exact ih hx
       · have hn' : (c == '\n') = false := by simpa using hn
         have hr' : (c == '\r') = false := by simpa using hr
-        have hmem : x = '\\' ∨ x = c ∨ x ∈ escapeCharsFrom pipes (some c) rest := by
+        have hmem : x = '\\' ∨ x = c ∨ x ∈ escapeCharsFrom pipes ats (some c) rest := by
           unfold escapeCharsFrom at hx
           simp only [hn', hr', Bool.false_eq_true, ↓reduceIte] at hx
           split at hx
@@ -69,9 +74,9 @@ private theorem escapeCharsFrom_line (pipes : Bool) :
         · exact ⟨hn, hr⟩
         · exact ih hx
 
-private theorem escapeChars_line (pipes : Bool) (l : List Char) :
-    ∀ x ∈ escapeChars pipes l, x ≠ '\n' ∧ x ≠ '\r' :=
-  escapeCharsFrom_line pipes none l
+private theorem escapeChars_line (pipes ats : Bool) (l : List Char) :
+    ∀ x ∈ escapeChars pipes ats l, x ≠ '\n' ∧ x ≠ '\r' :=
+  escapeCharsFrom_line pipes ats none l
 
 /-- Whether the rest of a line is a space, a tab or nothing, as must follow a
 list marker or an ATX opening. -/
@@ -521,7 +526,7 @@ private inductive Site where
 /-- A citation note as the reader reads it back inside a citation's brackets. -/
 private def citeNote (pipes : Bool) (s : String) : String :=
   String.join (s.toList.map fun c =>
-    if c == ';' || c == '@' then "\\" ++ c.toString else String.ofList (escapeChars pipes [c]))
+    if c == ';' || c == '@' then "\\" ++ c.toString else String.ofList (escapeChars pipes true [c]))
 
 /-- One work of a bracketed citation, `prefix -@key, suffix`; `none` where its key has no
 spelling. -/
@@ -535,45 +540,69 @@ private def bracketWork (pipes : Bool) (pre post : String) (suppress : Bool) (ke
   return pre ++ (if suppress then "-" else "") ++ k ++ post
 
 /-- Whether an author-in-text citation may open after what the twin wrote: not inside a word, after
-its `.`, an emphasis run or a backslash. -/
+its `.`, an emphasis delimiter, a backslash that would escape it, or a hyphen that would suppress
+its author; an escaped delimiter or backslash is text. -/
 private def inTextAfter (acc : String) : Bool :=
-  match acc.back? with
-  | some c => !(CiteKey.isAlnum c || c == '.' || c == '*' || c == '_' || c == '\\')
-  | none => true
+  let r := acc.toList.reverse
+  let escaped (l : List Char) : Bool := (l.takeWhile (· == '\\')).length % 2 == 1
+  match r with
+  | c :: rest =>
+    if c == '\\' then !escaped r
+    else if c == '*' || c == '_' then escaped rest
+    else !(CiteKey.isAlnum c || c == '.' || c == '-')
+  | [] => true
 
 /-- Whether the text after a citation would read as part of it: a bracket, a parenthesis or a brace
 opening on it. -/
 private def opensOn (after : String) : Bool :=
   after.startsWith "(" || after.startsWith "[" || after.startsWith "{"
 
-/-- A citation group's Pandoc spelling, `[see @a, p. 3; @b]`, `@a [p. 3]` or `[-@a]`, where the
-form has one that reads back to it; `none` elsewhere. -/
-private def citeSpelling (pipes : Bool) (f : CiteForm) (keys : Array String) (acc after : String) :
-    Option String :=
-  if f.full || f.up then none else
-  match f.cmd, keys.toList with
-  | .paren, _ :: _ =>
-    if opensOn after then none else
-    let n := keys.size
-    let works := keys.toList.zipIdx.mapM fun (k, i) =>
-      bracketWork pipes (if i == 0 then f.pre else "") (if i + 1 == n then f.post else "") false k
-    works.map fun ws => "[" ++ "; ".intercalate ws ++ "]"
-  | .yearPar, [k] =>
-    if opensOn after then none else (bracketWork pipes f.pre f.post true k).map fun w => "[" ++ w ++ "]"
-  | .textual, [k] =>
-    if !f.pre.isEmpty || !inTextAfter acc then none
-    else if f.post.isEmpty then
-      if (after.dropWhile (· == ' ')).startsWith "[" then none
-      else CiteKey.spelling? k after.front?
-    else if opensOn after then none
-    else (CiteKey.spelling? k none).map fun s => s ++ " [" ++ citeNote pipes f.post ++ "]"
-  | _, _ => none
-
 /-- A citation node's form and keys, resolved or not. -/
 private def citeOf? : Inline → Option (CiteForm × Array String)
   | .cite f ks => some (f, ks)
   | .cited f ks _ => some (f, ks)
   | _ => none
+
+/-- Whether a citation's spelling opens on a bracket an author-in-text citation before it would read
+as its own. -/
+private def bracketCite (x : Inline) : Bool :=
+  (citeOf? x).any fun (f, _) => f.cmd == .paren || f.cmd == .yearPar || f.cmd == .bracket true
+
+/-- How an author-in-text citation without notes stands before `rest`: bare, before the space that
+would join a bracket citation after it written as a reference, or not at all. -/
+private def inTextTail (rest : List Inline) : Option (String × Nat) :=
+  match rest with
+  | .text " " :: y :: _ => if bracketCite y then some ("&#32;", 1) else some ("", 0)
+  | y :: _ => if bracketCite y then none else some ("", 0)
+  | [] => some ("", 0)
+
+/-- A citation group's Pandoc spelling, `[see @a, p. 3; @b]`, `@a [p. 3]` or `[-@a]`, where the
+form has one that reads back to it, and the siblings after it the spelling takes; `none` elsewhere,
+a bracket before another citation's bracket among them, which would read as a reference link. -/
+private def citeSpelling (pipes : Bool) (f : CiteForm) (keys : Array String) (acc after : String)
+    (rest : List Inline) : Option (String × Nat) :=
+  if f.full || f.up then none else
+  let closed := opensOn after || rest.head?.any bracketCite
+  match f.cmd, keys.toList with
+  | .paren, _ :: _ =>
+    if closed then none else
+    let n := keys.size
+    let works := keys.toList.zipIdx.mapM fun (k, i) =>
+      bracketWork pipes (if i == 0 then f.pre else "") (if i + 1 == n then f.post else "") false k
+    works.map fun ws => ("[" ++ "; ".intercalate ws ++ "]", 0)
+  | .yearPar, [k] =>
+    if closed then none
+    else (bracketWork pipes f.pre f.post true k).map fun w => ("[" ++ w ++ "]", 0)
+  | .textual, [k] =>
+    if !f.pre.isEmpty || !inTextAfter acc then none
+    else if f.post.isEmpty then do
+      let (tail, n) ← inTextTail rest
+      -- A reference's `&#` lengthens no key.
+      let spelled ← CiteKey.spelling? k (if tail.isEmpty then after.front? else none)
+      return (spelled ++ tail, n)
+    else if closed then none
+    else (CiteKey.spelling? k none).map fun s => (s ++ " [" ++ citeNote pipes f.post ++ "]", 0)
+  | _, _ => none
 
 /-- The works of a `\citetext` group after its opening mark, each its own command's single key
 separated by `; `, to the closing mark: their spellings and the nodes read, the closing mark's
@@ -605,7 +634,7 @@ private def citeRun (pipes : Bool) (acc : String) (x : Inline) (rest : List Inli
     if f.cmd == .bracket true then
       match groupWorks pipes #[] 0 rest with
       | some (ws, n) =>
-        if opensOn (afterOf (rest.drop n)) then none
+        if opensOn (afterOf (rest.drop n)) || (rest.drop n).head?.any bracketCite then none
         else some ("[" ++ "; ".intercalate ws.toList ++ "]", n)
       | _ => none
     else if f.cmd == .author && !f.full && !f.up && f.pre.isEmpty && f.post.isEmpty then
@@ -619,7 +648,7 @@ private def citeRun (pipes : Bool) (acc : String) (x : Inline) (rest : List Inli
               match citeOf? y, groupWorks pipes #[] 0 more with
               | some (yf, yks), some (ws, n) =>
                 if yf.cmd != .year || yks != #[k] || !yf.pre.isEmpty || opensOn (afterOf (more.drop n))
-                then none
+                  || (more.drop n).head?.any bracketCite then none
                 else
                   let tail := if yf.post.isEmpty then ws.toList.drop 1
                     else (citeNote pipes yf.post) :: ws.toList.drop 1
@@ -629,7 +658,7 @@ private def citeRun (pipes : Bool) (acc : String) (x : Inline) (rest : List Inli
             | [] => none
         | _ => none
       | _, _ => none
-    else (citeSpelling pipes f ks acc (afterOf rest)).map (·, 0)
+    else citeSpelling pipes f ks acc (afterOf rest) rest
   | _ => none
 
 /-- Whether content opens on an inline formula, under any source location. -/
@@ -645,9 +674,10 @@ private def opensInlineMath : List Inline → Bool
 mutual
 
 /-- Inline content onto `acc`: meaning survives, decoration degrades. -/
-private def inlineInto (site : Site) (acc : String) (after : Bool := true) : Inline → String
+private def inlineInto (site : Site) (cites : Bool) (acc : String) (after : Bool := true) :
+    Inline → String
   | .text s =>
-    let escaped := escapeText (site != .cell) s
+    let escaped := escapeText (site != .cell) cites s
     acc ++ escaped
   | .math display src =>
     if display then acc ++ s!"$${src}$$" else acc ++ s!"${src}$"
@@ -655,41 +685,42 @@ private def inlineInto (site : Site) (acc : String) (after : Bool := true) : Inl
   | .formula display src _ =>
     if display then acc ++ s!"$${src}$$" else acc ++ s!"${src}$"
   | .image src _ alt =>
-    let shown := escapeText (site != .cell) alt.text
+    let shown := escapeText (site != .cell) cites alt.text
     let dest := linkDest src
     acc ++ "![" ++ shown ++ "](" ++ dest ++ ")"
   -- An icon's markdown spelling is its text alternative.
   | .icon _ label =>
-    let escaped := escapeText (site != .cell) label
+    let escaped := escapeText (site != .cell) cites label
     acc ++ escaped
   -- An anchor is written as the empty target the markdown reader reads back.
   | .label key => acc ++ "<a name=\"" ++ Ir.labelAnchor key ++ "\"></a>"
   | .ref _ _ text _ =>
-    let escaped := escapeText (site != .cell) text
+    let escaped := escapeText (site != .cell) cites text
     acc ++ escaped
   | .styled st body =>
     match st with
     | .mono => monoInto acc #[] body.toList
     | _ =>
-      let inner := inlinesInto site "" none after 0 body.toList
+      let inner := inlinesInto site cites "" none after 0 body.toList
       match styleMark st with
       | some m =>
         let (lead, core, trail) := spaceSplit inner
         if core.isEmpty then acc ++ lead ++ trail else acc ++ lead ++ m ++ core ++ m ++ trail
       | none => acc ++ inner
-  | .colored _ _ body => inlinesInto site acc none after 0 body.toList
-  | .located _ body => inlinesInto site acc none after 0 body.toList
-  | .role _ body => inlinesInto site acc none after 0 body.toList
+  | .colored _ _ body => inlinesInto site cites acc none after 0 body.toList
+  | .located _ body => inlinesInto site cites acc none after 0 body.toList
+  | .role _ body => inlinesInto site cites acc none after 0 body.toList
   | .link url body =>
     if bareLink url body && autolinkable url then acc ++ "<" ++ url ++ ">"
     else
-      let inner := inlinesInto site "" none true 0 body.toList
+      let inner := inlinesInto site cites "" none true 0 body.toList
       let dest := linkDest url
       acc ++ "[" ++ inner ++ "](" ++ dest ++ ")"
-  | .decorated _ body => inlinesInto site acc none after 0 body.toList
-  | .onSteps _ body => inlinesInto site acc none after 0 body.toList
+  | .decorated _ body => inlinesInto site cites acc none after 0 body.toList
+  | .onSteps _ body => inlinesInto site cites acc none after 0 body.toList
   | .altSteps _ active otherwise =>
-    inlinesInto site (inlinesInto site acc none false 0 active.toList) none after 0 otherwise.toList
+    inlinesInto site cites (inlinesInto site cites acc none false 0 active.toList) none after 0
+      otherwise.toList
   -- `\hfill` renders as a spaced em dash: text has no margin.
   | .fill =>
     let acc := if acc.endsWith " " then (acc.dropEnd 1).toString else acc
@@ -713,7 +744,7 @@ private def inlineInto (site : Site) (acc : String) (after : Bool := true) : Inl
   | .cite _ keys =>
     let marks := Ir.citeMarks keys
     acc ++ marks
-  | .cited _ _ ink => inlinesInto site acc none after 0 ink.toList
+  | .cited _ _ ink => inlinesInto site cites acc none after 0 ink.toList
   -- The mark in footnote syntax; the body is a `[^k]: ...` definition after the document.
   | .footnote num _ => acc ++ s!"[^{num.getD 0}]"
   | .linebreak _ =>
@@ -721,14 +752,14 @@ private def inlineInto (site : Site) (acc : String) (after : Bool := true) : Inl
 
 /-- The sibling walk: a run following a run of its own delimiter reopens it, and zero glue between
 two formulas is a space, so the second never reads as a display's `$$`. -/
-private def inlinesInto (site : Site) (acc : String) (prev : Option String)
+private def inlinesInto (site : Site) (cites : Bool) (acc : String) (prev : Option String)
     (after : Bool) (skip : Nat) : List Inline → String
   | [] => acc
   | x :: rest =>
     -- The siblings a citation's spelling already read write nothing of their own.
-    if skip > 0 then inlinesInto site acc prev after (skip - 1) rest else
-    match citeRun (site == .cell) acc x rest with
-    | some (spelled, n) => inlinesInto site (acc ++ spelled) none after n rest
+    if skip > 0 then inlinesInto site cites acc prev after (skip - 1) rest else
+    match (if cites then citeRun (site == .cell) acc x rest else none) with
+    | some (spelled, n) => inlinesInto site cites (acc ++ spelled) none after n rest
     | none =>
     match x with
     | .hspace e keep =>
@@ -737,16 +768,16 @@ private def inlinesInto (site : Site) (acc : String) (prev : Option String)
       let bare := !g.fil && !e.anyRef (fun _ => true) && g.width.sp == 0 && g.width.em == 0 &&
         g.width.ex == 0
       if bare && acc.endsWith "$" && opensInlineMath rest then
-        inlinesInto site (acc ++ " ") prev after 0 rest
+        inlinesInto site cites (acc ++ " ") prev after 0 rest
       else
-        let next := inlineInto site acc (closesAfterTag after rest) (.hspace e keep)
-        inlinesInto site next (if next.utf8ByteSize == acc.utf8ByteSize then prev else none) after 0
+        let next := inlineInto site cites acc (closesAfterTag after rest) (.hspace e keep)
+        inlinesInto site cites next (if next.utf8ByteSize == acc.utf8ByteSize then prev else none) after 0
           rest
     | .styled st body =>
       match styleMark st with
       | some m =>
         let closes := closesAfterTag after rest
-        let (lead, core, trail) := spaceSplit (inlinesInto site "" none closes 0 body.toList)
+        let (lead, core, trail) := spaceSplit (inlinesInto site cites "" none closes 0 body.toList)
         -- A paragraph's run keeps closing breaks inside as `<br>` where its closer still closes.
         let (lead, core, trail) := if site == .flow then
             match closingBreaks trail closes with
@@ -758,19 +789,19 @@ private def inlinesInto (site : Site) (acc : String) (prev : Option String)
             (lead ++ opening, core, closing ++ trail)
         let ends := if trail.isEmpty then some m else none
         if core.isEmpty then
-          inlinesInto site (acc ++ lead ++ trail) (if (lead ++ trail).isEmpty then prev else none)
+          inlinesInto site cites (acc ++ lead ++ trail) (if (lead ++ trail).isEmpty then prev else none)
             after 0 rest
         else if prev == some m then
-          inlinesInto site ((acc.dropEnd m.length).toString ++ lead ++ core ++ m ++ trail) ends
+          inlinesInto site cites ((acc.dropEnd m.length).toString ++ lead ++ core ++ m ++ trail) ends
             after 0 rest
-        else inlinesInto site (acc ++ lead ++ m ++ core ++ m ++ trail) ends after 0 rest
+        else inlinesInto site cites (acc ++ lead ++ m ++ core ++ m ++ trail) ends after 0 rest
       | none =>
-        inlinesInto site (inlineInto site acc (closesAfterTag after rest) (.styled st body)) none
+        inlinesInto site cites (inlineInto site cites acc (closesAfterTag after rest) (.styled st body)) none
           after 0 rest
     | x =>
       -- An inline that writes nothing leaves the run it follows open to the next.
-      let next := inlineInto site acc (closesAfterTag after rest) x
-      inlinesInto site next (if next.utf8ByteSize == acc.utf8ByteSize then prev else none) after 0
+      let next := inlineInto site cites acc (closesAfterTag after rest) x
+      inlinesInto site cites next (if next.utf8ByteSize == acc.utf8ByteSize then prev else none) after 0
         rest
 
 end
@@ -782,21 +813,22 @@ private def closeHash (s : String) : String :=
   | '#' :: rest => String.ofList (rest.reverse ++ ['\\', '#'])
   | _ => s
 
-/-- The markdown spelling of inline content in a paragraph's flow. -/
-public def inlineText (xs : Array Inline) : String :=
-  closeHash (inlinesInto .flow "" none true 0 xs.toList)
+/-- The markdown spelling of inline content in a paragraph's flow; `cites` where the twin declares
+the document's bibliography and spells its citations. -/
+public def inlineText (xs : Array Inline) (cites : Bool := false) : String :=
+  closeHash (inlinesInto .flow cites "" none true 0 xs.toList)
 
 /-- Line endings as spaces. -/
 private def oneLine (s : String) : String :=
   String.ofList (s.toList.map fun c => if c == '\n' || c == '\r' then ' ' else c)
 
 /-- A heading's text: one line, its trailing `#` escaped. -/
-public def headingText (xs : Array Inline) : String :=
-  closeHash (oneLine (inlinesInto .line "" none true 0 xs.toList))
+public def headingText (xs : Array Inline) (cites : Bool := false) : String :=
+  closeHash (oneLine (inlinesInto .line cites "" none true 0 xs.toList))
 
 /-- A pipe table cell's text: one line, its pipes bare. -/
-public def cellText (xs : Array Inline) : String :=
-  oneLine (inlinesInto .cell "" none true 0 xs.toList)
+public def cellText (xs : Array Inline) (cites : Bool := false) : String :=
+  oneLine (inlinesInto .cell cites "" none true 0 xs.toList)
 
 private theorem oneLine_mem (s : String) : ∀ x ∈ (oneLine s).toList, x ≠ '\n' ∧ x ≠ '\r' := by
   intro x hx
@@ -827,24 +859,26 @@ private theorem closeHash_mem (s : String) (x : Char) (hx : x ∈ (closeHash s).
       exact hx
   · exact Or.inl hx
 
-public theorem headingText_contract (xs : Array Inline) :
-    ∀ x ∈ (headingText xs).toList, x ≠ '\n' ∧ x ≠ '\r' := by
+public theorem headingText_contract (xs : Array Inline) (cites : Bool := false) :
+    ∀ x ∈ (headingText xs cites).toList, x ≠ '\n' ∧ x ≠ '\r' := by
   intro x hx
   rcases closeHash_mem _ x hx with hx | rfl | rfl
   · exact oneLine_mem _ x hx
   · decide
   · decide
 
-public theorem cellText_contract (xs : Array Inline) :
-    ∀ x ∈ (cellText xs).toList, x ≠ '\n' ∧ x ≠ '\r' :=
+public theorem cellText_contract (xs : Array Inline) (cites : Bool := false) :
+    ∀ x ∈ (cellText xs cites).toList, x ≠ '\n' ∧ x ≠ '\r' :=
   oneLine_mem _
 
 /-- The llms.txt title line's text: the metadata title
 written as a heading's text. -/
-public def titleLine (t : String) : String := closeHash (escapeText true t)
+public def titleLine (t : String) (cites : Bool := false) : String :=
+  closeHash (escapeText true cites t)
 
 /-- The llms.txt summary line's text inside its quotation. -/
-public def summaryLine (s : String) : String := escapeLineStart (escapeText true s)
+public def summaryLine (s : String) (cites : Bool := false) : String :=
+  escapeLineStart (escapeText true cites s)
 
 private theorem escapeLineStart_mem (s : String) (x : Char)
     (hx : x ∈ (escapeLineStart s).toList) : x ∈ s.toList ∨ x = '\\' := by
@@ -869,19 +903,19 @@ private theorem escapeLineStart_mem (s : String) (x : Char)
         · exact Or.inr rfl
         · exact Or.inl (hsub x hx)
 
-public theorem titleLine_contract (t : String) :
-    ∀ x ∈ (titleLine t).toList, x ≠ '\n' ∧ x ≠ '\r' := by
+public theorem titleLine_contract (t : String) (cites : Bool := false) :
+    ∀ x ∈ (titleLine t cites).toList, x ≠ '\n' ∧ x ≠ '\r' := by
   intro x hx
   rcases closeHash_mem _ x hx with hx | rfl | rfl
-  · exact escapeChars_line true t.toList x (by simpa [escapeText] using hx)
+  · exact escapeChars_line true cites t.toList x (by simpa [escapeText] using hx)
   · decide
   · decide
 
-public theorem summaryLine_contract (s : String) :
-    ∀ x ∈ (summaryLine s).toList, x ≠ '\n' ∧ x ≠ '\r' := by
+public theorem summaryLine_contract (s : String) (cites : Bool := false) :
+    ∀ x ∈ (summaryLine s cites).toList, x ≠ '\n' ∧ x ≠ '\r' := by
   intro x hx
   rcases escapeLineStart_mem _ x hx with hx | rfl
-  · exact escapeChars_line true s.toList x (by simpa [escapeText] using hx)
+  · exact escapeChars_line true cites s.toList x (by simpa [escapeText] using hx)
   · decide
 
 /-- A paragraph's lines under their container, each escaped at its start and set
@@ -917,15 +951,18 @@ private def fencedText (ind fence info : String) (lines : List String) : String 
   lines.foldl (fun acc l => acc ++ ind ++ l ++ "\n") (ind ++ fence ++ info ++ "\n") ++
     ind ++ fence ++ "\n\n"
 
-/-- The reference list's markdown spelling: one paragraph
-per entry, the style's marker leading it. -/
-private def bibItemsText (ind : String) (items : Array Ir.BibItem) : String := Id.run do
+/-- The reference list's markdown spelling: one paragraph per entry, the anchor its citations link
+to and the style's marker leading it. -/
+private def bibItemsText (cites : Bool) (ind : String) (items : Array Ir.BibItem) : String :=
+    Id.run do
   let mut out := ""
   for item in items do
+    let anchor := Ir.bibAnchor item.key
+    let target := if Ir.labelAnchor anchor == anchor then "<a name=\"" ++ anchor ++ "\"></a>" else ""
     let mark := match item.marker with
-      | some m => escapeText true s!"[{m}]" ++ " "
+      | some m => escapeText true cites s!"[{m}]" ++ " "
       | none => ""
-    out := out ++ paraText ind ind (mark ++ inlineText item.content) ++ "\n\n"
+    out := out ++ paraText ind ind (target ++ mark ++ inlineText item.content cites) ++ "\n\n"
   return out
 
 /-- The heading marker a section level takes, as many `#` as the shared rank. -/
@@ -1013,74 +1050,81 @@ private def itemPut (cont : String) (pen : ItemPen) (leadsList : Bool) (s : Stri
     | some first => { acc := pen.acc ++ itemHead first cont s ++ "\n", first := none, prev := none }
     | none => { pen with acc := pen.acc ++ (if leadsList then "" else "\n") ++ s ++ "\n", prev := none }
 
+/-- What the twin writes blocks against: the document's locale, and whether the twin declares the
+document's bibliography, so its citations are spelled and its list stands in a division. -/
+private structure Twin where
+  loc : Locale
+  cites : Bool
+
 mutual
 
 /-- One block onto `acc`; `ind` is the line prefix every
 line of the block carries. -/
-private def blockInto (loc : Locale) (summary ind acc : String) : Block → String
-  | .para xs => acc ++ paraText ind ind (inlineText xs) ++ "\n\n"
+private def blockInto (tw : Twin) (summary ind acc : String) : Block → String
+  | .para xs => acc ++ paraText ind ind (inlineText xs tw.cites) ++ "\n\n"
   -- the number rides beside the formula, as it does on the page
-  | .equation num xs => acc ++ paraText ind ind (inlineText xs ++ " " ++ inlineText num) ++ "\n\n"
+  | .equation num xs => acc ++ paraText ind ind (inlineText xs tw.cites ++ " " ++ inlineText num tw.cites) ++ "\n\n"
   | .section level _ num title =>
     -- The heading line carries its resolved number as the page does.
     let numTxt := match num with
       | some n => n ++ " "
       | none => ""
-    let head := acc ++ ind ++ headingMarker level ++ " " ++ numTxt ++ headingText title ++ "\n\n"
+    let head := acc ++ ind ++ headingMarker level ++ " " ++ numTxt ++ headingText title tw.cites ++ "\n\n"
     if level == 0 then head ++ summary
     else head
   | .list ordered items =>
-    let text := itemsInto loc summary ind ordered false 1 "" items.toList
+    let text := itemsInto tw summary ind ordered false 1 "" items.toList
     acc ++ text ++ "\n"
-  | .center body => blocksInto loc summary ind acc none body.toList
-  | .ragged _ body => blocksInto loc summary ind acc none body.toList
+  | .center body => blocksInto tw summary ind acc none body.toList
+  | .ragged _ body => blocksInto tw summary ind acc none body.toList
   -- Every quoted line takes the `> ` marker, a bare `>` between quoted blocks (§5.1).
   | .quote body =>
-    let inner := blocksInto loc summary (ind ++ "> ") "" none body.toList
+    let inner := blocksInto tw summary (ind ++ "> ") "" none body.toList
     let trimmed := String.ofList (inner.toList.reverse.dropWhile (· == '\n')).reverse
     -- An empty quotation is its bare marker.
     let joined := if trimmed.isEmpty then ind ++ ">"
       else String.intercalate ("\n" ++ ind ++ ">\n") (trimmed.splitOn "\n\n")
     acc ++ joined ++ "\n\n"
-  | .spaced _ body => blocksInto loc summary ind acc none body.toList
+  | .spaced _ body => blocksInto tw summary ind acc none body.toList
   -- An abstract mirrors the HTML `<section>` with its heading.
   | .abstract body =>
-    blocksInto loc summary ind (acc ++ (ind ++ "## " ++ loc.abstract ++ "\n\n")) none body.toList
+    blocksInto tw summary ind (acc ++ (ind ++ "## " ++ tw.loc.abstract ++ "\n\n")) none body.toList
   | .titled _ title body =>
     let head := if title.isEmpty then "" else
-      paraText ind ind (inlineText #[.styled .bold title]) ++ "\n\n"
-    blocksInto loc summary ind (acc ++ head) none body.toList
+      paraText ind ind (inlineText #[.styled .bold title] tw.cites) ++ "\n\n"
+    blocksInto tw summary ind (acc ++ head) none body.toList
   -- The disclosure as the element its reader reads back.
   | .disclosure head expanded body =>
-    let inner := blocksInto loc summary ind "" none body.toList
+    let inner := blocksInto tw summary ind "" none body.toList
     let inner := if inner.endsWith "\n\n" then (inner.dropEnd 1).toString else inner
     acc ++ (ind ++ (if expanded then "<details open>" else "<details>") ++ "\n" ++
       ind ++ "<summary>" ++ summaryHtml head ++ "</summary>\n\n" ++ inner ++
       ind ++ "</details>\n\n")
-  | .role _ body => blocksInto loc summary ind acc none body.toList
+  | .role _ body => blocksInto tw summary ind acc none body.toList
   -- CommonMark has no block-link construct; the body stays.
-  | .link _ body => blocksInto loc summary ind acc none body.toList
+  | .link _ body => blocksInto tw summary ind acc none body.toList
   | .verbatim _ s spec =>
     -- The numbered caption leads the fence; the declared language is the fence's info string.
     let cap := match spec.caption with
-      | some (n, c) => paraText ind ind (inlineText (Ir.listingCaption loc n c)) ++ "\n\n"
+      | some (n, c) =>
+        paraText ind ind (inlineText (Ir.listingCaption tw.loc n c) tw.cites) ++ "\n\n"
       | none => ""
     let lines := (verbatimLines s).toList
     acc ++ cap ++ fencedText (fenceIndent ind lines) (fenceFor s) spec.fenceInfo lines
   -- Pseudocode as a fence, each line's keywords as plain text.
   | .algorithm _ semis lines =>
-    let words := Ir.algWords loc.tag
+    let words := Ir.algWords tw.loc.tag
     let rendered := lines.toList.map fun l =>
       String.ofList (List.replicate (2 * l.depth) ' ') ++
         Ir.plainText (Ir.AlgLine.rendered words semis Ir.Color.black l)
     acc ++ fencedText (fenceIndent ind rendered) (fenceFor (String.join rendered)) "" rendered
-  | .columns cols => columnsInto loc summary ind acc cols.toList
-  | .onSteps _ body => blocksInto loc summary ind acc none body.toList
+  | .columns cols => columnsInto tw summary ind acc cols.toList
+  | .onSteps _ body => blocksInto tw summary ind acc none body.toList
   | .altSteps _ active otherwise =>
-    blocksInto loc summary ind (blocksInto loc summary ind acc none active.toList) none
+    blocksInto tw summary ind (blocksInto tw summary ind acc none active.toList) none
       otherwise.toList
   -- `emit` already kept this node for markdown.
-  | .only _ body => blocksInto loc summary ind acc none body.toList
+  | .only _ body => blocksInto tw summary ind acc none body.toList
   -- A nav is furniture, not content.
   | .nav _ _ => acc
   -- A speaker note is a side channel in every backend.
@@ -1099,11 +1143,11 @@ private def blockInto (loc : Locale) (summary ind acc : String) : Block → Stri
   -- A picture's labels are not prose in reading order.
   | .picture _ => acc
   | .frame title _ _ _ body =>
-    let head := if title.isEmpty then "" else ind ++ "## " ++ headingText title ++ "\n\n"
-    blocksInto loc summary ind (acc ++ head) none body.toList
+    let head := if title.isEmpty then "" else ind ++ "## " ++ headingText title tw.cites ++ "\n\n"
+    blocksInto tw summary ind (acc ++ head) none body.toList
   -- The GFM pipe table: one line per row, the separator after the first.
   | .table cols _ _ rows _ _ =>
-    let line (row : Array (Array Inline)) : String := rowLine (row.toList.map cellText)
+    let line (row : Array (Array Inline)) : String := rowLine (row.toList.map (cellText · tw.cites))
     let sep := "|" ++ String.join (cols.toList.map fun c =>
       match c.align with
       | .left => " --- |"
@@ -1117,74 +1161,78 @@ private def blockInto (loc : Locale) (summary ind acc : String) : Block → Stri
   -- A float's caption is a paragraph beside its content, in source order.
   | .float kind num capAbove body caption =>
     let cap := if caption.isEmpty then ""
-      else paraText ind ind (inlineText (Ir.numberedCaption loc kind num caption)) ++ "\n\n"
-    if capAbove then blocksInto loc summary ind (acc ++ cap) none body.toList
-    else blocksInto loc summary ind acc none body.toList ++ cap
-  | .bibliography _ _ items =>
-    let entries := bibItemsText ind items
-    acc ++ entries
+      else
+        paraText ind ind (inlineText (Ir.numberedCaption tw.loc kind num caption) tw.cites) ++
+          "\n\n"
+    if capAbove then blocksInto tw summary ind (acc ++ cap) none body.toList
+    else blocksInto tw summary ind acc none body.toList ++ cap
+  -- A twin that declares the bibliography places its list where the reader reads it back.
+  | .bibliography src _ items =>
+    let entries := bibItemsText tw.cites ind items
+    if tw.cites && !src.isEmpty then acc ++ ind ++ "::: {#refs}\n" ++ ind ++ ":::\n\n"
+    else acc ++ entries
 termination_by structural b => b
 
 /-- A block sequence; a list after a list of its kind takes
 the other marker (§5.3). -/
-private def blocksInto (loc : Locale) (summary ind acc : String)
+private def blocksInto (tw : Twin) (summary ind acc : String)
     (prev : Option (Bool × Bool)) : List Block → String
   | [] => acc
   | .list ordered items :: rest =>
     let alt := listAlt prev ordered
-    let text := itemsInto loc summary ind ordered alt 1 "" items.toList
-    blocksInto loc summary ind (acc ++ text ++ "\n") (some (ordered, alt)) rest
-  | b :: rest => blocksInto loc summary ind (blockInto loc summary ind acc b) none rest
+    let text := itemsInto tw summary ind ordered alt 1 "" items.toList
+    blocksInto tw summary ind (acc ++ text ++ "\n") (some (ordered, alt)) rest
+  | b :: rest => blocksInto tw summary ind (blockInto tw summary ind acc b) none rest
 termination_by structural bs => bs
 
-private def columnsInto (loc : Locale) (summary ind acc : String) :
+private def columnsInto (tw : Twin) (summary ind acc : String) :
     List (BoxWidth × Array Block) → String
   | [] => acc
-  | (_, body) :: rest => columnsInto loc summary ind (blocksInto loc summary ind acc none body.toList) rest
+  | (_, body) :: rest => columnsInto tw summary ind (blocksInto tw summary ind acc none body.toList) rest
 termination_by structural cols => cols
 
 /-- List items: `- ` or `k. `, every further line indented
 to the content column (§5.2). -/
-private def itemsInto (loc : Locale) (summary ind : String) (ordered alt : Bool) (k : Nat)
+private def itemsInto (tw : Twin) (summary ind : String) (ordered alt : Bool) (k : Nat)
     (acc : String) : List (Array Block) → String
   | [] => acc
   | item :: rest =>
     let marker := if ordered then s!"{k}{if alt then ")" else "."} " else if alt then "+ " else "- "
     let cont := ind ++ String.ofList (List.replicate marker.length ' ')
-    let pen := itemSeq loc summary cont { acc, first := some (ind ++ marker), prev := none }
+    let pen := itemSeq tw summary cont { acc, first := some (ind ++ marker), prev := none }
       item.toList
     let acc := match pen.first with
       | some m => pen.acc ++ m ++ "\n"
       | none => pen.acc
-    itemsInto loc summary ind ordered alt (k + 1) acc rest
+    itemsInto tw summary ind ordered alt (k + 1) acc rest
 termination_by structural items => items
 
 /-- An item's blocks, in order, from where the pen stands. -/
-private def itemSeq (loc : Locale) (summary cont : String) (pen : ItemPen) :
+private def itemSeq (tw : Twin) (summary cont : String) (pen : ItemPen) :
     List Block → ItemPen
   | [] => pen
   | b :: rest =>
-    let write (_ : Unit) := itemPut cont pen (leadsWithList b) (blockInto loc summary cont "" b)
+    let write (_ : Unit) := itemPut cont pen (leadsWithList b) (blockInto tw summary cont "" b)
     let pen := match (generalizing := false) b with
       | .list ordered items =>
         match pen.first with
         | some first =>
-          let head := itemHead first cont (itemsInto loc summary cont ordered false 1 "" items.toList)
+          let head := itemHead first cont (itemsInto tw summary cont ordered false 1 "" items.toList)
           { acc := pen.acc ++ head ++ "\n", first := none, prev := some (ordered, false) }
         | none =>
           let alt := listAlt pen.prev ordered
-          { pen with acc := pen.acc ++ itemsInto loc summary cont ordered alt 1 "" items.toList,
+          { pen with acc := pen.acc ++ itemsInto tw summary cont ordered alt 1 "" items.toList,
                      prev := some (ordered, alt) }
-      | .role _ body => itemSeq loc summary cont pen body.toList
-      | .spaced _ body => itemSeq loc summary cont pen body.toList
-      | .only _ body => itemSeq loc summary cont pen body.toList
-      | .onSteps _ body => itemSeq loc summary cont pen body.toList
+      | .role _ body => itemSeq tw summary cont pen body.toList
+      | .spaced _ body => itemSeq tw summary cont pen body.toList
+      | .only _ body => itemSeq tw summary cont pen body.toList
+      | .onSteps _ body => itemSeq tw summary cont pen body.toList
       | .altSteps _ active otherwise =>
-        itemSeq loc summary cont (itemSeq loc summary cont pen active.toList) otherwise.toList
-      | .center body => itemSeq loc summary cont pen body.toList
-      | .ragged _ body => itemSeq loc summary cont pen body.toList
-      | .link _ body => itemSeq loc summary cont pen body.toList
-      | .columns cols => itemColumns loc summary cont pen cols.toList
+        itemSeq tw summary cont (itemSeq tw summary cont pen active.toList) otherwise.toList
+      | .center body => itemSeq tw summary cont pen body.toList
+      | .ragged _ body => itemSeq tw summary cont pen body.toList
+      | .link _ body => itemSeq tw summary cont pen body.toList
+      | .columns cols => itemColumns tw summary cont pen cols.toList
       | .para _ => write ()
       | .equation _ _ => write ()
       | .section _ _ _ _ => write ()
@@ -1207,15 +1255,15 @@ private def itemSeq (loc : Locale) (summary cont : String) (pen : ItemPen) :
       | .frame _ _ _ _ _ => write ()
       | .table _ _ _ _ _ _ => write ()
       | .float _ _ _ _ _ => write ()
-    itemSeq loc summary cont pen rest
+    itemSeq tw summary cont pen rest
 termination_by structural bs => bs
 
 /-- Columns inside an item: each column's blocks in turn. -/
-private def itemColumns (loc : Locale) (summary cont : String) (pen : ItemPen) :
+private def itemColumns (tw : Twin) (summary cont : String) (pen : ItemPen) :
     List (BoxWidth × Array Block) → ItemPen
   | [] => pen
   | (_, body) :: rest =>
-    itemColumns loc summary cont (itemSeq loc summary cont pen body.toList) rest
+    itemColumns tw summary cont (itemSeq tw summary cont pen body.toList) rest
 termination_by structural cols => cols
 
 end
@@ -1240,27 +1288,92 @@ public def twinBody (doc : Doc) : Array Block := Ir.keepFor "md" (Ir.eraseLocati
 
 /-- The `[^k]: …` definitions, one per footnote in flow
 order; empty without notes. -/
-private def noteDefs (body : Array Block) : String := Id.run do
+private def noteDefs (cites : Bool) (body : Array Block) : String := Id.run do
   let notes := Ir.footnotesOf body
   if notes.isEmpty then return ""
   let mut out := ""
   for (num, content) in notes do
-    out := out ++ "\n" ++ paraText s!"[^{num.getD 0}]: " "    " (inlineText content) ++ "\n"
+    out := out ++ "\n" ++ paraText s!"[^{num.getD 0}]: " "    " (inlineText content cites) ++ "\n"
   return out
 
-/-- The document's markdown twin. -/
+/-- natbib's package options whose declarations `decls` is, in natbib's order; `none` where a
+declaration no option makes stands among them. -/
+private def natbibOptionWords (decls : Array String) : Option (Array String) := Id.run do
+  let mut out : Array String := #[]
+  let mut rest := decls.toList
+  for _ in [0:decls.size + 1] do
+    if rest.isEmpty then return some out
+    let best := Bib.natbibOptions.foldl (init := none) fun (best : Option (String × Nat)) (o, ds) =>
+      if ds.isEmpty || rest.take ds.length != ds then best
+      else match best with
+        | some (_, n) => if ds.length > n then some (o, ds.length) else best
+        | none => some (o, ds.length)
+    match best with
+    | some (o, n) =>
+      out := out.push o
+      rest := rest.drop n
+    | none => return none
+  return none
+
+/-- A YAML scalar the twin's metadata writes: plain where the reader reads it so, else quoted. -/
+private def yamlScalar (s : String) : String :=
+  if !s.isEmpty && !s.startsWith "-" &&
+      s.all (fun c => c.isAlphanum || c == '.' || c == '-' || c == '_' || c == '/') then s
+  else "'" ++ s.replace "'" "''" ++ "'"
+
+/-- The twin's metadata block, where the document's citations read back through Pandoc's syntax:
+its bibliography, its style, natbib's options, and every listed entry as `nocite`, so the reference
+list reads back whole; empty where they cannot, and the twin sets each citation as its ink. -/
+public def twinMeta (doc : Doc) : String :=
+  let lists := Ir.foldBlocks (fun out b => match b with
+    | .bibliography src style items => if src.isEmpty then out else out.push (style, items)
+    | _ => out) (fun out _ => out) #[] doc.body
+  match lists[0]?, doc.natbib.bind natbibOptionWords with
+  | some (style, _), some opts =>
+    let names := (Ir.bibRefs doc).map fun n => if n.endsWith ".bib" then n else n ++ ".bib"
+    let bib := match names.toList with
+      | [one] => yamlScalar one
+      | many => "[" ++ ", ".intercalate (many.map yamlScalar) ++ "]"
+    let listed := Id.run do
+      let mut seen : Std.HashSet String := {}
+      let mut out : Array String := #[]
+      for (_, items) in lists do
+        for it in items do
+          unless seen.contains it.key do
+            seen := seen.insert it.key
+            out := out.push it.key
+      return out
+    let nocite := listed.filterMap fun k => CiteKey.spelling? k none
+    let optLine := if opts.isEmpty then "" else
+      "\nnatbiboptions: " ++ yamlScalar (",".intercalate opts.toList)
+    let nociteLine := if nocite.isEmpty then "" else
+      "\nnocite: '" ++ (", ".intercalate nocite.toList).replace "'" "''" ++ "'"
+    "---\nbibliography: " ++ bib ++ "\nbiblio-style: " ++ yamlScalar (style.getD "unsrtnat") ++
+      optLine ++ nociteLine ++ "\n---\n\n"
+  | _, _ => ""
+
+/-- The twin's opening: its metadata block, empty where it sets citations as their ink. -/
+public def twinFront (doc : Doc) : String := twinMeta { doc with body := twinBody doc }
+
+/-- Whether the twin declares the document's bibliography and spells its citations. -/
+public def twinCites (doc : Doc) : Bool := !(twinFront doc).isEmpty
+
+/-- The document's markdown twin: its metadata block where its citations read back through
+Pandoc's syntax, then its body. -/
 public def emit (doc : Doc) : String :=
+  let cites := twinCites doc
+  let front := twinFront doc
   let doc := { doc with body := twinBody doc }
   let summary := match doc.info.subject with
-    | some s => "> " ++ summaryLine s ++ "\n\n"
+    | some s => "> " ++ summaryLine s cites ++ "\n\n"
     | none => ""
   let bodyTitled := (headingLevels doc.body).contains 0
   let title := match doc.info.title with
-    | some t => if bodyTitled then "" else "# " ++ titleLine t ++ "\n\n"
+    | some t => if bodyTitled then "" else "# " ++ titleLine t cites ++ "\n\n"
     | none => ""
   let preamble := title ++ (if bodyTitled then "" else summary)
-  tighten (preamble ++ blocksInto doc.info.locale summary "" "" none doc.body.toList)
-    ++ noteDefs doc.body
+  front ++ tighten (preamble ++ blocksInto ⟨doc.info.locale, cites⟩ summary "" "" none
+    doc.body.toList) ++ noteDefs cites doc.body
 
 -- Sealed so unification cannot unfold the collection walk.
 seal noteDefs
@@ -1291,8 +1404,8 @@ private theorem extends_comp {a g f : String} (h₁ : ∃ r, g = a ++ r)
 
 mutual
 
-private theorem blockInto_extends (loc : Locale) (summary ind acc : String) :
-    (b : Block) → ∃ r, blockInto loc summary ind acc b = acc ++ r
+private theorem blockInto_extends (tw : Twin) (summary ind acc : String) :
+    (b : Block) → ∃ r, blockInto tw summary ind acc b = acc ++ r
   | .para _ => by
     simp only [blockInto]
     exact append_chain₂ _ _ _
@@ -1307,34 +1420,38 @@ private theorem blockInto_extends (loc : Locale) (summary ind acc : String) :
   | .list _ _ => by
     simp only [blockInto]
     exact append_chain₂ _ _ _
-  | .center body => blocksInto_extends loc summary ind acc none body.toList
-  | .ragged _ body => blocksInto_extends loc summary ind acc none body.toList
+  | .center body => blocksInto_extends tw summary ind acc none body.toList
+  | .ragged _ body => blocksInto_extends tw summary ind acc none body.toList
   | .quote _ => by
     simp only [blockInto]
     exact append_chain₂ _ _ _
   | .abstract body =>
-    extends_comp ⟨_, rfl⟩ (blocksInto_extends loc summary ind
-      (acc ++ (ind ++ "## " ++ loc.abstract ++ "\n\n")) none body.toList)
+    extends_comp ⟨_, rfl⟩ (blocksInto_extends tw summary ind
+      (acc ++ (ind ++ "## " ++ tw.loc.abstract ++ "\n\n")) none body.toList)
   | .titled _ title body =>
-    extends_comp ⟨_, rfl⟩ (blocksInto_extends loc summary ind
+    extends_comp ⟨_, rfl⟩ (blocksInto_extends tw summary ind
       (acc ++ if title.isEmpty then "" else
-        paraText ind ind (inlineText #[.styled .bold title]) ++ "\n\n")
+        paraText ind ind (inlineText #[.styled .bold title] tw.cites) ++ "\n\n")
       none body.toList)
   | .disclosure _ _ _ => ⟨_, rfl⟩
-  | .spaced _ body => blocksInto_extends loc summary ind acc none body.toList
-  | .bibliography _ _ items => ⟨bibItemsText ind items, rfl⟩
-  | .role _ body => blocksInto_extends loc summary ind acc none body.toList
-  | .link _ body => blocksInto_extends loc summary ind acc none body.toList
+  | .spaced _ body => blocksInto_extends tw summary ind acc none body.toList
+  | .bibliography src _ items => by
+    simp only [blockInto]
+    split
+    · exact ⟨ind ++ "::: {#refs}\n" ++ ind ++ ":::\n\n", by simp [String.append_assoc]⟩
+    · exact ⟨_, rfl⟩
+  | .role _ body => blocksInto_extends tw summary ind acc none body.toList
+  | .link _ body => blocksInto_extends tw summary ind acc none body.toList
   | .verbatim _ _ _ => by
     simp only [blockInto]
     exact append_chain₂ _ _ _
   | .algorithm _ _ _ => ⟨_, rfl⟩
-  | .columns cols => columnsInto_extends loc summary ind acc cols.toList
-  | .onSteps _ body => blocksInto_extends loc summary ind acc none body.toList
+  | .columns cols => columnsInto_extends tw summary ind acc cols.toList
+  | .onSteps _ body => blocksInto_extends tw summary ind acc none body.toList
   | .altSteps _ active otherwise =>
-    extends_comp (blocksInto_extends loc summary ind acc none active.toList)
-      (blocksInto_extends loc summary ind _ none otherwise.toList)
-  | .only _ body => blocksInto_extends loc summary ind acc none body.toList
+    extends_comp (blocksInto_extends tw summary ind acc none active.toList)
+      (blocksInto_extends tw summary ind _ none otherwise.toList)
+  | .only _ body => blocksInto_extends tw summary ind acc none body.toList
   | .nav _ _ => append_nil acc
   | .note _ => append_nil acc
   | .framefoot _ => append_nil acc
@@ -1345,8 +1462,8 @@ private theorem blockInto_extends (loc : Locale) (summary ind acc : String) :
   | .rule _ _ _ => append_nil acc
   | .picture _ => append_nil acc
   | .frame title _ _ _ body =>
-    extends_comp ⟨_, rfl⟩ (blocksInto_extends loc summary ind
-      (acc ++ if title.isEmpty then "" else ind ++ "## " ++ headingText title ++ "\n\n")
+    extends_comp ⟨_, rfl⟩ (blocksInto_extends tw summary ind
+      (acc ++ if title.isEmpty then "" else ind ++ "## " ++ headingText title tw.cites ++ "\n\n")
       none body.toList)
   | .table _ _ _ rows _ _ => by
     simp only [blockInto]
@@ -1356,22 +1473,23 @@ private theorem blockInto_extends (loc : Locale) (summary ind acc : String) :
   | .float kind num capAbove body caption => by
     simp only [blockInto]
     split
-    · exact extends_comp ⟨_, rfl⟩ (blocksInto_extends loc summary ind
+    · exact extends_comp ⟨_, rfl⟩ (blocksInto_extends tw summary ind
         (acc ++ if caption.isEmpty then "" else
-          paraText ind ind (inlineText (Ir.numberedCaption loc kind num caption)) ++ "\n\n")
+          paraText ind ind (inlineText (Ir.numberedCaption tw.loc kind num caption) tw.cites) ++
+            "\n\n")
         none body.toList)
-    · exact extends_comp (blocksInto_extends loc summary ind acc none body.toList) ⟨_, rfl⟩
+    · exact extends_comp (blocksInto_extends tw summary ind acc none body.toList) ⟨_, rfl⟩
 
-private theorem blocksInto_extends (loc : Locale) (summary ind acc : String)
+private theorem blocksInto_extends (tw : Twin) (summary ind acc : String)
     (prev : Option (Bool × Bool)) :
-    (bs : List Block) → ∃ r, blocksInto loc summary ind acc prev bs = acc ++ r
+    (bs : List Block) → ∃ r, blocksInto tw summary ind acc prev bs = acc ++ r
   | [] => append_nil acc
   | .list _ _ :: rest => by
     simp only [blocksInto]
-    exact extends_comp (append_chain₂ _ _ _) (blocksInto_extends loc summary ind _ _ rest)
+    exact extends_comp (append_chain₂ _ _ _) (blocksInto_extends tw summary ind _ _ rest)
   | b :: rest => by
-    have hb := blockInto_extends loc summary ind acc b
-    have hrest := fun acc' p => blocksInto_extends loc summary ind acc' p rest
+    have hb := blockInto_extends tw summary ind acc b
+    have hrest := fun acc' p => blocksInto_extends tw summary ind acc' p rest
     cases b with
     | list _ _ =>
       simp only [blocksInto]
@@ -1380,13 +1498,13 @@ private theorem blocksInto_extends (loc : Locale) (summary ind acc : String)
       simp only [blocksInto]
       exact extends_comp hb (hrest _ _)
 
-private theorem columnsInto_extends (loc : Locale) (summary ind acc : String) :
+private theorem columnsInto_extends (tw : Twin) (summary ind acc : String) :
     (cols : List (BoxWidth × Array Block)) →
-      ∃ r, columnsInto loc summary ind acc cols = acc ++ r
+      ∃ r, columnsInto tw summary ind acc cols = acc ++ r
   | [] => append_nil acc
   | (_, body) :: rest =>
-    extends_comp (blocksInto_extends loc summary ind acc none body.toList)
-      (columnsInto_extends loc summary ind (blocksInto loc summary ind acc none body.toList) rest)
+    extends_comp (blocksInto_extends tw summary ind acc none body.toList)
+      (columnsInto_extends tw summary ind (blocksInto tw summary ind acc none body.toList) rest)
 
 end
 
@@ -1581,21 +1699,23 @@ end
 public theorem emit_meta_title_first (doc : Doc) (t s : String)
     (ht : doc.info.title = some t) (hs : doc.info.subject = some s)
     (hbody : ((Ir.headingLevels (twinBody doc)).contains 0) = false) :
-    ∃ q, emit doc = "# " ++ titleLine t ++ "\n\n" ++ "> " ++ summaryLine s ++ q := by
-  obtain ⟨q, hq⟩ := tighten_head (titleLine t) (summaryLine s)
-    (blocksInto doc.info.locale ("> " ++ summaryLine s ++ "\n\n") "" "" none
-      (twinBody doc).toList)
-    (fun c hc => (titleLine_contract t c hc).1) (fun c hc => (summaryLine_contract s c hc).1)
-  refine ⟨q ++ noteDefs (twinBody doc), ?_⟩
-  simp only [emit, ht, hs, hbody]
-  exact (congrArg (· ++ noteDefs (twinBody doc)) hq).trans
-    (String.append_assoc ..)
+    ∃ q, emit doc = twinFront doc ++ ("# " ++ titleLine t (twinCites doc) ++ "\n\n" ++ "> " ++
+      summaryLine s (twinCites doc) ++ q) := by
+  obtain ⟨q, hq⟩ := tighten_head (titleLine t (twinCites doc)) (summaryLine s (twinCites doc))
+    (blocksInto ⟨doc.info.locale, twinCites doc⟩ ("> " ++ summaryLine s (twinCites doc) ++ "\n\n")
+      "" "" none (twinBody doc).toList)
+    (fun c hc => (titleLine_contract t _ c hc).1) (fun c hc => (summaryLine_contract s _ c hc).1)
+  refine ⟨q ++ noteDefs (twinCites doc) (twinBody doc), ?_⟩
+  simp only [emit, ht, hs, hbody, Bool.false_eq_true, ↓reduceIte]
+  rw [hq]
+  simp only [String.append_assoc]
 
 public theorem emit_body_title_first (doc : Doc) (s : String) (st : Bool)
     (ttl : Array Inline) (rest : List Block)
     (hs : doc.info.subject = some s)
     (hbody : (twinBody doc).toList = .section 0 st none ttl :: rest) :
-    ∃ q, emit doc = "# " ++ headingText ttl ++ "\n\n" ++ "> " ++ summaryLine s ++ q := by
+    ∃ q, emit doc = twinFront doc ++ ("# " ++ headingText ttl (twinCites doc) ++ "\n\n" ++ "> " ++
+      summaryLine s (twinCites doc) ++ q) := by
   have h0 : (0 : Ir.HeadingLevel) ∈ Ir.headingLevels (twinBody doc) := by
     show (0 : Ir.HeadingLevel) ∈ Ir.headingLevelList #[] (twinBody doc).toList
     rw [hbody]
@@ -1604,27 +1724,26 @@ public theorem emit_body_title_first (doc : Doc) (s : String) (st : Bool)
       simp)
   have hbt : (Ir.headingLevels (twinBody doc)).contains 0 = true :=
     Array.contains_eq_true_of_mem h0
-  have hfirst : blocksInto doc.info.locale ("> " ++ summaryLine s ++ "\n\n") "" "" none
-      (twinBody doc).toList =
-      blocksInto doc.info.locale ("> " ++ summaryLine s ++ "\n\n") ""
-        ("# " ++ headingText ttl ++ "\n\n" ++ ("> " ++ summaryLine s ++ "\n\n")) none rest := by
+  let tw : Twin := ⟨doc.info.locale, twinCites doc⟩
+  let sm := "> " ++ summaryLine s (twinCites doc) ++ "\n\n"
+  have hfirst : blocksInto tw sm "" "" none (twinBody doc).toList =
+      blocksInto tw sm "" ("# " ++ headingText ttl (twinCites doc) ++ "\n\n" ++ sm) none rest := by
     rw [hbody]
-    simp [blocksInto, blockInto, headingMarker, Ir.headingRank]
-  obtain ⟨w, hw⟩ := blocksInto_extends doc.info.locale ("> " ++ summaryLine s ++ "\n\n") ""
-    ("# " ++ headingText ttl ++ "\n\n" ++ ("> " ++ summaryLine s ++ "\n\n")) none rest
-  obtain ⟨q, hq⟩ := tighten_head (headingText ttl) (summaryLine s) w
-    (fun c hc => (headingText_contract ttl c hc).1) (fun c hc => (summaryLine_contract s c hc).1)
-  refine ⟨q ++ noteDefs (twinBody doc), ?_⟩
+    simp [blocksInto, blockInto, headingMarker, Ir.headingRank, tw, sm]
+  obtain ⟨w, hw⟩ := blocksInto_extends tw sm ""
+    ("# " ++ headingText ttl (twinCites doc) ++ "\n\n" ++ sm) none rest
+  obtain ⟨q, hq⟩ := tighten_head (headingText ttl (twinCites doc)) (summaryLine s (twinCites doc)) w
+    (fun c hc => (headingText_contract ttl _ c hc).1)
+    (fun c hc => (summaryLine_contract s _ c hc).1)
+  refine ⟨q ++ noteDefs (twinCites doc) (twinBody doc), ?_⟩
   cases hT : doc.info.title with
   | some t =>
     simp only [emit, hs, hbt, hT, ite_true, String.empty_append]
-    rw [hfirst, hw]
-    exact (congrArg (· ++ noteDefs (twinBody doc)) hq).trans
-      (String.append_assoc ..)
+    rw [hfirst, hw, hq]
+    simp only [String.append_assoc]
   | none =>
     simp only [emit, hs, hbt, hT, ite_true, String.empty_append]
-    rw [hfirst, hw]
-    exact (congrArg (· ++ noteDefs (twinBody doc)) hq).trans
-      (String.append_assoc ..)
+    rw [hfirst, hw, hq]
+    simp only [String.append_assoc]
 
 end LeanTex.Core.MarkdownDoc

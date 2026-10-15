@@ -841,10 +841,9 @@ def elabFixture (n src : String) : IO (Ir.Doc × Array Diag) := do
 
 /-- A document elaborated and its bibliography resolved as a build resolves them
 (`Cli.Driver.elaborate`), in the driver's four parts. -/
-def bibBuildRun (src : String) (bibs : Array (String × String)) :
-    Ir.Doc × Array Diag × Array Diag × Array Diag :=
-  let file := "t.tex"
-  let (raws, readDs) := Surface.read .tex file src
+def bibBuildRun (src : String) (bibs : Array (String × String)) (surface : Ir.Surface := .tex)
+    (file : String := "t.tex") : Ir.Doc × Array Diag × Array Diag × Array Diag :=
+  let (raws, readDs) := Surface.read surface file src
   let prepared := Elab.prepareExecuted file (Elab.executeInputs nullReader file raws)
   let pass (prepared : Elab.Prepared) : Ir.Doc × Array Diag × Array Diag × Array Diag :=
     let (doc, ds, spans) := Elab.runPrepared file prepared readDs (fun _ _ => {})
@@ -878,6 +877,30 @@ def bibBuild (src : String) (bibs : Array (String × String)) : Ir.Doc × Array 
   let (doc, ds, bds, refs) := bibBuildRun src bibs
   (doc, Bib.accountFront ds bds #[] refs)
 
+/-- A markdown document built as `bibBuild` builds a TeX one, its bibliography from `.bib` texts by
+the names its metadata gives them. -/
+def mdBibBuild (src : String) (bibs : Array (String × String)) (file : String := "t.md") :
+    Ir.Doc × Array Diag :=
+  let (doc, ds, bds, refs) := bibBuildRun src bibs .markdown file
+  (doc, Bib.accountFront ds bds #[] refs)
+
+/-- Invented entries, keys `a`, `b` and `roe2020`, placeholder names. -/
+def worksBib : String :=
+  "@book{a, author = {Ash, Ada}, title = {Alpha Notes}, publisher = {Example Press}, year = {2001}}\n\
+@book{b, author = {Birch, Bo}, title = {Beta Notes}, publisher = {Example Press}, year = {2002}}\n\
+@misc{roe2020, author = {Roe, Sam}, title = {Placeholder Text}, year = {2020}}\n"
+
+/-- The metadata block that declares `works.bib`, which a markdown document reads citations under. -/
+def worksMeta : String := "---\nbibliography: works.bib\n---\n\n"
+
+/-- The `.bib` texts beside the corpus a document's bibliography names, by those names. -/
+def corpusBibs (doc : Ir.Doc) : IO (Array (String × String)) := do
+  let mut out : Array (String × String) := #[]
+  for name in Ir.bibRefs doc do
+    let path := s!"testdata/corpus/{Bib.sourceName name}"
+    if ← System.FilePath.pathExists path then out := out.push (name, ← fixtureText path)
+  return out
+
 /-- A golden fixture's source file under `testdata/corpus`, with its surface's extension. -/
 def goldenFile (n : String) : String :=
   let ext := match codeGoldenNames.lookup n with
@@ -885,7 +908,8 @@ def goldenFile (n : String) : String :=
     | none => if mdGoldenNames.contains n then "md" else "tex"
   s!"testdata/corpus/{n}.{ext}"
 
-/-- Markdown citations in Pandoc's syntax, each with what the markdown twin spells it as. -/
+/-- Markdown citations in Pandoc's syntax, read under `worksMeta`, each with what the markdown twin
+spells it as. -/
 def mdCiteTwinCases : List (String × String) :=
   [("[@a]", "[@a]"), ("[see @a, p. 33]", "[see @a, p. 33]"), ("[@a; @b, p. 2]", "[@a; @b, p. 2]"),
    ("[see @a, pp. 1-3; @b]", "[see @a, pp. 1-3; @b]"), ("@a says", "@a says"),

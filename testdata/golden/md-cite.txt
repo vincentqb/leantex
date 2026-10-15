@@ -1,7 +1,5 @@
 class article
 page 612x792 vmargin 72 hmargin 114
-section* h1
-  text "Citations in Markdown"
 para
   text "A first claim "
   cited citep "roe2020"
@@ -16,7 +14,7 @@ para
       text "2024"
     text "]"
   text " showed it first. A grouped citation "
-  cited NAT@open 
+  cited NAT@open
     text "["
   cited citealp pre "see" post "pp. 101-110" "poe2022"
     text "see "
@@ -27,7 +25,7 @@ para
   cited citealp "roe2020"
     link "#ref-roe2020"
       text "Roe, 2020"
-  cited NAT@close 
+  cited NAT@close
     text "]"
   text " keeps one bracket, and the year stands alone where the author is named already: Roe "
   cited citeyearpar "roe2020"

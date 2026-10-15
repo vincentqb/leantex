@@ -9105,8 +9105,9 @@ end
 /-- A citation's dump line after its tag: the command, its notes, its keys. -/
 private def dumpCiteHead (form : CiteForm) (keys : Array String) : String :=
   let note (tag s : String) := if s.isEmpty then "" else s!" {tag} {s.quote}"
+  let named := keys.toList.map (·.quote)
   s!"{form.command}{if form.full then "*" else ""}{note "pre" form.pre}\
-{note "post" form.post} {String.intercalate " " (keys.toList.map (·.quote))}"
+{note "post" form.post}{if named.isEmpty then "" else " " ++ String.intercalate " " named}"
 
 mutual
 

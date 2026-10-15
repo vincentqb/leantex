@@ -925,6 +925,18 @@ private def recordBibSpan (ctx : Ctx) (src : String) (pos : Pos) : EM Unit :=
     { st with spans := { st.spans with bib := st.spans.bib.push (src, ctx.sourceSpan pos) }
               ctr := { c with notesAt := c.notesAt.push c.fnNum, fnNum := c.fnNum + step } }
 
+/-- A markdown reference list off the bridged control at `i`: its style and sources, no heading,
+and the index past its two groups. -/
+private def markdownBibArm (ctx : Ctx) (raws : Array Raw) (i : Nat) (pos : Pos) :
+    EM { t : Nat × Option Ir.Block // i < t.1 } := do
+  match raws[i + 1]?, raws[i + 2]? with
+  | some (.group styleBody _), some (.group body _) =>
+    let src := (rawSrc body).trimAscii.toString
+    recordBibSpan ctx src pos
+    pure ⟨(i + 3, some (.bibliography src (some (rawSrc styleBody).trimAscii.toString) #[])),
+      by simp⟩
+  | _, _ => pure ⟨(i + 1, none), by simp⟩
+
 /-- The family a url.sty `\urlstyle` value names, `some none` for `same`'s
 face in force. -/
 private def urlStyleFamily? : String → Option (Option Ir.Style)
@@ -11912,15 +11924,10 @@ a side channel, never slide content" cpos
           diag ctx' .E0304 "'\\bibliographystyle' needs a {style} group" cpos
           elabBlocksGo ctx' raws (i + 1) blocks #[] gen'
       else if n == Parse.markdownBibControl then
-        -- A markdown list: its style and sources, and no heading.
-        match raws[i + 1]?, raws[i + 2]? with
-        | some (.group styleBody _), some (.group body _) =>
-          let src := (rawSrc body).trimAscii.toString
-          recordBibSpan ctx' src cpos
-          let blocks := blocks.push (.bibliography src (some (rawSrc styleBody).trimAscii.toString) #[])
-          have hadv := advance_measures raws h (show i < i + 3 by omega)
-          elabBlocksGo ctx' raws (i + 3) blocks #[] gen'
-        | _, _ => elabBlocksGo ctx' raws (i + 1) blocks #[] gen'
+        let ⟨(j, list), hj⟩ ← markdownBibArm ctx' raws i cpos
+        have hij : i < j := hj
+        have _ := advance_measures raws h hij
+        elabBlocksGo ctx' raws j ((list.map blocks.push).getD blocks) #[] gen'
       else if n == "bibliography" then
         -- classes.dtx: the list opens with an unnumbered `\refname` section.
         let ⟨j, hjge⟩ : { x : Nat // i + 1 ≤ x } ←

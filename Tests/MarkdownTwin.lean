@@ -357,11 +357,24 @@ def twinEdgeChecks (ref : IO.Ref (List String)) : IO Unit := do
         | .styled .bold ys => Ir.plainText ys == "Cedar"
         | _ => false
       | _ => false)
+  -- A list the twin declares reads back from its bibliography; one it cannot, as its entries.
+  let markers (d : Ir.Doc) : Array (String × Option String) := Ir.foldBlocks (fun out b =>
+    match b with
+    | .bibliography _ _ items => out ++ items.map fun it => (it.key, it.marker)
+    | _ => out) (fun out _ => out) #[] d.body
   let (d, _) ← elabFixture "bibliography" (← fixtureText "testdata/corpus/bibliography.tex")
   let tw := MarkdownDoc.emit d
+  let found ← corpusBibs d
+  let (back, _) := mdBibBuild tw (found.map fun (n, text) => (Bib.sourceName n, text))
+  t s!"twin: a declared reference list's markers read back from its bibliography ({repr tw})"
+    (hasStr tw "::: {#refs}" && !(markers d).isEmpty && markers back == markers d)
+  let (own, _) := bibBuild (dvDoc "" "See \\cite{a}.\n\n\\begin{thebibliography}{9}\n\\bibitem{a} \
+Ada Ash. Alpha Notes.\n\\end{thebibliography}") #[]
+  let tw := MarkdownDoc.emit own
   let (back, _) := elabMd tw
-  t s!"twin: a reference list's markers read back as written ({repr tw})"
-    (hasStr tw "\n\\[1\\] " && MarkdownDoc.emit back == tw)
+  t s!"twin: a reference list it cannot declare reads back as its entries, each anchored ({repr tw})"
+    (hasStr tw "<a name=\"ref-a\"></a>\\[1\\] Ada Ash" && hasStr tw "(#ref-a)" &&
+      MarkdownDoc.emit back == tw)
 
 /-- A disclosure's twin is the element its reader reads back, in a document, a quotation and a list
 item. -/
