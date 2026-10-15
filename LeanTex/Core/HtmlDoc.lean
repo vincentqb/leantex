@@ -3019,6 +3019,28 @@ private def deckStageRule : DeckRule :=
       ("position", "relative")]
     part := .stage }
 
+/-- A focus indicator's thickness: the 2 CSS px of the perimeter WCAG 2.2 SC 2.4.13 measures an
+indicator's area against. -/
+private def focusWidth : String := "2px"
+
+/-- A focused stage draws no browser ring but a rule in its ink down the middle half of each side
+margin, as a background that holds still while the stage scrolls, beneath all it shows and over a
+theme's later stage grounds. -/
+private def deckStageFocusRule : DeckRule :=
+  let side := s!"max({focusWidth}, calc(0.5 * {safeareaVar}))"
+  let ink := "linear-gradient(currentColor, currentColor)"
+  { selector := [.lit "html section.slide:focus-visible, html section.section-page:focus-visible"]
+    decls := [("outline", "none"), ("background-image", s!"{ink}, {ink}"),
+      ("background-size", s!"{focusWidth} 50%"),
+      ("background-position", s!"left {side} center, right {side} center"),
+      ("background-repeat", "no-repeat")] }
+
+/-- In forced colours, which drop a background image, a focused stage rings its own edge instead. -/
+private def deckStageForcedFocusRule : DeckRule :=
+  { selector := [.lit ("@media (forced-colors: active) { html section.slide:focus-visible, " ++
+      "html section.section-page:focus-visible")]
+    decls := [("outline", s!"{focusWidth} solid currentColor"), ("outline-offset", s!"-{focusWidth}")] }
+
 /-- The deck's stage typography: body and root sizes as shares of the stage height, and the
 body's line height. -/
 public structure DeckType where
@@ -3061,7 +3083,9 @@ private def deckBase (ty : DeckType) : List DeckRule :=
     { selector := [.lit "html"], decls := [("font-size", ty.root)], part := .stage },
     -- a listing on the stage takes no padding or ground of its own, as on the page
     { selector := [.lit "pre"], decls := [("padding", "0"), ("background", "none")],
-      part := .stage } ]
+      part := .stage },
+    deckStageFocusRule,
+    deckStageForcedFocusRule ]
 
 /-- `deckGlideRule`'s reduced-motion counterpart. -/
 private def deckGlideGuard : DeckRule :=
@@ -3703,12 +3727,13 @@ private theorem deckBase_cases {P : DeckRule → Prop} {v : DeckType}
                decls := [("font-size", scaleSize v.scale "Large" "em")], part := .stage })
     (h13 : P { selector := [.lit "html"], decls := [("font-size", v.root)], part := .stage })
     (h14 : P { selector := [.lit "pre"], decls := [("padding", "0"), ("background", "none")],
-               part := .stage }) :
+               part := .stage })
+    (h15 : P deckStageFocusRule) (h16 : P deckStageForcedFocusRule) :
     ∀ r ∈ deckBase v, P r := by
   intro r hr
   simp only [deckBase, List.mem_cons, List.not_mem_nil, or_false] at hr
   rcases hr with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl |
-    rfl | rfl | rfl <;>
+    rfl | rfl | rfl | rfl | rfl <;>
     assumption
 
 /-- Whether a rule whose syntax depends on a feature is gated on that feature's support. -/
@@ -3718,7 +3743,7 @@ public def gateRespects (r : DeckRule) : Bool :=
 public theorem deck_css_partition (v : DeckType) (pg : String) (cp ms : Nat) :
     ∀ r ∈ deckRules v pg cp ms, gateRespects r = true :=
   deckRules_check v pg cp ms
-    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
+    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
     (by decide) rfl rfl rfl rfl rfl (by decide) (fun _ => rfl) (fun _ => rfl)
     (by decide) (fun _ => altSnapRules_cases rfl rfl rfl rfl)
     (setRules_cases rfl rfl rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
@@ -3734,7 +3759,8 @@ public def baselineProps : List String :=
    "justify-content", "align-items", "position", "content",
    "animation", "border", "border-radius", "break-inside", "break-after",
    "break-before", "size", "print-color-adjust", "box-decoration-break",
-   "bottom", "left", "right"]
+   "bottom", "left", "right", "outline", "outline-offset", "background-image",
+   "background-size", "background-position", "background-repeat"]
 
 /-- Whether a rule is part of the floor: the base and every `@supports not` block. -/
 public def onFloor (r : DeckRule) : Bool :=
@@ -3747,7 +3773,7 @@ public theorem floor_is_baseline (v : DeckType) (pg : String) (cp ms : Nat) :
     ∀ r ∈ deckRules v pg cp ms,
       (!(onFloor r) || r.decls.all fun d => baselineProps.contains d.1) = true :=
   deckRules_check v pg cp ms
-    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
+    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
     (by decide) rfl rfl rfl rfl rfl (by decide) (fun _ => rfl) (fun _ => rfl)
     (by decide) (fun _ => altSnapRules_cases rfl rfl rfl rfl)
     (setRules_cases rfl rfl rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
@@ -3778,7 +3804,7 @@ public theorem content_hidden_behind_script (v : DeckType) (pg : String) (cp ms 
         (!(r.decls.contains ("display", "none")) &&
          !(r.decls.contains ("visibility", "hidden")))) = true :=
   deckRules_check v pg cp ms
-    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
+    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
     (by decide) rfl rfl rfl rfl rfl (by decide) (fun _ => rfl) (fun _ => rfl)
     (by decide) (fun _ => altSnapRules_cases rfl rfl rfl rfl)
     (setRules_cases rfl rfl rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
@@ -3796,7 +3822,8 @@ public theorem floor_opacity_mem (v : DeckType) (pg : String) (cp ms : Nat) :
       (fun o ho => nomatch ho) (fun o ho => nomatch ho) (fun o ho => nomatch ho)
       (fun o ho => nomatch ho) (fun o ho => nomatch ho) (fun o ho => nomatch ho)
       (fun o ho => nomatch ho) (fun o ho => nomatch ho) (fun o ho => nomatch ho)
-      (fun o ho => nomatch ho) (fun o ho => nomatch ho)
+      (fun o ho => nomatch ho) (fun o ho => nomatch ho) (fun o ho => nomatch ho)
+      (fun o ho => nomatch ho)
   · intro r hr
     simp only [deckReduce, deckGlideGuard, List.mem_cons, List.not_mem_nil,
       or_false] at hr
@@ -3851,7 +3878,7 @@ public theorem floor_covered_script_gated (v : DeckType) (pg : String) (cp ms : 
       (!(onFloor r) || scriptGated r ||
         r.decls.all fun d => d.1 != "opacity" || d.2 == "100%") = true :=
   deckRules_check v pg cp ms
-    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
+    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
     (by decide) rfl rfl rfl rfl rfl (by decide) (fun _ => rfl) (fun _ => rfl)
     (by decide) (fun _ => altSnapRules_cases rfl rfl rfl rfl)
     (setRules_cases rfl rfl rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
@@ -3863,7 +3890,7 @@ public theorem hidden_script_gated (v : DeckType) (pg : String) (cp ms : Nat) :
     ∀ r ∈ deckRules v pg cp ms,
       (keyframesRule r || scriptGated r || !(r.decls.contains ("visibility", "hidden"))) = true :=
   deckRules_check v pg cp ms
-    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
+    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
     (by decide) rfl rfl rfl rfl rfl (by decide) (fun _ => rfl) (fun _ => rfl)
     (by decide) (fun _ => altSnapRules_cases rfl rfl rfl rfl)
     (setRules_cases rfl rfl rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
@@ -3875,7 +3902,7 @@ public theorem animations_script_gated (v : DeckType) (pg : String) (cp ms : Nat
     ∀ r ∈ deckRules v pg cp ms,
       (scriptGated r || r.decls.all fun d => d.1 != "animation" || d.2 == "none") = true :=
   deckRules_check v pg cp ms
-    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
+    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
     (by decide) rfl rfl rfl rfl rfl (by decide) (fun _ => rfl) (fun _ => rfl)
     (by decide) (fun _ => altSnapRules_cases rfl rfl rfl rfl)
     (setRules_cases rfl rfl rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
@@ -3935,7 +3962,7 @@ public theorem guards_by_construction (v : DeckType) (pg : String) (cp ms : Nat)
             List.map_cons, List.map_nil, SelChunk.render, String.join_cons,
             String.join_nil, String.append_empty, String.toList_append]
           decide))
-      rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl
+      rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl
   · intro r hr
     simp only [deckReduce, deckGlideGuard, List.mem_cons, List.not_mem_nil,
       or_false] at hr
@@ -4026,7 +4053,7 @@ public theorem print_lifts_stage_bounds_covers (v : DeckType) (pg : String) (cp 
             List.map_cons, List.map_nil, SelChunk.render, String.join_cons,
             String.join_nil, String.append_empty]
           decide))
-      rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl
+      rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl
   · intro r hr
     simp only [deckReduce, deckGlideGuard, List.mem_cons, List.not_mem_nil,
       or_false] at hr
@@ -4087,7 +4114,7 @@ public theorem deck_text_path_free (v : DeckType) (pg : String) (cp ms : Nat) :
       (r.decls.all fun d =>
         d.1 != "content" || (d.2 == "\"\"" || d.2 == "none")) = true :=
   deckRules_check v pg cp ms
-    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
+    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
     (by decide) rfl rfl rfl rfl rfl (by decide) (fun _ => rfl) (fun _ => rfl)
     (by decide) (fun _ => altSnapRules_cases rfl rfl rfl rfl)
     (setRules_cases rfl rfl rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
@@ -4158,12 +4185,15 @@ public theorem image_share_agrees (l : Image.Len) (iW iH textW textH stage : Int
 /-! ## Deck script -/
 
 /-- The deck's constant script: arrow, page, space, Home and End keys page between `[data-snap]`
-points, and the floor's step state follows the current snap. -/
+points, the floor's step state follows the current snap, and the stages it pages leave the tab
+order. -/
 public def deckScript : String :=
   "(() => {
   document.documentElement.dataset.deckScript = \"\";
   const snaps = Array.from(document.querySelectorAll(\"[data-snap]\"));
   if (snaps.length === 0) return;
+  const stops = \"section.slide[tabindex], section.section-page[tabindex]\";
+  for (const s of document.querySelectorAll(stops)) s.removeAttribute(\"tabindex\");
   const reduce = matchMedia(\"(prefers-reduced-motion: reduce)\");
   const stageOf = (el) => el.closest(\".slide-track\") || el;
   const links = snaps.map(s => s.dataset.slideLabel);
@@ -4276,6 +4306,8 @@ public theorem deck_script_constant : deckScript =
   document.documentElement.dataset.deckScript = \"\";
   const snaps = Array.from(document.querySelectorAll(\"[data-snap]\"));
   if (snaps.length === 0) return;
+  const stops = \"section.slide[tabindex], section.section-page[tabindex]\";
+  for (const s of document.querySelectorAll(stops)) s.removeAttribute(\"tabindex\");
   const reduce = matchMedia(\"(prefers-reduced-motion: reduce)\");
   const stageOf = (el) => el.closest(\".slide-track\") || el;
   const links = snaps.map(s => s.dataset.slideLabel);
@@ -6983,7 +7015,8 @@ public theorem sectionPageName_contract (title : Array Inline) :
     nonBlank (sectionPageName title) = true :=
   firstNonBlank_contract _ _ (by decide)
 
-/-- A deck stage's keyboard door: a tab stop and a name, so a reader can scroll what spills. -/
+/-- A deck stage's name, and the tab stop through which a reader the pager does not serve scrolls
+what spills. -/
 public def stageAttrs (deck : Bool) (name : String) : Array (String × String) :=
   if deck then #[("tabindex", "0"), ("aria-label", name)] else #[]
 

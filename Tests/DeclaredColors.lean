@@ -187,6 +187,34 @@ public def focusGateChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((({ cmd := .build "probe.tex" } : LeanTex.Cli.Config).effectiveEmit #["pdf", "html"]).contains .html &&
       (reports bothDs).any (·.code == "W0345"))
 
+/-- A deck's focused stage draws the deck's mark, never the browser's ring, a rule in its ink, which
+its ground holds legible, down the middle half of each side margin, or in forced colours a ring on
+its own edge, and the pager, which owns the keys, takes the stages out of the tab order. -/
+public def stageFocusChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let (deckDoc, deckDs) := elabStr ("\\documentclass{beamer}\\palette{ focus = #FFE000 }" ++
+    "\\begin{document}\\begin{frame}{Placeholder}A line with no link.\\end{frame}" ++
+    "\\begin{frame}[standout]Questions?\\end{frame}\\end{document}")
+  t "stage focus: a stage marks in its ink, so a focus colour no link ships is not judged"
+    (!(reports deckDs).any fun d => d.code == "W0345" && hasStr d.message "the focus ring")
+  let side := "max(2px, calc(0.5 * var(--safearea, 6vmin)))"
+  t "stage focus: a focused stage's mark is its background, a rule down each side margin's middle half"
+    (hasStr (HtmlDoc.emit {} deckDoc).1
+      ("html section.slide:focus-visible, html section.section-page:focus-visible { outline: none; " ++
+        "background-image: linear-gradient(currentColor, currentColor), " ++
+        "linear-gradient(currentColor, currentColor); background-size: 2px 50%; " ++
+        s!"background-position: left {side} center, right {side} center; " ++
+        "background-repeat: no-repeat; }"))
+  t "stage focus: in forced colours, which drop the mark, a focused stage rings its own edge"
+    (hasStr (HtmlDoc.emit {} deckDoc).1
+      ("@media (forced-colors: active) { html section.slide:focus-visible, " ++
+        "html section.section-page:focus-visible { outline: 2px solid currentColor; " ++
+        "outline-offset: -2px; } }"))
+  t "stage focus: the pager takes the stages out of the tab order"
+    (hasStr HtmlDoc.deckScript
+      ("const stops = \"section.slide[tabindex], section.section-page[tabindex]\";\n" ++
+        "  for (const s of document.querySelectorAll(stops)) s.removeAttribute(\"tabindex\");"))
+
 /-- The ink of every glyph of `c` the pages set, outside furniture. -/
 private def charInks (out : Layout.Out) (c : Char) : Array Ir.Color :=
   (ListingHighlight.glyphColors out).filterMap fun (g, ink) => if g == c then some ink else none

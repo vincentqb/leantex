@@ -521,6 +521,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   Tests.DeclaredColors.checks ref oneFace
   Tests.DeclaredColors.listingGroundChecks ref oneFace
   Tests.DeclaredColors.focusGateChecks ref
+  Tests.DeclaredColors.stageFocusChecks ref
   Tests.BlockBody.checks ref oneFace
   Tests.BlockRegionFit.checks ref oneFace
   Tests.BlockHeaderClearance.checks ref oneFace

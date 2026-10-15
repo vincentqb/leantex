@@ -1750,7 +1750,14 @@ def reports : List Report := [
     pins := [check% deckStepChecks, check% deckRangeEndChecks, check% deckStillChecks]
     accept := ["in Chromium 151.0.7922.34, on an invented stepped deck, the second step's box stands at x 43.19 px at its fade's start, middle and end, its opacity 0, 0.5 and 1 where steps hide and 0.15, 0.575 and 1 at beamer's transparent share; with the slide-in restored it starts 25.69 px, one rem, to the right and moves",
       "thirteen of the guards' assertions fail with the slide-in restored onto the recorded commit: the uncover's keyframes and the still-steps check of both step decks, and ten stepped corpus decks'"]
-    state := .guarded "5139d571" .revert .author }
+    state := .guarded "5139d571" .revert .author },
+  { id := "R196", date := "2026-10-15"
+    what := "a deck's focused slide drew the browser's own focus ring on its outermost pixels, a line along the window's edges that ran between slides as the reader paged on: every stage was a tab stop, focused when an address named its id or a click landed on it and shown once a key was pressed, and the deck declared no indicator for a stage"
+    pins := [check% Tests.DeclaredColors.stageFocusChecks]
+    accept := ["three of the guard's four assertions fail on main at 26720a07: its stylesheet declares no mark for a focused stage nor a ring of its own in forced colours, and its pager leaves every stage a tab stop; the fourth, that a stage marks in its ink so a focus colour no link ships is not judged, holds both ways",
+      "the browser oracle's stage-focus row fails on every corpus deck the engine at 26720a07 builds: under the pager each stage stays a tab stop, and read without it each draws the browser's auto outline and no mark, focusing one changing the viewport's outermost pixels; on every deck built here no stage is a tab stop under the pager, and read without it every stage draws no outline but its mark, focusing one stage of each kind changing two bands of pixels a rule wide inside its side margins and none at the viewport's edges or in its band, footline or logo, at the deck's own aspect at 1x and 2x and at 16:10, 4:3 and a portrait phone, the bands holding still as a stage that spills scrolls, and in forced colours a focused stage still shows its focus; its controls fail a stage keeping the browser's ring, a mark run into a footline, a mark that scrolls with its stage, a mark forced colours drop and a stage left a tab stop under the pager",
+      "a presentation deck opened at a frame's address in 16:9 and 16:10 windows at 1x, 1.5x and 2x and paged with the arrow keys: before, the address focused the frame, whose browser ring drew along the window's edges and ran between slides as it scrolled away; after, the address, a click in a margin and the keys focus no stage, no ring or mark shows, and each of the 20 snaps from the frame on shows one slide alone"]
+    state := .guarded "26720a07" .before .author }
 ]
 
 /-- The reports guarded but never seen failing, a count held in both directions. -/

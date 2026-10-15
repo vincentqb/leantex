@@ -25,7 +25,8 @@ def features : List String :=
   ["load", "images", "fonts", "mathml", "mathAlpha", "math-line", "lang", "landmarks", "snaps",
    "box-side",
    "affine-screen", "affine-print", "color-scheme", "reduced-motion", "print", "print-spill",
-   "print-sheets", "no-script", "code-height", "stage-fit", "deck-links", "disclosure",
+   "print-sheets", "no-script", "code-height", "stage-fit", "stage-focus", "deck-links",
+   "disclosure",
    "print-disclosure", "code-wrap", "print-code"]
 
 def die (code : UInt32) (msg : String) : IO UInt32 := do
@@ -1030,6 +1031,259 @@ const stageShapes = async (page) => {
   return rows;
 };
 
+// A screenshot's pixels: Chromium's PNG, 8-bit RGB or RGBA, each row unfiltered.
+const pngPixels = (buf) => {
+  let at = 8, w = 0, h = 0, bpp = 4;
+  const idat = [];
+  while (at < buf.length) {
+    const len = buf.readUInt32BE(at), type = buf.toString('latin1', at + 4, at + 8);
+    if (type === 'IHDR') {
+      w = buf.readUInt32BE(at + 8); h = buf.readUInt32BE(at + 12);
+      if (buf[at + 16] !== 8 || buf[at + 20] !== 0) throw new Error('screenshot: not an 8-bit plain PNG');
+      bpp = buf[at + 17] === 2 ? 3 : 4;
+    } else if (type === 'IDAT') idat.push(buf.subarray(at + 8, at + 8 + len));
+    else if (type === 'IEND') break;
+    at += 12 + len;
+  }
+  const raw = require('zlib').inflateSync(Buffer.concat(idat));
+  const stride = w * bpp, px = Buffer.alloc(h * stride);
+  for (let y = 0; y < h; y++) {
+    const f = raw[y * (stride + 1)], src = y * (stride + 1) + 1, row = y * stride;
+    for (let x = 0; x < stride; x++) {
+      const a = x >= bpp ? px[row + x - bpp] : 0, b = y > 0 ? px[row - stride + x] : 0;
+      const c = x >= bpp && y > 0 ? px[row - stride + x - bpp] : 0;
+      let v = raw[src + x];
+      if (f === 1) v += a;
+      else if (f === 2) v += b;
+      else if (f === 3) v += (a + b) >> 1;
+      else if (f === 4) {
+        const q = a + b - c, pa = Math.abs(q - a), pb = Math.abs(q - b), pc = Math.abs(q - c);
+        v += pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
+      }
+      px[row + x] = v & 255;
+    }
+  }
+  return { w, h, bpp, px };
+};
+
+// The device pixels two shots of one viewport differ at by more than a tenth of a channel's range,
+// which a re-rasterized glyph or image edge stays within, by column, or null past a twentieth.
+const shotChanges = (a, b) => {
+  const cols = new Map();
+  let n = 0;
+  for (let y = 0; y < a.h; y++) {
+    const row = y * a.w * a.bpp;
+    for (let x = 0; x < a.w; x++) {
+      const i = row + x * a.bpp;
+      if (Math.abs(a.px[i] - b.px[i]) <= 25 && Math.abs(a.px[i + 1] - b.px[i + 1]) <= 25 &&
+          Math.abs(a.px[i + 2] - b.px[i + 2]) <= 25) continue;
+      if (++n > a.w * a.h / 20) return null;
+      const rows = cols.get(x);
+      if (rows) rows.push(y); else cols.set(x, [y]);
+    }
+  }
+  return { cols, w: a.w, h: a.h };
+};
+
+// The runs of adjacent changed columns, each with its first and last changed row.
+const changeBands = (ch) => {
+  const bands = [];
+  for (const x of [...ch.cols.keys()].sort((p, q) => p - q)) {
+    const rows = ch.cols.get(x), last = bands[bands.length - 1];
+    if (last && x === last.to + 1) {
+      last.to = x; last.top = Math.min(last.top, rows[0]); last.bottom = Math.max(last.bottom, rows[rows.length - 1]);
+    } else bands.push({ from: x, to: x, top: rows[0], bottom: rows[rows.length - 1] });
+  }
+  return bands;
+};
+
+// Under the pager a stage is no tab stop, so an address or a click focuses none that fits its box.
+const stagePagerJudge = () => {
+  const stages = [...document.querySelectorAll('section.slide, section.section-page')];
+  const bad = document.documentElement.hasAttribute('data-deck-script') ? [] : ['the pager did not run'];
+  for (const s of stages) {
+    const name = s.id || s.dataset.slideLabel || '-';
+    if (s.hasAttribute('tabindex')) { bad.push(`${name} stays a tab stop under the pager`); continue; }
+    if (s.scrollHeight > s.clientHeight + 1 || s.scrollWidth > s.clientWidth + 1) continue;
+    s.focus({ preventScroll: true });
+    if (document.activeElement === s) { bad.push(`${name} takes focus under the pager`); s.blur(); }
+  }
+  return { n: stages.length, bad };
+};
+
+// A stage read without the pager, focused under keyboard modality: its outline, ground and mark,
+// its furniture's boxes, and its kind; every stage's premises when `only` is null.
+const stageMarkJudge = (only) => {
+  const stages = [...document.querySelectorAll('section.slide[tabindex], section.section-page[tabindex]')];
+  const parts = [['band', ':scope > header'], ['footline', ':scope > footer.slide-foot'], ['logo', ':scope .slide-logo']];
+  const read = (s) => {
+    const plain = getComputedStyle(s).backgroundImage;
+    s.focus({ preventScroll: true });
+    const cs = getComputedStyle(s), r = s.getBoundingClientRect();
+    const inks = cs.backgroundImage.match(/rgba?\([^)]*\)/g) || [];
+    const furniture = parts.flatMap(([what, sel]) => [...s.querySelectorAll(sel)].map(el => {
+      const q = el.getBoundingClientRect();
+      return { what, box: { left: q.left, right: q.right, top: q.top, bottom: q.bottom } };
+    }));
+    const probe = document.createElement('div');
+    probe.style.cssText = 'position: absolute; width: var(--safearea, 6vmin); height: 0';
+    s.append(probe);
+    const safe = probe.getBoundingClientRect().width;
+    probe.remove();
+    const m = { name: s.id || s.dataset.slideLabel || '-', seen: s.matches(':focus-visible'), safe,
+      outline: cs.outlineStyle, plain, inked: inks.length > 0 && inks.every(c => c === cs.color),
+      still: cs.backgroundAttachment.split(',').every(v => v.trim() === 'scroll'),
+      width: parseFloat(cs.backgroundSize) || 0, shown: Math.abs(r.left) < 0.5,
+      spills: s.scrollHeight > s.clientHeight + 1, furniture,
+      kind: [s.className, s.closest('.slide-track') ? 'stepped' : '', ...furniture.map(f => f.what)].join(' ') };
+    s.blur();
+    return m;
+  };
+  if (only !== null) return read(stages[only]);
+  const bad = [], kinds = new Map();
+  stages.forEach((s, i) => {
+    const m = read(s), why = [];
+    if (!m.seen) why.push('takes no visible focus');
+    if (m.outline !== 'none') why.push(`draws a ${m.outline} outline`);
+    if (m.plain !== 'none') why.push('stands on a ground image the mark would replace');
+    if (!m.inked) why.push('marks in no colour or not in its ink');
+    if (!m.still) why.push('marks in a ground that scrolls with its content');
+    if (why.length) bad.push(`${m.name} ${why.join(', ')}`);
+    if (!kinds.has(m.kind)) kinds.set(m.kind, i);
+  });
+  return { n: stages.length, bad, kinds: [...kinds.entries()].map(([kind, i]) => [i, /band|footline|logo/.test(kind)]) };
+};
+
+// One stage at its snap: focusing it changes pixels only inside its side margins, off the
+// viewport's outermost pixels and outside its band, footline and logo; with its children hidden,
+// two bands each its mark's width or a pixel more, the same scrolled to its end when it spills.
+const stageMarkShot = async (p, k, scale, shape, measure) => {
+  const at = `at ${shape} ${scale}x`;
+  const sel = 'section.slide[tabindex], section.section-page[tabindex]';
+  await p.evaluate(({ k, sel }) => {
+    const s = document.querySelectorAll(sel)[k];
+    s.scrollTop = 0;
+    (s.closest('.slide-track') || s).scrollIntoView({ behavior: 'instant', inline: 'start', block: 'nearest' });
+  }, { k, sel });
+  const m = await p.evaluate(stageMarkJudge, k);
+  if (!m.shown) return [`${at} ${m.name} stands off the viewport`];
+  // a page without script runs no animation frame; the screenshot draws the current one
+  const shot = async () => pngPixels(await drawn(p));
+  const pair = async () => {
+    const plain = await shot();
+    await p.evaluate(({ k, sel }) => document.querySelectorAll(sel)[k].focus({ preventScroll: true }),
+      { k, sel });
+    const marked = await shot();
+    await p.evaluate(() => document.activeElement && document.activeElement.blur());
+    return shotChanges(plain, marked);
+  };
+  const off = [];
+  const seen = await pair();
+  if (!seen) return [`${at} focusing ${m.name} changes the viewport at large`];
+  const cols = [...seen.cols.keys()], margin = Math.ceil(m.safe * scale);
+  if (cols.length === 0) off.push(`${at} ${m.name} shows no mark`);
+  if (cols.some(x => x >= margin && x < seen.w - margin))
+    off.push(`${at} focusing ${m.name} changes pixels outside its side margins`);
+  if (cols.some(x => x < 1 || x > seen.w - 2) ||
+      [...seen.cols.values()].some(rows => rows[0] < 1 || rows[rows.length - 1] > seen.h - 2))
+    off.push(`${at} focusing ${m.name} changes the viewport's outermost pixels`);
+  for (const f of m.furniture) {
+    const x0 = Math.ceil(f.box.left * scale), x1 = Math.floor(f.box.right * scale);
+    const y0 = Math.ceil(f.box.top * scale), y1 = Math.floor(f.box.bottom * scale);
+    for (const [x, rows] of seen.cols)
+      if (x >= x0 && x < x1 && rows.some(y => y >= y0 && y < y1)) {
+        off.push(`${at} focusing ${m.name} changes its ${f.what}`);
+        break;
+      }
+  }
+  if (!measure && !m.spills) return off;
+  await p.evaluate(() => {
+    const hide = document.createElement('style');
+    hide.id = 'ltx-oracle-hide';
+    hide.textContent = 'section.slide > *, section.section-page > * { visibility: hidden !important; }';
+    document.head.append(hide);
+  });
+  try {
+    const whole = await pair();
+    const bands = whole ? changeBands(whole) : [];
+    if (measure) {
+      if (bands.length !== 2) off.push(`${at} ${m.name}'s mark is ${bands.length} bands of pixels, not two`);
+      for (const b of bands)
+        if (b.to - b.from + 1 > Math.ceil(m.width * scale) + 1)
+          off.push(`${at} ${m.name}'s mark is a band ${b.to - b.from + 1} device px wide`);
+      if (bands.length === 2 && !(bands[0].to < whole.w / 2 && bands[1].from > whole.w / 2))
+        off.push(`${at} ${m.name}'s mark leaves its side margins`);
+    }
+    if (m.spills && bands.length > 0) {
+      const end = await p.evaluate(({ k, sel }) => {
+        const s = document.querySelectorAll(sel)[k];
+        s.scrollTop = s.scrollHeight;
+        return s.scrollTop;
+      }, { k, sel });
+      const later = await pair();
+      const moved = later ? changeBands(later) : [];
+      const same = moved.length === bands.length && moved.every((b, i) =>
+        Math.abs(b.from - bands[i].from) <= 1 && Math.abs(b.to - bands[i].to) <= 1 &&
+        Math.abs(b.top - bands[i].top) <= 1 && Math.abs(b.bottom - bands[i].bottom) <= 1);
+      if (!same) off.push(`${at} ${m.name}'s mark moves as the stage scrolls ${end}px`);
+    }
+  } finally {
+    await p.evaluate(() => document.getElementById('ltx-oracle-hide').remove());
+  }
+  return off;
+};
+
+// A focused stage shows the deck's own mark, never the browser's ring: under the pager no stage
+// is a tab stop, and read without it every stage draws no outline but a mark in its ink that holds
+// still as the stage scrolls, which one stage of each kind shows as two bands of pixels inside its
+// side margins, clear of the viewport's edges and its band, footline and logo, at the deck's own
+// aspect at 1x and 2x, and a stage of each kind with furniture shows so at every reader shape.
+const stageFocus = async (page, browser, open) => {
+  const deck = await page.evaluate(() =>
+    /mandatory/.test(getComputedStyle(document.documentElement).scrollSnapType));
+  if (!deck) return { ok: true, n: 0, why: '' };
+  const pt = /^([\d.]+)pt ([\d.]+)pt$/.exec((await pageSizeOf(page)).trim());
+  if (!pt) return { ok: false, n: 1, why: 'no @page size in points' };
+  const W = 1280, H = Math.round(1280 * +pt[2] / +pt[1]);
+  const off = (await page.evaluate(stagePagerJudge)).bad.slice(0, 2);
+  let judged = null;
+  for (const scale of [1, 2]) {
+    const ctx = budgeted(await browser.newContext({ viewport: { width: W, height: H },
+      deviceScaleFactor: scale, javaScriptEnabled: false }));
+    try {
+      const p = await ctx.newPage();
+      await open(p);
+      await p.evaluate(() => document.fonts.ready);
+      await p.keyboard.press('Shift');
+      if (!judged) { judged = await p.evaluate(stageMarkJudge, null); off.push(...judged.bad.slice(0, 2)); }
+      for (const [shape, w, h] of scale === 1 ? [['own', W, H], ...readerShapes] : [['own', W, H]]) {
+        await p.setViewportSize({ width: w, height: h });
+        for (const [k, furnished] of judged.kinds)
+          if (shape === 'own' || furnished) off.push(...await stageMarkShot(p, k, scale, shape, shape === 'own'));
+      }
+      if (scale === 1 && judged.n > 0) {
+        // forced colours drop the mark's image, so a focused stage still shows its focus there
+        await p.setViewportSize({ width: W, height: H });
+        await p.emulateMedia({ forcedColors: 'active' });
+        const sel = 'section.slide[tabindex], section.section-page[tabindex]';
+        await p.evaluate((sel) => {
+          const s = document.querySelector(sel);
+          (s.closest('.slide-track') || s).scrollIntoView({ behavior: 'instant', inline: 'start', block: 'nearest' });
+        }, sel);
+        const plain = pngPixels(await drawn(p));
+        await p.evaluate((sel) => document.querySelector(sel).focus({ preventScroll: true }), sel);
+        const marked = pngPixels(await drawn(p));
+        await p.evaluate(() => document.activeElement && document.activeElement.blur());
+        const forced = shotChanges(plain, marked);
+        if (forced && forced.cols.size === 0) off.push('in forced colours a focused stage shows no focus');
+        await p.emulateMedia({ forcedColors: 'none' });
+      }
+    } finally { await ctx.close(); }
+  }
+  return { ok: off.length === 0, n: judged ? judged.n : 1, findings: off,
+    why: off.length ? `${off.length} findings; ${off.slice(0, 4).join('; ')}` : '' };
+};
+
 const deckLinks = async (page, url) => {
   const info = await page.evaluate(() => {
     if (!document.documentElement.hasAttribute('data-deck-script')) return null;
@@ -1314,6 +1568,39 @@ async function runReader(name) {
     } finally {
       await control.setViewportSize({ width: 1280, height: 720 });
     }
+    // The stage-focus judge breaks five ways: a stage keeping the browser's ring
+    // changes the viewport's edges, a mark run into the foot changes its footline,
+    // a mark that scrolls with its stage moves, a mark forced colours drop shows
+    // nothing there, and a tab stop under the pager stays.
+    const focusStage = (rule, body) => '<!doctype html><html data-deck-script><head><style>@page { size: 960pt 540pt } html { scroll-snap-type: x mandatory } ' +
+      'body { margin: 0 } main { display: flex } section.slide { box-sizing: border-box; width: 100vw; ' +
+      'flex: 0 0 100vw; height: 100dvh; padding: 0 6vh; overflow-y: auto; position: relative; display: flex; ' +
+      'flex-direction: column; background: #fff; color: #222 } footer.slide-foot { position: sticky; ' +
+      'bottom: 0; margin: auto -6vh 0; height: 3vh; flex-shrink: 0 } footer.slide-foot > span { ' +
+      'position: absolute; left: 1vh; bottom: 0; font: 2vh sans-serif } ' + rule + '</style></head><body>' +
+      '<main><section class="slide" tabindex="0" data-snap>' + body + '<footer class="slide-foot">' +
+      '<span>An invented footline</span></footer></section></main></body></html>';
+    const focusInk = 'linear-gradient(currentColor, currentColor)';
+    const focusMark = (size) => 'section.slide:focus-visible { outline: none; background-image: ' + focusInk +
+      ', ' + focusInk + '; background-size: 2px ' + size + '; background-position: left 3vh center, ' +
+      'right 3vh center; background-repeat: no-repeat }';
+    const focusScrolls = 'section.slide:focus-visible { outline: none } section.slide:focus-visible::before { ' +
+      'content: ""; position: absolute; top: 25%; height: 50%; left: 3vh; right: 3vh; ' +
+      'border-left: 2px solid; border-right: 2px solid }';
+    const focusLine = '<p>An invented line.</p>';
+    for (const [label, html, want] of [
+        ['the browser ring', focusStage('', focusLine), /outermost/],
+        ['a mark into the foot', focusStage(focusMark('100%'), focusLine), /changes its footline/],
+        ['a mark that scrolls', focusStage(focusScrolls, focusLine.repeat(60)), /moves as the stage scrolls/],
+        ['a mark forced colours drop', focusStage(focusMark('50%'), focusLine), /forced colours/],
+        ['a tab stop under the pager', focusStage(focusMark('50%'), focusLine), /tab stop under the pager/]]) {
+      await control.setContent(html);
+      if (!label.startsWith('a tab stop'))
+        await control.evaluate(() => document.querySelector('section.slide').removeAttribute('tabindex'));
+      const got = await stageFocus(control, browser, (p) => p.setContent(html));
+      if (got.ok || !got.findings.some(f => want.test(f)))
+        throw new Error('stage-focus control: ' + label + ' ' + got.why);
+    }
     // Both disclosure judges break once: a closed body forced into view on
     // screen, and a closed body printed with no print rule to show it.
     const closed = '<details><summary>A</summary><p>B</p></details>';
@@ -1435,6 +1722,8 @@ async function runReader(name) {
       for (const [shape, frame, what] of await stageShapes(page).catch(e =>
           [['-', '-', 'unmeasured: ' + clean(String(e.message).split('\n')[0])]]))
         out('shape', fx, name, shape, frame, clean(what));
+      out(fx, name, 'stage-focus', cell(await stageFocus(page, browser,
+        (p) => p.goto(url, { waitUntil: 'load' }))));
       const links = await deckLinks(page, url);
       out(fx, name, 'deck-links', cell(links));
       if (links.after) throw links.after;
