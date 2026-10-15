@@ -344,6 +344,29 @@ def cssListChecks (ref : IO.Ref (List String)) : IO Unit := do
   check ref "CSS lists: the lossy figure ships its authored bytes, every list as written"
     ((HtmlDoc.imageResources imgs).any (·.bytes == bytes) &&
       (elemAttrsList (· == "svg") #[] body.toList).isEmpty)
+  let blocks := svgDocument ("<style>rect[title=x), y], circle { fill: red } " ++
+    ".k { fill: blue; x: [a); b] } .m { fill: green } .w { x: [}]; fill: yellow }" ++
+    "rect\n\t .ok..bad, rect { fill: red }</style>" ++
+    "<rect class=\"k\" width=\"5\" height=\"5\"/><rect class=\"m\" x=\"10\" width=\"5\" height=\"5\"/>" ++
+    "<rect class=\"w\" x=\"20\" width=\"5\" height=\"5\"/>" ++
+    "<text x=\"1\" y=\"18\" font-family=\"Invented's Hand, serif\">Hi</text>" ++
+    "<text x=\"20\" y=\"18\" font-family=\"Invented /* it's */, monospace\">Ho</text>") 40 20
+  let bf ← Driver.svgFetch "blocks.svg" blocks .first "en" none
+  let (ben, _) := Image.fulfilOne { src := "blocks.svg" } (.decoded "" bf.res none none (some blocks) none)
+  let (blockStore, blockShaped) :=
+    FigureStore.settle fs (FigureStore.attach { entries := #[ben] } #[some bf.drawn])
+  let geom : Layout.Geom := {}
+  let blockDoc := (elabStr "\\includegraphics[width=200pt]{blocks.svg}").1
+  let pdf := pdfText (Pdf.write geom fs (layoutOf fs blockDoc geom none blockStore).pages {} blockStore)
+  check ref "CSS lists: a closer inside another kind's block ends neither, so the rule's paint ships"
+    (bytesContain pdf "0 0 1 rg" && bytesContain pdf "1 1 0 rg")
+  let blockSubjects := (bf.diags ++ blockShaped.map (·.2)).filterMap (·.subject)
+  let blockNamed := blockSubjects.filterMap fun s =>
+    (after "figure:svg:property:style: the selector '" s).map (·.dropEnd 1 |>.toString)
+  check ref s!"CSS lists: a selector is named whole and on one line ({blockNamed})"
+    (blockNamed == #["rect[title=x), y]", "rect .ok..bad"])
+  check ref s!"CSS lists: a family list CSS reads whole or drops names no family it lacks ({blockSubjects})"
+    (blockSubjects.all fun s => !s.startsWith "svg:font:")
 
 
 /-- The corpus's figures ship as the page's own SVG where they can, the moving and raster ones as

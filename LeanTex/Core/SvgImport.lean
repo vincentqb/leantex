@@ -581,21 +581,39 @@ where
   | "evenodd" => some .evenOdd
   | _ => none
 
-/-- The generic families CSS Fonts 4 §4.2 names. -/
+/-- The generic families CSS Fonts 4 §2.1.5 names. -/
 @[expose] public def generics : List String :=
   ["serif", "sans-serif", "monospace", "cursive", "fantasy", "system-ui", "ui-serif",
    "ui-sans-serif", "ui-monospace", "ui-rounded", "math", "emoji", "fangsong"]
 
-/-- A `font-family` list, cut at its commas outside strings: each family unquoted, a generic one
-lower case. -/
-public def families? (s : String) : Option (Array String) :=
-  let fams := (Css.splitList ',' s).map fun f =>
-    let t := f.trimAscii.toString
-    let t := if t.length ≥ 2 && (t.startsWith "\"" && t.endsWith "\"" || t.startsWith "'" && t.endsWith "'")
-      then ((t.drop 1).dropEnd 1).toString else t
-    if generics.contains t.toLower then t.toLower else t
-  let fams := fams.filter (!·.isEmpty)
-  if fams.isEmpty then none else some fams
+/-- One family of a `font-family` list (CSS Fonts 4 §2.1): a string its quote closes, its text, or
+identifiers joined by single blanks, a generic family's keyword in lower case; `none` for anything
+else. -/
+public def family? (t : String) : Option String :=
+  match Css.atoms t with
+  | [q :: body] =>
+    if (q == '"' || q == '\'') && Css.closedAtom (q :: body) && body.getLast? == some q then
+      some (String.ofList body.dropLast)
+    else ident? t
+  | _ => ident? t
+where
+  ident? (t : String) : Option String :=
+    let words := (t.split Css.isWs).toList.map (·.toString) |>.filter (!·.isEmpty)
+    let isIdent (w : String) : Bool :=
+      w.all Css.identChar && !(w.front.isDigit)
+    if words.isEmpty || !words.all isIdent then none
+    else match words with
+      | [w] => some (if generics.contains w.toLower then w.toLower else w)
+      | _ => some (" ".intercalate words)
+
+/-- A `font-family` list, its comments removed and cut at its commas outside strings and blocks,
+each family as `family?` reads it; `none` when one is no family, as CSS then drops the
+declaration. -/
+public def families? (s : String) : Option (Array String) := do
+  let mut out : Array String := #[]
+  for f in Css.splitList ',' (Css.stripComments s) do
+    out := out.push (← family? f.trimAscii.toString)
+  if out.isEmpty then none else some out
 
 /-- A `font-weight`: a keyword or a number, `bolder`/`lighter` against the
 parent's (CSS Fonts 4 §2.2's table). -/

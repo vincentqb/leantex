@@ -555,6 +555,20 @@ def cssSplitChecks (ref : IO.Ref (List String)) : IO Unit := do
   check ref "CSS split: a declaration block is cut at semicolons outside strings and brackets"
     (Css.splitList ';' "fill: red; font-family: \"a;b\"; grid-area: [a;b]" ==
       #["fill: red", " font-family: \"a;b\"", " grid-area: [a;b]"])
+  check ref "CSS split: a block ends only at its own mirror, another closer inside it is its content"
+    (Css.splitList ',' "(a], b)" == #["(a], b)"] && Css.splitList ',' "[a), b]" == #["[a), b]"] &&
+      Css.splitList ',' "rect[title=x), y], circle" == #["rect[title=x), y]", " circle"] &&
+      Css.splitList ';' " fill: blue; x: [a); b] " == #[" fill: blue", " x: [a); b] "])
+  check ref "CSS split: a closer no block opened stands alone, a separator after it cuts"
+    (Css.splitList ',' "a), b" == #["a)", " b"] && Css.splitList ',' "x] y, z" == #["x] y", " z"])
+  check ref "CSS split: an unclosed block runs to the text's end, holding every separator in it"
+    (Css.splitList ',' "a, :is(b, c" == #["a", " :is(b, c"])
+  check ref "CSS families: a family is a string or identifiers, else the list is no list"
+    (Svg.families? "Invented's Hand, serif" == none &&
+      Svg.families? "Invented /* it's */, monospace" == some #["Invented", "monospace"] &&
+      Svg.families? "\"Two, Words\", Times  New Roman, SERIF" ==
+        some #["Two, Words", "Times New Roman", "serif"] &&
+      Svg.families? "\"Open, serif" == none && Svg.families? "3D, serif" == none)
   check ref "CSS split: importance is read after the value's strings"
     (Css.importance "\"Bang!\" !important" == ("\"Bang!\"", true) &&
       Css.importance "red ! IMPORTANT" == ("red", true) &&

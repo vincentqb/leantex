@@ -2018,7 +2018,7 @@ public def roleDefaultVars (pal : Ir.Palette) (s : Ir.Scheme) (roles : List Ir.R
 declares with what that reads. -/
 private def styleRefs (style : String) : Array String × Array (String × Array String) :=
   if !style.contains "--" then (#[], #[]) else
-  (style.splitOn ";").foldl (fun (acc : Array String × Array (String × Array String)) piece =>
+  (Css.splitList ';' style).foldl (fun (acc : Array String × Array (String × Array String)) piece =>
     let t := piece.trimAscii.toString
     if t.startsWith "--" then
       match t.splitOn ":" with
@@ -2109,7 +2109,7 @@ public def resolveRoleVars (keep : Ir.Role → Bool) (s : String) : String := Id
 /-- A style attribute with declarations of roles outside `keep` dropped and their reads resolved. -/
 private def keepRoleStyle (keep : Ir.Role → Bool) (style : String) : String :=
   if !style.contains "--ltx-" then style else
-  let pieces := (style.splitOn ";").filter fun piece =>
+  let pieces := (Css.splitList ';' style).toList.filter fun piece =>
     let t := piece.trimAscii.toString
     match (t.splitOn ":").head? with
     | some name => match roleOfVar? name.trimAscii.toString with
@@ -5668,7 +5668,7 @@ private def joinStyles (a b : String) : String :=
 
 /-- An epoch's accumulated declarations, with each property's last value kept. -/
 private def compactStyle (style : String) : String :=
-  let decls := (style.splitOn ";").filterMap fun d =>
+  let decls := (Css.splitList ';' style).toList.filterMap fun d =>
     let d := d.trimAscii.toString
     if d.isEmpty then none else some (((d.splitOn ":").headD "").trimAscii.toString, d)
   let kept := decls.foldr (fun (k, d) acc => if acc.any (·.1 == k) then acc else (k, d) :: acc) []
@@ -5887,7 +5887,7 @@ public def fillCarrier (cfg : Config) (n : Nat) (node : Node) (item : Bool := fa
 
 /-- A generated leading margin as the authored addend of the frame boundary. -/
 private def frameBodyBefore (style : String) : String :=
-  String.intercalate ";" ((style.splitOn ";").map fun decl =>
+  String.intercalate ";" ((Css.splitList ';' style).toList.map fun decl =>
     match decl.splitOn ":" with
     | [key, value] =>
       if key.trimAscii.toString == "margin-top" then
