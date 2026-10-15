@@ -384,42 +384,61 @@ def owedRows (row : String) : List String :=
   landed (f "name") ((jsonField row "tip").getD (f "gated")) (f "branch")
     :: riders.map fun (n, t, c) => landed n c t
 
-/-- Whether `main` holds each gated tip asked about, once per run. -/
-initialize heldTips : IO.Ref (Std.HashMap String Bool) ← IO.mkRef {}
+/-- Whether `main`, at each tip it was read at, holds each gated tip asked about. -/
+initialize heldTips : IO.Ref (Std.HashMap (Sha × Sha) Bool) ← IO.mkRef {}
 
-/-- Whether `main` holds commit `g`; a commit git cannot place reads as not held. -/
-def mainHolds (e : Env) (g : Sha) : IO Bool := do
-  if let some held := (← heldTips.get)[g]? then return held
+/-- Whether `main` at `tip` holds commit `g`; a commit git cannot place reads as not held. -/
+def mainHolds (e : Env) (tip g : Sha) : IO Bool := do
+  if let some held := (← heldTips.get)[(tip, g)]? then return held
   let ctr ← IO.mkRef 0
   let held ← try
-      pure ((← git e ctr "ledger" #["merge-base", "--is-ancestor", g, "refs/heads/main"]
-        (some e.mainWt)).code == 0)
+      pure ((← git e ctr "ledger" #["merge-base", "--is-ancestor", g, tip] (some e.mainWt)).code
+        == 0)
     catch _ => pure false
-  heldTips.modify (·.insert g held)
+  heldTips.modify (·.insert (tip, g) held)
   return held
 
-/-- The ledger's rows, each write-ahead row of a run that died after its fast-forward followed by
-the landed rows it names and the run did not write: its run halted on no other verdict and no
-longer runs, and `main` holds its gated tip. -/
+/-- The ledger's rows, each run that died after its fast-forward followed, after its own last row,
+by the landed rows its write-ahead row names and it did not write: the run halted on no other
+verdict and no longer runs, and `main` holds its gated tip. -/
 def ledgerLines (e : Env) : IO (List String) := do
   let txt ← IO.FS.readFile (ledgerPath e)
-  let ls := (txt.splitOn "\n").filter (!·.isEmpty)
+  let ls := ((txt.splitOn "\n").filter (!·.isEmpty)).toArray
   let field (l k : String) := (jsonField l k).getD ""
+  let verdict (l : String) (vs : List Verdict) := (jsonField l "verdict").any (vs.map (·.name)).contains
   let landed : Std.HashSet (String × String) := ls.foldl (init := {}) fun acc l =>
-    if jsonField l "verdict" == some "landed" then acc.insert (field l "run", field l "name") else acc
+    if verdict l [.landed] then acc.insert (field l "run", field l "name") else acc
   let halted : Std.HashSet String := ls.foldl (init := {}) fun acc l =>
-    if (jsonField l "verdict").any (["refused", "failed", "landedUnpushed", "checked"].contains ·)
-    then acc.insert (field l "run") else acc
-  let mut out : Array String := #[]
+    if verdict l [.refused, .failed, .landedUnpushed, .checked] then acc.insert (field l "run")
+    else acc
+  -- Each run's own last row; an abandoned row names the dead run, but another run wrote it.
+  let last : Std.HashMap String Nat := ls.zipIdx.foldl (init := {}) fun acc (l, i) =>
+    if jsonField l "verdict" == some "abandoned" then acc else acc.insert (field l "run") i
+  let ctr ← IO.mkRef 0
+  let mut mainTip : Option Sha := none
+  let mut owed : Std.HashMap Nat (Array String) := {}
   for l in ls do
-    out := out.push l
     if jsonField l "verdict" == some "landing" then
       let run := field l "run"
-      let owed := (owedRows l).filter fun r => !landed.contains (run, field r "name")
-      if !owed.isEmpty && !halted.contains run && isSha (field l "gated")
-          && !((← runProbe s!"{e.common}/land/{run}").getD false)
-          && (← mainHolds e (field l "gated")) then
-        out := out ++ owed.toArray
+      let g := field l "gated"
+      let rows := (owedRows l).filter fun r => !landed.contains (run, field r "name")
+      if !rows.isEmpty && !halted.contains run && isSha g then
+        if !((← runProbe s!"{e.common}/land/{run}").getD false) then
+          let tip ← match mainTip with
+            | some t => pure t
+            | none => do
+              let r ← try git e ctr "ledger" #["rev-parse", "refs/heads/main"] (some e.mainWt)
+                catch _ => pure { code := 1, out := "", err := "" }
+              pure (if r.code == 0 then trimWs r.out else "")
+          mainTip := some tip
+          if isSha tip then
+            if ← mainHolds e tip g then
+              let at_ := last.getD run 0
+              owed := owed.insert at_ (owed.getD at_ #[] ++ rows.toArray)
+  let mut out : Array String := #[]
+  for (l, i) in ls.zipIdx do
+    out := out.push l
+    if let some rows := owed[i]? then out := out ++ rows
   return out.toList
 
 /-- The last ledger row for `name`. -/
@@ -1166,10 +1185,13 @@ def withTurn (e : Env) (name : String) (fare : String) (act : List String → IO
       return some 2
     return none
   let mut consulted : List String := []
+  -- The train a dead place this run took over carried, whose verdict was another run's.
+  let mut inherited : Option String := none
   for i in [0:turnBeats] do
-    -- The trains this run saw itself ride, or its place boarded, once each is over.
-    let boarded := (((← try readQueueAt e.common catch _ => pure []).find? (·.name == name)).map
-      (·.train)).filter (!·.isEmpty)
+    -- The trains this run saw itself ride, or its own place boarded, once each is over.
+    let boarded := (((← try readQueueAt e.common catch _ => pure []).find? fun w =>
+      w.name == name && w.run == e.runId).map (·.train)).filter fun t =>
+        !t.isEmpty && inherited != some t
     for t in (rode.toList ++ boarded.toList).eraseDups do
       if !consulted.contains t && !(← runLiveAt e.common t) then
         if let some code ← trainVerdict t then return code
@@ -1177,6 +1199,10 @@ def withTurn (e : Env) (name : String) (fare : String) (act : List String → IO
         if rode == some t then rode := none
     let asked ← try pure (Except.ok (← askTurn e qh h me (i == 0) holds reach))
       catch ex => pure (Except.error (toString ex))
+    if i == 0 then
+      if let .ok (_, q) := asked then
+        inherited := ((q.find? fun w => w.name == name && w.run == e.runId).map (·.train)).filter
+          (!·.isEmpty)
     match asked with
     | .error why =>
       h.unlock
@@ -1202,7 +1228,7 @@ again once it is free"
         say "queue" "ride" [("train", t), ("head", recField (← owner) "name")]
         (← IO.getStdout).flush
         said := some (.rides t)
-      rode := some t
+      if inherited != some t then rode := some t
       IO.sleep turnBeatMs
     | .ok (.behind p hd, q) =>
       say "queue" "behind" [("position", toString p), ("head", hd),
@@ -3301,11 +3327,11 @@ others land"
 /-- Stop the live run waiting under `name`, holding the queue's lock so that it is never stopped
 holding it; the pid stopped, if any. -/
 def stopWaiter (s : Scratch) (name : String) : IO (Option Nat) := do
-  let some w := (← queueOf s).find? (·.name == name) | return none
-  if w.pid == 0 || !(← waiterLiveAt s!"{s.repo}/.git" w) then return none
   let ql ← IO.FS.Handle.mk s!"{s.repo}/.git/land/queue.lock" .append
   ql.lock
   try
+    let some w := (← queueOf s).find? (·.name == name) | return none
+    if w.pid == 0 || !(← waiterLiveAt s!"{s.repo}/.git" w) then return none
     let (c, _) ← hrun "kill" #["-STOP", toString w.pid] none
     return if c == 0 then some w.pid else none
   finally ql.unlock
@@ -3830,6 +3856,44 @@ told it landed"
              && (← mainSubjects s.repo) == ["Base", "Add holder", "Add first", "Add rider"]
          , detail := s!"held={held} live={live} stopped={stopped.isSome} head={cf} rider={cr}" }
 
+/-- A rider's run killed while its train's head dies after the landed rows leaves its place boarded
+on a dead train: a new run of that name after a new commit is not told that train's verdict, but
+refused as a landed branch continued, the new commit not on main. -/
+def scenarioTrainStaleBoarding (self root : String) : IO Outcome := do
+  let s ← mkScratch s!"{root}/staleboarding" "holder"
+  let names := ["first", "rider"]
+  for n in names do addAgent s n
+  let wrap ← gitWrapper s "[ \"$1\" = worktree ] && [ \"$2\" = remove ]" "  kill -KILL $PPID"
+  let env := #[("PATH", some wrap)]
+  let th ← landAsync self s.repo #["holder"] (← holdGate s "holder")
+  let held ← awaitTrue (System.FilePath.pathExists s!"{s.root}/held-holder")
+  let tf ← landAsync self s.repo #["first"] "t=true" env
+  let _ ← awaitQueued s "first"
+  let tr ← landAsync self s.repo #["rider"] "t=true" env
+  let live ← awaitLive s names
+  let stopped ← if live then stopWaiter s "rider" else pure none
+  let cf ← try
+      release s "holder"
+      let _ ← awaitRun th
+      pure (← awaitRun tf).1
+    finally
+      if let some pid := stopped then
+        let _ ← hrun "kill" #["-KILL", toString pid] none
+  let (cr, _) ← awaitRun tr
+  let boarded := ((← queueOf s).find? (·.name == "rider")).any (!·.train.isEmpty)
+  IO.FS.writeFile s!"{s.root}/lt-rider/next.txt" "next\n"
+  hgitOk #["add", "next.txt"] s!"{s.root}/lt-rider"
+  hgitOk #["commit", "-qm", "The owner's next unit"] s!"{s.root}/lt-rider"
+  let (ca, oa) ← landIn self s.repo #["rider"] "t=true"
+  let order ← mainSubjects s.repo
+  return { label := "a new run of a name whose place a dead train boarded is not told that \
+train's verdict"
+         , ok := held && live && stopped.isSome && cf != 0 && cr != 0 && boarded && ca == 2
+             && says oa "is already landed" && !says oa "result=landed"
+             && order == ["Base", "Add holder", "Add first", "Add rider"]
+         , detail := s!"held={held} live={live} stopped={stopped.isSome} head={cf} rider={cr} \
+boarded={boarded} again={ca} main={order}" }
+
 /-- A train's head killed right after its fast-forward, before any landed row: the write-ahead row
 lands each member, its rider told so, and each lands as already landed and retires. -/
 def scenarioTrainKilledAfterFF (self root : String) : IO Outcome := do
@@ -3856,6 +3920,7 @@ write-ahead row, and each retires"
 lands that rider by its write-ahead row: asked again it answers landed, and it retires. -/
 def scenarioTrainPartialRows (self root : String) : IO Outcome := do
   let s ← mkScratch s!"{root}/partialrows" "holder"
+  let remote ← addRemote s
   let names := ["first", "rider"]
   for n in names do addAgent s n
   let (ready, outs) ← runTrain self s names (← trainGate s "train")
@@ -3864,13 +3929,17 @@ def scenarioTrainPartialRows (self root : String) : IO Outcome := do
   let kept := (rows.splitOn "\n").filter fun l =>
     !(says l "\"name\":\"rider\"" && says l "\"verdict\":\"landed\"")
   IO.FS.writeFile ledger (String.intercalate "\n" kept)
+  let (cp, op) ← landIn self s.repo #["push"] "t=true"
+  let published := (← revOf remote "refs/heads/main") == (← revOf s.repo "refs/heads/main")
   let (c1, o1) ← landIn self s.repo #["rider"] "t=true"
   let (c2, o2) ← landIn self s.repo #["retire", "rider"] "t=true"
   return { label := "a rider whose landed row its train never wrote is landed by the write-ahead \
-row, and retires"
+row, the push publishes the train, and the rider retires"
          , ok := ready && outs.all (·.1 == 0) && kept.length < (rows.splitOn "\n").length
+             && cp == 0 && says op "result=pushed" && published
              && c1 == 0 && says o1 "already=yes" && c2 == 0 && says o2 "landed-as="
-         , detail := s!"ready={ready} exits={outs.map (·.1)} again={c1} retire={c2}" }
+         , detail := s!"ready={ready} exits={outs.map (·.1)} push={cp} published={published} \
+again={c1} retire={c2}" }
 
 /-- A landing killed right after its fast-forward, before its landed row, is landed by its
 write-ahead row: asked again it answers landed, and it retires. -/
@@ -3942,6 +4011,7 @@ def scratchSelftest : IO UInt32 := do
     , ("vanished", scenarioRiderVanished), ("untouched", scenarioTrainUntouched)
     , ("riderdirty", scenarioTrainRiderDirty), ("riderstopped", scenarioTrainRiderStopped)
     , ("killedrows", scenarioTrainKilledAfterRows), ("stoppedkilled", scenarioTrainStoppedKilled)
+    , ("staleboarding", scenarioTrainStaleBoarding)
     , ("killedff", scenarioTrainKilledAfterFF), ("partialrows", scenarioTrainPartialRows)
     , ("soloff", scenarioKilledAfterFF), ("gatedirtied", scenarioTrainGateDirtied)
     , ("ownerbefore", fun self root => scenarioOwnerCommitsBeforeRebase self root false)
@@ -4013,7 +4083,16 @@ def main (argv : List String) : IO UInt32 := do
           sayFinal .refused [("name", n), ("why", why)]
           return 2
         | .ok (gs, gateset) =>
-          withTurn env n (if m == .land && !p then fareOf gs else "") (landRun env n m p gs gateset)
+          withTurn env n (if m == .land && !p then fareOf gs else "") fun rs => do
+            -- A branch that landed while this run waited lands nothing, its riders queued again.
+            if m == .land && !p then
+              if let some row ← alreadyLanded env n then
+                settleRiders env [] rs
+                let f (k : String) := (jsonField row k).getD ""
+                sayFinal .landed [("name", n), ("run", f "run"), ("tip", f "tip"),
+                  ("gated", f "gated"), ("already", "yes")]
+                return 0
+            landRun env n m p gs gateset rs
       let retained (act : IO UInt32) : IO UInt32 := do
         retainRuns env 50
         act
