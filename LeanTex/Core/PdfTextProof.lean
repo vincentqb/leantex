@@ -87,8 +87,13 @@ public theorem textString_representable (s : String) : (textString s).Representa
       intro b hb
       obtain ⟨c, hc, rfl⟩ := List.mem_map.mp hb
       have := List.all_eq_true.mp hall c hc
-      simp only [decide_eq_true_eq] at this
-      omega
+      simp only [docEncodingSelf, Bool.or_eq_true, Bool.and_eq_true, decide_eq_true_eq,
+        beq_iff_eq] at this
+      rcases this with ((h1 | h2) | h3) | h4
+      · omega
+      · subst h2; decide
+      · subst h3; decide
+      · subst h4; decide
     have hl := literalBytes_spelled _ h
     exact strOf_representable _ hl.1 hl.2
   · have hd : ∀ x ∈ ("FEFF" ++ String.join (s.toList.map utf16Hex)).toList,

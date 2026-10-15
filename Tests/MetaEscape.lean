@@ -28,11 +28,16 @@ def utf16 : List Nat → String → String
   | _, acc => acc
 termination_by l => l.length
 
-/-- A text string's characters (§7.9.2.2): UTF-16BE after its byte-order mark, else bytes. -/
-def textOf (b : ByteArray) : String :=
+/-- A text string's characters (§7.9.2.2): UTF-16BE after its byte-order mark, else bytes
+PDFDocEncoding reads as themselves (printable ASCII, tab, line feed, return); none for any other
+byte, which a conforming reader reads otherwise. -/
+def textOf (b : ByteArray) : Option String :=
   match b.data.toList.map UInt8.toNat with
-  | 0xFE :: 0xFF :: rest => utf16 rest ""
-  | bs => String.ofList (bs.map Char.ofNat)
+  | 0xFE :: 0xFF :: rest => some (utf16 rest "")
+  | bs =>
+    if bs.all fun n => (0x20 ≤ n && n < 0x7F) || n == 9 || n == 10 || n == 13 then
+      some (String.ofList (bs.map Char.ofNat))
+    else none
 
 /-- The trailer's Info dictionary of a written PDF. -/
 def infoOf (pdf : ByteArray) : Option (Array (String × PdfRead.Obj)) := do
@@ -46,14 +51,14 @@ def infoOf (pdf : ByteArray) : Option (Array (String × PdfRead.Obj)) := do
 def infoText (pdf : ByteArray) (key : String) : Option String := do
   let es ← infoOf pdf
   let (_, o) ← es.find? (·.1 == key)
-  textOf <$> PdfContentLex.strBytes? o
+  textOf (← PdfContentLex.strBytes? o)
 
 /-- One catalog entry's text. -/
 def catalogText (pdf : ByteArray) (key : String) : Option String := do
   let tr ← (PdfRead.trailer pdf).toOption
   let doc ← (PdfRead.Doc.ofBytes pdf).toOption
   let root ← (doc.deref (← tr.get? "Root")).toOption
-  textOf <$> PdfContentLex.strBytes? (← root.get? key)
+  textOf (← PdfContentLex.strBytes? (← root.get? key))
 
 /-- The XMP packet's `x:xmpmeta` element, decoded from the catalog's metadata stream. -/
 def xmpOf (pdf : ByteArray) : Option Xml.Node := do
@@ -99,6 +104,40 @@ end
 def xmpField (pdf : ByteArray) (outer : String) : Option String := do
   let li ← findElem "rdf:li" (← findElem outer (← xmpOf pdf))
   nodeText "" li
+
+/-- The text of the first element of this name in the XMP packet. -/
+def xmpText (pdf : ByteArray) (name : String) : Option String := do
+  nodeText "" (← findElem name (← xmpOf pdf))
+
+mutual
+
+/-- Every `/URI` string inside an object, in order. -/
+def urisOf (acc : Array String) : PdfRead.Obj → Array String
+  | .dict es => urisEntries acc es.toList
+  | .arr xs => urisList acc xs.toList
+  | _ => acc
+
+def urisList (acc : Array String) : List PdfRead.Obj → Array String
+  | [] => acc
+  | o :: rest => urisList (urisOf acc o) rest
+
+def urisEntries (acc : Array String) : List (String × PdfRead.Obj) → Array String
+  | [] => acc
+  | (k, o) :: rest =>
+    let acc := if k == "URI" then
+        match (PdfContentLex.strBytes? o).bind textOf with
+        | some u => acc.push u
+        | none => acc
+      else urisOf acc o
+    urisEntries acc rest
+
+end
+
+/-- The URI each link annotation's action names, in object order. -/
+def linkUris (pdf : ByteArray) : Array String :=
+  match PdfRead.objects pdf with
+  | .ok es => es.val.foldl (fun acc e => urisOf acc e.val) #[]
+  | .error _ => #[]
 
 /-- The head's `<title>` text and each named meta element's content. -/
 def headFacts (head : Array Html.Node) : Option String × Array (String × String) :=
@@ -147,7 +186,9 @@ def metaEscapeChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
     t s!"xmp: the packet parses and its fields read back as the characters XML admits ({v.quote})"
       (xmpField pdf "dc:title" == some (xmlAdmitted v) &&
         xmpField pdf "dc:creator" == some (xmlAdmitted v) &&
-        xmpField pdf "dc:description" == some (xmlAdmitted v))
+        xmpField pdf "dc:description" == some (xmlAdmitted v) &&
+        xmpText pdf "pdf:Keywords" == some (xmlAdmitted v) &&
+        xmpText pdf "dc:identifier" == some (xmlAdmitted ("https://example.org/" ++ v)))
     let (title, metas) := headFacts (HtmlDoc.emitTree {} doc).1
     t s!"html: the head's title and named metas carry the value ({v.quote})"
       (title == some v && metas.contains ("author", v) && metas.contains ("description", v) &&
@@ -179,6 +220,48 @@ def metaEscapeChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   t "DocumentMetadata: a quote in the language sets no other key, and the tag ships as declared"
     (infoText metaPdf "Title" == none &&
       catalogText metaPdf "Lang" == some "en\", title = \"Injected")
+  let read (pre : String) : Option String := infoText (pdfOf geom fonts (surface pre).1) "Title"
+  t "hyperref: a value reads as hyperref's PDF strings read it, a tie a space and a footnote, label or thanks no text"
+    (read "\\hypersetup{pdftitle={A\\mbox{Widget}B \\texorpdfstring{TEX}{PDF} C\\footnote{Note.}D\\label{x}E\\thanks{F}~G}}\n"
+      == some "AWidgetB PDF CDE G")
+  t "hyperref: an author list's separator reads as a semicolon, and quotes as the page sets them"
+    (infoText (pdfOf geom fonts (surface "\\hypersetup{pdfauthor={O'Brien \\and Smith}}\n").1)
+      "Author" == some "O’Brien; Smith")
+  let (reserved, reservedDiags) := surface "\\hypersetup{pdftitle={my_file name}, pdfkeywords={x^2, A & B, \\#1}}\n"
+  let reservedPdf := pdfOf geom fonts reserved
+  t "hyperref: a reserved character in a value is its text, and the document still ships"
+    (infoText reservedPdf "Title" == some "my_file name" &&
+      infoText reservedPdf "Keywords" == some "x^2, A & B, #1" &&
+      reservedDiags.all fun d => d.code != "E0311")
+  let leak := dvDoc "\\hypersetup{pdftitle={A study\\footnote{Aside.}}, pdfsubject={x\\label{sec:one}}}\n"
+    "\\section{Alpha}\\label{sec:one}Words\\footnote{Body note.} and \\ref{sec:one}."
+  let leakText := pageTextOf fonts leak
+  t "hyperref: elaborating a value leaves the document's counters and labels as they were"
+    (hasStr leakText "and 1." && hasStr leakText "1Body note.")
+  t "title: a tie in the title the metadata falls back to reads as a space"
+    (infoText (pdfOf geom fonts (elabStr (dvDoc "\\title{Chapter~One}\n" "Words.")).1) "Title" ==
+      some "Chapter One")
+  let hostileUrl := "https://example.org/a)b(c"
+  let linkDoc := (elabStr (dvDoc "" ("\\href{" ++ hostileUrl ++ "}{link}"))).1
+  t "pdf: a link's URI reads back as written"
+    (linkUris (pdfOf geom fonts linkDoc) == #[hostileUrl])
+  for (what, pre) in [("math family", "\\usepackage{unicode-math}\n\\setmathfont{Foo\", body = \"Evil}\n"),
+      ("font path", "\\usepackage{fontspec}\n\\setmainfont[Path=./x\", mono = \"Evil]{Foo}\n")] do
+    let css := ((HtmlDoc.emitTree {} (surface pre).1).1.filterMap fun n => match n with
+      | .style s => some s
+      | _ => none).toList
+    t s!"fontspec: a quote in a {what} sets no other slot"
+      (css.all fun s => !hasStr s "\"Evil\"")
+  let colourSrc := dvDoc ("\\usepackage{xcolor}\n\\definecolor{ink, accent = HTML(FF0000), x}{HTML}{112233}\n" ++
+    "\\colorlet{brand}{blue, fg = red}\n\\linespread{1.0, fontsize = 20pt}\n")
+    "Alpha \\textcolor{accent}{words} and more words."
+  t "xcolor: a colour's name or value, or a line spread, sets no other key on the page"
+    (!bytesContain (pdfText (pdfOf geom fonts (elabStr colourSrc).1)) "1 0 0 rg" &&
+      lineSizeOf (censusOfSrc fonts colourSrc) 0 "Alpha" == some (Dim.pt 10))
+  let linkDiags := (surface ("\\usepackage{hyperref}\n" ++
+    "\\hypersetup{colorlinks, linkcolor={blue, font = \\bfseries}}\n")).2
+  t "hyperref: a link colour no palette entry reads is named, not spliced"
+    (linkDiags.any fun d => d.code == "W0102" && hasStr d.message "linkcolor")
   let fontDoc := (surface "\\usepackage{fontspec}\n\\setmainfont{Foo\", mono = \"Evil}\n").1
   let css := ((HtmlDoc.emitTree {} fontDoc).1.filterMap fun n => match n with
     | .style s => some s

@@ -1633,7 +1633,8 @@ def reports : List Report := [
       thm% PdfRead.textString_representable, thm% PdfRead.literal_representable,
       thm% PdfRead.xmpText_admitted]
     accept := ["nine of the guard's assertions fail at 3c258580 before the fix: a quoted value read back with its quotes doubled; a return in the information's strings read back as a line feed and the XMP packet holding a return or a control character did not read back; a quote in hyperref's author set the subject; the escaped title read back as written in both lowerings; and a quote in the declared language and in a font family's name set the title and the typewriter slot",
-      "the corpus built by this tree and by 3c258580, PDF and HTML: 221 of 224 artifacts byte-identical, the deck, math and math-text pages' HTML differing in a formula's TeX attribute alone, with no visible difference"]
+      "the corpus built by this tree and by 3c258580, PDF and HTML: 221 of 224 artifacts byte-identical, the deck, math and math-text pages' HTML differing in a formula's TeX attribute alone, with no visible difference",
+      "the review's guards fail on the branch's first cut: an underscore, a caret or an ampersand in a value stopped the build; a value's footnote renumbered the body's and its label took the body's; the PDF string reading set the second argument's alternative, a dropped footnote and the author list's separator as their TeX; a control character spelled in a literal string a reader decodes otherwise; and a colour's name, a colour's value, a line spread or a link colour set another key, the first stopping the build"]
     state := .guarded "3c258580" .before .author }
 ]
 

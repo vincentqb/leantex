@@ -27,10 +27,14 @@ delimiters, or UTF-16BE hex, so it reads back as one string (`literal_representa
     let v := n - 0x10000
     Hex.digits true 4 (0xD800 + v / 1024) ++ Hex.digits true 4 (0xDC00 + v % 1024)
 
-/-- A text string's bytes (§7.9.2.2): ASCII as a literal, anything else as UTF-16BE hex after the
-byte-order mark. -/
+/-- A character PDFDocEncoding reads as itself (§D.2): printable ASCII, tab, line feed, return. -/
+@[expose] public def docEncodingSelf (c : Char) : Bool :=
+  (0x20 ≤ c.toNat && c.toNat < 0x7F) || c == '\t' || c == '\n' || c == '\r'
+
+/-- A text string's bytes (§7.9.2.2): characters PDFDocEncoding reads as themselves as a literal,
+anything else as UTF-16BE hex after the byte-order mark. -/
 @[expose] public def textStringBytes (s : String) : List Nat :=
-  if s.toList.all (·.toNat < 0x80) then literalBytes (s.toList.map Char.toNat)
+  if s.toList.all docEncodingSelf then literalBytes (s.toList.map Char.toNat)
   else 60 :: ("FEFF" ++ String.join (s.toList.map utf16Hex)).toList.map Char.toNat ++ [62]
 
 /-- A byte list as a string object's verbatim bytes. -/

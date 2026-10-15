@@ -5682,19 +5682,48 @@ private def beamerposter (opts : String) (pos : Pos) : M (Array Raw) := do
 \\page{ ... } declares anything further")
   synthAt native pos
 
+/-- Whether a value stands as one entry of a native declaration, so spliced into one it sets no
+other key. -/
+private def oneEntry (v : String) : Bool := (Decl.splitEntries ("k = " ++ v)).length == 1
+
+/-- Whether a name spells a key of a native declaration. -/
+private def nativeName (n : String) : Bool :=
+  !n.isEmpty && n.all fun c => Decl.isIdentChar c || c == '-'
+
+/-- The metadata keys hyperref's options set, each as its `\pdfmeta` key. -/
+public inductive MetaKey where
+  | title
+  | author
+  | subject
+  | keywords
+  deriving BEq, Repr
+
+public def MetaKey.name : MetaKey → String
+  | .title => "title"
+  | .author => "author"
+  | .subject => "subject"
+  | .keywords => "keywords"
+
+public def MetaKey.all : List MetaKey := [.title, .author, .subject, .keywords]
+
+public def MetaKey.ofName? (n : String) : Option MetaKey := MetaKey.all.find? (·.name == n)
+
 /-- hyperref's keys, as `\hypersetup` and the package options give them: its metadata keys with
 their TeX values, with its link keys written into the setup and whether one was read. -/
-private def hyperrefKeys (opts : String) (pos : Pos) : M (Array (String × String) × Bool) := do
-  let mut metadata : Array (String × String) := #[]
+private def hyperrefKeys (opts : String) (pos : Pos) : M (Array (MetaKey × String) × Bool) := do
+  let mut metadata : Array (MetaKey × String) := #[]
   let mut links := (← get).links
   let mut linked := false
   let mut cut : Array String := #[]
+  let mut unread : Array String := #[]
   for e in KeyVal.items opts do
     let (k, value) := KeyVal.entry e
     let v := value.getD ""
-    if let some m := ["title", "author", "subject", "keywords"].find? (k == "pdf" ++ ·) then
+    if let some m := MetaKey.all.find? (k == "pdf" ++ ·.name) then
       metadata := metadata.push (m, v)
-    if let some l := links.read k v then
+    if ["linkcolor", "urlcolor", "citecolor", "allcolors"].contains k && !oneEntry v then
+      unread := unread.push s!"'{e}'"
+    else if let some l := links.read k v then
       links := l
       linked := true
     else if value.isNone && KeyVal.unbalanced e then cut := cut.push s!"'{e}'"
@@ -5703,34 +5732,55 @@ private def hyperrefKeys (opts : String) (pos : Pos) : M (Array (String × Strin
     say .W0101 s!"hyperref keys without a native equivalent were dropped: \
 {String.intercalate ", " cut.toList}" pos
       (help := "brace a value that holds a comma: key={...}")
+  unless unread.isEmpty do
+    say .W0102 s!"hyperref link colours no palette entry reads were dropped: \
+{String.intercalate ", " unread.toList}" pos
+      (help := "give a colour name, a mix such as blue!50!black, or #RRGGBB")
   return (metadata, linked)
 
 /-- The mark opening a `\pdfmeta` group of TeX values: the construct and the link styles it
 lowers, then each key's group and its value's group. -/
 public def metaTextMark : String := "pdfmeta text"
 
+/-- TeX as hyperref's PDF strings read it at its top level (hyperref manual §4.1), onto `out`:
+`\texorpdfstring`'s second argument, `\label`, `\index`, `\footnote` and `\thanks` dropped with
+their argument, `\mbox` and `\hbox` their content, and `\and` a separator. -/
+private def pdfStringList (out : Array Raw) : List Raw → Array Raw
+  | [] => out
+  | .ctrl "texorpdfstring" _ :: .group _ _ :: .group b _ :: rest => pdfStringList (out ++ b) rest
+  | .ctrl "label" _ :: .group _ _ :: rest | .ctrl "index" _ :: .group _ _ :: rest
+  | .ctrl "footnote" _ :: .group _ _ :: rest | .ctrl "thanks" _ :: .group _ _ :: rest =>
+    pdfStringList out rest
+  | .ctrl "mbox" _ :: .group b _ :: rest | .ctrl "hbox" _ :: .group b _ :: rest =>
+    pdfStringList (out ++ b) rest
+  | .ctrl "and" p :: rest =>
+    pdfStringList (((if out.back? matches some .space then out.pop else out).push
+      (.word ";" p)).push .space) rest
+  | r :: rest => pdfStringList (out.push r) rest
+
 /-- hyperref's metadata and link styles lowered, the metadata as TeX the elaborator sets as text
 and names in its note. -/
-private def hyperrefLowered (what : String) (metadata : Array (String × String)) (linked : Bool)
+private def hyperrefLowered (what key : String) (metadata : Array (MetaKey × String)) (linked : Bool)
     (pos : Pos) : M (Array Raw) := do
   let setup := (← get).links
   let links := if linked then setup.native else ""
   let styles ← if links.isEmpty then pure #[] else synthAt links pos
   if metadata.isEmpty then
-    if links.isEmpty then discard what "the engine does this itself" "hypersetup" pos
+    if links.isEmpty then discard what "the engine does this itself" key pos
     else became what links pos
     return styles
   let mut body : Array Raw :=
     #[.ctrl metaTextMark pos, .group #[.word what pos] pos, .group #[.word links pos] pos]
   for (k, v) in metadata do
-    body := (body.push (.group #[.word k pos] pos)).push (.group (← synthAt v pos) pos)
+    body := (body.push (.group #[.word k.name pos] pos)).push
+      (.group (pdfStringList #[] (← synthAt v pos).toList) pos)
   return #[Raw.ctrl "pdfmeta" pos, .group body pos] ++ styles
 
 /-- `\hypersetup` as `\pdfmeta` for its metadata keys and link-kind colour styles for its link
 colours. -/
 private def hypersetup (opts : String) (pos : Pos) : M (Array Raw) := do
   let (metadata, linked) ← hyperrefKeys opts pos
-  hyperrefLowered "\\hypersetup" metadata linked pos
+  hyperrefLowered "\\hypersetup" "hypersetup" metadata linked pos
 
 /-- `\DocumentMetadata{...}`: `lang` and `pdfversion` land
 on the native `\pdfmeta` keys. -/
@@ -6050,6 +6100,10 @@ private def defineSpotColor (raws : Array Raw) (start : Nat) (pos : Pos) :
 is defined" pos (help := "write \\definespotcolor{name}{colorant}{c,m,y,k}")
       return some (#[], k)
   let n := (rawSrc n).trimAscii.toString
+  unless nativeName n do
+    say .W0102 s!"'\\definespotcolor\{{n}}' names a colour no palette entry spells; the colour is \
+not defined" pos (help := "name the colour with letters, digits, '.', '_' or '-'")
+    return some (#[], k)
   let flat := String.ofList ((rawSrc colorant).toList.map fun c => if c.isWhitespace then ' ' else c)
   let ink := " ".intercalate ((flat.splitOn " ").filter (!·.isEmpty))
   if ink.isEmpty || ink.contains '"' then
@@ -6916,6 +6970,10 @@ private def rewriteCtrlLaterNamed (name : String) (pos : Pos) (raws : Array Raw)
     -- setspace's parameterised form is `\linespread` by another name.
     let (args, k) := takeGroups raws start 1
     if args.isEmpty then return none
+    unless oneEntry (rawSrc (args.getD 0 #[])) do
+      sayOnce ("ctrl:" ++ name) .W0104 s!"'\\{name}' is given a factor this engine cannot read; \
+skipped, and the leading keeps its value" pos (help := "give a number, such as \\linespread{1.2}")
+      return some (#[], k)
     let native := s!"\\page\{ leading = {rawSrc (args.getD 0 #[])} }"
     became s!"\\{name}" native pos
     return some (← synthAt native pos, k)
@@ -8027,8 +8085,8 @@ no package options are supported by the strict native Markdown dialect" pos
     if metadata.isEmpty && !linked then
       discard s!"\\{name}\{{p}}" "the engine does this itself" s!"{name}:{p}" pos
     else
-      out := out ++ (← hyperrefLowered s!"\\usepackage[{opt.getD ""}]\{hyperref}" metadata
-        linked pos)
+      out := out ++ (← hyperrefLowered s!"\\usepackage[{opt.getD ""}]\{hyperref}"
+        s!"{name}:{p}" metadata linked pos)
   else if p == "ulem" then
     if KeyVal.items (opt.getD "") == #["normalem"] then
       discard s!"\\{name}[normalem]\{{p}}"
@@ -8381,6 +8439,10 @@ face serves every language, so the binding is dropped" pos
       let n := rawSrc args[0]
       let model := rawSrc args[1]
       let modeled := modeledColorSource (some model) (rawSrc args[2])
+      unless nativeName n && oneEntry modeled do
+        say .W0102 s!"'\\definecolor\{{n}}' gives a name or a value no palette entry spells; \
+the colour is not defined" pos (help := "name the colour with letters, digits, '.', '_' or '-'")
+        return some (#[], k)
       let native := s!"\\palette\{ {n} = {modeled} }"
       let carried := s!"\\palette\{ {n} = {Decl.xcolorDefinitionPrefix}{modeled} }"
       became s!"\\definecolor\{{n}}" native pos
@@ -8395,6 +8457,10 @@ face serves every language, so the binding is dropped" pos
       -- xcolor's `.` names the current colour, black in the preamble.
       let src := if (rawSrc args[1]).trimAscii.toString == "." then "#000000"
         else rawSrc args[1]
+      unless nativeName (rawSrc args[0]) && oneEntry src do
+        say .W0102 s!"'\\colorlet\{{rawSrc args[0]}}' gives a name or a colour no palette entry \
+spells; the colour is not defined" pos (help := "name the colour with letters, digits, '.', '_' or '-'")
+        return some (#[], k)
       let native := s!"\\palette\{ {rawSrc args[0]} = {src} }"
       let carried := s!"\\palette\{ {rawSrc args[0]} = {Decl.xcolorDefinitionPrefix}{src} }"
       became "\\colorlet" native pos

@@ -7956,10 +7956,18 @@ end
 /-- The text the first page of an overlay sequence shows. -/
 public def firstPageText (xs : Array Inline) : String := firstPageTextList "" xs.toList
 
-/-- The text a metadata field holds of inline content: its first page's, a tie a space, as
-hyperref's PDF strings read `~`. -/
+/-- A metadata field's characters with the controls no artifact carries alike dropped: C0 and C1
+controls but tab, line feed and return, and the two noncharacters XML refuses. -/
+public def metaClean (s : String) : String :=
+  String.ofList (s.toList.filter fun c =>
+    c == '\t' || c == '\n' || c == '\r' ||
+      (0x20 ≤ c.toNat && !(0x7F ≤ c.toNat && c.toNat ≤ 0x9F) && c.toNat != 0xFFFE &&
+        c.toNat != 0xFFFF))
+
+/-- The text a metadata field holds of inline content: its first page's, quotes as the page sets
+them, a tie a space as hyperref reads `~`, and no control `metaClean` drops (`metaEscapeChecks`). -/
 public def metaText (xs : Array Inline) : String :=
-  (firstPageText xs).map fun c => if c == '\u00A0' then ' ' else c
+  metaClean ((firstPageText xs).map fun c => if c == '\u00A0' then ' ' else c)
 
 /-- The words a picture's labels set, in shape order, joined: what a sighted
 reader reads in the drawing. -/

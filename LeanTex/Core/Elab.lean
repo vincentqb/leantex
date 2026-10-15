@@ -13479,16 +13479,16 @@ private def applyMeta (ctx : Ctx) (m0 : Meta) (entries : Array Decl.Entry)
   for e in entries do
     let before := evs.size
     match e.key, e.value with
-    | "title", .str s => m := { m with title := some s }
+    | "title", .str s => m := { m with title := some (Ir.metaClean s) }
     | "language", .str s =>
       if (Locale.forTag s).isNone then
         evs := evs.push (.say (Diag.of .W0368
           s!"no locale for language '{s}'; English captions and patterns stand in" (some ⟨ctx.file, pos⟩)
           (help := some "the engine ships locale records for: en, fr, de")))
       m := { m with language := some s }
-    | "author", .str s => m := { m with author := some s }
-    | "subject", .str s => m := { m with subject := some s }
-    | "keywords", .str s => m := { m with keywords := some s }
+    | "author", .str s => m := { m with author := some (Ir.metaClean s) }
+    | "subject", .str s => m := { m with subject := some (Ir.metaClean s) }
+    | "keywords", .str s => m := { m with keywords := some (Ir.metaClean s) }
     | "url", .str s => m := { m with url := some s }
     | "image", .str s => m := { m with image := some s }
     | "favicon", .str s => m := { m with favicon := some s }
@@ -13582,7 +13582,7 @@ public inductive PDecl where
   | fonts (src : Option String) (pos : Pos)
   | pdfmeta (src : Option String) (pos : Pos)
   /-- hyperref's metadata lowered by Compat: the construct, its link styles, each key's TeX. -/
-  | pdfmetaText (what links : String) (pairs : Array (String × Array Raw)) (pos : Pos)
+  | pdfmetaText (what links : String) (pairs : Array (Compat.MetaKey × Array Raw)) (pos : Pos)
   | captionsetup (scope : Option String) (unclosed : Option Pos) (body : Option String) (pos : Pos)
   /-- url.sty's `\urlstyle`: the family `\url` and `\nolinkurl` set in. -/
   | urlstyle (v : Option String) (pos : Pos)
@@ -13660,13 +13660,17 @@ private def takeOptRun (preamble : Array Raw) (j : Nat) :
   else (none, j)
 
 /-- Each key's group and its value's group, from a lowered metadata group. -/
-private def metaTextPairs : List Raw → Array (String × Array Raw) → Array (String × Array Raw)
-  | .group k _ :: .group v _ :: rest, acc => metaTextPairs rest (acc.push (rawSrc k, v))
+private def metaTextPairs : List Raw → Array (Compat.MetaKey × Array Raw) →
+    Array (Compat.MetaKey × Array Raw)
+  | .group k _ :: .group v _ :: rest, acc =>
+    metaTextPairs rest (match Compat.MetaKey.ofName? (rawSrc k) with
+      | some key => acc.push (key, v)
+      | none => acc)
   | _, acc => acc
 
 /-- The `\pdfmeta` group at `j` when Compat lowered it from TeX values (`Compat.metaTextMark`). -/
 private def metaTextAt (raws : Array Raw) (j : Nat) :
-    Option (String × String × Array (String × Array Raw) × Nat) :=
+    Option (String × String × Array (Compat.MetaKey × Array Raw) × Nat) :=
   match raws[j]? with
   | some (.group body _) =>
     match body.toList with
@@ -14473,14 +14477,18 @@ convert = none refuses both")
     let mut evs : Array PEvent := #[]
     let mut said : Array String := #[]
     for (key, raws) in pairs do
-      let text := Ir.metaText (← elabInlines s.ctx raws)
+      -- A value's reserved characters are its text; only its diagnostics reach the document.
+      let saved ← get
+      let xs ← elabInlines { s.ctx with argBody := true } raws
+      modify fun st => { saved with diags := st.diags }
+      let text := Ir.metaText xs
       info := match key with
-        | "title" => { info with title := some text }
-        | "author" => { info with author := some text }
-        | "subject" => { info with subject := some text }
-        | _ => { info with keywords := some text }
-      evs := evs.push (.scalar "pdfmeta" key text pos)
-      said := said.push s!"{key} = {Decl.quote text}"
+        | .title => { info with title := some text }
+        | .author => { info with author := some text }
+        | .subject => { info with subject := some text }
+        | .keywords => { info with keywords := some text }
+      evs := evs.push (.scalar "pdfmeta" key.name text pos)
+      said := said.push s!"{key.name} = {Decl.quote text}"
     diag s.ctx .N0100 s!"'{what}' → \\pdfmeta\{ {String.intercalate ", " said.toList} }{links}" pos
     emitEvents s.ctx evs
     return { s with info }
