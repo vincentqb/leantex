@@ -5,8 +5,6 @@ public meta import Lean.Server.InfoUtils
 public meta import Lean.Compiler.NoncomputableAttr
 public meta import Lean.Elab.PreDefinition.Structural.Eqns
 public meta import Lean.Elab.PreDefinition.WF.Eqns
-public meta import Lean.Meta.Match.MatchEqsExt
-meta import Lean.Meta.Match.MatchEqs
 meta import Lean.Util.CollectAxioms
 meta import Lean.Util.Path
 
@@ -157,23 +155,25 @@ meta def readsOutside (dead : NameMap (Array Bool)) (x : FVarId) :
   | _, _ => false
 
 /-- Per discriminant of a matcher and per alternative, the field the alternative's pattern binds
-the discriminant to; `none` for a discriminant some pattern inspects. -/
+the discriminant to, read off the alternative's type; `none` for a discriminant some pattern
+inspects. -/
 meta def matchAliases (m : Name) (info : Meta.MatcherInfo) :
     MetaM (Array (Option (Array (Option Nat)))) := do
-  let eqns ← Meta.Match.getEquationsFor m
-  let mut per : Array (Option (Array (Option Nat))) := Array.replicate info.numDiscrs (some #[])
-  for eqn in eqns.eqnNames do
-    let row ← Meta.forallTelescope (← Meta.inferType (← mkConstWithLevelParams eqn)) fun xs body => do
-      let some (_, lhs, rhs) := body.eq? | return Array.replicate info.numDiscrs none
-      let lhsArgs := lhs.getAppArgs
-      let rhsArgs := rhs.getAppArgs
-      return (Array.range info.numDiscrs).map fun j =>
-        let pat := lhsArgs.getD (info.numParams + 1 + j) default
-        if pat.isFVar && xs.contains pat then some (rhsArgs.findIdx? (· == pat)) else none
-    per := (per.zip row).map fun
-      | (some acc, some t) => some (acc.push t)
-      | _ => none
-  return per
+  Meta.forallTelescope (← getConstInfo m).type fun xs _ => do
+    let first := info.numParams + 1 + info.numDiscrs
+    let mut per : Array (Option (Array (Option Nat))) := Array.replicate info.numDiscrs (some #[])
+    for (alt, i) in info.altInfos.zipIdx do
+      let fields := alt.numFields + (if alt.hasUnitThunk then 1 else 0)
+      let row ← Meta.forallBoundedTelescope (← Meta.inferType (xs.getD (first + i) default)) fields
+        fun ys rest => Meta.forallTelescope rest fun _ res => do
+          let pats := res.getAppArgs
+          return (Array.range info.numDiscrs).map fun j =>
+            let pat := pats.getD j default
+            if pat.isFVar then (ys.findIdx? (· == pat)).map some else none
+      per := (per.zip row).map fun
+        | (some acc, some t) => some (acc.push t)
+        | _ => none
+    return per
 
 /-- Whether `body` reads `x` outside the slots `marks` makes dead, a root match that binds `x`
 only to variables passing it to the alternatives that bind it. -/

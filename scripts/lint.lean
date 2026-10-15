@@ -1,4 +1,5 @@
 import Lean.Data.Json
+import scripts.Gate
 
 open Lean (Json)
 
@@ -18,7 +19,8 @@ def concurrent : Array (String × Array String) := #[
   (".lake/build/bin/precommit", #["--selftest"]),
   (".lake/build/bin/cites", #["--selftest"]),
   (".lake/build/bin/cites", #["--check"]),
-  (".lake/build/bin/lint", #["--linters"])]
+  (".lake/build/bin/lint", #["--linters"]),
+  (".lake/build/bin/lint", #["--selftest"])]
 
 def check : IO UInt32 := do
   for (cmd, args) in first do
@@ -108,7 +110,7 @@ def bare (options : Json) : Json :=
 
 /-- The option a source line turns off with a set_option command, if a probe names it. -/
 def disables (l : String) : Option String :=
-  let named := probes.toList.flatMap fun p => [p.option, p.note]
+  let named := "linter.all" :: probes.toList.flatMap fun p => [p.option, p.note]
   let rec go : List String → Option String
     | "set_option" :: o :: "false" :: rest =>
       if named.contains o || o.startsWith "linter.unusedVariables" then some o else go rest
@@ -126,15 +128,16 @@ def intact (setup : Json) : IO Bool := do
           unless ← System.FilePath.pathExists p do return false
   return true
 
-/-- The lakefile's lines naming a linter outside its `leanOptions` array. -/
+/-- The lakefile's lines naming a linter outside a `leanOptions` array. -/
 def strayLinterLines (lakefile : String) : Array Nat := Id.run do
-  let mut inside := false
+  let mut depth : Int := 0
   let mut out := #[]
   for (l, k) in (lakefile.splitOn "\n").zipIdx do
     let t := l.trimAscii.toString
-    if t.startsWith "leanOptions = [" then inside := true
-    else if inside && t == "]" then inside := false
-    else if !inside && (t.splitOn "linter.").length > 1 && !t.startsWith "#" then out := out.push (k + 1)
+    let opens := t.startsWith "leanOptions" || depth > 0
+    if opens then
+      depth := depth + ((t.splitOn "[").length : Int) - ((t.splitOn "]").length : Int)
+    else if (t.splitOn "linter.").length > 1 && !t.startsWith "#" then out := out.push (k + 1)
   return out
 
 /-- The maintained Lean sources: every `.lean` file outside hidden directories and testdata. -/
@@ -190,7 +193,7 @@ def linters : IO UInt32 := do
         && count out "`unused`" ≥ 1 do
       bad := bad.push s!"{src} with an unused parameter added drew not just that warning:\n{out}"
   for f in ← sources do
-    for (l, k) in ((← IO.FS.readFile f).splitOn "\n").zipIdx do
+    for (l, k) in (lexView (← IO.FS.readFile f) (· == .code)).zipIdx do
       if let some o := disables l then bad := bad.push s!"{f}:{k + 1} turns {o} off"
   for k in strayLinterLines (← IO.FS.readFile "lakefile.toml") do
     bad := bad.push s!"lakefile.toml:{k} sets a linter outside leanOptions, which this check reads"
@@ -200,12 +203,39 @@ def linters : IO UInt32 := do
   for m in bad do IO.eprintln s!"lint: {m}"
   return 1
 
+/-- Every case the liveness check's readers must catch and every spelling they must pass. -/
+def selftest : IO UInt32 := do
+  let mut bad : Array String := #[]
+  for (l, want) in [("set_option linter.omit false", some "linter.omit"),
+      ("set_option pp.proofs false in set_option linter.unusedVariables false in",
+        some "linter.unusedVariables"),
+      ("  set_option  linter.all false", some "linter.all"),
+      ("set_option linter.extra.dupNamespace false in", some "linter.extra.dupNamespace"),
+      ("set_option pp.all false", none), ("set_option linter.omit true", none)] do
+    unless disables l == want do bad := bad.push s!"disables {l}: {disables l}"
+  let lakefile := "name = \"x\"\nleanOptions = [[\"linter.extra\", true]]\n\
+    moreLeanArgs = [\"-D\", \"linter.all=false\"]\n# linter.omit in a comment\n\
+    leanOptions = [\n  [\"linter.omit\", true],\n]\nweakLeanArgs = [\"-Dlinter.omit=false\"]\n"
+  unless strayLinterLines lakefile == #[3, 8] do
+    bad := bad.push s!"strayLinterLines: {strayLinterLines lakefile}, not #[3, 8]"
+  let setupOf (path : String) : Json :=
+    Json.mkObj [("importArts", Json.mkObj [("M", Json.arr #[Json.arr #[Json.str path]])])]
+  unless (← intact (setupOf "lakefile.toml")) && !(← intact (setupOf ".lake/build/no-such.olean")) &&
+      (← intact (Json.mkObj [])) do
+    bad := bad.push "intact misread a setup's recorded imports"
+  if bad.isEmpty then
+    IO.println "lint selftest: all passed"
+    return 0
+  for b in bad do IO.eprintln s!"lint selftest: {b}"
+  return 1
+
 end Lint
 
 def main (args : List String) : IO UInt32 :=
   match args with
   | [] => Lint.check
   | ["--linters"] => Lint.linters
+  | ["--selftest"] => Lint.selftest
   | _ => do
-    IO.eprintln "usage: lint [--linters]"
+    IO.eprintln "usage: lint [--linters | --selftest]"
     return 2
