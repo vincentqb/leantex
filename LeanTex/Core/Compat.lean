@@ -6,6 +6,7 @@ public import LeanTex.Core.PackageImports
 import LeanTex.Core.Theme
 import LeanTex.Core.Decl
 import LeanTex.Core.KeyVal
+import LeanTex.Core.PdfDate
 public import LeanTex.Core.Ir
 import LeanTex.Core.BeamerColor
 import LeanTex.Core.TitleTemplate
@@ -730,6 +731,8 @@ private structure St where
   bibStyle : Option String := none
   /-- hyperref's link colouring as declared so far. -/
   links : LinkSetup := {}
+  /-- The ICC profile `\DocumentMetadata`'s `colorprofiles` names for the PDF/X output intent. -/
+  intentProfile : Option String := none
   /-- Names the caller declares the engine renders or reserves, which the
   provision definers keep. -/
   provideKeeps : List String := []
@@ -5792,19 +5795,62 @@ public def MetaKey.ofName? (n : String) : Option MetaKey := MetaKey.all.find? (�
 public theorem MetaKey.ofName?_name (k : MetaKey) : MetaKey.ofName? k.name = some k := by
   cases k <;> rfl
 
-/-- hyperref's keys, as `\hypersetup` and the package options give them: its metadata keys with
-their TeX values, with its link keys written into the setup and whether one was read. -/
-private def hyperrefKeys (opts : String) (pos : Pos) : M (Array (MetaKey × String) × Bool) := do
+/-- hyperref's keys whose values the engine reads as words, not TeX it sets: its dates and its
+trapping state, each as its `\pdfmeta` key. -/
+private inductive MetaWord where
+  | created
+  | modified
+  | trapped
+
+/-- The hyperref key a word is read from. -/
+private def MetaWord.hyperref : MetaWord → String
+  | .created => "pdfcreationdate"
+  | .modified => "pdfmoddate"
+  | .trapped => "pdftrapped"
+
+private def MetaWord.name : MetaWord → String
+  | .created => "created"
+  | .modified => "modified"
+  | .trapped => "trapped"
+
+private def MetaWord.all : List MetaWord := [.created, .modified, .trapped]
+
+/-- A word's value as its `\pdfmeta` key reads it: a date in either spelling, or a trapping state
+in any case, as hyperref lowers it. -/
+private def MetaWord.read (w : MetaWord) (v : String) : Option String :=
+  let t := v.trimAscii.toString
+  match w with
+  | .created | .modified => if (PdfDate.parse? t).isSome then some t else none
+  | .trapped => if ["true", "false", "unknown"].contains t.toLower then some t.toLower else none
+
+/-- What hyperref's keys declare: its metadata keys with their TeX values, its dates and trapping
+as words, whether a link key was read, and whether a dropped key was named. -/
+private structure HyperrefRead where
+  metadata : Array (MetaKey × String)
+  words : Array (MetaWord × String)
+  linked : Bool
+  warned : Bool
+
+/-- hyperref's keys, as `\hypersetup` and the package options give them, with its link keys
+written into the setup. -/
+private def hyperrefKeys (opts : String) (pos : Pos) : M HyperrefRead := do
   let mut metadata : Array (MetaKey × String) := #[]
+  let mut words : Array (MetaWord × String) := #[]
   let mut links := (← get).links
   let mut linked := false
   let mut cut : Array String := #[]
   let mut unread : Array String := #[]
+  let mut misread : Array String := #[]
   for e in KeyVal.items opts do
     let (k, value) := KeyVal.entry e
     let v := value.getD ""
     if let some m := MetaKey.all.find? (k == "pdf" ++ ·.name) then
       metadata := metadata.push (m, v)
+    if let some w := MetaWord.all.find? (k == ·.hyperref) then
+      unless v.trimAscii.isEmpty do
+        match w.read v with
+        | some x => words := words.push (w, x)
+        | none => misread := misread.push s!"'{e}'"
     if ["linkcolor", "urlcolor", "citecolor", "allcolors"].contains k && !oneEntry v then
       unread := unread.push s!"'{e}'"
     else if let some l := links.read k v then
@@ -5812,18 +5858,30 @@ private def hyperrefKeys (opts : String) (pos : Pos) : M (Array (MetaKey × Stri
       linked := true
     else if value.isNone && KeyVal.unbalanced e then cut := cut.push s!"'{e}'"
   if linked then write fun st => { st with links }
-  unless cut.isEmpty do
-    say .W0101 s!"hyperref keys without a native equivalent were dropped: \
-{String.intercalate ", " cut.toList}" pos
-      (help := "brace a value that holds a comma: key={...}")
+  let dropped := cut ++ misread
+  unless dropped.isEmpty do
+    let hints := (if cut.isEmpty then [] else ["brace a value that holds a comma: key={...}"]) ++
+      if misread.isEmpty then [] else
+        ["a date reads as D:20260131090000Z or 2026-01-31, trapping as True or False"]
+    say .W0101 s!"hyperref entries without a native equivalent were dropped: \
+{String.intercalate ", " dropped.toList}" pos (help := String.intercalate "; " hints)
   unless unread.isEmpty do
     say .W0102 s!"hyperref link colours no palette entry reads were dropped: \
 {String.intercalate ", " unread.toList}" pos
       (help := "give a colour name, a mix such as blue!50!black, or #RRGGBB")
-  return (metadata, linked)
+  return { metadata, words, linked, warned := !(dropped.isEmpty && unread.isEmpty) }
 
-/-- The mark opening a `\pdfmeta` group of TeX values: the construct and the link styles it
-lowers, then each key's group and its value's group. -/
+/-- A group holding `s` as one word, which the elaborator reads as written, never lexed as TeX. -/
+private def wordGroup (s : String) (pos : Pos) : Raw :=
+  .group (if s.isEmpty then #[] else #[.word s pos]) pos
+
+/-- A native declaration whose body the elaborator reads as written, so each value `Decl.quote`
+spells reads back exactly (`Decl.parseValue_quote`). -/
+private def declaredRaws (name body : String) (pos : Pos) : Array Raw :=
+  #[.ctrl name pos, wordGroup body pos]
+
+/-- The mark opening a `\pdfmeta` group of TeX values: the construct, the link styles it lowers and
+its dates and trapping as `\pdfmeta` entries, then each key's group and its value's group. -/
 public def metaTextMark : String := "pdfmeta text"
 
 private theorem toList_sizeOf_lt (b : Array Raw) : sizeOf b.toList < sizeOf b := by
@@ -5856,55 +5914,150 @@ decreasing_by
   all_goals simp_wf
   all_goals first | omega | (have := toList_sizeOf_lt b; omega)
 
-/-- hyperref's metadata and link styles lowered, the metadata as TeX the elaborator sets as text
-and names in its note. -/
-private def hyperrefLowered (what key : String) (metadata : Array (MetaKey × String)) (linked : Bool)
-    (pos : Pos) : M (Array Raw) := do
+/-- hyperref's metadata, dates, trapping and link styles lowered, the metadata as TeX the
+elaborator sets as text, the dates and trapping as quoted `\pdfmeta` entries it reads beside them,
+and all named in its note. -/
+private def hyperrefLowered (what key : String) (r : HyperrefRead) (pos : Pos) : M (Array Raw) := do
   let setup := (← get).links
-  let links := if linked then setup.native else ""
+  let links := if r.linked then setup.native else ""
   let styles ← if links.isEmpty then pure #[] else synthAt links pos
-  if metadata.isEmpty then
-    if links.isEmpty then discard what "the engine does this itself" key pos
-    else became what links pos
+  if r.metadata.isEmpty && r.words.isEmpty then
+    if !links.isEmpty then became what links pos
+    else unless r.warned do discard what "the engine does this itself" key pos
     return styles
+  let entries := String.intercalate ", " (r.words.toList.map fun (w, v) => s!"{w.name} = {Decl.quote v}")
   let mut body : Array Raw :=
-    #[.ctrl metaTextMark pos, .group #[.word what pos] pos, .group #[.word links pos] pos]
-  for (k, v) in metadata do
+    #[.ctrl metaTextMark pos, .group #[.word what pos] pos, .group #[.word links pos] pos,
+      wordGroup entries pos]
+  for (k, v) in r.metadata do
     body := (body.push (.group #[.word k.name pos] pos)).push
       (.group (pdfStringList #[] (← synthAt v pos).toList) pos)
   return #[Raw.ctrl "pdfmeta" pos, .group body pos] ++ styles
 
-/-- `\hypersetup` as `\pdfmeta` for its metadata keys and link-kind colour styles for its link
-colours. -/
+/-- `\hypersetup` as `\pdfmeta` for its metadata keys, dates and trapping, and link-kind colour
+styles for its link colours; in the body, which reads none of them, named and set aside. -/
 private def hypersetup (opts : String) (pos : Pos) : M (Array Raw) := do
-  let (metadata, linked) ← hyperrefKeys opts pos
-  hyperrefLowered "\\hypersetup" "hypersetup" metadata linked pos
+  -- premise: Tests.PrintX4.checks — a setup in the body leaves its page as written
+  if (← get).inDoc then
+    sayOnce "ctrl:hypersetup" .W0340 "'\\hypersetup' is read in the preamble; in the body it is ignored"
+      pos (help := "declare it in the preamble, before '\\begin{document}'")
+    return #[]
+  hyperrefLowered "\\hypersetup" "hypersetup" (← hyperrefKeys opts pos) pos
 
-/-- `\DocumentMetadata{...}`: `lang` and `pdfversion` land
-on the native `\pdfmeta` keys. -/
+/-- `\DocumentMetadata{...}`: `lang`, `pdfversion`, `pdfstandard=X-4` and the `X` entry of
+`colorprofiles` land on the native `\pdfmeta` keys. -/
 private def documentMetadata (opts : String) (pos : Pos) : M (Array Raw) := do
   let mut lang : Option String := none
   let mut version : Option String := none
+  let mut standard : Option String := none
+  let mut profile : Option String := none
   let mut dropped : Array String := #[]
   for e in KeyVal.items opts do
     match KeyVal.entry e with
     | ("lang", some v) => if v.isEmpty then dropped := dropped.push e else lang := some v
     | ("pdfversion", some v) =>
-      if v == "1.7" || v == "2.0" then version := some v
+      if v == "1.6" || v == "1.7" || v == "2.0" then version := some v
       else dropped := dropped.push (if v.isEmpty then e else "pdfversion")
+    | ("pdfstandard", some v) =>
+      if v == "X-4" || v == "x-4" then standard := some "X-4"
+      else dropped := dropped.push s!"pdfstandard={v}"
+    | ("colorprofiles", some v) =>
+      for p in KeyVal.items v do
+        match KeyVal.entry p with
+        | ("X", some f) | ("x", some f) | ("GTS_PDFX", some f) =>
+          if f.isEmpty then dropped := dropped.push s!"colorprofiles {p}" else profile := some f
+        | _ => dropped := dropped.push s!"colorprofiles {p}"
     | (key, some v) => dropped := dropped.push (if key.isEmpty || v.isEmpty then e else key)
     | (_, none) => dropped := dropped.push e
   unless dropped.isEmpty do
     say .W0101 s!"\\DocumentMetadata keys without a native equivalent were \
 dropped: {String.intercalate ", " dropped.toList}" pos
-      (help := "the engine writes PDF 2.0, or 1.7 when 'pdfversion=1.7' asks; \
-standard and compression keys have no effect here")
+      (help := "the engine writes PDF 2.0, or 1.6 or 1.7 when 'pdfversion' asks, and PDF/X-4 \
+with an X output profile; other standards and compression keys have no effect here")
+  write fun st => { st with intentProfile := profile }
   let keys := (lang.map fun tag => s!"language = {Decl.quote tag}").toArray ++
-    (version.map fun v => s!"version = {Decl.quote v}").toArray
+    (version.map fun v => s!"version = {Decl.quote v}").toArray ++
+    (standard.map fun v => s!"standard = {Decl.quote v}").toArray ++
+    (profile.map fun f => s!"intent = {Decl.quote f}").toArray
   if keys.isEmpty then return #[]
-  let native := s!"\\pdfmeta\{ {String.intercalate ", " keys.toList} }"
-  became "\\DocumentMetadata" native pos
-  synthAt native pos
+  let body := String.intercalate ", " keys.toList
+  became "\\DocumentMetadata" s!"\\pdfmeta\{ {body} }" pos
+  return declaredRaws "pdfmeta" body pos
+
+/-- An expl3 key-value list as the expl3 catcodes read it: spaces dropped, `~` a space. -/
+private def explKeyVals (src : String) : Array (String × String) :=
+  let flat := String.ofList ((src.toList.filter (!·.isWhitespace)).map fun c =>
+    if c == '~' then ' ' else c)
+  (KeyVal.items flat).filterMap fun e => match KeyVal.entry e with
+    | (key, some v) => some (key, v)
+    | (_, none) => none
+
+/-- The native output-intent key for one of pdfmeta's colour profile property keys. -/
+private def explProfileKey : String → Option String
+  | "OutputConditionIdentifier" => some "intent-condition"
+  | "Info" => some "intent-info"
+  | "RegistryName" => some "intent-registry"
+  | _ => none
+
+/-- The property name and its two groups after `\prop`, where the name spells
+`_const_from_keyval:cn`. -/
+private def propGroups (toks : Array Raw) (j : Nat) : Option (Array Raw × Array Raw × Nat) := Id.run do
+  let mut name : String := ""
+  for k in [j:toks.size] do
+    match toks[k]?, toks[k + 1]? with
+    | some (.group body _), some (.group kv _) =>
+      return if name == "_const_from_keyval:cn" then some (body, kv, k + 2) else none
+    | some (.group _ _), _ => return none
+    | some r, _ => name := name ++ (rawSrc #[r]).trimAscii.toString
+    | none, _ => return none
+  return none
+
+/-- One pdfmeta colour profile description as `\pdfmeta` keys, and its keys without a native one. -/
+private def explProfileKeys (kv : String) : Array String × Array String := Id.run do
+  let mut keys : Array String := #[]
+  let mut dropped : Array String := #[]
+  for (key, v) in explKeyVals kv do
+    if let some n := explProfileKey key then
+      keys := keys.push s!"{n} = {Decl.quote v}"
+    else if key == "N" && (v == "1" || v == "3" || v == "4") then
+      keys := keys.push s!"intent-components = {v}"
+    else dropped := dropped.push key
+  return (keys, dropped)
+
+/-- pdfmeta's description of a profile it does not ship, `\prop_const_from_keyval:cn
+{ c__pdfmeta_colorprofile_<file> } {…}`, read as the intent's `\pdfmeta` keys when `<file>` is the
+declared X profile, and whether the block holds more. -/
+private def explProfiles (block : Array Raw) (pos : Pos) : M (Array Raw × Bool) := do
+  let toks := block.filter fun r => !(r matches .space) && !(r matches .par _)
+  let mut out : Array Raw := #[]
+  let mut rest := false
+  let mut i := 0
+  for _ in [0:toks.size + 1] do
+    if i ≥ toks.size then break
+    let read : Option (String × Array Raw × Nat) := match toks[i]? with
+      | some (.ctrl "prop" _) => (propGroups toks (i + 1)).bind fun (nameBody, kv, k) =>
+        let key := String.ofList ((rawSrc nameBody).toList.filter (!·.isWhitespace))
+        (key.dropPrefix? "c__pdfmeta_colorprofile_").map fun file => (file.toString, kv, k)
+      | _ => none
+    match read with
+    | none =>
+      rest := true
+      i := i + 1
+    | some (file, kv, k) =>
+      let label := s!"\\prop_const_from_keyval:cn\{c__pdfmeta_colorprofile_{file}}"
+      -- premise: Tests.PrintX4.checks — a description of another profile names no field of the intent
+      if (← get).intentProfile == some file then
+        let (keys, dropped) := explProfileKeys (rawSrc kv)
+        unless dropped.isEmpty do
+          say .W0101 s!"the colour profile description's keys without a native equivalent \
+were dropped: {String.intercalate ", " dropped.toList}" pos
+        let body := String.intercalate ", " keys.toList
+        became label s!"\\pdfmeta\{ {body} }" pos
+        out := out ++ declaredRaws "pdfmeta" body pos
+      else
+        discard label "it describes a profile no output intent of the document names" "explprofile" pos
+      i := k
+  return (out, rest)
 
 /-- `\AddToHook{hook}[label]{code}`, skipped whole: the
 engine has no hook machinery. -/
@@ -7392,13 +7545,21 @@ clock, so nothing is inserted" pos
     return some (#[.ctrl "underline" pos], j2)
   | "IfValueT" | "IfValueTF" => return some (#[.ctrl "ifgiven" pos], start)
   | "ExplSyntaxOn" =>
-    -- expl3 holds no document content, so the block is skipped whole.
+    -- expl3 holds no document content: pdfmeta's colour profile properties are read in the
+    -- preamble, the rest skipped.
     let mut k := start
+    let mut stop := raws.size
     for j in [start:raws.size] do
       k := j + 1
-      if let some (.ctrl "ExplSyntaxOff" _) := raws[j]? then break
-    say .W0106 "code between '\\ExplSyntaxOn' and '\\ExplSyntaxOff' is not supported; skipped" pos
-    return some (#[], k)
+      if let some (.ctrl "ExplSyntaxOff" _) := raws[j]? then
+        stop := j
+        break
+    -- premise: Tests.PrintX4.checks — a description in the body leaves its page as written
+    let (out, rest) ← if (← get).inDoc then pure (#[], true)
+      else explProfiles (raws.extract start stop) pos
+    if rest then
+      say .W0106 "code between '\\ExplSyntaxOn' and '\\ExplSyntaxOff' is not supported; skipped" pos
+    return some (out, k)
   | "setkomafont" =>
     let (args, k) := takeGroups raws start 2
     if h : args.size = 2 then
@@ -8291,12 +8452,12 @@ no package options are supported by the strict native Markdown dialect" pos
       s!"\\{name}[{opt.getD ""}]\{unicode-math}" (opt.getD "") pos)
   else if p == "hyperref" && opt.isSome then
     -- hyperref's package options are `\hypersetup`'s keys.
-    let (metadata, linked) ← hyperrefKeys (opt.getD "") pos
-    if metadata.isEmpty && !linked then
+    let r ← hyperrefKeys (opt.getD "") pos
+    if r.metadata.isEmpty && r.words.isEmpty && !r.linked then
       discard s!"\\{name}\{{p}}" "the engine does this itself" s!"{name}:{p}" pos
     else
       out := out ++ (← hyperrefLowered s!"\\usepackage[{opt.getD ""}]\{hyperref}"
-        s!"{name}:{p}" metadata linked pos)
+        s!"{name}:{p}" r pos)
   else if p == "ulem" then
     if KeyVal.items (opt.getD "") == #["normalem"] then
       discard s!"\\{name}[normalem]\{{p}}"

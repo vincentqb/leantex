@@ -6,24 +6,18 @@ import LeanTex.Core.LoopProgress
 
 namespace LeanTex.Core.PdfLex
 
-private theorem keep_char (c : Char) (h : (c.isAlphanum || c == '-' || c == '.') = true) :
+private theorem keep_char (c : Char) (h : nameKeeps c = true) :
     c.toNat < 128 ∧ isWs c.toNat = false ∧ isDelim c.toNat = false ∧ c.toNat ≠ 35 := by
-  simp only [Bool.or_eq_true, beq_iff_eq, Char.isAlphanum, Char.isAlpha,
-    Char.isUpper, Char.isLower, Char.isDigit, Bool.or_eq_true, Bool.and_eq_true,
-    decide_eq_true_eq, UInt32.le_iff_toNat_le, ge_iff_le] at h
-  simp only [isWs, isDelim, Bool.or_eq_false_iff, beq_eq_false_iff_ne]
-  change ((((65 ≤ c.toNat ∧ c.toNat ≤ 90) ∨ (97 ≤ c.toNat ∧ c.toNat ≤ 122)) ∨
-    (48 ≤ c.toNat ∧ c.toNat ≤ 57)) ∨ c = '-') ∨ c = '.' at h
-  rcases h with (((h|h)|h)|h)|h
-  · omega
-  · omega
-  · omega
-  · subst c; decide
-  · subst c; decide
+  simp only [nameKeeps, Bool.and_eq_true, decide_eq_true_eq, Bool.not_eq_eq_eq_not, Bool.not_true,
+    bne_iff_ne, ne_eq] at h
+  obtain ⟨⟨⟨h1, h2⟩, h3⟩, h4⟩ := h
+  refine ⟨by omega, ?_, h3, h4⟩
+  simp only [isWs, Bool.or_eq_false_iff, beq_eq_false_iff_ne]
+  omega
 
 /-- The ISO 32000-2 §7.3.5 escaping of one name character. -/
 public def nameChars (c : Char) : List Char :=
-  if c.isAlphanum || c == '-' || c == '.' then [c]
+  if nameKeeps c then [c]
   else ['#', Hex.spell true (c.toNat / 16), Hex.spell true c.toNat]
 
 public theorem nameChars_nonempty (c : Char) : (nameChars c).length > 0 := by
@@ -43,7 +37,7 @@ public theorem nameChars_ascii (c : Char) : ∀ d ∈ nameChars c, d.toNat < 128
     · exact Hex.spell_ascii true _
 
 private theorem escapeLoop (cs : List Char) (out : String) :
-    (forIn cs out (fun c out => if c.isAlphanum || c == '-' || c == '.' then pure (.yield (out.push c))
+    (forIn cs out (fun c out => if nameKeeps c then pure (.yield (out.push c))
       else pure (.yield (out ++ "#" ++ String.ofList [Hex.spell true (c.toNat / 16), Hex.spell true c.toNat]))) : Id String).run
       = out ++ String.ofList (cs.flatMap nameChars) := by
   induction cs generalizing out with

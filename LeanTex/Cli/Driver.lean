@@ -8,6 +8,7 @@ import LeanTex.Core.Encoding
 import LeanTex.Core.Flate
 import LeanTex.Core.PdfCensus
 import LeanTex.Core.PdfContract
+import LeanTex.Core.PdfX
 public import LeanTex.Core.Image
 public import LeanTex.Core.Gfx
 public import LeanTex.Core.PdfRead
@@ -505,6 +506,69 @@ def loadImages (file : String) (doc : Ir.Doc) (pics : Array PicResult := #[])
     if en.info.isSome then f.title.map (en.src, ·) else none
   return (store, diags, hits, titles, reads)
 
+/-- The output intent's ICC profile read beside the document, W0446 where it is not there or is
+no output profile. -/
+def loadProfile (file : String) (info : Ir.Meta) : IO (Option ByteArray × Array Diag) := do
+  let some oi := info.intent | return (none, #[])
+  let some p := Publication.localPath? file oi.profile
+    | return (none, #[PdfX.profileRefused oi.profile "names no local file" oi.span])
+  let reply : Except World.Failure ByteArray ← Host.answer (.readFile p.toString)
+  match reply with
+  | .error f =>
+    let why := match f with
+      | .absent => "is not there"
+      | .denied => "cannot be read, its permission denied"
+      | .notRegular => "is no regular file"
+      | .other w => s!"cannot be read: {w}"
+    return (none, #[PdfX.profileRefused oi.profile why oi.span])
+  | .ok b =>
+    match PdfX.profileFault b oi.components with
+    | some why => return (none, #[PdfX.profileRefused oi.profile why oi.span])
+    | none => return (some b, #[])
+
+/-- The claim's losses less the missing output intent a refused profile already names (W0446). -/
+def claimLosses (profileDiags claimDiags : Array Diag) : Array Diag :=
+  if profileDiags.isEmpty then claimDiags
+  else claimDiags.filter (·.subject != some "pdfx:output-intent")
+
+/-- W0447 for each declaration a standing PDF/X claim replaces: a PDF version other than the 1.6
+the standard is written on, and an unknown trapping, stated False as the engine traps nothing. -/
+def pdfxDeclLosses (x : String) (info : Ir.Meta) : Array Diag :=
+  let version := match info.pdfVersion with
+    | some v =>
+      if v == "1.6" then #[] else #[Diag.of .W0447
+        "the declared PDF version is one the declared PDF standard does not admit; the standard's \
+version is written" info.versionSpan
+        (help := some "declare the version the standard is written on: \\DocumentMetadata{ pdfversion = 1.6 } or \\pdfmeta{ version = \"1.6\" }")
+        (subject := some "pdfx:version") (output := some .pdf)
+        (detail := some s!"the PDF/{x} standard is written on PDF 1.6; PDF {v} is declared, and 1.6 written")]
+    | none => #[]
+  let trapped := match info.trappedUnknownAt with
+    | some site =>
+      #[Diag.of .W0447 "the declared trapping is unknown, which the declared PDF standard does not \
+admit; the file states False, as it is untrapped" (some site)
+        (help := some "state the trapping: \\hypersetup{ pdftrapped = False }")
+        (subject := some "pdfx:trapped") (output := some .pdf)
+        (detail := some s!"PDF/{x} asks the trapping True or False")]
+    | none => #[]
+  version ++ trapped
+
+/-- A file claiming a PDF/X standard kept only where its own bytes meet it, what it leaves out of
+its `links` and only a preflight judges named; else the file `rewrite` writes without the claim,
+and each requirement it breaks named (W0445). -/
+def pdfxClaim (info : Ir.Meta) (pdf : ByteArray) (links : Nat)
+    (rewrite : Ir.Meta → Except Pdf.WriteError ByteArray) :
+    Except Pdf.WriteError (ByteArray × Array Diag) :=
+  match info.pdfx with
+  | none => .ok (pdf, #[])
+  | some x =>
+    let (facts, bs) := match PdfX.read pdf with
+      | .ok f => (some f, PdfX.breaches f)
+      | .error e => (none, #[⟨"census", s!"the engine's reader refuses the file: {e}"⟩])
+    match facts, bs.isEmpty with
+    | some f, true => .ok (pdf, pdfxDeclLosses x info ++ PdfX.claimDiags x f links)
+    | _, _ => (rewrite { info with pdfx := none }).map (·, PdfX.breachDiags x bs)
+
 /-- PDF sources' browser images of their selected page, converted from the bytes already
 read; a declared animation's self-contained companion SVG serves where usable. -/
 def imageBrowserFaces (imgs : Image.Store) : IO Image.Store := do
@@ -724,9 +788,9 @@ def boundaryFaces (ui : Ui) (file : String) (front : Front) : IO (Ir.FontSpec ×
   | .ok (fs, _, _, _) => return (FontAssembly.boundaryFonts doc fs scan, front)
   | .error _ => return (doc.fonts, front)
 
-/-- Every file a build reads, by the path it reads it at: the document, its execution's
-reads, bibliography, images, staged picture inputs, every face read or found under the
-document's and the run's own font directories, and its declared stylesheet and icon. -/
+/-- Every file a build reads, by the path it reads it at: the document, its execution's reads,
+bibliography, images, staged picture inputs, every face read or found under the document's and the
+run's own font directories, and its declared stylesheet, icon and output profile. -/
 def buildInputs (file : String) (front : Front) (doc : Ir.Doc) (scan : FaceScan)
     (parsed imgReads staged faces : Array String) : Array String :=
   let owned := scan.docDirs ++ scan.privateDirs
@@ -734,7 +798,8 @@ def buildInputs (file : String) (front : Front) (doc : Ir.Doc) (scan : FaceScan)
   let scanned := (scan.faces.filter fun face =>
     owned.any fun dir => face.path.startsWith (if dir.endsWith "/" then dir else dir ++ "/")).map
       (FontDb.faceFile ·.path)
-  let declared := (doc.output.stylesheet.toArray ++ doc.info.favicon.toArray).filterMap fun name =>
+  let declared := (doc.output.stylesheet.toArray ++ doc.info.favicon.toArray ++
+    (doc.info.intent.map (·.profile)).toArray).filterMap fun name =>
     (Publication.localPath? file name).map (·.toString)
   #[file] ++ front.reads ++ (Input.bibPaths file doc).map (·.toString) ++ imgReads ++ staged ++
     faces.map FontDb.faceFile ++ parsed ++ scanned ++ declared
@@ -971,15 +1036,28 @@ in the HTML" (← since t)
         let tree := Struct.ofDoc (Layout.pdfView doc)
         let ops := Pdf.pageOps geom fs out.pages imgs tree keep
         let streams ← Compression.pageStreams cache (ops.map fun o => (Pdf.render o).toUTF8)
+        let (profile, profileDiags) ← loadProfile file doc.info
         let imgs := { imgs with
-          formZ := ← Compression.formZdata cache (Pdf.copiedFormContents imgs out.pages) }
-        match Pdf.writeChecked geom fs out.pages doc.info imgs out.outline streams tree ops programs with
+          formZ := ← Compression.formZdata cache (Pdf.copiedFormContents imgs out.pages)
+          profile }
+        -- A claimed file's outline carries no link out of the file, PDF/X admitting no action.
+        let claimOutline := if doc.info.pdfx.isSome then out.outline.filter (·.url.isNone)
+          else out.outline
+        let links := Pdf.linkCount geom out.pages + (out.outline.size - claimOutline.size)
+        let written := (Pdf.writeChecked geom fs out.pages doc.info imgs claimOutline streams tree ops
+          programs).bind fun pdf =>
+            pdfxClaim doc.info pdf links fun info =>
+            Pdf.writeChecked geom fs out.pages info imgs out.outline streams tree ops programs
+        match written with
         | .error error =>
           ui.diag (DriverDiag.pdfWriteRefused error)
           ui.accepted resolved.accepted
           ui.summary file 1 (← since t0)
           return 1
-        | .ok pdf =>
+        | .ok (pdf, claimDiags) =>
+          resolved := resolved.append
+            (← ui.resolve doc.allow allowAll (outputs := outputs)
+              (profileDiags ++ claimLosses profileDiags claimDiags))
           ui.phase "pdf" s!"{pdf.size} bytes" (← since t)
           pdfBuilt := some pdf
       -- Phase 3: census, gate, publish; assertions judge the built bytes before any write.

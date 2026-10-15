@@ -482,9 +482,9 @@ public theorem Color.milli_lt (a : UInt8) : milli a < 1001 := by
   omega
 
 /-- The colour printer's marks paint in: the `All` colorant, DeviceCMYK
-1,1,1,1, when the document declares print colours, else black. -/
+1,1,1,1, when the document declares print colours, else black ink. -/
 public def Color.registration (printModel : Bool) : Color :=
-  if printModel then Color.ofInk Ink.all 1 else Color.black
+  if printModel then Color.ofInk Ink.all 1 else Color.blackInk
 
 /-- Replace-on-redeclare: a later declaration of a key overrides, keeping one entry per key. -/
 public abbrev redeclare {κ α : Type} [BEq κ] (xs : Array (κ × α)) (k : κ) (v : α) :
@@ -1441,6 +1441,18 @@ private def Color.mixInk (a : Color) (i : Ink) (t : Rat) (pct : Nat) (b : Color)
       else mixCmyk (a.cmyk.getD (0, 0, 0, 0)) pct b
     | none => mixCmyk (a.cmyk.getD (0, 0, 0, 0)) pct b
 
+/-- A colour's DeviceGray value, where it is declared in gray. -/
+private def Color.grayOf? (c : Color) : Option Decl.ColorComponent :=
+  match c.pdfModel with
+  | some (.gray v) => (Decl.parseDecimal v).bind fun (m, scale) =>
+    if m < 0 then none else some { num := m.toNat, scale }
+  | some (.rgb ..) | some (.cmyk ..) | some (.separation ..) | none => none
+
+/-- xcolor's `!` mix of two gray colours, in gray. -/
+private def Color.mixGray (x y : Decl.ColorComponent) (pct : Nat) : Color :=
+  Color.ofGray { num := x.num * y.scale * pct + y.num * x.scale * (100 - pct)
+                 scale := x.scale * y.scale * 100 }
+
 /-- One step of xcolor's `!` mix: `pct`% of `a` over the rest of `b`, in `a`'s model; the paper
 over an ink is a tint of the ink, as the ink over the paper is. -/
 public def Color.mix (a : Color) (pct : Nat) (b : Color) : Color :=
@@ -1453,7 +1465,9 @@ public def Color.mix (a : Color) (pct : Nat) (b : Color) : Color :=
       | none => mixSrgb a pct b
   | none, none => match a.cmyk with
     | some q => mixCmyk q pct b
-    | none => mixSrgb a pct b
+    | none => match a.grayOf?, b.grayOf? with
+      | some x, some y => mixGray x y pct
+      | _, _ => mixSrgb a pct b
 
 private theorem Color.ofInk_model (i : Ink) (t : Rat) : (Color.ofInk i t).model = .cmyk := rfl
 
@@ -1509,11 +1523,13 @@ public theorem Color.mix_model_exact (a b : Color) (pct : Nat) :
       | none =>
         have ha : a.model = .srgb := by unfold Color.model; rw [hc, hi]
         rw [ha]
-        rfl
+        simp only
+        split <;> rfl
 
 private theorem Color.mix_srgb_id (a b : Color) (pct : Nat) (h : a.cmyk = none)
-    (hi : a.ink? = none) (hb : b.ink? = none) : a.mix pct b = a.mixSrgb pct b := by
-  simp [Color.mix, h, hi, hb]
+    (hi : a.ink? = none) (hb : b.ink? = none) (hg : a.grayOf? = none) :
+    a.mix pct b = a.mixSrgb pct b := by
+  simp [Color.mix, h, hi, hb, hg]
 
 public def asciiBlank (c : Char) : Bool := c == ' ' || c == '\t' || c == '\n' || c == '\r'
 
@@ -1534,28 +1550,36 @@ where
   trimmed (cur : List Char) : String :=
     String.ofList (((cur.dropWhile asciiBlank).reverse).dropWhile asciiBlank)
 
-/-- xcolor's base colours (manual §4.1, Table 1), as sRGB bytes. -/
+/-- A decimal fraction `num / scale` as a colour component. -/
+private def part (num scale : Nat) : Decl.ColorComponent := { num, scale }
+
+/-- xcolor's base colours (manual §4.1, Table 1): the grays in gray as xcolor declares them, the rest
+in RGB, the web page's schemes adjusting no CMYK one. -/
 private def xcolorBase (s : String) : Option Color :=
+  let one := part 1 1
+  let zero := part 0 1
+  let half := part 5 10
+  let rgb (r g b : Decl.ColorComponent) : Option Color := some (Color.ofRgbUnit r g b)
   match s with
-  | "black" => some Color.black
-  | "white" => some Color.white
-  | "red" => some { r := 255, g := 0, b := 0 }
-  | "green" => some { r := 0, g := 255, b := 0 }
-  | "blue" => some { r := 0, g := 0, b := 255 }
-  | "cyan" => some { r := 0, g := 255, b := 255 }
-  | "magenta" => some { r := 255, g := 0, b := 255 }
-  | "yellow" => some { r := 255, g := 255, b := 0 }
-  | "brown" => some { r := 191, g := 128, b := 64 }
-  | "lime" => some { r := 191, g := 255, b := 0 }
-  | "olive" => some { r := 128, g := 128, b := 0 }
-  | "orange" => some { r := 255, g := 128, b := 0 }
-  | "pink" => some { r := 255, g := 191, b := 191 }
-  | "purple" => some { r := 191, g := 0, b := 64 }
-  | "teal" => some { r := 0, g := 128, b := 128 }
-  | "violet" => some { r := 128, g := 0, b := 128 }
-  | "gray" => some { r := 128, g := 128, b := 128 }
-  | "darkgray" => some { r := 64, g := 64, b := 64 }
-  | "lightgray" => some { r := 191, g := 191, b := 191 }
+  | "black" => some (Color.ofGray zero)
+  | "white" => some (Color.ofGray one)
+  | "red" => rgb one zero zero
+  | "green" => rgb zero one zero
+  | "blue" => rgb zero zero one
+  | "cyan" => rgb zero one one
+  | "magenta" => rgb one zero one
+  | "yellow" => rgb one one zero
+  | "brown" => rgb (part 75 100) half (part 25 100)
+  | "lime" => rgb (part 75 100) one zero
+  | "olive" => rgb half half zero
+  | "orange" => rgb one half zero
+  | "pink" => rgb one (part 75 100) (part 75 100)
+  | "purple" => rgb (part 75 100) zero (part 25 100)
+  | "teal" => rgb zero half half
+  | "violet" => rgb half zero half
+  | "gray" => some (Color.ofGray half)
+  | "darkgray" => some (Color.ofGray (part 25 100))
+  | "lightgray" => some (Color.ofGray (part 75 100))
   | _ => none
 
 /-- One atom of a palette expression: a declared entry first, then xcolor's base colours. -/
@@ -1573,7 +1597,7 @@ public def Palette.resolve (p : Palette) (expr : String) : Option Color :=
       | some pct =>
         if pct > 100 then none
         else match rest with
-          | [] => some (c.mix pct Color.white)
+          | [] => some (c.mix pct (Color.ofGray (part 1 1)))
           | name :: rest' =>
             match p.atom name with
             | some b => go (c.mix pct b) rest'
@@ -1891,6 +1915,18 @@ public theorem OutputSpec.addProfile_nodup (o : OutputSpec) (p : String)
     subst hxy
     simpa [Array.contains_iff_mem] using hx
 
+/-- A declared output intent: its ICC profile file and the registry entry naming the printing
+condition the profile characterizes. -/
+public structure OutputIntent where
+  profile : String := ""
+  condition : Option String := none
+  info : Option String := none
+  registry : Option String := none
+  components : Option Nat := none
+  /-- Where the document names the profile. -/
+  span : Option Span := none
+  deriving Repr, BEq, Inhabited
+
 /-- Document metadata, as declared by `\pdfmeta`: the one record every surface derives from. -/
 public structure Meta where
   title : Option String := none
@@ -1911,7 +1947,25 @@ public structure Meta where
   (`\DocumentMetadata{ pdfversion = 1.7 }` or
   `\pdfmeta{ version = "1.7" }`). -/
   pdfVersion : Option String := none
+  /-- Where the document declares its PDF version. -/
+  versionSpan : Option Span := none
+  /-- Where the document declares its trapping unknown, which PDF/X does not admit. -/
+  trappedUnknownAt : Option Span := none
+  /-- The PDF/X standard the document declares, which the file claims only where it meets it. -/
+  pdfx : Option String := none
+  /-- The printing condition the document's colours are meant for (ISO 32000-2 §14.11.5). -/
+  intent : Option OutputIntent := none
+  /-- The file's creation and modification dates, as declared. -/
+  created : Option String := none
+  modified : Option String := none
+  /-- Whether the document declares itself trapped for press. -/
+  trapped : Option Bool := none
   deriving Repr, BEq, Inhabited
+
+/-- The PDF version the file is written in: the 1.6 a PDF/X standard is defined on under its
+claim, else as declared. -/
+@[expose] public def Meta.writtenVersion (m : Meta) : Option String :=
+  if m.pdfx.isSome then some "1.6" else m.pdfVersion
 
 /-- The document's main locale: the declared language when a record ships for
 it, English otherwise. -/

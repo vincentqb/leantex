@@ -21,6 +21,7 @@ import Tests.SeedPalette
 import Tests.Schemes
 import Tests.SpotColor
 import Tests.PageBoxes
+import Tests.PrintX4
 import Tests.SvgRoute
 import scripts.Rung
 import Tests.MonoDefault
@@ -139,6 +140,11 @@ def registry : List AuditRow :=
    ⟨.W0443, .keep, .degraded, check% Tests.PageBoxes.checks⟩,
    ⟨.W0434, .keep, .degraded, check% Tests.Blueprint.blueprintChecks⟩,
    ⟨.W0436, .keep, .degraded, check% Tests.Blueprint.blueprintChecks⟩,
+   ⟨.W0444, .keep, .degraded, check% Tests.PrintX4.checks⟩,
+   ⟨.W0445, .keep, .degraded, check% Tests.PrintX4.checks⟩,
+   ⟨.W0446, .keep, .degraded, check% Tests.PrintX4.checks⟩,
+   ⟨.W0447, .keep, .degraded, check% Tests.PrintX4.checks⟩,
+   ⟨.N0448, .keep, .native, check% Tests.PrintX4.checks⟩,
    ⟨.W0394, .keep, .degraded, check% layoutInkChecks⟩,
    ⟨.E0395, .keep, .fails, check% layoutInkChecks⟩,
    ⟨.W0396, .keep, .degraded, check% layoutInkChecks⟩,

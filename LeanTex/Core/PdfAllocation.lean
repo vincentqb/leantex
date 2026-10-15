@@ -33,7 +33,7 @@ private theorem allocation_perm (t : ObjTable) :
           List.range' p.1 p.2) ++
         (List.range t.nFigForm).map t.figFormId ++
         (List.range t.nf).flatMap (fun k => [ObjTable.toUniId k, t.fileId k]) ++
-        [t.xmpId]) ++ (List.range t.nStm).map t.objStmId ++ [t.xrefId]).Perm t.ids.toList := by
+        t.metaIds.toList) ++ (List.range t.nStm).map t.objStmId ++ [t.xrefId]).Perm t.ids.toList := by
   apply List.perm_iff_count.mpr
   intro n
   have split3 := count_flatMap_cons (List.range t.nf) ObjTable.type0Id

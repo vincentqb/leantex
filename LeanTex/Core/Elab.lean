@@ -18,6 +18,7 @@ import LeanTex.Core.PictureCensus
 import LeanTex.Core.FaIcons
 import LeanTex.Core.BibAccent
 import LeanTex.Core.PdfContract
+import LeanTex.Core.PdfDate
 public import LeanTex.Core.ListingReply
 import LeanTex.Core.Listing
 import LeanTex.Core.LexerName
@@ -961,7 +962,8 @@ private def pageGeometryKeys : List String :=
 
 private def metaKeys : List String :=
   ["title", "author", "subject", "keywords", "url", "image", "favicon",
-   "language", "version"]
+   "language", "version", "standard", "intent", "intent-condition", "intent-info",
+   "intent-registry", "intent-components", "created", "modified", "trapped"]
 
 private def fontKeys : List String :=
   ["body", "sans", "mono", "math", "rm", "sf", "tt", "dir",
@@ -13659,13 +13661,61 @@ private def applyMeta (ctx : Ctx) (m0 : Meta) (entries : Array Decl.Entry)
     | "image", .str s => m := { m with image := some s }
     | "favicon", .str s => m := { m with favicon := some s }
     | "version", .str s =>
-      if s == "1.7" || s == "2.0" then m := { m with pdfVersion := some s }
+      if s == "1.6" || s == "1.7" || s == "2.0" then
+        m := { m with pdfVersion := some s, versionSpan := some ⟨ctx.file, pos⟩ }
       else
         evs := evs.push (.say (diagOf ctx .E0323
-          s!"'version' in '\\pdfmeta' expects \"1.7\" or \"2.0\", got '{s}'" (some pos) none))
+          s!"'version' in '\\pdfmeta' expects \"1.6\", \"1.7\" or \"2.0\", got '{s}'" (some pos) none))
+    | "standard", .str s =>
+      if s == "X-4" then m := { m with pdfx := some s }
+      else
+        evs := evs.push (.say (diagOf ctx .E0323
+          s!"'standard' in '\\pdfmeta' expects \"X-4\", got '{s}'" (some pos) none))
+    | "intent", .str s =>
+      m := { m with intent := some { m.intent.getD {} with profile := s, span := some ⟨ctx.file, pos⟩ } }
+    | "intent-condition", .str s =>
+      m := { m with intent := some { m.intent.getD {} with condition := some s } }
+    | "intent-info", .str s => m := { m with intent := some { m.intent.getD {} with info := some s } }
+    | "intent-registry", .str s =>
+      m := { m with intent := some { m.intent.getD {} with registry := some s } }
+    | "intent-components", .str c =>
+      match c.toNat? with
+      | some n =>
+        if n == 1 || n == 3 || n == 4 then
+          m := { m with intent := some { m.intent.getD {} with components := some n } }
+        else
+          evs := evs.push (.say (diagOf ctx .E0323
+            s!"'intent-components' in '\\pdfmeta' expects 1, 3 or 4, got {n}" (some pos) none))
+      | none =>
+        evs := evs.push (.say (diagOf ctx .E0323
+          s!"'intent-components' in '\\pdfmeta' expects 1, 3 or 4, got '{c}'" (some pos) none))
+    | "intent-components", .int n =>
+      if n == 1 || n == 3 || n == 4 then
+        m := { m with intent := some { m.intent.getD {} with components := some n.toNat } }
+      else
+        evs := evs.push (.say (diagOf ctx .E0323
+          s!"'intent-components' in '\\pdfmeta' expects 1, 3 or 4, got {n}" (some pos) none))
+    | "created", .str s | "modified", .str s =>
+      if (PdfDate.parse? s).isSome then
+        m := if e.key == "created" then { m with created := some s } else { m with modified := some s }
+      else
+        evs := evs.push (.say (diagOf ctx .E0323
+          s!"'{e.key}' in '\\pdfmeta' expects a date, 2026-01-31 or 2026-01-31T09:00:00Z, got '{s}'"
+          (some pos) none))
+    | "trapped", .ident w | "trapped", .str w =>
+      let v := w.toLower
+      if v == "true" || v == "false" then
+        m := { m with trapped := some (v == "true"), trappedUnknownAt := none }
+      else if v == "unknown" then
+        m := { m with trapped := none, trappedUnknownAt := some ⟨ctx.file, pos⟩ }
+      else
+        evs := evs.push (.say (diagOf ctx .E0323
+          s!"'trapped' in '\\pdfmeta' expects true, false or unknown, got '{v}'" (some pos) none))
     | key, v =>
       if metaKeys.contains key then
-        evs := evs.push (.say (Decl.wrongType ctx.file "pdfmeta" key "a string" v pos))
+        let expected := if key == "trapped" then "true, false or unknown"
+          else if key == "intent-components" then "1, 3 or 4" else "a string"
+        evs := evs.push (.say (Decl.wrongType ctx.file "pdfmeta" key expected v pos))
       else
         evs := evs.push (.say (Decl.unknownKey ctx.file "pdfmeta" key metaKeys pos))
     if evs.size == before then
@@ -13747,8 +13797,9 @@ public inductive PDecl where
   | page (src : Option String) (pos : Pos)
   | fonts (src : Option String) (pos : Pos)
   | pdfmeta (src : Option String) (pos : Pos)
-  /-- hyperref's metadata lowered by Compat: the construct, its link styles, each key's TeX. -/
-  | pdfmetaText (what links : String) (pairs : Array (Compat.MetaKey × Array Raw)) (pos : Pos)
+  /-- hyperref's metadata lowered by Compat: the construct, its link styles, its dates and trapping
+  as `\pdfmeta` entries, each key's TeX. -/
+  | pdfmetaText (what links words : String) (pairs : Array (Compat.MetaKey × Array Raw)) (pos : Pos)
   | captionsetup (scope : Option String) (unclosed : Option Pos) (body : Option String) (pos : Pos)
   /-- url.sty's `\urlstyle`: the family `\url` and `\nolinkurl` set in. -/
   | urlstyle (v : Option String) (pos : Pos)
@@ -13838,12 +13889,13 @@ private def metaTextPairs : List Raw → Array (Compat.MetaKey × Array Raw) →
 
 /-- The `\pdfmeta` group at `j` when Compat lowered it from TeX values (`Compat.metaTextMark`). -/
 private def metaTextAt (raws : Array Raw) (j : Nat) :
-    Option (String × String × Array (Compat.MetaKey × Array Raw) × Nat) :=
+    Option (String × String × String × Array (Compat.MetaKey × Array Raw) × Nat) :=
   match raws[j]? with
   | some (.group body _) =>
     match body.toList with
-    | .ctrl m _ :: .group what _ :: .group links _ :: rest =>
-      if m == Compat.metaTextMark then some (rawSrc what, rawSrc links, metaTextPairs rest #[], j + 1)
+    | .ctrl m _ :: .group what _ :: .group links _ :: .group words _ :: rest =>
+      if m == Compat.metaTextMark then
+        some (rawSrc what, rawSrc links, rawSrc words, metaTextPairs rest #[], j + 1)
       else none
     | _ => none
   | _ => none
@@ -14066,10 +14118,10 @@ public def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run d
             if let some k := Blueprint.SiteKey.ofName? (rawSrc key) then
               out := out.push (.blueprintSite k (rawSrc url) pos)
           | _, _ => pure ()
-        else if let some (what, links, pairs, k) :=
+        else if let some (what, links, words, pairs, k) :=
             (if name == "pdfmeta" then metaTextAt preamble (skipSpaces preamble i) else none) then
           i := k
-          out := out.push (.pdfmetaText what links pairs pos)
+          out := out.push (.pdfmetaText what links words pairs pos)
         else if declCtrl.contains name then
           let j := skipSpaces preamble i
           let src : Option String := match preamble[j]? with
@@ -14667,7 +14719,7 @@ convert = none refuses both")
       return s
   | .pdfmeta (some src) pos => stepDone s.ctx (stepPdfmeta s src pos)
   | .pdfmeta none pos => stepDone s.ctx (stepMissing s "pdfmeta" "a {...} block" pos)
-  | .pdfmetaText what links pairs pos =>
+  | .pdfmetaText what links words pairs pos =>
     let mut info := s.info
     let mut evs : Array PEvent := #[]
     let mut said : Array String := #[]
@@ -14699,11 +14751,13 @@ numbers it; set as '??' or '?'" (some pos)
         | .keywords => { info with keywords := some text }
       evs := evs.push (.scalar "pdfmeta" key.name text pos)
       said := said.push s!"{key.name} = {Decl.quote text}"
+    let (worded, wordEvs) := stepPdfmeta { s with info } words pos
+    unless words.isEmpty do said := said.push words
     let native := (if said.isEmpty then "" else
       s!"\\pdfmeta\{ {String.intercalate ", " said.toList} }") ++ links
     diag s.ctx .N0100 s!"'{what}' → {if native.isEmpty then "nothing: its values are empty" else native}" pos
-    emitEvents s.ctx evs
-    return { s with info }
+    emitEvents s.ctx (evs ++ wordEvs)
+    return { s with info := worded.info }
   | .urlstyle v pos =>
     -- The family is read before the fold (`urlFamily0`); this arm only reports.
     match v with

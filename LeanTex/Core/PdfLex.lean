@@ -135,11 +135,15 @@ public def tryRef (b : ByteArray) (i0 : Nat) : Option (Nat × Nat) := do
       return (gen, k + 1)
   none
 
+/-- A character a name writes as itself: a regular character from `!` to `~` but `#` (§7.3.5). -/
+@[expose] public def nameKeeps (c : Char) : Bool :=
+  33 ≤ c.toNat && c.toNat ≤ 126 && !isDelim c.toNat && c.toNat != 35
+
 /-- A name's byte escape (§7.3.5); an empty name becomes `Embedded`, and each character keeps its low byte. -/
 public def escapeName (s : String) : String := Id.run do
   let mut out := ""
   for c in s.toList do
-    if c.isAlphanum || c == '-' || c == '.' then
+    if nameKeeps c then
       out := out.push c
     else
       out := out ++ "#" ++ String.ofList [Hex.spell true (c.toNat / 16), Hex.spell true c.toNat]

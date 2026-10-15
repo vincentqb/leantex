@@ -1736,6 +1736,8 @@ public structure Store where
   formZ : Array (Option ByteArray) := #[]
   /-- Each entry's vector figure with its text set in the document's faces. -/
   shaped : Array (Option (Gfx.Figure Gfx.Shaped)) := #[]
+  /-- The output intent's ICC profile, as the driver read it. -/
+  profile : Option ByteArray := none
   deriving Inhabited
 
 @[expose] public def Store.findRequest? (s : Store) (req : Request) : Option Nat :=

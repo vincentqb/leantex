@@ -315,7 +315,7 @@ white paper. -/
   | .page => keyed "bg" .decorative none (screen (.const Color.white) (.seeded .page))
       [("normal text", .bg), ("background canvas", .bg)] (exportName := some "Paper")
       (judged := .uses)
-  | .ink => keyed "fg" .text (some .page) (screen (.const Color.black) (.seeded .ink))
+  | .ink => keyed "fg" .text (some .page) (screen (.const Color.blackInk) (.seeded .ink))
       [("normal text", .fg)] (exportName := some "Ink") (judged := .page)
   | .muted => keyed "muted" .text (some .page) mutedFallback
       [("footline", .fg), ("page number in head/foot", .fg)] (exportName := some "Muted") (judged := .uses)

@@ -8,6 +8,8 @@ import LeanTex.Core.FontSubset
 public import LeanTex.Core.Layout
 import LeanTex.Core.Loop
 import LeanTex.Core.PdfText
+import LeanTex.Core.PdfDate
+public import LeanTex.Core.Icc
 public import LeanTex.Core.PdfContent
 public import LeanTex.Core.PdfFigures
 public import LeanTex.Core.PdfStruct
@@ -189,6 +191,10 @@ private def linkRects (geom : Geom) (page : PageOut) :
       | .poly _ _ => pure ()
   return out
 
+/-- The link annotations the pages carry, one per rectangle. -/
+public def linkCount (geom : Geom) (pages : Array PageOut) : Nat :=
+  pages.foldl (fun n p => n + (linkRects geom p).size) 0
+
 private def toUnicode (used : Array (Nat × Char)) : String := Id.run do
   let mut s := "/CIDInit /ProcSet findresource begin
 12 dict begin
@@ -225,7 +231,36 @@ private def widthObj (μ : Int) : PdfRead.Obj :=
 private def wArray (font : Font) (used : Array (Nat × Char)) : PdfRead.Obj :=
   .arr (used.flatMap fun (g, _) => #[PdfRead.Obj.int g, .arr #[widthObj (pdfWidthμ font g)]])
 
-private def xmpPacket (info : Ir.Meta) : String :=
+/-- The trapping a file states: as declared, else not trapped where PDF/X asks the key. -/
+public def trappedOf (info : Ir.Meta) : Option Bool :=
+  info.trapped.orElse fun _ => if info.pdfx.isSome then some false else none
+
+/-- The metadata a claim and declared dates add: the PDF/X identification, the document's identifier
+drawn from its title and creation and the instance's from its dates and its pages' `digest` too,
+`pdf:Trapped`, and the dates. -/
+private def xmpPrint (info : Ir.Meta) (digest : String) : String :=
+  let date (tag : String) (v : Option String) : String :=
+    match v.bind PdfDate.parse? with
+    | some d => s!"        <{tag}>{PdfRead.xmpText d.xmp}</{tag}>\n"
+    | none => ""
+  (match info.pdfx with
+   | some v =>
+     let doc := s!"{info.title.getD ""}\x00{info.created.getD ""}"
+     let version := s!"{doc}\x00{info.modified.getD ""}\x00{digest}"
+     s!"        <pdfxid:GTS_PDFXVersion>{PdfRead.xmpText ("PDF/" ++ v)}</pdfxid:GTS_PDFXVersion>\n" ++
+     s!"        <xmpMM:DocumentID>xmp.did:{Flate.contentKey doc.toUTF8}</xmpMM:DocumentID>\n" ++
+     s!"        <xmpMM:InstanceID>xmp.iid:{Flate.contentKey version.toUTF8}</xmpMM:InstanceID>\n" ++
+     "        <xmpMM:VersionID>1</xmpMM:VersionID>\n" ++
+     "        <xmpMM:RenditionClass>default</xmpMM:RenditionClass>\n"
+   | none => "") ++
+  (match trappedOf info with
+   | some b => s!"        <pdf:Trapped>{if b then "True" else "False"}</pdf:Trapped>\n"
+   | none => "") ++
+  date "xmp:CreateDate" info.created ++
+  date "xmp:ModifyDate" (info.modified.orElse fun _ => info.created) ++
+  date "xmp:MetadataDate" (info.modified.orElse fun _ => info.created)
+
+private def xmpPacket (info : Ir.Meta) (digest : String) : String :=
   let elem (tag : String) (v : Option String) : String :=
     match v with
     | some s =>
@@ -241,7 +276,12 @@ private def xmpPacket (info : Ir.Meta) : String :=
   "    <rdf:Description rdf:about=\"\"\n" ++
   "        xmlns:dc=\"http://purl.org/dc/elements/1.1/\"\n" ++
   "        xmlns:pdf=\"http://ns.adobe.com/pdf/1.3/\"\n" ++
-  "        xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\">\n" ++
+  "        xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\"" ++
+  (if info.pdfx.isSome then
+    "\n        xmlns:pdfxid=\"http://www.npes.org/pdfx/ns/id/\"" ++
+      "\n        xmlns:xmpMM=\"http://ns.adobe.com/xap/1.0/mm/\""
+  else "") ++
+  ">\n" ++
   elem "dc:title" info.title ++
   seqElem "dc:creator" info.author ++
   elem "dc:description" info.subject ++
@@ -252,11 +292,35 @@ private def xmpPacket (info : Ir.Meta) : String :=
   (match info.keywords with
    | some k => s!"        <pdf:Keywords>{PdfRead.xmpText k}</pdf:Keywords>\n"
    | none => "") ++
-  "        <pdf:Producer>leantex</pdf:Producer>\n" ++
+  "        <pdf:Producer>leantex</pdf:Producer>\n" ++ xmpPrint info digest ++
   "    </rdf:Description>\n" ++
   "  </rdf:RDF>\n" ++
   "</x:xmpmeta>\n" ++
   "<?xpacket end=\"w\"?>"
+
+/-- The file header's version line: PDF 1.6 or 1.7 where the document declares it, else 2.0. -/
+public def headerLine (info : Ir.Meta) : String :=
+  match info.writtenVersion with
+  | some "1.6" => "%PDF-1.6\n%"
+  | some "1.7" => "%PDF-1.7\n%"
+  | _ => "%PDF-2.0\n%"
+
+/-- The catalog's `/OutputIntents` for a declared intent whose profile the file embeds at `icc`:
+one `GTS_PDFX` intent naming its condition, `Custom` when undeclared, and describing it by the
+declared text or the profile's own (ISO 32000-2 §14.11.5). -/
+public def intentEntry (info : Ir.Meta) (icc : Option Nat) (profile : Option ByteArray) :
+    Array (String × PdfRead.Obj) :=
+  match info.intent, icc with
+  | some oi, some id =>
+    let text (k : String) : Option String → Array (String × PdfRead.Obj)
+      | some v => #[(k, PdfRead.textString v)]
+      | none => #[]
+    let desc := oi.info.orElse fun _ => profile.bind Icc.description?
+    #[("OutputIntents", .arr #[.dict (#[("Type", .name "OutputIntent"), ("S", .name "GTS_PDFX"),
+      ("DestOutputProfile", .ref id 0),
+      ("OutputConditionIdentifier", PdfRead.textString (oi.condition.getD "Custom"))] ++
+      text "Info" desc ++ text "RegistryName" oi.registry)])]
+  | _, _ => #[]
 
 /-- The catalog's `/Lang` from the declared language tag (ISO 32000-2 §14.9.2.2), none when undeclared. -/
 public def langEntry : Option String → Array (String × PdfRead.Obj)
@@ -308,36 +372,37 @@ public def ocEntries (figs : Array (String × Nat × PdfRead.FormOc)) :
 
 /-- The document catalog (ISO 32000-2 §7.7.2) as a typed object. -/
 public def catalogDict (outlineRoot : Option Nat) (xmpId : Nat) (lang : Option String)
-    (structTreeRoot : Nat) (oc : Array (String × PdfRead.Obj)) : PdfRead.Obj :=
+    (structTreeRoot : Nat) (oc : Array (String × PdfRead.Obj))
+    (intents : Array (String × PdfRead.Obj) := #[]) : PdfRead.Obj :=
   .dict (#[("Type", .name "Catalog"), ("Pages", .ref 2 0)]
     ++ (match outlineRoot with
         | some r => #[("Outlines", PdfRead.Obj.ref r 0)]
         | none => #[])
     ++ #[("Metadata", .ref xmpId 0)]
-    ++ langEntry lang ++ markedEntry structTreeRoot ++ viewerEntry ++ oc)
+    ++ langEntry lang ++ markedEntry structTreeRoot ++ viewerEntry ++ oc ++ intents)
 
 public theorem pdf_lang_declared (outlineRoot : Option Nat) (xmpId : Nat) (lang : Option String)
-    (structTreeRoot : Nat) (oc : Array (String × PdfRead.Obj)) :
-    ∃ pre post, catalogDict outlineRoot xmpId lang structTreeRoot oc
+    (structTreeRoot : Nat) (oc intents : Array (String × PdfRead.Obj)) :
+    ∃ pre post, catalogDict outlineRoot xmpId lang structTreeRoot oc intents
       = .dict (pre ++ langEntry lang ++ post) :=
   ⟨#[("Type", .name "Catalog"), ("Pages", .ref 2 0)]
     ++ (match outlineRoot with
         | some r => #[("Outlines", PdfRead.Obj.ref r 0)]
         | none => #[])
     ++ #[("Metadata", .ref xmpId 0)],
-   markedEntry structTreeRoot ++ viewerEntry ++ oc, by
+   markedEntry structTreeRoot ++ viewerEntry ++ oc ++ intents, by
     simp only [catalogDict, Array.append_assoc]⟩
 
 public theorem pdf_marked_declared (outlineRoot : Option Nat) (xmpId : Nat) (lang : Option String)
-    (structTreeRoot : Nat) (oc : Array (String × PdfRead.Obj)) :
-    ∃ pre post, catalogDict outlineRoot xmpId lang structTreeRoot oc
+    (structTreeRoot : Nat) (oc intents : Array (String × PdfRead.Obj)) :
+    ∃ pre post, catalogDict outlineRoot xmpId lang structTreeRoot oc intents
       = .dict (pre ++ markedEntry structTreeRoot ++ post) :=
   ⟨#[("Type", .name "Catalog"), ("Pages", .ref 2 0)]
     ++ (match outlineRoot with
         | some r => #[("Outlines", PdfRead.Obj.ref r 0)]
         | none => #[])
     ++ #[("Metadata", .ref xmpId 0)] ++ langEntry lang,
-   viewerEntry ++ oc, by
+   viewerEntry ++ oc ++ intents, by
     simp only [catalogDict, Array.append_assoc]⟩
 
 private def remapOf (fs : FontSet) (keep : Array Nat) : Array Nat := Id.run do
@@ -751,7 +816,10 @@ public structure ObjTable where
   xrefId : Nat
   size : Nat
   outputIntent : Option Nat := none
+  /-- The output intent's destination profile stream, after the metadata stream. -/
   icc : Option Nat := none
+  /-- How many destination profiles the file embeds, one or none. -/
+  nIcc : Nat := 0
   nElems : Nat
   structTreeRoot : Nat
   parentTree : Nat
@@ -777,6 +845,10 @@ public def structElemId (t : ObjTable) (k : Nat) : Nat := t.structBase + k
 public def figDictId (t : ObjTable) (k : Nat) : Nat := t.resId + 1 + k
 public def figFormId (t : ObjTable) (k : Nat) : Nat := t.resId + 1 + t.nFigDict + k
 public def objStmId (t : ObjTable) (k : Nat) : Nat := t.objStmBase + k
+public def iccId (t : ObjTable) (k : Nat) : Nat := t.xmpId + 1 + k
+
+/-- The metadata stream's id, then the destination profile's. -/
+public def metaIds (t : ObjTable) : Array Nat := #[t.xmpId] ++ (Array.range t.nIcc).map t.iccId
 
 /-- Every allocated id, in emission order. -/
 public def ids (t : ObjTable) : Array Nat :=
@@ -793,7 +865,7 @@ public def ids (t : ObjTable) : Array Nat :=
   ++ #[t.resId]
   ++ (Array.range t.nFigDict).map t.figDictId
   ++ (Array.range t.nFigForm).map t.figFormId
-  ++ (#[t.xmpId] ++ (Array.range t.nStm).map t.objStmId ++ #[t.xrefId])
+  ++ (t.metaIds ++ (Array.range t.nStm).map t.objStmId ++ #[t.xrefId])
 
 /-- The cross-reference row kind of an id, `none` for an id the table never allocated. -/
 public def kindOf (t : ObjTable) (compressedIdx : Nat → Option Nat) (id : Nat) : Option ObjKind :=
@@ -818,6 +890,7 @@ public def objTable (keep : Array Nat) (imgs : Image.Store) (usedImgs : Array Na
   let structTreeRoot := if nOut == 0 then infoId + 1 else infoId + 2 + nOut
   let resId := structTreeRoot + 3 + nElems
   let xmpId := resId + 1 + nFigDict + nFigForm
+  let nIcc := if imgs.profile.isSome then 1 else 0
   let nStm := objStmCount (compressedCount nf np nOut nElems nFigDict)
   { nf, ni := usedImgs.size, np, nOut, imgIds, imgSpans := spans
     smaskIds := (imgIds.zip extras).map fun (id, e) => match e with
@@ -833,7 +906,9 @@ public def objTable (keep : Array Nat) (imgs : Image.Store) (usedImgs : Array Na
       | .plain => 0
       | .alpha => 0
     pageBase, infoId, outlineRootId := infoId + 1, xmpId
-    objStmBase := xmpId + 1, nStm, xrefId := xmpId + 1 + nStm, size := xmpId + 2 + nStm
+    icc := if imgs.profile.isSome then some (xmpId + 1) else none, nIcc
+    objStmBase := xmpId + 1 + nIcc, nStm, xrefId := xmpId + 1 + nIcc + nStm
+    size := xmpId + 2 + nIcc + nStm
     nElems, structTreeRoot, parentTree := structTreeRoot + 1, namespaceId := structTreeRoot + 2
     structBase := structTreeRoot + 3, resId, nFigDict, nFigForm }
 
@@ -876,8 +951,8 @@ private theorem ObjTable.ids_exact (t : ObjTable) (spans : List Nat)
     (hpt : t.parentTree = t.structTreeRoot + 1) (hns : t.namespaceId = t.structTreeRoot + 2)
     (hsb : t.structBase = t.structTreeRoot + 3) (hres : t.resId = t.structBase + t.nElems)
     (hxmp : t.xmpId = t.resId + 1 + t.nFigDict + t.nFigForm)
-    (hstm : t.objStmBase = t.xmpId + 1) (hxref : t.xrefId = t.xmpId + 1 + t.nStm)
-    (hsize : t.size = t.xmpId + 2 + t.nStm) :
+    (hstm : t.objStmBase = t.xmpId + 1 + t.nIcc) (hxref : t.xrefId = t.xmpId + 1 + t.nIcc + t.nStm)
+    (hsize : t.size = t.xmpId + 2 + t.nIcc + t.nStm) :
     t.ids.toList = List.range' 1 (t.size - 1) := by
   have joinRanges (s m s' n : Nat) (h : s' = s + m) :
       List.range' s m ++ List.range' s' n = List.range' s (m + n) := by
@@ -893,14 +968,18 @@ private theorem ObjTable.ids_exact (t : ObjTable) (spans : List Nat)
     rw [List.range'_eq_map_range]; rfl
   have h12 : [1, 2] = List.range' 1 2 := rfl
   have hinfo1 : [t.infoId] = List.range' t.infoId 1 := rfl
-  have hstms : List.map t.objStmId (List.range t.nStm) = List.range' (t.xmpId + 1) t.nStm := by
+  have hstms : List.map t.objStmId (List.range t.nStm) = List.range' (t.xmpId + 1 + t.nIcc) t.nStm := by
     rw [List.range'_eq_map_range, ← hstm]; rfl
-  have htail : [t.xmpId] ++ List.map t.objStmId (List.range t.nStm) ++ [t.xrefId] =
-      List.range' t.xmpId (t.nStm + 2) := by
-    rw [hstms, hxref]
+  have hiccs : List.map t.iccId (List.range t.nIcc) = List.range' (t.xmpId + 1) t.nIcc := by
+    rw [List.range'_eq_map_range]; rfl
+  have htail : t.metaIds.toList ++
+      List.map t.objStmId (List.range t.nStm) ++ [t.xrefId] =
+      List.range' t.xmpId (t.nIcc + t.nStm + 2) := by
+    simp only [ObjTable.metaIds, Array.toList_append, Array.toList_map, Array.toList_range]
+    rw [hiccs, hstms, hxref]
     rw [show [t.xmpId] = List.range' t.xmpId 1 from rfl,
-      show [t.xmpId + 1 + t.nStm] = List.range' (t.xmpId + 1 + t.nStm) 1 from rfl,
-      joinRanges _ _ _ _ rfl, joinRanges _ _ _ _ (by omega)]
+      show [t.xmpId + 1 + t.nIcc + t.nStm] = List.range' (t.xmpId + 1 + t.nIcc + t.nStm) 1 from rfl,
+      joinRanges _ _ _ _ rfl, joinRanges _ _ _ _ (by omega), joinRanges _ _ _ _ (by omega)]
     congr 1
     omega
   have hstruct : [t.structTreeRoot, t.parentTree, t.namespaceId] = List.range' t.structTreeRoot 3 := by
@@ -1143,7 +1222,7 @@ public theorem Feature.name_inj (a b : Feature) (h : a.name = b.name) : a = b :=
 public def Feature.ofName? (s : String) : Option Feature := Feature.all.find? (·.name == s)
 
 private def reaches (geom : Geom) (fs : FontSet) (pages : Array PageOut) (imgs : Image.Store)
-    (outline : Array OutlineEntry) (tree : Struct.Tree) : Feature → Bool
+    (outline : Array OutlineEntry) (tree : Struct.Tree) (info : Ir.Meta) : Feature → Bool
   | .xrefStream => true
   | .objStm => true
   | .objStmMulti => 1 < (tableOf geom fs pages imgs outline tree).nStm
@@ -1157,14 +1236,14 @@ private def reaches (geom : Geom) (fs : FontSet) (pages : Array PageOut) (imgs :
   | .copiedGraph => (tableOf geom fs pages imgs outline).formSizes.any (· > 0)
   | .cidFontType0 => (keepFaces fs pages imgs.shaped).any fun k => (fs.get k).isCff
   | .cidFontType2 => (keepFaces fs pages imgs.shaped).any fun k => !(fs.get k).isCff
-  | .linkURI =>
-    pages.any (fun p => (linkRects geom p).any (fun r => !r.2.2.2.2.startsWith "#"))
-      || outline.any (fun e => e.page.isNone && e.url.isSome)
+  | .linkURI => info.pdfx.isNone &&
+    (pages.any (fun p => (linkRects geom p).any (fun r => !r.2.2.2.2.startsWith "#"))
+      || outline.any (fun e => e.page.isNone && e.url.isSome))
   | .outlines => outline.size > 0
   | .xmp => true
-  | .trimBox => geom.bleed != 0
-  | .outputIntent => (tableOf geom fs pages imgs outline).outputIntent.isSome
-  | .iccBased => (tableOf geom fs pages imgs outline).icc.isSome
+  | .trimBox => geom.bleed != 0 || geom.boxes.any (·.kind == .trim) || info.pdfx.isSome
+  | .outputIntent => (tableOf geom fs pages imgs outline).icc.isSome
+  | .iccBased => false
   | .tabs => false
   | .markedContent => (pageOps geom fs pages imgs).any fun ops => (lines ops).any Line.isOpen
   | .structTree => true
@@ -1185,8 +1264,9 @@ where
 /-- The features `write` reaches on these inputs, in `Feature.all`'s order, computed from its
 inputs rather than its bytes. -/
 public def features (geom : Geom) (fs : FontSet) (pages : Array PageOut) (imgs : Image.Store := {})
-    (outline : Array OutlineEntry := #[]) (tree : Struct.Tree := ⟨#[]⟩) : Array Feature :=
-  (Feature.all.filter (reaches geom fs pages imgs outline tree)).toArray
+    (outline : Array OutlineEntry := #[]) (tree : Struct.Tree := ⟨#[]⟩) (info : Ir.Meta := {}) :
+    Array Feature :=
+  (Feature.all.filter (reaches geom fs pages imgs outline tree info)).toArray
 
 public theorem features_mem (geom : Geom) (fs : FontSet) (pages : Array PageOut) (imgs : Image.Store)
     (outline : Array OutlineEntry) (tree : Struct.Tree) (f : Feature)
@@ -1928,9 +2008,91 @@ public theorem WritePlan.bytes_serialized_exact (p : WritePlan) :
       let (out, _) := serialize body #[flateRow p.table.xrefId dict xrefRows]
       out ++ (s!"startxref\n{body.size}\n%%EOF\n").toUTF8 := by rfl
 
-/-- Prepares positioned pages for a PDF 2.0 file, or 1.7 where the document declares it; `ops`,
-`streams` and `programs` are the driver's cached page operators, their rendered and deflated bytes,
-and its face programs. -/
+/-- A page of a file claiming PDF/X: an `/ArtBox` repeating its `/TrimBox` is dropped, the
+standard admitting one of the two. -/
+public def pdfxPage (info : Ir.Meta) (o : PdfRead.Obj) : PdfRead.Obj :=
+  match info.pdfx, o with
+  | some _, .dict es =>
+    match es.find? (·.1 == "TrimBox"), es.find? (·.1 == "ArtBox") with
+    | some (_, trim), some (_, art) => if trim == art then .dict (es.filter (·.1 != "ArtBox")) else o
+    | _, _ => o
+  | _, _ => o
+
+public theorem pdfxPage_get_type (info : Ir.Meta) (o : PdfRead.Obj) :
+    (pdfxPage info o).get? "Type" = o.get? "Type" := by
+  unfold pdfxPage
+  split
+  · split
+    · split
+      · simp only [PdfRead.Obj.get?]
+        rw [Array.find?_filter]
+        have hp : (fun a : String × PdfRead.Obj => decide ((a.fst != "ArtBox") = true ∧
+            (a.fst == "Type") = true)) = (fun x => x.fst == "Type") := by
+          funext x
+          by_cases hx : x.1 = "Type" <;> simp [hx]
+        rw [hp]
+      · rfl
+    · rfl
+  · rfl
+
+private def dateEntry (key : String) (v : Option String) : Array (String × PdfRead.Obj) :=
+  match v.bind PdfDate.parse? with
+  | some d => #[(key, PdfRead.textString d.pdf)]
+  | none => #[]
+
+private theorem dateEntry_find (key k : String) (v : Option String) (h : key ≠ k) :
+    (dateEntry key v).find? (·.1 == k) = none := by
+  unfold dateEntry
+  split <;> simp [h]
+
+private def trappedEntry (info : Ir.Meta) : Array (String × PdfRead.Obj) :=
+  match trappedOf info with
+  | some b => #[("Trapped", PdfRead.Obj.name (if b then "True" else "False"))]
+  | none => #[]
+
+private theorem trappedEntry_find (info : Ir.Meta) (k : String) (h : "Trapped" ≠ k) :
+    (trappedEntry info).find? (·.1 == k) = none := by
+  unfold trappedEntry
+  split <;> simp [h]
+
+/-- The Info dictionary's dates and trapping, as declared or as PDF/X asks. -/
+public def infoPrint (info : Ir.Meta) : Array (String × PdfRead.Obj) :=
+  let trapped := trappedEntry info
+  dateEntry "CreationDate" info.created ++
+    dateEntry "ModDate" (info.modified.orElse fun _ => info.created) ++ trapped
+
+public theorem infoPrint_untyped (info : Ir.Meta) (k : String)
+    (hk : k = "Type" ∨ k = "Subtype") : (infoPrint info).find? (·.1 == k) = none := by
+  have h1 : "CreationDate" ≠ k := by rcases hk with rfl | rfl <;> decide
+  have h2 : "ModDate" ≠ k := by rcases hk with rfl | rfl <;> decide
+  have h3 : "Trapped" ≠ k := by rcases hk with rfl | rfl <;> decide
+  simp only [infoPrint, Array.find?_append, dateEntry_find _ _ _ h1, dateEntry_find _ _ _ h2,
+    trappedEntry_find _ _ h3, Option.or_none]
+
+/-- The metadata stream, unfiltered under a PDF/X claim so a tool scanning for its packet finds
+it, else deflated. -/
+public def xmpRow (t : ObjTable) (info : Ir.Meta) (digest : String) : Row :=
+  let data := (xmpPacket info digest).toUTF8
+  if info.pdfx.isSome then ⟨t.xmpId, .stream StreamPrefix.metadata.text data⟩
+  else flateRow t.xmpId StreamPrefix.metadata.text data
+
+public theorem xmpRow_native_exact (t : ObjTable) (info : Ir.Meta) (digest : String) :
+    (xmpRow t info digest).body.Native := by
+  unfold xmpRow
+  split
+  · exact ⟨.metadata, false, (xmpPacket info digest).toUTF8, by simp [StreamPrefix.fragment]⟩
+  · exact flateRow_native_exact _ .metadata _
+
+/-- The destination profile's stream, deflated, its channels as its header names them. -/
+public def iccRows (t : ObjTable) (profile : Option ByteArray) : Array Row :=
+  match t.icc, profile with
+  | some id, some data =>
+    #[flateRow id s!"/N {((Icc.header? data).bind (Icc.components ·.colorSpace)).getD 4}" data]
+  | some _, none | none, _ => #[]
+
+/-- Prepares positioned pages for a PDF 2.0 file, or 1.6 or 1.7 where the document declares it;
+`ops`, `streams` and `programs` are the driver's cached page operators, their rendered and deflated
+bytes, and its face programs. -/
 public def prepare (geom : Geom) (fs : FontSet) (pages : Array PageOut)
     (info : Ir.Meta := {}) (imgs : Image.Store := {})
     (outline : Array OutlineEntry := #[])
@@ -1938,7 +2100,7 @@ public def prepare (geom : Geom) (fs : FontSet) (pages : Array PageOut)
     (tree : Struct.Tree := ⟨#[]⟩) (ops : Array (Array ContentOp) := #[])
     (programs : Array (ByteArray × Bool) := #[]) : WritePlan := Id.run do
   let np := pages.size
-  let v17 := info.pdfVersion == some "1.7"
+  let v17 := info.writtenVersion == some "1.7" || info.writtenVersion == some "1.6"
   let allUsed : Array (Array (Nat × Char)) := usedAll fs pages imgs.shaped
   let keep : Array Nat := keepOf allUsed
   let remap := remapOf fs keep
@@ -1976,6 +2138,7 @@ public def prepare (geom : Geom) (fs : FontSet) (pages : Array PageOut)
       return ((en.src, f.val.page), ← (t.formBases[n]?).join, ← f.val.oc)
   let catalog := catalogDict outlineRoot t.xmpId info.language t.structTreeRoot
     (ocEntries ((ocLabels (ocFigs.map (·.1))).zip (ocFigs.map (·.2))))
+    (intentEntry info t.icc imgs.profile)
   let pagesObj : PdfRead.Obj := .dict
     #[("Type", .name "Pages"),
       ("Kids", .arr ((Array.range np).map fun i => .ref (t.pageId i) 0)),
@@ -2002,14 +2165,14 @@ public def prepare (geom : Geom) (fs : FontSet) (pages : Array PageOut)
         ("A", .dict #[("S", .name "GoTo"), ("D", PdfRead.textString name)])
     else
       ("A", .dict #[("S", .name "URI"), ("URI", PdfRead.literal url.toUTF8)])
+  -- PDF/X admits no link on the printed sheet, so a file claiming it carries none (W0444).
   let annots (i : Nat) : Array (String × PdfRead.Obj) :=
     let rects := linkRects geom pages[i]!
-    if rects.isEmpty then #[] else
+    if rects.isEmpty || info.pdfx.isSome then #[] else
       #[("Annots", .arr (rects.map fun (x0, y0, x1, y1, url) =>
         .dict #[("Type", .name "Annot"), ("Subtype", .name "Link"),
           ("Rect", .arr #[ptObj x0, ptObj y0, ptObj x1, ptObj y1]),
-          ("Border", .arr #[.int 0, .int 0, .int 0]), ("F", .int 4),
-          linkTarget url]))]
+          ("Border", .arr #[.int 0, .int 0, .int 0]), ("F", .int 4), linkTarget url]))]
   let figId (k : Nat) : Nat :=
     if (figs[k]?.map FigRes.isForm).getD false then t.figFormId (figRank figs k)
     else t.figDictId (figRank figs k)
@@ -2036,6 +2199,10 @@ public def prepare (geom : Geom) (fs : FontSet) (pages : Array PageOut)
       (declared.find? (·.kind == k)).map fun c => ⟨c.x0, c.y0, c.x1, c.y1⟩
     let bled (r : Rect) : Option Rect := if b == 0 then none else some r
     let trimR := (rect .trim).orElse fun _ => bled trim
+    -- Under a PDF/X claim a page declaring no trim is trimmed inside its crop and bleed boxes.
+    let trimR := if info.pdfx.isNone || trimR.isSome || (rect .art).isSome then trimR else
+      let within := fun (a c : Rect) => (⟨max a.x0 c.x0, max a.y0 c.y0, min a.x1 c.x1, min a.y1 c.y1⟩ : Rect)
+      some (within ((rect .crop).getD media) ((rect .bleed).getD media))
     let boxes : Array (String × PdfRead.Obj) :=
       #[("TrimBox", trimR), ("BleedBox", (rect .bleed).orElse fun _ => bled bleedBox),
         ("ArtBox", (rect .art).orElse fun _ => trimR.bind bled), ("CropBox", rect .crop)].filterMap
@@ -2055,7 +2222,7 @@ public def prepare (geom : Geom) (fs : FontSet) (pages : Array PageOut)
   let infoDict : PdfRead.Obj := .dict
     (infoEntry "Title" info.title ++ infoEntry "Author" info.author ++
       infoEntry "Subject" info.subject ++ infoEntry "Keywords" info.keywords ++
-      #[("Producer", litObj "(leantex)")])
+      #[("Producer", litObj "(leantex)")] ++ infoPrint info)
 
   -- A resolved outline target is a /Dest to its page; /XYZ null null null keeps the reader's view.
   let outlineObjs : List (Nat × PdfRead.Obj) :=
@@ -2121,10 +2288,10 @@ public def prepare (geom : Geom) (fs : FontSet) (pages : Array PageOut)
     ++ es.toList.zipIdx.map fun (e, i) => (t.structElemId i, structElemObj e)
   let compressed : List (Nat × PdfRead.Obj) :=
     [(1, catalog), (2, pagesObj)] ++ fontObjs ++ [(t.infoId, infoDict)] ++ outlineObjs ++
-    (List.range np).map (fun i => (t.pageId i, pageDict i)) ++ structObjs ++
+    (List.range np).map (fun i => (t.pageId i, pdfxPage info (pageDict i))) ++ structObjs ++
     [(t.resId, resources)] ++ figDictObjs
 
-  let fileHead : ByteArray := (if v17 then "%PDF-1.7\n%" else "%PDF-2.0\n%").toUTF8 ++
+  let fileHead : ByteArray := (headerLine info).toUTF8 ++
     ⟨#[0xE2, 0xE3, 0xCF, 0xD3]⟩ ++ "\n".toUTF8
 
   let mut rows : Array Row := #[]
@@ -2209,7 +2376,15 @@ public def prepare (geom : Geom) (fs : FontSet) (pages : Array PageOut)
       | some z => zRow (t.fileId k) ffDict prog z
       | none => flateRow (t.fileId k) ffDict prog)
 
-  rows := rows.push (flateRow t.xmpId "/Type /Metadata /Subtype /XML" (xmpPacket info).toUTF8)
+  -- Under a claim, the metadata's identifiers read the pages' contents too.
+  let digest := if info.pdfx.isNone then "" else
+    Flate.hex16 ((List.range np).foldl (init := Flate.fnvOffset) fun h i =>
+      Flate.fnv64 h (match streams[i]?, ops[i]? with
+        | some s, _ => s.1
+        | none, some o => (render o).toUTF8
+        | none, none => ByteArray.empty))
+  rows := rows.push (xmpRow t info digest)
+  rows := rows ++ iccRows t imgs.profile
   return ⟨t, fileHead, rows, compressed⟩
 
 /-- Serializes the prepared emissions. -/
@@ -2324,7 +2499,7 @@ public theorem prepare_native_exact (geom : Geom) (fs : FontSet) (pages : Array 
       · split
         · exact zfont _ _ _ _
         · exact ffont _ _ _
-  · exact flateRow_native_exact _ .metadata _
+  · exact xmpRow_native_exact _ _ _
 
 private theorem map_zipIdx_snd {α β : Type} (l : List α) (f : Nat → β) :
     l.zipIdx.map (fun p => f p.2) = (List.range l.length).map f := by
@@ -2407,6 +2582,24 @@ private theorem zRow_id (n : Nat) (d : String) (data z : ByteArray) :
 private theorem flateRow_id (n : Nat) (d : String) (data : ByteArray) :
     (flateRow n d data).id = n := zRow_id ..
 
+private theorem xmpRow_id (t : ObjTable) (info : Ir.Meta) (digest : String) :
+    (xmpRow t info digest).id = t.xmpId := by
+  unfold xmpRow
+  split
+  · rfl
+  · exact flateRow_id ..
+
+private theorem iccRows_ids (keep : Array Nat) (imgs : Image.Store) (usedImgs : Array Nat)
+    (np nOut nElems nFigDict nFigForm : Nat) :
+    (iccRows (objTable keep imgs usedImgs np nOut nElems nFigDict nFigForm) imgs.profile).toList.map
+        Row.id =
+      (List.range (objTable keep imgs usedImgs np nOut nElems nFigDict nFigForm).nIcc).map
+        (objTable keep imgs usedImgs np nOut nElems nFigDict nFigForm).iccId := by
+  unfold iccRows objTable
+  cases h : imgs.profile with
+  | none => simp
+  | some p => simp [ObjTable.iccId, flateRow_id]
+
 private theorem formRow_id (gi : GfxPdf.GlyphInk) (n resId : Nat) (r : FigRes) :
     (formRow gi n resId r).id = n := by
   cases r <;> exact flateRow_id ..
@@ -2463,11 +2656,12 @@ public theorem prepare_direct_ids_exact (geom : Layout.Geom) (fs : Font.FontSet)
       ((p.table.imgIds.zip p.table.imgSpans).toList.flatMap fun p => List.range' p.1 p.2) ++
       (List.range p.table.nFigForm).map p.table.figFormId ++
       (List.range p.table.nf).flatMap (fun k => [ObjTable.toUniId k, p.table.fileId k]) ++
-      [p.table.xmpId] := by
+      p.table.metaIds.toList := by
   let t := tableOf geom fs pages imgs outline tree
   dsimp only
   simp only [prepare, Id.run, bind, pure, fill_size_exact]
-  simp only [Array.toList_push, List.map_append, List.map_cons, List.map_nil, flateRow_id]
+  simp only [Array.toList_append, Array.toList_push, List.map_append, List.map_cons, List.map_nil,
+    xmpRow_id, iccRows_ids]
   rw [forIn_range_ids (ids := fun rs : Array Row => rs.toList.map Row.id)
     (emits := fun k => [ObjTable.toUniId k, t.fileId k])]
   case hf =>
@@ -2527,7 +2721,8 @@ public theorem prepare_direct_ids_exact (geom : Layout.Geom) (fs : Font.FontSet)
     split <;> simp only [zRow_id, flateRow_id] <;> rfl
   rw [image_transcript]
   simp only [List.map_nil, List.nil_append, ← List.map_eq_flatMap, Array.toList_zipIdx,
-    map_zipIdx_snd, Array.length_toList]
+    map_zipIdx_snd, Array.length_toList, ObjTable.metaIds, Array.toList_append, Array.toList_map,
+    Array.toList_range, List.append_assoc, List.singleton_append]
   rfl
 
 public theorem stmRowsOf_ids_exact (t : ObjTable) (packed : List (Nat × ObjectStream)) :
@@ -2548,7 +2743,7 @@ private theorem emission_covers (p : WritePlan)
       ((p.table.imgIds.zip p.table.imgSpans).toList.flatMap fun q => List.range' q.1 q.2) ++
       (List.range p.table.nFigForm).map p.table.figFormId ++
       (List.range p.table.nf).flatMap (fun k => [ObjTable.toUniId k, p.table.fileId k]) ++
-      [p.table.xmpId])
+      p.table.metaIds.toList)
     (hc : p.compressed.map Prod.fst =
       [1, 2] ++ (List.range p.table.nf).flatMap (fun k =>
         [ObjTable.type0Id k, ObjTable.cidId k, ObjTable.fdId k]) ++

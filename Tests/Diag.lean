@@ -8,6 +8,9 @@ public import Tests.Support
 public import Tests.CorpusStore
 public import Tests.LayoutInkContracts
 public import Tests.ListingStyleTable
+public import Tests.DriverAssets
+public import Tests.PrintX4
+public import LeanTex.Core.PdfX
 
 public section
 
@@ -120,6 +123,37 @@ def driverProbes : Array (DiagCode × DriverProbe) :=
         | .error d => ds := ds.push d
         | .ok _ => pure ()
       return ds),
+    -- The output intent's profile, named beside a document where no file answers it.
+    (.W0446, fun dir => do
+      let file := (dir / "doc.tex").toString
+      return (← Tests.DriverAssets.loadProfile file { intent := some { profile := "absent.icc" } }).2),
+    -- A file declaring PDF/X-4 with no output intent, judged as the driver judges it.
+    (.W0445, fun _ => do
+      let pdf := syntheticPdf #["<< /Type /Catalog /Pages 2 0 R >>",
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] /Contents 4 0 R >>",
+        streamObj "1 0 0 rg 0 0 5 5 re f"]
+      match Tests.DriverAssets.pdfxClaim { pdfx := some "X-4" } pdf 0 fun _ => .ok pdf with
+      | .ok (_, ds) => return ds
+      | .error _ => return #[]),
+    -- A hand-built file meeting PDF/X-4, claimed over two links the claim leaves out.
+    (.W0444, fun _ => do
+      let pdf := Tests.PrintX4.passingPdf (Tests.PrintX4.profile 2 1 "prtr" "CMYK" "Probe Press 1")
+      match Tests.DriverAssets.pdfxClaim { pdfx := some "X-4" } pdf 2 fun _ => .ok .empty with
+      | .ok (_, ds) => return ds
+      | .error _ => return #[]),
+    -- A claim standing over a declared PDF 2.0, which it writes as 1.6.
+    (.W0447, fun _ => do
+      let pdf := Tests.PrintX4.passingPdf (Tests.PrintX4.profile 2 1 "prtr" "CMYK" "Probe Press 1")
+      match Tests.DriverAssets.pdfxClaim { pdfx := some "X-4", pdfVersion := some "2.0" } pdf 0
+          fun _ => .ok .empty with
+      | .ok (_, ds) => return ds
+      | .error _ => return #[]),
+    (.N0448, fun _ => do
+      let pdf := Tests.PrintX4.passingPdf (Tests.PrintX4.profile 2 1 "prtr" "CMYK" "Probe Press 1")
+      match Tests.DriverAssets.pdfxClaim { pdfx := some "X-4" } pdf 0 fun _ => .ok .empty with
+      | .ok (_, ds) => return ds
+      | .error _ => return #[]),
     (.W0008, fun _ => do
       let doc := (elabStr ("\\documentclass{article}\n\\fonts{ dir = \"fonts\" }\n" ++
         "\\begin{document}\nx\n\\end{document}\n")).1
@@ -427,6 +461,11 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
   | .W0436 => dvE (w := w) (dvDoc ("\\usepackage{amsthm}\n" ++
       "\\usepackage[link=https://github.com/example/widgets]{blueprint}\n\\newtheorem{lemma}{Lemma}\n")
       "\\begin{lemma}\\lean{Example.Widget} x\\end{lemma}")
+  | .W0444 => probed .W0444
+  | .W0445 => probed .W0445
+  | .W0446 => probed .W0446
+  | .N0448 => probed .N0448
+  | .W0447 => probed .W0447
   | .W0317 => dvE (w := w) ("\\documentclass{card}\n\\runninghead{name}\n" ++
       "\\begin{document}\nx\n\\end{document}")
   | .W0318 => dvE (w := w) (dvDoc "\\chrome{ footer = { left = \\sectiontitle } }\n" "x")
@@ -1363,7 +1402,13 @@ keeps once (`Layout.uniqueDiags`)")
   unexercisedAs "a judgement of the reference list's language, made once per list"
     ["W0421"] ++
   unexercisedAs "a judgement of the reference list's collation, made once per list"
-    ["W0427"]
+    ["W0427"] ++
+  unexercisedAs "a judgement of the written file against its declared standard, made once per file"
+    ["W0444", "W0445"] ++
+  unexercisedAs "a loss of the output intent's profile, read once per file however often it is named"
+    ["W0446"] ++
+  unexercisedAs "a judgement of the declared PDF version, made once per document"
+    ["W0447"]
 
 /-- A loss written twice is one line: every warning code's witness written twice prints no more
 warning lines than once, or `repeatFoldUnexercised` names it. -/

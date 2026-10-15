@@ -156,7 +156,7 @@ def listingProviderChecks (ref : IO.Ref (List String)) : IO Unit := do
         ("ready", ⟨"Literal.String.Double"⟩), ("$HOME", ⟨"Name.Variable"⟩),
         ("# terminal", ⟨"Comment.Single"⟩)] do
       let own := Listing.ink doc.palette none kind (style := style)
-      let ink := own.getD Ir.Color.black
+      let ink := own.getD Ir.Color.blackInk
       t "listing provider: Layout.Out ships checked class ink"
         ((ShellHighlight.witnessPaint? source word glyphs).any fun colors =>
           !colors.isEmpty && colors.all (· == ink))

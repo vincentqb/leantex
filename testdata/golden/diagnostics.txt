@@ -316,6 +316,10 @@
 ℹ [N0376]
   this picture ships no text alternative; assistive technology reads nothing in its place (WCAG 2.2 SC 1.1.1)
   suggestion: describe the picture — \begin{tikzpicture}[alt={...}] — mark it decorative with [artifact], or caption a figure around it; an empty alt= says nothing
+── N0448 (info) a file claiming a PDF/X standard on the checks the engine makes; a print service's preflight judges what they leave
+ℹ [N0448]
+  the file claims its PDF/X standard on the engine's checks; a print service's preflight judges the rest
+  under PDF/X-4, unjudged: ink coverage, line weights, image resolution, overprint
 ── W0001 (config) content after \end{document} is ignored
 ⚠ [W0001]
   content after '\end{document}' is ignored
@@ -994,6 +998,42 @@
 ⚠ [W0443] - \AddToHook
   the page attribute /Rotate is not a page box; the engine writes the page dictionary itself, without it
   suggestion: a page attribute's '/TrimBox', '/BleedBox', '/ArtBox' and '/CropBox' are written; '\page' declares the rest of the page
+── W0444 (degraded) links on the printed sheet, which the PDF/X standard the file claims does not admit; the PDF carries none, the web page keeps them
+⚠ [W0444]
+  the file claims its PDF/X standard, which admits no link on the printed sheet; its links are not written
+  under PDF/X-4: 2 link areas
+  suggestion: the web page keeps them: \output{ formats = pdf, html }
+── W0445 (degraded) the file breaks a requirement of the PDF/X standard the document declares; it is written without claiming the standard
+⚠ [W0445]
+  the file is written without claiming its declared PDF standard: its PDF version is one the standard does not admit
+  under PDF/X-4: the file header is PDF 1.7, not 1.6
+  suggestion: declare the version the standard is written on: \DocumentMetadata{ pdfversion = 1.6 }
+⚠ [W0445]
+  the file is written without claiming its declared PDF standard: it has no output intent the standard admits
+  under PDF/X-4: the file carries no GTS_PDFX output intent
+  suggestion: name the output profile: \DocumentMetadata{ colorprofiles = { X = name.icc } }
+⚠ [W0445]
+  the file is written without claiming its declared PDF standard: its metadata lacks or contradicts what the standard asks
+  under PDF/X-4: the metadata's pdfxid:GTS_PDFXVersion is absent; the metadata carries no dc:title; the metadata lacks xmpMM:DocumentID, xmpMM:VersionID or xmpMM:RenditionClass; the metadata lacks xmp:CreateDate or xmp:ModifyDate
+  suggestion: declare the file's title and dates: \hypersetup{ pdftitle = {Title}, pdfcreationdate = D:20260131090000Z }
+⚠ [W0445]
+  the file is written without claiming its declared PDF standard: its trapping is missing, unknown or stated two ways
+  under PDF/X-4: the file states neither /Trapped nor pdf:Trapped
+  suggestion: state the trapping as True or False: \hypersetup{ pdftrapped = False }
+⚠ [W0445]
+  the file is written without claiming its declared PDF standard: a page's boxes break the standard's trim and bleed rules
+  under PDF/X-4: page 1 declares neither /TrimBox nor /ArtBox
+  suggestion: declare the bleed past the trim, which writes the trim box: \page{ bleed = 3mm }
+── W0446 (degraded) the output intent's profile is missing or is no ICC output profile; the file carries no output intent and claims no PDF/X standard
+⚠ [W0446]
+  the output intent's profile is missing or no ICC output profile; the file has no output intent and claims no PDF standard
+  'absent.icc' is not there
+  suggestion: name an ICC output profile beside the document: \DocumentMetadata{ colorprofiles = { X = name.icc } }
+── W0447 (degraded) a declaration the declared PDF/X standard does not admit; the standard's value is written in its place
+⚠ [W0447]
+  the declared PDF version is one the declared PDF standard does not admit; the standard's version is written
+  the PDF/X-4 standard is written on PDF 1.6; PDF 2.0 is declared, and 1.6 written
+  suggestion: declare the version the standard is written on: \DocumentMetadata{ pdfversion = 1.6 } or \pdfmeta{ version = "1.6" }
 ── W0601 (degraded) image unreadable or not found; placeholder box placed
 ⚠ [W0601]
   image file not found: 'figures/plot.png'; a placeholder box holds its place

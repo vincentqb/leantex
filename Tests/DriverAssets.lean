@@ -7,6 +7,7 @@ public import LeanTex.Core.Font
 import LeanTex.Core.Elab
 import LeanTex.Cli.FontEnv
 public import LeanTex.Cli.Args
+public import LeanTex.Core.PdfWriteContract
 import all LeanTex.Cli.Driver
 
 /-! Test access to the driver's captured-image preparation and settle decision, without exporting
@@ -38,5 +39,19 @@ public def settles (elaborated : Ir.Doc) (provisional : Option Ir.Pic.LabelMetri
     earlier := #[], spliced := #[], ledger := {}, reads := #[], cache := ← LeanTex.Cli.FontEnv.Cache.mk'
     scan := none, provisional }
   return (LeanTex.Cli.Driver.settlement front fs resolved).2.2
+
+/-- The driver's reading of an output intent's profile beside `file` (`Driver.loadProfile`). -/
+public def loadProfile (file : String) (info : Ir.Meta) : IO (Option ByteArray × Array Diag) :=
+  LeanTex.Cli.Driver.loadProfile file info
+
+/-- The claim's losses a refused profile leaves to name (`Driver.claimLosses`). -/
+public def claimLosses (profileDiags claimDiags : Array Diag) : Array Diag :=
+  LeanTex.Cli.Driver.claimLosses profileDiags claimDiags
+
+/-- The driver's PDF/X claim over written bytes (`Driver.pdfxClaim`). -/
+public def pdfxClaim (info : Ir.Meta) (pdf : ByteArray) (links : Nat)
+    (rewrite : Ir.Meta → Except LeanTex.Core.Pdf.WriteError ByteArray) :
+    Except LeanTex.Core.Pdf.WriteError (ByteArray × Array Diag) :=
+  LeanTex.Cli.Driver.pdfxClaim info pdf links rewrite
 
 end Tests.DriverAssets

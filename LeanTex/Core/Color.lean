@@ -81,6 +81,10 @@ itself in the PDF. -/
 
 @[expose] public def Color.white : Color := { r := 255, g := 255, b := 255 }
 
+/-- Black ink alone, in DeviceGray as the PDF's initial fill and xcolor's `black` are. -/
+@[expose] public def Color.blackInk : Color :=
+  { r := 0, g := 0, b := 0, pdfModel := some (.gray "0") }
+
 /-- The colour as six hex digits, upper-case and behind `#` unless asked otherwise. -/
 @[expose] public def Color.hex (c : Color) (hash upper : Bool := true) : String :=
   (if hash then "#" else "") ++ Hex.byte upper c.r ++ Hex.byte upper c.g ++ Hex.byte upper c.b

@@ -226,7 +226,12 @@ def publicationInputChecks (ref : IO.Ref (List String)) : IO Unit := do
       ("the icon a build with no page declares",
         [("doc.tex", tex "\\pdfmeta{ favicon = \"figure.png\" }\n\\output{ formats = pdf, md, md = \"figure.png\" }\n"
             "An invented probe.")],
-        #["doc.tex"], ["figure.png"], [])]
+        #["doc.tex"], ["figure.png"], []),
+      ("the declared output profile",
+        [("doc.tex", tex "\\pdfmeta{ intent = \"probe.icc\" }\n\\output{ formats = pdf, md, md = \"probe.icc\" }\n"
+            "An invented probe."),
+         ("probe.icc", "an invented profile\n")],
+        #["doc.tex"], ["probe.icc"], [])]
     for (name, files, args, guarded, links) in cases do
       let dir ← prepare name files links
       let before ← snapshot dir

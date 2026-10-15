@@ -255,6 +255,11 @@ public inductive DiagCode where
   | N0032
   | W0434
   | W0436
+  | W0444
+  | W0445
+  | W0446
+  | W0447
+  | N0448
   deriving Repr, BEq, DecidableEq
 
 /-- The registry: each code's digits, its declared `Loss`, and its one meaning. -/
@@ -485,6 +490,11 @@ private def DiagCode.spec : DiagCode → String × Loss × String
   | .N0032 => ("0032", .info, "a Lean file whose page asks for its facts has no facts file where its project's exporter writes one, or where the document declares it; its page sets the file's code alone")
   | .W0434 => ("0434", .degraded, "leanblueprint's dependency graph is not drawn, nor the proof buttons its showmore option asks for; the web page names beside each statement what it uses and proves")
   | .W0436 => ("0436", .degraded, "a blueprint's link template names a part a Lean name alone cannot fill; its names are set without links")
+  | .W0445 => ("0445", .degraded, "the file breaks a requirement of the PDF/X standard the document declares; it is written without claiming the standard")
+  | .W0446 => ("0446", .degraded, "the output intent's profile is missing or is no ICC output profile; the file carries no output intent and claims no PDF/X standard")
+  | .W0447 => ("0447", .degraded, "a declaration the declared PDF/X standard does not admit; the standard's value is written in its place")
+  | .W0444 => ("0444", .degraded, "links on the printed sheet, which the PDF/X standard the file claims does not admit; the PDF carries none, the web page keeps them")
+  | .N0448 => ("0448", .info, "a file claiming a PDF/X standard on the checks the engine makes; a print service's preflight judges what they leave")
 
 public def DiagCode.digits (c : DiagCode) : String := c.spec.1
 

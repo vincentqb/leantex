@@ -975,8 +975,8 @@ public structure Cx where
   bodySize : Sp := Ir.baseFontSize
   /-- How a label's content measures at a per-mille size, provided by the driver through the elaborator. -/
   metric : Ir.Pic.LabelMetric := fun _ _ => {}
-  /-- The current colour (pgf's `.`), black until a colour option, `\color` or `\textcolor` sets it. -/
-  ink : Ir.Color := Ir.Color.black
+  /-- The current colour (pgf's `.`), black ink until a colour option, `\color` or `\textcolor` sets it. -/
+  ink : Ir.Color := Ir.Color.blackInk
   /-- The font declarations in force, innermost last. -/
   decls : Array String := #[]
   /-- The coordinate transformation in force, from the points a statement spells to the canvas. -/
@@ -6558,7 +6558,7 @@ public def elabPicture (pal : Ir.Palette) (raws : Array Parse.Raw)
                    metric := metric
                    bodySize := bodySize
                    decls := outerDecls
-                   ink := ink0.getD Ir.Color.black
+                   ink := ink0.getD Ir.Color.blackInk
                    parseGap := st.bad.any fun d => d.1 == .W0334 }
   let ev := evalFixed cx st.out.toList
   let mut unread : Array PDiag := #[]

@@ -32,9 +32,9 @@ public theorem prepare_header_exact (geom : Layout.Geom) (fs : Font.FontSet)
     (prepare geom fs pages info imgs outline streams tree ops programs).head_suffix
   rw [ht]
   have hh : (prepare geom fs pages info imgs outline streams tree ops programs).head =
-      (if info.pdfVersion == some "1.7" then "%PDF-1.7\n%" else "%PDF-2.0\n%").toUTF8 ++
-        ⟨#[0xE2, 0xE3, 0xCF, 0xD3]⟩ ++ "\n".toUTF8 := rfl
+      (headerLine info).toUTF8 ++ ⟨#[0xE2, 0xE3, 0xCF, 0xD3]⟩ ++ "\n".toUTF8 := rfl
   rw [hh]
+  unfold headerLine
   split <;> simp only [byte_get, ByteArray.data_append, Array.getElem?_append,
     String.toUTF8_eq_toByteArray] <;> rfl
 

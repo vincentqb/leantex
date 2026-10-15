@@ -1109,7 +1109,7 @@ public structure TextStyle where
   /-- The weight axis in force (`Ir.Weight`), `\fontseries`'s series. -/
   weight : Ir.Weight := .m
   italic : Bool := false
-  color : Ir.Color := Ir.Color.black
+  color : Ir.Color := Ir.Color.blackInk
   /-- Destination of the enclosing `\href`, if any. -/
   link : Option String := none
   /-- Size relative to the surrounding text, per mille,
@@ -9012,8 +9012,8 @@ public structure Spacing.Pending where
   private pal : Ir.Palette := {}
   private paletteEpoch : Nat := 0
   private tokens : Ir.Tokens := {}
-  /-- Default text colour: the palette's `fg` when declared, else black. -/
-  private fg : Ir.Color := Ir.Color.black
+  /-- Default text colour: the palette's `fg` when declared, else black ink. -/
+  private fg : Ir.Color := Ir.Color.blackInk
   /-- The surface content collected here stands on: the palette
   epoch's `bg`, overridden where a bar or an inversion resolves. -/
   private ground : Option Ir.Color := none
@@ -9313,9 +9313,9 @@ private def Spacing.Pending.pushOp (a : Acc) (op : Op) : Acc :=
 private def Spacing.Context.style (r : Rd) (element : String) : Ir.ElementStyle :=
   (r.styles.find? element).getD {}
 
-/-- The default ink a palette implies: its `fg` when declared, else black. -/
+/-- The default ink a palette implies: its `fg` when declared, else black ink. -/
 private def fgOf (pal : Ir.Palette) : Ir.Color :=
-  (Ir.Design.at pal .print .ink).getD Ir.Color.black
+  (Ir.Design.at pal .print .ink).getD Ir.Color.blackInk
 
 /-- `.setPalette` on the accumulator: the palette, default ink and
 surface change together, and the page ground rides as a state op. -/
@@ -18038,7 +18038,7 @@ private theorem sourceBound_collectPara {n : Nat} (r : Rd) (a : Acc)
     xs (a.flushGap r).hyphCache (LeafCtr.of leaf span xs) r.imgs
     ((a.flushGap r).measure.getD r.geom.textWidth - (indent + 0))
     r.geom.textHeight true r.geom.scale r.step r.roleMetrics r.steps hp
-  simp only [collectPara, show (Color.black == Color.black) = true from rfl,
+  simp only [collectPara, show (Color.blackInk == Color.black) = true from rfl,
     BEq.rfl, Bool.false_eq_true, ↓reduceIte]
   rw [hn]
   simp only [Array.isEmpty_empty, ↓reduceIte]
@@ -18308,7 +18308,7 @@ private theorem collectPara_prose (r : Rd) (a : Acc)
     ((Spacing.Pending.measure (a.flushGap r)).getD (Spacing.Context.geom r).textWidth - (indent + 0))
     (Spacing.Context.geom r).textHeight (Spacing.Pending.hyphCache (a.flushGap r)) (LeafCtr.of leaf span xs)
     style xs true (Spacing.Context.geom r).scale (Spacing.Context.step r) (Spacing.Context.roleMetrics r) (Spacing.Context.steps r) hp rfl
-  simp only [collectPara, show (Color.black == Color.black) = true from rfl,
+  simp only [collectPara, show (Color.blackInk == Color.black) = true from rfl,
     BEq.rfl, Bool.false_eq_true, ↓reduceIte]
   rw [hn]
   simp only [Array.isEmpty_empty, ↓reduceIte]

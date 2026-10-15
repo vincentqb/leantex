@@ -16,8 +16,8 @@ private theorem find_choice {α : Type} (p : α → Bool)
   split <;> rfl
 
 private theorem catalog_not_font (root : Option Nat) (xmp : Nat)
-    (lang : Option String) (structRoot : Nat) (oc : Array (String × Obj)) :
-    kindOf (catalogDict root xmp lang structRoot oc) ≠ .font := by
+    (lang : Option String) (structRoot : Nat) (oc intents : Array (String × Obj)) :
+    kindOf (catalogDict root xmp lang structRoot oc intents) ≠ .font := by
   rw [kindOf_catalog_exact _ (by simp [catalogDict, Obj.get?, Array.find?_append])]
   decide
 
@@ -48,7 +48,7 @@ public theorem prepare_census_fonts_exact (geom : Layout.Geom) (fs : Font.FontSe
     Prod.mk.injEq] at hm
   rcases hm with (((((((hcat | hpages) | hfont) | hinfo) | hout) | hpage) | hstruct) | hres) | hfig
   · rw [hcat.2] at hf
-    exact False.elim (catalog_not_font _ _ _ _ _ hf)
+    exact False.elim (catalog_not_font _ _ _ _ _ _ hf)
   · rw [hpages.2, kindOf_pages_exact _ (by simp [Obj.get?])] at hf
     contradiction
   · obtain ⟨k, hk, hrow⟩ := List.mem_flatMap.mp hfont
@@ -69,7 +69,7 @@ public theorem prepare_census_fonts_exact (geom : Layout.Geom) (fs : Font.FontSe
     apply kindOf_no_subtype_not_font _ ?_ ?_ hf
     all_goals
       cases info.title <;> cases info.author <;> cases info.subject <;> cases info.keywords <;>
-        simp [Obj.get?]
+        simp [Obj.get?, Array.find?_append, infoPrint_untyped]
   · split at hout
     · simp at hout
     · simp only [List.mem_cons, Prod.mk.injEq] at hout
@@ -90,7 +90,7 @@ public theorem prepare_census_fonts_exact (geom : Layout.Geom) (fs : Font.FontSe
   · obtain ⟨i, hi, heq⟩ := List.mem_map.mp hpage
     have hv := congrArg Prod.snd heq
     dsimp only at hv
-    rw [← hv, kindOf_page_exact _ (by simp [Obj.get?, Array.find?_append])] at hf
+    rw [← hv, kindOf_page_exact _ (by rw [pdfxPage_get_type]; simp [Obj.get?, Array.find?_append])] at hf
     contradiction
   · rcases hstruct with (hroot | hparent | hns) | helems
     · rw [hroot.2] at hf
