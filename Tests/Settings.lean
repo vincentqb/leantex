@@ -61,6 +61,7 @@ def paramProbes : List (String × String × String × String) :=
    ("topsep", "\\setlength{\\topsep}{17pt}", "\\tokens{ topsep = 17pt }", "center"),
    ("partopsep", "\\setlength{\\partopsep}{9pt}", "\\tokens{ partopsep = 9pt }", "parlist"),
    ("footins", "\\setlength{\\skip\\footins}{61pt}", "\\tokens{ footins = 61pt }", "note"),
+   ("textheight", "\\setlength{\\textheight}{300pt}", "\\page{ textheight = 300pt }", "paras"),
     ("tabcolsep", "\\setlength{\\tabcolsep}{13pt}", "\\tokens{ tabcolsep = 13pt }", "table"),
     ("columnsep", "\\setlength{\\columnsep}{19pt}", "\\tokens{ columnsep = 19pt }", "columns"),
    ("heavyrulewidth", "\\setlength{\\heavyrulewidth}{3pt}",
@@ -512,7 +513,7 @@ def kernelLengthNames : List String :=
 
 /-- The kernel lengths no row decides yet, held in both directions. -/
 def openKernelLengths : List String :=
-  ["paperwidth", "paperheight", "textheight", "oddsidemargin", "evensidemargin", "topmargin",
+  ["paperwidth", "paperheight", "oddsidemargin", "evensidemargin", "topmargin",
    "headheight", "marginparwidth", "marginparsep", "marginparpush", "columnseprule",
    "columnwidth", "linewidth", "topskip", "textfloatsep", "intextsep", "dblfloatsep",
    "dbltextfloatsep", "lineskip", "lineskiplimit", "parfillskip", "mathindent"]

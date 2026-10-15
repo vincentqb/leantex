@@ -49,14 +49,24 @@ public def optionSpelling (item : String) : String :=
   | (k, some v) => s!"{k}={v}"
   | (k, none) => k
 
+/-- The font encodings LaTeX's `fontenc` loads, Unicode's included. -/
+public def fontencEncodings : List String :=
+  ["TU", "T1", "OT1", "OT2", "OT3", "OT4", "OT6", "LY1", "TS1", "TS3", "T2A", "T2B", "T2C", "X2",
+   "T3", "T4", "T5", "T7", "LGR", "OML", "OMS", "OMX", "U", "L7x", "IL2", "QX", "LCY"]
+
 /-- Options of a native package without an option reader of its own that configure machinery the
 engine runs as they ask, each with why; every other such option is a setting nothing reads. -/
 public def packageOptionsInert : List (String × List (String × String)) :=
   let drivers (why : String) : List (String × String) :=
     ["dvips", "dvipdfm", "dvipdfmx", "dvisvgm", "pdftex", "luatex", "xetex"].map (·, why)
   [("inputenc", ["utf8", "utf8x", "ascii"].map (·, "the input is read as UTF-8")),
-   ("fontenc", ["T1", "OT1", "LY1", "TS1", "T2A", "LGR"].map
-     (·, "text is set from Unicode faces, whatever 8-bit encoding is named")),
+   ("fontenc", fontencEncodings.map (·, "text is set from Unicode faces, whatever encoding is named")),
+   ("csquotes", [("autostyle", "quotes follow the language in force, as the option asks"),
+     ("autostyle=true", "quotes follow the language in force, as the option asks"),
+     ("autostyle=try", "quotes follow the language in force, as the option asks"),
+     ("german=quotes", "German quotes are set as „…“, the style the option names")]),
+   ("babel", [("shorthands=off", "the engine reads no shorthand characters, as the option asks")]),
+   ("parskip", [("indent=0pt", "paragraphs are set flush, as without the option")]),
    ("graphicx", ("final", "images are drawn, as without the option") ::
      drivers "the engine writes its own output"),
    ("xcolor", [("natural", "colours ship in the model they are declared in"),
@@ -75,6 +85,9 @@ public def packageOptionsInert : List (String × List (String × String)) :=
      ("draft", "the features stay on: only 'disable=ifdraft' reads the flag"),
      ("disable=ifdraft", "the features stay on: the flag disables them only beside 'draft'"),
      ("disable=false", "the features stay on, as without the option"),
+     ("activate", "the features stay on, as without the option"),
+     ("activate=true", "the features stay on, as without the option"),
+     ("activate=true,nocompatibility", "the features stay on, as without the option"),
      ("verbose", "the engine writes no TeX log")]),
    ("listings", [("final", "listings are set, as without the option")]),
    ("minted", [("newfloat", "a listing float is set as without the option"),
@@ -233,6 +246,7 @@ name is a length of the document's own. -/
 public def paramSites : List (String × ParamSite) :=
   [("parskip", .page "parskip"),
    ("textwidth", .page "textwidth"),
+   ("textheight", .page "textheight"),
    ("headsep", .page "headsep"),
    ("footskip", .page "footskip"),
    ("abovecaptionskip", .token "captionsep"),
@@ -2039,17 +2053,21 @@ private def skipStar (raws : Array Raw) (i : Nat) : Nat :=
   | some (.word "*" _) => i + 1
   | _ => i
 
+/-- lineno's options naming the numbering the engine sets once `\linenumbers` turns it on. -/
+public def linenoInert : List String := ["left", "running", "displaymath", "mathlines"]
+
+/-- lineno's options read as one native declaration each. -/
+public def linenoNatives : List (String × String) := [("modulo", "\\page{ modulo = 5 }")]
+
 /-- `\usepackage[...]{lineno}`'s options, natively the declared page keys. -/
 private def linenoLoad (opt : String) (pos : Pos) : M (Array Raw) := do
   let mut out : Array Raw := #[]
   for o in KeyVal.items opt do
-    if o == "left" || o == "running" || o == "displaymath"
-        || o == "mathlines" then
+    if linenoInert.contains o then
       inertParam "usepackage:lineno" o s!"\\usepackage[{o}]\{lineno}"
-        "every galley line, display math's too, is numbered in the left margin, running on" pos
-    else if o == "modulo" then
-      let native := "\\page{ modulo = 5 }"
-      became "\\usepackage[modulo]{lineno}" native pos
+        "where line numbers are on, every galley line, display math's too, is numbered in the left margin, running on" pos
+    else if let some native := linenoNatives.lookup o then
+      became s!"\\usepackage[{o}]\{lineno}" native pos (subject := some (paramSubject "usepackage:lineno" o))
       out := out ++ (← synthAt native pos)
     else
       say .W0101 s!"lineno option '{o}' selects a numbering mode the \
@@ -2159,7 +2177,7 @@ private def natbibLoad (name opt : String) (pos : Pos) : M (Array Raw) := do
   return #[]
 
 /-- biblatex's options the reference list and citations read. -/
-private def biblatexRead : List String :=
+public def biblatexRead : List String :=
   ["style", "bibstyle", "citestyle", "sorting", "maxnames", "minnames", "maxbibnames",
    "minbibnames", "maxcitenames", "mincitenames", "maxsortnames", "minsortnames", "maxitems",
    "minitems", "giveninits", "firstinits", "useprefix", "dashed", "isbn", "url", "doi",
@@ -2177,7 +2195,7 @@ private def biblatexCarried : List String :=
    "dateuncertain", "sortlocale", "clearlang"]
 
 /-- biblatex's options that change nothing the engine sets. -/
-private def biblatexInert : List String :=
+public def biblatexInert : List String :=
   ["backend", "hyperref", "natbib", "bibencoding", "texencoding", "safeinputenc",
    "bibwarn", "bibtexcaseprotection", "noerroretextools"]
 
@@ -5662,6 +5680,14 @@ change nothing this engine sets. -/
 public def driverOptions : List String :=
   ["dvips", "dvipdfm", "dvipdfmx", "dvisvgm", "pdftex", "luatex", "xetex", "vtex", "driver"]
 
+/-- crop's options that turn its marks on or off. -/
+public def cropModes : List (String × Bool) := [("cam", true), ("off", false)]
+
+/-- crop's options the engine's marks already answer, each with why. -/
+public def cropInert : List (String × String) :=
+  [("noaxes", "the cut marks stand without axis marks, as drawn")] ++
+    driverOptions.map (·, "the engine writes its own output")
+
 /-- The geometry keys read as the `\page` key of the same name. -/
 public def geometryPageKeys : List String :=
   ["margin", "vmargin", "hmargin", "width", "height", "textwidth", "textheight", "headsep", "footskip"]
@@ -5686,7 +5712,9 @@ private def geometry (opts : String) (pos : Pos)
       if f.endsWith "paper" then
         keys := keys.push s!"size = {(f.dropEnd "paper".length).toString}"
       else if geometryNoFurniture.contains f then
-        inertParam "geometry" f spelling "the page carries no running head or foot until one is declared" pos
+        -- geometry's flags zero the head's separation, the foot's skip, or both.
+        if f != "nofoot" then keys := keys.push "headsep = 0pt"
+        if f != "nohead" then keys := keys.push "footskip = 0pt"
       -- premise: driverOptionChecks — a driver option ships the page without it
       else if driverOptions.contains f then
         inertParam "geometry" f spelling "the engine writes its own output" pos
@@ -5752,13 +5780,9 @@ private def crop (opts : String) (pos : Pos)
   let mut dropped : Array String := #[]
   for e in KeyVal.items opts do
     let o := (KeyVal.entry e).1
-    if o == "cam" then mode := some true
-    else if o == "off" then mode := some false
-    else if o == "noaxes" then
-      inertParam "crop" o spelling "the cut marks stand without axis marks, as drawn" pos
+    if let some on := cropModes.lookup o then mode := some on
     -- premise: driverOptionChecks — a driver option ships the page without it
-    else if driverOptions.contains o then
-      inertParam "crop" o spelling "the engine writes its own output" pos
+    else if let some why := cropInert.lookup o then inertParam "crop" o spelling why pos
     else if !o.isEmpty then dropped := dropped.push o
   unless dropped.isEmpty do
     say .W0101 s!"crop options without a native equivalent were dropped: \
@@ -5955,14 +5979,18 @@ public def hyperrefInert : List (String × String) :=
     [(k, why), (k ++ "=true", why), (k ++ "=false", why)]
   either "unicode" "the PDF's text strings are Unicode" ++
   either "final" "links are written, as without the option" ++
-  either "bookmarks" "the PDF's outline is written from the headings" ++
+  [("bookmarks=false", "the PDF carries no outline of its headings, as the option asks")] ++
   either "breaklinks" "a link's text breaks across lines as other text does" ++
   either "pdfusetitle" "the title and author fall back to the document's own" ++
   either "pdfdisplaydoctitle" "the viewer shows the document's title" ++
   any "hypertexnames" "anchors are named by the engine" ++
   any "naturalnames" "anchors are named by the engine" ++
   any "plainpages" "anchors are named by the engine" ++
-  [("pdfborder=0 0 0", "links are written without a border")]
+  either "pageanchor" "hyperref's default, as without the option" ++
+  ["dvips", "dvipdfm", "dvipdfmx", "dvisvgm", "pdftex", "luatex", "xetex", "hypertex", "vtex"].map
+    (·, "the engine writes its own output") ++
+  [("verbose", "the engine writes no TeX log"), ("debug", "the engine writes no TeX log"),
+   ("pdfborder=0 0 0", "links are written without a border")]
 
 /-- hyperref's keys, as `\hypersetup` and the package options give them, with its link keys
 written into the setup. -/
@@ -6901,7 +6929,8 @@ public def packageOptionNatives : List (String × List (String × String)) :=
      ("expansion", "\\page{ expansion = on }"), ("expansion=true", "\\page{ expansion = on }"),
      ("expansion=false", "\\page{ expansion = off }"),
      ("disable", "\\page{ protrusion = off, expansion = off }"),
-     ("disable=true", "\\page{ protrusion = off, expansion = off }")])]
+     ("disable=true", "\\page{ protrusion = off, expansion = off }"),
+     ("activate=false", "\\page{ protrusion = off, expansion = off }")])]
 
 /-- moloch's `block` option values as the theme's own block
 colour declarations. -/
@@ -8566,14 +8595,22 @@ private def rewritePackageBody (name p : String) (opt : Option String) (pos : Po
   else if p == "beamerposter" then
     out := out ++ (← beamerposter (opt.getD "") pos)
   else if p == "parskip" then
-    -- The package sets `\parskip` to half a line plus 2pt, or to its `skip`, and drops the indent.
+    -- The package sets `\parskip` to half a line plus 2pt, or to its `skip` as `\setlength` reads
+    -- it, and drops the indent.
     let skip := given.findSome? fun o => match KeyVal.entry o with
-      | ("skip", some v) => some (lengthOfTeX v)
+      | ("skip", some v) => some v
       | _ => none
-    let native := s!"\\page\{ parskip = {skip.getD "0.6em plus 2pt"} }"
-    became (if skip.isSome then s!"\\usepackage[{opt.getD ""}]\{parskip}" else "\\usepackage{parskip}")
-      native pos
-    out := out ++ (← synthAt native pos)
+    let read ← match skip with
+      | some v => doorValue? (← synthAt v pos)
+      | none => pure none
+    match skip, read with
+    | some v, some src =>
+      out := out ++ (← setLength "parskip" src s!"\\usepackage[skip={v}]\{parskip}" pos)
+    | _, _ =>
+      let native := "\\page{ parskip = 0.6em plus 2pt }"
+      became "\\usepackage{parskip}" native pos
+      out := out ++ (← synthAt native pos)
+      if let some v := skip then out := out ++ (← unreadableLength "parskip" v pos)
     out := out ++ (← packageOptions name p (given.filter fun o => (KeyVal.entry o).1 != "skip") pos)
   else if p == "amsthm" then
     -- amsthm's documented default style is plain.
@@ -8728,8 +8765,14 @@ its rule paddings are measured in Latin Modern" pos
     if p == "inputenc" then recordInputenc (opt.getD "")
     discard s!"\\{name}\{{p}}" "the engine does this itself" s!"{name}:{p}" pos
     -- microtype's `disable=ifdraft` disables its features exactly when `draft` is given too.
-    let given := if p == "microtype" && given.contains "draft" then
-        given.map fun o => if optionSpelling o == "disable=ifdraft" then "disable" else o
+    -- microtype's `disable=ifdraft` disables its features when `draft` stands before it, the class's included.
+    let classDraft := ((← get).loads.cls.map fun (_, os) => os.any (optionSpelling · == "draft")).getD false
+    let given := if p == "microtype" then
+        (given.foldl (init := (classDraft, #[])) fun (draft, acc) o =>
+          let sp := optionSpelling o
+          if sp == "draft" then (true, acc.push o)
+          else if sp == "disable=ifdraft" && draft then (draft, acc.push "disable")
+          else (draft, acc.push o)).2.toList
       else given
     out := out ++ (← packageOptions name p given pos)
   else if boundaryPkgs.contains p && (← get).boundaryOpen then
@@ -12635,6 +12678,84 @@ public theorem finishRewrite_configSkip_document_exact (cursor : RewriteCursor)
     hpre hpost hn (by simpa only [Nat.zero_add] using hg)
   rw [hbody]
   simp only [Array.empty_append, finishConfigSkipDocument]
+
+/-- The commands whose first argument names the length they assign. -/
+private def lengthAssigners : List String := ["setlength", "addtolength"]
+
+/-- The token names the engine reads by name beside the parameter sites. -/
+private def engineReadTokens : List String :=
+  ["frametitlepadding", "progressheight", "algindent", "algnumindent"]
+
+/-- A raw walk's tally: each control word's occurrences, each length declaration's or assignment's
+target, and the file and place of a target's first assignment to a literal value. -/
+private structure LengthTally where
+  seen : Std.HashMap String Nat := {}
+  targets : Std.HashMap String Nat := {}
+  first : Array (String × String × Pos) := #[]
+
+private def LengthTally.see (t : LengthTally) (n : String) : LengthTally :=
+  { t with seen := t.seen.insert n (t.seen.getD n 0 + 1) }
+
+private def LengthTally.target (t : LengthTally) (n : String) : LengthTally :=
+  { t with targets := t.targets.insert n (t.targets.getD n 0 + 1) }
+
+private def LengthTally.assign (t : LengthTally) (n file : String) (p : Pos) : LengthTally :=
+  { t.target n with first := if t.first.any (·.1 == n) then t.first else t.first.push (n, file, p) }
+
+/-- The length a length command's next raw names, `\x` or `{\x}`, and the raws after it. -/
+private def assignedLength : List Raw → Option (String × List Raw)
+  | .space :: rest => assignedLength rest
+  | .ctrl n _ :: rest => some (n, rest)
+  | .group g _ :: rest => match g.toList.filter (!· matches .space) with
+    | [.ctrl n _] => some (n, rest)
+    | _ => none
+  | _ => none
+
+/-- Whether an assignment's value is a braced literal, which the length door reads without naming
+it. -/
+private def literalValue : List Raw → Bool
+  | .space :: rest => literalValue rest
+  | .group g _ :: _ => g.all fun r => !(r matches .ctrl ..)
+  | _ => false
+
+mutual
+
+private def tallyList (file : String) (t : LengthTally) : List Raw → LengthTally
+  | [] => t
+  | r :: rest =>
+    let t := match r with
+      | .ctrl c p =>
+        match assignedLength rest with
+        | some (n, after) =>
+          if lengthAssigners.contains c && literalValue after then t.assign n file p
+          else if lengthAssigners.contains c || c == "newlength" then t.target n
+          else t
+        | none => t
+      | _ => t
+    tallyList file (tallyOne file t r) rest
+termination_by structural l => l
+
+private def tallyOne (file : String) (t : LengthTally) : Raw → LengthTally
+  | .ctrl n _ => t.see n
+  | .group body _ => tallyList file t body.toList
+  | .math _ body _ => tallyList file t body.toList
+  | .env n body _ => tallyList ((Parse.inputEnvFile? n).getD file) t body.toList
+  | _ => t
+termination_by structural r => r
+
+end
+
+/-- Each length the document assigns that neither it nor the engine reads, named at its first
+assignment. -/
+public def unusedLengths (file : String) (raws : Array Raw) : Array Diag :=
+  let t := tallyList file {} raws.toList
+  t.first.filterMap fun (n, f, p) =>
+    if (paramSites.lookup n).isSome || engineReadTokens.contains n ||
+        t.seen.getD n 0 > t.targets.getD n 0 then none
+    else some (Diag.of .W0104
+      s!"'\\{n}' is set, but nothing in the document or the engine reads it; the setting changes nothing"
+      (some ⟨f, p⟩) (help := "use the length where the page should read it, or drop the setting")
+      (subject := some (paramSubject "setlength" n)))
 
 /-- Rewrites a whole parsed document. -/
 public def rewrite (file : String) (raws : Array Raw) (provideKeeps : List String := [])

@@ -6001,10 +6001,25 @@ private def classPageDefaults (record : Ir.ClassRecord) (opts : List String)
 
 /-- Class options asking for what a page model's class already is, each with why. -/
 public def classOptionsInert : List (Ir.PageModel × List (String × String)) :=
+  let final := ("final", "the document is rendered in full, as without the option")
   [(.flow, [("oneside", "the page is one-sided, as without the option"),
+     ("twoside=false", "the page is one-sided, as without the option"),
      ("onecolumn", "the text is set in one column, as without the option"),
-     ("final", "the document is rendered in full, as without the option"),
-     ("notitlepage", "the title opens the first page, as without the option")])]
+     final,
+     ("notitlepage", "the title opens the first page, as without the option"),
+     ("reqno", "equation numbers stand on the right, as without the option"),
+     ("openany", "a part or chapter opens on the next page, as without the option")]),
+   (.frame, [final, ("c", "frames are centred vertically, as without the option"),
+     ("slidescentered", "frames are centred vertically, as without the option")]),
+   (.face, [final])]
+
+/-- The bare class options each page model's readers read beside a body size and a paper size. -/
+public def classOptionFlags : List (Ir.PageModel × List String) :=
+  [(.flow, ["landscape", "twoside"]), (.frame, ["t", "slidestop", "noamsthm"]),
+   (.face, ["us", "jis"])]
+
+/-- The paper sizes a class option names, each as `<size>paper`. -/
+public def classPaperOptions : List String := pageSizes.map (·.1 ++ "paper")
 
 /-- Whether a reader here reads a class option under a page model: a body size; in the flow model
 a paper size, `landscape` and `twoside`'s title-page folio; in the frame model the slide stage, its
@@ -6016,9 +6031,8 @@ public def classOptionRead (model : Ir.PageModel) (o : String) : Bool :=
   | ("fontsize", some v), _ => sized v
   | (k, none), .flow =>
     sized k || (k.endsWith "paper" && paper (k.dropEnd "paper".length).toString) ||
-      ["landscape", "twoside"].contains k
-  | (k, none), .frame => sized k || ["t", "c", "slidestop", "slidescentered", "noamsthm"].contains k
-  | (k, none), .face => sized k || ["us", "jis"].contains k
+      (classOptionFlags.lookup .flow).any (·.contains k)
+  | (k, none), m => sized k || (classOptionFlags.lookup m).any (·.contains k)
   | (k, some v), .flow => (k == "paper" && paper v) || (k == "twoside" && v == "true")
   | (k, some v), .frame => k == "aspectratio" && (Ir.slidesStageNamed v).isSome
   | (_, some _), .face => false
@@ -16116,8 +16130,8 @@ public def prepareRewritten (file : String) (picScan : Compat.BoundaryScan)
 public def prepareExecuted (file : String) (executed : Compat.Executed) : Prepared :=
   let picScan := Compat.boundaryScan file executed.raws
   let picMacros := macroScan executed.raws
-  prepareRewritten file picScan picMacros executed.sourceTriggers #[]
-    (Compat.rewriteExecuted executed) executed.inputAttempts
+  prepareRewritten file picScan picMacros executed.sourceTriggers
+    (Compat.unusedLengths file executed.raws) (Compat.rewriteExecuted executed) executed.inputAttempts
 
 private theorem prepareRewritten_carried_exact (file : String)
     (scan : Compat.BoundaryScan) (macros : Array (String × String))
@@ -16151,8 +16165,8 @@ public def prepare (file : String) (raws : Array Raw) : Prepared :=
   let picMacros := macroScan raws
   let executed := Compat.execute file raws
     (provideKeeps := providedNames)
-  prepareRewritten file picScan picMacros executed.sourceTriggers splitDiags
-    (Compat.rewriteExecuted executed)
+  prepareRewritten file picScan picMacros executed.sourceTriggers
+    (splitDiags ++ Compat.unusedLengths file executed.raws) (Compat.rewriteExecuted executed)
 
 /-- Whether the source holds a natively drawn picture, and whether one sets a
 formula. -/

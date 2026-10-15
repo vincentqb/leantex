@@ -1707,12 +1707,13 @@ def reports : List Report := [
       "the fix's first cut left each such command as written in a body the elaborator expands, so an environment setting a colour, a language, a span's language, a length or the PDF title from its argument, or calling a colour or language macro, printed the argument on the page and the web page; here no argument reaches either, and each setting an environment takes from its argument is named once where the environment is defined, no use applying it"]
     state := .guarded "22525202" .before .author },
   { id := "R193", date := "2026-10-15"
-    what := "a setting a document declared could be accepted and then read by nothing and named by nothing: package options, hyperref's keys, class options, a list's own options and a theme's options shipped the page the document without them ships, with no word that they were dropped"
-    pins := [check% Tests.ParamCensus.paramCensusChecks]
+    what := "a setting a document declared could be accepted and then read by nothing and named by nothing: package options, hyperref's keys, class options, a list's own options, a theme's options and a length set but never read shipped the page the document without them ships, with no word that they were dropped"
+    pins := [check% Tests.ParamCensus.paramCensusChecks, check% Tests.ParamCensus.paramTruthChecks]
     accept := ["the census over the readers as 3c258580 has them, its tables kept, reports 226 of its 391 settings across 61 readers read by nothing and named by nothing; here none",
       "a mutant dropping geometry's margin in silence and one silencing the package-option fallback each make the census fail, naming geometry's margin=3cm and the invented option on every native package tried",
-      "the corpus's PDFs and web pages are byte-identical to its parent's and its warnings unchanged"]
-    state := .guarded "3c258580" .revert .author }
+      "the review's guards, added with its answer, each failing on the first cut at e47536eb4: parskip's skip=10pt plus1pt stopped the build and now sets the 22pt gap lualatex sets at 21.9 bp, and a medium skip the 18pt it sets at 17.9 bp; hyperref's pdftex, verbose and pageanchor=true were named unread and are silent, and the outline bookmarks asks for, which nothing writes, is named; reqno, twoside=false and openany as class options, fontenc's TU and csquotes' autostyle=true were named and are silent; a length set and never read was silent and is named",
+      "the census judges what a page shows, a custom property no var() reads counting for nothing and a setting noted as changing nothing failing it when it changes an artifact, and each reader's own key table is walked; of the review's three surviving mutants, geometry's bindingoffset read as nothing fails it naming bindingoffset=1cm, and openany listed as a flag the flow model reads fails the flag check"]
+    state := .guarded "3c258580" .before .author }
 ]
 
 /-- The reports guarded but never seen failing, a count held in both directions. -/

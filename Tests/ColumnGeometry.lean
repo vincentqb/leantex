@@ -249,7 +249,9 @@ def columnGeometryChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
         "\\setlength{\\columnsep}{\\savedgap}\n")] do
     for acrossParts in #[false, true] do
       let body := "Alpha {Beta\\par\\setlength{\\columnsep}{0pt}" ++
-        (if acrossParts then "\\setlength{\\savedgap}{30pt}\n" ++ columnGeomPair else "") ++
+        (if acrossParts then
+          (if source == "copied" then "\\setlength{\\savedgap}{30pt}\n" else "") ++ columnGeomPair
+        else "") ++
         "Gamma}\\par\n" ++ columnGeomPair
       let pre := "\\columnratio{.25}\n" ++ pre ++
         (if source == "native" then "\\newlength{\\savedgap}\n" else "")

@@ -27,8 +27,8 @@ public theorem runExecuted_rewrite_exact (file : String) (executed : Compat.Exec
     (earlier : Array Diag) (metric : Ir.Pic.LabelMetric) :
     runExecuted file executed earlier metric =
       runRewriteFinal file (Compat.boundaryScan file executed.raws) (macroScan executed.raws)
-        executed.sourceTriggers #[] earlier metric (Compat.beginRewrite executed)
-        executed.inputAttempts := by rfl
+        executed.sourceTriggers (Compat.unusedLengths file executed.raws) earlier metric
+        (Compat.beginRewrite executed) executed.inputAttempts := by rfl
 
 public theorem meaningFree_document_exact (file : String) (scan : Compat.BoundaryScan)
     (macros : Array (String × String)) (triggers : Compat.SourceTriggers)
@@ -441,12 +441,12 @@ public theorem runExecuted_meaningFree_contract (file : String) (executed : Comp
     runExecuted file executed earlier metric =
       runPreparedFinal file
         (prepareRewritten file (Compat.boundaryScan file executed.raws) (macroScan executed.raws)
-          executed.sourceTriggers #[]
+          executed.sourceTriggers (Compat.unusedLengths file executed.raws)
           (Compat.finishMeaningFreeDocument (Compat.beginRewrite executed)
             name note input.pos input.docPos (input.pre.toArray ++ input.post.toArray))
           executed.inputAttempts) earlier metric := by
   rw [runExecuted_rewrite_exact]
-  exact meaningFree_document_exact file _ _ _ #[] earlier metric
+  exact meaningFree_document_exact file _ _ _ (Compat.unusedLengths file executed.raws) earlier metric
     (Compat.beginRewrite executed) input.body name arity note input.pos input.docPos
     input.pre input.taken input.post input.args hm input.outsidePicture input.outsideList
     input.document input.source input.before input.after input.arity_exact input.operands
@@ -460,12 +460,12 @@ public theorem runExecuted_configSkip_contract (file : String) (executed : Compa
     runExecuted file executed earlier metric =
       runPreparedFinal file
         (prepareRewritten file (Compat.boundaryScan file executed.raws) (macroScan executed.raws)
-          executed.sourceTriggers #[]
+          executed.sourceTriggers (Compat.unusedLengths file executed.raws)
           (Compat.finishConfigSkipDocument (Compat.beginRewrite executed)
             name msg help input.pos input.docPos (input.pre.toArray ++ input.post.toArray))
           executed.inputAttempts) earlier metric := by
   rw [runExecuted_rewrite_exact]
-  exact configSkip_document_exact file _ _ _ #[] earlier metric
+  exact configSkip_document_exact file _ _ _ (Compat.unusedLengths file executed.raws) earlier metric
     (Compat.beginRewrite executed) input.body name arity msg help input.pos input.docPos
     input.pre input.taken input.post input.args hm input.outsidePicture input.outsideList
     input.document input.source input.before input.after input.arity_exact input.operands
@@ -480,7 +480,7 @@ public theorem control_completion_contract (file : String) (executed : Compat.Ex
         runExecuted file executed earlier metric =
           runPreparedFinal file
             (prepareRewritten file (Compat.boundaryScan file executed.raws) (macroScan executed.raws)
-              executed.sourceTriggers #[]
+              executed.sourceTriggers (Compat.unusedLengths file executed.raws)
               (Compat.finishMeaningFreeDocument (Compat.beginRewrite executed)
                 row.1 row.2.2 input.pos input.docPos
                 (input.pre.toArray ++ input.post.toArray))
@@ -490,7 +490,7 @@ public theorem control_completion_contract (file : String) (executed : Compat.Ex
         runExecuted file executed earlier metric =
           runPreparedFinal file
             (prepareRewritten file (Compat.boundaryScan file executed.raws) (macroScan executed.raws)
-              executed.sourceTriggers #[]
+              executed.sourceTriggers (Compat.unusedLengths file executed.raws)
               (Compat.finishConfigSkipDocument (Compat.beginRewrite executed)
                 row.1 row.2.2.1 row.2.2.2 input.pos input.docPos
                 (input.pre.toArray ++ input.post.toArray))
