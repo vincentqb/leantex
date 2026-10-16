@@ -91,7 +91,8 @@ def sectionMeasureChecks (ref : IO.Ref (List String)) : IO Unit := do
   let css := treeCssList "" head.toList
   -- `min(<share>vh, 100%)`: the stage's share, never past its width.
   let shares (sel : String) : Bool :=
-    (cssBlocksFor css sel).any fun decls => match cssProperty decls "width" with
+    ((artCssBlocks css).toList.filter fun (s, _) => (cssSelectorParts s).contains sel).any
+      fun (_, decls) => match cssProperty decls "width" with
       | some v => match (v.dropPrefix "min(").toString.splitOn ", " with
         | [share, "100%)"] => cssStageLength s!"width: {share}" "width" measure doc.page.height
         | _ => false

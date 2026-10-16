@@ -1698,26 +1698,25 @@ def artFrameGroundsAt (doc : Ir.Doc) : Array (Nat × Option (Option Ir.Color)) :
   return out
 
 /-- The frames' declared grounds in document order, read at `Ir.frameGroundOf`, and a deck's run of
-content outside every frame at the page's ground in force where the run opens. -/
+content outside every frame at the page's ground in force where the run ships. -/
 def artFrameGrounds (doc : Ir.Doc) (includeStandout : Bool := false) :
     Array (Option Ir.Color) := Id.run do
+  let deck := doc.docClass.record.model == .frame
   let mut pal := doc.palette
   let mut out : Array (Option Ir.Color) := #[]
   let mut outsideRun := false
   for b in doc.body do
+    if deck && outsideRun && doc.outside b == .stage then
+      out := out.push (Ir.Design.declared? pal .page)
+      outsideRun := false
     match b with
     | .setPalette p => pal := p
     | .frame _ standout valign _ _ =>
       if (includeStandout || !standout) && !(valign matches .golden) then
         out := out.push (Ir.frameGroundOf pal standout valign)
     | _ => pure ()
-    if doc.docClass.record.model == .frame then
-      match doc.outside b with
-      | .content =>
-        unless outsideRun do out := out.push (Ir.Design.declared? pal .page)
-        outsideRun := true
-      | .stage => outsideRun := false
-      | .none => pure ()
+    if deck && doc.outside b == .content then outsideRun := true
+  if outsideRun then out := out.push (Ir.Design.declared? pal .page)
   return out
 
 /-- The path a plain stage stands on in the emitted tree. -/
@@ -1902,15 +1901,21 @@ def artStageGroundChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   let bHtml := artStageGroundOffences (artFrameGrounds bdoc) bcss bbody
   t s!"background canvas in the body reaches both artifacts: {bOffs.toList} {bHtml.toList}"
     (bOffs.isEmpty && bHtml.isEmpty)
+  -- the page of content outside the frames ships under the ground in force at its end, as TeX's
   let (ldoc, lds) := elabStr ("\\documentclass{beamer}\n\\begin{document}\n" ++
-    frame "One" ++ canvas ++ "Outside words.\n\n" ++ frame "Two" ++ "\\end{document}\n")
+    frame "One" ++ "Outside before words.\n\n" ++ canvas ++ "Outside after words.\n\n" ++
+    frame "Two" ++ "\\end{document}\n")
   let (lhead, lbody, _) := HtmlDoc.emitTree {} ldoc
   let lHtml := artStageGroundOffences (artFrameGrounds ldoc)
     (artTreeCssList (artTreeCssList "" lhead.toList) lbody.toList) lbody
-  t s!"background canvas in the body grounds the stage of content outside frames: {lHtml.toList}"
-    (artFrameGrounds ldoc == #[ldoc.palette.find? "bg", some { r := 0xF0, g := 0xE8, b := 0xD8 },
-        some { r := 0xF0, g := 0xE8, b := 0xD8 }] &&
-      lds.all (·.severity == .note) && lHtml.isEmpty)
+  let canvasBg : Ir.Color := { r := 0xF0, g := 0xE8, b := 0xD8 }
+  let lgeom := Layout.Geom.ofPage ldoc.page
+  let lout := layoutOf oneFace ldoc lgeom
+  let looseGround := (lout.pages.find? (·.frameOrigin.isNone)).bind fun p => p.fills[0]?.bind fun f =>
+    if f.x == 0 && f.y == 0 && f.w == lgeom.pageW && f.h == lgeom.pageH then some f.color else none
+  t s!"background canvas in the body grounds the page and stage of content outside frames: {lHtml.toList}"
+    (artFrameGrounds ldoc == #[ldoc.palette.find? "bg", some canvasBg, some canvasBg] &&
+      lds.all (·.severity == .note) && lHtml.isEmpty && looseGround == some canvasBg)
   t "background canvas has no ink: its fg is named, not taken"
     (warnCodes ("\\documentclass{beamer}\n\\setbeamercolor{background canvas}{fg=#101010}\n" ++
       "\\begin{document}\n" ++ frame "One" ++ "\\end{document}\n") == ["W0104"])

@@ -10783,9 +10783,7 @@ private def collectDisplayPicture (r : Rd) (a : Acc) (anchors : Array Inline)
 private def collectParaBlock (r : Rd) (a : Acc) (content : Array Inline) (indent : Sp) : Acc :=
   -- A paragraph of label anchors alone ships no line and no gap.
   if Ir.anchorsOnly content then
-    { a with ops := a.ops ++ content.filterMap (fun x => match x with
-        | .label name => some (.anchor name)
-        | _ => none) }
+    { a with ops := a.ops ++ (Ir.labelKeys content).map Op.anchor }
   else
     let (a, leaf) := a.leafRange (Struct.leafCountInlines content)
     collectPara r a content indent false r.geom.fontSize
@@ -10852,7 +10850,7 @@ private def openFrameBody (r : Rd) (a : Acc) (hasTitle : Bool) (valign : VAlign)
                        frameTop := true }
 
 private def collectSection (r : Rd) (a : Acc) (level : Ir.HeadingLevel) (starred : Bool)
-    (num : Option String) (title : Array Inline) (indent : Sp) : Acc :=
+    (num : Option String) (title : Array Inline) (indent : Sp) (top : Bool := false) : Acc :=
   if level == 0 then
     -- The document title opens no page of its own, even in slides.
     collectTitle r a title indent false
@@ -10866,7 +10864,8 @@ private def collectSection (r : Rd) (a : Acc) (level : Ir.HeadingLevel) (starred
   let span := Struct.leafCountInlines title
   let (a, leaf) := a.leafRange span
   let design := Ir.Design.ofPalette a.pal
-  let divider := r.slides && !r.inFrame
+  -- A deck's top-level section names navigation; one nested in a block outside the frames is its ink.
+  let divider := r.slides && !r.inFrame && top
   if divider && r.sectionPages.pageFor level starred then
     let a := a.pageBreak
     -- A divider is moloch's `\frame[plain,c,noframenumbering]`: a plain frame's text area.
@@ -10907,9 +10906,7 @@ private def collectSection (r : Rd) (a : Acc) (level : Ir.HeadingLevel) (starred
     (a.pageBreak).pushOp .frameClose
   -- Without a section page a deck's section inks nothing: its anchors ride the next line set.
   else if divider then
-    { a with ops := a.ops ++ Ir.foldInlines (fun out x => match x with
-        | .label name => out.push (.anchor name)
-        | _ => out) #[] title }
+    { a with ops := a.ops ++ (Ir.labelKeys title).map Op.anchor }
   else
   let st := r.style level.element
   -- The number stands before the title with a `\quad` kern (classes.dtx `\@seccntformat`).
@@ -12368,6 +12365,7 @@ private def collectCentered (r : Rd) (a : Acc)
     let a := if ruleBlock blk then { a with declaredSkip := false } else a
     let a := match blk with
       | .para content =>
+        if Ir.anchorsOnly content then collectParaBlock r a content indent else
         let (a, leaf) := a.leafRange (Struct.leafCountInlines content)
         collectPara r a content indent true r.geom.fontSize
           (leaf := leaf) (span := Struct.leafCountInlines content)
@@ -17996,6 +17994,8 @@ private def collectDocBlock (rd : Rd) (doc : Doc) (cover : Ir.Cover)
           { acc with leafNext := leafStart, frameOrigin := some ⟨i, k⟩ }
           (.frame title standout valign breakable
             (Ir.unwrapItemSteps (Ir.dimBlocks cover k body))) 0
+  | .section level starred num title =>
+    acc := collectSection rd acc level starred num title 0 (top := true)
   | other => acc := collectBlock rd acc (Ir.unwrapItemStep other) 0
   return (acc, firstBlk)
 
@@ -18207,7 +18207,7 @@ private theorem collectParaBlock_plain (r : Rd) (a : Acc) (xs : Array Inline)
     · obtain ⟨x, hx⟩ := Array.exists_mem_of_ne_empty xs he
       obtain ⟨s, rfl⟩ := hp x hx
       have hh := (Array.all_eq_true_iff_forall_mem.mp hall) (.text s) hx
-      contradiction
+      simp [anchorInline] at hh
   · rfl
 
 private theorem collectParaBlock_leafNext (r : Rd) (a : Acc) (xs : Array Inline)

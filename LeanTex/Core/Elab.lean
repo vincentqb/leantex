@@ -531,8 +531,8 @@ public structure ESt where
   /-- What the document's own `\AtBeginSection` and `\AtBeginSubsection` declare. -/
   sectionHook : Option Ir.SectionHook := none
   subsectionHook : Option Ir.SectionHook := none
-  /-- A section has been set, after which a hook declared in the body binds none before it. -/
-  sawSection : Bool := false
+  /-- Whether a deck has set a section and a subsection, which a later hook cannot open. -/
+  sectionsSeen : Bool × Bool := (false, false)
   /-- The `\bibliographystyle` name, wherever it appears. -/
   bibStyle : Option String := none
   /-- natbib's declarations, `none` until natbib is loaded. -/
@@ -6151,7 +6151,8 @@ private def sectionNumber (ctx : Ctx) (level : Nat) (starred : Bool) :
     EM (Option String) := do
   let st ← get
   let deck := ctx.slides
-  if deck && level != 0 then modify fun st => { st with sawSection := true }
+  if deck && level == 1 then modify fun st => { st with sectionsSeen := (true, st.sectionsSeen.2) }
+  if deck && level == 2 then modify fun st => { st with sectionsSeen := (st.sectionsSeen.1, true) }
   if (starred && !deck) || (!ctx.numberHeadings && !deck) || level == 0 || level > 3 ||
       (level : Int) > st.ctr.secDepth then
     return none
@@ -6168,20 +6169,41 @@ private def sectionNumber (ctx : Ctx) (level : Nat) (starred : Bool) :
                              refTarget := some { kind := some .heading, num := num } }
   return if deck then none else some num
 
-mutual
-
-/-- Whether a hook's code sets a page of its own: a frame, or a section page outside one. -/
-private def hookSetsPageOne : Raw → Bool
-  | .ctrl n _ => n == "frame" || n == "againframe" || n == "sectionpage" || n == "subsectionpage"
-  | .env n body _ => n == "frame" || hookSetsPageList body.toList
-  | .group body _ => hookSetsPageList body.toList
+/-- Whether raws open with a `{frame}` group, as an environment's begin half spells `\begin{frame}`. -/
+private def opensFrameGroup : List Raw → Bool
+  | .group g _ :: _ => g.size == 1 && (g[0]? matches some (Raw.word "frame" _))
   | _ => false
 
-private def hookSetsPageList : List Raw → Bool
+mutual
+
+/-- Whether code sets a page of its own: a frame, a section page outside one, or a command or
+environment of the document's that does. -/
+private def hookSetsPageOne (cmds envs : String → Bool) : Raw → Bool
+  | .ctrl n _ =>
+    n == "frame" || n == "againframe" || n == "sectionpage" || n == "subsectionpage" || cmds n
+  | .env n body _ => n == "frame" || envs n || hookSetsPageList cmds envs body.toList
+  | .group body _ => hookSetsPageList cmds envs body.toList
+  | .word .. | .space | .par _ | .sym .. | .math .. | .verb .. => false
+
+private def hookSetsPageList (cmds envs : String → Bool) : List Raw → Bool
   | [] => false
-  | r :: rest => hookSetsPageOne r || hookSetsPageList rest
+  | r :: rest =>
+    hookSetsPageOne cmds envs r || (r matches .ctrl "begin" _ && opensFrameGroup rest) ||
+      hookSetsPageList cmds envs rest
 
 end
+
+/-- Whether each command and environment the document defines sets a page of its own, a command
+reading only those defined before it. -/
+private def pageDefs (ctx : Ctx) : Array Bool × Array Bool := Id.run do
+  let mut cmds : Array Bool := #[]
+  for h : j in [0:ctx.user.size] do
+    let seen := cmds
+    let sets := fun n => ((latestNamed (·.name) ctx.user n j).bind fun (k, _) => seen[k]?) == some true
+    cmds := cmds.push (hookSetsPageList sets (fun _ => false) ctx.user[j].body.toList)
+  let sets := fun n => ((lookupUser ctx n).bind fun (k, _) => cmds[k]?) == some true
+  return (cmds, ctx.userEnvs.map fun e =>
+    hookSetsPageList sets (fun _ => false) (e.beginBody ++ e.endBody).toList)
 
 /-- A hook's `[starred]` code, its `{code}` group and the index past them, after its control word. -/
 private def hookArgsAt (raws : Array Raw) (i : Nat) :
@@ -6201,9 +6223,12 @@ private def hookArgsAt (raws : Array Raw) (i : Nat) :
 opens, and each starred one, stands on a page of its own. -/
 private def recordSectionHook (ctx : Ctx) (name : String) (starred : Option (Array Raw))
     (code : Array Raw) (pos : Pos) : EM Unit := do
+  let (cmds, envs) := pageDefs ctx
+  let sets := hookSetsPageList
+    (fun n => ((lookupUser ctx n).bind fun (k, _) => cmds[k]?) == some true)
+    (fun n => ((lookupUserEnv ctx n).bind fun (k, _) => envs[k]?) == some true)
   let hook : Ir.SectionHook :=
-    { page := hookSetsPageList code.toList
-      starredPage := hookSetsPageList (starred.getD code).toList }
+    { page := sets code.toList, starredPage := sets (starred.getD code).toList }
   if name == "AtBeginSubsection" then
     modify fun st => { st with subsectionHook := some hook }
   else
@@ -6213,15 +6238,19 @@ private def recordSectionHook (ctx : Ctx) (name : String) (starred : Option (Arr
       s!"'\\{name}' is not set yet: each section it opens stands on a page showing its title" pos
       (help := "beamer sets the hook's own frame there")
 
-/-- A hook declared in the body: read where no section precedes it, else named and ignored. -/
+/-- A hook declared in the body: read where no section it opens precedes it, else named and
+ignored. -/
 private def bodySectionHook (ctx : Ctx) (name : String) (raws : Array Raw) (i : Nat) (pos : Pos) :
     EM Unit := do
   let (starred, code, _) := hookArgsAt raws i
+  let sub := name == "AtBeginSubsection"
+  let what := if sub then "subsection" else "section"
+  let (secs, subs) := (← get).sectionsSeen
   -- premise: sectionPageChecks — one hook decides every section's page
-  if (← get).sawSection then
-    warnOnce ctx ("ctrl:" ++ name) .W0340
-      s!"'\\{name}' after a section is ignored: the hook decides every section's page" pos
-      (help := "declare it before the first '\\section', or in the preamble")
+  if (if sub then subs else secs) then
+    warnOnce ctx ("ctrl:" ++ name ++ ":body") .W0340
+      s!"'\\{name}' after a {what} is ignored: the hook decides every {what}'s page" pos
+      (help := s!"declare it before the first '\\{what}', or in the preamble")
   else match code with
     | some c => recordSectionHook ctx name starred c pos
     | none => diag ctx .E0304 s!"'\\{name}' needs a \{...} group" pos
@@ -10674,7 +10703,7 @@ private def isBlockStart (ctx' : Ctx) (n : String) (raws : Array Raw) (i : Nat)
   n == "par" || n == "block" || n == "centering" || n == "pause"
     || (Ir.raggedSideOf? n).isSome
     || n == "framefoot" || n == "pagebreak" || n == "appendix"
-    || n == "AtBeginSection" || n == "AtBeginSubsection"
+    || (ctx'.slides && (n == "AtBeginSection" || n == "AtBeginSubsection"))
     || n == Compat.frameRestartMark || n == Compat.vspaceAnchorMark
     || (Ir.pageOpeningOfRole? n).isSome
     -- `\prevdepth` is vertical mode's: TeX refuses it mid-paragraph.
@@ -11274,7 +11303,8 @@ private def elabEnvArm (ctx : Ctx) (n : String) (scope : Array Raw)
   else if n == "thebibliography" then
     blocks := blocks ++ (← ownBibList ctx body)
   else if n == "frame" then
-    -- A label in a deck's frame binds no section's number.
+    -- A label in a deck's frame binds no section's number, and one after it the section's again.
+    let outer := (← get).refTarget
     if ctx.slides then modify fun st => { st with refTarget := none }
     -- A paragraph break before the title group makes it content, as in LaTeX.
     let opts ← frameOpts ctx body pos
@@ -11306,6 +11336,7 @@ private def elabEnvArm (ctx : Ctx) (n : String) (scope : Array Raw)
       inner ← drainNotesGo frameCtx stash.toList inner
     -- A frame nests no frame: an inner title frame flattens into this one.
     blocks ← closeFramePalette ctx pos blocks title opts inner aliasScope
+    if ctx.slides then modify fun st => { st with refTarget := outer }
   else if n == "itemize" || n == "enumerate" || n == "description" then
     let mut bodyFrom := 0
     match scanOpeningArg body pos fun _ => true with
@@ -11696,7 +11727,8 @@ when it is empty — '{}'")
     if let some p ← mkPara ctx junk then
       blocks := blocks.push p
     return (blocks, ⟨j, by omega⟩)
-  else if n == "AtBeginSection" || n == "AtBeginSubsection" then
+  -- premise: sectionPageChecks — outside a deck the hooks are unknown, their arguments kept
+  else if ctx.slides && (n == "AtBeginSection" || n == "AtBeginSubsection") then
     let ju := skipReservedArgs raws (i + 1) pos
     have hj : i + 1 ≤ ju.1 := skipReservedArgs_ge raws (i + 1) pos 1
     bodySectionHook ctx n raws (i + 1) pos
@@ -14883,6 +14915,13 @@ draws; skipped" pos
               s!"theme '{tname}' replaces the document's earlier '{key}' from '\\{kind.name}'"
               (some pos)
               (help := "overrides go after '\\theme': move the declaration below it")
+        -- A theme with a section page sets its own hook, as beamer's does, over an earlier one.
+        -- premise: sectionPageChecks — the replaced hook is named
+        if th.sectionPage && (← get).sectionHook.isSome then
+          diag s.ctx .W0348
+            s!"theme '{tname}' replaces the document's earlier '\\AtBeginSection'" (some pos)
+            (help := "overrides go after '\\theme': move the declaration below it")
+          modify fun st => { st with sectionHook := none }
         let installed := (Theme.declares th s.palette.classColors.depth).map
           fun (k, key) => (k.name, key)
         let ownRoles (rs : Array Role) : Array Role :=
@@ -15249,6 +15288,12 @@ does not keep; the number stands alone" pos
 a heading; its numbers stand alone" pos
       return s
   | .sectionHook name starred code pos =>
+    -- the hooks are beamer's: outside a deck LaTeX knows neither
+    if s.docClass.record.model != .frame then
+      warnOnce s.ctx ("ctrl:" ++ name) .W0301
+        s!"unknown command '\\{name}' in the preamble; skipped" pos
+        (help := unknownCmdHelp name false)
+      return s
     match code with
     | some c => recordSectionHook s.ctx name starred c pos
     | none => diag s.ctx .E0304 s!"'\\{name}' needs a \{...} group" pos

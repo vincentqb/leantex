@@ -216,6 +216,33 @@ private def lateHook : String :=
   "\n\\begin{frame}{First}FirstWords\\end{frame}\n\\section{Beta Part}\n" ++
   "\\begin{frame}{Second}SecondWords\\end{frame}"
 
+/-- Sections and labels under a language, a size group and a colour declared outside the frames. -/
+private def scopedLabels : String :=
+  "\\begin{frame}{One}OneWords\\end{frame}\n\\selectlanguage{french}\n" ++
+  "\\section{Partie Alpha}\\label{sec:fr}\n\\begin{frame}{Deux}DeuxWords\\end{frame}\n" ++
+  "{\\small\n\\section{Small Part}\\label{sec:small}\n\\begin{frame}{Four}FourWords\\end{frame}\n}\n" ++
+  "\\color{red}\n\\section{Red Part}\\label{sec:red}\n\\begin{frame}{Five}FiveWords\\end{frame}"
+
+/-- Blocks outside the frames that set nothing: an empty centre, an empty list, a label in a centre. -/
+private def quiet : String :=
+  "\\begin{frame}{One}OneWords\\end{frame}\n\\begin{center}\\end{center}\n" ++
+  "\\begin{frame}{Two}TwoWords\\end{frame}\n\\begin{itemize}\\end{itemize}\n" ++
+  "\\begin{frame}{Three}ThreeWords\\end{frame}\n\\begin{center}\\label{quiet:c}\\end{center}\n" ++
+  "\\begin{frame}{Four}FourWords\\end{frame}"
+
+/-- A section inside a block outside the frames, which inks as that block's heading. -/
+private def nestedSection : String :=
+  "\\begin{frame}{One}OneWords\\end{frame}\n" ++
+  "\\begin{center}\n\\section{Centred Part}\nCentredWords\n\\end{center}\n" ++
+  "\\begin{frame}{Two}TwoWords\\end{frame}"
+
+/-- A subsection hook declared after a section, before any subsection it opens. -/
+private def lateSubHook : String :=
+  "\\begin{frame}{Opening}OpeningWords\\end{frame}\n\\section{Alpha Part}\n" ++
+  "\\AtBeginSubsection[]{\\begin{frame}{Sub}SubWords\\end{frame}}\n" ++
+  "\\subsection{Alpha One}\n\\begin{frame}{First}FirstWords\\end{frame}\n" ++
+  "\\subsection{Alpha Two}\n\\begin{frame}{Second}SecondWords\\end{frame}"
+
 /-- References across a starred section and `\appendix`, which beamer numbers on. -/
 private def appendixed : String :=
   "\\begin{frame}{Opening}OpeningWords, see \\ref{sec:a}, \\ref{sec:b}, \\ref{sec:backup}, " ++
@@ -237,7 +264,7 @@ def sectionPageChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
     { pageless with
       foots := #[("", ""), ("Alpha Part", ""), ("Alpha Part", ""), ("Beta Part", ""),
         ("Gamma Part", "")] }
-  verify ref fonts "a theme's section page" "\\theme{moloch}" sectioned
+  let themed : Expected :=
     { pages := #[(.frame, "OpeningWords"), (.section, "Alpha Part"), (.frame, "FirstWords"),
         (.frame, "SecondWords"), (.section, "Beta Part"), (.frame, "ThirdWords"),
         (.section, "Gamma Part"), (.frame, "FourthWords")]
@@ -245,6 +272,9 @@ def sectionPageChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
         ("sec:beta", "ThirdWords")]
       anchors := #[("Alpha Part", "Alpha Part"), ("Beta Part", "Beta Part")]
       headings := #[("h3", "Alpha Detail", "SecondWords")] }
+  verify ref fonts "a theme's section page" "\\theme{moloch}" sectioned themed
+  verify ref fonts "a theme after the document's hook sets its own, as beamer's, and says so"
+    "\\AtBeginSection[]{}\n\\theme{moloch}" sectioned { themed with warns := #["W0348"] }
   verify ref fonts "a progress bar's colour declares no section page"
     "\\theme{default}\n\\setbeamercolor{progress bar}{fg=red}" sectioned pageless
   verify ref fonts "the document's section hook" ("\\theme{default}\n" ++ outlineHook) sectioned hooked
@@ -262,6 +292,21 @@ def sectionPageChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
       headings := #[("h2", "Alpha Part", "FirstWords"), ("h2", "Beta Part", "ThirdWords"),
         ("h2", "Gamma Part", "FourthWords")]
       warns := #["W0307"] }
+  verify ref fonts "a hook reaching its frame through the document's command"
+    ("\\theme{default}\n\\newcommand{\\outlineframe}{\\begin{frame}{Outline}OutlineWords\\end{frame}}\n" ++
+      "\\AtBeginSection[]{\\outlineframe}") sectioned hooked
+  verify ref fonts "a hook reaching its frame through the document's environment"
+    ("\\theme{default}\n" ++
+      "\\newenvironment{outline}{\\begin{frame}{Outline}OutlineWords\\end{frame}}{}\n" ++
+      "\\AtBeginSection[]{\\begin{outline}\\end{outline}}") sectioned hooked
+  verify ref fonts "a subsection hook after a section opens every subsection" "\\theme{default}"
+    lateSubHook
+    { pages := #[(.frame, "OpeningWords"), (.section, "Alpha One"), (.frame, "FirstWords"),
+        (.section, "Alpha Two"), (.frame, "SecondWords")]
+      labels := #[]
+      anchors := #[("Alpha Part", "Alpha One")]
+      headings := #[("h2", "Alpha Part", "Alpha One")]
+      warns := #["W0307"] }
   verify ref fonts "a hook after a section is named and read by none" "\\theme{default}" lateHook
     { pages := #[(.frame, "OpeningWords"), (.frame, "FirstWords"), (.frame, "SecondWords")]
       labels := #[]
@@ -278,6 +323,30 @@ def sectionPageChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
       labels := #[("sec:last", "LastWords"), ("deck:end", "LastWords")]
       anchors := #[("Last Part", "LastWords")]
       headings := #[("h2", "Last Part", "LastWords")] }
+  verify ref fonts "labels under a language, size or colour outside the frames, no section page"
+    "\\usepackage[french,english]{babel}\n\\theme{default}" scopedLabels
+    { pages := #[(.frame, "OneWords"), (.frame, "DeuxWords"), (.frame, "FourWords"),
+        (.frame, "FiveWords")]
+      labels := #[("sec:fr", "DeuxWords"), ("sec:small", "FourWords"), ("sec:red", "FiveWords")]
+      anchors := #[("Partie Alpha", "DeuxWords"), ("Small Part", "FourWords"),
+        ("Red Part", "FiveWords")]
+      headings := #[("h2", "Partie Alpha", "DeuxWords"), ("h2", "Small Part", "FourWords"),
+        ("h2", "Red Part", "FiveWords")] }
+  verify ref fonts "labels under a language, size or colour outside the frames, a theme's section page"
+    "\\usepackage[french,english]{babel}\n\\theme{moloch}" scopedLabels
+    { pages := #[(.frame, "OneWords"), (.section, "Partie Alpha"), (.frame, "DeuxWords"),
+        (.section, "Small Part"), (.frame, "FourWords"), (.section, "Red Part"), (.frame, "FiveWords")]
+      labels := #[("sec:fr", "DeuxWords"), ("sec:small", "FourWords"), ("sec:red", "FiveWords")]
+      anchors := #[("Partie Alpha", "Partie Alpha"), ("Small Part", "Small Part"),
+        ("Red Part", "Red Part")] }
+  verify ref fonts "blocks outside the frames that set nothing" "\\theme{default}" quiet
+    { pages := #[(.frame, "OneWords"), (.frame, "TwoWords"), (.frame, "ThreeWords"),
+        (.frame, "FourWords")]
+      labels := #[("quiet:c", "FourWords")] }
+  verify ref fonts "a section inside a block outside the frames inks as its heading" "\\theme{moloch}"
+    nestedSection
+    { pages := #[(.frame, "OneWords"), (.loose, "CentredWords"), (.frame, "TwoWords")]
+      labels := #[] }
   verify ref fonts "content outside frames, no section page" "\\theme{default}" loose
     { pages := #[(.frame, "OneWords"), (.loose, "LooseBefore"), (.frame, "TwoWords")]
       labels := #[("sec:middle", "LooseAfter")]
@@ -308,7 +377,30 @@ def sectionPageChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
   t "a label in a frame binds no section's number, the loss named"
     ((pageWith c "OpeningWords").any (pageHas c · "see ??.") &&
       (elabStr (deck169 "\\theme{default}" inFrame)).2.any (·.code == "W0349"))
+  let afterFrame := "\\begin{frame}{Opening}OpeningWords, see \\ref{after}.\\end{frame}\n" ++
+    "\\section{Alpha Part}\n\\begin{frame}{First}FirstWords\\end{frame}\n\\label{after}\n" ++
+    "\\begin{frame}{Second}SecondWords\\end{frame}"
+  let c := censusOfSrc fonts (deck169 "\\theme{default}" afterFrame)
+  t "a label after a frame binds its section's number again, as beamer's"
+    ((pageWith c "OpeningWords").any (pageHas c · "see 1."))
+  let (_, lds) := elabStr (deck169 ("\\theme{default}\n" ++ outlineHook) lateHook)
+  t "a hook after a section is named as a warning beside the hook it cannot replace"
+    (lds.any (fun d => d.code == "W0307" && d.severity == .warning) &&
+      lds.any fun d => d.code == "W0340" && d.severity == .warning)
+  let art := "\\documentclass{article}\n\\AtBeginSection[]{\\begin{frame}{Outline}\\end{frame}}\n" ++
+    "\\begin{document}\n\\section{Alpha}\nAlpha words.\n\\AtBeginSubsection{KeptWords}\n" ++
+    "\\subsection{Beta}\nBeta words.\n\\end{document}"
+  let ads := (elabStr art).2
+  t "outside a deck the hooks stay unknown commands, the body's argument kept as text"
+    ((ads.filter (·.code == "W0301")).size == 2 && !ads.any (·.code == "W0307") &&
+      hasStr (censusText (censusOfSrc fonts art)) "KeptWords")
   let kidsOf (pre body : String) := mainKids (HtmlDoc.emitTree {} (elabStr (deck169 pre body)).1).2.1
+  let kids := kidsOf "\\theme{default}\n\\AtBeginSubsection{\\begin{frame}{Sub}SubWords\\end{frame}}" sectioned
+  t "a subsection's page heads it at the subsection's rank, as the tagged PDF does"
+    ((kids.filter fun k => stageKind k == some .section).all fun k =>
+      (elemNodesList (fun t => t == "h2" || t == "h3") #[] [k]).any fun h => match h with
+        | .elem tag _ _ => tag == "h3" && !outOfSight h
+        | _ => false)
   let kids := kidsOf "\\theme{default}" trailing
   t "a note between frames rides the frame before it, a trailing one the last"
     (stageWith kids "EarlyNoteWords" == stageWith kids "OpeningWords" &&

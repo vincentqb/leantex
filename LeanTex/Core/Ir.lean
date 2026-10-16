@@ -4575,9 +4575,18 @@ public def inParagraph (b : Block) : Block :=
   | .role n body => body.isEmpty && pageMarkerRole n
   | _ => false
 
+/-- Whether an inline sets no ink: a label anchor, alone or under a style, colour, span or role. -/
+@[expose] public def anchorInline : Inline → Bool
+  | .label _ => true
+  | .styled _ body | .colored _ _ body | .located _ body | .role _ body =>
+    body.attach.all fun ⟨x, _⟩ => anchorInline x
+  | .text _ | .math _ _ | .formula _ _ _ | .link _ _ | .ref _ _ _ _ | .decorated _ _ | .fill
+  | .hspace _ _ | .rule _ _ _ | .pageNumber | .pageCount | .linebreak _ | .strut _ | .italicCorr _
+  | .onSteps _ _ | .altSteps _ _ _ | .image _ _ _ | .icon _ _ | .cite _ _ | .footnote _ _ => false
+
 /-- A paragraph of label anchors alone, which sets no line. -/
 @[expose] public def anchorsOnly (content : Array Inline) : Bool :=
-  !content.isEmpty && content.all (· matches .label _)
+  !content.isEmpty && content.all anchorInline
 
 /-- Mark the block an environment arm pushed past `k` as opened inside a
 paragraph when `inPar` says so. -/
@@ -8163,6 +8172,12 @@ end
 @[expose] public def foldInlines (fi : α → Inline → α) (acc : α) (xs : Array Inline) : α :=
   foldInlineList fi acc xs.toList
 
+/-- The label keys inlines hold, nested ones included, in order. -/
+public def labelKeys (content : Array Inline) : Array String :=
+  foldInlines (fun out x => match x with
+    | .label key => out.push key
+    | _ => out) #[] content
+
 /-- The first contributing source location, in document order. -/
 -- conserves: none — reads provenance.
 public def inlineSource (content : Array Inline) : Option Span :=
@@ -8260,6 +8275,12 @@ end
     (xs : Array Block) : α :=
   foldBlockList fb fi acc xs.toList
 
+/-- The label keys blocks hold, nested ones included, in order. -/
+public def blockLabelKeys (body : Array Block) : Array String :=
+  foldBlocks (fun out _ => out) (fun out x => match x with
+    | .label key => out.push key
+    | _ => out) #[] body
+
 /-- Whether blocks hold a list anywhere: what beamer's squeeze changes. -/
 public def holdsList (body : Array Block) : Bool :=
   foldBlocks (fun acc b => acc || b matches .list ..) (fun acc _ => acc) false body
@@ -8278,23 +8299,34 @@ public inductive Outside where
   | none
   deriving Repr, BEq, DecidableEq, Inhabited
 
-/-- What a deck sets for a block outside every frame, read as both of its artifacts read it. -/
+/-- Whether a block sets nothing a page shows: an empty paragraph or one of label anchors, an empty
+list, or a container holding only such blocks. -/
+public def setsNothing : Block → Bool
+  | .para content => content.isEmpty || anchorsOnly content
+  | .list _ items => items.isEmpty
+  | .center body | .ragged _ body | .spaced _ body | .role _ body | .link _ body | .quote body
+  | .onSteps _ body | .only _ body => body.attach.all fun ⟨b, _⟩ => setsNothing b
+  | .section .. | .abstract _ | .titled .. | .disclosure .. | .equation .. | .verbatim ..
+  | .algorithm .. | .columns _ | .altSteps .. | .note _ | .nav .. | .logo _ | .pagebreak
+  | .frame .. | .framefoot _ | .setPalette _ | .setTokens _ | .rule .. | .picture _ | .table ..
+  | .float .. | .bibliography .. => false
+
+/-- What a deck sets for a top-level block outside every frame: a stage of its own, content on a
+page of its own, or nothing a page shows. -/
 public def Doc.outside (doc : Doc) (b : Block) : Outside :=
   if holdsFrame #[b] then .stage
-  else if pageMarkerBlock b then .none
+  else if setsNothing b then .none
   else match b with
     | .frame .. | .pagebreak => .stage
     | .setPalette _ | .setTokens _ | .logo _ | .framefoot _ | .note _ => .none
-    | .spaced _ body => if body.isEmpty then .none else .content
     | .section level starred _ _ =>
       if level == .title then .content
       else if doc.sectionPages.pageFor level starred then .stage
       else .none
-    | .para content => if anchorsOnly content then .none else .content
-    | .list .. | .center .. | .ragged .. | .role .. | .link .. | .quote .. | .abstract ..
-    | .titled .. | .disclosure .. | .equation .. | .verbatim .. | .algorithm .. | .columns ..
-    | .onSteps .. | .altSteps .. | .only .. | .nav .. | .rule .. | .picture .. | .table ..
-    | .float .. | .bibliography .. => .content
+    | .para _ | .list .. | .center .. | .ragged .. | .spaced .. | .role .. | .link .. | .quote ..
+    | .abstract .. | .titled .. | .disclosure .. | .equation .. | .verbatim .. | .algorithm ..
+    | .columns .. | .onSteps .. | .altSteps .. | .only .. | .nav .. | .rule .. | .picture ..
+    | .table .. | .float .. | .bibliography .. => .content
 
 /-- The events a context-threading walk declares. -/
 public structure CtxFold (γ : Type) (α : Type) where
