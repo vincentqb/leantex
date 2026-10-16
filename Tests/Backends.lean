@@ -1337,7 +1337,8 @@ def deckCssChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a declared safearea token overrides the engine default"
     (has (HtmlDoc.emit {} tokDoc).1 "--safearea: 20pt;")
   -- Two stages of equal height and different width emit identical screen decks; 16:10 differs.
-  t "the deck page carries no stage millimetre" (!has deckPage "mm")
+  t "the deck page carries no stage millimetre"
+    (!(deckPage.splitOn "mm").dropLast.any fun piece => piece.back.isDigit || piece.back == '.')
   let deckAt (ratio : String) : String :=
     (HtmlDoc.emit {} (elabStr
       (s!"\\documentclass[aspectratio={ratio}]\{slides}\n" ++

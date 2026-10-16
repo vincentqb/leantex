@@ -7401,6 +7401,8 @@ public structure Doc where
   frameRestart : Option Nat := none
   /-- Which of a deck's sections stand on pages of their own. -/
   sectionPages : SectionPages := {}
+  /-- The roles the document's own colour declarations set, a theme's aside. -/
+  ownRoles : Array Role := #[]
   /-- Where each `\bibliography` list's footnotes number from, in document
   order, and how many notes its fields set. -/
   listNotes : Array (Nat × Nat) := #[]
@@ -9864,6 +9866,9 @@ document's own seeds where declared, else the class's. -/
 default there; `none` for a role nothing paints. -/
 @[expose] public def Design.at (pal : Palette) (s : Scheme) (r : Role) : Option Color :=
   Design.atDepth pal r.depth s r
+
+/-- Whether the document itself declares the focus role, not a theme it loads. -/
+public def Doc.declaresFocus (doc : Doc) : Bool := doc.ownRoles.contains .focus
 
 private theorem filterMap_ext_mem {α β : Type} (f g : α → Option β) :
     ∀ (l : List α), (∀ a ∈ l, f a = g a) → l.filterMap f = l.filterMap g

@@ -3368,23 +3368,31 @@ private def deckStageRule : DeckRule :=
 indicator's area against. -/
 private def focusWidth : String := "2px"
 
-/-- A focused stage draws no browser ring but a rule in its ink down the middle half of each side
-margin, as a background that holds still while the stage scrolls, beneath all it shows and over a
-theme's later stage grounds. -/
-private def deckStageFocusRule : DeckRule :=
-  let side := s!"max({focusWidth}, calc(0.5 * {safeareaVar}))"
-  let ink := "linear-gradient(currentColor, currentColor)"
-  { selector := [.lit "html section.slide:focus-visible, html section.section-page:focus-visible"]
-    decls := [("outline", "none"), ("background-image", s!"{ink}, {ink}"),
-      ("background-size", s!"{focusWidth} 50%"),
-      ("background-position", s!"left {side} center, right {side} center"),
-      ("background-repeat", "no-repeat")] }
+/-- How far in from its side a stage's focus mark stands: the middle of the safe area, else as far
+in as the safe area holds it clear of the content, else at the side. -/
+public def focusInset : String :=
+  s!"max(0px, min(calc(0.5 * {safeareaVar}), calc({safeareaVar} - {focusWidth})))"
 
-/-- In forced colours, which drop a background image, a focused stage rings its own edge instead. -/
-private def deckStageForcedFocusRule : DeckRule :=
-  { selector := [.lit ("@media (forced-colors: active) { html section.slide:focus-visible, " ++
-      "html section.section-page:focus-visible")]
-    decls := [("outline", s!"{focusWidth} solid currentColor"), ("outline-offset", s!"-{focusWidth}")] }
+/-- A focused stage draws no browser ring. -/
+private def deckStageFocusRule : DeckRule :=
+  { selector := [.lit "html section.slide:focus-visible, html section.section-page:focus-visible"]
+    decls := [("outline", "none")] }
+
+/-- A focused stage's mark: a rule down the middle half of each side margin, centred on the stage
+whatever its padding, in its ink, out of its flow and still while it scrolls, a border forced
+colours keep in their own ink. -/
+private def deckStageMarkRule : DeckRule :=
+  { selector := [.lit ("html section.slide:focus-visible::before, " ++
+      "html section.section-page:focus-visible::before")]
+    decls := [("content", "\"\""), ("position", "sticky"), ("top", "25dvh"), ("flex", "none"),
+      ("align-self", "center"), ("width", s!"calc(100vw - 2 * {focusInset})"), ("height", "50dvh"),
+      ("margin", "0 0 -50dvh"), ("border-inline", s!"{focusWidth} solid currentColor"),
+      ("pointer-events", "none")] }
+
+/-- A display wider than its stage scrolls inside its own box, so the stage never scrolls sideways
+and the deck alone pages there. -/
+private def deckDisplayRule : DeckRule :=
+  { selector := [.lit "section.slide .display"], decls := [("overflow-x", "auto")] }
 
 /-- The deck's stage typography: body and root sizes as shares of the stage height, and the
 body's line height. -/
@@ -3430,7 +3438,8 @@ private def deckBase (ty : DeckType) : List DeckRule :=
     { selector := [.lit "pre"], decls := [("padding", "0"), ("background", "none")],
       part := .stage },
     deckStageFocusRule,
-    deckStageForcedFocusRule ]
+    deckStageMarkRule,
+    deckDisplayRule ]
 
 /-- `deckGlideRule`'s reduced-motion counterpart. -/
 private def deckGlideGuard : DeckRule :=
@@ -4077,12 +4086,12 @@ private theorem deckBase_cases {P : DeckRule → Prop} {v : DeckType}
     (h13 : P { selector := [.lit "html"], decls := [("font-size", v.root)], part := .stage })
     (h14 : P { selector := [.lit "pre"], decls := [("padding", "0"), ("background", "none")],
                part := .stage })
-    (h15 : P deckStageFocusRule) (h16 : P deckStageForcedFocusRule) :
+    (h15 : P deckStageFocusRule) (h16 : P deckStageMarkRule) (h17 : P deckDisplayRule) :
     ∀ r ∈ deckBase v, P r := by
   intro r hr
   simp only [deckBase, List.mem_cons, List.not_mem_nil, or_false] at hr
   rcases hr with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl |
-    rfl | rfl | rfl | rfl | rfl <;>
+    rfl | rfl | rfl | rfl | rfl | rfl <;>
     assumption
 
 /-- Whether a rule whose syntax depends on a feature is gated on that feature's support. -/
@@ -4092,7 +4101,7 @@ public def gateRespects (r : DeckRule) : Bool :=
 public theorem deck_css_partition (v : DeckType) (pg : String) (cp ms : Nat) :
     ∀ r ∈ deckRules v pg cp ms, gateRespects r = true :=
   deckRules_check v pg cp ms
-    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
+    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
     (by decide) rfl rfl rfl rfl rfl (by decide) (fun _ => rfl) (fun _ => rfl)
     (by decide) (fun _ => altSnapRules_cases rfl rfl rfl rfl)
     (setRules_cases rfl rfl rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
@@ -4108,8 +4117,8 @@ public def baselineProps : List String :=
    "justify-content", "align-items", "position", "content",
    "animation", "border", "border-radius", "break-inside", "break-after",
    "break-before", "size", "print-color-adjust", "box-decoration-break",
-   "bottom", "left", "right", "outline", "outline-offset", "background-image",
-   "background-size", "background-position", "background-repeat"]
+   "bottom", "left", "right", "outline", "top", "align-self", "border-inline", "pointer-events",
+   "overflow-x"]
 
 /-- Whether a rule is part of the floor: the base and every `@supports not` block. -/
 public def onFloor (r : DeckRule) : Bool :=
@@ -4122,7 +4131,7 @@ public theorem floor_is_baseline (v : DeckType) (pg : String) (cp ms : Nat) :
     ∀ r ∈ deckRules v pg cp ms,
       (!(onFloor r) || r.decls.all fun d => baselineProps.contains d.1) = true :=
   deckRules_check v pg cp ms
-    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
+    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
     (by decide) rfl rfl rfl rfl rfl (by decide) (fun _ => rfl) (fun _ => rfl)
     (by decide) (fun _ => altSnapRules_cases rfl rfl rfl rfl)
     (setRules_cases rfl rfl rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
@@ -4153,7 +4162,7 @@ public theorem content_hidden_behind_script (v : DeckType) (pg : String) (cp ms 
         (!(r.decls.contains ("display", "none")) &&
          !(r.decls.contains ("visibility", "hidden")))) = true :=
   deckRules_check v pg cp ms
-    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
+    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
     (by decide) rfl rfl rfl rfl rfl (by decide) (fun _ => rfl) (fun _ => rfl)
     (by decide) (fun _ => altSnapRules_cases rfl rfl rfl rfl)
     (setRules_cases rfl rfl rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
@@ -4172,7 +4181,7 @@ public theorem floor_opacity_mem (v : DeckType) (pg : String) (cp ms : Nat) :
       (fun o ho => nomatch ho) (fun o ho => nomatch ho) (fun o ho => nomatch ho)
       (fun o ho => nomatch ho) (fun o ho => nomatch ho) (fun o ho => nomatch ho)
       (fun o ho => nomatch ho) (fun o ho => nomatch ho) (fun o ho => nomatch ho)
-      (fun o ho => nomatch ho)
+      (fun o ho => nomatch ho) (fun o ho => nomatch ho)
   · intro r hr
     simp only [deckReduce, deckGlideGuard, List.mem_cons, List.not_mem_nil,
       or_false] at hr
@@ -4227,7 +4236,7 @@ public theorem floor_covered_script_gated (v : DeckType) (pg : String) (cp ms : 
       (!(onFloor r) || scriptGated r ||
         r.decls.all fun d => d.1 != "opacity" || d.2 == "100%") = true :=
   deckRules_check v pg cp ms
-    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
+    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
     (by decide) rfl rfl rfl rfl rfl (by decide) (fun _ => rfl) (fun _ => rfl)
     (by decide) (fun _ => altSnapRules_cases rfl rfl rfl rfl)
     (setRules_cases rfl rfl rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
@@ -4239,7 +4248,7 @@ public theorem hidden_script_gated (v : DeckType) (pg : String) (cp ms : Nat) :
     ∀ r ∈ deckRules v pg cp ms,
       (keyframesRule r || scriptGated r || !(r.decls.contains ("visibility", "hidden"))) = true :=
   deckRules_check v pg cp ms
-    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
+    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
     (by decide) rfl rfl rfl rfl rfl (by decide) (fun _ => rfl) (fun _ => rfl)
     (by decide) (fun _ => altSnapRules_cases rfl rfl rfl rfl)
     (setRules_cases rfl rfl rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
@@ -4251,7 +4260,7 @@ public theorem animations_script_gated (v : DeckType) (pg : String) (cp ms : Nat
     ∀ r ∈ deckRules v pg cp ms,
       (scriptGated r || r.decls.all fun d => d.1 != "animation" || d.2 == "none") = true :=
   deckRules_check v pg cp ms
-    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
+    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
     (by decide) rfl rfl rfl rfl rfl (by decide) (fun _ => rfl) (fun _ => rfl)
     (by decide) (fun _ => altSnapRules_cases rfl rfl rfl rfl)
     (setRules_cases rfl rfl rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
@@ -4311,7 +4320,7 @@ public theorem guards_by_construction (v : DeckType) (pg : String) (cp ms : Nat)
             List.map_cons, List.map_nil, SelChunk.render, String.join_cons,
             String.join_nil, String.append_empty, String.toList_append]
           decide))
-      rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl
+      rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl
   · intro r hr
     simp only [deckReduce, deckGlideGuard, List.mem_cons, List.not_mem_nil,
       or_false] at hr
@@ -4402,7 +4411,7 @@ public theorem print_lifts_stage_bounds_covers (v : DeckType) (pg : String) (cp 
             List.map_cons, List.map_nil, SelChunk.render, String.join_cons,
             String.join_nil, String.append_empty]
           decide))
-      rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl
+      rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl
   · intro r hr
     simp only [deckReduce, deckGlideGuard, List.mem_cons, List.not_mem_nil,
       or_false] at hr
@@ -4463,7 +4472,7 @@ public theorem deck_text_path_free (v : DeckType) (pg : String) (cp ms : Nat) :
       (r.decls.all fun d =>
         d.1 != "content" || (d.2 == "\"\"" || d.2 == "none")) = true :=
   deckRules_check v pg cp ms
-    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
+    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
     (by decide) rfl rfl rfl rfl rfl (by decide) (fun _ => rfl) (fun _ => rfl)
     (by decide) (fun _ => altSnapRules_cases rfl rfl rfl rfl)
     (setRules_cases rfl rfl rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
@@ -4533,9 +4542,9 @@ public theorem image_share_agrees (l : Image.Len) (iW iH textW textH stage : Int
 
 /-! ## Deck script -/
 
-/-- The deck's constant script: arrow, page, space, Home and End keys page between `[data-snap]`
-points, the floor's step state follows the current snap, and the stages it pages leave the tab
-order. -/
+/-- The deck's constant script: the keys page between `[data-snap]` points but where the focused
+element still scrolls, the floor's step state follows the snap, a stage paged past loses its focus,
+and the stages leave the tab order. -/
 public def deckScript : String :=
   "(() => {
   document.documentElement.dataset.deckScript = \"\";
@@ -4543,6 +4552,7 @@ public def deckScript : String :=
   if (snaps.length === 0) return;
   const stops = \"section.slide[tabindex], section.section-page[tabindex]\";
   for (const s of document.querySelectorAll(stops)) s.removeAttribute(\"tabindex\");
+  const stages = \".slide-track, section.slide, section.section-page\";
   const reduce = matchMedia(\"(prefers-reduced-motion: reduce)\");
   const stageOf = (el) => el.closest(\".slide-track\") || el;
   const links = snaps.map(s => s.dataset.slideLabel);
@@ -4575,10 +4585,16 @@ public def deckScript : String :=
       history[mode === \"push\" ? \"pushState\" : \"replaceState\"](history.state, \"\", hash);
     seenHash = location.hash;
   };
+  const leave = () => {
+    const a = document.activeElement;
+    const at = a && a.closest && a.closest(stages);
+    if (at && !stageOf(snaps[cur]).contains(at)) a.blur();
+  };
   const go = (i, mode, instant = false) => {
     cur = Math.min(Math.max(i, 0), snaps.length - 1);
     destination = cur;
     mark();
+    leave();
     if (mode) writeHash(mode);
     const el = snaps[cur].getBoundingClientRect().width > 0
       ? snaps[cur] : stageOf(snaps[cur]);
@@ -4598,6 +4614,7 @@ public def deckScript : String :=
     if (box(snaps[best]).left !== box(snaps[cur]).left) {
       cur = best;
       mark();
+      leave();
       writeHash(\"replace\");
     }
   };
@@ -4621,6 +4638,20 @@ public def deckScript : String :=
     addEventListener(event, () => { destination = null; }, { passive: true });
   readHash();
   if (!location.hash) { sync(); writeHash(\"replace\"); }
+  const room = (t, across, back) => {
+    for (let n = t; n instanceof Element; n = n.parentElement) {
+      const stage = n.matches(stages);
+      if (stage && across) return false;
+      const s = getComputedStyle(n);
+      if (/auto|scroll/.test(across ? s.overflowX : s.overflowY)) {
+        const at = across ? n.scrollLeft : n.scrollTop;
+        const end = across ? n.scrollWidth - n.clientWidth : n.scrollHeight - n.clientHeight;
+        if (back ? at > 0 : at < end - 1) return true;
+      }
+      if (stage) return false;
+    }
+    return false;
+  };
   const skip = (i, dir) => {
     if (!reduce.matches) return i;
     while (snaps[i] && stageOf(snaps[i]) === stageOf(snaps[cur])) i += dir;
@@ -4634,16 +4665,21 @@ public def deckScript : String :=
     if (t instanceof Element &&
         (t.isContentEditable || /^(input|textarea|select|button)$/i.test(t.tagName) ||
           (t.tagName === \"SUMMARY\" && (e.key === \" \" || e.key === \"Enter\")))) return;
+    const back = (e.key === \" \" && e.shiftKey) || e.key === \"ArrowLeft\" ||
+      e.key === \"ArrowUp\" || e.key === \"PageUp\";
+    const ahead = (e.key === \" \" && !e.shiftKey) || e.key === \"ArrowRight\" ||
+      e.key === \"ArrowDown\" || e.key === \"PageDown\";
     let i = null;
     if (e.key === \"Home\") i = 0;
     else if (e.key === \"End\") {
       i = snaps.length - 1;
       while (reduce.matches && i > 0 && stageOf(snaps[i - 1]) === stageOf(snaps[i])) i -= 1;
     }
-    else if ((e.key === \" \" && e.shiftKey) || e.key === \"ArrowLeft\" ||
-        e.key === \"ArrowUp\" || e.key === \"PageUp\") i = skip(cur - 1, -1);
-    else if ((e.key === \" \" && !e.shiftKey) || e.key === \"ArrowRight\" ||
-        e.key === \"ArrowDown\" || e.key === \"PageDown\") i = skip(cur + 1, 1);
+    else if (back || ahead) {
+      if (t instanceof Element &&
+          room(t, e.key === \"ArrowLeft\" || e.key === \"ArrowRight\", back)) return;
+      i = back ? skip(cur - 1, -1) : skip(cur + 1, 1);
+    }
     if (i === null) return;
     e.preventDefault();
     go(i, \"push\");
@@ -4657,6 +4693,7 @@ public theorem deck_script_constant : deckScript =
   if (snaps.length === 0) return;
   const stops = \"section.slide[tabindex], section.section-page[tabindex]\";
   for (const s of document.querySelectorAll(stops)) s.removeAttribute(\"tabindex\");
+  const stages = \".slide-track, section.slide, section.section-page\";
   const reduce = matchMedia(\"(prefers-reduced-motion: reduce)\");
   const stageOf = (el) => el.closest(\".slide-track\") || el;
   const links = snaps.map(s => s.dataset.slideLabel);
@@ -4689,10 +4726,16 @@ public theorem deck_script_constant : deckScript =
       history[mode === \"push\" ? \"pushState\" : \"replaceState\"](history.state, \"\", hash);
     seenHash = location.hash;
   };
+  const leave = () => {
+    const a = document.activeElement;
+    const at = a && a.closest && a.closest(stages);
+    if (at && !stageOf(snaps[cur]).contains(at)) a.blur();
+  };
   const go = (i, mode, instant = false) => {
     cur = Math.min(Math.max(i, 0), snaps.length - 1);
     destination = cur;
     mark();
+    leave();
     if (mode) writeHash(mode);
     const el = snaps[cur].getBoundingClientRect().width > 0
       ? snaps[cur] : stageOf(snaps[cur]);
@@ -4712,6 +4755,7 @@ public theorem deck_script_constant : deckScript =
     if (box(snaps[best]).left !== box(snaps[cur]).left) {
       cur = best;
       mark();
+      leave();
       writeHash(\"replace\");
     }
   };
@@ -4735,6 +4779,20 @@ public theorem deck_script_constant : deckScript =
     addEventListener(event, () => { destination = null; }, { passive: true });
   readHash();
   if (!location.hash) { sync(); writeHash(\"replace\"); }
+  const room = (t, across, back) => {
+    for (let n = t; n instanceof Element; n = n.parentElement) {
+      const stage = n.matches(stages);
+      if (stage && across) return false;
+      const s = getComputedStyle(n);
+      if (/auto|scroll/.test(across ? s.overflowX : s.overflowY)) {
+        const at = across ? n.scrollLeft : n.scrollTop;
+        const end = across ? n.scrollWidth - n.clientWidth : n.scrollHeight - n.clientHeight;
+        if (back ? at > 0 : at < end - 1) return true;
+      }
+      if (stage) return false;
+    }
+    return false;
+  };
   const skip = (i, dir) => {
     if (!reduce.matches) return i;
     while (snaps[i] && stageOf(snaps[i]) === stageOf(snaps[cur])) i += dir;
@@ -4748,16 +4806,21 @@ public theorem deck_script_constant : deckScript =
     if (t instanceof Element &&
         (t.isContentEditable || /^(input|textarea|select|button)$/i.test(t.tagName) ||
           (t.tagName === \"SUMMARY\" && (e.key === \" \" || e.key === \"Enter\")))) return;
+    const back = (e.key === \" \" && e.shiftKey) || e.key === \"ArrowLeft\" ||
+      e.key === \"ArrowUp\" || e.key === \"PageUp\";
+    const ahead = (e.key === \" \" && !e.shiftKey) || e.key === \"ArrowRight\" ||
+      e.key === \"ArrowDown\" || e.key === \"PageDown\";
     let i = null;
     if (e.key === \"Home\") i = 0;
     else if (e.key === \"End\") {
       i = snaps.length - 1;
       while (reduce.matches && i > 0 && stageOf(snaps[i - 1]) === stageOf(snaps[i])) i -= 1;
     }
-    else if ((e.key === \" \" && e.shiftKey) || e.key === \"ArrowLeft\" ||
-        e.key === \"ArrowUp\" || e.key === \"PageUp\") i = skip(cur - 1, -1);
-    else if ((e.key === \" \" && !e.shiftKey) || e.key === \"ArrowRight\" ||
-        e.key === \"ArrowDown\" || e.key === \"PageDown\") i = skip(cur + 1, 1);
+    else if (back || ahead) {
+      if (t instanceof Element &&
+          room(t, e.key === \"ArrowLeft\" || e.key === \"ArrowRight\", back)) return;
+      i = back ? skip(cur - 1, -1) : skip(cur + 1, 1);
+    }
     if (i === null) return;
     e.preventDefault();
     go(i, \"push\");
@@ -4786,6 +4849,11 @@ public theorem math_boundary_contract (renderer : Option String) :
       (renderer.map fun text => Node.script #[("data-math-boundary", "")] text).toArray := by
   cases renderer <;> rfl
 
+/-- A deck declaring its focus colour marks a focused stage standing on the page ground in it. -/
+public def stageFocusRoleCss : String :=
+  "@media screen { html section.slide:not(.standout):not(.title-page):focus-visible::before, " ++
+    s!"html section.section-page:focus-visible::before \{ border-color: {roleRef .focus}; } }\n"
+
 /-- The slide sections' stylesheet: the paged deck for the slides class, the card for every
 other. -/
 private def slideCss (doc : Doc) : String :=
@@ -4802,7 +4870,8 @@ private def slideCss (doc : Doc) : String :=
     -- the covered shade is the PDF cover's own fraction (`Ir.Design.cover`)
     headerH2 ++
       emitDeckRules (deckRules (deckType doc.page)
-        (deckPageSize doc.page) (Design.ofDoc doc).coveredFraction maxSteps)
+        (deckPageSize doc.page) (Design.ofDoc doc).coveredFraction maxSteps) ++
+      (if doc.declaresFocus then stageFocusRoleCss else "")
   else handout ++ headerH2
 
 /-- Whether the document carries a listing with a caption or line numbers, gating the listing
@@ -4945,6 +5014,15 @@ private def linesCss : String :=
   s!".lines-scope \{ padding-inline-start: {cssLength Ir.linesStep}; }\n" ++
   s!".lines-mark \{ {visuallyHidden} }\n"
 
+/-- A display's attributes: its class, and in a deck the tab stop through which a reader scrolls
+it sideways (WCAG 2.2 SC 2.1.1). -/
+public def displayAttrs (cfg : Config) (cls : String) : Array (String × String) :=
+  #[("class", cls)] ++ (if cfg.deck then #[("tabindex", "0")] else #[])
+
+/-- The focus ring every focusable element but a stage draws: the focus role's outline, out from
+its box. -/
+public def focusRingDecls : String := s!"outline: 2px solid {roleRef .focus}; outline-offset: 2px;"
+
 /-- A figure's words as the page carries them, out of sight and out of the accessibility tree. -/
 public def figureWordsNode (words : String) : Node :=
   Html.elem "span" #[Html.text words]
@@ -5008,7 +5086,8 @@ public def baseRules (doc : Doc) (pairs : List (Nat × Nat) := []) : String :=
   "    text-decoration-thickness: from-font; text-underline-position: from-font; }\n" ++
   s!"s \{ text-decoration-line: line-through; text-decoration-thickness: {lineThroughThicknessCss};\n" ++
   "    text-decoration-skip-ink: none; }\n" ++
-  s!"a:focus-visible \{ outline: 2px solid {roleRef .focus}; outline-offset: 2px; }\n" ++
+  s!"a:focus-visible \{ {focusRingDecls} }\n" ++
+  s!":where(pre, summary, .display[tabindex]):focus-visible \{ {focusRingDecls} }\n" ++
   "code, pre { font-family: var(--font-mono); }\n" ++
   -- a code unit never breaks, save in a box too narrow to hold it
   s!"pre .{codeTokClass} \{ white-space: nowrap; }\n" ++
@@ -7846,7 +7925,7 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     fillCarrier cfg n (Html.elem tag (listItemsInto (cfg.deeper false).into #[] items.toList) attrs)
   | .center body =>
     match Ir.displayContent? body with
-    | some content => Html.elem "p" (inlines cfg content) #[("class", "display")]
+    | some content => Html.elem "p" (inlines cfg content) (displayAttrs cfg "display")
     | none =>
       fillCarrier cfg (Ir.frameFills cfg.lists cfg.styles .deck body)
         (Html.elem "div" (blockNodesInto cfg.into #[] body.toList) #[("class", "centered")])
@@ -7858,7 +7937,7 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
   | .role n body =>
     if let some (anchors, pic) := Ir.displayPicture? (.role n body) then
       Html.elem "p" ((inlines cfg anchors).push (pictureSvg cfg pic))
-        #[("class", "display")]
+        (displayAttrs cfg "display")
     else
     -- a title slot's content sets under the slot's template alone
     let cfg := if (Ir.titleSlotOf ((cfg.styles.find? "titlepage").getD {}).slots n).isSome
@@ -7964,7 +8043,7 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     let kids := inlines cfg content
     Html.elem "div"
       (kids.push (Html.elem "span" (inlines cfg num) #[("class", "eqnum")]))
-      #[("class", "equation display")]
+      (displayAttrs cfg "equation display")
   | .abstract body =>
     -- an `<h2>`, so a declared `\style{section}` reaches the abstract's heading
     fillCarrier cfg (Ir.frameFillsOne cfg.lists cfg.styles .deck 0 b)
@@ -8380,10 +8459,20 @@ private def withHeld (held : Array Node) : Node → Node
   | .style s => .style s
   | .script attrs s => .script attrs s
 
+/-- Where a stage's out-of-flow name or anchor stands: its stage's top left corner, a scroll margin
+a stage wide past it, so a scroll into view by its own default lands on its stage. -/
+public def stageCorner : String := "left: 0; top: 0; scroll-margin-inline-end: 100vw;"
+
 /-- A deck's section on no page of its own: its heading out of sight and out of flow, naming the
 section to assistive technology as beamer's bookmark names it to a reader. -/
 private def navHeading (cfg : Config) (b : Block) : Node :=
-  withStyle visuallyHidden (blockNode cfg b)
+  withStyle (visuallyHidden ++ " " ++ stageCorner) (blockNode cfg b)
+
+/-- The label anchors of what sets nothing, at the corner of the stage set next. -/
+private def heldAnchors (keys : Array String) : Node :=
+  Html.elem "span" (keys.map fun k =>
+      Html.elem "span" #[] #[("id", Ir.labelAnchor k), ("style", stageCorner)])
+    #[("style", "position: absolute; left: 0; top: 0;")]
 
 /-- Whether a node of the deck's row is a stage: a frame's, a stepped frame's track, a section page. -/
 private def isStage : Node → Bool
@@ -8929,7 +9018,7 @@ retitle the frames apart, or link to the numbered anchor")
             -- what sets nothing keeps only its label anchors, for the stage set next
             let keys := Ir.blockLabelKeys #[b]
             unless keys.isEmpty do
-              held := held.push (Html.elem "span" (inlines cfg (keys.map Inline.label)))
+              held := held.push (heldAnchors keys)
           cfg := cfg.afterBlock b
       if !loose.isEmpty then
         let (node, _) := claimStageName named
@@ -9226,13 +9315,16 @@ public def classTokens (attrs : Array (String × String)) : List String :=
 public def declaresScroll (own deck : Bool) (tag : String) (attrs : Array (String × String)) :
     Bool :=
   own && (tag == "pre" ||
-    (deck && tag == "section" &&
-      (classTokens attrs).any (fun c => c == "slide" || c == "section-page")))
+    (deck && ((tag == "section" &&
+      (classTokens attrs).any (fun c => c == "slide" || c == "section-page")) ||
+      (classTokens attrs).contains "display")))
 
-/-- Whether a scroll container is a tab stop with a name; a code block takes no name. -/
+/-- Whether a scroll container is a tab stop with a name; a code block and a display, whose
+content reads, take none. -/
 public def scrollReachable : Node → Bool
   | n@(.elem tag attrs _) =>
-    attrOf? attrs "tabindex" == some "0" && (tag == "pre" || carriesName n)
+    attrOf? attrs "tabindex" == some "0" &&
+      (tag == "pre" || (classTokens attrs).contains "display" || carriesName n)
   | .text _ => false
   | .style _ => false
   | .script _ _ => false
@@ -9362,6 +9454,13 @@ public theorem picture_svg_named_contract (cfg : Config) (pic : Ir.Pic.Picture) 
   | undeclared =>
     simp [blockNode, Ir.Block.listScope, pictureSvg, h, Html.elem, carriesName, pictureRole,
       pictureAltAttrs, ha, figureWord_contract]
+
+/-- Artifact-specific. -/
+public theorem display_reachable_contract (cfg : Config) (hd : cfg.deck = true) (tag : String)
+    (kids : Array Node) (cls : String) (hc : (cls.splitOn " ").contains "display" = true) :
+    scrollReachable (Html.elem tag kids (displayAttrs cfg cls)) = true := by
+  have hm : "display" ∈ cls.splitOn " " := by simpa using hc
+  simp [scrollReachable, displayAttrs, hd, Html.elem, attrOf?, classTokens, hm]
 
 /-- Artifact-specific. -/
 public theorem frame_stage_reachable_contract (cfg : Config) (hd : cfg.deck = true)

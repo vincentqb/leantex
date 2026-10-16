@@ -16444,6 +16444,7 @@ the .bib file"
                                    else s.themeSectionPage
                         atSection := (← get).sectionHook
                         atSubsection := (← get).subsectionHook }
+      ownRoles := (← get).spans.docRoles
       styles := styles
       info := info
       output := output

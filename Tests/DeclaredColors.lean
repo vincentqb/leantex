@@ -187,33 +187,86 @@ public def focusGateChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((({ cmd := .build "probe.tex" } : LeanTex.Cli.Config).effectiveEmit #["pdf", "html"]).contains .html &&
       (reports bothDs).any (·.code == "W0345"))
 
-/-- A deck's focused stage draws the deck's mark, never the browser's ring, a rule in its ink, which
-its ground holds legible, down the middle half of each side margin, or in forced colours a ring on
-its own edge, and the pager, which owns the keys, takes the stages out of the tab order. -/
+/-- A deck's display scrolls sideways in its own box, a tab stop the facts count reachable, and a
+page-less section's heading and label anchors stand at their stage's corner with a stage-wide
+scroll margin. -/
+public def stageScrollChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let src (cls : String) := "\\documentclass{" ++ cls ++ "}\\AtBeginSection{}\\begin{document}" ++
+    "\\section{Alpha}\\label{sec:alpha}\\begin{frame}{One}\\[ x + y \\]" ++
+    "\\begin{equation} a = b \\end{equation}\\end{frame}\\end{document}"
+  let (deckDoc, _) := elabStr (src "beamer")
+  let (artDoc, _) := elabStr (src "article")
+  let deckPage := (HtmlDoc.emit {} deckDoc).1
+  let displays (doc : Ir.Doc) : Array (Option String) :=
+    let (_, body, _) := HtmlDoc.emitTree {} doc
+    (elemNodesList (fun _ => true) #[] body.toList).filterMap fun n => match n with
+      | .elem _ attrs _ =>
+        if (((HtmlDoc.attrOf? attrs "class").getD "").splitOn " ").contains "display" then
+          some (HtmlDoc.attrOf? attrs "tabindex") else none
+      | .text _ | .style _ | .script .. => none
+  t "stage scroll: a deck's displays are tab stops"
+    (displays deckDoc == #[some "0", some "0"])
+  t "stage scroll: an article's displays are no tab stops"
+    (displays artDoc == #[none, none])
+  t "stage scroll: a deck's display scrolls sideways in its own box"
+    (hasStr deckPage "section.slide .display { overflow-x: auto; }")
+  let disp := Html.elem "p" #[] #[("class", "display"), ("tabindex", "0")]
+  t "stage scroll: the facts count a deck's display a reachable scroller"
+    (HtmlDoc.declaresScroll true true "p" #[("class", "display")] &&
+      !HtmlDoc.declaresScroll true false "p" #[("class", "display")] &&
+      HtmlDoc.scrollReachable disp &&
+      !HtmlDoc.scrollReachable (Html.elem "p" #[] #[("class", "display")]))
+  t "stage scroll: a page-less section's heading stands at its stage's corner"
+    (hasStr deckPage (HtmlDoc.visuallyHidden ++ " " ++ HtmlDoc.stageCorner))
+  t "stage scroll: a page-less section's label anchor stands at its stage's corner"
+    (hasStr deckPage ("<span style=\"position: absolute; left: 0; top: 0;\"><span id=\"sec:alpha\" " ++
+      s!"style=\"{HtmlDoc.stageCorner}\"></span></span>"))
+
+/-- A focused stage draws the deck's mark, never the browser's ring, in its ink or a declared focus
+colour judged on its page, and the pager takes the stages out of the tab order, releases a stage it
+pages past and yields a key a focused element still scrolls by. -/
 public def stageFocusChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
-  let (deckDoc, deckDs) := elabStr ("\\documentclass{beamer}\\palette{ focus = #FFE000 }" ++
+  let deck (pre : String) := elabStr ("\\documentclass{beamer}" ++ pre ++
     "\\begin{document}\\begin{frame}{Placeholder}A line with no link.\\end{frame}" ++
     "\\begin{frame}[standout]Questions?\\end{frame}\\end{document}")
-  t "stage focus: a stage marks in its ink, so a focus colour no link ships is not judged"
-    (!(reports deckDs).any fun d => d.code == "W0345" && hasStr d.message "the focus ring")
-  let side := "max(2px, calc(0.5 * var(--safearea, 6vmin)))"
-  t "stage focus: a focused stage's mark is its background, a rule down each side margin's middle half"
-    (hasStr (HtmlDoc.emit {} deckDoc).1
-      ("html section.slide:focus-visible, html section.section-page:focus-visible { outline: none; " ++
-        "background-image: linear-gradient(currentColor, currentColor), " ++
-        "linear-gradient(currentColor, currentColor); background-size: 2px 50%; " ++
-        s!"background-position: left {side} center, right {side} center; " ++
-        "background-repeat: no-repeat; }"))
-  t "stage focus: in forced colours, which drop the mark, a focused stage rings its own edge"
-    (hasStr (HtmlDoc.emit {} deckDoc).1
-      ("@media (forced-colors: active) { html section.slide:focus-visible, " ++
-        "html section.section-page:focus-visible { outline: 2px solid currentColor; " ++
-        "outline-offset: -2px; } }"))
+  let (deckDoc, deckDs) := deck "\\palette{ focus = #FFE000 }"
+  t "stage focus: a declared focus colour the stages mark in is judged where no link ships it"
+    ((reports deckDs).any fun d => d.code == "W0345" && hasStr d.message "the focus ring")
+  let (plainDoc, plainDs) := deck "\\usetheme{default}"
+  t "stage focus: a deck declaring no focus colour marks its stages in their ink, judged nowhere"
+    (!plainDoc.declaresFocus &&
+      !(reports plainDs).any fun d => d.code == "W0345" && hasStr d.message "the focus ring" &&
+      !hasStr (HtmlDoc.emit {} plainDoc).1 HtmlDoc.stageFocusRoleCss)
+  let page := (HtmlDoc.emit {} deckDoc).1
+  t "stage focus: a focused stage draws no outline of its own"
+    (hasStr page "html section.slide:focus-visible, html section.section-page:focus-visible { outline: none; }")
+  t "stage focus: the mark is a border down the middle half of each side margin, still as the stage scrolls"
+    (hasStr page ("html section.slide:focus-visible::before, html section.section-page:focus-visible::before { " ++
+      "content: \"\"; position: sticky; top: 25dvh; flex: none; align-self: center; " ++
+      s!"width: calc(100vw - 2 * {HtmlDoc.focusInset}); height: 50dvh; margin: 0 0 -50dvh; " ++
+      "border-inline: 2px solid currentColor; pointer-events: none; }"))
+  t "stage focus: a safe area too narrow to centre the mark keeps it clear of the content, else at the side"
+    (HtmlDoc.focusInset == "max(0px, min(calc(0.5 * var(--safearea, 6vmin)), calc(var(--safearea, 6vmin) - 2px)))")
+  t "stage focus: a declared focus colour marks the stages standing on the page"
+    (deckDoc.declaresFocus && hasStr page HtmlDoc.stageFocusRoleCss &&
+      hasStr HtmlDoc.stageFocusRoleCss
+        "html section.slide:not(.standout):not(.title-page):focus-visible::before, ")
+  t "stage focus: forced colours keep the mark, so no ring on the stage's edge stands in for it"
+    (!hasStr page "forced-colors: active) { html section.slide:focus-visible")
+  t "stage focus: code blocks, summaries and displays ring their focus in the focus colour"
+    (hasStr page s!":where(pre, summary, .display[tabindex]):focus-visible \{ {HtmlDoc.focusRingDecls} }")
   t "stage focus: the pager takes the stages out of the tab order"
     (hasStr HtmlDoc.deckScript
       ("const stops = \"section.slide[tabindex], section.section-page[tabindex]\";\n" ++
         "  for (const s of document.querySelectorAll(stops)) s.removeAttribute(\"tabindex\");"))
+  t "stage focus: paging releases the focus a stage it leaves still holds"
+    (hasStr HtmlDoc.deckScript "if (at && !stageOf(snaps[cur]).contains(at)) a.blur();" &&
+      (HtmlDoc.deckScript.splitOn "    leave();\n").length == 3)
+  t "stage focus: a key a focused element still scrolls by is the element's"
+    (hasStr HtmlDoc.deckScript "room(t, e.key === \"ArrowLeft\" || e.key === \"ArrowRight\", back)) return;")
+  stageScrollChecks ref
 
 /-- The ink of every glyph of `c` the pages set, outside furniture. -/
 private def charInks (out : Layout.Out) (c : Char) : Array Ir.Color :=
