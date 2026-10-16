@@ -329,7 +329,10 @@ family installed without italics still serves: italic code sets upright in
 it, and a note says so. A document that bundles its fonts takes these from its own font
 directory first, then from the computer's.
 
-List themes with `leantex themes` and select one with `\theme{moloch}`.
+List themes with `leantex themes` and select one with `\theme{moloch}`. A deck's section
+stands on a page of its own only where its theme declares a section page, as `moloch`, `plain`
+and `daylight` do; under beamer's default theme it opens no page or slide, as in beamer, its title
+reaching the footline and its label the next frame.
 
 A document that declares no colours ships what its class prints. Its HTML
 page is white, as its PDF's paper is; list markers are the printed ink in

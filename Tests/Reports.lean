@@ -142,6 +142,8 @@ import Tests.SeedSeries
 import Tests.MetaEscape
 import Tests.Algorithm
 import Tests.Layout
+import Tests.FrameHeadingScope
+import Tests.SectionPages
 import Tests.SeedPalette
 import Tests.PaletteCover
 
@@ -1774,7 +1776,15 @@ def reports : List Report := [
       "mutants: unreadParam's warning demoted to a note fails the census on 75 readers, a frame-title font named under a bar fails it on beamer's font setting, a level scope dropped past the first on the list setup, a listing key keyed by its words on listing and minted defaults, the covered setting keyed by its command on beamer's covered setting; a scope's unstyled part dropped beside a styled part survives",
       "the second review's guards, each failing on this branch's third cut (1861eb6c): a counter a step, a value, a numbering or counter within it, a setting, a reference step, an addition or a list's use reads was named at its allocation as one nothing reads, or gave W0387 there; each is silent at its allocation and named at its use, and one nothing reads is named once where it is allocated, a macro's at its use, linear in the document (10 and 300 counters over a 2.6 MB body: 26.3 and 26.8 s, main 27.8 and 27.6 s, the third cut 324.5 s and past 794 s); an article's titlepage named the title command in a document with neither a title nor an abstract, where LuaLaTeX sets the same single page either way, and is named only at the title command and at the abstract, where LuaLaTeX sets two pages and the engine one; a page length set in a body group was named twice, W0104 beside the W0346 of a declaration it synthesized, and is named once; a frame-title font asking for the plain title's Large size or bold series, which the engine sets already (LuaLaTeX's size alike, its default title not bold), was named unread, and is noted",
       "the stricter census: a setting is read only where an artifact changes, a translation note alone reading nothing; a keyed declaration's setting is tried after a neighbour key; beamer's fonts are tried in every deck that draws their element; listing defaults in a deck too; the empty and default templates projected from the reader's tables, each measured; mutants caught: the unread warning demoted to a note (77 failures), a translation note in its place (84), beamer's fonts dropped under moloch (1), enumerate scopes' labels dropped (2), a frame-title template claimed empty (1), a declaration's keys keyed by its first (2); a list setup's unstyled scope parts silenced survives"]
-    state := .guarded "47b07e39" .before .author }
+    state := .guarded "47b07e39" .before .author },
+  { id := "R198", date := "2026-10-15"
+    what := "in a deck whose theme declares no section page a section between two frames made a page holding only its heading, and the web deck set a bare heading between the two stages, a strip that moved every later slide off the pager's grid so a seam showed a sliver of the next slide; a subsection did the same under every theme; the section's anchor stood on that page, text set outside the frames stood bare between stages and split at a section, and a reference to a deck's section showed question marks"
+    pins := [check% sectionPageChecks, check% frameHeadingScopeChecks]
+    accept := ["thirty-four of the guard's fifty-eight assertions fail with the elaborator, layout and both writers of 76a682b6 under it, the guard kept: decks with no section page and with a theme's ship a page per section heading or subsection, their web decks set those headings in the row between stages and their labels outside every stage, the section anchors stand on those pages, text outside the frames stands bare between stages and splits at a section, no tagged heading names a section no page inks, and a reference to a section shows question marks",
+      "the browser oracle's snap judge, now reading every snap point against the grid of whole viewports and the scroll space against one viewport per snap, fails the corpus deck, the trio deck and the new sections deck as main's binary builds them, the deck's later stages six off the grid by its 151 pixel strip, and passes all three as this tree builds them",
+      "invented decks under lualatex: the default theme ships one page per frame and none for a section, a starred one or a subsection, a section's bookmark and the label after it on the next frame's page; moloch ships its section page for a section and a starred one and none for a subsection, its bookmark on that page; an outline frame the document's own hook declares holds the bookmark; a reference to a second section gives 2 and to a first subsection 1",
+      "the corpus built by main's binary and this tree: 190 artifacts byte-identical; every deck's web page differs in one stylesheet rule and shows no visible difference; the deck and trio deck PDFs each lose the one page that held a section's heading and show no visible difference with that page set aside"]
+    state := .guarded "76a682b6" .revert .author }
 ]
 
 /-- The reports guarded but never seen failing, a count held in both directions. -/
