@@ -276,6 +276,8 @@ public structure Ctx where
   literalWhen : Option OverlaySpec := none
   /-- Inside a speaker note, where a reserved character is literal text. -/
   noteBody : Bool := false
+  /-- Inside a frame's body, whose end drains the notes its inline content stashes. -/
+  inFrame : Bool := false
   /-- The ground a region paints under the content being elaborated. -/
   ground : Option Color := none
   /-- The frame's ground that inline code's derived colours fit to. -/
@@ -11704,11 +11706,19 @@ private def elabEnvArm (ctx : Ctx) (n : String) (scope : Array Raw)
     title := title2
     have _ : sliceWeight rest 0 = rawWeightList rest.toList := sliceWeight_zero _
     have _ : slicePars rest 0 = nestedParsList rest.toList := slicePars_zero _
-    -- A note's own frame has no side channel, so its stashed notes are refused; only a frame's
-    -- body counts `\pause`s, from zero, as beamer's frame resets `beamerpauses`.
+    -- Notes the content before the frame stashed stand before it; a note's own frame refuses its.
+    let early := (← get).pendingNotes
+    modify fun st => { st with pendingNotes := #[] }
+    if hnb : ctx.noteBody then pure ()
+    else if ctx.inFrame then pure ()
+    else
+      have _ : noteFlag ctx = 2 := by simp [noteFlag, hnb]
+      blocks ← drainNotesGo ctx early.toList blocks
+    -- Only a frame's body counts `\pause`s, from zero, as beamer's frame resets `beamerpauses`.
     let outerPauses := (← get).ctr.pauses
-    modify fun st => { st with pendingNotes := #[], ctr := { st.ctr with pauses := some 0 } }
-    let mut inner ← elabBlockScope frameCtx rest
+    modify fun st => { st with ctr := { st.ctr with pauses := some 0 } }
+    let ⟨bodyCtx, _⟩ : MCtx frameCtx ← pure ⟨{ frameCtx with inFrame := true }, rfl, rfl, rfl, rfl⟩
+    let mut inner ← elabBlockScope bodyCtx rest
     let stash := (← get).pendingNotes
     modify fun st => { st with pendingNotes := #[], ctr := { st.ctr with pauses := outerPauses } }
     if hnb : ctx.noteBody then
@@ -12200,6 +12210,15 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
         elabBlocksGo ctx' raws (i + 1) blocks (cur.push raws[i]) gen'
     | .par _ =>
       let (⟨ctx', hm⟩, blocks) ← flushPara ctx' blocks cur
+      -- Outside a frame, notes the paragraph's inline content stashed stand after it.
+      let blocks ← if cur.isEmpty then pure blocks
+        else if hnb : ctx.noteBody then pure blocks
+        else if ctx.inFrame then pure blocks
+        else do
+          let stash := (← get).pendingNotes
+          modify fun st => { st with pendingNotes := #[] }
+          have _ : noteFlag ctx = 2 := by simp [noteFlag, hnb]
+          drainNotesGo ctx stash.toList blocks
       elabBlocksGo ctx' raws (i + 1) blocks #[] gen'
     | .verb env s vpos =>
       if verbRunsInline env s cur raws i then
@@ -16463,7 +16482,9 @@ marks its level" (some pos) (help := some s!"redefine it as text, a symbol or a 
     match d with
     | .bodyStart source p => some (.ctrl (Marker.name .ink source) p)
     | _ => none
-  return { ctx, raws := opening ++ body, finish := fun blocks => do
+  -- `\end{document}` ends the last paragraph as a paragraph break does, draining what it stashed.
+  return { ctx, raws := opening ++ body ++ #[.par { sourceMapped := false }],
+           finish := fun blocks => do
     let mut asserts := asserts
     let mut output := output
     let mut info := info

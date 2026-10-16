@@ -471,6 +471,24 @@ def noteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit :
       | #[.frame _ _ _ _ #[_, .note nbody]] =>
         ((Ir.dumpBlocks "" nbody).splitOn "name_with_underscores & more").length == 2 -- ir tier: note content, not a page claim
       | _ => false))
+  -- A note stashed outside every frame stands after its paragraph, before the next frame.
+  let (loose, _) := elabStr (deck169Body ("\\begin{frame}{One}One words.\\end{frame}\n" ++
+    "\\label{x}\\note{Loose words.}\n\\begin{frame}{Two}Two words.\\end{frame}"))
+  let stages := elemNodesList (· == "section") #[] (docNodesOf loose).toList
+  let asideIn (n : Html.Node) : String :=
+    String.join ((elemNodesList (· == "aside") #[] [n]).toList.map (nodeTextOne ""))
+  let stageOf (label : String) : Option Html.Node := stages.find? fun n => match n with
+    | .elem _ attrs _ => HtmlDoc.attrOf? attrs "aria-label" == some label
+    | _ => false
+  t "a note after a label outside every frame stands with the frame before it, as beamer's"
+    ((stageOf "One").any (fun n => hasStr (asideIn n) "Loose words.") &&
+      !(stageOf "Two").any (fun n => hasStr (asideIn n) "Loose words."))
+  let (art, _) := elabStr (dvDoc "" ("Words.\\label{y}\\note{After a label.}\n\n" ++
+    "Last words.\\note{In the last paragraph.}"))
+  let asides := elemNodesList (· == "aside") #[] (docNodesOf art).toList
+  t "an article's notes after a label and in its last paragraph stay its side channel"
+    (asides.size == 2 && hasStr (asideIn (Html.elem "div" asides #[])) "After a label." &&
+      hasStr (asideIn (Html.elem "div" asides #[])) "In the last paragraph.")
   let (nested, nestedDs) := elabStr (deck169Body
     "\\note{\\begin{frame}{T}\nspoken \\note{inner aside} words\n\\end{frame}}")
   t "a note inside a note's frame is refused, named"
