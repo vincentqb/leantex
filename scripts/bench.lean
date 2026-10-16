@@ -6,7 +6,7 @@ import LeanTex.Core.PngEncode
 /-
 Benchmark leantex against lualatex on the bench corpus, median of `N` runs (default 5), or the
 measurement a flag selects; never a gate. `LEANTEX_BENCH_BINARY` names a saved compiler.
-Usage: lake build && lake env lean --run scripts/bench.lean [--boundary-only | --concurrency-only | --slides-only | --slides-compressed-only | --slides-selftest | --decode-only | --listings-only | --bib-only | --passes-only | --svg-only | --pdf-pages-only <f.pdf> | --faces-only <f.pdf>... | --doc-cost [--record] [--history <path>]]
+Usage: lake build && lake env lean --run scripts/bench.lean [--boundary-only | --concurrency-only | --slides-only | --slides-compressed-only | --slides-selftest | --talk-only | --decode-only | --listings-only | --bib-only | --passes-only | --svg-only | --pdf-pages-only <f.pdf> | --faces-only <f.pdf>... | --doc-cost [--record] [--history <path>]]
 -/
 
 def compiler : IO String := do
@@ -967,6 +967,70 @@ def run (n : Nat) (compressed : Bool := false) : IO Unit := do
 
 end Slides
 
+namespace Talk
+
+open Slides (say require)
+
+/-- The invented talk deck of `scripts/talkdeck.lean` staged in `dir` beside the corpus fonts,
+after building its generator. -/
+def stage (dir : System.FilePath) (frames : Nat) : IO Unit := do
+  let built ← (← IO.Process.spawn { cmd := "lake", args := #["build", "-q", "talkDeck"] }).wait
+  if built != 0 then die "lake build talkDeck failed"
+  let out ← IO.Process.output
+    { cmd := ".lake/build/bin/talkDeck", args := #[dir.toString, toString frames] }
+  if out.exitCode != 0 then die s!"talkDeck failed:\n{out.stderr}"
+  Slides.copyFonts dir
+
+/-- One sealed build of the staged deck: no tool on `PATH`, an empty `HOME`, the application
+cache at `cache`. -/
+def build (binary dir cache : System.FilePath) (format : String) : IO (Sample × ByteArray) := do
+  let output := dir / ("deck." ++ format)
+  if ← output.pathExists then IO.FS.removeFile output
+  let sealed := #[("HOME", some (dir / "home").toString), ("PATH", some (dir / "no-tools").toString),
+    ("LEANTEX_FONT", none), ("LEANTEX_FONT_PATH", none)]
+  let r ← sample binary (dir / "deck.tex") output cache true sealed
+  require (Slides.fixtureFonts dir.toString r) "the deck resolved a font outside its private copy"
+  return (r, ← IO.FS.readBinFile output)
+
+/-- Cold (an empty application cache) and warm builds of the talk deck in each format, the
+median of `n` pairs: wall and compiler time, every phase, and the artifact, which every build
+must reproduce byte for byte. -/
+def run (n frames : Nat) : IO Unit := do
+  let binary ← IO.FS.realPath (← compiler)
+  say s!"talk deck benchmark; N={n}; frames={frames}; binary={binary}; sha256={← Slides.binaryHash binary}"
+  say s!"host load before: {← Slides.load}"
+  IO.FS.withTempDir fun dir => do
+    stage dir frames
+    for format in ["pdf", "html"] do
+      let cache := dir / s!"cache-{format}"
+      let mut cold : Array Sample := #[]
+      let mut warm : Array Sample := #[]
+      let mut artifact : Option ByteArray := none
+      for _ in [:n] do
+        if ← cache.pathExists then IO.FS.removeDirAll cache
+        let (first, a) ← build binary dir cache format
+        let (second, b) ← build binary dir cache format
+        require (a == b && first.diagnostics == second.diagnostics)
+          s!"{format}: the warm build changed the artifact or its diagnostics"
+        if let some earlier := artifact then
+          require (earlier == a) s!"{format}: cold builds disagree"
+        artifact := some a
+        cold := cold.push first
+        warm := warm.push second
+      let some first := cold[0]? | die "the talk benchmark needs at least one pair"
+      let bytes := (artifact.map (·.size)).getD 0
+      say s!"leantex  talk deck, {frames} frames ({format}): {first.pages} pages, {bytes} bytes"
+      for (label, samples) in [("cold", cold), ("warm", warm)] do
+        IO.println s!"{padRight s!"leantex  talk deck {format} ({label})" 42} \
+{padLeft (toString (median (samples.map (·.ms)))) 6} ms, compiler \
+{median (samples.map (·.compilerMs))} ms (median of {n})"
+      for p in first.phases do
+        let time := fun r : Sample => ((r.phase? p.name).map (·.ms)).getD 0
+        say s!"  phase {padRight p.name 12} cold={median (cold.map time)} warm={median (warm.map time)} ms"
+  say s!"host load after: {← Slides.load}"
+
+end Talk
+
 /-- Four times the input may cost at most eight times the phase (linear 4, quadratic 16,
 cubic 64). -/
 def growthBound (label : String) (small big : Nat) : IO Unit := do
@@ -1156,6 +1220,9 @@ def main (args : List String) : IO UInt32 := do
   if args == ["--slides-only"] then
     Slides.run n
     return 0
+  if args == ["--talk-only"] then
+    Talk.run n 60
+    return 0
   if args == ["--slides-compressed-only"] then
     Slides.run n true
     return 0
@@ -1217,6 +1284,7 @@ def main (args : List String) : IO UInt32 := do
   IO.FS.removeDirAll outDir
   benchImageDeck n 32
   benchImageDeck n 128
+  Talk.run n 60
   benchDecode n
   benchListings n 8
   listingGrowth n

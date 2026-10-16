@@ -193,3 +193,14 @@ provisional; the ratio is the claim.
 | 17 figures, HTML, warm | 14,047 ms (images 5,083) | 530 ms (images 60) |
 
 The default rows moved within the host's noise.
+
+## Talk deck — 2026-10-16
+
+`--talk-only` builds the invented deck `scripts/talkdeck.lean` writes: 60 frames with 43 minted
+listings (Lean, Python, shell), overlays (item specs, `\pause`, `\uncover`, `\only`,
+`\alert<n>`), blocks, tables, a footnote, a 4096×4096 RGBA PNG shown three times, an SVG chart
+and two vector PDF charts. Its generator is compiled (`lake build talkDeck`), so its raster and
+streams deflate at the engine's speed. Each build is sealed (no tool on `PATH`, an empty `HOME`,
+the corpus fonts staged beside the deck) and must ship no loss; the report gives the median of
+`N` pairs of a cold build (an empty application cache) and a warm one, in each format, with every
+phase, and fails when a warm or a later cold build changes the artifact.

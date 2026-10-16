@@ -87,3 +87,7 @@ root = "scripts.land"
 [[lean_exe]]
 name = "passBench"
 root = "scripts.passbench"
+
+[[lean_exe]]
+name = "talkDeck"
+root = "scripts.talkdeck"
