@@ -133,7 +133,7 @@ export LIBRARY_PATH="$(lean --print-prefix)/lib:$(lean --print-prefix)/lib/lean"
   a theorem against it (`rowLine_cells_exact`).
 - A refusal by name: no error, its code alone, the page without it, or for a use its braced
   spelling's (`refusedEnvChecks`, `delimitedUseChecks`); an engine name for a raw: a character no
-  word holds (`reservedEnvNameChecks`).
+  word holds (`reservedNameChecks`).
 - A name read off a title or caption: one page's reading, never the census (`frameAnchorChecks`).
 - A script running git in repositories it makes: one guard per command (`hcall_writes_owned`).
 - A vendored corpus: its licence, provenance and checksums (`scripts/external.lean`).

@@ -1096,14 +1096,6 @@ private def isMathEnv (name : String) : Bool :=
 private def titleCtrls : List String :=
   ["title", "subtitle", "author", "institute", "date"]
 
-/-- A preamble marker naming the file the declarations after it come from;
-no document can spell one. -/
-private def fileMarker (f : String) : String := "@file:" ++ f
-
-private def fileMarkerFile? (name : String) : Option String :=
-  if name.startsWith "@file:" then some ((name.drop "@file:".length).toString)
-  else none
-
 /-- The NFSS font axes: each value with its declaration and its text-command
 spelling (fntguide §2.2). -/
 public def fontAxes : List (String × String × Style) :=
@@ -1282,22 +1274,17 @@ end
 
 private def phantomBorrows (raws : Array Raw) : Bool := phantomBorrowsList raws.toList
 
-/-- A declaration style by name, or by one of Compat's `@lang:`, `@series:`
-and `@family:` markers. -/
+/-- A declaration style by name, or by a language, series or font slot marker. -/
 private def declStyleOf (name : String) : Option Ir.Style :=
-  if name.startsWith "@lang:" then
-    some (.lang ((name.drop "@lang:".length).toString))
-  else if name.startsWith "@series:" then
-    (Ir.Weight.parseSeries ((name.drop "@series:".length).toString)).map
-      fun (w, _) => .series w
-  else if name.startsWith "@family:" then
-    ((name.drop "@family:".length).toString.toNat?).map .family
-  else declStyles.lookup name
+  match Marker.read? name with
+  | some (.lang, tag) => some (.lang tag)
+  | some (.series, s) => (Ir.Weight.parseSeries s).map fun (w, _) => .series w
+  | some (.family, slot) => slot.toNat?.map .family
+  | _ => declStyles.lookup name
 
 /-- The block-level language switch; a switch back to the main language
 clears the attribute. -/
-private def flowLangUpdate (ctx : Ctx) (marker : String) (st : ESt) : ESt :=
-  let tag := (marker.drop "@lang:".length).toString
+private def flowLangUpdate (ctx : Ctx) (tag : String) (st : ESt) : ESt :=
   { st with scope := { st.scope with lang := if tag == ctx.locale.tag then none else some tag } }
 
 /-- A paragraph, wrapped in the flow language's attribute when one is set. -/
@@ -1421,7 +1408,7 @@ private def envOfHalves (name : String) (params : Array Param) (b e : Array Raw)
   let e := trimTail e
   let ink := spanRawsEnd b (· matches .space)
   let closing := if ink > 0 then b[ink - 1]? else none
-  let environ := closing.any (isCtrl Compat.environBodyMark)
+  let environ := closing.any (isCtrl (Marker.name .environBody ""))
   let lead := environ || closing.any (isCtrl "ignorespaces")
   let params := params.map fun p => { p with code := referencesParamCode p.name (b.toList ++ e.toList) }
   { name, params, cmdLimit := limit,
@@ -1481,9 +1468,9 @@ private def expandMathList (user : Array UserCmd) (limit : Nat)
     let tail := expandMathList user limit args rest
     if let some (_, sub) := args.find? (·.1 == n) then
       sub ++ tail
-    else if n.startsWith "@ink:" then
+    else if let some source := Marker.value? .ink n then
       -- Compat's colour markers in macro bodies resolve as a direct \color.
-      #[Raw.ctrl "color" pos, Raw.group #[Raw.word (n.drop 5).toString pos] pos] ++ tail
+      #[Raw.ctrl "color" pos, Raw.group #[Raw.word source pos] pos] ++ tail
     else
       match latestNamed (·.name) user n limit with
       | some (k, cmd) =>
@@ -1536,7 +1523,7 @@ private def cancelKey? (ctx : Ctx) : Option String :=
     match (cmd.body.filter fun r => !(r matches .space)).toList with
     | [] => none
     | [.ctrl n _] =>
-      some (if n.startsWith "@ink:" then (n.drop "@ink:".length).toString else n)
+      some ((Marker.value? .ink n).getD n)
     | [.ctrl "color" _, .group g _] => some (rawSrc g).trimAscii.toString
     | _ => some (rawSrc cmd.body).trimAscii.toString
 
@@ -2826,12 +2813,11 @@ private def fontDim (ctx : Ctx) (src : String) : Except String (Affine Measure) 
   if e.rigid then return e
   throw "rubber is not a font dimension"
 
-/-- Decodes Compat's `\fontsize` marker into one typed size declaration. -/
-private def readFontSizeStyle (ctx : Ctx) (name : String) (pos : Pos) :
+/-- Decodes a `\fontsize` marker's value into one typed size declaration. -/
+private def readFontSizeStyle (ctx : Ctx) (spec : String) (pos : Pos) :
     EM (Option Style) := do
-  let payload := (name.drop Compat.fontSizeMark.length).toString
-  match payload.splitOn Compat.fontSizeSep with
-  | [sizeSrc, leadingSrc] =>
+  match Marker.fontSizeParts spec with
+  | some (sizeSrc, leadingSrc) =>
     match fontDim ctx sizeSrc with
     | .error why =>
       diag ctx .E0331
@@ -2844,7 +2830,7 @@ private def readFontSizeStyle (ctx : Ctx) (name : String) (pos : Pos) :
           s!"cannot read leading in '\\fontsize' from '{leadingSrc}': {lengthStringError leadingSrc why}" pos
         return none
       | .ok leading => return some (.fontSize size leading)
-  | _ =>
+  | none =>
     diag ctx .E0331 "cannot read the affine dimensions in '\\fontsize'" pos
     return none
 
@@ -3947,7 +3933,8 @@ private def refCtrlForm? (name : String) : Option Ir.RefForm :=
    ("cref", .cref false), ("Cref", .cref true),
    ("labelcref", .labelOnly),
    ("namecref", .name false), ("nameCref", .name true),
-   ("@crefrange", .crefRange false), ("@Crefrange", .crefRange true)].lookup name
+   (Marker.name .crefRange "", .crefRange false),
+   (Marker.name .crefRangeUp "", .crefRange true)].lookup name
 
 private def refFormNeedsKind : Ir.RefForm → Bool
   | .cref _ | .crefRange _ | .name _ => true
@@ -5260,8 +5247,8 @@ private def elabInlinesCtrl2 (ctx : Ctx) (raws : Array Raw) (i : Nat)
     -- knot_dec's `assumption` consumes it on the fall-through edges.
     (_hadv1 : sliceWeight raws (i + 1) < sliceWeight raws i) :
     EM (Array Inline) := do
-  let inkMarker := name.startsWith "@ink:"
-  let source := if inkMarker then (name.drop "@ink:".length).toString else name
+  let inkMarker := (Marker.value? .ink name).isSome
+  let source := (Marker.value? .ink name).getD name
   let read ← if inkMarker then
       readColor ctx ctx.palette none source pos
     else
@@ -5303,8 +5290,8 @@ private def elabInlinesCtrl2 (ctx : Ctx) (raws : Array Raw) (i : Nat)
     | .missing => warnPaletteMiss ctx source pos
     | _ => pure ()
     elabInlinesFrom ctx raws (i + 1) acc sb
-  else if name.startsWith Compat.fontSizeMark then
-    let style ← readFontSizeStyle ctx name pos
+  else if let some spec := Marker.value? .fontSize name then
+    let style ← readFontSizeStyle ctx spec pos
     have _ : rawWeightList (raws.extract (i + 1) raws.size).toList
         < sliceWeight raws i :=
       extract_lt_slice raws.size h (Nat.lt_succ_self i)
@@ -5665,8 +5652,8 @@ public def recoversInlineName (ctx : Ctx) (name : String) : Bool :=
     else if name.startsWith "insert" then
       TitleDatum.ofName? (name.drop "insert".length).copy
     else none).isNone &&
-  !(name.startsWith "@ink:") && (ctx.palette.resolve name).isNone &&
-  !(name.startsWith Compat.fontSizeMark) && (declStyleOf name).isNone &&
+  (Marker.value? .ink name).isNone && (ctx.palette.resolve name).isNone &&
+  (Marker.value? .fontSize name).isNone && (declStyleOf name).isNone &&
   !(overlayCtrls.contains name) && (Ir.raggedSideOf? name).isNone &&
   (reservedCtrl.lookup name).isNone &&
   !(declCtrl.contains name || runningCtrl.contains name) &&
@@ -5687,7 +5674,7 @@ private theorem elabInlinesCtrl2_unknown (ctx : Ctx) (raws : Array Raw) (i : Nat
     Bool.or_eq_false_iff, Bool.or_false] at hn
   rw [elabInlinesCtrl2]
   simp only [hn, reservedCtrlAt, Bool.false_and, Bool.false_eq_true, ↓reduceIte, pure_bind,
-    Option.isSome_none, Bool.false_or]
+    Option.isSome_none, Bool.false_or, Option.getD_none]
 
 private theorem recoversInlineName_title (ctx : Ctx) (name : String)
     (hn : recoversInlineName ctx name = true) (st : ESt) :
@@ -6361,9 +6348,9 @@ private def bodySectionHook (ctx : Ctx) (name : String) (raws : Array Raw) (i : 
 /-- Whether a raw sets a style, size, alignment or colour for its group. -/
 private def isDeclaration (ctx : Ctx) : Raw → Bool
   | .ctrl n _ =>
-    n == "centering" || n.startsWith Compat.fontSizeMark || (Ir.raggedSideOf? n).isSome
+    n == "centering" || (Ir.raggedSideOf? n).isSome
       || (declStyles.lookup n).isSome || (ctx.palette.find? n).isSome
-      || n.startsWith "@ink:" || n.startsWith "@lang:"
+      || (Marker.read? n).any fun (k, _) => k == .fontSize || k == .ink || k == .lang
   | _ => false
 
 /-- False exactly for a palette name followed by a group, its argument. -/
@@ -6390,12 +6377,13 @@ scope, when the open paragraph holds only space. -/
 private def declBlockOf (ctx : Ctx) (n : String) (raws : Array Raw) (i : Nat)
     (cur : Array Raw) : Option Ir.Decl :=
   -- `\ttfamily`'s literal punctuation lives on the inline context.
-  if !cur.all isSpaceOrPar || n.startsWith "@lang:" || n == "ttfamily" then none
+  if !cur.all isSpaceOrPar || (Marker.value? .lang n).isSome || n == "ttfamily" then
+    none
   else namedScopeDecl ctx n raws i
 
 private def isDeclBlock (ctx : Ctx) (n : String) (raws : Array Raw) (i : Nat)
     (cur : Array Raw) : Bool :=
-  (cur.all isSpaceOrPar && n.startsWith Compat.fontSizeMark) ||
+  (cur.all isSpaceOrPar && (Marker.value? .fontSize n).isSome) ||
     (declBlockOf ctx n raws i cur).isSome
 
 /-- A font size with no `em` or `ex` part, needing no size around it. -/
@@ -6451,8 +6439,8 @@ private def pushDecl (decls : List Ir.Decl) (d : Ir.Decl) : List Ir.Decl :=
 private def enterBlockDecl (ctx : Ctx) (n : String) (raws : Array Raw) (i : Nat)
     (cur : Array Raw) (pos : Pos) : EM (List Ir.Decl) := do
   let saved := (← get).scope.blockDecls
-  if n.startsWith Compat.fontSizeMark then
-    if let some style ← readFontSizeStyle ctx n pos then
+  if let some spec := Marker.value? .fontSize n then
+    if let some style ← readFontSizeStyle ctx spec pos then
       modify fun st => { st with scope := { st.scope with blockDecls := pushDecl saved (.style style) } }
   else
     match declBlockOf ctx n raws i cur with
@@ -6511,11 +6499,10 @@ private def listScopeCtrl (ctx : Ctx) (raws : Array Raw) (i : Nat)
     (name : String) (pos : Pos) (scope : ListScope) : EM (Option ListScope) := do
   if let some align := declAlignOf name then
     return some { scope with align := some align }
-  if name.startsWith Compat.fontSizeMark then
-    let style ← readFontSizeStyle ctx name pos
+  if let some spec := Marker.value? .fontSize name then
+    let style ← readFontSizeStyle ctx spec pos
     return some { scope with decls := scope.decls ++ style.toList.map Ir.Decl.style }
-  if name.startsWith "@ink:" then
-    let source := (name.drop "@ink:".length).toString
+  if let some source := Marker.value? .ink name then
     match ← readColor ctx ctx.palette none source pos with
     | .resolved c token =>
       return some { scope with decls := scope.decls ++ [.color c token] }
@@ -6537,9 +6524,8 @@ private def setInk (pal : Palette) (st : ESt) : ESt :=
 
 /-- Declares a block-level `\color`'s ink for the rest of the flow; `none`
 when the colour does not resolve. -/
-private def inkFlowDecl (ctx : Ctx) (marker : String) (pos : Pos) :
+private def inkFlowDecl (ctx : Ctx) (source : String) (pos : Pos) :
     EM (Option Ir.Palette) := do
-  let source := (marker.drop "@ink:".length).toString
   if source == Compat.normalInkSource then
     -- `\normalcolor`: the opening ink back.
     let pal := ctx.palette.restore ctx.basePalette (.role .ink)
@@ -6562,9 +6548,8 @@ private def warnPageColorMiss (ctx : Ctx) (source : String) (pos : Pos) : EM Uni
 
 /-- `\pagecolor`'s page ground, set globally as xcolor sets it, whatever
 group it stands in. -/
-private def pageGroundDecl (ctx : Ctx) (marker : String) (pos : Pos) :
+private def pageGroundDecl (ctx : Ctx) (source : String) (pos : Pos) :
     EM (Option Ir.Palette) := do
-  let source := (marker.drop Compat.pageColorMarkPrefix.length).toString
   match ← readColor ctx ctx.palette none source pos with
   | .resolved c _ =>
     logGlobal (.entry (.role .page) (some c) false false)
@@ -6581,6 +6566,16 @@ private def pageGroundReset (ctx : Ctx) : EM Ir.Palette := do
   logGlobal (.entry (.role .page) (Ir.Design.declared? ctx.basePalette .page)
     (ctx.basePalette.decorative.contains (.role .page)) false)
   return ctx.palette.restore ctx.basePalette (.role .page)
+
+/-- Whether a control is `\pagecolor`'s or `\nopagecolor`'s marker. -/
+private def isPageGround (n : String) : Bool :=
+  (Marker.read? n).any fun (k, _) => k == .pageColor || k == .pageColorReset
+
+/-- The page ground a page-ground marker sets, globally. -/
+private def pageGround (ctx : Ctx) (n : String) (pos : Pos) : EM (Option Ir.Palette) :=
+  match Marker.value? .pageColor n with
+  | some source => pageGroundDecl ctx source pos
+  | none => some <$> pageGroundReset ctx
 
 public def isParRaw : Raw → Bool
   | .par _ => true
@@ -6660,8 +6655,7 @@ private theorem rawPars_decl {ctx : Ctx} {r : Raw}
 ground or beamer colour declaration. -/
 private def isCenteringRaw : Raw → Bool
   | .ctrl n _ => n == "centering" || (Ir.raggedSideOf? n).isSome
-      || n.startsWith Compat.pageColorMarkPrefix || n == Compat.pageColorResetMark
-      || n == BeamerColor.marker || n == BeamerColor.starMarker
+      || isPageGround n || n == BeamerColor.marker || n == BeamerColor.starMarker
   | _ => false
 
 /-- Whether a group after `cur` is an argument: a control word or an option
@@ -6705,7 +6699,7 @@ private def sizeParScope (body : Array Raw) : Bool :=
   let ws := body.toList.filter fun r => !(r matches .space)
   match ws.head?, ws.getLast? with
   | some (.ctrl n _), some last =>
-    ((declStyleOf n) matches some (.size _) || n.startsWith Compat.fontSizeMark) &&
+    ((declStyleOf n matches some (.size _)) || (Marker.value? .fontSize n).isSome) &&
       isParRaw last
   | _, _ => false
 
@@ -9408,25 +9402,22 @@ decreasing_by all_goals (simp only [rawWeightList, rawWeight]; omega)
 the paragraph, since a paragraph end closes no group (TeXbook ch. 24). -/
 private def carriesPar (ctx : Ctx) (n : String) : Bool :=
   n != "ttfamily" &&
-    (n.startsWith "@ink:" || n.startsWith Compat.fontSizeMark || (declStyleOf n).isSome
+    ((Marker.value? .ink n).isSome || (Marker.value? .fontSize n).isSome || (declStyleOf n).isSome
       || (ctx.palette.resolve n).isSome)
 
 /-- `readFontSizeStyle` without its diagnostics. -/
-private def fontSizeStyle? (ctx : Ctx) (name : String) : Option Style :=
-  let payload := (name.drop Compat.fontSizeMark.length).toString
-  match payload.splitOn Compat.fontSizeSep with
-  | [sizeSrc, leadingSrc] =>
+private def fontSizeStyle? (ctx : Ctx) (spec : String) : Option Style :=
+  (Marker.fontSizeParts spec).bind fun (sizeSrc, leadingSrc) =>
     match fontDim ctx sizeSrc, fontDim ctx leadingSrc with
     | .ok size, .ok leading => some (.fontSize size leading)
     | _, _ => none
-  | _ => none
 
 /-- Applies one carried declaration as its reading between blocks does,
 silently, over `pal`, the palette in force. -/
 private def carryOne (ctx : Ctx) (pal : Palette) (cur : Array Raw) (i : Nat) (n : String)
     (blocks : Array Block) : EM (Array Block × Palette) := do
-  if n.startsWith "@ink:" then
-    let source := (n.drop "@ink:".length).toString
+  let marker := Marker.read? n
+  if let some (.ink, source) := marker then
     unless source == Compat.normalInkSource do noteColorReads source
     let ink := if source == Compat.normalInkSource then
         some (pal.restore ctx.basePalette (.role .ink))
@@ -9438,12 +9429,13 @@ private def carryOne (ctx : Ctx) (pal : Palette) (cur : Array Raw) (i : Nat) (n 
       modify (setInk p)
       return (blocks.push (.setPalette p), p)
     | none => return (blocks, pal)
-  else if n.startsWith "@lang:" then
-    modify (flowLangUpdate ctx n)
+  else if let some (.lang, tag) := marker then
+    modify (flowLangUpdate ctx tag)
     return (blocks, pal)
   else
-    let decl := if n.startsWith Compat.fontSizeMark then (fontSizeStyle? ctx n).map .style
-      else namedScopeDecl ctx n cur i
+    let decl := match marker with
+      | some (.fontSize, spec) => (fontSizeStyle? ctx spec).map Ir.Decl.style
+      | _ => namedScopeDecl ctx n cur i
     if let some (.color _ _) := decl then noteColorReads n
     match decl with
     | some d =>
@@ -9592,8 +9584,7 @@ private def blockMacroStep (ctx : Ctx) (st : ESt) (gen : Nat)
 
 /-- Declarations that change the flowing palette or spacing tokens. -/
 private def flowStyleCtrl (n : String) : Bool :=
-  n.startsWith "@ink:" || n.startsWith Compat.pageColorMarkPrefix ||
-    n == Compat.pageColorResetMark || n == BeamerColor.marker ||
+  (Marker.value? .ink n).isSome || isPageGround n || n == BeamerColor.marker ||
     n == BeamerColor.starMarker || n == "palette" || n == "tokens"
 
 /-- Reads a flow declaration after its command, publishing it to the state and
@@ -9617,13 +9608,11 @@ private def flowStyleArm (ctx : Ctx) (n : String) (raws : Array Raw)
       diag ctx .E0304 "'\\tokens' needs a {...} block" pos
       return (⟨ctx, rfl, rfl, rfl, rfl⟩, ⟨start, Nat.le_refl _⟩, blocks, gen)
   let ⟨(pal?, j), hj⟩ : { t : Option Palette × Nat // start ≤ t.2 } ←
-    if n.startsWith "@ink:" then do
+    if let some source := Marker.value? .ink n then do
       -- xcolor's `\color` colours the rest of its group (manual §2.6.4).
-      pure ⟨(← inkFlowDecl ctx n pos, start), Nat.le_refl _⟩
-    else if n.startsWith Compat.pageColorMarkPrefix then do
-      pure ⟨(← pageGroundDecl ctx n pos, start), Nat.le_refl _⟩
-    else if n == Compat.pageColorResetMark then do
-      pure ⟨(some (← pageGroundReset ctx), start), Nat.le_refl _⟩
+      pure ⟨(← inkFlowDecl ctx source pos, start), Nat.le_refl _⟩
+    else if isPageGround n then do
+      pure ⟨(← pageGround ctx n pos, start), Nat.le_refl _⟩
     else if n == BeamerColor.marker || n == BeamerColor.starMarker then
       beamerColorArm ctx raws start (n == BeamerColor.starMarker) pos
     else do
@@ -9655,8 +9644,7 @@ private def flowStyleArm (ctx : Ctx) (n : String) (raws : Array Raw)
         diag ctx .E0304 "'\\palette' needs a {...} block" pos
         pure ⟨(none, start), Nat.le_refl _⟩
   -- Ink and Beamer readers publish their own palette.
-  if n == "palette" || n.startsWith Compat.pageColorMarkPrefix ||
-      n == Compat.pageColorResetMark then
+  if n == "palette" || isPageGround n then
     if let some pal := pal? then
       modify fun st => { st with scope := { st.scope with palette := { st.scope.palette with current := some pal } },
                                  flowGen := st.flowGen + 1 }
@@ -10836,10 +10824,8 @@ private def isBlockStart (ctx' : Ctx) (n : String) (raws : Array Raw) (i : Nat)
     || (n == "note" && cur.isEmpty)
     || isDeclBlock ctx' n raws i cur
     -- Mid-paragraph these markers stay inline: splitting there would move text.
-    || (cur.isEmpty && n.startsWith "@ink:")
-    || (cur.isEmpty && n.startsWith Compat.pageColorMarkPrefix)
-    || (cur.isEmpty && n == Compat.pageColorResetMark)
-    || (cur.isEmpty && n.startsWith "@lang:")
+    || (cur.isEmpty &&
+      ((Marker.read? n).any (fun (k, _) => k == .ink || k == .lang) || isPageGround n))
     || n == BeamerColor.marker || n == BeamerColor.starMarker
     || ((lookupUser ctx' sourceName).isNone && !(ctx'.args.any (·.1 == sourceName)) &&
       (n == "href" || n == "link" || n == "hyperlink" || n == "hypertarget") &&
@@ -11021,7 +11007,7 @@ private def columnPosOf (cbody : Array Raw) (cpos : Pos) : Ir.BoxPos × Nat :=
 /-- The flow-state update a declaration between blocks makes: a language
 switch, a frame-count restart, or `\appendix`. -/
 private def flowDecl? (ctx : Ctx) (n : String) (next : Nat) : Option (ESt → ESt) :=
-  if n.startsWith "@lang:" then some (flowLangUpdate ctx n)
+  if let some tag := Marker.value? .lang n then some (flowLangUpdate ctx tag)
   else if n == Compat.frameRestartMark then
     some fun st => { st with frameRestart := st.frameRestart <|> some next }
   -- beamer's `\appendix` opens a part, which numbers no section anew
@@ -12060,12 +12046,8 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
         elabBlocksGo ctx' raws (i + 1) blocks (cur.push raws[i]) gen'
     | .ctrl n cpos =>
       -- A page-ground command mid-paragraph changes shipout state, not structure.
-      if !cur.isEmpty &&
-          (n.startsWith Compat.pageColorMarkPrefix || n == Compat.pageColorResetMark) then
-        let pal? ← if n.startsWith Compat.pageColorMarkPrefix then
-            pageGroundDecl ctx' n cpos
-          else
-            some <$> pageGroundReset ctx'
+      if !cur.isEmpty && isPageGround n then
+        let pal? ← pageGround ctx' n cpos
         match pal? with
         | some pal => modify fun st =>
           { st with scope := { st.scope with palette := { st.scope.palette with current := some pal } },
@@ -14305,9 +14287,9 @@ public inductive PDecl where
   | captionsetup (scope : Option String) (unclosed : Option Pos) (body : Option String) (pos : Pos)
   /-- url.sty's `\urlstyle`: the family `\url` and `\nolinkurl` set in. -/
   | urlstyle (v : Option String) (pos : Pos)
-  /-- A preamble declaration still in force where the body begins, replayed
+  /-- A preamble ink declaration still in force where the body begins, replayed
   as the body's first. -/
-  | bodyStart (marker : String) (pos : Pos)
+  | bodyStart (source : String) (pos : Pos)
   | titleDecl (name : String) (unclosed : Option Pos) (recovered : Bool)
       (body : Option (Array Raw × Option (Array Raw))) (pos : Pos)
   | reserved (name : String) (code : DiagCode) (unclosed : Option Pos) (pos : Pos)
@@ -14422,8 +14404,8 @@ public def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run d
       if let .env n wrapped pos := r then
         if let some f := Parse.inputEnvFile? n then
           preamble := preamble.extract 0 i ++
-            #[Raw.ctrl (fileMarker f) pos] ++ wrapped ++
-            #[Raw.ctrl (fileMarker curFile) pos] ++
+            #[Raw.ctrl (Marker.name .file f) pos] ++ wrapped ++
+            #[Raw.ctrl (Marker.name .file curFile) pos] ++
             preamble.extract (i + 1) preamble.size
           continue
       match r with
@@ -14491,7 +14473,7 @@ public def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run d
           let k2 := skipSpaces preamble k
           -- environ's `\NewEnviron`: the code before `\BODY` begins, the rest ends.
           let isMark (r : Raw) : Bool := match r with
-            | .ctrl n _ => n == Compat.environBodyMark
+            | .ctrl n _ => n == Marker.name .environBody ""
             | _ => false
           let environ := sigRaws.any isMark
           sigRaws := sigRaws.filter (!isMark ·)
@@ -14505,7 +14487,7 @@ public def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run d
                 | none => (none, k)
               | _ => (none, k)
             let (bb, ee) := match Compat.bodySlot? code with
-              | some (bb, ee) => (bb.push (.ctrl Compat.environBodyMark pos), ee)
+              | some (bb, ee) => (bb.push (.ctrl (Marker.name .environBody "") pos), ee)
               | none => (#[], code)
             i := kf
             out := out.push (.defineEnv (some (envName, npos)) (rawSrc sigRaws) dflt
@@ -14522,19 +14504,19 @@ public def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run d
           i := j + 1
       | .ctrl name pos =>
         i := i + 1
-        if let some f := fileMarkerFile? name then
+        let marker := Marker.read? name
+        if let some (.file, f) := marker then
           curFile := f
           out := out.push (.fileMark f)
-        else if name.startsWith "@series:" || name.startsWith "@lang:" then
+        else if marker.any fun (k, _) => k == .series || k == .lang then
           -- premise: compatMarkerChecks — the Doc is the one without it
           pure ()
-        else if name.startsWith Compat.pageColorMarkPrefix then
-          out := out.push (.pageGround
-            (some (name.drop Compat.pageColorMarkPrefix.length).toString) pos)
-        else if name == Compat.pageColorResetMark then
+        else if let some (.pageColor, source) := marker then
+          out := out.push (.pageGround (some source) pos)
+        else if marker.any (·.1 == .pageColorReset) then
           out := out.push (.pageGround none pos)
-        else if name.startsWith "@ink:" then
-          out := out.push (.bodyStart name pos)
+        else if let some (.ink, source) := marker then
+          out := out.push (.bodyStart source pos)
         else if runningCtrl.contains name then
           let (opts, k) := takeOptRun preamble (skipSpaces preamble i)
           let j := skipSpaces preamble k
@@ -16210,14 +16192,11 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
     | none => basePalette
   -- `\normalcolor` restores the ink in force when the body opens (color.sty).
   let openingInk := decls.foldl (fun pal d => match d with
-    | .bodyStart m _ =>
-      if m.startsWith "@ink:" then
-        let source := (m.drop "@ink:".length).toString
-        if source == Compat.normalInkSource then pal.restore basePalette (.role .ink)
-        else match pal.resolveSource none source with
-          | .ok (some c) => pal.declare (.role .ink) c
-          | _ => pal
-      else pal
+    | .bodyStart source _ =>
+      if source == Compat.normalInkSource then pal.restore basePalette (.role .ink)
+      else match pal.resolveSource none source with
+        | .ok (some c) => pal.declare (.role .ink) c
+        | _ => pal
     | _ => pal) basePalette
   let tokens := themedDs.tokens
   let styles := themedDs.styles
@@ -16299,7 +16278,7 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
                       (abstractFormUnder record.abstractForm classOpts) == .quotation }
   let opening : Array Raw := decls.filterMap fun d =>
     match d with
-    | .bodyStart m p => some (.ctrl m p)
+    | .bodyStart source p => some (.ctrl (Marker.name .ink source) p)
     | _ => none
   return { ctx, raws := opening ++ body, finish := fun blocks => do
     let mut asserts := asserts

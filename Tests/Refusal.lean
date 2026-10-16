@@ -150,9 +150,37 @@ def groupedBlockChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
     t s!"and ships the unwrapped body's text ('{o}')"
       (pageTextOf fonts grouped == pageTextOf fonts (wrap tab))
 
-/-- No document spells an environment name the engine makes. -/
-def reservedEnvNameChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+/-- No document spells an environment or control name the engine makes: each holds a character no
+word holds, a written marker reads as a control space and text, and a former spelling as an unknown
+command or environment. -/
+def reservedNameChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
+  let markers := Marker.Kind.words.map fun (w, k) => Marker.name k (w.take 1).toString
+  let names := markers ++
+    [Parse.citeSetupMark, Parse.markdownBibControl, Parse.headingControl .h1, Compat.metaTextMark,
+     Compat.vspaceAnchorMark, Compat.frameRestartMark, Compat.cancelOptionsMark,
+     Compat.blueprintSiteMark, Compat.linkedBoxRowMark, Compat.alertMark true,
+     Compat.alertMark false, BeamerColor.marker, BeamerColor.starMarker,
+     BeamerColor.standoutMarker, BeamerColor.siteMarker]
+  for n in names do
+    t s!"the engine's control '{n}' holds a character no word holds"
+      (n.any fun c => Lex.special c || Lex.isWs c)
+  let doc (s : String) := dvDoc "\\usepackage{cleveref}\n"
+    s!"\\section\{Lead}\\label\{a}\nLead words{s} tail words."
+  let codes (src : String) := (dvE src).toList.map (·.code)
+  for m in markers do
+    let spelled := doc ("\\" ++ m)
+    let text := doc (" " ++ (m.drop 1).toString)
+    t s!"a written '\\{m}' reads as text" (pageLines fonts spelled == pageLines fonts text)
+    t s!"and raises what its text does ('{m}')" (codes spelled == codes text)
+  for (name, rest) in [("@ink", ":red"), ("@lang", ":fr"), ("@series", ":b"), ("@family", ":1"),
+      ("@file", ":probe.sty"), ("@pagecolor", ":red"), ("@pagecolor", "-reset"),
+      ("@fontsize", ":1em"), ("@environ", ":BODY"), ("@crefrange", "{a}{b}"),
+      ("@Crefrange", "{a}{b}"), ("@natbib", "{numbers}")] do
+    let spelled := doc (" \\" ++ name ++ rest)
+    let unknown := doc (" \\zzprobe" ++ rest)
+    t s!"'\\{name}{rest}' is an unknown command like any other" (codes spelled == codes unknown)
+    t s!"and ships its page ('\\{name}{rest}')" (pageLines fonts spelled == pageLines fonts unknown)
   for n in [Parse.splitOpen "center", Parse.splitClose "center",
       Parse.inputEnv "probe.sty", Parse.scopeEnv, Tcolorbox.boxEnv, Parse.markdownTableEnv,
       Parse.markdownDisclosureEnv, Md.leanDivisionEnv, Parse.keptInputEnv "probe.md",
@@ -161,7 +189,6 @@ def reservedEnvNameChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : 
       (n.any fun c => Lex.special c || Lex.isWs c)
   let use (n : String) :=
     dvDoc "" s!"Lead words.\n\n\\begin\{{n}}Marker words.\\end\{{n}}\nBody words."
-  let codes (src : String) := (dvE src).toList.map (·.code)
   let unknown := use "probeunknown"
   for n in ["@open:center", "@close:center", "@input:probe.sty"] do
     t s!"'\{{n}}' is an unknown environment like any other" (codes (use n) == codes unknown)

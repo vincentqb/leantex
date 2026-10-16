@@ -47,8 +47,8 @@ def pictureBoundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
     t s!"the actual picture request keeps TeX spelling: {command}"
       ((Ir.pictureRefs doc).size == 1 &&
         hasStr req (canonical command) &&
-        !hasStr req "\\block" && !hasStr req "\\@fontsize:" &&
-        !hasStr req "\\@ink:" &&
+        !hasStr req "\\block" && !hasStr req ("\\" ++ Marker.name .fontSize "") &&
+        !hasStr req ("\\" ++ Marker.name .ink "") &&
         ds.any (·.code == "N0023") &&
         spans.fallbacks == (Ir.pictureRefs doc).map (·.1))
   let (macroDoc, _, _) := firstPass (dvDoc "\\newcommand{\\gap}{\\smallskip}\n"
@@ -75,7 +75,7 @@ def pictureBoundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((Ir.pictureRefs styledDoc).size == 1 && hasStr styledReq "\\smallskip" &&
       hasStr styledReq "\\textcolor {alert}" && !hasStr styledReq "\\bfseries" &&
       hasStr styledReq "\\definecolor{alert}" && hasStr styledReq "\\color {blue}" &&
-      !hasStr styledReq "\\block" && !hasStr styledReq "\\@ink:")
+      !hasStr styledReq "\\block" && !hasStr styledReq ("\\" ++ Marker.name .ink ""))
   for (theme, label, explicit) in [
       ("\\theme{moloch}", "\\alert{Bright}", "\\textcolor{alert}{Bright}"),
       ("", "\\alert{Bright}", "{\\bfseries Bright}"),

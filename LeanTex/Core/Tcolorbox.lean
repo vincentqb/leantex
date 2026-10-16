@@ -131,7 +131,7 @@ private def settings (options : Array Raw) : Settings := Id.run do
 private def ink (v : Option (Array Raw)) (pos : Pos) : Array Raw :=
   match v with
   | none => #[]
-  | some rs => #[.ctrl ("@ink:" ++ rawSrc rs) pos]
+  | some rs => #[.ctrl (Marker.name .ink (rawSrc rs)) pos]
 
 private def gap (v : Option String) (pos : Pos) : Array Raw :=
   match v with

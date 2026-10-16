@@ -284,7 +284,7 @@ end
 
 def compatMarkerChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
-  let markers := ["@series:", "@lang:", "@ink:"]
+  let markers := [Marker.name .series "", Marker.name .lang "", Marker.name .ink ""]
   let namesMarker (d : Diag) : Bool :=
     d.subject.any fun s => markers.any fun m => hasStr s m
   let docOf (pre : String) : Ir.Doc × Array Diag :=

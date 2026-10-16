@@ -977,8 +977,8 @@ private def withGroupScope (arg : Bool) (act : Bool → Nat → M α) : M α := 
     (act (st.defaultAt matches .inside _) st.bodyNext { st with defaultAt := .none })
 
 /-- Whether a group the walk reaches after `out` may be an argument, whose braces TeX does not
-scope: past blanks and at most nine groups the output so far ends with an optional argument or a
-passed control word, neither an engine mark nor one of TeX's grouping primitives. -/
+scope: past blanks and at most nine groups, an optional argument or a control word, neither one
+whose name holds a colon, a marker but cleveref's range, nor one of TeX's grouping primitives. -/
 private def argGroupAt (out : Array Raw) : Bool := Id.run do
   let mut k := out.size
   for _ in [0:20] do
@@ -986,7 +986,8 @@ private def argGroupAt (out : Array Raw) : Bool := Id.run do
     match out[k - 1]? with
     | some .space | some (.group _ _) => k := k - 1
     | some (.ctrl n _) =>
-      return !n.contains ':' && !["begingroup", "endgroup", "bgroup", "egroup", "relax"].contains n
+      return !n.contains ':' && (Marker.read? n).all (·.1 matches .crefRange | .crefRangeUp) &&
+        !["begingroup", "endgroup", "bgroup", "egroup", "relax"].contains n
     | some (.sym ']' _) => return true
     | _ => return false
   return false
@@ -6926,13 +6927,10 @@ private def shipoutRules (look : String → Option (Array Raw)) (lengths : Array
     | _ => return none
   if (mode == 0 || mode == 13) && stack.size == 1 then return some rules else return none
 
-/-- The marker prefix for xcolor's page-ground epoch. -/
-public def pageColorMarkPrefix : String := "@pagecolor:"
-
 /-- `\pagecolor[model]{colour}`: the page background from here on. -/
 private def pageColor (value : String) (pos : Pos) : M (Array Raw) := do
   became "\\pagecolor" s!"the {value} page-ground epoch" pos
-  return #[.ctrl (pageColorMarkPrefix ++ value) pos]
+  return #[.ctrl (Marker.name .pageColor value) pos]
 
 private def modeledColorSource (model : Option String) (value : String) : String :=
   match model with
@@ -7005,10 +7003,6 @@ private def colorspaceOptions (opts : String) (pos : Pos) : M Unit := do
       unreadParam "usepackage:colorspace" (KeyVal.entry o).1 s!"colorspace option '{o}'" pos
         (help := "the engine writes each ink's separation itself")
 
-/-- The marker for xcolor's global page-ground reset, unforgeable because `@` is
-no surface control-word character. -/
-public def pageColorResetMark : String := "@pagecolor-reset"
-
 /-- The ink source `\normalcolor` names: the colour in force
 when the body opened. -/
 public def normalInkSource : String := "\\normalcolor"
@@ -7068,10 +7062,6 @@ public def bodySlot? (code : Array Raw) : Option (Array Raw × Array Raw) :=
     let after := code.extract (i + 1) code.size
     if mentionsBody before.toList || mentionsBody after.toList then none
     else some (before, after)
-
-/-- The mark after the native head of an environ definition, where the
-elaborator splits its begin half. -/
-public def environBodyMark : String := "@environ:BODY"
 
 /-- The words naming an environment definition the document body holds. -/
 public def bodyEnvDefMessage : String :=
@@ -7136,7 +7126,7 @@ public def defineEnvEnd (raws : Array Raw) (i : Nat) : Nat := Id.run do
       | (none, _) => return raws.size
     | some r =>
       match r with
-      | .ctrl n _ => if n == environBodyMark then environ := true
+      | .ctrl n _ => if n == Marker.name .environBody "" then environ := true
       | _ => pure ()
       k := k + 1
     | none => break
@@ -7359,8 +7349,9 @@ private def tokenRows : List CtrlRow :=
    tok "IfValueT" (.ctrl "ifgiven" {}) none,
    tok "IfValueTF" (.ctrl "ifgiven" {}) none,
    tok "footercontent" (.ctrl "runningfoot" {}) (some "\\runningfoot{...}"),
-   tok "nopagecolor" (.ctrl pageColorResetMark {}) (some "the document's default page ground"),
-   tok "normalcolor" (.ctrl ("@ink:" ++ normalInkSource) {})
+   tok "nopagecolor" (.ctrl (Marker.name .pageColorReset "") {})
+    (some "the document's default page ground"),
+   tok "normalcolor" (.ctrl (Marker.name .ink normalInkSource) {})
      (some "the document's normal ink, to the end of the group")]
 
 /-- Commands whose whole meaning is one native declaration. -/
@@ -7673,7 +7664,8 @@ private def crefRangeArm (name : String) (pos : Pos) (raws : Array Raw)
   let (args, k) := takeGroups raws start 2
   if h : args.size = 2 then
     became s!"\\{name}" "the range pair: plural name, both numbers" pos
-    return some (#[.ctrl ("@" ++ name) pos, .group args[0] pos,
+    let kind := if name == "Crefrange" then Marker.Kind.crefRangeUp else .crefRange
+    return some (#[.ctrl (Marker.name kind "") pos, .group args[0] pos,
       .ctrl "labelcref" pos, .group args[1] pos], k)
   else return none
 
@@ -7703,10 +7695,6 @@ private def alertPlain (pos : Pos) (raws : Array Raw) (start : Nat) (picture : B
     else
       became "\\alert" "\\textbf" pos
       return some (#[.ctrl "textbf" pos], start)
-
-/-- The marker prefix of a parsed `\fontsize` declaration. -/
-public def fontSizeMark : String := "@fontsize:"
-public def fontSizeSep : String := "\u0000"
 
 /-- The list depth each of beamer's three marker templates selects. -/
 private def beamerMarkerElement : String → Option String
@@ -7860,8 +7848,7 @@ private def flushBeamerFootline : M (Array Raw × Array Raw) := do
     if let some fields := (← get).beamerFonts.toList.lookup name then
       let font := beamerTemplateFont name fields
       if let some size := font.size then
-        fontPrefix := fontPrefix.push (.ctrl (fontSizeMark ++ size ++ fontSizeSep ++
-          font.leading.getD "") pos)
+        fontPrefix := fontPrefix.push (.ctrl (Marker.fontSizeName size (font.leading.getD "")) pos)
       fontPrefix := fontPrefix ++ (← synthAt font.cmds pos)
       unread := font.unread
       -- premise: beamerTemplateChecks — the selected font reaches the footer note
@@ -8199,9 +8186,9 @@ were dropped: {o}" pos
     let size := rawSrc (args.getD 0 #[])
     let leading := rawSrc (args.getD 1 #[])
     became "\\fontsize" "an affine font size and baseline skip" pos
-    return some (#[.ctrl (fontSizeMark ++ size ++ fontSizeSep ++ leading) pos], k)
+    return some (#[.ctrl (Marker.fontSizeName size leading) pos], k)
   | "fontseries" =>
-    -- The series' weight half rides the `@series:` marker; its width half has no engine axis.
+    -- The series' weight half rides its marker; its width half has no engine axis.
     let (args, k) := takeGroups raws start 1
     if args.isEmpty then return none
     if ← paramArgs args then
@@ -8220,7 +8207,7 @@ were dropped: {o}" pos
           s!"'\\fontseries\{{code}}' also asks for the '{width}' width; \
 the engine has no width axis, so only the weight is honoured" pos
       became s!"\\fontseries\{{code}}" s!"the {w.series} series" pos
-      return some (#[.ctrl ("@series:" ++ w.series) pos], k)
+      return some (#[.ctrl (Marker.name .series w.series) pos], k)
     | none =>
       sayOnce "ctrl:fontseries" .W0104
         s!"'\\fontseries\{{code}}' names no NFSS series; \
@@ -8250,7 +8237,7 @@ and patterns stand in" pos
     if (← get).inDoc then
       write fun st => { st with mainLang := tag }
     became s!"\\selectlanguage\{{lname}}" s!"the '{tag}' language attribute" pos
-    return some (#[.ctrl ("@lang:" ++ tag) pos], k)
+    return some (#[.ctrl (Marker.name .lang tag) pos], k)
   | "foreignlanguage" =>
     let (_, j) := takeOpt raws start
     let (args, k) := takeGroups raws j 2
@@ -8265,7 +8252,7 @@ and patterns stand in" pos
 and patterns stand in" pos
           (help := "the engine ships locale records for: en, fr, de")
       became s!"\\foreignlanguage\{{lname}}" s!"the '{tag}' language attribute" pos
-      return some (#[.group (#[Raw.ctrl ("@lang:" ++ tag) pos] ++ args[1]) pos], k)
+      return some (#[.group (#[Raw.ctrl (Marker.name .lang tag) pos] ++ args[1]) pos], k)
     else return none
   | "enquote" =>
     let j := skipStar raws start
@@ -8288,7 +8275,7 @@ and patterns stand in" pos
     match model with
     | some m => became s!"\\color[{m}]\{{value}}" s!"the {source} ink declaration" pos
     | none => became s!"\\color\{{value}}" s!"\\{value}" pos
-    return some (#[.ctrl ("@ink:" ++ source) pos], skipSpaces raws k)
+    return some (#[.ctrl (Marker.name .ink source) pos], skipSpaces raws k)
   | "vspace" =>
     -- The star's zero rule goes before the space, keeping it at a page's top.
     let starred := skipStar raws start != start
@@ -8700,7 +8687,7 @@ the definition is skipped" pos
           write fun st => { st with
             discardEnvs := if slot then st.discardEnvs.filter (·.1 != env)
               else Ir.redeclare st.discardEnvs env spec }
-        let mark := if (← get).inDoc then #[] else #[Raw.ctrl environBodyMark pos]
+        let mark := if (← get).inDoc then #[] else #[Raw.ctrl (Marker.name .environBody "") pos]
         return some ((← synthAt native pos) ++ mark, j0)
       else
         let (_, k) := takeOpt raws (b + 1)
@@ -9914,7 +9901,7 @@ face serves every language, so the binding is dropped" pos
       unless st.fontFamilies.contains c do
         write fun st => { st with fontFamilies := st.fontFamilies.push c }
       let switch := (← synthAt s!"\\define \\{c}() " pos) ++
-        #[Raw.group #[Raw.ctrl s!"@family:{slot}" pos] pos]
+        #[Raw.group #[Raw.ctrl (Marker.name .family (toString slot)) pos] pos]
       return some (fonts ++ switch, k)
   | "definecolor" =>
     let (args, k) := takeGroups raws start 3
@@ -12227,7 +12214,7 @@ private def rewriteRaw (inBody : Bool) (arg : Bool) : Raw → M Raw
 and patterns stand in" p
             (help := "the engine ships locale records for: en, fr, de")
         became s!"\\begin\{{n}}\{{lname}}" s!"the '{tag}' language attribute" p
-        return .group (#[Raw.ctrl ("@lang:" ++ tag) p] ++ body'.extract j body'.size) p
+        return .group (#[Raw.ctrl (Marker.name .lang tag) p] ++ body'.extract j body'.size) p
       else if n == "document" then
         rewriteDocumentBody (rewriteList inBody body #[] body.toList 0 0) p
       else if n == "frame" then
