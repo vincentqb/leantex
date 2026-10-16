@@ -20,6 +20,7 @@ import LeanTex.Core.PdfLex
 import LeanTex.Core.ContrastSolve
 import Init.Data.Nat.ToString
 public import Std.Data.HashMap
+import Std.Data.HashSet
 
 namespace LeanTex.Core.Ir
 
@@ -931,7 +932,7 @@ public structure ListSet where
   partopsep : Option SymGlue := none
   itemsep : Option SymGlue := none
   parsep : Option SymGlue := none
-  deriving Repr, BEq, Inhabited
+  deriving Repr, BEq, Inhabited, Hashable
 
 /-- The keys a list's spacing declares, as a style and a list's options spell them. -/
 public def listSetKeys : List String := ["topsep", "partopsep", "itemsep", "parsep"]
@@ -8444,9 +8445,23 @@ public def Doc.outside (doc : Doc) (b : Block) : Outside :=
 
 /-- The spacings a body's lists declare, each once, in flow order. -/
 public def listSetsOf (body : Array Block) : Array ListSet :=
-  foldBlocks (fun acc b => if let .list _ s _ := b then
-      (if s == {} || acc.contains s then acc else acc.push s) else acc)
-    (fun acc _ => acc) #[] body
+  (foldBlocks (fun (acc : Array ListSet × Std.HashSet ListSet) b => if let .list _ s _ := b then
+      (if s == {} || acc.2.contains s then acc else (acc.1.push s, acc.2.insert s)) else acc)
+    (fun acc _ => acc) (#[], {}) body).1
+
+/-- The nested list or quotation an item closes on, as `\endtrivlist` reads the skip it leaves:
+its declared spacing, whether it opened inside a paragraph, and whether it is a quotation. -/
+public def itemCloses? (item : Array Block) : Option (ListSet × Bool × Bool) :=
+  match item.back? with
+  | some (.list _ s _) => some (s, false, false)
+  | some (.quote _) => some ({}, false, true)
+  | some (.role n body) =>
+    if n != inParagraphRole then none
+    else match body with
+      | #[.list _ s _] => some (s, true, false)
+      | #[.quote _] => some ({}, true, true)
+      | _ => none
+  | _ => none
 
 /-- The events a context-threading walk declares. -/
 public structure CtxFold (γ : Type) (α : Type) where

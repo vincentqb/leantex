@@ -125,7 +125,7 @@ public structure Length where
   sp : Sp := 0
   em : Int := 0
   ex : Int := 0
-  deriving Repr, BEq, DecidableEq, Inhabited
+  deriving Repr, BEq, DecidableEq, Inhabited, Hashable
 
 namespace Length
 
@@ -165,7 +165,7 @@ public structure SymGlue where
   shrink : Length := {}
   /-- First-order infinite stretch, TeX's `fil`; finite components ride beside it. -/
   fil : Bool := false
-  deriving Repr, BEq, DecidableEq, Inhabited
+  deriving Repr, BEq, DecidableEq, Inhabited, Hashable
 
 namespace SymGlue
 

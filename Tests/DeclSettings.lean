@@ -74,6 +74,16 @@ def setlistChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) (font : 
     let s := steps (lv.extract 0 4)
     t s!"setlist: a level keeps its own margin beside its kind's: {pre}"
       (s.size == 3 && near s[0]! (pt 10) && near s[1]! (pt 30) && near s[2]! (pt 30))
+  -- lualatex: a level declaring only spacing keeps its kind's label and margin, in either order.
+  for pre in ["\\setlist[itemize]{label=x}\\setlist[itemize,2]{itemsep=0pt}",
+      "\\setlist[itemize,2]{itemsep=0pt}\\setlist[itemize]{label=x}"] do
+    let (lv, _, _) := run (listDoc pre)
+    t s!"setlist: a level's spacing alone keeps its kind's label: {pre}"
+      ((lv.map markerOf).extract 0 4 == #["x", "x", "x", "x"])
+  let (km, _, _) := run (listDoc "\\setlist[itemize]{leftmargin=3em}\\setlist[itemize,2]{topsep=3pt}")
+  let ks := steps (km.extract 0 4)
+  t "setlist: a level's spacing alone keeps its kind's margin"
+    (ks.size == 3 && [0, 1, 2].all fun i => near (ks.getD i 0) (pt 30))
   -- lualatex: itemize keeps x, enumerate takes y, whatever the order.
   let (g1, _, _) := run (listDoc "\\setlist[itemize]{label=x}\\setlist{label=y}")
   t "setlist: a kind scope wins over a later global one"
@@ -133,7 +143,11 @@ def listSpacingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
           [2, 1, 2]),
         ("\\setlist[itemize]{topsep=2pt, itemsep=1pt, parsep=0pt, partopsep=0pt}", multi, abcde,
           [2, 0, 1, 2]),
-        ("\\setlist[enumerate]{nosep}", basic, abcd, [10, 8, 10])] do
+        ("\\setlist[enumerate]{nosep}", basic, abcd, [10, 8, 10]),
+        ("\\setlist{nosep}\\setlist{leftmargin=1cm}", basic, abcd, [10, 8, 10]),
+        ("\\setlist{nosep}\\setlist*{leftmargin=1cm}", basic, abcd, [0, 0, 0]),
+        ("\\setlist[itemize]{topsep=20pt}\\setlist[itemize]{label=--}", basic, abcd, [10, 8, 10]),
+        ("\\setlist[itemize]{topsep=20pt}\\setlist*[itemize]{label=--}", basic, abcd, [22, 8, 22])] do
       t s!"list spacing: {cls} '{pre}' sets the lines lualatex sets"
         (steps (doc cls pre b) ws == over want)
   let nested := "Alpha paragraph.\n\n\\begin{itemize}\n\\item Bravo outer.\n\n\\begin{itemize}\n" ++
@@ -162,6 +176,36 @@ def listSpacingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
       ("\\setlist[itemize]{itemsep=3pt}\\setlist*[itemize]{topsep=1pt}", nested, [3, 7, 5, 7, 3])] do
     t s!"list spacing: nested lists under '{pre}' set the lines lualatex sets"
       (steps (doc "[10pt]{article}" pre b) six == over want)
+  -- lualatex, article at 10pt: a list whose last item closes on a nested list or a quotation's on a
+  -- list ends on that list's skip with its own \parsep on it, less the \parskip outside it.
+  let ends := "Alpha paragraph.\n\n\\begin{itemize}\n\\item Bravo outer.\n\\begin{itemize}\n" ++
+    "\\item Charlie inner.\n\\end{itemize}\n\\end{itemize}\n\nDelta after."
+  let endsOpened := "Alpha paragraph.\n\n\\begin{itemize}\n\\item Bravo outer.\n\n" ++
+    "\\begin{itemize}\n\\item Charlie inner.\n\\end{itemize}\n\\end{itemize}\n\nDelta after."
+  let quoted := "Alpha paragraph.\n\n\\begin{itemize}\n\\item Bravo outer.\n\\begin{quote}\n" ++
+    "Charlie quoted.\n\\begin{itemize}\n\\item Delta inner.\n\\end{itemize}\n\\end{quote}\n" ++
+    "\\item Echo outer.\n\\end{itemize}\n\nFoxtrot after."
+  for (pre, b, ws, want) in [
+      ("", ends, abcd, [10, 8, 10]), ("\\setlist{topsep=6pt}", ends, abcd, [8, 10, 10]),
+      ("\\setlist{topsep=6pt}", endsOpened, abcd, [8, 12, 12]),
+      ("\\setlist[2]{topsep=10pt}", ends, abcd, [10, 14, 14]),
+      ("\\setlist[2]{topsep=10pt}", endsOpened, abcd, [10, 16, 16]),
+      ("\\setlist[1]{parsep=9pt}", ends, abcd, [10, 13, 13]),
+      ("\\setlist[1]{parsep=9pt}", endsOpened, abcd, [10, 15, 15]),
+      ("", quoted, six, [10, 8, 4, 8, 10]),
+      ("\\setlist[itemize,2]{topsep=9pt}", quoted, six, [10, 8, 11, 11, 10])] do
+    t s!"list spacing: a list closing on a nested one under '{pre}' sets the lines lualatex sets"
+      (steps (doc "[10pt]{article}" pre b) ws == over want)
+  -- lualatex: an article's abstract is a quotation, so its list is the second level.
+  let abstr := "\\begin{abstract}\nAlpha abstract.\n\\begin{itemize}\n\\item Bravo one.\n" ++
+    "\\item Charlie two.\n\\end{itemize}\n\\end{abstract}\nDelta after."
+  let abstractStep (pre : String) : Option Dim.Sp :=
+    (steps (doc "[10pt]{article}" pre abstr) ["Bravo", "Charlie"]).head?
+  t "list spacing: an abstract's list takes the second level's scope and not the first's"
+    (abstractStep "\\setlist[1]{itemsep=9pt}" == abstractStep "" &&
+      match abstractStep "\\setlist[2]{itemsep=9pt}", abstractStep "" with
+      | some a, some b => a - b > Dim.pt 6
+      | _, _ => false)
   let own := "Alpha paragraph.\n\n\\begin{itemize}[topsep=1pt, partopsep=0pt, itemsep=0pt, parsep=2pt]\n" ++
     "\\item Bravo entry.\n\\item Charlie entry.\n\\end{itemize}\n\nDelta after.\n\n\\begin{itemize}\n" ++
     "\\item Echo entry.\n\\item Foxtrot entry.\n\\end{itemize}\n\nGolf after."
@@ -183,6 +227,10 @@ def listSpacingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
     (named unread "itemsep" && unread.all (·.severity != .error) &&
       steps (doc "[10pt]{article}" "\\setlist{itemsep=.5\\baselineskip}" basic) abcd ==
         over [10, 8, 10])
+  let mixedOwn := ds "" "\\begin{itemize}[topsep=3pt, label=x]\\item Kilo.\\item Lima.\\end{itemize}"
+  t "list spacing: a list's own options naming a key it does not honour are that one warning"
+    (named mixedOwn "label" && (mixedOwn.filter fun d => d.span.any (·.pos.line == 5)).all
+      (·.code == "W0104"))
   let ownUnread := ds "" ("\\begin{itemize}[itemsep=\\zzlength]\\item Kilo.\\item Lima.\\end{itemize}")
   t "list spacing: a list's own length the engine cannot read is named"
     (named ownUnread "itemsep" && ownUnread.all (·.severity != .error))

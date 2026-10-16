@@ -9259,6 +9259,22 @@ private theorem listOpen_beamer_adds_exact (a : Acc) (r : Rd) (g : Glue)
     (h : r.lists = .beamer) : (a.listOpen r g).owed = a.owed.push g := by
   simp [Spacing.Pending.listOpen, Spacing.Pending.vskip, h]
 
+/-- `\endtrivlist`'s re-skip on owed glue: a positive last skip takes `inner` on it, less `outer`. -/
+private def reskipOwed (owed : Array Glue) (inner outer : Glue) : Array Glue :=
+  match owed.back? with
+  | some last =>
+    if 0 < last.width then
+      owed.pop.push { last with width := last.width + inner.width - outer.width
+                                stretch := last.stretch + inner.stretch - outer.stretch
+                                shrink := last.shrink + inner.shrink - outer.shrink }
+    else owed
+  | none => owed
+
+/-- `\endtrivlist`'s re-skip: the skip a list's content ends on takes the list's own `\parskip`,
+less the one outside it. -/
+private def Spacing.Pending.endReskip (a : Acc) (inner outer : Glue) : Acc :=
+  { a with owed := reskipOwed a.owed inner outer, dispAlt := a.dispAlt.map (reskipOwed · inner outer) }
+
 private theorem addvspace_after_vspace_exact (a : Acc) (v g : Glue) :
     ((a.vspace v).addvspace g).owed = (a.vspace v).owed.push g ∧
     ((a.vspace v).trivSpace g).owed = (a.vspace v).owed.push g ∧
@@ -12459,7 +12475,13 @@ private def collectBlock (r : Rd) (a : Acc)
       else { a with itemDepth := depth - 1 }
     match st.before, top with
     | some g, _ => a.addvspace (r.resolve g)
-    | none, some t => a.listSpace t
+    | none, some t =>
+      -- `\endtrivlist`: a last item closing on a nested list or quotation leaves its skip with
+      -- this list's `\parsep` on it, less the `\parskip` outside (`Ir.itemCloses?`).
+      let a := match sk, items.back?.bind Ir.itemCloses? with
+        | some s, some _ => a.endReskip (r.resolve s.parsep) (r.resolve r.geom.texParskip)
+        | _, _ => a
+      a.listSpace t
     | none, none => a
   | .center body =>
     match Ir.displayContent? body with
@@ -12530,6 +12552,10 @@ private def collectBlock (r : Rd) (a : Acc)
       let ri := { (r.within blk) with
         inPar := false, geom := { r.geom with parskip := sk.parsep, texParskip := sk.parsep } }
       let sub := collectBlocks ri sub body (indent + lm)
+      -- `\endtrivlist`: closing on a nested list or quotation, as a list's last item does.
+      let sub := if (Ir.itemCloses? body).isSome then
+          sub.endReskip (r.resolve sk.parsep) (r.resolve r.geom.texParskip)
+        else sub
       { sub.listSpace g with measure := saved, quoteDepth := a.quoteDepth }
     | none =>
       let g := r.resolve (Ir.trivlistSkipFor r.lists a.tokens r.geom.fontSize

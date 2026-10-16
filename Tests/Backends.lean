@@ -566,6 +566,27 @@ def htmlListSpacingChecks (ref : IO.Ref (List String)) : IO Unit := do
      hasStr own s!":where(.list-set-1 > li + {item}, .list-set-1 > dd + dt) \{ margin-top: {space "0.000"}; }" &&
      hasStr own s!":where(* + .list-set-1) \{ margin-top: {space "1.208"}; }")
   t "html an undeclared list carries no class" (!hasStr (page "" list) "list-set")
+  -- lualatex and the page: 13pt above and below a nested level declaring it, between outer items.
+  let between := page "\\setlist[2]{topsep=13pt}"
+    "\\begin{itemize}\\item a\n\\begin{itemize}\\item b\\end{itemize}\n\\item c\\end{itemize}"
+  let closing (sel : String) := s!":has(> {sel}:last-child, > details[open]:last-child > {sel}:last-child)"
+  t "html the item after a nested list declaring spacing stands at that list's closing skip"
+    (hasStr between s!"dl):not([class*=\"list-set-\"]) > li{closing ".list-set-1.u-in-paragraph"} + {item}" &&
+     hasStr between s!"\{ margin-top: {space "1.570"}; }")
+  -- `\endtrivlist`: the nested list's 6pt with the outer \parsep 4pt on it, over the outer 8pt.
+  let ends := page "\\setlist{topsep=6pt}"
+    "\\begin{itemize}\\item a\n\\begin{itemize}\\item b\\end{itemize}\n\\end{itemize}\n\nc"
+  t "html a list closing on a nested list ends on that list's skip and its own parsep"
+    (hasStr ends (".list-set-1:not(.u-in-paragraph):has(> li:last-child > " ++
+      ".list-set-1.u-in-paragraph:last-child") &&
+     hasStr ends "margin-top: calc(max(calc(1.208rem - var(--parskip, 0rem)), 0.966rem) + var(--parskip, 0rem));")
+  -- A quotation closing an item on a declared list: 9pt with its \parsep 2pt, less the outer 4pt.
+  let quoted := page "\\setlist[itemize,2]{topsep=9pt}"
+    ("\\begin{itemize}\\item a\n\\begin{quote}b\n\\begin{itemize}\\item c\\end{itemize}\n" ++
+      "\\end{quote}\n\\item d\\end{itemize}")
+  t "html the item after a quotation closing on a declared list stands at the quotation's skip"
+    (hasStr quoted ("li:has(> blockquote.u-in-paragraph:last-child > " ++
+      ".list-set-1.u-in-paragraph:last-child") && hasStr quoted s!"\{ margin-top: {space "0.845"}; }")
 
 /-- A list's spaces are the class's `\@list⟨n⟩` in HTML too, at each level, in the screen's quanta. -/
 def htmlListGapChecks (ref : IO.Ref (List String)) : IO Unit := do

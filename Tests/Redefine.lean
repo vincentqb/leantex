@@ -591,9 +591,19 @@ def ignoredDefinitionChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) 
      ("DeclareRobustCommand", "\\DeclareRobustCommand{\\uline}[1]{\\ifmmode#1\\fi}"),
      ("def", "\\def\\varul#1{\\raisebox{1pt}[0pt][0pt]{#1}}"),
      ("renewenvironment", "\\renewenvironment{itemize}{\\ifmmode x\\fi}{\\setlength{\\fboxsep}{2pt}}"),
-     ("newenvironment", "\\newenvironment{verbatim}{\\raisebox{1pt}[0pt][0pt]{x}}{}")]
+     ("newenvironment", "\\newenvironment{verbatim}{\\raisebox{1pt}[0pt][0pt]{x}}{}"),
+     ("renewenvironment of a float",
+      "\\renewenvironment{figure}{\\ifmmode x\\fi}{\\setlength{\\fboxsep}{2pt}}"),
+     ("RenewEnviron", "\\RenewEnviron{itemize}{\\BODY}"),
+     ("NewEnviron", "\\NewEnviron{quote}{\\ifmmode x\\fi\\BODY}"),
+     ("let", "\\let\\varul\\relax"),
+     ("RenewDocumentEnvironment", "\\RenewDocumentEnvironment{itemize}{}{\\ifmmode x\\fi}{}"),
+     ("NewDocumentEnvironment", "\\NewDocumentEnvironment{quote}{}{\\setlength{\\fboxsep}{2pt}}{}"),
+     ("DeclareDocumentEnvironment", "\\DeclareDocumentEnvironment{center}{}{x}{y}")]
   let body := "Alpha \\varul{bravo} \\sout{charlie} \\ul{delta} \\uline{echo} \\underline{golf}.\n" ++
-    "\\begin{itemize}\\item Foxtrot words.\\end{itemize}"
+    "\\begin{itemize}\\item Foxtrot words.\\end{itemize}\n" ++
+    "\\begin{quote}Quebec words.\\end{quote}\n\\begin{center}Hotel words.\\end{center}\n" ++
+    "\\begin{figure}India words.\\end{figure}"
   let source (pre : String) : String :=
     "\\documentclass{article}\n" ++ pre ++ "\n\\begin{document}\n" ++ body ++ "\n\\end{document}\n"
   let pagesOfDoc (doc : Ir.Doc) : String := reprStr (layoutOf fonts doc).pages

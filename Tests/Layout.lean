@@ -2436,10 +2436,22 @@ def strutLengthChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
       ("[10pt]{article}", "\\onehalfspacing"), ("[10pt]{article}", "\\fontsize{11}{14}\\selectfont"),
       ("[10pt]{article}", "\\small"), ("[10pt]{article}", "\\usepackage[onehalfspacing]{setspace}"),
       ("[10pt]{scrartcl}", "\\KOMAoptions{fontsize=12pt}"),
-      ("[10pt]{article}", "\\renewcommand{\\baselinestretch}{1.5}")] do
+      ("[10pt]{article}", "\\renewcommand{\\baselinestretch}{1.5}"),
+      ("[10pt]{article}", "\\setbox\\strutbox\\hbox{\\vrule height 20pt depth 4pt width 0pt}"),
+      ("[9pt]{memoir}", ""), ("[14pt]{memoir}", "")] do
     let s := src cls (pre ++ geo)
     t s!"strut: after '{pre}' in {cls} the strut is not read, and the footskip is named and dropped"
       (lost s && (cls != "[10pt]{article}" || drop s == base))
+  -- A length the page cannot resolve leaves its value named and the page shipped, as before any read.
+  for value in ["footskip=\\dimexpr\\headheight+1pt\\relax", "footskip=\\dimexpr\\topskip\\relax",
+      "footskip=\\dimexpr 0.5\\paperheight\\relax", "footskip=\\dimexpr 1in/2\\relax",
+      "left=\\dimexpr 0.1\\paperwidth\\relax", "top=\\dimexpr\\headheight+1in\\relax",
+      "footskip=\\dimexpr\\marginparwidth+\\oddsidemargin\\relax"] do
+    let s := src "[10pt]{article}" s!"\\geometry\{letterpaper, textheight=9in, {value}}"
+    let (doc, ds) := elabStr s
+    t s!"strut: geometry's '{value}' is named with its spelling and the page ships"
+      (ds.all (·.severity != .error) && (layoutOf oneFace doc).pages.size == 1 &&
+        ds.any fun d => d.code == "W0101" && hasStr d.message "\\dimexpr")
 
 /-- A chrome slot's box depends only on the declared layout and the geometry, priorities decide who
 yields, and a yield stays in place and is named. -/

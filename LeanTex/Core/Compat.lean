@@ -165,17 +165,20 @@ private def classNormalSkip (pt : Nat) : Int :=
 /-- KOMA-Script's classes, whose `\normalsize` defaults to 11pt where the native article's is 10pt. -/
 private def komaClasses : List String := ["scrartcl", "scrreprt", "scrbook"]
 
-/-- The point size a standard class's options set `\normalsize` at: its one size option, else
-10pt, a KOMA-Script class's only by an option. -/
+/-- The point size a standard class's options set `\normalsize` at: its one size option of 10, 11
+or 12pt, else 10pt, a KOMA-Script class's only by an option; none past a size option of any other
+size. -/
 public def classNormalPt (cls : String) (opts : List String) : Option Nat :=
-  let sizes := opts.filterMap fun o => match KeyVal.entry o with
-    | ("10pt", none) | ("fontsize", some "10pt") => some 10
-    | ("11pt", none) | ("fontsize", some "11pt") => some 11
-    | ("12pt", none) | ("fontsize", some "12pt") => some 12
+  let sized (v : String) : Bool :=
+    2 < v.length && v.endsWith "pt" && (v.dropEnd 2).toString.toList.all fun c => c.isDigit || c == '.'
+  let sizes : List (Option Nat) := opts.filterMap fun o => match KeyVal.entry o with
+    | (v, none) | ("fontsize", some v) =>
+      if v == "10pt" then some (some 10) else if v == "11pt" then some (some 11)
+      else if v == "12pt" then some (some 12) else if sized v then some none else none
     | _ => none
   if cls != "article" && !articleClasses.contains cls then none
   else match sizes with
-    | [n] => some n
+    | [some n] => some n
     | [] => if komaClasses.contains cls then none else some 10
     | _ => none
 
@@ -3244,6 +3247,59 @@ private structure DefShape where
   stop : Nat
   bodies : List Nat
 
+/-- The control word inside a group, ignoring whitespace around it. -/
+private def ctrlName (raws : Array Raw) : Option String :=
+  match raws.toList.filter (fun r => match r with | .space => false | _ => true) with
+  | [.ctrl n _] => some n
+  | _ => none
+
+/-- The caption-skip declarations standing in front of a float's kernel core,
+when they are the whole begin body. -/
+private def floatCoreDecls (kind : String) : List Raw → Option (List (String × Array Raw))
+  | [.ctrl "@float" _, .group n _] =>
+    if (rawSrc n).trimAscii.toString == kind then some [] else none
+  | .ctrl "setlength" _ :: .group reg _ :: .group v _ :: rest =>
+    let skip := (ctrlName reg).filter fun r => r == "abovecaptionskip" || r == "belowcaptionskip"
+    skip.bind fun r => (floatCoreDecls kind rest).map ((r, v) :: ·)
+  | _ => none
+
+/-- The floats a redefinition around their own kernel core reads. -/
+public def floatRedefEnvs : List String := ["table", "figure"]
+
+/-- The environment definers of xparse that replace or declare an environment. -/
+private def xparseEnvDefiners : List String :=
+  ["NewDocumentEnvironment", "RenewDocumentEnvironment", "DeclareDocumentEnvironment"]
+
+/-- Whether a float's redefinition at `raws[i]` is the kernel-core idiom `floatRedef?` reads: a
+`\renewenvironment` without arguments, `\@float` with caption skips before it, `\end@float` after. -/
+private def floatCoreAt (env : String) (raws : Array Raw) (i : Nat) (d : String) : Bool := Id.run do
+  if d != "renewenvironment" then return false
+  let (_, j) := takeGroups raws (skipStar raws (i + 1)) 1
+  let (count, j) := takeOpt raws j
+  let (dflt, jd) := takeRawOpt raws j
+  if count.isSome || dflt.isSome then return false
+  let items (xs : Array Raw) : List Raw := xs.toList.filter fun r =>
+    match r with | .space | .par _ => false | _ => true
+  let b := skipSpaces raws jd
+  let some (.group beginB _) := raws[b]? | return false
+  let some (.group endB _) := raws[skipSpaces raws (b + 1)]? | return false
+  return (items endB matches [.ctrl "end@float" _]) && (floatCoreDecls env (items beginB)).isSome
+
+/-- The environment an environment definer at `raws[i]` names in its first group. -/
+private def definedEnv (raws : Array Raw) (i : Nat) : Option String :=
+  match raws[skipSpaces raws (skipStar raws (i + 1))]? with
+  | some (.group #[.word w _] _) => some w
+  | _ => none
+
+/-- Whether an environment definer at `raws[i]` defines a built-in the engine ignores whole: one of
+`ignored`, or a float other than by its kernel-core idiom. -/
+private def ignoredEnvDef (ignored : List String) (raws : Array Raw) (i : Nat) (d : String) :
+    Bool :=
+  match definedEnv raws i with
+  | some e => ignored.contains (Tcolorbox.bindingName e) ||
+      (floatRedefEnvs.contains e && !floatCoreAt e raws i d)
+  | none => false
+
 /-- The operands of the definer `d` at `raws[i]`, or `none`
 for a shape the pass does not read. -/
 private def definerShape (raws : Array Raw) (i : Nat) (d : String)
@@ -4046,12 +4102,6 @@ private def forgetLengths (names : Array String) : M Unit := do
   for t in names do
     if (← get).exactLens.contains t then setExactLen t none global
 
-/-- The environment an environment definer at `raws[i]` names in its first group. -/
-private def definedEnv (raws : Array Raw) (i : Nat) : Option String :=
-  match raws[skipSpaces raws (skipStar raws (i + 1))]? with
-  | some (.group #[.word w _] _) => some w
-  | _ => none
-
 /-- The controls the environment an environment definer at `raws[i]` defines assigns in its code,
 which runs where the environment opens. -/
 private def condNoteEnv (raws : Array Raw) (i : Nat) : M Unit := do
@@ -4342,6 +4392,17 @@ private def condList [Monad m]
         discard "\\tcbuselibrary" "box keys are handled at each use" n (st.useSite.getD pos)
         condList ex [] raws following out stack rest (i + 1) (stop - (i + 1))
       else condList ex [] raws following (out.push (.ctrl n pos)) stack rest (i + 1) 0
+    else if xparseEnvDefiners.contains n && ignoredEnvDef st.ignoredDefs raws i n then
+      condStopSpaces
+      let j := skipSpaces raws (i + 1)
+      let (groups, stop) := takeGroups raws j 4
+      -- premise: ignoredDefinitionChecks — an ignored built-in's definition text runs nowhere
+      if groups.size == 4 then
+        let named : Raw := (raws[j]?).getD (.group #[] pos)
+        condList ex [] raws following
+          ((((out.push (.ctrl "renewenvironment" pos)).push named).push (.group #[] pos)).push
+            (.group #[] pos)) stack rest (i + 1) (stop - (i + 1))
+      else condList ex [] raws following (out.push (.ctrl n pos)) stack rest (i + 1) 0
     else if condDefiners.contains n then
       condStopSpaces
       let bound := if definesNext.contains n then
@@ -4350,15 +4411,18 @@ private def condList [Monad m]
       let provide := n == "providecommand" || n == "ProvideDocumentCommand"
       let ignored := match bound with
         | some m => st.ignoredDefs.contains m
-        | none => (definedEnv raws i).any (st.ignoredDefs.contains <| Tcolorbox.bindingName ·)
+        | none => ignoredEnvDef st.ignoredDefs raws i n
       -- premise: ignoredDefinitionChecks — an ignored built-in's definition text runs nowhere
       if ignored && !provide then
         if let some sh := definerShape raws i n then
-          let ops : List Raw := (List.range' (i + 1) (sh.stop - (i + 1))).filterMap fun k =>
-            raws[k]?.map fun (r : Raw) => match r with
-              | .group _ gp => if sh.bodies.contains k then Raw.group #[] gp else r
-              | _ => r
-          return ← condList ex [] raws following ((out.push (.ctrl n pos)) ++ ops.toArray) stack
+          -- `\let` defines the name too, spelled here as the definer the rewrite reads.
+          let (head, ops) : String × List Raw := if n == "let" then
+              ("def", (raws[skipSpaces raws (i + 1)]?).toList ++ [Raw.group #[] pos])
+            else (n, (List.range' (i + 1) (sh.stop - (i + 1))).filterMap fun k =>
+              raws[k]?.map fun (r : Raw) => match r with
+                | .group _ gp => if sh.bodies.contains k then Raw.group #[] gp else r
+                | _ => r)
+          return ← condList ex [] raws following ((out.push (.ctrl head pos)) ++ ops.toArray) stack
             rest (i + 1) (sh.stop - (i + 1))
       if envDefiners.contains n then condNoteEnv raws i
       if let some m := bound then
@@ -4949,6 +5013,11 @@ private theorem condList_package_read_step
     have h : (lengthAssigns ++ lengthArith ++ envDefiners).contains name = false := by
       rcases hc with rfl | rfl <;> decide
     simp only [h, hlens, Std.HashMap.isEmpty_empty, Bool.not_true, Bool.or_false]
+  have hxp : (xparseEnvDefiners.contains name && ignoredEnvDef st.ignoredDefs raws i name) =
+      false := by
+    have h : xparseEnvDefiners.contains name = false := by
+      rcases hc with rfl | rfl <;> decide
+    simp only [h, Bool.false_and]
   rw [condList.eq_16]
   all_goals try solve | simp_all
   simp only [bind, StateT.bind, get, getThe, MonadStateOf.get, StateT.get,
@@ -4958,7 +5027,7 @@ private theorem condList_package_read_step
     Bool.not_true, Bool.false_eq_true, hg, hp, Array.back?_empty,
     Option.any_none, hh, hn.2.2.2.2.2.2.1, hl, Option.bind_none,
     hn.2.2.2.2.2.2.2.1, ht, hf,
-    hbox, htcb, hdef, hno, hd, Bool.not_false, ho, htpl, hlen]
+    hbox, htcb, hdef, hno, hd, Bool.not_false, ho, htpl, hlen, hxp]
   cases hload : recordLoad raws name i st with
   | mk tick loaded =>
     cases tick
@@ -5888,12 +5957,6 @@ private def lengthOfTeX (v : String) : String :=
     if n.isEmpty then name else s!"{n} * {name}"
   | [] => t
 
-/-- The control word inside a group, ignoring whitespace around it. -/
-private def ctrlName (raws : Array Raw) : Option String :=
-  match raws.toList.filter (fun r => match r with | .space => false | _ => true) with
-  | [.ctrl n _] => some n
-  | _ => none
-
 /-- An xparse argument spec, or a plain count, as native
 parameters `a1 … an`. -/
 private def signature (spec : String) : String := Id.run do
@@ -5976,18 +6039,22 @@ private def listOptions (n : String) (body : Array Raw) (pos : Pos) : M (Array R
     | none => rest := rest.push e
   unless read do return body
   let native := ", ".intercalate ((spacing.toList.map fun (key, v) => s!"{key} = {v}") ++ rest.toList)
-  became what s!"\\begin\{{n}}[{native}]" pos
+  -- A key the list does not honour is named where it stands, which accounts for the options.
+  unless rest.any fun e => !(KeyVal.entry e).1.isEmpty do
+    became what s!"\\begin\{{n}}[{native}]" pos
   return (← synthAt s!"[{native}]" pos) ++ body.extract k body.size
 
-/-- A key's value as the preamble's length door reads a `\dimexpr`: its native expression, else the
-value as written. -/
+/-- A key's value as the preamble's length door reads a `\dimexpr` to a literal, sums and scalings of
+lengths it holds, else the value as written. -/
 private def dimexprValue (v : String) : M String := do
   if !v.startsWith "\\dimexpr" then return v
   let st ← get
   let raws ← synth v
+  -- premise: strutLengthChecks — a value naming a length the page cannot resolve stays dropped
   let read := (lenValue st.lens raws (preamble := !st.inDoc) (measureKnown := st.measureKnown)
     (flowPage := st.flowPage) (strut := if st.inDoc then none else st.strutSkip)).filter fun s =>
-      readsAsLength s && texWordsOnly v
+      readsAsLength s && texWordsOnly v && !s.contains '/' &&
+        (lengthNames s).all (texLengthWords.contains ·)
   return read.getD v
 
 /-- `\usepackage[opts]{geometry}`, `\geometry{...}` and
@@ -7055,16 +7122,6 @@ public def theoremDeclEnd (raws : Array Raw) (name : String) (i : Nat) : Nat :=
       | (some _, k) => k
       | (none, _) => skipSpaces raws j
 
-/-- The caption-skip declarations standing in front of a float's kernel core,
-when they are the whole begin body. -/
-private def floatCoreDecls (kind : String) : List Raw → Option (List (String × Array Raw))
-  | [.ctrl "@float" _, .group n _] =>
-    if (rawSrc n).trimAscii.toString == kind then some [] else none
-  | .ctrl "setlength" _ :: .group reg _ :: .group v _ :: rest =>
-    let skip := (ctrlName reg).filter fun r => r == "abovecaptionskip" || r == "belowcaptionskip"
-    skip.bind fun r => (floatCoreDecls kind rest).map ((r, v) :: ·)
-  | _ => none
-
 /-- A caption skip's value inside the float-core idiom, read
 in the code's order. -/
 private def floatSkipValue? (assigned : Array (String × String)) (v : Array Raw) :
@@ -7073,9 +7130,6 @@ private def floatSkipValue? (assigned : Array (String × String)) (v : Array Raw
     if let some (_, src) := assigned.find? (·.1 == n) then return some src
   if v.any (· matches .ctrl "belowcaptionskip" _) then return none
   doorValue? v
-
-/-- The floats a redefinition around their own kernel core reads. -/
-public def floatRedefEnvs : List String := ["table", "figure"]
 
 /-- A float redefined around its own kernel core, as a scoped caption-skip
 declaration for its kind. -/
@@ -7804,6 +7858,11 @@ private def rewriteCtrlLaterNamed (name : String) (pos : Pos) (raws : Array Raw)
   match name with
   | "addtobeamertemplate" => blockHookArm pos raws start
   | "apptocmd" => standoutFootHookArm pos raws start
+  | "setbox" =>
+    -- A box assigned to the strut box sets its height and depth anew.
+    if raws[skipSpaces raws start]? matches some (.ctrl "strutbox" _) then
+      write fun st => { st with strutSkip := none }
+    return none
   | "linespread" | "setstretch" =>
     -- setspace's parameterised form is `\linespread` by another name.
     write fun st => { st with strutSkip := none }
@@ -8215,32 +8274,46 @@ description scopes")) ++
         let old := ((st.setlists.find? (·.1 == sc)).map (·.2)).getD #[]
         let new := if star then entries.foldl (fun a e => Ir.redeclare a e.1 e.2) old else entries
         { st with setlists := Ir.redeclare st.setlists sc new }
-    let stored := (← get).setlists
-    let declaredLevels (kind : String) : List Nat := [2, 3, 4].filter fun l =>
-      stored.any fun (sc, _) => sc == (some kind, some l) || sc == (none, some l)
-    let touched : List (String × Option Nat) := if styled.isEmpty then [] else
-      scopes.flatMap fun (kd, l) =>
-        (match kd with | some k => [k] | none => setlistKinds).flatMap fun k =>
-          match l with
-          | some n => [(k, some n)]
-          | none => (k, none) :: (declaredLevels k).map fun n => (k, some n)
-    -- Each element's entries, the kind's style keys and the scope's spacing in one declaration.
-    let mut records : Array (String × Array (String × String)) := #[]
-    for (kind, level) in touched do
-      let entriesAt := setlistRecord stored kind level
-      unless entriesAt.isEmpty do
-        records := Ir.redeclare records (setlistElement kind level) entriesAt
-    -- A scope's vertical keys replace the ones it held, as enumitem's `\\setlist` replaces them.
-    unless vertical.isEmpty do
+    -- A scope's vertical keys replace the ones it held, as enumitem's `\\setlist` replaces every key.
+    let mut spaced : Array (String × Array (String × String)) := #[]
+    unless star && vertical.isEmpty do
       for sc in vScopes do
         let old := (((← get).listSpacings.find? (·.1 == sc)).map (·.2)).getD #[]
         let new := if star then vertical.foldl (fun a e => Ir.redeclare a e.1 e.2) old
           else vertical
         write fun st => { st with listSpacings := Ir.redeclare st.listSpacings sc new }
         let cleared := (old.filter fun e => !new.any (·.1 == e.1)).map fun e => (e.1, "none")
-        let el := Ir.listSetElement sc
-        let held := ((records.find? (·.1 == el)).map (·.2)).getD #[]
-        records := Ir.redeclare records el (held ++ new ++ cleared)
+        unless new.isEmpty && cleared.isEmpty do
+          spaced := spaced.push (Ir.listSetElement sc, new ++ cleared)
+    let stored := (← get).setlists
+    let spacings := (← get).listSpacings
+    -- A kind's level is its own element once any scope declares through it.
+    let declaredLevels (kind : String) : List Nat := [2, 3, 4].filter fun l =>
+      stored.any (fun (sc, _) => sc == (some kind, some l) || sc == (none, some l)) ||
+        spacings.any (·.1 == (some kind, some l))
+    let styledTouched : List (String × Option Nat) := if styled.isEmpty then [] else
+      scopes.flatMap fun (kd, l) =>
+        (match kd with | some k => [k] | none => setlistKinds).flatMap fun k =>
+          match l with
+          | some n => [(k, some n)]
+          | none => (k, none) :: (declaredLevels k).map fun n => (k, some n)
+    -- A level element a spacing creates takes its kind's label and margin with it.
+    let spacedTouched : List (String × Option Nat) := vScopes.filterMap fun
+      | (some k, some n) =>
+        if setlistKinds.contains k && 2 ≤ n && n ≤ 4 &&
+            spaced.any (·.1 == setlistElement k (some n)) then some (k, some n)
+        else none
+      | _ => none
+    -- Each element's entries, the kind's style keys and the scope's spacing in one declaration.
+    let mut records : Array (String × Array (String × String)) := #[]
+    let touched := styledTouched ++ spacedTouched
+    for (kind, level) in touched do
+      let entriesAt := setlistRecord stored kind level
+      unless entriesAt.isEmpty do
+        records := Ir.redeclare records (setlistElement kind level) entriesAt
+    for (el, es) in spaced do
+      let held := ((records.find? (·.1 == el)).map (·.2)).getD #[]
+      records := Ir.redeclare records el (held ++ es)
     let natives := records.map fun (el, es) =>
       s!"\\style\{{el}}\{ {", ".intercalate (es.toList.map fun e => s!"{e.1} = {e.2}")} }"
     if natives.isEmpty then return some (#[], k)
@@ -8361,8 +8434,10 @@ the definition is skipped" pos
       if let some (out, k) ← floatRedef? envName.trimAscii.toString raws jd pos then
         return some (out, k)
     let native := s!"\\defineenv\{{envName}}({signature spec})"
-    -- premise: ignoredDefinitionChecks — an ignored built-in's refusal is its one accounting
-    unless (← get).ignoredDefs.contains (Tcolorbox.bindingName envName.trimAscii.toString) do
+    let env := envName.trimAscii.toString
+    -- premise: ignoredDefinitionChecks — a refused built-in's refusal is its one accounting
+    unless (← get).ignoredDefs.contains (Tcolorbox.bindingName env) ||
+        floatRedefEnvs.contains env || env == "abstract" do
       became s!"\\{name}\{{envName}}"
         (native ++ (if dflt.isSome then " [default]" else "") ++ " {begin} {end}") pos
     -- The default stays in the walk, rewritten where it stands, its groups no body.
@@ -8409,14 +8484,16 @@ the definition is skipped" pos
     | some (.group code _) =>
       let slot := (bodySlot? code).isSome
       if slot || !mentionsBody code.toList then
-        unless (← get).ignoredDefs.contains (Tcolorbox.bindingName envName.trimAscii.toString) do
+        let env := envName.trimAscii.toString
+        let ignored := (← get).ignoredDefs.contains (Tcolorbox.bindingName env)
+        unless ignored do
           became s!"\\{name}\{{envName}}" (native ++ (if dflt.isSome then " [default]" else "") ++
             (if slot then " {code before \\BODY} {code after it}"
               else " {} {code}, its body discarded")) pos
         write fun st => { st with
           bodyNext := 1, envNext := 1, defaultAt := if dflt.isSome then .awaiting else .none }
-        let env := envName.trimAscii.toString
-        unless (← get).inDef do
+        -- premise: ignoredDefinitionChecks — an ignored built-in's definition discards no use
+        unless (← get).inDef || ignored do
           write fun st => { st with
             discardEnvs := if slot then st.discardEnvs.filter (·.1 != env)
               else Ir.redeclare st.discardEnvs env spec }

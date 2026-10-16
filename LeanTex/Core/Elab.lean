@@ -279,6 +279,8 @@ public structure Ctx where
   macroRoles : MacroRoles := .empty
   /-- The lists around the content being elaborated. -/
   listNest : ListNest := {}
+  /-- Whether the abstract is a quotation, and so a list level, as `article`'s is. -/
+  abstractNests : Bool := false
 
 /-- The span of `pos`, or of the written call when inside replacement code. -/
 public def Ctx.sourceSpan (ctx : Ctx) (pos : Pos) : Span :=
@@ -11503,7 +11505,8 @@ the text width; the box takes the whole measure" pos
       || n == "appendices" then
     let saved ← enterAppendicesIf (n == "appendices")
     -- A quotation is a list level, which its enclosing lists' spacing reaches as LaTeX's does.
-    let ⟨quoteCtx, _⟩ : MCtx ctx ← pure ⟨if n == "appendices" || n == "abstract" then ctx
+    let ⟨quoteCtx, _⟩ : MCtx ctx ← pure ⟨
+      if n == "appendices" || (n == "abstract" && !ctx.abstractNests) then ctx
       else { ctx with listNest := ctx.listNest.quoted ctx.lists ctx.page.fontSize },
       by split <;> rfl, by split <;> rfl, by split <;> rfl, by split <;> rfl⟩
     let inner ← splicedFrameScope (if n == "appendices" then some blocks.size else none)
@@ -16140,7 +16143,9 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
                     numberHeadings := record.numberHeadings, styles := styles
                     page := page, tokens := tokens, surface := surface, lists := record.lists
                     preamble := face
-                    engineTokens := engineLengthTokensOfPage page ++ classMarginTokens record.lists }
+                    engineTokens := engineLengthTokensOfPage page ++ classMarginTokens record.lists
+                    abstractNests := s.abstractForm.getD
+                      (abstractFormUnder record.abstractForm classOpts) == .quotation }
   let opening : Array Raw := decls.filterMap fun d =>
     match d with
     | .bodyStart m p => some (.ctrl m p)
