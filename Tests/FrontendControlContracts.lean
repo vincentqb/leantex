@@ -17,9 +17,13 @@ def frontendControlContractChecks (ref : IO.Ref (List String)) : IO Unit := do
   let finish (body : Array Parse.Raw) :=
     Elab.runRewriteFinal file {} #[] executed.sourceTriggers #[] #[]
       (fun _ _ => {}) (cursor.withDocument body {})
-  let body (name : String) (arity : Nat) (payload : Array Parse.Raw) :=
-    #[Parse.Raw.word "alpha" {}, .space, .ctrl name {}] ++
-      Array.replicate arity (.group payload {}) ++
+  let operands (sig : List Compat.ArgKind) (payload : Array Parse.Raw) : Array Parse.Raw :=
+    sig.foldl (init := #[]) fun acc k => match k with
+      | .opt => acc ++ #[.sym '[' {}] ++ payload ++ #[.sym ']' {}]
+      | .group | .needed => acc.push (.group payload {})
+      | .kept => acc.push (.group #[.word "kept" {}] {})
+  let body (row : Compat.CtrlRow) (payload : Array Parse.Raw) :=
+    #[Parse.Raw.word "alpha" {}, .space, .ctrl row.name {}] ++ operands row.sig payload ++
       #[.space, .word "omega" {}, .par {}, .word "tail" {}]
   let left : Array Parse.Raw :=
     #[.word "zzkeyword" {}, .group #[.word "nested" {}] {},
@@ -27,33 +31,67 @@ def frontendControlContractChecks (ref : IO.Ref (List String)) : IO Unit := do
   let right : Array Parse.Raw :=
     #[.env "center" #[.word "different" {}] {}, .ctrl "ref" {},
       .group #[.word "neverRequested" {}] {}]
-  let source (name : String) (arity : Nat) (deferred : Bool) :=
-    let call := "\\" ++ name ++ String.join (List.replicate arity "{zzkeyword}")
+  let written (sig : List Compat.ArgKind) : String :=
+    String.join (sig.map fun k => match k with
+      | .opt => "[zzkeyword]"
+      | .group | .needed => "{zzkeyword}"
+      | .kept => "{kept}")
+  let source (row : Compat.CtrlRow) (deferred : Bool) :=
+    let call := "\\" ++ row.name ++ written row.sig
     "\\documentclass{article}" ++
       (if deferred then "\\AtBeginDocument{" ++ call ++ "}" else "") ++
       "\\begin{document}alpha " ++ (if deferred then "" else call) ++
       " omega\\end{document}"
-  for row in Compat.meaningFree do
-    let l ← pure (finish (body row.1 row.2.1 left))
-    let r ← pure (finish (body row.1 row.2.1 right))
-    t s!"control completion: {row.1} consumes arbitrary nested operands"
-      (l == r)
-    for deferred in #[false, true] do
-      let result ← pure (Elab.run file (source row.1 row.2.1 deferred))
-      t s!"control source: {row.1} consumes its groups, deferred={deferred}"
+  let reported (row : Compat.CtrlRow) (ds : Array Diag) : Bool :=
+    let noted := ds.any fun d => d.kind == .N0100 && d.message.startsWith s!"'\\{row.name}' →"
+    match row.action with
+    | .tokens _ none => true
+    | .tokens _ (some _) | .native .. | .skip _ => noted
+    | .refuse code .ctrl _ _ =>
+      ds.any fun d => d.kind == code && d.subject == some ("ctrl:" ++ row.name)
+    | .refuse code .beamer _ _ =>
+      ds.any fun d => d.kind == code && d.subject == some ("beamer:" ++ row.name)
+    | .refuse code .each msg _ => ds.any fun d => d.kind == code && d.message == msg
+    | .discard _ key =>
+      ds.any fun d => d.kind == .N0100 && d.subject == some ("ctrl:nothing:" ++ key)
+    | .inert => ds.any fun d => d.kind == .W0387 && d.subject == some ("ctrl:" ++ row.name)
+  t "control table: every skip row names a kernel skip amount"
+    (Compat.ctrlRows.all fun row => match row.action with
+      | .skip amount => (Compat.kernelSkip amount).isSome
+      | .tokens .. | .native _ | .refuse .. | .discard .. | .inert => true)
+  -- A row answers its control after the \cite guard and before a document's list settings.
+  let listed (preamble use after : String) : Array Diag :=
+    (Elab.run file ("\\documentclass{article}" ++ preamble ++
+      "\\begin{document}\\begin{itemize}\\item Alpha " ++ use ++ " more\\end{itemize}" ++ after ++
+      "End.\\end{document}")).2
+  let settled (ds : Array Diag) : Bool :=
+    ds.any fun d => d.kind == .W0104 && (d.message.splitOn "itemsep").length > 1
+  let cited := listed ("\\usepackage[style=authoryear]{biblatex}" ++
+    "\\renewcommand{\\cite}{\\setlength{\\itemsep}{9pt}}") "\\cite" ""
+  t "dispatch order: a renewed \\cite inside a list still takes the citation path"
+    (cited.any (·.kind == .E0304) && !settled cited)
+  let hooked := listed "\\renewcommand{\\AtBeginDocument}{\\setlength{\\itemsep}{9pt}}"
+    "\\AtBeginDocument" ""
+  t "dispatch order: a renewed hook inside a list is its row's refusal"
+    (hooked.any (·.kind == .W0340) && !settled hooked)
+  let later := listed "" "\\newpage" "\\gdef\\newpage{\\setlength{\\itemsep}{9pt}}"
+  t "dispatch order: a use before a later definition keeps the row's meaning"
+    (later.any (fun d => d.kind == .N0100 && d.message.startsWith "'\\newpage' →") &&
+      !settled later)
+  for row in Compat.ctrlRows do
+    let l ← pure (finish (body row left))
+    let r ← pure (finish (body row right))
+    t s!"control completion: {row.name} consumes arbitrary nested operands"
+      (l == r && reported row l.2)
+    let deferrable := row.action matches .discard .. | .inert
+    for deferred in (if deferrable then #[false, true] else #[false]) do
+      let result ← pure (Elab.run file (source row deferred))
+      t s!"control source: {row.name} consumes its arguments, deferred={deferred}"
         (((Ir.blocksText result.1.body).splitOn "zzkeyword").length == 1)
-      if row.2.2.isSome then
-        t s!"control source: {row.1} retains its report, deferred={deferred}"
-          (result.2.any (·.kind == .N0100))
-  for row in Compat.configSkip do
-    let l ← pure (finish (body row.1 row.2.1 left))
-    let r ← pure (finish (body row.1 row.2.1 right))
-    t s!"configuration completion: {row.1} preserves the complete result"
-      (l == r && l.2.any (·.kind == .W0104))
-    let result ← pure (Elab.run file (source row.1 row.2.1 false))
-    t s!"configuration source: {row.1} retains its report"
-      (result.2.any (·.kind == .W0104))
-  let unknown ← pure (Elab.run file (source "zzNotAControl" 1 false))
+      t s!"control source: {row.name} retains its report, deferred={deferred}"
+        (reported row result.2)
+  let unknown ← pure (Elab.run file ("\\documentclass{article}\\begin{document}alpha " ++
+    "\\zzNotAControl{zzkeyword} omega\\end{document}"))
   t "unknown controls retain group text and attribution"
     (((Ir.blocksText unknown.1.body).splitOn "zzkeyword").length == 2 &&
       unknown.1.salvage.any (·.command == "zzNotAControl") &&

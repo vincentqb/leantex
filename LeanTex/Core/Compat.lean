@@ -195,70 +195,6 @@ private def fontPackages : List (String × String) :=
 mono = \"Linux Libertine Mono O\""),
    ("carlito", "sans = \"Carlito\"")]
 
-/-- Commands that configure TeX's own machinery and change
-nothing this engine models. -/
-public def meaningFree : List (String × Nat × Option String) :=
-  [("makeatletter", 0, some "@-names are always readable here"),
-   ("makeatother", 0, some "@-names are always readable here"),
-   ("relax", 0, some "it means do nothing"),
-   ("PackageWarning", 2,
-    some "package diagnostics address TeX's log, not the document"),
-   ("PackageWarningNoLine", 2,
-    some "package diagnostics address TeX's log, not the document"),
-   ("PackageInfo", 2,
-    some "package diagnostics address TeX's log, not the document"),
-   ("PackageNote", 2,
-    some "package diagnostics address TeX's log, not the document"),
-   ("PackageNoteNoLine", 2,
-    some "package diagnostics address TeX's log, not the document"),
-   ("ClassWarning", 2,
-    some "class diagnostics address TeX's log, not the document"),
-   ("ClassWarningNoLine", 2,
-    some "class diagnostics address TeX's log, not the document"),
-   ("ClassInfo", 2,
-    some "class diagnostics address TeX's log, not the document"),
-   ("ClassNote", 2,
-    some "class diagnostics address TeX's log, not the document"),
-   ("ClassNoteNoLine", 2,
-    some "class diagnostics address TeX's log, not the document"),
-   ("GenericWarning", 2,
-    some "package diagnostics address TeX's log, not the document"),
-   ("GenericInfo", 2,
-    some "package diagnostics address TeX's log, not the document"),
-   ("MessageBreak", 0, some "a line break in a log message, not in the document"),
-   ("@latex@warning", 1,
-    some "kernel diagnostics address TeX's log, not the document"),
-   ("@latex@warning@no@line", 1,
-    some "kernel diagnostics address TeX's log, not the document"),
-   ("@latex@info", 1,
-    some "kernel diagnostics address TeX's log, not the document"),
-   ("@latex@info@no@line", 1,
-    some "kernel diagnostics address TeX's log, not the document"),
-   ("@latex@note", 1,
-    some "kernel diagnostics address TeX's log, not the document"),
-   ("@latex@note@no@line", 1,
-    some "kernel diagnostics address TeX's log, not the document"),
-   -- The `Error` spellings are consumed but named (W0387); arities are latex.ltx's.
-   ("PackageError", 3, none),
-   ("ClassError", 3, none),
-   ("GenericError", 4, none),
-   ("@latex@error", 2, none),
-   ("noindent", 0, some "no paragraph carries a first-line indent here"),
-   ("frenchspacing", 0, some "inter-sentence space is uniform here either way"),
-   ("nonfrenchspacing", 0, some "inter-sentence space is uniform here either way"),
-   ("selectfont", 0, some "font declarations apply where they stand"),
-   ("linenomath", 0, some "display math lines are numbered like every galley line"),
-   ("shortcites", 1, some "citations are set short throughout, which is what it asks"),
-   ("endlinenomath", 0, some "display math lines are numbered like every galley line")]
-
-/-- Declarations whose loss is real, skipped with a warning
-naming what changed. -/
-public def configSkip : List (String × Nat × String × Option String) :=
-  [
-   ("sloppy", 0,
-    "'\\sloppy' loosens TeX's line-breaking tolerance; the breaker keeps \
-its own and an overfull line warns by itself", none)]
-
 /-- Where a LaTeX length parameter's value goes. -/
 public inductive ParamSite where
   /-- A page property: `\page{ key = ... }`. -/
@@ -342,15 +278,6 @@ private def sizeReset (n : String) : Bool :=
   match paramSites.lookup n with
   | some (.sizeReset _) => true
   | _ => false
-
-/-- Beamer configuration commands with their `{...}` argument counts, each
-skipped whole with one warning. -/
-private def beamerConfig : List (String × Nat) :=
-  [("usecolortheme", 1),
-   ("useinnertheme", 1),
-   ("useoutertheme", 1),
-   ("metroset", 1),
-   ("beamertemplatenavigationsymbolsempty", 0)]
 
 /-- The native spelling of a skipped beamer construct, named
 in its warning's help. -/
@@ -1266,17 +1193,6 @@ private def bracketed (s : String) : String := if s.isEmpty then "" else s!"[{s}
 /-- A declared setting the engine's own machinery already answers, named in its note. -/
 private def inertParam (reader name what why : String) (pos : Pos) : M Unit :=
   became what s!"nothing: {why}" pos (subject := some (paramSubject reader name))
-
-/-- Log controls' accounting, read from their descriptor,
-never their arguments. -/
-private def meaningFreeReport (name : String) (pos : Pos) (note : Option String) : M Unit :=
-  match note with
-  | some why => discard s!"\\{name}" why name pos
-  | none => pure ()
-
-private def configSkipReport (name : String) (pos : Pos)
-    (msg : String) (help : Option String) : M Unit :=
-  sayOnce ("ctrl:" ++ name) .W0104 msg pos (help := help)
 
 /-- The preamble proper: outside the document environment, a `\begin{document}`
 hook's replay, and every brace group of the walk. -/
@@ -6958,42 +6874,16 @@ engine does not convert to CMYK; the colour is not defined" pos
       (help := "give the alternate as '[cmyk]', '[rgb]', '[RGB]', '[HTML]' or '[gray]' values")
     return some (#[], k)
 
-/-- One of colorspace's documented commands the engine carries no state for, its arguments read
-whole: the page's colour spaces are native, a DeviceN or ICC-based space and the overprint state
-are refused by name. -/
-private def colorspaceCommand (name : String) (raws : Array Raw) (start : Nat) (pos : Pos) :
+/-- colorspace's `\definecolorspace`, a DeviceN or ICC-based space refused by name, its arguments
+read whole. -/
+private def defineColorspace (raws : Array Raw) (start : Nat) (pos : Pos) :
     M (Option (Array Raw × Nat)) := do
-  let j := start
-  match name with
-  | "definecolorspace" =>
-    let (args, k) := takeGroups raws (skipStar raws j) 3
-    if args.size < 3 then return none
-    say .W0104 s!"'\\definecolorspace\{{rawSrc (args.getD 0 #[])}}' declares a DeviceN or \
+  let (args, k) := takeGroups raws (skipStar raws start) 3
+  if args.size < 3 then return none
+  say .W0104 s!"'\\definecolorspace\{{rawSrc (args.getD 0 #[])}}' declares a DeviceN or \
 ICC-based colour space; the engine paints each ink in its own separation; skipped" pos
-      (help := "declare each ink with \\definespotcolor")
-    return some (#[], k)
-  | "pagecolorspace" =>
-    let (args, k) := takeGroups raws j 1
-    if args.isEmpty then return none
-    discard "\\pagecolorspace" "every page lists each ink it paints" "pagecolorspace" pos
-    return some (#[], k)
-  | "resetpagecolorspace" =>
-    discard "\\resetpagecolorspace" "every page lists each ink it paints" "pagecolorspace" pos
-    return some (#[], j)
-  | "overprintstate" =>
-    let (args, k) := takeGroups raws j 1
-    if args.isEmpty then return none
-    say .W0104 "'\\overprintstate' sets the overprint state; the engine knocks out every \
-colour it paints; skipped" pos
-    return some (#[], k)
-  | "textoverprint" =>
-    let (_, j) := takeOpt raws j
-    let g := skipSpaces raws j
-    unless raws[g]? matches some (.group _ _) do return none
-    say .W0104 "'\\textoverprint' overprints its text; the engine knocks it out, and the \
-text is kept" pos
-    return some (#[], g)
-  | _ => return none
+    (help := "declare each ink with \\definespotcolor")
+  return some (#[], k)
 
 /-- colorspace's options: the overprint mode and a Lab alternate's illuminant, which the engine
 has no state for. -/
@@ -7262,16 +7152,6 @@ redefinition is skipped") pos
     else return none
   | _ => return none
 
-/-- Commands that are one fixed token by another name. -/
-private def literalReplace : List (String × (Pos → Raw)) :=
-  [("thepage", fun p => .ctrl "pagenumber" p),
-   ("textbar", fun p => .word "|" p),
-   ("textperiodcentered", fun p => .ctrl "middot" p),
-   ("textendash", fun p => .ctrl "endash" p),
-   ("textemdash", fun p => .ctrl "emdash" p),
-   ("textbackslash", fun p => .word "\\" p),
-   ("textasciitilde", fun p => .word "~" p)]
-
 /-- The mark before `\vspace*`'s space, which keeps the
 space at a page's top. -/
 public def vspaceAnchorMark : String := "vspace anchor"
@@ -7305,24 +7185,186 @@ private def skipNative (sp : SkipSpelling) (kind : String := "") : String :=
     (if sp.unranked then ", stretch = unranked" else if sp.fill then ", stretch = fill" else "")
   s!"\\block[{opts}]\{}"
 
-/-- Commands whose whole meaning is one fixed native spelling. -/
-private def simpleNative : List (String × String) :=
-  [("vfill", "\\block[before = fill]{}"),
-   ("bigskip", "\\block[before = 12pt plus 4pt minus 4pt]{}"),
-   ("medskip", "\\block[before = 6pt plus 2pt minus 2pt]{}"),
-   ("smallskip", "\\block[before = 3pt plus 1pt minus 1pt]{}"),
-   ("singlespacing", "\\page{ leading = 1 }"),
+/-- One argument a control's signature reads: an optional `[...]`, a group or bare control word
+where one stands, one that must stand or the control is left to elaboration, and a brace group that
+must stand next and stays in the walk. -/
+public inductive ArgKind where
+  | opt
+  | group
+  | needed
+  | kept
+  deriving BEq, Repr
+
+/-- The index past a signature's arguments read from `i`, or none where one that must stand does
+not. -/
+public def argsEnd (raws : Array Raw) : List ArgKind → Nat → Option Nat
+  | [], i => some i
+  | .opt :: sig, i => argsEnd raws sig (takeOpt raws i).2
+  | .group :: sig, i => argsEnd raws sig (takeGroups raws i 1).2
+  | .needed :: sig, i =>
+    if (takeGroups raws i 1).1.isEmpty then none else argsEnd raws sig (takeGroups raws i 1).2
+  | .kept :: sig, i =>
+    if raws[skipSpaces raws i]? matches some (.group _ _) then argsEnd raws sig (skipSpaces raws i)
+    else none
+
+/-- Where a row's refusal says itself: once per control under `ctrl:` or `beamer:`, or at each
+use. -/
+public inductive RefusalKey where
+  | ctrl
+  | beamer
+  | each
+  deriving BEq, Repr
+
+/-- What a table row's control does where it stands. -/
+public inductive CtrlAction where
+  /-- Fixed tokens, named in a translation note where one spells their native form. -/
+  | tokens (toks : List Raw) (note : Option String)
+  /-- A native declaration, named in its translation note. -/
+  | native (src : String)
+  /-- The kernel skip `amount`: its declared value, else its default. -/
+  | skip (amount : String)
+  /-- Refused with `code`. -/
+  | refuse (code : DiagCode) (key : RefusalKey) (msg : String) (help : Option String)
+  /-- Read to nothing, its note keyed `ctrl:nothing:<key>`. -/
+  | discard (why key : String)
+  /-- Read to nothing with no report of its own, so the dispatcher's guard names it. -/
+  | inert
+
+/-- A control the dispatcher answers from data: the arguments it consumes and what it does. -/
+public structure CtrlRow where
+  name : String
+  sig : List ArgKind
+  action : CtrlAction
+
+/-- Controls that are fixed tokens by another name. -/
+private def tokenRows : List CtrlRow :=
+  let tok (name : String) (r : Raw) (note : Option String) : CtrlRow := ⟨name, [], .tokens [r] note⟩
+  [tok "thepage" (.ctrl "pagenumber" {}) none,
+   tok "textbar" (.word "|" {}) none,
+   tok "textperiodcentered" (.ctrl "middot" {}) none,
+   tok "textendash" (.ctrl "endash" {}) none,
+   tok "textemdash" (.ctrl "emdash" {}) none,
+   tok "textbackslash" (.word "\\" {}) none,
+   tok "textasciitilde" (.word "~" {}) none,
+   -- With no floats to flush, `\clearpage` and `\newpage` are the declared page break.
+   tok "newpage" (.ctrl "pagebreak" {}) (some "\\pagebreak"),
+   tok "clearpage" (.ctrl "pagebreak" {}) (some "\\pagebreak"),
+   tok "ul" (.ctrl "underline" {}) (some "\\underline"),
+   tok "IfValueT" (.ctrl "ifgiven" {}) none,
+   tok "IfValueTF" (.ctrl "ifgiven" {}) none,
+   tok "footercontent" (.ctrl "runningfoot" {}) (some "\\runningfoot{...}"),
+   tok "nopagecolor" (.ctrl pageColorResetMark {}) (some "the document's default page ground"),
+   tok "normalcolor" (.ctrl ("@ink:" ++ normalInkSource) {})
+     (some "the document's normal ink, to the end of the group")]
+
+/-- Commands whose whole meaning is one native declaration. -/
+private def nativeRows : List CtrlRow :=
+  [⟨"vfill", [], .native "\\block[before = fill]{}"⟩,
+   ⟨"bigskip", [], .skip "bigskipamount"⟩,
+   ⟨"medskip", [], .skip "medskipamount"⟩,
+   ⟨"smallskip", [], .skip "smallskipamount"⟩,
+   ⟨"singlespacing", [], .native "\\page{ leading = 1 }"⟩,
    -- The page's bottom (latex.ltx `\flushbottom`, `\raggedbottom`).
-   ("flushbottom", "\\page{ bottom = flush }"),
-   ("raggedbottom", "\\page{ bottom = ragged }"),
-   ("onehalfspacing", "\\page{ leading = 1.25 }"),
-   ("doublespacing", "\\page{ leading = 1.667 }")]
+   ⟨"flushbottom", [], .native "\\page{ bottom = flush }"⟩,
+   ⟨"raggedbottom", [], .native "\\page{ bottom = ragged }"⟩,
+   ⟨"onehalfspacing", [], .native "\\page{ leading = 1.25 }"⟩,
+   ⟨"doublespacing", [], .native "\\page{ leading = 1.667 }"⟩]
+
+/-- LaTeX's package, class and kernel diagnostics, at latex.ltx's arities: an error spelling is
+consumed and named (W0387), any other is nothing here. -/
+private def logRows : List CtrlRow :=
+  let free (name : String) (n : Nat) (why : String) : CtrlRow :=
+    ⟨name, List.replicate n .group, .discard why name⟩
+  let pkg := "package diagnostics address TeX's log, not the document"
+  let cls := "class diagnostics address TeX's log, not the document"
+  let kernel := "kernel diagnostics address TeX's log, not the document"
+  [free "PackageWarning" 2 pkg, free "PackageWarningNoLine" 2 pkg, free "PackageInfo" 2 pkg,
+   free "PackageNote" 2 pkg, free "PackageNoteNoLine" 2 pkg,
+   free "ClassWarning" 2 cls, free "ClassWarningNoLine" 2 cls, free "ClassInfo" 2 cls,
+   free "ClassNote" 2 cls, free "ClassNoteNoLine" 2 cls,
+   free "GenericWarning" 2 pkg, free "GenericInfo" 2 pkg,
+   free "MessageBreak" 0 "a line break in a log message, not in the document",
+   free "@latex@warning" 1 kernel, free "@latex@warning@no@line" 1 kernel,
+   free "@latex@info" 1 kernel, free "@latex@info@no@line" 1 kernel,
+   free "@latex@note" 1 kernel, free "@latex@note@no@line" 1 kernel,
+   ⟨"PackageError", List.replicate 3 .group, .inert⟩,
+   ⟨"ClassError", List.replicate 3 .group, .inert⟩,
+   ⟨"GenericError", List.replicate 4 .group, .inert⟩,
+   ⟨"@latex@error", List.replicate 2 .group, .inert⟩]
+
+/-- Commands that configure TeX's own machinery or the page's colour spaces, and change nothing
+this engine models. -/
+private def machineryRows : List CtrlRow :=
+  let free (name : String) (n : Nat) (why : String) : CtrlRow :=
+    ⟨name, List.replicate n .group, .discard why name⟩
+  [free "makeatletter" 0 "@-names are always readable here",
+   free "makeatother" 0 "@-names are always readable here",
+   free "relax" 0 "it means do nothing",
+   free "noindent" 0 "no paragraph carries a first-line indent here",
+   free "frenchspacing" 0 "inter-sentence space is uniform here either way",
+   free "nonfrenchspacing" 0 "inter-sentence space is uniform here either way",
+   free "selectfont" 0 "font declarations apply where they stand",
+   free "linenomath" 0 "display math lines are numbered like every galley line",
+   free "endlinenomath" 0 "display math lines are numbered like every galley line",
+   free "shortcites" 1 "citations are set short throughout, which is what it asks",
+   ⟨"pagecolorspace", [.needed], .discard "every page lists each ink it paints" "pagecolorspace"⟩,
+   ⟨"resetpagecolorspace", [], .discard "every page lists each ink it paints" "pagecolorspace"⟩]
+
+/-- Controls refused by name, each with its loss. -/
+private def refusalRows : List CtrlRow :=
+  let once (name : String) (sig : List ArgKind) (msg help : String) : CtrlRow :=
+    ⟨name, sig, .refuse .W0104 .ctrl msg (some help)⟩
+  let beamer (name : String) (n : Nat) : CtrlRow :=
+    ⟨name, .opt :: List.replicate n .group, .refuse .W0104 .beamer
+      s!"'\\{name}' is beamer configuration the engine does not have; skipped"
+      (some ((beamerNative.lookup name).getD "a theme is a token bundle here: \\theme selects one, \
+and \\palette and \\tokens declare the design directly"))⟩
+  [⟨"sloppy", [], .refuse .W0104 .ctrl "'\\sloppy' loosens TeX's line-breaking \
+tolerance; the breaker keeps its own and an overfull line warns by itself" none⟩,
+   beamer "usecolortheme" 1, beamer "useinnertheme" 1, beamer "useoutertheme" 1,
+   beamer "metroset" 1, beamer "beamertemplatenavigationsymbolsempty" 0,
+   -- Core reads no clock, so `\today` is refused.
+   once "today" [] "'\\today' asks for the day the document is built; the engine reads no \
+clock, so nothing is inserted" "write the date as text where it should appear; \\allow{W0104} \
+accepts the skip",
+   -- Running Lua is refused by design.
+   once "directlua" [.group] "'\\directlua' is Lua code for luatex; the engine does not run Lua, \
+so it is skipped" "\\allow{W0104} accepts the skip",
+   once "column" [.group] "'\\column' is not at the top level of a {columns} body; it starts \
+no column there and is skipped" "\\column{width} splits the body of \\begin{columns} ... \
+\\end{columns}",
+   once "raisebox" [.needed, .opt, .opt] "'\\raisebox' lift, height and depth are not applied; \
+its content is set as if unboxed" "remove the box dimensions to use the surrounding line's \
+natural spacing",
+   ⟨"overprintstate", [.needed], .refuse .W0104 .each "'\\overprintstate' sets the overprint \
+state; the engine knocks out every colour it paints; skipped" none⟩,
+   ⟨"textoverprint", [.opt, .kept], .refuse .W0104 .each "'\\textoverprint' overprints its text; \
+the engine knocks it out, and the text is kept" none⟩] ++
+  -- Every hook was collected before this pass, so a hook here is already at its moment.
+  deferredHooks.map fun (name, _) =>
+    ⟨name, [], .refuse .W0340 .ctrl
+      s!"'\\{name}' cannot defer from here; its group is read where it stands"
+      (some "declare the hook before '\\begin{document}'")⟩
+
+/-- The controls the dispatcher answers from data alone. -/
+public def ctrlRows : List CtrlRow :=
+  tokenRows ++ nativeRows ++ logRows ++ machineryRows ++ refusalRows
+
+/-- The row answering a control. -/
+public def ctrlRow? (name : String) : Option CtrlRow := ctrlRows.find? (·.name == name)
+
+/-- A row's native declaration, where it is one. -/
+private def ctrlNative? (name : String) : Option String :=
+  match (ctrlRow? name).map (·.action) with
+  | some (CtrlAction.native src) => some src
+  | none | some (.tokens ..) | some (.skip _) | some (.refuse ..) | some (.discard ..)
+  | some .inert => none
 
 /-- Options of a native package without an option reader of its own whose meaning is one native
 declaration: setspace's spacings as its commands read, and microtype's switches. -/
 public def packageOptionNatives : List (String × List (String × String)) :=
   [("setspace", ["singlespacing", "onehalfspacing", "doublespacing"].filterMap fun o =>
-     (simpleNative.lookup o).map (o, ·)),
+     (ctrlNative? o).map (o, ·)),
    ("microtype", [("protrusion", "\\page{ protrusion = on }"),
      ("protrusion=true", "\\page{ protrusion = on }"),
      ("protrusion=false", "\\page{ protrusion = off }"),
@@ -7331,6 +7373,39 @@ public def packageOptionNatives : List (String × List (String × String)) :=
      ("disable", "\\page{ protrusion = off, expansion = off }"),
      ("disable=true", "\\page{ protrusion = off, expansion = off }"),
      ("activate=false", "\\page{ protrusion = off, expansion = off }")])]
+
+/-- A row's action where its control stands: its emission, with its report. -/
+private def ctrlRowRun (row : CtrlRow) (pos : Pos) : M (Array Raw) := do
+  match row.action with
+  | .tokens toks note =>
+    if let some native := note then became s!"\\{row.name}" native pos
+    return toks.toArray.map (rebase (fun _ => pos) true)
+  | .native src =>
+    -- setspace's spacings set the strut box again where they stand.
+    if (packageOptionNatives.lookup "setspace").any (·.any (·.1 == row.name)) then
+      write fun st => { st with strutSkip := none }
+    became s!"\\{row.name}" src pos
+    synthAt src pos
+  | .skip amount =>
+    -- premise: kernelLengthChecks — a declared skip amount ships at its command
+    let native := match (← get).lens.find? (·.1 == amount) with
+      | some (_, v) => skipNative { width := v }
+      | none => skipNative { width := (kernelSkip amount).getD "" }
+    became s!"\\{row.name}" native pos
+    synthAt native pos
+  | .refuse code .ctrl msg help =>
+    sayOnce ("ctrl:" ++ row.name) code msg pos (help := help)
+    return #[]
+  | .refuse code .beamer msg help =>
+    sayOnce ("beamer:" ++ row.name) code msg pos (help := help)
+    return #[]
+  | .refuse code .each msg help =>
+    say code msg pos (help := help)
+    return #[]
+  | .discard why key =>
+    discard s!"\\{row.name}" why key pos
+    return #[]
+  | .inert => return #[]
 
 /-- moloch's `block` option values as the theme's own block
 colour declarations. -/
@@ -7377,16 +7452,17 @@ private def themeOptions (cmd load tname opts : String) (pos : Pos) : M (Array R
     unreadParam s!"usetheme:{tname}" (KeyVal.entry o).1 s!"'{load}' option '{o}'" pos
   return #[]
 
-/-- The finite block-hook grammar: whitespace and the three
-standard skip commands. -/
+/-- The finite block-hook grammar: whitespace and the kernel's skip commands at their default
+amounts. -/
 private def blockHookSkips (out : Array String) : List Raw → Option (Array String)
   | [] => some out
   | .space :: rest => blockHookSkips out rest
   | .ctrl name _ :: rest =>
-    if ["smallskip", "medskip", "bigskip"].contains name then
-      (simpleNative.lookup name).bind fun native =>
-        blockHookSkips (out.push native) rest
-    else none
+    match (ctrlRow? name).map (·.action) with
+    | some (CtrlAction.skip amount) =>
+      (kernelSkip amount).bind fun v => blockHookSkips (out.push (skipNative { width := v })) rest
+    | none | some (.tokens ..) | some (.native ..) | some (.refuse ..) | some (.discard ..)
+    | some .inert => none
   | _ => none
 
 /-- `\addtobeamertemplate` on the block templates, read
@@ -8129,26 +8205,12 @@ and patterns stand in" pos
     let native := skipNative sp "vskip"
     became "\\vskip" native pos
     return some (← synthAt native pos, e)
-  | "newpage" | "clearpage" =>
-    -- With no floats to flush, `\clearpage` and `\newpage` are the declared page break.
-    became s!"\\{name}" "\\pagebreak" pos
-    return some (#[.ctrl "pagebreak" pos], start)
   | "pagebreak" =>
     -- Every `\pagebreak` is taken whole; the demand level is not weighed.
     let (opt, j) := takeOpt raws start
     if opt.isSome then
       say .N0102 "'\\pagebreak' demand levels are ignored: the break is taken" pos
     return some (#[.ctrl "pagebreak" pos], j)
-  | "today" =>
-    -- Core reads no clock, so `\today` is refused.
-    sayOnce "ctrl:today" .W0104
-      "'\\today' asks for the day the document is built; the engine reads no \
-clock, so nothing is inserted" pos
-      (help := "write the date as text where it should appear; \\allow{W0104} accepts the skip")
-    return some (#[], start)
-  | "ul" =>
-    became "\\ul" "\\underline" pos
-    return some (#[.ctrl "underline" pos], start)
   | "varul" =>
     let mut j := skipSpaces raws start
     if let some (.word w _) := raws[j]? then
@@ -8158,7 +8220,6 @@ clock, so nothing is inserted" pos
     let (_, j2) := takeOpt raws j1
     became "\\varul" "\\underline" pos
     return some (#[.ctrl "underline" pos], j2)
-  | "IfValueT" | "IfValueTF" => return some (#[.ctrl "ifgiven" pos], start)
   | "ExplSyntaxOn" =>
     -- expl3 holds no document content: pdfmeta's colour profile properties are read in the
     -- preamble, the rest skipped.
@@ -8393,13 +8454,6 @@ description scopes")) ++
     if args.isEmpty then return none
     let opts := rawSrc (args.getD 0 #[])
     return some (← unicodeMathOptions s!"\\unimathsetup\{{opts}}" opts pos, k)
-  | "directlua" =>
-    let (_, k) := takeGroups raws start 1
-    -- Running Lua is refused by design.
-    sayOnce "ctrl:directlua" .W0104
-      "'\\directlua' is Lua code for luatex; the engine does not run Lua, so it is skipped" pos
-      (help := "\\allow{W0104} accepts the skip")
-    return some (#[], k)
   | "def" | "edef" | "gdef" | "xdef" =>
     -- A plain `\def` with undelimited parameters declares exactly what `\define` declares.
     let expanding := name == "edef" || name == "xdef"
@@ -8845,14 +8899,6 @@ page of its own" pos (help := "\\begin{titlepage}...\\end{titlepage} sets a page
     let (args, j) := takeGroups raws start 1
     if args.size != 1 then return none
     return some (#[.ctrl name pos] ++ raws.extract start j, j)
-  | "raisebox" =>
-    let (args, j) := takeGroups raws start 1
-    if args.size != 1 then return none
-    let (_, j) := takeOpts raws j 2
-    sayOnce "ctrl:raisebox" .W0104
-      "'\\raisebox' lift, height and depth are not applied; its content is set as if unboxed" pos
-      (help := "remove the box dimensions to use the surrounding line's natural spacing")
-    return some (#[], j)
   | "mbox" | "makebox" =>
     -- An hbox's geometry is not modelled, so its drop is named once and its content stays.
     let (opts, widths) := match boxShape.lookup name with
@@ -8983,9 +9029,6 @@ its value is skipped" pos
     became "\\parbox" "\\begin{minipage}{<width>}...\\end{minipage}" pos
     let widthGroup : Array Raw := #[.group (args[0]?.getD #[]) pos]
     return some (#[.env "minipage" (raws.extract start j ++ widthGroup ++ (args[1]?.getD #[])) pos], k)
-  | "footercontent" =>
-    became "\\footercontent" "\\runningfoot{...}" pos
-    return some (← synthAt "\\runningfoot" pos, start)
   | "usetheme" =>
     let (opt, j) := takeOpt raws start
     let (args, k) := takeGroups raws j 1
@@ -9129,43 +9172,14 @@ and 'transparent=<n>' are understood")
     return some (#[], k)
   | "graphcolor" => blueprintGraphColorArm pos raws start
   | "home" | "github" | "dochome" => blueprintSiteArm name pos raws start
-  | "column" =>
-    let (_, k) := takeGroups raws start 1
-    sayOnce "ctrl:column" .W0104
-      "'\\column' is not at the top level of a {columns} body; it starts \
-no column there and is skipped" pos
-      (help := "\\column{width} splits the body of \\begin{columns} ... \\end{columns}")
-    return some (#[], k)
   | _ =>
-    match beamerConfig.lookup name with
-    | some n =>
-      let (_, j) := takeOpt raws start
-      let (_, k) := takeGroups raws j n
-      sayOnce ("beamer:" ++ name) .W0104
-        s!"'\\{name}' is beamer configuration the engine does not have; skipped" pos
-        (help := (beamerNative.lookup name).getD
-          "a theme is a token bundle here: \\theme selects one, and \\palette \
-and \\tokens declare the design directly")
-      return some (#[], k)
-    | none =>
-    match configSkip.lookup name with
-    | some (n, msg, help) =>
-      let (_, k) := takeGroups raws start n
-      configSkipReport name pos msg help
-      return some (#[], k)
-    | none =>
     -- `\begin{document}` runs `\normalsize`, so a preamble size command sets nothing kept.
     if (Ir.sizeScale.lookup name).isSome && (← docPreamble) then
       write fun st => { st with strutSkip := none }
       discard s!"\\{name}" "'\\begin{document}' runs '\\normalsize', which sets the size again"
         ("size:" ++ name) pos
       return some (#[], start)
-    match meaningFree.lookup name with
-    | some (n, note) =>
-      let (_, k) := takeGroups raws start n
-      meaningFreeReport name pos note
-      return some (#[], k)
-    | none => return none
+    return none
 
 private def rewriteCtrlLater (name : String) (pos : Pos) (raws : Array Raw)
     (start : Nat) : M (Option (Array Raw × Nat)) := do
@@ -9818,8 +9832,7 @@ the colour is not defined" pos (help := "name the colour with ASCII letters, dig
       return some (← synthAt carried pos, k)
     else return none
   | "definespotcolor" => defineSpotColor raws start pos
-  | "definecolorspace" | "pagecolorspace" | "resetpagecolorspace" | "overprintstate"
-  | "textoverprint" => colorspaceCommand name raws start pos
+  | "definecolorspace" => defineColorspace raws start pos
   | "colorlet" =>
     let (args, k) := takeGroups raws start 2
     if h : args.size = 2 then
@@ -9845,12 +9858,6 @@ spells; the colour is not defined" pos (help := "name the colour with ASCII lett
       let value := modeledColorSource model (rawSrc args[0])
       return some (← pageColor value pos, k)
     else return none
-  | "nopagecolor" =>
-    became "\\nopagecolor" "the document's default page ground" pos
-    return some (#[.ctrl pageColorResetMark pos], start)
-  | "normalcolor" =>
-    became "\\normalcolor" "the document's normal ink, to the end of the group" pos
-    return some (#[.ctrl ("@ink:" ++ normalInkSource) pos], start)
   | "geometry" | "newgeometry" =>
     -- The command forms take the same keys the package options carry.
     let (args, k) := takeGroups raws start 1
@@ -10267,32 +10274,15 @@ where
                                   beamerScopes := rest }
         became s!"\\{name}" "the enclosing font and footer scope" pos
         return some (#[], start)
-  if let some tok := literalReplace.lookup name then
-    return some (#[tok pos], start)
   -- premise: biblatexChecks — authoryear `\cite` sets bare as lualatex and biber do
   if name == "cite" && (← get).bibStyle == some "plainnat" then
     return some (#[.ctrl "citealp" pos], start)
   -- premise: numberingChecks — the appendix numbers from 1 only with the package
   if name == "appendix" && (← get).loads.pkgs.any (·.1 == "appendixnumberbeamer") then
     return some (#[.ctrl frameRestartMark pos, .ctrl name pos], start)
-  -- premise: kernelLengthChecks — a declared skip amount ships at its command
-  if let some (_, v) := (← get).lens.find? (·.1 == name ++ "amount") then
-    if (kernelSkip (name ++ "amount")).isSome then
-      let native := s!"\\block[before = {v}]\{}"
-      became s!"\\{name}" native pos
-      return some (← synthAt native pos, start)
-  if let some native := simpleNative.lookup name then
-    -- setspace's spacings set the strut box again where they stand.
-    if (packageOptionNatives.lookup "setspace").any (·.any (·.1 == name)) then
-      write fun st => { st with strutSkip := none }
-    became s!"\\{name}" native pos
-    return some (← synthAt native pos, start)
-  if (deferredHooks.lookup name).isSome then
-    -- Every hook was collected before this pass, so a hook here is already at its moment.
-    sayOnce ("ctrl:" ++ name) .W0340
-      s!"'\\{name}' cannot defer from here; its group is read where it stands" pos
-      (help := "declare the hook before '\\begin{document}'")
-    return some (#[], start)
+  if let some row := ctrlRow? name then
+    let some k := argsEnd raws row.sig start | return none
+    return some (← ctrlRowRun row pos, k)
   if let some (value, e) := plainAssign? name raws start then
     return some (← assignLength name value s!"\\{name}" pos, e)
   if let some settings := listSettings? (← get) name then
@@ -12217,51 +12207,24 @@ private theorem rewriteCtrlAt_named_scope (name : String) (pos : Pos)
     (raws : Array Raw) (start : Nat) (s : St)
     (hd : (s.wholeDoc && s.deck && !s.inDoc && !s.inDef) = false)
     (hl : St.inList s = false)
-    (hLit : literalReplace.lookup name = none)
     (hCite : (name == "cite") = false)
     (hAppendix : (name == "appendix") = false)
-    (hKernel : kernelSkip (name ++ "amount") = none)
-    (hSimple : simpleNative.lookup name = none)
-    (hHooks : deferredHooks.lookup name = none)
-    (hAssign : plainAssign? name raws start = none) :
+    (hAssign : plainAssign? name raws start = none)
+    (hRow : ctrlRow? name = none) :
     rewriteCtrl.rewriteCtrlAt name pos raws start s =
       rewriteCtrlNamed name pos raws start s := by
   have hSettings : listSettings? s name = none := by
     simp [listSettings?, hl]
   simp only [rewriteCtrl.rewriteCtrlAt]
   simp [bind, StateT.bind, pure, get, getThe, MonadStateOf.get,
-    StateT.get, hd, hLit, hCite, hAppendix, hSimple, hHooks, hAssign]
-  cases hLens : (St.lens s).find? (fun x => x.1 == name ++ "amount") with
-  | none =>
-    dsimp only [bind, StateT.bind, StateT.get, pure]
-    simp only [hSettings]
-  | some entry =>
-    cases entry
-    simp only [hKernel, Option.isSome_none, Bool.false_eq_true, ↓reduceIte]
-    dsimp only [bind, StateT.bind, StateT.get, pure]
-    simp only [hSettings]
-
-private theorem rewriteCtrlAt_named_exact (name : String) (pos : Pos)
-    (raws : Array Raw) (start : Nat) (s : St)
-    (hd : St.inDoc s = true) (hl : St.inList s = false)
-    (hLit : literalReplace.lookup name = none)
-    (hCite : (name == "cite") = false)
-    (hAppendix : (name == "appendix") = false)
-    (hKernel : kernelSkip (name ++ "amount") = none)
-    (hSimple : simpleNative.lookup name = none)
-    (hHooks : deferredHooks.lookup name = none)
-    (hAssign : plainAssign? name raws start = none) :
-    rewriteCtrl.rewriteCtrlAt name pos raws start s =
-      rewriteCtrlNamed name pos raws start s :=
-  rewriteCtrlAt_named_scope name pos raws start s (by simp [hd]) hl
-    hLit hCite hAppendix hKernel hSimple hHooks hAssign
+    StateT.get, hd, hCite, hAppendix, hAssign, hSettings, hRow]
 
 private theorem rewriteCtrl_package_named (command names : String) (pos gp np : Pos)
     (st : St) (hc : command = "usepackage" ∨ command = "RequirePackage")
-    (hd : st.wholeDoc = false) (hl : st.inList = false) :
+    (hrow : ctrlRow? command = none) (hd : st.wholeDoc = false) (hl : st.inList = false) :
     rewriteCtrl.rewriteCtrlAt command pos (packageCall command names pos gp np) 1 st =
       rewriteCtrlNamed command pos (packageCall command names pos gp np) 1 st := by
-  apply rewriteCtrlAt_named_scope _ _ _ _ _ (by simp [hd]) hl
+  apply rewriteCtrlAt_named_scope _ _ _ _ _ (by simp [hd]) hl _ _ _ hrow
   all_goals rcases hc with rfl | rfl <;> rfl
 
 private theorem rewriteCtrlNamed_package_external_exact
@@ -12292,7 +12255,7 @@ private theorem rewriteCtrlNamed_package_external_exact
 
 private theorem rewriteCtrl_package_external_exact
     (command names : String) (pos gp np : Pos) (st : St)
-    (hc : command = "usepackage" ∨ command = "RequirePackage")
+    (hc : command = "usepackage" ∨ command = "RequirePackage") (hrow : ctrlRow? command = none)
     (hd : st.inDoc = false) (hdef : st.inDef = false)
     (hw : st.wholeDoc = false) (hl : st.inList = false)
     (hn : ∀ p ∈ names.trimAscii.toString.splitOn "," |>.map (·.trimAscii.toString),
@@ -12313,152 +12276,131 @@ private theorem rewriteCtrl_package_external_exact
       st.diags.size := by
     simp only [Array.size_append, List.size_toArray, List.length_map]
     omega
-  simp only [rewriteCtrl, rewriteCtrl_package_named command names pos gp np st hc hw hl,
+  simp only [rewriteCtrl, rewriteCtrl_package_named command names pos gp np st hc hrow hw hl,
     rewriteCtrlNamed_package_external_exact command names pos gp np st hc hd hdef hn hb ht,
     Array.isEmpty_empty, ↓reduceIte, account]
   rw [ite_eq_left (Or.inl hsize)]
 
-private theorem rewriteCtrl_value_exact (name : String) (pos : Pos)
-    (raws : Array Raw) (start : Nat) (s : St) :
-    (rewriteCtrl name pos raws start s).1 =
-      (rewriteCtrl.rewriteCtrlAt name pos raws start s).1.map
-        (fun (rs, k) => (rs, k - start)) := by
+/-- The table's names are distinct; none is `\cite` or `\appendix`, which a body's dispatch reads
+before the table, or the walk's own `\define` head; and none is spelled as a saved overlay-native
+name. -/
+public def CtrlRowsSound : Prop :=
+  (ctrlRows.map (·.name)).Nodup ∧
+    ∀ row ∈ ctrlRows, row.name ∉ ["cite", "appendix", "define"] ∧
+      ¬ ("overlay native ".toByteArray.data.toList <+: row.name.toByteArray.data.toList)
+
+private theorem find_row_exact (rows : List CtrlRow) (row : CtrlRow) (h : row ∈ rows)
+    (hnd : (rows.map (·.name)).Nodup) : rows.find? (·.name == row.name) = some row := by
+  induction rows with
+  | nil => simp at h
+  | cons r rs ih =>
+    rw [List.map_cons, List.nodup_cons] at hnd
+    rcases List.mem_cons.mp h with rfl | h
+    · simp
+    · have hne : (r.name == row.name) = false := by
+        rw [beq_eq_false_iff_ne]
+        intro he
+        exact hnd.1 (he ▸ List.mem_map_of_mem h)
+      rw [List.find?_cons, hne]
+      exact ih h hnd.2
+
+private theorem overlayName_unsaved (n : String)
+    (h : ¬ ("overlay native ".toByteArray.data.toList <+: n.toByteArray.data.toList)) :
+    overlayName n = n := by
+  unfold overlayName
+  split
+  · rename_i hs
+    rw [String.startsWith_string_iff] at hs
+    obtain ⟨u, hu⟩ := hs
+    have hn : n = "overlay native " ++ String.ofList u := by
+      apply String.ext
+      rw [← hu]
+      simp [String.toList_append]
+    exact absurd ⟨(String.ofList u).toByteArray.data.toList, by
+      rw [hn, String.toByteArray_append, ByteArray.toList_data_append]⟩ h
+  · rfl
+
+private theorem ctrlRow_names (hsound : CtrlRowsSound) (row : CtrlRow) (hrow : row ∈ ctrlRows) :
+    ctrlRow? row.name = some row ∧ (row.name == "cite") = false ∧
+      (row.name == "appendix") = false ∧ row.name ≠ "define" ∧ overlayName row.name = row.name := by
+  obtain ⟨hnames, hsaved⟩ := hsound.2 row hrow
+  simp only [List.mem_cons, List.not_mem_nil, or_false, not_or] at hnames
+  exact ⟨find_row_exact ctrlRows row hrow hsound.1, beq_false_of_ne hnames.1,
+    beq_false_of_ne hnames.2.1, hnames.2.2, overlayName_unsaved row.name hsaved⟩
+
+/-- Whether a row's action emits nothing, its report its whole effect. -/
+@[expose] public def CtrlAction.silent : CtrlAction → Bool
+  | .refuse .. | .discard .. | .inert => true
+  | .tokens .. | .native .. | .skip _ => false
+
+private theorem ctrlRowRun_silent (row : CtrlRow) (pos : Pos) (s : St)
+    (h : row.action.silent = true) : (ctrlRowRun row pos s).1 = #[] := by
+  rcases row with ⟨name, sig, action⟩
+  cases action with
+  | refuse code key msg help =>
+    cases key <;> rfl
+  | discard why key => rfl
+  | inert => rfl
+  | tokens toks note => simp [CtrlAction.silent] at h
+  | native src => simp [CtrlAction.silent] at h
+  | skip amount => simp [CtrlAction.silent] at h
+
+/-- The state a row's control leaves: its action's report, with the dispatcher's guard where it
+emits nothing. -/
+private def ctrlRowState (s : St) (row : CtrlRow) (pos : Pos) : St :=
+  if (ctrlRowRun row pos s).1.isEmpty then (account row.name pos s (ctrlRowRun row pos s).2).2
+  else (ctrlRowRun row pos s).2
+
+private theorem rewriteCtrlAt_row (hsound : CtrlRowsSound) (row : CtrlRow) (hrow : row ∈ ctrlRows)
+    (pos : Pos) (raws : Array Raw) (start : Nat) (s : St) (hd : s.inDoc = true) :
+    rewriteCtrl.rewriteCtrlAt row.name pos raws start s =
+      match argsEnd raws row.sig start with
+      | some k => (some ((ctrlRowRun row pos s).1, k), (ctrlRowRun row pos s).2)
+      | none => (none, s) := by
+  obtain ⟨hfind, hCite, hAppendix, _, _⟩ := ctrlRow_names hsound row hrow
+  simp only [rewriteCtrl.rewriteCtrlAt]
+  cases hk : argsEnd raws row.sig start with
+  | none =>
+    simp [bind, StateT.bind, pure, get, getThe, MonadStateOf.get, StateT.get, hd, hCite,
+      hAppendix, hfind, hk]
+    rfl
+  | some k =>
+    simp [bind, StateT.bind, pure, get, getThe, MonadStateOf.get, StateT.get, hd, hCite,
+      hAppendix, hfind, hk]
+    cases ctrlRowRun row pos s
+    rfl
+
+private theorem rewriteCtrl_row_exact (hsound : CtrlRowsSound) (row : CtrlRow)
+    (hrow : row ∈ ctrlRows) (pos : Pos) (raws : Array Raw) (start k : Nat) (s : St)
+    (hd : s.inDoc = true) (hk : argsEnd raws row.sig start = some k) :
+    rewriteCtrl row.name pos raws start s =
+      (some ((ctrlRowRun row pos s).1, k - start), ctrlRowState s row pos) := by
   unfold rewriteCtrl
-  cases h : rewriteCtrl.rewriteCtrlAt name pos raws start s with
-  | mk result st =>
-    cases result with
-    | none => rfl
-    | some entry =>
-      cases entry
-      rfl
-
-private theorem meaningFree_routes_exact (name : String) (n : Nat) (note : Option String)
-    (hm : (name, n, note) ∈ meaningFree) (pos : Pos) (raws : Array Raw) (start : Nat) :
-    literalReplace.lookup name = none ∧
-    (name == "cite") = false ∧
-    (name == "appendix") = false ∧
-    kernelSkip (name ++ "amount") = none ∧
-    simpleNative.lookup name = none ∧
-    deferredHooks.lookup name = none ∧
-    plainAssign? name raws start = none ∧
-    rewriteCtrlNamed name pos raws start = rewriteCtrlLater name pos raws start ∧
-    styOptionsRequest name pos raws start = pure none ∧
-    rewriteCtrlLaterNamed name pos raws start = (do
-      let (_, k) := takeGroups raws start n
-      meaningFreeReport name pos note
-      return some (#[], k)) := by
-  simp only [meaningFree, List.mem_cons, List.not_mem_nil, or_false,
-    Prod.mk.injEq] at hm
-  rcases hm with h | h | h |
-    h | h | h |
-    h | h | h |
-    h | h | h |
-    h | h | h |
-    h | h | h |
-    h | h | h |
-    h | h | h |
-    h | h | h |
-    h | h | h |
-    h | h | h
-  all_goals
-    obtain ⟨rfl, rfl, rfl⟩ := h
-    exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
-
-private theorem rewriteCtrl_meaningFree_exact (s : St) (pos : Pos)
-    (raws : Array Raw) (start : Nat) (name : String) (n : Nat) (note : Option String)
-    (hm : (name, n, note) ∈ meaningFree)
-    (hd : St.inDoc s = true) (hl : St.inList s = false) :
-    (rewriteCtrl name pos raws start s).1 =
-      some (#[], (takeGroups raws start n).2 - start) := by
-  obtain ⟨hLit, hCite, hAppendix, hKernel, hSimple, hHooks, hAssign,
-    hNamed, hOptions, hLater⟩ := meaningFree_routes_exact name n note hm pos raws start
-  rw [rewriteCtrl_value_exact, rewriteCtrlAt_named_exact name pos raws start s hd hl
-    hLit hCite hAppendix hKernel hSimple hHooks hAssign, hNamed]
-  simp only [rewriteCtrlLater, hOptions, bind, StateT.bind, pure]
-  rw [hLater]
-  cases note <;> rfl
-
-/-- The descriptor's only state effect, including the dispatcher's guard. -/
-private def meaningFreeState (s : St) (name : String) (pos : Pos)
-    (note : Option String) : St :=
-  (account name pos s (meaningFreeReport name pos note s).2).2
-
-private def configSkipState (s : St) (name : String) (pos : Pos)
-    (msg : String) (help : Option String) : St :=
-  (account name pos s (configSkipReport name pos msg help s).2).2
-
-private theorem rewriteCtrl_meaningFree_state (s : St) (pos : Pos)
-    (raws : Array Raw) (start : Nat) (name : String) (n : Nat) (note : Option String)
-    (hm : (name, n, note) ∈ meaningFree)
-    (hd : St.inDoc s = true) (hl : St.inList s = false) :
-    (rewriteCtrl name pos raws start s).2 = meaningFreeState s name pos note := by
-  obtain ⟨hLit, hCite, hAppendix, hKernel, hSimple, hHooks, hAssign,
-    hNamed, hOptions, hLater⟩ := meaningFree_routes_exact name n note hm pos raws start
-  unfold rewriteCtrl
-  rw [rewriteCtrlAt_named_exact name pos raws start s hd hl
-    hLit hCite hAppendix hKernel hSimple hHooks hAssign, hNamed]
-  simp only [rewriteCtrlLater, hOptions, bind, StateT.bind, pure]
-  rw [hLater]
-  cases note <;> rfl
-
-private theorem rewriteCtrl_configSkip_exact (s : St) (pos : Pos)
-    (raws : Array Raw) (start : Nat) (name : String) (n : Nat)
-    (msg : String) (help : Option String)
-    (hm : (name, n, msg, help) ∈ configSkip)
-    (hd : St.inDoc s = true) (hl : St.inList s = false) :
-    (rewriteCtrl name pos raws start s).1 =
-      some (#[], (takeGroups raws start n).2 - start) := by
-  simp only [configSkip, List.mem_cons, List.not_mem_nil, or_false,
-    Prod.mk.injEq] at hm
-  obtain ⟨rfl, rfl, rfl, rfl⟩ := hm
-  rw [rewriteCtrl_value_exact, rewriteCtrlAt_named_exact "sloppy" pos raws start s hd hl
-    rfl rfl rfl rfl rfl rfl rfl]
+  rw [rewriteCtrlAt_row hsound row hrow pos raws start s hd, hk]
   rfl
 
-private theorem rewriteCtrl_configSkip_state (s : St) (pos : Pos)
-    (raws : Array Raw) (start : Nat) (name : String) (n : Nat)
-    (msg : String) (help : Option String)
-    (hm : (name, n, msg, help) ∈ configSkip)
-    (hd : St.inDoc s = true) (hl : St.inList s = false) :
-    (rewriteCtrl name pos raws start s).2 = configSkipState s name pos msg help := by
-  simp only [configSkip, List.mem_cons, List.not_mem_nil, or_false,
-    Prod.mk.injEq] at hm
-  obtain ⟨rfl, rfl, rfl, rfl⟩ := hm
+/-- A row's control whose signature finds an argument that must stand missing is left, with the
+state, to elaboration. -/
+public def CtrlRowDeclines (row : CtrlRow) : Prop :=
+  ∀ (pos : Pos) (raws : Array Raw) (start : Nat) (s : St), St.inDoc s = true →
+    argsEnd raws row.sig start = none → rewriteCtrl row.name pos raws start s = (none, s)
+
+public theorem ctrlRow_declines_contract (hsound : CtrlRowsSound) (row : CtrlRow)
+    (hrow : row ∈ ctrlRows) : CtrlRowDeclines row := by
+  intro pos raws start s hd hk
   unfold rewriteCtrl
-  rw [rewriteCtrlAt_named_exact "sloppy" pos raws start s hd hl
-    rfl rfl rfl rfl rfl rfl rfl]
-  rfl
+  rw [rewriteCtrlAt_row hsound row hrow pos raws start s hd, hk]
 
 private theorem rewriteCtrl_unknown_exact (s : St) (pos : Pos)
-    (raws : Array Raw) (start : Nat)
+    (raws : Array Raw) (start : Nat) (hz : ctrlRow? "zzNotAControl" = none)
     (hd : St.inDoc s = true) (hl : St.inList s = false) :
     rewriteCtrl "zzNotAControl" pos raws start s = (none, s) := by
   have hAt : rewriteCtrl.rewriteCtrlAt "zzNotAControl" pos raws start s = (none, s) := by
-    rw [rewriteCtrlAt_named_exact "zzNotAControl" pos raws start s hd hl
-      rfl rfl rfl rfl rfl rfl rfl]
+    rw [rewriteCtrlAt_named_scope "zzNotAControl" pos raws start s (by simp [hd]) hl
+      rfl rfl rfl hz]
     rfl
   unfold rewriteCtrl
   rw [hAt]
-
-private theorem meaningFree_names_exact (name : String) (n : Nat) (note : Option String)
-    (hm : (name, n, note) ∈ meaningFree) :
-    name ≠ "define" ∧ overlayName name = name := by
-  simp only [meaningFree, List.mem_cons, List.not_mem_nil, or_false,
-    Prod.mk.injEq] at hm
-  rcases hm with h | h | h |
-    h | h | h |
-    h | h | h |
-    h | h | h |
-    h | h | h |
-    h | h | h |
-    h | h | h |
-    h | h | h |
-    h | h | h |
-    h | h | h |
-    h | h | h
-  all_goals
-    obtain ⟨rfl, rfl, rfl⟩ := h
-    exact ⟨by simp, by simp [overlayName, String.startsWith_string_iff]⟩
 
 private theorem rewriteList_skip_exact (inBody : Bool) (raws out : Array Raw)
     (taken rest : List Raw) (i : Nat) :
@@ -12508,22 +12450,36 @@ private theorem rewriteList_literal_exact (inBody : Bool) (raws out : Array Raw)
   simp only [List.append_nil, rewriteList] at h
   exact congrFun h st
 
-private theorem rewriteList_control_exact (inBody : Bool) (raws out : Array Raw)
+private theorem rewriteList_unknown_exact (inBody : Bool) (raws out : Array Raw)
+    (pos : Pos) (rest : List Raw) (i : Nat) (s : St) (hz : ctrlRow? "zzNotAControl" = none)
+    (hd : St.inDoc s = true) (hl : St.inList s = false) (hp : St.inPicture s = false) :
+    rewriteList inBody raws out (.ctrl "zzNotAControl" pos :: rest) i 0 s =
+      rewriteList inBody raws (out.push (.ctrl "zzNotAControl" pos)) rest (i + 1) 0 s := by
+  rw [rewriteList]
+  case x_3 => simp
+  simp only [bind, StateT.bind, get, getThe, MonadStateOf.get, StateT.get,
+    pure, hp, Bool.false_eq_true, ↓reduceIte]
+  have hoverlay : overlayName "zzNotAControl" = "zzNotAControl" := by
+    simp [overlayName, String.startsWith_string_iff]
+  rw [hoverlay, rewriteCtrl_unknown_exact s pos raws (i + 1) hz hd hl]
+  rfl
+
+private theorem rewriteList_control_exact (inBody : Bool) (raws out repl : Array Raw)
     (name : String) (pos : Pos) (taken rest : List Raw) (i : Nat) (s s' : St)
     (hdef : name ≠ "define") (hpic : St.inPicture s = false)
     (hstep : rewriteCtrl (overlayName name) pos raws (i + 1) s =
-      (some (#[], taken.length), s')) :
+      (some (repl, taken.length), s')) :
     rewriteList inBody raws out (.ctrl name pos :: (taken ++ rest)) i 0 s =
-      rewriteList inBody raws out rest (i + 1 + taken.length) 0 s' := by
+      rewriteList inBody raws (out ++ repl) rest (i + 1 + taken.length) 0 s' := by
   rw [rewriteList]
   case x_3 => exact fun h => hdef h
   simp only [bind, StateT.bind, get, getThe, MonadStateOf.get, StateT.get,
-    pure, hpic, Bool.false_eq_true, ↓reduceIte, hstep, Array.append_empty]
+    pure, hpic, Bool.false_eq_true, ↓reduceIte, hstep]
   rw [rewriteList_skip_exact]
 
 private theorem rewriteList_package_external_exact
     (command names : String) (pos gp np : Pos) (st : St)
-    (hc : command = "usepackage" ∨ command = "RequirePackage")
+    (hc : command = "usepackage" ∨ command = "RequirePackage") (hrow : ctrlRow? command = none)
     (hd : st.inDoc = false) (hf : st.inDef = false) (hw : st.wholeDoc = false)
     (hl : st.inList = false) (hpic : st.inPicture = false)
     (hn : ∀ p ∈ names.trimAscii.toString.splitOn "," |>.map (·.trimAscii.toString),
@@ -12542,100 +12498,92 @@ private theorem rewriteList_package_external_exact
   have ho : overlayName command = command := by
     rcases hc with rfl | rfl <;> simp [overlayName, String.startsWith_string_iff]
   have hstep := rewriteCtrl_package_external_exact command names pos gp np st
-    hc hd hf hw hl hn hb ht part hp
-  have h := rewriteList_control_exact false (packageCall command names pos gp np) #[]
+    hc hrow hd hf hw hl hn hb ht part hp
+  have h := rewriteList_control_exact false (packageCall command names pos gp np) #[] #[]
     command pos [.group #[.word names np] gp] [] 0 st _ hdef hpic
     (by simpa only [ho, Nat.zero_add, List.length_cons, List.length_nil] using hstep)
+  rw [Array.empty_append] at h
   exact h
 
-private theorem rewriteList_meaningFree_exact (inBody : Bool) (raws out : Array Raw)
-    (name : String) (n : Nat) (note : Option String) (pos : Pos)
-    (args : List (Array Raw)) (taken rest : List Raw) (i : Nat) (s : St)
-    (hm : (name, n, note) ∈ meaningFree)
-    (hd : St.inDoc s = true) (hl : St.inList s = false) (hp : St.inPicture s = false)
-    (hn : args.length = n)
-    (hg : GroupPrefix raws (i + 1) args (i + 1 + taken.length)) :
-    rewriteList inBody raws out (.ctrl name pos :: (taken ++ rest)) i 0 s =
-      rewriteList inBody raws out rest (i + 1 + taken.length) 0
-        (rewriteCtrl name pos raws (i + 1) s).2 := by
-  have hvalue := rewriteCtrl_meaningFree_exact s pos raws (i + 1) name n note hm hd hl
-  have hread := takeGroups_prefix_exact hg
-  rw [hn] at hread
-  rw [hread] at hvalue
-  simp only [Nat.add_sub_cancel_left] at hvalue
-  obtain ⟨hdef, hoverlay⟩ := meaningFree_names_exact name n note hm
-  apply rewriteList_control_exact inBody raws out name pos taken rest i s _ hdef hp
+private theorem rewriteList_row_exact (hsound : CtrlRowsSound) (inBody : Bool)
+    (raws out : Array Raw) (row : CtrlRow) (hrow : row ∈ ctrlRows) (pos : Pos)
+    (taken rest : List Raw) (i : Nat) (s : St)
+    (hd : s.inDoc = true) (hp : s.inPicture = false)
+    (hk : argsEnd raws row.sig (i + 1) = some (i + 1 + taken.length)) :
+    rewriteCtrl row.name pos raws (i + 1) s =
+      (some ((ctrlRowRun row pos s).1, taken.length), ctrlRowState s row pos) ∧
+    rewriteList inBody raws out (.ctrl row.name pos :: (taken ++ rest)) i 0 s =
+      rewriteList inBody raws (out ++ (ctrlRowRun row pos s).1) rest (i + 1 + taken.length) 0
+        (ctrlRowState s row pos) := by
+  have hstep := rewriteCtrl_row_exact hsound row hrow pos raws (i + 1) (i + 1 + taken.length) s
+    hd hk
+  rw [Nat.add_sub_cancel_left] at hstep
+  obtain ⟨_, _, _, hdef, hoverlay⟩ := ctrlRow_names hsound row hrow
+  refine ⟨hstep, ?_⟩
+  apply rewriteList_control_exact inBody raws out _ row.name pos taken rest i s _ hdef hp
   rw [hoverlay]
-  exact Prod.ext hvalue rfl
+  exact hstep
 
-private theorem rewriteList_unknown_exact (inBody : Bool) (raws out : Array Raw)
-    (pos : Pos) (rest : List Raw) (i : Nat) (s : St)
-    (hd : St.inDoc s = true) (hl : St.inList s = false) (hp : St.inPicture s = false) :
-    rewriteList inBody raws out (.ctrl "zzNotAControl" pos :: rest) i 0 s =
-      rewriteList inBody raws (out.push (.ctrl "zzNotAControl" pos)) rest (i + 1) 0 s := by
-  rw [rewriteList]
-  case x_3 => simp
-  simp only [bind, StateT.bind, get, getThe, MonadStateOf.get, StateT.get,
-    pure, hp, Bool.false_eq_true, ↓reduceIte]
-  have hoverlay : overlayName "zzNotAControl" = "zzNotAControl" := by
-    simp [overlayName, String.startsWith_string_iff]
-  rw [hoverlay, rewriteCtrl_unknown_exact s pos raws (i + 1) hd hl]
-  rfl
-
-private theorem rewriteList_configSkip_exact (inBody : Bool) (raws out : Array Raw)
-    (name : String) (n : Nat) (msg : String) (help : Option String) (pos : Pos)
-    (args : List (Array Raw)) (taken rest : List Raw) (i : Nat) (s : St)
-    (hm : (name, n, msg, help) ∈ configSkip)
-    (hd : St.inDoc s = true) (hl : St.inList s = false) (hp : St.inPicture s = false)
-    (hn : args.length = n)
-    (hg : GroupPrefix raws (i + 1) args (i + 1 + taken.length)) :
-    rewriteList inBody raws out (.ctrl name pos :: (taken ++ rest)) i 0 s =
-      rewriteList inBody raws out rest (i + 1 + taken.length) 0
-        (rewriteCtrl name pos raws (i + 1) s).2 := by
-  have hvalue := rewriteCtrl_configSkip_exact s pos raws (i + 1) name n msg help hm hd hl
-  have hread := takeGroups_prefix_exact hg
-  rw [hn] at hread
-  rw [hread] at hvalue
-  simp only [Nat.add_sub_cancel_left] at hvalue
-  have hnames : name ≠ "define" ∧ overlayName name = name := by
-    simp only [configSkip, List.mem_cons, List.not_mem_nil, or_false,
-      Prod.mk.injEq] at hm
-    obtain ⟨rfl, rfl, rfl, rfl⟩ := hm
-    exact ⟨by simp, by simp [overlayName, String.startsWith_string_iff]⟩
-  apply rewriteList_control_exact inBody raws out name pos taken rest i s _ hnames.1 hp
-  rw [hnames.2]
-  exact Prod.ext hvalue rfl
-
-private theorem rewriteList_meaningFree_body_exact (inBody : Bool)
-    (raws out : Array Raw) (name : String) (n : Nat) (note : Option String)
-    (pos : Pos) (pre taken post : List Raw) (args : List (Array Raw))
-    (i : Nat) (s : St) (hm : (name, n, note) ∈ meaningFree)
-    (hd : s.inDoc = true) (hl : s.inList = false) (hp : s.inPicture = false)
-    (hpre : LiteralRaws pre) (hpost : LiteralRaws post) (hn : args.length = n)
-    (hg : GroupPrefix raws (i + pre.length + 1) args
-      (i + pre.length + 1 + taken.length)) :
-    rewriteList inBody raws out (pre ++ .ctrl name pos :: (taken ++ post)) i 0 s =
-      (out ++ pre.toArray ++ post.toArray, meaningFreeState s name pos note) := by
+private theorem rewriteList_row_body_exact (hsound : CtrlRowsSound) (inBody : Bool)
+    (raws out : Array Raw) (row : CtrlRow) (hrow : row ∈ ctrlRows) (pos : Pos)
+    (pre taken post : List Raw) (i : Nat) (s : St)
+    (hd : s.inDoc = true) (hp : s.inPicture = false)
+    (hpre : LiteralRaws pre) (hpost : LiteralRaws post)
+    (hk : argsEnd raws row.sig (i + pre.length + 1) =
+      some (i + pre.length + 1 + taken.length)) :
+    rewriteList inBody raws out (pre ++ .ctrl row.name pos :: (taken ++ post)) i 0 s =
+      (out ++ pre.toArray ++ (ctrlRowRun row pos s).1 ++ post.toArray,
+        ctrlRowState s row pos) := by
   rw [rewriteList_literal_prefix _ _ _ _ _ _ hpre,
-    rewriteList_meaningFree_exact _ _ _ _ _ _ _ _ _ _ _ _ hm hd hl hp hn hg,
-    rewriteCtrl_meaningFree_state _ _ _ _ _ _ _ hm hd hl,
+    (rewriteList_row_exact hsound inBody raws (out ++ pre.toArray) row hrow pos taken post
+      (i + pre.length) s hd hp hk).2,
     rewriteList_literal_exact _ _ _ _ _ _ hpost]
 
-private theorem rewriteList_configSkip_body_exact (inBody : Bool)
-    (raws out : Array Raw) (name : String) (n : Nat) (msg : String)
-    (help : Option String) (pos : Pos) (pre taken post : List Raw)
-    (args : List (Array Raw)) (i : Nat) (s : St)
-    (hm : (name, n, msg, help) ∈ configSkip)
-    (hd : s.inDoc = true) (hl : s.inList = false) (hp : s.inPicture = false)
-    (hpre : LiteralRaws pre) (hpost : LiteralRaws post) (hn : args.length = n)
-    (hg : GroupPrefix raws (i + pre.length + 1) args
-      (i + pre.length + 1 + taken.length)) :
-    rewriteList inBody raws out (pre ++ .ctrl name pos :: (taken ++ post)) i 0 s =
-      (out ++ pre.toArray ++ post.toArray, configSkipState s name pos msg help) := by
-  rw [rewriteList_literal_prefix _ _ _ _ _ _ hpre,
-    rewriteList_configSkip_exact _ _ _ _ _ _ _ _ _ _ _ _ _ hm hd hl hp hn hg,
-    rewriteCtrl_configSkip_state _ _ _ _ _ _ _ _ hm hd hl,
-    rewriteList_literal_exact _ _ _ _ _ _ hpost]
+/-- At an ordinary body cursor a row's control consumes exactly what its signature reads: its
+emission takes its place, the walk resumes where the reading stops, and a silent row emits nothing
+and is paid for. -/
+public def CtrlRowConsumed (row : CtrlRow) : Prop :=
+  ∀ (inBody : Bool) (raws out : Array Raw) (pos : Pos) (taken rest : List Raw) (i : Nat)
+    (s : St),
+    St.inDoc s = true → St.inPicture s = false →
+    raws.toList.drop i = .ctrl row.name pos :: (taken ++ rest) →
+    argsEnd raws row.sig (i + 1) = some (i + 1 + taken.length) →
+    rewriteCtrl row.name pos raws (i + 1) s =
+      (some ((ctrlRowRun row pos s).1, taken.length), ctrlRowState s row pos) ∧
+    rewriteList inBody raws out (raws.toList.drop i) i 0 s =
+      rewriteList inBody raws (out ++ (ctrlRowRun row pos s).1) rest (i + 1 + taken.length) 0
+        (ctrlRowState s row pos) ∧
+    (row.action.silent = true → (ctrlRowRun row pos s).1 = #[] ∧
+      ((St.diags (ctrlRowState s row pos)).size > (St.diags s).size ∨
+        St.writes (ctrlRowState s row pos) > St.writes s))
+
+public theorem ctrlRow_control_contract (hsound : CtrlRowsSound) (row : CtrlRow)
+    (hrow : row ∈ ctrlRows) : CtrlRowConsumed row := by
+  intro inBody raws out pos taken rest i s hd hp hsource hk
+  obtain ⟨hstep, hwalk⟩ := rewriteList_row_exact hsound inBody raws out row hrow pos taken rest
+    i s hd hp hk
+  refine ⟨hstep, by rw [hsource]; exact hwalk, fun hsilent => ?_⟩
+  have hempty := ctrlRowRun_silent row pos s hsilent
+  refine ⟨hempty, ?_⟩
+  rw [hempty] at hstep
+  exact rewriteCtrl_accounts row.name pos raws (i + 1) s _ taken.length hstep
+
+/-- A signature of groups reads exactly a group prefix. -/
+public theorem argsEnd_groups_exact {raws : Array Raw} {i args stop}
+    (h : GroupPrefix raws i args stop) :
+    argsEnd raws (List.replicate args.length .group) i = some stop := by
+  induction h with
+  | nil => rfl
+  | @group i body p args stop hg _ ih =>
+    have hone := takeGroups_prefix_exact (GroupPrefix.group hg GroupPrefix.nil)
+    simp only [List.length_cons, List.length_nil, Nat.zero_add] at hone
+    simp only [List.length_cons, List.replicate_succ, argsEnd, hone]
+    exact ih
+  | @ctrl i name p args stop hg _ ih =>
+    have hone := takeGroups_prefix_exact (GroupPrefix.ctrl hg GroupPrefix.nil)
+    simp only [List.length_cons, List.length_nil, Nat.zero_add] at hone
+    simp only [List.length_cons, List.replicate_succ, argsEnd, hone]
+    exact ih
 
 /-- An ordinary body control consumes exactly its declared argument prefix. -/
 public def ControlGroupsConsumed (name : String) (arity : Nat) : Prop :=
@@ -12652,6 +12600,23 @@ public def ControlGroupsConsumed (name : String) (arity : Nat) : Prop :=
     ((St.diags dispatched.2).size > (St.diags s).size ∨
       St.writes dispatched.2 > St.writes s)
 
+/-- A silent row whose arguments are groups consumes exactly a group prefix of its arity. -/
+public theorem ctrlRow_groups_consumed (hsound : CtrlRowsSound) (row : CtrlRow)
+    (hrow : row ∈ ctrlRows) (hsilent : row.action.silent = true)
+    (hsig : ∀ k ∈ row.sig, k = .group) : ControlGroupsConsumed row.name row.sig.length := by
+  intro inBody raws out pos args taken rest i s hd _ hp hsource hn hg
+  have hk : argsEnd raws row.sig (i + 1) = some (i + 1 + taken.length) := by
+    rw [List.eq_replicate_iff.mpr ⟨rfl, hsig⟩, ← hn]
+    exact argsEnd_groups_exact hg
+  obtain ⟨hstep, hwalk, hpaid⟩ :=
+    ctrlRow_control_contract hsound row hrow inBody raws out pos taken rest i s hd hp hsource hk
+  obtain ⟨hempty, hgrew⟩ := hpaid hsilent
+  rw [hempty, Array.append_empty] at hwalk
+  rw [hempty] at hstep
+  dsimp only
+  rw [hstep]
+  exact ⟨rfl, hwalk, hgrew⟩
+
 /-- The dispatcher leaves a command and every following raw to elaboration. -/
 public def UnknownControlPreserved (name : String) : Prop :=
   ∀ (inBody : Bool) (raws out : Array Raw) (pos : Pos)
@@ -12662,45 +12627,12 @@ public def UnknownControlPreserved (name : String) : Prop :=
     rewriteList inBody raws out (raws.toList.drop i) i 0 s =
       rewriteList inBody raws (out.push (.ctrl name pos)) rest (i + 1) 0 s
 
-public theorem meaningFree_control_contract (row : String × Nat × Option String)
-    (hm : row ∈ meaningFree) : ControlGroupsConsumed row.1 row.2.1 := by
-  rcases row with ⟨name, n, note⟩
-  intro inBody raws out pos args taken rest i s hd hl hp hsource hn hg
-  dsimp only
-  have hvalue := rewriteCtrl_meaningFree_exact s pos raws (i + 1) name n note hm hd hl
-  have hread := takeGroups_prefix_exact hg
-  rw [hn] at hread
-  rw [hread] at hvalue
-  simp only [Nat.add_sub_cancel_left] at hvalue
-  refine ⟨hvalue, ?_, ?_⟩
-  · rw [hsource]
-    exact rewriteList_meaningFree_exact inBody raws out name n note pos
-      args taken rest i s hm hd hl hp hn hg
-  · exact rewriteCtrl_accounts name pos raws (i + 1) s _ taken.length
-      (Prod.ext hvalue rfl)
-
-public theorem configSkip_control_contract (row : String × Nat × String × Option String)
-    (hm : row ∈ configSkip) : ControlGroupsConsumed row.1 row.2.1 := by
-  rcases row with ⟨name, n, msg, help⟩
-  intro inBody raws out pos args taken rest i s hd hl hp hsource hn hg
-  dsimp only
-  have hvalue := rewriteCtrl_configSkip_exact s pos raws (i + 1) name n msg help hm hd hl
-  have hread := takeGroups_prefix_exact hg
-  rw [hn] at hread
-  rw [hread] at hvalue
-  simp only [Nat.add_sub_cancel_left] at hvalue
-  refine ⟨hvalue, ?_, ?_⟩
-  · rw [hsource]
-    exact rewriteList_configSkip_exact inBody raws out name n msg help pos
-      args taken rest i s hm hd hl hp hn hg
-  · exact rewriteCtrl_accounts name pos raws (i + 1) s _ taken.length
-      (Prod.ext hvalue rfl)
-
-public theorem unknown_control_contract : UnknownControlPreserved "zzNotAControl" := by
+public theorem unknown_control_contract (hz : ctrlRow? "zzNotAControl" = none) :
+    UnknownControlPreserved "zzNotAControl" := by
   intro inBody raws out pos rest i s hd hl hp hsource
-  refine ⟨rewriteCtrl_unknown_exact s pos raws (i + 1) hd hl, ?_⟩
+  refine ⟨rewriteCtrl_unknown_exact s pos raws (i + 1) hz hd hl, ?_⟩
   rw [hsource]
-  exact rewriteList_unknown_exact inBody raws out pos rest i s hd hl hp
+  exact rewriteList_unknown_exact inBody raws out pos rest i s hz hd hl hp
 
 /-- A checkpoint of the compatibility walk: the source array, the rewritten
 prefix `out`, and the remaining input `raws.drop index`. -/
@@ -12736,12 +12668,13 @@ private def rewriteCursor (cursor : RewriteCursor) : Array Raw × St :=
   cursor.complete (rewriteList cursor.inBody cursor.raws cursor.out
     (cursor.raws.toList.drop cursor.index) cursor.index 0 cursor.state)
 
-/-- The continuation after an accounted control has consumed its groups. -/
-public def RewriteCursor.afterControl (cursor : RewriteCursor) (name : String)
-    (pos : Pos) (consumed : Nat) : RewriteCursor :=
+/-- The continuation after a row's control, where its signature's reading stops. -/
+public def RewriteCursor.afterRow (cursor : RewriteCursor) (row : CtrlRow) (pos : Pos)
+    (consumed : Nat) : RewriteCursor :=
   { cursor with
+    out := cursor.out ++ (ctrlRowRun row pos cursor.state).1
     index := cursor.index + 1 + consumed
-    state := (rewriteCtrl name pos cursor.raws (cursor.index + 1) cursor.state).2 }
+    state := ctrlRowState cursor.state row pos }
 
 /-- Descends into the document environment at this checkpoint, its continuation
 restoring the enclosing scope. -/
@@ -12809,20 +12742,17 @@ private theorem drop_control_rest (raws : Array Raw) (i : Nat)
   rw [Nat.add_assoc, ← List.drop_drop, h, Nat.add_comm 1,
     List.drop_succ_cons, List.drop_left]
 
-private theorem rewriteCursor_control_exact (cursor : RewriteCursor)
-    (name : String) (arity : Nat) (hc : ControlGroupsConsumed name arity)
-    (pos : Pos) (args : List (Array Raw)) (taken rest : List Raw)
+private theorem rewriteCursor_row_exact (hsound : CtrlRowsSound) (cursor : RewriteCursor)
+    (row : CtrlRow) (hrow : row ∈ ctrlRows) (pos : Pos) (taken rest : List Raw)
     (hd : cursor.inDocument)
-    (hs : cursor.raws.toList.drop cursor.index = .ctrl name pos :: (taken ++ rest))
-    (hn : args.length = arity)
-    (hg : GroupPrefix cursor.raws (cursor.index + 1) args
-      (cursor.index + 1 + taken.length)) :
-    rewriteCursor cursor =
-      rewriteCursor (cursor.afterControl name pos taken.length) := by
-  obtain ⟨hd, hl, hp⟩ := hd
-  have h := (hc cursor.inBody cursor.raws cursor.out pos args taken rest
-    cursor.index cursor.state hd hl hp hs hn hg).2.1
-  simpa only [rewriteCursor, RewriteCursor.afterControl,
+    (hs : cursor.raws.toList.drop cursor.index = .ctrl row.name pos :: (taken ++ rest))
+    (hk : argsEnd cursor.raws row.sig (cursor.index + 1) =
+      some (cursor.index + 1 + taken.length)) :
+    rewriteCursor cursor = rewriteCursor (cursor.afterRow row pos taken.length) := by
+  obtain ⟨hd, _, hp⟩ := hd
+  have h := (ctrlRow_control_contract hsound row hrow cursor.inBody cursor.raws cursor.out pos
+    taken rest cursor.index cursor.state hd hp hs hk).2.1
+  simpa only [rewriteCursor, RewriteCursor.afterRow,
     drop_control_rest _ _ _ _ _ _ hs] using congrArg cursor.complete h
 
 /-- The gathered running content, one declaration each. -/
@@ -13370,7 +13300,7 @@ named by the compatibility producer. -/
 public theorem executeInputs_package_refusal_contract (reader : InputReader Id)
     (file command names : String) (pos groupPos namePos : Pos)
     (keeps : List String) (ds : Array Diag) (ignored : List String)
-    (hc : command = "usepackage" ∨ command = "RequirePackage")
+    (hc : command = "usepackage" ∨ command = "RequirePackage") (hrow : ctrlRow? command = none)
     (hnames : ExternalPackageNames names)
     (hr : ∀ request context, reader request context = (none, context)) :
     let executed := executeInputs reader file
@@ -13404,7 +13334,7 @@ public theorem executeInputs_package_refusal_contract (reader : InputReader Id)
       obtain ⟨q, hq, rfl⟩ := List.mem_map.mp hp
       exact (hnames q hq).2.2.2
     have hstep := rewriteList_package_external_exact command names pos groupPos namePos st
-      hc rfl rfl rfl rfl rfl hn hb ht part hpart
+      hc hrow rfl rfl rfl rfl rfl hn hb ht part hpart
     let reports := ((names.trimAscii.toString.splitOn ",").map fun p =>
       atSource st pos (packageRefusal st.file pos p.trimAscii.toString)).toArray
     let after := { st with diags := st.diags ++ reports }
@@ -13426,80 +13356,45 @@ public theorem executeInputs_package_refusal_contract (reader : InputReader Id)
     rw [← atSource_package_exact st pos part.trimAscii.toString]
     exact hfinish
 
-public theorem finishRewrite_control_exact (cursor : RewriteCursor)
-    (name : String) (arity : Nat) (hc : ControlGroupsConsumed name arity)
-    (pos : Pos) (args : List (Array Raw)) (taken rest : List Raw)
+public theorem finishRewrite_row_exact (hsound : CtrlRowsSound) (cursor : RewriteCursor)
+    (row : CtrlRow) (hrow : row ∈ ctrlRows) (pos : Pos) (taken rest : List Raw)
     (hd : cursor.inDocument)
-    (hs : cursor.raws.toList.drop cursor.index = .ctrl name pos :: (taken ++ rest))
-    (hn : args.length = arity)
-    (hg : GroupPrefix cursor.raws (cursor.index + 1) args
-      (cursor.index + 1 + taken.length)) :
-    finishRewrite cursor = finishRewrite (cursor.afterControl name pos taken.length) :=
+    (hs : cursor.raws.toList.drop cursor.index = .ctrl row.name pos :: (taken ++ rest))
+    (hk : argsEnd cursor.raws row.sig (cursor.index + 1) =
+      some (cursor.index + 1 + taken.length)) :
+    finishRewrite cursor = finishRewrite (cursor.afterRow row pos taken.length) :=
   congrArg finishRewritten
-    (rewriteCursor_control_exact cursor name arity hc pos args taken rest hd hs hn hg)
+    (rewriteCursor_row_exact hsound cursor row hrow pos taken rest hd hs hk)
 
-/-- A consumed control's document completed from the retained body and its
-registered reporting effect alone. -/
-public def finishMeaningFreeDocument (cursor : RewriteCursor) (name : String)
-    (note : Option String) (pos docPos : Pos) (kept : Array Raw) :
-    Array Raw × Array Diag × Array String :=
+/-- A row's control's document completed from the retained body around the row's emission and
+from its report alone. -/
+public def finishCtrlRowDocument (cursor : RewriteCursor) (row : CtrlRow) (pos docPos : Pos)
+    (pre post : Array Raw) : Array Raw × Array Diag × Array String :=
   finishRewritten (closeLastDocument cursor docPos
-    (kept, meaningFreeState (openDocumentBody cursor.state).2 name pos note))
+    (pre ++ (ctrlRowRun row pos (openDocumentBody cursor.state).2).1 ++ post,
+      ctrlRowState (openDocumentBody cursor.state).2 row pos))
 
-public def finishConfigSkipDocument (cursor : RewriteCursor) (name msg : String)
-    (help : Option String) (pos docPos : Pos) (kept : Array Raw) :
-    Array Raw × Array Diag × Array String :=
-  finishRewritten (closeLastDocument cursor docPos
-    (kept, configSkipState (openDocumentBody cursor.state).2 name pos msg help))
+public theorem finishCtrlRowDocument_source_exact (cursor : RewriteCursor) (body : Array Raw)
+    (row : CtrlRow) (pos docPos : Pos) (pre post : Array Raw) :
+    finishCtrlRowDocument (cursor.withDocument body docPos) row pos docPos pre post =
+      finishCtrlRowDocument cursor row pos docPos pre post := by rfl
 
-public theorem finishMeaningFreeDocument_source_exact (cursor : RewriteCursor)
-    (body kept : Array Raw) (name : String) (note : Option String) (pos docPos : Pos) :
-    finishMeaningFreeDocument (cursor.withDocument body docPos) name note pos docPos kept =
-      finishMeaningFreeDocument cursor name note pos docPos kept := by rfl
-
-public theorem finishConfigSkipDocument_source_exact (cursor : RewriteCursor)
-    (body kept : Array Raw) (name msg : String) (help : Option String) (pos docPos : Pos) :
-    finishConfigSkipDocument (cursor.withDocument body docPos) name msg help pos docPos kept =
-      finishConfigSkipDocument cursor name msg help pos docPos kept := by rfl
-
-public theorem finishRewrite_meaningFree_document_exact (cursor : RewriteCursor)
-    (body : Array Raw) (name : String) (n : Nat) (note : Option String)
-    (pos docPos : Pos) (pre taken post : List Raw) (args : List (Array Raw))
-    (hm : (name, n, note) ∈ meaningFree)
-    (hp : cursor.outsidePicture) (hl : cursor.outsideList)
+public theorem finishRewrite_row_document_exact (hsound : CtrlRowsSound)
+    (cursor : RewriteCursor) (body : Array Raw) (row : CtrlRow) (hrow : row ∈ ctrlRows)
+    (pos docPos : Pos) (pre taken post : List Raw) (hp : cursor.outsidePicture)
     (hs : cursor.raws.toList.drop cursor.index = [.env "document" body docPos])
-    (hb : body.toList = pre ++ .ctrl name pos :: (taken ++ post))
-    (hpre : LiteralRaws pre) (hpost : LiteralRaws post) (hn : args.length = n)
-    (hg : GroupPrefix body (pre.length + 1) args (pre.length + 1 + taken.length)) :
+    (hb : body.toList = pre ++ .ctrl row.name pos :: (taken ++ post))
+    (hpre : LiteralRaws pre) (hpost : LiteralRaws post)
+    (hk : argsEnd body row.sig (pre.length + 1) = some (pre.length + 1 + taken.length)) :
     finishRewrite cursor =
-      finishMeaningFreeDocument cursor name note pos docPos (pre.toArray ++ post.toArray) := by
+      finishCtrlRowDocument cursor row pos docPos pre.toArray post.toArray := by
   unfold finishRewrite
   rw [rewriteCursor_last_document_exact cursor body docPos hp hs, hb]
-  have hbody := rewriteList_meaningFree_body_exact cursor.inBody body #[] name n note
-    pos pre taken post args 0 (openDocumentBody cursor.state).2 hm rfl hl hp
-    hpre hpost hn (by simpa only [Nat.zero_add] using hg)
+  have hbody := rewriteList_row_body_exact hsound cursor.inBody body #[] row hrow pos pre taken
+    post 0 (openDocumentBody cursor.state).2 rfl hp hpre hpost
+    (by simpa only [Nat.zero_add] using hk)
   rw [hbody]
-  simp only [Array.empty_append, finishMeaningFreeDocument]
-
-public theorem finishRewrite_configSkip_document_exact (cursor : RewriteCursor)
-    (body : Array Raw) (name : String) (n : Nat) (msg : String) (help : Option String)
-    (pos docPos : Pos) (pre taken post : List Raw) (args : List (Array Raw))
-    (hm : (name, n, msg, help) ∈ configSkip)
-    (hp : cursor.outsidePicture) (hl : cursor.outsideList)
-    (hs : cursor.raws.toList.drop cursor.index = [.env "document" body docPos])
-    (hb : body.toList = pre ++ .ctrl name pos :: (taken ++ post))
-    (hpre : LiteralRaws pre) (hpost : LiteralRaws post) (hn : args.length = n)
-    (hg : GroupPrefix body (pre.length + 1) args (pre.length + 1 + taken.length)) :
-    finishRewrite cursor =
-      finishConfigSkipDocument cursor name msg help pos docPos
-        (pre.toArray ++ post.toArray) := by
-  unfold finishRewrite
-  rw [rewriteCursor_last_document_exact cursor body docPos hp hs, hb]
-  have hbody := rewriteList_configSkip_body_exact cursor.inBody body #[] name n msg help
-    pos pre taken post args 0 (openDocumentBody cursor.state).2 hm rfl hl hp
-    hpre hpost hn (by simpa only [Nat.zero_add] using hg)
-  rw [hbody]
-  simp only [Array.empty_append, finishConfigSkipDocument]
+  simp only [Array.empty_append, finishCtrlRowDocument]
 
 /-- The commands whose first argument names the length they assign. -/
 private def lengthAssigners : List String := ["setlength", "addtolength"]

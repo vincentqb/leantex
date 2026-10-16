@@ -7,7 +7,7 @@ public section
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 
 /-! The log-only control gate: LaTeX's package and class diagnostics are consumed before inline
-elaboration and ship no ink, the family held against `Compat.meaningFree` with an owed count that
+elaboration and ship no ink, the family held against `Compat.ctrlRows` with an owed count that
 only falls. -/
 
 /-- The LaTeX controls that write the log or the terminal and contribute no ink, each with its
@@ -73,11 +73,11 @@ def logOnlyAccounted (name : String) (ds : Array Diag) : Bool :=
 leaves no ink, warning or error, is named, and has its LaTeX arity. -/
 def logOnlySurfaceChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
-  let listed := logOnlyControls.filter fun (n, _) => (Compat.meaningFree.lookup n).isSome
-  let owed := logOnlyControls.filter fun (n, _) => (Compat.meaningFree.lookup n).isNone
+  let listed := logOnlyControls.filter fun (n, _) => (Compat.ctrlRow? n).isSome
+  let owed := logOnlyControls.filter fun (n, _) => (Compat.ctrlRow? n).isNone
   t s!"log-only controls: the arity of every consumed row is LaTeX's \
 ({listed.map (·.1)})"
-    (listed.all fun (n, arity) => (Compat.meaningFree.lookup n).map (·.1) == some arity)
+    (listed.all fun (n, arity) => (Compat.ctrlRow? n).map (·.sig.length) == some arity)
   t s!"log-only controls: {owed.length} of {logOnlyControls.length} still reach body \
 recovery, over the recorded {logOnlyOwedBaseline} ({owed.map (·.1)})"
     (owed.length ≤ logOnlyOwedBaseline)
@@ -119,7 +119,7 @@ def logOnlyArtifactChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     t s!"log-only artifact control: the reading finds the strings when they are body text"
       (logOnlyInkStrings.all fun s => hasStr ink s)
   for (name, arity) in logOnlyControls.filter
-      fun (n, _) => (Compat.meaningFree.lookup n).isSome do
+      fun (n, _) => (Compat.ctrlRow? n).isSome do
     for (where_, src) in [("in the body", logOnlyBodySrc name arity),
         ("deferred through \\AtBeginDocument", logOnlyHookSrc name arity)] do
       match inkOf src with

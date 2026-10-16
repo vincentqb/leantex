@@ -31,111 +31,71 @@ public theorem runExecuted_rewrite_exact (file : String) (executed : Compat.Exec
         executed.sourceTriggers (Compat.unusedLengths file executed.raws) earlier metric
         (Compat.beginRewrite executed) executed.inputAttempts executed.mentions := by rfl
 
-public theorem meaningFree_document_exact (file : String) (scan : Compat.BoundaryScan)
+/-- The control table's names are distinct, clear of `\cite`, `\appendix` and `\define`, and none is
+spelled as a saved overlay-native name. -/
+public theorem ctrlRows_sound : Compat.CtrlRowsSound := by
+  unfold Compat.CtrlRowsSound
+  decide +kernel
+
+/-- At an ordinary body cursor every row of the control table consumes exactly what its signature
+reads, a silent row whose arguments are groups exactly its group prefix, a row missing an argument
+that must stand is left to elaboration, and so is an unknown control. -/
+public theorem ctrl_rows_consumed_contract :
+    (∀ row ∈ Compat.ctrlRows, Compat.CtrlRowConsumed row) ∧
+    (∀ row ∈ Compat.ctrlRows, row.action.silent = true → (∀ k ∈ row.sig, k = .group) →
+      Compat.ControlGroupsConsumed row.name row.sig.length) ∧
+    (∀ row ∈ Compat.ctrlRows, Compat.CtrlRowDeclines row) ∧
+    Compat.UnknownControlPreserved "zzNotAControl" :=
+  ⟨Compat.ctrlRow_control_contract ctrlRows_sound,
+    fun row hrow hsilent hsig => Compat.ctrlRow_groups_consumed ctrlRows_sound row hrow hsilent hsig,
+    Compat.ctrlRow_declines_contract ctrlRows_sound,
+    Compat.unknown_control_contract (by decide +kernel)⟩
+
+public theorem ctrlRow_document_exact (file : String) (scan : Compat.BoundaryScan)
     (macros : Array (String × String)) (triggers : Compat.SourceTriggers)
     (priorDiags earlier : Array Diag) (metric : Ir.Pic.LabelMetric)
     (cursor : Compat.RewriteCursor) (body : Array Raw)
-    (name : String) (arity : Nat) (note : Option String) (pos docPos : Pos)
-    (pre taken post : List Raw) (args : List (Array Raw))
-    (hm : (name, arity, note) ∈ Compat.meaningFree)
-    (hp : cursor.outsidePicture) (hl : cursor.outsideList)
+    (row : Compat.CtrlRow) (pos docPos : Pos) (pre taken post : List Raw)
+    (hrow : row ∈ Compat.ctrlRows) (hp : cursor.outsidePicture)
     (hs : cursor.raws.toList.drop cursor.index = [.env "document" body docPos])
-    (hb : body.toList = pre ++ .ctrl name pos :: (taken ++ post))
+    (hb : body.toList = pre ++ .ctrl row.name pos :: (taken ++ post))
     (hpre : Compat.LiteralRaws pre) (hpost : Compat.LiteralRaws post)
-    (hn : args.length = arity)
-    (hg : Compat.GroupPrefix body (pre.length + 1) args (pre.length + 1 + taken.length))
+    (hk : Compat.argsEnd body row.sig (pre.length + 1) = some (pre.length + 1 + taken.length))
     (attempts : Array Compat.InputAttempt := #[]) (mentions : Array String := #[]) :
     runRewriteFinal file scan macros triggers priorDiags earlier metric cursor attempts mentions =
       runPreparedFinal file
         (prepareRewritten file scan macros triggers priorDiags
-          (Compat.finishMeaningFreeDocument cursor name note pos docPos
-            (pre.toArray ++ post.toArray)) attempts mentions) earlier metric := by
+          (Compat.finishCtrlRowDocument cursor row pos docPos pre.toArray post.toArray)
+          attempts mentions) earlier metric := by
   unfold runRewriteFinal
-  rw [Compat.finishRewrite_meaningFree_document_exact cursor body name arity note pos docPos
-    pre taken post args hm hp hl hs hb hpre hpost hn hg]
+  rw [Compat.finishRewrite_row_document_exact ctrlRows_sound cursor body row hrow pos docPos
+    pre taken post hp hs hb hpre hpost hk]
 
-public theorem configSkip_document_exact (file : String) (scan : Compat.BoundaryScan)
-    (macros : Array (String × String)) (triggers : Compat.SourceTriggers)
-    (priorDiags earlier : Array Diag) (metric : Ir.Pic.LabelMetric)
-    (cursor : Compat.RewriteCursor) (body : Array Raw)
-    (name : String) (arity : Nat) (msg : String) (help : Option String) (pos docPos : Pos)
-    (pre taken post : List Raw) (args : List (Array Raw))
-    (hm : (name, arity, msg, help) ∈ Compat.configSkip)
-    (hp : cursor.outsidePicture) (hl : cursor.outsideList)
-    (hs : cursor.raws.toList.drop cursor.index = [.env "document" body docPos])
-    (hb : body.toList = pre ++ .ctrl name pos :: (taken ++ post))
-    (hpre : Compat.LiteralRaws pre) (hpost : Compat.LiteralRaws post)
-    (hn : args.length = arity)
-    (hg : Compat.GroupPrefix body (pre.length + 1) args (pre.length + 1 + taken.length))
-    (attempts : Array Compat.InputAttempt := #[]) (mentions : Array String := #[]) :
-    runRewriteFinal file scan macros triggers priorDiags earlier metric cursor attempts mentions =
-      runPreparedFinal file
-        (prepareRewritten file scan macros triggers priorDiags
-          (Compat.finishConfigSkipDocument cursor name msg help pos docPos
-            (pre.toArray ++ post.toArray)) attempts mentions) earlier metric := by
-  unfold runRewriteFinal
-  rw [Compat.finishRewrite_configSkip_document_exact cursor body name arity msg help pos docPos
-    pre taken post args hm hp hl hs hb hpre hpost hn hg]
-
-public theorem meaningFree_operands_agree (file : String) (scan : Compat.BoundaryScan)
+public theorem ctrlRow_operands_agree (file : String) (scan : Compat.BoundaryScan)
     (macros : Array (String × String)) (triggers : Compat.SourceTriggers)
     (priorDiags earlier : Array Diag) (metric : Ir.Pic.LabelMetric)
     (cursor : Compat.RewriteCursor) (left right : Array Raw)
-    (name : String) (arity : Nat) (note : Option String) (pos docPos : Pos)
-    (pre post takenLeft takenRight : List Raw) (argsLeft argsRight : List (Array Raw))
-    (hm : (name, arity, note) ∈ Compat.meaningFree)
-    (hp : cursor.outsidePicture) (hl : cursor.outsideList)
-    (hleft : left.toList = pre ++ .ctrl name pos :: (takenLeft ++ post))
-    (hright : right.toList = pre ++ .ctrl name pos :: (takenRight ++ post))
+    (row : Compat.CtrlRow) (pos docPos : Pos) (pre post takenLeft takenRight : List Raw)
+    (hrow : row ∈ Compat.ctrlRows) (hp : cursor.outsidePicture)
+    (hleft : left.toList = pre ++ .ctrl row.name pos :: (takenLeft ++ post))
+    (hright : right.toList = pre ++ .ctrl row.name pos :: (takenRight ++ post))
     (hpre : Compat.LiteralRaws pre) (hpost : Compat.LiteralRaws post)
-    (hnleft : argsLeft.length = arity) (hnright : argsRight.length = arity)
-    (hgleft : Compat.GroupPrefix left (pre.length + 1) argsLeft
-      (pre.length + 1 + takenLeft.length))
-    (hgright : Compat.GroupPrefix right (pre.length + 1) argsRight
-      (pre.length + 1 + takenRight.length))
+    (hkleft : Compat.argsEnd left row.sig (pre.length + 1) =
+      some (pre.length + 1 + takenLeft.length))
+    (hkright : Compat.argsEnd right row.sig (pre.length + 1) =
+      some (pre.length + 1 + takenRight.length))
     (attempts : Array Compat.InputAttempt := #[]) (mentions : Array String := #[]) :
     runRewriteFinal file scan macros triggers priorDiags earlier metric
       (cursor.withDocument left docPos) attempts mentions =
     runRewriteFinal file scan macros triggers priorDiags earlier metric
       (cursor.withDocument right docPos) attempts mentions := by
-  rw [meaningFree_document_exact file scan macros triggers priorDiags earlier metric
-    (cursor.withDocument left docPos) left name arity note pos docPos pre takenLeft post
-    argsLeft hm hp hl rfl hleft hpre hpost hnleft hgleft attempts mentions,
-    meaningFree_document_exact file scan macros triggers priorDiags earlier metric
-    (cursor.withDocument right docPos) right name arity note pos docPos pre takenRight post
-    argsRight hm hp hl rfl hright hpre hpost hnright hgright attempts mentions,
-    Compat.finishMeaningFreeDocument_source_exact,
-    Compat.finishMeaningFreeDocument_source_exact]
-
-public theorem configSkip_operands_agree (file : String) (scan : Compat.BoundaryScan)
-    (macros : Array (String × String)) (triggers : Compat.SourceTriggers)
-    (priorDiags earlier : Array Diag) (metric : Ir.Pic.LabelMetric)
-    (cursor : Compat.RewriteCursor) (left right : Array Raw)
-    (name : String) (arity : Nat) (msg : String) (help : Option String) (pos docPos : Pos)
-    (pre post takenLeft takenRight : List Raw) (argsLeft argsRight : List (Array Raw))
-    (hm : (name, arity, msg, help) ∈ Compat.configSkip)
-    (hp : cursor.outsidePicture) (hl : cursor.outsideList)
-    (hleft : left.toList = pre ++ .ctrl name pos :: (takenLeft ++ post))
-    (hright : right.toList = pre ++ .ctrl name pos :: (takenRight ++ post))
-    (hpre : Compat.LiteralRaws pre) (hpost : Compat.LiteralRaws post)
-    (hnleft : argsLeft.length = arity) (hnright : argsRight.length = arity)
-    (hgleft : Compat.GroupPrefix left (pre.length + 1) argsLeft
-      (pre.length + 1 + takenLeft.length))
-    (hgright : Compat.GroupPrefix right (pre.length + 1) argsRight
-      (pre.length + 1 + takenRight.length))
-    (attempts : Array Compat.InputAttempt := #[]) (mentions : Array String := #[]) :
-    runRewriteFinal file scan macros triggers priorDiags earlier metric
-      (cursor.withDocument left docPos) attempts mentions =
-    runRewriteFinal file scan macros triggers priorDiags earlier metric
-      (cursor.withDocument right docPos) attempts mentions := by
-  rw [configSkip_document_exact file scan macros triggers priorDiags earlier metric
-    (cursor.withDocument left docPos) left name arity msg help pos docPos pre takenLeft post
-    argsLeft hm hp hl rfl hleft hpre hpost hnleft hgleft attempts mentions,
-    configSkip_document_exact file scan macros triggers priorDiags earlier metric
-    (cursor.withDocument right docPos) right name arity msg help pos docPos pre takenRight post
-    argsRight hm hp hl rfl hright hpre hpost hnright hgright attempts mentions,
-    Compat.finishConfigSkipDocument_source_exact,
-    Compat.finishConfigSkipDocument_source_exact]
+  rw [ctrlRow_document_exact file scan macros triggers priorDiags earlier metric
+    (cursor.withDocument left docPos) left row pos docPos pre takenLeft post hrow hp rfl
+    hleft hpre hpost hkleft attempts mentions,
+    ctrlRow_document_exact file scan macros triggers priorDiags earlier metric
+    (cursor.withDocument right docPos) right row pos docPos pre takenRight post hrow hp
+    rfl hright hpre hpost hkright attempts mentions,
+    Compat.finishCtrlRowDocument_source_exact, Compat.finishCtrlRowDocument_source_exact]
 
 /-- A recovery accounted by its producer's diagnostic code and its command identity. -/
 @[expose] public def RecoveryNamed (ds : Array Diag) (item : Ir.Recovered) : Prop :=
@@ -412,89 +372,53 @@ public theorem runRaws_recovery_group_contract (file : String) (raws : Array Raw
   exact ⟨runPreparedFinal_recovery_group_exact file _ earlier metric group h,
     fun item hi => runPreparedFinal_recovery_named file _ earlier metric item hi⟩
 
-/-- An executed document holding a registered control between literal neighbours, its operands
+/-- An executed document holding a table row's control between literal neighbours, its operands
 unrestricted. -/
-public structure ControlDocument (executed : Compat.Executed) (name : String)
-    (arity : Nat) where
+public structure ControlDocument (executed : Compat.Executed) (row : Compat.CtrlRow) where
   body : Array Raw
   pos : Pos
   docPos : Pos
   pre : List Raw
   taken : List Raw
   post : List Raw
-  args : List (Array Raw)
   outsidePicture : (Compat.beginRewrite executed).outsidePicture
-  outsideList : (Compat.beginRewrite executed).outsideList
   document : (Compat.beginRewrite executed).raws.toList.drop
     (Compat.beginRewrite executed).index = [.env "document" body docPos]
-  source : body.toList = pre ++ .ctrl name pos :: (taken ++ post)
+  source : body.toList = pre ++ .ctrl row.name pos :: (taken ++ post)
   before : Compat.LiteralRaws pre
   after : Compat.LiteralRaws post
-  arity_exact : args.length = arity
-  operands : Compat.GroupPrefix body (pre.length + 1) args
-    (pre.length + 1 + taken.length)
+  operands : Compat.argsEnd body row.sig (pre.length + 1) = some (pre.length + 1 + taken.length)
 
-public theorem runExecuted_meaningFree_contract (file : String) (executed : Compat.Executed)
-    (earlier : Array Diag) (metric : Ir.Pic.LabelMetric)
-    (name : String) (arity : Nat) (note : Option String)
-    (hm : (name, arity, note) ∈ Compat.meaningFree)
-    (input : ControlDocument executed name arity) :
+public theorem runExecuted_ctrlRow_contract (file : String) (executed : Compat.Executed)
+    (earlier : Array Diag) (metric : Ir.Pic.LabelMetric) (row : Compat.CtrlRow)
+    (hrow : row ∈ Compat.ctrlRows) (input : ControlDocument executed row) :
     runExecuted file executed earlier metric =
       runPreparedFinal file
         (prepareRewritten file (Compat.boundaryScan file executed.raws) (macroScan executed.raws)
           executed.sourceTriggers (Compat.unusedLengths file executed.raws)
-          (Compat.finishMeaningFreeDocument (Compat.beginRewrite executed)
-            name note input.pos input.docPos (input.pre.toArray ++ input.post.toArray))
+          (Compat.finishCtrlRowDocument (Compat.beginRewrite executed)
+            row input.pos input.docPos input.pre.toArray input.post.toArray)
           executed.inputAttempts executed.mentions) earlier metric := by
   rw [runExecuted_rewrite_exact]
-  exact meaningFree_document_exact file _ _ _ (Compat.unusedLengths file executed.raws) earlier metric
-    (Compat.beginRewrite executed) input.body name arity note input.pos input.docPos
-    input.pre input.taken input.post input.args hm input.outsidePicture input.outsideList
-    input.document input.source input.before input.after input.arity_exact input.operands
+  exact ctrlRow_document_exact file _ _ _ (Compat.unusedLengths file executed.raws) earlier metric
+    (Compat.beginRewrite executed) input.body row input.pos input.docPos
+    input.pre input.taken input.post hrow input.outsidePicture
+    input.document input.source input.before input.after input.operands
     executed.inputAttempts executed.mentions
 
-public theorem runExecuted_configSkip_contract (file : String) (executed : Compat.Executed)
-    (earlier : Array Diag) (metric : Ir.Pic.LabelMetric)
-    (name : String) (arity : Nat) (msg : String) (help : Option String)
-    (hm : (name, arity, msg, help) ∈ Compat.configSkip)
-    (input : ControlDocument executed name arity) :
-    runExecuted file executed earlier metric =
-      runPreparedFinal file
-        (prepareRewritten file (Compat.boundaryScan file executed.raws) (macroScan executed.raws)
-          executed.sourceTriggers (Compat.unusedLengths file executed.raws)
-          (Compat.finishConfigSkipDocument (Compat.beginRewrite executed)
-            name msg help input.pos input.docPos (input.pre.toArray ++ input.post.toArray))
-          executed.inputAttempts executed.mentions) earlier metric := by
-  rw [runExecuted_rewrite_exact]
-  exact configSkip_document_exact file _ _ _ (Compat.unusedLengths file executed.raws) earlier metric
-    (Compat.beginRewrite executed) input.body name arity msg help input.pos input.docPos
-    input.pre input.taken input.post input.args hm input.outsidePicture input.outsideList
-    input.document input.source input.before input.after input.arity_exact input.operands
-    executed.inputAttempts executed.mentions
-
-/-- The consuming-control contract at the executed frontend: registered controls consume their
-operands, unhandled ones keep their braced content, and every recovery is named. -/
+/-- The consuming-control contract at the executed frontend: a table row's control between literal
+neighbours leaves the document its emission and report alone, unhandled controls keep their braced
+content, and every recovery is named. -/
 public theorem control_completion_contract (file : String) (executed : Compat.Executed)
     (earlier : Array Diag) (metric : Ir.Pic.LabelMetric) :
-    (∀ row ∈ Compat.meaningFree,
-      ∀ input : ControlDocument executed row.1 row.2.1,
+    (∀ row ∈ Compat.ctrlRows,
+      ∀ input : ControlDocument executed row,
         runExecuted file executed earlier metric =
           runPreparedFinal file
             (prepareRewritten file (Compat.boundaryScan file executed.raws) (macroScan executed.raws)
               executed.sourceTriggers (Compat.unusedLengths file executed.raws)
-              (Compat.finishMeaningFreeDocument (Compat.beginRewrite executed)
-                row.1 row.2.2 input.pos input.docPos
-                (input.pre.toArray ++ input.post.toArray))
-              executed.inputAttempts executed.mentions) earlier metric) ∧
-    (∀ row ∈ Compat.configSkip,
-      ∀ input : ControlDocument executed row.1 row.2.1,
-        runExecuted file executed earlier metric =
-          runPreparedFinal file
-            (prepareRewritten file (Compat.boundaryScan file executed.raws) (macroScan executed.raws)
-              executed.sourceTriggers (Compat.unusedLengths file executed.raws)
-              (Compat.finishConfigSkipDocument (Compat.beginRewrite executed)
-                row.1 row.2.2.1 row.2.2.2 input.pos input.docPos
-                (input.pre.toArray ++ input.post.toArray))
+              (Compat.finishCtrlRowDocument (Compat.beginRewrite executed)
+                row input.pos input.docPos input.pre.toArray input.post.toArray)
               executed.inputAttempts executed.mentions) earlier metric) ∧
     (∀ group : RecoveryGroup,
       PreparedRecoveryGroup file (prepareExecuted file executed) metric group →
@@ -503,13 +427,9 @@ public theorem control_completion_contract (file : String) (executed : Compat.Ex
             (prepareExecuted file executed) earlier metric withdrawn group)) ∧
     (∀ item ∈ (runExecuted file executed earlier metric).1.salvage,
       RecoveryNamed (runExecuted file executed earlier metric).2 item) := by
-  refine ⟨?_, ?_, ?_, ?_⟩
+  refine ⟨?_, ?_, ?_⟩
   · intro row hrow input
-    exact runExecuted_meaningFree_contract file executed earlier metric
-      row.1 row.2.1 row.2.2 hrow input
-  · intro row hrow input
-    exact runExecuted_configSkip_contract file executed earlier metric
-      row.1 row.2.1 row.2.2.1 row.2.2.2 hrow input
+    exact runExecuted_ctrlRow_contract file executed earlier metric row hrow input
   · intro group hgroup
     exact (runExecuted_recovery_group_contract file executed earlier metric group hgroup).1
   · exact runExecuted_recovery_named file executed earlier metric

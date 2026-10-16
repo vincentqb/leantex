@@ -412,6 +412,17 @@ def mdTreeOf (src : String) : String := docTreeOf (elabMd src).1
 /-- A page's HTML body rendered, its text escaped, telling a `<br>` from the text `<br>`. -/
 def docHtmlOf (doc : Ir.Doc) : String := Html.render (Html.elem "div" (docNodesOf doc)) 0
 
+/-- The control table's rows read to nothing whose arguments are all groups: each name, its group
+count and the key its note names, none where the dispatcher's guard names it. -/
+def nothingRows : List (String × Nat × Option String) :=
+  Compat.ctrlRows.filterMap fun row =>
+    if row.sig.all (fun k => k == .group || k == .needed) then
+      match row.action with
+      | .discard _ key => some (row.name, row.sig.length, some key)
+      | .inert => some (row.name, row.sig.length, none)
+      | .tokens .. | .native _ | .skip _ | .refuse .. => none
+    else none
+
 /-- The sites the raw-HTML family places a construct at: in a paragraph, opening a line, as a block,
 in each container and in a heading. -/
 def mdHtmlSites : List (String × (String → String)) :=

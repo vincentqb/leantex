@@ -6,18 +6,6 @@ namespace LeanTex.Core.CompatContract
 
 open LeanTex.Core.Parse
 
-/-- At an ordinary body cursor, an exact declared argument
-prefix of every registered row contributes no replacement
-tokens and the walk resumes at its end. -/
-public theorem ctrl_groups_consumed_contract :
-    (∀ row ∈ Compat.meaningFree,
-      Compat.ControlGroupsConsumed row.1 row.2.1) ∧
-    (∀ row ∈ Compat.configSkip,
-      Compat.ControlGroupsConsumed row.1 row.2.1) ∧
-    Compat.UnknownControlPreserved "zzNotAControl" := by
-  exact ⟨Compat.meaningFree_control_contract,
-    Compat.configSkip_control_contract, Compat.unknown_control_contract⟩
-
 /-- The operand the style-file scanner reads from an expanded loading call. -/
 @[expose] public def loadArgument (command : String) (pos : Pos) (tail : Array Raw) : String :=
   let call := #[Raw.ctrl command pos] ++ tail

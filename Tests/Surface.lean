@@ -679,7 +679,7 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   for row in diagFamily do
     let (name, arity) := row
     t s!"compat {name} is a log-only row at LaTeX's own arity {arity}"
-      ((Compat.meaningFree.lookup name).map (·.1) == some arity)
+      ((nothingRows.find? (·.1 == name)).map (·.2.1) == some arity)
   -- LuaLaTeX joins the sentinel to the first body token; only a space inside the hook survives.
   let logFace ← match Font.parse
       (← IO.FS.readBinFile (testFonts ++ "/SourceSerifPro-Regular.otf")) with
@@ -694,7 +694,7 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
     t s!"compat {spacing} hook control ships exactly its literal text"
       (controlDs.isEmpty && controlText == expected &&
         (bodyLines controlOut).map (lineText ·) == #[expected])
-    for (name, arity, note) in Compat.meaningFree do
+    for (name, arity, key) in nothingRows do
       let groups := String.join (List.replicate arity "{ignored_message_}")
       let source := dvDoc
         ("\\AtBeginDocument{\\" ++ name ++ groups ++ "{SENTINEL}" ++ separator ++ "}\n") "x"
@@ -705,11 +705,12 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
         (diagDs.all fun d => d.code != "W0301" && d.code != "E0311" &&
           d.severity != .error)
       -- A row with a reason is silent through one named N0100; a row with none is named by the silence guard (W0387).
-      if note.isSome then
+      match key with
+      | some key =>
         t s!"compat {name} accounts for its no-op as N0100 naming the command ({spacing})"
           ((diagDs.filter fun d => d.code == "N0100" &&
-            d.subject == some ("ctrl:nothing:" ++ name)).size == 1)
-      else
+            d.subject == some ("ctrl:nothing:" ++ key)).size == 1)
+      | none =>
         t s!"compat {name} is consumed with its loss named ({spacing})"
           (diagDs.any fun d => d.code == "W0387")
   let (unkDoc, unkDs) := elabStr ("\\documentclass{article}\n" ++
