@@ -205,6 +205,32 @@ def mdOutPath (output : Option String) (outputIsDir : Bool) (source : String)
     else PublicationPaths.placed ((System.FilePath.mk base).parent.getD ".").toString name
   | none => base
 
+/-- `target` as the folder `dir` names it, both read from one working directory; `none` where one is
+absolute and the other not, or where `dir` climbs out of a folder it does not name. -/
+public def relativeFrom (dir target : String) : Option String :=
+  let parts (p : String) : List String := Id.run do
+    let mut out : Array String := #[]
+    for c in p.splitOn "/" do
+      if c.isEmpty || c == "." then continue
+      if c == ".." && !out.isEmpty && out.back? != some ".." then out := out.pop
+      else out := out.push c
+    return out.toList
+  let rec strip : List String → List String → List String × List String
+    | a :: as, b :: bs => if a == b then strip as bs else (a :: as, b :: bs)
+    | as, bs => (as, bs)
+  if dir.startsWith "/" != target.startsWith "/" then none else
+  let (up, down) := strip (parts dir) (parts target)
+  if up.contains ".." then none
+  else some ("/".intercalate (up.map (fun _ => "..") ++ down))
+
+/-- The bibliography names a twin written at `mdPath` gives the files its document's bibliography
+reads, by the names the document gives them. -/
+def twinBibNames (file mdPath : String) (doc : Ir.Doc) : Array (String × String) :=
+  let dir := ((System.FilePath.mk mdPath).parent.getD ".").toString
+  (Ir.bibRefs doc).filterMap fun src =>
+    let name := Bib.sourceName src
+    (relativeFrom dir (Input.besideDocument file name).toString).map (name, ·)
+
 /-- The markdown twin's link from the page: the declared name, else the derived file's own
 name; none where the page cannot link that name. -/
 def twinHref (mdPath : String) (declared : Option String) : Option String :=
@@ -1022,7 +1048,8 @@ in the HTML" (← since t)
       let mut mdBuilt : Option String := none
       if emit.contains .md then
         let t ← IO.monoMsNow
-        let md := MarkdownDoc.emit doc
+        let names := twinBibNames file mdPath doc
+        let md := MarkdownDoc.emit doc fun n => ((names.find? (·.1 == n)).map (·.2)).getD n
         ui.phase "markdown" s!"{md.utf8ByteSize} bytes" (← since t)
         mdBuilt := some md
       let mut pdfBuilt : Option ByteArray := none

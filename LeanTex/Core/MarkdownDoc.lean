@@ -540,17 +540,24 @@ private def bracketWork (pipes : Bool) (pre post : String) (suppress : Bool) (ke
   return pre ++ (if suppress then "-" else "") ++ k ++ post
 
 /-- Whether an author-in-text citation may open after what the twin wrote: not inside a word, after
-its `.`, an emphasis delimiter, a backslash that would escape it, or a hyphen that would suppress
-its author; an escaped delimiter or backslash is text. -/
+its `.`, an emphasis delimiter, a backslash that would escape it, or a hyphen after no word, which
+would suppress its author; an escaped delimiter or backslash is text. -/
 private def inTextAfter (acc : String) : Bool :=
-  let r := acc.toList.reverse
-  let escaped (l : List Char) : Bool := (l.takeWhile (· == '\\')).length % 2 == 1
-  match r with
-  | c :: rest =>
-    if c == '\\' then !escaped r
-    else if c == '*' || c == '_' then escaped rest
-    else !(CiteKey.isAlnum c || c == '.' || c == '-')
-  | [] => true
+  let slashes (s : String.Slice) : Nat := (s.takeEndWhile (· == '\\')).toString.length
+  match acc.back? with
+  | none => true
+  | some c =>
+    if c == '\\' then slashes (acc.dropEnd 0) % 2 == 0
+    else if c == '*' || c == '_' then slashes (acc.dropEnd 1) % 2 == 1
+    else if c == '-' then ((acc.dropEnd 1).back?).any CiteKey.isAlnum
+    else !(CiteKey.isAlnum c || c == '.')
+
+/-- What both readers skip between two spellings that would otherwise read as one. -/
+private def apart : String := "<!-- -->"
+
+/-- What a twin declaring its bibliography writes before a citation it cannot spell, which then
+writes its citations as their marks instead. -/
+private def unspelled : String := "\uE000"
 
 /-- Whether the text after a citation would read as part of it: a bracket, a parenthesis or a brace
 opening on it. -/
@@ -569,39 +576,37 @@ private def bracketCite (x : Inline) : Bool :=
   (citeOf? x).any fun (f, _) => f.cmd == .paren || f.cmd == .yearPar || f.cmd == .bracket true
 
 /-- How an author-in-text citation without notes stands before `rest`: bare, before the space that
-would join a bracket citation after it written as a reference, or not at all. -/
-private def inTextTail (rest : List Inline) : Option (String × Nat) :=
+would join a bracket citation after it written as a reference, or apart from one right after it. -/
+private def inTextTail (rest : List Inline) : String × Nat :=
   match rest with
-  | .text " " :: y :: _ => if bracketCite y then some ("&#32;", 1) else some ("", 0)
-  | y :: _ => if bracketCite y then none else some ("", 0)
-  | [] => some ("", 0)
+  | .text " " :: y :: _ => if bracketCite y then ("&#32;", 1) else ("", 0)
+  | y :: _ => if bracketCite y then (apart, 0) else ("", 0)
+  | [] => ("", 0)
 
 /-- A citation group's Pandoc spelling, `[see @a, p. 3; @b]`, `@a [p. 3]` or `[-@a]`, where the
-form has one that reads back to it, and the siblings after it the spelling takes; `none` elsewhere,
-a bracket before another citation's bracket among them, which would read as a reference link. -/
+form has one that reads back to it, and the siblings after it the spelling takes, set apart from
+what it would read as one with; `none` where the form has none. -/
 private def citeSpelling (pipes : Bool) (f : CiteForm) (keys : Array String) (acc after : String)
     (rest : List Inline) : Option (String × Nat) :=
   if f.full || f.up then none else
-  let closed := opensOn after || rest.head?.any bracketCite
+  let close := if opensOn after || rest.head?.any bracketCite then apart else ""
+  let open_ := if inTextAfter acc then "" else apart
   match f.cmd, keys.toList with
   | .paren, _ :: _ =>
-    if closed then none else
     let n := keys.size
     let works := keys.toList.zipIdx.mapM fun (k, i) =>
       bracketWork pipes (if i == 0 then f.pre else "") (if i + 1 == n then f.post else "") false k
-    works.map fun ws => ("[" ++ "; ".intercalate ws ++ "]", 0)
-  | .yearPar, [k] =>
-    if closed then none
-    else (bracketWork pipes f.pre f.post true k).map fun w => ("[" ++ w ++ "]", 0)
+    works.map fun ws => ("[" ++ "; ".intercalate ws ++ "]" ++ close, 0)
+  | .yearPar, [k] => (bracketWork pipes f.pre f.post true k).map fun w => ("[" ++ w ++ "]" ++ close, 0)
   | .textual, [k] =>
-    if !f.pre.isEmpty || !inTextAfter acc then none
+    if !f.pre.isEmpty then none
     else if f.post.isEmpty then do
-      let (tail, n) ← inTextTail rest
-      -- A reference's `&#` lengthens no key.
+      let (tail, n) := inTextTail rest
+      -- A reference's `&#` or a comment's `<` lengthens no key.
       let spelled ← CiteKey.spelling? k (if tail.isEmpty then after.front? else none)
-      return (spelled ++ tail, n)
-    else if closed then none
-    else (CiteKey.spelling? k none).map fun s => (s ++ " [" ++ citeNote pipes f.post ++ "]", 0)
+      return (open_ ++ spelled ++ tail, n)
+    else (CiteKey.spelling? k none).map fun s =>
+      (open_ ++ s ++ " [" ++ citeNote pipes f.post ++ "]" ++ close, 0)
   | _, _ => none
 
 /-- The works of a `\citetext` group after its opening mark, each its own command's single key
@@ -634,26 +639,29 @@ private def citeRun (pipes : Bool) (acc : String) (x : Inline) (rest : List Inli
     if f.cmd == .bracket true then
       match groupWorks pipes #[] 0 rest with
       | some (ws, n) =>
-        if opensOn (afterOf (rest.drop n)) || (rest.drop n).head?.any bracketCite then none
-        else some ("[" ++ "; ".intercalate ws.toList ++ "]", n)
+        let close := if opensOn (afterOf (rest.drop n)) || (rest.drop n).head?.any bracketCite
+          then apart else ""
+        some ("[" ++ "; ".intercalate ws.toList ++ "]" ++ close, n)
       | _ => none
     else if f.cmd == .author && !f.full && !f.up && f.pre.isEmpty && f.post.isEmpty then
       match ks.toList, rest with
       | [k], .text " " :: g :: more =>
         match citeOf? g with
         | some (gf, _) =>
-          if gf.cmd != .bracket true || !inTextAfter acc then none
+          if gf.cmd != .bracket true then none
           else match more with
             | y :: _ =>
               match citeOf? y, groupWorks pipes #[] 0 more with
               | some (yf, yks), some (ws, n) =>
-                if yf.cmd != .year || yks != #[k] || !yf.pre.isEmpty || opensOn (afterOf (more.drop n))
-                  || (more.drop n).head?.any bracketCite then none
+                if yf.cmd != .year || yks != #[k] || !yf.pre.isEmpty then none
                 else
+                  let open_ := if inTextAfter acc then "" else apart
+                  let close := if opensOn (afterOf (more.drop n)) ||
+                    (more.drop n).head?.any bracketCite then apart else ""
                   let tail := if yf.post.isEmpty then ws.toList.drop 1
                     else (citeNote pipes yf.post) :: ws.toList.drop 1
                   (CiteKey.spelling? k none).map fun s =>
-                    (s ++ " [" ++ "; ".intercalate tail ++ "]", n + 2)
+                    (open_ ++ s ++ " [" ++ "; ".intercalate tail ++ "]" ++ close, n + 2)
               | _, _ => none
             | [] => none
         | _ => none
@@ -743,8 +751,9 @@ private def inlineInto (site : Site) (cites : Bool) (acc : String) (after : Bool
   -- An unresolved citation is worth its marks.
   | .cite _ keys =>
     let marks := Ir.citeMarks keys
-    acc ++ marks
-  | .cited _ _ ink => inlinesInto site cites acc none after 0 ink.toList
+    (if cites then acc ++ unspelled else acc) ++ marks
+  | .cited _ _ ink => inlinesInto site cites (if cites then acc ++ unspelled else acc) none after 0
+    ink.toList
   -- The mark in footnote syntax; the body is a `[^k]: ...` definition after the document.
   | .footnote num _ => acc ++ s!"[^{num.getD 0}]"
   | .linebreak _ =>
@@ -758,7 +767,7 @@ private def inlinesInto (site : Site) (cites : Bool) (acc : String) (prev : Opti
   | x :: rest =>
     -- The siblings a citation's spelling already read write nothing of their own.
     if skip > 0 then inlinesInto site cites acc prev after (skip - 1) rest else
-    match (if cites then citeRun (site == .cell) acc x rest else none) with
+    match (if cites then citeRun (site != .cell) acc x rest else none) with
     | some (spelled, n) => inlinesInto site cites (acc ++ spelled) none after n rest
     | none =>
     match x with
@@ -965,6 +974,17 @@ private def bibItemsText (cites : Bool) (ind : String) (items : Array Ir.BibItem
     out := out ++ paraText ind ind (target ++ mark ++ inlineText item.content cites) ++ "\n\n"
   return out
 
+/-- A reference list's entries as a comment its division holds, each marker and text on a line, read
+where the twin's text is read and skipped where it is built again. -/
+private def refsComment (ind : String) (items : Array Ir.BibItem) : String :=
+  if items.isEmpty then "" else
+  let line (it : Ir.BibItem) : String :=
+    let mark := (it.marker.map fun m => "[" ++ m ++ "] ").getD ""
+    let text := String.ofList ((mark ++ plainText it.content).toList.map fun c =>
+      if c == '\n' || c == '\r' then ' ' else c)
+    ind ++ text.replace "-->" "-- >" ++ "\n"
+  ind ++ "<!--\n" ++ String.join (items.toList.map line) ++ ind ++ "-->\n"
+
 /-- The heading marker a section level takes, as many `#` as the shared rank. -/
 @[expose] public def headingMarker (level : Ir.HeadingLevel) : String :=
   String.ofList (List.replicate (Ir.headingRank level) '#')
@@ -1169,7 +1189,8 @@ private def blockInto (tw : Twin) (summary ind acc : String) : Block → String
   -- A twin that declares the bibliography places its list where the reader reads it back.
   | .bibliography src _ items =>
     let entries := bibItemsText tw.cites ind items
-    if tw.cites && !src.isEmpty then acc ++ ind ++ "::: {#refs}\n" ++ ind ++ ":::\n\n"
+    let listed := refsComment ind items
+    if tw.cites && !src.isEmpty then acc ++ ind ++ "::: {#refs}\n" ++ listed ++ ind ++ ":::\n\n"
     else acc ++ entries
 termination_by structural b => b
 
@@ -1293,7 +1314,12 @@ private def noteDefs (cites : Bool) (body : Array Block) : String := Id.run do
   if notes.isEmpty then return ""
   let mut out := ""
   for (num, content) in notes do
-    out := out ++ "\n" ++ paraText s!"[^{num.getD 0}]: " "    " (inlineText content cites) ++ "\n"
+    -- A note's citation stands after the body, out of the order a list numbers in.
+    let moved := cites && Ir.foldInlines (fun b x => b || x matches .cite .. || x matches .cited ..)
+      false content
+    let written := inlineText content cites
+    let text := (if moved then unspelled else "") ++ written
+    out := out ++ "\n" ++ paraText s!"[^{num.getD 0}]: " "    " text ++ "\n"
   return out
 
 /-- natbib's package options whose declarations `decls` is, in natbib's order; `none` where a
@@ -1321,16 +1347,18 @@ private def yamlScalar (s : String) : String :=
       s.all (fun c => c.isAlphanum || c == '.' || c == '-' || c == '_' || c == '/') then s
   else "'" ++ s.replace "'" "''" ++ "'"
 
-/-- The twin's metadata block, where the document's citations read back through Pandoc's syntax:
-its bibliography, its style, natbib's options, and every listed entry as `nocite`, so the reference
-list reads back whole; empty where they cannot, and the twin sets each citation as its ink. -/
-public def twinMeta (doc : Doc) : String :=
+/-- The twin's closing metadata block, where the document's citations can read back through
+Pandoc's syntax: its one list's bibliography, named as `bibName` places it, its style, natbib's
+options, and every listed entry as `nocite`, so the list reads back whole; empty elsewhere. -/
+public def twinMeta (doc : Doc) (bibName : String → String := id) : String :=
   let lists := Ir.foldBlocks (fun out b => match b with
-    | .bibliography src style items => if src.isEmpty then out else out.push (style, items)
+    | .bibliography src style items => out.push (src, style, items)
     | _ => out) (fun out _ => out) #[] doc.body
-  match lists[0]?, doc.natbib.bind natbibOptionWords with
-  | some (style, _), some opts =>
-    let names := (Ir.bibRefs doc).map fun n => if n.endsWith ".bib" then n else n ++ ".bib"
+  match lists.toList, doc.natbib.bind natbibOptionWords with
+  | [(src, style, items)], some opts =>
+    if src.isEmpty then "" else
+    let lists := #[(style, items)]
+    let names := (Ir.bibRefs doc).map fun n => bibName (if n.endsWith ".bib" then n else n ++ ".bib")
     let bib := match names.toList with
       | [one] => yamlScalar one
       | many => "[" ++ ", ".intercalate (many.map yamlScalar) ++ "]"
@@ -1348,21 +1376,12 @@ public def twinMeta (doc : Doc) : String :=
       "\nnatbiboptions: " ++ yamlScalar (",".intercalate opts.toList)
     let nociteLine := if nocite.isEmpty then "" else
       "\nnocite: '" ++ (", ".intercalate nocite.toList).replace "'" "''" ++ "'"
-    "---\nbibliography: " ++ bib ++ "\nbiblio-style: " ++ yamlScalar (style.getD "unsrtnat") ++
-      optLine ++ nociteLine ++ "\n---\n\n"
+    "\n---\nbibliography: " ++ bib ++ "\nbiblio-style: " ++ yamlScalar (style.getD "unsrtnat") ++
+      optLine ++ nociteLine ++ "\n---\n"
   | _, _ => ""
 
-/-- The twin's opening: its metadata block, empty where it sets citations as their ink. -/
-public def twinFront (doc : Doc) : String := twinMeta { doc with body := twinBody doc }
-
-/-- Whether the twin declares the document's bibliography and spells its citations. -/
-public def twinCites (doc : Doc) : Bool := !(twinFront doc).isEmpty
-
-/-- The document's markdown twin: its metadata block where its citations read back through
-Pandoc's syntax, then its body. -/
-public def emit (doc : Doc) : String :=
-  let cites := twinCites doc
-  let front := twinFront doc
+/-- The twin in a citation mode: its body, its footnotes, then `back`. -/
+public def twinIn (doc : Doc) (cites : Bool) (back : String) : String :=
   let doc := { doc with body := twinBody doc }
   let summary := match doc.info.subject with
     | some s => "> " ++ summaryLine s cites ++ "\n\n"
@@ -1372,8 +1391,24 @@ public def emit (doc : Doc) : String :=
     | some t => if bodyTitled then "" else "# " ++ titleLine t cites ++ "\n\n"
     | none => ""
   let preamble := title ++ (if bodyTitled then "" else summary)
-  front ++ tighten (preamble ++ blocksInto ⟨doc.info.locale, cites⟩ summary "" "" none
-    doc.body.toList) ++ noteDefs cites doc.body
+  tighten (preamble ++ blocksInto ⟨doc.info.locale, cites⟩ summary "" "" none doc.body.toList)
+    ++ noteDefs cites doc.body ++ back
+
+/-- The twin's closing metadata block, with `bibName` placing its bibliography. -/
+public def twinBack (doc : Doc) (bibName : String → String) : String :=
+  twinMeta { doc with body := twinBody doc } bibName
+
+/-- Whether the twin spells the document's citations in Pandoc's syntax: they read back through a
+closing metadata block, each spelled where it stands. -/
+public def twinCites (doc : Doc) (bibName : String → String := id) : Bool :=
+  let back := twinBack doc bibName
+  !back.isEmpty && !(twinIn doc true back).contains '\uE000'
+
+/-- The document's markdown twin: its citations in Pandoc's syntax under the metadata block it
+closes with, where they read back so, else as their marks. -/
+public def emit (doc : Doc) (bibName : String → String := id) : String :=
+  let cites := twinCites doc bibName
+  twinIn doc cites (if cites then twinBack doc bibName else "")
 
 -- Sealed so unification cannot unfold the collection walk.
 seal noteDefs
@@ -1438,7 +1473,8 @@ private theorem blockInto_extends (tw : Twin) (summary ind acc : String) :
   | .bibliography src _ items => by
     simp only [blockInto]
     split
-    · exact ⟨ind ++ "::: {#refs}\n" ++ ind ++ ":::\n\n", by simp [String.append_assoc]⟩
+    · exact ⟨ind ++ "::: {#refs}\n" ++ refsComment ind items ++ ind ++ ":::\n\n",
+        by simp [String.append_assoc]⟩
     · exact ⟨_, rfl⟩
   | .role _ body => blocksInto_extends tw summary ind acc none body.toList
   | .link _ body => blocksInto_extends tw summary ind acc none body.toList
@@ -1696,26 +1732,30 @@ private theorem headingLevelColumns_mem (x : Ir.HeadingLevel) :
 
 end
 
-public theorem emit_meta_title_first (doc : Doc) (t s : String)
+public theorem emit_meta_title_first (doc : Doc) (bibName : String → String) (t s : String)
     (ht : doc.info.title = some t) (hs : doc.info.subject = some s)
     (hbody : ((Ir.headingLevels (twinBody doc)).contains 0) = false) :
-    ∃ q, emit doc = twinFront doc ++ ("# " ++ titleLine t (twinCites doc) ++ "\n\n" ++ "> " ++
-      summaryLine s (twinCites doc) ++ q) := by
-  obtain ⟨q, hq⟩ := tighten_head (titleLine t (twinCites doc)) (summaryLine s (twinCites doc))
-    (blocksInto ⟨doc.info.locale, twinCites doc⟩ ("> " ++ summaryLine s (twinCites doc) ++ "\n\n")
-      "" "" none (twinBody doc).toList)
-    (fun c hc => (titleLine_contract t _ c hc).1) (fun c hc => (summaryLine_contract s _ c hc).1)
-  refine ⟨q ++ noteDefs (twinCites doc) (twinBody doc), ?_⟩
-  simp only [emit, ht, hs, hbody, Bool.false_eq_true, ↓reduceIte]
+    ∃ q, emit doc bibName = "# " ++ titleLine t (twinCites doc bibName) ++ "\n\n" ++ "> " ++
+      summaryLine s (twinCites doc bibName) ++ q := by
+  let c := twinCites doc bibName
+  let back := if c then twinBack doc bibName else ""
+  obtain ⟨q, hq⟩ := tighten_head (titleLine t c) (summaryLine s c)
+    (blocksInto ⟨doc.info.locale, c⟩ ("> " ++ summaryLine s c ++ "\n\n") "" "" none
+      (twinBody doc).toList)
+    (fun x hx => (titleLine_contract t _ x hx).1) (fun x hx => (summaryLine_contract s _ x hx).1)
+  refine ⟨q ++ noteDefs c (twinBody doc) ++ back, ?_⟩
+  show twinIn doc c back = _
+  simp only [twinIn, ht, hs, hbody, Bool.false_eq_true, ↓reduceIte]
   rw [hq]
   simp only [String.append_assoc]
+  rfl
 
-public theorem emit_body_title_first (doc : Doc) (s : String) (st : Bool)
-    (ttl : Array Inline) (rest : List Block)
+public theorem emit_body_title_first (doc : Doc) (bibName : String → String) (s : String)
+    (st : Bool) (ttl : Array Inline) (rest : List Block)
     (hs : doc.info.subject = some s)
     (hbody : (twinBody doc).toList = .section 0 st none ttl :: rest) :
-    ∃ q, emit doc = twinFront doc ++ ("# " ++ headingText ttl (twinCites doc) ++ "\n\n" ++ "> " ++
-      summaryLine s (twinCites doc) ++ q) := by
+    ∃ q, emit doc bibName = "# " ++ headingText ttl (twinCites doc bibName) ++ "\n\n" ++ "> " ++
+      summaryLine s (twinCites doc bibName) ++ q := by
   have h0 : (0 : Ir.HeadingLevel) ∈ Ir.headingLevels (twinBody doc) := by
     show (0 : Ir.HeadingLevel) ∈ Ir.headingLevelList #[] (twinBody doc).toList
     rw [hbody]
@@ -1724,26 +1764,30 @@ public theorem emit_body_title_first (doc : Doc) (s : String) (st : Bool)
       simp)
   have hbt : (Ir.headingLevels (twinBody doc)).contains 0 = true :=
     Array.contains_eq_true_of_mem h0
-  let tw : Twin := ⟨doc.info.locale, twinCites doc⟩
-  let sm := "> " ++ summaryLine s (twinCites doc) ++ "\n\n"
+  let c := twinCites doc bibName
+  let back := if c then twinBack doc bibName else ""
+  let tw : Twin := ⟨doc.info.locale, c⟩
+  let sm := "> " ++ summaryLine s c ++ "\n\n"
   have hfirst : blocksInto tw sm "" "" none (twinBody doc).toList =
-      blocksInto tw sm "" ("# " ++ headingText ttl (twinCites doc) ++ "\n\n" ++ sm) none rest := by
+      blocksInto tw sm "" ("# " ++ headingText ttl c ++ "\n\n" ++ sm) none rest := by
     rw [hbody]
     simp [blocksInto, blockInto, headingMarker, Ir.headingRank, tw, sm]
-  obtain ⟨w, hw⟩ := blocksInto_extends tw sm ""
-    ("# " ++ headingText ttl (twinCites doc) ++ "\n\n" ++ sm) none rest
-  obtain ⟨q, hq⟩ := tighten_head (headingText ttl (twinCites doc)) (summaryLine s (twinCites doc)) w
-    (fun c hc => (headingText_contract ttl _ c hc).1)
-    (fun c hc => (summaryLine_contract s _ c hc).1)
-  refine ⟨q ++ noteDefs (twinCites doc) (twinBody doc), ?_⟩
+  obtain ⟨w, hw⟩ := blocksInto_extends tw sm "" ("# " ++ headingText ttl c ++ "\n\n" ++ sm) none rest
+  obtain ⟨q, hq⟩ := tighten_head (headingText ttl c) (summaryLine s c) w
+    (fun x hx => (headingText_contract ttl _ x hx).1)
+    (fun x hx => (summaryLine_contract s _ x hx).1)
+  refine ⟨q ++ noteDefs c (twinBody doc) ++ back, ?_⟩
+  show twinIn doc c back = _
   cases hT : doc.info.title with
   | some t =>
-    simp only [emit, hs, hbt, hT, ite_true, String.empty_append]
+    simp only [twinIn, hs, hbt, hT, ite_true, String.empty_append]
     rw [hfirst, hw, hq]
     simp only [String.append_assoc]
+    rfl
   | none =>
-    simp only [emit, hs, hbt, hT, ite_true, String.empty_append]
+    simp only [twinIn, hs, hbt, hT, ite_true, String.empty_append]
     rw [hfirst, hw, hq]
     simp only [String.append_assoc]
+    rfl
 
 end LeanTex.Core.MarkdownDoc

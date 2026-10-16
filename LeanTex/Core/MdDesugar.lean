@@ -177,11 +177,12 @@ public structure CiteRaws where
 /-- A raw run without its leading spaces. -/
 public def dropSpaces (l : List Raw) : List Raw := l.dropWhile (· matches Raw.space)
 
-/-- A suffix's opening separator, `,` or `:`, off its first word, with the spaces after it. -/
+/-- A suffix's opening punctuation off its first word, with the spaces after it, as Pandoc's
+`citeArguments` takes it off. -/
 public def dropSeparator (l : List Raw) : List Raw :=
   match l with
   | Raw.word w p :: rest =>
-    if w.startsWith "," || w.startsWith ":" then
+    if [",", ":", ";", ".", "!", "?"].any (fun (m : String) => w.startsWith m) then
       if (w.drop 1).isEmpty then dropSpaces rest else Raw.word (w.drop 1).toString p :: rest
     else l
   | _ => l
@@ -279,6 +280,24 @@ work sets as its key, uncited" p (help := some "spell the key as its .bib entry 
     else (citeTextRaws items.toList p, diags)
   | none => (#[], diags)
 
+mutual
+
+/-- Whether inline content holds a citation of a work natbib's key list carries, outside an image's
+text alternative, which sets it as text. -/
+private def citesInl : Inl → Bool
+  | .cite items _ => items.any (keyCrosses ·.key)
+  | .emph body _ => citesInls body.toList
+  | .strong body _ => citesInls body.toList
+  | .link _ _ body _ => citesInls body.toList
+  | .image _ _ _ _ => false
+  | .text .. | .code .. | .anchor .. | .soft _ | .hard _ => false
+
+private def citesInls : List Inl → Bool
+  | [] => false
+  | x :: rest => citesInl x || citesInls rest
+
+end
+
 /-- An empty group, TeX's own end of a command's arguments, when `rs` opens on a word an
 overlay-aware command before it would read as its `<…>` selector. -/
 @[expose] public def selectorGuard (rs : Array Raw) (p : Pos) : Array Raw :=
@@ -319,6 +338,9 @@ private def inlRaws (file : String) : Inl → Array Raw × Array Diag
     let ds := if title.isEmpty then #[] else
       #[routeDegraded file "image-title"
         "an image's title is not carried: the image sets without it" p]
+    let ds := if citesInls alt.toList then ds.push (routeDegraded file "image-alt-cite"
+        "a citation in an image's text alternative sets as its text, and its work is not cited" p)
+      else ds
     if text.isEmpty then
       (#[.ctrl "includegraphics" p, .group (textRaws dest p) p], ds)
     else
@@ -583,23 +605,6 @@ private def refsAtItems : List (Array Blk) → Option Pos
 
 end
 
-mutual
-
-/-- Whether inline content holds a citation. -/
-private def citesInl : Inl → Bool
-  | .cite _ _ => true
-  | .emph body _ => citesInls body.toList
-  | .strong body _ => citesInls body.toList
-  | .link _ _ body _ => citesInls body.toList
-  | .image _ _ alt _ => citesInls alt.toList
-  | .text .. | .code .. | .anchor .. | .soft _ | .hard _ => false
-
-private def citesInls : List Inl → Bool
-  | [] => false
-  | x :: rest => citesInl x || citesInls rest
-
-end
-
 /-- Whether a table's cells hold a citation. -/
 private def citesCells (cells : List (Array Inl)) : Bool := cells.any fun c => citesInls c.toList
 
@@ -740,10 +745,13 @@ without a comma" (some ⟨file, f.pos⟩) (some "convert the entries to a .bib f
       let lowered := inlListRaws file #[] #[] title.toList
       out := { out with title := some (title, f.pos), diags := out.diags ++ ds ++ lowered.2 }
     | "link-citations", v =>
-      if v.bool? == some false then
+      match v.bool? with
+      | some false =>
         let d := routeDegraded file "link-citations"
           "a citation links to its reference-list entry whatever 'link-citations' declares" f.pos
         out := { out with diags := out.diags.push d }
+      | some true => pure ()
+      | none => out := { out with diags := out.diags.push (unread f "its value is not true or false") }
     | _, _ => out := { out with diags := out.diags.push (unread f "its value is not one the key takes") }
   return out
 
@@ -795,8 +803,8 @@ public def splitMetadata (bs : Array Blk) : Array MetaField × Array Blk :=
 own diagnostics carrying `.md` spans; its metadata opens it, and its reference list stands in
 its first `::: {#refs}` division, else at its end, as Pandoc places it. -/
 public def desugar (file : String) (input : String) (dialect : Dialect := .document)
-    (role : Role := .document) : Array Raw × Array Diag :=
-  let read := blocksIn dialect file input (included := role == .included)
+    (role : Role := .document) (citing : Bool := false) : Array Raw × Array Diag :=
+  let read := blocksIn dialect file input (included := role == .included && citing)
   let split := splitMetadata read.1
   let m := metaRead file role split.1
   let blocks := split.2.toList
@@ -814,8 +822,9 @@ bibliography is declared for this file: nothing sets there" p] else #[]
 /-- The frontend a `.md` path selects: the reader plus the desugaring. -/
 public def read (file input : String) : Array Raw × Array Diag := desugar file input
 
-/-- A markdown file another document includes: its citations join the including document's. -/
-public def readIncluded (file input : String) : Array Raw × Array Diag :=
-  desugar file input (role := .included)
+/-- A markdown file another document includes: its citations, where `cites` says the including
+document reads them, join the including document's. -/
+public def readIncluded (file input : String) (cites : Bool) : Array Raw × Array Diag :=
+  desugar file input (role := .included) (citing := cites)
 
 end LeanTex.Core.Md

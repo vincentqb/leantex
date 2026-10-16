@@ -5499,7 +5499,9 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
   -- the mark links to the note's endnote entry (DPUB-ARIA `doc-noteref`)
   | .footnote num _ =>
     let n := num.getD 0
-    acc.push (Html.elem "sup"
+    -- Inside a link's text the mark is its number alone, as no anchor nests.
+    if cfg.inLink then acc.push (Html.elem "sup" #[Html.text (toString n)] #[("id", s!"fnref{n}")])
+    else acc.push (Html.elem "sup"
       #[Html.elem "a" #[Html.text (toString n)]
         #[("href", s!"#fn{n}"), ("id", s!"fnref{n}"),
           ("role", "doc-noteref"), ("style", "color: inherit")]])

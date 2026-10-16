@@ -351,7 +351,8 @@ def mdFileReader (files : List (String × String × String)) :
   match files.find? (·.1 == request.name.trimAscii.toString) with
   | none => return (none, context)
   | some (_, path, text) =>
-    let (sub, ds) := Surface.fragment .markdown path text request.pos
+    let cites := (request.options.splitOn ",").any (·.trimAscii.toString == "citations")
+    let (sub, ds) := Surface.fragment .markdown path text request.pos cites
     modify (· ++ ds)
     let (answer, context) := Elab.resumeInput nullReader context request.file sub
     return (some answer, context)
@@ -876,6 +877,13 @@ def bibResolve (src : String) (bibs : Array (String × String)) :
 def bibBuild (src : String) (bibs : Array (String × String)) : Ir.Doc × Array Diag :=
   let (doc, ds, bds, refs) := bibBuildRun src bibs
   (doc, Bib.accountFront ds bds #[] refs)
+
+/-- A body's text as its pages show it, each reference-list entry after its marker. -/
+def inkText (blocks : Array Ir.Block) : String :=
+  blocks.foldl (init := "") fun acc b => match b with
+    | .bibliography _ _ items => items.foldl (init := acc) fun acc it =>
+      acc ++ ((it.marker.map fun m => s!"[{m}] ").getD "") ++ Ir.plainText it.content
+    | _ => acc ++ Ir.blocksText #[b]
 
 /-- A markdown document built as `bibBuild` builds a TeX one, its bibliography from `.bib` texts by
 the names its metadata gives them. -/

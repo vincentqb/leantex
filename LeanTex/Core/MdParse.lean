@@ -543,6 +543,21 @@ def metadataAt (lines : Array Line) : Option (Array MetaField × Nat) := do
   let fields ← metaFields (lines.extract 1 closer)
   return (fields, closer + 1)
 
+/-- A metadata block closing the document, as Pandoc reads one after a blank line: `---`, no
+blank line, the mapping, and `---` or `...` with nothing but blank lines after it; its fields and
+the index of its opening line, past `from`. -/
+def closingMetadataAt (lines : Array Line) (from_ : Nat) : Option (Array MetaField × Nat) := do
+  let fence (k : Nat) : Bool := lines[k]?.any fun l => rstrip (sliceStr l.cs 0 l.cs.size) == "---"
+  let blank (k : Nat) : Bool := lines[k]?.all fun l => isBlankFrom l.cs 0
+  let last ← (List.range lines.size).reverse.find? (!blank ·)
+  guard (lines[last]?.any fun l =>
+    let t := rstrip (sliceStr l.cs 0 l.cs.size)
+    t == "---" || t == "...")
+  let opener ← (List.range last).reverse.find? fence
+  guard (opener > from_ && blank (opener - 1) && !blank (opener + 1))
+  let fields ← metaFields (lines.extract (opener + 1) last)
+  return (fields, opener)
+
 /-- A closing fence for an open one: at most three spaces of indent, the same
 char at least as long, nothing after it. -/
 def closesFence (cs : Array Char) (ch : Char) (len : Nat) : Bool := Id.run do
@@ -1494,11 +1509,13 @@ def citeMayOpen (c : Chars) (s : CiteScan) (i : Nat) : Bool :=
   else if s.closers.contains i then false
   else match (if i == 0 then none else c.at? (i - 1)) with
     | none => true
-    | some p => !(CiteKey.isAlnum p || p == '.')
+    | some p =>
+      -- Smart typography reads `...` as an ellipsis, which no word holds.
+      let ellipsis := p == '.' && i ≥ 3 && c.at? (i - 2) == some '.' && c.at? (i - 3) == some '.'
+      !(CiteKey.isAlnum p || (p == '.' && !ellipsis))
 
-/-- A citation key at `i`, Pandoc's `citeKey`: whether a `-` before the `@` suppresses the author,
-the key without its braces, and the index past it. A dash run's last hyphen suppresses nothing,
-since smart typography reads the run as a dash. -/
+/-- A citation key at `i`, Pandoc's `citeKey`: whether a `-` before the `@`, outside a dash run,
+suppresses the author, the key without its braces, and the index past it. -/
 def citeKeyAt (c : Chars) (s : CiteScan) (i : Nat) : Option (Bool × String × Nat) := Id.run do
   unless citeMayOpen c s i do return none
   let dash := c.at? i == some '-'
@@ -2291,22 +2308,22 @@ notes cannot hold: Pandoc reads it, here it sets as its text and its work goes u
 def nestedCites (file : String) (cpairs : Array CPair) : Array Diag := Id.run do
   let order := cpairs.qsort fun a b =>
     a.openTok < b.openTok || (a.openTok == b.openTok && a.closeTok > b.closeTok)
-  let mut open_ : Array CPair := #[]
+  let mut open_ : Array (CPair × Std.HashSet Nat) := #[]
   let mut out : Array Diag := #[]
   for cp in order do
     for _ in [0:open_.size] do
       match open_.back? with
-      | some top => if top.closeTok < cp.openTok then open_ := open_.pop else break
+      | some (top, _) => if top.closeTok < cp.openTok then open_ := open_.pop else break
       | none => break
-    if let some outer := open_.back? then
+    if let some (_, places) := open_.back? then
       -- A group's own key, read in-text by the scan before its bracket closed, is no inner one.
-      let own := (cp.spans[0]?).any fun sp => outer.spans.any (·.preTo == sp.preFrom)
+      let own := cp.spans.size == 1 && (cp.spans[0]?).any (places.contains ·.preFrom)
       unless own do
         out := out.push (Diag.of .W0392 "a citation inside another citation's prefix or suffix \
 sets as its text, and its work is not cited" (some ⟨file, cp.pos⟩)
           (some "close the first citation's brackets before it, or list both in one bracket \
 separated by ';'") (subject := some "md:cite-nested"))
-    open_ := open_.push cp
+    open_ := open_.push (cp, cp.spans.foldl (fun s sp => s.insert sp.preTo) {})
   return out
 
 /-- Inline structure for one stretch of text, in three passes, Pandoc's citations read where
@@ -2649,10 +2666,15 @@ public def blocksIn (dialect : Dialect) (file : String) (input : String) (includ
   let lines := splitLines input
   let mut frames : Array Frame := #[]
   let mut acc : Array Blk := #[]
-  -- premise: mdMetadataChecks — only a mapping at the first line is metadata
-  let (meta?, firstLine) := match (if doc then metadataAt lines else none) with
+  -- premise: mdMetadataChecks — only a mapping opening or closing the document is metadata
+  let (front?, firstLine) := match (if doc then metadataAt lines else none) with
     | some (fields, next) => (some fields, next)
     | none => (none, 0)
+  let (back?, lastLine) := match (if doc then closingMetadataAt lines firstLine else none) with
+    | some (fields, opener) => (some fields, opener)
+    | none => (none, lines.size)
+  let meta? := if front?.isNone && back?.isNone then none
+    else some (front?.getD #[] ++ back?.getD #[])
   if let some fields := meta? then acc := acc.push (.metadata fields { line := 1, col := 1 })
   -- premise: mdCiteChecks — citations are read only where a bibliography takes them
   let cites := doc && (included || meta?.any bibDeclared)
@@ -2667,7 +2689,7 @@ public def blocksIn (dialect : Dialect) (file : String) (input : String) (includ
   let mut divs : Array Bool := #[]
   let mut refsSeen := false
   for li in [0:lines.size] do
-    if li < firstLine then continue
+    if li < firstLine || li ≥ lastLine then continue
     let some ln := lines[li]? | continue
     let cs := ln.cs
     let lpos : Pos := { line := ln.no, col := 1 }

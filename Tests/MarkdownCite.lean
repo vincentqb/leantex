@@ -1,10 +1,11 @@
 module
 
 public import Tests.Support
+public import LeanTex.Cli.Driver
 
 public section
 
-open LeanTex.Core
+open LeanTex.Core LeanTex.Cli.Driver
 
 /-! Markdown's citations: Pandoc's syntax, read as its manual and its reader read it, lowered as
 its LaTeX writer lowers it under natbib, resolved through the one bibliography path, and spelled
@@ -54,7 +55,8 @@ def pandocNatbib : List (String × String) :=
    ("[@smith{}, 99 years later]", "\\citep[, 99 years later]{smith}"),
    ("[*see* @a]", "\\citep[\\emph{see}][]{a}"), ("[@a, and *passim*]", "\\citep[and \\emph{passim}]{a}"),
    ("[@a,p. 33]", "\\citep[p. 33]{a}"), ("[@a: p. 33]", "\\citep[p. 33]{a}"),
-   ("[@a\n, p. 33]", "\\citep[p. 33]{a}"), ("x @a-@b ends", "x \\citet{a}\\citeyearpar{b} ends"),
+   ("x @a-@b ends", "x \\citet{a}\\citeyearpar{b} ends"), ("[@a.]", "\\citep{a}"),
+   ("[@a. p. 3]", "\\citep[p. 3]{a}"), ("[@a! p. 3]", "\\citep[p. 3]{a}"), ("x...@a ends", "x...\\citet{a} ends"),
    ("x --@a ends", "x --\\citet{a} ends"), ("[--@a]", "\\citep[--][]{a}")]
 
 /-- Keys as Pandoc's `citeKey` reads them, with what stands after the key. -/
@@ -83,7 +85,15 @@ def notCites : List (String × String) :=
 def texTwinCases : List (String × String) :=
   [("\\citep{a}", "[@a]"), ("\\citep[see][p. 3]{a,b}", "[see @a; @b, p. 3]"),
    ("\\citet{a}", "@a"), ("\\citet[p. 4]{a}", "@a [p. 4]"), ("\\citeyearpar{a}", "[-@a]"),
-   ("\\citet{a} \\citep{b}", "@a&#32;[@b]")]
+   ("\\citet{a} \\citep{b}", "@a&#32;[@b]"), ("x -\\citet{a}", "x -<!-- -->@a"),
+   ("\\citet{a}\\citep{b}", "@a<!-- -->[@b]"), ("\\citep{a}\\citep{b}", "[@a]<!-- -->[@b]"),
+   ("word\\citet{a}", "word<!-- -->@a"), ("x-\\citet{a}", "x-@a")]
+
+/-- TeX bodies whose twin cannot spell every citation where it stands, so it sets them as their
+marks. -/
+def inkTwinCases : List String :=
+  ["\\citet*{a} and \\citep{b}; \\citep{a}(x) and \\citep{roe2020}.",
+   "\\citeauthor{roe2020} and \\citep{b} and \\citep{a}."]
 
 /-- A tex body with natbib loaded and `works.bib` its bibliography. -/
 def worksTex (body : String) : String :=
@@ -96,9 +106,11 @@ def mdCiteChecks (ref : IO.Ref (List String)) : IO Unit := do
     let m := citesOf (elabCited md).1
     let l := citesOf (elabStr (dvDoc "\\usepackage{natbib}\n" latex)).1
     t s!"cite: {repr md} elaborates as Pandoc's natbib writer sets it, {latex}" (!m.isEmpty && m == l)
-  -- Pandoc's evident-intent reading, not its writer's wart: a suffix's space before its comma.
-  t "cite: a suffix spaced before its comma sets without the comma"
-    (citesOf (elabCited "[@a , p. 33]").1 == citesOf (elabStr (dvDoc "" "\\citep[p. 33]{a}")).1)
+  -- Pandoc's evident-intent reading, not its writer's wart: a suffix's space or line ending before
+  -- its comma.
+  for md in ["[@a , p. 33]", "[@a\n, p. 33]"] do
+    t s!"cite: {repr md}, its comma after white space, sets without the comma"
+      (citesOf (elabCited md).1 == citesOf (elabStr (dvDoc "" "\\citep[p. 33]{a}")).1)
   t "cite: a suffix keeps a balanced bracket, which natbib's optional argument cannot hold"
     ((citesOf (elabCited "[@a, p. 3 [note]]").1).map (·.1.post) == #["p. 3 [note]"])
   for (md, key, after) in keyCases do
@@ -132,14 +144,30 @@ def mdCiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (_, ds) := elabCited "[*see* @a] and [@a, `code`]"
   t "cite: a formatted prefix or suffix is named, once per citation"
     ((ds.filter (·.subject == some "md:cite-note")).size == 2)
-  for md in ["[see @a and @b] end", "[@a, see @b] end", "[see [@a] and @b] end"] do
+  for md in ["[see @a and @b] end", "[@a, see @b] end", "[see [@a] and @b] end", "[@a [@b]] end",
+      "[see @a [p. 3; @b]] end", "[x @a [@b]] end"] do
     let (_, ds) := elabCited md
     t s!"cite: {repr md}, a citation inside another's note, is named once"
       ((ds.filter (·.subject == some "md:cite-nested")).size == 1)
+  let (_, ds) := elabCited "[see @a [p. 3]] end"
+  t "cite: a citation's own locator in its suffix names no nested citation"
+    (!ds.any (·.subject == some "md:cite-nested"))
   let (d, ds) := elabCited "[see @{c,d}; @a] end"
   t "cite: a key natbib cannot carry sets as its text, the group's other works cited"
     (keysOf d == ["a"] && hasStr (Ir.blocksText d.body) "@{c,d}" &&
       ds.any (·.subject == some "md:cite-key"))
+  let (_, ds) := elabCited "An image ![see @a here](img.svg) end."
+  t "cite: a citation in an image's text alternative is named, its work uncited"
+    (ds.any (·.subject == some "md:image-alt-cite"))
+  -- An included file reads citations where the TeX document's markdown package says to.
+  let part := "Thanks to @octocat and [@a].\n"
+  for (pre, opts, cites) in [("\\usepackage{markdown}", "", false),
+      ("\\usepackage{markdown}", "[citations]", true)] do
+    let (d, ds) := includedDoc "h.tex" (dvDoc (pre ++ "\n") s!"\\markdownInput{opts}\{p.md}")
+      [("p.md", "p.md", part)]
+    t s!"include: under {pre} and \\markdownInput{opts}, the file reads citations: {cites}"
+      (!(citesOf d).isEmpty == cites &&
+        (cites || (hasStr (Ir.blocksText d.body) "@octocat" && !ds.any (·.kind == .W0351))))
   -- Citations are read only where a bibliography takes them: a document and its own declaration.
   let (d, ds) := elabMd "Thanks to @octocat and [@a].\n"
   t "cite: a document declaring no bibliography keeps its '@' text, as Pandoc sets it uncited"
@@ -163,13 +191,49 @@ def mdCiteChecks (ref : IO.Ref (List String)) : IO Unit := do
     let twin := MarkdownDoc.emit d
     t s!"twin: tex's {tex} spells {repr spelled} ({repr twin})" (hasStr twin spelled)
     t s!"twin: tex's {tex} reads back to its citations" (citesOf (elabMd twin).1 == citesOf d)
-  for tex in ["\\citet{a,b}", "\\Citep{a}", "\\citeauthor{a}", "\\citep*{a}", "x -\\citet{a}",
-      "\\citet{a}\\citep{b}"] do
+  for tex in ["\\citet{a,b}", "\\Citep{a}", "\\citeauthor{a}", "\\citep*{a}"] do
     let (d, _) := elabStr (worksTex tex)
     let twin := MarkdownDoc.emit d
-    let back := citesOf (elabMd twin).1
-    t s!"twin: tex's {tex}, which Pandoc's syntax cannot spell there, writes no citation that reads \
-back as another ({repr twin})" (back.all fun c => (citesOf d).contains c)
+    t s!"twin: tex's {tex}, which Pandoc's syntax cannot spell, sets as its marks and declares no \
+bibliography ({repr twin})" ((citesOf (elabMd twin).1).isEmpty && !hasStr twin "bibliography:")
+  -- A numbered list counts in citation order, so a twin that cannot keep every citation in place
+  -- sets them all as their marks, linked to the entries it writes.
+  let numbered (body : String) : String := dvDoc "\\usepackage[numbers]{natbib}\n"
+    (body ++ "\n\n\\bibliographystyle{unsrtnat}\n\\bibliography{works.bib}")
+  for tex in inkTwinCases do
+    let (d, _) := bibBuild (numbered tex) #[("works.bib", worksBib)]
+    let twin := MarkdownDoc.emit d
+    let (back, _) := mdBibBuild twin #[("works.bib", worksBib)]
+    t s!"twin: {repr tex}'s twin sets as its marks and reads back to its text ({repr twin})"
+      (!hasStr twin "bibliography:" && hasStr twin "<a name=\"ref-a\"></a>" &&
+        inkText back.body == inkText d.body)
+  let (d, _) := bibBuild (numbered "Body\\footnote{See \\citet{a}.} and \\citep{b}.")
+    #[("works.bib", worksBib)]
+  let twin := MarkdownDoc.emit d
+  t s!"twin: a citation in a footnote, which the twin writes after the body, sets the twin's \
+citations as their marks ({repr twin})"
+    (!hasStr twin "bibliography:" && hasStr twin "See Ash \\[[1](#ref-a)\\]")
+  let (d, _) := bibBuild (numbered "\\citep{a} and \\citep{b}.\n\n\\bibliography{works.bib}")
+    #[("works.bib", worksBib)]
+  t "twin: a document with two lists sets its citations as their marks"
+    (!hasStr (MarkdownDoc.emit d) "bibliography:")
+  let (d, _) := bibBuild (numbered "\\citep{b} and \\citet{a}.") #[("works.bib", worksBib)]
+  let twin := MarkdownDoc.emit d
+  t s!"twin: a declared list's entries stay readable in its division, the bibliography declared \
+last ({repr twin})"
+    (hasStr twin "::: {#refs}\n<!--\n[1] Bo Birch" && hasStr twin "\n---\nbibliography: works.bib" &&
+      twin.endsWith "---\n")
+  let (d, _) := mdBibBuild (worksMeta ++ "# A placeholder note\n\nText [@a].\n") #[("works.bib", worksBib)]
+  t "twin: a cited document's twin still opens on its title, as llms.txt reads one"
+    ((MarkdownDoc.emit d).startsWith "# A placeholder note")
+  let (d, _) := elabCited "| Works |\n| --- |\n| [@a, x \\| y] |"
+  let twin := MarkdownDoc.emit d
+  t s!"twin: a citation's note in a table cell keeps its pipe escaped once ({repr twin})"
+    (hasStr twin "[@a, x \\| y]" && (elabMd twin).1.body == d.body)
+  t "twin: the bibliography is named from where the twin is written"
+    (relativeFrom "out" "sub/refs.bib" == some "../sub/refs.bib" &&
+      relativeFrom "sub" "sub/refs.bib" == some "refs.bib" &&
+      relativeFrom "." "refs.bib" == some "refs.bib" && relativeFrom "/a" "refs.bib" == none)
   let (d, _) := elabCited "Write x\\@a and \\@b and [x@y.org], citing [@a]."
   let twin := MarkdownDoc.emit d
   t s!"twin: an at sign that would open a citation is escaped, an e-mail's is not ({repr twin})"
@@ -263,6 +327,13 @@ def mdMetadataChecks (ref : IO.Ref (List String)) : IO Unit := do
     t s!"metadata: a block {why} stays markdown" (hasStr (Ir.blocksText d.body) "Text" &&
       (listOf d).isEmpty && (hasStr (Ir.blocksText d.body) "bibliography" ||
         hasStr (Ir.blocksText d.body) "Just a line"))
+  let (d, _) := mdBibBuild "Text [@a].\n\n---\nbibliography: works.bib\n---\n" bibs
+  t "metadata: a block closing the document after a blank line declares the bibliography, as \
+Pandoc reads one" (listOf d == #["a"] && !hasStr (Ir.blocksText d.body) "bibliography")
+  let (_, ds) := mdBibBuild "---\nbibliography: works.bib\nlink-citations: maybe\n---\n\nText [@a].\n"
+    bibs
+  t "metadata: a link-citations value neither true nor false is named"
+    (ds.any (·.subject == some "md:meta:link-citations"))
   -- YAML's spellings of a key, a path and a list of paths.
   for (form, src) in [("a quoted path", "bibliography: 'works.bib'"),
       ("a double-quoted path", "bibliography: \"works.bib\""),
@@ -332,6 +403,7 @@ After.\n") bibs
   t "metadata: a {#refs} division with no bibliography is named" (ds.any (·.subject == some "md:refs"))
   -- An included file's metadata: its nocite joins the document's, its bibliography is the document's.
   let (raws, ds) := Md.readIncluded "part.md" "---\nbibliography: works.bib\nnocite: '@b'\n---\n\nText.\n"
+    true
   t "metadata: an included file's bibliography is named, its nocite read"
     (ds.any (·.subject == some "md:meta:bibliography") &&
       raws.any (· matches .ctrl "nocite" _) && !raws.any (· matches .ctrl "markdown bibliography" _))

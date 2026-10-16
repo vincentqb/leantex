@@ -9064,16 +9064,20 @@ English captions and patterns stand in" pos
           (help := "put poster and size options on each '\\animategraphics'; playback settings remain unsupported")
   else if p == "markdown" then
     -- premise: markdownInputChecks — the driver reads native fragments
-    let opts := (opt.getD "").trimAscii.toString
-    if opts.isEmpty then
+    let given := (KeyVal.items (opt.getD "")).toList.map (·.trimAscii.toString)
+    -- The package reads Pandoc's citations in its files under its `citations` option, which the
+    -- driver's reader reads as it fulfils each `\markdownInput`.
+    let citing (o : String) : Bool := o == "citations" || o == "citations=true"
+    let others := given.filter fun o => !o.isEmpty && !citing o
+    if others.isEmpty then
       discard s!"\\{name}\{{p}}"
         "native Markdown fragments are read at each '\\markdownInput' command"
         s!"{name}:{p}" pos
     else
-      for o in KeyVal.items opts do
+      for o in others do
         sayOnce ("param:usepackage:markdown:" ++ (KeyVal.entry o).1) .W0110
           s!"'markdown' package option '{o}' is not applied; \
-no package options are supported by the strict native Markdown dialect" pos
+the strict native Markdown dialect reads only 'citations'" pos
           (help := "remove the package options")
   else if p == "unicode-math" && opt.isSome then
     out := out ++ (← unicodeMathOptions

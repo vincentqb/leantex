@@ -109,7 +109,7 @@ def citeInkRows (emit : Ir.Doc → String) (docs : Array (Ir.Doc × Array (Strin
   let mut same : Nat := 0
   for (d, found) in docs do
     let back := rebuiltWith emit d found
-    if Ir.blocksText back.body == Ir.blocksText d.body then same := same + 1
+    if inkText back.body == inkText d.body then same := same + 1
   return (#[{ item := "cite.reread-ink", value := (same : Int) }], docs.size, same)
 
 /-- The corpus documents, each with the `.bib` texts beside the corpus its bibliography names. -/
@@ -173,16 +173,12 @@ def mdtwinSelftest : IO UInt32 := tierSelftest "mdtwin" fun no => do
   let spelledBack := rebuiltWith MarkdownDoc.emit cited bibs
   let inkedBack := rebuiltWith MarkdownDoc.emit { cited with natbib := none } bibs
   no "blind spot: cite.reread-ink is blind to a twin setting its citations as their ink"
-    (Ir.blocksText inkedBack.body == Ir.blocksText spelledBack.body &&
-      Ir.blocksText spelledBack.body == Ir.blocksText cited.body)
+    (inkText inkedBack.body == inkText spelledBack.body && inkText spelledBack.body == inkText cited.body)
   no "blind spot: the re-read body sees it, the inked twin reading back no citation"
     (inkedBack.body != spelledBack.body && spelledBack.body == cited.body)
   -- A twin that drops its metadata block is seen: its citations read back as their source.
   let dropMeta (d : Ir.Doc) : String :=
-    let t := MarkdownDoc.emit d
-    match t.splitOn "\n---\n\n" with
-    | _ :: rest@(_ :: _) => if t.startsWith "---\n" then "\n---\n\n".intercalate rest else t
-    | _ => t
+    ((MarkdownDoc.emit d).splitOn "\n---\nbibliography:").headD ""
   let (_, citedN, inked) := citeInkRows MarkdownDoc.emit #[(cited, bibs)]
   let (_, _, dropped) := citeInkRows dropMeta #[(cited, bibs)]
   no s!"planted: a twin without its metadata lowers cite.reread-ink ({inked} → {dropped})"

@@ -687,8 +687,8 @@ private theorem tail_adm (file : String) (m : MetaRead) (cited placed : Bool) :
     · exact adm_append (titleRaws_adm file m) (list_adm m cited)
 
 public theorem desugar_vocabulary_mem (file input : String) (dialect : Dialect := .document)
-    (role : Role := .document) :
-    ∀ r ∈ (desugar file input dialect role).1, vocabulary.admits r = true := by
+    (role : Role := .document) (citing : Bool := false) :
+    ∀ r ∈ (desugar file input dialect role citing).1, vocabulary.admits r = true := by
   unfold desugar
   exact adm_append (adm_append (prelude_adm _) (blkListRaws_adm file _ (list_adm _ _) _ #[] #[]
     adm_empty)) (tail_adm _ _ _ _)
@@ -697,8 +697,8 @@ public theorem read_desugar_exact (file input : String) : read file input = desu
   unfold read
   rfl
 
-public theorem readIncluded_desugar_exact (file input : String) :
-    readIncluded file input = desugar file input .document .included := by
+public theorem readIncluded_desugar_exact (file input : String) (cites : Bool) :
+    readIncluded file input cites = desugar file input .document .included cites := by
   unfold readIncluded
   rfl
 
@@ -807,8 +807,9 @@ private theorem tail_starts (file : String) (m : MetaRead) (cited placed : Bool)
       · exact Or.inr ⟨r, Array.mem_append.mpr (Or.inr hr), hs⟩
 
 public theorem desugar_blockStart_contract (file input : String) (dialect : Dialect := .document)
-    (role : Role := .document) (h : (desugar file input dialect role).1 ≠ #[]) :
-    ∃ r ∈ (desugar file input dialect role).1, BlockStart r := by
+    (role : Role := .document) (citing : Bool := false)
+    (h : (desugar file input dialect role citing).1 ≠ #[]) :
+    ∃ r ∈ (desugar file input dialect role citing).1, BlockStart r := by
   unfold desugar at h ⊢
   exact (starts_append (starts_append (prelude_starts _)
     (blkListRaws_starts file _ (list_starts _ _) _ #[] #[] (Or.inl rfl)))

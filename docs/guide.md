@@ -52,11 +52,13 @@ line breaks from the TeX document around it. Include one with:
 Markdown cites as Pandoc does: `[@key]`, `[see @key, p. 33; @other]`,
 `[-@key]` without the author's name, and `@key` or `@key [p. 33]` within a
 sentence. A key is letters, digits and `_` with single punctuation marks
-inside it (`:.#$%&-+?<>~/`), or anything braced, `@{https://example.org/x}`;
-an e-mail address, code and `\@` stay text. Citations are read only in a
-document that declares its bibliography, in a YAML metadata block on its
-first line, as Pandoc's CommonMark reader reads one; without it an `@name`
-stays text, and so it does in a code file's documentation:
+inside it (`:.#$%&-+?<>~/`), or braced, without white space,
+`@{https://example.org/x}`; an e-mail address, code and `\@` stay text, and a
+key no natbib key list can hold, one with a comma or a brace, sets as its text,
+named. Citations are read only in a document that declares its bibliography,
+in a YAML metadata block on its first line, or closing the document after a
+blank line, as Pandoc reads one; without it an `@name` stays text, and so it
+does in a code file's documentation:
 
 ```markdown
 ---
@@ -76,14 +78,17 @@ sets at the end. The list stands in the first `::: {#refs}` division, else at
 the end, and only where something is cited. Citations set as Pandoc's LaTeX
 writer sets them under natbib, with the numbering, list, styles and
 diagnostics of TeX's `\cite`; the web page links each to its entry. A
-citation inside another's note sets as its text, named. The markdown twin
-writes citations back in Pandoc's syntax under a metadata block naming the
-bibliography, with every listed entry as `nocite` and the list's division,
-where the document's citation setup is one markdown metadata states; else it
-sets each citation as its marks, linked to the entries it writes. Every other
-metadata key is named as not read, `csl` among them, since no CSL processor
-runs. A Markdown file included in TeX cites into the TeX document's
-bibliography.
+citation inside another's note, or in an image's text alternative, sets as
+its text, named. The markdown twin writes citations back in Pandoc's syntax,
+the list as its division with the entries in a comment there, and closes with
+a metadata block naming the bibliography from where the twin stands, every
+listed entry as `nocite`, wherever each citation reads back so in one list;
+otherwise it sets every citation as its marks, linked to the entries it
+writes. Every other metadata key is named as not read, `csl` among them, since
+no CSL processor runs. A Markdown file included in TeX reads citations, into
+the TeX document's bibliography, where the document loads the markdown package
+with its `citations` option or `\markdownInput[citations]{…}` asks, as the
+markdown package reads them.
 
 Source files are read as UTF-8 unless a byte-order mark says UTF-16, and a
 line ends at LF, CR LF or a CR alone. A TeX document that declares

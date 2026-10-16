@@ -11,6 +11,7 @@ import LeanTex.Core.Bib
 import LeanTex.Core.BibStyle
 public import LeanTex.Core.BibText
 import LeanTex.Core.Data
+import LeanTex.Core.KeyVal
 import LeanTex.Cli.DriverDiag
 import LeanTex.Cli.LeanFactsFile
 import LeanTex.Cli.LeanLinks
@@ -57,6 +58,8 @@ private structure InputLog where
   /-- Each file read, by the path it was read at, which publication must never
   overwrite. -/
   reads : Array String := #[]
+  /-- Whether the markdown package loaded with its `citations` option, so its files read them. -/
+  markdownCitations : Bool := false
 
 private abbrev ReadM := StateT InputLog IO
 
@@ -87,8 +90,8 @@ private def readTexOnce (path : String) (bytes : ByteArray) : ReadM Encoding.Fil
 `Surface.fragment` of the same AST, after LaTeX's file-name sanitizing. -/
 private def readFragment (dir : System.FilePath) (file name : String) (pos : Pos)
     (prefer : String → String) (command : String)
-    (decode : String → ByteArray → ReadM Encoding.FileText) (surface : Ir.Surface) :
-    ReadM (Array Parse.Raw × Array Diag) := do
+    (decode : String → ByteArray → ReadM Encoding.FileText) (surface : Ir.Surface)
+    (cites : Bool := false) : ReadM (Array Parse.Raw × Array Diag) := do
   -- Do not turn an unmatched quote into an accepted, unquoted filename.
   let name := if name.toList.count '"' % 2 == 0 then
       let unquoted := name.replace "\"" ""
@@ -104,7 +107,7 @@ private def readFragment (dir : System.FilePath) (file name : String) (pos : Pos
     | .ok bytes =>
       modify fun log => { log with reads := log.reads.push path.toString }
       let read ← decode path.toString bytes
-      return Surface.fragment surface path.toString read.text pos
+      return Surface.fragment surface path.toString read.text pos cites
   else
     -- The span names the file the `\input` sits in, where the reader fixes it.
     let d := DriverDiag.inputMissing preferred (some ⟨file, pos⟩) command
@@ -186,13 +189,18 @@ private def readAt (dir : System.FilePath) (root : String) (depth : Nat) :
       let (sub, diags) ← if request.command == "markdownInput" then do
           let prefer := fun name : String =>
             if (System.FilePath.mk name).extension.isSome then name else name ++ ".tex"
+          let given := (KeyVal.items request.options).toList.map (·.trimAscii.toString)
+          let citing (o : String) : Bool := o == "citations" || o == "citations=true"
+          let cites := (← get).markdownCitations || given.any citing
           let (sub, ds) ← readFragment dir request.file request.name request.pos prefer
             "markdownInput" (fun path bytes => do
               return (← decodeOnce path fun _ => Encoding.readMarkdown path bytes).1) .markdown
-          let ds := if request.options.isEmpty then ds else ds.push <|
-            Diag.of .W0110 s!"'\\markdownInput' options '{request.options}' are not applied; \
-the file uses the Markdown document dialect" (some ⟨request.file, request.pos⟩)
-              (subject := some "markdownInput:options")
+            cites
+          let others := given.filter fun o => !o.isEmpty && !citing o
+          let ds := if others.isEmpty then ds else ds.push <|
+            Diag.of .W0110 s!"'\\markdownInput' options '{", ".intercalate others}' are not \
+applied; the file uses the Markdown document dialect, which reads only 'citations'"
+              (some ⟨request.file, request.pos⟩) (subject := some "markdownInput:options")
           pure (sub, ds)
         else if request.command == "inputminted" then readMinted dir request
         else if request.command == "inputlean" then readLean dir request
@@ -207,6 +215,9 @@ the file uses the Markdown document dialect" (some ⟨request.file, request.pos�
     let mut handled := false
     -- Each member executes before the next, since an earlier member may load a later sibling.
     for (name, call) in request.packageCalls do
+      if name == "markdown" && (KeyVal.items request.options).any
+          (fun o => o.trimAscii.toString == "citations" || o.trimAscii.toString == "citations=true") then
+        modify fun log => { log with markdownCitations := true }
       if name == "inputenc" && !(← get).inputenc then
         modify fun log => { log with
           inputenc := true

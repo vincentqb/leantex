@@ -587,57 +587,57 @@ private theorem bodyIsBlock_of_blockStart (body : Array Raw) (h : ∃ r ∈ body
   exact bodyIsBlockList_of_mem body.toList r (Array.mem_toList_iff.mpr hr)
     (bodyIsBlockOne_of_blockStart r hs)
 
-private theorem markdownInput_splice (ctx : Ctx) (f t : String) (pos : Pos)
+private theorem markdownInput_splice (ctx : Ctx) (f t : String) (cites : Bool) (pos : Pos)
     (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles) (hp : pos.origins = [])
-    (hne : (Md.readIncluded f t).1 ≠ #[]) :
-    InputSplice ctx (Md.readIncluded f t).1 pos := by
-  have hread : (Md.readIncluded f t).1 = (Md.desugar f t .document .included).1 := by
+    (hne : (Md.readIncluded f t cites).1 ≠ #[]) :
+    InputSplice ctx (Md.readIncluded f t cites).1 pos := by
+  have hread : (Md.readIncluded f t cites).1 = (Md.desugar f t .document .included cites).1 := by
     rw [Md.readIncluded_desugar_exact]
   rw [hread] at hne ⊢
   refine ⟨hm, hp, bodyIsBlock_of_blockStart _
-    (Md.desugar_blockStart_contract f t .document .included hne), ?_⟩
+    (Md.desugar_blockStart_contract f t .document .included cites hne), ?_⟩
   intro n p hback
-  have hmem : Raw.ctrl n p ∈ (Md.desugar f t .document .included).1 := by
+  have hmem : Raw.ctrl n p ∈ (Md.desugar f t .document .included cites).1 := by
     rw [Array.back?_eq_getElem?] at hback
     exact Array.mem_of_getElem? hback
-  have hadm := Md.desugar_vocabulary_mem f t .document .included _ hmem
+  have hadm := Md.desugar_vocabulary_mem f t .document .included cites _ hmem
   simp only [Md.Vocab.admits, Bool.or_eq_true, List.contains_iff_mem] at hadm
   exact markdownVocabulary_contract.2 n (List.mem_append.mpr hadm)
 
-private theorem markdownInput_scope_exact (ctx : Ctx) (f t : String) (pre post : Array Raw)
+private theorem markdownInput_scope_exact (ctx : Ctx) (f t : String) (cites : Bool) (pre post : Array Raw)
     (pos : Pos) (st : ESt)
     (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles) (hp : pos.origins = [])
-    (hne : (Md.readIncluded f t).1 ≠ #[])
+    (hne : (Md.readIncluded f t cites).1 ≠ #[])
     (hpre : pre.all sourceBlank = true) (hpost : post.all sourceBlank = true) :
-    (elabBlockScope ctx (pre ++ (Surface.fragment .markdown f t pos).1 ++ post)).run st =
+    (elabBlockScope ctx (pre ++ (Surface.fragment .markdown f t pos cites).1 ++ post)).run st =
       let r := (elabBlockScope { ctx with file := f, callSite := none }
-        (Md.readIncluded f t).1).run st
+        (Md.readIncluded f t cites).1).run st
       (Ir.markDisplay false (post.any (· matches .par _)) false 0 r.1, r.2) :=
-  elabBlockScope_input_exact ctx f _ pre post pos st (markdownInput_splice ctx f t pos hm hp hne)
+  elabBlockScope_input_exact ctx f _ pre post pos st (markdownInput_splice ctx f t cites pos hm hp hne)
     hpre hpost
 
-public theorem markdownInput_blocks_exact (ctx : Ctx) (f t : String) (pre post : Array Raw)
+public theorem markdownInput_blocks_exact (ctx : Ctx) (f t : String) (cites : Bool) (pre post : Array Raw)
     (pos : Pos) (st : ESt)
     (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles) (hp : pos.origins = [])
-    (hne : (Md.readIncluded f t).1 ≠ #[])
+    (hne : (Md.readIncluded f t cites).1 ≠ #[])
     (hpre : pre.all sourceBlank = true) (hpost : post.all sourceBlank = true) :
-    (elabBlocks ctx (pre ++ (Surface.fragment .markdown f t pos).1 ++ post)).run st =
+    (elabBlocks ctx (pre ++ (Surface.fragment .markdown f t pos cites).1 ++ post)).run st =
       let r := (elabBlocks { ctx with file := f, callSite := none }
-        (Md.readIncluded f t).1).run st
+        (Md.readIncluded f t cites).1).run st
       (Ir.markDisplay false (post.any (· matches .par _)) false 0 r.1, r.2) := by
   rw [elabBlocks_run, elabBlocks_run]
-  exact markdownInput_scope_exact ctx f t pre post pos _ hm hp hne hpre hpost
+  exact markdownInput_scope_exact ctx f t cites pre post pos _ hm hp hne hpre hpost
 
-public theorem markdownInput_blocks_text (ctx : Ctx) (f t : String) (pre post : Array Raw)
+public theorem markdownInput_blocks_text (ctx : Ctx) (f t : String) (cites : Bool) (pre post : Array Raw)
     (pos : Pos) (st : ESt)
     (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles) (hp : pos.origins = [])
-    (hne : (Md.readIncluded f t).1 ≠ #[])
+    (hne : (Md.readIncluded f t cites).1 ≠ #[])
     (hpre : pre.all sourceBlank = true) (hpost : post.all sourceBlank = true) :
     Ir.blocksText
-        ((elabBlocks ctx (pre ++ (Surface.fragment .markdown f t pos).1 ++ post)).run st).1 =
+        ((elabBlocks ctx (pre ++ (Surface.fragment .markdown f t pos cites).1 ++ post)).run st).1 =
       Ir.blocksText ((elabBlocks { ctx with file := f, callSite := none }
-        (Md.readIncluded f t).1).run st).1 := by
-  rw [markdownInput_blocks_exact ctx f t pre post pos st hm hp hne hpre hpost]
+        (Md.readIncluded f t cites).1).run st).1 := by
+  rw [markdownInput_blocks_exact ctx f t cites pre post pos st hm hp hne hpre hpost]
   exact Ir.markDisplay_text false _ false 0 _
 
 end LeanTex.Core.Elab
