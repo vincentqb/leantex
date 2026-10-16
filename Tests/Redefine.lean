@@ -577,3 +577,40 @@ def seamChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := 
   t "ignorespacesafterend skips the spaces after the environment's end"
     (same after use "Inline Lead words\\ \\ Middle words\\ \\ Tail wordsafter." &&
       !((dvE (dvDoc after use)).any (·.code == "W0301")))
+
+/-- A built-in the engine ignores every definition of, defined through each definer from a style
+file: one refusal at the definition's site accounts for it, its lossy text raises nothing and the
+built-in's page stands. -/
+def ignoredDefinitionChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let definitions : List (String × String) :=
+    [("NewDocumentCommand", "\\NewDocumentCommand{\\varul}{m}{\\ifmmode\\underline{#1}\\else#1\\fi}"),
+     ("RenewDocumentCommand", "\\RenewDocumentCommand{\\underline}{m}{\\raisebox{1pt}[0pt][0pt]{#1}}"),
+     ("newcommand", "\\newcommand{\\sout}[1]{\\setlength{\\fboxsep}{2pt}#1}"),
+     ("renewcommand", "\\renewcommand{\\ul}[1]{\\newcommand{\\zzinner}{#1}\\zzinner}"),
+     ("DeclareRobustCommand", "\\DeclareRobustCommand{\\uline}[1]{\\ifmmode#1\\fi}"),
+     ("def", "\\def\\varul#1{\\raisebox{1pt}[0pt][0pt]{#1}}"),
+     ("renewenvironment", "\\renewenvironment{itemize}{\\ifmmode x\\fi}{\\setlength{\\fboxsep}{2pt}}"),
+     ("newenvironment", "\\newenvironment{verbatim}{\\raisebox{1pt}[0pt][0pt]{x}}{}")]
+  let body := "Alpha \\varul{bravo} \\sout{charlie} \\ul{delta} \\uline{echo} \\underline{golf}.\n" ++
+    "\\begin{itemize}\\item Foxtrot words.\\end{itemize}"
+  let source (pre : String) : String :=
+    "\\documentclass{article}\n" ++ pre ++ "\n\\begin{document}\n" ++ body ++ "\n\\end{document}\n"
+  let pagesOfDoc (doc : Ir.Doc) : String := reprStr (layoutOf fonts doc).pages
+  let base := pagesOfDoc (elabStr (source "")).1
+  IO.FS.withTempDir fun dir => do
+    let file := (dir / "host.tex").toString
+    for (definer, line) in definitions do
+      IO.FS.writeFile (dir / "zzbuiltin.sty") (line ++ "\n")
+      let (toks, ld) := Lex.lex file (source "\\usepackage{zzbuiltin}")
+      let (raws, pd) := Parse.parse file toks
+      let (executed, ids, _) ← LeanTex.Cli.Input.expandInputs file raws
+      let (doc, ds) := Elab.runExecuted file executed (ld ++ pd ++ ids)
+      let mine := ds.filter (·.span.any (·.file.endsWith "zzbuiltin.sty"))
+      t s!"ignored definitions: a '\\{definer}' of a built-in is its one refusal, at its site"
+        (mine.size == 1 && mine.all fun d => d.code == "W0303" && d.span.any (·.pos.line == 1))
+      t s!"ignored definitions: a '\\{definer}' of a built-in leaves the built-in's page"
+        (pagesOfDoc doc == base)
+      let (_, inline) := elabStr (source line)
+      t s!"ignored definitions: a '\\{definer}' of a built-in in the preamble is its one refusal"
+        ((inline.filter (·.span.any (·.pos.line == 2))).map (·.code) == #["W0303"])

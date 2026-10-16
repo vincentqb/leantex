@@ -5956,6 +5956,12 @@ as they are. -/
 private def providedNames : List String :=
   renderedBuiltins ++ structuralNames ++ builtinEnvNames.map Tcolorbox.bindingName
 
+/-- The built-ins whose every definition is ignored whole, environments as their binding name:
+an abstract's redefinition is read for its heading and size, a float's for its kernel core. -/
+public def ignoredDefNames : List String :=
+  structuralNames ++ (builtinEnvNames.filter fun e =>
+    e != "abstract" && !Compat.floatRedefEnvs.contains e).map Tcolorbox.bindingName
+
 private def _root_.LeanTex.Core.Ir.PageSpec.textWidth (p : PageSpec) : Sp :=
   p.width - 2 * p.hmargin
 
@@ -16390,7 +16396,7 @@ public def executeInputs [Monad m] (reader : Compat.InputReader m) (file : Strin
     (raws : Array Raw) : m Compat.Executed :=
   let (raws, splitDiags) := settleSplits file raws
   Compat.executeInputs reader file raws
-    (provideKeeps := providedNames) (diags := splitDiags)
+    (provideKeeps := providedNames) (diags := splitDiags) (ignoredDefs := ignoredDefNames)
 
 /-- Resumes execution with a file answer, after settling its split halves. -/
 public def resumeInput [Monad m] (reader : Compat.InputReader m) (context : Compat.InputContext)
@@ -16450,7 +16456,7 @@ public def prepare (file : String) (raws : Array Raw) : Prepared :=
   let picScan := Compat.boundaryScan file raws
   let picMacros := macroScan raws
   let executed := Compat.execute file raws
-    (provideKeeps := providedNames)
+    (provideKeeps := providedNames) (ignoredDefs := ignoredDefNames)
   prepareRewritten file picScan picMacros executed.sourceTriggers
     (splitDiags ++ Compat.unusedLengths file executed.raws) (Compat.rewriteExecuted executed)
 

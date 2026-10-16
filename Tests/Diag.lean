@@ -873,7 +873,12 @@ def siteAccountingProbes : List (String × String) :=
     "a mixed title-page node beside a readable full-page ground"),
    (dvDoc "\\definecolor{codestring}{HTML}{AA0000}\n" "Sierra.",
     "a translated colour declaration of a retired listing key"),
-   (dvDoc "\\setlength{\\parskip}{foo}\n" "Tango.", "a length set to a word")]
+   (dvDoc "\\setlength{\\parskip}{foo}\n" "Tango.", "a length set to a word"),
+   (dvDoc ("\\NewDocumentCommand{\\varul}{m}{\\ifmmode\\underline{#1}\\else#1\\fi}\n" ++
+      "\\newenvironment{verbatim}{\\setlength{\\fboxsep}{2pt}}{}\n") "Uniform \\varul{victor}.",
+    "a built-in's ignored definitions, their texts lossy"),
+   (dvDoc "\\renewcommand{\\textbf}[1]{\\ifmmode\\mathbf{#1}\\else#1\\fi}\n" "Whiskey \\textbf{xray}.",
+    "a rendered built-in's refused redefinition, its text lossy")]
 
 /-- Sources the site audit lays out, elaborated with their locations kept. -/
 def layoutSiteAccountingProbes : List (String × String) :=
@@ -910,7 +915,14 @@ construct is reported at the picture's position, where W0362 already names the p
 placeholder; name the constructs in W0362, or report each at its own span"),
    ("N0100", "W0107", "LeanTex/Core/Compat.lean, the length door: a \\setlength given a word, or a \
 package option given an unreadable length, keeps its translation note beside the refusal of the \
-value it carried, one construct accounted twice; say the translation in the refusal")]
+value it carried, one construct accounted twice; say the translation in the refusal"),
+   ("W0104", "W0361", "LeanTex/Core/Elab.lean, the redefinition gate: a rendered built-in's \
+redefinition the gate refuses keeps the compatibility pass's loss in its text, at its site, beside \
+the refusal, though the text never runs; drop the text's accounting once the gate refuses it, as \
+the compatibility pass drops an always-ignored built-in's"),
+   ("N0100", "W0104", "LeanTex/Core/Compat.lean, the conditional pass and the definer rewrite: a \
+definition whose text holds a conditional keeps its translation note beside the warning that the \
+conditional's part is skipped, one construct accounted twice; say the translation in the warning")]
 
 /-- Independent facts at one source site, witnessed by varying each separately; not merge debt. -/
 def independentSiteFacts : List (String × String) :=

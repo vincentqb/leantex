@@ -920,6 +920,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   composedLengthChecks ref
   endInputChecks ref oneFace
   abstractRedefChecks ref oneFace
+  ignoredDefinitionChecks ref oneFace
   captionScopeChecks ref oneFace
   globalCaptionSkipChecks ref oneFace
   environScopeChecks ref oneFace

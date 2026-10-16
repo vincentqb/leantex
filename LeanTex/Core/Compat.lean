@@ -831,6 +831,9 @@ private structure St where
   /-- Names the caller declares the engine renders or reserves, which the
   provision definers keep. -/
   provideKeeps : List String := []
+  /-- Built-in names whose every definition the engine ignores whole: commands by name,
+  environments as `Tcolorbox.bindingName`. -/
+  ignoredDefs : List String := []
   /-- State mutations performed through `write`, which with `diags.size` the
   dispatcher's silence guard reads. -/
   writes : Nat := 0
@@ -4015,6 +4018,12 @@ private def forgetLengths (names : Array String) : M Unit := do
   for t in names do
     if (← get).exactLens.contains t then setExactLen t none global
 
+/-- The environment an environment definer at `raws[i]` names in its first group. -/
+private def definedEnv (raws : Array Raw) (i : Nat) : Option String :=
+  match raws[skipSpaces raws (skipStar raws (i + 1))]? with
+  | some (.group #[.word w _] _) => some w
+  | _ => none
+
 /-- The controls the environment an environment definer at `raws[i]` defines assigns in its code,
 which runs where the environment opens. -/
 private def condNoteEnv (raws : Array Raw) (i : Nat) : M Unit := do
@@ -4022,10 +4031,7 @@ private def condNoteEnv (raws : Array Raw) (i : Nat) : M Unit := do
   let (_, k) := takeOpt raws (j + 1)
   let (_, k) := takeOpt raws k
   let (codes, _) := takeGroups raws k 2
-  let envName? : Option String := match raws[j]? with
-    | some (.group #[.word w _] _) => some w
-    | _ => none
-  let some name := envName? | return
+  let some name := definedEnv raws i | return
   let assigned := (codes.toList.filterMap (assignedIn (fun _ => true))).foldl (· ++ ·) #[]
   write fun st => { st with envAssigns := st.envAssigns.insert name assigned }
 
@@ -4310,11 +4316,23 @@ private def condList [Monad m]
       else condList ex [] raws following (out.push (.ctrl n pos)) stack rest (i + 1) 0
     else if condDefiners.contains n then
       condStopSpaces
-      if envDefiners.contains n then condNoteEnv raws i
       let bound := if definesNext.contains n then
           (rest.dropWhile isSpaceOrStar).head?.bind boundName
         else none
       let provide := n == "providecommand" || n == "ProvideDocumentCommand"
+      let ignored := match bound with
+        | some m => st.ignoredDefs.contains m
+        | none => (definedEnv raws i).any (st.ignoredDefs.contains <| Tcolorbox.bindingName ·)
+      -- premise: ignoredDefinitionChecks — an ignored built-in's definition text runs nowhere
+      if ignored && !provide then
+        if let some sh := definerShape raws i n then
+          let ops : List Raw := (List.range' (i + 1) (sh.stop - (i + 1))).filterMap fun k =>
+            raws[k]?.map fun (r : Raw) => match r with
+              | .group _ gp => if sh.bodies.contains k then Raw.group #[] gp else r
+              | _ => r
+          return ← condList ex [] raws following ((out.push (.ctrl n pos)) ++ ops.toArray) stack
+            rest (i + 1) (sh.stop - (i + 1))
+      if envDefiners.contains n then condNoteEnv raws i
       if let some m := bound then
         -- premise: Tests.xparseIgnoredOperandsChecks — ignored operands change no artifact
         if provide && (st.binds.contains m || st.provideKeeps.contains m ||
@@ -6934,12 +6952,15 @@ private def floatSkipValue? (assigned : Array (String × String)) (v : Array Raw
   if v.any (· matches .ctrl "belowcaptionskip" _) then return none
   doorValue? v
 
+/-- The floats a redefinition around their own kernel core reads. -/
+public def floatRedefEnvs : List String := ["table", "figure"]
+
 /-- A float redefined around its own kernel core, as a scoped caption-skip
 declaration for its kind. -/
 private def floatRedef? (envName : String) (raws : Array Raw) (j : Nat) (pos : Pos) :
     M (Option (Array Raw × Nat)) := do
   let some kind := Ir.FloatKind.ofCaptionType? envName | return none
-  unless envName == "table" || envName == "figure" do return none
+  unless floatRedefEnvs.contains envName do return none
   let items (xs : Array Raw) : List Raw := xs.toList.filter fun r =>
     match r with | .space | .par _ => false | _ => true
   let b := skipSpaces raws j
@@ -8131,10 +8152,12 @@ a deeper level apart"
       if found && !expanding && arity.isSome then
         let n := arity.getD 0
         let spec := String.ofList (List.replicate n 'm')
-        write fun st => { st with
-          bound := if st.bound.contains cmd then st.bound else st.bound.push cmd }
         let native := s!"\\define \\{cmd}({signature spec})"
-        became s!"\\{name}\{\\{cmd}}" (native ++ " {...}") pos
+        -- premise: ignoredDefinitionChecks — an ignored built-in's refusal is its one accounting
+        unless (← get).ignoredDefs.contains cmd do
+          write fun st => { st with
+            bound := if st.bound.contains cmd then st.bound else st.bound.push cmd }
+          became s!"\\{name}\{\\{cmd}}" (native ++ " {...}") pos
         write fun st => { st with bodyNext := 1, quietNext := st.templateCode.contains cmd }
         return some (← synthAt native pos, k)
       else
@@ -8172,8 +8195,10 @@ the definition is skipped" pos
       if let some (out, k) ← floatRedef? envName.trimAscii.toString raws jd pos then
         return some (out, k)
     let native := s!"\\defineenv\{{envName}}({signature spec})"
-    became s!"\\{name}\{{envName}}"
-      (native ++ (if dflt.isSome then " [default]" else "") ++ " {begin} {end}") pos
+    -- premise: ignoredDefinitionChecks — an ignored built-in's refusal is its one accounting
+    unless (← get).ignoredDefs.contains (Tcolorbox.bindingName envName.trimAscii.toString) do
+      became s!"\\{name}\{{envName}}"
+        (native ++ (if dflt.isSome then " [default]" else "") ++ " {begin} {end}") pos
     -- The default stays in the walk, rewritten where it stands, its groups no body.
     write fun st => { st with
       bodyNext := 2, envNext := 2, defaultAt := if dflt.isSome then .awaiting else .none }
@@ -8218,9 +8243,10 @@ the definition is skipped" pos
     | some (.group code _) =>
       let slot := (bodySlot? code).isSome
       if slot || !mentionsBody code.toList then
-        became s!"\\{name}\{{envName}}" (native ++ (if dflt.isSome then " [default]" else "") ++
-          (if slot then " {code before \\BODY} {code after it}"
-            else " {} {code}, its body discarded")) pos
+        unless (← get).ignoredDefs.contains (Tcolorbox.bindingName envName.trimAscii.toString) do
+          became s!"\\{name}\{{envName}}" (native ++ (if dflt.isSome then " [default]" else "") ++
+            (if slot then " {code before \\BODY} {code after it}"
+              else " {} {code}, its body discarded")) pos
         write fun st => { st with
           bodyNext := 1, envNext := 1, defaultAt := if dflt.isSome then .awaiting else .none }
         let env := envName.trimAscii.toString
@@ -9814,10 +9840,12 @@ baselineskip = {milliStr ld}pt }" ++
                 write fun st => { st with listiKept := !resetsListi sbody }
                 became "\\renewcommand{\\normalsize}" native pos
                 return some (← synthAt native pos, js + 1)
-    write fun st => { st with
-      bound := if st.bound.contains cmd then st.bound else st.bound.push cmd }
     let native := s!"\\define \\{cmd}({spec})"
-    became s!"\\{name}\{\\{cmd}}" (native ++ " {...}") pos
+    -- premise: ignoredDefinitionChecks — an ignored built-in's refusal is its one accounting
+    unless st.ignoredDefs.contains cmd do
+      write fun st => { st with
+        bound := if st.bound.contains cmd then st.bound else st.bound.push cmd }
+      became s!"\\{name}\{\\{cmd}}" (native ++ " {...}") pos
     write fun st => { st with bodyNext := 1, quietNext := st.templateCode.contains cmd }
     return some (← synthAt native pos, j)
   | "DeclareMathOperator" =>
@@ -12630,16 +12658,18 @@ public theorem Executed.withRaws_contract (executed : Executed) (raws : Array Ra
   exact ⟨rfl, rfl, rfl⟩
 
 private def executionState (reading : Bool) (file : String) (raws : Array Raw)
-    (provideKeeps : List String) (warned : Array String) (diags : Array Diag) : St :=
-  { file := file, provideKeeps := provideKeeps, warned := warned, diags := diags
+    (provideKeeps : List String) (warned : Array String) (diags : Array Diag)
+    (ignoredDefs : List String) : St :=
+  { file := file, provideKeeps := provideKeeps, ignoredDefs := ignoredDefs, warned := warned
+    diags := diags
     sourceTriggers := sourceTriggers file {} raws.toList
     fileTop := reading, boundaryOpen := !boundaryRefused raws
     wholeDoc := raws.any (· matches .env "document" _ _), docFile := file }
 
 private def executeBy [Monad m] (reader : Option (InputReader m))
     (file : String) (raws : Array Raw) (provideKeeps : List String)
-    (warned : Array String) (inherited : List String) (diags : Array Diag) :
-    m Executed := do
+    (warned : Array String) (inherited : List String) (diags : Array Diag)
+    (ignoredDefs : List String) : m Executed := do
   let go : EvalM m (Array Raw) := do
     -- latex.ltx's `\def\space{ }`.
     recordValue "space"
@@ -12648,59 +12678,64 @@ private def executeBy [Monad m] (reader : Option (InputReader m))
     for n in inherited do setBind n none
     condDocument reader raws
   let (raws, state) ← go.run
-    (executionState reader.isSome file raws provideKeeps warned diags)
+    (executionState reader.isSome file raws provideKeeps warned diags ignoredDefs)
   return { raws := raws, state := state }
 
 /-- Executes a file-free surface once, retaining the same source evidence as the
 input-fulfilling path. -/
 public def execute (file : String) (raws : Array Raw) (provideKeeps : List String := [])
-    (warned : Array String := #[]) (inherited : List String := []) : Executed :=
-  executeBy (m := Id) none file raws provideKeeps warned inherited #[]
+    (warned : Array String := #[]) (inherited : List String := [])
+    (ignoredDefs : List String := []) : Executed :=
+  executeBy (m := Id) none file raws provideKeeps warned inherited #[] ignoredDefs
 
 /-- Executes the document with a reader that fulfils file
 requests at their uses. -/
 public def executeInputs [Monad m] (reader : InputReader m) (file : String)
-    (raws : Array Raw) (provideKeeps : List String := []) (diags : Array Diag := #[]) :
-    m Executed :=
-  executeBy (some reader) file raws provideKeeps #[] [] diags
+    (raws : Array Raw) (provideKeeps : List String := []) (diags : Array Diag := #[])
+    (ignoredDefs : List String := []) : m Executed :=
+  executeBy (some reader) file raws provideKeeps #[] [] diags ignoredDefs
 
 private theorem executeInputs_condDocument_exact (reader : InputReader Id)
-    (file : String) (raws : Array Raw) (keeps : List String) (ds : Array Diag) :
-    executeInputs reader file raws keeps ds =
+    (file : String) (raws : Array Raw) (keeps : List String) (ds : Array Diag)
+    (ignored : List String) :
+    executeInputs reader file raws keeps ds ignored =
       let result := condDocument (some reader) raws
-        (withSpaceBinding (executionState true file raws keeps #[] ds))
+        (withSpaceBinding (executionState true file raws keeps #[] ds ignored))
       { raws := result.1, state := result.2 } := by
   simp only [executeInputs, executeBy, Option.isSome_some, StateT.run,
     evalLift_id, bind, StateT.bind, recordValue_space_exact]
   rfl
 
 private def packageInitialState (file command names : String) (pos gp np : Pos)
-    (keeps : List String) (ds : Array Diag) : St :=
-  withSpaceBinding (executionState true file (packageCall command names pos gp np) keeps #[] ds)
+    (keeps : List String) (ds : Array Diag) (ignored : List String) : St :=
+  withSpaceBinding
+    (executionState true file (packageCall command names pos gp np) keeps #[] ds ignored)
 
 private def packageExecutedState (file command names : String) (pos gp np : Pos)
-    (keeps : List String) (ds : Array Diag) : St :=
-  let st := packageInitialState file command names pos gp np keeps ds
+    (keeps : List String) (ds : Array Diag) (ignored : List String) : St :=
+  let st := packageInitialState file command names pos gp np keeps ds ignored
   { packageFailed command names pos gp np st with writes := st.writes + 10 }
 
 private theorem executeInputs_package_failed_exact (reader : InputReader Id)
     (file command names : String) (pos gp np : Pos) (keeps : List String) (ds : Array Diag)
+    (ignored : List String)
     (hc : command = "usepackage" ∨ command = "RequirePackage")
     (hr : ∀ request context, reader request context = (none, context)) :
-    executeInputs reader file (packageCall command names pos gp np) keeps ds =
+    executeInputs reader file (packageCall command names pos gp np) keeps ds ignored =
       { raws := packageCall command names pos gp np
-        state := packageExecutedState file command names pos gp np keeps ds } := by
+        state := packageExecutedState file command names pos gp np keeps ds ignored } := by
   have hn : command ≠ "space" := by rcases hc with rfl | rfl <;> decide
   have hv : condValueOf
-      (packageInitialState file command names pos gp np keeps ds).binds command = none := by
+      (packageInitialState file command names pos gp np keeps ds ignored).binds command =
+        none := by
     simp [packageInitialState, withSpaceBinding, executionState, condValueOf, Ne.symm hn]
   rw [executeInputs_condDocument_exact]
   have heq := condDocument_package_failed_exact reader command names pos gp np
-    (packageInitialState file command names pos gp np keeps ds)
+    (packageInitialState file command names pos gp np keeps ds ignored)
     hc rfl rfl rfl rfl rfl rfl rfl hv hr
   change condDocument (some reader) (packageCall command names pos gp np)
     (withSpaceBinding (executionState true file
-      (packageCall command names pos gp np) keeps #[] ds)) = _ at heq
+      (packageCall command names pos gp np) keeps #[] ds ignored)) = _ at heq
   simp only [heq]
   rfl
 
@@ -13030,12 +13065,12 @@ attribute [local irreducible] finishRewritten in
 named by the compatibility producer. -/
 public theorem executeInputs_package_refusal_contract (reader : InputReader Id)
     (file command names : String) (pos groupPos namePos : Pos)
-    (keeps : List String) (ds : Array Diag)
+    (keeps : List String) (ds : Array Diag) (ignored : List String)
     (hc : command = "usepackage" ∨ command = "RequirePackage")
     (hnames : ExternalPackageNames names)
     (hr : ∀ request context, reader request context = (none, context)) :
     let executed := executeInputs reader file
-      (packageCall command names pos groupPos namePos) keeps ds
+      (packageCall command names pos groupPos namePos) keeps ds ignored
     executed.inputAttempts =
         #[⟨⟨command, file, pos, pos, #[.group #[.word names namePos] groupPos]⟩, false⟩] ∧
       ∀ part ∈ names.trimAscii.toString.splitOn ",",
@@ -13043,8 +13078,8 @@ public theorem executeInputs_package_refusal_contract (reader : InputReader Id)
           (packageRefusal file pos part.trimAscii.toString) ∈
             (rewriteExecuted executed).2.1 := by
   rw [executeInputs_package_failed_exact reader file command names pos groupPos namePos
-    keeps ds hc hr]
-  let initial := packageExecutedState file command names pos groupPos namePos keeps ds
+    keeps ds ignored hc hr]
+  let initial := packageExecutedState file command names pos groupPos namePos keeps ds ignored
   let st := packageRewriteState initial command names pos groupPos namePos
   constructor
   · rfl
