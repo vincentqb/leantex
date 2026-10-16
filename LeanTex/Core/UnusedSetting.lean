@@ -106,10 +106,15 @@ private def blockReads (ctx : Nat × Nat) (acc : Shown) (b : Block) : Shown × (
   | .algorithm _ _ _ =>
     (["enumerate", "enumerate2", "enumerate3", "enumerate4"].foldl Shown.element acc, ctx)
   | .bibliography _ _ _ => (acc.element "itemize", ctx)
-  | .list ordered _ =>
+  | .list ordered _ _ =>
     let kind := if ordered then "enumerate" else "itemize"
     let depth := (if ordered then ctx.2 else ctx.1) + 1
     let acc := acc.element kind
+    -- An unordered list may be a description list, whose scopes it reads too.
+    let kinds := if ordered then [(kind, depth)]
+      else (kind, depth) :: [1, 2, 3, 4].map ("description", ·)
+    let acc := kinds.foldl (fun acc (k, kd) =>
+      (Ir.listSetScopes k (ctx.1 + ctx.2 + 1) kd).foldl Shown.element acc) acc
     let acc := match listLevel kind depth with
       | some el => acc.element el
       | none => acc

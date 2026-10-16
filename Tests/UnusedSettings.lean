@@ -236,7 +236,7 @@ def accountingChecks (ref : IO.Ref (List String)) : IO Unit := do
   let accepted := (allowed.filter (·.kind == .W0449)).map (Diag.accept allowing.allow false · |>.1)
   t "unused settings: \\allow{W0449} accepts the loss as a note"
     (accepted.size == 1 && accepted.all (·.severity == .note))
-  let (_, ds) := elabStr (article "\\usepackage{enumitem}\\setlist{nosep}" "Words.")
+  let (_, ds) := elabStr (article "\\usepackage{enumitem}\\setlist{labelsep=1em}" "Words.")
   t "unused settings: a declaration already named unread keeps that one accounting"
     (ds.any (·.kind == .W0104) && !ds.any (·.kind == .W0449))
   let (_, ds) := elabStr (article probeColor "Words.")
