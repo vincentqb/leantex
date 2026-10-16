@@ -34,6 +34,8 @@ public import LeanTex.Core.Math
 public import LeanTex.Core.MathSymData
 public import LeanTex.Core.MathParse
 public import LeanTex.Core.Ir
+public import LeanTex.Core.Referent
+public import LeanTex.Core.StageNames
 public import LeanTex.Core.ColorContract
 public import LeanTex.Core.TextSymData
 public import LeanTex.Core.Bib

@@ -15,6 +15,7 @@ import LeanTex.Core.ListMark
 public import LeanTex.Core.Diag
 import all LeanTex.Core.Diag
 public import LeanTex.Core.Struct
+import LeanTex.Core.StageNames
 import LeanTex.Core.Loop
 import LeanTex.Core.Layout.GlyphBounds
 public import LeanTex.Core.Layout.LabelAudit
@@ -753,6 +754,8 @@ public structure InkOut where
   fig : Gfx.Figure (Nat × Nat)
   place : Gfx.Iso
   leaf : Option Nat := none
+  /-- Zero-ink destinations the picture opens. -/
+  anchors : Array String := #[]
   deriving Repr, Inhabited
 
 @[expose] public def InkOut.shiftY (d : Sp) (k : InkOut) : InkOut :=
@@ -782,6 +785,12 @@ public def InkOut.claims (k : InkOut) : Array Gfx.Box :=
         Gfx.Box.dilate (k.place.box b) ((st.map (·.width / 2)).getD 0)
     | .raster ctm _ _ _ => some (k.place.box (Gfx.Box.image ctm Gfx.rasterUnit))
     | .shading _ _ _ => none
+
+/-- An ink's top-left corner on the page, over the boxes its marks claim, else its placement. -/
+public def InkOut.topLeft (k : InkOut) : Sp × Sp :=
+  match k.claims[0]? with
+  | some b0 => k.claims.foldl (fun (x, y) b => (min x b.1.1, min y b.1.2)) (b0.1.1, b0.1.2)
+  | none => (k.place.dx, k.place.dy)
 
 public structure LinkRect where
   x : Sp
@@ -1016,11 +1025,20 @@ placed picture ink; every emptiness test reads this. -/
 public def PageOut.frameStamp (p : PageOut) : FrameStamp :=
   (p.frameOrigin, p.frame, p.foot)
 
-/-- Every anchor's first shipped line by name, in page and line order: where a link to it lands. -/
-public def anchorIndex (pages : Array PageOut) : Std.HashMap String (Nat × LineOut) :=
+/-- What an anchor stands on: the shipped line declaring it, or the picture it opens. -/
+public inductive AnchorSite where
+  | line (l : LineOut)
+  | ink (k : InkOut)
+  deriving Repr, Inhabited
+
+/-- Every anchor's first shipped site by name, in page order, a page's lines before its pictures:
+where a link to it lands. -/
+public def anchorIndex (pages : Array PageOut) : Std.HashMap String (Nat × AnchorSite) :=
   pages.zipIdx.foldl (init := {}) fun m (p, i) =>
-    p.lines.foldl (init := m) fun m l =>
-      l.anchors.foldl (init := m) fun m a => if m.contains a then m else m.insert a (i, l)
+    let m := p.lines.foldl (init := m) fun m l =>
+      l.anchors.foldl (init := m) fun m a => if m.contains a then m else m.insert a (i, .line l)
+    p.inks.foldl (init := m) fun m k =>
+      k.anchors.foldl (init := m) fun m a => if m.contains a then m else m.insert a (i, .ink k)
 
 private theorem foldl_inv {α β : Type} (xs : Array α) (f : β → α → β) (init : β) (P : β → Prop)
     (h0 : P init) (hs : ∀ b x, x ∈ xs → P b → P (f b x)) : P (xs.foldl f init) :=
@@ -1028,18 +1046,13 @@ private theorem foldl_inv {α β : Type} (xs : Array α) (f : β → α → β) 
     hs b xs[i] (Array.getElem_mem i.isLt) hb
 
 public theorem anchorIndex_page_lt (pages : Array PageOut) (name : String) (i : Nat)
-    (l : LineOut) (h : (anchorIndex pages)[name]? = some (i, l)) : i < pages.size := by
-  let P : Std.HashMap String (Nat × LineOut) → Prop := fun m =>
-    ∀ (k : String) (v : Nat × LineOut), m[k]? = some v → v.1 < pages.size
-  have hp : P (anchorIndex pages) := by
-    unfold anchorIndex
-    refine foldl_inv _ _ _ P (fun k v hk => by simp at hk) ?_
-    rintro m ⟨p, j⟩ hm hP
-    have hj : j < pages.size := by simpa using (Array.mem_zipIdx hm).2.1
-    refine foldl_inv _ _ _ P hP ?_
-    intro m l _ hP
-    refine foldl_inv _ _ _ P hP ?_
-    intro m a _ hP k v hk
+    (site : AnchorSite) (h : (anchorIndex pages)[name]? = some (i, site)) : i < pages.size := by
+  let P : Std.HashMap String (Nat × AnchorSite) → Prop := fun m =>
+    ∀ (k : String) (v : Nat × AnchorSite), m[k]? = some v → v.1 < pages.size
+  have insert_ok : ∀ (m : Std.HashMap String (Nat × AnchorSite)) (a : String) (j : Nat)
+      (s : AnchorSite), j < pages.size → P m →
+        P (if m.contains a then m else m.insert a (j, s)) := by
+    intro m a j s hj hP k v hk
     split at hk
     · exact hP k v hk
     · rw [Std.HashMap.getElem?_insert] at hk
@@ -1048,40 +1061,51 @@ public theorem anchorIndex_page_lt (pages : Array PageOut) (name : String) (i : 
         subst hk
         exact hj
       · exact hP k v hk
-  exact hp name (i, l) h
+  have hp : P (anchorIndex pages) := by
+    unfold anchorIndex
+    refine foldl_inv _ _ _ P (fun k v hk => by simp at hk) ?_
+    rintro m ⟨p, j⟩ hm hP
+    have hj : j < pages.size := by simpa using (Array.mem_zipIdx hm).2.1
+    refine foldl_inv _ _ _ P ?_ ?_
+    · refine foldl_inv _ _ _ P hP ?_
+      intro m l _ hP
+      exact foldl_inv _ _ _ P hP fun m a _ hP => insert_ok m a j _ hj hP
+    · intro m k _ hP
+      exact foldl_inv _ _ _ P hP fun m a _ hP => insert_ok m a j _ hj hP
+  exact hp name (i, site) h
 
-/-- The first shipped line declaring `name`, and its page. -/
-public def destination? (pages : Array PageOut) (name : String) : Option (Nat × LineOut) :=
+/-- The first shipped site declaring `name`, and its page: where a link to it lands. -/
+public def destination? (pages : Array PageOut) (name : String) : Option (Nat × AnchorSite) :=
   (anchorIndex pages)[name]?
 
-/-- Where an in-page fragment lands: the first shipped line declaring it, else the first page's
+/-- Where an in-page fragment lands: the first shipped site declaring it, else the first page's
 top where the fragment names the document's top (`Ir.fragmentTop`). -/
 public inductive Landing where
-  | line (page : Nat) (line : LineOut)
+  | site (page : Nat) (at_ : AnchorSite)
   | top
   deriving Repr, Inhabited
 
 @[expose] public def Landing.page : Landing → Nat
-  | .line p _ => p
+  | .site p _ => p
   | .top => 0
 
 /-- Where `frag` lands among `pages`, whose anchors `idx` indexes (`anchorIndex`). -/
-public def landing? (idx : Std.HashMap String (Nat × LineOut)) (pages : Array PageOut)
+public def landing? (idx : Std.HashMap String (Nat × AnchorSite)) (pages : Array PageOut)
     (frag : String) : Option Landing :=
   match (if frag.isEmpty then none else idx[frag]?) with
-  | some (i, l) => some (.line i l)
+  | some (i, s) => some (.site i s)
   | none => if Ir.fragmentTop frag && !pages.isEmpty then some .top else none
 
 public theorem landing?_page_lt (pages : Array PageOut) (frag : String) (l : Landing)
     (h : landing? (anchorIndex pages) pages frag = some l) : l.page < pages.size := by
   unfold landing? at h
   split at h
-  · rename_i i line hd
+  · rename_i i st hd
     simp only [Option.some.injEq] at h
     subst h
     split at hd
     · cases hd
-    · exact anchorIndex_page_lt pages frag i line hd
+    · exact anchorIndex_page_lt pages frag i st hd
   · split at h
     · rename_i hc
       simp only [Option.some.injEq] at h
@@ -9108,6 +9132,10 @@ public structure Spacing.Context where
   /-- Each top-level section's claimed anchor at its body index, in a flow document
   (`Ir.sectionAnchors`). -/
   private sectionAnchors : Array (Option Ir.SectionAnchor) := #[]
+  /-- Each top-level frame's claimed anchors at its body index, in a deck (`Ir.frameAnchors`). -/
+  private frameAnchorIds : Array (Option Ir.FrameAnchors) := #[]
+  /-- Each section page's route at its body index, in a deck (`Ir.Doc.sectionRoutes`). -/
+  private sectionRoutes : Array (Option String) := #[]
   /-- The walk is inside a frame whose lists set with
   beamer's squeezed spacing (`Ir.frameSqueeze`). -/
   private squeeze : Bool := false
@@ -14930,11 +14958,12 @@ private def placePicture (fs : FontSet) (imgs : Image.Store) (b0 : B)
     let fils := b.pageFils + (if b.skip.fil then 1 else 0)
     let place : Ir.Pic.Place := { x0 := x, yTop := yTop, xmin := px0, ymax := py1 }
     let emitted := emitPicture fs imgs b.geom b.xHeight leaf place pic (some origin)
-    let ink := pictureInk box pic place leaf origin
-    -- Anchors pending above the picture land on its first line.
-    let labelLines := emitted.lines.modify 0 fun l =>
+    -- Anchors pending above the picture land on its top: its ink, else its first label line.
+    let ink := (pictureInk box pic place leaf origin).map fun k =>
+      { k with anchors := b.pendingAnchors ++ k.anchors }
+    let labelLines := if ink.isSome then emitted.lines else emitted.lines.modify 0 fun l =>
       { l with anchors := b.pendingAnchors ++ l.anchors }
-    let pending := if emitted.lines.isEmpty then b.pendingAnchors else #[]
+    let pending := if ink.isSome || !emitted.lines.isEmpty then #[] else b.pendingAnchors
     let b := ({ b with pageStretch := stretch
                        diags := b.diags ++ emitted.diags
                        pendingAnchors := pending }.pushSibling
@@ -17682,29 +17711,33 @@ private theorem reportOnce_covers (ps : Array ParagraphBreaks)
 /-- The in-page fragments a page's shipped links name: its runs' and its block links', hidden
 content aside. -/
 private def PageOut.fragments (p : PageOut) : Array String :=
-  let frag (u : String) : Option String := if u.startsWith "#" then some (u.drop 1).toString else none
   let runs := p.lines.foldl (init := #[]) fun acc l =>
     if l.hidden then acc else
     l.segs.foldl (init := acc) fun acc s => match s with
-      | .run _ _ (some u) .. => if s.hides then acc else (frag u).elim acc acc.push
+      | .run _ _ (some u) .. => if s.hides then acc else (Ir.linkFragment? u).elim acc acc.push
       | _ => acc
-  runs ++ (keepUnlisted p.links p.hidden.links).filterMap (frag ·.target)
+  runs ++ (keepUnlisted p.links p.hidden.links).filterMap (Ir.linkFragment? ·.target)
+
+/-- How a document names an anchor, in its own surface. -/
+private def deadLinkHelp : Ir.Surface → String
+  | .tex => "give its target a \\label or a \\hypertarget, or link to an anchor the document sets"
+  | .markdown | .code _ =>
+    "give its target an anchor ('<a name=\"…\"></a>' or a heading) or link to one the document sets"
 
 /-- One loss per in-page fragment a shipped link or outline entry names and nothing lands on: the
 PDF ships the link's ink unlinked. -/
-private def deadLinks (idx : Std.HashMap String (Nat × LineOut)) (pages : Array PageOut)
-    (nav : Array (String × String)) : Array Diag := Id.run do
+private def deadLinks (surface : Ir.Surface) (idx : Std.HashMap String (Nat × AnchorSite))
+    (pages : Array PageOut) (nav : Array (String × String)) : Array Diag := Id.run do
   let named := pages.foldl (fun acc p => acc ++ p.fragments) #[] ++
-    nav.filterMap fun (_, t) => if t.startsWith "#" then some (t.drop 1).toString else none
+    nav.filterMap (Ir.linkFragment? ·.2)
   let mut seen : Std.HashSet String := {}
   let mut out : Array Diag := #[]
   for f in named do
     unless seen.contains f || (landing? idx pages f).isSome do
       seen := seen.insert f
       out := out.push (Diag.of .W0326
-        s!"in-page link '#{f}' has no target anchor in the document"
-        (help := some "the PDF sets the link's text unlinked; give its target a \\label or a \
-\\hypertarget, or link to an anchor the document sets")
+        "an in-page link names an anchor the document does not set; the PDF sets its text unlinked"
+        (help := some (deadLinkHelp surface)) (subject := some f) (detail := some s!"'#{f}'")
         (output := some .pdf))
   return out
 
@@ -17920,14 +17953,13 @@ slot yields in place: shorten the content or drop a slot")
   let diags := fout.2.1
   let idx := anchorIndex out
   let unique := reportOnce sh.paragraphBreaks sh.overfullMost
-    (diags ++ deadLinks idx out sh.navEntries)
+    (diags ++ deadLinks doc.surface idx out sh.navEntries)
   -- An outline target lands as a PDF link annotation does; one landing nowhere is left out.
   let outline := sh.navEntries.filterMap fun (title, target) =>
-    if target.startsWith "#" then
-      let frag := (target.drop 1).toString
-      (landing? idx out frag).map fun l =>
+    match Ir.linkFragment? target with
+    | some frag => (landing? idx out frag).map fun l =>
         ({ title := title, page := some l.page, fragment := some frag } : OutlineEntry)
-    else some ({ title := title, url := some target } : OutlineEntry)
+    | none => some ({ title := title, url := some target } : OutlineEntry)
   return { pages := out, diags := unique, outline := outline
            paragraphBreaks := sh.paragraphBreaks, overruns := sh.overruns, needs := sh.needs
            spilled := sh.spilled }
@@ -18139,19 +18171,26 @@ private def collectDocBlock (rd : Rd) (doc : Doc) (cover : Ir.Cover)
                       framesDone := num.getD acc.framesDone
                       frameSource := (frameSpans.find? (·.1 == i)).map (·.2) }
     let steps := Ir.frameSteps blk
+    -- Each step's page answers to the names the web deck's stage and step do.
+    let named (a : Acc) (k : Nat) : Acc :=
+      { a with ops := a.ops ++
+        (Ir.frameStepNames rd.frameAnchorIds rd.frameLabels i steps k).map Op.anchor }
     if steps ≤ 1 then
-      acc := collectBlock { rd with steps := steps } acc
+      acc := collectBlock { rd with steps := steps } (named acc 1)
         (.frame title standout valign breakable
           (Ir.unwrapItemSteps (Ir.dimBlocks cover 1 body))) 0
     else
       let leafStart := acc.leafNext
       for k in [1:steps + 1] do
         acc := collectBlock { rd with step := k, steps := steps }
-          { acc with leafNext := leafStart, frameOrigin := some ⟨i, k⟩ }
+          (named { acc with leafNext := leafStart, frameOrigin := some ⟨i, k⟩ } k)
           (.frame title standout valign breakable
             (Ir.unwrapItemSteps (Ir.dimBlocks cover k body))) 0
   | .section level starred num title =>
-    acc := collectSection rd acc level starred num title 0 (top := true)
+    let routed := match rd.sectionRoutes[i]?.join with
+      | some route => { acc with ops := acc.ops.push (.anchor route) }
+      | none => acc
+    acc := collectSection rd routed level starred num title 0 (top := true)
       (anchor := (rd.sectionAnchors[i]?.join).map (·.id))
   | other => acc := collectBlock rd acc (Ir.unwrapItemStep other) 0
   return (acc, firstBlk)
@@ -18909,6 +18948,10 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
                    frameLabels := doc.frameLabels
                    sectionAnchors := if doc.docClass.record.model == .flow then
                      Ir.sectionAnchors doc.body else #[]
+                   frameAnchorIds := if doc.docClass.record.model == .frame then
+                     Ir.frameAnchors doc.body else #[]
+                   sectionRoutes := if doc.docClass.record.model == .frame then
+                     doc.sectionRoutes else #[]
                    imgs := imgs
                    pictureSpans := pictureSpans
                    headline := doc.headline

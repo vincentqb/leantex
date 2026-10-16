@@ -194,8 +194,9 @@ private def linkRects (geom : Geom) (page : PageOut) :
 /-- The link annotations the pages carry, one per rectangle whose link lands (`linkEntry`). -/
 public def linkCount (geom : Geom) (pages : Array PageOut) : Nat :=
   let anchors := Layout.anchorIndex pages
-  let lands (url : String) : Bool :=
-    !url.startsWith "#" || (Layout.landing? anchors pages (url.drop 1).toString).isSome
+  let lands (url : String) : Bool := match Ir.linkFragment? url with
+    | some frag => (Layout.landing? anchors pages frag).isSome
+    | none => true
   pages.foldl (fun n p => n + ((linkRects geom p).filter fun (_, _, _, _, url) => lands url).size) 0
 
 private def toUnicode (used : Array (Nat × Char)) : String := Id.run do
@@ -2093,12 +2094,15 @@ public def iccRows (t : ObjTable) (profile : Option ByteArray) : Array Row :=
     #[flateRow id s!"/N {((Icc.header? data).bind (Icc.components ·.colorSpace)).getD 4}" data]
   | some _, none | none, _ => #[]
 
-/-- The explicit destination a landing is (§12.3.2.2): its line's left edge and ink top, or the
-first page's top-left corner, the reader's zoom kept. -/
+/-- The explicit destination a landing is (§12.3.2.2): its line's left edge and ink top, its
+picture's top-left corner, or the first page's, the reader's zoom kept. -/
 public def destObj (t : ObjTable) (geom : Geom) (fs : FontSet) : Layout.Landing → PdfRead.Obj
-  | .line page line =>
+  | .site page (.line line) =>
     .arr #[.ref (t.pageId page) 0, .name "XYZ", ptObj (line.x + geom.bleed),
       ptObj (geom.pageH + geom.bleed - (line.y - (Layout.segsInk fs line.segs).1)), .null]
+  | .site page (.ink k) =>
+    .arr #[.ref (t.pageId page) 0, .name "XYZ", ptObj (k.topLeft.1 + geom.bleed),
+      ptObj (geom.pageH + geom.bleed - k.topLeft.2), .null]
   | .top =>
     .arr #[.ref (t.pageId 0) 0, .name "XYZ", .int 0, ptObj (geom.pageH + 2 * geom.bleed), .null]
 
@@ -2106,11 +2110,11 @@ public def destObj (t : ObjTable) (geom : Geom) (fs : FontSet) : Layout.Landing 
 lands, none where it lands nowhere, never a name the file would have to define; else a URI
 action. -/
 public def linkEntry (t : ObjTable) (geom : Geom) (fs : FontSet)
-    (anchors : Std.HashMap String (Nat × Layout.LineOut)) (pages : Array PageOut) (url : String) :
+    (anchors : Std.HashMap String (Nat × Layout.AnchorSite)) (pages : Array PageOut) (url : String) :
     Option (String × PdfRead.Obj) :=
-  if url.startsWith "#" then
-    (Layout.landing? anchors pages (url.drop 1).toString).map fun l => ("Dest", destObj t geom fs l)
-  else some ("A", .dict #[("S", .name "URI"), ("URI", PdfRead.literal url.toUTF8)])
+  match Ir.linkFragment? url with
+  | some frag => (Layout.landing? anchors pages frag).map fun l => ("Dest", destObj t geom fs l)
+  | none => some ("A", .dict #[("S", .name "URI"), ("URI", PdfRead.literal url.toUTF8)])
 
 /-- An in-page link's destination names the page object of a page the file writes. -/
 public theorem linkEntry_page_lt (t : ObjTable) (geom : Geom) (fs : FontSet)
@@ -2127,9 +2131,21 @@ public theorem linkEntry_page_lt (t : ObjTable) (geom : Geom) (fs : FontSet)
     simp only [Prod.mk.injEq] at he
     obtain ⟨_, rfl⟩ := he
     refine ⟨l.page, Layout.landing?_page_lt pages _ l hl, ?_⟩
-    cases l <;> rfl
+    rcases l with ⟨page, line | k⟩ | _ <;> rfl
   · simp only [Option.some.injEq, Prod.mk.injEq] at h
     exact absurd (h.1.trans hk) (by decide)
+
+/-- A link to an in-page fragment carries an explicit destination or no annotation, never an
+action. -/
+public theorem linkEntry_fragment_dest (t : ObjTable) (geom : Geom) (fs : FontSet)
+    (anchors : Std.HashMap String (Nat × Layout.AnchorSite)) (pages : Array PageOut)
+    (url frag : String) (hf : Ir.linkFragment? url = some frag) (k : String) (d : PdfRead.Obj)
+    (h : linkEntry t geom fs anchors pages url = some (k, d)) : k = "Dest" := by
+  unfold linkEntry at h
+  rw [hf] at h
+  obtain ⟨_, _, he⟩ := Option.map_eq_some_iff.mp h
+  simp only [Prod.mk.injEq] at he
+  exact he.1.symm
 
 /-- Prepares positioned pages for a PDF 2.0 file, or 1.6 or 1.7 where the document declares it;
 `ops`, `streams` and `programs` are the driver's cached page operators, their rendered and deflated

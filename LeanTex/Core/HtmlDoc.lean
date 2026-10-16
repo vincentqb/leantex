@@ -13,6 +13,7 @@ public import LeanTex.Core.GfxPicture
 public import LeanTex.Core.FigureSvg
 import LeanTex.Core.Listing
 import LeanTex.Core.NameClaim
+import LeanTex.Core.StageNames
 import LeanTex.Core.ContrastSolve
 import LeanTex.Core.TitleTemplate
 import LeanTex.Core.ListMark
@@ -8173,7 +8174,7 @@ private def pageFacts : Html.Walk (Option String) PageFacts where
         { acc with reveals := acc.reveals + 1 } else acc
     attrs.foldl (init := acc) fun a kv =>
       if kv.1 == "id" then { a with ids := a.ids.push (kv.2, stage) }
-      else if kv.1 == "href" && kv.2.startsWith "#" then
+      else if kv.1 == "href" && (Ir.linkFragment? kv.2).isSome then
         { a with fragmentRefs := a.fragmentRefs.push kv.2 }
       else a
 
@@ -8271,25 +8272,24 @@ private def looseStage (cfg : Config) (kids : Array Node) (label : String) : Nod
       #[("data-snap", ""), ("data-slide-label", label)])
 
 /-- The snap spacers of a stepped frame's track, one per overlay step, each claiming its aliases. -/
-private def snapWalk (id text label : String) (kids : Array Node)
-    (taken : NameClaim.Claims .dashed) (diags : Array Diag) :
-    List Nat → Array Node × NameClaim.Claims .dashed × Array Diag
-  | [] => (kids, taken, diags)
+private def snapWalk (id text label : String) (stepAnchors : Array Ir.SectionAnchor)
+    (kids : Array Node) (diags : Array Diag) : List Nat → Array Node × Array Diag
+  | [] => (kids, diags)
   | k :: rest =>
-    let r := taken.claim s!"{id}-{k}" text
-    let diags := match r.2.1 with
+    let sa := (stepAnchors[k - 1]?).getD { base := s!"{id}-{k}", id := s!"{id}-{k}", clash := none }
+    let diags := match sa.clash with
       | some holder => diags.push (Diag.of .W0327
-          s!"frames share the step anchor '{id}-{k}'; each after the first takes a \
+          s!"frames share the step anchor '{sa.base}'; each after the first takes a \
 numbered anchor"
-          (help := some s!"an in-page link '#{id}-{k}' reaches only the first; \
+          (help := some s!"an in-page link '#{sa.base}' reaches only the first; \
 retitle the frames apart, or link to the numbered anchor")
-          (detail := some s!"{text.quote} takes '{r.1}', after {holder.quote}"))
+          (detail := some s!"{text.quote} takes '{sa.id}', after {holder.quote}"))
       | none => diags
-    snapWalk id text label
+    snapWalk id text label stepAnchors
       (kids.push (Html.elem "div" #[]
-        #[("class", "snap"), ("id", r.1), ("data-snap", ""),
-          ("data-slide-label", s!"{label}.{k}")]))
-      r.2.2 diags rest
+        #[("class", "snap"), ("id", sa.id), ("data-snap", ""),
+          ("data-slide-label", Ir.stepLabel label k)]))
+      diags rest
 
 private def stepList (steps : Nat) : List Nat :=
   (List.range steps).map (· + 1)
@@ -8298,21 +8298,19 @@ private def stepList (steps : Nat) : List Nat :=
     (stepList steps).length = steps := by
   simp [stepList]
 
-private theorem snapWalk_count (id text label : String) :
-    ∀ (ks : List Nat) (kids : Array Node) (taken : NameClaim.Claims .dashed)
-      (diags : Array Diag),
-      (snapWalk id text label kids taken diags ks).1.size = kids.size + ks.length
-  | [], _, _, _ => rfl
-  | k :: rest, kids, taken, diags => by
+private theorem snapWalk_count (id text label : String) (stepAnchors : Array Ir.SectionAnchor) :
+    ∀ (ks : List Nat) (kids : Array Node) (diags : Array Diag),
+      (snapWalk id text label stepAnchors kids diags ks).1.size = kids.size + ks.length
+  | [], _, _ => rfl
+  | k :: rest, kids, diags => by
     unfold snapWalk
-    rw [snapWalk_count id text label rest]
+    rw [snapWalk_count id text label stepAnchors rest]
     simp only [Array.size_push, List.length_cons]
     omega
 
-private theorem track_snaps_exact (id text label : String)
-    (taken : NameClaim.Claims .dashed) (diags : Array Diag)
-    (frame : Ir.Block) :
-    (snapWalk id text label #[] taken diags
+private theorem track_snaps_exact (id text label : String) (stepAnchors : Array Ir.SectionAnchor)
+    (diags : Array Diag) (frame : Ir.Block) :
+    (snapWalk id text label stepAnchors #[] diags
         (stepList (Ir.frameSteps frame))).1.size
       = Ir.frameSteps frame := by
   rw [snapWalk_count, stepList_length]
@@ -8623,14 +8621,13 @@ private def emitTreeCore (cfg : Config) (doc : Doc)
       let mut total := doc.frameCount
       let mut done := 0
       let labels := doc.frameLabels
-      let mut sectionPages := 0
+      let sectionRoutes := doc.sectionRoutes
       let mut curSection : Array Inline := #[]
       let mut frameFoot : Option (Array Inline) := none
       let mut logoSpans : Array (Nat × Array Inline) := #[]
       let mut acc : Array Node := #[]
       let mut walkDiags : Array Diag := #[]
-      -- each assigned frame id with the plain title that holds it
-      let mut taken : NameClaim.Claims .dashed := {}
+      let frameIds := Ir.frameAnchors doc.body
       let mut named : NameClaim.Claims .parenthesized := {}
       let mut cfg := cfg
       -- what waits for the next stage: page-less sections' headings and label anchors
@@ -8692,23 +8689,22 @@ on the web slide"
           held := #[]
           -- a stepped frame's anchor rides its track: a pinned stage reads as already in view
           let text := Ir.firstPageText title
-          let base := slug title
-          let base := if base.isEmpty then "slide" else base
-          let (id, clash, taken1) := taken.claim base text
-          if let some holder := clash then
+          let fa := (frameIds[i]?.join).getD
+            { frame := { base := slug title, id := slug title, clash := none }, steps := #[] }
+          let id := fa.frame.id
+          if let some holder := fa.frame.clash then
             walkDiags := walkDiags.push (Diag.of .W0327
-              s!"frames share the anchor '{base}'; each after the first takes a numbered anchor"
-              (help := some s!"an in-page link '#{base}' reaches only the first; \
+              s!"frames share the anchor '{fa.frame.base}'; each after the first takes a numbered \
+anchor"
+              (help := some s!"an in-page link '#{fa.frame.base}' reaches only the first; \
 retitle the frames apart, or link to the numbered anchor")
               (detail := some s!"{text.quote} takes '{id}', after {holder.quote}"))
-          taken := taken1
           let steps := frameCfg.overlaySteps
-          let (spacers, taken2, diags2) :=
+          let (spacers, diags2) :=
             if steps > 1 then
-              snapWalk id text label #[] taken walkDiags (stepList steps)
+              snapWalk id text label fa.steps #[] walkDiags (stepList steps)
             else
-              (#[], taken, walkDiags)
-          taken := taken2
+              (#[], walkDiags)
           walkDiags := diags2
           let node := if chromeFoot then
               match doc.chrome.frameFootBand frameFoot curSection num total standout, node with
@@ -8735,7 +8731,7 @@ retitle the frames apart, or link to the numbered anchor")
           let node := if steps > 1 then
               Html.elem "div" (#[node] ++ spacers)
                 (#[("class", "slide-track"), ("style", s!"--steps: {steps}"),
-                  ("id", id), ("data-snapped", "1"), ("data-slide-label", s!"{label}.1")] ++
+                  ("id", id), ("data-snapped", "1"), ("data-slide-label", Ir.stepLabel label 1)] ++
                   numberAttrs)
             else match node with
               | .elem tag attrs kids =>
@@ -8767,10 +8763,9 @@ retitle the frames apart, or link to the numbered anchor")
                 (Html.elem "section" kids
                   (#[("class", "section-page")] ++
                     stageAttrs cfg.deck name ++ #[("data-snap", ""),
-                      ("data-slide-label", s!"section-{sectionPages}")]))
+                      ("data-slide-label", (sectionRoutes[i]?.join).getD (Ir.sectionRoute 0))]))
                 (Ir.logoInForce doc.logo logoSpans i)))
             lastStage := some (acc.size - 1)
-            sectionPages := sectionPages + 1
           else
             if level == 1 then curSection := title
             held := held.push (cfg.applyEpoch (navHeading cfg b))

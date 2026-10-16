@@ -2873,6 +2873,10 @@ public def bibAnchor (key : String) : String := "ref-" ++ key
   | .ref _ _ shown (some a) => some (.link ("#" ++ a) #[.text shown])
   | _ => none
 
+/-- The in-page fragment a link's URL names, where it names one. -/
+@[expose] public def linkFragment? (url : String) : Option String :=
+  if url.startsWith "#" then some (url.drop 1).toString else none
+
 /-- Whether an in-page fragment no anchor claims names the document's top: the empty fragment, or
 `top` in any ASCII case (HTML §7.4.6.4). -/
 @[expose] public def fragmentTop (frag : String) : Bool :=

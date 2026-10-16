@@ -19,6 +19,7 @@ import LeanTex.Core.FaIcons
 import LeanTex.Core.BibAccent
 import LeanTex.Core.PdfContract
 import LeanTex.Core.PdfDate
+import LeanTex.Core.Referent
 public import LeanTex.Core.ListingReply
 import LeanTex.Core.Listing
 import LeanTex.Core.LexerName
@@ -12996,6 +12997,10 @@ private theorem numbered_recovered_para (lang : Option String) (xs : Array Inlin
     Ir.numberFloats #[paraUnder lang xs] = #[paraUnder lang xs] := by
   cases lang <;> exact Ir.numberFloats_para_exact _
 
+private theorem referent_recovered_para (keys : Ir.ReferentKeys) (lang : Option String)
+    (xs : Array Inline) : Ir.anchorReferents keys #[paraUnder lang xs] = #[paraUnder lang xs] := by
+  cases lang <;> exact Ir.anchorReferents_para_exact keys _
+
 /-- A declared value as its author would write it. -/
 private def renderValue : Decl.Value → String
   | .str s => s
@@ -15997,10 +16002,20 @@ public structure DocBodyPlan where
   raws : Array Raw
   finish : Array Block → EM BodyCompletion
 
-/-- Numbers the body's floats, runs the continuation and attaches the body. -/
+/-- The labels the body bound, by what each names; none in a deck, whose labels stand on what is
+set next, as beamer's do. -/
+private def referentKeys (ctx : Ctx) (st : ESt) : Ir.ReferentKeys :=
+  if ctx.slides then Ir.ReferentKeys.empty
+  else
+    { headings := st.labels.foldl (init := {}) fun m (k, b) =>
+        if let some { kind := some .heading, num, .. } := b then m.insert k num else m
+      labels := st.labelKeys }
+
+/-- Numbers the body's floats, stands each label at what it names, runs the continuation and
+attaches the body. -/
 public def finishDocBody (plan : DocBodyPlan) (blocks : Array Block) :
     EM (Doc × Ir.RefTable × PictureReportContext) := do
-  let blocks := Ir.numberFloats blocks
+  let blocks := Ir.anchorReferents (referentKeys plan.ctx (← get)) (Ir.numberFloats blocks)
   let completion ← plan.finish blocks
   return (completion.attach blocks, completion.table, completion.pictureReport)
 
@@ -16078,10 +16093,12 @@ public theorem runDocBody_recovered_word_exact (plan : DocBodyPlan) (st : ESt) (
   rw [← hraw] at hbs
   obtain ⟨lang, ds, hbs⟩ := hbs
   change Ir.blocksText ((((plan.finish
-    (Ir.numberFloats ((elabBlocks plan.ctx plan.raws).run st).1)).run
+    (Ir.anchorReferents (referentKeys plan.ctx ((elabBlocks plan.ctx plan.raws).run st).2)
+      (Ir.numberFloats ((elabBlocks plan.ctx plan.raws).run st).1))).run
       ((elabBlocks plan.ctx plan.raws).run st).2).1.attach
-        (Ir.numberFloats ((elabBlocks plan.ctx plan.raws).run st).1)).body) = _
-  rw [hbs, numbered_recovered_para, BodyCompletion.attach_body_exact]
+        (Ir.anchorReferents (referentKeys plan.ctx ((elabBlocks plan.ctx plan.raws).run st).2)
+          (Ir.numberFloats ((elabBlocks plan.ctx plan.raws).run st).1))).body) = _
+  rw [hbs, numbered_recovered_para, referent_recovered_para, BodyCompletion.attach_body_exact]
   split
   · rw [resolve_recovered_para]
     exact recovered_para_census plan.ctx wordPos word lang ds

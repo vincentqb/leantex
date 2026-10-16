@@ -8,11 +8,13 @@ float figure 1
   caption
     text "An invented centred panel."
   para
-    text "An invented stand-in for a centred panel body. "
     label "fig:panel"
+    text "An invented stand-in for a centred panel body. "
 float table 1
   caption
     text "An invented centred strip."
+  para
+    label "tab:strip"
   table l,l
     row
       cell
@@ -24,8 +26,6 @@ float table 1
         text "gamma"
       cell
         text "delta"
-  para
-    label "tab:strip"
 para
   text "Figure "
   ref "fig:panel" shows "1" -> #fig:panel

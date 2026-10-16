@@ -56,37 +56,71 @@ private def opensAt (fs : Font.FontSet) (geom : Layout.Geom) (ds : Array Obj)
            (Layout.segsInk fs line.segs).1)).natAbs ≤ tolerance.toNat
      | _, _ => false)
 
-private def sortedUnique (xs : Array String) : Array String :=
-  (xs.qsort (· < ·)).foldl (fun acc x => if acc.back? == some x then acc else acc.push x) #[]
+/-- The in-page fragments a document's HTML links to, one per anchor element, sorted; a note's mark
+and back-link are the endnote list's own apparatus, and a pinned navigation a screen's control. -/
+private def htmlLinks (doc : Ir.Doc) : Array String :=
+  let w : Html.Walk Unit (Array String) :=
+    { inner := fun _ tag attrs =>
+        if tag == "nav" && hasStr ((HtmlDoc.attrOf? attrs "style").getD "") "position: fixed"
+        then none else some ()
+      enter := fun _ acc tag attrs _ =>
+        if tag != "a" then acc else
+        match (HtmlDoc.attrOf? attrs "href").bind Ir.linkFragment?, HtmlDoc.attrOf? attrs "role" with
+        | some f, role =>
+          if role == some "doc-noteref" || role == some "doc-backlink" then acc else acc.push f
+        | none, _ => acc }
+  (w.list () #[] (docNodesOf doc).toList).qsort (· < ·)
 
-/-- The in-page fragments a document's HTML links to, each once; a note's mark and back-link are
-the endnote list's own apparatus. -/
-private def htmlFragments (doc : Ir.Doc) : Array String :=
-  sortedUnique ((elemAttrsList (· == "a") #[] (docNodesOf doc).toList).filterMap fun (_, attrs) =>
-    match HtmlDoc.attrOf? attrs "href", HtmlDoc.attrOf? attrs "role" with
-    | some h, role =>
-      if h.startsWith "#" && role != some "doc-noteref" && role != some "doc-backlink" then
-        some (h.drop 1).toString
-      else none
-    | none, _ => none)
+/-- The in-page links one page carries, each a run of link segments to one target across gaps and
+lines, then its block links. -/
+private def pageLinks (p : Layout.PageOut) : Array String := Id.run do
+  let mut found : Array String := #[]
+  let mut current : Option String := none
+  for l in p.lines do
+    unless l.furniture do
+      for seg in l.segs do
+        match seg with
+        | .run _ _ link _ glyphs .. =>
+          if link.isNone && !glyphs.isEmpty then current := none
+          else if link.isSome && current != link then
+            current := link
+            if let some f := link.bind Ir.linkFragment? then found := found.push f
+        | _ => pure ()
+  return found ++ p.links.filterMap (Ir.linkFragment? ·.target)
 
-/-- The in-page fragments a laid-out document links to, each once: its runs' and block links' and
-its outline's. -/
-private def pdfFragments (out : Layout.Out) : Array String :=
-  let frag (u : String) : Option String := if u.startsWith "#" then some (u.drop 1).toString else none
-  let runs := out.pages.foldl (init := #[]) fun acc p =>
-    p.lines.foldl (init := acc ++ p.links.filterMap (frag ·.target)) fun acc l =>
-      l.segs.foldl (init := acc) fun acc s => match s with
-        | .run _ _ (some u) .. => (frag u).elim acc acc.push
-        | _ => acc
-  sortedUnique (runs ++ out.outline.filterMap (·.fragment))
+/-- The in-page fragments a laid-out document links to, one per link, sorted: a frame's step pages
+count each link once, as the most any step shows, a link continued over a page break once, and each
+outline entry once. -/
+private def pdfLinks (out : Layout.Out) : Array String := Id.run do
+  let mut found : Array String := #[]
+  let mut group : Option Nat := none
+  let mut most : Std.HashMap String Nat := {}
+  let mut last : Option String := none
+  for p in out.pages do
+    let source := p.frameOrigin.map (·.source)
+    if source.isNone || source != group then
+      found := most.fold (fun acc f n => acc ++ Array.replicate n f) found
+      most := {}
+    group := source
+    let here := pageLinks p
+    -- A link continued from the previous page counts with it.
+    let here := if source.isNone && here[0]? == last && last.isSome then here.extract 1 else here
+    let counts := here.foldl (fun (m : Std.HashMap String Nat) f => m.insert f (m.getD f 0 + 1)) {}
+    most := counts.fold (fun m f n => m.insert f (max n (m.getD f 0))) most
+    last := (p.lines.reverse.findSome? fun l =>
+      if l.furniture then none else l.segs.reverse.findSome? fun seg => match seg with
+        | .run _ _ link _ glyphs .. => if glyphs.isEmpty then none else some link
+        | _ => none).join.bind Ir.linkFragment?
+  found := most.fold (fun acc f n => acc ++ Array.replicate n f) found
+  return (found ++ out.outline.filterMap (·.fragment)).qsort (· < ·)
 
 /-- One synthetic file: a catalog with `catalog`'s entries, one page tree holding object 3, a
 dictionary that is no page, and a link annotation with `link`'s entries, then `more`. -/
-private def navPdf (catalog link : String) (more : Array String := #[]) : ByteArray :=
+private def navPdf (catalog link : String) (more : Array String := #[])
+    (pageBox : String := "/MediaBox [0 0 100 100]") (treeBox : String := "") : ByteArray :=
   syntheticPdf (#[s!"<< /Type /Catalog /Pages 2 0 R {catalog}>>",
-    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Annots [5 0 R] >>",
+    s!"<< /Type /Pages /Kids [3 0 R] /Count 1 {treeBox}>>",
+    s!"<< /Type /Page /Parent 2 0 R {pageBox} /Annots [5 0 R] >>",
     "<< /Kind /Other >>",
     s!"<< /Type /Annot /Subtype /Link /Rect [0 0 10 10] {link}>>"] ++ more)
 
@@ -127,11 +161,32 @@ private def judgeCases : List (String × ByteArray × List PdfDests.Why) :=
    ("an open action onto no page", navPdf "/OpenAction [4 0 R /Fit]" "/Dest [3 0 R /Fit]",
     [.notPage]),
    ("a go-to action in an annotation's additional actions",
-    navPdf "" "/Dest [3 0 R /Fit] /AA << /E << /S /GoTo /D (gone) >> >>", [.undefined])]
+    navPdf "" "/Dest [3 0 R /Fit] /AA << /E << /S /GoTo /D (gone) >> >>", [.undefined]),
+   ("a structure destination naming a structure element",
+    navPdf "" "/A << /S /GoTo /D [3 0 R /Fit] /SD [6 0 R /Fit] >>" #["<< /S /P /P 1 0 R >>"], []),
+   ("a structure destination naming no structure element",
+    navPdf "" "/A << /S /GoTo /D [3 0 R /Fit] /SD [4 0 R /Fit] >>", [.malformed]),
+   ("a dangling reference as a link's action", navPdf "" "/A 9 0 R", [.malformed]),
+   ("an action that is no dictionary", navPdf "" "/A [1 2]", [.malformed]),
+   ("a destination above its page's media box", navPdf "" "/Dest [3 0 R /XYZ 0 150 null]",
+    [.offPage]),
+   ("a media box the page inherits from its tree",
+    navPdf "" "/Dest [3 0 R /XYZ 0 150 null]" (pageBox := "") (treeBox := "/MediaBox [0 0 100 200]"),
+    []),
+   ("a name tree leaf whose keys stand out of order",
+    navPdf "/Names << /Dests << /Names [(z) [3 0 R /Fit] (a) [3 0 R /Fit]] >> >>" "/A << /S /GoTo /D (a) >>",
+    [.undefined]),
+   ("a name tree kid whose limits miss the key",
+    navPdf "/Names << /Dests 6 0 R >>" "/A << /S /GoTo /D (here) >>"
+      #["<< /Kids [7 0 R] >>", "<< /Limits [(m) (z)] /Names [(here) [3 0 R /Fit]] >>"],
+    [.undefined]),
+   ("an outline item with no parent, found through the outline",
+    navPdf "/Outlines 6 0 R" "/Dest [3 0 R /Fit]"
+      #["<< /Type /Outlines /First 7 0 R /Last 7 0 R /Count 1 >>", "<< /Title (Item) >>"],
+    [.nowhere])]
 
-/-- A target is zero-ink metadata tied to the line that ships it; every link navigates by the final
-page order to a destination the file defines, in every corpus file; and a cross-reference links in
-the PDF exactly where it links in the HTML. -/
+/-- Every navigation of a corpus file reaches a destination the file defines, a target stands at
+what it names, and a resolved reference or citation links in both artifacts, equally often. -/
 def pdfDestinationChecks (ref : IO.Ref (List String))
     (fs : Font.FontSet) (arts : Array GoldenArt) : IO Unit := do
   let t := check ref
@@ -146,16 +201,19 @@ def pdfDestinationChecks (ref : IO.Ref (List String))
 ({(found.map (·.toList.map PdfDests.Finding.render)).toOption.getD ["unreadable"]})"
       (found.map (·.isEmpty) == .ok true)
     -- A link whose ink the single face cannot set is judged under the faces the fixture ships.
-    let linked ← if htmlFragments a.doc == pdfFragments a.out then pure (pdfFragments a.out)
+    let linked ← if htmlLinks a.doc == pdfLinks a.out then pure (pdfLinks a.out)
       else do
         let ffs ← fixtureFontSet fs mathSet shipped a.doc
-        pure (pdfFragments (fittedOf ffs a.doc a.geom none (← corpusStore a.doc (some ffs))).out)
-    t s!"pdf destinations {a.name}: the PDF links exactly the in-page targets the HTML links \
-({htmlFragments a.doc} against {linked})"
-      (htmlFragments a.doc == linked)
+        pure (pdfLinks (fittedOf ffs a.doc a.geom none (← corpusStore a.doc (some ffs))).out)
+    t s!"pdf destinations {a.name}: the PDF links each in-page target as often as the HTML does \
+({htmlLinks a.doc} against {linked})"
+      (htmlLinks a.doc == linked)
     let anchors := Layout.anchorIndex a.out.pages
     t s!"pdf destinations {a.name}: every in-page link the pages carry lands"
-      ((pdfFragments a.out).all fun f => (Layout.landing? anchors a.out.pages f).isSome)
+      ((pdfLinks a.out).all fun f => (Layout.landing? anchors a.out.pages f).isSome)
+    if a.doc.info.pdfx.isNone then
+      t s!"pdf destinations {a.name}: the file carries one annotation per link that lands"
+        ((PdfCensus.census a.pdf).map (·.linkAnnots) == .ok (Pdf.linkCount a.geom a.out.pages))
   let pre := "\\usepackage{hyperref,paracol}\n" ++
     "\\page{width=260pt,height=220pt,hmargin=24pt,vmargin=24pt}\n"
   let longText := String.join (List.replicate 24 "Earlier words occupy the available lines. ")
@@ -243,15 +301,15 @@ def pdfDestinationChecks (ref : IO.Ref (List String))
   let cpdf := Pdf.write cgeom fs cout.pages cdoc.info
   let cdests := linkDestinations cpdf
   t "a citation and a reference: both link in the PDF, as in the HTML"
-    (cdests.map (·.size) == .ok 2 && htmlFragments cdoc == #["ref-probe2020", "s"] &&
-      pdfFragments cout == #["ref-probe2020", "s"])
+    (cdests.map (·.size) == .ok 2 && htmlLinks cdoc == #["ref-probe2020", "s"] &&
+      pdfLinks cout == #["ref-probe2020", "s"])
   t "a citation: its destination opens at its reference-list entry's line, not the page top"
     (match cdests, lineWith cout "Alice" with
      | .ok ds, some entry => ds[0]?.any fun (_, d) => opensAt fs cgeom d entry
      | _, _ => false)
-  t "a reference: its destination opens at the line its label stands on"
-    (match cdests, lineWith cout "Some words" with
-     | .ok ds, some labelled => ds[1]?.any fun (_, d) => opensAt fs cgeom d labelled
+  t "a reference to a label written after its heading: its destination opens at the heading"
+    (match cdests, lineWith cout "One" with
+     | .ok ds, some heading => ds[1]?.any fun (_, d) => opensAt fs cgeom d heading
      | _, _ => false)
   t "a citation and a reference: every navigation reaches a destination the file defines"
     ((PdfDests.ofBytes cpdf).map (·.isEmpty) == .ok true)
@@ -283,14 +341,77 @@ def pdfDestinationChecks (ref : IO.Ref (List String))
     ((PdfCensus.census dpdf).map (·.linkAnnots) == .ok 0)
   t "a link landing nowhere: named once for the PDF"
     ((dout.diags.filter fun d => d.code == "W0326" && d.output == some .pdf).size == 1)
-  -- An enclosing link wins over a cross-reference inside it, as no anchor nests in the HTML.
+  -- A link holding a reference keeps the enclosing link alone, as the web page does.
   let (odoc, _) := elabStr (dvDoc "" ("\\section{One}\\label{s}" ++
     "\\href{https://example.org/}{see Section \\ref{s}}"))
   let oout := layoutOf fs odoc
   let opdf := Pdf.write (Layout.Geom.ofPage odoc.page) fs oout.pages odoc.info
   t "a reference inside a link: the enclosing link alone ships, in both artifacts"
-    (htmlFragments odoc == #[] && pdfFragments oout == #[] &&
+    (htmlLinks odoc == #[] && pdfLinks oout == #[] &&
       (PdfCensus.census opdf).map (·.linkAnnots) == .ok 1)
+  -- A label names its heading from anywhere under it, a target its own place, in both artifacts.
+  let (hdoc, _) := elabStr (dvDoc "" ("\\section{One}\\hypertarget{h}{}Target words here.\\par " ++
+    "Later words.\\label{s}\\par See \\ref{s} and \\hyperlink{h}{there}."))
+  let hout := layoutOf fs hdoc
+  let hgeom := Layout.Geom.ofPage hdoc.page
+  let hdests := linkDestinations (Pdf.write hgeom fs hout.pages hdoc.info)
+  t "a label later under its heading: its destination opens at the heading"
+    (match hdests, lineWith hout "One" with
+     | .ok ds, some heading => ds[0]?.any fun (_, d) => opensAt fs hgeom d heading
+     | _, _ => false)
+  t "a target after a heading: its destination opens at its own line"
+    (match hdests, lineWith hout "Target words" with
+     | .ok ds, some line => ds[1]?.any fun (_, d) => opensAt fs hgeom d line
+     | _, _ => false)
+  let headings := elemNodesList (· == "h2") #[] (docNodesOf hdoc).toList
+  t "a label later under its heading: the web page sets it in the heading, the target in its text"
+    (headings.any (fun n => (attrValuesOf (fun _ => true) "id" n).contains "s") &&
+      !headings.any (fun n => (attrValuesOf (fun _ => true) "id" n).contains "h") &&
+      (attrValuesOf (fun _ => true) "id" (Html.elem "body" (docNodesOf hdoc) #[])).contains "h")
+  -- A float's label opens at the float's top: a caption standing above, a picture's ink.
+  let (fdoc, _) := elabStr (dvDoc "" ("See Table~\\ref{t} and Figure~\\ref{p}.\\par" ++
+    "\\begin{table}[h]\\caption{Table caption words.}\\label{t}" ++
+    "\\begin{tabular}{ll}Cell&Cell\\\\\\end{tabular}\\end{table}" ++
+    "\\begin{figure}[h]\\begin{tikzpicture}\\draw (0,0) rectangle (3,1);\\end{tikzpicture}" ++
+    "\\caption{Figure caption words.}\\label{p}\\end{figure}"))
+  let fout := layoutOf fs fdoc
+  let fgeom := Layout.Geom.ofPage fdoc.page
+  let fdests := linkDestinations (Pdf.write fgeom fs fout.pages fdoc.info)
+  t "a caption standing above: its float's label opens at the caption"
+    (match fdests, lineWith fout "Table caption" with
+     | .ok ds, some cap => ds[0]?.any fun (_, d) => opensAt fs fgeom d cap
+     | _, _ => false)
+  let ink := (fout.pages.flatMap (·.inks))[0]?
+  t "a picture standing first: its float's label opens at the picture's top"
+    (match fdests, ink with
+     | .ok ds, some k =>
+       let tolerance := ((spPerPt + 999) / 1000).toNat
+       ds[1]?.any fun (_, d) => d[1]? == some (.name "XYZ") &&
+         (match d[2]?.bind Obj.sp?, d[3]?.bind Obj.sp? with
+          | some x, some y =>
+            (x - (k.topLeft.1 + fgeom.bleed)).natAbs ≤ tolerance &&
+              (y - (fgeom.pageH + fgeom.bleed - k.topLeft.2)).natAbs ≤ tolerance
+          | _, _ => false)
+     | _, _ => false)
+  -- A deck's stages answer to the names its web deck's do: frames, steps, routes, section pages.
+  let deckSrc := "\\documentclass{beamer}\n\\title{Deck Title}\n\\begin{document}\n\\maketitle\n" ++
+    "\\section{Divider}\n\\begin{frame}{Intro}\n\\href{#1}{one} \\href{#1.2}{step} " ++
+    "\\href{#titlepage}{title} \\href{#section-0}{divider} \\href{#intro}{intro} " ++
+    "\\href{#intro-2}{second} \\href{#aside}{aside}\n\n\\pause\nLater words.\n\\end{frame}\n" ++
+    "\\begin{frame}[standout]{Aside}Aside words.\\end{frame}\n\\end{document}\n"
+  let (ddoc', dds) := elabStr deckSrc
+  let dout' := layoutOf fs ddoc'
+  let danchors := Layout.anchorIndex dout'.pages
+  let htmlDs := (HtmlDoc.emitTree {} ddoc').2.2
+  t s!"a deck's stage names: the web deck resolves each ({htmlDs.filter (·.code == "W0326") |>.map (·.message)})"
+    (dds.all (·.code != "W0301") && htmlDs.all (·.code != "W0326"))
+  t s!"a deck's stage names: each lands in the PDF ({pdfLinks dout'})"
+    (pdfLinks dout' == htmlLinks ddoc' && (htmlLinks ddoc').size == 7 &&
+      (pdfLinks dout').all fun f => (Layout.landing? danchors dout'.pages f).isSome)
+  t "a deck's stage names: a step's route lands on that step's page"
+    (match Layout.landing? danchors dout'.pages "1.2", Layout.landing? danchors dout'.pages "1.1" with
+     | some a, some b => a.page == b.page + 1
+     | _, _ => false)
   -- Sections sharing a title claim numbered anchors, the same in both artifacts.
   let (sdoc, _) := elabStr (dvDoc pre ("\\href{#twin-2}{To the second.}\\section{Twin}Words." ++
     "\\newpage\\section{Twin}TARGET words.\\section{}Untitled."))
@@ -298,7 +419,7 @@ def pdfDestinationChecks (ref : IO.Ref (List String))
   let sgeom := Layout.Geom.ofPage sdoc.page
   let spdf := Pdf.write sgeom fs sout.pages sdoc.info
   t "sections sharing a title: a link to the second's numbered anchor lands on its page"
-    (htmlFragments sdoc == #["twin-2"] && pdfFragments sout == #["twin-2"] &&
+    (htmlLinks sdoc == #["twin-2"] && pdfLinks sout == #["twin-2"] &&
       (linkDestination spdf).map (·.map (·.1)) == .ok (pageWith sout "TARGET"))
   t "sections sharing a title: every navigation reaches a destination the file defines"
     ((PdfDests.ofBytes spdf).map (·.isEmpty) == .ok true)
@@ -311,5 +432,5 @@ def pdfDestinationChecks (ref : IO.Ref (List String))
   let kout := layoutOf fs kdoc
   let kpdf := Pdf.write (Layout.Geom.ofPage kdoc.page) fs kout.pages kdoc.info
   t "a citation of an entry no list sets: unlinked in both artifacts, the listed one linked"
-    (htmlFragments kdoc == #["ref-b"] && pdfFragments kout == #["ref-b"] &&
+    (htmlLinks kdoc == #["ref-b"] && pdfLinks kout == #["ref-b"] &&
       (PdfCensus.census kpdf).map (·.linkAnnots) == .ok 1)
