@@ -3,7 +3,7 @@ module
 import LeanTex.Core.KeyVal
 
 /-! natbib's and biblatex's citation setup as typed declarations, each carried as one word the
-reference list reads back exactly. -/
+elaborator reads back exactly. -/
 
 namespace LeanTex.Core
 
@@ -26,7 +26,7 @@ public inductive CiteDecl.Key where
   | usetranslator | abbreviate | datecirca | dateuncertain | sortlocale | clearlang
   deriving DecidableEq, Repr, Inhabited
 
-/-- natbib's package options. -/
+/-- The natbib package options the engine honours. -/
 public inductive CiteDecl.Opt where
   | numbers | authoryear | round | square | angle | curly | comma | semicolon | colon
   | nobibstyle | bibstyle | sort | compress | sortCompress
@@ -146,11 +146,13 @@ private def stripGroup (v : String) : String := Id.run do
 /-- A punctuation key's value as natbib reads it, one outer brace group stripped. -/
 public def punct (k : Key) (v : String) : CiteDecl := .set k (stripGroup v)
 
-/-- A `\setcitestyle` item as natbib reads it, compared exactly as written: a keyword or the
-`\bibstyle` door, or a punctuation key and its value. -/
+/-- A `\setcitestyle` item as natbib reads it, compared exactly as written: a keyword, or a
+punctuation key and its value. -/
 public def ofItem? (item : String) : Option CiteDecl :=
   (ofSpelling? item).bind fun
-    | .word w => if [.sort, .compress, .biblatex].contains w then none else some (.word w)
+    | .word w =>
+      if [.sort, .compress, .biblatex, .bibstyle, .nobibstyle].contains w then none
+      else some (.word w)
     | .set k v =>
       if [.open, .close, .citesep, .aysep, .yysep, .notesep].contains k then some (punct k v)
       else none

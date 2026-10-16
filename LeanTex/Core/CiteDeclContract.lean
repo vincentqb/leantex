@@ -28,9 +28,11 @@ public theorem CiteDecl.spelling_read_exact (d : CiteDecl) :
     have hl : CiteDecl.Opt.names.lookup o.name = some o := by cases o <;> decide +kernel
     simp [CiteDecl.spelling, CiteDecl.ofSpelling?, String.toList_append, KeyVal.cutAt, hl]
 
-/-- A carried setup's group reads back as the declarations a surface wrote. -/
-public theorem Parse.citeSetupOf_words_exact (ds : Array CiteDecl) (pos : Pos) :
-    Parse.citeSetupOf (ds.map fun d => .word d.spelling pos) = ds := by
+/-- The setup a surface carries is its mark and a group the elaborator reads back as the setup. -/
+public theorem Parse.citeSetupRaws_read_exact (ds : Array CiteDecl) (pos : Pos) :
+    ∃ body, Parse.citeSetupRaws ds pos = #[.ctrl Parse.citeSetupMark pos, .group body pos] ∧
+      Parse.citeSetupOf body = ds := by
+  refine ⟨_, rfl, ?_⟩
   unfold Parse.citeSetupOf
   rw [Array.filterMap_map]
   simp [Function.comp_def, CiteDecl.spelling_read_exact]

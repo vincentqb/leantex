@@ -256,9 +256,9 @@ def biblatexChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
       t s!"{tag}: the html reads '{line}'" (hasStr html line)
 
 
-/-- A body's `\@natbib` is an unknown command whose argument stays text, its citations LaTeX's own;
-`\setcitestyle` reads no key it does not take; an option natbib lacks is one loss, worded alike from
-either surface; the twin writes the options as declared and reads back to the same citations. -/
+/-- A body's `\@natbib` is an unknown command, its citations LaTeX's own; `\setcitestyle` reads no
+key or door word it does not take; an option natbib lacks is one loss, worded alike from either
+surface; the twin writes the options as declared and reads back to the same citations. -/
 def citeSetupChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let (page, _, html, ds) := natbibShip oneFace natbibBib "" "plain"
@@ -270,12 +270,12 @@ def citeSetupChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   let calls := ["\\citep{alpha2019,delta2021}", "\\citet{alpha2019}"]
   let (plain, _, _, _) := natbibShip oneFace natbibBib "\\usepackage{natbib}\\setcitestyle{}"
     "plainnat" calls
-  let items := ["option=numbers", "citestyle=plain", "bbx=numeric", "sort", "super",
-    "mainlang=french", "biblatex"]
+  let items := ["option=numbers", "citestyle=plain", "bbx=numeric", "cbx=authoryear",
+    "sorting=none", "maxnames=1", "sort", "super", "mainlang=french", "biblatex", "bibstyle"]
   let (forged, _, _, fds) := natbibShip oneFace natbibBib
     s!"\\usepackage\{natbib}\\setcitestyle\{{",".intercalate items}}" "plainnat" calls
-  t s!"cite setup: '\\setcitestyle' sets no option, style, scheme, flag or language ({forged})"
-    (forged == plain)
+  t s!"cite setup: '\\setcitestyle' sets no option, style, scheme, flag, door or language ({forged})"
+    (forged == plain && forged.contains "L1 (Alpha et al., 2019; Delta, 2021) end.")
   t "cite setup: and names each item it drops"
     (fds.any fun d => d.code == "W0101" && items.all fun i => hasStr d.message s!"'{i}'")
   let tex := (dvE (dvDoc "\\usepackage[super]{natbib}\n" "Text.")).filter (·.code == "W0104")
