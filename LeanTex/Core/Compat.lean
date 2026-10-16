@@ -6031,18 +6031,35 @@ private def listOptions (n : String) (body : Array Raw) (pos : Pos) : M (Array R
   let mut rest : Array String := #[]
   let mut spacing : Array (String × String) := #[]
   let mut read := false
+  let mut named := false
   for e in KeyVal.items src do
     match ← listSpacingEntries what n e pos with
     | some vs =>
       read := true
+      if vs.isEmpty then named := true
       for (key, v) in vs do spacing := Ir.redeclare spacing key v
     | none => rest := rest.push e
   unless read do return body
   let native := ", ".intercalate ((spacing.toList.map fun (key, v) => s!"{key} = {v}") ++ rest.toList)
-  -- A key the list does not honour is named where it stands, which accounts for the options.
-  unless rest.any fun e => !(KeyVal.entry e).1.isEmpty do
+  -- A value or key the list does not read is named where it stands, which accounts for the options.
+  unless named || rest.any fun e => !(KeyVal.entry e).1.isEmpty do
     became what s!"\\begin\{{n}}[{native}]" pos
   return (← synthAt s!"[{native}]" pos) ++ body.extract k body.size
+
+/-- Each run of letters a native length spells, a unit after its number included. -/
+private def letterRuns (s : String) : Array String := Id.run do
+  let mut out : Array String := #[]
+  let mut cur := ""
+  for c in s.toList ++ [' '] do
+    if c.isAlpha then cur := cur.push c
+    else
+      unless cur.isEmpty do out := out.push cur
+      cur := ""
+  return out
+
+/-- The units a page length takes whatever its font or device, and the keywords around them. -/
+private def absoluteWords : List String :=
+  ["true", "plus", "minus", "pt", "pc", "in", "bp", "cm", "mm", "dd", "cc", "nd", "nc", "sp"]
 
 /-- A key's value as the preamble's length door reads a `\dimexpr` to a literal, sums and scalings of
 lengths it holds, else the value as written. -/
@@ -6053,8 +6070,7 @@ private def dimexprValue (v : String) : M String := do
   -- premise: strutLengthChecks — a value naming a length the page cannot resolve stays dropped
   let read := (lenValue st.lens raws (preamble := !st.inDoc) (measureKnown := st.measureKnown)
     (flowPage := st.flowPage) (strut := if st.inDoc then none else st.strutSkip)).filter fun s =>
-      readsAsLength s && texWordsOnly v && !s.contains '/' &&
-        (lengthNames s).all (texLengthWords.contains ·)
+      readsAsLength s && texWordsOnly v && !s.contains '/' && (letterRuns s).all absoluteWords.contains
   return read.getD v
 
 /-- `\usepackage[opts]{geometry}`, `\geometry{...}` and
@@ -7858,7 +7874,7 @@ private def rewriteCtrlLaterNamed (name : String) (pos : Pos) (raws : Array Raw)
   match name with
   | "addtobeamertemplate" => blockHookArm pos raws start
   | "apptocmd" => standoutFootHookArm pos raws start
-  | "setbox" =>
+  | "setbox" | "sbox" | "savebox" =>
     -- A box assigned to the strut box sets its height and depth anew.
     if raws[skipSpaces raws start]? matches some (.ctrl "strutbox" _) then
       write fun st => { st with strutSkip := none }
@@ -8485,7 +8501,9 @@ the definition is skipped" pos
       let slot := (bodySlot? code).isSome
       if slot || !mentionsBody code.toList then
         let env := envName.trimAscii.toString
-        let ignored := (← get).ignoredDefs.contains (Tcolorbox.bindingName env)
+        -- environ's definition of a float is never the kernel-core idiom, so it is ignored whole.
+        let ignored := (← get).ignoredDefs.contains (Tcolorbox.bindingName env) ||
+          floatRedefEnvs.contains env
         unless ignored do
           became s!"\\{name}\{{envName}}" (native ++ (if dflt.isSome then " [default]" else "") ++
             (if slot then " {code before \\BODY} {code after it}"

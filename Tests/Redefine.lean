@@ -595,6 +595,7 @@ def ignoredDefinitionChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) 
      ("renewenvironment of a float",
       "\\renewenvironment{figure}{\\ifmmode x\\fi}{\\setlength{\\fboxsep}{2pt}}"),
      ("RenewEnviron", "\\RenewEnviron{itemize}{\\BODY}"),
+     ("RenewEnviron of a float", "\\RenewEnviron{figure}{\\BODY}"),
      ("NewEnviron", "\\NewEnviron{quote}{\\ifmmode x\\fi\\BODY}"),
      ("let", "\\let\\varul\\relax"),
      ("RenewDocumentEnvironment", "\\RenewDocumentEnvironment{itemize}{}{\\ifmmode x\\fi}{}"),

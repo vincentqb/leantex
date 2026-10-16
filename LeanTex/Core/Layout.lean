@@ -9029,6 +9029,9 @@ public structure Spacing.Context where
   /-- The list or quote being collected opened inside an open paragraph
   (`Ir.inParagraphRole`), so its `\topsep` takes no `\partopsep`. -/
   private inPar : Bool := false
+  /-- The list being collected opens an item, in its label, where LaTeX's `\@noparlist` sets no
+  skip above or below it. -/
+  private inLabel : Bool := false
   /-- The document's loaded images, which layout measures and places. -/
   private imgs : Image.Store := {}
   /-- Native-picture source openings, on the structure leaves the collector allocates. -/
@@ -12338,6 +12341,7 @@ private def collectItem (r : Rd) (a : Acc)
           (marker := some marker) (leaf := leaf) (span := Struct.leafCountInlines content)
       -- A disclosure opening its item sets its summary as the first paragraph, by the marker.
       | .disclosure .., true => collectBlock r { a with itemMarker := some marker } blk indent
+      | .list .., true => collectBlock { r with inLabel := true } a blk indent
       | _, _ => collectBlock r a blk indent
     collectItem r a rest indent false marker hang
 
@@ -12456,18 +12460,20 @@ private def collectBlock (r : Rd) (a : Acc)
     -- `\@trivlist`'s `\@topsepadd`: `\topsep`, plus `\partopsep` where the list opens a paragraph.
     let top := sp.map fun (s, pts) => if r.inPar then r.resolve s.topsep
       else (r.resolve s.topsep).add (r.resolve pts)
-    -- `\topsep` with TeX's `\parskip` on top; after a heading the first item spends `\@nbitem`.
+    -- `\topsep` with TeX's `\parskip` on top; after a heading the first item spends `\@nbitem`, and
+    -- in an item's label it takes the item's line.
     let a := match st.before, top with
       | some g, _ => a.addvspace (r.resolve g)
-      | none, some t => if a.afterHeading then a.flushGap r else (a.listOpen r t).flushGap r
+      | none, some t =>
+        if a.afterHeading || r.inLabel then a.flushGap r else (a.listOpen r t).flushGap r
       | none, none => a
     let step := (st.indent.map fun g => (r.resolve g).width).getD (r.leftMargin lv a.tokens)
     let indent := indent + step
     let a := if ordered then { a with enumDepth := depth } else { a with itemDepth := depth }
     let ri := match sk with
-      | some s => { r with inPar := false,
+      | some s => { r with inPar := false, inLabel := false,
                            geom := { r.geom with parskip := s.parsep, texParskip := s.parsep } }
-      | none => { r with inPar := false }
+      | none => { r with inPar := false, inLabel := false }
     -- beamer's squeeze (`\beamer@cramped`): `\itemsep0pt` in every list.
     let a := collectItems ri a items.toList indent st ordered level 1
       (sk.map fun s => if r.squeeze then {} else r.resolve s.itemsep) step
@@ -12476,6 +12482,7 @@ private def collectBlock (r : Rd) (a : Acc)
     match st.before, top with
     | some g, _ => a.addvspace (r.resolve g)
     | none, some t =>
+      if r.inLabel then a else
       -- `\endtrivlist`: a last item closing on a nested list or quotation leaves its skip with
       -- this list's `\parsep` on it, less the `\parskip` outside (`Ir.itemCloses?`).
       let a := match sk, items.back?.bind Ir.itemCloses? with
@@ -12552,10 +12559,6 @@ private def collectBlock (r : Rd) (a : Acc)
       let ri := { (r.within blk) with
         inPar := false, geom := { r.geom with parskip := sk.parsep, texParskip := sk.parsep } }
       let sub := collectBlocks ri sub body (indent + lm)
-      -- `\endtrivlist`: closing on a nested list or quotation, as a list's last item does.
-      let sub := if (Ir.itemCloses? body).isSome then
-          sub.endReskip (r.resolve sk.parsep) (r.resolve r.geom.texParskip)
-        else sub
       { sub.listSpace g with measure := saved, quoteDepth := a.quoteDepth }
     | none =>
       let g := r.resolve (Ir.trivlistSkipFor r.lists a.tokens r.geom.fontSize

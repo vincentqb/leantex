@@ -583,13 +583,33 @@ def htmlListSpacingChecks (ref : IO.Ref (List String)) : IO Unit := do
     (hasStr ends (".list-set-1:not(.u-in-paragraph):has(> li:last-child > " ++
       ".list-set-1.u-in-paragraph:last-child") &&
      hasStr ends "margin-top: calc(max(calc(1.208rem - var(--parskip, 0rem)), 0.966rem) + var(--parskip, 0rem));")
-  -- A quotation closing an item on a declared list: 9pt with its \parsep 2pt, less the outer 4pt.
+  -- A quotation closing an item on a declared list leaves the larger skip, the list's 9pt, as the page.
   let quoted := page "\\setlist[itemize,2]{topsep=9pt}"
     ("\\begin{itemize}\\item a\n\\begin{quote}b\n\\begin{itemize}\\item c\\end{itemize}\n" ++
       "\\end{quote}\n\\item d\\end{itemize}")
-  t "html the item after a quotation closing on a declared list stands at the quotation's skip"
+  t "html the item after a quotation closing on a declared list stands at the larger skip"
     (hasStr quoted ("li:has(> blockquote.u-in-paragraph:last-child > " ++
-      ".list-set-1.u-in-paragraph:last-child") && hasStr quoted s!"\{ margin-top: {space "0.845"}; }")
+      ".list-set-1.u-in-paragraph:last-child") && hasStr quoted s!"\{ margin-top: {space "1.087"}; }")
+  -- An inline list closing on an opened one: its 8pt under the nested 6pt and its \parsep 4pt.
+  let inlineEnds := (HtmlDoc.emit {} (elabStr ("\\documentclass{article}\\begin{document}" ++
+    "Alpha\n\\begin{itemize}\\item a\n\n\\begin{itemize}\\item b\\end{itemize}\n\\end{itemize}" ++
+    "\n\nc\\end{document}")).1).1
+  t "html an undeclared inline list closing on a nested one ends on its re-skip, as the page"
+    (hasStr inlineEnds ("dl):not([class*=\"list-set-\"]).u-in-paragraph:has(> li:last-child > ") &&
+     hasStr inlineEnds "margin-top: calc(max(calc(1.208rem - var(--parskip, 0rem)), 0.966rem) + var(--parskip, 0rem));")
+  -- A description's item reached by the spine as a list's item is.
+  let described := page "\\setlist[3]{topsep=10pt}"
+    ("\\begin{itemize}\\item a\n\\begin{description}\\item[T] b\n\\begin{itemize}\\item c" ++
+      "\\end{itemize}\n\\end{description}\n\\end{itemize}\n\nd")
+  t "html a closing spine through a description list reaches its item"
+    (hasStr described "> :is(li, dd):last-child > .list-set-1.u-in-paragraph:last-child")
+  -- An article's abstract closing on a declared list ends on that list's skip, as the page.
+  let abstractEnds := page "\\setlist[2]{topsep=10pt}"
+    "\\begin{abstract}a\n\\begin{itemize}\\item b\\end{itemize}\n\\end{abstract}\nc"
+  t "html an abstract closing on a declared list ends on its skip"
+    (hasStr abstractEnds (":where(.abstract.quoted:has(> .list-set-1.u-in-paragraph:last-child, " ++
+      "> details[open]:last-child > .list-set-1.u-in-paragraph:last-child) + *) " ++
+      s!"\{ margin-top: {space "1.208"}; }"))
 
 /-- A list's spaces are the class's `\@list⟨n⟩` in HTML too, at each level, in the screen's quanta. -/
 def htmlListGapChecks (ref : IO.Ref (List String)) : IO Unit := do

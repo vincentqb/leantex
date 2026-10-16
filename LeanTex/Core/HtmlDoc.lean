@@ -1039,7 +1039,7 @@ mutual
 
 -- conserves: none — reads the skip a closing list or quotation leaves, no content
 /-- The spine a block closing an item hangs down each last item, and the natural width of the skip
-it leaves: its own, or where larger the skip it closes on with its `\parsep` on it less `outer`. -/
+it leaves: its own, or where larger the one it closes on, a list's with its `\parsep` less `outer`. -/
 public def blockSpine (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens) (level : Nat)
     (outer : Int) (inPar : Bool) : Block → Option (List SpineStep × Int)
   | .list _ s items =>
@@ -1053,10 +1053,9 @@ public def blockSpine (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens) (le
   | .quote body =>
     (Ir.listSpacing l size level tokens {}).map fun (sk, pts) =>
       let own := listSkipSp size sk.topsep + (if inPar then 0 else listSkipSp size pts)
-      let parsep := listSkipSp size sk.parsep
       let step : SpineStep := { quote := true, set := {}, inPar }
-      match lastSpine l size tokens (level + 1) parsep body.toList with
-      | some (rest, e) => (step :: rest, max (e + parsep - outer) own)
+      match lastSpine l size tokens (level + 1) (listSkipSp size sk.parsep) body.toList with
+      | some (rest, e) => (step :: rest, max e own)
       | none => ([step], own)
   | .role n body =>
     if n == Ir.inParagraphRole then roleSpine l size tokens level outer body.toList else none
@@ -1073,11 +1072,12 @@ public def itemsSpine (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens) (le
   | [item] => lastSpine l size tokens level outer item.toList
   | _ :: rest => itemsSpine l size tokens level outer rest
 
-/-- The spine the last block hangs. -/
+/-- The spine the last block hangs, none from an item's one block, which stands in its label. -/
 public def lastSpine (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens) (level : Nat)
     (outer : Int) : List Block → Option (List SpineStep × Int)
   | [] => none
-  | [b] => blockSpine l size tokens level outer false b
+  | [_] => none
+  | [_, b] => blockSpine l size tokens level outer false b
   | _ :: rest => lastSpine l size tokens level outer rest
 
 /-- The spine an in-paragraph wrapper's one block hangs. -/
@@ -1088,48 +1088,59 @@ public def roleSpine (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens) (lev
 
 end
 
-/-- An item of a list or quotation closing on a spine whose spacing a declaration reaches: the
-`\@listdepth` level, spacing and opening inside a paragraph of the list, whether it is a quotation,
-the spine, the skip it leaves, and whether the item is the last. -/
+/-- What a nested close stands in: a list, a quotation or an article's abstract. -/
+public inductive CloseParent where
+  | list
+  | quote
+  | abstract
+  deriving BEq, Hashable
+
+/-- An item of a list, a quotation or an abstract closing on a spine: the `\@listdepth` level, the
+spacing and opening inside a paragraph of what holds it, the spine, the skip it leaves, and whether
+the item is the last. -/
 public structure NestedClose where
   level : Nat
+  parent : CloseParent
   outer : Ir.ListSet
   outerInPar : Bool
-  inQuote : Bool
   spine : List SpineStep
   close : Int
   last : Bool
   deriving BEq, Hashable
 
-/-- Whether a nested close sets a space the class's level and spacing rules do not: a spine a
-declaration reaches, or a declared list's last item closing on any. -/
+/-- Whether a nested close sets a space the class's level and spacing rules may not: a spine longer
+than one block or one a declaration reaches, and any below a list, whose re-skip the levels' own
+skips meet only where it opened after a paragraph break. -/
 private def NestedClose.owed (c : NestedClose) : Bool :=
-  c.spine.any (·.set != {}) || (c.last && c.outer != {})
+  (c.last && c.parent == .list) || c.spine.length > 1 || c.spine.any (·.set != {})
 
-/-- The nested closes a body's lists and quotations hold that `NestedClose.owed` keeps, each once,
-ordered so a deeper level's rule, a declared side's and a longer spine's follow the rules they
-refine; `abstractNests` counts an abstract as a quotation. -/
+/-- The nested closes a body's lists, quotations and abstracts hold that `NestedClose.owed` keeps,
+each once, ordered so a deeper level's rule, a declared side's and a longer spine's follow the
+rules they refine; `abstractNests` counts an abstract as a quotation. -/
 public def nestedClosesOf (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens)
     (abstractNests : Bool) (body : Array Block) : List NestedClose :=
-  let note (level : Nat) (s : Ir.ListSet) (inPar inQuote : Bool) (items : Array (Array Block))
-      (acc : Array NestedClose × Std.HashSet NestedClose) :
+  let note (level : Nat) (parent : CloseParent) (s : Ir.ListSet) (inPar : Bool) (outer : Int)
+      (items : Array (Array Block)) (acc : Array NestedClose × Std.HashSet NestedClose) :
       Array NestedClose × Std.HashSet NestedClose :=
-    match Ir.listSpacing l size level tokens s with
-    | none => acc
-    | some (sk, _) =>
-      items.zipIdx.foldl (fun acc (item, i) =>
-        match lastSpine l size tokens (level + 1) (listSkipSp size sk.parsep) item.toList with
-        | some (spine, close) =>
-          let c : NestedClose := { level, outer := s, outerInPar := inPar, inQuote, spine, close
-                                   last := i + 1 == items.size }
-          if !c.owed || acc.2.contains c then acc else (acc.1.push c, acc.2.insert c)
-        | none => acc) acc
+    items.zipIdx.foldl (fun acc (item, i) =>
+      match lastSpine l size tokens (level + 1) outer item.toList with
+      | some (spine, close) =>
+        let c : NestedClose := { level, parent, outer := s, outerInPar := inPar, spine, close
+                                 last := i + 1 == items.size }
+        if !c.owed || acc.2.contains c then acc else (acc.1.push c, acc.2.insert c)
+      | none => acc) acc
+  let parsepAt (level : Nat) (s : Ir.ListSet) : Int :=
+    ((Ir.listSpacing l size level tokens s).map fun (sk, _) => listSkipSp size sk.parsep).getD 0
   let walk : Ir.CtxFold (Nat × Bool) (Array NestedClose × Std.HashSet NestedClose) := {
     openBlock := fun (depth, inPar) acc b =>
       match b with
-      | .list _ s items => (note (depth + 1) s inPar false items acc, (depth + 1, false))
-      | .quote body => (note (depth + 1) {} inPar true #[body] acc, (depth + 1, false))
-      | .abstract _ => (acc, (if abstractNests then depth + 1 else depth, false))
+      | .list _ s items =>
+        (note (depth + 1) .list s inPar (parsepAt (depth + 1) s) items acc, (depth + 1, false))
+      | .quote body =>
+        (note (depth + 1) .quote {} inPar (parsepAt (depth + 1) {}) #[body] acc, (depth + 1, false))
+      | .abstract body =>
+        if abstractNests then (note (depth + 1) .abstract {} false 0 #[body] acc, (depth + 1, false))
+        else (acc, (depth, false))
       | .role n _ => (acc, (depth, n == Ir.inParagraphRole))
       | .para _ | .center _ | .ragged .. | .spaced .. | .link .. | .onSteps .. | .only ..
       | .section .. | .titled .. | .disclosure .. | .equation .. | .verbatim .. | .algorithm ..
@@ -1145,7 +1156,7 @@ public def nestedClosesOf (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens)
     rank a.1 < rank b.1 || (rank a.1 == rank b.1 && a.2 ≤ b.2)).map (·.1)
 
 /-- The rules of a page's nested closes: the larger of a spine's skip and the item skip before the
-next item, and below a list its last item's spine reskipped as `\endtrivlist` does. -/
+next item, and below what holds the last item its close as the page sets it. -/
 public def nestedCloseRules (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens)
     (sets : List Ir.ListSet) (closes : List NestedClose) (disc : String := "details[open]") :
     List GapRule :=
@@ -1163,29 +1174,38 @@ public def nestedCloseRules (l : Ir.ListLineage) (size : Int) (tokens : Ir.Token
   let chain (spine : List SpineStep) : String :=
     (spine.zip ((none : Option SpineStep) :: spine.map some)).foldl (fun acc (st, prev) =>
       acc ++ (match prev with
-        | some p => if p.quote then " > " else " > li:last-child > "
+        | some p => if p.quote then " > " else " > :is(li, dd):last-child > "
         | none => "") ++ stepSel st) ""
   closes.flatMap fun c =>
     match Ir.listSpacing l size c.level tokens c.outer with
     | some (osk, opts) =>
-      let outerSel := String.join (List.replicate (c.level - 1) itemAncestor) ++
-        (if c.inQuote then "blockquote" else classed c.outer)
+      let pre := String.join (List.replicate (c.level - 1) itemAncestor)
       let ends := chain c.spine
       let close := screenMilli size c.close
-      if c.last then
-        let own := screenMilli size
-          (listSkipSp size osk.topsep + (if c.outerInPar then 0 else listSkipSp size opts))
+      let own := screenMilli size
+        (listSkipSp size osk.topsep + (if c.outerInPar then 0 else listSkipSp size opts))
+      -- `:has` admits no `:has` inside it, so the item and its close are one relative chain.
+      let held (items : List String) : String :=
+        s!":has({", ".intercalate (items.flatMap fun item =>
+          [s!"> {item}{ends}", s!"> {item}{disc}:last-child > {ends}"])})"
+      match c.parent, c.last with
+      | .list, true =>
         let parsep := screenMilli size (listSkipSp size osk.parsep)
         let reskip := s!"max(calc({milliRem (close + parsep)} - var(--parskip, 0rem)), {milliRem own})"
-        -- `:has` admits no `:has` inside it, so the item and its close are one relative chain.
-        let chains := (if c.inQuote then [""] else ["li:last-child > ", "dd:last-child > "]).flatMap
-          fun item => [s!"> {item}{ends}", s!"> {item}{disc}:last-child > {ends}"]
-        ownsBelow [outerSel ++ opened c.outerInPar ++ s!":has({", ".intercalate chains})"]
+        ownsBelow [pre ++ classed c.outer ++ opened c.outerInPar ++
+            held ["li:last-child > ", "dd:last-child > "]]
           s!"calc({reskip} + var(--parskip, 0rem))" reskip texParskip
-      else
+      | .list, false =>
         let lastSel := s!":has(> {ends}, > {disc}:last-child > {ends})"
+        let outerSel := pre ++ classed c.outer
         [.boundary s!"{outerSel} > li{lastSel} + {itemSubject}, {outerSel} > dd{lastSel} + dt"
           (listSpace (max close (screenMilli size (listSkipSp size osk.itemsep))))]
+      | .quote, _ =>
+        ownsBelow [pre ++ "blockquote" ++ opened c.outerInPar ++ held [""]]
+          (listSpace (max close own)) (milliRem (max close own)) texParskip
+      | .abstract, _ =>
+        ownsBelow [pre ++ ".abstract.quoted" ++ held [""]] (listSpace close) (milliRem close)
+          texParskip
     | none => []
 
 /-- The list rules a page's class owes, `\@list⟨n⟩` for levels one to three; the web lineage

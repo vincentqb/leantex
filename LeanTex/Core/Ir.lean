@@ -8450,8 +8450,10 @@ public def listSetsOf (body : Array Block) : Array ListSet :=
     (fun acc _ => acc) (#[], {}) body).1
 
 /-- The nested list or quotation an item closes on, as `\endtrivlist` reads the skip it leaves:
-its declared spacing, whether it opened inside a paragraph, and whether it is a quotation. -/
+its declared spacing, whether it opened inside a paragraph, and whether it is a quotation; none
+where it is the item's one block, which opening in the item's label leaves no skip. -/
 public def itemCloses? (item : Array Block) : Option (ListSet × Bool × Bool) :=
+  if item.size < 2 then none else
   match item.back? with
   | some (.list _ s _) => some (s, false, false)
   | some (.quote _) => some ({}, false, true)

@@ -2438,6 +2438,8 @@ def strutLengthChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
       ("[10pt]{scrartcl}", "\\KOMAoptions{fontsize=12pt}"),
       ("[10pt]{article}", "\\renewcommand{\\baselinestretch}{1.5}"),
       ("[10pt]{article}", "\\setbox\\strutbox\\hbox{\\vrule height 20pt depth 4pt width 0pt}"),
+      ("[10pt]{article}", "\\sbox\\strutbox{\\rule{0pt}{20pt}}"),
+      ("[10pt]{article}", "\\savebox\\strutbox{\\rule{0pt}{20pt}}"),
       ("[9pt]{memoir}", ""), ("[14pt]{memoir}", "")] do
     let s := src cls (pre ++ geo)
     t s!"strut: after '{pre}' in {cls} the strut is not read, and the footskip is named and dropped"
@@ -2446,7 +2448,8 @@ def strutLengthChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
   for value in ["footskip=\\dimexpr\\headheight+1pt\\relax", "footskip=\\dimexpr\\topskip\\relax",
       "footskip=\\dimexpr 0.5\\paperheight\\relax", "footskip=\\dimexpr 1in/2\\relax",
       "left=\\dimexpr 0.1\\paperwidth\\relax", "top=\\dimexpr\\headheight+1in\\relax",
-      "footskip=\\dimexpr\\marginparwidth+\\oddsidemargin\\relax"] do
+      "footskip=\\dimexpr\\marginparwidth+\\oddsidemargin\\relax", "footskip=\\dimexpr 2em\\relax",
+      "footskip=\\dimexpr 30pt+1ex\\relax", "footskip=\\dimexpr 20px\\relax"] do
     let s := src "[10pt]{article}" s!"\\geometry\{letterpaper, textheight=9in, {value}}"
     let (doc, ds) := elabStr s
     t s!"strut: geometry's '{value}' is named with its spelling and the page ships"
