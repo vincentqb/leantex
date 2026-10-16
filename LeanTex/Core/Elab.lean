@@ -16002,14 +16002,10 @@ public structure DocBodyPlan where
   raws : Array Raw
   finish : Array Block → EM BodyCompletion
 
-/-- The labels the body bound, by what each names; none in a deck, whose labels stand on what is
-set next, as beamer's do. -/
+/-- The `\label` keys the body bound; none in a deck, whose labels stand on what is set next, as
+beamer's do. -/
 private def referentKeys (ctx : Ctx) (st : ESt) : Ir.ReferentKeys :=
-  if ctx.slides then Ir.ReferentKeys.empty
-  else
-    { headings := st.labels.foldl (init := {}) fun m (k, b) =>
-        if let some { kind := some .heading, num, .. } := b then m.insert k num else m
-      labels := st.labelKeys }
+  if ctx.slides then Ir.ReferentKeys.empty else { labels := st.labelKeys }
 
 /-- Numbers the body's floats, stands each label at what it names, runs the continuation and
 attaches the body. -/

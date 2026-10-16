@@ -6,25 +6,19 @@ namespace LeanTex.Core.Ir
 
 /-! Each label stands at the thing it names, where both artifacts set its anchor. -/
 
-/-- The labels elaboration bound: the number of the heading each names, where it names one, and
-every `\label`'s key; a `\hypertarget` names its own place, so it is in neither. -/
+/-- The `\label` keys elaboration bound, each naming what it stands at; a `\hypertarget` names
+its own place, so it is not among them. -/
 public structure ReferentKeys where
-  headings : Std.HashMap String String
   labels : Std.HashSet String
 
 /-- No label to move, as in a deck, whose labels stand on what is set next, as beamer's do. -/
-public def ReferentKeys.empty : ReferentKeys := { headings := {}, labels := {} }
+public def ReferentKeys.empty : ReferentKeys := { labels := {} }
 
 private def Inline.isLabel : Inline → Bool
   | .label _ => true
   | _ => false
 
-/-- Whether an inline is a label naming the heading numbered `num`. -/
-private def ReferentKeys.namesHeading (keys : ReferentKeys) (num : String) : Inline → Bool
-  | .label k => keys.headings[k]? == some num
-  | _ => false
-
-/-- Whether an inline is a `\label`, which names the float it stands in. -/
+/-- Whether an inline is a `\label`, which names the heading or float it stands at. -/
 private def ReferentKeys.isBound (keys : ReferentKeys) : Inline → Bool
   | .label k => keys.labels.contains k
   | _ => false
@@ -55,82 +49,55 @@ private def floatLabelsTop (keys : ReferentKeys) (capAbove : Bool) (body : Array
   else if labels.isEmpty then (body, caption)
   else (#[.para labels] ++ body, caption)
 
-/-- The heading a block opens, its index and number where it is a numbered one. -/
-private def nextOpen (cur : Option (Nat × String)) (i : Nat) (b : Block) : Option (Nat × String) :=
-  if let .section _ _ n _ := b then n.map (i, ·) else cur
+/-- The bound labels among those a paragraph opens with, and the paragraph without them. -/
+private def leadingLabels (keys : ReferentKeys) (content : Array Inline) :
+    Array Inline × Array Inline :=
+  let lead := content.toList.takeWhile Inline.isLabel
+  ((lead.filter keys.isBound).toArray,
+    (lead.filter (!keys.isBound ·) ++ content.toList.dropWhile Inline.isLabel).toArray)
 
-/-- Each block's open heading, from block `i` on: the index and number of the last numbered heading
-before it, none before one or past an unnumbered one. -/
-private def openHeadings (cur : Option (Nat × String)) (i : Nat)
-    (out : Array (Option (Nat × String))) : List Block → Array (Option (Nat × String))
-  | [] => out
-  | b :: rest => openHeadings (nextOpen cur i b) (i + 1) (out.push cur) rest
-
-/-- The labels each heading gains: those the paragraphs under it hold that name it. -/
-private def headingGains (keys : ReferentKeys) (xs : Array Block)
-    (opens : Array (Option (Nat × String))) : Array (Array Inline) := Id.run do
-  let mut gains : Array (Array Inline) := Array.replicate xs.size #[]
-  for (b, i) in xs.zipIdx do
-    if let .para content := b then
-      if let some (some (j, num)) := opens[i]? then
-        gains := gains.modify j (· ++ content.filter (keys.namesHeading num))
-  return gains
-
-/-- One block of the heading rule: a heading with the labels it gains, a paragraph under a numbered
-heading without the labels naming it, left out where it held only those. -/
-private def headingPush (keys : ReferentKeys) (opens : Array (Option (Nat × String)))
-    (gains : Array (Array Inline)) (out : Array Block) (i : Nat) (b : Block) : Array Block :=
-  if let .section l s n title := b then
-    out.push (.section l s n (title ++ (gains[i]?.getD #[]).filter Inline.isLabel))
-  else if let .para content := b then
-    if let some (some (_, num)) := opens[i]? then
-      let rest := content.filter (!keys.namesHeading num ·)
-      if rest.isEmpty && !content.isEmpty then out else out.push (.para rest)
-    else out.push b
+/-- One block after the walk's output: the bound labels a paragraph right after a heading opens
+with join the heading, as nothing set between them moves hyperref's `\@currentHref` off it. -/
+private def referentStep (keys : ReferentKeys) (out : Array Block) (b : Block) : Array Block :=
+  if let (some (.section l s n title), .para content) := (out.back?, b) then
+    let (moved, rest) := leadingLabels keys content
+    if moved.isEmpty then out.push b
+    else
+      let out := out.pop.push (.section l s n (title ++ moved))
+      if rest.isEmpty then out else out.push (.para rest)
   else out.push b
-
-private def headingList (keys : ReferentKeys) (opens : Array (Option (Nat × String)))
-    (gains : Array (Array Inline)) (out : Array Block) (i : Nat) : List Block → Array Block
-  | [] => out
-  | b :: rest => headingList keys opens gains (headingPush keys opens gains out i b) (i + 1) rest
-
-/-- Each label naming a heading into that heading, from the paragraphs set under it, as hyperref
-anchors a `\label` at the heading its `\@currentHref` names. -/
-private def headingReferents (keys : ReferentKeys) (xs : Array Block) : Array Block :=
-  let opens := openHeadings none 0 #[] xs.toList
-  headingList keys opens (headingGains keys xs opens) #[] 0 xs.toList
 
 mutual
 
 private def referentList (keys : ReferentKeys) (out : Array Block) : List Block → Array Block
   | [] => out
-  | b :: rest => referentList keys (out.push (referentOne keys b)) rest
+  | b :: rest => referentList keys (referentStep keys out (referentOne keys b)) rest
 
 private def referentOne (keys : ReferentKeys) : Block → Block
   | .float k n ca body caption =>
     let (body, caption) :=
-      floatLabelsTop keys ca (headingReferents keys (referentList keys #[] body.toList)) caption
+      floatLabelsTop keys ca (referentList keys #[] body.toList) caption
     .float k n ca body caption
   | .list o items => .list o (referentItems keys #[] items.toList)
-  | .center body => .center (headingReferents keys (referentList keys #[] body.toList))
-  | .ragged s body => .ragged s (headingReferents keys (referentList keys #[] body.toList))
-  | .quote body => .quote (headingReferents keys (referentList keys #[] body.toList))
-  | .abstract body => .abstract (headingReferents keys (referentList keys #[] body.toList))
+  | .center body => .center (referentList keys #[] body.toList)
+  | .ragged s body => .ragged s (referentList keys #[] body.toList)
+  | .quote body => .quote (referentList keys #[] body.toList)
+  | .abstract body => .abstract (referentList keys #[] body.toList)
   | .titled kind title body =>
-    .titled kind title (headingReferents keys (referentList keys #[] body.toList))
+    .titled kind title (referentList keys #[] body.toList)
   | .disclosure summary expanded body =>
-    .disclosure summary expanded (headingReferents keys (referentList keys #[] body.toList))
-  | .role n body => .role n (headingReferents keys (referentList keys #[] body.toList))
-  | .link target body => .link target (headingReferents keys (referentList keys #[] body.toList))
-  | .spaced g body => .spaced g (headingReferents keys (referentList keys #[] body.toList))
+    .disclosure summary expanded (referentList keys #[] body.toList)
+  | .role n body => .role n (referentList keys #[] body.toList)
+  | .link target body => .link target (referentList keys #[] body.toList)
+  | .spaced g body => .spaced g (referentList keys #[] body.toList)
   | .columns cols => .columns (referentCols keys #[] cols.toList)
-  | .onSteps spec body => .onSteps spec (headingReferents keys (referentList keys #[] body.toList))
+  | .onSteps spec body => .onSteps spec (referentList keys #[] body.toList)
   | .altSteps spec firstPage otherPage =>
-    .altSteps spec (headingReferents keys (referentList keys #[] firstPage.toList))
-      (headingReferents keys (referentList keys #[] otherPage.toList))
-  | .only targets body => .only targets (headingReferents keys (referentList keys #[] body.toList))
-  | .nav spec body => .nav spec (headingReferents keys (referentList keys #[] body.toList))
-  | .frame t s v br body => .frame t s v br (headingReferents keys (referentList keys #[] body.toList))
+    .altSteps spec (referentList keys #[] firstPage.toList)
+      (referentList keys #[] otherPage.toList)
+  | .only targets body => .only targets (referentList keys #[] body.toList)
+  | .nav spec body => .nav spec (referentList keys #[] body.toList)
+  | .frame t s v br body => .frame t s v br (referentList keys #[] body.toList)
   | .para content => .para content
   | .equation n content => .equation n content
   | .section l st num title => .section l st num title
@@ -151,20 +118,21 @@ private def referentItems (keys : ReferentKeys) (out : Array (Array Block)) :
     List (Array Block) → Array (Array Block)
   | [] => out
   | item :: rest =>
-    referentItems keys (out.push (headingReferents keys (referentList keys #[] item.toList))) rest
+    referentItems keys (out.push (referentList keys #[] item.toList)) rest
 
 private def referentCols (keys : ReferentKeys) (out : Array (BoxWidth × Array Block)) :
     List (BoxWidth × Array Block) → Array (BoxWidth × Array Block)
   | [] => out
   | (w, body) :: rest =>
-    referentCols keys (out.push (w, headingReferents keys (referentList keys #[] body.toList))) rest
+    referentCols keys (out.push (w, referentList keys #[] body.toList)) rest
 
 end
 
-/-- Each label to the thing it names: a heading's from the paragraphs under it, a float's to the
-float's top, as hyperref and the caption package anchor them. -/
+/-- Each label to the thing it names, as hyperref and the caption package anchor it: one written
+right after a heading into the heading, a float's to its top; a hand walk, as a label moves into the
+block before it. -/
 public def anchorReferents (keys : ReferentKeys) (xs : Array Block) : Array Block :=
-  headingReferents keys (referentList keys #[] xs.toList)
+  referentList keys #[] xs.toList
 
 private theorem plainTextList_append' (l1 l2 : List Inline) :
     plainTextList (l1 ++ l2) = plainTextList l1 ++ plainTextList l2 := by
@@ -178,10 +146,6 @@ private theorem plainText_append' (a b : Array Inline) :
 
 private theorem label_text (x : Inline) (h : x.isLabel = true) : plainTextOne x = "" := by
   cases x <;> simp_all [Inline.isLabel, plainTextOne]
-
-private theorem namesHeading_label (keys : ReferentKeys) (num : String) (x : Inline)
-    (h : keys.namesHeading num x = true) : x.isLabel = true := by
-  cases x <;> simp_all [ReferentKeys.namesHeading, Inline.isLabel]
 
 private theorem isBound_label (keys : ReferentKeys) (x : Inline) (h : keys.isBound x = true) :
     x.isLabel = true := by
@@ -313,45 +277,56 @@ private theorem floatLabelsTop_text (keys : ReferentKeys) (k : FloatKind) (n : O
       · rw [hcap, hb]
       · simp [blockTextList, blockTextOne, hlabels, hcap, hb]
 
-private theorem headingPush_text (keys : ReferentKeys) (opens : Array (Option (Nat × String)))
-    (gains : Array (Array Inline)) (out : Array Block) (i : Nat) (b : Block) (acc : String) :
-    blockTextList acc (headingPush keys opens gains out i b).toList =
+private theorem leadingLabels_text (keys : ReferentKeys) (content : Array Inline) :
+    plainText (leadingLabels keys content).1 = "" ∧
+      plainText (leadingLabels keys content).2 = plainText content := by
+  have hlead : ∀ x ∈ content.toList.takeWhile Inline.isLabel, x.isLabel = true :=
+    fun x hx => List.all_eq_true.mp List.all_takeWhile x hx
+  have hz : ∀ l : List Inline, (∀ x ∈ l, x.isLabel = true) → plainTextList l = "" := by
+    intro l hl
+    induction l with
+    | nil => simp [plainTextList]
+    | cons x rest ih =>
+      simp only [List.mem_cons, forall_eq_or_imp] at hl
+      simp only [plainTextList]
+      rw [label_text x hl.1, ih hl.2]
+      rfl
+  have hsub : ∀ (q : Inline → Bool), ∀ x ∈ (content.toList.takeWhile Inline.isLabel).filter q,
+      x.isLabel = true := fun q x hx => hlead x (List.mem_filter.mp hx).1
+  refine ⟨?_, ?_⟩
+  · show plainTextList ((content.toList.takeWhile Inline.isLabel).filter keys.isBound).toArray.toList
+      = ""
+    exact hz _ (hsub _)
+  · have hsplit := List.takeWhile_append_dropWhile (p := Inline.isLabel) (l := content.toList)
+    show plainTextList ((content.toList.takeWhile Inline.isLabel).filter (!keys.isBound ·) ++
+      content.toList.dropWhile Inline.isLabel).toArray.toList = plainTextList content.toList
+    conv => rhs; rw [← hsplit]
+    rw [List.toList_toArray, plainTextList_append', plainTextList_append', hz _ (hsub _),
+      hz _ hlead]
+
+private theorem referentStep_text (keys : ReferentKeys) (out : Array Block) (b : Block)
+    (acc : String) :
+    blockTextList acc (referentStep keys out b).toList =
       blockTextOne (blockTextList acc out.toList) b := by
-  unfold headingPush
+  unfold referentStep
   split
-  · rw [push_text]
-    simp [blockTextOne, plainText_append', plainText_filter_named _ (fun _ h => h)]
-  · split
-    · rename_i content _
-      split
-      · rename_i num _
-        have hn := namesHeading_label keys num
-        dsimp only
-        split
-        · rename_i he
-          simp only [Bool.and_eq_true, Bool.not_eq_true'] at he
-          have hz : plainText content = "" := by
-            rw [← plainText_filter_unnamed _ hn, Array.isEmpty_iff.mp he.1]
-            rfl
-          simp [blockTextOne, hz]
-        · rw [push_text]
-          simp [blockTextOne, plainText_filter_unnamed _ hn]
-      · exact push_text _ _ _
-    · exact push_text _ _ _
-
-private theorem headingList_text (keys : ReferentKeys) (opens : Array (Option (Nat × String)))
-    (gains : Array (Array Inline)) (l : List Block) (out : Array Block) (i : Nat) (acc : String) :
-    blockTextList acc (headingList keys opens gains out i l).toList =
-      blockTextList (blockTextList acc out.toList) l := by
-  induction l generalizing out i with
-  | nil => simp [headingList, blockTextList]
-  | cons b rest ih =>
-    rw [headingList, ih, headingPush_text]
-    rfl
-
-private theorem headingReferents_text (keys : ReferentKeys) (xs : Array Block) (acc : String) :
-    blockTextList acc (headingReferents keys xs).toList = blockTextList acc xs.toList := by
-  simp [headingReferents, headingList_text, blockTextList]
+  · rename_i l s n title content hback
+    obtain ⟨hlead, htail⟩ := leadingLabels_text keys content
+    simp only [Prod.mk.injEq] at hback
+    obtain ⟨init, rfl⟩ := Array.back?_eq_some_iff.mp hback.1
+    obtain rfl := hback.2
+    simp only [Array.pop_push]
+    by_cases hle : (leadingLabels keys content).1.isEmpty = true
+    · simp [hle, blockTextList, Array.toList_push, blockTextList_append]
+    · simp only [hle, Bool.false_eq_true, ite_false]
+      by_cases hte : (leadingLabels keys content).2.isEmpty = true
+      · have hz : plainText content = "" := by
+          rw [← htail, Array.isEmpty_iff.mp hte]; rfl
+        simp [hte, blockTextList, blockTextOne, Array.toList_push, blockTextList_append,
+          plainText_append', hlead, hz]
+      · simp [hte, blockTextList, blockTextOne, Array.toList_push, blockTextList_append,
+          plainText_append', hlead, htail, String.append_assoc]
+  · exact push_text _ _ _
 
 mutual
 
@@ -362,7 +337,7 @@ private theorem referentList_text (keys : ReferentKeys) (xs : List Block) (out :
   match xs with
   | [] => simp [referentList, blockTextList]
   | b :: rest =>
-    rw [referentList, referentList_text keys rest, push_text, referentOne_text keys b]
+    rw [referentList, referentList_text keys rest, referentStep_text, referentOne_text keys b]
     rfl
 
 private theorem referentOne_text (keys : ReferentKeys) (b : Block) (acc : String) :
@@ -370,69 +345,69 @@ private theorem referentOne_text (keys : ReferentKeys) (b : Block) (acc : String
   match b with
   | .float k n ca body caption =>
     rw [referentOne, floatLabelsTop_text]
-    simp [blockTextOne, headingReferents_text, referentList_text keys body.toList #[] _,
+    simp [blockTextOne, referentList_text keys body.toList #[] _,
       blockTextList]
   | .list o items =>
     rw [referentOne]
     simp [blockTextOne, referentItems_text keys items.toList #[] acc, blockTextItems]
   | .center body =>
     rw [referentOne]
-    simp [blockTextOne, headingReferents_text, referentList_text keys body.toList #[] acc,
+    simp [blockTextOne, referentList_text keys body.toList #[] acc,
       blockTextList]
   | .ragged _ body =>
     rw [referentOne]
-    simp [blockTextOne, headingReferents_text, referentList_text keys body.toList #[] acc,
+    simp [blockTextOne, referentList_text keys body.toList #[] acc,
       blockTextList]
   | .quote body =>
     rw [referentOne]
-    simp [blockTextOne, headingReferents_text, referentList_text keys body.toList #[] acc,
+    simp [blockTextOne, referentList_text keys body.toList #[] acc,
       blockTextList]
   | .abstract body =>
     rw [referentOne]
-    simp [blockTextOne, headingReferents_text, referentList_text keys body.toList #[] acc,
+    simp [blockTextOne, referentList_text keys body.toList #[] acc,
       blockTextList]
   | .titled kind title body =>
     rw [referentOne]
-    simp [blockTextOne, headingReferents_text, referentList_text keys body.toList #[] _,
+    simp [blockTextOne, referentList_text keys body.toList #[] _,
       blockTextList]
   | .disclosure summary expanded body =>
     rw [referentOne]
-    simp [blockTextOne, headingReferents_text, referentList_text keys body.toList #[] _,
+    simp [blockTextOne, referentList_text keys body.toList #[] _,
       blockTextList]
   | .role n body =>
     rw [referentOne]
-    simp [blockTextOne, headingReferents_text, referentList_text keys body.toList #[] acc,
+    simp [blockTextOne, referentList_text keys body.toList #[] acc,
       blockTextList]
   | .link target body =>
     rw [referentOne]
-    simp [blockTextOne, headingReferents_text, referentList_text keys body.toList #[] acc,
+    simp [blockTextOne, referentList_text keys body.toList #[] acc,
       blockTextList]
   | .spaced g body =>
     rw [referentOne]
-    simp [blockTextOne, headingReferents_text, referentList_text keys body.toList #[] acc,
+    simp [blockTextOne, referentList_text keys body.toList #[] acc,
       blockTextList]
   | .columns cols =>
     rw [referentOne]
     simp [blockTextOne, referentCols_text keys cols.toList #[] acc, blockTextColumns]
   | .onSteps spec body =>
     rw [referentOne]
-    simp [blockTextOne, headingReferents_text, referentList_text keys body.toList #[] acc,
+    simp [blockTextOne, referentList_text keys body.toList #[] acc,
       blockTextList]
   | .altSteps spec firstPage otherPage =>
     rw [referentOne]
-    simp [blockTextOne, headingReferents_text, referentList_text keys firstPage.toList #[],
+    simp [blockTextOne, referentList_text keys firstPage.toList #[],
       referentList_text keys otherPage.toList #[], blockTextList]
   | .only targets body =>
     rw [referentOne]
-    simp [blockTextOne, headingReferents_text, referentList_text keys body.toList #[] acc,
+    simp [blockTextOne, referentList_text keys body.toList #[] acc,
       blockTextList]
   | .nav spec body =>
     rw [referentOne]
-    simp [blockTextOne, headingReferents_text, referentList_text keys body.toList #[] acc,
+    simp [blockTextOne, referentList_text keys body.toList #[] acc,
       blockTextList]
   | .frame t s v _ body =>
     rw [referentOne]
-    simp [blockTextOne, headingReferents_text, referentList_text keys body.toList #[] _,
+    simp [blockTextOne, referentList_text keys body.toList #[] _,
       blockTextList]
   | .para _ | .equation _ _ | .section _ _ _ _ | .verbatim _ _ _ | .note _ | .framefoot _
   | .pagebreak | .setPalette _ | .setTokens _ | .algorithm _ _ _ | .logo _ | .rule _ _ _
@@ -446,7 +421,7 @@ private theorem referentItems_text (keys : ReferentKeys) (items : List (Array Bl
   | [] => simp [referentItems, blockTextItems]
   | item :: rest =>
     rw [referentItems, referentItems_text keys rest]
-    simp [blockTextItems, headingReferents_text, referentList_text keys item.toList #[],
+    simp [blockTextItems, referentList_text keys item.toList #[],
       blockTextList, blockTextItems_append]
 
 private theorem referentCols_text (keys : ReferentKeys) (cols : List (BoxWidth × Array Block))
@@ -457,19 +432,17 @@ private theorem referentCols_text (keys : ReferentKeys) (cols : List (BoxWidth �
   | [] => simp [referentCols, blockTextColumns]
   | (w, body) :: rest =>
     rw [referentCols, referentCols_text keys rest]
-    simp [blockTextColumns, headingReferents_text, referentList_text keys body.toList #[],
+    simp [blockTextColumns, referentList_text keys body.toList #[],
       blockTextList, blockTextColumns_append]
 
 end
 
 public theorem anchorReferents_text (keys : ReferentKeys) :
     Conserves blocksText (anchorReferents keys) := fun xs => by
-  simp [blocksText, anchorReferents, headingReferents_text,
-    referentList_text keys xs.toList #[] "", blockTextList]
+  simp [blocksText, anchorReferents, referentList_text keys xs.toList #[] "", blockTextList]
 
 public theorem anchorReferents_para_exact (keys : ReferentKeys) (xs : Array Inline) :
     anchorReferents keys #[.para xs] = #[.para xs] := by
-  simp [anchorReferents, referentList, referentOne, headingReferents, openHeadings, headingList,
-    headingPush]
+  simp [anchorReferents, referentList, referentStep, referentOne]
 
 end LeanTex.Core.Ir

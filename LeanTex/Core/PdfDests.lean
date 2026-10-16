@@ -7,7 +7,6 @@ namespace LeanTex.Core.PdfDests
 
 open LeanTex.Core.PdfRead
 open LeanTex.Core.PdfCensus (kindOf)
-open LeanTex.Core.Dim (Sp)
 
 /-! Where a file's navigation leads, read from its bytes by the engine's own reader (ISO 32000-2
 §12.3.2, §12.6.4.2-4), never from the writer's intent. -/
@@ -29,8 +28,6 @@ public inductive Why where
   | notPage
   /-- An explicit destination whose fit type or operands Table 149 does not admit. -/
   | badFit
-  /-- An explicit destination whose coordinates stand outside its page's media box. -/
-  | offPage
   /-- A name neither the catalog's `/Dests` nor the name tree's `/Dests` defines as a reader finds
   it. -/
   | undefined
@@ -61,7 +58,6 @@ public def Why.word : Why → String
   | .nowhere => "names no destination"
   | .notPage => "names no page of the page tree"
   | .badFit => "spells a fit Table 149 does not admit"
-  | .offPage => "stands outside its page's media box"
   | .undefined => "names a destination the file does not define"
   | .remote => "leads into another file"
   | .malformed => "is malformed"
@@ -70,12 +66,11 @@ public def Finding.render (f : Finding) : String :=
   let spelled := (String.fromUTF8? f.dest.render).getD s!"<{f.dest.render.size} bytes>"
   s!"object {f.obj}: {f.carrier.word} to {spelled} {f.why.word}"
 
-/-- What a judgement reads once: the objects by number, the page tree's pages with their media
-boxes, and the two name-to-destination tables (§12.3.2.3). -/
+/-- What a judgement reads once: the objects by number, the page tree's pages, and the two
+name-to-destination tables (§12.3.2.3). -/
 private structure Ctx where
   vals : Std.HashMap Nat Obj
-  /-- Each page of the page tree, with its media box `(x0, y0, x1, y1)` where it inherits one. -/
-  pages : Std.HashMap Nat (Option (Sp × Sp × Sp × Sp))
+  pages : Std.HashSet Nat
   /-- The catalog's `/Dests` dictionary, which names map. -/
   names : Std.HashMap String Obj
   /-- The root of the name dictionary's `/Dests` tree, which strings map. -/
@@ -113,27 +108,10 @@ private def treeNodes (vals : Std.HashMap Nat Obj) (root : Obj) : Array (Option 
     level := next
   return out
 
-/-- A rectangle's four numbers. -/
-private def rectOf : Obj → Option (Sp × Sp × Sp × Sp)
-  | .arr #[a, b, c, d] => do return (← a.sp?, ← b.sp?, ← c.sp?, ← d.sp?)
-  | _ => none
-
-/-- A page's media box, its own or the nearest ancestor's (§7.7.3.4), up the `/Parent` chain. -/
-private def mediaBox (vals : Std.HashMap Nat Obj) (page : Obj) : Option (Sp × Sp × Sp × Sp) :=
-  Id.run do
-  let mut node := page
-  for _ in [0:vals.size + 1] do
-    if let some box := (node.get? "MediaBox").map (derefIn vals) |>.bind rectOf then return some box
-    match node.get? "Parent" with
-    | some p => node := derefIn vals p
-    | none => return none
-  return none
-
-/-- The page objects the catalog's page tree reaches (§7.7.3), with their media boxes. -/
-private def pageTree (vals : Std.HashMap Nat Obj) (pagesRoot : Obj) :
-    Std.HashMap Nat (Option (Sp × Sp × Sp × Sp)) :=
+/-- The page objects the catalog's page tree reaches (§7.7.3). -/
+private def pageTree (vals : Std.HashMap Nat Obj) (pagesRoot : Obj) : Std.HashSet Nat :=
   (treeNodes vals pagesRoot).foldl (fun s (num, v) => match num with
-    | some n => if kindOf v == .page then s.insert n (mediaBox vals v) else s
+    | some n => if kindOf v == .page then s.insert n else s
     | none => s) {}
 
 /-- Byte strings in ascending order (§7.9.6: keys ordered lexically by their bytes). -/
@@ -180,40 +158,32 @@ private def treeLookup (vals : Std.HashMap Nat Obj) (root : Obj) (key : List UIn
       | _ => return none
   return none
 
-/-- Table 149's fit types: the operands each takes, whether a null operand keeps the viewer's
-current value, and which axis each operand reads (`true` horizontal). -/
-private def fits : List (String × Nat × Bool × List Bool) :=
-  [("XYZ", 3, true, [true, false]), ("Fit", 0, true, []), ("FitH", 1, true, [false]),
-   ("FitV", 1, true, [true]), ("FitR", 4, false, [true, false, true, false]),
-   ("FitB", 0, true, []), ("FitBH", 1, true, [false]), ("FitBV", 1, true, [true])]
+/-- Table 149's fit types: the operands each takes, and whether a null operand keeps the viewer's
+current value. -/
+private def fits : List (String × Nat × Bool) :=
+  [("XYZ", 3, true), ("Fit", 0, true), ("FitH", 1, true), ("FitV", 1, true), ("FitR", 4, false),
+   ("FitB", 0, true), ("FitBH", 1, true), ("FitBV", 1, true)]
 
 private def operandOk (nullOk : Bool) : Obj → Bool
   | .int _ | .real _ => true
   | .null => nullOk
   | _ => false
 
-/-- A fit and its operands after a destination's first element; within `box` where one is given. -/
-private def fitWhy (box : Option (Sp × Sp × Sp × Sp)) (ds : Array Obj) : Option Why :=
+/-- A fit and its operands after a destination's first element, coordinates unbounded, as viewers
+clamp them (§12.3.2.2). -/
+private def fitWhy (ds : Array Obj) : Option Why :=
   match (ds[1]? : Option Obj) with
   | some (.name f) => match fits.lookup f with
-    | some (k, nullOk, axes) =>
-      let ops := ds.extract 2 ds.size
-      if ds.size != k + 2 || !ops.all (operandOk nullOk) then some .badFit
-      else box.bind fun (x0, y0, x1, y1) =>
-        let inside := (ops.toList.zip axes).all fun (o, horizontal) => match o.sp? with
-          | some v => if horizontal then x0 ≤ v && v ≤ x1 else y0 ≤ v && v ≤ y1
-          | none => true
-        if inside then none else some .offPage
+    | some (k, nullOk) =>
+      if ds.size != k + 2 || !(ds.extract 2 ds.size).all (operandOk nullOk) then some .badFit
+      else none
     | none => some .badFit
   | _ => some .badFit
 
-/-- An explicit destination (§12.3.2.2): a page of the page tree, a fit type and its operands, inside
-the page's media box. -/
+/-- An explicit destination (§12.3.2.2): a page of the page tree, a fit type and its operands. -/
 private def explicit (c : Ctx) (ds : Array Obj) : Option Why :=
   match (ds[0]? : Option Obj) with
-  | some (.ref n _) => match c.pages[n]? with
-    | some box => fitWhy box ds
-    | none => some .notPage
+  | some (.ref n _) => if c.pages.contains n then fitWhy ds else some .notPage
   | _ => some .notPage
 
 /-- A named destination's value: an explicit array, or a dictionary whose `/D` is one. -/
@@ -260,7 +230,7 @@ private def structWhy (c : Ctx) (sd : Obj) : Option Why :=
   match c.deref sd with
   | .arr xs => match (xs[0]?).map c.deref with
     | some se@(.dict _) =>
-      if (se.get? "S").isSome && (se.get? "P").isSome then fitWhy none xs else some .malformed
+      if (se.get? "S").isSome && (se.get? "P").isSome then fitWhy xs else some .malformed
     | _ => some .malformed
   | _ => some .malformed
 

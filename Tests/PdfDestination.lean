@@ -116,11 +116,10 @@ private def pdfLinks (out : Layout.Out) : Array String := Id.run do
 
 /-- One synthetic file: a catalog with `catalog`'s entries, one page tree holding object 3, a
 dictionary that is no page, and a link annotation with `link`'s entries, then `more`. -/
-private def navPdf (catalog link : String) (more : Array String := #[])
-    (pageBox : String := "/MediaBox [0 0 100 100]") (treeBox : String := "") : ByteArray :=
+private def navPdf (catalog link : String) (more : Array String := #[]) : ByteArray :=
   syntheticPdf (#[s!"<< /Type /Catalog /Pages 2 0 R {catalog}>>",
-    s!"<< /Type /Pages /Kids [3 0 R] /Count 1 {treeBox}>>",
-    s!"<< /Type /Page /Parent 2 0 R {pageBox} /Annots [5 0 R] >>",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Annots [5 0 R] >>",
     "<< /Kind /Other >>",
     s!"<< /Type /Annot /Subtype /Link /Rect [0 0 10 10] {link}>>"] ++ more)
 
@@ -168,11 +167,8 @@ private def judgeCases : List (String × ByteArray × List PdfDests.Why) :=
     navPdf "" "/A << /S /GoTo /D [3 0 R /Fit] /SD [4 0 R /Fit] >>", [.malformed]),
    ("a dangling reference as a link's action", navPdf "" "/A 9 0 R", [.malformed]),
    ("an action that is no dictionary", navPdf "" "/A [1 2]", [.malformed]),
-   ("a destination above its page's media box", navPdf "" "/Dest [3 0 R /XYZ 0 150 null]",
-    [.offPage]),
-   ("a media box the page inherits from its tree",
-    navPdf "" "/Dest [3 0 R /XYZ 0 150 null]" (pageBox := "") (treeBox := "/MediaBox [0 0 100 200]"),
-    []),
+   ("a destination above its page's media box, which a viewer clamps",
+    navPdf "" "/Dest [3 0 R /XYZ 0 150 null]", []),
    ("a name tree leaf whose keys stand out of order",
     navPdf "/Names << /Dests << /Names [(z) [3 0 R /Fit] (a) [3 0 R /Fit]] >> >>" "/A << /S /GoTo /D (a) >>",
     [.undefined]),
@@ -349,25 +345,28 @@ def pdfDestinationChecks (ref : IO.Ref (List String))
   t "a reference inside a link: the enclosing link alone ships, in both artifacts"
     (htmlLinks odoc == #[] && pdfLinks oout == #[] &&
       (PdfCensus.census opdf).map (·.linkAnnots) == .ok 1)
-  -- A label names its heading from anywhere under it, a target its own place, in both artifacts.
-  let (hdoc, _) := elabStr (dvDoc "" ("\\section{One}\\hypertarget{h}{}Target words here.\\par " ++
-    "Later words.\\label{s}\\par See \\ref{s} and \\hyperlink{h}{there}."))
+  -- A label written right after its heading names the heading; any other label or target its line.
+  let (hdoc, _) := elabStr (dvDoc "" ("\\section{One}\\hypertarget{h}{}\\label{a}Target words here." ++
+    "\\par Later words.\\label{s}\\par\\paragraph{Run-in.}\\label{r}Run words.\\par " ++
+    "See \\ref{a}, \\ref{s}, \\ref{r} and \\hyperlink{h}{there}."))
   let hout := layoutOf fs hdoc
   let hgeom := Layout.Geom.ofPage hdoc.page
   let hdests := linkDestinations (Pdf.write hgeom fs hout.pages hdoc.info)
-  t "a label later under its heading: its destination opens at the heading"
-    (match hdests, lineWith hout "One" with
-     | .ok ds, some heading => ds[0]?.any fun (_, d) => opensAt fs hgeom d heading
-     | _, _ => false)
-  t "a target after a heading: its destination opens at its own line"
-    (match hdests, lineWith hout "Target words" with
-     | .ok ds, some line => ds[1]?.any fun (_, d) => opensAt fs hgeom d line
-     | _, _ => false)
+  let landsOn (i : Nat) (text : String) : Bool :=
+    match hdests, lineWith hout text with
+    | .ok ds, some line => ds[i]?.any fun (_, d) => opensAt fs hgeom d line
+    | _, _ => false
+  t "a label written right after its heading: its destination opens at the heading"
+    (landsOn 0 "One")
+  t "a label later under its heading, or after a run-in heading: it opens at its own line"
+    (landsOn 1 "Later words" && landsOn 2 "Run-in")
+  t "a target after a heading: its destination opens at its own line" (landsOn 3 "Target words")
   let headings := elemNodesList (· == "h2") #[] (docNodesOf hdoc).toList
-  t "a label later under its heading: the web page sets it in the heading, the target in its text"
-    (headings.any (fun n => (attrValuesOf (fun _ => true) "id" n).contains "s") &&
-      !headings.any (fun n => (attrValuesOf (fun _ => true) "id" n).contains "h") &&
-      (attrValuesOf (fun _ => true) "id" (Html.elem "body" (docNodesOf hdoc) #[])).contains "h")
+  let headingIds := headings.flatMap (attrValuesOf (fun _ => true) "id")
+  t s!"the web page sets the label written right after its heading in the heading, alone ({headingIds})"
+    (headingIds.contains "a" && ["h", "s", "r"].all (!headingIds.contains ·) &&
+      ["h", "s", "r"].all (attrValuesOf (fun _ => true) "id"
+        (Html.elem "body" (docNodesOf hdoc) #[])).contains)
   -- A float's label opens at the float's top: a caption standing above, a picture's ink.
   let (fdoc, _) := elabStr (dvDoc "" ("See Table~\\ref{t} and Figure~\\ref{p}.\\par" ++
     "\\begin{table}[h]\\caption{Table caption words.}\\label{t}" ++

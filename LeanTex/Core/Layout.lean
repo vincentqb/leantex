@@ -17721,24 +17721,26 @@ private def PageOut.fragments (p : PageOut) : Array String :=
 /-- How a document names an anchor, in its own surface. -/
 private def deadLinkHelp : Ir.Surface → String
   | .tex => "give its target a \\label or a \\hypertarget, or link to an anchor the document sets"
-  | .markdown | .code _ =>
+  | .markdown =>
     "give its target an anchor ('<a name=\"…\"></a>' or a heading) or link to one the document sets"
+  | .code _ => "link to a heading the documentation sets, by its anchor"
 
 /-- One loss per in-page fragment a shipped link or outline entry names and nothing lands on: the
-PDF ships the link's ink unlinked. -/
+PDF carries no link for it, and its outline leaves the entry out. -/
 private def deadLinks (surface : Ir.Surface) (idx : Std.HashMap String (Nat × AnchorSite))
     (pages : Array PageOut) (nav : Array (String × String)) : Array Diag := Id.run do
-  let named := pages.foldl (fun acc p => acc ++ p.fragments) #[] ++
-    nav.filterMap (Ir.linkFragment? ·.2)
+  let named := pages.foldl (fun acc p => acc ++ p.fragments.map (·, false)) #[] ++
+    nav.filterMap fun e => (Ir.linkFragment? e.2).map (·, true)
   let mut seen : Std.HashSet String := {}
   let mut out : Array Diag := #[]
-  for f in named do
+  for (f, entry) in named do
     unless seen.contains f || (landing? idx pages f).isSome do
       seen := seen.insert f
+      let loss := if entry then "the PDF outline leaves the entry out"
+        else "the PDF carries no link for it"
       out := out.push (Diag.of .W0326
-        "an in-page link names an anchor the document does not set; the PDF sets its text unlinked"
-        (help := some (deadLinkHelp surface)) (subject := some f) (detail := some s!"'#{f}'")
-        (output := some .pdf))
+        s!"in-page link '#{f}' has no target anchor in the document; {loss}"
+        (help := some (deadLinkHelp surface)) (subject := some f) (output := some .pdf))
   return out
 
 /-- The postlude: running furniture per page (`furnishFrom`),
