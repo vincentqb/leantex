@@ -1046,7 +1046,7 @@ private def leadsWithList : Block → Bool
   | .lines _ => false
   | .equation _ _ => false
   | .section _ _ _ _ => false
-  | .quote _ => false
+  | .quote _ _ => false
   | .abstract _ => false
   | .verbatim _ _ _ => false
   | .algorithm _ _ _ => false
@@ -1116,7 +1116,7 @@ private def blockInto (tw : Twin) (summary ind acc : String) : Block → String
   | .center body => blocksInto tw summary ind acc none body.toList
   | .ragged _ body => blocksInto tw summary ind acc none body.toList
   -- Every quoted line takes the `> ` marker, a bare `>` between quoted blocks (§5.1).
-  | .quote body =>
+  | .quote _ body =>
     let inner := blocksInto tw summary (ind ++ "> ") "" none body.toList
     let trimmed := String.ofList (inner.toList.reverse.dropWhile (· == '\n')).reverse
     -- An empty quotation is its bare marker.
@@ -1276,7 +1276,7 @@ private def itemSeq (tw : Twin) (summary cont : String) (pen : ItemPen) :
       | .lines _ => write ()
       | .equation _ _ => write ()
       | .section _ _ _ _ => write ()
-      | .quote _ => write ()
+      | .quote _ _ => write ()
       | .abstract _ => write ()
       | .titled _ _ _ => write ()
       | .disclosure _ _ _ => write ()
@@ -1460,7 +1460,7 @@ private theorem blockInto_extends (tw : Twin) (summary ind acc : String) :
     exact append_chain₂ _ _ _
   | .center body => blocksInto_extends tw summary ind acc none body.toList
   | .ragged _ body => blocksInto_extends tw summary ind acc none body.toList
-  | .quote _ => by
+  | .quote _ _ => by
     simp only [blockInto]
     exact append_chain₂ _ _ _
   | .abstract body =>
@@ -1688,7 +1688,7 @@ private theorem headingLevelOne_mem (x : Ir.HeadingLevel) :
   | .list _ _ items, out, h => headingLevelItems_mem x items.toList out h
   | .center body, out, h => headingLevelList_mem x body.toList out h
   | .ragged _ body, out, h => headingLevelList_mem x body.toList out h
-  | .quote body, out, h => headingLevelList_mem x body.toList out h
+  | .quote _ body, out, h => headingLevelList_mem x body.toList out h
   | .lines _, _, h => h
   | .abstract body, out, h => headingLevelList_mem x body.toList out h
   | .titled _ _ body, out, h => headingLevelList_mem x body.toList out h

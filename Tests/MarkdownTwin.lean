@@ -113,12 +113,12 @@ def twinBlockChecks (ref : IO.Ref (List String)) : IO Unit := do
       | _ => false)
   let spaced := "def a():\n    pass\n\n\ndef b():\n    pass"
   for (where_, wrap) in [("at the top level", fun (b : Ir.Block) => #[b]),
-      ("in a quotation", fun b => #[.quote #[b]]),
+      ("in a quotation", fun b => #[.quote ⟨.quote, {}⟩ #[b]]),
       ("in a list item", fun b => #[.list false {} #[#[.para #[.text "item"], b]]])] do
     let (tw, back, _) := roundTrip { body := wrap (.verbatim none spaced {}) }
     let found := (back.body.map fun b => match b with
       | .verbatim _ s _ => #[s]
-      | .quote body => body.filterMap fun b => match b with
+      | .quote _ body => body.filterMap fun b => match b with
         | .verbatim _ s _ => some s
         | _ => none
       | .list _ _ items => items.flatMap fun it => it.filterMap fun b => match b with
@@ -131,7 +131,7 @@ def twinBlockChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\begin{quote}\n\\begin{verbatim}\ncode in quote\n\\end{verbatim}\n\\end{quote}"
   t s!"twin: a code block in a quotation stays in it ({repr tw})"
     (back.body.any fun b => match b with
-      | .quote body => body.any (· matches .verbatim ..)
+      | .quote _ body => body.any (· matches .verbatim ..)
       | _ => false)
   let (tw, back, ds) := texRoundTrip
     "\\begin{itemize}\\item a\n\\begin{verbatim}\ncode in item\n\\end{verbatim}\n\\end{itemize}"
@@ -178,9 +178,9 @@ def twinBlockChecks (ref : IO.Ref (List String)) : IO Unit := do
     t s!"twin: {what} reads back tight, its blocks at the item's level ({repr tw})"
       (back.body == want && !ds.any (·.subject == some "md:loose-list") &&
         MarkdownDoc.emit back == tw)
-  let (tw, back, _) := roundTrip { body := #[.quote #[]] }
+  let (tw, back, _) := roundTrip { body := #[.quote ⟨.quote, {}⟩ #[]] }
   t s!"twin: an empty quotation reads back ({repr tw})"
-    (back.body.any (· matches .quote _))
+    (back.body.any (· matches .quote ..))
   let path := "testdata/corpus/lists.tex"
   let (doc, _) ← elabInputSrc path (← fixtureText path)
   let (tw, _, ds) := roundTrip doc
@@ -291,7 +291,7 @@ def twinHeadChecks (ref : IO.Ref (List String)) : IO Unit := do
     let (tw, back, ds) := roundTrip doc
     t s!"twin: the metadata title {repr ttl} and summary {repr summ} read back ({repr tw})"
       (!hasError ds && match back.body.toList with
-        | [.section _ _ _ xs, .quote qs, .para _] =>
+        | [.section _ _ _ xs, .quote _ qs, .para _] =>
           Ir.plainText xs == ttl && (match qs.toList with
             | [.para ys] => Ir.plainText ys == summ
             | _ => false)

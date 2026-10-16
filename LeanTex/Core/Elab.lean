@@ -191,6 +191,8 @@ public structure ListNest where
   enumerate : Nat := 0
   description : Nat := 0
   set : Ir.ListSet := {}
+  /-- TeX's `\parskip` inside the innermost list, its `\parsep`; `none` outside every list. -/
+  parskip : Option Dim.SymGlue := none
   deriving Repr, BEq, Inhabited
 
 /-- A list kind's own depth, as enumitem counts its levels. -/
@@ -198,17 +200,24 @@ public def ListNest.kindDepth (nest : ListNest) (kind : String) : Nat :=
   if kind == "enumerate" then nest.enumerate
   else if kind == "description" then nest.description else nest.itemize
 
-/-- One list of `kind` deeper, its declared spacing in force. -/
-public def ListNest.enter (nest : ListNest) (kind : String) (set : Ir.ListSet) : ListNest :=
-  { nest with depth := nest.depth + 1, set := set
+/-- One list of `kind` deeper, its declared spacing and `\parsep` in force. -/
+public def ListNest.enter (nest : ListNest) (kind : String) (set : Ir.ListSet)
+    (parsep : Dim.SymGlue) : ListNest :=
+  { nest with depth := nest.depth + 1, set := set, parskip := some parsep
               itemize := if kind == "itemize" then nest.itemize + 1 else nest.itemize
               enumerate := if kind == "enumerate" then nest.enumerate + 1 else nest.enumerate
               description := if kind == "description" then nest.description + 1
                 else nest.description }
 
-/-- One quotation deeper: a level whose own macro sets the skips again. -/
-public def ListNest.quoted (nest : ListNest) (l : Ir.ListLineage) (size : Sp) : ListNest :=
-  { nest with depth := nest.depth + 1, set := Ir.ListSet.within l size (nest.depth + 1) nest.set }
+/-- One quotation deeper: a level whose own macro sets the skips again over what the `\parskip` in
+force asks of it, under what its environment sets (`own`), its `\parsep` TeX's `\parskip` inside. -/
+public def ListNest.quoted (nest : ListNest) (l : Ir.ListLineage) (extra : Ir.ListExtra) (size : Sp)
+    (tokens : Ir.Tokens) (outer : Dim.SymGlue) (own : Ir.ListSet) : ListNest :=
+  let depth := nest.depth + 1
+  let set := ((Ir.ListSet.within l size depth nest.set).over
+    (extra.over size depth (nest.parskip.getD outer))).over own
+  { nest with depth, set
+              parskip := some (((Ir.listSpacing l size depth tokens set).map (·.1.parsep)).getD {}) }
 
 /-- The elaboration context; `limit` bounds the prefix of `user` a command
 sees. -/
@@ -245,6 +254,8 @@ public structure Ctx where
   kept : Bool := false
   /-- The class's list lineage, which a listing's frame reads. -/
   lists : Ir.ListLineage := .sizeFile
+  /-- How the class's list levels read the `\parskip` in force (`Ir.ListExtra.over`). -/
+  listExtra : Ir.ListExtra := .none
   /-- The class's preamble font, in which a length the class fixes at load is fixed. -/
   preamble : Ir.PreambleFace := Ir.PreambleFace.article
   /-- The engine's length tokens, resolved from the final page. -/
@@ -300,6 +311,11 @@ private def Ctx.atCall (ctx : Ctx) (name : String) (pos : Pos) : Ctx :=
 
 public theorem Ctx.sourceSpan_call_projects (ctx : Ctx) (span : Span) (name : String) (pos : Pos) :
     ({ ctx with callSite := some (span, name) } : Ctx).sourceSpan pos = span := by rfl
+
+/-- The lists around a quotation's content: one level deeper, under what its environment sets. -/
+public def Ctx.quotedNest (ctx : Ctx) (own : Ir.ListSet) : ListNest :=
+  ctx.listNest.quoted ctx.lists ctx.listExtra ctx.page.fontSize ctx.tokens (Ir.texParskipOf ctx.page)
+    own
 
 /-- A counter's numeral style: `\arabic`, `\alph`, `\Alph`, `\roman` or
 `\Roman`. -/
@@ -9854,13 +9870,20 @@ private def leaveAppendices (saved : Option ((Nat × Nat × Nat) × Bool)) : EM 
 
 /-- The node a block-sequence wrapper environment ships: `{abstract}`'s titled
 block, `{appendices}`'s splice, else a quotation. -/
-private def wrapScopedEnv (n : String) (blocks inner : Array Block) : Array Block :=
+private def wrapScopedEnv (n : String) (spacing : Ir.ListSet) (blocks inner : Array Block) :
+    Array Block :=
   if n == "abstract" then blocks.push (.abstract inner)
   else if n == "appendices" then blocks ++ inner
-  else blocks.push (.quote inner)
+  else blocks.push (.quote ⟨(Ir.QuoteKind.ofName? n).getD .quote, spacing⟩ inner)
 
-private theorem wrapScopedEnv_text (n : String) :
-    Ir.Conserves Ir.blocksText (wrapScopedEnv n #[]) := fun inner => by
+/-- What a scoped environment's own list setting declares: a quotation's, or an abstract's, which
+is a quotation. -/
+private def scopedEnvOwn (n : String) : Ir.ListSet :=
+  (((Ir.QuoteKind.ofName? n).orElse fun _ => if n == "abstract" then some .quotation else none).map
+    (·.own)).getD {}
+
+private theorem wrapScopedEnv_text (n : String) (spacing : Ir.ListSet) :
+    Ir.Conserves Ir.blocksText (wrapScopedEnv n spacing #[]) := fun inner => by
   unfold wrapScopedEnv
   split
   · rfl
@@ -11028,11 +11051,11 @@ private def listOptionLength (ctx : Ctx) (src : String) : Option SymGlue :=
     | .ok g => some g
     | .error _ => none
 
-/-- A list's options and the scopes over it: the index past its options, and the spacing it
-declares as enumitem sets it, its scopes in order, its own options last, over what it keeps of the
-enclosing list's. -/
+/-- A list's options and the scopes over it: the index past its options, the spacing it declares as
+enumitem sets it, its scopes in order, its own options last, over what its level's macro sets from
+the `\parskip` in force and what it keeps of the enclosing list's, and its `\parsep`. -/
 private def listOptsArm (ctx : Ctx) (n : String) (body : Array Raw) (pos : Pos) :
-    EM (Nat × Ir.ListSet) := do
+    EM (Nat × Ir.ListSet × Dim.SymGlue) := do
   let mut own : Ir.ListSet := {}
   let mut bodyFrom := 0
   match scanOpeningArg body pos fun _ => true with
@@ -11063,8 +11086,11 @@ their own specifications say" pos
   let depth := nest.depth + 1
   let scopes := (Ir.listSetScopes n depth (nest.kindDepth n + 1)).foldl (fun (acc : Ir.ListSet) e =>
     acc.over (((ctx.styles.find? e).map (·.list)).getD {})) {}
-  return (bodyFrom, (Ir.ListSet.within ctx.lists ctx.page.fontSize depth nest.set).over
-    (scopes.over own))
+  let size := ctx.page.fontSize
+  let extra := ctx.listExtra.over size depth (nest.parskip.getD (Ir.texParskipOf ctx.page))
+  let set := ((Ir.ListSet.within ctx.lists size depth nest.set).over extra).over (scopes.over own)
+  let parsep := ((Ir.listSpacing ctx.lists size depth ctx.tokens set).map (·.1.parsep)).getD {}
+  return (bodyFrom, set, parsep)
 
 /-- Whether every item of a bracket's text names a key beamer's `beamer@col` family reads. -/
 private def columnsKeysOnly (src : String) : Bool :=
@@ -11625,7 +11651,7 @@ private def elabEnvArm (ctx : Ctx) (n : String) (scope : Array Raw)
     blocks ← closeFramePalette ctx pos blocks title opts inner aliasScope
     if ctx.slides then modify fun st => { st with refTarget := outer }
   else if n == "itemize" || n == "enumerate" || n == "description" then
-    let (bodyFrom, spacing) ← listOptsArm ctx n body pos
+    let (bodyFrom, spacing, parsep) ← listOptsArm ctx n body pos
     let ⟨lbody, _, _⟩ : { a : Array Raw //
         rawWeightList a.toList ≤ rawWeightList body.toList
           ∧ nestedParsList a.toList ≤ nestedParsList body.toList } ←
@@ -11646,7 +11672,7 @@ private def elabEnvArm (ctx : Ctx) (n : String) (scope : Array Raw)
     -- Literal punctuation must reach the item reader before its text elaborates.
     let literal := ctx.literalText || Ir.Decl.anyStyle (· == .mono) scope.decls
     let ⟨itemCtx, _⟩ : MCtx ctx ← pure ⟨{ ctx with
-        literalText := literal, listNest := ctx.listNest.enter n spacing },
+        literalText := literal, listNest := ctx.listNest.enter n spacing parsep },
       rfl, rfl, rfl, rfl⟩
     let elabItems ← withBlockDecls scope.decls do
       let elabItems ← elabItemsGo itemCtx items 0 #[]
@@ -11711,12 +11737,12 @@ the text width; the box takes the whole measure" pos
     -- A quotation is a list level, which its enclosing lists' spacing reaches as LaTeX's does.
     let ⟨quoteCtx, _⟩ : MCtx ctx ← pure ⟨
       if n == "appendices" || (n == "abstract" && !ctx.abstractNests) then ctx
-      else { ctx with listNest := ctx.listNest.quoted ctx.lists ctx.page.fontSize },
+      else { ctx with listNest := ctx.quotedNest (scopedEnvOwn n) },
       by split <;> rfl, by split <;> rfl, by split <;> rfl, by split <;> rfl⟩
     let inner ← splicedFrameScope (if n == "appendices" then some blocks.size else none)
       (elabBlockScope quoteCtx body)
     leaveAppendices saved
-    blocks := wrapScopedEnv n blocks inner
+    blocks := wrapScopedEnv n quoteCtx.listNest.set blocks inner
   else if n == "figure" || n == "figure*" || n == "table" || n == "table*" then
     let kind : Ir.FloatKind :=
       if n == "table" || n == "table*" then .table else .figure
@@ -16268,10 +16294,17 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
         page := { page with fontSize := d }
   -- A declared size is absolute, so its step is read against the body size the class settles.
   page := (← applyRefusedSizeLadder { s with page }).page
-  if page.parskip.isNone then
-    if let some g := record.parskip then
-      page := { page with parskip := some g }
   let classOpts := (KeyVal.items classOptions).toList
+  let optionSkip (o : String) : Option SymGlue :=
+    match KeyVal.entry o with
+    | ("parskip", v) =>
+      if record.parskipOption then
+        Ir.classParskip? v (Ir.sizeFileLeading page.fontSize page.spread "normalsize")
+      else none
+    | _ => none
+  if page.parskip.isNone then
+    if let some g := (classOpts.filterMap optionSkip).getLast? <|> record.parskip then
+      page := { page with parskip := some g }
   page := classPageDefaults record classOpts page
   let classSay (code : DiagCode) (o msg : String) : EM Unit := do
     let d := diagOf ctx code msg none (subject := some (Compat.paramSubject "documentclass" o))
@@ -16286,7 +16319,7 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
         "class option 'draft' asks for a proofing mode the engine does not have; the document is rendered in full"
     else if let some why := (classOptionsInert.lookup record.model).bind (·.lookup o) then
       classSay .N0100 key s!"'\\documentclass[{o}]' → nothing: {why}"
-    else unless classOptionRead record.model o || key.isEmpty do
+    else unless classOptionRead record.model o || (optionSkip o).isSome || key.isEmpty do
       classSay .W0356 key s!"class option '{o}' is not honoured; the document renders without it"
   let surface := Ir.Surface.ofPath file
   if record.model == .flow && !sawPage then
@@ -16309,7 +16342,7 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
                     face := record.model == .face
                     numberHeadings := record.numberHeadings, styles := styles
                     page := page, tokens := tokens, surface := surface, lists := record.lists
-                    preamble := face
+                    listExtra := record.listExtra, preamble := face
                     engineTokens := engineLengthTokensOfPage page ++ classMarginTokens record.lists
                     abstractNests := s.abstractForm.getD
                       (abstractFormUnder record.abstractForm classOpts) == .quotation }

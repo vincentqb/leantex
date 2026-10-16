@@ -264,6 +264,7 @@ import Tests.ParamCensus
 import Tests.ParamCensusDecl
 import Tests.DeclSettings
 import Tests.UnusedSettings
+import Tests.ListsKoma
 import Tests.Settings
 import Tests.Kernel
 import Tests.PicturePaths
@@ -492,6 +493,9 @@ def declSettingSuiteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   Tests.DeclSettings.markerScopeChecks ref
   Tests.DeclSettings.listSpacingChecks ref oneFace
   Tests.DeclSettings.listSpacingStyleChecks ref oneFace
+  Tests.ListsKoma.komaListChecks ref oneFace
+  Tests.ListsKoma.quoteKindChecks ref oneFace
+  Tests.ListsKoma.quoteKindHtmlChecks ref
   Tests.DeclSettings.frameTitleKeyChecks ref oneFace
   Tests.DeclSettings.emptyTemplateChecks ref oneFace
   Tests.DeclSettings.emptyTemplateMeasuredChecks ref

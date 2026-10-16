@@ -60,7 +60,7 @@ def structChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a laid-out paragraph's lines are Spans in one P, each bounding a scope saying so in its text"
     ((laidElems.map (·.s)).toList == ["Document", "P", "Span", "Span", "Span", "Span"] &&
       (laidElems.map (·.actualText)).toList == [none, none, none, some "(b", some "(c)", some "d)"])
-  t "quote is a quote" (structKinds (Struct.ofBlocks #[.quote #[para]]) == #[.quote])
+  t "quote is a quote" (structKinds (Struct.ofBlocks #[.quote ⟨.quote, {}⟩ #[para]]) == #[.quote])
   t "abstract is a section" (structKinds (Struct.ofBlocks #[.abstract #[para]]) == #[.section])
   let titled := Struct.ofBlocks #[.titled .block #[.text "T"] #[para]]
   t "titled block is a section opening with its title"
@@ -181,7 +181,7 @@ def ctxFoldChecks (ref : IO.Ref (List String)) : IO Unit := do
     (ctxTrace #[.center #[para], para]
       == #["<0", "<1", "t2:a", ">1", ">0", "<0", "t1:a", ">0"])
   t "a container's end is observed after its content, innermost first"
-    (ctxTrace #[.quote #[.center #[para]]]
+    (ctxTrace #[.quote ⟨.quote, {}⟩ #[.center #[para]]]
       == #["<0", "<1", "<2", "t3:a", ">2", ">1", ">0"])
   t "siblings are read under the context their parent opened them in"
     (ctxTrace #[.center #[para, para]]

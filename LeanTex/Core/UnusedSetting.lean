@@ -133,7 +133,7 @@ private def blockReads (ctx : Nat × Nat) (acc : Shown) (b : Block) : Shown × (
     let acc := acc.face "mono"
     ((spec.caption.map fun (_, c) => inlines acc c).getD acc, ctx)
   | .picture pic => (pic.labelContents.foldl inlines acc, ctx)
-  | .para _ | .lines _ | .center _ | .ragged _ _ | .spaced _ _ | .link _ _ | .quote _
+  | .para _ | .lines _ | .center _ | .ragged _ _ | .spaced _ _ | .link _ _ | .quote _ _
   | .disclosure _ _ _ | .columns _ | .onSteps _ _ | .altSteps _ _ _
   | .note _ | .only _ _ | .pagebreak | .framefoot _ | .setPalette _ | .setTokens _
   | .rule _ _ _ | .table _ _ _ _ _ _ | .float _ _ _ _ _ => (acc, ctx)

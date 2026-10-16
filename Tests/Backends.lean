@@ -557,7 +557,7 @@ def htmlListSpacingChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "html a declared nosep's items stand no space apart, as on the page"
     (hasStr tight
       s!":where(.list-set-1 > li + {item}, .list-set-1 > dd + dt) \{ margin-top: {space "0.000"}; }" &&
-     hasStr tight s!":where(.list-set-1 > {item}, dl.list-set-1 > *) \{ --parskip: 0.000rem; }" &&
+     hasStr tight s!":where(.list-set-1 > {item}, :is(dl, blockquote).list-set-1 > *) \{ --parskip: 0.000rem; }" &&
      hasStr tight s!":where(* + .list-set-1) \{ margin-top: {space "0.000"}; }")
   -- size10.clo's level one: \topsep 8pt, \partopsep 2pt; a declared \itemsep 0pt over \parsep 4pt.
   let own := page "" ("\\begin{itemize}[itemsep=0pt]\\item a\\item b\\end{itemize}\n\n" ++ list)
@@ -587,9 +587,11 @@ def htmlListSpacingChecks (ref : IO.Ref (List String)) : IO Unit := do
   let quoted := page "\\setlist[itemize,2]{topsep=9pt}"
     ("\\begin{itemize}\\item a\n\\begin{quote}b\n\\begin{itemize}\\item c\\end{itemize}\n" ++
       "\\end{quote}\n\\item d\\end{itemize}")
-  t "html the item after a quotation closing on a declared list stands at the larger skip"
-    (hasStr quoted ("li:has(> blockquote.u-in-paragraph:last-child > " ++
-      ".list-set-1.u-in-paragraph:last-child") && hasStr quoted s!"\{ margin-top: {space "1.087"}; }")
+  -- lualatex: the quotation's end re-skips the nested list's 9pt with its \parsep 2pt less the 4pt
+  -- outside it, 7pt under the next item.
+  t "html the item after a quotation closing on a declared list stands at its re-skip"
+    (hasStr quoted ("li:has(> blockquote:not([class*=\"list-set-\"]).u-in-paragraph:last-child > " ++
+      ".list-set-1.u-in-paragraph:last-child") && hasStr quoted s!"\{ margin-top: {space "0.845"}; }")
   -- An inline list closing on an opened one: its 8pt under the nested 6pt and its \parsep 4pt.
   let inlineEnds := (HtmlDoc.emit {} (elabStr ("\\documentclass{article}\\begin{document}" ++
     "Alpha\n\\begin{itemize}\\item a\n\n\\begin{itemize}\\item b\\end{itemize}\n\\end{itemize}" ++

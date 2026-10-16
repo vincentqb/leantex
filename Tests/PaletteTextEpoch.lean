@@ -108,7 +108,7 @@ private def containerEpochChecks (ref : IO.Ref (List String))
   let base := document true
   let changed := base.palette.declare (.role .ink) brown
   let wrappers : List (String × (Array Ir.Block → Ir.Block)) :=
-    [("center", .center), ("ragged", .ragged .left), ("quote", .quote),
+    [("center", .center), ("ragged", .ragged .left), ("quote", .quote ⟨.quote, {}⟩),
      ("abstract", .abstract), ("role", .role "container"),
      ("link", .link "#target"), ("only", .only #["pdf", "html"]),
      ("list", fun body => .list false {} #[body]),

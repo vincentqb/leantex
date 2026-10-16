@@ -942,8 +942,9 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
         (·.code != "N0102"))
   t "algorithmic: a step after a space that is not modelled is named, its spelling the detail"
     ((algorithmic "" "[2]" "").any fun d => d.code == "N0102" && d.detail == some "[2]")
-  t "compat scrartcl is article"
-    ((elabStr "\\documentclass{scrartcl}\\begin{document}x\\end{document}").1.docClass == .article)
+  t "compat KOMA-Script's three classes are the one KOMA record"
+    (["scrartcl", "scrreprt", "scrbook"].all fun c =>
+      (elabStr s!"\\documentclass\{{c}}\\begin\{document}x\\end\{document}").1.docClass == .koma)
   t "compat moderncv is resume"
     ((elabStr "\\documentclass{moderncv}\\begin{document}x\\end{document}").1.docClass == .resume)
   t "compat res is resume"
@@ -1194,12 +1195,15 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
       "\\@startsection{section}{1}{\\z@}{1.5ex}{-1em}{\\normalsize\\bf}}" ++
       "\\begin{document}\\section{S}\nx\\end{document}") == ["W0104"])
   -- LaTeX classes space paragraphs by indent: parskip is zero unless KOMA's option or the parskip package says otherwise.
-  t "compat koma class declares parskip zero"
+  -- scrkernel-paragraphs.dtx: parskip=false is 0pt plus 1pt, half and full a share of the 13.6pt line.
+  t "compat koma class declares the kernel's parskip"
     ((elabStr ("\\documentclass{scrartcl}\\begin{document}x\\end{document}")).1.page.parskip ==
-      some { width := Dim.Length.ofSp 0 })
-  t "compat koma parskip=half is half a line"
-    (((elabStr ("\\documentclass[parskip=half]{scrartcl}\\begin{document}x\\end{document}")).1.page.parskip.map
-      (·.width.em)) == some 600)
+      some Ir.texParskipDefault)
+  for (opt, w, st) in [("half", 445644, 445644), ("full", 891289, 89128), ("", 891289, 89128)] do
+    t s!"compat koma parskip={opt} is its share of the class's line"
+      (((elabStr (s!"\\documentclass[parskip{if opt.isEmpty then "" else "=" ++ opt}]" ++
+          "{scrartcl}\\begin{document}x\\end{document}")).1.page.parskip.map
+        fun g => (g.width.sp, g.stretch.sp)) == some (w, st))
   t "compat parskip package"
     (((elabStr ("\\documentclass{article}\\usepackage{parskip}\\begin{document}x\\end{document}")).1.page.parskip.map
       (·.width.em)) == some 600)

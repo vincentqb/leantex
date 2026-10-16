@@ -397,8 +397,8 @@ def refChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit :=
   t "a lone label line ships no blank line"
     (run "\\section{A}\\label{s:a}\nText after." == run "\\section{A}\nText after.")
 
-/-- `quote` and `quotation` elaborate to one `Block.quote`, set inside both margins in the PDF, as
-`<blockquote>` in HTML and as one `> ` block in markdown. -/
+/-- `quote` and `quotation` elaborate to one `Block.quote` of their kinds, set inside both margins in
+the PDF, as `<blockquote>` in HTML and as one `> ` block in markdown. -/
 def quoteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let (doc, ds) := elabStr ("\\documentclass{article}\\begin{document}" ++
@@ -410,11 +410,11 @@ def quoteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   let unrole : Option Ir.Block → Option Ir.Block
     | some (.role n #[b]) => if n == Ir.inParagraphRole then some b else some (.role n #[b])
     | b => b
-  t "quote and quotation elaborate to the one quote node"
+  t "quote and quotation elaborate to the one quote node, each of its kind"
     (doc.body.size == 4 &&
       (match unrole doc.body[1]?, doc.body[2]? with
-       | some (Ir.Block.quote q1), some (Ir.Block.quote q2) =>
-         q1.size == 1 && q2.size == 2
+       | some (Ir.Block.quote s1 q1), some (Ir.Block.quote s2 q2) =>
+         q1.size == 1 && q2.size == 2 && s1.kind == .quote && s2.kind == .quotation
        | _, _ => false))
   let md := (MarkdownDoc.emit doc)
   t "markdown sets the quotation as > lines"
@@ -2418,7 +2418,7 @@ def strutLengthChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
   -- lualatex: `\the\ht\strutbox` 8.39996pt, 9.51996pt and 10.14995pt, `\dp` 3.60004pt at 10pt.
   for (cls, ht) in [("[10pt]{article}", 550500), ("[11pt]{article}", 623900),
       ("[12pt]{report}", 665187), ("[11pt]{scrartcl}", 623900),
-      ("[fontsize=12pt]{scrartcl}", 665187), ("{article}", 550500)] do
+      ("[fontsize=12pt]{scrartcl}", 665187), ("{article}", 550500), ("{scrartcl}", 623900)] do
     t s!"strut: {cls}'s geometry footskip reads the class's strut height"
       (drop (src cls geo) == some (quarter + ht) && !lost (src cls geo))
     t s!"strut: {cls}'s preamble \\setlength reads it too"
@@ -2432,7 +2432,7 @@ def strutLengthChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
     "\\geometry{letterpaper, textheight=9in, footskip=\\dimexpr 20pt + 10pt\\relax}"
   t "strut: geometry reads any dimexpr the length door reads" (drop sum == some (Dim.pt 30))
   let base := drop (src "[10pt]{article}" "\\geometry{letterpaper, textheight=9in}")
-  for (cls, pre) in [("{scrartcl}", ""), ("[10pt]{article}", "\\linespread{1.5}"),
+  for (cls, pre) in [("[10pt]{article}", "\\linespread{1.5}"),
       ("[10pt]{article}", "\\onehalfspacing"), ("[10pt]{article}", "\\fontsize{11}{14}\\selectfont"),
       ("[10pt]{article}", "\\small"), ("[10pt]{article}", "\\usepackage[onehalfspacing]{setspace}"),
       ("[10pt]{scrartcl}", "\\KOMAoptions{fontsize=12pt}"),

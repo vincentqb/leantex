@@ -143,8 +143,7 @@ private def themeBlockFont (theme element : String) : List (String × String) :=
 private def beamerFontKeys : List String := ["size", "shape", "series", "family"]
 
 /-- Classes that are an `article` with different defaults. -/
-private def articleClasses : List String :=
-  ["scrartcl", "scrreprt", "scrbook", "report", "book", "memoir", "letter"]
+private def articleClasses : List String := ["report", "book", "memoir", "letter"]
 
 /-- Whether written class options ask for title pages, `notitlepage` winning as the classes declare
 it last. -/
@@ -168,8 +167,7 @@ private def classNormalSkip (pt : Nat) : Int :=
 private def komaClasses : List String := ["scrartcl", "scrreprt", "scrbook"]
 
 /-- The point size a standard class's options set `\normalsize` at: its one size option of 10, 11
-or 12pt, else 10pt, a KOMA-Script class's only by an option; none past a size option of any other
-size. -/
+or 12pt, else 10pt, a KOMA-Script class's 11pt; none past a size option of any other size. -/
 public def classNormalPt (cls : String) (opts : List String) : Option Nat :=
   let sized (v : String) : Bool :=
     2 < v.length && v.endsWith "pt" && (v.dropEnd 2).toString.toList.all fun c => c.isDigit || c == '.'
@@ -178,10 +176,10 @@ public def classNormalPt (cls : String) (opts : List String) : Option Nat :=
       if v == "10pt" then some (some 10) else if v == "11pt" then some (some 11)
       else if v == "12pt" then some (some 12) else if sized v then some none else none
     | _ => none
-  if cls != "article" && !articleClasses.contains cls then none
+  if cls != "article" && !articleClasses.contains cls && !komaClasses.contains cls then none
   else match sizes with
     | [some n] => some n
-    | [] => if komaClasses.contains cls then none else some 10
+    | [] => some (if komaClasses.contains cls then 11 else 10)
     | _ => none
 
 /-- Font-selection packages whose whole documented effect is

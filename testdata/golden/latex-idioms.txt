@@ -1,5 +1,5 @@
-class article [paper=a5,fontsize=11pt]
-page 420x595 vmargin 39.685 hmargin 48.189 fontsize 11 parskip 0
+class scrartcl [paper=a5,fontsize=11pt]
+page 420x595 vmargin 39.685 hmargin 48.189 fontsize 11 parskip 0 plus 1pt
 font dir "fonts/"
 font body "SourceSerifPro-Regular.otf"
 font sans "OpenSans-Regular.ttf"
@@ -98,7 +98,6 @@ para
     text "remarkably steadily"
   text " into a headwind."
 -- diagnostics
-note[N0100] 5:1 '\documentclass{scrartcl}' → \documentclass[paper=a5,fontsize=11pt]{article}\page{ parskip = 0pt }
 note[N0100] 7:1 '\usepackage{xcolor}' → nothing: the engine does this itself
 note[N0100] 8:1 '\definecolor{deepwater}' → \palette{ deepwater = HTML(1F4E5F) }
 note[N0100] 9:1 '\definecolor{driftwood}' → \palette{ driftwood = rgb(0.47,0.41,0.33) }

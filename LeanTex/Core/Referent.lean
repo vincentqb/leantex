@@ -81,7 +81,7 @@ private def referentOne (keys : ReferentKeys) : Block → Block
   | .list o sp items => .list o sp (referentItems keys #[] items.toList)
   | .center body => .center (referentList keys #[] body.toList)
   | .ragged s body => .ragged s (referentList keys #[] body.toList)
-  | .quote body => .quote (referentList keys #[] body.toList)
+  | .quote q body => .quote q (referentList keys #[] body.toList)
   | .abstract body => .abstract (referentList keys #[] body.toList)
   | .titled kind title body =>
     .titled kind title (referentList keys #[] body.toList)
@@ -359,7 +359,7 @@ private theorem referentOne_text (keys : ReferentKeys) (b : Block) (acc : String
     rw [referentOne]
     simp [blockTextOne, referentList_text keys body.toList #[] acc,
       blockTextList]
-  | .quote body =>
+  | .quote _ body =>
     rw [referentOne]
     simp [blockTextOne, referentList_text keys body.toList #[] acc,
       blockTextList]

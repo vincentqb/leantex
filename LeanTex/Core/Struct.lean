@@ -214,7 +214,7 @@ mutual
   | .spaced _ body => blocksRaw out body.toList
   | .role _ body => blocksRaw out body.toList
   | .link target body => out.push (.node (.link target) (blocksRaw #[] body.toList))
-  | .quote body => out.push (.node .quote (blocksRaw #[] body.toList))
+  | .quote _ body => out.push (.node .quote (blocksRaw #[] body.toList))
   | .abstract body => out.push (.node .section (blocksRaw #[] body.toList))
   | .titled _ title body =>
     out.push (.node .section (blocksRaw (titleRaw title) body.toList))
@@ -405,7 +405,7 @@ private structure Sim (F : NodeFold α) (G : Census α) : Prop where
   bSpaced : ∀ a g body, G.block a (.spaced g body) = G.blocks a body.toList
   bRole : ∀ a n body, G.block a (.role n body) = G.blocks a body.toList
   bLink : ∀ a t body, G.block a (.link t body) = F.node a (.link t) (G.blocks · body.toList)
-  bQuote : ∀ a body, G.block a (.quote body) = F.node a .quote (G.blocks · body.toList)
+  bQuote : ∀ a q body, G.block a (.quote q body) = F.node a .quote (G.blocks · body.toList)
   bAbstract : ∀ a body, G.block a (.abstract body) = F.node a .section (G.blocks · body.toList)
   bTitled : ∀ a k title body, G.block a (.titled k title body) =
     F.node a .section fun a => G.blocks (G.region F .title a title) body.toList
@@ -762,7 +762,7 @@ private theorem blockRaw_fold_exact (h : Sim F G) (a : α) (out : Array Node) (b
   | .link t body =>
     rw [blockRaw, foldNodeList_push, foldNode_node, h.bLink]
     exact congrArg (F.node _ _) (funext fun a' => blocksRaw_fold_exact h a' #[] body.toList)
-  | .quote body =>
+  | .quote _ body =>
     rw [blockRaw, foldNodeList_push, foldNode_node, h.bQuote]
     exact congrArg (F.node _ _) (funext fun a' => blocksRaw_fold_exact h a' #[] body.toList)
   | .abstract body =>
@@ -1114,7 +1114,7 @@ public theorem blockRaw_acc (out : Array Node) (b : Block) :
   | .role nm body =>
     simp only [blockRaw]; exact blocksRaw_acc out body.toList
   | .link target body => simp [blockRaw]
-  | .quote body => simp [blockRaw]
+  | .quote _ body => simp [blockRaw]
   | .abstract body => simp [blockRaw]
   | .titled kind title body => simp [blockRaw]
   | .disclosure title _ body => simp [blockRaw]

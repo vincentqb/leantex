@@ -340,13 +340,13 @@ def shellReplyChecks (ref : IO.Ref (List String)) : IO Unit := do
   let ruby := ListingHighlight.sourceDoc "ruby" "puts 7"
   let combined : Ir.Doc := { bash with
     body := native.body ++ lean.body ++
-      #[.center (bash.body ++ #[.quote (friendly.body ++ markdown.body)] ++ ruby.body)] }
+      #[.center (bash.body ++ #[.quote ⟨.quote, {}⟩ (friendly.body ++ markdown.body)] ++ ruby.body)] }
   let fish := (ShellHighlight.minted "fish" .default "echo x").1
   let fishFriendly := (ShellHighlight.minted "fish" .friendly "echo x").1
   let fishMarkdown := (elabMd "```fish\necho x\n```").1
   let withFish : Ir.Doc := { combined with
     body := combined.body ++
-      #[.center (fish.body ++ #[.quote (fishFriendly.body ++ fishMarkdown.body)])] }
+      #[.center (fish.body ++ #[.quote ⟨.quote, {}⟩ (fishFriendly.body ++ fishMarkdown.body)])] }
   let collected := ListingReply.requests withFish
   t "listing reply: generic fold finds nested requests, dedupes surfaces and styles"
     (collected == #[{ language := "ruby", source := "puts 7" },

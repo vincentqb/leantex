@@ -121,6 +121,8 @@ public structure Config where
   listSets : Std.HashMap Ir.ListSet Nat := {}
   /-- The list and quotation levels around this content. -/
   listDepth : Nat := 0
+  /-- Directly inside verse, where each line of a paragraph hangs (`Ir.verseHang`). -/
+  verse : Bool := false
   inset : Sp := 0
   /-- The local measurement context; `none` reads the document's text area. -/
   measures : Option MeasureValues := none
@@ -170,7 +172,7 @@ measure's start, and for a quotation off its end. -/
 public def Config.deeper (cfg : Config) (both : Bool) : Config :=
   let lv := cfg.listDepth + 1
   let lm := Ir.leftMarginAt cfg.lists cfg.tokens cfg.preamble lv
-  { cfg with listDepth := lv, inset := cfg.inset + (if both then 2 * lm else lm) }
+  { cfg with listDepth := lv, inset := cfg.inset + (if both then 2 * lm else lm), verse := false }
 
 /-- Enter a box of the given width, at the list depth around it, as the page counts it there. -/
 public def Config.atMeasure (cfg : Config) (width : Sp) : Config :=
@@ -1090,7 +1092,7 @@ private def listSetLevelRules (pre cls : String) (g : Nat × Nat × Nat) (opened
     let ends := s!":is({", ".intercalate listElems}){sel}:last-child"
     let last := s!":has(> {ends}, > {disc}:last-child > {ends})"
     .boundary s!"{own} > li{last} + {itemSubject}, {own} > dd{last} + dt" (listSpace m)
-  [.parskip s!"{own} > {itemSubject}, {pre}dl.{cls} > *" (milliRem g.2.2),
+  [.parskip s!"{own} > {itemSubject}, {pre}:is(dl, blockquote).{cls} > *" (milliRem g.2.2),
    .boundary s!"{pre}* + .{cls}" (listSpace opened)] ++
   ownsBelow [own] (listSpace opened) (milliRem opened) texParskip ++
   [.boundary s!"{own} > li + {itemSubject}, {own} > dd + dt" (listSpace g.2.1)] ++
@@ -1138,12 +1140,13 @@ public def blockSpine (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens) (le
       match itemsSpine l size tokens (level + 1) parsep items.toList with
       | some (rest, e) => (step :: rest, max (e + parsep - outer) own)
       | none => ([step], own)
-  | .quote body =>
-    (Ir.listSpacing l size level tokens {}).map fun (sk, pts) =>
+  | .quote q body =>
+    (Ir.listSpacing l size level tokens q.spacing).map fun (sk, pts) =>
       let own := listSkipSp size sk.topsep + (if inPar then 0 else listSkipSp size pts)
-      let step : SpineStep := { quote := true, set := {}, inPar }
-      match lastSpine l size tokens (level + 1) (listSkipSp size sk.parsep) body.toList with
-      | some (rest, e) => (step :: rest, max e own)
+      let parsep := listSkipSp size sk.parsep
+      let step : SpineStep := { quote := true, set := q.spacing, inPar }
+      match lastSpine l size tokens (level + 1) parsep body.toList with
+      | some (rest, e) => (step :: rest, max (e + parsep - outer) own)
       | none => ([step], own)
   | .role n body =>
     if n == Ir.inParagraphRole then roleSpine l size tokens level outer body.toList else none
@@ -1197,10 +1200,10 @@ public structure NestedClose where
   deriving BEq, Hashable
 
 /-- Whether a nested close sets a space the class's level and spacing rules may not: a spine longer
-than one block or one a declaration reaches, and any below a list, whose re-skip the levels' own
-skips meet only where it opened after a paragraph break. -/
+than one block or one a declaration reaches, and any below a list or a quotation, whose re-skip the
+levels' own skips meet only where it opened after a paragraph break. -/
 private def NestedClose.owed (c : NestedClose) : Bool :=
-  (c.last && c.parent == .list) || c.spine.length > 1 || c.spine.any (·.set != {})
+  (c.last && c.parent != .abstract) || c.spine.length > 1 || c.spine.any (·.set != {})
 
 /-- The nested closes a body's lists, quotations and abstracts hold that `NestedClose.owed` keeps,
 each once, ordered so a deeper level's rule, a declared side's and a longer spine's follow the
@@ -1224,8 +1227,9 @@ public def nestedClosesOf (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens)
       match b with
       | .list _ s items =>
         (note (depth + 1) .list s inPar (parsepAt (depth + 1) s) items acc, (depth + 1, false))
-      | .quote body =>
-        (note (depth + 1) .quote {} inPar (parsepAt (depth + 1) {}) #[body] acc, (depth + 1, false))
+      | .quote q body =>
+        (note (depth + 1) .quote q.spacing inPar (parsepAt (depth + 1) q.spacing) #[body] acc,
+          (depth + 1, false))
       | .abstract body =>
         if abstractNests then (note (depth + 1) .abstract {} false 0 #[body] acc, (depth + 1, false))
         else (acc, (depth, false))
@@ -1256,8 +1260,12 @@ public def nestedCloseRules (l : Ir.ListLineage) (size : Int) (tokens : Ir.Token
     match index[s]? with
     | some i => s!".{listSetClass i}"
     | none => lists ++ ":not([class*=\"list-set-\"])"
+  let quoteClassed (s : Ir.ListSet) : String :=
+    match index[s]? with
+    | some i => s!"blockquote.{listSetClass i}"
+    | none => "blockquote:not([class*=\"list-set-\"])"
   let stepSel (st : SpineStep) : String :=
-    (if st.quote then "blockquote" else classed st.set) ++ opened st.inPar ++ ":last-child"
+    (if st.quote then quoteClassed st.set else classed st.set) ++ opened st.inPar ++ ":last-child"
   -- each step past the first stands last in its parent list's last item, or last in its quotation
   let chain (spine : List SpineStep) : String :=
     (spine.zip ((none : Option SpineStep) :: spine.map some)).foldl (fun acc (st, prev) =>
@@ -1289,8 +1297,10 @@ public def nestedCloseRules (l : Ir.ListLineage) (size : Int) (tokens : Ir.Token
         [.boundary s!"{outerSel} > li{lastSel} + {itemSubject}, {outerSel} > dd{lastSel} + dt"
           (listSpace (max close (screenMilli size (listSkipSp size osk.itemsep))))]
       | .quote, _ =>
-        ownsBelow [pre ++ "blockquote" ++ opened c.outerInPar ++ held [""]]
-          (listSpace (max close own)) (milliRem (max close own)) texParskip
+        let parsep := screenMilli size (listSkipSp size osk.parsep)
+        let reskip := s!"max(calc({milliRem (close + parsep)} - var(--parskip, 0rem)), {milliRem own})"
+        ownsBelow [pre ++ quoteClassed c.outer ++ opened c.outerInPar ++ held [""]]
+          s!"calc({reskip} + var(--parskip, 0rem))" reskip texParskip
       | .abstract, _ =>
         ownsBelow [pre ++ ".abstract.quoted" ++ held [""]] (listSpace close) (milliRem close)
           texParskip
@@ -1333,6 +1343,15 @@ public def listIndentCss (l : Ir.ListLineage) (basis : LengthBasis) (face : Ir.P
     let v := s!"var(--{Ir.leftMarginName (k + 1)}, {fixed})"
     s!":where({pre}ul, {pre}ol, {pre}dd) \{ padding-left: {v}; }\n" ++
       s!":where({pre}:is(blockquote, .abstract.quoted)) \{ padding: 0 {v}; }\n")
+
+/-- The paragraph shapes of the quotation kinds a page holds: quotation's first-line indent, and
+verse's lines hung from a margin `Ir.verseHang` past the quotation's. -/
+public def quoteKindCss (indent : Dim.Length) (kinds : Array Ir.QuoteKind) : String :=
+  (if kinds.contains .quotation then
+    s!"blockquote.quotation > p \{ text-indent: {cssLength indent}; }\n" else "") ++
+  (if kinds.contains .verse then
+    s!"blockquote.verse > p > .verse-line \{ display: block; padding-left: {cssLength Ir.verseHang}; \
+text-indent: -{cssLength Ir.verseHang}; }\n" else "")
 
 /-- beamer's abstract inset as CSS on the abstract's own paragraphs, in the page's unit as the
 preamble's font fixes it. -/
@@ -5363,6 +5382,7 @@ public def baseRules (doc : Doc) (pairs : List (Nat × Nat) := []) : String :=
   (if doc.surface != .tex then
     ":where(:not(pre) > code) { overflow-wrap: break-word; }\n" else "") ++
   listIndentCss doc.docClass.record.lists (lengthBasisOf doc) doc.preambleFace ++
+  quoteKindCss doc.docClass.record.quotationIndent (Ir.quoteKindsOf doc.body) ++
   (if doc.abstractForm == .inset then abstractInsetCss (lengthBasisOf doc) doc.preambleFace
    else "") ++
   s!"li::marker \{ color: {roleRef .marker}; }\n" ++
@@ -5983,7 +6003,7 @@ private def endBelowOne (cfg : Config) (para : String) : Block → String
   | .disclosure _ expanded body => if expanded then endBelowList cfg para body.toList else para
   | .list _ _ items => endBelowItems cfg para items.toList
   | .center body | .ragged _ body | .spaced _ body | .role _ body | .link _ body
-  | .quote body | .abstract body | .onSteps _ body | .only _ body =>
+  | .quote _ body | .abstract body | .onSteps _ body | .only _ body =>
     endBelowList cfg para body.toList
   | .verbatim covered content spec =>
     match cfg.blockLastBelow (some (.verbatim covered content spec)) with
@@ -6520,6 +6540,18 @@ private def splitAtBreaks (xs : Array Inline) : Array (Array Inline) := Id.run d
       cur := #[]
     | other => cur := cur.push other
   return out.push cur
+
+/-- A verse paragraph's lines, each with the space its `\\[...]` declares after it. -/
+private def verseLines (xs : Array Inline) : Array (Array Inline × SymGlue) := Id.run do
+  let mut out : Array (Array Inline × SymGlue) := #[]
+  let mut cur : Array Inline := #[]
+  for x in xs do
+    match x with
+    | .linebreak extra =>
+      out := out.push (cur, extra)
+      cur := #[]
+    | other => cur := cur.push other
+  return if cur.isEmpty && !out.isEmpty then out else out.push (cur, {})
 
 /-- Split one row at each `\hfill`. -/
 private def splitAtFills (xs : Array Inline) : Array (Array Inline) := Id.run do
@@ -8040,6 +8072,13 @@ private def paragraphNode (cfg : Config) (content : Array Inline) : Node :=
   if Ir.anchorsOnly content then
     Html.elem "span" (inlines cfg content)
   else
+  -- each of a verse's lines is a block of its own, which its hang restarts on
+  if cfg.verse then
+    Html.elem "p" ((verseLines content).map fun (row, extra) =>
+      Html.elem "span" (inlines cfg row) (#[("class", "verse-line")] ++
+        (if extra == ({} : SymGlue) then #[]
+         else #[("style", s!"margin-bottom: {cssLength extra.width}")])))
+  else
   if hasFill content then
     let rows := splitAtBreaks content
     if rows.size == 1 then
@@ -8316,9 +8355,15 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     fillCarrier cfg (Ir.frameFills cfg.lists cfg.styles .deck body)
       (Html.elem "a" (blockNodesInto cfg.into #[] body.toList)
         #[("href", target), ("style", "display: block")])
-  | .quote body =>
+  | .quote q body =>
+    -- A quotation's kind and the spacing it declares read their rules by its classes.
+    let classes := (if q.kind == .quote then [] else [q.kind.name]) ++
+      (cfg.listSets[q.spacing]?.map listSetClass).toList
+    let attrs := if classes.isEmpty then #[] else #[("class", " ".intercalate classes)]
     fillCarrier cfg (Ir.frameFillsOne cfg.lists cfg.styles .deck 0 b)
-      (Html.elem "blockquote" (blockNodesInto (cfg.deeper true).into #[] body.toList))
+      (Html.elem "blockquote"
+        (blockNodesInto { cfg.deeper true with verse := q.kind == Ir.QuoteKind.verse }.into #[]
+          body.toList) attrs)
   | .disclosure summary expanded body =>
     fillCarrier cfg (Ir.frameFillsOne cfg.lists cfg.styles .deck 0 b)
       (Html.elem "details"

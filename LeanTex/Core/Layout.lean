@@ -2817,7 +2817,7 @@ private def scalarTextOne (out : ScalarAcc) (itemD enumD : Nat) :
     scalarTextItems { out with texts := out.texts.push (ListMark.scalars ordered level) } itemD enumD items.toList
   | .center body => scalarTextList out itemD enumD body.toList
   | .ragged _ body => scalarTextList out itemD enumD body.toList
-  | .quote body => scalarTextList out itemD enumD body.toList
+  | .quote _ body => scalarTextList out itemD enumD body.toList
   | .lines ls => ls.foldl (fun out l => textAndMath out l.content) out
   | .abstract body =>
     scalarTextList { out with texts := out.texts.push out.locale.abstract } itemD enumD body.toList
@@ -3038,7 +3038,7 @@ private def weightKeysBlock (corners : Bool) (styles : Ir.Styles) (slides : Bool
   | .list _ _ items => weightKeysBlockItems corners styles slides acc items.toList
   | .center body => weightKeysBlockList corners styles slides acc body.toList
   | .ragged _ body => weightKeysBlockList corners styles slides acc body.toList
-  | .quote body => weightKeysBlockList corners styles slides acc body.toList
+  | .quote _ body => weightKeysBlockList corners styles slides acc body.toList
   | .lines ls => ls.foldl (fun a l => weightKeysInlineList corners a {} l.content.toList) acc
   | .abstract body =>
     -- The abstract heading is the locale's word, and any word stands for its face key.
@@ -9047,6 +9047,9 @@ public structure Spacing.Paragraph where
   /-- TeX's `\hangindent`, the list's `\itemindent` negated:
   every line but the first stands this far in from `indent`. -/
   private hangIndent : Sp := 0
+  /-- Every forced break but the last restarts the hang past its kern, as verse's `\\` ends its
+  paragraph. -/
+  private hangLines : Bool := false
   /-- A rule filling the first line after the content. -/
   private rule : Option HeadingRule := none
   /-- The paragraph's pre-broken footnotes, each with its mark's item index. -/
@@ -9241,6 +9244,8 @@ public structure Spacing.Context where
   private inFrame : Bool := false
   /-- Where the class's list spacing comes from (`Ir.listSkips`). -/
   private lists : Ir.ListLineage := .sizeFile
+  /-- A quotation's `\listparindent`, from the class (`Ir.ClassRecord.quotationIndent`). -/
+  private quotationIndent : Dim.Length := {}
   /-- The deck's frame-alignment keys (`Ir.Doc.frameKeys`). -/
   private frameKeys : Ir.FrameKeys := .beamer
   /-- Every frame's label at its body index (`Ir.Doc.frameLabels`). -/
@@ -9710,6 +9715,22 @@ private def columnsOverfull (r : Rd) (a : Acc) (cols : Array (BoxWidth × Array 
     (span := source) (subject := some ("columns:" ++ overfullSubject source))
     (detail := some (overfullDetail (if staged then s!"{stageWho a.frameLabel}: " else "") excess))
 
+/-- A paragraph's items with `box` before the first and, where `restart`, after each forced break
+but the last; with how many boxes stand before each original item. -/
+private def withKerns (items : Array Item) (box : Item) (restart : Bool) :
+    Array Item × Array Nat := Id.run do
+  let mut out : Array Item := #[box]
+  let mut shift : Array Nat := #[]
+  for h : i in [0:items.size] do
+    shift := shift.push (out.size - i)
+    out := out.push items[i]
+    let forced := match items[i] with
+      | .pen _ cost _ _ _ _ => cost ≤ forcedCost
+      | _ => false
+    if restart && forced && i + 1 < items.size then
+      out := out.push box
+  return (out, shift)
+
 private def collectPara (r : Rd) (a : Acc)
     (inlines : Array Inline) (indent : Sp) (center : Bool) (size : Sp)
     (baseStyle : TextStyle := {})
@@ -9719,7 +9740,8 @@ private def collectPara (r : Rd) (a : Acc)
     (rule : Option HeadingRule := none)
     (display : Bool := false)
     (leaf : Option Nat := none) (span : Nat := 0) (keepNext : Sp := 0)
-    (hangIndent : Sp := 0) (literalLines : Bool := false)
+    (hangIndent : Sp := 0) (firstIndent : Sp := 0) (hangLines : Bool := false)
+    (literalLines : Bool := false)
     (dispJob : Option DisplayJob := none) (paintPadding : Option Sp := none)
     (rowStrut : Option (Sp × Sp) := none) (strut : Option Sp := none)
     (inserted : Bool := false) (background : Sp := 0)
@@ -9826,15 +9848,21 @@ private def collectPara (r : Rd) (a : Acc)
       let (segs, w, _, _) := setLine mi (lineStart mi 0) (mi.size - 1) r.geom.textWidth false
       (some (segs, w), ds ++ mds, cache)
     | none => (none, ds, cache)
-  -- A hanging indent opens the items with its kern; item-indexed data moves with them.
+  -- A hanging or first-line indent opens the items with its kern, and a restarting hang stands
+  -- after each forced break but the last; item-indexed data moves with them.
+  let kern := if hangIndent == 0 then firstIndent else -hangIndent
+  let restart := hangLines && hangIndent != 0
   let (items, extras, noteBlocks, wordOffsets, anchors, itemSources) :=
-    if hangIndent == 0 then (items, extras, noteBlocks, wordOffsets, anchors, itemSources)
-    else (#[Item.box (-hangIndent) 0 a.fg none #[] size {} {} 0 a.ground .unattributed] ++ items,
-      extras.fold (fun m k v => m.insert (k + 1) v) {},
-      noteBlocks.map (fun (i, nb) => (i + 1, nb)),
-      wordOffsets.fold (fun m k v => m.insert (k + 1) v) {},
-      anchors.map (fun (n, i) => (n, i + 1)),
-      itemSources.map (fun (i, span) => (i + 1, span)))
+    if kern == 0 then (items, extras, noteBlocks, wordOffsets, anchors, itemSources)
+    else
+      let (items, shift) :=
+        withKerns items (Item.box kern 0 a.fg none #[] size {} {} 0 a.ground .unattributed) restart
+      let move (k : Nat) : Nat := k + shift.getD k (shift.back?.getD 1)
+      (items, extras.fold (fun m k v => m.insert (move k) v) {},
+        noteBlocks.map (fun (i, nb) => (move i, nb)),
+        wordOffsets.fold (fun m k v => m.insert (move k) v) {},
+        anchors.map (fun (n, i) => (n, move i)),
+        itemSources.map (fun (i, span) => (move i, span)))
   -- A paragraph set wholly in one named size stands on that step's strut (`Ir.paraStep?`).
   let step := if inserted then Ir.insertedStep? r.geom.scale inlines else Ir.paraStep? inlines
   let strutSize := match step with
@@ -9859,6 +9887,7 @@ private def collectPara (r : Rd) (a : Acc)
       expand := r.geom.expand
       markerSegs := markerSegs, markerIndent := markerIndent, markerLeft := markerLeft
       hangIndent := hangIndent
+      hangLines := restart
       rule := rule
       notes := noteBlocks
       inFloat := r.inFloat
@@ -9868,7 +9897,7 @@ private def collectPara (r : Rd) (a : Acc)
       rowStrut := rowStrut
       background := background
       -- premise: markdownWarningChecks — a markdown hard break declares no line (no W0386).
-      declaresLines := r.surface == .tex }) }
+      declaresLines := r.surface == .tex && !restart }) }
 
 /-- The weight of a heading's declared rule: 0.06 em of the base,
 relating to the stroke weight of the text it cuts (Hochuli). -/
@@ -12563,6 +12592,38 @@ private def collectInsetList (r ri : Rd) (a : Acc) (blocks : List Block) (indent
     let a := if prevRule then { a with declaredSkip := false } else a
     collectInsetList r ri a rest indent inset false (ruleBlock blk)
 
+/-- A quotation's body as `collectBlockList` walks it: a list opening it stands in its item's
+label, under `quotation` each paragraph's first line takes the class's `\listparindent`, and under
+`verse` every line hangs from the margin past its own (`Ir.verseHang`). -/
+private def collectQuoteList (r : Rd) (a : Acc) (kind : Ir.QuoteKind) (blocks : List Block)
+    (indent : Sp) (first prevRule : Bool) : Acc :=
+  match blocks with
+  | [] => a
+  | blk :: rest =>
+    if statefulBlock blk then
+      collectQuoteList r (collectBlock r a blk indent) kind rest indent first prevRule
+    else
+    let a := if first || a.frameTop then a else a.wantGap
+    let a := if ruleBlock blk then { a with declaredSkip := false } else a
+    let a := match kind, blk, first with
+      | _, .list .., true => collectBlock { r with inLabel := true } a blk indent
+      | .quotation, .para content, _ =>
+        if Ir.anchorsOnly content then collectParaBlock r a content indent else
+        let (a, leaf) := a.leafRange (Struct.leafCountInlines content)
+        collectPara r a content indent false r.geom.fontSize (leaf := leaf)
+          (span := Struct.leafCountInlines content)
+          (firstIndent := (r.resolve { width := r.quotationIndent }).width)
+      | .verse, .para content, _ =>
+        if Ir.anchorsOnly content then collectParaBlock r a content indent else
+        let (a, leaf) := a.leafRange (Struct.leafCountInlines content)
+        collectPara r a content indent false r.geom.fontSize (leaf := leaf)
+          (span := Struct.leafCountInlines content)
+          (hangIndent := (r.resolve { width := Ir.verseHang }).width) (hangLines := true)
+      | .verse, _, _ => collectBlock r a blk (indent + (r.resolve { width := Ir.verseHang }).width)
+      | _, _, _ => collectBlock r a blk indent
+    let a := if prevRule then { a with declaredSkip := false } else a
+    collectQuoteList r a kind rest indent false (ruleBlock blk)
+
 /-- The title frame's body when the title page declares slots: each
 slot set as one box from the shared start and pinned where declared. -/
 private def collectSlots (r : Rd) (a : Acc) (slots : Array Ir.TitleSlot)
@@ -12863,21 +12924,25 @@ private def collectBlock (r : Rd) (a : Acc)
     let a := { a with ops := a.ops.push (.regionOpen (.link target)) }
     let a := collectBlocks r a body indent
     { a with ops := a.ops.push .regionClose }
-  | .quote body =>
-    -- A quotation is classes.dtx's `\list{}{\rightmargin\leftmargin}`, one `\@listdepth` level.
+  | .quote q body =>
+    -- A quotation is classes.dtx's `\list{}{\rightmargin\leftmargin}`, one `\@listdepth` level,
+    -- spaced as a list under what its environment and its scope set (`Ir.listSpacing`).
     let saved := a.measure
     let lv := a.itemDepth + a.enumDepth + a.quoteDepth + 1
     let lm := r.leftMargin lv a.tokens
     let narrow := some ((a.measure.getD r.geom.textWidth) - lm)
-    match Ir.listSkips r.lists r.geom.fontSize lv with
-    | some sk =>
-      let g := if r.inPar then r.resolve sk.topsep
-        else (r.resolve sk.topsep).add (r.resolve (Ir.partopsepFor r.lists r.geom.fontSize lv a.tokens))
+    match Ir.listSpacing r.lists r.geom.fontSize lv a.tokens q.spacing with
+    | some (sk, pts) =>
+      let g := if r.inPar then r.resolve sk.topsep else (r.resolve sk.topsep).add (r.resolve pts)
       let top := if a.afterHeading then a.flushGap r else (a.listSpace g).flushGap r
       let sub := { top with measure := narrow, quoteDepth := a.quoteDepth + 1 }
       let ri := { (r.within blk) with
         inPar := false, geom := { r.geom with parskip := sk.parsep, texParskip := sk.parsep } }
-      let sub := collectBlocks ri sub body (indent + lm)
+      let sub := collectQuoteList ri sub q.kind body.toList (indent + lm) true false
+      -- `\endtrivlist`: a quotation closing on a nested list or quotation re-skips as an item does.
+      let sub := match Ir.itemCloses? body with
+        | some _ => sub.endReskip (r.resolve sk.parsep) (r.resolve r.geom.texParskip)
+        | none => sub
       { sub.listSpace g with measure := saved, quoteDepth := a.quoteDepth }
     | none =>
       let g := r.resolve (Ir.trivlistSkipFor r.lists a.tokens r.geom.fontSize
@@ -13864,8 +13929,16 @@ private theorem sourceBound_paintLines {n : Nat} (fs : FontSet) (lines : Array L
     · exact sourceBound_appendMarks l out hout r hr hf
     · exact h r hl hf
 
+/-- Whether the line after break `prev` hangs as a first line does, past the kern after a forced
+break (`hangLines`). -/
+private def Spacing.Paragraph.restarts (j : ParaJob) (first : Bool) (prev : Nat) : Bool :=
+  first || (j.hangLines && j.hangIndent != 0 && match j.items[prev]? with
+    | some (.pen _ cost _ _ _ _) => cost ≤ forcedCost
+    | _ => false)
+
 private def Spacing.Paragraph.lineStart (j : ParaJob) (first : Bool) (prev : Nat) : Nat :=
   if first then Layout.lineStart j.items (if j.hangIndent == 0 then 0 else 1)
+  else if j.restarts first prev then Layout.lineStart j.items (prev + 2)
   else Layout.lineStart j.items (prev + 1)
 
 /-- The geometry of one paragraph line: its segs, x, set
@@ -13873,7 +13946,7 @@ width, overfull flag, protrusion hang and expansion factor. -/
 private def paraLineGeom (fs : FontSet) (j : ParaJob) (b : B) (first : Bool)
     (prev brk : Nat) : Array Seg × Sp × Sp × Bool × Sp × Int :=
   -- A hanging first line starts past its kern, as the breaker priced it.
-  let lead := if first then j.hangIndent else 0
+  let lead := if j.restarts first prev then j.hangIndent else 0
   let width := j.target + lead
   let a := j.lineStart first prev
   -- A `\@flushglue` line wider than the measure takes its glue's shrink, as TeX's does.
@@ -14007,7 +14080,7 @@ private def texBoxBaseline (fs : FontSet) (b : B) (j : ParaJob) (tb : TexBox) (s
 /-- How far a paragraph's line sets past its measure, where its overrun flag is set: past the
 target its protrusion widens, as TeX measures its margin kerns inside the box. -/
 private def lineOverrunBy (j : ParaJob) (first : Bool) (prev brk : Nat) : Option Sp :=
-  let lead := if first then j.hangIndent else 0
+  let lead := if j.restarts first prev then j.hangIndent else 0
   let width := j.target + lead
   let a := j.lineStart first prev
   let shrinks := j.rightFil && width < (measure j.items a brk).natural
@@ -14153,10 +14226,12 @@ private theorem warnReflow_accounts (b : B) (q : ParagraphBreaks) (reflowed : Bo
 private theorem paraLineGeom_overruns (fs : FontSet) (j : ParaJob) (b : B) (first : Bool)
     (prev brk : Nat) :
     (paraLineGeom fs j b first prev brk).2.2.2.1 = (lineOverrunBy j first prev brk).isSome := by
+  have someIf : ∀ (c : Bool) (v : Sp), (if c = true then some v else (none : Option Sp)).isSome = c := by
+    intro c v
+    cases c <;> rfl
   unfold paraLineGeom lineOverrunBy setLine
   dsimp only
-  repeat' split
-  all_goals simp_all
+  rw [someIf]
 
 /-- Which breaks end a line of a re-flowed declared line, and
 each such line with its rank, first item, lines and overruns. -/
@@ -14891,7 +14966,7 @@ private theorem paraStart_cursor (j : ParaJob) (first : Bool) (prev : Nat)
     j.lineStart first prev = kpStart (Spacing.Paragraph.items j) (if first then (Spacing.Paragraph.items j).size else prev) := by
   cases first
   · simp only [Bool.false_eq_true, false_or] at hp
-    simp [Spacing.Paragraph.lineStart, kpStart, Nat.ne_of_lt hp]
+    simp [Spacing.Paragraph.lineStart, Spacing.Paragraph.restarts, kpStart, Nat.ne_of_lt hp, hh]
   · simp [Spacing.Paragraph.lineStart, kpStart, hh]
 
 private theorem spanFold_prefix (items : Array Item) (breaks : List Nat) (cs : List Char) (prev : Nat) :
@@ -19203,6 +19278,7 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
                    slides := doc.docClass.record.model == .frame
                    abstractForm := doc.abstractForm
                    lists := doc.docClass.record.lists
+                   quotationIndent := doc.docClass.record.quotationIndent
                    frameKeys := doc.frameKeys
                    sectionPages := doc.sectionPages
                    frameLabels := doc.frameLabels

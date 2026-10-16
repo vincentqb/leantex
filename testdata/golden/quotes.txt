@@ -10,7 +10,7 @@ quote
     text "A short invented epigraph, set off from the text by indenting both margins, long enough to wrap at the narrowed measure it is set to."
 para
   text "Prose between the two forms returns to the full measure."
-quote
+quote quotation
   para
     text "The first paragraph of a longer invented quotation, still indented on both sides and wrapping at the narrowed measure."
   para

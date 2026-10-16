@@ -157,6 +157,7 @@ import Tests.BibEdges
 import Tests.LeanProseReading
 import Tests.AmsMath
 import Tests.CoveredSteps
+import Tests.ListsKoma
 
 /-! Every breakage the user reported, as a row whose pins hold it closed; a report closes only as
 `guarded`, and the unwitnessed and owed counts are held both ways. -/
@@ -1950,7 +1951,15 @@ def reports : List Report := [
       "bibtex 0.99e's alpha.bst over thirty invented entries, von parts, braced and accented names, an initial, keys, organizations, an empty author and odd years: every label's text and the list's order are the engine's but the empty author's, which alpha.bst reads as missing and labels by its editor, and lualatex prints a label's apostrophe curly; its et al. mark prints raised, which a list's plain marker cannot carry",
       "biber 2.22 and bibtex on two files sharing keys: both keep the first entry and name each later one, bibtex reading keys case-blind; here, keys read as biber reads them, a later entry is named where the list reads its key, cited, listed, a set's or lending its fields to another entry, and the fields it sets differ, in any order or wrapping and an empty one read as missing, the first's place in its detail; a bibliography file there but unreadable leaves each citation's '?' named, and a biblatex list's file is its resource however the list is printed",
       "the corpus built by main's binary at e5afdc63 and by this tree's, on 320e1b58: every PDF and markdown twin both build is byte-identical, and every web page but for the stage and focus rules main's commits since add; their diagnostics differ in three fixtures, a citation with no entry now at its command in two and a Lean inclusion's bibliography naming the key the document's file holds first"]
-    state := .guarded "e5afdc63" .before .author }
+    state := .guarded "e5afdc63" .before .author },
+  { id := "R217", date := "2026-10-17"
+    what := "KOMA-Script's classes set as a 10pt article: a document naming no size set its body at 10pt where KOMA-Script sets 11pt; parskip=half and full were read as fractions of an em, short of the class's half and whole line at 11pt and 12pt; and every list nested in another, and every list under parskip=half or full, took its level's own skips where KOMA-Script's lists take the parskip in force as their parsep, with no topsep and no itemsep, so nested lists stood 2 to 8pt apart from LaTeX's; quote, quotation and verse were one environment, so a quotation's paragraphs were spaced and unindented as a quote's, a verse's long lines did not hang and were named as declared lines that did not fit, a declared partopsep or a deep list's topsep and parsep did not reach a quotation, and a quotation closing on a nested list ended up to 4pt short"
+    pins := [check% Tests.ListsKoma.komaListChecks, check% Tests.ListsKoma.quoteKindChecks,
+      check% Tests.ListsKoma.quoteKindHtmlChecks, thm% Ir.ListExtra.koma_exact]
+    accept := ["lualatex on invented probes, scrartcl, scrreprt and scrbook with no size option, at 10pt and 12pt, under parskip=never, half and full, and article at 10pt: three nested lists and a quote, a quotation and a verse between paragraphs set every gap lualatex sets, to a tenth of a point, past each page's own baselineskip; a quotation's paragraphs indented by 1.5em under article and 1em under KOMA-Script and a verse's continuation lines 1.5em past its lines; main's binary at ac870b67 set the nested lists 2 to 4pt and the KOMA-Script parskip lists 8pt apart from lualatex's, the quotation 2 to 8pt, a fifth-level quote 5pt and the verse's continuations at its lines' margin",
+      "26 of the guards' 29 assertions fail built against da86ec891's tree, the guards kept; the three that hold there are article's nested lists, the parskip option's diagnostics and a page without quotation or verse carrying neither rule",
+      "in Chromium the web page sets the same gaps as shares of its line height, within 0.002, and the quotation's 1em indent and the verse's 1.5em hang; the page's own line height at 11pt stays the engine's 1.2 of the body, so an 11pt page's lines stand 13.2pt apart where KOMA-Script's stand 13.6pt"]
+    state := .guarded "da86ec89" .before .author }
 ]
 
 /-- The reports guarded but never seen failing, a count held in both directions. -/
