@@ -553,8 +553,8 @@ public theorem markdownVocabulary_contract :
       · obtain ⟨level, _, rfl⟩ := List.mem_map.mp hn
         cases level <;> simp [Parse.headingControl, Compat.lengthRestoreKeys?]
       · simp only [List.mem_cons, List.not_mem_nil, or_false] at hn
-        subst hn
-        simp [Parse.markdownBibControl, Compat.lengthRestoreKeys?]
+        rcases hn with rfl | rfl <;>
+          simp [Parse.markdownBibControl, Parse.citeSetupMark, Compat.lengthRestoreKeys?]
 
 private theorem bodyIsBlockList_of_mem : (l : List Raw) → (r : Raw) → r ∈ l →
     bodyIsBlockOne r = true → bodyIsBlockList l = true
@@ -573,8 +573,7 @@ private theorem bodyIsBlockOne_of_blockStart (r : Raw) (h : Md.BlockStart r) :
     · obtain ⟨level, _, rfl⟩ := List.mem_map.mp hn
       cases level <;> simp [bodyIsBlockOne, blockHeading?, Parse.headingControl, Parse.headingControl?]
     · simp only [List.mem_cons, List.not_mem_nil, or_false] at hn
-      subst hn
-      simp [bodyIsBlockOne]
+      rcases hn with rfl | rfl <;> simp [bodyIsBlockOne]
   · simp only [Md.vocabulary, List.mem_cons, List.not_mem_nil, or_false] at he
     rcases he with rfl | rfl <;> simp [bodyIsBlockOne]
   · simp only [Md.vocabulary, List.mem_cons, List.not_mem_nil, or_false] at hn

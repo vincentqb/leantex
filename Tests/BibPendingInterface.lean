@@ -37,12 +37,9 @@ example (ink : Option (Ir.Color × Option Ir.ColorRef)) : Bib.CitePunct :=
 example (p : Bib.CitePunct) : Bool × String × Option (Ir.Color × Option Ir.ColorRef) :=
   (p.numbers, p.notesep, p.ink)
 
-example : String → Bool := Bib.CitePunct.reads
-example : String → Array String := Bib.citeItems
-example : List (String × List String) := Bib.natbibOptions
 example : List (String × Bib.CitePunct) := Bib.natbibRows
 example : Array Bib.CitePunct := #[Bib.natPunct, Bib.latexPunct]
-example : Option (Array String) → Option Bib.CitePunct → Bool → Bib.CitePunct :=
+example : Option (Array CiteDecl) → Option Bib.CitePunct → Bool → Bib.CitePunct :=
   Bib.CitePunct.ofDoc
 
 example : Repr Bib.Field := inferInstance
@@ -160,10 +157,8 @@ example (table : Ir.RefTable) (spanOf : String → Option Span)
   pending_named table spanOf sources doc cv fetched hcov
 
 example : True := by
-  fail_if_success have := Bib.citeKeywords
-  fail_if_success have := Bib.citeKeys
-  fail_if_success have := Bib.stripGroup
-  fail_if_success have := Bib.keyValue?
+  fail_if_success have := CiteDecl.stripGroup
+  fail_if_success have := CiteDecl.splitEq
   fail_if_success have := Bib.CitePunct.step
   trivial
 

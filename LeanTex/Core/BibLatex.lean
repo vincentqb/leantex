@@ -76,21 +76,20 @@ public structure BblOptions where
 private def boolOpt (v : String) : Option Bool :=
   if v == "true" then some true else if v == "false" then some false else none
 
-/-- The options a document's biblatex load declared, read back from the
-declarations the compatibility pass carries; `none` without a load. -/
-public def BblOptions.ofDecls (decls : Option (Array String)) : Option BblOptions := do
+/-- The options a document's biblatex load declared; `none` without a load. -/
+public def BblOptions.ofDecls (decls : Option (Array CiteDecl)) : Option BblOptions := do
   let ds ← decls
-  let fam ← ds.findSome? fun d => (d.dropPrefix? "bbx=").map (·.toString)
-  let cite : BblStyle :=
-    if ds.contains "cbx=authoryear" then .authoryear else .numeric
-  let val (k : String) : Option String := (ds.toList.reverse.findSome? fun d =>
-    (d.dropPrefix? (k ++ "=")).map (·.toString))
-  let num (k : String) (dflt : Nat) : Nat := ((val k).bind String.toNat?).getD dflt
-  let flag (k : String) (dflt : Bool) : Bool := ((val k).bind boolOpt).getD dflt
-  let maxnames := num "maxnames" 3
-  let minnames := num "minnames" 1
-  let giveninits := flag "giveninits" (flag "firstinits" false)
-  let uniquename : UniqueName := match val "uniquename" with
+  let fam ← ds.findSome? fun
+    | .set .bbx v => some v
+    | _ => none
+  let cite : BblStyle := if ds.contains (.set .cbx "authoryear") then .authoryear else .numeric
+  let val := CiteDecl.last? ds
+  let num (k : CiteDecl.Key) (dflt : Nat) : Nat := ((val k).bind String.toNat?).getD dflt
+  let flag (k : CiteDecl.Key) (dflt : Bool) : Bool := ((val k).bind boolOpt).getD dflt
+  let maxnames := num .maxnames 3
+  let minnames := num .minnames 1
+  let giveninits := flag .giveninits (flag .firstinits false)
+  let uniquename : UniqueName := match val .uniquename with
     | some "true" | some "full" => .full
     | some "init" => .init
     | some "allinit" => .allinit
@@ -106,40 +105,34 @@ public def BblOptions.ofDecls (decls : Option (Array String)) : Option BblOption
     | .allinit => .allinit
   some { style := if fam == "authoryear" then .authoryear else .numeric
          cite
-         maxbibnames := num "maxbibnames" maxnames
-         minbibnames := num "minbibnames" minnames
-         maxcitenames := num "maxcitenames" maxnames
-         mincitenames := num "mincitenames" minnames
-         maxsortnames := num "maxsortnames" maxnames
-         minsortnames := num "minsortnames" minnames
+         maxbibnames := num .maxbibnames maxnames
+         minbibnames := num .minbibnames minnames
+         maxcitenames := num .maxcitenames maxnames
+         mincitenames := num .mincitenames minnames
+         maxsortnames := num .maxsortnames maxnames
+         minsortnames := num .minsortnames minnames
          uniquename
-         uniquelist := flag "uniquelist" (cite == .authoryear)
-         language := val "language"
-         babelMain := ds.toList.reverse.findSome? fun d => (d.dropPrefix? "mainlang=").map (·.toString)
-         autolang := (val "autolang").getD "none"
-         maxitems := num "maxitems" 3
-         minitems := num "minitems" 1
+         uniquelist := flag .uniquelist (cite == .authoryear)
+         language := val .language
+         babelMain := val .mainlang
+         autolang := (val .autolang).getD "none"
+         maxitems := num .maxitems 3
+         minitems := num .minitems 1
          giveninits
-         useprefix := flag "useprefix" false
-         useauthor := flag "useauthor" true
-         useeditor := flag "useeditor" true
-         usetranslator := flag "usetranslator" false
-         abbreviate := flag "abbreviate" true
-         datecirca := flag "datecirca" false
-         dateuncertain := flag "dateuncertain" false
-         dashed := flag "dashed" true
-         isbn := flag "isbn" true
-         url := flag "url" true
-         doi := flag "doi" true
-         eprint := flag "eprint" true
-         sortlocale := (val "sortlocale").getD "auto"
-         clearlang := flag "clearlang" true }
-
-/-- The sorting scheme the load declared, else biblatex's
-default for the family. -/
-public def bblSorting (decls : Option (Array String)) : String :=
-  ((decls.getD #[]).toList.reverse.findSome? fun d => (d.dropPrefix? "sorting=").map (·.toString)).getD
-    "nty"
+         useprefix := flag .useprefix false
+         useauthor := flag .useauthor true
+         useeditor := flag .useeditor true
+         usetranslator := flag .usetranslator false
+         abbreviate := flag .abbreviate true
+         datecirca := flag .datecirca false
+         dateuncertain := flag .dateuncertain false
+         dashed := flag .dashed true
+         isbn := flag .isbn true
+         url := flag .url true
+         doi := flag .doi true
+         eprint := flag .eprint true
+         sortlocale := (val .sortlocale).getD "auto"
+         clearlang := flag .clearlang true }
 
 /-- An entry's `options` field as `key=value` items; a bare key is `true`. -/
 public def entryOptions (e : Entry) : List (String × String) :=

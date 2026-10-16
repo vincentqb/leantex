@@ -2,7 +2,6 @@ module
 
 public import LeanTex.Core.Ir
 import LeanTex.Core.CiteKey
-import LeanTex.Core.BibPunct
 import Std.Data.HashSet
 
 /-! The markdown backend: the llms.txt twin of the IR the HTML and PDF backends
@@ -1322,25 +1321,6 @@ private def noteDefs (cites : Bool) (body : Array Block) : String := Id.run do
     out := out ++ "\n" ++ paraText s!"[^{num.getD 0}]: " "    " text ++ "\n"
   return out
 
-/-- natbib's package options whose declarations `decls` is, in natbib's order; `none` where a
-declaration no option makes stands among them. -/
-private def natbibOptionWords (decls : Array String) : Option (Array String) := Id.run do
-  let mut out : Array String := #[]
-  let mut rest := decls.toList
-  for _ in [0:decls.size + 1] do
-    if rest.isEmpty then return some out
-    let best := Bib.natbibOptions.foldl (init := none) fun (best : Option (String × Nat)) (o, ds) =>
-      if ds.isEmpty || rest.take ds.length != ds then best
-      else match best with
-        | some (_, n) => if ds.length > n then some (o, ds.length) else best
-        | none => some (o, ds.length)
-    match best with
-    | some (o, n) =>
-      out := out.push o
-      rest := rest.drop n
-    | none => return none
-  return none
-
 /-- A YAML scalar the twin's metadata writes: plain where the reader reads it so, else quoted. -/
 private def yamlScalar (s : String) : String :=
   if !s.isEmpty && !s.startsWith "-" &&
@@ -1354,7 +1334,7 @@ public def twinMeta (doc : Doc) (bibName : String → String := id) : String :=
   let lists := Ir.foldBlocks (fun out b => match b with
     | .bibliography src style items => out.push (src, style, items)
     | _ => out) (fun out _ => out) #[] doc.body
-  match lists.toList, doc.natbib.bind natbibOptionWords with
+  match lists.toList, doc.natbib.bind CiteDecl.options? with
   | [(src, style, items)], some opts =>
     if src.isEmpty then "" else
     let lists := #[(style, items)]

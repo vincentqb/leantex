@@ -6,7 +6,6 @@ public import LeanTex.Core.Ir
 import LeanTex.Core.Decl
 import LeanTex.Core.UnusedSetting
 import LeanTex.Core.Loop
-import LeanTex.Core.BibPunct
 import LeanTex.Core.KeyVal
 import Std.Data.HashMap
 
@@ -774,7 +773,7 @@ public structure MetaRead where
   sources : Array String := #[]
   bibPos : Pos := { line := 1, col := 1 }
   style : Option String := none
-  decls : Array String := #[]
+  decls : Array CiteDecl := #[]
   nocite : Option (Array String × Pos) := none
   title : Option (Array Inl × Pos) := none
   /-- Each key the reader took, with its field's site, which only a citation reads. -/
@@ -861,15 +860,10 @@ without a comma" (some ⟨file, f.pos⟩) (some "convert the entries to a .bib f
         | .scalar s => (KeyVal.items s).toList
         | .list items => items.toList.map fun (o : String) => o.trimAscii.toString
         | .unread => []
-      -- natbib processes its options in its own declaration order, as its load in TeX does.
-      let decls := Bib.natbibOptions.foldl (init := #[]) fun acc (o, ds) =>
-        if given.contains o then acc.appendList ds else acc
-      out := { out with decls := out.decls ++ decls }
-      for o in given do
-        unless Bib.natbibOptions.any (·.1 == o) do
-          let d := Diag.of .W0307 s!"the natbib option '{o}' is not read: natbib reads no such option"
-            (some ⟨file, f.pos⟩) (subject := some ("md:meta:natbiboptions:" ++ o))
-          out := { out with diags := out.diags.push d }
+      let (decls, unread) := CiteDecl.natbibLoad given
+      let ds := unread.toArray.map fun o => Diag.of .W0104 (CiteDecl.natbibUnread o)
+        (some ⟨file, f.pos⟩) (subject := some ("md:meta:natbiboptions:" ++ o))
+      out := { out with decls := out.decls ++ decls, diags := out.diags ++ ds }
     | "nocite", v =>
       match v.text with
       | some t =>
@@ -895,8 +889,7 @@ without a comma" (some ⟨file, f.pos⟩) (some "convert the entries to a .bib f
 
 /-- natbib loaded with the declared options, where a bibliography is declared. -/
 public def MetaRead.opening (m : MetaRead) : Array Raw :=
-  if m.sources.isEmpty then #[] else
-    #[.ctrl "@natbib" m.bibPos, .group (m.decls.map (.word · m.bibPos)) m.bibPos]
+  if m.sources.isEmpty then #[] else Parse.citeSetupRaws m.decls m.bibPos
 
 /-- The `nocite` keys as natbib's `\nocite`. -/
 public def MetaRead.nociteRaws (m : MetaRead) : Array Raw :=

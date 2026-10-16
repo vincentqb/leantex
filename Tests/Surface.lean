@@ -1871,7 +1871,8 @@ def compatConservationChecks (ref : IO.Ref (List String)) : IO Unit := do
   let nat := (elabStr (wrap "" "\\citep{k}\n\n\\bibliographystyle{plain}\\bibliography{refs}")).1
   t "conserves biblatex, but for its citation and list style"
     ({ bl with natbib := none } == nat &&
-      bl.natbib == some #["biblatex", "bbx=numeric", "cbx=numeric", "sorting=nty"])
+      bl.natbib == some #[.word .biblatex, .set .bbx "numeric", .set .cbx "numeric",
+        .set .sorting "nty"])
 
 /-- Reference decimal printers spelled with `pushn` and `dropEndWhile`; `Dim.fracDigits` spells
 every value as they do. -/
@@ -3615,13 +3616,13 @@ def bibApplyChecks (ref : IO.Ref (List String)) : IO Unit := do
   let bib := "@misc{a, author = {Doe, Alex}, title = {First}, year = 2024}\n" ++
     "@misc{b, author = {Roe, Sam}, title = {Second}, year = 2020}\n" ++
     "@misc{c, author = {Poe, Kim}, title = {Third}, year = 2022}"
-  let doc (style : Option String) (natbib : Option (Array String) := none) : Ir.Doc :=
+  let doc (style : Option String) (natbib : Option (Array CiteDecl) := none) : Ir.Doc :=
     { natbib
       body := #[
         .para #[.text "x ", .cite { cmd := .paren } #["b"], .text " y ", .cite { cmd := .textual } #["a"]],
         .para #[.cite { cmd := .paren } #["c", "b"]],
         .bibliography "refs" style #[]] }
-  let run (style : Option String) (natbib : Option (Array String) := none) :=
+  let run (style : Option String) (natbib : Option (Array CiteDecl) := none) :=
     Bib.apply #[("refs", bib)] (doc style natbib) Bib.plainReading
   let (outU, dsU) := run (some "unsrtnat")
   t "apply: no diagnostics on a clean resolution" dsU.isEmpty

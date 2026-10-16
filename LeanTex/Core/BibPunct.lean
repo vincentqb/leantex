@@ -1,7 +1,6 @@
 module
 
 public import LeanTex.Core.Ir
-import LeanTex.Core.KeyVal
 
 /-! natbib's citation punctuation, read where a document declares it. -/
 
@@ -55,95 +54,42 @@ public def natbibRows : List (String × CitePunct) :=
    ("plain", latexPunct), ("alpha", latexPunct), ("abbrv", latexPunct), ("unsrt", latexPunct),
    ("plainnat", natPunct), ("abbrvnat", natPunct), ("unsrtnat", natPunct)]
 
-/-- `\setcitestyle`'s keywords, each a row. -/
-private def citeKeywords : List (String × (CitePunct → CitePunct)) :=
-  [("round", fun p => { p with «open» := "(", close := ")" }),
-   ("square", fun p => { p with «open» := "[", close := "]" }),
-   ("angle", fun p => { p with «open» := "<", close := ">" }),
-   ("curly", fun p => { p with «open» := "{", close := "}" }),
-   ("semicolon", fun p => { p with sep := ";" }),
-   ("colon", fun p => { p with sep := ";" }),
-   ("comma", fun p => { p with sep := "," }),
-   ("authoryear", fun p => { p with numbers := false }),
-   ("numbers", fun p => { p with numbers := true })]
-
-/-- `\setcitestyle`'s `key=value` declarations. -/
-private def citeKeys : List (String × (CitePunct → String → CitePunct)) :=
-  [("open", fun p v => { p with «open» := v }), ("close", fun p v => { p with close := v }),
-   ("aysep", fun p v => { p with aysep := v }), ("yysep", fun p v => { p with yysep := v }),
-   ("notesep", fun p v => { p with notesep := v }),
-   ("citesep", fun p v => { p with sep := v })]
-
-/-- A value as TeX reads a delimited argument: one outer
-brace group stripped. -/
-private def stripGroup (v : String) : String := Id.run do
-  let cs := v.toList
-  unless cs.head? == some '{' && cs.getLast? == some '}' do return v
-  let mut depth : Int := 0
-  let mut k := 0
-  for c in cs do
-    k := k + 1
-    if c == '{' then depth := depth + 1
-    else if c == '}' then
-      depth := depth - 1
-      if depth == 0 && k < cs.length then return v
-  return String.ofList (cs.drop 1 |>.dropLast)
-
-/-- A `key=value` declaration's key and value, when it is one. -/
-private def keyValue? (d : String) : Option (String × String) :=
-  match d.splitOn "=" with
-  | k :: v :: rest => some (k, stripGroup (String.intercalate "=" (v :: rest)))
-  | _ => none
-
-/-- Whether natbib reads this declaration, compared exactly as written. -/
-public def CitePunct.reads (d : String) : Bool :=
-  d == "nobibstyle" || d == "bibstyle" || (citeKeywords.lookup d).isSome ||
-    ((keyValue? d).bind fun (k, _) => citeKeys.lookup k).isSome
-
 /-- One declaration over the punctuation and natbib's `\bibstyle` door. -/
-private def CitePunct.step (st : CitePunct × Bool) (d : String) : CitePunct × Bool :=
-  if d == "nobibstyle" then (st.1, false)
-  else if d == "bibstyle" then (st.1, true)
-  else if d == "sort" then ({ st.1 with sort := true }, st.2)
-  else if d == "compress" then ({ st.1 with compress := true }, st.2)
-  else if d == "biblatex" then ({ st.1 with biblatex := true }, st.2)
-  else if let ["citestyle", name] := d.splitOn "=" then
+private def CitePunct.step (st : CitePunct × Bool) : CiteDecl → CitePunct × Bool
+  | .word .nobibstyle => (st.1, false)
+  | .word .bibstyle => (st.1, true)
+  | .word .sort => ({ st.1 with sort := true }, st.2)
+  | .word .compress => ({ st.1 with compress := true }, st.2)
+  | .word .biblatex => ({ st.1 with biblatex := true }, st.2)
+  | .word .round => ({ st.1 with «open» := "(", close := ")" }, st.2)
+  | .word .square => ({ st.1 with «open» := "[", close := "]" }, st.2)
+  | .word .angle => ({ st.1 with «open» := "<", close := ">" }, st.2)
+  | .word .curly => ({ st.1 with «open» := "{", close := "}" }, st.2)
+  | .word .semicolon | .word .colon => ({ st.1 with sep := ";" }, st.2)
+  | .word .comma => ({ st.1 with sep := "," }, st.2)
+  | .word .authoryear => ({ st.1 with numbers := false }, st.2)
+  | .word .numbers => ({ st.1 with numbers := true }, st.2)
+  | .set .open v => ({ st.1 with «open» := v }, st.2)
+  | .set .close v => ({ st.1 with close := v }, st.2)
+  | .set .citesep v => ({ st.1 with sep := v }, st.2)
+  | .set .aysep v => ({ st.1 with aysep := v }, st.2)
+  | .set .yysep v => ({ st.1 with yysep := v }, st.2)
+  | .set .notesep v => ({ st.1 with notesep := v }, st.2)
+  | .set .citestyle name =>
     -- `\citestyle{name}`: the name's `\bibstyle@` row, or nothing for a name with none.
     match natbibRows.lookup name with
     | some r => ({ r with sort := st.1.sort, compress := st.1.compress,
                           biblatex := st.1.biblatex }, st.2)
     | none => st
-  else match citeKeywords.lookup d, keyValue? d with
-    | some f, _ => (f st.1, st.2)
-    | none, some (k, v) =>
-      match citeKeys.lookup k with
-      | some f => (f st.1 v, st.2)
-      | none => st
-    | none, none => st
-
-/-- The items of a `\setcitestyle` list, split at commas
-outside braces, kept as written. -/
-public def citeItems (src : String) : Array String := (KeyVal.split src).filter (!·.isEmpty)
-
-/-- natbib's package options in its own declaration order, each as the
-declarations it executes. -/
-public def natbibOptions : List (String × List String) :=
-  [("numbers", ["numbers", "square", "comma", "nobibstyle"]),
-   ("authoryear", ["authoryear", "round", "semicolon", "bibstyle"]),
-   ("round", ["round", "nobibstyle"]), ("square", ["square", "nobibstyle"]),
-   ("angle", ["angle", "nobibstyle"]), ("curly", ["curly", "nobibstyle"]),
-   ("comma", ["comma", "nobibstyle"]), ("semicolon", ["semicolon", "nobibstyle"]),
-   ("colon", ["semicolon", "nobibstyle"]),
-   ("nobibstyle", ["nobibstyle"]), ("bibstyle", ["bibstyle"]),
-   ("sort", ["sort"]), ("compress", ["compress"]), ("sort&compress", ["sort", "compress"])]
+  | .set _ _ => st
 
 /-- The punctuation a document's citations draw with, by natbib's rule. -/
-public def CitePunct.ofDoc (natbib : Option (Array String)) (row : Option CitePunct)
+public def CitePunct.ofDoc (natbib : Option (Array CiteDecl)) (row : Option CitePunct)
     (labels : Bool) : CitePunct :=
   match natbib with
   | none => latexPunct
   | some decls =>
-    let (p, door) := decls.foldl CitePunct.step ({}, true)
+    let (p, door) := (CiteDecl.expand decls).foldl CitePunct.step ({}, true)
     let q := if door then row.getD p else p
     let q := { q with sort := p.sort, compress := p.compress, biblatex := p.biblatex }
     if labels then q else { q with numbers := true }

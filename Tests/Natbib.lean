@@ -256,6 +256,33 @@ def biblatexChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
       t s!"{tag}: the html reads '{line}'" (hasStr html line)
 
 
+/-- A citation setup comes only from a load or a declaration natbib or biblatex reads: a body
+spelling the engine's former carrier is an unknown command, its citations LaTeX's own; and an option
+natbib's table lacks is one loss, worded alike from either surface. -/
+def citeSetupChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let (page, _, html, ds) := natbibShip oneFace natbibBib "" "plain"
+    ["\\cite{alpha2019}", "\\@natbib{nobibstyle numbers}"]
+  t "cite setup: a body spelling '\\@natbib' leaves LaTeX's own citations"
+    (page.contains "L1 [1] end." && hasStr html "L1 [1] end.")
+  t s!"cite setup: and is an unknown command, its argument kept as text ({ds.map (·.code)})"
+    (ds.any (fun d => d.code == "W0301") && page.contains "L2 nobibstyle numbers end.")
+  let tex := (dvE (dvDoc "\\usepackage[super]{natbib}\n" "Text.")).filter (·.code == "W0104")
+  let front := "---\nbibliography: works.bib\nnatbiboptions: super\n---\n\n"
+  let (_, md) := mdBibBuild (front ++ "Text [@a].\n") #[("works.bib", worksBib)]
+  let md := md.filter fun d => d.subject == some "md:meta:natbiboptions:super"
+  t s!"cite setup: an option natbib's table lacks is one loss from either surface \
+({tex.map (·.message)}, {md.map (·.message)})"
+    (tex.size == 1 && md.size == 1 && tex.map (·.kind) == md.map (·.kind) &&
+      tex.map (·.message) == md.map (·.message))
+  let (doc, _) := bibBuild (natbibSrc "\\usepackage[sort,compress]{natbib}" "plainnat"
+    ["\\citep{alpha2019}"]) #[("refs", natbibBib)]
+  let twin := MarkdownDoc.emit doc
+  t s!"cite setup: the twin writes natbib's options as declared ({repr twin})"
+    (hasStr twin "natbiboptions: 'sort,compress'")
+  t "cite setup: and reads back to the same setup"
+    ((mdBibBuild twin #[("refs.bib", natbibBib)]).1.natbib == doc.natbib)
+
 /-- `\citestyle{name}` under a bare natbib and plainnat: the lines lualatex sets for four calls. -/
 def natbibCiteStyleModes : List (String × List String) :=
   let round := ["L1 (Alpha et al., 2019; Delta, 2021) end.", "L2 Alpha et al. (2019) end.",
@@ -286,3 +313,4 @@ def natbibCiteStyleChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) 
   t s!"natbib \\shortcites: no ink, no diagnostic ({ds.map (·.code)})"
     (page.contains "L1 Alpha et al. [2019] end." && hasStr html "L1 Alpha et al. [2019] end." &&
       !ds.any fun d => d.code.startsWith "W" || d.code.startsWith "E")
+  citeSetupChecks ref oneFace

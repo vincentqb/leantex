@@ -570,8 +570,8 @@ public structure ESt where
   sectionsSeen : Bool × Bool := (false, false)
   /-- The `\bibliographystyle` name, wherever it appears. -/
   bibStyle : Option String := none
-  /-- natbib's declarations, `none` until natbib is loaded. -/
-  natbib : Option (Array String) := none
+  /-- The citation setup, `none` until natbib or biblatex is loaded. -/
+  natbib : Option (Array CiteDecl) := none
   scope : GroupScope := {}
   /-- Lengths the body declares (`\setlength` mid-document). -/
   flowTokens : Option Tokens := none
@@ -6180,7 +6180,7 @@ private def bodyIsBlockOne : Raw → Bool
   | .ctrl n _ =>
     n == "block" || n == "par" || n == "framefoot" || n == "pagebreak"
       || n == "bibliography" || n == Parse.markdownBibControl || n == "bibliographystyle"
-      || n == "@natbib"
+      || n == Parse.citeSetupMark
       -- Definitions and counter commands expand only through the block walk.
       || n == "define" || counterCtrl n
       || (Compat.lengthRestoreKeys? n).isSome
@@ -10814,7 +10814,7 @@ private def isBlockStart (ctx' : Ctx) (n : String) (raws : Array Raw) (i : Nat)
     -- `\prevdepth` is vertical mode's: TeX refuses it mid-paragraph.
     || (n == "nointerlineskip" && cur.isEmpty)
     || n == "bibliography" || n == Parse.markdownBibControl || n == "bibliographystyle"
-    || n == "@natbib"
+    || n == Parse.citeSetupMark
     || (n == "note" && cur.isEmpty)
     || isDeclBlock ctx' n raws i cur
     -- Mid-paragraph these markers stay inline: splitting there would move text.
@@ -12158,16 +12158,13 @@ a side channel, never slide content" cpos
         let ⟨j2, hj2⟩ ← counterArm ctx' raws (i + 1) n cpos
         have _ := advance_measures raws h (show i < j2 by omega)
         elabBlocksGo ctx' raws j2 blocks #[] gen'
-      else if n == "bibliographystyle" || n == "@natbib" then
+      else if n == "bibliographystyle" || n == Parse.citeSetupMark then
         let ⟨j, hjge⟩ : { x : Nat // i + 1 ≤ x } ←
           pure ⟨skipSpaces raws (i + 1), skipSpaces_ge raws (i + 1)⟩
         match raws[j]? with
         | some (.group body _) =>
-          modify fun st => if n == "@natbib" then
-              { st with natbib := some ((st.natbib.getD #[]) ++ body.filterMap fun r =>
-                  match r with
-                  | .word w _ => some w
-                  | _ => none) }
+          modify fun st => if n == Parse.citeSetupMark then
+              { st with natbib := some ((st.natbib.getD #[]) ++ Parse.citeSetupOf body) }
             else { st with bibStyle := some (rawSrc body).trimAscii.toString }
           have hadv := advance_measures raws h (show i < j + 1 by omega)
           elabBlocksGo ctx' raws (j + 1) blocks #[] gen'

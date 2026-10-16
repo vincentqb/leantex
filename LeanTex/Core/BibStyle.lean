@@ -2166,8 +2166,9 @@ private def analyse (sources : Array (String × String)) (doc : Ir.Doc) (rd : Fi
   -- biblatex sorts by the load's `sorting`: nty for numeric styles and nyt for author-year.
   let bbl := (BblOptions.ofDecls doc.natbib).map ({ · with mainLang := doc.info.locale.tag })
   let style := declared.getD Style.unsrtnat
+  let sorting := (doc.natbib.bind (CiteDecl.last? · .sorting)).getD "nty"
   let style := match bbl with
-    | some o => { style with sort := match bblSorting doc.natbib with
+    | some o => { style with sort := match sorting with
         | "none" => .citation
         | t => .bbl (if bblTemplates.contains t then t
             else if o.style == .authoryear then "nyt" else "nty") o }

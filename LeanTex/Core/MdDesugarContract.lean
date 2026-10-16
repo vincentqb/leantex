@@ -40,17 +40,17 @@ public structure Vocab where
   mathCtrls : List String := []
   mathSyms : List Char := []
 
-/-- natbib's citation commands and declarations a markdown citation or its metadata lowers to. -/
+/-- natbib's citation commands a markdown citation or its metadata lowers to. -/
 @[expose] public def citeCtrls : List String :=
   ["citep", "citet", "citeyearpar", "citeauthor", "citetext", "citealp", "citealt", "citeyear",
-   "nocite", "@natbib"]
+   "nocite"]
 
 /-- The vocabulary the elaborator reads markdown in. -/
 @[expose] public def vocabulary : Vocab where
   ctrls := ["emph", "textbf", "texttt", "href", "includegraphics", "item", "hypertarget", "\\",
     "toprule", "midrule", "bottomrule"] ++ citeCtrls
   bridged := ([Ir.HeadingLevel.title, .h1, .h2, .h3, .h4, .h5, .h6].map Parse.headingControl) ++
-    [Parse.markdownBibControl]
+    [Parse.markdownBibControl, Parse.citeSetupMark]
   envs := ["quote", "itemize", "enumerate", Parse.markdownDisclosureEnv, Parse.markdownTableEnv]
   verbs := ["verbatim", "lstlisting"]
   syms := ['[', ']', '&', '@']
@@ -682,15 +682,18 @@ private theorem itemsRaws_adm (file : String) (refs : Array Raw) (hrefs : Adm d 
 end
 
 private theorem opening_adm (m : MetaRead) : Adm d m.opening := by
-  unfold MetaRead.opening
+  unfold MetaRead.opening Parse.citeSetupRaws
   split
   · exact adm_empty
   · exact adm_lit (by
       intro r hr
       simp only [List.mem_cons, List.not_mem_nil, or_false] at hr
       rcases hr with rfl | rfl
-      · exact cite_mem _ _ (by simp [citeCtrls])
-      · exact adm_group _ _ (adm_words _ _))
+      · simp only [Vocab.admits, Bool.or_eq_true]
+        exact Or.inr (List.contains_iff_mem.mpr (List.mem_append.mpr (Or.inr (by simp))))
+      · exact adm_group _ _ fun r hr => by
+          obtain ⟨d, _, rfl⟩ := Array.mem_map.mp hr
+          rfl)
 
 private theorem nociteRaws_adm (m : MetaRead) : Adm d m.nociteRaws := by
   unfold MetaRead.nociteRaws
@@ -880,8 +883,8 @@ public theorem vocabulary_contract :
     (∀ n ∈ vocabulary.envs, Parse.inputEnvFile? n = none ∧ n ≠ Parse.scopeEnv ∧
       Parse.splitOpen? n = none ∧ Parse.splitClose? n = none) ∧
     (∀ n ∈ vocabulary.ctrls, ' ' ∉ n.toList) ∧
-    (∀ n ∈ vocabulary.bridged, ((Parse.headingControl? n).isSome ∨ n = Parse.markdownBibControl) ∧
-      ' ' ∈ n.toList) ∧
+    (∀ n ∈ vocabulary.bridged, ((Parse.headingControl? n).isSome ∨ n = Parse.markdownBibControl ∨
+      n = Parse.citeSetupMark) ∧ ' ' ∈ n.toList) ∧
     (∀ n ∈ (vocabularyFor true).requests, n ∉ vocabulary.envs ∧ Parse.inputEnvFile? n = none ∧
       ' ' ∈ n.toList) := by
   refine ⟨?_, ?_, ?_, ?_⟩
@@ -900,8 +903,7 @@ public theorem vocabulary_contract :
     · obtain ⟨level, _, rfl⟩ := List.mem_map.mp hn
       cases level <;> simp [Parse.headingControl, Parse.headingControl?]
     · simp only [List.mem_cons, List.not_mem_nil, or_false] at hn
-      subst hn
-      simp [Parse.markdownBibControl]
+      rcases hn with rfl | rfl <;> simp [Parse.markdownBibControl, Parse.citeSetupMark]
   · intro n hn
     simp only [vocabularyFor, ↓reduceIte, List.mem_cons, List.not_mem_nil, or_false] at hn
     subst hn

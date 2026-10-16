@@ -15,6 +15,7 @@ public import LeanTex.Core.ContrastRatio
 public import LeanTex.Core.Oklab
 public import LeanTex.Core.SeedPalette
 public import LeanTex.Core.PaletteData
+public import LeanTex.Core.CiteDecl
 import LeanTex.Core.Loop
 import LeanTex.Core.NameClaim
 import LeanTex.Core.PdfLex
@@ -7350,9 +7351,9 @@ public structure Doc where
   /-- `\allow{W0307, ...}`: diagnostic codes whose losses this document
   accepts, downgraded to warnings and always printed. -/
   allow : Array String := #[]
-  /-- natbib as the document declared it: `none` when not loaded, else its
-  punctuation declarations in the order natbib applies them. -/
-  natbib : Option (Array String) := none
+  /-- The citation setup natbib or biblatex loads: `none` with neither, else its declarations in
+  the order they apply. -/
+  natbib : Option (Array CiteDecl) := none
   /-- The boundary tool in force: the external TeX the driver runs for
   pictures outside the rendered subset. -/
   pictureTool : Option String := some "lualatex"

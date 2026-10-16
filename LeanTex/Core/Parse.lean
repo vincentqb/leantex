@@ -2,6 +2,7 @@ module
 
 public import LeanTex.Core.Lex
 public import LeanTex.Core.Heading
+public import LeanTex.Core.CiteDecl
 
 namespace LeanTex.Core.Parse
 
@@ -521,6 +522,19 @@ public def markdownDisclosureEnv : String := "markdown details"
 /-- The control a markdown reference list desugars to: `\bibliography` without LaTeX's `\refname`
 heading, unforgeable because it holds a space. -/
 public def markdownBibControl : String := "markdown bibliography"
+
+/-- The control carrying a citation setup to the elaborator, unforgeable as it holds a space. -/
+public def citeSetupMark : String := "citation setup"
+
+/-- A citation setup as the raws that carry it: its mark, then a group of a word per declaration. -/
+public def citeSetupRaws (ds : Array CiteDecl) (pos : Pos) : Array Raw :=
+  #[.ctrl citeSetupMark pos, .group (ds.map fun d => .word d.spelling pos) pos]
+
+/-- The declarations a carried setup's group spells. -/
+public def citeSetupOf (body : Array Raw) : Array CiteDecl :=
+  body.filterMap fun
+    | .word w _ => CiteDecl.ofSpelling? w
+    | _ => none
 
 /-- Whether an environment is one only the markdown reader writes. -/
 @[expose] public def markdownEnv (name : String) : Bool :=

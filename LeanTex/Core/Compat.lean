@@ -11,7 +11,6 @@ public import LeanTex.Core.Ir
 import LeanTex.Core.BeamerColor
 import LeanTex.Core.TitleTemplate
 import LeanTex.Core.BlockTemplate
-import LeanTex.Core.BibPunct
 public import LeanTex.Core.Tcolorbox
 import LeanTex.Core.LoopProgress
 import LeanTex.Core.EncodingOption
@@ -2273,11 +2272,10 @@ private def unicodeMathOptions (what opt : String) (pos : Pos) : M (Array Raw) :
   became what native pos
   synthAt native pos
 
-/-- natbib declarations carried to the document as the `@natbib` marker,
-replayed at `\begin{document}`. -/
-private def natbibDefer (decls : Array String) (pos : Pos) : M Unit :=
+/-- A citation setup carried to the document, replayed at `\begin{document}`. -/
+private def natbibDefer (decls : Array CiteDecl) (pos : Pos) : M Unit :=
   write fun st => { st with deferred := st.deferred.push (.beginDocument, st.file, pos,
-    #[.ctrl "@natbib" pos, .group (decls.map (.word · pos)) pos]) }
+    Parse.citeSetupRaws decls pos) }
 
 /-- biblatex's punctuation and format macros, which a document redefines to
 restyle the list and its citations. -/
@@ -2310,19 +2308,19 @@ private def punctText (body : Array Raw) : Option String :=
 /-- A redefinition of one of biblatex's macros. -/
 private def biblatexMacroDef (definer cmd : String) (body : Array Raw) (pos : Pos) : M (Array Raw) := do
   let authoryear := (← get).bibStyle == some "plainnat"
-  let slot := match cmd with
-    | "nameyeardelim" => some "aysep"
-    | "multicitedelim" => some "citesep"
-    | "postnotedelim" => some "notesep"
+  let slot : Option CiteDecl.Key := match cmd with
+    | "nameyeardelim" => some .aysep
+    | "multicitedelim" => some .citesep
+    | "postnotedelim" => some .notesep
     | _ => none
   let value := (punctText body).bind fun t =>
-    if slot == some "notesep" then (if t.isEmpty then none else some t)
+    if slot == some .notesep then (if t.isEmpty then none else some t)
     else if t.endsWith " " && !(t.dropEnd 1).toString.endsWith " " then some (t.dropEnd 1).toString
     else none
   match slot, value with
   | some key, some v =>
     if authoryear then
-      natbibDefer #[s!"{key}={v}"] pos
+      natbibDefer #[.set key v] pos
       became s!"\\{definer}\{\\{cmd}}" s!"the author-year citations' '{v}'" pos
       return #[]
     else pure ()
@@ -2338,33 +2336,19 @@ citations keep biblatex's default in its place" pos
 declarations in natbib's order. -/
 private def natbibLoad (name opt : String) (pos : Pos) : M (Array Raw) := do
   let given := (KeyVal.items opt).toList
-  let decls := Bib.natbibOptions.foldl (init := #[]) fun acc (o, ds) =>
-    if given.contains o then acc.appendList ds else acc
-  let dropped := given.filter fun o => !Bib.natbibOptions.any (·.1 == o)
+  let (decls, dropped) := CiteDecl.natbibLoad given
   for o in dropped do
-    unreadParam "usepackage:natbib" (KeyVal.entry o).1 s!"'natbib' option '{o}'" pos
+    sayOnce ("param:usepackage:natbib:" ++ (KeyVal.entry o).1) .W0104 (CiteDecl.natbibUnread o) pos
+      (help := "\\allow{W0104} accepts the skip")
   became (if given.isEmpty then s!"\\{name}\{natbib}" else s!"\\{name}[{opt}]\{natbib}")
     "natbib's citation punctuation, read at \\begin{document}" pos
   natbibDefer decls pos
   return #[]
 
-/-- biblatex's options the reference list and citations read. -/
+/-- biblatex's options the reference list and citations read; `babel` is `autolang`'s former name
+(biblatex manual §3.1.2.1). -/
 public def biblatexRead : List String :=
-  ["style", "bibstyle", "citestyle", "sorting", "maxnames", "minnames", "maxbibnames",
-   "minbibnames", "maxcitenames", "mincitenames", "maxsortnames", "minsortnames", "maxitems",
-   "minitems", "giveninits", "firstinits", "useprefix", "dashed", "isbn", "url", "doi",
-   "eprint", "uniquename", "uniquelist", "language", "autolang", "babel", "useauthor",
-   "useeditor", "usetranslator", "abbreviate", "datecirca", "dateuncertain", "sortlocale",
-   "clearlang"]
-
-/-- The option keys a biblatex load carries to the
-bibliography as `key=value` declarations. -/
-private def biblatexCarried : List String :=
-  ["maxnames", "minnames", "maxbibnames", "minbibnames", "maxcitenames", "mincitenames",
-   "maxsortnames", "minsortnames", "maxitems", "minitems", "giveninits", "firstinits",
-   "useprefix", "dashed", "isbn", "url", "doi", "eprint", "uniquename", "uniquelist", "language",
-   "autolang", "babel", "useauthor", "useeditor", "usetranslator", "abbreviate", "datecirca",
-   "dateuncertain", "sortlocale", "clearlang"]
+  ["style", "bibstyle", "citestyle", "sorting", "babel"] ++ CiteDecl.Key.carriedNames.map (·.1)
 
 /-- biblatex's options that change nothing the engine sets. -/
 public def biblatexInert : List String :=
@@ -2428,26 +2412,26 @@ sorts by; the list is sorted '{defaultSorting}'" pos (subject := some "usepackag
   became (if opt.isEmpty then s!"\\{name}\{biblatex}" else s!"\\{name}[{opt}]\{biblatex}")
     s!"biblatex's {listFamily} reference list and {citeFamily} citations" pos
   write fun st => { st with bibStyle := some record }
-  let mut carried : Array String := #[]
+  let mut carried : Array CiteDecl := #[]
   for (k, v) in pairs do
-    if !biblatexCarried.contains k then continue
+    let some key := (CiteDecl.Key.carriedNames.lookup (if k == "babel" then "autolang" else k))
+      | continue
     if k == "uniquename" && ["mininit", "minfull", "minyearinit", "minyearfull"].contains v then
       say .W0101 s!"'biblatex' option 'uniquename={v}' is read as 'uniquename={if v.endsWith "init" then "init" else "full"}': \
 a shared family is told apart wherever it appears, not only where whole lists coincide" pos
         (subject := some "usepackage:biblatex")
-      carried := carried.push s!"uniquename={if v.endsWith "init" then "init" else "full"}"
+      carried := carried.push (.set key (if v.endsWith "init" then "init" else "full"))
     else if k == "uniquelist" && v == "minyear" then
       say .W0101 s!"'biblatex' option 'uniquelist=minyear' is read as 'uniquelist=true': lists \
 are told apart whatever their year" pos (subject := some "usepackage:biblatex")
-      carried := carried.push "uniquelist=true"
-    -- `babel=` is `autolang=`'s former name (biblatex manual §3.1.2.1)
-    else if k == "babel" then carried := carried.push s!"autolang={v}"
-    else carried := carried.push s!"{k}={v}"
+      carried := carried.push (.set key "true")
+    else carried := carried.push (.set key v)
   let mainLang := (← get).babelMain
   write fun st => { st with biblatexLoaded := true }
-  natbibDefer ((if record == "plainnat" then #["nobibstyle", "aysep=", "biblatex"]
-    else #["biblatex"]) ++ #[s!"bbx={listFamily}", s!"cbx={citeFamily}", s!"sorting={sorting}"] ++
-    carried ++ (mainLang.map (s!"mainlang={·}")).toArray) pos
+  natbibDefer ((if record == "plainnat" then #[.word .nobibstyle, .set .aysep "", .word .biblatex]
+    else #[.word .biblatex]) ++
+    #[.set .bbx listFamily, .set .cbx citeFamily, .set .sorting sorting] ++ carried ++
+    (mainLang.map (.set .mainlang ·)).toArray) pos
 
 /-- `\setcitestyle{…}` and `\bibpunct`: natbib's
 declarations in the preamble. -/
@@ -2472,15 +2456,15 @@ private def natbibStyleArm (name : String) (pos : Pos) (raws : Array Raw) (start
   let src (i : Nat) : String := verbatim (args.getD i #[])
   let notesep := if opt.isSome then
       verbatim (raws.extract (skipSpaces raws start + 1) (j - 1)) else ", "
-  let decls := if punct then
+  let items := if punct then
       #["open=" ++ src 0, "close=" ++ src 1, "citesep=" ++ src 2,
         if (src 3).trimAscii.toString == "n" || (src 3).trimAscii.toString == "s" then
           "numbers" else "authoryear",
         "aysep=" ++ src 4, "yysep=" ++ src 5, "notesep=" ++ notesep]
-    else if name == "citestyle" then #["citestyle=" ++ (src 0).trimAscii.toString]
-    else Bib.citeItems (src 0)
-  let reads (d : String) : Bool := name == "citestyle" || Bib.CitePunct.reads d
-  let dropped := decls.filter (!reads ·)
+    else CiteDecl.items (src 0)
+  let decls := if name == "citestyle" then #[CiteDecl.set .citestyle (src 0).trimAscii.toString]
+    else items.filterMap CiteDecl.ofItem?
+  let dropped := if name == "citestyle" then #[] else items.filter (CiteDecl.ofItem? · |>.isNone)
   unless dropped.isEmpty do
     say .W0101 s!"'\\{name}' keywords without a native equivalent were dropped: \
 {String.intercalate ", " (dropped.toList.map fun d => s!"'{d}'")}" pos
@@ -2490,7 +2474,7 @@ private def natbibStyleArm (name : String) (pos : Pos) (raws : Array Raw) (start
     say .W0101 s!"'\\bibpunct' superscript citations are set on the baseline" pos
       (subject := some "ctrl:bibpunct")
   became s!"\\{name}" "natbib's citation punctuation, read at \\begin{document}" pos
-  natbibDefer (#["nobibstyle"] ++ decls.filter reads) pos
+  natbibDefer (#[.word .nobibstyle] ++ decls) pos
   return some (#[], k)
 
 /-- lineno's switch and modulo commands, natively the declared page keys. -/
@@ -9345,7 +9329,7 @@ private def rewritePackageBody (name p : String) (opt : Option String) (pos : Po
     | some main =>
       let tag := Locale.babelTagOf main
       write fun st => { st with babelMain := some main }
-      if (← get).biblatexLoaded then natbibDefer #[s!"mainlang={main}"] pos
+      if (← get).biblatexLoaded then natbibDefer #[.set .mainlang main] pos
       if (Locale.forTag tag).isSome then
         let native := s!"\\pdfmeta\{ language = {Decl.quote tag} }"
         became s!"\\usepackage[{main}]\{babel}" native pos
