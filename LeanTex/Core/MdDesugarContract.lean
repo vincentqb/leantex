@@ -19,6 +19,9 @@ public structure Vocab where
   /-- Names holding a space, which no source can spell, forge or redefine. -/
   bridged : List String
   envs : List String
+  /-- Environments a reader asks the driver to fulfil before elaboration, unforgeable because their
+  names hold a space. -/
+  requests : List String := []
   verbs : List String
   syms : List Char
   /-- Whether a formula is admitted, and the controls and characters its raws may hold. -/
@@ -34,10 +37,11 @@ public structure Vocab where
 /-- The vocabulary markdown lowers into. -/
 @[expose] public def vocabulary : Vocab where
   ctrls := ["emph", "textbf", "texttt", "href", "includegraphics", "item", "hypertarget", "\\",
-    "toprule", "midrule", "bottomrule", "inputlean"] ++ citeCtrls
+    "toprule", "midrule", "bottomrule"] ++ citeCtrls
   bridged := ([Ir.HeadingLevel.title, .h1, .h2, .h3, .h4, .h5, .h6].map Parse.headingControl) ++
     [Parse.markdownBibControl]
   envs := ["quote", "itemize", "enumerate", Parse.markdownDisclosureEnv, Parse.markdownTableEnv]
+  requests := [leanDivisionEnv]
   verbs := ["verbatim", "lstlisting"]
   syms := ['[', ']', '&', '@']
 
@@ -51,7 +55,7 @@ mutual
   | .ctrl n _ => v.ctrls.contains n || v.bridged.contains n
   | .sym c _ => v.syms.contains c
   | .group body _ => v.admitsList body.toList
-  | .env n body _ => v.envs.contains n && v.admitsList body.toList
+  | .env n body _ => (v.envs.contains n || v.requests.contains n) && v.admitsList body.toList
   | .verb e _ _ => v.verbs.contains e
   | .math _ body _ => v.formulas && v.mathAdmitsList body.toList
 
@@ -531,6 +535,25 @@ private theorem tableRaws_adm (file : String) (aligns : Array TableAlign)
     exact ⟨by simp [vocabulary],
       admitsList_of_adm _ fun x hx => hfull x (Array.mem_toList_iff.mp hx)⟩)
 
+private theorem division_adm (d : LeanDivision) (p : Pos) :
+    vocabulary.admits (d.raw p) = true := by
+  have hattrs : Adm (d.attrs.map fun (k, v) => Raw.group #[.word k p, .word v p] p) := by
+    intro r hr
+    obtain ⟨⟨k, v⟩, _, rfl⟩ := Array.mem_map.mp hr
+    exact adm_group _ _ (adm_lit (by
+      intro x hx
+      simp only [List.mem_cons, List.not_mem_nil, or_false] at hx
+      rcases hx with rfl | rfl <;> rfl))
+  have hbody : Adm #[Raw.group #[.word d.file p] p,
+      .group (d.attrs.map fun (k, v) => Raw.group #[.word k p, .word v p] p) p] := adm_lit (by
+    intro r hr
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at hr
+    rcases hr with rfl | rfl
+    · exact adm_group _ _ (adm_lit (by intro x hx; simp at hx; subst hx; rfl))
+    · exact adm_group _ _ hattrs)
+  simp only [LeanDivision.raw, Vocab.admits, Bool.and_eq_true, Bool.or_eq_true]
+  exact ⟨Or.inr (by simp [vocabulary]), admitsList_of_adm _ fun r hr => hbody r (by simpa using hr)⟩
+
 mutual
 
 private theorem blkRaws_adm (file : String) (refs : Array Raw) (hrefs : Adm refs) :
@@ -607,25 +630,12 @@ private theorem blkRaws_adm (file : String) (refs : Array Raw) (hrefs : Adm refs
     exact tableRaws_adm file aligns header rows p
   | .lean attrs p => by
     simp only [blkRaws]
-    refine adm_append (adm_append (adm_lit ?_) ?_) (adm_lit ?_)
-    · intro r hr
+    exact adm_lit (by
+      intro r hr
       simp only [List.mem_cons, List.not_mem_nil, or_false] at hr
       rcases hr with rfl | rfl
       · rfl
-      · simp [Vocab.admits, vocabulary]
-    · split
-      · exact adm_empty
-      · refine adm_lit ?_
-        intro r hr
-        simp only [List.mem_cons, List.not_mem_nil, or_false] at hr
-        rcases hr with rfl | rfl | rfl
-        · exact sym_mem _ _ (by simp [vocabulary])
-        · rfl
-        · exact sym_mem _ _ (by simp [vocabulary])
-    · intro r hr
-      simp only [List.mem_cons, List.not_mem_nil, or_false] at hr
-      subst hr
-      exact adm_group _ _ (adm_lit (by intro r hr; simp at hr; subst hr; rfl))
+      · exact division_adm _ p)
   | .metadata _ _ => by
     simp only [blkRaws]
     exact adm_empty
@@ -850,8 +860,10 @@ public theorem vocabulary_contract :
       Parse.splitOpen? n = none ∧ Parse.splitClose? n = none) ∧
     (∀ n ∈ vocabulary.ctrls, ' ' ∉ n.toList) ∧
     (∀ n ∈ vocabulary.bridged, ((Parse.headingControl? n).isSome ∨ n = Parse.markdownBibControl) ∧
+      ' ' ∈ n.toList) ∧
+    (∀ n ∈ vocabulary.requests, n ∉ vocabulary.envs ∧ Parse.inputEnvFile? n = none ∧
       ' ' ∈ n.toList) := by
-  refine ⟨?_, ?_, ?_⟩
+  refine ⟨?_, ?_, ?_, ?_⟩
   · intro n hn
     simp only [vocabulary, List.mem_cons, List.not_mem_nil, or_false] at hn
     rcases hn with rfl | rfl | rfl | rfl | rfl <;>
@@ -861,7 +873,7 @@ public theorem vocabulary_contract :
     simp only [vocabulary, citeCtrls, List.cons_append, List.nil_append, List.mem_cons,
       List.not_mem_nil, or_false] at hn
     rcases hn with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl |
-      rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;> simp
+      rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;> simp
   · intro n hn
     rcases List.mem_append.mp hn with hn | hn
     · obtain ⟨level, _, rfl⟩ := List.mem_map.mp hn
@@ -869,5 +881,10 @@ public theorem vocabulary_contract :
     · simp only [List.mem_cons, List.not_mem_nil, or_false] at hn
       subst hn
       simp [Parse.markdownBibControl]
+  · intro n hn
+    simp only [vocabulary, List.mem_cons, List.not_mem_nil, or_false] at hn
+    subst hn
+    simp [vocabulary, leanDivisionEnv, Parse.inputEnvFile?, Parse.markdownTableEnv,
+      Parse.markdownDisclosureEnv]
 
 end LeanTex.Core.Md

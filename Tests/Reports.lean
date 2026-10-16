@@ -4,6 +4,7 @@ import Tests.BuildGraph
 import Tests.DeclaredColors
 import Tests.ColorNames
 import LeanTex.Core.ControlContract
+import LeanTex.Core.CodeDocContract
 import Tests.Surface
 import Tests.Regress
 import Tests.Census
@@ -1835,7 +1836,14 @@ def reports : List Report := [
     accept := ["the destination judge, reading every navigation in a file's bytes, finds the corpus PDFs main builds at 5123c431 failing in seven fixtures: five cite into nothing (the bibliography, both markdown and both Lean citation fixtures), the icons fixture names an undefined top and the web navigation fixture holds an outline entry with no destination; here every corpus file's navigation reaches a page it writes, and the PDF links each in-page target as often as its web page does",
       "invented probes under lualatex with hyperref: a citation's destination stands on its reference-list entry's line, one baseline skip above its baseline, a section's on its heading, a table's at its caption and a footnote's on its note's line, where the caption package's hypcap moves a float's to its top; a label names the last anchor set before it (the heading it follows, a run-in heading, a phantom section, a float, an equation, a list item), a hypertarget its own place, and in a beamer deck a label after its section stands on the frame set next; this tree opens a label written right after its heading at the heading, a float's labels at the float's top, its caption above or its picture's ink, a deck's label on the frame set next, and any other label or target at its own line's ink top, a label later under its heading with no anchor between included, which hyperref opens at the heading",
       "a citation or reference inside a URL link took its own link in the PDF and the enclosing one in the web page; both now keep the enclosing link, as the web page and Pandoc set a citation inside a link's text"]
-    state := .guarded "5123c431" .before .author }
+    state := .guarded "5123c431" .before .author },
+  { id := "R204", date := "2026-10-16"
+    what := "a markdown Lean division reached its inclusion as option text the inclusion command read again, so a value closing a brace wrote an option of its own, named as one no inclusion has, and a key holding a comma read as two keys; a host document's definition of the inclusion command replaced the divisions of every markdown file it included; and lualatex's leantex package lacked the citation style key and the prose and documentation views, each warned as an option it does not have"
+    pins := [check% Tests.LeanViews.leanViewChecks, thm% Md.LeanDivision.ofRaw?_raw,
+      thm% Code.includeLean_vocabulary_mem]
+    accept := ["main's binary at da86ec89 on invented probes: a division whose show value closes a brace and opens an option zz names zz as an option the division does not have, and a host redefining the inclusion command sets its replacement text where the markdown file's division included its Lean file",
+      "lualatex on an invented probe with the package as main ships it: an inclusion showing math and prose, and one showing the documentation view under a citation style, each warn that the inclusion has no option prose or biblio-style beside the warning that the whole file sets as code; with this package only that warning"]
+    state := .guarded "da86ec89" .before .author }
 ]
 
 /-- The reports guarded but never seen failing, a count held in both directions. -/

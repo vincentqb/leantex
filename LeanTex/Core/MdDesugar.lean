@@ -570,6 +570,76 @@ public theorem tableRaws_contract (file : String) (aligns : Array TableAlign)
     · exact Or.inr (Or.inr (Or.inr (Or.inl rfl)))
   · exact hh x hx
 
+/-- The environment a Lean division lowers to, which the driver replaces by the file it includes;
+unforgeable because its name holds a space. -/
+public def leanDivisionEnv : String := "markdown lean"
+
+/-- A Lean division's request: the file it names and its other attributes, as written. -/
+public structure LeanDivision where
+  file : String
+  attrs : Array (String × String)
+  deriving Repr, BEq, Inhabited
+
+/-- The request a Lean division's attributes make: its first `file`, and the others in order. -/
+@[expose] public def LeanDivision.ofAttrs (attrs : Array (String × String)) : LeanDivision :=
+  { file := ((attrs.find? (·.1 == "file")).map (·.2)).getD ""
+    attrs := attrs.filter (·.1 != "file") }
+
+/-- A division's request as the one raw the driver reads: the file's word, then a group per
+attribute holding its key's word and its value's. -/
+@[expose] public def LeanDivision.raw (d : LeanDivision) (p : Pos) : Raw :=
+  .env leanDivisionEnv #[.group #[.word d.file p] p,
+    .group (d.attrs.map fun (k, v) => .group #[.word k p, .word v p] p) p] p
+
+private def attrsOf? : List Raw → Option (List (String × String))
+  | [] => some []
+  | .group kv _ :: rest => match kv.toList with
+    | [.word k _, .word v _] => (attrsOf? rest).map ((k, v) :: ·)
+    | _ => none
+  | _ :: _ => none
+
+/-- The request a division's raw spells, read back as `LeanDivision.raw` writes it. -/
+public def LeanDivision.ofRaw? : Raw → Option LeanDivision
+  | .env n body _ =>
+    if n != leanDivisionEnv then none else
+      match body.toList with
+      | [.group file _, .group attrs _] =>
+        match file.toList with
+        | [.word f _] => (attrsOf? attrs.toList).map fun as => ⟨f, as.toArray⟩
+        | _ => none
+      | _ => none
+  | _ => none
+
+private theorem attrsOf?_map (p : Pos) : (l : List (String × String)) →
+    attrsOf? (l.map fun (k, v) => Raw.group #[.word k p, .word v p] p) = some l
+  | [] => rfl
+  | (k, v) :: rest => by simp [attrsOf?, attrsOf?_map p rest]
+
+/-- A division's raw reads back as exactly its request, whatever its attributes hold. -/
+public theorem LeanDivision.ofRaw?_raw (d : LeanDivision) (p : Pos) :
+    LeanDivision.ofRaw? (d.raw p) = some d := by
+  rcases d with ⟨file, attrs⟩
+  simp [ofRaw?, raw, attrsOf?_map]
+
+/-- Each Lean division the raws request replaced by what `answer` includes for it, asked from `file`
+or the file the input environment around it names. -/
+public def includeDivisions [Monad m] (answer : LeanDivision → Span → m (Array Raw))
+    (file : String) (out : Array Raw) : List Raw → m (Array Raw)
+  | [] => pure out
+  | r :: rest => do
+    let here ← match LeanDivision.ofRaw? r, r with
+      | some d, .env _ _ p => answer d ⟨file, p⟩
+      | _, .env n body p => do
+        let inner ← includeDivisions answer ((Parse.inputEnvFile? n).getD file) #[] body.toList
+        pure #[.env n inner p]
+      | _, .group body p => do
+        let inner ← includeDivisions answer file #[] body.toList
+        pure #[.group inner p]
+      | _, r => pure #[r]
+    includeDivisions answer file (out ++ here) rest
+termination_by l => sizeOf l
+decreasing_by raws_dec
+
 mutual
 
 private def blkRaws (file : String) (refs : Array Raw) : Blk → Array Raw × Array Diag
@@ -615,12 +685,7 @@ without a language" p
         "a loose list sets as a tight one: its items' paragraph spacing is not carried" p)
     (#[.env (if ordered then "enumerate" else "itemize") rs p], ds)
   | .table aligns header rows p => tableRaws file aligns header rows p
-  | .lean attrs p =>
-    let file := ((attrs.find? (·.1 == "file")).map (·.2)).getD ""
-    let opts := (attrs.filter (·.1 != "file")).toList.map fun (k, v) => s!"{k} = \{{v}}"
-    let bracket : Array Raw := if opts.isEmpty then #[] else
-      #[.sym '[' p, .word (", ".intercalate opts) p, .sym ']' p]
-    (#[.par p, .ctrl "inputlean" p] ++ bracket ++ #[.group #[.word file p] p], #[])
+  | .lean attrs p => (#[.par p, (LeanDivision.ofAttrs attrs).raw p], #[])
   -- The metadata block is read whole by `desugar`, before the blocks.
   | .metadata _ _ => (#[], #[])
   | .refs _ => (refs, #[])

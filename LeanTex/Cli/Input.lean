@@ -169,22 +169,27 @@ private def keysOnce (f : LeanFactsFile.BibFile) : ReadM (Std.HashSet String) :=
   modify fun log => { log with bibKeys := log.bibKeys.push (f.path, ks) }
   return ks
 
-/-- `\inputlean[options]{file}`: a Lean file included with the views its options ask for, its facts
-read where they need them and git asked where its link names the file's commit or path. -/
-private def readLean (dir : System.FilePath) (request : Compat.InputRequest) :
-    ReadM (Array Parse.Raw × Array Diag) := do
-  let name := request.name.trimAscii.toString
-  let path := dir / name
-  let division := Ir.Surface.ofPath request.file == .markdown
+/-- A Lean file an inclusion names, what it asks to show, where it is asked, and whether markdown's
+division asks it. -/
+private structure LeanAsk where
+  name : String
+  showing : Code.Showing
+  site : Span
+  division : Bool
+
+/-- A Lean file included with the views its inclusion asks for, its facts read where they need them
+and git asked where its link names the file's commit or path. -/
+private def readLean (dir : System.FilePath) (ask : LeanAsk) : ReadM (Array Parse.Raw × Array Diag) := do
+  let path := dir / ask.name
   unless ← path.pathExists do
-    return (#[], #[DriverDiag.inputMissing name (some ⟨request.file, request.pos⟩) "inputlean"
-      (if division then some "the Lean division's file" else none)])
+    return (#[], #[DriverDiag.inputMissing ask.name (some ask.site) "inputlean"
+      (if ask.division then some "the Lean division's file" else none)])
   match ← readSource path.toString with
-  | .error d => return (#[], #[{ d with span := some ⟨request.file, request.pos⟩ }])
+  | .error d => return (#[], #[{ d with span := some ask.site }])
   | .ok bytes =>
     modify fun log => { log with reads := log.reads.push path.toString }
     let text := (← decodeOnce path.toString fun _ => Encoding.readMarkdown path.toString bytes).1.text
-    let showing := Code.showingOfEntries .lean (Decl.splitEntries request.options) (alone := true)
+    let showing := ask.showing
     let lost := showing.lostIncluded
     let declared := showing.facts.map fun p => (dir / p).toString
     let (facts, factDiags, factsRead) ← if showing.asks || showing.decls.isSome then
@@ -195,18 +200,18 @@ private def readLean (dir : System.FilePath) (request : Compat.InputRequest) :
       | some l => if showing.statements then
           Host.runIO (LeanLinks.placeOf path.toString (Code.linkTemplate l)) else pure {}
       | none => pure {}
-    let entry := if division then "the Lean division" else "`\\inputlean`"
+    let entry := if ask.division then "the Lean division" else "`\\inputlean`"
     -- A documentation view cites by its bibliography's keys, declared beside the document, else the
     -- Lean file's project's, and the document's reference list joins the files it cites from.
     let (found, bibDiags) ← if showing.docs then
-        Host.runIO (LeanFactsFile.bibFor path.toString showing.bibliography
-          ⟨request.file, request.pos⟩ (base := some dir.toString) (entry := some entry))
+        Host.runIO (LeanFactsFile.bibFor path.toString showing.bibliography ask.site
+          (base := some dir.toString) (entry := some entry))
       else pure (#[], #[])
-    let (found, commaDiags) := listable found ⟨request.file, request.pos⟩
+    let (found, commaDiags) := listable found ask.site
     let keyed ← found.mapM fun f => return (f, ← keysOnce f)
     let keys := keyed.foldl (init := {}) fun ks (_, k) => k.fold (init := ks) fun acc x => acc.insert x
-    let (raws, ds) := Code.includeLean path.toString text showing facts place
-      ⟨request.file, request.pos⟩ entry (codeRefs found keys)
+    let (raws, ds) := Code.includeLean path.toString text showing facts place ask.site entry
+      (codeRefs found keys)
     let cited := Code.citedKeys raws
     let citing := keyed.filter fun (_, ks) => cited.any ks.contains
     modify fun log => { log with
@@ -214,6 +219,21 @@ private def readLean (dir : System.FilePath) (request : Compat.InputRequest) :
         log.joins
       reads := log.reads ++ found.map (·.path) }
     return (raws, ds ++ factDiags ++ bibDiags ++ commaDiags)
+
+/-- `\inputlean[options]{file}`, its options read as TeX spells them. -/
+private def inputleanAsk (request : Compat.InputRequest) : LeanAsk :=
+  { name := request.name.trimAscii.toString, site := ⟨request.file, request.pos⟩, division := false
+    showing := Code.showingOfEntries .lean (Decl.splitEntries request.options) (alone := true) }
+
+/-- Each Lean division markdown raws read from `file` hold, replaced by the file it includes. -/
+private def includeDivisions (dir : System.FilePath) (file : String) (raws : Array Parse.Raw) :
+    ReadM (Array Parse.Raw) :=
+  Md.includeDivisions (fun d site => do
+    let (raws, ds) ← readLean dir
+      { name := d.file.trimAscii.toString, site, division := true
+        showing := Code.showingOfDivision d }
+    modify fun log => { log with diags := log.diags ++ ds }
+    return raws) file #[] raws.toList
 
 /-- Fulfil one executed request; a compatible repeat or a cycle back edge of a local style
 reads nothing, and nesting stays within eight files. -/
@@ -238,6 +258,7 @@ private def readAt (dir : System.FilePath) (root : String) (depth : Nat) :
             "markdownInput" (fun path bytes => do
               return (← decodeOnce path fun _ => Encoding.readMarkdown path bytes).1) .markdown
             cites
+          let sub ← includeDivisions dir request.file sub
           let others := given.filter fun o => !o.isEmpty && !citing o
           let ds := if others.isEmpty then ds else ds.push <|
             Diag.of .W0110 s!"'\\markdownInput' options '{", ".intercalate others}' are not \
@@ -245,7 +266,7 @@ applied; the file uses the Markdown document dialect, which reads only 'citation
               (some ⟨request.file, request.pos⟩) (subject := some "markdownInput:options")
           pure (sub, ds)
         else if request.command == "inputminted" then readMinted dir request
-        else if request.command == "inputlean" then readLean dir request
+        else if request.command == "inputlean" then readLean dir (inputleanAsk request)
         else readInputAt dir request.file request.name request.pos
       modify fun log => { log with diags := log.diags ++ diags }
       let (answer, context) ←
@@ -310,7 +331,10 @@ run already knows of its files. -/
 private def executeWith (file : String) (raws : Array Parse.Raw) (log : InputLog)
     (dir : System.FilePath := (System.FilePath.mk file).parent.getD ".") :
     IO (Compat.Executed × InputLog) :=
-  (Elab.executeInputs (readAt dir file 8) file raws).run log
+  (do
+    let raws ← if Ir.Surface.ofPath file == Ir.Surface.markdown then includeDivisions dir file raws
+      else pure raws
+    Elab.executeInputs (readAt dir file 8) file raws).run log
 
 /-- Execute macros and fulfil input requests in source order, resolving beside the
 document unless `dir` says otherwise; the execution continues through

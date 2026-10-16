@@ -420,10 +420,12 @@ def leanViewChecks (ref : IO.Ref (List String)) : IO Unit := do
   let braced := "show = {prose}, phrase.Tide.height = {the height after #2 steps of #1}"
   let (raws, _) := Md.desugar "d.md"
     "::: {.lean file=\"F.lean\" show=\"prose\" phrase.Tide.height=\"the height after #2 steps of #1\"}\n:::\n"
+  let divisionShows := (raws.toList.filterMap Md.LeanDivision.ofRaw?).map Code.showingOfDivision
+  let bracedShows := Code.showingOfEntries .lean (Decl.splitEntries braced) true
   let (phrased, phrasedTakenDs) := docOf (incl braced (some facts))
   let phrasedLines := codePageLines fonts phrased
-  t s!"views: a phrase a division or a braced inclusion declares is taken, its braces not its words ({Parse.rawSrc raws})"
-    (Parse.rawSrc raws == s!"\\inputlean [{braced}]\{F.lean}" &&
+  t s!"views: a phrase a division or a braced inclusion declares is taken, its braces not its words ({repr (divisionShows.map (·.phrases))})"
+    (divisionShows.map (fun s => (s.views, s.phrases)) == [(bracedShows.views, bracedShows.phrases)] &&
       !phrasedTakenDs.any (·.kind == .W0416) &&
       phrasedLines.any (fun (_, l) => (l.splitOn "the height after").length > 1) &&
       !phrasedLines.any (fun (_, l) => (l.splitOn "the height after").length > 1 &&
@@ -510,8 +512,9 @@ def leanViewChecks (ref : IO.Ref (List String)) : IO Unit := do
       | .para _ _ => true
       | _ => false)
   let (raws, _) := Md.desugar "d.md" "::: {.lean file=\"F.lean\" show=\"math, code\"}\n:::\n"
-  t s!"views: the division lowers onto the inclusion command, its keys as the command's options ({Parse.rawSrc raws})"
-    (Parse.rawSrc raws == "\\inputlean [show = {math, code}]{F.lean}")
+  t s!"views: the division lowers onto one request holding its file and its attributes as written ({repr raws})"
+    (raws.toList.filterMap Md.LeanDivision.ofRaw? == [⟨"F.lean", #[("show", "math, code")]⟩] &&
+      !raws.any (· matches .ctrl "inputlean" _))
   let mdSrc := "Before.\n\n::: {.lean file=\"fixtures/example.lean\"}\n:::\n"
   let (mdRaws, mdDs) := Surface.read .markdown "testdata/compat-index/probe.md" mdSrc
   let (executed, inputDs, _) ← Input.expandInputs "testdata/compat-index/probe.md" mdRaws
@@ -524,5 +527,48 @@ def leanViewChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "views: a division whose file is not there names the division, not the command it lowers onto"
     (goneDs.any fun d => d.kind == .E0502 &&
       (d.message.splitOn "the Lean division's file 'fixtures/gone.lean' is not there").length == 2)
+  -- A division's attributes reach the inclusion as written, through no text a reader lexes again.
+  IO.FS.withTempDir fun tmp => do
+    IO.FS.writeFile (tmp / "ex.lean") "theorem probe_true : True := trivial\n"
+    let build (name text : String) : IO (Ir.Doc × Array Diag) := do
+      let path := (tmp / name).toString
+      IO.FS.writeFile path text
+      let read ← Input.readDocument path text.toUTF8
+      return Elab.runExecuted path read.executed read.diags
+    let included (doc : Ir.Doc) : Bool :=
+      (listingTexts doc).any fun c => hasStr c "theorem probe_true"
+    let subjects (ds : Array Diag) : Array String := ds.filterMap (·.subject)
+    let (injected, injectedDs) ← build "inject.md"
+      "::: {.lean file=ex.lean show=\"code}, zz = {1\"}\n:::\n"
+    t s!"views: a division's value closing a brace adds no option, its words naming views no file has ({subjects injectedDs})"
+      (included injected && !(subjects injectedDs).contains "code:option:zz" &&
+        (subjects injectedDs).contains "code:show:code}" &&
+        (subjects injectedDs).contains "code:show:zz = {1")
+    let (_, commaDs) ← build "comma.md" "::: {.lean file=ex.lean a,b=1}\n:::\n"
+    t s!"views: a division's key holding a comma is that one key ({subjects commaDs})"
+      ((subjects commaDs).filter (·.startsWith "code:option:") == #["code:option:a,b"])
+    IO.FS.writeFile (tmp / "frag.md") "::: {.lean file=ex.lean}\n:::\n"
+    let (hosted, _) ← build "host.tex" ("\\documentclass{article}\n\\usepackage{markdown}\n" ++
+      "\\renewcommand{\\inputlean}[2][]{Zed}\n\\begin{document}\n\\markdownInput{frag.md}\n" ++
+      "\\end{document}\n")
+    t "views: a host redefining \\inputlean leaves a division in the markdown it includes as written"
+      (included hosted && !hasStr (inkText hosted.body) "Zed")
+  -- The package lualatex reads takes every option an inclusion does.
+  let sty ← IO.FS.readFile "tex/leantex.sty"
+  let block := ((sty.splitOn "\\keys_define:nn { leantex }").getD 1 "").splitOn "\n  }" |>.headD ""
+  let styKeys := (block.splitOn "\n").filterMap fun l =>
+    match (l.trimAscii.toString.splitOn " .").head? with
+    | some k => if k.isEmpty || k.any (· == ' ') || k == "unknown" || !hasStr l " ." then none
+      else some k
+    | none => none
+  let views := Code.View.all.map (·.name)
+  let viewKeys := views.filter fun v =>
+    hasStr block s!"{v} .code:n = \\tl_put_right:Nn \\l__leantex_show_tl \{ , {v} }"
+  t s!"views: leantex.sty defines each option key and a bare key per view, and nothing else ({styKeys})"
+    (styKeys.length == styKeys.eraseDups.length &&
+      styKeys.all (fun k => Code.showKeys.contains k || views.contains k) &&
+      Code.showKeys.all styKeys.contains && viewKeys == views)
+  t "views: leantex.sty takes a phrase entry by the prefix the engine reads"
+    (hasStr block s!"\\str_range:Nnn \\l_keys_key_str \{ 1 } \{ {Code.phraseKey.length} } } \{ {Code.phraseKey} }")
 
 end Tests.LeanViews

@@ -1,5 +1,5 @@
 \NeedsTeXFormat{LaTeX2e}
-\ProvidesPackage{leantex}[2026/10/14 Lean files in LaTeX documents, as leantex reads them]
+\ProvidesPackage{leantex}[2026/10/16 Lean files in LaTeX documents, as leantex reads them]
 \RequirePackage{minted}
 \ExplSyntaxOn
 \tl_new:N \l__leantex_show_tl
@@ -15,8 +15,11 @@
     link .tl_set:N = \l__leantex_link_tl ,
     facts .code:n = { } ,
     bibliography .code:n = { } ,
+    biblio-style .code:n = { } ,
     code .code:n = \tl_put_right:Nn \l__leantex_show_tl { , code } ,
     math .code:n = \tl_put_right:Nn \l__leantex_show_tl { , math } ,
+    prose .code:n = \tl_put_right:Nn \l__leantex_show_tl { , prose } ,
+    docs .code:n = \tl_put_right:Nn \l__leantex_show_tl { , docs } ,
     unknown .code:n =
       \str_if_eq:eeTF { \str_range:Nnn \l_keys_key_str { 1 } { 7 } } { phrase. }
         { \bool_set_true:N \l__leantex_phrased_bool }

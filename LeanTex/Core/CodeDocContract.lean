@@ -62,8 +62,12 @@ private theorem mono_one : (r : Raw) → Md.vocabulary.admits r = true →
     exact mono_list body.toList h
   | .math _ _ _, h => by simp [Md.Vocab.admits, Md.vocabulary] at h
   | .env n body _, h => by
-    simp only [Md.Vocab.admits, Bool.and_eq_true, List.contains_iff_mem] at h ⊢
-    exact ⟨by simp [vocabulary, h.1], mono_list body.toList h.2⟩
+    simp only [Md.Vocab.admits, Bool.and_eq_true, Bool.or_eq_true, List.contains_iff_mem] at h ⊢
+    refine ⟨?_, mono_list body.toList h.2⟩
+    simp only [vocabulary, List.mem_append]
+    rcases h.1 with h | h
+    · exact Or.inl (Or.inl h)
+    · exact Or.inr h
   | .verb e _ _, h => by simpa [Md.Vocab.admits, vocabulary] using h
 
 private theorem mono_list : (l : List Raw) → Md.vocabulary.admitsList l = true →
@@ -347,7 +351,7 @@ private theorem displayRaws_adm (d : LeanFacts.Decl)
   intro r hr
   simp only [displayRaws, List.mem_toArray, List.mem_cons, List.not_mem_nil, or_false] at hr
   subst hr
-  simp only [Md.Vocab.admits, Bool.and_eq_true, List.contains_iff_mem]
+  simp only [Md.Vocab.admits, Bool.and_eq_true]
   exact ⟨by simp [vocabulary, Md.vocabulary], (admitsList_iff _ _).mpr fun x hx =>
     hbody x (by simpa using hx)⟩
 
@@ -391,7 +395,7 @@ private theorem wordsRaws_adm (d : LeanFacts.Decl) (s : LeanProse.Stmt LeanProse
   intro r hr
   simp only [wordsRaws, List.mem_toArray, List.mem_cons, List.not_mem_nil, or_false] at hr
   subst hr
-  simp only [Md.Vocab.admits, Bool.and_eq_true, List.contains_iff_mem]
+  simp only [Md.Vocab.admits, Bool.and_eq_true]
   exact ⟨by simp [vocabulary, Md.vocabulary], (admitsList_iff _ _).mpr fun x hx =>
     hbody x (by simpa [or_assoc] using hx)⟩
 
@@ -475,7 +479,7 @@ private theorem disclosure_adm (summary body : Array Raw) (expanded : Bool) (p :
   intro r hr
   simp only [List.mem_toArray, List.mem_cons, List.not_mem_nil, or_false] at hr
   subst hr
-  simp only [Md.Vocab.admits, Bool.and_eq_true, List.contains_iff_mem]
+  simp only [Md.Vocab.admits, Bool.and_eq_true]
   refine ⟨by simp [vocabulary, Md.vocabulary], (admitsList_iff _ _).mpr fun x hx => ?_⟩
   have hx' : x ∈ opts ∨ x = .group summary p ∨ x ∈ body := by simpa using hx
   rcases hx' with hx | rfl | hx
@@ -704,7 +708,7 @@ public theorem read_vocabulary_mem (lang : Ir.CodeLang) (file text : String)
   · split
     · exact directive_adm _ _
     · intro r hr; simp at hr
-  · simp only [Md.Vocab.admits, Bool.and_eq_true, List.contains_iff_mem]
+  · simp only [Md.Vocab.admits, Bool.and_eq_true]
     refine ⟨by simp [vocabulary, Md.vocabulary], (admitsList_iff _ _).mpr fun r hr => ?_⟩
     have hplaced := placedBody_adm acc refs (showingOf lang text.toList.toArray).bibStyle hacc.1
     have hbody : Adm (if acc.titled then placedBody acc refs (showingOf lang text.toList.toArray).bibStyle
@@ -714,5 +718,100 @@ public theorem read_vocabulary_mem (lang : Ir.CodeLang) (file text : String)
       · exact hplaced
       · exact adm_append (titleHeading_adm _ _ htitle) hplaced
     exact hbody r (by simpa using hr)
+
+private theorem listingAt_adm (starts : Array Nat) (start : Nat) (code : List Char) :
+    Adm (listingAt starts start code) := by
+  unfold listingAt
+  dsimp only
+  split
+  · intro r hr; simp at hr
+  · intro r hr
+    simp only [List.mem_toArray, List.mem_cons, List.not_mem_nil, or_false] at hr
+    subst hr
+    simp [Md.Vocab.admits, vocabulary, Md.vocabulary]
+
+private theorem docsRaws_adm (file text : String) (starts : Array Nat)
+    (known : Option (Std.HashSet String)) : Adm (docsRaws file text starts known).1 := by
+  unfold docsRaws
+  rw [← Array.foldl_toList]
+  refine foldl_adm _ (fun acc piece h => ?_) _ _ (by intro r hr; simp at hr)
+  cases piece with
+  | code start code => exact adm_append h (listingAt_adm _ _ _)
+  | prose seg => exact adm_append h (proseRaws_adm _ _ _ _ _ _)
+  | statement _ => exact h
+
+private theorem paras_adm (file : String) (starts : Array Nat) (src : Array Char)
+    (segs : List Seg) (showing : Showing) (declared : LeanProse.Declared) (place : LinkPlace)
+    (folds : List ProofFold) (request : Span) (facts : Option LeanFacts.Facts) :
+    ∀ p ∈ (statementsFor file starts src segs showing declared place folds
+      (folds.map (foldRaws starts src)).toArray request facts).1 ++
+      (folds.map (foldRaws starts src)).toArray, Adm p := by
+  have hfold : ∀ p ∈ (folds.map (foldRaws starts src)).toArray, Adm p := by
+    intro p hp
+    simp only [List.mem_toArray, List.mem_map] at hp
+    obtain ⟨fo, _, rfl⟩ := hp
+    exact foldRaws_adm _ _ _
+  intro p hp
+  rcases Array.mem_append.mp hp with hp | hp
+  · exact statementsFor_adm _ _ _ _ _ _ _ _ _ hfold _ _ p hp
+  · exact hfold p hp
+
+private theorem getD_adm {paras : Array (Array Raw)} (h : ∀ p ∈ paras, Adm p) (k : Nat) :
+    Adm (paras.getD k #[]) := by
+  simp only [Array.getD_eq_getD_getElem?]
+  cases hk : paras[k]? with
+  | none => intro r hr; simp at hr
+  | some q => exact h q (Array.mem_of_getElem? hk)
+
+private theorem adm_nil : Adm #[] := by intro r hr; simp at hr
+
+private theorem adm_ite {c : Prop} [Decidable c] {a b : Array Raw} (ha : Adm a) (hb : Adm b) :
+    Adm (if c then a else b) := by
+  split
+  · exact ha
+  · exact hb
+
+private theorem chosenRaws_adm (items : Array (Nat × Array Raw)) (h : ∀ x ∈ items, Adm x.2) :
+    Adm (chosenRaws items) := by
+  unfold chosenRaws
+  have hm : ∀ x ∈ items.toList.mergeSort fun a b => decide (a.1 ≤ b.1), Adm x.2 :=
+    fun x hx => h x (Array.mem_toList_iff.mp (List.mem_mergeSort.mp hx))
+  generalize items.toList.mergeSort (fun a b => decide (a.1 ≤ b.1)) = l at hm
+  suffices ∀ acc : Array Raw, Adm acc → Adm (l.foldl (fun acc x => acc ++ x.2) acc) from
+    this #[] (by intro r hr; simp at hr)
+  induction l with
+  | nil => exact fun _ h => h
+  | cons x rest ih =>
+    intro acc ha
+    exact ih (fun y hy => hm y (List.mem_cons_of_mem _ hy)) _
+      (adm_append ha (hm x (List.mem_cons_self ..)))
+
+/-- A Lean inclusion sets its file as the one input environment naming it, every raw inside which
+lies in the reader's declared vocabulary. -/
+public theorem includeLean_vocabulary_mem (file text : String) (showing : Showing)
+    (facts : Option LeanFacts.Facts) (place : LinkPlace) (request : Span) (entry : String)
+    (refs : Option Refs) :
+    ∃ body, (includeLean file text showing facts place request entry refs).1 =
+        #[.env (Parse.inputEnv file) body request.pos] ∧ ∀ r ∈ body, vocabulary.admits r = true := by
+  unfold includeLean
+  dsimp only
+  split
+  · exact ⟨_, rfl, docsRaws_adm _ _ _ _⟩
+  · split
+    · exact ⟨_, rfl, listingAt_adm _ _ _⟩
+    · have hp := paras_adm
+      split
+      · refine ⟨_, rfl, piecesRaws_adm _ _ (fun s t => ?_) (hp _ _ _ _ _ _ _ _ _ _) _⟩
+        split
+        · exact listingAt_adm _ _ _
+        · intro r hr; simp at hr
+      · refine ⟨_, rfl, chosenRaws_adm _ ?_⟩
+        intro x hx
+        simp only [Array.mem_append, Array.mem_map] at hx
+        rcases hx with ⟨d, _, rfl⟩ | ⟨fl, _, rfl⟩
+        · exact adm_append (adm_append (adm_ite (getD_adm (hp _ _ _ _ _ _ _ _ _ _) _) adm_nil)
+            (adm_ite (piecesRaws_adm _ _ (listingAt_adm _) (hp _ _ _ _ _ _ _ _ _ _) _) adm_nil))
+            (adm_ite (getD_adm (hp _ _ _ _ _ _ _ _ _ _) _) adm_nil)
+        · exact piecesRaws_adm _ _ (listingAt_adm _) (hp _ _ _ _ _ _ _ _ _ _) _
 
 end LeanTex.Core.Code

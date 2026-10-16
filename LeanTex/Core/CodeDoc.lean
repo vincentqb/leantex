@@ -131,6 +131,23 @@ public inductive View where
   | docs
   deriving Repr, BEq, DecidableEq, Inhabited
 
+/-- A view's name in a `show` value. -/
+public def View.name : View → String
+  | .code => "code"
+  | .math => "math"
+  | .prose => "prose"
+  | .docs => "docs"
+
+public def View.all : List View := [.code, .math, .prose, .docs]
+
+/-- Whether a page of a file of `lang` sets the view; the documentation view only an inclusion's,
+whose options nothing else reads. -/
+public def View.setBy (v : View) (lang : Ir.CodeLang) (alone : Bool) : Bool :=
+  match v with
+  | .code => true
+  | .math | .prose => lang == .lean
+  | .docs => lang == .lean && alone
+
 /-- What a page does with a theorem's proof: shows it, folds it into a disclosure, or sets Lean's
 `⋯` in its place. -/
 public inductive Proofs where
@@ -480,45 +497,58 @@ public def unwrapValue (v : String) : String :=
   if t.length ≥ 2 && ((t.startsWith "\"" && t.endsWith "\"") || (t.startsWith "{" && t.endsWith "}"))
   then ((t.drop 1).dropEnd 1).trimAscii.toString else t
 
-/-- What option entries ask a page of a file of `lang` to show: its `show` views, `code` where it
-names none the language has, its `decls`, `proofs`, `link` and phrases; `alone` where nothing else
-reads the entries, so any other key is strange. -/
-public def showingOfEntries (lang : Ir.CodeLang) (entries : List String) (alone : Bool := false) :
-    Showing :=
-  let groups := keyedEntries entries
-  let values (k : String) : Option (List String) := (groups.reverse.find? (·.1 == k)).map (·.2)
-  let listed (vs : List String) : List String :=
-    (vs.flatMap fun v => (unwrapValue v).splitOn ",").map (·.trimAscii.toString) |>.filter (!·.isEmpty)
-  let named := listed ((values "show").getD [])
+/-- The keys whose value is a comma-separated list. -/
+private def listKeys : List String := ["show", "decls", "bibliography"]
+
+/-- The value each key of option entries takes as TeX and a directive spell them: bare entries
+continue the key before them, and a list key's values each, any other key's joined value, lose one
+layer of braces or quotes. -/
+public def entryValues (entries : List String) : List (String × String) :=
+  (keyedEntries entries).map fun (k, vs) =>
+    (k, if k.isEmpty then vs.headD ""
+      else if listKeys.contains k then ",".intercalate (vs.map unwrapValue)
+      else unwrapValue ((if k == "proofs" || k.startsWith phraseKey then ", " else ",").intercalate vs))
+
+/-- What option values by key ask a page of a file of `lang` to show: its `show` views, `code` where
+it names none the language sets, its `decls`, `proofs`, `link` and phrases, a key written twice
+taking its last value; `alone` where nothing else reads the options, so any other key is strange. -/
+public def showingOfValues (lang : Ir.CodeLang) (values : List (String × String))
+    (alone : Bool := false) : Showing :=
+  let value (k : String) : Option String := (values.reverse.find? (·.1 == k)).map (·.2)
+  let listed (v : String) : List String :=
+    (v.splitOn ",").map (·.trimAscii.toString) |>.filter (!·.isEmpty)
+  let named := listed ((value "show").getD "")
   let viewOf? (n : String) : Option View :=
-    if n == "code" then some .code
-    else if lang == .lean && n == "math" then some .math
-    else if lang == .lean && n == "prose" then some .prose
-    else if lang == .lean && alone && n == "docs" then some .docs
-    else none
+    View.all.find? fun v => v.name == n && v.setBy lang alone
   let views := (named.filterMap viewOf?).eraseDups
-  let decls := ((values "decls").map listed).filter (!·.isEmpty)
-  let proofs := (values "proofs").map fun vs => unwrapValue (", ".intercalate vs)
-  let (proofs, unread) := match proofs with
+  let decls := ((value "decls").map listed).filter (!·.isEmpty)
+  let (proofs, unread) := match value "proofs" with
     | none | some "show" => (Proofs.show, [])
     | some "collapse" => (.collapse, [])
     | some "remove" => (.remove, [])
     | some v => (.show, [("proofs", v)])
   { views := if views.isEmpty then [.code] else views
     decls, proofs, unread
-    link := (values "link").map fun vs => unwrapValue (",".intercalate vs)
-    facts := (values "facts").map fun vs => unwrapValue (",".intercalate vs)
-    bibliography := listed ((values "bibliography").getD [])
-    bibStyle := (values "biblio-style").map fun vs => unwrapValue (",".intercalate vs)
+    link := value "link"
+    facts := value "facts"
+    bibliography := listed ((value "bibliography").getD "")
+    bibStyle := value "biblio-style"
     unknown := named.filter fun n => (viewOf? n).isNone
-    strange := if alone then groups.filterMap fun (k, vs) =>
-        if showKey k then none else some (if k.isEmpty then vs.headD "" else k)
+    strange := if alone then values.filterMap fun (k, v) =>
+        if showKey k then none else some (if k.isEmpty then v else k)
       else []
-    written := groups.map (·.1)
-    phrases := groups.filterMap fun (k, vs) =>
-      if k.startsWith phraseKey then
-        some ((k.drop phraseKey.length).toString, unwrapValue (", ".intercalate vs))
-      else none }
+    written := values.map (·.1)
+    phrases := values.filterMap fun (k, v) =>
+      if k.startsWith phraseKey then some ((k.drop phraseKey.length).toString, v) else none }
+
+/-- What option entries, as TeX and a directive spell them, ask a page of a file of `lang` to show. -/
+public def showingOfEntries (lang : Ir.CodeLang) (entries : List String) (alone : Bool := false) :
+    Showing :=
+  showingOfValues lang (entryValues entries) alone
+
+/-- What a markdown Lean division asks its inclusion to show, each attribute's value as written. -/
+public def showingOfDivision (d : Md.LeanDivision) : Showing :=
+  showingOfValues .lean (d.attrs.toList.map fun (k, v) => (k, v.trimAscii.toString)) (alone := true)
 
 /-- What a file's directive asks its page to show. -/
 public def showingOf (lang : Ir.CodeLang) (src : Array Char) : Showing :=
@@ -541,8 +571,7 @@ public def Showing.idle (s : Showing) (lang : Ir.CodeLang) (request : Span) (pag
     Diag.of .W0110 s!"`{key}` {what}; {sets}" (some request) (help := help)
       (subject := some s!"code:{key}")
   let foreign := if lang == .lean then [] else
-    let keys := ["decls", "proofs", "link", "facts", "bibliography", "biblio-style"]
-    (keys.filter s.written.contains).map fun k =>
+    ((showKeys.filter (· != "show")).filter s.written.contains).map fun k =>
       note k "is read only on a Lean file's page" "delete it, or write it in a Lean file's directive"
   let uncited := if lang == .lean && !page && !s.docs && s.written.contains "bibliography" then
       [note "bibliography" "names the bibliography an inclusion's documentation cites into, and \
@@ -2162,6 +2191,30 @@ trailing white space aside. -/
   if body.isEmpty then #[] else
     #[.verb "lstlisting" (head ++ "\n" ++ String.ofList body) { line := (lineCol starts start).1 - 1 }]
 
+/-- Names in backticks, the last after "or". -/
+private def namesOr (names : List String) : String :=
+  match names.reverse with
+  | [] => ""
+  | last :: rest =>
+    let init := rest.reverse.map (s!"`{·}`")
+    if init.isEmpty then s!"`{last}`" else s!"{", ".intercalate init} or `{last}`"
+
+/-- A Lean file's documentation view: its code as listings and its documentation as prose citing into
+`known`, as its page sets them. -/
+@[expose] public def docsRaws (file text : String) (starts : Array Nat)
+    (known : Option (Std.HashSet String)) : Array Raw × Array Diag :=
+  (pagePieces .lean text [] []).foldl (init := (#[], #[])) fun (acc : Array Raw × Array Diag) piece =>
+    match piece with
+    | .code start code => (acc.1 ++ listingAt starts start code, acc.2)
+    | .prose seg =>
+      let read := proseRaws .lean file starts known seg false
+      (acc.1 ++ read.1, acc.2 ++ read.2)
+    | .statement _ => acc
+
+/-- The raws an inclusion's chosen declarations set, each by its offset, in source order. -/
+@[expose] public def chosenRaws (items : Array (Nat × Array Raw)) : Array Raw :=
+  (items.toList.mergeSort fun a b => decide (a.1 ≤ b.1)).foldl (fun acc x => acc ++ x.2) #[]
+
 /-- The bibliography a page's documentation cites into: the file as the document names it, and the
 keys of its entries. -/
 public structure Refs where
@@ -2185,11 +2238,11 @@ public def includeLean (file text : String) (showing : Showing) (facts : Option 
     let what := if valueless then s!"`{k}` is written without a value" else s!"{entry} has no option '{k}'"
     Diag.of .W0110 s!"{what}; the file is included as if it were not written" (some request)
       (help := if valueless then s!"write `{k} = …`"
-        else "name `show`, `decls`, `proofs`, `link`, `facts`, `bibliography` or a `phrase.` entry")
+        else s!"name {", ".intercalate (showKeys.map (s!"`{·}`"))} or a `{phraseKey}` entry")
       (subject := some s!"code:option:{k}")
   let views := showing.unknown.toArray.map fun n =>
     Diag.of .W0110 s!"`show` names '{n}', which is no view of a Lean file; it is included without \
-it" (some request) (help := "name `code`, `math`, `prose` or `docs`")
+it" (some request) (help := s!"name {namesOr (View.all.map (·.name))}")
       (subject := some s!"code:show:{n}")
   let idle := showing.idle .lean request (page := false)
   let notes := views ++ unread ++ strange ++ idle
@@ -2197,16 +2250,10 @@ it" (some request) (help := "name `code`, `math`, `prose` or `docs`")
   let whole : List Seg := [⟨.code, 0, text.toList⟩]
   -- The documentation view sets the file as its page does, citing into its bibliography's keys.
   if showing.docs then
-    let (body, ds) := (pagePieces .lean text [] []).foldl (init := (#[], #[]))
-      fun (acc : Array Raw × Array Diag) piece => match piece with
-        | .code start code => (acc.1 ++ listingAt starts start code, acc.2)
-        | .prose seg =>
-          let read := proseRaws .lean file starts (refs.map (·.keys)) seg false
-          (acc.1 ++ read.1, acc.2 ++ read.2)
-        | .statement _ => acc
+    let read := docsRaws file text starts (refs.map (·.keys))
     let unsaid := (declaredFor .lean showing none).refused.map fun (name, r) =>
       refusalNote request.file request.pos name r
-    (wrap body, notes ++ unsaid ++ ds)
+    (wrap read.1, notes ++ unsaid ++ read.2)
   else
   match (if showing.asks || showing.decls.isSome then facts else none) with
   | none =>
@@ -2242,7 +2289,7 @@ it" (some request) (help := "name `code`, `math`, `prose` or `docs`")
       let index (d : LeanFacts.Decl) : Nat := (f.decls.findIdx? (· == d)).getD 0
       let items := (ds.filter (chosen ·.name)).map (fun d => (offsetOf starts d.head, one d (index d))) ++
         (f.failed.filter (chosen ·.name)).map fun fl => (offsetOf starts fl.head, code fl.head fl.stop)
-      let body := (items.qsort (·.1 < ·.1)).foldl (fun acc (_, raws) => acc ++ raws) #[]
+      let body := chosenRaws items
       let named := if showing.statements then #[] else unnamedNotes showing f request
       (wrap body, notes ++ refused ++ st.2.2 ++ named)
 
