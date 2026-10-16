@@ -14,3 +14,13 @@ def surfaceModules : List String :=
 def backendModules : List String :=
   ["Layout", "Pdf", "PdfContent", "PdfStruct", "Html", "HtmlDoc", "MathMl", "MarkdownDoc"].map
     ("LeanTex.Core." ++ ·)
+
+/-- Import floors: a module whose import closure must not reach another; the colour arithmetic stands
+below the IR and the contrast judge off the PDF layout engine. -/
+def importFloors : List (String × String) :=
+  [("LeanTex.Core.DesignRole", "LeanTex.Core.Ir"),
+   ("LeanTex.Core.Oklab", "LeanTex.Core.Ir"),
+   ("LeanTex.Core.ContrastRatio", "LeanTex.Core.Ir"),
+   ("LeanTex.Core.ContrastSolve", "LeanTex.Core.Ir"),
+   ("LeanTex.Core.SeedPalette", "LeanTex.Core.Ir"),
+   ("LeanTex.Core.Contrast", "LeanTex.Core.Layout")]

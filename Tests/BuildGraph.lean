@@ -37,25 +37,10 @@ def parseHeader (name text : String) : IO (Except String Header) := do
         { mod := i.module.toString (escape := false), all := i.importAll } }
   catch e => return .error e.toString
 
-/-- The modules whose private part `h`'s build reads among `graph`: everything for a file outside
-the module system, else the transitive `import all` closure. -/
-def privateReads (graph : Std.HashMap String Header) (h : Header) : Array String := Id.run do
-  let follow (i : Import) : Bool := !h.isModule || i.all
-  let mut seen : Array String :=
-    (h.imports.filter fun i => follow i && graph.contains i.mod).map (·.mod)
-  for _ in [0:graph.size] do
-    let mut next := seen
-    for m in seen do
-      for i in (graph.get? m).map (·.imports) |>.getD #[] do
-        if follow i && graph.contains i.mod && !next.contains i.mod then
-          next := next.push i.mod
-    if next.size == seen.size then break
-    seen := next
-  return seen.qsort (· < ·)
-
-/-- Each surface module `root`'s build reaches through a chain of imports of any kind, with the first
-chain reaching it, a surface's own imports unread. -/
-def surfaceReach (graph : Std.HashMap String Header) (root : String) : Array (List String) := Id.run do
+/-- Every module `root`'s build reaches through the imports `follow` admits, each with the first chain
+reaching it; a module `stop` names, or one outside `graph`, is reached and not read on. -/
+def reach (graph : Std.HashMap String Header) (root : String) (follow : Import → Bool)
+    (stop : String → Bool := fun _ => false) : Array (List String) := Id.run do
   let mut seen : Std.HashSet String := ({} : Std.HashSet String).insert root
   let mut frontier : Array (List String) := #[[root]]
   let mut found : Array (List String) := #[]
@@ -64,13 +49,25 @@ def surfaceReach (graph : Std.HashMap String Header) (root : String) : Array (Li
     for path in frontier do
       let some m := path.head? | continue
       for i in (graph.get? m).map (·.imports) |>.getD #[] do
-        unless seen.contains i.mod do
+        unless !follow i || seen.contains i.mod do
           seen := seen.insert i.mod
-          if surfaceModules.contains i.mod then found := found.push (i.mod :: path).reverse
-          else next := next.push (i.mod :: path)
+          found := found.push (i.mod :: path).reverse
+          unless stop i.mod do next := next.push (i.mod :: path)
     if next.isEmpty then break
     frontier := next
   return found
+
+/-- The modules whose private part `h`'s build reads among `graph`: everything for a file outside
+the module system, else the transitive `import all` closure. -/
+def privateReads (graph : Std.HashMap String Header) (h : Header) : Array String :=
+  (((reach graph h.name fun i => !h.isModule || i.all).filterMap (·.getLast?)).filter
+    graph.contains).qsort (· < ·)
+
+/-- Each surface module `root`'s build reaches through a chain of imports of any kind, with the first
+chain reaching it, a surface's own imports unread. -/
+def surfaceReach (graph : Std.HashMap String Header) (root : String) : Array (List String) :=
+  (reach graph root (fun _ => true) surfaceModules.contains).filter fun chain =>
+    chain.getLast?.any surfaceModules.contains
 
 /-- The files outside the module system, each small and imported by no module. -/
 def legacyFiles : List String :=
@@ -111,6 +108,15 @@ def largeReaders : List (String × List String) :=
    ("Tests.Layout", []),
    ("Tests.Surface", [])]
 
+/-- The maintained tools' sources, which a module may import too. -/
+def scriptSources : IO (Array (String × String)) := do
+  let mut named := #[]
+  for f in ← System.FilePath.walkDir "scripts" do
+    if f.extension == some "lean" then
+      let name := ".".intercalate ((f.toString.dropEnd ".lean".length).toString.splitOn "/")
+      named := named.push (name, ← IO.FS.readFile f)
+  return named
+
 /-- The maintained Lean sources: the library, the suite and the two roots beside them. -/
 def sources : IO (Array (String × String)) := do
   let mut out := #[]
@@ -125,27 +131,55 @@ def sources : IO (Array (String × String)) := do
     named := named.push (name, ← IO.FS.readFile path)
   return named
 
-/-- The verdicts over one tree, as named facts. -/
-def judge (files : Array (String × String)) : IO (List (String × Bool)) := do
+/-- The verdicts over one tree, as named facts; `tools` join the graph its import closures read. -/
+def judge (files : Array (String × String)) (tools : Array (String × String) := #[]) :
+    IO (List (String × Bool)) := do
   let mut headers : Array Header := #[]
+  let mut toolHeaders : Array Header := #[]
   let mut refused : Array String := #[]
   for (n, t) in files do
     match ← parseHeader n t with
     | .ok h => headers := headers.push h
     | .error e => refused := refused.push e
+  for (n, t) in tools do
+    match ← parseHeader n t with
+    | .ok h => toolHeaders := toolHeaders.push h
+    | .error e => refused := refused.push e
   let graph : Std.HashMap String Header :=
-    headers.foldl (fun g h => g.insert h.name h) {}
+    (headers ++ toolHeaders).foldl (fun g h => g.insert h.name h) {}
+  let chains (cs : Array (List String)) : List String := cs.toList.map (" → ".intercalate ·)
+  let reaches (root target : String) : Bool :=
+    (reach graph root (fun _ => true)).any (·.getLast? == some target)
+  -- Every module of the core a backend's build reads lies on the backends' side of the surface.
+  let aboveBackends := headers.filter fun h => h.name.startsWith "LeanTex.Core." &&
+    (backendModules.contains h.name || backendModules.any (reaches h.name ·))
+  let crossing := aboveBackends.filterMap fun h =>
+    let found := surfaceReach graph h.name
+    if found.isEmpty || backendModules.contains h.name then none else some (chains found)
+  let door := "LeanTex.Core.Surface"
+  let doorReads := (((graph.get? door).map (·.imports)).getD #[]).filterMap fun i =>
+    if i.mod.startsWith "LeanTex." then some i.mod else none
   let legacy := (headers.filter (!·.isModule)).map (·.name)
   let mut facts : List (String × Bool) :=
     [(s!"every header reads as Lake reads it (refused: {refused.toList})", refused.isEmpty),
      (s!"the files outside the module system are exactly {legacyFiles} (found {legacy.toList})",
       legacy.toList.mergeSort (· ≤ ·) == legacyFiles.mergeSort (· ≤ ·)),
      ("every declared large file exists",
-      (largeReads ++ largeReaders).all fun (n, _) => graph.contains n)] ++
-    backendModules.map fun b =>
-      let reached := (surfaceReach graph b).toList.map (" → ".intercalate ·)
-      (s!"the backend {b} reaches no surface module through any import (found {reached})",
-        graph.contains b && reached.isEmpty)
+      (largeReads ++ largeReaders).all fun (n, _) => graph.contains n),
+     (s!"every surface module and backend is in the tree (missing: \
+{(surfaceModules ++ backendModules).filter (!graph.contains ·)})",
+      (surfaceModules ++ backendModules).all graph.contains),
+     (s!"every module of the library the surfaces' door reads is a surface module (found {doorReads})",
+      graph.contains door && doorReads.all surfaceModules.contains),
+     (s!"no module of the core a backend's build reads reaches a surface module (found {crossing})",
+      crossing.isEmpty)] ++
+    (backendModules.map fun b =>
+      (s!"the backend {b} reaches no surface module through any import (found \
+{chains (surfaceReach graph b)})", (surfaceReach graph b).isEmpty)) ++
+    importFloors.map fun (root, banned) =>
+      let found := (reach graph root (fun _ => true)).filter (·.getLast? == some banned)
+      (s!"{root} stays below {banned}, which none of its imports reaches (found {chains found})",
+        found.isEmpty)
   let moduleReads := (headers.filter (·.isModule)).map fun h => (h.name, privateReads graph h)
   for (name, text) in files do
     let size := (text.splitOn "\n").length
@@ -197,6 +231,19 @@ def selfTest : IO (List (String × Bool)) := do
     ("Synthetic.Leaf", "module\n")]
   let backendFact (facts : List (String × Bool)) (b : String) : Option (String × Bool) :=
     facts.find? fun (n, _) => hasStr n s!"the backend {b} "
+  let viaTool ← judge #[("LeanTex.Core.Html", "module\nimport scripts.Mid\n")]
+    #[("scripts.Mid", "module\nimport LeanTex.Core.Parse\n")]
+  let above ← judge #[("LeanTex.Core.Html", "module\n"),
+    ("Synthetic.Above", "module\nimport LeanTex.Core.Html\nimport LeanTex.Core.Lex\n")]
+  let aboveCore ← judge #[("LeanTex.Core.Html", "module\n"),
+    ("LeanTex.Core.Above", "module\nimport LeanTex.Core.Html\nimport LeanTex.Core.Lex\n")]
+  let floorKept ← judge #[("LeanTex.Core.Oklab", "module\npublic import LeanTex.Core.Color\n"),
+    ("LeanTex.Core.Color", "module\n")]
+  let floorBroken ← judge #[("LeanTex.Core.Oklab", "module\nimport LeanTex.Core.Ir\n")]
+  let floorThrough ← judge #[("LeanTex.Core.Contrast", "module\npublic import LeanTex.Core.Theme\n"),
+    ("LeanTex.Core.Theme", "module\npublic import all LeanTex.Core.Layout\n")]
+  let floorFact (facts : List (String × Bool)) (root : String) : Option (String × Bool) :=
+    facts.find? fun (n, _) => hasStr n s!"{root} stays below"
   return [("an import all reads through further import all, never through a plain import",
      reads "A" == #["B", "D"]),
    ("a plain import reads no private part", reads "D" == #[]),
@@ -224,16 +271,31 @@ def selfTest : IO (List (String × Bool)) := do
        hasStr n "LeanTex.Core.MarkdownDoc → LeanTex.Core.MdDesugar"),
    ("a backend whose imports reach no surface passes",
      (backendFact clean "LeanTex.Core.Html").any (·.2)),
-   ("a backend absent from the tree fails",
-     (backendFact clean "LeanTex.Core.Pdf").any (!·.2))]
+   ("a backend absent from the tree fails, named missing",
+     clean.any fun (n, ok) => !ok && hasStr n "missing:" && hasStr n "LeanTex.Core.Pdf"),
+   ("a backend reaching a surface through a tool's module fails",
+     (backendFact viaTool "LeanTex.Core.Html").any fun (n, ok) => !ok &&
+       hasStr n "LeanTex.Core.Html → scripts.Mid → LeanTex.Core.Parse"),
+   ("a core module above a backend reaching a surface fails, and one outside the core does not",
+     aboveCore.any (fun (n, ok) => !ok && hasStr n "LeanTex.Core.Above → LeanTex.Core.Lex") &&
+       !above.any fun (n, ok) => !ok && hasStr n "Synthetic.Above"),
+   ("a floor its imports keep passes",
+     (floorFact floorKept "LeanTex.Core.Oklab").any (·.2)),
+   ("a floor broken by a direct import fails, naming the chain",
+     (floorFact floorBroken "LeanTex.Core.Oklab").any fun (n, ok) => !ok &&
+       hasStr n "LeanTex.Core.Oklab → LeanTex.Core.Ir"),
+   ("a floor broken through a dependency's import all fails",
+     (floorFact floorThrough "LeanTex.Core.Contrast").any fun (n, ok) => !ok &&
+       hasStr n "LeanTex.Core.Contrast → LeanTex.Core.Theme → LeanTex.Core.Layout")]
 
 end Tests.BuildGraph
 
 /-- Every library and test file is a `module` but the declared shims, and the shims, each large
-file's private reads and its private readers match the declared lists; no backend's imports reach a
-surface. -/
+file's private reads and its private readers match the declared lists; no backend, nor a core module
+above one, reaches a surface, and every import floor holds. -/
 def buildGraphChecks (ref : IO.Ref (List String)) : IO Unit := do
   for (name, ok) in ← Tests.BuildGraph.selfTest do
     check ref s!"build graph model: {name}" ok
-  for (name, ok) in ← Tests.BuildGraph.judge (← Tests.BuildGraph.sources) do
+  for (name, ok) in ← Tests.BuildGraph.judge (← Tests.BuildGraph.sources)
+      (← Tests.BuildGraph.scriptSources) do
     check ref s!"build graph: {name}" ok
