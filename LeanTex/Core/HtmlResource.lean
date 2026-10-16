@@ -27,6 +27,12 @@ public inductive Media where
   if k < 26 then k + 65 else if k < 52 then k + 71 else if k < 62 then k - 4
   else if k == 62 then 43 else 47
 
+/-- Every sextet's character is RFC 4648's base64 alphabet at that index. -/
+theorem sextet_rfc4648 :
+    (List.range 64).map (fun k => (sextet k.toUInt8).toNat) =
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/".toList.map Char.toNat := by
+  decide
+
 private theorem sextet_lt (k : UInt8) : sextet k < 128 := by
   unfold sextet
   have := k.toNat_lt
@@ -74,7 +80,7 @@ public def base64 (bytes : ByteArray) : String := Id.run do
   return String.fromUTF8 out.1 out.2
 
 /-- A resource's data URL (RFC 2397). -/
-public def dataUri (media : Media) (bytes : ByteArray) : String :=
+public def dataUrl (media : Media) (bytes : ByteArray) : String :=
   let payload := base64 bytes
   "data:" ++ media.mime ++ ";base64," ++ payload
 
@@ -82,15 +88,15 @@ public def dataUri (media : Media) (bytes : ByteArray) : String :=
 public structure Embedded where
   media : Media
   bytes : ByteArray
-  cachedUri : Thunk String := Thunk.mk fun _ => dataUri media bytes
-  cachedUri_exact : cachedUri.get = dataUri media bytes := by rfl
+  cachedUri : Thunk String := Thunk.mk fun _ => dataUrl media bytes
+  cachedUri_exact : cachedUri.get = dataUrl media bytes := by rfl
 
 public instance : BEq Embedded where
   beq a b := a.media == b.media && a.bytes == b.bytes
 
 public def Embedded.uri (r : Embedded) : String := r.cachedUri.get
 
-public theorem Embedded.uri_exact (r : Embedded) : r.uri = dataUri r.media r.bytes :=
+public theorem Embedded.uri_exact (r : Embedded) : r.uri = dataUrl r.media r.bytes :=
   r.cachedUri_exact
 
 /-- Whether the bytes may render: SVG among `svgChecked`, other media by their format signature. -/

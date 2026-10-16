@@ -198,12 +198,14 @@ The default rows moved within the host's noise.
 
 `--talk-only` builds the invented deck `scripts/talkdeck.lean` writes: 60 frames with 43 minted
 listings (Lean, Python, shell), overlays (item specs, `\pause`, `\uncover`, `\only`,
-`\alert<n>`), blocks, tables, a footnote, a 4096×4096 RGBA PNG shown three times, an SVG chart
+`\alert<n>`), blocks, tables, footnotes, a 4096×4096 RGBA PNG shown three times, an SVG chart
 and two vector PDF charts. Its generator is compiled (`lake build talkDeck`), so its raster and
-streams deflate at the engine's speed. Each build is sealed (no tool on `PATH`, an empty `HOME`,
-the corpus fonts staged beside the deck) and must ship no loss; the report gives the median of
-`N` pairs of a cold build (an empty application cache) and a warm one, in each format, with every
-phase, and fails when a warm or a later cold build changes the artifact.
+streams deflate at the engine's speed. Each build has no tool on `PATH`, an empty `HOME` and the
+corpus fonts staged beside the deck (font discovery still reads the host's system font
+directories), and must ship no loss; the report gives the median of `N` pairs of a cold build
+(an empty application cache) and a warm one, in each format, with every phase, and fails when a
+warm or a later cold build changes the artifact, or when `LEANTEX_BENCH_COMPARE_BINARY` names a
+compiler whose cold build differs.
 
 The web page's writer escaped every text node and attribute value through a list of characters and
 encoded each data URL once per use, and once more for its closure check. It now returns a value

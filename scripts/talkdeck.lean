@@ -1,5 +1,6 @@
 import LeanTex.Core.Flate
 import LeanTex.Core.PngEncode
+import Tests.Support.Rand
 
 /-
 An invented talk-sized deck and its figures, written into a directory for `bench.lean --talk-only`.
@@ -14,7 +15,7 @@ def vocabulary : Array String :=
   #["orbit", "cedar", "lumen", "prism", "quill", "raven", "sable", "tundra", "willow", "zephyr",
     "harbor", "meadow", "nectar", "ember", "fable", "gamut"]
 
-def word (i : Nat) : String := vocabulary[i % vocabulary.size]!
+def word (i : Nat) : String := vocabulary.getD (i % vocabulary.size) ""
 
 def phrase (seed len : Nat) : String :=
   String.intercalate " " ((List.range len).map fun j => word (seed * 5 + j * 3))
@@ -136,14 +137,8 @@ def deck (frames : Nat) : String := Id.run do
 
 /-! Figures. -/
 
-def png (width height : Nat) (compressed : ByteArray) : ByteArray :=
-  PngEncode.signature ++
-    PngEncode.chunk PngEncode.tagIHDR
-      (PngEncode.be32 width ++ PngEncode.be32 height ++ ⟨#[8, 6, 0, 0, 0]⟩) ++
-    PngEncode.chunk PngEncode.tagIDAT compressed ++ PngEncode.chunk PngEncode.tagIEND ByteArray.empty
-
-/-- A diagram-like RGBA raster: flat panels on a light ground, ruled text-like strokes, a soft
-gradient band, seeded grain in one panel and transparent margins. -/
+/-- A diagram-like RGBA raster: panels on a light ground, flat, graded or grained, ruled with
+text-like strokes, inside transparent margins. -/
 def panelsRaw (side : Nat) : ByteArray := Id.run do
   let mut out := ByteArray.emptyWithCapacity (side * (4 * side + 1))
   let mut seed : UInt64 := 731
@@ -156,10 +151,9 @@ def panelsRaw (side : Nat) : ByteArray := Id.run do
       let inPanel := (x * 6) % side > side / 20 && (y * 5) % side > side / 16
       let stroke := inPanel && (y * 40 / side) % 2 == 0 && (y * 160 / side) % 4 == 1 &&
         ((x * 37 + y) / 23) % 7 != 0
-      seed := seed ^^^ (seed >>> 12)
-      seed := seed ^^^ (seed <<< 25)
-      seed := seed ^^^ (seed >>> 27)
-      let grain := ((seed * 2685821657736338717) >>> 61).toUInt8
+      let (next, v) := nextRand seed
+      seed := next
+      let grain := (v >>> 61).toUInt8
       let (r, g, b) : UInt8 × UInt8 × UInt8 :=
         if !inPanel then (248, 247, 244)
         else if stroke then (34, 40, 49)
@@ -200,13 +194,11 @@ def scatterContent (points : Nat) : ByteArray := Id.run do
   let mut seed : UInt64 := 99
   let mut out := s.toUTF8
   for p in [0:points] do
-    seed := seed ^^^ (seed >>> 12)
-    seed := seed ^^^ (seed <<< 25)
-    seed := seed ^^^ (seed >>> 27)
-    let v := seed * 2685821657736338717
+    let (next, v) := nextRand seed
+    seed := next
     let x := 42 + (v >>> 40).toNat % 556
     let y := 32 + ((v >>> 20).toNat % 346 + p % 346) / 2
-    let c := palette[p % 4]!
+    let c := palette.getD (p % 4) ""
     out := out ++ s!"{c} rg {x}.{p % 10} {y}.{(p / 10) % 10} 2.4 2.4 re f\n".toUTF8
   return out
 
@@ -216,11 +208,11 @@ def barsContent (bars : Nat) : ByteArray := Id.run do
   for k in [0:bars] do
     let h := 20 + (k * 53 + 17) % 260
     let w := 400 / bars
-    s := s ++ s!"{palette[k % 4]!} rg {32 + k * w} 21 {w - 2} {h} re f\n"
+    s := s ++ s!"{palette.getD (k % 4) ""} rg {32 + k * w} 21 {w - 2} {h} re f\n"
   return s.toUTF8
 
-/-- An invented SVG line chart of `series` polylines of `points` points, with markers, a grid
-and labels. -/
+/-- An invented SVG line chart of `series` polylines of `points` points, every fourth marked,
+over vertical grid lines. -/
 def linesSvg (series points : Nat) : String := Id.run do
   let colours := #["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728"]
   let mut s := "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"640\" height=\"400\" viewBox=\"0 0 640 400\">\n" ++
@@ -233,12 +225,12 @@ def linesSvg (series points : Nat) : String := Id.run do
       let x := 40 + p * 560 / points
       let y := 360 - ((p * (j + 3) * 7 + j * 61) % 300)
       d := d ++ (if p == 0 then "M " else " L ") ++ s!"{x} {y}"
-    s := s ++ s!"<path d=\"{d}\" fill=\"none\" stroke=\"{colours[j % 4]!}\" stroke-width=\"1.5\"/>\n"
+    s := s ++ s!"<path d=\"{d}\" fill=\"none\" stroke=\"{colours.getD (j % 4) ""}\" stroke-width=\"1.5\"/>\n"
     for p in [0:points] do
       if p % 4 == 0 then
         let x := 40 + p * 560 / points
         let y := 360 - ((p * (j + 3) * 7 + j * 61) % 300)
-        s := s ++ s!"<circle cx=\"{x}\" cy=\"{y}\" r=\"2.5\" fill=\"{colours[j % 4]!}\"/>\n"
+        s := s ++ s!"<circle cx=\"{x}\" cy=\"{y}\" r=\"2.5\" fill=\"{colours.getD (j % 4) ""}\"/>\n"
   return s ++ "</svg>\n"
 
 end TalkDeck
@@ -250,7 +242,8 @@ def main (args : List String) : IO UInt32 := do
   let dir := System.FilePath.mk dir
   IO.FS.createDirAll (dir / "figures")
   IO.FS.writeFile (dir / "deck.tex") (deck frames)
-  IO.FS.writeBinFile (dir / "figures" / "panels.png") (png 4096 4096 (Flate.deflate (panelsRaw 4096)))
+  IO.FS.writeBinFile (dir / "figures" / "panels.png") (PngEncode.encodeIdat
+    { width := 4096, height := 4096, bitDepth := 8, colorType := 6 } (Flate.deflate (panelsRaw 4096)))
   IO.FS.writeBinFile (dir / "figures" / "scatter.pdf") (pdfOf (scatterContent 60000) 640 400)
   IO.FS.writeBinFile (dir / "figures" / "bars.pdf") (pdfOf (barsContent 24) 480 320)
   IO.FS.writeFile (dir / "figures" / "lines.svg") (linesSvg 4 2000)

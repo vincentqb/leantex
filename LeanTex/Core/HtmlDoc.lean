@@ -45,8 +45,8 @@ public inductive LengthBasis where
 public abbrev CodeRoot := List (Ir.Scheme × List (Ir.Role × Option (Ir.Color × Option Ir.Role)))
 
 /-- A page's captured resources, each built once so its data URL is computed once: images and
-static faces by store index, font programs by face index (`Uris.of`). -/
-public structure Uris where
+static faces by store index, font programs by face index (`PageResources.of`). -/
+public structure PageResources where
   images : Array (Option HtmlResource.Embedded) := #[]
   posters : Array (Option HtmlResource.Embedded) := #[]
   fonts : Array HtmlResource.Embedded := #[]
@@ -62,7 +62,7 @@ public structure Config where
   /-- The document's loaded images, whose intrinsic sizes `<img>` carries. -/
   imgs : Image.Store := {}
   /-- The captured resources, which the page's emission builds once from `imgs` and `fonts`. -/
-  uris : Uris := {}
+  captured : PageResources := {}
   /-- The markdown twin's relative URL, linked from the head as the alternate representation. -/
   mdHref : Option String := none
   /-- The palette in force at this point of the block walk. -/
@@ -2907,69 +2907,69 @@ public def imagePosterHref (imgs : Image.Store) (req : Image.Request) :
   some r.uri
 
 /-- Every captured resource, each built once. -/
-public def Uris.of (imgs : Image.Store) (fonts : Option Font.FontSet) : Uris where
+public def PageResources.of (imgs : Image.Store) (fonts : Option Font.FontSet) : PageResources where
   images := imgs.entries.map imageResource?
   posters := imgs.entries.map imagePosterResource?
   fonts := (fonts.map fontResources).getD #[]
 
 /-- `imageRequestHref`, read from the table where it holds the request's entry. -/
-public def Uris.imageHref (u : Uris) (imgs : Image.Store) (req : Image.Request) : String :=
+public def PageResources.imageHref (u : PageResources) (imgs : Image.Store) (req : Image.Request) : String :=
   match (imgs.findRequest? req).bind (u.images[·]?) with
   | some (some r) => r.uri
   | _ => imageRequestHref imgs req
 
 /-- `imagePosterHref`, read from the table where it holds the request's entry. -/
-public def Uris.posterHref (u : Uris) (imgs : Image.Store) (req : Image.Request) :
+public def PageResources.posterHref (u : PageResources) (imgs : Image.Store) (req : Image.Request) :
     Option String :=
   match (imgs.findRequest? req).bind (u.posters[·]?) with
   | some (some r) => some r.uri
   | _ => imagePosterHref imgs req
 
 /-- A font program's URL, read from the table where it holds the face. -/
-public def Uris.fontHref (u : Uris) (fs : Font.FontSet) (i : Nat) : String :=
+public def PageResources.fontHref (u : PageResources) (fs : Font.FontSet) (i : Nat) : String :=
   match u.fonts[i]? with
   | some r => r.uri
   | none => (fontResource (fs.get i)).uri
 
-public theorem Uris.imageHref_exact (imgs : Image.Store) (fonts : Option Font.FontSet)
-    (req : Image.Request) : (Uris.of imgs fonts).imageHref imgs req = imageRequestHref imgs req := by
-  unfold Uris.imageHref
+public theorem PageResources.imageHref_exact (imgs : Image.Store) (fonts : Option Font.FontSet)
+    (req : Image.Request) : (PageResources.of imgs fonts).imageHref imgs req = imageRequestHref imgs req := by
+  unfold PageResources.imageHref
   split
   · next r h =>
     cases hk : imgs.findRequest? req with
     | none => simp [hk] at h
     | some k =>
       cases he : imgs.entries[k]? with
-      | none => simp [hk, Uris.of, he] at h
+      | none => simp [hk, PageResources.of, he] at h
       | some en =>
-        simp only [hk, Uris.of, Option.bind_some, Array.getElem?_map, he, Option.map_some,
+        simp only [hk, PageResources.of, Option.bind_some, Array.getElem?_map, he, Option.map_some,
           Option.some.injEq] at h
         simp [imageRequestHref, hk, Image.Store.get?, he, h]
   · rfl
 
-public theorem Uris.posterHref_exact (imgs : Image.Store) (fonts : Option Font.FontSet)
+public theorem PageResources.posterHref_exact (imgs : Image.Store) (fonts : Option Font.FontSet)
     (req : Image.Request) :
-    (Uris.of imgs fonts).posterHref imgs req = imagePosterHref imgs req := by
-  unfold Uris.posterHref
+    (PageResources.of imgs fonts).posterHref imgs req = imagePosterHref imgs req := by
+  unfold PageResources.posterHref
   split
   · next r h =>
     cases hk : imgs.findRequest? req with
     | none => simp [hk] at h
     | some k =>
       cases he : imgs.entries[k]? with
-      | none => simp [hk, Uris.of, he] at h
+      | none => simp [hk, PageResources.of, he] at h
       | some en =>
-        simp only [hk, Uris.of, Option.bind_some, Array.getElem?_map, he, Option.map_some,
+        simp only [hk, PageResources.of, Option.bind_some, Array.getElem?_map, he, Option.map_some,
           Option.some.injEq] at h
         simp [imagePosterHref, hk, Image.Store.get?, he, h]
   · rfl
 
-public theorem Uris.fontHref_exact (imgs : Image.Store) (fs : Font.FontSet) (i : Nat) :
-    (Uris.of imgs (some fs)).fontHref fs i = (fontResource (fs.get i)).uri := by
-  unfold Uris.fontHref
+public theorem PageResources.fontHref_exact (imgs : Image.Store) (fs : Font.FontSet) (i : Nat) :
+    (PageResources.of imgs (some fs)).fontHref fs i = (fontResource (fs.get i)).uri := by
+  unfold PageResources.fontHref
   split
   · next r h =>
-    simp only [Uris.of, Option.map_some, Option.getD_some, fontResources, Array.getElem?_map,
+    simp only [PageResources.of, Option.map_some, Option.getD_some, fontResources, Array.getElem?_map,
       Array.getElem?_range] at h
     split at h
     · simp only [Option.map_some, Option.some.injEq] at h
@@ -3091,17 +3091,17 @@ public theorem imagePosterHref_covers (imgs : Image.Store) (req : Image.Request)
   · exact Array.mem_of_getElem? hen
   · simp [imagePosterHref, hk, hen, hr]
 
-private def fontFaceRule (u : Uris) (fs : Font.FontSet) (ff : FontFace) : String :=
+private def fontFaceRule (u : PageResources) (fs : Font.FontSet) (ff : FontFace) : String :=
   s!"@font-face \{ font-family: \"{cssString ff.family}\"; font-weight: {ff.weight}; " ++
   s!"font-style: {if ff.italic then "italic" else "normal"}; " ++
   s!"src: url(\"{u.fontHref fs ff.index}\") format(\"{ff.format}\"); }\n"
 
-private def fontFaceCss (u : Uris) (fs : Font.FontSet) : String :=
+private def fontFaceCss (u : PageResources) (fs : Font.FontSet) : String :=
   String.join ((shipFaces fs).toList.map (fontFaceRule u fs))
 
 /-- The `@font-face` rules, the body weight the document resolved, and small caps as the only
 synthesis. -/
-private def fontCss (u : Uris) (fs : Font.FontSet) : String :=
+private def fontCss (u : PageResources) (fs : Font.FontSet) : String :=
   let w := (fs.get (fs.lookup 0 400 false)).weight
   fontFaceCss u fs ++
   s!"body \{ font-weight: {w}; --ltx-body-weight: {w}; " ++
@@ -5615,7 +5615,7 @@ public def imageElement (cfg : Config) (index? : Option Nat) (req : Image.Reques
   | some fig => FigureSvg.inlineSvg fig
       (pictureAltAttrs (figureWord cfg.locale) alt ++ #[("class", "picture")] ++ dims)
   | none =>
-    match cfg.uris.posterHref cfg.imgs req with
+    match cfg.captured.posterHref cfg.imgs req with
     | some poster => Html.elem "picture" #[
         Html.elem "source" #[] #[("media", "print, (prefers-reduced-motion: reduce)"),
           ("srcset", poster)], img]
@@ -5651,7 +5651,7 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
           | .decorative => .decorative
           | .described t => .described t) else alt
     -- an unresolved request keeps its source spelling, so publication can name the loss
-    let href := cfg.uris.imageHref cfg.imgs (size.request src)
+    let href := cfg.captured.imageHref cfg.imgs (size.request src)
     let horizontal (l : Image.Len) : Bool :=
       l.value.anyRef fun m => m != .textHeight
     let vertical (l : Image.Len) : Bool :=
@@ -8640,7 +8640,7 @@ private def emitTreeCore (cfg : Config) (doc : Doc)
   let (styled, styleDiags) := styles cfg.literal
   diags := diags ++ styleDiags
   let faceRules := match cfg.fonts with
-    | some fs => fontCss cfg.uris fs
+    | some fs => fontCss cfg.captured fs
     | none => ""
   -- the base sheet's slot is held here, filled once the body's boundary shapes are known
   let cssCfg := cfg
@@ -9009,21 +9009,21 @@ one in the article class"
 
 /-- The document's typed tree, head and body, with its diagnostics, from the normalized IR, its
 resources read from `u`. -/
-public def emitTreeWith (cfg : Config) (u : Uris) (doc : Doc) :
+private def emitTreeWith (cfg : Config) (u : PageResources) (doc : Doc) :
     Array Node × Array Node × Array Diag :=
   let coverage := cfg.fonts.map (·.mathAlphabets) |>.getD {}
   let family := cfg.fonts.bind (fun fs => fs.math.bind (fs.fonts[·]?))
     |>.map (·.family) |>.getD "math face"
   let resolved := Ir.resolveMathAlphas coverage family doc
   -- locations erased, so they hide nothing from the structural classifiers
-  let tree := emitTreeCore { cfg with mathRenderer := none, uris := u }
+  let tree := emitTreeCore { cfg with mathRenderer := none, captured := u }
     (Ir.eraseLocations resolved.1) (fun lit => styleRules resolved.1 lit)
   -- projections, not a destructuring `let`, keep `emitTree_resolve_agree` cheap to check
   (tree.1, tree.2.1 ++ mathBoundaryNodes cfg.mathRenderer, resolved.2 ++ tree.2.2)
 
 /-- The document's typed tree, head and body, with its diagnostics, from the normalized IR. -/
 public def emitTree (cfg : Config) (doc : Doc) : Array Node × Array Node × Array Diag :=
-  emitTreeWith cfg (Uris.of cfg.imgs cfg.fonts) doc
+  emitTreeWith cfg (PageResources.of cfg.imgs cfg.fonts) doc
 
 -- a bound below the default, holding the kernel check's cost
 set_option maxHeartbeats 2000 in
@@ -9059,20 +9059,15 @@ public def resources (cfg : Config) : Array HtmlResource.Embedded :=
     (cfg.favicon.map fun (_, r) => #[r]).getD #[]
 
 /-- The table's resources in `resources`' order, each the very value the page's URLs read. -/
-public def Uris.resources (u : Uris) (favicon : Option (String × HtmlResource.Embedded)) :
+public def PageResources.resources (u : PageResources) (favicon : Option (String × HtmlResource.Embedded)) :
     Array HtmlResource.Embedded :=
   u.fonts ++ (u.images.filterMap id ++ u.posters.filterMap id) ++
     (favicon.map fun (_, r) => #[r]).getD #[]
 
-private theorem filterMap_id_map {α β : Type} (f : α → Option β) (xs : Array α) :
-    (xs.map f).filterMap id = xs.filterMap f := by
-  apply Array.ext'
-  simp [List.filterMap_map]
-
-public theorem Uris.resources_exact (cfg : Config) :
-    (Uris.of cfg.imgs cfg.fonts).resources cfg.favicon = HtmlDoc.resources cfg := by
-  simp only [Uris.resources, Uris.of, HtmlDoc.resources, imageResources, filterMap_id_map,
-    Array.append_assoc]
+public theorem PageResources.resources_exact (cfg : Config) :
+    (PageResources.of cfg.imgs cfg.fonts).resources cfg.favicon = HtmlDoc.resources cfg := by
+  simp only [PageResources.resources, PageResources.of, HtmlDoc.resources, imageResources,
+    Array.filterMap_map, Function.id_comp, Array.append_assoc]
 
 /-- The scripts a page may carry: the deck's constant and the declared math renderer. -/
 public def admittedScripts (renderer : Option String) : Array String :=
@@ -9087,7 +9082,7 @@ public abbrev ClosedPage (renderer : Option String) :=
 public def emitClosed (cfg : Config) (doc : Doc) (svgChecked : Array ByteArray) :
     Except String (ClosedPage cfg.mathRenderer) × Array Diag :=
   -- one table, so each data URL the page and its closure read is computed once
-  let u := Uris.of cfg.imgs cfg.fonts
+  let u := PageResources.of cfg.imgs cfg.fonts
   let (head, body, diags) := emitTreeWith cfg u doc
   -- premise: Tests.htmlContainedChecks — Bulma requires a captured framework stylesheet.
   let page := if cfg.css == .bulma && doc.output.stylesheet.isNone then
@@ -9106,7 +9101,7 @@ public theorem emitClosed_covers (cfg : Config) (doc : Doc) (svgChecked : Array 
   dsimp only [emitClosed] at h
   split at h
   · contradiction
-  · rw [← Uris.resources_exact]
+  · rw [← PageResources.resources_exact]
     exact HtmlResource.close_covers _ svgChecked (admittedScripts cfg.mathRenderer)
       (doc.info.language.getD "en") _ _ h
 

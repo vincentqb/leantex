@@ -595,10 +595,7 @@ def binaryHash (binary : System.FilePath) : IO String := do
   return key
 
 def png (width height : Nat) (compressed : ByteArray) : ByteArray :=
-  PngEncode.signature ++
-    PngEncode.chunk PngEncode.tagIHDR
-      (PngEncode.be32 width ++ PngEncode.be32 height ++ ⟨#[8, 6, 0, 0, 0]⟩) ++
-    PngEncode.chunk PngEncode.tagIDAT compressed ++ PngEncode.chunk PngEncode.tagIEND ByteArray.empty
+  PngEncode.encodeIdat { width, height, bitDepth := 8, colorType := 6 } compressed
 
 /-- Two same-sized RGBA fixtures under one filename, so a colour change must invalidate
 alpha decoding by content. -/
@@ -969,7 +966,10 @@ end Slides
 
 namespace Talk
 
-open Slides (say require)
+open Slides (say)
+
+def require (ok : Bool) (why : String) : IO Unit := do
+  unless ok do throw (IO.userError s!"talk benchmark: {why}")
 
 /-- The invented talk deck of `scripts/talkdeck.lean` staged in `dir` beside the corpus fonts,
 after building its generator. -/
@@ -992,12 +992,21 @@ def build (binary dir cache : System.FilePath) (format : String) : IO (Sample ×
   require (Slides.fixtureFonts dir.toString r) "the deck resolved a font outside its private copy"
   return (r, ← IO.FS.readBinFile output)
 
+/-- A compiler file's size and modification time, which a rebuild during the run changes. -/
+def stamp (binary : System.FilePath) : IO (Nat × IO.FS.SystemTime) := do
+  let m ← binary.metadata
+  return (m.byteSize.toNat, m.modified)
+
 /-- Cold (an empty application cache) and warm builds of the talk deck in each format, the
 median of `n` pairs: wall and compiler time, every phase, and the artifact, which every build
-must reproduce byte for byte. -/
+must reproduce byte for byte, as must `LEANTEX_BENCH_COMPARE_BINARY` when it names a compiler. -/
 def run (n frames : Nat) : IO Unit := do
   let binary ← IO.FS.realPath (← compiler)
-  say s!"talk deck benchmark; N={n}; frames={frames}; binary={binary}; sha256={← Slides.binaryHash binary}"
+  let before ← stamp binary
+  let comparison ← match ← IO.getEnv "LEANTEX_BENCH_COMPARE_BINARY" with
+    | some path => pure (some (← IO.FS.realPath path))
+    | none => pure none
+  say s!"talk deck benchmark; N={n}; frames={frames}; binary={binary} ({before.1} bytes)"
   say s!"host load before: {← Slides.load}"
   IO.FS.withTempDir fun dir => do
     stage dir frames
@@ -1027,6 +1036,14 @@ def run (n frames : Nat) : IO Unit := do
       for p in first.phases do
         let time := fun r : Sample => ((r.phase? p.name).map (·.ms)).getD 0
         say s!"  phase {padRight p.name 12} cold={median (cold.map time)} warm={median (warm.map time)} ms"
+      if let some other := comparison then
+        let otherCache := dir / s!"compare-{format}"
+        if ← otherCache.pathExists then IO.FS.removeDirAll otherCache
+        let (reference, c) ← build other dir otherCache format
+        require (artifact == some c && first.diagnostics == reference.diagnostics)
+          s!"{format}: {other} built a different artifact or diagnostics"
+        say s!"  compiler comparison ({other}): byte-identical artifact and diagnostics"
+  require ((← stamp binary) == before) "the compiler changed during the benchmark"
   say s!"host load after: {← Slides.load}"
 
 end Talk
