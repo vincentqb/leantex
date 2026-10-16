@@ -1644,11 +1644,16 @@ def censusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     inkMarkupChecks ref n c
     for (label, ok) in facts geom c do
       check ref s!"census {n}: {label}" ok
-    if !out.outline.isEmpty then
-      check ref s!"census {n}: a shipped outline has its outline row"
+    let declared := out.outline.filter (!·.bookmark)
+    if !declared.isEmpty then
+      check ref s!"census {n}: a shipped navigation outline has its outline row"
         ((censusOutlineTable.lookup n).isSome)
-    for (label, ok) in ((censusOutlineTable.lookup n).map (· out.outline)).getD [] do
+    for (label, ok) in ((censusOutlineTable.lookup n).map (· declared)).getD [] do
       check ref s!"census {n} outline: {label}" ok
+    let bookmarks := out.outline.filter (·.bookmark)
+    check ref s!"census {n}: the outline bookmarks the document's listed headings, each landing ({bookmarks.map (·.title)})"
+      (bookmarks.map (·.title) == (Ir.outlineHeadings doc).map (·.title) &&
+        bookmarks.all (·.page.isSome))
   silentLossChecks ref seen
 
 /-- A resolved reference to a key inside a captioned float shows the number the numbered node

@@ -381,7 +381,7 @@ public def catalogDict (outlineRoot : Option Nat) (xmpId : Nat) (lang : Option S
     (intents : Array (String × PdfRead.Obj) := #[]) : PdfRead.Obj :=
   .dict (#[("Type", .name "Catalog"), ("Pages", .ref 2 0)]
     ++ (match outlineRoot with
-        | some r => #[("Outlines", PdfRead.Obj.ref r 0)]
+        | some r => #[("Outlines", PdfRead.Obj.ref r 0), ("PageMode", .name "UseOutlines")]
         | none => #[])
     ++ #[("Metadata", .ref xmpId 0)]
     ++ langEntry lang ++ markedEntry structTreeRoot ++ viewerEntry ++ oc ++ intents)
@@ -392,7 +392,7 @@ public theorem pdf_lang_declared (outlineRoot : Option Nat) (xmpId : Nat) (lang 
       = .dict (pre ++ langEntry lang ++ post) :=
   ⟨#[("Type", .name "Catalog"), ("Pages", .ref 2 0)]
     ++ (match outlineRoot with
-        | some r => #[("Outlines", PdfRead.Obj.ref r 0)]
+        | some r => #[("Outlines", PdfRead.Obj.ref r 0), ("PageMode", .name "UseOutlines")]
         | none => #[])
     ++ #[("Metadata", .ref xmpId 0)],
    markedEntry structTreeRoot ++ viewerEntry ++ oc ++ intents, by
@@ -404,7 +404,7 @@ public theorem pdf_marked_declared (outlineRoot : Option Nat) (xmpId : Nat) (lan
       = .dict (pre ++ markedEntry structTreeRoot ++ post) :=
   ⟨#[("Type", .name "Catalog"), ("Pages", .ref 2 0)]
     ++ (match outlineRoot with
-        | some r => #[("Outlines", PdfRead.Obj.ref r 0)]
+        | some r => #[("Outlines", PdfRead.Obj.ref r 0), ("PageMode", .name "UseOutlines")]
         | none => #[])
     ++ #[("Metadata", .ref xmpId 0)] ++ langEntry lang,
    viewerEntry ++ oc ++ intents, by
@@ -2192,6 +2192,161 @@ public theorem linkEntry_fragment_dest (t : ObjTable) (geom : Geom) (fs : FontSe
   simp only [Prod.mk.injEq] at he
   exact he.1.symm
 
+/-- An outline item's place in the tree its entries' depths spell (ISO 32000-2 §12.3.3): its parent,
+its siblings before and after it, its first and last children, and its count, every descendant where
+it opens and its children negated where it stays closed. -/
+public structure OutlineLink where
+  parent : Option Nat
+  prev : Option Nat
+  next : Option Nat
+  first : Option Nat
+  last : Option Nat
+  count : Int
+  deriving Repr, Inhabited
+
+/-- The links of each entry and the root's first, last and visible count; an entry deeper than one
+past the entry before it nests under that entry. -/
+public def outlineLinks (es : Array OutlineEntry) :
+    Array OutlineLink × Option Nat × Option Nat × Int := Id.run do
+  let n := es.size
+  let mut parent : Array (Option Nat) := Array.replicate n none
+  let mut prev : Array (Option Nat) := Array.replicate n none
+  let mut next : Array (Option Nat) := Array.replicate n none
+  let mut first : Array (Option Nat) := Array.replicate n none
+  let mut last : Array (Option Nat) := Array.replicate n none
+  let mut kids : Array Nat := Array.replicate n 0
+  let mut rootFirst : Option Nat := none
+  let mut rootLast : Option Nat := none
+  let mut rootKids : Nat := 0
+  let mut stack : Array Nat := #[]
+  for (e, k) in es.zipIdx do
+    stack := stack.extract 0 (min e.depth stack.size)
+    let up := stack.back?
+    let before := match up with
+      | some p => last[p]?.join
+      | none => rootLast
+    parent := parent.modify k fun _ => up
+    prev := prev.modify k fun _ => before
+    if let some b := before then next := next.modify b fun _ => some k
+    match up with
+    | some p =>
+      if (first[p]?.join).isNone then first := first.modify p fun _ => some k
+      last := last.modify p fun _ => some k
+      kids := kids.modify p (· + 1)
+    | none =>
+      if rootFirst.isNone then rootFirst := some k
+      rootLast := some k
+      rootKids := rootKids + 1
+    stack := stack.push k
+  -- Descendants accumulate from the last entry back, each entry's parent standing before it.
+  let mut desc : Array Nat := Array.replicate n 0
+  for k in (List.range n).reverse do
+    if let some p := parent[k]?.join then
+      desc := desc.modify p (· + 1 + desc[k]?.getD 0)
+  let links := es.zipIdx.map fun (e, k) =>
+    let c : Nat := kids[k]?.getD 0
+    { parent := parent[k]?.join, prev := prev[k]?.join, next := next[k]?.join
+      first := first[k]?.join, last := last[k]?.join
+      count := if e.expanded then (desc[k]?.getD 0 : Int) else -(c : Int) }
+  let visible : Int := if es.all (·.expanded) then n else rootKids
+  return (links, rootFirst, rootLast, visible)
+
+/-- A dictionary entry where its value is present. -/
+private def optEntry (key : String) : Option PdfRead.Obj → Array (String × PdfRead.Obj)
+  | some v => #[(key, v)]
+  | none => #[]
+
+/-- Where an outline entry leads: as a link does, else a bare page keeping the reader's view
+(/XYZ null null null), else a URI action. -/
+private def outlineTarget (t : ObjTable) (geom : Geom) (fs : FontSet)
+    (anchors : Std.HashMap String (Nat × Layout.AnchorSite)) (pages : Array PageOut)
+    (e : OutlineEntry) : Array (String × PdfRead.Obj) :=
+  match e.fragment, e.page, e.url with
+  | some f, _, _ => match Layout.landing? anchors pages f with
+    | some l => #[("Dest", destObj t geom fs l)]
+    | none => #[]
+  | none, some p, _ => #[("Dest", .arr #[.ref (t.pageId p) 0, .name "XYZ", .null, .null, .null])]
+  | none, none, some u => #[("A", .dict #[("S", .name "URI"), ("URI", PdfRead.literal u.toUTF8)])]
+  | none, none, none => #[]
+
+/-- One outline item (ISO 32000-2 Table 151): its title, its place in the tree and its target. -/
+private def outlineItem (t : ObjTable) (geom : Geom) (fs : FontSet)
+    (anchors : Std.HashMap String (Nat × Layout.AnchorSite)) (pages : Array PageOut)
+    (e : OutlineEntry) (ln : OutlineLink) : PdfRead.Obj :=
+  let ref (k : Option Nat) : Option PdfRead.Obj := k.map fun k => .ref (t.outlineItemId k) 0
+  .dict (#[("Title", PdfRead.textString e.title),
+      ("Parent", (ref ln.parent).getD (.ref t.outlineRootId 0))] ++
+    optEntry "Prev" (ref ln.prev) ++ optEntry "Next" (ref ln.next) ++
+    optEntry "First" (ref ln.first) ++ optEntry "Last" (ref ln.last) ++
+    optEntry "Count" (ln.first.map fun _ => .int ln.count) ++ outlineTarget t geom fs anchors pages e)
+
+/-- The outline's objects: its root and one item per entry, nested as the entries' depths spell. -/
+public def outlineObjects (t : ObjTable) (geom : Geom) (fs : FontSet)
+    (anchors : Std.HashMap String (Nat × Layout.AnchorSite)) (pages : Array PageOut)
+    (outline : Array OutlineEntry) : List (Nat × PdfRead.Obj) :=
+  if outline.isEmpty then [] else
+    let (links, rootFirst, rootLast, visible) := outlineLinks outline
+    let ref (k : Option Nat) : Option PdfRead.Obj := k.map fun k => .ref (t.outlineItemId k) 0
+    (t.outlineRootId, PdfRead.Obj.dict (#[("Type", .name "Outlines")] ++
+        optEntry "First" (ref rootFirst) ++ optEntry "Last" (ref rootLast) ++
+        #[("Count", .int visible)])) ::
+      outline.toList.zipIdx.map fun (e, k) =>
+        (t.outlineItemId k, outlineItem t geom fs anchors pages e (links[k]?.getD default))
+
+private theorem optEntry_key {key : String} {v : Option PdfRead.Obj} {p : String × PdfRead.Obj}
+    (h : p ∈ optEntry key v) : p.1 = key := by
+  cases v <;> simp_all [optEntry]
+
+private theorem outlineTarget_key (t : ObjTable) (geom : Geom) (fs : FontSet)
+    (anchors : Std.HashMap String (Nat × Layout.AnchorSite)) (pages : Array PageOut)
+    (e : OutlineEntry) {p : String × PdfRead.Obj} (h : p ∈ outlineTarget t geom fs anchors pages e) :
+    p.1 = "Dest" ∨ p.1 = "A" := by
+  unfold outlineTarget at h
+  (repeat' split at h) <;> simp_all
+
+/-- No outline object is typed or subtyped as a font: the root is `/Outlines`, an item has no type. -/
+public theorem outlineObjects_untyped (t : ObjTable) (geom : Geom) (fs : FontSet)
+    (anchors : Std.HashMap String (Nat × Layout.AnchorSite)) (pages : Array PageOut)
+    (outline : Array OutlineEntry) (x : Nat × PdfRead.Obj)
+    (hx : x ∈ outlineObjects t geom fs anchors pages outline) :
+    x.2.get? "Type" ≠ some (.name "Font") ∧ x.2.get? "Subtype" = none := by
+  unfold outlineObjects at hx
+  split at hx
+  · simp at hx
+  · simp only [List.mem_cons] at hx
+    rcases hx with rfl | hx
+    · constructor
+      · simp [PdfRead.Obj.get?, Array.find?_append]
+      · simp only [PdfRead.Obj.get?, Option.map_eq_none_iff, Array.find?_eq_none]
+        intro p hp
+        simp only [Array.mem_append, Array.mem_singleton] at hp
+        rcases hp with ((rfl | hp) | hp) | rfl
+        · simp
+        · rw [optEntry_key hp]; simp
+        · rw [optEntry_key hp]; simp
+        · simp
+    · obtain ⟨⟨e, k⟩, _, rfl⟩ := List.mem_map.mp hx
+      have keys : ∀ p ∈ (match outlineItem t geom fs anchors pages e
+          ((outlineLinks outline).1[k]?.getD default) with
+          | .dict es => es | _ => #[]), p.1 ≠ "Type" ∧ p.1 ≠ "Subtype" := by
+        intro p hp
+        simp only [outlineItem, Array.mem_append, List.mem_toArray, List.mem_cons,
+          List.not_mem_nil, or_false] at hp
+        rcases hp with ((((((rfl | rfl) | hp) | hp) | hp) | hp) | hp) | hp
+        · simp
+        · simp
+        all_goals first
+          | (rw [optEntry_key hp]; simp)
+          | (rcases outlineTarget_key t geom fs anchors pages e hp with h | h <;> rw [h] <;> simp)
+      simp only [outlineItem, PdfRead.Obj.get?] at keys ⊢
+      constructor
+      · rw [show (Array.find? _ _) = none from Array.find?_eq_none.mpr fun p hp => by
+          simpa using (keys p hp).1]
+        simp
+      · rw [Option.map_eq_none_iff, Array.find?_eq_none]
+        intro p hp
+        simpa using (keys p hp).2
+
 /-- Prepares positioned pages for a PDF 2.0 file, or 1.6 or 1.7 where the document declares it;
 `ops`, `streams` and `programs` are the driver's cached page operators, their rendered and deflated
 bytes, and its face programs. -/
@@ -2316,29 +2471,7 @@ public def prepare (geom : Geom) (fs : FontSet) (pages : Array PageOut)
       infoEntry "Subject" info.subject ++ infoEntry "Keywords" info.keywords ++
       #[("Producer", litObj "(leantex)")] ++ infoPrint info)
 
-  -- An outline entry lands as a link does; a bare page keeps the reader's view (/XYZ null null null).
-  let outlineObjs : List (Nat × PdfRead.Obj) :=
-    if nOut == 0 then [] else
-      (t.outlineRootId, PdfRead.Obj.dict
-        #[("Type", .name "Outlines"), ("First", .ref (t.outlineItemId 0) 0),
-          ("Last", .ref (t.outlineItemId (nOut - 1)) 0), ("Count", .int nOut)]) ::
-      outline.toList.zipIdx.map fun (e, k) =>
-        let prev : Array (String × PdfRead.Obj) :=
-          if k == 0 then #[] else #[("Prev", .ref (t.outlineItemId (k - 1)) 0)]
-        let next : Array (String × PdfRead.Obj) :=
-          if k + 1 == nOut then #[] else #[("Next", .ref (t.outlineItemId (k + 1)) 0)]
-        let target : Array (String × PdfRead.Obj) := match e.fragment, e.page, e.url with
-          | some f, _, _ => match Layout.landing? anchors pages f with
-            | some l => #[("Dest", destObj t geom fs l)]
-            | none => #[]
-          | none, some p, _ =>
-            #[("Dest", .arr #[.ref (t.pageId p) 0, .name "XYZ", .null, .null, .null])]
-          | none, none, some u =>
-            #[("A", .dict #[("S", .name "URI"), ("URI", PdfRead.literal u.toUTF8)])]
-          | none, none, none => #[]
-        (t.outlineItemId k, PdfRead.Obj.dict
-          (#[("Title", PdfRead.textString e.title),
-             ("Parent", PdfRead.Obj.ref t.outlineRootId 0)] ++ prev ++ next ++ target))
+  let outlineObjs := outlineObjects t geom fs anchors pages outline
   let elemRef (i : Nat) : PdfRead.Obj := .ref (t.structElemId i) 0
   -- A PDF 1.7 file role-maps its 2.0-only types onto 1.7's and has no namespace objects.
   let roleMap : Array (String × PdfRead.Obj) := es.foldl (fun acc e =>
@@ -2601,6 +2734,22 @@ private theorem map_zipIdx_snd {α β : Type} (l : List α) (f : Nat → β) :
     l.zipIdx.map (fun p => f p.2) = (List.range l.length).map f := by
   have h := congrArg (List.map f) (List.zipIdx_map_snd 0 l)
   simpa only [List.map_map, List.range_eq_range', Function.comp_def] using h
+
+private theorem outlineObjects_ids (t : ObjTable) (geom : Geom) (fs : FontSet)
+    (anchors : Std.HashMap String (Nat × Layout.AnchorSite)) (pages : Array PageOut)
+    (outline : Array OutlineEntry) :
+    (outlineObjects t geom fs anchors pages outline).map Prod.fst =
+      if outline.size == 0 then [] else
+        t.outlineRootId :: (List.range outline.size).map t.outlineItemId := by
+  unfold outlineObjects
+  by_cases h : outline.size = 0
+  · have he : outline = #[] := Array.eq_empty_of_size_eq_zero h
+    subst he
+    simp
+  · have he : outline.isEmpty = false := by simpa [Array.isEmpty_iff_size_eq_zero] using h
+    simp only [he, Bool.false_eq_true, ite_false, beq_iff_eq, h, List.map_cons, List.map_map,
+      Function.comp_def]
+    rw [map_zipIdx_snd, Array.length_toList]
 public theorem prepare_table_exact (geom : Geom) (fs : FontSet) (pages : Array PageOut) (info : Ir.Meta)
     (imgs : Image.Store) (outline : Array OutlineEntry)
     (streams : Array (ByteArray × Option ByteArray)) (tree : Struct.Tree)
@@ -2630,7 +2779,7 @@ public theorem prepare_compressed_ids_exact (geom : Geom) (fs : FontSet) (pages 
   simp only [prepare, Id.run, pure, bind, List.map_append, List.map_cons,
     List.map_nil, List.map_flatMap, FontObjects.rows, List.map_map, Function.comp_def,
     List.append_assoc, nameUninked_size_exact, fill_size_exact]
-  simp only [apply_ite, List.map_nil, List.map_cons, List.map_map, Function.comp_def]
+  simp only [apply_ite, outlineObjects_ids]
   simp only [map_zipIdx_snd, apply_ite, Array.length_toList, nameUninked_size_exact,
     fill_size_exact, ite_self]
   rfl

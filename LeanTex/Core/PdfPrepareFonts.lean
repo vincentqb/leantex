@@ -70,23 +70,8 @@ public theorem prepare_census_fonts_exact (geom : Layout.Geom) (fs : Font.FontSe
     all_goals
       cases info.title <;> cases info.author <;> cases info.subject <;> cases info.keywords <;>
         simp [Obj.get?, Array.find?_append, infoPrint_untyped]
-  · split at hout
-    · simp at hout
-    · simp only [List.mem_cons, Prod.mk.injEq] at hout
-      rcases hout with hroot | hitems
-      · rw [hroot.2] at hf
-        exact False.elim (kindOf_no_subtype_not_font _
-          (by simp [Obj.get?]) (by simp [Obj.get?]) hf)
-      · obtain ⟨⟨ol, k⟩, hk, heq⟩ := List.mem_map.mp hitems
-        have hv := congrArg Prod.snd heq
-        dsimp only at hv
-        rw [← hv] at hf
-        apply False.elim
-        apply kindOf_no_subtype_not_font _ ?_ ?_ hf
-        all_goals
-          cases ol.fragment <;> cases ol.page <;> cases ol.url <;>
-            simp only [Obj.get?, Array.find?_append, find_choice,
-              Array.find?_empty] <;> (repeat' split) <;> simp
+  · obtain ⟨ht, hs⟩ := outlineObjects_untyped _ _ _ _ _ _ _ hout
+    exact False.elim (kindOf_no_subtype_not_font _ ht hs hf)
   · obtain ⟨i, hi, heq⟩ := List.mem_map.mp hpage
     have hv := congrArg Prod.snd heq
     dsimp only at hv

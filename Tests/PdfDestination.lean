@@ -112,7 +112,7 @@ private def pdfLinks (out : Layout.Out) : Array String := Id.run do
         | .run _ _ link _ glyphs .. => if glyphs.isEmpty then none else some link
         | _ => none).join.bind Ir.linkFragment?
   found := most.fold (fun acc f n => acc ++ Array.replicate n f) found
-  return (found ++ out.outline.filterMap (·.fragment)).qsort (· < ·)
+  return (found ++ out.outline.filterMap fun e => if e.bookmark then none else e.fragment).qsort (· < ·)
 
 /-- One synthetic file: a catalog with `catalog`'s entries, one page tree holding object 3, a
 dictionary that is no page, and a link annotation with `link`'s entries, then `more`. -/
@@ -258,6 +258,81 @@ def deckDestinationChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO 
     ((lids.filter (· == "intro")).size == 1 && lids.contains "intro-2" &&
       (Layout.landing? (Layout.anchorIndex lout.pages) lout.pages "intro").map (·.page) ==
         pageWith lout "FirstWords")
+
+/-- The outline a file's bytes hold, in reading order from the catalog's `/Outlines`: each item's
+depth, title, count and destination, with the root's count. -/
+private def outlineRead (pdf : ByteArray) :
+    Except String (Option Int × Array (Nat × Obj × Option Int × Option Obj)) := do
+  let es ← PdfRead.objects pdf
+  let es := es.val
+  let deref := PdfCensus.deref es
+  let root := deref (((PdfCensus.catalogOf es .null).get? "Outlines").getD .null)
+  let count (o : Obj) : Option Int := match o.get? "Count" with
+    | some (.int n) => some n
+    | _ => none
+  let mut out : Array (Nat × Obj × Option Int × Option Obj) := #[]
+  let mut stack : Array (Obj × Nat) := ((root.get? "First").map (·, 0)).toArray
+  for _ in [0:es.size + 1] do
+    match stack.back? with
+    | none => break
+    | some (r, d) =>
+      stack := stack.pop
+      let item := deref r
+      out := out.push (d, (item.get? "Title").getD .null, count item, (item.get? "Dest").map deref)
+      if let some n := item.get? "Next" then stack := stack.push (n, d)
+      if let some f := item.get? "First" then stack := stack.push (f, d + 1)
+  return (count root, out)
+
+/-- The PDF outline is the heading tree: each unstarred heading down to a subsubsection at its
+depth, closed and landing on its heading line in a flow, a deck's sections and subsections open. -/
+def pdfOutlineChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let (doc, _) := elabStr (dvDoc "" ("\\section{Alpha}Alpha words.\\subsection{Alpha Detail}" ++
+    "Detail words.\\subsubsection{Alpha Fine}Fine words.\\paragraph{Run-in.} Run words." ++
+    "\\section*{Starred}Starred words.\\section{Beta}Beta words.\\subsection{Beta Detail}" ++
+    "More words.\\appendix\\section{Extras}Extra words."))
+  let out := layoutOf fs doc
+  let geom := Layout.Geom.ofPage doc.page
+  let pdf := Pdf.write geom fs out.pages doc.info (outline := out.outline)
+  let expected : Array (Nat × String × Option Int) := #[(0, "Alpha", some (-1)),
+    (1, "Alpha Detail", some (-1)), (2, "Alpha Fine", none), (0, "Beta", some (-1)),
+    (1, "Beta Detail", none), (0, "Extras", none)]
+  match outlineRead pdf with
+  | .error e => t s!"outline: the file reads ({e})" false
+  | .ok (rootCount, items) =>
+    t s!"outline: the headings nest as written, closed, the starred and run-in ones left out \
+({repr (items.map fun (d, ti, c, _) => (d, ti, c))})"
+      (rootCount == some 3 && items.size == expected.size &&
+        (items.zip expected).all fun ((d, ti, c, _), (d', s, c')) =>
+          d == d' && ti == PdfRead.textString s && c == c')
+    t "outline: each item opens at its heading's line"
+      ((items.zip expected).all fun ((_, _, _, dest), (_, s, _)) =>
+        match dest, lineWith out s with
+        | some (.arr ds), some line => opensAt fs geom ds line
+        | _, _ => false)
+  t "outline: the catalog opens the outline beside the pages"
+    (match PdfRead.objects pdf with
+     | .ok es => (PdfCensus.catalogOf es.val .null).get? "PageMode" == some (.name "UseOutlines")
+     | .error _ => false)
+  t "outline: every navigation reaches a destination the file defines"
+    ((PdfDests.ofBytes pdf).map (·.isEmpty) == .ok true)
+  -- A deck's sections and subsections, open, each at the page set next; a starred one is left out.
+  let (deck, _) := elabStr ("\\documentclass{beamer}\n\\begin{document}\n" ++
+    "\\begin{frame}{Opening}Opening words.\\end{frame}\n\\section{Part One}\n" ++
+    "\\begin{frame}{First}First words.\\end{frame}\n\\subsection{Part Detail}\n" ++
+    "\\begin{frame}{Second}Second words.\\end{frame}\n\\section*{Aside}\n" ++
+    "\\begin{frame}{Third}Third words.\\end{frame}\n\\end{document}\n")
+  let dout := layoutOf fs deck
+  let dpdf := Pdf.write (Layout.Geom.ofPage deck.page) fs dout.pages deck.info
+    (outline := dout.outline)
+  match outlineRead dpdf with
+  | .error e => t s!"deck outline: the file reads ({e})" false
+  | .ok (rootCount, items) =>
+    t s!"deck outline: its sections and subsections, open ({repr (items.map fun (d, ti, c, _) => (d, ti, c))})"
+      (rootCount == some 2 && items.map (fun (d, ti, c, _) => (d, ti, c)) ==
+        #[(0, PdfRead.textString "Part One", some 1), (1, PdfRead.textString "Part Detail", none)])
+  t "deck outline: every navigation reaches a destination the file defines"
+    ((PdfDests.ofBytes dpdf).map (·.isEmpty) == .ok true)
 
 /-- Every navigation of a corpus file reaches a destination the file defines, a target stands at
 what it names, and a resolved reference or citation links in both artifacts, equally often. -/
@@ -512,3 +587,4 @@ def pdfDestinationChecks (ref : IO.Ref (List String))
     (htmlLinks kdoc == #["ref-b"] && pdfLinks kout == #["ref-b"] &&
       (PdfCensus.census kpdf).map (·.linkAnnots) == .ok 1)
   deckDestinationChecks ref fs
+  pdfOutlineChecks ref fs

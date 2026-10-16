@@ -266,8 +266,13 @@ def counterChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
     "\\documentclass{article}\n" ++ pre ++ "\n\\begin{document}\n" ++ body ++ "\n\\end{document}"
   let heads := "\\section{Alpha}\nOne.\n\n\\subsection{Bravo}\nTwo."
   let shallow := pagesOf oneFace (doc "\\setcounter{secnumdepth}{1}" heads)
-  t "secnumdepth 1 sets a subsection the page a starred one sets"
-    (shallow == pagesOf oneFace (doc "" "\\section{Alpha}\nOne.\n\n\\subsection*{Bravo}\nTwo."))
+  -- An unnumbered subsection still holds its bookmark, as hyperref's does; a starred one does not.
+  let unanchored (src : String) : String :=
+    reprStr ((layoutOf oneFace (elabStr src).1).pages.map fun (p : Layout.PageOut) =>
+      { p with lines := p.lines.map fun (l : Layout.LineOut) => { l with anchors := #[] } })
+  t "secnumdepth 1 sets a subsection the page a starred one sets, its bookmark aside"
+    (unanchored (doc "\\setcounter{secnumdepth}{1}" heads) ==
+      unanchored (doc "" "\\section{Alpha}\nOne.\n\n\\subsection*{Bravo}\nTwo."))
   t "secnumdepth moves the page" (shallow != pagesOf oneFace (doc "" heads))
   let deeper := censusOfSrc oneFace (doc "\\setcounter{secnumdepth}{1}"
     (heads ++ "\n\n\\setcounter{secnumdepth}{2}\n\\subsection{Charlie}\nThree."))

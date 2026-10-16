@@ -16,6 +16,7 @@ public import LeanTex.Core.Diag
 import all LeanTex.Core.Diag
 public import LeanTex.Core.Struct
 import LeanTex.Core.StageNames
+import LeanTex.Core.Outline
 import LeanTex.Core.Loop
 import LeanTex.Core.Layout.GlyphBounds
 public import LeanTex.Core.Layout.LabelAudit
@@ -1190,6 +1191,12 @@ public structure OutlineEntry where
   page : Option Nat := none
   url : Option String := none
   fragment : Option String := none
+  /-- How deep in the heading tree the entry stands, the top at 0. -/
+  depth : Nat := 0
+  /-- Whether a reader opens the entry's subtree, as beamer's are and hyperref's are not. -/
+  expanded : Bool := false
+  /-- Whether the entry is a heading's bookmark, which no link on the web page mirrors. -/
+  bookmark : Bool := false
   deriving Repr, BEq, Inhabited
 
 public structure Out where
@@ -9260,6 +9267,8 @@ public structure Spacing.Context where
   private frameAnchorIds : Array (Option Ir.FrameAnchors) := #[]
   /-- Each section page's route at its body index, in a deck (`Ir.Doc.sectionRoutes`). -/
   private sectionRoutes : Array (Option String) := #[]
+  /-- The body indices of the headings the outline holds (`Ir.outlineHeadings`). -/
+  private outlineMarks : Std.HashSet Nat := {}
   /-- The walk is inside a frame whose lists set with
   beamer's squeezed spacing (`Ir.frameSqueeze`). -/
   private squeeze : Bool := false
@@ -18376,8 +18385,14 @@ slot yields in place: shorten the content or drop a slot")
   let idx := anchorIndex out
   let unique := reportOnce sh.paragraphBreaks sh.overfullMost
     (diags ++ deadLinks doc.surface idx out sh.navEntries)
-  -- An outline target lands as a PDF link annotation does; one landing nowhere is left out.
-  let outline := sh.navEntries.filterMap fun (title, target) =>
+  -- The heading tree first, open in a deck; an outline target lands as a PDF link annotation does,
+  -- and one landing nowhere is left out.
+  let deck := doc.docClass.record.model == .frame
+  let headings := (Ir.outlineHeadings doc).filterMap fun h =>
+    (landing? idx out (Ir.outlineMark h.index)).map fun l =>
+      ({ title := h.title, page := some l.page, fragment := some (Ir.outlineMark h.index)
+         depth := h.depth, expanded := deck, bookmark := true } : OutlineEntry)
+  let outline := headings ++ sh.navEntries.filterMap fun (title, target) =>
     match Ir.linkFragment? target with
     | some frag => (landing? idx out frag).map fun l =>
         ({ title := title, page := some l.page, fragment := some frag } : OutlineEntry)
@@ -18611,6 +18626,9 @@ private def collectDocBlock (rd : Rd) (doc : Doc)
     let routed := match rd.sectionRoutes[i]?.join with
       | some route => { acc with ops := acc.ops.push (.anchor route) }
       | none => acc
+    let routed := if rd.outlineMarks.contains i then
+        { routed with ops := routed.ops.push (.anchor (Ir.outlineMark i)) }
+      else routed
     acc := collectSection rd routed level starred num title 0 (top := true)
       (anchor := (rd.sectionAnchors[i]?.join).map (·.id))
   | other => acc := collectBlock rd acc other 0
@@ -19368,6 +19386,7 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
                      deckIds.frames else #[]
                    sectionRoutes := if doc.docClass.record.model == .frame then
                      doc.sectionRoutes else #[]
+                   outlineMarks := (Ir.outlineHeadings doc).foldl (·.insert ·.index) {}
                    imgs := imgs
                    pictureSpans := pictureSpans
                    headline := doc.headline
