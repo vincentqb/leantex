@@ -566,6 +566,9 @@ def htmlListSpacingChecks (ref : IO.Ref (List String)) : IO Unit := do
      hasStr own s!":where(.list-set-1 > li + {item}, .list-set-1 > dd + dt) \{ margin-top: {space "0.000"}; }" &&
      hasStr own s!":where(* + .list-set-1) \{ margin-top: {space "1.208"}; }")
   t "html an undeclared list carries no class" (!hasStr (page "" list) "list-set")
+  -- 1em at 10pt over the class's \partopsep 2pt, as the page resolves it.
+  t "html a list's spacing in em reaches the web page at the page's size"
+    (hasStr (page "\\setlist{topsep=1em}" list) s!":where(* + .list-set-1) \{ margin-top: {space "1.450"}; }")
   -- lualatex and the page: 13pt above and below a nested level declaring it, between outer items.
   let between := page "\\setlist[2]{topsep=13pt}"
     "\\begin{itemize}\\item a\n\\begin{itemize}\\item b\\end{itemize}\n\\item c\\end{itemize}"

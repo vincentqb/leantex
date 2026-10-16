@@ -958,14 +958,17 @@ private def listSpace (m : Nat) : String := s!"calc({milliRem m} + var(--parskip
 /-- The `\parskip` term a list's space folds in, alone. -/
 private def texParskip : Option String := some "var(--parskip, 0rem)"
 
+/-- A list skip's natural width at the page's size, an ex half of it as a skip box reads one. -/
+public def listSkipSp (size : Int) (g : SymGlue) : Int := g.width.resolve size (size / 2)
+
 /-- One list level's `\topsep`, `\itemsep` and `\parsep`, in screen milli-rem. -/
 public def listLevelGaps (size : Int) (sk : Ir.ListSkips) : Nat × Nat × Nat :=
-  (screenMilli size sk.topsep.width.sp, screenMilli size sk.itemsep.width.sp,
-   screenMilli size sk.parsep.width.sp)
+  (screenMilli size (listSkipSp size sk.topsep), screenMilli size (listSkipSp size sk.itemsep),
+   screenMilli size (listSkipSp size sk.parsep))
 
 /-- A list level's `\@topsepadd` where the list opens a paragraph, in screen milli-rem. -/
 public def listOpenGap (size : Int) (sk : Ir.ListSkips) (partopsep : SymGlue) : Nat :=
-  screenMilli size (sk.topsep.width.sp + partopsep.width.sp)
+  screenMilli size (listSkipSp size sk.topsep + listSkipSp size partopsep)
 
 /-- One list level's rules, `pre` reaching the level through an item ancestor per enclosing list. -/
 private def listLevelRules (pre : String) (g : Nat × Nat × Nat) (opened : Nat)
@@ -1041,17 +1044,19 @@ public def blockSpine (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens) (le
     (outer : Int) (inPar : Bool) : Block → Option (List SpineStep × Int)
   | .list _ s items =>
     (Ir.listSpacing l size level tokens s).map fun (sk, pts) =>
-      let own := sk.topsep.width.sp + (if inPar then 0 else pts.width.sp)
+      let own := listSkipSp size sk.topsep + (if inPar then 0 else listSkipSp size pts)
+      let parsep := listSkipSp size sk.parsep
       let step : SpineStep := { quote := false, set := s, inPar }
-      match itemsSpine l size tokens (level + 1) sk.parsep.width.sp items.toList with
-      | some (rest, e) => (step :: rest, max (e + sk.parsep.width.sp - outer) own)
+      match itemsSpine l size tokens (level + 1) parsep items.toList with
+      | some (rest, e) => (step :: rest, max (e + parsep - outer) own)
       | none => ([step], own)
   | .quote body =>
     (Ir.listSpacing l size level tokens {}).map fun (sk, pts) =>
-      let own := sk.topsep.width.sp + (if inPar then 0 else pts.width.sp)
+      let own := listSkipSp size sk.topsep + (if inPar then 0 else listSkipSp size pts)
+      let parsep := listSkipSp size sk.parsep
       let step : SpineStep := { quote := true, set := {}, inPar }
-      match lastSpine l size tokens (level + 1) sk.parsep.width.sp body.toList with
-      | some (rest, e) => (step :: rest, max (e + sk.parsep.width.sp - outer) own)
+      match lastSpine l size tokens (level + 1) parsep body.toList with
+      | some (rest, e) => (step :: rest, max (e + parsep - outer) own)
       | none => ([step], own)
   | .role n body =>
     if n == Ir.inParagraphRole then roleSpine l size tokens level outer body.toList else none
@@ -1113,7 +1118,7 @@ public def nestedClosesOf (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens)
     | none => acc
     | some (sk, _) =>
       items.zipIdx.foldl (fun acc (item, i) =>
-        match lastSpine l size tokens (level + 1) sk.parsep.width.sp item.toList with
+        match lastSpine l size tokens (level + 1) (listSkipSp size sk.parsep) item.toList with
         | some (spine, close) =>
           let c : NestedClose := { level, outer := s, outerInPar := inPar, inQuote, spine, close
                                    last := i + 1 == items.size }
@@ -1169,8 +1174,8 @@ public def nestedCloseRules (l : Ir.ListLineage) (size : Int) (tokens : Ir.Token
       let close := screenMilli size c.close
       if c.last then
         let own := screenMilli size
-          (osk.topsep.width.sp + (if c.outerInPar then 0 else opts.width.sp))
-        let parsep := screenMilli size osk.parsep.width.sp
+          (listSkipSp size osk.topsep + (if c.outerInPar then 0 else listSkipSp size opts))
+        let parsep := screenMilli size (listSkipSp size osk.parsep)
         let reskip := s!"max(calc({milliRem (close + parsep)} - var(--parskip, 0rem)), {milliRem own})"
         -- `:has` admits no `:has` inside it, so the item and its close are one relative chain.
         let chains := (if c.inQuote then [""] else ["li:last-child > ", "dd:last-child > "]).flatMap
@@ -1180,7 +1185,7 @@ public def nestedCloseRules (l : Ir.ListLineage) (size : Int) (tokens : Ir.Token
       else
         let lastSel := s!":has(> {ends}, > {disc}:last-child > {ends})"
         [.boundary s!"{outerSel} > li{lastSel} + {itemSubject}, {outerSel} > dd{lastSel} + dt"
-          (listSpace (max close (screenMilli size osk.itemsep.width.sp)))]
+          (listSpace (max close (screenMilli size (listSkipSp size osk.itemsep))))]
     | none => []
 
 /-- The list rules a page's class owes, `\@list⟨n⟩` for levels one to three; the web lineage
@@ -1777,19 +1782,21 @@ public theorem blockGapThrough_owner_contract (l : Ir.ListLineage) (size : Int)
 
 public theorem listGaps_agree (size : Int) (sk : Ir.ListSkips) (pt : SymGlue)
     (hq : 0 < Ir.rhythmQuantum size)
-    (h0 : 0 ≤ sk.topsep.width.sp ∧ 0 ≤ sk.itemsep.width.sp ∧ 0 ≤ sk.parsep.width.sp)
-    (hp : 0 ≤ sk.topsep.width.sp + pt.width.sp) :
+    (h0 : 0 ≤ listSkipSp size sk.topsep ∧ 0 ≤ listSkipSp size sk.itemsep ∧
+      0 ≤ listSkipSp size sk.parsep)
+    (hp : 0 ≤ listSkipSp size sk.topsep + listSkipSp size pt) :
     let h : Int := ((bodyLeadingMilli / 2 : Nat) : Int)
     let q := Ir.rhythmQuantum size
     let g := listLevelGaps size sk
     let o := listOpenGap size sk pt
-    ((g.1 : Int) * q ≤ sk.topsep.width.sp * h ∧ sk.topsep.width.sp * h < ((g.1 : Int) + 1) * q) ∧
-    ((g.2.1 : Int) * q ≤ sk.itemsep.width.sp * h ∧
-      sk.itemsep.width.sp * h < ((g.2.1 : Int) + 1) * q) ∧
-    ((g.2.2 : Int) * q ≤ sk.parsep.width.sp * h ∧
-      sk.parsep.width.sp * h < ((g.2.2 : Int) + 1) * q) ∧
-    ((o : Int) * q ≤ (sk.topsep.width.sp + pt.width.sp) * h ∧
-      (sk.topsep.width.sp + pt.width.sp) * h < ((o : Int) + 1) * q) :=
+    ((g.1 : Int) * q ≤ listSkipSp size sk.topsep * h ∧
+      listSkipSp size sk.topsep * h < ((g.1 : Int) + 1) * q) ∧
+    ((g.2.1 : Int) * q ≤ listSkipSp size sk.itemsep * h ∧
+      listSkipSp size sk.itemsep * h < ((g.2.1 : Int) + 1) * q) ∧
+    ((g.2.2 : Int) * q ≤ listSkipSp size sk.parsep * h ∧
+      listSkipSp size sk.parsep * h < ((g.2.2 : Int) + 1) * q) ∧
+    ((o : Int) * q ≤ (listSkipSp size sk.topsep + listSkipSp size pt) * h ∧
+      (listSkipSp size sk.topsep + listSkipSp size pt) * h < ((o : Int) + 1) * q) :=
   ⟨screenMilli_between size _ hq h0.1, screenMilli_between size _ hq h0.2.1,
    screenMilli_between size _ hq h0.2.2, screenMilli_between size _ hq hp⟩
 
