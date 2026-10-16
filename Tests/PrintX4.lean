@@ -330,12 +330,12 @@ def checks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
       (losses.all (·.subject != some "pdfx:output-intent") &&
         losses.any (·.subject == some "pdfx:metadata") &&
         (Tests.DriverAssets.claimLosses #[] noIntent).size == noIntent.size)
-  -- xcolor's grays in gray; its other base colours stay RGB, so the web page's schemes adapt them.
+  -- xcolor's base colours in the models it declares them in.
   let (_, _, bpdf) := written oneFace (card "" ("Alpha \\textcolor{black}{A}\\textcolor{cyan}{B}" ++
     "\\textcolor{olive}{C}\\textcolor{black!50}{D}\\textcolor{gray}{E}\\textcolor{red}{F}")) (some icc)
   let btext := pdfText bpdf
-  t "black, gray and their mixes are DeviceGray, cyan, olive and red DeviceRGB"
-    (["0 g\n", "0.5 g\n", "0 1 1 rg\n", "0.5 0.5 0 rg\n", "1 0 0 rg\n"].all (bytesContain btext ·))
+  t "black, gray and their mixes are DeviceGray, cyan and olive DeviceCMYK, red DeviceRGB"
+    (["0 g\n", "0.5 g\n", "1 0 0 0 k\n", "0 0 1 0.5 k\n", "1 0 0 rg\n"].all (bytesContain btext ·))
   let (linkDoc, _) := elabStr ("\\documentclass{article}\n\\usepackage[colorlinks]{hyperref}\n" ++
     "\\begin{document}\nSee \\url{https://example.org}.\n\\end{document}")
   t "a document's magenta link keeps its web schemes, as before the grays were declared in gray"

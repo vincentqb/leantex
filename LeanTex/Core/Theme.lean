@@ -284,7 +284,8 @@ public def applyUnder (th : Theme) (s : Decls) : Decls :=
         coveredFraction := s.palette.coveredFraction <|> real.coveredFraction
         decorative := s.palette.decorative ++ pal.decorative
         seeded := s.palette.seeded <|> real.seeded
-        classColors := s.palette.classColors }
+        classColors := s.palette.classColors
+        profile := s.palette.profile }
     tokens := installTokens th.tokens s.tokens.entries.toList
     styles := installStyles th.styles s.styles.entries.toList
     chrome := chromeApply s.chrome th.chrome }
@@ -508,6 +509,16 @@ private theorem installPalette_classColors (p : Palette) (es : List (ColorRef ×
     rw [ih]
     rfl
 
+private theorem installPalette_profile (p : Palette) (es : List (ColorRef × Color)) :
+    (installPalette p es).profile = p.profile := by
+  induction es generalizing p with
+  | nil => rfl
+  | cons e es ih =>
+    obtain ⟨k, c⟩ := e
+    simp only [installPalette]
+    rw [ih]
+    rfl
+
 private theorem installPalette_decorative (p : Palette) (es : List (ColorRef × Color)) :
     (installPalette p es).decorative =
       p.decorative.filter (fun x => !(es.any (fun e => x == e.1))) := by
@@ -632,7 +643,7 @@ private theorem tokens_ext {a b : Tokens} (h : a.entries = b.entries) : a = b :=
 
 private theorem palette_ext {a b : Palette} (he : a.entries = b.entries)
     (hc : a.coveredFraction = b.coveredFraction) (hd : a.decorative = b.decorative)
-    (hs : a.seeded = b.seeded) (hk : a.classColors = b.classColors) :
+    (hs : a.seeded = b.seeded) (hk : a.classColors = b.classColors) (hp : a.profile = b.profile) :
     a = b := by
   cases a
   cases b
@@ -701,6 +712,11 @@ private theorem paletteApply_idem (bp p : Palette) :
     rw [installPalette_classColors, installPalette_classColors]
     show (installPalette p bp.entries.toList).classColors = _
     rw [installPalette_classColors]
+  · show (installPalette (paletteApply bp p) bp.entries.toList).profile =
+      (installPalette p bp.entries.toList).profile
+    rw [installPalette_profile, installPalette_profile]
+    show (installPalette p bp.entries.toList).profile = _
+    rw [installPalette_profile]
 
 private theorem chromeApply_idem (bc c : Chrome) :
     chromeApply bc (chromeApply bc c) = chromeApply bc c := by

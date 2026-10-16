@@ -37,7 +37,7 @@ public def settles (elaborated : Ir.Doc) (provisional : Option Ir.Pic.LabelMetri
   let front : LeanTex.Cli.Driver.Front := {
     doc := elaborated, diags := #[], spans := {}, prepared := Elab.prepare "t" #[]
     earlier := #[], spliced := #[], ledger := {}, reads := #[], cache := ← LeanTex.Cli.FontEnv.Cache.mk'
-    scan := none, provisional }
+    scan := none, provisional, profile := (none, #[]) }
   return (LeanTex.Cli.Driver.settlement front fs resolved).2.2
 
 /-- The driver's reading of an output intent's profile beside `file` (`Driver.loadProfile`). -/

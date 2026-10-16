@@ -13,6 +13,7 @@ public import LeanTex.Core.ListingHighlight
 public import LeanTex.Core.DesignRole
 public import LeanTex.Core.ContrastRatio
 public import LeanTex.Core.Oklab
+public import LeanTex.Core.Icc
 public import LeanTex.Core.SeedPalette
 public import LeanTex.Core.PaletteData
 public import LeanTex.Core.CiteDecl
@@ -354,6 +355,44 @@ public def Color.ofCmykSource (c m y k : Decl.ColorComponent) : Color :=
   { r := cmykPreviewByte c k, g := cmykPreviewByte m k, b := cmykPreviewByte y k,
     pdfModel := some (.cmyk c.pdfUnit m.pdfUnit y.pdfUnit k.pdfUnit),
     cmyk := some (c.milli, m.milli, y.milli, k.milli) }
+
+/-- A declared DeviceCMYK decimal as an exact fraction. -/
+private def decimalRat? (s : String) : Option Rat :=
+  (Decl.parseDecimal s).bind fun (m, scale) => if m < 0 then none else some (mkRat m scale)
+
+/-- The CMYK a colour paints in, as unit fractions: its separation's alternate at its tint, its
+DeviceCMYK as declared, else its CMYK rider; none for a colour of another model. -/
+public def Color.cmykParts? (c : Color) : Option (Rat × Rat × Rat × Rat) :=
+  let unit (v : Rat) : Rat := if v < 0 then 0 else if 1 < v then 1 else v
+  match c.ink?, c.pdfModel, c.cmyk with
+  | some (i, t), _, _ => some (unit (i.c * unit t), unit (i.m * unit t), unit (i.y * unit t),
+      unit (i.k * unit t))
+  | none, some (.cmyk cy m y k), some _ =>
+    match decimalRat? cy, decimalRat? m, decimalRat? y, decimalRat? k with
+    | some a, some b, some d, some e => some (unit a, unit b, unit d, unit e)
+    | _, _, _, _ => none
+  | none, _, some (cy, m, y, k) =>
+    some (unit (mkRat cy 1000), unit (mkRat m 1000), unit (mkRat y 1000), unit (mkRat k 1000))
+  | none, _, none => none
+
+/-- A colour as xcolor's own arithmetic converts it to RGB, each CMYK channel `1 - min(1, v + k)`,
+whatever its screen preview; any other colour as it stands. -/
+public def Color.xcolorRgb (c : Color) : Color :=
+  match c.cmykParts? with
+  | some (cy, m, y, k) =>
+    { c with r := inkPreviewByte cy k, g := inkPreviewByte m k, b := inkPreviewByte y k }
+  | none => c
+
+/-- A colour's screen preview through a CMYK output profile: its CMYK converted relatively
+colorimetrically, any other colour as it stands. -/
+public def Color.through (t : Icc.Transform) (c : Color) : Color :=
+  let at16 (v : Rat) : Nat := (v * 65535 + 1 / 2).floor.toNat
+  match c.cmykParts? with
+  | some (cy, m, y, k) =>
+    if t.space != "CMYK" then c else
+    let (r, g, b) := t.toSrgb #[at16 cy, at16 m, at16 y, at16 k]
+    { c with r, g, b }
+  | none => c
 
 /-- An exact fraction as a PDF decimal, at most nine places. -/
 public def Color.pdfRat (v : Rat) : String := Dim.ratString v.num v.den
@@ -1343,7 +1382,16 @@ public structure Palette where
   seeded : Option SeedPalette.SeedState := none
   /-- The class's defaults where nothing declares a role. -/
   classColors : ClassColors := {}
+  /-- The declared output profile's transform, through which a CMYK colour shows on screen. -/
+  profile : Option Icc.Transform := none
   deriving Repr, BEq, Inhabited
+
+/-- A colour as the palette's output profile shows it on screen: a CMYK colour through the
+profile, any other colour, and any colour under no profile, as it stands. -/
+public def Palette.shown (p : Palette) (c : Color) : Color :=
+  match p.profile with
+  | some t => c.through t
+  | none => c
 
 /-- The colour a palette declares under one name, of either kind. -/
 public def Palette.lookup (p : Palette) (ref : ColorRef) : Option Color :=
@@ -1543,12 +1591,12 @@ public def Color.mix (a : Color) (pct : Nat) (b : Color) : Color :=
     if a.isPaper then Color.ofInk j (u * (1 - (pct : Rat) / 100))
     else match a.cmyk with
       | some q => mixCmyk q pct b
-      | none => mixSrgb a pct b
+      | none => mixSrgb a pct b.xcolorRgb
   | none, none => match a.cmyk with
     | some q => mixCmyk q pct b
     | none => match a.grayOf?, b.grayOf? with
       | some x, some y => mixGray x y pct
-      | _, _ => mixSrgb a pct b
+      | _, _ => mixSrgb a pct b.xcolorRgb
 
 private theorem Color.ofInk_model (i : Ink) (t : Rat) : (Color.ofInk i t).model = .cmyk := rfl
 
@@ -1609,7 +1657,7 @@ public theorem Color.mix_model_exact (a b : Color) (pct : Nat) :
 
 private theorem Color.mix_srgb_id (a b : Color) (pct : Nat) (h : a.cmyk = none)
     (hi : a.ink? = none) (hb : b.ink? = none) (hg : a.grayOf? = none) :
-    a.mix pct b = a.mixSrgb pct b := by
+    a.mix pct b = a.mixSrgb pct b.xcolorRgb := by
   simp [Color.mix, h, hi, hb, hg]
 
 public def asciiBlank (c : Char) : Bool := c == ' ' || c == '\t' || c == '\n' || c == '\r'
@@ -1634,25 +1682,26 @@ where
 /-- A decimal fraction `num / scale` as a colour component. -/
 private def part (num scale : Nat) : Decl.ColorComponent := { num, scale }
 
-/-- xcolor's base colours (manual §4.1, Table 1): the grays in gray as xcolor declares them, the rest
-in RGB, the web page's schemes adjusting no CMYK one. -/
+/-- xcolor's base colours (manual §4.1, Table 1) in the models xcolor declares them in: the grays
+in gray, cyan, magenta, yellow and olive in CMYK, the rest in RGB. -/
 private def xcolorBase (s : String) : Option Color :=
   let one := part 1 1
   let zero := part 0 1
   let half := part 5 10
   let rgb (r g b : Decl.ColorComponent) : Option Color := some (Color.ofRgbUnit r g b)
+  let cmyk (c m y k : Decl.ColorComponent) : Option Color := some (Color.ofCmykSource c m y k)
   match s with
   | "black" => some (Color.ofGray zero)
   | "white" => some (Color.ofGray one)
   | "red" => rgb one zero zero
   | "green" => rgb zero one zero
   | "blue" => rgb zero zero one
-  | "cyan" => rgb zero one one
-  | "magenta" => rgb one zero one
-  | "yellow" => rgb one one zero
+  | "cyan" => cmyk one zero zero zero
+  | "magenta" => cmyk zero one zero zero
+  | "yellow" => cmyk zero zero one zero
   | "brown" => rgb (part 75 100) half (part 25 100)
   | "lime" => rgb (part 75 100) one zero
-  | "olive" => rgb half half zero
+  | "olive" => cmyk zero zero one half
   | "orange" => rgb one half zero
   | "pink" => rgb one (part 75 100) (part 75 100)
   | "purple" => rgb (part 75 100) zero (part 25 100)
@@ -1663,9 +1712,10 @@ private def xcolorBase (s : String) : Option Color :=
   | "lightgray" => some (Color.ofGray (part 75 100))
   | _ => none
 
-/-- One atom of a palette expression: a declared entry first, then xcolor's base colours. -/
+/-- One atom of a palette expression: a declared entry first, then xcolor's base colours as the
+palette shows them. -/
 private def Palette.atom (p : Palette) (s : String) : Option Color :=
-  (p.find? s).orElse fun _ => xcolorBase s
+  (p.find? s).orElse fun _ => (xcolorBase s).map p.shown
 
 /-- A palette expression: a name, or xcolor's `!` mix folding left, where a
 trailing `a!30` mixes toward white. -/
@@ -1678,10 +1728,10 @@ public def Palette.resolve (p : Palette) (expr : String) : Option Color :=
       | some pct =>
         if pct > 100 then none
         else match rest with
-          | [] => some (c.mix pct (Color.ofGray (part 1 1)))
+          | [] => some (p.shown (c.mix pct (Color.ofGray (part 1 1))))
           | name :: rest' =>
             match p.atom name with
-            | some b => go (c.mix pct b) rest'
+            | some b => go (p.shown (c.mix pct b)) rest'
             | none => none
   match bangParts [] expr.toList with
   | [] => none
@@ -1725,8 +1775,8 @@ public def Palette.resolveSpec (p : Palette) : Decl.ColorSpec → Option Color
   | .rgbByte r g b => some (Color.ofRgbByte r g b)
   | .rgbUnit r g b => some (Color.ofRgbUnit r g b)
   | .gray v => some (Color.ofGray v)
-  | .cmyk c m y k => some (Color.ofCmykSource c m y k)
-  | .spot n c m y k => some (Color.ofInk (Ink.ofSource n c m y k) 1)
+  | .cmyk c m y k => some (p.shown (Color.ofCmykSource c m y k))
+  | .spot n c m y k => some (p.shown (Color.ofInk (Ink.ofSource n c m y k) 1))
   | .oklab L a b => (Decl.ColorSpec.oklab L a b).okLab?.map Oklab.ofLab
   | .oklch L C H => (Decl.ColorSpec.oklch L C H).okLab?.map Oklab.ofLab
 
@@ -1741,7 +1791,7 @@ public theorem Palette.resolveSpec_models_exact (p : Palette) (r g b : UInt8)
     p.resolveSpec (.rgbByte x y z) = some (Color.ofRgbByte x y z) ∧
     p.resolveSpec (.rgbUnit x y z) = some (Color.ofRgbUnit x y z) ∧
     p.resolveSpec (.gray x) = some (Color.ofGray x) ∧
-    p.resolveSpec (.cmyk c m y k) = some (Color.ofCmykSource c m y k) := by
+    p.resolveSpec (.cmyk c m y k) = some (p.shown (Color.ofCmykSource c m y k)) := by
   exact ⟨rfl, rfl, rfl, rfl, rfl⟩
 
 /-- Font families a document asks for, as declared by `\fonts`. -/

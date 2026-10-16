@@ -643,7 +643,8 @@ def recipeLinkAffordChecks (ref : IO.Ref (List String))
     (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let cascade := ["W0301", "W0302", "E0304", "E0336", "E0311"]
-  let magenta : Ir.Color := { r := 255, g := 0, b := 255 }
+  -- xcolor's magenta, in the CMYK it declares it in.
+  let magenta : Ir.Color := ((default : Ir.Palette).resolve "magenta").getD Ir.Color.black
   let tsrc := dvDoc "\\usepackage[colorlinks]{hyperref}\n"
     "\\href{https://example.org}{First linked line.\n\nSecond linked line.}"
   let (tdoc, tds) := elabStr tsrc

@@ -82,11 +82,10 @@ private def realizeAt (req : Nat) (ground : Color) (lab : Oklab.Lab) (f : Nat) :
   realizeFrom req ground lab f lab.L
 
 /-- The nearest legible colour on a ground: the colour itself when it passes, else the nearest
-passing one at its hue, chroma reduced where needed; `none` when nothing passes or a failing
-colour is DeviceCMYK. -/
+passing one at the hue it shows, chroma reduced where needed, a screen colour in any model;
+`none` when nothing passes. -/
 public def realizeNearest (req : Nat) (ground c : Color) : Option Color :=
   if req ≤ contrastMilli c ground then some c
-  else if c.cmyk.isSome then none
   else
     (([100, 75, 50, 25, 0] : List Nat).findSome? fun f =>
         realizeAt req ground (Oklab.labOf c) f).bind fun cand =>
@@ -98,17 +97,14 @@ public theorem realizeNearest_meets {req : Nat} {ground c c' : Color}
   split at h
   next hp => cases h; exact hp
   next =>
-    split at h
-    next => cases h
-    next =>
-      match hb : ([100, 75, 50, 25, 0] : List Nat).findSome? fun f =>
-          realizeAt req ground (Oklab.labOf c) f with
-      | none => rw [hb] at h; cases h
-      | some cand =>
-        rw [hb, Option.bind_some] at h
-        split at h
-        next hp => cases h; exact hp
-        next => cases h
+    match hb : ([100, 75, 50, 25, 0] : List Nat).findSome? fun f =>
+        realizeAt req ground (Oklab.labOf c) f with
+    | none => rw [hb] at h; cases h
+    | some cand =>
+      rw [hb, Option.bind_some] at h
+      split at h
+      next hp => cases h; exact hp
+      next => cases h
 
 private theorem realizeFrom_cand {req : Nat} {ground : Color} {lab : Oklab.Lab} {f : Nat}
     {L0 : Int} {c : Color} (h : realizeFrom req ground lab f L0 = some c) :
@@ -131,29 +127,27 @@ public theorem realize_hue_between {req : Nat} {ground c c' : Color}
   unfold realizeNearest at h
   split at h
   · cases h; exact Or.inl rfl
-  · split at h
-    · cases h
-    · right
-      match hb : ([100, 75, 50, 25, 0] : List Nat).findSome? fun f =>
-          realizeAt req ground (Oklab.labOf c) f with
-      | none => rw [hb] at h; cases h
-      | some cand =>
-        rw [hb, Option.bind_some] at h
-        split at h
-        · cases h
-          obtain ⟨f, hf, hr⟩ := List.exists_of_findSome?_eq_some hb
-          obtain ⟨L, rfl⟩ := realizeAt_cand hr
-          have hf100 : f ≤ 100 := by
-            simp only [List.mem_cons, List.not_mem_nil, or_false] at hf
-            omega
-          have hg := Oklab.Okl.toGamut_between
-            { L, a := (Oklab.labOf c).a, b := (Oklab.labOf c).b, f := f * Oklab.fracOne / 100 }
-          refine ⟨_, hg.2.1, hg.2.2.1, ?_, rfl⟩
-          have hle : f * Oklab.fracOne / 100 ≤ Oklab.fracOne := by
-            have : f * Oklab.fracOne ≤ 100 * Oklab.fracOne := Nat.mul_le_mul_right _ hf100
-            omega
-          exact Nat.le_trans hg.2.2.2.1 hle
-        · cases h
+  · right
+    match hb : ([100, 75, 50, 25, 0] : List Nat).findSome? fun f =>
+        realizeAt req ground (Oklab.labOf c) f with
+    | none => rw [hb] at h; cases h
+    | some cand =>
+      rw [hb, Option.bind_some] at h
+      split at h
+      · cases h
+        obtain ⟨f, hf, hr⟩ := List.exists_of_findSome?_eq_some hb
+        obtain ⟨L, rfl⟩ := realizeAt_cand hr
+        have hf100 : f ≤ 100 := by
+          simp only [List.mem_cons, List.not_mem_nil, or_false] at hf
+          omega
+        have hg := Oklab.Okl.toGamut_between
+          { L, a := (Oklab.labOf c).a, b := (Oklab.labOf c).b, f := f * Oklab.fracOne / 100 }
+        refine ⟨_, hg.2.1, hg.2.2.1, ?_, rfl⟩
+        have hle : f * Oklab.fracOne / 100 ≤ Oklab.fracOne := by
+          have : f * Oklab.fracOne ≤ 100 * Oklab.fracOne := Nat.mul_le_mul_right _ hf100
+          omega
+        exact Nat.le_trans hg.2.2.2.1 hle
+      · cases h
 
 /-- ΔEOK² between two colours, at `labOf`'s scale squared. -/
 public def deltaEOkSq (c c' : Color) : Int := Oklab.distSq (Oklab.labOf c) (Oklab.labOf c')

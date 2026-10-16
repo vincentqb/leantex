@@ -579,6 +579,12 @@ hue. A spot colour, an ink a press prints from its own plate, is
 Separation named by the ink, which a printer reads, over its CMYK
 alternate, which the web page previews. `name!30` is a 30% tint; a mix of
 an ink with anything but the paper prints as a process colour, named.
+A CMYK colour shows on the web page as xcolor projects it, unless the
+document names the press it prints for: under an output profile
+(`\DocumentMetadata{ colorprofiles = { X = press.icc } }`) it shows, and is
+judged for contrast, as that profile prints it, and the engine's own colours,
+such as highlighted code and a missing image's box, print in the profile's
+CMYK.
 
 To use the same palette under lualatex, export it as xcolor and beamer
 declarations:

@@ -567,7 +567,7 @@ private def ruleWords : String → String
 
 private def ruleHelp : String → String
   | "metadata" => "declare the file's title and dates: \\hypersetup{ pdftitle = {Title}, pdfcreationdate = D:20260131090000Z }"
-  | "colour" => "the detail names where: give the document's colours and figures CMYK, gray or spot data (\\definecolor{name}{cmyk}{c,m,y,k}); listings' and placeholders' own colours are RGB here"
+  | "colour" => "the detail names where: give the document's colours and figures CMYK, gray or spot data (\\definecolor{name}{cmyk}{c,m,y,k})"
   | "fonts" => "embed the font the detail names where it is used: export the figure that holds it with its fonts embedded"
   | "constructs" => "a figure's transfer functions, named halftones, OPI links, PostScript, references and actions break the standard: export the figure as PDF/X"
   | "output-intent" => "name the output profile: \\DocumentMetadata{ colorprofiles = { X = name.icc } }"

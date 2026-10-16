@@ -95,6 +95,8 @@ import Tests.Schemes
 import Tests.SpotColor
 import Tests.PageBoxes
 import Tests.PrintX4
+import Tests.Icc
+import Tests.PrintColour
 import Tests.DeclaredColors
 import Tests.BlockBody
 import Tests.BlockRegionFit
@@ -489,6 +491,16 @@ def declSettingSuiteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   Tests.DeclSettings.titlePageChecks ref oneFace
   Tests.DeclSettings.inlineDisplayChecks ref
 
+/-- Print colour: inks, page boxes, the PDF/X-4 claim, the output profile's transforms, and what a
+document declaring one shows and prints. -/
+def printColourChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  Tests.SpotColor.checks ref oneFace
+  Tests.PageBoxes.checks ref oneFace
+  Tests.PrintX4.checks ref oneFace
+  Tests.Icc.checks ref
+  Tests.PrintColour.checks ref oneFace
+  Tests.PrintColour.driverChecks ref
+
 /-- The layout, census, theme and chrome blocks over the shipped face; a missing or unparsable font
 only skips them, `fontSuiteChecks` reporting it. -/
 def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
@@ -685,9 +697,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   cardChecks ref oneFace pats
   cutMarkChecks ref oneFace
   drawnMarkChecks ref oneFace
-  Tests.SpotColor.checks ref oneFace
-  Tests.PageBoxes.checks ref oneFace
-  Tests.PrintX4.checks ref oneFace
+  printColourChecks ref oneFace
   pdfVersionChecks ref oneFace
   driverOptionChecks ref oneFace
   posterChecks ref oneFace

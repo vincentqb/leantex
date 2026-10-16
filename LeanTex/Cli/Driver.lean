@@ -734,6 +734,8 @@ structure Front where
   /-- The measurement the document was elaborated against; `none` when the source draws no
   measured picture. -/
   provisional : Option Ir.Pic.LabelMetric
+  /-- The declared output profile as the host read it, and why it was refused where it was. -/
+  profile : Option ByteArray × Array Diag
 
 /-- Read and decode the file and run the front end, elaborating against a face resolved
 from the preamble alone; `build` elaborates again where the settled face would measure a
@@ -776,13 +778,18 @@ def frontend (ui : Ui) (file : String) : IO (Option Front) := do
       (ledger := src.ledger)
   -- Highlighting is discovered once; every later elaboration reuses this snapshot.
   let requests := LeanTex.Core.ListingReply.requests doc reqSpans.code
-  let (doc, diags, reqSpans, prepared, earlier) ← if requests.isEmpty then
+  -- The declared output profile is read once; a CMYK one shows every later elaboration's CMYK.
+  let profile ← loadProfile file doc.info
+  let screen := (profile.1.bind Icc.Transform.of?).filter (·.space == "CMYK")
+  let (doc, diags, reqSpans, prepared, earlier) ← if requests.isEmpty && screen.isNone then
       pure (doc, diags, reqSpans, prepared, earlier)
     else do
       let t ← IO.monoMsNow
-      let (replies, listingDiags) ← LeanTex.Cli.ListingHighlight.fulfil requests
-      ui.phase "highlight" s!"{replies.size} of {requests.size} listings" (← since t)
-      let prepared := { prepared with listingReplies := replies }
+      let (replies, listingDiags) ← if requests.isEmpty then pure (#[], #[])
+        else LeanTex.Cli.ListingHighlight.fulfil requests
+      unless requests.isEmpty do
+        ui.phase "highlight" s!"{replies.size} of {requests.size} listings" (← since t)
+      let prepared := { prepared with listingReplies := replies, profile := screen }
       let earlier := earlier ++ listingDiags
       let (doc, diags, reqSpans) ← elaborate ui file prepared earlier spliced
         (provisional.getD (fun _ _ => {})) (phases := false) (ledger := src.ledger)
@@ -790,7 +797,7 @@ def frontend (ui : Ui) (file : String) : IO (Option Front) := do
   return some { doc := doc, diags := diags, spans := reqSpans
                 prepared := prepared, earlier := earlier, spliced := spliced
                 ledger := src.ledger, reads := src.reads
-                cache := cache, scan := scan, provisional := provisional }
+                cache := cache, scan := scan, provisional := provisional, profile }
 
 /-- The reporting scope: each artifact the run writes, so a loss scoped to an artifact is
 named exactly when it is written. -/
@@ -1073,12 +1080,13 @@ in the HTML" (← since t)
         let programs := Pdf.facePrograms fs used
         let fs := { fs with zdata := ← Compression.fontZdata cache fs.fonts.size keep programs }
         let tree := Struct.ofDoc (Layout.pdfView doc)
+        -- The output profile's press prints the engine's own colours in every operator.
+        let (profile, profileDiags) := front.profile
+        let imgs := { imgs with profile }
         let ops := Pdf.pageOps geom fs out.pages imgs tree keep
         let streams ← Compression.pageStreams cache (ops.map fun o => (Pdf.render o).toUTF8)
-        let (profile, profileDiags) ← loadProfile file doc.info
         let imgs := { imgs with
-          formZ := ← Compression.formZdata cache (Pdf.copiedFormContents imgs out.pages)
-          profile }
+          formZ := ← Compression.formZdata cache (Pdf.copiedFormContents imgs out.pages) }
         -- A claimed file's outline carries no link out of the file, PDF/X admitting no action.
         let claimOutline := if doc.info.pdfx.isSome then out.outline.filter (·.url.isNone)
           else out.outline

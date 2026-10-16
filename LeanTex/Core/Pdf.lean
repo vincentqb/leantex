@@ -12,6 +12,7 @@ import LeanTex.Core.PdfDate
 public import LeanTex.Core.Icc
 public import LeanTex.Core.PdfContent
 public import LeanTex.Core.PdfFigures
+public import LeanTex.Core.PdfPress
 public import LeanTex.Core.PdfStruct
 public import LeanTex.Core.PdfXref
 
@@ -519,8 +520,27 @@ private def ratObj (p q : Int) : PdfRead.Obj :=
   let s := ratString p q
   if s.toList.contains '.' then .real s else .int (s.toInt?.getD 0)
 
+/-- A stop in DeviceRGB, a CMYK colour as xcolor converts it, as pgf shades it. -/
 private def rgbObj (c : Ir.Color) : PdfRead.Obj :=
+  let c := c.xcolorRgb
   .arr #[ratObj c.r.toNat 255, ratObj c.g.toNat 255, ratObj c.b.toNat 255]
+
+/-- The DeviceCMYK a colour paints in, as the PDF spells it: a tint of an ink's alternate, its
+declared or printed DeviceCMYK, else its CMYK rider. -/
+private def deviceCmyk? (c : Ir.Color) : Option (Array PdfRead.Obj) :=
+  let part (v : Rat) : PdfRead.Obj := ratObj v.num v.den
+  let spelled (s : String) : Option PdfRead.Obj :=
+    (Decl.parseDecimal s).map fun (m, scale) => ratObj m scale
+  match c.ink?, c.pdfModel, c.cmyk with
+  | some (i, t), _, _ => some #[part (i.c * t), part (i.m * t), part (i.y * t), part (i.k * t)]
+  | none, some (.cmyk a b d e), _ => [a, b, d, e].mapM spelled |>.map List.toArray
+  | none, _, some (a, b, d, e) =>
+    some ((#[a, b, d, e] : Array Nat).map fun v => ratObj (Int.ofNat v) 1000)
+  | none, _, none => none
+
+/-- A stop in DeviceCMYK, black where it paints in none. -/
+private def cmykObj (c : Ir.Color) : PdfRead.Obj :=
+  .arr ((deviceCmyk? c).getD #[.int 0, .int 0, .int 0, .int 1])
 
 /-- An ink's `/Separation` space: its colorant, the DeviceCMYK alternate, and the tint transform
 from paper at tint 0 to the alternate at tint 1 (ISO 32000-2 §8.6.6.4, §7.10.3). -/
@@ -565,11 +585,15 @@ private def tintObj (c : Ir.Color) : PdfRead.Obj :=
   .arr #[ratObj t.num t.den]
 
 /-- A gradient as a shading dictionary in its own frame (§8.7.4.5.3–4), padded at both ends as SVG
-pads: through one ink's tints in its Separation space, any other in DeviceRGB. -/
-public def shadingObj (g : Gfx.Gradient) : PdfRead.Obj :=
+pads: through one ink's tints in its Separation space, in DeviceCMYK on a `cmyk` press where every
+stop paints in it, any other in DeviceRGB. -/
+public def shadingObj (g : Gfx.Gradient) (cmyk : Bool := false) : PdfRead.Obj :=
   let (space, fn) := match g.singleInk? with
     | some i => (inkSpaceObj i, stopsFunctionObj g.stops tintObj)
-    | none => (PdfRead.Obj.name "DeviceRGB", stopsFunctionObj g.stops rgbObj)
+    | none =>
+      if cmyk && g.stops.all (fun s => (deviceCmyk? s.color).isSome) then
+        (PdfRead.Obj.name "DeviceCMYK", stopsFunctionObj g.stops cmykObj)
+      else (PdfRead.Obj.name "DeviceRGB", stopsFunctionObj g.stops rgbObj)
   match g with
   | .linear p0 p1 _ _ =>
     .dict #[("ShadingType", .int 2), ("ColorSpace", space),
@@ -587,14 +611,16 @@ public def matrixObj (m : Gfx.Affine) : PdfRead.Obj :=
     ratObj m.d.num m.d.den, ratObj m.e.num ((m.e.den : Int) * spPerPt),
     ratObj m.f.num ((m.f.den : Int) * spPerPt)]
 
-/-- A table entry spelled as a dictionary; a form is a stream and has none. -/
-public def figDictObj : FigRes → Option PdfRead.Obj
+/-- A table entry spelled as a dictionary, its shadings in DeviceCMYK on a `cmyk` press where they
+can be; a form is a stream and has none. -/
+public def figDictObj (r : FigRes) (cmyk : Bool := false) : Option PdfRead.Obj :=
+  match r with
   | .extG a b =>
     some (.dict #[("Type", .name "ExtGState"), ("ca", ratObj a.val 1000), ("CA", ratObj b.val 1000)])
   | .pattern g =>
-    some (.dict #[("Type", .name "Pattern"), ("PatternType", .int 2), ("Shading", shadingObj g),
+    some (.dict #[("Type", .name "Pattern"), ("PatternType", .int 2), ("Shading", shadingObj g cmyk),
       ("Matrix", matrixObj g.xf)])
-  | .shading g => some (shadingObj g)
+  | .shading g => some (shadingObj g cmyk)
   | .form _ _ => none
 
 /-- Each kept glyph's `/W` width and outline hull in millionths of the em, by font resource. -/
@@ -720,9 +746,9 @@ public def docInks (ops : Array (Array ContentOp)) (figs : Array FigRes) : Array
     | .form _ body => ContentOp.inksList body.toList acc
     | .extG .. | .pattern _ | .shading _ => acc) pages
 
-public theorem figDictObj_untyped_exact (r : FigRes) :
-    ((figDictObj r).getD .null).get? "Type" ≠ some (.name "Font") ∧
-      ((figDictObj r).getD .null).get? "Subtype" = none := by
+public theorem figDictObj_untyped_exact (r : FigRes) (cmyk : Bool) :
+    ((figDictObj r cmyk).getD .null).get? "Type" ≠ some (.name "Font") ∧
+      ((figDictObj r cmyk).getD .null).get? "Subtype" = none := by
   cases r with
   | extG a b => simp [figDictObj, PdfRead.Obj.get?]
   | pattern g => simp [figDictObj, PdfRead.Obj.get?]
@@ -736,6 +762,19 @@ public theorem figDictObj_untyped_exact (r : FigRes) :
   | .shading _ => "Sh"
   | .form _ _ => "Fm"
 
+/-- Pages' or forms' operators with the engine's own colours in the output intent's press. -/
+public def pressOps (profile : Option ByteArray) (ops : Array (Array ContentOp)) :
+    Array (Array ContentOp) :=
+  match pressOf profile with
+  | some t => ops.map (·.map (ContentOp.recolor (pressColor t)))
+  | none => ops
+
+/-- A figure resource with the engine's own colours in the output intent's press. -/
+public def pressFig (profile : Option ByteArray) (r : FigRes) : FigRes :=
+  match pressOf profile with
+  | some t => r.recolor (pressColor t)
+  | none => r
+
 /-- Each page's typed operators, resolved against the used faces, images and leaf tags. -/
 public def pageOps (geom : Geom) (fs : FontSet) (pages : Array PageOut)
     (imgs : Image.Store := {}) (tree : Struct.Tree := ⟨#[]⟩)
@@ -745,7 +784,8 @@ public def pageOps (geom : Geom) (fs : FontSet) (pages : Array PageOut)
   let tags := tagsOf tree
   let wt := widthTable fs.fonts keep
   let figs := docFigsWith fs keep imgs
-  namedPageOps geom pages figs (pages.map (contentOps geom remap wt imgMap tags figureNames figs))
+  pressOps imgs.profile
+    (namedPageOps geom pages figs (pages.map (contentOps geom remap wt imgMap tags figureNames figs)))
 
 /-- The per-page content streams `write` embeds, uncompressed. -/
 public def pageStreams (geom : Geom) (fs : FontSet) (pages : Array PageOut)
@@ -2179,12 +2219,13 @@ public def prepare (geom : Geom) (fs : FontSet) (pages : Array PageOut)
   let docFigs := docFigsWith fs keep imgs
   let ops := if ops.size == np then ops
     else let wt := widthTable fs.fonts keep
-      namedPageOps geom pages docFigs
-        (pages.map (contentOps geom remap wt imgMap tags figureNames docFigs))
+      pressOps imgs.profile (namedPageOps geom pages docFigs
+        (pages.map (contentOps geom remap wt imgMap tags figureNames docFigs)))
   let marks := ops.map pageMarks
   let es := nameUninked tree sk (fill sk (leafPagesOf nLeaves marks))
   let parentTree := parentTreeOf marks (leafOwners sk nLeaves)
   let figs := figureTable geom pages docFigs
+  let cmykPress := (pressOf imgs.profile).any (·.space == "CMYK")
   let figDicts := figs.filter fun r => !r.isForm
   let figForms := figs.filter FigRes.isForm
   let t := objTable keep imgs usedImgs np nOut es.size (figDictCount figs) (figFormCount figs)
@@ -2236,7 +2277,7 @@ public def prepare (geom : Geom) (fs : FontSet) (pages : Array PageOut)
     (figEntries fun r => r.namePrefix == "P") (figEntries fun r => r.namePrefix == "Sh")
     ((docInks ops figs).map fun i => (i.resKey, inkSpaceObj i))
   let figDictObjs : List (Nat × PdfRead.Obj) := figDicts.toList.zipIdx.map fun (r, j) =>
-    (t.figDictId j, (figDictObj (nameRes figs r)).getD .null)
+    (t.figDictId j, (figDictObj (pressFig imgs.profile (nameRes figs r)) cmykPress).getD .null)
   let pageDict (i : Nat) : PdfRead.Obj :=
     let b := geom.bleed
     let (media, bleedBox, trim) := pageBoxes geom.pageW geom.pageH b
@@ -2415,7 +2456,7 @@ public def prepare (geom : Geom) (fs : FontSet) (pages : Array PageOut)
             rows := rows.push ⟨mid, .stream mdict plane⟩
 
   for (r, j) in figForms.zipIdx do
-    rows := rows.push (formRow gi (t.figFormId j) t.resId (nameRes figs r))
+    rows := rows.push (formRow gi (t.figFormId j) t.resId (pressFig imgs.profile (nameRes figs r)))
 
   for k in [0:nf] do
     let font := fs.get keep[k]!

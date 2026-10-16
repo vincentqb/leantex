@@ -326,7 +326,7 @@ def groupScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
   let (gdoc, _) := Elab.run "group-scope.tex"
     (dvDoc "\\usepackage{xcolor}\n" "\\begin{center}\\pagecolor{yellow}\\end{center}\nAegis\n\\clearpage\nBoreas")
   let gout := Layout.run (Layout.Geom.ofPage gdoc.page) fonts none gdoc
-  let yellow : Ir.Color := { r := 255, g := 255, b := 0 }
+  let yellow : Ir.Color := ((default : Ir.Palette).resolve "yellow").getD black
   t "group scope/a page ground set inside an environment outlives it"
     (gout.pages.size == 2 && pdfGround gdoc gout 0 == some yellow &&
       pdfGround gdoc gout 1 == some yellow)

@@ -47,11 +47,11 @@ public def fitInk (req : Nat) (ground seed : Color) : Color := Id.run do
 public def defaultInk (ground seed : Color) : Color := fitInk Contrast.aaText ground seed
 
 /-- A listing's plain text colour on its own ground: the declared `codeink`, else the text
-colour around it fitted to that ground. -/
+colour around it fitted to that ground, as the palette shows it. -/
 public def groundInk (pal : Palette) (ground inherited : Color) : Color :=
   match Design.declared? pal .codeInk with
   | some c => c
-  | none => defaultInk ground inherited
+  | none => pal.shown (defaultInk ground inherited)
 
 /-- A paint's colour on the actual ground: stated colours as stated, derived ones fitted here to the
 palette's code floor. -/

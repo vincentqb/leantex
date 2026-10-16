@@ -30,8 +30,8 @@ def linkColorChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit :
   let red : Ir.Color := { r := 255, g := 0, b := 0 }
   let green : Ir.Color := { r := 0, g := 255, b := 0 }
   let blue : Ir.Color := { r := 0, g := 0, b := 255 }
-  let magenta : Ir.Color := { r := 255, g := 0, b := 255 }
   let black := Ir.Color.black
+  let magenta : Ir.Color := ((default : Ir.Palette).resolve "magenta").getD black
   -- '1' is the reference and the citation mark, 'x' the URL's, 'Z' the `\hyperlink`'s.
   let dflt := inks "\\usepackage[colorlinks]{hyperref}"
   t "colorlinks: the reference, then the citation, in red and green"

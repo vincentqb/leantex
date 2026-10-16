@@ -16147,7 +16147,8 @@ public theorem runDocBody_recovered_word_exact (plan : DocBodyPlan) (st : ESt) (
 private def beginDoc (file : String) (raws : Array Raw) (picPre : String)
     (picSets : Array (Span × Array Raw)) (picMacros : Array (String × String))
     (picMetric : Ir.Pic.LabelMetric) (picWithdrawn : Array String)
-    (listingReplies : Array ListingReply.Answer) : EM DocPreamble := do
+    (listingReplies : Array ListingReply.Answer) (profile : Option Icc.Transform := none) :
+    EM DocPreamble := do
   let docIdx := raws.findIdx? fun r =>
     match r with
     | .env "document" _ _ => true
@@ -16181,11 +16182,14 @@ private def beginDoc (file : String) (raws : Array Raw) (picPre : String)
       | _ => fam) (← get).scope.urlFamily
   modify fun st => { st with scope := { st.scope with urlFamily := urlFamily0 }
                              packageInputs := Compat.packageInputs file raws }
+  -- Every palette descends from these, so each colour resolves through the output profile.
+  let shown : Palette := { profile }
   let s ← decls.foldlM applyDecl
-    { ctx := { file := file, listingReplies := listingReplies
+    { ctx := { file := file, listingReplies := listingReplies, palette := shown, basePalette := shown
                pic := { tool := picTool0, preamble := picPre, metric := picMetric
                         withdrawn := picWithdrawn, macros := picMacros
-                        sets := picSets, graphics := Compat.graphicsPath file raws } } }
+                        sets := picSets, graphics := Compat.graphicsPath file raws } }
+      palette := shown }
   return { state := s, decls, body, trailing }
 
 private def prepareStyledBody (file : String) (decls : Array PDecl)
@@ -16561,6 +16565,8 @@ public structure Prepared where
   /-- The notes each bibliography list's fields set, in document order; empty
   on a first elaboration. -/
   listNotes : Array Nat := #[]
+  /-- The declared output profile's transform, which the host read for this input. -/
+  profile : Option Icc.Transform := none
 
 /-- The name a definer's head binds, when its next item (past spaces and a
 `*`) is a one-word group. -/
@@ -16916,7 +16922,7 @@ public def preparedPreamble (file : String) (p : Prepared)
     (picWithdrawn : Array String := #[]) : DocPreamble × ESt :=
   -- Starts from the rewrite's warn-once keys, so no warning is said twice.
   (beginDoc file p.raws p.picPre p.picSets p.picMacros picMetric picWithdrawn
-    p.listingReplies).run { warnedUnknown := p.warned, ctr := { listNotes := p.listNotes } }
+    p.listingReplies p.profile).run { warnedUnknown := p.warned, ctr := { listNotes := p.listNotes } }
 
 /-- The body plan and state after the declaration fold and class defaults. -/
 public def preparedBody (file : String) (p : Prepared)
