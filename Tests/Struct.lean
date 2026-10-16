@@ -43,7 +43,7 @@ def structChecks (ref : IO.Ref (List String)) : IO Unit := do
   let sec := Struct.ofBlocks #[.section 2 false (some "1.1") #[.text "Heading"]]
   t "section is a heading at its level, the number generated"
     (structKinds sec == #[.heading 2] && structTexts sec == #["Heading"])
-  let lst := Struct.ofBlocks #[.list true #[#[para], #[para]]]
+  let lst := Struct.ofBlocks #[.list true {} #[#[para], #[para]]]
   t "list is list/item/label/body"
     (structKinds lst == #[.list true]
       && structKinds (structKids lst) == #[.item, .item]
@@ -135,7 +135,7 @@ def structChecks (ref : IO.Ref (List String)) : IO Unit := do
 
   let nested := Struct.ofBlocks
     #[.section 1 false none #[.text "H"],
-      .list false #[#[.para #[.text "a", .link "u" #[.text "b"]]], #[.para #[.text "c"]]],
+      .list false {} #[#[.para #[.text "a", .link "u" #[.text "b"]]], #[.para #[.text "c"]]],
       .float .figure none false #[.para #[.image "i.png" {} (.described "pic")]] #[.text "Cap"]]
   t "ids run 0..n-1 in preorder across nesting"
     ((Struct.leaves nested).map (·.1) == #[0, 1, 2, 3, 4, 5]

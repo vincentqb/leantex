@@ -122,7 +122,7 @@ note[N0100] 33:1 '\sectionlinesformat' → \style{section}{ rule = foam, rule-po
 note[N0100] 34:1 '\makeatother' → nothing: @-names are always readable here
 note[N0100] 35:1 '\RedeclareSectionCommand{section}' → \style{section}{ before = 2 * stroke, after = 1 * stroke }
 note[N0100] 36:1 '\setkomafont{section}' → \style{section}{ font = {...} }
-note[N0100] 37:1 '\setlist[itemize]' → \style{itemize}{ marker = {\textcolor {oarblade}{\footnotesize \textbullet}}, indent = 1.6em, gap = stroke, before = stroke }
+note[N0100] 37:1 '\setlist[itemize]' → \style{itemize}{ marker = {\textcolor {oarblade}{\footnotesize \textbullet}}, indent = 1.6em, itemsep = stroke, topsep = stroke }
 note[N0100] 39:1 '\newcommand{\boat}' → \define \boat(a1: content, a2: content) {...}
 note[N0100] 40:1 '\NewDocumentCommand{\boatsep}' → \define \boatsep() {...}
 note[N0100] 41:1 '\NewDocumentCommand{\fixture}' → \define \fixture(a1: content, a2: content, a3: content, a4?: content) {...}

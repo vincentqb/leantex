@@ -114,14 +114,14 @@ def twinBlockChecks (ref : IO.Ref (List String)) : IO Unit := do
   let spaced := "def a():\n    pass\n\n\ndef b():\n    pass"
   for (where_, wrap) in [("at the top level", fun (b : Ir.Block) => #[b]),
       ("in a quotation", fun b => #[.quote #[b]]),
-      ("in a list item", fun b => #[.list false #[#[.para #[.text "item"], b]]])] do
+      ("in a list item", fun b => #[.list false {} #[#[.para #[.text "item"], b]]])] do
     let (tw, back, _) := roundTrip { body := wrap (.verbatim none spaced {}) }
     let found := (back.body.map fun b => match b with
       | .verbatim _ s _ => #[s]
       | .quote body => body.filterMap fun b => match b with
         | .verbatim _ s _ => some s
         | _ => none
-      | .list _ items => items.flatMap fun it => it.filterMap fun b => match b with
+      | .list _ _ items => items.flatMap fun it => it.filterMap fun b => match b with
         | .verbatim _ s _ => some s
         | _ => none
       | _ => #[]).flatten
@@ -137,43 +137,43 @@ def twinBlockChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\begin{itemize}\\item a\n\\begin{verbatim}\ncode in item\n\\end{verbatim}\n\\end{itemize}"
   t s!"twin: a code block in a list item stays in it ({repr tw})"
     (!hasError ds && back.body.any fun b => match b with
-      | .list _ items => items.any (·.any (· matches .verbatim ..))
+      | .list _ _ items => items.any (·.any (· matches .verbatim ..))
       | _ => false)
   let (tw, back, _) := texRoundTrip
     "\\begin{enumerate}\\item a\n\\begin{itemize}\\item b\\end{itemize}\\end{enumerate}"
   t s!"twin: a bullet list nested in an ordered item stays nested ({repr tw})"
     (match back.body.toList with
-      | [.list true items] => items.size == 1 && items.any fun it =>
-          it.any fun b => (b matches .list false _) || (match b with
-            | .role _ body => body.any (· matches .list false _)
+      | [.list true _ items] => items.size == 1 && items.any fun it =>
+          it.any fun b => (b matches .list false _ _) || (match b with
+            | .role _ body => body.any (· matches .list false _ _)
             | _ => false)
       | _ => false)
-  let (tw, back, _) := roundTrip { body := #[.list false #[#[.para #[.text "one"],
+  let (tw, back, _) := roundTrip { body := #[.list false {} #[#[.para #[.text "one"],
     .para #[.text "two"]]]] }
   t s!"twin: an item's two paragraphs stay two ({repr tw})"
     (match back.body.toList with
-      | [.list false items] => items.any fun it => (it.filter (· matches .para _)).size == 2
+      | [.list false _ items] => items.any fun it => (it.filter (· matches .para _)).size == 2
       | _ => false)
-  let (tw, back, _) := roundTrip { body := #[.list false #[#[.para #[.text "a"]]],
-    .list false #[#[.para #[.text "b"]]]] }
+  let (tw, back, _) := roundTrip { body := #[.list false {} #[#[.para #[.text "a"]]],
+    .list false {} #[#[.para #[.text "b"]]]] }
   t s!"twin: two adjacent lists stay two ({repr tw})"
     ((back.body.filter (· matches .list ..)).size == 2)
-  let inner (x : String) : Ir.Block := .list false #[#[.para #[.text x]]]
+  let inner (x : String) : Ir.Block := .list false {} #[#[.para #[.text x]]]
   for (what, doc) in [("two lists in one item",
-        ({ body := #[.list false #[#[.para #[.text "first"], inner "a", inner "b"]]] } : Ir.Doc)),
-      ("a list closing an item", { body := #[.list false #[#[.para #[.text "first"], inner "a"],
+        ({ body := #[.list false {} #[#[.para #[.text "first"], inner "a", inner "b"]]] } : Ir.Doc)),
+      ("a list closing an item", { body := #[.list false {} #[#[.para #[.text "first"], inner "a"],
         #[.para #[.text "second"]]]] })] do
     let (tw, back, ds) := roundTrip doc
     t s!"twin: {what} reads back as written and tight ({repr tw})"
       (back.body == doc.body && !ds.any (·.subject == some "md:loose-list"))
   for (what, doc, want) in [
       ("a stepped item's paragraph and its nested list",
-        ({ body := #[.list false #[#[.onSteps { first := 2, last := none } #[.para #[.text "first"],
+        ({ body := #[.list false {} #[#[.onSteps { first := 2, last := none } #[.para #[.text "first"],
           .role "in-paragraph" #[inner "a"]]]]] } : Ir.Doc),
-        #[Ir.Block.list false #[#[.para #[.text "first"], inner "a"]]]),
+        #[Ir.Block.list false {} #[#[.para #[.text "first"], inner "a"]]]),
       ("an item opening with a note",
-        { body := #[.list false #[#[.note #[.para #[.text "aside"]], .para #[.text "x"]]]] },
-        #[Ir.Block.list false #[#[.para #[.text "x"]]]])] do
+        { body := #[.list false {} #[#[.note #[.para #[.text "aside"]], .para #[.text "x"]]]] },
+        #[Ir.Block.list false {} #[#[.para #[.text "x"]]]])] do
     let (tw, back, ds) := roundTrip doc
     t s!"twin: {what} reads back tight, its blocks at the item's level ({repr tw})"
       (back.body == want && !ds.any (·.subject == some "md:loose-list") &&

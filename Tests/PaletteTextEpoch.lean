@@ -111,8 +111,8 @@ private def containerEpochChecks (ref : IO.Ref (List String))
     [("center", .center), ("ragged", .ragged .left), ("quote", .quote),
      ("abstract", .abstract), ("role", .role "container"),
      ("link", .link "#target"), ("only", .only #["pdf", "html"]),
-     ("list", fun body => .list false #[body]),
-     ("nested list", fun body => .list false #[#[.list true #[body]]])]
+     ("list", fun body => .list false {} #[body]),
+     ("nested list", fun body => .list false {} #[#[.list true {} #[body]]])]
   for (name, wrap) in wrappers do
     let doc := { base with body := #[
       .titled .block #[] #[wrap #[.setPalette changed, para "ITEM"], para "LATER"],

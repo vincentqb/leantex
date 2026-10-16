@@ -91,7 +91,7 @@ def roleShapingChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
       ("hanging indent", #["A", "B", "Tail"], true)
     ] : Array (String × Array String × Bool)) do
     let body (xs : Array Ir.Inline) : Array Ir.Block :=
-      if hanging then #[.list false #[#[.para
+      if hanging then #[.list false {} #[#[.para
         (#[.role Ir.descLabelRole #[.text "Term "]] ++ xs)]]]
       else #[.para xs]
     let mut xs : Array Ir.Inline := #[]

@@ -179,6 +179,33 @@ private def moveMacroRuns (wrap : String → Array α → α)
       { origin, start := acc.size, pendingPara := pending })
   (active, acc)
 
+/-- The lists around content as LaTeX counts them where a list opens: `\@listdepth`, each kind's
+own depth, and the spacing the innermost declares. -/
+public structure ListNest where
+  depth : Nat := 0
+  itemize : Nat := 0
+  enumerate : Nat := 0
+  description : Nat := 0
+  set : Ir.ListSet := {}
+  deriving Repr, BEq, Inhabited
+
+/-- A list kind's own depth, as enumitem counts its levels. -/
+public def ListNest.kindDepth (nest : ListNest) (kind : String) : Nat :=
+  if kind == "enumerate" then nest.enumerate
+  else if kind == "description" then nest.description else nest.itemize
+
+/-- One list of `kind` deeper, its declared spacing in force. -/
+public def ListNest.enter (nest : ListNest) (kind : String) (set : Ir.ListSet) : ListNest :=
+  { nest with depth := nest.depth + 1, set := set
+              itemize := if kind == "itemize" then nest.itemize + 1 else nest.itemize
+              enumerate := if kind == "enumerate" then nest.enumerate + 1 else nest.enumerate
+              description := if kind == "description" then nest.description + 1
+                else nest.description }
+
+/-- One quotation deeper: a level whose own macro sets the skips again. -/
+public def ListNest.quoted (nest : ListNest) (l : Ir.ListLineage) (size : Sp) : ListNest :=
+  { nest with depth := nest.depth + 1, set := Ir.ListSet.within l size (nest.depth + 1) nest.set }
+
 /-- The elaboration context; `limit` bounds the prefix of `user` a command
 sees. -/
 public structure Ctx where
@@ -250,6 +277,8 @@ public structure Ctx where
   atUse : Bool := false
   /-- The semantic ancestry of executed compatibility macros. -/
   macroRoles : MacroRoles := .empty
+  /-- The lists around the content being elaborated. -/
+  listNest : ListNest := {}
 
 /-- The span of `pos`, or of the written call when inside replacement code. -/
 public def Ctx.sourceSpan (ctx : Ctx) (pos : Pos) : Span :=
@@ -10822,6 +10851,54 @@ private def boxOptsArm (ctx : Ctx) (body : Array Raw) (pos : Pos) (what : String
     | .content => break
   return (boxPos, k)
 
+/-- A list option's length, as the native length grammar reads it; `none` where it cannot. -/
+private def listOptionLength (ctx : Ctx) (src : String) : Option SymGlue :=
+  match Decl.parseValue src ctx.tokens.entries with
+  | some (.glue g) => some g
+  | some (.dim d) => some { width := Dim.Length.ofSp d }
+  | _ =>
+    match Decl.parseLengthExpr (ctx.tokens.entries ++ ctx.engineTokens)
+        (String.join (src.splitOn "\\")) with
+    | .ok g => some g
+    | .error _ => none
+
+/-- A list's options and the scopes over it: the index past its options, and the spacing it
+declares as enumitem sets it, its scopes in order, its own options last, over what it keeps of the
+enclosing list's. -/
+private def listOptsArm (ctx : Ctx) (n : String) (body : Array Raw) (pos : Pos) :
+    EM (Nat × Ir.ListSet) := do
+  let mut own : Ir.ListSet := {}
+  let mut bodyFrom := 0
+  match scanOpeningArg body pos fun _ => true with
+  | .took k' =>
+    for o in KeyVal.items (bracketSrc body 0 k') do
+      let (key, value) := KeyVal.entry o
+      if key.startsWith "<" then
+        warnOnce ctx ("param:" ++ n ++ ":" ++ key) .W0104
+          s!"'\{{n}}' default overlay specification '{key}' is not read; its items show as \
+their own specifications say" pos
+          (help := "give each item a numbered specification, as \\item<1-> and \\item<2->")
+      else if Ir.listSetKeys.contains key then
+        match listOptionLength ctx (value.getD "") with
+        | some g => own := own.put key (some g)
+        | none =>
+          warnOnce ctx ("param:" ++ n ++ ":" ++ key) .W0104
+            s!"'\{{n}}' option '{key}' has a length this engine cannot read; skipped" pos
+            (help := "give a length such as 2pt, 0.5em or a token name")
+      else unless key.isEmpty do
+        warnOnce ctx ("param:" ++ n ++ ":" ++ key) .W0104
+          s!"'\{{n}}' option '{key}' is not honoured per list; the declared list style stands" pos
+    bodyFrom := k'
+  | .unclosed bpos =>
+    warnUnclosed ctx s!"'\\begin\{{n}}'" bpos
+  | .content => pure ()
+  let nest := ctx.listNest
+  let depth := nest.depth + 1
+  let scopes := (Ir.listSetScopes n depth (nest.kindDepth n + 1)).foldl (fun (acc : Ir.ListSet) e =>
+    acc.over (((ctx.styles.find? e).map (·.list)).getD {})) {}
+  return (bodyFrom, (Ir.ListSet.within ctx.lists ctx.page.fontSize depth nest.set).over
+    (scopes.over own))
+
 /-- Whether every item of a bracket's text names a key beamer's `beamer@col` family reads. -/
 private def columnsKeysOnly (src : String) : Bool :=
   (KeyVal.items src).all fun opt =>
@@ -11344,23 +11421,7 @@ private def elabEnvArm (ctx : Ctx) (n : String) (scope : Array Raw)
     blocks ← closeFramePalette ctx pos blocks title opts inner aliasScope
     if ctx.slides then modify fun st => { st with refTarget := outer }
   else if n == "itemize" || n == "enumerate" || n == "description" then
-    let mut bodyFrom := 0
-    match scanOpeningArg body pos fun _ => true with
-    | .took k' =>
-      for o in KeyVal.items (bracketSrc body 0 k') do
-        let key := (KeyVal.entry o).1
-        if key.startsWith "<" then
-          warnOnce ctx ("param:" ++ n ++ ":" ++ key) .W0104
-            s!"'\{{n}}' default overlay specification '{key}' is not read; its items show as \
-their own specifications say" pos
-            (help := "give each item a numbered specification, as \\item<1-> and \\item<2->")
-        else unless key.isEmpty do
-          warnOnce ctx ("param:" ++ n ++ ":" ++ key) .W0104
-            s!"'\{{n}}' option '{key}' is not honoured per list; the declared list style stands" pos
-      bodyFrom := k'
-    | .unclosed bpos =>
-      warnUnclosed ctx s!"'\\begin\{{n}}'" bpos
-    | .content => pure ()
+    let (bodyFrom, spacing) ← listOptsArm ctx n body pos
     let ⟨lbody, _, _⟩ : { a : Array Raw //
         rawWeightList a.toList ≤ rawWeightList body.toList
           ∧ nestedParsList a.toList ≤ nestedParsList body.toList } ←
@@ -11380,7 +11441,8 @@ their own specifications say" pos
       slicePars_zero _
     -- Literal punctuation must reach the item reader before its text elaborates.
     let literal := ctx.literalText || Ir.Decl.anyStyle (· == .mono) scope.decls
-    let ⟨itemCtx, _⟩ : MCtx ctx ← pure ⟨{ ctx with literalText := literal },
+    let ⟨itemCtx, _⟩ : MCtx ctx ← pure ⟨{ ctx with
+        literalText := literal, listNest := ctx.listNest.enter n spacing },
       rfl, rfl, rfl, rfl⟩
     let elabItems ← withBlockDecls scope.decls do
       let elabItems ← elabItemsGo itemCtx items itemPauses 0 #[]
@@ -11389,7 +11451,7 @@ their own specifications say" pos
       if n == "description" then descItems itemCtx lbody elabItems
       else pure elabItems
     blocks := blocks ++ wrapDeclAlign scope.align
-      #[.list (n == "enumerate") (coverItems ctx steps itemPauses elabItems)]
+      #[.list (n == "enumerate") spacing (coverItems ctx steps itemPauses elabItems)]
   else if n == "center" || (Ir.raggedSideOf? n).isSome then
     let inner ← elabBlockScope ctx body
     -- The environment is a trivlist and opens `\topsep`; the declaration does not.
@@ -11440,8 +11502,12 @@ the text width; the box takes the whole measure" pos
   else if n == "quote" || n == "quotation" || n == "verse" || n == "abstract"
       || n == "appendices" then
     let saved ← enterAppendicesIf (n == "appendices")
+    -- A quotation is a list level, which its enclosing lists' spacing reaches as LaTeX's does.
+    let ⟨quoteCtx, _⟩ : MCtx ctx ← pure ⟨if n == "appendices" || n == "abstract" then ctx
+      else { ctx with listNest := ctx.listNest.quoted ctx.lists ctx.page.fontSize },
+      by split <;> rfl, by split <;> rfl, by split <;> rfl, by split <;> rfl⟩
     let inner ← splicedFrameScope (if n == "appendices" then some blocks.size else none)
-      (elabBlockScope ctx body)
+      (elabBlockScope quoteCtx body)
     leaveAppendices saved
     blocks := wrapScopedEnv n blocks inner
   else if n == "figure" || n == "figure*" || n == "table" || n == "table*" then
@@ -13226,7 +13292,8 @@ private def styleKeys : List String :=
   ["font", "before", "after", "rule", "rule-position", "rule-thickness", "marker", "indent", "gap",
    "align", "separator", "rule-above", "rule-above-skip", "rule-above-gap",
    "rule-below", "rule-below-gap", "rule-below-skip", "author-font",
-   "author-strut", "body-size", "hover", "focus", "motion", "slot", "color", "shape"]
+   "author-strut", "body-size", "hover", "focus", "motion", "slot", "color", "shape"] ++
+    Ir.listSetKeys
 
 /-- The keys of a block's `shape = {...}`. -/
 private def blockShapeKeys : List String :=
@@ -13412,14 +13479,14 @@ declared so far. -/
 private def applyStyle (ctx : Ctx) (styles : Styles) (element src : String) (pos : Pos) :
     EM Styles := do
   unless styleableElements.contains element || ctx.user.any (·.name == element) do
-    let named := (styleableElements.filter fun e =>
-      !(e.startsWith "itemize" && e != "itemize") &&
-        !(e.startsWith "enumerate" && e != "enumerate") &&
-        e != "heading5" && e != "heading6").map fun e =>
-          if e == "heading1" then "heading{1,5,6}"
-          else if e == "itemize" then "itemize{,2..4}"
-          else if e == "enumerate" then "enumerate{,2..4}"
-          else e
+    let lists := "{" ++ ",".intercalate ("list" :: Ir.listSetKinds) ++ "}{,1..4}"
+    let named := styleableElements.filterMap fun e =>
+      if e == "section" then some "{,sub,subsub}section"
+      else if ["subsection", "subsubsection", "heading5", "heading6"].contains e then none
+      else if e == "heading1" then some "heading{1,5,6}"
+      else if e == "itemize" then some lists
+      else if Ir.listSetElements.contains e then none
+      else some e
     diag ctx .E0328 s!"'{element}' is not a styleable element or a '\\define'd name" pos
       (help := s!"elements: {String.intercalate ", " named}")
     return styles
@@ -13477,6 +13544,15 @@ private def applyStyle (ctx : Ctx) (styles : Styles) (element src : String) (pos
         else
           modify fun st => { st with spans := { st.spans with
             frameTitleFont := st.spans.frameTitleFont <|> some (ctx.sourceSpan pos) } }
+      -- premise: listSpacingStyleChecks — no list site reads these keys there
+      if (Ir.listSetOnly.contains element && styleKeys.contains key &&
+          !Ir.listSetKeys.contains key) ||
+          (Ir.listSetKeys.contains key && !Ir.listSetElements.contains element) then
+        warnOnce ctx ("style:" ++ element ++ ":" ++ key) .W0104
+          s!"'{key}' has no meaning on '{element}'; the element is set without it" pos
+          (help := "a list's spacing reads topsep, partopsep, itemsep and parsep on its \
+list, kind or level, and its other keys on the kind's own element")
+        continue
       -- premise: blockStyleKeyChecks — no block site reads these keys
       if Ir.blockStyleElements.contains element && styleKeys.contains key &&
           !Ir.blockStyleKeys.contains key && key != "slot" then
@@ -13494,6 +13570,9 @@ private def applyStyle (ctx : Ctx) (styles : Styles) (element src : String) (pos
           diag ctx .E0326 s!"'{valueSrc}' is not in the palette" pos
           return none
       match key with
+      | "topsep" | "partopsep" | "itemsep" | "parsep" =>
+        if valueSrc.trimAscii.toString == "none" then st := { st with list := st.list.put key none }
+        else if let some g ← asLength then st := { st with list := st.list.put key (some g) }
       | "font" => st := { st with font := ← asInline }
       | "marker" =>
         st := { st with marker := (← asInline).map fun body =>

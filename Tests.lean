@@ -330,6 +330,7 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   Tests.LineRhythm.htmlStepChecks ref
   Tests.LineRhythm.htmlGapChecks ref
   htmlListGapChecks ref
+  htmlListSpacingChecks ref
   htmlSectionGapChecks ref
   printLiftChecks ref
   classHookChecks ref
@@ -463,6 +464,8 @@ def declSettingSuiteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     IO Unit := do
   Tests.ParamCensus.declCensusChecks ref oneFace
   Tests.DeclSettings.setlistChecks ref oneFace font
+  Tests.DeclSettings.listSpacingChecks ref oneFace
+  Tests.DeclSettings.listSpacingStyleChecks ref oneFace
   Tests.DeclSettings.frameTitleKeyChecks ref oneFace
   Tests.DeclSettings.emptyTemplateChecks ref oneFace
   Tests.DeclSettings.emptyTemplateMeasuredChecks ref

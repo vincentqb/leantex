@@ -94,6 +94,128 @@ def setlistChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) (font : 
     ((bodyDs.filter (·.severity != .note)).size == 1 && bodyDs.any (·.code == "W0340") &&
       bodyPdf == basePdf)
 
+/-- A list spaced at lualatex's positions as enumitem's vertical keys space it, by every scope and
+its own options, a nested list keeping what its level's macro leaves, an unread length named. -/
+def listSpacingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let doc (cls pre body : String) : String :=
+    s!"\\documentclass{cls}\n\\usepackage\{enumitem}\n{pre}\n\\begin\{document}\n{body}\n" ++
+      "\\end{document}\n"
+  let steps (src : String) (words : List String) : List Dim.Sp :=
+    let c := censusOfSrc oneFace src
+    let v := words.filterMap (lineYOf c 0 ·)
+    (v.zip v.tail).map fun (a, b) => b - a
+  -- Every step a 12pt baselineskip over the space lualatex sets between the two lines.
+  let over (xs : List Int) : List Dim.Sp := xs.map fun x => Dim.pt 12 + Dim.pt x
+  let basic := "Alpha paragraph.\n\n\\begin{itemize}\n\\item Bravo entry.\n\\item Charlie entry.\n" ++
+    "\\end{itemize}\n\nDelta after."
+  let inline := "Alpha paragraph\n\\begin{itemize}\n\\item Bravo entry.\n\\item Charlie entry.\n" ++
+    "\\end{itemize}\nDelta after."
+  let multi := "Alpha paragraph.\n\n\\begin{itemize}\n\\item Bravo first.\n\nCharlie second.\n" ++
+    "\\item Delta entry.\n\\end{itemize}\n\nEcho after."
+  let abcd := ["Alpha", "Bravo", "Charlie", "Delta"]
+  let abcde := abcd ++ ["Echo"]
+  -- lualatex, article and scrartcl at 10pt: \topsep 8pt, \partopsep 2pt, \itemsep and \parsep 4pt.
+  for cls in ["[10pt]{article}", "[10pt]{scrartcl}"] do
+    for (pre, b, ws, want) in [
+        ("", basic, abcd, [10, 8, 10]), ("", inline, abcd, [8, 8, 8]),
+        ("", multi, abcde, [10, 4, 8, 10]),
+        ("\\setlist{partopsep=0pt}", basic, abcd, [8, 8, 8]),
+        ("\\setlist{partopsep=0pt}", inline, abcd, [8, 8, 8]),
+        ("\\setlist{parsep=0pt}", basic, abcd, [10, 4, 10]),
+        ("\\setlist{parsep=0pt}", multi, abcde, [10, 0, 4, 10]),
+        ("\\setlist{itemsep=1pt}", basic, abcd, [10, 5, 10]),
+        ("\\setlist{itemsep=1pt}", multi, abcde, [10, 4, 5, 10]),
+        ("\\setlist{topsep=3pt}", basic, abcd, [5, 8, 5]), ("\\setlist{topsep=3pt}", inline, abcd, [3, 8, 3]),
+        ("\\setlist{nosep}", basic, abcd, [0, 0, 0]), ("\\setlist{nosep}", multi, abcde, [0, 0, 0, 0]),
+        ("\\setlist{noitemsep}", basic, abcd, [10, 0, 10]), ("\\setlist{nolistsep}", basic, abcd, [0, 0, 0]),
+        ("\\setlist[itemize]{topsep=2pt, itemsep=1pt, parsep=0pt, partopsep=0pt}", basic, abcd,
+          [2, 1, 2]),
+        ("\\setlist[itemize]{topsep=2pt, itemsep=1pt, parsep=0pt, partopsep=0pt}", multi, abcde,
+          [2, 0, 1, 2]),
+        ("\\setlist[enumerate]{nosep}", basic, abcd, [10, 8, 10])] do
+      t s!"list spacing: {cls} '{pre}' sets the lines lualatex sets"
+        (steps (doc cls pre b) ws == over want)
+  let nested := "Alpha paragraph.\n\n\\begin{itemize}\n\\item Bravo outer.\n\n\\begin{itemize}\n" ++
+    "\\item Charlie inner.\n\\item Delta inner.\n\\end{itemize}\n\\item Echo outer.\n" ++
+    "\\end{itemize}\n\nFoxtrot after."
+  let mixed := "Alpha paragraph.\n\n\\begin{enumerate}\n\\item Bravo outer.\n\\begin{itemize}\n" ++
+    "\\item Charlie inner.\n\\item Delta inner.\n\\end{itemize}\n\\item Echo outer.\n" ++
+    "\\end{enumerate}\n\nFoxtrot after."
+  let six := abcde ++ ["Foxtrot"]
+  -- lualatex, article at 10pt; level two is size10.clo's \topsep 4pt, \parsep and \itemsep 2pt.
+  for (pre, b, want) in [
+      ("", nested, [10, 10, 4, 10, 10]), ("", mixed, [10, 8, 4, 8, 10]),
+      ("\\setlist{partopsep=0pt}", nested, [8, 8, 4, 8, 8]),
+      ("\\setlist[itemize,1]{partopsep=0pt}", nested, [8, 8, 4, 8, 8]),
+      ("\\setlist[itemize,1]{partopsep=0pt}", mixed, [10, 8, 4, 8, 10]),
+      ("\\setlist[itemize,1]{itemsep=0pt}", nested, [10, 10, 4, 10, 10]),
+      ("\\setlist[itemize,1]{itemsep=0pt}", mixed, [10, 8, 2, 8, 10]),
+      ("\\setlist[itemize,2]{itemsep=0pt, topsep=0pt}", nested, [10, 6, 2, 8, 10]),
+      ("\\setlist[2]{itemsep=0pt, topsep=0pt}", nested, [10, 6, 2, 8, 10]),
+      ("\\setlist[2]{itemsep=0pt, topsep=0pt}", mixed, [10, 4, 2, 8, 10]),
+      ("\\setlist[itemize]{topsep=1pt}\\setlist[2]{topsep=5pt}", nested, [3, 7, 4, 8, 3]),
+      ("\\setlist[itemize]{topsep=1pt}\\setlist[2]{topsep=5pt}", mixed, [10, 5, 4, 8, 10]),
+      ("\\setlist{itemsep=1pt}", nested, [10, 10, 3, 10, 10]),
+      ("\\setlist[1]{parsep=0pt}", nested, [10, 6, 4, 6, 10]),
+      ("\\setlist[itemize]{itemsep=3pt}\\setlist[itemize]{topsep=1pt}", nested, [3, 7, 4, 8, 3]),
+      ("\\setlist[itemize]{itemsep=3pt}\\setlist*[itemize]{topsep=1pt}", nested, [3, 7, 5, 7, 3])] do
+    t s!"list spacing: nested lists under '{pre}' set the lines lualatex sets"
+      (steps (doc "[10pt]{article}" pre b) six == over want)
+  let own := "Alpha paragraph.\n\n\\begin{itemize}[topsep=1pt, partopsep=0pt, itemsep=0pt, parsep=2pt]\n" ++
+    "\\item Bravo entry.\n\\item Charlie entry.\n\\end{itemize}\n\nDelta after.\n\n\\begin{itemize}\n" ++
+    "\\item Echo entry.\n\\item Foxtrot entry.\n\\end{itemize}\n\nGolf after."
+  let seven := six ++ ["Golf"]
+  for cls in ["[10pt]{article}", "[10pt]{scrartcl}"] do
+    t s!"list spacing: a list's own options in {cls} space that list alone, as lualatex"
+      (steps (doc cls "" own) seven == over [1, 2, 1, 10, 8, 10])
+    t s!"list spacing: a list's own options in {cls} stand over its scopes, as lualatex"
+      (steps (doc cls "\\setlist{itemsep=5pt}" own) seven == over [1, 2, 1, 10, 9, 10])
+  let ds (pre body : String) : Array Diag := (elabStr (doc "[10pt]{article}" pre body)).2
+  let named (d : Array Diag) (key : String) : Bool :=
+    d.any fun x => x.code == "W0104" && hasStr x.message key
+  t "list spacing: the vertical keys and shorthands read are not named"
+    (!(named (ds "\\setlist[itemize]{topsep=2pt, itemsep=1pt, parsep=0pt, partopsep=0pt}" basic)
+      "sep") && !(named (ds "\\setlist{nosep, noitemsep, nolistsep}" basic) "sep") &&
+      !(named (ds "" own) "sep"))
+  let unread := ds "\\setlist{itemsep=.5\\baselineskip}" basic
+  t "list spacing: a length the preamble cannot read is named, and the list keeps its spacing"
+    (named unread "itemsep" && unread.all (·.severity != .error) &&
+      steps (doc "[10pt]{article}" "\\setlist{itemsep=.5\\baselineskip}" basic) abcd ==
+        over [10, 8, 10])
+  let ownUnread := ds "" ("\\begin{itemize}[itemsep=\\zzlength]\\item Kilo.\\item Lima.\\end{itemize}")
+  t "list spacing: a list's own length the engine cannot read is named"
+    (named ownUnread "itemsep" && ownUnread.all (·.severity != .error))
+  t "list spacing: a scope no list spacing reads is named, and spaces nothing"
+    (["\\setlist[trivlist]{topsep=0pt}", "\\setlist[5]{itemsep=0pt}",
+        "\\setlist[itemize,5]{itemsep=0pt}"].all fun pre =>
+      named (ds pre basic) "sep" && steps (doc "[10pt]{article}" pre basic) abcd == over [10, 8, 10])
+  t "list spacing: a list's other options are still named per list"
+    (named (ds "" "\\begin{itemize}[label=--, nosep]\\item Kilo.\\end{itemize}") "label")
+
+/-- A list's spacing key on an element no list reads, and another key on an element that declares
+only a list's spacing, ship the page without them and are named where they are set. -/
+def listSpacingStyleChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let doc (pre : String) : String :=
+    "\\documentclass{article}\n" ++ pre ++ "\n\\begin{document}\n\\section{Kilo}\nLima words.\n\n" ++
+      "\\begin{itemize}\\item Mike\\item November\\end{itemize}\n" ++
+      "\\begin{description}\\item[Oscar] Papa\\end{description}\n\\end{document}\n"
+  let pages (src : String) : String := reprStr (layoutOf oneFace (elabStr src).1).pages
+  let base := pages (doc "")
+  for (pre, element, key) in [("\\style{section}{ itemsep = 9pt }", "section", "itemsep"),
+      ("\\style{titlepage}{ topsep = 9pt }", "titlepage", "topsep"),
+      ("\\style{list}{ indent = 3em }", "list", "indent"),
+      ("\\style{itemize1}{ gap = 9pt }", "itemize1", "gap"),
+      ("\\style{description}{ marker = x }", "description", "marker")] do
+    t s!"list spacing keys: '{pre}' sets the page as without it" (pages (doc pre) == base)
+    t s!"list spacing keys: '{pre}' is named where it is set"
+      ((elabStr (doc pre)).2.any fun d =>
+        d.code == "W0104" && d.subject == some s!"style:{element}:{key}")
+  t "list spacing keys: a spacing key on a list's element is read"
+    (pages (doc "\\style{list}{ itemsep = 9pt }") != base &&
+      pages (doc "\\style{description}{ topsep = 9pt }") != base)
+
 /-- A three-frame deck: a title page, a titled frame with lists and a block, and a second
 titled frame; `pre` in its preamble and `mid` between the first two titled frames. -/
 def deck (pre : String) (mid : String := "") : String :=

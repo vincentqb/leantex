@@ -5346,7 +5346,7 @@ the text sets ({badGap.getD ""})"
         | some j => if j < lastLabel && labelOff.isNone then labelOff := some (lineText l)
         | none => pure ()
     let expectedMarkers := Ir.foldBlocks (fun acc b => match b with
-      | .list _ items => acc + (items.filter fun item =>
+      | .list _ _ items => acc + (items.filter fun item =>
           match (item.toList.dropWhile fun blk =>
               blk matches .setPalette _ | .setTokens _).head? with
           | some (.para _) => true

@@ -486,13 +486,13 @@ def counterRow : Row :=
         "\\subsection{Later}\\paragraph{Late run} Words\\footnote{Late note.}." ++
         "\\begin{equation}x\\end{equation}\\thecensusprobecounter")] }
 
-/-- A list's own options, which no list reads. -/
+/-- A list's own options: the spacing its list reads, and the keys it names. -/
 def listRow : Row :=
   let list (env : String) (o : Option String) : String :=
     article "\\usepackage{enumitem}" "" s!"\\begin\{{env}}{bracketed o}\\item Alpha\\item Beta\\end\{{env}}"
   { reader := "list options"
-    settings := ["label=(\\alph*)", "leftmargin=3em", "itemsep=0pt", "noitemsep", "start=3",
-      "resume", invented]
+    settings := ["label=(\\alph*)", "leftmargin=3em", "itemsep=0pt", "parsep=0pt", "noitemsep",
+      "nosep", "start=3", "resume", invented]
     docs := [list "enumerate", list "itemize", list "description"] }
 
 /-- beamer's covered-content setting, tried bare and over a share already in force. -/

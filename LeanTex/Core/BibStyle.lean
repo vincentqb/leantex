@@ -1826,7 +1826,7 @@ private def resolveBlock (p : CitePunct) (find : Resolver)
     out.push (.equation (resolveArr p find n) (resolveArr p find content))
   | .section l st num title => out.push (.section l st num (resolveArr p find title))
   | .abstract body => out.push (.abstract (resolveBlocks p find items #[] body.toList))
-  | .list ordered its => out.push (.list ordered (resolveItems p find items #[] its.toList))
+  | .list ordered s its => out.push (.list ordered s (resolveItems p find items #[] its.toList))
   | .center body => out.push (.center (resolveBlocks p find items #[] body.toList))
   | .ragged s body => out.push (.ragged s (resolveBlocks p find items #[] body.toList))
   | .quote body => out.push (.quote (resolveBlocks p find items #[] body.toList))
@@ -2978,7 +2978,7 @@ private theorem resolveBlock_pending (p : CitePunct) (find : Resolver) (items : 
     rcases resolveBlocks_pending p find items body.toList #[] _ q h with h' | hc
     · exact resolveInlines_pending p find caption.toList _ q h'
     · exact .inr hc
-  | .list _ its =>
+  | .list _ _ its =>
     intro out acc q h
     simp only [resolveBlock, Ir.foldBlockList_push, Ir.foldBlock] at h
     exact resolveItems_pending p find items its.toList #[] _ q h

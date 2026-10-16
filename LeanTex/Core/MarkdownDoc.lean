@@ -1010,7 +1010,7 @@ mutual
 
 /-- Whether the block's markdown opens with a list. -/
 private def leadsWithList : Block → Bool
-  | .list _ _ => true
+  | .list _ _ _ => true
   | .role _ body => leadsWithListList body.toList
   | .spaced _ body => leadsWithListList body.toList
   | .only _ body => leadsWithListList body.toList
@@ -1092,7 +1092,7 @@ private def blockInto (tw : Twin) (summary ind acc : String) : Block → String
     let head := acc ++ ind ++ headingMarker level ++ " " ++ numTxt ++ headingText title tw.cites ++ "\n\n"
     if level == 0 then head ++ summary
     else head
-  | .list ordered items =>
+  | .list ordered _ items =>
     let text := itemsInto tw summary ind ordered false 1 "" items.toList
     acc ++ text ++ "\n"
   | .center body => blocksInto tw summary ind acc none body.toList
@@ -1199,7 +1199,7 @@ the other marker (§5.3). -/
 private def blocksInto (tw : Twin) (summary ind acc : String)
     (prev : Option (Bool × Bool)) : List Block → String
   | [] => acc
-  | .list ordered items :: rest =>
+  | .list ordered _ items :: rest =>
     let alt := listAlt prev ordered
     let text := itemsInto tw summary ind ordered alt 1 "" items.toList
     blocksInto tw summary ind (acc ++ text ++ "\n") (some (ordered, alt)) rest
@@ -1235,7 +1235,7 @@ private def itemSeq (tw : Twin) (summary cont : String) (pen : ItemPen) :
   | b :: rest =>
     let write (_ : Unit) := itemPut cont pen (leadsWithList b) (blockInto tw summary cont "" b)
     let pen := match (generalizing := false) b with
-      | .list ordered items =>
+      | .list ordered _ items =>
         match pen.first with
         | some first =>
           let head := itemHead first cont (itemsInto tw summary cont ordered false 1 "" items.toList)
@@ -1452,7 +1452,7 @@ private theorem blockInto_extends (tw : Twin) (summary ind acc : String) :
     split
     · exact append_chain₇ _ _ _ _ _ _ _ _
     · exact append_chain₆ _ _ _ _ _ _ _
-  | .list _ _ => by
+  | .list _ _ _ => by
     simp only [blockInto]
     exact append_chain₂ _ _ _
   | .center body => blocksInto_extends tw summary ind acc none body.toList
@@ -1520,7 +1520,7 @@ private theorem blocksInto_extends (tw : Twin) (summary ind acc : String)
     (prev : Option (Bool × Bool)) :
     (bs : List Block) → ∃ r, blocksInto tw summary ind acc prev bs = acc ++ r
   | [] => append_nil acc
-  | .list _ _ :: rest => by
+  | .list _ _ _ :: rest => by
     simp only [blocksInto]
     exact extends_comp (append_chain₂ _ _ _) (blocksInto_extends tw summary ind _ _ rest)
   | b :: rest => by
@@ -1682,7 +1682,7 @@ private theorem headingLevelOne_mem (x : Ir.HeadingLevel) :
   | .section _ _ _ _, _, h => Array.mem_push_of_mem _ h
   | .para _, _, h => h
   | .equation _ _, _, h => h
-  | .list _ items, out, h => headingLevelItems_mem x items.toList out h
+  | .list _ _ items, out, h => headingLevelItems_mem x items.toList out h
   | .center body, out, h => headingLevelList_mem x body.toList out h
   | .ragged _ body, out, h => headingLevelList_mem x body.toList out h
   | .quote body, out, h => headingLevelList_mem x body.toList out h

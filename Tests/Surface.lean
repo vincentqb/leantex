@@ -1366,7 +1366,7 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
       "\\item[--] a\\end{itemize}\\end{document}")
      warnCodes ("\\documentclass{article}\\begin{document}\\begin{itemize}" ++
        "\\item[--] a\\end{itemize}\\end{document}") == ["W0110"] &&
-     doc.body == #[.list false #[#[.para #[.text "a"]]]] && ds.all (·.code != "E0310"))
+     doc.body == #[.list false {} #[#[.para #[.text "a"]]]] && ds.all (·.code != "E0310"))
   t "every alignment declaration is implemented, not refused"
     (let ds := (elabStr "{\\flushleft a} {\\raggedleft b} {\\flushright c}").2
      ds.all fun d => d.code != "W0301" && d.code != "W0104")
@@ -1409,7 +1409,7 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((warnCodes "\\uncover<+->{a} \\uncover<.->{b}").length == 1)
   t "item overlay spec wraps the item"
     ((elabStr "\\begin{itemize}\\item<1-> one\\end{itemize}").1.body ==
-      #[.list false #[#[.step 1 none #[.para #[.text "one"]]]]])
+      #[.list false {} #[#[.step 1 none #[.para #[.text "one"]]]]])
   t "compat alert is textbf"
     ((elabStr "\\alert{hot}").1.body == #[.para #[.styled .bold #[.text "hot"]]])
   t "compat bigskip is a spaced block"
@@ -1456,7 +1456,7 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "compat koma section rule with a depth is not the idiom"
     (errCodes (pre ("\\definecolor{ink}{HTML}{112233}\\makeatletter\\renewcommand\\sectionlinesformat[4]" ++
       "{#3#4 \\textcolor{ink}{\\leaders\\hrule height 1pt depth 1pt\\hfill}}\\makeatother")) == ["E0113"])
-  t "compat enumitem list" (((koma.1.styles.find? "itemize").bind (·.gap)).map (·.width) == some { sp := Dim.pt 3 } &&
+  t "compat enumitem list" (((koma.1.styles.find? "itemize").bind (·.list.itemsep)).map (·.width) == some { sp := Dim.pt 3 } &&
     ((koma.1.styles.find? "itemize").bind (·.marker)).isSome)
   t "compat thispagestyle empty starts running content on page 2" (koma.1.headFrom == 2)
   t "compat unrecognised sectionlinesformat body is a dropped loss"
@@ -1861,7 +1861,7 @@ def compatConservationChecks (ref : IO.Ref (List String)) : IO Unit := do
     ("setlist", wrap "\\setlist[itemize]{leftmargin=2em}" "x",
       wrap "\\style{itemize}{ indent = 2em }" "x"),
     ("setlist level", wrap "\\setlist[enumerate,2]{itemsep=3pt}" "x",
-      wrap "\\style{enumerate2}{ gap = 3pt }" "x"),
+      wrap "\\style{enumerate2}{ itemsep = 3pt }" "x"),
     ("fontface", wrap "\\setmainfont{Alpha Serif}[FontFace={l}{n}{Alpha Serif Light}]" "x",
       wrap "\\fonts{ body = \"Alpha Serif\", body.l = \"Alpha Serif Light\" }" "x")]
   for (nm, latex, native) in pairs do
@@ -2541,7 +2541,7 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
     #[.section 1 true none #[.text "Work"], .para #[.text "text"]])
   let (doc5, d5) := elabStr "\\begin{itemize}\\item a\\item b\\end{itemize}"
   t "elab itemize" (d5.isEmpty && doc5.body ==
-    #[.list false #[#[.para #[.text "a"]], #[.para #[.text "b"]]]])
+    #[.list false {} #[#[.para #[.text "a"]], #[.para #[.text "b"]]]])
   let (doc6, d6) := elabStr "\\documentclass[x=1]{article}\n\\begin{document}\nhi\n\\end{document}"
   t "elab documentclass, an option nothing reads named once"
     (d6.map (·.code) == #["W0356"] && doc6.docClass == .article && doc6.classOptions == "x=1")

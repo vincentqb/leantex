@@ -238,7 +238,7 @@ public def styleMerge (top base : ElementStyle) : ElementStyle :=
     (top.bodySize <|> base.bodySize) (top.hover <|> base.hover) (top.focus <|> base.focus)
     (top.motion <|> base.motion) (top.color <|> base.color)
     (if top.slots.isEmpty then base.slots else top.slots)
-    (top.shape <|> base.shape)
+    (top.shape <|> base.shape) (base.list.over top.list)
 
 private def installPalette (p : Palette) : List (ColorRef × Color) → Palette
   | [] => p
@@ -367,7 +367,7 @@ private theorem or_absorb {α : Type} (a b : Option α) : a.or (a.or b) = a.or b
 
 private theorem styleMerge_absorb (a b : ElementStyle) :
     styleMerge a (styleMerge a b) = styleMerge a b := by
-  simp [styleMerge, or_absorb]
+  simp [styleMerge, or_absorb, ListSet.over_absorb]
   intro h h'
   exact absurd h' h
 

@@ -2636,7 +2636,7 @@ private def scalarTextOne (out : ScalarAcc) (itemD enumD : Nat) :
     textAndMath { out with texts := out.texts.push (num.getD "") } title
   | .bibliography _ _ items =>
     items.foldl (fun out item => textAndMath out item.content) out
-  | .list ordered items =>
+  | .list ordered _ items =>
     let (itemD, enumD) := if ordered then (itemD, enumD + 1) else (itemD + 1, enumD)
     let level := min (if ordered then enumD else itemD) 4
     scalarTextItems { out with texts := out.texts.push (ListMark.scalars ordered level) } itemD enumD items.toList
@@ -2857,7 +2857,7 @@ private def weightKeysBlock (corners : Bool) (styles : Ir.Styles) (slides : Bool
         weightKeysInlineList corners acc (headingBase page) (templated page title).toList
       else acc
     else weightKeysInlineList corners acc {} title.toList
-  | .list _ items => weightKeysBlockItems corners styles slides acc items.toList
+  | .list _ _ items => weightKeysBlockItems corners styles slides acc items.toList
   | .center body => weightKeysBlockList corners styles slides acc body.toList
   | .ragged _ body => weightKeysBlockList corners styles slides acc body.toList
   | .quote body => weightKeysBlockList corners styles slides acc body.toList
@@ -12419,7 +12419,7 @@ private def collectBlock (r : Rd) (a : Acc)
   | .para content => collectParaBlock r a content indent
   | .equation num content => collectEquation r a num content indent
   | .section level starred num title => collectSection r a level starred num title indent
-  | .list ordered items =>
+  | .list ordered spacing items =>
     -- Past the class's four levels, where LaTeX errors, the fourth level is reused and named.
     let depth := (if ordered then a.enumDepth else a.itemDepth) + 1
     let level := min depth 4
@@ -12432,12 +12432,14 @@ private def collectBlock (r : Rd) (a : Acc)
     let element := if ordered then "enumerate" else "itemize"
     let st := if level == 1 then r.style element
       else (r.styles.find? s!"{element}{level}").getD (r.style element)
-    -- The level's spacing, LaTeX's `\@list⟨n⟩` (`Ir.listSkips`), at the depth `\@listdepth` counts.
+    -- The level's spacing, LaTeX's `\@list⟨n⟩`, at the depth `\@listdepth` counts, under what the
+    -- list declares (`Ir.listSpacing`).
     let lv := a.itemDepth + a.enumDepth + a.quoteDepth + 1
-    let sk := Ir.listSkips r.lists r.geom.fontSize lv
+    let sp := Ir.listSpacing r.lists r.geom.fontSize lv a.tokens spacing
+    let sk := sp.map (·.1)
     -- `\@trivlist`'s `\@topsepadd`: `\topsep`, plus `\partopsep` where the list opens a paragraph.
-    let top := sk.map fun s => if r.inPar then r.resolve s.topsep
-      else (r.resolve s.topsep).add (r.resolve (Ir.partopsepFor r.lists r.geom.fontSize lv a.tokens))
+    let top := sp.map fun (s, pts) => if r.inPar then r.resolve s.topsep
+      else (r.resolve s.topsep).add (r.resolve pts)
     -- `\topsep` with TeX's `\parskip` on top; after a heading the first item spends `\@nbitem`.
     let a := match st.before, top with
       | some g, _ => a.addvspace (r.resolve g)

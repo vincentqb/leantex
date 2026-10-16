@@ -103,7 +103,7 @@ private theorem mapBlock_pictureCount (gp : Pic.Picture → Pic.Picture)
   match b with
   | .para _ | .equation _ _ | .section _ _ _ _ | .framefoot _ | .logo _ =>
     simp only [mapBlock, foldBlock, pictureCountStep, inlineListPictureCount_id]
-  | .list _ items =>
+  | .list _ _ items =>
     simp only [mapBlock, foldBlock, pictureCountStep, mapBlockItemsWith_toList, List.nil_append]
     exact mapItems_pictureCount gp f finish listing n items.toList
   | .columns cols =>

@@ -83,7 +83,7 @@ def listingRows : List Row :=
      docs := [fun o => article "" (pre ++ (o.map (s!"\\setmintedinline\{{·}}")).getD "")
          "Inline \\mintinline{python}{probe(x)\treturn} code."] }]
 
-/-- enumitem's keys, the length keys and label the reader's table translates and keys it names,
+/-- enumitem's keys, the length and spacing keys and label the reader translates and keys it names,
 set for a kind, a kind's deeper level, a level of every kind, and every list, each before another
 preamble line, in nested lists of every kind. -/
 def setlistRow : Row :=
@@ -96,7 +96,8 @@ def setlistRow : Row :=
     article "" ("\\usepackage{enumitem}" ++ (o.map (s!"\\setlist{scope}\{{·}}")).getD "" ++
       "\n\\newcommand{\\probeword}{x}") lists
   { reader := "\\setlist"
-    settings := (Compat.setlistLengthKeys.map (·.1 ++ "=3em")) ++ ["label=x", "label=(\\alph*)",
+    settings := ((Compat.setlistLengthKeys.map (·.1)) ++ Ir.listSetKeys).map (· ++ "=3em") ++
+      ["label=x", "label=(\\alph*)",
       "nosep", "noitemsep", "align=left", "font=\\bfseries", "labelsep=1em", "parsep=0pt",
       "start=3", invented]
     docs := [doc "[itemize]", doc "[enumerate,2]", doc "[2]", doc ""] }

@@ -30,7 +30,7 @@ private def annotationDoc (xs : Array Inline) (source : Option Span) : Doc :=
       .para xs,
       .section 1 false none xs,
       .equation xs xs,
-      .list false #[#[.para xs]],
+      .list false {} #[#[.para xs]],
       .frame xs false .top false #[.para xs, .framefoot xs],
       .float .figure (some 1) false #[.para xs] xs,
       .table #[{ width := .natural, align := .left }] true true #[#[xs]] #[] #[],
@@ -111,8 +111,8 @@ def sourceAnnotationChecks (ref : IO.Ref (List String)) : IO Unit := do
   let description : Array Inline := #[
     .role Ir.descLabelRole #[.text "Term"], .text "Definition"]
   t "source annotations: HTML description classification sees the body"
-    (emit #[.list false #[#[.para #[.located span description]]]] ==
-      emit #[.list false #[#[.para description]]])
+    (emit #[.list false {} #[#[.para #[.located span description]]]] ==
+      emit #[.list false {} #[#[.para description]]])
   let row : Array Inline := #[.text "left", .fill, .text "right"]
   t "source annotations: HTML fill classification sees the body"
     (emit #[.para #[.located span row]] == emit #[.para row])

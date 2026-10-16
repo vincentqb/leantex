@@ -196,7 +196,7 @@ mutual
 @[expose] public def blockRaw (out : Array Node) : Block → Array Node
   | .para content => out.push (.node .paragraph (inlinesRaw #[] content.toList))
   | .section level _ _ title => out.push (.node (.heading level) (inlinesRaw #[] title.toList))
-  | .list ordered items => out.push (.node (.list ordered) (itemsRaw #[] items.toList))
+  | .list ordered _ items => out.push (.node (.list ordered) (itemsRaw #[] items.toList))
   | .center body => blocksRaw out body.toList
   | .ragged _ body => blocksRaw out body.toList
   | .spaced _ body => blocksRaw out body.toList
@@ -381,7 +381,7 @@ private structure Sim (F : NodeFold α) (G : Census α) : Prop where
   bPara : ∀ a c, G.block a (.para c) = F.node a .paragraph (G.inlines · c.toList)
   bSection : ∀ a level st num title,
     G.block a (.section level st num title) = F.node a (.heading level) (G.inlines · title.toList)
-  bList : ∀ a o items, G.block a (.list o items) = F.node a (.list o) (G.items · items.toList)
+  bList : ∀ a o s items, G.block a (.list o s items) = F.node a (.list o) (G.items · items.toList)
   bCenter : ∀ a body, G.block a (.center body) = G.blocks a body.toList
   bRagged : ∀ a fl body, G.block a (.ragged fl body) = G.blocks a body.toList
   bSpaced : ∀ a g body, G.block a (.spaced g body) = G.blocks a body.toList
@@ -724,7 +724,7 @@ private theorem blockRaw_fold_exact (h : Sim F G) (a : α) (out : Array Node) (b
   match b with
   | .para c => rw [blockRaw, foldNodeList_push, inlinesNode_fold_exact h, h.bPara]
   | .section level st num title => rw [blockRaw, foldNodeList_push, inlinesNode_fold_exact h, h.bSection]
-  | .list o items =>
+  | .list o _ items =>
     rw [blockRaw, foldNodeList_push, foldNode_node, h.bList]
     exact congrArg (F.node _ _) (funext fun a' => itemsRaw_fold_exact h a' #[] items.toList)
   | .center body => rw [h.bCenter]; exact blocksRaw_fold_exact h a out body.toList
@@ -1072,7 +1072,7 @@ public theorem blockRaw_acc (out : Array Node) (b : Block) :
   match b with
   | .para content => simp [blockRaw]
   | .section level st num title => simp [blockRaw]
-  | .list ordered items => simp [blockRaw]
+  | .list ordered _ items => simp [blockRaw]
   | .center body =>
     simp only [blockRaw]; exact blocksRaw_acc out body.toList
   | .ragged _ body =>

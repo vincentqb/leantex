@@ -542,6 +542,31 @@ def htmlRhythmChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "html themed sheet has one gap owner per boundary"
     ((themedPage.splitOn "margin-bottom").length == 2)
 
+/-- A list declaring its own spacing carries its class, whose rules space it at each level as the
+page does: its declared values over the level's. -/
+def htmlListSpacingChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let page (pre body : String) : String :=
+    (HtmlDoc.emit {} (elabStr (s!"\\documentclass\{article}\\usepackage\{enumitem}{pre}" ++
+      s!"\\begin\{document}x\n\n{body}\\end\{document}")).1).1
+  let list := "\\begin{itemize}\\item a\\item b\\end{itemize}"
+  let item := "li:not(.bibliography *):not(.algorithm *):not([role=doc-endnotes] *)"
+  let space (m : String) := s!"calc({m}rem + var(--parskip, 0rem))"
+  let tight := page "\\setlist{nosep}" list
+  t "html a list declaring its spacing carries its class" (hasStr tight "<ul class=\"list-set-1\">")
+  t "html a declared nosep's items stand no space apart, as on the page"
+    (hasStr tight
+      s!":where(.list-set-1 > li + {item}, .list-set-1 > dd + dt) \{ margin-top: {space "0.000"}; }" &&
+     hasStr tight s!":where(.list-set-1 > {item}, dl.list-set-1 > *) \{ --parskip: 0.000rem; }" &&
+     hasStr tight s!":where(* + .list-set-1) \{ margin-top: {space "0.000"}; }")
+  -- size10.clo's level one: \topsep 8pt, \partopsep 2pt; a declared \itemsep 0pt over \parsep 4pt.
+  let own := page "" ("\\begin{itemize}[itemsep=0pt]\\item a\\item b\\end{itemize}\n\n" ++ list)
+  t "html a list's own option reaches that list alone"
+    (hasStr own "<ul class=\"list-set-1\">" && hasStr own "<ul>" &&
+     hasStr own s!":where(.list-set-1 > li + {item}, .list-set-1 > dd + dt) \{ margin-top: {space "0.000"}; }" &&
+     hasStr own s!":where(* + .list-set-1) \{ margin-top: {space "1.208"}; }")
+  t "html an undeclared list carries no class" (!hasStr (page "" list) "list-set")
+
 /-- A list's spaces are the class's `\@list⟨n⟩` in HTML too, at each level, in the screen's quanta. -/
 def htmlListGapChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref

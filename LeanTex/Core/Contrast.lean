@@ -274,7 +274,7 @@ private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
       | none => (hc, acc)
       else (hc, acc)
     usesInlines hc acc title.toList
-  | .list _ items => usesItems cx acc items.toList
+  | .list _ _ items => usesItems cx acc items.toList
   | .center body => usesBlocks cx acc body.toList
   | .ragged _ body => usesBlocks cx acc body.toList
   | .quote body => usesBlocks cx acc body.toList

@@ -154,7 +154,7 @@ def overlayChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
   let (doc, ds) := elabStr src
   t "overlay specs elaborate to steps, warning nothing" (ds.isEmpty &&
     doc.body == #[.frame #[] false .center false #[
-      .list false #[
+      .list false {} #[
         #[.step 1 none #[.para #[.text "first"]]],
         #[.step 2 none #[.para #[.text "second"]]]],
       .para #[.step 2 (some 2) #[.text "tail"]]]])
@@ -248,7 +248,7 @@ def overlayBlockChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
     "\\onslide<2->{\n\\begin{itemize}\n\\item Stepped item.\n\\end{itemize}\n}")
   t "a list inside an overlay group steps whole, erroring nothing"
     (lDs.isEmpty && lDoc.body == #[.frame #[] false .center false #[
-      .step 2 none #[.list false #[#[.para #[.text "Stepped item."]]]]]])
+      .step 2 none #[.list false {} #[#[.para #[.text "Stepped item."]]]]]])
   let (mDoc, mDs) := elabStr (deck169Frame "\\uncover<2>{\nFirst covered.\n\nSecond covered.\n}")
   t "every paragraph of an overlay group stays inside its step"
     (mDs.isEmpty && mDoc.body == #[.frame #[] false .center false #[
@@ -271,7 +271,7 @@ def overlayBlockChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
     "\\begin{itemize}\n\\item first\n\\pause\n\\item second\n\\pause\n\\item third\n\\end{itemize}")
   t "pause between items steps the later items"
     (pDs.isEmpty && pDoc.body == #[.frame #[] false .center false #[
-      .list false #[
+      .list false {} #[
         #[.para #[.text "first"]],
         #[.step 2 none #[.para #[.text "second"]]],
         #[.step 3 none #[.para #[.text "third"]]]]]])
@@ -305,7 +305,7 @@ def overlayBlockChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
     "\\onslide<+->{\n\\begin{itemize}\n\\item shown anyway\n\\end{itemize}\n}")
   t "an unnumberable spec on a block group warns and shows the content"
     ((uDs.map (·.code)) == #["W0105"] && uDoc.body == #[.frame #[] false .center false #[
-      .list false #[#[.para #[.text "shown anyway"]]]]])
+      .list false {} #[#[.para #[.text "shown anyway"]]]]])
 
 /-- `\alert<spec>{body}` is `\alt<spec>{\alert{body}}{body}`: the body inked once per step page,
 never covered, alerted only on the spec's steps. -/

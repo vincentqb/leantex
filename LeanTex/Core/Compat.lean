@@ -896,6 +896,8 @@ private structure St where
   fontFamilies : Array String := #[]
   /-- enumitem's stored settings by scope (kind, level) as native style entries. -/
   setlists : Array ((Option String × Option Nat) × Array (String × String)) := #[]
+  /-- enumitem's stored vertical keys by scope, as native spacing entries (`Ir.listSetKeys`). -/
+  listSpacings : Array ((Option String × Option Nat) × Array (String × String)) := #[]
 
 private abbrev M := StateM St
 
@@ -1194,9 +1196,9 @@ private def setlistScope (scope : String) : List String × List Nat :=
 /-- The list kinds a `\\setlist` scope styles through an element. -/
 private def setlistKinds : List String := ["itemize", "enumerate"]
 
-/-- enumitem's length keys a `\\setlist` reads, each with the native style key it sets. -/
-public def setlistLengthKeys : List (String × String) :=
-  [("leftmargin", "indent"), ("itemsep", "gap"), ("topsep", "before")]
+/-- enumitem's length keys a `\\setlist` reads into a kind's style, each with the native style key
+it sets; its vertical keys are a list's spacing (`listSpacingEntries`). -/
+public def setlistLengthKeys : List (String × String) := [("leftmargin", "indent")]
 
 /-- The native entries one list level takes from enumitem's stored scopes, applied as enumitem
 applies them: every list, the level, the kind, then the kind at the level, a later key winning. -/
@@ -5931,6 +5933,52 @@ public def geometrySideKeys : List String := ["top", "bottom", "left", "right"]
 /-- geometry's flags asking for a page without running furniture, the page the engine starts from. -/
 public def geometryNoFurniture : List String := ["noheadfoot", "nohead", "nofoot"]
 
+/-- The native spacing entries one enumitem option entry sets: a vertical key with its length as
+the length door reads it, or a shorthand's zeros; `none` for any other entry. -/
+private def listSpacingEntries (what reader e : String) (pos : Pos) :
+    M (Option (Array (String × String))) := do
+  let zeros (keys : List String) : Array (String × String) := keys.toArray.map (·, "0pt")
+  match KeyVal.entry e with
+  | ("nosep", none) | ("nosep", some "true") => return some (zeros Ir.listSetKeys)
+  | ("noitemsep", none) | ("noitemsep", some "true") => return some (zeros ["itemsep", "parsep"])
+  | ("nolistsep", none) | ("nolistsep", some "true") =>
+    return some ((zeros ["partopsep", "itemsep", "parsep"]).push ("topsep", "0pt plus 0.1pt"))
+  | (key, some v) =>
+    if !Ir.listSetKeys.contains key then return none
+    let st ← get
+    let read := (lenValue st.lens (← synth v) (preamble := !st.inDoc)
+      (measureKnown := st.measureKnown) (flowPage := st.flowPage)).filter fun n =>
+        readsAsLength n && texWordsOnly v
+    match read with
+    | some n => return some #[(key, n)]
+    | none =>
+      unreadParam reader key s!"'{what}' key '{key}={v}', a length this engine cannot read," pos
+        (help := "give a length such as 2pt, 0.5em or \\smallskipamount")
+      return some #[]
+  | _ => return none
+
+/-- A list's options with enumitem's vertical keys and shorthands as native spacing keys, the rest
+as written, for the list to read where it opens. -/
+private def listOptions (n : String) (body : Array Raw) (pos : Pos) : M (Array Raw) := do
+  let j := skipSpaces body 0
+  unless body[j]? matches some (.sym '[' _) do return body
+  let (opt, k) := takeOpt body j
+  let some src := opt | return body
+  let what := s!"\\begin\{{n}}[{src}]"
+  let mut rest : Array String := #[]
+  let mut spacing : Array (String × String) := #[]
+  let mut read := false
+  for e in KeyVal.items src do
+    match ← listSpacingEntries what n e pos with
+    | some vs =>
+      read := true
+      for (key, v) in vs do spacing := Ir.redeclare spacing key v
+    | none => rest := rest.push e
+  unless read do return body
+  let native := ", ".intercalate ((spacing.toList.map fun (key, v) => s!"{key} = {v}") ++ rest.toList)
+  became what s!"\\begin\{{n}}[{native}]" pos
+  return (← synthAt s!"[{native}]" pos) ++ body.extract k body.size
+
 /-- A key's value as the preamble's length door reads a `\dimexpr`: its native expression, else the
 value as written. -/
 private def dimexprValue (v : String) : M String := do
@@ -8095,6 +8143,19 @@ native equivalent were dropped: {dropped}" pos
     let levelsIn : List (Option Nat) :=
       if levels.isEmpty then [none] else (levels.filter fun l => 2 ≤ l && l ≤ 4).map some
     let scopes := kindsIn.flatMap fun kd => levelsIn.map fun l => (kd, l)
+    -- The vertical keys' scopes are enumitem's own, each kind and level its element.
+    let vKindsIn : List (Option String) :=
+      if kinds.isEmpty then [none] else (kinds.filter Ir.listSetKinds.contains).map some
+    let vLevelsIn : List (Option Nat) :=
+      if levels.isEmpty then [none] else (levels.filter fun l => 1 ≤ l && l ≤ 4).map some
+    let vScopes := vKindsIn.flatMap fun kd => vLevelsIn.map fun l => (kd, l)
+    let items := KeyVal.items (rawSrc (args.getD 0 #[]))
+    let mut vertical : Array (String × String) := #[]
+    let mut styled : Array String := #[]
+    for e in items do
+      match ← listSpacingEntries what "\\setlist" e pos with
+      | some vs => for (key, v) in vs do vertical := Ir.redeclare vertical key v
+      | none => styled := styled.push e
     -- The parts of the scope no element styles, each with what its keys would need.
     let listHelp := "\\style{element}{ indent = ..., gap = ... } styles the lists the engine draws"
     let firstHelp := "\\setlist[itemize]{...} styles every level of a kind, \\setlist[itemize,2]{...} \
@@ -8107,9 +8168,15 @@ a deeper level apart"
           else if l == 0 || 4 < l then some (toString l, s!"'{what}' at level {l}",
             "lists nest four levels")
           else none
+    let vUnstyled : List (String × String × String) :=
+      (kinds.filter (!Ir.listSetKinds.contains ·)).map (fun kd =>
+          (kd, s!"'{what}' for '{kd}' lists", "a list's spacing reads itemize, enumerate and \
+description scopes")) ++
+        levels.filterMap fun l =>
+          if l == 0 || 4 < l then some (toString l, s!"'{what}' at level {l}", "lists nest four levels")
+          else none
     let mut entries : Array (String × String) := #[]
-    let items := KeyVal.items (rawSrc (args.getD 0 #[]))
-    for e in items do
+    for e in styled do
       if scopes.isEmpty then
         let key := (KeyVal.entry e).1
         unreadParam "\\setlist" key s!"'{what}' key '{key}'" pos
@@ -8131,9 +8198,16 @@ a deeper level apart"
         else unreadParam "\\setlist" key s!"'{what}' key '{key}'" pos
       | (key, none) =>
         unreadParam "\\setlist" key s!"'{what}' key '{key}'" pos
+    if vScopes.isEmpty then
+      for (key, _) in vertical do
+        unreadParam "\\setlist" key s!"'{what}' key '{key}'" pos
+          (help := ((vUnstyled.head?.map (·.2.2)).getD listHelp))
     -- A scope part no element styles is named once, its keys standing for the parts styled.
-    unless scopes.isEmpty && !items.isEmpty do
+    unless scopes.isEmpty || styled.isEmpty do
       for (name, part, help) in unstyled do
+        unreadParam "\\setlist" name part pos (help := help)
+    unless vScopes.isEmpty || vertical.isEmpty do
+      for (name, part, help) in vUnstyled do
         unreadParam "\\setlist" name part pos (help := help)
     let star := j0 != start
     for sc in scopes do
@@ -8144,17 +8218,31 @@ a deeper level apart"
     let stored := (← get).setlists
     let declaredLevels (kind : String) : List Nat := [2, 3, 4].filter fun l =>
       stored.any fun (sc, _) => sc == (some kind, some l) || sc == (none, some l)
-    let touched : List (String × Option Nat) := scopes.flatMap fun (kd, l) =>
-      (match kd with | some k => [k] | none => setlistKinds).flatMap fun k =>
-        match l with
-        | some n => [(k, some n)]
-        | none => (k, none) :: (declaredLevels k).map fun n => (k, some n)
-    let mut natives : Array String := #[]
+    let touched : List (String × Option Nat) := if styled.isEmpty then [] else
+      scopes.flatMap fun (kd, l) =>
+        (match kd with | some k => [k] | none => setlistKinds).flatMap fun k =>
+          match l with
+          | some n => [(k, some n)]
+          | none => (k, none) :: (declaredLevels k).map fun n => (k, some n)
+    -- Each element's entries, the kind's style keys and the scope's spacing in one declaration.
+    let mut records : Array (String × Array (String × String)) := #[]
     for (kind, level) in touched do
       let entriesAt := setlistRecord stored kind level
-      let native := s!"\\style\{{setlistElement kind level}}\{ {", ".intercalate
-        (entriesAt.toList.map fun e => s!"{e.1} = {e.2}")} }"
-      unless entriesAt.isEmpty || natives.contains native do natives := natives.push native
+      unless entriesAt.isEmpty do
+        records := Ir.redeclare records (setlistElement kind level) entriesAt
+    -- A scope's vertical keys replace the ones it held, as enumitem's `\\setlist` replaces them.
+    unless vertical.isEmpty do
+      for sc in vScopes do
+        let old := (((← get).listSpacings.find? (·.1 == sc)).map (·.2)).getD #[]
+        let new := if star then vertical.foldl (fun a e => Ir.redeclare a e.1 e.2) old
+          else vertical
+        write fun st => { st with listSpacings := Ir.redeclare st.listSpacings sc new }
+        let cleared := (old.filter fun e => !new.any (·.1 == e.1)).map fun e => (e.1, "none")
+        let el := Ir.listSetElement sc
+        let held := ((records.find? (·.1 == el)).map (·.2)).getD #[]
+        records := Ir.redeclare records el (held ++ new ++ cleared)
+    let natives := records.map fun (el, es) =>
+      s!"\\style\{{el}}\{ {", ".intercalate (es.toList.map fun e => s!"{e.1} = {e.2}")} }"
     if natives.isEmpty then return some (#[], k)
     became what (String.join natives.toList) pos
     let mut out : Array Raw := #[]
@@ -11984,6 +12072,7 @@ steps come from its body" p
                                   tableTop := tableEnvs.contains n, defTop := false,
                                   inParacol := n == "paracol", localLengths := #[] }
         let body' ← rewriteList inBody body #[] body.toList 0 0
+        let body' ← if listEnvs.contains n then listOptions n body' p else pure body'
         let restores := restoreLengths (← get).localLengths p
         write fun st => { st with lens := st0.lens, localLengths := st0.localLengths,
                                   inList := st0.inList,

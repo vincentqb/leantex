@@ -1798,7 +1798,17 @@ def reports : List Report := [
     accept := ["lualatex on invented probes: the strut box is 8.39996pt high and 3.60004pt deep under a 10pt class, 9.51996pt high under 11pt and 10.14995pt under 12pt, as the class's baselineskip sets it; here the foot skip a quarter inch over it hangs the foot's baseline that far below the text area under article, report and KOMA-Script classes at each size, from geometry and from a preamble setlength, and a page number in an invented letter-size article moves from 6.7 bp below lualatex's to 0.5 bp, the engine's own offset at any literal foot skip",
       "the strut stays unread, named once and the page left as without it, under a KOMA-Script class with no size option, whose 11pt the engine does not take, and after a preamble line spacing, setspace spacing, font size, size command, KOMA-Script font size or stretch redefinition, each of which may set the strut box again",
       "fourteen of the guard's assertions fail with the fix reverted onto 0073deb37: each class's geometry and setlength foot skip over the strut, and a geometry value's expression over literals, is dropped and named"]
-    state := .guarded "0073deb3" .revert .author }
+    state := .guarded "0073deb3" .revert .author },
+  { id := "R201", date := "2026-10-16"
+    what := "enumitem's paragraph and vertical-mode list skips were named not honoured though the page models them, so a list declaring no space above it took the class's default where LaTeX takes none; its item and top skips replaced the item and paragraph skips and the vertical-mode skip LaTeX adds to them; its shorthands spaced nothing; and a list's own options were named and ignored, so a dense page's lists drifted apart from LaTeX's, list by list"
+    pins := [check% Tests.DeclSettings.listSpacingChecks, check% Tests.DeclSettings.listSpacingStyleChecks,
+      check% htmlListSpacingChecks, check% Tests.ParamCensus.declCensusChecks,
+      check% Tests.ParamCensus.paramCensusChecks, thm% Ir.listSpacing_undeclared_exact,
+      thm% Ir.listSpacing_declared_exact]
+    accept := ["lualatex on invented probes, article and scrartcl at 10pt: the space above a list after a paragraph break, around an inline list, between items and between an item's paragraphs under each vertical key, nosep, noitemsep and nolistsep through every list's, a kind's, a level's and a kind's level's scope, a later scope of one name replacing the earlier one or adding to it starred, and a list's own options; and article's nested lists, a second level keeping a first level's declared partopsep as size10.clo's level macro leaves it; here every step is lualatex's to the point",
+      "the guard's documents built by 0073deb37's binary: a declared partopsep or topsep moved a list's top by 2pt, a parsep or itemsep its items by 4pt, nosep left 10pt and 8pt where lualatex sets none, and a list's own options changed nothing",
+      "a length enumitem stores and the preamble cannot read, such as half a baselineskip, stopped the build with two errors and is named and skipped; the list keeps its level's spacing"]
+    state := .guarded "0073deb3" .before .author }
 ]
 
 /-- The reports guarded but never seen failing, a count held in both directions. -/

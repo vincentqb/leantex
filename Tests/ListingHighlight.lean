@@ -599,7 +599,7 @@ standoutfg=#FFFFFF,standoutbg=#000000}"
          ("identical", #[.setPalette light, sample], 1, true),
          ("repeated", #[.setPalette light, .setPalette light, sample], 1, true),
          ("nested", #[.center #[.setPalette light, sample], sample], 2, true),
-         ("items", #[.list false #[#[.setPalette light, sample], #[sample]], sample], 3, true),
+         ("items", #[.list false {} #[#[.setPalette light, sample], #[sample]], sample], 3, true),
          ("columns", #[.columns #[(.frac 500, #[.setPalette light, sample]),
            (.frac 500, #[sample])], sample], 3, true),
          ("nested notes", #[.center #[.setPalette light, .note #[.setPalette changed]],
