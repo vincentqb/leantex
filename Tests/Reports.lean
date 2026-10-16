@@ -1842,7 +1842,7 @@ def reports : List Report := [
     pins := [check% Tests.LeanViews.leanViewChecks, thm% Md.LeanDivision.ofRaw?_raw,
       thm% Code.includeLean_vocabulary_mem]
     accept := ["main's binary at da86ec89 on invented probes: a division whose show value closes a brace and opens an option zz names zz as an option the division does not have, and a host redefining the inclusion command sets its replacement text where the markdown file's division included its Lean file",
-      "lualatex on an invented probe with the package as main ships it: an inclusion showing math and prose, and one showing the documentation view under a citation style, each warn that the inclusion has no option prose or biblio-style beside the warning that the whole file sets as code; with this package only that warning"]
+      "lualatex on an invented probe with the package as main ships it: an inclusion showing math and prose, and one showing the documentation view under a citation style, each warn that the inclusion has no option prose or biblio-style beside the warning that the whole file sets as code; with this package the views warn nothing of their own and biblio-style warns that the inclusion takes no such key, its citations setting in the document's style"]
     state := .guarded "da86ec89" .before .author }
 ]
 

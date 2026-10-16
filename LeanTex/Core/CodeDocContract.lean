@@ -670,9 +670,12 @@ private theorem placedBody_adm (acc : Acc) (refs : Option Refs) (style : Option 
         · exact adm_group _ _ (word _ _)
   · exact h
 
-/-- Every view is one the reader, its help and lualatex's package list. -/
+/-- Every view is listed, as the reader, its help and the package's check read them. -/
 public theorem View.all_complete (v : View) : v ∈ View.all := by
   cases v <;> simp [View.all]
+
+/-- The code reader's vocabulary admits no request a driver must fulfil. -/
+public theorem vocabulary_requests : vocabulary.requests = [] := rfl
 
 /-- Everything a code file reads into stays inside the reader's declared vocabulary. -/
 public theorem read_vocabulary_mem (lang : Ir.CodeLang) (file text : String)

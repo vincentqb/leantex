@@ -552,6 +552,11 @@ def leanViewChecks (ref : IO.Ref (List String)) : IO Unit := do
     t s!"views: an inclusion's help for a key it has no option for names only the keys it honours ({strangeHelp})"
       (strangeHelp.any fun h => hasStr h "`bibliography`" && !hasStr h "biblio-style" &&
         Code.inclusionKeys.all fun k => hasStr h s!"`{k}`")
+    let (_, bareDs) ← build "bare.tex" ("\\documentclass{article}\n\\begin{document}\n" ++
+      "\\inputlean[biblio-style]{ex.lean}\n\\end{document}\n")
+    let pageKey := bareDs.find? (·.subject == some "code:option:biblio-style")
+    t s!"views: a page's key an inclusion is given bare is named as no option of it ({pageKey.map (·.message)})"
+      (pageKey.any fun d => hasStr d.message "has no option 'biblio-style'")
     IO.FS.writeFile (tmp / "frag.md") "::: {.lean file=ex.lean}\n:::\n"
     let (hosted, _) ← build "host.tex" ("\\documentclass{article}\n\\usepackage{markdown}\n" ++
       "\\renewcommand{\\inputlean}[2][]{Zed}\n\\begin{document}\n\\markdownInput{frag.md}\n" ++

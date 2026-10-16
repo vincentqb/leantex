@@ -2261,7 +2261,7 @@ public def includeLean (file text : String) (showing : Showing) (facts : Option 
       (some request) (help := "write `proofs = show`, `collapse` or `remove`")
       (subject := some s!"code:{k}:{v}")
   let strange := showing.strange.toArray.map fun k =>
-    let valueless := showKeys.contains k
+    let valueless := inclusionKeys.contains k
     let what := if valueless then s!"`{k}` is written without a value" else s!"{entry} has no option '{k}'"
     Diag.of .W0110 s!"{what}; the file is included as if it were not written" (some request)
       (help := if valueless then s!"write `{k} = …`"

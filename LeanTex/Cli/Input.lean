@@ -260,13 +260,13 @@ private def readAt (dir : System.FilePath) (root : String) (depth : Nat) :
             "markdownInput" (fun path bytes => do
               return (← decodeOnce path fun _ => Encoding.readMarkdown path bytes).1) .markdown
             cites
-          let (sub, divisionDs) ← includeDivisions dir request.file sub
           let others := given.filter fun o => !o.isEmpty && !citing o
           let ds := if others.isEmpty then ds else ds.push <|
             Diag.of .W0110 s!"'\\markdownInput' options '{", ".intercalate others}' are not \
 applied; the file uses the Markdown document dialect, which reads only 'citations'"
               (some ⟨request.file, request.pos⟩) (subject := some "markdownInput:options")
-          pure (sub, ds ++ divisionDs)
+          modify fun (log : InputLog) => { log with diags := log.diags ++ ds }
+          includeDivisions dir request.file sub
         else if request.command == "inputminted" then readMinted dir request
         else if request.command == "inputlean" then readLean dir (inputleanAsk request)
         else readInputAt dir request.file request.name request.pos

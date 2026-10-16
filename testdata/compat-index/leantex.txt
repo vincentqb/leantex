@@ -1,6 +1,7 @@
 # source: tex/leantex.sty and docs/guide.md's "Code files" section: the
 # \inputlean[options]{file} command, whose options are show, decls,
-# proofs, link, facts, bibliography, biblio-style and phrase. entries.
+# proofs, link, facts, bibliography and phrase. entries; biblio-style,
+# a page's key, is named and ignored.
 # Under lualatex the package sets the whole file through minted's
 # \inputminted and warns when an option asks for more.
 # The engine reads the file as a Lean file: show = code with no decls,
