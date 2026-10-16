@@ -11,7 +11,7 @@ git diff --cached --name-only | grep -qE '\.lean$|^lakefile\.(toml|lean)$|^lean-
   || exit 0
 b=.lake/build/bin/precommit
 [ -x "$b" ] && [ ! scripts/precommit.lean -nt "$b" ] && [ ! scripts/Gate.lean -nt "$b" ] \
-  && [ ! scripts/Privacy.lean -nt "$b" ] && exec "$b"
+  && [ ! scripts/Layers.lean -nt "$b" ] && [ ! scripts/Privacy.lean -nt "$b" ] && exec "$b"
 [ -z "$LEAN_CC" ] && [ -x /home/linuxbrew/.linuxbrew/bin/clang ] \
   && export LEAN_CC=/home/linuxbrew/.linuxbrew/bin/clang LIBRARY_PATH="$(lean --print-prefix)/lib:$(lean --print-prefix)/lib/lean"
 lake build precommit --wfail -q >&2 && exec "$b"

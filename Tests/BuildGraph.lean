@@ -64,9 +64,10 @@ def privateReads (graph : Std.HashMap String Header) (h : Header) : Array String
     graph.contains).qsort (· < ·)
 
 /-- Each surface module `root`'s build reaches through a chain of imports of any kind, with the first
-chain reaching it, a surface's own imports unread. -/
-def surfaceReach (graph : Std.HashMap String Header) (root : String) : Array (List String) :=
-  (reach graph root (fun _ => true) surfaceModules.contains).filter fun chain =>
+chain reaching it, a surface's own imports and those of a module `stop` names unread. -/
+def surfaceReach (graph : Std.HashMap String Header) (root : String)
+    (stop : String → Bool := fun _ => false) : Array (List String) :=
+  (reach graph root (fun _ => true) fun m => surfaceModules.contains m || stop m).filter fun chain =>
     chain.getLast?.any surfaceModules.contains
 
 /-- The files outside the module system, each small and imported by no module. -/
@@ -150,15 +151,17 @@ def judge (files : Array (String × String)) (tools : Array (String × String) :
   let chains (cs : Array (List String)) : List String := cs.toList.map (" → ".intercalate ·)
   let reaches (root target : String) : Bool :=
     (reach graph root (fun _ => true)).any (·.getLast? == some target)
-  -- Every module of the core a backend's build reads lies on the backends' side of the surface.
+  -- Every module of the core whose build reads a backend lies on the backends' side of the surface.
   let aboveBackends := headers.filter fun h => h.name.startsWith "LeanTex.Core." &&
     (backendModules.contains h.name || backendModules.any (reaches h.name ·))
   let crossing := aboveBackends.filterMap fun h =>
-    let found := surfaceReach graph h.name
+    let found := surfaceReach graph h.name backendModules.contains
     if found.isEmpty || backendModules.contains h.name then none else some (chains found)
   let door := "LeanTex.Core.Surface"
+  let backendSide (m : String) : Bool := backendModules.any fun b => b == m || reaches b m
   let doorReads := (((graph.get? door).map (·.imports)).getD #[]).filterMap fun i =>
-    if i.mod.startsWith "LeanTex." then some i.mod else none
+    if i.mod.startsWith "LeanTex." && !backendSide i.mod then some i.mod else none
+  let layers := surfaceModules ++ backendModules ++ importFloors.flatMap fun (a, b) => [a, b]
   let legacy := (headers.filter (!·.isModule)).map (·.name)
   let mut facts : List (String × Bool) :=
     [(s!"every header reads as Lake reads it (refused: {refused.toList})", refused.isEmpty),
@@ -166,13 +169,12 @@ def judge (files : Array (String × String)) (tools : Array (String × String) :
       legacy.toList.mergeSort (· ≤ ·) == legacyFiles.mergeSort (· ≤ ·)),
      ("every declared large file exists",
       (largeReads ++ largeReaders).all fun (n, _) => graph.contains n),
-     (s!"every surface module and backend is in the tree (missing: \
-{(surfaceModules ++ backendModules).filter (!graph.contains ·)})",
-      (surfaceModules ++ backendModules).all graph.contains),
-     (s!"every module of the library the surfaces' door reads is a surface module (found {doorReads})",
-      graph.contains door && doorReads.all surfaceModules.contains),
-     (s!"no module of the core a backend's build reads reaches a surface module (found {crossing})",
-      crossing.isEmpty)] ++
+     (s!"every surface module, backend and floor's end is in the tree (missing: \
+{layers.filter (!graph.contains ·)})", layers.all graph.contains),
+     (s!"every module of the library the surfaces' door reads and no backend reads is a surface \
+module (found {doorReads})", graph.contains door && doorReads.all surfaceModules.contains),
+     (s!"no module of the core whose build reads a backend reaches a surface module but through one \
+(found {crossing})", crossing.isEmpty)] ++
     (backendModules.map fun b =>
       (s!"the backend {b} reaches no surface module through any import (found \
 {chains (surfaceReach graph b)})", (surfaceReach graph b).isEmpty)) ++
@@ -244,6 +246,14 @@ def selfTest : IO (List (String × Bool)) := do
     ("LeanTex.Core.Theme", "module\npublic import all LeanTex.Core.Layout\n")]
   let floorFact (facts : List (String × Bool)) (root : String) : Option (String × Bool) :=
     facts.find? fun (n, _) => hasStr n s!"{root} stays below"
+  let throughBackend ← judge #[("LeanTex.Core.Html", "module\nimport LeanTex.Core.Lex\n"),
+    ("LeanTex.Core.Lex", "module\n"), ("LeanTex.Core.Above", "module\nimport LeanTex.Core.Html\n")]
+  let sharedDoor ← judge #[("LeanTex.Core.Surface", "module\nimport LeanTex.Core.Ir\n"),
+    ("LeanTex.Core.Html", "module\nimport LeanTex.Core.Ir\n"), ("LeanTex.Core.Ir", "module\n")]
+  let unlistedDoor ← judge #[("LeanTex.Core.Surface", "module\nimport LeanTex.Core.Helper\n"),
+    ("LeanTex.Core.Helper", "module\n")]
+  let doorFact (facts : List (String × Bool)) : Option (String × Bool) :=
+    facts.find? fun (n, _) => hasStr n "the surfaces' door reads"
   return [("an import all reads through further import all, never through a plain import",
      reads "A" == #["B", "D"]),
    ("a plain import reads no private part", reads "D" == #[]),
@@ -273,6 +283,14 @@ def selfTest : IO (List (String × Bool)) := do
      (backendFact clean "LeanTex.Core.Html").any (·.2)),
    ("a backend absent from the tree fails, named missing",
      clean.any fun (n, ok) => !ok && hasStr n "missing:" && hasStr n "LeanTex.Core.Pdf"),
+   ("a floor's end absent from the tree fails, named missing",
+     clean.any fun (n, ok) => !ok && hasStr n "missing:" && hasStr n "LeanTex.Core.DesignRole"),
+   ("a core module reaching a surface only through a backend is named once, by the backend",
+     (backendFact throughBackend "LeanTex.Core.Html").any (!·.2) &&
+       throughBackend.any fun (n, ok) => ok && hasStr n "whose build reads a backend"),
+   ("the door may read a module a backend reads, and not an unlisted one no backend reads",
+     (doorFact sharedDoor).any (·.2) &&
+       (doorFact unlistedDoor).any fun (n, ok) => !ok && hasStr n "LeanTex.Core.Helper"),
    ("a backend reaching a surface through a tool's module fails",
      (backendFact viaTool "LeanTex.Core.Html").any fun (n, ok) => !ok &&
        hasStr n "LeanTex.Core.Html → scripts.Mid → LeanTex.Core.Parse"),
