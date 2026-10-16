@@ -238,6 +238,9 @@ public structure Ctx where
   page : Ir.PageSpec := {}
   /-- The surface the main document was written in. -/
   surface : Ir.Surface := .tex
+  /-- Inside raws markdown or a code file lowered, which the document's own commands and
+  environments do not reach. -/
+  native : Bool := false
   /-- The class's list lineage, which a listing's frame reads. -/
   lists : Ir.ListLineage := .sizeFile
   /-- The class's preamble font, in which a length the class fixes at load is fixed. -/
@@ -1322,19 +1325,29 @@ private theorem latestNamed_lt {α : Type} {nameOf : α → String} {xs : Array 
   | case4 m _ ih => exact Nat.lt_succ_of_lt (ih h)
 
 private def lookupUser (ctx : Ctx) (name : String) : Option (Nat × UserCmd) :=
-  latestNamed (·.name) ctx.user name ctx.limit
+  if ctx.native then none else latestNamed (·.name) ctx.user name ctx.limit
+
+private theorem lookupUser_latest {ctx : Ctx} {name : String} {x : Nat × UserCmd}
+    (h : lookupUser ctx name = some x) : latestNamed (·.name) ctx.user name ctx.limit = some x := by
+  unfold lookupUser at h
+  split at h
+  · exact absurd h (by simp)
+  · exact h
 
 private theorem lookupUser_lt {ctx : Ctx} {name : String} {k : Nat}
     {cmd : UserCmd} (h : lookupUser ctx name = some (k, cmd)) : k < ctx.limit :=
-  latestNamed_lt h
+  latestNamed_lt (lookupUser_latest h)
 
 private def lookupUserEnv (ctx : Ctx) (name : String) : Option (Nat × UserEnv) :=
-  latestNamed (·.name) ctx.userEnvs name ctx.envLimit
+  if ctx.native then none else latestNamed (·.name) ctx.userEnvs name ctx.envLimit
 
 private theorem lookupUserEnv_lt {ctx : Ctx} {name : String} {k : Nat}
     {env : UserEnv} (h : lookupUserEnv ctx name = some (k, env)) :
-    k < ctx.envLimit :=
-  latestNamed_lt h
+    k < ctx.envLimit := by
+  unfold lookupUserEnv at h
+  split at h
+  · exact absurd h (by simp)
+  · exact latestNamed_lt h
 
 private def isSpace : Raw → Bool
   | .space => true
@@ -2273,7 +2286,7 @@ private theorem visGo_expand {f : UserCmd → Nat} {ctx : Ctx} {name : String}
     {k : Nat} {cmd : UserCmd} (h : lookupUser ctx name = some (k, cmd)) :
     f cmd + visGo f ctx.user k ≤ visGo f ctx.user ctx.limit := by
   have hlt := lookupUser_lt h
-  have hfound := latestNamed_mem h
+  have hfound := latestNamed_mem (lookupUser_latest h)
   obtain ⟨hk, hbody⟩ := Array.getElem?_eq_some_iff.mp hfound
   have hstep : visGo f ctx.user (k + 1) = f cmd + visGo f ctx.user k := by
     simp only [visGo, hk, dite_true, hbody]
@@ -4659,7 +4672,8 @@ private def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
         elabInlinesFrom ctx raws (i + 1) (acc ++ inner) ""
       else if let some f := Parse.inputEnvFile? name then
         let acc := flushText acc sb
-        let inner ← elabInlinesCore { ctx with file := f, callSite := none } body
+        let inner ← elabInlinesCore
+          { ctx with file := f, callSite := none, native := ctx.native || Parse.isNativeInput name } body
         elabInlinesFrom ctx raws (i + 1) (acc ++ inner) ""
       else if let some numbered := displayMathEnvs.lookup name then
         let acc := flushText acc sb
@@ -11446,7 +11460,8 @@ private def elabEnvArm (ctx : Ctx) (n : String) (scope : Array Raw)
     blocks := blocks ++ (← splicedFrameScope (some blocks.size) (elabBlockScope ctx body))
   else if let some f := Parse.inputEnvFile? n then
     let ⟨fileCtx, _⟩ : MCtx ctx ←
-      pure ⟨{ ctx with file := f, callSite := none }, rfl, rfl, rfl, rfl⟩
+      pure ⟨{ ctx with file := f, callSite := none, native := ctx.native || Parse.isNativeInput n },
+        rfl, rfl, rfl, rfl⟩
     blocks := blocks ++ (← splicedFrameScope (some blocks.size) (elabBlockScope fileCtx body))
   else if let some numbered := displayMathEnvs.lookup n then
     blocks ← displayMathArm ctx numbered body pos blocks

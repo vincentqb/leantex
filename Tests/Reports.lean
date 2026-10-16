@@ -1843,7 +1843,16 @@ def reports : List Report := [
       thm% Code.includeLean_vocabulary_mem]
     accept := ["main's binary at da86ec89 on invented probes: a division whose show value closes a brace and opens an option zz names zz as an option the division does not have, and a host redefining the inclusion command sets its replacement text where the markdown file's division included its Lean file",
       "lualatex on an invented probe with the package as main ships it: an inclusion showing math and prose, and one showing the documentation view under a citation style, each warn that the inclusion has no option prose or biblio-style beside the warning that the whole file sets as code; with this package the views warn nothing of their own and biblio-style warns that the inclusion takes no such key, its citations setting in the document's style"]
-    state := .guarded "da86ec89" .before .author }
+    state := .guarded "da86ec89" .before .author },
+  { id := "R205", date := "2026-10-16"
+    what := "a markdown file or a Lean file a TeX document included ran through the compatibility walk among the document's own commands, so a document renewing a command the markdown's emphasis, strong emphasis, code, links, images, anchors or line breaks lower onto replaced each in the included file, and renewing one a Lean file's documentation sets did the same; the markdown package's hybrid option, under which a file's text is TeX, was named as an option the engine does not apply, and its setup command was unknown"
+    pins := [check% Tests.MarkdownDoors.markdownDoorChecks,
+      check% Tests.MarkdownDoors.markdownDoorDriverChecks,
+      check% Tests.MarkdownDoors.markdownHybridChecks, thm% Parse.spliceNatives_nativeRaw]
+    accept := ["main's binary at 0e5db3b5 on invented probes: a host renewing the emphasis command sets its replacement where an included markdown file emphasises a word and where an included Lean file's documentation does, the hybrid package option warns that it is not applied and the setup command that it is unknown, each file's commands then set as written",
+      "lualatex with the markdown package on invented probes: a file's commands, braces and dollars set as written, and as TeX under hybrid, whether the package's option, the setup command before the inclusion or the inclusion's own option declares it, the inclusion's applying to it alone, its hybrid=false overriding the package's, and a setup inside a group or an environment ending with it",
+      "the corpus built by main's binary at 0e5db3b5 and by this tree's: all 347 artifacts byte-identical, and its markdown, code and including sources warn alike"]
+    state := .guarded "0e5db3b5" .before .author }
 ]
 
 /-- The reports guarded but never seen failing, a count held in both directions. -/

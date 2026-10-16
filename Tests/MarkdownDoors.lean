@@ -9,7 +9,7 @@ open LeanTex.Core.Parse (Raw)
 
 /-! Two doors, one meaning: a markdown file elaborates the same alone and included by
 `\markdownInput` (D1 and D1′ the document, D2 capture, D3 its bound, D4 diagnostics, D5 artifacts,
-D6 a self-named include). -/
+D6 a self-named include, D7 the walk left out). -/
 
 namespace Tests.MarkdownDoors
 
@@ -55,6 +55,11 @@ def family : List String :=
   blockFamily ++ inlineFamily.map (fun x => "Before " ++ x ++ " after.")
 
 def mdName : String := "frag.md"
+
+/-- A page of each code language, invented. -/
+def codePages : List (Ir.CodeLang × String × String) :=
+  [(.lean, "page.lean", "/-- A *word* here. -/\ntheorem page_true : True := trivial\n"),
+    (.python, "page.py", "# A *word* here.\nx = 1\n"), (.bash, "page.sh", "# A *word* here.\necho one\n")]
 def hostFile : String := "host.tex"
 
 def standalone (src : String) : Ir.Doc × Array Diag := standaloneDoc mdName src
@@ -105,6 +110,11 @@ def spliceList (name : String) (wrap : Pos → Array Raw) (out : Array Raw) :
   | .ctrl "markdownInput" p :: .group #[.word w q] g :: rest =>
     if w == name then spliceList name wrap (out ++ wrap p) rest
     else spliceList name wrap ((out.push (.ctrl "markdownInput" p)).push (.group #[.word w q] g)) rest
+  | .ctrl "markdownInput" p :: .sym '[' a :: .word "hybrid" h :: .sym ']' b :: .group #[.word w q] g ::
+      rest =>
+    if w == name then spliceList name wrap (out ++ wrap p) rest
+    else spliceList name wrap (out ++ #[.ctrl "markdownInput" p, .sym '[' a, .word "hybrid" h,
+      .sym ']' b, .group #[.word w q] g]) rest
   | r :: rest => spliceList name wrap (out.push (spliceOne name wrap r)) rest
 
 def spliceOne (name : String) (wrap : Pos → Array Raw) : Raw → Raw
@@ -144,6 +154,11 @@ def quotedDoc (host src : String) : Ir.Doc × Array Diag :=
 def hostWith (pre : String) : String :=
   "\\documentclass{article}\\usepackage{markdown}" ++ pre ++
     "\\begin{document}\\markdownInput{" ++ mdName ++ "}\\end{document}"
+
+/-- The host whose include declares the markdown package's hybrid option. -/
+def hybridHostWith (pre : String) : String :=
+  "\\documentclass{article}\\usepackage{markdown}" ++ pre ++
+    "\\begin{document}\\markdownInput[hybrid]{" ++ mdName ++ "}\\end{document}"
 
 /-- A slides host whose frame body is the include. -/
 def frameHost : String :=
@@ -194,8 +209,8 @@ def captureFragment : String :=
   "Words *em* **bold** `mono` [link](http://example.org/l) ![alt](pic.png) " ++
     "<a id=\"k2\"></a>tail\\\nnext line\n\n- item one\n- item two\n"
 
-/-- Which vocabulary controls a host's redefinition reaches inside included markdown: all but
-`\item`. -/
+/-- Which vocabulary controls a host's redefinition reaches inside markdown it includes under the
+markdown package's hybrid option: all but `\item`; without the option, none. -/
 def captureRule : List (String × Bool) :=
   [("emph", true), ("textbf", true), ("texttt", true), ("href", true),
     ("includegraphics", true), ("item", false), ("hypertarget", true), ("\\", true)]
@@ -232,13 +247,18 @@ def markdownDoorChecks (ref : IO.Ref (List String)) : IO Unit := do
   t s!"doors D4: a door that renames the file is seen ({plantedRenamed} of {family.length})"
     (plantedRenamed > 0)
   let (neutralDoc, _) := includedDoc hostFile (hostWith "") [(mdName, mdName, captureFragment)]
+  let (hybridNeutral, _) := includedDoc hostFile (hybridHostWith "") [(mdName, mdName, captureFragment)]
   for (n, captured) in captureRule do
-    let host := hostWith ("\\renewcommand{\\" ++ n ++ "}{Zed}")
-    let (iDoc, _) := includedDoc hostFile host [(mdName, mdName, captureFragment)]
-    t s!"doors D2: a host redefining \\{n} includes as it splices"
-      (iDoc == (splicedDoc host captureFragment).1)
-    t s!"doors D2: the capture rule for \\{n} is {captured}"
-      ((iDoc.body != neutralDoc.body) == captured)
+    let pre := "\\renewcommand{\\" ++ n ++ "}{Zed}"
+    let (iDoc, _) := includedDoc hostFile (hostWith pre) [(mdName, mdName, captureFragment)]
+    t s!"doors D2: a host redefining \\{n} leaves the markdown it includes as the neutral host sets it"
+      (iDoc.body == neutralDoc.body)
+    let host := hybridHostWith pre
+    let (hDoc, _) := includedDoc hostFile host [(mdName, mdName, captureFragment)]
+    t s!"doors D2: under hybrid, a host redefining \\{n} includes as it splices"
+      (hDoc == (splicedDoc host captureFragment).1)
+    t s!"doors D2: under hybrid, the capture rule for \\{n} is {captured}"
+      ((hDoc.body != hybridNeutral.body) == captured)
   let (frameDoc, _) := includedDoc hostFile frameHost [(mdName, mdName, captureFragment)]
   t "doors D2: a frame host includes as it splices"
     (frameDoc == (splicedDoc frameHost captureFragment).1)
@@ -249,9 +269,10 @@ def markdownDoorChecks (ref : IO.Ref (List String)) : IO Unit := do
       "\\newcommand{\\foo}{Zed}"] do
     let (doc, _) := includedDoc hostFile (hostWith pre) [(mdName, mdName, captureFragment)]
     t s!"doors D3: {pre} leaves the included blocks alone" (doc.body == neutralDoc.body)
-  let (emphDoc, _) := includedDoc hostFile (hostWith "\\renewcommand{\\emph}{Zed}")
+  let (emphDoc, _) := includedDoc hostFile (hybridHostWith "\\renewcommand{\\emph}{Zed}")
     [(mdName, mdName, captureFragment)]
-  t "doors D3: a redefinition inside the vocabulary is seen" (emphDoc.body != neutralDoc.body)
+  t "doors D3: under hybrid, a redefinition inside the vocabulary is seen"
+    (emphDoc.body != hybridNeutral.body)
   let some bytes ← findFont | failures ref "doors D5: missing fixture font"
   let .ok font := Font.parse bytes | failures ref "doors D5: invalid fixture font"
   let fonts := oneFaceOf font
@@ -300,8 +321,20 @@ def markdownDoorChecks (ref : IO.Ref (List String)) : IO Unit := do
     (deck.size == 1 && deck.all includeStands)
   t "doors D6: the domain judge refuses an include beside text (the corpus article)"
     (!includeStands (← fixturePlanRaws "md-include"))
+  let prepared (f : String) (raws : Array Raw) : Array Raw :=
+    (Elab.prepareExecuted f (Compat.native f raws)).raws
+  let kept := family.filter fun src =>
+    let raws := (Surface.read .markdown mdName src).1
+    prepared mdName raws == raws
+  t s!"doors D7: the elaborator reads each markdown file as its surface lowers it ({kept.length} of \
+{family.length})" (kept.length == family.length)
+  for (lang, name, src) in codePages do
+    let raws := (Surface.read (.code lang) name src).1
+    t s!"doors D7: the elaborator reads a {name} page as its surface lowers it"
+      (prepared name raws == raws)
 
-/-- The neutral host through the driver's own reader agrees with the pure door. -/
+/-- The neutral host through the driver's own reader agrees with the pure door, and the driver hands
+the walk a markdown or code file as one place it leaves alone. -/
 def markdownDoorDriverChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   IO.FS.withTempDir fun dir => do
@@ -313,5 +346,64 @@ def markdownDoorDriverChecks (ref : IO.Ref (List String)) : IO Unit := do
       let (pureDoc, pureDs) := includedDoc host (neutralHost mdName) [(mdName, frag, src)]
       t s!"doors: the driver's reader is the pure door for {repr src}"
         (driverDoc == pureDoc && driverDs.map ident == pureDs.map ident)
+    for (name, src) in (mdName, captureFragment) :: codePages.map fun (_, n, s) => (n, s) do
+      let path := (dir / name).toString
+      IO.FS.writeFile path src
+      let read ← Input.readDocument path src.toUTF8
+      t s!"doors D7: the driver hands the walk {name} as one place it leaves alone"
+        (read.executed.raws == #[Parse.nativeRaw 0 {}])
+
+/-- The markdown package's `hybrid` option where LaTeX's package reads it: a file's text is TeX under
+it and text without it, and a Lean file it or a host includes stays as its page sets it. -/
+def markdownHybridChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  IO.FS.withTempDir fun dir => do
+    let host := (dir / hostFile).toString
+    IO.FS.writeFile (dir / mdName) "Words \\textbf{Boldword} and \\zed here.\n"
+    let run (pre body : String) : IO (Array Html.Node × Array Diag) := do
+      let (doc, ds) ← elabInputSrc host ("\\documentclass{article}" ++ pre ++
+        "\\newcommand{\\zed}{Zed}\\renewcommand{\\emph}[1]{Emzed}\\begin{document}" ++ body ++
+        "\\end{document}")
+      let (_, html, _) := HtmlDoc.emitTree {} doc
+      return (html, ds)
+    let input := "\\markdownInput{" ++ mdName ++ "}"
+    for (label, pre, body, tex, text) in [
+        ("without the option", "\\usepackage{markdown}", input, 0, 1),
+        ("under the package's option", "\\usepackage[hybrid]{markdown}", input, 1, 0),
+        ("under its setup", "\\usepackage{markdown}\\markdownSetup{hybrid}", input, 1, 0),
+        ("under the inclusion's own option, then without it", "\\usepackage{markdown}",
+          "\\markdownInput[hybrid]{" ++ mdName ++ "}" ++ input, 1, 1),
+        ("under an inclusion turning the package's option off", "\\usepackage[hybrid]{markdown}",
+          "\\markdownInput[hybrid=false]{" ++ mdName ++ "}", 0, 1),
+        ("before and after a setup naming it", "\\usepackage{markdown}",
+          input ++ "\\markdownSetup{hybrid}" ++ input, 1, 1),
+        ("in and after a group whose setup names it", "\\usepackage{markdown}",
+          "{\\markdownSetup{hybrid}" ++ input ++ "}" ++ input, 1, 1),
+        ("in and after a minipage whose setup turns the package's option off",
+          "\\usepackage[hybrid]{markdown}", "\\begin{minipage}{4cm}\\markdownSetup{hybrid=false}" ++
+          input ++ "\\end{minipage}" ++ input, 1, 1)] do
+      let (html, ds) ← run pre body
+      let set := treeShownOccurs html "Zed"
+      let written := treeShownOccurs html "\\zed"
+      t s!"markdown hybrid: {label}, a file's TeX is set {tex} times and shown as written {text} \
+times (found {set} and {written})"
+        (set == tex && written == text && treeShownOccurs html "\\textbf" == text &&
+          ds.all (·.severity != .error))
+    let (_, setupDs) ← run "\\usepackage{markdown}\\markdownSetup{smartEllipses}" input
+    t "markdown hybrid: a setup key the engine does not read is named once, as the package's option"
+      ((setupDs.filter fun d => d.kind == .W0110 && d.subject == some "markdownSetup:options" &&
+        hasStr d.message "smartEllipses").size == 1)
+    IO.FS.writeFile (dir / "ex.lean") "/-- A *docword* here. -/\ntheorem probe_true : True := trivial\n"
+    IO.FS.writeFile (dir / "div.md") "Words *emword*.\n\n::: {.lean file=ex.lean show=docs}\n:::\n"
+    for hybrid in [false, true] do
+      let (html, _) ← run "\\usepackage{markdown}"
+        ("\\markdownInput" ++ (if hybrid then "[hybrid]" else "") ++ "{div.md}")
+      t s!"markdown hybrid {hybrid}: a host's emphasis reaches the file's own only under the option, \
+and never the Lean file its division includes"
+        (treeShownOccurs html "docword" == 1 && treeShownOccurs html "emword" == (if hybrid then 0 else 1) &&
+          treeShownOccurs html "Emzed" == (if hybrid then 1 else 0))
+    let (leanHtml, _) ← run "" "\\inputlean[show = docs]{ex.lean}"
+    t "markdown hybrid: a host's emphasis leaves a Lean file it includes as its page sets it"
+      (treeShownOccurs leanHtml "docword" == 1 && treeShownOccurs leanHtml "Emzed" == 0)
 
 end Tests.MarkdownDoors

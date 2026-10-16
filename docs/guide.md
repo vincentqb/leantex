@@ -58,6 +58,19 @@ line breaks from the TeX document around it. Include one with:
 \markdownInput{notes.md}
 ```
 
+An included file's text is Markdown alone, as the markdown package reads it
+by default: a command, a brace or a `$` in it is text. Its emphasis, links
+and code are the document's own constructs, which the TeX document's command
+definitions do not reach: renewing `\emph` leaves its emphasis as it was.
+Under the package's `hybrid` option, declared by
+`\usepackage[hybrid]{markdown}`, `\markdownSetup{hybrid}` for the rest of its
+group or `\markdownInput[hybrid]{…}` for one file (and `hybrid = false` to
+turn it off), its text is TeX within Markdown's structure, as the package
+reads it then: its commands and math are TeX's, and the document's
+definitions reach it as they reach the TeX around it, though never a Lean
+file one of its divisions includes. A Lean file `\inputlean` includes sets as
+its page sets it, whatever the document defines.
+
 Markdown cites as Pandoc does: `[@key]`, `[see @key, p. 33; @other]`,
 `[-@key]` without the author's name, and `@key` or `@key [p. 33]` within a
 sentence. A key is letters, digits and `_` with single punctuation marks

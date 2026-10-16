@@ -308,7 +308,7 @@ private theorem selectorGuard_adm (rs : Array Raw) (p : Pos) : Adm d (selectorGu
 
 mutual
 
-private theorem inlRaws_adm (file : String) : (x : Inl) → Adm d (inlRaws file x).1
+private theorem inlRaws_adm (file : String) : (x : Inl) → Adm d (inlRaws file false x).1
   | .text s p => by
     simp only [inlRaws]
     exact adm_text s p
@@ -407,7 +407,7 @@ private theorem inlRaws_adm (file : String) : (x : Inl) → Adm d (inlRaws file 
   | .cite items p => by
     simp only [inlRaws]
     have hn := citeItemsRaws_adm file items.toList #[] #[] (by intro c hc; simp at hc)
-    have hl : NotesAdm d (citeItemsRaws file #[] #[] items.toList).1.toList :=
+    have hl : NotesAdm d (citeItemsRaws file false #[] #[] items.toList).1.toList :=
       fun c hc => hn c (Array.mem_toList_iff.mp hc)
     unfold citeGroupRaws
     dsimp only
@@ -441,7 +441,7 @@ private theorem closeLeading_adm (rs : Array Raw) (h : Adm d rs) : Adm d (closeL
   · exact h
 
 private theorem inlListRaws_adm (file : String) : (l : List Inl) → (out : Array Raw) →
-    (ds : Array Diag) → Adm d out → Adm d (inlListRaws file out ds l).1
+    (ds : Array Diag) → Adm d out → Adm d (inlListRaws file false out ds l).1
   | [], _, _, h => by simpa [inlListRaws] using h
   | x :: rest, out, ds, h => by
     simp only [inlListRaws]
@@ -459,7 +459,7 @@ private theorem inlListRaws_adm (file : String) : (l : List Inl) → (out : Arra
 
 private theorem citeItemsRaws_adm (file : String) : (l : List CiteItem) → (out : Array CiteRaws) →
     (ds : Array Diag) → (∀ c ∈ out, Adm d c.pre ∧ Adm d c.post) →
-    ∀ c ∈ (citeItemsRaws file out ds l).1, Adm d c.pre ∧ Adm d c.post
+    ∀ c ∈ (citeItemsRaws file false out ds l).1, Adm d c.pre ∧ Adm d c.post
   | [], _, _, h => by simpa [citeItemsRaws] using h
   | .mk key mode pre post :: rest, out, ds, h => by
     simp only [citeItemsRaws]
@@ -478,18 +478,18 @@ private theorem sym_mem (c : Char) (p : Pos) (h : c ∈ vocabulary.syms) :
   exact List.contains_iff_mem.mpr h
 
 private theorem laterCellsRaws_adm (file : String) (p : Pos) : (cells : List (Array Inl)) →
-    (out : Array Raw) → (ds : Array Diag) → Adm d out → Adm d (laterCellsRaws file p out ds cells).1
+    (out : Array Raw) → (ds : Array Diag) → Adm d out → Adm d (laterCellsRaws file false p out ds cells).1
   | [], _, _, h => by simpa [laterCellsRaws] using h
   | cell :: rest, out, ds, h => by
     have hc := inlListRaws_adm file cell.toList #[] #[] (adm_empty (d := d))
     unfold laterCellsRaws
-    rcases hr : inlListRaws file #[] #[] cell.toList with ⟨rs, cds⟩
+    rcases hr : inlListRaws file false #[] #[] cell.toList with ⟨rs, cds⟩
     rw [hr] at hc
     exact laterCellsRaws_adm file p rest _ _
       (adm_push (adm_push h (sym_mem '&' p (by simp [vocabulary]))) (adm_group rs p hc))
 
 private theorem rowCellsRaws_adm (file : String) (p : Pos) :
-    (cells : List (Array Inl)) → Adm d (rowCellsRaws file p cells).1
+    (cells : List (Array Inl)) → Adm d (rowCellsRaws file false p cells).1
   | [] => by simpa [rowCellsRaws] using adm_empty
   | cell :: rest => by
     have hc := inlListRaws_adm file cell.toList #[] #[] (adm_empty (d := d))
@@ -501,26 +501,26 @@ private theorem rowCellsRaws_adm (file : String) (p : Pos) :
       exact adm_group _ p hc))
 
 private theorem rowRaws_adm (file : String) (row : Array (Array Inl)) (p : Pos) :
-    Adm d (rowRaws file row p).1 := by
+    Adm d (rowRaws file false row p).1 := by
   unfold rowRaws
   exact adm_push (rowCellsRaws_adm file p row.toList) (ctrl_mem _ _ (by simp [vocabulary]))
 
 private theorem rowsRaws_adm (file : String) (p : Pos) : (rows : List (Array (Array Inl))) →
-    (out : Array Raw) → (ds : Array Diag) → Adm d out → Adm d (rowsRaws file p out ds rows).1
+    (out : Array Raw) → (ds : Array Diag) → Adm d out → Adm d (rowsRaws file false p out ds rows).1
   | [], _, _, h => by simpa [rowsRaws] using h
   | row :: rest, out, ds, h => by
     have hr := rowRaws_adm (d := d) file row p
     unfold rowsRaws
-    rcases hrow : rowRaws file row p with ⟨rs, rds⟩
+    rcases hrow : rowRaws file false row p with ⟨rs, rds⟩
     rw [hrow] at hr
     exact rowsRaws_adm file p rest _ _ (adm_append h hr)
 
 private theorem tableRaws_adm (file : String) (aligns : Array TableAlign)
     (header : Array (Array Inl)) (rows : Array (Array (Array Inl))) (p : Pos) :
-    Adm d (tableRaws file aligns header rows p).1 := by
+    Adm d (tableRaws file false aligns header rows p).1 := by
   have hh := rowRaws_adm (d := d) file header p
   unfold tableRaws
-  rcases hhr : rowRaws file header p with ⟨hr, hds⟩
+  rcases hhr : rowRaws file false header p with ⟨hr, hds⟩
   rw [hhr] at hh
   simp only at hh
   dsimp only
@@ -573,7 +573,7 @@ private theorem division_adm (q : LeanDivision) (p : Pos) :
 mutual
 
 private theorem blkRaws_adm (file : String) (refs : Array Raw) (hrefs : Adm d refs) :
-    (b : Blk) → Adm d (blkRaws file refs d b).1
+    (b : Blk) → Adm d (blkRaws file refs d false b).1
   | .para body p => by
     simp only [blkRaws]
     exact adm_push (inlListRaws_adm file body.toList #[] #[] adm_empty) rfl
@@ -663,7 +663,7 @@ private theorem blkRaws_adm (file : String) (refs : Array Raw) (hrefs : Adm d re
 
 private theorem blkListRaws_adm (file : String) (refs : Array Raw) (hrefs : Adm d refs) :
     (l : List Blk) → (out : Array Raw) →
-    (ds : Array Diag) → Adm d out → Adm d (blkListRaws file refs d out ds l).1
+    (ds : Array Diag) → Adm d out → Adm d (blkListRaws file refs d false out ds l).1
   | [], _, _, h => by simpa [blkListRaws] using h
   | b :: rest, out, ds, h => by
     simp only [blkListRaws]
@@ -671,7 +671,7 @@ private theorem blkListRaws_adm (file : String) (refs : Array Raw) (hrefs : Adm 
 
 private theorem itemsRaws_adm (file : String) (refs : Array Raw) (hrefs : Adm d refs) :
     (l : List (Array Blk)) → (p : Pos) →
-    (out : Array Raw) → (ds : Array Diag) → Adm d out → Adm d (itemsRaws file refs d out ds l p).1
+    (out : Array Raw) → (ds : Array Diag) → Adm d out → Adm d (itemsRaws file refs d false out ds l p).1
   | [], _, _, _, h => by simpa [itemsRaws] using h
   | it :: rest, p, out, ds, h => by
     simp only [itemsRaws]
@@ -789,7 +789,7 @@ private theorem env_start (n : String) (b : Array Raw) (p : Pos) (h : n ∈ voca
   Or.inr (Or.inr (Or.inr ⟨n, b, p, rfl, h⟩))
 
 private theorem blkRaws_starts (file : String) (refs : Array Raw) (hrefs : Starts refs) (b : Blk) :
-    Starts (blkRaws file refs d b).1 := by
+    Starts (blkRaws file refs d false b).1 := by
   cases b with
   | para body p =>
     simp only [blkRaws]
@@ -819,7 +819,7 @@ private theorem blkRaws_starts (file : String) (refs : Array Raw) (hrefs : Start
     exact starts_single (env_start _ _ _ (by cases ordered <;> simp [vocabulary]))
   | table aligns header rows p =>
     simp only [blkRaws]
-    obtain ⟨body, hbody, _⟩ := tableRaws_contract file aligns header rows p
+    obtain ⟨body, hbody, _⟩ := tableRaws_contract file false aligns header rows p
     rw [hbody]
     exact starts_single (env_start _ _ _ (by simp [vocabulary]))
   | lean attrs p =>
@@ -836,7 +836,7 @@ private theorem blkRaws_starts (file : String) (refs : Array Raw) (hrefs : Start
 
 private theorem blkListRaws_starts (file : String) (refs : Array Raw) (hrefs : Starts refs) :
     (l : List Blk) → (out : Array Raw) →
-    (ds : Array Diag) → Starts out → Starts (blkListRaws file refs d out ds l).1
+    (ds : Array Diag) → Starts out → Starts (blkListRaws file refs d false out ds l).1
   | [], _, _, h => by simpa [blkListRaws] using h
   | b :: rest, out, ds, h => by
     simp only [blkListRaws]

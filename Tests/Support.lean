@@ -337,24 +337,29 @@ def dvMd (s : String) (w : WitnessRun := {}) : Array Diag := (w.elabMarkdown s).
 /-- A reader that answers no request. -/
 def nullReader : Compat.InputReader Id := fun _ context => (none, context)
 
-/-- A markdown file as a document of its own, executed and elaborated as the driver runs one; no
-request reaches the null reader. -/
+/-- A markdown file as a document of its own, elaborated as the driver runs one: nothing executes. -/
 def standaloneDoc (f t : String) : Ir.Doc × Array Diag :=
   let (raws, ds) := Surface.read .markdown f t
-  Elab.runExecuted f (Elab.executeInputs nullReader f raws) ds
+  Elab.runExecuted f (Compat.native f raws) ds
 
 /-- The included door's reader: `\markdownInput{name}` answered with the markdown fragment of the
-file `files` maps it to. -/
+file `files` maps it to, which the walk leaves alone unless its options declare `hybrid`. -/
 def mdFileReader (files : List (String × String × String)) :
     Compat.InputReader (StateM (Array Diag)) := fun request context => do
   if request.command != "markdownInput" then return (none, context)
   match files.find? (·.1 == request.name.trimAscii.toString) with
   | none => return (none, context)
   | some (_, path, text) =>
-    let cites := (request.options.splitOn ",").any (·.trimAscii.toString == "citations")
-    let (sub, ds) := Surface.fragment .markdown path text request.pos cites
+    let opts := Compat.MarkdownOptions.read request.options
+    let hybrid := opts.hybrid.getD (context.markdown.hybrid.getD false)
+    let cites := opts.citations.getD (context.markdown.citations.getD false)
+    let (sub, ds) := Surface.fragment .markdown path text request.pos cites (native := !hybrid)
+      (hybrid := hybrid)
     modify (· ++ ds)
-    let (answer, context) := Elab.resumeInput nullReader context request.file sub
+    if hybrid then
+      let (answer, context) := Elab.resumeInput nullReader context request.file sub
+      return (some answer, context)
+    let (answer, context) := context.native sub request.pos
     return (some answer, context)
 
 /-- A tex host through its door, executed with the included door's reader. -/
@@ -366,8 +371,8 @@ def includedDoc (hostFile host : String) (files : List (String × String × Stri
 
 /-- A markdown file alone as a document named `docFile`: its fragment and nothing else. -/
 def aloneDoc (docFile f t : String) : Ir.Doc × Array Diag :=
-  let (raws, ds) := Surface.fragment .markdown f t {}
-  Elab.runExecuted docFile (Elab.executeInputs nullReader docFile raws) ds
+  let (raws, ds) := Surface.fragment .markdown f t {} (native := true)
+  Elab.runExecuted docFile (Compat.native docFile raws) ds
 
 /-- An article whose body is one `\markdownInput` and nothing else. -/
 def neutralHost (name : String) : String :=

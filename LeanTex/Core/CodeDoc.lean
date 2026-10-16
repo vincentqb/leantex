@@ -1235,26 +1235,6 @@ public def Prose.place (pr : Prose) (p : Pos) : Pos :=
   | some (ln, col) => if p.line == 0 then p else { p with line := ln, col := col + p.col }
   | none => p
 
-mutual
-
-/-- A raw with every position moved by `f`. -/
-public def mapPos (f : Pos → Pos) : Raw → Raw
-  | .word s p => .word s (f p)
-  | .space => .space
-  | .par p => .par (f p)
-  | .ctrl n p => .ctrl n (f p)
-  | .sym c p => .sym c (f p)
-  | .group body p => .group (mapPosList f #[] body.toList) (f p)
-  | .math d body p => .math d (mapPosList f #[] body.toList) (f p)
-  | .env n body p => .env n (mapPosList f #[] body.toList) (f p)
-  | .verb e s p => .verb e s (f p)
-
-public def mapPosList (f : Pos → Pos) (acc : Array Raw) : List Raw → Array Raw
-  | [] => acc
-  | r :: rest => mapPosList f (acc.push (mapPos f r)) rest
-
-end
-
 /-! ## The document -/
 
 /-- The option head of a code language's listings, its language crossing as the IR's own value. -/
@@ -2273,7 +2253,7 @@ it" (some request) (help := s!"name {namesOr (View.all.map (·.name))}")
       (subject := some s!"code:show:{n}")
   let idle := showing.idle .lean request (page := false)
   let notes := views ++ unread ++ strange ++ idle
-  let wrap (raws : Array Raw) : Array Raw := #[.env (Parse.inputEnv file) raws request.pos]
+  let wrap (raws : Array Raw) : Array Raw := #[.env (Parse.nativeInputEnv file) raws request.pos]
   let whole : List Seg := [⟨.code, 0, text.toList⟩]
   -- The documentation view sets the file as its page does, citing into its bibliography's keys.
   if showing.docs then

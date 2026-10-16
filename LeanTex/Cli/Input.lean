@@ -58,8 +58,6 @@ private structure InputLog where
   /-- Each file read, by the path it was read at, which publication must never
   overwrite. -/
   reads : Array String := #[]
-  /-- Whether the markdown package loaded with its `citations` option, so its files read them. -/
-  markdownCitations : Bool := false
   /-- The bibliography files the document's inclusions cite into, by the names the document gives
   them, which its reference list joins. -/
   joins : Array String := #[]
@@ -96,7 +94,8 @@ private def readTexOnce (path : String) (bytes : ByteArray) : ReadM Encoding.Fil
 private def readFragment (dir : System.FilePath) (file name : String) (pos : Pos)
     (prefer : String → String) (command : String)
     (decode : String → ByteArray → ReadM Encoding.FileText) (surface : Ir.Surface)
-    (cites : Bool := false) : ReadM (Array Parse.Raw × Array Diag) := do
+    (cites : Bool := false) (native : Bool := false) (hybrid : Bool := false) :
+    ReadM (Array Parse.Raw × Array Diag) := do
   -- Do not turn an unmatched quote into an accepted, unquoted filename.
   let name := if name.toList.count '"' % 2 == 0 then
       let unquoted := name.replace "\"" ""
@@ -112,7 +111,7 @@ private def readFragment (dir : System.FilePath) (file name : String) (pos : Pos
     | .ok bytes =>
       modify fun log => { log with reads := log.reads.push path.toString }
       let read ← decode path.toString bytes
-      return Surface.fragment surface path.toString read.text pos cites
+      return Surface.fragment surface path.toString read.text pos cites native hybrid
   else
     -- The span names the file the `\input` sits in, where the reader fixes it.
     let d := DriverDiag.inputMissing preferred (some ⟨file, pos⟩) command
@@ -225,52 +224,80 @@ private def inputleanAsk (request : Compat.InputRequest) : LeanAsk :=
   { name := request.name.trimAscii.toString, site := ⟨request.file, request.pos⟩, division := false
     showing := Code.showingOfEntries .lean (Decl.splitEntries request.options) (alone := true) }
 
+/-- What a Lean division asks the reader for. -/
+private def divisionAsk (d : Md.LeanDivision) (site : Span) : LeanAsk :=
+  { name := d.file.trimAscii.toString, site, division := true, showing := Code.showingOfDivision d }
+
 /-- Each Lean division markdown raws read from `file` hold, replaced by the file it includes, with
 the inclusions' diagnostics in order. -/
 private def includeDivisions (dir : System.FilePath) (file : String) (raws : Array Parse.Raw) :
     ReadM (Array Parse.Raw × Array Diag) := do
   if !Md.requestsDivisions raws.toList then return (raws, #[])
   (Md.includeDivisions (m := StateT (Array Diag) ReadM) (fun d site => do
-    let (raws, ds) ← readLean dir
-      { name := d.file.trimAscii.toString, site, division := true
-        showing := Code.showingOfDivision d }
+    let (raws, ds) ← readLean dir (divisionAsk d site)
     modify (· ++ ds)
     return raws) file #[] raws.toList).run #[]
+
+/-- The same in a file the walk reads as TeX: each inclusion's raws kept off the walk, at their
+place, in the context. -/
+private def keptDivisions (dir : System.FilePath) (file : String) (raws : Array Parse.Raw)
+    (context : Compat.InputContext) :
+    ReadM ((Array Parse.Raw × Array Diag) × Compat.InputContext) := do
+  if !Md.requestsDivisions raws.toList then return ((raws, #[]), context)
+  ((Md.includeDivisions (m := StateT (Array Diag) (StateT Compat.InputContext ReadM)) (fun d site => do
+    let (raws, ds) ← readLean dir (divisionAsk d site)
+    modify (· ++ ds)
+    let (place, kept) := (← getThe Compat.InputContext).native raws site.pos
+    set kept
+    return place) file #[] raws.toList).run #[]).run context
+
+/-- The markdown package's `citations` and `hybrid` an inclusion reads under, its own options over
+those in force, and a note naming every other option it writes. -/
+private def markdownSet (opts setup : Compat.MarkdownOptions) (site : Span) :
+    Bool × Bool × Array Diag :=
+  let note := if opts.others.isEmpty then #[] else #[Diag.of .W0110 s!"'\\markdownInput' options \
+'{", ".intercalate opts.others.toList}' are not applied; the Markdown document dialect reads only \
+'citations' and 'hybrid'" (some site) (subject := some "markdownInput:options")]
+  (opts.citations.getD (setup.citations.getD false), opts.hybrid.getD (setup.hybrid.getD false), note)
 
 /-- Fulfil one executed request; a compatible repeat or a cycle back edge of a local style
 reads nothing, and nesting stays within eight files. -/
 private def readAt (dir : System.FilePath) (root : String) (depth : Nat) :
     Compat.InputReader ReadM := fun request context => do
-  let input := ["input", "include", "markdownInput", "inputminted", "inputlean"].contains
-    request.command
-  if input then
+  let site : Span := ⟨request.file, request.pos⟩
+  if Compat.inputCommands.contains request.command then
     match depth with
     | 0 =>
-      let d := { DriverDiag.inputTooDeep with span := some ⟨request.file, request.pos⟩ }
+      let d := { DriverDiag.inputTooDeep with span := some site }
       modify fun log => { log with diags := log.diags.push d }
       return (none, context)
     | depth + 1 =>
-      let (sub, diags) ← if request.command == "markdownInput" then do
-          let prefer := fun name : String =>
-            if (System.FilePath.mk name).extension.isSome then name else name ++ ".tex"
-          let given := (KeyVal.items request.options).toList.map (·.trimAscii.toString)
-          let citing (o : String) : Bool := o == "citations" || o == "citations=true"
-          let cites := (← get).markdownCitations || given.any citing
-          let (sub, ds) ← readFragment dir request.file request.name request.pos prefer
-            "markdownInput" (fun path bytes => do
-              return (← decodeOnce path fun _ => Encoding.readMarkdown path bytes).1) .markdown
-            cites
-          let others := given.filter fun o => !o.isEmpty && !citing o
-          let ds := if others.isEmpty then ds else ds.push <|
-            Diag.of .W0110 s!"'\\markdownInput' options '{", ".intercalate others}' are not \
-applied; the file uses the Markdown document dialect, which reads only 'citations'"
-              (some ⟨request.file, request.pos⟩) (subject := some "markdownInput:options")
-          modify fun (log : InputLog) => { log with diags := log.diags ++ ds }
-          includeDivisions dir request.file sub
-        else if request.command == "inputminted" then readMinted dir request
+      if request.command == "markdownInput" then
+        let prefer := fun name : String =>
+          if (System.FilePath.mk name).extension.isSome then name else name ++ ".tex"
+        let (cites, hybrid, note) :=
+          markdownSet (Compat.MarkdownOptions.read request.options) context.markdown site
+        let (sub, ds) ← readFragment dir request.file request.name request.pos prefer
+          "markdownInput" (fun path bytes => do
+            return (← decodeOnce path fun _ => Encoding.readMarkdown path bytes).1) .markdown
+          cites (native := !hybrid) (hybrid := hybrid)
+        modify fun (log : InputLog) => { log with diags := log.diags ++ ds ++ note }
+        if hybrid then
+          let ((sub, divisionDs), context) ← keptDivisions dir request.file sub context
+          modify fun (log : InputLog) => { log with diags := log.diags ++ divisionDs }
+          let (answer, context) ← Elab.resumeInput (readAt dir root depth) context request.file sub
+          return (some answer, context)
+        let (sub, divisionDs) ← includeDivisions dir request.file sub
+        modify fun (log : InputLog) => { log with diags := log.diags ++ divisionDs }
+        let (answer, context) := context.native sub request.pos
+        return (some answer, context)
+      let (sub, diags) ← if request.command == "inputminted" then readMinted dir request
         else if request.command == "inputlean" then readLean dir (inputleanAsk request)
         else readInputAt dir request.file request.name request.pos
       modify fun log => { log with diags := log.diags ++ diags }
+      if request.command == "inputlean" then
+        let (answer, context) := context.native sub request.pos
+        return (some answer, context)
       let (answer, context) ←
         Elab.resumeInput (readAt dir root depth) context request.file sub
       return (some answer, context)
@@ -280,9 +307,6 @@ applied; the file uses the Markdown document dialect, which reads only 'citation
     let mut handled := false
     -- Each member executes before the next, since an earlier member may load a later sibling.
     for (name, call) in request.packageCalls do
-      if name == "markdown" && (KeyVal.items request.options).any
-          (fun o => o.trimAscii.toString == "citations" || o.trimAscii.toString == "citations=true") then
-        modify fun log => { log with markdownCitations := true }
       if name == "inputenc" && !(← get).inputenc then
         modify fun log => { log with
           inputenc := true
@@ -328,18 +352,18 @@ applied; the file uses the Markdown document dialect, which reads only 'citation
           handled := true
     return if handled then (some out, current) else (none, context)
 
-/-- Execute macros and fulfil input requests in source order, from what the
-run already knows of its files. -/
+/-- Execute macros and fulfil input requests in source order, from what the run already knows of
+its files; markdown and a code file execute nothing. -/
 private def executeWith (file : String) (raws : Array Parse.Raw) (log : InputLog)
     (dir : System.FilePath := (System.FilePath.mk file).parent.getD ".") :
     IO (Compat.Executed × InputLog) :=
-  (do
-    let raws ← if Ir.Surface.ofPath file == Ir.Surface.markdown then do
-        let (raws, ds) ← includeDivisions dir file raws
-        modify fun (l : InputLog) => { l with diags := l.diags ++ ds }
-        pure raws
-      else pure raws
-    Elab.executeInputs (readAt dir file 8) file raws).run log
+  (match Ir.Surface.ofPath file with
+    | .markdown => do
+      let (raws, ds) ← includeDivisions dir file raws
+      modify fun (l : InputLog) => { l with diags := l.diags ++ ds }
+      return Compat.native file (Code.joinBibliography raws (← get).joins)
+    | .code _ => return Compat.native file raws
+    | .tex => Elab.executeInputs (readAt dir file 8) file raws).run log
 
 /-- Execute macros and fulfil input requests in source order, resolving beside the
 document unless `dir` says otherwise; the execution continues through

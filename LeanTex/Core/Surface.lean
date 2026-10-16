@@ -40,13 +40,15 @@ public theorem read_tex_exact (file text : String) :
         (texLex file text).2 ++ (texParse file (texLex file text).1).2) := rfl
 
 /-- An included file read through its surface's door, wrapped as
-`Parse.inputEnv` at the including call's position. -/
+`Parse.inputEnv` at the including call's position, or as `Parse.nativeInputEnv` where the
+compatibility pass and the document's own commands leave it alone. -/
 @[expose] public def fragment (s : Ir.Surface) (path text : String) (pos : Pos)
-    (cites : Bool := false) : Array Parse.Raw × Array Diag :=
+    (cites : Bool := false) (native : Bool := false) (hybrid : Bool := false) :
+    Array Parse.Raw × Array Diag :=
   let (sub, ds) := match s with
-    | .markdown => Md.readIncluded path text cites
+    | .markdown => Md.readIncluded path text cites hybrid
     | s => read s path text
-  (#[.env (Parse.inputEnv path) sub pos], ds)
+  (#[.env (if native then Parse.nativeInputEnv path else Parse.inputEnv path) sub pos], ds)
 
 end Surface
 

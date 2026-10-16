@@ -386,6 +386,7 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   markdownInputChecks ref
   Tests.MarkdownDoors.markdownDoorChecks ref
   Tests.MarkdownDoors.markdownDoorDriverChecks ref
+  Tests.MarkdownDoors.markdownHybridChecks ref
   Tests.MarkdownTwin.markdownTwinChecks ref
   Tests.MarkdownCite.mdCiteChecks ref
   Tests.MarkdownCite.mdMetadataChecks ref
