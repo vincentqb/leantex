@@ -191,9 +191,12 @@ private def linkRects (geom : Geom) (page : PageOut) :
       | .poly _ _ => pure ()
   return out
 
-/-- The link annotations the pages carry, one per rectangle. -/
+/-- The link annotations the pages carry, one per rectangle whose link lands (`linkEntry`). -/
 public def linkCount (geom : Geom) (pages : Array PageOut) : Nat :=
-  pages.foldl (fun n p => n + (linkRects geom p).size) 0
+  let anchors := Layout.anchorIndex pages
+  let lands (url : String) : Bool :=
+    !url.startsWith "#" || (Layout.landing? anchors pages (url.drop 1).toString).isSome
+  pages.foldl (fun n p => n + ((linkRects geom p).filter fun (_, _, _, _, url) => lands url).size) 0
 
 private def toUnicode (used : Array (Nat × Char)) : String := Id.run do
   let mut s := "/CIDInit /ProcSet findresource begin
@@ -2090,6 +2093,44 @@ public def iccRows (t : ObjTable) (profile : Option ByteArray) : Array Row :=
     #[flateRow id s!"/N {((Icc.header? data).bind (Icc.components ·.colorSpace)).getD 4}" data]
   | some _, none | none, _ => #[]
 
+/-- The explicit destination a landing is (§12.3.2.2): its line's left edge and ink top, or the
+first page's top-left corner, the reader's zoom kept. -/
+public def destObj (t : ObjTable) (geom : Geom) (fs : FontSet) : Layout.Landing → PdfRead.Obj
+  | .line page line =>
+    .arr #[.ref (t.pageId page) 0, .name "XYZ", ptObj (line.x + geom.bleed),
+      ptObj (geom.pageH + geom.bleed - (line.y - (Layout.segsInk fs line.segs).1)), .null]
+  | .top =>
+    .arr #[.ref (t.pageId 0) 0, .name "XYZ", .int 0, ptObj (geom.pageH + 2 * geom.bleed), .null]
+
+/-- What a link to `url` carries (§12.5.6.5): an in-page fragment's explicit destination where it
+lands, none where it lands nowhere, never a name the file would have to define; else a URI
+action. -/
+public def linkEntry (t : ObjTable) (geom : Geom) (fs : FontSet)
+    (anchors : Std.HashMap String (Nat × Layout.LineOut)) (pages : Array PageOut) (url : String) :
+    Option (String × PdfRead.Obj) :=
+  if url.startsWith "#" then
+    (Layout.landing? anchors pages (url.drop 1).toString).map fun l => ("Dest", destObj t geom fs l)
+  else some ("A", .dict #[("S", .name "URI"), ("URI", PdfRead.literal url.toUTF8)])
+
+/-- An in-page link's destination names the page object of a page the file writes. -/
+public theorem linkEntry_page_lt (t : ObjTable) (geom : Geom) (fs : FontSet)
+    (pages : Array PageOut) (url : String) (k : String) (d : PdfRead.Obj)
+    (h : linkEntry t geom fs (Layout.anchorIndex pages) pages url = some (k, d))
+    (hk : k = "Dest") :
+    ∃ p, p < pages.size ∧
+      (match d with
+       | .arr xs => xs[0]?
+       | _ => none) = some (.ref (t.pageId p) 0) := by
+  unfold linkEntry at h
+  split at h
+  · obtain ⟨l, hl, he⟩ := Option.map_eq_some_iff.mp h
+    simp only [Prod.mk.injEq] at he
+    obtain ⟨_, rfl⟩ := he
+    refine ⟨l.page, Layout.landing?_page_lt pages _ l hl, ?_⟩
+    cases l <;> rfl
+  · simp only [Option.some.injEq, Prod.mk.injEq] at h
+    exact absurd (h.1.trans hk) (by decide)
+
 /-- Prepares positioned pages for a PDF 2.0 file, or 1.6 or 1.7 where the document declares it;
 `ops`, `streams` and `programs` are the driver's cached page operators, their rendered and deflated
 bytes, and its face programs. -/
@@ -2151,28 +2192,16 @@ public def prepare (geom : Geom) (fs : FontSet) (pages : Array PageOut)
     let baseFont := if (programs[k]?.map (·.2)).getD false
       then s!"{subsetTag k (used.map (·.1))}+{font.psName}" else font.psName
     (fontObjects t k font baseFont (wArray font used)).rows k
-  -- Internal fragments are destinations resolved from the final lines, never URI actions (§12.3.2).
-  let linkTarget (url : String) : String × PdfRead.Obj :=
-    if url.startsWith "#" then
-      let name := (url.drop 1).toString
-      match Layout.destination? pages name with
-      | some (page, line) =>
-        let above := (Layout.segsInk fs line.segs).1
-        ("Dest", .arr #[.ref (t.pageId page) 0, .name "XYZ",
-          ptObj (line.x + geom.bleed),
-          ptObj (geom.pageH + geom.bleed - (line.y - above)), .null])
-      | none =>
-        ("A", .dict #[("S", .name "GoTo"), ("D", PdfRead.textString name)])
-    else
-      ("A", .dict #[("S", .name "URI"), ("URI", PdfRead.literal url.toUTF8)])
+  let anchors := Layout.anchorIndex pages
   -- PDF/X admits no link on the printed sheet, so a file claiming it carries none (W0444).
   let annots (i : Nat) : Array (String × PdfRead.Obj) :=
-    let rects := linkRects geom pages[i]!
+    let rects := (linkRects geom pages[i]!).filterMap fun (x0, y0, x1, y1, url) =>
+      (linkEntry t geom fs anchors pages url).map ((x0, y0, x1, y1), ·)
     if rects.isEmpty || info.pdfx.isSome then #[] else
-      #[("Annots", .arr (rects.map fun (x0, y0, x1, y1, url) =>
+      #[("Annots", .arr (rects.map fun ((x0, y0, x1, y1), target) =>
         .dict #[("Type", .name "Annot"), ("Subtype", .name "Link"),
           ("Rect", .arr #[ptObj x0, ptObj y0, ptObj x1, ptObj y1]),
-          ("Border", .arr #[.int 0, .int 0, .int 0]), ("F", .int 4), linkTarget url]))]
+          ("Border", .arr #[.int 0, .int 0, .int 0]), ("F", .int 4), target]))]
   let figId (k : Nat) : Nat :=
     if (figs[k]?.map FigRes.isForm).getD false then t.figFormId (figRank figs k)
     else t.figDictId (figRank figs k)
@@ -2224,7 +2253,7 @@ public def prepare (geom : Geom) (fs : FontSet) (pages : Array PageOut)
       infoEntry "Subject" info.subject ++ infoEntry "Keywords" info.keywords ++
       #[("Producer", litObj "(leantex)")] ++ infoPrint info)
 
-  -- A resolved outline target is a /Dest to its page; /XYZ null null null keeps the reader's view.
+  -- An outline entry lands as a link does; a bare page keeps the reader's view (/XYZ null null null).
   let outlineObjs : List (Nat × PdfRead.Obj) :=
     if nOut == 0 then [] else
       (t.outlineRootId, PdfRead.Obj.dict
@@ -2235,11 +2264,15 @@ public def prepare (geom : Geom) (fs : FontSet) (pages : Array PageOut)
           if k == 0 then #[] else #[("Prev", .ref (t.outlineItemId (k - 1)) 0)]
         let next : Array (String × PdfRead.Obj) :=
           if k + 1 == nOut then #[] else #[("Next", .ref (t.outlineItemId (k + 1)) 0)]
-        let target : Array (String × PdfRead.Obj) := match e.page, e.url with
-          | some p, _ =>
+        let target : Array (String × PdfRead.Obj) := match e.fragment, e.page, e.url with
+          | some f, _, _ => match Layout.landing? anchors pages f with
+            | some l => #[("Dest", destObj t geom fs l)]
+            | none => #[]
+          | none, some p, _ =>
             #[("Dest", .arr #[.ref (t.pageId p) 0, .name "XYZ", .null, .null, .null])]
-          | none, some u => #[("A", .dict #[("S", .name "URI"), ("URI", PdfRead.literal u.toUTF8)])]
-          | none, none => #[]
+          | none, none, some u =>
+            #[("A", .dict #[("S", .name "URI"), ("URI", PdfRead.literal u.toUTF8)])]
+          | none, none, none => #[]
         (t.outlineItemId k, PdfRead.Obj.dict
           (#[("Title", PdfRead.textString e.title),
              ("Parent", PdfRead.Obj.ref t.outlineRootId 0)] ++ prev ++ next ++ target))

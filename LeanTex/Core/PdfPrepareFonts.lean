@@ -84,9 +84,9 @@ public theorem prepare_census_fonts_exact (geom : Layout.Geom) (fs : Font.FontSe
         apply False.elim
         apply kindOf_no_subtype_not_font _ ?_ ?_ hf
         all_goals
-          cases ol.page <;> cases ol.url <;>
+          cases ol.fragment <;> cases ol.page <;> cases ol.url <;>
             simp only [Obj.get?, Array.find?_append, find_choice,
-              Array.find?_empty] <;> simp
+              Array.find?_empty] <;> (repeat' split) <;> simp
   · obtain ⟨i, hi, heq⟩ := List.mem_map.mp hpage
     have hv := congrArg Prod.snd heq
     dsimp only at hv

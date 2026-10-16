@@ -5792,6 +5792,12 @@ private def inlineNodesInto (cfg : Config) (acc : Array Node) : List Inline → 
 
 end
 
+private theorem ref_link_projects (cfg : Config) (acc : Array Node) (key : String)
+    (form : Ir.RefForm) (shown a : String) :
+    (Inline.ref key form shown (some a)).refLink?.map (inlineNodeInto cfg acc) =
+      some (inlineNodeInto cfg acc (.ref key form shown (some a))) := by
+  simp [Inline.refLink?, inlineNodeInto, inlineNodesInto]
+
 private def inlines (cfg : Config) (xs : Array Inline) : Array Node :=
   inlineNodesInto cfg #[] xs.toList
 
@@ -8322,11 +8328,10 @@ private def sectionize (cfg : Config) (blocks : Array Block) :
   let mut out : Array Node := #[]
   let mut cur : Array Node := #[]
   let mut openId : Option String := none
-  -- each assigned id with the plain text of the title that holds it
-  let mut taken : NameClaim.Claims .dashed := {}
   let mut diags : Array Diag := #[]
   let mut cfg := cfg
-  for b in blocks do
+  let anchors := Ir.sectionAnchors blocks
+  for (b, i) in blocks.zipIdx do
     match b with
     | .setPalette p =>
       cfg := cfg.advancePalette p
@@ -8335,17 +8340,14 @@ private def sectionize (cfg : Config) (blocks : Array Block) :
     | .section 1 _ _ title =>
       out := close out cur openId
       let text := Ir.firstPageText title
-      let base := slug title
-      let base := if base.isEmpty then "section" else base
-      let (id, clash, taken2) := taken.claim base text
-      if let some holder := clash then
+      let sa := (anchors[i]?.join).getD { base := slug title, id := slug title, clash := none }
+      if let some holder := sa.clash then
         diags := diags.push (Diag.of .W0327
-          s!"sections share the anchor '{base}'; each after the first takes a numbered anchor"
-          (help := some s!"an in-page link '#{base}' reaches only the first; \
+          s!"sections share the anchor '{sa.base}'; each after the first takes a numbered anchor"
+          (help := some s!"an in-page link '#{sa.base}' reaches only the first; \
 retitle the sections apart, or link to the numbered anchor")
-          (detail := some s!"{text.quote} takes '{id}', after {holder.quote}"))
-      taken := taken2
-      openId := some id
+          (detail := some s!"{text.quote} takes '{sa.id}', after {holder.quote}"))
+      openId := some sa.id
       cur := #[cfg.applyEpoch (blockNode cfg b)]
     | _ =>
       unless Ir.pageMarkerBlock b do cur := cur.push (cfg.applyEpoch (blockNode cfg b))
@@ -8880,8 +8882,7 @@ Regions): give each one a name, \\begin{nav}[label = Site]")
   let mut checked : Array String := #[]
   for fref in facts.fragmentRefs do
     let frag := (fref.drop 1).toString
-    let isTop := frag.isEmpty || frag.map Char.toLower == "top"
-    unless isTop || facts.ids.any (·.1 == frag) || routes.contains frag ||
+    unless Ir.fragmentTop frag || facts.ids.any (·.1 == frag) || routes.contains frag ||
         checked.contains fref do
       checked := checked.push fref
       diags := diags.push (Diag.of .W0326

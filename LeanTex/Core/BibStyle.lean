@@ -259,6 +259,10 @@ public structure Resolved where
 /-- The entry a sort key and alpha's label read: as its `.bib` writes it. -/
 public def Resolved.sortEntry (r : Resolved) : Entry := r.raw.getD r.entry
 
+/-- The anchor an entry's citations link to: its list entry's, where a list sets the entry. -/
+public def Resolved.anchor? (r : Resolved) : Option String :=
+  if r.skipbib then none else some (anchorOf r.key)
+
 /-- The full author list natbib's starred forms print, or the key. -/
 private def citeFullAuthors (e : Entry) : String :=
   match e.field? "author" with
@@ -316,21 +320,25 @@ end
 private def emit (out : Array Ir.Inline) (s : String) : Array Ir.Inline :=
   if s.isEmpty then out else out.push (.text s)
 
-private def emitLink (p : CitePunct) (out : Array Ir.Inline) (anchor s : String) :
-    Array Ir.Inline :=
-  out.push (.link anchor (match p.ink with
+private def emitLink (p : CitePunct) (out : Array Ir.Inline) (anchor : Option String)
+    (s : String) : Array Ir.Inline :=
+  match anchor with
+  | some a => out.push (.link a (match p.ink with
     | some (c, n) => #[.colored c n #[.text s]]
     | none => #[.text s]))
+  | none => emit out s
 
-/-- A key's piece linked to its entry, after what precedes it. -/
-private def linkPiece (p : CitePunct) (out : Array Ir.Inline) (anchor : String)
+/-- A key's piece, linked to its entry where a list sets it, after what precedes it. -/
+private def linkPiece (p : CitePunct) (out : Array Ir.Inline) (anchor : Option String)
     (before piece : Array Ir.Inline) : Array Ir.Inline :=
   if piece.isEmpty then
     if citeFreeList before.toList then out ++ before else emit out (Ir.plainText before)
   else if citeFreeList before.toList && citeFreeList piece.toList then
-    (out ++ before).push (.link anchor (match p.ink with
+    match anchor with
+    | some a => (out ++ before).push (.link a (match p.ink with
       | some (c, n) => #[.colored c n piece]
       | none => piece))
+    | none => out ++ before ++ piece
   else emitLink p (emit out (Ir.plainText before)) anchor (Ir.plainText piece)
 
 /-- The first letter capitalized over inline content, natbib's `\NAT@Up`. -/
@@ -447,7 +455,7 @@ private def citeStep (p : CitePunct) (f : Ir.CiteForm) (s : Switches) (total : N
         else
           (if same then txt (p.yysep ++ " " ++ (if s.numeric then pre else ""))
             else lead acc.citea (" " ++ s.op ++ pre), markInk, s.cl ++ tsep)
-    { out := linkPiece p acc.out (anchorOf r.key) t.1 t.2.1
+    { out := linkPiece p acc.out r.anchor? t.1 t.2.1
       citea := t.2.2
       last := some names
       lastYear := some bare
@@ -485,7 +493,7 @@ private structure RunAcc where
 /-- The held number, printed. -/
 private def flushHeld (p : CitePunct) (out : Array Ir.Inline) :
     Option (String × Resolved) → Array Ir.Inline
-  | some (pre, r) => emitLink p (emit out pre) (anchorOf r.key) (toString r.position)
+  | some (pre, r) => emitLink p (emit out pre) r.anchor? (toString r.position)
   | none => out
 
 /-- One key under `compress`: a number one past the last extends the run and is
@@ -500,7 +508,7 @@ private def runStep (p : CitePunct) (st : RunAcc) : Option Resolved → RunAcc
         held := some (if st.held.isSome then "–" else st.acc.citea, r) }
     else
       { acc := { st.acc with
-          out := emitLink p (emit (flushHeld p st.acc.out st.held) st.acc.citea) (anchorOf r.key)
+          out := emitLink p (emit (flushHeld p st.acc.out st.held) st.acc.citea) r.anchor?
             (r.label.getD (toString r.position))
           citea := p.sep ++ " ", dated := true }
         last := if r.label.isNone then some r.position else none }
@@ -518,7 +526,10 @@ private def fieldPiece (w : Ir.CiteField) (full : Bool) (acc : Array Ir.Inline) 
   | some r =>
     let ink := ((r.fieldInk.find? (·.1 == (w, full))).map (·.2)).getD #[]
     if ink.isEmpty || !citeFreeList ink.toList then emit acc "?"
-    else if w == .title || w == .date then acc.push (.link (anchorOf r.key) ink)
+    else if w == .title || w == .date then
+      match r.anchor? with
+      | some a => acc.push (.link a ink)
+      | none => acc ++ ink
     else acc ++ ink
   | none => emit acc "?"
 
@@ -2561,10 +2572,13 @@ private theorem emit_plain (out : Array Ir.Inline) (s : String)
   · exact h
   · rw [Array.all_push, h]; rfl
 
-private theorem emitLink_plain (p : CitePunct) (out : Array Ir.Inline) (anchor s : String)
-    (h : out.all plainCite = true) : (emitLink p out anchor s).all plainCite = true := by
-  rw [emitLink, Array.all_push, h]
-  cases p.ink <;> simp [plainCite, plainMark]
+private theorem emitLink_plain (p : CitePunct) (out : Array Ir.Inline) (anchor : Option String)
+    (s : String) (h : out.all plainCite = true) : (emitLink p out anchor s).all plainCite = true := by
+  cases anchor with
+  | none => exact emit_plain out s h
+  | some a =>
+    rw [emitLink, Array.all_push, h]
+    cases p.ink <;> simp [plainCite, plainMark]
 
 private theorem flushHeld_plain (p : CitePunct) (out : Array Ir.Inline)
     (h : Option (String × Resolved))
@@ -2705,8 +2719,8 @@ private theorem emit_citeFree (out : Array Ir.Inline) (t : String)
   · exact h
   · rw [Array.toList_push]; exact citeFreeList_append _ _ h rfl
 
-private theorem linkPiece_citeFree (p : CitePunct) (out : Array Ir.Inline) (anchor : String)
-    (before piece : Array Ir.Inline) (h : citeFreeList out.toList = true) :
+private theorem linkPiece_citeFree (p : CitePunct) (out : Array Ir.Inline)
+    (anchor : Option String) (before piece : Array Ir.Inline) (h : citeFreeList out.toList = true) :
     citeFreeList (linkPiece p out anchor before piece).toList = true := by
   unfold linkPiece
   split
@@ -2718,12 +2732,22 @@ private theorem linkPiece_citeFree (p : CitePunct) (out : Array Ir.Inline) (anch
   split
   · rename_i hg
     simp only [Bool.and_eq_true] at hg
-    rw [Array.toList_push, Array.toList_append]
-    refine citeFreeList_append _ _ (citeFreeList_append _ _ h hg.1) ?_
-    cases p.ink <;> simp [citeFreeList, citeFreeOne, hg.2]
-  · rw [emitLink, Array.toList_push]
-    refine citeFreeList_append _ _ (emit_citeFree _ _ h) ?_
-    cases p.ink <;> simp [citeFreeList, citeFreeOne]
+    cases anchor with
+    | some a =>
+      simp only
+      rw [Array.toList_push, Array.toList_append]
+      refine citeFreeList_append _ _ (citeFreeList_append _ _ h hg.1) ?_
+      cases p.ink <;> simp [citeFreeList, citeFreeOne, hg.2]
+    | none =>
+      simp only
+      rw [Array.toList_append, Array.toList_append]
+      exact citeFreeList_append _ _ (citeFreeList_append _ _ h hg.1) hg.2
+  · cases anchor with
+    | some a =>
+      rw [emitLink, Array.toList_push]
+      refine citeFreeList_append _ _ (emit_citeFree _ _ h) ?_
+      cases p.ink <;> simp [citeFreeList, citeFreeOne]
+    | none => exact emit_citeFree _ _ (emit_citeFree _ _ h)
 
 private theorem citeStep_citeFree (p : CitePunct) (f : Ir.CiteForm) (s : Switches) (n : Nat)
     (acc : CiteAcc) (o : Option Resolved) (h : citeFreeList acc.out.toList = true) :
@@ -2756,9 +2780,12 @@ private theorem fieldStep_citeFree (p : CitePunct) (w : Ir.CiteField) (full : Bo
     · rename_i hink
       simp only [Bool.or_eq_true, not_or, Bool.not_eq_true'] at hink
       split
-      · rw [Array.toList_push]
-        refine citeFreeList_append _ _ hsep ?_
-        simp [citeFreeList, citeFreeOne, hink.2]
+      · split
+        · rw [Array.toList_push]
+          refine citeFreeList_append _ _ hsep ?_
+          simp [citeFreeList, citeFreeOne, hink.2]
+        · rw [Array.toList_append]
+          exact citeFreeList_append _ _ hsep (by simpa using hink.2)
       · rw [Array.toList_append]
         exact citeFreeList_append _ _ hsep (by simpa using hink.2)
 

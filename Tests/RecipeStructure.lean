@@ -109,7 +109,7 @@ def recipeLinkWrapperChecks (ref : IO.Ref (List String))
     "Before the link.\n\n" ++
     "\\hyperlink{multi}{First linked paragraph.\n\n" ++
     "Second linked paragraph.}\n\n" ++
-    "After the link.")
+    "\\hypertarget{multi}{After the link.}")
   let (mdoc, mds) := elabStr msrc
   let linkBlocks := Ir.foldBlocks (fun n b => n + (if b matches .link _ _ then 1 else 0))
     (fun n _ => n) 0 mdoc.body
@@ -132,7 +132,9 @@ def recipeLinkWrapperChecks (ref : IO.Ref (List String))
      | none => false)
   let mpdf := Pdf.write (Layout.Geom.ofPage mdoc.page) oneFace mout.pages mdoc.info
   t "multi-paragraph link: exactly one PDF annotation, none on siblings"
-    (pdfLinkTargets mpdf == .ok #[.str "(multi)".toUTF8])
+    (match pdfLinkTargets mpdf with
+     | .ok #[.arr _] => true
+     | _ => false)
   let mtrees := mdoc.body.map (HtmlDoc.blockNode {})
   let mhrefs := mtrees.foldl (fun acc n => acc ++ attrValuesOf (· == "a") "href" n) #[]
   let mAnchorText := mtrees.foldl (fun s n => s ++ anchorInnerText false n) ""

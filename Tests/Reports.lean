@@ -1828,7 +1828,14 @@ def reports : List Report := [
       "a first cut naming unpainted colours everywhere broke 147 suite checks; scoped to the document's own files, its own cut broke 139, each fixture made honest or its unread declarations accepted where they are the point; the colour export's fixtures name exactly the colours their deck leaves unused, and the regression decks' shared preamble declares only the faces they set, their PDFs byte-identical and their web pages visually so; the typeset report keeps its typewriter face, without which its web page would ship its body face's programs a second time for that slot, and accepts the loss",
       "both reviews' 518 probe pairs rebuilt on this tree, each judged by visualdiff on the PDF and the web page and by the twin's bytes: no declaration named unused changes an artifact but a hypersetup naming a title, whose help names only its link keys; the corpus's 224 artifacts are byte-identical to main's binary's",
       "the judge adds 2 to 5 percent to main's own time: 4000 unused colours build in 73.1 s and 1000 over 40000 reads in 39.8 s, main 69.3 and 38.4 s, the first cut 104.9 and 52.9 s"]
-    state := .guarded "75f6f88c" .before .reviewer }
+    state := .guarded "75f6f88c" .before .reviewer },
+  { id := "R203", date := "2026-10-16"
+    what := "a citation's PDF link went nowhere: it named a destination the file never defined, so a viewer ignored it, while a reference linked in the web page and not in the PDF; a link to the document's top, to a label whose anchor spelling differs from its key, or to a section whose anchor took a number went nowhere in the PDF, a citation of an entry no list sets linked to nothing in both artifacts, and an outline entry landing nowhere navigated nowhere"
+    pins := [check% pdfDestinationChecks]
+    accept := ["the destination judge, reading every navigation in a file's bytes, finds the corpus PDFs main builds at 43e0cd39 citing into nothing in the bibliography, markdown citation and included citation fixtures, naming an undefined top in the icons fixture and holding an outline entry with no destination in the web navigation fixture; here every corpus file's navigation reaches a page it writes, and the PDF links the in-page targets its web page links",
+      "invented probes under lualatex with hyperref: a citation's destination stands on its reference-list entry's line, one baseline skip above its baseline, and a section's, a figure's, an equation's and a footnote's each on its own line, not at the page top; this tree opens each in-page link at its target line's left edge and ink top",
+      "a citation inside a link took its own link in the PDF and the enclosing one in the web page; both now keep the enclosing link"]
+    state := .guarded "43e0cd39" .before .author }
 ]
 
 /-- The reports guarded but never seen failing, a count held in both directions. -/

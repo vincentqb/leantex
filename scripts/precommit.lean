@@ -606,9 +606,10 @@ def surfaceReach (l : String) : Bool :=
     || surfaceMods.any (usesQualified l ·)
     || doorReads.any (spellsName l ·)
 
-/-- The modules that judge a PDF's bytes: the census and the conformance contract. -/
+/-- The modules that judge a PDF's bytes: the census, the conformance contract and the destination
+judge. -/
 def judgeFiles : List String :=
-  ["LeanTex/Core/PdfCensus.lean", "LeanTex/Core/PdfContract.lean"]
+  ["LeanTex/Core/PdfCensus.lean", "LeanTex/Core/PdfContract.lean", "LeanTex/Core/PdfDests.lean"]
 
 /-- A judge reaching into the writer: an import, an `open` or a qualified use of `Pdf`. -/
 def writerReach (l : String) : Bool :=
@@ -1365,9 +1366,10 @@ def gates : List Gate := [
   { applies := (judgeFiles.contains ·)
     flag := writerReach
     what := fun f => s!"a judge of the PDF's bytes reaches into the writer, in {f}"
-    help := "  PdfCensus judges what a PDF's bytes carry, through PdfRead alone, and
-  PdfContract judges the census; a judge that can see Pdf.lean's spellings
-  reports the writer's intent (AGENTS.md § Layout and design).
+    help := "  PdfCensus judges what a PDF's bytes carry, through PdfRead alone, PdfDests
+  where their navigation leads, and PdfContract judges the census; a judge
+  that can see Pdf.lean's spellings reports the writer's intent (AGENTS.md
+  § Layout and design).
   Fix: read the fact off the parsed objects or the census; a spelling a
   judge needs is a fact of ISO 32000-2 or a profile, stated where it
   stands with its section." },

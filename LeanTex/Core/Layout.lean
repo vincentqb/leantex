@@ -1016,18 +1016,92 @@ placed picture ink; every emptiness test reads this. -/
 public def PageOut.frameStamp (p : PageOut) : FrameStamp :=
   (p.frameOrigin, p.frame, p.foot)
 
-/-- Resolve a destination from the finalized lines: the first shipped
-declaration owns the target and supplies its page and coordinates. -/
-public def destination? (pages : Array PageOut) (name : String) : Option (Nat × LineOut) :=
-  (pages.zipIdx).findSome? fun (page, i) =>
-    (page.lines.find? (fun line => line.anchors.contains name)).map (i, ·)
+/-- Every anchor's first shipped line by name, in page and line order: where a link to it lands. -/
+public def anchorIndex (pages : Array PageOut) : Std.HashMap String (Nat × LineOut) :=
+  pages.zipIdx.foldl (init := {}) fun m (p, i) =>
+    p.lines.foldl (init := m) fun m l =>
+      l.anchors.foldl (init := m) fun m a => if m.contains a then m else m.insert a (i, l)
 
-/-- One entry of the PDF document outline (ISO 32000-2 §12.3.3), with
-an in-document page index, an external URL, or no destination. -/
+private theorem foldl_inv {α β : Type} (xs : Array α) (f : β → α → β) (init : β) (P : β → Prop)
+    (h0 : P init) (hs : ∀ b x, x ∈ xs → P b → P (f b x)) : P (xs.foldl f init) :=
+  Array.foldl_induction (motive := fun _ b => P b) h0 fun i b hb =>
+    hs b xs[i] (Array.getElem_mem i.isLt) hb
+
+public theorem anchorIndex_page_lt (pages : Array PageOut) (name : String) (i : Nat)
+    (l : LineOut) (h : (anchorIndex pages)[name]? = some (i, l)) : i < pages.size := by
+  let P : Std.HashMap String (Nat × LineOut) → Prop := fun m =>
+    ∀ (k : String) (v : Nat × LineOut), m[k]? = some v → v.1 < pages.size
+  have hp : P (anchorIndex pages) := by
+    unfold anchorIndex
+    refine foldl_inv _ _ _ P (fun k v hk => by simp at hk) ?_
+    rintro m ⟨p, j⟩ hm hP
+    have hj : j < pages.size := by simpa using (Array.mem_zipIdx hm).2.1
+    refine foldl_inv _ _ _ P hP ?_
+    intro m l _ hP
+    refine foldl_inv _ _ _ P hP ?_
+    intro m a _ hP k v hk
+    split at hk
+    · exact hP k v hk
+    · rw [Std.HashMap.getElem?_insert] at hk
+      split at hk
+      · simp only [Option.some.injEq] at hk
+        subst hk
+        exact hj
+      · exact hP k v hk
+  exact hp name (i, l) h
+
+/-- The first shipped line declaring `name`, and its page. -/
+public def destination? (pages : Array PageOut) (name : String) : Option (Nat × LineOut) :=
+  (anchorIndex pages)[name]?
+
+/-- Where an in-page fragment lands: the first shipped line declaring it, else the first page's
+top where the fragment names the document's top (`Ir.fragmentTop`). -/
+public inductive Landing where
+  | line (page : Nat) (line : LineOut)
+  | top
+  deriving Repr, Inhabited
+
+@[expose] public def Landing.page : Landing → Nat
+  | .line p _ => p
+  | .top => 0
+
+/-- Where `frag` lands among `pages`, whose anchors `idx` indexes (`anchorIndex`). -/
+public def landing? (idx : Std.HashMap String (Nat × LineOut)) (pages : Array PageOut)
+    (frag : String) : Option Landing :=
+  match (if frag.isEmpty then none else idx[frag]?) with
+  | some (i, l) => some (.line i l)
+  | none => if Ir.fragmentTop frag && !pages.isEmpty then some .top else none
+
+public theorem landing?_page_lt (pages : Array PageOut) (frag : String) (l : Landing)
+    (h : landing? (anchorIndex pages) pages frag = some l) : l.page < pages.size := by
+  unfold landing? at h
+  split at h
+  · rename_i i line hd
+    simp only [Option.some.injEq] at h
+    subst h
+    split at hd
+    · cases hd
+    · exact anchorIndex_page_lt pages frag i line hd
+  · split at h
+    · rename_i hc
+      simp only [Option.some.injEq] at h
+      subst h
+      simp only [Bool.and_eq_true, Bool.not_eq_true'] at hc
+      obtain ⟨_, hne⟩ := hc
+      simp only [Landing.page]
+      cases pages with
+      | mk l => cases l with
+        | nil => simp at hne
+        | cons _ _ => simp
+    · cases h
+
+/-- One entry of the PDF document outline (ISO 32000-2 §12.3.3): an in-page fragment with the page
+it lands on, or an external URL. -/
 public structure OutlineEntry where
   title : String
   page : Option Nat := none
   url : Option String := none
+  fragment : Option String := none
   deriving Repr, BEq, Inhabited
 
 public structure Out where
@@ -1362,6 +1436,12 @@ private def pushText (st : FlattenSt) (sty : TextStyle) (s : String) : FlattenSt
   let (attr, ctr) := st.ctr.take
   pushTextAttr { st with ctr := ctr } sty s attr
 
+/-- A link's style: the enclosing link where one is in force, as links do not nest, else this one,
+underlined as its affordance, never colour alone (WCAG 2.2 SC 1.4.1). -/
+private def TextStyle.linked (sty : TextStyle) (url : String) : TextStyle :=
+  if sty.link.isSome then sty
+  else { sty with link := some url, decorations := { sty.decorations with underline := true } }
+
 /-- Apply one markup style to the active text style; `\normalfont` resets to the body face. -/
 private def applyStyle (ladder : List (String × Nat)) (sty : TextStyle) :
     Ir.Style → TextStyle
@@ -1413,8 +1493,10 @@ private def flattenOne (mathOk noteOk : Bool) (st : FlattenSt) (sty : TextStyle)
     (x : Inline) : FlattenSt :=
   match x with
   | .text s => pushText st sty s
-  | .label name => { st with toks := st.toks.push (.anchor name) }
-  | .ref _ _ text _ => pushText st sty text
+  | .label name => { st with toks := st.toks.push (.anchor (Ir.labelAnchor name)) }
+  | .ref _ _ text target => match target with
+    | some a => pushText st (sty.linked ("#" ++ a)) text
+    | none => pushText st sty text
   | .cite _ keys => pushText st sty (Ir.citeMarks keys)
   | .cited _ _ ink => flatten mathOk noteOk st sty ink
   -- Without a note apparatus (furniture, markers, captions, a card face) the body stays inline.
@@ -1465,11 +1547,7 @@ OpenType math face; `leantex fonts` lists families") with warnedMath := true }
             leading := leading.map fun l => .lit { width := Dim.Length.ofSp l } }
           body
       | none => flatten mathOk noteOk st sty body
-  -- The underline is the link's affordance, never colour alone (WCAG 2.2 SC 1.4.1).
-  | .link url body =>
-    flatten mathOk noteOk st
-      { sty with link := some url
-                 decorations := { sty.decorations with underline := true } } body
+  | .link url body => flatten mathOk noteOk st (sty.linked url) body
   | .decorated kind body =>
     match kind with
     | .underline =>
@@ -1504,6 +1582,12 @@ OpenType math face; `leantex fonts` lists families") with warnedMath := true }
   | .pageCount => pushTextAttr st sty "?" st.ctr.generated
 
 end
+
+private theorem ref_link_projects (mathOk noteOk : Bool) (st : FlattenSt) (sty : TextStyle)
+    (key : String) (form : Ir.RefForm) (shown a : String) :
+    (Inline.ref key form shown (some a)).refLink?.map (flattenOne mathOk noteOk st sty) =
+      some (flattenOne mathOk noteOk st sty (.ref key form shown (some a))) := by
+  simp [Ir.Inline.refLink?, flattenOne, flatten, flattenList]
 
 private theorem role_transparent_layout (mathOk noteOk : Bool) (st : FlattenSt)
     (sty : TextStyle) (n : String) (body : Array Inline) (h : n ≠ leafRole)
@@ -1659,7 +1743,10 @@ private theorem flattenOne_attr_covers (mathOk noteOk : Bool) (st : FlattenSt) (
     rcases hm with hm | hm
     · exact Or.inl hm
     · subst hm; exact Or.inr rfl
-  | .ref _ _ text _ => exact pushText_toks st sty text h
+  | .ref _ _ text target =>
+    cases target with
+    | none => exact pushText_toks st sty text h
+    | some a => exact pushText_toks st (sty.linked ("#" ++ a)) text h
   | .cite _ keys => exact pushText_toks st sty (Ir.citeMarks keys) h
   | .cited _ _ ink => exact flatten_attr_covers mathOk noteOk st sty ink h
   | .footnote num body =>
@@ -9018,6 +9105,9 @@ public structure Spacing.Context where
   private frameKeys : Ir.FrameKeys := .beamer
   /-- Every frame's label at its body index (`Ir.Doc.frameLabels`). -/
   private frameLabels : Array (Option String) := #[]
+  /-- Each top-level section's claimed anchor at its body index, in a flow document
+  (`Ir.sectionAnchors`). -/
+  private sectionAnchors : Array (Option Ir.SectionAnchor) := #[]
   /-- The walk is inside a frame whose lists set with
   beamer's squeezed spacing (`Ir.frameSqueeze`). -/
   private squeeze : Bool := false
@@ -10795,14 +10885,14 @@ private def collectDisplayPicture (r : Rd) (a : Acc) (anchors : Array Inline)
   let dj := a.displayJob r
   let a := a.openDisplay r dj
   let a := { a with ops := a.ops ++ anchors.filterMap fun x => match x with
-    | .label name => some (.anchor name)
+    | .label name => some (.anchor (Ir.labelAnchor name))
     | _ => none }
   (collectPicture r a pic indent true (display := some dj)).closeDisplay r
 
 private def collectParaBlock (r : Rd) (a : Acc) (content : Array Inline) (indent : Sp) : Acc :=
   -- A paragraph of label anchors alone ships no line and no gap.
   if Ir.anchorsOnly content then
-    { a with ops := a.ops ++ (Ir.labelKeys content).map Op.anchor }
+    { a with ops := a.ops ++ (Ir.labelKeys content).map (Op.anchor ∘ Ir.labelAnchor) }
   else
     let (a, leaf) := a.leafRange (Struct.leafCountInlines content)
     collectPara r a content indent false r.geom.fontSize
@@ -10869,7 +10959,8 @@ private def openFrameBody (r : Rd) (a : Acc) (hasTitle : Bool) (valign : VAlign)
                        frameTop := true }
 
 private def collectSection (r : Rd) (a : Acc) (level : Ir.HeadingLevel) (starred : Bool)
-    (num : Option String) (title : Array Inline) (indent : Sp) (top : Bool := false) : Acc :=
+    (num : Option String) (title : Array Inline) (indent : Sp) (top : Bool := false)
+    (anchor : Option String := none) : Acc :=
   if level == 0 then
     -- The document title opens no page of its own, even in slides.
     collectTitle r a title indent false
@@ -10877,7 +10968,7 @@ private def collectSection (r : Rd) (a : Acc) (level : Ir.HeadingLevel) (starred
   -- The top-level section in force, for the footer's `\sectiontitle` slot.
   let a := if level == 1 then
       { a with curSection := if r.inFrame then a.curSection else title
-               ops := a.ops.push (.anchor (Ir.slug title)) }
+               ops := a.ops.push (.anchor (anchor.getD (Ir.slug title))) }
     else a
   -- The number the walk sets before the title is generated ink.
   let span := Struct.leafCountInlines title
@@ -10925,7 +11016,7 @@ private def collectSection (r : Rd) (a : Acc) (level : Ir.HeadingLevel) (starred
     (a.pageBreak).pushOp .frameClose
   -- Without a section page a deck's section inks nothing: its anchors ride the next line set.
   else if divider then
-    { a with ops := a.ops ++ (Ir.labelKeys title).map Op.anchor }
+    { a with ops := a.ops ++ (Ir.labelKeys title).map (Op.anchor ∘ Ir.labelAnchor) }
   else
   let st := r.style level.element
   -- The number stands before the title with a `\quad` kern (classes.dtx `\@seccntformat`).
@@ -10977,6 +11068,7 @@ private def collectBibliography (r : Rd) (a : Acc) (items : Array Ir.BibItem) (i
   items.zipIdx.foldl (init := a) fun a (item, i) =>
     let marker := item.marker.map fun m => #[Ir.Inline.text s!"[{m}]"]
     -- The entry's leaves are its inline content's; the label is generated marker ink.
+    let a := { a with ops := a.ops.push (.anchor (Ir.bibAnchor item.key)) }
     let (a, leaf) := a.leafRange (Struct.leafCountInlines item.content)
     let a := collectPara r a item.content textIndent false size (marker := marker)
       (markerLeft := if item.labelFlush then some indent else none)
@@ -17587,6 +17679,35 @@ private theorem reportOnce_covers (ps : Array ParagraphBreaks)
   · exact hc.trans ((mergeOverfull_names _ _).1.trans (mergeReflow_names _ d).1)
   · exact hs.trans ((mergeOverfull_names _ _).2.trans (mergeReflow_names _ d).2)
 
+/-- The in-page fragments a page's shipped links name: its runs' and its block links', hidden
+content aside. -/
+private def PageOut.fragments (p : PageOut) : Array String :=
+  let frag (u : String) : Option String := if u.startsWith "#" then some (u.drop 1).toString else none
+  let runs := p.lines.foldl (init := #[]) fun acc l =>
+    if l.hidden then acc else
+    l.segs.foldl (init := acc) fun acc s => match s with
+      | .run _ _ (some u) .. => if s.hides then acc else (frag u).elim acc acc.push
+      | _ => acc
+  runs ++ (keepUnlisted p.links p.hidden.links).filterMap (frag ·.target)
+
+/-- One loss per in-page fragment a shipped link or outline entry names and nothing lands on: the
+PDF ships the link's ink unlinked. -/
+private def deadLinks (idx : Std.HashMap String (Nat × LineOut)) (pages : Array PageOut)
+    (nav : Array (String × String)) : Array Diag := Id.run do
+  let named := pages.foldl (fun acc p => acc ++ p.fragments) #[] ++
+    nav.filterMap fun (_, t) => if t.startsWith "#" then some (t.drop 1).toString else none
+  let mut seen : Std.HashSet String := {}
+  let mut out : Array Diag := #[]
+  for f in named do
+    unless seen.contains f || (landing? idx pages f).isSome do
+      seen := seen.insert f
+      out := out.push (Diag.of .W0326
+        s!"in-page link '#{f}' has no target anchor in the document"
+        (help := some "the PDF sets the link's text unlinked; give its target a \\label or a \
+\\hypertarget, or link to an anchor the document sets")
+        (output := some .pdf))
+  return out
+
 /-- The postlude: running furniture per page (`furnishFrom`),
 one report per problem, and the resolved outline. -/
 public def runPost (sh : Shipped) : Out := Id.run do
@@ -17797,13 +17918,16 @@ slot yields in place: shorten the content or drop a slot")
   let fout := furnishFrom (furnishStep fs furnishPage) pages (sh.diags, sh.hyphCache, 0) 0
   let out := fout.1
   let diags := fout.2.1
-  let unique := reportOnce sh.paragraphBreaks sh.overfullMost diags
-  -- An in-document outline target resolves against finalized lines, as a PDF link annotation does.
-  let outline := sh.navEntries.map fun (title, target) =>
+  let idx := anchorIndex out
+  let unique := reportOnce sh.paragraphBreaks sh.overfullMost
+    (diags ++ deadLinks idx out sh.navEntries)
+  -- An outline target lands as a PDF link annotation does; one landing nowhere is left out.
+  let outline := sh.navEntries.filterMap fun (title, target) =>
     if target.startsWith "#" then
-      { title := title
-        page := (destination? out (target.drop 1).toString).map (·.1) }
-    else ({ title := title, url := some target } : OutlineEntry)
+      let frag := (target.drop 1).toString
+      (landing? idx out frag).map fun l =>
+        ({ title := title, page := some l.page, fragment := some frag } : OutlineEntry)
+    else some ({ title := title, url := some target } : OutlineEntry)
   return { pages := out, diags := unique, outline := outline
            paragraphBreaks := sh.paragraphBreaks, overruns := sh.overruns, needs := sh.needs
            spilled := sh.spilled }
@@ -17815,6 +17939,7 @@ public theorem runPost_diags_covers (sh : Shipped) :
   unfold runPost
   dsimp only [Id.run, bind, pure, Id]
   apply reportOnce_covers
+  refine Array.mem_append.mpr (Or.inl ?_)
   apply furnishFrom_inv _
     (fun s : Array Diag × Std.HashMap String (Array Nat) × Nat => d ∈ s.1)
   · intro i page s hs
@@ -18027,6 +18152,7 @@ private def collectDocBlock (rd : Rd) (doc : Doc) (cover : Ir.Cover)
             (Ir.unwrapItemSteps (Ir.dimBlocks cover k body))) 0
   | .section level starred num title =>
     acc := collectSection rd acc level starred num title 0 (top := true)
+      (anchor := (rd.sectionAnchors[i]?.join).map (·.id))
   | other => acc := collectBlock rd acc (Ir.unwrapItemStep other) 0
   return (acc, firstBlk)
 
@@ -18781,6 +18907,8 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
                    frameKeys := doc.frameKeys
                    sectionPages := doc.sectionPages
                    frameLabels := doc.frameLabels
+                   sectionAnchors := if doc.docClass.record.model == .flow then
+                     Ir.sectionAnchors doc.body else #[]
                    imgs := imgs
                    pictureSpans := pictureSpans
                    headline := doc.headline

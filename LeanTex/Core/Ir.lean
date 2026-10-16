@@ -16,6 +16,7 @@ public import LeanTex.Core.Oklab
 public import LeanTex.Core.SeedPalette
 public import LeanTex.Core.PaletteData
 import LeanTex.Core.Loop
+import LeanTex.Core.NameClaim
 import LeanTex.Core.PdfLex
 import LeanTex.Core.ContrastSolve
 import Init.Data.Nat.ToString
@@ -2864,8 +2865,18 @@ correction, and the trailing correction under the surrounding face. -/
   let run : Inline := .styled style (if edges.1 then #[.italicCorr true] ++ inner else inner)
   if edges.2 then #[run, .italicCorr true] else #[run]
 
-/-- The anchor a reference-list entry carries in HTML and its citations link to. -/
+/-- The anchor a reference-list entry carries and its citations link to. -/
 public def bibAnchor (key : String) : String := "ref-" ++ key
+
+/-- The link a resolved reference is: its text, linked to its label's anchor. -/
+@[expose] public def Inline.refLink? : Inline → Option Inline
+  | .ref _ _ shown (some a) => some (.link ("#" ++ a) #[.text shown])
+  | _ => none
+
+/-- Whether an in-page fragment no anchor claims names the document's top: the empty fragment, or
+`top` in any ASCII case (HTML §7.4.6.4). -/
+@[expose] public def fragmentTop (frag : String) : Bool :=
+  frag.isEmpty || frag.map Char.toLower == "top"
 
 /-- What an unresolved citation shows for each key, as LaTeX renders an undefined citation. -/
 public def citeMark : String := "?"
@@ -9073,6 +9084,27 @@ private def slugGo (acc : Array Char) (sep : Bool) : List Char → Array Char
 /-- An anchor id from a title's own text. -/
 public def slug (title : Array Inline) : String :=
   String.ofList (slugGo #[] false (firstPageText title).toList).toList
+
+/-- The anchor a top-level section claims: its title's slug or `section`, the first form of it no
+earlier section holds, and the earlier holder of the base whose title differs. -/
+public structure SectionAnchor where
+  base : String
+  id : String
+  clash : Option String
+  deriving Repr, BEq
+
+/-- Each top-level level-one section's anchor, at its body index, in flow order. -/
+public def sectionAnchors (body : Array Block) : Array (Option SectionAnchor) := Id.run do
+  let mut taken : NameClaim.Claims .dashed := {}
+  let mut out : Array (Option SectionAnchor) := #[]
+  for b in body do
+    if let .section 1 _ _ title := b then
+      let base := if (slug title).isEmpty then "section" else slug title
+      let (id, clash, next) := taken.claim base (firstPageText title)
+      taken := next
+      out := out.push (some { base, id, clash })
+    else out := out.push none
+  return out
 
 private theorem slugCharKeep_not_whitespace (k k' : Char) (h : slugCharKeep k = some k') :
     isWhiteSpaceUni k' = false := by

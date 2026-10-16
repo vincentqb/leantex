@@ -1513,9 +1513,9 @@ def censusOutlineTable :
       o.map (·.title) == #["First Light", "Gathered Notes", "Back to top"]),
     ("the section targets resolve to the page their headings land on",
       (o.filter (·.title != "Back to top")).all (·.page == some 0)),
-    ("the #top target stands bare: no heading anchors it",
+    ("the #top target lands at the document's top, as no anchor claims it",
       (o.find? (·.title == "Back to top")).map
-        (fun e => e.page.isNone && e.url.isNone) == some true)]),
+        (fun e => e.page == some 0 && e.fragment == some "top") == some true)]),
   ("nav-directory", fun o => [
     ("one entry per menu link, in order",
       o.map (·.title) == (Array.range 300).map fun i => s!"Entry {i + 1}"),

@@ -15,6 +15,7 @@ public import LeanTex.Core.PdfReadProof
 public import LeanTex.Core.PdfTextProof
 public import LeanTex.Core.PdfCensus
 public import LeanTex.Core.PdfContract
+public import LeanTex.Core.PdfDests
 public import LeanTex.Core.Image
 public import LeanTex.Core.NfcData
 public import LeanTex.Core.Nfc

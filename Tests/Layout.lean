@@ -4785,17 +4785,17 @@ def navLayoutChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   t "a pinned nav ships no body ink either" (!hasStr ink "Up")
   t "the content around the navs still ships"
     (hasStr ink "first body" && hasStr ink "second body")
-  t "the outline holds one entry per menu link, in order"
-    (out.outline.map (·.title) == #["One", "Two", "Out", "Lost"])
+  t "the outline holds one entry per menu link that lands, in order"
+    (out.outline.map (·.title) == #["One", "Two", "Out"])
   t "in-document targets resolve to the pages their headings land on"
     ((out.outline.find? (·.title == "One")).map (·.page) == some (some 0) &&
      (out.outline.find? (·.title == "Two")).map (·.page) == some (some 1))
   t "an external target rides as its URL"
     ((out.outline.find? (·.title == "Out")).map (·.url) ==
       some (some "https://example.org"))
-  t "an unresolved target is a bare entry"
-    ((out.outline.find? (·.title == "Lost")).map (fun e => e.page.isNone && e.url.isNone) ==
-      some true)
+  t "a target landing nowhere is left out of the outline, named once for the PDF"
+    ((out.outline.find? (·.title == "Lost")).isNone &&
+      (out.diags.filter fun d => d.code == "W0326" && d.output == some .pdf).size == 1)
   let pdf := pdfText (Pdf.write geom oneFace out.pages {} {} out.outline)
   t "the PDF carries the outline"
     (bytesContain pdf "/Outlines" && bytesContain pdf "/Title (One)" &&
