@@ -156,6 +156,29 @@ private def titlepageClasses : List String := ["report", "book"]
 private def resumeClasses : List String :=
   ["moderncv", "res"]
 
+/-- A class option's `\normalsize` `\baselineskip`, its size file's decimal points as TeX scans
+them. -/
+private def classNormalSkip (pt : Nat) : Int :=
+  let milli := (Ir.sizeFileLeading (Dim.pt pt) 1000 "normalsize" * 1000 + 32768) / 65536
+  (milli * 65536 + 500) / 1000
+
+/-- KOMA-Script's classes, whose `\normalsize` defaults to 11pt where the native article's is 10pt. -/
+private def komaClasses : List String := ["scrartcl", "scrreprt", "scrbook"]
+
+/-- The point size a standard class's options set `\normalsize` at: its one size option, else
+10pt, a KOMA-Script class's only by an option. -/
+public def classNormalPt (cls : String) (opts : List String) : Option Nat :=
+  let sizes := opts.filterMap fun o => match KeyVal.entry o with
+    | ("10pt", none) | ("fontsize", some "10pt") => some 10
+    | ("11pt", none) | ("fontsize", some "11pt") => some 11
+    | ("12pt", none) | ("fontsize", some "12pt") => some 12
+    | _ => none
+  if cls != "article" && !articleClasses.contains cls then none
+  else match sizes with
+    | [n] => some n
+    | [] => if komaClasses.contains cls then none else some 10
+    | _ => none
+
 /-- Font-selection packages whose whole documented effect is
 naming families for the generic slots. -/
 private def fontPackages : List (String × String) :=
@@ -834,6 +857,9 @@ private structure St where
   /-- Built-in names whose every definition the engine ignores whole: commands by name,
   environments as `Tcolorbox.bindingName`. -/
   ignoredDefs : List String := []
+  /-- The `\baselineskip` the class set the strut box at, while nothing the preamble has run since
+  may have set it again. -/
+  strutSkip : Option Int := none
   /-- State mutations performed through `write`, which with `diags.size` the
   dispatcher's silence guard reads. -/
   writes : Nat := 0
@@ -5334,14 +5360,44 @@ amounts and the column gap. -/
 private def kernelLength (n : String) : Option String :=
   if n == "columnsep" then some s!"{Ir.columnSep.sp.toPtString}pt" else kernelSkip n
 
-/-- A length value as the door reads it where it stands. -/
+/-- The operand `\ht\strutbox` or `\dp\strutbox` reads as, under a name no document spells. -/
+private def strutOperand (dimen : String) : String := dimen ++ " strutbox"
+
+/-- The strut box's height or depth at a `\baselineskip`: latex.ltx's `.7` and `.3` of it, in
+TeX's scaled arithmetic. -/
+public def strutDimen (dimen : String) (skip : Int) : Int :=
+  skip * (if dimen == "ht" then 45875 else 19661) / 65536
+
+/-- A length's raws with `\ht\strutbox` and `\dp\strutbox` each one operand. -/
+private def strutOperands (raws : Array Raw) : Array Raw := Id.run do
+  let mut out : Array Raw := #[]
+  let mut i := 0
+  for _ in [0:raws.size] do
+    match (raws[i]? : Option Raw) with
+    | some (.ctrl d p) =>
+      let j := skipSpaces raws (i + 1)
+      if (d == "ht" || d == "dp") && raws[j]? matches some (.ctrl "strutbox" _) then
+        out := out.push (.ctrl (strutOperand d) p)
+        i := j + 1
+      else
+        out := out.push (.ctrl d p)
+        i := i + 1
+    | some r =>
+      out := out.push r
+      i := i + 1
+    | none => break
+  return out
+
+/-- A length value as the door reads it where it stands; the strut box reads at `strut`, the
+`\baselineskip` it was set at, where that is known. -/
 private def lenValue (lens : Array (String × String)) (raws : Array Raw)
     (deferred : Bool := false) (preamble : Bool := false) (measureKnown : Bool := true)
-    (flowPage : Bool := false) : Option String :=
+    (flowPage : Bool := false) (strut : Option Int := none) : Option String :=
   -- premise: unreadableLengthChecks — a kernel parameter in a definition body stands by name
   let kernel (n : String) : Bool := !deferred && (paramSites.lookup n).isSome
   let set (n : String) : Option String := (lens.find? (·.1 == n)).map (·.2)
   let line (n : String) : Bool := n == "linewidth" || n == "columnwidth"
+  let raws := strutOperands raws
   let held (n : String) : Option String :=
     -- premise: columnGeometryChecks — class defaults are readable register values
     if kernel n then (set n).orElse fun _ => kernelLength n
@@ -5349,10 +5405,16 @@ private def lenValue (lens : Array (String × String)) (raws : Array Raw)
       match set n with
       | some v => if deferred then none else some v
       | none => kernelSkip n
+    -- premise: strutLengthChecks — the strut box reads where the class's strut stands
+    else if n == strutOperand "ht" then
+      if deferred then none else strut.map fun s => s!"{strutDimen "ht" s}sp"
+    else if n == strutOperand "dp" then
+      if deferred then none else strut.map fun s => s!"{strutDimen "dp" s}sp"
     else none
   -- premise: kernelLengthChecks — a flow page without a measure withholds `textwidth`
   let unknown (n : String) : Bool :=
     (kernel n && n != "textwidth") || n == "ht" || n == "wd" || n == "dp" ||
+      n == strutOperand "ht" || n == strutOperand "dp" ||
       (!deferred && ((line n && (!preamble || flowPage || (set "textwidth").isSome)) ||
         (preamble && !measureKnown && n == "textwidth")))
   let ref (n : String) (arg : Bool) : Option String :=
@@ -5523,7 +5585,7 @@ the length keeps its value" pos
 private def spelledValue? (value : Array Raw) : M (Option String) := do
   let st ← get
   return (lenValue st.lens value st.inDef (!st.inDoc && !st.seam) st.measureKnown
-    st.flowPage).filter readsAsLength
+    st.flowPage (if st.inDoc then none else st.strutSkip)).filter readsAsLength
 
 /-- A length value as the assignment door reads it; `none`
 for one it cannot read. -/
@@ -5869,6 +5931,17 @@ public def geometrySideKeys : List String := ["top", "bottom", "left", "right"]
 /-- geometry's flags asking for a page without running furniture, the page the engine starts from. -/
 public def geometryNoFurniture : List String := ["noheadfoot", "nohead", "nofoot"]
 
+/-- A key's value as the preamble's length door reads a `\dimexpr`: its native expression, else the
+value as written. -/
+private def dimexprValue (v : String) : M String := do
+  if !v.startsWith "\\dimexpr" then return v
+  let st ← get
+  let raws ← synth v
+  let read := (lenValue st.lens raws (preamble := !st.inDoc) (measureKnown := st.measureKnown)
+    (flowPage := st.flowPage) (strut := if st.inDoc then none else st.strutSkip)).filter fun s =>
+      readsAsLength s && texWordsOnly v
+  return read.getD v
+
 /-- `\usepackage[opts]{geometry}`, `\geometry{...}` and
 `\newgeometry{...}` as `\page{...}`. -/
 private def geometry (opts : String) (pos : Pos)
@@ -5891,16 +5964,17 @@ private def geometry (opts : String) (pos : Pos)
         inertParam "geometry" f spelling "the engine writes its own output" pos
       else if f == "verbose" then inertParam "geometry" f spelling "the engine writes no TeX log" pos
       else dropped := dropped.push f
-    | (k, some v) =>
+    | (k, some v0) =>
       -- geometry's width/height size the text block, paperwidth/paperheight the page.
       let k := if k == "paperwidth" then "width" else if k == "paperheight" then "height" else k
+      let v ← dimexprValue v0
       -- premise: driverOptionChecks — a driver option ships the page without it
       if driverOptions.contains k then
         inertParam "geometry" k spelling "the engine writes its own output" pos
       else if k == "verbose" then inertParam "geometry" k spelling "the engine writes no TeX log" pos
       else if v.startsWith "\\dimexpr" then
         droppedExpr := droppedExpr.push s!"{k} = {v}"
-      else match k, (KeyVal.items v).toList with
+      else match k, ← (KeyVal.items v).toList.mapM dimexprValue with
       | "margin", a :: b :: _ | "hmargin", a :: b :: _ | "vmargin", a :: b :: _ =>
         if a.startsWith "\\dimexpr" || b.startsWith "\\dimexpr" then
           droppedExpr := droppedExpr.push s!"{k} = {v}"
@@ -7684,6 +7758,7 @@ private def rewriteCtrlLaterNamed (name : String) (pos : Pos) (raws : Array Raw)
   | "apptocmd" => standoutFootHookArm pos raws start
   | "linespread" | "setstretch" =>
     -- setspace's parameterised form is `\linespread` by another name.
+    write fun st => { st with strutSkip := none }
     let (args, k) := takeGroups raws start 1
     if args.isEmpty then return none
     if ← paramArgs args then
@@ -7786,6 +7861,7 @@ were dropped: {o}" pos
     crefRangeArm name pos raws start
   | "fontsize" =>
     -- NFSS records the two dimensions and `\selectfont` commits them.
+    write fun st => { st with strutSkip := none }
     let (args, k) := takeGroups raws start 2
     if args.size < 2 then
       say .E0304 "'\\fontsize' needs {size} and {leading} groups" pos
@@ -8141,6 +8217,8 @@ a deeper level apart"
     let arity := undelimitedArity params
     match cmd? with
     | some cmd =>
+      -- A stretch the next font selection reads sets the strut box again there.
+      if cmd == "baselinestretch" then write fun st => { st with strutSkip := none }
       if found && !expanding && arity == some 0 && (← docPreamble) then
         if let (some level, some (.group body _)) := (listLevelOf cmd, raws[k]?) then
           if ← listLevelDef level s!"\\{name}\{\\{cmd}}" body pos then
@@ -8826,6 +8904,8 @@ and 'transparent=<n>' are understood")
   | "KOMAoptions" =>
     let (args, k) := takeGroups raws start 1
     let entries := (KeyVal.items (rawSrc (args.getD 0 #[]))).toList
+    if entries.any fun e => (KeyVal.entry e).1 == "fontsize" then
+      write fun st => { st with strutSkip := none }
     let satisfied (e : String) : Bool :=
       match KeyVal.entry e with
       | (key, some v) => (key == "headsepline" || key == "footsepline")
@@ -8868,6 +8948,7 @@ and \\tokens declare the design directly")
     | none =>
     -- `\begin{document}` runs `\normalsize`, so a preamble size command sets nothing kept.
     if (Ir.sizeScale.lookup name).isSome && (← docPreamble) then
+      write fun st => { st with strutSkip := none }
       discard s!"\\{name}" "'\\begin{document}' runs '\\normalsize', which sets the size again"
         ("size:" ++ name) pos
       return some (#[], start)
@@ -8956,6 +9037,8 @@ private def packageOptions (name p : String) (opts : List String) (pos : Pos)
       unreadParam s!"usepackage:{p}" key s!"'fontenc' main encoding '{o}', which sets Latin input \
 in its own script's glyphs," pos
     else if let some native := (packageOptionNatives.lookup p).bind (·.lookup spelled) then
+      -- setspace's spacings set the strut box again as the package loads.
+      if p == "setspace" then write fun st => { st with strutSkip := none }
       became what native pos (subject := some (paramSubject s!"usepackage:{p}" key))
       out := out ++ (← synthAt native pos)
     else if let some why := (packageOptionsInert.lookup p).bind fun rows =>
@@ -9354,6 +9437,9 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
     let offered := offeredOptions raws k (KeyVal.items (opt.getD "")).toList
     unless offered.isEmpty do write fun st => { st with globalOffered := offered.toArray }
     let keptItems := (KeyVal.items (opt.getD "")).toList.filter (!offered.contains ·)
+    -- The class's `\normalsize` sets the strut box at its `\baselineskip` as the class loads.
+    let strut := (classNormalPt cls keptItems).map classNormalSkip
+    write fun st => { st with strutSkip := strut }
     if cls == "article" && asksTitlePage keptItems then
       write fun st => { st with titlePageAsked := true }
     if presentationClasses.contains cls then
@@ -9775,6 +9861,8 @@ skipped, and the length keeps its value" pos
     let start := skipStar raws start
     let (nameArgs, j) := takeGroups raws start 1
     let some cmd := ctrlName (nameArgs.getD 0 #[]) | return none
+    -- A stretch the next font selection reads sets the strut box again there.
+    if cmd == "baselinestretch" then write fun st => { st with strutSkip := none }
     let provide := name == "providecommand" || name == "ProvideDocumentCommand"
     let st ← get
     -- premise: Tests.xparseProvideChecks — provision keeps existing meanings
@@ -9986,6 +10074,9 @@ where
       became s!"\\{name}" native pos
       return some (← synthAt native pos, start)
   if let some native := simpleNative.lookup name then
+    -- setspace's spacings set the strut box again where they stand.
+    if (packageOptionNatives.lookup "setspace").any (·.any (·.1 == name)) then
+      write fun st => { st with strutSkip := none }
     became s!"\\{name}" native pos
     return some (← synthAt native pos, start)
   if (deferredHooks.lookup name).isSome then

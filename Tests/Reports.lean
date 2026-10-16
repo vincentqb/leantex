@@ -1791,6 +1791,13 @@ def reports : List Report := [
     pins := [check% ignoredDefinitionChecks, check% siteAccountingChecks]
     accept := ["eighteen of the guards' assertions fail with the fix reverted onto 0073deb37: each of eight definers of an ignored built-in, from a style file and in the preamble, raises a warning or a note beside its refusal, and two site-accounting probes find a loss and a translation note at a refusal's site, with no row; the built-in's page stands either way",
       "a refused redefinition of a built-in the engine renders keeps its text's losses beside the refusal, now a site-accounting row naming the redefinition gate as owing the merge"]
+    state := .guarded "0073deb3" .revert .author },
+  { id := "R200", date := "2026-10-16"
+    what := "a geometry or preamble length reading the strut box, a quarter inch over its height as a foot skip, was dropped as arithmetic the engine cannot evaluate, so the page number stood where an undeclared foot skip hangs it, several points from where LaTeX sets it; and every geometry value spelled as an e-TeX dimension expression was dropped the same way"
+    pins := [check% strutLengthChecks]
+    accept := ["lualatex on invented probes: the strut box is 8.39996pt high and 3.60004pt deep under a 10pt class, 9.51996pt high under 11pt and 10.14995pt under 12pt, as the class's baselineskip sets it; here the foot skip a quarter inch over it hangs the foot's baseline that far below the text area under article, report and KOMA-Script classes at each size, from geometry and from a preamble setlength, and a page number in an invented letter-size article moves from 6.7 bp below lualatex's to 0.5 bp, the engine's own offset at any literal foot skip",
+      "the strut stays unread, named once and the page left as without it, under a KOMA-Script class with no size option, whose 11pt the engine does not take, and after a preamble line spacing, setspace spacing, font size, size command, KOMA-Script font size or stretch redefinition, each of which may set the strut box again",
+      "fourteen of the guard's assertions fail with the fix reverted onto 0073deb37: each class's geometry and setlength foot skip over the strut, and a geometry value's expression over literals, is dropped and named"]
     state := .guarded "0073deb3" .revert .author }
 ]
 

@@ -2398,6 +2398,49 @@ def footskipChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
     (drop (src "\\geometry{letterpaper, textheight=9in}") ==
       some ((furnYs oneFace.body bg).2 - (bg.pageH - bg.vmargin)))
 
+/-- The strut box a preamble length reads stands as the class set it, `.7` and `.3` of its
+`\baselineskip` in TeX's arithmetic, and where the preamble may have set it again the length is
+named and dropped. -/
+def strutLengthChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let src (cls pre : String) : String :=
+    s!"\\documentclass{cls}\\usepackage\{geometry}" ++ pre ++
+    "\\begin{document}Alpha words.\n\nBravo words.\n\\end{document}"
+  let drop (s : String) : Option Dim.Sp := do
+    let (doc, _) := elabStr s
+    let g := Layout.Geom.ofPage doc.page
+    let foot ← ((layoutOf oneFace doc).pages[0]?).bind (·.lines.find? (·.furniture))
+    pure (foot.y - (g.pageH - g.vmargin))
+  let lost (s : String) : Bool :=
+    (elabStr s).2.any fun d => d.code == "W0101" || d.code == "W0107"
+  let quarter := Dim.pt 18
+  let geo := "\\geometry{letterpaper, textheight=9in, footskip=\\dimexpr 0.25in + \\ht\\strutbox\\relax}"
+  -- lualatex: `\the\ht\strutbox` 8.39996pt, 9.51996pt and 10.14995pt, `\dp` 3.60004pt at 10pt.
+  for (cls, ht) in [("[10pt]{article}", 550500), ("[11pt]{article}", 623900),
+      ("[12pt]{report}", 665187), ("[11pt]{scrartcl}", 623900),
+      ("[fontsize=12pt]{scrartcl}", 665187), ("{article}", 550500)] do
+    t s!"strut: {cls}'s geometry footskip reads the class's strut height"
+      (drop (src cls geo) == some (quarter + ht) && !lost (src cls geo))
+    t s!"strut: {cls}'s preamble \\setlength reads it too"
+      (let s := src cls ("\\geometry{letterpaper, textheight=9in}\\setlength{\\footskip}" ++
+        "{\\dimexpr 0.25in + \\ht\\strutbox\\relax}")
+       drop s == some (quarter + ht) && !lost s)
+  let depth := src "[10pt]{article}"
+    "\\geometry{letterpaper, textheight=9in, footskip=\\dimexpr 2\\dp\\strutbox\\relax}"
+  t "strut: the depth reads as the class sets it" (drop depth == some (2 * 235932) && !lost depth)
+  let sum := src "[10pt]{article}"
+    "\\geometry{letterpaper, textheight=9in, footskip=\\dimexpr 20pt + 10pt\\relax}"
+  t "strut: geometry reads any dimexpr the length door reads" (drop sum == some (Dim.pt 30))
+  let base := drop (src "[10pt]{article}" "\\geometry{letterpaper, textheight=9in}")
+  for (cls, pre) in [("{scrartcl}", ""), ("[10pt]{article}", "\\linespread{1.5}"),
+      ("[10pt]{article}", "\\onehalfspacing"), ("[10pt]{article}", "\\fontsize{11}{14}\\selectfont"),
+      ("[10pt]{article}", "\\small"), ("[10pt]{article}", "\\usepackage[onehalfspacing]{setspace}"),
+      ("[10pt]{scrartcl}", "\\KOMAoptions{fontsize=12pt}"),
+      ("[10pt]{article}", "\\renewcommand{\\baselinestretch}{1.5}")] do
+    let s := src cls (pre ++ geo)
+    t s!"strut: after '{pre}' in {cls} the strut is not read, and the footskip is named and dropped"
+      (lost s && (cls != "[10pt]{article}" || drop s == base))
+
 /-- A chrome slot's box depends only on the declared layout and the geometry, priorities decide who
 yields, and a yield stays in place and is named. -/
 def bandChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do

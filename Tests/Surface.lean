@@ -604,13 +604,19 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   let unequal := (elabStr (pre "\\usepackage[top=1in,bottom=0.5in]{geometry}")).2
   t "compat geometry drops an unequal pair named"
     (["top", "bottom"].all fun k => unequal.any fun d => d.code == "W0104" && hasStr d.message k)
-  -- A `\dimexpr` value is arithmetic the mapping cannot carry: a named drop, never an unreadable `\page` value.
+  -- A `\dimexpr` value reads as the length door reads it, the strut box as the class sets it.
+  let (strutDoc, strutDs) := elabStr
+    (pre "\\usepackage[footskip=\\dimexpr 0.3in + \\dp\\strutbox\\relax]{geometry}")
+  t "compat geometry reads a dimexpr value"
+    (strutDoc.page.footskip == some (Dim.inch 3 / 10 + 235932) &&
+      strutDs.all (·.code != "W0101"))
+  -- One the door cannot read is a named drop, never an unreadable `\page` value.
   let dimexprDs := (elabStr
-    (pre "\\usepackage[footskip=\\dimexpr 0.3in + \\dp\\strutbox\\relax]{geometry}")).2
-  t "compat geometry drops a dimexpr value named with its spelling"
+    (pre "\\usepackage[footskip=\\dimexpr 0.3in + \\wd0\\relax]{geometry}")).2
+  t "compat geometry drops an unreadable dimexpr value named with its spelling"
     ((dimexprDs.any fun d => d.code == "W0101" &&
         hasStr d.message "footskip = \\dimexpr 0.3in" &&
-        hasStr d.message "\\strutbox" &&
+        hasStr d.message "\\wd" &&
         (d.help.map (hasStr · "literal")).getD false) &&
       dimexprDs.all (·.severity != .error))
   -- Dropped geometry keys change the page, so they warn.
