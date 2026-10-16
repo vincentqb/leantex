@@ -28,16 +28,23 @@ def directoryFits (b : ByteArray) : Bool :=
     let e := 12 + 16 * k
     Ink.u32 b (e + 8) + Ink.u32 b (e + 12) ≤ b.size
 
-/-- The `src` of the HTML's typewriter regular `@font-face`. -/
-def monoSrc (html : String) : Option String :=
-  match html.splitOn "@font-face { font-family: \"ltx-mono\"; font-weight: 400; \
+/-- The family the HTML's typewriter stack opens with. -/
+def monoFamily (html : String) : Option String :=
+  match html.splitOn "--font-mono: \"" with
+  | _ :: rest :: _ => (rest.splitOn "\"").head?
+  | _ => none
+
+/-- The `src` of the regular `@font-face` of the family the HTML's typewriter stack opens with. -/
+def monoSrc (html : String) : Option String := do
+  let family ← monoFamily html
+  match html.splitOn s!"@font-face \{ font-family: \"{family}\"; font-weight: 400; \
 font-style: normal; src: url(\"" with
   | _ :: rest :: _ => (rest.splitOn "\")").head?
   | _ => none
 
 /-- The generic family closing the HTML's typewriter stack. -/
 def monoGeneric (html : String) : Option String :=
-  match html.splitOn "--font-mono: \"ltx-mono\"" with
+  match html.splitOn "--font-mono: \"" with
   | _ :: rest :: _ => (rest.splitOn ";").head?.bind fun stack => (stack.splitOn ", ").getLast?
   | _ => none
 

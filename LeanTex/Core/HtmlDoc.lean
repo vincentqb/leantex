@@ -2708,12 +2708,20 @@ private def slotName : Nat → String
   | 2 => "mono"
   | n => toString n
 
-/-- The synthetic families face `i` serves: each slot resolving to it, and `ltx-math` for the
-math face. -/
+/-- The faces slot `s` resolves to, in face order. -/
+private def slotFaces (fs : Font.FontSet) (s : Nat) : List Nat :=
+  (List.range fs.fonts.size).filter fun i => fs.index.any fun e => e.1.1 == s && e.2 == i
+
+/-- The first slot resolving to exactly the faces slot `s` resolves to, whose family serves both. -/
+private def familySlot (fs : Font.FontSet) (s : Nat) : Nat :=
+  ((List.range s).find? fun t => slotFaces fs t == slotFaces fs s).getD s
+
+/-- The synthetic families face `i` serves: each slot's that resolves to it, one for slots resolving
+to the same faces, and `ltx-math` for the math face. -/
 private def namedFamiliesOf (fs : Font.FontSet) (i : Nat) : List String :=
   let slots := fs.index.foldl (fun n e => max n (e.1.1 + 1)) 3
   ((List.range slots).filterMap fun s =>
-    if fs.index.any (fun e => e.1.1 == s && e.2 == i) then
+    if familySlot fs s == s && fs.index.any (fun e => e.1.1 == s && e.2 == i) then
       some s!"ltx-{slotName s}"
     else none) ++
   (if fs.math == some i then ["ltx-math"] else [])
@@ -3136,7 +3144,7 @@ private def tokenVars (cfg : Config) (doc : Doc) (roles : List Ir.Role)
         if doc.docClass == DocClass.slides && doc.fonts.sans.isSome then "sans-serif"
         else "serif"
       let slot (s : Nat) (declared : String) : String :=
-        stackFor fs s!"ltx-{slotName s}" (genericFor fs s declared)
+        stackFor fs s!"ltx-{slotName (familySlot fs s)}" (genericFor fs s declared)
       [s!"    --font-body: {slot 0 bodyDeclared};",
        s!"    --font-sans: {slot 1 "sans-serif"};",
        s!"    --font-mono: {slot 2 "monospace"};"] ++

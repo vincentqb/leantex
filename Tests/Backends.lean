@@ -1986,17 +1986,20 @@ def fontShipChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((html.splitOn "@font-face").length == faces.size + 1)
   t "census deck html: the font-family variables name the synthetic families"
     (((html.splitOn "--font-body: \"ltx-body\"").length == 2) &&
-     ((html.splitOn "--font-sans: \"ltx-sans\"").length == 2) &&
      ((html.splitOn "--font-mono: \"ltx-mono\"").length == 2))
+  t "font ship: slots resolving to the same faces share one family, its programs shipped once"
+    (((html.splitOn "--font-sans: \"ltx-body\"").length == 2) &&
+     !hasStr html "font-family: \"ltx-sans\"" &&
+     (html.splitOn (HtmlDoc.fontResource sans).uri).length == 2)
   t "font ship: every captured face is embedded in the page"
     ((HtmlDoc.fontResources fs).all fun a => (html.splitOn a.uri).length ≥ 2)
   t "font ship: one captured resource per face, carrying its bytes"
     ((HtmlDoc.fontResources fs).size == fs.fonts.size &&
      (HtmlDoc.fontResources fs).all fun a => !a.bytes.isEmpty)
   t "font ship: the OS/2 sans class closes the body stack, not the slot's serif"
-    ((html.splitOn "--font-body: \"ltx-body\", \"ltx-sans\", \"ltx-mono\", sans-serif;").length == 2)
+    ((html.splitOn "--font-body: \"ltx-body\", \"ltx-mono\", sans-serif;").length == 2)
   t "font ship: an undeclared class takes the slot's kind"
-    ((html.splitOn "--font-mono: \"ltx-mono\", \"ltx-body\", \"ltx-sans\", monospace;").length == 2)
+    ((html.splitOn "--font-mono: \"ltx-mono\", \"ltx-body\", monospace;").length == 2)
   t "font ship: the body weight is the resolved face's, and nothing is faked"
     ((html.splitOn "body { font-weight: 400; --ltx-body-weight: 400; font-synthesis: small-caps; }").length == 2)
   let fsFb : Font.FontSet := { fs with fonts := fs.fonts.push icons }
@@ -2004,11 +2007,11 @@ def fontShipChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "font ship: a slotless face ships under its fallback family"
     (((htmlFb.splitOn "font-family: \"ltx-fb2\"").length == 2) &&
      ((htmlFb.splitOn
-        "--font-body: \"ltx-body\", \"ltx-sans\", \"ltx-mono\", \"ltx-fb2\", sans-serif;").length == 2))
+        "--font-body: \"ltx-body\", \"ltx-mono\", \"ltx-fb2\", sans-serif;").length == 2))
   let fsMath : Font.FontSet := { fs with math := some 1 }
   let (htmlMath, _) := HtmlDoc.emit { cfg with fonts := some fsMath } doc
   t "font ship: the resolved math face lands in --font-math"
-    ((htmlMath.splitOn "--font-math: \"ltx-math\", \"ltx-body\", \"ltx-sans\", \"ltx-mono\", math;").length == 2)
+    ((htmlMath.splitOn "--font-math: \"ltx-math\", \"ltx-body\", \"ltx-mono\", math;").length == 2)
   t "font ship: .math reads the document's math face through its token"
     ((htmlMath.splitOn ".math { font-family: var(--font-math,").length == 2)
   t "font ship: a config with no set ships no rules"
