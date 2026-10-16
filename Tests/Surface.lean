@@ -3224,7 +3224,8 @@ def pictureElabChecks (ref : IO.Ref (List String)) : IO Unit := do
     let body := if body.startsWith "[" then
       "[alt={A synthetic diagram}, " ++ (body.drop 1).toString
     else "[alt={A synthetic diagram}]" ++ body
-    "\\pictures{ tool = none }\\palette{ grid = #2A6F4E }" ++
+    "\\pictures{ tool = none }" ++
+    (if hasStr body "grid" then "\\palette{ grid = #2A6F4E }" else "") ++
     "\\begin{document}\\begin{tikzpicture}" ++
     body ++ "\\end{tikzpicture}\\end{document}"
   let picOf (src : String) : Option Ir.Pic.Picture :=
@@ -5453,6 +5454,7 @@ def boundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "the set lines are the boundary's: no W0301 for them"
     (ds.all (·.code != "W0301"))
   -- Macros execute at the picture's source site, so the request equals the literal replacement's.
+  let pal := "\\palette{ ember = #C0431F }\n"
   let mac := "\\newcommand{\\tint}[2][]{\\textcolor{ember}{#2}}\n" ++
     "\\newcommand{\\badge}[2][]{\\tint{[#2]}}\n" ++
     "\\newcommand{\\elsewhere}{only ever in prose}\n"
@@ -5969,8 +5971,8 @@ def pictureNodeFloorChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     IO Unit := do
   let t := check ref
   let pic (body : String) : String :=
-    "\\palette{ rose = #B03060 }\\begin{document}\n\\begin{tikzpicture}\n" ++
-    body ++ "\\end{tikzpicture}\n\\end{document}"
+    (if hasStr body "rose" then "\\palette{ rose = #B03060 }" else "") ++
+    "\\begin{document}\n\\begin{tikzpicture}\n" ++ body ++ "\\end{tikzpicture}\n\\end{document}"
   let run (body : String) : Array CensusPage × Array Diag :=
     let (doc, ds) := elabStr (pic body)
     (censusOf (coveredColorsOf doc) (layoutOf oneFace doc), ds)
@@ -6205,7 +6207,8 @@ def pictureNodeStyleChecks (ref : IO.Ref (List String)) : IO Unit := do
   let boldIdx (i : Nat) : Bool := i == 1 || i == 3
   let italIdx (i : Nat) : Bool := i == 2 || i == 3
   let doc (inner : String) : String :=
-    "\\palette{ rose = #B03060 }\\begin{document}\n" ++ inner ++ "\n\\end{document}"
+    (if hasStr inner "rose" then "\\palette{ rose = #B03060 }" else "") ++
+    "\\begin{document}\n" ++ inner ++ "\n\\end{document}"
   let node (body : String) : String :=
     doc ("\\begin{tikzpicture}\n\\node (a) at (0,0) {" ++ body ++ "};\n\\end{tikzpicture}")
   -- A line as its runs, each run's face, glyphs and colour, and each gap's width.

@@ -286,8 +286,15 @@ def inlineCodeChecks (ref : IO.Ref (List String)) : IO Unit := do
     let src := mintedDoc ("\\setminted{fontsize=\\footnotesize}\n" ++ pre)
       (sizes ++ "{\\scriptsize Small " ++ code ++ "}")
     let gs := shipped src
+    -- A lexer's layer no inline code of that lexer reads is the one setting named.
+    let unread := (elabStr src).2.filter (·.kind == .W0449)
+    let layerUnread := code == "\\mintinline{bash}{probe}"
     t s!"inline code layers: {label}"
-      (quiet src && (sizeOf gs want).isSome && probeSize gs == sizeOf gs want)
+      ((if layerUnread then
+          unread.map (·.subject) == #[some "unused:listing:setmintedinline:python"] &&
+            (elabStr src).2.all fun d => d.severity != .warning || d.kind == .W0449
+        else quiet src) &&
+        (sizeOf gs want).isSome && probeSize gs == sizeOf gs want)
     let step := match want with
       | "Foot" => "footnotesize"
       | "Small" => "scriptsize"

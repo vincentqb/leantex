@@ -140,7 +140,7 @@ and judges both a PDF and an HTML page"
       HtmlDoc.emitTree cfg { doc with body := Ir.squeezeFrames doc.body fitted.webSqueeze }
     let sourceDiags := elabDiags ++ fontDiags ++ imgDiags
     let diags := Diag.forOutputs #[.pdf, .html]
-      (sourceDiags ++ out.diags ++ PlanLoss.ofPlan plan fs doc ++ htmlDiags)
+      (sourceDiags ++ out.diags ++ PlanLoss.ofPlan plan fs doc spans.faces ++ htmlDiags)
     let resolved := Diag.resolveAll doc.allow false diags
     if resolved.errors > 0 then
       return .error s!"{file}: {resolved.errors} error(s) stop the build: \

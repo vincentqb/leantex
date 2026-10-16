@@ -10,7 +10,11 @@ repeated in the same words within one phase of a build prints once, at its
 first site, with its count; `-v` lists every site, `--porcelain` gives JSON
 output, and `leantex --help` shows all options. A loss of the PDF's page, such
 as a line that runs past the margin, is reported only when the build writes a
-PDF.
+PDF. A setting the document declares that nothing it sets uses (a colour
+nothing paints, a face no text is set in, listing defaults no listing after
+them reads, a style for an element the document never shows) is named where
+it stands, `W0449`; the settings a package, class or theme declares never
+are, while a file the document inputs is the document's own.
 
 ## TeX and Markdown
 
@@ -570,10 +574,12 @@ and apply it with `\setminted{formatcom=\SlidePygments}`, so a lualatex build
 sets the colours leantex sets, Lean's `#` commands aside: leantex reads them as
 Lean's own highlighter does, as keywords and `#exit` as an error, where
 Pygments reads them as names. leantex reads the palette itself and runs no
-`formatcom`, and reads the export without a warning where a document both
-engines build loads it. Such a document keeps `\palette[seeds]` for leantex,
-or names the exported colours under the code roles' own keys
-(`\colorlet{codekeyword}{SlideCodeKeyword}`), which both engines read.
+`formatcom`, and reads the export without a loss where a document both
+engines build loads it, naming each exported colour only `formatcom` paints
+(`W0449`, which `\allow{W0449}` accepts). Such a document keeps
+`\palette[seeds]` for leantex, or names the exported colours under the code
+roles' own keys (`\colorlet{codekeyword}{SlideCodeKeyword}`), which both
+engines read.
 
 Add `--series N`, from 1 to 16, to export colours for a chart's N series,
 `SlideSeries1` to `SlideSeriesN`, at the depth `--depth` names. The first is

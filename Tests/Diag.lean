@@ -3,6 +3,7 @@ module
 public import LeanTex.Core.FigureLoss
 public import LeanTex.Cli.FontDiscovery
 public import LeanTex.Cli.FontAssembly
+public import LeanTex.Cli.FaceUse
 public import LeanTex.Cli.LeanFactsFile
 public import Tests.Support
 public import Tests.CorpusStore
@@ -631,6 +632,12 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
   | .W0383 => dvE (w := w) (dvDoc ""
       "\\begin{algorithm}\n\\lIf{$x < 0$}{negate $x$}\\;\n\\end{algorithm}")
   | .W0387 => dvE (w := w) (dvDoc "\\thispagestyle{plain}\n\\palette{codestring = #AA0000}\n" "x")
+  | .W0449 =>
+    dvE (w := w) (dvDoc "\\definecolor{plum}{HTML}{AA0000}\n" "x") ++
+    dvE (w := w) (dvDoc "\\style{itemize}{ gap = 4pt }\n" "x") ++
+    dvE (w := w) (dvDoc "\\usepackage{listings}\n\\lstset{numbers=left}\n" "x") ++
+    FaceUse.diags #[("mono", ⟨"t", {}⟩), ("math", ⟨"t", {}⟩)] one
+      (elabStr (dvDoc "\\fonts{ mono = \"Probe Mono\", math = \"Probe Math\" }\n" "x")).1
   | .W0701 =>
     let (doc, _) := elabStr (dvDoc "\\output{ formats = pdf, alternatives = required }\n" "x")
     Ir.contractDiags (doc.output.contract.unmet Pdf.profile)
@@ -1359,7 +1366,7 @@ def repeatFoldUnexercised : List (String × String) :=
     ["W0007", "W0101", "W0102", "W0103", "W0104", "W0106", "W0111", "W0202", "W0303", "W0306",
      "W0312", "W0316", "W0317", "W0318", "W0319", "W0328", "W0329", "W0330", "W0331", "W0342",
      "W0343", "W0348", "W0354", "W0355", "W0357", "W0361", "W0363", "W0367", "W0368", "W0369",
-     "W0373", "W0387", "W0398", "W0434", "W0442", "W0443", "W0109"] ++
+     "W0373", "W0387", "W0398", "W0434", "W0442", "W0443", "W0109", "W0449"] ++
   unexercisedAs "its construct is a class option, which the repetition does not write twice"
     ["W0356"] ++
   unexercisedAs "its witness is the emitter's own record, with no source to write twice"

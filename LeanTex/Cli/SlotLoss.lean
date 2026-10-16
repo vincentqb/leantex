@@ -130,7 +130,7 @@ public def slotsUsed (doc : Ir.Doc) : Array Nat :=
     | _ => acc
   let found := (Ir.furnitureInlines doc).foldl (fun acc r => Ir.foldInlines fi acc r)
     (Ir.foldBlocks fb fi #[] doc.body)
-  if (Ir.mathRequests .alphabets doc).any (·.body.setsMono doc.fonts.mathSources.tt) then
+  if (Ir.mathRequests .alphabets doc).any (·.body.setsText .mono doc.fonts.mathSources) then
     push found 2
   else found
 

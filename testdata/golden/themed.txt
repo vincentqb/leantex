@@ -2,7 +2,6 @@ class slides [aspectratio=169]
 page 453.543x255.118 vmargin 26.4 hmargin 28.346 fontsize 11 parskip 0 justify off
 font dir "fonts"
 font body "Open Sans"
-font mono "Source Code Pro"
 palette fg #23373B
 palette bg #FAFAFA
 palette example #008080
@@ -142,6 +141,6 @@ note[N0100] 8:1 '\documentclass{beamer}' → \documentclass[aspectratio=169]{sli
 note[N0100] 8:1 '\RequirePackage{amsmath}' → nothing: the engine does this itself
 note[N0100] 8:1 '\usepackage{amsthm}' → \theoremstyle{plain}
 note[N0100] 10:1 '\usetheme' → \theme{moloch}
-note[N0100] 36:11 '\alert' → the alert colour
-note[N0100] 43:6 '\alert' → the alert colour
-warning[W0315] 36:44 text coloured 'fg!50!bg' reads on the page below the contrast WCAG 2.2 asks of large-scale text (SC 1.4.3) | detail: #8F999B on #FAFAFA: 2.79:1, below 3.00:1
+note[N0100] 35:11 '\alert' → the alert colour
+note[N0100] 42:6 '\alert' → the alert colour
+warning[W0315] 35:44 text coloured 'fg!50!bg' reads on the page below the contrast WCAG 2.2 asks of large-scale text (SC 1.4.3) | detail: #8F999B on #FAFAFA: 2.79:1, below 3.00:1

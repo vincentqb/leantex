@@ -1265,12 +1265,13 @@ def paletteChecks (ref : IO.Ref (List String)) : IO Unit := do
       | .colored c name body => c.r == 0x7C && name == some (.color "primary") && body.size == 1
       | _ => false
     | _ => false)
+  let unknownSrc := "\\documentclass{article}\\palette{a = #333}" ++
+    "\\begin{document}\\textcolor{a}{y}\\textcolor{nope}{x}\\end{document}"
   t "palette unknown name warns and keeps the content"
-    (warnCodes ("\\documentclass{article}\\palette{a = #fff}" ++
-      "\\begin{document}\\textcolor{nope}{x}\\end{document}") == ["W0304"] &&
-     (elabStr ("\\documentclass{article}\\palette{a = #fff}" ++
-      "\\begin{document}\\textcolor{nope}{x}\\end{document}")).1.body ==
-        #[.para #[.text "x"]])
+    (warnCodes unknownSrc == ["W0304"] &&
+     (elabStr unknownSrc).1.body.any fun b => match b with
+       | .para xs => xs.back? == some (.text "x")
+       | _ => false)
   let palSrc (body : String) : Ir.Doc :=
     (Elab.run "t" ("\\documentclass{article}\\palette{mut = #666666}" ++
       "\\begin{document}" ++ body ++ "\\end{document}")).1
@@ -1728,9 +1729,9 @@ def mixChecks (ref : IO.Ref (List String)) : IO Unit := do
     (({} : Ir.Palette).resolve "black" == some Ir.Color.black &&
      ({} : Ir.Palette).resolve "white" == some Ir.Color.white)
   let doc (body : String) := elabStr ("\\documentclass{article}\n" ++
-    "\\palette{ fg = #000000, bg = #ffffff, dim = bg!50!fg, faint = black!2 }\n" ++
+    "\\palette{ fg = #000000, bg = #ffffff }\\palette[decorative]{ dim = bg!50!fg, faint = black!2 }\n" ++
     "\\begin{document}" ++ body ++ "\\end{document}")
-  let (pDoc, pDs) := doc "x"
+  let (pDoc, pDs) := doc "\\textcolor{dim}{x} \\textcolor{faint}{y}"
   t "palette mix entry clean" pDs.isEmpty
   t "palette mix entry value" (pDoc.palette.find? "dim" == some { r := 0x80, g := 0x80, b := 0x80 })
   t "palette black!2 entry" (pDoc.palette.find? "faint" == some { r := 250, g := 250, b := 250 })

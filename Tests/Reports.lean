@@ -146,6 +146,7 @@ import Tests.FrameHeadingScope
 import Tests.SectionPages
 import Tests.SeedPalette
 import Tests.PaletteCover
+import Tests.UnusedSettings
 
 /-! Every breakage the user reported, as a row whose pins hold it closed; a report closes only as
 `guarded`, and the unwitnessed and owed counts are held both ways. -/
@@ -1816,6 +1817,15 @@ def reports : List Report := [
       "the second review's cases: a list opening an item, in its label, takes the item's line and leaves no skip below it, as LaTeX's noparlist sets it, where main set 2 to 4pt above it and the first answer (c9b19f21) up to 8pt above and 6pt below; a quotation closing on a declared nested list ends on the larger of their skips, 24pt where lualatex sets 24pt and main 22pt, where the first answer re-skipped it at the quote's parsep, 4pt more; the web page reaches a description list's items and an abstract's closing list, and an inline list's re-skip without a declaration, as the page",
       "in Chromium 151.0.7922.34, the item after a nested list declaring spacing, by a scope, the list's own options or an inherited partopsep, at the second level and the fourth, stands where the page sets it, 21 to 31pt, where the first cut's web page took the class's level for it, 14 to 22pt",
       "the first review's cases: a level declaring only spacing kept its kind's label and margin on 0073deb37 and lost them on the first cut, here kept in either order; a later scope without vertical keys left an earlier one's vertical keys standing, here replaced as enumitem replaces them; an article's abstract was no list level, so its list took the first level's scope, here the second's"]
+    state := .guarded "0073deb3" .before .author },
+  { id := "R202", date := "2026-10-16"
+    what := "a setting a document declared that nothing it set used shipped with no word: a colour nothing painted, a face no text was set in, listing defaults no listing read, a style for an element the document never showed; one in a package, class or theme must never be named"
+    pins := [check% Tests.UnusedSettings.firesChecks, check% Tests.UnusedSettings.scopeChecks,
+      check% Tests.UnusedSettings.accountingChecks, check% Tests.UnusedSettings.oracleChecks,
+      check% Tests.UnusedSettings.faceChecks]
+    accept := ["the guards fail on main at 0073deb3, which names none of these declarations; here every kind is named once at its site and none a document reads",
+      "a first cut naming unpainted colours everywhere broke 147 suite checks; scoped to the document's own files, its own cut broke 139, each fixture made honest or its unread declarations accepted where they are the point: shared fixture colours declared only where a case paints with them, a generated export's colours named only where the document leaves them unpainted",
+      "the two-build judge over 596 probe pairs, each a declaration built with and without it in an article or a deck and judged by visualdiff on the PDF and the web page: no declaration named unused changes either artifact; 27 read by the judgment change nothing, over-approximated readers such as a description list for an itemize style"]
     state := .guarded "0073deb3" .before .author }
 ]
 

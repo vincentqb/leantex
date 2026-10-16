@@ -23,6 +23,7 @@ public import LeanTex.Core.ListingReply
 import LeanTex.Core.Listing
 import LeanTex.Core.LexerName
 public import LeanTex.Core.BeamerColor
+public import LeanTex.Core.UnusedSetting
 public import LeanTex.Core.Blueprint
 
 namespace LeanTex.Core.Elab
@@ -580,6 +581,11 @@ public structure ESt where
   /-- The keyed entries the document itself declared, `(decl, key)`, that no
   theme install has replaced. -/
   declaredKeys : Array (String × String) := #[]
+  /-- The settings the document itself declares, each at its site, which the unused-setting
+  judge reads. -/
+  settings : Array UnusedSetting.Declared := #[]
+  /-- The document's own colours no colour read has named yet. -/
+  owedColors : Array String := #[]
   ctr : Counters := {}
   /-- The binding of the nearest preceding numbered thing, which a `\label`
   declared here takes. -/
@@ -728,6 +734,7 @@ private inductive PEvent where
   | say (d : Diag)
   | scalar (decl key value : String) (pos : Pos)
   | declared (decl key : String)
+  | setting (s : UnusedSetting.Setting) (pos : Pos)
 
 private def applyEvent (ctx : Ctx) (st : ESt) : PEvent → ESt
   | .say d => { st with diags := st.diags.push d }
@@ -747,6 +754,15 @@ private def applyEvent (ctx : Ctx) (st : ESt) : PEvent → ESt
     { st with declaredKeys :=
       if st.declaredKeys.contains (decl, key) then st.declaredKeys
       else st.declaredKeys.push (decl, key) }
+  | .setting setting pos =>
+    if UnusedSetting.ownSite (Compat.packageFile ctx.file) ctx.callSite.isSome pos then
+      let st := { st with settings := st.settings.push ⟨setting, ctx.sourceSpan pos⟩ }
+      match setting with
+      | .color n =>
+        if st.owedColors.contains n || st.spans.colorReads.contains n then st
+        else { st with owedColors := st.owedColors.push n }
+      | .face _ | .style _ => st
+    else st
 
 private def emitEvents (ctx : Ctx) (evs : Array PEvent) : EM Unit :=
   modify fun st => evs.foldl (applyEvent ctx) st
@@ -880,11 +896,12 @@ private def recordNativePictureSpan (ctx : Ctx) (pos : Pos) : EM Unit := do
 nothing reads them. -/
 private def legacyScreenKeys : List String := ["ink", "surface"]
 
-/-- The declared legacy keys the engine has not read yet. -/
+/-- The declared colours the engine has not read yet: the legacy keys and the document's own. -/
 private def owedKeys : EM (List String) := do
-  let spans := (← get).spans
-  return spans.tokenKeys.toList.filterMap fun (k, _) =>
-    if spans.colorReads.contains k then none else some k
+  let st ← get
+  let reads := st.spans.colorReads
+  return st.spans.tokenKeys.toList.filterMap (fun (k, _) => if reads.contains k then none else some k) ++
+    st.owedColors.toList
 
 private def readsOwed : EM Bool := return !(← owedKeys).isEmpty
 
@@ -896,7 +913,8 @@ private def noteColorNames (names : Array String) : EM Unit := do
   let more := names.foldl (fun acc n =>
     if owed.contains n && !acc.contains n then acc.push n else acc) reads
   if more.size != reads.size then
-    modify fun st => { st with spans := { st.spans with colorReads := more } }
+    modify fun st => { st with spans := { st.spans with colorReads := more }
+                               owedColors := st.owedColors.filter (!more.contains ·) }
 
 /-- Records the owed colour names a resolved expression spells. -/
 private def noteColorReads (expr : String) : EM Unit := do
@@ -6996,6 +7014,10 @@ named. -/
 private def noteDeclared (ctx : Ctx) (decl key : String) : EM Unit :=
   modify fun st => applyEvent ctx st (.declared decl key)
 
+/-- Records a setting the document itself declares at `pos`. -/
+private def noteSetting (ctx : Ctx) (setting : UnusedSetting.Setting) (pos : Pos) : EM Unit :=
+  modify fun st => applyEvent ctx st (.setting setting pos)
+
 /-- The `\leftmargin⟨n⟩` the class fixes as it loads, which a length may name. -/
 private def classMarginTokens (l : Ir.ListLineage) : Array (String × Dim.SymGlue) :=
   (List.range 6).toArray.map fun k => (Ir.leftMarginName (k + 1), Ir.leftMarginFor l {} (k + 1))
@@ -7321,6 +7343,11 @@ by its code role" pos
         modify fun st => if st.spans.tokenKeys.any (·.1 == key) then st else
           { st with spans := { st.spans with
             tokenKeys := st.spans.tokenKeys.push (key, ctx.sourceSpan pos) } }
+      else if ref == .color key && !aliasOnly && ColorRef.ofKey key == .color key &&
+          (CodeColor.retiredKeys.lookup key).isNone then
+        noteSetting ctx (.color key) pos
+        -- A picture's settings and macros are read again for the colour now owed.
+        modify fun st => { st with spans := { st.spans with pictureContextRead := (0, 0) } }
       unless aliasOnly do
         for k in refs do
           if let .role r := k then
@@ -13214,6 +13241,21 @@ private def fontVariantKey? (key : String) : Option (Nat × Nat × Bool) :=
 private def familyVariantKey? (variant : List String) : Option (Nat × Bool) :=
   (fontVariantKey? (String.intercalate "." ("body" :: variant))).map fun (_, w, i) => (w, i)
 
+/-- The face a `\fonts` key declares for the unused-setting judge: its slot's, a declared family's,
+or the math face's for an alphabet source; a directory declares none. -/
+private def faceKeyOf? (key : String) : Option String :=
+  match fontSlot? key, key.splitOn "." with
+  | some 0, _ => some "body"
+  | some 1, _ => some "sans"
+  | some _, _ => some "mono"
+  | none, "family" :: name :: _ => some s!"family.{name}"
+  | none, _ =>
+    match fontVariantKey? key with
+    | some (0, _, _) => some "body"
+    | some (1, _, _) => some "sans"
+    | some _ => some "mono"
+    | none => if key == "math" || (Math.MathAlphabet.sourceKey? key).isSome then some "math" else none
+
 /-- Applies `\fonts{...}`: family names per slot, variant faces and font
 directories. -/
 private def applyFonts (ctx : Ctx) (spec : FontSpec) (entries : Array Decl.Entry)
@@ -13289,6 +13331,8 @@ private def applyFonts (ctx : Ctx) (spec : FontSpec) (entries : Array Decl.Entry
       if ["body", "sans", "mono", "math"].contains canonical ||
           (Math.MathAlphabet.sourceKey? canonical).isSome then
         evs := evs.push (.scalar "fonts" canonical (renderValue e.value) pos)
+      if let some face := faceKeyOf? e.key then
+        evs := evs.push (.setting (.face face) pos)
   return (spec, evs)
 
 private def styleKeys : List String :=
@@ -13796,6 +13840,7 @@ institute, or date, got '{vt}'" pos
         modify fun st' => { st' with
           diags := st'.diags.push (Decl.unknownKey ctx.file "style" key styleKeys pos) }
   noteDeclared ctx "style" element
+  noteSetting ctx (.style element) pos
   return styles.declare element st
 
 /-- Applies `\chrome{...}`, merging each declared footer slot onto the chrome
@@ -15411,9 +15456,10 @@ a heading; its numbers stand alone" pos
       diag s.ctx .E0313 "only declarations may appear before '\\begin{document}'" none
       return { s with textDiagged := true }
 
-/-- The elaboration state with the four stores only diagnostics read erased. -/
+/-- The elaboration state with the six stores only diagnostics read erased. -/
 public def ESt.sem (e : ESt) : ESt :=
-  { e with diags := #[], warnedUnknown := #[], seenScalars := #[], declaredKeys := #[] }
+  { e with diags := #[], warnedUnknown := #[], seenScalars := #[], declaredKeys := #[],
+           settings := #[], owedColors := #[] }
 
 /-- The fold state with its reporting once-latch erased. -/
 public def PreState.sem (s : PreState) : PreState := { s with textDiagged := false }
@@ -15448,6 +15494,10 @@ private theorem applyEvent_sem (ctx : Ctx) (st : ESt) (ev : PEvent) :
     all_goals rfl
   | declared decl key =>
     simp only [applyEvent, ESt.sem]
+  | setting setting pos =>
+    simp only [applyEvent, ESt.sem]
+    repeat' split
+    all_goals rfl
 
 private theorem foldEvents_sem (ctx : Ctx) (l : List PEvent) (st : ESt) :
     (l.foldl (applyEvent ctx) st).sem = st.sem := by
@@ -16384,6 +16434,9 @@ public structure ReqSpans where
   /-- Inline code in a language only the highlighter reads, as language and
   source. -/
   code : Array (String × String) := #[]
+  /-- The faces the document itself declares, at sites no other warning names, which the face
+  set's judge reads. -/
+  faces : Array (String × Span) := #[]
   deriving Repr, BEq, Inhabited
 
 /-- The rewritten source and scans every elaboration of one document reads. -/
@@ -16699,9 +16752,17 @@ public def completePrepared (file : String) (p : Prepared) (earlier : Array Diag
     else unreadPaletteKeys (doc.page.drawn.foldl (fun acc r => acc ++ Ir.colorNames r.color)
       st.spans.colorReads) st.spans.tokenKeys
   let unread := unread ++ unreadFrameTitleFont doc st.spans.frameTitleFont st.spans.frameTitleRestated
-  (doc, Diag.tallySites ((accountRecovered doc.salvage
-    (earlier ++ p.compatDiags ++ st.diags ++ contrast ++ outline ++ alt ++ links ++ sequences ++
-      unread ++ Ir.boxDiags doc.page)
+  let said := earlier ++ p.compatDiags ++ st.diags ++ contrast ++ outline ++ alt ++ links ++
+    sequences ++ unread ++ Ir.boxDiags doc.page
+  -- A declaration a definition's replacement text makes at its call is the definition's.
+  let settings := st.settings.filter fun d =>
+    d.span.pos.command.isSome && p.sourceTriggers.writtenAt d.span.file d.span.pos == d.span.pos.command
+  let named := if settings.isEmpty then #[] else
+    said.filterMap fun d => if d.severity == .note then none else d.span
+  let unused := if settings.isEmpty then #[] else
+    UnusedSetting.diags settings (UnusedSetting.shown doc)
+      (doc.page.drawn.foldl (fun acc r => acc ++ Ir.colorNames r.color) st.spans.colorReads) named
+  (doc, Diag.tallySites ((accountRecovered doc.salvage (said ++ unused)
     st.spans.recoveryDiags).map p.sourceTriggers.attribute),
     { inputAttempts := p.inputAttempts
       bib := st.spans.bib
@@ -16714,7 +16775,8 @@ public def completePrepared (file : String) (p : Prepared) (earlier : Array Diag
         fun (out, seen) (key, _, pos) =>
           if seen.contains key then (out, seen)
           else (out.push (key, ⟨file, pos⟩), seen.insert key)).1
-      labels := table })
+      labels := table
+      faces := UnusedSetting.faceSites settings named })
 
 public theorem completePrepared_inputAttempts_exact (file : String) (p : Prepared)
     (earlier : Array Diag) (doc : Doc) (table : Ir.RefTable)

@@ -4,7 +4,8 @@
 % shop. The card class itself asserts the contract: content fits both
 % faces, ink stays inside
 % the safe margin, and no type drops below the legible floor. Invented
-% identity: placeholder name, example.org.
+% identity: placeholder name, example.org. The shared blocks style lists
+% the card never sets, which \allow{W0449} accepts.
 \documentclass{card}
 
 \fonts{
@@ -27,6 +28,7 @@
 \page{ bleed = 3mm, marks = cut }
 \pdfmeta{ title = "Cardamom Press — card", author = "Pat Placeholder" }
 \assert{ fonts.all_embedded }
+\allow{W0449}
 
 \begin{document}
 

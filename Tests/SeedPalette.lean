@@ -293,8 +293,10 @@ def exportChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit :
       LeanTex.Core.SeedPalette.beamerDeclarations "seed" st ++ focus ++ body
     let (nd, nds) := elabStr native
     let (ed, eds) := elabStr exported
-    t s!"export {style.name}: both build clean"
-      (nds.all (·.severity == .note) && eds.all (·.severity == .note))
+    let unpainted (d : Diag) : Bool := d.kind == .W0449 &&
+      d.subject.any fun s => s.startsWith "unused:color:seed" && s != "unused:color:seedInk"
+    t s!"export {style.name}: both build clean, but the export's colours the deck does not paint"
+      (nds.all (·.severity == .note) && eds.all fun d => d.severity == .note || unpainted d)
     let geom := Layout.Geom.ofPage nd.page
     let pdf (d : Ir.Doc) := driverPdf fonts geom d (Layout.run geom fonts none d)
     t s!"export {style.name}: identical PDF bytes" (pdf nd == pdf ed)

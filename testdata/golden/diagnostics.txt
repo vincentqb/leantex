@@ -1045,6 +1045,22 @@
   the declared PDF version is one the declared PDF standard does not admit; the standard's version is written
   the PDF/X-4 standard is written on PDF 1.6; PDF 2.0 is declared, and 1.6 written
   suggestion: declare the version the standard is written on: \DocumentMetadata{ pdfversion = 1.6 } or \pdfmeta{ version = "1.6" }
+── W0449 (config) a setting the document declares that nothing it sets uses; every artifact is the same without it
+⚠ [W0449] - \definecolor
+  the colour 'plum' is declared here, and nothing the document sets paints with it
+  suggestion: delete the declaration, or \allow{W0449} keeps it
+⚠ [W0449] - \style
+  this styles itemize lists, and the document sets none
+  suggestion: delete the declaration, or \allow{W0449} keeps it
+⚠ [W0449] - \lstset
+  listing defaults are declared here, and no listing after them reads them
+  suggestion: delete the declaration, or \allow{W0449} keeps it
+⚠ [W0449]
+  the 'mono' face is declared here, and no text the document sets is set in it
+  suggestion: delete the declaration, or \allow{W0449} keeps it
+⚠ [W0449]
+  the 'math' face is declared here, and the document sets no mathematics
+  suggestion: delete the declaration, or \allow{W0449} keeps it
 ── W0601 (degraded) image unreadable or not found; placeholder box placed
 ⚠ [W0601]
   image file not found: 'figures/plot.png'; a placeholder box holds its place

@@ -698,7 +698,10 @@ def codeExportChecks (ref : IO.Ref (List String)) : IO Unit := do
         | none => !hasStr tex (CodeExport.colorName "Probe" r ++ "Tok"))
     let (_, ds) := elabStr (dvDoc ("\\usepackage{minted}\n" ++ tex ++ "\\setminted{formatcom=\\ProbePygments}\n")
       "\\begin{minted}{python}\nx = len(\"probe\") + 1\n\\end{minted}")
-    t s!"code export {style.name}: a document that reads the export builds clean ({(ds.filter (·.severity != .note)).map (·.code)})"
-      (ds.all (·.severity == .note))
+    -- The export's colours paint through `formatcom`, which only a TeX engine runs.
+    let unpainted (d : Diag) : Bool := d.kind == .W0449 &&
+      d.subject.any (·.startsWith "unused:color:Probe")
+    t s!"code export {style.name}: a document that reads the export builds clean, but the colours only formatcom paints ({(ds.filter (·.severity != .note)).map (·.code)})"
+      (ds.all fun d => d.severity == .note || unpainted d)
 
 end Tests

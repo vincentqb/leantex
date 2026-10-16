@@ -256,6 +256,7 @@ import Tests.Algorithm
 import Tests.ParamCensus
 import Tests.ParamCensusDecl
 import Tests.DeclSettings
+import Tests.UnusedSettings
 import Tests.Settings
 import Tests.Kernel
 import Tests.PicturePaths
@@ -463,6 +464,11 @@ stays within its elaboration budget. -/
 def declSettingSuiteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) (font : Font) :
     IO Unit := do
   Tests.ParamCensus.declCensusChecks ref oneFace
+  Tests.UnusedSettings.firesChecks ref
+  Tests.UnusedSettings.scopeChecks ref
+  Tests.UnusedSettings.accountingChecks ref
+  Tests.UnusedSettings.oracleChecks ref oneFace
+  Tests.UnusedSettings.faceChecks ref
   Tests.DeclSettings.setlistChecks ref oneFace font
   Tests.DeclSettings.listSpacingChecks ref oneFace
   Tests.DeclSettings.listSpacingStyleChecks ref oneFace

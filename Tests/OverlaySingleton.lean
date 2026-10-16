@@ -9,12 +9,18 @@ open LeanTex.Core
 /-- Compares native layout and the PDF with an explicitly painted control, marked-content lines
 removed. -/
 private def singletonWitness (ref : IO.Ref (List String)) (fonts : Font.FontSet)
-    (pre label body control : String) (markers : List (String × Ir.Color)) : IO Unit := do
+    (base : String) (colours : List (String × String)) (label body control : String)
+    (markers : List (String × Ir.Color)) : IO Unit := do
   let t := check ref
+  let preOf (s : String) : String :=
+    let painted := colours.filter fun (name, _) => hasStr s name
+    base ++ if painted.isEmpty then "" else
+      "\\palette[decorative]{ " ++ ", ".intercalate (painted.map fun (n, v) => n ++ " = " ++ v) ++
+        " }\n"
   let frame (s : String) := "\\begin{frame}\n" ++ s ++ "\n\\end{frame}\n"
   for mixed in [false, true] do
     let here := "overlay singleton " ++ label ++ if mixed then " mixed" else " alone"
-    let source (s : String) := deck169 pre
+    let source (s : String) := deck169 (preOf s)
       (if mixed then
         frame "ClockEarly\n\n\\uncover<2->{ClockLate}" ++ frame s ++ frame "AfterMarker"
        else frame s)
@@ -58,10 +64,9 @@ def overlaySingletonChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
   let seed := (elabStr (deck169Frame "")).1
   let design := Ir.Design.ofDoc seed
   let hot : Ir.Color := { r := 0xAA, g := 0, b := 0 }
-  let pre := "\\theme{default}\n\\palette{ covered = 38\\% }\n\\palette[decorative]{ singlePlain = " ++
-    design.cover.plain.hex ++ ", singleHot = " ++ (design.cover.of hot).hex ++
-    ", hot = " ++ hot.hex ++ " }\n"
-  let witness := singletonWitness ref fonts pre
+  let witness := singletonWitness ref fonts "\\theme{default}\n\\palette{ covered = 38\\% }\n"
+    [("singlePlain", design.cover.plain.hex), ("singleHot", (design.cover.of hot).hex),
+     ("hot", hot.hex)]
   for spec in ["0", "0-0"] do
     let cover (s : String) := "\\uncover<" ++ spec ++ ">{" ++ s ++ "}"
     witness (spec ++ " inline") ("LeadMarker " ++ cover "ProbeMarker")

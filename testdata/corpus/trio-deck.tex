@@ -1,7 +1,8 @@
 % One design, three artefacts (2/3): the deck. Same declaration blocks as
 % trio-page.tex and trio-card.tex; only the class and the content differ.
 % Invented content throughout. The deck opts out of the default bundle
-% (\theme{default}): its whole point is the trio's own shared design.
+% (\theme{default}): its whole point is the trio's own shared design, whose
+% body face a deck's sans text never reads, which \allow{W0449} accepts.
 \documentclass[aspectratio=169]{slides}
 \theme{default}
 
@@ -27,6 +28,7 @@
 \date{}
 
 \assert{ fonts.all_embedded }
+\allow{W0449}
 
 \begin{document}
 

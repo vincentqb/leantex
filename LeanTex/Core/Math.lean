@@ -2216,35 +2216,44 @@ end
 
 mutual
 
-/-- Does this math tree set a scalar in the text typewriter slot? -/
-@[expose] public def MList.setsMono (tt : MathAlphabetSource) : MList → Bool
+/-- Does this math tree set a scalar in a text family slot: a text style's, or a text-sourced
+alphabet's under the document's sources? -/
+@[expose] public def MList.setsText (slot : MathTextSlot) (src : MathAlphabetSources) :
+    MList → Bool
   | .nil => false
-  | .cons x rest => x.setsMono tt || rest.setsMono tt
+  | .cons x rest => x.setsText slot src || rest.setsText slot src
 
-@[expose] public def MItem.setsMono (tt : MathAlphabetSource) : MItem → Bool
-  | .atom _ nuc sup sub _ => nuc.setsMono tt || (sup.setsMono tt || sub.setsMono tt)
+@[expose] public def MItem.setsText (slot : MathTextSlot) (src : MathAlphabetSources) :
+    MItem → Bool
+  | .atom _ nuc sup sub _ =>
+    nuc.setsText slot src || (sup.setsText slot src || sub.setsText slot src)
   | .space _ | .ink _ _ => false
 
-@[expose] public def MNucleus.setsMono (tt : MathAlphabetSource) : MNucleus → Bool
+@[expose] public def MNucleus.setsText (slot : MathTextSlot) (src : MathAlphabetSources) :
+    MNucleus → Bool
   | .sym _ | .word _ => false
-  | .styled style _ => style.slot == .mono
-  | .list body => body.setsMono tt
-  | .alpha a src body => (a == .tt && src == .doc && tt == .text) || body.setsMono tt
-  | .frac _ num den => num.setsMono tt || den.setsMono tt
-  | .rad deg body => deg.setsMono tt || body.setsMono tt
-  | .delim _ _ body => body.setsMono tt
+  | .styled style _ => style.slot == slot
+  | .list body => body.setsText slot src
+  | .alpha a origin body =>
+    (a.textStyle?.any (·.slot == slot) && origin == .doc && src.get a == .text) ||
+      body.setsText slot src
+  | .frac _ num den => num.setsText slot src || den.setsText slot src
+  | .rad deg body => deg.setsText slot src || body.setsText slot src
+  | .delim _ _ body => body.setsText slot src
   | .big _ _ => false
-  | .accent _ _ body => body.setsMono tt
-  | .grid _ rows => rows.setsMono tt
-  | .cancel _ _ value body => value.setsMono tt || body.setsMono tt
+  | .accent _ _ body => body.setsText slot src
+  | .grid _ rows => rows.setsText slot src
+  | .cancel _ _ value body => value.setsText slot src || body.setsText slot src
 
-@[expose] public def MRow.setsMono (tt : MathAlphabetSource) : MRow → Bool
+@[expose] public def MRow.setsText (slot : MathTextSlot) (src : MathAlphabetSources) :
+    MRow → Bool
   | .nil => false
-  | .cons cell rest => cell.setsMono tt || rest.setsMono tt
+  | .cons cell rest => cell.setsText slot src || rest.setsText slot src
 
-@[expose] public def MRows.setsMono (tt : MathAlphabetSource) : MRows → Bool
+@[expose] public def MRows.setsText (slot : MathTextSlot) (src : MathAlphabetSources) :
+    MRows → Bool
   | .nil => false
-  | .cons row rest => row.setsMono tt || rest.setsMono tt
+  | .cons row rest => row.setsText slot src || rest.setsText slot src
 
 end
 

@@ -17,6 +17,7 @@ import LeanTex.Core.LoopProgress
 import LeanTex.Core.EncodingOption
 import LeanTex.Core.PdfObj
 public import LeanTex.Core.TikzCommands
+import LeanTex.Core.UnusedSetting
 
 namespace LeanTex.Core.Compat
 
@@ -645,6 +646,15 @@ private inductive DefaultAt where
   | inside (outerDef : Bool)
   deriving Repr, BEq, Inhabited
 
+/-- A listing default the document declares: its command, its lexer's layer, its site and file,
+and whether a listing after it has read it. -/
+private structure ListingDefault where
+  reader : String
+  lang : Option String
+  pos : Pos
+  file : String
+  read : Bool := false
+
 private structure St where
   file : String
   diags : Array Diag := #[]
@@ -901,6 +911,8 @@ private structure St where
   setlists : Array ((Option String × Option Nat) × Array (String × String)) := #[]
   /-- enumitem's stored vertical keys by scope, as native spacing entries (`Ir.listSetKeys`). -/
   listSpacings : Array ((Option String × Option Nat) × Array (String × String)) := #[]
+  /-- The listing defaults the document declares, in the order the text pass meets them. -/
+  listingDefaults : Array ListingDefault := #[]
 
 private abbrev M := StateM St
 
@@ -14247,6 +14259,14 @@ private structure TextSt where
   /-- The document's argument-free commands standing for a minted call short of
   its code, each with that call's head. -/
   shortcuts : Array (String × Array Raw) := #[]
+  /-- The declared defaults standing in each layer, by their index in `listingDefaults`. -/
+  lstIds : Array Nat := #[]
+  mintedIds : Array Nat := #[]
+  mintedLangIds : Array (String × Array Nat) := #[]
+  inlineIds : Array Nat := #[]
+  inlineLangIds : Array (String × Array Nat) := #[]
+  /-- Brace groups the pass stands inside, where a definition's body stands too. -/
+  depth : Nat := 0
 
 /-- The standing entries injected ahead of an environment's
 own options, which win. -/
@@ -14256,6 +14276,49 @@ private def injectListingOpts (opts : Array String) (s : String) : String :=
   match Parse.listingOptHead s with
   | some (o, past) => "[" ++ joined ++ "," ++ o ++ "]" ++ (s.drop past).toString
   | none => "[" ++ joined ++ "]" ++ s
+
+/-- The defaults a listing of `env` reads: `\lstset`'s for a `lstlisting`, minted's global and
+lexer layers for minted's display, and the inline layers too for `\mintinline`. -/
+private def readIds (st : TextSt) (env lang : String) : Array Nat :=
+  let layer (l : Array (String × Array Nat)) := ((l.find? (·.1 == lang)).map (·.2)).getD #[]
+  if env == "lstlisting" then st.lstIds
+  else if env == "mintinline" then
+    st.mintedIds ++ layer st.mintedLangIds ++ st.inlineIds ++ layer st.inlineLangIds
+  else st.mintedIds ++ layer st.mintedLangIds
+
+/-- Marks the defaults a listing reads as read. -/
+private def markRead (ids : Array Nat) : M Unit :=
+  unless ids.isEmpty do
+    write fun s => { s with listingDefaults := ids.foldl (fun ds i =>
+      ds.modify i fun d => { d with read := true }) s.listingDefaults }
+
+/-- The lexer a minted call names, its options aside. -/
+private def mintedLang (s : String) : String :=
+  let afterOpt := ((Parse.listingOptHead s).map (·.2)).getD 0
+  ((Parse.mintedLangHead s afterOpt).map (·.1.trimAscii.toString)).getD ""
+
+/-- Records a listing default the document itself declares at the pass's top level, and its
+index; a definition's body or a group's is no standing declaration. -/
+private def declareDefault (st : TextSt) (reader : String) (lang : Option String) (pos : Pos) :
+    M (Option Nat) := do
+  let file := (← get).file
+  -- A declaration a definition's replacement text makes at its call is the definition's.
+  let written := pos.command.isSome && (← get).sourceTriggers.writtenAt file pos == pos.command
+  if st.depth != 0 || !written || !UnusedSetting.ownSite (packageFile file) false pos then
+    return none
+  let i := (← get).listingDefaults.size
+  write fun s => { s with listingDefaults := s.listingDefaults.push { reader, lang, pos, file } }
+  return some i
+
+/-- Names each declared listing default no listing after it read. -/
+private def nameUnreadDefaults : M Unit := do
+  let saved := (← get).file
+  for d in (← get).listingDefaults do
+    unless d.read do
+      let (msg, subject) := UnusedSetting.listingWords d.reader d.lang
+      write fun s => { s with file := d.file }
+      say .W0449 msg d.pos (help := some UnusedSetting.unusedHelp) (subject := some subject)
+  write fun s => { s with file := saved }
 
 /-- One siunitx command's replacement and the index past its arguments. -/
 private def siCtrl (loc : Locale) (n : String) (pos : Pos) (raws : Array Raw)
@@ -14300,8 +14363,7 @@ private def siCtrls : List String :=
 /-- A minted call with the standing defaults injected ahead
 of its own options. -/
 private def injectMinted (st : TextSt) (env s : String) : String :=
-  let afterOpt := ((Parse.listingOptHead s).map (·.2)).getD 0
-  let lang := ((Parse.mintedLangHead s afterOpt).map (·.1.trimAscii.toString)).getD ""
+  let lang := mintedLang s
   let layer (l : Array (String × Array String)) := ((l.find? (·.1 == lang)).map (·.2)).getD #[]
   let block := st.mintedOpts ++ layer st.mintedLangOpts
   injectListingOpts (if env == "mintinline" then
@@ -14392,6 +14454,7 @@ private def textList (loc : Locale) (st : TextSt) (raws : Array Raw)
       match head[0]?, mintedRaws joined 1 with
       | some (Raw.ctrl c _), some (call, k, tail) =>
         let used := k - head.size
+        markRead (readIds st c (mintedLang call))
         let out := out.push (.verb c (injectMinted st c call) pos)
         textList loc st raws (match tail with | some r => out.push r | none => out) rest (i + 1) used
       | _, _ => textList loc st raws (out.push (.ctrl n pos)) rest (i + 1) 0
@@ -14410,18 +14473,27 @@ private def textList (loc : Locale) (st : TextSt) (raws : Array Raw)
       let layered (layer : Array (String × Array String)) (lang : String) :=
         let old := ((layer.find? (·.1 == lang)).map (·.2)).getD #[]
         Ir.redeclare layer lang (old ++ entries)
+      let lang := lang.map (·.trimAscii.toString)
+      let id ← declareDefault st n lang pos
+      let ids := id.toArray
+      let tagged (layer : Array (String × Array Nat)) (lang : String) :=
+        let old := ((layer.find? (·.1 == lang)).map (·.2)).getD #[]
+        Ir.redeclare layer lang (old ++ ids)
       let st := if n == "lstset" then
-          { st with lstOpts := st.lstOpts ++ entries }
+          { st with lstOpts := st.lstOpts ++ entries, lstIds := st.lstIds ++ ids }
         else if n == "setminted" then match lang with
-          | none => { st with mintedOpts := st.mintedOpts ++ entries }
-          | some lang => { st with mintedLangOpts := layered st.mintedLangOpts lang.trimAscii.toString }
+          | none => { st with mintedOpts := st.mintedOpts ++ entries, mintedIds := st.mintedIds ++ ids }
+          | some lang => { st with mintedLangOpts := layered st.mintedLangOpts lang
+                                   mintedLangIds := tagged st.mintedLangIds lang }
         else match lang with
-          | none => { st with inlineOpts := st.inlineOpts ++ entries }
-          | some lang => { st with inlineLangOpts := layered st.inlineLangOpts lang.trimAscii.toString }
+          | none => { st with inlineOpts := st.inlineOpts ++ entries, inlineIds := st.inlineIds ++ ids }
+          | some lang => { st with inlineLangOpts := layered st.inlineLangOpts lang
+                                   inlineLangIds := tagged st.inlineLangIds lang }
       textList loc st raws out rest (i + 1) (k - (i + 1))
     else if (n == "mintinline" || n == "mint") && !st.defined.contains n &&
         (mintedRaws raws (i + 1)).isSome then
       let (call, k, tail) := (mintedRaws raws (i + 1)).getD ("", i + 1, none)
+      markRead (readIds st n (mintedLang call))
       let out := out.push (.verb n (injectMinted st n call) pos)
       textList loc st raws (match tail with | some r => out.push r | none => out) rest (i + 1)
         (k - (i + 1))
@@ -14435,6 +14507,8 @@ private def textList (loc : Locale) (st : TextSt) (raws : Array Raw)
     if (env == "mintinline" || env == "mint") && st.defined.contains env then
       let args := (← synth s).map (rebase (fun _ => vpos) true)
       return ← textList loc st raws ((out.push (.ctrl env vpos)) ++ args) rest (i + 1) 0
+    if env == "lstlisting" || env == "minted" || env == "mint" || env == "mintinline" then
+      markRead (readIds st env (mintedLang s))
     let s := if env == "lstlisting" then injectListingOpts st.lstOpts s
       else if env == "minted" || env == "mint" || env == "mintinline" then injectMinted st env s
       else s
@@ -14447,7 +14521,7 @@ private def textList (loc : Locale) (st : TextSt) (raws : Array Raw)
 an input wrapper opens no group. -/
 private def textRaw (loc : Locale) (st : TextSt) : Raw → M (Raw × TextSt)
   | .group body p => do
-    let (body, inner) ← textList loc st body #[] body.toList 0 0
+    let (body, inner) ← textList loc { st with depth := st.depth + 1 } body #[] body.toList 0 0
     return (.group body p, { st with defined := inner.defined })
   | .env n body p => do
     if let some file := Parse.inputEnvFile? n then
@@ -14519,6 +14593,7 @@ public def rewriteText (file : String) (raws : Array Raw) (warned : Array String
   let loc := ((declaredTagList raws.toList).bind Locale.forTag).getD Locale.en
   let go : M (Array Raw) := do
     let (out, _) ← textList loc {} raws #[] raws.toList 0 0
+    nameUnreadDefaults
     return out
   let (out, st) := go.run
     { file := file, warned := warned, sourceTriggers := sourceTriggers file {} raws.toList }

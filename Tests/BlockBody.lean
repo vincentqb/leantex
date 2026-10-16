@@ -156,7 +156,12 @@ private def generatedSourceChecks (ref : IO.Ref (List String))
           "\\end{frame}\\end{document}"
         let (doc, diags) := Elab.run "generated.tex" source
         let label := s!"generated block {paper.css}/{env}/{title}"
-        check ref (label ++ ": clean source") (diags.all (·.severity == .note))
+        -- The export's colours for other blocks and for the author's own use paint nothing here.
+        let unpainted (d : Diag) : Bool := d.kind == .W0449 &&
+          d.subject.any fun s => s.startsWith "unused:color:sample" &&
+            s != "unused:color:sampleInk" && s != "unused:color:samplePaper"
+        check ref (label ++ ": clean source, but the export's colours it does not paint")
+          (diags.all fun d => d.severity == .note || unpainted d)
         let out := layout fonts doc
         let body := out.pages.flatMap (·.lines) |>.filter (lineText · false == "BODY")
         check ref (label ++ ": content survives once") (body.size == 1)

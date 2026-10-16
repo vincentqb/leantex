@@ -961,7 +961,7 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
       let shipFonts := doc.fontPolicy == .embedded
       -- A slot fallen to the body face is named here, where the emitted formats are known.
       resolved := resolved.append (← ui.resolve doc.allow allowAll (outputs := outputs)
-        ((PlanLoss.ofPlan emit fs doc).map sourceDiag))
+        ((PlanLoss.ofPlan emit fs doc reqSpans.faces).map sourceDiag))
       let mut htmlBuilt : Option HtmlArtifact := none
       if emit.contains .html then
         let t ← IO.monoMsNow

@@ -16,8 +16,8 @@ private def paper : Ir.Color := { r := 0xE8, g := 0xED, b := 0xF3 }
 
 private def source (env pre : String) : String :=
   "\\documentclass{beamer}\\usetheme{moloch}\\usepackage{etoolbox}" ++
-    "\\definecolor{ProbeInk}{HTML}{173B58}" ++
-    "\\definecolor{ProbePaper}{HTML}{E8EDF3}" ++ pre ++
+    (if hasStr pre "ProbeInk" then "\\definecolor{ProbeInk}{HTML}{173B58}" else "") ++
+    (if hasStr pre "ProbePaper" then "\\definecolor{ProbePaper}{HTML}{E8EDF3}" else "") ++ pre ++
     "\\begin{document}\\begin{frame}[t]{FRAME}" ++
     "\\begin{" ++ env ++ "}{HEADER}BODYFIRST\\par BODYLAST\\end{" ++ env ++ "}" ++
     "OUTSIDE\\end{frame}\\end{document}"

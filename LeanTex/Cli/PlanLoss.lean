@@ -1,6 +1,7 @@
 module
 
 public import LeanTex.Cli.SlotLoss
+public import LeanTex.Cli.FaceUse
 public import LeanTex.Core.Image
 public import LeanTex.Core.Pdf
 public import LeanTex.Core.HtmlDoc
@@ -28,10 +29,13 @@ public def pictureAlts (doc : Ir.Doc) (imageSpans : Array (String × Span))
     (fun src => store.entries.any fun en => en.src == src && en.info.isSome)
 
 /-- The losses the plan's formats decide over the settled face set: each slot set in a
-face not of its kind (W0390), and each unmet contract fact, per artifact (W0701). -/
-public def ofPlan (emit : Array Emit) (fs : Font.FontSet) (doc : Ir.Doc) : Array Diag :=
+face not of its kind (W0390), each declared face no text is set in (W0449), and each unmet
+contract fact, per artifact (W0701). -/
+public def ofPlan (emit : Array Emit) (fs : Font.FontSet) (doc : Ir.Doc)
+    (faces : Array (String × Span)) : Array Diag :=
   -- premise: slotLossChecks — carrying a face reports the lost slot, carrying none nothing
   SlotLoss.diags doc.fonts fs doc (SlotLoss.carries emit doc.fontPolicy) ++
+    FaceUse.diags faces fs doc ++
     (if emit.contains .pdf then Ir.contractDiags (doc.output.contract.unmet Pdf.profile)
      else #[]) ++
     (if emit.contains .html then Ir.contractDiags (doc.output.contract.unmet HtmlDoc.profile)

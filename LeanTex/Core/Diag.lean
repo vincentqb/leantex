@@ -262,6 +262,7 @@ public inductive DiagCode where
   | N0448
   | W0107
   | W0109
+  | W0449
   deriving Repr, BEq, DecidableEq
 
 /-- The registry: each code's digits, its declared `Loss`, and its one meaning. -/
@@ -499,6 +500,7 @@ private def DiagCode.spec : DiagCode → String × Loss × String
   | .W0447 => ("0447", .degraded, "a declaration the declared PDF/X standard does not admit; the standard's value is written in its place")
   | .W0444 => ("0444", .degraded, "links on the printed sheet, which the PDF/X standard the file claims does not admit; the PDF carries none, the web page keeps them")
   | .N0448 => ("0448", .info, "a file claiming a PDF/X standard on the checks the engine makes; a print service's preflight judges what they leave")
+  | .W0449 => ("0449", .config, "a setting the document declares that nothing it sets uses; every artifact is the same without it")
 
 public def DiagCode.digits (c : DiagCode) : String := c.spec.1
 
