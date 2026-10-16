@@ -78,7 +78,7 @@ private def referentOne (keys : ReferentKeys) : Block → Block
     let (body, caption) :=
       floatLabelsTop keys ca (referentList keys #[] body.toList) caption
     .float k n ca body caption
-  | .list o items => .list o (referentItems keys #[] items.toList)
+  | .list o sp items => .list o sp (referentItems keys #[] items.toList)
   | .center body => .center (referentList keys #[] body.toList)
   | .ragged s body => .ragged s (referentList keys #[] body.toList)
   | .quote body => .quote (referentList keys #[] body.toList)
@@ -347,7 +347,7 @@ private theorem referentOne_text (keys : ReferentKeys) (b : Block) (acc : String
     rw [referentOne, floatLabelsTop_text]
     simp [blockTextOne, referentList_text keys body.toList #[] _,
       blockTextList]
-  | .list o items =>
+  | .list o sp items =>
     rw [referentOne]
     simp [blockTextOne, referentItems_text keys items.toList #[] acc, blockTextItems]
   | .center body =>
