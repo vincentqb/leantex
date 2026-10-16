@@ -182,9 +182,142 @@ public def splitAlpha (px : ByteArray) (chs : Nat) : ByteArray × ByteArray :=
     ByteArray :=
   Flate.build (pxH * (1 + W * k)) fun out => raw[embPred W chs k sel out.size]?.getD 0
 
+/-- The pixel's samples `sel j` for each channel `j` from `c` up to but not including `k`, its
+first sample at `src`, pushed in order. -/
+@[specialize] private def chanGo (raw : ByteArray) (src k : Nat) (sel : Nat → Nat) (c : Nat)
+    (out : ByteArray) : ByteArray :=
+  if c < k then chanGo raw src k sel (c + 1) (out.push (raw[src + sel c]?.getD 0)) else out
+termination_by k - c
+
+/-- Pixels `p` on of the row whose filter byte is at `rowSrc`, `k` samples each. -/
+@[specialize] private def pixGo (raw : ByteArray) (rowSrc W chs k : Nat) (sel : Nat → Nat)
+    (p : Nat) (out : ByteArray) : ByteArray :=
+  if p < W then pixGo raw rowSrc W chs k sel (p + 1) (chanGo raw (rowSrc + 1 + p * chs) k sel 0 out)
+  else out
+termination_by W - p
+
+/-- Rows `r` on, each its filter byte and then its pixels' samples. -/
+@[specialize] private def rowGo (raw : ByteArray) (pxH W chs k : Nat) (sel : Nat → Nat) (r : Nat)
+    (out : ByteArray) : ByteArray :=
+  if r < pxH then
+    rowGo raw pxH W chs k sel (r + 1)
+      (pixGo raw (r * (1 + W * chs)) W chs k sel 0 (out.push (raw[r * (1 + W * chs)]?.getD 0)))
+  else out
+termination_by pxH - r
+
+/-- `projectPred` row by row, its indices counted rather than divided out. -/
+@[specialize] private def projectRows (raw : ByteArray) (pxH W chs k : Nat) (sel : Nat → Nat) :
+    ByteArray :=
+  rowGo raw pxH W chs k sel 0 (ByteArray.emptyWithCapacity (pxH * (1 + W * k)))
+
+private theorem embPred_filter (W chs k : Nat) (sel : Nat → Nat) (r : Nat) :
+    embPred W chs k sel (r * (1 + W * k)) = r * (1 + W * chs) := by
+  have hL : 0 < 1 + W * k := by omega
+  simp [embPred, Nat.mul_div_cancel _ hL, Nat.mul_mod_left]
+
+private theorem embPred_sample (W chs k : Nat) (sel : Nat → Nat) (r p c : Nat) (hp : p < W)
+    (hc : c < k) :
+    embPred W chs k sel (r * (1 + W * k) + 1 + (p * k + c)) =
+      r * (1 + W * chs) + 1 + (p * chs + sel c) := by
+  have hL : 0 < 1 + W * k := by omega
+  have hi : p * k + c < W * k := by
+    have : (p + 1) * k ≤ W * k := Nat.mul_le_mul_right _ hp
+    rw [Nat.add_mul, Nat.one_mul] at this
+    omega
+  have hq : (r * (1 + W * k) + 1 + (p * k + c)) / (1 + W * k) = r := by
+    rw [Nat.add_assoc, Nat.mul_comm r, Nat.mul_add_div hL, Nat.div_eq_of_lt (by omega)]
+    rfl
+  have hm : (r * (1 + W * k) + 1 + (p * k + c)) % (1 + W * k) = 1 + (p * k + c) := by
+    rw [Nat.add_assoc, Nat.mul_comm r, Nat.mul_add_mod, Nat.mod_eq_of_lt (by omega)]
+  have hk : 0 < k := by omega
+  have hdiv : (p * k + c) / k = p := by
+    rw [Nat.mul_comm, Nat.mul_add_div hk, Nat.div_eq_of_lt hc]; rfl
+  have hmod : (p * k + c) % k = c := by
+    rw [Nat.mul_comm, Nat.mul_add_mod, Nat.mod_eq_of_lt hc]
+  unfold embPred
+  simp only [hq, hm, show ¬1 + (p * k + c) = 0 by omega, ↓reduceIte, Nat.add_sub_cancel_left]
+  unfold embPlane
+  rw [hdiv, hmod]
+
+private theorem chanGo_build (raw : ByteArray) (W chs k : Nat) (sel : Nat → Nat) (r p : Nat)
+    (hp : p < W) :
+    ∀ m c, c + m = k →
+      chanGo raw (r * (1 + W * chs) + 1 + p * chs) k sel c
+          (Flate.build (r * (1 + W * k) + 1 + (p * k + c))
+            fun out => raw[embPred W chs k sel out.size]?.getD 0) =
+        Flate.build (r * (1 + W * k) + 1 + (p * k + k))
+          fun out => raw[embPred W chs k sel out.size]?.getD 0
+  | 0, c, h => by
+    rw [chanGo]
+    simp only [show c = k by omega, Nat.lt_irrefl, ↓reduceIte]
+  | m + 1, c, h => by
+    rw [chanGo]
+    simp only [show c < k by omega, ↓reduceIte]
+    rw [show r * (1 + W * chs) + 1 + p * chs + sel c = embPred W chs k sel
+        (Flate.build (r * (1 + W * k) + 1 + (p * k + c))
+          fun out => raw[embPred W chs k sel out.size]?.getD 0).size by
+      rw [Flate.size_build, embPred_sample W chs k sel r p c hp (by omega)]
+      omega,
+      ← Flate.build_succ]
+    exact chanGo_build raw W chs k sel r p hp m (c + 1) (by omega)
+
+private theorem pixGo_build (raw : ByteArray) (W chs k : Nat) (sel : Nat → Nat) (r : Nat) :
+    ∀ m p, p + m = W →
+      pixGo raw (r * (1 + W * chs)) W chs k sel p
+          (Flate.build (r * (1 + W * k) + 1 + p * k)
+            fun out => raw[embPred W chs k sel out.size]?.getD 0) =
+        Flate.build ((r + 1) * (1 + W * k))
+          fun out => raw[embPred W chs k sel out.size]?.getD 0
+  | 0, p, h => by
+    rw [pixGo]
+    simp only [show ¬p < W by omega, ↓reduceIte]
+    congr 1
+    rw [Nat.add_mul, Nat.one_mul, show p = W by omega]
+    omega
+  | m + 1, p, h => by
+    rw [pixGo]
+    simp only [show p < W by omega, ↓reduceIte]
+    have hc := chanGo_build raw W chs k sel r p (by omega) k 0 (by omega)
+    simp only [Nat.add_zero] at hc
+    rw [hc, show r * (1 + W * k) + 1 + (p * k + k) = r * (1 + W * k) + 1 + (p + 1) * k by
+      rw [Nat.add_mul, Nat.one_mul]]
+    exact pixGo_build raw W chs k sel r m (p + 1) (by omega)
+
+private theorem rowGo_build (raw : ByteArray) (pxH W chs k : Nat) (sel : Nat → Nat) :
+    ∀ m r, r + m = pxH →
+      rowGo raw pxH W chs k sel r
+          (Flate.build (r * (1 + W * k)) fun out => raw[embPred W chs k sel out.size]?.getD 0) =
+        Flate.build (pxH * (1 + W * k)) fun out => raw[embPred W chs k sel out.size]?.getD 0
+  | 0, r, h => by
+    rw [rowGo]
+    simp only [show r = pxH by omega, Nat.lt_irrefl, ↓reduceIte]
+  | m + 1, r, h => by
+    rw [rowGo]
+    simp only [show r < pxH by omega, ↓reduceIte]
+    have hsrc : raw[r * (1 + W * chs)]?.getD 0 =
+        (fun out => raw[embPred W chs k sel out.size]?.getD 0)
+          (Flate.build (r * (1 + W * k)) fun out => raw[embPred W chs k sel out.size]?.getD 0) := by
+      simp only [Flate.size_build, embPred_filter]
+    rw [hsrc, ← Flate.build_succ]
+    have hp := pixGo_build raw W chs k sel r W 0 (by omega)
+    simp only [Nat.zero_mul, Nat.add_zero] at hp
+    rw [hp]
+    exact rowGo_build raw pxH W chs k sel m (r + 1) (by omega)
+
+private theorem projectRows_exact (raw : ByteArray) (pxH W chs k : Nat) (sel : Nat → Nat) :
+    projectRows raw pxH W chs k sel = projectPred raw pxH W chs k sel := by
+  have h := rowGo_build raw pxH W chs k sel pxH 0 (by omega)
+  rw [Nat.zero_mul, Flate.build_zero] at h
+  exact h
+
 /-- An alpha PNG's inflated IDAT as two predicted planes, colour and alpha, each row's filter byte kept. -/
 public def splitPredictedAlpha (raw : ByteArray) (pxH W chs : Nat) : ByteArray × ByteArray :=
-  (projectPred raw pxH W chs (chs - 1) id, projectPred raw pxH W chs 1 fun _ => chs - 1)
+  (projectRows raw pxH W chs (chs - 1) id, projectRows raw pxH W chs 1 fun _ => chs - 1)
+
+private theorem splitPredictedAlpha_spec (raw : ByteArray) (pxH W chs : Nat) :
+    splitPredictedAlpha raw pxH W chs =
+      (projectPred raw pxH W chs (chs - 1) id, projectPred raw pxH W chs 1 fun _ => chs - 1) := by
+  simp only [splitPredictedAlpha, projectRows_exact]
 
 private theorem getElem?_project (px : ByteArray) (chs k : Nat) (sel : Nat → Nat) (j : Nat)
     (hj : j < px.size / chs * k) :
@@ -368,6 +501,7 @@ public theorem splitPredictedAlpha_exact (raw : ByteArray) (pxH W chs : Nat) (h2
       Flate.pngUnfilter (splitPredictedAlpha raw pxH W chs).2 pxH W 1 =
         .ok (splitAlpha px chs).2 := by
   have hchs : 0 < chs := by omega
+  rw [splitPredictedAlpha_spec]
   unfold Flate.pngUnfilter at h
   split at h
   · exact absurd h (by simp)

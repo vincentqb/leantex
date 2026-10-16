@@ -164,7 +164,7 @@ theorem writeEntry_read_exact {seq out : Array Nat} {p q : Nat} {entry : Entry}
       push_bits_exact mid data _ _ hm (by have := he.2.1; omega) he.2.2 hr'
   · have hz : entry.2.2 = 0 := by omega
     have hv : entry.2.1 = 0 := by have := he.2.2; simp only [hz] at this; omega
-    simp [writeEntry, hz, hv, Br.bits_zero_id, mid]
+    simp [writeEntry, hz, hv, Br.bits_zero_exact, mid]
 
 theorem write_steps_exact {seq out : Array Nat} {start p : Nat} {entries : Array Entry}
     (freqs : Array Nat) (w : Bw) (data : ByteArray)

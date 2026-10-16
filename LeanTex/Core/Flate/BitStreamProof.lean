@@ -14,9 +14,6 @@ theorem push_bits_exact (w : Bw) (data : ByteArray) (v n : Nat)
   exact bitField_bits_exact _ n v (by omega) hv
     (hr.field (push_field_exact w v n hw hn hv))
 
-theorem Br.bits_zero_id (r : Br) : r.bits 0 = some (0, r) := by
-  simp [Br.bits, Std.Legacy.Range.forIn_eq_forIn_range', Std.Legacy.Range.size]
-
 theorem pushExtra_contract (w : Bw) (value width : Nat)
     (hw : w.Valid) (hn : width ≤ 16) :
     (w.pushExtra value width).Valid ∧ (w.pushExtra value width).Extends w := by
@@ -36,7 +33,7 @@ theorem pushExtra_bits_exact (w : Bw) (data : ByteArray) (value width : Nat)
         simpa only [Bw.pushExtra, h, ite_true] using hr)
   · have hn : width = 0 := by omega
     have hv : value = 0 := by simp only [hn] at hv; omega
-    simp [hn, hv, Bw.pushExtra, Br.bits_zero_id]
+    simp [hn, hv, Bw.pushExtra, Br.bits_zero_exact]
 
 namespace BitStream
 

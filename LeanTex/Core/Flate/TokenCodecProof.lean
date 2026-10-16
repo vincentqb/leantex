@@ -9,6 +9,50 @@ import all LeanTex.Core.Flate.DecodeLoop
 
 namespace LeanTex.Core.Flate
 
+namespace TokenBlock
+
+theorem copyBytes_slice (out : ByteArray) (len dist : Nat) (hl : len ≤ dist)
+    (hd : dist ≤ out.size) :
+    copyBytes out len dist = out ++ out.extract (out.size - dist) (out.size - dist + len) := by
+  change (forIn [0:len] out (fun _ result =>
+    pure (.yield (result.push (result[result.size - dist]?.getD 0)))) : Id ByteArray).run = _
+  apply Progress.forIn_range_exact
+    (fun k result => result = out ++ out.extract (out.size - dist) (out.size - dist + k))
+    (· = out ++ out.extract (out.size - dist) (out.size - dist + len)) _ 0 len out
+    (Nat.zero_le _) (by simp) _ (fun _ h => h)
+  intro k _ hk result hres
+  subst hres
+  change (out ++ out.extract (out.size - dist) (out.size - dist + k)).push
+      ((out ++ out.extract (out.size - dist) (out.size - dist + k))[
+        (out ++ out.extract (out.size - dist) (out.size - dist + k)).size - dist]?.getD 0) =
+    out ++ out.extract (out.size - dist) (out.size - dist + (k + 1))
+  have hsize : (out ++ out.extract (out.size - dist) (out.size - dist + k)).size =
+      out.size + k := by
+    simp only [ByteArray.size_append, ByteArray.size_extract]
+    omega
+  have hi : out.size - dist + k < out.size := by omega
+  rw [hsize, show out.size + k - dist = out.size - dist + k by omega]
+  have hread : (out ++ out.extract (out.size - dist) (out.size - dist + k))[
+      out.size - dist + k]? = some out[out.size - dist + k] := by
+    rw [getElem?_pos _ _ (by rw [hsize]; omega), ByteArray.getElem_append_left hi]
+  rw [hread, Option.getD_some]
+  apply ByteArray.ext
+  simp only [ByteArray.data_push, ByteArray.data_append, ByteArray.data_extract,
+    Array.push_append]
+  congr 1
+  rw [show out.size - dist + (k + 1) = (out.size - dist + k) + 1 by omega,
+    Array.extract_succ_right (by omega) (by simpa using hi)]
+  rfl
+
+theorem copy_eq_copyBytes (out : ByteArray) (len dist : Nat) :
+    copy out len dist = copyBytes out len dist := by
+  unfold copy
+  split
+  · next h => exact (copyBytes_slice out len dist h.2.1 h.2.2).symm
+  · rfl
+
+end TokenBlock
+
 theorem BytePrefix.complete {raw out : ByteArray} (hp : BytePrefix raw raw.size out) :
     out = raw :=
   ext_of_getElem? out raw hp.1 (fun i hi => hp.2.2 i (by rwa [hp.1] at hi))
@@ -321,7 +365,9 @@ theorem write_steps_bounded_exact {raw out : ByteArray} {start finish : Nat}
       maxOut hv.1 hlf hdf hlen hdist hlast.1 (hlast.2 _ rfl)
       (by rw [hprefix.1]; exact hpos.2.1)
       (by rw [hprefix.1]; exact Nat.le_trans hpos.2.2.1 hmax) hreal
-    refine ⟨copy before len dist, ?_, backref_copy_exact raw before i len dist hprefix href⟩
+    refine ⟨copy before len dist, ?_, by
+      rw [TokenBlock.copy_eq_copyBytes]
+      exact backref_copy_exact raw before i len dist hprefix href⟩
     rw [Array.size_push, hwr]
     exact .snoc hsteps hread
 

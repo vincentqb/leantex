@@ -8,12 +8,19 @@ import LeanTex.Core.Flate.DecodeLoop
 
 namespace LeanTex.Core.Flate.TokenBlock
 
-/-- Copy from the growing output, so a match may overlap its destination. -/
-def copy (out : ByteArray) (len dist : Nat) : ByteArray := Id.run do
+/-- Copy from the growing output one byte at a time, so a match may overlap its destination. -/
+def copyBytes (out : ByteArray) (len dist : Nat) : ByteArray := Id.run do
   let mut result := out
   for _ in [0:len] do
     result := result.push (result[result.size - dist]?.getD 0)
   return result
+
+/-- Copy from the growing output: a match of six bytes or more ending before its destination
+starts as one slice. -/
+def copy (out : ByteArray) (len dist : Nat) : ByteArray :=
+  if 6 ≤ len ∧ len ≤ dist ∧ dist ≤ out.size then
+    out ++ out.extract (out.size - dist) (out.size - dist + len)
+  else copyBytes out len dist
 
 /-- Decodes one symbol, telling the end of block apart from a continuing state. -/
 def readStep (lit dist : Huff) (maxOut : Nat) (state : ByteArray × Br) :

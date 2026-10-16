@@ -96,8 +96,7 @@ theorem readEntry_exact {seq out : Array Nat} {p q : Nat} {entry : Entry}
   cases hs with
   | literal value hv hr =>
     have hz : afterExtra = afterCode := by
-      have hb : afterCode.bits 0 = some (0, afterCode) := by
-        simp [Br.bits, Std.Legacy.Range.forIn_eq_forIn_range', Std.Legacy.Range.size]
+      have hb : afterCode.bits 0 = some (0, afterCode) := Br.bits_zero_exact afterCode
       rw [hb] at he
       exact (Prod.mk.inj (Option.some.inj he)).2.symm
     subst afterExtra

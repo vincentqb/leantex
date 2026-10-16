@@ -222,3 +222,22 @@ the html phase includes the faces phase:
 | PDF, cold | 3,976 ms | 4,078 ms |
 
 The artifacts are byte-identical before and after.
+
+The images phase then dominated both builds: a 4096×4096 RGBA PNG inflated through a reader that
+allocated a reader state, a pair and an option for every bit, split into its colour and alpha
+planes with divisions for every byte, and every warm build inflated the vector charts' content
+streams again to probe them. Bits and Huffman codes are now read by tail-recursive loops over a bit
+position, a match of six bytes or more that ends before its destination is copied as one slice,
+and the planes are cut row by row. Median of 5, back to back on a host at load 68-79: the
+before column with `LEANTEX_BENCH_BINARY` naming the parent's saved compiler, the after column
+with `LEANTEX_BENCH_COMPARE_BINARY` naming it for the byte comparison:
+
+| Build | before | after |
+|---|---:|---:|
+| PDF, cold | 4,246 ms (images 3,458) | 1,804 ms (images 1,204) |
+| PDF, warm | 818 ms (images 490) | 499 ms (images 154) |
+| HTML, cold | 5,143 ms (images 3,414, faces 1,105) | 2,611 ms (images 1,218, faces 776) |
+| HTML, warm | 1,040 ms (images 491) | 720 ms (images 153) |
+
+The comparison found the artifacts and diagnostics byte-identical; `scripts/flate-fuzz.lean` still
+reads and refuses exactly what zlib does, and `scripts/img-fuzz.lean` passes.

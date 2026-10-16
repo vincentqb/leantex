@@ -345,10 +345,10 @@ theorem build.go_succ (n : Nat) (f : ByteArray → UInt8) (out : ByteArray)
 termination_by n - out.size
 decreasing_by simp only [ByteArray.size_push]; omega
 
-theorem build_zero (f : ByteArray → UInt8) : build 0 f = ByteArray.empty :=
+public theorem build_zero (f : ByteArray → UInt8) : build 0 f = ByteArray.empty :=
   build.go_of_le 0 f _ (Nat.zero_le _)
 
-theorem build_succ (n : Nat) (f : ByteArray → UInt8) :
+public theorem build_succ (n : Nat) (f : ByteArray → UInt8) :
     build (n + 1) f = (build n f).push (f (build n f)) :=
   build.go_succ n f (ByteArray.emptyWithCapacity (n + 1)) (Nat.zero_le _)
 
