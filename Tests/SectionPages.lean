@@ -379,9 +379,20 @@ def sectionPageChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
   let inFrame := "\\begin{frame}{Opening}OpeningWords, see \\ref{fr:first}.\\end{frame}\n" ++
     "\\section{Alpha Part}\n\\begin{frame}{First}\\label{fr:first}FirstWords\\end{frame}"
   let c := censusOfSrc fonts (deck169 "\\theme{default}" inFrame)
-  t "a label in a frame binds no section's number, the loss named"
-    ((pageWith c "OpeningWords").any (pageHas c · "see ??.") &&
-      (elabStr (deck169 "\\theme{default}" inFrame)).2.any (·.code == "W0349"))
+  t "a label in a frame takes its frame's number, as beamer's"
+    ((pageWith c "OpeningWords").any (pageHas c · "see 2.") &&
+      !(elabStr (deck169 "\\theme{default}" inFrame)).2.any (·.code == "W0349"))
+  let named := "\\begin{frame}{Opening}OpeningWords, called \\nameref{fr:first} and " ++
+    "\\nameref{sec:alpha}.\\end{frame}\n\\section{Alpha Part}\\label{sec:alpha}\n" ++
+    "\\begin{frame}{First}\\label{fr:first}FirstWords\\end{frame}"
+  let c := censusOfSrc fonts (deck169 "\\theme{default}" named)
+  t "nameref names a frame's label by its section and a section's by its title, as beamer's"
+    ((pageWith c "OpeningWords").any (pageHas c · "called Alpha Part and Alpha Part."))
+  let c := censusOfSrc fonts (dvDoc "" ("\\section{Alpha}\\label{a}Words.\n\n" ++
+    "\\begin{figure}[h]Body.\\caption{Panel words}\\label{f}\\end{figure}\n" ++
+    "See \\nameref{a} and \\nameref{f}."))
+  t "nameref sets a section's title and a float's caption in an article, as hyperref's"
+    ((pageWith c "See Alpha").any (pageHas c · "See Alpha and Panel words."))
   let afterFrame := "\\begin{frame}{Opening}OpeningWords, see \\ref{after}.\\end{frame}\n" ++
     "\\section{Alpha Part}\n\\begin{frame}{First}FirstWords\\end{frame}\n\\label{after}\n" ++
     "\\begin{frame}{Second}SecondWords\\end{frame}"

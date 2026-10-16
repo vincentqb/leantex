@@ -2677,6 +2677,8 @@ public inductive RefForm where
   | labelOnly
   | name (cap : Bool)
   | headed
+  /-- hyperref's `\nameref`: the title of what the label names. -/
+  | title
   deriving Repr, BEq
 
 /-- What a field citation prints of its entry instead of its label (biblatex manual §3.8.4). -/
@@ -7767,13 +7769,16 @@ public structure Doc where
   body : Array Block := #[]
   deriving Repr, BEq, Inhabited
 
+/-- A body's frame numbering: numbered whole, or each part from 1 where `restart` splits it. -/
+public def frameNumbersFrom (restart : Option Nat) (body : Array Block) : Array (Option Nat) :=
+  match restart with
+  | none => frameNumbers body
+  | some p => frameNumbers (body.extract 0 p) ++ frameNumbers (body.extract p body.size)
+
 /-- The document's frame numbering: the body numbered whole, or each part from
 1 where `frameRestart` splits it. -/
 public def Doc.frameNumbers (doc : Doc) : Array (Option Nat) :=
-  match doc.frameRestart with
-  | none => Ir.frameNumbers doc.body
-  | some p =>
-    Ir.frameNumbers (doc.body.extract 0 p) ++ Ir.frameNumbers (doc.body.extract p doc.body.size)
+  frameNumbersFrom doc.frameRestart doc.body
 
 /-- The numbering's denominator at body index `i`: the count of the part `i` stands in. -/
 public def Doc.frameCountAt (doc : Doc) (i : Nat) : Nat :=
@@ -7833,11 +7838,11 @@ public theorem Doc.frameNumbers_restart_exact (doc : Doc) (p : Nat)
     doc.frameNumbers.toList.filterMap id =
       List.range' 1 (Ir.frameCount (doc.body.extract 0 p)) ++
         List.range' 1 (Ir.frameCount (doc.body.extract p doc.body.size)) := by
-  simp only [Doc.frameNumbers, h, Array.toList_append, List.filterMap_append,
+  simp only [Doc.frameNumbers, frameNumbersFrom, h, Array.toList_append, List.filterMap_append,
     frameNumbers_gapless]
 
 public theorem Doc.frameNumbers_size (doc : Doc) : doc.frameNumbers.size = doc.body.size := by
-  unfold Doc.frameNumbers
+  unfold Doc.frameNumbers frameNumbersFrom
   split
   · exact Ir.frameNumbers_size doc.body
   · simp only [Array.size_append, Ir.frameNumbers_size, Array.size_extract]
@@ -9951,6 +9956,7 @@ private def dumpInline (ind : String) (x : Inline) : String :=
       | .name false => "namecref"
       | .name true => "nameCref"
       | .headed => "headed"
+      | .title => "nameref"
     let tgt := match target with
       | some a => s!" -> #{a}"
       | none => ""
@@ -17367,6 +17373,8 @@ public structure RefBinding where
   kind : Option RefKind
   num : String
   statement : Option (String × Option String) := none
+  /-- The title of what the label names, as hyperref's `\nameref` prints it. -/
+  name : Option String := none
   deriving Repr, BEq
 
 private def indexStep {α : Type} (m : Std.HashMap String (String × α))
@@ -17488,6 +17496,7 @@ public def refText (loc : Locale) (form : RefForm) (b : RefBinding) : String :=
     | some (h, none), _ => h
     | none, some k => (crefNameOf loc k).capOne ++ "\u00a0" ++ numText
     | none, none => b.num
+  | .title => b.name.getD b.num
 
 public def resolveOneRefWith (loc : Locale)
     (look : String → Option (String × Option RefBinding)) (key : String)
@@ -17806,6 +17815,49 @@ private def withFloatRowsIdx (labels : RefTable)
 
 public def withFloatRows (labels rows : RefTable) : RefTable :=
   withFloatRowsIdx labels (keyIndex rows)
+
+/-- Every label inside a top-level frame, bound to the frame's number, as beamer's `\label` in a
+frame takes it. -/
+public def frameLabelRows (xs : Array Block) (nums : Array (Option Nat)) : RefTable := Id.run do
+  let keyOf := fun (out : Array String) (x : Inline) =>
+    if let .label k := x then out.push k else out
+  let mut out : RefTable := #[]
+  for (b, i) in xs.zipIdx do
+    if let .frame title _ _ _ body := b then
+      if let some n := nums[i]?.join then
+        let keys := foldBlocks (fun out _ => out) keyOf (foldInlines keyOf #[] title) body
+        out := out ++ keys.map fun k => (k, some { kind := none, num := toString n })
+  return out
+
+/-- The table with each key no construct numbered taking its row's binding. -/
+public def withUnboundRows (labels rows : RefTable) : RefTable :=
+  let idx := keyIndex rows
+  labels.map fun e => match e.2, idx[e.1]? with
+    | none, some (_, some b) => (e.1, some b)
+    | _, _ => e
+
+/-- The title each label names, as hyperref's `\@currentlabelname` holds it: a float's caption
+inside the float, else the last heading's title before it. -/
+public def labelNames (xs : Array Block) : Std.HashMap String String := Id.run do
+  let keyOf := fun (out : Array String) (x : Inline) =>
+    if let .label k := x then out.push k else out
+  let named := fun (m : Std.HashMap String String) (keys : Array String) (n : String) =>
+    keys.foldl (fun m k => if m.contains k then m else m.insert k n) m
+  let mut current : Option String := none
+  let mut out : Std.HashMap String String := {}
+  for b in xs do
+    if let .section _ _ _ title := b then current := some (firstPageText title).trimAscii.toString
+    if let .float _ _ _ body caption := b then
+      let keys := foldBlocks (fun out _ => out) keyOf (foldInlines keyOf #[] caption) body
+      out := named out keys (firstPageText caption).trimAscii.toString
+    else if let some n := current then
+      out := named out (foldBlocks (fun out _ => out) keyOf #[] #[b]) n
+  return out
+
+/-- The table with each binding carrying the title its label names (`labelNames`). -/
+public def withLabelNames (labels : RefTable) (xs : Array Block) : RefTable :=
+  let names := labelNames xs
+  labels.map fun e => (e.1, e.2.map fun b => { b with name := names[e.1]? })
 
 private theorem withFloatRows_agree (labels rows : RefTable) :
     withFloatRows labels rows

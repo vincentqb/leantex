@@ -1202,7 +1202,7 @@ redefinition wins only if its body, expanded once, loses nothing. -/
 public def renderedBuiltins : List String :=
   ["maketitle", "titlepage", "logo", "appendix", "note", "pause",
    "centering", "alt", "hfill", "ensuremath", "label", "ref", "eqref",
-   "cref", "Cref", "crefrange", "Crefrange", "labelcref", "namecref", "nameCref",
+   "cref", "Cref", "crefrange", "Crefrange", "labelcref", "namecref", "nameCref", "nameref",
    "paragraph", "subparagraph", "href", "link", "hyperlink", "hypertarget",
    "url", "nolinkurl", "hspace", "rule", "fontsize", "includegraphics",
    "animategraphics", "faIcon", "pagenumber", "pagecount",
@@ -4041,13 +4041,13 @@ private def refCtrlForm? (name : String) : Option Ir.RefForm :=
   [("ref", Ir.RefForm.plain), ("eqref", .paren),
    ("cref", .cref false), ("Cref", .cref true),
    ("labelcref", .labelOnly),
-   ("namecref", .name false), ("nameCref", .name true),
+   ("namecref", .name false), ("nameCref", .name true), ("nameref", .title),
    (Marker.name .crefRange "", .crefRange false),
    (Marker.name .crefRangeUp "", .crefRange true)].lookup name
 
 private def refFormNeedsKind : Ir.RefForm → Bool
   | .cref _ | .crefRange _ | .name _ => true
-  | .plain | .paren | .labelOnly | .headed => false
+  | .plain | .paren | .labelOnly | .headed | .title => false
 
 -- Sealed so the knot's fixpoint never unfolds their string code.
 seal footnoteOverride hasParRaw footnoteWarnPar footnoteWarnFace
@@ -16491,8 +16491,11 @@ marks its level" (some pos) (help := some s!"redefine it as text, a symbol or a 
     finishBeamerColors ctx
     let pictureReport : PictureReportContext := { ctx, offset := (← get).diags.size }
     let stRefs ← get
+    -- A deck's frame label takes its frame's number, and every label the title of what it names.
     let table := if stRefs.labels.isEmpty then stRefs.labels
-      else Ir.withFloatRows stRefs.labels (Ir.floatLabelRows blocks)
+      else Ir.withLabelNames (Ir.withUnboundRows
+        (Ir.withFloatRows stRefs.labels (Ir.floatLabelRows blocks))
+        (Ir.frameLabelRows blocks (Ir.frameNumbersFrom stRefs.frameRestart blocks))) blocks
     let mut warnedRefs : Array String := #[]
     for (key, form, rpos) in stRefs.refSites do
       unless warnedRefs.contains key do

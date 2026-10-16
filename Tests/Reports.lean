@@ -150,6 +150,7 @@ import Tests.Algorithm
 import Tests.Layout
 import Tests.FrameHeadingScope
 import Tests.SectionPages
+import Tests.Themes
 import Tests.SeedPalette
 import Tests.PaletteCover
 import Tests.UnusedSettings
@@ -1974,7 +1975,14 @@ def reports : List Report := [
     accept := ["lualatex on invented probes, article at 10pt with enumitem's topsep at 10ex and itemsep at 2ex: a serif face of 475 thousandths opens the list 47.5pt down, Latin Modern 43.1pt; in Chromium this tree's web page stands those gaps at 3.957 and 0.790 of its line height where lualatex's stand at 3.958 and 0.792 of its baselineskip, and at 3.590 and 0.717 in Latin Modern against 3.592 and 0.718, where the tree before stood 4.165 and 0.832 in both",
       "a deck in a sans face declaring its partopsep at 3ex opens a frame's list with lualatex's 42.19pt to the first baseline and the PDF's 42.17; the web page's frame opening now stands at 7.493vh, its pt equivalent's 7.492vh, where it stood at 1.102vh, the partopsep read as nothing",
       "nine assertions; five fail built against a22f93197's tree, among them an article's and a deck's web page declaring nine lengths and a skip in ex against the same in sp; the four that hold there guard the PDF's own reading of the face and the half em of a page shipping no face"]
-    state := .guarded "a22f9319" .before .author }
+    state := .guarded "a22f9319" .before .author },
+  { id := "R220", date := "2026-10-16"
+    what := "a PDF's outline held only a declared navigation menu, never its headings; a deck's label in a frame set question marks; nameref was an unknown command printing its key; and a note a paragraph's inline content held outside every frame, as after a loose label, vanished without a word"
+    pins := [check% pdfOutlineChecks, check% sectionPageChecks, check% noteChecks,
+      thm% Ir.outlineHeadings_depth_step]
+    accept := ["invented probes under lualatex: hyperref's outline holds an article's unstarred headings down to the subsubsection, titled without numbers, nested and closed, the catalog opening it; beamer's holds a deck's unstarred sections and subsections, open; a label in a frame refers to the frame's number, and nameref prints a section's title, a float's caption, and for a frame's label its section's title; this tree ships the same",
+      "main at 0e5db3b5 bookmarks no heading, sets a frame's label as question marks, keeps nameref's key as text and drops the stashed notes; the guards fail there"]
+    state := .guarded "0e5db3b5" .before .author }
 ]
 
 /-- The reports guarded but never seen failing, a count held in both directions. -/

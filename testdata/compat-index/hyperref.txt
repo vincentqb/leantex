@@ -11,7 +11,7 @@ body impl \hypertarget{t}{x}
 body refuse:W0301 \phantomsection
 body refuse:W0301 \autoref{sec}
 body refuse:W0301 \autopageref{sec}
-body refuse:W0301 \nameref{sec}
+body impl \section{A}\label{s}\nameref{s}
 body refuse:E0304 \section{A}\label{s}\ref*{s}
 body refuse:W0307 \section{A}\label{s}\pageref*{s}
 body refuse:W0301 \pdfbookmark[1]{T}{n}
