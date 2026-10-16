@@ -9212,13 +9212,11 @@ and \\tokens declare the design directly")
       | ("transparent", none) => some Ir.transparentShare
       | ("transparent", some v) => v.toNat?
       | ("dynamic", none) => some Ir.dynamicShare
-      | ("highly dynamic", none) => some Ir.transparentShare
+      | ("highly dynamic", none) => some Ir.highlyDynamicShare
       | _ => none
     match pct? with
     | some n =>
       let native := s!"\\palette\{ covered = {min n 99}\\% }"
-      -- In the body the palette reader names the cover it ignores, once.
-      if (← get).inDoc then return some (← synthAt native pos, k)
       if 99 < n then
         sayOnce ("param:setbeamercovered:" ++ src) .W0109
           s!"'\\setbeamercovered\{{src}}' asks for undimmed covered content; it covers at the \

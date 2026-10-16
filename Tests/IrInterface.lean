@@ -57,10 +57,6 @@ example (loc : Locale) (table : Ir.RefTable) (text : String) :
 example (text : String) : Ir.plainText #[.text text] = text := by
   simp [Ir.plainText, Ir.plainTextList, Ir.plainTextOne]
 
-example (body : Array Ir.Inline) :
-    Ir.unwrapItemStep (.para body) = .para body :=
-  Ir.unwrapItemStep_para_exact body
-
 /-- The public colour contract is usable without seeing the printer body. -/
 example (v : Nat) (hv : v < 1001) :
     Ir.Color.decodeMilli (Ir.Color.pdfMilli v) = v :=
@@ -112,9 +108,6 @@ example : True := by
   fail_if_success have := Ir.orphanFreeList
   fail_if_success have := Ir.imageRequestPush
   fail_if_success have := Ir.resolveRefLeaf
-  fail_if_success have := Ir.unwrapItemStepList
-  fail_if_success have := Ir.unwrapItemStepItems
-  fail_if_success have := Ir.unwrapItemStepCols
   trivial
 
 end Tests.IrInterface

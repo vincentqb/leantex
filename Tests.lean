@@ -198,6 +198,7 @@ import Tests.SeedPalette
 import Tests.SeedSeries
 import Tests.PaletteFloor
 import Tests.PaletteCover
+import Tests.CoveredSteps
 import Tests.AlertMark
 import Tests.ColourSolve
 import Tests.ThemePalette
@@ -995,6 +996,12 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   linkColorChecks ref oneFace
   algorithmReadChecks ref oneFace
 
+/-- The covered-steps blocks: a body's covering, the dim path's colours and a pause's reach. -/
+def coveredStepsChecks (ref : IO.Ref (List String)) : IO Unit := do
+  Tests.CoveredSteps.bodyShareChecks ref
+  Tests.CoveredSteps.dimPathChecks ref
+  Tests.CoveredSteps.pauseScopeChecks ref
+
 /-- The world premises' blocks: the runtime's process boundary, the toolchain's spawners, and the
 registry held to the source. -/
 def worldPremiseChecks (ref : IO.Ref (List String)) : IO Unit := do
@@ -1212,6 +1219,7 @@ def main (args : List String) : IO UInt32 := do
   themeSuiteChecks ref
   fontFaceSuiteChecks ref
   layoutSuiteChecks ref
+  coveredStepsChecks ref
   mdSurfaceChecks ref
 
   let failed := (← ref.get).reverse

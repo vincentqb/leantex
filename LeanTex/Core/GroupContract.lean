@@ -30,7 +30,7 @@ private theorem elabBlocksGo_env_alone (ctx : Ctx) (st : ESt) (n : String) (body
   rw [elabBlocksGo, run_get]
   rw [blockMacroStep_idle ctx st _ 0 #[] #[] hm (by simp) (by simpa [Raw.origins?] using hp)]
   simp [hl, hb, pictureInSentence_alone, flushPara_empty ctx _ hm, Ir.flushedText_empty_exact,
-    Ir.lastLeavesEndPe_empty_exact, endPeAt, parFollows]
+    Ir.lastLeavesEndPe_empty_exact, endPeAt, parFollows, elabBlocksNext_blank]
 
 private theorem elabBlocksGo_group_alone (ctx : Ctx) (st : ESt) (body : Array Raw)
     (pos : Pos) (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles) (hp : pos.origins = [])
@@ -46,7 +46,7 @@ private theorem elabBlocksGo_group_alone (ctx : Ctx) (st : ESt) (body : Array Ra
     simp [Std.Legacy.Range.forIn_eq_forIn_range']
   rw [elabBlocksGo, run_get]
   rw [blockMacroStep_idle ctx st _ 0 #[] #[] hm (by simp) (by simpa [Raw.origins?] using hp)]
-  simp [hpar, hb, ha, groupPictureInSentence_alone, flushPara_empty ctx _ hm]
+  simp [hpar, hb, ha, groupPictureInSentence_alone, flushPara_empty ctx _ hm, elabBlocksNext_blank]
 
 private theorem closeBlockScope_scope (ctx : Ctx) (base : Option Nat) (bs : Array Block)
     (st : ESt) : ((closeBlockScope ctx #[] base bs).run st).2.scope = st.scope := by

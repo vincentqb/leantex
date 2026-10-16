@@ -9294,10 +9294,9 @@ public structure Spacing.Context where
   private centreBoxes : Bool := false
   /-- Where the display being collected stands in its paragraph (`Ir.DisplayCtx`). -/
   private display : Ir.DisplayCtx := {}
-  /-- The document's cover (`Ir.Design.cover`), from `run`. -/
-  private cover : Option Ir.Cover := none
   /-- Inside an overlay step this page does not show, the cover a colour resolved
-  here takes, as beamer's `\opaqueness` covers a covered step's colours. -/
+  here takes, as beamer's `\opaqueness` covers a covered step's colours, read where that step
+  starts. -/
   private covering : Option Ir.Cover := none
   /-- The surface the document was written in (`Ir.Doc.surface`). -/
   private surface : Ir.Surface := .tex
@@ -9313,6 +9312,8 @@ public structure Spacing.Pending where
   private measure : Option Sp := none
   /-- The document's palette, whose semantic keys drive the themed furniture. -/
   private pal : Ir.Palette := {}
+  /-- What the dimming walk and a pending step's cover read of `pal`, once per palette epoch. -/
+  private dimHere : Ir.DimHere := Ir.DimHere.of {}
   private paletteEpoch : Nat := 0
   private tokens : Ir.Tokens := {}
   /-- Default text colour: the palette's `fg` when declared, else black ink. -/
@@ -9425,9 +9426,12 @@ private def Spacing.Context.shown (r : Rd) (c : Ir.Color) : Ir.Color :=
 private def Spacing.Context.hides (r : Rd) (spec : Ir.OverlaySpec) : Bool :=
   spec.hidesAt r.step r.steps
 
-/-- The context a pending overlay step's content is collected in: covered unless it hides. -/
-private def Spacing.Context.pendingStep (r : Rd) (spec : Ir.OverlaySpec) : Rd :=
-  if spec.pending r.step && !spec.invisible then { r with covering := r.cover } else r
+/-- The context a frame's pending overlay step's content is collected in: covered unless it hides,
+by the cover of the palette in force where it starts, or by an enclosing pending step's. -/
+private def Spacing.Context.pendingStep (r : Rd) (spec : Ir.OverlaySpec) (cover : Ir.Cover) : Rd :=
+  if 0 < r.steps && r.covering.isNone && spec.pending r.step && !spec.invisible then
+    { r with covering := some cover }
+  else r
 
 /-- Open a hidden region: what the walk collects until it closes keeps its place and ships nothing. -/
 private def Spacing.Pending.openHidden (a : Acc) : Acc := { a with ops := a.ops.push (.regionOpen .hidden) }
@@ -9639,12 +9643,23 @@ private def fgOf (pal : Ir.Palette) : Ir.Color :=
 /-- `.setPalette` on the accumulator: the palette, default ink and
 surface change together, and the page ground rides as a state op. -/
 private def Spacing.Pending.setPalette (a : Acc) (p : Ir.Palette) : Acc :=
-  { a with pal := p, paletteEpoch := a.paletteEpoch + 1
+  { a with pal := p, dimHere := Ir.DimHere.of p, paletteEpoch := a.paletteEpoch + 1
            fg := fgOf p, bodyInk := none, ground := a.bodyGround.or (Ir.Design.declared? p .page)
            ops := a.ops.push (.pageGround (Ir.Design.declared? p .page)) }
 
 private def Spacing.Pending.setTokens (a : Acc) (tk : Ir.Tokens) : Acc :=
   { a with tokens := tk }
+
+/-- The flow a frame opens in, as each later step's page opens it again: the palette and tokens
+its body's declarations moved on the step before. -/
+private def Spacing.Pending.reopenFrame (a opening : Acc) : Acc :=
+  let a := { a with tokens := opening.tokens }
+  if a.paletteEpoch == opening.paletteEpoch then a
+  else
+    { a with pal := opening.pal, dimHere := opening.dimHere, paletteEpoch := a.paletteEpoch + 1
+             fg := opening.fg
+             bodyInk := opening.bodyInk, ground := opening.ground
+             ops := a.ops.push (.pageGround (Ir.Design.declared? opening.pal .page)) }
 
 /-- Capture the frame's source and policy inputs together. -/
 private def Spacing.Pending.frameOpening (a : Acc) (standout : Bool)
@@ -12461,6 +12476,31 @@ private theorem frameReader_foot_agree (r : Rd) (a : Acc) (standout : Bool) (are
   unfold frameReader
   split <;> rfl
 
+/-- A step carrying nothing, which an item's marker passes to the block after it. -/
+private def emptyStep : Block → Bool
+  | .onSteps _ body => body.isEmpty
+  | _ => false
+
+/-- An item's marker as the step its leading paragraph stands in shows it: covered where the step
+covers, each colour its own. -/
+private def Spacing.Context.coveredMarker (r : Rd) (a : Acc) (marker : Array Inline) : Array Inline :=
+  match r.covering with
+  | some cover => Ir.coverInlines cover a.fg marker
+  | none => marker
+
+/-- An item's leading paragraph: a description's label runs in at the outer margin, as latex.ltx's
+`description` sets it, else the marker opens it. -/
+private def collectItemLead (r : Rd) (a : Acc) (content : Array Inline) (indent : Sp)
+    (marker : Array Inline) (hang : Sp) : Acc :=
+  let (a', leaf) := a.leafRange (Struct.leafCountInlines content)
+  if (Ir.descLabel? content).isSome then
+    collectPara r a' content (indent - hang) false r.geom.fontSize
+      (leaf := leaf) (span := Struct.leafCountInlines content) (hangIndent := hang)
+  else
+    collectPara r a' content indent false r.geom.fontSize
+      (marker := some (r.coveredMarker a marker)) (leaf := leaf)
+      (span := Struct.leafCountInlines content)
+
 /-- The reader inside `blk`: boxed where the block is a box (`Ir.Block.listScope`). -/
 private def Spacing.Context.within (r : Rd) (blk : Block) : Rd :=
   match blk.listScope r.lists r.styles with
@@ -12583,30 +12623,34 @@ private def collectItem (r : Rd) (a : Acc)
   | blk :: rest =>
     if statefulBlock blk then
       collectItem r (collectBlock r a blk indent) rest indent first marker hang
+    else if emptyStep blk then collectItem r a rest indent first marker hang
     else
     let a := if first then a else a.wantGap
     let a := match blk, first with
-      | .para content, true =>
-        if (Ir.descLabel? content).isSome then
-          -- latex.ltx `description`: the label runs in at the outer margin.
-          let (a, leaf) := a.leafRange (Struct.leafCountInlines content)
-          collectPara r a content (indent - hang) false r.geom.fontSize
-            (leaf := leaf) (span := Struct.leafCountInlines content) (hangIndent := hang)
-        else
-        -- A covered item is one colour wrapper; its marker dims with it, as beamer's cover, or
-        -- hides in the region its hidden step's lead hides in.
-        let marker := match Ir.hiddenLeadSpec? content, content with
-          | some s, _ => #[Ir.Inline.onSteps s marker]
-          | none, #[.colored c none _] => #[Ir.Inline.colored c none marker]
-          | none, _ => marker
-        let (a, leaf) := a.leafRange (Struct.leafCountInlines content)
-        collectPara r a content indent false r.geom.fontSize
-          (marker := some marker) (leaf := leaf) (span := Struct.leafCountInlines content)
+      | .para content, true => collectItemLead r a content indent marker hang
+      | .onSteps spec body, true => collectItemStep r a spec body indent marker hang
       -- A disclosure opening its item sets its summary as the first paragraph, by the marker.
-      | .disclosure .., true => collectBlock r { a with itemMarker := some marker } blk indent
-      | .list .., true => collectBlock { r with inLabel := true } a blk indent
-      | _, _ => collectBlock r a blk indent
+      | .disclosure summary expanded body, true =>
+        collectBlock r { a with itemMarker := some (r.coveredMarker a marker) }
+          (.disclosure summary expanded body) indent
+      | .list ordered spacing items, true =>
+        collectBlock { r with inLabel := true } a (.list ordered spacing items) indent
+      | b, _ => collectBlock r a b indent
     collectItem r a rest indent false marker hang
+
+/-- A step opening its item: its paragraph carries the marker into the step, as beamer's `\item<n>`
+covers or hides its label with it. -/
+private def collectItemStep (r : Rd) (a : Acc) (spec : Ir.OverlaySpec) (body : Array Block)
+    (indent : Sp) (marker : Array Inline) (hang : Sp) : Acc :=
+  let hides := r.hides spec
+  let r' := if hides then r else r.pendingStep spec a.dimHere.cover
+  let a' := if hides then a.openHidden else a
+  let done := match body with
+    | ⟨.para content :: more⟩ =>
+      let a := collectItemLead r' a' content indent marker hang
+      if more.isEmpty then a else collectBlockList r' a.wantGap more indent true false
+    | ⟨other⟩ => collectBlockList r' a' other indent true false
+  if hides then done.closeHidden else done
 
 private def collectItems (r : Rd) (a : Acc)
     (items : List (Array Block)) (indent : Sp) (st : Ir.ElementStyle)
@@ -12639,7 +12683,7 @@ private def collectCentered (r : Rd) (a : Acc)
   | .onSteps spec inner :: rest =>
     let a := if r.hides spec then
         (collectCentered r a.openHidden inner.toList indent false).closeHidden
-      else collectCentered (r.pendingStep spec) a inner.toList indent false
+      else collectCentered (r.pendingStep spec a.dimHere.cover) a inner.toList indent false
     collectCentered r (if rest.isEmpty then a else a.wantGap) rest indent false
   | .altSteps spec firstPage otherPage :: rest =>
     let a := if spec.showsFirst r.step then
@@ -12969,7 +13013,7 @@ private def collectBlock (r : Rd) (a : Acc)
   | .onSteps spec body =>
     -- Dimming was painted into the colours before layout; what resolves here takes the cover.
     if r.hides spec then (collectBlocks r a.openHidden body indent).closeHidden
-    else collectBlocks (r.pendingStep spec) a body indent
+    else collectBlocks (r.pendingStep spec a.dimHere.cover) a body indent
   | .altSteps spec firstPage otherPage =>
     -- The counter steps over the group this page does not ink, so the inked one keeps its tree id.
     if spec.showsFirst r.step then
@@ -18378,7 +18422,7 @@ public theorem frameSpansForPdf_covers (doc : Doc) (spans : Array (Nat × Span))
         (by simpa using hb)
 
 /-- One top-level source block, overlay rewind included; the index is the source identity. -/
-private def collectDocBlock (rd : Rd) (doc : Doc) (cover : Ir.Cover)
+private def collectDocBlock (rd : Rd) (doc : Doc)
     (frameSpans : Array (Nat × Span)) (nums : Array (Option Nat))
     (i : Nat) (hi : i < doc.body.size)
     (st : Acc × Bool) : Acc × Bool := Id.run do
@@ -18401,31 +18445,30 @@ private def collectDocBlock (rd : Rd) (doc : Doc) (cover : Ir.Cover)
         (Ir.frameStepNames rd.frameAnchorIds rd.frameLabels i steps k).map Op.anchor }
     if steps ≤ 1 then
       acc := collectBlock { rd with steps := steps } (named acc 1)
-        (.frame title standout valign breakable
-          (Ir.unwrapItemSteps (Ir.dimBlocks cover 1 body))) 0
+        (.frame title standout valign breakable (Ir.dimBlocks acc.dimHere 1 body)) 0
     else
       let leafStart := acc.leafNext
+      let opening := acc
       for k in [1:steps + 1] do
         acc := collectBlock { rd with step := k, steps := steps }
-          (named { acc with leafNext := leafStart, frameOrigin := some ⟨i, k⟩ } k)
-          (.frame title standout valign breakable
-            (Ir.unwrapItemSteps (Ir.dimBlocks cover k body))) 0
+          (named { acc.reopenFrame opening with leafNext := leafStart, frameOrigin := some ⟨i, k⟩ } k)
+          (.frame title standout valign breakable (Ir.dimBlocks opening.dimHere k body)) 0
   | .section level starred num title =>
     let routed := match rd.sectionRoutes[i]?.join with
       | some route => { acc with ops := acc.ops.push (.anchor route) }
       | none => acc
     acc := collectSection rd routed level starred num title 0 (top := true)
       (anchor := (rd.sectionAnchors[i]?.join).map (·.id))
-  | other => acc := collectBlock rd acc (Ir.unwrapItemStep other) 0
+  | other => acc := collectBlock rd acc other 0
   return (acc, firstBlk)
 
 /-- The source loop, its state recording whether a real block has appeared. -/
-private def collectDocBody (rd : Rd) (doc : Doc) (cover : Ir.Cover)
+private def collectDocBody (rd : Rd) (doc : Doc)
     (frameSpans : Array (Nat × Span)) (acc0 : Acc) : Acc := Id.run do
   let nums := doc.frameNumbers
   let mut st := (acc0, true)
   for h : i in [0:doc.body.size] do
-    st := collectDocBlock rd doc cover frameSpans nums i h.upper st
+    st := collectDocBlock rd doc frameSpans nums i h.upper st
   return st.1
 
 private theorem Spacing.Paragraph.SourceBound.mono {n m : Nat} {j : ParaJob}
@@ -18654,28 +18697,28 @@ private theorem sourceBound_collectParaBlock {n : Nat} (r : Rd) (a : Acc)
       refine ⟨a.leafNext, ?_, by omega⟩
       simp [plainInlines_leafCount xs hp, Nat.ne_of_gt hs]
 
-private theorem collectDocBlock_leafNext (rd : Rd) (doc : Doc) (cover : Ir.Cover)
+private theorem collectDocBlock_leafNext (rd : Rd) (doc : Doc)
     (frameSpans : Array (Nat × Span)) (nums : Array (Option Nat))
     (i : Nat) (hi : i < doc.body.size) (st : Acc × Bool) (xs : Array Inline)
     (hb : doc.body[i] = .para xs) (hp : PlainInlines xs) :
-    (collectDocBlock rd doc cover frameSpans nums i hi st).1.leafNext =
+    (collectDocBlock rd doc frameSpans nums i hi st).1.leafNext =
       st.1.leafNext + Struct.leafCountBlocks #[doc.body[i]] := by
   simp only [collectDocBlock, hb, statefulBlock, Ir.pageMarkerBlock,
-    Bool.or_false, Bool.and_false, Id.run, Ir.unwrapItemStep_para_exact]
+    Bool.or_false, Bool.and_false, Id.run]
   dsimp only [pure, Id]
   rw [collectBlock, collectParaBlock_leafNext _ _ _ _ hp]
   simp only [sourceLeafSum_para, plainInlines_leafCount xs hp]
   split <;> rfl
 
 private theorem sourceBound_collectDocBlock {n : Nat} (rd : Rd) (doc : Doc)
-    (cover : Ir.Cover) (frameSpans : Array (Nat × Span)) (nums : Array (Option Nat))
+    (frameSpans : Array (Nat × Span)) (nums : Array (Option Nat))
     (i : Nat) (hi : i < doc.body.size) (st : Acc × Bool) (xs : Array Inline)
     (hb : doc.body[i] = .para xs) (hp : PlainInlines xs)
     (ha : st.1.SourceBound n)
     (hn : st.1.leafNext + Struct.leafCountBlocks #[doc.body[i]] ≤ n) :
-    (collectDocBlock rd doc cover frameSpans nums i hi st).1.SourceBound n := by
+    (collectDocBlock rd doc frameSpans nums i hi st).1.SourceBound n := by
   simp only [collectDocBlock, hb, statefulBlock, Ir.pageMarkerBlock,
-    Bool.or_false, Bool.and_false, Id.run, Ir.unwrapItemStep_para_exact]
+    Bool.or_false, Bool.and_false, Id.run]
   dsimp only [pure, Id]
   rw [collectBlock]
   apply sourceBound_collectParaBlock
@@ -18702,19 +18745,19 @@ private theorem sourceRange_progress {β : Type}
     simpa only [Nat.add_assoc, Nat.add_comm 1 len, Id.run] using hr
 
 
-private theorem collectDocBody_source {n : Nat} (rd : Rd) (doc : Doc) (cover : Ir.Cover)
+private theorem collectDocBody_source {n : Nat} (rd : Rd) (doc : Doc)
     (frameSpans : Array (Nat × Span)) (acc0 : Acc)
     (hp : ∀ b ∈ doc.body, ∃ xs, b = .para xs ∧ PlainInlines xs)
     (ha : acc0.SourceBound n)
     (hn : acc0.leafNext + sourceLeafSum doc.body.toList ≤ n) :
-    (collectDocBody rd doc cover frameSpans acc0).SourceBound n ∧
-      (collectDocBody rd doc cover frameSpans acc0).leafNext =
+    (collectDocBody rd doc frameSpans acc0).SourceBound n ∧
+      (collectDocBody rd doc frameSpans acc0).leafNext =
         acc0.leafNext + sourceLeafSum doc.body.toList := by
   let P := fun i (st : Acc × Bool) => st.1.SourceBound n ∧
     st.1.leafNext = acc0.leafNext + sourceLeafSum (doc.body.toList.take i)
   have h0 : P 0 (acc0, true) := by simp [P, sourceLeafSum, ha]
   have step (i : Nat) (hi : i < doc.body.size) (st : Acc × Bool) (hs : P i st) :
-      P (i + 1) (collectDocBlock rd doc cover frameSpans doc.frameNumbers i hi st) := by
+      P (i + 1) (collectDocBlock rd doc frameSpans doc.frameNumbers i hi st) := by
     obtain ⟨xs, hb, hx⟩ := hp doc.body[i] (Array.getElem_mem hi)
     have hprefix : sourceLeafSum (doc.body.toList.take (i + 1)) =
         sourceLeafSum (doc.body.toList.take i) + Struct.leafCountBlocks #[doc.body[i]] := by
@@ -18727,23 +18770,23 @@ private theorem collectDocBody_source {n : Nat} (rd : Rd) (doc : Doc) (cover : I
       dsimp only [P] at hs
       omega
     constructor
-    · exact sourceBound_collectDocBlock rd doc cover frameSpans doc.frameNumbers i hi st
+    · exact sourceBound_collectDocBlock rd doc frameSpans doc.frameNumbers i hi st
         xs hb hx hs.1 hbnd
-    · rw [collectDocBlock_leafNext _ _ _ _ _ _ _ _ _ hb hx, hs.2, hprefix]
+    · rw [collectDocBlock_leafNext _ _ _ _ _ _ _ _ hb hx, hs.2, hprefix]
       omega
   unfold collectDocBody
   simp only [Std.Legacy.Range.forIn'_eq_forIn'_range', Std.Legacy.Range.size,
     Nat.sub_zero, Nat.add_sub_cancel, Nat.div_one]
   dsimp only [Id.run, bind, pure, Id]
   have hr := sourceRange_progress P 0 doc.body.size
-    (fun i hi st => .yield (collectDocBlock rd doc cover frameSpans doc.frameNumbers
+    (fun i hi st => .yield (collectDocBlock rd doc frameSpans doc.frameNumbers
       i (by simpa using (List.mem_range'_1.mp hi).2) st)) (acc0, true) h0 ?_
   · have ht : doc.body.toList.take doc.body.size = doc.body.toList := by
       simpa only [Array.length_toList] using (List.take_length (l := doc.body.toList))
     simpa only [P, Nat.zero_add, ht, Id.run, bind, pure, Id] using hr
   · intro i hi st hs
     have hib : i < doc.body.size := (by simpa using (List.mem_range'_1.mp hi).2)
-    exact ⟨collectDocBlock rd doc cover frameSpans doc.frameNumbers i hib st, rfl,
+    exact ⟨collectDocBlock rd doc frameSpans doc.frameNumbers i hib st, rfl,
       step i hib st hs⟩
 
 private def GlyphClean (ds : Array Diag) : Prop :=
@@ -18956,18 +18999,18 @@ private theorem collectParaBlock_census (r : Rd) (a : Acc) (xs : Array Inline)
     collectPara_census r (a.leafRange (Struct.leafCountInlines xs)).1 xs indent
       (a.leafRange (Struct.leafCountInlines xs)).2 (Struct.leafCountInlines xs) hp hr ha pick
 
-private theorem collectDocBlock_census (rd : Rd) (doc : Doc) (cover : Ir.Cover)
+private theorem collectDocBlock_census (rd : Rd) (doc : Doc)
     (frameSpans : Array (Nat × Span)) (nums : Array (Option Nat))
     (i : Nat) (hi : i < doc.body.size) (st : Acc × Bool) (xs : Array Inline)
     (hb : doc.body[i] = .para xs) (hp : PlainInlines xs)
     (hr : (Spacing.Context.pats rd) = none) (ha : st.1.Prose) (pick : Option Nat → Bool → Bool) :
-    let out := (collectDocBlock rd doc cover frameSpans nums i hi st).1
+    let out := (collectDocBlock rd doc frameSpans nums i hi st).1
     out.Prose ∧ (out.Clean → st.1.Clean ∧
       inkCensus (out.census pick) = inkCensus (st.1.census pick) ++
         if pick (if xs.size == 0 then none else some (Spacing.Pending.leafNext st.1)) (!(Spacing.Context.inFloat rd))
         then inkCensus (Ir.plainText xs).toList else []) := by
   simp only [collectDocBlock, hb, statefulBlock, Ir.pageMarkerBlock,
-    Bool.or_false, Bool.and_false, Id.run, Ir.unwrapItemStep_para_exact]
+    Bool.or_false, Bool.and_false, Id.run]
   dsimp only [pure, Id]
   rw [collectBlock]
   split <;> refine collectParaBlock_census rd _ xs 0 hp hr ?_ pick <;> exact ha
@@ -19004,12 +19047,12 @@ private theorem sourceInkAt_para (pick : Option Nat → Bool → Bool)
   simp only [Ir.blocksText, Ir.blockTextList,
     Ir.blockTextOne, String.empty_append]
 
-private theorem collectDocBody_census (rd : Rd) (doc : Doc) (cover : Ir.Cover)
+private theorem collectDocBody_census (rd : Rd) (doc : Doc)
     (frameSpans : Array (Nat × Span)) (acc0 : Acc)
     (hp : ∀ b ∈ doc.body, ∃ xs, b = .para xs ∧ PlainInlines xs)
     (hr : (Spacing.Context.pats rd) = none) (ha : acc0.Prose)
     (pick : Option Nat → Bool → Bool) :
-    let out := collectDocBody rd doc cover frameSpans acc0
+    let out := collectDocBody rd doc frameSpans acc0
     out.Prose ∧ (out.Clean → acc0.Clean ∧
       inkCensus (out.census pick) = inkCensus (acc0.census pick) ++
         sourceInkPrefix pick doc.body (Spacing.Pending.leafNext acc0) (!(Spacing.Context.inFloat rd)) doc.body.size) := by
@@ -19021,17 +19064,17 @@ private theorem collectDocBody_census (rd : Rd) (doc : Doc) (cover : Ir.Cover)
   have h0 : P 0 (acc0, true) := by
     simp [P, sourceLeafSum, sourceInkPrefix, ha]
   have step (i : Nat) (hi : i < doc.body.size) (st : Acc × Bool) (hs : P i st) :
-      P (i + 1) (collectDocBlock rd doc cover frameSpans doc.frameNumbers i hi st) := by
+      P (i + 1) (collectDocBlock rd doc frameSpans doc.frameNumbers i hi st) := by
     obtain ⟨xs, hb, hx⟩ := hp doc.body[i] (Array.getElem_mem hi)
     have hprefix : sourceLeafSum (doc.body.toList.take (i + 1)) =
         sourceLeafSum (doc.body.toList.take i) + Struct.leafCountBlocks #[doc.body[i]] := by
       rw [List.take_succ_eq_append_getElem (by simpa using hi), sourceLeafSum_append]
       simp only [sourceLeafSum, List.map_singleton, List.sum_cons, List.sum_nil, Nat.add_zero,
         Array.getElem_toList]
-    have hc := collectDocBlock_census rd doc cover frameSpans doc.frameNumbers i hi st
+    have hc := collectDocBlock_census rd doc frameSpans doc.frameNumbers i hi st
       xs hb hx hr hs.1 pick
     refine ⟨hc.1, ?_, ?_⟩
-    · rw [collectDocBlock_leafNext _ _ _ _ _ _ _ _ _ hb hx, hs.2.1, hprefix]
+    · rw [collectDocBlock_leafNext _ _ _ _ _ _ _ _ hb hx, hs.2.1, hprefix]
       omega
     · intro hd
       obtain ⟨hprev, hstep⟩ := hc.2 hd
@@ -19044,12 +19087,12 @@ private theorem collectDocBody_census (rd : Rd) (doc : Doc) (cover : Ir.Cover)
     Nat.sub_zero, Nat.add_sub_cancel, Nat.div_one]
   dsimp only [Id.run, bind, pure, Id]
   have hresult := sourceRange_progress P 0 doc.body.size
-    (fun i hi st => .yield (collectDocBlock rd doc cover frameSpans doc.frameNumbers
+    (fun i hi st => .yield (collectDocBlock rd doc frameSpans doc.frameNumbers
       i (by simpa using (List.mem_range'_1.mp hi).2) st)) (acc0, true) h0 ?_
   · simpa only [Nat.zero_add, Id.run] using And.intro hresult.1 hresult.2.2
   · intro i hi st hs
     have hib : i < doc.body.size := (by simpa using (List.mem_range'_1.mp hi).2)
-    exact ⟨collectDocBlock rd doc cover frameSpans doc.frameNumbers i hib st, rfl,
+    exact ⟨collectDocBlock rd doc frameSpans doc.frameNumbers i hib st, rfl,
       step i hib st hs⟩
 
 
@@ -19149,7 +19192,6 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
     else { geom with topskip := some ((tokenLen "topskip").getD geom.fontSize) }
   -- `Design.ofDoc` resolves the document colours, the ink `Contrast.docDiags` judges.
   let design := Ir.Design.ofDoc doc
-  let cover := design.cover
   let footGap := doc.page.furnitureGap.getD Ir.footline.sep
   let deckIds := Ir.deckAnchors doc.body
   let rd : Rd := { geom := geom, xHeight := xHeight, pats := pats, fs := fs
@@ -19175,9 +19217,9 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
                    pictureSpans := pictureSpans
                    headline := doc.headline
                    footGap := footGap
-                   cover := some cover
                    surface := doc.surface }
   let acc0 : Acc := { pal := doc.palette
+                      dimHere := Ir.DimHere.of doc.palette
                       tokens := doc.tokens
                       frameCount := doc.frameCount
                       chromeL := if footAllowed then doc.chrome.footerLeft else none
@@ -19187,7 +19229,7 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
                       fg := design.fg
                       ground := Ir.Design.declared? doc.palette .page }
   -- One handout page per overlay step, collected under one frame number read off `Ir.frameNumbers`.
-  let acc := collectDocBody rd doc cover frameSpans acc0
+  let acc := collectDocBody rd doc frameSpans acc0
   -- Trailing fil glue stretches on the page it ends, so it reaches placement; finite glue drops.
   let accF := if acc.owed.any (·.fil) then
       { acc with ops := acc.ops.push (.skip (acc.owed.foldl Glue.add {})) }
@@ -19296,13 +19338,13 @@ private def shipCore (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns
   withLayoutOps geom fs pats doc imgs (fun staged b0 post =>
     post (placeFrom fs imgs staged { b := b0 } 0)) frameSpans pictureSpans
 
-private theorem sourceBound_collected {n : Nat} (rd : Rd) (doc : Doc) (cover : Ir.Cover)
+private theorem sourceBound_collected {n : Nat} (rd : Rd) (doc : Doc)
     (frameSpans : Array (Nat × Span)) (acc0 : Acc)
     (hp : ∀ b ∈ doc.body, ∃ xs, b = .para xs ∧ PlainInlines xs)
     (ha : acc0.ops = #[]) (hk : acc0.leafNext = 0)
     (hn : (Struct.ofDoc doc).leaves.size ≤ n) :
-    (collectDocBody rd doc cover frameSpans acc0).SourceBound n := by
-  apply (collectDocBody_source rd doc cover frameSpans acc0 hp ?_ ?_).1
+    (collectDocBody rd doc frameSpans acc0).SourceBound n := by
+  apply (collectDocBody_source rd doc frameSpans acc0 hp ?_ ?_).1
   · simp [Spacing.Pending.SourceBound, ha]
   · simpa [hk, sourceLeafSum_ofDoc] using hn
 
@@ -19334,7 +19376,7 @@ private theorem shipCore_source (geom : Geom) (fs : FontSet)
   apply (close _ _ _ ?_).pages
   apply sourceBound_placeFrom
   · exact sourceBound_trailing (n := (Struct.ofDoc (pdfView doc)).leaves.size)
-      _ (sourceBound_collected _ _ _ _ _ hp rfl rfl (Nat.le_refl _))
+      _ (sourceBound_collected _ _ _ _ hp rfl rfl (Nat.le_refl _))
   · exact ⟨by simp, by simp, rfl, rfl, rfl⟩
 
 private theorem census_keepHeading {n : Nat} (pick : Option Nat → Bool → Bool)
@@ -19551,9 +19593,9 @@ private theorem shipCore_census (geom : Geom) (fs : FontSet)
   dsimp (config := { zeta := false }) only [Id.run, bind, pure, Id]
   extract_lets d ps _ _ _ _ _ _ _ _
     _ _ _ _ _ _ _ _ _ _ _
-    _ cover _ _ rd acc0 acc accF _ _ _ b0
+    _ _ _ rd acc0 acc accF _ _ _ b0
     alphabet _ _ cpl10 dir post
-  have hacc := collectDocBody_census rd d cover frameSpans acc0 hp
+  have hacc := collectDocBody_census rd d frameSpans acc0 hp
     (by rcases hh with hh | hh <;>
       simp only [rd, ps, hh, Bool.false_eq_true, ↓reduceIte, ite_self])
     (by intro op ho; simp [acc0] at ho) pick
@@ -19565,7 +19607,7 @@ private theorem shipCore_census (geom : Geom) (fs : FontSet)
   have hprose : ∀ op ∈ accF.ops, op.Prose := htrail.prose hacc.1
   have hbound : ∀ op ∈ accF.ops, op.SourceBound (Struct.ofDoc d).leaves.size :=
     sourceBound_trailing acc
-      (sourceBound_collected rd d cover frameSpans acc0 hp rfl rfl (Nat.le_refl _))
+      (sourceBound_collected rd d frameSpans acc0 hp rfl rfl (Nat.le_refl _))
   have hb0 : b0.SourceBound (Struct.ofDoc d).leaves.size :=
     Spacing.Page.SourceBound.mk (by simp [b0]) (by simp [b0]) rfl rfl rfl
   have hplaced := census_placeFrom pick fs imgs accF.ops { b := b0 } hbound hprose hb0

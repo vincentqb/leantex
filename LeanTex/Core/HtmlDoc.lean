@@ -3672,21 +3672,41 @@ private def stepSnapSize : DeckRule :=
     decls := [("flex", "0 0 100vw"), ("height", "100dvh")]
     requires := .supported .viewTimeline }
 
+/-- The custom property a pending step's opacity reads, which a body epoch's covering restates. -/
+public def stepShareVar : String := "--ltx-step-share"
+
+/-- The custom property a pending step's reach reads, restated with `stepShareVar`. -/
+public def stepReachVar : String := "--ltx-step-reach"
+
+/-- A pending step's opacity: the share of the epoch it stands in, the document's otherwise. -/
+public def stepShareValue (coveredPct : Nat) : String := s!"var({stepShareVar}, {coveredPct}%)"
+
+/-- A pending step's reach: out of reach until its reveal starts where the covering in force hides
+it, else its parent's throughout. -/
+public def stepReachValue : String := s!"var({stepReachVar}, inherit)"
+
+/-- What a covering at `n`% declares `stepReachVar` as: hidden at a share of none, else nothing,
+which leaves a pending step its parent's reach. -/
+public def stepReachDecl (n : Nat) : String := if n == 0 then "hidden" else "initial"
+
+/-- The properties an epoch covering at `n`% declares for the steps under it. -/
+public def stepShareDecls (n : Nat) : String :=
+  s!"{stepShareVar}: {n}%; {stepReachVar}: {stepReachDecl n}"
+
+/-- The deck's own covering, which an epoch restates: its pending steps' reach. -/
+private def stepReachRoot (coveredPct : Nat) : DeckRule :=
+  { selector := [.lit "html"], decls := [(stepReachVar, stepReachDecl coveredPct)] }
+
 /-- The uncover's keyframes: a covered step fades in from its covered share, standing still. -/
 private def stepKeyframes (coveredPct : Nat) : DeckRule :=
   { selector := [.lit "@keyframes ltx-uncover { to { opacity: 100% } from"]
-    decls := [("opacity", s!"{coveredPct}%")]
+    decls := [("opacity", stepShareValue coveredPct)]
     requires := .supported .viewTimeline }
 
-/-- A step's reach as a hidden share leaves it: out of reach until its reveal starts, then its
-parent's; a covered share leaves it its parent's throughout. -/
-private def stepPendingReach (coveredPct : Nat) : String :=
-  if coveredPct == 0 then "hidden" else "inherit"
-
 /-- The unhide's keyframes: a step takes its pending reach until its reveal starts. -/
-private def stepUnhideKeyframes (coveredPct : Nat) : DeckRule :=
+private def stepUnhideKeyframes : DeckRule :=
   { selector := [.lit "@keyframes ltx-unhide { to { visibility: inherit } from"]
-    decls := [("visibility", stepPendingReach coveredPct)]
+    decls := [("visibility", stepReachValue)]
     requires := .supported .viewTimeline }
 
 /-- The steps' uncover: each step fades in during the scroll to its snap. -/
@@ -3715,7 +3735,7 @@ private def stepTrackFloorSnap : DeckRule :=
 /-- On the floor, steps start covered only under the deck script's marker. -/
 private def stepFloorCovered (coveredPct : Nat) : DeckRule :=
   { selector := [.lit "html[data-deck-script] .step:not([data-step=\"1\"])"]
-    decls := [("opacity", s!"{coveredPct}%"), ("visibility", stepPendingReach coveredPct)]
+    decls := [("opacity", stepShareValue coveredPct), ("visibility", stepReachValue)]
     requires := .unsupported .viewTimeline }
 
 /-- The steps a floor snap `k` uncovers: `2..k`. -/
@@ -3736,13 +3756,13 @@ private def stepSnapped (maxSteps : Nat) : List DeckRule :=
 /-- The recover's keyframes: full colour at the range's end, the covered fraction past it. -/
 private def stepRecoverKeyframes (coveredPct : Nat) : DeckRule :=
   { selector := [.lit "@keyframes ltx-recover { from { opacity: 100% } to"]
-    decls := [("opacity", s!"{coveredPct}%")]
+    decls := [("opacity", stepShareValue coveredPct)]
     requires := .supported .viewTimeline }
 
 /-- The rehide's keyframes: a recovered step takes its pending reach again from its recover's end. -/
-private def stepRehideKeyframes (coveredPct : Nat) : DeckRule :=
+private def stepRehideKeyframes : DeckRule :=
   { selector := [.lit "@keyframes ltx-rehide { from { visibility: inherit } to"]
-    decls := [("visibility", stepPendingReach coveredPct)]
+    decls := [("visibility", stepReachValue)]
     requires := .supported .viewTimeline }
 
 /-- A declared end's carrier dims over the snap interval after the range's last step. -/
@@ -3789,7 +3809,7 @@ private def stepRecoverFloorRule (coveredPct maxSteps k : Nat) : DeckRule :=
   { selector := [.lit "html[data-deck-script] .slide-track[data-snapped=\"", .num k,
       .lit "\"] :is(", .attrAlts "step-end" "data-step-last" (endedBy maxSteps k),
       .lit ")"]
-    decls := [("opacity", s!"{coveredPct}%"), ("visibility", stepPendingReach coveredPct)]
+    decls := [("opacity", stepShareValue coveredPct), ("visibility", stepReachValue)]
     requires := .unsupported .viewTimeline }
 
 private def stepRecovered (coveredPct maxSteps : Nat) : List DeckRule :=
@@ -3945,7 +3965,7 @@ private def stepFixed : List DeckRule :=
 
 private def stepRules (coveredPct maxSteps : Nat) : List DeckRule :=
   stepKeyframes coveredPct :: stepRecoverKeyframes coveredPct ::
-    stepUnhideKeyframes coveredPct :: stepRehideKeyframes coveredPct ::
+    stepUnhideKeyframes :: stepRehideKeyframes ::
     stepFloorCovered coveredPct ::
     (stepFixed ++ stepSnapped maxSteps ++ stepRecovered coveredPct maxSteps)
 
@@ -4067,7 +4087,7 @@ private def deckPrint (maxSteps : Nat) : List DeckRule :=
 private def stepSetPendingRule (cp k : Nat) : DeckRule :=
   { selector := [.lit "html[data-deck-script] [data-snapped=\"", .num k,
       .lit "\"] .step-set:not([data-steps~=\"", .num k, .lit "\"])"]
-    decls := [("opacity", s!"{cp}%"), ("visibility", stepPendingReach cp)] }
+    decls := [("opacity", stepShareValue cp), ("visibility", stepReachValue)] }
 
 private def altSetShownRule (k : Nat) : DeckRule :=
   { selector := [.lit "[data-snapped=\"", .num k,
@@ -4105,34 +4125,55 @@ private def nestedCoverRule (k : Nat) : DeckRule :=
       [.lit " :is(.step, .step-set) > .step-end"]
     decls := [("opacity", "100%"), ("animation", "none")] }
 
+/-- Under a pending ancestor a pending descendant covering what it carries takes its own reach,
+hidden where the covering it starts under hides it, as the PDF hides it inside a covered step. -/
+private def nestedReachRule (k : Nat) : DeckRule :=
+  { selector := [.lit "html[data-deck-script] [data-snapped=\"", .num k,
+      .lit "\"] :is(.step, .step-set):not([data-steps~=\"", .num k, .lit "\"]) ",
+      .lit ":is(.step, .step-set):not(.step-hide)", .lit ":not([data-steps~=\"", .num k, .lit "\"])"]
+    decls := [("visibility", stepReachValue)] }
+
+/-- `nestedReachRule`'s reduced-motion counterpart, at its specificity. -/
+private def nestedReachGuard : DeckRule :=
+  { selector := [.lit "html[data-deck-script] [data-snapped] :is(.step, .step-set)[data-steps] ",
+      .lit ":is(.step, .step-set):not(.step-hide)[data-steps]"]
+    decls := [("visibility", "inherit")]
+    part := .reduce }
+
 /-- Without the deck script every cover stands at full colour. -/
 private def coverStaticFloor : DeckRule :=
   { selector := [.lit "html:not([data-deck-script]) :is(.step, .step-end, .step-set)"]
     decls := [("opacity", "100%"), ("animation", "none")] }
 
 private def setRules (cp ms : Nat) : List DeckRule :=
-  stepSetGuard :: stepHideGuard :: coverStaticFloor :: (List.range ms).flatMap fun i =>
+  stepReachRoot cp :: stepSetGuard :: stepHideGuard :: coverStaticFloor :: nestedReachGuard ::
+    (List.range ms).flatMap fun i =>
     [stepSetPendingRule cp (i + 1), stepHideRule (i + 1), altSetShownRule (i + 1),
-      altSetHiddenRule (i + 1), nestedCoverRule (i + 1)]
+      altSetHiddenRule (i + 1), nestedCoverRule (i + 1), nestedReachRule (i + 1)]
 
 private theorem setRules_cases {P : DeckRule → Prop} {cp ms : Nat}
-    (hg : P stepSetGuard) (hhg : P stepHideGuard) (hf : P coverStaticFloor)
+    (hr : P (stepReachRoot cp)) (hg : P stepSetGuard) (hhg : P stepHideGuard)
+    (hf : P coverStaticFloor)
     (hp : ∀ k, P (stepSetPendingRule cp k)) (hhide : ∀ k, P (stepHideRule k))
     (hs : ∀ k, P (altSetShownRule k)) (hh : ∀ k, P (altSetHiddenRule k))
-    (hn : ∀ k, P (nestedCoverRule k)) :
+    (hn : ∀ k, P (nestedCoverRule k)) (hrg : P nestedReachGuard)
+    (hnr : ∀ k, P (nestedReachRule k)) :
     ∀ r ∈ setRules cp ms, P r := by
   intro r hr
   simp only [setRules, List.mem_cons, List.mem_flatMap, List.mem_range,
     List.not_mem_nil, or_false] at hr
-  rcases hr with rfl | rfl | rfl | ⟨i, _, rfl | rfl | rfl | rfl | rfl⟩
+  rcases hr with rfl | rfl | rfl | rfl | rfl | ⟨i, _, rfl | rfl | rfl | rfl | rfl | rfl⟩
+  · exact hr
   · exact hg
   · exact hhg
   · exact hf
+  · exact hrg
   · exact hp _
   · exact hhide _
   · exact hs _
   · exact hh _
   · exact hn _
+  · exact hnr _
 
 /-- Every rule of the deck's stylesheet, in emission order. -/
 public def deckRules (ty : DeckType) (pageSize : String) (coveredPct maxSteps : Nat) :
@@ -4147,8 +4188,8 @@ private theorem deckRules_forall {P : DeckRule → Prop} {v : DeckType} {pg : St
     (hreduce : ∀ r ∈ deckReduce, P r)
     (hkey : 2 ≤ ms → P (stepKeyframes cp))
     (hrkey : 2 ≤ ms → P (stepRecoverKeyframes cp))
-    (hukey : 2 ≤ ms → P (stepUnhideKeyframes cp))
-    (hhkey : 2 ≤ ms → P (stepRehideKeyframes cp))
+    (hukey : 2 ≤ ms → P stepUnhideKeyframes)
+    (hhkey : 2 ≤ ms → P stepRehideKeyframes)
     (hcov : 2 ≤ ms → P (stepFloorCovered cp))
     (hfix : 2 ≤ ms → ∀ r ∈ stepFixed, P r)
     (hsnapped : 2 ≤ ms → ∀ k, P (stepSnappedRule k))
@@ -4240,8 +4281,8 @@ private theorem deckRules_check {p : DeckRule → Bool} (v : DeckType) (pg : Str
     (hreduce : ∀ r ∈ deckReduce, p r = true)
     (hkey : p (stepKeyframes cp) = true)
     (hrkey : p (stepRecoverKeyframes cp) = true)
-    (hukey : p (stepUnhideKeyframes cp) = true)
-    (hhkey : p (stepRehideKeyframes cp) = true)
+    (hukey : p stepUnhideKeyframes = true)
+    (hhkey : p stepRehideKeyframes = true)
     (hcov : p (stepFloorCovered cp) = true)
     (hfix : ∀ r ∈ stepFixed, p r = true)
     (hsnapped : ∀ k, p (stepSnappedRule k) = true)
@@ -4307,8 +4348,8 @@ public theorem deck_css_partition (v : DeckType) (pg : String) (cp ms : Nat) :
     (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
     (by decide) rfl rfl rfl rfl rfl (by decide) (fun _ => rfl) (fun _ => rfl)
     (by decide) (fun _ => altSnapRules_cases rfl rfl rfl rfl)
-    (setRules_cases rfl rfl rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
-      (fun _ => rfl) (fun _ => rfl)) (fun _ => rfl) (by decide)
+    (setRules_cases rfl rfl rfl rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
+      (fun _ => rfl) (fun _ => rfl) rfl (fun _ => rfl)) (fun _ => rfl) (by decide)
 
 /-- The property names the floor may use, each universal across current engines per caniuse. -/
 public def baselineProps : List String :=
@@ -4321,7 +4362,7 @@ public def baselineProps : List String :=
    "animation", "border", "border-radius", "break-inside", "break-after",
    "break-before", "size", "print-color-adjust", "box-decoration-break",
    "bottom", "left", "right", "outline", "top", "align-self", "border-inline", "pointer-events",
-   "overflow-x", "padding-block", "isolation", "z-index"]
+   "overflow-x", "padding-block", "isolation", "z-index", stepReachVar]
 
 /-- Whether a rule is part of the floor: the base and every `@supports not` block. -/
 public def onFloor (r : DeckRule) : Bool :=
@@ -4337,8 +4378,8 @@ public theorem floor_is_baseline (v : DeckType) (pg : String) (cp ms : Nat) :
     (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
     (by decide) rfl rfl rfl rfl rfl (by decide) (fun _ => rfl) (fun _ => rfl)
     (by decide) (fun _ => altSnapRules_cases rfl rfl rfl rfl)
-    (setRules_cases rfl rfl rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
-      (fun _ => rfl) (fun _ => rfl)) (fun _ => rfl) (by decide)
+    (setRules_cases rfl rfl rfl rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
+      (fun _ => rfl) (fun _ => rfl) rfl (fun _ => rfl)) (fun _ => rfl) (by decide)
 
 /-- Whether a rule is a keyframe block, which styles nothing until an animation runs it. -/
 public def keyframesRule (r : DeckRule) : Bool :=
@@ -4358,25 +4399,28 @@ public def targetsContent (r : DeckRule) : Bool :=
   contentFrags.any fun frag =>
     (r.selector.flatMap SelChunk.lits).any fun s => hasFrag s frag
 
+/-- Whether a declaration may hide what its rule styles: a display of none, or a visibility other
+than its parent's or visible, a reach an epoch restates included. -/
+public def mayHide (d : String × String) : Bool :=
+  d == ("display", "none") || (d.1 == "visibility" && d.2 != "inherit" && d.2 != "visible")
+
 /-- No rule hides a frame or a step's content but behind the deck script's marker. -/
 public theorem content_hidden_behind_script (v : DeckType) (pg : String) (cp ms : Nat) :
     ∀ r ∈ deckRules v pg cp ms,
-      (!(targetsContent r) || scriptGated r ||
-        (!(r.decls.contains ("display", "none")) &&
-         !(r.decls.contains ("visibility", "hidden")))) = true :=
+      (!(targetsContent r) || scriptGated r || !(r.decls.any mayHide)) = true :=
   deckRules_check v pg cp ms
     (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
     (by decide) rfl rfl rfl rfl rfl (by decide) (fun _ => rfl) (fun _ => rfl)
     (by decide) (fun _ => altSnapRules_cases rfl rfl rfl rfl)
-    (setRules_cases rfl rfl rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
-      (fun _ => rfl) (fun _ => rfl)) (fun _ => rfl) (by decide)
+    (setRules_cases rfl rfl rfl rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
+      (fun _ => rfl) (fun _ => rfl) rfl (fun _ => rfl)) (fun _ => rfl) (by decide)
 
 public def opacityValues (r : DeckRule) : List String :=
   r.decls.filterMap fun d => if d.1 == "opacity" then some d.2 else none
 
 public theorem floor_opacity_mem (v : DeckType) (pg : String) (cp ms : Nat) :
     ∀ r ∈ deckRules v pg cp ms, ∀ o ∈ opacityValues r,
-      o = "100%" ∨ o = s!"{cp}%" := by
+      o = "100%" ∨ o = stepShareValue cp := by
   refine deckRules_forall ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_
   · exact deckBase_cases (fun o ho => nomatch ho) (fun o ho => nomatch ho)
       (fun o ho => nomatch ho) (fun o ho => nomatch ho) (fun o ho => nomatch ho)
@@ -4410,6 +4454,7 @@ public theorem floor_opacity_mem (v : DeckType) (pg : String) (cp ms : Nat) :
   · exact fun _ k => altSnapRules_cases (fun o ho => nomatch ho)
       (fun o ho => nomatch ho) (fun o ho => nomatch ho) (fun o ho => nomatch ho)
   · exact setRules_cases
+      (fun o ho => nomatch ho)
       (fun o ho => Or.inl (List.mem_singleton.mp ho))
       (fun o ho => nomatch ho)
       (fun o ho => Or.inl (List.mem_singleton.mp ho))
@@ -4417,6 +4462,7 @@ public theorem floor_opacity_mem (v : DeckType) (pg : String) (cp ms : Nat) :
       (fun _ o ho => nomatch ho)
       (fun _ o ho => nomatch ho) (fun _ o ho => nomatch ho)
       (fun _ o ho => Or.inl (List.mem_singleton.mp ho))
+      (fun o ho => nomatch ho) (fun _ o ho => nomatch ho)
   · exact fun _ o ho => nomatch ho
   · intro r hr
     have hr2 := deckPrint_subset r hr
@@ -4442,20 +4488,21 @@ public theorem floor_covered_script_gated (v : DeckType) (pg : String) (cp ms : 
     (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
     (by decide) rfl rfl rfl rfl rfl (by decide) (fun _ => rfl) (fun _ => rfl)
     (by decide) (fun _ => altSnapRules_cases rfl rfl rfl rfl)
-    (setRules_cases rfl rfl rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
-      (fun _ => rfl) (fun _ => rfl)) (fun _ => rfl) (by decide)
+    (setRules_cases rfl rfl rfl rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
+      (fun _ => rfl) (fun _ => rfl) rfl (fun _ => rfl)) (fun _ => rfl) (by decide)
 
 /-- A rule hiding what a step carries opens on the deck script's attribute, or is a keyframe, which
 only rules opening on that attribute run (`animations_script_gated`), so no floor hides it. -/
 public theorem hidden_script_gated (v : DeckType) (pg : String) (cp ms : Nat) :
     ∀ r ∈ deckRules v pg cp ms,
-      (keyframesRule r || scriptGated r || !(r.decls.contains ("visibility", "hidden"))) = true :=
+      (keyframesRule r || scriptGated r ||
+        !(r.decls.any fun d => d.1 == "visibility" && mayHide d)) = true :=
   deckRules_check v pg cp ms
     (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
     (by decide) rfl rfl rfl rfl rfl (by decide) (fun _ => rfl) (fun _ => rfl)
     (by decide) (fun _ => altSnapRules_cases rfl rfl rfl rfl)
-    (setRules_cases rfl rfl rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
-      (fun _ => rfl) (fun _ => rfl)) (fun _ => rfl) (by decide)
+    (setRules_cases rfl rfl rfl rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
+      (fun _ => rfl) (fun _ => rfl) rfl (fun _ => rfl)) (fun _ => rfl) (by decide)
 
 /-- Every rule that runs an animation opens on the deck script's attribute, so no keyframe styles a
 page the script does not run. -/
@@ -4466,8 +4513,8 @@ public theorem animations_script_gated (v : DeckType) (pg : String) (cp ms : Nat
     (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
     (by decide) rfl rfl rfl rfl rfl (by decide) (fun _ => rfl) (fun _ => rfl)
     (by decide) (fun _ => altSnapRules_cases rfl rfl rfl rfl)
-    (setRules_cases rfl rfl rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
-      (fun _ => rfl) (fun _ => rfl)) (fun _ => rfl) (by decide)
+    (setRules_cases rfl rfl rfl rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
+      (fun _ => rfl) (fun _ => rfl) rfl (fun _ => rfl)) (fun _ => rfl) (by decide)
 
 /-- The motion properties the reduced-motion contract covers. -/
 public def motionProps : List String := ["animation", "transition", "scroll-behavior"]
@@ -4513,8 +4560,8 @@ public theorem guards_by_construction (v : DeckType) (pg : String) (cp ms : Nat)
     (fun _ => rfl) ?_
     (fun _ _ => rfl) (fun _ _ => rfl) (fun _ => altReduceFixed_cases rfl rfl)
     (fun _ k => altSnapRules_cases rfl rfl rfl rfl)
-    (setRules_cases rfl rfl rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
-      (fun _ => rfl) (fun _ => rfl))
+    (setRules_cases rfl rfl rfl rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
+      (fun _ => rfl) (fun _ => rfl) rfl (fun _ => rfl))
     (fun _ => rfl) ?_
   · exact deckBase_cases rfl
       (motionGuarded_of_guard (g := deckGlideGuard)
@@ -4604,8 +4651,8 @@ public theorem print_lifts_stage_bounds_covers (v : DeckType) (pg : String) (cp 
     (fun _ => rfl) ?_
     (fun _ _ => rfl) (fun _ _ => rfl) (fun _ => altReduceFixed_cases rfl rfl)
     (fun _ k => altSnapRules_cases rfl rfl rfl rfl)
-    (setRules_cases rfl rfl rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
-      (fun _ => rfl) (fun _ => rfl))
+    (setRules_cases rfl rfl rfl rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
+      (fun _ => rfl) (fun _ => rfl) rfl (fun _ => rfl))
     (fun _ => rfl) ?_
   · exact deckBase_cases rfl rfl rfl rfl rfl
       (printLifts_of_lift (g := printStageRule)
@@ -4678,8 +4725,8 @@ public theorem deck_text_path_free (v : DeckType) (pg : String) (cp ms : Nat) :
     (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
     (by decide) rfl rfl rfl rfl rfl (by decide) (fun _ => rfl) (fun _ => rfl)
     (by decide) (fun _ => altSnapRules_cases rfl rfl rfl rfl)
-    (setRules_cases rfl rfl rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
-      (fun _ => rfl) (fun _ => rfl)) (fun _ => rfl) (by decide)
+    (setRules_cases rfl rfl rfl rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
+      (fun _ => rfl) (fun _ => rfl) rfl (fun _ => rfl)) (fun _ => rfl) (by decide)
 
 public theorem deckStageMilli_share (x stage : Int) (hs : 0 < stage) :
     deckStageMilli x stage * stage ≤ x * 100000 ∧
@@ -6643,6 +6690,29 @@ public def Config.epochVarBlocks (cfg : Config) (used : List String) : String :=
         some (evs.map fun (v, texts) => (v, (texts.lookup sc).join)) else none)
       cfg.floor (scheme := false)
 
+/-- The share an epoch under `p` restates for a deck's steps: its own, where it differs from the
+share in force. -/
+public def Config.epochShare (cfg : Config) (p : Ir.Palette) : Option Nat :=
+  let share := (Design.ofPalette p).coveredFraction
+  if cfg.deck && share != (Design.ofPalette cfg.pal).coveredFraction then some share else none
+
+/-- An epoch's step share is the covered fraction the PDF's cover of the same palette reads. -/
+public theorem Config.epochShare_projects (cfg : Config) (p : Ir.Palette) (n : Nat)
+    (h : cfg.epochShare p = some n) : n = (Design.ofPalette p).coveredFraction := by
+  unfold Config.epochShare at h
+  dsimp only at h
+  split at h
+  · exact (Option.some.inj h).symm
+  · exact nomatch h
+
+/-- An epoch's step share hides a pending step on the web page exactly where the PDF's cover of
+the same palette hides it. -/
+public theorem Config.epochShare_hides_agree (cfg : Config) (p : Ir.Palette) (n : Nat)
+    (h : cfg.epochShare p = some n) : (stepReachDecl n == "hidden") = p.cover.hidden := by
+  rw [cfg.epochShare_projects p n h, Ir.Palette.cover, Ir.Design.cover_hidden]
+  unfold stepReachDecl
+  split <;> simp_all
+
 /-- Advance the palette tokens and the flow's default ink, keeping a painted body's surface. -/
 public def Config.advancePalette (cfg : Config) (p : Ir.Palette) : Config :=
   let views := cfg.viewsOf p
@@ -6650,18 +6720,23 @@ public def Config.advancePalette (cfg : Config) (p : Ir.Palette) : Config :=
   let diff := epochPaletteDiff cfg.cssRoles cfg.floorPal
     (((cfg.frames.map (·.scheme)).zip views).lookup cfg.floor |>.getD p)
   let fg := Design.printInk p
-  let home := cfg.bodyGround.isNone && p.sameAs cfg.docPal
+  let home := cfg.bodyGround.isNone && p.uncovered.sameAs cfg.docPal.uncovered
+  -- a deck's steps cover at the share in force where they stand, as the PDF covers them
+  let shareStyle := match cfg.epochShare p with
+    | some n => stepShareDecls n
+    | none => ""
   { cfg with pal := p
              views, boxTexts
              listingGround := cfg.bodyGround.or (Ir.Design.declared? p .page)
              listingFg := if home then none else some fg, bodyInk := none
-             epochStyle := compactStyle (joinStyles cfg.epochStyle (cfg.epochStyleFor diff cfg.views views))
+             epochStyle := compactStyle (joinStyles (joinStyles cfg.epochStyle
+               (cfg.epochStyleFor diff cfg.views views)) shareStyle)
              epochPaint := if home then "" else s!"color: {roleRef .ink};"
              epochGround := cfg.bodyGround.isNone && (cfg.epochGround || diff.groundChanged) }
 
 public theorem Config.advancePalette_ink_projects (cfg : Config) (p : Ir.Palette) :
     (cfg.advancePalette p).listingFg =
-      if cfg.bodyGround.isNone && p.sameAs cfg.docPal then none
+      if cfg.bodyGround.isNone && p.uncovered.sameAs cfg.docPal.uncovered then none
       else some (Design.ofPalette p).fg := by
   rfl
 
@@ -6671,25 +6746,48 @@ private def Config.advanceTokens (cfg : Config) (tk : Ir.Tokens) : Config :=
              epochStyle := compactStyle (joinStyles cfg.epochStyle
                (epochTokenStyle cfg.lengthBasis cfg.tokens tk)) }
 
+/-- The side an alternation shows on every step of an `n`-step frame, if it shows one. -/
+private def uniformSide? (n : Nat) (spec : Ir.OverlaySpec) : Option Bool :=
+  let sides := (List.range n).map fun i => spec.showsFirst (i + 1)
+  if sides.all id then some true else if sides.all (!·) then some false else none
+
 /-- How declarations flow past a block: through ordinary containers, never out of columns, notes
-or navigation. -/
-private def declarationFlow : Ir.CtxFold Bool Config where
-  openBlock := fun visible cfg b => match b with
-    | .columns _ | .note _ | .nav _ _ => (cfg, false)
-    | .role name _ => (cfg, visible && !Ir.pageMarkerRole name)
-    | .setPalette p => (if visible then cfg.advancePalette p else cfg, visible)
-    | .setTokens tk => (if visible then cfg.advanceTokens tk else cfg, visible)
-    | _ => (cfg, visible)
+or navigation, and out of an alternative that changes with the step (`alt`) only as colours,
+whose steps no epoch style can tell. -/
+private def declarationFlowIn : Ir.CtxFold (Bool × Bool) Config where
+  openBlock := fun (visible, alt) cfg b => match b with
+    | .columns _ | .note _ | .nav _ _ => (cfg, (false, alt))
+    | .role name _ => (cfg, (visible && !Ir.pageMarkerRole name, alt))
+    | .altSteps _ _ _ => (cfg, (visible, true))
+    | .setPalette p =>
+      (if !visible then cfg else cfg.advancePalette (if alt then p.coveredAs cfg.pal else p),
+        (visible, alt))
+    | .setTokens tk => (if visible then cfg.advanceTokens tk else cfg, (visible, alt))
+    | _ => (cfg, (visible, alt))
   closeBlock := fun _ cfg _ => cfg
-  openInline := fun visible cfg _ => (cfg, visible)
+  openInline := fun ctx cfg _ => (cfg, ctx)
   closeInline := fun _ cfg _ => cfg
+
+/-- `declarationFlowIn`, where an alternative showing one side on every step of its frame passes on
+that side's declarations alone. -/
+private def declarationFlow : Ir.CtxFold (Bool × Bool) Config :=
+  { declarationFlowIn with
+    openBlock := fun (visible, alt) cfg b => match b with
+      | .altSteps spec first other =>
+        match uniformSide? cfg.overlaySteps spec with
+        | some side =>
+          (if visible then
+            Ir.foldCtxBlocks declarationFlowIn (true, alt) cfg (if side then first else other)
+          else cfg, (false, alt))
+        | none => (cfg, (visible, true))
+      | b => declarationFlowIn.openBlock (visible, alt) cfg b }
 
 private def Config.afterBlock (cfg : Config) : Block → Config
   | .columns _ | .note _ | .nav _ _ => cfg
-  | b => Ir.foldCtxBlock declarationFlow true cfg b
+  | b => Ir.foldCtxBlock declarationFlow (true, false) cfg b
 
 private def Config.afterBlocks (cfg : Config) (body : Array Block) : Config :=
-  Ir.foldCtxBlocks declarationFlow true cfg body
+  Ir.foldCtxBlocks declarationFlow (true, false) cfg body
 
 private theorem Config.afterBlock_palette_projects (cfg : Config) (p : Ir.Palette) :
     cfg.afterBlock (.setPalette p) = cfg.advancePalette p := rfl

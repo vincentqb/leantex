@@ -507,15 +507,28 @@ in its medium and no further, so it keeps the most colour its hue holds
 there: a deck's text and marks at WCAG 2.2's large-scale 3:1, a document's
 and a poster's text at 4.5:1 and their marks at 3:1, and an accent that
 meets its floor ships as given. A deck hides a pending overlay step, its
-place kept, unless its preamble declares a share, as beamer's default
-`invisible` covering does, and a cover declared in the body is ignored
-with `W0340`; `\setbeamercovered{transparent}` covers it at beamer's 15%,
+place kept, unless it declares a share, as beamer's default `invisible`
+covering does; `\setbeamercovered{transparent}` covers it at beamer's 15%,
 and `transparent=<n>` or `\palette{ covered = <n>\% }` at that share, while
 `dynamic` and `highly dynamic`, which grade each step by its distance, cover
 every pending step at its next steps' share, and a share past 99% at 99%,
-each named with `W0109`. On the web page a step fades in where it stands,
-from its share; a hidden one takes no focus or pointer until its reveal
-starts. A seed or a declared colour ships as given at any share, and
+each named with `W0109`. A share the body declares covers the steps after it
+to the end of its group, a frame's or the document's, as beamer applies a
+body `\setbeamercovered` to the frames after it, and a `covered` colour, as
+every palette colour, from there on: a pending step covers at the share in
+force where it starts, each run in the cover of its own colour, an item's
+marker with its item, and a step inside a covered one once, by the outer's
+cover, where beamer covers it twice. A share declared inside `\only` or
+`\alt` covers past it on the steps that typeset it, as beamer's does; the
+web page, whose steps no epoch can tell apart, carries it past only an
+alternative showing that side on every step. A `\pause` reveals the rest of
+its frame after it, past the column, list or block it stands in, as beamer
+counts a frame's pauses; one inside `\only` or `\alt` counts on its own
+steps alone, where beamer also counts it toward the frame's later pauses on
+those steps, and one outside a frame's body, in a note or between frames,
+reveals nothing, named with `W0105`. On the web page a step fades in where
+it stands, from its share; a hidden one takes no focus or pointer until its
+reveal starts. A seed or a declared colour ships as given at any share, and
 `W0345` names the ink, or an alert or example a covered step sets, whose
 covered form stands under 3:1 from it, or a declared `covered` colour under
 3:1 from the ink, unless `\palette[decorative]{ covered = <n>\% }` declares

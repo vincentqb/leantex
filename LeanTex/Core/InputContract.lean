@@ -350,8 +350,8 @@ private theorem elabBlocksGo_input_at (ctx : Ctx) (st : ESt) (raws : Array Raw) 
     (elabBlocksGo ctx raws i #[] #[] gen).run st =
       ((do
         let bs ← elabEnvArm ctx n body pos #[]
-        elabBlocksGo ctx raws (i + 1)
-          (Ir.markDisplay false (parFollows raws (i + 1)) false 0 bs) #[] gen) :
+        elabBlocksNext ctx raws (i + 1)
+          (Ir.markDisplay false (parFollows raws (i + 1)) false 0 bs) gen) :
         EM (Array Block)).run st := by
   subst hg
   rw [elabBlocksGo, run_get]
@@ -528,6 +528,14 @@ private theorem elabBlockScope_input_exact (ctx : Ctx) (n f : String)
     elabBlocksGo_input_at ctx (openScope st) _ pre.size n f hn body pos st.flowGen rfl hm hp hb
       (by omega) hw]
   simp only [StateT.run_bind]
+  have hrest : ((pre ++ #[Raw.env n body pos] ++ post).extract (pre.size + 1)
+      (pre ++ #[Raw.env n body pos] ++ post).size).all isSpaceOrPar = true := by
+    have hx : ((pre ++ #[Raw.env n body pos] ++ post).extract (pre.size + 1)
+        (pre ++ #[Raw.env n body pos] ++ post).size).toList = post.toList := by
+      simp [List.drop_append]
+    rw [← Array.all_toList, hx, Array.all_toList, Array.all_eq_true_iff_forall_mem]
+    exact fun r hr => sourceBlank_spaceOrPar r (sourceBlank_of_mem post hpost r hr)
+  simp only [elabBlocksNext_blank _ _ _ _ _ hrest]
   rw [elabEnvArm_input_scope ctx n f hn body pos hlen, splicedFrameScope_zero,
     elabBlockScope_run _ _ body hmF (openLengthScope_inert _ _ hlen)]
   have he : openScope { openScope st with spans := { (openScope st).spans with frames :=

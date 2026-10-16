@@ -59,7 +59,7 @@ def runContrastContractChecks (ref : IO.Ref (List String)) : IO Unit := do
   let pendingRuns := observedContrastRuns pendingOut
   t "a real two-step frame ships computed covered paint outside the plan"
     (pendingOut.pages.size == 2 && pendingRuns.any fun r =>
-      r.1 == "Pending" && r.2.1 == (Ir.Design.ofDoc pending).cover.plain &&
+      r.1 == "Pending" && r.2.1 == (Ir.Design.ofDoc pending).inkCover &&
         unplannedContrastRun pending r &&
         Contrast.contrastMilli r.2.1
           (r.2.2.getD (Contrast.effectivePair pending).bg) < Contrast.aaText)
@@ -118,7 +118,7 @@ def runContrastContractChecks (ref : IO.Ref (List String)) : IO Unit := do
     Contrast.shippedAudit (Contrast.effectivePair pending).bg Contrast.aaText pendingOut
   t "covered paint remains a raw arithmetic observation"
     (pendingAudit.any fun a =>
-      a.paint.ink == (Ir.Design.ofDoc pending).cover.plain && !a.assessment.passes)
+      a.paint.ink == (Ir.Design.ofDoc pending).inkCover && !a.assessment.passes)
   t "equal active ink on distinct pages retains distinct addresses"
     ((pendingAudit.filter fun a =>
       a.paint.page == 0 && a.paint.ink == Ir.Color.black).size > 0 &&

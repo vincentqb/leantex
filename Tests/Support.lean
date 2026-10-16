@@ -1134,10 +1134,10 @@ def CensusPage.text (p : CensusPage) : String :=
 
 /-- The colours covering can paint in a document (`Design.cover`), fixed points excluded. -/
 def coveredColorsOf (doc : Ir.Doc) : Array Ir.Color :=
-  let cov := (Ir.Design.ofDoc doc).cover
+  let d := Ir.Design.ofDoc doc
   (doc.palette.entries.filterMap fun (_, c) =>
-    let covered := cov.of c
-    if covered == c then none else some covered).push cov.plain
+    let covered := d.cover.of c
+    if covered == c then none else some covered).push d.inkCover
 
 /-- A page's picture marks in layout coordinates, in paint order, each placed by its ink's
 placement. -/
@@ -1347,8 +1347,23 @@ def stepAnimations (css : String) : List String :=
           if n.isEmpty || n == "none" then none else some n
       | [] => []).eraseDups
 
-/-- The declarations a stylesheet's `@keyframes` block of that name sets, frame by frame in order. -/
+/-- A deck's stylesheet as a page whose body restates no covering reads it: each pending step's
+share at its fallback, and its reach at the deck's root declaration, else its parent's. -/
+def stepCssResolved (css : String) : String :=
+  let root := ((css.splitOn s!"html \{ {HtmlDoc.stepReachVar}: ").drop 1).head?.map fun rest =>
+    ((rest.splitOn ";").headD "").trimAscii.toString
+  let css := css.replace HtmlDoc.stepReachValue (if root == some "hidden" then "hidden" else "inherit")
+  match css.splitOn s!"var({HtmlDoc.stepShareVar}, " with
+  | [] => css
+  | first :: rest => first ++ String.join (rest.map fun part =>
+      match part.splitOn ")" with
+      | value :: more => value ++ ")".intercalate more
+      | [] => part)
+
+/-- The declarations a stylesheet's `@keyframes` block of that name sets, frame by frame in order,
+each step's share and reach as `stepCssResolved` reads them. -/
 def keyframeDecls (css name : String) : Option (List (String × String)) := do
+  let css := stepCssResolved css
   let rest ← ((css.splitOn s!"@keyframes {name} ").drop 1).head?
   let (_, body, _) := rest.toList.foldl (init := ((0 : Nat), "", false)) fun (depth, acc, done) c =>
     if done then (depth, acc, done)
@@ -1388,6 +1403,7 @@ def stepsFadeFromNothing (css : String) : Bool :=
 run, its reveal opens on a hidden step and its recover closes on one, and every rule outside a
 keyframe that covers a step from nothing hides it too. -/
 def pendingStepsOutOfReach (css : String) : Bool :=
+  let css := stepCssResolved css
   let runs := stepAnimations css
   runs.contains "ltx-unhide" && runs.contains "ltx-rehide" &&
     (keyframeDecls css "ltx-unhide").any (·.contains ("visibility", "hidden")) &&
@@ -1613,6 +1629,10 @@ def wordRun (lines : Array Layout.LineOut) (word : String) : Option (Ir.Color ×
     | .run _ c _ _ gs _ _ _ _ ground _ =>
       if String.ofList (gs.map (·.2.1)).toList == word then some (c, ground) else none
     | _ => none
+
+/-- The colour a page ships a word in, if it ships it. -/
+def wordOn (out : Layout.Out) (page : Nat) (word : String) : Option Ir.Color :=
+  (out.pages[page]?.bind fun p => wordRun p.lines word).map (·.1)
 
 /-- Whether a shipped line sets any glyph. -/
 def hasGlyphRun (l : Layout.LineOut) : Bool :=

@@ -3237,7 +3237,7 @@ def wholeTreeChecks (say : String → IO Unit) : IO Unit := do
   let armAllow : List String :=
     ["setAltLeaf", "resolveRefLeaf", "substPageLeaf", "imageSrcPush",
      "floatLabelPush",
-     "flattenLeadStep", "collectTable", "collectItem"]
+     "collectTable", "collectItem"]
   for (f, lines) in coreTexts do
     if f.startsWith "LeanTex/Core/" then
       -- A def handed to a fold reads one node while the fold recurses, so its catch-all is no hole.

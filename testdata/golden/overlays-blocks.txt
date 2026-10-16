@@ -90,8 +90,9 @@ frame
         para
           text "Below the pause."
     column 500/1000
-      para
-        text "The steady column."
+      step 2
+        para
+          text "The steady column."
 frame
   title
     text "Alternation"

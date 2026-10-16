@@ -23,7 +23,7 @@ private def overlayBoundaryContractChecks (ref : IO.Ref (List String)) (fonts : 
     let out := layoutOf fonts doc
     let (head, tree, htmlDs) := HtmlDoc.emitTree {} doc
     let attrs := (elemAttrsList (fun _ => true) #[] tree.toList).map (·.2)
-    let rules := artCssBlocks (treeCssList "" head.toList)
+    let rules := artCssBlocks (stepCssResolved (treeCssList "" head.toList))
     let here := "boundary " ++ spec
     t (here ++ ": clean four-step artifact")
       ((ds ++ out.diags ++ htmlDs).all (·.severity == .note) && out.pages.size == 4)
@@ -201,7 +201,7 @@ def overlayContractChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : 
     ("BeforeGuard " ++ body ++ " AfterGuard\n\n\\uncover<4,4>{ClockMarker}")
   let rulesOf (text : String) :=
     let (head, _, _) := HtmlDoc.emitTree {} (elabStr text).1
-    artCssBlocks (treeCssList "" head.toList)
+    artCssBlocks (stepCssResolved (treeCssList "" head.toList))
   let witness (label native : String) (readings : List String) (markers : List String) := do
     let (out, tree, ds) := styleBuild faces (source native)
     t (label ++ ": clean native") (ds.all (·.severity == .note))

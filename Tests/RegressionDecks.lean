@@ -97,7 +97,7 @@ private def title (ref : IO.Ref (List String)) (name : String) (a : Artifact)
   check ref s!"{name}: HTML title accent"
     (styled ts.toList byline "color: var(--ltx-c-deckGold, #f4ce84)" &&
       styled ts.toList "Paper Lab" "color: var(--ltx-c-deckGold, #f4ce84)")
-  let css := treeCssList "" a.head.toList
+  let css := stepCssResolved (treeCssList "" a.head.toList)
   check ref s!"{name}: HTML custom title palette"
     (#["--ltx-titlepagebg: #243347", "--ltx-titlepagefg: #fafcff", "--ltx-c-deckGold: #f4ce84"].all
       (hasStr css))
@@ -133,7 +133,7 @@ private def workshop (ref : IO.Ref (List String)) (a : Artifact) : IO Unit := do
   check ref s!"{name}: HTML standout and explicit reminder"
     (standout.size == 1 && treeShownOccurs standout "Keep one clear gap." == 1 &&
       slideFootsList #[] standout.toList == #[("Workshop reminder", "")])
-  let css := treeCssList "" a.head.toList
+  let css := stepCssResolved (treeCssList "" a.head.toList)
   check ref s!"{name}: HTML standout palette"
     (hasStr css "--ltx-standoutbg: #243347" && hasStr css "--ltx-standoutfg: #fafcff")
   check ref s!"{name}: numbered closing frame"
@@ -196,7 +196,7 @@ private def overlays (ref : IO.Ref (List String)) (a : Artifact) : IO Unit := do
   check ref s!"{name}: HTML cover colours"
     (styled corner.toList "Corner marker" "color: var(--ltx-c-deckBlue, #1c5070)" &&
       styled centre.toList "Centre marker" "color: var(--ltx-c-deckRust, #7a321d)")
-  let css := treeCssList "" a.head.toList
+  let css := stepCssResolved (treeCssList "" a.head.toList)
   check ref s!"{name}: HTML cover palette and fraction"
     (hasStr css "--ltx-c-deckBlue: #1c5070" && hasStr css "--ltx-c-deckRust: #7a321d" &&
       (screenRuleOf css
@@ -248,7 +248,7 @@ private def deckListings (ref : IO.Ref (List String)) (a : Artifact) : IO Unit :
   check ref s!"{name}: section page" (textAt a 1 == #["Small counting tools"])
   let codes := elemNodesList (· == "code") #[] a.body.toList
   let lightCodes := elemNodesList (· == "code") #[] (schemeTree a.head a.body .print).toList
-  let css := treeCssList "" a.head.toList
+  let css := stepCssResolved (treeCssList "" a.head.toList)
   check ref s!"{name}: both native listing languages"
     (codes.map (deckAttr · "class") == #[some "language-lean4", some "language-python"])
   for (lang, page, source, heading, intro) in #[

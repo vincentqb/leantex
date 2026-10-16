@@ -125,6 +125,10 @@ cover colour's own coloured runs take. -/
 fainter ones (beamerbaseoverlay.sty). -/
 @[expose] public def dynamicShare : Nat := 10
 
+/-- beamer's `highly dynamic` share for the step next to show, which its graded covering sets ahead
+of fainter ones (beamerbaseoverlay.sty). -/
+@[expose] public def highlyDynamicShare : Nat := 15
+
 /-- What a class asks of colours nothing declares: LaTeX's classes print secondary ink in the
 ink, the web's keep a quieter one and tinted verbatim. -/
 public inductive ClassRow where

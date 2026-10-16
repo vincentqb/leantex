@@ -1455,6 +1455,15 @@ order, with the same decorative names and cover. -/
       (a.decorative ++ b.decorative).all (fun k => a.decorative.contains k == b.decorative.contains k)) &&
     a.coveredFraction == b.coveredFraction
 
+/-- The palette without its covering: its share and covered colour, which only steps read. -/
+@[expose] public def Palette.uncovered (p : Palette) : Palette :=
+  { p with coveredFraction := none, entries := p.entries.filter (·.1 != .role .covered)
+           decorative := p.decorative.filter (· != .role .covered) }
+
+/-- The palette with `q`'s covered share. -/
+@[expose] public def Palette.coveredAs (p q : Palette) : Palette :=
+  { p with coveredFraction := q.coveredFraction }
+
 public theorem Palette.erase_exact (p : Palette) (ref : ColorRef) :
     (p.erase ref).lookup ref = none := by
   simp only [Palette.erase, Palette.lookup]
@@ -2761,6 +2770,10 @@ public def maxStep (s : OverlaySpec) : Nat :=
 
 public def union (s t : OverlaySpec) : OverlaySpec := { s with more := s.more ++ t.ranges }
 
+/-- The selector showing where `s` shows from step `n` on: each range starting no earlier. -/
+@[expose] public def fromStep (s : OverlaySpec) (n : Nat) : OverlaySpec :=
+  { s with first := max s.first n, more := s.more.map fun r => (max r.1 n, r.2) }
+
 /-- The frame's numbered steps that satisfy `p`, each once. -/
 public def numberedSteps (steps : Nat) (p : Nat → Bool) : List Nat :=
   ((List.range steps).map (· + 1)).filter p
@@ -2783,6 +2796,36 @@ public theorem selects_exact (s : OverlaySpec) (k : Nat) :
 public theorem union_selects_exact (s t : OverlaySpec) (k : Nat) :
     (s.union t).selects k = (s.selects k || t.selects k) := by
   simp [selects, union, ranges, List.any_append, Bool.or_assoc]
+
+private theorem fromStep_range (a n k : Nat) (b : Option Nat) :
+    (!stepPending (max a n) b k) = ((!stepPending a b k) && decide (n ≤ k)) := by
+  unfold stepPending
+  have hm : (k < max a n) = (k < a ∨ k < n) := by
+    apply propext; rw [Nat.max_def]; split <;> omega
+  cases b with
+  | none =>
+    simp only [hm, Bool.or_false]
+    by_cases h2 : k < a <;> by_cases h3 : n ≤ k <;> (simp [h2, h3]; try omega)
+  | some u =>
+    simp only [hm]
+    by_cases h2 : k < a <;> by_cases h3 : n ≤ k <;> by_cases h4 : k > u <;>
+      (simp [h2, h3, h4]; try omega)
+
+public theorem fromStep_selects_exact (s : OverlaySpec) (n k : Nat) :
+    (s.fromStep n).selects k = (s.selects k && decide (n ≤ k)) := by
+  have hl : ∀ l : List (Nat × Option Nat),
+      (l.map fun r => (max r.1 n, r.2)).any (fun r => !stepPending r.1 r.2 k) =
+        (l.any (fun r => !stepPending r.1 r.2 k) && decide (n ≤ k)) := by
+    intro l
+    induction l with
+    | nil => simp
+    | cons r rest ih =>
+      rw [List.map_cons, List.any_cons, List.any_cons, ih, fromStep_range]
+      cases (!stepPending r.1 r.2 k) <;> cases decide (n ≤ k) <;> simp
+  have hf := fromStep_range s.first n k s.last
+  simp only [selects, ranges, fromStep, List.any_cons] at hl ⊢
+  rw [hf, hl]
+  cases (!stepPending s.first s.last k) <;> cases decide (n ≤ k) <;> simp
 
 public theorem union_self_id (s : OverlaySpec) (k : Nat) :
     (s.union s).selects k = s.selects k := by
@@ -11391,27 +11434,63 @@ public def Design.style (d : Design) (element : String) : ElementStyle :=
 public def Design.consumedRoles : List String :=
   Role.all.filterMap (·.row.key)
 
-/-- How covering paints: a covered run with no colour of its own, and the
-per-colour cover of a coloured one. -/
+/-- How covering paints: the per-colour cover, and a declared constant cover for runs with no
+colour of their own. -/
 public structure Cover where
-  plain : Color
   of : Color → Color
+  covered : Option Color
   /-- A share of none: a pending step is invisible, as `\visible` sets it, its place kept. -/
   hidden : Bool
+
+/-- The cover of a run with no colour of its own, set in `ink`. -/
+@[expose] public def Cover.plainOf (c : Cover) (ink : Color) : Color := c.covered.getD (c.of ink)
 
 /-- The paint of ink that keeps its place and ships nothing, its CMYK rider outside every
 document's range. -/
 @[expose] public def hiddenPaint : Color :=
   { r := 0, g := 0, b := 0, cmyk := some (1001, 1001, 1001, 1001) }
 
-/-- Covering: the per-colour cover at the design's fraction toward its surface, and the plain
-cover for runs with no colour; a share of none hides the step instead, as beamer's `invisible`
-does. -/
+/-- Covering: the per-colour cover at the design's fraction toward its surface; a share of none
+hides the step instead, as beamer's `invisible` does. -/
 public def Design.cover (d : Design) : Cover :=
-  if d.coveredFraction == 0 then { plain := hiddenPaint, of := fun _ => hiddenPaint, hidden := true }
-  else
-    let of := Oklab.coverOver d.coveredFraction (Oklab.labOf d.bg)
-    { plain := d.covered.getD (of d.fg), of := of, hidden := false }
+  if d.coveredFraction == 0 then { of := fun _ => hiddenPaint, covered := none, hidden := true }
+  else { of := Oklab.coverOver d.coveredFraction (Oklab.labOf d.bg), covered := d.covered, hidden := false }
+
+/-- The cover a pending step starting under this palette takes. -/
+@[expose] public def Palette.cover (p : Palette) : Cover := (Design.ofPalette p).cover
+
+public theorem Design.cover_hidden (d : Design) : d.cover.hidden = (d.coveredFraction == 0) := by
+  unfold Design.cover
+  split <;> simp_all
+
+/-- The cover of the design's own ink, which a run with no colour of its own takes. -/
+@[expose] public def Design.inkCover (d : Design) : Color := d.cover.plainOf d.fg
+
+/-- What the dimming walk reads where it stands: the cover a step starting here takes, and the ink
+a run with no colour of its own sets in. -/
+public structure DimHere where
+  cover : Cover
+  ink : Color
+  /-- `cover.plainOf ink`, read once. -/
+  plain : Color
+
+/-- The dimming walk's reading of a cover where runs set in `ink`. -/
+@[expose] public def DimHere.under (cover : Cover) (ink : Color) : DimHere :=
+  { cover, ink, plain := cover.plainOf ink }
+
+/-- The dimming walk's reading under the palette in force. -/
+@[expose] public def DimHere.of (p : Palette) : DimHere := DimHere.under p.cover (Design.printInk p)
+
+/-- The paint a pending inline step's runs take: the cover of the colour in force, or of the ink. -/
+@[expose] public def DimHere.paint (h : DimHere) (own : Option Color) : Color :=
+  match own with
+  | some c => h.cover.of c
+  | none => h.plain
+
+/-- The paint of a run with no colour of its own in a step covered by the reading `region`, set in
+the ink in force at `here`. -/
+@[expose] public def DimHere.plainUnder (region here : DimHere) : Color :=
+  if region.ink = here.ink then region.plain else region.cover.plainOf here.ink
 
 /-- One component of a numbered overlay: a number, a closed range or an open range. -/
 private def overlayInterval (w : String) : Option (Nat × Option Nat) := do
@@ -11604,204 +11683,51 @@ public def altUnreachable (doc : Doc) : Nat :=
     | .rule _ _ _ | .picture _ | .table _ _ _ _ _ _ | .float _ _ _ _ _
     | .bibliography _ _ _ => n
 
-/-- An item's leading paragraph hidden on this step where the marker lifts it out of its step's
-region: a description's label and text each invisible, else the text invisible under the hidden
-paint its marker takes. -/
-private def hiddenLead (hid : OverlaySpec) (p : Array Inline) : Array Inline :=
-  match p.toList with
-  | .role n label :: rest =>
-    if n == descLabelRole then #[.role n #[.onSteps hid label], .onSteps hid rest.toArray]
-    else #[.colored hiddenPaint none #[.onSteps hid p]]
-  | _ => #[.colored hiddenPaint none #[.onSteps hid p]]
-
-/-- The invisible region an item's leading paragraph hides in where `hiddenLead` set it, which its
-marker hides in too. -/
-public def hiddenLeadSpec? (content : Array Inline) : Option OverlaySpec :=
-  match content with
-  | #[.colored c none #[.onSteps s _]] => if c == hiddenPaint && s.invisible then some s else none
-  | _ => none
-
-/-- Under a hidden cover, a dimmed item whose step the cover hides keeps its leading paragraph
-hidden where `flattenLeadStep` lifts it out of the step, its marker with it. -/
-private def hideLead (cover : Cover) (k : Nat) (item dimmed : Array Block) : Array Block :=
-  if let some (Block.onSteps spec _) := item[0]? then
-    if cover.hidden && !spec.invisible && spec.pending k then
-      if let .onSteps hid body :: more := dimmed.toList then
-        if let .para p :: rest := body.toList then
-          (Block.onSteps hid (Block.para (hiddenLead hid p) :: rest).toArray :: more).toArray
-        else dimmed
-      else dimmed
-    else dimmed
-  else dimmed
-
 /-- A decoration as a covered step shows it: a mark quieted by the cover, as
 the text it stands behind is; a rule as it is, in the run's covered ink. -/
-private def Decoration.dimmed (d : Decoration) (cover : Cover) (pending : Bool) : Decoration :=
+private def Decoration.dimmed (d : Decoration) (pend : Option DimHere) : Decoration :=
   match d with
   | .underline => .underline
   | .lineThrough => .lineThrough
-  | .highlight c nm => if pending then .highlight (cover.of c) none else .highlight c nm
+  | .highlight c nm => match pend with
+    | some cv => .highlight (cv.cover.of c) none
+    | none => .highlight c nm
 
 mutual
 
-/-- One overlay walk in two modes: off, step `k` of the frame's overlay,
-covering what lies outside its range; on, everything covered; only colours
-change. -/
-private def dimBlockList (cover : Cover) (k : Nat) (pending : Bool) (out : Array Block) :
-    List Block → Array Block
-  | [] => out
-  | b :: rest =>
-    dimBlockList cover k pending (out.push (dimBlock cover k pending b)) rest
-
-private def dimBlock (cover : Cover) (k : Nat) (pending : Bool) : Block → Block
-  | .para content =>
-    if pending then
-      .para #[.colored cover.plain none (dimInlineList cover k true #[] content.toList)]
-    else .para (dimInlineList cover k false #[] content.toList)
-  | .equation num content =>
-    if pending then
-      .equation num #[.colored cover.plain none (dimInlineList cover k true #[] content.toList)]
-    else .equation num (dimInlineList cover k false #[] content.toList)
-  | .list o s items => .list o s (dimItems cover k pending #[] items.toList)
-  | .center body => .center (dimBlockList cover k pending #[] body.toList)
-  | .ragged s body => .ragged s (dimBlockList cover k pending #[] body.toList)
-  | .quote body => .quote (dimBlockList cover k pending #[] body.toList)
-  | .lines ls => .lines (dimLaid cover k pending #[] ls.toList)
-  | .abstract body => .abstract (dimBlockList cover k pending #[] body.toList)
-  | .titled kind title body =>
-    .titled kind (dimInlineList cover k pending #[] title.toList)
-      (dimBlockList cover k pending #[] body.toList)
-  | .disclosure summary expanded body =>
-    .disclosure (dimInlineList cover k pending #[] summary.toList) expanded
-      (dimBlockList cover k pending #[] body.toList)
-  | .role n body => .role n (dimBlockList cover k pending #[] body.toList)
-  | .link target body => .link target (dimBlockList cover k pending #[] body.toList)
-  | .spaced g body => .spaced g (dimBlockList cover k pending #[] body.toList)
-  | .columns cols => .columns (dimColumns cover k pending #[] cols.toList)
-  -- Invisible content brings no cover of its own: layout keeps its place and ships none of it,
-  -- as it does of every pending step under a hidden cover.
-  | .onSteps spec body =>
-    .onSteps (if cover.hidden then { spec with invisible := true } else spec)
-      (dimBlockList cover k (pending || (!cover.hidden && !spec.invisible && spec.pending k)) #[]
-        body.toList)
-  | .altSteps spec firstPage otherPage =>
-    .altSteps spec (dimBlockList cover k pending #[] firstPage.toList)
-      (dimBlockList cover k pending #[] otherPage.toList)
-  | .only targets body => .only targets (dimBlockList cover k pending #[] body.toList)
-  | .nav spec body => .nav spec (dimBlockList cover k pending #[] body.toList)
-  | .section l st num title => .section l st num (dimInlineList cover k pending #[] title.toList)
-  | .verbatim c s spec =>
-    .verbatim (if pending then some cover.plain else c) s
-      { spec with caption := spec.caption.map fun (n, cap) =>
-          (n, dimInlineList cover k pending #[] cap.toList) }
-  | .algorithm n sm lines => .algorithm n sm (dimAlgLines cover k pending #[] lines.toList)
-  | .note body => .note body
-  | .frame t st v br body => .frame t st v br body
-  | .framefoot content => .framefoot content
-  | .setPalette pal => .setPalette pal
-  | .setTokens tk => .setTokens tk
-  | .pagebreak => .pagebreak
-  | .logo content => .logo content
-  | .rule c nm th => .rule c nm th
-  | .picture p => .picture (if pending then p.recolor cover.of else p)
-  | .table cols pl pr rows rules spans =>
-    .table cols pl pr (dimTableRows cover k pending #[] rows.toList) rules spans
-  | .float fk num ca body caption =>
-    .float fk num ca (dimBlockList cover k pending #[] body.toList)
-      (if pending then
-        if caption.isEmpty then caption
-        else #[.colored cover.plain none (dimInlineList cover k true #[] caption.toList)]
-       else dimInlineList cover k false #[] caption.toList)
-  | .bibliography src style items => .bibliography src style items
-
-private def dimTableRows (cover : Cover) (k : Nat) (pending : Bool)
-    (out : Array (Array (Array Inline))) :
-    List (Array (Array Inline)) → Array (Array (Array Inline))
-  | [] => out
-  | row :: rest =>
-    dimTableRows cover k pending (out.push (dimTableCells cover k pending #[] row.toList)) rest
-
-private def dimTableCells (cover : Cover) (k : Nat) (pending : Bool)
-    (out : Array (Array Inline)) :
-    List (Array Inline) → Array (Array Inline)
-  | [] => out
-  | cell :: rest =>
-    dimTableCells cover k pending (out.push
-      (if pending then
-        if cell.isEmpty then cell
-        else #[.colored cover.plain none (dimInlineList cover k true #[] cell.toList)]
-       else dimInlineList cover k false #[] cell.toList)) rest
-
-private def dimItems (cover : Cover) (k : Nat) (pending : Bool) (out : Array (Array Block)) :
-    List (Array Block) → Array (Array Block)
-  | [] => out
-  | item :: rest =>
-    dimItems cover k pending
-      (out.push (hideLead cover k item (dimBlockList cover k pending #[] item.toList))) rest
-
-private def dimColumns (cover : Cover) (k : Nat) (pending : Bool)
-    (out : Array (BoxWidth × Array Block)) :
-    List (BoxWidth × Array Block) → Array (BoxWidth × Array Block)
-  | [] => out
-  | (w, body) :: rest =>
-    dimColumns cover k pending (out.push (w, dimBlockList cover k pending #[] body.toList)) rest
-
-private def dimAlgLines (cover : Cover) (k : Nat) (pending : Bool) (out : Array AlgLine) :
-    List AlgLine → Array AlgLine
-  | [] => out
-  | l :: rest =>
-    let content := if pending then
-        (if l.content.isEmpty then l.content
-         else #[.colored cover.plain none (dimInlineList cover k true #[] l.content.toList)])
-      else dimInlineList cover k false #[] l.content.toList
-    let comment := match l.comment with
-      | some c =>
-        some (if pending then
-            (if c.isEmpty then c
-             else #[Inline.colored cover.plain none (dimInlineList cover k true #[] c.toList)])
-          else dimInlineList cover k false #[] c.toList)
-      | none => Option.none
-    dimAlgLines cover k pending (out.push
-      { depth := l.depth
-        kind := l.kind
-        content := content
-        comment := comment }) rest
-
-private def dimLaid (cover : Cover) (k : Nat) (pending : Bool) (out : Array LaidLine) :
-    List LaidLine → Array LaidLine
-  | [] => out
-  | l :: rest =>
-    let content := if pending then
-        #[.colored cover.plain none (dimInlineList cover k true #[] l.content.toList)]
-      else dimInlineList cover k false #[] l.content.toList
-    dimLaid cover k pending (out.push { depth := l.depth, content := content }) rest
-
-private def dimInlineList (cover : Cover) (k : Nat) (pending : Bool) (out : Array Inline) :
-    List Inline → Array Inline
+/-- One overlay walk over inline content in two modes: off, step `k` of the frame's overlay,
+covering what lies outside its range; on (`pend`), everything covered by the cover of the step it
+lies in; only colours change, `own` the colour in force. -/
+private def dimInlineList (k : Nat) (pend : Option DimHere) (here : DimHere) (own : Option Color)
+    (out : Array Inline) : List Inline → Array Inline
   | [] => out
   | x :: rest =>
-    dimInlineList cover k pending (out.push (dimInline cover k pending x)) rest
+    dimInlineList k pend here own (out.push (dimInline k pend here own x)) rest
 
-private def dimInline (cover : Cover) (k : Nat) (pending : Bool) : Inline → Inline
-  | .styled st body => .styled st (dimInlineList cover k pending #[] body.toList)
+private def dimInline (k : Nat) (pend : Option DimHere) (here : DimHere) (own : Option Color) :
+    Inline → Inline
+  | .styled st body => .styled st (dimInlineList k pend here own #[] body.toList)
   | .colored c nm body =>
-    if pending then .colored (cover.of c) none (dimInlineList cover k true #[] body.toList)
-    else .colored c nm (dimInlineList cover k false #[] body.toList)
-  | .located n body => .located n (dimInlineList cover k pending #[] body.toList)
-  | .role n body => .role n (dimInlineList cover k pending #[] body.toList)
-  | .link u body => .link u (dimInlineList cover k pending #[] body.toList)
+    match pend with
+    | some cv => .colored (cv.cover.of c) none (dimInlineList k pend here (some c) #[] body.toList)
+    | none => .colored c nm (dimInlineList k none here (some c) #[] body.toList)
+  | .located n body => .located n (dimInlineList k pend here own #[] body.toList)
+  | .role n body => .role n (dimInlineList k pend here own #[] body.toList)
+  | .link u body => .link u (dimInlineList k pend here own #[] body.toList)
   -- a covered mark is quieted with the text it stands behind
-  | .decorated kind body => .decorated (kind.dimmed cover pending) (dimInlineList cover k pending #[] body.toList)
+  | .decorated kind body =>
+    .decorated (kind.dimmed pend) (dimInlineList k pend here own #[] body.toList)
   -- A pending inline step brings its own cover; a covered paragraph's comes from its block.
   | .onSteps spec body =>
-    if cover.hidden then
-      .onSteps { spec with invisible := true } (dimInlineList cover k pending #[] body.toList)
-    else if !spec.invisible && !pending && spec.pending k then
-      .onSteps spec #[.colored cover.plain none (dimInlineList cover k true #[] body.toList)]
-    else .onSteps spec (dimInlineList cover k pending #[] body.toList)
+    if here.cover.hidden then
+      .onSteps { spec with invisible := true } (dimInlineList k pend here own #[] body.toList)
+    else if !spec.invisible && pend.isNone && spec.pending k then
+      .onSteps spec #[.colored (here.paint own) none
+        (dimInlineList k (some here) here own #[] body.toList)]
+    else .onSteps spec (dimInlineList k pend here own #[] body.toList)
   | .altSteps spec firstPage otherPage =>
-    .altSteps spec (dimInlineList cover k pending #[] firstPage.toList)
-      (dimInlineList cover k pending #[] otherPage.toList)
+    .altSteps spec (dimInlineList k pend here own #[] firstPage.toList)
+      (dimInlineList k pend here own #[] otherPage.toList)
   | .text s => .text s
   | .math d src => .math d src
   -- Formula and image nodes stay whole: the backends dim them.
@@ -11819,111 +11745,175 @@ private def dimInline (cover : Cover) (k : Nat) (pending : Bool) : Inline → In
   | .pageCount => .pageCount
   | .linebreak e => .linebreak e
   | .cite t keys => .cite t keys
-  | .cited t keys ink => .cited t keys (dimInlineList cover k pending #[] ink.toList)
-  | .footnote n body => .footnote n (dimInlineList cover k pending #[] body.toList)
+  | .cited t keys ink => .cited t keys (dimInlineList k pend here own #[] ink.toList)
+  | .footnote n body => .footnote n (dimInlineList k pend here own #[] body.toList)
 
 end
 
-/-- The frame's body as step `k` of its overlay shows it. -/
-public def dimBlocks (cover : Cover) (k : Nat) (xs : Array Block) : Array Block :=
-  dimBlockList cover k false #[] xs.toList
+/-- A run a pending step covers under `cv`: its runs with no colour of their own in the cover of
+the ink. -/
+private def coverRun (k : Nat) (cv : DimHere) (here : DimHere) (xs : Array Inline) : Array Inline :=
+  #[.colored (cv.plainUnder here) none (dimInlineList k (some cv) here none #[] xs.toList)]
 
-/-- A leading `.step` wrapper opening on a paragraph gives the item that
-paragraph, keeping the rest under the wrapper. -/
-public def flattenLeadStep (item : Array Block) : Array Block :=
-  match item[0]? with
-  | some (Block.onSteps spec body) =>
-    match (body[0]? : Option Block) with
-    | some (.para p) =>
-      #[.para p] ++
-        (if body.size ≤ 1 then #[] else #[Block.onSteps spec (body.extract 1 body.size)]) ++
-        item.extract 1 item.size
-    | none => item.extract 1 item.size
-    | some (.onSteps _ _) | some (.section _ _ _ _) | some (.list _ _ _) | some (.center _)
-    | some (.ragged _ _) | some (.spaced _ _) | some (.role _ _) | some (.link _ _)
-    | some (.quote _) | some (.lines _) | some (.abstract _) | some (.titled _ _ _) | some (.disclosure _ _ _) | some (.equation _ _)
-    | some (.verbatim _ _ _) | some (.algorithm _ _ _) | some (.columns _)
-    | some (.altSteps _ _ _) | some (.note _) | some (.only _ _) | some (.nav _ _)
-    | some (.logo _) | some .pagebreak | some (.frame _ _ _ _ _) | some (.framefoot _)
-    | some (.setPalette _) | some (.setTokens _) | some (.rule _ _ _) | some (.picture _)
-    | some (.table _ _ _ _ _ _) | some (.float _ _ _ _ _) | some (.bibliography _ _ _) => item
-  | none => item
-  | some (.para _) | some (.section _ _ _ _) | some (.list _ _ _) | some (.center _)
-  | some (.ragged _ _) | some (.spaced _ _) | some (.role _ _) | some (.link _ _)
-  | some (.quote _) | some (.lines _) | some (.abstract _) | some (.titled _ _ _) | some (.disclosure _ _ _) | some (.equation _ _)
-  | some (.verbatim _ _ _) | some (.algorithm _ _ _) | some (.columns _)
-  | some (.altSteps _ _ _) | some (.note _) | some (.only _ _) | some (.nav _ _)
-  | some (.logo _) | some .pagebreak | some (.frame _ _ _ _ _) | some (.framefoot _)
-  | some (.setPalette _) | some (.setTokens _) | some (.rule _ _ _) | some (.picture _)
-  | some (.table _ _ _ _ _ _) | some (.float _ _ _ _ _) | some (.bibliography _ _ _) => item
+/-- Inline content as step `k` shows it: covered whole inside a pending step, a description's
+run-in label covered in its own role so it runs in as it does shown, else stepwise. -/
+private def dimContent (k : Nat) (pend : Option DimHere) (here : DimHere) (xs : Array Inline) :
+    Array Inline :=
+  match pend with
+  | some cv =>
+    match descLabel? xs with
+    | some (label, rest) =>
+      let shown := coverRun k cv here rest
+      #[.role descLabelRole (coverRun k cv here label)] ++ shown
+    | none => coverRun k cv here xs
+  | none => dimInlineList k none here none #[] xs.toList
+
+/-- `dimContent` for content an empty run leaves as it stands. -/
+private def dimFilled (k : Nat) (pend : Option DimHere) (here : DimHere) (xs : Array Inline) :
+    Array Inline :=
+  if pend.isSome && xs.isEmpty then xs else dimContent k pend here xs
+
+private def dimTableRows (k : Nat) (pend : Option DimHere) (here : DimHere)
+    (out : Array (Array (Array Inline))) :
+    List (Array (Array Inline)) → Array (Array (Array Inline))
+  | [] => out
+  | row :: rest =>
+    dimTableRows k pend here (out.push (row.map (dimFilled k pend here))) rest
+
+private def dimAlgLines (k : Nat) (pend : Option DimHere) (here : DimHere) (out : Array AlgLine) :
+    List AlgLine → Array AlgLine
+  | [] => out
+  | l :: rest =>
+    dimAlgLines k pend here (out.push
+      { depth := l.depth
+        kind := l.kind
+        content := dimFilled k pend here l.content
+        comment := l.comment.map (dimFilled k pend here) }) rest
+
+private def dimLaid (k : Nat) (pend : Option DimHere) (here : DimHere) (out : Array LaidLine) :
+    List LaidLine → Array LaidLine
+  | [] => out
+  | l :: rest =>
+    dimLaid k pend here (out.push { depth := l.depth, content := dimFilled k pend here l.content }) rest
 
 mutual
 
-/-- Flatten each list item's leading `.step`, so the marker lands on the
-item's first paragraph, as LaTeX puts the label. -/
-public def unwrapItemSteps (xs : Array Block) : Array Block :=
-  unwrapItemStepList #[] xs.toList
+/-- One overlay walk in two modes: off, step `k` covering what lies outside its range; on
+(`pend`), everything covered by the cover read where its step starts, `here` the palette in force,
+in flow order, which the walk returns. -/
+private def dimBlockList (k : Nat) (pend : Option DimHere) (here : DimHere) (out : Array Block) :
+    List Block → Array Block × DimHere
+  | [] => (out, here)
+  | b :: rest =>
+    let r := dimBlock k pend here b
+    dimBlockList k pend r.2 (out.push r.1) rest
 
-private def unwrapItemStepList (out : Array Block) : List Block → Array Block
-  | [] => out
-  | b :: rest => unwrapItemStepList (out.push (unwrapItemStep b)) rest
-
-public def unwrapItemStep : Block → Block
-  | .list o s items => .list o s (unwrapItemStepItems #[] items.toList)
-  | .center body => .center (unwrapItemStepList #[] body.toList)
-  | .ragged s body => .ragged s (unwrapItemStepList #[] body.toList)
-  | .quote body => .quote (unwrapItemStepList #[] body.toList)
-  | .abstract body => .abstract (unwrapItemStepList #[] body.toList)
-  | .titled kind title body => .titled kind title (unwrapItemStepList #[] body.toList)
+private def dimBlock (k : Nat) (pend : Option DimHere) (here : DimHere) : Block → Block × DimHere
+  | .para content => (.para (dimContent k pend here content), here)
+  | .equation num content => (.equation num (dimContent k pend here content), here)
+  | .list o s items =>
+    let r := dimItems k pend here #[] items.toList
+    (.list o s r.1, r.2)
+  | .center body =>
+    let r := dimBlockList k pend here #[] body.toList
+    (.center r.1, r.2)
+  | .ragged s body =>
+    let r := dimBlockList k pend here #[] body.toList
+    (.ragged s r.1, r.2)
+  | .quote body =>
+    let r := dimBlockList k pend here #[] body.toList
+    (.quote r.1, r.2)
+  | .lines ls => (.lines (dimLaid k pend here #[] ls.toList), here)
+  | .abstract body =>
+    let r := dimBlockList k pend here #[] body.toList
+    (.abstract r.1, r.2)
+  | .titled kind title body =>
+    let r := dimBlockList k pend here #[] body.toList
+    (.titled kind (dimInlineList k pend here none #[] title.toList) r.1, r.2)
   | .disclosure summary expanded body =>
-    .disclosure summary expanded (unwrapItemStepList #[] body.toList)
-  | .role n body => .role n (unwrapItemStepList #[] body.toList)
-  | .link target body => .link target (unwrapItemStepList #[] body.toList)
-  | .spaced g body => .spaced g (unwrapItemStepList #[] body.toList)
-  | .columns cols => .columns (unwrapItemStepCols #[] cols.toList)
-  | .onSteps spec body => .onSteps spec (unwrapItemStepList #[] body.toList)
+    let r := dimBlockList k pend here #[] body.toList
+    (.disclosure (dimInlineList k pend here none #[] summary.toList) expanded r.1, r.2)
+  | .role n body =>
+    let r := dimBlockList k pend here #[] body.toList
+    (.role n r.1, r.2)
+  | .link target body =>
+    let r := dimBlockList k pend here #[] body.toList
+    (.link target r.1, r.2)
+  | .spaced g body =>
+    let r := dimBlockList k pend here #[] body.toList
+    (.spaced g r.1, r.2)
+  | .columns cols =>
+    let r := dimColumns k pend here #[] cols.toList
+    (.columns r.1, r.2)
+  -- A step covers by the cover read where it starts, one inside a covered step by the outer's.
+  | .onSteps spec body =>
+    let opens := !here.cover.hidden && !spec.invisible && spec.pending k
+    let r := dimBlockList k (if pend.isNone && opens then some here else pend) here #[]
+      body.toList
+    (.onSteps (if here.cover.hidden then { spec with invisible := true } else spec) r.1, r.2)
   | .altSteps spec firstPage otherPage =>
-    .altSteps spec (unwrapItemStepList #[] firstPage.toList)
-      (unwrapItemStepList #[] otherPage.toList)
-  | .only targets body => .only targets (unwrapItemStepList #[] body.toList)
-  | .nav spec body => .nav spec (unwrapItemStepList #[] body.toList)
-  | .frame t s v br body => .frame t s v br (unwrapItemStepList #[] body.toList)
-  | .para content => .para content
-  | .lines ls => .lines ls
-  | .equation n content => .equation n content
-  | .section l st num title => .section l st num title
-  | .verbatim c s sp => .verbatim c s sp
-  | .algorithm n sm lines => .algorithm n sm lines
-  | .note body => .note body
-  | .framefoot content => .framefoot content
-  | .setPalette pal => .setPalette pal
-  | .setTokens tk => .setTokens tk
-  | .pagebreak => .pagebreak
-  | .logo content => .logo content
-  | .rule c nm th => .rule c nm th
-  | .picture p => .picture p
-  | .table cols pl pr rows rules spans => .table cols pl pr rows rules spans
-  | .float k n ca body caption => .float k n ca (unwrapItemStepList #[] body.toList) caption
-  | .bibliography src style items => .bibliography src style items
+    let f := dimBlockList k pend here #[] firstPage.toList
+    let o := dimBlockList k pend here #[] otherPage.toList
+    (.altSteps spec f.1 o.1, if spec.showsFirst k then f.2 else o.2)
+  | .only targets body =>
+    let r := dimBlockList k pend here #[] body.toList
+    (.only targets r.1, r.2)
+  | .nav spec body =>
+    let r := dimBlockList k pend here #[] body.toList
+    (.nav spec r.1, r.2)
+  | .section l st num title => (.section l st num (dimInlineList k pend here none #[] title.toList), here)
+  | .verbatim c s spec =>
+    (.verbatim (match pend with
+        | some cv => some (cv.plainUnder here)
+        | none => c) s
+      { spec with caption := spec.caption.map fun (n, cap) =>
+          (n, dimInlineList k pend here none #[] cap.toList) }, here)
+  | .algorithm n sm lines => (.algorithm n sm (dimAlgLines k pend here #[] lines.toList), here)
+  | .note body => (.note body, here)
+  | .frame t st v br body => (.frame t st v br body, here)
+  | .framefoot content => (.framefoot content, here)
+  | .setPalette pal => (.setPalette pal, DimHere.of pal)
+  | .setTokens tk => (.setTokens tk, here)
+  | .pagebreak => (.pagebreak, here)
+  | .logo content => (.logo content, here)
+  | .rule c nm th => (.rule c nm th, here)
+  | .picture p =>
+    (.picture (match pend with
+      | some cv => p.recolor cv.cover.of
+      | none => p), here)
+  | .table cols pl pr rows rules spans =>
+    (.table cols pl pr (dimTableRows k pend here #[] rows.toList) rules spans, here)
+  | .float fk num ca body caption =>
+    let r := dimBlockList k pend here #[] body.toList
+    (.float fk num ca r.1 (dimFilled k pend here caption), r.2)
+  | .bibliography src style items => (.bibliography src style items, here)
 
-private def unwrapItemStepItems (out : Array (Array Block)) :
-    List (Array Block) → Array (Array Block)
-  | [] => out
+private def dimItems (k : Nat) (pend : Option DimHere) (here : DimHere) (out : Array (Array Block)) :
+    List (Array Block) → Array (Array Block) × DimHere
+  | [] => (out, here)
   | item :: rest =>
-    unwrapItemStepItems
-      (out.push (flattenLeadStep (unwrapItemStepList #[] item.toList))) rest
+    let r := dimBlockList k pend here #[] item.toList
+    dimItems k pend r.2 (out.push r.1) rest
 
-private def unwrapItemStepCols (out : Array (BoxWidth × Array Block)) :
-    List (BoxWidth × Array Block) → Array (BoxWidth × Array Block)
-  | [] => out
+private def dimColumns (k : Nat) (pend : Option DimHere) (here : DimHere)
+    (out : Array (BoxWidth × Array Block)) :
+    List (BoxWidth × Array Block) → Array (BoxWidth × Array Block) × DimHere
+  | [] => (out, here)
   | (w, body) :: rest =>
-    unwrapItemStepCols (out.push (w, unwrapItemStepList #[] body.toList)) rest
+    let r := dimBlockList k pend here #[] body.toList
+    dimColumns k pend r.2 (out.push (w, r.1)) rest
 
 end
 
-public theorem unwrapItemStep_para_exact (content : Array Inline) :
-    unwrapItemStep (.para content) = .para content := by
-  rfl
+/-- The frame's body as step `k` of its overlay shows it, from the reading of the palette in force
+where it opens. -/
+public def dimBlocks (here : DimHere) (k : Nat) (xs : Array Block) : Array Block :=
+  (dimBlockList k none here #[] xs.toList).1
+
+/-- Inline content a pending step covers under `cv`, as `dimBlocks` covers a pending paragraph set
+in `ink`. -/
+public def coverInlines (cv : Cover) (ink : Color) (xs : Array Inline) : Array Inline :=
+  coverRun 1 (DimHere.under cv ink) (DimHere.under cv ink) xs
 
 /-- The conservation shape: `f` leaves the census fixed. -/
 @[expose] public def Conserves (census : α → β) (f : α → α) : Prop :=
@@ -12798,59 +12788,64 @@ private theorem blockTextTableCells_chain (l1 l2 : List (Array Inline))
 
 mutual
 
-private theorem dimInlineList_text (cover : Cover) (k : Nat) (pending : Bool)
-    (xs : List Inline) (out : Array Inline) :
-    plainTextList (dimInlineList cover k pending out xs).toList
+private theorem dimInlineList_text (k : Nat) (pend : Option DimHere) (here : DimHere)
+    (own : Option Color) (xs : List Inline) (out : Array Inline) :
+    plainTextList (dimInlineList k pend here own out xs).toList
       = plainTextList out.toList ++ plainTextList xs := by
   match xs with
   | [] => simp [dimInlineList, plainTextList]
   | x :: rest =>
-    rw [dimInlineList, dimInlineList_text cover k pending rest]
-    simp [plainTextList, plainTextList_append, dimInline_text cover k pending x,
+    rw [dimInlineList, dimInlineList_text k pend here own rest]
+    simp [plainTextList, plainTextList_append, dimInline_text k pend here own x,
       String.append_assoc]
 
-private theorem dimInline_text (cover : Cover) (k : Nat) (pending : Bool) (x : Inline) :
-    plainTextOne (dimInline cover k pending x) = plainTextOne x := by
+private theorem dimInline_text (k : Nat) (pend : Option DimHere) (here : DimHere)
+    (own : Option Color) (x : Inline) :
+    plainTextOne (dimInline k pend here own x) = plainTextOne x := by
   match x with
   | .styled st body =>
     rw [dimInline]
-    simp [plainTextOne, dimInlineList_text cover k pending body.toList #[], plainTextList]
+    simp [plainTextOne, dimInlineList_text k pend here own body.toList #[], plainTextList]
   | .footnote n body =>
     rw [dimInline]
-    simp [plainTextOne, dimInlineList_text cover k pending body.toList #[], plainTextList]
+    simp [plainTextOne, dimInlineList_text k pend here own body.toList #[], plainTextList]
   | .colored c nm body =>
-    rw [dimInline]
-    by_cases h : pending = true
-    · simp [h, plainTextOne, dimInlineList_text cover k true body.toList #[], plainTextList]
-    · simp [h, plainTextOne, dimInlineList_text cover k false body.toList #[], plainTextList]
+    cases pend with
+    | some cv =>
+      rw [dimInline]
+      simp [plainTextOne, dimInlineList_text k (some cv) here (some c) body.toList #[],
+        plainTextList]
+    | none =>
+      rw [dimInline]
+      simp [plainTextOne, dimInlineList_text k none here (some c) body.toList #[], plainTextList]
   | .located n body =>
     rw [dimInline]
-    simp [plainTextOne, dimInlineList_text cover k pending body.toList #[], plainTextList]
+    simp [plainTextOne, dimInlineList_text k pend here own body.toList #[], plainTextList]
   | .role n body =>
     rw [dimInline]
-    simp [plainTextOne, dimInlineList_text cover k pending body.toList #[], plainTextList]
+    simp [plainTextOne, dimInlineList_text k pend here own body.toList #[], plainTextList]
   | .link u body =>
     rw [dimInline]
-    simp [plainTextOne, dimInlineList_text cover k pending body.toList #[], plainTextList]
+    simp [plainTextOne, dimInlineList_text k pend here own body.toList #[], plainTextList]
   | .cited f ks ink =>
     rw [dimInline]
-    simp [plainTextOne, dimInlineList_text cover k pending ink.toList #[], plainTextList]
+    simp [plainTextOne, dimInlineList_text k pend here own ink.toList #[], plainTextList]
   | .decorated kind body =>
     rw [dimInline]
-    simp [plainTextOne, dimInlineList_text cover k pending body.toList #[], plainTextList]
+    simp [plainTextOne, dimInlineList_text k pend here own body.toList #[], plainTextList]
   | .onSteps spec body =>
     rw [dimInline]
-    by_cases hc : cover.hidden = true
-    · simp [hc, plainTextOne, dimInlineList_text cover k pending body.toList #[], plainTextList]
-    by_cases h : (!spec.invisible && !pending && spec.pending k) = true
+    by_cases hc : here.cover.hidden = true
+    · simp [hc, plainTextOne, dimInlineList_text k pend here own body.toList #[], plainTextList]
+    by_cases h : (!spec.invisible && pend.isNone && spec.pending k) = true
     · simp [hc, h, plainTextOne, plainTextList,
-        dimInlineList_text cover k true body.toList #[]]
-    · simp [hc, h, plainTextOne, dimInlineList_text cover k pending body.toList #[],
+        dimInlineList_text k (some here) here own body.toList #[]]
+    · simp [hc, h, plainTextOne, dimInlineList_text k pend here own body.toList #[],
         plainTextList]
   | .altSteps spec firstPage otherPage =>
     rw [dimInline]
-    simp [plainTextOne, dimInlineList_text cover k pending firstPage.toList #[],
-      dimInlineList_text cover k pending otherPage.toList #[], plainTextList]
+    simp [plainTextOne, dimInlineList_text k pend here own firstPage.toList #[],
+      dimInlineList_text k pend here own otherPage.toList #[], plainTextList]
   | .image _ _ _ =>
     rfl
   | .formula _ _ _ =>
@@ -12862,438 +12857,220 @@ private theorem dimInline_text (cover : Cover) (k : Nat) (pending : Bool) (x : I
 
 end
 
-private theorem dimAlgLines_text (cover : Cover) (k : Nat) (pending : Bool)
+private theorem coverRun_text (k : Nat) (cv : DimHere) (here : DimHere) (xs : Array Inline) :
+    plainText (coverRun k cv here xs) = plainText xs := by
+  simp [coverRun, plainText, plainTextList, plainTextOne,
+    dimInlineList_text k (some cv) here none xs.toList #[]]
+
+private theorem descLabel_text {xs label rest : Array Inline}
+    (h : descLabel? xs = some (label, rest)) :
+    plainText xs = plainText label ++ plainText rest := by
+  unfold descLabel? at h
+  split at h
+  · rename_i n l hx
+    split at h
+    · simp only [Option.some.injEq, Prod.mk.injEq] at h
+      obtain ⟨rfl, rfl⟩ := h
+      have h0 : xs.toList[0]? = some (Inline.role n l) := by simpa using hx
+      cases wl : xs.toList with
+      | nil => simp [wl] at h0
+      | cons y tl =>
+        rw [wl] at h0
+        simp only [List.getElem?_cons_zero, Option.some.injEq] at h0
+        subst h0
+        have hlen : xs.size = tl.length + 1 := by
+          have h1 := congrArg List.length wl
+          simpa using h1
+        simp [plainText, wl, hlen, plainTextList, plainTextOne, Array.toList_extract,
+          List.extract]
+    · simp at h
+  · simp at h
+
+private theorem dimContent_text (k : Nat) (pend : Option DimHere) (here : DimHere)
+    (xs : Array Inline) : plainText (dimContent k pend here xs) = plainText xs := by
+  cases pend with
+  | some cv =>
+    cases hd : descLabel? xs with
+    | none =>
+      simp only [dimContent, hd]
+      exact coverRun_text k cv here xs
+    | some lr =>
+      obtain ⟨label, rest⟩ := lr
+      simp only [dimContent, hd]
+      rw [descLabel_text hd]
+      simp [plainText, plainTextList, plainTextOne, coverRun,
+        dimInlineList_text k (some cv) here none label.toList #[],
+        dimInlineList_text k (some cv) here none rest.toList #[]]
+  | none => simp [dimContent, plainText, dimInlineList_text k none here none xs.toList #[],
+      plainTextList]
+
+private theorem dimFilled_text (k : Nat) (pend : Option DimHere) (here : DimHere)
+    (xs : Array Inline) : plainText (dimFilled k pend here xs) = plainText xs := by
+  unfold dimFilled
+  split
+  · rfl
+  · exact dimContent_text k pend here xs
+
+private theorem blockTextTableCells_map (f : Array Inline → Array Inline)
+    (hf : ∀ x, plainText (f x) = plainText x) (cells : List (Array Inline)) (acc : String) :
+    blockTextTableCells acc (cells.map f) = blockTextTableCells acc cells := by
+  induction cells generalizing acc with
+  | nil => rfl
+  | cons c rest ih => simp [blockTextTableCells, hf, ih]
+
+private theorem dimAlgLines_text (k : Nat) (pend : Option DimHere) (here : DimHere)
     (ls : List AlgLine) (out : Array AlgLine) (acc : String) :
-    algLineText acc (dimAlgLines cover k pending out ls).toList
+    algLineText acc (dimAlgLines k pend here out ls).toList
       = algLineText (algLineText acc out.toList) ls := by
   match ls with
   | [] => simp [dimAlgLines, algLineText]
   | l :: rest =>
-    rw [dimAlgLines, dimAlgLines_text cover k pending rest]
+    rw [dimAlgLines, dimAlgLines_text k pend here rest]
     rw [Array.toList_push, algLineText_chain]
-    by_cases h : pending = true
-    · cases hc : l.comment with
-      | none =>
-        by_cases he : l.content.isEmpty
-        · simp [h, hc, he, algLineText]
-        · simp [h, hc, he, algLineText, plainText, plainTextList, plainTextOne,
-            dimInlineList_text cover k true l.content.toList #[]]
-      | some c =>
-        by_cases he : l.content.isEmpty
-        · by_cases hce : c.isEmpty
-          · simp [h, hc, he, hce, algLineText]
-          · simp [h, hc, he, hce, algLineText, plainText, plainTextList,
-              plainTextOne, dimInlineList_text cover k true c.toList #[]]
-        · by_cases hce : c.isEmpty
-          · simp [h, hc, he, hce, algLineText, plainText, plainTextList,
-              plainTextOne, dimInlineList_text cover k true l.content.toList #[]]
-          · simp [h, hc, he, hce, algLineText, plainText, plainTextList,
-              plainTextOne, dimInlineList_text cover k true l.content.toList #[],
-              dimInlineList_text cover k true c.toList #[]]
-    · cases hc : l.comment with
-      | none =>
-        simp [h, hc, algLineText, plainText, plainTextList,
-          dimInlineList_text cover k false l.content.toList #[]]
-      | some c =>
-        simp [h, hc, algLineText, plainText, plainTextList,
-          dimInlineList_text cover k false l.content.toList #[],
-          dimInlineList_text cover k false c.toList #[]]
+    cases hc : l.comment <;> simp [hc, algLineText, dimFilled_text]
 
-private theorem dimLaid_text (cover : Cover) (k : Nat) (pending : Bool)
+private theorem dimLaid_text (k : Nat) (pend : Option DimHere) (here : DimHere)
     (ls : List LaidLine) (out : Array LaidLine) (acc : String) :
-    laidText acc (dimLaid cover k pending out ls).toList
-      = laidText (laidText acc out.toList) ls := by
+    laidText acc (dimLaid k pend here out ls).toList = laidText (laidText acc out.toList) ls := by
   match ls with
   | [] => simp [dimLaid, laidText]
   | l :: rest =>
-    rw [dimLaid, dimLaid_text cover k pending rest]
+    rw [dimLaid, dimLaid_text k pend here rest]
     rw [Array.toList_push, laidText_chain]
-    by_cases h : pending = true
-    · simp [h, laidText, plainText, plainTextList, plainTextOne,
-        dimInlineList_text cover k true l.content.toList #[]]
-    · simp [h, laidText, plainText, plainTextList,
-        dimInlineList_text cover k false l.content.toList #[]]
+    simp [laidText, dimFilled_text]
 
-private theorem dimTableCells_text (cover : Cover) (k : Nat) (pending : Bool)
-    (cells : List (Array Inline))
-    (out : Array (Array Inline)) (acc : String) :
-    blockTextTableCells acc (dimTableCells cover k pending out cells).toList
-      = blockTextTableCells (blockTextTableCells acc out.toList) cells := by
-  match cells with
-  | [] => simp [dimTableCells, blockTextTableCells]
-  | cell :: rest =>
-    rw [dimTableCells, dimTableCells_text cover k pending rest _ acc]
-    by_cases h : pending = true
-    · by_cases hc : cell.isEmpty
-      · simp [h, hc, blockTextTableCells, blockTextTableCells_chain]
-      · simp [h, hc, blockTextTableCells, blockTextTableCells_chain, plainText,
-          plainTextList, plainTextOne, dimInlineList_text cover k true cell.toList #[]]
-    · simp [h, blockTextTableCells, blockTextTableCells_chain, plainText,
-        dimInlineList_text cover k false cell.toList #[], plainTextList]
-
-private theorem dimTableRows_text (cover : Cover) (k : Nat) (pending : Bool)
+private theorem dimTableRows_text (k : Nat) (pend : Option DimHere) (here : DimHere)
     (rows : List (Array (Array Inline)))
     (out : Array (Array (Array Inline))) (acc : String) :
-    blockTextTableRows acc (dimTableRows cover k pending out rows).toList
+    blockTextTableRows acc (dimTableRows k pend here out rows).toList
       = blockTextTableRows (blockTextTableRows acc out.toList) rows := by
   match rows with
   | [] => simp [dimTableRows, blockTextTableRows]
   | row :: rest =>
-    rw [dimTableRows, dimTableRows_text cover k pending rest _ acc]
-    simp [blockTextTableRows, blockTextTableRows_chain,
-      dimTableCells_text cover k pending row.toList #[], blockTextTableCells]
-
-private theorem hiddenLead_text (hid : OverlaySpec) (p : Array Inline) :
-    plainText (hiddenLead hid p) = plainText p := by
-  unfold hiddenLead plainText
-  split
-  · rename_i n label rest h
-    split
-    · simp [h, plainTextList, plainTextOne]
-    · simp [plainTextList, plainTextOne]
-  · simp [plainTextList, plainTextOne]
-
-private theorem hideLead_text (cover : Cover) (k : Nat) (item dimmed : Array Block)
-    (acc : String) :
-    blockTextList acc (hideLead cover k item dimmed).toList = blockTextList acc dimmed.toList := by
-  unfold hideLead
-  split
-  · split
-    · split
-      · rename_i hid body more hd
-        split
-        · rename_i p rest hb
-          simp [hd, hb, blockTextList, blockTextOne, hiddenLead_text]
-        · rfl
-      · rfl
-    · rfl
-  · rfl
+    rw [dimTableRows, dimTableRows_text k pend here rest _ acc]
+    simp [blockTextTableRows, blockTextTableRows_chain, Array.toList_map,
+      blockTextTableCells_map _ (dimFilled_text k pend here)]
 
 mutual
 
-private theorem dimBlockList_text (cover : Cover) (k : Nat) (pending : Bool)
+private theorem dimBlockList_text (k : Nat) (pend : Option DimHere) (here : DimHere)
     (xs : List Block) (out : Array Block) (acc : String) :
-    blockTextList acc (dimBlockList cover k pending out xs).toList
+    blockTextList acc (dimBlockList k pend here out xs).1.toList
       = blockTextList (blockTextList acc out.toList) xs := by
   match xs with
   | [] => simp [dimBlockList, blockTextList]
   | b :: rest =>
-    rw [dimBlockList, dimBlockList_text cover k pending rest]
-    simp [blockTextList, blockTextList_chain, dimBlock_text cover k pending b]
+    rw [dimBlockList, dimBlockList_text k pend (dimBlock k pend here b).2 rest]
+    simp [blockTextList, blockTextList_chain, dimBlock_text k pend here b]
 
-private theorem dimBlock_text (cover : Cover) (k : Nat) (pending : Bool) (b : Block)
+private theorem dimBlock_text (k : Nat) (pend : Option DimHere) (here : DimHere) (b : Block)
     (acc : String) :
-    blockTextOne acc (dimBlock cover k pending b) = blockTextOne acc b := by
+    blockTextOne acc (dimBlock k pend here b).1 = blockTextOne acc b := by
   match b with
   | .para content =>
-    rw [dimBlock]
-    by_cases h : pending = true
-    · simp [h, blockTextOne, plainText, plainTextList, plainTextOne,
-        dimInlineList_text cover k true content.toList #[]]
-    · simp [h, blockTextOne, plainText,
-        dimInlineList_text cover k false content.toList #[], plainTextList]
+    simp [dimBlock, blockTextOne, dimContent_text]
   | .equation num content =>
-    rw [dimBlock]
-    by_cases h : pending = true
-    · simp [h, blockTextOne, plainText, plainTextList, plainTextOne,
-        dimInlineList_text cover k true content.toList #[]]
-    · simp [h, blockTextOne, plainText,
-        dimInlineList_text cover k false content.toList #[], plainTextList]
+    simp [dimBlock, blockTextOne, dimContent_text]
   | .list o _ items =>
-    rw [dimBlock]
-    simp [blockTextOne, dimItems_text cover k pending items.toList #[] acc, blockTextItems]
+    simp [dimBlock, blockTextOne, dimItems_text k pend here items.toList #[] acc, blockTextItems]
   | .center body =>
-    rw [dimBlock]
-    simp [blockTextOne, dimBlockList_text cover k pending body.toList #[] acc, blockTextList]
+    simp [dimBlock, blockTextOne, dimBlockList_text k pend here body.toList #[] acc, blockTextList]
   | .ragged _ body =>
-    rw [dimBlock]
-    simp [blockTextOne, dimBlockList_text cover k pending body.toList #[] acc, blockTextList]
+    simp [dimBlock, blockTextOne, dimBlockList_text k pend here body.toList #[] acc, blockTextList]
   | .quote body =>
-    rw [dimBlock]
-    simp [blockTextOne, dimBlockList_text cover k pending body.toList #[] acc, blockTextList]
+    simp [dimBlock, blockTextOne, dimBlockList_text k pend here body.toList #[] acc, blockTextList]
   | .lines ls =>
-    rw [dimBlock]
-    show laidText acc (dimLaid cover k pending #[] ls.toList).toList = _
-    rw [dimLaid_text cover k pending ls.toList #[] acc]
-    rfl
+    simp [dimBlock, blockTextOne, dimLaid_text k pend here ls.toList #[] acc, laidText]
   | .abstract body =>
-    rw [dimBlock]
-    simp [blockTextOne, dimBlockList_text cover k pending body.toList #[] acc, blockTextList]
+    simp [dimBlock, blockTextOne, dimBlockList_text k pend here body.toList #[] acc, blockTextList]
   | .titled kind title body =>
-    rw [dimBlock]
-    simp [blockTextOne, plainText,
-      dimInlineList_text cover k pending title.toList #[], plainTextList,
-      dimBlockList_text cover k pending body.toList #[] _, blockTextList]
+    simp [dimBlock, blockTextOne, plainText,
+      dimInlineList_text k pend here none title.toList #[], plainTextList,
+      dimBlockList_text k pend here body.toList #[] _, blockTextList]
   | .disclosure summary expanded body =>
-    rw [dimBlock]
-    simp [blockTextOne, plainText,
-      dimInlineList_text cover k pending summary.toList #[], plainTextList,
-      dimBlockList_text cover k pending body.toList #[] _, blockTextList]
+    simp [dimBlock, blockTextOne, plainText,
+      dimInlineList_text k pend here none summary.toList #[], plainTextList,
+      dimBlockList_text k pend here body.toList #[] _, blockTextList]
   | .role n body =>
-    rw [dimBlock]
-    simp [blockTextOne, dimBlockList_text cover k pending body.toList #[] acc, blockTextList]
+    simp [dimBlock, blockTextOne, dimBlockList_text k pend here body.toList #[] acc, blockTextList]
   | .link target body =>
-    rw [dimBlock]
-    simp [blockTextOne, dimBlockList_text cover k pending body.toList #[] acc, blockTextList]
+    simp [dimBlock, blockTextOne, dimBlockList_text k pend here body.toList #[] acc, blockTextList]
   | .spaced g body =>
-    rw [dimBlock]
-    simp [blockTextOne, dimBlockList_text cover k pending body.toList #[] acc, blockTextList]
+    simp [dimBlock, blockTextOne, dimBlockList_text k pend here body.toList #[] acc, blockTextList]
   | .columns cols =>
-    rw [dimBlock]
-    simp [blockTextOne, dimColumns_text cover k pending cols.toList #[] acc, blockTextColumns]
+    simp [dimBlock, blockTextOne, dimColumns_text k pend here cols.toList #[] acc, blockTextColumns]
   | .onSteps spec body =>
-    rw [dimBlock]
-    simp [blockTextOne,
-      dimBlockList_text cover k (pending || (!cover.hidden && !spec.invisible && spec.pending k))
-        body.toList #[] acc, blockTextList]
+    simp only [dimBlock, blockTextOne]
+    rw [dimBlockList_text k _ here body.toList #[] acc]
+    simp [blockTextList]
   | .altSteps spec firstPage otherPage =>
-    rw [dimBlock]
-    simp [blockTextOne, dimBlockList_text cover k pending firstPage.toList #[],
-      dimBlockList_text cover k pending otherPage.toList #[], blockTextList]
+    simp [dimBlock, blockTextOne, dimBlockList_text k pend here firstPage.toList #[],
+      dimBlockList_text k pend here otherPage.toList #[], blockTextList]
   | .only targets body =>
-    rw [dimBlock]
-    simp [blockTextOne, dimBlockList_text cover k pending body.toList #[] acc, blockTextList]
+    simp [dimBlock, blockTextOne, dimBlockList_text k pend here body.toList #[] acc, blockTextList]
   | .nav spec body =>
-    rw [dimBlock]
-    simp [blockTextOne, dimBlockList_text cover k pending body.toList #[] acc, blockTextList]
+    simp [dimBlock, blockTextOne, dimBlockList_text k pend here body.toList #[] acc, blockTextList]
   | .logo _ => rfl
   | .verbatim c s spec =>
-    rw [dimBlock]
     cases hc : spec.caption with
-    | none => simp [blockTextOne, ListingSpec.capText, hc]
+    | none => simp [dimBlock, blockTextOne, ListingSpec.capText, hc]
     | some p =>
-      simp [blockTextOne, ListingSpec.capText, hc, plainText, plainTextList,
-        dimInlineList_text cover k pending p.2.toList #[]]
+      simp [dimBlock, blockTextOne, ListingSpec.capText, hc, plainText, plainTextList,
+        dimInlineList_text k pend here none p.2.toList #[]]
   | .section l st num title =>
-    rw [dimBlock]
-    simp [blockTextOne, plainText, dimInlineList_text cover k pending title.toList #[],
+    simp [dimBlock, blockTextOne, plainText, dimInlineList_text k pend here none title.toList #[],
       plainTextList]
   | .note _ | .frame _ _ _ _ _ | .framefoot _
   | .setPalette _ | .setTokens _
   | .rule _ _ _ | .picture _ | .pagebreak | .bibliography _ _ _ => rfl
   | .algorithm n sm lines =>
-    rw [dimBlock]
-    show algLineText acc (dimAlgLines cover k pending #[] lines.toList).toList = _
-    rw [dimAlgLines_text cover k pending lines.toList #[] acc]
+    show algLineText acc (dimAlgLines k pend here #[] lines.toList).toList = _
+    rw [dimAlgLines_text k pend here lines.toList #[] acc]
     rfl
   | .table cols pl pr rows rules spans =>
-    rw [dimBlock]
-    simp [blockTextOne, dimTableRows_text cover k pending rows.toList #[] acc,
+    simp [dimBlock, blockTextOne, dimTableRows_text k pend here rows.toList #[] acc,
       blockTextTableRows]
   | .float fk num ca body caption =>
-    rw [dimBlock]
-    by_cases h : pending = true
-    · by_cases hc : caption.isEmpty
-      · simp [h, hc, blockTextOne,
-          dimBlockList_text cover k true body.toList #[] _, blockTextList]
-      · simp [h, hc, blockTextOne, plainText, plainTextList, plainTextOne,
-          dimInlineList_text cover k true caption.toList #[],
-          dimBlockList_text cover k true body.toList #[] _, blockTextList]
-    · simp [h, blockTextOne, plainText,
-        dimInlineList_text cover k false caption.toList #[], plainTextList,
-        dimBlockList_text cover k false body.toList #[] _, blockTextList]
+    simp [dimBlock, blockTextOne, dimFilled_text,
+      dimBlockList_text k pend here body.toList #[] _, blockTextList]
 
-private theorem dimItems_text (cover : Cover) (k : Nat) (pending : Bool)
+private theorem dimItems_text (k : Nat) (pend : Option DimHere) (here : DimHere)
     (items : List (Array Block))
     (out : Array (Array Block)) (acc : String) :
-    blockTextItems acc (dimItems cover k pending out items).toList
+    blockTextItems acc (dimItems k pend here out items).1.toList
       = blockTextItems (blockTextItems acc out.toList) items := by
   match items with
   | [] => simp [dimItems, blockTextItems]
   | item :: rest =>
-    rw [dimItems, dimItems_text cover k pending rest]
-    simp [blockTextItems, blockTextItems_chain, hideLead_text,
-      dimBlockList_text cover k pending item.toList #[], blockTextList]
+    rw [dimItems, dimItems_text k pend (dimBlockList k pend here #[] item.toList).2 rest]
+    simp [blockTextItems, blockTextItems_chain,
+      dimBlockList_text k pend here item.toList #[], blockTextList]
 
-private theorem dimColumns_text (cover : Cover) (k : Nat) (pending : Bool)
+private theorem dimColumns_text (k : Nat) (pend : Option DimHere) (here : DimHere)
     (cols : List (BoxWidth × Array Block))
     (out : Array (BoxWidth × Array Block)) (acc : String) :
-    blockTextColumns acc (dimColumns cover k pending out cols).toList
+    blockTextColumns acc (dimColumns k pend here out cols).1.toList
       = blockTextColumns (blockTextColumns acc out.toList) cols := by
   match cols with
   | [] => simp [dimColumns, blockTextColumns]
   | (w, body) :: rest =>
-    rw [dimColumns, dimColumns_text cover k pending rest]
+    rw [dimColumns, dimColumns_text k pend (dimBlockList k pend here #[] body.toList).2 rest]
     simp [blockTextColumns, blockTextColumns_chain,
-      dimBlockList_text cover k pending body.toList #[], blockTextList]
+      dimBlockList_text k pend here body.toList #[], blockTextList]
 
 end
 
-public theorem dimBlocks_text (cover : Cover) (k : Nat) :
-    Conserves blocksText (dimBlocks cover k) := fun xs => by
-  simp [blocksText, dimBlocks, dimBlockList_text cover k false xs.toList #[] "",
-    blockTextList]
+public theorem dimBlocks_text (here : DimHere) (k : Nat) :
+    Conserves blocksText (dimBlocks here k) := fun xs => by
+  simp [blocksText, dimBlocks, dimBlockList_text k none here xs.toList #[] "", blockTextList]
+
+public theorem coverInlines_text (cv : Cover) (ink : Color) :
+    Conserves plainText (coverInlines cv ink) := fun xs =>
+  coverRun_text 1 (DimHere.under cv ink) (DimHere.under cv ink) xs
 
 public theorem algorithm_text (numbered semis : Bool) (lines : Array AlgLine) :
     blocksText #[Block.algorithm numbered semis lines]
       = algLineText "" lines.toList := by rfl
-
-private theorem flattenLeadStep_text (item : Array Block) (acc : String) :
-    blockTextList acc (flattenLeadStep item).toList
-      = blockTextList acc item.toList := by
-  unfold flattenLeadStep
-  split
-  next spec body h =>
-    have h0 : item.toList[0]? = some (Block.onSteps spec body) := by simpa using h
-    cases wl : item.toList with
-    | nil => simp [wl] at h0
-    | cons y rest =>
-      rw [wl] at h0
-      simp only [List.getElem?_cons_zero, Option.some.injEq] at h0
-      subst h0
-      have hlen : item.size - 1 = rest.length := by
-        have h1 := congrArg List.length wl
-        simp at h1
-        omega
-      split
-      next p hb =>
-        have hb0 : body.toList[0]? = some (Block.para p) := by simpa using hb
-        cases wb : body.toList with
-        | nil => simp [wb] at hb0
-        | cons z more =>
-          rw [wb] at hb0
-          simp only [List.getElem?_cons_zero, Option.some.injEq] at hb0
-          subst hb0
-          have hblen : body.size - 1 = more.length := by
-            have h1 := congrArg List.length wb
-            simp at h1
-            omega
-          by_cases hs : body.size ≤ 1
-          · have hm : more = [] := by
-              have h1 := congrArg List.length wb
-              simp at h1
-              cases more with
-              | nil => rfl
-              | cons _ _ => simp at h1; omega
-            subst hm
-            simp [hs, wl, wb, hlen, blockTextList, blockTextOne]
-          · simp [hs, wl, wb, hlen, hblen, blockTextList, blockTextOne]
-      next hb =>
-        have hb0 : body.toList = [] := by
-          rcases body with ⟨l⟩
-          cases l with
-          | nil => rfl
-          | cons z more => simp at hb
-        simp [wl, hb0, hlen, blockTextList, blockTextOne]
-      all_goals simp [wl]
-  all_goals rfl
-
-mutual
-
-private theorem unwrapItemStepList_text (xs : List Block) (out : Array Block)
-    (acc : String) :
-    blockTextList acc (unwrapItemStepList out xs).toList
-      = blockTextList (blockTextList acc out.toList) xs := by
-  match xs with
-  | [] => simp [unwrapItemStepList, blockTextList]
-  | b :: rest =>
-    rw [unwrapItemStepList, unwrapItemStepList_text rest]
-    simp [blockTextList, blockTextList_chain, unwrapItemStep_text b]
-
-private theorem unwrapItemStep_text (b : Block) (acc : String) :
-    blockTextOne acc (unwrapItemStep b) = blockTextOne acc b := by
-  match b with
-  | .list o _ items =>
-    rw [unwrapItemStep]
-    simp [blockTextOne, unwrapItemStepItems_text items.toList #[] acc,
-      blockTextItems]
-  | .center body =>
-    rw [unwrapItemStep]
-    simp [blockTextOne, unwrapItemStepList_text body.toList #[] acc,
-      blockTextList]
-  | .ragged _ body =>
-    rw [unwrapItemStep]
-    simp [blockTextOne, unwrapItemStepList_text body.toList #[] acc,
-      blockTextList]
-  | .quote body =>
-    rw [unwrapItemStep]
-    simp [blockTextOne, unwrapItemStepList_text body.toList #[] acc,
-      blockTextList]
-  | .abstract body =>
-    rw [unwrapItemStep]
-    simp [blockTextOne, unwrapItemStepList_text body.toList #[] acc,
-      blockTextList]
-  | .titled kind title body =>
-    rw [unwrapItemStep]
-    simp [blockTextOne, unwrapItemStepList_text body.toList #[] _,
-      blockTextList]
-  | .disclosure summary expanded body =>
-    rw [unwrapItemStep]
-    simp [blockTextOne, unwrapItemStepList_text body.toList #[] _,
-      blockTextList]
-  | .role n body =>
-    rw [unwrapItemStep]
-    simp [blockTextOne, unwrapItemStepList_text body.toList #[] acc,
-      blockTextList]
-  | .link target body =>
-    rw [unwrapItemStep]
-    simp [blockTextOne, unwrapItemStepList_text body.toList #[] acc,
-      blockTextList]
-  | .spaced g body =>
-    rw [unwrapItemStep]
-    simp [blockTextOne, unwrapItemStepList_text body.toList #[] acc,
-      blockTextList]
-  | .columns cols =>
-    rw [unwrapItemStep]
-    simp [blockTextOne, unwrapItemStepCols_text cols.toList #[] acc,
-      blockTextColumns]
-  | .onSteps spec body =>
-    rw [unwrapItemStep]
-    simp [blockTextOne, unwrapItemStepList_text body.toList #[] acc,
-      blockTextList]
-  | .altSteps spec firstPage otherPage =>
-    rw [unwrapItemStep]
-    simp [blockTextOne, unwrapItemStepList_text firstPage.toList #[],
-      unwrapItemStepList_text otherPage.toList #[], blockTextList]
-  | .only targets body =>
-    rw [unwrapItemStep]
-    simp [blockTextOne, unwrapItemStepList_text body.toList #[] acc,
-      blockTextList]
-  | .nav spec body =>
-    rw [unwrapItemStep]
-    simp [blockTextOne, unwrapItemStepList_text body.toList #[] acc,
-      blockTextList]
-  | .frame t s v _ body =>
-    rw [unwrapItemStep]
-    simp [blockTextOne, unwrapItemStepList_text body.toList #[] _,
-      blockTextList]
-  | .float k n ca body caption =>
-    rw [unwrapItemStep]
-    simp [blockTextOne, unwrapItemStepList_text body.toList #[] _,
-      blockTextList]
-  | .para _ | .lines _ | .equation _ _ | .section _ _ _ _ | .verbatim _ _ _ | .note _
-  | .framefoot _ | .pagebreak
-  | .setPalette _ | .setTokens _ | .algorithm _ _ _
-  | .logo _ | .rule _ _ _ | .picture _ | .table _ _ _ _ _ _
-  | .bibliography _ _ _ => rfl
-
-private theorem unwrapItemStepItems_text (items : List (Array Block))
-    (out : Array (Array Block)) (acc : String) :
-    blockTextItems acc (unwrapItemStepItems out items).toList
-      = blockTextItems (blockTextItems acc out.toList) items := by
-  match items with
-  | [] => simp [unwrapItemStepItems, blockTextItems]
-  | item :: rest =>
-    rw [unwrapItemStepItems, unwrapItemStepItems_text rest]
-    simp [blockTextItems, blockTextItems_chain, flattenLeadStep_text,
-      unwrapItemStepList_text item.toList #[], blockTextList]
-
-private theorem unwrapItemStepCols_text (cols : List (BoxWidth × Array Block))
-    (out : Array (BoxWidth × Array Block)) (acc : String) :
-    blockTextColumns acc (unwrapItemStepCols out cols).toList
-      = blockTextColumns (blockTextColumns acc out.toList) cols := by
-  match cols with
-  | [] => simp [unwrapItemStepCols, blockTextColumns]
-  | (w, body) :: rest =>
-    rw [unwrapItemStepCols, unwrapItemStepCols_text rest]
-    simp [blockTextColumns, blockTextColumns_chain,
-      unwrapItemStepList_text body.toList #[], blockTextList]
-
-end
-
-public theorem unwrapItemSteps_text : Conserves blocksText unwrapItemSteps := fun xs => by
-  simp [blocksText, unwrapItemSteps, unwrapItemStepList_text xs.toList #[] "",
-    blockTextList]
 
 public theorem decorated_text (kind : Decoration) :
     Conserves plainText (fun xs => #[Inline.decorated kind xs]) :=

@@ -137,7 +137,7 @@ def listChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     | some (Layout.Seg.run _ c _ _ _ _ _ _ _ _ _) => some c
     | _ => none
   t "a covered item's marker dims with it"
-    (markerColor stepLines[1]! == some (Ir.Design.ofDoc { palette := { coveredFraction := some 38 } }).cover.plain &&
+    (markerColor stepLines[1]! == some (Ir.Design.ofDoc { palette := { coveredFraction := some 38 } }).inkCover &&
      markerColor stepLines[0]! == some Ir.Color.black)
   let (hiddenLines, _) := runOn ("\\documentclass{beamer}\n\\usetheme{default}\n" ++
     "\\begin{document}\n" ++

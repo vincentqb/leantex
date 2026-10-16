@@ -184,39 +184,42 @@ def deckChecks (ref : IO.Ref (List String)) : IO Unit := do
     (Ir.Design.declared? declared.palette .accent == some blue)
   let (body, _) := elabStr (dvDeck ("\\setbeamercovered{transparent}\n" ++ light)
     (frame ++ "\n\\palette{ covered = 40\\% }\n" ++ frame))
-  t "cover deck: a body's share leaves the tones the preamble's share generated, which it covers at"
+  t "cover deck: a body's share covers the frames after it and leaves the tones the preamble's share generated"
     (!(bodyPalettes body).isEmpty && (bodyPalettes body).all fun p =>
       Ir.Design.declared? p .alert == Ir.Design.declared? lightWide.palette .alert &&
-        p.seeded.all fun st => st.targets.cover == some Ir.transparentShare)
+        p.coveredFraction == some 40 && p.seeded.all fun st => st.targets.cover == some Ir.transparentShare)
   let (bodyAccent, _) := elabStr (dvDeck "\\setbeamercovered{transparent}\n"
     (frame ++ "\n\\palette{ covered = 40\\% }\n\\palette{ accent = #F2A541 }\n" ++ frame))
-  t "cover deck: a bundle the body regenerates for an accent keeps the share the renderers cover at"
+  t "cover deck: a bundle the body regenerates for an accent keeps the share its preamble binds"
     (!(bodyPalettes bodyAccent).isEmpty && (bodyPalettes bodyAccent).all fun p =>
       p.seeded.all fun st => st.targets.cover == some Ir.transparentShare)
-  let (bodyHides, bodyDiags) := elabStr (dvDeck pre ("\\setbeamercovered{transparent}\n" ++ frame))
-  t s!"cover deck, a share in the body: named once, pending steps hidden as the preamble keeps them ({coverLosses bodyHides})"
-    ((bodyDiags.filter (·.code == "W0340")).size == 1 && (Ir.Design.ofDoc bodyHides).cover.hidden &&
-      (bodyPalettes bodyHides).all (fun p => p.coveredFraction == none) && (coverLosses bodyHides).isEmpty)
-  let (bodyKeeps, keepDiags) := elabStr (dvDeck ("\\setbeamercovered{transparent}\n" ++ pre)
+  let (bodyCovers, bodyDiags) := elabStr (dvDeck pre ("\\setbeamercovered{transparent}\n" ++ frame))
+  t s!"cover deck, a share in the body: the frames after it cover at it, judged there ({coverLosses bodyCovers})"
+    (!(bodyDiags.any (·.code == "W0340")) && (Ir.Design.ofDoc bodyCovers).cover.hidden &&
+      (bodyPalettes bodyCovers).any (fun p => p.coveredFraction == some 15) &&
+      coverLosses bodyCovers == #[some "covered:alert"])
+  let (bodyHides, hideDiags) := elabStr (dvDeck ("\\setbeamercovered{transparent}\n" ++ pre)
     ("\\setbeamercovered{invisible}\n" ++ frame))
-  t s!"cover deck, a body share against the preamble's: named, the preamble's share judged ({coverLosses bodyKeeps})"
-    ((keepDiags.filter (·.code == "W0340")).size == 1 &&
-      (bodyPalettes bodyKeeps).all (fun p => p.coveredFraction == some 15) &&
-      coverLosses bodyKeeps == #[some "covered:alert"])
+  t s!"cover deck, a body share of none over the preamble's: the frames after it hide, nothing judged ({coverLosses bodyHides})"
+    (!(hideDiags.any (·.code == "W0340")) &&
+      (bodyPalettes bodyHides).any (fun p => p.coveredFraction == some 0) &&
+      (coverLosses bodyHides).isEmpty)
   let (bodyColour, colourDiags) := elabStr (dvDeck pre ("\\palette{ covered = #000000 }\n" ++ frame))
-  t s!"cover deck, a covered colour in the body: named once, nothing judged where steps hide ({coverLosses bodyColour})"
-    ((colourDiags.filter (·.code == "W0340")).size == 1 && (coverLosses bodyColour).isEmpty &&
-      (bodyPalettes bodyColour).all fun p => (Ir.Design.declared? p .covered).isNone)
+  t s!"cover deck, a covered colour in the body: the frames after it cover in it, judged there ({coverLosses bodyColour})"
+    (!(colourDiags.any (·.code == "W0340")) &&
+      coverLosses bodyColour == #[some "covered:covered", some "covered:alert"] &&
+      (bodyPalettes bodyColour).any fun p => (Ir.Design.declared? p .covered).isSome)
   let (bodyColourT, colourTDiags) := elabStr (dvDeck ("\\setbeamercovered{transparent}\n" ++ pre)
     ("\\palette{ covered = #000000 }\n" ++ frame))
-  t s!"cover deck, a covered colour in the body over a share: named, the share judged ({coverLosses bodyColourT})"
-    ((colourTDiags.filter (·.code == "W0340")).size == 1 && coverLosses bodyColourT == #[some "covered:alert"])
+  t s!"cover deck, a covered colour in the body over a share: judged at the share ({coverLosses bodyColourT})"
+    (!(colourTDiags.any (·.code == "W0340")) &&
+      coverLosses bodyColourT == #[some "covered:covered", some "covered:alert"])
   let (bodySeq, seqDiags) := elabStr (dvDeck pre ("\\palette{ covered = #777777 }\n" ++
     "\\palette{ covered = 0\\% }\n\\setbeamercovered{transparent}\n" ++ frame))
-  t "cover deck, covers declared in the body in turn: each named against the preamble's hiding, none kept"
-    ((seqDiags.filter (·.code == "W0340")).foldl (fun n d => n + d.sites) 0 == 2 &&
-      ((seqDiags.filter (·.code == "W0340")).all fun d => hasStr d.message "hiding") &&
-      (bodyPalettes bodySeq).all fun p => p.coveredFraction == none && (Ir.Design.declared? p .covered).isNone)
+  t "cover deck, covers declared in the body in turn: the last share and the colour stand"
+    (!(seqDiags.any (·.code == "W0340")) &&
+      (bodyPalettes bodySeq).back?.any fun p => p.coveredFraction == some 15 &&
+        Ir.Design.declared? p .covered == some (Ir.Color.ofHtml 0x77 0x77 0x77))
   let (bodySame, sameDiags) := elabStr (dvDeck ("\\setbeamercovered{transparent}\n" ++ pre)
     ("\\setbeamercovered{transparent}\n" ++ frame))
   t "cover deck, a body share agreeing with the preamble's names nothing"
@@ -230,10 +233,6 @@ def deckChecks (ref : IO.Ref (List String)) : IO Unit := do
     (doc.palette.seeded.all (·.targets.cover.isNone) &&
       Ir.Design.declared? doc.palette .alert ==
         (SeedPalette.generate s (s.targets .documents)).toOption.map (·.colors.alert))
-
-/-- The colour a page ships a word in, if it ships it. -/
-private def wordOn (out : Layout.Out) (page : Nat) (word : String) : Option Ir.Color :=
-  (out.pages[page]?.bind fun p => wordRun p.lines word).map (·.1)
 
 /-- A deck declaring no share hides a pending step, its place kept, as beamer's default `invisible`
 does, and covers it at beamer's transparent share, a given share or none as declared, in the PDF's
@@ -266,7 +265,7 @@ def hiddenChecks (ref : IO.Ref (List String)) : IO Unit := do
         (wordOn out 0 "Kilo" == some (Oklab.cover n d.bg ink))
     let (html, _) := HtmlDoc.emit {} doc
     t s!"hidden, {label}: the web page covers the pending step at the share, none hidden"
-      (hasStr html s!"from \{ opacity: {share.getD 0}%;")
+      (hasStr (stepCssResolved html) s!"from \{ opacity: {share.getD 0}%;")
   -- What a hidden step ships: no ink on a pending item's line, its marker's, image's and link's
   -- included, whatever its marker, and no ground of a block it holds, nothing in the hidden paint.
   let items := "\\item<2> Kilo words \\includegraphics[height=0.3cm]{absent.png} " ++

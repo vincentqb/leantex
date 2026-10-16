@@ -773,7 +773,7 @@ private def pendingCoverDiags (site : ColorSite) (doc : Doc) (pending : Array Pa
     out := out ++ judge "fg" d.fg (cov.of d.fg)
     -- A declared constant cover is judged under its own key; undeclared, it is the fg cover.
     if d.covered.isSome then
-      out := out ++ judge "covered" d.fg cov.plain
+      out := out ++ judge "covered" d.fg d.inkCover
     for (role, r) in [("alert", Role.alert), ("example", Role.example)] do
       if let some c := Design.declared? pal r then
         if covered.contains (pal, .role r) then
@@ -1029,7 +1029,7 @@ public def coveredContract (pal : Palette) (reported : List Role := []) : Bool :
   visiblyCovered .ink d.fg
     && (match Design.declared? pal .alert with | some c => visiblyCovered .alert c | none => true)
     && (match Design.declared? pal .example with | some c => visiblyCovered .example c | none => true)
-    && coverHolds d.bg d.fg cov.plain
+    && coverHolds d.bg d.fg d.inkCover
 
 /-- Covering twice quiets further, for every text role the bundle ships. -/
 public def coverMonotone (pal : Palette) : Bool :=

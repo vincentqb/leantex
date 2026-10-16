@@ -461,13 +461,16 @@ public structure Counters where
   /-- The footnote counter where each `\bibliography` list stands. -/
   notesAt : Array Nat := #[]
   thm : ThmDecls := {}
+  /-- beamer's `beamerpauses` less one inside a frame's body, the `\pause`s it has met in reading
+  order; none outside every frame's body. -/
+  pauses : Option Nat := none
 
 /-- A global assignment made inside a group, which the group's end replays. -/
 public inductive GlobalWrite where
   /-- A palette name set or cleared; `native` when Beamer's role state
   follows it. -/
   | entry (ref : ColorRef) (value : Option Color) (decorative : Bool) (native : Bool)
-  /-- The cover fraction a body `\palette{ covered = ... }` set. -/
+  /-- The cover fraction a preamble `\palette{ covered = ... }` set. -/
   | covered (fraction : Option Nat)
   /-- The generated palette a body `\palette[seeds]{...}` installed. -/
   | seeded (state : Option SeedPalette.SeedState)
@@ -7397,17 +7400,6 @@ private def reseedCovered (ctx : Ctx) (pos : Pos) (pal : Palette) (depth : Groun
     logGlobal (.seeded (some st'))
     return out
 
-/-- The report of a cover the body declares, which the deck's covering, set once before the body,
-does not take. -/
-private def coverInBody (ctx : Ctx) (pos : Pos) : EM Unit :=
-  let share := (Design.ofPalette ctx.basePalette).coveredFraction
-  let how := if share == 0 then "hiding its pending steps"
-    else s!"covering its pending steps at {share}%"
-  warnOnce ctx "palette:covered:body" .W0340
-    ("a cover declared in the body is ignored; the deck keeps the covering its body opens " ++
-      s!"with, {how}") pos
-    (help := "a deck's covering is set once, before '\\begin{document}'")
-
 private def applyPaletteEntry (ctx : Ctx) (pal : Palette) (key valueSrc entry : String)
     (pos : Pos) (decorative : Bool := false) (aliasOnly : Bool := false) (inBody : Bool := false)
     (depth : GroundDepth := .documents) : EM Palette := do
@@ -7426,15 +7418,13 @@ private def applyPaletteEntry (ctx : Ctx) (pal : Palette) (key valueSrc entry : 
     | some n =>
       if n ≤ 99 then
         pal := { pal with decorative := if decorative && !pal.decorative.contains (.role .covered)
-                            then pal.decorative.push (.role .covered) else pal.decorative }
-        -- The renderers cover at the share in force when the body opens.
-        if inBody then
-          if n != (Design.ofPalette ctx.basePalette).coveredFraction then
-            coverInBody ctx pos
-        else
-          pal := { pal with coveredFraction := some n }
+                            then pal.decorative.push (.role .covered) else pal.decorative
+                          coveredFraction := some n }
+        noteDeclared ctx "palette" "covered"
+        -- In the body a share covers the steps after it to its group's end, as beamer's
+        -- `\setbeamercovered` does, over the colours generated before it.
+        unless inBody do
           logGlobal (.covered (some n))
-          noteDeclared ctx "palette" "covered"
           pal ← reseedCovered ctx pos pal depth n
       else
         diag ctx .E0332 s!"covered fraction must be 0–99 percent, got '{valueSrc}'" pos
@@ -7442,8 +7432,6 @@ private def applyPaletteEntry (ctx : Ctx) (pal : Palette) (key valueSrc entry : 
     | none =>
       diag ctx .E0321 s!"cannot read covered fraction: {valueSrc.quote}" pos
         (help := "a percentage like: covered = 38\\%")
-  else if inBody && !aliasOnly && key == "covered" then
-    coverInBody ctx pos
   else
     let xcolor := valueSrc.trimAscii.toString.startsWith Decl.xcolorDefinitionPrefix
     let ref : ColorRef := if aliasOnly || xcolor then .color key else ColorRef.ofKey key
@@ -7544,7 +7532,7 @@ private def seedKeys : List String := ["ink", "paper", "accent", "alert", "examp
 /-- Installs the palette generated from `\palette[seeds]{…}`; seeds that
 generate none stand as the page's text, ground and accent. -/
 private def applySeeds (ctx : Ctx) (pal : Palette) (src : String) (pos : Pos)
-    (depth : GroundDepth) (inBody : Bool := false) : EM Palette := do
+    (depth : GroundDepth) : EM Palette := do
   let mut found : Array (String × Color) := #[]
   let mut blocks := SeedPalette.Blocks.tonal
   for entry in Decl.splitEntries src do
@@ -7576,9 +7564,8 @@ private def applySeeds (ctx : Ctx) (pal : Palette) (src : String) (pos : Pos)
   let seeds : SeedPalette.Seeds :=
     { ink, paper, accent, alert := seed "alert", exampleColor := seed "example",
       neutral := seed "neutral" }
-  -- The renderers cover at the share in force when the body opens.
-  let share := if inBody then ctx.basePalette.coveredFraction else pal.coveredFraction
-  let targets := seeds.targetsAt depth share
+  -- The generated tones keep the covered-state contract at the share in force.
+  let targets := seeds.targetsAt depth pal.coveredFraction
   -- The document's own role colours outrank the generated ones.
   let docRoles := (← get).spans.docRoles
   let keep (r : Role) : Bool := docRoles.contains r
@@ -7601,7 +7588,7 @@ where
 private def applyPalette (ctx : Ctx) (pal : Palette) (src : String)
     (pos : Pos) (decorative : Bool := false) (seeds : Bool := false)
     (depth : GroundDepth := .documents) (inBody : Bool := false) : EM Palette := do
-  if seeds then return ← applySeeds ctx pal src pos depth inBody
+  if seeds then return ← applySeeds ctx pal src pos depth
   let mut pal := pal
   for entry in Decl.splitEntries src do
     match Decl.splitEntry entry with
@@ -8529,15 +8516,42 @@ private theorem ItemSplitFits.done {items : Array (Array Raw)} {cur body : Array
   rw [itemsMeas_push, itemsMeas_push]
   omega
 
-/-- Splits a list body at its `\item`s, each item with its overlay step and
-the `\pause` count before it. -/
+/-- Steps the frame's `\pause` count in a deck, as beamer steps its `beamerpauses` counter. -/
+private def notePause (ctx : Ctx) : EM Unit :=
+  if ctx.slides then
+    modify fun st => { st with ctr := { st.ctr with pauses := st.ctr.pauses.map (· + 1) } }
+  else pure ()
+
+/-- The `\pause`s a scope stands after beyond the steps its context opens: content the frame
+reveals after them, wherever its scope began. -/
+private def pausesPast (ctx : Ctx) (st : ESt) : Nat :=
+  if ctx.noteBody then 0 else st.ctr.pauses.getD ctx.stepBase - ctx.stepBase
+
+/-- A scope standing after `past` more of its frame's `\pause`s, revealed after them. -/
+private def pausedScope (ctx : Ctx) (past : Nat) (blocks : Array Block) : Array Block :=
+  if past == 0 || blocks.isEmpty then blocks else #[.step (ctx.stepBase + past + 1) none blocks]
+
+/-- The step a `\pause` reveals after: the frame's count of them in a deck, as beamer's
+`\onslide<\value{beamerpauses}->` reads it, none outside a frame's body, else one past its scope's. -/
+private def pauseStep (ctx : Ctx) (st : ESt) : Option Nat :=
+  if ctx.slides then st.ctr.pauses else some (ctx.stepBase + 1)
+
+/-- Runs content beamer typesets only on some steps, so the `\pause`s it meets count on none of
+the frame's others. -/
+private def pausesKept (act : EM α) : EM α := do
+  let saved := (← get).ctr.pauses
+  let r ← act
+  modify fun st => { st with ctr := { st.ctr with pauses := saved } }
+  return r
+
+/-- Splits a list body at its `\item`s, each item with its overlay step; a `\pause` before the
+first item is the frame's, which every item stands after. -/
 private def itemSplitGo (ctx : Ctx) (body : Array Raw) (pos : Pos) (desc : Bool) (scope : ListScope) (j : Nat)
     (items : Array (Array Raw)) (steps : Array (Option Ir.OverlaySpec))
-    (itemPauses : Array Nat) (pauses : Nat) (curItem : Array Raw)
-    (curStep : Option Ir.OverlaySpec) (curPauses : Nat)
+    (curItem : Array Raw) (curStep : Option Ir.OverlaySpec)
     (awaitSpec inOpt seen strayDiagged : Bool) (bound pbound : Nat)
     (hfit : ItemSplitFits items curItem body j bound pbound) :
-    EM { r : Array (Array Raw) × Array (Option Ir.OverlaySpec) × Array Nat × ListScope //
+    EM { r : Array (Array Raw) × Array (Option Ir.OverlaySpec) × ListScope //
       itemsMeas rawWeightList r.1.toList ≤ bound ∧
         itemsMeas nestedParsList r.1.toList ≤ pbound } := do
   if h : j < body.size then
@@ -8545,29 +8559,30 @@ private def itemSplitGo (ctx : Ctx) (body : Array Raw) (pos : Pos) (desc : Bool)
     | .ctrl "item" _ =>
       if seen then
         itemSplitGo ctx body pos desc scope (j + 1) (items.push curItem)
-          (steps.push curStep) (itemPauses.push curPauses) pauses #[]
-          none pauses true inOpt true strayDiagged bound pbound
+          (steps.push curStep) #[]
+          none true inOpt true strayDiagged bound pbound
           (hfit.close h)
       else
-        itemSplitGo ctx body pos desc scope (j + 1) items steps itemPauses pauses #[]
-          none pauses true inOpt true strayDiagged bound pbound
+        itemSplitGo ctx body pos desc scope (j + 1) items steps #[]
+          none true inOpt true strayDiagged bound pbound
           (hfit.restart h)
     | .ctrl "pause" _ =>
-      -- Also kept in the item, so a mid-item pause steps the item's rest.
+      -- Kept in the item, so a mid-item pause steps the rest of the frame from there.
       if seen then
-        itemSplitGo ctx body pos desc scope (j + 1) items steps itemPauses (pauses + 1)
-          (curItem.push body[j]) curStep curPauses awaitSpec inOpt seen
+        itemSplitGo ctx body pos desc scope (j + 1) items steps
+          (curItem.push body[j]) curStep awaitSpec inOpt seen
           strayDiagged bound pbound
           (hfit.keep h)
       else
-        itemSplitGo ctx body pos desc scope (j + 1) items steps itemPauses (pauses + 1)
-          curItem curStep curPauses awaitSpec inOpt seen strayDiagged bound pbound
+        notePause ctx
+        itemSplitGo ctx body pos desc scope (j + 1) items steps
+          curItem curStep awaitSpec inOpt seen strayDiagged bound pbound
           (hfit.skip h .refl)
     | item =>
       if inOpt then
         let inOpt := !(item matches .sym ']' _)
-        itemSplitGo ctx body pos desc scope (j + 1) items steps itemPauses pauses curItem
-          curStep curPauses awaitSpec inOpt seen strayDiagged bound pbound
+        itemSplitGo ctx body pos desc scope (j + 1) items steps curItem
+          curStep awaitSpec inOpt seen strayDiagged bound pbound
           (hfit.skip h .refl)
       else
       if seen && awaitSpec && !isSpace item then
@@ -8577,8 +8592,8 @@ private def itemSplitGo (ctx : Ctx) (body : Array Raw) (pos : Pos) (desc : Bool)
             warnOnce ctx "item:marker" .W0110
               "'\\item' [marker] override is not modelled; the level's marker stands" pos
               (help := "\\style{itemize}{ marker = {...} } declares a level's marker")
-          itemSplitGo ctx body pos desc scope (j + 1) items steps itemPauses pauses curItem
-            curStep curPauses false true seen strayDiagged bound pbound
+          itemSplitGo ctx body pos desc scope (j + 1) items steps curItem
+            curStep false true seen strayDiagged bound pbound
             (hfit.skip h .refl)
         else if let some w := specWord? item then
           let curStep ← match Ir.overlayRange w with
@@ -8586,17 +8601,17 @@ private def itemSplitGo (ctx : Ctx) (body : Array Raw) (pos : Pos) (desc : Bool)
             | none => do
               warnOverlaySpec ctx w pos
               pure curStep
-          itemSplitGo ctx body pos desc scope (j + 1) items steps itemPauses pauses curItem
-            curStep curPauses awaitSpec inOpt seen strayDiagged bound pbound
+          itemSplitGo ctx body pos desc scope (j + 1) items steps curItem
+            curStep awaitSpec inOpt seen strayDiagged bound pbound
             (hfit.skip h .refl)
         else
-          itemSplitGo ctx body pos desc scope (j + 1) items steps itemPauses pauses
-            (curItem.push body[j]) curStep curPauses false inOpt seen strayDiagged
+          itemSplitGo ctx body pos desc scope (j + 1) items steps
+            (curItem.push body[j]) curStep false inOpt seen strayDiagged
             bound pbound
             (hfit.keep h)
       else if seen then
-        itemSplitGo ctx body pos desc scope (j + 1) items steps itemPauses pauses
-          (curItem.push body[j]) curStep curPauses awaitSpec inOpt seen strayDiagged
+        itemSplitGo ctx body pos desc scope (j + 1) items steps
+          (curItem.push body[j]) curStep awaitSpec inOpt seen strayDiagged
           bound pbound
           (hfit.keep h)
       else do
@@ -8604,26 +8619,26 @@ private def itemSplitGo (ctx : Ctx) (body : Array Raw) (pos : Pos) (desc : Bool)
           if counterCtrl c then
             -- ltlists.dtx: a counter set before the first `\item` declares.
             let ⟨k, hk⟩ ← counterArm ctx body (j + 1) c pos
-            return ← itemSplitGo ctx body pos desc scope k items steps itemPauses pauses curItem
-              curStep curPauses awaitSpec inOpt seen strayDiagged bound pbound
+            return ← itemSplitGo ctx body pos desc scope k items steps curItem
+              curStep awaitSpec inOpt seen strayDiagged bound pbound
               (hfit.skip h hk)
           if let some scope' ← listScopeCtrl ctx body j c cpos scope then
             return ← itemSplitGo ctx body pos desc scope' (j + 1)
-              items steps itemPauses pauses curItem curStep curPauses
+              items steps curItem curStep
               awaitSpec inOpt seen strayDiagged bound pbound
               (hfit.skip h .refl)
         if !isSpaceOrPar item && !strayDiagged then
           diag ctx .E0310 s!"content before the first '\\item'" pos
-        itemSplitGo ctx body pos desc scope (j + 1) items steps itemPauses pauses curItem
-          curStep curPauses awaitSpec inOpt seen
+        itemSplitGo ctx body pos desc scope (j + 1) items steps curItem
+          curStep awaitSpec inOpt seen
           (strayDiagged || !isSpaceOrPar item) bound pbound
           (hfit.skip h .refl)
   else
     have hend := hfit.done (show body.size ≤ j by omega)
     if seen then
-      return ⟨(items.push curItem, steps.push curStep, itemPauses.push curPauses, scope), hend.1⟩
+      return ⟨(items.push curItem, steps.push curStep, scope), hend.1⟩
     else
-      return ⟨(items, steps, itemPauses, scope), hend.2⟩
+      return ⟨(items, steps, scope), hend.2⟩
 termination_by body.size - j
 
 /-- `ctx` with the palette and tokens that body declarations earlier in flow
@@ -8652,6 +8667,10 @@ private def MCtx (ctx : Ctx) := { c : Ctx // c.envLimit = ctx.envLimit
 
 private def regionCtx (ctx : Ctx) (ground : Option Color) : MCtx ctx :=
   ⟨{ ctx with ground := ground.or ctx.ground }, rfl, rfl, rfl, rfl⟩
+
+/-- The context of a scope standing after `past` more of its frame's `\pause`s than `ctx` opens. -/
+private def pastCtx (ctx : Ctx) (past : Nat) : MCtx ctx :=
+  ⟨{ ctx with stepBase := ctx.stepBase + past }, rfl, rfl, rfl, rfl⟩
 
 private def barCtx (ctx : Ctx) (bar : Role) : Ctx :=
   (regionCtx ctx (Design.declared? ctx.palette bar)).1
@@ -10097,16 +10116,17 @@ private def descItems (ctx : Ctx) (body : Array Raw) (items : Array (Array Block
       | _ => #[Block.para head] ++ item)
   return out
 
-/-- Applies each item's overlay selector to the whole item, label included, as
-beamer's `beamer@parseitem` does. -/
+/-- Applies each item's overlay selector to the whole item, label included, as beamer's
+`beamer@parseitem` does, from the step after the `\pause`s its frame met before it. -/
 private def coverItems (ctx : Ctx) (steps : Array (Option OverlaySpec))
-    (pauses : Array Nat) (items : Array (Array Block)) : Array (Array Block) :=
-  items.mapIdx fun i inner =>
+    (items : Array (Nat × Array Block)) : Array (Array Block) :=
+  items.mapIdx fun i (past, inner) =>
     let spec := (steps[i]?).getD none
-    let p := (pauses[i]?).getD 0
-    match spec with
-    | some _ => selectedCover Block.onSteps spec inner
-    | none => if p > 0 then #[.step (ctx.stepBase + p + 1) none inner] else inner
+    if past == 0 then selectedCover Block.onSteps spec inner
+    else
+      let after := ctx.stepBase + past + 1
+      selectedCover Block.onSteps
+        (some ((spec.map (·.fromStep after)).getD ⟨after, none, [], false⟩)) inner
 
 /-- A `\bibitem`'s text: paragraph ends as spaces, edge spaces dropped. -/
 private def entryRaws (raws : Array Raw) : Array Raw :=
@@ -11333,26 +11353,26 @@ private def drainNotesGo (ctx : Ctx) (stash : List (Array Raw × Pos))
 termination_by (ctx.envLimit, 1, 0, 0, 0, stash.length)
 decreasing_by all_goals blocks_dec
 
-/-- Elaborates each list item under its accumulated `\pause` base. -/
-private def elabItemsGo (ctx : Ctx) (items : Array (Array Raw)) (itemPauses : Array Nat)
-    (m : Nat) (acc : Array (Array Block)) (bound pbound : Nat)
+/-- Elaborates each list item beside the `\pause`s its frame met before it past the list's own
+steps, which its cover reveals it after. -/
+private def elabItemsGo (ctx : Ctx) (items : Array (Array Raw))
+    (m : Nat) (acc : Array (Nat × Array Block)) (bound pbound : Nat)
     (hb : itemsMeas rawWeightList items.toList < bound)
     (hpb : itemsMeas nestedParsList items.toList ≤ pbound) :
-    EM (Array (Array Block)) := do
+    EM (Array (Nat × Array Block)) := do
   if hm : m < items.size then
     let ⟨it, _, _⟩ : { a : Array Raw //
         rawWeightList a.toList ≤ itemsMeas rawWeightList items.toList
           ∧ nestedParsList a.toList ≤ itemsMeas nestedParsList items.toList } ←
       pure ⟨items[m], itemsMeas_elem_le _ (Array.getElem?_eq_getElem hm),
         itemsMeas_elem_le _ (Array.getElem?_eq_getElem hm)⟩
-    let p := (itemPauses[m]?).getD 0
+    let past := pausesPast ctx (← get)
     have _ : sliceWeight it 0 = rawWeightList it.toList := sliceWeight_zero _
     have _ : slicePars it 0 = nestedParsList it.toList := slicePars_zero _
-    let ⟨stepCtx, hm2⟩ : MCtx ctx ←
-      pure ⟨{ ctx with stepBase := ctx.stepBase + p }, rfl, rfl, rfl, rfl⟩
+    let ⟨stepCtx, _⟩ := pastCtx ctx past
     let inner ← elabBlockScope stepCtx it
-    let acc := acc.push inner
-    elabItemsGo ctx items itemPauses (m + 1) acc bound pbound hb hpb
+    let acc := acc.push (past, inner)
+    elabItemsGo ctx items (m + 1) acc bound pbound hb hpb
   else return acc
 termination_by (ctx.envLimit, noteFlag ctx,
   visParsGo ctx.user ctx.limit + pbound,
@@ -11494,8 +11514,11 @@ private def columnsGo (ctx : Ctx) (body : Array Raw) (j : Nat)
               = rawWeightList strayRaws.toList := sliceWeight_zero _
           have _ : slicePars strayRaws 0
               = nestedParsList strayRaws.toList := slicePars_zero _
-          let sb ← splicedFrameScope (some blocks.size) (elabBlockScope ctx strayRaws)
-          pure ((#[] : Array (BoxWidth × Array Block)), blocks ++ sb)
+          let past := pausesPast ctx (← get)
+          let ⟨strayCtx, _⟩ := pastCtx ctx past
+          let sb ← splicedFrameScope (some blocks.size) (elabBlockScope strayCtx strayRaws)
+          let shown := pausedScope ctx past sb
+          pure ((#[] : Array (BoxWidth × Array Block)), blocks ++ shown)
         else pure (cols, blocks)
       let (colPos, m) := columnPosOf cbody cpos
       let mut width : Ir.BoxWidth := .share
@@ -11510,10 +11533,14 @@ private def columnsGo (ctx : Ctx) (body : Array Raw) (j : Nat)
             s!"column width '{src}' is not a fraction of the text width; \
 the column shares the leftover" cpos
             (help := "write a factor like {0.5\\textwidth}")
-      have hcm := tail_measures cbody m2
-      have hcp2 := nestedParsList_le cbody.toList
-      -- A column is a group: beamer sets each in a minipage of its own.
-      let cinner ← groupBlocks ctx.palette (elabBlockScope ctx (cbody.extract m2 cbody.size))
+      have _ := tail_measures cbody m2
+      have _ := nestedParsList_le cbody.toList
+      -- A column is a group: beamer sets each in a minipage of its own, revealed after the
+      -- `\pause`s an earlier column met.
+      let past := pausesPast ctx (← get)
+      let ⟨colCtx, _⟩ := pastCtx ctx past
+      let cinner := pausedScope ctx past
+        (← groupBlocks ctx.palette (elabBlockScope colCtx (cbody.extract m2 cbody.size)))
       columnsGo ctx body (j + 1) (cols.push ({ width with pos := colPos }, cinner)) #[]
         blocks (hf.flush (by omega))
     | _ =>
@@ -11526,8 +11553,11 @@ the column shares the leftover" cpos
       have _ : slicePars strayRaws 0 = nestedParsList strayRaws.toList :=
         slicePars_zero _
       have _ := hf.bounds
-      let sb ← splicedFrameScope (some blocks.size) (elabBlockScope ctx strayRaws)
-      return blocks ++ sb
+      let past := pausesPast ctx (← get)
+      let ⟨strayCtx, _⟩ := pastCtx ctx past
+      let sb ← splicedFrameScope (some blocks.size) (elabBlockScope strayCtx strayRaws)
+      let shown := pausedScope ctx past sb
+      return blocks ++ shown
     else
       return blocks
 termination_by (ctx.envLimit, noteFlag ctx,
@@ -11578,11 +11608,13 @@ private def elabEnvArm (ctx : Ctx) (n : String) (scope : Array Raw)
     title := title2
     have _ : sliceWeight rest 0 = rawWeightList rest.toList := sliceWeight_zero _
     have _ : slicePars rest 0 = nestedParsList rest.toList := slicePars_zero _
-    -- A note's own frame has no side channel, so its stashed notes are refused.
-    modify fun st => { st with pendingNotes := #[] }
+    -- A note's own frame has no side channel, so its stashed notes are refused; only a frame's
+    -- body counts `\pause`s, from zero, as beamer's frame resets `beamerpauses`.
+    let outerPauses := (← get).ctr.pauses
+    modify fun st => { st with pendingNotes := #[], ctr := { st.ctr with pauses := some 0 } }
     let mut inner ← elabBlockScope frameCtx rest
     let stash := (← get).pendingNotes
-    modify fun st => { st with pendingNotes := #[] }
+    modify fun st => { st with pendingNotes := #[], ctr := { st.ctr with pauses := outerPauses } }
     if hnb : ctx.noteBody then
       unless stash.isEmpty do
         diag ctx .E0359
@@ -11602,10 +11634,10 @@ private def elabEnvArm (ctx : Ctx) (n : String) (scope : Array Raw)
           ∧ nestedParsList a.toList ≤ nestedParsList body.toList } ←
       pure ⟨body.extract bodyFrom body.size, extract_weight_le ..,
         extract_nested_le ..⟩
-    -- `\pause` between items steps the rest of the list, not only the item.
-    let ⟨(items, steps, itemPauses, scope), hsplit⟩ ← itemSplitGo ctx lbody pos
+    -- `\pause` between items steps the rest of the frame, not only the item.
+    let ⟨(items, steps, scope), hsplit⟩ ← itemSplitGo ctx lbody pos
       (n == "description") {} 0
-      #[] #[] #[] 0 #[] none 0 false false false false
+      #[] #[] #[] none false false false false
       (sliceWeight lbody 0) (slicePars lbody 0)
       (ItemSplitFits.start lbody 0)
     have hiw : itemsMeas rawWeightList items.toList ≤ sliceWeight lbody 0 := hsplit.1
@@ -11620,13 +11652,15 @@ private def elabEnvArm (ctx : Ctx) (n : String) (scope : Array Raw)
         literalText := literal, listNest := ctx.listNest.enter n spacing },
       rfl, rfl, rfl, rfl⟩
     let elabItems ← withBlockDecls scope.decls do
-      let elabItems ← elabItemsGo itemCtx items itemPauses 0 #[]
+      let elabItems ← elabItemsGo itemCtx items 0 #[]
         (rawWeightList lbody.toList + 1) (nestedParsList lbody.toList)
         (by omega) (by omega)
-      if n == "description" then descItems itemCtx lbody elabItems
+      if n == "description" then
+        let labelled ← descItems itemCtx lbody (elabItems.map (·.2))
+        pure ((elabItems.zip labelled).map fun ((past, _), item) => (past, item))
       else pure elabItems
     blocks := blocks ++ wrapDeclAlign scope.align
-      #[.list (n == "enumerate") spacing (coverItems ctx steps itemPauses elabItems)]
+      #[.list (n == "enumerate") spacing (coverItems ctx steps elabItems)]
   else if n == "center" || (Ir.raggedSideOf? n).isSome then
     let inner ← elabBlockScope ctx body
     -- The environment is a trivlist and opens `\topsep`; the declaration does not.
@@ -11919,8 +11953,8 @@ private def elabCtrlArm (ctx : Ctx) (raws : Array Raw) (i : Nat)
           let ⟨stepCtx, hm⟩ : MCtx ctx ←
             pure ⟨{ ctx with stepBase := max ctx.stepBase (spec.start - 1) },
               rfl, rfl, rfl, rfl⟩
-          let ia ← elabBlockScope stepCtx ga
-          let ib ← elabBlockScope ctx gb
+          let ia ← pausesKept (elabBlockScope stepCtx ga)
+          let ib ← pausesKept (elabBlockScope ctx gb)
           blocks := blocks.push (altCarriers raws i j3 blocks spec ga gb ia ib)
           return (blocks, ⟨j3 + 1, by omega⟩)
         | none =>
@@ -11942,7 +11976,8 @@ when it is empty — '{}'")
           let ⟨stepCtx, hm⟩ : MCtx ctx ←
             pure ⟨{ ctx with stepBase := max ctx.stepBase (spec.start - 1) },
               rfl, rfl, rfl, rfl⟩
-          let inner ← elabBlockScope stepCtx gbody
+          let inner ← if n == "only" then pausesKept (elabBlockScope stepCtx gbody)
+            else elabBlockScope stepCtx gbody
           let inner := carrierInGroup raws i jg blocks gbody inner
           unless inner.isEmpty do
             blocks := blocks.push (.onSteps spec inner)
@@ -12053,13 +12088,13 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
         -- A restoring scope stays whole so its snapshot predates every assignment.
         let inner ← restoringGroup ctx' cur
           (splicedFrameScope (some blocks.size) (elabBlockScope ctx' body cur))
-        elabBlocksGo ctx' raws (i + 1) (blocks ++ inner) #[] gen'
+        elabBlocksNext ctx' raws (i + 1) (blocks ++ inner) gen'
       else if (body.any isCenteringRaw || bodyIsBlock body) && !isArgument cur then
         groupPictureInSentence ctx' body cur raws i
         let (⟨ctx', _⟩, blocks) ← flushPara ctx' blocks cur
         let inner ← groupBlocks ctx'.palette
           (splicedFrameScope (some blocks.size) (elabBlockScope ctx' body))
-        elabBlocksGo ctx' raws (i + 1) (blocks ++ inner) #[] gen'
+        elabBlocksNext ctx' raws (i + 1) (blocks ++ inner) gen'
       else
         elabBlocksGo ctx' raws (i + 1) blocks (cur.push raws[i]) gen'
     | .par _ =>
@@ -12116,7 +12151,7 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
         let afterEnv := endPeAt raws i inPar flushed
         let blocks ← envGroup n ctx'.palette inPar (parFollows raws (i + 1)) afterEnv
           flushed.size (elabEnvArm ctx' n body epos flushed)
-        elabBlocksGo ctx' raws (i + 1) blocks #[] gen'
+        elabBlocksNext ctx' raws (i + 1) blocks gen'
       else
         elabBlocksGo ctx' raws (i + 1) blocks (cur.push raws[i]) gen'
     | .ctrl n cpos =>
@@ -12164,15 +12199,22 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
       else if n == "pause" then
         have _ := rest_measures raws (i + 1)
         let (⟨ctx', _⟩, blocks) ← closeBlockMacros ctx' blocks
-        let ⟨stepCtx, hm⟩ : MCtx ctx' ←
-          pure ⟨{ ctx' with stepBase := ctx'.stepBase + 1 }, rfl, rfl, rfl, rfl⟩
-        let inner ← elabBlockScope stepCtx (raws.extract (i + 1) raws.size)
-        let blocks := pauseCarrier raws i blocks (ctx'.stepBase + 2) inner
-        have _ : sliceWeight raws raws.size = 0 :=
-          sliceWeight_end raws (Nat.le_refl _)
-        have _ : slicePars raws raws.size = 0 :=
-          slicePars_end raws (Nat.le_refl _)
-        elabBlocksGo ctx' raws raws.size blocks #[] gen'
+        notePause ctx'
+        match pauseStep ctx' (← get) with
+        | none =>
+          warnOnce ctx' "spec:pause-outside" .W0105
+            "'\\pause' outside a frame's body cannot step; what follows it is shown" cpos
+          elabBlocksGo ctx' raws (i + 1) blocks #[] gen'
+        | some k =>
+          let ⟨stepCtx, hm⟩ : MCtx ctx' ←
+            pure ⟨{ ctx' with stepBase := max (ctx'.stepBase + 1) k }, rfl, rfl, rfl, rfl⟩
+          let inner ← elabBlockScope stepCtx (raws.extract (i + 1) raws.size)
+          let blocks := pauseCarrier raws i blocks (k + 1) inner
+          have _ : sliceWeight raws raws.size = 0 :=
+            sliceWeight_end raws (Nat.le_refl _)
+          have _ : slicePars raws raws.size = 0 :=
+            slicePars_end raws (Nat.le_refl _)
+          elabBlocksGo ctx' raws raws.size blocks #[] gen'
       else if n == "note" then
         if let .took _ := scanBracketArg raws (i + 1) cpos then
           warnOnce ctx' "note:options" .N0102
@@ -12321,8 +12363,8 @@ a side channel, never slide content" cpos
           have hbm := group_measures hgf (show i ≤ jf by omega)
           let inner ← elabBlockScope ctx' body
           have hadv := advance_measures raws h (show i < jf + 1 by omega)
-          elabBlocksGo ctx' raws (jf + 1)
-            (pushSkipBlock blocks (.spaced (Ir.Sourced.bare before) inner) primitive) #[] gen'
+          elabBlocksNext ctx' raws (jf + 1)
+            (pushSkipBlock blocks (.spaced (Ir.Sourced.bare before) inner) primitive) gen'
         | _ =>
           diag ctx' .E0304 "'\\block' needs a {body}" cpos
           elabBlocksGo ctx' raws (i + 1) blocks #[] gen'
@@ -12330,7 +12372,7 @@ a side channel, never slide content" cpos
         let (⟨ctx', _⟩, blocks) ← blockControlContext ctx' n raws i blocks
         let (blocks, ⟨j, hij⟩) ← elabCtrlArm ctx' raws i h n cpos blocks
         have _ := advance_measures raws h hij
-        elabBlocksGo ctx' raws j blocks #[] gen'
+        elabBlocksNext ctx' raws j blocks gen'
     | _ =>
       if cur.isEmpty && isSpaceOrPar raws[i] then
         elabBlocksGo ctx' raws (i + 1) blocks cur gen'
@@ -12341,6 +12383,26 @@ a side channel, never slide content" cpos
 termination_by (ctx.envLimit, noteFlag ctx,
   visParsGo ctx.user ctx.limit + slicePars raws i,
   visWeightGo ctx.user ctx.limit + sliceWeight raws i, 2, 0)
+decreasing_by all_goals blocks_dec
+
+/-- Continues a scope at `raws[i]` after a child; where the child's `\pause`s passed the scope's
+steps, the rest is a scope of its own, revealed after them. -/
+private def elabBlocksNext (ctx : Ctx) (raws : Array Raw) (i : Nat) (blocks : Array Block)
+    (gen : Nat) : EM (Array Block) := do
+  let past := pausesPast ctx (← get)
+  if past == 0 || (raws.extract i raws.size).all isSpaceOrPar then
+    elabBlocksGo ctx raws i blocks #[] gen
+  else
+    have _ := rest_measures raws i
+    have _ : sliceWeight raws raws.size = 0 := sliceWeight_end raws (Nat.le_refl _)
+    have _ : slicePars raws raws.size = 0 := slicePars_end raws (Nat.le_refl _)
+    let ⟨restCtx, _⟩ := pastCtx ctx past
+    let rest ← elabBlockScope restCtx (raws.extract i raws.size)
+    let shown := pausedScope ctx past rest
+    elabBlocksGo ctx raws raws.size (blocks ++ shown) #[] gen
+termination_by (ctx.envLimit, noteFlag ctx,
+  visParsGo ctx.user ctx.limit + slicePars raws i,
+  visWeightGo ctx.user ctx.limit + sliceWeight raws i, 4, 0)
 decreasing_by all_goals blocks_dec
 
 /-- Elaborates a nested block scope, carrying the caller's pending text `cur`. -/
@@ -12705,6 +12767,15 @@ private theorem elabBlocksGo_done (ctx : Ctx) (st : ESt) (raws : Array Raw) (i :
 
 private theorem run_get (k : ESt → EM α) (st : ESt) :
     ((do let x ← get; k x) : EM α).run st = (k st).run st := by rfl
+
+/-- After a child, a rest of blank source continues the scope as the walk does. -/
+private theorem elabBlocksNext_blank (ctx : Ctx) (raws : Array Raw) (i : Nat)
+    (blocks : Array Block) (gen : Nat) (h : (raws.extract i raws.size).all isSpaceOrPar = true) :
+    elabBlocksNext ctx raws i blocks gen = elabBlocksGo ctx raws i blocks #[] gen := by
+  rw [elabBlocksNext]
+  funext st
+  simp only [h, Bool.or_true, ite_true]
+  rfl
 
 private theorem elabBlocksGo_recovery_ctrl (ctx : Ctx) (st : ESt) (name : String)
     (body : Array Raw) (p gp : Pos) (blocks : Array Block)

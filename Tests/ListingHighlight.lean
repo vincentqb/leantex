@@ -708,7 +708,7 @@ def listingHighlightChecks (ref : IO.Ref (List String)) : IO Unit := do
     let active := layoutOf fonts doc
     let coveredBody := doc.body.map fun b => match b with
       | .verbatim _ source spec =>
-        .verbatim (some (Ir.Design.ofDoc doc).cover.plain) source spec
+        .verbatim (some (Ir.Design.ofDoc doc).inkCover) source spec
       | b => b
     let pending := layoutOf fonts { doc with body := coveredBody }
     let activeInk := ListingHighlight.glyphColors active

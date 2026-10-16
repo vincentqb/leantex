@@ -225,7 +225,7 @@ def overlayChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
         !(runColors p1).contains { r := 0xAA, g := 0, b := 0 } &&
         -- the covered run is the ink's own cover, not the plain grey
         (runColors p1).contains hotCover &&
-        hotCover != (Ir.Design.ofDoc cDoc).cover.plain &&
+        hotCover != (Ir.Design.ofDoc cDoc).inkCover &&
         (runColors p2).contains { r := 0xAA, g := 0, b := 0 }
       | _, _ => false))
   let (vDoc, vDs) := elabStr
@@ -280,7 +280,7 @@ def overlayBlockChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
   let (cDoc, cDs) := elabStr (deck169Frame
     ("\\begin{columns}\n\\begin{column}{0.5\\textwidth}\nabove\n\n\\pause\nbelow\n" ++
      "\\end{column}\n\\begin{column}{0.5\\textwidth}\nsteady\n\\end{column}\n\\end{columns}"))
-  t "pause inside a column steps the column's rest"
+  t "pause inside a column steps the rest of the frame, the next column included"
     (cDs.isEmpty && (match cDoc.body with
       | #[.frame _ _ _ _ #[.columns cols]] =>
         (match cols[0]? with
@@ -288,7 +288,7 @@ def overlayBlockChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
              .step 2 none #[.para #[.text "below"]]]
          | none => false) &&
         (match cols[1]? with
-         | some (_, body) => body == #[.para #[.text "steady"]]
+         | some (_, body) => body == #[.step 2 none #[.para #[.text "steady"]]]
          | none => false)
       | _ => false))
   let (aDoc, aDs) := elabStr (deck169Frame "\\alt<2>{after}{before}")
@@ -1832,7 +1832,7 @@ def designChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "bare design declares no covered constant and hides its pending steps"
     (bare.covered == none && bare.coveredFraction == Ir.coveredFractionDefault && bare.cover.hidden)
   t "a design declaring 38% covers plain runs to 38% of black over white"
-    ((designOf "\\theme{default}\\palette{ covered = 38\\% }").cover.plain == { r := 0x86, g := 0x86, b := 0x86 })
+    ((designOf "\\theme{default}\\palette{ covered = 38\\% }").inkCover == { r := 0x86, g := 0x86, b := 0x86 })
   t "bare design mutes to the ink" (bare.muted == bare.fg)
   t "bare design separator defaults to the ink" (bare.separator == bare.fg)
   t "bare design progress bar is 1pt thick"
@@ -2097,7 +2097,7 @@ def deckStepChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
   let (_, body, _) := HtmlDoc.emitTree {} doc
   let snapCount := (elemAttrsList (fun _ => true) #[] body.toList).filter
     (fun (_, attrs) => attrs.contains ("data-snap", "")) |>.size
-  let count (s : String) : Nat := (html.splitOn s).length - 1
+  let count (s : String) : Nat := ((stepCssResolved html).splitOn s).length - 1
   let slideSections := count "<section class=\"slide\""
     + count "<section class=\"slide titlebar\""
     + count "<section class=\"slide standout\""

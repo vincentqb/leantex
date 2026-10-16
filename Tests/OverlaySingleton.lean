@@ -7,10 +7,10 @@ public section
 open LeanTex.Core
 
 /-- Compares native layout and the PDF with an explicitly painted control, marked-content lines
-removed. -/
+removed; `controlPre` declares what the control alone paints. -/
 private def singletonWitness (ref : IO.Ref (List String)) (fonts : Font.FontSet)
     (base : String) (colours : List (String × String)) (label body control : String)
-    (markers : List (String × Ir.Color)) : IO Unit := do
+    (markers : List (String × Ir.Color)) (controlPre : String := "") : IO Unit := do
   let t := check ref
   let preOf (s : String) : String :=
     let painted := colours.filter fun (name, _) => hasStr s name
@@ -20,12 +20,12 @@ private def singletonWitness (ref : IO.Ref (List String)) (fonts : Font.FontSet)
   let frame (s : String) := "\\begin{frame}\n" ++ s ++ "\n\\end{frame}\n"
   for mixed in [false, true] do
     let here := "overlay singleton " ++ label ++ if mixed then " mixed" else " alone"
-    let source (s : String) := deck169 (preOf s)
+    let source (extra s : String) := deck169 (preOf (extra ++ s) ++ extra)
       (if mixed then
         frame "ClockEarly\n\n\\uncover<2->{ClockLate}" ++ frame s ++ frame "AfterMarker"
        else frame s)
-    let (doc, ds) := elabStr (source body)
-    let (wantDoc, wantDs) := elabStr (source control)
+    let (doc, ds) := elabStr (source "" body)
+    let (wantDoc, wantDs) := elabStr (source controlPre control)
     let out := layoutOf fonts doc
     let want := layoutOf fonts wantDoc
     t (here ++ ": diagnostics")
@@ -64,23 +64,28 @@ def overlaySingletonChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
   let seed := (elabStr (deck169Frame "")).1
   let design := Ir.Design.ofDoc seed
   let hot : Ir.Color := { r := 0xAA, g := 0, b := 0 }
-  let witness := singletonWitness ref fonts "\\theme{default}\n\\palette{ covered = 38\\% }\n"
-    [("singlePlain", design.cover.plain.hex), ("singleHot", (design.cover.of hot).hex),
-     ("hot", hot.hex)]
+  let base := "\\theme{default}\n\\palette{ covered = 38\\% }\n"
+  let colours := [("singlePlain", design.inkCover.hex), ("singleHot", (design.cover.of hot).hex),
+    ("hot", hot.hex)]
+  let witness := singletonWitness ref fonts base colours
+  let bullet := Ir.plainText (ListMark.marker false 1 1 fun c =>
+    (fonts.body.gid c).isSome || (fonts.fallbackFor c).isSome)
   for spec in ["0", "0-0"] do
     let cover (s : String) := "\\uncover<" ++ spec ++ ">{" ++ s ++ "}"
     witness (spec ++ " inline") ("LeadMarker " ++ cover "ProbeMarker")
       "LeadMarker \\textcolor{singlePlain!100}{ProbeMarker}"
-      [("LeadMarker", design.fg), ("ProbeMarker", design.cover.plain)]
+      [("LeadMarker", design.fg), ("ProbeMarker", design.inkCover)]
     witness (spec ++ " block") (cover "ProbeMarker\n\nSecondMarker")
       "\\textcolor{singlePlain!100}{ProbeMarker}\n\n\\textcolor{singlePlain!100}{SecondMarker}"
-      [("ProbeMarker", design.cover.plain), ("SecondMarker", design.cover.plain)]
+      [("ProbeMarker", design.inkCover), ("SecondMarker", design.inkCover)]
     witness (spec ++ " coloured") (cover "\\hot{ProbeMarker}")
       "\\textcolor{singleHot!100}{ProbeMarker}" [("ProbeMarker", design.cover.of hot)]
-    witness (spec ++ " item")
+    -- The covered item's marker is covered with it; the control paints its marker so.
+    singletonWitness ref fonts base colours (spec ++ " item")
       ("\\begin{itemize}\n\\item<" ++ spec ++ "> ProbeMarker\n\\end{itemize}")
       "\\begin{itemize}\n\\item \\textcolor{singlePlain!100}{ProbeMarker}\n\\end{itemize}"
-      [("ProbeMarker", design.cover.plain)]
+      [("ProbeMarker", design.inkCover)]
+      (controlPre := "\\style{itemize}{ marker = {\\textcolor{singlePlain!100}{" ++ bullet ++ "}} }\n")
     for (kind, nested) in
         [("outer", cover "\\uncover<1>{ProbeMarker}"),
          ("inner", "\\uncover<1>{" ++ cover "ProbeMarker" ++ "}"),
@@ -88,12 +93,12 @@ def overlaySingletonChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
       let colored := kind == "both"
       witness (spec ++ " nested " ++ kind) nested
         (if colored then "\\textcolor{singleHot!100}{ProbeMarker}" else "\\textcolor{singlePlain!100}{ProbeMarker}")
-        [("ProbeMarker", if colored then design.cover.of hot else design.cover.plain)]
+        [("ProbeMarker", if colored then design.cover.of hot else design.inkCover)]
     witness (spec ++ " covered alt") (cover "\\alt<1>{ProbeMarker}{LostMarker}")
-      "\\textcolor{singlePlain!100}{ProbeMarker}" [("ProbeMarker", design.cover.plain)]
+      "\\textcolor{singlePlain!100}{ProbeMarker}" [("ProbeMarker", design.inkCover)]
     witness (spec ++ " alt covering")
       ("\\alt<" ++ spec ++ ">{LostMarker}{\\uncover<0>{ProbeMarker}}")
-      "\\textcolor{singlePlain!100}{ProbeMarker}" [("ProbeMarker", design.cover.plain)]
+      "\\textcolor{singlePlain!100}{ProbeMarker}" [("ProbeMarker", design.inkCover)]
   for (spec, active) in
       [("0", false), ("0-0", false), ("1", true), ("1-1", true),
        ("0-1", true), ("0-", true), ("1-", true), ("0,1", true)] do
