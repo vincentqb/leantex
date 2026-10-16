@@ -92,6 +92,50 @@ public def deref (es : Array Entry) (o : Obj) : Obj :=
   | .ref n _ => ((es.find? (·.num == n)).map (·.val)).getD .null
   | _ => o
 
+/-- A file's entries keyed by object number, the first listed for a number, so a lookup costs
+what a hash costs. -/
+public structure Index where
+  entries : Array Entry
+  byNum : Std.HashMap Nat Entry
+
+/-- The index of a file's entries. -/
+public def Index.of (es : Array Entry) : Index :=
+  { entries := es, byNum := es.foldl (fun m e => m.insertIfNew e.num e) {} }
+
+/-- The entry an object number names. -/
+public def Index.find? (t : Index) (n : Nat) : Option Entry := t.byNum[n]?
+
+/-- `deref` through the index. -/
+public def Index.deref (t : Index) (o : Obj) : Obj :=
+  match o with
+  | .ref n _ => ((t.find? n).map (·.val)).getD .null
+  | _ => o
+
+private theorem foldl_insertIfNew (l : List Entry) (m : Std.HashMap Nat Entry) (n : Nat) :
+    (l.foldl (fun m e => m.insertIfNew e.num e) m)[n]? = m[n]?.or (l.find? (·.num == n)) := by
+  induction l generalizing m with
+  | nil => simp
+  | cons e l ih =>
+    simp only [List.foldl_cons, ih, Std.HashMap.getElem?_insertIfNew, List.find?_cons]
+    by_cases hn : e.num = n
+    · subst hn
+      by_cases hm : e.num ∈ m
+      · simp [hm]
+      · simp [hm]
+    · have hb : (e.num == n) = false := by simpa using hn
+      simp [hb]
+
+/-- **The index finds the entry the linear search finds.** -/
+public theorem Index.find?_exact (es : Array Entry) (n : Nat) :
+    (Index.of es).find? n = es.find? (·.num == n) := by
+  simp only [Index.find?, Index.of, ← Array.foldl_toList, foldl_insertIfNew,
+    Std.HashMap.getElem?_empty, Option.none_or, ← Array.find?_toList]
+
+/-- **A reference resolves through the index as `deref` resolves it.** -/
+public theorem Index.deref_exact (es : Array Entry) (o : Obj) :
+    (Index.of es).deref o = PdfCensus.deref es o := by
+  cases o <;> simp [Index.deref, PdfCensus.deref, Index.find?_exact]
+
 /-- The font dictionaries the file carries, copied graphs included. -/
 public def fontEntries (es : Array Entry) : Array Entry :=
   es.filter fun e => kindOf e.val == .font
@@ -107,6 +151,60 @@ public def fontEmbedded (es : Array Entry) (e : Entry) : Bool :=
     let fd := deref es ((e.val.get? "FontDescriptor").getD .null)
     (fd.get? "FontFile").isSome || (fd.get? "FontFile2").isSome ||
       (fd.get? "FontFile3").isSome
+
+mutual
+
+/-- The direct dictionaries at any depth inside an object, the object itself excluded. -/
+public def innerDicts (acc : Array Obj) : Obj → Array Obj
+  | .dict es => innerEntries acc es.toList
+  | .arr xs => innerList acc xs.toList
+  | .null | .bool _ | .int _ | .real _ | .str _ | .name _ | .ref _ _ => acc
+
+private def innerEntries (acc : Array Obj) : List (String × Obj) → Array Obj
+  | [] => acc
+  | (_, v) :: rest =>
+    let acc := match v with
+      | .dict _ => acc.push v
+      | _ => acc
+    innerEntries (innerDicts acc v) rest
+
+private def innerList (acc : Array Obj) : List Obj → Array Obj
+  | [] => acc
+  | o :: rest =>
+    let acc := match o with
+      | .dict _ => acc.push o
+      | _ => acc
+    innerList (innerDicts acc o) rest
+
+end
+
+/-- Every font dictionary the file carries: an entry's, one standing directly in a resource
+dictionary, and a composite font's direct descendant. -/
+public def fontDicts (t : Index) : Array Obj :=
+  t.entries.foldl (init := #[]) fun acc e =>
+    let acc := if kindOf e.val == .font then acc.push e.val else acc
+    acc ++ (innerDicts #[] e.val).filter (kindOf · == .font)
+
+/-- Whether a simple or CID font's descriptor names its program in the file (§9.9). -/
+private def descriptorEmbedded (t : Index) (d : Obj) : Bool :=
+  let fd := t.deref ((d.get? "FontDescriptor").getD .null)
+  (fd.get? "FontFile").isSome || (fd.get? "FontFile2").isSome || (fd.get? "FontFile3").isSome
+
+/-- Whether a font dictionary's program is in the file: a Type 3 draws its own glyphs, a composite
+font through each descendant, any other through its descriptor. -/
+public def fontDictEmbedded (t : Index) (d : Obj) : Bool :=
+  match nameOf d "Subtype" with
+  | some "Type3" => true
+  | some "Type0" => match t.deref ((d.get? "DescendantFonts").getD .null) with
+    | .arr xs => !xs.isEmpty && xs.all fun x => descriptorEmbedded t (t.deref x)
+    | _ => false
+  | _ => descriptorEmbedded t d
+
+/-- The fonts whose programs the file does not carry, by name, each once. -/
+public def unembeddedFonts (t : Index) : Array String :=
+  ((fontDicts t).filter (!fontDictEmbedded t ·)).foldl (init := #[]) fun acc f =>
+    let n := (nameOf f "BaseFont").getD "a font with no name"
+    if acc.contains n then acc else acc.push n
 
 /-- The filter names a stream declares, one or a chain (§7.4). -/
 public def filtersOf (o : Obj) : Array String :=
@@ -148,7 +246,11 @@ public structure Census where
   pages : Nat
   fonts : Nat
   type0Fonts : Nat
+  /-- Every font entry's program is in the file. -/
   fontsEmbedded : Bool
+  /-- The fonts whose programs the file does not carry, those standing directly inside another
+  object included, by name. -/
+  unembedded : Array String
   images : Nat
   smasks : Nat
   forms : Nat
@@ -187,6 +289,7 @@ public def ofEntries (trailer : Obj) (es : Array Entry) : Census :=
     fonts := (fontEntries es).size
     type0Fonts := ((fontEntries es).filter fun e => nameOf e.val "Subtype" == some "Type0").size
     fontsEmbedded := (fontEntries es).all (fontEmbedded es)
+    unembedded := unembeddedFonts (Index.of es)
     images := images.size
     smasks := (images.filter fun e => (e.val.get? "SMask").isSome).size
     forms := count .form
@@ -211,6 +314,9 @@ public def ofEntries (trailer : Obj) (es : Array Entry) : Census :=
       ["CropBox", "BleedBox", "TrimBox", "ArtBox"].foldl (fun acc k =>
         if (e.val.get? k).isSome then acc.push k else acc) acc) #[])
   }
+
+/-- Every font the file carries has its program in the file, an entry's or a direct one's. -/
+@[expose] public def Census.allEmbedded (c : Census) : Bool := c.fontsEmbedded && c.unembedded.isEmpty
 
 public theorem census_fontsEmbedded_exact (trailer : Obj) (es : Array Entry) :
     (ofEntries trailer es).fontsEmbedded = true ↔

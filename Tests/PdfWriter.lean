@@ -14,6 +14,40 @@ private def fieldFile (w : Pdf.Xref.Widths) (row : ByteArray) : ByteArray :=
     (.stream s!"/Type /XRef /Size 2 /W [1 {w.first} {w.second}] /Index [0 2] /Root 1 0 R" data)
   out ++ s!"startxref\n{head.size}\n%%EOF\n".toUTF8
 
+/-- The fonts-embedded census reads a font dictionary standing directly in a figure's resources, or
+as a composite font's descendant, as it reads an entry's, and so does a file copying that figure. -/
+def censusDirectFontChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let figure (font : String) (more : Array String := #[]) : ByteArray := syntheticPdf (#[
+    "<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    s!"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 20 20] /Resources << /Font << /F1 {font} >> >> " ++
+      "/Contents 4 0 R >>",
+    streamObj "BT /F1 9 Tf 1 1 Td (x) Tj ET"] ++ more)
+  let descriptor (file : String) : String :=
+    s!"<< /Type /FontDescriptor /FontName /Probe /Flags 4 /FontBBox [0 0 1 1] /ItalicAngle 0 " ++
+      s!"/Ascent 1 /Descent 0 /CapHeight 1 /StemV 1{file} >>"
+  let census (b : ByteArray) : Option PdfCensus.Census := (PdfCensus.census b).toOption
+  let bare := figure "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"
+  t "a direct font dictionary without its program fails the census, named, though no font entry does"
+    ((census bare).any fun c => c.fontsEmbedded && !c.allEmbedded && c.unembedded == #["Helvetica"])
+  let carried := figure ("<< /Type /Font /Subtype /TrueType /BaseFont /Probe /FontDescriptor " ++
+    descriptor " /FontFile2 5 0 R" ++ " >>") #[streamObj "probe program"]
+  t "a direct font dictionary carrying its program passes the census"
+    ((census carried).any (·.allEmbedded))
+  let composite := figure ("<< /Type /Font /Subtype /Type0 /BaseFont /Probe /Encoding /Identity-H " ++
+    "/DescendantFonts [<< /Type /Font /Subtype /CIDFontType2 /BaseFont /Probe " ++
+    "/CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor " ++
+    descriptor "" ++ " >>] >>")
+  t "a composite font whose direct descendant lacks its program fails the census"
+    ((census composite).any fun c => !c.allEmbedded && c.unembedded == #["Probe"])
+  let (doc, _) := elabStr ("\\documentclass{article}\n\\usepackage{graphicx}\n\\begin{document}\n" ++
+    "\\includegraphics{fig.pdf}\n\\end{document}")
+  let imgs : Image.Store := { entries := #[{ src := "fig.pdf", info := (Image.decode bare).toOption }] }
+  let geom := Layout.Geom.ofPage doc.page
+  let pdf := Pdf.write geom fs (layoutOf fs doc (imgs := imgs)).pages doc.info imgs
+  t "a file copying that figure fails the census its fonts assertion reads"
+    ((census pdf).any fun c => !c.allEmbedded && c.unembedded.contains "Helvetica")
+
 /-- The reader consumes fields at the widths the PDF writer declares, offsets past 4 GiB and indices
 past one byte included. -/
 def pdfWriterChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit := do
@@ -115,7 +149,7 @@ def pdfWriterChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit :
           (x.trailer.bind (·.get? "Size")).bind PdfRead.Obj.int? ==
             some (Int.ofNat (x.locs.size + 1)))
     t "PDF writer: font census reads program references"
-      ((PdfCensus.census pdf).toOption.any (·.fontsEmbedded))
+      ((PdfCensus.census pdf).toOption.any fun c => c.fontsEmbedded && c.allEmbedded)
     match PdfRead.objects pdf with
     | .error _ => t "PDF writer: font objects read" false
     | .ok objects =>
@@ -145,3 +179,4 @@ def pdfWriterChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit :
           else e
         t "PDF writer: a descriptor without a program reference fails the census"
           (!(PdfCensus.ofEntries .null missingProgram).fontsEmbedded)
+  censusDirectFontChecks ref fs

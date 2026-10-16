@@ -141,6 +141,10 @@ def figureChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit
       ("a transfer function", "pdfx:constructs",
         figure "<< /ExtGState << /G1 << /TR 5 0 R >> >> >>" "/G1 gs 0 0 0 1 k 0 0 5 5 re f"
           #["<< /FunctionType 2 /Domain [0 1] /C0 [0] /C1 [1] /N 1 >>".toUTF8]),
+      ("a halftone named for a device", "pdfx:constructs",
+        figure ("<< /ExtGState << /G1 << /HT << /Type /Halftone /HalftoneType 1 " ++
+          "/HalftoneName (ProbeScreen) /Frequency 60 /Angle 45 /SpotFunction /Round >> >> >> >>")
+          "/G1 gs 0 0 0 1 k 0 0 5 5 re f"),
       ("a PostScript XObject", "pdfx:constructs",
         figure "<< /XObject << /X1 5 0 R >> >>" "/X1 Do"
           #[(streamObj "%!" "/Type /XObject /Subtype /PS ").toUTF8]),

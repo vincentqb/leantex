@@ -92,20 +92,20 @@ public def textOf (o : Obj) : Option String := do
     return String.ofList (units.map Char.ofNat)
   else return String.ofList (b.toList.map fun v => Char.ofNat v.toNat)
 
-private def rectOf (es : Array Entry) (o : Option Obj) : Option Rect := do
-  let .arr xs := deref es (← o) | none
+private def rectOf (t : Index) (o : Option Obj) : Option Rect := do
+  let .arr xs := t.deref (← o) | none
   match xs.toList.map PdfContentLex.numRat? with
   | [some a, some b, some c, some d] => some ⟨if a ≤ c then a else c, if b ≤ d then b else d, if a ≤ c then c else a, if b ≤ d then d else b⟩
   | _ => none
 
 /-- An attribute a page inherits through its page tree (ISO 32000-2 §7.7.3.4). -/
-private def inherited (es : Array Entry) (page : Obj) (k : String) : Option Obj := Id.run do
+private def inherited (t : Index) (page : Obj) (k : String) : Option Obj := Id.run do
   let mut o := page
-  for _ in [0:es.size + 1] do
+  for _ in [0:t.entries.size + 1] do
     match o.get? k with
     | some v => return some v
     | none => match o.get? "Parent" with
-      | some p => o := deref es p
+      | some p => o := t.deref p
       | none => return none
   return none
 
@@ -122,36 +122,36 @@ private def spaceDepth : Nat := 8
 /-- The device families a colour space spells at most `depth` spaces down: a separation's or a
 DeviceN's alternate, a DeviceN's colorants and process space, and an indexed or pattern space's
 base; `Unread` past the depth. -/
-private def familiesAt (es : Array Entry) : Nat → Obj → Array String
+private def familiesAt (t : Index) : Nat → Obj → Array String
   | 0, _ => #["Unread"]
   | d + 1, o =>
-    match deref es o with
+    match t.deref o with
     | .name n => familyOfName n
     | .arr xs =>
       match (xs[0]? : Option Obj) with
-      | some (.name "Separation") => (xs[2]?.map (familiesAt es d)).getD #[]
+      | some (.name "Separation") => (xs[2]?.map (familiesAt t d)).getD #[]
       | some (.name "DeviceN") =>
-        let attrs := match xs[4]?.map (deref es) with
+        let attrs := match xs[4]?.map t.deref with
           | some a@(.dict _) =>
-            let colorants := match (a.get? "Colorants").map (deref es) with
-              | some (.dict cs) => cs.foldl (fun acc (_, v) => acc ++ familiesAt es d v) #[]
+            let colorants := match (a.get? "Colorants").map t.deref with
+              | some (.dict cs) => cs.foldl (fun acc (_, v) => acc ++ familiesAt t d v) #[]
               | _ => #[]
-            let process := match (a.get? "Process").map (deref es) with
-              | some p@(.dict _) => ((p.get? "ColorSpace").map (familiesAt es d)).getD #[]
+            let process := match (a.get? "Process").map t.deref with
+              | some p@(.dict _) => ((p.get? "ColorSpace").map (familiesAt t d)).getD #[]
               | _ => #[]
             colorants ++ process
           | _ => #[]
-        (xs[2]?.map (familiesAt es d)).getD #[] ++ attrs
+        (xs[2]?.map (familiesAt t d)).getD #[] ++ attrs
       | some (.name "Indexed") | some (.name "I") | some (.name "Pattern") =>
-        (xs[1]?.map (familiesAt es d)).getD #[]
+        (xs[1]?.map (familiesAt t d)).getD #[]
       | _ => #[]
     | _ => #[]
 
 /-- The device families a colour space spells, the spaces it is built on included. -/
-private def families (es : Array Entry) (o : Obj) : Array String := familiesAt es spaceDepth o
+private def families (t : Index) (o : Obj) : Array String := familiesAt t spaceDepth o
 
 /-- A content stream's device colour operators, resolving named spaces in `spaces`. -/
-private def streamFamilies (es : Array Entry) (spaces : Obj) (data : ByteArray) : Array String :=
+private def streamFamilies (t : Index) (spaces : Obj) (data : ByteArray) : Array String :=
   let toks := PdfContentLex.scan data
   (List.range toks.size).foldl (init := #[]) fun acc i =>
     match (toks[i]? : Option PdfContentLex.Tok) with
@@ -161,25 +161,25 @@ private def streamFamilies (es : Array Entry) (spaces : Obj) (data : ByteArray) 
     | some (.op "cs") | some (.op "CS") =>
       match (if i == 0 then none else toks[i - 1]? : Option PdfContentLex.Tok) with
       | some (.val (.name n)) =>
-        let named := match deref es spaces with
+        let named := match t.deref spaces with
           | d@(.dict _) => (d.get? n).getD (.name n)
           | _ => .name n
-        let found := families es named
+        let found := families t named
         acc ++ found
       | _ => acc
     | some (.inline d _) =>
-      acc ++ ((PdfContentLex.inlineGet d "ColorSpace" "CS").map (families es)).getD #[]
+      acc ++ ((PdfContentLex.inlineGet d "ColorSpace" "CS").map (families t)).getD #[]
     | _ => acc
 
-private def decodedOf (es : Array Entry) (o : Obj) : Option ByteArray :=
+private def decodedOf (t : Index) (o : Obj) : Option ByteArray :=
   match o with
-  | .ref n _ => (es.find? (·.num == n)).bind fun e => match e.decoded with
+  | .ref n _ => (t.find? n).bind fun e => match e.decoded with
     | .ok d => d
     | .error _ => none
   | _ => none
 
-private def spacesOf (es : Array Entry) (owner : Obj) : Obj :=
-  match deref es ((owner.get? "Resources").getD .null) with
+private def spacesOf (t : Index) (owner : Obj) : Obj :=
+  match t.deref ((owner.get? "Resources").getD .null) with
   | r@(.dict _) => (r.get? "ColorSpace").getD .null
   | _ => .null
 
@@ -228,65 +228,18 @@ private def keyList (visit : String → Obj → Option String) (acc : Array Stri
 
 end
 
-mutual
-
-/-- The direct dictionaries at any depth inside an object, the object itself excluded. -/
-private def innerDicts (acc : Array Obj) : Obj → Array Obj
-  | .dict es => innerEntries acc es.toList
-  | .arr xs => innerList acc xs.toList
-  | .null | .bool _ | .int _ | .real _ | .str _ | .name _ | .ref _ _ => acc
-
-private def innerEntries (acc : Array Obj) : List (String × Obj) → Array Obj
-  | [] => acc
-  | (_, v) :: rest =>
-    let acc := match v with
-      | .dict _ => acc.push v
-      | _ => acc
-    innerEntries (innerDicts acc v) rest
-
-private def innerList (acc : Array Obj) : List Obj → Array Obj
-  | [] => acc
-  | o :: rest =>
-    let acc := match o with
-      | .dict _ => acc.push o
-      | _ => acc
-    innerList (innerDicts acc o) rest
-
-end
-
-/-- Every font dictionary in the file: indirect, direct in a resource dictionary, and a composite
-font's direct descendant. -/
-private def fontDicts (es : Array Entry) : Array Obj :=
-  es.foldl (init := #[]) fun acc e =>
-    let acc := if kindOf e.val == .font then acc.push e.val else acc
-    acc ++ (innerDicts #[] e.val).filter (kindOf · == .font)
-
-/-- Whether a simple or CID font's descriptor names its program in the file (§9.9). -/
-private def descriptorEmbedded (es : Array Entry) (d : Obj) : Bool :=
-  let fd := deref es ((d.get? "FontDescriptor").getD .null)
-  (fd.get? "FontFile").isSome || (fd.get? "FontFile2").isSome || (fd.get? "FontFile3").isSome
-
-/-- Whether a font dictionary's program is in the file: a Type 3 draws its own glyphs, a composite
-font through each descendant, any other through its descriptor. -/
-private def fontDictEmbedded (es : Array Entry) (d : Obj) : Bool :=
-  match nameOf (d.get? "Subtype") with
-  | some "Type3" => true
-  | some "Type0" => match deref es ((d.get? "DescendantFonts").getD .null) with
-    | .arr xs => !xs.isEmpty && xs.all fun x => descriptorEmbedded es (deref es x)
-    | _ => false
-  | _ => descriptorEmbedded es d
 
 /-- Every content stream the file paints with, beside the colour spaces its names resolve in and
 where it stands: page and form contents, tiling pattern cells and Type 3 glyph procedures. -/
-private def contentStreams (es : Array Entry) : Array (String × Obj × ByteArray) := Id.run do
+private def contentStreams (t : Index) : Array (String × Obj × ByteArray) := Id.run do
   let mut out : Array (String × Obj × ByteArray) := #[]
   let mut page := 0
-  for e in es do
+  for e in t.entries do
     let o := e.val
     match kindOf o with
     | .page =>
       page := page + 1
-      let spaces := (inherited es o "Resources").map (fun r => match deref es r with
+      let spaces := (inherited t o "Resources").map (fun r => match t.deref r with
         | d@(.dict _) => (d.get? "ColorSpace").getD .null
         | _ => .null) |>.getD .null
       let contents := match o.get? "Contents" with
@@ -294,17 +247,17 @@ private def contentStreams (es : Array Entry) : Array (String × Obj × ByteArra
         | some r => #[r]
         | none => #[]
       for c in contents do
-        if let some d := decodedOf es c then out := out.push (s!"page {page}'s content", spaces, d)
+        if let some d := decodedOf t c then out := out.push (s!"page {page}'s content", spaces, d)
     | .form =>
-      if let .ok (some d) := e.decoded then out := out.push ("a form", spacesOf es o, d)
+      if let .ok (some d) := e.decoded then out := out.push ("a form", spacesOf t o, d)
     | _ =>
       if (o.get? "PatternType").bind Obj.int? == some 1 then
-        if let .ok (some d) := e.decoded then out := out.push ("a pattern", spacesOf es o, d)
-  for f in fontDicts es do
+        if let .ok (some d) := e.decoded then out := out.push ("a pattern", spacesOf t o, d)
+  for f in fontDicts t do
     if nameOf (f.get? "Subtype") == some "Type3" then
-      if let .dict procs := deref es ((f.get? "CharProcs").getD .null) then
+      if let .dict procs := t.deref ((f.get? "CharProcs").getD .null) then
         for (_, p) in procs do
-          if let some d := decodedOf es p then out := out.push ("a Type 3 glyph", spacesOf es f, d)
+          if let some d := decodedOf t p then out := out.push ("a Type 3 glyph", spacesOf t f, d)
   return out
 
 mutual
@@ -330,9 +283,9 @@ private def iccList (acc : Array Obj) : List Obj → Array Obj
 end
 
 /-- The ICC version each ICCBased colour space's profile carries, `none` where it is unreadable. -/
-private def iccSpacesOf (es : Array Entry) : Array (Option (Nat × Nat)) :=
-  (es.foldl (fun acc e => iccRefs acc e.val) #[]).map fun x =>
-    ((decodedOf es x).bind Icc.header?).map (·.version)
+private def iccSpacesOf (t : Index) : Array (Option (Nat × Nat)) :=
+  (t.entries.foldl (fun acc e => iccRefs acc e.val) #[]).map fun x =>
+    ((decodedOf t x).bind Icc.header?).map (·.version)
 
 /-- The action types (ISO 32000-2 Table 201), which an action dictionary names under `/S`. -/
 private def actionTypes : List String :=
@@ -341,13 +294,14 @@ private def actionTypes : List String :=
    "Trans", "GoTo3DView", "RichMediaExecute"]
 
 /-- What a key and its value hold that PDF/X does not admit (ISO 15930-7 §6): a transfer function,
-an OPI link, an image's alternates, PostScript, a reference to another file's page, an action or
-JavaScript. -/
+a halftone named for a device, an OPI link, an image's alternates, PostScript, a reference to
+another file's page, an action or JavaScript. -/
 private def forbiddenAt (k : String) (v : Obj) : Option String :=
   match k, v with
   | "TR", .name "Identity" | "TR", .name "Default" | "TR2", .name "Identity"
   | "TR2", .name "Default" | "TransferFunction", .name "Identity" => none
   | "TR", _ | "TR2", _ | "TransferFunction", _ => some "a transfer function"
+  | "HalftoneName", _ => some "a named halftone"
   | "OPI", _ => some "an OPI link"
   | "Alternates", _ => some "an image's alternates"
   | "Subtype", .name "PS" | "Subtype2", .name "PS" | "PS", _ => some "a PostScript XObject"
@@ -358,31 +312,33 @@ private def forbiddenAt (k : String) (v : Obj) : Option String :=
 
 /-- Every device colour family the file paints in, beside where: content streams wherever they
 stand, images, shadings, transparency groups and the spaces resources declare. -/
-private def devicesOf (es : Array Entry) : Array (String × String) := Id.run do
+private def devicesOf (t : Index) : Array (String × String) := Id.run do
   let mut out : Array (String × String) := #[]
-  for (place, spaces, d) in contentStreams es do
-    for f in streamFamilies es spaces d do out := out.push (f, place)
-  for e in es do
+  for (place, spaces, d) in contentStreams t do
+    for f in streamFamilies t spaces d do out := out.push (f, place)
+  for e in t.entries do
     let o := e.val
     let place := match kindOf o with
       | .image => "an image"
       | .form => "a form's resources"
       | _ => "a colour space the file declares"
     for (k, cs) in spaceValues #[] o do
-      match deref es cs with
+      match t.deref cs with
       | .dict entries =>
         -- A resources `/ColorSpace` maps names to spaces.
         if k == "ColorSpace" then
           for (_, v) in entries do
-            for f in families es v do out := out.push (f, place)
-      | v => for f in families es v do out := out.push (f, place)
-  return out.foldl (fun acc f => if acc.contains f then acc else acc.push f) #[]
+            for f in families t v do out := out.push (f, place)
+      | v => for f in families t v do out := out.push (f, place)
+  return (out.foldl (fun (acc, seen) f =>
+    if seen.contains f then (acc, seen) else (acc.push f, seen.insert f))
+    ((#[], {}) : Array (String × String) × Std.HashSet (String × String))).1
 
 /-- What the file holds that PDF/X does not admit, each named once: its keys at any depth, and the
 `PS` operator in any content stream. -/
-private def forbiddenOf (es : Array Entry) : Array String :=
-  let keys := es.foldl (fun acc e => keyFinds forbiddenAt acc e.val) #[]
-  let ps := (contentStreams es).any fun (_, _, d) =>
+private def forbiddenOf (t : Index) : Array String :=
+  let keys := t.entries.foldl (fun acc e => keyFinds forbiddenAt acc e.val) #[]
+  let ps := (contentStreams t).any fun (_, _, d) =>
     (PdfContentLex.scan d).any (· matches .op "PS")
   let all := if ps then keys.push "the PostScript operator" else keys
   all.foldl (fun acc f => if acc.contains f then acc else acc.push f) #[]
@@ -402,42 +358,42 @@ public def read (b : ByteArray) : Except String Facts := do
   unless b.size ≥ 8 && b[0]? == some 37 && b[1]? == some 80 do throw "not a PDF file"
   let version := String.ofList ((b.extract 5 8).toList.map fun v => Char.ofNat v.toNat)
   let es := (← PdfRead.objects b).val
+  let t := Index.of es
   let tr ← PdfRead.trailer b
   let cat := catalogOf es tr
-  let info := deref es ((tr.get? "Info").getD .null)
-  let intents := match deref es ((cat.get? "OutputIntents").getD .null) with
+  let info := t.deref ((tr.get? "Info").getD .null)
+  let intents := match t.deref ((cat.get? "OutputIntents").getD .null) with
     | .arr xs => xs.map fun i =>
-      let d := deref es i
-      let prof := (d.get? "DestOutputProfile").bind (decodedOf es)
-      let n := ((d.get? "DestOutputProfile").map (deref es)).bind fun s =>
+      let d := t.deref i
+      let prof := (d.get? "DestOutputProfile").bind (decodedOf t)
+      let n := ((d.get? "DestOutputProfile").map t.deref).bind fun s =>
         ((s.get? "N").bind Obj.int?).map (·.toNat)
       { subtype := nameOf (d.get? "S"), condition := (d.get? "OutputConditionIdentifier").bind textOf
         info := (d.get? "Info").bind textOf, profile := prof.bind Icc.header?, declaredN := n
         embedded := prof.isSome : Intent }
     | _ => #[]
-  let xmp := match (cat.get? "Metadata").bind (decodedOf es) with
+  let xmp := match (cat.get? "Metadata").bind (decodedOf t) with
     | some d => String.fromUTF8? d |>.getD ""
     | none => ""
   -- Only the media and crop boxes inherit through the page tree (ISO 32000-2 Table 31).
   let pages := (es.filter fun e => kindOf e.val == .page).map fun e =>
-    let up (k : String) := rectOf es (inherited es e.val k)
-    let own (k : String) := rectOf es (e.val.get? k)
+    let up (k : String) := rectOf t (inherited t e.val k)
+    let own (k : String) := rectOf t (e.val.get? k)
     { media := up "MediaBox", crop := up "CropBox", bleed := own "BleedBox"
       trim := own "TrimBox", art := own "ArtBox" : Boxes }
   let pageEntries := es.filter fun e => kindOf e.val == .page
   let annots := pageEntries.zipIdx.flatMap fun (e, p) =>
-    match deref es ((e.val.get? "Annots").getD .null) with
+    match t.deref ((e.val.get? "Annots").getD .null) with
     | .arr xs => xs.filterMap fun a =>
-      let d := deref es a
+      let d := t.deref a
       let flags := ((d.get? "F").bind Obj.int?).getD 0
       let printable := flags % 8 / 4 == 1 && flags % 4 / 2 == 0
-      match nameOf (d.get? "Subtype"), rectOf es (d.get? "Rect") with
+      match nameOf (d.get? "Subtype"), rectOf t (d.get? "Rect") with
       | some s, some r => if printable then some (p, s, r) else none
       | _, _ => none
     | _ => #[]
-  let unembedded := (fontDicts es).filter (!fontDictEmbedded es ·) |>.map fun f =>
-    (nameOf (f.get? "BaseFont")).getD "a font with no name"
-  let places := devicesOf es
+  let unembedded := unembeddedFonts t
+  let places := devicesOf t
   return { version, encrypted := (tr.get? "Encrypt").isSome, intents
            xmpVersion := xmpText xmp "pdfxid:GTS_PDFXVersion", xmpTrapped := xmpText xmp "pdf:Trapped"
            xmpCreated := xmpText xmp "xmp:CreateDate", xmpModified := xmpText xmp "xmp:ModifyDate"
@@ -451,7 +407,7 @@ public def read (b : ByteArray) : Except String Facts := do
            pages, annots
            devices := places.foldl (fun acc (f, _) => if acc.contains f then acc else acc.push f) #[]
            devicePlaces := places, fontsEmbedded := unembedded.isEmpty, unembedded
-           iccSpaces := iccSpacesOf es, forbidden := forbiddenOf es }
+           iccSpaces := iccSpacesOf t, forbidden := forbiddenOf t }
 
 private def within (inner outer : Rect) : Bool :=
   outer.x0 ≤ inner.x0 && outer.y0 ≤ inner.y0 && inner.x1 ≤ outer.x1 && inner.y1 ≤ outer.y1
@@ -570,7 +526,7 @@ public def breaches (f : Facts) : Array Breach := Id.run do
     | some v =>
       if !iccAdmitted v then
         out := bad "colour" s!"an ICCBased colour space carries an ICC {v.1}.{v.2} profile, past 4.2" out
-  for name in f.unembedded.foldl (fun acc n => if acc.contains n then acc else acc.push n) #[] do
+  for name in f.unembedded do
     out := bad "fonts" s!"the font {name} is not embedded" out
   for c in f.forbidden do out := bad "constructs" s!"the file holds {c}" out
   return out
@@ -613,7 +569,7 @@ private def ruleHelp : String → String
   | "metadata" => "declare the file's title and dates: \\hypersetup{ pdftitle = {Title}, pdfcreationdate = D:20260131090000Z }"
   | "colour" => "the detail names where: give the document's colours and figures CMYK, gray or spot data (\\definecolor{name}{cmyk}{c,m,y,k}); listings' and placeholders' own colours are RGB here"
   | "fonts" => "embed the font the detail names where it is used: export the figure that holds it with its fonts embedded"
-  | "constructs" => "a figure's transfer functions, OPI links, PostScript, references and actions break the standard: export the figure as PDF/X"
+  | "constructs" => "a figure's transfer functions, named halftones, OPI links, PostScript, references and actions break the standard: export the figure as PDF/X"
   | "output-intent" => "name the output profile: \\DocumentMetadata{ colorprofiles = { X = name.icc } }"
   | "boxes" => "declare the bleed past the trim, which writes the trim box: \\page{ bleed = 3mm }"
   | "trapped" => "state the trapping as True or False: \\hypersetup{ pdftrapped = False }"

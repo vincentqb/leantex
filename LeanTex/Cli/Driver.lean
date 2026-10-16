@@ -1110,7 +1110,7 @@ in the HTML" (← since t)
       let fontsEmbedded : Bool :=
         if doc.asserts.any (·.kind == .fontsAllEmbedded) then
           (pdfCensus.all fun c => match c with
-            | .ok c => c.fontsEmbedded
+            | .ok c => c.allEmbedded
             | .error _ => false) &&
           htmlBuilt.all fun _ => shipFonts
         else true

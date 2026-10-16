@@ -140,7 +140,7 @@ private def convertResult (op : Op) (bytes : ByteArray)
   let spec := op.spec
   let bytes := if spec.inputExt == "pdf" then PdfRead.ocAsCopied bytes else bytes
   let eligible := runner.isNone && (spec.inputExt != "pdf" ||
-    (PdfCensus.census bytes).toOption.any (·.fontsEmbedded))
+    (PdfCensus.census bytes).toOption.any (·.allEmbedded))
   let runTool := runner.getD RunBounded.output
   ConvCache.cachedResult bytes spec.recipe spec.tools eligible do
     let result ← try Host.withScratch fun dir => do
