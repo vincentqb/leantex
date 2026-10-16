@@ -7353,7 +7353,7 @@ public structure Doc where
   allow : Array String := #[]
   /-- The citation setup natbib or biblatex loads: `none` with neither, else its declarations in
   the order they apply. -/
-  natbib : Option (Array CiteDecl) := none
+  citeSetup : Option (Array CiteDecl) := none
   /-- The boundary tool in force: the external TeX the driver runs for
   pictures outside the rendered subset. -/
   pictureTool : Option String := some "lualatex"

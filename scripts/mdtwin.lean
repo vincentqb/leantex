@@ -170,7 +170,7 @@ def mdtwinSelftest : IO UInt32 := tierSelftest "mdtwin" fun no => do
   let bibs := #[("works.bib", worksBib)]
   let (cited, _) := mdBibBuild (worksMeta ++ "Text [@a].\n") bibs
   let spelledBack := rebuiltWith MarkdownDoc.emit cited bibs
-  let inkedBack := rebuiltWith MarkdownDoc.emit { cited with natbib := none } bibs
+  let inkedBack := rebuiltWith MarkdownDoc.emit { cited with citeSetup := none } bibs
   no "blind spot: cite.reread-ink is blind to a twin setting its citations as their ink"
     (inkText inkedBack.body == inkText spelledBack.body && inkText spelledBack.body == inkText cited.body)
   no "blind spot: the re-read body sees it, the inked twin reading back no citation"

@@ -680,6 +680,9 @@ public def Diag.of (c : DiagCode) (message : String) (span : Option Span := none
 
 public def Diag.triggerText (d : Diag) : Option String := d.trigger.map (·.text)
 
+/-- The wording of a declared setting the engine skips, whatever surface declares it. -/
+public def Diag.notHonoured (what : String) : String := s!"{what} is not honoured; skipped"
+
 public theorem Diag.of_record_exact (c : DiagCode) (message : String)
     (span : Option Span) (help subject refused trigger : Option String)
     (recovery : Option Diag.Recovery) (output : Option Diag.Output) (detail : Option String)

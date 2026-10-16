@@ -1219,7 +1219,7 @@ public def paramSubject (reader name : String) : String := s!"param:{reader}:{na
 /-- A declared setting no engine site reads, named once where it is set. -/
 private def unreadParam (reader name what : String) (pos : Pos)
     (help : String := "\\allow{W0104} accepts the skip") : M Unit :=
-  sayOnce ("param:" ++ reader ++ ":" ++ name) .W0104 s!"{what} is not honoured; skipped" pos
+  sayOnce ("param:" ++ reader ++ ":" ++ name) .W0104 (Diag.notHonoured what) pos
     (help := help)
 
 /-- minted's keys that configure a display alone, read for no inline code. -/
@@ -2338,8 +2338,7 @@ private def natbibLoad (name opt : String) (pos : Pos) : M (Array Raw) := do
   let given := (KeyVal.items opt).toList
   let (decls, dropped) := CiteDecl.natbibLoad given
   for o in dropped do
-    sayOnce ("param:usepackage:natbib:" ++ (KeyVal.entry o).1) .W0104 (CiteDecl.natbibUnread o) pos
-      (help := "\\allow{W0104} accepts the skip")
+    unreadParam "usepackage:natbib" (KeyVal.entry o).1 (CiteDecl.natbibOption o) pos
   became (if given.isEmpty then s!"\\{name}\{natbib}" else s!"\\{name}[{opt}]\{natbib}")
     "natbib's citation punctuation, read at \\begin{document}" pos
   natbibDefer decls pos
@@ -2456,15 +2455,15 @@ private def natbibStyleArm (name : String) (pos : Pos) (raws : Array Raw) (start
   let src (i : Nat) : String := verbatim (args.getD i #[])
   let notesep := if opt.isSome then
       verbatim (raws.extract (skipSpaces raws start + 1) (j - 1)) else ", "
-  let items := if punct then
-      #["open=" ++ src 0, "close=" ++ src 1, "citesep=" ++ src 2,
-        if (src 3).trimAscii.toString == "n" || (src 3).trimAscii.toString == "s" then
-          "numbers" else "authoryear",
-        "aysep=" ++ src 4, "yysep=" ++ src 5, "notesep=" ++ notesep]
-    else CiteDecl.items (src 0)
-  let decls := if name == "citestyle" then #[CiteDecl.set .citestyle (src 0).trimAscii.toString]
-    else items.filterMap CiteDecl.ofItem?
-  let dropped := if name == "citestyle" then #[] else items.filter (CiteDecl.ofItem? · |>.isNone)
+  let (decls, dropped) : Array CiteDecl × Array String :=
+    if punct then
+      (#[.punct .open (src 0), .punct .close (src 1), .punct .citesep (src 2),
+        .word (if ["n", "s"].contains (src 3).trimAscii.toString then .numbers else .authoryear),
+        .punct .aysep (src 4), .punct .yysep (src 5), .punct .notesep notesep], #[])
+    else if name == "citestyle" then (#[.set .citestyle (src 0).trimAscii.toString], #[])
+    else
+      let items := (KeyVal.split (src 0)).filter (!·.isEmpty)
+      (items.filterMap CiteDecl.ofItem?, items.filter (CiteDecl.ofItem? · |>.isNone))
   unless dropped.isEmpty do
     say .W0101 s!"'\\{name}' keywords without a native equivalent were dropped: \
 {String.intercalate ", " (dropped.toList.map fun d => s!"'{d}'")}" pos

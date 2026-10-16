@@ -256,9 +256,9 @@ def biblatexChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
       t s!"{tag}: the html reads '{line}'" (hasStr html line)
 
 
-/-- A citation setup comes only from a load or a declaration natbib or biblatex reads: a body
-spelling the engine's former carrier is an unknown command, its citations LaTeX's own; and an option
-natbib's table lacks is one loss, worded alike from either surface. -/
+/-- A body's `\@natbib` is an unknown command whose argument stays text, its citations LaTeX's own;
+`\setcitestyle` reads no key it does not take; an option natbib lacks is one loss, worded alike from
+either surface; the twin writes the options as declared and reads back to the same citations. -/
 def citeSetupChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let (page, _, html, ds) := natbibShip oneFace natbibBib "" "plain"
@@ -267,6 +267,17 @@ def citeSetupChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
     (page.contains "L1 [1] end." && hasStr html "L1 [1] end.")
   t s!"cite setup: and is an unknown command, its argument kept as text ({ds.map (·.code)})"
     (ds.any (fun d => d.code == "W0301") && page.contains "L2 nobibstyle numbers end.")
+  let calls := ["\\citep{alpha2019,delta2021}", "\\citet{alpha2019}"]
+  let (plain, _, _, _) := natbibShip oneFace natbibBib "\\usepackage{natbib}\\setcitestyle{}"
+    "plainnat" calls
+  let items := ["option=numbers", "citestyle=plain", "bbx=numeric", "sort", "super",
+    "mainlang=french", "biblatex"]
+  let (forged, _, _, fds) := natbibShip oneFace natbibBib
+    s!"\\usepackage\{natbib}\\setcitestyle\{{",".intercalate items}}" "plainnat" calls
+  t s!"cite setup: '\\setcitestyle' sets no option, style, scheme, flag or language ({forged})"
+    (forged == plain)
+  t "cite setup: and names each item it drops"
+    (fds.any fun d => d.code == "W0101" && items.all fun i => hasStr d.message s!"'{i}'")
   let tex := (dvE (dvDoc "\\usepackage[super]{natbib}\n" "Text.")).filter (·.code == "W0104")
   let front := "---\nbibliography: works.bib\nnatbiboptions: super\n---\n\n"
   let (_, md) := mdBibBuild (front ++ "Text [@a].\n") #[("works.bib", worksBib)]
@@ -280,8 +291,9 @@ def citeSetupChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   let twin := MarkdownDoc.emit doc
   t s!"cite setup: the twin writes natbib's options as declared ({repr twin})"
     (hasStr twin "natbiboptions: 'sort,compress'")
-  t "cite setup: and reads back to the same setup"
-    ((mdBibBuild twin #[("refs.bib", natbibBib)]).1.natbib == doc.natbib)
+  let cited (d : Ir.Doc) : String := Ir.blocksText (d.body.filter (· matches .para ..))
+  t "cite setup: and reads back to the same citations"
+    (cited (mdBibBuild twin #[("refs.bib", natbibBib)]).1 == cited doc)
 
 /-- `\citestyle{name}` under a bare natbib and plainnat: the lines lualatex sets for four calls. -/
 def natbibCiteStyleModes : List (String × List String) :=

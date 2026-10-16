@@ -308,7 +308,7 @@ def packageSettings : String → List String
   | "parskip" => ["skip=10pt", "indent"]
   | "beamerposter" => ["size=a1", "orientation=portrait", "scale=1.4"]
   | "caption" | "subcaption" => ["skip=20pt", "position=top", "font=small"]
-  | "natbib" => CiteDecl.natbibOptions.map (·.1) ++ ["super"]
+  | "natbib" => CiteDecl.Opt.names.map (·.1) ++ ["super"]
   | "biblatex" => ["style=authoryear", "maxnames=1", "giveninits=true", "sorting=ydnt"] ++
     Compat.biblatexInert.map fun k => s!"{k}={biblatexSample k}"
   | "carlito" => ["sfdefault"]

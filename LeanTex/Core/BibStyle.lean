@@ -2135,7 +2135,7 @@ private def analyse (sources : Array (String × String)) (doc : Ir.Doc) (rd : Fi
     match sources.find? (·.1 == src) with
     | none => pure ()  -- the driver's missing-file diagnostic already fired
     | some (_, text) =>
-      let parsed := parse text store (biber := (CitePunct.ofDoc doc.natbib none true).biblatex)
+      let parsed := parse text store (biber := (CitePunct.ofDoc doc.citeSetup none true).biblatex)
       store := parsed.macros
       for (k, n) in parsed.undefined do
         unless (undefined.getD k #[]).contains n do
@@ -2155,18 +2155,18 @@ private def analyse (sources : Array (String × String)) (doc : Ir.Doc) (rd : Fi
     | none => pure none
     | some (_, some s) => pure (some s)
     | some (name, none) =>
-        let cites := if doc.natbib.isSome then ", and its citations as author-year ones" else ""
+        let cites := if doc.citeSetup.isSome then ", and its citations as author-year ones" else ""
         diags := diags.push (Diag.of .W0353 s!"bibliography style '{name}' is not \
           one the engine knows; the reference list is set as 'unsrtnat'{cites}"
           (help := "styles known: unsrtnat, unsrt, plainnat, plain, abbrvnat, abbrv, alpha"))
         pure (some Style.unsrtnat)
-  let p := CitePunct.ofDoc doc.natbib ((Ir.bibStyleName doc).bind (natbibRows.lookup ·))
+  let p := CitePunct.ofDoc doc.citeSetup ((Ir.bibStyleName doc).bind (natbibRows.lookup ·))
     (declared.all (·.labels))
   let p := { p with ink := (doc.styles.find? "cite").bind (·.color) }
   -- biblatex sorts by the load's `sorting`: nty for numeric styles and nyt for author-year.
-  let bbl := (BblOptions.ofDecls doc.natbib).map ({ · with mainLang := doc.info.locale.tag })
+  let bbl := (BblOptions.ofDecls doc.citeSetup).map ({ · with mainLang := doc.info.locale.tag })
   let style := declared.getD Style.unsrtnat
-  let sorting := (doc.natbib.bind (CiteDecl.last? · .sorting)).getD "nty"
+  let sorting := (doc.citeSetup.bind (CiteDecl.last? · .sorting)).getD "nty"
   let style := match bbl with
     | some o => { style with sort := match sorting with
         | "none" => .citation

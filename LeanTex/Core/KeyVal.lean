@@ -437,4 +437,21 @@ public theorem split_fixed_point (s : String) : ∀ p ∈ (split s).toList, spli
   rw [splitTopAt_fixed_point _ _ _ _ piece hpiece]
   simp
 
+/-- `cs` cut at its first `sep`: what stands before it, and the rest past it. -/
+@[expose] public def cutAt (sep : Char) : List Char → List Char × Option (List Char)
+  | [] => ([], none)
+  | c :: rest =>
+    if c = sep then ([], some rest) else
+      let r := cutAt sep rest
+      (c :: r.1, r.2)
+
+/-- Text holding no `sep` cuts where what follows it cuts. -/
+public theorem cutAt_append (sep : Char) (k r : List Char) (h : sep ∉ k) :
+    cutAt sep (k ++ r) = (k ++ (cutAt sep r).1, (cutAt sep r).2) := by
+  induction k with
+  | nil => rfl
+  | cons c k ih =>
+    simp only [List.mem_cons, not_or] at h
+    simp [cutAt, ih h.2, Ne.symm h.1]
+
 end LeanTex.Core.KeyVal

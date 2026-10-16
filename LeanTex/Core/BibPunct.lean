@@ -54,21 +54,27 @@ public def natbibRows : List (String × CitePunct) :=
    ("plain", latexPunct), ("alpha", latexPunct), ("abbrv", latexPunct), ("unsrt", latexPunct),
    ("plainnat", natPunct), ("abbrvnat", natPunct), ("unsrtnat", natPunct)]
 
-/-- One declaration over the punctuation and natbib's `\bibstyle` door. -/
+/-- One of natbib's words over the punctuation and its `\bibstyle` door. -/
+private def CitePunct.word (st : CitePunct × Bool) : CiteDecl.Word → CitePunct × Bool
+  | .nobibstyle => (st.1, false)
+  | .bibstyle => (st.1, true)
+  | .sort => ({ st.1 with sort := true }, st.2)
+  | .compress => ({ st.1 with compress := true }, st.2)
+  | .biblatex => ({ st.1 with biblatex := true }, st.2)
+  | .round => ({ st.1 with «open» := "(", close := ")" }, st.2)
+  | .square => ({ st.1 with «open» := "[", close := "]" }, st.2)
+  | .angle => ({ st.1 with «open» := "<", close := ">" }, st.2)
+  | .curly => ({ st.1 with «open» := "{", close := "}" }, st.2)
+  | .semicolon | .colon => ({ st.1 with sep := ";" }, st.2)
+  | .comma => ({ st.1 with sep := "," }, st.2)
+  | .authoryear => ({ st.1 with numbers := false }, st.2)
+  | .numbers => ({ st.1 with numbers := true }, st.2)
+
+/-- One declaration over the punctuation and natbib's `\bibstyle` door, a package option as the
+words natbib executes for it. -/
 private def CitePunct.step (st : CitePunct × Bool) : CiteDecl → CitePunct × Bool
-  | .word .nobibstyle => (st.1, false)
-  | .word .bibstyle => (st.1, true)
-  | .word .sort => ({ st.1 with sort := true }, st.2)
-  | .word .compress => ({ st.1 with compress := true }, st.2)
-  | .word .biblatex => ({ st.1 with biblatex := true }, st.2)
-  | .word .round => ({ st.1 with «open» := "(", close := ")" }, st.2)
-  | .word .square => ({ st.1 with «open» := "[", close := "]" }, st.2)
-  | .word .angle => ({ st.1 with «open» := "<", close := ">" }, st.2)
-  | .word .curly => ({ st.1 with «open» := "{", close := "}" }, st.2)
-  | .word .semicolon | .word .colon => ({ st.1 with sep := ";" }, st.2)
-  | .word .comma => ({ st.1 with sep := "," }, st.2)
-  | .word .authoryear => ({ st.1 with numbers := false }, st.2)
-  | .word .numbers => ({ st.1 with numbers := true }, st.2)
+  | .word w => CitePunct.word st w
+  | .option o => o.words.foldl CitePunct.word st
   | .set .open v => ({ st.1 with «open» := v }, st.2)
   | .set .close v => ({ st.1 with close := v }, st.2)
   | .set .citesep v => ({ st.1 with sep := v }, st.2)
@@ -84,12 +90,12 @@ private def CitePunct.step (st : CitePunct × Bool) : CiteDecl → CitePunct × 
   | .set _ _ => st
 
 /-- The punctuation a document's citations draw with, by natbib's rule. -/
-public def CitePunct.ofDoc (natbib : Option (Array CiteDecl)) (row : Option CitePunct)
+public def CitePunct.ofDoc (setup : Option (Array CiteDecl)) (row : Option CitePunct)
     (labels : Bool) : CitePunct :=
-  match natbib with
+  match setup with
   | none => latexPunct
   | some decls =>
-    let (p, door) := (CiteDecl.expand decls).foldl CitePunct.step ({}, true)
+    let (p, door) := decls.foldl CitePunct.step ({}, true)
     let q := if door then row.getD p else p
     let q := { q with sort := p.sort, compress := p.compress, biblatex := p.biblatex }
     if labels then q else { q with numbers := true }

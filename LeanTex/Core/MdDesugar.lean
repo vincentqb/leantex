@@ -861,8 +861,9 @@ without a comma" (some ⟨file, f.pos⟩) (some "convert the entries to a .bib f
         | .list items => items.toList.map fun (o : String) => o.trimAscii.toString
         | .unread => []
       let (decls, unread) := CiteDecl.natbibLoad given
-      let ds := unread.toArray.map fun o => Diag.of .W0104 (CiteDecl.natbibUnread o)
-        (some ⟨file, f.pos⟩) (subject := some ("md:meta:natbiboptions:" ++ o))
+      let ds := unread.toArray.map fun o =>
+        Diag.of .W0104 (Diag.notHonoured (CiteDecl.natbibOption o)) (some ⟨file, f.pos⟩)
+          (subject := some ("md:meta:natbiboptions:" ++ o))
       out := { out with decls := out.decls ++ decls, diags := out.diags ++ ds }
     | "nocite", v =>
       match v.text with

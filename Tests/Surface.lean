@@ -1870,8 +1870,8 @@ def compatConservationChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\autocite{k}\n\n\\printbibliography")).1
   let nat := (elabStr (wrap "" "\\citep{k}\n\n\\bibliographystyle{plain}\\bibliography{refs}")).1
   t "conserves biblatex, but for its citation and list style"
-    ({ bl with natbib := none } == nat &&
-      bl.natbib == some #[.word .biblatex, .set .bbx "numeric", .set .cbx "numeric",
+    ({ bl with citeSetup := none } == nat &&
+      bl.citeSetup == some #[.word .biblatex, .set .bbx "numeric", .set .cbx "numeric",
         .set .sorting "nty"])
 
 /-- Reference decimal printers spelled with `pushn` and `dropEndWhile`; `Dim.fracDigits` spells
@@ -3616,14 +3616,14 @@ def bibApplyChecks (ref : IO.Ref (List String)) : IO Unit := do
   let bib := "@misc{a, author = {Doe, Alex}, title = {First}, year = 2024}\n" ++
     "@misc{b, author = {Roe, Sam}, title = {Second}, year = 2020}\n" ++
     "@misc{c, author = {Poe, Kim}, title = {Third}, year = 2022}"
-  let doc (style : Option String) (natbib : Option (Array CiteDecl) := none) : Ir.Doc :=
-    { natbib
+  let doc (style : Option String) (citeSetup : Option (Array CiteDecl) := none) : Ir.Doc :=
+    { citeSetup
       body := #[
         .para #[.text "x ", .cite { cmd := .paren } #["b"], .text " y ", .cite { cmd := .textual } #["a"]],
         .para #[.cite { cmd := .paren } #["c", "b"]],
         .bibliography "refs" style #[]] }
-  let run (style : Option String) (natbib : Option (Array CiteDecl) := none) :=
-    Bib.apply #[("refs", bib)] (doc style natbib) Bib.plainReading
+  let run (style : Option String) (citeSetup : Option (Array CiteDecl) := none) :=
+    Bib.apply #[("refs", bib)] (doc style citeSetup) Bib.plainReading
   let (outU, dsU) := run (some "unsrtnat")
   t "apply: no diagnostics on a clean resolution" dsU.isEmpty
   let itemsOf (d : Ir.Doc) : Array Ir.BibItem :=
@@ -3825,7 +3825,7 @@ def natbibChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit
   let body := (elabStr (natbibSrc "\\usepackage{natbib}" "plainnat"
     ["\\setcitestyle{square}"])).1
   t "natbib: a body declaration leaves no ink and no punctuation"
-    (body.natbib == some #[] && !hasStr (Ir.plainText (body.body.flatMap fun b =>
+    (body.citeSetup == some #[] && !hasStr (Ir.plainText (body.body.flatMap fun b =>
       match b with | Ir.Block.para xs => xs | _ => #[])) "square")
   let (miss, _, _) := shipped "\\usepackage[numbers]{natbib}" "unsrtnat" ["\\citep{missing2000}"]
   t "natbib: an unresolved key prints [?], the separators a resolved one has"

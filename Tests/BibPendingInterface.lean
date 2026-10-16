@@ -158,7 +158,7 @@ example (table : Ir.RefTable) (spanOf : String → Option Span)
 
 example : True := by
   fail_if_success have := CiteDecl.stripGroup
-  fail_if_success have := CiteDecl.splitEq
+  fail_if_success have := Bib.CitePunct.word
   fail_if_success have := Bib.CitePunct.step
   trivial
 

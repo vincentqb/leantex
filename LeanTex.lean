@@ -42,6 +42,7 @@ public import LeanTex.Core.Bib
 public import LeanTex.Core.BibModel
 public import LeanTex.Core.BibStyle
 public import LeanTex.Core.BibContract
+public import LeanTex.Core.CiteDeclContract
 public import LeanTex.Core.BibText
 public import LeanTex.Core.BibLatex
 public import LeanTex.Core.BibUnique

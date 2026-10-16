@@ -571,7 +571,7 @@ public structure ESt where
   /-- The `\bibliographystyle` name, wherever it appears. -/
   bibStyle : Option String := none
   /-- The citation setup, `none` until natbib or biblatex is loaded. -/
-  natbib : Option (Array CiteDecl) := none
+  citeSetup : Option (Array CiteDecl) := none
   scope : GroupScope := {}
   /-- Lengths the body declares (`\setlength` mid-document). -/
   flowTokens : Option Tokens := none
@@ -12164,7 +12164,7 @@ a side channel, never slide content" cpos
         match raws[j]? with
         | some (.group body _) =>
           modify fun st => if n == Parse.citeSetupMark then
-              { st with natbib := some ((st.natbib.getD #[]) ++ Parse.citeSetupOf body) }
+              { st with citeSetup := some ((st.citeSetup.getD #[]) ++ Parse.citeSetupOf body) }
             else { st with bibStyle := some (rawSrc body).trimAscii.toString }
           have hadv := advance_measures raws h (show i < j + 1 by omega)
           elabBlocksGo ctx' raws (j + 1) blocks #[] gen'
@@ -16406,7 +16406,7 @@ the .bib file"
       output := output
       asserts := asserts
       allow := allow
-      natbib := (← get).natbib
+      citeSetup := (← get).citeSetup
       pictureTool := ctx.pic.tool
       figureConvert := ctx.pic.convert
       pictureSrcs := (← get).pictures

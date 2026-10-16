@@ -1334,7 +1334,7 @@ public def twinMeta (doc : Doc) (bibName : String → String := id) : String :=
   let lists := Ir.foldBlocks (fun out b => match b with
     | .bibliography src style items => out.push (src, style, items)
     | _ => out) (fun out _ => out) #[] doc.body
-  match lists.toList, doc.natbib.bind CiteDecl.options? with
+  match lists.toList, doc.citeSetup.bind CiteDecl.options? with
   | [(src, style, items)], some opts =>
     if src.isEmpty then "" else
     let lists := #[(style, items)]
