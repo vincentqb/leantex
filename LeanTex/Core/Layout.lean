@@ -9219,6 +9219,8 @@ public structure Spacing.Context where
   private styles : Ir.Styles := {}
   /-- The caption positions the document declares. -/
   private captionPos : Array (String × Ir.CaptionPos) := #[]
+  /-- The itemize levels' redefined class labels (`Ir.Doc.itemLabels`). -/
+  private itemLabels : Array (Nat × Array Ir.Inline) := #[]
   /-- The document's main locale, in which generated class furniture is worded. -/
   private locale : Locale := Locale.en
   /-- The `slides` class: frames open fresh pages. -/
@@ -12614,7 +12616,9 @@ private def collectItems (r : Rd) (a : Acc)
     -- The class glyph is checked against the loaded faces, so it degrades to its stand-in.
     let covered := fun c =>
       (r.fs.body.gid c).isSome || (r.fs.fallbackFor c).isSome
-    let marker := st.marker.getD (ListMark.marker ordered level idx covered)
+    -- A level's declared style marks it, else its redefined class label, else the class's own.
+    let label := if ordered then none else (r.itemLabels.find? (·.1 == level)).map (·.2)
+    let marker := st.marker.getD (label.getD (ListMark.marker ordered level idx covered))
     let a := collectItem r a item.toList indent true marker hang
     collectItems r a rest indent st ordered level (idx + 1) itemsep hang
 
@@ -19145,6 +19149,7 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
                    preamble := doc.preambleFace
                    styles := doc.styles
                    captionPos := doc.captionPos
+                   itemLabels := doc.itemLabels
                    locale := doc.info.locale
                    slides := doc.docClass.record.model == .frame
                    abstractForm := doc.abstractForm

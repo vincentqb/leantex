@@ -210,8 +210,9 @@ def registry : List Premise := [
     checks := [check% publicationPathChecks, check% Tests.publicationInputChecks]
     owed := some "Publish two formats whose names differ only in case on a case-folding filesystem, and an artifact named through a second mount of its source's directory, and require the preflight to refuse both." },
   { name := "tex-font-roots", residue := .host "TeX tree", reach := .render
-    statement := "The TeX distribution whose lualatex, luatex or tex comes first on PATH keeps its OpenType and TrueType fonts in the trees TexFontTrees.trees lists beside that program's real path, so the directories TexFontTrees.roots finds hold the faces that distribution's own font search finds."
-    sites := [("LeanTex/Cli/TexFontTrees.lean", "roots"), ("LeanTex/Cli/Driver.lean", "texFontDirs")]
+    statement := "The TeX distribution whose lualatex, luatex or tex comes first on PATH keeps its OpenType and TrueType fonts, and the colorprofiles package's profiles, in the trees TexFontTrees.trees lists beside that program's real path, so the directories TexFontTrees.roots finds hold the faces that distribution's own font search finds and TexFontTrees.colorProfile finds the profiles its l3pdfmeta embeds."
+    sites := [("LeanTex/Cli/TexFontTrees.lean", "roots"), ("LeanTex/Cli/Driver.lean", "texFontDirs"),
+      ("LeanTex/Cli/TexFontTrees.lean", "colorProfile"), ("LeanTex/Cli/Driver.lean", "loadProfile")]
     scripts := ["scripts/texfonts-report.lean"] },
   { name := "engine-environment", residue := .host "environment", reach := .render
     statement := "The driver reads PATH to choose tools, XDG_CACHE_HOME and HOME to place its cache, HOME, LEANTEX_FONT and LEANTEX_FONT_PATH to extend the font environment, TMPDIR, TMP, TEMP and TEMPDIR to place a run's scratch directory, and NO_COLOR for terminal colour, and the artifact depends on none of them except through the tools and faces they select."

@@ -543,17 +543,29 @@ def loadImages (file : String) (doc : Ir.Doc) (pics : Array PicResult := #[])
     if en.info.isSome then f.title.map (en.src, ·) else none
   return (store, diags, hits, titles, reads, svgs.filterMap (·.judged))
 
-/-- The output intent's ICC profile read beside the document, W0446 where it is not there or is
-no output profile. -/
-def loadProfile (file : String) (info : Ir.Meta) : IO (Option ByteArray × Array Diag) := do
+/-- The output intent's ICC profile and the path it was read at: beside the document, else, for a
+profile l3pdfmeta describes, in the TeX distribution's colorprofiles package where LaTeX finds it;
+W0446 where it is neither or no output profile. -/
+def loadProfile (file : String) (info : Ir.Meta) : IO (Option (String × ByteArray) × Array Diag) := do
   let some oi := info.intent | return (none, #[])
   let some p := Publication.localPath? file oi.profile
     | return (none, #[PdfX.profileRefused oi.profile "names no local file" oi.span])
   let reply : Except World.Failure ByteArray ← Host.answer (.readFile p.toString)
+  let builtin := (Ir.OutputIntent.builtin? oi.profile).isSome
+  let (path, reply) ← match reply with
+    | .error .absent =>
+      if !builtin then pure (p.toString, reply) else do
+      let found ← ((TexFontTrees.colorProfile (← IO.getEnv "HOME") oi.profile).runM Host.answer :
+        BaseIO (Option String))
+      match found with
+      | some q => pure (q, ← (Host.answer (.readFile q) : IO (Except World.Failure ByteArray)))
+      | none => pure (p.toString, reply)
+    | _ => pure (p.toString, reply)
   match reply with
   | .error f =>
     let why := match f with
-      | .absent => "is not there"
+      | .absent => if builtin then "is neither beside the document nor in the TeX distribution's \
+colorprofiles package" else "is not there"
       | .denied => "cannot be read, its permission denied"
       | .notRegular => "is no regular file"
       | .other w => s!"cannot be read: {w}"
@@ -561,7 +573,7 @@ def loadProfile (file : String) (info : Ir.Meta) : IO (Option ByteArray × Array
   | .ok b =>
     match PdfX.profileFault b oi.components with
     | some why => return (none, #[PdfX.profileRefused oi.profile why oi.span])
-    | none => return (some b, #[])
+    | none => return (some (path, b), #[])
 
 /-- The claim's losses less the missing output intent a refused profile already names (W0446). -/
 def claimLosses (profileDiags claimDiags : Array Diag) : Array Diag :=
@@ -734,8 +746,9 @@ structure Front where
   /-- The measurement the document was elaborated against; `none` when the source draws no
   measured picture. -/
   provisional : Option Ir.Pic.LabelMetric
-  /-- The declared output profile as the host read it, and why it was refused where it was. -/
-  profile : Option ByteArray × Array Diag
+  /-- The declared output profile as the host read it and where, and why it was refused where it
+  was. -/
+  profile : Option (String × ByteArray) × Array Diag
 
 /-- Read and decode the file and run the front end, elaborating against a face resolved
 from the preamble alone; `build` elaborates again where the settled face would measure a
@@ -780,7 +793,7 @@ def frontend (ui : Ui) (file : String) : IO (Option Front) := do
   let requests := LeanTex.Core.ListingReply.requests doc reqSpans.code
   -- The declared output profile is read once; a CMYK one shows every later elaboration's CMYK.
   let profile ← loadProfile file doc.info
-  let screen := (profile.1.bind Icc.Transform.of?).filter (·.space == "CMYK")
+  let screen := (profile.1.bind (Icc.Transform.of? ·.2)).filter (·.space == "CMYK")
   let (doc, diags, reqSpans, prepared, earlier) ← if requests.isEmpty && screen.isNone then
       pure (doc, diags, reqSpans, prepared, earlier)
     else do
@@ -842,11 +855,15 @@ def buildInputs (file : String) (front : Front) (doc : Ir.Doc) (scan : FaceScan)
   let scanned := (scan.faces.filter fun face =>
     owned.any fun dir => face.path.startsWith (if dir.endsWith "/" then dir else dir ++ "/")).map
       (FontDb.faceFile ·.path)
-  let declared := (doc.output.stylesheet.toArray ++ doc.info.favicon.toArray ++
-    (doc.info.intent.map (·.profile)).toArray).filterMap fun name =>
+  let declared := (doc.output.stylesheet.toArray ++ doc.info.favicon.toArray).filterMap fun name =>
     (Publication.localPath? file name).map (·.toString)
+  -- The profile where it was read; one not read is the file it names beside the document.
+  let profile := match front.profile.1, doc.info.intent with
+    | some (path, _), _ => #[path]
+    | none, some oi => ((Publication.localPath? file oi.profile).map (·.toString)).toArray
+    | none, none => #[]
   #[file] ++ front.reads ++ (Input.bibPaths file doc).map (·.toString) ++ imgReads ++ staged ++
-    faces.map FontDb.faceFile ++ parsed ++ scanned ++ declared
+    faces.map FontDb.faceFile ++ parsed ++ scanned ++ declared ++ profile
 
 def build (ui : Ui) (file : String) : IO UInt32 := do
   let t0 ← IO.monoMsNow
@@ -1082,7 +1099,7 @@ in the HTML" (← since t)
         let tree := Struct.ofDoc (Layout.pdfView doc)
         -- The output profile's press prints the engine's own colours in every operator.
         let (profile, profileDiags) := front.profile
-        let imgs := { imgs with profile }
+        let imgs := { imgs with profile := profile.map (·.2) }
         let ops := Pdf.pageOps geom fs out.pages imgs tree keep
         let streams ← Compression.pageStreams cache (ops.map fun o => (Pdf.render o).toUTF8)
         let imgs := { imgs with

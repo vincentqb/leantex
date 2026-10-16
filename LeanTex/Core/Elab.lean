@@ -3350,6 +3350,25 @@ private def secFmtDefine? (cmd : UserCmd) : Option (Nat × Array SecPart) :=
   else (theCounterLevel? cmd.name).bind fun lvl =>
     (secFmtOfBody cmd.body).map ((lvl, ·))
 
+/-- The itemize level a class label macro names: `\labelitemi`…`\labelitemiv` (classes.dtx). -/
+private def itemLabelLevel? (name : String) : Option Nat :=
+  [1, 2, 3, 4].find? (Ir.itemLabelName · == name)
+
+/-- Each definition of an itemize level's label inside the raws, at any depth, with its place. -/
+private def itemLabelDefines (acc : Array (String × Pos)) : List Raw → Array (String × Pos)
+  | [] => acc
+  | .ctrl "define" p :: rest =>
+    let acc := match rest.dropWhile (· matches .space) with
+      | .ctrl n _ :: _ => if (itemLabelLevel? n).isSome then acc.push (n, p) else acc
+      | _ => acc
+    itemLabelDefines acc rest
+  | .group body _ :: rest => itemLabelDefines (itemLabelDefines acc body.toList) rest
+  | .env _ body _ :: rest => itemLabelDefines (itemLabelDefines acc body.toList) rest
+  | .math _ body _ :: rest => itemLabelDefines (itemLabelDefines acc body.toList) rest
+  | _ :: rest => itemLabelDefines acc rest
+termination_by l => sizeOf l
+decreasing_by raws_dec
+
 /-- Declares one level's heading-number format, in flow scope. -/
 private def applySecFmt (lvl : Nat) (parts : Array SecPart) : EM Unit :=
   modify fun st =>
@@ -14178,7 +14197,15 @@ private def applyMeta (ctx : Ctx) (m0 : Meta) (entries : Array Decl.Entry)
         evs := evs.push (.say (diagOf ctx .E0323
           s!"'standard' in '\\pdfmeta' expects \"X-4\", got '{s}'" (some pos) none))
     | "intent", .str s =>
-      m := { m with intent := some { m.intent.getD {} with profile := s, span := some ⟨ctx.file, pos⟩ } }
+      -- A profile l3pdfmeta describes takes its description where the document gives none.
+      let own := m.intent.getD {}
+      let b := (OutputIntent.builtin? s).getD {}
+      let described : OutputIntent :=
+        { own with profile := s, span := some ⟨ctx.file, pos⟩
+                   condition := own.condition <|> b.condition, info := own.info <|> b.info
+                   registry := own.registry <|> b.registry
+                   components := own.components <|> b.components }
+      m := { m with intent := some described }
     | "intent-condition", .str s =>
       m := { m with intent := some { m.intent.getD {} with condition := some s } }
     | "intent-info", .str s => m := { m with intent := some { m.intent.getD {} with info := some s } }
@@ -14360,6 +14387,8 @@ public structure PreState where
   tokens : Tokens := {}
   /-- The caption positions `\captionsetup` declared. -/
   captionPos : Array (String × Ir.CaptionPos) := #[]
+  /-- The itemize level labels the preamble redefines, by level, each read when the preamble ends. -/
+  itemLabels : Array (Nat × UserCmd × Pos) := #[]
   head : Option (Array Inline) := none
   foot : Option (Array Inline) := none
   headFrom : Nat := 1
@@ -14929,7 +14958,11 @@ public def applyDecl (s : PreState) (d : PDecl) : EM PreState := do
       | none => pure none
     match cmd? with
     | some cmd =>
-      return { s with ctx := bindCmd s.ctx cmd }
+      -- A redefined itemize label is the level's marker as well as a macro.
+      let itemLabels := match itemLabelLevel? cmd.name, cmd.params.isEmpty with
+        | some lvl, true => (s.itemLabels.filter (·.1 != lvl)).push (lvl, cmd, pos)
+        | _, _ => s.itemLabels
+      return { s with ctx := bindCmd s.ctx cmd, itemLabels }
     | none => return s
   | .defineEnv name sig dflt beginB endB pos =>
     match name with
@@ -16302,6 +16335,15 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
                     engineTokens := engineLengthTokensOfPage page ++ classMarginTokens record.lists
                     abstractNests := s.abstractForm.getD
                       (abstractFormUnder record.abstractForm classOpts) == .quotation }
+  -- A redefined itemize label is read once the preamble's colours and macros all stand.
+  let mut itemLabels : Array (Nat × Array Inline) := #[]
+  for (lvl, cmd, pos) in s.itemLabels do
+    let marker ← elabInlines (ctx.atCall cmd.name pos) cmd.body
+    itemLabels := itemLabels.push (lvl, #[.located (ctx.sourceSpan pos) marker])
+  for (name, pos) in itemLabelDefines #[] body.toList do
+    warnOnce ctx ("labelitem:" ++ name) .W0340
+      s!"'\\{name}' is read in the preamble; in the body it is ignored" pos
+      (help := "declare it in the preamble, before '\\begin{document}'")
   let opening : Array Raw := decls.filterMap fun d =>
     match d with
     | .bodyStart source p => some (.ctrl (Marker.name .ink source) p)
@@ -16434,6 +16476,7 @@ the .bib file"
       palette := palette
       tokens := tokens
       captionPos := s.captionPos
+      itemLabels := itemLabels
       head := head
       foot := foot
       logo := logo

@@ -193,6 +193,16 @@ def figureChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit
   let (_, febDs) := elabStr ("\\documentclass{article}\n\\pdfmeta{ created = \"2026-02-31\" }\n" ++
     "\\begin{document}\nx\n\\end{document}")
   t "a date the calendar does not have is refused" (codes febDs .E0323 == 1)
+  let builtin (pre : String) : Option Ir.OutputIntent := (elabStr ("\\DocumentMetadata{pdfstandard=X-4, " ++
+    "colorprofiles={X=FOGRA39L_coated.icc}}\n\\documentclass{article}\n" ++ pre ++
+    "\\begin{document}\nx\n\\end{document}")).1.info.intent
+  t "a profile of the colorprofiles package a document does not describe takes l3pdfmeta's description"
+    ((builtin "").any fun oi => oi.condition == some "FOGRA39L Coated" &&
+      oi.registry == some "http://www.fogra.org" && oi.components == some 4 &&
+      oi.info.any (·.startsWith "Offset printing, according to ISO 12647-2:2004/Amd 1, OFCOM,"))
+  t "a document's own description of such a profile stands over l3pdfmeta's"
+    ((builtin "\\pdfmeta{ intent-condition = \"Probe Press 2\" }\n").any fun oi =>
+      oi.condition == some "Probe Press 2" && oi.registry == some "http://www.fogra.org")
   let (_, nbClaim, nbPdf) := written oneFace
     ((card "" "Alpha").replace "\\page{ bleed = 9bp }\n" "") (some icc)
   t "a claimed page with no declared trim is trimmed at its media box"

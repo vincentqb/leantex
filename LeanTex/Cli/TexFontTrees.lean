@@ -40,6 +40,11 @@ public def trees (program : String) (home : Option String) : List String :=
 public def fontDirs (trees : List String) : List String :=
   trees.map (ToolPath.join · "fonts/opentype") ++ trees.map (ToolPath.join · "fonts/truetype")
 
+/-- The colorprofiles package's directory in each tree, where l3pdfmeta finds the profiles it
+describes. -/
+public def profileDirs (trees : List String) : List String :=
+  trees.map (ToolPath.join · "tex/generic/colorprofiles")
+
 /-- The real path of the first of `names` that `PATH` reaches as a regular
 file. -/
 @[expose] public def programIn : List String → Prog (Option String)
@@ -56,6 +61,22 @@ of them reach through links searched once, in order. -/
     dirsGo (match st with
       | .ok s => if s.kind == .dir && !acc.any (·.2 == s.real) then acc.push (c, s.real) else acc
       | .error _ => acc) cs
+
+/-- The first regular file named `name` in one of `dirs`, in order. -/
+@[expose] public def firstFileIn (name : String) : List String → Prog (Option String)
+  | [] => .pure none
+  | d :: ds =>
+    let p := ToolPath.join d name
+    .ask (.stat p) fun st => match ToolPath.regular p st with
+      | some _ => .pure (some p)
+      | none => firstFileIn name ds
+
+/-- The colorprofiles package's profile `name` in the TeX distribution on `PATH`, in its trees'
+search order; none when `PATH` reaches no TeX program or no tree holds it. -/
+@[expose] public def colorProfile (home : Option String) (name : String) : Prog (Option String) :=
+  programIn programs >>= fun
+    | none => .pure none
+    | some program => firstFileIn name (profileDirs (trees program home))
 
 /-- The font directories of the TeX distribution on `PATH` that exist, in
 search order; none when `PATH` reaches no TeX program. -/

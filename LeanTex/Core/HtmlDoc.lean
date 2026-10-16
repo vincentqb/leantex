@@ -741,6 +741,24 @@ public def styleRules (doc : Doc) (lit : Ir.Color → String := cssColor) : Stri
   Id.run do
   let mut css := ""
   let mut diags : Array Diag := #[]
+  -- A redefined itemize label marks its level over the class's, under a declared level style.
+  for (level, m) in doc.itemLabels do
+    let levelSel := " ".intercalate (List.replicate level "ul")
+    match markerCss? m doc.page.scale with
+    | some r =>
+      let decls := r.decls.map fun d => match literalColorDecl? d with
+        | some c => s!"color: {lit c};"
+        | none => d
+      let body := String.join (decls.toList.map (" " ++ ·))
+      css := css ++ s!"{levelSel} > li::marker \{ content: \"{cssString r.text}  \";{body} }\n"
+    | none =>
+      diags := diags.push (Diag.of .W0331
+        s!"the declared '\\{Ir.itemLabelName level}' marker is not expressible in HTML; \
+the level default marks these items"
+        (span := Ir.inlineSource m)
+        (help := some "marker = {...} reaches HTML as text with colour \
+and font styling (CSS Pseudo-Elements 4 §4.1); a link, an image, math, or \
+an overlay step does not"))
   for (element, st) in doc.styles.entries do
     let some tag := sel element | continue
     -- the title block's `after` is a skip of its own, not the heading's margin

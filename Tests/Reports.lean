@@ -1,4 +1,9 @@
 import Tests.DiagAudit
+import Tests.PdfWriter
+import Tests.Icc
+import Tests.PrintColour
+import Tests.TexFontTrees
+import Tests.ItemLabels
 import Tests.EngineCache
 import Tests.BuildGraph
 import Tests.DeclaredColors
@@ -1889,7 +1894,33 @@ def reports : List Report := [
     what := "a one-letter word in math, from a text command or an operator name, was an identifier the browser set in italic on the web page, where the PDF sets it upright"
     pins := [check% textInMathChecks]
     accept := ["main's binary at b7efbc12 writes such a word as an identifier with no variant, which MathML sets italic; this tree marks a one-scalar word normal, as it marks a lone scalar, and a longer word stays as it was"]
-    state := .guarded "b7efbc12" .before .author }
+    state := .guarded "b7efbc12" .before .author },
+  { id := "R999", date := "2026-10-16"
+    what := "the PDF X-4 judge took a figure's halftone named for a device for one the standard admits and resolved every reference by a linear search of the file, and the fonts-embedded census passed a copied figure printing in an unembedded font whose dictionary stood directly in its resources"
+    pins := [check% Tests.PrintX4.checks, check% censusDirectFontChecks,
+      thm% PdfCensus.Index.find?_exact, thm% PdfCensus.Index.deref_exact]
+    accept := ["probe documents built by the engine at da86ec89: a card copying a figure whose graphics state names its halftone keeps its PDF X-4 claim, and a document asserting its fonts embedded over a figure with a direct unembedded Helvetica passes; built here the claim is withheld, the construct named, and the assertion fails naming the font",
+      "the guards fail on da86ec89 with the halftone case and the census's direct fonts, and hold here; the index finds what the linear search finds by proof"]
+    state := .guarded "da86ec89" .before .author },
+  { id := "R208", date := "2026-10-16"
+    what := "a print document declaring its output intent's profile showed its CMYK colours on the web page, and judged their contrast, as xcolor projects them rather than as the press the profile characterizes prints them; its listings', a missing image's and a shading's colours stood in RGB, so a document whose own colours were CMYK lost its PDF X-4 claim to them; and xcolor's cyan, magenta, yellow and olive were RGB where xcolor declares them in CMYK"
+    pins := [check% Tests.Icc.checks, check% Tests.PrintColour.checks,
+      check% Tests.PrintColour.driverChecks, check% Tests.PrintX4.checks]
+    accept := ["LittleCMS 2.19 as the oracle, relatively colorimetric: 600 random ink mixes through FOGRA39L shown alike to the byte, Ghostscript's default and PostScript CMYK profiles and two invented version 4 profiles 592 to 597 of 600 alike and the rest a byte apart, and sRGB colours printed to within a thousandth of an ink",
+      "the guards' documents built by the engine at da86ec89 show the CMYK accent as #ff4d00 under the profile, judge its contrast there, and paint a listing, a placeholder and a shading in DeviceRGB under it, losing the claim; built here they show and judge the profile's colour, paint the same inks, and print the engine's own colours in the press, the claim standing",
+      "an invented card declaring FOGRA39L with a CMYK accent, a listing, cyan text and a missing image: at da86ec89 its claim is withheld for DeviceRGB in its page; here it claims PDF X-4 and its page holds no DeviceRGB"]
+    state := .guarded "da86ec89" .before .author },
+  { id := "R209", date := "2026-10-16"
+    what := "a print document naming one of the profiles l3pdfmeta describes, FOGRA39L coated or sRGB, got no output intent: the engine looked for the profile beside the document alone, where LaTeX finds it in the colorprofiles package, and gave it none of l3pdfmeta's description"
+    pins := [check% Tests.colorProfileLayoutChecks, check% Tests.colorProfileDiskChecks,
+      check% Tests.PrintX4.checks]
+    accept := ["lualatex on an invented card naming FOGRA39L coated: the output intent embeds the colorprofiles package's profile with the condition FOGRA39L Coated, the FOGRA registry and l3pdfmeta's description of the press; the engine at da86ec89 names the profile missing and writes no intent; here, under a TeX Live layout holding an invented profile of that name, it embeds that profile with the same description and claims PDF X-4, running no TeX program"]
+    state := .guarded "da86ec89" .before .author },
+  { id := "R210", date := "2026-10-16"
+    what := "an itemize label a document redefined, its colour and its glyph, marked nothing: the class's bullet and dash stood on the page and the web page, and nothing named the definition"
+    pins := [check% Tests.ItemLabels.checks]
+    accept := ["lualatex on an invented article redefining the first and second labels: a red bullet and a plain dash, the third level's asterisk as the class sets it; the engine at da86ec89 sets the class's black bullet and bold dash; here the red bullet and the plain dash on the page and the web page, an enumitem label over the redefinition, and a redefinition in the body named"]
+    state := .guarded "da86ec89" .before .author }
 ]
 
 /-- The reports guarded but never seen failing, a count held in both directions. -/

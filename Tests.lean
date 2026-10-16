@@ -97,6 +97,7 @@ import Tests.PageBoxes
 import Tests.PrintX4
 import Tests.Icc
 import Tests.PrintColour
+import Tests.ItemLabels
 import Tests.DeclaredColors
 import Tests.BlockBody
 import Tests.BlockRegionFit
@@ -490,6 +491,7 @@ def declSettingSuiteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   Tests.DeclSettings.counterReadChecks ref
   Tests.DeclSettings.titlePageChecks ref oneFace
   Tests.DeclSettings.inlineDisplayChecks ref
+  Tests.ItemLabels.checks ref oneFace
 
 /-- Print colour: inks, page boxes, the PDF/X-4 claim, the output profile's transforms, and what a
 document declaring one shows and prints. -/

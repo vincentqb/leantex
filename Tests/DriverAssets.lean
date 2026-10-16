@@ -41,8 +41,9 @@ public def settles (elaborated : Ir.Doc) (provisional : Option Ir.Pic.LabelMetri
   return (LeanTex.Cli.Driver.settlement front fs resolved).2.2
 
 /-- The driver's reading of an output intent's profile beside `file` (`Driver.loadProfile`). -/
-public def loadProfile (file : String) (info : Ir.Meta) : IO (Option ByteArray × Array Diag) :=
-  LeanTex.Cli.Driver.loadProfile file info
+public def loadProfile (file : String) (info : Ir.Meta) : IO (Option ByteArray × Array Diag) := do
+  let (found, ds) ← LeanTex.Cli.Driver.loadProfile file info
+  return (found.map (·.2), ds)
 
 /-- The claim's losses a refused profile leaves to name (`Driver.claimLosses`). -/
 public def claimLosses (profileDiags claimDiags : Array Diag) : Array Diag :=

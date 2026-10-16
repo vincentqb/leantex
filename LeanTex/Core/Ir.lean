@@ -2058,6 +2058,30 @@ public structure OutputIntent where
   span : Option Span := none
   deriving Repr, BEq, Inhabited
 
+/-- The class label macro of an itemize level, `labelitemi` for the first. -/
+public def itemLabelName (level : Nat) : String :=
+  let numeral := match level with
+    | 1 => "i"
+    | 2 => "ii"
+    | 3 => "iii"
+    | _ => "iv"
+  "labelitem" ++ numeral
+
+/-- The description l3pdfmeta gives a profile of the colorprofiles package that a document names
+without describing it (l3pdfmeta.dtx, `c__pdfmeta_colorprofile_…`). -/
+public def OutputIntent.builtin? (file : String) : Option OutputIntent :=
+  match file with
+  | "sRGB.icc" =>
+    some { profile := file, condition := some "IEC sRGB"
+           info := some "IEC 61966-2.1 Default RGB colour space - sRGB"
+           registry := some "http://www.iec.ch", components := some 3 }
+  | "FOGRA39L_coated.icc" =>
+    some { profile := file, condition := some "FOGRA39L Coated"
+           info := some ("Offset printing, according to ISO 12647-2:2004/Amd 1, OFCOM, paper type " ++
+             "1 or 2 = coated art, 115 g/m2, tone value increase curves A (CMY) and B (K)")
+           registry := some "http://www.fogra.org", components := some 4 }
+  | _ => none
+
 /-- Document metadata, as declared by `\pdfmeta`: the one record every surface derives from. -/
 public structure Meta where
   title : Option String := none
@@ -7391,6 +7415,9 @@ public structure Doc where
   tokens : Tokens := {}
   /-- The caption positions the document declares, by float type scope (`""` for every type). -/
   captionPos : Array (String × CaptionPos) := #[]
+  /-- The marker each itemize level's class label (`\labelitemi`…`\labelitemiv`) is redefined to,
+  by level; a declared level style's marker stands over it. -/
+  itemLabels : Array (Nat × Array Inline) := #[]
   /-- `\runninghead` / `\runningfoot`: one line of inline content each, laid
   out in the margin after the body. -/
   head : Option (Array Inline) := none

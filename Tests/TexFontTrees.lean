@@ -3,6 +3,7 @@ module
 public import LeanTex.Cli.TexFontTrees
 public import LeanTex.Cli.Host
 public import Tests.Support
+public import Tests.Icc
 
 public section
 
@@ -189,9 +190,82 @@ def texFontTreeNoProcessChecks (ref : IO.Ref (List String)) : IO Unit := do
     (listed.exitCode == 0 && (listed.stdout.splitOn "\n").contains "Example Icons")
   check ref s!"tex fonts no process: nothing ran lualatex, kpsewhich or sh: {left}" left.isEmpty
 
+/-- The colorprofiles package's profile in the trees of the distribution on `PATH`, where
+l3pdfmeta finds the profiles it describes: the first tree holding it, in search order. -/
+def colorProfileLayoutChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let found (path : Option String) (home : Option String) (stats : List (String × Stat)) :
+      Option String :=
+    let facts : List Fact := (⟨.env "PATH", path⟩ : Fact) :: (⟨.cwd, .ok "/"⟩ : Fact) ::
+      stats.map fun (p, st) => (⟨.stat p, .ok st⟩ : Fact)
+    (TexFontTrees.colorProfile home "FOGRA39L_coated.icc").run (World.traceWorld facts World.quiet)
+  let dist := "/tl/2099/texmf-dist/tex/generic/colorprofiles/FOGRA39L_coated.icc"
+  let user := "/people/ada/texmf/tex/generic/colorprofiles/FOGRA39L_coated.icc"
+  let program := ("/links/lualatex", fileAt "/tl/2099/bin/x86_64-linux/luahbtex")
+  let tl := [program, (dist, fileAt dist)]
+  check ref "colour profiles: the distribution's colorprofiles package holds the profile"
+    (found (some "/links") none tl == some dist)
+  check ref "colour profiles: the user's tree is searched first"
+    (found (some "/links") (some "/people/ada") (tl ++ [(user, fileAt user)]) == some user)
+  check ref "colour profiles: no tree holding it, or no TeX program on PATH, finds none"
+    (found (some "/links") none [program] == none && found (some "/nowhere") none tl == none)
+  check ref "colour profiles: a directory of the profile's name is no profile"
+    (found (some "/links") none [program, (dist, dirAt dist)] == none)
+
+/-- A document naming a profile l3pdfmeta describes, beside no file of that name, embeds the one
+the TeX distribution on `PATH` holds, described as lualatex describes it, and runs no TeX program. -/
+def colorProfileDiskChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let make ← IO.Process.output { cmd := "lake", args := #["build", "leantex", "-q"] }
+  if make.exitCode != 0 then
+    check ref s!"colour profiles on disk: the CLI builds: {make.stderr}" false
+    return
+  let binary := (← IO.FS.realPath ".lake/build/bin/leantex").toString
+  let corpus ← IO.FS.realPath testFonts
+  IO.FS.withTempDir fun tmp => do
+    let root := (← IO.FS.realPath tmp).toString
+    let marks := root ++ "/marks"
+    IO.FS.createDirAll marks
+    let bin := root ++ "/tl/2099/bin/x86_64-linux"
+    writeScript (bin ++ "/lualatex") s!"#!/bin/sh\necho ran > {marks}/lualatex\nexit 1\n"
+    let profiles := root ++ "/tl/2099/texmf-dist/tex/generic/colorprofiles"
+    IO.FS.createDirAll profiles
+    IO.FS.writeBinFile (profiles ++ "/FOGRA39L_coated.icc") Tests.Icc.press
+    let doc := root ++ "/doc"
+    IO.FS.createDirAll (doc ++ "/fonts")
+    IO.FS.writeBinFile (doc ++ "/fonts/OpenSans-Regular.ttf")
+      (← IO.FS.readBinFile (corpus / "OpenSans-Regular.ttf"))
+    let page (profile : String) : String := String.intercalate "\n" [
+      s!"\\DocumentMetadata\{pdfversion=1.6, pdfstandard=X-4, colorprofiles=\{X={profile}}}",
+      "\\documentclass{article}", "\\usepackage{hyperref}",
+      "\\fonts{dir=\"fonts\", body=\"Open Sans\"}",
+      "\\hypersetup{pdftitle={Probe card}, pdfcreationdate={D:20261014120000Z}}",
+      "\\page{ bleed = 9bp }", "\\pagestyle{empty}", "\\begin{document}", "Plain", "\\end{document}"]
+    IO.FS.writeFile (doc ++ "/built.tex") (page "FOGRA39L_coated.icc")
+    IO.FS.writeFile (doc ++ "/other.tex") (page "probe.icc")
+    let env : Array (String × Option String) := #[("PATH", some bin),
+      ("HOME", some (root ++ "/people/ada")), ("XDG_CACHE_HOME", some (root ++ "/cache"))]
+    let run (name : String) : IO IO.Process.Output :=
+      IO.Process.output { cmd := binary, args := #[doc ++ s!"/{name}.tex", "--porcelain"]
+                          cwd := some doc, inheritEnv := false, env }
+    let built ← run "built"
+    let pdf ← if ← System.FilePath.pathExists (doc ++ "/built.pdf") then
+        pdfText <$> IO.FS.readBinFile (doc ++ "/built.pdf") else pure ByteArray.empty
+    check ref s!"colour profiles on disk: the tree's profile is embedded as the X-4 intent: {built.stdout}"
+      (built.exitCode == 0 && bytesContain pdf "/S /GTS_PDFX" &&
+        bytesContain pdf "/OutputConditionIdentifier (FOGRA39L Coated)" &&
+        bytesContain pdf "/RegistryName (http://www.fogra.org)" &&
+        bytesContain pdf "<pdfxid:GTS_PDFXVersion>PDF/X-4</pdfxid:GTS_PDFXVersion>" &&
+        !hasStr built.stdout "W0446")
+    let other ← run "other"
+    check ref s!"colour profiles on disk: a profile l3pdfmeta does not describe is read beside the document alone: {other.stdout}"
+      (hasStr other.stdout "W0446" && hasStr other.stdout "is not there")
+    let left ← System.FilePath.readDir marks
+    check ref "colour profiles on disk: no TeX program ran" left.isEmpty
+
 def texFontTreeChecks (ref : IO.Ref (List String)) : IO Unit := do
   texFontTreeLayoutChecks ref
   texFontTreeDiskChecks ref
   texFontTreeNoProcessChecks ref
+  Tests.colorProfileLayoutChecks ref
+  Tests.colorProfileDiskChecks ref
 
 end Tests
