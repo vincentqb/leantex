@@ -8280,16 +8280,21 @@ public inductive Outside where
 
 /-- What a deck sets for a block outside every frame, read as both of its artifacts read it. -/
 public def Doc.outside (doc : Doc) (b : Block) : Outside :=
-  if holdsFrame #[b] || b matches .pagebreak then .stage
-  else if pageMarkerBlock b || b matches .setPalette _ | .setTokens _ | .logo _ | .framefoot _
-      | .note _ | .spaced _ #[] then .none
+  if holdsFrame #[b] then .stage
+  else if pageMarkerBlock b then .none
   else match b with
+    | .frame .. | .pagebreak => .stage
+    | .setPalette _ | .setTokens _ | .logo _ | .framefoot _ | .note _ => .none
+    | .spaced _ body => if body.isEmpty then .none else .content
     | .section level starred _ _ =>
       if level == .title then .content
       else if doc.sectionPages.pageFor level starred then .stage
       else .none
     | .para content => if anchorsOnly content then .none else .content
-    | _ => .content
+    | .list .. | .center .. | .ragged .. | .role .. | .link .. | .quote .. | .abstract ..
+    | .titled .. | .disclosure .. | .equation .. | .verbatim .. | .algorithm .. | .columns ..
+    | .onSteps .. | .altSteps .. | .only .. | .nav .. | .rule .. | .picture .. | .table ..
+    | .float .. | .bibliography .. => .content
 
 /-- The events a context-threading walk declares. -/
 public structure CtxFold (γ : Type) (α : Type) where
