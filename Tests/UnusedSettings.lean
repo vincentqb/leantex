@@ -165,6 +165,33 @@ def accountingChecks (ref : IO.Ref (List String)) : IO Unit := do
       (ds.filter fun d => d.kind == .N0100 || d.kind == .W0449).all fun d =>
         d.span.any (·.pos.line == 2))
 
+/-- A markdown document's metadata keys only a citation reads are named where the document cites
+nothing, each at its field; a citation, a `nocite` or an included file's role reads them. -/
+def metadataChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let front := "---\nbibliography: refs.bib\nbiblio-style: plainnat\nreference-section-title: Works\n---\n\n"
+  let named (src : String) : Array (Option String) :=
+    ((elabMd src).2.filter (·.kind == .W0449)).map (·.subject)
+  let uncited := (elabMd (front ++ "# A note\n\nPlain words, citing nothing.\n")).2.filter
+    (·.kind == .W0449)
+  t s!"unused metadata: a document citing nothing names each citation key it declares ({uncited.map (·.subject)})"
+    (uncited.map (·.subject) == #[some "unused:meta:bibliography", some "unused:meta:biblio-style",
+      some "unused:meta:reference-section-title"])
+  t "unused metadata: each is named at its own field"
+    (uncited.map (·.span.map (·.pos.line)) == #[some 2, some 3, some 4])
+  t "unused metadata: a citation reads them"
+    (named (front ++ "A claim [@roe2020].\n")).isEmpty
+  t "unused metadata: a nocite reads them"
+    (named ("---\nbibliography: refs.bib\nnocite: '@roe2020'\n---\n\nPlain words.\n")).isEmpty
+  t "unused metadata: a document with no metadata names nothing"
+    (named "# A note\n\nPlain words.\n").isEmpty
+  let (_, included) := Md.readIncluded "part.md" (front ++ "Plain words.\n") false
+  t "unused metadata: an included file's keys are the including document's to judge"
+    (!included.any (·.kind == .W0449))
+  t "unused metadata: a key already named keeps that one accounting"
+    ((named ("---\nbibliography: refs.bib\nlink-citations: false\n---\n\nPlain words.\n")) ==
+      #[some "unused:meta:bibliography"])
+
 /-- Each tag and class a typed HTML tree holds, a class written `.name`, with the most of it one
 path from the root nests. -/
 def presentOne (path : List String) (acc : Array (String × Nat)) : Html.Node → Array (String × Nat)

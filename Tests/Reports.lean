@@ -1822,7 +1822,7 @@ def reports : List Report := [
     what := "a setting a document declared that nothing it set used shipped with no word: a colour nothing painted, a face no text was set in, listing defaults no listing read, a style for an element the document never showed; one in a package, class or theme must never be named"
     pins := [check% Tests.UnusedSettings.firesChecks, check% Tests.UnusedSettings.scopeChecks,
       check% Tests.UnusedSettings.accountingChecks, check% Tests.UnusedSettings.oracleChecks,
-      check% Tests.UnusedSettings.faceChecks]
+      check% Tests.UnusedSettings.faceChecks, check% Tests.UnusedSettings.metadataChecks]
     accept := ["the guards fail on main at 0073deb3, which names none of these declarations; here every kind is named once at its site and none a document reads",
       "a first cut naming unpainted colours everywhere broke 147 suite checks; scoped to the document's own files, its own cut broke 139, each fixture made honest or its unread declarations accepted where they are the point: shared fixture colours declared only where a case paints with them, a generated export's colours named only where the document leaves them unpainted",
       "the two-build judge over 596 probe pairs, each a declaration built with and without it in an article or a deck and judged by visualdiff on the PDF and the web page: no declaration named unused changes either artifact; 27 read by the judgment change nothing, over-approximated readers such as a description list for an itemize style"]

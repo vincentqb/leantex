@@ -73,7 +73,7 @@ private def inlineReads (acc : Shown) : Inline → Shown
   | .image _ _ _ => { acc with images := true }
   | .ref _ _ _ _ => acc.element "link"
   | .link _ _ => (acc.element "link").element "url"
-  | .cite _ _ => acc.element "cite"
+  | .cite _ _ | .cited _ _ _ => acc.element "cite"
   | .role name _ => acc.element name
   | .footnote _ _ => acc.element "enumerate"
   | .styled _ _ | .colored _ _ _ | .located _ _ | .decorated _ _ | .onSteps _ _
@@ -242,6 +242,12 @@ public def faceDiag (key : String) (span : Span) : Diag :=
       else s!"the '{key}' face"
     Diag.of .W0449 s!"{what} is declared here, and no text the document sets is set in it"
       (span := some span) (subject := some s!"unused:face:{key}") (help := help)
+
+/-- The loss of a markdown metadata key only a citation reads, in a document citing nothing. -/
+public def metaDiag (file key : String) (pos : Pos) : Diag :=
+  Diag.of .W0449 s!"the metadata key '{key}' is declared here, and the document cites nothing"
+    (span := some ⟨file, pos⟩) (subject := some s!"unused:meta:{key}")
+    (help := some "cite an entry, as '[@key]' does, or delete the key")
 
 /-- The loss of an author colour nothing paints with. -/
 private def colorDiag (name : String) (span : Span) : Diag :=

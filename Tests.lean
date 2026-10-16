@@ -469,6 +469,7 @@ def declSettingSuiteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   Tests.UnusedSettings.accountingChecks ref
   Tests.UnusedSettings.oracleChecks ref oneFace
   Tests.UnusedSettings.faceChecks ref
+  Tests.UnusedSettings.metadataChecks ref
   Tests.DeclSettings.setlistChecks ref oneFace font
   Tests.DeclSettings.listSpacingChecks ref oneFace
   Tests.DeclSettings.listSpacingStyleChecks ref oneFace

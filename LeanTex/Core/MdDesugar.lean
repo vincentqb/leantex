@@ -4,6 +4,7 @@ public import LeanTex.Core.MdParse
 public import LeanTex.Core.Parse
 public import LeanTex.Core.Ir
 import LeanTex.Core.Decl
+import LeanTex.Core.UnusedSetting
 import LeanTex.Core.Loop
 import LeanTex.Core.BibPunct
 import LeanTex.Core.KeyVal
@@ -684,6 +685,8 @@ public structure MetaRead where
   decls : Array String := #[]
   nocite : Option (Array String × Pos) := none
   title : Option (Array Inl × Pos) := none
+  /-- Each key the reader took, with its field's site, which only a citation reads. -/
+  taken : Array (String × Pos) := #[]
   diags : Array Diag := #[]
 
 /-- A metadata value's text, a sequence's items joined by `, `. -/
@@ -739,6 +742,7 @@ public def metaRead (file : String) (role : Role) (fields : Array MetaField) : M
       out := { out with diags := out.diags.push (unread f "the document declares no bibliography"
         (some "name the .bib file the citations take, as 'bibliography: refs.bib'")) }
       continue
+    let before := out.diags.size
     match f.key, f.value with
     | "bibliography", v =>
       let paths := match v with
@@ -793,6 +797,8 @@ without a comma" (some ⟨file, f.pos⟩) (some "convert the entries to a .bib f
       | some true => pure ()
       | none => out := { out with diags := out.diags.push (unread f "its value is not true or false") }
     | _, _ => out := { out with diags := out.diags.push (unread f "its value is not one the key takes") }
+    if out.diags.size == before && f.key != "nocite" then
+      out := { out with taken := out.taken.push (f.key, f.pos) }
   return out
 
 /-- natbib loaded with the declared options, where a bibliography is declared. -/
@@ -850,6 +856,9 @@ public def desugar (file : String) (input : String) (dialect : Dialect := .docum
   let m := metaRead file role split.1
   let blocks := split.2.toList
   let cited := citesBlks blocks
+  -- premise: Tests.UnusedSettings.metadataChecks — a document citing nothing reads none of these
+  let unused := if role != .document || m.sources.isEmpty || cited || m.nocite.isSome then #[]
+    else m.taken.map fun (key, pos) => UnusedSetting.metaDiag file key pos
   let body := blkListRaws file (m.list cited) #[] #[] blocks
   let placed := refsAt blocks
   -- premise: mdMetadataChecks — a division with no bibliography to place is named
@@ -858,7 +867,8 @@ public def desugar (file : String) (input : String) (dialect : Dialect := .docum
         #[route file "refs" "a '::: {#refs}' division places the reference list, and no \
 bibliography is declared for this file: nothing sets there" p] else #[]
     | none => #[]
-  (m.prelude ++ body.1 ++ m.tail file cited placed.isSome, read.2 ++ m.diags ++ body.2 ++ unplaced)
+  (m.prelude ++ body.1 ++ m.tail file cited placed.isSome,
+    read.2 ++ m.diags ++ unused ++ body.2 ++ unplaced)
 
 /-- The frontend a `.md` path selects: the reader plus the desugaring. -/
 public def read (file input : String) : Array Raw × Array Diag := desugar file input
