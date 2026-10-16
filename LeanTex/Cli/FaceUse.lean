@@ -42,6 +42,7 @@ public def diags (faces : Array (String × Span)) (fs : Font.FontSet) (doc : Ir.
   let shown := UnusedSetting.shown doc
   let slides := doc.docClass == .slides
   faces.filterMap fun (key, span) =>
+    -- premise: Tests.UnusedSettings.faceChecks — a refused math face is named by its refusal
     if (key == "math" && fs.math.isNone) || UnusedSetting.faceUsed doc.fonts slides shown key ||
         servesFallback fs (ownFonts fs doc key)
     then none else some (UnusedSetting.faceDiag key span)

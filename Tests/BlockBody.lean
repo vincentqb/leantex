@@ -156,12 +156,9 @@ private def generatedSourceChecks (ref : IO.Ref (List String))
           "\\end{frame}\\end{document}"
         let (doc, diags) := Elab.run "generated.tex" source
         let label := s!"generated block {paper.css}/{env}/{title}"
-        -- The export's colours for the author's own use, and its bindings of the kinds the deck
-        -- sets no block of, at their title and body sites.
+        -- The export's colours for the author's own use paint nothing here.
         let unused := #["sampleAccentText", "sampleAccentEdge", "sampleMutedOnDark",
-            "sampleAccentOnDark", "sampleDiagramMuted"].map ("unused:color:" ++ ·) ++
-          (#["alertblock", "exampleblock"].filter (· != env)).flatMap fun k =>
-            #["unused:style:" ++ k, "unused:style:" ++ k]
+            "sampleAccentOnDark", "sampleDiagramMuted"].map ("unused:color:" ++ ·)
         let named := (diags.filter (·.kind == .W0449)).map (·.subject.getD "")
         check ref (label ++ s!": clean source but the declarations the deck leaves unused ({named})")
           (diags.all (fun d => d.severity == .note || d.kind == .W0449) && named == unused)

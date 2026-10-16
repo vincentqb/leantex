@@ -368,6 +368,8 @@ public structure SpanRecords where
   colorReads : Array String := #[]
   /-- How many picture settings and macro definitions `colorReads` has read. -/
   pictureContextRead : Nat × Nat := (0, 0)
+  /-- Whether `colorReads` has read the boundary preamble. -/
+  picturePreambleRead : Bool := false
   /-- Boundary pictures the rendered subset draws in part, by picture id. -/
   fallbacks : Array String := #[]
   /-- Pictures drawn in part under `tool = none`, by picture id. -/
@@ -591,6 +593,9 @@ public structure ESt where
   mentions : Std.HashSet String := {}
   /-- The files a package or class file inputs, whose declarations are the package's. -/
   packageInputs : Array String := #[]
+  /-- The declaration sites whose deletion changes an artifact otherwise, which the unused-setting
+  judge skips. -/
+  unjudged : Array Span := #[]
   ctr : Counters := {}
   /-- The binding of the nearest preceding numbered thing, which a `\label`
   declared here takes. -/
@@ -1578,6 +1583,7 @@ private def elabMathInline (ctx : Ctx) (display : Bool) (body : Array Parse.Raw)
     return sourceInline ctx pos (.formula display (Parse.rawSrc body) l)
   | .error what =>
     let src := Parse.rawSrc body
+    noteMentions src
     warnOnce ctx ("math:" ++ what) .W0012
       s!"math with {what} is not rendered yet; the formula {floorWording src}" pos
     return sourceInline ctx pos (.math display src)
@@ -1602,6 +1608,7 @@ private def elabMathEnv (ctx : Ctx) (name : String) (kind : Math.GridKind)
     return sourceInline ctx pos (.formula true (Parse.rawSrc body) l)
   | .error what =>
     let src := Parse.rawSrc body
+    noteMentions src
     warnOnce ctx ("math:" ++ what) .W0012
       s!"math with {what} is not rendered yet; '\{{name}}' {floorWording src}" pos
     return sourceInline ctx pos (.math true src)
@@ -4014,14 +4021,15 @@ each picture setting and macro once. -/
 private def notePictureReads (ctx : Ctx) (body : Array Raw) : EM Unit := do
   unless ← readsOwed do return
   noteColorReads (Parse.rawSrc body)
-  noteColorReads ctx.pic.preamble
+  unless (← get).spans.picturePreambleRead do
+    noteColorReads ctx.pic.preamble
   let (sets, macros) := (← get).spans.pictureContextRead
   for (_, rs) in ctx.pic.sets.extract sets ctx.pic.sets.size do
     noteColorReads (Parse.rawSrc rs)
   for (_, def_) in ctx.pic.macros.extract macros ctx.pic.macros.size do
     noteColorReads def_
   modify fun st => { st with spans := { st.spans with
-    pictureContextRead := (ctx.pic.sets.size, ctx.pic.macros.size) } }
+    pictureContextRead := (ctx.pic.sets.size, ctx.pic.macros.size), picturePreambleRead := true } }
 
 /-- States a boundary request once, the drawing named `what`, and returns the image source that
 stands for it; `fallback` records a drawing the subset makes beside it. -/
@@ -4255,13 +4263,14 @@ private structure InlineCodeOpts where
 /-- Inline code's options as minted reads them there; a key inline code does
 not honour is named. -/
 private def inlineCodeOpts (ctx : Ctx) (opts : String) (pos : Pos) : EM InlineCodeOpts := do
-  noteMentions opts
-  let unhonoured (key msg : String) (help : Option String) : EM Unit :=
+  let unhonoured (item key msg : String) (help : Option String) : EM Unit := do
+    noteMentions item
     warnOnce ctx ("lstopt:" ++ msg ++ ":" ++ key) .W0110 msg pos (help := help)
   let mut o : InlineCodeOpts := {}
   for bare in KeyVal.items opts do
     let key := ((KeyVal.pair? bare).map (·.1)).getD bare
     if key == "formatcom" || bare.startsWith "formatcom=" then
+      noteMentions bare
       noteFormatcom ctx pos
       continue
     -- premise: inlineCodeChecks — display keys leave inline code unchanged
@@ -4276,14 +4285,14 @@ private def inlineCodeOpts (ctx : Ctx) (opts : String) (pos : Pos) : EM InlineCo
       match sizeCommand? v with
         | some name => o := { o with size := some (.size name) }
         | none =>
-          unhonoured key s!"inline code fontsize '{v}' is not a supported size command; the size \
+          unhonoured bare key s!"inline code fontsize '{v}' is not a supported size command; the size \
 around it stands" "use a named size command such as fontsize=\\small, or fontsize=\\relax"
     | some ("style", v) =>
       let v := listingVal v
       match Ir.ListingStyle.ofName? v with
       | some selected => o := { o with style := some selected }
       | none =>
-        unhonoured key s!"listing style '{v}' is not supported; the current style stands"
+        unhonoured bare key s!"listing style '{v}' is not supported; the current style stands"
           "use style=default or style=friendly"
     | some ("tabsize", v) =>
       let v := listingVal v
@@ -4291,21 +4300,21 @@ around it stands" "use a named size command such as fontsize=\\small, or fontsiz
       match v.toNat? with
       | some n =>
         if 0 < n && n ≤ 100 then o := { o with tabSize := n }
-        else unhonoured key s!"listing tabsize '{v}' is outside 1..100; \
+        else unhonoured bare key s!"listing tabsize '{v}' is outside 1..100; \
 the current tab stops stand" none
       | none =>
-        unhonoured key s!"listing tabsize '{v}' is not an integer; \
+        unhonoured bare key s!"listing tabsize '{v}' is not an integer; \
 the current tab stops stand" none
     | some ("breaklines", v) =>
       let v := listingVal v
       if v == "true" then o := { o with breakLines := true }
       else if v == "false" then o := { o with breakLines := false }
-      else unhonoured key s!"listing breaklines '{v}' is not true or false; \
+      else unhonoured bare key s!"listing breaklines '{v}' is not true or false; \
 the current wrapping stands" none
-    | some (k, _) => unhonoured key s!"inline code key '{k}' is not honoured; ignored" none
+    | some (k, _) => unhonoured bare key s!"inline code key '{k}' is not honoured; ignored" none
     | none =>
       if bare == "breaklines" then o := { o with breakLines := true }
-      else unhonoured key s!"inline code key '{bare}' is not honoured; ignored" none
+      else unhonoured bare key s!"inline code key '{bare}' is not honoured; ignored" none
   -- premise: codeRoleChecks — the style is inert under a full palette
   if let some declared := o.style then
     let pal := (← get).scope.palette.current.getD ctx.palette
@@ -7189,7 +7198,6 @@ private def applyBeamerColor (ctx : Ctx) (pal : Palette) (name : String)
           warnOnce ctx ("beamercolor:channel:" ++ name ++ ":" ++ key) .W0104
             s!"'\\setbeamercolor' {key} on '{name}' has no paint site; that channel is kept only for inheritance" pos
             (trigger := "\\setbeamercolor")
-  for el in UnusedSetting.beamerColorElements name do noteSetting ctx (.style el) pos
   resolveBeamerColors ctx pal
 
 /-- The `\setbeamercolor{element}{declaration}` arm. -/
@@ -7367,8 +7375,9 @@ by its code role" pos
       else if ref == .color key && !aliasOnly && ColorRef.ofKey key == .color key &&
           (CodeColor.retiredKeys.lookup key).isNone then
         noteSetting ctx (.color key) pos
-        -- A picture's settings and macros are read again for the colour now owed.
-        modify fun st => { st with spans := { st.spans with pictureContextRead := (0, 0) } }
+        -- A picture's settings, macros and preamble are read again for the colour now owed.
+        modify fun st => { st with spans := { st.spans with pictureContextRead := (0, 0),
+                                                            picturePreambleRead := false } }
       unless aliasOnly do
         for k in refs do
           if let .role r := k then
@@ -8662,6 +8671,7 @@ private def tabularArm (ctx : Ctx) (n : String) (body : Array Raw)
       else cs
     padL := pl
     padR := pr
+    unless warns.isEmpty do noteMentions (Parse.rawSrc spec)
     for (key, msg, help) in warns do
       warnOnce ctx ("tabular:" ++ key) .W0104 msg pos
         (help := if help.isEmpty then none else some help)
@@ -8845,7 +8855,6 @@ is set as a display listing" pos
         fontSize := inherited, source := some (ctx.sourceSpan sourceStart)
         frame := Ir.ListingFrame.onPage ctx.surface ctx.lists ctx.page.parskip .trivlist }
   let (opts, afterOpt) := (Parse.listingOptHead s).getD ("", 0)
-  noteMentions opts
   let mut content := s
   let mut caption : Option String := none
   let mut label : Option String := none
@@ -8857,13 +8866,15 @@ is set as a display listing" pos
   let mut breakLines := base.breakLines
   let mut ground := base.ground
   -- Keyed by its words and its key: listings share a loss when they print the same.
-  let unhonoured (key msg : String) (help : Option String) : EM Unit :=
+  let unhonoured (item key msg : String) (help : Option String) : EM Unit := do
+    noteMentions item
     warnOnce ctx ("lstopt:" ++ msg ++ ":" ++ key) .W0110 msg pos (help := help)
   let langOf (raw : String) : EM (Option Ir.ListingLang) := codeLanguage ctx raw (env == "minted") pos
   for bare in KeyVal.items opts do
     let key := ((KeyVal.pair? bare).map (·.1)).getD bare
     if env == "minted" && ((KeyVal.pair? bare).map (·.1) == some "formatcom" ||
         bare == "formatcom" || bare.startsWith "formatcom=") then
+      noteMentions bare
       noteFormatcom ctx pos
       continue
     if env == "minted" && keepsSize bare then
@@ -8879,13 +8890,13 @@ is set as a display listing" pos
       if v == "left" then numbers := true
       else if v == "none" then numbers := false
       else
-        unhonoured key s!"'numbers={v}' asks for a numbering the engine \
+        unhonoured bare key s!"'numbers={v}' asks for a numbering the engine \
 does not draw; lines keep no numbers" "numbers=left draws them"
     | some ("linenos", v) =>
       numbers := v.trimAscii.toString != "false"
     | some ("language", v) =>
       if env == "minted" then
-        unhonoured key "minted has no key 'language'; the language argument names the lexer"
+        unhonoured bare key "minted has no key 'language'; the language argument names the lexer"
           s!"name the language in \\begin\{minted}\{{(listingVal v).trimAscii.toString}}"
       else language ← langOf (listingVal v)
     | some ("style", v) =>
@@ -8894,18 +8905,18 @@ does not draw; lines keep no numbers" "numbers=left draws them"
         match Ir.ListingStyle.ofName? v with
         | some selected => style := some selected
         | none =>
-          unhonoured key
+          unhonoured bare key
             s!"listing style '{v}' is not supported; the current style stands"
             "use style=default or style=friendly"
       else
-        unhonoured key
+        unhonoured bare key
           s!"listing named style '{v}' is not supported; the current style stands" none
     | some ("fontsize", v) =>
       let v := listingVal v
       if env == "minted" && (sizeCommand? v).isSome then
         fontSize := .size ((sizeCommand? v).getD "normalsize")
       else
-        unhonoured key s!"listing fontsize '{v}' is not a supported size command; \
+        unhonoured bare key s!"listing fontsize '{v}' is not a supported size command; \
 the current size stands" "use a named size command such as fontsize=\\small, or fontsize=auto"
     | some ("tabsize", v) =>
       let v := listingVal v
@@ -8913,28 +8924,28 @@ the current size stands" "use a named size command such as fontsize=\\small, or 
       match v.toNat? with
       | some n =>
         if 0 < n && n ≤ 100 then tabSize := n
-        else unhonoured key s!"listing tabsize '{v}' is outside 1..100; \
+        else unhonoured bare key s!"listing tabsize '{v}' is outside 1..100; \
 the current tab stops stand" none
       | none =>
-        unhonoured key s!"listing tabsize '{v}' is not an integer; \
+        unhonoured bare key s!"listing tabsize '{v}' is not an integer; \
 the current tab stops stand" none
     | some ("bgcolor", v) =>
       let v := listingVal v
       if env != "minted" then
-        unhonoured key "listing key 'bgcolor' is not honoured; ignored" none
+        unhonoured bare key "listing key 'bgcolor' is not honoured; ignored" none
       else if v == "none" || v.isEmpty then ground := none
       else
         noteColorReads v
         match ctx.palette.resolveSource none v with
         | .ok (some c) => ground := some (c, ctx.palette.refOf? v)
         | _ =>
-          unhonoured key s!"listing bgcolor '{v}' names no colour; the listing keeps the \
+          unhonoured bare key s!"listing bgcolor '{v}' names no colour; the listing keeps the \
 ground it stands on" none
     | some ("breaklines", v) =>
       let v := listingVal v
       if v == "true" then breakLines := true
       else if v == "false" then breakLines := false
-      else unhonoured key s!"listing breaklines '{v}' is not true or false; \
+      else unhonoured bare key s!"listing breaklines '{v}' is not true or false; \
 the current wrapping stands" none
     | some ("basicstyle", v) =>
       let v := listingVal v
@@ -8947,14 +8958,14 @@ the current wrapping stands" none
           let name := name.trimAscii.toString
           if name == "ttfamily" then size else .size name) inherited
       else
-        unhonoured key "listing basicstyle supports only \\ttfamily and named \
+        unhonoured bare key "listing basicstyle supports only \\ttfamily and named \
 size commands; the current style stands" none
     | some (k, _) =>
-      unhonoured key s!"listing key '{k}' is not honoured; ignored" none
+      unhonoured bare key s!"listing key '{k}' is not honoured; ignored" none
     | none =>
       if bare == "linenos" then numbers := true
       else if bare == "breaklines" then breakLines := true
-      else unhonoured key s!"listing key '{bare}' is not honoured; ignored" none
+      else unhonoured bare key s!"listing key '{bare}' is not honoured; ignored" none
   if env == "minted" then
     match Parse.mintedLangHead s afterOpt with
     | some (lang, _) => language ← langOf lang
@@ -9195,6 +9206,13 @@ private def macroPictureInSentence (ctx : Ctx) (n : String) (cur raws : Array Ra
   if let some (_, cmd) := lookupUser ctx n then
     if cmd.body.any (· matches .env "tikzpicture" _ _) then
       pictureInSentence ctx "tikzpicture" cur raws i pos
+
+/-- Marks a colour declaration text stands before in its paragraph as one the unused-setting judge
+skips: it ends that paragraph, so deleting it changes the page. -/
+private def noteSplitDecl (ctx : Ctx) (n : String) (cur : Array Raw) (pos : Pos) : EM Unit :=
+  if n == "palette" && cur.any (!isSpaceOrPar ·) then
+    modify fun st => { st with unjudged := st.unjudged.push (ctx.sourceSpan pos) }
+  else pure ()
 
 /-- The `{tikzpicture}` arm: the rendered subset's drawing, or a boundary
 request for what the subset draws only with a loss, every loss named. -/
@@ -12020,6 +12038,7 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
         elabBlocksGo ctx' raws (i + 1) blocks (cur.push raws[i]) gen'
       else
       macroPictureInSentence ctx' n cur raws i cpos
+      noteSplitDecl ctx' n cur cpos
       let (⟨ctx', _⟩, blocks) ← flushPara ctx' blocks cur
       if n == "par" then
         elabBlocksGo ctx' raws (i + 1) blocks #[] gen'
@@ -15464,11 +15483,11 @@ a heading; its numbers stand alone" pos
   | .blueprintSite key url _ =>
     return { s with ctx := { s.ctx with blueprint := s.ctx.blueprint.declare key url } }
   | .unknownCmd name args unclosed pos =>
-    noteMentions args
     -- Set lines the engine or an open boundary reads are not unknown.
     if Compat.nativeReadCtrls.contains name ||
         (s.ctx.pic.tool.isSome && Compat.boundaryCtrls.contains name) then
       return s
+    noteMentions args
     warnOnce s.ctx ("ctrl:" ++ name) .W0301
       s!"unknown command '\\{name}' in the preamble; skipped" pos
       (help := unknownCmdHelp name false)
@@ -15487,7 +15506,7 @@ a heading; its numbers stand alone" pos
 /-- The elaboration state with the stores only diagnostics read erased. -/
 public def ESt.sem (e : ESt) : ESt :=
   { e with diags := #[], warnedUnknown := #[], seenScalars := #[], declaredKeys := #[],
-           settings := #[], owedColors := {}, mentions := {} }
+           settings := #[], owedColors := {}, mentions := {}, packageInputs := #[], unjudged := #[] }
 
 /-- The fold state with its reporting once-latch erased. -/
 public def PreState.sem (s : PreState) : PreState := { s with textDiagged := false }
@@ -16792,8 +16811,9 @@ public def completePrepared (file : String) (p : Prepared) (earlier : Array Diag
   -- A declaration a definition's replacement text makes at its call is the definition's.
   let settings := st.settings.filter fun d =>
     d.span.pos.command.isSome && p.sourceTriggers.writtenAt d.span.file d.span.pos == d.span.pos.command
+  -- premise: Tests.UnusedSettings.accountingChecks — a site another warning or a split names
   let named := if settings.isEmpty then #[] else
-    said.filterMap fun d => if d.severity == .note then none else d.span
+    said.filterMap (fun d => if d.severity == .note then none else d.span) ++ st.unjudged
   let unused := if settings.isEmpty then #[] else
     -- A title block reads the title page's style whatever datum it sets.
     let shown := UnusedSetting.shown doc (if st.titleDone then #["titlepage"] else #[])

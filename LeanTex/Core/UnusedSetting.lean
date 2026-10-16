@@ -43,26 +43,6 @@ public def ownSite (package inCall : Bool) (pos : Pos) : Bool :=
   !package && !inCall && pos.origins.isEmpty &&
     !(pos.command.any fun c => loaders.contains c || definers.contains c)
 
-/-- The style elements a beamer colour element paints and alone reads, with the elements beamer's
-colour themes let inherit it; one many elements read, such as `structure`, reads none here. -/
-public def beamerColorElements (name : String) : List String :=
-  match name with
-  | "block title" | "block body" => blockStyleElements
-  | "block title alerted" | "block body alerted" => ["alertblock"]
-  | "block title example" | "block body example" => ["exampleblock"]
-  | "titlelike" => ["titlepage", "frametitle", "sectionpage"]
-  | "title" | "subtitle" | "author" | "institute" | "date" => ["titlepage"]
-  | "frametitle" | "frametitle right" => ["frametitle"]
-  | "section title" => ["sectionpage"]
-  | "item" => ["itemize", "enumerate"]
-  | "itemize item" => ["itemize"]
-  | "itemize subitem" => ["itemize2"]
-  | "itemize subsubitem" => ["itemize3"]
-  | "enumerate item" => ["enumerate"]
-  | "enumerate subitem" => ["enumerate2"]
-  | "enumerate subsubitem" => ["enumerate3"]
-  | _ => []
-
 /-- A site's identity, as a diagnostic's span compares it. -/
 private def siteKey (span : Span) : String × Nat × Nat := (span.file, span.pos.line, span.pos.col)
 
@@ -248,6 +228,14 @@ public def metaDiag (file key : String) (pos : Pos) : Diag :=
     (span := some ⟨file, pos⟩) (subject := some s!"unused:meta:{key}")
     (help := some "cite an entry, as '[@key]' does, or delete the key")
 
+/-- The loss of a Lean page's directive key only a citation reads, on a page whose documentation
+cites nothing. -/
+public def directiveDiag (file key : String) (pos : Pos) : Diag :=
+  Diag.of .W0449 s!"the directive key '{key}' is declared here, and the page's documentation \
+cites nothing"
+    (span := some ⟨file, pos⟩) (subject := some s!"unused:directive:{key}")
+    (help := some "cite an entry, as `[Key]` does, or delete the key")
+
 /-- The loss of an author colour nothing paints with. -/
 private def colorDiag (name : String) (span : Span) : Diag :=
   Diag.of .W0449 s!"the colour '{name}' is declared here, and nothing the document sets paints with it"
@@ -260,9 +248,9 @@ private def styleDiag (elements : Array String) (span : Span) : Diag :=
     (span := some span) (subject := some s!"unused:style:{",".intercalate elements.toList}")
     (help := some (unusedHelp "what it declares for them"))
 
-/-- The losses of the colours and styles nothing reads, one per site and colour, in the order
-declared; the style elements one site declares are one setting, read when any is, and a site
-another warning already names keeps that one accounting. -/
+/-- The losses of the colours nothing reads, one per site and colour, then of the style sites, each
+in the order declared; the style elements one site declares are one setting, read when any is, and a
+site another warning already names keeps that one accounting. -/
 public def diags (ledger : Array Declared) (shown : Shown) (read : Std.HashSet String)
     (named : Array Span) : Array Diag := Id.run do
   let taken : Std.HashSet (String × Nat × Nat) := named.foldl (·.insert <| siteKey ·) {}

@@ -53,10 +53,14 @@ def unreadCases : List (String × String × String) :=
      "\\begin{minted}{bash}\necho probe\n\\end{minted}", "unused:listing:setminted:python"),
    ("inline-code defaults", article "\\usepackage{minted}\\setmintedinline{fontsize=\\small}"
      "\\begin{minted}{python}\nx = 1\n\\end{minted}", "unused:listing:setmintedinline"),
-   ("a beamer block colour", deck "\\setbeamercolor{block title}{bg=red}"
-     "\\begin{frame}{Title}Words.\\end{frame}", "unused:style:block,alertblock,exampleblock"),
    ("a colour only an uncalled definition names",
      article (probeColor ++ "\\newcommand{\\probebox}[1]{\\colorbox{probeink}{#1}}") "Words.",
+     "unused:color:probeink"),
+   ("a colour only an honoured listing caption's words name", article
+     ("\\usepackage{listings}" ++ probeColor)
+     "\\begin{lstlisting}[caption={A probeink example}]\nx = 1\n\\end{lstlisting}", "unused:color:probeink"),
+   ("a colour only a picture style no picture reads names",
+     article ("\\usepackage{tikz}" ++ probeColor ++ "\\tikzset{probe/.style={fill=probeink}}") "Words.",
      "unused:color:probeink")]
 
 /-- Each declaration with content that reads it. -/
@@ -105,8 +109,13 @@ def readCases : List (String × String) :=
      "\\maketitle Words."),
    ("a beamer author font a title page reads", deck
      "\\author{Probe Author}\\setbeamerfont{author}{size=\\tiny}" "\\begin{frame}\\titlepage\\end{frame}"),
-   ("a beamer block colour an alert block reads", deck "\\setbeamercolor{block title}{bg=red}"
-     "\\begin{frame}{Title}\\begin{alertblock}{Alert}Words.\\end{alertblock}\\end{frame}"),
+   ("a beamer block colour a box reads", deck
+     "\\usepackage{tcolorbox}\\setbeamercolor{block title}{bg=red,fg=white}"
+     "\\begin{frame}{Title}\\begin{tcolorbox}[title=Probe box]Words.\\end{tcolorbox}\\end{frame}"),
+   ("a colour declared inside a paragraph, which it ends", article ""
+     ("Words.\n" ++ probeColor ++ "\nMore words.")),
+   ("listing defaults an inline listing reads", article "\\usepackage{listings}\\lstset{numbers=left}"
+     "Inline \\lstinline|x = 1| code."),
    ("a list macro's definition", article
      "\\makeatletter\\def\\@listii{\\leftmargin 8em \\topsep 30pt}\\makeatother"
      "\\begin{quote}Outer.\\begin{quote}Inner.\\end{quote}\\end{quote}")]
@@ -133,6 +142,9 @@ def refusedCases : List (String × DiagCode × String) :=
    ("text standing before the document", .E0313, article
      ("\\usepackage{tikz}" ++ probeColor ++ "\\tikzstyle{probe}=[fill=probeink]")
      "\\begin{tikzpicture}\\fill[probe] (0,0) rectangle (1,1);\\end{tikzpicture}"),
+   ("a refused column modifier", .W0104, article ("\\usepackage{colortbl}" ++ probeColor)
+     "\\begin{tabular}{>{\\columncolor{probeink}}c}x\\end{tabular}"),
+   ("a formula refused whole", .W0012, article probeColor "A formula $\\mathcolor{probeink}{x^2}$."),
    ("a link colour read before the colour is declared", .E0326, article
      ("\\usepackage{hyperref}\\hypersetup{colorlinks, urlcolor=probeink}" ++ probeColor)
      "\\href{https://example.org}{A place}.")]
@@ -253,6 +265,17 @@ def metadataChecks (ref : IO.Ref (List String)) : IO Unit := do
     (named (front ++ "Words [@{roe2020,doe2019}].\n")).isEmpty
   t "unused metadata: a citation an image's text alternative sets reads them"
     (named (front ++ "![A caption citing [@roe2020].](fig.png)\n")).isEmpty
+  let leanPage (doc : String) (refs : Option Code.Refs) : Array (Option String) :=
+    ((Code.read .lean "t.lean" ("-- leantex: bibliography = refs.bib, biblio-style = plain\n" ++ doc)
+      (refs := refs)).2.filter (·.kind == .W0449)).map (·.subject)
+  let refs : Code.Refs := { path := "refs.bib", keys := ({} : Std.HashSet String).insert "roe2020" }
+  t "unused metadata: a Lean page's citation directive keys are named where its documentation cites nothing"
+    (leanPage "/-! Plain words. -/\ndef x := 1\n" (some refs) ==
+      #[some "unused:directive:bibliography", some "unused:directive:biblio-style"])
+  t "unused metadata: a Lean page's citation reads its directive keys"
+    (leanPage "/-! A claim [roe2020]. -/\ndef x := 1\n" (some refs)).isEmpty
+  t "unused metadata: a Lean page whose bibliography is not read is not judged"
+    (leanPage "/-! A claim [roe2020]. -/\ndef x := 1\n" none).isEmpty
   t "unused metadata: a nocite reads them"
     (named ("---\nbibliography: refs.bib\nnocite: '@roe2020'\n---\n\nPlain words.\n")).isEmpty
   t "unused metadata: a document with no metadata names nothing"

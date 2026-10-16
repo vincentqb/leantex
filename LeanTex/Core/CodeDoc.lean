@@ -8,6 +8,7 @@ public import LeanTex.Core.LeanProse
 public import LeanTex.Core.CodeLink
 import LeanTex.Core.Decl
 import LeanTex.Core.Hex
+public import LeanTex.Core.UnusedSetting
 
 /-! # Code files as documents
 
@@ -2395,8 +2396,12 @@ the preamble's declarations, the file's name the title where no description open
       (some ⟨file, directivePos lang src⟩) (help := "write `proofs = show`, `collapse` or `remove`")
       (subject := some s!"code:{k}:{v}")
   let idle := showing.idle lang ⟨file, directivePos lang src⟩
+  -- premise: Tests.UnusedSettings.metadataChecks — a page citing nothing reads none of these
+  let uncited := if lang != .lean || refs.isNone || acc.cited then #[] else
+    (#["bibliography", "biblio-style"].filter showing.written.contains).map fun k =>
+      UnusedSetting.directiveDiag file k (directivePos lang src)
   (preamble.push (.env "document" body origin),
-    views ++ unread ++ idle ++ acc.diags ++ plan.2.2 ++ stray.toArray)
+    views ++ unread ++ idle ++ uncited ++ acc.diags ++ plan.2.2 ++ stray.toArray)
 
 private theorem ite_prefix (b : Bool) (x y : Array Raw) :
     (if b = true then x else y ++ x) = (if b = true then #[] else y) ++ x := by

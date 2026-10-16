@@ -14534,6 +14534,9 @@ private def textList (loc : Locale) (st : TextSt) (raws : Array Raw)
       let (repl, k) ← siCtrl loc n pos raws (i + 1)
       textList loc st raws (out ++ repl) rest (i + 1) (k - (i + 1))
     else
+      -- listings' inline and file readers read `\lstset`'s defaults, refused or not.
+      if (n == "lstinline" || n == "lstinputlisting") && !st.defined.contains n then
+        markRead (readIds st "lstlisting" "")
       textList loc st raws (out.push (.ctrl n pos)) rest (i + 1) 0
   | .verb env s vpos :: rest, i, 0 => do
     -- A document's own `\mintinline` is the command its calls run.
