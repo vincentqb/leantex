@@ -306,7 +306,8 @@ def registry : List Premise := [
     statement := "Poppler, Ghostscript, pypdf, PDFium as the host's Chrome runs it and pdf.js as the host Firefox's omni.ja ships it read a written PDF as ISO 32000-2 says, veraPDF judges PDF/A-4 and PDF/UA-2 as those standards say, and ImageMagick measures the distance between rasters as it documents, so where the readers agree with the engine's own reader the page is what the file states."
     sites := [("scripts/pdf-oracles.lean", "main"), ("scripts/ink-oracle.lean", "main"),
       ("scripts/visualdiff.lean", "main")]
-    tools := ["pdftotext", "pdfinfo", "pdffonts", "pdftoppm", "gs", "magick", "verapdf", "chrome"]
+    tools := ["pdftotext", "pdfinfo", "pdffonts", "pdftoppm", "pdfimages", "gs", "magick", "verapdf",
+      "chrome"]
     scripts := ["scripts/pdf-oracles.lean"] },
   { name := "zlib", residue := .oracle "zlib", reach := .oracle
     statement := "The zlib python3 links, zlib-ng in its zlib-compatible mode, refuses and reads a stream as zlib's inflate does, its table, length and header checks beyond RFC 1950 and RFC 1951 included, so a stream it reads back as the input is one zlib-based readers read, and its verdict on any stream is theirs."
