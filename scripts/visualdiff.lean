@@ -658,14 +658,6 @@ def run (cmd : String) (args : Array String) (env : Array (String × Option Stri
   if code != 0 then throw s!"{cmd} exited {code}: {errorLine err}"
   return out
 
-def pdfPages (pdf : String) : ExceptT String IO Nat := do
-  let out ← run "pdfinfo" #[pdf]
-  let count := ((out.splitOn "\n").find? (·.startsWith "Pages:")).bind fun l =>
-    (l.drop "Pages:".length).toString.trimAscii.toString.toNat?
-  match count with
-  | some n => return n
-  | none => throw s!"pdfinfo printed no page count for {pdf}"
-
 /-- `f` over `jobs`, `width` at a time, every job finished before the first error is raised. -/
 def parMap {α β : Type} (width : Nat) (jobs : Array α) (f : α → ExceptT String IO β) :
     ExceptT String IO (Array β) := do
@@ -703,32 +695,39 @@ def pdfPage (pdf : String) (page : Nat) (stem : System.FilePath) (dpi : Nat)
     let why := errorLine err
     throw s!"{pdf} page {page} at {dpi} dpi: {e}{if why.isEmpty then "" else s!" ({why})"}"
 
-/-- The longest side of an image cairo draws with its ground, one short of its `MAX_IMAGE_SIZE`. -/
-def cairoSide : Nat := 32766
+/-- The longest side of an image cairo draws, its `MAX_IMAGE_SIZE`. -/
+def cairoSide : Nat := 32767
 
-def drawable (w h : Nat) : Bool := w ≤ cairoSide && h ≤ cairoSide
+/-- The longest side drawn at once: pixman composites an image in a 16-bit range, which a piece and
+the source pixels an image reaches in it share, so an image of up to this many draws at any
+offset. -/
+def pieceSide : Nat := cairoSide / 2
 
-/-- `[0, n)` cut evenly into the fewest runs no longer than `cairoSide`, each a start and a length. -/
+def drawable (w h : Nat) : Bool := w ≤ pieceSide && h ≤ pieceSide
+
+/-- `[0, n)` cut evenly into the fewest runs no longer than `pieceSide`, each a start and a length. -/
 def runs (n : Nat) : Array (Nat × Nat) :=
-  let k := (n + cairoSide - 1) / cairoSide
+  let k := (n + pieceSide - 1) / pieceSide
   let step := (n + k - 1) / max k 1
   (Array.range k).map fun i => (i * step, min n (i * step + step) - i * step)
 
-/-- Window `(x, y, w, h)` of page `page` at `dpi`, drawn whole where cairo can and otherwise in
-pieces laid together, of which only those along the window's far edges may come back short, where
-the page ends. -/
-def pdfWindow (pdf : String) (page : Nat) (stem : System.FilePath) (dpi x y w h : Nat) :
+/-- The first `cw × ch` pixels of window `(x, y, w, h)` of page `page` at `dpi`, drawn at once where
+the window fits a piece and otherwise in the window's pieces laid together, of which only those
+along the far edges of what is drawn may come back short, where the page ends. -/
+def pdfWindow (pdf : String) (page : Nat) (stem : System.FilePath) (dpi x y w h cw ch : Nat) :
     ExceptT String IO Raster := do
-  if drawable w h then return ← pdfPage pdf page stem dpi (some (x, y, w, h))
+  if drawable w h then return ← pdfPage pdf page stem dpi (some (x, y, cw, ch))
   let fits (got want start whole : Nat) := got == want || (start + want == whole && got < want)
-  let mut rgb := ByteArray.emptyWithCapacity (3 * w * h)
+  let mut rgb := ByteArray.emptyWithCapacity (3 * cw * ch)
   let mut width := 0
   let mut height := 0
-  for (py, ph) in runs h do
+  for (py, ph) in (runs h).filter (·.1 < ch) do
+    let ph := min ph (ch - py)
     let mut row : Array Raster := #[]
-    for (px, pw) in runs w do
+    for (px, pw) in (runs w).filter (·.1 < cw) do
+      let pw := min pw (cw - px)
       let r ← pdfPage pdf page stem dpi (some (x + px, y + py, pw, ph))
-      unless fits r.w pw px w && fits r.h ph py h && row.all (·.h == r.h) do
+      unless fits r.w pw px cw && fits r.h ph py ch && row.all (·.h == r.h) do
         throw s!"{pdf} page {page} at {dpi} dpi: a piece of {pw}x{ph} at ({x + px}, {y + py}) \
 drawn {r.w}x{r.h}"
       row := row.push r
@@ -742,39 +741,42 @@ drawn {r.w}x{r.h}"
     height := height + high
   return { w := width, h := height, rgb }
 
-/-- Page `page`'s crop box as pdfinfo prints it, its width and height in micro-points, turned by the
+/-- Each page's crop box as pdfinfo prints it, its width and height in micro-points, turned by the
 page's rotation. -/
-def cropBox (pdf : String) (page : Nat) : ExceptT String IO (Nat × Nat) := do
-  let out ← run "pdfinfo" #["-f", toString page, "-l", toString page, "-box", pdf]
-  let fields (key : String) : Option (List String) :=
-    (out.splitOn "\n").findSome? fun l =>
-      match (l.splitOn " ").filter (!·.isEmpty) with
-      | "Page" :: n :: k :: rest => if n == toString page && k == key then some rest else none
-      | _ => none
-  let micro (s : String) : Option Int := do
-    let (m, scale) ← LeanTex.Core.Decl.parseDecimal s
+def pdfBoxes (pdf : String) : ExceptT String IO (Array (Nat × Nat)) := do
+  let out ← run "pdfinfo" #["-f", "1", "-l", "1000000", "-box", pdf]
+  let mut count : Option Nat := none
+  let mut boxes : Std.HashMap String (List String) := {}
+  let mut turns : Std.HashMap String Nat := {}
+  for l in out.splitOn "\n" do
+    match (l.splitOn " ").filter (!·.isEmpty) with
+    | ["Pages:", n] => count := n.toNat?
+    | ["Page", n, "CropBox:", x0, y0, x1, y1] => boxes := boxes.insert n [x0, y0, x1, y1]
+    | ["Page", n, "rot:", r] => turns := turns.insert n (r.toNat?.getD 0)
+    | _ => pure ()
+  let some pages := count | throw s!"pdfinfo printed no page count for {pdf}"
+  let micro (v : String) : Option Int := do
+    let (m, scale) ← LeanTex.Core.Decl.parseDecimal v
     return m * 1000000 / (scale : Int)
-  let some [x0, y0, x1, y1] := (fields "CropBox:").bind (·.mapM micro)
-    | throw s!"pdfinfo printed no crop box for {pdf} page {page}"
-  let rot := ((fields "rot:").bind fun vs => vs.head?.bind String.toNat?).getD 0
-  let (w, h) := ((x1 - x0).natAbs, (y1 - y0).natAbs)
-  return if rot % 180 == 90 then (h, w) else (w, h)
+  (Array.range pages).mapM fun i => do
+    let some [x0, y0, x1, y1] := (boxes.get? (toString (i + 1))).bind (·.mapM micro)
+      | throw s!"pdfinfo printed no crop box for {pdf} page {i + 1}"
+    let (w, h) := ((x1 - x0).natAbs, (y1 - y0).natAbs)
+    return if turns.getD (toString (i + 1)) 0 % 180 == 90 then (h, w) else (w, h)
 
 /-- A length in micro-points as the whole pixels it spans at `dpi`, rounded up as pdftocairo sizes a
 page. -/
 def pagePixels (len dpi : Nat) : Nat := (len * dpi + 72000000 - 1) / 72000000
 
-/-- Page `page` of `pdf` at `dpi`, drawn whole, or where cairo cannot, in pieces over its crop box
-and two pixels more along each axis, the page ending within them. -/
-def pdfFind (pdf : String) (page : Nat) (stem : System.FilePath) (dpi : Nat) :
+/-- Page `page` of `pdf` at `dpi`, drawn whole where the `w × h` pixels planned for it fit a piece,
+and otherwise in their pieces, the page ending within them. -/
+def pdfFind (pdf : String) (page : Nat) (stem : System.FilePath) (dpi w h : Nat) :
     ExceptT String IO Raster := do
-  let (bw, bh) ← cropBox pdf page
-  let (w, h) := (pagePixels bw dpi + 2, pagePixels bh dpi + 2)
   if drawable w h then return ← pdfPage pdf page stem dpi
-  let r ← pdfWindow pdf page stem dpi 0 0 w h
+  let r ← pdfWindow pdf page stem dpi 0 0 w h w h
   unless r.w < w && r.h < h do
     throw s!"{pdf} page {page} at {dpi} dpi: drawn {r.w}x{r.h}, the page not ending within the \
-{w}x{h} its crop box spans"
+{w}x{h} planned for it"
   return r
 
 /-- Rows `[y0, y0 + rows)` of window `(x0, w)` on page `n`, `pw × ph` find-resolution pixels, as
@@ -785,20 +787,23 @@ def pdfBand (pdf : String) (n : Nat) (stem : System.FilePath) (pw ph x0 y0 w row
   let (k, s) := (printSplit, printSupersample * printSplit)
   let (bx, by_) := (min x0 (pw - 1), min y0 (ph - 1))
   let (bw, bh) := (max 1 (min pw (x0 + w) - bx), max 1 (min ph (y0 + rows) - by_))
-  let r ← pdfWindow pdf n stem (printSupersample * printDpi) (s * bx) (s * by_) (s * bw) (s * bh)
+  let r ← pdfWindow pdf n stem (printSupersample * printDpi) (s * bx) (s * by_) (s * w) (s * rows)
+    (s * bw) (s * bh)
   unless r.w + s > s * bw && r.h + s > s * bh do
     throw s!"{pdf} page {n}: a window of {s * bw}x{s * bh} drawn {r.w}x{r.h}"
   return crop (extendTo (shrink printSupersample r) (k * w) (k * rows)) 0 0 (k * w) (k * rows)
 
-/-- Page `n` of two PDFs judged at the print medium: drawn at the find resolution to find the
-window around their differences, which is judged band by band and grows while a difference comes
-within the margin of an edge it can widen; after eight growths the whole page is judged. -/
-def judgePdfPage (a b : String) (n : Nat) (heat : Bool) (dir : System.FilePath) :
+/-- Page `n` of two PDFs with crop boxes `ca` and `cb` at the print medium: drawn on one plan to find
+the window around their differences, judged band by band and grown while a difference nears an edge
+it can widen, the whole page after eight growths. -/
+def judgePdfPage (a b : String) (n : Nat) (ca cb : Nat × Nat) (heat : Bool) (dir : System.FilePath) :
     ExceptT String IO Judgement := do
   let m := print
   let k := m.split
-  let fa ← pdfFind a n (dir / s!"a-{n}") (printDpi / k)
-  let fb ← pdfFind b n (dir / s!"b-{n}") (printDpi / k)
+  let dpi := printDpi / k
+  let (pw, ph) := (pagePixels (max ca.1 cb.1) dpi + 2, pagePixels (max ca.2 cb.2) dpi + 2)
+  let fa ← pdfFind a n (dir / s!"a-{n}") dpi pw ph
+  let fb ← pdfFind b n (dir / s!"b-{n}") dpi pw ph
   let pages := #[(a, "a", fa.w, fa.h), (b, "b", fb.w, fb.h)]
   let some (ra, rb) := sized m fa fb | return { verdict := .visible, reason := "size" }
   let some first := window m ra rb | return { verdict := .same }
@@ -1055,12 +1060,14 @@ def sameBytes (a b : String) (html : Bool) : IO Bool := do
 def comparePdf (a b : String) (heat : Bool) (dir : System.FilePath) : ExceptT String IO Outcome := do
   if ← sameBytes a b false then return { medium := print, unit := "page", units := #[], bytes := true }
   IO.FS.createDirAll dir
-  let na ← pdfPages a
-  let nb ← pdfPages b
+  let boxA ← pdfBoxes a
+  let boxB ← pdfBoxes b
+  let (na, nb) := (boxA.size, boxB.size)
   let units ← parMap workers ((List.range (max na nb)).toArray.map (· + 1)) fun n => do
     if n > na then return (toString n, { verdict := .visible, reason := "only-in-b" })
     if n > nb then return (toString n, { verdict := .visible, reason := "only-in-a" })
-    return (toString n, ← judgePdfPage a b n heat dir)
+    return (toString n,
+      ← judgePdfPage a b n (boxA[n - 1]?.getD (0, 0)) (boxB[n - 1]?.getD (0, 0)) heat dir)
   return { medium := print, unit := "page", units }
 
 /-- The Playwright module whose Chromium launches, found once a run. -/
@@ -1172,6 +1179,15 @@ def wide (size : String × String) (shift : String) (drop : String := "0pt") : S
     "words at the right margin\\hspace*{-" ++ shift ++ "}\n\n\\noindent\\hspace*{" ++ shift ++
     "}\\rule{4cm}{0.4pt}\\hfill\\rule{4cm}{0.4pt}\\hspace*{-" ++ shift ++ "}\n\\end{document}\n"
 
+/-- An invented page 2400 pt wide inside 2 cm margins: the corpus's rectangles stretched across it
+1 cm high and moved `shift` right, then a paragraph of words wrapping across it. -/
+def strip (shift : String) : String :=
+  "\\documentclass{article}\n\\usepackage{graphicx}\n\\usepackage[paperwidth=2400pt, " ++
+    "paperheight=200pt, margin=2cm]{geometry}\n" ++ selftestFonts ++ "\\begin{document}\n\\noindent" ++
+    "\\hspace*{" ++ shift ++ "}\\includegraphics[width=0.99\\linewidth, height=1cm]{rects.png}\n\n" ++
+    String.join (List.replicate 12 "Plain words set in a paragraph across a wide invented strip. ") ++
+    "\n\\end{document}\n"
+
 /-- An invented page of `size` on a coloured ground, holding a line of words. -/
 def ground (size : String × String) : String :=
   "\\documentclass{article}\n\\usepackage[paperwidth=" ++ size.1 ++ ", paperheight=" ++ size.2 ++
@@ -1234,9 +1250,9 @@ structure Case where
 def phases : List String :=
   (List.range 8).map fun k => fixed (k.toFloat * 72 / (printDpi / printSplit).toFloat / 8) 4 ++ "pt"
 
-/-- One content moved around the acuity on letter, A0 and banner pages, the last two beyond what
-cairo draws at once; an A0 poster's list moved 44.8 pt beside a line moved 0.05 pt; and coloured
-pages grown by less than the reach. -/
+/-- One content moved around the acuity on letter, A0 and banner pages, the last two beyond what is
+drawn at once; an A0 poster's list moved 44.8 pt beside a line moved 0.05 pt; an image stretched
+across a wide page; and coloured pages grown by less than the reach. -/
 def sizedCases : List Case :=
   let (letter, a0, banner) := (("8.5in", "11in"), ("841mm", "1189mm"), ("30cm", "180cm"))
   let low := "150cm"
@@ -1255,6 +1271,9 @@ def sizedCases : List Case :=
      paper := .unseen, screen := .skip },
    { name := "board-list-44.8pt", a := board "100pt" "0pt", b := board "55.2pt" "0.05pt",
      paper := .seen, screen := .skip },
+   { name := "strip-image-0.05pt", a := strip "0pt", b := strip "0.05pt", paper := .unseen,
+     screen := .skip },
+   { name := "strip-image-2pt", a := strip "0pt", b := strip "2pt", paper := .seen, screen := .skip },
    { name := "ground-wider-0.3pt", a := ground ("612pt", "792pt"), b := ground ("612.3pt", "792pt"),
      paper := .unseen, screen := .skip },
    { name := "ground-taller-0.15pt", a := ground ("612pt", "792pt"), b := ground ("612pt", "792.15pt"),
@@ -1394,37 +1413,48 @@ def buildCase (dir : System.FilePath) (c : Case) (ext : String) : ExceptT String
     IO.FS.writeBinFile b ((← IO.FS.readBinFile a) ++ tail.toUTF8)
   return (a, b)
 
-/-- `f` in a scratch directory holding a copy of the shipped fonts. -/
-def withFonts {α : Type} (f : System.FilePath → IO α) : IO α :=
+/-- `f` in a scratch directory holding copies of the shipped fonts and the corpus's rectangles. -/
+def withAssets {α : Type} (f : System.FilePath → IO α) : IO α :=
   LeanTex.Cli.Host.withScratch fun dir => do
     let fonts := dir / "fonts"
     IO.FS.createDirAll fonts
     for e in ← System.FilePath.readDir "testdata/corpus/fonts" do
       IO.FS.writeBinFile (fonts / e.fileName) (← IO.FS.readBinFile e.path)
+    IO.FS.writeBinFile (dir / "rects.png") (← IO.FS.readBinFile "testdata/corpus/rects.png")
     f dir
 
-/-- What goes wrong, if anything, drawing a window two `cairoSide` wide across an A0 poster's line
-of words at the judging resolution: drawn at once it must be an error or whole, and drawn in pieces
-whole, with no visible difference across its seam or inside a piece from a window drawn at once. -/
+/-- Whether a raster holds a sample darker than mid-grey in some channel. -/
+def inked (r : Raster) : Bool := r.rgb.foldl (fun seen v => seen || v < 128) false
+
+/-- What goes wrong, if anything, drawing the strip at the judging resolution: a window wider than
+cairo draws must be an error or whole drawn at once, and over its image and its words a piece at
+every quarter piece across it, and two pieces laid together, must show what a narrow window does. -/
 def windowCheck (dir : System.FilePath) : ExceptT String IO (Option String) := do
-  IO.FS.writeFile (dir / "w.tex") (board "100pt" "0pt")
+  IO.FS.writeFile (dir / "w.tex") (strip "0pt")
   let pdf := (dir / "w.pdf").toString
   discard <| run leantexBin #["-q", (dir / "w.tex").toString, "-o", pdf]
-  let (dpi, stem) := (printSupersample * printDpi, dir / "w")
-  let (y, w, h, side) := (25950, 2 * cairoSide, 256, 1024)
-  let once ← try some <$> pdfPage pdf 1 stem dpi (some (0, y, w, h)) catch _ => pure none
+  let (dpi, stem, side) := (printSupersample * printDpi, dir / "w", 1024)
+  let some (pageW, _) := (← pdfBoxes pdf)[0]? | return some "no-page"
+  let across := pagePixels pageW dpi
+  let once ← try some <$> pdfPage pdf 1 stem dpi (some (0, 0, cairoSide + 1, 4)) catch _ => pure none
   if let some r := once then
-    unless r.w == w && r.h == h do return some s!"drawn-at-once-as-{r.w}x{r.h}"
-  let r ← pdfWindow pdf 1 stem dpi 0 y w h
-  unless r.w == w && r.h == h && r.rgb.size == 3 * w * h do return some s!"pieced-as-{r.w}x{r.h}"
-  for (px, pw) in runs w do
-    for c in [px + pw / 2, px + pw] do
-      if c + side / 2 > w then continue
-      let direct ← pdfPage pdf 1 stem dpi (some (c - side / 2, y, side, h))
-      let pieced := crop r (c - side / 2) 0 side h
-      if (judge drawn false (shrink printSupersample pieced) (shrink printSupersample direct)).verdict ==
-          .visible then
-        return some s!"pieced-differs-at-{c}"
+    unless r.w == cairoSide + 1 && r.h == 4 do return some s!"drawn-at-once-as-{r.w}x{r.h}"
+  let shows (r : Raster) (x y h c : Nat) : ExceptT String IO Bool := do
+    let direct ← pdfPage pdf 1 stem dpi (some (x + c - side / 2, y, side, h))
+    let part := shrink printSupersample (crop r (c - side / 2) 0 side h)
+    return inked direct && (judge drawn false part (shrink printSupersample direct)).verdict != .visible
+  for (name, y, h) in [("image", 1800, 256), ("words", 2600, 128)] do
+    for k in [0:(across - min across pieceSide) / (pieceSide / 4) + 1] do
+      let x := k * (pieceSide / 4)
+      let r ← pdfPage pdf 1 stem dpi (some (x, y, pieceSide, h))
+      unless ← shows r x y h (pieceSide / 2) do return some s!"{name}-piece-differs-at-{x}"
+    let (x, w) := (across - min across (2 * pieceSide + 128), 2 * pieceSide)
+    let r ← pdfWindow pdf 1 stem dpi x y w h w h
+    unless r.w == w && r.h == h && r.rgb.size == 3 * w * h do return some s!"{name}-pieced-as-{r.w}x{r.h}"
+    for (px, pw) in runs w do
+      for c in [px + pw / 2, px + pw] do
+        if c + side / 2 ≤ w then
+          unless ← shows r x y h c do return some s!"{name}-pieced-differs-at-{x + c}"
   return none
 
 def selftest : IO UInt32 := do
@@ -1447,7 +1477,7 @@ not below 0.5 and above 3"
     IO.eprintln s!"visualdiff: {leantexBin} not found; run lake build first"
     return 2
   let mut unjudged := 0
-  match ← withFonts fun dir => (windowCheck dir).run with
+  match ← withAssets fun dir => (windowCheck dir).run with
   | .error e =>
     unjudged := unjudged + 1
     IO.println s!"visualdiff: selftest case=undrawable-window medium=print unjudged={e}"
@@ -1456,7 +1486,7 @@ not below 0.5 and above 3"
     IO.println s!"visualdiff: selftest case=undrawable-window medium=print expect=refused-then-pieced \
 got={why.getD "refused-then-pieced"} ok={why.isNone}"
   for c in cases do
-    let outcome ← withFonts fun dir => do
+    let outcome ← withAssets fun dir => do
       let mut results := #[]
       for (ext, medium, expect) in [("pdf", "print", c.paper), ("html", "screen", c.screen)] do
         if expect == .skip then continue
