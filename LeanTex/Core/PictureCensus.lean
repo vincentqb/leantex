@@ -109,7 +109,7 @@ private theorem mapBlock_pictureCount (gp : Pic.Picture → Pic.Picture)
   | .columns cols =>
     simp only [mapBlock, foldBlock, pictureCountStep, mapBlockColsWith_toList, List.nil_append]
     exact mapCols_pictureCount gp f finish listing n cols.toList
-  | .center body | .ragged _ body | .quote body | .abstract body
+  | .center body | .ragged _ body | .quote body | .lines body | .abstract body
   | .role _ body | .link _ body | .spaced _ body | .onSteps _ body
   | .only _ body | .nav _ body | .note body
   | .titled _ _ body | .disclosure _ _ body | .frame _ _ _ _ body | .float _ _ _ body _ =>

@@ -527,6 +527,9 @@ public def markdownTableEnv : String := "markdown tabular"
 /-- The environment a markdown disclosure desugars to. -/
 public def markdownDisclosureEnv : String := "markdown details"
 
+/-- The environment a Lean statement's words lay out in, one nested in it a block one step in. -/
+public def linesEnv : String := "prose lines"
+
 /-- The control a markdown reference list desugars to: `\bibliography` without LaTeX's `\refname`
 heading, unforgeable because it holds a space. -/
 public def markdownBibControl : String := "markdown bibliography"

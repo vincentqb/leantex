@@ -405,8 +405,28 @@ def twinDisclosureChecks (ref : IO.Ref (List String)) : IO Unit := do
     t s!"twin: a contained disclosure reads back to itself, a loosened list named ({repr tw}: {ds0.map (·.subject)} then {ds.map (·.subject)})"
       (named ds0 && back.body == doc.body && named ds)
 
+/-- A laid-out paragraph is one paragraph of hard-broken lines, each after the first opening on its
+indent, and reads back as that paragraph: its lines' text kept, a long line's wrap no longer at its
+indent the loss. -/
+def twinLinesChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let doc : Ir.Doc := { body := #[.lines #[.para #[.text "If"],
+    .lines #[.para #[.text "for every n, n is 0,"], .lines #[.para #[.text "deeper"]]],
+    .para #[.text "then False."]]] }
+  let (tw, back, ds) := roundTrip doc
+  let step := "\u2003\u2002"
+  t s!"twin: a laid-out paragraph is one paragraph, each line after a hard break and its indent ({repr tw})"
+    (hasStr tw ("If\\\n" ++ step ++ "for every n, n is 0,\\\n" ++ step ++ step ++ "deeper\\\n" ++
+      "then False.\n"))
+  t s!"twin: a laid-out paragraph reads back as one paragraph of its lines, indents kept as text ({repr back.body})"
+    ((match back.body.toList with
+      | [.para xs] => Ir.plainText xs ==
+        "If " ++ step ++ "for every n, n is 0, " ++ step ++ step ++ "deeper then False."
+      | _ => false) && !hasError ds && MarkdownDoc.emit back == tw)
+
 def markdownTwinChecks (ref : IO.Ref (List String)) : IO Unit := do
   twinDisclosureChecks ref
+  twinLinesChecks ref
   twinInlineChecks ref
   twinBlockChecks ref
   twinLineStartChecks ref

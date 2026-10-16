@@ -148,6 +148,7 @@ import Tests.SectionPages
 import Tests.SeedPalette
 import Tests.PaletteCover
 import Tests.UnusedSettings
+import Tests.LeanProseReading
 
 /-! Every breakage the user reported, as a row whose pins hold it closed; a report closes only as
 `guarded`, and the unwitnessed and owed counts are held both ways. -/
@@ -1853,7 +1854,14 @@ def reports : List Report := [
       "lualatex with the markdown package on invented probes: a file's commands, braces and dollars set as written, and as TeX under hybrid, whether the package's option, the setup command before the inclusion or the inclusion's own option declares it, the inclusion's applying to it alone, its hybrid=false overriding the package's, a setup inside a group, an environment or an included file ending with it and an option passed after the package loads applying to nothing; under hybrid a group, an environment or math spans the file's emphasis and paragraphs, a percent sign comments out the rest of its line before the markdown is read and an escaped hash or percent sign sets as itself",
       "lualatex: without hybrid a host renewing the emphasis, bold, typewriter or first item label command changes the included markdown, which the package sets through them; this tree departs from it by the decision, the door checks naming the departure",
       "the corpus built by main's binary at 0e5db3b5 and by this tree's: all 347 artifacts byte-identical, and its markdown, code and including sources warn alike"]
-    state := .guarded "0e5db3b5" .before .author }
+    state := .guarded "0e5db3b5" .before .author },
+  { id := "R206", date := "2026-10-16"
+    what := "the prose view's sentences marked where a scope ends with nothing but parentheses or the sentence's end, so a reader could take an 'if and only if' a quantifier or a conclusion holds for the sentence's own, an 'and' inside a declared phrase for a conjunction's, and a parenthesized hypothesis's extent from marks readers pass over"
+    pins := [check% Tests.LeanProseReading.readingChecks, check% Tests.LeanProse.leanProseChecks,
+      check% censusChecks, thm% LeanProse.parse_render_exact, thm% LeanProse.render_inj]
+    accept := ["a reader sharing no grammar with the renderer, taking a scope's extent from indentation alone and splitting each line at the first of its connective's words, reads back 26 of the invented statements fixture's 31 sentences from the markdown twin da86ec89's binary writes, misreading Tide.imp_iff as an equivalence whose first side is the conditional and failing on the four whose parentheses it does not read; from this tree's twin it reads back all 31, and all 352 statements of its invented corpus, 300 of them random, from this tree's page, web page and twin alike",
+      "with the rule grouping a relation whose words hold 'and', 'or' or 'if' reverted, the reader fails on three of the corpus's statements in each artifact; set at the margin with their words unchanged, every corpus statement whose block bounds an 'if and only if' reads otherwise, so the indentation, not the words, carries its scope"]
+    state := .guarded "da86ec89" .before .author }
 ]
 
 /-- The reports guarded but never seen failing, a count held in both directions. -/

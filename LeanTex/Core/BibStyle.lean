@@ -1841,6 +1841,7 @@ private def resolveBlock (p : CitePunct) (find : Resolver)
   | .center body => out.push (.center (resolveBlocks p find items #[] body.toList))
   | .ragged s body => out.push (.ragged s (resolveBlocks p find items #[] body.toList))
   | .quote body => out.push (.quote (resolveBlocks p find items #[] body.toList))
+  | .lines body => out.push (.lines (resolveBlocks p find items #[] body.toList))
   | .titled kind title body =>
     out.push (.titled kind (resolveArr p find title)
       (resolveBlocks p find items #[] body.toList))
@@ -1925,7 +1926,7 @@ only nonprinting citations. -/
 public def keepsBlock : Ir.Block → Bool
   | .para content => !nociteOnly content
   | .bibliography .. | .equation .. | .section .. | .abstract .. | .list ..
-  | .center .. | .ragged .. | .quote .. | .titled .. | .disclosure .. | .role .. | .link ..
+  | .center .. | .ragged .. | .quote .. | .lines .. | .titled .. | .disclosure .. | .role .. | .link ..
   | .spaced .. | .columns .. | .onSteps .. | .altSteps .. | .only .. | .nav ..
   | .note .. | .frame .. | .framefoot .. | .float .. | .table .. | .algorithm ..
   | .logo .. | .verbatim .. | .setPalette .. | .setTokens .. | .pagebreak
@@ -2983,7 +2984,7 @@ private theorem resolveBlock_pending (p : CitePunct) (find : Resolver) (items : 
     intro out acc q h
     simp only [resolveBlock, Ir.foldBlockList_push, Ir.foldBlock] at h
     exact resolveInlines_pending p find title.toList _ q h
-  | .abstract body | .center body | .ragged _ body | .quote body | .role _ body
+  | .abstract body | .center body | .ragged _ body | .quote body | .lines body | .role _ body
   | .link _ body | .spaced _ body | .onSteps _ body | .only _ body | .nav _ body | .note body =>
     intro out acc q h
     simp only [resolveBlock, Ir.foldBlockList_push, Ir.foldBlock] at h

@@ -278,6 +278,7 @@ private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
   | .center body => usesBlocks cx acc body.toList
   | .ragged _ body => usesBlocks cx acc body.toList
   | .quote body => usesBlocks cx acc body.toList
+  | .lines body => usesBlocks cx acc body.toList
   | .abstract body => usesBlocks cx acc body.toList
   | .titled kind title body =>
     let acc := if title.isEmpty then acc else

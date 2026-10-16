@@ -296,9 +296,24 @@ is a proposition, or an instance one, as a hypothesis, `if …, then …`; `∃`
 there is; `∧ ∨ ↔ ¬` as both … and, either … or, if and only if, and it is not
 the case that; `= ≠ < ≤ > ≥ ∣ ∈` as is equal to, is not equal to, is less than,
 is at most, is greater than, is at least, divides and is an element of; every
-other proposition stays a formula, and parentheses group what the words do not.
-The words parse back to the statement they say, implicit arguments hidden as in
-the math view. A declaration whose type is no proposition, or a statement the
+other proposition stays a formula. Indentation groups what the words do not, as
+a written proof lays out a statement: a part whose end nothing else would mark
+stands as a block a step in under the line before it, the line after it back
+at that line's indent, all at the paragraph's leading. So a quantified or
+conditional hypothesis or conjunct is a block, as is an equivalence a
+quantifier, an existential or a conclusion holds, and a relation whose words
+hold `and`, `or` or `if` where more of the sentence follows it:
+
+```text
+Theorem (Tide.strict_hyp). If
+    for every natural number n, n is equal to 0,
+then False.
+```
+
+The web page sets the same lines, and the markdown twin opens each line after
+the first with a hard break and an em and an en space for each step. The words,
+with their blocks, parse back to the statement they say, implicit arguments
+hidden as in the math view. A declaration whose type is no proposition, or a statement the
 words cannot say (a hypothesis the rest names, a `let`), is set as mathematics,
 once on a page that also shows the math view, and the run says so. A directive
 may give a constant its own words, `#k` standing for its k-th explicit argument:

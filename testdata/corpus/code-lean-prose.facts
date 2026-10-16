@@ -1,0 +1,27 @@
+{"leantex-lean-export":3,"lean":"4.34.1","errors":0}
+{"name":"Ebb.both_all","module":"Ebb","kind":"theorem","range":[21,0,22,44],"head":[21,0],"signature":[21,17,21,71],"proof":[21,72,22,44],"proved":true,"prop":true,"doc":null,"type":[["const","And"],["const","Nat"],["const","LE.le"],["const","Nat"],["app",2,3],["const","instLENat"],["app",4,5],["const","OfNat.ofNat"],["const","Nat"],["app",7,8],["nat","0"],["app",9,10],["const","instOfNatNat"],["nat","0"],["app",12,13],["app",11,14],["app",6,15],["bvar",0],["app",16,17],["pi","n","d",1,18,0],["app",0,19],["const","Exists"],["const","Nat"],["app",21,22],["const","Nat"],["const","Eq"],["const","Nat"],["app",25,26],["bvar",0],["app",27,28],["bvar",0],["app",29,30],["lam","m","d",24,31],["app",23,32],["app",20,33]]}
+{"name":"Ebb.chain","module":"Ebb","kind":"theorem","range":[24,0,25,20],"head":[24,0],"signature":[24,14,24,64],"proof":[24,65,25,20],"proved":true,"prop":true,"doc":null,"type":[["const","Nat"],["const","Nat"],["const","Nat"],["const","LE.le"],["const","Nat"],["app",3,4],["const","instLENat"],["app",5,6],["bvar",2],["app",7,8],["bvar",1],["app",9,10],["const","LE.le"],["const","Nat"],["app",12,13],["const","instLENat"],["app",14,15],["bvar",2],["app",16,17],["bvar",1],["app",18,19],["const","LE.le"],["const","Nat"],["app",21,22],["const","instLENat"],["app",23,24],["bvar",4],["app",25,26],["bvar",2],["app",27,28],["pi","h2","d",20,29,1],["pi","h1","d",11,30,1],["pi","c","d",2,31,0],["pi","b","d",1,32,0],["pi","a","d",0,33,0]]}
+{"name":"Ebb.iff_after","module":"Ebb","kind":"theorem","range":[12,0,13,61],"head":[12,0],"signature":[13,18,13,50],"proof":[13,51,13,61],"proved":true,"prop":true,"doc":"An equivalence a conclusion holds stands as a block under it. ","type":[["sort","0"],["sort","0"],["bvar",1],["const","Iff"],["bvar",1],["app",3,4],["bvar",1],["app",5,6],["pi","_hp","d",2,7,1],["pi","q","d",1,8,0],["pi","p","d",0,9,0]]}
+{"name":"Ebb.neg_all","module":"Ebb","kind":"theorem","range":[18,0,19,34],"head":[18,0],"signature":[18,16,18,45],"proof":[18,46,19,34],"proved":true,"prop":true,"doc":null,"type":[["const","Not"],["const","Nat"],["const","Eq"],["const","Nat"],["app",2,3],["bvar",0],["app",4,5],["const","OfNat.ofNat"],["const","Nat"],["app",7,8],["nat","0"],["app",9,10],["const","instOfNatNat"],["nat","0"],["app",12,13],["app",11,14],["app",6,15],["pi","n","d",1,16,0],["app",0,17]]}
+{"name":"Ebb.none_all","module":"Ebb","kind":"theorem","range":[8,0,10,25],"head":[8,0],"signature":[9,17,9,52],"proof":[9,53,10,25],"proved":true,"prop":true,"doc":"A quantified hypothesis stands as a block under its condition. ","type":[["const","Nat"],["const","Eq"],["const","Nat"],["app",1,2],["bvar",0],["app",3,4],["const","OfNat.ofNat"],["const","Nat"],["app",6,7],["nat","0"],["app",8,9],["const","instOfNatNat"],["nat","0"],["app",11,12],["app",10,13],["app",5,14],["pi","n","d",0,15,0],["const","False"],["pi","h","d",16,17,1]]}
+{"name":"Ebb.swap","module":"Ebb","kind":"theorem","range":[15,0,16,59],"head":[15,0],"signature":[16,13,16,47],"proof":[16,48,16,59],"proved":true,"prop":true,"doc":"An equivalence of conjunctions under a quantifier sets its first side a block deeper. ","type":[["sort","0"],["sort","0"],["const","Iff"],["const","And"],["bvar",1],["app",3,4],["bvar",0],["app",5,6],["app",2,7],["const","And"],["bvar",0],["app",9,10],["bvar",1],["app",11,12],["app",8,13],["pi","q","d",1,14,0],["pi","p","d",0,15,0]]}
+{"const":"False","binders":""}
+{"const":"Exists","binders":"id"}
+{"const":"instOfNatNat","binders":"d"}
+{"const":"LE.le","binders":"icdd"}
+{"const":"instLENat","binders":""}
+{"const":"And","binders":"dd"}
+{"const":"Iff","binders":"dd"}
+{"const":"Nat","binders":""}
+{"const":"OfNat.ofNat","binders":"idc"}
+{"const":"Eq","binders":"idd"}
+{"const":"Not","binders":"d"}
+{"command":[6,0,6,13],"text":"namespace Ebb"}
+{"command":[8,0,10,25],"text":"/-- A quantified hypothesis stands as a block under its condition. -/\ntheorem none_all (h : forall n : Nat, n = 0) : False :=\n  absurd (h 1) (by omega)"}
+{"command":[12,0,13,61],"text":"/-- An equivalence a conclusion holds stands as a block under it. -/\ntheorem iff_after (p q : Prop) (_hp : p) : q <-> q := Iff.rfl"}
+{"command":[15,0,16,59],"text":"/-- An equivalence of conjunctions under a quantifier sets its first side a block deeper. -/\ntheorem swap (p q : Prop) : And p q <-> And q p := And.comm"}
+{"command":[18,0,19,34],"text":"theorem neg_all : Not (forall n : Nat, n = 0) :=\n  fun h => absurd (h 1) (by omega)"}
+{"command":[21,0,22,44],"text":"theorem both_all : And (forall n : Nat, 0 <= n) (exists m : Nat, m = m) :=\n  And.intro Nat.zero_le (Exists.intro 0 rfl)"}
+{"command":[24,0,25,20],"text":"theorem chain (a b c : Nat) (h1 : a <= b) (h2 : b <= c) : a <= c :=\n  Nat.le_trans h1 h2"}
+{"command":[27,0,27,7],"text":"end Ebb"}
+{"leantex-lean-export-end":6}

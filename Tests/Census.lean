@@ -1427,6 +1427,22 @@ def shipsNext (c : Array CensusPage) (a b : String) : Bool :=
     | none => false
   | none => false
 
+/-- Page 0's lines from the first holding `a`, in order. -/
+def linesFrom (c : Array CensusPage) (a : String) : Array CensusLine :=
+  match c[0]? with
+  | some p =>
+    match p.lines.findIdx? (hasStr ·.text a) with
+    | some i => p.lines.extract i p.lines.size
+    | none => #[]
+  | none => #[]
+
+/-- Whether the `i`-th of `ls` holds `text` and stands `steps` laid-out steps in from the first. -/
+def linesStepAt (step : Dim.Sp) (ls : Array CensusLine) (i : Nat) (text : String) (steps : Nat) :
+    Bool :=
+  match ls[0]?, ls[i]? with
+  | some l0, some li => hasStr li.text text && li.x == l0.x + steps * step
+  | _, _ => false
+
 /-- The code fixtures' census rows: prose where its comment stands or above the code it
 documents, the code every character, no comment delimiter of the prose and no directive. -/
 def censusCodeRows :
@@ -1446,6 +1462,25 @@ def censusCodeRows :
     ("no prose ships its comment delimiters, and the directive ships nowhere",
       !hasStr (censusInk c) "/-!" && !hasStr (censusInk c) "/--Theheights" &&
         !hasStr (censusInk c) "leantex:")]),
+  ("code-lean-prose", fun g c =>
+    let step := Ir.linesStep.resolve g.fontSize 0
+    let lead := Ir.leadingFor g.fontSize g.leading
+    let hyp := linesFrom c "Theorem (Ebb.none_all). If"
+    let swap := linesFrom c "Theorem (Ebb.swap)."
+    let both := linesFrom c "Theorem (Ebb.both_all). Both"
+    [("one page", c.size == 1),
+     ("a quantified hypothesis stands a step in under its condition, the conclusion back at its margin",
+       linesStepAt step hyp 1 "for every natural number" 1 && linesStepAt step hyp 2 "then False." 0),
+     ("a laid-out paragraph's lines stand a leading apart, as a paragraph's do, no gap between them",
+       let apart (a b : CensusLine) : Bool := lead ≤ b.y - a.y && b.y - a.y < lead + lead / 2
+       match hyp[0]?, hyp[1]?, hyp[2]? with
+       | some a, some b, some d => apart a b && apart b d && d.y - b.y == lead
+       | _, _, _ => false),
+     ("an equivalence a quantifier holds stands a step in, its first side a step further",
+       linesStepAt step swap 1 "both" 2 && linesStepAt step swap 2 "if and only if both" 1),
+     ("a conjunction's quantified sides each stand a step in, its 'and' at its margin",
+       linesStepAt step both 1 "for every natural number" 1 && linesStepAt step both 2 "and" 0 &&
+         linesStepAt step both 3 "there is a natural number" 1)]),
   ("code-python", fun _ c => [
     ("one page", c.size == 1),
     ("the file's name ships first, as its title", shipsAbove c "code-python.py" "Kettle timings."),

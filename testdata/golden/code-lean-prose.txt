@@ -1,0 +1,240 @@
+class article
+page 612x792 vmargin 72 hmargin 114
+meta title "Laid-out statements"
+section* 0
+  text "Laid-out statements"
+para
+  text "Invented statements whose scopes the prose view sets as indented blocks."
+verbatim language lean4
+  "namespace Ebb"
+para
+  text "A quantified hypothesis stands as a block under its condition."
+role trivlist-env
+  ragged left
+    lines
+      para
+        styled bold
+          italicCorr maybe
+          text "Theorem"
+        italicCorr maybe
+        text " ("
+        styled mono
+          italicCorr maybe
+          text "Ebb.none_all"
+        italicCorr maybe
+        text "). If"
+      lines
+        para
+          text "for every natural number "
+          formula inline "n"
+            ord:𝑛
+          text ", "
+          formula inline "n"
+            ord:𝑛
+          text " is equal to "
+          formula inline "0"
+            ord:0
+          text ","
+      para
+        text "then "
+        formula inline "\\operatorname {False}"
+          op:"False"
+        text "."
+verbatim language lean4
+  "theorem none_all (h : forall n : Nat, n = 0) : False :="
+  "  absurd (h 1) (by omega)"
+para
+  text "An equivalence a conclusion holds stands as a block under it."
+role trivlist-env
+  ragged left
+    lines
+      para
+        styled bold
+          italicCorr maybe
+          text "Theorem"
+        italicCorr maybe
+        text " ("
+        styled mono
+          italicCorr maybe
+          text "Ebb.iff_after"
+        italicCorr maybe
+        text "). For all propositions "
+        formula inline "p"
+          ord:𝑝
+        text " and "
+        formula inline "q"
+          ord:𝑞
+        text ", if "
+        formula inline "p"
+          ord:𝑝
+        text ", then"
+      lines
+        para
+          formula inline "q"
+            ord:𝑞
+          text " if and only if "
+          formula inline "q"
+            ord:𝑞
+          text "."
+verbatim language lean4
+  "theorem iff_after (p q : Prop) (_hp : p) : q <-> q := Iff.rfl"
+para
+  text "An equivalence of conjunctions under a quantifier sets its first side a block deeper."
+role trivlist-env
+  ragged left
+    lines
+      para
+        styled bold
+          italicCorr maybe
+          text "Theorem"
+        italicCorr maybe
+        text " ("
+        styled mono
+          italicCorr maybe
+          text "Ebb.swap"
+        italicCorr maybe
+        text "). For all propositions "
+        formula inline "p"
+          ord:𝑝
+        text " and "
+        formula inline "q"
+          ord:𝑞
+        text ","
+      lines
+        lines
+          para
+            text "both "
+            formula inline "p"
+              ord:𝑝
+            text " and "
+            formula inline "q"
+              ord:𝑞
+        para
+          text "if and only if both "
+          formula inline "q"
+            ord:𝑞
+          text " and "
+          formula inline "p"
+            ord:𝑝
+          text "."
+verbatim language lean4
+  "theorem swap (p q : Prop) : And p q <-> And q p := And.comm"
+role trivlist-env
+  ragged left
+    lines
+      para
+        styled bold
+          italicCorr maybe
+          text "Theorem"
+        italicCorr maybe
+        text " ("
+        styled mono
+          italicCorr maybe
+          text "Ebb.neg_all"
+        italicCorr maybe
+        text "). It is not the case that"
+      lines
+        para
+          text "for every natural number "
+          formula inline "n"
+            ord:𝑛
+          text ", "
+          formula inline "n"
+            ord:𝑛
+          text " is equal to "
+          formula inline "0"
+            ord:0
+          text "."
+verbatim language lean4
+  "theorem neg_all : Not (forall n : Nat, n = 0) :="
+  "  fun h => absurd (h 1) (by omega)"
+role trivlist-env
+  ragged left
+    lines
+      para
+        styled bold
+          italicCorr maybe
+          text "Theorem"
+        italicCorr maybe
+        text " ("
+        styled mono
+          italicCorr maybe
+          text "Ebb.both_all"
+        italicCorr maybe
+        text "). Both"
+      lines
+        para
+          text "for every natural number "
+          formula inline "n"
+            ord:𝑛
+          text ", "
+          formula inline "0"
+            ord:0
+          text " is at most "
+          formula inline "n"
+            ord:𝑛
+      para
+        text "and"
+      lines
+        para
+          text "there is a natural number "
+          formula inline "m"
+            ord:𝑚
+          text " such that "
+          formula inline "m"
+            ord:𝑚
+          text " is equal to "
+          formula inline "m"
+            ord:𝑚
+          text "."
+verbatim language lean4
+  "theorem both_all : And (forall n : Nat, 0 <= n) (exists m : Nat, m = m) :="
+  "  And.intro Nat.zero_le (Exists.intro 0 rfl)"
+role trivlist-env
+  ragged left
+    lines
+      para
+        styled bold
+          italicCorr maybe
+          text "Theorem"
+        italicCorr maybe
+        text " ("
+        styled mono
+          italicCorr maybe
+          text "Ebb.chain"
+        italicCorr maybe
+        text "). For all natural numbers "
+        formula inline "a"
+          ord:𝑎
+        text ", "
+        formula inline "b"
+          ord:𝑏
+        text " and "
+        formula inline "c"
+          ord:𝑐
+        text ", if "
+        formula inline "a"
+          ord:𝑎
+        text " is at most "
+        formula inline "b"
+          ord:𝑏
+        text " and "
+        formula inline "b"
+          ord:𝑏
+        text " is at most "
+        formula inline "c"
+          ord:𝑐
+        text ", then "
+        formula inline "a"
+          ord:𝑎
+        text " is at most "
+        formula inline "c"
+          ord:𝑐
+        text "."
+verbatim language lean4
+  "theorem chain (a b c : Nat) (h1 : a <= b) (h2 : b <= c) : a <= c :="
+  "  Nat.le_trans h1 h2"
+  ""
+  "end Ebb"
+-- diagnostics
+(none)

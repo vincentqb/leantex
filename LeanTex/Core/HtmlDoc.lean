@@ -232,7 +232,8 @@ public def engineClasses : List String :=
    "band-left", "band-right", "booktabs", "bt-center", "bt-cmid", "bt-heavy-above", "bt-left",
    "bt-light-above", "bt-nowrap", "bt-overhang", "bt-right", "cell-measure", "centered", "ragged", "ragged-right", "column", "columns", "content",
    "deck-progress", "entry",
-   "entry-pair", "entry-row", "entry-rows", "fill", "float", "frame-body-end",
+   "entry-pair", "entry-row", "entry-rows", "fill", "float", "frame-body-end", "lines",
+   "lines-line", "lines-scope",
    "frame-body-start", "group", "icon",
    "math", "math-display", "nopadl", "nopadr", "note", "picture", "progress",
    "reveal-scroll", "ruled", "section-page", "separator", "slide",
@@ -1069,7 +1070,7 @@ public def blockSpine (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens) (le
       | none => ([step], own)
   | .role n body =>
     if n == Ir.inParagraphRole then roleSpine l size tokens level outer body.toList else none
-  | .para _ | .center _ | .ragged .. | .spaced .. | .link .. | .onSteps .. | .only ..
+  | .para _ | .lines _ | .center _ | .ragged .. | .spaced .. | .link .. | .onSteps .. | .only ..
   | .section .. | .abstract _ | .titled .. | .disclosure .. | .equation .. | .verbatim ..
   | .algorithm .. | .columns _ | .altSteps .. | .note _ | .nav .. | .logo _ | .pagebreak
   | .frame .. | .framefoot _ | .setPalette _ | .setTokens _ | .rule .. | .picture _ | .table ..
@@ -1152,7 +1153,7 @@ public def nestedClosesOf (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens)
         if abstractNests then (note (depth + 1) .abstract {} false 0 #[body] acc, (depth + 1, false))
         else (acc, (depth, false))
       | .role n _ => (acc, (depth, n == Ir.inParagraphRole))
-      | .para _ | .center _ | .ragged .. | .spaced .. | .link .. | .onSteps .. | .only ..
+      | .para _ | .lines _ | .center _ | .ragged .. | .spaced .. | .link .. | .onSteps .. | .only ..
       | .section .. | .titled .. | .disclosure .. | .equation .. | .verbatim .. | .algorithm ..
       | .columns _ | .altSteps .. | .note _ | .nav .. | .logo _ | .pagebreak | .frame ..
       | .framefoot _ | .setPalette _ | .setTokens _ | .rule .. | .picture _ | .table .. | .float ..
@@ -4847,6 +4848,14 @@ private def docHasNarrowingTable (doc : Doc) : Bool :=
 private def docHasDisclosure (doc : Doc) : Bool :=
   Ir.foldBlocks (fun b bl => b || bl matches .disclosure ..) (fun b _ => b) false doc.body
 
+private def docHasLines (doc : Doc) : Bool :=
+  Ir.foldBlocks (fun b bl => b || bl matches .lines ..) (fun b _ => b) false doc.body
+
+/-- A laid-out paragraph's rules: each line a block of its own, each scope `Ir.linesStep` in. -/
+private def linesCss : String :=
+  ".lines-line, .lines-scope { display: block; }\n" ++
+  s!".lines-scope \{ padding-inline-start: {cssLength Ir.linesStep}; }\n"
+
 private def disclosureCss : String :=
   s!"summary \{ {" ".intercalate ((fontStyleDecls [] Ir.disclosureSummaryStyle).getD #[]).toList} }\n"
 
@@ -5046,6 +5055,7 @@ public def baseRules (doc : Doc) (pairs : List (Nat × Nat) := []) : String :=
   ".md { font-weight: 400; }\n" ++
   ".up { font-style: normal; font-variant-caps: normal; }\n" ++
   (if docHasDisclosure doc then disclosureCss else "") ++
+  (if docHasLines doc then linesCss else "") ++
   ".ruled::after { content: \"\"; flex: 1; border-top: 1px solid var(--rule-color);\n" ++
   -- half the heading's x-height above the baseline, where the PDF draws the rule
   "  transform: translateY(-0.5ex); }\n" ++
@@ -5564,8 +5574,8 @@ private def stageLength (cfg : Config) (v : Int) : String := pageLength cfg.deck
 /-- A block that sets no line box in its section's flow. -/
 private def shipsNoLine : Block → Bool
   | .note .. | .nav .. | .logo .. | .pagebreak | .framefoot .. | .setPalette .. | .setTokens .. => true
-  | .para .. | .section .. | .list .. | .center .. | .ragged .. | .spaced .. | .role .. | .link ..
-  | .quote .. | .abstract .. | .titled .. | .disclosure .. | .equation .. | .verbatim ..
+  | .para .. | .lines .. | .section .. | .list .. | .center .. | .ragged .. | .spaced .. | .role ..
+  | .link .. | .quote .. | .abstract .. | .titled .. | .disclosure .. | .equation .. | .verbatim ..
   | .algorithm .. | .columns .. | .onSteps .. | .altSteps .. | .only .. | .frame .. | .rule ..
   | .picture .. | .table .. | .float .. | .bibliography .. => false
 
@@ -5601,7 +5611,7 @@ private def endBelowOne (cfg : Config) (para : String) : Block → String
     | some v =>
       if cfg.deck then stageLength cfg v else s!"calc({stageLength cfg v} + {quantaRem 1})"
     | none => para
-  | .para .. | .section .. | .equation .. | .algorithm .. | .rule .. | .picture ..
+  | .para .. | .lines .. | .section .. | .equation .. | .algorithm .. | .rule .. | .picture ..
   | .table .. | .bibliography .. | .columns .. | .altSteps .. | .note .. | .nav ..
   | .logo .. | .pagebreak | .frame .. | .framefoot .. | .setPalette .. | .setTokens ..
   | .float .. => para
@@ -7742,6 +7752,29 @@ private def Config.listingStyle (cfg : Config) (spec : Ir.ListingSpec)
       bg ++ [s!"color: {value ink [.ink]};"] ++ roles
   " ".intercalate decls
 
+/-- A laid-out paragraph's lines: each paragraph a line, each lines block in it a scope a step in,
+any other block a line of its text, a word space between two that the line boxes collapse. -/
+private def linesNodesInto (cfg : Config) (acc : Array Node) : List Block → Array Node
+  | [] => acc
+  | .lines body :: rest =>
+    let acc := if acc.isEmpty then acc else acc.push (Html.text " ")
+    linesNodesInto cfg
+      (acc.push (Html.elem "span" (linesNodesInto cfg #[] body.toList) #[("class", "lines-scope")]))
+      rest
+  | b :: rest =>
+    let acc := if acc.isEmpty then acc else acc.push (Html.text " ")
+    let kids := match b with
+      | .para content => inlines cfg content
+      | b => #[Html.text (Ir.blockTextOne "" b)]
+    linesNodesInto cfg (acc.push (Html.elem "span" kids #[("class", "lines-line")])) rest
+termination_by l => sizeOf l
+decreasing_by
+  all_goals simp_wf
+  all_goals
+    (have hb : ∀ (a : Array Block), sizeOf a = 1 + sizeOf a.toList := fun _ => rfl
+     (try simp only [hb])
+     omega)
+
 mutual
 
 public def blockNode (cfg : Config) (b : Block) : Node :=
@@ -7750,6 +7783,7 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     | .box | .aside => { cfg with fillsInert := true }
   match b with
   | .para content => paragraphNode cfg content
+  | .lines body => Html.elem "p" (linesNodesInto cfg #[] body.toList) #[("class", "lines")]
   | .section level _ num title =>
     let element := level.element
     let tag := headingTag level

@@ -838,6 +838,33 @@ public def headingText (xs : Array Inline) (cites : Bool := false) : String :=
 public def cellText (xs : Array Inline) (cites : Bool := false) : String :=
   oneLine (inlinesInto .cell cites "" none true 0 xs.toList)
 
+/-- A laid-out paragraph's indent in the twin for a line `depth` steps in: `Ir.linesStep` in em and
+en spaces for each step. -/
+private def linesIndent (depth : Nat) : String :=
+  let em := Ir.linesStep.em.toNat
+  let step := String.join (List.replicate (em / 1000) "\u2003" ++
+    List.replicate (em % 1000 / 500) "\u2002")
+  String.join (List.replicate depth step)
+
+/-- A laid-out paragraph's lines after `acc` as one paragraph's text, each line after the first
+opening a hard break and its indent. -/
+private def linesText (cites : Bool) (depth : Nat) (acc : String) : List Block → String
+  | [] => acc
+  | .lines body :: rest => linesText cites depth (linesText cites (depth + 1) acc body.toList) rest
+  | b :: rest =>
+    let text := match b with
+      | .para xs => inlineText xs cites
+      | b => Ir.blockTextOne "" b
+    linesText cites depth
+      (acc ++ (if acc.isEmpty then "" else "\\\n") ++ linesIndent depth ++ text) rest
+termination_by l => sizeOf l
+decreasing_by
+  all_goals simp_wf
+  all_goals
+    (have hb : ∀ (a : Array Block), sizeOf a = 1 + sizeOf a.toList := fun _ => rfl
+     (try simp only [hb])
+     omega)
+
 private theorem oneLine_mem (s : String) : ∀ x ∈ (oneLine s).toList, x ≠ '\n' ∧ x ≠ '\r' := by
   intro x hx
   simp only [oneLine, String.toList_ofList, List.mem_map] at hx
@@ -1026,6 +1053,7 @@ private def leadsWithList : Block → Bool
     (caption.isEmpty || !capAbove) && leadsWithListList body.toList
   | .columns cols => leadsWithListColumns cols.toList
   | .para _ => false
+  | .lines _ => false
   | .equation _ _ => false
   | .section _ _ _ _ => false
   | .quote _ => false
@@ -1081,6 +1109,7 @@ mutual
 line of the block carries. -/
 private def blockInto (tw : Twin) (summary ind acc : String) : Block → String
   | .para xs => acc ++ paraText ind ind (inlineText xs tw.cites) ++ "\n\n"
+  | .lines body => acc ++ paraText ind ind (linesText tw.cites 0 "" body.toList) ++ "\n\n"
   -- the number rides beside the formula, as it does on the page
   | .equation num xs => acc ++ paraText ind ind (inlineText xs tw.cites ++ " " ++ inlineText num tw.cites) ++ "\n\n"
   | .section level _ num title =>
@@ -1254,6 +1283,7 @@ private def itemSeq (tw : Twin) (summary cont : String) (pen : ItemPen) :
       | .link _ body => itemSeq tw summary cont pen body.toList
       | .columns cols => itemColumns tw summary cont pen cols.toList
       | .para _ => write ()
+      | .lines _ => write ()
       | .equation _ _ => write ()
       | .section _ _ _ _ => write ()
       | .quote _ => write ()
@@ -1422,6 +1452,9 @@ mutual
 private theorem blockInto_extends (tw : Twin) (summary ind acc : String) :
     (b : Block) → ∃ r, blockInto tw summary ind acc b = acc ++ r
   | .para _ => by
+    simp only [blockInto]
+    exact append_chain₂ _ _ _
+  | .lines _ => by
     simp only [blockInto]
     exact append_chain₂ _ _ _
   | .equation _ _ => by
@@ -1666,6 +1699,7 @@ private theorem headingLevelOne_mem (x : Ir.HeadingLevel) :
   | .center body, out, h => headingLevelList_mem x body.toList out h
   | .ragged _ body, out, h => headingLevelList_mem x body.toList out h
   | .quote body, out, h => headingLevelList_mem x body.toList out h
+  | .lines body, out, h => headingLevelList_mem x body.toList out h
   | .abstract body, out, h => headingLevelList_mem x body.toList out h
   | .titled _ _ body, out, h => headingLevelList_mem x body.toList out h
   | .disclosure _ _ body, out, h => headingLevelList_mem x body.toList out h

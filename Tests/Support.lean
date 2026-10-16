@@ -514,7 +514,8 @@ def mdGoldenNames : List String :=
 /-- The golden set's code fixtures: `testdata/corpus/<n>.<ext>`, read by the code-file reader
 their extension selects. -/
 def codeGoldenNames : List (String × Ir.CodeLang) :=
-  [("code-lean", .lean), ("code-python", .python), ("code-bash", .bash), ("lean-cite", .lean)]
+  [("code-lean", .lean), ("code-python", .python), ("code-bash", .bash), ("lean-cite", .lean),
+   ("code-lean-prose", .lean)]
 
 /-- Fixtures allowed to ship a named markup character as ink, per character, each with its reason. -/
 def inkMarkupExempt : List (String × List Char) :=
@@ -1010,7 +1011,8 @@ def leanCiteBuild (file src : String) (sources : Array (String × String)) : Ir.
 through the front door beside it and its citations resolved against the files it names. -/
 def elabCodeFixture (n : String) (lang : Ir.CodeLang) (src : String) : IO (Ir.Doc × Array Diag) := do
   let file := s!"{n}.{lang.extension}"
-  if lang != .lean || (Code.showingOf lang src.toList.toArray).bibliography.isEmpty then
+  let showing := Code.showingOf lang src.toList.toArray
+  if lang != .lean || (showing.bibliography.isEmpty && !showing.asks) then
     return elabCode file src
   let path := s!"testdata/corpus/{file}"
   let read ← Input.readDocument path src.toUTF8

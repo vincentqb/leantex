@@ -10,10 +10,13 @@ namespace LeanTex.Core.LeanProse
 
 open LeanTex.Core
 
-/-- A token: a word, or an opaque leaf (a formula or a bound name) the grammar never inspects. -/
+/-- A token: a word, an opaque leaf (a formula or a bound name) the grammar never inspects, or a
+block's bounds, which a page sets as lines indented one step deeper than the line before. -/
 public inductive Tok (α : Type) where
   | w (s : String)
   | leaf (a : α)
+  | indent
+  | dedent
   deriving BEq, Repr
 
 /-- A template part: a word, or the slot `#k` of the `k`-th argument, counted from 1. -/
@@ -153,10 +156,10 @@ public def ofString (s : String) : Template :=
 end Template
 
 /-- The words that may follow an operand, so no relation's lead begins with one. -/
-private def stops : List String := [")", "and", "or", ",", "if"]
+private def stops : List String := ["and", "or", ",", "if"]
 
 /-- The words that open a statement or an operand, so no phrase begins with one. -/
-private def opens : List String := ["for", "there", "if", "both", "either", "it", "("]
+private def opens : List String := ["for", "there", "if", "both", "either", "it"]
 
 private def isRel (t : Template) : Bool :=
   match t.parts with
@@ -239,9 +242,21 @@ private def article : List String → String
   | s :: _ => if s.toList.head?.any ("aeiou".toList.contains ·.toLower) then "an" else "a"
   | [] => "some"
 
-/-- How loosely a statement binds: 0 atomic, 1 delimited by its own words, 2 the rest. -/
+/-- Whether a template's words hold one a connective splits a sentence at. -/
+private def Template.splits (t : Template) : Bool :=
+  t.parts.any fun
+    | .word w => w == "and" || w == "or" || w == "if"
+    | .slot _ => false
+
+private def Term.splits : Term α → Bool
+  | .leaf _ => false
+  | .phrase t _ => t.splits
+
+/-- How loosely a statement binds: 0 atomic, 1 delimited by its own words, 2 the rest, a relation
+whose words hold a connective's among them. -/
 private def Stmt.prec : Stmt α → Nat
-  | .rel .. | .atom _ => 0
+  | .rel t args => if t.splits || args.any Term.splits then 2 else 0
+  | .atom _ => 0
   | .neg _ | .conj .. | .disj .. => 1
   | .all .. | .ex .. | .imp .. | .iff .. => 2
 
@@ -249,10 +264,24 @@ private def Stmt.isImp : Stmt α → Bool
   | .imp .. => true
   | .all .. | .ex .. | .conj .. | .disj .. | .iff .. | .neg _ | .rel .. | .atom _ => false
 
-/-- An operand's tokens `f` before `rest`, bare up to precedence `k`, else parenthesized. -/
+private def Stmt.isIff : Stmt α → Bool
+  | .iff .. => true
+  | .all .. | .ex .. | .imp .. | .conj .. | .disj .. | .neg _ | .rel .. | .atom _ => false
+
+/-- Tokens `f` before `rest` as a block. -/
+private def blockWith (f : List (Tok α) → List (Tok α)) (rest : List (Tok α)) : List (Tok α) :=
+  .indent :: f (.dedent :: rest)
+
+/-- An operand's tokens `f` before `rest`, bare up to precedence `k`, else a block. -/
 private def wrapWith (k : Nat) (s : Stmt α) (f : List (Tok α) → List (Tok α))
     (rest : List (Tok α)) : List (Tok α) :=
-  if s.prec ≤ k then f rest else .w "(" :: f (.w ")" :: rest)
+  if s.prec ≤ k then f rest else blockWith f rest
+
+/-- A quantifier's body or a conclusion, which runs to its scope's end: a block where its "if and
+only if" would otherwise read as ending that scope. -/
+private def scopeWith (s : Stmt α) (f : List (Tok α) → List (Tok α)) (rest : List (Tok α)) :
+    List (Tok α) :=
+  if s.isIff then blockWith f rest else f rest
 
 /-- What follows a hypothesis: the next one of a curried implication, or its conclusion. -/
 private def chainWith (c : Stmt α) (f : List (Tok α) → List (Tok α)) (rest : List (Tok α)) :
@@ -268,10 +297,12 @@ private def exWords (b : Binder α) : List String :=
 
 /-- A statement's tokens before `rest`. -/
 private def renderTo : Stmt α → List (Tok α) → List (Tok α)
-  | .all b s, rest => wordsTo (allWords b) (b.renderTo (.w "," :: renderTo s rest))
-  | .ex b s, rest => wordsTo (exWords b) (b.renderTo (.w "such" :: .w "that" :: renderTo s rest))
+  | .all b s, rest => wordsTo (allWords b) (b.renderTo (.w "," :: scopeWith s (renderTo s) rest))
+  | .ex b s, rest =>
+    wordsTo (exWords b) (b.renderTo (.w "such" :: .w "that" :: scopeWith s (renderTo s) rest))
   | .imp h c, rest =>
-    .w "if" :: wrapWith (if c.isImp then 0 else 1) h (renderTo h) (chainWith c (renderTo c) rest)
+    .w "if" :: wrapWith (if c.isImp then 0 else 1) h (renderTo h)
+      (chainWith c (scopeWith c (renderTo c)) rest)
   | .conj a b, rest =>
     .w "both" :: wrapWith 0 a (renderTo a) (.w "and" :: wrapWith 1 b (renderTo b) rest)
   | .disj a b, rest =>
@@ -285,21 +316,45 @@ private def renderTo : Stmt α → List (Tok α) → List (Tok α)
 
 public def render (s : Stmt α) : List (Tok α) := renderTo s []
 
-/-- Whether a token sets against the one before it, with no space: a comma or a closing
-parenthesis does, and any token after an opening one. -/
-public def Tok.joins : Option (Tok α) → Tok α → Bool
-  | some (.w "("), _ => true
-  | _, .w s => s == "," || s == ")"
-  | _, .leaf _ => false
+/-- Whether a token sets against the one before it, with no space: a comma or a full stop does. -/
+public def Tok.joins : Tok α → Bool
+  | .w s => s == "," || s == "."
+  | .leaf _ | .indent | .dedent => false
 
-/-- The tokens as text, a space between two but where they join. -/
-public def showToks (f : α → String) (l : List (Tok α)) : String :=
-  (l.foldl (fun (acc : String × Option (Tok α)) t =>
+/-- A comma or full stop after blocks moved inside the last of them, where a page sets it: at the end
+of that block's last line. -/
+public def closeIn : List (Tok α) → List (Tok α)
+  | .dedent :: rest => match closeIn rest with
+    | .w s :: r => if s == "," || s == "." then .w s :: .dedent :: r else .dedent :: .w s :: r
+    | r => .dedent :: r
+  | t :: rest => t :: closeIn rest
+  | [] => []
+
+/-- A sentence's lines, each with its depth and its tokens, a block's lines one deeper than the line
+before it. -/
+public def layoutLines (l : List (Tok α)) : Array (Nat × List (Tok α)) :=
+  let flush (acc : Nat × Array (Tok α) × Array (Nat × List (Tok α))) :=
+    if acc.2.1.isEmpty then acc.2.2 else acc.2.2.push (acc.1, acc.2.1.toList)
+  let step (acc : Nat × Array (Tok α) × Array (Nat × List (Tok α))) (t : Tok α) :=
+    match t with
+    | .indent => (acc.1 + 1, #[], flush acc)
+    | .dedent => (acc.1 - 1, #[], flush acc)
+    | .w _ | .leaf _ => (acc.1, acc.2.1.push t, acc.2.2)
+  flush (l.foldl step (0, #[], #[]))
+
+/-- One line's tokens as text, a space between two but where they join. -/
+public def lineText (f : α → String) (l : List (Tok α)) : String :=
+  (l.foldl (fun (acc : String × Bool) t =>
     let text := match t with
       | .w s => s
       | .leaf a => f a
-    ((if acc.2.isNone || Tok.joins acc.2 t then acc.1 else acc.1.push ' ') ++ text, some t))
-    ("", none)).1
+      | .indent | .dedent => ""
+    ((if acc.2 || t.joins then acc.1 else acc.1.push ' ') ++ text, false)) ("", true)).1
+
+/-- The tokens as text in their lines, four spaces of indent for each step of depth. -/
+public def showToks (f : α → String) (l : List (Tok α)) : String :=
+  "\n".intercalate ((layoutLines (closeIn l)).toList.map fun (d, ts) =>
+    String.ofList (List.replicate (4 * d) ' ') ++ lineText f ts)
 
 private def spanWords : List (Tok α) → List String × List (Tok α)
   | .w s :: t => let p := spanWords t; (s :: p.1, p.2)
@@ -367,6 +422,8 @@ public def Term.parse (lex : Lexicon) : List (Tok α) → Option (Term α × Lis
   | .leaf a :: r => some (.leaf a, r)
   | .w s :: r => (lex.phrases.find? fun p => startsWith (lead p.parts) (.w s :: r)).bind
       fun p => phraseTail p r
+  | .indent :: _ => none
+  | .dedent :: _ => none
   | [] => none
 
 /-- The rest of a relation whose opening slot holds `x`. -/
@@ -473,7 +530,7 @@ private theorem Term.parse_len {lex : Lexicon} {t r : List (Tok α)} {x : Term �
   · obtain ⟨p, -, h2⟩ := Option.bind_eq_some_iff.mp h
     have := phraseTail_len h2
     simp; omega
-  · simp at h
+  all_goals simp at h
 
 private theorem relTail_len {lex : Lexicon} {tp : Template} {x : Term α} {r r' : List (Tok α)}
     {s : Stmt α} (h : relTail lex tp x r = some (s, r')) : r'.length ≤ r.length := by
@@ -562,8 +619,8 @@ decreasing_by all_goals ((try simp only [List.length_cons] at *); omega)
 
 private def parseOperand (lex : Lexicon) (t : List (Tok α)) : Parsed α (Stmt α) t :=
   match t with
-  | .w "(" :: t => match parseStmt lex t with
-    | some (s, ⟨.w ")" :: r, h⟩) => some (s, ⟨r, by simp at h ⊢; omega⟩)
+  | .indent :: t => match parseStmt lex t with
+    | some (s, ⟨.dedent :: r, h⟩) => some (s, ⟨r, by simp at h ⊢; omega⟩)
     | _ => none
   | .w "both" :: t => match parseOperand lex t with
     | some (a, ⟨.w "and" :: r, h⟩) => (parseOperand lex r).map fun (b, r') =>
@@ -589,17 +646,16 @@ public def parse (lex : Lexicon) (t : List (Tok α)) : Option (Stmt α) :=
   | _ => none
 
 
-/-- A continuation that may follow a statement: the end, or a closing parenthesis. -/
+/-- A continuation that may follow a statement: the end, or a block's end. -/
 private def followsStmt : List (Tok α) → Bool
-  | [] => true
-  | .w s :: _ => s == ")"
-  | .leaf _ :: _ => false
+  | [] | .dedent :: _ => true
+  | .w _ :: _ | .leaf _ :: _ | .indent :: _ => false
 
-/-- A continuation that may follow an operand: the end, or a word in `stops`. -/
+/-- A continuation that may follow an operand: the end, a block's end, or a word in `stops`. -/
 private def followsOpnd : List (Tok α) → Bool
-  | [] => true
+  | [] | .dedent :: _ => true
   | .w s :: _ => stops.contains s
-  | .leaf _ :: _ => false
+  | .leaf _ :: _ | .indent :: _ => false
 
 /-- The slot indices and arguments a template's parts carry. -/
 private def pairsOf {β : Type} (args : List β) : List Part → List (Nat × β)
@@ -836,7 +892,7 @@ private theorem parseBinder_render (b : Binder α) (s : String) (r : List (Tok �
 private theorem notMem_kw {w : String} (h : w ∉ opens) : w ∉ ["for", "there", "if"] :=
   fun hm => h (List.subset_def.mp (by simp [opens]) hm)
 
-private theorem notMem_op {w : String} (h : w ∉ opens) : w ∉ ["(", "both", "either", "it"] :=
+private theorem notMem_op {w : String} (h : w ∉ opens) : w ∉ ["both", "either", "it"] :=
   fun hm => h (List.subset_def.mp (by simp [opens]) hm)
 
 /-- A relation's tokens open with a leaf or with a word no statement or operand opens with. -/
@@ -893,18 +949,18 @@ private theorem parseAtomic_atom {lex : Lexicon} (hlex : lex.wf = true) (x : α)
     simp only [Template.relLead, hps, hlead] at hst
     match rest, hr, hst with
     | [], _, hst => simp [startsWith] at hst
+    | .dedent :: _, _, hst => simp [startsWith] at hst
     | .w s' :: _, hr, hst =>
       simp only [startsWith, Bool.and_eq_true, beq_iff_eq] at hst
       simp only [followsOpnd, List.contains_iff_mem] at hr
       exact hs (hst.1 ▸ hr)
-    | .leaf _ :: _, hr, _ => simp [followsOpnd] at hr
   simp [parseAtomic, Term.parse, hnone]
 
 private theorem followsOpnd_of {r : List (Tok α)} (h : followsStmt r = true) :
     followsOpnd r = true := by
   match r, h with
   | [], _ => rfl
-  | .w s :: _, h => simp only [followsStmt, beq_iff_eq] at h; simp [followsOpnd, h, stops]
+  | .dedent :: _, _ => rfl
 
 private theorem isArticle_article (n : List String) : isArticle (article n) = true := by
   unfold article
@@ -929,12 +985,12 @@ private theorem parseStmt_op {lex : Lexicon} {t rest : List (Tok α)} {s : Stmt 
     (fun _ ht => hkw _ _ ht (by simp)), e]
   match rest, hr, h with
   | [], _, _ => rfl
-  | .w _ :: _, hr, _ => simp only [followsStmt, beq_iff_eq] at hr; subst hr; rfl
+  | .dedent :: _, _, _ => rfl
 
 private theorem parseOperand_atomic {lex : Lexicon} {t : List (Tok α)}
-    (h : ∀ w r, t = .w w :: r → w ∉ ["(", "both", "either", "it"]) :
+    (hi : ∀ r, t ≠ .indent :: r) (h : ∀ w r, t = .w w :: r → w ∉ ["both", "either", "it"]) :
     forget (parseOperand lex t) = parseAtomic lex t := by
-  rw [parseOperand.eq_5 lex t (fun _ ht => h _ _ ht (by simp)) (fun _ ht => h _ _ ht (by simp))
+  rw [parseOperand.eq_5 lex t (fun _ ht => hi _ ht) (fun _ ht => h _ _ ht (by simp))
     (fun _ ht => h _ _ ht (by simp)) (fun _ ht => h _ _ ht (by simp))]
   split
   · rename_i s r heq; simp [forget, heq]
@@ -954,11 +1010,19 @@ private theorem wrap0_head {lex : Lexicon} (hlex : lex.wf = true) {a : Stmt α}
     | rel t args => exact notMem_kw (render_rel_head hlex ha X w r h)
     | atom x => simp [renderTo] at h
     | _ => simp [Stmt.prec] at hp
-  · rw [ite_eq_right hp] at h
-    simp only [List.cons.injEq, Tok.w.injEq] at h
-    rw [← h.1]; decide
+  · rw [ite_eq_right hp, blockWith] at h
+    simp at h
 
-/-- An operand reads back at every wrapping level up to 1, bare or parenthesized. -/
+/-- A statement's tokens as a block read back as an operand. -/
+private theorem block_of {lex : Lexicon} {s : Stmt α}
+    (hS : ∀ rest, followsStmt rest = true →
+      forget (parseStmt lex (renderTo s rest)) = some (s, rest)) (rest : List (Tok α)) :
+    forget (parseOperand lex (blockWith (renderTo s) rest)) = some (s, rest) := by
+  obtain ⟨h, e⟩ := forget_eq.mp (hS (.dedent :: rest) rfl)
+  rw [blockWith, parseOperand.eq_1, e]
+  rfl
+
+/-- An operand reads back at every wrapping level up to 1, bare or as a block. -/
 private theorem wrap_of {lex : Lexicon} {s : Stmt α}
     (hS : ∀ rest, followsStmt rest = true →
       forget (parseStmt lex (renderTo s rest)) = some (s, rest))
@@ -970,9 +1034,19 @@ private theorem wrap_of {lex : Lexicon} {s : Stmt α}
   unfold wrapWith
   by_cases hp : s.prec ≤ k
   · rw [ite_eq_left hp]; exact hB (by omega) rest hr
-  · obtain ⟨h, e⟩ := forget_eq.mp (hS (.w ")" :: rest) (by simp [followsStmt]))
-    rw [ite_eq_right hp, parseOperand.eq_1, e]
-    rfl
+  · rw [ite_eq_right hp]; exact block_of hS rest
+
+/-- A scope reads back, bare or as a block, before a continuation a statement may stand before. -/
+private theorem scope_of {lex : Lexicon} {s : Stmt α}
+    (hS : ∀ rest, followsStmt rest = true →
+      forget (parseStmt lex (renderTo s rest)) = some (s, rest)) (rest : List (Tok α))
+    (hr : followsStmt rest = true) :
+    forget (parseStmt lex (scopeWith s (renderTo s) rest)) = some (s, rest) := by
+  unfold scopeWith
+  by_cases hi : s.isIff = true
+  · rw [ite_eq_left hi]
+    exact parseStmt_op (fun w r ht => by simp [blockWith] at ht) (block_of hS rest) hr
+  · rw [ite_eq_right hi]; exact hS rest hr
 
 private theorem stmt_of {lex : Lexicon} {s : Stmt α}
     (hkw : ∀ rest w r, renderTo s rest = .w w :: r → w ∉ ["for", "there", "if"])
@@ -983,7 +1057,7 @@ private theorem stmt_of {lex : Lexicon} {s : Stmt α}
   fun rest hr => parseStmt_op (hkw rest) (hB rest (followsOpnd_of hr)) hr
 
 private theorem quant_all {lex : Lexicon} (b : Binder α) {body : Stmt α} {rest : List (Tok α)}
-    (e1 : ∃ h, parseStmt lex (renderTo body rest) = some (body, ⟨rest, h⟩)) :
+    (e1 : ∃ h, parseStmt lex (scopeWith body (renderTo body) rest) = some (body, ⟨rest, h⟩)) :
     forget (parseStmt lex (renderTo (.all b body) rest)) = some (.all b body, rest) := by
   obtain ⟨h1, e1⟩ := e1
   have hq : ∀ q, q = (if b.more.isEmpty then "every" else "all") →
@@ -992,7 +1066,7 @@ private theorem quant_all {lex : Lexicon} (b : Binder α) {body : Stmt α} {rest
   obtain ⟨hor, hdec⟩ := hq _ rfl
   have ht : renderTo (.all b body) rest =
       .w "for" :: .w (if b.more.isEmpty then "every" else "all") ::
-      b.renderTo (.w "," :: renderTo body rest) := by
+      b.renderTo (.w "," :: scopeWith body (renderTo body) rest) := by
     simp [renderTo, wordsTo, allWords]
   rw [ht, parseStmt.eq_1, ite_eq_left hor]
   split
@@ -1005,14 +1079,14 @@ private theorem quant_all {lex : Lexicon} (b : Binder α) {body : Stmt α} {rest
     exact (hne b _ (by rw [hdec]; exact parseBinder_render b "," _ (by decide))).elim
 
 private theorem quant_ex {lex : Lexicon} (b : Binder α) {body : Stmt α} {rest : List (Tok α)}
-    (e1 : ∃ h, parseStmt lex (renderTo body rest) = some (body, ⟨rest, h⟩)) :
+    (e1 : ∃ h, parseStmt lex (scopeWith body (renderTo body) rest) = some (body, ⟨rest, h⟩)) :
     forget (parseStmt lex (renderTo (.ex b body) rest)) = some (.ex b body, rest) := by
   obtain ⟨h1, e1⟩ := e1
-  have hb := parseBinder_render b "such" (.w "that" :: renderTo body rest) (by decide)
+  have hb := parseBinder_render b "such" (.w "that" :: scopeWith body (renderTo body) rest) (by decide)
   cases hm : b.more.isEmpty with
   | true =>
     have ht : renderTo (.ex b body) rest = .w "there" :: .w "is" :: .w (article b.noun) ::
-        b.renderTo (.w "such" :: .w "that" :: renderTo body rest) := by
+        b.renderTo (.w "such" :: .w "that" :: scopeWith body (renderTo body) rest) := by
       simp [renderTo, wordsTo, exWords, hm]
     rw [hm, Bool.not_true] at hb
     rw [ht, parseStmt.eq_2, ite_eq_left (isArticle_article b.noun)]
@@ -1025,7 +1099,7 @@ private theorem quant_ex {lex : Lexicon} (b : Binder α) {body : Stmt α} {rest 
     · rename_i hne; exact (hne b _ hb).elim
   | false =>
     have ht : renderTo (.ex b body) rest = .w "there" :: .w "are" ::
-        b.renderTo (.w "such" :: .w "that" :: renderTo body rest) := by
+        b.renderTo (.w "such" :: .w "that" :: scopeWith body (renderTo body) rest) := by
       simp [renderTo, wordsTo, exWords, hm]
     rw [hm, Bool.not_false] at hb
     rw [ht, parseStmt.eq_3]
@@ -1049,12 +1123,12 @@ private theorem parseStmt_render_exact {lex : Lexicon} (hlex : lex.wf = true) (s
   | all b body ih =>
     have hS : ∀ rest, followsStmt rest = true →
         forget (parseStmt lex (renderTo (.all b body) rest)) = some (.all b body, rest) :=
-      fun rest hr => quant_all b (forget_eq.mp ((ih hs).1 rest hr))
+      fun rest hr => quant_all b (forget_eq.mp (scope_of (ih hs).1 rest hr))
     exact ⟨hS, wrap_of hS (fun h => by simp [Stmt.prec] at h)⟩
   | ex b body ih =>
     have hS : ∀ rest, followsStmt rest = true →
         forget (parseStmt lex (renderTo (.ex b body) rest)) = some (.ex b body, rest) :=
-      fun rest hr => quant_ex b (forget_eq.mp ((ih hs).1 rest hr))
+      fun rest hr => quant_ex b (forget_eq.mp (scope_of (ih hs).1 rest hr))
     exact ⟨hS, wrap_of hS (fun h => by simp [Stmt.prec] at h)⟩
   | imp h c ihh ihc =>
     simp only [Stmt.ok, Bool.and_eq_true] at hs
@@ -1066,7 +1140,7 @@ private theorem parseStmt_render_exact {lex : Lexicon} (hlex : lex.wf = true) (s
         cases c with
         | imp h' c' =>
           let Y := wrapWith (if c'.isImp then 0 else 1) h' (renderTo h')
-            (chainWith c' (renderTo c') rest)
+            (chainWith c' (scopeWith c' (renderTo c')) rest)
           have hc1 := (ihc hs.2).1 rest hr
           rw [show renderTo (.imp h' c') rest = .w "if" :: Y from rfl, parseStmt_if] at hc1
           obtain ⟨h2, e2⟩ := forget_eq.mp hc1
@@ -1074,17 +1148,18 @@ private theorem parseStmt_render_exact {lex : Lexicon} (hlex : lex.wf = true) (s
             (by simp [followsOpnd, stops]))
           have ht : renderTo (.imp h (.imp h' c')) rest =
               .w "if" :: wrapWith 0 h (renderTo h) (.w "and" :: Y) := by
-            simp [renderTo, chainWith, Stmt.isImp, Y]
+            simp [renderTo, chainWith, scopeWith, Stmt.isImp, Stmt.isIff, Y]
           rw [ht, parseStmt_if, parseHyps.eq_1, e1]
           simp only
           rw [e2]; rfl
         | _ => simp [Stmt.isImp] at hc
       | false =>
-        obtain ⟨h2, e2⟩ := forget_eq.mp ((ihc hs.2).1 rest hr)
-        obtain ⟨h1, e1⟩ := forget_eq.mp ((ihh hs.1).2 1 (.w "," :: .w "then" :: renderTo c rest)
-          (by decide) (by simp [followsOpnd, stops]))
-        have ht : renderTo (.imp h c) rest =
-            .w "if" :: wrapWith 1 h (renderTo h) (.w "," :: .w "then" :: renderTo c rest) := by
+        obtain ⟨h2, e2⟩ := forget_eq.mp (scope_of (ihc hs.2).1 rest hr)
+        obtain ⟨h1, e1⟩ := forget_eq.mp ((ihh hs.1).2 1
+          (.w "," :: .w "then" :: scopeWith c (renderTo c) rest) (by decide)
+          (by simp [followsOpnd, stops]))
+        have ht : renderTo (.imp h c) rest = .w "if" ::
+            wrapWith 1 h (renderTo h) (.w "," :: .w "then" :: scopeWith c (renderTo c) rest) := by
           simp [renderTo, chainWith, hc]
         rw [ht, parseStmt_if, parseHyps.eq_1, e1]
         simp only
@@ -1161,7 +1236,12 @@ private theorem parseStmt_render_exact {lex : Lexicon} (hlex : lex.wf = true) (s
     have hB : ∀ rest, followsOpnd rest = true →
         forget (parseOperand lex (renderTo (.rel t args) rest)) = some (.rel t args, rest) := by
       intro rest _
-      rw [parseOperand_atomic (fun w r h => notMem_op (hhead rest w r h)), parseAtomic_rel hlex hs]
+      have hi : ∀ r, renderTo (.rel t args) rest ≠ .indent :: r := fun r h => by
+        have := parseAtomic_rel hlex hs rest
+        rw [h] at this
+        simp [parseAtomic, Term.parse] at this
+      rw [parseOperand_atomic hi (fun w r h => notMem_op (hhead rest w r h)),
+        parseAtomic_rel hlex hs]
     have hS := stmt_of (fun rest w r h => notMem_kw (hhead rest w r h)) hB
     exact ⟨hS, wrap_of hS (fun _ => hB)⟩
   | atom x =>
@@ -1169,7 +1249,7 @@ private theorem parseStmt_render_exact {lex : Lexicon} (hlex : lex.wf = true) (s
         forget (parseOperand lex (renderTo (.atom x) rest)) = some (.atom x, rest) := by
       intro rest hr
       have ht : renderTo (.atom x) rest = .leaf x :: rest := rfl
-      rw [ht, parseOperand_atomic (by simp), parseAtomic_atom hlex x hr]
+      rw [ht, parseOperand_atomic (by simp) (by simp), parseAtomic_atom hlex x hr]
     have hS := stmt_of (fun rest w r h => by simp [renderTo] at h) hB
     exact ⟨hS, wrap_of hS (fun _ => hB)⟩
 

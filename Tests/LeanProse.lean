@@ -79,17 +79,17 @@ def randStmt (tb : Table) : Nat → UInt64 → Stmt Leaf × UInt64
     | _ => (a, s)
 
 /-- The words a statement's sentence sets, in order, as the page sets them: the one it opens on,
-past any opening parenthesis, capitalized. -/
+past the blocks it opens in, capitalized. -/
 def sentenceWords (s : Stmt Leaf) : List String :=
-  let opening := (render s).dropWhile fun | .w "(" => true | _ => false
-  let capital := match opening with
+  let toks := (render s).filter fun
+    | .indent | .dedent => false
+    | .w _ | .leaf _ => true
+  let capital := match toks with
     | .w _ :: _ => true
     | _ => false
-  let ws := (render s).filterMap fun | .w w => some w | .leaf _ => none
-  let parens := ws.takeWhile (· == "(")
-  match ws.drop parens.length with
-  | w :: rest => parens ++ (if capital then w.capitalize else w) :: rest
-  | [] => parens
+  match toks.filterMap (fun | .w w => some w | .leaf _ | .indent | .dedent => none) with
+  | w :: rest => (if capital then w.capitalize else w) :: rest
+  | [] => []
 
 /-- A theorem of an invented file: its name, the line it stands on, and its type. -/
 def theoremAt (name : String) (line : Nat) (type : LeanFacts.Term) : LeanFacts.Decl :=
@@ -278,7 +278,7 @@ def leanProseChecks (ref : IO.Ref (List String)) : IO Unit := do
     (words "Tide.ordered_pair" "There are natural numbers and such that is less than" &&
       words "Tide.ge_zero" "For every natural number is at least" &&
       words "Tide.refl_any" "For every type for every element of is equal to" &&
-      words "Tide.inhabited_nonempty" "If (for every type if Inhabited then Nonempty ), then True.")
+      words "Tide.inhabited_nonempty" "If for every type if Inhabited then Nonempty , then True.")
   t "prose: no sentence leaves a line past the measure"
     (!out.diags.any (·.kind == .W0005))
   t "prose: a theorem Lean holds unproved is marked so in words too"
@@ -291,7 +291,7 @@ def leanProseChecks (ref : IO.Ref (List String)) : IO Unit := do
   let oneSentence := ((said.find? (·.1.name == "Tide.le_or_gt")).bind fun (_, r) => r.toOption)
   let pieces := (oneSentence.map fun s => ((render s).filterMap fun
     | .leaf l => some l.length
-    | .w _ => none).sum).getD 0
+    | .w _ | .indent | .dedent => none).sum).getD 0
   let nodes := (docNodesOf oneDoc).toList
   let maths := (elemNodesList (· == "math") #[] nodes).size
   let textOf := nodeTextList "" nodes
@@ -358,7 +358,7 @@ def leanProseChecks (ref : IO.Ref (List String)) : IO Unit := do
       let ls := codePageLines fonts (readAs v).1
       ["Definition (Tide.height).", "Theorem (Tide.dep_hyp)."].all fun l =>
         (ls.filter (·.2.startsWith l)).size == 1)
-  -- A sentence that opens on a parenthesis capitalizes the word after it.
+  -- A sentence that opens on a block capitalizes the block's first word.
   let swapType : LeanFacts.Term := .pi "p" .implicit false (.apps (.sort "0") [])
     (.pi "q" .implicit false (.apps (.sort "0") []) (.apps (.const "Iff")
       [.apps (.const "And") [.apps (.bvar 1) [], .apps (.bvar 0) []],
@@ -367,10 +367,12 @@ def leanProseChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (swapRaws, swapDs) := Surface.readCode .lean "swap.lean"
     "-- leantex: show = prose\ntheorem tt {p q : Prop} : p ∧ q ↔ q ∧ p := And.comm\n" (some swapFacts)
   let swapLines := codePageLines fonts (Elab.runKept "swap.lean" swapRaws swapDs).1
-  t s!"prose: a sentence opening on a parenthesis capitalizes the word after it ({swapLines.map (·.2)})"
-    (swapLines.any (·.2.startsWith "Theorem (tt). (Both") &&
+  let swapInk := swapLines.map (·.2.trimAscii.toString)
+  t s!"prose: a sentence opening on a block capitalizes the block's first word ({swapInk})"
+    ((swapInk.findIdx? (· == "Theorem (tt).")).any (fun i =>
+        (swapInk[i + 1]?).any (·.startsWith "Both")) &&
       ((proseOf swapFacts (coreTable true) (theoremAt "tt" 2 swapType) swapType).toOption.map
-        fun s => (sentenceWords s).take 2) == some ["(", "Both"])
+        fun s => (sentenceWords s).take 1) == some ["Both"])
   -- Phrases on the page.
   let phrased := codePageLines fonts (readAs ("show = prose, code, phrase.height = \"the height after #2 steps of #1\", " ++
     "phrase.Tide.holds = \"#1 holds\"")).1

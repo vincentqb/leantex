@@ -6210,7 +6210,7 @@ private def bodyIsBlockOne : Raw → Bool
     if (Parse.inputEnvFile? n).isSome then bodyIsBlockList body.toList
     else
       blockEnvs.contains n || isMathEnv n || n == Tcolorbox.boxEnv
-        || n == "tabular" || n == "tabular*" || Parse.markdownEnv n
+        || n == "tabular" || n == "tabular*" || Parse.markdownEnv n || n == Parse.linesEnv
         || n == "algorithm" || n == "algorithm*" || n == "algorithm2e"
         || n == "algorithmic"
         || reservedEnv.contains n || bodyIsBlockList body.toList
@@ -11185,6 +11185,26 @@ private def closeBlockScope (ctx : Ctx) (savedLengths : Array (String × SymGlue
 seal lengthScopeKeys? openLengthScope closeLengthScope openBlockScope closeBlockScope
   openStandoutPalette closeFramePalette
 
+/-- A laid-out paragraph's line from its raws, onto `out`: none where they hold only space. -/
+private def linesFlush (ctx : Ctx) (cur : Array Raw) (out : Array Block) : EM (Array Block) := do
+  let raws := trimRaws cur
+  if raws.isEmpty then return out
+  return out.push (.para (← elabInlines ctx raws))
+
+/-- A laid-out paragraph's blocks from its raws, onto `out`: each run of inline raws one line, each
+nested lines environment a block of lines one step in. -/
+private def linesBlocks (ctx : Ctx) : List Raw → Array Raw → Array Block → EM (Array Block)
+  | [], cur, out => linesFlush ctx cur out
+  | .env n inner p :: rest, cur, out => do
+    if n == Parse.linesEnv then
+      let out ← linesFlush ctx cur out
+      let sub ← linesBlocks ctx inner.toList #[] #[]
+      linesBlocks ctx rest #[] (out.push (.lines sub))
+    else linesBlocks ctx rest (cur.push (.env n inner p)) out
+  | r :: rest, cur, out => linesBlocks ctx rest (cur.push r) out
+termination_by l => sizeOf l
+decreasing_by raws_dec
+
 mutual
 
 /-- Whether a redefinition of a rendered built-in wins: its body, expanded
@@ -11462,6 +11482,8 @@ private def elabEnvArm (ctx : Ctx) (n : String) (scope : Array Raw)
   let mut blocks := blocks
   if n == Parse.scopeEnv then
     blocks := blocks ++ (← splicedFrameScope (some blocks.size) (elabBlockScope ctx body))
+  else if n == Parse.linesEnv then
+    blocks := blocks.push (.lines (← linesBlocks ctx body.toList #[] #[]))
   else if let some f := Parse.inputEnvFile? n then
     let ⟨fileCtx, _⟩ : MCtx ctx ←
       pure ⟨{ ctx with file := f, callSite := none, kept := ctx.kept || Parse.isKeptInput n },
@@ -12013,7 +12035,7 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
         if (Parse.inputEnvFile? n).isSome then bodyIsBlock body
         else
           blockEnvs.contains n || isMathEnv n || n == Tcolorbox.boxEnv
-            || n == "tabular" || n == "tabular*" || Parse.markdownEnv n
+            || n == "tabular" || n == "tabular*" || Parse.markdownEnv n || n == Parse.linesEnv
             || n == "algorithm" || n == "algorithm*" || n == "algorithm2e"
             || n == "algorithmic"
             || reservedEnv.contains n

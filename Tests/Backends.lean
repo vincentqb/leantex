@@ -2606,6 +2606,7 @@ def pdfCensusTable :
   ("cond-loaded", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("md-code", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("code-lean", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("code-lean-prose", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("code-python", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("code-bash", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("lean-cite", (1, 1, 0, 0, 0, 5, 0, none, ["FlateDecode"])),

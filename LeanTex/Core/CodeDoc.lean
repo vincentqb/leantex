@@ -1682,29 +1682,60 @@ public def leafRaws (pos : Pos) : LeanProse.Leaf → Array Raw
       #[formulaRaw pos m]
 
 /-- A token's raws, its word capitalized while the sentence still opens, and whether it still
-opens after it: past an opening parenthesis it does. -/
+opens after it: past a block's bounds it does. -/
 public def tokRaws (pos : Pos) (opening : Bool) : LeanProse.Tok LeanProse.Leaf → Array Raw × Bool
-  | .w "(" => (#[.word "(" pos], opening)
   | .w s => (#[.word (if opening then s.capitalize else s) pos], false)
   | .leaf l => (leafRaws pos l, false)
+  | .indent | .dedent => (#[], opening)
+
+/-- A sentence's raws so far: each open block's, innermost first, whether the sentence still opens,
+and whether a line just began. -/
+public abbrev SentenceAcc := List (Array Raw) × Bool × Bool
+
+/-- A block's raws closed into the one around it as a nested lines environment. -/
+public def closeBlock (pos : Pos) : List (Array Raw) → List (Array Raw)
+  | inner :: outer :: rest => (outer.push (.env Parse.linesEnv inner pos)) :: rest
+  | [top] => [top]
+  | [] => []
+
+/-- A word or leaf onto the innermost open block's raws, after a word space but at a line's start or
+where it joins. -/
+public def pushTok (pos : Pos) (acc : SentenceAcc) (t : LeanProse.Tok LeanProse.Leaf) :
+    SentenceAcc :=
+  let gap : Array Raw := if acc.2.2 || t.joins then #[] else #[.space]
+  let r := tokRaws pos acc.2.1 t
+  match acc.1 with
+  | top :: rest => ((top ++ gap ++ r.1) :: rest, r.2, false)
+  | [] => ([r.1], r.2, false)
+
+/-- One token onto a sentence's raws: a block's start opens a nested lines environment and its end
+closes it. -/
+public def sentenceStep (pos : Pos) (acc : SentenceAcc) (t : LeanProse.Tok LeanProse.Leaf) :
+    SentenceAcc :=
+  match t with
+  | .indent => (#[] :: acc.1, acc.2.1, true)
+  | .dedent => (closeBlock pos acc.1, acc.2.1, true)
+  | .w _ | .leaf _ => pushTok pos acc t
+
+/-- The raws of every block a sentence leaves open, closed into the sentence's own. -/
+public def closeAll (pos : Pos) : List (Array Raw) → Array Raw
+  | inner :: outer :: rest => closeAll pos ((outer.push (.env Parse.linesEnv inner pos)) :: rest)
+  | [top] => top
+  | [] => #[]
+termination_by l => l.length
 
 /-- A sentence's tokens as text, its opening word capitalized, each leaf as inline mathematics, a
-word space between tokens but where they join, and a full stop. -/
+word space between tokens but where they join, each block a nested lines environment, and a full
+stop closing its last line. -/
 public def sentenceRaws (pos : Pos) (toks : List (LeanProse.Tok LeanProse.Leaf)) : Array Raw :=
-  let step (acc : Array Raw × Option (LeanProse.Tok LeanProse.Leaf) × Bool)
-      (t : LeanProse.Tok LeanProse.Leaf) :
-      Array Raw × Option (LeanProse.Tok LeanProse.Leaf) × Bool :=
-    let gap : Array Raw :=
-      if acc.2.1.isNone || LeanProse.Tok.joins acc.2.1 t then #[] else #[.space]
-    let r := tokRaws pos acc.2.2 t
-    (acc.1 ++ gap ++ r.1, some t, r.2)
-  (toks.foldl step (#[], none, true)).1.push (.word "." pos)
+  closeAll pos ((LeanProse.closeIn (toks ++ [.w "."])).foldl (sentenceStep pos) ([#[]], true, true)).1
 
 /-- The paragraph a declaration's statement sets as in words, ragged right: its head, then its
-sentence, a line free to break between words. -/
+sentence in its lines, each block indented a step, a line free to break between words. -/
 public def wordsRaws (d : LeanFacts.Decl) (s : LeanProse.Stmt LeanProse.Leaf) (pos : Pos)
     (link : Option String := none) : Array Raw :=
-  #[.env "flushleft" ((headRaws d pos link).push .space ++ sentenceRaws pos (LeanProse.render s)) pos]
+  #[.env "flushleft" #[.env Parse.linesEnv
+    ((headRaws d pos link).push .space ++ sentenceRaws pos (LeanProse.render s)) pos] pos]
 
 /-- Why a declaration's statement is not set, when it is not. -/
 private def unset? (d : LeanFacts.Decl) : Option String :=

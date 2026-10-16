@@ -2754,6 +2754,7 @@ private def scalarTextOne (out : ScalarAcc) (itemD enumD : Nat) :
   | .center body => scalarTextList out itemD enumD body.toList
   | .ragged _ body => scalarTextList out itemD enumD body.toList
   | .quote body => scalarTextList out itemD enumD body.toList
+  | .lines body => scalarTextList out itemD enumD body.toList
   | .abstract body =>
     scalarTextList { out with texts := out.texts.push out.locale.abstract } itemD enumD body.toList
   | .titled _ title body => scalarTextList (textAndMath out title) itemD enumD body.toList
@@ -2972,6 +2973,7 @@ private def weightKeysBlock (corners : Bool) (styles : Ir.Styles) (slides : Bool
   | .center body => weightKeysBlockList corners styles slides acc body.toList
   | .ragged _ body => weightKeysBlockList corners styles slides acc body.toList
   | .quote body => weightKeysBlockList corners styles slides acc body.toList
+  | .lines body => weightKeysBlockList corners styles slides acc body.toList
   | .abstract body =>
     -- The abstract heading is the locale's word, and any word stands for its face key.
     let acc := if corners then
@@ -12553,10 +12555,21 @@ private def collectStandout (r : Rd) (a : Acc)
     collectStandout r (if rest.isEmpty || statefulBlock blk then a else a.wantGap)
       rest indent
 
+/-- A laid-out paragraph's lines: each paragraph one line under the last at the leading, no peer gap
+between them, each lines block in it `Ir.linesStep` further in. -/
+private def collectLines (r : Rd) (a : Acc) (blocks : List Block) (indent : Sp) : Acc :=
+  match blocks with
+  | [] => a
+  | .lines body :: rest =>
+    let step := Ir.linesStep.resolve r.geom.fontSize r.xHeight
+    collectLines r (collectLines r a body.toList (indent + step)) rest indent
+  | blk :: rest => collectLines r (collectBlock r a blk indent) rest indent
+
 private def collectBlock (r : Rd) (a : Acc)
     (blk : Block) (indent : Sp) : Acc :=
   match blk with
   | .para content => collectParaBlock r a content indent
+  | .lines body => collectLines r a body.toList indent
   | .equation num content => collectEquation r a num content indent
   | .section level starred num title => collectSection r a level starred num title indent
   | .list ordered spacing items =>
