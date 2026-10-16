@@ -636,8 +636,8 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
     dvE (w := w) (dvDoc "\\definecolor{plum}{HTML}{AA0000}\n" "x") ++
     dvE (w := w) (dvDoc "\\style{itemize}{ gap = 4pt }\n" "x") ++
     dvE (w := w) (dvDoc "\\usepackage{listings}\n\\lstset{numbers=left}\n" "x") ++
-    FaceUse.diags #[("mono", ⟨"t", {}⟩), ("math", ⟨"t", {}⟩)] one
-      (elabStr (dvDoc "\\fonts{ mono = \"Probe Mono\", math = \"Probe Math\" }\n" "x")).1
+    let faced := (elabStr (dvDoc "\\fonts{ mono = \"Probe Mono\", math = \"Probe Math\" }\n" "x")).1
+    FaceUse.diags #[("mono", ⟨"t", {}⟩), ("math", ⟨"t", {}⟩)] { one with math := some 0 } faced
   | .W0701 =>
     let (doc, _) := elabStr (dvDoc "\\output{ formats = pdf, alternatives = required }\n" "x")
     Ir.contractDiags (doc.output.contract.unmet Pdf.profile)

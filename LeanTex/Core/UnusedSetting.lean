@@ -32,10 +32,36 @@ public def loaders : List String :=
   ["\\usepackage", "\\RequirePackage", "\\documentclass", "\\LoadClass", "\\usetheme",
    "\\usecolortheme", "\\usefonttheme", "\\useinnertheme", "\\useoutertheme", "\\theme"]
 
-/-- Whether a declaration at `pos` is the document's own: outside a package or class file and any
-definition's replacement text, and loading nothing. -/
+/-- The written controls that define a macro, whose lowering is the definition's. -/
+public def definers : List String :=
+  ["\\def", "\\gdef", "\\edef", "\\xdef", "\\let", "\\newcommand", "\\renewcommand",
+   "\\providecommand", "\\DeclareRobustCommand"]
+
+/-- Whether a declaration at `pos` is the document's own: outside a package or class file, a file
+one inputs and any definition's replacement text, and loading or defining nothing. -/
 public def ownSite (package inCall : Bool) (pos : Pos) : Bool :=
-  !package && !inCall && pos.origins.isEmpty && !(pos.command.any loaders.contains)
+  !package && !inCall && pos.origins.isEmpty &&
+    !(pos.command.any fun c => loaders.contains c || definers.contains c)
+
+/-- The style elements a beamer colour element paints and alone reads, with the elements beamer's
+colour themes let inherit it; one many elements read, such as `structure`, reads none here. -/
+public def beamerColorElements (name : String) : List String :=
+  match name with
+  | "block title" | "block body" => blockStyleElements
+  | "block title alerted" | "block body alerted" => ["alertblock"]
+  | "block title example" | "block body example" => ["exampleblock"]
+  | "titlelike" => ["titlepage", "frametitle", "sectionpage"]
+  | "title" | "subtitle" | "author" | "institute" | "date" => ["titlepage"]
+  | "frametitle" | "frametitle right" => ["frametitle"]
+  | "section title" => ["sectionpage"]
+  | "item" => ["itemize", "enumerate"]
+  | "itemize item" => ["itemize"]
+  | "itemize subitem" => ["itemize2"]
+  | "itemize subsubitem" => ["itemize3"]
+  | "enumerate item" => ["enumerate"]
+  | "enumerate subitem" => ["enumerate2"]
+  | "enumerate subsubitem" => ["enumerate3"]
+  | _ => []
 
 /-- A site's identity, as a diagnostic's span compares it. -/
 private def siteKey (span : Span) : String × Nat × Nat := (span.file, span.pos.line, span.pos.col)
@@ -135,11 +161,12 @@ private def blockFold : CtxFold (Nat × Nat) Shown :=
 SVG sets in the document's faces, and a picture the boundary tool draws. -/
 private def drawnFaces : List String := ["body", "sans", "mono", "math"]
 
-/-- What a document's body and furniture read: a formula's text alphabet reads its text face, and
-an image or a boundary picture every face. -/
+/-- What a document's body and furniture read, beside the elements the elaborator read as it set
+them: a formula's text alphabet reads its text face, and an image or a boundary picture every
+face. -/
 -- conserves: none — reads what the content sets.
-public def shown (doc : Doc) : Shown :=
-  let body := foldCtxBlocks blockFold (0, 0) {} doc.body
+public def shown (doc : Doc) (consumed : Array String := #[]) : Shown :=
+  let body := foldCtxBlocks blockFold (0, 0) { elements := consumed } doc.body
   let acc := (furnitureInlines doc).foldl (foldCtxInlines inlineFold (0, 0)) body
   let acc := if doc.headline.isSome then { acc.element "titlepage" with headings := true } else acc
   let acc := if doc.logo.isSome || doc.logoLeft.isSome || doc.logoRight.isSome then
@@ -172,51 +199,20 @@ public def faceUsed (fonts : FontSpec) (slides : Bool) (shown : Shown) (key : St
 
 /-- An element as the document sets it, in the plural. -/
 private def elementNoun (el : String) : String :=
-  match el with
-  | "section" => "section headings"
-  | "subsection" => "subsection headings"
-  | "subsubsection" => "subsubsection headings"
-  | "heading1" => "first-level headings"
-  | "heading5" => "fifth-level headings"
-  | "heading6" => "sixth-level headings"
-  | "abstract" => "abstracts"
-  | "itemize" | "itemize2" | "itemize3" | "itemize4" => "itemize lists"
-  | "enumerate" | "enumerate2" | "enumerate3" | "enumerate4" => "enumerate lists"
-  | "frametitle" => "frame titles"
-  | "sectionpage" => "section pages"
-  | "standout" => "standout frames"
-  | "titlepage" => "titles"
-  | "nav" => "navigation landmarks"
-  | "logo" => "logos"
-  | "link" => "links within the document"
-  | "url" => "links to addresses"
-  | "cite" => "citations"
-  | "block" => "blocks"
-  | "alertblock" => "alert blocks"
-  | "exampleblock" => "example blocks"
-  | name => s!"uses of '\\{name}'"
+  (styleableNouns.lookup el).getD s!"uses of '\\{el}'"
 
 /-- The nouns a site's elements name, in order and once each, joined as a list in prose. -/
 private def nounsOf (elements : Array String) : String :=
   let nouns := elements.foldl (fun acc el =>
     let n := elementNoun el
     if acc.contains n then acc else acc.push n) #[]
-  let listed (el : String) := el.startsWith "itemize" || el.startsWith "enumerate"
-  let level := match elements.toList with
-    | [el] => if listed el && el.back.isDigit then
-        some s!"{match el.back with | '2' => "second" | '3' => "third" | _ => "fourth"}-level "
-      else none
-    | _ => none
-  let nouns := match level, nouns.toList with
-    | some l, [n] => #[l ++ n]
-    | _, _ => nouns
   match nouns.toList.reverse with
   | [] => ""
   | [n] => n
   | last :: rest => String.intercalate ", " rest.reverse ++ " or " ++ last
 
-/-- What the author can do about a declaration nothing reads. -/
-public def unusedHelp : String := "delete the declaration, or \\allow{W0449} keeps it"
+/-- What the author can do about a declaration nothing reads: delete `what`, or accept it. -/
+public def unusedHelp (what : String) : String := s!"delete {what}, or \\allow\{W0449} keeps it"
 
 /-- The words and subject of listing defaults no listing after them reads, by the command that
 declares them and its lexer layer. -/
@@ -224,24 +220,27 @@ public def listingWords (reader : String) (lang : Option String) : String × Str
   let (what, which) := match reader, lang with
     | "lstset", _ => ("listing defaults", "no listing")
     | "setminted", none => ("minted defaults", "no minted listing")
-    | "setminted", some l => (s!"minted defaults for '{l}'", s!"no '{l}' listing")
-    | _, none => ("inline-code defaults", "no '\\mintinline'")
-    | _, some l => (s!"inline-code defaults for '{l}'", s!"no '{l}' '\\mintinline'")
+    | "setminted", some l => (s!"minted defaults for '{l}'", s!"no minted '{l}' listing")
+    | _, none => ("inline-code defaults", "no inline code")
+    | _, some l => (s!"inline-code defaults for '{l}'", s!"no inline '{l}' code")
   (s!"{what} are declared here, and {which} after them reads them",
    s!"unused:listing:{reader}" ++ (lang.map (":" ++ ·)).getD "")
 
 /-- The loss of a face the document declares that no text is set in. -/
 public def faceDiag (key : String) (span : Span) : Diag :=
-  let help := some unusedHelp
   if key == "math" then
     Diag.of .W0449 "the 'math' face is declared here, and the document sets no mathematics"
-      (span := some span) (subject := some "unused:face:math") (help := help)
+      (span := some span) (subject := some "unused:face:math")
+      (help := some (unusedHelp "the 'math' face's entry"))
+  else if key.startsWith "family." then
+    let cmd := s!"'\\{(key.drop "family.".length).toString}'"
+    Diag.of .W0449 s!"{cmd} declares a face here, and no text the document sets is set in it"
+      (span := some span) (subject := some s!"unused:face:{key}")
+      (help := some (unusedHelp s!"{cmd}'s declaration"))
   else
-    let what := if key.startsWith "family." then
-        s!"the family '\\{(key.drop "family.".length).toString}' selects"
-      else s!"the '{key}' face"
-    Diag.of .W0449 s!"{what} is declared here, and no text the document sets is set in it"
-      (span := some span) (subject := some s!"unused:face:{key}") (help := help)
+    Diag.of .W0449 s!"the '{key}' face is declared here, and no text the document sets is set in it"
+      (span := some span) (subject := some s!"unused:face:{key}")
+      (help := some (unusedHelp s!"the '{key}' face's entry"))
 
 /-- The loss of a markdown metadata key only a citation reads, in a document citing nothing. -/
 public def metaDiag (file key : String) (pos : Pos) : Diag :=
@@ -252,20 +251,20 @@ public def metaDiag (file key : String) (pos : Pos) : Diag :=
 /-- The loss of an author colour nothing paints with. -/
 private def colorDiag (name : String) (span : Span) : Diag :=
   Diag.of .W0449 s!"the colour '{name}' is declared here, and nothing the document sets paints with it"
-    (span := some span) (subject := some s!"unused:color:{name}") (help := some unusedHelp)
+    (span := some span) (subject := some s!"unused:color:{name}")
+    (help := some (unusedHelp s!"the declaration of '{name}'"))
 
 /-- The loss of a site's styles for elements the document never sets. -/
 private def styleDiag (elements : Array String) (span : Span) : Diag :=
   Diag.of .W0449 s!"this styles {nounsOf elements}, and the document sets none"
     (span := some span) (subject := some s!"unused:style:{",".intercalate elements.toList}")
-    (help := some unusedHelp)
+    (help := some (unusedHelp "what it declares for them"))
 
 /-- The losses of the colours and styles nothing reads, one per site and colour, in the order
 declared; the style elements one site declares are one setting, read when any is, and a site
 another warning already names keeps that one accounting. -/
-public def diags (ledger : Array Declared) (shown : Shown) (reads : Array String)
+public def diags (ledger : Array Declared) (shown : Shown) (read : Std.HashSet String)
     (named : Array Span) : Array Diag := Id.run do
-  let read : Std.HashSet String := reads.foldl (·.insert ·) {}
   let taken : Std.HashSet (String × Nat × Nat) := named.foldl (·.insert <| siteKey ·) {}
   let mut out : Array Diag := #[]
   let mut colors : Std.HashSet (String × String × Nat × Nat) := {}

@@ -34,14 +34,16 @@ it, which a run in another face falls back to. -/
 public def servesFallback (fs : Font.FontSet) (own : Array Nat) : Bool :=
   fs.fallback.any fun (_, i) => own.contains i
 
-/-- The W0449 of each declared face no content slot resolves to and no fallback glyph reads. -/
+/-- The W0449 of each declared face no content slot of the finished document resolves to and no
+fallback glyph reads; a math face the build refused is named where it is refused. -/
 public def diags (faces : Array (String × Span)) (fs : Font.FontSet) (doc : Ir.Doc) :
     Array Diag :=
   if faces.isEmpty then #[] else
   let shown := UnusedSetting.shown doc
   let slides := doc.docClass == .slides
   faces.filterMap fun (key, span) =>
-    if UnusedSetting.faceUsed doc.fonts slides shown key || servesFallback fs (ownFonts fs doc key)
+    if (key == "math" && fs.math.isNone) || UnusedSetting.faceUsed doc.fonts slides shown key ||
+        servesFallback fs (ownFonts fs doc key)
     then none else some (UnusedSetting.faceDiag key span)
 
 end LeanTex.Cli.FaceUse

@@ -1265,13 +1265,11 @@ def paletteChecks (ref : IO.Ref (List String)) : IO Unit := do
       | .colored c name body => c.r == 0x7C && name == some (.color "primary") && body.size == 1
       | _ => false
     | _ => false)
-  let unknownSrc := "\\documentclass{article}\\palette{a = #333}" ++
-    "\\begin{document}\\textcolor{a}{y}\\textcolor{nope}{x}\\end{document}"
+  let unknownSrc (body : String) := "\\documentclass{article}\\palette{a = #333}" ++
+    "\\begin{document}\\textcolor{a}{y}" ++ body ++ "\\end{document}"
   t "palette unknown name warns and keeps the content"
-    (warnCodes unknownSrc == ["W0304"] &&
-     (elabStr unknownSrc).1.body.any fun b => match b with
-       | .para xs => xs.back? == some (.text "x")
-       | _ => false)
+    (warnCodes (unknownSrc "\\textcolor{nope}{x}") == ["W0304"] &&
+     (elabStr (unknownSrc "\\textcolor{nope}{x}")).1.body == (elabStr (unknownSrc "x")).1.body)
   let palSrc (body : String) : Ir.Doc :=
     (Elab.run "t" ("\\documentclass{article}\\palette{mut = #666666}" ++
       "\\begin{document}" ++ body ++ "\\end{document}")).1

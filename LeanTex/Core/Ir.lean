@@ -6123,6 +6123,27 @@ public def blockStyleElements : List String := ["block", "alertblock", "exampleb
 /-- The `\style` keys a beamer block reads: its title's `font` and its template. -/
 public def blockStyleKeys : List String := ["font", "shape"]
 
+/-- The headings and lists a document may style, each beside its plural as the document sets it. -/
+private def styleableFlow : List (String × String) :=
+  [("section", "section headings"), ("subsection", "subsection headings"),
+   ("subsubsection", "subsubsection headings"), ("heading1", "first-level headings"),
+   ("heading5", "fifth-level headings"), ("heading6", "sixth-level headings"),
+   ("abstract", "abstracts"), ("itemize", "itemize lists"), ("enumerate", "enumerate lists"),
+   ("itemize2", "second-level itemize lists"), ("itemize3", "third-level itemize lists"),
+   ("itemize4", "fourth-level itemize lists"), ("enumerate2", "second-level enumerate lists"),
+   ("enumerate3", "third-level enumerate lists"), ("enumerate4", "fourth-level enumerate lists")]
+
+/-- The deck furniture, links and blocks a document may style, each beside its plural. -/
+private def styleableFurniture : List (String × String) :=
+  [("frametitle", "frame titles"), ("sectionpage", "section pages"),
+   ("standout", "standout frames"), ("titlepage", "title blocks"),
+   ("nav", "navigation landmarks"), ("logo", "logos"), ("link", "links within the document"),
+   ("url", "links to addresses"), ("cite", "citations"), ("block", "blocks"),
+   ("alertblock", "alert blocks"), ("exampleblock", "example blocks")]
+
+/-- Elements a document may style, each beside its plural; a `\define`d name is styleable too. -/
+public def styleableNouns : List (String × String) := styleableFlow ++ styleableFurniture
+
 /-- The list kinds a spacing scope names, as enumitem names them. -/
 public def listSetKinds : List String := ["itemize", "enumerate", "description"]
 
@@ -6145,12 +6166,7 @@ public def listSetScopes (kind : String) (depth kindDepth : Nat) : List String :
     listSetElement
 
 /-- The elements the document styles directly. -/
-private def drawnElements : List String :=
-  ["section", "subsection", "subsubsection", "heading1", "heading5", "heading6",
-   "abstract", "itemize", "enumerate",
-   "itemize2", "itemize3", "itemize4", "enumerate2", "enumerate3", "enumerate4",
-   "frametitle", "sectionpage", "standout", "titlepage", "nav", "logo",
-   "link", "url", "cite", "block", "alertblock", "exampleblock"]
+private def drawnElements : List String := styleableNouns.map (·.1)
 
 /-- The elements that declare only a list's spacing. -/
 public def listSetOnly : List String := listSetElements.filter (!drawnElements.contains ·)

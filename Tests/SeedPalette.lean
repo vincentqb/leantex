@@ -293,10 +293,16 @@ def exportChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit :
       LeanTex.Core.SeedPalette.beamerDeclarations "seed" st ++ focus ++ body
     let (nd, nds) := elabStr native
     let (ed, eds) := elabStr exported
-    let unpainted (d : Diag) : Bool := d.kind == .W0449 &&
-      d.subject.any fun s => s.startsWith "unused:color:seed" && s != "unused:color:seedInk"
-    t s!"export {style.name}: both build clean, but the export's colours the deck does not paint"
-      (nds.all (·.severity == .note) && eds.all fun d => d.severity == .note || unpainted d)
+    -- The export's colours the deck paints nothing with: the author's own and the other style's.
+    let unpainted := (match style.name with
+      | "strong" => #["Surface", "SurfaceStrong", "AccentText", "AccentEdge", "MutedOnDark",
+          "DiagramMuted", "AlertTitle", "ExampleTitle"]
+      | _ => #["AccentText", "AccentEdge", "MutedOnDark", "AccentOnDark", "DiagramMuted"]).map
+        ("unused:color:seed" ++ ·)
+    let named := (eds.filter (·.kind == .W0449)).map (·.subject.getD "")
+    t s!"export {style.name}: both build clean but the colours the deck leaves unpainted ({named})"
+      (nds.all (·.severity == .note) &&
+        eds.all (fun d => d.severity == .note || d.kind == .W0449) && named == unpainted)
     let geom := Layout.Geom.ofPage nd.page
     let pdf (d : Ir.Doc) := driverPdf fonts geom d (Layout.run geom fonts none d)
     t s!"export {style.name}: identical PDF bytes" (pdf nd == pdf ed)

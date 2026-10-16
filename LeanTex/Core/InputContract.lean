@@ -116,9 +116,9 @@ public theorem prepareRewritten_diags_covers (file : String)
     (scan : Compat.BoundaryScan) (macros : Array (String × String))
     (triggers : Compat.SourceTriggers) (prior : Array Diag)
     (rewritten : Array Parse.Raw × Array Diag × Array String)
-    (attempts : Array Compat.InputAttempt) (d : Diag)
+    (attempts : Array Compat.InputAttempt) (mentions : Array String) (d : Diag)
     (h : d ∈ rewritten.2.1) :
-    d ∈ (prepareRewritten file scan macros triggers prior rewritten attempts).compatDiags := by
+    d ∈ (prepareRewritten file scan macros triggers prior rewritten attempts mentions).compatDiags := by
   rcases rewritten with ⟨raws, diags, warned⟩
   unfold prepareRewritten
   cases Compat.rewriteText file raws warned
@@ -130,7 +130,7 @@ public theorem prepareExecuted_diags_covers (file : String)
     (executed : Compat.Executed) (d : Diag)
     (h : d ∈ (Compat.rewriteExecuted executed).2.1) :
     d ∈ (prepareExecuted file executed).compatDiags :=
-  prepareRewritten_diags_covers file _ _ _ _ _ _ d h
+  prepareRewritten_diags_covers file _ _ _ _ _ _ _ d h
 
 attribute [local irreducible] prepareExecuted runPreparedFinal in
 public theorem runExecuted_reports_contract (file : String)

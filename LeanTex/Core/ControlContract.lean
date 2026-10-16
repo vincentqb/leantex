@@ -17,10 +17,11 @@ public def runRewriteFinal (file : String) (picScan : Compat.BoundaryScan)
     (picMacros : Array (String × String)) (triggers : Compat.SourceTriggers)
     (priorDiags earlier : Array Diag) (metric : Ir.Pic.LabelMetric)
     (cursor : Compat.RewriteCursor)
-    (attempts : Array Compat.InputAttempt := #[]) : Ir.Doc × Array Diag :=
+    (attempts : Array Compat.InputAttempt := #[]) (mentions : Array String := #[]) :
+    Ir.Doc × Array Diag :=
   runPreparedFinal file
     (prepareRewritten file picScan picMacros triggers priorDiags
-      (Compat.finishRewrite cursor) attempts)
+      (Compat.finishRewrite cursor) attempts mentions)
     earlier metric
 
 public theorem runExecuted_rewrite_exact (file : String) (executed : Compat.Executed)
@@ -28,7 +29,7 @@ public theorem runExecuted_rewrite_exact (file : String) (executed : Compat.Exec
     runExecuted file executed earlier metric =
       runRewriteFinal file (Compat.boundaryScan file executed.raws) (macroScan executed.raws)
         executed.sourceTriggers (Compat.unusedLengths file executed.raws) earlier metric
-        (Compat.beginRewrite executed) executed.inputAttempts := by rfl
+        (Compat.beginRewrite executed) executed.inputAttempts executed.mentions := by rfl
 
 public theorem meaningFree_document_exact (file : String) (scan : Compat.BoundaryScan)
     (macros : Array (String × String)) (triggers : Compat.SourceTriggers)
@@ -43,12 +44,12 @@ public theorem meaningFree_document_exact (file : String) (scan : Compat.Boundar
     (hpre : Compat.LiteralRaws pre) (hpost : Compat.LiteralRaws post)
     (hn : args.length = arity)
     (hg : Compat.GroupPrefix body (pre.length + 1) args (pre.length + 1 + taken.length))
-    (attempts : Array Compat.InputAttempt := #[]) :
-    runRewriteFinal file scan macros triggers priorDiags earlier metric cursor attempts =
+    (attempts : Array Compat.InputAttempt := #[]) (mentions : Array String := #[]) :
+    runRewriteFinal file scan macros triggers priorDiags earlier metric cursor attempts mentions =
       runPreparedFinal file
         (prepareRewritten file scan macros triggers priorDiags
           (Compat.finishMeaningFreeDocument cursor name note pos docPos
-            (pre.toArray ++ post.toArray)) attempts) earlier metric := by
+            (pre.toArray ++ post.toArray)) attempts mentions) earlier metric := by
   unfold runRewriteFinal
   rw [Compat.finishRewrite_meaningFree_document_exact cursor body name arity note pos docPos
     pre taken post args hm hp hl hs hb hpre hpost hn hg]
@@ -66,12 +67,12 @@ public theorem configSkip_document_exact (file : String) (scan : Compat.Boundary
     (hpre : Compat.LiteralRaws pre) (hpost : Compat.LiteralRaws post)
     (hn : args.length = arity)
     (hg : Compat.GroupPrefix body (pre.length + 1) args (pre.length + 1 + taken.length))
-    (attempts : Array Compat.InputAttempt := #[]) :
-    runRewriteFinal file scan macros triggers priorDiags earlier metric cursor attempts =
+    (attempts : Array Compat.InputAttempt := #[]) (mentions : Array String := #[]) :
+    runRewriteFinal file scan macros triggers priorDiags earlier metric cursor attempts mentions =
       runPreparedFinal file
         (prepareRewritten file scan macros triggers priorDiags
           (Compat.finishConfigSkipDocument cursor name msg help pos docPos
-            (pre.toArray ++ post.toArray)) attempts) earlier metric := by
+            (pre.toArray ++ post.toArray)) attempts mentions) earlier metric := by
   unfold runRewriteFinal
   rw [Compat.finishRewrite_configSkip_document_exact cursor body name arity msg help pos docPos
     pre taken post args hm hp hl hs hb hpre hpost hn hg]
@@ -92,17 +93,17 @@ public theorem meaningFree_operands_agree (file : String) (scan : Compat.Boundar
       (pre.length + 1 + takenLeft.length))
     (hgright : Compat.GroupPrefix right (pre.length + 1) argsRight
       (pre.length + 1 + takenRight.length))
-    (attempts : Array Compat.InputAttempt := #[]) :
+    (attempts : Array Compat.InputAttempt := #[]) (mentions : Array String := #[]) :
     runRewriteFinal file scan macros triggers priorDiags earlier metric
-      (cursor.withDocument left docPos) attempts =
+      (cursor.withDocument left docPos) attempts mentions =
     runRewriteFinal file scan macros triggers priorDiags earlier metric
-      (cursor.withDocument right docPos) attempts := by
+      (cursor.withDocument right docPos) attempts mentions := by
   rw [meaningFree_document_exact file scan macros triggers priorDiags earlier metric
     (cursor.withDocument left docPos) left name arity note pos docPos pre takenLeft post
-    argsLeft hm hp hl rfl hleft hpre hpost hnleft hgleft attempts,
+    argsLeft hm hp hl rfl hleft hpre hpost hnleft hgleft attempts mentions,
     meaningFree_document_exact file scan macros triggers priorDiags earlier metric
     (cursor.withDocument right docPos) right name arity note pos docPos pre takenRight post
-    argsRight hm hp hl rfl hright hpre hpost hnright hgright attempts,
+    argsRight hm hp hl rfl hright hpre hpost hnright hgright attempts mentions,
     Compat.finishMeaningFreeDocument_source_exact,
     Compat.finishMeaningFreeDocument_source_exact]
 
@@ -122,17 +123,17 @@ public theorem configSkip_operands_agree (file : String) (scan : Compat.Boundary
       (pre.length + 1 + takenLeft.length))
     (hgright : Compat.GroupPrefix right (pre.length + 1) argsRight
       (pre.length + 1 + takenRight.length))
-    (attempts : Array Compat.InputAttempt := #[]) :
+    (attempts : Array Compat.InputAttempt := #[]) (mentions : Array String := #[]) :
     runRewriteFinal file scan macros triggers priorDiags earlier metric
-      (cursor.withDocument left docPos) attempts =
+      (cursor.withDocument left docPos) attempts mentions =
     runRewriteFinal file scan macros triggers priorDiags earlier metric
-      (cursor.withDocument right docPos) attempts := by
+      (cursor.withDocument right docPos) attempts mentions := by
   rw [configSkip_document_exact file scan macros triggers priorDiags earlier metric
     (cursor.withDocument left docPos) left name arity msg help pos docPos pre takenLeft post
-    argsLeft hm hp hl rfl hleft hpre hpost hnleft hgleft attempts,
+    argsLeft hm hp hl rfl hleft hpre hpost hnleft hgleft attempts mentions,
     configSkip_document_exact file scan macros triggers priorDiags earlier metric
     (cursor.withDocument right docPos) right name arity msg help pos docPos pre takenRight post
-    argsRight hm hp hl rfl hright hpre hpost hnright hgright attempts,
+    argsRight hm hp hl rfl hright hpre hpost hnright hgright attempts mentions,
     Compat.finishConfigSkipDocument_source_exact,
     Compat.finishConfigSkipDocument_source_exact]
 
@@ -444,13 +445,13 @@ public theorem runExecuted_meaningFree_contract (file : String) (executed : Comp
           executed.sourceTriggers (Compat.unusedLengths file executed.raws)
           (Compat.finishMeaningFreeDocument (Compat.beginRewrite executed)
             name note input.pos input.docPos (input.pre.toArray ++ input.post.toArray))
-          executed.inputAttempts) earlier metric := by
+          executed.inputAttempts executed.mentions) earlier metric := by
   rw [runExecuted_rewrite_exact]
   exact meaningFree_document_exact file _ _ _ (Compat.unusedLengths file executed.raws) earlier metric
     (Compat.beginRewrite executed) input.body name arity note input.pos input.docPos
     input.pre input.taken input.post input.args hm input.outsidePicture input.outsideList
     input.document input.source input.before input.after input.arity_exact input.operands
-    executed.inputAttempts
+    executed.inputAttempts executed.mentions
 
 public theorem runExecuted_configSkip_contract (file : String) (executed : Compat.Executed)
     (earlier : Array Diag) (metric : Ir.Pic.LabelMetric)
@@ -463,13 +464,13 @@ public theorem runExecuted_configSkip_contract (file : String) (executed : Compa
           executed.sourceTriggers (Compat.unusedLengths file executed.raws)
           (Compat.finishConfigSkipDocument (Compat.beginRewrite executed)
             name msg help input.pos input.docPos (input.pre.toArray ++ input.post.toArray))
-          executed.inputAttempts) earlier metric := by
+          executed.inputAttempts executed.mentions) earlier metric := by
   rw [runExecuted_rewrite_exact]
   exact configSkip_document_exact file _ _ _ (Compat.unusedLengths file executed.raws) earlier metric
     (Compat.beginRewrite executed) input.body name arity msg help input.pos input.docPos
     input.pre input.taken input.post input.args hm input.outsidePicture input.outsideList
     input.document input.source input.before input.after input.arity_exact input.operands
-    executed.inputAttempts
+    executed.inputAttempts executed.mentions
 
 /-- The consuming-control contract at the executed frontend: registered controls consume their
 operands, unhandled ones keep their braced content, and every recovery is named. -/
@@ -484,7 +485,7 @@ public theorem control_completion_contract (file : String) (executed : Compat.Ex
               (Compat.finishMeaningFreeDocument (Compat.beginRewrite executed)
                 row.1 row.2.2 input.pos input.docPos
                 (input.pre.toArray ++ input.post.toArray))
-              executed.inputAttempts) earlier metric) ∧
+              executed.inputAttempts executed.mentions) earlier metric) ∧
     (∀ row ∈ Compat.configSkip,
       ∀ input : ControlDocument executed row.1 row.2.1,
         runExecuted file executed earlier metric =
@@ -494,7 +495,7 @@ public theorem control_completion_contract (file : String) (executed : Compat.Ex
               (Compat.finishConfigSkipDocument (Compat.beginRewrite executed)
                 row.1 row.2.2.1 row.2.2.2 input.pos input.docPos
                 (input.pre.toArray ++ input.post.toArray))
-              executed.inputAttempts) earlier metric) ∧
+              executed.inputAttempts executed.mentions) earlier metric) ∧
     (∀ group : RecoveryGroup,
       PreparedRecoveryGroup file (prepareExecuted file executed) metric group →
         runExecuted file executed earlier metric =

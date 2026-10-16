@@ -301,6 +301,25 @@ private def citesInls : List Inl → Bool
 
 end
 
+mutual
+
+/-- Whether inline content spells a citation at all, one no key list carries and one an image's
+text alternative sets as text included. -/
+private def spellsCiteInl : Inl → Bool
+  | .cite _ _ => true
+  | .citeText _ _ _ => true
+  | .emph body _ => spellsCiteInls body.toList
+  | .strong body _ => spellsCiteInls body.toList
+  | .link _ _ body _ => spellsCiteInls body.toList
+  | .image _ _ alt _ => spellsCiteInls alt.toList
+  | .text .. | .code .. | .anchor .. | .soft _ | .hard _ => false
+
+private def spellsCiteInls : List Inl → Bool
+  | [] => false
+  | x :: rest => spellsCiteInl x || spellsCiteInls rest
+
+end
+
 /-- An empty group, TeX's own end of a command's arguments, when `rs` opens on a word an
 overlay-aware command before it would read as its `<…>` selector. -/
 @[expose] public def selectorGuard (rs : Array Raw) (p : Pos) : Array Raw :=
@@ -643,31 +662,33 @@ private def refsAtItems : List (Array Blk) → Option Pos
 
 end
 
-/-- Whether a table's cells hold a citation. -/
-private def citesCells (cells : List (Array Inl)) : Bool := cells.any fun c => citesInls c.toList
+/-- Whether a table's cells hold inline content `inl` finds a citation in. -/
+private def citesCells (inl : List Inl → Bool) (cells : List (Array Inl)) : Bool :=
+  cells.any fun c => inl c.toList
 
 mutual
 
-/-- Whether a block holds a citation anywhere. -/
-private def citesBlk : Blk → Bool
-  | .para body _ => citesInls body.toList
-  | .heading _ body _ => citesInls body.toList
-  | .quote body _ => citesBlks body.toList
-  | .disclosure summary _ body _ => citesInls summary.toList || citesBlks body.toList
-  | .list _ _ _ items _ => citesItems items.toList
-  | .table _ header rows _ => citesCells header.toList || rows.toList.any (citesCells ·.toList)
+/-- Whether a block holds inline content `inl` finds a citation in, anywhere. -/
+private def citesBlk (inl : List Inl → Bool) : Blk → Bool
+  | .para body _ => inl body.toList
+  | .heading _ body _ => inl body.toList
+  | .quote body _ => citesBlks inl body.toList
+  | .disclosure summary _ body _ => inl summary.toList || citesBlks inl body.toList
+  | .list _ _ _ items _ => citesItems inl items.toList
+  | .table _ header rows _ =>
+    citesCells inl header.toList || rows.toList.any (citesCells inl ·.toList)
   -- A Lean division's documentation view cites into the document's list.
   | .lean attrs _ => attrs.any fun (k, v) =>
     k == "show" && ((v.splitOn ",").map (·.trimAscii.toString)).contains "docs"
   | .code .. | .rule _ | .metadata .. | .refs _ => false
 
-private def citesBlks : List Blk → Bool
+private def citesBlks (inl : List Inl → Bool) : List Blk → Bool
   | [] => false
-  | b :: rest => citesBlk b || citesBlks rest
+  | b :: rest => citesBlk inl b || citesBlks inl rest
 
-private def citesItems : List (Array Blk) → Bool
+private def citesItems (inl : List Inl → Bool) : List (Array Blk) → Bool
   | [] => false
-  | it :: rest => citesBlks it.toList || citesItems rest
+  | it :: rest => citesBlks inl it.toList || citesItems inl rest
 
 end
 
@@ -855,9 +876,10 @@ public def desugar (file : String) (input : String) (dialect : Dialect := .docum
   let split := splitMetadata read.1
   let m := metaRead file role split.1
   let blocks := split.2.toList
-  let cited := citesBlks blocks
-  -- premise: Tests.UnusedSettings.metadataChecks — a document citing nothing reads none of these
-  let unused := if role != .document || m.sources.isEmpty || cited || m.nocite.isSome then #[]
+  let cited := citesBlks citesInls blocks
+  -- premise: Tests.UnusedSettings.metadataChecks — a document spelling no citation reads none
+  let unused := if role != .document || m.sources.isEmpty || m.nocite.isSome ||
+      citesBlks spellsCiteInls blocks then #[]
     else m.taken.map fun (key, pos) => UnusedSetting.metaDiag file key pos
   let body := blkListRaws file (m.list cited) #[] #[] blocks
   let placed := refsAt blocks

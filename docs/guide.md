@@ -10,11 +10,14 @@ repeated in the same words within one phase of a build prints once, at its
 first site, with its count; `-v` lists every site, `--porcelain` gives JSON
 output, and `leantex --help` shows all options. A loss of the PDF's page, such
 as a line that runs past the margin, is reported only when the build writes a
-PDF. A setting the document declares that nothing it sets uses (a colour
-nothing paints, a face no text is set in, listing defaults no listing after
-them reads, a style for an element the document never shows) is named where
-it stands, `W0449`; the settings a package, class or theme declares never
-are, while a file the document inputs is the document's own.
+PDF. A setting the document declares that nothing it sets uses is named where
+it stands, `W0449`: a colour nothing paints, a face no text is set in, listing
+defaults no listing after them reads, a style or beamer colour for an element
+the document never shows, or a markdown document's citation metadata where it
+cites nothing. A use the engine refuses still uses what it names, its own
+warning naming the loss. What a package, class or theme declares is never
+named, nor what a file one of them inputs declares, nor a macro's definition;
+a file the document inputs is the document's own.
 
 ## TeX and Markdown
 
@@ -543,7 +546,10 @@ Load `colors.tex` after the Beamer theme. It defines one colour per role
 `SlideAlert`, `SlideAlertTitle`, `SlideExampleTitle`, and `SlideAlertMark`
 where the accent serves as a container) and binds beamer's `normal text`,
 `background canvas`, `footline`, `page number in head/foot`, `alerted text`,
-six block elements, `progress bar` and `title separator` to them.
+six block elements, `progress bar` and `title separator` to them. As the
+document's own file, the colours and block bindings it leaves unused are
+named, `W0449`; saved as a `.sty` file and loaded with `\usepackage` after the
+theme, they are the package's.
 Use `SlideAccent` for decoration and `SlideAccentText` for text on
 `SlidePaper`: the text tones meet their floor on the paper, so a TeX build
 sets them on a block's fill below it by the fill's ratio, where leantex sets

@@ -156,12 +156,15 @@ private def generatedSourceChecks (ref : IO.Ref (List String))
           "\\end{frame}\\end{document}"
         let (doc, diags) := Elab.run "generated.tex" source
         let label := s!"generated block {paper.css}/{env}/{title}"
-        -- The export's colours for other blocks and for the author's own use paint nothing here.
-        let unpainted (d : Diag) : Bool := d.kind == .W0449 &&
-          d.subject.any fun s => s.startsWith "unused:color:sample" &&
-            s != "unused:color:sampleInk" && s != "unused:color:samplePaper"
-        check ref (label ++ ": clean source, but the export's colours it does not paint")
-          (diags.all fun d => d.severity == .note || unpainted d)
+        -- The export's colours for the author's own use, and its bindings of the kinds the deck
+        -- sets no block of, at their title and body sites.
+        let unused := #["sampleAccentText", "sampleAccentEdge", "sampleMutedOnDark",
+            "sampleAccentOnDark", "sampleDiagramMuted"].map ("unused:color:" ++ ·) ++
+          (#["alertblock", "exampleblock"].filter (· != env)).flatMap fun k =>
+            #["unused:style:" ++ k, "unused:style:" ++ k]
+        let named := (diags.filter (·.kind == .W0449)).map (·.subject.getD "")
+        check ref (label ++ s!": clean source but the declarations the deck leaves unused ({named})")
+          (diags.all (fun d => d.severity == .note || d.kind == .W0449) && named == unused)
         let out := layout fonts doc
         let body := out.pages.flatMap (·.lines) |>.filter (lineText · false == "BODY")
         check ref (label ++ ": content survives once") (body.size == 1)

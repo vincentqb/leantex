@@ -52,7 +52,12 @@ def unreadCases : List (String × String × String) :=
    ("a lexer's minted defaults", article "\\usepackage{minted}\\setminted[python]{linenos}"
      "\\begin{minted}{bash}\necho probe\n\\end{minted}", "unused:listing:setminted:python"),
    ("inline-code defaults", article "\\usepackage{minted}\\setmintedinline{fontsize=\\small}"
-     "\\begin{minted}{python}\nx = 1\n\\end{minted}", "unused:listing:setmintedinline")]
+     "\\begin{minted}{python}\nx = 1\n\\end{minted}", "unused:listing:setmintedinline"),
+   ("a beamer block colour", deck "\\setbeamercolor{block title}{bg=red}"
+     "\\begin{frame}{Title}Words.\\end{frame}", "unused:style:block,alertblock,exampleblock"),
+   ("a colour only an uncalled definition names",
+     article (probeColor ++ "\\newcommand{\\probebox}[1]{\\colorbox{probeink}{#1}}") "Words.",
+     "unused:color:probeink")]
 
 /-- Each declaration with content that reads it. -/
 def readCases : List (String × String) :=
@@ -87,7 +92,50 @@ def readCases : List (String × String) :=
    ("a lexer's minted defaults", article "\\usepackage{minted}\\setminted[python]{linenos}"
      "\\begin{minted}{python}\nx = 1\n\\end{minted}"),
    ("inline-code defaults", article "\\usepackage{minted}\\setmintedinline{fontsize=\\small}"
-     "Inline \\mintinline{python}{x = 1} code.")]
+     "Inline \\mintinline{python}{x = 1} code."),
+   ("a colour a diagram's arrow takes", article ("\\usepackage{tikz-cd}" ++ probeColor)
+     "\\begin{tikzcd} A \\arrow[r, probeink] & B \\end{tikzcd}"),
+   ("a colour a displayed diagram takes", article ("\\usepackage{tikz-cd}" ++ probeColor)
+     "\\[\\begin{tikzcd} A \\arrow[r, probeink] & B \\end{tikzcd}\\]"),
+   ("a colour the pictures' preamble names", article ("\\usepackage{pgfplots}" ++ probeColor ++
+     "\\pgfplotsset{every axis plot/.append style={color=probeink}}")
+     "\\begin{tikzpicture}\\begin{axis}\\addplot coordinates {(0,0) (1,1)};\\end{axis}\\end{tikzpicture}"),
+   ("a title page style an author alone reads", article
+     "\\author{Probe Author}\\date{1 January 2020}\\style{titlepage}{ author-font = {\\Huge} }"
+     "\\maketitle Words."),
+   ("a beamer author font a title page reads", deck
+     "\\author{Probe Author}\\setbeamerfont{author}{size=\\tiny}" "\\begin{frame}\\titlepage\\end{frame}"),
+   ("a beamer block colour an alert block reads", deck "\\setbeamercolor{block title}{bg=red}"
+     "\\begin{frame}{Title}\\begin{alertblock}{Alert}Words.\\end{alertblock}\\end{frame}"),
+   ("a list macro's definition", article
+     "\\makeatletter\\def\\@listii{\\leftmargin 8em \\topsep 30pt}\\makeatother"
+     "\\begin{quote}Outer.\\begin{quote}Inner.\\end{quote}\\end{quote}")]
+
+/-- Each colour named only by a construct the engine refuses or cannot resolve, with that refusal's
+code: the refusal is the one accounting, and the colour is the document's in use. -/
+def refusedCases : List (String × DiagCode × String) :=
+  [("an unknown command", .W0301, article probeColor "\\colorbox{probeink}{Words.}"),
+   ("an unknown preamble command", .W0301,
+     article (probeColor ++ "\\titleformat{\\section}{\\color{probeink}}{\\thesection}{1em}{}")
+       "\\section{Opening}Words."),
+   ("a refused listing key", .W0110, article
+     ("\\usepackage{listings}" ++ probeColor ++ "\\lstset{keywordstyle=\\color{probeink}}")
+     "\\begin{lstlisting}\nx = 1\n\\end{lstlisting}"),
+   ("a refused box key", .W0104, article ("\\usepackage{tcolorbox}" ++ probeColor)
+     "\\begin{tcolorbox}[colback=probeink]Words.\\end{tcolorbox}"),
+   ("an unknown environment's options", .W0302, article probeColor
+     "\\begin{probeframe}[color=probeink]Words.\\end{probeframe}"),
+   ("a refused caption key", .W0354, article
+     ("\\usepackage{caption}" ++ probeColor ++ "\\captionsetup{labelfont={color=probeink}}")
+     "\\begin{figure}Words.\\caption{A caption.}\\end{figure}"),
+   ("a refused list option", .W0104, article ("\\usepackage{enumitem}" ++ probeColor)
+     "\\begin{enumerate}[label=\\textcolor{probeink}{\\arabic*.}]\\item Alpha\\end{enumerate}"),
+   ("text standing before the document", .E0313, article
+     ("\\usepackage{tikz}" ++ probeColor ++ "\\tikzstyle{probe}=[fill=probeink]")
+     "\\begin{tikzpicture}\\fill[probe] (0,0) rectangle (1,1);\\end{tikzpicture}"),
+   ("a link colour read before the colour is declared", .E0326, article
+     ("\\usepackage{hyperref}\\hypersetup{colorlinks, urlcolor=probeink}" ++ probeColor)
+     "\\href{https://example.org}{A place}.")]
 
 /-- Each kind of declaration nothing reads is named once at its site, keyed by what it declares;
 one something reads is not. -/
@@ -102,6 +150,14 @@ def firesChecks (ref : IO.Ref (List String)) : IO Unit := do
   for (what, src) in readCases do
     t s!"unused settings: {what} read by the document is not named ({(unused src).map (·.subject)})"
       (unused src).isEmpty
+  for (what, code, src) in refusedCases do
+    let ds := (elabStr src).2
+    t s!"unused settings: a colour {what} names is that refusal's, never named unused ({ds.map (·.kind.code)})"
+      (ds.any (·.kind == code) && !ds.any (·.kind == .W0449))
+  let palette := unused (article "\\palette{ probeone = #8A2BE2, probetwo = #2BE28A }"
+    "\\textcolor{probetwo}{Words.}")
+  t "unused settings: the help names the entry of a declaration that declares several"
+    (palette.size == 1 && palette.all fun d => d.help.any (·.startsWith "delete the declaration of 'probeone'"))
   let twice := unused (article (probeColor ++ "\n" ++ probeColor) "Words.")
   t "unused settings: a colour declared twice and never read is one loss at both sites"
     (((Diag.foldRepeats twice).filter (·.severity == .warning)).size == 1)
@@ -131,6 +187,18 @@ def scopeChecks (ref : IO.Ref (List String)) : IO Unit := do
       ("a class", "article", "probe.cls"), ("a local theme", "beamer", "beamerthemeprobe.sty")] do
     let (_, ds, spans) := spliced cls child
     t s!"unused settings: {what}'s unread declarations are its own, never named"
+      (!ds.any (·.kind == .W0449) && spans.faces.isEmpty)
+  let nested (cls pkg inner : String) : Ir.Doc × Array Diag × Elab.ReqSpans :=
+    let raws := parse "root.tex" s!"\\documentclass\{{cls}}\n" ++
+      #[Parse.Raw.env (Parse.inputEnv pkg)
+        #[Parse.Raw.env (Parse.inputEnv inner) (parse inner declared) {}] {}] ++
+      parse "root.tex" "\\begin{document}\nWords.\n\\end{document}"
+    Elab.runRawsSpanned "root.tex" raws
+  for (what, cls, pkg, inner) in [("a package", "article", "probe.sty", "probecolors.tex"),
+      ("a package", "article", "probe.sty", "probe.cfg"),
+      ("a local theme", "beamer", "beamerthemeprobe.sty", "probetheme.tex")] do
+    let (_, ds, spans) := nested cls pkg inner
+    t s!"unused settings: a file {what} inputs is the package's, its declarations never named ({inner}: {(ds.filter (·.kind == .W0449)).map (·.subject)})"
       (!ds.any (·.kind == .W0449) && spans.faces.isEmpty)
   let (_, ds, spans) := spliced "article" "part.tex"
   t s!"unused settings: an input file's unread declarations are the document's, named in it ({ds.filter (·.kind == .W0449) |>.map (·.subject)})"
@@ -181,6 +249,10 @@ def metadataChecks (ref : IO.Ref (List String)) : IO Unit := do
     (uncited.map (·.span.map (·.pos.line)) == #[some 2, some 3, some 4])
   t "unused metadata: a citation reads them"
     (named (front ++ "A claim [@roe2020].\n")).isEmpty
+  t "unused metadata: a citation no bibliography key holds reads them"
+    (named (front ++ "Words [@{roe2020,doe2019}].\n")).isEmpty
+  t "unused metadata: a citation an image's text alternative sets reads them"
+    (named (front ++ "![A caption citing [@roe2020].](fig.png)\n")).isEmpty
   t "unused metadata: a nocite reads them"
     (named ("---\nbibliography: refs.bib\nnocite: '@roe2020'\n---\n\nPlain words.\n")).isEmpty
   t "unused metadata: a document with no metadata names nothing"
@@ -312,7 +384,9 @@ def judgedBodies : List (String × String) :=
      "\\href{https://example.org}{a place} and \\cite{key1}.\\bibliographystyle{plainnat}\\bibliography{refs}"),
    ("listings", "\\begin{lstlisting}\nx = 1\n\\end{lstlisting}\\begin{minted}{python}\ny = 2\n" ++
      "\\end{minted}Inline \\mintinline{bash}{echo z} code."),
-   ("colour", "\\textcolor{probeink}{Coloured words.}")]
+   ("colour", "\\textcolor{probeink}{Coloured words.}"),
+   ("a diagram", "\\begin{tikzcd} A \\arrow[r, probeink] & B \\end{tikzcd}"),
+   ("nested quotes", "\\begin{quote}Outer.\\begin{quote}Inner.\\end{quote}\\end{quote}")]
 
 /-- The declarations the two-build judge varies, one at a time. -/
 def judgedDecls : List String :=
@@ -323,13 +397,16 @@ def judgedDecls : List String :=
    "\\style{titlepage}{ font = {\\Huge} }", "\\style{cite}{ color = red }",
    "\\setlist[enumerate,2]{leftmargin=4em}", "\\hypersetup{colorlinks, linkcolor=red}",
    "\\lstset{numbers=left}", "\\setminted{linenos}", "\\setminted[python]{linenos}",
-   "\\setmintedinline{fontsize=\\small}"]
+   "\\setmintedinline{fontsize=\\small}", "\\style{titlepage}{ author-font = {\\Huge} }",
+   "\\makeatletter\\def\\@listii{\\leftmargin 8em \\topsep 30pt}\\makeatother",
+   "\\lstset{keywordstyle=\\color{red}}", "\\style{block}{ font = {\\Large} }"]
 
 /-- The two-build judge: wherever W0449 names a declaration, the document without it ships the same
 PDF bytes, web page and markdown twin. -/
 def oracleChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let pre := "\\title{Probe title}\\author{Probe author}\\usepackage{listings}\\usepackage{minted}" ++
-    "\\usepackage{algpseudocode}\\usepackage{hyperref}\\usepackage{natbib}\\usepackage{enumitem}"
+    "\\usepackage{algpseudocode}\\usepackage{hyperref}\\usepackage{natbib}\\usepackage{enumitem}" ++
+    "\\usepackage{tikz-cd}"
   let tasks := judgedBodies.map fun (what, body) =>
     let base := Task.spawn fun _ => seen fonts (article pre body)
     (what, judgedDecls.map fun decl => (decl, base.bind fun b => Task.spawn fun _ =>
@@ -348,6 +425,15 @@ def oracleChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit :
   check ref s!"unused settings, two builds: a declaration named unused changes no artifact ({faults})"
     faults.isEmpty
   check ref s!"unused settings, two builds: the judge names declarations ({named})" (named ≥ 40)
+  -- A declaration some of whose entries something reads names the rest, which the help deletes.
+  let linked (keys : String) := seen fonts (article ("\\usepackage{hyperref}\\hypersetup{" ++ keys ++ "}")
+    "Plain words.")
+  let whole := linked "colorlinks, linkcolor=red, pdftitle={Probe Title}"
+  let kept := linked "pdftitle={Probe Title}"
+  let helps := (whole.diags.filter (·.kind == .W0449)).filterMap (·.help)
+  check ref s!"unused settings, two builds: deleting what the help names of a declaration read in part changes no artifact ({helps})"
+    (helps == #["delete what it declares for them, or \\allow{W0449} keeps it"] &&
+      whole.pdf == kept.pdf && whole.page == kept.page && whole.css == kept.css && whole.md == kept.md)
 
 /-- A declared face is judged over the settled face set: one no text is set in is named, one a run
 or a fallback glyph reads is not. -/
@@ -377,12 +463,26 @@ def faceChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((monoOnly.map (·.2)) == (without.map (·.2)) && monoOnly.isSome)
   let code ← judge "article" (serif ++ ", mono = \"Source Code Pro\"") "A \\texttt{code} run."
   t s!"unused faces: a typewriter face code sets in is not named ({keys code})" (keys code).isEmpty
+  let bib := "@article{probe2020, author = {Roe, Pat}, title = {An Invented Article}, " ++
+    "journal = {Journal of Placeholders}, year = {2020}, url = {https://example.org/roe}}\n"
+  let cited := s!"\\documentclass\{article}\n\\fonts\{ {serif}, mono = \"Source Code Pro\" }\n" ++
+    "\\usepackage{natbib}\\usepackage{url}\n\\begin{document}\nA claim \\citep{probe2020}.\n" ++
+    "\\bibliographystyle{plainnat}\n\\bibliography{refs}\n\\end{document}\n"
+  let (citedDoc, _, _) := bibBuildParts cited #[("refs", bib), ("refs.bib", bib)]
+  match ← FontAssembly.buildFontSet citedDoc scan cache .settled with
+  | .ok (fs, doc, _, _) =>
+    t "unused faces: a typewriter face a reference list's address sets in is not named"
+      (FaceUse.diags #[("mono", ⟨"t", {}⟩)] fs doc).isEmpty
+  | .error _ => t "unused faces: the citing document's face set settles" false
   let fallback ← judge "article" (serif ++ ", mono = \"Source Code Pro\"") "A rule \u2500 drawn."
   t s!"unused faces: a face a glyph the text face lacks falls back to is not named ({keys fallback})"
     (keys fallback).isEmpty
   let math ← judge "article" (serif ++ ", math = \"Fira Math\"") "Plain words."
   t s!"unused faces: a math face no formula sets in is named ({keys math})"
     (keys math == #["unused:face:math"])
+  let refused ← judge "article" (serif ++ ", math = \"Open Sans\"") "Plain words."
+  t s!"unused faces: a math face the build refuses for its missing MATH table is that refusal's ({keys refused})"
+    (refused.isSome && (keys refused).isEmpty)
   let formula ← judge "article" (serif ++ ", math = \"Fira Math\"") "A formula $x^2$."
   t s!"unused faces: a math face a formula sets in is not named ({keys formula})"
     (keys formula).isEmpty

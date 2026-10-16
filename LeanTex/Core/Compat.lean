@@ -913,6 +913,9 @@ private structure St where
   listSpacings : Array ((Option String × Option Nat) × Array (String × String)) := #[]
   /-- The listing defaults the document declares, in the order the text pass meets them. -/
   listingDefaults : Array ListingDefault := #[]
+  /-- The source of each value a construct the walk refused carried, which still names what it
+  names. -/
+  mentions : Array String := #[]
 
 private abbrev M := StateM St
 
@@ -1122,6 +1125,31 @@ public def packageFile (file : String) : Bool :=
 package code and the name a TeX internal. -/
 public def styInternal (file name : String) : Bool :=
   packageFile file && texInternal name
+
+mutual
+
+-- conserves: none — the result is the files the walk enters
+private def packageInputsList (owned : Bool) (acc : Array String) : List Raw → Array String
+  | [] => acc
+  | r :: rest => packageInputsList owned (packageInputsOne owned acc r) rest
+
+private def packageInputsOne (owned : Bool) (acc : Array String) : Raw → Array String
+  | .env n body _ =>
+    match Parse.inputEnvFile? n with
+    | some f =>
+      packageInputsList (owned || packageFile f)
+        (if owned && !acc.contains f then acc.push f else acc) body.toList
+    | none => packageInputsList owned acc body.toList
+  | .group body _ => packageInputsList owned acc body.toList
+  | .math _ body _ => packageInputsList owned acc body.toList
+  | .ctrl _ _ | .verb _ _ _ | .sym _ _ | .word _ _ | .space | .par _ => acc
+
+end
+
+/-- The files a package or class file inputs, directly or through another file it inputs, whose
+declarations are the package's. -/
+public def packageInputs (file : String) (raws : Array Raw) : Array String :=
+  packageInputsList (packageFile file) #[] raws.toList
 
 /-- A diagnostic attributed by its source site, keeping an explicit trigger; a
 loss about a place takes none. -/
@@ -4628,6 +4656,8 @@ private def condOne [Monad m]
           for key in lowered.unsupported do
             unreadParam s!"\\begin\{{n}}" key s!"'\\begin\{{n}}' key '{key}'" p
               (help := "use native block styles for portable decoration")
+          unless lowered.refusedValues.isEmpty do
+            write fun st => { st with mentions := st.mentions ++ lowered.refusedValues }
           pure (Raw.env Parse.scopeEnv lowered.raws p)
         | some .refused => pure (.group (body'.raws.extract head.size body'.raws.size) p)
         | none => pure (.env n (body'.raws.extract head.size body'.raws.size) p)
@@ -12938,6 +12968,10 @@ public def Executed.sourceTriggers (executed : Executed) : SourceTriggers :=
 public def Executed.inputAttempts (executed : Executed) : Array InputAttempt :=
   executed.state.inputAttempts
 
+/-- The source of each value a construct execution refused carried. -/
+public def Executed.mentions (executed : Executed) : Array String :=
+  executed.state.mentions
+
 public theorem Executed.withRaws_contract (executed : Executed) (raws : Array Raw) :
     (executed.withRaws raws).raws = raws ∧
       (executed.withRaws raws).sourceTriggers = executed.sourceTriggers ∧
@@ -14242,31 +14276,31 @@ private def fmtAng (loc : Locale) (src : String) : String := Id.run do
     i := i + 1
   return out
 
+/-- The listing defaults standing in one layer: each declaration's entries, beside its index in
+`listingDefaults` where the declaration is the document's own. -/
+private abbrev DefaultLayer := Array (Option Nat × Array String)
+
 /-- The state the text pass threads in flow order. -/
 private structure TextSt where
   /-- `\lstset` entries standing, injected ahead of every
   following listing's own options. -/
-  lstOpts : Array String := #[]
+  lstOpts : DefaultLayer := #[]
   /-- Minted's global and lexer defaults, separate layers. -/
-  mintedOpts : Array String := #[]
-  mintedLangOpts : Array (String × Array String) := #[]
+  mintedOpts : DefaultLayer := #[]
+  mintedLangOpts : Array (String × DefaultLayer) := #[]
   /-- `\setmintedinline`'s layers, read by inline code
   alone, after both of `\setminted`'s. -/
-  inlineOpts : Array String := #[]
-  inlineLangOpts : Array (String × Array String) := #[]
+  inlineOpts : DefaultLayer := #[]
+  inlineLangOpts : Array (String × DefaultLayer) := #[]
   /-- Names the document defines; a defined `\num` is the document's. -/
   defined : Array String := #[]
   /-- The document's argument-free commands standing for a minted call short of
   its code, each with that call's head. -/
   shortcuts : Array (String × Array Raw) := #[]
-  /-- The declared defaults standing in each layer, by their index in `listingDefaults`. -/
-  lstIds : Array Nat := #[]
-  mintedIds : Array Nat := #[]
-  mintedLangIds : Array (String × Array Nat) := #[]
-  inlineIds : Array Nat := #[]
-  inlineLangIds : Array (String × Array Nat) := #[]
   /-- Brace groups the pass stands inside, where a definition's body stands too. -/
   depth : Nat := 0
+  /-- Inside a file a package or class file inputs, whose declarations are the package's. -/
+  owned : Bool := false
 
 /-- The standing entries injected ahead of an environment's
 own options, which win. -/
@@ -14277,14 +14311,23 @@ private def injectListingOpts (opts : Array String) (s : String) : String :=
   | some (o, past) => "[" ++ joined ++ "," ++ o ++ "]" ++ (s.drop past).toString
   | none => "[" ++ joined ++ "]" ++ s
 
-/-- The defaults a listing of `env` reads: `\lstset`'s for a `lstlisting`, minted's global and
-lexer layers for minted's display, and the inline layers too for `\mintinline`. -/
-private def readIds (st : TextSt) (env lang : String) : Array Nat :=
-  let layer (l : Array (String × Array Nat)) := ((l.find? (·.1 == lang)).map (·.2)).getD #[]
-  if env == "lstlisting" then st.lstIds
+/-- The layers a listing of `env` in `lang` reads, in the order its options stack: `\lstset`'s for
+a `lstlisting`, minted's global and lexer layers for minted's display, and the inline layers too
+for `\mintinline`. -/
+private def readLayers (st : TextSt) (env lang : String) : Array DefaultLayer :=
+  let layer (l : Array (String × DefaultLayer)) := ((l.find? (·.1 == lang)).map (·.2)).getD #[]
+  if env == "lstlisting" then #[st.lstOpts]
   else if env == "mintinline" then
-    st.mintedIds ++ layer st.mintedLangIds ++ st.inlineIds ++ layer st.inlineLangIds
-  else st.mintedIds ++ layer st.mintedLangIds
+    #[st.mintedOpts, layer st.mintedLangOpts, st.inlineOpts, layer st.inlineLangOpts]
+  else #[st.mintedOpts, layer st.mintedLangOpts]
+
+/-- The entries the layers a listing reads stack, in order. -/
+private def readEntries (st : TextSt) (env lang : String) : Array String :=
+  (readLayers st env lang).foldl (fun acc l => l.foldl (· ++ ·.2) acc) #[]
+
+/-- The document's own declarations among the layers a listing reads. -/
+private def readIds (st : TextSt) (env lang : String) : Array Nat :=
+  (readLayers st env lang).foldl (fun acc l => l.foldl (fun acc d => acc ++ d.1.toArray) acc) #[]
 
 /-- Marks the defaults a listing reads as read. -/
 private def markRead (ids : Array Nat) : M Unit :=
@@ -14304,7 +14347,7 @@ private def declareDefault (st : TextSt) (reader : String) (lang : Option String
   let file := (← get).file
   -- A declaration a definition's replacement text makes at its call is the definition's.
   let written := pos.command.isSome && (← get).sourceTriggers.writtenAt file pos == pos.command
-  if st.depth != 0 || !written || !UnusedSetting.ownSite (packageFile file) false pos then
+  if st.depth != 0 || !written || !UnusedSetting.ownSite (packageFile file || st.owned) false pos then
     return none
   let i := (← get).listingDefaults.size
   write fun s => { s with listingDefaults := s.listingDefaults.push { reader, lang, pos, file } }
@@ -14317,7 +14360,8 @@ private def nameUnreadDefaults : M Unit := do
     unless d.read do
       let (msg, subject) := UnusedSetting.listingWords d.reader d.lang
       write fun s => { s with file := d.file }
-      say .W0449 msg d.pos (help := some UnusedSetting.unusedHelp) (subject := some subject)
+      say .W0449 msg d.pos (help := some (UnusedSetting.unusedHelp "the declaration"))
+        (subject := some subject)
   write fun s => { s with file := saved }
 
 /-- One siunitx command's replacement and the index past its arguments. -/
@@ -14363,11 +14407,7 @@ private def siCtrls : List String :=
 /-- A minted call with the standing defaults injected ahead
 of its own options. -/
 private def injectMinted (st : TextSt) (env s : String) : String :=
-  let lang := mintedLang s
-  let layer (l : Array (String × Array String)) := ((l.find? (·.1 == lang)).map (·.2)).getD #[]
-  let block := st.mintedOpts ++ layer st.mintedLangOpts
-  injectListingOpts (if env == "mintinline" then
-    block ++ st.inlineOpts ++ layer st.inlineLangOpts else block) s
+  injectListingOpts (readEntries st env (mintedLang s)) s
 
 /-- The head of a minted call a definition's text is, alone, or `none`. -/
 private def shortcutHead (raws : Array Raw) (j : Nat) : Option (Array Raw) := do
@@ -14470,25 +14510,18 @@ private def textList (loc : Locale) (st : TextSt) (raws : Array Raw)
           if mintedDisplayKeys.contains key then
             inertParam "\\setmintedinline" key s!"\\setmintedinline\{{e}}"
               "it configures a display, and inline code reads none" pos
-      let layered (layer : Array (String × Array String)) (lang : String) :=
-        let old := ((layer.find? (·.1 == lang)).map (·.2)).getD #[]
-        Ir.redeclare layer lang (old ++ entries)
       let lang := lang.map (·.trimAscii.toString)
-      let id ← declareDefault st n lang pos
-      let ids := id.toArray
-      let tagged (layer : Array (String × Array Nat)) (lang : String) :=
+      let decl := (← declareDefault st n lang pos, entries)
+      let layered (layer : Array (String × DefaultLayer)) (lang : String) :=
         let old := ((layer.find? (·.1 == lang)).map (·.2)).getD #[]
-        Ir.redeclare layer lang (old ++ ids)
-      let st := if n == "lstset" then
-          { st with lstOpts := st.lstOpts ++ entries, lstIds := st.lstIds ++ ids }
+        Ir.redeclare layer lang (old.push decl)
+      let st := if n == "lstset" then { st with lstOpts := st.lstOpts.push decl }
         else if n == "setminted" then match lang with
-          | none => { st with mintedOpts := st.mintedOpts ++ entries, mintedIds := st.mintedIds ++ ids }
-          | some lang => { st with mintedLangOpts := layered st.mintedLangOpts lang
-                                   mintedLangIds := tagged st.mintedLangIds lang }
+          | none => { st with mintedOpts := st.mintedOpts.push decl }
+          | some lang => { st with mintedLangOpts := layered st.mintedLangOpts lang }
         else match lang with
-          | none => { st with inlineOpts := st.inlineOpts ++ entries, inlineIds := st.inlineIds ++ ids }
-          | some lang => { st with inlineLangOpts := layered st.inlineLangOpts lang
-                                   inlineLangIds := tagged st.inlineLangIds lang }
+          | none => { st with inlineOpts := st.inlineOpts.push decl }
+          | some lang => { st with inlineLangOpts := layered st.inlineLangOpts lang }
       textList loc st raws out rest (i + 1) (k - (i + 1))
     else if (n == "mintinline" || n == "mint") && !st.defined.contains n &&
         (mintedRaws raws (i + 1)).isSome then
@@ -14509,7 +14542,7 @@ private def textList (loc : Locale) (st : TextSt) (raws : Array Raw)
       return ← textList loc st raws ((out.push (.ctrl env vpos)) ++ args) rest (i + 1) 0
     if env == "lstlisting" || env == "minted" || env == "mint" || env == "mintinline" then
       markRead (readIds st env (mintedLang s))
-    let s := if env == "lstlisting" then injectListingOpts st.lstOpts s
+    let s := if env == "lstlisting" then injectListingOpts (readEntries st env "") s
       else if env == "minted" || env == "mint" || env == "mintinline" then injectMinted st env s
       else s
     textList loc st raws (out.push (.verb env s vpos)) rest (i + 1) 0
@@ -14527,9 +14560,10 @@ private def textRaw (loc : Locale) (st : TextSt) : Raw → M (Raw × TextSt)
     if let some file := Parse.inputEnvFile? n then
       let savedFile := (← get).file
       write fun s => { s with file := file }
-      let (body, inner) ← textList loc st body #[] body.toList 0 0
+      let (body, inner) ← textList loc { st with owned := st.owned || packageFile savedFile } body
+        #[] body.toList 0 0
       write fun s => { s with file := savedFile }
-      return (.env n body p, inner)
+      return (.env n body p, { inner with owned := st.owned })
     let (body, inner) ← textList loc st body #[] body.toList 0 0
     return (.env n body p, { st with defined := inner.defined })
   | r => return (r, st)

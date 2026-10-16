@@ -26,6 +26,8 @@ public theorem boundName?_exact (name : String) :
 public structure Lowered where
   raws : Array Raw
   unsupported : Array String
+  /-- The source of each refused key's value, which still names what it names. -/
+  refusedValues : Array String
   /-- The keys applied in part, through the native block's spacing. -/
   inPart : Array String
   deriving Repr
@@ -66,9 +68,11 @@ private structure Settings where
   before : Option String := none
   after : Option String := none
   unsupported : Array String := #[]
+  refusedValues : Array String := #[]
   inPart : Array String := #[]
 
-private def Settings.refuse (s : Settings) (key : String) : Settings :=
+private def Settings.refuse (s : Settings) (key : String) (value : String := "") : Settings :=
+  let s := if value.isEmpty then s else { s with refusedValues := s.refusedValues.push value }
   if s.unsupported.contains key then s
   else { s with unsupported := s.unsupported.push key }
 
@@ -95,7 +99,7 @@ private def settings (options : Array Raw) : Settings := Id.run do
     if (rawSrc raw).isEmpty then continue
     let (key, v) := entry raw
     if !readKeys.contains key then
-      s := s.refuse (if key.isEmpty then rawSrc raw else key)
+      s := s.refuse (if key.isEmpty then rawSrc raw else key) (rawSrc v)
       continue
     match key with
     | "title" => s := { s with title := v }
@@ -110,16 +114,17 @@ private def settings (options : Array Raw) : Settings := Id.run do
         if key != "after skip" then s := { s with before := some g }
         if key != "before skip" then s := { s with after := some g }
       | none => s := s.refuse key
-    | "colback" => s := { s.refuse key with bodyGround := true }
+    | "colback" => s := { s.refuse key (rawSrc v) with bodyGround := true }
     | "colframe" | "colbacktitle" | "boxed title style" =>
-      s := { s.refuse key with titleGround := true }
-    | _ => s := s.refuse (if key.isEmpty then rawSrc raw else key)
+      s := { s.refuse key (rawSrc v) with titleGround := true }
+    | _ => s := s.refuse (if key.isEmpty then rawSrc raw else key) (rawSrc v)
   -- premise: TcolorboxChecks.groundChecks — a foreground without its ground can erase ink
   if s.bodyGround then
-    if let some (key, _) := s.textInk then
-      s := { s.refuse key with textInk := none }
-  if s.titleGround && s.titleInk.isSome then
-    s := { s.refuse "coltitle" with titleInk := none }
+    if let some (key, v) := s.textInk then
+      s := { s.refuse key (rawSrc v) with textInk := none }
+  if s.titleGround then
+    if let some v := s.titleInk then
+      s := { s.refuse "coltitle" (rawSrc v) with titleInk := none }
   return s
 
 /-- The native ink marker, resolved through Elab's typed colour resolver as `\color` is. -/
@@ -142,6 +147,7 @@ public structure Prepared where
   before : Option String
   after : Option String
   unsupported : Array String
+  refusedValues : Array String
   inPart : Array String
   deriving Repr
 
@@ -156,6 +162,7 @@ private def Settings.prepared (s : Settings) (pos : Pos) : Prepared :=
     before := s.before
     after := s.after
     unsupported := s.unsupported
+    refusedValues := s.refusedValues
     inPart := s.inPart }
 
 /-- Select the last assignments before executing any key's value. -/
@@ -170,11 +177,11 @@ public def prepareM [Monad m]
   if let some (key, rs) := s.textInk then
     match ← capture key rs with
     | some rs => s := { s with textInk := some (key, rs) }
-    | none => s := { s.refuse key with textInk := none }
+    | none => s := { s.refuse key (rawSrc rs) with textInk := none }
   if let some rs := s.titleInk then
     match ← capture "coltitle" rs with
     | some rs => s := { s with titleInk := some rs }
-    | none => s := { s.refuse "coltitle" with titleInk := none }
+    | none => s := { s.refuse "coltitle" (rawSrc rs) with titleInk := none }
   return s.prepared pos
 
 public theorem prepareM_identity_exact (options : Array Raw) (pos : Pos) :
@@ -184,7 +191,7 @@ public theorem prepareM_identity_exact (options : Array Raw) (pos : Pos) :
   generalize settings options = s
   cases s with
   | mk title fontTitle fontUpper textInk titleInk bodyGround titleGround before after unsupported
-      inPart =>
+      refusedValues inPart =>
     cases textInk <;> cases titleInk <;> rfl
 
 /-- Assemble the already-selected fields around the original body. -/
@@ -195,6 +202,7 @@ public def Prepared.lower (s : Prepared) (body : Array Raw) (pos : Pos) : Lowere
   let after := gap s.after pos
   { raws := before.push block ++ after
     unsupported := s.unsupported
+    refusedValues := s.refusedValues
     inPart := s.inPart }
 
 /-- Lower already-bound options and an untouched body through native block semantics. -/

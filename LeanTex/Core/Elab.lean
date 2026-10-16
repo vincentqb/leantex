@@ -585,7 +585,12 @@ public structure ESt where
   judge reads. -/
   settings : Array UnusedSetting.Declared := #[]
   /-- The document's own colours no colour read has named yet. -/
-  owedColors : Array String := #[]
+  owedColors : Std.HashSet String := {}
+  /-- The words a construct the engine refused or could not resolve spells, which still name what
+  they name. -/
+  mentions : Std.HashSet String := {}
+  /-- The files a package or class file inputs, whose declarations are the package's. -/
+  packageInputs : Array String := #[]
   ctr : Counters := {}
   /-- The binding of the nearest preceding numbered thing, which a `\label`
   declared here takes. -/
@@ -755,12 +760,11 @@ private def applyEvent (ctx : Ctx) (st : ESt) : PEvent → ESt
       if st.declaredKeys.contains (decl, key) then st.declaredKeys
       else st.declaredKeys.push (decl, key) }
   | .setting setting pos =>
-    if UnusedSetting.ownSite (Compat.packageFile ctx.file) ctx.callSite.isSome pos then
+    let package := Compat.packageFile ctx.file || st.packageInputs.contains ctx.file
+    if UnusedSetting.ownSite package ctx.callSite.isSome pos then
       let st := { st with settings := st.settings.push ⟨setting, ctx.sourceSpan pos⟩ }
       match setting with
-      | .color n =>
-        if st.owedColors.contains n || st.spans.colorReads.contains n then st
-        else { st with owedColors := st.owedColors.push n }
+      | .color n => { st with owedColors := st.owedColors.insert n }
       | .face _ | .style _ => st
     else st
 
@@ -896,30 +900,37 @@ private def recordNativePictureSpan (ctx : Ctx) (pos : Pos) : EM Unit := do
 nothing reads them. -/
 private def legacyScreenKeys : List String := ["ink", "surface"]
 
-/-- The declared colours the engine has not read yet: the legacy keys and the document's own. -/
-private def owedKeys : EM (List String) := do
+/-- Whether a declared colour the engine has not read yet stands: a legacy key or the document's
+own. -/
+private def readsOwed : EM Bool := do
   let st ← get
-  let reads := st.spans.colorReads
-  return st.spans.tokenKeys.toList.filterMap (fun (k, _) => if reads.contains k then none else some k) ++
-    st.owedColors.toList
-
-private def readsOwed : EM Bool := return !(← owedKeys).isEmpty
+  return !st.owedColors.isEmpty ||
+    st.spans.tokenKeys.any fun (k, _) => !st.spans.colorReads.contains k
 
 /-- Records the owed keys among colour names the engine read. -/
 private def noteColorNames (names : Array String) : EM Unit := do
-  let owed ← owedKeys
-  if owed.isEmpty then return
-  let reads := (← get).spans.colorReads
-  let more := names.foldl (fun acc n =>
-    if owed.contains n && !acc.contains n then acc.push n else acc) reads
+  let st ← get
+  let keys := st.spans.tokenKeys
+  if keys.isEmpty && st.owedColors.isEmpty then return
+  let reads := st.spans.colorReads
+  let (more, owed) := names.foldl (init := (reads, st.owedColors)) fun (acc, owed) n =>
+    if owed.contains n then (acc.push n, owed.erase n)
+    else if keys.any (·.1 == n) && !acc.contains n then (acc.push n, owed)
+    else (acc, owed)
   if more.size != reads.size then
-    modify fun st => { st with spans := { st.spans with colorReads := more }
-                               owedColors := st.owedColors.filter (!more.contains ·) }
+    modify fun st => { st with spans := { st.spans with colorReads := more }, owedColors := owed }
 
 /-- Records the owed colour names a resolved expression spells. -/
 private def noteColorReads (expr : String) : EM Unit := do
-  let owed ← owedKeys
-  if owed.any (expr.contains ·) then noteColorNames (Ir.colorNames expr)
+  let st ← get
+  unless st.spans.tokenKeys.isEmpty && st.owedColors.isEmpty do
+    noteColorNames (Ir.colorNames expr)
+
+/-- Records the words a construct the engine refuses or cannot resolve spells, read wherever the
+document declares them. -/
+private def noteMentions (src : String) : EM Unit :=
+  unless src.isEmpty do
+    modify fun st => { st with mentions := (Ir.colorNames src).foldl (·.insert ·) st.mentions }
 
 private def noteDocRoles (rs : List Role) : EM Unit :=
   modify fun st =>
@@ -1912,8 +1923,11 @@ private def dropEnvArgs (body : Array Raw) (beginPos : Pos) :
       | _ => break
   return (i, none, dropped)
 
-private def warnDroppedArgs (ctx : Ctx) (name : String) (dropped : Nat)
+/-- Names the groups an unknown wrapper's `\begin` line drops, and records what its arguments
+spell. -/
+private def warnDroppedArgs (ctx : Ctx) (name : String) (args : Array Raw) (dropped : Nat)
     (pos : Pos) : EM Unit := do
+  noteMentions (Parse.rawSrc args)
   if dropped > 0 then
     let noun := if dropped == 1 then "group" else "groups"
     diag ctx .E0336
@@ -3814,7 +3828,9 @@ or its own tint; it prints as a process colour" (some pos)
           (subject := some s!"ink:{i.name}")) }
     let token := if model.isNone then pal.refOf? label else none
     return .resolved c token
-  | .ok none => return .missing
+  | .ok none =>
+    if model.isNone then noteMentions src
+    return .missing
   | .error (.unsupported m) =>
     diag ctx .W0102
       s!"colour model '{m}' is not supported; use {String.intercalate ", " Decl.colorModelNames}" pos
@@ -3993,11 +4009,12 @@ private def pictureSizeInForce : EM (Option String) := do
 private def pictureSrcAt (body : Array Raw) (kind : Ir.PicKind := .picture) : EM Ir.PicSrc := do
   return { kind, body := Parse.rawSrc body, size := ← pictureSizeInForce }
 
-/-- Notes the colour names a picture reads: its body's, and those of each
-picture setting and macro once. -/
+/-- Notes the colour names a picture reads: its body's, the boundary preamble's, and those of
+each picture setting and macro once. -/
 private def notePictureReads (ctx : Ctx) (body : Array Raw) : EM Unit := do
   unless ← readsOwed do return
   noteColorReads (Parse.rawSrc body)
+  noteColorReads ctx.pic.preamble
   let (sets, macros) := (← get).spans.pictureContextRead
   for (_, rs) in ctx.pic.sets.extract sets ctx.pic.sets.size do
     noteColorReads (Parse.rawSrc rs)
@@ -4067,6 +4084,7 @@ private def cdSource (b : Array Raw) : EM (Ir.PicSrc × String) := do
 drawing with the losses it names. -/
 private def cdReading (ctx : Ctx) (b : Array Raw) :
     EM (Ir.PicSrc × String × Ir.Pic.Picture × Array Picture.PDiag) := do
+  notePictureReads ctx b
   let (src, id) ← cdSource b
   let (pic, pdiags) := Picture.Cd.elabCd ctx.palette b (pictureMath ctx) ctx.pic.metric
     ctx.page.fontSize Ir.Color.white
@@ -4122,6 +4140,7 @@ boundary is closed or withdrew the request. -/
 private def tikzcdDisplay (ctx : Ctx) (body : Array Raw) (pos : Pos) :
     EM (Option Ir.Inline) := do
   let some (b, _) := soleTikzcd body | return none
+  notePictureReads ctx b
   let (src, id) ← cdSource b
   -- premise: tikzcdRouteChecks — a refused diagram keeps its text floor
   if ctx.pic.tool.isNone || ctx.pic.withdrawn.contains id then return none
@@ -4236,6 +4255,7 @@ private structure InlineCodeOpts where
 /-- Inline code's options as minted reads them there; a key inline code does
 not honour is named. -/
 private def inlineCodeOpts (ctx : Ctx) (opts : String) (pos : Pos) : EM InlineCodeOpts := do
+  noteMentions opts
   let unhonoured (key msg : String) (help : Option String) : EM Unit :=
     warnOnce ctx ("lstopt:" ++ msg ++ ":" ++ key) .W0110 msg pos (help := help)
   let mut o : InlineCodeOpts := {}
@@ -4702,7 +4722,7 @@ private def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
           let (keptFrom, unclosed, dropped) := dropEnvArgs body pos
           if let some bpos := unclosed then
             warnUnclosed ctx s!"'\\begin\{{name}}'" bpos
-          warnDroppedArgs ctx name dropped pos
+          warnDroppedArgs ctx name (body.extract 0 keptFrom) dropped pos
           have _ : sliceWeight (raws.extract 0 i ++ body.extract keptFrom body.size
               ++ raws.extract (i + 1) raws.size) i < sliceWeight raws i :=
             sliceWeight_splice h hr keptFrom
@@ -7169,6 +7189,7 @@ private def applyBeamerColor (ctx : Ctx) (pal : Palette) (name : String)
           warnOnce ctx ("beamercolor:channel:" ++ name ++ ":" ++ key) .W0104
             s!"'\\setbeamercolor' {key} on '{name}' has no paint site; that channel is kept only for inheritance" pos
             (trigger := "\\setbeamercolor")
+  for el in UnusedSetting.beamerColorElements name do noteSetting ctx (.style el) pos
   resolveBeamerColors ctx pal
 
 /-- The `\setbeamercolor{element}{declaration}` arm. -/
@@ -8824,6 +8845,7 @@ is set as a display listing" pos
         fontSize := inherited, source := some (ctx.sourceSpan sourceStart)
         frame := Ir.ListingFrame.onPage ctx.surface ctx.lists ctx.page.parskip .trivlist }
   let (opts, afterOpt) := (Parse.listingOptHead s).getD ("", 0)
+  noteMentions opts
   let mut content := s
   let mut caption : Option String := none
   let mut label : Option String := none
@@ -10900,6 +10922,7 @@ private def listOptsArm (ctx : Ctx) (n : String) (body : Array Raw) (pos : Pos) 
   let mut bodyFrom := 0
   match scanOpeningArg body pos fun _ => true with
   | .took k' =>
+    noteMentions (bracketSrc body 0 k')
     for o in KeyVal.items (bracketSrc body 0 k') do
       let (key, value) := KeyVal.entry o
       if key.startsWith "<" then
@@ -11641,7 +11664,7 @@ prefer the construct or the class, and keep '\\begin{ifbackend}' for the true re
         extract_nested_le ..⟩
     if let some bpos := unclosed then
       warnUnclosed ctx s!"'\\begin\{{n}}'" bpos
-    warnDroppedArgs ctx n dropped pos
+    warnDroppedArgs ctx n (body.extract 0 keptFrom) dropped pos
     have _ : sliceWeight kept 0 = rawWeightList kept.toList := sliceWeight_zero _
     have _ : slicePars kept 0 = nestedParsList kept.toList := slicePars_zero _
     blocks := blocks ++ (← splicedFrameScope (some blocks.size) (elabBlockScope ctx kept))
@@ -14224,7 +14247,7 @@ public inductive PDecl where
   | titleDecl (name : String) (unclosed : Option Pos) (recovered : Bool)
       (body : Option (Array Raw × Option (Array Raw))) (pos : Pos)
   | reserved (name : String) (code : DiagCode) (unclosed : Option Pos) (pos : Pos)
-  | unknownCmd (name : String) (unclosed : Option Pos) (pos : Pos)
+  | unknownCmd (name : String) (args : String) (unclosed : Option Pos) (pos : Pos)
   /-- `\SetKw` and family: a document-global algorithm2e keyword. -/
   | algKw (name : String) (args : Option (Array Raw × Array Raw)) (pos : Pos)
   /-- `\DontPrintSemicolon`/`\LinesNumbered`: a document-wide algorithm
@@ -14248,7 +14271,8 @@ public inductive PDecl where
   | cancelOpts (src : String) (pos : Pos)
   /-- A blueprint's site declaration: its package load, `\github`, `\dochome` or `link`. -/
   | blueprintSite (key : Blueprint.SiteKey) (url : String) (pos : Pos)
-  | stray
+  /-- Text before `\begin{document}`, as written. -/
+  | stray (src : String)
 
 /-- The preamble fold's state. -/
 public structure PreState where
@@ -14484,7 +14508,7 @@ public def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run d
               | _ => none
             out := out.push (.beamerSite chain (rawSrc ch).trimAscii.toString
               (rawSrc key).trimAscii.toString pos)
-          | _, _, _ => out := out.push (.unknownCmd "usebeamercolor" none pos)
+          | _, _, _ => out := out.push (.unknownCmd "usebeamercolor" "" none pos)
         else if name == BeamerColor.marker || name == BeamerColor.starMarker ||
             name == BeamerColor.standoutMarker then
           let j := skipSpaces preamble i
@@ -14495,7 +14519,7 @@ public def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run d
             out := out.push (if name == BeamerColor.standoutMarker then
               .standoutColor (rawSrc elem) (rawSrc body) pos
               else .beamerColor (rawSrc elem) (name == BeamerColor.starMarker) (rawSrc body) pos)
-          | _, _ => out := out.push (.unknownCmd "setbeamercolor" none pos)
+          | _, _ => out := out.push (.unknownCmd "setbeamercolor" "" none pos)
         else if name == "palette" then
           let (opts, k) := takeOptRun preamble (skipSpaces preamble i)
           let j := skipSpaces preamble k
@@ -14689,16 +14713,17 @@ public def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run d
             if w.startsWith "=" then i := j0 + 1
           | _ => pure ()
           let (j, unclosed) := skipReservedArgs preamble i pos (maxGroups := 9)
+          let args := rawSrc (preamble.extract i j)
           match unclosed with
           | some bpos =>
-            out := out.push (.unknownCmd name (some bpos) pos)
+            out := out.push (.unknownCmd name args (some bpos) pos)
             i := malformedRun preamble i pos (groups := true)
           | none =>
-            out := out.push (.unknownCmd name none pos)
+            out := out.push (.unknownCmd name args none pos)
             i := j
       | _ =>
         i := i + 1
-        out := out.push .stray
+        out := out.push (.stray (rawSrc #[r]))
     else
       break
   return out
@@ -15283,6 +15308,7 @@ numbers it; set as '??' or '?'" (some pos)
             s := { s with captionPos := Ir.redeclare s.captionPos sc p }
             honouredPos := true
         unless honouredToken || honouredPos do
+          noteMentions value
           let head := match scope with
             | some sc => s!"'\\captionsetup[{sc}]'"
             | none => "'\\captionsetup'"
@@ -15437,7 +15463,8 @@ a heading; its numbers stand alone" pos
     return { s with ctx := { s.ctx with cancel := (Math.CancelSpec.ofOptions opts).1 } }
   | .blueprintSite key url _ =>
     return { s with ctx := { s.ctx with blueprint := s.ctx.blueprint.declare key url } }
-  | .unknownCmd name unclosed pos =>
+  | .unknownCmd name args unclosed pos =>
+    noteMentions args
     -- Set lines the engine or an open boundary reads are not unknown.
     if Compat.nativeReadCtrls.contains name ||
         (s.ctx.pic.tool.isSome && Compat.boundaryCtrls.contains name) then
@@ -15449,17 +15476,18 @@ a heading; its numbers stand alone" pos
     if let some bpos := unclosed then
       warnUnclosed s.ctx s!"'\\{name}'" bpos
     return s
-  | .stray =>
+  | .stray src =>
+    noteMentions src
     if s.textDiagged then
       return s
     else
       diag s.ctx .E0313 "only declarations may appear before '\\begin{document}'" none
       return { s with textDiagged := true }
 
-/-- The elaboration state with the six stores only diagnostics read erased. -/
+/-- The elaboration state with the stores only diagnostics read erased. -/
 public def ESt.sem (e : ESt) : ESt :=
   { e with diags := #[], warnedUnknown := #[], seenScalars := #[], declaredKeys := #[],
-           settings := #[], owedColors := #[] }
+           settings := #[], owedColors := {}, mentions := {} }
 
 /-- The fold state with its reporting once-latch erased. -/
 public def PreState.sem (s : PreState) : PreState := { s with textDiagged := false }
@@ -16075,7 +16103,8 @@ private def beginDoc (file : String) (raws : Array Raw) (picPre : String)
       match d with
       | .urlstyle (some v) _ => (urlStyleFamily? v).getD fam
       | _ => fam) (← get).scope.urlFamily
-  modify fun st => { st with scope := { st.scope with urlFamily := urlFamily0 } }
+  modify fun st => { st with scope := { st.scope with urlFamily := urlFamily0 }
+                             packageInputs := Compat.packageInputs file raws }
   let s ← decls.foldlM applyDecl
     { ctx := { file := file, listingReplies := listingReplies
                pic := { tool := picTool0, preamble := picPre, metric := picMetric
@@ -16451,6 +16480,8 @@ public structure Prepared where
   sourceTriggers : Compat.SourceTriggers := {}
   /-- The input-reader calls execution made. -/
   inputAttempts : Array Compat.InputAttempt := #[]
+  /-- The source of each value a construct execution refused carried. -/
+  mentions : Array String := #[]
   /-- The highlighter answers every elaboration of this input reads. -/
   listingReplies : Array ListingReply.Answer := #[]
   /-- The notes each bibliography list's fields set, in document order; empty
@@ -16547,13 +16578,14 @@ public def prepareRewritten (file : String) (picScan : Compat.BoundaryScan)
     (picMacros : Array (String × String)) (sourceTriggers : Compat.SourceTriggers)
     (priorDiags : Array Diag)
     (rewritten : Array Raw × Array Diag × Array String)
-    (inputAttempts : Array Compat.InputAttempt := #[]) : Prepared :=
+    (inputAttempts : Array Compat.InputAttempt := #[]) (mentions : Array String := #[]) :
+    Prepared :=
   let (raws, compatDiags, warned) := rewritten
   let (raws, textDiags, warned) := Compat.rewriteText file raws warned
   { raws := raws, picPre := picScan.pre, picSets := picScan.sets
     picMacros := picMacros, warned := warned
     compatDiags := priorDiags ++ compatDiags ++ textDiags
-    sourceTriggers := sourceTriggers, inputAttempts := inputAttempts }
+    sourceTriggers := sourceTriggers, inputAttempts := inputAttempts, mentions := mentions }
 
 /-- Prepares a document whose macro and input execution already ran. -/
 public def prepareExecuted (file : String) (executed : Compat.Executed) : Prepared :=
@@ -16561,14 +16593,16 @@ public def prepareExecuted (file : String) (executed : Compat.Executed) : Prepar
   let picMacros := macroScan executed.raws
   prepareRewritten file picScan picMacros executed.sourceTriggers
     (Compat.unusedLengths file executed.raws) (Compat.rewriteExecuted executed) executed.inputAttempts
+    executed.mentions
 
 private theorem prepareRewritten_carried_exact (file : String)
     (scan : Compat.BoundaryScan) (macros : Array (String × String))
     (triggers : Compat.SourceTriggers) (prior : Array Diag)
     (rewritten : Array Raw × Array Diag × Array String)
-    (attempts : Array Compat.InputAttempt) :
-    (prepareRewritten file scan macros triggers prior rewritten attempts).inputAttempts = attempts ∧
-      (prepareRewritten file scan macros triggers prior rewritten attempts).sourceTriggers =
+    (attempts : Array Compat.InputAttempt) (mentions : Array String) :
+    (prepareRewritten file scan macros triggers prior rewritten attempts mentions).inputAttempts =
+        attempts ∧
+      (prepareRewritten file scan macros triggers prior rewritten attempts mentions).sourceTriggers =
         triggers := by
   rcases rewritten with ⟨raws, diags, warned⟩
   unfold prepareRewritten
@@ -16579,13 +16613,13 @@ attribute [local irreducible] prepareRewritten macroScan in
 public theorem prepareExecuted_inputAttempts_exact (file : String) (executed : Compat.Executed) :
     (prepareExecuted file executed).inputAttempts = executed.inputAttempts := by
   unfold prepareExecuted
-  exact (prepareRewritten_carried_exact file _ _ _ _ _ _).1
+  exact (prepareRewritten_carried_exact file _ _ _ _ _ _ _).1
 
 attribute [local irreducible] prepareRewritten macroScan in
 public theorem prepareExecuted_sourceTriggers_exact (file : String) (executed : Compat.Executed) :
     (prepareExecuted file executed).sourceTriggers = executed.sourceTriggers := by
   unfold prepareExecuted
-  exact (prepareRewritten_carried_exact file _ _ _ _ _ _).2
+  exact (prepareRewritten_carried_exact file _ _ _ _ _ _ _).2
 
 /-- Settles, scans, executes and rewrites a parsed document, once. -/
 public def prepare (file : String) (raws : Array Raw) : Prepared :=
@@ -16596,6 +16630,7 @@ public def prepare (file : String) (raws : Array Raw) : Prepared :=
     (provideKeeps := providedNames) (ignoredDefs := ignoredDefNames)
   prepareRewritten file picScan picMacros executed.sourceTriggers
     (splitDiags ++ Compat.unusedLengths file executed.raws) (Compat.rewriteExecuted executed)
+    (mentions := executed.mentions)
 
 /-- Whether the source holds a natively drawn picture, and whether one sets a
 formula. -/
@@ -16760,8 +16795,14 @@ public def completePrepared (file : String) (p : Prepared) (earlier : Array Diag
   let named := if settings.isEmpty then #[] else
     said.filterMap fun d => if d.severity == .note then none else d.span
   let unused := if settings.isEmpty then #[] else
-    UnusedSetting.diags settings (UnusedSetting.shown doc)
-      (doc.page.drawn.foldl (fun acc r => acc ++ Ir.colorNames r.color) st.spans.colorReads) named
+    -- A title block reads the title page's style whatever datum it sets.
+    let shown := UnusedSetting.shown doc (if st.titleDone then #["titlepage"] else #[])
+    -- A construct the engine refused or could not resolve still names what it names.
+    let words (acc : Std.HashSet String) (src : String) := (Ir.colorNames src).foldl (·.insert ·) acc
+    let read := doc.salvage.foldl (fun acc r => words acc r.text) (p.mentions.foldl words st.mentions)
+    let read := doc.page.drawn.foldl (fun acc r => words acc r.color)
+      (st.spans.colorReads.foldl (·.insert ·) read)
+    UnusedSetting.diags settings shown read named
   (doc, Diag.tallySites ((accountRecovered doc.salvage (said ++ unused)
     st.spans.recoveryDiags).map p.sourceTriggers.attribute),
     { inputAttempts := p.inputAttempts
