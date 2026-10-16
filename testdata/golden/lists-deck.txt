@@ -24,6 +24,7 @@ token institutegap 1000/1000em
 chrome footer right framenumber
 meta title "List Marks"
 meta author "Pat Placeholder"
+section-pages theme
 frame golden
   section* 0
     text "List Marks"

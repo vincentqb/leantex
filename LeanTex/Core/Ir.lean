@@ -7123,6 +7123,34 @@ diagram environment, after the size switch in force. -/
   | none => core
   | some z => "\\" ++ z ++ " " ++ core
 
+/-- What a document's own `\AtBeginSection` or `\AtBeginSubsection` declares: a page for each
+section it opens, and for each starred one. -/
+public structure SectionHook where
+  page : Bool
+  starredPage : Bool
+  deriving Repr, BEq, Inhabited
+
+/-- Where a deck's sections stand on pages of their own: the theme's section page, which the
+document's own hooks replace. -/
+public structure SectionPages where
+  theme : Bool := false
+  atSection : Option SectionHook := none
+  atSubsection : Option SectionHook := none
+  deriving Repr, BEq, Inhabited
+
+/-- Whether a deck's section outside every frame stands on a page of its own; any other names
+navigation alone, as beamer's `\section` does. -/
+@[expose] public def SectionPages.pageFor (p : SectionPages) (level : HeadingLevel) (starred : Bool) :
+    Bool :=
+  let hooked (h : Option SectionHook) (otherwise : Bool) : Bool :=
+    match h with
+    | some h => if starred then h.starredPage else h.page
+    | none => otherwise
+  match level with
+  | .h1 | .h2 => hooked p.atSection p.theme
+  | .h3 => hooked p.atSubsection false
+  | .title | .h4 | .h5 | .h6 => false
+
 public structure Doc where
   docClass : DocClass := .article
   surface : Surface := .tex
@@ -7194,6 +7222,8 @@ public structure Doc where
   /-- Where the frame numbering starts over: the body index of the first block
   after `\appendix` under appendixnumberbeamer. -/
   frameRestart : Option Nat := none
+  /-- Which of a deck's sections stand on pages of their own. -/
+  sectionPages : SectionPages := {}
   /-- Where each `\bibliography` list's footnotes number from, in document
   order, and how many notes its fields set. -/
   listNotes : Array (Nat × Nat) := #[]
@@ -8233,6 +8263,33 @@ end
 /-- Whether blocks hold a list anywhere: what beamer's squeeze changes. -/
 public def holdsList (body : Array Block) : Bool :=
   foldBlocks (fun acc b => acc || b matches .list ..) (fun acc _ => acc) false body
+
+/-- Whether blocks hold a frame anywhere. -/
+public def holdsFrame (body : Array Block) : Bool :=
+  foldBlocks (fun acc b => acc || b matches .frame ..) (fun acc _ => acc) false body
+
+/-- What a deck sets for a block outside every frame. -/
+public inductive Outside where
+  /-- A page and a stage of its own: a frame, a section page, a boundary. -/
+  | stage
+  /-- Content beamer sets on a page of its own, with what stands beside it outside the frames. -/
+  | content
+  /-- Nothing a page shows: navigation, an anchor, a note, a state change or a mark. -/
+  | none
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+/-- What a deck sets for a block outside every frame, read as both of its artifacts read it. -/
+public def Doc.outside (doc : Doc) (b : Block) : Outside :=
+  if holdsFrame #[b] || b matches .pagebreak then .stage
+  else if pageMarkerBlock b || b matches .setPalette _ | .setTokens _ | .logo _ | .framefoot _
+      | .note _ | .spaced _ #[] then .none
+  else match b with
+    | .section level starred _ _ =>
+      if level == .title then .content
+      else if doc.sectionPages.pageFor level starred then .stage
+      else .none
+    | .para content => if anchorsOnly content then .none else .content
+    | _ => .content
 
 /-- The events a context-threading walk declares. -/
 public structure CtxFold (γ : Type) (α : Type) where
@@ -9821,11 +9878,6 @@ public structure Design where
 
 /-- The print design, which the PDF paints and the contrast judge reads. -/
 @[expose] public def Design.ofPalette (pal : Palette) : Design := Design.resolve pal .print
-
-/-- Whether a deck's section outside every frame stands on a page of its own: a section under a
-design with a section page, as a theme's `\AtBeginSection` sets one; any other names navigation only. -/
-@[expose] public def Design.sectionPageFor (d : Design) (level : HeadingLevel) : Bool :=
-  level == 1 && d.sectionProgress.isSome
 
 /-- The printed ink alone: `(Design.ofPalette pal).fg` without resolving the
 rest of the design. -/
@@ -17338,12 +17390,21 @@ public def dump (doc : Doc) (diags : Array Diag) : String :=
     s!"assert {a.kind.source}\n")
   let allowLine := if doc.allow.isEmpty then ""
     else s!"allow {String.intercalate ", " doc.allow.toList}\n"
+  let hookLine (label : String) : Option SectionHook → String
+    | some h => s!"{label} {if h.page then "page" else "none"} starred \
+{if h.starredPage then "page" else "none"}\n"
+    | none => ""
+  let sectionLines :=
+    (if doc.sectionPages.theme then "section-pages theme\n" else "") ++
+    hookLine "section-hook" doc.sectionPages.atSection ++
+    hookLine "subsection-hook" doc.sectionPages.atSubsection
   let body := dumpBlocks "" doc.body
   let ds :=
     if diags.isEmpty then
       "-- diagnostics\n(none)\n"
     else
       "-- diagnostics\n" ++ String.join (diags.toList.map dumpDiag)
-  head ++ page ++ fontLines ++ paletteLines ++ tokenLines ++ runLines ++ infoLines ++ outputLines ++ asserts ++ allowLine ++ body ++ ds
+  head ++ page ++ fontLines ++ paletteLines ++ tokenLines ++ runLines ++ infoLines ++ outputLines ++
+    asserts ++ allowLine ++ sectionLines ++ body ++ ds
 
 end LeanTex.Core.Ir

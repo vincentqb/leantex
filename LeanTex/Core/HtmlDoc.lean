@@ -7970,9 +7970,33 @@ section to assistive technology as beamer's bookmark names it to a reader. -/
 private def navHeading (cfg : Config) (b : Block) : Node :=
   withStyle visuallyHidden (blockNode cfg b)
 
-/-- Whether a block outside every frame wraps a frame, which the deck's row keeps where it stands. -/
-private def wrapsFrame (b : Block) : Bool :=
-  Ir.foldBlocks (fun acc b => acc || b matches .frame ..) (fun acc _ => acc) false #[b]
+/-- Whether a node of the deck's row is a stage: a frame's, a stepped frame's track, a section page. -/
+private def isStage : Node → Bool
+  | .elem tag attrs _ =>
+    let cls := attrsClass attrs
+    (tag == "section" && (classHas cls "slide" || classHas cls "section-page")) ||
+      (tag == "div" && classHas cls "slide-track")
+  | .text _ | .style _ | .script .. => false
+
+private def hasStage (row : Array Node) : Bool := row.any isStage
+
+/-- A stage with nodes appended to its content, a stepped frame's to its stage, not its track. -/
+private def appendInStage (nodes : Array Node) : Node → Node
+  | .elem "div" attrs kids =>
+    .elem "div" attrs (kids.modify 0 fun
+      | .elem t a k => .elem t a (k ++ nodes)
+      | n => n)
+  | .elem tag attrs kids => .elem tag attrs (kids ++ nodes)
+  | .text s => .text s
+  | .style s => .style s
+  | .script attrs s => .script attrs s
+
+/-- The row with nodes appended to its last stage, where what no later stage takes lands. -/
+private def intoLastStage (row : Array Node) (nodes : Array Node) : Array Node :=
+  if nodes.isEmpty then row else
+  match (row.toList.zipIdx.filter (isStage ·.1)).getLast? with
+  | some (_, k) => row.modify k (appendInStage nodes)
+  | none => row ++ nodes
 
 /-- Content set outside every frame, on a stage of its own as beamer ships it on a page of its own. -/
 private def looseStage (cfg : Config) (kids : Array Node) (label : String) : Node :=
@@ -8345,30 +8369,29 @@ private def emitTreeCore (cfg : Config) (doc : Doc)
       let mut taken : NameClaim.Claims .dashed := {}
       let mut named : NameClaim.Claims .parenthesized := {}
       let mut cfg := cfg
-      -- page-less sections' headings and anchors waiting for what is set next, and the open run of
-      -- content outside every frame
-      let mut heads : Array Node := #[]
+      -- what waits for the next stage: page-less sections' headings and label anchors
       let mut held : Array Node := #[]
+      -- the open run of content outside every frame, and the configuration and block it opened on
       let mut loose : Array Node := #[]
+      let mut looseCfg := cfg
+      let mut looseAt := 0
       let mut loosePages := 0
       for h : i in [0:doc.body.size] do
         let b := doc.body[i]
         total := doc.frameCountAt i
         if doc.frameRestart == some i then done := 0
-        let opensStage := match b with
-          | .frame .. | .pagebreak => true
-          | .section level _ _ _ => (Design.ofPalette cfg.pal).sectionPageFor level
-          | _ => wrapsFrame b
-        if opensStage then
-          unless loose.isEmpty do
-            let label := if loosePages == 0 then "page" else s!"page-{loosePages + 1}"
-            let (node, named2) := claimStageName named (looseStage cfg loose label)
-            named := named2
-            acc := acc.push node
-            loose := #[]
-            loosePages := loosePages + 1
-          acc := acc ++ heads
-          heads := #[]
+        let kind := doc.outside b
+        if kind == .stage && !loose.isEmpty then
+          loosePages := loosePages + 1
+          let (node, named2) := claimStageName named
+            (looseStage looseCfg loose s!"outside-{loosePages}")
+          named := named2
+          acc := acc.push (looseCfg.applyEpoch
+            (attachLogo looseCfg node (Ir.logoInForce doc.logo logoSpans looseAt)))
+          loose := #[]
+        if kind == .content && loose.isEmpty then
+          looseCfg := cfg
+          looseAt := i
         match b with
         | .setPalette p =>
           cfg := cfg.advancePalette p
@@ -8462,17 +8485,16 @@ retitle the frames apart, or link to the numbered anchor")
           acc := acc.push (cfg.applyEpoch node)
           cfg := cfg.afterBlock b
         | .section level _ _ title =>
-          if level == 0 then
-            loose := (loose ++ heads ++ held).push (cfg.applyEpoch (blockNode cfg b))
-            heads := #[]
+          if kind == .content then
+            loose := (loose ++ held).push (cfg.applyEpoch (blockNode cfg b))
             held := #[]
-          else if (Design.ofPalette cfg.pal).sectionPageFor level then
-            curSection := title
-            -- no clamp, as on the PDF path
+          else if kind == .stage then
+            if level == 1 then curSection := title
             let kids := held ++ #[Html.elem "h2" (inlines cfg title)]
             held := #[]
-            let kids := if total == 0 then kids else
-              kids.push (Html.elem "div"
+            -- no clamp, as on the PDF path
+            let kids := if total == 0 || (Design.ofPalette cfg.pal).sectionProgress.isNone then kids
+              else kids.push (Html.elem "div"
                 #[Html.elem "div" #[] #[("style", s!"width: {done * 100 / total}%")]]
                 #[("class", "progress")])
             let (name, named2) := claimName named (sectionPageName title)
@@ -8487,33 +8509,30 @@ retitle the frames apart, or link to the numbered anchor")
             sectionPages := sectionPages + 1
           else
             if level == 1 then curSection := title
-            heads := heads.push (cfg.applyEpoch (navHeading cfg b))
+            held := held.push (cfg.applyEpoch (navHeading cfg b))
         | .pagebreak => pure ()
         | .spaced _ #[] =>
           unless loose.isEmpty do loose := loose.push (cfg.applyEpoch (blockNode cfg b))
-        | .para content =>
-          let node := cfg.applyEpoch (blockNode cfg b)
-          if Ir.anchorsOnly content then held := held.push node
-          else
-            loose := (loose ++ heads ++ held).push node
-            heads := #[]
-            held := #[]
-          cfg := cfg.afterBlock b
         | .note _ =>
-          held := held.push (cfg.applyEpoch (blockNode cfg b))
+          -- beamer's note outside the frames is its previous frame's
+          let node := cfg.applyEpoch (blockNode cfg b)
+          if hasStage acc then acc := intoLastStage acc #[node] else held := held.push node
         | _ =>
-          unless Ir.pageMarkerBlock b do
-            if wrapsFrame b then acc := acc.push (cfg.applyEpoch (blockNode cfg b))
-            else
-              loose := (loose ++ heads ++ held).push (cfg.applyEpoch (blockNode cfg b))
-              heads := #[]
-              held := #[]
+          if kind == .stage then
+            acc := acc.push (withHeld held (cfg.applyEpoch (blockNode cfg b)))
+            held := #[]
+          else if kind == .content then
+            loose := (loose ++ held).push (cfg.applyEpoch (blockNode cfg b))
+            held := #[]
+          else if b matches .para _ then held := held.push (cfg.applyEpoch (blockNode cfg b))
           cfg := cfg.afterBlock b
       if !loose.isEmpty then
-        let label := if loosePages == 0 then "page" else s!"page-{loosePages + 1}"
-        acc := acc.push (claimStageName named (looseStage cfg (loose ++ heads ++ held) label)).1
+        let (node, _) := claimStageName named
+          (looseStage looseCfg (loose ++ held) s!"outside-{loosePages + 1}")
+        acc := acc.push (looseCfg.applyEpoch
+          (attachLogo looseCfg node (Ir.logoInForce doc.logo logoSpans looseAt)))
       else
-        acc := acc ++ heads ++ held
+        acc := if hasStage acc then intoLastStage acc held else acc ++ held
       return (acc, walkDiags)
   diags := diags ++ sectionDiags
   -- the endnotes: one `doc-endnotes` section, each note back-linked to its mark

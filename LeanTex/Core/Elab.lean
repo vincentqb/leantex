@@ -528,6 +528,11 @@ public structure ESt where
   salvage : Array Ir.Recovered := #[]
   /-- The top-level block index where the deck's frame count starts over. -/
   frameRestart : Option Nat := none
+  /-- What the document's own `\AtBeginSection` and `\AtBeginSubsection` declare. -/
+  sectionHook : Option Ir.SectionHook := none
+  subsectionHook : Option Ir.SectionHook := none
+  /-- A section has been set, after which a hook declared in the body binds none before it. -/
+  sawSection : Bool := false
   /-- The `\bibliographystyle` name, wherever it appears. -/
   bibStyle : Option String := none
   /-- natbib's declarations, `none` until natbib is loaded. -/
@@ -6140,13 +6145,13 @@ private def contentWrapperTakesBlocks (n : String) (raws : Array Raw) (i : Nat) 
   | some (.group _ _), some (.group body _) => bodyIsBlock body
   | _, _ => false
 
-/-- The number a heading takes, stepped in flow order; `none` when starred,
-past `secnumdepth`, or in a class that does not number. -/
+/-- The number a heading prints, stepped in flow order; `none` when starred, past `secnumdepth`, in
+a class that does not number, or in a deck, which steps every section for `\ref` and prints none. -/
 private def sectionNumber (ctx : Ctx) (level : Nat) (starred : Bool) :
     EM (Option String) := do
   let st ← get
-  -- beamer steps every section's counter for `\ref`, a starred one's too, and prints no number
   let deck := ctx.slides
+  if deck && level != 0 then modify fun st => { st with sawSection := true }
   if (starred && !deck) || (!ctx.numberHeadings && !deck) || level == 0 || level > 3 ||
       (level : Int) > st.ctr.secDepth then
     return none
@@ -6155,13 +6160,71 @@ private def sectionNumber (ctx : Ctx) (level : Nat) (starred : Bool) :
     | 1 => (s1 + 1, 0, 0)
     | 2 => (s1, s2 + 1, 0)
     | _ => (s1, s2, s3 + 1)
-  -- beamer's `\thesubsection` is `\arabic{subsection}` alone, its parent unprinted
+  -- beamer's `\thesubsection` is `\arabic{subsection}` alone
   let num := if deck && (st.ctr.secFmts.findRev? (·.1 == level)).isNone then
       ListMark.arabicN (counterAt nums level)
     else renderSecLevel st.ctr.secFmts nums st.ctr.inAppendix secFmtFuel level
   modify fun st => { st with ctr := { st.ctr with secNums := nums, runNums := (0, 0) }
                              refTarget := some { kind := some .heading, num := num } }
   return if deck then none else some num
+
+mutual
+
+/-- Whether a hook's code sets a page of its own: a frame, or a section page outside one. -/
+private def hookSetsPageOne : Raw → Bool
+  | .ctrl n _ => n == "frame" || n == "againframe" || n == "sectionpage" || n == "subsectionpage"
+  | .env n body _ => n == "frame" || hookSetsPageList body.toList
+  | .group body _ => hookSetsPageList body.toList
+  | _ => false
+
+private def hookSetsPageList : List Raw → Bool
+  | [] => false
+  | r :: rest => hookSetsPageOne r || hookSetsPageList rest
+
+end
+
+/-- A hook's `[starred]` code, its `{code}` group and the index past them, after its control word. -/
+private def hookArgsAt (raws : Array Raw) (i : Nat) :
+    Option (Array Raw) × Option (Array Raw) × Nat :=
+  let j0 := skipSpaces raws i
+  let (starred, j1) := if raws[j0]? matches some (.sym '[' _) then
+      match closeBracketFrom raws (j0 + 1) with
+      | some c => (some (raws.extract (j0 + 1) c), c + 1)
+      | none => (some #[], raws.size)
+    else (none, j0)
+  let j2 := skipSpaces raws j1
+  match raws[j2]? with
+  | some (.group g _) => (starred, some g, j2 + 1)
+  | _ => (starred, none, j1)
+
+/-- Records the document's own `\AtBeginSection` or `\AtBeginSubsection`: whether each section it
+opens, and each starred one, stands on a page of its own. -/
+private def recordSectionHook (ctx : Ctx) (name : String) (starred : Option (Array Raw))
+    (code : Array Raw) (pos : Pos) : EM Unit := do
+  let hook : Ir.SectionHook :=
+    { page := hookSetsPageList code.toList
+      starredPage := hookSetsPageList (starred.getD code).toList }
+  if name == "AtBeginSubsection" then
+    modify fun st => { st with subsectionHook := some hook }
+  else
+    modify fun st => { st with sectionHook := some hook }
+  if hook.page || hook.starredPage then
+    warnOnce ctx ("ctrl:" ++ name) .W0307
+      s!"'\\{name}' is not set yet: each section it opens stands on a page showing its title" pos
+      (help := "beamer sets the hook's own frame there")
+
+/-- A hook declared in the body: read where no section precedes it, else named and ignored. -/
+private def bodySectionHook (ctx : Ctx) (name : String) (raws : Array Raw) (i : Nat) (pos : Pos) :
+    EM Unit := do
+  let (starred, code, _) := hookArgsAt raws i
+  -- premise: sectionPageChecks — one hook decides every section's page
+  if (← get).sawSection then
+    warnOnce ctx ("ctrl:" ++ name) .W0340
+      s!"'\\{name}' after a section is ignored: the hook decides every section's page" pos
+      (help := "declare it before the first '\\section', or in the preamble")
+  else match code with
+    | some c => recordSectionHook ctx name starred c pos
+    | none => diag ctx .E0304 s!"'\\{name}' needs a \{...} group" pos
 
 /-- Whether a raw sets a style, size, alignment or colour for its group. -/
 private def isDeclaration (ctx : Ctx) : Raw → Bool
@@ -10611,6 +10674,7 @@ private def isBlockStart (ctx' : Ctx) (n : String) (raws : Array Raw) (i : Nat)
   n == "par" || n == "block" || n == "centering" || n == "pause"
     || (Ir.raggedSideOf? n).isSome
     || n == "framefoot" || n == "pagebreak" || n == "appendix"
+    || n == "AtBeginSection" || n == "AtBeginSubsection"
     || n == Compat.frameRestartMark || n == Compat.vspaceAnchorMark
     || (Ir.pageOpeningOfRole? n).isSome
     -- `\prevdepth` is vertical mode's: TeX refuses it mid-paragraph.
@@ -10759,8 +10823,10 @@ private def flowDecl? (ctx : Ctx) (n : String) (next : Nat) : Option (ESt → ES
   if n.startsWith "@lang:" then some (flowLangUpdate ctx n)
   else if n == Compat.frameRestartMark then
     some fun st => { st with frameRestart := st.frameRestart <|> some next }
+  -- beamer's `\appendix` opens a part, which numbers no section anew
   else if n == "appendix" then
-    some fun st => { st with ctr := { st.ctr with inAppendix := true, secNums := (0, 0, 0) } }
+    if ctx.slides then some id
+    else some fun st => { st with ctr := { st.ctr with inAppendix := true, secNums := (0, 0, 0) } }
   else none
 
 /-- The tokens a `\block`'s `before` reads: the document's, then the engine's
@@ -11208,6 +11274,8 @@ private def elabEnvArm (ctx : Ctx) (n : String) (scope : Array Raw)
   else if n == "thebibliography" then
     blocks := blocks ++ (← ownBibList ctx body)
   else if n == "frame" then
+    -- A label in a deck's frame binds no section's number.
+    if ctx.slides then modify fun st => { st with refTarget := none }
     -- A paragraph break before the title group makes it content, as in LaTeX.
     let opts ← frameOpts ctx body pos
     let (⟨frameCtx, _⟩, frameBlocks, aliasScope) ← openStandoutPalette ctx opts.standout blocks
@@ -11628,6 +11696,11 @@ when it is empty — '{}'")
     if let some p ← mkPara ctx junk then
       blocks := blocks.push p
     return (blocks, ⟨j, by omega⟩)
+  else if n == "AtBeginSection" || n == "AtBeginSubsection" then
+    let ju := skipReservedArgs raws (i + 1) pos
+    have hj : i + 1 ≤ ju.1 := skipReservedArgs_ge raws (i + 1) pos 1
+    bodySectionHook ctx n raws (i + 1) pos
+    return (blocks, ⟨ju.1, by omega⟩)
   else if n == "logo" then
     let j := skipSpaces raws (i + 1)
     have hjge := skipSpaces_ge raws (i + 1)
@@ -14004,6 +14077,8 @@ public inductive PDecl where
   /-- amsmath's `\numberwithin[fmt]{counter}{within}`; `none` when its groups
   are missing. -/
   | numberwithin (fmt : Option String) (counter : Option (String × String)) (pos : Pos)
+  /-- `\AtBeginSection[starred]{code}` or `\AtBeginSubsection`, as written. -/
+  | sectionHook (name : String) (starred code : Option (Array Raw)) (pos : Pos)
   /-- A cancel package load's options, as written. -/
   | cancelOpts (src : String) (pos : Pos)
   /-- A blueprint's site declaration: its package load, `\github`, `\dochome` or `link`. -/
@@ -14044,6 +14119,8 @@ public structure PreState where
   sawTheme : Bool := false
   /-- The frame-alignment keys the installed theme sets. -/
   frameKeys : Ir.FrameKeys := .beamer
+  /-- Whether the installed theme sets each section on a page of its own. -/
+  themeSectionPage : Bool := false
   /-- The form a refused abstract redefinition sets its body in, where it opens a quotation. -/
   abstractForm : Option Ir.AbstractForm := none
 
@@ -14400,6 +14477,10 @@ public def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run d
           | _ =>
             i := j0
             out := out.push (.newtheorem star "" none none none pos)
+        else if name == "AtBeginSection" || name == "AtBeginSubsection" then
+          let (starred, code, j) := hookArgsAt preamble i
+          i := j
+          out := out.push (.sectionHook name starred code pos)
         else if name == "theoremstyle" then
           let j := skipSpaces preamble i
           match preamble[j]? with
@@ -14777,7 +14858,7 @@ draws; skipped" pos
       let tname := src.trimAscii.toString
       -- beamer's `default` installs no bundle and displaces the class default.
       if tname == "default" then
-        return s
+        return { s with themeSectionPage := false }
       match Theme.find? tname with
       | some th =>
         if !s.docClass.record.chrome then
@@ -14827,13 +14908,14 @@ draws; skipped" pos
           styles := ds.styles
           chrome := ds.chrome
           frameKeys := th.frameKeys
+          themeSectionPage := th.sectionPage
           ctx := { s.ctx with palette := pal, tokens := ds.tokens } }
       | none =>
         diag s.ctx .W0319 s!"unknown theme '{tname}'; the document is unthemed"
           (some pos)
           (help := s!"themes: {String.intercalate ", " Theme.names}")
           (refused := some tname)
-        return s
+        return { s with themeSectionPage := false }
     | none =>
       diag s.ctx .E0304 "'\\theme' needs a {...} block" pos
       return s
@@ -15166,6 +15248,11 @@ does not keep; the number stands alone" pos
             s!"'\\numberwithin\{{c}}' names a counter the engine does not number within \
 a heading; its numbers stand alone" pos
       return s
+  | .sectionHook name starred code pos =>
+    match code with
+    | some c => recordSectionHook s.ctx name starred c pos
+    | none => diag s.ctx .E0304 s!"'\\{name}' needs a \{...} group" pos
+    return s
   | .cancelOpts src _ =>
     -- Compat named every option the package does not declare at the load.
     let opts := (KeyVal.items src).toList
@@ -16067,6 +16154,10 @@ the .bib file"
       chrome := chrome
       chromeDeclared := chromeDeclared
       frameKeys := if defaultBundle then Theme.daylight.frameKeys else s.frameKeys
+      sectionPages := { theme := if defaultBundle then Theme.daylight.sectionPage
+                                   else s.themeSectionPage
+                        atSection := (← get).sectionHook
+                        atSubsection := (← get).subsectionHook }
       styles := styles
       info := info
       output := output

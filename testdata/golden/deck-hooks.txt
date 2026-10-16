@@ -1,0 +1,55 @@
+class slides [aspectratio=169]
+page 453.543x255.118 vmargin 26.4 hmargin 28.346 fontsize 11 parskip 0 justify off
+font dir "fonts"
+font body "Open Sans"
+meta title "Sections Behind Hooks"
+meta author "Pat Placeholder"
+section-hook page starred none
+frame golden
+  center
+    section* 0
+      text "Sections Behind Hooks"
+    para
+      text "Pat Placeholder"
+section 1
+  text "Wheels"
+para
+  label "sec:wheels"
+frame
+  title
+    text "Spokes"
+  para
+    text "A wheel holds its spokes, and Section "
+    ref "sec:chains" shows "2" -> #sec:chains
+    text " drives it."
+section 2
+  text "Rims"
+frame
+  title
+    text "Truing"
+  para
+    text "The rim runs true."
+section 1
+  text "Chains"
+para
+  label "sec:chains"
+frame
+  title
+    text "Links"
+  para
+    text "Chains follow wheels, as Section "
+    ref "sec:wheels" shows "1" -> #sec:wheels
+    text " said."
+section* 1
+  text "Spare parts"
+frame
+  title
+    text "Tubes"
+  para
+    text "The last frame keeps a spare tube."
+-- diagnostics
+note[N0100] 7:1 '\documentclass{beamer}' → \documentclass[aspectratio=169]{slides}
+note[N0100] 7:1 '\RequirePackage{amsmath}' → nothing: the engine does this itself
+note[N0100] 7:1 '\usepackage{amsthm}' → \theoremstyle{plain}
+note[N0100] 9:1 '\usetheme' → \theme{default}
+warning[W0307] 10:1 '\AtBeginSection' is not set yet: each section it opens stands on a page showing its title | help: beamer sets the hook's own frame there

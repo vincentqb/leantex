@@ -24,6 +24,7 @@ token institutegap 1000/1000em
 chrome footer right framenumber
 meta title "Two Sequences"
 meta author "Pat Placeholder"
+section-pages theme
 frame golden
   section* 0
     text "Two Sequences"

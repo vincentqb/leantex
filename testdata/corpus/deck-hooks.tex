@@ -1,0 +1,49 @@
+% Invented deck: beamer's default theme declares no section page, and the
+% document's own \AtBeginSection sets a frame before each section it opens and,
+% its optional argument empty, none before a starred one. The hook's frame is not
+% set yet, so each section it opens stands on a page showing its title, the loss
+% named once; a subsection opens no page, as no hook declares one. Nothing here
+% derives from any private document.
+\documentclass[aspectratio=169]{beamer}
+
+\usetheme{default}
+\AtBeginSection[]{\begin{frame}{Outline}\tableofcontents[currentsection]\end{frame}}
+
+\fonts{
+  dir = "fonts",
+  body = "Open Sans",
+}
+
+\title{Sections Behind Hooks}
+\author{Pat Placeholder}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section{Wheels}\label{sec:wheels}
+
+\begin{frame}{Spokes}
+  A wheel holds its spokes, and Section~\ref{sec:chains} drives it.
+\end{frame}
+
+\subsection{Rims}
+
+\begin{frame}{Truing}
+  The rim runs true.
+\end{frame}
+
+\section{Chains}\label{sec:chains}
+
+\begin{frame}{Links}
+  Chains follow wheels, as Section~\ref{sec:wheels} said.
+\end{frame}
+
+\section*{Spare parts}
+
+\begin{frame}{Tubes}
+  The last frame keeps a spare tube.
+\end{frame}
+
+\end{document}

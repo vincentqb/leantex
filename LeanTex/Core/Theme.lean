@@ -28,6 +28,9 @@ public structure _root_.LeanTex.Core.Theme extends Decls where
   derived : List (Ir.Role × Color) := []
   /-- The roles the lineage declares short of their need, shipped as declared and reported. -/
   reported : List Ir.Role := []
+  /-- Whether the bundle sets each deck section on a page of its own, as its lineage's
+  `\AtBeginSection` does. -/
+  sectionPage : Bool := false
 
 /-- The palette a bundle's seeds generate at a depth and cover share, derived afresh. -/
 public def generatedFresh (th : Theme) (d : GroundDepth)
@@ -123,6 +126,7 @@ public def moloch : Theme :=
     reported := [.alert, .alertTitleInk]
     tokens := lineageTokens
     frameKeys := .moloch
+    sectionPage := true
     styles := { entries := #[
       ("frametitle", boldFont "large"),
       ("sectionpage", boldFont "Large"),
@@ -147,6 +151,7 @@ public def plain : Theme :=
         (.role .standoutInk, bg), (.role .standoutGround, fg)] }
     derived := [(.muted, fg)]
     tokens := { entries := #[("progressheight", pt1)] }
+    sectionPage := true
     styles := { entries := #[
       ("sectionpage", boldFont "Large"),
       ("standout", boldFont "Large")] }
@@ -166,6 +171,7 @@ public def daylightWith (seeds : SeedPalette.Seeds) : Theme :=
     palette := {
       entries := #[(.role .standoutInk, seeds.paper), (.role .standoutGround, seeds.accent)] }
     tokens := lineageTokens
+    sectionPage := true
     styles := { entries := #[
       -- No frame-title bar: the title sets as a plain bold heading.
       ("frametitle", boldFont "large"),

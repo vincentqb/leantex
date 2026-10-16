@@ -25,6 +25,7 @@ token institutegap 1000/1000em
 chrome footer right framenumber
 meta title "A Themed Deck"
 meta author "Pat Placeholder"
+section-pages theme
 frame golden
   section* 0
     text "A Themed Deck"

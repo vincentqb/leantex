@@ -533,7 +533,7 @@ def goldenNames : List String :=
    "algorithm", "lineno", "lineno-modulo",
    "cond-newif", "cond-ifdefined", "cond-ifx", "cond-ifnum", "cond-loaded",
    "md-include", "md-include-deck", "md-cite-include", "palette-seeds", "alert-mark",
-   "deck-sections"] ++
+   "deck-sections", "deck-hooks"] ++
   mdGoldenNames ++ codeGoldenNames.map (·.1)
 
 /-- A TikZ picture of `body`, its environment on lines of their own. -/
@@ -1995,21 +1995,16 @@ def serifFacesSet : IO (Option Font.FontSet) := do
     math := some 4
     mathAlphabets := loaded[4]!.mathAlphabetCoverage {} }
 
-/-- The structure leaves of a deck's sections outside every frame that stand on no page of their
-own (`Ir.Design.sectionPageFor` under the palette in force), whose titles ship no ink. -/
+/-- The structure leaves of a deck's top-level sections that stand on no page of their own
+(`Ir.Doc.outside`), whose titles ship no ink. -/
 def navSectionLeaves (doc : Ir.Doc) : Array Nat := Id.run do
   if doc.docClass.record.model != .frame then return #[]
-  let mut pal := doc.palette
   let mut next := 0
   let mut out : Array Nat := #[]
   for b in doc.body do
     let n := Struct.leafCountBlocks #[b]
-    if let .section level _ _ _ := b then
-      if level != 0 && !(Ir.Design.ofPalette pal).sectionPageFor level then
-        out := out ++ (Array.range n).map (next + ·)
-    pal := Ir.foldBlocks (fun p b => match b with
-      | .setPalette q => q
-      | _ => p) (fun p _ => p) pal #[b]
+    if b matches .section .. && doc.outside b == .none then
+      out := out ++ (Array.range n).map (next + ·)
     next := next + n
   return out
 

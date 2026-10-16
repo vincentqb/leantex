@@ -2503,6 +2503,7 @@ def pdfCensusTable :
   ("palette-seeds", (2, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("alert-mark", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("deck-sections", (6, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("deck-hooks", (7, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("algorithm", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("lineno", (2, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("lineno-modulo", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),

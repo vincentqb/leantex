@@ -44,6 +44,7 @@ token authorgap 500/1000em
 token institutegap 1000/1000em
 chrome footer right framenumber
 meta title "A Seeded Palette"
+section-pages theme
 frame
   title
     text "Seeded "

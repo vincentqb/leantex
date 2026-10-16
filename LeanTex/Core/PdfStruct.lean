@@ -266,7 +266,7 @@ public theorem fill_size_exact (es : Array StructElem) (lp : Array (Array (Nat �
 replacement text (ISO 32000-2 §14.9.4), its skeleton's leaf placeholders read through the tree. -/
 public def nameUninked (t : Struct.Tree) (sk es : Array StructElem) : Array StructElem :=
   es.mapIdx fun i e =>
-    if e.heading.isNone || !e.kids.isEmpty then e else
+    if e.heading.isNone || e.kids.any (· matches .mcid ..) then e else
     let words := String.join (((sk[i]?).map (·.kids)).getD #[] |>.toList.filterMap fun k =>
       match k with
       | .leaf j => (t.leaves[j]?).bind fun (id, l) => if id == j then some l.census else none

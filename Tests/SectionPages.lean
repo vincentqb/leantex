@@ -6,9 +6,8 @@ public section
 
 open LeanTex.Core
 
-/-! A deck's section stands on a page of its own only where its design declares a section page, as
-beamer's theme hook does; any other names navigation alone: its anchor and its label land on what is
-set next, its title reaches the footline, and content outside every frame takes a page of its own. -/
+/-! A deck's section stands on a page of its own only where its theme or its own `\AtBeginSection`
+declares one; any other names navigation alone, its anchor and label on what is set next. -/
 
 namespace SectionPages
 
@@ -28,9 +27,11 @@ private def isStage : Html.Node → Bool
       (tag == "div" && (classes attrs).contains "slide-track")
   | _ => false
 
-/-- Whether a node stands out of the row's flow, so it moves no stage off the snap grid. -/
-private def outOfFlow : Html.Node → Bool
-  | .elem _ attrs _ => hasStr ((HtmlDoc.attrOf? attrs "style").getD "") "position: absolute"
+/-- Whether a node stands out of sight and out of flow. -/
+private def outOfSight : Html.Node → Bool
+  | .elem _ attrs _ =>
+    let style := (HtmlDoc.attrOf? attrs "style").getD ""
+    hasStr style "position: absolute" && hasStr style "clip-path: inset(50%)"
   | _ => false
 
 /-- Whether a subtree carries an element of that `id`. -/
@@ -45,18 +46,18 @@ private def stageLabels (kids : Array Html.Node) : Array String :=
     | .elem _ attrs _ => (HtmlDoc.attrOf? attrs "data-slide-label").getD ""
     | _ => ""
 
-/-- The out-of-flow headings of the row, their tag and words, in order. -/
+/-- The out-of-sight headings under the nodes, their tag and words, in order. -/
 private def navHeadings (kids : Array Html.Node) : Array (String × String) :=
   (elemNodesList (fun t => t == "h2" || t == "h3" || t == "h4") #[] kids.toList).filterMap fun k =>
     match k with
-    | .elem tag _ _ => if outOfFlow k then some (tag, (nodeTextOne "" k).trimAscii.toString) else none
+    | .elem tag _ _ => if outOfSight k then some (tag, (nodeTextOne "" k).trimAscii.toString) else none
     | _ => none
 
 /-- The index of the first stage holding the `id`, among the row's stages. -/
 private def stageWithId (kids : Array Html.Node) (id : String) : Option Nat :=
   (kids.filter isStage).findIdx? (holdsId id)
 
-/-- The index of the first stage whose shown words hold the marker. -/
+/-- The index of the first stage whose words hold the marker. -/
 private def stageWith (kids : Array Html.Node) (marker : String) : Option Nat :=
   (kids.filter isStage).findIdx? fun k => hasStr (nodeTextOne "" k) marker
 
@@ -88,13 +89,15 @@ private def pageKind (p : Layout.PageOut) (sectionTitles : Array String) : Kind 
   else .loose
 
 /-- What one invented deck ships: its pages by kind and marker, where its labels and section
-anchors land, its footlines and its out-of-flow headings. -/
+anchors land, its footlines, its out-of-sight headings with a marker of the stage holding each, and
+the codes it names. -/
 private structure Expected where
   pages : Array (Kind × String)
   labels : Array (String × String)
   anchors : Array (String × String) := #[]
   foots : Array (String × String) := #[]
-  headings : Array (String × String) := #[]
+  headings : Array (String × String × String) := #[]
+  warns : Array String := #[]
 
 private def verify (ref : IO.Ref (List String)) (fonts : Font.FontSet) (name pre body : String)
     (e : Expected) : IO Unit := do
@@ -104,15 +107,16 @@ private def verify (ref : IO.Ref (List String)) (fonts : Font.FontSet) (name pre
   let census := censusOf (coveredColorsOf doc) out
   let (_, html, hds) := HtmlDoc.emitTree {} doc
   let kids := mainKids html
-  t "the deck builds clean"
-    (!(ds ++ hds ++ out.diags).any fun d => d.severity == .error || d.code == "W0301")
+  let all := ds ++ hds ++ out.diags
+  t s!"the deck builds clean, naming what it loses ({all.toList.map (·.code)})"
+    (!all.any (fun d => d.severity == .error || d.code == "W0301") &&
+      e.warns.all fun c => all.any (·.code == c))
   let titles := e.pages.filterMap fun (k, m) => if k == .section then some m else none
   t s!"the PDF ships the expected pages ({census.size} pages)"
     (census.size == e.pages.size &&
       e.pages.toList.zipIdx.all fun ((kind, marker), i) =>
         pageHas census i marker && out.pages[i]?.map (pageKind · titles) == some kind)
-  t "every element of the web deck's row is a stage or stands out of its flow"
-    (kids.all fun k => isStage k || outOfFlow k)
+  t "every element of the web deck's row is a stage" (kids.all isStage)
   let stages := kids.filter isStage
   t s!"the web deck ships one stage per page, of its kind ({stageLabels kids})"
     (stages.size == e.pages.size &&
@@ -131,17 +135,21 @@ private def verify (ref : IO.Ref (List String)) (fonts : Font.FontSet) (name pre
     t s!"the footline names the section in force on every frame ({pdfFoots out})"
       (pdfFoots out == e.foots && slideFootsList #[] html.toList == e.foots)
   t s!"each page-less section names itself out of sight ({navHeadings kids})"
-    (navHeadings kids == e.headings)
+    (navHeadings kids == e.headings.map fun (tag, title, _) => (tag, title))
+  for (tag, title, marker) in e.headings do
+    t s!"the heading {title} stands in the stage set next, where the pager finds it"
+      ((stageWith kids marker).any fun i =>
+        (stages[i]?.map fun s => (navHeadings #[s]).contains (tag, title)) == some true)
   let pdf := Pdf.write (Layout.Geom.ofPage doc.page) fonts out.pages doc.info
     (tree := Struct.ofDoc (Layout.pdfView doc))
   let tagged := match PdfRead.objects pdf with
-    | .ok es => es.val.filterMap fun en =>
+    | .ok es => some (es.val.filterMap fun en =>
       match en.val.get? "S", en.val.get? "K" with
       | some (.name s), none => if s.startsWith "H" then (en.val.get? "ActualText").map (s, ·) else none
-      | _, _ => none
-    | .error _ => #[]
+      | _, _ => none)
+    | .error _ => none
   t "and names itself in the tagged PDF by its words, as a heading holding no ink"
-    (tagged == e.headings.map fun (tag, title) => (tag.toUpper, PdfRead.textString title))
+    (tagged == some (e.headings.map fun (tag, title, _) => (tag.toUpper, PdfRead.textString title)))
 
 /-- Five frames under three sections, one starred, with a subsection, labels and references. -/
 private def sectioned : String :=
@@ -155,6 +163,30 @@ private def sectioned : String :=
   "\\section*{Gamma Part}\n" ++
   "\\begin{frame}{Fourth}FourthWords\\end{frame}"
 
+/-- What `sectioned` ships where no section stands on a page of its own. -/
+private def pageless : Expected :=
+  { pages := #[(.frame, "OpeningWords"), (.frame, "FirstWords"), (.frame, "SecondWords"),
+      (.frame, "ThirdWords"), (.frame, "FourthWords")]
+    labels := #[("sec:alpha", "FirstWords"), ("sub:detail", "SecondWords"), ("sec:beta", "ThirdWords")]
+    anchors := #[("Alpha Part", "FirstWords"), ("Beta Part", "ThirdWords")]
+    headings := #[("h2", "Alpha Part", "FirstWords"), ("h3", "Alpha Detail", "SecondWords"),
+      ("h2", "Beta Part", "ThirdWords"), ("h2", "Gamma Part", "FourthWords")] }
+
+/-- A hook setting a frame for each section and, its optional argument empty, none for a starred
+one. -/
+private def outlineHook : String :=
+  "\\AtBeginSection[]{\\begin{frame}{Outline}OutlineWords\\end{frame}}"
+
+/-- What `sectioned` ships where each unstarred section stands on a page of its own. -/
+private def hooked : Expected :=
+  { pages := #[(.frame, "OpeningWords"), (.section, "Alpha Part"), (.frame, "FirstWords"),
+      (.frame, "SecondWords"), (.section, "Beta Part"), (.frame, "ThirdWords"),
+      (.frame, "FourthWords")]
+    labels := #[("sec:alpha", "FirstWords"), ("sub:detail", "SecondWords"), ("sec:beta", "ThirdWords")]
+    anchors := #[("Alpha Part", "Alpha Part"), ("Beta Part", "Beta Part")]
+    headings := #[("h3", "Alpha Detail", "SecondWords"), ("h2", "Gamma Part", "FourthWords")]
+    warns := #["W0307"] }
+
 /-- Content outside every frame, then a section, then a frame. -/
 private def looseThenSection : String :=
   "\\begin{frame}{One}OneWords\\end{frame}\n" ++
@@ -167,23 +199,44 @@ private def loose : String :=
   "LooseBefore words.\n\n\\section{Middle Part}\\label{sec:middle}\nLooseAfter words.\n\n" ++
   "\\begin{frame}{Two}TwoWords\\end{frame}"
 
+/-- A section whose title holds its label. -/
+private def titleLabel : String :=
+  "\\begin{frame}{Opening}OpeningWords\\end{frame}\n\\section{Kettle Part\\label{sec:kettle}}\n" ++
+  "\\begin{frame}{First}FirstWords\\end{frame}"
+
+/-- A section, a label and a note after the last frame, and a note between frames. -/
+private def trailing : String :=
+  "\\begin{frame}{Opening}OpeningWords\\end{frame}\n\\note{EarlyNoteWords}\n" ++
+  "\\begin{frame}{Last}LastWords\\end{frame}\n" ++
+  "\\section{Last Part}\\label{sec:last}\n\\label{deck:end}\n\n\\note{LateNoteWords}"
+
+/-- A hook declared after a section, which the earlier section cannot read. -/
+private def lateHook : String :=
+  "\\begin{frame}{Opening}OpeningWords\\end{frame}\n\\section{Alpha Part}\n" ++ outlineHook ++
+  "\n\\begin{frame}{First}FirstWords\\end{frame}\n\\section{Beta Part}\n" ++
+  "\\begin{frame}{Second}SecondWords\\end{frame}"
+
+/-- References across a starred section and `\appendix`, which beamer numbers on. -/
+private def appendixed : String :=
+  "\\begin{frame}{Opening}OpeningWords, see \\ref{sec:a}, \\ref{sec:b}, \\ref{sec:backup}, " ++
+  "\\ref{sub:x}.\\end{frame}\n" ++
+  "\\section{Alpha}\\label{sec:a}\n\\begin{frame}{First}FirstWords\\end{frame}\n" ++
+  "\\section*{Starred}\n\\section{Beta}\\label{sec:b}\n\\subsection{Sub X}\\label{sub:x}\n" ++
+  "\\begin{frame}{Second}SecondWords\\end{frame}\n\\appendix\n" ++
+  "\\section{Backup}\\label{sec:backup}\n\\begin{frame}{Spare}SpareWords\\end{frame}"
+
 end SectionPages
 
 open SectionPages in
 /-- Page counts over `Layout.Out` and stages over the typed HTML tree, beamer's measured on invented
-decks: no section page, a theme's own, a footline naming the section, and content outside frames. -/
+decks: no section page, a theme's own, the document's hooks, a footline naming the section, labels
+and notes around the frames, and content outside frames. -/
 def sectionPageChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let foot := "\\chrome{ footer = { left = \\sectiontitle } }"
   verify ref fonts "no section page" ("\\theme{default}" ++ foot) sectioned
-    { pages := #[(.frame, "OpeningWords"), (.frame, "FirstWords"), (.frame, "SecondWords"),
-        (.frame, "ThirdWords"), (.frame, "FourthWords")]
-      labels := #[("sec:alpha", "FirstWords"), ("sub:detail", "SecondWords"),
-        ("sec:beta", "ThirdWords")]
-      anchors := #[("Alpha Part", "FirstWords"), ("Beta Part", "ThirdWords")]
+    { pageless with
       foots := #[("", ""), ("Alpha Part", ""), ("Alpha Part", ""), ("Beta Part", ""),
-        ("Gamma Part", "")]
-      headings := #[("h2", "Alpha Part"), ("h3", "Alpha Detail"), ("h2", "Beta Part"),
-        ("h2", "Gamma Part")] }
+        ("Gamma Part", "")] }
   verify ref fonts "a theme's section page" "\\theme{moloch}" sectioned
     { pages := #[(.frame, "OpeningWords"), (.section, "Alpha Part"), (.frame, "FirstWords"),
         (.frame, "SecondWords"), (.section, "Beta Part"), (.frame, "ThirdWords"),
@@ -191,11 +244,44 @@ def sectionPageChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
       labels := #[("sec:alpha", "FirstWords"), ("sub:detail", "SecondWords"),
         ("sec:beta", "ThirdWords")]
       anchors := #[("Alpha Part", "Alpha Part"), ("Beta Part", "Beta Part")]
-      headings := #[("h3", "Alpha Detail")] }
+      headings := #[("h3", "Alpha Detail", "SecondWords")] }
+  verify ref fonts "a progress bar's colour declares no section page"
+    "\\theme{default}\n\\setbeamercolor{progress bar}{fg=red}" sectioned pageless
+  verify ref fonts "the document's section hook" ("\\theme{default}\n" ++ outlineHook) sectioned hooked
+  verify ref fonts "the document's hook declared before the first section" "\\theme{default}"
+    (outlineHook ++ "\n" ++ sectioned) hooked
+  verify ref fonts "the document's empty hook replaces the theme's"
+    "\\theme{moloch}\n\\AtBeginSection{}" sectioned pageless
+  verify ref fonts "the document's subsection hook"
+    "\\theme{default}\n\\AtBeginSubsection{\\begin{frame}{Sub}SubWords\\end{frame}}" sectioned
+    { pages := #[(.frame, "OpeningWords"), (.frame, "FirstWords"), (.section, "Alpha Detail"),
+        (.frame, "SecondWords"), (.frame, "ThirdWords"), (.frame, "FourthWords")]
+      labels := #[("sec:alpha", "FirstWords"), ("sub:detail", "SecondWords"),
+        ("sec:beta", "ThirdWords")]
+      anchors := #[("Alpha Part", "FirstWords"), ("Beta Part", "ThirdWords")]
+      headings := #[("h2", "Alpha Part", "FirstWords"), ("h2", "Beta Part", "ThirdWords"),
+        ("h2", "Gamma Part", "FourthWords")]
+      warns := #["W0307"] }
+  verify ref fonts "a hook after a section is named and read by none" "\\theme{default}" lateHook
+    { pages := #[(.frame, "OpeningWords"), (.frame, "FirstWords"), (.frame, "SecondWords")]
+      labels := #[]
+      anchors := #[("Alpha Part", "FirstWords"), ("Beta Part", "SecondWords")]
+      headings := #[("h2", "Alpha Part", "FirstWords"), ("h2", "Beta Part", "SecondWords")]
+      warns := #["W0340"] }
+  verify ref fonts "a label in a section's title" "\\theme{default}" titleLabel
+    { pages := #[(.frame, "OpeningWords"), (.frame, "FirstWords")]
+      labels := #[("sec:kettle", "FirstWords")]
+      anchors := #[("Kettle Part", "FirstWords")]
+      headings := #[("h2", "Kettle Part", "FirstWords")] }
+  verify ref fonts "a section and a label after the last frame" "\\theme{default}" trailing
+    { pages := #[(.frame, "OpeningWords"), (.frame, "LastWords")]
+      labels := #[("sec:last", "LastWords"), ("deck:end", "LastWords")]
+      anchors := #[("Last Part", "LastWords")]
+      headings := #[("h2", "Last Part", "LastWords")] }
   verify ref fonts "content outside frames, no section page" "\\theme{default}" loose
     { pages := #[(.frame, "OneWords"), (.loose, "LooseBefore"), (.frame, "TwoWords")]
       labels := #[("sec:middle", "LooseAfter")]
-      headings := #[("h2", "Middle Part")] }
+      headings := #[("h2", "Middle Part", "LooseBefore")] }
   verify ref fonts "content outside frames, a theme's section page" "\\theme{moloch}" loose
     { pages := #[(.frame, "OneWords"), (.loose, "LooseBefore"), (.section, "Middle Part"),
         (.loose, "LooseAfter"), (.frame, "TwoWords")]
@@ -204,13 +290,8 @@ def sectionPageChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
     { pages := #[(.frame, "OneWords"), (.loose, "LooseOnly"), (.frame, "TwoWords")]
       labels := #[("sec:late", "TwoWords")]
       anchors := #[("Late Part", "TwoWords")]
-      headings := #[("h2", "Late Part")] }
+      headings := #[("h2", "Late Part", "TwoWords")] }
   let t := fun claim => check ref ("section pages / " ++ claim)
-  let (doc, _) := elabStr (deck169 "\\theme{default}" looseThenSection)
-  let kids := mainKids (HtmlDoc.emitTree {} doc).2.1
-  t "a section set after content outside frames names the stage set next, between the two"
-    (navHeadings (kids.filter outOfFlow) == #[("h2", "Late Part")] &&
-      (kids.filter isStage).all fun k => navHeadings #[k] == #[])
   let census (pre : String) := censusOfSrc fonts (deck169 pre sectioned)
   for pre in ["\\theme{default}", "\\theme{moloch}"] do
     let c := census pre
@@ -218,13 +299,28 @@ def sectionPageChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
       ((pageWith c "FirstWords").any (pageHas c · "see 2.") &&
         (pageWith c "SecondWords").any (pageHas c · "detail 1.") &&
         (pageWith c "ThirdWords").any (pageHas c · "back to 1."))
-  -- the outside content's two paragraphs and the section between them share one page and one stage
-  let (doc, _) := elabStr (deck169 "\\theme{default}" loose)
-  let kids := mainKids (HtmlDoc.emitTree {} doc).2.1
-  t "the outside content's section stands between its paragraphs on its stage"
-    (match (kids.filter isStage)[1]? with
-     | some stage =>
-       let text := nodeTextOne "" stage
-       hasStr text "LooseBefore" && hasStr text "LooseAfter" &&
-         navHeadings #[stage] == #[("h2", "Middle Part")]
-     | none => false)
+  let c := censusOfSrc fonts (deck169 "\\theme{default}" appendixed)
+  t "a starred section steps the count and the appendix numbers on, as beamer's"
+    ((pageWith c "OpeningWords").any (pageHas c · "see 1, 3, 4, 1."))
+  let inFrame := "\\begin{frame}{Opening}OpeningWords, see \\ref{fr:first}.\\end{frame}\n" ++
+    "\\section{Alpha Part}\n\\begin{frame}{First}\\label{fr:first}FirstWords\\end{frame}"
+  let c := censusOfSrc fonts (deck169 "\\theme{default}" inFrame)
+  t "a label in a frame binds no section's number, the loss named"
+    ((pageWith c "OpeningWords").any (pageHas c · "see ??.") &&
+      (elabStr (deck169 "\\theme{default}" inFrame)).2.any (·.code == "W0349"))
+  let kidsOf (pre body : String) := mainKids (HtmlDoc.emitTree {} (elabStr (deck169 pre body)).1).2.1
+  let kids := kidsOf "\\theme{default}" trailing
+  t "a note between frames rides the frame before it, a trailing one the last"
+    (stageWith kids "EarlyNoteWords" == stageWith kids "OpeningWords" &&
+      stageWith kids "LateNoteWords" == stageWith kids "LastWords")
+  let kids := kidsOf "\\theme{default}\n\\logo{LogoMarkWords}" looseThenSection
+  t "content outside frames carries the logo in force, as a frame's stage"
+    ((kids.filter isStage).all fun s => hasStr (nodeTextOne "" s) "LogoMarkWords")
+  let wrapped := "\\begin{frame}{Opening}OpeningWords\\end{frame}\n" ++
+    "\\section{Web Part}\\label{sec:web}\n" ++
+    "\\begin{ifbackend}{html}\n\\begin{frame}{WebOnly}WebOnlyWords\\end{frame}\n\\end{ifbackend}\n" ++
+    "\\begin{frame}{Both}BothWords\\end{frame}"
+  let kids := kidsOf "\\theme{default}" wrapped
+  t "a section before a frame set for one backend lands on that frame"
+    (kids.any fun k => holdsId (Ir.labelAnchor "sec:web") k &&
+      hasStr (nodeTextOne "" k) "WebOnlyWords" && (navHeadings #[k]).contains ("h2", "Web Part"))

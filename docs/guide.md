@@ -331,8 +331,10 @@ directory first, then from the computer's.
 
 List themes with `leantex themes` and select one with `\theme{moloch}`. A deck's section
 stands on a page of its own only where its theme declares a section page, as `moloch`, `plain`
-and `daylight` do; under beamer's default theme it opens no page or slide, as in beamer, its title
-reaching the footline and its label the next frame.
+and `daylight` do, or the document's `\AtBeginSection` sets a frame; under beamer's default
+theme it opens no page or slide, as in beamer, its title reaching the footline and its label the
+next frame. A deck naming no theme takes `daylight`, section pages included. A hook's own frame is
+not set yet: its section stands on a page showing its title, and a warning names it.
 
 A document that declares no colours ships what its class prints. Its HTML
 page is white, as its PDF's paper is; list markers are the printed ink in

@@ -9003,8 +9003,10 @@ public structure Spacing.Context where
   private captionPos : Array (String × Ir.CaptionPos) := #[]
   /-- The document's main locale, in which generated class furniture is worded. -/
   private locale : Locale := Locale.en
-  /-- The `slides` class: frames and out-of-frame sections open fresh pages. -/
+  /-- The `slides` class: frames open fresh pages. -/
   private slides : Bool := false
+  /-- Which of the deck's sections stand on pages of their own (`Ir.Doc.sectionPages`). -/
+  private sectionPages : Ir.SectionPages := {}
   /-- How the abstract's body sets (`Ir.Doc.abstractForm`). -/
   private abstractForm : Ir.AbstractForm := .quotation
   /-- A frame body owns its headings: they neither open section dividers
@@ -10849,7 +10851,8 @@ private def openFrameBody (r : Rd) (a : Acc) (hasTitle : Bool) (valign : VAlign)
   | .paper => { a with ops := (a.ops.push (.bodyOpen g none)).push .noInterline, wantDefault := false,
                        frameTop := true }
 
-private def collectSection (r : Rd) (a : Acc) (level : Ir.HeadingLevel) (num : Option String) (title : Array Inline) (indent : Sp) : Acc :=
+private def collectSection (r : Rd) (a : Acc) (level : Ir.HeadingLevel) (starred : Bool)
+    (num : Option String) (title : Array Inline) (indent : Sp) : Acc :=
   if level == 0 then
     -- The document title opens no page of its own, even in slides.
     collectTitle r a title indent false
@@ -10864,7 +10867,7 @@ private def collectSection (r : Rd) (a : Acc) (level : Ir.HeadingLevel) (num : O
   let (a, leaf) := a.leafRange span
   let design := Ir.Design.ofPalette a.pal
   let divider := r.slides && !r.inFrame
-  if divider && design.sectionPageFor level then
+  if divider && r.sectionPages.pageFor level starred then
     let a := a.pageBreak
     -- A divider is moloch's `\frame[plain,c,noframenumbering]`: a plain frame's text area.
     let area : FrameArea := if a.footAllowed then .paper else .margins
@@ -10902,8 +10905,11 @@ private def collectSection (r : Rd) (a : Acc) (level : Ir.HeadingLevel) (num : O
           { width := Ir.sectionPageStrut r.geom.scale r.geom.fontSize r.geom.leading - thick }) }
       else a
     (a.pageBreak).pushOp .frameClose
-  -- Without a section page a deck's section inks nothing: its anchor rides the next line set.
-  else if divider then a
+  -- Without a section page a deck's section inks nothing: its anchors ride the next line set.
+  else if divider then
+    { a with ops := a.ops ++ Ir.foldInlines (fun out x => match x with
+        | .label name => out.push (.anchor name)
+        | _ => out) #[] title }
   else
   let st := r.style level.element
   -- The number stands before the title with a `\quad` kern (classes.dtx `\@seccntformat`).
@@ -12414,7 +12420,7 @@ private def collectBlock (r : Rd) (a : Acc)
   match blk with
   | .para content => collectParaBlock r a content indent
   | .equation num content => collectEquation r a num content indent
-  | .section level _ num title => collectSection r a level num title indent
+  | .section level starred num title => collectSection r a level starred num title indent
   | .list ordered items =>
     -- Past the class's four levels, where LaTeX errors, the fourth level is reused and named.
     let depth := (if ordered then a.enumDepth else a.itemDepth) + 1
@@ -18626,6 +18632,67 @@ private theorem collectDocBody_census (rd : Rd) (doc : Doc) (cover : Ir.Cover)
     exact ⟨collectDocBlock rd doc cover frameSpans doc.frameNumbers i hib st, rfl,
       step i hib st hs⟩
 
+/-- Anchors no later line holds land on the last line shipped, as TeX ships them with its last page. -/
+private def landTrailing (b : B) : B :=
+  { b with pages := b.pages.modify (b.pages.size - 1) (fun p =>
+             { p with lines := p.lines.modify (p.lines.size - 1) fun l =>
+                 { l with anchors := l.anchors ++ b.pendingAnchors } })
+           pendingAnchors := #[] }
+
+private theorem map_modify_of {α β : Type} (xs : Array α) (i : Nat) (f : α → α) (g : α → β)
+    (h : ∀ x, g (f x) = g x) : (xs.modify i f).map g = xs.map g := by
+  apply Array.ext
+  · simp
+  · intro j h1 h2
+    simp only [Array.getElem_map, Array.getElem_modify]
+    split <;> simp [h]
+
+private theorem flatMap_eq_of_map_eq {α β : Type} (xs ys : Array α) (g : α → List β)
+    (h : xs.map g = ys.map g) : xs.toList.flatMap g = ys.toList.flatMap g := by
+  have := congrArg (fun a => a.toList.flatten) h
+  simpa [List.flatMap_def] using this
+
+private theorem forall_mem_modify {α : Type} {Q : α → Prop} (xs : Array α) (i : Nat)
+    (f : α → α) (h : ∀ x ∈ xs, Q x) (hf : ∀ x, Q x → Q (f x)) : ∀ x ∈ xs.modify i f, Q x := by
+  intro x hx
+  obtain ⟨j, hj, rfl⟩ := Array.mem_iff_getElem.mp hx
+  have hj' : j < xs.size := by simpa using hj
+  rw [Array.getElem_modify]
+  split
+  · exact hf _ (h _ (Array.getElem_mem hj'))
+  · exact h _ (Array.getElem_mem hj')
+
+private theorem sourceBound_landTrailing {n : Nat} (b : B) (hb : b.SourceBound n) :
+    (landTrailing b).SourceBound n := by
+  refine ⟨hb.current, ?_, hb.notes, hb.chrome, hb.ledger⟩
+  exact forall_mem_modify (Q := fun (p : PageOut) => ∀ l ∈ p.lines, l.SourceBound n) b.pages _ _
+    hb.pages fun p hp => forall_mem_modify (Q := LineOut.SourceBound n) p.lines _
+      (fun l => { l with anchors := l.anchors ++ b.pendingAnchors }) hp fun _ hl => hl
+
+private theorem census_landTrailing (pick : Option Nat → Bool → Bool) (b : B) :
+    (landTrailing b).pages.toList.flatMap (pageCensus pick) =
+      b.pages.toList.flatMap (pageCensus pick) := by
+  apply flatMap_eq_of_map_eq
+  refine map_modify_of _ _ _ _ fun p => ?_
+  exact flatMap_eq_of_map_eq _ _ _ (map_modify_of p.lines _
+    (fun l => { l with anchors := l.anchors ++ b.pendingAnchors }) _ fun _ => rfl)
+
+private theorem framesFooted_landTrailing {openings : Array FrameOpening} {b : B}
+    (hb : FramesFooted openings b) : FramesFooted openings (landTrailing b) :=
+  ⟨hb.1, forall_mem_modify (Q := fun (p : PageOut) => SelectedFrame openings p.frameStamp)
+    b.pages _ _ hb.2 fun _ h => h⟩
+
+private theorem bgStep_landTrailing {b0 X : B} (h : BgStep b0 X) (h0 : b0.pages = #[]) :
+    BgStep b0 (landTrailing X) := by
+  refine ⟨h.1, h.2.1, fun hd p hp => Or.inr ?_⟩
+  refine forall_mem_modify (Q := bgFilled b0.geom) X.pages _ (fun p =>
+    { p with lines := p.lines.modify (p.lines.size - 1) fun l =>
+        { l with anchors := l.anchors ++ X.pendingAnchors } }) (fun q hq => ?_) (fun _ hq => hq) p hp
+  rcases h.2.2 hd q hq with hin | hf
+  · rw [h0] at hin
+    simp at hin
+  · exact hf
+
 /-- The collected ops, the initial page state and the postlude, the
 continuation reading the exact ops placement consumes. -/
 private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
@@ -18681,6 +18748,7 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
                    abstractForm := doc.abstractForm
                    lists := doc.docClass.record.lists
                    frameKeys := doc.frameKeys
+                   sectionPages := doc.sectionPages
                    frameLabels := doc.frameLabels
                    imgs := imgs
                    pictureSpans := pictureSpans
@@ -18750,7 +18818,7 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
     -- A final frame's trailing boundary has already closed its page; no empty page is added.
     let b := if !st.b.cur.blank || st.b.pages.isEmpty then
         st.b.finishPage st.b.closingOwed
-      else st.b
+      else landTrailing st.b
     -- The measure against the readable band (Bringhurst §2.1.2), via memoir's copy-fitting lines.
     let shipDiags :=
       if doc.docClass.record.measureBand && doc.page.measureChecked
@@ -18835,11 +18903,11 @@ private theorem shipCore_source (geom : Geom) (fs : FontSet)
     ∀ p ∈ (shipCore geom fs pats doc imgs frameSpans).pages, ∀ l ∈ p.lines,
       l.SourceBound (Struct.ofDoc (pdfView doc)).leaves.size := by
   have close : ∀ (c : Prop) [Decidable c] (b : B) (n : Nat), b.SourceBound n →
-      (if c then b.finishPage b.closingOwed else b).SourceBound n := by
+      (if c then b.finishPage b.closingOwed else landTrailing b).SourceBound n := by
     intro c inst b n hb
     split
     · exact sourceBound_finishPage _ _ _ hb
-    · exact hb
+    · exact sourceBound_landTrailing _ hb
   unfold shipCore withLayoutOps
   dsimp only [Id.run, bind, pure, Id]
   apply (close _ _ _ ?_).pages
@@ -19016,7 +19084,7 @@ private theorem census_placeFrom {n : Nat} (pick : Option Nat → Bool → Bool)
 private theorem census_close {n : Nat} (pick : Option Nat → Bool → Bool)
     (b : B) (hb : b.SourceBound n) :
     let out := if !(Spacing.Page.cur b).blank || (Spacing.Page.pages b).isEmpty
-      then b.finishPage b.closingOwed else b
+      then b.finishPage b.closingOwed else landTrailing b
     (Spacing.Page.pages out).toList.flatMap (pageCensus pick) = Spacing.Page.census pick b := by
   dsimp only
   split
@@ -19028,11 +19096,12 @@ private theorem census_close {n : Nat} (pick : Option Nat → Bool → Bool)
       have hb := (Bool.or_eq_false_iff.mp (Bool.eq_false_iff.mpr hn)).1
       simp only [PageOut.blank, Bool.not_eq_false', Bool.and_eq_true, Array.isEmpty_iff] at hb
       exact hb.1.1.1
+    rw [census_landTrailing]
     simp only [Spacing.Page.census, pageCensus, he, Array.toList_empty, List.flatMap_nil, List.append_nil]
 
 private theorem clean_close (b : B) :
     let out := if !(Spacing.Page.cur b).blank || (Spacing.Page.pages b).isEmpty
-      then b.finishPage b.closingOwed else b
+      then b.finishPage b.closingOwed else landTrailing b
     GlyphClean (Spacing.Page.diags out) → GlyphClean (Spacing.Page.diags b) := by
   dsimp only
   split
@@ -19698,11 +19767,11 @@ private theorem shipCore_frames (geom : Geom) (fs : FontSet)
       SelectedFrame (frameOpeningsCore geom fs pats doc imgs frameSpans) p.frameStamp := by
   have close : ∀ (c : Prop) [Decidable c] (b : B) (openings : Array FrameOpening),
       FramesFooted openings b →
-      FramesFooted openings (if c then b.finishPage b.closingOwed else b) := by
+      FramesFooted openings (if c then b.finishPage b.closingOwed else landTrailing b) := by
     intro c inst b openings hb
     split
     · exact hb.step (frameStep_finishPage ..)
-    · exact hb
+    · exact framesFooted_landTrailing hb
   unfold shipCore frameOpeningsCore withLayoutOps
   dsimp only [Id.run, bind, pure, Id]
   apply (close _ _ _ ?_).2
@@ -19724,7 +19793,7 @@ private theorem shipCore_reflows (geom : Geom) (fs : FontSet)
     ReflowsNamed (shipCore geom fs pats doc imgs frameSpans).paragraphBreaks
       (shipCore geom fs pats doc imgs frameSpans).diags := by
   have close : ∀ (c : Prop) [Decidable c] (b : B), b.ReflowsNamed →
-      (if c then b.finishPage b.closingOwed else b).ReflowsNamed := by
+      (if c then b.finishPage b.closingOwed else landTrailing b).ReflowsNamed := by
     intro c inst b hb
     split
     · exact hb.step (reflowStep_finishPage ..)
@@ -19891,13 +19960,13 @@ private theorem runCore_bg
     · rw [← hB]; exact hy
     · rw [← hW, ← hB]; exact hw
     · rw [← hH, ← hB]; exact hh
-  have bgStep_close : ∀ (c : Prop) [inst : Decidable c] (b0 X : B),
-      BgStep b0 X → BgStep b0 (if c then X.finishPage X.closingOwed else X) := by
-    intro c inst b0 X h
+  have bgStep_close : ∀ (c : Prop) [inst : Decidable c] (b0 X : B), b0.pages = #[] →
+      BgStep b0 X → BgStep b0 (if c then X.finishPage X.closingOwed else landTrailing X) := by
+    intro c inst b0 X h0 h
     split
     · exact h.trans (bgStep_finishPage _)
-    · exact h
-  refine fin _ (key _ _ (bgStep_close _ _ _
+    · exact bgStep_landTrailing h h0
+  refine fin _ (key _ _ (bgStep_close _ _ _ rfl
     (bgStep_placeFrom _ _ _ _ _ (Array.all_eq_true'.mp hepoch) (by simp))) ?_ rfl q hq)
     ?_ ?_ ?_
   all_goals first
@@ -20155,7 +20224,7 @@ public def program (geom : Geom) (fs : FontSet) (doc : Ir.Doc) : Program :=
 private def closeLast (b : B) : B :=
   if !b.cur.blank || b.pages.isEmpty then
     b.finishPage b.closingOwed
-  else b
+  else landTrailing b
 
 private theorem program_ship (geom : Geom) (fs : FontSet) (doc : Ir.Doc) :
     (ship geom fs none doc).pages =

@@ -26,6 +26,7 @@ def doc (progress footer : Bool) (valign : Ir.VAlign)
     #[Ir.Block.para #[.text "After"]]
   { base with
     palette := palette
+    sectionPages := if progress then base.sectionPages else {}
     chrome := if footer then { footerRight := some .frameNumber } else {}
     body := prologue ++ #[.frame #[.text "Frame title"] false valign false body] }
 

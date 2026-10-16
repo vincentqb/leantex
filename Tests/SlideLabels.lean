@@ -200,10 +200,11 @@ private def sectionChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : 
     pageFooters := #[none, some ("", "1"), none, some ("", "2")]
     htmlFooters := #[("", "1"), ("", "2")]
   }
+  -- A hook with an empty starred argument sets a divider for each section and none for a starred one.
   verify ref fonts "only emitted dividers consume section labels" (elabStr (deck169
-    "\\theme{default}"
-    ("\\section{UnmarkedSection}\n\\begin{frame}{One}FirstBody\\end{frame}\n" ++
-     "\\palette{progressfg=#123456}\n\\section{RepeatSection}\n" ++
+    "\\theme{default}\n\\AtBeginSection[]{\\begin{frame}{Outline}x\\end{frame}}"
+    ("\\section*{UnmarkedSection}\n\\begin{frame}{One}FirstBody\\end{frame}\n" ++
+     "\\section{RepeatSection}\n" ++
      "\\begin{frame}[standout]{Aside}AsideBody\\end{frame}\n" ++
      "\\section{RepeatSection}\n\\begin{frame}{Two}SecondBody\\end{frame}"))) {
     snaps := #[("one", "1"), ("", "section-0"), ("aside", "standout"), ("", "section-1"),

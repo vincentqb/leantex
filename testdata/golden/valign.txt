@@ -44,6 +44,7 @@ token separatorgap 800/1000em
 token authorgap 500/1000em
 token institutegap 1000/1000em
 chrome footer right framenumber
+section-pages theme
 frame
   title
     text "Centred by default"

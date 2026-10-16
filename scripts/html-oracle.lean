@@ -966,6 +966,8 @@ const shapeRead = (textBlocks) => {
   };
   const inks = (el) => el.matches('img, svg, math, canvas, video') ||
     [...el.childNodes].some(n => n.nodeType === 3 && n.data.trim());
+  // Out of sight by design, as a page-less section's heading: the reader's window clips nothing.
+  const unseen = (el) => /inset\(50%\)/.test(getComputedStyle(el).clipPath);
   const frames = [];
   for (const s of document.querySelectorAll('section.slide, section.section-page')) {
     const track = s.closest('.slide-track');
@@ -983,13 +985,13 @@ const shapeRead = (textBlocks) => {
     let held = null;
     for (const el of s.querySelectorAll('*')) {
       if (held && held.contains(el)) continue;
-      if (!el.checkVisibility() || !inks(el) || past(el).length === 0) continue;
+      if (!el.checkVisibility() || unseen(el) || !inks(el) || past(el).length === 0) continue;
       let top = el;
       while (top.parentElement && top.parentElement !== s && past(top.parentElement).length) top = top.parentElement;
       clipped.push(name(top) + ' ' + past(top).map(([w, d]) => Math.round(d) + 'px ' + w).join(' '));
       held = top;
     }
-    const counts = [...s.querySelectorAll(textBlocks)]
+    const counts = [...s.querySelectorAll(textBlocks)].filter(el => !unseen(el))
       .map(el => [name(el), el.checkVisibility() ? lines(el) : 0]);
     frames.push({ label, clipped, counts });
   }

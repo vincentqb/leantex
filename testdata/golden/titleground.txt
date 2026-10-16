@@ -50,6 +50,7 @@ token institutegap 1000/1000em
 chrome footer right framenumber
 meta title "A Placeholder Deck"
 meta author "P. Placeholder"
+section-pages theme
 frame golden
   role titlepage-slot-0
     ragged left
