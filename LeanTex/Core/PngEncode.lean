@@ -2,7 +2,7 @@ module
 
 import LeanTex.Core.Flate
 
-/-! PNG writing (ISO/IEC 15948): signature, `IHDR`, optional palette, one `IDAT` and `IEND`, from
+/-! PNG writing [PNG]: signature, `IHDR`, optional palette, one `IDAT` and `IEND`, from
 sample rows or from a zlib stream of already-filtered rows. -/
 
 namespace LeanTex.Core.PngEncode

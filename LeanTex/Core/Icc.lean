@@ -4,7 +4,7 @@ public import Init.Data.ByteArray.Basic
 
 namespace LeanTex.Core.Icc
 
-/-! An ICC profile's header and description (ICC.1:2010 §7.2, §9.2.41), read from its bytes. -/
+/-! An ICC profile's header and description ([ICC1] §7.2, §9.2.41), read from its bytes. -/
 
 /-- The header fields a PDF output intent is judged by. -/
 public structure Header where

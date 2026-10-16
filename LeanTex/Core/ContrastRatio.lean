@@ -5,7 +5,7 @@ public import LeanTex.Core.Dim
 public import LeanTex.Core.DesignRole
 import LeanTex.Core.Oklab
 
-/-! The WCAG 2.2 contrast arithmetic (relative luminance, contrast ratio, SC 1.4.3, SC 1.4.11)
+/-! The WCAG 2.2 [WCAG22] contrast arithmetic (relative luminance, contrast ratio, SC 1.4.3, SC 1.4.11)
 shared by painting defaults and the document contrast judge. -/
 namespace LeanTex.Core.Contrast
 

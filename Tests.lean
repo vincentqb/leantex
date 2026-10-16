@@ -390,6 +390,7 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   Tests.MarkdownCite.mdCiteChecks ref
   Tests.MarkdownCite.mdMetadataChecks ref
   Tests.LeanCite.leanCiteChecks ref
+  Tests.LeanCite.selfDocChecks ref
   markdownInputHtmlChecks ref
   inputUseChecks ref
   backendChecks ref

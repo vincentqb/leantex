@@ -10,7 +10,7 @@ import LeanTex.Core.Hex
 
 namespace LeanTex.Core.Flate
 
-/-! Bounded zlib compression and decompression (RFC 1950 wrapping RFC 1951), and the checksums,
+/-! Bounded zlib compression and decompression ([RFC1950] wrapping [RFC1951]), and the checksums,
 content keys and PNG scanline unfiltering beside them. -/
 
 /-- Inflates a zlib stream into at most `maxOut` bytes, checking its header, stored lengths,

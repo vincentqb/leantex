@@ -6194,7 +6194,7 @@ private theorem KpChain.spans {items : Array Item} {last : Nat} {breaks : List N
     simp [kpStart, Nat.ne_of_lt hp]
 
 
-/-- Optimal breakpoints by dynamic programming over break
+/-- Optimal breakpoints [KnuthPlass1981] by dynamic programming over break
 positions, with prefix-sum line measures and an active list. -/
 public def kp (items : Array Item) (target : Sp) (protrude : Bool := false)
     (expand : Bool := false) (bg : Sp := 0) (fil : Bool := false) (runt : Bool := false) :

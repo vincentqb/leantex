@@ -11,7 +11,7 @@ namespace LeanTex.Core.Hyphen
 
 open Std
 
-/-- Liang patterns: letters to inter-letter weights (odd allows a break), the exception
+/-- Liang patterns [Liang1983]: letters to inter-letter weights (odd allows a break), the exception
 dictionary, and the locale's hyphenation minima. -/
 public structure Patterns where
   map : HashMap String (Array Nat)

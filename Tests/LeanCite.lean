@@ -348,4 +348,26 @@ cites nothing ({repr (listFilesOf d)}, {repr (listsOf d)}, {repr (ds.map (·.mes
       (ds.any (fun d => d.kind == .W0110 && d.subject == some "code:bibliography") &&
         listFilesOf d == #["own"] && hasStr (inkText d.body) "Cites [ash2001].")
 
+/-- leantex's own documentation: each module citing `docs/references.bib` builds as the driver
+builds it with every key it cites in its reference list, and every entry is cited somewhere. -/
+def selfDocChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let bib := Bib.parse (← IO.FS.readFile "docs/references.bib")
+  let keys := bib.entries.map (·.key)
+  t "self docs: the project bibliography parses" (bib.errors.isEmpty && !keys.isEmpty)
+  let files := (← System.FilePath.walkDir "LeanTex").filter (·.toString.endsWith ".lean")
+  let mut cited : Array String := #[]
+  for f in files do
+    let src ← IO.FS.readFile f
+    let has := hasStr src
+    let ks := keys.filter fun k => has ("[" ++ k ++ "]")
+    unless ks.isEmpty do
+      let (d, ds) ← driverBuild f.toString
+      let listed := (listsOf d).flatMap (·.2)
+      t s!"self docs: {f} lists every key it cites (missing {ks.filter (!listed.contains ·)})"
+        (ks.all listed.contains && !ds.any (·.kind == .W0351))
+      cited := cited ++ ks
+  t s!"self docs: every project reference is cited (uncited {keys.filter (!cited.contains ·)})"
+    (keys.all cited.contains)
+
 end Tests.LeanCite
