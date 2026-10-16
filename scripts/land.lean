@@ -21,6 +21,8 @@ structure Env where
   /-- An exclusive lock on `<run dir>/alive`, held for the whole run, which tells a live
   run's directory from a dead one's. -/
   alive : IO.FS.Handle
+  /-- The monotonic clock when the run started, in milliseconds. -/
+  startMs : Nat
 
 /-- A porcelain value, quoted when it holds whitespace, a quote, a backslash or nothing at
 all. -/
@@ -176,7 +178,7 @@ def mkEnv : IO (Except String Env) := do
   let alive ← IO.FS.Handle.mk s!"{runDir}/alive" .append
   let _ ← alive.tryLock
   IO.FS.writeFile s!"{runDir}/bootstrap.log" (← trace.get)
-  return .ok { common, mainWt, runDir, runId, ts, childEnv, alive }
+  return .ok { common, mainWt, runDir, runId, ts, childEnv, alive, startMs := ← IO.monoMsNow }
 
 def rmQuiet (p : System.FilePath) : IO Unit := do
   try IO.FS.removeDirAll p catch _ => pure ()
@@ -609,9 +611,26 @@ def runGate (e : Env) (ctr : IO.Ref Nat) (g : Gate) (idx : Nat) (mainTip tip : S
   if r.code != 0 then return .gateFail idx head clean
   return .gateOk idx head clean
 
-/-- The landing lock, and the record of who holds it. -/
+/-- The landing lock, which a land built before the queue takes exclusively and which a run holds
+shared while it lands or waits first in line, and the record of who holds the turn. -/
 def lockPath (e : Env) : String := s!"{e.common}/land/landing.lock"
 def ownerPath (e : Env) : String := s!"{e.common}/land/landing.owner"
+
+/-- The turn lock, which one landing run at a time holds exclusively. -/
+def turnPath (e : Env) : String := s!"{e.common}/land/turn.lock"
+
+/-- Hold the landing lock shared, as the fence that keeps a land built before the queue from taking
+it out of turn; whether it is held. -/
+def raiseFence (fence : IO.FS.Handle) (fenced : IO.Ref Bool) : IO Bool := do
+  if ← fenced.get then return true
+  let got ← try fence.tryLock (exclusive := false) catch _ => pure false
+  if got then fenced.set true
+  return got
+
+def lowerFence (fence : IO.FS.Handle) (fenced : IO.Ref Bool) : IO Unit := do
+  if ← fenced.get then
+    try fence.unlock catch _ => pure ()
+    fenced.set false
 
 /-- A `key=value` field of an owner record; empty when absent. -/
 def recField (rec key : String) : String :=
@@ -681,6 +700,45 @@ def turnBeatMs : UInt32 := 500
 /-- The asks a waiting run makes before it refuses: eight hours of beats, the span a landing's
 retries are given. -/
 def turnBeats : Nat := 8 * 60 * 60 * 1000 / turnBeatMs.toNat
+
+/-- The beats a live waiter may miss before the queue reads it as asking no more: thirty seconds. -/
+def staleBeats : Nat := 60
+
+/-- How long a dead run's place outlives that run's start, in seconds: the span a run waits, then
+the span a landing's retries are given. -/
+def placeKeepSec : Nat := 2 * turnBeats * turnBeatMs.toNat / 1000
+
+/-- Days from the Unix epoch to the Gregorian date `y-m-d`, for a date from then on. -/
+def civilDays (y m d : Nat) : Nat :=
+  let y' := if m ≤ 2 then y - 1 else y
+  let (era, yoe) := (y' / 400, y' % 400)
+  let doy := (153 * (if m > 2 then m - 3 else m + 9) + 2) / 5 + d - 1
+  era * 146097 + yoe * 365 + yoe / 4 - yoe / 100 + doy - 719468
+
+/-- When a run started, in Unix seconds, read from its id's UTC stamp `YYYYMMDDTHHMMSS…`. -/
+def runStart (run : String) : Option Nat := do
+  let cs := run.toList
+  guard (cs.length ≥ 15 && cs[8]? == some 'T')
+  let num (i n : Nat) : Option Nat := (String.ofList ((cs.drop i).take n)).toNat?
+  let (y, mo, d, h, mi, se) := (← num 0 4, ← num 4 2, ← num 6 2, ← num 9 2, ← num 11 2, ← num 13 2)
+  guard (y ≥ 1970 && 1 ≤ mo && mo ≤ 12 && 1 ≤ d && d ≤ 31 && h < 24 && mi < 60 && se < 61)
+  return civilDays y mo d * 86400 + h * 3600 + mi * 60 + se
+
+/-- Now, in Unix seconds: the run's start and the monotonic time since. -/
+def nowSec (e : Env) : IO (Option Nat) := do
+  return (runStart e.runId).map (· + ((← IO.monoMsNow) - e.startMs) / 1000)
+
+/-- Record that this run asks now, by the monotonic clock every process on the machine shares. -/
+def writeBeat (e : Env) (now : Nat) : IO Unit := do
+  try
+    IO.FS.writeFile s!"{e.runDir}/beat.next" (toString now)
+    IO.FS.rename s!"{e.runDir}/beat.next" s!"{e.runDir}/beat"
+  catch _ => pure ()
+
+/-- The last beat of `run`, none for a run that never beat, as a land built before beats. -/
+def beatOf (common run : String) : IO (Option Nat) := do
+  try return (trimWs (← IO.FS.readFile s!"{common}/land/{run}/beat")).toNat?
+  catch _ => return none
 
 /-- Settle a train's riders under the queue's lock: the landed and the refused leave, the rest
 wait again in their places. -/
@@ -926,13 +984,12 @@ def landLoop (e : Env) (ctr : IO.Ref Nat) (treeLive : IO.Ref Bool) (name : Strin
         pure (.mainRecheck onMain tip)
       | .writeLanding => do
         let t1 ← IO.monoMsNow
-        -- Each rider still riding, by name, read tip and commit in the train.
-        let riding := st.riders.toList.filter (·.standing == .riding)
+        -- Each rider still riding, by name, read tip and commit in the train (`step_ridingRows_exact`).
         let ok ← writeLedger e
           ([("ts", e.ts), ("run", e.runId), ("name", name), ("verdict", "landing"),
            ("gated", st.gatedTip), ("prev", st.prevMainTip), ("branch", st.branchTip)]
-           ++ (if riding.isEmpty then [] else [("tip", st.headTip),
-             ("riders", ridersField (riding.map fun r => (r.name, r.tip, r.rebased)))])
+           ++ (if st.ridingRows.isEmpty then [] else [("tip", st.headTip),
+             ("riders", ridersField st.ridingRows)])
            ++ [("gateset", gateset), ("ms", toString (t1 - t0)), ("dir", e.runDir)])
         say "announce" (if ok then "ok" else "fail") [("gated", st.gatedTip)]
         pure (if ok then .ledgerOk else .ledgerFail)
@@ -957,9 +1014,10 @@ def landLoop (e : Env) (ctr : IO.Ref Nat) (treeLive : IO.Ref Bool) (name : Strin
         pure (.mainTip mt)
       | .writeLanded => do
         let t1 ← IO.monoMsNow
-        -- One row per member, each naming the commit it landed as, the train's top last.
-        let landedRiders := st.riders.toList.filter (·.standing == .landed)
-        let train := if landedRiders.isEmpty then [] else [("train", e.runId)]
+        -- One row per member, each naming the commit it landed as, the train's top last
+        -- (`step_landedRows_exact`).
+        let rows := st.landedRows
+        let train := if rows.length ≤ 1 then [] else [("train", e.runId)]
         let row (n tip branch : String) : List (String × String) :=
           [("ts", e.ts), ("run", e.runId), ("name", n),
            ("verdict", "landed"), ("tip", tip), ("gated", st.gatedTip),
@@ -968,13 +1026,12 @@ def landLoop (e : Env) (ctr : IO.Ref Nat) (treeLive : IO.Ref Bool) (name : Strin
            ("skipped", String.intercalate "," st.skipped.toList),
            ("pushed", if wantPush then "pending" else "no")] ++ train
           ++ [("gateset", gateset), ("ms", toString (t1 - t0)), ("dir", e.runDir)]
-        let mut ok ← writeLedger e (row name (if landedRiders.isEmpty then st.mainAt else st.headTip)
-          st.branchTip)
-        for r in landedRiders do
-          ok := ok && (← writeLedger e (row r.name r.rebased r.tip))
+        let mut ok := true
+        for (n, tip, branch) in rows do
+          ok := ok && (← writeLedger e (row n tip branch))
         say "ledger" (if ok then "ok" else "fail")
-          ([("file", ledgerPath e)] ++ (if landedRiders.isEmpty then []
-            else [("members", toString (landedRiders.length + 1))]))
+          ([("file", ledgerPath e)] ++ (if rows.length ≤ 1 then []
+            else [("members", toString rows.length)]))
         pure (if ok then .ledgerOk else .ledgerFail)
       | .push tip => do
         -- The gated tip, by sha, to the remote's `main`, never forced.
@@ -1053,11 +1110,11 @@ def landRun (e : Env) (name : String) (mode : Mode) (wantPush : Bool)
   finally
     if ← treeLive.get then removeTree e ctr
 
-/-- One ask for the lock under the queue's lock: enter or read the queue, decide this run's turn
-with the runs' liveness and a train's `reach`, and on a take hold the landing lock, leave and
-board the riders; a run that `holds` no place decides as if last and writes nothing. -/
-def askTurn (e : Env) (queueH lockH : IO.FS.Handle) (me : Waiter) (enter holds : Bool)
-    (reach : Nat) : IO (Turn × List Waiter) := do
+/-- One ask under the queue's lock: expire dead places, enter, decide the turn by liveness, by beats
+against this run's previous one `prev`, and a train's `reach`, and take the turn behind the fence;
+one that `holds` no place writes nothing; whether the run stands first comes back with the turn. -/
+def askTurn (e : Env) (queueH turnH fence : IO.FS.Handle) (fenced : IO.Ref Bool) (me : Waiter)
+    (enter holds : Bool) (reach prev : Nat) (now : Option Nat) : IO (Turn × List Waiter × Bool) := do
   queueH.lock
   try
     let q0 ← readQueueAt e.common
@@ -1065,19 +1122,28 @@ def askTurn (e : Env) (queueH lockH : IO.FS.Handle) (me : Waiter) (enter holds :
     for r in (q0.map (·.run) ++ q0.map (·.train)).eraseDups do
       if !r.isEmpty && r != me.run && (← runLiveAt e.common r) then liveRuns := liveRuns.push r
     let live : String → Bool := (liveRuns.contains ·)
-    let q := if !enter then q0
-      else if holds then Queue.enter q0 live me
-      else Queue.enter (Queue.leave q0 me.name) live me
-    let t ← match Queue.turn q live me.name me.run true reach with
+    let mut quiet : Array String := #[]
+    for w in q0 do
+      if live w.run then
+        if let some b ← beatOf e.common w.run then
+          if b + staleBeats * turnBeatMs.toNat < prev then quiet := quiet.push w.run
+    let asks : String → Bool := (!quiet.contains ·)
+    let qx := match now with
+      | some t => if holds then Queue.expire q0 live runStart (t - min t placeKeepSec) else q0
+      | none => q0
+    let q := if !enter then qx
+      else if holds then Queue.enter qx live me
+      else Queue.enter (Queue.leave qx me.name) live me
+    let (t, first) ← match Queue.turn q live asks me.name me.run true reach with
       | .take rs => do
-        if ← lockH.tryLock then pure (Turn.take rs)
-        else pure (Queue.turn q live me.name me.run false reach)
-      | t => pure t
+        if (← raiseFence fence fenced) && (← turnH.tryLock) then pure (Turn.take rs, true)
+        else pure (Queue.turn q live asks me.name me.run false reach, true)
+      | t => pure (t, false)
     let q' := if !holds then q0 else match t with
       | .take rs => Queue.board (Queue.leave q me.name) rs me.run
       | _ => q
     if q' != q0 then writeQueue e q'
-    return (t, q')
+    return (t, q', first)
   finally
     queueH.unlock
 
@@ -1098,9 +1164,11 @@ def fareOf (gates : Array Gate) : String := Id.run do
   let hex := String.ofList (Nat.toDigits 16 h.toNat)
   return String.ofList (List.replicate (16 - hex.length) '0') ++ hex
 
-/-- Hold the landing lock for `act`: a record found from a holder that died is marked
-`abandoned` and its gate tree removed, this run's record written, and both released after. -/
-def holdLock (e : Env) (h : IO.FS.Handle) (name : String) (act : IO UInt32) : IO UInt32 := do
+/-- Hold the turn for `act`: a record found from a holder that died is marked `abandoned` and its
+gate tree removed, this run's record written, and the record, the turn lock and the fence released
+after. -/
+def holdLock (e : Env) (h fence : IO.FS.Handle) (fenced : IO.Ref Bool) (name : String)
+    (act : IO UInt32) : IO UInt32 := do
   let ctr ← IO.mkRef 0
   let prev := trimWs (← try IO.FS.readFile (ownerPath e) catch _ => pure "")
   if prev.isEmpty then say "lock" "ok" [("path", lockPath e)]
@@ -1122,6 +1190,7 @@ def holdLock (e : Env) (h : IO.FS.Handle) (name : String) (act : IO UInt32) : IO
     pure 3
   try IO.FS.removeFile (ownerPath e) catch _ => pure ()
   h.unlock
+  lowerFence fence fenced
   return r
 
 /-- Drop `name`'s waiter under the queue's lock (`QueueOp.drop`), whether it was waiting. -/
@@ -1143,8 +1212,8 @@ def riderVerdict (e : Env) (name train : String) : IO (Option String) := do
   | some row => return if jsonField row "run" == some train then some row else none
   | none => return none
 
-/-- One lock taker at a time, in arrival order among the live: the first takes the lock once free
-with its riders, one in a train's reach waits, one beyond refuses with exit 2 keeping its place, a
+/-- One taker at a time in arrival order among the waiters that ask: the first, fenced, takes the free
+turn with its riders, one within a train's reach waits, one beyond refuses keeping its place, a
 rider waits for its train's verdict, and a taker that `holds` no place never waits. -/
 def withTurn (e : Env) (name : String) (fare : String) (act : List String → IO UInt32)
     (holds : Bool := true) : IO UInt32 := do
@@ -1157,12 +1226,15 @@ def withTurn (e : Env) (name : String) (fare : String) (act : List String → IO
     say "queue" "fail" ([("name", name)] ++ kvs ++ [("why", why)])
     sayFinal .refused [("name", name), ("why", why)]
     return 2
-  let some h ← try some <$> IO.FS.Handle.mk (lockPath e) .append catch _ => pure none
+  let some h ← try some <$> IO.FS.Handle.mk (turnPath e) .append catch _ => pure none
+    | fail "lock" (turnPath e) "the turn lock file cannot be opened"
+  let some fence ← try some <$> IO.FS.Handle.mk (lockPath e) .append catch _ => pure none
     | fail "lock" (lockPath e) "the lock file cannot be opened"
   let some qh ← try some <$> IO.FS.Handle.mk (queueLockPath e) .append catch _ => pure none
     | fail "queue" (queueLockPath e) "the queue's lock file cannot be opened"
   if !queueable name then
     return ← refuse s!"agent/{name} names no branch: it holds whitespace or a control character"
+  let fenced ← IO.mkRef false
   let reach ← trainReach e
   let me : Waiter :=
     { name, run := e.runId, pid := (← IO.Process.getPID).toNat, since := e.ts, fare, train := "" }
@@ -1170,11 +1242,14 @@ def withTurn (e : Env) (name : String) (fare : String) (act : List String → IO
   let busy := "another landing holds the lock"
   let t0 ← IO.monoMsNow
   let mut said : Option Turn := none
-  let mut rode : Option String := none
-  -- The row the train this run rode wrote for this name, once the train is over, is the verdict.
+  let tipNow : IO Sha := do
+    let ctr ← IO.mkRef 0
+    revParse e ctr "queue" s!"refs/heads/agent/{name}" (some e.mainWt)
+  -- The row a train wrote for this name is the verdict when it judged the tip the branch reads now.
   let trainVerdict (t : String) : IO (Option UInt32) := do
     let some row ← riderVerdict e name t | return none
     let fld (k : String) := (jsonField row k).getD ""
+    if fld "branch" != (← tipNow) then return none
     if fld "verdict" == "landed" then
       let _ ← leaveQueue e name
       sayFinal .landed [("name", name), ("train", t), ("tip", fld "tip"), ("gated", fld "gated")]
@@ -1184,53 +1259,69 @@ def withTurn (e : Env) (name : String) (fare : String) (act : List String → IO
       sayFinal .refused [("name", name), ("train", t), ("why", fld "why")]
       return some 2
     return none
+  -- What a train that judged an older tip of this name said of it, for the run's refusal.
+  let trainJudged (t : String) : IO (Option String) := do
+    let some row ← riderVerdict e name t | return none
+    let fld (k : String) := (jsonField row k).getD ""
+    let now ← tipNow
+    if fld "branch" == now then return none
+    return some s!"train {t} judged agent/{name} at {fld "branch"} ({fld "verdict"}\
+{if (fld "why").isEmpty then "" else s!": {fld "why"}"}), and the branch reads \
+{if now.isEmpty then "no tip" else now} now"
+  -- Every train this run's place rode, which answers once it no longer runs.
+  let mut trains : List String := []
   let mut consulted : List String := []
-  -- The train a dead place this run took over carried, whose verdict was another run's.
-  let mut inherited : Option String := none
+  let mut prev := 0
   for i in [0:turnBeats] do
-    -- The trains this run saw itself ride, or its own place boarded, once each is over.
     let boarded := (((← try readQueueAt e.common catch _ => pure []).find? fun w =>
-      w.name == name && w.run == e.runId).map (·.train)).filter fun t =>
-        !t.isEmpty && inherited != some t
-    for t in (rode.toList ++ boarded.toList).eraseDups do
+      w.name == name && w.run == e.runId).map (·.train)).filter (!·.isEmpty)
+    trains := (trains ++ boarded.toList).eraseDups
+    for t in trains do
       if !consulted.contains t && !(← runLiveAt e.common t) then
-        if let some code ← trainVerdict t then return code
+        if let some code ← trainVerdict t then
+          lowerFence fence fenced
+          return code
         consulted := consulted ++ [t]
-        if rode == some t then rode := none
-    let asked ← try pure (Except.ok (← askTurn e qh h me (i == 0) holds reach))
+    let beat ← IO.monoMsNow
+    writeBeat e beat
+    let asked ← try pure (Except.ok (← askTurn e qh h fence fenced me (i == 0) holds reach prev
+        (← nowSec e)))
       catch ex => pure (Except.error (toString ex))
-    if i == 0 then
-      if let .ok (_, q) := asked then
-        inherited := ((q.find? fun w => w.name == name && w.run == e.runId).map (·.train)).filter
-          (!·.isEmpty)
+    prev := beat
     match asked with
     | .error why =>
       h.unlock
+      lowerFence fence fenced
       return ← fail "queue" (queuePath e) s!"the queue could not be read or written: {why}"
-    | .ok (.take rs, q) =>
+    | .ok (.take rs, q, _) =>
       say "queue" "ok" ([("waited-ms", toString ((← IO.monoMsNow) - t0)),
         ("waiters", toString q.length)]
         ++ (if rs.isEmpty then [] else [("riders", String.intercalate "," rs)]))
-      return ← holdLock e h name (act rs)
-    | .ok (.wait, q) =>
+      return ← holdLock e h fence fenced name (act rs)
+    | .ok (.wait, q, first) =>
       if !holds then
+        lowerFence fence fenced
         say "lock" "fail" [("path", lockPath e), ("owner", ← owner)]
         return ← refuse s!"{busy} ({← owner}), and {name} takes no place in the queue: ask \
 again once it is free"
+      -- First in line, the run holds the fence, so no land outside the queue takes the lock when it frees.
+      if first then discard <| raiseFence fence fenced else lowerFence fence fenced
       unless said == some .wait do
         say "queue" "wait" [("position", toString ((Queue.ahead q name).length + 1)),
           ("waiters", toString q.length), ("holder", recField (← owner) "name")]
         (← IO.getStdout).flush
         said := some .wait
       IO.sleep turnBeatMs
-    | .ok (.rides t, _) =>
+    | .ok (.rides t, _, _) =>
+      lowerFence fence fenced
       unless said == some (.rides t) do
         say "queue" "ride" [("train", t), ("head", recField (← owner) "name")]
         (← IO.getStdout).flush
         said := some (.rides t)
-      if inherited != some t then rode := some t
+      trains := (trains ++ [t]).eraseDups
       IO.sleep turnBeatMs
-    | .ok (.behind p hd, q) =>
+    | .ok (.behind p hd, q, _) =>
+      lowerFence fence fenced
       say "queue" "behind" [("position", toString p), ("head", hd),
         ("waiters", toString q.length)]
       say "lock" "fail" [("path", lockPath e), ("owner", ← owner)]
@@ -1238,11 +1329,13 @@ again once it is free"
         else s!"{name} takes no place in the queue, behind {hd}; ask again once it is free"
       sayFinal .refused [("name", name), ("why", s!"{busy} or is first in the queue: {place}")]
       return 2
-    | .ok (.held r, _) =>
+    | .ok (.held r, _, _) =>
+      lowerFence fence fenced
       return ← refuse s!"{busy} or waits for it: agent/{name} already waits for the lock in run \
 {r}; ask again once that run ends" [("run", r)]
-    | .ok (.gone, _) =>
-      if let some t := rode then
+    | .ok (.gone, _, _) =>
+      lowerFence fence fenced
+      for t in trains do
         if let some code ← trainVerdict t then return code
       -- A train that took this name while this run did not run: main's landing of it answers.
       if let some row ← alreadyLanded e name then
@@ -1250,8 +1343,12 @@ again once it is free"
         sayFinal .landed [("name", name), ("train", (jsonField row "train").getD (fld "run")),
           ("tip", fld "tip"), ("gated", fld "gated")]
         return 0
+      for t in trains do
+        if let some why ← trainJudged t then
+          return ← refuse s!"agent/{name} left the queue while this run waited: {why}; ask again"
       return ← refuse s!"agent/{name} left the queue while this run waited: it landed, retired \
 or was made new (land new <name>)"
+  lowerFence fence fenced
   refuse s!"{busy} ({← owner}) after agent/{name} waited {turnBeats * turnBeatMs.toNat / 60000} \
 minutes in the queue: it keeps its place; ask again to keep it"
 
@@ -2065,15 +2162,15 @@ not own")]
           && (waiterOfLine? "name=a run=x/y pid=1 since=t").isNone
           && (waiterOfLine? "name=a run=x pid=1 since=t train=../y").isNone)
     , ("a name holding a space is not queued", !queueable "a b" && queueable "a-b")
-    , ("the first waiter takes a free lock", Queue.turn q3 all "a" "ra" true 1 == .take [])
-    , ("the first waiter waits on a held one", Queue.turn q3 all "a" "ra" false 1 == .wait)
+    , ("the first waiter takes a free lock", Queue.turn q3 all all "a" "ra" true 1 == .take [])
+    , ("the first waiter waits on a held one", Queue.turn q3 all all "a" "ra" false 1 == .wait)
     , ("a waiter behind a live one keeps its place",
-        Queue.turn q3 liveB "c" "rc" true 1 == .behind 3 "b")
-    , ("a dead first waiter is skipped", Queue.turn q3 liveB "b" "rb" true 1 == .take [])
+        Queue.turn q3 liveB all "c" "rc" true 1 == .behind 3 "b")
+    , ("a dead first waiter is skipped", Queue.turn q3 liveB all "b" "rb" true 1 == .take [])
     , ("a name another live run waits under is held from this one",
-        Queue.turn q3 liveB "b" "rx" true 1 == .held "rb")
+        Queue.turn q3 liveB all "b" "rx" true 1 == .held "rb")
     , ("a name a dead run waited under, entered by no one, is gone",
-        Queue.turn q3 liveB "a" "rx" true 1 == .gone)
+        Queue.turn q3 liveB all "a" "rx" true 1 == .gone)
     , ("entering again keeps the place and the arrival",
         Queue.enter q3 liveB { wtr "a" "ra2" 8 with since := "later" }
           == [wtr "a" "ra2" 8, wtr "b" "rb", wtr "c" "rc"])
@@ -2083,29 +2180,45 @@ not own")]
         (Queue.enter q3 liveB (wtr "d" "rd")).map (·.name) == ["a", "b", "c", "d"])
     , ("a name holding a C1 control character is not queued", !queueable "a\u0085b")
     , ("a head takes the live waiters behind it under its fare as riders",
-        Queue.turn qf all "a" "ra" true 4 == .take ["b", "c"])
+        Queue.turn qf all all "a" "ra" true 4 == .take ["b", "c"])
     , ("a train takes a train's worth at most",
-        Queue.turn qf all "a" "ra" true 2 == .take ["b"])
-    , ("a dead waiter rides no train", Queue.turn qf (· != "rb") "a" "ra" true 4 == .take ["c"])
-    , ("a waiter within a train's reach waits", Queue.turn qf all "c" "rc" true 4 == .wait)
+        Queue.turn qf all all "a" "ra" true 2 == .take ["b"])
+    , ("a dead waiter rides no train", Queue.turn qf (· != "rb") all "a" "ra" true 4 == .take ["c"])
+    , ("a waiter within a train's reach waits", Queue.turn qf all all "c" "rc" true 4 == .wait)
     , ("a waiter past a train's reach is refused",
-        Queue.turn qf all "c" "rc" true 2 == .behind 3 "a")
+        Queue.turn qf all all "c" "rc" true 2 == .behind 3 "a")
     , ("a head riding no train takes no riders",
-        Queue.turn ((qf.take 1).map ({ · with fare := "" }) ++ qf.drop 1) all "a" "ra" true 4
+        Queue.turn ((qf.take 1).map ({ · with fare := "" }) ++ qf.drop 1) all all "a" "ra" true 4
           == .take [])
     , ("a rider of a live train waits for its verdict",
-        Queue.turn (Queue.board qf ["b"] "rt") (fun r => r != "rx") "b" "rb" true 4 == .rides "rt")
+        Queue.turn (Queue.board qf ["b"] "rt") (fun r => r != "rx") all "b" "rb" true 4 == .rides "rt")
     , ("a rider of a dead train waits again in its place",
-        Queue.turn (Queue.board qf ["b"] "rt") (· != "rt") "b" "rb" false 4 == .wait)
+        Queue.turn (Queue.board qf ["b"] "rt") (· != "rt") all "b" "rb" false 4 == .wait)
     , ("a train's riders are no waiters ahead",
-        Queue.turn (Queue.board qf ["b", "c"] "rt") all "d" "rd" true 2 == .wait
-          && Queue.turn qf all "d" "rd" true 2 == .behind 4 "a")
+        Queue.turn (Queue.board qf ["b", "c"] "rt") all all "d" "rd" true 2 == .wait
+          && Queue.turn qf all all "d" "rd" true 2 == .behind 4 "a")
     , ("a gate list's fare is a digest of its gates",
         fareOf #[{ name := "t", cmd := "true", args := #[] }]
           == fareOf #[{ name := "t", cmd := "true", args := #[] }]
         && fareOf #[{ name := "t", cmd := "true", args := #[] }]
           != fareOf #[{ name := "t", cmd := "false", args := #[] }]
-        && (fareOf #[]).length == 16) ]
+        && (fareOf #[]).length == 16)
+    , ("a live waiter that asks no more is passed over",
+        Queue.turn q3 all (· != "ra") "b" "rb" true 1 == .take [])
+    , ("a live waiter that asks no more is no head to refuse behind",
+        Queue.turn q3 all (· != "ra") "c" "rc" true 1 == .behind 3 "b")
+    , ("a dead place whose last run started before the cutoff expires, the rest in order",
+        Queue.expire q3 liveB (fun r => if r == "ra" then some 10 else if r == "rc" then some 100
+          else none) 50 == [wtr "b" "rb", wtr "c" "rc"])
+    , ("a dead place on a live train, or of an unread start, stays",
+        Queue.expire (Queue.board q3 ["a"] "rt") (· == "rt") (fun _ => some 0) 50
+          == [{ wtr "a" "ra" with train := "rt" }]
+        && Queue.expire q3 (fun _ => false) (fun _ => none) 50 == q3)
+    , ("a run's start reads from its id's stamp",
+        runStart "19700101T000000000000000-1" == some 0
+          && runStart "20261016T174511179335071-166826" == some 1792172711
+          && runStart "20240229T235959000000000-7" == some 1709251199
+          && runStart "run-12" == none && runStart "20261316T000000000000000-1" == none) ]
   for (why, ok) in queueCases do
     if ok then say "selftest" "ok" [("case", s!"queue: {why}")]
     else
@@ -3812,6 +3925,131 @@ grep -q \"transport 'https' not allowed\" {s.root}/probe.err\n"
          , ok := code == 0 && after == tip
          , detail := s!"exit={code} main={after} gated={tip} git-said=[{said}]" }
 
+/-- A land built before the queue polls for the lock while a landing holds it and a waiter stands
+first in line: it takes the lock only once that waiter has landed, never in the gap a holder
+leaves. -/
+def scenarioPreQueueFenced (self root : String) : IO Outcome := do
+  let s ← mkScratch s!"{root}/fenced" "holder"
+  addAgent s "waiter"
+  let th ← landAsync self s.repo #["holder"] (← holdGate s "holder")
+  let held ← awaitTrue (System.FilePath.pathExists s!"{s.root}/held-holder")
+  let tw ← landAsync self s.repo #["waiter"] (← holdGate s "waiter")
+  let first ← awaitHead s "waiter"
+  -- The old land's ask, made every two milliseconds: the waiter's turn must be under way when it wins.
+  let poller : Task (Except IO.Error (Option Bool)) ← IO.asTask (prio := .dedicated) do
+    let lock ← IO.FS.Handle.mk s!"{s.repo}/.git/land/landing.lock" .append
+    for _ in [0:60000] do
+      if ← lock.tryLock then
+        let turned ← System.FilePath.pathExists s!"{s.root}/held-waiter"
+        lock.unlock
+        return some turned
+      IO.sleep 2
+    return none
+  release s "holder"
+  let gated ← awaitTrue (System.FilePath.pathExists s!"{s.root}/held-waiter")
+  release s "waiter"
+  let (ch, _) ← awaitRun th
+  let (cw, _) ← awaitRun tw
+  let won ← match ← IO.wait poller with
+    | .ok r => pure r
+    | .error _ => pure none
+  return { label := "a land built before the queue takes the lock only once the waiter first in line \
+has landed"
+         , ok := held && first && gated && ch == 0 && cw == 0 && won == some true
+         , detail := s!"held={held} first={first} gated={gated} holder={ch} waiter={cw} \
+old-land-won-after-the-waiter-gated={won}" }
+
+/-- A waiter first in line is stopped: once it misses its beats, the one behind it takes the lock
+and lands, and the stopped one, continued, lands after it. -/
+def scenarioQueueStoppedHead (self root : String) : IO Outcome := do
+  let s ← mkScratch s!"{root}/stoppedhead" "holder"
+  for n in ["first", "second"] do addAgent s n
+  let th ← landAsync self s.repo #["holder"] (← holdGate s "holder")
+  let held ← awaitTrue (System.FilePath.pathExists s!"{s.root}/held-holder")
+  let tf ← landAsync self s.repo #["first"] (← holdGate s "first")
+  let entered ← awaitHead s "first"
+  let ts ← landAsync self s.repo #["second"] (← holdGate s "second")
+  let both ← awaitLive s ["first", "second"]
+  let stopped ← if both then stopWaiter s "first" else pure none
+  let passed ← try
+      release s "holder"
+      let _ ← awaitRun th
+      -- Thirty seconds of missed beats, with room: the second's gate starts within ninety.
+      let mut went := false
+      for _ in [0:900] do
+        if ← System.FilePath.pathExists s!"{s.root}/held-second" then went := true; break
+        IO.sleep 100
+      pure went
+    finally
+      if let some pid := stopped then
+        let _ ← hrun "kill" #["-CONT", toString pid] none
+  release s "second"
+  release s "first"
+  let (cs, _) ← awaitRun ts
+  let (cf, _) ← awaitRun tf
+  let order ← mainSubjects s.repo
+  return { label := "a waiter stopped first in line is passed over once it misses its beats, and \
+lands when it runs again"
+         , ok := held && entered && both && stopped.isSome && passed && cs == 0 && cf == 0
+             && order == ["Base", "Add holder", "Add second", "Add first"]
+         , detail := s!"held={held} entered={entered} both={both} stopped={stopped.isSome} \
+passed={passed} second={cs} first={cf} main={order}" }
+
+/-- A dead place whose last run started before the span a place is kept expires at the next ask,
+while a dead place of a recent run keeps its place. -/
+def scenarioQueueExpired (self root : String) : IO Outcome := do
+  let s ← mkScratch s!"{root}/expired" "solo"
+  IO.FS.createDirAll s!"{s.repo}/.git/land"
+  let (_, stamp) ← hrun "date" #["-u", "+%Y%m%dT%H%M%S%N"] none
+  let fresh := s!"{trimWs stamp}-1"
+  IO.FS.writeFile s!"{s.repo}/.git/land/queue" <|
+    waiterLine ⟨"old", "20200101T000000000000000-1", 1, "2020-01-01T00:00:00Z", "", ""⟩ ++ "\n" ++
+    waiterLine ⟨"recent", fresh, 1, "2026-01-01T00:00:00Z", "", ""⟩ ++ "\n"
+  let (c, _) ← landIn self s.repo #["solo"] "t=true"
+  let after := (← queueOf s).map (·.name)
+  return { label := "a dead place past the span a place is kept expires, a recent one keeps its place"
+         , ok := c == 0 && after == ["recent"]
+         , detail := s!"exit={c} queue={after}" }
+
+/-- A rider's run is killed while its train is gated, a new run of it takes its place on the live
+train, and the train refuses the rider for a conflict: that new run is told the train's reason. -/
+def scenarioTrainInheritedRefused (self root : String) : IO Outcome := do
+  let s ← mkScratch s!"{root}/inheritedrefused" "holder"
+  for n in ["first", "rider"] do
+    addAgent s n
+    IO.FS.writeFile s!"{s.root}/lt-{n}/shared.txt" s!"{n} writes this line\n"
+    hgitOk #["add", "shared.txt"] s!"{s.root}/lt-{n}"
+    hgitOk #["commit", "-qm", s!"{n} writes shared"] s!"{s.root}/lt-{n}"
+  let gates ← trainGate s "train"
+  let th ← landAsync self s.repo #["holder"] (← holdGate s "holder")
+  let held ← awaitTrue (System.FilePath.pathExists s!"{s.root}/held-holder")
+  let tf ← landAsync self s.repo #["first"] gates
+  let _ ← awaitQueued s "first"
+  let tr ← landAsync self s.repo #["rider"] gates
+  let both ← awaitLive s ["first", "rider"]
+  release s "holder"
+  let gating ← awaitTrue (System.FilePath.pathExists s!"{s.root}/held-train")
+  let boarded := (← queueOf s).find? (·.name == "rider")
+  let killed ← match boarded with
+    | some w => do pure (!w.train.isEmpty && (← hrun "kill" #["-KILL", toString w.pid] none).1 == 0)
+    | none => pure false
+  let (cr, _) ← awaitRun tr
+  let t2 ← landAsync self s.repo #["rider"] gates
+  let took ← awaitTrue do
+    match (← queueOf s).find? (·.name == "rider") with
+    | some w => return !w.train.isEmpty && (← waiterLiveAt s!"{s.repo}/.git" w)
+    | none => return false
+  release s "train"
+  let (ch, _) ← awaitRun th
+  let (cf, _) ← awaitRun tf
+  let (c2, o2) ← awaitRun t2
+  return { label := "a run that took a dead rider's place on a live train is told the train's refusal \
+and its reason"
+         , ok := held && both && gating && killed && cr != 0 && took && ch == 0 && cf == 0 && c2 == 2
+             && says o2 "result=refused" && says o2 "rebase conflict: shared.txt"
+         , detail := s!"held={held} both={both} gating={gating} killed={killed} rider={cr} took={took} \
+holder={ch} first={cf} again={c2}" }
+
 /-- A train's head killed after its landed rows, before it settles its riders: each rider is
 told it landed, with exit 0. -/
 def scenarioTrainKilledAfterRows (self root : String) : IO Outcome := do
@@ -4006,7 +4244,9 @@ def scratchSelftest : IO UInt32 := do
     , ("turns", scenarioQueueTurns)
     , ("train3", scenarioTrainThree), ("trainconf", scenarioTrainConflict)
     , ("trainred", scenarioTrainRed), ("trainmoved", scenarioTrainMoved)
-    , ("prequeue", scenarioTrainPreQueue), ("trainkill", scenarioTrainHeadKilled)
+    , ("prequeue", scenarioTrainPreQueue), ("fenced", scenarioPreQueueFenced)
+    , ("stoppedhead", scenarioQueueStoppedHead), ("expired", scenarioQueueExpired)
+    , ("inheritedrefused", scenarioTrainInheritedRefused), ("trainkill", scenarioTrainHeadKilled)
     , ("trainpush", scenarioTrainPushHeld), ("landeddirty", scenarioLandedDirty)
     , ("vanished", scenarioRiderVanished), ("untouched", scenarioTrainUntouched)
     , ("riderdirty", scenarioTrainRiderDirty), ("riderstopped", scenarioTrainRiderStopped)
@@ -4045,7 +4285,8 @@ def scratchSelftest : IO UInt32 := do
 def usage : String :=
   "usage: land new <name> | land check <name> | land <name> [--push] | land push | \
 land retire <name> | land status | land --selftest | land --scratch-selftest | land --help\n\
-A land built before the landing queue ignores it, and can take the lock out of turn."
+A land built before the landing queue ignores it, and takes the lock only while no run of this one \
+lands or waits first in line."
 
 def resolveGates (e : Env) : IO (Except String (Array Gate × String)) := do
   let ctr ← IO.mkRef 0
