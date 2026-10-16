@@ -15,7 +15,6 @@ import LeanTex.Core.Listing
 import LeanTex.Core.NameClaim
 import LeanTex.Core.StageNames
 import LeanTex.Core.ContrastSolve
-import LeanTex.Core.TitleTemplate
 import LeanTex.Core.ListMark
 import LeanTex.Core.Css
 import Std.Http.Data.URI.Encoding

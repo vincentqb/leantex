@@ -1,6 +1,7 @@
 module
 
 public import Tests.Support
+public import scripts.Layers
 import Lean.Elab.ParseImportsFast
 
 public section
@@ -51,6 +52,25 @@ def privateReads (graph : Std.HashMap String Header) (h : Header) : Array String
     if next.size == seen.size then break
     seen := next
   return seen.qsort (· < ·)
+
+/-- Each surface module `root`'s build reaches through a chain of imports of any kind, with the first
+chain reaching it, a surface's own imports unread. -/
+def surfaceReach (graph : Std.HashMap String Header) (root : String) : Array (List String) := Id.run do
+  let mut seen : Std.HashSet String := ({} : Std.HashSet String).insert root
+  let mut frontier : Array (List String) := #[[root]]
+  let mut found : Array (List String) := #[]
+  for _ in [0:graph.size + 1] do
+    let mut next : Array (List String) := #[]
+    for path in frontier do
+      let some m := path.head? | continue
+      for i in (graph.get? m).map (·.imports) |>.getD #[] do
+        unless seen.contains i.mod do
+          seen := seen.insert i.mod
+          if surfaceModules.contains i.mod then found := found.push (i.mod :: path).reverse
+          else next := next.push (i.mod :: path)
+    if next.isEmpty then break
+    frontier := next
+  return found
 
 /-- The files outside the module system, each small and imported by no module. -/
 def legacyFiles : List String :=
@@ -121,7 +141,11 @@ def judge (files : Array (String × String)) : IO (List (String × Bool)) := do
      (s!"the files outside the module system are exactly {legacyFiles} (found {legacy.toList})",
       legacy.toList.mergeSort (· ≤ ·) == legacyFiles.mergeSort (· ≤ ·)),
      ("every declared large file exists",
-      (largeReads ++ largeReaders).all fun (n, _) => graph.contains n)]
+      (largeReads ++ largeReaders).all fun (n, _) => graph.contains n)] ++
+    backendModules.map fun b =>
+      let reached := (surfaceReach graph b).toList.map (" → ".intercalate ·)
+      (s!"the backend {b} reaches no surface module through any import (found {reached})",
+        graph.contains b && reached.isEmpty)
   let moduleReads := (headers.filter (·.isModule)).map fun h => (h.name, privateReads graph h)
   for (name, text) in files do
     let size := (text.splitOn "\n").length
@@ -164,6 +188,15 @@ def selfTest : IO (List (String × Bool)) := do
   let chained ← judge #[("LeanTex.Core.Picture", big),
     ("Synthetic.Mid", "module\nimport all LeanTex.Core.Picture\n"),
     ("Synthetic.Contract", "module\nimport all Synthetic.Mid\n")]
+  let throughMid ← judge #[("LeanTex.Core.HtmlDoc", "module\nimport Synthetic.Leaf\nimport Synthetic.Mid\n"),
+    ("Synthetic.Leaf", "module\n"), ("Synthetic.Mid", "module\npublic import all LeanTex.Core.Parse\n"),
+    ("LeanTex.Core.Parse", "module\nimport LeanTex.Core.Lex\n"), ("LeanTex.Core.Lex", "module\n")]
+  let spelled ← judge #[("LeanTex.Core.MarkdownDoc", "module\npublic meta import LeanTex.Core.MdDesugar\n"),
+    ("LeanTex.Core.MdDesugar", "module\n")]
+  let clean ← judge #[("LeanTex.Core.Html", "module\nimport Synthetic.Leaf\n"),
+    ("Synthetic.Leaf", "module\n")]
+  let backendFact (facts : List (String × Bool)) (b : String) : Option (String × Bool) :=
+    facts.find? fun (n, _) => hasStr n s!"the backend {b} "
   return [("an import all reads through further import all, never through a plain import",
      reads "A" == #["B", "D"]),
    ("a plain import reads no private part", reads "D" == #[]),
@@ -182,12 +215,23 @@ def selfTest : IO (List (String × Bool)) := do
    ("a declared row on a small file fails",
      smallRow.any fun (n, ok) => !ok && hasStr n "keeps a largeReads row"),
    ("a large file read whole through a chain of import all fails, naming the reader",
-     chained.any fun (n, ok) => !ok && hasStr n "largeReaders" && hasStr n "Synthetic.Contract")]
+     chained.any fun (n, ok) => !ok && hasStr n "largeReaders" && hasStr n "Synthetic.Contract"),
+   ("a backend reaching a surface through a module it imports fails, naming the first chain",
+     (backendFact throughMid "LeanTex.Core.HtmlDoc").any fun (n, ok) => !ok &&
+       hasStr n "[LeanTex.Core.HtmlDoc → Synthetic.Mid → LeanTex.Core.Parse]"),
+   ("a backend importing a surface meta and publicly fails",
+     (backendFact spelled "LeanTex.Core.MarkdownDoc").any fun (n, ok) => !ok &&
+       hasStr n "LeanTex.Core.MarkdownDoc → LeanTex.Core.MdDesugar"),
+   ("a backend whose imports reach no surface passes",
+     (backendFact clean "LeanTex.Core.Html").any (·.2)),
+   ("a backend absent from the tree fails",
+     (backendFact clean "LeanTex.Core.Pdf").any (!·.2))]
 
 end Tests.BuildGraph
 
 /-- Every library and test file is a `module` but the declared shims, and the shims, each large
-file's private reads and its private readers match the declared lists. -/
+file's private reads and its private readers match the declared lists; no backend's imports reach a
+surface. -/
 def buildGraphChecks (ref : IO.Ref (List String)) : IO Unit := do
   for (name, ok) in ← Tests.BuildGraph.selfTest do
     check ref s!"build graph model: {name}" ok

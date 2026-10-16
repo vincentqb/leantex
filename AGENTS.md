@@ -55,7 +55,7 @@ export LIBRARY_PATH="$(lean --print-prefix)/lib:$(lean --print-prefix)/lib/lean"
   Host.withScratch's (`tempRootOutsideHost`); world assumptions are hypotheses or premise rows
   (`premiseChecks`).
 - Surfaces (Lex, Parse, Compat, Md*, CodeDoc) feed Elab; backends read only its IR
-  (`surfaceReach`; owed (U27)), a judge only an artifact's bytes, never its writer (`writerReach`).
+  (`surfaceReach`), a judge only an artifact's bytes, never its writer (`writerReach`).
 - Plain import for implementation, public for interface types, import all only for a small proof or
   contract companion (`buildGraphChecks`); in a large module types precede theorems (owed (U28)).
 - HTML is a typed tree with certified escapers (`tagStringEmit`, `escapeText_no_lt`; CSS owed (U62):

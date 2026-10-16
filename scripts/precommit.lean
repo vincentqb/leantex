@@ -5,6 +5,7 @@ adds (`--range`) or the tree (`--tree`), then lake build --wfail, lake test and 
 -/
 
 import scripts.Gate
+import scripts.Layers
 import scripts.Privacy
 import LeanTex.Core.DesignRole
 import LeanTex.Core.SurfaceKind
@@ -468,11 +469,8 @@ def addedByFile (diff : String) : Array (String × Array String) :=
     | some (g, ls) => if g == f then out.pop.push (g, ls.push l) else out.push (f, #[l])
     | none => out.push (f, #[l])) #[]
 
-/-- The modules that consume the IR and never reach back into a surface. -/
-def backendFiles : List String :=
-  ["LeanTex/Core/Layout.lean", "LeanTex/Core/Pdf.lean", "LeanTex/Core/PdfContent.lean",
-   "LeanTex/Core/PdfStruct.lean", "LeanTex/Core/Html.lean", "LeanTex/Core/HtmlDoc.lean",
-   "LeanTex/Core/MathMl.lean", "LeanTex/Core/MarkdownDoc.lean"]
+/-- The backends' files. -/
+def backendFiles : List String := backendModules.map fun m => "/".intercalate (m.splitOn ".") ++ ".lean"
 
 /-- A temporary directory or file made outside Host, as a code token. -/
 def tempRootOutsideHost (l : String) : Bool :=
@@ -481,16 +479,6 @@ def tempRootOutsideHost (l : String) : Bool :=
 /-- `IO`, or a name that runs effects without it, as a code token. -/
 def ioInCore (l : String) : Bool :=
   ["IO", "BaseIO", "EIO", "unsafeBaseIO", "unsafeIO", "unsafeEIO"].any (bannedWord · l)
-
-/-- The surface modules: tex's lexer, parser, elaborator and compatibility layer, markdown's reader
-and desugaring, and the code-file reader. -/
-def surfaceMods : List String :=
-  ["Lex", "Parse", "Elab", "Compat", "MdParse", "MdDesugar", "Md", "CodeDoc", "Code"]
-
-/-- The surface door and the names that read through it; naming the door's type reads the IR. -/
-def doorModule : String := "LeanTex.Core.Surface"
-def doorReads : List String :=
-  ["Surface.read", "Surface.fragment", "Surface.texLex", "Surface.texParse"]
 
 /-- Composed so this file's own diff never spells the pattern. -/
 def kwDemotedAssign : String := "demo" ++ "ted :="
@@ -507,8 +495,6 @@ def importedModule (t : String) : Option String :=
   | "import" :: "all" :: m :: _ => some m
   | "import" :: m :: _ => some m
   | _ => none
-
-def surfaceModules : List String := surfaceMods.map ("LeanTex.Core." ++ ·)
 
 /-- A qualified use `Mod.…` with nothing word-like before the name: catches
 `Parse.scanOpt` and `LeanTex.Core.Parse.scanOpt`, not `myParse.foo`. -/
@@ -588,23 +574,6 @@ def spellsName (line pat : String) : Bool :=
     && (match after.toList.head? with
      | none => true
      | some c => !isWordChar c)
-
-/-- The namespaces an `open` line opens, `in` aside. -/
-def openedNames (t : String) : List String :=
-  if t.startsWith "open " then
-    (((t.drop 5).toString.splitOn " ").filter (fun w => !w.isEmpty && w != "in"))
-  else []
-
-/-- A backend reaching into a surface: an import, an `open`, a qualified use or a door read,
-comments aside. -/
-def surfaceReach (l : String) : Bool :=
-  let l := stripComments l
-  let t := l.trimAscii.toString
-  (importedModule t).any (fun m => surfaceModules.contains m || m == doorModule)
-    || (t.startsWith "open " && surfaceMods.any (hasWord t ·))
-    || (openedNames t).any (fun n => n == "Surface" || n == "Core.Surface" || n == doorModule)
-    || surfaceMods.any (usesQualified l ·)
-    || doorReads.any (spellsName l ·)
 
 /-- The modules that judge a PDF's bytes: the census, the conformance contract and the destination
 judge. -/
@@ -1357,12 +1326,6 @@ def gates : List Gate := [
     help := "  A measure walk with a numeric default silently miscounts a new IR
   constructor (AGENTS.md § When you add).
   Fix: spell every constructor and say what each one measures." },
-  { applies := (backendFiles.contains ·)
-    flag := surfaceReach
-    what := fun f => s!"a backend reaches into the surface, in {f}"
-    help := "  Backends consume the IR and nothing else; a backend that re-parses is how
-  md→PDF and tex→HTML decay into N×M special cases (AGENTS.md § Layout and design).
-  Fix: put what the backend needs on the IR." },
   { applies := (judgeFiles.contains ·)
     flag := writerReach
     what := fun f => s!"a judge of the PDF's bytes reaches into the writer, in {f}"
@@ -2707,46 +2670,10 @@ def selftest : IO UInt32 := do
     ("  let x := unsafeBaseIO (pure 1)", true),
     ("  let tag := baseIOTag", false)]
 
-  expect "surfaceReach" surfaceReach [
-    ("import LeanTex.Core.Parse", true),
-    ("open LeanTex.Core.Parse in", true),
-    ("open Elab", true),
-    ("  let opt := Parse.scanOpt args i", true),
-    ("    LeanTex.Core.Compat.rewrite doc", true),
-    ("public import LeanTex.Core.Parse", true),
-    ("import all LeanTex.Core.Elab", true),
-    ("public import all LeanTex.Core.Compat", true),
-    ("public meta import LeanTex.Core.Lex", true),
-    ("import LeanTex.Core.MdParse", true),
-    ("public import LeanTex.Core.MdDesugar", true),
-    ("open LeanTex.Core.Md", true),
-    ("  let (raws, ds) := Md.read file text", true),
-    ("  let (raws, ds) := LeanTex.Core.Md.desugar file text", true),
-    ("import LeanTex.Core.Surface", true),
-    ("public import LeanTex.Core.Surface", true),
-    ("open LeanTex.Core.Surface in", true),
-    ("  let (raws, ds) := Surface.read .tex file text", true),
-    ("  let (raws, ds) := LeanTex.Core.Surface.fragment .markdown f t p", true),
-    ("  | Ir.Surface.markdown => doc.surface", false),
-    ("  let w := Ir.Surface.textBlock s", false),
-    ("open Ir.Surface in", false),
-    ("  let r := Surface.readers", false),
-    ("import LeanTex.Core.Ir", false),
-    ("public import LeanTex.Core.Ir", false),
-    ("import LeanTex.Core.ParseCache", false),
-    ("  -- a backend never calls Parse.scanOpt; the IR carries it", false),
-    ("  let reparse := myParse.run s", false),
-    ("  let md := MarkdownDoc.emit doc", false),
-    ("  openTag := elem tag attrs kids", false)]
-
   let gated (file line : String) : Bool := gates.any fun g => g.applies file && g.flag line
   let autolink := "  | .link url _ => acc " ++ patAppend ++ " \"<\" " ++ patAppend ++
     " url " ++ patAppend ++ " \">\""
   for (file, line, want) in [
-      ("LeanTex/Core/MarkdownDoc.lean", "import LeanTex.Core.MdParse", true),
-      ("LeanTex/Core/MarkdownDoc.lean", "public import LeanTex.Core.Parse", true),
-      ("LeanTex/Core/MarkdownDoc.lean", "  let (raws, ds) := Md.read file text", true),
-      ("LeanTex/Core/HtmlDoc.lean", "  let (raws, ds) := Md.desugar file text", true),
       ("LeanTex/Core/HtmlDoc.lean", autolink, true),
       ("LeanTex/Core/MarkdownDoc.lean", autolink, false),
       ("LeanTex/Core/MarkdownDoc.lean", "public import LeanTex.Core.Ir", false),
