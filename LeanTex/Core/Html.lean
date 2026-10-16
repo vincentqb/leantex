@@ -11,8 +11,18 @@ def escapeCharText (c : Char) : List Char :=
   else if c == '>' then "&gt;".toList
   else [c]
 
+def needsText (c : Char) : Bool := c == '&' || c == '<' || c == '>'
+
+def escapeStepText (acc : String) (c : Char) : String :=
+  if c == '&' then acc ++ "&amp;"
+  else if c == '<' then acc ++ "&lt;"
+  else if c == '>' then acc ++ "&gt;"
+  else acc.push c
+
+/-- The text with `&`, `<` and `>` replaced by their references; a text holding none is returned
+as it stands. -/
 public def escapeText (s : String) : String :=
-  String.ofList (go s.toList)
+  if s.contains needsText then s.foldl escapeStepText "" else s
 where
   go : List Char → List Char
     | [] => []
@@ -26,8 +36,20 @@ def escapeCharAttr (c : Char) : List Char :=
   else if c == '\'' then "&#39;".toList
   else [c]
 
+def needsAttr (c : Char) : Bool := c == '&' || c == '<' || c == '>' || c == '"' || c == '\''
+
+def escapeStepAttr (acc : String) (c : Char) : String :=
+  if c == '&' then acc ++ "&amp;"
+  else if c == '<' then acc ++ "&lt;"
+  else if c == '>' then acc ++ "&gt;"
+  else if c == '"' then acc ++ "&quot;"
+  else if c == '\'' then acc ++ "&#39;"
+  else acc.push c
+
+/-- The attribute value with `&`, `<`, `>` and both quotes replaced by their references; a value
+holding none is returned as it stands. -/
 public def escapeAttr (s : String) : String :=
-  String.ofList (go s.toList)
+  if s.contains needsAttr then s.foldl escapeStepAttr "" else s
 where
   go : List Char → List Char
     | [] => []
@@ -61,8 +83,94 @@ theorem escapeCharAttr_no_quote (c : Char) : '"' ∉ escapeCharAttr c := by
             intro hc
             exact absurd hc.symm (by simp_all)
 
+theorem escapeStepText_go (l : List Char) (acc : String) :
+    (l.foldl escapeStepText acc).toList = acc.toList ++ escapeText.go l := by
+  induction l generalizing acc with
+  | nil => simp [escapeText.go]
+  | cons c rest ih =>
+    simp only [List.foldl_cons, escapeText.go, ih, ← List.append_assoc]
+    congr 1
+    unfold escapeStepText escapeCharText
+    split
+    · simp_all [String.toList_append]
+    · split
+      · simp_all [String.toList_append]
+      · split
+        · simp_all [String.toList_append]
+        · simp [String.toList_push]
+
+theorem escapeText_go_plain (l : List Char) (h : l.any needsText = false) :
+    escapeText.go l = l := by
+  induction l with
+  | nil => rfl
+  | cons c rest ih =>
+    simp only [List.any_cons, Bool.or_eq_false_iff] at h
+    have hc : escapeCharText c = [c] := by
+      have := h.1
+      unfold needsText at this
+      unfold escapeCharText
+      simp_all
+    simp only [escapeText.go, hc, ih h.2, List.singleton_append]
+
+/-- The escaper is its character-by-character specification. -/
+theorem escapeText_spec (s : String) :
+    escapeText s = String.ofList (escapeText.go s.toList) := by
+  apply String.ext
+  rw [String.toList_ofList]
+  unfold escapeText
+  split
+  · rw [String.foldl_eq_foldl_toList, escapeStepText_go]
+    rfl
+  · next h =>
+    rw [escapeText_go_plain _ (by simpa [String.contains_bool_eq] using h)]
+
+theorem escapeStepAttr_go (l : List Char) (acc : String) :
+    (l.foldl escapeStepAttr acc).toList = acc.toList ++ escapeAttr.go l := by
+  induction l generalizing acc with
+  | nil => simp [escapeAttr.go]
+  | cons c rest ih =>
+    simp only [List.foldl_cons, escapeAttr.go, ih, ← List.append_assoc]
+    congr 1
+    unfold escapeStepAttr escapeCharAttr
+    split
+    · simp_all [String.toList_append]
+    · split
+      · simp_all [String.toList_append]
+      · split
+        · simp_all [String.toList_append]
+        · split
+          · simp_all [String.toList_append]
+          · split
+            · simp_all [String.toList_append]
+            · simp [String.toList_push]
+
+theorem escapeAttr_go_plain (l : List Char) (h : l.any needsAttr = false) :
+    escapeAttr.go l = l := by
+  induction l with
+  | nil => rfl
+  | cons c rest ih =>
+    simp only [List.any_cons, Bool.or_eq_false_iff] at h
+    have hc : escapeCharAttr c = [c] := by
+      have := h.1
+      unfold needsAttr at this
+      unfold escapeCharAttr
+      simp_all
+    simp only [escapeAttr.go, hc, ih h.2, List.singleton_append]
+
+/-- The escaper is its character-by-character specification. -/
+theorem escapeAttr_spec (s : String) :
+    escapeAttr s = String.ofList (escapeAttr.go s.toList) := by
+  apply String.ext
+  rw [String.toList_ofList]
+  unfold escapeAttr
+  split
+  · rw [String.foldl_eq_foldl_toList, escapeStepAttr_go]
+    rfl
+  · next h =>
+    rw [escapeAttr_go_plain _ (by simpa [String.contains_bool_eq] using h)]
+
 public theorem escapeText_no_lt (s : String) : '<' ∉ (escapeText s).toList := by
-  simp only [escapeText, String.toList_ofList]
+  simp only [escapeText_spec, String.toList_ofList]
   suffices h : ∀ l : List Char, '<' ∉ escapeText.go l by exact h s.toList
   intro l
   induction l with
@@ -72,7 +180,7 @@ public theorem escapeText_no_lt (s : String) : '<' ∉ (escapeText s).toList := 
     exact ⟨escapeCharText_no_lt c, ih⟩
 
 public theorem escapeAttr_no_quote (s : String) : '"' ∉ (escapeAttr s).toList := by
-  simp only [escapeAttr, String.toList_ofList]
+  simp only [escapeAttr_spec, String.toList_ofList]
   suffices h : ∀ l : List Char, '"' ∉ escapeAttr.go l by exact h s.toList
   intro l
   induction l with
@@ -285,9 +393,10 @@ public theorem Rewrite.node_elem_exact (r : Rewrite) (acc : Array Node) (tag : S
       acc.push (.elem tag (r.attrs tag attrs) (r.list #[] kids.toList)) := by
   simp only [Rewrite.node]
 
-private def attrString (attrs : Array (String × String)) : String :=
-  String.join (attrs.toList.map fun (k, v) =>
-    if v.isEmpty then s!" {k}" else s!" {k}=\"{escapeAttr v}\"")
+/-- The accumulator with each attribute appended, its value escaped. -/
+private def attrsInto (acc : String) (attrs : Array (String × String)) : String :=
+  attrs.foldl (init := acc) fun acc (k, v) =>
+    if v.isEmpty then acc ++ " " ++ k else acc ++ " " ++ k ++ "=\"" ++ escapeAttr v ++ "\""
 
 private def isInlineOnly (kids : Array Node) : Bool :=
   kids.all fun k =>
@@ -299,9 +408,38 @@ private def hasTerm (term : List Char) : List Char → Bool
   | [] => false
   | c :: rest => term.isPrefixOf (c :: rest) || hasTerm term rest
 
+/-- Whether some character of `payload`, lowered, is the first of `endTag`, without which
+`endTag` cannot occur. -/
+private def mayHold (endTag payload : String) : Bool :=
+  match endTag.toList with
+  | [] => true
+  | c :: _ => payload.contains fun x => x.toLower == c
+
+private theorem hasTerm_absent (c : Char) (rest l : List Char) (h : c ∉ l) :
+    hasTerm (c :: rest) l = false := by
+  induction l with
+  | nil => rfl
+  | cons d ds ih =>
+    have hd : c ≠ d := fun e => h (e ▸ List.mem_cons_self ..)
+    simp only [hasTerm, List.isPrefixOf, Bool.or_eq_false_iff]
+    exact ⟨by simp [hd], ih (fun m => h (List.mem_cons_of_mem _ m))⟩
+
+private theorem hasTerm_of_mayHold (endTag payload : String) (h : mayHold endTag payload = false) :
+    hasTerm endTag.toList (payload.toList.map Char.toLower) = false := by
+  unfold mayHold at h
+  split at h
+  · contradiction
+  · next c rest he =>
+    rw [he]
+    apply hasTerm_absent
+    simp only [String.contains_bool_eq, List.any_eq_false, beq_iff_eq] at h
+    simp only [List.mem_map, not_exists, not_and]
+    exact fun x hx e => h x hx e
+
 /-- The payload, or `/* removed */` when it contains `endTag` in any ASCII case. -/
 private def rawPayload (endTag payload : String) : String :=
-  if hasTerm endTag.toList (payload.toList.map Char.toLower) then "/* removed */"
+  if mayHold endTag payload && hasTerm endTag.toList (payload.toList.map Char.toLower) then
+    "/* removed */"
   else payload
 
 private theorem rawPayload_no_terminator (endTag payload : String)
@@ -310,7 +448,10 @@ private theorem rawPayload_no_terminator (endTag payload : String)
   unfold rawPayload
   split
   · exact h
-  · next hc => exact Bool.not_eq_true _ ▸ hc
+  · next hc =>
+    cases hm : mayHold endTag payload
+    · exact hasTerm_of_mayHold endTag payload hm
+    · simpa [hm] using hc
 
 private theorem rawPayload_style_no_terminator (payload : String) :
     hasTerm "</style".toList
@@ -331,17 +472,17 @@ private def renderInto (acc : String) (n : Node) (indent : Nat) : String :=
   | .style css =>
     acc ++ pad ++ "<style>\n" ++ rawPayload "</style" css ++ "\n" ++ pad ++ "</style>\n"
   | .script attrs js =>
-    acc ++ pad ++ "<script" ++ attrString attrs ++ ">\n" ++
+    attrsInto (acc ++ pad ++ "<script") attrs ++ ">\n" ++
       rawPayload "</script" js ++ "\n" ++ pad ++ "</script>\n"
   | .elem tag attrs kids =>
-    let open' := "<" ++ tag ++ attrString attrs ++ ">"
+    let opened := attrsInto (acc ++ pad ++ "<" ++ tag) attrs ++ ">"
     if voidTags.contains tag then
-      acc ++ pad ++ open' ++ "\n"
+      opened ++ "\n"
     else if preserveTags.contains tag || phrasingTags.contains tag ||
         isInlineOnly kids then
-      inlineRenderListInto (acc ++ pad ++ open') kids.toList ++ "</" ++ tag ++ ">\n"
+      inlineRenderListInto opened kids.toList ++ "</" ++ tag ++ ">\n"
     else
-      renderListInto (acc ++ pad ++ open' ++ "\n") kids.toList (indent + 1)
+      renderListInto (opened ++ "\n") kids.toList (indent + 1)
         ++ pad ++ "</" ++ tag ++ ">\n"
 
 private def inlineRenderInto (acc : String) (n : Node) : String :=
@@ -349,11 +490,11 @@ private def inlineRenderInto (acc : String) (n : Node) : String :=
   | .text s => acc ++ escapeText s
   | .style css => acc ++ "<style>" ++ rawPayload "</style" css ++ "</style>"
   | .script attrs js =>
-    acc ++ "<script" ++ attrString attrs ++ ">" ++ rawPayload "</script" js ++ "</script>"
+    attrsInto (acc ++ "<script") attrs ++ ">" ++ rawPayload "</script" js ++ "</script>"
   | .elem tag attrs kids =>
-    let open' := "<" ++ tag ++ attrString attrs ++ ">"
-    if voidTags.contains tag then acc ++ open'
-    else inlineRenderListInto (acc ++ open') kids.toList ++ "</" ++ tag ++ ">"
+    let opened := attrsInto (acc ++ "<" ++ tag) attrs ++ ">"
+    if voidTags.contains tag then opened
+    else inlineRenderListInto opened kids.toList ++ "</" ++ tag ++ ">"
 
 private def renderListInto (acc : String) : List Node → Nat → String
   | [], _ => acc

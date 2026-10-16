@@ -164,15 +164,16 @@ def htmlContainedIndexChecks (ref : IO.Ref (List String)) : IO Unit := do
     t s!"contained index: admitted {repr media} signature still resolves"
       ((close #[resource] #[] #[] #[carrier resource.uri]).isOk)
     for n in [:signature.size] do
-      let truncated := { resource with bytes := signature.extract 0 n }
+      let truncated : HtmlResource.Embedded := { media, bytes := signature.extract 0 n }
       t s!"contained index: truncated {repr media} signature {n} remains refused"
         (!(close #[truncated] #[truncated.bytes] #[] #[carrier truncated.uri]).isOk)
-    let changed := { resource with bytes := signature ++ "changed".toUTF8 }
+    let changed : HtmlResource.Embedded := { media, bytes := signature ++ "changed".toUTF8 }
     t s!"contained index: {repr media} readiness cannot stand in for the captured bytes"
       (!(close #[changed] #[] #[] #[carrier resource.uri]).isOk &&
         (close #[changed] #[] #[] #[carrier changed.uri]).isOk)
   let original := captures[0]'(by simp [captures])
-  let changed := { original with bytes := svgDocument "<rect width=\"2\" height=\"1\"/>" }
+  let changed : HtmlResource.Embedded :=
+    { media := original.media, bytes := svgDocument "<rect width=\"2\" height=\"1\"/>" }
   t "contained index: replacing SVG bytes cannot reuse the old attestation"
     (!(close #[changed] #[original.bytes] #[] #[image changed.uri]).isOk)
   t "contained index: new SVG approval admits only the new captured URI"

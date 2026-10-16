@@ -204,3 +204,19 @@ streams deflate at the engine's speed. Each build is sealed (no tool on `PATH`, 
 the corpus fonts staged beside the deck) and must ship no loss; the report gives the median of
 `N` pairs of a cold build (an empty application cache) and a warm one, in each format, with every
 phase, and fails when a warm or a later cold build changes the artifact.
+
+The web page's writer escaped every text node and attribute value through a list of characters and
+encoded each data URL once per use, and once more for its closure check. It now returns a value
+holding nothing to escape as it stands, writes attributes straight into the page, builds each
+captured resource once per page so its URL is computed once, and keeps the encoder's ASCII output
+valid UTF-8 as it grows rather than validating it after. Median of 5, shared host (load 48-78);
+the html phase includes the faces phase:
+
+| Build | before | after |
+|---|---:|---:|
+| HTML, warm | 2,855 ms (html 2,051) | 1,115 ms (html 392) |
+| HTML, cold | 7,341 ms (html 3,225) | 5,342 ms (html 1,528) |
+| PDF, warm | 819 ms | 836 ms |
+| PDF, cold | 3,976 ms | 4,078 ms |
+
+The artifacts are byte-identical before and after.

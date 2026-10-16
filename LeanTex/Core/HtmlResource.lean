@@ -18,27 +18,80 @@ public inductive Media where
   | .ttf => "font/ttf"
   | .otf => "font/otf"
 
-public def base64 (bytes : ByteArray) : String := Id.run do
-  let alphabet := "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/".toUTF8
-  let mut out := ByteArray.emptyWithCapacity ((bytes.size + 2) / 3 * 4)
-  for i in [0:(bytes.size + 2) / 3] do
-    let a := bytes[i * 3]?.getD 0
-    let b := bytes[i * 3 + 1]?.getD 0
-    let c := bytes[i * 3 + 2]?.getD 0
-    out := out.push (alphabet[(a >>> 2).toNat]?.getD 61)
-    out := out.push (alphabet[(((a &&& 3) <<< 4) ||| (b >>> 4)).toNat]?.getD 61)
-    out := out.push (if i * 3 + 1 < bytes.size then
-      alphabet[(((b &&& 15) <<< 2) ||| (c >>> 6)).toNat]?.getD 61 else 61)
-    out := out.push (if i * 3 + 2 < bytes.size then alphabet[(c &&& 63).toNat]?.getD 61 else 61)
-  return String.fromUTF8! out
+/-- The byte at `i`, or zero past the end. -/
+@[inline] private def byteAt (bytes : ByteArray) (i : Nat) : UInt8 :=
+  if h : i < bytes.size then bytes[i] else 0
 
+/-- The base64 alphabet's character for a sextet (RFC 4648 §4). -/
+@[inline] private def sextet (k : UInt8) : UInt8 :=
+  if k < 26 then k + 65 else if k < 52 then k + 71 else if k < 62 then k - 4
+  else if k == 62 then 43 else 47
+
+private theorem sextet_lt (k : UInt8) : sextet k < 128 := by
+  unfold sextet
+  have := k.toNat_lt
+  split
+  · next h => simp only [UInt8.lt_iff_toNat_lt, UInt8.toNat_add] at h ⊢; simp at h ⊢; omega
+  · split
+    · next h => simp only [UInt8.lt_iff_toNat_lt, UInt8.toNat_add] at h ⊢; simp at h ⊢; omega
+    · split
+      · next h1 h2 h3 =>
+        simp only [UInt8.lt_iff_toNat_lt, UInt8.toNat_sub] at h1 h2 h3 ⊢
+        simp at h1 h2 h3 ⊢; omega
+      · split <;> decide
+
+private theorem ascii_char (n : Nat) (h : n < 128) :
+    (Char.ofNat n).utf8Size = 1 ∧ (Char.ofNat n).toUInt8 = n.toUInt8 := by
+  have hv : n.isValidChar := Or.inl (by omega)
+  simp only [Char.ofNat, hv, ↓reduceDIte, Char.ofNatAux, Char.utf8Size, Char.toUInt8]
+  constructor
+  · simp [UInt32.le_iff_toNat_le]; omega
+  · simp [UInt32.toUInt8, UInt8.ofNat]
+
+/-- Bytes kept valid UTF-8 as they grow, so the string they spell needs no validation. -/
+private abbrev Utf8Bytes := { b : ByteArray // b.IsValidUTF8 }
+
+@[inline] private def pushAscii (out : Utf8Bytes) (x : UInt8) (h : x < 128) : Utf8Bytes :=
+  ⟨out.1.push x, by
+    obtain ⟨h1, h2⟩ := ascii_char x.toNat h
+    have := out.2.push h1
+    rwa [h2, Nat.toUInt8_eq, UInt8.ofNat_toNat] at this⟩
+
+public def base64 (bytes : ByteArray) : String := Id.run do
+  let mut out : Utf8Bytes :=
+    ⟨ByteArray.emptyWithCapacity ((bytes.size + 2) / 3 * 4), ByteArray.isValidUTF8_empty⟩
+  for i in [0:(bytes.size + 2) / 3] do
+    let a := byteAt bytes (i * 3)
+    let b := byteAt bytes (i * 3 + 1)
+    let c := byteAt bytes (i * 3 + 2)
+    out := pushAscii out (sextet (a >>> 2)) (sextet_lt _)
+    out := pushAscii out (sextet (((a &&& 3) <<< 4) ||| (b >>> 4))) (sextet_lt _)
+    out := if i * 3 + 1 < bytes.size then
+        pushAscii out (sextet (((b &&& 15) <<< 2) ||| (c >>> 6))) (sextet_lt _)
+      else pushAscii out 61 (by decide)
+    out := if i * 3 + 2 < bytes.size then pushAscii out (sextet (c &&& 63)) (sextet_lt _)
+      else pushAscii out 61 (by decide)
+  return String.fromUTF8 out.1 out.2
+
+/-- A resource's data URL (RFC 2397). -/
+public def dataUri (media : Media) (bytes : ByteArray) : String :=
+  let payload := base64 bytes
+  "data:" ++ media.mime ++ ";base64," ++ payload
+
+/-- Captured bytes and their media; the data URL is computed on its first read and kept. -/
 public structure Embedded where
   media : Media
   bytes : ByteArray
-  deriving BEq
+  cachedUri : Thunk String := Thunk.mk fun _ => dataUri media bytes
+  cachedUri_exact : cachedUri.get = dataUri media bytes := by rfl
 
-public def Embedded.uri (r : Embedded) : String :=
-  "data:" ++ r.media.mime ++ ";base64," ++ base64 r.bytes
+public instance : BEq Embedded where
+  beq a b := a.media == b.media && a.bytes == b.bytes
+
+public def Embedded.uri (r : Embedded) : String := r.cachedUri.get
+
+public theorem Embedded.uri_exact (r : Embedded) : r.uri = dataUri r.media r.bytes :=
+  r.cachedUri_exact
 
 /-- Whether the bytes may render: SVG among `svgChecked`, other media by their format signature. -/
 public def Embedded.ready (svgChecked : Array ByteArray) (r : Embedded) : Bool :=

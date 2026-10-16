@@ -1818,6 +1818,29 @@ def linkHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
   let escaped := Html.escapeText "a <script> & \"x\""
   t "html escapes text" (escaped == "a &lt;script&gt; &amp; \"x\"")
   t "html escapes attributes" (Html.escapeAttr "a\"b<c" == "a&quot;b&lt;c")
+  t "html escapes every reserved character beside other text"
+    (Html.escapeAttr "é\"'<>&x" == "é&quot;&#39;&lt;&gt;&amp;x" &&
+      Html.escapeText "é\"'<>&x" == "é\"'&lt;&gt;&amp;x" &&
+      Html.escapeText "plain ✓ text" == "plain ✓ text")
+  -- RFC 4648 §4's alphabet read by index, the oracle for the page's data URLs
+  let reference (bytes : ByteArray) : String := Id.run do
+    let alphabet := "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/".toList.toArray
+    let mut out := ""
+    for i in [0:(bytes.size + 2) / 3] do
+      let a := (bytes[i * 3]?.getD 0).toNat
+      let b := (bytes[i * 3 + 1]?.getD 0).toNat
+      let c := (bytes[i * 3 + 2]?.getD 0).toNat
+      out := out.push (alphabet.getD (a / 4) '=')
+      out := out.push (alphabet.getD ((a % 4) * 16 + b / 16) '=')
+      out := out.push (if i * 3 + 1 < bytes.size then alphabet.getD ((b % 16) * 4 + c / 64) '='
+        else '=')
+      out := out.push (if i * 3 + 2 < bytes.size then alphabet.getD (c % 64) '=' else '=')
+    return out
+  let samples := (List.range 70).map fun n =>
+    ByteArray.mk ((Array.range n).map fun i => (i * 37 + n * 11).toUInt8)
+  t "base64 agrees with the reference encoder"
+    ((ByteArray.mk ((Array.range 256).map (·.toUInt8)) :: samples).all fun b =>
+      HtmlResource.base64 b == reference b)
   t "html void element has no closing tag"
     (Html.render (Html.elem "br" #[]) 0 == "<br>\n")
   t "html phrasing content stays on one line"
