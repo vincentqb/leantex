@@ -74,8 +74,7 @@ def cmRows (emit : Ir.Doc → String) (cases : Array Case) : Array Row × Nat ×
 document was. -/
 def rereadWith (emit : Ir.Doc → String) (d : Ir.Doc) (found : Array (String × String)) :
     Ir.Doc × Array Diag :=
-  if found.isEmpty then reread emit d
-  else mdBibBuild (emit d) (found ++ found.map fun (n, t) => (Bib.sourceName n, t))
+  if found.isEmpty then reread emit d else mdBibBuild (emit d) found
 
 /-- The corpus rows, over documents already elaborated, each with its `.bib` texts. -/
 def corpusRows (emit : Ir.Doc → String) (docs : Array (Ir.Doc × Array (String × String))) :
@@ -103,13 +102,13 @@ def rebuiltWith (emit : Ir.Doc → String) (d : Ir.Doc) (found : Array (String �
   (rereadWith emit d found).1
 
 /-- The citation-ink rows: the cited documents, each with its `.bib` texts, whose twin, built again
-with their bibliography, sets the same text. -/
+with their bibliography, sets the same text, where its blocks break aside. -/
 def citeInkRows (emit : Ir.Doc → String) (docs : Array (Ir.Doc × Array (String × String))) :
     Array Row × Nat × Nat := Id.run do
   let mut same : Nat := 0
   for (d, found) in docs do
     let back := rebuiltWith emit d found
-    if inkText back.body == inkText d.body then same := same + 1
+    if inkFlat back.body == inkFlat d.body then same := same + 1
   return (#[{ item := "cite.reread-ink", value := (same : Int) }], docs.size, same)
 
 /-- The corpus documents, each with the `.bib` texts beside the corpus its bibliography names. -/
@@ -176,6 +175,13 @@ def mdtwinSelftest : IO UInt32 := tierSelftest "mdtwin" fun no => do
     (inkText inkedBack.body == inkText spelledBack.body && inkText spelledBack.body == inkText cited.body)
   no "blind spot: the re-read body sees it, the inked twin reading back no citation"
     (inkedBack.body != spelledBack.body && spelledBack.body == cited.body)
+  -- The blind-spot pair: one paragraph and its text in two set one ink, which cite.reread-ink
+  -- cannot tell apart, while the bodies differ.
+  let whole : Array Ir.Block := #[.para #[.text "ab"]]
+  let split : Array Ir.Block := #[.para #[.text "a"], .para #[.text "b"]]
+  no "blind spot: cite.reread-ink is blind to where a body's blocks break"
+    (inkFlat whole == inkFlat split)
+  no "blind spot: the re-read body sees it, the blocks being others" (whole != split)
   -- A twin that drops its metadata block is seen: its citations read back as their source.
   let dropMeta (d : Ir.Doc) : String :=
     ((MarkdownDoc.emit d).splitOn "\n---\nbibliography:").headD ""

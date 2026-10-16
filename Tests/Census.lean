@@ -1467,7 +1467,29 @@ def censusCodeRows :
     ("the code after the block joins the line before it in one listing",
       shipsNext c "#!/usr/bin/envbash" "set-eu"),
     ("the block ships without its comment markers, the code with its own",
-      !hasStr (censusText c) "# Rinse" && hasStr (censusInk c) "#atrailingcommentstaysinthecode")])]
+      !hasStr (censusText c) "# Rinse" && hasStr (censusInk c) "#atrailingcommentstaysinthecode")]),
+  ("lean-cite", fun _ c => [
+    ("one page", c.size == 1),
+    ("a bracketed key ships as alpha's label, as doc-gen4 shows its tag, collapsed or not",
+      hasStr (censusText c) "does, [Ash01], and" && hasStr (censusText c) "form, [BC02];"),
+    ("a key the bibliography lacks ships as written, as does a bracketed key in code",
+      hasStr (censusText c) "[unknown1999]" && hasStr (censusInk c) "[ash2001]"),
+    ("Pandoc's spelling cites, and an @name the bibliography lacks ships as written",
+      hasStr (censusText c) "[Roe20, p. 3]" && hasStr (censusInk c) "BirchandCole[BC02]" &&
+        hasStr (censusText c) "@List.map"),
+    ("the list ships last, under its heading", shipsAbove c "References" "Ada Ash. Alpha Notes")]),
+  ("lean-cite-include", fun _ c => [
+    ("one page", c.size == 1),
+    ("the article's and its Lean file's citations ship in one numbering, in the article's style",
+      ["citing [1] before", "does, [2], and", "form, [3];", "Birch and Cole [3]",
+        "Doe and Hale [5] after"].all (hasStr (censusProse c) ·)),
+    ("the included documentation ships as prose under its heading, its code as a listing",
+      shipsAbove c "Citing from Lean documentation" "A module doc cites" &&
+        hasStr (censusInk c) "defsucc'(n:Nat):Nat:=n+1" && !hasStr (censusProse c) "/-!"),
+    ("one reference list ships all five entries, once each, a key both files hold the article's",
+      ["[1] Rin Vale", "[2] Ada Ash", "[3] Bo Birch", "[4] Sam Roe", "[5] Alex B. Doe"].all
+        (fun s => pageOccurs c 0 s == 1) && pageOccurs c 0 "References" == 1 &&
+        hasStr (censusProse c) "Notes on placeholder text")])]
 
 /-- The census rows in parts of at most `censusPartRows`, since a list literal's elaboration grows
 faster than its rows. -/

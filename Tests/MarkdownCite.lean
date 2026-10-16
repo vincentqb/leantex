@@ -1,11 +1,11 @@
 module
 
 public import Tests.Support
-public import LeanTex.Cli.Driver
+public import LeanTex.Cli.World
 
 public section
 
-open LeanTex.Core LeanTex.Cli.Driver
+open LeanTex.Core LeanTex.Cli
 
 /-! Markdown's citations: Pandoc's syntax, read as its manual and its reader read it, lowered as
 its LaTeX writer lowers it under natbib, resolved through the one bibliography path, and spelled
@@ -13,18 +13,8 @@ back by the markdown twin. -/
 
 namespace Tests.MarkdownCite
 
-/-- The citation nodes of an elaborated body in order, resolved or not: their forms and keys. -/
-def citesOf (doc : Ir.Doc) : Array (Ir.CiteForm × Array String) :=
-  Ir.foldBlocks (fun out _ => out) (fun out x => match x with
-    | .cite f ks => out.push (f, ks)
-    | .cited f ks _ => out.push (f, ks)
-    | _ => out) #[] doc.body
-
 /-- A markdown body read under `worksMeta`, which declares the bibliography citations need. -/
 def elabCited (body : String) : Ir.Doc × Array Diag := elabMd (worksMeta ++ body ++ "\n")
-
-/-- The keys of an elaborated body's citations, in order. -/
-def keysOf (doc : Ir.Doc) : List String := (citesOf doc).toList.flatMap fun (_, ks) => ks.toList
 
 /-- A page's text as a browser shows it: the rendered HTML without its tags. -/
 def webText (doc : Ir.Doc) : String := Id.run do
@@ -230,10 +220,11 @@ last ({repr twin})"
   let twin := MarkdownDoc.emit d
   t s!"twin: a citation's note in a table cell keeps its pipe escaped once ({repr twin})"
     (hasStr twin "[@a, x \\| y]" && (elabMd twin).1.body == d.body)
+  let relative := World.ToolPath.relative
   t "twin: the bibliography is named from where the twin is written"
-    (relativeFrom "out" "sub/refs.bib" == some "../sub/refs.bib" &&
-      relativeFrom "sub" "sub/refs.bib" == some "refs.bib" &&
-      relativeFrom "." "refs.bib" == some "refs.bib" && relativeFrom "/a" "refs.bib" == none)
+    (relative "out" "sub/refs.bib" == some "../sub/refs.bib" &&
+      relative "sub" "sub/refs.bib" == some "refs.bib" &&
+      relative "." "refs.bib" == some "refs.bib" && relative "/a" "refs.bib" == none)
   let (d, _) := elabCited "Write x\\@a and \\@b and [x@y.org], citing [@a]."
   let twin := MarkdownDoc.emit d
   t s!"twin: an at sign that would open a citation is escaped, an e-mail's is not ({repr twin})"
@@ -286,9 +277,7 @@ Text [@b] and @a and [@ghost].\n"
     (Ir.blocksText back.body == Ir.blocksText md.body && listOf back == listOf md)
   for n in ["md-cite", "bibliography", "md-cite-include"] do
     let (d, _) ← goldenDoc n
-    let found ← corpusBibs d
-    let bibs := found ++ found.map fun (name, text) => (Bib.sourceName name, text)
-    let (back, _) := mdBibBuild (MarkdownDoc.emit d) bibs
+    let (back, _) := mdBibBuild (MarkdownDoc.emit d) (← corpusBibs d)
     t s!"twin: {n}'s twin, rebuilt with its bibliography, sets its text"
       (!(listOf d).isEmpty && Ir.blocksText back.body == Ir.blocksText d.body)
   -- A markdown file included in tex cites into the including document's bibliography.

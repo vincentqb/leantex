@@ -2516,6 +2516,8 @@ def pdfCensusTable :
   ("code-lean", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("code-python", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("code-bash", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("lean-cite", (1, 1, 0, 0, 0, 5, 0, none, ["FlateDecode"])),
+  ("lean-cite-include", (1, 1, 0, 0, 0, 8, 0, none, ["FlateDecode"])),
   ("md-emphasis", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("md-headings", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   -- No link annotation: the image a link wraps ships without its link (`silentLosses`).

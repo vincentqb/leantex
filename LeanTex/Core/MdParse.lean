@@ -7,7 +7,7 @@ import LeanTex.Core.Blank
 import LeanTex.Core.Hex
 import LeanTex.Core.CiteKey
 import Std.Data.HashMap
-import Std.Data.HashSet
+public import Std.Data.HashSet
 
 /-! The markdown reader: strict CommonMark with GFM tables into an md AST
 carrying `.md` spans, refusing raw HTML outside a closed vocabulary, indented
@@ -42,6 +42,8 @@ public inductive Inl where
   | hard (pos : Pos)
   /-- One citation group in Pandoc's syntax: its works in order. -/
   | cite (items : Array CiteItem) (pos : Pos)
+  /-- A work cited by the author's own text, doc-gen4's full reference `[text][Key]`. -/
+  | citeText (key : String) (body : Array Inl) (pos : Pos)
   deriving Repr, BEq
 
 /-- One cited work: its key, its mode, and the prefix and suffix written around it. -/
@@ -1478,6 +1480,16 @@ def entityAt (c : Chars) (i : Nat) : Option (String × Nat) := Id.run do
     return some (String.singleton (Char.ofNat cp), j + 1)
   | _ => return none
 
+/-- A work cited by the author's text, doc-gen4's `[text][Key]`: the text's tokens, the key, and
+the text's characters. -/
+structure ShownRef where
+  openTok : Nat
+  closeTok : Nat
+  key : String
+  textFrom : Nat
+  textTo : Nat
+  pos : Pos
+
 /-- What a scan knows where a citation may open: the indices just past an emphasis run that
 closes one the text opened, and just past a citation key, and each braced key's closing brace by
 its opening one's index. -/
@@ -1853,13 +1865,52 @@ theorem htmlInlineAt_covers {file : String} {cs : Array Char} {i next : Nat} {p 
       · exact Or.inr ⟨key, Option.some.inj h2⟩
       · simp at h2
 
+/-- How a text reads citations: not at all, every key where a document declares its bibliography,
+or in a Lean docstring only the keys its bibliography holds, with the keys doc-gen4's bracket rule
+cites (`docGenKeys`). -/
+public structure CiteRead where
+  on : Bool := false
+  known : Option (Std.HashSet String) := none
+  bracketed : Std.HashSet String := {}
+  /-- The longest bracketed key's length, past which a bracket's text is no key. -/
+  longest : Nat := 0
+
+/-- Whether a citation of `key` is read: a document's any key, a docstring's a key its bibliography
+holds. -/
+def CiteRead.takes (cr : CiteRead) (key : String) : Bool := cr.known.all (·.contains key)
+
+/-- The keys doc-gen4 cites a docstring by (`findAllReferences`): the text from each `[` to the
+next `]`, the scan going on past that `]`, where the bibliography holds it. -/
+public def docGenKeys (text : String) (known : Std.HashSet String) : Std.HashSet String := Id.run do
+  let mut out : Std.HashSet String := {}
+  let mut opened : Option String := none
+  for ch in text.toList do
+    match opened with
+    | none => if ch == '[' then opened := some ""
+    | some cur =>
+      if ch == ']' then
+        if known.contains cur then out := out.insert cur
+        opened := none
+      else opened := some (cur.push ch)
+  return out
+
+/-- How a Lean docstring reads citations against its bibliography's keys: Pandoc's of those keys
+alone, and doc-gen4's bracketed ones. -/
+public def docGenRead (text : String) (known : Std.HashSet String) : CiteRead :=
+  let bracketed := docGenKeys text known
+  { on := true, known := some known, bracketed
+    longest := bracketed.fold (fun n k => max n k.length) 0 }
+
 /-- The scan: characters to a flat token array, brackets resolved against a
 stack and refusals raised where seen. -/
 def scanInlines (file : String) (c : Chars) (dialect : Dialect := .document)
-    (cites : Bool := false) : Array ITok × Array BPair × Array CPair × Array Diag := Id.run do
+    (cr : CiteRead := {}) :
+    Array ITok × Array BPair × Array CPair × Array ShownRef × Array Diag := Id.run do
+  let cites := cr.on
   let mut toks : Array ITok := #[]
   let mut pairs : Array BPair := #[]
   let mut cpairs : Array CPair := #[]
+  let mut shownRefs : Array ShownRef := #[]
   let mut diags : Array Diag := #[]
   -- token index, image, character index, and the in-text citation a bracket may close on
   let mut stack : Array (Nat × Bool × Nat × Option Nat) := #[]
@@ -2004,7 +2055,24 @@ def scanInlines (file : String) (c : Chars) (dialect : Dialect := .document)
             let free := !(after == some '[' || after == some '{')
             let tailFree := free && after != some '('
             let scan : CiteScan := { closers, keyEnds, braces }
-            let normal := if cites && free then citeListAt c scan ticks closeOf (openAt + 1) i
+            -- doc-gen4's rule: a bracket whose text is a key it cites, alone or before `[]`, or a
+            -- bracket before one whose text is such a key, `[text][Key]`.
+            let keyIn (a b : Nat) : String := if cites && !image && b - a ≤ cr.longest
+              then String.ofList (c.cs.extract a b).toList else ""
+            let label : Option (String × Nat) := if after == some '[' && cites && !image && active then do
+                let m ← ((List.range (cr.longest + 2)).map (i + 2 + ·)).find? fun k =>
+                  c.at? k == some ']' || c.at? k == some '['
+                guard (c.at? m == some ']')
+                let key := keyIn (i + 2) m
+                guard (cr.bracketed.contains key)
+                pure (key, m)
+              else none
+            let collapsed := after == some '[' && c.at? (i + 2) == some ']'
+            let shortcut := after != some '{' && (after != some '[' || collapsed) &&
+              cr.bracketed.contains (keyIn (openAt + 1) i)
+            -- A group of Pandoc's is read where its bibliography holds one of its works.
+            let normal := if cites && free && !shortcut then
+                (citeListAt c scan ticks closeOf (openAt + 1) i).filter (·.any (cr.takes ·.key))
               else none
             let closeTok := toks.size + (if pending.isEmpty then 0 else 1)
             let joined : Option (Nat × CPair) := match tail.bind (fun k => (cpairs[k]?).map (k, ·)) with
@@ -2012,8 +2080,9 @@ def scanInlines (file : String) (c : Chars) (dialect : Dialect := .document)
                 match normal with
                 | some list => some (k, { cp with closeTok, spans := cp.spans ++ list })
                 | none =>
-                  if !cites || !tailFree then none
-                  else match citeTailAt c scan ticks closeOf (openAt + 1) i, cp.spans[0]? with
+                  if !cites || !tailFree || shortcut then none
+                  else match (citeTailAt c scan ticks closeOf (openAt + 1) i).filter
+                      (·.2.all (cr.takes ·.key)), cp.spans[0]? with
                     | some ((a, b), rest), some first =>
                       some (k, { cp with closeTok
                                          spans := #[{ first with postFrom := a, postTo := b }] ++ rest })
@@ -2032,7 +2101,35 @@ def scanInlines (file : String) (c : Chars) (dialect : Dialect := .document)
               cpairs := cpairs.push { openTok, closeTok, spans := list,
                                       pos := (toks[openTok]?.map ITok.pos).getD p }
             | none, none =>
-              pending := pending.push ']'
+              let at_ := (toks[openTok]?.map ITok.pos).getD p
+              match label with
+              | some (key, m) =>
+                toks := flush toks pending pendingPos
+                pending := ""
+                toks := toks.push (.bclose p)
+                -- Text that is the key itself shows the work's label, as doc-gen4 shows its tag.
+                if keyIn (openAt + 1) i == key then
+                  let work : CiteSpan := { key, mode := .normal, preFrom := openAt + 1,
+                                           preTo := openAt + 1, postFrom := i, postTo := i }
+                  cpairs := cpairs.push { openTok, closeTok, pos := at_, spans := #[work] }
+                else
+                  shownRefs := shownRefs.push
+                    { openTok, closeTok, key, textFrom := openAt + 1, textTo := i, pos := at_ }
+                -- A reference is a link, which no link around it may contain (§6.3).
+                inactiveBelow := stack.size
+                i := m
+              | none =>
+                if shortcut then
+                  toks := flush toks pending pendingPos
+                  pending := ""
+                  toks := toks.push (.bclose p)
+                  let work : CiteSpan := { key := keyIn (openAt + 1) i, mode := .normal,
+                                           preFrom := openAt + 1, preTo := openAt + 1,
+                                           postFrom := i, postTo := i }
+                  cpairs := cpairs.push { openTok, closeTok, pos := at_, spans := #[work] }
+                  inactiveBelow := stack.size
+                  if collapsed then i := i + 2
+                else pending := pending.push ']'
             i := i + 1
       else if ch == '*' || ch == '_' then
         let mut n := 0
@@ -2059,7 +2156,7 @@ def scanInlines (file : String) (c : Chars) (dialect : Dialect := .document)
         toks := toks.push (.run ch n canOpen canClose p)
         i := k
       else if cites && (ch == '@' || (ch == '-' && c.at? (i + 1) == some '@')) then
-        match citeKeyAt c { closers, keyEnds, braces } i with
+        match (citeKeyAt c { closers, keyEnds, braces } i).filter (cr.takes ·.2.1) with
         | some (suppress, key, next) =>
           keyEnds := keyEnds.insert next
           toks := flush toks pending pendingPos
@@ -2078,7 +2175,7 @@ def scanInlines (file : String) (c : Chars) (dialect : Dialect := .document)
         pending := pending.push ch
         i := i + 1
   toks := flush toks pending pendingPos
-  return (toks, pairs, cpairs, diags)
+  return (toks, pairs, cpairs, shownRefs, diags)
 
 /-- The innermost resolved link or image region of each token, `0` outside every
 one, and the region count. -/
@@ -2278,7 +2375,7 @@ def buildInlines (toks : Array ITok) (bpairs : Array BPair) (cites : Array (Nat 
 /-- Inline structure for one stretch of text, in three passes, every `@` read as text. -/
 def inlinesPlain (file : String) (c : Chars) (dialect : Dialect := .document) :
     Array Inl × Array Diag :=
-  let (toks, bpairs, _, diags) := scanInlines file c dialect
+  let (toks, bpairs, _, _, diags) := scanInlines file c dialect
   let (reg, nRegions) := regions toks bpairs
   let (epairs, leftover) := matchEmphasis toks reg nRegions
   (buildInlines toks bpairs #[] epairs leftover, diags)
@@ -2326,14 +2423,15 @@ separated by ';'") (subject := some "md:cite-nested"))
     open_ := open_.push (cp, cp.spans.foldl (fun s sp => s.insert sp.preTo) {})
   return out
 
-/-- Inline structure for one stretch of text, in three passes, Pandoc's citations read where
-`cites` says the document has a bibliography to cite into. -/
-def inlines (file : String) (c : Chars) (dialect : Dialect := .document) (cites : Bool := false) :
+/-- Inline structure for one stretch of text, in three passes, citations read as `cr` says. -/
+def inlines (file : String) (c : Chars) (dialect : Dialect := .document) (cr : CiteRead := {}) :
     Array Inl × Array Diag :=
-  let (toks, bpairs, cpairs, diags) := scanInlines file c dialect cites
+  let (toks, bpairs, cpairs, shownRefs, diags) := scanInlines file c dialect cr
   let grouped := (cpairs.filter fun cp => cp.openTok < cp.closeTok).map fun cp =>
     ({ openTok := cp.openTok, closeTok := cp.closeTok, image := false, dest := "", title := "" } :
       BPair)
+  let grouped := grouped ++ shownRefs.map fun r =>
+    ({ openTok := r.openTok, closeTok := r.closeTok, image := false, dest := "", title := "" } : BPair)
   let (reg, nRegions) := regions toks (bpairs ++ grouped)
   let (epairs, leftover) := matchEmphasis toks reg nRegions
   let built := cpairs.map fun cp =>
@@ -2345,7 +2443,9 @@ def inlines (file : String) (c : Chars) (dialect : Dialect := .document) (cites 
       | some (ITok.bopen true p) => #[.text "!" p]
       | _ => #[]
     (cp.openTok, cp.closeTok, lead.push node)
-  (buildInlines toks bpairs built epairs leftover, diags ++ nestedCites file cpairs)
+  let shown := shownRefs.map fun r =>
+    (r.openTok, r.closeTok, #[Inl.citeText r.key (citeNote file c dialect r.textFrom r.textTo) r.pos])
+  (buildInlines toks bpairs (built ++ shown) epairs leftover, diags ++ nestedCites file cpairs)
 
 /-- The characters of a run of paragraph lines,
 newline-separated, each with its source position. -/
@@ -2492,13 +2592,13 @@ def tableCells (c : Chars) : Array Chars := Id.run do
 /-- A row's cells as inline content, exactly `n` of them: a missing cell is
 empty and an excess one dropped. -/
 def tableRow (file : String) (n : Nat) (cells : Array Chars) (dialect : Dialect := .document)
-    (cites : Bool := false) : Array (Array Inl) × Array Diag := Id.run do
+    (cr : CiteRead := {}) : Array (Array Inl) × Array Diag := Id.run do
   let mut row : Array (Array Inl) := #[]
   let mut diags : Array Diag := #[]
   for k in [0:n] do
     match cells[k]? with
     | some c =>
-      let (inl, ds) := inlines file c dialect cites
+      let (inl, ds) := inlines file c dialect cr
       row := row.push inl
       diags := diags ++ ds
     | none => row := row.push #[]
@@ -2660,8 +2760,8 @@ private def indentedBlock (lines : Array String) (pos : Pos) : Blk :=
   .code "" (kept.foldl (fun s l => s ++ l ++ "\n") "") pos
 
 /-- Blocks for one markdown text in a dialect, and the diagnostics the reader raised. -/
-public def blocksIn (dialect : Dialect) (file : String) (input : String) (included : Bool := false) :
-    Array Blk × Array Diag := Id.run do
+public def blocksIn (dialect : Dialect) (file : String) (input : String) (included : Bool := false)
+    (known : Option (Std.HashSet String) := none) : Array Blk × Array Diag := Id.run do
   let doc := dialect == .document
   let lines := splitLines input
   let mut frames : Array Frame := #[]
@@ -2677,7 +2777,9 @@ public def blocksIn (dialect : Dialect) (file : String) (input : String) (includ
     else some (front?.getD #[] ++ back?.getD #[])
   if let some fields := meta? then acc := acc.push (.metadata fields { line := 1, col := 1 })
   -- premise: mdCiteChecks — citations are read only where a bibliography takes them
-  let cites := doc && (included || meta?.any bibDeclared)
+  let cites := match known with
+    | some keys => if dialect == .docstring then docGenRead input keys else {}
+    | none => { on := doc && (included || meta?.any bibDeclared) }
   let mut leaf : Leaf := .none
   let mut diags : Array Diag := #[]
   let mut sawBlank := false

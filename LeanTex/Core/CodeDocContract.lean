@@ -18,7 +18,8 @@ document around its body, and the formulas a Lean statement sets as, with the ze
 breaks at between them. -/
 @[expose] public def vocabulary : Md.Vocab :=
   { Md.vocabulary with
-    ctrls := Md.vocabulary.ctrls ++ ["title", "output", "theme", "hspace"]
+    ctrls := Md.vocabulary.ctrls ++ ["title", "output", "theme", "hspace", "bibliographystyle",
+      "bibliography"]
     envs := Md.vocabulary.envs ++ ["document", "flushleft"]
     formulas := true
     mathCtrls := LeanNotation.MathCtrl.all.map (·.name)
@@ -209,21 +210,24 @@ private theorem retitle_adm : (l : List Raw) → (∀ r ∈ l, vocabulary.admits
     · exact hl
 
 private theorem proseRaws_adm (lang : Ir.CodeLang) (file : String) (starts : Array Nat)
-    (seg : Seg) (opens : Bool) : Adm (proseRaws lang file starts seg opens).1 := by
+    (known : Option (Std.HashSet String)) (seg : Seg) (opens : Bool) :
+    Adm (proseRaws lang file starts known seg opens).1 := by
+  let k := if lang == .lean then known else none
   have hraws : ∀ (pr : Prose),
-      Adm (mapPosList pr.place #[] (Md.desugar file pr.text .docstring).1.toList) := by
+      Adm (mapPosList pr.place #[] (Md.desugar file pr.text .docstring .document false k).1.toList) := by
     intro pr
     apply adm_mapPos
-    exact Md.desugar_vocabulary_mem _ _ .docstring
+    exact Md.desugar_vocabulary_mem _ _ .docstring .document false k
   let pr := proseIn lang seg.text (lineCol starts seg.start).1 ((lineCol starts seg.start).2 - 1)
   have h := hraws pr
   cases opens with
   | true =>
-    have hl : ∀ x ∈ (mapPosList pr.place #[] (Md.desugar file pr.text .docstring).1.toList).toList,
+    have hl : ∀ x ∈ (mapPosList pr.place #[]
+        (Md.desugar file pr.text .docstring .document false k).1.toList).toList,
         vocabulary.admits x = true := fun x hx => h x (by simpa using hx)
     intro r hr
-    exact retitle_adm _ hl r (by simpa [proseRaws] using hr)
-  | false => exact h
+    exact retitle_adm _ hl r (by simpa [proseRaws, k] using hr)
+  | false => simpa [proseRaws, k] using h
 
 private theorem caret_sym : '^' ∈ vocabulary.mathSyms := by simp [vocabulary]
 
@@ -396,6 +400,7 @@ private theorem viewPara_adm (file : String) (facts : LeanFacts.Facts) (tb : Lea
     Adm (viewPara file facts tb withMath link d t v).1 := by
   cases v with
   | code => intro r hr; simp [viewPara] at hr
+  | docs => intro r hr; simp [viewPara] at hr
   | math => exact displayRaws_adm _ _ _ _
   | prose =>
     simp only [viewPara]
@@ -540,7 +545,7 @@ private theorem pieceRaws_adm (lang : Ir.CodeLang) (file : String) (starts : Arr
   | prose seg =>
     simp only [pieceRaws]
     split
-    · exact proseRaws_adm lang file starts seg opens
+    · exact proseRaws_adm lang file starts page.cites seg opens
     · intro r hr; simp at hr
   | statement i =>
     simp only [pieceRaws, Array.getD_eq_getD_getElem?]
@@ -549,9 +554,10 @@ private theorem pieceRaws_adm (lang : Ir.CodeLang) (file : String) (starts : Arr
     | some p => exact hs p (Array.mem_of_getElem? h)
 
 private theorem titleSource_adm (lang : Ir.CodeLang) (file : String) (starts : Array Nat)
-    (opens : Bool) (piece : Piece) : Adm (titleSource lang file starts opens piece) := by
+    (known : Option (Std.HashSet String)) (opens : Bool) (piece : Piece) :
+    Adm (titleSource lang file starts known opens piece) := by
   cases piece with
-  | prose seg => exact proseRaws_adm lang file starts seg opens
+  | prose seg => exact proseRaws_adm lang file starts known seg opens
   | code _ _ => intro r hr; simp [titleSource] at hr
   | statement _ => intro r hr; simp [titleSource] at hr
 
@@ -562,7 +568,7 @@ private theorem pieceStep_inv (lang : Ir.CodeLang) (file : String) (starts : Arr
     (page : PageSet) (hs : ∀ p ∈ page.stmts, Adm p)
     (acc : Acc) (piece : Piece) (h : Inv acc) : Inv (pieceStep lang file starts page acc piece) := by
   have hp := pieceRaws_adm lang file starts page hs (acc.opens piece) piece
-  have hsrc := titleSource_adm lang file starts (acc.opens piece) piece
+  have hsrc := titleSource_adm lang file starts page.cites (acc.opens piece) piece
   obtain ⟨hbody, htitle⟩ := pieceStep_exact lang file starts page acc piece
   refine ⟨hbody ▸ adm_append h.1 hp, ?_⟩
   intro t ht
@@ -622,10 +628,48 @@ private theorem titleHeading_adm (t : Array Raw) (p : Pos) (h : Adm t) :
   · rfl
   · exact adm_group _ _ h
 
+private theorem adm_lit {l : List Raw} (h : ∀ r ∈ l, vocabulary.admits r = true) :
+    Adm l.toArray := fun r hr => h r (by simpa using hr)
+
+private theorem adm_extract {a : Array Raw} (h : Adm a) (i j : Nat) : Adm (a.extract i j) := by
+  intro r hr
+  simp only [Array.mem_extract_iff_getElem] at hr
+  obtain ⟨k, hk, rfl⟩ := hr
+  exact h _ (Array.getElem_mem _)
+
+private theorem placedBody_adm (acc : Acc) (refs : Option Refs) (style : Option String)
+    (h : Adm acc.body) : Adm (placedBody acc refs style) := by
+  have word : ∀ w p, Adm (#[Raw.word w p] : Array Raw) := by
+    intro w p x hx; simp at hx; subst hx; rfl
+  unfold placedBody
+  split
+  · split
+    · exact h
+    · split
+      · refine adm_append (adm_append (adm_extract h _ _) (adm_lit ?_)) (adm_extract h _ _)
+        intro r hr
+        simp only [List.mem_cons, List.not_mem_nil, or_false] at hr
+        rcases hr with rfl | rfl | rfl | rfl
+        · rfl
+        · simp only [Md.Vocab.admits, Bool.or_eq_true, List.contains_iff_mem]
+          exact Or.inr (List.mem_append.mpr (Or.inr (by simp)))
+        · exact adm_group _ _ (word _ _)
+        · exact adm_group _ _ (word _ _)
+      · refine adm_append h (adm_lit ?_)
+        intro r hr
+        simp only [List.mem_cons, List.not_mem_nil, or_false] at hr
+        rcases hr with rfl | rfl | rfl | rfl | rfl
+        · rfl
+        · simp [Md.Vocab.admits, vocabulary]
+        · exact adm_group _ _ (word _ _)
+        · simp [Md.Vocab.admits, vocabulary]
+        · exact adm_group _ _ (word _ _)
+  · exact h
+
 /-- Everything a code file reads into stays inside the reader's declared vocabulary. -/
 public theorem read_vocabulary_mem (lang : Ir.CodeLang) (file text : String)
-    (facts : Option LeanFacts.Facts) (place : LinkPlace) :
-    ∀ r ∈ (read lang file text facts place).1, vocabulary.admits r = true := by
+    (facts : Option LeanFacts.Facts) (place : LinkPlace) (refs : Option Refs) :
+    ∀ r ∈ (read lang file text facts place refs).1, vocabulary.admits r = true := by
   have hplan : ∀ p ∈ (planOf lang file text facts place).1.stmts, Adm p := by
     have hfold : ∀ (fs : List ProofFold) (p : Array Raw),
         p ∈ (fs.map (foldRaws (lineStarts text.toList.toArray) text.toList.toArray)).toArray →
@@ -639,9 +683,14 @@ public theorem read_vocabulary_mem (lang : Ir.CodeLang) (file text : String)
     rcases Array.mem_append.mp hp with hp | hp
     · exact statementsFor_adm _ _ _ _ _ _ _ _ _ (hfold _) _ _ p hp
     · exact hfold _ p hp
-  have hacc : Inv (readPieces lang file text (planOf lang file text facts place).1
+  have hcited : ∀ p ∈ ((planOf lang file text facts place).1.citing (refs.map (·.keys))).stmts,
+      Adm p := by
+    rw [PageSet.citing_stmts]
+    exact hplan
+  have hacc : Inv (readPieces lang file text
+      ((planOf lang file text facts place).1.citing (refs.map (·.keys)))
       (planOf lang file text facts place).2.1) :=
-    foldl_inv lang file _ _ hplan _ {} ⟨by simp [Adm], by simp⟩
+    foldl_inv lang file _ _ hcited _ {} ⟨by simp [Adm], by simp⟩
   unfold read
   dsimp only
   generalize readPieces lang file text _ _ = acc at hacc ⊢
@@ -657,12 +706,13 @@ public theorem read_vocabulary_mem (lang : Ir.CodeLang) (file text : String)
     · intro r hr; simp at hr
   · simp only [Md.Vocab.admits, Bool.and_eq_true, List.contains_iff_mem]
     refine ⟨by simp [vocabulary, Md.vocabulary], (admitsList_iff _ _).mpr fun r hr => ?_⟩
-    have hbody : Adm (if acc.titled then acc.body
+    have hplaced := placedBody_adm acc refs (showingOf lang text.toList.toArray).bibStyle hacc.1
+    have hbody : Adm (if acc.titled then placedBody acc refs (showingOf lang text.toList.toArray).bibStyle
         else Parse.headingRaws .title (acc.title.getD (Md.textRaws (baseName file) {})) {} ++
-          acc.body) := by
+          placedBody acc refs (showingOf lang text.toList.toArray).bibStyle) := by
       split
-      · exact hacc.1
-      · exact adm_append (titleHeading_adm _ _ htitle) hacc.1
+      · exact hplaced
+      · exact adm_append (titleHeading_adm _ _ htitle) hplaced
     exact hbody r (by simpa using hr)
 
 end LeanTex.Core.Code

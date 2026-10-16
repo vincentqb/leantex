@@ -374,6 +374,16 @@ private theorem inlRaws_adm (file : String) : (x : Inl) → Adm (inlRaws file x)
         rcases hr with rfl | rfl
         · rfl
         · exact adm_group _ _ (adm_text dest p)
+  | .citeText key body p => by
+    simp only [inlRaws]
+    have h := inlListRaws_adm file body.toList #[] #[] adm_empty
+    refine adm_append (adm_lit ?_) (citeCmdRaws_adm _ _ _ _ _ (by simp [citeCtrls]) adm_empty adm_empty)
+    intro r hr
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at hr
+    rcases hr with rfl | rfl | rfl
+    · exact ctrl_mem _ _ (by simp [vocabulary])
+    · exact adm_group _ _ (adm_text _ p)
+    · exact adm_group _ _ h
   | .cite items p => by
     simp only [inlRaws]
     have hn := citeItemsRaws_adm file items.toList #[] #[] (by intro c hc; simp at hc)
@@ -399,12 +409,30 @@ private theorem inlRaws_adm (file : String) : (x : Inl) → Adm (inlRaws file x)
         · exact citeTextRaws_adm _ p hl
       · exact adm_empty
 
+private theorem closeLeading_adm (rs : Array Raw) (h : Adm rs) : Adm (closeLeading rs) := by
+  unfold closeLeading
+  split
+  · rename_i w p rest hl
+    intro r hr
+    simp only [List.mem_toArray, List.mem_cons] at hr
+    rcases hr with rfl | hr
+    · rfl
+    · exact h r (by rw [← Array.mem_toList_iff, hl]; exact List.mem_cons_of_mem _ hr)
+  · exact h
+
 private theorem inlListRaws_adm (file : String) : (l : List Inl) → (out : Array Raw) →
     (ds : Array Diag) → Adm out → Adm (inlListRaws file out ds l).1
   | [], _, _, h => by simpa [inlListRaws] using h
   | x :: rest, out, ds, h => by
     simp only [inlListRaws]
-    refine inlListRaws_adm file rest _ _ (adm_append (adm_append h ?_) (inlRaws_adm file x))
+    have closed : ∀ (b : Bool) (rs : Array Raw), Adm rs →
+        Adm (if b = true then closeLeading rs else rs) := by
+      intro b rs hrs
+      cases b
+      · exact hrs
+      · exact closeLeading_adm rs hrs
+    refine inlListRaws_adm file rest _ _
+      (adm_append (adm_append h ?_) (closed _ _ (inlRaws_adm file x)))
     split
     · exact selectorGuard_adm _ _
     · exact adm_empty
@@ -687,8 +715,9 @@ private theorem tail_adm (file : String) (m : MetaRead) (cited placed : Bool) :
     · exact adm_append (titleRaws_adm file m) (list_adm m cited)
 
 public theorem desugar_vocabulary_mem (file input : String) (dialect : Dialect := .document)
-    (role : Role := .document) (citing : Bool := false) :
-    ∀ r ∈ (desugar file input dialect role citing).1, vocabulary.admits r = true := by
+    (role : Role := .document) (citing : Bool := false)
+    (known : Option (Std.HashSet String) := none) :
+    ∀ r ∈ (desugar file input dialect role citing known).1, vocabulary.admits r = true := by
   unfold desugar
   exact adm_append (adm_append (prelude_adm _) (blkListRaws_adm file _ (list_adm _ _) _ #[] #[]
     adm_empty)) (tail_adm _ _ _ _)
@@ -808,8 +837,9 @@ private theorem tail_starts (file : String) (m : MetaRead) (cited placed : Bool)
 
 public theorem desugar_blockStart_contract (file input : String) (dialect : Dialect := .document)
     (role : Role := .document) (citing : Bool := false)
-    (h : (desugar file input dialect role citing).1 ≠ #[]) :
-    ∃ r ∈ (desugar file input dialect role citing).1, BlockStart r := by
+    (known : Option (Std.HashSet String) := none)
+    (h : (desugar file input dialect role citing known).1 ≠ #[]) :
+    ∃ r ∈ (desugar file input dialect role citing known).1, BlockStart r := by
   unfold desugar at h ⊢
   exact (starts_append (starts_append (prelude_starts _)
     (blkListRaws_starts file _ (list_starts _ _) _ #[] #[] (Or.inl rfl)))

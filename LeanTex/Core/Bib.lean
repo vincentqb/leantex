@@ -917,4 +917,7 @@ public def fullNames (v : String) : String :=
   andJoin ((splitNames v).toList.map fun s =>
     if s == "others" then s else text (parseName s).short)
 
+/-- The keys a `.bib` file's entries hold, in order. -/
+public def keysOf (src : String) : Array String := (parse src).entries.map (·.key)
+
 end LeanTex.Core.Bib

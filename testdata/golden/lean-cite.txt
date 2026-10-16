@@ -1,0 +1,63 @@
+class article
+page 612x792 vmargin 72 hmargin 114
+meta title "Citing from Lean documentation"
+section* 0
+  text "Citing from Lean documentation"
+para
+  text "A module doc cites a work as doc-gen4 does, "
+  cited citep "ash2001"
+    text "["
+    link "#ref-ash2001"
+      text "Ash01"
+    text "]"
+  text ", and a second one in the collapsed form, "
+  cited citep "birch2002"
+    text "["
+    link "#ref-birch2002"
+      text "BC02"
+    text "]"
+  text "; a key the bibliography lacks, [unknown1999], stays as written, as does "
+  styled mono
+    italicCorr maybe
+    text "[ash2001]"
+  italicCorr maybe
+  text " in code. Pandoc’s spelling cites too: "
+  cited citep post "p. 3" "roe2020"
+    text "["
+    link "#ref-roe2020"
+      text "Roe20"
+    text ", p. 3]"
+  text ", and in the sentence "
+  cited citet "birch2002"
+    text "Birch and Cole ["
+    link "#ref-birch2002"
+      text "BC02"
+    text "]"
+  text ", while @List.map stays text."
+para
+  text "The successor, as "
+  cited citep "ash2001"
+    text "["
+    link "#ref-ash2001"
+      text "Ash01"
+    text "]"
+  text " defines it."
+verbatim language lean4
+  "def succ' (n : Nat) : Nat := n + 1"
+section* 1
+  text "References"
+bibliography "lean-cite.bib" style "alpha"
+  [Ash01] "ash2001"
+    text "Ada Ash. "
+    styled emph
+      text "Alpha Notes"
+    text ". Example Press, 2001."
+  [BC02] "birch2002"
+    text "Bo Birch and Cy Cole. "
+    styled emph
+      text "Beta Notes"
+    text ". Example Press, 2002."
+  [Roe20] "roe2020"
+    text "Sam Roe. Placeholder text, 2020."
+-- diagnostics
+(none)

@@ -364,8 +364,7 @@ def twinEdgeChecks (ref : IO.Ref (List String)) : IO Unit := do
     | _ => out) (fun out _ => out) #[] d.body
   let (d, _) ← elabFixture "bibliography" (← fixtureText "testdata/corpus/bibliography.tex")
   let tw := MarkdownDoc.emit d
-  let found ← corpusBibs d
-  let (back, _) := mdBibBuild tw (found.map fun (n, text) => (Bib.sourceName n, text))
+  let (back, _) := mdBibBuild tw (← corpusBibs d)
   t s!"twin: a declared reference list's markers read back from its bibliography ({repr tw})"
     (hasStr tw "::: {#refs}" && !(markers d).isEmpty && markers back == markers d)
   let (own, _) := bibBuild (dvDoc "" "See \\cite{a}.\n\n\\begin{thebibliography}{9}\n\\bibitem{a} \

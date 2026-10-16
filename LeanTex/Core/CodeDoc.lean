@@ -116,12 +116,18 @@ public structure Acc where
   /-- Whether the body holds the title heading its description opens on. -/
   titled : Bool := false
   sawModule : Bool := false
+  /-- Whether the body's documentation cites a work. -/
+  cited : Bool := false
+  /-- Where the body's documentation heads its own references, so the list stands there. -/
+  refsAt : Option Nat := none
 
 /-- A reading of a Lean file's declarations its page sets. -/
 public inductive View where
   | code
   | math
   | prose
+  /-- An inclusion's documentation as prose, where it stands between its code's listings. -/
+  | docs
   deriving Repr, BEq, DecidableEq, Inhabited
 
 /-- What a page does with a theorem's proof: shows it, folds it into a disclosure, or sets Lean's
@@ -143,6 +149,11 @@ public structure Showing where
   link : Option String := none
   /-- The facts file the document declares for the file, else the exporter's own. -/
   facts : Option String := none
+  /-- The bibliography files the document declares for the file's documentation, else its
+  project's `docs/references.bib`. -/
+  bibliography : List String := []
+  /-- The style the page's citations set in, alpha where none is declared. -/
+  bibStyle : Option String := none
   /-- Each option value the page cannot read, as its key and value. -/
   unread : List (String × String) := []
   /-- Each key no option of the page's names, where nothing else reads the entries. -/
@@ -170,6 +181,15 @@ public structure PageSet where
   stmts : Array (Array Raw) := #[]
   code : Bool := true
   folds : List ProofFold := []
+  /-- The keys of the bibliography the page's documentation cites into, where it has one. -/
+  cites : Option (Std.HashSet String) := none
+
+/-- A page citing into the bibliography whose keys `keys` are. -/
+@[expose] public def PageSet.citing (page : PageSet) (keys : Option (Std.HashSet String)) : PageSet :=
+  { page with cites := keys }
+
+public theorem PageSet.citing_stmts (page : PageSet) (keys : Option (Std.HashSet String)) :
+    (page.citing keys).stmts = page.stmts := rfl
 
 /-- The kind a run's characters may carry: white space alone is blank, a directive is one line,
 and anything else is code. -/
@@ -427,7 +447,8 @@ public def keyedEntries (entries : List String) : List (String × List String) :
       | none => acc.push ("", [e.trimAscii.toString])) #[]).toList
 
 /-- The keys a directive takes for what its page shows, which no declaration reads. -/
-public def showKeys : List String := ["show", "decls", "proofs", "link", "facts"]
+public def showKeys : List String :=
+  ["show", "decls", "proofs", "link", "facts", "bibliography", "biblio-style"]
 
 /-- The prefix of the directive keys that declare a constant's phrase. -/
 public def phraseKey : String := "phrase."
@@ -441,6 +462,9 @@ public def Showing.math (s : Showing) : Bool := s.views.contains .math
 public def Showing.code (s : Showing) : Bool := s.views.contains .code
 
 public def Showing.prose (s : Showing) : Bool := s.views.contains .prose
+
+/-- Whether an inclusion sets its documentation as prose, as the file's page does. -/
+public def Showing.docs (s : Showing) : Bool := s.views.contains .docs
 
 /-- Whether a page sets a declaration's statement, which its facts give. -/
 public def Showing.statements (s : Showing) : Bool := s.math || s.prose
@@ -469,6 +493,7 @@ public def showingOfEntries (lang : Ir.CodeLang) (entries : List String) (alone 
     if n == "code" then some .code
     else if lang == .lean && n == "math" then some .math
     else if lang == .lean && n == "prose" then some .prose
+    else if lang == .lean && alone && n == "docs" then some .docs
     else none
   let views := (named.filterMap viewOf?).eraseDups
   let decls := ((values "decls").map listed).filter (!·.isEmpty)
@@ -482,6 +507,8 @@ public def showingOfEntries (lang : Ir.CodeLang) (entries : List String) (alone 
     decls, proofs, unread
     link := (values "link").map fun vs => unwrapValue (",".intercalate vs)
     facts := (values "facts").map fun vs => unwrapValue (",".intercalate vs)
+    bibliography := listed ((values "bibliography").getD [])
+    bibStyle := (values "biblio-style").map fun vs => unwrapValue (",".intercalate vs)
     unknown := named.filter fun n => (viewOf? n).isNone
     strange := if alone then groups.filterMap fun (k, vs) =>
         if showKey k then none else some (if k.isEmpty then vs.headD "" else k)
@@ -513,8 +540,23 @@ public def Showing.idle (s : Showing) (lang : Ir.CodeLang) (request : Span) (pag
     Diag.of .W0110 s!"`{key}` {what}; {sets}" (some request) (help := help)
       (subject := some s!"code:{key}")
   let foreign := if lang == .lean then [] else
-    (["decls", "proofs", "link", "facts"].filter s.written.contains).map fun k =>
+    let keys := ["decls", "proofs", "link", "facts", "bibliography", "biblio-style"]
+    (keys.filter s.written.contains).map fun k =>
       note k "is read only on a Lean file's page" "delete it, or write it in a Lean file's directive"
+  let uncited := if lang == .lean && !page && !s.docs && s.written.contains "bibliography" then
+      [note "bibliography" "names the bibliography an inclusion's documentation cites into, and \
+this one sets its documentation as code" "write `show = docs`, or delete `bibliography`"]
+    else []
+  let restyled := if lang == .lean && !page && s.written.contains "biblio-style" then
+      [note "biblio-style" "names a page's citation style, and an inclusion's citations set in its \
+document's" "delete it"]
+    else []
+  let docsAlone := if lang == .lean && !page && s.docs &&
+      (s.views.length > 1 || s.decls.isSome || s.proofs != .show) then
+      [Diag.of .W0110 "`show` names `docs` with another view, `decls` or `proofs`; the file is \
+included as its page sets it, documentation as prose, without them" (some request)
+        (help := "write `show = docs` alone, or drop `docs`") (subject := some "code:show")]
+    else []
   let unlinked := if lang == .lean && s.link.isSome && !s.statements then
       [note "link" "links statements' names, and none is set" "write `show = math, code`"]
     else []
@@ -530,7 +572,7 @@ public def Showing.idle (s : Showing) (lang : Ir.CodeLang) (request : Span) (pag
       [note "decls" "chooses the declarations whose statements a page sets, and it sets none"
         "write `show = math, code`"]
     else []
-  (foreign ++ unlinked ++ unread ++ empty ++ unchosen).toArray
+  (foreign ++ unlinked ++ unread ++ uncited ++ restyled ++ docsAlone ++ empty ++ unchosen).toArray
 
 /-- What a page that reads its facts sets when it has none that line up. -/
 public def Showing.lost (s : Showing) : String :=
@@ -1245,10 +1287,10 @@ public def baseName (file : String) : String :=
 /-- A documentation comment through the markdown reader, at the place it stands; `opens` raises
 the heading it opens on to the document's title. -/
 @[expose] public def proseRaws (lang : Ir.CodeLang) (file : String) (starts : Array Nat)
-    (seg : Seg) (opens : Bool) : Array Raw × Array Diag :=
+    (known : Option (Std.HashSet String)) (seg : Seg) (opens : Bool) : Array Raw × Array Diag :=
   let place := lineCol starts seg.start
   let prose := proseIn lang seg.text place.1 (place.2 - 1)
-  let read := Md.desugar file prose.text .docstring
+  let read := Md.desugar file prose.text .docstring (known := if lang == .lean then known else none)
   let raws := mapPosList prose.place #[] read.1.toList
   (if opens then (retitle raws.toList).toArray else raws,
     read.2.map fun d => { d with span := d.span.map fun sp => { sp with pos := prose.place sp.pos } })
@@ -1709,6 +1751,8 @@ public def viewPara (file : String) (facts : LeanFacts.Facts) (tb : LeanProse.Ta
     (withMath : Bool) (link : Option String) (d : LeanFacts.Decl) (t : LeanFacts.Term) :
     View → Array Raw × Array Diag × Array LeanProse.Template
   | .code => (#[], #[], #[])
+  -- The documentation view sets the file's comments, no declaration's paragraph.
+  | .docs => (#[], #[], #[])
   | .math => (displayRaws d (LeanStatement.statementMath facts d t) (posOf d) link, #[], #[])
   | .prose =>
     match LeanProse.proseOf facts tb d t with
@@ -1947,14 +1991,49 @@ where the page shows them, and its paragraph for a statement. -/
     (page : PageSet) (opens : Bool) : Piece → Array Raw
   | .code start code => if page.code && code.any (!isWhite ·) then
       #[listingRaw lang (String.ofList code) { line := (lineCol starts start).1 - 1 }] else #[]
-  | .prose seg => if page.code then (proseRaws lang file starts seg opens).1 else #[]
+  | .prose seg => if page.code then (proseRaws lang file starts page.cites seg opens).1 else #[]
   | .statement i => page.stmts.getD i #[]
 
 /-- The raws a piece's title is read from: its prose's, whether or not the page shows it. -/
 @[expose] public def titleSource (lang : Ir.CodeLang) (file : String) (starts : Array Nat)
-    (opens : Bool) : Piece → Array Raw
-  | .prose seg => (proseRaws lang file starts seg opens).1
+    (known : Option (Std.HashSet String)) (opens : Bool) : Piece → Array Raw
+  | .prose seg => (proseRaws lang file starts known seg opens).1
   | .code _ _ | .statement _ => #[]
+
+/-- Where raws' section headed References ends, which the page's list closes: before the next
+heading of its rank or above, else at their end; none where no heading names References. -/
+public def referencesEnd (raws : Array Raw) : Option Nat :=
+  let step (st : Option Nat × Option Nat) (i : Nat) : Option Nat × Option Nat :=
+    match st, raws[i]?, raws[i + 2]? with
+    | (rank, none), some (.ctrl n _), some (.group body _) =>
+      match Parse.headingControl? n, rank with
+      | some lvl, some r => if Ir.headingRank lvl ≤ r then (rank, some i) else (rank, none)
+      | some lvl, none =>
+        if (rawSrc body).trimAscii.toString.toLower == "references" then
+          (some (Ir.headingRank lvl), none)
+        else (none, none)
+      | none, _ => (rank, none)
+    | st, _, _ => st
+  match (List.range raws.size).foldl step (none, none) with
+  | (some _, some e) => some e
+  | (some _, none) => some raws.size
+  | (none, _) => none
+
+mutual
+
+/-- Whether raws hold a citation command, `\nocite` among them, inside a group or an environment too. -/
+public def citesRaw : Raw → Bool
+  | .ctrl n _ => n.startsWith "cite" || n == "nocite"
+  | .group body _ => citesRaws body.toList
+  | .env _ body _ => citesRaws body.toList
+  | .math _ body _ => citesRaws body.toList
+  | .word .. | .space | .par _ | .sym .. | .verb .. => false
+
+public def citesRaws : List Raw → Bool
+  | [] => false
+  | r :: rest => citesRaw r || citesRaws rest
+
+end
 
 /-- Whether a piece is the file's description the title is read from, given what came before. -/
 @[expose] public def Acc.opens (acc : Acc) : Piece → Bool
@@ -1966,7 +2045,7 @@ where the page shows them, and its paragraph for a statement. -/
     (page : PageSet) (acc : Acc) (piece : Piece) : Acc :=
   let opens := acc.opens piece
   let read := match piece with
-    | .prose seg => proseRaws lang file starts seg opens
+    | .prose seg => proseRaws lang file starts page.cites seg opens
     | .code _ _ | .statement _ => (#[], #[])
   let raws := match piece with
     | .prose _ => if page.code then read.1 else #[]
@@ -1975,7 +2054,10 @@ where the page shows them, and its paragraph for a statement. -/
   { body := acc.body ++ raws, diags := acc.diags ++ (if page.code then read.2 else #[])
     title := if opens then heading else acc.title
     titled := acc.titled || (page.code && heading.isSome)
-    sawModule := acc.sawModule || opens }
+    sawModule := acc.sawModule || opens
+    cited := acc.cited || (page.code && citesRaws read.1.toList)
+    refsAt := if acc.refsAt.isNone && page.code then (referencesEnd raws).map (acc.body.size + ·)
+      else acc.refsAt }
 
 /-- One piece adds its raws to the body, and the title its prose opens on when it opens the
 document. -/
@@ -1984,7 +2066,8 @@ public theorem pieceStep_exact (lang : Ir.CodeLang) (file : String) (starts : Ar
     (pieceStep lang file starts page acc p).body =
         acc.body ++ pieceRaws lang file starts page (acc.opens p) p ∧
       (pieceStep lang file starts page acc p).title = (if acc.opens p then
-        openingHeading? (titleSource lang file starts (acc.opens p) p).toList else acc.title) := by
+        openingHeading? (titleSource lang file starts page.cites (acc.opens p) p).toList
+        else acc.title) := by
   cases p <;> exact ⟨rfl, by simp only [pieceStep, titleSource]; split <;> rfl⟩
 
 /-- A code file's pieces read in page order, statements standing at their anchors. -/
@@ -2078,11 +2161,18 @@ trailing white space aside. -/
   if body.isEmpty then #[] else
     #[.verb "lstlisting" (head ++ "\n" ++ String.ofList body) { line := (lineCol starts start).1 - 1 }]
 
+/-- The bibliography a page's documentation cites into: the file as the document names it, and the
+keys of its entries. -/
+public structure Refs where
+  path : String
+  keys : Std.HashSet String
+
 /-- A Lean file included at `request`, which `entry` names: one listing where nothing reads facts or
 none line up; with no `decls`, the whole file with each statement at its declaration and
 its folds cut out; else each chosen declaration's views in order. -/
 public def includeLean (file text : String) (showing : Showing) (facts : Option LeanFacts.Facts)
-    (place : LinkPlace) (request : Span) (entry : String) : Array Raw × Array Diag :=
+    (place : LinkPlace) (request : Span) (entry : String) (refs : Option Refs := none) :
+    Array Raw × Array Diag :=
   let src := text.toList.toArray
   let starts := lineStarts src
   let unread := showing.unread.toArray.map fun (k, v) =>
@@ -2094,15 +2184,29 @@ public def includeLean (file text : String) (showing : Showing) (facts : Option 
     let what := if valueless then s!"`{k}` is written without a value" else s!"{entry} has no option '{k}'"
     Diag.of .W0110 s!"{what}; the file is included as if it were not written" (some request)
       (help := if valueless then s!"write `{k} = …`"
-        else "name `show`, `decls`, `proofs`, `link`, `facts` or a `phrase.` entry")
+        else "name `show`, `decls`, `proofs`, `link`, `facts`, `bibliography` or a `phrase.` entry")
       (subject := some s!"code:option:{k}")
   let views := showing.unknown.toArray.map fun n =>
     Diag.of .W0110 s!"`show` names '{n}', which is no view of a Lean file; it is included without \
-it" (some request) (help := "name `code`, `math` or `prose`") (subject := some s!"code:show:{n}")
+it" (some request) (help := "name `code`, `math`, `prose` or `docs`")
+      (subject := some s!"code:show:{n}")
   let idle := showing.idle .lean request (page := false)
   let notes := views ++ unread ++ strange ++ idle
   let wrap (raws : Array Raw) : Array Raw := #[.env (Parse.inputEnv file) raws request.pos]
   let whole : List Seg := [⟨.code, 0, text.toList⟩]
+  -- The documentation view sets the file as its page does, citing into its bibliography's keys.
+  if showing.docs then
+    let (body, ds) := (pagePieces .lean text [] []).foldl (init := (#[], #[]))
+      fun (acc : Array Raw × Array Diag) piece => match piece with
+        | .code start code => (acc.1 ++ listingAt starts start code, acc.2)
+        | .prose seg =>
+          let read := proseRaws .lean file starts (refs.map (·.keys)) seg false
+          (acc.1 ++ read.1, acc.2 ++ read.2)
+        | .statement _ => acc
+    let unsaid := (declaredFor .lean showing none).refused.map fun (name, r) =>
+      refusalNote request.file request.pos name r
+    (wrap body, notes ++ unsaid ++ ds)
+  else
   match (if showing.asks || showing.decls.isSome then facts else none) with
   | none =>
     let unsaid := (declaredFor .lean showing none).refused.map fun (name, r) =>
@@ -2141,6 +2245,114 @@ it" (some request) (help := "name `code`, `math` or `prose`") (subject := some s
       let named := if showing.statements then #[] else unnamedNotes showing f request
       (wrap body, notes ++ refused ++ st.2.2 ++ named)
 
+/-- The body with the reference list its documentation's citations call for: under the
+documentation's own References heading where it has one, else at its end under its own heading;
+in the declared style, else alpha, whose labels doc-gen4's follow. -/
+@[expose] public def placedBody (acc : Acc) (refs : Option Refs) (style : Option String) : Array Raw :=
+  let p : Pos := {}
+  let named := style.getD "alpha"
+  match refs with
+  | some r => if !acc.cited then acc.body else
+    match acc.refsAt with
+    | some k =>
+      let list : Array Raw := #[.par p, .ctrl Parse.markdownBibControl p, .group #[.word named p] p,
+        .group #[.word r.path p] p]
+      acc.body.extract 0 k ++ list ++ acc.body.extract k acc.body.size
+    | none =>
+      acc.body ++ #[.par p, .ctrl "bibliographystyle" p, .group #[.word named p] p,
+        .ctrl "bibliography" p, .group #[.word r.path p] p]
+  | none => acc.body
+
+/-- A page without a bibliography is its pieces' raws alone. -/
+public theorem placedBody_none (acc : Acc) (style : Option String) :
+    placedBody acc none style = acc.body := rfl
+
+/-- One spelling of a file a reference list names: its folders resolved and `.bib` dropped. -/
+public def listedName (name : String) : String :=
+  let t := name.trimAscii.toString
+  let parts : Array String := (t.splitOn "/").foldl (init := #[]) fun out c =>
+    if c.isEmpty || c == "." then out
+    else if c == ".." && !out.isEmpty && out.back? != some ".." then out.pop
+    else out.push c
+  let joined := (if t.startsWith "/" then "/" else "") ++ "/".intercalate parts.toList
+  if joined.endsWith ".bib" then (joined.dropEnd 4).toString else joined
+
+/-- A list's files, `body` as written, with each of `names` it does not name already after them. -/
+private def joinedFiles (names : Array String) (body : Array Raw) (pos : Pos) : Array Raw :=
+  let own := Ir.bibSourceNames (rawSrc body).trimAscii.toString
+  let extra := names.foldl (init := (#[] : Array String)) fun out n =>
+    if n.contains ',' || (own ++ out).any (listedName · == listedName n) then out else out.push n
+  if extra.isEmpty then body else #[.word (",".intercalate (own ++ extra).toList) pos]
+
+/-- The raws with the first reference list naming files, `\bibliography`, biblatex's
+`\printbibliography` or the markdown one, joined by `names`; `done` once one is. -/
+private def joinList (names : Array String) (done : Bool) (out : Array Raw) :
+    List Raw → Bool × Array Raw
+  | [] => (done, out)
+  | .ctrl "printbibliography" p :: rest =>
+    if done then joinList names done (out.push (.ctrl "printbibliography" p)) rest
+    else
+      let added := names.foldl (init := out) fun out n =>
+        (out.push (.ctrl "addbibresource" p)).push (.group #[.word n p] p)
+      joinList names true (added.push (.ctrl "printbibliography" p)) rest
+  | .ctrl n p :: .group st sp :: .group body gp :: rest =>
+    if !done && n == Parse.markdownBibControl then
+      joinList names true (((out.push (.ctrl n p)).push (.group st sp)).push
+        (.group (joinedFiles names body gp) gp)) rest
+    else if !done && n == "bibliography" then
+      joinList names true ((out.push (.ctrl n p)).push (.group (joinedFiles names st sp) sp))
+        (.group body gp :: rest)
+    else joinList names done (out.push (.ctrl n p)) (.group st sp :: .group body gp :: rest)
+  | .ctrl n p :: .group body gp :: rest =>
+    if !done && n == "bibliography" then
+      joinList names true ((out.push (.ctrl n p)).push (.group (joinedFiles names body gp) gp)) rest
+    else joinList names done (out.push (.ctrl n p)) (.group body gp :: rest)
+  | .ctrl n p :: .space :: .group body gp :: rest =>
+    if !done && n == "bibliography" then
+      joinList names true (((out.push (.ctrl n p)).push .space).push
+        (.group (joinedFiles names body gp) gp)) rest
+    else joinList names done (out.push (.ctrl n p)) (.space :: .group body gp :: rest)
+  | .group body p :: rest =>
+    let (done, inner) := joinList names done #[] body.toList
+    joinList names done (out.push (.group inner p)) rest
+  | .env n body p :: rest =>
+    let (done, inner) := joinList names done #[] body.toList
+    joinList names done (out.push (.env n inner p)) rest
+  | r :: rest => joinList names done (out.push r) rest
+termination_by l => sizeOf l
+decreasing_by raws_dec
+
+/-- The raws a citation command's keys stand in after its notes, `[…]` groups. -/
+private def keysGroup : List Raw → Option (Array Raw)
+  | .sym '[' _ :: .group _ _ :: .sym ']' _ :: rest => keysGroup rest
+  | .group body _ :: _ => some body
+  | _ => none
+
+/-- The keys raws cite, `\nocite`'s among them, inside a group or an environment too, onto `out`. -/
+private def citedList (out : Array String) : List Raw → Array String
+  | [] => out
+  | .ctrl n _ :: rest =>
+    let out := if n.startsWith "cite" || n == "nocite" then
+        match keysGroup rest with
+        | some body => ((rawSrc body).splitOn ",").foldl (init := out) fun out k =>
+            out.push k.trimAscii.toString
+        | none => out
+      else out
+    citedList out rest
+  | .group body _ :: rest => citedList (citedList out body.toList) rest
+  | .env _ body _ :: rest => citedList (citedList out body.toList) rest
+  | _ :: rest => citedList out rest
+termination_by l => sizeOf l
+decreasing_by raws_dec
+
+/-- The keys raws cite. -/
+public def citedKeys (raws : Array Raw) : Array String := citedList #[] raws.toList
+
+/-- A document whose inclusions cite into the files `names`: its first reference list naming files
+reads them too, after its own, so a key both hold is set from the document's. -/
+public def joinBibliography (raws : Array Raw) (names : Array String) : Array Raw :=
+  if names.isEmpty then raws else (joinList names false #[] raws.toList).2
+
 /-- With no answer from Lean, a page shows the file's code, whatever its directive asks. -/
 public theorem planOf_unanswered_exact (lang : Ir.CodeLang) (file text : String) :
     (planOf lang file text none).1.code = true := by
@@ -2150,12 +2362,13 @@ public theorem planOf_unanswered_exact (lang : Ir.CodeLang) (file text : String)
 each statement beside its declaration's code as the views order them, the title and directive as
 the preamble's declarations, the file's name the title where no description opens on one. -/
 @[expose] public def read (lang : Ir.CodeLang) (file text : String)
-    (facts : Option LeanFacts.Facts := none) (place : LinkPlace := {}) : Array Raw × Array Diag :=
+    (facts : Option LeanFacts.Facts := none) (place : LinkPlace := {}) (refs : Option Refs := none) :
+    Array Raw × Array Diag :=
   let src := text.toList.toArray
   let starts := lineStarts src
   let showing := showingOf lang src
   let plan := planOf lang file text facts place
-  let acc := readPieces lang file text plan.1 plan.2.1
+  let acc := readPieces lang file text (plan.1.citing (refs.map (·.keys))) plan.2.1
   let origin : Pos := {}
   let directive := match directive? lang src with
     | some (cut, value) =>
@@ -2163,8 +2376,8 @@ the preamble's declarations, the file's name the title where no description open
       directiveRaws value { line, col }
     | none => #[]
   let titleRaws := acc.title.getD (Md.textRaws (baseName file) origin)
-  let body := if acc.titled then acc.body
-    else Parse.headingRaws .title titleRaws origin ++ acc.body
+  let placed := placedBody acc refs showing.bibStyle
+  let body := if acc.titled then placed else Parse.headingRaws .title titleRaws origin ++ placed
   let preamble : Array Raw := #[.ctrl "title" origin, .group titleRaws origin] ++ directive
   let stray := (strayDirective? lang src).map fun off =>
     let (line, col) := lineCol starts off
@@ -2190,12 +2403,14 @@ private theorem ite_prefix (b : Bool) (x y : Array Raw) :
   cases b <;> simp
 
 /-- A code file's raws close on its document, whose body ends with its pieces' raws under the
-page its plan sets. -/
+page its plan sets, the reference list its citations call for placed among them. -/
 public theorem read_body_exact (lang : Ir.CodeLang) (file text : String)
-    (facts : Option LeanFacts.Facts) (place : LinkPlace) :
-    ∃ head : Array Raw, (read lang file text facts place).1.back? =
-      some (.env "document" (head ++ (readPieces lang file text (planOf lang file text facts place).1
-        (planOf lang file text facts place).2.1).body) {}) := by
+    (facts : Option LeanFacts.Facts) (place : LinkPlace) (refs : Option Refs) :
+    ∃ head : Array Raw, (read lang file text facts place refs).1.back? =
+      some (.env "document" (head ++ placedBody (readPieces lang file text
+        ((planOf lang file text facts place).1.citing (refs.map (·.keys)))
+        (planOf lang file text facts place).2.1) refs (showingOf lang text.toList.toArray).bibStyle)
+        {}) := by
   unfold read
   simp only [Array.back?_push, ite_prefix]
   exact ⟨_, rfl⟩

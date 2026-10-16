@@ -60,6 +60,11 @@ private structure InputLog where
   reads : Array String := #[]
   /-- Whether the markdown package loaded with its `citations` option, so its files read them. -/
   markdownCitations : Bool := false
+  /-- The bibliography files the document's inclusions cite into, by the names the document gives
+  them, which its reference list joins. -/
+  joins : Array String := #[]
+  /-- Each bibliography file's keys by its path, parsed once a run. -/
+  bibKeys : Array (String × Std.HashSet String) := #[]
 
 private abbrev ReadM := StateT InputLog IO
 
@@ -142,6 +147,28 @@ private def readMinted (dir : System.FilePath) (request : Compat.InputRequest) :
     let lang := request.name.trimAscii.toString
     return (#[.verb "minted" (head ++ "{" ++ lang ++ "}\n" ++ text) request.pos], #[])
 
+/-- The bibliography a Lean page or inclusion cites into: its files as the document names them, and
+their entries' keys. -/
+private def codeRefs (found : Array LeanFactsFile.BibFile) (keys : Std.HashSet String) :
+    Option Code.Refs :=
+  if found.isEmpty then none else some { path := ",".intercalate (found.map (·.name)).toList, keys }
+
+/-- The bibliography files a reference list can name, and W0110 at `span` for each whose name holds
+a comma, which a list's names cannot. -/
+private def listable (found : Array LeanFactsFile.BibFile) (span : Span) :
+    Array LeanFactsFile.BibFile × Array Diag :=
+  let (bad, good) := found.partition (·.name.contains ',')
+  (good, bad.map fun f => Diag.of .W0110 s!"`bibliography` names '{f.name}', whose comma a \
+reference list's file names cannot hold; its entries are not read" (some span)
+    (help := "rename the file or its folder without a comma") (subject := some "code:bibliography"))
+
+/-- A bibliography file's keys, parsed once a run. -/
+private def keysOnce (f : LeanFactsFile.BibFile) : ReadM (Std.HashSet String) := do
+  if let some (_, ks) := (← get).bibKeys.find? (·.1 == f.path) then return ks
+  let ks := (Bib.keysOf f.text).foldl (·.insert ·) {}
+  modify fun log => { log with bibKeys := log.bibKeys.push (f.path, ks) }
+  return ks
+
 /-- `\inputlean[options]{file}`: a Lean file included with the views its options ask for, its facts
 read where they need them and git asked where its link names the file's commit or path. -/
 private def readLean (dir : System.FilePath) (request : Compat.InputRequest) :
@@ -169,9 +196,24 @@ private def readLean (dir : System.FilePath) (request : Compat.InputRequest) :
           Host.runIO (LeanLinks.placeOf path.toString (Code.linkTemplate l)) else pure {}
       | none => pure {}
     let entry := if division then "the Lean division" else "`\\inputlean`"
+    -- A documentation view cites by its bibliography's keys, declared beside the document, else the
+    -- Lean file's project's, and the document's reference list joins the files it cites from.
+    let (found, bibDiags) ← if showing.docs then
+        Host.runIO (LeanFactsFile.bibFor path.toString showing.bibliography
+          ⟨request.file, request.pos⟩ (base := some dir.toString) (entry := some entry))
+      else pure (#[], #[])
+    let (found, commaDiags) := listable found ⟨request.file, request.pos⟩
+    let keyed ← found.mapM fun f => return (f, ← keysOnce f)
+    let keys := keyed.foldl (init := {}) fun ks (_, k) => k.fold (init := ks) fun acc x => acc.insert x
     let (raws, ds) := Code.includeLean path.toString text showing facts place
-      ⟨request.file, request.pos⟩ entry
-    return (raws, ds ++ factDiags)
+      ⟨request.file, request.pos⟩ entry (codeRefs found keys)
+    let cited := Code.citedKeys raws
+    let citing := keyed.filter fun (_, ks) => cited.any ks.contains
+    modify fun log => { log with
+      joins := citing.foldl (fun js (f, _) => if js.contains f.name then js else js.push f.name)
+        log.joins
+      reads := log.reads ++ found.map (·.path) }
+    return (raws, ds ++ factDiags ++ bibDiags ++ commaDiags)
 
 /-- Fulfil one executed request; a compatible repeat or a cycle back edge of a local style
 reads nothing, and nesting stays within eight files. -/
@@ -277,6 +319,8 @@ public def expandInputs (file : String) (raws : Array Parse.Raw)
     (dir : System.FilePath := (System.FilePath.mk file).parent.getD ".") :
     IO (Compat.Executed × Array Diag × Array (String × Option String × Pos)) := do
   let (executed, log) ← executeWith file raws {} dir
+  let executed := if log.joins.isEmpty then executed
+    else executed.withRaws (Code.joinBibliography executed.raws log.joins)
   return (executed, log.diags, log.spliced)
 
 /-- Where a file a document names by `name` is read: beside the document,
@@ -405,10 +449,18 @@ public def readDocument (file : String) (bytes : ByteArray)
         | some l => if lang == .lean && showing.statements then
             Host.runIO (LeanLinks.placeOf file (Code.linkTemplate l)) else pure {}
         | none => pure {}
+      -- A Lean page's documentation cites into its declared bibliography, else its project's.
+      let (found, bibDiags) ← if lang == .lean then
+          Host.runIO (LeanFactsFile.bibFor file showing.bibliography ⟨file, {}⟩)
+        else pure (#[], #[])
+      let (found, commaDiags) := listable found ⟨file, {}⟩
+      let refs := codeRefs found (found.foldl (init := {}) fun ks f =>
+        (Bib.keysOf f.text).foldl (·.insert ·) ks)
+      let bibRead := found.map (·.path)
       let t ← IO.monoMsNow
-      let (raws, ds) := Surface.readCode lang file text facts place
+      let (raws, ds) := Surface.readCode lang file text facts place refs
       if phases then phase "code" s!"{raws.size} top-level nodes" (← since t)
-      return (raws, ds ++ factDiags, factsRead.toArray)
+      return (raws, ds ++ factDiags ++ bibDiags ++ commaDiags, factsRead.toArray ++ bibRead)
   let (raws, frontDiags, surfaceReads) ← surface first.text true
   let t ← IO.monoMsNow
   let seeded (read : Encoding.FileText) (under : Option Encoding.Declared) : Encoding.Ledger :=
@@ -427,6 +479,7 @@ public def readDocument (file : String) (bytes : ByteArray)
       let ledger := { log.ledger with declared := settled }
       pure (again, frontDiags, executed, { log with ledger })
   let (raws, dataDiags, ledger, dataReads) ← resolveDataIn file executed.raws log.ledger
+  let raws := Code.joinBibliography raws log.joins
   phase "input" s!"{raws.size} top-level nodes" (← since t)
   return { text := read.text
            executed := executed.withRaws raws

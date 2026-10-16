@@ -258,6 +258,24 @@ namespace ToolPath
   | .ok st => st.kind == .file
   | .error _ => false
 
+/-- `target` as the folder `dir` names it, both read from one working directory; `none` where one is
+absolute and the other not, or where `dir` climbs out of a folder it does not name. -/
+public def relative (dir target : String) : Option String :=
+  let parts (p : String) : List String := Id.run do
+    let mut out : Array String := #[]
+    for c in p.splitOn "/" do
+      if c.isEmpty || c == "." then continue
+      if c == ".." && !out.isEmpty && out.back? != some ".." then out := out.pop
+      else out := out.push c
+    return out.toList
+  let rec strip : List String → List String → List String × List String
+    | a :: as, b :: bs => if a == b then strip as bs else (a :: as, b :: bs)
+    | as, bs => (as, bs)
+  if dir.startsWith "/" != target.startsWith "/" then none else
+  let (up, down) := strip (parts dir) (parts target)
+  if up.contains ".." then none
+  else some ("/".intercalate (up.map (fun _ => "..") ++ down))
+
 /-- A name inside a directory, with one separator between them. -/
 @[expose] public def join (dir name : String) : String :=
   if dir.endsWith "/" then dir ++ name else dir ++ "/" ++ name

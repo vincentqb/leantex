@@ -157,6 +157,7 @@ private def inlText1 : Inl → String
   | .link _ _ b _ => inlTextList "" b.toList
   | .image _ _ a _ => inlTextList "" a.toList
   | .cite items _ => " ".intercalate (items.toList.map fun it => "@" ++ it.key)
+  | .citeText _ body _ => inlTextList "" body.toList
 
 private def inlTextList (acc : String) : List Inl → String
   | [] => acc
@@ -286,6 +287,7 @@ mutual
 text alternative, which sets it as text. -/
 private def citesInl : Inl → Bool
   | .cite items _ => items.any (keyCrosses ·.key)
+  | .citeText key _ _ => keyCrosses key
   | .emph body _ => citesInls body.toList
   | .strong body _ => citesInls body.toList
   | .link _ _ body _ => citesInls body.toList
@@ -304,6 +306,29 @@ overlay-aware command before it would read as its `<…>` selector. -/
   match rs[0]? with
   | some (Raw.word w _) => if w.startsWith "<" then #[.group #[] p] else #[]
   | _ => #[]
+
+/-- A word's opening quote as it reads after a word, closing, where the word follows an inline element
+whose ink ends it, as Pandoc's smart punctuation reads `*x*'s`. -/
+private def closingQuote (w : String) : String :=
+  match w.toList with
+  | '\'' :: '\'' :: rest => String.ofList ('”' :: rest)
+  | '\'' :: rest => String.ofList ('’' :: rest)
+  | '"' :: rest => String.ofList ('”' :: rest)
+  | _ => w
+
+/-- Whether text's opening quote closes after an inline element, as Pandoc reads it: always after
+emphasis, else a single quote no later one pairs with, and a double one before a space or the end. -/
+private def closesAfter (emphasis : Bool) (s : String) : Bool :=
+  match s.toList with
+  | '\'' :: rest => emphasis || !rest.contains '\''
+  | '"' :: rest => emphasis || rest.head?.all (· == ' ')
+  | _ => false
+
+/-- Text's raws after an inline element, their first word's opening quote closing. -/
+private def closeLeading (rs : Array Raw) : Array Raw :=
+  match rs.toList with
+  | .word w p :: rest => (Raw.word (closingQuote w) p :: rest).toArray
+  | _ => rs
 
 mutual
 
@@ -356,6 +381,11 @@ the image option cannot carry them as written" p
       let altRaws := textRaws src p
       (#[.ctrl "includegraphics" p, .sym '[' p] ++ altRaws
          ++ #[.sym ']' p, .group (textRaws dest p) p], ds)
+  -- The author's text links to the work's entry, which `\nocite` lists.
+  | .citeText key body p =>
+    let (rs, ds) := inlListRaws file #[] #[] body.toList
+    let listed := citeCmdRaws "nocite" #[] #[] #[key] p
+    (#[.ctrl "href" p, .group (textRaws ("#" ++ Ir.bibAnchor key) p) p, .group rs p] ++ listed, ds)
   | .cite items p =>
     let cs := citeItemsRaws file #[] #[] items.toList
     let g := citeGroupRaws file cs.1 p
@@ -381,6 +411,13 @@ private def inlListRaws (file : String) (out : Array Raw) (ds : Array Diag) :
   | [] => (out, ds)
   | x :: rest =>
     let (rs, ds') := inlRaws file x
+    let emphasis := match out[out.size - 2]? with
+      | some (.ctrl "emph" _) | some (.ctrl "textbf" _) => true
+      | _ => false
+    let closes := match x with
+      | .text s _ => (out.back? matches some (.group ..)) && closesAfter emphasis s
+      | _ => false
+    let rs := if closes then closeLeading rs else rs
     let guard := match out.back? with
       | some (.group _ p) => selectorGuard rs p
       | _ => #[]
@@ -618,7 +655,10 @@ private def citesBlk : Blk → Bool
   | .disclosure summary _ body _ => citesInls summary.toList || citesBlks body.toList
   | .list _ _ _ items _ => citesItems items.toList
   | .table _ header rows _ => citesCells header.toList || rows.toList.any (citesCells ·.toList)
-  | .code .. | .rule _ | .lean .. | .metadata .. | .refs _ => false
+  -- A Lean division's documentation view cites into the document's list.
+  | .lean attrs _ => attrs.any fun (k, v) =>
+    k == "show" && ((v.splitOn ",").map (·.trimAscii.toString)).contains "docs"
+  | .code .. | .rule _ | .metadata .. | .refs _ => false
 
 private def citesBlks : List Blk → Bool
   | [] => false
@@ -803,8 +843,9 @@ public def splitMetadata (bs : Array Blk) : Array MetaField × Array Blk :=
 own diagnostics carrying `.md` spans; its metadata opens it, and its reference list stands in
 its first `::: {#refs}` division, else at its end, as Pandoc places it. -/
 public def desugar (file : String) (input : String) (dialect : Dialect := .document)
-    (role : Role := .document) (citing : Bool := false) : Array Raw × Array Diag :=
-  let read := blocksIn dialect file input (included := role == .included && citing)
+    (role : Role := .document) (citing : Bool := false)
+    (known : Option (Std.HashSet String) := none) : Array Raw × Array Diag :=
+  let read := blocksIn dialect file input (included := role == .included && citing) (known := known)
   let split := splitMetadata read.1
   let m := metaRead file role split.1
   let blocks := split.2.toList

@@ -1,0 +1,21 @@
+% Invented fixture: an article that includes a Lean file's documentation, whose
+% citations cite into the article's own bibliography, the Lean file's bibliography
+% joining the article's list after its own. Nothing here derives from any private
+% document.
+\documentclass{article}
+
+\fonts{ dir = "fonts", body = "Source Serif Pro", mono = "Source Code Pro" }
+\usepackage[numbers]{natbib}
+
+\begin{document}
+
+Placeholder prose citing \citep{vale2016} before the included file.
+
+\inputlean[show = docs, bibliography = lean-cite.bib]{lean-cite.lean}
+
+Placeholder prose citing \citet{doe2024} after it.
+
+\bibliographystyle{unsrtnat}
+\bibliography{md-cite}
+
+\end{document}

@@ -501,7 +501,7 @@ def mdGoldenNames : List String :=
 /-- The golden set's code fixtures: `testdata/corpus/<n>.<ext>`, read by the code-file reader
 their extension selects. -/
 def codeGoldenNames : List (String × Ir.CodeLang) :=
-  [("code-lean", .lean), ("code-python", .python), ("code-bash", .bash)]
+  [("code-lean", .lean), ("code-python", .python), ("code-bash", .bash), ("lean-cite", .lean)]
 
 /-- Fixtures allowed to ship a named markup character as ink, per character, each with its reason. -/
 def inkMarkupExempt : List (String × List Char) :=
@@ -532,8 +532,8 @@ def goldenNames : List String :=
    "redefine", "titlebars", "titleground", "daylight", "blocks", "poster", "poster-headline", "listings",
    "algorithm", "lineno", "lineno-modulo",
    "cond-newif", "cond-ifdefined", "cond-ifx", "cond-ifnum", "cond-loaded",
-   "md-include", "md-include-deck", "md-cite-include", "palette-seeds", "alert-mark",
-   "deck-sections", "deck-hooks"] ++
+   "md-include", "md-include-deck", "md-cite-include", "lean-cite-include", "palette-seeds",
+   "alert-mark", "deck-sections", "deck-hooks"] ++
   mdGoldenNames ++ codeGoldenNames.map (·.1)
 
 /-- A TikZ picture of `body`, its environment on lines of their own. -/
@@ -886,6 +886,38 @@ def inkText (blocks : Array Ir.Block) : String :=
       acc ++ ((it.marker.map fun m => s!"[{m}] ").getD "") ++ Ir.plainText it.content
     | _ => acc ++ Ir.blocksText #[b]
 
+/-- A body's text as its pages show it, each reference-list entry after its marker, where its blocks
+break aside. -/
+def inkFlat (blocks : Array Ir.Block) : String :=
+  String.ofList ((inkText blocks).toList.filter (· != '\n'))
+
+/-- A world holding files by path, `/work` its working directory, and nothing to run. -/
+def factsWorld (files : List (String × ByteArray)) : (q : World.Ask) → World.Reply q
+  | .env _ => none
+  | .cwd => .ok "/work"
+  | .stat path =>
+    if files.any (·.1 == path) then
+      .ok { kind := .file, size := 0, mtimeSec := 0, mtimeNsec := 0, real := path }
+    else .error .absent
+  | .metadata _ => .error .absent
+  | .readFile path => match files.lookup path with
+    | some b => .ok b
+    | none => .error .absent
+  | .listDir _ => .error .absent
+  | .run _ => { ran := .exited 1, out := "", err := "", complete := true, outputs := #[] }
+  | .writeAtomic _ _ => .ok ()
+  | .createDirAll _ => .ok ()
+
+/-- The citation nodes of an elaborated body in order, resolved or not: their forms and keys. -/
+def citesOf (doc : Ir.Doc) : Array (Ir.CiteForm × Array String) :=
+  Ir.foldBlocks (fun out _ => out) (fun out x => match x with
+    | .cite f ks => out.push (f, ks)
+    | .cited f ks _ => out.push (f, ks)
+    | _ => out) #[] doc.body
+
+/-- The keys of an elaborated body's citations, in order. -/
+def keysOf (doc : Ir.Doc) : List String := (citesOf doc).toList.flatMap fun (_, ks) => ks.toList
+
 /-- A markdown document built as `bibBuild` builds a TeX one, its bibliography from `.bib` texts by
 the names its metadata gives them. -/
 def mdBibBuild (src : String) (bibs : Array (String × String)) (file : String := "t.md") :
@@ -902,12 +934,16 @@ def worksBib : String :=
 /-- The metadata block that declares `works.bib`, which a markdown document reads citations under. -/
 def worksMeta : String := "---\nbibliography: works.bib\n---\n\n"
 
-/-- The `.bib` texts beside the corpus a document's bibliography names, by those names. -/
+/-- The `.bib` texts beside the corpus a document's bibliography names, by those names and by their
+files', as a twin names them. -/
 def corpusBibs (doc : Ir.Doc) : IO (Array (String × String)) := do
   let mut out : Array (String × String) := #[]
   for name in Ir.bibRefs doc do
     let path := s!"testdata/corpus/{Bib.sourceName name}"
-    if ← System.FilePath.pathExists path then out := out.push (name, ← fixtureText path)
+    if ← System.FilePath.pathExists path then
+      let text ← fixtureText path
+      out := out.push (name, text)
+      if Bib.sourceName name != name then out := out.push (Bib.sourceName name, text)
   return out
 
 /-- A golden fixture's source file under `testdata/corpus`, with its surface's extension. -/
@@ -944,11 +980,39 @@ def elabMdFixture (n src : String) : IO (Ir.Doc × Array Diag) := do
   let (doc, bibDiags) := Bib.resolve file prepared sources doc
   return (Ir.eraseLocations doc, diags ++ bibDiags)
 
+/-- A Lean page's documentation reading citations into the bibliography files `sources` name,
+elaborated and resolved as the driver builds it. -/
+def leanCiteBuild (file src : String) (sources : Array (String × String)) : Ir.Doc × Array Diag :=
+  let refs : Code.Refs := { path := ",".intercalate (sources.map (·.1)).toList
+                            keys := sources.foldl (init := {}) fun ks (_, bib) =>
+                              (Bib.keysOf bib).foldl (·.insert ·) ks }
+  let (raws, ds) := Surface.readCode .lean file src none {} (some refs)
+  let prepared := Elab.prepareExecuted file (Elab.executeInputs nullReader file raws)
+  let (doc, diags) := Elab.runPreparedFinal file prepared ds (fun _ _ => {})
+  let (doc, bibDiags) := Bib.resolve file prepared sources doc
+  (Ir.eraseLocations doc, diags ++ bibDiags)
+
+/-- A code fixture elaborated as the driver builds it, a Lean page declaring its bibliography read
+through the front door beside it and its citations resolved against the files it names. -/
+def elabCodeFixture (n : String) (lang : Ir.CodeLang) (src : String) : IO (Ir.Doc × Array Diag) := do
+  let file := s!"{n}.{lang.extension}"
+  if lang != .lean || (Code.showingOf lang src.toList.toArray).bibliography.isEmpty then
+    return elabCode file src
+  let path := s!"testdata/corpus/{file}"
+  let read ← Input.readDocument path src.toUTF8
+  let prepared := Elab.prepareExecuted path read.executed
+  let (doc, diags) := Elab.runPreparedFinal path prepared read.diags (fun _ _ => {})
+  let mut sources : Array (String × String) := #[]
+  for srcName in Ir.bibRefs doc do
+    let bib := Input.besideDocument path (Bib.sourceName srcName)
+    if ← bib.pathExists then sources := sources.push (srcName, ← fixtureText bib.toString)
+  let (doc, bibDiags) := Bib.resolve path prepared sources doc
+  return (Ir.eraseLocations doc, diags ++ bibDiags)
+
 /-- A golden fixture elaborated through its own surface's reader. -/
 def goldenDoc (n : String) : IO (Ir.Doc × Array Diag) := do
   let src ← fixtureText (goldenFile n)
-  if let some lang := codeGoldenNames.lookup n then
-    return elabCode s!"{n}.{lang.extension}" src
+  if let some lang := codeGoldenNames.lookup n then elabCodeFixture n lang src
   else if mdGoldenNames.contains n then elabMdFixture n src
   else elabFixture n src
 

@@ -2472,7 +2472,7 @@ private def analyse (sources : Array (String × String)) (doc : Ir.Doc) (rd : Fi
   unless requested.isEmpty && own.isEmpty do
     for k in cited do
       if (find k).isNone then
-        let md := doc.surface == .markdown
+        let md := doc.surface != .tex
         let (cmd, loss) := if shown.contains k || citedBy.contains k then ("cite", "it shows as '?'")
           else ("nocite", if md then "its 'nocite' adds nothing" else "\\nocite adds nothing for it")
         let atEntry : Option Span := if shown.contains k then none else

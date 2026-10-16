@@ -3,6 +3,7 @@ module
 public import LeanTex.Cli.World
 public import LeanTex.Core.LeanFactsRead
 public import LeanTex.Core.Diag
+import LeanTex.Cli.DriverDiag
 
 /-! A Lean file's facts, as its project's exporter wrote them: read from the file a document
 declares or from the one beneath the project's `.lake/build/leantex`, never asked of Lean. -/
@@ -68,5 +69,53 @@ public def factsFor (file text : String) (declared : Option String)
   let read := (← ask (.readFile path)).toOption
   let (facts, ds) := LeanFacts.judge file path text lost help read
   return (facts, ds, read.map fun _ => path)
+
+/-- A bibliography file a Lean file's documentation cites into: the name its document gives it, the
+path it is read at, and its text. -/
+public structure BibFile where
+  name : String
+  path : String
+  text : String
+
+/-- The bibliography a Lean file's documentation cites into: the files declared beside `base` (else
+the file's folder), else its project's `docs/references.bib`, each named from `base` with its text,
+and E0503 at `span` for a declared one that is not there. -/
+public def bibFor (file : String) (declared : List String) (span : Span)
+    (base : Option String := none) (entry : Option String := none) :
+    Prog (Array BibFile × Array Diag) := do
+  let cwd := (← ask .cwd).toOption
+  let placed (p : String) : String :=
+    if p.startsWith "/" then p else (cwd.map (ToolPath.join · p)).getD p
+  let joined := placed file
+  -- Names are read from the document's folder, the file's as given, where it really stands, since a
+  -- name climbing out of it climbs out of its real folder; the project is the real file's.
+  let given := match base with
+    | some b => placed b
+    | none => (ancestors joined).headD "/"
+  let here := match ← ask (.stat given) with
+    | .ok st => st.real
+    | .error _ => given
+  let real := match ← ask (.stat joined) with
+    | .ok st => st.real
+    | .error _ => joined
+  let wanted : List (String × String × Bool) ← if declared.isEmpty then do
+      match ← findUp ["lakefile.lean", "lakefile.toml"] (ancestors real) with
+      | some root =>
+        let path := ToolPath.join root "docs/references.bib"
+        pure [((ToolPath.relative here path).getD path, path, false)]
+      | none => pure []
+    else pure (declared.map fun p => (p, if p.startsWith "/" then p else ToolPath.join here p, true))
+  let mut found : Array BibFile := #[]
+  let mut diags : Array Diag := #[]
+  for (name, path, isDeclared) in wanted do
+    match ← ask (.readFile path) with
+    | .ok bytes =>
+      -- A file that is no UTF-8 is read byte for byte, its keys ASCII; the list's own read names it.
+      let text := (String.fromUTF8? bytes).getD
+        (String.ofList (bytes.toList.map fun b => Char.ofNat b.toNat))
+      found := found.push { name, path, text }
+    | .error _ =>
+      if isDeclared then diags := diags.push (DriverDiag.bibMissingLean name path span entry)
+  return (found, diags)
 
 end LeanTex.Cli.LeanFactsFile

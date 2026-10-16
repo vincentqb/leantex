@@ -21,7 +21,8 @@ example (p : Pos) (body : Array Md.Inl) : Array Md.Inl :=
   #[.text "alpha" p, .code "beta" p, .emph body p, .strong body p,
     .link "https://example.org" "gamma" body p,
     .image "figure.png" "delta" body p, .anchor "delta" p, .soft p, .hard p,
-    .cite #[.mk "epsilon" .normal body body, .mk "zeta" .authorInText #[] #[]] p]
+    .cite #[.mk "epsilon" .normal body body, .mk "zeta" .authorInText #[] #[]] p,
+    .citeText "eta" body p]
 
 example (p : Pos) (inlines : Array Md.Inl) (blocks : Array Md.Blk) : Array Md.Blk :=
   #[.para inlines p, .heading 2 inlines p, .code "text" "alpha" p,
@@ -34,7 +35,8 @@ example (p : Pos) (inlines : Array Md.Inl) (blocks : Array Md.Blk) : Array Md.Bl
 example (node : Md.Inl) : Pos :=
   match node with
   | .text _ p | .code _ p | .emph _ p | .strong _ p
-  | .link _ _ _ p | .image _ _ _ p | .anchor _ p | .soft p | .hard p | .cite _ p => p
+  | .link _ _ _ p | .image _ _ _ p | .anchor _ p | .soft p | .hard p | .cite _ p
+  | .citeText _ _ p => p
 
 example (node : Md.Blk) : Pos :=
   match node with

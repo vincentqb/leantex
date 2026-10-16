@@ -39,23 +39,6 @@ def texOf (t : LeanFacts.Term) (ctx : List String)
     { binders := fun c => binders.lookup c, shown := id, collectionFirst := true }
   Parse.rawSrc (LeanStatement.Math.listRaws {} #[] (LeanStatement.render lk ctx t).math.toList)
 
-/-- A world holding files by path, `/work` its working directory, and nothing to run. -/
-def factsWorld (files : List (String × ByteArray)) : (q : Ask) → Reply q
-  | .env _ => none
-  | .cwd => .ok "/work"
-  | .stat path =>
-    if files.any (·.1 == path) then
-      .ok { kind := .file, size := 0, mtimeSec := 0, mtimeNsec := 0, real := path }
-    else .error .absent
-  | .metadata _ => .error .absent
-  | .readFile path => match files.lookup path with
-    | some b => .ok b
-    | none => .error .absent
-  | .listDir _ => .error .absent
-  | .run _ => { ran := .exited 1, out := "", err := "", complete := true, outputs := #[] }
-  | .writeAtomic _ _ => .ok ()
-  | .createDirAll _ => .ok ()
-
 /-- A run that wrote `answer` and exited `code`, saying `out`. -/
 def ended (code : Nat) (out : String) (answer : Option ByteArray) : Ended :=
   { ran := .exited code, out, err := "", complete := true, outputs := #[("answer.jsonl", answer)] }

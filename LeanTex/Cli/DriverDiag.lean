@@ -332,6 +332,16 @@ entries of the other files" span
     (help := s!"put the file at {looked}, or drop '{name}' from the list of files")
     (subject := some ("bibfile:" ++ name))
 
+/-- E0503 as a Lean page's directive, or the inclusion `entry` names, names its bibliography: the
+file is not there, so its documentation's citations stay as written and nothing is listed. -/
+public def bibMissingLean (name looked : String) (span : Span) (entry : Option String) : Diag :=
+  let (names, loss) := match entry with
+    | some e => (s!"{e} names", "the included documentation's citations stay as written")
+    | none => ("the directive names",
+        "the page's citations stay as written and its reference list is empty")
+  Diag.of .E0503 s!"the bibliography file '{name}' {names} is not there; {loss}" (some span)
+    (help := s!"put the file at {looked}")
+
 /-- E0503 or W0424 as a markdown document's metadata names its bibliography, where no `\allow` is
 written. -/
 public def bibMissingMarkdown (among : Bool) (name looked : String) (span : Option Span) : Diag :=

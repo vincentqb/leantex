@@ -57,8 +57,8 @@ inside it (`:.#$%&-+?<>~/`), or braced, without white space,
 key no natbib key list can hold, one with a comma or a brace, sets as its text,
 named. Citations are read only in a document that declares its bibliography,
 in a YAML metadata block on its first line, or closing the document after a
-blank line, as Pandoc reads one; without it an `@name` stays text, and so it
-does in a code file's documentation:
+blank line, as Pandoc reads one; without it an `@name` stays text (a Lean
+file's documentation cites by its own rule, under Code files):
 
 ```markdown
 ---
@@ -75,8 +75,9 @@ reference-section-title: References
 brackets), `natbiboptions` natbib's options, `nocite` lists entries to include
 uncited (`@*` for all), and `reference-section-title` heads the list where it
 sets at the end. The list stands in the first `::: {#refs}` division, else at
-the end, and only where something is cited. Citations set as Pandoc's LaTeX
-writer sets them under natbib, with the numbering, list, styles and
+the end, and only where something is cited or a Lean division sets its
+documentation (`show = "docs"`, under Code files). Citations set as Pandoc's
+LaTeX writer sets them under natbib, with the numbering, list, styles and
 diagnostics of TeX's `\cite`; the web page links each to its entry. A
 citation inside another's note, or in an image's text alternative, sets as
 its text, named. The markdown twin writes citations back in Pandoc's syntax,
@@ -167,6 +168,23 @@ as written; the blank lines around a listing ship nowhere.
   decorators and header, whose body follows in the same listing.
 - **Shell:** the leading `#` comment block, after the `#!` line, is prose
   above the script.
+
+A Lean page's documentation cites into its project's bibliography:
+`docs/references.bib` beneath the nearest directory above the file that holds
+a lakefile, or the files the directive names beside it,
+`-- leantex: bibliography = refs.bib`. A bracket cites as doc-gen4 resolves
+one. doc-gen4 registers each key the bibliography holds that its scan finds
+between a `[` and the next `]`, resuming after that `]`, so `[[Key]]` alone
+registers nothing; then `[Key]`, `[Key][]` and `[Key](Theorem 2)` cite a
+registered `Key`, set as its label, and `[text][Key]` sets the author's text,
+linked to the entry, where the text is not the key itself and holds no link or
+citation, which no link may hold. Pandoc's citations cite a group holding a
+key the bibliography holds, any key it lacks set as `?` and named, so
+`@List.map`, or a group with no such key, stays as written. Citations set in
+the alpha style, as doc-gen4 labels its references (`[Doe12]`), unless the
+directive names another (`biblio-style = plain`), and their list closes the
+documentation's own References section, else stands at the page's end under
+its own heading. A Python or shell file's documentation cites nothing.
 
 A file's description that opens on a heading gives the document its title;
 otherwise the file's name is the title, shown as the page's first heading.
@@ -297,7 +315,20 @@ file's facts, as above, and sets the whole file with each statement at its
 declaration; `decls` sets only the declarations it names (theorems,
 definitions and axioms), each with its views in order; `phrase.` entries
 give constants their words there as a directive's do. An included file's
-documentation comments are code, as its source has them.
+documentation comments are code, as its source has them, unless `show = docs`
+sets the file as its page does, documentation as prose and code as listings.
+Its citations then cite into the including document's bibliography: a bracket
+cites by the keys of the files the inclusion names beside the document,
+`bibliography = refs.bib`, else of the Lean file's project's
+`docs/references.bib`, and the files it cites from join the document's
+reference list after its own, as if `\bibliography` named them last (under
+biblatex, as resources added before `\printbibliography`), so the citations
+number and set in the document's style and a key both hold is set from the
+document's file. A list the document writes itself, `thebibliography`, names
+no file, so they resolve against its items; where the document has no list
+they show as `?`, named. A `bibliography` with no `show = docs` and a
+`biblio-style` are named and ignored, and `docs` beside another view, `decls`
+or `proofs` sets the documentation view alone, named.
 
 ## Fonts and themes
 
