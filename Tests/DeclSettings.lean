@@ -126,6 +126,12 @@ def frameTitleKeyChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
   t "frame title: a font with no bar is named at its declaration"
     (ds.any fun d => d.subject == some "param:\\style:frametitle:font" &&
       d.span.any (·.pos.line == 2))
+  for restated in ["size=\\Large", "series=\\bfseries", "size=\\Large,series=\\bfseries"] do
+    let (pdfR, htmlR, dsR) := ship (deck s!"\\setbeamerfont\{frametitle}\{{restated}}")
+    t s!"frame title: '{restated}' restates the plain title, changing nothing, noted"
+      (pdfR == pdf && htmlR == html &&
+        !dsR.any (fun d => d.severity == .warning && d.subject == some "param:\\style:frametitle:font") &&
+        dsR.any fun d => d.code == "N0100" && d.subject == some "param:\\style:frametitle:font")
   let (pdfB, _, _) := ship (deck font "")
   let (pdfM, _, dsM) := ship (deck font bar)
   t "frame title: a bar declared between frames sets the declared font" (pdfM != pdfB)
@@ -154,7 +160,7 @@ def emptyTemplateChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
       (out.pages.all fun p => p.links.isEmpty && p.lines.all fun l => l.segs.all fun
         | Layout.Seg.run _ _ link _ _ _ _ _ _ _ _ => link.isNone
         | _ => true)
-    for element in ["navigation symbols", "headline", "background"] do
+    for element in Compat.emptyTemplates do
       let (pdf', html', ds, _) := ship (deck (theme ++ s!"\\setbeamertemplate\{{element}}\{}"))
       t s!"templates: '{element}\{}' changes nothing {theme}" (pdf' == pdf && html' == html)
       t s!"templates: '{element}\{}' is a note, not a warning {theme}"
@@ -169,7 +175,42 @@ def emptyTemplateChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
     let (_, _, ds, _) := ship (deck s!"\\setbeamertemplate\{{e}}{(tpl.drop e.length).toString}\n{next}")
     t s!"templates: '{tpl}' before another line ships, the template named"
       (!ds.any (·.severity == .error) &&
-        ds.any fun d => d.code == "W0104" && d.subject == some s!"param:\\setbeamertemplate:{e}")
+        ds.any fun d => d.subject == some s!"param:\\setbeamertemplate:{e}")
+
+/-- The templates lualatex measured drawing nothing by default, beamer's headline and background
+under its default, moloch, metropolis and Madrid themes. -/
+def lualatexEmptyByDefault : List String := ["headline", "background"]
+
+/-- Every empty template the reader notes is one lualatex measured empty by default, or the
+navigation symbols, which the engine draws none of. -/
+def emptyTemplateMeasuredChecks (ref : IO.Ref (List String)) : IO Unit :=
+  check ref "templates: every empty template noted is measured empty, or one the engine never draws"
+    (Compat.emptyTemplates.all fun e => e == "navigation symbols" || lualatexEmptyByDefault.contains e)
+
+/-- The templates lualatex measured unchanged by their predefined `default` form in an unthemed
+deck. -/
+def lualatexDefaultUnchanged : List String :=
+  ["itemize items", "enumerate items", "blocks", "footline", "title page"]
+
+/-- A predefined `default` the reader notes is one lualatex measured unchanged, and the unthemed
+deck ships the same pages with it; a themed deck's names it. -/
+def defaultTemplateChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  t "templates: every noted default is one lualatex measured unchanged"
+    (Compat.defaultTemplates.all lualatexDefaultUnchanged.contains)
+  let ship (src : String) : Array UInt8 × String × Array Diag :=
+    let (d, ds) := elabStr src
+    ((driverPdf oneFace (Layout.Geom.ofPage d.page) d (layoutOf oneFace d)).data,
+      (HtmlDoc.emit {} d).1, ds)
+  let (pdf, html, _) := ship (deck "")
+  for e in Compat.defaultTemplates do
+    let (pdf', html', ds) := ship (deck s!"\\setbeamertemplate\{{e}}[default]")
+    t s!"templates: '{e}[default]' ships an unthemed deck's pages, noted"
+      (pdf' == pdf && html' == html && !ds.any (·.severity == .warning) &&
+        ds.any (·.subject == some s!"param:\\setbeamertemplate:{e}"))
+    let (_, _, dsM) := ship (deck s!"\\usetheme\{moloch}\\setbeamertemplate\{{e}}[default]")
+    t s!"templates: '{e}[default]' under a theme is named"
+      (dsM.any fun d => d.code == "W0104" && d.subject == some s!"param:\\setbeamertemplate:{e}")
 
 /-- A counter a use reads is named at the use, and only one nothing reads at its allocation; a
 listing's language help names the language written. -/
@@ -180,15 +221,70 @@ def counterReadChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\begin{theorem}Words.\\end{theorem}\n\\end{document}\n")
   t "counters: a counter a theorem shares is named at the theorem alone"
     (!shared.any (·.subject == some "param:\\newcounter:shared") && shared.any (·.code == "W0110"))
-  let (_, unused) := elabStr ("\\documentclass{article}\n\\newcounter{probe}\n" ++
-    "\\begin{document}\nWords.\n\\end{document}\n")
-  t "counters: a counter nothing reads is named, with help"
-    (unused.any fun d => d.subject == some "param:\\newcounter:probe" && d.help.isSome)
+  let counted (pre body : String) : Array Diag :=
+    (elabStr (s!"\\documentclass\{article}\n\\usepackage\{amsmath}\n\\newcounter\{probe}\n{pre}\n" ++
+      s!"\\begin\{document}\n{body}\nWords.\n\\end\{document}\n")).2
+  let allocNamed (ds : Array Diag) : Nat :=
+    (ds.filter fun d => d.subject == some "param:\\newcounter:probe").size
+  for (pre, body, what) in [("", "\\stepcounter{probe}Count \\theprobe.", "a step and its value"),
+      ("\\numberwithin{equation}{probe}", "\\begin{equation}x\\end{equation}", "a numbering within it"),
+      ("\\counterwithin{figure}{probe}", "", "a counter within it"),
+      ("", "\\setcounter{probe}{3}", "a setting"), ("", "\\refstepcounter{probe}", "a reference step"),
+      ("", "\\addtocounter{probe}{2}\\arabic{probe}", "an addition and its numeral"),
+      ("", "{\\usecounter{probe}}", "a list's use"),
+      ("", "\\setcounter{section}{\\value{probe}}", "its value")] do
+    let ds := counted pre body
+    t s!"counters: a counter read by {what} is not named at its allocation, its use naming its loss"
+      (allocNamed ds == 0 && !ds.any (·.subject == some "ctrl:newcounter") &&
+        ds.any (·.severity == .warning))
+  let unused := counted "" ""
+  t "counters: a counter nothing reads is named once, with help"
+    (allocNamed unused == 1 && unused.any fun d =>
+      d.subject == some "param:\\newcounter:probe" && d.help.isSome && d.span.any (·.pos.line == 3))
+  t "counters: a counter whose name another's extends is still unread"
+    (allocNamed (counted "\\newcounter{probeextra}" "\\stepcounter{probeextra}\\theprobeextra") == 1)
+  t "counters: a counter reset by another is still unread"
+    (allocNamed (counted "\\newcounter{probereset}[probe]" "") == 0 &&
+      (counted "\\newcounter{probereset}[section]" "").any
+        (·.subject == some "param:\\newcounter:probereset"))
+  let (_, viaMacro) := elabStr ("\\documentclass{article}\n\\newcommand{\\mkcounter}[1]{\\newcounter{#1}}\n" ++
+    "\\mkcounter{probe}\n\\begin{document}\nWords.\n\\end{document}\n")
+  t "counters: an allocation a macro makes is named once, at its use"
+    ((viaMacro.filter fun d => d.subject.any (·.startsWith "param:\\newcounter:")).size == 1 &&
+      viaMacro.any fun d => d.subject == some "param:\\newcounter:probe" && d.span.any (·.pos.line == 3))
   let (_, minted) := elabStr ("\\documentclass{article}\n\\usepackage{minted}\n" ++
     "\\setminted{language=haskell}\n\\begin{document}\n\\begin{minted}{haskell}\nmain = 1\n" ++
     "\\end{minted}\n\\end{document}\n")
   t "listings: minted's language help names the language written"
     (minted.any fun d => d.help.any fun h => hasStr h "{haskell}")
+
+/-- An article's titlepage names a loss only where LaTeX sets a page the engine does not: at
+`\\maketitle`, whose title stands above the text here, and at the abstract. -/
+def titlePageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let doc (cls opts body : String) : String :=
+    s!"\\documentclass{opts}\{{cls}}\n\\title\{Probe title}\\author\{Probe author}\n" ++
+      s!"\\begin\{document}\n{body}\nBody words.\n\\end\{document}\n"
+  let losses (ds : Array Diag) : Array Diag :=
+    ds.filter fun d => d.subject.any (·.startsWith "partial:\\documentclass:titlepage")
+  let firstPage (d : Ir.Doc) : String :=
+    String.join ((((layoutOf oneFace d).pages[0]?).map (·.lines.toList.map lineText)).getD [])
+  t "titlepage: nothing is named where no title or abstract stands"
+    (losses (elabStr (doc "article" "[titlepage]" "")).2).isEmpty
+  t "titlepage: a page of the document's own names nothing"
+    (losses (elabStr (doc "article" "[titlepage]" "\\begin{titlepage}Own page.\\end{titlepage}")).2).isEmpty
+  for (body, what) in [("\\maketitle", "'\\maketitle'"),
+      ("\\begin{abstract}Abstract words.\\end{abstract}", "the abstract")] do
+    let (d, ds) := elabStr (doc "article" "[titlepage]" body)
+    t s!"titlepage: {what} is named once, at its line"
+      ((losses ds).size == 1 && (losses ds).all fun x => x.span.any (·.pos.line == 4))
+    -- the premise the loss stands on: what LaTeX gives a page of its own shares the text's first page
+    t s!"titlepage: {what} shares the first page with the text"
+      (hasStr (firstPage d) "Body" && (hasStr (firstPage d) "Probe" || hasStr (firstPage d) "Abstract"))
+  t "titlepage: report's own title page names nothing"
+    (losses (elabStr (doc "report" "" "\\maketitle")).2).isEmpty
+  t "titlepage: notitlepage names nothing"
+    (losses (elabStr (doc "article" "[titlepage,notitlepage]" "\\maketitle")).2).isEmpty
 
 /-- The display keys lualatex measured leaving fvextra's inline `\\Verb` where it stands, each
 with a value against the same line without it. -/

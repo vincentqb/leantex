@@ -451,6 +451,20 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   pageTitleChecks ref
   htmlMathChecks ref
 
+/-- The declaration settings' census and reader blocks, dispatched together so `layoutSuiteChecks`
+stays within its elaboration budget. -/
+def declSettingSuiteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) (font : Font) :
+    IO Unit := do
+  Tests.ParamCensus.declCensusChecks ref oneFace
+  Tests.DeclSettings.setlistChecks ref oneFace font
+  Tests.DeclSettings.frameTitleKeyChecks ref oneFace
+  Tests.DeclSettings.emptyTemplateChecks ref oneFace
+  Tests.DeclSettings.emptyTemplateMeasuredChecks ref
+  Tests.DeclSettings.defaultTemplateChecks ref oneFace
+  Tests.DeclSettings.counterReadChecks ref
+  Tests.DeclSettings.titlePageChecks ref oneFace
+  Tests.DeclSettings.inlineDisplayChecks ref
+
 /-- The layout, census, theme and chrome blocks over the shipped face; a missing or unparsable font
 only skips them, `fontSuiteChecks` reporting it. -/
 def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
@@ -908,12 +922,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   Tests.ParamCensus.paramTruthChecks ref oneFace
   Tests.ParamCensus.paramSilenceChecks ref oneFace
   Tests.ParamCensus.engineTokenChecks ref
-  Tests.ParamCensus.declCensusChecks ref oneFace
-  Tests.DeclSettings.setlistChecks ref oneFace font
-  Tests.DeclSettings.frameTitleKeyChecks ref oneFace
-  Tests.DeclSettings.emptyTemplateChecks ref oneFace
-  Tests.DeclSettings.counterReadChecks ref
-  Tests.DeclSettings.inlineDisplayChecks ref
+  declSettingSuiteChecks ref oneFace font
   seamChecks ref oneFace
   abstractSkipChecks ref oneFace
   paramSiteChecks ref oneFace

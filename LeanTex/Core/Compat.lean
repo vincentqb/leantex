@@ -815,6 +815,10 @@ private structure St where
   bound : Array String := #[]
   /-- Whether the document defines `\only` and `\alt` itself. -/
   userOverlays : Bool × Bool := (false, false)
+  /-- The counter names the document's counter commands read, its included files' too. -/
+  countersRead : Std.HashSet String := {}
+  /-- Whether an article's author asked for a title page, which its title and abstract lack. -/
+  titlePageAsked : Bool := false
   /-- biblatex's declared resources (`\addbibresource`). -/
   bibResources : Array String := #[]
   /-- The record name biblatex's style option mapped to, emitted beside the
@@ -2134,14 +2138,6 @@ private def predefinedEnd (raws : Array Raw) (i : Nat) : Nat :=
   | some (.group _ _) => j + 1
   | _ => j
 
-/-- Whether a document's source after a `\\newcounter` reads the counter: a counter command, a
-counter's representation or value, or a theorem numbered with or within it. -/
-private def counterRead (src counter : String) : Bool :=
-  let braced := "{" ++ counter ++ "}"
-  ["counter", "\\value", "\\arabic", "\\roman", "\\Roman", "\\alph", "\\Alph",
-    "\\fnsymbol"].any (fun c => (src.splitOn (c ++ braced)).length > 1) ||
-    (src.splitOn ("\\the" ++ counter)).length > 1 || (src.splitOn ("[" ++ counter ++ "]")).length > 1
-
 /-- Whether a template body prints only its element's own text, beamer's `\\insert` command of that
 name, which the engine draws in its own element. -/
 private def insertsOwn (element body : String) : Bool :=
@@ -2151,6 +2147,11 @@ private def insertsOwn (element body : String) : Bool :=
 /-- The templates an empty body leaves as the engine draws them: no navigation symbols, and beamer's
 empty headline and background. -/
 public def emptyTemplates : List String := ["navigation symbols", "headline", "background"]
+
+/-- The templates whose predefined `default` form lualatex measured drawing as an unthemed deck
+draws them already. -/
+public def defaultTemplates : List String :=
+  ["itemize items", "enumerate items", "blocks", "footline", "title page"]
 
 /-- lineno's options naming the numbering the engine sets once `\linenumbers` turns it on. -/
 public def linenoInert : List String := ["left", "running", "displaymath", "mathlines"]
@@ -5427,7 +5428,7 @@ private def setLength (n src what : String) (pos : Pos) : M (Array Raw) := do
     if tokens then synthAt own pos else pure #[]
   let named (why : String) : M (Array Raw) := do
     nameParam n why pos
-    synthAt own pos
+    return #[]
   -- premise: listBodyChecks — a list-body parameter ships the page without it
   if st.inList && !st.inDef && (listSpent.contains n || listPerItem.contains n) then
     if listSpent.contains n then
@@ -8355,8 +8356,17 @@ defines; those blocks keep beamer's default template" pos
     -- premise: beamerTemplateChecks — footer content reaches the frame furniture
     else if element == "footline" &&
         (← get).wholeDoc && !(← get).inDoc && !(← get).inDef then
+      let (rawVariant, _) := takeRawOpt raws j
       let (variant, k) := takeOpt raws j
       if let some name := variant then
+        if ← paramArgs #[] #[rawVariant] then
+          unappliedParam "setbeamertemplate" "beamer's template stands" pos
+          return some (#[], predefinedEnd raws k)
+        -- premise: defaultTemplateChecks — an unthemed deck draws each such default already
+        if name.trimAscii.toString == "default" && (← get).beamerTheme.isEmpty then
+          inertParam "\\setbeamertemplate" element s!"\\setbeamertemplate\{{element}}[default]"
+            "beamer's default, which an unthemed deck draws already" pos
+          return some (#[], predefinedEnd raws k)
         unreadParam "\\setbeamertemplate" element
           s!"'\\setbeamertemplate\{{element}}[{name.trimAscii.toString}]' predefined template" pos
         return some (#[], predefinedEnd raws k)
@@ -8384,6 +8394,12 @@ defines; those blocks keep beamer's default template" pos
       if let some name := predefined then
         if ← paramArgs #[] #[rawPredefined] then
           unappliedParam "setbeamertemplate" "beamer's template stands" pos
+          return some (#[], predefinedEnd raws j)
+        -- premise: defaultTemplateChecks — an unthemed deck draws each such default already
+        if name.trimAscii.toString == "default" && (← get).beamerTheme.isEmpty &&
+            defaultTemplates.contains element then
+          inertParam "\\setbeamertemplate" element s!"\\setbeamertemplate\{{element}}[default]"
+            "beamer's default, which an unthemed deck draws already" pos
           return some (#[], predefinedEnd raws j)
         unreadParam "\\setbeamertemplate" element
           s!"'\\setbeamertemplate\{{element}}[{name.trimAscii.toString}]' predefined template" pos
@@ -8432,6 +8448,12 @@ defines; those blocks keep beamer's default template" pos
         if ← paramArgs #[] #[rawPredefined] then
           unappliedParam "setbeamertemplate" "beamer's template stands" pos
           return some (#[], predefinedEnd raws j)
+        -- premise: defaultTemplateChecks — an unthemed deck draws each such default already
+        if name.trimAscii.toString == "default" && (← get).beamerTheme.isEmpty &&
+            defaultTemplates.contains element then
+          inertParam "\\setbeamertemplate" element s!"\\setbeamertemplate\{{element}}[default]"
+            "beamer's default, which an unthemed deck draws already" pos
+          return some (#[], predefinedEnd raws j)
         unreadParam "\\setbeamertemplate" element
           s!"'\\setbeamertemplate\{{element}}[{name.trimAscii.toString}]' predefined template" pos
         return some (#[], predefinedEnd raws j)
@@ -8440,7 +8462,7 @@ defines; those blocks keep beamer's default template" pos
         unappliedParam "setbeamertemplate" "beamer's template stands" pos
         return some (#[], k)
       let emptyBody := bodyArgs.size == 1 && (rawSrc (bodyArgs.getD 0 #[])).trimAscii.toString.isEmpty
-      -- premise: emptyTemplateChecks — a deck draws no navigation symbols, headline or background
+      -- premise: emptyTemplateMeasuredChecks — each noted template is measured empty, or never drawn
       if emptyBody && element == "navigation symbols" then
         inertParam "\\setbeamertemplate" element s!"\\setbeamertemplate\{{element}}\{}"
           "the engine draws no navigation symbols" pos
@@ -8471,16 +8493,30 @@ template around it; the engine's own {element} stands" pos
       unless key.isEmpty do
         unreadParam s!"\\{name}" key s!"'\\{name}' key '{key}'" pos
     return some (#[], k)
+  | "maketitle" =>
+    -- premise: titlePageChecks — under an article's titlepage the title stands above the text
+    if (← get).titlePageAsked && !(← get).inDef then
+      sayOnce "partial:\\documentclass:titlepage:maketitle" .W0110
+        "'\\maketitle' sets the title above the text, where class option 'titlepage' gives it a \
+page of its own" pos (help := "\\begin{titlepage}...\\end{titlepage} sets a page of its own")
+    return none
   | "newcounter" =>
     let (args, j) := takeGroups raws start 1
     let (_, k) := takeOpt raws j
     if args.isEmpty then return none
+    if ← paramArgs args then
+      unappliedParam "newcounter" "no counter is allocated" pos
+      return some (#[], k)
     let counter := (rawSrc (args.getD 0 #[])).trimAscii.toString
-    -- A use names its own loss, so only a counter nothing in the document reads is named here.
-    unless counterRead (rawSrc (raws.extract k raws.size)) counter do
+    -- premise: counterReadChecks — a counter's uses name what they lose
+    if (← get).countersRead.contains counter then
+      discard s!"\\newcounter\{{counter}}"
+        "the engine does not model counters, and each use names what it loses"
+        ("newcounter:" ++ counter) pos
+    else
       sayOnce ("param:\\newcounter:" ++ counter) .W0104
-        s!"counter '{counter}' is not modelled, and nothing reads it; '\\newcounter' allocates \
-nothing" pos (help := "the engine numbers its own environments; a counter nothing reads can go")
+        s!"counter '{counter}' is allocated, but nothing in the document reads it; \
+'\\newcounter' changes nothing" pos (help := "use the counter where it should count, or drop it")
     return some (#[], k)
   | "setbeamercolor" =>
     -- A later parent declaration changes its children, so nothing is flattened here.
@@ -9288,11 +9324,8 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
     let offered := offeredOptions raws k (KeyVal.items (opt.getD "")).toList
     unless offered.isEmpty do write fun st => { st with globalOffered := offered.toArray }
     let keptItems := (KeyVal.items (opt.getD "")).toList.filter (!offered.contains ·)
-    -- premise: paramCensusChecks — an article's titlepage gives LaTeX's title a page of its own
     if cls == "article" && asksTitlePage keptItems then
-      sayOnce "partial:\\documentclass:titlepage" .W0110
-        "class option 'titlepage' is read for the abstract alone: '\\maketitle' keeps the title \
-above the text, where LaTeX gives it a page of its own" pos
+      write fun st => { st with titlePageAsked := true }
     if presentationClasses.contains cls then
       write fun st => { st with deck := true }
     let native := if articleClasses.contains cls then "article"
@@ -11634,6 +11667,14 @@ private def restoreLengths (keys : Array String) (p : Pos) : Array Raw :=
   if keys.isEmpty then #[]
   else #[.ctrl ("length restore " ++ String.intercalate "," keys.toList) p]
 
+/-- Names an abstract an article's titlepage would set on a page of its own. -/
+private def abstractUnderTitlePage (pos : Pos) : M Unit := do
+  -- premise: titlePageChecks — under an article's titlepage the abstract stands in the text
+  if (← get).titlePageAsked && !(← get).inDef then
+    sayOnce "partial:\\documentclass:titlepage:abstract" .W0110
+      "the abstract is set in the text, where class option 'titlepage' gives it a page of its own"
+      pos (help := "\\begin{titlepage}...\\end{titlepage} sets a page of its own")
+
 mutual
 
 /-- Pushes one raw's rewrite, keeping a rewritten environment's group apart from
@@ -11734,6 +11775,7 @@ private def rewriteRaw (inBody : Bool) (arg : Bool) : Raw → M Raw
       write fun st => { st with file := saved }
       return .env n body' p
     | none => withScope do
+      if n == "abstract" then abstractUnderTitlePage p
       if mathEnvs.contains n then
         return .env n body p
       -- premise: pictureBoundaryChecks — requests retain TeX commands
@@ -12716,6 +12758,98 @@ private theorem onlyAlternationsIn_package_exact (cx : ReadCx) (command names : 
   have hn : command ≠ "apptocmd" := by rcases hc with rfl | rfl <;> decide
   simp [onlyAlternationsIn, packageCall, onlyAltList, onlyAltRaw, readList, readRawAlone, hn]
 
+/-- The commands whose first braced argument names a counter they read or set. -/
+private def counterCommands : List String :=
+  ["stepcounter", "refstepcounter", "addtocounter", "setcounter", "value", "arabic", "roman",
+   "Roman", "alph", "Alph", "fnsymbol", "usecounter"]
+
+/-- The commands whose two braced arguments each name a counter. -/
+private def counterPairCommands : List String := ["numberwithin", "counterwithin", "counterwithout"]
+
+/-- The braced argument past spaces and a star, `none` inside when it holds a parameter, and the
+raws after it. -/
+private def counterArg : List Raw → Option (Option String × List Raw)
+  | .space :: rest => counterArg rest
+  | .word "*" _ :: rest => counterArg rest
+  | .group g _ :: rest =>
+    some (if holdsParam g.toList then none else some (rawSrc g).trimAscii.toString, rest)
+  | _ => none
+
+/-- The raws up to the bracket closing an option, and the raws after it. -/
+private def bracketBody (acc : Array Raw) : List Raw → Option (Array Raw × List Raw)
+  | [] => none
+  | .sym ']' _ :: rest => some (acc, rest)
+  | r :: rest => bracketBody (acc.push r) rest
+
+/-- A bracketed option past spaces, as `counterArg` reads a group. -/
+private def counterOpt : List Raw → Option (Option String × List Raw)
+  | .space :: rest => counterOpt rest
+  | .sym '[' _ :: rest => (bracketBody #[] rest).map fun (b, after) =>
+    (if holdsParam b.toList then none else some (rawSrc b).trimAscii.toString, after)
+  | _ => none
+
+private def readCounter (reads : Std.HashSet String) : Option String → Std.HashSet String
+  | some n => reads.insert n
+  | none => reads
+
+/-- The counters one control reads from the raws after it: a counter command's argument, both of
+a pair's, an allocation's parent, a theorem's shared or parent counter, and the counter a `\the`
+or `\c@` control names. -/
+private def controlCounterReads (reads : Std.HashSet String) (c : String) (rest : List Raw) :
+    Std.HashSet String :=
+  if counterCommands.contains c then
+    match counterArg rest with
+    | some (n, _) => readCounter reads n
+    | none => reads
+  else if counterPairCommands.contains c then
+    match counterArg rest with
+    | some (a, after) => match counterArg after with
+      | some (b, _) => readCounter (readCounter reads a) b
+      | none => readCounter reads a
+    | none => reads
+  else if c == "newcounter" then
+    match counterArg rest with
+    | some (_, after) => match counterOpt after with
+      | some (p, _) => readCounter reads p
+      | none => reads
+    | none => reads
+  else if c == "newtheorem" then
+    match counterArg rest with
+    | some (_, after) =>
+      let (reads, after) := match counterOpt after with
+        | some (shared, after') => (readCounter reads shared, after')
+        | none => (reads, after)
+      match counterArg after with
+      | some (_, after) => match counterOpt after with
+        | some (within, _) => readCounter reads within
+        | none => reads
+      | none => reads
+    | none => reads
+  else if c.startsWith "the" && c.length > 3 then reads.insert (c.drop 3).toString
+  else if c.startsWith "c@" && c.length > 2 then reads.insert (c.drop 2).toString
+  else reads
+
+mutual
+
+/-- The counter names a document's raws read, in one pass. -/
+private def counterReadsList (reads : Std.HashSet String) : List Raw → Std.HashSet String
+  | [] => reads
+  | r :: rest =>
+    let reads := match r with
+      | .ctrl c _ => controlCounterReads reads c rest
+      | _ => reads
+    counterReadsList (counterReadsOne reads r) rest
+termination_by structural l => l
+
+private def counterReadsOne (reads : Std.HashSet String) : Raw → Std.HashSet String
+  | .group body _ => counterReadsList reads body.toList
+  | .math _ body _ => counterReadsList reads body.toList
+  | .env _ body _ => counterReadsList reads body.toList
+  | _ => reads
+termination_by structural r => r
+
+end
+
 /-- The passes before the compatibility walk: overlay inputs, live groups,
 delimiters, columns, overprints and `\only`'s alternations. -/
 public def beginRewrite (executed : Executed) : RewriteCursor :=
@@ -12732,7 +12866,8 @@ public def beginRewrite (executed : Executed) : RewriteCursor :=
     { executed.state with
       boundaryOpen := !boundaryRefused raws,
       wholeDoc := raws.any (· matches .env "document" _ _),
-      userOverlays := (cx.userOnly, cx.userAlt) }
+      userOverlays := (cx.userOnly, cx.userAlt),
+      countersRead := counterReadsList {} raws.toList }
   let (raws, st) := go.run st0
   { inBody := false, raws := raws, state := st }
 
@@ -12740,7 +12875,8 @@ private def packageRewriteState (st : St) (command names : String) (pos gp np : 
   { st with
     boundaryOpen := !boundaryRefused (packageCall command names pos gp np)
     wholeDoc := false, deferred := #[], writes := st.writes + 1,
-    userOverlays := (false, false) }
+    userOverlays := (false, false),
+    countersRead := counterReadsList {} (packageCall command names pos gp np).toList }
 
 private theorem beginRewrite_package_exact (command names : String) (pos gp np : Pos)
     (st : St) (hc : command = "usepackage" ∨ command = "RequirePackage")
@@ -12757,7 +12893,8 @@ private theorem beginRewrite_package_exact (command names : String) (pos gp np :
     { st with
       boundaryOpen := !boundaryRefused (packageCall command names pos gp np)
       wholeDoc := false
-      userOverlays := (false, false) } hd
+      userOverlays := (false, false)
+      countersRead := counterReadsList {} (packageCall command names pos gp np).toList } hd
   have hcols : splitColumnsList (packageCall command names pos gp np).toList =
       (packageCall command names pos gp np).toList := by rfl
   simp only [hw, StateT.run, bind, StateT.bind,

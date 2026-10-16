@@ -46,6 +46,12 @@ def paletteRow : Row :=
       fun o => paintedDeck "" ("\\usetheme{moloch}" ++ decl o),
       fun o => paintedDeck "" (s!"\\palette\{ titlepagebg = #F5F0E6 }" ++ decl o)] }
 
+/-- A deck whose one fragile frame holds `code`, `pre` in its preamble; its uncaptioned listing numbers
+nothing a label could name. -/
+def codeDeck (pre code : String) : String :=
+  s!"\\documentclass\{beamer}\n{pre}\n\\begin\{document}\n\\begin\{frame}[fragile]\{Code}\n{code}\n" ++
+    "\\end{frame}\n\\end{document}\n"
+
 /-- The listing reader's keys, each standing in a listing default. -/
 def listingSettings : List String :=
   ["caption=Probe caption", "label=lst:probe", "numbers=left", "linenos", "language=Python",
@@ -59,11 +65,17 @@ def listingRows : List Row :=
   let pre := "\\usepackage{listings}\\usepackage{minted}"
   [{ reader := "\\lstset"
      settings := listingSettings
+     tries := fun s i => i == 0 || !s.startsWith "label="
      docs := [fun o => article "" (pre ++ (o.map (s!"\\lstset\{{·}}")).getD "")
+         s!"\\begin\{lstlisting}{code}\\end\{lstlisting}See listing~\\ref\{lst:probe}.",
+       fun o => codeDeck (pre ++ (o.map (s!"\\lstset\{{·}}")).getD "")
          s!"\\begin\{lstlisting}{code}\\end\{lstlisting}See listing~\\ref\{lst:probe}."] },
    { reader := "\\setminted"
      settings := listingSettings
+     tries := fun s i => i == 0 || !s.startsWith "label="
      docs := [fun o => article "" (pre ++ (o.map (s!"\\setminted\{{·}}")).getD "")
+         s!"\\begin\{minted}\{python}{code}\\end\{minted}See listing~\\ref\{lst:probe}.",
+       fun o => codeDeck (pre ++ (o.map (s!"\\setminted\{{·}}")).getD "")
          s!"\\begin\{minted}\{python}{code}\\end\{minted}See listing~\\ref\{lst:probe}."] },
    { reader := "\\setmintedinline"
      settings := Compat.mintedDisplayKeys.map (· ++ "=2") ++ listingSettings
@@ -112,6 +124,7 @@ def tcolorboxRows : List Row :=
          s!"\\begin\{tcolorbox}[title=Box title{(o.map ("," ++ ·)).getD ""}]Boxed words.\\end\{tcolorbox}"] },
    { reader := "\\tcbset"
      settings := keys
+     neighbour := some (invented ++ "=1")
      tries := fun s i => i == 1 || !hasStr (KeyVal.entry s).1 "title"
      docs := [fun o => article "" (pre ++ (o.map (s!"\\tcbset\{{·}}")).getD "") box,
        fun o => article "" (pre ++ (o.map (s!"\\tcbset\{{·}}")).getD "") titled] },
@@ -134,6 +147,11 @@ def elementSplit (s : String) : String × String :=
   | [e, v] => (e, v)
   | _ => (s, "")
 
+/-- Whether `\\setbeamerfont`'s document of that index draws the element: the abstract's title only
+in the abstract's deck, which draws nothing else. -/
+def fontDrawnIn (element : String) (i : Nat) : Bool :=
+  if element == "abstract title" then i == 3 else i != 3 || element == "censusprobeelement"
+
 /-- A `\\setbeamerfont` setting written `element|fields`, followed by another preamble line. -/
 def fontOf (o : Option String) : String :=
   (o.map fun s =>
@@ -143,12 +161,14 @@ def fontOf (o : Option String) : String :=
 /-- beamer's template, size, font and colour settings, in a deck that shows their elements. -/
 def beamerRows : List Row :=
   [{ reader := "\\setbeamertemplate"
-     settings := ["navigation symbols{}", "itemize items[circle]", "itemize item[square]",
-       "enumerate items[default]", "footline[frame number]", "headline{}",
-       "frametitle{\\insertframetitle}", "background{}", "blocks[rounded]",
-       "section in toc[sections numbered]", "censusprobetemplate{}"]
+     settings := Compat.emptyTemplates.map (· ++ "{}") ++
+       Compat.defaultTemplates.map (· ++ "[default]") ++ ["itemize items[circle]",
+       "itemize item[square]", "footline[frame number]",
+       "frametitle{\\insertframetitle}", "blocks[rounded]", "section in toc[sections numbered]",
+       "censusprobetemplate{}"]
      keyOf := elementOf
-     inert := fun s => s.endsWith "{}" && Compat.emptyTemplates.contains (elementOf s)
+     inert := fun s => (s.endsWith "{}" && Compat.emptyTemplates.contains (elementOf s)) ||
+       (s.endsWith "[default]" && Compat.defaultTemplates.contains (elementOf s))
      docs := [fun o => paintedDeck "" ((o.map fun s =>
        let e := elementOf s
        s!"\\setbeamertemplate\{{e}}{(s.drop e.length).toString}\n\\newcommand\{\\probeword}\{x}").getD ""),
@@ -158,13 +178,17 @@ def beamerRows : List Row :=
    { reader := "\\setbeamersize"
      settings := ["text margin left=2cm", "text margin right=2cm", "sidebar width left=2cm",
        "description width=2cm", "mini frame size=2pt", invented]
+     neighbour := some (invented ++ "=1")
      docs := [fun o => paintedDeck "" ((o.map (s!"\\setbeamersize\{{·}}")).getD "")] },
    { reader := "\\setbeamerfont"
      settings := Compat.beamerFontElements.map (fun (e, _) => e ++ "|size=\\tiny") ++
        ["frametitle|series=\\bfseries", "frametitle|shape=\\itshape", "normal text|family=\\rmfamily",
         "footline|size=\\tiny", "item|size=\\small", "censusprobeelement|size=\\tiny"]
      keyOf := fun s => (elementSplit s).1
-     anyDoc := true
+     inert := fun s => let (e, v) := elementSplit s
+       e == "frametitle" && Elab.restatesPlainTitle
+         (String.join ((KeyVal.items v).toList.map fun kv => (KeyVal.entry kv).2.getD ""))
+     tries := fun s i => fontDrawnIn (elementSplit s).1 i
      docs := [fun o => paintedDeck "" (fontOf o), fun o => paintedDeck "" ("\\usetheme{moloch}" ++ fontOf o),
        fun o => paintedDeck "" (fontOf o ++ "\\setbeamercolor{frametitle}{bg=blue,fg=white}"),
        fun o => s!"\\documentclass\{beamer}\n{fontOf o}\n\\begin\{document}\n\\begin\{frame}" ++

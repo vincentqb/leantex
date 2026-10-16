@@ -147,11 +147,6 @@ def unreadCodes : List String :=
 /-- Whether a keyed warning says the setting is applied in part, which a change bears out. -/
 def inPart (d : Diag) : Bool := d.subject.any (·.startsWith "partial:")
 
-/-- Whether a diagnostic is a translation note keyed by a setting: a site read it into a native
-spelling, which may be what the document already does. -/
-def translates (key : String) (d : Diag) : Bool :=
-  d.code == "N0100" && !hasStr d.message "→ nothing:" && d.subject.any (keyedBy key)
-
 /-- Whether a diagnostic is the note an inert row gives a setting, keyed by it. -/
 def notesInert (key : String) (d : Diag) : Bool :=
   d.code == "N0100" && hasStr d.message "→ nothing:" && d.subject.any (keyedBy key)
@@ -171,6 +166,8 @@ structure Row where
   /-- Whether the documents are alternative grounds, a setting read where its element stands: one
   a document without that element leaves unread is a document's own unused setting. -/
   anyDoc : Bool := false
+  /-- A key written before each setting in its declaration, whose own name must not stand for it. -/
+  neighbour : Option String := none
 
 /-- A setting's verdict in one document: whether the artifacts changed, whether a warning keyed by
 it or its inert row's note names it, and whether one names it unread although the PDF or the page
@@ -180,8 +177,7 @@ def judge (fonts : Font.FontSet) (base : Shipped) (src key : String) (inert : Bo
   let w := shipped fonts src
   let fresh := w.diags.filter fun d =>
     !base.diags.any fun b => b.code == d.code && b.message == d.message && b.subject == d.subject
-  let changed := w.pdf != base.pdf || w.html != base.html || w.md != base.md ||
-    fresh.any (translates key)
+  let changed := w.pdf != base.pdf || w.html != base.html || w.md != base.md
   let shows := w.pdf != base.pdf || w.body != base.body || w.css != base.css
   let warned := fresh.filter (warnsKeyed key)
   let noted := if inert then fresh.filter (notesInert key) else #[]
@@ -195,8 +191,9 @@ def rowJudged (fonts : Font.FontSet) (row : Row) : List (String × List (Task (B
   row.settings.map fun s =>
     let key := row.keyOf s
     let inert := row.inert s
+    let written := (row.neighbour.map (· ++ ", " ++ s)).getD s
     (s, (bases.filter fun (_, i, _) => row.tries s i).map fun (d, _, b) => b.bind fun base =>
-      Task.spawn fun _ => judge fonts base (d (some s)) key inert)
+      Task.spawn fun _ => judge fonts base (d (some written)) key inert)
 
 /-- The settings of a row some document reads by nothing and names by nothing, and those named
 unread although they change an artifact. -/
@@ -344,7 +341,13 @@ def packageDocs (p : String) : List (Option String → String) :=
   else if p == "ulem" then [fun o => plain "" s!"\\usepackage[{along "normalem" o}]\{ulem}"]
   else if p == "biblatex" then
     [fun o => article "" (pre o ++ "\\addbibresource{refs.bib}") "" (list := "\\printbibliography")]
-  else if p == "crop" then [fun o => plain "" (pre o ++ "\\page{ bleed = 5mm }")]
+  else if p == "crop" then
+    [fun o => plain "" (pre o ++ "\\page{ bleed = 5mm }"),
+     fun o => plain "" ("\\page{ marks = cut }" ++ pre o ++ "\\page{ bleed = 5mm }")]
+  else if p == "microtype" then
+    [fun o => article "" (pre o) (packageBody p),
+     fun o => article "" ("\\page{ protrusion = off, expansion = off }" ++ pre o) (packageBody p)]
+  else if p == "setspace" then [fun o => article "" ("\\page{ leading = 2 }" ++ pre o) (packageBody p)]
   else if p == "natbib" then
     let many := "\\citep{key1,key2,key3} and \\citep{key3,key1}."
     [fun o => article "" (pre o) many, fun o => article "" (pre (some (along "numbers" o))) many,
@@ -386,6 +389,11 @@ def packageTries (p s : String) (i : Nat) : Bool :=
   let k := (KeyVal.entry s).1
   if p == "hyperref" then hyperrefTries s i
   else if p == "geometry" then i == 1 || !(k.startsWith "head" || k == "nohead")
+  else if p == "microtype" then
+    match (Compat.packageOptionNatives.lookup p).bind (·.lookup s) with
+    | some native => if hasStr native "= on" then i == 1 else i == 0
+    | none => true
+  else if p == "crop" then if s == "off" then i == 1 else i == 0
   else if p == "natbib" then
     !((natbibAsked[i]?).getD []).contains k && (i == 1 || !(k == "compress" || k == "sort&compress")) &&
       !(k == "bibstyle" && i == 0) && !(k == "nobibstyle" && i != 0)
@@ -493,6 +501,7 @@ def coveredRow : Row :=
   { reader := "\\setbeamercovered"
     settings := ["transparent", "transparent=30", "invisible", "dynamic", "highly dynamic", invented]
     keyOf := id
+    tries := fun s i => !(s == "invisible" && i == 0)
     docs := [fun o => deck "" (covered o),
       fun o => deck "" ("\\setbeamercovered{transparent=40}\n" ++ covered o)] }
 
