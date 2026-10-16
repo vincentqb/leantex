@@ -221,7 +221,7 @@ private theorem proseRaws_adm (lang : Ir.CodeLang) (file : String) (starts : Arr
       Adm (mapPosList pr.place #[] (Md.desugar file pr.text .docstring .document false k).1.toList) := by
     intro pr
     apply adm_mapPos
-    exact Md.desugar_vocabulary_mem _ _ .docstring .document false k
+    exact Md.desugar_vocabulary_mem file pr.text .docstring .document false k
   let pr := proseIn lang seg.text (lineCol starts seg.start).1 ((lineCol starts seg.start).2 - 1)
   have h := hraws pr
   cases opens with
@@ -669,6 +669,10 @@ private theorem placedBody_adm (acc : Acc) (refs : Option Refs) (style : Option 
         · simp [Md.Vocab.admits, vocabulary]
         · exact adm_group _ _ (word _ _)
   · exact h
+
+/-- Every view is one the reader, its help and lualatex's package list. -/
+public theorem View.all_complete (v : View) : v ∈ View.all := by
+  cases v <;> simp [View.all]
 
 /-- Everything a code file reads into stays inside the reader's declared vocabulary. -/
 public theorem read_vocabulary_mem (lang : Ir.CodeLang) (file text : String)

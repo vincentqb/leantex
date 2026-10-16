@@ -225,15 +225,17 @@ private def inputleanAsk (request : Compat.InputRequest) : LeanAsk :=
   { name := request.name.trimAscii.toString, site := ⟨request.file, request.pos⟩, division := false
     showing := Code.showingOfEntries .lean (Decl.splitEntries request.options) (alone := true) }
 
-/-- Each Lean division markdown raws read from `file` hold, replaced by the file it includes. -/
+/-- Each Lean division markdown raws read from `file` hold, replaced by the file it includes, with
+the inclusions' diagnostics in order. -/
 private def includeDivisions (dir : System.FilePath) (file : String) (raws : Array Parse.Raw) :
-    ReadM (Array Parse.Raw) :=
-  Md.includeDivisions (fun d site => do
+    ReadM (Array Parse.Raw × Array Diag) := do
+  if !Md.requestsDivisions raws.toList then return (raws, #[])
+  (Md.includeDivisions (m := StateT (Array Diag) ReadM) (fun d site => do
     let (raws, ds) ← readLean dir
       { name := d.file.trimAscii.toString, site, division := true
         showing := Code.showingOfDivision d }
-    modify fun log => { log with diags := log.diags ++ ds }
-    return raws) file #[] raws.toList
+    modify (· ++ ds)
+    return raws) file #[] raws.toList).run #[]
 
 /-- Fulfil one executed request; a compatible repeat or a cycle back edge of a local style
 reads nothing, and nesting stays within eight files. -/
@@ -258,13 +260,13 @@ private def readAt (dir : System.FilePath) (root : String) (depth : Nat) :
             "markdownInput" (fun path bytes => do
               return (← decodeOnce path fun _ => Encoding.readMarkdown path bytes).1) .markdown
             cites
-          let sub ← includeDivisions dir request.file sub
+          let (sub, divisionDs) ← includeDivisions dir request.file sub
           let others := given.filter fun o => !o.isEmpty && !citing o
           let ds := if others.isEmpty then ds else ds.push <|
             Diag.of .W0110 s!"'\\markdownInput' options '{", ".intercalate others}' are not \
 applied; the file uses the Markdown document dialect, which reads only 'citations'"
               (some ⟨request.file, request.pos⟩) (subject := some "markdownInput:options")
-          pure (sub, ds)
+          pure (sub, ds ++ divisionDs)
         else if request.command == "inputminted" then readMinted dir request
         else if request.command == "inputlean" then readLean dir (inputleanAsk request)
         else readInputAt dir request.file request.name request.pos
@@ -332,7 +334,10 @@ private def executeWith (file : String) (raws : Array Parse.Raw) (log : InputLog
     (dir : System.FilePath := (System.FilePath.mk file).parent.getD ".") :
     IO (Compat.Executed × InputLog) :=
   (do
-    let raws ← if Ir.Surface.ofPath file == Ir.Surface.markdown then includeDivisions dir file raws
+    let raws ← if Ir.Surface.ofPath file == Ir.Surface.markdown then do
+        let (raws, ds) ← includeDivisions dir file raws
+        modify fun (l : InputLog) => { l with diags := l.diags ++ ds }
+        pure raws
       else pure raws
     Elab.executeInputs (readAt dir file 8) file raws).run log
 

@@ -15,7 +15,10 @@
     link .tl_set:N = \l__leantex_link_tl ,
     facts .code:n = { } ,
     bibliography .code:n = { } ,
-    biblio-style .code:n = { } ,
+    biblio-style .code:n =
+      \PackageWarning { leantex }
+        { \token_to_str:N \inputlean \c_space_tl takes ~ no ~ 'biblio-style': ~ its ~ citations ~
+          set ~ in ~ the ~ document's ~ style ~ (ignored) } ,
     code .code:n = \tl_put_right:Nn \l__leantex_show_tl { , code } ,
     math .code:n = \tl_put_right:Nn \l__leantex_show_tl { , math } ,
     prose .code:n = \tl_put_right:Nn \l__leantex_show_tl { , prose } ,

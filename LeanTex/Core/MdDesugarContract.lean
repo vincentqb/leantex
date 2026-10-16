@@ -12,6 +12,17 @@ namespace LeanTex.Core.Md
 
 open LeanTex.Core LeanTex.Core.Parse
 
+private theorem attrsOf?_map (p : Pos) : (l : List (String × String)) →
+    attrsOf? (l.map fun (k, v) => Raw.group #[.word k p, .word v p] p) = some l
+  | [] => rfl
+  | (k, v) :: rest => by simp [attrsOf?, attrsOf?_map p rest]
+
+/-- A division's raw reads back as exactly its request, whatever its attributes hold. -/
+public theorem LeanDivision.ofRaw?_raw (d : LeanDivision) (p : Pos) :
+    LeanDivision.ofRaw? (d.raw p) = some d := by
+  rcases d with ⟨file, attrs⟩
+  simp [ofRaw?, raw, attrsOf?_map]
+
 /-- A slice of the surface AST's vocabulary. -/
 public structure Vocab where
   /-- Ordinary controls, spelled as a document spells them. -/
@@ -34,16 +45,19 @@ public structure Vocab where
   ["citep", "citet", "citeyearpar", "citeauthor", "citetext", "citealp", "citealt", "citeyear",
    "nocite", "@natbib"]
 
-/-- The vocabulary markdown lowers into. -/
+/-- The vocabulary the elaborator reads markdown in. -/
 @[expose] public def vocabulary : Vocab where
   ctrls := ["emph", "textbf", "texttt", "href", "includegraphics", "item", "hypertarget", "\\",
     "toprule", "midrule", "bottomrule"] ++ citeCtrls
   bridged := ([Ir.HeadingLevel.title, .h1, .h2, .h3, .h4, .h5, .h6].map Parse.headingControl) ++
     [Parse.markdownBibControl]
   envs := ["quote", "itemize", "enumerate", Parse.markdownDisclosureEnv, Parse.markdownTableEnv]
-  requests := [leanDivisionEnv]
   verbs := ["verbatim", "lstlisting"]
   syms := ['[', ']', '&', '@']
+
+/-- The vocabulary markdown lowers into: a document's with its Lean divisions' requests. -/
+@[expose] public def vocabularyFor (divisions : Bool) : Vocab :=
+  { vocabulary with requests := if divisions then [leanDivisionEnv] else [] }
 
 mutual
 
@@ -79,45 +93,47 @@ mutual
 end
 
 /-- Every raw of a sequence is admitted. -/
-private def Adm (rs : Array Raw) : Prop := ∀ r ∈ rs, vocabulary.admits r = true
+private def Adm (d : Bool) (rs : Array Raw) : Prop := ∀ r ∈ rs, (vocabularyFor d).admits r = true
 
-private theorem admitsList_of_adm : (l : List Raw) → (∀ r ∈ l, vocabulary.admits r = true) →
-    vocabulary.admitsList l = true
+variable {d : Bool}
+
+private theorem admitsList_of_adm : (l : List Raw) → (∀ r ∈ l, (vocabularyFor d).admits r = true) →
+    (vocabularyFor d).admitsList l = true
   | [], _ => by simp [Vocab.admitsList]
   | r :: rest, h => by
     simp only [Vocab.admitsList, Bool.and_eq_true]
     exact ⟨h r (List.mem_cons_self ..), admitsList_of_adm rest fun x hx =>
       h x (List.mem_cons_of_mem _ hx)⟩
 
-private theorem adm_group (body : Array Raw) (p : Pos) (h : Adm body) :
-    vocabulary.admits (.group body p) = true := by
+private theorem adm_group (body : Array Raw) (p : Pos) (h : Adm d body) :
+    (vocabularyFor d).admits (.group body p) = true := by
   simp only [Vocab.admits]
   exact admitsList_of_adm _ fun r hr => h r (Array.mem_toList_iff.mp hr)
 
-private theorem adm_empty : Adm #[] := by simp [Adm]
+private theorem adm_empty : Adm d #[] := by simp [Adm]
 
-private theorem adm_append {a b : Array Raw} (ha : Adm a) (hb : Adm b) : Adm (a ++ b) := by
+private theorem adm_append {a b : Array Raw} (ha : Adm d a) (hb : Adm d b) : Adm d (a ++ b) := by
   intro r hr
   rcases Array.mem_append.mp hr with hr | hr
   · exact ha r hr
   · exact hb r hr
 
-private theorem adm_push {a : Array Raw} {r : Raw} (ha : Adm a) (hr : vocabulary.admits r = true) :
-    Adm (a.push r) := by
+private theorem adm_push {a : Array Raw} {r : Raw} (ha : Adm d a) (hr : (vocabularyFor d).admits r = true) :
+    Adm d (a.push r) := by
   intro x hx
   rcases Array.mem_push.mp hx with hx | rfl
   · exact ha x hx
   · exact hr
 
-private theorem adm_lit {l : List Raw} (h : ∀ r ∈ l, vocabulary.admits r = true) :
-    Adm l.toArray := fun r hr => h r (by simpa using hr)
+private theorem adm_lit {l : List Raw} (h : ∀ r ∈ l, (vocabularyFor d).admits r = true) :
+    Adm d l.toArray := fun r hr => h r (by simpa using hr)
 
-private theorem adm_text (s : String) (p : Pos) : Adm (textRaws s p) := by
+private theorem adm_text (s : String) (p : Pos) : Adm d (textRaws s p) := by
   intro r hr
   rcases textRaws_covers s p r hr with rfl | ⟨t, q, rfl⟩ <;> rfl
 
 private theorem ctrl_mem (n : String) (p : Pos) (h : n ∈ vocabulary.ctrls) :
-    vocabulary.admits (.ctrl n p) = true := by
+    (vocabularyFor d).admits (.ctrl n p) = true := by
   simp only [Vocab.admits, Bool.or_eq_true]
   exact Or.inl (List.contains_iff_mem.mpr h)
 
@@ -126,28 +142,28 @@ private theorem bridged_mem (level : Ir.HeadingLevel) :
   List.mem_append.mpr (Or.inl (List.mem_map.mpr ⟨level, by cases level <;> simp, rfl⟩))
 
 private theorem bibControl_mem (p : Pos) :
-    vocabulary.admits (.ctrl Parse.markdownBibControl p) = true := by
+    (vocabularyFor d).admits (.ctrl Parse.markdownBibControl p) = true := by
   simp only [Vocab.admits, Bool.or_eq_true]
   exact Or.inr (List.contains_iff_mem.mpr (List.mem_append.mpr (Or.inr (by simp))))
 
 private theorem cite_mem (n : String) (p : Pos) (h : n ∈ citeCtrls) :
-    vocabulary.admits (.ctrl n p) = true := by
+    (vocabularyFor d).admits (.ctrl n p) = true := by
   simp only [Vocab.admits, Bool.or_eq_true]
   exact Or.inl (List.contains_iff_mem.mpr (List.mem_append.mpr (Or.inr h)))
 
 private theorem heading_mem (level : Ir.HeadingLevel) (p : Pos) :
-    vocabulary.admits (.ctrl (Parse.headingControl level) p) = true := by
+    (vocabularyFor d).admits (.ctrl (Parse.headingControl level) p) = true := by
   simp only [Vocab.admits, Bool.or_eq_true]
   exact Or.inr (List.contains_iff_mem.mpr (bridged_mem level))
 
-private theorem adm_words (ws : Array String) (p : Pos) : Adm (ws.map (Raw.word · p)) := by
+private theorem adm_words (ws : Array String) (p : Pos) : Adm d (ws.map (Raw.word · p)) := by
   intro r hr
   obtain ⟨w, _, rfl⟩ := Array.mem_map.mp hr
   rfl
 
-private theorem citeOpts_adm (pre post : Array Raw) (p : Pos) (hpre : Adm pre) (hpost : Adm post) :
-    Adm (citeOpts pre post p) := by
-  have note : ∀ r : Array Raw, Adm r → Adm (#[.sym '[' p, .group r p, .sym ']' p] : Array Raw) :=
+private theorem citeOpts_adm (pre post : Array Raw) (p : Pos) (hpre : Adm d pre) (hpost : Adm d post) :
+    Adm d (citeOpts pre post p) := by
+  have note : ∀ r : Array Raw, Adm d r → Adm d (#[.sym '[' p, .group r p, .sym ']' p] : Array Raw) :=
     fun r hr => adm_lit (by
       intro x hx
       simp only [List.mem_cons, List.not_mem_nil, or_false] at hx
@@ -163,8 +179,8 @@ private theorem citeOpts_adm (pre post : Array Raw) (p : Pos) (hpre : Adm pre) (
     · exact adm_append (note pre hpre) (note post hpost)
 
 private theorem citeCmdRaws_adm (cmd : String) (pre post : Array Raw) (keys : Array String) (p : Pos)
-    (hc : cmd ∈ citeCtrls) (hpre : Adm pre) (hpost : Adm post) :
-    Adm (citeCmdRaws cmd pre post keys p) := by
+    (hc : cmd ∈ citeCtrls) (hpre : Adm d pre) (hpost : Adm d post) :
+    Adm d (citeCmdRaws cmd pre post keys p) := by
   unfold citeCmdRaws
   refine adm_append (adm_append (adm_lit ?_) (citeOpts_adm pre post p hpre hpost)) (adm_lit ?_)
   · intro x hx
@@ -177,13 +193,13 @@ private theorem citeCmdRaws_adm (cmd : String) (pre post : Array Raw) (keys : Ar
     exact adm_group _ _ (adm_lit (by intro y hy; simp at hy; subst hy; rfl))
 
 /-- Every citation of a group carries admitted notes. -/
-private def NotesAdm (cs : List CiteRaws) : Prop := ∀ c ∈ cs, Adm c.pre ∧ Adm c.post
+private def NotesAdm (d : Bool) (cs : List CiteRaws) : Prop := ∀ c ∈ cs, Adm d c.pre ∧ Adm d c.post
 
 private theorem textCmd_mem (m : CiteMode) : textCmd m ∈ citeCtrls := by
   cases m <;> simp [textCmd, citeCtrls]
 
-private theorem workText_adm (c : CiteRaws) (p : Pos) (hc : Adm c.pre ∧ Adm c.post) :
-    Adm (workText c p) := by
+private theorem workText_adm (c : CiteRaws) (p : Pos) (hc : Adm d c.pre ∧ Adm d c.post) :
+    Adm d (workText c p) := by
   unfold workText
   refine adm_append (adm_append ?_ (adm_lit (by simp [Vocab.admits]))) ?_
   · split
@@ -193,11 +209,11 @@ private theorem workText_adm (c : CiteRaws) (p : Pos) (hc : Adm c.pre ∧ Adm c.
     · exact adm_empty
     · exact adm_append (adm_lit (by simp [Vocab.admits])) hc.2
 
-private theorem citeTextRaws_adm (items : List CiteRaws) (p : Pos) (h : NotesAdm items) :
-    Adm (citeTextRaws items p) := by
+private theorem citeTextRaws_adm (items : List CiteRaws) (p : Pos) (h : NotesAdm d items) :
+    Adm d (citeTextRaws items p) := by
   unfold citeTextRaws
-  have fold : ∀ (l : List CiteRaws) (acc : Array Raw), Adm acc → NotesAdm l →
-      Adm (l.foldl (init := acc) fun acc c =>
+  have fold : ∀ (l : List CiteRaws) (acc : Array Raw), Adm d acc → NotesAdm d l →
+      Adm d (l.foldl (init := acc) fun acc c =>
         (if acc.isEmpty then acc else acc ++ #[.word ";" p, .space]) ++
           (if keyCrosses c.key then citeCmdRaws (textCmd c.mode) c.pre c.post #[c.key] p
            else workText c p)) := by
@@ -223,8 +239,8 @@ private theorem citeTextRaws_adm (items : List CiteRaws) (p : Pos) (h : NotesAdm
     · exact cite_mem _ _ (by simp [citeCtrls])
     · exact adm_group _ _ (fold items #[] adm_empty h))
 
-private theorem natbibRaws_adm (items : List CiteRaws) (p : Pos) (h : NotesAdm items) :
-    Adm (natbibRaws items p) := by
+private theorem natbibRaws_adm (items : List CiteRaws) (p : Pos) (h : NotesAdm d items) :
+    Adm d (natbibRaws items p) := by
   unfold natbibRaws
   split
   · exact adm_empty
@@ -248,12 +264,12 @@ private theorem natbibRaws_adm (items : List CiteRaws) (p : Pos) (h : NotesAdm i
         · exact h c (List.mem_cons_of_mem _ hc)
       · exact citeTextRaws_adm _ p h
 
-private theorem dropSpaces_adm (l : List Raw) (h : ∀ r ∈ l, vocabulary.admits r = true) :
-    ∀ r ∈ dropSpaces l, vocabulary.admits r = true :=
+private theorem dropSpaces_adm (l : List Raw) (h : ∀ r ∈ l, (vocabularyFor d).admits r = true) :
+    ∀ r ∈ dropSpaces l, (vocabularyFor d).admits r = true :=
   fun r hr => h r ((List.dropWhile_sublist _).subset hr)
 
-private theorem dropSeparator_adm (l : List Raw) (h : ∀ r ∈ l, vocabulary.admits r = true) :
-    ∀ r ∈ dropSeparator l, vocabulary.admits r = true := by
+private theorem dropSeparator_adm (l : List Raw) (h : ∀ r ∈ l, (vocabularyFor d).admits r = true) :
+    ∀ r ∈ dropSeparator l, (vocabularyFor d).admits r = true := by
   unfold dropSeparator
   split
   · next w p rest =>
@@ -267,9 +283,9 @@ private theorem dropSeparator_adm (l : List Raw) (h : ∀ r ∈ l, vocabulary.ad
     · exact h
   · exact h
 
-private theorem postNote_adm (rs : Array Raw) (h : Adm rs) : Adm (postNote rs) := by
+private theorem postNote_adm (rs : Array Raw) (h : Adm d rs) : Adm d (postNote rs) := by
   unfold postNote
-  have hl := dropSeparator_adm _ (dropSpaces_adm rs.toList fun r hr => h r (Array.mem_toList_iff.mp hr))
+  have hl := dropSeparator_adm (d := d) _ (dropSpaces_adm rs.toList fun r hr => h r (Array.mem_toList_iff.mp hr))
   intro r hr
   obtain ⟨x, hx, hm⟩ := List.mem_filterMap.mp (by simpa using hr)
   unfold unbraceWord at hm
@@ -279,7 +295,7 @@ private theorem postNote_adm (rs : Array Raw) (h : Adm rs) : Adm (postNote rs) :
     · cases hm; rfl
   · cases hm; exact hl _ hx
 
-private theorem selectorGuard_adm (rs : Array Raw) (p : Pos) : Adm (selectorGuard rs p) := by
+private theorem selectorGuard_adm (rs : Array Raw) (p : Pos) : Adm d (selectorGuard rs p) := by
   unfold selectorGuard
   split
   · split
@@ -292,7 +308,7 @@ private theorem selectorGuard_adm (rs : Array Raw) (p : Pos) : Adm (selectorGuar
 
 mutual
 
-private theorem inlRaws_adm (file : String) : (x : Inl) → Adm (inlRaws file x).1
+private theorem inlRaws_adm (file : String) : (x : Inl) → Adm d (inlRaws file x).1
   | .text s p => by
     simp only [inlRaws]
     exact adm_text s p
@@ -332,7 +348,7 @@ private theorem inlRaws_adm (file : String) : (x : Inl) → Adm (inlRaws file x)
     · exact adm_empty
   | .emph body p => by
     simp only [inlRaws]
-    have h := inlListRaws_adm file body.toList #[] #[] adm_empty
+    have h := inlListRaws_adm file body.toList #[] #[] (adm_empty (d := d))
     exact adm_lit (by
       intro r hr
       simp only [List.mem_cons, List.not_mem_nil, or_false] at hr
@@ -341,7 +357,7 @@ private theorem inlRaws_adm (file : String) : (x : Inl) → Adm (inlRaws file x)
       · exact adm_group _ _ h)
   | .strong body p => by
     simp only [inlRaws]
-    have h := inlListRaws_adm file body.toList #[] #[] adm_empty
+    have h := inlListRaws_adm file body.toList #[] #[] (adm_empty (d := d))
     exact adm_lit (by
       intro r hr
       simp only [List.mem_cons, List.not_mem_nil, or_false] at hr
@@ -350,7 +366,7 @@ private theorem inlRaws_adm (file : String) : (x : Inl) → Adm (inlRaws file x)
       · exact adm_group _ _ h)
   | .link dest title body p => by
     simp only [inlRaws]
-    have h := inlListRaws_adm file body.toList #[] #[] adm_empty
+    have h := inlListRaws_adm file body.toList #[] #[] (adm_empty (d := d))
     exact adm_lit (by
       intro r hr
       simp only [List.mem_cons, List.not_mem_nil, or_false] at hr
@@ -380,7 +396,7 @@ private theorem inlRaws_adm (file : String) : (x : Inl) → Adm (inlRaws file x)
         · exact adm_group _ _ (adm_text dest p)
   | .citeText key body p => by
     simp only [inlRaws]
-    have h := inlListRaws_adm file body.toList #[] #[] adm_empty
+    have h := inlListRaws_adm file body.toList #[] #[] (adm_empty (d := d))
     refine adm_append (adm_lit ?_) (citeCmdRaws_adm _ _ _ _ _ (by simp [citeCtrls]) adm_empty adm_empty)
     intro r hr
     simp only [List.mem_cons, List.not_mem_nil, or_false] at hr
@@ -391,7 +407,7 @@ private theorem inlRaws_adm (file : String) : (x : Inl) → Adm (inlRaws file x)
   | .cite items p => by
     simp only [inlRaws]
     have hn := citeItemsRaws_adm file items.toList #[] #[] (by intro c hc; simp at hc)
-    have hl : NotesAdm (citeItemsRaws file #[] #[] items.toList).1.toList :=
+    have hl : NotesAdm d (citeItemsRaws file #[] #[] items.toList).1.toList :=
       fun c hc => hn c (Array.mem_toList_iff.mp hc)
     unfold citeGroupRaws
     dsimp only
@@ -399,7 +415,7 @@ private theorem inlRaws_adm (file : String) : (x : Inl) → Adm (inlRaws file x)
     · exact natbibRaws_adm _ p hl
     · split
       · next first hfirst =>
-        have h1 : Adm first.pre ∧ Adm first.post :=
+        have h1 : Adm d first.pre ∧ Adm d first.post :=
           hn first (Array.mem_of_getElem? hfirst)
         split
         · split
@@ -413,7 +429,7 @@ private theorem inlRaws_adm (file : String) : (x : Inl) → Adm (inlRaws file x)
         · exact citeTextRaws_adm _ p hl
       · exact adm_empty
 
-private theorem closeLeading_adm (rs : Array Raw) (h : Adm rs) : Adm (closeLeading rs) := by
+private theorem closeLeading_adm (rs : Array Raw) (h : Adm d rs) : Adm d (closeLeading rs) := by
   unfold closeLeading
   split
   · rename_i w p rest hl
@@ -425,12 +441,12 @@ private theorem closeLeading_adm (rs : Array Raw) (h : Adm rs) : Adm (closeLeadi
   · exact h
 
 private theorem inlListRaws_adm (file : String) : (l : List Inl) → (out : Array Raw) →
-    (ds : Array Diag) → Adm out → Adm (inlListRaws file out ds l).1
+    (ds : Array Diag) → Adm d out → Adm d (inlListRaws file out ds l).1
   | [], _, _, h => by simpa [inlListRaws] using h
   | x :: rest, out, ds, h => by
     simp only [inlListRaws]
-    have closed : ∀ (b : Bool) (rs : Array Raw), Adm rs →
-        Adm (if b = true then closeLeading rs else rs) := by
+    have closed : ∀ (b : Bool) (rs : Array Raw), Adm d rs →
+        Adm d (if b = true then closeLeading rs else rs) := by
       intro b rs hrs
       cases b
       · exact hrs
@@ -442,8 +458,8 @@ private theorem inlListRaws_adm (file : String) : (l : List Inl) → (out : Arra
     · exact adm_empty
 
 private theorem citeItemsRaws_adm (file : String) : (l : List CiteItem) → (out : Array CiteRaws) →
-    (ds : Array Diag) → (∀ c ∈ out, Adm c.pre ∧ Adm c.post) →
-    ∀ c ∈ (citeItemsRaws file out ds l).1, Adm c.pre ∧ Adm c.post
+    (ds : Array Diag) → (∀ c ∈ out, Adm d c.pre ∧ Adm d c.post) →
+    ∀ c ∈ (citeItemsRaws file out ds l).1, Adm d c.pre ∧ Adm d c.post
   | [], _, _, h => by simpa [citeItemsRaws] using h
   | .mk key mode pre post :: rest, out, ds, h => by
     simp only [citeItemsRaws]
@@ -457,15 +473,15 @@ private theorem citeItemsRaws_adm (file : String) : (l : List CiteItem) → (out
 end
 
 private theorem sym_mem (c : Char) (p : Pos) (h : c ∈ vocabulary.syms) :
-    vocabulary.admits (.sym c p) = true := by
+    (vocabularyFor d).admits (.sym c p) = true := by
   simp only [Vocab.admits]
   exact List.contains_iff_mem.mpr h
 
 private theorem laterCellsRaws_adm (file : String) (p : Pos) : (cells : List (Array Inl)) →
-    (out : Array Raw) → (ds : Array Diag) → Adm out → Adm (laterCellsRaws file p out ds cells).1
+    (out : Array Raw) → (ds : Array Diag) → Adm d out → Adm d (laterCellsRaws file p out ds cells).1
   | [], _, _, h => by simpa [laterCellsRaws] using h
   | cell :: rest, out, ds, h => by
-    have hc := inlListRaws_adm file cell.toList #[] #[] adm_empty
+    have hc := inlListRaws_adm file cell.toList #[] #[] (adm_empty (d := d))
     unfold laterCellsRaws
     rcases hr : inlListRaws file #[] #[] cell.toList with ⟨rs, cds⟩
     rw [hr] at hc
@@ -473,10 +489,10 @@ private theorem laterCellsRaws_adm (file : String) (p : Pos) : (cells : List (Ar
       (adm_push (adm_push h (sym_mem '&' p (by simp [vocabulary]))) (adm_group rs p hc))
 
 private theorem rowCellsRaws_adm (file : String) (p : Pos) :
-    (cells : List (Array Inl)) → Adm (rowCellsRaws file p cells).1
+    (cells : List (Array Inl)) → Adm d (rowCellsRaws file p cells).1
   | [] => by simpa [rowCellsRaws] using adm_empty
   | cell :: rest => by
-    have hc := inlListRaws_adm file cell.toList #[] #[] adm_empty
+    have hc := inlListRaws_adm file cell.toList #[] #[] (adm_empty (d := d))
     unfold rowCellsRaws
     exact laterCellsRaws_adm file p rest _ _ (adm_lit (by
       intro r hr'
@@ -485,15 +501,15 @@ private theorem rowCellsRaws_adm (file : String) (p : Pos) :
       exact adm_group _ p hc))
 
 private theorem rowRaws_adm (file : String) (row : Array (Array Inl)) (p : Pos) :
-    Adm (rowRaws file row p).1 := by
+    Adm d (rowRaws file row p).1 := by
   unfold rowRaws
   exact adm_push (rowCellsRaws_adm file p row.toList) (ctrl_mem _ _ (by simp [vocabulary]))
 
 private theorem rowsRaws_adm (file : String) (p : Pos) : (rows : List (Array (Array Inl))) →
-    (out : Array Raw) → (ds : Array Diag) → Adm out → Adm (rowsRaws file p out ds rows).1
+    (out : Array Raw) → (ds : Array Diag) → Adm d out → Adm d (rowsRaws file p out ds rows).1
   | [], _, _, h => by simpa [rowsRaws] using h
   | row :: rest, out, ds, h => by
-    have hr := rowRaws_adm file row p
+    have hr := rowRaws_adm (d := d) file row p
     unfold rowsRaws
     rcases hrow : rowRaws file row p with ⟨rs, rds⟩
     rw [hrow] at hr
@@ -501,14 +517,14 @@ private theorem rowsRaws_adm (file : String) (p : Pos) : (rows : List (Array (Ar
 
 private theorem tableRaws_adm (file : String) (aligns : Array TableAlign)
     (header : Array (Array Inl)) (rows : Array (Array (Array Inl))) (p : Pos) :
-    Adm (tableRaws file aligns header rows p).1 := by
-  have hh := rowRaws_adm file header p
+    Adm d (tableRaws file aligns header rows p).1 := by
+  have hh := rowRaws_adm (d := d) file header p
   unfold tableRaws
   rcases hhr : rowRaws file header p with ⟨hr, hds⟩
   rw [hhr] at hh
   simp only at hh
   dsimp only
-  have hhead : Adm (#[.group #[.sym '@' p, .group #[] p,
+  have hhead : Adm d (#[.group #[.sym '@' p, .group #[] p,
       .word (String.ofList (aligns.toList.map TableAlign.specLetter)) p, .sym '@' p, .group #[] p] p,
       .ctrl "toprule" p] : Array Raw) := adm_lit (by
     intro r hr'
@@ -524,7 +540,7 @@ private theorem tableRaws_adm (file : String) (aligns : Array TableAlign)
         · exact sym_mem _ _ (by simp [vocabulary])
         · exact adm_group _ _ adm_empty))
     · exact ctrl_mem _ _ (by simp [vocabulary]))
-  have hbody := rowsRaws_adm file p rows.toList _ hds
+  have hbody := rowsRaws_adm (d := d) file p rows.toList _ hds
     (adm_push (adm_append hhead hh) (ctrl_mem "midrule" p (by simp [vocabulary])))
   have hfull := adm_push hbody (ctrl_mem "bottomrule" p (by simp [vocabulary]))
   exact adm_lit (by
@@ -532,38 +548,38 @@ private theorem tableRaws_adm (file : String) (aligns : Array TableAlign)
     simp only [List.mem_cons, List.not_mem_nil, or_false] at hr'
     subst hr'
     simp only [Vocab.admits, Bool.and_eq_true]
-    exact ⟨by simp [vocabulary],
+    exact ⟨by simp [vocabularyFor, vocabulary],
       admitsList_of_adm _ fun x hx => hfull x (Array.mem_toList_iff.mp hx)⟩)
 
-private theorem division_adm (d : LeanDivision) (p : Pos) :
-    vocabulary.admits (d.raw p) = true := by
-  have hattrs : Adm (d.attrs.map fun (k, v) => Raw.group #[.word k p, .word v p] p) := by
+private theorem division_adm (q : LeanDivision) (p : Pos) :
+    (vocabularyFor true).admits (q.raw p) = true := by
+  have hattrs : Adm true (q.attrs.map fun (k, v) => Raw.group #[.word k p, .word v p] p) := by
     intro r hr
     obtain ⟨⟨k, v⟩, _, rfl⟩ := Array.mem_map.mp hr
     exact adm_group _ _ (adm_lit (by
       intro x hx
       simp only [List.mem_cons, List.not_mem_nil, or_false] at hx
       rcases hx with rfl | rfl <;> rfl))
-  have hbody : Adm #[Raw.group #[.word d.file p] p,
-      .group (d.attrs.map fun (k, v) => Raw.group #[.word k p, .word v p] p) p] := adm_lit (by
+  have hbody : Adm true #[Raw.group #[.word q.file p] p,
+      .group (q.attrs.map fun (k, v) => Raw.group #[.word k p, .word v p] p) p] := adm_lit (by
     intro r hr
     simp only [List.mem_cons, List.not_mem_nil, or_false] at hr
     rcases hr with rfl | rfl
     · exact adm_group _ _ (adm_lit (by intro x hx; simp at hx; subst hx; rfl))
     · exact adm_group _ _ hattrs)
   simp only [LeanDivision.raw, Vocab.admits, Bool.and_eq_true, Bool.or_eq_true]
-  exact ⟨Or.inr (by simp [vocabulary]), admitsList_of_adm _ fun r hr => hbody r (by simpa using hr)⟩
+  exact ⟨Or.inr (by simp [vocabularyFor]), admitsList_of_adm _ fun r hr => hbody r (by simpa using hr)⟩
 
 mutual
 
-private theorem blkRaws_adm (file : String) (refs : Array Raw) (hrefs : Adm refs) :
-    (b : Blk) → Adm (blkRaws file refs b).1
+private theorem blkRaws_adm (file : String) (refs : Array Raw) (hrefs : Adm d refs) :
+    (b : Blk) → Adm d (blkRaws file refs d b).1
   | .para body p => by
     simp only [blkRaws]
     exact adm_push (inlListRaws_adm file body.toList #[] #[] adm_empty) rfl
   | .heading level body p => by
     simp only [blkRaws, Parse.headingRaws_contract]
-    have h := inlListRaws_adm file body.toList #[] #[] adm_empty
+    have h := inlListRaws_adm file body.toList #[] #[] (adm_empty (d := d))
     exact adm_lit (by
       intro r hr
       simp only [List.mem_cons, List.not_mem_nil, or_false] at hr
@@ -574,28 +590,28 @@ private theorem blkRaws_adm (file : String) (refs : Array Raw) (hrefs : Adm refs
   | .code info text p => by
     simp only [blkRaws]
     split
-    · exact adm_lit (by simp [Vocab.admits, vocabulary])
+    · exact adm_lit (by simp [Vocab.admits, vocabularyFor, vocabulary])
     · split
-      · exact adm_lit (by simp [Vocab.admits, vocabulary])
-      · exact adm_lit (by simp [Vocab.admits, vocabulary])
+      · exact adm_lit (by simp [Vocab.admits, vocabularyFor, vocabulary])
+      · exact adm_lit (by simp [Vocab.admits, vocabularyFor, vocabulary])
   | .rule p => by
     simp only [blkRaws]
     exact adm_empty
   | .quote body p => by
     simp only [blkRaws]
-    have h := blkListRaws_adm file refs hrefs body.toList #[] #[] adm_empty
+    have h := blkListRaws_adm file refs hrefs body.toList #[] #[] (adm_empty (d := d))
     exact adm_lit (by
       intro r hr
       simp only [List.mem_cons, List.not_mem_nil, or_false] at hr
       subst hr
       simp only [Vocab.admits, Bool.and_eq_true]
-      exact ⟨by simp [vocabulary],
+      exact ⟨by simp [vocabularyFor, vocabulary],
         admitsList_of_adm _ fun r hr => h r (Array.mem_toList_iff.mp hr)⟩)
   | .disclosure summary expanded body p => by
     simp only [blkRaws, disclosureRaws]
-    have hs := inlListRaws_adm file summary.toList #[] #[] adm_empty
-    have hb := blkListRaws_adm file refs hrefs body.toList #[] #[] adm_empty
-    have ho : Adm (if expanded then #[.sym '[' p, .word "open" p, .sym ']' p] else #[]) := by
+    have hs := inlListRaws_adm file summary.toList #[] #[] (adm_empty (d := d))
+    have hb := blkListRaws_adm file refs hrefs body.toList #[] #[] (adm_empty (d := d))
+    have ho : Adm d (if expanded then #[.sym '[' p, .word "open" p, .sym ']' p] else #[]) := by
       cases expanded
       · exact adm_empty
       · refine adm_lit ?_
@@ -613,24 +629,26 @@ private theorem blkRaws_adm (file : String) (refs : Array Raw) (hrefs : Adm refs
       simp only [List.mem_cons, List.not_mem_nil, or_false] at hr
       subst hr
       simp only [Vocab.admits, Bool.and_eq_true]
-      exact ⟨by simp [vocabulary],
+      exact ⟨by simp [vocabularyFor, vocabulary],
         admitsList_of_adm _ fun r hr => hall r (Array.mem_toList_iff.mp hr)⟩)
   | .list ordered start tight items p => by
     simp only [blkRaws]
-    have h := itemsRaws_adm file refs hrefs items.toList p #[] #[] adm_empty
+    have h := itemsRaws_adm file refs hrefs items.toList p #[] #[] (adm_empty (d := d))
     exact adm_lit (by
       intro r hr
       simp only [List.mem_cons, List.not_mem_nil, or_false] at hr
       subst hr
       simp only [Vocab.admits, Bool.and_eq_true]
-      exact ⟨by cases ordered <;> simp [vocabulary],
+      exact ⟨by cases ordered <;> simp [vocabularyFor, vocabulary],
         admitsList_of_adm _ fun r hr => h r (Array.mem_toList_iff.mp hr)⟩)
   | .table aligns header rows p => by
     simp only [blkRaws]
     exact tableRaws_adm file aligns header rows p
   | .lean attrs p => by
     simp only [blkRaws]
-    exact adm_lit (by
+    cases d with
+    | false => exact adm_empty
+    | true => exact adm_lit (by
       intro r hr
       simp only [List.mem_cons, List.not_mem_nil, or_false] at hr
       rcases hr with rfl | rfl
@@ -643,17 +661,17 @@ private theorem blkRaws_adm (file : String) (refs : Array Raw) (hrefs : Adm refs
     simp only [blkRaws]
     exact hrefs
 
-private theorem blkListRaws_adm (file : String) (refs : Array Raw) (hrefs : Adm refs) :
+private theorem blkListRaws_adm (file : String) (refs : Array Raw) (hrefs : Adm d refs) :
     (l : List Blk) → (out : Array Raw) →
-    (ds : Array Diag) → Adm out → Adm (blkListRaws file refs out ds l).1
+    (ds : Array Diag) → Adm d out → Adm d (blkListRaws file refs d out ds l).1
   | [], _, _, h => by simpa [blkListRaws] using h
   | b :: rest, out, ds, h => by
     simp only [blkListRaws]
     exact blkListRaws_adm file refs hrefs rest _ _ (adm_append h (blkRaws_adm file refs hrefs b))
 
-private theorem itemsRaws_adm (file : String) (refs : Array Raw) (hrefs : Adm refs) :
+private theorem itemsRaws_adm (file : String) (refs : Array Raw) (hrefs : Adm d refs) :
     (l : List (Array Blk)) → (p : Pos) →
-    (out : Array Raw) → (ds : Array Diag) → Adm out → Adm (itemsRaws file refs out ds l p).1
+    (out : Array Raw) → (ds : Array Diag) → Adm d out → Adm d (itemsRaws file refs d out ds l p).1
   | [], _, _, _, h => by simpa [itemsRaws] using h
   | it :: rest, p, out, ds, h => by
     simp only [itemsRaws]
@@ -663,7 +681,7 @@ private theorem itemsRaws_adm (file : String) (refs : Array Raw) (hrefs : Adm re
 
 end
 
-private theorem opening_adm (m : MetaRead) : Adm m.opening := by
+private theorem opening_adm (m : MetaRead) : Adm d m.opening := by
   unfold MetaRead.opening
   split
   · exact adm_empty
@@ -674,19 +692,19 @@ private theorem opening_adm (m : MetaRead) : Adm m.opening := by
       · exact cite_mem _ _ (by simp [citeCtrls])
       · exact adm_group _ _ (adm_words _ _))
 
-private theorem nociteRaws_adm (m : MetaRead) : Adm m.nociteRaws := by
+private theorem nociteRaws_adm (m : MetaRead) : Adm d m.nociteRaws := by
   unfold MetaRead.nociteRaws
   split
   · exact citeCmdRaws_adm _ _ _ _ _ (by simp [citeCtrls]) adm_empty adm_empty
   · exact adm_empty
 
-private theorem prelude_adm (m : MetaRead) : Adm m.prelude := by
+private theorem prelude_adm (m : MetaRead) : Adm d m.prelude := by
   unfold MetaRead.prelude
   split
   · exact adm_empty
   · exact adm_push (opening_adm m) rfl
 
-private theorem list_adm (m : MetaRead) (cited : Bool) : Adm (m.list cited) := by
+private theorem list_adm (m : MetaRead) (cited : Bool) : Adm d (m.list cited) := by
   unfold MetaRead.list
   split
   · exact adm_empty
@@ -699,7 +717,7 @@ private theorem list_adm (m : MetaRead) (cited : Bool) : Adm (m.list cited) := b
       · exact adm_group _ _ (adm_lit (by intro y hy; simp at hy; subst hy; rfl))
       · exact adm_group _ _ (adm_lit (by intro y hy; simp at hy; subst hy; rfl)))
 
-private theorem titleRaws_adm (file : String) (m : MetaRead) : Adm (m.titleRaws file) := by
+private theorem titleRaws_adm (file : String) (m : MetaRead) : Adm d (m.titleRaws file) := by
   unfold MetaRead.titleRaws
   split
   · next title q _ =>
@@ -714,7 +732,7 @@ private theorem titleRaws_adm (file : String) (m : MetaRead) : Adm (m.titleRaws 
   · exact adm_empty
 
 private theorem tail_adm (file : String) (m : MetaRead) (cited placed : Bool) :
-    Adm (m.tail file cited placed) := by
+    Adm d (m.tail file cited placed) := by
   unfold MetaRead.tail
   refine adm_append ?_ ?_
   · split
@@ -727,7 +745,8 @@ private theorem tail_adm (file : String) (m : MetaRead) (cited placed : Bool) :
 public theorem desugar_vocabulary_mem (file input : String) (dialect : Dialect := .document)
     (role : Role := .document) (citing : Bool := false)
     (known : Option (Std.HashSet String) := none) :
-    ∀ r ∈ (desugar file input dialect role citing known).1, vocabulary.admits r = true := by
+    ∀ r ∈ (desugar file input dialect role citing known).1,
+      (vocabularyFor (dialect matches .document)).admits r = true := by
   unfold desugar
   exact adm_append (adm_append (prelude_adm _) (blkListRaws_adm file _ (list_adm _ _) _ #[] #[]
     adm_empty)) (tail_adm _ _ _ _)
@@ -767,7 +786,7 @@ private theorem env_start (n : String) (b : Array Raw) (p : Pos) (h : n ∈ voca
   Or.inr (Or.inr (Or.inr ⟨n, b, p, rfl, h⟩))
 
 private theorem blkRaws_starts (file : String) (refs : Array Raw) (hrefs : Starts refs) (b : Blk) :
-    Starts (blkRaws file refs b).1 := by
+    Starts (blkRaws file refs d b).1 := by
   cases b with
   | para body p =>
     simp only [blkRaws]
@@ -802,7 +821,9 @@ private theorem blkRaws_starts (file : String) (refs : Array Raw) (hrefs : Start
     exact starts_single (env_start _ _ _ (by simp [vocabulary]))
   | lean attrs p =>
     simp only [blkRaws]
-    exact Or.inr ⟨.par p, by simp, Or.inl ⟨p, rfl⟩⟩
+    cases d with
+    | false => exact Or.inl rfl
+    | true => exact Or.inr ⟨.par p, by simp, Or.inl ⟨p, rfl⟩⟩
   | metadata fields p =>
     simp only [blkRaws]
     exact Or.inl rfl
@@ -812,7 +833,7 @@ private theorem blkRaws_starts (file : String) (refs : Array Raw) (hrefs : Start
 
 private theorem blkListRaws_starts (file : String) (refs : Array Raw) (hrefs : Starts refs) :
     (l : List Blk) → (out : Array Raw) →
-    (ds : Array Diag) → Starts out → Starts (blkListRaws file refs out ds l).1
+    (ds : Array Diag) → Starts out → Starts (blkListRaws file refs d out ds l).1
   | [], _, _, h => by simpa [blkListRaws] using h
   | b :: rest, out, ds, h => by
     simp only [blkListRaws]
@@ -861,7 +882,7 @@ public theorem vocabulary_contract :
     (∀ n ∈ vocabulary.ctrls, ' ' ∉ n.toList) ∧
     (∀ n ∈ vocabulary.bridged, ((Parse.headingControl? n).isSome ∨ n = Parse.markdownBibControl) ∧
       ' ' ∈ n.toList) ∧
-    (∀ n ∈ vocabulary.requests, n ∉ vocabulary.envs ∧ Parse.inputEnvFile? n = none ∧
+    (∀ n ∈ (vocabularyFor true).requests, n ∉ vocabulary.envs ∧ Parse.inputEnvFile? n = none ∧
       ' ' ∈ n.toList) := by
   refine ⟨?_, ?_, ?_, ?_⟩
   · intro n hn
@@ -882,7 +903,7 @@ public theorem vocabulary_contract :
       subst hn
       simp [Parse.markdownBibControl]
   · intro n hn
-    simp only [vocabulary, List.mem_cons, List.not_mem_nil, or_false] at hn
+    simp only [vocabularyFor, ↓reduceIte, List.mem_cons, List.not_mem_nil, or_false] at hn
     subst hn
     simp [vocabulary, leanDivisionEnv, Parse.inputEnvFile?, Parse.markdownTableEnv,
       Parse.markdownDisclosureEnv]

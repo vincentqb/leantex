@@ -179,7 +179,7 @@ public structure Showing where
   /-- The keys written. -/
   written : List String := []
   phrases : List (String × String) := []
-  deriving Repr, Inhabited
+  deriving Repr, BEq, Inhabited
 
 /-- A proof a page folds or removes: its source offsets, and the paragraph standing for it where
 it folds. -/
@@ -464,12 +464,40 @@ public def keyedEntries (entries : List String) : List (String × List String) :
       | some (k, vs) => acc.pop.push (k, vs.concat e.trimAscii.toString)
       | none => acc.push ("", [e.trimAscii.toString])) #[]).toList
 
+/-- How an option key's value reads. -/
+public inductive KeyRead where
+  /-- A comma list, each of TeX's entries losing one layer of braces or quotes. -/
+  | list
+  /-- One value, TeX's continuation entries joined by `sep` before it loses one layer. -/
+  | joined (sep : String)
+  deriving Repr, BEq
+
+/-- A key a directive or an inclusion takes for what its page shows: its name, how its value
+reads, and whether an inclusion honours it. -/
+public structure ShowKey where
+  name : String
+  read : KeyRead
+  included : Bool
+
+public def showKeyRows : List ShowKey :=
+  [⟨"show", .list, true⟩, ⟨"decls", .list, true⟩, ⟨"proofs", .joined ", ", true⟩,
+   ⟨"link", .joined ",", true⟩, ⟨"facts", .joined ",", true⟩, ⟨"bibliography", .list, true⟩,
+   ⟨"biblio-style", .joined ",", false⟩]
+
 /-- The keys a directive takes for what its page shows, which no declaration reads. -/
-public def showKeys : List String :=
-  ["show", "decls", "proofs", "link", "facts", "bibliography", "biblio-style"]
+public def showKeys : List String := showKeyRows.map (·.name)
+
+/-- The keys an inclusion honours. -/
+public def inclusionKeys : List String := (showKeyRows.filter (·.included)).map (·.name)
 
 /-- The prefix of the directive keys that declare a constant's phrase. -/
 public def phraseKey : String := "phrase."
+
+/-- How a key's value reads: a phrase's as prose, a key no row names as one value. -/
+public def keyRead (k : String) : KeyRead :=
+  match showKeyRows.find? (·.name == k) with
+  | some r => r.read
+  | none => if k.startsWith phraseKey then .joined ", " else .joined ","
 
 /-- Whether a directive key says what its page shows, which no declaration reads. -/
 public def showKey (k : String) : Bool := showKeys.contains k || k.startsWith phraseKey
@@ -497,17 +525,13 @@ public def unwrapValue (v : String) : String :=
   if t.length ≥ 2 && ((t.startsWith "\"" && t.endsWith "\"") || (t.startsWith "{" && t.endsWith "}"))
   then ((t.drop 1).dropEnd 1).trimAscii.toString else t
 
-/-- The keys whose value is a comma-separated list. -/
-private def listKeys : List String := ["show", "decls", "bibliography"]
-
 /-- The value each key of option entries takes as TeX and a directive spell them: bare entries
-continue the key before them, and a list key's values each, any other key's joined value, lose one
-layer of braces or quotes. -/
+continue the key before them, read as the key reads them (`keyRead`). -/
 public def entryValues (entries : List String) : List (String × String) :=
   (keyedEntries entries).map fun (k, vs) =>
-    (k, if k.isEmpty then vs.headD ""
-      else if listKeys.contains k then ",".intercalate (vs.map unwrapValue)
-      else unwrapValue ((if k == "proofs" || k.startsWith phraseKey then ", " else ",").intercalate vs))
+    (k, if k.isEmpty then vs.headD "" else match keyRead k with
+      | .list => ",".intercalate (vs.map unwrapValue)
+      | .joined sep => unwrapValue (sep.intercalate vs))
 
 /-- What option values by key ask a page of a file of `lang` to show: its `show` views, `code` where
 it names none the language sets, its `decls`, `proofs`, `link` and phrases, a key written twice
@@ -515,13 +539,14 @@ taking its last value; `alone` where nothing else reads the options, so any othe
 public def showingOfValues (lang : Ir.CodeLang) (values : List (String × String))
     (alone : Bool := false) : Showing :=
   let value (k : String) : Option String := (values.reverse.find? (·.1 == k)).map (·.2)
-  let listed (v : String) : List String :=
-    (v.splitOn ",").map (·.trimAscii.toString) |>.filter (!·.isEmpty)
-  let named := listed ((value "show").getD "")
+  let listField (k : String) : Option (List String) := (value k).map fun v => match keyRead k with
+    | .list => (v.splitOn ",").map (·.trimAscii.toString) |>.filter (!·.isEmpty)
+    | .joined _ => [v]
+  let named := (listField "show").getD []
   let viewOf? (n : String) : Option View :=
     View.all.find? fun v => v.name == n && v.setBy lang alone
   let views := (named.filterMap viewOf?).eraseDups
-  let decls := ((value "decls").map listed).filter (!·.isEmpty)
+  let decls := (listField "decls").filter (!·.isEmpty)
   let (proofs, unread) := match value "proofs" with
     | none | some "show" => (Proofs.show, [])
     | some "collapse" => (.collapse, [])
@@ -531,7 +556,7 @@ public def showingOfValues (lang : Ir.CodeLang) (values : List (String × String
     decls, proofs, unread
     link := value "link"
     facts := value "facts"
-    bibliography := listed ((value "bibliography").getD "")
+    bibliography := (listField "bibliography").getD []
     bibStyle := value "biblio-style"
     unknown := named.filter fun n => (viewOf? n).isNone
     strange := if alone then values.filterMap fun (k, v) =>
@@ -546,9 +571,11 @@ public def showingOfEntries (lang : Ir.CodeLang) (entries : List String) (alone 
     Showing :=
   showingOfValues lang (entryValues entries) alone
 
-/-- What a markdown Lean division asks its inclusion to show, each attribute's value as written. -/
+/-- What a markdown Lean division asks its inclusion to show, each attribute's value as written and an
+attribute without a key named as it is written. -/
 public def showingOfDivision (d : Md.LeanDivision) : Showing :=
-  showingOfValues .lean (d.attrs.toList.map fun (k, v) => (k, v.trimAscii.toString)) (alone := true)
+  showingOfValues .lean (d.attrs.toList.map fun (k, v) =>
+    (k, if k.isEmpty then "=" ++ v else v.trimAscii.toString)) (alone := true)
 
 /-- What a file's directive asks its page to show. -/
 public def showingOf (lang : Ir.CodeLang) (src : Array Char) : Showing :=
@@ -2192,7 +2219,7 @@ trailing white space aside. -/
     #[.verb "lstlisting" (head ++ "\n" ++ String.ofList body) { line := (lineCol starts start).1 - 1 }]
 
 /-- Names in backticks, the last after "or". -/
-private def namesOr (names : List String) : String :=
+public def namesOr (names : List String) : String :=
   match names.reverse with
   | [] => ""
   | last :: rest =>
@@ -2238,7 +2265,7 @@ public def includeLean (file text : String) (showing : Showing) (facts : Option 
     let what := if valueless then s!"`{k}` is written without a value" else s!"{entry} has no option '{k}'"
     Diag.of .W0110 s!"{what}; the file is included as if it were not written" (some request)
       (help := if valueless then s!"write `{k} = …`"
-        else s!"name {", ".intercalate (showKeys.map (s!"`{·}`"))} or a `{phraseKey}` entry")
+        else s!"name {", ".intercalate (inclusionKeys.map (s!"`{·}`"))} or a `{phraseKey}` entry")
       (subject := some s!"code:option:{k}")
   let views := showing.unknown.toArray.map fun n =>
     Diag.of .W0110 s!"`show` names '{n}', which is no view of a Lean file; it is included without \
@@ -2436,7 +2463,7 @@ the preamble's declarations, the file's name the title where no description open
   let views := showing.unknown.toArray.map fun n =>
     Diag.of .W0110 s!"`show` names '{n}', which is no view of this file; the page sets without it"
       (some ⟨file, directivePos lang src⟩)
-      (help := "name `code`, or for a Lean file `math` or `prose`")
+      (help := s!"name {namesOr ((View.all.filter (·.setBy lang false)).map (·.name))}")
       (subject := some s!"code:show:{n}")
   let unread := showing.unread.toArray.map fun (k, v) =>
     Diag.of .W0110 s!"`{k}` takes no value '{v}'; the page sets as if it were not written"

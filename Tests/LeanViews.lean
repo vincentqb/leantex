@@ -425,7 +425,7 @@ def leanViewChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (phrased, phrasedTakenDs) := docOf (incl braced (some facts))
   let phrasedLines := codePageLines fonts phrased
   t s!"views: a phrase a division or a braced inclusion declares is taken, its braces not its words ({repr (divisionShows.map (·.phrases))})"
-    (divisionShows.map (fun s => (s.views, s.phrases)) == [(bracedShows.views, bracedShows.phrases)] &&
+    (divisionShows == [bracedShows] &&
       !phrasedTakenDs.any (·.kind == .W0416) &&
       phrasedLines.any (fun (_, l) => (l.splitOn "the height after").length > 1) &&
       !phrasedLines.any (fun (_, l) => (l.splitOn "the height after").length > 1 &&
@@ -544,9 +544,14 @@ def leanViewChecks (ref : IO.Ref (List String)) : IO Unit := do
       (included injected && !(subjects injectedDs).contains "code:option:zz" &&
         (subjects injectedDs).contains "code:show:code}" &&
         (subjects injectedDs).contains "code:show:zz = {1")
-    let (_, commaDs) ← build "comma.md" "::: {.lean file=ex.lean a,b=1}\n:::\n"
-    t s!"views: a division's key holding a comma is that one key ({subjects commaDs})"
-      ((subjects commaDs).filter (·.startsWith "code:option:") == #["code:option:a,b"])
+    let (_, commaDs) ← build "comma.md" "::: {.lean file=ex.lean a,b=1 =x}\n:::\n"
+    t s!"views: a division's key holding a comma is that one key, and an attribute without a key is named as written ({subjects commaDs})"
+      ((subjects commaDs).filter (·.startsWith "code:option:") == #["code:option:a,b", "code:option:=x"])
+    let (_, styledDs) ← build "styled.md" "::: {.lean file=ex.lean zz=1 biblio-style=plain}\n:::\n"
+    let strangeHelp := (styledDs.find? (·.subject == some "code:option:zz")).bind (·.help)
+    t s!"views: an inclusion's help for a key it has no option for names only the keys it honours ({strangeHelp})"
+      (strangeHelp.any fun h => hasStr h "`bibliography`" && !hasStr h "biblio-style" &&
+        Code.inclusionKeys.all fun k => hasStr h s!"`{k}`")
     IO.FS.writeFile (tmp / "frag.md") "::: {.lean file=ex.lean}\n:::\n"
     let (hosted, _) ← build "host.tex" ("\\documentclass{article}\n\\usepackage{markdown}\n" ++
       "\\renewcommand{\\inputlean}[2][]{Zed}\n\\begin{document}\n\\markdownInput{frag.md}\n" ++
@@ -568,6 +573,9 @@ def leanViewChecks (ref : IO.Ref (List String)) : IO Unit := do
     (styKeys.length == styKeys.eraseDups.length &&
       styKeys.all (fun k => Code.showKeys.contains k || views.contains k) &&
       Code.showKeys.all styKeys.contains && viewKeys == views)
+  t "views: leantex.sty warns at each key an inclusion does not honour, as the engine names it"
+    ((Code.showKeys.filter (!Code.inclusionKeys.contains ·)).all fun k =>
+      hasStr block s!"{k} .code:n =\n      \\PackageWarning")
   t "views: leantex.sty takes a phrase entry by the prefix the engine reads"
     (hasStr block s!"\\str_range:Nnn \\l_keys_key_str \{ 1 } \{ {Code.phraseKey.length} } } \{ {Code.phraseKey} }")
 
