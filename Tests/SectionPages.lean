@@ -396,8 +396,9 @@ def sectionPageChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
       hasStr (censusText (censusOfSrc fonts art)) "KeptWords")
   let kidsOf (pre body : String) := mainKids (HtmlDoc.emitTree {} (elabStr (deck169 pre body)).1).2.1
   let kids := kidsOf "\\theme{default}\n\\AtBeginSubsection{\\begin{frame}{Sub}SubWords\\end{frame}}" sectioned
+  let pages := kids.filter fun k => stageKind k == some .section
   t "a subsection's page heads it at the subsection's rank, as the tagged PDF does"
-    ((kids.filter fun k => stageKind k == some .section).all fun k =>
+    (!pages.isEmpty && pages.all fun k =>
       (elemNodesList (fun t => t == "h2" || t == "h3") #[] [k]).any fun h => match h with
         | .elem tag _ _ => tag == "h3" && !outOfSight h
         | _ => false)
@@ -407,7 +408,8 @@ def sectionPageChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
       stageWith kids "LateNoteWords" == stageWith kids "LastWords")
   let kids := kidsOf "\\theme{default}\n\\logo{LogoMarkWords}" looseThenSection
   t "content outside frames carries the logo in force, as a frame's stage"
-    ((kids.filter isStage).all fun s => hasStr (nodeTextOne "" s) "LogoMarkWords")
+    (kids.any (stageKind · == some .loose) &&
+      (kids.filter isStage).all fun s => hasStr (nodeTextOne "" s) "LogoMarkWords")
   let wrapped := "\\begin{frame}{Opening}OpeningWords\\end{frame}\n" ++
     "\\section{Web Part}\\label{sec:web}\n" ++
     "\\begin{ifbackend}{html}\n\\begin{frame}{WebOnly}WebOnlyWords\\end{frame}\n\\end{ifbackend}\n" ++

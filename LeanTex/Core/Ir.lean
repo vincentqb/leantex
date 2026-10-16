@@ -4582,7 +4582,8 @@ public def inParagraph (b : Block) : Block :=
     body.attach.all fun ⟨x, _⟩ => anchorInline x
   | .text _ | .math _ _ | .formula _ _ _ | .link _ _ | .ref _ _ _ _ | .decorated _ _ | .fill
   | .hspace _ _ | .rule _ _ _ | .pageNumber | .pageCount | .linebreak _ | .strut _ | .italicCorr _
-  | .onSteps _ _ | .altSteps _ _ _ | .image _ _ _ | .icon _ _ | .cite _ _ | .footnote _ _ => false
+  | .onSteps _ _ | .altSteps _ _ _ | .image _ _ _ | .icon _ _ | .cite _ _ | .cited .. | .footnote _ _ =>
+    false
 
 /-- A paragraph of label anchors alone, which sets no line. -/
 @[expose] public def anchorsOnly (content : Array Inline) : Bool :=
