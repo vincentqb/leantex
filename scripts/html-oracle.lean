@@ -1093,11 +1093,9 @@ const shotChanges = (a, b) => {
   return { cols, w: a.w, h: a.h };
 };
 
-// The viewport at rest: a drawn frame no different from the one drawn before it, asked again
-// within the budget while the page still changes; a page still changing when the budget ends is no
-// verdict.
-// A frame is decoded only where its bytes differ from the one before it, and keeps its bytes; a
-// page running no animation with its fonts loaded is at rest in the first.
+// The viewport at rest, a drawn frame no different from the one before it (decoded only where their
+// bytes differ, the first where no animation runs and the fonts are loaded), asked again within the
+// budget, a page still changing when it ends no verdict.
 const settled = async (page, budget = STEP_MS) => {
   const end = Date.now() + budget;
   let last = await drawn(page);
@@ -1161,7 +1159,8 @@ const stageMarkJudge = (only) => {
       outline: cs.outlineStyle,
       marked: mark.content !== 'none' && mark.borderLeftStyle !== 'none' && mark.borderRightStyle !== 'none',
       inked: sides.every(c => c === cs.color) || sides.every(c => c === focus),
-      still: mark.position === 'sticky' || mark.position === 'fixed',
+      still: mark.position === 'sticky' || mark.position === 'fixed' ||
+        (mark.position === 'absolute' && s.scrollHeight <= s.clientHeight + 1),
       width: parseFloat(mark.borderLeftWidth) || 0, shown: Math.abs(r.left) < 0.5,
       spills: s.scrollHeight > s.clientHeight + 1, furniture,
       kind: [s.className, s.closest('.slide-track') ? 'stepped' : '', ...furniture.map(f => f.what)].join(' ') };

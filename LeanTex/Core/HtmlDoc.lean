@@ -3373,21 +3373,30 @@ in as the safe area holds it clear of the content, else at the side. -/
 public def focusInset : String :=
   s!"max(0px, min(calc(0.5 * {safeareaVar}), calc({safeareaVar} - {focusWidth})))"
 
-/-- A focused stage draws no browser ring. -/
+/-- A focused stage draws no browser ring, and stacks its mark beneath its content. -/
 private def deckStageFocusRule : DeckRule :=
   { selector := [.lit "html section.slide:focus-visible, html section.section-page:focus-visible"]
-    decls := [("outline", "none")] }
+    decls := [("outline", "none"), ("isolation", "isolate")] }
 
-/-- A focused stage's mark: a rule down the middle half of each side margin whatever the stage's
-padding, its margin box the content box, in its ink, out of its flow and still while it scrolls, a
-border forced colours keep in their own ink. -/
+/-- A focused stage's mark: a rule down each side margin, its margin box the content box, in its
+ink, beneath the content, out of its flow and still while the stage scrolls, a border forced colours
+keep in their own ink. -/
 private def deckStageMarkRule : DeckRule :=
   { selector := [.lit ("html section.slide:focus-visible::before, " ++
       "html section.section-page:focus-visible::before")]
     decls := [("content", "\"\""), ("position", "sticky"), ("top", "25dvh"), ("flex", "none"),
       ("align-self", "stretch"), ("height", "50dvh"),
       ("margin", s!"0 calc(50% - 50vw + {focusInset}) -50dvh"),
-      ("border-inline", s!"{focusWidth} solid currentColor"), ("pointer-events", "none")] }
+      ("border-inline", s!"{focusWidth} solid currentColor"), ("pointer-events", "none"),
+      ("z-index", "-1")] }
+
+/-- A section or title page's mark stands down the middle half of its sides, whatever its centred
+content and padding, as neither pages content past its stage. -/
+private def deckSectionMarkRule : DeckRule :=
+  { selector := [.lit ("html section.section-page:focus-visible::before, " ++
+      "html section.slide.title-page:focus-visible::before")]
+    decls := [("position", "absolute"), ("top", "25dvh"), ("left", focusInset),
+      ("right", focusInset), ("margin", "0")] }
 
 /-- A display the pager finds wider than its stage scrolls sideways inside its own box, its ink
 held in its padding, so the stage never scrolls sideways and the deck alone pages there. -/
@@ -3440,6 +3449,7 @@ private def deckBase (ty : DeckType) : List DeckRule :=
       part := .stage },
     deckStageFocusRule,
     deckStageMarkRule,
+    deckSectionMarkRule,
     deckDisplayRule ]
 
 /-- `deckGlideRule`'s reduced-motion counterpart. -/
@@ -4087,12 +4097,13 @@ private theorem deckBase_cases {P : DeckRule → Prop} {v : DeckType}
     (h13 : P { selector := [.lit "html"], decls := [("font-size", v.root)], part := .stage })
     (h14 : P { selector := [.lit "pre"], decls := [("padding", "0"), ("background", "none")],
                part := .stage })
-    (h15 : P deckStageFocusRule) (h16 : P deckStageMarkRule) (h17 : P deckDisplayRule) :
+    (h15 : P deckStageFocusRule) (h16 : P deckStageMarkRule) (h16a : P deckSectionMarkRule)
+    (h17 : P deckDisplayRule) :
     ∀ r ∈ deckBase v, P r := by
   intro r hr
   simp only [deckBase, List.mem_cons, List.not_mem_nil, or_false] at hr
   rcases hr with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl |
-    rfl | rfl | rfl | rfl | rfl | rfl <;>
+    rfl | rfl | rfl | rfl | rfl | rfl | rfl <;>
     assumption
 
 /-- Whether a rule whose syntax depends on a feature is gated on that feature's support. -/
@@ -4102,7 +4113,7 @@ public def gateRespects (r : DeckRule) : Bool :=
 public theorem deck_css_partition (v : DeckType) (pg : String) (cp ms : Nat) :
     ∀ r ∈ deckRules v pg cp ms, gateRespects r = true :=
   deckRules_check v pg cp ms
-    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
+    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
     (by decide) rfl rfl rfl rfl rfl (by decide) (fun _ => rfl) (fun _ => rfl)
     (by decide) (fun _ => altSnapRules_cases rfl rfl rfl rfl)
     (setRules_cases rfl rfl rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
@@ -4119,7 +4130,7 @@ public def baselineProps : List String :=
    "animation", "border", "border-radius", "break-inside", "break-after",
    "break-before", "size", "print-color-adjust", "box-decoration-break",
    "bottom", "left", "right", "outline", "top", "align-self", "border-inline", "pointer-events",
-   "overflow-x", "padding-block"]
+   "overflow-x", "padding-block", "isolation", "z-index"]
 
 /-- Whether a rule is part of the floor: the base and every `@supports not` block. -/
 public def onFloor (r : DeckRule) : Bool :=
@@ -4132,7 +4143,7 @@ public theorem floor_is_baseline (v : DeckType) (pg : String) (cp ms : Nat) :
     ∀ r ∈ deckRules v pg cp ms,
       (!(onFloor r) || r.decls.all fun d => baselineProps.contains d.1) = true :=
   deckRules_check v pg cp ms
-    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
+    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
     (by decide) rfl rfl rfl rfl rfl (by decide) (fun _ => rfl) (fun _ => rfl)
     (by decide) (fun _ => altSnapRules_cases rfl rfl rfl rfl)
     (setRules_cases rfl rfl rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
@@ -4163,7 +4174,7 @@ public theorem content_hidden_behind_script (v : DeckType) (pg : String) (cp ms 
         (!(r.decls.contains ("display", "none")) &&
          !(r.decls.contains ("visibility", "hidden")))) = true :=
   deckRules_check v pg cp ms
-    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
+    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
     (by decide) rfl rfl rfl rfl rfl (by decide) (fun _ => rfl) (fun _ => rfl)
     (by decide) (fun _ => altSnapRules_cases rfl rfl rfl rfl)
     (setRules_cases rfl rfl rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
@@ -4182,7 +4193,7 @@ public theorem floor_opacity_mem (v : DeckType) (pg : String) (cp ms : Nat) :
       (fun o ho => nomatch ho) (fun o ho => nomatch ho) (fun o ho => nomatch ho)
       (fun o ho => nomatch ho) (fun o ho => nomatch ho) (fun o ho => nomatch ho)
       (fun o ho => nomatch ho) (fun o ho => nomatch ho) (fun o ho => nomatch ho)
-      (fun o ho => nomatch ho) (fun o ho => nomatch ho)
+      (fun o ho => nomatch ho) (fun o ho => nomatch ho) (fun o ho => nomatch ho)
   · intro r hr
     simp only [deckReduce, deckGlideGuard, List.mem_cons, List.not_mem_nil,
       or_false] at hr
@@ -4237,7 +4248,7 @@ public theorem floor_covered_script_gated (v : DeckType) (pg : String) (cp ms : 
       (!(onFloor r) || scriptGated r ||
         r.decls.all fun d => d.1 != "opacity" || d.2 == "100%") = true :=
   deckRules_check v pg cp ms
-    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
+    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
     (by decide) rfl rfl rfl rfl rfl (by decide) (fun _ => rfl) (fun _ => rfl)
     (by decide) (fun _ => altSnapRules_cases rfl rfl rfl rfl)
     (setRules_cases rfl rfl rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
@@ -4249,7 +4260,7 @@ public theorem hidden_script_gated (v : DeckType) (pg : String) (cp ms : Nat) :
     ∀ r ∈ deckRules v pg cp ms,
       (keyframesRule r || scriptGated r || !(r.decls.contains ("visibility", "hidden"))) = true :=
   deckRules_check v pg cp ms
-    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
+    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
     (by decide) rfl rfl rfl rfl rfl (by decide) (fun _ => rfl) (fun _ => rfl)
     (by decide) (fun _ => altSnapRules_cases rfl rfl rfl rfl)
     (setRules_cases rfl rfl rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
@@ -4261,7 +4272,7 @@ public theorem animations_script_gated (v : DeckType) (pg : String) (cp ms : Nat
     ∀ r ∈ deckRules v pg cp ms,
       (scriptGated r || r.decls.all fun d => d.1 != "animation" || d.2 == "none") = true :=
   deckRules_check v pg cp ms
-    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
+    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
     (by decide) rfl rfl rfl rfl rfl (by decide) (fun _ => rfl) (fun _ => rfl)
     (by decide) (fun _ => altSnapRules_cases rfl rfl rfl rfl)
     (setRules_cases rfl rfl rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
@@ -4321,7 +4332,7 @@ public theorem guards_by_construction (v : DeckType) (pg : String) (cp ms : Nat)
             List.map_cons, List.map_nil, SelChunk.render, String.join_cons,
             String.join_nil, String.append_empty, String.toList_append]
           decide))
-      rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl
+      rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl
   · intro r hr
     simp only [deckReduce, deckGlideGuard, List.mem_cons, List.not_mem_nil,
       or_false] at hr
@@ -4412,7 +4423,7 @@ public theorem print_lifts_stage_bounds_covers (v : DeckType) (pg : String) (cp 
             List.map_cons, List.map_nil, SelChunk.render, String.join_cons,
             String.join_nil, String.append_empty]
           decide))
-      rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl
+      rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl
   · intro r hr
     simp only [deckReduce, deckGlideGuard, List.mem_cons, List.not_mem_nil,
       or_false] at hr
@@ -4473,7 +4484,7 @@ public theorem deck_text_path_free (v : DeckType) (pg : String) (cp ms : Nat) :
       (r.decls.all fun d =>
         d.1 != "content" || (d.2 == "\"\"" || d.2 == "none")) = true :=
   deckRules_check v pg cp ms
-    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
+    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
     (by decide) rfl rfl rfl rfl rfl (by decide) (fun _ => rfl) (fun _ => rfl)
     (by decide) (fun _ => altSnapRules_cases rfl rfl rfl rfl)
     (setRules_cases rfl rfl rfl (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
@@ -4574,6 +4585,7 @@ public def deckScript : String :=
   const mark = () => {
     const track = snaps[cur].closest(\".slide-track\");
     if (!track) return;
+    requestAnimationFrame(() => fit());
     let k = 0;
     for (const s of snaps) {
       if (s.closest(\".slide-track\") === track) k += 1;
@@ -4638,11 +4650,17 @@ public def deckScript : String :=
   addEventListener(\"hashchange\", readHash);
   for (const event of [\"wheel\", \"touchstart\", \"pointerdown\"])
     addEventListener(event, () => { destination = null; swiped = true; }, { passive: true });
+  addEventListener(\"focusin\", () => { swiped = false; });
   const fit = () => {
+    const shown = [];
     for (const d of document.querySelectorAll(\"section.slide .display\")) {
-      if (!d.querySelector(\"math\")) continue;
-      d.classList.remove(\"wide\");
-      const wide = d.scrollWidth > d.clientWidth + 1;
+      if (!d.querySelector(\"math\") || d.clientWidth === 0) continue;
+      const r = document.createRange();
+      r.selectNodeContents(d);
+      shown.push([d, r.getBoundingClientRect().width > d.clientWidth + 1]);
+    }
+    for (const [d, wide] of shown) {
+      if (d.classList.contains(\"wide\") === wide) continue;
       d.classList.toggle(\"wide\", wide);
       if (wide) d.tabIndex = 0; else d.removeAttribute(\"tabindex\");
     }
@@ -4729,6 +4747,7 @@ public theorem deck_script_constant : deckScript =
   const mark = () => {
     const track = snaps[cur].closest(\".slide-track\");
     if (!track) return;
+    requestAnimationFrame(() => fit());
     let k = 0;
     for (const s of snaps) {
       if (s.closest(\".slide-track\") === track) k += 1;
@@ -4793,11 +4812,17 @@ public theorem deck_script_constant : deckScript =
   addEventListener(\"hashchange\", readHash);
   for (const event of [\"wheel\", \"touchstart\", \"pointerdown\"])
     addEventListener(event, () => { destination = null; swiped = true; }, { passive: true });
+  addEventListener(\"focusin\", () => { swiped = false; });
   const fit = () => {
+    const shown = [];
     for (const d of document.querySelectorAll(\"section.slide .display\")) {
-      if (!d.querySelector(\"math\")) continue;
-      d.classList.remove(\"wide\");
-      const wide = d.scrollWidth > d.clientWidth + 1;
+      if (!d.querySelector(\"math\") || d.clientWidth === 0) continue;
+      const r = document.createRange();
+      r.selectNodeContents(d);
+      shown.push([d, r.getBoundingClientRect().width > d.clientWidth + 1]);
+    }
+    for (const [d, wide] of shown) {
+      if (d.classList.contains(\"wide\") === wide) continue;
       d.classList.toggle(\"wide\", wide);
       if (wide) d.tabIndex = 0; else d.removeAttribute(\"tabindex\");
     }

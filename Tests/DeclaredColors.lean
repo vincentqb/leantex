@@ -210,10 +210,12 @@ public def stageScrollChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "stage scroll: a deck's display the pager finds wide scrolls sideways in its own box, its ink's height held"
     (hasStr deckPage ("section.slide .display.wide { overflow-x: auto; overflow-y: hidden; " ++
       "padding-block: 0.25em; }"))
-  t "stage scroll: the pager marks a formula display wider than its stage and makes it a tab stop"
-    (hasStr HtmlDoc.deckScript "if (!d.querySelector(\"math\")) continue;" &&
+  t "stage scroll: the pager marks a shown formula display wider than its stage, a step's again as it \
+shows, and makes it a tab stop"
+    (hasStr HtmlDoc.deckScript "if (!d.querySelector(\"math\") || d.clientWidth === 0) continue;" &&
       hasStr HtmlDoc.deckScript "d.classList.toggle(\"wide\", wide);" &&
       hasStr HtmlDoc.deckScript "if (wide) d.tabIndex = 0; else d.removeAttribute(\"tabindex\");" &&
+      hasStr HtmlDoc.deckScript "requestAnimationFrame(() => fit());" &&
       hasStr HtmlDoc.deckScript "addEventListener(\"resize\", fit);")
   let margin := "scroll-margin-inline-end: 100vw;"
   t "stage scroll: a page-less section's heading stands at its stage's corner"
@@ -251,14 +253,19 @@ public def stageFocusChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "stage focus: a theme's generated focus colour leaves the mark in the stage's ink"
     (!hasStr (HtmlDoc.emit {} themedDoc).1 roleMark)
   let page := (HtmlDoc.emit {} deckDoc).1
-  t "stage focus: a focused stage draws no outline of its own"
-    (hasStr page "html section.slide:focus-visible, html section.section-page:focus-visible { outline: none; }")
+  t "stage focus: a focused stage draws no outline of its own, and stacks its mark beneath its content"
+    (hasStr page ("html section.slide:focus-visible, html section.section-page:focus-visible { " ++
+      "outline: none; isolation: isolate; }"))
   let safe := "var(--safearea, 6vmin)"
   t "stage focus: the mark is a border down the middle half of each side margin, in the middle of the safe area, else clear of the content, else at the side"
     (hasStr page ("html section.slide:focus-visible::before, html section.section-page:focus-visible::before { " ++
       "content: \"\"; position: sticky; top: 25dvh; flex: none; align-self: stretch; height: 50dvh; " ++
       s!"margin: 0 calc(50% - 50vw + max(0px, min(calc(0.5 * {safe}), calc({safe} - 2px)))) -50dvh; " ++
-      "border-inline: 2px solid currentColor; pointer-events: none; }"))
+      "border-inline: 2px solid currentColor; pointer-events: none; z-index: -1; }") &&
+      hasStr page ("html section.section-page:focus-visible::before, " ++
+        "html section.slide.title-page:focus-visible::before { position: absolute; top: 25dvh; " ++
+        s!"left: max(0px, min(calc(0.5 * {safe}), calc({safe} - 2px))); " ++
+        s!"right: max(0px, min(calc(0.5 * {safe}), calc({safe} - 2px))); margin: 0; }"))
   t "stage focus: a declared focus colour marks the stages standing on the page"
     (hasStr page roleMark)
   t "stage focus: forced colours keep the mark, so no ring on the stage's edge stands in for it"
