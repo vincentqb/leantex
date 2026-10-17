@@ -1877,8 +1877,10 @@ def linkHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
     return out
   let samples := (List.range 70).map fun n =>
     ByteArray.mk ((Array.range n).map fun i => (i * 37 + n * 11).toUInt8)
+  let long := (List.range 3).map fun r =>
+    ByteArray.mk ((Array.range (12288 + r)).map fun i => (i * i * 131 + i / 7 + r).toUInt8)
   t "base64 agrees with the reference encoder"
-    ((ByteArray.mk ((Array.range 256).map (·.toUInt8)) :: samples).all fun b =>
+    ((ByteArray.mk ((Array.range 256).map (·.toUInt8)) :: samples ++ long).all fun b =>
       HtmlResource.base64 b == reference b)
   t "html void element has no closing tag"
     (Html.render (Html.elem "br" #[]) 0 == "<br>\n")

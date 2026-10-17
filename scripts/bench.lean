@@ -182,7 +182,7 @@ def benchPages (n : Nat) (leantex : String) : IO Unit := do
   let outDir ← IO.FS.createTempDir
   for (label, doc) in [("md-emphasis.md", "testdata/corpus/md-emphasis.md"),
       ("md-code.md", "testdata/corpus/md-code.md"), ("themed.tex", "testdata/corpus/themed.tex")] do
-    bench n s!"leantex  {label} -o html" leantex
+    benchCompared n s!"leantex  {label} -o html" leantex
       #["-q", "build", doc, "-o", (outDir / "page.html").toString]
   IO.FS.removeDirAll outDir
   growthBound "html, 32000 / 8000 stylesheet rules" (← stylesheetHtmlMs n 8000 leantex)

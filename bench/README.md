@@ -359,3 +359,24 @@ compiler before that change against the one after:
 
 Only the shared families change the page's bytes, in its `@font-face` rules and font stacks, and
 `scripts/visualdiff.lean` finds the deck's page unchanged.
+
+## Data URLs — 2026-10-17
+
+A web page carries each image and face program as a base64 data URL. Each character of the URL was
+found through a chain of comparisons on its sextet, which mispredicts on most bytes, and pushed
+onto the URL by a call. The four characters of each group of three bytes are now read from the
+alphabet by index and written over a buffer of the URL's length filled with padding, held ASCII
+throughout so its string needs no validation. Median of 5 per round, two rounds at load 90-135,
+`LEANTEX_BENCH_COMPARE_BINARY` naming the parent's compiler so the two alternate (the pages the
+median of 9):
+
+| Build | before | after |
+|---|---:|---:|
+| Flat raster deck HTML, cold | 1,962, 1,837 ms (html 1,652, 1,446) | 1,090, 927 ms (html 776, 669) |
+| Flat raster deck HTML, warm | 1,880, 1,950 ms (html 1,618, 1,601) | 1,091, 931 ms (html 792, 674) |
+| Raster deck HTML, warm | 152, 153 ms (html 90, 90) | 122, 122 ms (html 57, 57) |
+| Talk deck HTML, warm | 526, 439 ms (html 198, 177) | 477, 399 ms (html 161, 137) |
+| md-code.md to HTML | 251, 253 ms | 230, 217 ms |
+
+The cold talk deck, md-emphasis.md, themed.tex and every PDF build move within the host's noise.
+The artifacts are byte-identical before and after.

@@ -54,30 +54,129 @@ private theorem ascii_char (n : Nat) (h : n < 128) :
   · simp [UInt32.le_iff_toNat_le]; omega
   · simp [UInt32.toUInt8, UInt8.ofNat]
 
-/-- Bytes kept valid UTF-8 as they grow, so the string they spell needs no validation. -/
-private abbrev Utf8Bytes := { b : ByteArray // b.IsValidUTF8 }
+/-- `n` bytes, each ASCII, so the string they spell needs no validation. -/
+private abbrev AsciiOf (n : Nat) := { b : ByteArray // b.size = n ∧ ∀ i (h : i < b.size), b[i] < 128 }
 
-@[inline] private def pushAscii (out : Utf8Bytes) (x : UInt8) (h : x < 128) : Utf8Bytes :=
-  ⟨out.1.push x, by
-    obtain ⟨h1, h2⟩ := ascii_char x.toNat h
-    have := out.2.push h1
-    rwa [h2, Nat.toUInt8_eq, UInt8.ofNat_toNat] at this⟩
+/-- Bytes each ASCII spell a string, a character per byte. -/
+private theorem isValidUTF8_of_ascii (b : ByteArray) (h : ∀ i (hi : i < b.size), b[i] < 128) :
+    b.IsValidUTF8 := by
+  refine .intro (b.data.toList.map fun x => Char.ofNat x.toNat) ?_
+  have hl : ∀ l : List UInt8, (∀ x ∈ l, x < 128) →
+      (l.map fun x => Char.ofNat x.toNat).flatMap String.utf8EncodeChar = l := by
+    intro l hl
+    induction l with
+    | nil => rfl
+    | cons x xs ih =>
+      have hx : x < 128 := hl x (List.mem_cons_self ..)
+      obtain ⟨h1, h2⟩ := ascii_char x.toNat hx
+      have hv : (Char.ofNat x.toNat).val.toUInt8 = x := by
+        have h3 : (Char.ofNat x.toNat).val.toUInt8 = x.toNat.toUInt8 := h2
+        rw [h3, Nat.toUInt8_eq, UInt8.ofNat_toNat]
+      simp only [List.map_cons, List.flatMap_cons, String.utf8EncodeChar_eq_singleton h1, hv,
+        List.singleton_append]
+      rw [ih fun y hy => hl y (List.mem_cons_of_mem _ hy)]
+  have hall : ∀ x ∈ b.data.toList, x < 128 := by
+    intro x hx
+    obtain ⟨i, hi, rfl⟩ := List.mem_iff_getElem.mp hx
+    have hi' : i < b.size := by simpa [← ByteArray.size_data] using hi
+    simpa [ByteArray.getElem_eq_getElem_data] using h i hi'
+  rw [List.utf8Encode, hl _ hall]
+  ext1
+  simp
 
-public def base64 (bytes : ByteArray) : String := Id.run do
-  let mut out : Utf8Bytes :=
-    ⟨ByteArray.emptyWithCapacity ((bytes.size + 2) / 3 * 4), ByteArray.isValidUTF8_empty⟩
-  for i in [0:(bytes.size + 2) / 3] do
-    let a := byteAt bytes (i * 3)
-    let b := byteAt bytes (i * 3 + 1)
-    let c := byteAt bytes (i * 3 + 2)
-    out := pushAscii out (sextet (a >>> 2)) (sextet_lt _)
-    out := pushAscii out (sextet (((a &&& 3) <<< 4) ||| (b >>> 4))) (sextet_lt _)
-    out := if i * 3 + 1 < bytes.size then
-        pushAscii out (sextet (((b &&& 15) <<< 2) ||| (c >>> 6))) (sextet_lt _)
-      else pushAscii out 61 (by decide)
-    out := if i * 3 + 2 < bytes.size then pushAscii out (sextet (c &&& 63)) (sextet_lt _)
-      else pushAscii out 61 (by decide)
-  return String.fromUTF8 out.1 out.2
+/-- `out` with the ASCII byte `x` at `i`. -/
+@[inline] private def setAscii (out : AsciiOf n) (i : Nat) (x : UInt8) (hx : x < 128)
+    (hi : i < n) : AsciiOf n :=
+  ⟨out.1.set i x (by rw [out.2.1]; exact hi), by
+    have hs : (out.1.set i x (by rw [out.2.1]; exact hi)).size = out.1.size := by
+      simp [← ByteArray.size_data, ByteArray.data_set]
+    refine ⟨hs.trans out.2.1, fun j hj => ?_⟩
+    simp only [ByteArray.getElem_eq_getElem_data, ByteArray.data_set, Array.getElem_set]
+    split
+    · exact hx
+    · exact out.2.2 j (by rw [hs] at hj; exact hj)⟩
+
+/-- `a` doubled until it holds at least `n` bytes. -/
+private def grown (n : Nat) (a : ByteArray) (ha : 0 < a.size) : ByteArray :=
+  if a.size < n then grown n (a ++ a) (by simp; omega) else a
+termination_by n - a.size
+decreasing_by simp; omega
+
+private theorem grown_spec (n : Nat) (a : ByteArray) (ha : 0 < a.size)
+    (h : ∀ i (hi : i < a.size), a[i] < 128) :
+    n ≤ (grown n a ha).size ∧ ∀ i (hi : i < (grown n a ha).size), (grown n a ha)[i] < 128 := by
+  unfold grown
+  split
+  · next hlt =>
+    apply grown_spec
+    intro i hi
+    by_cases hia : i < a.size
+    · rw [ByteArray.getElem_append_left hia]; exact h i hia
+    · rw [ByteArray.getElem_append_right (by omega)]; exact h _ _
+  · next hge => exact ⟨by omega, h⟩
+termination_by n - a.size
+decreasing_by simp; omega
+
+/-- `n` bytes of `=`, base64's padding. -/
+private def pads (n : Nat) : AsciiOf n :=
+  let one : ByteArray := ⟨#[61]⟩
+  have hone : ∀ i (hi : i < one.size), one[i] < 128 := by
+    intro i hi
+    have : i = 0 := by simp [one, ByteArray.size] at hi; omega
+    have h61 : one[i] = 61 := by subst this; rfl
+    rw [h61]; decide
+  let spec := grown_spec n one (by decide) hone
+  let a := grown n one (by decide)
+  ⟨a.extract 0 n, by
+    refine ⟨by simp [a]; omega, fun i hi => ?_⟩
+    rw [ByteArray.getElem_extract]
+    exact spec.2 _ _⟩
+
+/-- RFC 4648's base64 alphabet as bytes, read by a sextet's index. -/
+private def alphabet : ByteArray := ⟨(Array.range 64).map fun k => sextet k.toUInt8⟩
+
+private theorem alphabet_size : alphabet.size = 64 := by
+  simp [alphabet, ← ByteArray.size_data]
+
+/-- The alphabet's character for the low six bits of `k`. -/
+@[inline] private def char (k : UInt32) : UInt8 :=
+  alphabet[(k &&& 63).toNat]'(by
+    rw [alphabet_size, UInt32.toNat_and]
+    exact Nat.lt_of_le_of_lt Nat.and_le_right (by decide))
+
+private theorem char_lt (k : UInt32) : char k < 128 := by
+  simp only [char, alphabet, ByteArray.getElem_eq_getElem_data, Array.getElem_map,
+    Array.getElem_range]
+  exact sextet_lt _
+
+/-- The four characters of each whole group of three bytes from `i`, written from `o`. -/
+private def groups (bytes : ByteArray) (out : AsciiOf n) (i o : Nat) : AsciiOf n :=
+  if h : i + 2 < bytes.size ∧ o + 3 < n then
+    let x := (bytes[i].toUInt32 <<< 16) ||| (bytes[i + 1].toUInt32 <<< 8) ||| bytes[i + 2].toUInt32
+    let out := setAscii out o (char (x >>> 18)) (char_lt _) (by omega)
+    let out := setAscii out (o + 1) (char (x >>> 12)) (char_lt _) (by omega)
+    let out := setAscii out (o + 2) (char (x >>> 6)) (char_lt _) (by omega)
+    let out := setAscii out (o + 3) (char x) (char_lt _) (by omega)
+    groups bytes out (i + 3) (o + 4)
+  else out
+termination_by bytes.size - i
+
+public def base64 (bytes : ByteArray) : String :=
+  let n := (bytes.size + 2) / 3 * 4
+  let out := groups bytes (pads n) 0 0
+  let whole := bytes.size / 3 * 3
+  let o := bytes.size / 3 * 4
+  let a := (byteAt bytes whole).toUInt32
+  let b := (byteAt bytes (whole + 1)).toUInt32
+  let out : AsciiOf n :=
+    if h : whole < bytes.size ∧ o + 1 < n then
+      let out := setAscii out o (char (a >>> 2)) (char_lt _) (by omega)
+      let out := setAscii out (o + 1) (char ((a <<< 4) ||| (b >>> 4))) (char_lt _) h.2
+      if h2 : whole + 1 < bytes.size ∧ o + 2 < n then
+        setAscii out (o + 2) (char (b <<< 2)) (char_lt _) h2.2
+      else out
+    else out
+  String.fromUTF8 out.1 (isValidUTF8_of_ascii out.1 out.2.2)
 
 /-- A resource's data URL (RFC 2397). -/
 public def dataUrl (media : Media) (bytes : ByteArray) : String :=
