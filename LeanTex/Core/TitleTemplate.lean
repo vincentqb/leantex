@@ -2,6 +2,7 @@ module
 
 public import LeanTex.Core.Parse
 public import LeanTex.Core.Ir
+public import LeanTex.Core.Native
 import LeanTex.Core.Picture
 import LeanTex.Core.KeyVal
 
@@ -605,15 +606,13 @@ public def read (fonts : List (String × Font)) (body : Array Parse.Raw) : Optio
     | _ => rd := { rd with unread := rd.unread.push "a statement that is not a fill or a node" }
   return rd
 
-/-- The read template as the engine's own declarations: the ground and title ink as palette
-roles, and one slot per node. -/
-public def native (rd : Read) : String :=
+/-- The read template as the engine's own settings: the ground and title ink as palette roles, and
+one title-page slot per node. -/
+public def settings (rd : Read) : Array Native.Setting :=
   let titleInk := rd.nodes.toList.findSome? fun n =>
     (n.parts.find? (·.datum == some "title")).bind (·.ink)
-  let roles := (rd.ground.map (s!"titlepagebg = {·}")).toList ++
-    (if rd.ground.isSome then (titleInk.map (s!"titlepagefg = {·}")).toList else [])
-  let palette := if roles.isEmpty then "" else
-    "\\palette{ " ++ String.intercalate ", " roles ++ " }"
+  let roles := (rd.ground.map ("titlepagebg", ·)).toList ++
+    (if rd.ground.isSome then (titleInk.map ("titlepagefg", ·)).toList else [])
   let part (p : Part) : String :=
     let ink := match p.ink with
       | some c =>
@@ -640,9 +639,8 @@ public def native (rd : Read) : String :=
         (n.width.map (s!"width = {·}")).toList
       else []) ++
       (if n.pinned then (n.innerSep.map (s!"inner-sep = {·}")).toList else [])
-    "slot = { " ++ String.intercalate ", " fields ++ " }"
-  let style := "\\style{titlepage}{ separator = none" ++
-    String.join (rd.nodes.toList.map fun n => ", " ++ slot n) ++ " }"
-  palette ++ style
+    "{ " ++ String.intercalate ", " fields ++ " }"
+  (if roles.isEmpty then #[] else #[.palette roles.toArray]) ++
+    #[.style "titlepage" (#[("separator", "none")] ++ rd.nodes.map fun n => ("slot", slot n))]
 
 end LeanTex.Core.TitleTemplate

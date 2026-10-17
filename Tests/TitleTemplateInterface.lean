@@ -2,7 +2,7 @@ module
 
 import LeanTex.Core.TitleTemplate
 
-/-! A title-template consumer reads a declared template and emits its native spelling; scanners stay
+/-! A title-template consumer reads a declared template and emits its native settings; scanners stay
 private. -/
 
 open LeanTex.Core
@@ -11,7 +11,7 @@ namespace Tests.TitleTemplateInterface
 
 example : List (String × TitleTemplate.Font) → Array Parse.Raw →
     Option TitleTemplate.Read := TitleTemplate.read
-example : TitleTemplate.Read → String := TitleTemplate.native
+example : TitleTemplate.Read → Array Native.Setting := TitleTemplate.settings
 example : String → Bool := TitleTemplate.fontDecl
 example : Array String → String × String × Option String :=
   TitleTemplate.unplacedLoss

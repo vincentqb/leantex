@@ -6292,8 +6292,8 @@ public def titleUnreadKeys : List String :=
 /-- beamer's three blocks, which a `\style` styles by their kind. -/
 public def blockStyleElements : List String := ["block", "alertblock", "exampleblock"]
 
-/-- The `\style` keys a beamer block reads: its title's `font` and its template. -/
-public def blockStyleKeys : List String := ["font", "shape"]
+/-- The `\style` keys a beamer block reads: its title's `font`, its shape coming from its templates. -/
+public def blockStyleKeys : List String := ["font"]
 
 /-- The headings and lists a document may style, each beside its plural as the document sets it. -/
 private def styleableFlow : List (String × String) :=

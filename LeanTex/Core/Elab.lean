@@ -13501,178 +13501,8 @@ private def styleKeys : List String :=
   ["font", "before", "after", "rule", "rule-position", "rule-thickness", "marker", "indent", "gap",
    "align", "separator", "rule-above", "rule-above-skip", "rule-above-gap",
    "rule-below", "rule-below-gap", "rule-below-skip", "author-font",
-   "author-strut", "body-size", "hover", "focus", "motion", "slot", "color", "shape"] ++
+   "author-strut", "body-size", "hover", "focus", "motion", "slot", "color"] ++
     Ir.listSetKeys
-
-/-- The keys of a block's `shape = {...}`. -/
-private def blockShapeKeys : List String :=
-  ["before", "title", "untitled", "between", "after", "whole", "edge"]
-
-private def blockEdgeKeys : List String :=
-  ["span", "side", "width", "sep", "hang", "color", "height", "depth"]
-
-/-- Reads a title metric: terms in `lh` (the title's `\baselineskip`), `cap`
-(its cap height) and fixed lengths, joined by `+` and `-`. -/
-private def blockMetricOf (src : String) : Option BlockMetric :=
-  let terms := ((src.replace " - " " + -").splitOn "+").map (·.trimAscii.toString)
-  terms.foldlM (init := ({} : BlockMetric)) fun m t =>
-    let milli (v : String) : Option Int :=
-      (Decl.parseDecimal v).map fun (x, sc) => x * 1000 / (sc : Int)
-    if t.isEmpty then none
-    else if t.endsWith "lh" then
-      (milli (t.dropEnd 2).toString).map fun v => { m with lead := m.lead + v }
-    else if t.endsWith "cap" then
-      (milli (t.dropEnd 3).toString).map fun v => { m with cap := m.cap + v }
-    else (Decl.parseLength t).bind fun l =>
-      if l.em == 0 && l.ex == 0 then some { m with sp := m.sp + l.sp } else none
-
-/-- Reads a block's `shape = {...}`, the native spelling of a beamer block
-template. -/
-private def blockShapeOf (ctx : Ctx) (src : String) (pos : Pos) : EM (Option BlockShape) := do
-  let unbrace (src : String) : String :=
-    let t := src.trimAscii.toString
-    if t.startsWith "{" && t.endsWith "}" && t.length ≥ 2
-    then ((t.drop 1).dropEnd 1).toString else t
-  let bad (what : String) : EM Unit :=
-    diag ctx .E0323 s!"a block's 'shape' has {what}" pos
-      (help := "write shape = { before = medskipamount, title = box strut, edge = { span = title, side = left, width = 2pt, sep = 4pt, hang = true, color = accent } }")
-  let lengthOf (v : String) : Option Length :=
-    match Decl.parseValue v ctx.tokens.entries with
-    | some (.glue g) => if g.stretch == {} && g.shrink == {} && !g.fil then some g.width else none
-    | some (.dim d) => some (Dim.Length.ofSp d)
-    | _ =>
-      match Decl.parseLengthExpr ctx.tokens.entries v with
-      | .ok g => if g.stretch == {} && g.shrink == {} && !g.fil then some g.width else none
-      | .error _ => none
-  let skipsOf (v : String) : Option (Array BlockSkip) :=
-    let items := ((unbrace v).splitOn "+").map (·.trimAscii.toString) |>.filter (!·.isEmpty)
-    items.toArray.mapM fun item =>
-      if ["smallskipamount", "medskipamount", "bigskipamount"].contains item then
-        some (.register item)
-      else (Decl.parseGlue item).map .glue
-  let mut sh : BlockShape := {}
-  let mut ok := true
-  for entry in Decl.splitEntries (unbrace src) do
-    match Decl.splitEntry entry with
-    | none => ok := false; bad s!"an entry that is not key = value: {entry.quote}"
-    | some (k, v) =>
-      let vt := v.trimAscii.toString
-      match k with
-      | "before" | "between" | "after" =>
-        match skipsOf vt with
-        | some sk =>
-          if k == "before" then sh := { sh with before := sk }
-          else if k == "between" then sh := { sh with between := sk }
-          else sh := { sh with after := sk }
-        | none => ok := false; bad s!"'{k}' that is not skip registers or glues joined by +: {vt.quote}"
-      | "title" =>
-        let words := (vt.splitOn " ").filter (!·.isEmpty)
-        if words == ["plain"] then sh := { sh with title := {} }
-        else if words.all (["box", "strut", "parskip"].contains ·) then
-          sh := { sh with title := { boxed := words.contains "box", strut := words.contains "strut",
-                                     parskip := words.contains "parskip" } }
-        else ok := false; bad s!"a 'title' that is not plain or flags among box, strut, parskip: {vt.quote}"
-      | "untitled" =>
-        if vt == "box" then sh := { sh with bare := none }
-        else if vt.startsWith "{" then
-          let mut bare : BlockBare := {}
-          for sub in Decl.splitEntries (unbrace vt) do
-            match Decl.splitEntry sub with
-            | some (uk, uv) =>
-              match uk, skipsOf uv.trimAscii.toString with
-              | "before", some sk => bare := { bare with before := sk }
-              | "between", some sk => bare := { bare with between := sk }
-              | _, _ =>
-                ok := false
-                bad s!"an 'untitled' entry that is not before or between skips: {sub.quote}"
-            | none => ok := false; bad s!"an 'untitled' entry that is not key = value: {sub.quote}"
-          sh := { sh with bare := some bare }
-        else ok := false; bad s!"an 'untitled' that is neither box nor a group of skips: {vt.quote}"
-      | "whole" =>
-        if vt == "parskip" then sh := { sh with whole := some true }
-        else if vt == "plain" then sh := { sh with whole := some false }
-        else ok := false; bad s!"a 'whole' that is neither parskip nor plain: {vt.quote}"
-      | "edge" =>
-        let mut span : Option BlockSpan := none
-        let mut side : FlushSide := .left
-        let mut width : Option Length := none
-        let mut sep : Length := {}
-        let mut hang := true
-        let mut color : Option (Ir.Color × Option ColorRef) := none
-        let mut height : Option BlockMetric := none
-        let mut depth : Option BlockMetric := none
-        for sub in Decl.splitEntries (unbrace v) do
-          match Decl.splitEntry sub with
-          | none => ok := false; bad s!"an edge entry that is not key = value: {sub.quote}"
-          | some (ek, ev) =>
-            let et := ev.trimAscii.toString
-            match ek with
-            | "span" =>
-              if et == "title" then span := some .title
-              else if et == "whole" then span := some .whole
-              else ok := false; bad s!"an edge 'span' that is neither title nor whole: {et.quote}"
-            | "side" =>
-              if et == "left" then side := .left
-              else if et == "right" then side := .right
-              else ok := false; bad s!"an edge 'side' that is neither left nor right: {et.quote}"
-            | "width" =>
-              match lengthOf et with
-              | some l => width := some l
-              | none => ok := false; bad s!"an edge 'width' that is not a length: {et.quote}"
-            | "sep" =>
-              match lengthOf et with
-              | some l => sep := l
-              | none => ok := false; bad s!"an edge 'sep' that is not a length: {et.quote}"
-            | "hang" =>
-              if et == "true" then hang := true
-              else if et == "false" then hang := false
-              else ok := false; bad s!"an edge 'hang' that is neither true nor false: {et.quote}"
-            | "color" =>
-              match ← readColor ctx ctx.palette none et pos with
-              | .resolved c token => color := some (c, token)
-              | .rejected => ok := false
-              | .missing =>
-                ok := false
-                diag ctx .E0326 s!"'{et}' is not in the palette" pos
-            | "height" | "depth" =>
-              match blockMetricOf et with
-              | some m => if ek == "height" then height := some m else depth := some m
-              | none =>
-                ok := false
-                bad s!"an edge '{ek}' that is not a sum of lh, cap and fixed lengths: {et.quote}"
-            | _ =>
-              ok := false
-              modify fun st' => { st' with
-                diags := st'.diags.push (Decl.unknownKey ctx.file "block edge" ek blockEdgeKeys pos) }
-        let reach : Option BlockReach := match height, depth, span with
-          | none, none, _ => some .box
-          | some a, some b, some _ => some (.lines a b)
-          | _, _, _ => none
-        match span, width, color, reach with
-        | some sp, some w, some (c, n), some r =>
-          let wg : SymGlue := { width := w }
-          let sg : SymGlue := { width := sep }
-          let edge : BlockEdge :=
-            { span := sp, side := side, width := wg, sep := sg, hang := hang, color := c, name := n
-              reach := r }
-          sh := { sh with edges := sh.edges.push edge }
-        | _, _, _, none =>
-          ok := false
-          bad "an edge reaching by lines with no 'height' or 'depth'"
-        | _, _, _, _ => ok := false; bad "an edge without its span, width or color"
-      | _ =>
-        ok := false
-        modify fun st' => { st' with
-          diags := st'.diags.push (Decl.unknownKey ctx.file "block shape" k blockShapeKeys pos) }
-  -- Lines reach by their struts: unstrutted, they stand as tall as their ink.
-  if sh.edges.any (·.reach matches .lines ..) && !(sh.title.boxed && sh.title.strut) then
-    ok := false
-    bad "an edge reaching by lines beside a title that is not a box its struts bound"
-  if sh.edges.any (fun e => e.span == .whole && e.reach matches .lines ..) &&
-      (sh.whole.isSome || sh.edges.any fun e => e.span == .whole && e.reach matches .lines .. && !e.hang) then
-    ok := false
-    bad "an edge reaching by the block's lines inside its line or beside a box holding title and body"
-  return if ok then some sh else none
 
 /-- The keys of one `slot = {...}` group in `\style{titlepage}`. -/
 private def titleSlotKeys : List String :=
@@ -13805,12 +13635,6 @@ list, kind or level, and its other keys on the kind's own element")
         else
           diag ctx .E0323 s!"'body-size' in '\\style' expects a size name, got '{v}'" pos
             (help := "sizes: tiny, scriptsize, footnotesize, small, normalsize, large, Large")
-      | "shape" =>
-        if !Ir.blockStyleElements.contains element then
-          diag ctx .E0323 s!"'shape' in '\\style' belongs to a beamer block, not '{element}'" pos
-            (help := "write \\style{block}{ shape = {...} }")
-        else if let some sh ← blockShapeOf ctx valueSrc pos then
-          st := { st with shape := some sh }
       | "rule" =>
         if let some v ← asColor then st := { st with rule := some v }
       | "rule-thickness" => st := { st with ruleThickness := ← asLength }
@@ -16225,11 +16049,34 @@ public theorem runDocBody_recovered_word_exact (plan : DocBodyPlan) (st : ESt) (
     exact recovered_para_census plan.ctx wordPos word lang ds
   · exact recovered_para_census plan.ctx wordPos word lang ds
 
+/-- A block kind's shape as its templates read it, each rule painted by the palette entry it names. -/
+private def applyBlockShape (s : PreState) (d : Compat.BlockShapeDecl) : EM PreState := do
+  let ctx := { s.ctx with file := d.file }
+  let mut edges : Array BlockEdge := #[]
+  for (e, i) in d.read.edges.zipIdx do
+    let role := d.colors.getD i "fg"
+    match ← readColor ctx ctx.palette none role d.pos with
+    | .resolved c token =>
+      edges := edges.push { span := e.span, side := e.side, width := { width := e.width }
+                            sep := { width := e.sep }, hang := e.hang, color := c, name := token
+                            reach := e.reach }
+    | .rejected => return s
+    | .missing =>
+      diag ctx .E0326 s!"'{role}' is not in the palette" d.pos
+      return s
+  let r := d.read
+  let shape : BlockShape := { before := r.before, title := r.title, bare := r.bare
+                              between := r.between, after := r.after, whole := r.whole, edges }
+  let st : ElementStyle := (s.styles.find? d.element).getD {}
+  noteDeclared ctx "style" d.element
+  noteSetting ctx (.style d.element) d.pos
+  return { s with styles := s.styles.declare d.element { st with shape := some shape } }
+
 private def beginDoc (file : String) (raws : Array Raw) (picPre : String)
     (picSets : Array (Span × Array Raw)) (picMacros : Array (String × String))
     (picMetric : Ir.Pic.LabelMetric) (picWithdrawn : Array String)
-    (listingReplies : Array ListingReply.Answer) (profile : Option Icc.Transform := none) :
-    EM DocPreamble := do
+    (listingReplies : Array ListingReply.Answer) (blockShapes : Array Compat.BlockShapeDecl)
+    (profile : Option Icc.Transform := none) : EM DocPreamble := do
   let docIdx := raws.findIdx? fun r =>
     match r with
     | .env "document" _ _ => true
@@ -16271,6 +16118,8 @@ private def beginDoc (file : String) (raws : Array Raw) (picPre : String)
                         withdrawn := picWithdrawn, macros := picMacros
                         sets := picSets, graphics := Compat.graphicsPath file raws } }
       palette := shown }
+  -- The templates' shapes stand where the preamble ends, past every declaration of its own.
+  let s ← if docIdx.isSome then blockShapes.foldlM applyBlockShape s else pure s
   return { state := s, decls, body, trailing }
 
 private def prepareStyledBody (file : String) (decls : Array PDecl)
@@ -16610,9 +16459,10 @@ public theorem finishPreamble_run_congr (file : String) (preamble : DocPreamble)
 private def elabDocCore (file : String) (raws : Array Raw) (picPre : String)
     (picSets : Array (Span × Array Raw)) (picMacros : Array (String × String))
     (picMetric : Ir.Pic.LabelMetric) (picWithdrawn : Array String)
-    (listingReplies : Array ListingReply.Answer) :
+    (listingReplies : Array ListingReply.Answer) (blockShapes : Array Compat.BlockShapeDecl) :
     EM (Doc × Ir.RefTable × PictureReportContext) := do
   let preamble ← beginDoc file raws picPre picSets picMacros picMetric picWithdrawn listingReplies
+    blockShapes
   finishPreamble file preamble
 
 /-- Elaborates a document and names the unread settings of its engine-drawn
@@ -16622,10 +16472,12 @@ public def elabDoc (file : String) (raws : Array Raw) (picPre : String := "")
     (picMacros : Array (String × String) := #[])
     (picMetric : Ir.Pic.LabelMetric := fun _ _ => {})
     (picWithdrawn : Array String := #[])
-    (listingReplies : Array ListingReply.Answer := #[]) :
+    (listingReplies : Array ListingReply.Answer := #[])
+    (blockShapes : Array Compat.BlockShapeDecl := #[]) :
     EM (Doc × Ir.RefTable) := fun initial =>
   let ((doc, table, report), st) :=
-    (elabDocCore file raws picPre picSets picMacros picMetric picWithdrawn listingReplies).run initial
+    (elabDocCore file raws picPre picSets picMacros picMetric picWithdrawn listingReplies
+      blockShapes).run initial
   ((doc, table), finishPictureKeys report doc picSets st)
 
 /-- Where a document's requests were declared, for the driver's missing-file
@@ -16679,6 +16531,8 @@ public structure Prepared where
   listNotes : Array Nat := #[]
   /-- The declared output profile's transform, which the host read for this input. -/
   profile : Option Icc.Transform := none
+  /-- The block shapes beamer's templates read, applied where the preamble ends. -/
+  blockShapes : Array Compat.BlockShapeDecl := #[]
 
 /-- The name a definer's head binds, when its next item (past spaces and a
 `*`) is a one-word group. -/
@@ -16779,15 +16633,16 @@ output, with the caller's scans. -/
 public def prepareRewritten (file : String) (picScan : Compat.BoundaryScan)
     (picMacros : Array (String × String)) (sourceTriggers : Compat.SourceTriggers)
     (priorDiags : Array Diag)
-    (rewritten : Array Raw × Array Diag × Array String)
+    (rewritten : Array Raw × Array Diag × Array String × Array Compat.BlockShapeDecl)
     (inputAttempts : Array Compat.InputAttempt := #[]) (mentions : Array String := #[]) :
     Prepared :=
-  let (raws, compatDiags, warned) := rewritten
+  let (raws, compatDiags, warned, blockShapes) := rewritten
   let (raws, textDiags, warned) := Compat.rewriteText file raws warned
   { raws := raws, picPre := picScan.pre, picSets := picScan.sets
     picMacros := picMacros, warned := warned
     compatDiags := priorDiags ++ compatDiags ++ textDiags
-    sourceTriggers := sourceTriggers, inputAttempts := inputAttempts, mentions := mentions }
+    sourceTriggers := sourceTriggers, inputAttempts := inputAttempts, mentions := mentions
+    blockShapes := blockShapes }
 
 /-- Prepares a document whose macro and input execution already ran. -/
 public def prepareExecuted (file : String) (executed : Compat.Executed) : Prepared :=
@@ -16800,13 +16655,13 @@ public def prepareExecuted (file : String) (executed : Compat.Executed) : Prepar
 private theorem prepareRewritten_carried_exact (file : String)
     (scan : Compat.BoundaryScan) (macros : Array (String × String))
     (triggers : Compat.SourceTriggers) (prior : Array Diag)
-    (rewritten : Array Raw × Array Diag × Array String)
+    (rewritten : Array Raw × Array Diag × Array String × Array Compat.BlockShapeDecl)
     (attempts : Array Compat.InputAttempt) (mentions : Array String) :
     (prepareRewritten file scan macros triggers prior rewritten attempts mentions).inputAttempts =
         attempts ∧
       (prepareRewritten file scan macros triggers prior rewritten attempts mentions).sourceTriggers =
         triggers := by
-  rcases rewritten with ⟨raws, diags, warned⟩
+  rcases rewritten with ⟨raws, diags, warned, shapes⟩
   unfold prepareRewritten
   cases Compat.rewriteText file raws warned
   exact ⟨rfl, rfl⟩
@@ -16894,7 +16749,7 @@ public def preambleDoc (file : String) (p : Prepared) : Doc :=
   let raws := match docIdx with
     | some idx => (p.raws.extract 0 idx).push (.env "document" #[] { line := 0, col := 0 })
     | none => #[.env "document" #[] { line := 0, col := 0 }]
-  ((elabDoc file raws p.picPre p.picSets p.picMacros).run
+  ((elabDoc file raws p.picPre p.picSets p.picMacros (blockShapes := p.blockShapes)).run
     { warnedUnknown := p.warned }).1.1
 
 /-- An unlocated report for a recovery that arrived without its producer's
@@ -17049,7 +16904,8 @@ public def preparedPreamble (file : String) (p : Prepared)
     (picWithdrawn : Array String := #[]) : DocPreamble × ESt :=
   -- Starts from the rewrite's warn-once keys, so no warning is said twice.
   (beginDoc file p.raws p.picPre p.picSets p.picMacros picMetric picWithdrawn
-    p.listingReplies p.profile).run { warnedUnknown := p.warned, ctr := { listNotes := p.listNotes } }
+    p.listingReplies p.blockShapes p.profile).run
+      { warnedUnknown := p.warned, ctr := { listNotes := p.listNotes } }
 
 /-- The body plan and state after the declaration fold and class defaults. -/
 public def preparedBody (file : String) (p : Prepared)

@@ -1290,8 +1290,8 @@ private def projectionChecks (ref : IO.Ref (List String)) : IO Unit := do
         check ref s!"block template {name} {kind.name}: the page reads the rule's palette entry"
           (e.ink doc.palette == e.color)
 
-/-- A template outside the vocabulary is not applied and named once, and the native spelling reads
-back as the record. -/
+/-- A template outside the vocabulary is not applied and named once, and a block's shape comes from
+its templates alone: a document's `shape` key is no key of `\style`. -/
 private def readingChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   for (name, src) in sources do
     let (_, diags) := Elab.run s!"block-template-{name}.tex" src
@@ -1307,50 +1307,12 @@ private def readingChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : 
   check ref "block template: an unread template's blocks keep the default pair"
     ((out.pages[0]?.map fun p => (p.fills.filter (·.color == edgeColor)).size) == some 0 &&
       ((Elab.run "block-template-unread.tex" boxed).1.styles.find? "block").bind (·.shape) == none)
-  -- The native spelling round-trips, every field down to its emptiest form.
-  let reads : List (String × Ir.BlockShape) :=
-    [("{ title = plain, untitled = {} }", { title := {}, bare := some {} }),
-     ("{ title = plain, untitled = { before = medskipamount + 5pt, between = 3pt } }",
-      { title := {}, bare := some { before := #[.register "medskipamount", .glue { width := .ofSp (Dim.pt 5) }]
-                                    between := #[.glue { width := .ofSp (Dim.pt 3) }] } }),
-     ("{ title = box strut parskip, untitled = box, before = medskipamount + 2pt, " ++
-       "between = smallskipamount, after = bigskipamount, whole = parskip, " ++
-       "edge = { span = whole, side = right, width = 0.25em, sep = 3pt, hang = false, color = accent } }",
-      { title := { boxed := true, strut := true, parskip := true }, bare := none
-        before := #[.register "medskipamount", .glue { width := .ofSp (Dim.pt 2) }]
-        between := #[.register "smallskipamount"], after := #[.register "bigskipamount"]
-        whole := some true
-        edges := #[{ span := .whole, side := .right, width := { width := { em := 250 } }
-                     sep := { width := .ofSp (Dim.pt 3) }, hang := false
-                     color := { r := 0x12, g := 0x34, b := 0x56 }, name := some (.role .accent) }] }),
-     ("{ title = box strut parskip, untitled = {}, edge = { span = title, side = left, " ++
-       "width = 0.3em, sep = 0.6em, hang = true, color = accent, height = -0.5lh + 0.5cap, " ++
-       "depth = 0.5lh - 0.5cap - 1pt } }",
-      { title := { boxed := true, strut := true, parskip := true }, bare := some {}
-        edges := #[{ span := .title, side := .left, width := { width := { em := 300 } }
-                     sep := { width := { em := 600 } }, hang := true
-                     color := { r := 0x12, g := 0x34, b := 0x56 }, name := some (.role .accent)
-                     reach := .lines { lead := -500, cap := 500 }
-                       { lead := 500, cap := -500, sp := -Dim.pt 1 } }] }),
-     ("{ title = box strut parskip, untitled = { before = medskipamount }, before = medskipamount, " ++
-       "after = smallskipamount, edge = { span = whole, side = left, width = 0.3em, sep = 0.6em, " ++
-       "hang = true, color = accent, height = -0.5lh + 0.5cap, depth = 0.5lh - 0.5cap } }",
-      { title := { boxed := true, strut := true, parskip := true }
-        bare := some { before := #[.register "medskipamount"] }
-        before := #[.register "medskipamount"], after := #[.register "smallskipamount"]
-        edges := #[{ span := .whole, side := .left, width := { width := { em := 300 } }
-                     sep := { width := { em := 600 } }, hang := true
-                     color := { r := 0x12, g := 0x34, b := 0x56 }, name := some (.role .accent)
-                     reach := .lines { lead := -500, cap := 500 } { lead := 500, cap := -500 } }] })]
-  for (src, want) in reads do
-    let doc := (Elab.run "block-shape.tex"
-      ("\\documentclass{slides}\n\\palette{ accent = #123456 }\n\\style{block}{ shape = " ++ src ++
-        " }\n\\begin{document}\n\\end{document}\n")).1
-    -- The colour is the palette's own reading of its entry.
-    let accent := (doc.palette.find? "accent").getD Ir.Color.black
-    let want := { want with edges := want.edges.map fun e => { e with color := accent } }
-    check ref s!"block template: the native shape {src} reads back"
-      (((doc.styles.find? "block").bind (·.shape)) == some want)
+  let (doc, ds) := Elab.run "block-shape.tex"
+    ("\\documentclass{slides}\n\\palette{ accent = #123456 }\n\\style{block}{ shape = " ++
+      "{ title = plain, untitled = {} } }\n\\begin{document}\n\\end{document}\n")
+  check ref "block template: a document's shape key sets no shape and is named as no key"
+    (((doc.styles.find? "block").bind (·.shape)).isNone &&
+      ds.any fun d => d.code == "E0322" && hasStr d.message "'shape'")
 
 /-- Rules the reading does not hold beside the title's lines are named once, their blocks keeping
 beamer's default pair. -/
@@ -1388,13 +1350,6 @@ private def capitalReadingChecks (ref : IO.Ref (List String)) : IO Unit := do
   let reaches := ((Ir.blockShapeOf doc.styles .block).map (·.edges.map (·.reach))).getD #[]
   check ref "capitals: the plain kind's rule reads half the capitals' leading past its lines"
     (reaches == #[.lines Ir.BlockMetric.halfLeading.neg Ir.BlockMetric.halfLeading])
-  let (_, nd) := Elab.run "block-shape-unstrutted.tex"
-    ("\\documentclass{slides}\n\\palette{ accent = #123456 }\n\\style{block}{ shape = " ++
-      "{ title = box parskip, untitled = {}, edge = { span = title, side = left, width = 0.3em, " ++
-      "sep = 0.6em, hang = true, color = accent, height = -0.5lh + 0.5cap, depth = 0.5lh - 0.5cap } } }\n" ++
-      "\\begin{document}\n\\end{document}\n")
-  check ref s!"capitals: the native spelling refuses lines beside a title no strut bounds ({nd.map (·.message)})"
-    (nd.any fun d => d.code == "E0323" && hasStr d.message "a title that is not a box its struts bound")
 
 /-- A register a template assigns is no length of the document's: a document's read of it is refused
 by name. -/
@@ -2303,6 +2258,12 @@ private def wholeBarReadingChecks (ref : IO.Ref (List String)) : IO Unit := do
      ("starred", src.replace "{\\usebeamercolor[bg]{probe edge}%\n      \\raisebox"
          "{\\usebeamercolor*{probe edge} \\usebeamercolor[bg]{probe edge}%\n      \\raisebox",
        "a box beside the body other than a rule standing on its last line"),
+     ("unhung", src.replace "    \\setbox\\probe@title\\vbox{\\hsize\\linewidth\n"
+         "    \\probe@wd .3em\n    \\probe@sep .6em\n    \\setbox\\probe@title\\vbox{\\hsize\\dimexpr\\linewidth-\\probe@wd-\\probe@sep\\relax\n"
+         |>.replace "    \\noindent\\llap{{\\usebeamercolor[bg]{probe edge}%\n" "    \\noindent{\\usebeamercolor[bg]{probe edge}%\n"
+         |>.replace "          depth \\probe@inset}%\n      \\hskip \\probe@sep}%\n"
+           "          depth \\probe@inset}%\n      \\hskip \\probe@sep\n",
+       "a rule reaching by the block's lines inside its line"),
      ("forward", src.replace "\\newcommand{\\probe@peel}{%\n"
          "\\newcommand{\\probe@peel}{\\probe@peelone\\probe@peelone}\n\\newcommand{\\probe@peelone}{%\n"
          |>.replace "\\probe@trail}\\probe@peel\n" "\\probe@trail}\n",
@@ -2360,17 +2321,6 @@ private def wholeBarReadingChecks (ref : IO.Ref (List String)) : IO Unit := do
     (drifted != gapped && named.size == 1 && named.all (hasStr ·.message "changes \\ifprobe@gap"))
   check ref "whole bar: the blocks the body's flag changes keep the default pair"
     (((ddoc.styles.find? "block").bind (·.shape)).isNone)
-  let native (edge : String) (whole : String) : String :=
-    "\\documentclass{slides}\n\\palette{ accent = #123456 }\n\\style{block}{ shape = " ++
-      "{ title = box strut parskip, untitled = {}" ++ whole ++ ", edge = { span = whole, side = left, " ++
-      "width = 0.3em, sep = 0.6em, " ++ edge ++ ", color = accent, height = -0.5lh + 0.5cap, " ++
-      "depth = 0.5lh - 0.5cap } } }\n\\begin{document}\n\\end{document}\n"
-  for (name, src, why) in [("boxed", native "hang = true" ", whole = parskip",
-        "beside a box holding title and body"),
-      ("inside", native "hang = false" "", "inside its line")] do
-    let (_, nd) := Elab.run s!"block-shape-whole-{name}.tex" src
-    check ref s!"whole bar: the native spelling refuses lines beside the whole block {name} ({nd.map (·.message)})"
-      (nd.any fun d => d.code == "E0323" && hasStr d.message why)
 
 /-- A block template's own macro names no loss of its own unless the document's text also uses it. -/
 private def templateCodeChecks (ref : IO.Ref (List String)) : IO Unit := do

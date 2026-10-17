@@ -127,11 +127,11 @@ attribute [local irreducible] Compat.rewriteText in
 public theorem prepareRewritten_diags_covers (file : String)
     (scan : Compat.BoundaryScan) (macros : Array (String × String))
     (triggers : Compat.SourceTriggers) (prior : Array Diag)
-    (rewritten : Array Parse.Raw × Array Diag × Array String)
+    (rewritten : Array Parse.Raw × Array Diag × Array String × Array Compat.BlockShapeDecl)
     (attempts : Array Compat.InputAttempt) (mentions : Array String) (d : Diag)
     (h : d ∈ rewritten.2.1) :
     d ∈ (prepareRewritten file scan macros triggers prior rewritten attempts mentions).compatDiags := by
-  rcases rewritten with ⟨raws, diags, warned⟩
+  rcases rewritten with ⟨raws, diags, warned, shapes⟩
   unfold prepareRewritten
   cases Compat.rewriteText file raws warned
   exact Array.mem_append.mpr (Or.inl (Array.mem_append.mpr (Or.inr h)))

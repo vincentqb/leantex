@@ -2067,91 +2067,18 @@ public def read (beginRaws endRaws : Array Raw) (defs : String → Option Macro 
       else if titleEdges.any (fun _ => !title.boxed) then
         .error #["a rule beside a title with no box of its own"]
       else
+        let whole := if t.title.isSome && !untitledBox then u.whole else t.whole
         let spansides := t.edges.map fun e => (e.span, e.side)
         if spansides.toList.eraseDups.length != spansides.size then
           .error #["two rules on one side of one box"]
+        else if t.edges.any lineRule && (whole.isSome || t.edges.any fun e => lineRule e && !e.hang) then
+          .error #["a rule reaching by the block's lines inside its line or beside a box holding \
+title and body"]
         else .ok
           { before := t.before, title := title
             bare := if untitledBox then none else some { before := u.before, between := u.between }
-            between := t.between, after := t.after
-            whole := if t.title.isSome && !untitledBox then u.whole else t.whole
+            between := t.between, after := t.after, whole
             edges := t.edges, titleFont := t.titleFont, titlePaint := t.titlePaint
             bodyFont := t.bodyFont, bodyPaint := t.bodyPaint }
-
-/-- A thousandths value as its shortest decimal: 2500 is `2.5`. -/
-private def milliText (m : Int) : String :=
-  let ip := m.natAbs / 1000
-  let fr := m.natAbs % 1000
-  let sign := if m < 0 then "-" else ""
-  if fr == 0 then s!"{sign}{ip}"
-  else
-    let frs := toString fr
-    let frs := ("".pushn '0' (3 - frs.length)) ++ frs
-    s!"{sign}{ip}.{(frs.dropEndWhile (· == '0')).toString}"
-
-/-- Terms joined as the native declaration joins them: `a + b`, `a - b`. -/
-private def joinTerms : List String → String
-  | [] => "0pt"
-  | p :: ps => ps.foldl (fun acc q =>
-      if q.startsWith "-" then acc ++ " - " ++ (q.drop 1).toString else acc ++ " + " ++ q) p
-
-/-- A length as the native declaration writes it: points where they are
-exact to the thousandth, else scaled points, and the font-relative parts. -/
-private def lengthSrc (l : Length) : String :=
-  let part (v : Int) (unit : String) : Option String :=
-    if v == 0 then none else some (milliText v ++ unit)
-  let pts := if l.sp == 0 then none
-    else if (l.sp * 1000) % Dim.spPerPt == 0 then some (milliText (l.sp * 1000 / Dim.spPerPt) ++ "pt")
-    else some (toString l.sp ++ "sp")
-  joinTerms ([pts, part l.em "em", part l.ex "ex"].filterMap id)
-
-/-- A title metric as the native declaration writes it: its leading in `lh`
-and its cap height in `cap`, CSS's names for the two, and a fixed length. -/
-private def metricSrc (m : Ir.BlockMetric) : String :=
-  let part (v : Int) (unit : String) : Option String :=
-    if v == 0 then none else some (milliText v ++ unit)
-  joinTerms ([part m.lead "lh", part m.cap "cap",
-    if m.sp == 0 then none else some (lengthSrc (.ofSp m.sp))].filterMap id)
-
-private def glueSrc (g : SymGlue) : String :=
-  let w := lengthSrc g.width
-  let st := if g.stretch == {} then "" else s!" plus {lengthSrc g.stretch}"
-  let sh := if g.shrink == {} then "" else s!" minus {lengthSrc g.shrink}"
-  w ++ st ++ sh
-
-private def skipsSrc (skips : Array Ir.BlockSkip) : String :=
-  String.intercalate " + " (skips.toList.map fun
-    | .register n => n
-    | .glue g => glueSrc g)
-
-/-- The native `shape = {...}` value for a read template, its rules'
-colours the palette entries `color` names, one per rule in order. -/
-public def native (r : Read) (colors : Array String) : String :=
-  let flags := (if r.title.boxed then ["box"] else []) ++
-    (if r.title.strut then ["strut"] else []) ++ (if r.title.parskip then ["parskip"] else [])
-  let title := if flags.isEmpty then "plain" else String.intercalate " " flags
-  let whole := match r.whole with
-    | some true => ", whole = parskip"
-    | some false => ", whole = plain"
-    | none => ""
-  let edges := r.edges.toList.zipIdx.map fun (e, i) =>
-    let span := match e.span with | .title => "title" | .whole => "whole"
-    let side := match e.side with | .left => "left" | .right => "right"
-    let reach := match e.reach with
-      | .lines height depth => s!", height = {metricSrc height}, depth = {metricSrc depth}"
-      | .box => ""
-    s!", edge = \{ span = {span}, side = {side}, width = {lengthSrc e.width}, \
-sep = {lengthSrc e.sep}, hang = {e.hang}, color = {colors.getD i "fg"}{reach} }"
-  let skips (key : String) (sk : Array Ir.BlockSkip) : String :=
-    if sk.isEmpty then "" else s!", {key} = {skipsSrc sk}"
-  let untitled := match r.bare with
-    | none => "box"
-    | some b =>
-      let parts := (if b.before.isEmpty then [] else [s!"before = {skipsSrc b.before}"]) ++
-        (if b.between.isEmpty then [] else [s!"between = {skipsSrc b.between}"])
-      "{" ++ (if parts.isEmpty then "" else " " ++ String.intercalate ", " parts ++ " ") ++ "}"
-  s!"\{ title = {title}, untitled = {untitled}\
-{skips "before" r.before}{skips "between" r.between}{skips "after" r.after}{whole}\
-{String.join edges} }"
 
 end LeanTex.Core.BlockTemplate

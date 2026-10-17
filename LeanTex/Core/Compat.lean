@@ -12,7 +12,7 @@ import LeanTex.Core.PdfDate
 public import LeanTex.Core.Ir
 import LeanTex.Core.BeamerColor
 import LeanTex.Core.TitleTemplate
-import LeanTex.Core.BlockTemplate
+public import LeanTex.Core.BlockTemplate
 public import LeanTex.Core.Tcolorbox
 import LeanTex.Core.LoopProgress
 import LeanTex.Core.EncodingOption
@@ -578,6 +578,15 @@ private structure ListingDefault where
   file : String
   read : Bool := false
 
+/-- A beamer block kind's shape as its templates read it: the element it styles, the palette entry
+each rule paints, and the file and site the templates stand at. -/
+public structure BlockShapeDecl where
+  element : String
+  read : BlockTemplate.Read
+  colors : Array String
+  file : String
+  pos : Pos
+
 private structure St where
   file : String
   diags : Array Diag := #[]
@@ -825,6 +834,8 @@ private structure St where
   /-- beamer's block templates the preamble installs, by element, read as pairs
   where the preamble ends. -/
   beamerTemplates : Array (String × String × Pos × Array Raw) := #[]
+  /-- The block shapes the templates read, handed to the elaborator typed. -/
+  blockShapes : Array BlockShapeDecl := #[]
   /-- Named block templates a `\setbeamertemplate{element}[name]` installs. -/
   beamerTemplateDefs : Array ((String × String) × Array Raw) := #[]
   /-- The families declared beside the three slots, in the
@@ -7923,12 +7934,13 @@ which they run, before a block"]
                   .group (← synth ch) pos, .group (← synth role) pos]
                 colors := colors.push role
               | some (.named n) =>
-                out := out ++ wrap (← synthAt s!"\\palette\{ {role} = {n} }" pos)
+                out := out ++ wrap (← carry (.palette #[(role, n)]) pos)
                 colors := colors.push role
               | none => colors := colors.push "fg"
-            let native := s!"\\style\{{styleEl}}\{ shape = {BlockTemplate.native r colors} }"
-            became s!"{beginEl} / {endEl}" native pos
-            out := out ++ wrap (← synthAt native pos)
+            became s!"{beginEl} / {endEl}" s!"the shape of each '{styleEl}'" pos
+            let decl : BlockShapeDecl :=
+              { element := styleEl, read := r, colors := colors, file := file, pos := pos }
+            write fun st => { st with blockShapes := st.blockShapes.push decl }
             pure #[]
       | some _, none => pure #[s!"its '{endEl}' half, which the document never sets"]
       | none, _ => pure #[s!"its '{beginEl}' half, which the document never sets"]
@@ -8620,17 +8632,15 @@ defines; those blocks keep beamer's default template" pos
         let (sfx, msg, help) := TitleTemplate.mixedLoss datum rd.ground.isSome
         sayOnce ("beamer:setbeamertemplate:title page:" ++ sfx) .W0363 msg pos (help := help)
         match rd.ground with
-        | some ground =>
-          let native := s!"\\palette\{ titlepagebg = {ground} }"
-          return some (← synthAt native pos, k)
+        | some ground => return some (← carry (.palette #[("titlepagebg", ground)]) pos, k)
         | none => return some (#[], k)
       | some rd =>
-        let native := TitleTemplate.native rd
+        let settings := TitleTemplate.settings rd
         -- premise: themeTitleShipChecks — a selected theme font's size reaches the page
         let skips := rd.fonts.map ("beamer:setbeamerfont:" ++ ·)
         write fun st => { st with diags := st.diags.filter fun d =>
           !(d.code == DiagCode.W0104.code && d.subject.any skips.contains) }
-        became "\\setbeamertemplate{title page}" native pos
+        became "\\setbeamertemplate{title page}" (String.join (settings.toList.filterMap (·.note?))) pos
         unless rd.unread.isEmpty do
           sayOnce "beamer:setbeamertemplate:title page" .W0110
             s!"not read from the title-page template: \
@@ -8641,7 +8651,7 @@ defines; those blocks keep beamer's default template" pos
         for (construct, datum) in rd.skipped do
           let (sfx, msg) := TitleTemplate.skippedLoss construct datum
           sayOnce ("beamer:setbeamertemplate:title page:" ++ sfx) .W0104 msg pos
-        return some (← synthAt native pos, k)
+        return some (← settings.foldlM (init := #[]) fun out s => return out ++ (← carry s pos), k)
       | none =>
       -- `\setbeamertemplate{title page}` is beamer's spelling of `\renewcommand{\maketitle}`.
       became "\\setbeamertemplate{title page}" "\\define \\maketitle() {...}" pos
@@ -13511,12 +13521,12 @@ private def finishRewrittenState (result : Array Raw × St) : Array Raw × St :=
 
 /-- The production tail after the compatibility walk. -/
 private def finishRewritten (result : Array Raw × St) :
-    Array Raw × Array Diag × Array String :=
+    Array Raw × Array Diag × Array String × Array BlockShapeDecl :=
   let (out, st) := finishRewrittenState result
   let out := if st.beamerBlockBegin.isEmpty then out
     else blockHookList st.beamerBlockBegin #[] out.toList
   let out := if st.kept.isEmpty then out else Parse.spliceKeptList st.kept #[] out.toList
-  (out, st.diags, st.warned)
+  (out, st.diags, st.warned, st.blockShapes)
 
 attribute [local irreducible] boxRowList boxRowEmit finishDeclarations
   finishRewrittenState in
@@ -13541,11 +13551,13 @@ private theorem finishRewritten_named (result : Array Raw × St) (d : Diag)
 
 /-- Completes a rewrite checkpoint: boxes, running content, deferred hooks,
 counters and block hooks. -/
-public def finishRewrite (cursor : RewriteCursor) : Array Raw × Array Diag × Array String :=
+public def finishRewrite (cursor : RewriteCursor) :
+    Array Raw × Array Diag × Array String × Array BlockShapeDecl :=
   finishRewritten (rewriteCursor cursor)
 
 /-- The compatibility rewrite finished after execution and file fulfilment. -/
-@[expose] public def rewriteExecuted (executed : Executed) : Array Raw × Array Diag × Array String :=
+@[expose] public def rewriteExecuted (executed : Executed) :
+    Array Raw × Array Diag × Array String × Array BlockShapeDecl :=
   finishRewrite (beginRewrite executed)
 
 /-- Names for which the package dispatcher has no native, external-picture or
@@ -13622,7 +13634,8 @@ public theorem executeInputs_package_refusal_contract (reader : InputReader Id)
 /-- A row's control's document completed from the retained body around the row's emission at
 `call` and from the state it leaves. -/
 public def finishCtrlRowDocument (cursor : RewriteCursor) (row : CtrlRow) (call : CtrlCall)
-    (docPos : Pos) (pre post : Array Raw) : Array Raw × Array Diag × Array String :=
+    (docPos : Pos) (pre post : Array Raw) :
+    Array Raw × Array Diag × Array String × Array BlockShapeDecl :=
   finishRewritten (closeLastDocument cursor docPos
     (pre ++ (ctrlRowRun row call (openDocumentBody cursor.state).2).1 ++ post,
       ctrlRowState (openDocumentBody cursor.state).2 row call))
@@ -13744,7 +13757,8 @@ public def unusedLengths (file : String) (raws : Array Raw) : Array Diag :=
 public def rewrite (file : String) (raws : Array Raw) (provideKeeps : List String := [])
     (warned : Array String := #[]) (inherited : List String := []) :
     Array Raw × Array Diag × Array String :=
-  rewriteExecuted (execute file raws provideKeeps warned inherited)
+  let r := rewriteExecuted (execute file raws provideKeeps warned inherited)
+  (r.1, r.2.1, r.2.2.1)
 
 /-- Diagnostic codes that carry a refused name. -/
 public def nameRefusalAsk : List (DiagCode × String) :=
