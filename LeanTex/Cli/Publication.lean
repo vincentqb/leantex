@@ -40,8 +40,7 @@ private def captureMathBoundary (name : String) : IO (Except String String) := d
   let .ok bytes ← Host.runIO (World.ask (.readFile name)) | return .error (label ++ " could not be read")
   let some text := String.fromUTF8? bytes | return .error (label ++ " is not UTF-8")
   let text := if text.startsWith "\uFEFF" then (text.drop 1).toString else text
-  let lower := text.toLower
-  if (lower.splitOn "</script").length > 1 || (lower.splitOn "<!--").length > 1 then
+  if Html.holdsTerm text "</script" || Html.holdsTerm text "<!--" then
     return .error (label ++ " holds '</script' or '<!--', which would end its inline script \
 early or keep it from ending")
   if text.contains '\u0000' then return .error (label ++ " holds a NUL, which no page carries")

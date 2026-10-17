@@ -52,14 +52,6 @@ def bench (n : Nat) (label : String) (cmd : String) (args : Array String) : IO U
     times := times.push (← runMs cmd args)
   IO.println s!"{padRight label 42} {padLeft (toString (median times)) 6} ms (median of {n})"
 
-/-- Small web pages, each the median of `n` builds: two markdown pages and the themed deck. -/
-def benchPages (n : Nat) (leantex : String) : IO Unit := do
-  let outDir ← IO.FS.createTempDir
-  for (label, doc) in [("md-emphasis.md", "testdata/corpus/md-emphasis.md"),
-      ("md-code.md", "testdata/corpus/md-code.md"), ("themed.tex", "testdata/corpus/themed.tex")] do
-    bench n s!"leantex  {label} -o html" leantex
-      #["-q", "build", doc, "-o", (outDir / "page.html").toString]
-  IO.FS.removeDirAll outDir
 
 def hasCmd (cmd : String) (args : Array String := #["--version"]) : IO Bool := do
   try
@@ -130,6 +122,47 @@ def phaseMs (phase log : String) : Option Nat :=
       ((t.splitOn " ms").head?).bind (·.trimAscii.toString.toNat?)) else none
 
 def bibPhaseMs (log : String) : Option Nat := phaseMs "bib" log
+
+/-- Four times the input may cost at most eight times the phase (linear 4, quadratic 16,
+cubic 64). -/
+def growthBound (label : String) (small big : Nat) : IO Unit := do
+  let ratio := (big * 10 + max small 1 / 2) / max small 1
+  IO.println s!"{padRight s!"leantex  growth, {label}" 42} {padLeft s!"{ratio / 10}.{ratio % 10}" 6} ×  (bound 8.0)"
+  if big > 8 * max small 1 then
+    die s!"{label}: the phase grew {ratio / 10}.{ratio % 10}× for 4× the input (bound 8)"
+
+/-- The html phase of a page whose declared stylesheet holds `k` rules of characters outside
+ASCII, the median of `n` builds. -/
+def stylesheetHtmlMs (n k : Nat) (leantex : String) : IO Nat := do
+  IO.FS.withTempDir fun tmp => do
+    IO.FS.writeFile (tmp / "page.css") (String.join ((List.range k).map fun i =>
+      s!".rule{i}::after \{ content: \"é ü ñ ö\"; }\n"))
+    IO.FS.writeFile (tmp / "page.tex") ("\\documentclass{article}\n" ++
+      "\\output{ formats = html, stylesheet = \"page.css\" }\n" ++
+      "\\begin{document}\nInvented words.\n\\end{document}\n")
+    let mut times : Array Nat := #[]
+    for _ in [0:n] do
+      let out ← IO.Process.output { cmd := leantex, args := #["-v", "build",
+        (tmp / "page.tex").toString, "-o", (tmp / "page.html").toString] }
+      if out.exitCode != 0 then die s!"benchmark command failed: {leantex} on {k} stylesheet rules"
+      match phaseMs "html" (out.stdout ++ out.stderr) with
+      | some ms => times := times.push ms
+      | none => die "no html phase in the -v report"
+    let ms := median times
+    IO.println s!"{padRight s!"leantex  html, {k} stylesheet rules" 42} {padLeft (toString ms) 6} ms (median of {n})"
+    return ms
+
+/-- Small web pages, each the median of `n` builds: two markdown pages and the themed deck; then a
+declared stylesheet of characters outside ASCII, whose checks may grow only linearly. -/
+def benchPages (n : Nat) (leantex : String) : IO Unit := do
+  let outDir ← IO.FS.createTempDir
+  for (label, doc) in [("md-emphasis.md", "testdata/corpus/md-emphasis.md"),
+      ("md-code.md", "testdata/corpus/md-code.md"), ("themed.tex", "testdata/corpus/themed.tex")] do
+    bench n s!"leantex  {label} -o html" leantex
+      #["-q", "build", doc, "-o", (outDir / "page.html").toString]
+  IO.FS.removeDirAll outDir
+  growthBound "html, 32000 / 8000 stylesheet rules" (← stylesheetHtmlMs n 8000 leantex)
+    (← stylesheetHtmlMs n 32000 leantex)
 
 /-- The reference-list phase over `entries` invented entries, all listed under plainnat's
 `\nocite{*}`: the median of `n` runs. -/
@@ -1056,14 +1089,6 @@ def run (n frames : Nat) : IO Unit := do
   say s!"host load after: {← Slides.load}"
 
 end Talk
-
-/-- Four times the input may cost at most eight times the phase (linear 4, quadratic 16,
-cubic 64). -/
-def growthBound (label : String) (small big : Nat) : IO Unit := do
-  let ratio := (big * 10 + max small 1 / 2) / max small 1
-  IO.println s!"{padRight s!"leantex  growth, {label}" 42} {padLeft s!"{ratio / 10}.{ratio % 10}" 6} ×  (bound 8.0)"
-  if big > 8 * max small 1 then
-    die s!"{label}: the phase grew {ratio / 10}.{ratio % 10}× for 4× the input (bound 8)"
 
 /-- A listing's lexing and setting are linear in its length, in lines and within a
 line. -/

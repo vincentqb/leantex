@@ -415,7 +415,7 @@ private theorem hasTerm_iff (term l : List Char) (hne : term ≠ []) :
   | cons c rest ih => simp [hasTerm, List.infix_cons_iff, List.isPrefixOf_iff_prefix, ih]
 
 /-- A byte lowered as `Char.toLower` lowers the ASCII character it encodes. -/
-def lowerByte (b : UInt8) : UInt8 := if 65 ≤ b.toNat ∧ b.toNat ≤ 90 then b + 32 else b
+def lowerByte (b : UInt8) : UInt8 := if (65 : UInt8) ≤ b && b ≤ 90 then b + 32 else b
 
 /-- Whether `term` occurs in a byte list. -/
 def hasTermBytes (term : List UInt8) : List UInt8 → Bool
@@ -424,6 +424,17 @@ def hasTermBytes (term : List UInt8) : List UInt8 → Bool
 
 /-- A character's low byte, its UTF-8 encoding when it is ASCII. -/
 def byteOf (c : Char) : UInt8 := c.val.toUInt8
+
+theorem lowerByte_high (b : UInt8) (hb : 128 ≤ b.toNat) : lowerByte b = b := by
+  unfold lowerByte
+  have : ((65 : UInt8) ≤ b && b ≤ 90) = false := by
+    simp only [Bool.and_eq_false_iff, decide_eq_false_iff_not, UInt8.not_le]
+    right
+    rw [UInt8.lt_iff_toNat_lt]
+    simp
+    omega
+  rw [this]
+  rfl
 
 theorem lowerByte_ascii_table : ∀ n : Fin 128,
     lowerByte (byteOf (Char.ofNat n)) = byteOf (Char.ofNat n).toLower := by
@@ -495,7 +506,6 @@ theorem byteOf_beq (c d : Char) (hc : c.toNat < 128) (hd : d.toNat < 128) :
       rw [← byteOf_toNat c hc, ← byteOf_toNat d hd, e]))
     rw [beq_eq_false_iff_ne.mpr hne, beq_eq_false_iff_ne.mpr h]
 
-/-- Whether every character of `term` is ASCII. -/
 def AsciiTerm (term : List Char) : Prop := ∀ c ∈ term, c.toNat < 128
 
 instance (term : List Char) : Decidable (AsciiTerm term) :=
@@ -534,10 +544,7 @@ theorem prefix_bytes (term : List Char) (hterm : AsciiTerm term) (cs : List Char
         rw [List.flatMap_cons, hbs]
         simp only [List.cons_append, List.map_cons, List.isPrefixOf]
         rw [toLower_high c hc']
-        have hl : lowerByte b = b := by
-          unfold lowerByte; split
-          · exfalso; omega
-          · rfl
+        have hl : lowerByte b = b := lowerByte_high b hb
         have h1 : (byteOf t == lowerByte b) = false := by
           rw [hl]; apply beq_eq_false_iff_ne.mpr; intro e
           have := byteOf_toNat t ht; rw [e] at this; omega
@@ -560,10 +567,7 @@ theorem hasTermBytes_skip (tb : List UInt8) (t : UInt8) (ht : t.toNat < 128)
     | nil => simp at hts
     | cons a as =>
       simp at hts; subst hts
-      have hl : lowerByte h = h := by
-        unfold lowerByte; split
-        · exfalso; omega
-        · rfl
+      have hl : lowerByte h = h := lowerByte_high h hh
       have : (a == lowerByte h) = false := by
         rw [hl]; apply beq_eq_false_iff_ne.mpr; intro e; rw [e] at ht; omega
       simp only [List.isPrefixOf, this, Bool.false_and, Bool.false_or]
@@ -671,12 +675,12 @@ private theorem termFrom_spec (s : String) (term : List Char) (hterm : AsciiTerm
     ← String.utf8Encode_toList]
   simp [List.utf8Encode]
 
-/-- Whether `s` holds `term`, an ASCII text, in any ASCII case, read off its UTF-8 bytes. -/
+/-- Whether `s`, ASCII-lowered, holds the lowercase ASCII `term`, read off its UTF-8 bytes. -/
 public def holdsTerm (s term : String) : Bool := termFrom s (term.toList.map byteOf) 0
 
 /-- `holdsTerm` finds exactly the occurrences a character-by-character search of the lowered
 text finds. -/
-public theorem holdsTerm_iff (s term : String) (hterm : ∀ c ∈ term.toList, c.toNat < 128)
+public theorem holdsTerm_exact (s term : String) (hterm : ∀ c ∈ term.toList, c.toNat < 128)
     (hne : term.toList ≠ []) :
     holdsTerm s term = true ↔ term.toList <:+: s.toList.map Char.toLower := by
   unfold holdsTerm

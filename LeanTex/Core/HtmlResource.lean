@@ -285,9 +285,8 @@ mutual
       else
         let acc := acc ++ attrRequests "script" attrs
         -- `<!--` enters the script escape states, where a closing tag becomes payload
-        let raw := js.toLower
         let acc := if (attrs.any fun a => a.1.toLower == "src") || js.contains '\u0000' ||
-            ["</script", "<!--"].any (fun marker => (raw.splitOn marker).length > 1) then
+            Html.holdsTerm js "</script" || Html.holdsTerm js "<!--" then
           acc.push (.refused "a script carries a source, a NUL or HTML raw-text control syntax") else acc
         if attr attrs "type" == "application/ld+json" then acc
         else acc.push (.script js)

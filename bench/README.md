@@ -245,19 +245,25 @@ reads and refuses exactly what zlib does, and `scripts/img-fuzz.lean` passes.
 ## Web pages — 2026-10-17
 
 `--pages-only` builds three small web pages, `testdata/corpus/md-emphasis.md`, `md-code.md` and
-`themed.tex`, the median of `N` builds each.
+`themed.tex`, the median of `N` builds each, then a page whose declared stylesheet holds 8,000 and
+32,000 rules of characters outside ASCII, and bounds its html phase's growth.
 
 A page's style and script payloads were searched for their closing tag through a list of the
-payload's characters, lowered, and the stylesheet's own check lowered and split the whole sheet;
-on a small page the sheet is mostly the embedded fonts' data URLs. Both now search the payload's
-UTF-8 bytes (`Html.holdsTerm`, which `holdsTerm_iff` proves finds exactly what the character
-search finds). Median of 15, three rounds alternating on a host at load 61-77, the before column
-with `LEANTEX_BENCH_BINARY` naming the parent's compiler:
+payload's characters, lowered, and the stylesheet's and scripts' own checks lowered and split the
+whole text, a copy of it for each character outside ASCII; on a small page the sheet is mostly the
+embedded fonts' data URLs. All now search the UTF-8 bytes (`Html.holdsTerm`, which
+`holdsTerm_exact` proves finds exactly what the character search finds). Median of 9, the median
+of three alternating rounds at load 112-134, the before column with `LEANTEX_BENCH_BINARY` naming
+the parent's compiler:
 
 | Page | before | after |
 |---|---:|---:|
-| md-emphasis.md | 853 ms | 351 ms |
-| md-code.md | 754 ms | 332 ms |
-| themed.tex | 242 ms | 169 ms |
+| md-emphasis.md | 1,026 ms | 509 ms |
+| md-code.md | 868 ms | 456 ms |
+| themed.tex | 304 ms | 220 ms |
+| 8,000 stylesheet rules, html phase | 1,374 ms | 276 ms |
+| 32,000 stylesheet rules, html phase | 10,100 ms | 332 ms |
 
-Every corpus document's PDF and HTML is byte-identical before and after.
+The stylesheet rows are the median of 3 in two rounds; the phase grew 7.4 times for four times
+the rules before, 1.2 times after. Every corpus document's PDF and HTML is byte-identical before
+and after.

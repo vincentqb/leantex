@@ -1719,15 +1719,16 @@ def rawPayloadChecks (ref : IO.Ref (List String)) : IO Unit := do
       "/* removed */").length == 2)
   let lowered (s term : String) : Bool := hasStr s.toLower term
   let edges := ["é</StYlE", "</sty\u0130le", "<</style", "</</style>", "x</styl", "😀</style",
-    "</STYLE", "</s\u0000tyle", "", "</style"]
+    "</STYLE", "</s\u0000tyle", "", "</style", "</SCRIPT", "x</ScRiPt>", "<</script", "</scrip"]
   t "html raw payload: the byte search finds a terminator where the lowered characters hold one"
     (edges.all fun s => Html.holdsTerm s "</style" == lowered s "</style" &&
       Html.holdsTerm s "</script" == lowered s "</script")
   let alphabet : Array Char := #['<', '/', 's', 'S', 't', 'T', 'y', 'Y', 'l', 'L', 'e', 'E', 'c',
-    'r', 'i', 'p', 'P', 'é', '\u0130', '😀', ' ', '>']
+    'C', 'r', 'R', 'i', 'I', 'p', 'P', 'é', '\u0130', '😀', ' ', '>']
   let mut seed : UInt64 := 1709
   let mut misses : Array String := #[]
-  for _ in [0:3000] do
+  let mut positives := 0
+  for k in [0:3000] do
     let (len, s1) := rand seed 14
     seed := s1
     let mut text := ""
@@ -1735,9 +1736,23 @@ def rawPayloadChecks (ref : IO.Ref (List String)) : IO Unit := do
       let (pick, s2) := rand seed alphabet.size
       seed := s2
       text := text.push (alphabet[pick]?.getD 'x')
+    -- Every other text splices a terminator in random case among the random characters.
+    if k % 2 == 0 then
+      let term := if k % 4 == 0 then "</style" else "</script"
+      let mut cased := ""
+      for c in term.toList do
+        let (up, s3) := rand seed 2
+        seed := s3
+        cased := cased.push (if up == 1 then c.toUpper else c)
+      let (at_, s4) := rand seed (text.length + 1)
+      seed := s4
+      text := String.ofList (text.toList.take at_) ++ cased ++ String.ofList (text.toList.drop at_)
+    if lowered text "</style" || lowered text "</script" then positives := positives + 1
     unless Html.holdsTerm text "</style" == lowered text "</style" &&
         Html.holdsTerm text "</script" == lowered text "</script" do
       misses := misses.push text
+  t s!"html raw payload: half the random texts hold a terminator ({positives} of 3000)"
+    (positives ≥ 1500)
   t s!"html raw payload: random texts read alike off bytes and characters (differing: \
 {misses.toList.take 3})" misses.isEmpty
 
