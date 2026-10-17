@@ -379,6 +379,57 @@ private theorem entry_facts (k v : String) (hk : plainKey k = true) (hv : wholeV
     simp only [entryOf, hcut, Option.getD_some, trim_snoc_space _ hkh hkl hkne, trim_space,
       trim_self _ (by simpa using hvh) (by simpa using hvl), String.ofList_toList]
 
+private theorem empty_entry_facts (k : String) (hk : plainKey k = true) :
+    Good (k ++ " =").toList ∧ Trimmed (k ++ " =") ∧ entryOf (k ++ " =") = (k, "") := by
+  simp only [plainKey, Bool.and_eq_true, Bool.not_eq_true', List.isEmpty_eq_false_iff,
+    List.all_eq_true] at hk
+  obtain ⟨hkne, hkc⟩ := hk
+  have heq : (" =").toList = [' ', '='] := rfl
+  have htext : (k ++ " =").toList = k.toList ++ [' ', '='] := by
+    rw [String.toList_append, heq]
+  have hp : ∀ c ∈ k.toList ++ [' ', '='], c ≠ '"' ∧ (c ≠ '{' ∧ c ≠ '[' ∧ c ≠ '(' ∧ c ≠ '}' ∧
+      c ≠ ']' ∧ c ≠ ')' ∧ c ≠ ',') := by
+    intro c hc
+    rcases List.mem_append.mp hc with hc | hc
+    · have := plainChar_facts c (hkc c hc)
+      exact ⟨this.2.2.1, this.2.2.2⟩
+    · simp only [List.mem_cons, List.not_mem_nil, or_false] at hc
+      rcases hc with rfl | rfl <;> decide
+  have hatoms : quoteAtoms (k.toList ++ [' ', '=']) #[] =
+      ((k.toList ++ [' ', '=']).map fun c => [c]).toArray := by
+    have := quoteAtoms_plain (k.toList ++ [' ', '=']) [] #[] (fun c hc => (hp c hc).1)
+    simpa [quoteAtoms] using this
+  have hkh : k.toList.head?.any Char.isWhitespace = false := by
+    obtain ⟨c, cs, hcs⟩ := List.exists_cons_of_ne_nil hkne
+    have := plainChar_facts c (hkc c (by rw [hcs]; exact List.mem_cons_self))
+    simp [hcs, this.1]
+  have hkl : k.toList.getLast?.any Char.isWhitespace = false := by
+    have hmem := List.getLast_mem hkne
+    have := plainChar_facts _ (hkc _ hmem)
+    simp [List.getLast?_eq_some_getLast hkne, this.1]
+  refine ⟨⟨?_, ?_⟩, ⟨?_, ?_⟩, ?_⟩
+  · rw [htext, hatoms]
+    simp only [List.all_map, List.all_eq_true, Function.comp_apply]
+    intro c hc
+    simp [closedAtom, (hp c hc).1]
+  · rw [htext, hatoms]
+    have := fold_plain (k.toList ++ [' ', '=']) 0 (fun c hc => (hp c hc).2)
+    simpa using this
+  · rw [htext]
+    apply trim_self
+    · obtain ⟨c, cs, hcs⟩ := List.exists_cons_of_ne_nil hkne
+      have := plainChar_facts c (hkc c (by rw [hcs]; exact List.mem_cons_self))
+      simp [hcs, this.1]
+    · simp
+  · rw [htext]
+    simp [hkne]
+  · have hcut : KeyVal.cutAt '=' (k ++ " =").toList = (k.toList ++ [' '], some []) := by
+      rw [htext, KeyVal.cutAt_append '=' _ _ (fun hm => (plainChar_facts _ (hkc _ hm)).2.1 rfl)]
+      simp [KeyVal.cutAt]
+    simp only [entryOf, hcut, Option.getD_some, trim_snoc_space _ hkh hkl hkne,
+      String.ofList_toList]
+    simp [trimChars]
+
 private theorem kept_carried (s : Setting) : ∀ kv ∈ s.kept.pairs, Setting.carried kv = true := by
   cases s with
   | page es | pdfmeta es =>
@@ -395,12 +446,18 @@ private theorem kept_carried (s : Setting) : ∀ kv ∈ s.kept.pairs, Setting.ca
 public theorem body_read_exact (s : Setting) :
     (splitEntries s.kept.body).map entryOf = s.kept.pairs := by
   have hc := kept_carried s
-  have hfacts : ∀ kv ∈ s.kept.pairs, Good (kv.1 ++ " = " ++ kv.2).toList ∧
-      Trimmed (kv.1 ++ " = " ++ kv.2) ∧ entryOf (kv.1 ++ " = " ++ kv.2) = kv := by
+  have hfacts : ∀ kv ∈ s.kept.pairs, Good (Setting.entryText kv).toList ∧
+      Trimmed (Setting.entryText kv) ∧ entryOf (Setting.entryText kv) = kv := by
     intro kv hkv
     have := hc kv hkv
-    simp only [Setting.carried, Bool.and_eq_true] at this
-    exact entry_facts kv.1 kv.2 this.1 this.2
+    simp only [Setting.carried, Bool.and_eq_true, Bool.or_eq_true] at this
+    obtain ⟨k, v⟩ := kv
+    by_cases hv : v.isEmpty = true
+    · have hv' : v = "" := String.isEmpty_iff.mp hv
+      subst hv'
+      simpa [Setting.entryText] using empty_entry_facts k this.1
+    · have hw := this.2.resolve_left hv
+      simpa [Setting.entryText, hv] using entry_facts k v this.1 hw
   unfold Setting.body
   rw [splitEntries_join]
   · rw [List.map_map, List.map_congr_left (g := id) (fun ⟨k, v⟩ hkv => (hfacts (k, v) hkv).2.2),

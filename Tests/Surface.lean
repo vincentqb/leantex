@@ -1455,6 +1455,10 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
     (thickOf (ruleH " height 1.5pt") == some (Dim.pt 3 / 2))
   t "compat koma section rule reads a \\p@ height"
     (thickOf (ruleH " height .6\\p@") == some (Dim.pt 6 / 10))
+  let lastH := elabStr (pre ("\\definecolor{ink}{HTML}{112233}\\makeatletter" ++
+    "\\renewcommand\\sectionlinesformat[4]{#3#4 \\textcolor{ink}{\\hrule height 2pt}}\\makeatother"))
+  t "compat koma section rule reads a height its group's brace ends"
+    (thickOf lastH == some (Dim.pt 2) && lastH.2.all (·.severity != .error))
   t "compat koma section rule with an unreadable height is said, colour kept"
     ((ruleH " height 0.6zz").2.any (·.code == "E0321") &&
       (((ruleH " height 0.6zz").1.styles.find? "section").bind (·.rule)).isSome)

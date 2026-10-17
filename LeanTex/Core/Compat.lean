@@ -1443,9 +1443,10 @@ private def synthAt (s : String) (pos : Pos) : M (Array Raw) := do
 /-- A native setting's carrier where it stands, each entry its block cannot carry whole named and
 dropped, so the elaborator reads the rest exactly (`Native.render_parse_exact`). -/
 private def carry (s : Native.Setting) (pos : Pos) : M (Array Raw) := do
+  -- premise: nativeCarrierChecks — a value no entry carries whole would read as other entries
   for (k, v) in s.dropped do
     say .W0101 "a value that stands as no single native entry was dropped" pos
-      (detail := some s!"'{k} = {v}' in '\\{s.head}'")
+      (detail := some s!"'{k} = {v}' in '{s.opening}'")
       (help := "write the value as one length, number or name")
   return if s.kept.pairs.isEmpty then #[] else s.raws pos
 
@@ -6430,7 +6431,8 @@ private def hyperrefKeys (opts : String) (pos : Pos) : M HyperrefRead := do
         | none =>
           misread := misread.push s!"'{e}'"
           unless grammars.contains w.grammar do grammars := grammars.push w.grammar
-    if ["linkcolor", "urlcolor", "citecolor", "allcolors"].contains k && !Decl.wholeValue v then
+    if ["linkcolor", "urlcolor", "citecolor", "allcolors"].contains k &&
+        !(v.isEmpty || Decl.wholeValue v) then
       unread := unread.push s!"'{e}'"
     else if let some l := links.read k v then
       -- A colour style an earlier setup declared stands, so turning colouring off is not read.
@@ -6460,11 +6462,6 @@ private def hyperrefKeys (opts : String) (pos : Pos) : M HyperrefRead := do
 /-- A group holding `s` as one word, which the elaborator reads as written, never lexed as TeX. -/
 private def wordGroup (s : String) (pos : Pos) : Raw :=
   .group (if s.isEmpty then #[] else #[.word s pos]) pos
-
-/-- A native declaration whose body the elaborator reads as written, so each value `Decl.quote`
-spells reads back exactly (`Decl.parseValue_quote`). -/
-private def declaredRaws (name body : String) (pos : Pos) : Array Raw :=
-  #[.ctrl name pos, wordGroup body pos]
 
 /-- The mark opening a `\pdfmeta` group of TeX values: the construct, the link styles it lowers and
 its dates and trapping as `\pdfmeta` entries, then each key's group and its value's group. -/
@@ -6510,7 +6507,7 @@ and all named in its note. -/
 private def hyperrefLowered (what key : String) (r : HyperrefRead) (pos : Pos) : M (Array Raw) := do
   let setup := (← get).links
   let settings := if r.linked then setup.native else #[]
-  let links := String.join (settings.toList.map (·.render))
+  let links := String.join (settings.toList.filterMap (·.note?))
   let styles ← settings.foldlM (init := #[]) fun out s => return out ++ (← carry s pos)
   if r.metadata.isEmpty && r.words.isEmpty then
     if !links.isEmpty then became what links pos
@@ -6556,14 +6553,11 @@ dropped: {String.intercalate ", " dropped.toList}" pos
       (help := "the engine writes PDF 2.0, or 1.6 or 1.7 when 'pdfversion' asks, and PDF/X-4 \
 with an X output profile; other standards and compression keys have no effect here")
   write fun st => { st with intentProfile := profile }
-  let keys := (lang.map fun tag => s!"language = {Decl.quote tag}").toArray ++
-    (version.map fun v => s!"version = {Decl.quote v}").toArray ++
-    (standard.map fun v => s!"standard = {Decl.quote v}").toArray ++
-    (profile.map fun f => s!"intent = {Decl.quote f}").toArray
+  let keys : Array (Native.MetaKey × String) := (lang.map (.language, Decl.quote ·)).toArray ++
+    (version.map (.version, Decl.quote ·)).toArray ++ (standard.map (.standard, Decl.quote ·)).toArray ++
+    (profile.map (.intent, Decl.quote ·)).toArray
   if keys.isEmpty then return #[]
-  let body := String.intercalate ", " keys.toList
-  became "\\DocumentMetadata" s!"\\pdfmeta\{ {body} }" pos
-  return declaredRaws "pdfmeta" body pos
+  setting "\\DocumentMetadata" (.pdfmeta keys) pos
 
 /-- An expl3 key-value list as the expl3 catcodes read it: spaces dropped, `~` a space. -/
 private def explKeyVals (src : String) : Array (String × String) :=
@@ -6574,10 +6568,10 @@ private def explKeyVals (src : String) : Array (String × String) :=
     | (_, none) => none
 
 /-- The native output-intent key for one of pdfmeta's colour profile property keys. -/
-private def explProfileKey : String → Option String
-  | "OutputConditionIdentifier" => some "intent-condition"
-  | "Info" => some "intent-info"
-  | "RegistryName" => some "intent-registry"
+private def explProfileKey : String → Option Native.MetaKey
+  | "OutputConditionIdentifier" => some .intentCondition
+  | "Info" => some .intentInfo
+  | "RegistryName" => some .intentRegistry
   | _ => none
 
 /-- The property name and its two groups after `\prop`, where the name spells
@@ -6594,14 +6588,14 @@ private def propGroups (toks : Array Raw) (j : Nat) : Option (Array Raw × Array
   return none
 
 /-- One pdfmeta colour profile description as `\pdfmeta` keys, and its keys without a native one. -/
-private def explProfileKeys (kv : String) : Array String × Array String := Id.run do
-  let mut keys : Array String := #[]
+private def explProfileKeys (kv : String) : Array (Native.MetaKey × String) × Array String := Id.run do
+  let mut keys : Array (Native.MetaKey × String) := #[]
   let mut dropped : Array String := #[]
   for (key, v) in explKeyVals kv do
     if let some n := explProfileKey key then
-      keys := keys.push s!"{n} = {Decl.quote v}"
+      keys := keys.push (n, Decl.quote v)
     else if key == "N" && (v == "1" || v == "3" || v == "4") then
-      keys := keys.push s!"intent-components = {v}"
+      keys := keys.push (.intentComponents, v)
     else dropped := dropped.push key
   return (keys, dropped)
 
@@ -6632,9 +6626,9 @@ private def explProfiles (block : Array Raw) (pos : Pos) : M (Array Raw × Bool)
         unless dropped.isEmpty do
           say .W0101 s!"the colour profile description's keys without a native equivalent \
 were dropped: {String.intercalate ", " dropped.toList}" pos
-        let body := String.intercalate ", " keys.toList
-        became label s!"\\pdfmeta\{ {body} }" pos
-        out := out ++ declaredRaws "pdfmeta" body pos
+        if keys.isEmpty then
+          discard label "it describes no key the output intent reads" "explprofile" pos
+        else out := out ++ (← setting label (.pdfmeta keys) pos)
       else
         discard label "it describes a profile no output intent of the document names" "explprofile" pos
       i := k
@@ -6994,8 +6988,8 @@ rule; \\allow{E0113} accepts the loss")
     match (rest.splitOn "hrule")[1]? with
     | some afterRule =>
       if color.isEmpty then dropped "" else
-      let spec := ((afterRule.replace "\\p@" "pt").replace "\\z@" "0pt").splitOn "\\"
-        |>.headD "" |>.trimAscii.toString
+      let spec := (((afterRule.replace "\\p@" "pt").replace "\\z@" "0pt").splitOn "\\"
+        |>.headD "").splitOn "}" |>.headD "" |>.trimAscii.toString
       let height? : Option String :=
         if spec.isEmpty then some "0.4pt"
         else if spec.startsWith "height" then
@@ -7696,7 +7690,7 @@ private def blockHookArm (pos : Pos) (raws : Array Raw) (start : Nat) :
   | some before, some after =>
     -- premise: beamerHookChecks — scoped additions cannot set a global gap
     if args.size == 3 && element == "block begin" && before.isEmpty && (← docPreamble) then
-      let native := String.join (after.toList.map (·.render))
+      let native := String.join (after.toList.filterMap (·.note?))
       let spacing ← after.foldlM (init := #[]) fun out s => return out ++ (← carry s pos)
       write fun st => { st with beamerBlockBegin := st.beamerBlockBegin ++ spacing }
       if spacing.isEmpty then
@@ -8560,9 +8554,9 @@ defines; those blocks keep beamer's default template" pos
         return some (#[], predefinedEnd raws past)
       let (bodyArgs, k) := takeGroups raws j 1
       if bodyArgs.size != 1 then return none
-      let marker := rawSrc (bodyArgs.getD 0 #[])
-      return some (← setting s!"\\setbeamertemplate\{{element}}"
-        (.style native #[("marker", "{" ++ marker ++ "}")]) pos, k)
+      let entries := #[("marker", bodyArgs.getD 0 #[])]
+      became s!"\\setbeamertemplate\{{element}}" (Native.texStyleRender native entries) pos
+      return some (Native.texStyle native entries pos, k)
     -- premise: beamerTemplateChecks — footer content reaches the frame furniture
     else if element == "footline" &&
         (← get).wholeDoc && !(← get).inDoc && !(← get).inDef then
@@ -9640,7 +9634,7 @@ its value is skipped" pos
       unless own.isEmpty do
         write fun st => { st with beamerFonts := st.beamerFonts.push (alerted, seed) }
       let natives := #[Native.Setting.style target #[(styleKey, "{" ++ cmds ++ "}")]] ++ own
-      became written (" ".intercalate (natives.toList.map (·.render))) pos
+      became written (" ".intercalate (natives.toList.filterMap (·.note?))) pos
       natives.foldlM (init := #[]) fun out s => return out ++ (← carry s pos)
     else return #[]
 
@@ -9766,10 +9760,14 @@ description scopes")) ++
   for (el, es) in spaced do
     let held := ((records.find? (·.1 == el)).map (·.2)).getD #[]
     records := Ir.redeclare records el (held ++ es)
-  let natives := records.map fun (el, es) => Native.Setting.style el es
+  let natives := records.map fun (el, es) =>
+    s!"\\style\{{el}}\{ {", ".intercalate (es.toList.map fun e => s!"{e.1} = {e.2}")} }"
   if natives.isEmpty then return #[]
-  became what (String.join (natives.toList.map (·.render))) pos
-  natives.foldlM (init := #[]) fun out s => return out ++ (← carry s pos)
+  became what (String.join natives.toList) pos
+  let mut out : Array Raw := #[]
+  for native in natives do
+    out := out ++ (← synthAt native pos)
+  return out
 
 /-- A registered control's lowering over its arguments. -/
 private def lowerCall (c : CtrlCall) : Lowering → M (Array Raw)
@@ -9787,7 +9785,7 @@ private def lowerCall (c : CtrlCall) : Lowering → M (Array Raw)
   | .defineColor => do
     let n := c.src 0
     let modeled := modeledColorSource (some (c.src 1)) (c.src 2)
-    unless nativeName n && Decl.wholeValue modeled do
+    unless nativeName n && (modeled.isEmpty || Decl.wholeValue modeled) do
       say .W0102 s!"'\\definecolor\{{n}}' gives a name or a value no palette entry spells; \
 the colour is not defined" c.pos (help := "name the colour with ASCII letters, digits, '.' or '_'")
       return #[]
@@ -9796,7 +9794,7 @@ the colour is not defined" c.pos (help := "name the colour with ASCII letters, d
   | .colorLet => do
     -- xcolor's `.` names the current colour, black in the preamble.
     let src := if (c.src 1).trimAscii.toString == "." then "#000000" else c.src 1
-    unless nativeName (c.src 0) && Decl.wholeValue src do
+    unless nativeName (c.src 0) && (src.isEmpty || Decl.wholeValue src) do
       say .W0102 s!"'\\colorlet\{{c.src 0}}' gives a name or a colour no palette entry \
 spells; the colour is not defined" c.pos (help := "name the colour with ASCII letters, digits, '.' or '_'")
       return #[]
@@ -10070,7 +10068,7 @@ and patterns stand in" c.pos
     -- The star's zero rule goes before the space, keeping it at a page's top.
     let native := skipNative (skipSrc (lengthSrc (c.arg 2)))
     if (c.given 0).isSome then
-      became "\\vspace*" s!"a page-top anchor, then {native.render}" c.pos
+      became "\\vspace*" s!"a page-top anchor, then {native.note?.getD "nothing"}" c.pos
       return #[.ctrl vspaceAnchorMark c.pos] ++ (← carry native c.pos)
     setting "\\vspace" native c.pos
   | .pageBreak => do
@@ -10087,15 +10085,13 @@ and patterns stand in" c.pos
       became "\\setkomafont{disposition}" native pos
       let mut out : Array Raw := #[]
       for lvl in ["section", "subsection", "subsubsection"] do
-        out := out ++ (Native.Setting.style lvl #[]).frame
-          #[.word "font" pos, .space, .sym '=' pos, .space, .group (c.arg 1) pos] pos
+        out := out ++ Native.texStyle lvl #[("font", c.arg 1)] pos
       return out
     else if Ir.styleableElements.contains element then
       -- The font spec travels as a group, so its own idioms are still rewritten.
       let native := s!"\\style\{{element}}"
       became s!"\\setkomafont\{{element}}" (native ++ "{ font = {...} }") pos
-      return (Native.Setting.style element #[]).frame
-        #[.word "font" pos, .space, .sym '=' pos, .space, .group (c.arg 1) pos] pos
+      return Native.texStyle element #[("font", c.arg 1)] pos
     else
       say .W0111 s!"'\\setkomafont\{{element}}' names no styleable element; ignored" pos
         (help := "\\style{element}{ font = {...} } styles the elements the engine draws")
@@ -10180,7 +10176,7 @@ native equivalent were dropped: {dropped}" c.pos
       reseated := reseated.push (.style target
         #[(styleKey, "{" ++ beamerFontCommands (blockTitleFields element fields) ++ "}")])
     let theme := Native.Head.theme tname
-    became "\\usetheme" (" ".intercalate (theme.render :: reseated.toList.map (·.render))) pos
+    became "\\usetheme" (" ".intercalate (theme.render :: reseated.toList.filterMap (·.note?))) pos
     write fun st => { st with themeNamed := true }
     if (Theme.find? tname).isSome then
       write fun st => { st with themed := true, beamerTheme := tname }
@@ -13019,9 +13015,9 @@ private def flushRunning : M (Array Raw) := do
     out := out ++ (← synthAt native st.runPos)
   -- `\thispagestyle{empty}` with no field of its own still gates the opening page's furniture.
   if st.runFrom > 1 && st.head.isEmpty then
-    out := out ++ (← synthAt s!"\\runninghead[from = {st.runFrom}]\{}" st.runPos)
+    out := out ++ (Native.Head.runningFrom false st.runFrom).raws st.runPos
   if st.runFrom > 1 && st.foot.isEmpty then
-    out := out ++ (← synthAt s!"\\runningfoot[from = {st.runFrom}]\{}" st.runPos)
+    out := out ++ (Native.Head.runningFrom true st.runFrom).raws st.runPos
   return out
 
 private theorem flushRunning_quiet (st : St) (h : QuietTail st) :

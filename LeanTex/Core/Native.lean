@@ -5,8 +5,8 @@ public import LeanTex.Core.Parse
 import LeanTex.Core.Decl
 
 /-! The native declarations the surfaces lower into: settings, each carried to the elaborator as one
-word its entry reader reads back exactly (`Native.render_parse_exact`), and heads, whose operands are
-names, carried as the lexer reads their spelling. -/
+word its entry reader reads back exactly (`Native.render_parse_exact`), TeX-valued styles as the
+lexer reads them, and heads, each operand one word. -/
 
 namespace LeanTex.Core.Native
 
@@ -45,8 +45,19 @@ public def pairs : Setting → List (String × String)
   | .pdfmeta es => es.toList.map fun (k, v) => (k.name, v)
   | .tokens es | .palette es | .style _ es | .fonts es | .chrome es | .block es => es.toList
 
+/-- An entry as an author writes it, an empty value with nothing after its `=`. -/
+public def entryText (kv : String × String) : String :=
+  if kv.2.isEmpty then kv.1 ++ " =" else kv.1 ++ " = " ++ kv.2
+
 /-- The declaration's block, its entries joined as an author writes them. -/
-public def body (s : Setting) : String := ", ".intercalate (s.pairs.map fun (k, v) => k ++ " = " ++ v)
+public def body (s : Setting) : String := ", ".intercalate (s.pairs.map entryText)
+
+/-- What the declaration spells before its block: its control, and a style's element. -/
+public def opening (s : Setting) : String :=
+  match s with
+  | .style el _ => "\\style{" ++ el ++ "}"
+  | .page _ | .tokens _ | .palette _ | .fonts _ | .pdfmeta _ | .chrome _ | .block _ =>
+    "\\" ++ s.head
 
 /-- The declaration around a block `b`, as an author writes it. -/
 public def spell (s : Setting) (b : String) : String :=
@@ -60,7 +71,8 @@ public def spell (s : Setting) (b : String) : String :=
 public def render (s : Setting) : String := s.spell s.body
 
 /-- Whether an entry's key and value read back from the block, beside any other entries. -/
-public def carried (kv : String × String) : Bool := Decl.plainKey kv.1 && Decl.wholeValue kv.2
+public def carried (kv : String × String) : Bool :=
+  Decl.plainKey kv.1 && (kv.2.isEmpty || Decl.wholeValue kv.2)
 
 /-- The setting without the entries its block cannot carry whole. -/
 public def kept : Setting → Setting
@@ -95,9 +107,23 @@ public def raws (s : Setting) (pos : Pos) : Array Raw :=
 
 end Setting
 
-/-- A native command a surface lowers into whose operands are names: a class, a theme, a theorem
-style, a command's or environment's signature, a colour, the frame footer, a reference list, or a
-caption setup. -/
+/-- A style whose values are TeX, `\style{element}{ key = {...}, ... }` as the lexer reads it, each
+value one group its reader sets as inline content. -/
+public def texStyle (element : String) (entries : Array (String × Array Raw)) (pos : Pos) :
+    Array Raw :=
+  let body := entries.foldl (init := #[]) fun out (k, v) =>
+    (if out.isEmpty then out else out ++ #[.word "," pos, .space]) ++
+      #[.word k pos, .space, .word "=" pos, .space, .group v pos]
+  #[.ctrl "style" pos, .group #[.word element pos] pos, .group body pos]
+
+/-- That style as a translation note names it. -/
+public def texStyleRender (element : String) (entries : Array (String × Array Raw)) : String :=
+  "\\style{" ++ element ++ "}{ " ++
+    ", ".intercalate (entries.toList.map fun (k, v) => k ++ " = {" ++ rawSrc v ++ "}") ++ " }"
+
+/-- A native command a surface lowers into, its operands words the elaborator reads as text: a
+class, a theme, a theorem style, a command's or environment's head, a colour, the frame footer, a
+reference list, a caption setup, or a running line from a page on. -/
 public inductive Head where
   | documentclass (options : Array String) (cls : String)
   | theme (name : String)
@@ -108,6 +134,7 @@ public inductive Head where
   | framefoot
   | bibliography (style : Option String) (sources : Array String)
   | captionsetup (scope : Option String) (options : String)
+  | runningFrom (foot : Bool) (fromPage : Nat)
   deriving DecidableEq, Repr, Inhabited
 
 namespace Head
@@ -127,6 +154,7 @@ public def render : Head → String
     (st.map ("\\bibliographystyle{" ++ · ++ "}")).getD "" ++
       "\\bibliography{" ++ ",".intercalate ss.toList ++ "}"
   | .captionsetup sc os => "\\captionsetup" ++ (sc.map ("[" ++ · ++ "]")).getD "" ++ "{" ++ os ++ "}"
+  | .runningFrom foot n => (if foot then "\\runningfoot" else "\\runninghead") ++ s!"[from = {n}]" ++ "{}"
 
 /-- The command's tokens, each operand one word. -/
 public def raws (h : Head) (pos : Pos) : Array Raw :=
@@ -147,6 +175,9 @@ public def raws (h : Head) (pos : Pos) : Array Raw :=
       #[.ctrl "bibliography" pos, .group (word (",".intercalate ss.toList)) pos]
   | .captionsetup sc os =>
     #[.ctrl "captionsetup" pos] ++ (sc.map bracket).getD #[] ++ #[.group (word os) pos]
+  | .runningFrom foot n =>
+    #[.ctrl (if foot then "runningfoot" else "runninghead") pos] ++ bracket s!"from = {n}" ++
+      #[.group #[] pos]
 
 end Head
 

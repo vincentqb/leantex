@@ -155,6 +155,21 @@ def paramSiteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
       flush.any (·.subject == some "ctrl:nothing:setlength:parindent"))
 
 
+/-- Raws with each run of words and spaces one word of its text and every group's body alike, every
+site the default: a carrier's shape, each operand one word. -/
+private def mergedRuns : List Parse.Raw → String → Array Parse.Raw → Array Parse.Raw
+  | [], run, out => flushRun run out
+  | .word w _ :: rest, run, out => mergedRuns rest (run ++ w) out
+  | .space :: rest, run, out => mergedRuns rest (run ++ " ") out
+  | .group b _ :: rest, run, out =>
+    mergedRuns rest "" ((flushRun run out).push (.group (mergedRuns b.toList "" #[]) {}))
+  | r :: rest, run, out => mergedRuns rest "" ((flushRun run out).push (Compat.rebase (fun _ => {}) true r))
+termination_by rs => sizeOf rs
+decreasing_by raws_dec
+where
+  flushRun (run : String) (out : Array Parse.Raw) : Array Parse.Raw :=
+    if run.trimAscii.isEmpty then out else out.push (.word run.trimAscii.toString {})
+
 /-- A native setting a translation writes reaches the elaborator entry by entry: a value whose text
 holds another entry sets nothing beyond its own key and is named dropped, every native a table
 writes is carried whole, and a native head reads as its spelling. -/
@@ -199,19 +214,40 @@ def nativeCarrierChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
     (Compat.ctrlRows.all fun row => match row.action with
       | .native s => whole s
       | .tokens .. | .skip _ | .refuse .. | .discard .. | .inert | .lower .. => true)
-  -- A head's carrier, read as text, is the lexer's reading of the spelling its note names.
+  -- A head's carrier is the lexer's reading of the spelling its note names, each operand one word.
   let lexed (src : String) : Array Parse.Raw :=
-    ((Parse.parse "head.tex" (Lex.lex "head.tex" src).1).1).map (Compat.rebase (fun _ => {}) true)
+    mergedRuns (Parse.parse "head.tex" (Lex.lex "head.tex" src).1).1.toList "" #[]
   let heads : List Native.Head :=
     [.documentclass #[] "poster", .documentclass #["10pt", "aspectratio=169"] "slides",
      .theme "moloch", .theoremStyle "plain", .define "probe" "",
      .define "probe" "a1: content, a2?: content", .defineEnv "probe env" "a1: content",
      .textcolor "alert", .framefoot, .bibliography none #["refs"],
      .bibliography (some "plain") #["alpha", "beta"], .captionsetup none "font=small, labelfont=bf",
-     .captionsetup (some "figure") "position=bottom"]
+     .captionsetup (some "figure") "position=bottom", .runningFrom false 2, .runningFrom true 3]
   for h in heads do
-    t s!"the head {h.render} reads as its spelling"
-      (lexed (Parse.rawSrc (h.raws {})) == lexed h.render)
+    t s!"the head {h.render} is carried as the lexer reads it, each operand one word"
+      (mergedRuns (h.raws {}).toList "" #[] == h.raws {} && lexed h.render == h.raws {})
+  -- What the preamble's scan reads off a setting's carrier is its declaration with its kept block.
+  let settings : List Native.Setting :=
+    [.page #[(.margin, "2cm"), (.bleed, "3mm")], .tokens #[("gap", "1em plus 2pt")],
+     .palette #[("accent", "#123456")], .style "section" #[("before", "1em"), ("after", "")],
+     .fonts #[("body", "\"Example Serif\"")], .pdfmeta #[(.language, "\"fr\"")],
+     .chrome #[("standout-note", "true")]]
+  let declOf : Elab.PDecl → String
+    | .page src _ => s!"page {src}"
+    | .tokens src _ => s!"tokens {src}"
+    | .palette _ body _ => s!"palette {body}"
+    | .style args _ => s!"style {args}"
+    | .fonts src _ => s!"fonts {src}"
+    | .pdfmeta src _ => s!"pdfmeta {src}"
+    | .chrome src _ => s!"chrome {src}"
+    | _ => "another declaration"
+  for s in settings do
+    let scanned := (Elab.scanDecls "setting.tex" (s.raws {})).map declOf
+    let spelled := (Elab.scanDecls "setting.tex"
+      (Parse.parse "setting.tex" (Lex.lex "setting.tex" (s.opening ++ "{" ++ s.kept.body ++ "}")).1).1).map declOf
+    t s!"the setting {s.render} scans as its spelling's one declaration ({scanned}, {spelled})"
+      (scanned.size == 1 && scanned == spelled && scanned.all (· != "another declaration"))
 
 /-- A parameter set in a loaded style file ships the page its document spelling ships; only the
 diagnostic's severity moves. -/
