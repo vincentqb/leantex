@@ -9295,11 +9295,11 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
       let dependencies ← rewritePackages "RequirePackage" packages none pos
       return some (declaration ++ dependencies, k)
     else
-      -- The options passed to a class before it loads are its own beside its written ones.
+      -- The options passed to a class before it loads are its own, before its written ones.
       let passed := (← get).loads.rewriteClassPassed.toList.flatMap fun (name, options) =>
         if name == cls then options.toList.filter (!keptItems.contains ·) else []
       if offered.isEmpty && passed.isEmpty then return none
-      let kept := keptItems ++ passed
+      let kept := passed ++ keptItems
       let o := if kept.isEmpty then "" else s!"[{String.intercalate "," kept}]"
       let native := s!"\\documentclass{o}\{{cls}}"
       became s!"\\documentclass[{opt.getD ""}]\{{cls}}" native pos

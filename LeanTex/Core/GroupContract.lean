@@ -31,7 +31,7 @@ private theorem elabBlocksGo_env_alone (ctx : Ctx) (st : ESt) (n : String) (body
   rw [blockMacroStep_idle ctx st _ 0 #[] #[] hm (by simp) (by simpa [Raw.origins?] using hp)]
   simp [hl, hb, pictureInSentence_alone, flushPara_empty ctx _ hm, Ir.flushedText_empty_exact,
     Ir.lastLeavesEndPe_empty_exact, endPeAt, parFollows, elabBlocksNext_blank, parContinues,
-      Parse.skipSpaces]
+      textOpens, Parse.skipSpaces]
 
 private theorem elabBlocksGo_group_alone (ctx : Ctx) (st : ESt) (body : Array Raw)
     (pos : Pos) (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles) (hp : pos.origins = [])

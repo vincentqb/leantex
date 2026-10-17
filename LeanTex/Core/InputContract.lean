@@ -342,9 +342,9 @@ private theorem elabBlocksGo_blank (ctx : Ctx) (st : ESt) (raws : Array Raw) (i 
   · simp [sourceBlank_spaceOrPar _ hb]
 
 /-- What follows a blank tail is the end or a paragraph break, so no paragraph goes on past it. -/
-private theorem parContinues_blank (ctx : Ctx) (raws : Array Raw) (j : Nat) (bs : Array Block)
-    (hblank : ∀ k (hk : k < raws.size), j ≤ k → sourceBlank raws[k] = true) :
-    parContinues ctx raws j bs = bs := by
+private theorem parContinues_blank (ctx : Ctx) (raws : Array Raw) (j : Nat) (endPe : Bool)
+    (bs : Array Block) (hblank : ∀ k (hk : k < raws.size), j ≤ k → sourceBlank raws[k] = true) :
+    parContinues ctx raws j endPe bs = bs := by
   have key : ∀ k, j ≤ k → raws[skipSpaces raws k]? = none ∨
       ∃ p, raws[skipSpaces raws k]? = some (.par p) := by
     intro k hk
@@ -361,7 +361,7 @@ private theorem parContinues_blank (ctx : Ctx) (raws : Array Raw) (j : Nat) (bs 
     | case3 k h =>
       rw [Parse.skipSpaces]; simp only [h, dite_false]; exact .inl (by simp [h])
   unfold parContinues
-  rcases key j (Nat.le_refl _) with h | ⟨p, h⟩ <;> simp [h]
+  rcases key j (Nat.le_refl _) with h | ⟨p, h⟩ <;> simp [h, textOpens]
 
 private theorem elabBlocksGo_input_at (ctx : Ctx) (st : ESt) (raws : Array Raw) (i : Nat)
     (n f : String) (hn : Parse.inputEnvFile? n = some f) (body : Array Raw) (pos : Pos) (gen : Nat)
@@ -374,6 +374,7 @@ private theorem elabBlocksGo_input_at (ctx : Ctx) (st : ESt) (raws : Array Raw) 
         let bs ← elabEnvArm ctx n body pos #[]
         elabBlocksNext ctx raws (i + 1)
           (parContinues ctx raws (i + 1)
+            (Ir.lastLeavesEndPe (Ir.markDisplay false (parFollows raws (i + 1)) false 0 bs))
             (Ir.markDisplay false (parFollows raws (i + 1)) false 0 bs)) gen) :
         EM (Array Block)).run st := by
   subst hg
@@ -574,8 +575,8 @@ private theorem elabBlockScope_input_exact (ctx : Ctx) (n f : String)
   have hend := fun s b => elabBlocksGo_blanks_end
     (pre ++ #[Raw.env n body pos] ++ post) b _ (pre.size + 1) st.flowGen ctx s
     rfl hm (fun j hj hij => hblank j hj (by omega))
-  have hcont := fun b => parContinues_blank ctx
-    (pre ++ #[Raw.env (Parse.inputEnv f) body pos] ++ post) (pre.size + 1) b
+  have hcont := fun e b => parContinues_blank ctx
+    (pre ++ #[Raw.env (Parse.inputEnv f) body pos] ++ post) (pre.size + 1) e b
     (fun j hj hij => hblank j hj (by omega))
   simp only [StateT.run_bind, hx, closeBlockScope_base, hend, hcont,
     parFollows_include pre post _ hpost]

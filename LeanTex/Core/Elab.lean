@@ -193,8 +193,8 @@ public structure ListNest where
   set : Ir.ListSet := {}
   /-- TeX's `\parskip` inside the innermost list, its `\parsep`; `none` outside every list. -/
   parskip : Option Dim.SymGlue := none
-  /-- Directly in a quotation or a verse, whose paragraphs' first lines its class shapes. -/
-  shaped : Bool := false
+  /-- The quotation or verse directly around, whose paragraphs' first lines its class shapes. -/
+  shaped : Option Ir.QuoteKind := none
   deriving Repr, BEq, Inhabited
 
 /-- A list kind's own depth, as enumitem counts its levels. -/
@@ -205,7 +205,7 @@ public def ListNest.kindDepth (nest : ListNest) (kind : String) : Nat :=
 /-- One list of `kind` deeper, its declared spacing and `\parsep` in force. -/
 public def ListNest.enter (nest : ListNest) (kind : String) (set : Ir.ListSet)
     (parsep : Dim.SymGlue) : ListNest :=
-  { nest with depth := nest.depth + 1, set := set, parskip := some parsep, shaped := false
+  { nest with depth := nest.depth + 1, set := set, parskip := some parsep, shaped := none
               itemize := if kind == "itemize" then nest.itemize + 1 else nest.itemize
               enumerate := if kind == "enumerate" then nest.enumerate + 1 else nest.enumerate
               description := if kind == "description" then nest.description + 1
@@ -3574,15 +3574,17 @@ private def runInHead (ctx : Ctx) (name : String) (starred : Bool) (title : Arra
   let st ← get
   let level : Int := if name == "paragraph" then 4 else 5
   -- premise: counterChecks — numbered only within secnumdepth
+  let shaped (head : Inline) : Inline :=
+    if ctx.listNest.shaped.isSome then .role Ir.runInHeadRole #[head] else head
   if starred || !ctx.numberHeadings || level > st.ctr.secDepth then
-    return .styled .bold title
+    return shaped (.styled .bold title)
   let (n4, n5) := st.ctr.runNums
   let runs := if level == 4 then (n4 + 1, 0) else (n4, n5 + 1)
   let parent := renderSecLevel st.ctr.secFmts st.ctr.secNums st.ctr.inAppendix secFmtFuel 3
   let num := if level == 4 then s!"{parent}.{runs.1}" else s!"{parent}.{runs.1}.{runs.2}"
   modify fun st => { st with ctr := { st.ctr with runNums := runs }
                              refTarget := some { kind := some .heading, num := num } }
-  return .styled .bold (#[.text (num ++ "\u2003")] ++ title)
+  return shaped (.styled .bold (#[.text (num ++ "\u2003")] ++ title))
 
 /-- The number in `\footnote[num]`'s bracket, or `none` when there is none
 or it is not a number. -/
@@ -8697,9 +8699,9 @@ private def regionCtx (ctx : Ctx) (ground : Option Color) : MCtx ctx :=
 private def pastCtx (ctx : Ctx) (past : Nat) : MCtx ctx :=
   ⟨{ ctx with stepBase := ctx.stepBase + past }, rfl, rfl, rfl, rfl⟩
 
-/-- A box's body, where `\@parboxrestore` sets `\parskip` to zero for the lists in it. -/
+/-- A box's body, whose paragraphs are no quotation's own. -/
 private def parboxCtx (ctx : Ctx) : MCtx ctx :=
-  ⟨{ ctx with listNest := { ctx.listNest with parskip := some {}, shaped := false } }, rfl, rfl, rfl, rfl⟩
+  ⟨{ ctx with listNest := { ctx.listNest with shaped := none } }, rfl, rfl, rfl, rfl⟩
 
 private def barCtx (ctx : Ctx) (bar : Role) : Ctx :=
   (regionCtx ctx (Design.declared? ctx.palette bar)).1
@@ -9783,7 +9785,7 @@ private def flowStyleArm (ctx : Ctx) (n : String) (raws : Array Raw)
 private def parFollows (raws : Array Raw) (i : Nat) : Bool :=
   match (raws.extract i raws.size).toList.dropWhile (· matches .space) with
   | [] => false
-  | r :: _ => r matches .par _
+  | r :: _ => r matches .par _ | .ctrl "par" _
 
 private def parPrecedes (raws : Array Raw) (i : Nat) : Bool := Id.run do
   let mut j := i
@@ -9837,13 +9839,21 @@ private def altCarriers (raws : Array Raw) (i j3 : Nat) (blocks : Array Block)
   let (pb, eb, bb) := carrierOpening raws i blocks gb
   .alternate spec (Ir.carrierDisplays pa ea after ba ia) (Ir.carrierDisplays pb eb after bb ib)
 
-/-- `\pause`'s carrier: the rest of the scope from `raws[i]` on, revealed at
-step `n` and stood in its paragraph. -/
-private def pauseCarrier (raws : Array Raw) (i : Nat) (blocks : Array Block) (n : Nat)
-    (inner : Array Block) : Array Block :=
+/-- `\pause`'s carrier: the rest of the scope from `raws[i]` on, revealed at step `n` and stood in
+its paragraph, which in a quotation or a verse marks it to run on with no gap and, but past verse's
+`\\`, no indent. -/
+private def pauseCarrier (shaped : Option Ir.QuoteKind) (raws : Array Raw) (i : Nat)
+    (blocks : Array Block) (n : Nat) (inner : Array Block) : Array Block :=
   if inner.isEmpty then blocks else
   let (inPar, endPe, broken) := carrierOpening raws i blocks (raws.extract (i + 1) raws.size)
-  blocks.push (.step n none (Ir.carrierDisplays inPar endPe false broken inner))
+  let lineEnded := (raws.extract 0 i).toList.reverse.dropWhile (· matches .space) matches
+    .ctrl "\\" _ :: _
+  let marks : Array Block := match shaped, inPar with
+    | some k, true =>
+      #[.role Ir.parRunsOnRole #[]] ++
+        (if k == .verse && lineEnded then #[] else #[.role Ir.parContinuesRole #[]])
+    | _, _ => #[]
+  blocks ++ marks |>.push (.step n none (Ir.carrierDisplays inPar endPe false broken inner))
 
 /-- A display formula met between words: the paragraph flushed, and the
 display marked with where it stands in its paragraph. -/
@@ -9892,11 +9902,11 @@ private def wrapScopedEnv (n : String) (spacing : Ir.ListSet) (blocks inner : Ar
   else if n == "appendices" then blocks ++ inner
   else blocks.push (.quote ⟨(Ir.QuoteKind.ofName? n).getD .quote, spacing⟩ inner)
 
-/-- What a scoped environment's own list setting declares: a quotation's, or an abstract's, which
-is a quotation. -/
-private def scopedEnvOwn (l : Ir.ListLineage) (n : String) : Ir.ListSet :=
+/-- What a scoped environment's own list setting declares at `\@listdepth` `level`: a quotation's, or
+an abstract's, which is a quotation. -/
+private def scopedEnvOwn (l : Ir.ListLineage) (size : Sp) (level : Nat) (n : String) : Ir.ListSet :=
   (((Ir.QuoteKind.ofName? n).orElse fun _ => if n == "abstract" then some .quotation else none).map
-    (·.own l)).getD {}
+    (·.ownAt l size level)).getD {}
 
 private theorem wrapScopedEnv_text (n : String) (spacing : Ir.ListSet) :
     Ir.Conserves Ir.blocksText (wrapScopedEnv n spacing #[]) := fun inner => by
@@ -10973,25 +10983,52 @@ private def isBlockStart (ctx' : Ctx) (n : String) (raws : Array Raw) (i : Nat)
               titleCtrls.contains n || n == "maketitle"
                 || n == "titlepage" || n == "logo")))
 
-/-- `blocks` with `Ir.parContinuesRole`'s marker after an environment that leaves `\@endpe` in a
-quotation or a verse, where inline text follows it with no paragraph break between, and it did not
-open in a list's or a quotation's label, which `\@noparlist` leaves without one. -/
-private def parContinues (ctx : Ctx) (raws : Array Raw) (j : Nat) (blocks : Array Block) :
-    Array Block :=
+/-- Whether inline text opens at `raws[k]`: a word, a symbol, a group, a verbatim, inline math or a
+control that opens no block. -/
+private def textOpens (ctx : Ctx) (raws : Array Raw) (k : Nat) : Bool :=
+  match raws[k]? with
+  | some (.word ..) | some (.sym ..) | some (.group ..) | some (.verb ..)
+  | some (.math false ..) => true
+  | some (.ctrl n _) => !isBlockStart ctx n raws k #[]
+  | _ => false
+
+/-- The index past the bare skip blocks (`\block[...]{}`) and spaces from `k`, which `\@endpe`
+survives as TeX's vertical list does. -/
+private def pastSkips (raws : Array Raw) (k : Nat) : Nat := Id.run do
+  let mut k := k
+  for _ in [0:raws.size] do
+    match raws[k]? with
+    | some (.ctrl "block" _) =>
+      let j := skipSpaces raws (k + 1)
+      let p := match raws[j]? with
+        | some (.sym '[' _) => ((closeBracketFrom raws (j + 1)).map (· + 1)).getD j
+        | _ => j
+      let q := skipSpaces raws p
+      match raws[q]? with
+      | some (.group body _) =>
+        if body.all (· matches .space) then k := skipSpaces raws (q + 1) else break
+      | _ => break
+    | _ => break
+  return k
+
+/-- `blocks` with `Ir.parContinuesRole`'s marker after an environment leaving `\@endpe` (`endPe`) in a
+quotation or a verse, where text follows it past any bare skip, unless it opened in a label, which
+`\@noparlist` leaves without one. -/
+private def parContinues (ctx : Ctx) (raws : Array Raw) (j : Nat) (endPe : Bool)
+    (blocks : Array Block) : Array Block :=
   let k := skipSpaces raws j
   let text := match raws[k]? with
-    | some (.word ..) | some (.sym ..) | some (.group ..) | some (.verb ..)
-    | some (.math false ..) => true
-    | some (.ctrl n _) => !isBlockStart ctx n raws k #[]
-    | _ => false
+    | some (.ctrl "block" _) => textOpens ctx raws (pastSkips raws k)
+    | _ => textOpens ctx raws k
   let content := blocks.filter fun b =>
-    !Ir.pageMarkerBlock b && !(b matches .setPalette _ | .setTokens _)
+    !Ir.pageMarkerBlock b && !(b matches .setPalette _ | .setTokens _) &&
+      !(match b with | .para c => Ir.anchorsOnly c | _ => false)
   let labelled := 0 < ctx.listNest.depth && content.size ≤ 1
-  if text && ctx.listNest.shaped && !labelled && Ir.lastLeavesEndPe blocks then
+  if text && ctx.listNest.shaped.isSome && !labelled && endPe then
     blocks.push (.role Ir.parContinuesRole #[])
   else blocks
 
-seal parContinues
+seal textOpens pastSkips parContinues
 
 /-- The `\begin{frame}` options the frame model reads; a standout frame is
 centred whatever its options say. -/
@@ -11774,8 +11811,10 @@ the text width; the box takes the whole measure" pos
     -- A quotation is a list level, which its enclosing lists' spacing reaches as LaTeX's does.
     let ⟨quoteCtx, _⟩ : MCtx ctx ← pure ⟨
       if n == "appendices" || (n == "abstract" && !ctx.abstractNests) then ctx
-      else { ctx with listNest := { ctx.quotedNest (scopedEnvOwn ctx.lists n) with
-        shaped := ctx.lists != Ir.ListLineage.web && (n == "quotation" || n == "verse") } },
+      else { ctx with listNest := { ctx.quotedNest
+          (scopedEnvOwn ctx.lists ctx.page.fontSize (ctx.listNest.depth + 1) n) with
+        shaped := if ctx.lists == Ir.ListLineage.web || (n != "quotation" && n != "verse") then none
+          else Ir.QuoteKind.ofName? n } },
       by split <;> rfl, by split <;> rfl, by split <;> rfl, by split <;> rfl⟩
     let inner ← splicedFrameScope (if n == "appendices" then some blocks.size else none)
       (elabBlockScope quoteCtx body)
@@ -12168,7 +12207,8 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
       else
       let (⟨ctx', hm⟩, blocks) ← flushPara ctx' blocks cur
       let b ← listingBlock ctx' env s vpos
-      elabBlocksGo ctx' raws (i + 1) (blocks.push b) #[] gen'
+      -- A display listing's environment is a trivlist, which leaves `\@endpe`.
+      elabBlocksGo ctx' raws (i + 1) (parContinues ctx' raws (i + 1) true (blocks.push b)) #[] gen'
     | .math display body mpos =>
       if display then
         -- `\[` is amsmath's `equation*`.
@@ -12213,7 +12253,8 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
         let afterEnv := endPeAt raws i inPar flushed
         let blocks ← envGroup n ctx'.palette inPar (parFollows raws (i + 1)) afterEnv
           flushed.size (elabEnvArm ctx' n body epos flushed)
-        elabBlocksNext ctx' raws (i + 1) (parContinues ctx' raws (i + 1) blocks) gen'
+        elabBlocksNext ctx' raws (i + 1)
+          (parContinues ctx' raws (i + 1) (Ir.lastLeavesEndPe blocks) blocks) gen'
       else
         elabBlocksGo ctx' raws (i + 1) blocks (cur.push raws[i]) gen'
     | .ctrl n cpos =>
@@ -12271,7 +12312,7 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
           let ⟨stepCtx, hm⟩ : MCtx ctx' ←
             pure ⟨{ ctx' with stepBase := max (ctx'.stepBase + 1) k }, rfl, rfl, rfl, rfl⟩
           let inner ← elabBlockScope stepCtx (raws.extract (i + 1) raws.size)
-          let blocks := pauseCarrier raws i blocks (k + 1) inner
+          let blocks := pauseCarrier ctx'.listNest.shaped raws i blocks (k + 1) inner
           have _ : sliceWeight raws raws.size = 0 :=
             sliceWeight_end raws (Nat.le_refl _)
           have _ : slicePars raws raws.size = 0 :=
@@ -12521,7 +12562,7 @@ unseal displayMathEnvs alignEnvs isMathEnv sectionLevel specWord? blockHeading?
 unseal lookupUser lookupUserEnv isArgument isCenteringRaw isParRaw splitAtPars sizeParScope
 unseal isColumnStray
 unseal parFollows parPrecedes endPeAt displayAtBlock
-unseal parContinues
+unseal textOpens pastSkips parContinues
 unseal scanBracketArg
 unseal nativeLinkedRow linkedRowChoice noteLinkedRow
 unseal texGroup groupBlocks restoringGroup envGroup

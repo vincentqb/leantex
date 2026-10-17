@@ -125,6 +125,8 @@ public structure Config where
   shaped : Option Ir.QuoteKind := none
   /-- The block before goes on with the paragraph the next one opens (`Ir.Block.continuesPar`). -/
   continues : Bool := false
+  /-- The paragraph before runs on into the next block, an overlay step (`Ir.Block.runsOn`). -/
+  runsOn : Bool := false
   inset : Sp := 0
   /-- The local measurement context; `none` reads the document's text area. -/
   measures : Option MeasureValues := none
@@ -1123,10 +1125,13 @@ public def listSetRules (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens)
 level's and spacing's rule; the web's quotations keep the page's. -/
 public def quoteKindRules (l : Ir.ListLineage) (size : Int) (kinds : List Ir.QuoteKind) :
     List GapRule :=
-  if l == .web then [] else
+  if l == .web || kinds.isEmpty then [] else
   -- a list or quotation opening a quotation stands in its item's label, leaving no skip below it
   ownsBelow [s!"blockquote > :is({", ".intercalate listElems}):first-child"] (listSpace 0) (milliRem 0)
     texParskip ++
+  -- an overlay step a quotation's paragraph runs on into stands with no gap (`Ir.parRunsOnRole`)
+  (if kinds.contains .quotation || kinds.contains .verse then [.boundary "* + .u-runs-on" "0"]
+   else []) ++
   kinds.filterMap fun k =>
     (k.own l).parsep.map fun g =>
       .parskip s!"blockquote.{k.name} > *" (milliRem (screenMilli size (listSkipSp size g)))
@@ -1362,20 +1367,24 @@ public def listIndentCss (l : Ir.ListLineage) (basis : LengthBasis) (face : Ir.P
     s!":where({pre}ul, {pre}ol, {pre}dd) \{ padding-left: {v}; }\n" ++
       s!":where({pre}:is(blockquote, .abstract.quoted)) \{ padding: 0 {v}; }\n")
 
-/-- The paragraph shapes of the quotation kinds a page holds: quotation's first-line indent, and
-verse's lines hung from a margin `Ir.verseHang` past the quotation's; none on the web's. -/
-public def quoteKindCss (l : Ir.ListLineage) (indent : Dim.Length) (kinds : Array Ir.QuoteKind) :
-    String :=
+/-- The paragraph shapes of the quotation kinds a page holds, fixed in the preamble font as the
+class's list fixes them: quotation's first-line indent, and verse's lines hung from a margin
+`Ir.verseHang` past the quotation's, each forced line restarting; none on the web's. -/
+public def quoteKindCss (l : Ir.ListLineage) (basis : LengthBasis) (face : Ir.PreambleFace)
+    (indent : Dim.Length) (kinds : Array Ir.QuoteKind) : String :=
   if l == .web then "" else
+  let fixed (len : Dim.Length) : String := tableLengthCss basis (.ofSp (face.resolve len))
+  let hang := fixed Ir.verseHang
+  -- an overlay's carrier is grouping, its blocks the verse's own
+  let carriers := ".step, .step-set, .alt-pair, [data-backend]"
   (if kinds.contains .quotation then
-    s!"blockquote.quotation > p:not(.u-continues):not(.display) \{ text-indent: {cssLength indent}; }\n"
-   else "") ++
+    s!"p.quotation-par:not(.u-continues) \{ text-indent: {fixed indent}; }\n" else "") ++
   (if kinds.contains .verse then
-    s!"blockquote.verse > p > .verse-line:not(.entry-row) \{ display: block; }\n" ++
-    s!"blockquote.verse > p > .verse-line \{ padding-left: {cssLength Ir.verseHang}; \
-text-indent: -{cssLength Ir.verseHang}; }\n" ++
-    "blockquote.verse > p.u-continues > .verse-line:first-child { text-indent: 0; }\n" ++
-    s!"blockquote.verse > :not(p) \{ margin-left: {cssLength Ir.verseHang}; }\n" else "")
+    s!"p.verse-par \{ padding-left: {hang}; text-indent: -{hang} each-line; }\n" ++
+    "p.verse-par:is(.entry, .entry-rows) { padding-left: 0; text-indent: 0; }\n" ++
+    s!"p.verse-par.u-continues::before \{ content: \"\"; display: inline-block; width: {hang}; }\n" ++
+    s!"blockquote.verse > :not(p, {carriers}):not(:first-child), \
+blockquote.verse > :is({carriers}) > :not(p) \{ margin-left: {hang}; }\n" else "")
 
 /-- beamer's abstract inset as CSS on the abstract's own paragraphs, in the page's unit as the
 preamble's font fixes it. -/
@@ -1871,10 +1880,12 @@ private theorem quoteKindRules_noReset (l : Ir.ListLineage) (size : Int) (kinds 
   unfold quoteKindRules
   split
   · rfl
-  · rw [List.all_append, Bool.and_eq_true]
-    refine ⟨by simp [ownsBelow, GapRule.isReset, texParskip], ?_⟩
-    simp only [List.all_eq_true, List.mem_filterMap, Option.map_eq_some_iff]
-    rintro r ⟨k, -, g, -, rfl⟩
+  · rw [List.all_append, List.all_append, Bool.and_eq_true, Bool.and_eq_true]
+    refine ⟨⟨by simp [ownsBelow, GapRule.isReset, texParskip], by split <;> rfl⟩, ?_⟩
+    rw [List.all_eq_true]
+    intro r hr
+    obtain ⟨k, -, hk⟩ := List.mem_filterMap.mp hr
+    obtain ⟨g, -, rfl⟩ := Option.map_eq_some_iff.mp hk
     rfl
 
 private theorem nestedCloseRules_noReset (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens)
@@ -5424,10 +5435,8 @@ public def baseRules (doc : Doc) (pairs : List (Nat × Nat) := []) : String :=
   (if doc.surface != .tex then
     ":where(:not(pre) > code) { overflow-wrap: break-word; }\n" else "") ++
   listIndentCss doc.docClass.record.lists (lengthBasisOf doc) doc.preambleFace ++
-  quoteKindCss doc.docClass.record.lists doc.docClass.record.quotationIndent
-    (Ir.quoteKindsOf doc.body) ++
-  -- a box's `\@parboxrestore` zeroes a declared `\parskip`, its paragraphs' and its lists' alike
-  (if doc.page.parskip.isSome then ".column, figure.float { --parskip: 0rem; }\n" else "") ++
+  quoteKindCss doc.docClass.record.lists (lengthBasisOf doc) doc.preambleFace
+    doc.docClass.record.quotationIndent (Ir.quoteKindsOf doc.body) ++
   (if doc.abstractForm == .inset then abstractInsetCss (lengthBasisOf doc) doc.preambleFace
    else "") ++
   s!"li::marker \{ color: {roleRef .marker}; }\n" ++
@@ -6586,18 +6595,6 @@ private def splitAtBreaks (xs : Array Inline) : Array (Array Inline) := Id.run d
     | other => cur := cur.push other
   return out.push cur
 
-/-- A verse paragraph's lines, each with the space its `\\[...]` declares after it. -/
-private def verseLines (xs : Array Inline) : Array (Array Inline × SymGlue) := Id.run do
-  let mut out : Array (Array Inline × SymGlue) := #[]
-  let mut cur : Array Inline := #[]
-  for x in xs do
-    match x with
-    | .linebreak extra =>
-      out := out.push (cur, extra)
-      cur := #[]
-    | other => cur := cur.push other
-  return if cur.isEmpty && !out.isEmpty then out else out.push (cur, {})
-
 /-- Split one row at each `\hfill`. -/
 private def splitAtFills (xs : Array Inline) : Array (Array Inline) := Id.run do
   let mut out : Array (Array Inline) := #[]
@@ -6643,7 +6640,8 @@ private def gridTracks (cols : Array (BoxWidth × Array Block)) : String :=
 
 /-- Children start their own sibling walk; the parent's epoch style already inherits into them. -/
 public def Config.into (cfg : Config) : Config :=
-  { cfg with epochStyle := "", epochPaint := "", epochGround := false, continues := false }
+  { cfg with
+    epochStyle := "", epochPaint := "", epochGround := false, continues := false, runsOn := false }
 
 /-- The frame's numbered extent, for every part of its HTML frame. -/
 public def Config.inFrame (cfg : Config) (frame : Block) : Config :=
@@ -8117,17 +8115,12 @@ private def paragraphNode (cfg : Config) (content : Array Inline) : Node :=
   if Ir.anchorsOnly content then
     Html.elem "span" (inlines cfg content)
   else
-  -- a paragraph going on past an environment or a display takes no first-line indent
-  let mark (n : Node) : Node :=
-    if cfg.continues && cfg.shaped.isSome then withClass "u-continues" n else n
-  -- each of a verse's lines is a block of its own, which its hang restarts on
-  if cfg.shaped == some .verse then
-    mark (Html.elem "p" ((verseLines content).map fun (row, extra) =>
-      let line := if hasFill row then fillRow cfg "span" "entry-row verse-line" row
-        else Html.elem "span" (inlines cfg row) #[("class", "verse-line")]
-      if extra == ({} : SymGlue) then line
-      else withStyle s!"margin-bottom: {cssLength extra.width}" line))
-  else
+  -- a quotation's or a verse's own paragraph takes its kind's shape, but none past where it goes on
+  let mark (n : Node) : Node := match cfg.shaped with
+    | some k =>
+      let n := withClass s!"{k.name}-par" n
+      if cfg.continues || Ir.opensRunIn content then withClass "u-continues" n else n
+    | none => n
   if hasFill content then
     let rows := splitAtBreaks content
     if rows.size == 1 then
@@ -8515,8 +8508,10 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
         ("style", s!"display: grid; grid-template-columns: {gridTracks cols}; " ++
           s!"justify-content: {justify}")]
   | .onSteps spec body =>
+    -- a step is grouping: the paragraph state before it reaches its first block
     fillCarrier cfg (Ir.frameFills cfg.lists cfg.styles .deck body)
-      (overlayNode "div" cfg.overlaySteps spec (blockNodesInto cfg.into #[] body.toList))
+      (overlayNode "div" cfg.overlaySteps spec
+        (blockNodesInto { cfg.into with continues := cfg.continues } #[] body.toList))
   | .altSteps spec firstPage otherPage =>
     -- a group's fills grow nothing: the stage's flex column is shared by every step
     let first := blockNodesInto { cfg.into with fillsInert := true } #[] firstPage.toList
@@ -8737,9 +8732,13 @@ private def blockNodesInto (cfg : Config) (acc : Array Node) : List Block → Ar
     blockNodesInto (cfg.advanceTokens tk) acc rest
   | b :: rest =>
     if Ir.pageMarkerBlock b then
-      blockNodesInto (if b.continuesPar then { cfg with continues := true } else cfg) acc rest
-    else blockNodesInto { cfg.afterBlock b with continues := b.continuesPar }
-      (acc.push (cfg.applyEpoch (blockNode cfg b))) rest
+      blockNodesInto { cfg with continues := cfg.continues || b.continuesPar
+                                runsOn := cfg.runsOn || b.runsOn } acc rest
+    else blockNodesInto
+      { cfg.afterBlock b with continues := if b.isSkip then cfg.continues else b.continuesPar
+                              runsOn := false }
+      (acc.push (cfg.applyEpoch
+        (if cfg.runsOn then withClass "u-runs-on" (blockNode cfg b) else blockNode cfg b))) rest
 
 private def columnNodesInto (cfg : Config) (total share : Sp) (acc : Array Node) :
     List (BoxWidth × Array Block) → Array Node
@@ -8817,8 +8816,8 @@ private theorem pageOpening_projects (cfg : Config) (acc : Array Node)
     (h : Ir.pageOpeningOfRole? n = some opening) :
     blockNodesInto cfg acc (.role n #[] :: rest) = blockNodesInto cfg acc rest := by
   simp only [blockNodesInto, Ir.pageMarkerBlock, Array.isEmpty_empty,
-    Ir.pageOpening_marker_exact n opening h, Ir.pageOpening_continuesPar n opening h, Bool.true_and,
-    ite_true, Bool.false_eq_true, ite_false]
+    Ir.pageOpening_marker_exact n opening h, Ir.pageOpening_continuesPar n opening h,
+    Ir.pageOpening_runsOn n opening h, Bool.true_and, Bool.or_false, ite_true]
 
 /-- Facts of the emitted tree the landmark and anchor checks judge, collected in one walk. -/
 private structure PageFacts where

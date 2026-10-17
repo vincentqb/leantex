@@ -60,15 +60,55 @@ def stanzas : String :=
   "\\begin{frame}\nAlpha paragraph.\n\\begin{verse}\nBravo verse one\\\\\n" ++
   "Charlie verse two\n\nDelta stanza two\n\\end{verse}\nEcho after.\n\\end{frame}"
 
+/-- A list in a quote, in a quotation and in a verse, each between lines of its own. -/
+def webLists : String :=
+  "\\begin{quote}\nAlpha quoted.\n\\begin{itemize}\n\\item Bravo item.\n\\end{itemize}\n" ++
+  "Charlie after.\n\\end{quote}\n\n\\begin{quotation}\nDelta quoted.\n\\begin{itemize}\n" ++
+  "\\item Echo item.\n\\end{itemize}\nFoxtrot after.\n\\end{quotation}\n\n\\begin{verse}\n" ++
+  "Golf line\n\\begin{itemize}\n\\item Hotel item.\n\\end{itemize}\nIndia after\n\\end{verse}"
+
+/-- A frame's verse stepping the line its `\\` ended, before a stanza. -/
+def paused : String :=
+  "\\begin{frame}\n\\begin{verse}\nAlpha line one\\\\\n\\pause\nBravo line two\n\n" ++
+  "Charlie stanza two\n\\end{verse}\n\\end{frame}"
+
+/-- A verse whose lines all stand under one font declaration. -/
+def styledVerse : String :=
+  "\\begin{quote}\nAlpha plain.\n\\end{quote}\n\n\\begin{verse}\\itshape Bravo one\\\\\n" ++
+  "Charlie two\\\\\nDelta three\n\nEcho four\\\\\nFoxtrot five\n\\end{verse}"
+
+/-- A verse a list opens, and a line after the list. -/
+def verseOpening : String :=
+  "\\begin{verse}\n\\begin{itemize}\n\\item Alpha item.\n\\item Bravo item.\n\\end{itemize}\n" ++
+  "Charlie after\n\\end{verse}"
+
+/-- A quotation's paragraphs going on past a verbatim, a skip and a heading, a run-in heading's,
+and a paragraph a `\\par` after a display opens. -/
+def goesOnMore : String :=
+  "\\begin{quote}\nAlpha plain.\n\\end{quote}\n\n\\begin{quotation}\nBravo first.\n\n" ++
+  "Charlie before verbatim.\n\\begin{verbatim}\ncode line\n\\end{verbatim}\nDelta after.\n\n" ++
+  "Echo before list.\n\\begin{itemize}\n\\item Foxtrot item.\n\\end{itemize}\n\\vspace{2pt}\n" ++
+  "Golf after skip.\n\n\\subsection*{Hotel heading}\nIndia after heading.\n\n" ++
+  "\\paragraph{Juliet} Kilo run in.\n\nLima before\n\\[ x = y \\]\n\\par\nMike after par.\n" ++
+  "\\end{quotation}"
+
+/-- A quotation of paragraphs in `\\small`, and a label before a list opening a quotation. -/
+def smallAndLabel : String :=
+  "\\begin{quote}\nAlpha plain.\n\\end{quote}\n\nBravo paragraph.\n\\begin{quotation}\n" ++
+  "\\small Charlie small one.\n\nDelta small two.\n\\end{quotation}\n\n\\begin{quotation}\n" ++
+  "\\label{q}\n\\begin{itemize}\n\\item Echo item.\n\\end{itemize}\nFoxtrot after.\n" ++
+  "\\end{quotation}"
+
 def doc (cls pre body : String) : String :=
   s!"\\documentclass{cls}\n{pre}\n\\begin\{document}\n{body}\n\\end\{document}\n"
 
-/-- The space between consecutive lines starting with `words`, past the page's baselineskip, in
-tenths of a point; `none` where a word starts no line. -/
-def gaps (oneFace : Font.FontSet) (src : String) (words : List String) : Option (List Int) := do
+/-- The space between consecutive lines starting with `words` on page `page`, past the page's
+baselineskip, in tenths of a point; `none` where a word starts no line. -/
+def gaps (oneFace : Font.FontSet) (src : String) (words : List String) (page : Nat := 0) :
+    Option (List Int) := do
   let (d, _) := elabStr src
   let c := censusOf (coveredColorsOf d) (layoutOf oneFace d)
-  let ys ← words.mapM (lineYOf c 0 ·)
+  let ys ← words.mapM (lineYOf c page ·)
   let bs := Ir.baselineSkipOf d.page
   return (ys.zip ys.tail).map fun (a, b) => ((b - a - bs) * 10 + Dim.pt 1 / 2) / Dim.pt 1
 
@@ -118,12 +158,16 @@ def komaListChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
   t "koma lists: options passed to a KOMA-Script class before it loads are its own"
     ((elabStr ("\\PassOptionsToClass{titlepage}{scrartcl}\n" ++ doc "{scrartcl}" "" "Alpha.")).1.abstractForm ==
       .titlePage)
-  -- lualatex: `\@parboxrestore` sets `\parskip` to zero in a minipage and a float, so a list there
-  -- keeps its level's own skips.
+  -- A declared parskip stands in a minipage and a float, where `\@parboxrestore` zeroes LaTeX's, so a
+  -- list there takes it as its parsep.
   let src := doc "[parskip=half]{scrartcl}" "" boxed
-  t "koma lists: a list in a minipage or a float keeps its level's skips under parskip=half"
-    (gaps oneFace src ["Bravo", "Charlie", "Delta", "Echo"] == some [90, 90, 90] &&
-      gaps oneFace src ["Foxtrot", "Golf", "Hotel", "India"] == some [90, 90, 90])
+  t "koma lists: a list in a minipage or a float reads the declared parskip, which stands there"
+    (gaps oneFace src ["Bravo", "Charlie", "Delta", "Echo"] == some [68, 68, 68] &&
+      gaps oneFace src ["Foxtrot", "Golf", "Hotel", "India"] == some [68, 68, 68])
+  -- lualatex: the class's written options stand over those passed to it before it loads.
+  t "koma lists: a class's written option stands over the one passed to it"
+    (((elabStr ("\\PassOptionsToClass{parskip=full}{scrartcl}\n" ++
+        doc "[parskip=half]{scrartcl}" "" "Alpha.")).1.page.parskip.map (·.width.sp)) == some 445644)
   -- enumitem's keys stand over the level's macro: a declared parsep is the next level's parskip.
   let declared := doc "{scrartcl}" "\\usepackage{enumitem}\n\\setlist[1]{parsep=0pt}" nested
   t "koma lists: a declared level-one parsep of zero leaves the second level's own skips"
@@ -226,6 +270,45 @@ def quoteBoundaryChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
   t "quote kinds: beamer's verse stands its stanzas its own parsep apart"
     (gaps oneFace (doc "{beamer}" "" stanzas) ["Alpha", "Bravo", "Charlie", "Delta", "Echo"] ==
       some [30, 0, 83, 30])
+  -- The web page's lists keep the page's rhythm in a quotation and a verse as in a quote.
+  let web := doc "{webpage}" "" webLists
+  t "quote kinds: a list in the web page's quotation or verse keeps the page's own rhythm"
+    (let inQuote := gaps oneFace web ["Alpha", "Bravo", "Charlie"]
+     inQuote.isSome && gaps oneFace web ["Delta", "Echo", "Foxtrot"] == inQuote &&
+       gaps oneFace web ["Golf", "Hotel", "India"] == inQuote)
+  -- lualatex: verse's `\\` takes back the next paragraph's `\parskip`, so the line a step reveals
+  -- after it stands at the margin a line below, and a stanza after it its parsep further.
+  let stepped := layoutOf oneFace (elabStr (doc "{beamer}" "" paused)).1
+  t "quote kinds: a verse line a step reveals after its line's end stands a line below, unhung"
+    (gaps oneFace (doc "{beamer}" "" paused) ["Alpha", "Bravo", "Charlie"] (page := 1) ==
+        some [0, 83] && inkOf stepped "Bravo" == inkOf stepped "Alpha")
+  let styled := layoutOf oneFace (elabStr (doc "[10pt]{article}" "" styledVerse)).1
+  t "quote kinds: a verse under a font declaration sets each line at the verse's margin"
+    (["Bravo", "Charlie", "Delta", "Echo", "Foxtrot"].all fun w =>
+      inkOf styled w == inkOf styled "Alpha")
+  -- lualatex: a list opening a verse stands in its label, its first item at its own margin, and
+  -- the line after it at the hang.
+  let opened := layoutOf oneFace (elabStr (doc "[10pt]{article}" "" ("\\begin{quote}\nAlpha " ++
+    "plain.\n\\end{quote}\n\n\\begin{quote}\n\\begin{itemize}\n\\item Echo item.\n" ++
+    "\\end{itemize}\n\\end{quote}\n\n" ++ verseOpening.replace "Alpha item" "Delta item"))).1
+  t "quote kinds: a list opening a verse sets its first item where one opening a quote stands"
+    (inkOf opened "Delta" == inkOf opened "Echo" && inkOf opened "Charlie" == inkOf opened "Alpha")
+  -- lualatex: no indent past a verbatim, a skip after a list, a heading or a run-in heading, and
+  -- the indent on a paragraph `\\par` opens after a display.
+  let more := layoutOf oneFace (elabStr (doc "[10pt]{article}" "" goesOnMore)).1
+  let past (w : String) : Int := (inkOf more w).getD 0 - (inkOf more "Alpha").getD 0
+  t "quote kinds: a quotation's text past a verbatim, a skip or a heading takes no indent"
+    (past "Bravo" == Dim.pt 15 && past "Delta" == 0 && past "Golf" == 0 && past "India" == 0 &&
+      past "Juliet" == 0 && past "Mike" == Dim.pt 15)
+  -- lualatex: `\\small` paragraphs in a quotation stand on the small size's line, and a label
+  -- before a list opening a quotation leaves the list in its item's label.
+  let small := doc "[10pt]{article}" "" smallAndLabel
+  let labelled := layoutOf oneFace (elabStr small).1
+  t "quote kinds: small paragraphs in a quotation stand on their own size's line"
+    (gaps oneFace small ["Charlie", "Delta"] == some [-10])
+  t "quote kinds: a label before a list opening a quotation leaves the list in its label"
+    (gaps oneFace small ["Echo", "Foxtrot"] == some [0] &&
+      (inkOf labelled "Foxtrot").getD 0 - (inkOf labelled "Alpha").getD 0 == Dim.pt 15)
 
 /-- The web page sets each quotation kind by its class: quotation's first-line indent and verse's
 hung lines, a quote's declared spacing by its spacing's class, and a KOMA-Script nested list's. -/
@@ -236,27 +319,49 @@ def quoteKindHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "html quote kinds: a quotation and a verse carry their kind's class"
     (hasStr q "<blockquote class=\"quotation" && hasStr q "<blockquote class=\"verse" &&
       hasStr q "<blockquote>")
-  let indent := "blockquote.quotation > p:not(.u-continues):not(.display) { text-indent: "
+  let indent := "p.quotation-par:not(.u-continues) { text-indent: "
   t "html quote kinds: quotation indents its paragraphs by its class's parindent"
-    (hasStr q (indent ++ "1.5em; }") && hasStr (page "[10pt]{scrartcl}" quotes) (indent ++ "1em; }"))
-  t "html quote kinds: verse hangs each line of a paragraph, each a block of its own"
-    (hasStr q "blockquote.verse > p > .verse-line:not(.entry-row) { display: block; }" &&
-      hasStr q "blockquote.verse > p > .verse-line { padding-left: 1.5em; text-indent: -1.5em; }" &&
-      (q.splitOn "<span class=\"verse-line\">").length == 5)
+    (hasStr q (indent ++ "1.5rem; }") && hasStr (page "[10pt]{scrartcl}" quotes) (indent ++ "1rem; }"))
+  t "html quote kinds: verse hangs each line of a paragraph, each forced line restarting"
+    (hasStr q "p.verse-par { padding-left: 1.5rem; text-indent: -1.5rem each-line; }" &&
+      (q.splitOn "<p class=\"verse-par\">").length == 3 && (q.splitOn "<br").length ≥ 3 &&
+      !hasStr q "verse-line")
   t "html quote kinds: a page without quotation or verse carries neither rule"
     (let plain := page "[10pt]{article}" "Alpha.\n\n\\begin{quote}Bravo.\\end{quote}"
-     !hasStr plain "blockquote.quotation" && !hasStr plain "verse-line")
+     !hasStr plain "quotation-par" && !hasStr plain "verse-par")
   t "html quote kinds: the web page's quotation and verse take no shape of their kind"
     (let web := page "{webpage}" quotes
-     !hasStr web "blockquote.quotation >" && !hasStr web "verse-line")
+     !hasStr web "quotation-par" && !hasStr web "verse-par")
   let g := page "[10pt]{article}" goesOn
   t "html quote kinds: a quotation's or a verse's paragraph going on past a display or a list is marked"
-    (hasStr g "<p class=\"u-continues\">Delta after display." &&
-      hasStr g "<p class=\"u-continues\">Golf after list." && hasStr g "<p>India after." &&
-      (g.splitOn "<p class=\"u-continues\">").length == 4 &&
-      hasStr g "blockquote.verse > p.u-continues > .verse-line:first-child { text-indent: 0; }")
+    (hasStr g "<p class=\"quotation-par u-continues\">Delta after display." &&
+      hasStr g "<p class=\"quotation-par u-continues\">Golf after list." &&
+      hasStr g "<p class=\"quotation-par\">India after." &&
+      hasStr g "<p class=\"verse-par u-continues\">Lima after list" &&
+      (g.splitOn "u-continues\">").length == 4 &&
+      hasStr g "p.verse-par.u-continues::before")
+  let more := page "[10pt]{article}" goesOnMore
+  t "html quote kinds: a quotation's text past a verbatim, a skip or a heading is marked"
+    (hasStr more "<p class=\"quotation-par u-continues\">Delta after." &&
+      hasStr more "<p class=\"quotation-par u-continues\">Golf after skip." &&
+      hasStr more "<p class=\"quotation-par u-continues\">India after heading." &&
+      hasStr more "<p class=\"quotation-par\">Mike after par.")
   t "html quote kinds: a fill in a verse line sets its row against the verse's right margin"
-    (hasStr (page "[10pt]{article}" signed) "<span class=\"entry-row verse-line")
+    (hasStr (page "[10pt]{article}" signed) "<p class=\"entry-rows verse-par\">" &&
+      hasStr q "p.verse-par:is(.entry, .entry-rows) { padding-left: 0; text-indent: 0; }")
+  t "html quote kinds: a list in the web page's quotation or verse declares no spacing of its own"
+    (!hasStr (page "{webpage}" webLists) "list-set-")
+  let st := page "{beamer}" paused
+  t "html quote kinds: a verse line a step reveals after its line's end stands with no gap"
+    (hasStr st "class=\"step u-runs-on\"" && hasStr st "* + .u-runs-on")
+  let sv := page "[10pt]{article}" styledVerse
+  t "html quote kinds: a verse under a font declaration keeps its lines' breaks in one paragraph"
+    ((sv.splitOn "<p class=\"verse-par\">").length == 3 && (sv.splitOn "<br").length == 4)
+  t "html quote kinds: a list opening a verse takes no hang"
+    (hasStr (page "[10pt]{article}" verseOpening)
+      "blockquote.verse > :not(p, .step, .step-set, .alt-pair, [data-backend]):not(:first-child)")
+  t "html quote kinds: a page without a quotation carries no label rule"
+    (!hasStr (page "[10pt]{article}" "Alpha.") "blockquote > :is(")
   t "html quote kinds: a list or a quote opening a quote leaves no skip below it but its parsep"
     (hasStr (page "[10pt]{article}" opening)
       ":first-child + *) { margin-top: calc(0.000rem + var(--parskip, 0rem)); }")
@@ -265,8 +370,7 @@ def quoteKindHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
   let k := page "[10pt]{scrartcl}" nested
   t "html koma lists: a nested KOMA-Script list reads its level's parskip by its spacing's class"
     ((k.splitOn "<ul>").length == 2 && (k.splitOn "<ul class=\"list-set-1 ").length == 3)
-  t "html koma lists: a minipage or a float zeroes the parskip its lists read"
-    (hasStr (page "[parskip=half]{scrartcl}" boxed) ".column, figure.float { --parskip: 0rem; }" &&
-      !hasStr (page "[10pt]{article}" boxed) ".column, figure.float { --parskip: 0rem; }")
+  t "html koma lists: a minipage or a float keeps the declared parskip its lists read"
+    (!hasStr (page "[parskip=half]{scrartcl}" boxed) ".column, figure.float {")
 
 end Tests.ListsKoma

@@ -824,11 +824,15 @@ public theorem titlepage_empty_exact (s : PageState) :
 `\@endpe` sets the text after it with no first-line indent. -/
 public def parContinuesRole : String := "par continues"
 
+/-- The role an empty marker rides in before an overlay step a quotation's or a verse's paragraph
+runs on into, which stands with no paragraph gap above it. -/
+public def parRunsOnRole : String := "par runs on"
+
 /-- The engine roles that mark a fact of the page model and carry no content. -/
 @[expose] public def pageMarkerRole (n : String) : Bool :=
   n == pageAnchorRole || n == noInterlineRole || n == primitiveSkipRole ||
     (pageOpeningOfRole? n).isSome || n == squeezeRole || n == squeezeFitRole || fitMarkRole n ||
-    n == parContinuesRole
+    n == parContinuesRole || n == parRunsOnRole
 
 public theorem pageOpening_marker_exact (n : String) (opening : PageOpening)
     (h : pageOpeningOfRole? n = some opening) : pageMarkerRole n = true := by
@@ -836,6 +840,10 @@ public theorem pageOpening_marker_exact (n : String) (opening : PageOpening)
 
 /-- The inline role a description item's label rides in, first in the item's first paragraph. -/
 public def descLabelRole : String := "description-label"
+
+/-- The inline role a run-in heading rides in at its paragraph's start in a quotation or a verse,
+whose first line it opens with no indent, as `\@afterindentfalse` sets it. -/
+public def runInHeadRole : String := "run-in-head"
 
 public theorem trivlist_between :
     Dim.pt 4 ≤ (trivlistSkipDefault (Dim.pt 10)).width.sp ∧
@@ -4747,13 +4755,16 @@ public structure QuoteSpec where
   spacing : ListSet
   deriving Repr, BEq, Inhabited, Hashable
 
+/-- The keys a quotation's environment declares at `\@listdepth` `level` where its lineage sets list
+skips (`QuoteKind.own`); none on the web, whose lists declare over zero. -/
+public def QuoteKind.ownAt (k : QuoteKind) (l : ListLineage) (size : Sp) (level : Nat) : ListSet :=
+  if (listSkips l size level).isSome then k.own l else {}
+
 /-- A quotation's spacing and `\partopsep` at `\@listdepth` `level`: its level's under what it keeps
-and its environment's own keys over both; the web's quotations declare only what they keep. -/
+and its environment's own keys over both (`QuoteKind.ownAt`). -/
 public def quoteSpacing (l : ListLineage) (size : Sp) (level : Nat) (tokens : Tokens) (q : QuoteSpec) :
     Option (ListSkips × SymGlue) :=
-  match listSkips l size level with
-  | some _ => listSpacing l size level tokens (q.spacing.over (q.kind.own l))
-  | none => listSpacing l size level tokens q.spacing
+  listSpacing l size level tokens (q.spacing.over (q.kind.ownAt l size level))
 
 public theorem quoteSpacing_own_exact (l : ListLineage) (size : Sp) (level : Nat) (tokens : Tokens)
     (q : QuoteSpec) (sk : ListSkips) (p : SymGlue) (hl : l ≠ .web)
@@ -4765,9 +4776,9 @@ public theorem quoteSpacing_own_exact (l : ListLineage) (size : Sp) (level : Nat
     | web => exact absurd rfl hl
     | beamer => rfl
     | sizeFile => unfold listSkips; dsimp only; split <;> rfl
+  have hown : q.kind.ownAt l size level = q.kind.own l := by simp [QuoteKind.ownAt, hsome]
   unfold quoteSpacing at h
-  obtain ⟨sk0, hs⟩ := Option.isSome_iff_exists.mp hsome
-  rw [hs] at h
+  rw [hown] at h
   obtain ⟨-, hi, hp, -⟩ := listSpacing_declared_exact l size level tokens _ sk p h
   exact ⟨fun g hg => hp g (by simp [ListSet.over, hg]), fun g hg => hi g (by simp [ListSet.over, hg])⟩
 
@@ -5071,14 +5082,41 @@ public def displayCtxOf (b : Block) : DisplayCtx × Block :=
     | _, _ => ({}, b)
   | _ => ({}, b)
 
-/-- Whether the paragraph after `b` goes on with the one `b` stood in: after an environment's
-`parContinuesRole` marker, or a display its paragraph does not end at. -/
+/-- Whether the paragraph after `b` takes no first-line indent: after an environment's
+`parContinuesRole` marker or a display its paragraph does not end at, as `\@endpe` sets it, or after
+a heading, as `\@afterindentfalse` does. -/
 public def Block.continuesPar (b : Block) : Bool :=
   match b with
   | .role n body =>
     if body.isEmpty then n == parContinuesRole
     else (displayCtxOf b).2.isDisplay && !(displayCtxOf b).1.parEnd
+  | .section .. => true
   | _ => b.isDisplay
+
+/-- Whether `b` is `parRunsOnRole`'s marker. -/
+public def Block.runsOn : Block → Bool
+  | .role n body => body.isEmpty && n == parRunsOnRole
+  | _ => false
+
+public theorem pageOpening_runsOn (n : String) (opening : PageOpening)
+    (h : pageOpeningOfRole? n = some opening) : (Block.role n #[]).runsOn = false := by
+  have hn : n ≠ parRunsOnRole := by
+    intro e
+    subst e
+    simp [pageOpeningOfRole?, parRunsOnRole, titlePageBeginRole, titlePageEndRole] at h
+  simp [Block.runsOn, hn]
+
+/-- Whether a paragraph opens on a run-in heading (`runInHeadRole`). -/
+public def opensRunIn (content : Array Inline) : Bool :=
+  match (content[0]? : Option Inline) with
+  | some (.role n _) => n == runInHeadRole
+  | _ => false
+
+/-- Whether `b` is a bare vertical skip, which leaves the paragraph state as TeX's vertical list
+does. -/
+public def Block.isSkip : Block → Bool
+  | .spaced _ body => body.isEmpty
+  | _ => false
 
 public theorem pageOpening_continuesPar (n : String) (opening : PageOpening)
     (h : pageOpeningOfRole? n = some opening) : (Block.role n #[]).continuesPar = false := by

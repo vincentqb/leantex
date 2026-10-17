@@ -962,8 +962,9 @@ def overlayGapChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
   -- The judge sees the hole: the same tree under the sheet read through no carriers.
   let d := HtmlDoc.carrierPairs on
   let lists := ovDoc.docClass.record.lists
-  let through := HtmlDoc.blockGapCss lists ovDoc.page.fontSize ovDoc.tokens d
-  let plain := HtmlDoc.blockGapCss lists ovDoc.page.fontSize ovDoc.tokens
+  let kinds := (Ir.quoteKindsOf ovDoc.body).toList
+  let through := HtmlDoc.blockGapCss lists ovDoc.page.fontSize ovDoc.tokens d (kinds := kinds)
+  let plain := HtmlDoc.blockGapCss lists ovDoc.page.fontSize ovDoc.tokens (kinds := kinds)
   t "the overlay deck's carriers stand between its blocks, so its sheet reads through them"
     (!d.isEmpty && hasStr ovCss through && through != plain)
   t "without reading through carriers the judge finds the gaps that vanish"
