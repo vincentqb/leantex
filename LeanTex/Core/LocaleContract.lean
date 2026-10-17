@@ -13,6 +13,10 @@ public def forTag (tag : String) : Option Locale :=
   let primary := (tag.splitOn "-").headD tag
   builtin.find? (·.tag == primary)
 
+/-- The help naming the shipped locales, for a language without a record. -/
+public def shippedHelp : String :=
+  "the engine ships locale records for: " ++ ", ".intercalate (builtin.map (·.tag))
+
 public theorem builtin_total : builtin.all (fun l =>
     !l.tag.isEmpty && !l.figure.isEmpty && !l.table.isEmpty &&
     !l.algorithm.isEmpty &&

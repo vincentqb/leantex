@@ -1174,6 +1174,7 @@ def main (args : List String) : IO UInt32 := do
   hyphenChecks ref
   walkChecks ref
   diagChecks ref
+  mirrorChecks ref
   pendingChecks ref
   salvageChecks ref
   diagSiteCountChecks ref

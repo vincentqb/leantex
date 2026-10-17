@@ -27,6 +27,7 @@ import LeanTex.Core.Listing
 import LeanTex.Core.LexerName
 public import LeanTex.Core.BeamerColor
 public import LeanTex.Core.UnusedSetting
+import LeanTex.Core.Definer
 public import LeanTex.Core.Blueprint
 
 namespace LeanTex.Core.Elab
@@ -1048,14 +1049,15 @@ private def markdownBibArm (ctx : Ctx) (raws : Array Raw) (i : Nat) (pos : Pos) 
       by simp⟩
   | _, _ => pure ⟨(i + 1, none), by simp⟩
 
-/-- The family a url.sty `\urlstyle` value names, `some none` for `same`'s
-face in force. -/
-private def urlStyleFamily? : String → Option (Option Ir.Style)
-  | "tt" => some (some .mono)
-  | "rm" => some (some .roman)
-  | "sf" => some (some .sans)
-  | "same" => some none
-  | _ => none
+/-- The url.sty `\urlstyle` values with the family each names, `none` for `same`'s face in force. -/
+private def urlStyles : List (String × Option Ir.Style) :=
+  [("tt", some .mono), ("rm", some .roman), ("sf", some .sans), ("same", none)]
+
+/-- The family a url.sty `\urlstyle` value names. -/
+private def urlStyleFamily? (v : String) : Option (Option Ir.Style) := urlStyles.lookup v
+
+/-- The help naming the url.sty `\urlstyle` values. -/
+private def urlStyleHelp : String := s!"url.sty defines {Diag.prose "and" (urlStyles.map (·.1))}"
 
 /-- Reserved control words with the code each skip earns. -/
 private def reservedCtrl : List (String × DiagCode) :=
@@ -1063,15 +1065,13 @@ private def reservedCtrl : List (String × DiagCode) :=
    ("fontfallback", .W0329), ("figure", .W0307), ("pageref", .W0307)]
 
 /-- Declarations that take a `{...}` block and are handled in the preamble. -/
-public def declCtrl : List String :=
-  ["page", "pdfmeta", "assert", "fonts", "palette", "tokens", "style", "output",
-   "theme", "chrome", "pictures", "figures", "allow"]
+public def declCtrl : List String := Decl.blockDeclarations
 
 /-- The only boundary tools a document may select to draw its pictures. -/
 private def picTools : List String := ["lualatex"]
 
 /-- Preamble declarations that take one inline-content group. -/
-public def runningCtrl : List String := ["runninghead", "runningfoot"]
+public def runningCtrl : List String := Decl.runningDeclarations
 
 private def fontKeys : List String :=
   ["body", "sans", "mono", "math", "rm", "sf", "tt", "dir",
@@ -1130,8 +1130,7 @@ public def argStyles : List (String × Style) :=
 public def declStyles : List (String × Style) :=
   (fontAxes.map fun (decl, _, s) => (decl, s)) ++
   [("sans", .sans)] ++
-  (["tiny", "scriptsize", "footnotesize", "small", "normalsize", "large",
-    "Large", "LARGE", "huge", "Huge"].map fun n => (n, Style.size n))
+  (Ir.sizeScale.map fun (n, _) => (n, Style.size n))
 
 private def fontCmdNocorr : Raw → Bool
   | .ctrl "nocorr" _ => true
@@ -4335,8 +4334,8 @@ private def noteFormatcom (ctx : Ctx) (pos : Pos) : EM Unit :=
   warnOnce ctx "lstopt:formatcom" .N0102
     "minted's formatcom runs TeX on the Pygments formatter's macros, which only a TeX \
 engine runs; the listing's tokens paint by their code roles" pos
-    (help := "set a role's colour in the palette by its name: codeink, codekeyword, \
-codename, codeliteral, codecomment or codeerror")
+    (help := s!"set a role's colour in the palette by its name: \
+{Diag.prose "or" (Ir.Role.all.filterMap fun r => if r.code?.isSome then r.row.key else none)}")
 
 /-- Names once a language no known lexer or highlighter reply reads, with the
 nearest lexer name as minted's help. -/
@@ -5205,7 +5204,7 @@ no extent is reserved for it" pos
             | none =>
               warnOnce ctx ("ctrl:urlstyle:" ++ v) .W0104
                 s!"'\\urlstyle\{{v}}' names no URL face; skipped" pos
-                (help := "url.sty defines tt, rm, sf and same")
+                (help := urlStyleHelp)
             have hadv : sliceWeight raws (j + 1) < sliceWeight raws i :=
               sliceWeight_lt raws h (by omega)
             elabInlinesFrom ctx raws (j + 1) acc sb
@@ -7581,8 +7580,10 @@ private def applySeeds (ctx : Ctx) (pal : Palette) (src : String) (pos : Pos)
         match SeedPalette.Blocks.ofName? valueSrc.trimAscii.toString with
         | some b => blocks := b
         | none =>
-          diag ctx .E0321 s!"cannot read block style {valueSrc.quote}: the styles are tonal and strong" pos
-            (help := "blocks = tonal, or blocks = strong")
+          let styles := SeedPalette.Blocks.all.map (·.name)
+          diag ctx .E0321
+            s!"cannot read block style {valueSrc.quote}: the styles are {Diag.prose "and" styles}" pos
+            (help := ", or ".intercalate (styles.map ("blocks = " ++ ·)))
       else if seedKeys.contains key then
         match ← readColor ctx pal none valueSrc pos with
         | .resolved c _ => found := Ir.redeclare found key c
@@ -7592,7 +7593,8 @@ private def applySeeds (ctx : Ctx) (pal : Palette) (src : String) (pos : Pos)
             (help := "seeds are #RRGGBB, oklch(L C H), a colour name or a mix like accent!50!black")
       else
         diag ctx .E0320 s!"unknown seed '{key}' in '\\palette[seeds]'" pos
-          (help := "seeds: ink, paper, accent, alert, example, neutral, and blocks = tonal|strong")
+          (help := s!"seeds: {", ".intercalate seedKeys}, and blocks = \
+{"|".intercalate (SeedPalette.Blocks.all.map (·.name))}")
   let seed (k : String) := (found.find? (·.1 == k)).map (·.2)
   let some ink := seed "ink" | missingSeed
   let some paper := seed "paper" | missingSeed
@@ -11889,9 +11891,8 @@ prefer the construct or the class, and keep '\\begin{ifbackend}' for the true re
         diag ctx .E0334
           "this content is addressed to no backend; no output will carry it"
           (some pos)
-          (help := "name at least one of pdf, html, md; a nested \
-'\\begin{ifbackend}' intersects with its enclosing one; \
-\\allow{E0334} accepts the loss")
+          (help := s!"name at least one of {", ".intercalate Ir.backendNames}; a nested \
+'\\begin\{ifbackend}' intersects with its enclosing one; \\allow\{E0334} accepts the loss")
       let ⟨backCtx, hm⟩ : MCtx ctx ←
         pure ⟨{ ctx with backendTargets := eff }, rfl, rfl, rfl, rfl⟩
       have hxm := tail_measures body (j + 1)
@@ -13754,8 +13755,8 @@ private def applyStyle (ctx : Ctx) (styles : Styles) (element src : String) (pos
           (Ir.listSetKeys.contains key && !Ir.listSetElements.contains element) then
         warnOnce ctx ("style:" ++ element ++ ":" ++ key) .W0104
           s!"'{key}' has no meaning on '{element}'; the element is set without it" pos
-          (help := "a list's spacing reads topsep, partopsep, itemsep and parsep on its \
-list, kind or level, and its other keys on the kind's own element")
+          (help := s!"a list's spacing reads {Diag.prose "and" Ir.listSetKeys} on its list, kind \
+or level, and its other keys on the kind's own element")
         continue
       -- premise: blockStyleKeyChecks — no block site reads these keys
       if Ir.blockStyleElements.contains element && styleKeys.contains key &&
@@ -13799,7 +13800,7 @@ list, kind or level, and its other keys on the kind's own element")
         if sizeCtrlNames.contains v then st := { st with bodySize := some v }
         else
           diag ctx .E0323 s!"'body-size' in '\\style' expects a size name, got '{v}'" pos
-            (help := "sizes: tiny, scriptsize, footnotesize, small, normalsize, large, Large")
+            (help := s!"sizes: {", ".intercalate sizeCtrlNames}")
       | "rule" =>
         if let some v ← asColor then st := { st with rule := some v }
       | "rule-thickness" => st := { st with ruleThickness := ← asLength }
@@ -14085,11 +14086,11 @@ private def applyOutput (ctx : Ctx) (o0 : OutputSpec) (src : String) (pos : Pos)
     evs.push (.say (diagOf ctx code msg (some pos) help))
   let addFormat (o : OutputSpec) (evs : Array PEvent) (f : String) :
       OutputSpec × Array PEvent :=
-    if ["pdf", "html", "md"].contains f then
+    if Ir.backendNames.contains f then
       (o.addFormat f, evs)
     else
       (o, say evs .E0321 s!"'{f}' is not an output format"
-        (help := "formats: pdf, html, md"))
+        (help := s!"formats: {", ".intercalate Ir.backendNames}"))
   let addProfile (o : OutputSpec) (evs : Array PEvent) (p : String) :
       OutputSpec × Array PEvent :=
     if PdfContract.Profile.names.contains p then
@@ -14153,43 +14154,31 @@ private def applyOutput (ctx : Ctx) (o0 : OutputSpec) (src : String) (pos : Pos)
       evs := evs.push (.scalar "output" "md" v pos)
     | some ("alternatives", v) =>
       inList := none
-      let pol : Option AltPolicy := match v with
-        | "judged" => some .judged
-        | "required" => some .required
-        | _ => none
-      match pol with
+      match AltPolicy.byName.lookup v with
       | some p =>
         o := { o with contract := { o.contract with alternatives := p } }
         evs := evs.push (.scalar "output" "alternatives" v pos)
       | none =>
         evs := say evs .E0321 s!"'{v}' is not an alternatives policy"
-          (help := "alternatives: judged, required")
+          (help := s!"alternatives: {", ".intercalate (AltPolicy.byName.map (·.1))}")
     | some ("color", v) =>
       inList := none
-      let intent : Option ColorIntent := match v with
-        | "device" => some .device
-        | "srgb" => some .srgb
-        | _ => none
-      match intent with
+      match ColorIntent.byName.lookup v with
       | some c =>
         o := { o with contract := { o.contract with color := c } }
         evs := evs.push (.scalar "output" "color" v pos)
       | none =>
         evs := say evs .E0321 s!"'{v}' is not a colour intent"
-          (help := "color: device, srgb")
+          (help := s!"color: {", ".intercalate (ColorIntent.byName.map (·.1))}")
     | some ("fonts", v) =>
       inList := none
-      let pol : Option FontPolicy := match v with
-        | "embedded" => some .embedded
-        | "none" => some .none
-        | _ => none
-      match pol with
+      match FontPolicy.byName.lookup v with
       | some p =>
         o := { o with contract := { o.contract with fonts := some p } }
         evs := evs.push (.scalar "output" "fonts" v pos)
       | none =>
         evs := say evs .E0321 s!"'{v}' is not a font policy"
-          (help := "fonts: embedded, none")
+          (help := s!"fonts: {", ".intercalate (FontPolicy.byName.map (·.1))}")
     | some (key, _) =>
       inList := none
       evs := evs.push (.say (Decl.unknownKey ctx.file "output" key
@@ -14221,7 +14210,7 @@ private def applyMeta (ctx : Ctx) (m0 : Meta) (entries : Array Decl.Entry)
       if (Locale.forTag s).isNone then
         evs := evs.push (.say (Diag.of .W0368
           s!"no locale for language '{s}'; English captions and patterns stand in" (some ⟨ctx.file, pos⟩)
-          (help := some "the engine ships locale records for: en, fr, de")))
+          (help := some Locale.shippedHelp)))
       m := { m with language := some s }
     | some .author, .str s => m := { m with author := some (Ir.metaClean s) }
     | some .subject, .str s => m := { m with subject := some (Ir.metaClean s) }
@@ -15044,7 +15033,7 @@ public def applyDecl (s : PreState) (d : PDecl) : EM PreState := do
           classColors := c.classColors (Ir.Surface.ofPath s.ctx.file) } }
       | none =>
         diag s.ctx .E0309 s!"unknown document class '{named}'" pos
-          (help := "classes: article, slides, card, resume, webpage")
+          (help := s!"classes: {", ".intercalate (Ir.DocClass.all.map (·.name))}")
         return { s with classUnknown := true }
     | none =>
       diag s.ctx .E0304 "'\\documentclass' needs a {class}" pos
@@ -15445,10 +15434,11 @@ numbers it; set as '??' or '?'" (some pos)
       | none =>
         warnOnce s.ctx ("ctrl:urlstyle:" ++ val) .W0104
           s!"'\\urlstyle\{{val}}' names no URL face; skipped" pos
-          (help := "url.sty defines tt, rm, sf and same")
+          (help := urlStyleHelp)
         return s
     | none =>
-      diag s.ctx .E0304 "'\\urlstyle' needs a {tt|rm|sf|same} group" (some pos)
+      diag s.ctx .E0304 s!"'\\urlstyle' needs a \{{"|".intercalate (urlStyles.map (·.1))}} group"
+        (some pos)
       return s
   | .pageGround source pos =>
     match source with
@@ -15931,19 +15921,6 @@ order, so it is not read" }
     else
       return s
 
-/-- The LaTeX2e definers, re-emitted to the boundary standalone as one
-guarded `\renewcommand`. -/
-private def latexDefiners : List String :=
-  ["newcommand", "renewcommand", "providecommand", "DeclareRobustCommand"]
-
-/-- The xparse definers, re-emitted as `\DeclareDocumentCommand`. -/
-private def xparseDefiners : List String :=
-  ["NewDocumentCommand", "RenewDocumentCommand", "DeclareDocumentCommand",
-   "ProvideDocumentCommand"]
-
-/-- TeX's primitive definers, re-emitted in their own spelling. -/
-private def texDefiners : List String := ["def", "gdef", "edef", "xdef"]
-
 /-- A definer's name argument, braced or bare. -/
 private def definerName? (raws : Array Raw) (i : Nat) : Option String :=
   match raws[i]? with
@@ -16053,16 +16030,16 @@ private def macroScanLevel (raws : Array Raw) (out : Array (String × String)) :
   | _ :: rest, i, skip + 1 => macroScanLevel raws out rest (i + 1) skip
   | .ctrl name _ :: rest, i, 0 =>
     let read? : Option ((String × String) × Nat) :=
-      if latexDefiners.contains name then latexDefiner? raws (i + 1)
-      else if xparseDefiners.contains name then xparseDefiner? raws (i + 1)
-      else if texDefiners.contains name then texDefiner? name raws (i + 1)
+      if (Definer.commandsOf .latex).contains name then latexDefiner? raws (i + 1)
+      else if (Definer.commandsOf .xparse).contains name then xparseDefiner? raws (i + 1)
+      else if (Definer.commandsOf .tex).contains name then texDefiner? name raws (i + 1)
       else if name == "define" then nativeDefiner? raws (i + 1)
       else if name == "DeclareMathOperator" then operatorDefiner? raws (i + 1)
       else if name == "setlength" then lengthDefiner? raws (i + 1)
       else none
     match read? with
     | some (entry, k) =>
-      let provide := name == "providecommand" || name == "ProvideDocumentCommand"
+      let provide := Definer.provides name
       let kept := if provide && (out.any (fun q => q.1 == entry.1) ||
           TikzCommands.pgfDefined.contains entry.1)
         then out else out.push entry
@@ -16413,7 +16390,8 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
   let allow := s.allow
   if !sawClass && file.endsWith ".tex" then
     diag ctx .N0017 "no '\\documentclass'; the article page model is assumed" none
-      (help := "declare \\documentclass{article} (or slides, card, resume, webpage, poster) to choose it")
+      (help := s!"declare \\documentclass\{article} (or \
+{", ".intercalate ((Ir.DocClass.all.filter (· != .article)).map (·.name))}) to choose it")
   let record := docClass.record
   if page.fontSize == ({} : PageSpec).fontSize then
     let optSize := (KeyVal.items classOptions).findSome? fun o =>

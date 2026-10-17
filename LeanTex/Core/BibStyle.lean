@@ -1080,18 +1080,13 @@ public def Style.abbrvnat : Style :=
 public def Style.abbrv : Style :=
   { Style.plain with names := abbrvNames, shortMonths := true }
 
-/-- The style a `\bibliographystyle` name selects; `none`
-for an unknown name. -/
-public def Style.named (name : String) : Option Style :=
-  match name with
-  | "unsrtnat" => some .unsrtnat
-  | "unsrt" => some .unsrt
-  | "plainnat" => some .plainnat
-  | "plain" => some .plain
-  | "abbrvnat" => some .abbrvnat
-  | "abbrv" => some .abbrv
-  | "alpha" => some .alpha
-  | _ => none
+/-- The styles a `\bibliographystyle` name selects, by name. -/
+public def Style.byName : List (String × Style) :=
+  [("unsrtnat", .unsrtnat), ("unsrt", .unsrt), ("plainnat", .plainnat), ("plain", .plain),
+   ("abbrvnat", .abbrvnat), ("abbrv", .abbrv), ("alpha", .alpha)]
+
+/-- The style a `\bibliographystyle` name selects; `none` for an unknown name. -/
+public def Style.named (name : String) : Option Style := Style.byName.lookup name
 
 /-- The month names abbrv.bst and abbrvnat.bst define. -/
 private def shortMonthNames : Array String :=
@@ -1262,9 +1257,6 @@ private inductive SortSet where
   | yearOr9999
   | volume
   deriving BEq
-
-/-- biblatex's sorting templates the engine sorts by. -/
-public def bblTemplates : List String := ["nty", "nyt", "nyvt", "ynt", "ydnt"]
 
 private def bblTemplate : String → List SortSet × Bool
   | "nyt" => ([.presort, .sortkey, .names, .year, .titles, .volume], false)
@@ -2180,7 +2172,7 @@ private def analyse (sources : Array (String × String)) (doc : Ir.Doc) (rd : Fi
         let cites := if doc.citeSetup.isSome then ", and its citations as author-year ones" else ""
         diags := diags.push (Diag.of .W0353 s!"bibliography style '{name}' is not \
           one the engine knows; the reference list is set as 'unsrtnat'{cites}"
-          (help := "styles known: unsrtnat, unsrt, plainnat, plain, abbrvnat, abbrv, alpha"))
+          (help := s!"styles known: {", ".intercalate (Style.byName.map (·.1))}"))
         pure (some Style.unsrtnat)
   let p := CitePunct.ofDoc doc.citeSetup ((Ir.bibStyleName doc).bind (natbibRows.lookup ·))
     (declared.all (·.labels))
@@ -2192,7 +2184,7 @@ private def analyse (sources : Array (String × String)) (doc : Ir.Doc) (rd : Fi
   let style := match bbl with
     | some o => { style with sort := match sorting with
         | "none" => .citation
-        | t => .bbl (if bblTemplates.contains t then t
+        | t => .bbl (if CiteDecl.sortingTemplates.contains t then t
             else if o.style == .authoryear then "nyt" else "nty") o }
     | none => if p.biblatex && style.sort != .citation then
         { style with sort := .bbl (if p.numbers then "nty" else "nyt") {} } else style

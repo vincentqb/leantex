@@ -1659,11 +1659,40 @@ def hookChecks (ref : IO.Ref (List String)) : IO Unit := do
     (let inBody := hook "" "p\\AtBeginDocument{q}r"
      warnCodes inBody == ["W0340"] && hasStr (shippedText inBody) "pqr")
 
-/-- `Compat.hookPreambleSide` equals `Elab.declCtrl ++ Elab.runningCtrl`, which it restates from
-below. -/
+/-- Each native preamble declaration a hook holds declares on the seam's preamble side what it
+declares in the preamble, which the body placement and the document without it do not. -/
 def hookSeamChecks (ref : IO.Ref (List String)) : IO Unit := do
-  check ref "the hook seam's preamble side is the engine's preamble-only declarations"
-    (Compat.hookPreambleSide == Elab.declCtrl ++ Elab.runningCtrl)
+  let probes : List (String × String × String) :=
+    [("page", "article", "{ leading = 1.5 }"), ("pdfmeta", "article", "{ title = \"Zz Title\" }"),
+     ("assert", "article", "{ pages == 1 }"), ("fonts", "article", "{ mono = \"Zz Mono\" }"),
+     ("palette", "article", "{ alert = #1C1917 }"),
+     ("tokens", "article", "{ parskip = 9pt, itemsep = 7pt }"),
+     ("style", "article", "{section}{ after = 3pt }"), ("output", "article", "{ formats = html }"),
+     ("theme", "slides", "{moloch}"), ("chrome", "slides", "{footer={right=\\framefraction}}"),
+     ("pictures", "article", "{ tool = none }"), ("figures", "article", "{ convert = none }"),
+     ("allow", "article", "{W0104}"), ("runninghead", "article", "{Zzhead}"),
+     ("runningfoot", "article", "{Zzfoot}")]
+  let src (cls pre body : String) : String :=
+    "\\documentclass{" ++ cls ++ "}\n" ++ pre ++ "\n\\begin{document}\n" ++ body ++
+      "\\section{Zz}\nAlpha.\n\\end{document}\n"
+  let hookNote (d : Diag) : Bool :=
+    d.kind == .N0100 && d.message.startsWith "'\\AtBeginDocument"
+  -- Spaces stand where the hook's opening does, so a diagnostic sits where the hook's would.
+  let pad := String.ofList (List.replicate "\\AtBeginDocument{".length ' ')
+  let decls := Elab.declCtrl ++ Elab.runningCtrl
+  check ref "hook seam: each probe is a native preamble declaration's"
+    (probes.all (decls.contains ·.1))
+  for n in decls do
+    match probes.lookup n with
+    | none => check ref s!"hook seam: '\\{n}' has a probe" false
+    | some (cls, arg) =>
+      let decl := "\\" ++ n ++ arg
+      let (pre, preDs) := elabStr (src cls (pad ++ decl) "")
+      let (hook, hookDs) := elabStr (src cls ("\\AtBeginDocument{" ++ decl ++ "}") "")
+      check ref s!"hook seam: '\\{n}' in a hook declares what it declares in the preamble"
+        (hook == pre && hookDs.filter (!hookNote ·) == preDs)
+      check ref s!"hook seam: '\\{n}' declares what neither the body placement nor its absence does"
+        (!((elabStr (src cls "" (decl ++ "\n"))).1 == pre) && !((elabStr (src cls "" "")).1 == pre))
 
 /-- `\url` and `\nolinkurl` resolve at one site, so their shipped runs agree in everything but the
 link. -/

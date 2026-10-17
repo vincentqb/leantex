@@ -1,6 +1,7 @@
 module
 
 public import LeanTex.Core.Ir
+import LeanTex.Core.Definer
 import Std.Data.HashMap
 import Std.Data.HashSet
 
@@ -33,9 +34,7 @@ public def loaders : List String :=
    "\\usecolortheme", "\\usefonttheme", "\\useinnertheme", "\\useoutertheme", "\\theme"]
 
 /-- The written controls that define a macro, whose lowering is the definition's. -/
-public def definers : List String :=
-  ["\\def", "\\gdef", "\\edef", "\\xdef", "\\let", "\\newcommand", "\\renewcommand",
-   "\\providecommand", "\\DeclareRobustCommand"]
+public def definers : List String := Definer.macroDefiners
 
 /-- Whether a declaration at `pos` is the document's own: outside a package or class file, a file
 one inputs and any definition's replacement text, and loading or defining nothing. -/

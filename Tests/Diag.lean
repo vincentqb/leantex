@@ -12,6 +12,7 @@ public import Tests.ListingStyleTable
 public import Tests.DriverAssets
 public import Tests.PrintX4
 public import LeanTex.Core.PdfX
+import LeanTex.Core.BibMacro
 
 public section
 
@@ -1952,3 +1953,181 @@ def salvageChecks (ref : IO.Ref (List String)) : IO Unit := do
     t s!"salvage {n}: no recovered ink spells a diagnostic code"
       (fDoc.salvage.all fun s =>
         DiagCode.all.all fun c => !hasStr s.text c.code)
+
+/-- Each list read from one source holds what is written out for it here, and each help naming a
+set this suite reads names that set exactly. -/
+def mirrorChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let named := Definer.table.map (·.name)
+  t "definer table: each definer is one row" (named.eraseDups.length == named.length)
+  -- Each definer's readings written out by hand, as the Definer queries holding it.
+  let readings : List (List String × List String) :=
+    [(["def", "gdef", "edef", "xdef"], ["namedNext", "bindsNext", "readAsDefinition",
+        "redefiners", "nameDefiners", "macroDefiners", "tex"]),
+     (["let"], ["namedNext", "bindsNext", "readAsDefinition", "redefiners", "nameDefiners",
+        "macroDefiners"]),
+     (["newcommand", "renewcommand", "DeclareRobustCommand"], ["namedNext", "bindsNext",
+        "readAsDefinition", "redefiners", "nameDefiners", "macroDefiners", "latex"]),
+     (["providecommand"], ["namedNext", "bindsNext", "readAsDefinition", "nameDefiners",
+        "macroDefiners", "latex", "provides"]),
+     (["NewDocumentCommand", "RenewDocumentCommand", "DeclareDocumentCommand"], ["namedNext",
+        "bindsNext", "readAsDefinition", "redefiners", "nameDefiners", "xparse"]),
+     (["ProvideDocumentCommand"], ["namedNext", "bindsNext", "readAsDefinition", "nameDefiners",
+        "xparse", "provides"]),
+     (["newrobustcmd", "renewrobustcmd"], ["namedNext", "nameDefiners"]),
+     (["providerobustcmd"], ["namedNext", "nameDefiners", "provides"]),
+     (["NewCommandCopy", "RenewCommandCopy", "DeclareCommandCopy", "LetLtxMacro"], ["namedNext"]),
+     (["define"], ["namedNext", "bindsNext", "readAsDefinition", "redefiners"]),
+     (["defineenv"], ["bindsNext", "readAsDefinition", "tokenListEnvs"]),
+     (["DeclareMathOperator"], ["bindsNext", "readAsDefinition"]),
+     (["newenvironment", "renewenvironment"], ["readAsDefinition", "envs", "tokenListEnvs"]),
+     (["provideenvironment"], ["envs", "tokenListEnvs"]),
+     (["NewDocumentEnvironment", "RenewDocumentEnvironment", "DeclareDocumentEnvironment"],
+        ["xparseEnvs", "envs"]),
+     (["ProvideDocumentEnvironment"], ["envs"]),
+     (["NewEnviron", "RenewEnviron", "newtcolorbox", "renewtcolorbox"], ["readAsDefinition"])]
+  let written := readings.flatMap (·.1)
+  let readers (q : String) : List String :=
+    readings.flatMap fun (ds, qs) => if qs.contains q then ds else []
+  let same (a b : List String) : Bool :=
+    a.length == b.length && a.all (b.contains ·) && b.all (a.contains ·)
+  t "definer table: its rows are the definers written out here" (same named written)
+  let queries : List (String × List String) :=
+    [("namedNext", Definer.namedNext), ("bindsNext", Definer.bindsNext),
+     ("readAsDefinition", Definer.readAsDefinition), ("xparseEnvs", Definer.xparseEnvs),
+     ("envs", Definer.envs), ("tokenListEnvs", Definer.tokenListEnvs),
+     ("redefiners", Definer.redefiners), ("nameDefiners", Definer.nameDefiners),
+     ("tex", Definer.commandsOf .tex), ("latex", Definer.commandsOf .latex),
+     ("xparse", Definer.commandsOf .xparse), ("provides", named.filter Definer.provides)]
+  for (q, got) in queries do
+    t s!"definer table: '{q}' holds the definers written out for it" (same got (readers q))
+  t "definer table: 'macroDefiners' writes the definers written out for it"
+    (same Definer.macroDefiners ((readers "macroDefiners").map ("\\" ++ ·)))
+  t "definer table: each reading written out is a query's" (readings.all fun (_, qs) =>
+    qs.all fun q => q == "macroDefiners" || queries.any (·.1 == q))
+  t "definer table: a name no row holds provides nothing" (!Definer.provides "zznotadefiner")
+  -- The lexer reads the token after a 'namedNext' definer as the name it defines, never a call.
+  let verbatimAfter (d : String) : Bool :=
+    (Lex.lex "t" ("\\" ++ d ++ "\\mintinline{x}")).1.any (·.tok matches .verb "mintinline" _)
+  t "definer table: the lexer reads the name after exactly the 'namedNext' definers"
+    ((written ++ ["zznotadefiner"]).all fun d =>
+      verbatimAfter d == !(readers "namedNext").contains d)
+  -- The boundary re-emits a definition its own family spells, an etoolbox one or a copy never.
+  let reEmitted (src : String) : Bool :=
+    !(Elab.macroScan (Parse.parse "t" (Lex.lex "t" src).1).1).isEmpty
+  t "definer table: the boundary re-emits a TeX, LaTeX or xparse definition, no other"
+    (reEmitted "\\def\\zzm{a}" && reEmitted "\\newcommand{\\zzm}{a}" &&
+      reEmitted "\\NewDocumentCommand{\\zzm}{}{a}" && !reEmitted "\\newrobustcmd{\\zzm}{a}" &&
+      !reEmitted "\\NewCommandCopy{\\zzm}{\\textbf}")
+  -- Each command definer but the math operator's, written out with whether its macro expands.
+  let commandProbes : List (String × String × Bool) :=
+    (readers "tex").map (fun d => (d, s!"\\{d}\\zzm\{Zzbody}", true)) ++
+    (readers "latex").map (fun d => (d, s!"\\{d}\{\\zzm}\{Zzbody}", true)) ++
+    (readers "xparse").map (fun d => (d, s!"\\{d}\{\\zzm}\{}\{Zzbody}", true)) ++
+    [("let", "\\newcommand{\\zzold}{Zzbody}\\let\\zzm\\zzold", true),
+     ("define", "\\define \\zzm() {Zzbody}", true)] ++
+    ["newrobustcmd", "renewrobustcmd", "providerobustcmd"].map (fun d =>
+      (d, s!"\\{d}\{\\zzm}\{Zzbody}", false)) ++
+    ["NewCommandCopy", "RenewCommandCopy", "DeclareCommandCopy", "LetLtxMacro"].map (fun d =>
+      (d, s!"\\newcommand\{\\zzold}\{Zzbody}\\{d}\{\\zzm}\{\\zzold}", false))
+  let commands := Definer.table.filter fun r =>
+    r.defines == .command && r.name != "DeclareMathOperator"
+  t "definer table: each command definer but the math operator's has a probe"
+    (same (commandProbes.map (·.1)) (commands.map (·.name)))
+  for (d, defn, expands) in commandProbes do
+    let (doc, ds) := elabStr ("\\documentclass{article}\n" ++ defn ++
+      "\n\\begin{document}\nAlpha \\zzm{} omega.\n\\end{document}\n")
+    let shown := ((Ir.blocksText doc.body).splitOn "Zzbody").length - 1
+    t s!"definer table: '\\{d}' {if expands then "defines a macro its use expands" else "is refused"}"
+      (if expands then shown == 1 && !ds.any (·.kind == .W0301)
+       else shown == 0 && ds.any (·.kind == .W0301))
+  -- A `.bib` `@preamble` reads the LaTeX and TeX command definers, a providing one keeping a name.
+  let bibReads (d : String) : Bool :=
+    let src := if (readers "tex").contains d then s!"\\{d}\\zz\{Zzbody}"
+      else s!"\\{d}\{\\zz}\{Zzbody}"
+    Bib.expandMacros (Bib.preambleMacros #[src]) "\\zz" == "Zzbody"
+  t "bib preamble: each LaTeX and TeX command definer defines its macro"
+    ((readers "latex" ++ readers "tex").all bibReads && !bibReads "NewDocumentCommand")
+  t "bib preamble: a providing definer keeps the macro standing"
+    (Bib.expandMacros (Bib.preambleMacros #["\\newcommand{\\zz}{Zzold}",
+      "\\providecommand{\\zz}{Zzbody}"]) "\\zz" == "Zzold")
+  let keys := Ir.FontAxis.all.map (·.key)
+  t "font axes: each axis has its own key" (keys.eraseDups.length == keys.length)
+  let helpOf (code : DiagCode) (ds : Array Diag) : String :=
+    ((ds.find? (·.kind == code)).bind (·.help)).getD ""
+  -- A help listing a set ends in it after its colon, each member once, in the set's order.
+  let names (help : String) (members : List String) : Bool :=
+    ((help.splitOn ": ").getLastD "").splitOn ", " == members
+  -- A help naming a set in a sentence spells it whole between `pre` and `post`, or after `pre` last.
+  let spells (help pre joined post : String) : Bool :=
+    (help.splitOn (pre ++ joined ++ post)).length > 1
+  let ends (help pre joined : String) : Bool := help.endsWith (pre ++ joined)
+  t "class help: an unknown class's help names every class"
+    (names (helpOf .E0309 (dvE "\\documentclass{zzclass}\n\\begin{document}\nx\n\\end{document}"))
+      (Ir.DocClass.all.map (·.name)))
+  for (site, src) in [("babel", dvDoc "\\usepackage[zzlang]{babel}\n" "x"),
+      ("pdfmeta", dvDoc "\\pdfmeta{ language = \"zz\" }\n" "x"),
+      ("foreignlanguage", dvDoc "" "\\foreignlanguage{zzlang}{x}"),
+      ("selectlanguage", dvDoc "" "\\selectlanguage{zzlang}x"),
+      ("otherlanguage", dvDoc "" "\\begin{otherlanguage}{zzlang}x\\end{otherlanguage}")] do
+    t s!"locale help: a language without a record, by {site}, names every shipped locale"
+      (names (helpOf .W0368 (dvE src)) (Locale.builtin.map (·.tag)))
+  t "size help: a size the style key cannot read names every size"
+    (names (helpOf .E0323 (dvE (dvDoc "\\style{abstract}{ body-size = zzsize }\n" "x")))
+      (Ir.sizeScale.map (·.1)))
+  t "format help: an unknown output format names every backend"
+    (names (helpOf .E0321 (dvE (dvDoc "\\output{ formats = zzformat }\n" "x"))) Ir.backendNames)
+  t "style help: an unknown bibliography style names every style the engine knows"
+    (names (helpOf .W0353 (dvBib "@misc{k, year = 2024}" "k" (some "zzstyle")))
+      (Bib.Style.byName.map (·.1)))
+  t "sorting help: an unknown biblatex sorting names every scheme sorted"
+    (names (helpOf .W0101 (dvE (dvDoc "\\usepackage[sorting=zzsort]{biblatex}\n" "x")))
+      CiteDecl.sortingSchemes)
+  for (key, members) in [("alternatives", Ir.AltPolicy.byName.map (·.1)),
+      ("color", Ir.ColorIntent.byName.map (·.1)), ("fonts", Ir.FontPolicy.byName.map (·.1))] do
+    t s!"output help: an unknown '{key}' value names every value"
+      (names (helpOf .E0321 (dvE (dvDoc s!"\\output\{ {key} = zzvalue }\n" "x"))) members)
+  t "backend help: content addressed to no backend names every backend"
+    (spells (helpOf .E0334 (dvE (dvDoc "" "\\begin{ifbackend}{zzbackend}x\\end{ifbackend}")))
+      "of " (", ".intercalate Ir.backendNames) ";")
+  t "class help: a document without a class names every class but the article"
+    (spells (helpOf .N0017 (Elab.run "t.tex" "\\begin{document}\nx\n\\end{document}").2) "(or "
+      (", ".intercalate ((Ir.DocClass.all.filter (· != .article)).map (·.name))) ")")
+  t "list spacing help: a spacing key off a list names every spacing key"
+    (spells (helpOf .W0104 (dvE (dvDoc "\\style{section}{ itemsep = 1pt }\n" "x"))) "reads "
+      (Diag.prose "and" Ir.listSetKeys) " on")
+  let codeRoles := Ir.Role.all.filterMap fun r => if r.code?.isSome then r.row.key else none
+  t "code role help: minted's formatcom names every code role, each a palette key"
+    (ends (helpOf .N0102 (dvE (dvDoc "\\usepackage{minted}\n"
+        "\\begin{minted}[formatcom=\\color{red}]{python}\nx = 1\n\\end{minted}")))
+      "by its name: " (Diag.prose "or" codeRoles) &&
+      codeRoles.all fun r => (dvE (dvDoc s!"\\palette\{ {r} = #102030 }\n" "x")).isEmpty &&
+      !(dvE (dvDoc "\\palette{ zzrole = #102030 }\n" "x")).isEmpty)
+  t "citation style help: a markdown CSL key names every BibTeX style the engine knows"
+    (ends (helpOf .W0307 (elabMd "---\ncsl: zz.csl\n---\n\nText.\n").2) "with "
+      (Diag.prose "or" CiteDecl.bibtexStyles))
+  let blockStyles := SeedPalette.Blocks.all.map (·.name)
+  let seeds (entries : String) : String :=
+    dvDoc s!"\\palette[seeds]\{ ink = #102030, paper = #F0F0F0, accent = #A03020{entries} }\n" "x"
+  let seedHelp := helpOf .E0320 (dvE (seeds ", zz = #102030"))
+  let listed := (((seedHelp.splitOn "seeds: ").getLastD "").splitOn ", and blocks = ").headD ""
+  t "seed help: an unknown seed names every seed, each read, and the block styles"
+    (ends seedHelp ", and blocks = " ("|".intercalate blockStyles) &&
+      !listed.isEmpty && (listed.splitOn ", ").all fun k =>
+        !(dvE (seeds s!", {k} = #102030")).any (·.kind == .E0320))
+  let blockDs := dvE (seeds ", blocks = zz")
+  t "block style help: an unknown block style names every style"
+    (((blockDs.find? (·.kind == .E0321)).any fun d =>
+        ends d.message "the styles are " (Diag.prose "and" blockStyles)) &&
+      helpOf .E0321 blockDs == ", or ".intercalate (blockStyles.map ("blocks = " ++ ·)))
+  -- url.sty's `\urlstyle` values, written out.
+  let urlStyles := ["tt", "rm", "sf", "same"]
+  t "url style help: an unknown style names every url.sty style, each read"
+    (helpOf .W0104 (dvE (dvDoc "" "\\urlstyle{zz}x")) ==
+        "url.sty defines " ++ Diag.prose "and" urlStyles &&
+      urlStyles.all fun u => !(dvE (dvDoc "" s!"\\urlstyle\{{u}}x")).any (·.kind == .W0104))
+  t "url style message: a style left out names every url.sty style"
+    ((dvE (dvDoc "" "x \\urlstyle")).any fun d => d.kind == .E0304 &&
+      spells d.message "a {" ("|".intercalate urlStyles) "} group")
+  t "BibTeX styles: the surfaces' list is the reference list's, which sits above them"
+    (Bib.Style.byName.map (·.1) == CiteDecl.bibtexStyles)

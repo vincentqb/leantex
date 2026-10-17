@@ -1052,7 +1052,7 @@ public def metaRead (file : String) (role : Role) (fields : Array MetaField) : M
         else if csl then "no CSL processor reads it; citations set in a BibTeX style"
         else "its value does not reach the page"
       let help := if csl then
-          some "declare 'biblio-style:' with plainnat, unsrtnat, abbrvnat, plain, unsrt, abbrv or alpha"
+          some s!"declare 'biblio-style:' with {Diag.prose "or" CiteDecl.bibtexStyles}"
         else none
       out := { out with diags := out.diags.push (unread f why help) }
       continue

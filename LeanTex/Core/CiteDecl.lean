@@ -7,6 +7,16 @@ elaborator reads back exactly. -/
 
 namespace LeanTex.Core
 
+/-- The BibTeX styles the engine sets a reference list in. -/
+public def CiteDecl.bibtexStyles : List String :=
+  ["unsrtnat", "unsrt", "plainnat", "plain", "abbrvnat", "abbrv", "alpha"]
+
+/-- biblatex's sorting templates the engine sorts by. -/
+public def CiteDecl.sortingTemplates : List String := ["nty", "nyt", "nyvt", "ynt", "ydnt"]
+
+/-- biblatex's sorting schemes: its templates, and `none`, the citation order. -/
+public def CiteDecl.sortingSchemes : List String := CiteDecl.sortingTemplates ++ ["none"]
+
 /-- natbib's bare citation-setup words: `\setcitestyle`'s keywords, its `\bibstyle` door, sorting
 and compression, and biblatex's citations. -/
 public inductive CiteDecl.Word where

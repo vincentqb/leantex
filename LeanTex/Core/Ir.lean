@@ -1917,6 +1917,19 @@ public inductive AltPolicy where
   | required
   deriving Repr, BEq, DecidableEq, Inhabited
 
+/-- The policy's `\output` spelling. -/
+@[expose] public def AltPolicy.name : AltPolicy → String
+  | .judged => "judged"
+  | .required => "required"
+
+/-- Each policy by its `\output` spelling. -/
+@[expose] public def AltPolicy.byName : List (String × AltPolicy) :=
+  [AltPolicy.judged, .required].map fun p => (p.name, p)
+
+public theorem AltPolicy.byName_complete (p : AltPolicy) :
+    AltPolicy.byName.lookup p.name = some p := by
+  cases p <;> rfl
+
 /-- The colour the reader is meant to see: `device` leaves the numbers to the
 device, `srgb` defines them as sRGB. -/
 public inductive ColorIntent where
@@ -1924,12 +1937,38 @@ public inductive ColorIntent where
   | srgb
   deriving Repr, BEq, DecidableEq, Inhabited
 
+/-- The intent's `\output` spelling. -/
+@[expose] public def ColorIntent.name : ColorIntent → String
+  | .device => "device"
+  | .srgb => "srgb"
+
+/-- Each intent by its `\output` spelling. -/
+@[expose] public def ColorIntent.byName : List (String × ColorIntent) :=
+  [ColorIntent.device, .srgb].map fun c => (c.name, c)
+
+public theorem ColorIntent.byName_complete (c : ColorIntent) :
+    ColorIntent.byName.lookup c.name = some c := by
+  cases c <;> rfl
+
 /-- Whether the artifact carries the faces it was set in: `embedded` travels
 with the artifact, `none` leaves them to something else. -/
 public inductive FontPolicy where
   | embedded
   | none
   deriving Repr, @[expose] BEq, DecidableEq, Inhabited
+
+/-- The policy's `\output` spelling. -/
+@[expose] public def FontPolicy.name : FontPolicy → String
+  | .embedded => "embedded"
+  | .none => "none"
+
+/-- Each policy by its `\output` spelling. -/
+@[expose] public def FontPolicy.byName : List (String × FontPolicy) :=
+  [FontPolicy.embedded, .none].map fun p => (p.name, p)
+
+public theorem FontPolicy.byName_complete (p : FontPolicy) :
+    FontPolicy.byName.lookup p.name = some p := by
+  cases p <;> rfl
 
 /-- The semantic output contract: facts about the artifact the reader must
 get, declared in `\output` and read by every backend. -/
@@ -2008,17 +2047,17 @@ private theorem OutputContract.judge_fact {fact declared realized : String} {met
 
 /-- The facts this artifact does not realize, one entry per unmet key. -/
 public def OutputContract.unmet (c : OutputContract) (r : Realization) : Array Unmet :=
-  #[judge "alternatives" "required" "no alternative channel"
+  #[judge "alternatives" AltPolicy.required.name "no alternative channel"
       (match c.alternatives, r.alternatives with
         | .judged, _ => true
         | .required, .attribute => true
         | .required, .none => false),
-    judge "color" "srgb" "device colour"
+    judge "color" ColorIntent.srgb.name "device colour"
       (match c.color, r.color with
         | .device, _ => true
         | .srgb, .srgbByDefinition => true
         | .srgb, .device => false),
-    judge "fonts" "embedded" "no faces carried"
+    judge "fonts" FontPolicy.embedded.name "no faces carried"
       (match c.fonts, r.fonts with
         | none, _ => true
         | some .none, _ => true
@@ -6840,6 +6879,21 @@ public inductive FontAxis where
   | family
   deriving Repr, BEq, DecidableEq, Inhabited
 
+/-- The axes in the order beamer selects them. -/
+@[expose] public def FontAxis.all : List FontAxis := [.size, .shape, .series, .family]
+
+public theorem FontAxis.all_complete (a : FontAxis) : a ∈ FontAxis.all := by
+  cases a <;> simp [FontAxis.all]
+
+public theorem FontAxis.all_nodup : FontAxis.all.Nodup := by decide
+
+/-- The axis's key in a beamer font declaration. -/
+@[expose] public def FontAxis.key : FontAxis → String
+  | .size => "size"
+  | .shape => "shape"
+  | .series => "series"
+  | .family => "family"
+
 /-- The axis a style selects on; `none` for a style that selects on no one axis. -/
 public def Style.fontAxis : Style → Option FontAxis
   | .size _ | .fontSize _ _ => some .size
@@ -7483,6 +7537,15 @@ public def DocClass.ofString? : String → Option DocClass
 
 public theorem DocClass.ofString?_name (c : DocClass) : ofString? c.name = some c := by
   cases c <;> rfl
+
+/-- Every class, in the order a help lists them. -/
+@[expose] public def DocClass.all : List DocClass :=
+  [.article, .slides, .card, .resume, .webpage, .poster]
+
+public theorem DocClass.all_complete (c : DocClass) : c ∈ DocClass.all := by
+  cases c <;> simp [DocClass.all]
+
+public theorem DocClass.all_nodup : DocClass.all.Nodup := by decide
 
 /-- Each class as its record: slides' 11 pt is beamer's, the card's and
 résumé's floor the fluent-reading x-height at hand-held distance. -/

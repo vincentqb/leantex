@@ -19,6 +19,7 @@ public import LeanTex.Core.PdfDests
 public import LeanTex.Core.Image
 public import LeanTex.Core.NfcData
 public import LeanTex.Core.Nfc
+public import LeanTex.Core.Definer
 public import LeanTex.Core.Lex
 public import LeanTex.Core.Parse
 public import LeanTex.Core.MdParse

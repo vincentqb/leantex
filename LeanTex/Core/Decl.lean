@@ -8,6 +8,14 @@ import LeanTex.Core.KeyVal
 
 namespace LeanTex.Core.Decl
 
+/-- The native declarations that take a `{...}` block and are read in the preamble. -/
+@[expose] public def blockDeclarations : List String :=
+  ["page", "pdfmeta", "assert", "fonts", "palette", "tokens", "style", "output",
+   "theme", "chrome", "pictures", "figures", "allow"]
+
+/-- The native preamble declarations that take one inline-content group. -/
+@[expose] public def runningDeclarations : List String := ["runninghead", "runningfoot"]
+
 open LeanTex.Core LeanTex.Core.Dim
 
 /-- A parsed declaration value; absolute dimensions resolve immediately,

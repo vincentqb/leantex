@@ -2,6 +2,7 @@ module
 
 public import LeanTex.Core.Diag
 import LeanTex.Core.Nfc
+import LeanTex.Core.Definer
 
 namespace LeanTex.Core.Lex
 
@@ -134,11 +135,7 @@ private def argGap (cs : Array Char) (k : Nat) (comments : Bool := true) : Optio
 /-- The commands whose next token is the name they define or
 show, never a call. -/
 private def definers : List String :=
-  ["newcommand", "renewcommand", "providecommand", "DeclareRobustCommand",
-   "NewDocumentCommand", "RenewDocumentCommand", "ProvideDocumentCommand",
-   "DeclareDocumentCommand", "NewCommandCopy", "RenewCommandCopy", "DeclareCommandCopy",
-   "LetLtxMacro", "newrobustcmd", "renewrobustcmd", "providerobustcmd",
-   "def", "gdef", "edef", "xdef", "let", "define", "show", "meaning", "string", "noexpand"]
+  Definer.namedNext ++ ["show", "meaning", "string", "noexpand"]
 
 /-- Whether the last token, past white space and a definer's
 star, is a definer. -/

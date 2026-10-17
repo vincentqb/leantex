@@ -3,6 +3,7 @@ module
 public import LeanTex.Core.Lex
 public import LeanTex.Core.Heading
 public import LeanTex.Core.CiteDecl
+import LeanTex.Core.Definer
 
 namespace LeanTex.Core.Parse
 
@@ -134,8 +135,7 @@ private structure Frame where
   body : Bool := false
 
 /-- The definers whose two body groups are token lists. -/
-public def envDefiners : List String :=
-  ["newenvironment", "renewenvironment", "provideenvironment", "defineenv"]
+public def envDefiners : List String := Definer.tokenListEnvs
 
 /-- The name of a definer body's half of a construct its other body completes,
 unforgeable because it holds a space. -/

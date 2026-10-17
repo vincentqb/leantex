@@ -19,6 +19,7 @@ import LeanTex.Core.EncodingOption
 import LeanTex.Core.PdfObj
 public import LeanTex.Core.TikzCommands
 import LeanTex.Core.UnusedSetting
+public import LeanTex.Core.Definer
 
 namespace LeanTex.Core.Compat
 
@@ -136,11 +137,11 @@ public def beamerFontElements : List (String × String × String) :=
 `\setbeamerfont` merges into. -/
 private def themeBlockFont (theme element : String) : List (String × String) :=
   if theme == "moloch" && (element == "block title" || element == "block title alerted") then
-    [("series", "\\bfseries"), ("size", "\\normalsize")]
+    [(Ir.FontAxis.series.key, "\\bfseries"), (Ir.FontAxis.size.key, "\\normalsize")]
   else []
 
 /-- Beamer's font axes in the order `\usebeamerfont` selects them. -/
-private def beamerFontKeys : List String := ["size", "shape", "series", "family"]
+private def beamerFontKeys : List String := Ir.FontAxis.all.map (·.key)
 
 /-- Classes that are an `article` with different defaults. -/
 private def articleClasses : List String := ["report", "book", "memoir", "letter"]
@@ -341,9 +342,7 @@ private def deferredHooks : List (String × DeferPoint) :=
 
 /-- The native declarations the preamble reads and the body refuses, where a
 hook body's declaration half goes. -/
-public def hookPreambleSide : List String :=
-  ["page", "pdfmeta", "assert", "fonts", "palette", "tokens", "style", "output",
-   "theme", "chrome", "pictures", "figures", "allow", "runninghead", "runningfoot"]
+public def hookPreambleSide : List String := Decl.blockDeclarations ++ Decl.runningDeclarations
 
 /-- The native declarations a compatibility help text may name. -/
 public def nativeDeclarations : List String := hookPreambleSide ++ ["framefoot"]
@@ -1265,7 +1264,7 @@ private def braceGroups (s : String) : Array String := Id.run do
 
 /-- `size` and `size*` assign the same beamer field. -/
 private def beamerFontAxis (key : String) : String :=
-  if key == "size*" then "size" else key
+  if key == "size*" then Ir.FontAxis.size.key else key
 
 /-- The stored font fields updated by a declaration's key
 list; an empty value clears its field. -/
@@ -1299,8 +1298,8 @@ where they name none. -/
 private def blockTitleFields (element : String) (fields : List (String × String)) :
     List (String × String) :=
   if element == "block title" &&
-      !fields.any (fun e => e.1 == "series" && !e.2.trimAscii.isEmpty) then
-    ("series", "\\mdseries") :: fields.filter (·.1 != "series")
+      !fields.any (fun e => e.1 == Ir.FontAxis.series.key && !e.2.trimAscii.isEmpty) then
+    (Ir.FontAxis.series.key, "\\mdseries") :: fields.filter (·.1 != Ir.FontAxis.series.key)
   else fields
 
 /-- The title template's font, its measured size and leading
@@ -1308,8 +1307,9 @@ carried separately. -/
 private def beamerTemplateFont (element : String) (fields : List (String × String)) :
     TitleTemplate.Font := Id.run do
   let mut font : TitleTemplate.Font :=
-    { cmds := beamerFontCommands (fields.filter fun e => beamerFontAxis e.1 != "size") }
-  match fields.find? (fun e => beamerFontAxis e.1 == "size") with
+    { cmds := beamerFontCommands
+        (fields.filter fun e => beamerFontAxis e.1 != Ir.FontAxis.size.key) }
+  match fields.find? (fun e => beamerFontAxis e.1 == Ir.FontAxis.size.key) with
   | some ("size*", value) =>
     let gs := braceGroups value
     font := { font with size := gs[0]?, leading := gs[1]? }
@@ -2367,12 +2367,12 @@ to its entry," pos
 compaction and repetition rules are dropped" pos (subject := some "usepackage:biblatex")
   let defaultSorting := if listFamily == "authoryear" then "nyt" else "nty"
   let declaredSorting := pick "sorting" defaultSorting
-  let sorting ← if ["nty", "nyt", "nyvt", "ynt", "ydnt", "none"].contains declaredSorting then
+  let sorting ← if CiteDecl.sortingSchemes.contains declaredSorting then
       pure declaredSorting
     else do
       say .W0101 s!"'biblatex' option 'sorting={declaredSorting}' is not a scheme the engine \
 sorts by; the list is sorted '{defaultSorting}'" pos (subject := some "usepackage:biblatex")
-        (help := "the schemes sorted: nty, nyt, nyvt, ynt, ydnt, none")
+        (help := s!"the schemes sorted: {", ".intercalate CiteDecl.sortingSchemes}")
       pure defaultSorting
   let record :=
     if citeFamily == "authoryear" then "plainnat" else if sorting == "none" then "unsrt" else "plain"
@@ -2480,15 +2480,6 @@ public def milliStr (m : Nat) : String :=
 primitives and e-TeX's three. -/
 private def condHeads : List String :=
   (texPrimitives.toList.filter (·.startsWith "if")) ++ ["ifdefined", "ifcsname", "iffontchar"]
-
-/-- Definers that bind the control word standing after them,
-directly or as `{\name}`. -/
-private def definesNext : List String :=
-  ["def", "edef", "gdef", "xdef", "let", "newcommand", "renewcommand",
-   "providecommand", "DeclareRobustCommand", "DeclareMathOperator",
-   "NewDocumentCommand", "RenewDocumentCommand", "ProvideDocumentCommand",
-   "DeclareDocumentCommand",
-   "define", "defineenv"]
 
 /-- Bind `n` to `v`, recording what it replaced on the save stack. -/
 private def setBind (n : String) (v : Option CondVal) : M Unit :=
@@ -2867,12 +2858,6 @@ macro after one is not a use. -/
 private def condNoExpand : List String :=
   ["noexpand", "string", "meaning", "show", "expandafter", "futurelet"]
 
-/-- The definers whose operands the pass reads as a
-definition rather than as content. -/
-private def condDefiners : List String :=
-  definesNext ++ ["newenvironment", "renewenvironment", "NewEnviron", "RenewEnviron",
-    "newtcolorbox", "renewtcolorbox"]
-
 /-- Is `n` the setter of a declared flag (`\Xtrue`, `\Xfalse`)? -/
 private def isFlagSetter (flags : Std.HashMap String Bool) (n : String) : Bool :=
   (n.endsWith "true" && flags.contains (n.dropEnd 4).toString) ||
@@ -3189,7 +3174,7 @@ private def condLiveRaw (flags : Std.HashMap String Bool)
     (binds : Std.HashMap String (Option CondVal)) : Raw → Bool
   | .ctrl n _ =>
     isCondHead flags n || n == "unless" || n == "newif" || n == "ifstrequal" ||
-      condDefiners.contains n ||
+      Definer.readAsDefinition.contains n ||
       (overlayArity? n).isSome ||
       isFlagSetter flags n || loadedTests.any (·.ctrl == n) ||
       (deferredHooks.lookup n).isSome ||
@@ -3241,10 +3226,6 @@ private def floatCoreDecls (kind : String) : List Raw → Option (List (String �
 
 /-- The floats a redefinition around their own kernel core reads. -/
 public def floatRedefEnvs : List String := ["table", "figure"]
-
-/-- The environment definers of xparse that replace or declare an environment. -/
-private def xparseEnvDefiners : List String :=
-  ["NewDocumentEnvironment", "RenewDocumentEnvironment", "DeclareDocumentEnvironment"]
 
 /-- Whether a float's redefinition at `raws[i]` is the kernel-core idiom `floatRedef?` reads: a
 `\renewenvironment` without arguments, `\@float` with caption skips before it, `\end@float` after. -/
@@ -3375,7 +3356,7 @@ private def condStripList (flags : Std.HashMap String Bool) (raws : Array Raw)
       condStripList flags raws acc true rest (i + 1) 0
     else if n == "newif" then
       condStripList flags raws acc true rest (i + 1) 1
-    else if condDefiners.contains n then
+    else if Definer.readAsDefinition.contains n then
       match definerShape raws i n (stored := true) with
       | some sh => condStripList flags raws acc true rest (i + 1) (sh.stop - (i + 1))
       | none => condStripList flags raws (acc.push (.ctrl n p)) hit rest (i + 1) 0
@@ -3993,11 +3974,6 @@ private def lengthAssigns : List String :=
 /-- The TeX register arithmetic, whose target is the next control word. -/
 private def lengthArith : List String := ["advance", "multiply", "divide"]
 
-/-- The environment definers, whose code runs where each environment opens. -/
-private def envDefiners : List String :=
-  ["newenvironment", "renewenvironment", "provideenvironment", "NewDocumentEnvironment",
-   "RenewDocumentEnvironment", "ProvideDocumentEnvironment", "DeclareDocumentEnvironment"]
-
 /-- Whether the register at `raws[i]` is assigned there, as TeX's main loop reads a register token:
 not after an operand reader (`readsOperand`), and before a value, which at a list's start must be
 `=` or a number, since a register opening an argument is read. -/
@@ -4111,7 +4087,7 @@ private def condNoteLength (raws : Array Raw) (i : Nat) (n : String) (undecided 
         | "addtolength" => (look target).bind fun old => operand.map (old + ·)
         | _ => none
       setExactLen target value global
-  else if envDefiners.contains n then condNoteEnv raws i
+  else if Definer.envs.contains n then condNoteEnv raws i
   else if st.exactLens.contains n then
     if assignsAt st.exactLens.contains raws i then setExactLen n none global
   else if let some (some v) := st.binds[n]? then
@@ -4368,7 +4344,7 @@ private def condList [Monad m]
         discard "\\tcbuselibrary" "box keys are handled at each use" n (st.useSite.getD pos)
         condList ex [] raws following out stack rest (i + 1) (stop - (i + 1))
       else condList ex [] raws following (out.push (.ctrl n pos)) stack rest (i + 1) 0
-    else if xparseEnvDefiners.contains n && ignoredEnvDef st.ignoredDefs raws i n then
+    else if Definer.xparseEnvs.contains n && ignoredEnvDef st.ignoredDefs raws i n then
       condStopSpaces
       let j := skipSpaces raws (i + 1)
       let (groups, stop) := takeGroups raws j 4
@@ -4379,12 +4355,12 @@ private def condList [Monad m]
           ((((out.push (.ctrl "renewenvironment" pos)).push named).push (.group #[] pos)).push
             (.group #[] pos)) stack rest (i + 1) (stop - (i + 1))
       else condList ex [] raws following (out.push (.ctrl n pos)) stack rest (i + 1) 0
-    else if condDefiners.contains n then
+    else if Definer.readAsDefinition.contains n then
       condStopSpaces
-      let bound := if definesNext.contains n then
+      let bound := if Definer.bindsNext.contains n then
           (rest.dropWhile isSpaceOrStar).head?.bind boundName
         else none
-      let provide := n == "providecommand" || n == "ProvideDocumentCommand"
+      let provide := Definer.provides n
       let ignored := match bound with
         | some m => st.ignoredDefs.contains m
         | none => ignoredEnvDef st.ignoredDefs raws i n
@@ -4400,7 +4376,7 @@ private def condList [Monad m]
                 | _ => r)
           return ← condList ex [] raws following ((out.push (.ctrl head pos)) ++ ops.toArray) stack
             rest (i + 1) (sh.stop - (i + 1))
-      if envDefiners.contains n then condNoteEnv raws i
+      if Definer.envs.contains n then condNoteEnv raws i
       if let some m := bound then
         -- premise: Tests.xparseIgnoredOperandsChecks — ignored operands change no artifact
         if provide && (st.binds.contains m || st.provideKeeps.contains m ||
@@ -4494,7 +4470,7 @@ execute this definition there, so that part of the text is skipped whole")
       | r :: _ => condList ex [] raws following ((out.push (.ctrl n pos)).push r) stack rest (i + 1) 1
       | [] => condList ex [] raws following (out.push (.ctrl n pos)) stack rest (i + 1) 0
     else
-      if (lengthAssigns ++ lengthArith ++ envDefiners).contains n || !st.exactLens.isEmpty then
+      if (lengthAssigns ++ lengthArith ++ Definer.envs).contains n || !st.exactLens.isEmpty then
         condNoteLength raws i n (stack.any (· matches .opaque))
       if !st.condInDoc then recordLoad raws n i
       -- premise: Tests.overlayInputChecks — a selector reads macro fragments at its use
@@ -5048,7 +5024,7 @@ private theorem condList_package_read_step
       st.flags.contains (name.dropEnd 4).toString) = false := by simp [hflags]
   have hf : (name.endsWith "false" &&
       st.flags.contains (name.dropEnd 5).toString) = false := by simp [hflags]
-  have hdef : condDefiners.contains name = false := by
+  have hdef : Definer.readAsDefinition.contains name = false := by
     rcases hc with rfl | rfl <;> decide
   have hno : condNoExpand.contains name = false := by
     rcases hc with rfl | rfl <;> decide
@@ -5058,14 +5034,14 @@ private theorem condList_package_read_step
     rcases hc with rfl | rfl <;> decide
   have htpl : (name == "defbeamertemplate" || name == "setbeamertemplate") = false := by
     rcases hc with rfl | rfl <;> decide
-  have hlen : ((lengthAssigns ++ lengthArith ++ envDefiners).contains name ||
+  have hlen : ((lengthAssigns ++ lengthArith ++ Definer.envs).contains name ||
       !st.exactLens.isEmpty) = false := by
-    have h : (lengthAssigns ++ lengthArith ++ envDefiners).contains name = false := by
+    have h : (lengthAssigns ++ lengthArith ++ Definer.envs).contains name = false := by
       rcases hc with rfl | rfl <;> decide
     simp only [h, hlens, Std.HashMap.isEmpty_empty, Bool.not_true, Bool.or_false]
-  have hxp : (xparseEnvDefiners.contains name && ignoredEnvDef st.ignoredDefs raws i name) =
+  have hxp : (Definer.xparseEnvs.contains name && ignoredEnvDef st.ignoredDefs raws i name) =
       false := by
-    have h : xparseEnvDefiners.contains name = false := by
+    have h : Definer.xparseEnvs.contains name = false := by
       rcases hc with rfl | rfl <;> decide
     simp only [h, Bool.false_and]
   rw [condList.eq_16]
@@ -8252,7 +8228,7 @@ skipped, and the leading keeps its value" pos (help := "give a number, such as \
       if (Locale.forTag tag).isNone then
         say .W0368 s!"no locale for language '{lname}'; English captions \
 and patterns stand in" pos
-          (help := "the engine ships locale records for: en, fr, de")
+          (help := Locale.shippedHelp)
       became s!"\\foreignlanguage\{{lname}}" s!"the '{tag}' language attribute" pos
       return some (#[.group (#[Raw.ctrl (Marker.name .lang tag) pos] ++ args[1]) pos], k)
     else return none
@@ -8994,7 +8970,7 @@ private def rewritePackageBody (name p : String) (opt : Option String) (pos : Po
       else
         sayOnce ("param:usepackage:babel:" ++ main) .W0368 s!"no locale for language '{main}'; \
 English captions and patterns stand in" pos
-          (help := "the engine ships locale records for: en, fr, de")
+          (help := Locale.shippedHelp)
     | none =>
       discard s!"\\{name}\{{p}}" "the engine does this itself" s!"{name}:{p}" pos
   else if p == "natbib" then
@@ -9554,7 +9530,7 @@ skipped, and the length keeps its value" pos
     let some cmd := ctrlName (nameArgs.getD 0 #[]) | return none
     -- A stretch the next font selection reads sets the strut box again there.
     if cmd == "baselinestretch" then write fun st => { st with strutSkip := none }
-    let provide := name == "providecommand" || name == "ProvideDocumentCommand"
+    let provide := Definer.provides name
     let st ← get
     -- premise: Tests.xparseProvideChecks — provision keeps existing meanings
     if provide && (st.bound.contains cmd || st.provideKeeps.contains cmd) then
@@ -10127,7 +10103,7 @@ the weight in force stands" c.pos
     if (Locale.forTag tag).isNone then
       say .W0368 s!"no locale for language '{lname}'; English captions \
 and patterns stand in" c.pos
-        (help := "the engine ships locale records for: en, fr, de")
+        (help := Locale.shippedHelp)
     -- Only a switch in the body moves the language `\enquote` reads its quotes through.
     if (← get).inDoc then
       write fun st => { st with mainLang := tag }
@@ -10799,13 +10775,6 @@ private def delimCall (xs : Array Raw) (i : Nat) (name : String) (pos : Pos)
     | _, _ => (i + 1, #[])
   return some (#[Raw.ctrl name pos] ++ args ++ tail, stop)
 
-/-- The definers after which a name means something new;
-`\providecommand` is not one. -/
-private def redefiners : List String :=
-  ["def", "gdef", "edef", "xdef", "let", "define", "newcommand", "renewcommand",
-   "DeclareRobustCommand", "NewDocumentCommand", "RenewDocumentCommand",
-   "DeclareDocumentCommand"]
-
 /-- The command a definer standing at `i` names. -/
 private def definedCmd (xs : Array Raw) (i : Nat) : Option String :=
   let j := skipSpaces xs (i + 1)
@@ -10880,7 +10849,7 @@ private def delimCallsList (sigs : DelimState)
     delimCallsList sigs xs ((out.push (.ctrl "apptocmd" pos)) ++ xs.extract (i + 1) k)
       rest (i + 1) (k - (i + 1))
   | .ctrl d p :: rest, i, 0 =>
-    match (if redefiners.contains d then definedCmd xs i else none) with
+    match (if Definer.redefiners.contains d then definedCmd xs i else none) with
     | some n =>
       let sigs := sigsAfter sigs xs i d n
       match xs[i + 1]? with
@@ -11425,13 +11394,6 @@ document defines it. -/
 private def isAltHead (userAlt : Bool) (c : String) : Bool :=
   c == altHead || (!userAlt && c == "alt")
 
-/-- The definers whose next token names what they define. -/
-private def nameDefiners : List String :=
-  ["def", "gdef", "edef", "xdef", "let", "newcommand", "renewcommand", "providecommand",
-   "DeclareRobustCommand", "NewDocumentCommand", "RenewDocumentCommand",
-   "ProvideDocumentCommand", "DeclareDocumentCommand", "newrobustcmd", "renewrobustcmd",
-   "providerobustcmd"]
-
 /-- The command a definer's next tokens name, past a star and spaces. -/
 private def definedName : List Raw → Option String
   | .space :: rest => definedName rest
@@ -11449,7 +11411,7 @@ mutual
 private def definesList (n : String) : List Raw → Bool
   | [] => false
   | .ctrl d _ :: rest =>
-    (nameDefiners.contains d && definedName rest == some n) || definesList n rest
+    (Definer.nameDefiners.contains d && definedName rest == some n) || definesList n rest
   | r :: rest => definesRaw n r || definesList n rest
 termination_by structural l => l
 
@@ -11597,17 +11559,18 @@ private def readingCounts : List String :=
 /-- The definitions, assignments and switches a paragraph's reading cannot
 hold: a copy would repeat them, or its group end their reach. -/
 private def readingDeclarations : List String :=
-  nameDefiners ++
-    ["newenvironment", "renewenvironment", "provideenvironment", "newcounter", "newlength",
+  Definer.nameDefiners ++ Ir.sizeScale.map (·.1) ++
+    Definer.names (fun r => (r.defines == .environment && r.family == .latex) ||
+      r.family == .amsmath) ++
+    ["newcounter", "newlength",
      "setlength", "addtolength", "setcounter", "addtocounter", "stepcounter", "refstepcounter",
-     "newif", "newtheorem", "DeclareMathOperator", "newcolumntype", "definecolor", "colorlet",
+     "newif", "newtheorem", "newcolumntype", "definecolor", "colorlet",
      "setbeamercolor", "setbeamertemplate", "setbeamerfont", "usebeamercolor", "usebeamerfont",
      "usebeamertemplate", "setbeamercovered", "selectlanguage", "linespread", "selectfont",
      "fontsize", "centering", "raggedleft", "raggedright", "RaggedLeft", "RaggedRight",
      "bfseries", "mdseries", "itshape", "slshape", "upshape", "scshape", "rmfamily",
      "sffamily", "ttfamily", "normalfont", "em", "bf", "it", "sl", "sc", "rm", "sf", "tt",
-     "tiny", "scriptsize", "footnotesize", "small", "normalsize", "large", "Large", "LARGE",
-     "huge", "Huge", "color", "normalcolor"]
+     "color", "normalcolor"]
 
 /-- The overlay commands the math parser cannot read. -/
 private def formulaOverlays : List String :=
@@ -11992,9 +11955,8 @@ private def blankRun (r : ReadRun) : Bool := r.orig.all (· matches .space)
 private def leadDeclarations : List String :=
   ["centering", "raggedleft", "raggedright", "RaggedLeft", "RaggedRight", "bfseries",
    "mdseries", "itshape", "slshape", "upshape", "scshape", "rmfamily", "sffamily", "ttfamily",
-   "normalfont", "em", "bf", "it", "sl", "sc", "rm", "sf", "tt", "tiny", "scriptsize",
-   "footnotesize", "small", "normalsize", "large", "Large", "LARGE", "huge", "Huge",
-   "normalcolor"]
+   "normalfont", "em", "bf", "it", "sl", "sc", "rm", "sf", "tt", "normalcolor"] ++
+    Ir.sizeScale.map (·.1)
 
 /-- How many raws a paragraph opens on are switches, colours and blank
 space. -/
@@ -12304,7 +12266,7 @@ private def rewriteRaw (inBody : Bool) (arg : Bool) : Raw → M Raw
         if (Locale.forTag tag).isNone then
           say .W0368 s!"no locale for language '{lname}'; English captions \
 and patterns stand in" p
-            (help := "the engine ships locale records for: en, fr, de")
+            (help := Locale.shippedHelp)
         became s!"\\begin\{{n}}\{{lname}}" s!"the '{tag}' language attribute" p
         return .group (#[Raw.ctrl (Marker.name .lang tag) p] ++ body'.extract j body'.size) p
       else if n == "document" then
@@ -13345,9 +13307,11 @@ private theorem delimDocument_package_exact (command names : String) (pos gp np 
       (packageCall command names pos gp np).size = #[] :=
     Array.extract_empty_of_stop_le_start (Nat.le_refl _)
   simp only [delimDocument, hs, Option.getD_none, Array.extract_size, ht]
+  have hr : "usepackage" ∉ Definer.redefiners ∧ "RequirePackage" ∉ Definer.redefiners := by
+    decide
   rcases hc with rfl | rfl <;>
-    simp [packageCall, delimCallsList, delimCallsRaw, delimClose,
-      redefiners, bind, StateT.bind, get, getThe, MonadStateOf.get, StateT.get,
+    simp [packageCall, delimCallsList, delimCallsRaw, delimClose, hr.1, hr.2,
+      bind, StateT.bind, get, getThe, MonadStateOf.get, StateT.get,
       hd, write_eq, pure, StateT.pure]
 
 private theorem overprint_package_exact (command names : String) (pos gp np : Pos)
@@ -13361,8 +13325,10 @@ private theorem overprint_package_exact (command names : String) (pos gp np : Po
 private theorem readCxOf_package_exact (command names : String) (pos gp np : Pos)
     (hc : command = "usepackage" ∨ command = "RequirePackage") :
     readCxOf (packageCall command names pos gp np) = { userOnly := false, userAlt := false } := by
+  have hn : "usepackage" ∉ Definer.nameDefiners ∧ "RequirePackage" ∉ Definer.nameDefiners := by
+    decide
   rcases hc with rfl | rfl <;>
-    simp [readCxOf, packageCall, definesList, definesRaw, nameDefiners]
+    simp [readCxOf, packageCall, definesList, definesRaw, hn.1, hn.2]
 
 private theorem onlyAlternationsIn_package_exact (cx : ReadCx) (command names : String)
     (pos gp np : Pos) (hc : command = "usepackage" ∨ command = "RequirePackage") :

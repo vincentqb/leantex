@@ -60,7 +60,7 @@
 ── E0309 (dropped) unknown document class
 ✖ [E0309] - \documentclass
   unknown document class 'proseplate'
-  suggestion: classes: article, slides, card, resume, webpage
+  suggestion: classes: article, slides, card, resume, webpage, poster
 ── E0310 (dropped) content before the first \item in a list
 ✖ [E0310] - \begin
   content before the first '\item'

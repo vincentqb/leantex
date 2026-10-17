@@ -690,6 +690,13 @@ public def Diag.triggerText (d : Diag) : Option String := d.trigger.map (·.text
 /-- The wording of a declared setting the engine skips, whatever surface declares it. -/
 public def Diag.notHonoured (what : String) : String := s!"{what} is not honoured; skipped"
 
+/-- Names joined for prose, the last after `word`: `a, b or c`. -/
+public def Diag.prose (word : String) (names : List String) : String :=
+  match names.reverse with
+  | [] => ""
+  | [one] => one
+  | last :: rest => ", ".intercalate rest.reverse ++ s!" {word} {last}"
+
 /-- The one wording of a declaration the document body ignores. -/
 public def Diag.bodyDeclaration (name : String) : String :=
   s!"'\\{name}' is a declaration; in the body it is ignored"

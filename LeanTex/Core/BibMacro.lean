@@ -1,5 +1,7 @@
 module
 
+import LeanTex.Core.Definer
+
 /-! The commands a `.bib`'s `@preamble` defines, in force
 where the list's fields are set. -/
 
@@ -155,7 +157,7 @@ public def preambleMacros (texts : Array String) : Array Macro := Id.run do
         match ctrlAt cs i with
         | none => i := i + 1
         | some (cmd, j) =>
-          if cmd == "newcommand" || cmd == "renewcommand" || cmd == "providecommand" then
+          if (Definer.commandsOf .latex).contains cmd then
             let j := if cs[j]? == some '*' then j + 1 else j
             let j := skipWs cs j
             let named : Option (String × Nat) :=
@@ -177,11 +179,11 @@ public def preambleMacros (texts : Array String) : Array Macro := Id.run do
               let k := skipWs cs k
               match groupAt cs k with
               | some (body, k') =>
-                unless cmd == "providecommand" && ms.any (·.name == name) do
+                unless Definer.provides cmd && ms.any (·.name == name) do
                   ms := ms.push { name, arity, body := expandMacros ms body }
                 i := k'
               | none => i := k
-          else if cmd == "def" then
+          else if (Definer.commandsOf .tex).contains cmd then
             match ctrlAt cs (skipWs cs j) with
             | some (name, k) =>
               let mut arity := 0
