@@ -400,6 +400,8 @@ private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
     usesBlocks cx (usesInlines cx acc caption.toList) body.toList
   | .bibliography _ _ items =>
     items.foldl (fun o item => usesInlines cx o item.content.toList) acc
+  | .contents _ entries =>
+    entries.foldl (fun o e => usesInlines cx o e.title.toList) acc
   | .verbatim covered source spec =>
     let acc := acc.focusable
     let acc := match spec.caption with

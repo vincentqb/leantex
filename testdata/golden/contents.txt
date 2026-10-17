@@ -1,0 +1,59 @@
+class article
+page 612x792 vmargin 72 hmargin 150
+meta title "Kettles and Teapots"
+meta author "Pat Placeholder"
+center
+  section* 0
+    text "Kettles and Teapots"
+  para
+    text "Pat Placeholder"
+section* 1
+  text "Contents"
+contents depth 3 current 0.0
+  entry 0 "1" "kettles"
+    text "Kettles"
+  entry 1 "1.1" "spouts"
+    text "Spouts"
+  entry 1 "1.2" "handles"
+    text "Handles"
+  entry 0 "2" "teapots"
+    text "Teapots"
+  entry 1 "2.1" "leaves"
+    text "Leaves"
+  entry 2 "2.1.1" "lids"
+    text "Lids"
+section 1 number "1"
+  text "Kettles"
+  label "sec:kettles"
+para
+  text "Water boils in a kettle, as Section "
+  ref "sec:teapots" shows "2" -> #sec:teapots
+  text " steeps it."
+section 2 number "1.1"
+  text "Spouts"
+para
+  text "Tea pours from a spout."
+section 2 number "1.2"
+  text "Handles"
+para
+  text "A handle stays cool."
+pagebreak
+section 1 number "2"
+  text "Teapots"
+  label "sec:teapots"
+para
+  text "A teapot warms first."
+section 2 number "2.1"
+  text "Leaves"
+para
+  text "Leaves steep in a teapot."
+section 3 number "2.1.1"
+  text "Lids"
+para
+  text "A lid rattles as the water steams."
+section* 1
+  text "Saucers"
+para
+  text "A saucer holds the cup."
+-- diagnostics
+note[N0100] 27:1 '\newpage' → \pagebreak

@@ -461,8 +461,8 @@ def counterChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
     (!(dvE (doc "\\setcounter{secnumdepth}{1}\\stepcounter{footnote}" heads)).any
       (·.code == "W0301"))
   t "an unkept preamble counter is named as in the body"
-    ((dvE (doc "\\setcounter{tocdepth}{2}" heads)).any fun d =>
-      d.code == "W0104" && d.subject == some "ctrl:setcounter:tocdepth")
+    ((dvE (doc "\\setcounter{totalnumber}{2}" heads)).any fun d =>
+      d.code == "W0104" && d.subject == some "ctrl:setcounter:totalnumber")
   -- Kernel constant registers read as their integers (plain.tex); any other register is named once.
   let zero := doc "\\makeatletter\\setcounter{secnumdepth}{\\z@}\\makeatother" heads
   t "a counter set to '\\z@' builds and reads zero"

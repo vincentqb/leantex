@@ -165,7 +165,7 @@ def mdSurfaceChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a thematic break, which ships nothing, is pending"
     (routed "a\n\n***\n\nb\n" "md:thematic-break")
   t "a fourth-level heading ships at its declared rank without a loss"
-    (has "#### h\n" "<h4>h</h4>"
+    (has "#### h\n" "<h4 id=h>h</h4>"
       && !(dvMd "#### h\n").any (·.subject == some "md:heading-depth"))
   t "a loose list, which ships, is degraded"
     (degraded "- a\n\n- b\n" "md:loose-list")

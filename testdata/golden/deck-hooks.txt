@@ -10,13 +10,28 @@ frame golden
       text "Sections Behind Hooks"
     para
       text "Pat Placeholder"
+frame
+  title
+    text "Overview"
+  contents depth 3 current 0.0
+    entry 0 "-" "outline"
+      text "Wheels"
+    entry 1 "-" "truing"
+      text "Rims"
+    entry 0 "-" "outline-2"
+      text "Chains"
 section 1
   text "Wheels"
 frame
   title
     text "Outline"
-  para
-    text "The next part opens here."
+  contents depth 3 current 1.0
+    entry 0 "-" "outline"
+      text "Wheels"
+    entry 1 "-" "truing"
+      text "Rims"
+    entry 0 "-" "outline-2" shaded
+      text "Chains"
 para
   label "sec:wheels"
 frame
@@ -38,8 +53,13 @@ section 1
 frame
   title
     text "Outline"
-  para
-    text "The next part opens here."
+  contents depth 3 current 2.0
+    entry 0 "-" "outline" shaded
+      text "Wheels"
+    entry 1 "-" "truing" shaded
+      text "Rims"
+    entry 0 "-" "outline-2"
+      text "Chains"
 para
   label "sec:chains"
 frame
@@ -57,7 +77,7 @@ frame
   para
     text "The last frame keeps a spare tube."
 -- diagnostics
-note[N0100] 6:1 '\documentclass{beamer}' → \documentclass[aspectratio=169]{slides}
-note[N0100] 6:1 '\RequirePackage{amsmath}' → nothing: the engine does this itself
-note[N0100] 6:1 '\usepackage{amsthm}' → \theoremstyle{plain}
-note[N0100] 8:1 '\usetheme' → \theme{default}
+note[N0100] 7:1 '\documentclass{beamer}' → \documentclass[aspectratio=169]{slides}
+note[N0100] 7:1 '\RequirePackage{amsmath}' → nothing: the engine does this itself
+note[N0100] 7:1 '\usepackage{amsthm}' → \theoremstyle{plain}
+note[N0100] 9:1 '\usetheme' → \theme{default}

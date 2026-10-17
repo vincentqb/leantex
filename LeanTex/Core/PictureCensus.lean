@@ -56,6 +56,12 @@ private theorem bibPictureCount_id (n : Nat) (xs : List BibItem) :
   | nil => rfl
   | cons _ _ ih => simpa only [foldBibItems, inlineListPictureCount_id] using ih
 
+private theorem contentsPictureCount_id (n : Nat) (xs : List ContentsEntry) :
+    foldContentsEntries (fun n _ => n) n xs = n := by
+  induction xs with
+  | nil => rfl
+  | cons _ _ ih => simpa only [foldContentsEntries, inlineListPictureCount_id] using ih
+
 private theorem algPictureCount_id (n : Nat) (xs : List AlgLine) :
     foldAlgLines (fun n _ => n) n xs = n := by
   induction xs with
@@ -134,6 +140,8 @@ private theorem mapBlock_pictureCount (gp : Pic.Picture → Pic.Picture)
     simp only [mapBlock, foldBlock, pictureCountStep, laidPictureCount_id]
   | .bibliography _ _ _ =>
     simp only [mapBlock, foldBlock, pictureCountStep, bibPictureCount_id]
+  | .contents _ _ =>
+    simp only [mapBlock, foldBlock, pictureCountStep, contentsPictureCount_id]
   | .verbatim _ _ _ | .setPalette _ | .setTokens _
   | .pagebreak | .rule _ _ _ | .picture _ => rfl
 

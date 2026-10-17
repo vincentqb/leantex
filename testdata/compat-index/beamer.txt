@@ -18,8 +18,11 @@
 # code after a starred section, a later hook opening the later sections and
 # a hook a group declares ending with it; the insert commands name the section
 # in force; a frame holding only \sectionpage is the section's page; a frame's
-# label option labels the frame. These rows probe the deck's body outside the
-# frames: the `deck` place.
+# label option labels the frame. §10.5 (Adding a Table of Contents): \tableofcontents
+# lists the unstarred sections and subsections, its options showing, shading
+# or hiding them about the section in force; pausesections, which steps the
+# list, is named. These rows probe the deck's body outside the frames: the
+# `deck` place.
 frame impl \begin{columns}[T]\begin{column}{0.5\textwidth}x\end{column}\begin{column}{0.5\textwidth}y\end{column}\end{columns}
 frame impl \begin{columns}[T,onlytextwidth]\column{0.5\textwidth}x\column{0.5\textwidth}y\end{columns}
 frame impl \begin{columns}\column{0.5\textwidth}x\begin{column}{0.5\textwidth}y\end{column}\end{columns}
@@ -37,3 +40,11 @@ deck impl \section{Alpha}\begin{frame}{\insertsectionnumber}y\end{frame}
 deck impl \section{Alpha}\subsection{Beta}\begin{frame}{\insertsubsection}y\end{frame}
 deck impl \section{Alpha}\begin{frame}\sectionpage\end{frame}\begin{frame}y\end{frame}
 deck impl \begin{frame}[label=one]x\end{frame}\begin{frame}\ref{one}\end{frame}
+deck impl \begin{frame}\tableofcontents\end{frame}\section{Alpha}\begin{frame}y\end{frame}
+deck impl \section{Alpha}\begin{frame}\tableofcontents[currentsection]\end{frame}\section{Beta}\begin{frame}y\end{frame}
+deck impl \section{A}\subsection{B}\begin{frame}\tableofcontents[currentsubsection]\end{frame}\subsection{C}\begin{frame}y\end{frame}
+deck impl \begin{frame}\tableofcontents[hideallsubsections]\end{frame}\section{A}\subsection{B}\begin{frame}y\end{frame}
+deck impl \section{A}\begin{frame}\tableofcontents[hideothersubsections]\end{frame}\section{B}\subsection{C}\begin{frame}y\end{frame}
+deck impl \section{A}\begin{frame}\tableofcontents[sectionstyle=show/hide]\end{frame}\section{B}\begin{frame}y\end{frame}
+deck impl \section{A}\subsection{B}\begin{frame}\tableofcontents[subsectionstyle=show/shaded/hide]\end{frame}\section{C}\subsection{D}\begin{frame}y\end{frame}
+deck refuse:W0104 \begin{frame}\tableofcontents[pausesections]\end{frame}\section{A}\begin{frame}y\end{frame}

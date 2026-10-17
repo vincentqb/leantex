@@ -59,6 +59,8 @@ private def structTypeOf : Struct.Kind → String
   | .aside => "Aside"
   | .nav => "Sect"
   | .bibEntry => "LBody"
+  | .toc => "TOC"
+  | .tocItem => "TOCI"
   | .link _ => "Link"
   | .span _ => "Span"
   | .line _ _ => "Span"
@@ -74,13 +76,13 @@ private def inPdf2Namespace : Struct.Kind → Bool
   | .reference _ => false
   | .document | .section | .title | .heading _ | .paragraph | .list _ | .item | .label | .body
   | .table | .row | .cell | .caption | .figure | .formula | .note | .aside | .nav | .bibEntry
-  | .link _ | .span _ | .line _ _ | .artifact => true
+  | .toc | .tocItem | .link _ | .span _ | .line _ _ | .artifact => true
 
 private def headingLevelOf : Struct.Kind → Option Ir.HeadingLevel
   | .heading level => some level
   | .document | .section | .title | .paragraph | .list _ | .item | .label | .body | .table
   | .row | .cell | .caption | .figure | .formula | .code | .quote | .note | .aside | .nav
-  | .bibEntry | .link _ | .span _ | .line _ _ | .reference _ | .artifact => none
+  | .bibEntry | .toc | .tocItem | .link _ | .span _ | .line _ _ | .reference _ | .artifact => none
 
 private def isHolder (kind : Struct.Kind) (inline : Bool) : Bool :=
   match kind with
@@ -88,7 +90,7 @@ private def isHolder (kind : Struct.Kind) (inline : Bool) : Bool :=
   | .bibEntry | .figure | .line _ _ | .artifact => true
   | .formula => !inline
   | .document | .section | .list _ | .item | .table | .row | .quote | .aside | .nav
-  | .link _ | .span _ | .reference _ => false
+  | .toc | .tocItem | .link _ | .span _ | .reference _ => false
 
 private def elemOf (kind : Struct.Kind) : StructElem :=
   { s := structTypeOf kind, ns20 := inPdf2Namespace kind, heading := headingLevelOf kind }
@@ -165,7 +167,7 @@ private def skelStep (es : Array StructElem) (parent holder : Nat) (inline : Boo
       (skelList es i i true none kids.toList, none)
     | .document | .section | .title | .heading _ | .paragraph | .list _ | .item
     | .body | .table | .row | .cell | .caption | .figure | .formula | .code | .quote | .note
-    | .nav | .link _ | .span _ | .reference _ | .artifact =>
+    | .nav | .toc | .tocItem | .link _ | .span _ | .reference _ | .artifact =>
       let (es, i) := pushElem es parent (elemOf kind)
       let (h, inl) := if isHolder kind inline then (i, true) else (holder, inline)
       (skelList es i h inl none kids.toList, none)

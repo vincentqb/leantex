@@ -150,6 +150,7 @@ import Tests.Algorithm
 import Tests.Layout
 import Tests.FrameHeadingScope
 import Tests.SectionPages
+import Tests.Contents
 import Tests.Themes
 import Tests.SeedPalette
 import Tests.PaletteCover
@@ -2019,6 +2020,13 @@ def reports : List Report := [
     accept := ["invented probes under lualatex with beamer: a section hook's frame stands right after each section it opens, its starred code after a starred section or one with a blank title, the code itself when no starred code is given and nothing when it is empty; a hook declared after a section opens the later sections; a hook declared in a group ends with the group; insertsection names the section in force; a frame's label option refers to the frame's number; this tree ships the same, a theme's section page standing as the theme's own hook sets it",
       "the corpus built by the binary this branch stacks on and by this tree's: every artifact and diagnostics log byte-identical but the hooked deck's, whose hook frames stand where its section title pages stood and whose stand-in warning is gone",
       "main at 320e1b58 sets a page showing the title for each hooked section, ignores a hook after a section and drops a frame's label option; the guards fail there"]
+    state := .guarded "320e1b58" .before .author },
+  { id := "R224", date := "2026-10-17"
+    what := "a table of contents was an unknown command in decks and articles: a deck's overview and its section hook's outline listed nothing, an article's contents neither its headings nor their pages, and a subsection carried no anchor a link could open"
+    pins := [check% contentsChecks, check% censusChecks, check% compatIndexChecks]
+    accept := ["invented probes under lualatex: beamer's contents list the unstarred sections and subsections, a subsection 1.5em in, a fill before each section's entry and after the last sharing the frame's leftover, the currentsection option shading the other sections and their subsections; article's list the numbered headings to tocdepth under their heading, a section's bold after 1em with its folio right-aligned in 1.55em, a subsection's at 1.5em behind a 2.3em number with dotted leaders a stop and half an em apart from the line box's edge; this tree sets the same",
+      "the corpus built by the binary this branch stacks on and by this tree's: every artifact and diagnostics log byte-identical but the hooked deck's and the new article's, whose contents ship where they stand and whose deeper headings answer to anchors",
+      "main at 320e1b58 refuses the command and lists nothing; the guards fail there"]
     state := .guarded "320e1b58" .before .author }
 ]
 

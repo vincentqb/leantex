@@ -38,6 +38,7 @@ public import LeanTex.Core.Ir
 public import LeanTex.Core.Referent
 public import LeanTex.Core.StageNames
 public import LeanTex.Core.Outline
+public import LeanTex.Core.Contents
 public import LeanTex.Core.ColorContract
 public import LeanTex.Core.TextSymData
 public import LeanTex.Core.Bib

@@ -1401,14 +1401,26 @@ def censusRows7 :
       !pageHas c 4 "Serving" && !pageHas c 4 "Drying")]),
   ("deck-hooks", fun _ c => [
     ("a page per frame, the hook's own before each section it opens, none for a starred one",
-      c.size == 7),
-    ("each page holds its frame's words, the hook's before each unstarred section, in order",
-      [(0, "Sections Behind Hooks"), (1, "next part opens here"), (2, "holds its spokes"),
-        (3, "runs true"), (4, "next part opens here"), (5, "Chains follow"),
-        (6, "spare tube")].all fun (i, w) => pageHas c i w),
-    ("the hook's frame sets its own words, no section's title, and a starred section inks nothing",
-      !pageHas c 1 "Wheels" && !pageHas c 4 "Chains" && !pageHas c 6 "Spare parts"),
-    ("a reference to a section shows beamer's number", pageHas c 2 "2 drives" && pageHas c 5 "1 said")])]
+      c.size == 8),
+    ("each page holds its frame's words, the hook's outline before each unstarred section, in order",
+      [(0, "Sections Behind Hooks"), (1, "Overview"), (2, "Outline"), (3, "holds its spokes"),
+        (4, "runs true"), (5, "Outline"), (6, "Chains follow"),
+        (7, "spare tube")].all fun (i, w) => pageHas c i w),
+    ("the overview and each outline list every unstarred section and subsection, not the starred one",
+      [1, 2, 5].all fun i => pageHas c i "Wheels" && pageHas c i "Rims" && pageHas c i "Chains" &&
+        !pageHas c i "Spare parts"),
+    ("a starred section inks nothing", !pageHas c 7 "Spare parts"),
+    ("a reference to a section shows beamer's number", pageHas c 3 "2 drives" && pageHas c 6 "1 said")]),
+  ("contents", fun _ c => [
+    ("the contents and the first section share the first page, the second section the next",
+      c.size == 2 && pageHas c 0 "Contents" && pageHas c 1 "Leaves steep"),
+    ("each numbered heading's entry ends on the folio of its heading's page",
+      [("1 Kettles", "1"), ("1.1 Spouts", "1"), ("1.2 Handles", "1"), ("2 Teapots", "2"),
+        ("2.1 Leaves", "2"), ("2.1.1 Lids", "2")].all fun (w, f) =>
+          (c[0]?.bind fun p => p.lines.find? (hasStr ·.text w)).any fun l =>
+            l.text.trimAscii.toString.endsWith f),
+    ("no starred section is listed", !pageHas c 0 "Saucers"),
+    ("dotted leaders stand before the subsections' folios", (c[0]?.map (·.polys.size)).any (· > 0))])]
 
 /-- Whether `a` ships above `b` on page 0. -/
 def shipsAbove (c : Array CensusPage) (a b : String) : Bool :=

@@ -1855,6 +1855,8 @@ private def resolveBlock (p : CitePunct) (find : Resolver)
   | .bibliography src declared _ =>
     out.push (.bibliography src declared
       (items.map fun it => { it with content := resolveArr p find it.content }))
+  | .contents spec entries =>
+    out.push (.contents spec (entries.map fun e => { e with title := resolveArr p find e.title }))
   | .para content =>
     if nociteOnly content then out else out.push (.para (resolveArr p find content))
   | .equation n content =>
@@ -1949,7 +1951,7 @@ public def resolveDoc (p : CitePunct) (find : Resolver) (items : Array Ir.BibIte
 only nonprinting citations. -/
 public def keepsBlock : Ir.Block → Bool
   | .para content => !nociteOnly content
-  | .bibliography .. | .equation .. | .section .. | .abstract .. | .list ..
+  | .bibliography .. | .contents .. | .equation .. | .section .. | .abstract .. | .list ..
   | .center .. | .ragged .. | .quote .. | .lines .. | .titled .. | .disclosure .. | .role .. | .link ..
   | .spaced .. | .columns .. | .onSteps .. | .altSteps .. | .only .. | .nav ..
   | .note .. | .frame .. | .framefoot .. | .float .. | .table .. | .algorithm ..
@@ -3074,6 +3076,21 @@ private theorem bibItems_pending (p : CitePunct) (find : Resolver) :
     · exact resolveInlines_pending p find it.content.toList acc q h'
     · exact .inr hc
 
+private theorem contentsEntries_pending (p : CitePunct) (find : Resolver) :
+    ∀ (entries : List Ir.ContentsEntry) (acc : Array Ir.Unresolved) (q : Ir.Unresolved),
+      q ∈ Ir.foldContentsEntries Ir.pendingStep acc
+        (entries.map fun e => { e with title := resolveArr p find e.title }) →
+      q ∈ acc ∨ q.isCite = false := by
+  intro entries
+  induction entries with
+  | nil => intro acc q h; exact .inl h
+  | cons e rest ih =>
+    intro acc q h
+    rw [List.map_cons, Ir.foldContentsEntries] at h
+    rcases ih _ q h with h' | hc
+    · exact resolveInlines_pending p find e.title.toList acc q h'
+    · exact .inr hc
+
 mutual
 
 private theorem resolveBlock_pending (p : CitePunct) (find : Resolver) (items : Array Ir.BibItem)
@@ -3151,6 +3168,10 @@ private theorem resolveBlock_pending (p : CitePunct) (find : Resolver) (items : 
     intro out acc q h
     simp only [resolveBlock, Ir.foldBlockList_push, Ir.foldBlock, Array.toList_map] at h
     exact bibItems_pending p find items.toList _ q h
+  | .contents _ entries =>
+    intro out acc q h
+    simp only [resolveBlock, Ir.foldBlockList_push, Ir.foldBlock, Array.toList_map] at h
+    exact contentsEntries_pending p find entries.toList _ q h
   | .verbatim _ _ _ | .setPalette _ | .setTokens _ | .pagebreak
   | .rule _ _ _ | .picture _ =>
     intro out acc q h

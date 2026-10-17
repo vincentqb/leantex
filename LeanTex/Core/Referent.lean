@@ -114,6 +114,7 @@ private def referentOne (keys : ReferentKeys) : Block → Block
   | .picture p => .picture p
   | .table cols pl pr rows rules spans => .table cols pl pr rows rules spans
   | .bibliography src style items => .bibliography src style items
+  | .contents spec entries => .contents spec entries
 
 private def referentItems (keys : ReferentKeys) (out : Array (Array Block)) :
     List (Array Block) → Array (Array Block)
@@ -412,7 +413,7 @@ private theorem referentOne_text (keys : ReferentKeys) (b : Block) (acc : String
       blockTextList]
   | .para _ | .lines _ | .equation _ _ | .section _ _ _ _ | .verbatim _ _ _ | .note _
   | .framefoot _ | .pagebreak | .setPalette _ | .setTokens _ | .algorithm _ _ _ | .logo _ | .rule _ _ _
-  | .picture _ | .table _ _ _ _ _ _ | .bibliography _ _ _ => rfl
+  | .picture _ | .table _ _ _ _ _ _ | .bibliography _ _ _ | .contents _ _ => rfl
 
 private theorem referentItems_text (keys : ReferentKeys) (items : List (Array Block))
     (out : Array (Array Block)) (acc : String) :

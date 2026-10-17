@@ -355,8 +355,8 @@ def headingNumberChecks (ref : IO.Ref (List String)) : IO Unit := do
     (errCodes prefixed == [] && !(warnCodes prefixed).contains "W0349" &&
       nums (elabStr prefixed).1 == [some "1", some "Item 1.", some "Item 2."])
   t "a counter the engine does not model is named and its arguments consumed"
-    ((warnCodes (dvDoc "" "x\\setcounter{tocdepth}{2}y")).contains "W0104" &&
-      (errCodes (dvDoc "" "x\\setcounter{tocdepth}{2}y")) == [])
+    ((warnCodes (dvDoc "" "x\\setcounter{totalnumber}{2}y")).contains "W0104" &&
+      (errCodes (dvDoc "" "x\\setcounter{totalnumber}{2}y")) == [])
   let (doc, _) := elabStr ("\\documentclass{article}\\begin{document}\\section{Introduction}\nBody.\n\\end{document}")
   t "a number never moves the section anchor"
     ((((HtmlDoc.emit {} doc).1).splitOn "<section id=\"introduction\">").length == 2)

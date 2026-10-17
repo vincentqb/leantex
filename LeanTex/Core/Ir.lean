@@ -4904,6 +4904,103 @@ public theorem quoteSpacing_own_exact (l : ListLineage) (size : Sp) (level : Nat
   obtain ⟨-, hi, hp, -⟩ := listSpacing_declared_exact l size level tokens _ sk p h
   exact ⟨fun g hg => hp g (by simp [ListSet.over, hg]), fun g hg => hi g (by simp [ListSet.over, hg])⟩
 
+/-- How beamer's `\tableofcontents` options set an entry: as it stands, shaded, or hidden. -/
+public inductive ContentsShow where
+  | shown
+  | shaded
+  | hidden
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+/-- What a `\tableofcontents` declares: the deck's section and subsection numbers in force where it
+stands, how its options set the current section and the others, then the current subsection, the
+others of the current section and those of the others, and the depth a flow's contents list to. -/
+public structure ContentsSpec where
+  current : Nat × Nat := (0, 0)
+  sections : ContentsShow × ContentsShow := (.shown, .shown)
+  subsections : ContentsShow × ContentsShow × ContentsShow := (.shown, .shown, .shown)
+  depth : Nat := 3
+  deriving Repr, BEq, Inhabited
+
+/-- One entry of a table of contents: its depth, the number its heading prints, its title as
+`\nameref` sets it, the anchor it opens where its heading has one, whether it is set shaded, and
+the folio of the page its heading lands on, once a setting has placed it. -/
+public structure ContentsEntry where
+  depth : Nat
+  number : Option String
+  title : Array Inline
+  target : Option String
+  shaded : Bool
+  page : Option Nat := none
+  deriving Repr, BEq, Inhabited
+
+/-- An entry's words as both backends set them: its title, linked to its heading's anchor where it
+has one. -/
+@[expose] public def ContentsEntry.inline (e : ContentsEntry) : Array Inline :=
+  match e.target with
+  | some t => #[.link ("#" ++ t) e.title]
+  | none => e.title
+
+/-- The share of its colour a shaded entry keeps over its ground: beamer's `sections/subsections in
+toc shaded` default (beamerinnerthemedefault.sty). -/
+@[expose] public def contentsShadeShare : Nat := 20
+
+/-- Whether a deck's contents set a section entry after `\vskip1.5em` rather than `\vfill`: where
+the subsections of the other sections hide (beamerbasetoc.sty). -/
+@[expose] public def ContentsSpec.tightSections (spec : ContentsSpec) : Bool :=
+  spec.subsections.2.2 == .hidden
+
+/-- A deck's contents indent per depth, in thousandths of an em: the default inner theme's
+`subsection in toc` `\leftskip=1.5em` (beamerinnerthemedefault.sty). -/
+@[expose] public def deckContentsIndent : Nat := 1500
+
+/-- One item of a deck's contents on its frame's vertical list: a skip, or an entry. -/
+public inductive ContentsStep where
+  | skip (g : SymGlue)
+  | entry (e : ContentsEntry)
+  deriving Repr, BEq, Inhabited
+
+/-- A deck's contents as beamer sets them: `\vspace*{-.5em}`, each section's entry after `\vfill`
+or, where the sections stand tight, `\vskip1.5em`, and a closing `\vfill` (beamerbasetoc.sty). -/
+@[expose] public def deckContentsSteps (spec : ContentsSpec) (entries : Array ContentsEntry) :
+    Array ContentsStep :=
+  let before : SymGlue := if spec.tightSections then { width := { em := 1500 } } else { fil := true }
+  #[.skip { width := { em := -500 } }] ++
+    entries.flatMap (fun e => if e.depth == 0 then #[.skip before, .entry e] else #[.entry e]) ++
+    #[.skip { fil := true }]
+
+/-- Whether a contents step is a `\vfill`. -/
+@[expose] public def ContentsStep.fills : ContentsStep → Bool
+  | .skip g => g.fil
+  | .entry _ => false
+
+/-- The `\vfill`s a deck's contents set on its frame's list (`deckContentsSteps`). -/
+@[expose] public def contentsFills (spec : ContentsSpec) (entries : Array ContentsEntry) : Nat :=
+  ((deckContentsSteps spec entries).filter (·.fills)).size
+
+/-- Where a flow's contents set an entry of one depth, in thousandths of an em: its indent and the
+width its number takes (article.cls `\l@section`, `\l@subsection` and below). -/
+public structure ContentsLevel where
+  indent : Nat
+  numWidth : Nat
+  deriving Repr, BEq, Inhabited
+
+/-- The box a flow's contents set a page's folio in, right-aligned, in thousandths of an em:
+article.cls's `\@pnumwidth`. -/
+@[expose] public def contentsPageWidth : Nat := 1550
+
+/-- How far short of the measure a dotted contents entry's lines wrap, in thousandths of an em:
+article.cls's `\@tocrmarg`. -/
+@[expose] public def contentsRightMargin : Nat := 2550
+
+/-- article.cls's levels: a section at 0 with 1.5em, a subsection at 1.5em with 2.3em, a
+subsubsection at 3.8em with 3.2em, a paragraph at 7em with 4.1em, a subparagraph at 10em with 5em. -/
+@[expose] public def contentsFlowLevel : Nat → ContentsLevel
+  | 0 => ⟨0, 1500⟩
+  | 1 => ⟨1500, 2300⟩
+  | 2 => ⟨3800, 3200⟩
+  | 3 => ⟨7000, 4100⟩
+  | _ => ⟨10000, 5000⟩
+
 public inductive Block where
   | para (content : Array Inline)
   /-- A paragraph laid out in lines, each under the last at the leading, continuing at its indent
@@ -4997,6 +5094,9 @@ public inductive Block where
   /-- `\bibliography{src}`: the reference list, standing where the command was
   written; its items fill once the `.bib` is read. -/
   | bibliography (src : String) (style : Option String) (items : Array BibItem)
+  /-- `\tableofcontents`: the headings it lists, standing where the command was written; its
+  entries fill once the document's headings are known. -/
+  | contents (spec : ContentsSpec) (entries : Array ContentsEntry)
   deriving Repr, BEq, Inhabited
 
 /-- Single-interval construction; union nodes use `onSteps` directly. -/
@@ -5294,7 +5394,7 @@ private def carrierOpenBlock (inPar endPe broken : Bool) : Block → Block
     b@(.algorithm ..) | b@(.columns ..) | b@(.note ..) | b@(.only ..) | b@(.nav ..) |
     b@(.logo ..) | b@(.pagebreak) | b@(.frame ..) | b@(.framefoot ..) | b@(.setPalette ..) |
     b@(.setTokens ..) | b@(.rule ..) | b@(.picture ..) | b@(.table ..) | b@(.float ..) |
-    b@(.bibliography ..) =>
+    b@(.bibliography ..) | b@(.contents ..) =>
     openDisplayAt inPar endPe broken b
 
 private def carrierOpenList (inPar endPe broken : Bool) : List Block → List Block
@@ -5319,7 +5419,7 @@ private def carrierCloseBlock (parEnd : Bool) : Block → Block
     b@(.algorithm ..) | b@(.columns ..) | b@(.note ..) | b@(.only ..) | b@(.nav ..) |
     b@(.logo ..) | b@(.pagebreak) | b@(.frame ..) | b@(.framefoot ..) | b@(.setPalette ..) |
     b@(.setTokens ..) | b@(.rule ..) | b@(.picture ..) | b@(.table ..) | b@(.float ..) |
-    b@(.bibliography ..) =>
+    b@(.bibliography ..) | b@(.contents ..) =>
     closeDisplayAt parEnd b
 
 private def carrierCloseList (parEnd : Bool) : List Block → List Block
@@ -5554,6 +5654,7 @@ private def numberFloatOne (c : FloatCtr) : Block → FloatCtr × Block
   | .table cols pl pr rows rules spans => (c, .table cols pl pr rows rules spans)
   | .algorithm n sm lines => (c, .algorithm n sm lines)
   | .bibliography src style items => (c, .bibliography src style items)
+  | .contents spec entries => (c, .contents spec entries)
   | .float kind _ capAbove body caption =>
     let cAfter := if caption.isEmpty then c else c.bump kind
     let num := if caption.isEmpty then none else some (c.get kind + 1)
@@ -5624,7 +5725,7 @@ private def floatNumsOne (k : FloatKind) (out : List Nat) : Block → List Nat
   | .picture _ => out
   | .table _ _ _ _ _ _ => out
   | .algorithm _ _ _ => out
-  | .bibliography _ _ _ => out
+  | .bibliography _ _ _ | .contents _ _ => out
   | .float kind num _ body _ =>
     let out := match num with
       | some n => if kind = k then out ++ [n] else out
@@ -5687,7 +5788,7 @@ private theorem numberFloatOne_exact (k : FloatKind) (c : FloatCtr) (out : List 
   match b with
   | .para _ | .lines _ | .equation _ _ | .section _ _ _ _ | .note _ | .verbatim _ _ _ | .logo _
   | .algorithm _ _ _
-  | .bibliography _ _ _
+  | .bibliography _ _ _ | .contents _ _
   | .framefoot _ | .setPalette _ | .setTokens _ | .pagebreak
   | .rule _ _ _ | .picture _ | .table _ _ _ _ _ _ =>
     exact ⟨0, by simp [numberFloatOne], by simp [numberFloatOne, floatNumsOne]⟩
@@ -6725,7 +6826,7 @@ public def Block.markFrame (role : String) (b : Block) : Block :=
   | .link .. | .quote _ _ | .lines _ | .abstract _ | .titled .. | .disclosure .. | .equation .. | .verbatim ..
   | .algorithm .. | .columns _ | .onSteps .. | .altSteps .. | .note _ | .only ..
   | .nav .. | .logo _ | .pagebreak | .framefoot _ | .setPalette _ | .setTokens _
-  | .rule .. | .picture _ | .table .. | .float .. | .bibliography .. => b
+  | .rule .. | .picture _ | .table .. | .float .. | .bibliography .. | .contents .. => b
 
 /-- Mark the top-level frames at `indices` with the frame mark `role`. -/
 -- conserves: none — splices empty marks.
@@ -6819,7 +6920,7 @@ declared styles. -/
   | .para _ | .lines _ | .section .. | .list .. | .center _ | .ragged .. | .spaced .. | .role ..
   | .link .. | .equation .. | .verbatim .. | .algorithm .. | .onSteps .. | .altSteps ..
   | .only .. | .nav .. | .logo _ | .pagebreak | .frame .. | .framefoot _ | .setPalette _
-  | .setTokens _ | .rule .. | .picture _ | .table .. | .bibliography .. => .onList
+  | .setTokens _ | .rule .. | .picture _ | .table .. | .bibliography .. | .contents .. => .onList
 
 /-- A list whose every item runs in by its label: a description list. -/
 public def listIsDesc (ordered : Bool) (items : Array (Array Block)) : Bool :=
@@ -6840,7 +6941,7 @@ public def trailingFillsOne (n : Nat) : Block → Nat
   | .quote _ _ | .lines _ | .abstract _ | .titled .. | .disclosure .. | .equation .. | .verbatim .. | .algorithm ..
   | .columns _ | .altSteps .. | .note _ | .nav .. | .logo _ | .pagebreak | .frame ..
   | .framefoot _ | .setPalette _ | .setTokens _ | .rule .. | .picture _ | .table ..
-  | .float .. | .bibliography .. => 0
+  | .float .. | .bibliography .. | .contents .. => 0
 
 public def trailingFillsList (n : Nat) : List Block → Nat
   | [] => n
@@ -6906,6 +7007,7 @@ public def frameFillsOne (l : ListLineage) (styles : Styles) (v : FillView) (acc
     if (Block.disclosure summary expanded body).listScope l styles == .onList then
       frameFillsList l styles v acc body.toList
     else acc
+  | .contents spec entries => acc + contentsFills spec entries
   | .para _ | .lines _ | .section .. | .equation .. | .verbatim .. | .algorithm .. | .columns _
   | .note _ | .logo _ | .pagebreak | .frame .. | .framefoot _ | .setPalette _ | .setTokens _
   | .rule .. | .picture _ | .table .. | .bibliography .. =>
@@ -8972,6 +9074,12 @@ public def inlineSource (content : Array Inline) : Option Span :=
   | [] => acc
   | it :: rest => foldBibItems fi (foldInlineList fi acc it.content.toList) rest
 
+/-- `foldInline` over a table of contents' entries: each entry's title, in list order. -/
+@[expose] public def foldContentsEntries (fi : α → Inline → α) (acc : α) :
+    List ContentsEntry → α
+  | [] => acc
+  | e :: rest => foldContentsEntries fi (foldInlineList fi acc e.title.toList) rest
+
 mutual
 
 /-- The block face of the fold: `fb` reads each block, `fi` each inline, the
@@ -9011,6 +9119,7 @@ node first, a frame's title and a float's caption before their bodies. -/
   | .algorithm _ _ lines => foldAlgLines fi (fb acc b) lines.toList
   | .logo content => foldInlineList fi (fb acc b) content.toList
   | .bibliography _ _ items => foldBibItems fi (fb acc b) items.toList
+  | .contents _ entries => foldContentsEntries fi (fb acc b) entries.toList
   | .verbatim _ _ _ | .setPalette _ | .setTokens _ | .pagebreak
   | .rule _ _ _ | .picture _ => fb acc b
 
@@ -9071,6 +9180,7 @@ public def setsNothing : Block → Bool
   | .algorithm .. | .columns _ | .altSteps .. | .note _ | .nav .. | .logo _ | .pagebreak
   | .frame .. | .framefoot _ | .setPalette _ | .setTokens _ | .rule .. | .picture _ | .table ..
   | .float .. | .bibliography .. => false
+  | .contents _ entries => entries.isEmpty
 
 /-- What a deck sets for a top-level block outside every frame, given the block after it: a stage of
 its own, content on a page of its own, or nothing a page shows. -/
@@ -9087,7 +9197,7 @@ public def outsideUnder (next : Option Block) (b : Block) : Outside :=
     | .para _ | .list .. | .center .. | .ragged .. | .spaced .. | .role .. | .link .. | .quote .. | .lines ..
     | .abstract .. | .titled .. | .disclosure .. | .equation .. | .verbatim .. | .algorithm ..
     | .columns .. | .onSteps .. | .altSteps .. | .only .. | .nav .. | .rule .. | .picture ..
-    | .table .. | .float .. | .bibliography .. => .content
+    | .table .. | .float .. | .bibliography .. | .contents .. => .content
 
 /-- What a deck sets for its top-level block `i` outside every frame (`outsideUnder`). -/
 public def Doc.outside (doc : Doc) (i : Nat) (b : Block) : Outside := outsideUnder doc.body[i + 1]? b
@@ -9217,6 +9327,12 @@ public def foldCtxBibItems (w : CtxFold γ α) (ctx : γ) (acc : α) : List BibI
   | [] => acc
   | it :: rest => foldCtxBibItems w ctx (foldCtxInlineList w ctx acc it.content.toList) rest
 
+/-- `foldCtxInline` over a table of contents' entries, entry by entry. -/
+public def foldCtxContentsEntries (w : CtxFold γ α) (ctx : γ) (acc : α) :
+    List ContentsEntry → α
+  | [] => acc
+  | e :: rest => foldCtxContentsEntries w ctx (foldCtxInlineList w ctx acc e.title.toList) rest
+
 mutual
 
 /-- The block face: `foldBlock`'s descent, with the context `openBlock`
@@ -9311,6 +9427,9 @@ returns in force over the node's content and `closeBlock` called after it. -/
   | .bibliography _ _ items =>
     let r := w.openBlock ctx acc b
     w.closeBlock ctx (foldCtxBibItems w r.2 r.1 items.toList) b
+  | .contents _ entries =>
+    let r := w.openBlock ctx acc b
+    w.closeBlock ctx (foldCtxContentsEntries w r.2 r.1 entries.toList) b
   | .verbatim _ _ _ | .setPalette _ | .setTokens _ | .pagebreak
   | .rule _ _ _ | .picture _ =>
     w.closeBlock ctx (w.openBlock ctx acc b).1 b
@@ -9441,6 +9560,14 @@ public theorem foldCtxBibItems_covers (fb : α → Block → α) (fi : α → In
   induction items generalizing acc with
   | nil => rfl
   | cons it rest ih => rw [foldCtxBibItems, foldBibItems, foldCtxInlineList_covers, ih]
+
+public theorem foldCtxContentsEntries_covers (fb : α → Block → α) (fi : α → Inline → α)
+    (acc : α) (entries : List ContentsEntry) :
+    foldCtxContentsEntries (CtxFold.ofFold fb fi) () acc entries =
+      foldContentsEntries fi acc entries := by
+  induction entries generalizing acc with
+  | nil => rfl
+  | cons e rest ih => rw [foldCtxContentsEntries, foldContentsEntries, foldCtxInlineList_covers, ih]
 
 public theorem foldCtxAlgLines_covers (fb : α → Block → α) (fi : α → Inline → α) (acc : α)
     (lines : List AlgLine) :
@@ -9579,6 +9706,10 @@ public theorem foldCtxBlock_covers (fb : α → Block → α) (fi : α → Inlin
     simp only [foldCtxBlock, foldBlock, CtxFold.ofFold_openBlock,
       CtxFold.ofFold_closeBlock]
     exact foldCtxBibItems_covers fb fi _ items.toList
+  | .contents _ entries =>
+    simp only [foldCtxBlock, foldBlock, CtxFold.ofFold_openBlock,
+      CtxFold.ofFold_closeBlock]
+    exact foldCtxContentsEntries_covers fb fi _ entries.toList
   | .verbatim _ _ _ | .setPalette _ | .setTokens _ | .pagebreak
   | .rule _ _ _ | .picture _ =>
     simp only [foldCtxBlock, foldBlock, CtxFold.ofFold_openBlock,
@@ -9692,7 +9823,7 @@ private def blockLinkBlockReading (acc : String) (b : Block) : String :=
       | none => ""
     String.append (String.append acc caption) content
   | .picture pic => String.append acc pic.alternative.text
-  | .bibliography _ _ _
+  | .bibliography _ _ _ | .contents _ _
   | .para _ | .section _ _ _ _ | .list _ _ _ | .center _ | .ragged _ _ | .spaced _ _
   | .role _ _ | .link _ _ | .quote _ _ | .lines _ | .abstract _ | .titled _ _ _ | .disclosure _ _ _ | .equation _ _
   | .algorithm _ _ _ | .columns _ | .onSteps _ _ | .altSteps _ _ _ | .note _ | .only _ _
@@ -9745,8 +9876,9 @@ public structure SectionAnchor where
   clash : Option String
   deriving Repr, BEq
 
-/-- Each top-level level-one section's anchor, at its body index, in flow order. -/
-public def sectionAnchors (body : Array Block) : Array (Option SectionAnchor) := Id.run do
+/-- Each top-level level-one section's anchor at its body index, and the ledger of their claims. -/
+private def sectionClaims (body : Array Block) :
+    Array (Option SectionAnchor) × NameClaim.Claims .dashed := Id.run do
   let mut taken : NameClaim.Claims .dashed := {}
   let mut out : Array (Option SectionAnchor) := #[]
   for b in body do
@@ -9756,6 +9888,25 @@ public def sectionAnchors (body : Array Block) : Array (Option SectionAnchor) :=
       taken := next
       out := out.push (some { base, id, clash })
     else out := out.push none
+  return (out, taken)
+
+/-- Each top-level level-one section's anchor, at its body index, in flow order. -/
+public def sectionAnchors (body : Array Block) : Array (Option SectionAnchor) :=
+  (sectionClaims body).1
+
+/-- Each top-level heading's anchor at its body index: a level-one section's its `sectionAnchors`
+one, a deeper heading's claimed after every section's, so no section's anchor moves. -/
+public def headingAnchors (body : Array Block) : Array (Option SectionAnchor) := Id.run do
+  let (sections, ledger) := sectionClaims body
+  let mut taken := ledger
+  let mut out := sections
+  for h : i in [0:body.size] do
+    if let .section level _ _ title := body[i] then
+      if level != .title && level != .h1 && level != .h2 then
+        let base := if (slug title).isEmpty then "section" else slug title
+        let (id, clash, next) := taken.claim base (firstPageText title)
+        taken := next
+        out := out.setIfInBounds i (some { base, id, clash })
   return out
 
 private theorem slugCharKeep_not_whitespace (k k' : Char) (h : slugCharKeep k = some k') :
@@ -9860,6 +10011,7 @@ private def navLinkOne (out : Array (String × String)) : Block → Array (Strin
   | .float _ _ _ body caption => navLinkInlineList (navLinkList out body.toList) caption.toList
   | .algorithm _ _ lines => navLinkAlgLines out lines.toList
   | .bibliography _ _ items => navLinkBibItems out items.toList
+  | .contents _ _ => out
 
 private def navLinkBibItems (out : Array (String × String)) :
     List BibItem → Array (String × String)
@@ -10397,6 +10549,11 @@ private def dumpBlock (ind : String) (b : Block) : String :=
         | none => ""
       s!"{ind}  {mark}{item.key.quote}\n" ++
         dumpInlines (ind ++ "    ") item.content)
+  | .contents spec entries =>
+    s!"{ind}contents depth {spec.depth} current {spec.current.1}.{spec.current.2}\n" ++
+    String.join (entries.toList.map fun e =>
+      s!"{ind}  entry {e.depth} {(e.number.getD "-").quote} {(e.target.getD "-").quote}" ++
+        (if e.shaded then " shaded\n" else "\n") ++ dumpInlines (ind ++ "    ") e.title)
 
 end
 
@@ -12025,7 +12182,7 @@ private def maxStepBlock : Block → Nat
   | .picture _ => 1
   | .table _ _ _ rows _ _ => maxStepTableRows rows.toList
   | .float _ _ _ body cap => max (maxStepInlines cap) (maxStepBlockList body.toList)
-  | .bibliography _ _ _ => 1
+  | .bibliography _ _ _ | .contents _ _ => 1
 
 private def maxStepTableRows : List (Array (Array Inline)) → Nat
   | [] => 1
@@ -12114,7 +12271,7 @@ public def altUnreachable (doc : Doc) : Nat :=
           | .columns _ | .onSteps _ _ | .note _ | .only _ _ | .nav _ _ | .logo _
           | .pagebreak | .frame _ _ _ _ _ | .framefoot _ | .setPalette _ | .setTokens _
           | .rule _ _ _ | .picture _ | .table _ _ _ _ _ _ | .float _ _ _ _ _
-          | .bibliography _ _ _ => k)
+          | .bibliography _ _ _ | .contents _ _ => k)
         (fun k x => match x with
           | .altSteps spec _ o => if reached spec o.isEmpty then k else k + 1
           | .text _ | .math _ _ | .formula _ _ _ | .styled _ _ | .colored _ _ _
@@ -12130,7 +12287,7 @@ public def altUnreachable (doc : Doc) : Nat :=
     | .columns _ | .onSteps _ _ | .altSteps _ _ _ | .note _ | .only _ _
     | .nav _ _ | .logo _ | .pagebreak | .framefoot _ | .setPalette _ | .setTokens _
     | .rule _ _ _ | .picture _ | .table _ _ _ _ _ _ | .float _ _ _ _ _
-    | .bibliography _ _ _ => n
+    | .bibliography _ _ _ | .contents _ _ => n
 
 /-- A decoration as a covered step shows it: a mark quieted by the cover, as
 the text it stands behind is; a rule as it is, in the run's covered ink. -/
@@ -12336,6 +12493,7 @@ private def dimBlock (k : Nat) (pend : Option DimHere) (here : DimHere) : Block 
     let r := dimBlockList k pend here #[] body.toList
     (.float fk num ca r.1 (dimFilled k pend here caption), r.2)
   | .bibliography src style items => (.bibliography src style items, here)
+  | .contents spec entries => (.contents spec entries, here)
 
 private def dimItems (k : Nat) (pend : Option DimHere) (here : DimHere) (out : Array (Array Block)) :
     List (Array Block) → Array (Array Block) × DimHere
@@ -12495,10 +12653,15 @@ mutual
   | .table _ _ _ rows _ _ => blockTextTableRows acc rows.toList
   | .float _ _ _ body caption => blockTextList (acc ++ plainText caption) body.toList
   | .bibliography _ _ items => blockTextBibItems acc items.toList
+  | .contents _ entries => blockTextContentsEntries acc entries.toList
 
 @[expose] public def blockTextBibItems (acc : String) : List BibItem → String
   | [] => acc
   | item :: rest => blockTextBibItems (acc ++ plainText item.content) rest
+
+@[expose] public def blockTextContentsEntries (acc : String) : List ContentsEntry → String
+  | [] => acc
+  | e :: rest => blockTextContentsEntries (acc ++ plainText e.title) rest
 
 @[expose] public def blockTextTableRows (acc : String) : List (Array (Array Inline)) → String
   | [] => acc
@@ -12641,7 +12804,7 @@ private theorem carrierOpenBlock_text (inPar endPe broken : Bool) (acc : String)
     .link .. | .quote .. | .lines .. | .abstract .. | .titled .. | .disclosure .. | .equation .. |
     .verbatim .. | .algorithm .. | .columns .. | .note .. | .only .. | .nav .. | .logo .. |
     .pagebreak | .frame .. | .framefoot .. | .setPalette .. | .setTokens .. | .rule .. |
-    .picture .. | .table .. | .float .. | .bibliography .. =>
+    .picture .. | .table .. | .float .. | .bibliography .. | .contents .. =>
     simp only [carrierOpenBlock]
     exact openDisplayAt_text inPar endPe broken acc _
 
@@ -12670,7 +12833,7 @@ private theorem carrierCloseBlock_text (parEnd : Bool) (acc : String) :
     .link .. | .quote .. | .lines .. | .abstract .. | .titled .. | .disclosure .. | .equation .. |
     .verbatim .. | .algorithm .. | .columns .. | .note .. | .only .. | .nav .. | .logo .. |
     .pagebreak | .frame .. | .framefoot .. | .setPalette .. | .setTokens .. | .rule .. |
-    .picture .. | .table .. | .float .. | .bibliography .. =>
+    .picture .. | .table .. | .float .. | .bibliography .. | .contents .. =>
     simp only [carrierCloseBlock]
     exact closeDisplayAt_text parEnd acc _
 
@@ -12784,7 +12947,7 @@ frame bodies are walked, notes are not. -/
   | .picture _ => out
   | .table _ _ _ _ _ _ => out
   | .float _ _ _ body _ => headingLevelList out body.toList
-  | .bibliography _ _ _ => out
+  | .bibliography _ _ _ | .contents _ _ => out
 
 @[expose] public def headingLevelItems (out : Array HeadingLevel) : List (Array Block) → Array HeadingLevel
   | [] => out
@@ -12873,11 +13036,17 @@ private def footnoteBlockOne (out : Array (Option Nat × Array Inline)) :
   | .float _ _ _ body caption =>
     footnoteBlockList (footnoteInlineList out caption.toList) body.toList
   | .bibliography _ _ items => footnoteBibItems out items.toList
+  | .contents _ entries => footnoteContentsEntries out entries.toList
 
 private def footnoteBibItems (out : Array (Option Nat × Array Inline)) :
     List BibItem → Array (Option Nat × Array Inline)
   | [] => out
   | it :: rest => footnoteBibItems (footnoteInlineList out it.content.toList) rest
+
+private def footnoteContentsEntries (out : Array (Option Nat × Array Inline)) :
+    List ContentsEntry → Array (Option Nat × Array Inline)
+  | [] => out
+  | e :: rest => footnoteContentsEntries (footnoteInlineList out e.title.toList) rest
 
 private def footnoteTableRows (out : Array (Option Nat × Array Inline)) :
     List (Array (Array Inline)) → Array (Option Nat × Array Inline)
@@ -13471,7 +13640,7 @@ private theorem dimBlock_text (k : Nat) (pend : Option DimHere) (here : DimHere)
       plainTextList]
   | .note _ | .frame _ _ _ _ _ | .framefoot _
   | .setPalette _ | .setTokens _
-  | .rule _ _ _ | .picture _ | .pagebreak | .bibliography _ _ _ => rfl
+  | .rule _ _ _ | .picture _ | .pagebreak | .bibliography _ _ _ | .contents _ _ => rfl
   | .algorithm n sm lines =>
     show algLineText acc (dimAlgLines k pend here #[] lines.toList).toList = _
     rw [dimAlgLines_text k pend here lines.toList #[] acc]
@@ -13545,7 +13714,7 @@ private theorem numberFloatOne_text (c : FloatCtr) (b : Block) (s : String) :
     blockTextOne s (numberFloatOne c b).2 = blockTextOne s b := by
   match b with
   | .para _ | .lines _ | .equation _ _ | .section _ _ _ _ | .note _ | .verbatim _ _ _ | .logo _
-  | .bibliography _ _ _ | .algorithm _ _ _
+  | .bibliography _ _ _ | .contents _ _ | .algorithm _ _ _
   | .framefoot _ | .setPalette _ | .setTokens _ | .pagebreak
   | .rule _ _ _ | .picture _ | .table _ _ _ _ _ _ => rfl
   | .list o _ items =>
@@ -13640,6 +13809,13 @@ private theorem blockTextBibItems_chain (l1 l2 : List BibItem) (acc : String) :
   | nil => simp [blockTextBibItems]
   | cons item rest ih => simp [blockTextBibItems, ih]
 
+private theorem blockTextContentsEntries_chain (l1 l2 : List ContentsEntry) (acc : String) :
+    blockTextContentsEntries acc (l1 ++ l2)
+      = blockTextContentsEntries (blockTextContentsEntries acc l1) l2 := by
+  induction l1 generalizing acc with
+  | nil => simp [blockTextContentsEntries]
+  | cons e rest ih => simp [blockTextContentsEntries, ih]
+
 /-- The backend names an `{ifbackend}` target may spell, one per emitter. -/
 public def backendNames : List String := ["pdf", "html", "md"]
 
@@ -13655,7 +13831,7 @@ public def backendNames : List String := ["pdf", "html", "md"]
   | .altSteps _ _ _
   | .frame _ _ _ _ _ | .framefoot _ | .setPalette _ | .setTokens _
   | .rule _ _ _ | .nav _ _ | .picture _ | .pagebreak | .algorithm _ _ _
-  | .table _ _ _ _ _ _ | .float _ _ _ _ _ | .bibliography _ _ _ => true
+  | .table _ _ _ _ _ _ | .float _ _ _ _ _ | .bibliography _ _ _ | .contents _ _ => true
 
 mutual
 
@@ -13697,6 +13873,7 @@ exclude `t` is dropped whole, everything else kept. -/
   | .algorithm n sm lines => .algorithm n sm lines
   | .float k n ca body caption => .float k n ca (keepForList t body.toList).toArray caption
   | .bibliography src style items => .bibliography src style items
+  | .contents spec entries => .contents spec entries
 
 @[expose] public def keepForList (t : String) : List Block → List Block
   | [] => []
@@ -13773,10 +13950,15 @@ private def textLeavesOne (acc : List String) : Block → List String
   | .algorithm _ _ lines => algTextLeaves acc lines.toList
   | .float _ _ _ body caption => textLeavesList (plainText caption :: acc) body.toList
   | .bibliography _ _ items => textLeavesBibItems acc items.toList
+  | .contents _ entries => textLeavesContentsEntries acc entries.toList
 
 private def textLeavesBibItems (acc : List String) : List BibItem → List String
   | [] => acc
   | item :: rest => textLeavesBibItems (plainText item.content :: acc) rest
+
+private def textLeavesContentsEntries (acc : List String) : List ContentsEntry → List String
+  | [] => acc
+  | e :: rest => textLeavesContentsEntries (plainText e.title :: acc) rest
 
 private def textLeavesTableRows (acc : List String) :
     List (Array (Array Inline)) → List String
@@ -13831,7 +14013,7 @@ private def orphanFreeOne (avail : List String) : Block → Bool
   | .para _ | .lines _ | .equation _ _ | .section _ _ _ _ | .verbatim _ _ _ | .logo _
   | .framefoot _ | .setPalette _ | .setTokens _ | .algorithm _ _ _
   | .rule _ _ _ | .picture _ | .table _ _ _ _ _ _ | .pagebreak
-  | .bibliography _ _ _ => true
+  | .bibliography _ _ _ | .contents _ _ => true
   | .float _ _ _ body _ => orphanFreeList avail body.toList
 
 private def orphanFreeItems (avail : List String) : List (Array Block) → Bool
@@ -13992,6 +14174,9 @@ private theorem textLeavesOne_acc (acc : List String) (b : Block) :
   | .bibliography src style items =>
     rw [textLeavesOne, textLeavesOne]
     exact textLeavesBibItems_acc acc items.toList
+  | .contents spec entries =>
+    rw [textLeavesOne, textLeavesOne]
+    exact textLeavesContentsEntries_acc acc entries.toList
 
 private theorem textLeavesBibItems_acc (acc : List String) (items : List BibItem) :
     textLeavesBibItems acc items = textLeavesBibItems [] items ++ acc := by
@@ -14001,6 +14186,16 @@ private theorem textLeavesBibItems_acc (acc : List String) (items : List BibItem
     rw [textLeavesBibItems, textLeavesBibItems,
       textLeavesBibItems_acc (plainText item.content :: acc) rest,
       textLeavesBibItems_acc [plainText item.content] rest]
+    simp
+
+private theorem textLeavesContentsEntries_acc (acc : List String) (entries : List ContentsEntry) :
+    textLeavesContentsEntries acc entries = textLeavesContentsEntries [] entries ++ acc := by
+  match entries with
+  | [] => simp [textLeavesContentsEntries]
+  | e :: rest =>
+    rw [textLeavesContentsEntries, textLeavesContentsEntries,
+      textLeavesContentsEntries_acc (plainText e.title :: acc) rest,
+      textLeavesContentsEntries_acc [plainText e.title] rest]
     simp
 
 private theorem textLeavesItems_acc (acc : List String) (items : List (Array Block)) :
@@ -14119,6 +14314,9 @@ private theorem keepForOne_covers (avail : List String) (t0 : String) (h0 : t0 �
     intro s hs
     exact ⟨t0, h0, rfl, hs⟩
   | .bibliography src style items =>
+    intro s hs
+    exact ⟨t0, h0, rfl, hs⟩
+  | .contents spec entries =>
     intro s hs
     exact ⟨t0, h0, rfl, hs⟩
   | .float k n ca body caption =>
@@ -14380,7 +14578,7 @@ on `keepForList`'s skeleton for its proofs. -/
   | .float _ _ _ body _ => onlyFreeList body.toList
   | .para _ | .lines _ | .equation _ _ | .section _ _ _ _ | .verbatim _ _ _ | .logo _
   | .framefoot _ | .setPalette _ | .setTokens _ | .rule _ _ _ | .picture _ | .algorithm _ _ _
-  | .table _ _ _ _ _ _ | .pagebreak | .bibliography _ _ _ => true
+  | .table _ _ _ _ _ _ | .pagebreak | .bibliography _ _ _ | .contents _ _ => true
 
 public def onlyFreeItems : List (Array Block) → Bool
   | [] => true
@@ -14428,6 +14626,7 @@ public theorem keepForOne_id (t : String) (b : Block)
   | .table c pl pr rows rules spans => rfl
   | .algorithm n sm lines => rfl
   | .bibliography src style items => rfl
+  | .contents spec entries => rfl
   | .list o _ items =>
     rw [onlyFreeOne] at h
     simp [keepForOne, keepForItems_id t items.toList h]
@@ -15205,7 +15404,7 @@ private def sansTextBlockLinkStep (out : Array String)
   | .algorithm _ _ _ | .columns _ | .onSteps _ _ | .altSteps _ _ _ | .note _ | .only _ _
   | .nav _ _ | .logo _ | .pagebreak | .frame _ _ _ _ _ | .framefoot _ | .setPalette _
   | .setTokens _ | .rule _ _ _ | .picture _ | .table _ _ _ _ _ _ | .float _ _ _ _ _
-  | .bibliography _ _ _ => out
+  | .bibliography _ _ _ | .contents _ _ => out
 
 /-- Every link the artifacts ship with no reading, deduplicated by target, in document order. -/
 public def linksSansText (doc : Doc) : Array String :=
@@ -15299,6 +15498,14 @@ end
   | i :: rest =>
     mapBibItems f (out.push { i with content := mapInlines f i.content finish }) rest finish
 
+@[expose] public def mapContentsEntries (f : Inline → Inline) (out : Array ContentsEntry)
+    (entries : List ContentsEntry) (finish : Array Inline → Array Inline := id) :
+    Array ContentsEntry :=
+  match entries with
+  | [] => out
+  | e :: rest =>
+    mapContentsEntries f (out.push { e with title := mapInlines f e.title finish }) rest finish
+
 @[expose] public def mapAlgLines (f : Inline → Inline) (out : Array AlgLine) (ls : List AlgLine)
     (finish : Array Inline → Array Inline := id) : Array AlgLine :=
   match ls with
@@ -15383,6 +15590,7 @@ that must reach label text uses `mapBlocksPic`. -/
   | .logo content => .logo (mapInlines f content finish)
   | .bibliography src style items =>
     .bibliography src style (mapBibItems f #[] items.toList finish)
+  | .contents spec entries => .contents spec (mapContentsEntries f #[] entries.toList finish)
   | .verbatim c s spec =>
     .verbatim c s (listing { spec with caption := spec.caption.map fun (n, cap) =>
       (n, mapInlines f cap finish) })
@@ -15497,7 +15705,7 @@ private def mathRequestOpen (scope : MathRequestScope) (ctx : Option Span × Boo
   | .link _ _ | .spaced _ _ | .columns _ | .onSteps _ _ | .altSteps _ _ _
   | .only _ _ | .nav _ _ | .frame _ _ _ _ _ | .framefoot _
   | .float _ _ _ _ _ | .table _ _ _ _ _ _ | .algorithm _ _ _ | .logo _
-  | .bibliography _ _ _
+  | .bibliography _ _ _ | .contents _ _
   | .setPalette _ | .setTokens _ | .pagebreak | .rule _ _ _ => (out, ctx)
 
 private def mathRequestFold (scope : MathRequestScope) :
@@ -15730,6 +15938,16 @@ public theorem mapBibItems_toList (f : Inline → Inline) :
     rw [mapBibItems, mapBibItems_toList f (out.push { i with content := mapInlines f i.content }) rest]
     simp [Array.toList_push, List.append_assoc]
 
+public theorem mapContentsEntries_toList (f : Inline → Inline) :
+    ∀ (out : Array ContentsEntry) (entries : List ContentsEntry),
+      (mapContentsEntries f out entries).toList
+        = out.toList ++ entries.map (fun e => { e with title := mapInlines f e.title })
+  | _, [] => by simp [mapContentsEntries]
+  | out, e :: rest => by
+    rw [mapContentsEntries,
+      mapContentsEntries_toList f (out.push { e with title := mapInlines f e.title }) rest]
+    simp [Array.toList_push, List.append_assoc]
+
 private theorem resolveMathAlphaPicture_fixed_point (coverage : Math.MathAlphabetCoverage)
     (pic : Pic.Picture) :
     resolveMathAlphaPicture coverage (resolveMathAlphaPicture coverage pic)
@@ -15792,6 +16010,17 @@ private theorem mapMathBibItems_fixed_point (coverage : Math.MathAlphabetCoverag
   simp only [mapBibItems_toList, List.nil_append]
   apply map_map_fixed_point
   intro i
+  simp [mapMathInlines_fixed_point coverage]
+
+private theorem mapMathContentsEntries_fixed_point (coverage : Math.MathAlphabetCoverage)
+    (entries : List ContentsEntry) :
+    mapContentsEntries (resolveMathAlphaInline coverage) #[]
+        (mapContentsEntries (resolveMathAlphaInline coverage) #[] entries).toList
+      = mapContentsEntries (resolveMathAlphaInline coverage) #[] entries := by
+  apply Array.toList_inj.mp
+  simp only [mapContentsEntries_toList, List.nil_append]
+  apply map_map_fixed_point
+  intro e
   simp [mapMathInlines_fixed_point coverage]
 
 mutual
@@ -15864,6 +16093,9 @@ private theorem mapMathBlock_fixed_point (coverage : Math.MathAlphabetCoverage) 
   | .bibliography src style items =>
     simp only [mapBlock]
     rw [mapMathBibItems_fixed_point coverage items.toList]
+  | .contents spec entries =>
+    simp only [mapBlock]
+    rw [mapMathContentsEntries_fixed_point coverage entries.toList]
   | .verbatim c s spec =>
     cases hc : spec.caption with
     | none => simp [mapBlock, hc]
@@ -16103,6 +16335,17 @@ private theorem requestsBibItems_resolve_covers (scope : MathRequestScope)
     exact requestsBibItems_resolve_covers scope coverage ctx rest _
       (requestsFoldInlines_resolve_covers scope coverage ctx out it.content h)
 
+private theorem requestsContentsEntries_resolve_covers (scope : MathRequestScope)
+    (coverage : Math.MathAlphabetCoverage) (ctx : Option Span × Bool) :
+    ∀ (entries : List ContentsEntry) (out : Array MathRequest), RequestsFree out →
+      RequestsFree (foldCtxContentsEntries (mathRequestFold scope) ctx out
+        (entries.map fun e => { e with title := mapInlines (resolveMathAlphaInline coverage) e.title }))
+  | [], _, h => h
+  | e :: rest, out, h => by
+    rw [List.map_cons, foldCtxContentsEntries]
+    exact requestsContentsEntries_resolve_covers scope coverage ctx rest _
+      (requestsFoldInlines_resolve_covers scope coverage ctx out e.title h)
+
 mutual
 
 private theorem requestsBlock_resolve_covers (scope : MathRequestScope)
@@ -16172,6 +16415,10 @@ private theorem requestsBlock_resolve_covers (scope : MathRequestScope)
     simp only [mapBlock, foldCtxBlock, mathRequestFold_openBlock, mathRequestOpen,
       mathRequestFold_closeBlock, mapBibItems_toList, List.nil_append]
     exact requestsBibItems_resolve_covers scope coverage ctx items.toList out h
+  | .contents _ entries =>
+    simp only [mapBlock, foldCtxBlock, mathRequestFold_openBlock, mathRequestOpen,
+      mathRequestFold_closeBlock, mapContentsEntries_toList, List.nil_append]
+    exact requestsContentsEntries_resolve_covers scope coverage ctx entries.toList out h
   | .picture pic =>
     simp only [mapBlock, foldCtxBlock, mathRequestFold_openBlock, mathRequestOpen,
       mathRequestFold_closeBlock, resolveMathAlphaPicture, Pic.Picture.labelContents_mapLabels]
@@ -16604,6 +16851,19 @@ private theorem mapBibItems_text (f : Inline → Inline)
     rw [Array.toList_push, blockTextBibItems_chain]
     simp [blockTextBibItems, mapInlinesFinish_text f hf finish hfinish i.content]
 
+private theorem mapContentsEntries_text (f : Inline → Inline)
+    (hf : ∀ x, plainTextOne (f x) = plainTextOne x)
+    (finish : Array Inline → Array Inline) (hfinish : Conserves plainText finish)
+    (entries : List ContentsEntry) (out : Array ContentsEntry) (acc : String) :
+    blockTextContentsEntries acc (mapContentsEntries (finish := finish) f out entries).toList
+      = blockTextContentsEntries (blockTextContentsEntries acc out.toList) entries := by
+  match entries with
+  | [] => simp [mapContentsEntries, blockTextContentsEntries]
+  | e :: rest =>
+    rw [mapContentsEntries, mapContentsEntries_text f hf finish hfinish rest]
+    rw [Array.toList_push, blockTextContentsEntries_chain]
+    simp [blockTextContentsEntries, mapInlinesFinish_text f hf finish hfinish e.title]
+
 mutual
 
 public theorem mapBlockWith_text (gp : Pic.Picture → Pic.Picture) (f : Inline → Inline)
@@ -16715,6 +16975,11 @@ public theorem mapBlockWith_text (gp : Pic.Picture → Pic.Picture) (f : Inline 
   | .bibliography src style items =>
     show blockTextBibItems acc (mapBibItems (finish := finish) f #[] items.toList).toList = _
     rw [mapBibItems_text f hf finish hfinish items.toList #[]]
+    rfl
+  | .contents spec entries =>
+    show blockTextContentsEntries acc
+      (mapContentsEntries (finish := finish) f #[] entries.toList).toList = _
+    rw [mapContentsEntries_text f hf finish hfinish entries.toList #[]]
     rfl
   | .verbatim _ _ spec =>
     simp only [mapBlock, blockTextOne, hlisting]
@@ -17958,7 +18223,7 @@ public def floatLabelEnter (float : Option RefBinding) (out : Array (String × O
   | .altSteps _ _ _ | .only _ _ | .nav _ _ | .note _ | .frame _ _ _ _ _
   | .framefoot _ | .table _ _ _ _ _ _ | .algorithm _ _ _ | .logo _
   | .verbatim _ _ _ | .setPalette _ | .setTokens _ | .pagebreak
-  | .rule _ _ _ | .picture _ | .bibliography _ _ _ => (out, float)
+  | .rule _ _ _ | .picture _ | .bibliography _ _ _ | .contents _ _ => (out, float)
 
 /-- The label walk over the shared context fold: `floatLabelEnter` binds,
 `floatLabelPush` collects. -/

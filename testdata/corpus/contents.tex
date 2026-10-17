@@ -1,0 +1,41 @@
+% Invented article: its table of contents under its heading lists the
+% numbered sections, subsections and subsubsections, each with the folio of
+% the page its heading lands on, a subsection's after dotted leaders and a
+% section's in bold, and no starred section. Nothing here derives from any
+% private document.
+\documentclass{article}
+
+\title{Kettles and Teapots}
+\author{Pat Placeholder}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\tableofcontents
+
+\section{Kettles}\label{sec:kettles}
+Water boils in a kettle, as Section~\ref{sec:teapots} steeps it.
+
+\subsection{Spouts}
+Tea pours from a spout.
+
+\subsection{Handles}
+A handle stays cool.
+
+\newpage
+
+\section{Teapots}\label{sec:teapots}
+A teapot warms first.
+
+\subsection{Leaves}
+Leaves steep in a teapot.
+
+\subsubsection{Lids}
+A lid rattles as the water steams.
+
+\section*{Saucers}
+A saucer holds the cup.
+
+\end{document}

@@ -155,6 +155,7 @@ import Tests.OverlaySingleton
 import Tests.OverlaySingletonHtml
 import Tests.FrameHeadingScope
 import Tests.SectionPages
+import Tests.Contents
 import Tests.Census
 import Tests.GfxRegression
 import Tests.GfxMatrix
@@ -541,6 +542,11 @@ def printColourChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
   Tests.PrintColour.checks ref oneFace
   Tests.PrintColour.previewChecks ref oneFace
   Tests.PrintColour.driverChecks ref
+
+/-- The section blocks: a deck's section pages and both models' tables of contents. -/
+def sectionSuiteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  sectionPageChecks ref oneFace
+  contentsChecks ref oneFace
 
 /-- The layout, census, theme and chrome blocks over the shipped face; a missing or unparsable font
 only skips them, `fontSuiteChecks` reporting it. -/
@@ -977,7 +983,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   overlaySingletonChecks ref oneFace
   overlaySingletonHtmlChecks ref
   frameHeadingScopeChecks ref oneFace
-  sectionPageChecks ref oneFace
+  sectionSuiteChecks ref oneFace
   nestedStageChecks ref oneFace arts
   refusedEnvChecks ref oneFace
   splitPairingOwedChecks ref

@@ -4,6 +4,7 @@ public import LeanTex.Core.Ir
 import LeanTex.Core.CiteKey
 import LeanTex.Core.Nfc
 import LeanTex.Core.MdSmart
+import LeanTex.Core.Contents
 import Std.Data.HashSet
 
 /-! The markdown backend: the llms.txt twin of the IR the HTML and PDF backends
@@ -1122,6 +1123,8 @@ private def leadsWithList : Block → Bool
   | .algorithm _ _ _ => false
   | .table _ _ _ _ _ _ => false
   | .bibliography _ _ _ => false
+  -- `twinBody` has set every table of contents as its list.
+  | .contents _ _ => false
   | .nav _ _ => false
   | .note _ => false
   | .framefoot _ => false
@@ -1280,6 +1283,8 @@ private def blockInto (tw : Twin) (summary ind acc : String) : Block → String
     let listed := refsComment ind items
     if tw.cites && !src.isEmpty then acc ++ ind ++ "::: {#refs}\n" ++ listed ++ ind ++ ":::\n\n"
     else acc ++ entries
+  -- `twinBody` has set every table of contents as its list.
+  | .contents _ _ => acc
 termination_by structural b => b
 
 /-- A block sequence; a list after a list of its kind takes
@@ -1351,6 +1356,7 @@ private def itemSeq (tw : Twin) (summary cont : String) (pen : ItemPen) :
       | .titled _ _ _ => write ()
       | .disclosure _ _ _ => write ()
       | .bibliography _ _ _ => write ()
+      | .contents _ _ => write ()
       | .verbatim _ _ _ => write ()
       | .algorithm _ _ _ => write ()
       | .nav _ _ => write ()
@@ -1419,9 +1425,10 @@ private def notesByPlace (body : Array Block) : Array Block :=
     | x => x)
 
 /-- The twin's view of a document's body: source locations erased, backend conditionals resolved
-for markdown and footnotes numbered by their place. -/
+for markdown, footnotes numbered by their place and each table of contents a list. -/
 public def twinBody (doc : Doc) : Array Block :=
-  notesByPlace (Ir.keepFor "md" (Ir.eraseLocations doc).body)
+  notesByPlace (Ir.rewriteContents (fun _ entries => Ir.contentsList entries)
+    (Ir.keepFor "md" (Ir.eraseLocations doc).body))
 
 /-- The `[^k]: …` definitions, one per footnote in flow
 order; empty without notes. -/
@@ -1576,6 +1583,7 @@ private theorem blockInto_extends (tw : Twin) (summary ind acc : String) :
     · exact ⟨ind ++ "::: {#refs}\n" ++ refsComment ind items ++ ind ++ ":::\n\n",
         by simp [String.append_assoc]⟩
     · exact ⟨_, rfl⟩
+  | .contents _ _ => append_nil acc
   | .role _ body => blocksInto_extends tw summary ind acc none body.toList
   | .link _ body => blocksInto_extends tw summary ind acc none body.toList
   | .verbatim _ _ _ => by
@@ -1805,6 +1813,7 @@ private theorem headingLevelOne_mem (x : Ir.HeadingLevel) :
   | .verbatim _ _ _, _, h => h
   | .algorithm _ _ _, _, h => h
   | .bibliography _ _ _, _, h => h
+  | .contents _ _, _, h => h
   | .framefoot _, _, h => h
   | .setPalette _, _, h => h
   | .setTokens _, _, h => h

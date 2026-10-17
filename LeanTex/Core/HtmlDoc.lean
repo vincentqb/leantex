@@ -1183,7 +1183,7 @@ public def blockSpine (l : Ir.ListLineage) (size ex : Int) (tokens : Ir.Tokens) 
   | .section .. | .abstract _ | .titled .. | .disclosure .. | .equation .. | .verbatim ..
   | .algorithm .. | .columns _ | .altSteps .. | .note _ | .nav .. | .logo _ | .pagebreak
   | .frame .. | .framefoot _ | .setPalette _ | .setTokens _ | .rule .. | .picture _ | .table ..
-  | .float .. | .bibliography .. => none
+  | .float .. | .bibliography .. | .contents .. => none
 
 /-- The spine the last item closes on. -/
 public def itemsSpine (l : Ir.ListLineage) (size ex : Int) (tokens : Ir.Tokens) (level : Nat)
@@ -1268,7 +1268,7 @@ public def nestedClosesOf (l : Ir.ListLineage) (size ex : Int) (tokens : Ir.Toke
       | .section .. | .titled .. | .disclosure .. | .equation .. | .verbatim .. | .algorithm ..
       | .columns _ | .altSteps .. | .note _ | .nav .. | .logo _ | .pagebreak | .frame ..
       | .framefoot _ | .setPalette _ | .setTokens _ | .rule .. | .picture _ | .table .. | .float ..
-      | .bibliography .. => (acc, (depth, false))
+      | .bibliography .. | .contents .. => (acc, (depth, false))
     closeBlock := fun _ acc _ => acc
     openInline := fun c acc _ => (acc, c)
     closeInline := fun _ acc _ => acc }
@@ -1426,10 +1426,16 @@ private def gapResets : List GapRule :=
    -- a negative skip is the skip box's bottom margin
    .reset s!".{skipClass}" "0 0 min(0rem, var(--skip, 0rem))"]
 
+/-- The space before a flow's section entry, article.cls's `\addvspace{1.0em \@plus\p@}`, in the
+screen's quanta. -/
+private def contentsSectionGap : String :=
+  milliRem (screenMilli Ir.baseFontSize Ir.baseFontSize)
+
 private def gapBeforeLists : List GapRule :=
   (blockGapKinds.filter (·.2 != "heading")).map (fun (sel, _) =>
     .boundary s!"* + {sel}" peerGap) ++
   [.boundary ".bibliography > li + li" peerGap,
+   .boundary "nav.contents:not(.deck) > .level-0" contentsSectionGap,
    .boundary s!"* + .{roleClass Ir.trivlistRole}, * + blockquote" trivlistGap] ++
   ownsBelow [s!".{roleClass Ir.trivlistRole}", "blockquote"] trivlistGap trivlistOwn
 
@@ -5310,6 +5316,27 @@ private def disclosurePrintCss : String :=
   "  summary { list-style: none; }\n" ++
   "  summary::-webkit-details-marker { display: none; }\n"
 
+/-- Whether the document carries a table of contents, gating its rules. -/
+private def docHasContents (doc : Doc) : Bool :=
+  Ir.foldBlocks (fun b bl => b || bl matches .contents ..) (fun b _ => b) false doc.body
+
+/-- A table of contents as its page sets it: a flow's entries hanging their numbers at article's
+levels, a section's bold; a deck's subsections at the default inner theme's indent; a shaded entry
+in its ink's share over the page (`Ir.contentsShadeShare`). -/
+private def contentsCss : String :=
+  let em (m : Nat) : String := s!"{decMilli m}em"
+  let level (d : Nat) : String :=
+    let l := Ir.contentsFlowLevel d
+    s!"nav.contents:not(.deck) .level-{d} \{ padding-left: {em (l.indent + l.numWidth)}; \
+text-indent: -{em l.numWidth}; }\n" ++
+    s!"nav.contents:not(.deck) .level-{d} .contents-number \{ width: {em l.numWidth}; }\n" ++
+    s!".contents.deck .level-{d} \{ padding-left: {em (Ir.deckContentsIndent * d)}; }\n"
+  ".contents-number { display: inline-block; text-indent: 0; }\n" ++
+  "nav.contents:not(.deck) .level-0 { font-weight: bold; }\n" ++
+  String.join ((List.range 5).map level) ++
+  s!".contents .shaded \{ color: color-mix(in oklab, currentColor {Ir.contentsShadeShare}%, \
+{roleRef .page}); }\n"
+
 /-- Whether the document carries a reference list, gating its rules. -/
 private def docHasBibliography (doc : Doc) : Bool :=
   Ir.foldBlocks (fun b bl => b || bl matches .bibliography ..) (fun b _ => b) false doc.body
@@ -5499,6 +5526,7 @@ public def baseRules (doc : Doc) (ex : Int) (pairs : List (Nat × Nat) := []) : 
     "  user-select: none; }\n"
    else "") ++
   (if docHasBibliography doc then bibCss doc else "") ++
+  (if docHasContents doc then contentsCss else "") ++
   alignScopeRule "centered" .center ++
   raggedRule .left ++ raggedRule .right ++
   -- a box's content starts from no side of its own (`\@parboxrestore`)
@@ -6052,7 +6080,7 @@ private def shipsNoLine : Block → Bool
   | .para .. | .lines .. | .section .. | .list .. | .center .. | .ragged .. | .spaced .. | .role ..
   | .link .. | .quote .. | .abstract .. | .titled .. | .disclosure .. | .equation .. | .verbatim ..
   | .algorithm .. | .columns .. | .onSteps .. | .altSteps .. | .only .. | .frame .. | .rule ..
-  | .picture .. | .table .. | .float .. | .bibliography .. => false
+  | .picture .. | .table .. | .float .. | .bibliography .. | .contents .. => false
 
 mutual
 
@@ -6087,7 +6115,7 @@ private def endBelowOne (cfg : Config) (para : String) : Block → String
       if cfg.deck then stageLength cfg v else s!"calc({stageLength cfg v} + {quantaRem 1})"
     | none => para
   | .para .. | .lines .. | .section .. | .equation .. | .algorithm .. | .rule .. | .picture ..
-  | .table .. | .bibliography .. | .columns .. | .altSteps .. | .note .. | .nav ..
+  | .table .. | .bibliography .. | .contents .. | .columns .. | .altSteps .. | .note .. | .nav ..
   | .logo .. | .pagebreak | .frame .. | .framefoot .. | .setPalette .. | .setTokens ..
   | .float .. => para
 
@@ -6936,6 +6964,14 @@ public def withClass (c : String) : Node → Node
     if attrs.any (·.1 == "class") then
       .elem t (attrs.map fun kv => if kv.1 == "class" then (kv.1, kv.2 ++ " " ++ c) else kv) kids
     else .elem t (attrs.push ("class", c)) kids
+  | .text s => .text s
+  | .style css => .style css
+  | .script attrs code => .script attrs code
+
+/-- An element answering to `id`, unless it already answers to one. -/
+public def withId (id : String) : Node → Node
+  | .elem t attrs kids => if attrs.any (·.1 == "id") then .elem t attrs kids
+    else .elem t (attrs.push ("id", id)) kids
   | .text s => .text s
   | .style css => .style css
   | .script attrs code => .script attrs code
@@ -8339,6 +8375,31 @@ private def laidNodesInto (cfg : Config) (d : Nat) (st : LaidStack) : List Ir.La
 public def laidNodes (cfg : Config) (ls : Array Ir.LaidLine) : Array Node :=
   ((laidNodesInto cfg 0 [#[]] ls.toList).head?).getD #[]
 
+/-- A table of contents' entry: its number, then its words linked to its heading. -/
+private def contentsEntryNode (cfg : Config) (e : Ir.ContentsEntry) : Node :=
+  let number := match e.number with
+    | some n => #[Html.elem "span" #[Html.text n] #[("class", "contents-number")]]
+    | none => #[]
+  let cls := s!"contents-entry level-{min e.depth 4}" ++ (if e.shaded then " shaded" else "")
+  Html.elem "p" (number ++ inlines cfg e.inline) #[("class", cls)]
+
+/-- A table of contents as a landmark of its entries, a deck's spaced on its stage as its PDF page
+sets it (`Ir.deckContentsSteps`). -/
+private def contentsNode (cfg : Config) (spec : Ir.ContentsSpec)
+    (entries : Array Ir.ContentsEntry) : Node :=
+  let tag := if entries.isEmpty then "div" else "nav"
+  let named := if entries.isEmpty then #[] else #[("aria-label", cfg.locale.contents)]
+  if cfg.deck then
+    let grows := !cfg.fillsInert
+    let kids := (Ir.deckContentsSteps spec entries).map fun step => match step with
+      | .skip g =>
+        skipNode cfg.page.fontSize (Ir.Sourced.bare g) (if grows && g.fil then some Ir.fillUnit else none)
+      | .entry e => contentsEntryNode cfg e
+    fillCarrier cfg (Ir.contentsFills spec entries)
+      (Html.elem tag kids (#[("class", "contents deck")] ++ named))
+  else if entries.isEmpty then Html.text ""
+  else Html.elem tag (entries.map (contentsEntryNode cfg)) (#[("class", "contents")] ++ named)
+
 mutual
 
 public def blockNode (cfg : Config) (b : Block) : Node :=
@@ -8739,6 +8800,7 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     fillCarrier cfg (Ir.frameFillsOne cfg.lists cfg.styles .deck 0 b)
       (Html.elem "figure" (if capAbove then capNode ++ kids else kids ++ capNode)
         #[("class", cls)])
+  | .contents spec entries => contentsNode cfg spec entries
   | .bibliography _ _ items =>
     let marked := items.any (·.marker.isSome)
     -- WebKit drops list semantics from a list styled without markers, hence the explicit role
@@ -9028,7 +9090,7 @@ private def sectionize (cfg : Config) (blocks : Array Block) :
   let mut openId : Option String := none
   let mut diags : Array Diag := #[]
   let mut cfg := cfg
-  let anchors := Ir.sectionAnchors blocks
+  let anchors := Ir.headingAnchors blocks
   for (b, i) in blocks.zipIdx do
     match b with
     | .setPalette p =>
@@ -9048,7 +9110,11 @@ retitle the sections apart, or link to the numbered anchor")
       openId := some sa.id
       cur := #[cfg.applyEpoch (blockNode cfg b)]
     | _ =>
-      unless Ir.pageMarkerBlock b do cur := cur.push (cfg.applyEpoch (blockNode cfg b))
+      -- A deeper heading answers to its own anchor, as a table of contents links it.
+      let node := match anchors[i]?.join with
+        | some sa => withId sa.id (blockNode cfg b)
+        | none => blockNode cfg b
+      unless Ir.pageMarkerBlock b do cur := cur.push (cfg.applyEpoch node)
       cfg := cfg.afterBlock b
   return (close out cur openId, diags)
 

@@ -106,6 +106,7 @@ private def blockReads (ctx : Nat × Nat × Nat) (acc : Shown) (b : Block) :
   | .algorithm _ _ _ =>
     (["enumerate", "enumerate2", "enumerate3", "enumerate4"].foldl Shown.element acc, ctx)
   | .bibliography _ _ _ => (acc.element "itemize", ctx)
+  | .contents _ _ => (acc, ctx)
   | .list ordered _ _ =>
     let kind := if ordered then "enumerate" else "itemize"
     let depth := (if ordered then ctx.2.1 else ctx.1) + 1

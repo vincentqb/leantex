@@ -8,6 +8,7 @@ public import LeanTex.Core.Native
 import LeanTex.Core.MathParse
 import LeanTex.Core.TextSymData
 public import LeanTex.Core.Ir
+import LeanTex.Core.Contents
 import LeanTex.Core.ListMark
 public import LeanTex.Core.Dim
 import LeanTex.Core.Decl
@@ -472,6 +473,8 @@ public structure Counters where
   /-- LaTeX's `secnumdepth`: the deepest level a heading numbers at; 3 is
   article's. -/
   secDepth : Int := 3
+  /-- LaTeX's `tocdepth`: the deepest level a table of contents lists; 3 is article's. -/
+  tocDepth : Int := 3
   /-- The `paragraph` and `subparagraph` counters. -/
   runNums : Nat × Nat := (0, 0)
   /-- The declared heading-number format of each level, the last winning; a
@@ -3568,6 +3571,7 @@ private def flowCounter? (ctr : String) :
     Option ((Counters → Int) × (Counters → Int → Counters)) :=
   match ctr with
   | "secnumdepth" => some (fun c => c.secDepth, fun c v => { c with secDepth := v })
+  | "tocdepth" => some (fun c => c.tocDepth, fun c v => { c with tocDepth := v })
   | "footnote" => some (fun c => c.fnNum, fun c v => { c with fnNum := v.toNat })
   | "equation" => some (fun c => c.eqNum, fun c v => { c with eqNum := v.toNat })
   | _ => none
@@ -6467,6 +6471,7 @@ private def sectionNumber (ctx : Ctx) (level : Nat) (starred : Bool) :
     EM (Option String) := do
   let st ← get
   let deck := ctx.slides
+  -- premise: counterChecks — a heading numbers only where its class numbers, within secnumdepth
   if (starred && !deck) || (!ctx.numberHeadings && !deck) || level == 0 || level > 3 ||
       (level : Int) > st.ctr.secDepth then
     return none
@@ -6482,6 +6487,50 @@ private def sectionNumber (ctx : Ctx) (level : Nat) (starred : Bool) :
   modify fun st => { st with ctr := { st.ctr with secNums := nums, runNums := (0, 0) }
                              refTarget := some { kind := some .heading, num := num } }
   return if deck then none else some num
+
+/-- A style option's parts as beamer's processor reads them: one sets every place, two set the
+first and the rest, three set each. -/
+private def contentsStyle (parts : List String) : Option (List Ir.ContentsShow) :=
+  let word : String → Option Ir.ContentsShow := fun w => match w.trimAscii.toString with
+    | "show" => some .shown
+    | "shaded" => some .shaded
+    | "hide" => some .hidden
+    | _ => none
+  parts.mapM word
+
+/-- What a `\tableofcontents` declares where it stands: the depth it lists to and, in a deck, the
+section and subsection in force and how its options set the entries about them (beamerbasetoc.sty);
+an option it does not model is named. -/
+private def contentsSpecOf (ctx : Ctx) (opts : Option String) (pos : Pos) :
+    EM Ir.ContentsSpec := do
+  let st ← get
+  let (s1, s2, _) := st.ctr.secNums
+  let mut spec : Ir.ContentsSpec := { current := (s1, s2), depth := st.ctr.tocDepth.toNat }
+  -- premise: contentsChecks — a run-in paragraph heading is no heading block the contents list
+  if !ctx.slides && st.ctr.tocDepth > 3 then
+    warnOnce ctx "contents:tocdepth" .W0104
+      s!"'tocdepth' {st.ctr.tocDepth} would list paragraphs, which set run in and are not listed; \
+the contents stop at subsubsections" pos
+  for o in KeyVal.items (opts.getD "") do
+    let (key, value) := KeyVal.entry o
+    let parts := (value.getD "").splitOn "/"
+    match key, contentsStyle parts with
+    | "currentsection", _ =>
+      spec := { spec with sections := (.shown, .shaded), subsections := (.shown, .shown, .shaded) }
+    | "currentsubsection", _ =>
+      spec := { spec with subsections := (.shown, .shaded, .shaded) }
+    | "hideallsubsections", _ => spec := { spec with subsections := (.hidden, .hidden, .hidden) }
+    | "hideothersubsections", _ =>
+      spec := { spec with subsections := (.shown, .shown, .hidden) }
+    | "sectionstyle", some [a] => spec := { spec with sections := (a, a) }
+    | "sectionstyle", some [a, b] => spec := { spec with sections := (a, b) }
+    | "subsectionstyle", some [a] => spec := { spec with subsections := (a, a, a) }
+    | "subsectionstyle", some [a, b] => spec := { spec with subsections := (a, b, b) }
+    | "subsectionstyle", some [a, b, c] => spec := { spec with subsections := (a, b, c) }
+    | _, _ =>
+      warnOnce ctx ("contents:" ++ o) .W0104
+        s!"'\\tableofcontents' option '{o.trimAscii}' is not read; the contents list as without it" pos
+  return spec
 
 /-- Sets the deck's section in force after a section or subsection heading, as beamer's `\section`
 defines `\insertsection` and clears `\insertsubsection`. -/
@@ -11324,7 +11373,7 @@ private def isBlockStart (ctx' : Ctx) (n : String) (raws : Array Raw) (i : Nat)
     -- `\prevdepth` is vertical mode's: TeX refuses it mid-paragraph.
     || (n == "nointerlineskip" && cur.isEmpty)
     || n == "bibliography" || n == Parse.markdownBibControl || n == "bibliographystyle"
-    || n == Parse.citeSetupMark
+    || n == Parse.citeSetupMark || n == "tableofcontents"
     || (n == "note" && cur.isEmpty)
     || isDeclBlock ctx' n raws i cur
     -- Mid-paragraph these markers stay inline: splitting there would move text.
@@ -12510,6 +12559,20 @@ when it is empty — '{}'")
     | _ =>
       diag ctx .E0304 "'\\logo' needs one group of inline content" pos
       return (blocks, ⟨i + 1, by omega⟩)
+  else if n == "tableofcontents" then
+    -- beamer's takes options; a flow's contents stand under their heading, as article's
+    -- `\section*{\contentsname}`, a bracket after it its text.
+    let j0 := skipSpaces raws (i + 1)
+    have hj0 := skipSpaces_ge raws (i + 1)
+    let j := if ctx.slides then skipBracketRun raws j0 else i + 1
+    have hj : i + 1 ≤ j := by
+      by_cases hs : ctx.slides <;> simp only [j, hs, ite_true, ite_false, Bool.false_eq_true] <;>
+        first | omega | exact Nat.le_trans hj0 (skipBracketRun_ge raws j0)
+    let spec ← contentsSpecOf ctx (if ctx.slides then (bracketRunSrc raws j0).map rawSrc else none)
+      pos
+    unless ctx.slides do
+      blocks := blocks.push (.section .h2 true none #[.text ctx.locale.contents])
+    return (blocks.push (.contents spec #[]), ⟨j, by omega⟩)
   else if n == "maketitle" || n == "titlepage" then
     blocks ← maketitleArm ctx n pos blocks
     return (blocks, ⟨i + 1, by omega⟩)
@@ -16482,21 +16545,44 @@ public structure BodyCompletion where
   locale : Locale
   resolve : Bool
 
-/-- Attaches the numbered body and resolves references across the document. -/
-public def BodyCompletion.attach (completion : BodyCompletion) (blocks : Array Block) : Doc :=
+/-- The numbered body with its references resolved across the document. -/
+public def BodyCompletion.resolved (completion : BodyCompletion) (blocks : Array Block) : Doc :=
   let doc := { completion.doc with body := blocks }
   if completion.resolve then
     Ir.mapDoc (Ir.resolveRefInlines completion.locale completion.table)
       (Ir.resolveRefs completion.locale completion.table) doc
   else doc
 
-public theorem BodyCompletion.attach_body_exact (completion : BodyCompletion)
+/-- Attaches the numbered body, resolves references across the document and lists each table of
+contents. -/
+public def BodyCompletion.attach (completion : BodyCompletion) (blocks : Array Block) : Doc :=
+  Ir.fillContents (completion.resolved blocks)
+
+public theorem BodyCompletion.resolved_body_exact (completion : BodyCompletion)
     (blocks : Array Block) :
-    (completion.attach blocks).body =
+    (completion.resolved blocks).body =
       if completion.resolve then Ir.resolveRefs completion.locale completion.table blocks
       else blocks := by
-  unfold BodyCompletion.attach
+  unfold BodyCompletion.resolved
   split <;> rfl
+
+private theorem BodyCompletion.attach_body_exact (completion : BodyCompletion)
+    (blocks : Array Block) :
+    (completion.attach blocks).body = (Ir.fillContents (completion.resolved blocks)).body := rfl
+
+private theorem attach_paraUnder (completion : BodyCompletion) (lang : Option String)
+    (xs : Array Inline) :
+    (completion.attach #[paraUnder lang xs]).body =
+      (completion.resolved #[paraUnder lang xs]).body := by
+  rw [BodyCompletion.attach_body_exact]
+  have hb : ∃ c, (completion.resolved #[paraUnder lang xs]).body = #[.para c] := by
+    rw [BodyCompletion.resolved_body_exact]
+    split
+    · rw [Ir.resolveRefs_agree]
+      cases lang <;> exact ⟨_, rfl⟩
+    · cases lang <;> exact ⟨_, rfl⟩
+  obtain ⟨c, hc⟩ := hb
+  rw [Ir.fillContents_para _ c hc, hc]
 
 /-- The body interpreter's inputs and its document continuation. -/
 public structure DocBodyPlan where
@@ -16596,7 +16682,8 @@ public theorem runDocBody_recovered_word_exact (plan : DocBodyPlan) (st : ESt) (
       ((elabBlocks plan.ctx plan.raws).run st).2).1.attach
         (Ir.anchorReferents (referentKeys plan.ctx ((elabBlocks plan.ctx plan.raws).run st).2)
           (Ir.numberFloats ((elabBlocks plan.ctx plan.raws).run st).1))).body) = _
-  rw [hbs, numbered_recovered_para, referent_recovered_para, BodyCompletion.attach_body_exact]
+  rw [hbs, numbered_recovered_para, referent_recovered_para, attach_paraUnder,
+    BodyCompletion.resolved_body_exact]
   split
   · rw [resolve_recovered_para]
     exact recovered_para_census plan.ctx wordPos word lang ds

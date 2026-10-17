@@ -17,6 +17,7 @@ import all LeanTex.Core.Diag
 public import LeanTex.Core.Struct
 import LeanTex.Core.StageNames
 import LeanTex.Core.Outline
+import LeanTex.Core.Contents
 import LeanTex.Core.Loop
 import LeanTex.Core.Layout.GlyphBounds
 public import LeanTex.Core.Layout.LabelAudit
@@ -454,6 +455,16 @@ public structure DecorationRule where
   raise : Sp := 0
   deriving Repr, BEq, Inhabited
 
+/-- Dotted leaders as TeX's `\leaders` sets them: in each box of `box` its gap holds whole a dot,
+the face's full stop's ink as a polygon from the box's edge, the boxes aligned from the line box's
+left edge, which stands `reach` before the gap's end. -/
+public structure LeaderPaint where
+  dot : Array (Sp × Sp)
+  color : Ir.Color
+  box : Sp
+  reach : Sp
+  deriving Repr, BEq, Inhabited
+
 /-- The decoration slots of runs and spaces: runs defer underline resolution
 to their fallback face (`Bool`), spaces carry a resolved band. -/
 public structure Decorations (U : Type := Bool) [Inhabited U] where
@@ -461,6 +472,7 @@ public structure Decorations (U : Type := Bool) [Inhabited U] where
   lineThrough : Option DecorationRule := none
   /-- A mark behind the text, its band the command-entry face's. -/
   highlight : Option DecorationRule := none
+  leaders : Option LeaderPaint := none
   deriving Repr, BEq, Inhabited
 
 /-- An inline formula's ambient text metrics at `size`
@@ -1336,6 +1348,9 @@ public structure TextStyle where
   cellCode : Bool := false
   /-- Inside invisible overlay content (`Ir.OverlaySpec.invisible`) on a step it does not show. -/
   hidden : Bool := false
+  /-- Where a filling `\hspace` sets dotted leaders: how far before its end the line box's left
+  edge stands. -/
+  leaderReach : Option Sp := none
   deriving Repr, BEq, Inhabited
 
 /-- The paint the style's ink takes: its colour, or the hidden paint inside hidden content. -/
@@ -2818,6 +2833,10 @@ private def scalarTextOne (out : ScalarAcc) (itemD enumD : Nat) :
     textAndMath { out with texts := out.texts.push (num.getD "") } title
   | .bibliography _ _ items =>
     items.foldl (fun out item => textAndMath out item.content) out
+  -- A flow's entries also set their numbers, a page number's digits and the leaders' dot.
+  | .contents _ entries =>
+    let out := if entries.isEmpty then out else { out with texts := out.texts.push "0123456789." }
+    entries.foldl (fun out e => textAndMath out e.title) out
   | .list ordered _ items =>
     let (itemD, enumD) := if ordered then (itemD, enumD + 1) else (itemD + 1, enumD)
     let level := min (if ordered then enumD else itemD) 4
@@ -3105,6 +3124,11 @@ private def weightKeysBlock (corners : Bool) (styles : Ir.Styles) (slides : Bool
     pic.labelContents.foldl (fun a c => weightKeysInlineList corners a {} c.toList) acc
   | .bibliography _ _ items =>
     items.foldl (fun a it => weightKeysInlineList corners a {} it.content.toList) acc
+  -- A flow sets a section's entry bold, its number and page number with it.
+  | .contents _ entries =>
+    entries.foldl (fun a e =>
+      let sty : TextStyle := if !slides && e.depth == 0 then { weight := .b } else {}
+      weightKeysInlineList corners a sty (#[Ir.Inline.text "0"] ++ e.title).toList) acc
   -- A listing's token weights are all corners, so only the full census lexes it.
   | .verbatim _ s spec =>
     let acc := match spec.caption with
@@ -4236,11 +4260,33 @@ private def Decorations.resolve (d : Decorations) (font : Font) (size : Sp)
     (color : Ir.Color) : Decorations (Option DecorationRule) :=
   { underline := if d.underline then some (underlineRule font size color) else none
     lineThrough := d.lineThrough
-    highlight := d.highlight }
+    highlight := d.highlight
+    leaders := d.leaders }
+
+/-- A unit circle's points at sixteen equal steps, in thousandths. -/
+private def circle16 : Array (Int × Int) :=
+  #[(1000, 0), (924, 383), (707, 707), (383, 924), (0, 1000), (-383, 924), (-707, 707),
+    (-924, 383), (-1000, 0), (-924, -383), (-707, -707), (-383, -924), (0, -1000), (383, -924),
+    (707, -707), (924, -383)]
+
+/-- latex.ltx's `\@dottedtocline` leaders, `\leaders\hbox{$\mkern\@dotsep mu\hbox{.}\mkern\@dotsep
+mu$}\hfill` with `\@dotsep` 4.5: a box of a quarter em, the full stop and a quarter em, the dot the
+ellipse its ink's box holds; none where the face has no full stop. -/
+private def leaderPaint (font : Font) (size : Sp) (color : Ir.Color) (reach : Sp) :
+    Option LeaderPaint := do
+  let g ← font.gid '.'
+  let ink ← font.bounds g
+  let upem : Int := font.unitsPerEm
+  let scale (v : Int) : Sp := v * size / upem
+  let adv := scale ((font.widths[g]?.getD 0 : Nat) : Int)
+  let (cx, cy) := (size / 4 + scale ((ink.left + ink.right) / 2), scale ((ink.bottom + ink.top) / 2))
+  let (rx, ry) := (scale ((ink.right - ink.left) / 2), scale ((ink.top - ink.bottom) / 2))
+  pure { dot := circle16.map fun (c, s) => (cx + rx * c / 1000, cy + ry * s / 1000), color
+         box := size / 2 + adv, reach }
 
 private def Item.ofDecoratedGlue (g : Glue) (d : Decorations) (font : Font)
     (size : Sp) (color : Ir.Color) : Item :=
-  if d.underline || d.lineThrough.isSome || d.highlight.isSome then
+  if d.underline || d.lineThrough.isSome || d.highlight.isSome || d.leaders.isSome then
     .decoratedGlue g (d.resolve font size color)
   else .glue g
 
@@ -4381,7 +4427,14 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
           (.pen 0 10000 false 0 Ir.Color.black #[])
       else acc.items
     let decorations := sty.resolvedDecorations size xHeight textW textH fs
-    let font := fs.get (fs.lookup sty.slot sty.weight.css sty.italic)
+    let fontIdx := fs.lookup sty.slot sty.weight.css sty.italic
+    let decorations := match sty.leaderReach with
+      | some reach =>
+        if glue.fil then
+          { decorations with leaders := leaderPaint (fs.get fontIdx) sz sty.paint reach }
+        else decorations
+      | none => decorations
+    let font := fs.get fontIdx
     let item := Item.ofDecoratedGlue glue decorations font sz sty.paint
     { acc with items := items.push item }
   | .rule sty width height raise =>
@@ -9258,7 +9311,7 @@ public structure Spacing.Context where
   private frameKeys : Ir.FrameKeys := .beamer
   /-- Every frame's label at its body index (`Ir.Doc.frameLabels`). -/
   private frameLabels : Array (Option String) := #[]
-  /-- Each top-level section's claimed anchor at its body index (`Ir.sectionAnchors`, in a deck
+  /-- Each top-level heading's claimed anchor at its body index (`Ir.headingAnchors`, in a deck
   `Ir.deckAnchors`). -/
   private sectionAnchors : Array (Option Ir.SectionAnchor) := #[]
   /-- Each top-level frame's claimed anchors at its body index, in a deck (`Ir.deckAnchors`). -/
@@ -11232,7 +11285,9 @@ private def collectSection (r : Rd) (a : Acc) (level : Ir.HeadingLevel)
                  | some id, _ => a.ops.push (.anchor id)
                  | none, false => a.ops.push (.anchor (Ir.slug title))
                  | none, true => a.ops }
-    else a
+    else match anchor with
+      | some id => { a with ops := a.ops.push (.anchor id) }
+      | none => a
   -- The number the walk sets before the title is generated ink.
   let span := Struct.leafCountInlines title
   let (a, leaf) := a.leafRange span
@@ -11337,6 +11392,77 @@ private def collectBibliography (r : Rd) (a : Acc) (items : Array Ir.BibItem) (i
       (markerLeft := if item.labelFlush then some indent else none)
       (leaf := leaf) (span := Struct.leafCountInlines item.content) (hangIndent := hang)
     if i + 1 == items.size then a.wantGap else a.addvspace sep
+
+/-- One contents entry as a paragraph of `content` at `textIndent`, its number from `markerLeft`; a
+shaded entry keeps its ink's share over the ground (`Ir.contentsShadeShare`). -/
+private def collectContentsEntry (r : Rd) (a : Acc) (e : Ir.ContentsEntry) (content : Array Inline)
+    (textIndent : Sp) (style : TextStyle) (marker : Option (Array Inline))
+    (markerLeft : Option Sp) : Acc :=
+  let ground := a.ground.getD (Ir.Design.ofPalette a.pal).bg
+  let style := if e.shaded then
+      { style with color := r.shown (Oklab.cover Ir.contentsShadeShare ground a.fg) }
+    else style
+  let span := Struct.leafCountInlines e.inline
+  let (a, leaf) := a.leafRange span
+  collectPara r a content textIndent false r.geom.fontSize (baseStyle := style)
+    (marker := marker) (markerLeft := markerLeft) (leaf := leaf) (span := span)
+
+/-- A flow's contents entry: its words, leaders or a fill, then its folio right-aligned in
+`\@pnumwidth` past the `rightMargin` its lines wrap short of, as article.cls sets `\rightskip`. -/
+private def contentsPageLine (a : Acc) (r : Rd) (e : Ir.ContentsEntry) (bold dotted : Bool)
+    (rightMargin : Nat) : Array Inline × Acc :=
+  let folio := (e.page.map toString).getD ""
+  let shown : Array Inline := if bold then #[.styled .bold #[.text folio]] else #[.text folio]
+  let (w, a) := if folio.isEmpty then (0, a)
+    else a.naturalWidth r r.geom.fontSize shown r.geom.textWidth
+  let box := r.geom.fontSize * (Ir.contentsPageWidth : Int) / 1000
+  let kern (v : Sp) : Inline := .hspace (.lit { width := Dim.Length.ofSp v }) true
+  let reach : Inline := if dotted then .hspace (.lit { fil := true }) true else .fill
+  (markContent e.inline ++ #[reach, kern (box - w)] ++
+    (if folio.isEmpty then #[] else #[.text folio]) ++
+    #[kern (-(r.geom.fontSize * (rightMargin : Int) / 1000))], a)
+
+/-- A table of contents: in a deck beamer's, its entries over `\vfill`s that share the frame's
+leftover, a subsection's at `1.5em`; in a flow article's, a section's entry bold after `1em`, each
+with its page's folio. -/
+private def collectContents (r : Rd) (a : Acc) (spec : Ir.ContentsSpec)
+    (entries : Array Ir.ContentsEntry) (indent : Sp) : Acc := Id.run do
+  let em := r.geom.fontSize
+  let milli (m : Nat) : Sp := em * (m : Int) / 1000
+  let mut a := a
+  if r.slides then
+    for step in Ir.deckContentsSteps spec entries do
+      a := match step with
+        | .skip g =>
+          let g := r.resolve g
+          a.vspace (if r.boxed then { g with fil := false } else g)
+        | .entry e =>
+          collectContentsEntry r a e e.inline (indent + milli (Ir.deckContentsIndent * e.depth)) {}
+            none none
+  else
+    let saved := a.measure
+    for e in entries do
+      let level := Ir.contentsFlowLevel e.depth
+      let isSection := e.depth == 0
+      if isSection then
+        a := a.addvspace { width := em, stretch := Dim.pt 1 } -- article.cls \l@section
+      else
+        a := a.vskip { stretch := Dim.pt 1 / 5 } -- latex.ltx \@dottedtocline
+      let rightMargin := if isSection then Ir.contentsPageWidth else Ir.contentsRightMargin
+      let (content, a1) := contentsPageLine a r e isSection (!isSection) rightMargin
+      let full := (saved.getD r.geom.textWidth) - indent
+      a := { a1 with measure := some ((saved.getD r.geom.textWidth) - milli rightMargin) }
+      -- The leaders end where the folio's box opens, `\@pnumwidth` before the line box's end.
+      let style : TextStyle := if isSection then { weight := .b }
+        else { leaderReach := some (full - milli Ir.contentsPageWidth) }
+      let left := indent + milli level.indent
+      a := match e.number with
+        | some n =>
+          collectContentsEntry r a e content (left + milli level.numWidth) style
+            (some #[Ir.Inline.text n]) (some left)
+        | none => collectContentsEntry r a e content left style none none
+      a := { a with measure := saved }
+  return a
 
 private def collectNav (a : Acc) (spec : Ir.NavSpec) (body : Array Block) : Acc :=
   -- An unpinned nav ships no ink; its links become the outline and its leaves are skipped.
@@ -13155,6 +13281,7 @@ private def collectBlock (r : Rd) (a : Acc)
     let a := collectColumns inner a cols.toList (indent + off) shareW gutter total
     { a with ops := a.ops.push .colClose }
   | .bibliography _ _ items => collectBibliography r a items indent
+  | .contents spec entries => collectContents r a spec entries indent
   | .spaced before body =>
     -- Alone, the space is a `\vspace`; carrying a body, it is the element's `\addvspace`.
     let g := r.resolve before.value
@@ -13678,6 +13805,67 @@ private def markSegs (segs : Array Seg) : Array Seg := Id.run do
     | .poly _ _ => pure ()
   return out
 
+/-- Where a placed line's leader dots stand from its origin, each with its polygon and paint: in
+each leader gap a dot in every box the gap holds whole, the boxes counted from the line box's left
+edge (`LeaderPaint`). -/
+private def leaderDots (segs : Array Seg) : Array (Sp × Array (Sp × Sp) × Ir.Color) := Id.run do
+  let mut out : Array (Sp × Array (Sp × Sp) × Ir.Color) := #[]
+  let mut x : Sp := 0
+  for seg in segs do
+    if let .decoratedGap w _ d := seg then
+      if let some lp := d.leaders then
+        if 0 < lp.box && lp.color != hiddenPaint then
+          -- Box `k` spans `[k * box, (k + 1) * box)` from the line box's edge, `reach` before the gap's end.
+          let first := -((lp.reach - w) / -lp.box)
+          let last := lp.reach / lp.box
+          let edge := x + w - lp.reach
+          for j in [0:(last - first).toNat] do
+            out := out.push (edge + (first + j) * lp.box, lp.dot, lp.color)
+    x := x + seg.advance
+  return out
+
+/-- Dots as a rider's segments: a gap to each dot's box, then its polygon. -/
+private def dotSegs (pen : Sp) (out : Array Seg) : List (Sp × Array (Sp × Sp) × Ir.Color) → Array Seg
+  | [] => out
+  | (x, pts, c) :: rest => dotSegs x ((out.push (.gap (x - pen) false)).push (.poly pts c)) rest
+
+/-- A placed line's leader dots from its origin (`leaderDots`). -/
+private def leaderSegs (segs : Array Seg) : Array Seg := dotSegs 0 #[] (leaderDots segs).toList
+
+/-- A placed line's leader rider, its dots an overlay at the line's origin (`leaderSegs`). -/
+public def leaderRiders (l : LineOut) : Array LineOut :=
+  #[leaderSegs l.segs].filterMap fun paint =>
+    if paint.isEmpty then none
+    else some { x := l.x, y := l.y, size := l.size, segs := paint, setWidth := 0,
+                note := l.note, furniture := l.furniture, hidden := l.hidden }
+
+@[simp] public theorem leaderRiders_uncounted (l : LineOut) :
+    ∀ r ∈ leaderRiders l, r.counted = false := by
+  intro r hr
+  simp only [leaderRiders, Array.mem_filterMap] at hr
+  obtain ⟨paint, _, hr⟩ := hr
+  split at hr
+  · exact absurd hr (by simp)
+  · simp only [Option.some.injEq] at hr; simp [← hr]
+
+@[simp] public theorem leaderRiders_unattributed (l : LineOut) :
+    ∀ r ∈ leaderRiders l, r.leaf = none := by
+  intro r hr
+  simp only [leaderRiders, Array.mem_filterMap] at hr
+  obtain ⟨paint, _, hr⟩ := hr
+  split at hr
+  · exact absurd hr (by simp)
+  · simp only [Option.some.injEq] at hr; simp [← hr]
+
+@[simp] public theorem leaderRiders_band (l : LineOut) :
+    ∀ r ∈ leaderRiders l, r.furniture = l.furniture ∧ r.note = l.note := by
+  intro r hr
+  simp only [leaderRiders, Array.mem_filterMap] at hr
+  obtain ⟨paint, _, hr⟩ := hr
+  split at hr
+  · exact absurd hr (by simp)
+  · simp only [Option.some.injEq] at hr; simp [← hr]
+
 /-- The drawn-decoration riders of a placed line, underline then line-through, each an
 overlay at the line's origin; the one site turning a line's decorations into paint. -/
 public def decorationRiders (fs : FontSet) (l : LineOut) : Array LineOut :=
@@ -13785,18 +13973,37 @@ private theorem appendMarks_selected (l : LineOut) (lines : Array LineOut)
     simpa only [Id.run, pure, ForInStep.value, Array.filter_push, hselect r hr, Bool.false_eq_true,
       reduceIte] using hout
 
-/-- The final decoration pass: each line after its marks and before its drawn riders. -/
+private def appendLeaders (l : LineOut) (lines : Array LineOut) : Array LineOut := Id.run do
+  let mut out := lines
+  for r in leaderRiders l do
+    out := out.push r
+  return out
+
+private theorem appendLeaders_selected (l : LineOut) (lines : Array LineOut)
+    (select : LineOut → Bool) (hselect : ∀ r ∈ leaderRiders l, select r = false) :
+    (appendLeaders l lines).filter select = lines.filter select := by
+  unfold appendLeaders
+  dsimp only [Id.run, bind, pure, Id]
+  apply Loop.forIn_array_inv (fun out : Array LineOut => out.filter select = lines.filter select)
+    (fun r out => pure (.yield (out.push r))) (leaderRiders l) lines
+  · rfl
+  · intro r hr out hout
+    simpa only [Id.run, pure, ForInStep.value, Array.filter_push, hselect r hr, Bool.false_eq_true,
+      reduceIte] using hout
+
+/-- The final decoration pass: each line after its marks and before its drawn riders and leaders. -/
 public def paintLines (fs : FontSet) (lines : Array LineOut) : Array LineOut := Id.run do
   let mut out : Array LineOut := Array.mkEmpty lines.size
   for l in lines do
     out := appendMarks l out
     out := out.push l
-    out := appendRiders fs l out
+    out := appendLeaders l (appendRiders fs l out)
   return out
 
 private theorem paintLines_selected (fs : FontSet) (lines : Array LineOut)
     (select : LineOut → Bool) (hselect : ∀ l r, r ∈ decorationRiders fs l → select r = false)
-    (hmarks : ∀ l r, r ∈ markRiders l → select r = false) :
+    (hmarks : ∀ l r, r ∈ markRiders l → select r = false)
+    (hleaders : ∀ l r, r ∈ leaderRiders l → select r = false) :
     (paintLines fs lines).filter select = lines.filter select := by
   unfold paintLines
   simp only [Array.forIn_pure_yield_eq_foldl]
@@ -13806,10 +14013,11 @@ private theorem paintLines_selected (fs : FontSet) (lines : Array LineOut)
     (motive := fun i (out : Array LineOut) =>
       (out.filter select).toList = (lines.toList.take i).filter select)
     (init := Array.mkEmpty lines.size)
-    (f := fun out l => appendRiders fs l ((appendMarks l out).push l))
+    (f := fun out l => appendLeaders l (appendRiders fs l ((appendMarks l out).push l)))
     (by simp)
     (by
       intro i out hout
+      rw [appendLeaders_selected _ _ select (hleaders _)]
       rw [appendRiders_selected fs _ _ select (hselect _)]
       rw [Array.filter_push, appendMarks_selected _ _ select (hmarks _)]
       rw [List.take_succ_eq_append_getElem (by simp)]
@@ -13827,12 +14035,15 @@ public theorem paintLines_attributed_projects (fs : FontSet) (lines : Array Line
     simp [decorationRiders_unattributed fs l r hr]
   · intro l r hr
     simp [markRiders_unattributed l r hr]
+  · intro l r hr
+    simp [leaderRiders_unattributed l r hr]
 
 public theorem paintLines_counted_projects (fs : FontSet) (lines : Array LineOut) :
     (paintLines fs lines).filter (·.counted) = lines.filter (·.counted) := by
   apply paintLines_selected
   · exact fun l r hr => decorationRiders_uncounted fs l r hr
   · exact fun l r hr => markRiders_uncounted l r hr
+  · exact fun l r hr => leaderRiders_uncounted l r hr
 
 private theorem underlinePieces_noGlyph (paint : DecorationRule) (hi cur : Int)
     (spans : List (Int × Int)) (out : Array Seg)
@@ -13900,6 +14111,34 @@ private theorem lineThroughSegs_noGlyph (segs : Array Seg) :
         | image store w height => exact push _ True.intro
       | poly pts color => exact hout
   · simp
+
+private theorem dotSegs_noGlyph (pen : Sp) (out : Array Seg) (h : ∀ s ∈ out, s.NoGlyph) :
+    ∀ (dots : List (Sp × Array (Sp × Sp) × Ir.Color)), ∀ s ∈ dotSegs pen out dots, s.NoGlyph := by
+  intro dots
+  induction dots generalizing pen out with
+  | nil => exact h
+  | cons d rest ih =>
+    obtain ⟨x, pts, c⟩ := d
+    apply ih
+    intro s hs
+    rcases Array.mem_push.mp hs with hs | rfl
+    · rcases Array.mem_push.mp hs with hs | rfl
+      · exact h s hs
+      · trivial
+    · trivial
+
+private theorem leaderRiders_noGlyph (l : LineOut) :
+    ∀ r ∈ leaderRiders l, ∀ s ∈ r.segs, s.NoGlyph := by
+  intro r hr
+  obtain ⟨paint, hp, hr⟩ := Array.mem_filterMap.mp hr
+  have hg : ∀ s ∈ paint, s.NoGlyph := by
+    simp only [Array.mem_def, List.mem_cons, List.not_mem_nil, or_false] at hp
+    subst hp
+    exact dotSegs_noGlyph 0 #[] (by simp) _
+  split at hr
+  · simp at hr
+  · cases Option.some.inj hr
+    exact hg
 
 private theorem decorationRiders_noGlyph (fs : FontSet) (l : LineOut) :
     ∀ r ∈ decorationRiders fs l, ∀ s ∈ r.segs, s.NoGlyph := by
@@ -14001,6 +14240,19 @@ private theorem sourceBound_appendRiders {n : Nat} (fs : FontSet) (l : LineOut)
     · exact hout r hm hf
     · exact Or.inr (decorationRiders_noGlyph fs l r hr)
 
+private theorem sourceBound_appendLeaders {n : Nat} (l : LineOut) (lines : Array LineOut)
+    (h : ∀ l ∈ lines, l.furniture = false → l.SourceBound n) :
+    ∀ r ∈ appendLeaders l lines, r.furniture = false → r.SourceBound n := by
+  unfold appendLeaders
+  dsimp only [Id.run, bind, pure, Id]
+  apply Loop.forIn_array_inv
+    (fun out : Array LineOut => ∀ r ∈ out, r.furniture = false → r.SourceBound n)
+  · exact h
+  · intro rider hr out hout r hm hf
+    rcases Array.mem_push.mp hm with hm | rfl
+    · exact hout r hm hf
+    · exact Or.inr (leaderRiders_noGlyph l r hr)
+
 private theorem sourceBound_paintLines {n : Nat} (fs : FontSet) (lines : Array LineOut)
     (h : ∀ l ∈ lines, l.furniture = false → l.SourceBound n) :
     ∀ r ∈ paintLines fs lines, r.furniture = false → r.SourceBound n := by
@@ -14010,6 +14262,7 @@ private theorem sourceBound_paintLines {n : Nat} (fs : FontSet) (lines : Array L
     (fun out : Array LineOut => ∀ r ∈ out, r.furniture = false → r.SourceBound n)
   · simp
   · intro l hl out hout
+    apply sourceBound_appendLeaders
     apply sourceBound_appendRiders
     intro r hr hf
     rcases Array.mem_push.mp hr with hr | rfl
@@ -19382,7 +19635,7 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
                    frameKeys := doc.frameKeys
                    frameLabels := doc.frameLabels
                    sectionAnchors := if doc.docClass.record.model == .flow then
-                     Ir.sectionAnchors doc.body
+                     Ir.headingAnchors doc.body
                      else if doc.docClass.record.model == .frame then deckIds.sections else #[]
                    frameAnchorIds := if doc.docClass.record.model == .frame then
                      deckIds.frames else #[]
@@ -20080,9 +20333,34 @@ public structure Fitted where
   decisions : Array (FrameOrigin × Ir.FrameFit) := #[]
   webSqueeze : Array Nat := #[]
 
+/-- The folio of the page each anchor of `out` lands on. -/
+private def folioOf (out : Out) (name : String) : Option Nat :=
+  ((anchorIndex out.pages)[name]?).bind fun (i, _) => (out.pages[i]?).map (·.pageState.folio)
+
+/-- The pages pass: a flow whose contents print folios is set again with the folios its setting
+`laid` lands their anchors on, else it stands as laid. -/
+private def pagesPass (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
+    (imgs : Image.Store) (frameSpans pictureSpans : Array (Nat × Span)) (setting : Doc)
+    (laid : Out) : Doc × Out :=
+  if (Ir.pageTargets setting).isEmpty then (setting, laid)
+  else
+    let paged := Ir.fillPages (folioOf laid) setting
+    (paged, run geom fs pats paged imgs frameSpans pictureSpans)
+
+private theorem pagesPass_run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
+    (imgs : Image.Store) (frameSpans pictureSpans : Array (Nat × Span)) (setting : Doc)
+    (laid : Out) (h : laid = run geom fs pats setting imgs frameSpans pictureSpans) :
+    (pagesPass geom fs pats imgs frameSpans pictureSpans setting laid).2 =
+      run geom fs pats (pagesPass geom fs pats imgs frameSpans pictureSpans setting laid).1
+        imgs frameSpans pictureSpans := by
+  unfold pagesPass
+  split
+  · exact h
+  · rfl
+
 /-- The overflow ladder (`Ir.frameFit`): set every unbreakable frame to measure, decide each
-step as beamer sets it, set the document again where needed, name every frame moved once, and
-ship the pages (`PageOut.shipped`). -/
+step as beamer sets it, set the document again where needed, name every frame moved once, set a flow
+again where its contents print folios (`pagesPass`), and ship the pages (`PageOut.shipped`). -/
 public def runFitted (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
     (imgs : Image.Store := {}) (frameSpans : Array (Nat × Span) := #[])
     (pictureSpans : Array (Nat × Span) := #[]) : Fitted :=
@@ -20090,8 +20368,10 @@ public def runFitted (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns
   let first := run geom fs pats measured imgs frameSpans pictureSpans
   let decisions := stepDecisions first
   let setting := if first.overruns.isEmpty then measured else fittedDoc doc decisions
-  let final := if first.overruns.isEmpty then first
+  let laid := if first.overruns.isEmpty then first
     else run geom fs pats setting imgs frameSpans pictureSpans
+  let paged := pagesPass geom fs pats imgs frameSpans pictureSpans setting laid
+  let final := paged.2
   let webSqueeze := ((decisions.filterMap fun (o, fit) =>
     match fit with
     | .natural => none
@@ -20102,7 +20382,7 @@ public def runFitted (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns
         | some _ | none => none).toList.eraseDups).toArray
   { out := { final with pages := final.pages.map PageOut.shipped
                         diags := ladderDiags (pdfView doc).frameLabels frameSpans first final },
-    setting, decisions, webSqueeze }
+    setting := paged.1, decisions, webSqueeze }
 
 public theorem runFitted_projects (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
     (doc : Doc) (imgs : Image.Store) (frameSpans pictureSpans : Array (Nat × Span)) :
@@ -20115,8 +20395,10 @@ public theorem runFitted_projects (geom : Geom) (fs : FontSet) (pats : Option Hy
         ∀ d, (fold d).kind = d.kind ∧ (fold d).span = d.span ∧ (fold d).subject = d.subject := by
   simp only [runFitted]
   split
-  · exact ⟨rfl, ladderDiags_projects ..⟩
-  · exact ⟨rfl, ladderDiags_projects ..⟩
+  · rw [pagesPass_run geom fs pats imgs frameSpans pictureSpans _ _ rfl]
+    exact ⟨rfl, ladderDiags_projects ..⟩
+  · rw [pagesPass_run geom fs pats imgs frameSpans pictureSpans _ _ rfl]
+    exact ⟨rfl, ladderDiags_projects ..⟩
 
 public theorem runFitted_accounts (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
     (doc : Doc) (imgs : Image.Store) (frameSpans pictureSpans : Array (Nat × Span))
@@ -20133,6 +20415,7 @@ public theorem runFitted_accounts (geom : Geom) (fs : FontSet) (pats : Option Hy
         (fit.continues → d.kind = .W0384) := by
   simp only [runFitted] at hs ⊢
   split at hs <;> simp only [*, ite_true, ite_false, Bool.false_eq_true] <;>
+    rw [pagesPass_run geom fs pats imgs frameSpans pictureSpans _ _ rfl] <;>
     exact ladderDiags_accounts _ _ _ _ o fit hs hm
 
 private theorem keepFor_plain_body (backend : String) (body : Array Block)
@@ -21146,23 +21429,31 @@ private theorem appendMarks_toList (l : LineOut) (lines : Array LineOut) :
   simp only [Array.forIn_pure_yield_eq_foldl]
   simp [← Array.foldl_toList]
 
+private theorem appendLeaders_toList (l : LineOut) (lines : Array LineOut) :
+    (appendLeaders l lines).toList = lines.toList ++ (leaderRiders l).toList := by
+  unfold appendLeaders
+  simp only [Array.forIn_pure_yield_eq_foldl]
+  simp [← Array.foldl_toList]
+
 private theorem paintLines_toList (fs : FontSet) (lines : Array LineOut) :
     (paintLines fs lines).toList =
       lines.toList.flatMap
-        (fun l => (markRiders l).toList ++ l :: (decorationRiders fs l).toList) := by
+        (fun l => (markRiders l).toList ++ l ::
+          ((decorationRiders fs l).toList ++ (leaderRiders l).toList)) := by
   unfold paintLines
   simp only [Array.forIn_pure_yield_eq_foldl]
   have h := Array.foldl_induction
     (as := lines)
     (motive := fun i (out : Array LineOut) =>
       out.toList = (lines.toList.take i).flatMap
-        (fun l => (markRiders l).toList ++ l :: (decorationRiders fs l).toList))
+        (fun l => (markRiders l).toList ++ l ::
+          ((decorationRiders fs l).toList ++ (leaderRiders l).toList)))
     (init := Array.mkEmpty lines.size)
-    (f := fun out l => appendRiders fs l ((appendMarks l out).push l))
+    (f := fun out l => appendLeaders l (appendRiders fs l ((appendMarks l out).push l)))
     (by simp)
     (by
       intro i out hout
-      rw [appendRiders_toList, Array.toList_push, appendMarks_toList, hout]
+      rw [appendLeaders_toList, appendRiders_toList, Array.toList_push, appendMarks_toList, hout]
       rw [List.take_succ_eq_append_getElem (by simp)]
       simp [List.flatMap_append, List.append_assoc])
   simpa [← Array.length_toList] using h
@@ -21192,14 +21483,26 @@ private theorem riders_rise (fs : FontSet) {a b : LineOut} (h : LineRise a b) :
   · exact .cons ⟨rfl, rfl, h.note, h.furniture, rfl, h.baseline⟩
       (.cons ⟨rfl, rfl, h.note, h.furniture, rfl, h.baseline⟩ .nil)
 
+private theorem leaders_rise {a b : LineOut} (h : LineRise a b) :
+    LinesRise (leaderRiders a).toList (leaderRiders b).toList := by
+  simp only [leaderRiders, Array.toList_filterMap,
+    List.filterMap_cons, List.filterMap_nil, h.segs, h.size]
+  by_cases hm : (leaderSegs b.segs).isEmpty = true
+  all_goals simp only [hm, ite_true, Bool.false_eq_true, ite_false]
+  · exact .nil
+  · exact .cons ⟨rfl, rfl, h.note, h.furniture, rfl, h.baseline⟩ .nil
+
 private theorem paint_rise (fs : FontSet) {as bs : List LineOut}
     (h : LinesRise as bs) :
-    LinesRise (as.flatMap fun l => (markRiders l).toList ++ l :: (decorationRiders fs l).toList)
-      (bs.flatMap fun l => (markRiders l).toList ++ l :: (decorationRiders fs l).toList) := by
+    LinesRise (as.flatMap fun l => (markRiders l).toList ++ l ::
+        ((decorationRiders fs l).toList ++ (leaderRiders l).toList))
+      (bs.flatMap fun l => (markRiders l).toList ++ l ::
+        ((decorationRiders fs l).toList ++ (leaderRiders l).toList)) := by
   induction h with
   | nil => exact .nil
   | cons hl _ ih =>
-    exact ((marks_rise hl).append (LinesRise.cons hl (riders_rise fs hl))).append ih
+    exact ((marks_rise hl).append
+      (LinesRise.cons hl ((riders_rise fs hl).append (leaders_rise hl)))).append ih
 
 /-- A segment's text glyphs, white space, NBSP and soft hyphens excluded. -/
 public def textInk : Seg → List Char
@@ -21253,11 +21556,17 @@ private theorem furniture_ink_empty (fs : FontSet) (lines : Array LineOut) :
     have hb := markRiders_band (furnitureLine l) r
       (by simpa only [furnitureLine, Array.mem_toList_iff] using hr)
     simp [inkLine, hb.1, furnitureLine]
-  · apply List.filter_eq_nil_iff.mpr
-    intro r hr
-    have hb := decorationRiders_band fs (furnitureLine l) r
-      (by simpa only [furnitureLine, Array.mem_toList_iff] using hr)
-    simp [inkLine, hb.1, furnitureLine]
+  · constructor
+    · apply List.filter_eq_nil_iff.mpr
+      intro r hr
+      have hb := decorationRiders_band fs (furnitureLine l) r
+        (by simpa only [furnitureLine, Array.mem_toList_iff] using hr)
+      simp [inkLine, hb.1, furnitureLine]
+    · apply List.filter_eq_nil_iff.mpr
+      intro r hr
+      have hb := leaderRiders_band (furnitureLine l) r
+        (by simpa only [furnitureLine, Array.mem_toList_iff] using hr)
+      simp [inkLine, hb.1, furnitureLine]
 
 private theorem furnishLines_ink_projects (fs : FontSet)
     (before body after : Array LineOut) :
@@ -21509,7 +21818,7 @@ open LeanTex.Core LeanTex.Core.Dim LeanTex.Core.Font
 -- Exact equality keeps colour spellings and provenance, which the BEq instances omit.
 deriving instance DecidableEq for Ir.PdfColor, Ir.Color
 deriving instance DecidableEq for Diag
-deriving instance DecidableEq for Geom, Attribution, DecorationRule, Decorations,
+deriving instance DecidableEq for Geom, Attribution, DecorationRule, LeaderPaint, Decorations,
   MathLineMetrics, RunMetrics
 deriving instance DecidableEq for Item, Seg, LineOut, HeadingRule
 deriving instance DecidableEq for NoteBlock, DisplayJob

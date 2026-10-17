@@ -45,7 +45,7 @@ inside one belongs to the block around it. -/
   | .link _ | .span _ | .line _ _ | .reference _ => true
   | .document | .section | .title | .heading _ | .paragraph | .list _ | .item | .label
   | .body | .table | .row | .cell | .caption | .figure | .formula | .code | .quote
-  | .note | .aside | .nav | .bibEntry | .artifact => false
+  | .note | .aside | .nav | .bibEntry | .toc | .tocItem | .artifact => false
 
 /-- Kinds whose children are inline content: a formula directly inside one
 is set inline, and belongs to it. -/
@@ -53,21 +53,22 @@ is set inline, and belongs to it. -/
   | .title | .heading _ | .paragraph | .label | .cell | .caption | .note | .bibEntry
   | .artifact => true
   | .document | .section | .list _ | .item | .body | .table | .row | .figure | .formula
-  | .code | .quote | .aside | .nav | .link _ | .span _ | .line _ _ | .reference _ => false
+  | .code | .quote | .aside | .nav | .toc | .tocItem | .link _ | .span _ | .line _ _
+  | .reference _ => false
 
 /-- Kinds a page break may not cut. -/
 @[expose] public def unbreakable : Struct.Kind → Bool
   | .title | .heading _ | .caption | .figure => true
   | .document | .section | .paragraph | .list _ | .item | .label | .body | .table | .row
-  | .cell | .formula | .code | .quote | .note | .aside | .nav | .bibEntry | .link _
-  | .span _ | .line _ _ | .reference _ | .artifact => false
+  | .cell | .formula | .code | .quote | .note | .aside | .nav | .bibEntry | .toc | .tocItem
+  | .link _ | .span _ | .line _ _ | .reference _ | .artifact => false
 
 /-- Kinds set apart from running prose: what a lead-in introduces. -/
 @[expose] public def displays : Struct.Kind → Bool
-  | .list _ | .table | .code | .figure | .quote => true
+  | .list _ | .table | .code | .figure | .quote | .toc => true
   | .document | .section | .title | .heading _ | .paragraph | .item | .label | .body | .row
-  | .cell | .caption | .formula | .note | .aside | .nav | .bibEntry | .link _ | .span _
-  | .line _ _ | .reference _ | .artifact => false
+  | .cell | .caption | .formula | .note | .aside | .nav | .bibEntry | .tocItem | .link _
+  | .span _ | .line _ _ | .reference _ | .artifact => false
 
 /-- The block kind of a leaf from its enclosing kinds, innermost first. -/
 public def roleKind (kinds : List Struct.Kind) : Struct.Kind :=

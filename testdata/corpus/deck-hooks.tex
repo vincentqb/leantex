@@ -1,12 +1,13 @@
 % Invented deck: beamer's default theme declares no section page, and the
-% document's own \AtBeginSection sets its frame right after each section it
-% opens and, its optional argument empty, none after a starred one; a subsection
-% opens no page, as no hook declares one. Nothing here derives from any private
-% document.
+% document's own \AtBeginSection sets its outline frame right after each section
+% it opens, the contents shaded but for the section in force, and, its optional
+% argument empty, none after a starred one; a subsection opens no page, as no
+% hook declares one, and the overview lists every unstarred section and
+% subsection. Nothing here derives from any private document.
 \documentclass[aspectratio=169]{beamer}
 
 \usetheme{default}
-\AtBeginSection[]{\begin{frame}{Outline}The next part opens here.\end{frame}}
+\AtBeginSection[]{\begin{frame}{Outline}\tableofcontents[currentsection]\end{frame}}
 
 \fonts{
   dir = "fonts",
@@ -20,6 +21,10 @@
 \begin{document}
 
 \maketitle
+
+\begin{frame}{Overview}
+  \tableofcontents
+\end{frame}
 
 \section{Wheels}\label{sec:wheels}
 

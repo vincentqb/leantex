@@ -5030,8 +5030,8 @@ def leafRowsOne (path : List Struct.Kind) (first inMarked : Bool) (acc : Array L
     Struct.Node → Array LeafRow
   | .leaf id l => acc.push { id := id, leaf := l, path := path.reverse, marked := inMarked }
   | .node k kids =>
-    leafRowsList (k :: path) (k == .body) (inMarked || (first && k == .paragraph)) acc
-      kids.toList
+    leafRowsList (k :: path) (k == .body || k == .tocItem) (inMarked || (first && k == .paragraph))
+      acc kids.toList
 
 end
 
@@ -5081,7 +5081,7 @@ def ownerKind : Struct.Kind → Bool
   | .paragraph | .heading _ | .title | .cell | .caption | .code | .bibEntry
   | .artifact | .note | .formula | .label => true
   | .document | .section | .list _ | .item | .body | .table | .row | .figure
-  | .quote | .aside | .nav | .link _ | .span _ | .line _ _ | .reference _ => false
+  | .quote | .aside | .nav | .toc | .tocItem | .link _ | .span _ | .line _ _ | .reference _ => false
 
 def ownerOf (r : LeafRow) : Option Struct.Kind := (r.path.filter ownerKind).getLast?
 
@@ -5372,6 +5372,7 @@ the text sets ({badGap.getD ""})"
           | _ => false).size
       | .algorithm numbered _ ls => if numbered then acc + ls.size else acc
       | .bibliography _ _ items => acc + (items.filter (·.marker.isSome)).size
+      | .contents _ entries => acc + (entries.filter (·.number.isSome)).size
       | _ => acc) (fun acc _ => acc) 0 doc.body
     -- Compared only where every page is the one flow and every marker is the class's text.
     let declaredMarker := doc.styles.entries.any fun (_, st) => st.marker.isSome
