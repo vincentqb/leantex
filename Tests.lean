@@ -497,6 +497,7 @@ def declSettingSuiteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   Tests.ListsKoma.quoteKindChecks ref oneFace
   Tests.ListsKoma.quoteBoundaryChecks ref oneFace
   Tests.ListsKoma.quoteKindHtmlChecks ref
+  Tests.ListsKoma.labelChecks ref oneFace
   Tests.DeclSettings.frameTitleKeyChecks ref oneFace
   Tests.DeclSettings.emptyTemplateChecks ref oneFace
   Tests.DeclSettings.emptyTemplateMeasuredChecks ref

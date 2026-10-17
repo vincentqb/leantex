@@ -373,4 +373,75 @@ def quoteKindHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "html koma lists: a minipage or a float keeps the declared parskip its lists read"
     (!hasStr (page "[parskip=half]{scrartcl}" boxed) ".column, figure.float {")
 
+/-- An item a list opens, its label kept on the list's first line; an inner first item a centre
+opens, then one a description term opens, each before a list; the first shape set flush right; and an
+item whose list a label anchor precedes. -/
+def labelled : String :=
+  "Alpha paragraph.\n\\begin{enumerate}\n\\item \\begin{itemize}\n\\item Bravo inner.\n" ++
+  "\\item Charlie inner.\n\\end{itemize}\n\\item Delta outer.\n\\end{enumerate}\n\n" ++
+  "\\begin{enumerate}\n\\item \\begin{itemize}\n\\item \\begin{center}\nEcho centred.\n" ++
+  "\\end{center}\n\\begin{enumerate}\n\\item India after centre.\n\\end{enumerate}\n" ++
+  "\\item Foxtrot inner.\n\\end{itemize}\n\\item Golf outer.\n\\end{enumerate}\n\n" ++
+  "\\begin{enumerate}\n\\item \\begin{description}\n\\item[Kilo] term text.\n" ++
+  "\\begin{enumerate}\n\\item Lima after term.\n\\end{enumerate}\n\\end{description}\n" ++
+  "\\end{enumerate}\n\n\\begin{flushright}\n\\begin{enumerate}\n\\item \\begin{itemize}\n" ++
+  "\\item Juliet flush.\n\\end{itemize}\n\\end{enumerate}\n\\end{flushright}\n\n" ++
+  "\\begin{enumerate}\n\\item \\label{papa}\\begin{itemize}\n\\item Papa labelled.\n" ++
+  "\\end{itemize}\n\\end{enumerate}"
+
+/-- An item an enumerate opens, at a second level narrower than its label. -/
+def narrowLabel : String :=
+  "\\begin{enumerate}\n\\item \\begin{enumerate}\n\\item Mike first.\n\\item Mint second.\n" ++
+  "\\end{enumerate}\n\\end{enumerate}"
+
+/-- A frame whose item opens a list whose first item the second step reveals. -/
+def hiddenLabel : String :=
+  "\\begin{frame}\n\\begin{enumerate}\n\\item \\begin{itemize}\n\\item<2-> Hotel shown second.\n" ++
+  "\\item India shown first.\n\\end{itemize}\n\\end{enumerate}\n\\end{frame}"
+
+/-- The labels of an item a list opens, as `\@donoparitem` keeps them: the item's and the list's
+first item's on one line, each at its own item's place, as lualatex sets them. -/
+def labelChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let find (out : Layout.Out) (w : String) : Option Layout.LineOut :=
+    (bodyLines out).find? fun l => hasStr (lineText l) w
+  let out := layoutOf oneFace (elabStr (doc "[10pt]{article}" "" labelled)).1
+  let line := find out
+  t "labels: an item a list opens keeps its label on the list's first line, at its own place"
+    (match line "Bravo", line "Delta" with
+     | some b, some d => hasStr (lineText b) "1." && b.x == d.x
+     | _, _ => false)
+  t "labels: an item's label the list's first item cannot take stays off the next item"
+    (match line "Foxtrot" with
+     | some f => !hasStr (lineText f) "1."
+     | none => false)
+  t "labels: an item's label its list's first item cannot take stays off a list that item holds"
+    (match line "India", line "Lima" with
+     | some i, some l => hasStr (lineText i) "(a)" && !hasStr (lineText i) "1." &&
+         hasStr (lineText l) "(a)" && !hasStr (lineText l) "1."
+     | _, _ => false)
+  t "labels: flush right, the labels of an item a list opens stand by its first line's text"
+    (match line "Bravo", line "Juliet" with
+     | some b, some j =>
+       match glyphX b '1', glyphX b 'B', glyphX j '1', glyphX j 'J' with
+       | some b1, some bt, some j1, some jt => bt - b1 == jt - j1
+       | _, _, _, _ => false
+     | _, _ => false)
+  t "labels: an item's label waits past a label anchor for the list it opens with"
+    (match line "Papa" with
+     | some p => hasStr (lineText p) "1."
+     | none => false)
+  let narrow := layoutOf oneFace
+    (elabStr (doc "[10pt]{article}" "\\setlength{\\leftmarginii}{9pt}" narrowLabel)).1
+  t "labels: a label wider than its list's indent step overlaps the outer one, the text in place"
+    (match find narrow "Mike", find narrow "Mint" with
+     | some m, some n => hasStr (lineText m) "1." && glyphX m 'M' == glyphX n 'M'
+     | _, _ => false)
+  let deck := layoutOf oneFace (elabStr (doc "{beamer}" "" hiddenLabel)).1
+  let stepLines (k : Nat) : Array Layout.LineOut :=
+    ((deck.pages[k]?.map (·.lines)).getD #[]).filter (!·.furniture)
+  t "labels: the item's label hides with the first inner item a later step reveals"
+    (deck.pages.size == 2 && (stepLines 0).all (fun l => !hasStr (lineText l) "1.") &&
+      (stepLines 1).any fun l => hasStr (lineText l) "1." && hasStr (lineText l) "Hotel")
+
 end Tests.ListsKoma
