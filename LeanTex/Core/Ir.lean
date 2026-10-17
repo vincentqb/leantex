@@ -8488,9 +8488,9 @@ public def setsNothing : Block → Bool
   | .frame .. | .framefoot _ | .setPalette _ | .setTokens _ | .rule .. | .picture _ | .table ..
   | .float .. | .bibliography .. => false
 
-/-- What a deck sets for a top-level block outside every frame: a stage of its own, content on a
-page of its own, or nothing a page shows. -/
-public def Doc.outside (doc : Doc) (b : Block) : Outside :=
+/-- What a deck sets for a top-level block outside every frame under its section pages: a stage of
+its own, content on a page of its own, or nothing a page shows. -/
+public def outsideUnder (sp : SectionPages) (b : Block) : Outside :=
   if holdsFrame #[b] then .stage
   else if setsNothing b then .none
   else match b with
@@ -8498,12 +8498,15 @@ public def Doc.outside (doc : Doc) (b : Block) : Outside :=
     | .setPalette _ | .setTokens _ | .logo _ | .framefoot _ | .note _ => .none
     | .section level starred _ _ =>
       if level == .title then .content
-      else if doc.sectionPages.pageFor level starred then .stage
+      else if sp.pageFor level starred then .stage
       else .none
     | .para _ | .list .. | .center .. | .ragged .. | .spaced .. | .role .. | .link .. | .quote .. | .lines ..
     | .abstract .. | .titled .. | .disclosure .. | .equation .. | .verbatim .. | .algorithm ..
     | .columns .. | .onSteps .. | .altSteps .. | .only .. | .nav .. | .rule .. | .picture ..
     | .table .. | .float .. | .bibliography .. => .content
+
+/-- What a deck sets for a top-level block outside every frame (`outsideUnder`). -/
+public def Doc.outside (doc : Doc) (b : Block) : Outside := outsideUnder doc.sectionPages b
 
 /-- The spacings a body's lists declare, each once, in flow order. -/
 public def listSetsOf (body : Array Block) : Array ListSet :=

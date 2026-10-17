@@ -1094,15 +1094,20 @@ const shotChanges = (a, b) => {
 };
 
 // The viewport at rest: a drawn frame no different from the one drawn before it, asked again
-// within the budget while the page still changes, as a scroll-driven bar catching up with a scroll
-// does on a loaded host; a page still changing when the budget ends is no verdict.
+// within the budget while the page still changes; a page still changing when the budget ends is no
+// verdict.
+// A frame is decoded only where its bytes differ from the one before it, and keeps its bytes; a
+// page running no animation with its fonts loaded is at rest in the first.
 const settled = async (page, budget = STEP_MS) => {
   const end = Date.now() + budget;
-  let last = pngPixels(await drawn(page));
+  let last = await drawn(page);
+  if (await page.evaluate(() => document.getAnimations().length === 0 && document.fonts.status === 'loaded'))
+    return Object.assign(pngPixels(last), { buf: last });
   for (;;) {
-    const next = pngPixels(await drawn(page));
-    const ch = shotChanges(last, next);
-    if (ch && ch.cols.size === 0) return next;
+    const next = await drawn(page);
+    if (next.equals(last)) return Object.assign(pngPixels(next), { buf: next });
+    const shown = pngPixels(next), ch = shotChanges(pngPixels(last), shown);
+    if (ch && ch.cols.size === 0) return Object.assign(shown, { buf: next });
     if (Date.now() >= end) throw new Unfinished(`the page still changed after ${budget} ms`);
     last = next;
   }
@@ -1191,15 +1196,22 @@ const stageMarkShot = async (p, k, scale, shape, measure, budget) => {
   }, { k, sel });
   // a page without script runs no animation frame; each shot is the frame it draws at rest
   const shot = () => settled(p, budget);
-  await shot();
+  let rest = await shot();
   const m = await p.evaluate(stageMarkJudge, k);
   if (!m.shown) return [`${at} ${m.name} stands off the viewport`];
+  // a page that moved between the shots, its blurred frame no longer its first, gave no verdict
   const pair = async () => {
-    const plain = await shot();
+    const plain = rest || await shot();
+    rest = null;
     await p.evaluate(({ k, sel }) => document.querySelectorAll(sel)[k].focus({ preventScroll: true }),
       { k, sel });
     const marked = await shot();
     await p.evaluate(() => document.activeElement && document.activeElement.blur());
+    const again = await drawn(p);
+    if (!again.equals(plain.buf)) {
+      const back = shotChanges(plain, pngPixels(again));
+      if (!back || back.cols.size > 0) throw new Unfinished('the page changed while focus was judged');
+    }
     return shotChanges(plain, marked);
   };
   const off = [];
@@ -1277,48 +1289,58 @@ const stageFocus = async (page, browser, open, budget = STEP_MS) => {
   if (!pt) return { ok: false, n: 1, why: 'no @page size in points' };
   const W = 1280, H = Math.round(1280 * +pt[2] / +pt[1]);
   const off = (await page.evaluate(stagePagerJudge)).bad.slice(0, 2);
-  let judged = null;
+  const at = async (scale, body) => {
+    const ctx = budgeted(await browser.newContext({ viewport: { width: W, height: H },
+      deviceScaleFactor: scale, javaScriptEnabled: false }));
+    try {
+      const p = await ctx.newPage();
+      await open(p);
+      await p.evaluate(() => document.fonts.ready);
+      await p.keyboard.press('Shift');
+      return await body(p);
+    } finally { await ctx.close(); }
+  };
   try {
-    for (const scale of [1, 1.5, 2]) {
-      const ctx = budgeted(await browser.newContext({ viewport: { width: W, height: H },
-        deviceScaleFactor: scale, javaScriptEnabled: false }));
-      try {
-        const p = await ctx.newPage();
-        await open(p);
-        await p.evaluate(() => document.fonts.ready);
-        await p.keyboard.press('Shift');
-        if (!judged) { judged = await p.evaluate(stageMarkJudge, null); off.push(...judged.bad.slice(0, 2)); }
-        for (const [shape, w, h] of scale === 1 ? [['own', W, H], ...readerShapes] : [['own', W, H]]) {
-          await p.setViewportSize({ width: w, height: h });
-          for (const [k, furnished] of judged.kinds)
-            if (shape === 'own' || furnished)
-              off.push(...await stageMarkShot(p, k, scale, shape, shape === 'own', budget));
-        }
-        if (scale === 1 && judged.n > 0) {
-          // forced colours keep the mark in their own ink, so a focused stage still shows its focus
-          await p.setViewportSize({ width: W, height: H });
-          await p.emulateMedia({ forcedColors: 'active' });
-          const sel = 'section.slide[tabindex], section.section-page[tabindex]';
-          await p.evaluate((sel) => {
-            const s = document.querySelector(sel);
-            (s.closest('.slide-track') || s).scrollIntoView({ behavior: 'instant', inline: 'start', block: 'nearest' });
-          }, sel);
-          const plain = await settled(p, budget);
-          await p.evaluate((sel) => document.querySelector(sel).focus({ preventScroll: true }), sel);
-          const marked = await settled(p, budget);
-          await p.evaluate(() => document.activeElement && document.activeElement.blur());
-          const forced = shotChanges(plain, marked);
-          if (forced && forced.cols.size === 0) off.push('in forced colours a focused stage shows no focus');
-          await p.emulateMedia({ forcedColors: 'none' });
-        }
-      } finally { await ctx.close(); }
-    }
+    const judged = await at(1, (p) => p.evaluate(stageMarkJudge, null));
+    off.push(...judged.bad.slice(0, 2));
+    // the scales and shapes are judged side by side, each in a context of its own
+    const shapes = [[1, ['own', W, H]], ...readerShapes.map((s) => [1, s]), [1.5, ['own', W, H]],
+      [2, ['own', W, H]]];
+    const runs = await Promise.allSettled([...shapes.map(([scale, [shape, w, h]]) => at(scale, async (p) => {
+      const found = [];
+      await p.setViewportSize({ width: w, height: h });
+      for (const [k, furnished] of judged.kinds)
+        if (shape === 'own' || furnished)
+          found.push(...await stageMarkShot(p, k, scale, shape, shape === 'own', budget));
+      return found;
+    })), at(1, async (p) => {
+      const found = [];
+      if (judged.n > 0) {
+        // forced colours keep the mark in their own ink, so a focused stage still shows its focus
+        await p.emulateMedia({ forcedColors: 'active' });
+        const sel = 'section.slide[tabindex], section.section-page[tabindex]';
+        await p.evaluate((sel) => {
+          const s = document.querySelector(sel);
+          (s.closest('.slide-track') || s).scrollIntoView({ behavior: 'instant', inline: 'start', block: 'nearest' });
+        }, sel);
+        const plain = await settled(p, budget);
+        await p.evaluate((sel) => document.querySelector(sel).focus({ preventScroll: true }), sel);
+        const marked = await settled(p, budget);
+        await p.evaluate(() => document.activeElement && document.activeElement.blur());
+        const forced = shotChanges(plain, marked);
+        if (forced && forced.cols.size === 0) found.push('in forced colours a focused stage shows no focus');
+      }
+      return found;
+    })]);
+    const lost = runs.find((r) => r.status === 'rejected');
+    if (lost) throw lost.reason;
+    for (const r of runs) off.push(...r.value);
+    return { ok: off.length === 0, n: judged.n, findings: off,
+      why: off.length ? `${off.length} findings; ${off.slice(0, 4).join('; ')}` : '' };
   } catch (e) {
     if (!unfinished(e)) throw e;
     return { ok: false, n: 1, unfinished: true, findings: off, why: clean(e.message) };
   }
-  return { ok: off.length === 0, n: judged ? judged.n : 1, findings: off,
-    why: off.length ? `${off.length} findings; ${off.slice(0, 4).join('; ')}` : '' };
 };
 
 // Under the pager a key a focused element can still scroll by scrolls it, and at its end the key
@@ -1352,7 +1374,8 @@ const deckKeys = async (page) => {
   return { ok: why.length === 0, n: 1, why: why.join('; ') };
 };
 
-// A display wider than its stage scrolls inside its own box; its stage never scrolls sideways.
+// A display wider than its stage scrolls sideways inside its own box, a tab stop holding all its
+// ink's height; its stage never scrolls sideways.
 const wideDisplays = () => {
   const bad = [];
   let n = 0;
@@ -1362,8 +1385,11 @@ const wideDisplays = () => {
     r.selectNodeContents(d);
     if (r.getBoundingClientRect().width <= d.clientWidth + 1) continue;
     n++;
-    if (s.scrollWidth > s.clientWidth + 1) bad.push(`${s.id || '-'} scrolls sideways for its display`);
-    if (d.scrollWidth <= d.clientWidth + 1) bad.push(`${s.id || '-'}'s display runs past its box unscrolled`);
+    const at = s.id || '-';
+    if (s.scrollWidth > s.clientWidth + 1) bad.push(`${at} scrolls sideways for its display`);
+    if (d.scrollWidth <= d.clientWidth + 1) bad.push(`${at}'s display runs past its box unscrolled`);
+    if (d.scrollHeight > d.clientHeight + 1) bad.push(`${at}'s display cuts its ink's height`);
+    if (d.tabIndex !== 0) bad.push(`${at}'s scrolling display is no tab stop`);
   }
   return { ok: n > 0 && bad.length === 0, n,
     why: bad.length ? bad.join('; ') : n ? '' : 'no display wider than its stage' };
@@ -1675,12 +1701,10 @@ async function runReader(name) {
     } finally {
       await control.setViewportSize({ width: 1280, height: 720 });
     }
-    // The stage-focus judge breaks five ways: a stage keeping the browser's ring
-    // changes the viewport's edges, a mark run into the foot changes its footline,
-    // a mark that scrolls with its stage moves, a mark forced colours drop shows
-    // nothing there, and a tab stop under the pager stays. It passes the deck's own
-    // mark while a bar runs once across the top as a scroll-driven bar catches up on
-    // a loaded host, and is inconclusive, never failing, on a page that never rests.
+    // The stage-focus judge breaks five ways (the browser's ring at the viewport's edges, a mark
+    // into the foot, a mark that scrolls with its stage, a mark forced colours drop, a tab stop
+    // under the pager), passes the deck's mark beside a bar that runs once across the top, and is
+    // inconclusive, never failing, on a page that never rests or that moves in steps.
     const focusStage = (rule, body) => '<!doctype html><html data-deck-script><head><style>@page { size: 960pt 540pt } html { scroll-snap-type: x mandatory } ' +
       'body { margin: 0 } main { display: flex } section.slide { box-sizing: border-box; width: 100vw; ' +
       'flex: 0 0 100vw; height: 100dvh; padding: 0 6vmin; overflow-y: auto; position: relative; display: flex; ' +
@@ -1695,7 +1719,7 @@ async function runReader(name) {
       'right 3vmin center; background-repeat: no-repeat }';
     const deckMark = (top, height) => 'section.slide:focus-visible { outline: none } ' +
       'section.slide:focus-visible::before { content: ""; position: sticky; top: ' + top + '; flex: none; ' +
-      'align-self: center; width: calc(100vw - 6vmin); height: ' + height + '; margin: 0 0 -' + height +
+      'align-self: stretch; height: ' + height + '; margin: 0 calc(50% - 50vw + 3vmin) -' + height +
       '; border-inline: 2px solid; pointer-events: none }';
     const focusScrolls = 'section.slide:focus-visible { outline: none } section.slide:focus-visible::before { ' +
       'content: ""; position: absolute; top: 25%; height: 50%; left: 3vmin; right: 3vmin; ' +
@@ -1722,11 +1746,14 @@ async function runReader(name) {
     await control.evaluate(() => document.querySelector('section.slide').removeAttribute('tabindex'));
     const rested = await stageFocus(control, browser, (p) => p.setContent(once));
     if (!rested.ok) throw new Error('stage-focus control: a bar that runs once ' + rested.why);
-    const ever = focusStage(deckMark('25dvh', '50dvh') + bar('1s linear infinite'), '<div class="ltx-bar"></div>' + focusLine);
-    await control.setContent(ever);
-    await control.evaluate(() => document.querySelector('section.slide').removeAttribute('tabindex'));
-    const restless = await stageFocus(control, browser, (p) => p.setContent(ever), STEP_MS / 30);
-    if (!restless.unfinished) throw new Error('stage-focus control: a page that never rests ' + restless.why);
+    for (const [label, run] of [['a page that never rests', '1s linear infinite'],
+        ['a page that moves in steps', '2s steps(4) infinite']]) {
+      const ever = focusStage(deckMark('25dvh', '50dvh') + bar(run), '<div class="ltx-bar"></div>' + focusLine);
+      await control.setContent(ever);
+      await control.evaluate(() => document.querySelector('section.slide').removeAttribute('tabindex'));
+      const restless = await stageFocus(control, browser, (p) => p.setContent(ever), STEP_MS / 30);
+      if (!restless.unfinished) throw new Error('stage-focus control: ' + label + ' ' + restless.why);
+    }
     // Both disclosure judges break once: a closed body forced into view on
     // screen, and a closed body printed with no print rule to show it.
     const closed = '<details><summary>A</summary><p>B</p></details>';

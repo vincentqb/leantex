@@ -3378,21 +3378,22 @@ private def deckStageFocusRule : DeckRule :=
   { selector := [.lit "html section.slide:focus-visible, html section.section-page:focus-visible"]
     decls := [("outline", "none")] }
 
-/-- A focused stage's mark: a rule down the middle half of each side margin, centred on the stage
-whatever its padding, in its ink, out of its flow and still while it scrolls, a border forced
-colours keep in their own ink. -/
+/-- A focused stage's mark: a rule down the middle half of each side margin whatever the stage's
+padding, its margin box the content box, in its ink, out of its flow and still while it scrolls, a
+border forced colours keep in their own ink. -/
 private def deckStageMarkRule : DeckRule :=
   { selector := [.lit ("html section.slide:focus-visible::before, " ++
       "html section.section-page:focus-visible::before")]
     decls := [("content", "\"\""), ("position", "sticky"), ("top", "25dvh"), ("flex", "none"),
-      ("align-self", "center"), ("width", s!"calc(100vw - 2 * {focusInset})"), ("height", "50dvh"),
-      ("margin", "0 0 -50dvh"), ("border-inline", s!"{focusWidth} solid currentColor"),
-      ("pointer-events", "none")] }
+      ("align-self", "stretch"), ("height", "50dvh"),
+      ("margin", s!"0 calc(50% - 50vw + {focusInset}) -50dvh"),
+      ("border-inline", s!"{focusWidth} solid currentColor"), ("pointer-events", "none")] }
 
-/-- A display wider than its stage scrolls inside its own box, so the stage never scrolls sideways
-and the deck alone pages there. -/
+/-- A display the pager finds wider than its stage scrolls sideways inside its own box, its ink
+held in its padding, so the stage never scrolls sideways and the deck alone pages there. -/
 private def deckDisplayRule : DeckRule :=
-  { selector := [.lit "section.slide .display"], decls := [("overflow-x", "auto")] }
+  { selector := [.lit "section.slide .display.wide"],
+    decls := [("overflow-x", "auto"), ("overflow-y", "hidden"), ("padding-block", "0.25em")] }
 
 /-- The deck's stage typography: body and root sizes as shares of the stage height, and the
 body's line height. -/
@@ -4118,7 +4119,7 @@ public def baselineProps : List String :=
    "animation", "border", "border-radius", "break-inside", "break-after",
    "break-before", "size", "print-color-adjust", "box-decoration-break",
    "bottom", "left", "right", "outline", "top", "align-self", "border-inline", "pointer-events",
-   "overflow-x"]
+   "overflow-x", "padding-block"]
 
 /-- Whether a rule is part of the floor: the base and every `@supports not` block. -/
 public def onFloor (r : DeckRule) : Bool :=
@@ -4544,7 +4545,7 @@ public theorem image_share_agrees (l : Image.Len) (iW iH textW textH stage : Int
 
 /-- The deck's constant script: the keys page between `[data-snap]` points but where the focused
 element still scrolls, the floor's step state follows the snap, a stage paged past loses its focus,
-and the stages leave the tab order. -/
+a display wider than its stage scrolls in its own box, and the stages leave the tab order. -/
 public def deckScript : String :=
   "(() => {
   document.documentElement.dataset.deckScript = \"\";
@@ -4567,6 +4568,7 @@ public def deckScript : String :=
   };
   let cur = 0;
   let destination = null;
+  let swiped = false;
   let seenHash = location.hash;
   if (\"scrollRestoration\" in history) history.scrollRestoration = \"manual\";
   const mark = () => {
@@ -4614,7 +4616,7 @@ public def deckScript : String :=
     if (box(snaps[best]).left !== box(snaps[cur]).left) {
       cur = best;
       mark();
-      leave();
+      if (swiped) leave();
       writeHash(\"replace\");
     }
   };
@@ -4635,7 +4637,19 @@ public def deckScript : String :=
   addEventListener(\"scroll\", sync, { passive: true });
   addEventListener(\"hashchange\", readHash);
   for (const event of [\"wheel\", \"touchstart\", \"pointerdown\"])
-    addEventListener(event, () => { destination = null; }, { passive: true });
+    addEventListener(event, () => { destination = null; swiped = true; }, { passive: true });
+  const fit = () => {
+    for (const d of document.querySelectorAll(\"section.slide .display\")) {
+      if (!d.querySelector(\"math\")) continue;
+      d.classList.remove(\"wide\");
+      const wide = d.scrollWidth > d.clientWidth + 1;
+      d.classList.toggle(\"wide\", wide);
+      if (wide) d.tabIndex = 0; else d.removeAttribute(\"tabindex\");
+    }
+  };
+  fit();
+  document.fonts.ready.then(fit);
+  addEventListener(\"resize\", fit);
   readHash();
   if (!location.hash) { sync(); writeHash(\"replace\"); }
   const room = (t, across, back) => {
@@ -4660,6 +4674,7 @@ public def deckScript : String :=
     return i;
   };
   addEventListener(\"keydown\", (e) => {
+    swiped = false;
     if (e.ctrlKey || e.altKey || e.metaKey || e.defaultPrevented) return;
     const t = e.target;
     if (t instanceof Element &&
@@ -4708,6 +4723,7 @@ public theorem deck_script_constant : deckScript =
   };
   let cur = 0;
   let destination = null;
+  let swiped = false;
   let seenHash = location.hash;
   if (\"scrollRestoration\" in history) history.scrollRestoration = \"manual\";
   const mark = () => {
@@ -4755,7 +4771,7 @@ public theorem deck_script_constant : deckScript =
     if (box(snaps[best]).left !== box(snaps[cur]).left) {
       cur = best;
       mark();
-      leave();
+      if (swiped) leave();
       writeHash(\"replace\");
     }
   };
@@ -4776,7 +4792,19 @@ public theorem deck_script_constant : deckScript =
   addEventListener(\"scroll\", sync, { passive: true });
   addEventListener(\"hashchange\", readHash);
   for (const event of [\"wheel\", \"touchstart\", \"pointerdown\"])
-    addEventListener(event, () => { destination = null; }, { passive: true });
+    addEventListener(event, () => { destination = null; swiped = true; }, { passive: true });
+  const fit = () => {
+    for (const d of document.querySelectorAll(\"section.slide .display\")) {
+      if (!d.querySelector(\"math\")) continue;
+      d.classList.remove(\"wide\");
+      const wide = d.scrollWidth > d.clientWidth + 1;
+      d.classList.toggle(\"wide\", wide);
+      if (wide) d.tabIndex = 0; else d.removeAttribute(\"tabindex\");
+    }
+  };
+  fit();
+  document.fonts.ready.then(fit);
+  addEventListener(\"resize\", fit);
   readHash();
   if (!location.hash) { sync(); writeHash(\"replace\"); }
   const room = (t, across, back) => {
@@ -4801,6 +4829,7 @@ public theorem deck_script_constant : deckScript =
     return i;
   };
   addEventListener(\"keydown\", (e) => {
+    swiped = false;
     if (e.ctrlKey || e.altKey || e.metaKey || e.defaultPrevented) return;
     const t = e.target;
     if (t instanceof Element &&
@@ -5014,10 +5043,9 @@ private def linesCss : String :=
   s!".lines-scope \{ padding-inline-start: {cssLength Ir.linesStep}; }\n" ++
   s!".lines-mark \{ {visuallyHidden} }\n"
 
-/-- A display's attributes: its class, and in a deck the tab stop through which a reader scrolls
-it sideways (WCAG 2.2 SC 2.1.1). -/
-public def displayAttrs (cfg : Config) (cls : String) : Array (String × String) :=
-  #[("class", cls)] ++ (if cfg.deck then #[("tabindex", "0")] else #[])
+/-- A label's anchor: an empty span with its id. -/
+public def labelSpan (key : String) (attrs : Array (String × String) := #[]) : Node :=
+  Html.elem "span" #[] (#[("id", Ir.labelAnchor key)] ++ attrs)
 
 /-- The focus ring every focusable element but a stage draws: the focus role's outline, out from
 its box. -/
@@ -5887,8 +5915,7 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
     if cfg.inLink then inlineNodesInto cfg acc body.toList
     else acc.push (Html.elem "a" (inlineNodesInto { cfg with inLink := true } #[] body.toList)
       #[("href", url), ("style", "color: inherit")])
-  | .label key =>
-    acc.push (Html.elem "span" #[] #[("id", Ir.labelAnchor key)])
+  | .label key => acc.push (labelSpan key)
   -- an unresolved reference shows LaTeX's `??`, already diagnosed
   | .ref _ _ text target =>
     match target with
@@ -7925,7 +7952,7 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     fillCarrier cfg n (Html.elem tag (listItemsInto (cfg.deeper false).into #[] items.toList) attrs)
   | .center body =>
     match Ir.displayContent? body with
-    | some content => Html.elem "p" (inlines cfg content) (displayAttrs cfg "display")
+    | some content => Html.elem "p" (inlines cfg content) #[("class", "display")]
     | none =>
       fillCarrier cfg (Ir.frameFills cfg.lists cfg.styles .deck body)
         (Html.elem "div" (blockNodesInto cfg.into #[] body.toList) #[("class", "centered")])
@@ -7937,7 +7964,7 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
   | .role n body =>
     if let some (anchors, pic) := Ir.displayPicture? (.role n body) then
       Html.elem "p" ((inlines cfg anchors).push (pictureSvg cfg pic))
-        (displayAttrs cfg "display")
+        #[("class", "display")]
     else
     -- a title slot's content sets under the slot's template alone
     let cfg := if (Ir.titleSlotOf ((cfg.styles.find? "titlepage").getD {}).slots n).isSome
@@ -8043,7 +8070,7 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     let kids := inlines cfg content
     Html.elem "div"
       (kids.push (Html.elem "span" (inlines cfg num) #[("class", "eqnum")]))
-      (displayAttrs cfg "equation display")
+      #[("class", "equation display")]
   | .abstract body =>
     -- an `<h2>`, so a declared `\style{section}` reaches the abstract's heading
     fillCarrier cfg (Ir.frameFillsOne cfg.lists cfg.styles .deck 0 b)
@@ -8459,19 +8486,18 @@ private def withHeld (held : Array Node) : Node → Node
   | .style s => .style s
   | .script attrs s => .script attrs s
 
-/-- Where a stage's out-of-flow name or anchor stands: its stage's top left corner, a scroll margin
-a stage wide past it, so a scroll into view by its own default lands on its stage. -/
-public def stageCorner : String := "left: 0; top: 0; scroll-margin-inline-end: 100vw;"
+/-- A scroll margin a stage wide past a target at its stage's left edge, so a scroll into view by
+its own default lands on its stage. -/
+public def stageScrollMargin : String := "scroll-margin-inline-end: 100vw;"
 
-/-- A deck's section on no page of its own: its heading out of sight and out of flow, naming the
-section to assistive technology as beamer's bookmark names it to a reader. -/
+/-- A deck's section on no page of its own: its heading out of sight and out of flow at its stage's
+top left corner, naming the section to assistive technology as beamer's bookmark names it. -/
 private def navHeading (cfg : Config) (b : Block) : Node :=
-  withStyle (visuallyHidden ++ " " ++ stageCorner) (blockNode cfg b)
+  withStyle (visuallyHidden ++ " left: 0; top: 0; " ++ stageScrollMargin) (blockNode cfg b)
 
-/-- The label anchors of what sets nothing, at the corner of the stage set next. -/
+/-- The label anchors of what sets nothing, at the top left corner of the stage set next. -/
 private def heldAnchors (keys : Array String) : Node :=
-  Html.elem "span" (keys.map fun k =>
-      Html.elem "span" #[] #[("id", Ir.labelAnchor k), ("style", stageCorner)])
+  Html.elem "span" (keys.map (labelSpan · #[("style", stageScrollMargin)]))
     #[("style", "position: absolute; left: 0; top: 0;")]
 
 /-- Whether a node of the deck's row is a stage: a frame's, a stepped frame's track, a section page. -/
@@ -9315,16 +9341,13 @@ public def classTokens (attrs : Array (String × String)) : List String :=
 public def declaresScroll (own deck : Bool) (tag : String) (attrs : Array (String × String)) :
     Bool :=
   own && (tag == "pre" ||
-    (deck && ((tag == "section" &&
-      (classTokens attrs).any (fun c => c == "slide" || c == "section-page")) ||
-      (classTokens attrs).contains "display")))
+    (deck && tag == "section" &&
+      (classTokens attrs).any (fun c => c == "slide" || c == "section-page")))
 
-/-- Whether a scroll container is a tab stop with a name; a code block and a display, whose
-content reads, take none. -/
+/-- Whether a scroll container is a tab stop with a name; a code block takes no name. -/
 public def scrollReachable : Node → Bool
   | n@(.elem tag attrs _) =>
-    attrOf? attrs "tabindex" == some "0" &&
-      (tag == "pre" || (classTokens attrs).contains "display" || carriesName n)
+    attrOf? attrs "tabindex" == some "0" && (tag == "pre" || carriesName n)
   | .text _ => false
   | .style _ => false
   | .script _ _ => false
@@ -9454,13 +9477,6 @@ public theorem picture_svg_named_contract (cfg : Config) (pic : Ir.Pic.Picture) 
   | undeclared =>
     simp [blockNode, Ir.Block.listScope, pictureSvg, h, Html.elem, carriesName, pictureRole,
       pictureAltAttrs, ha, figureWord_contract]
-
-/-- Artifact-specific. -/
-public theorem display_reachable_contract (cfg : Config) (hd : cfg.deck = true) (tag : String)
-    (kids : Array Node) (cls : String) (hc : (cls.splitOn " ").contains "display" = true) :
-    scrollReachable (Html.elem tag kids (displayAttrs cfg cls)) = true := by
-  have hm : "display" ∈ cls.splitOn " " := by simpa using hc
-  simp [scrollReachable, displayAttrs, hd, Html.elem, attrOf?, classTokens, hm]
 
 /-- Artifact-specific. -/
 public theorem frame_stage_reachable_contract (cfg : Config) (hd : cfg.deck = true)

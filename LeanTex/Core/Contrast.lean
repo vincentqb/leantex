@@ -59,9 +59,9 @@ private structure UseAcc where
   standoutPals : Array Palette := #[]
   /-- Epochs that shipped a title page with a declared ground of its own. -/
   titlePagePals : Array Palette := #[]
-  /-- Epochs that shipped a link, a code block, a summary or a focus-marked stage: where the HTML
-  page draws a focus ring. -/
-  linkPals : Array Palette := #[]
+  /-- Epochs that shipped a link, a code block, a summary, a deck's display or a focus-marked
+  stage: where the HTML page draws a focus ring. -/
+  focusPals : Array Palette := #[]
   pendingPals : Array Palette := #[]
   /-- The colours some handout page covers, each beside its epoch. -/
   coveredNames : Array (Palette × ColorRef) := #[]
@@ -73,7 +73,7 @@ private def pushUnique [BEq α] (xs : Array α) (p : α) : Array α :=
 
 /-- The walk past an element the page draws the focus ring on, under the palette in force. -/
 private def UseAcc.focusable (acc : UseAcc) : UseAcc :=
-  { acc with linkPals := pushUnique acc.linkPals acc.pal }
+  { acc with focusPals := pushUnique acc.focusPals acc.pal }
 
 /-- The effective page of a palette: its `bg`, else the shipped light surface. -/
 private def surfaceOf (pal : Palette) : Color :=
@@ -114,6 +114,9 @@ private structure UseCx where
   markUnder : Option (Option Color × Option Role) := none
   /-- Whether a focused stage standing on the page marks its focus in the focus role. -/
   stageFocus : Bool := false
+  /-- The deck's section pages, and whether this content stands outside every frame. -/
+  sectionPages : SectionPages := {}
+  outside : Bool := false
 
 private def UseCx.atEpoch (cx : UseCx) (pal : Palette) (epoch : Nat) : UseCx :=
   let cx := if cx.inkEpoch.any (· != epoch) then
@@ -207,7 +210,7 @@ private def usesInline (cx : UseCx) (acc : UseAcc) : Inline → UseAcc
     | some (nm, c, _) => acc.use cx nm c
     | none => acc
   | .ref _ _ _ _ =>
-    let acc := { acc with linkPals := pushUnique acc.linkPals acc.pal }
+    let acc := { acc with focusPals := pushUnique acc.focusPals acc.pal }
     match cx.cur with
     | some (nm, c, _) => acc.use cx nm c
     | none => acc
@@ -224,7 +227,7 @@ private def usesInline (cx : UseCx) (acc : UseAcc) : Inline → UseAcc
   | .located _ body => usesInlines cx acc body.toList
   | .role _ body => usesInlines cx acc body.toList
   | .link _ body =>
-    usesInlines cx { acc with linkPals := pushUnique acc.linkPals acc.pal } body.toList
+    usesInlines cx { acc with focusPals := pushUnique acc.focusPals acc.pal } body.toList
   | .decorated kind body =>
     match kind with
     | .underline | .lineThrough => usesInlines cx acc body.toList
@@ -242,7 +245,7 @@ private def usesInline (cx : UseCx) (acc : UseAcc) : Inline → UseAcc
   | .altSteps _ active otherwise =>
     usesInlines cx (usesInlines cx acc active.toList) otherwise.toList
   | .footnote _ body =>
-    usesInlines cx { acc with linkPals := pushUnique acc.linkPals acc.pal } body.toList
+    usesInlines cx { acc with focusPals := pushUnique acc.focusPals acc.pal } body.toList
   | .fill | .hspace _ _ | .rule _ _ _ | .strut _ | .italicCorr _ | .linebreak _ => acc
   | .image _ _ _ => acc
   | .icon _ _ =>
@@ -261,7 +264,10 @@ private def usesBlocks (cx : UseCx) (acc : UseAcc) (xs : List Block) :
   | [] => acc
   | b :: rest =>
     let cx := cx.atEpoch acc.pal acc.epochs.size
-    usesBlocks cx (usesBlock cx acc b) rest
+    -- A section page or the run of content outside the frames is a stage of its own.
+    let acc := if cx.stageFocus && cx.outside && !(b matches .frame ..) &&
+        Ir.outsideUnder cx.sectionPages b != .none then acc.focusable else acc
+    usesBlocks cx (usesBlock { cx with outside := false } acc b) rest
 
 private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
   | .para content => usesInlines cx acc content.toList
@@ -320,9 +326,7 @@ private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
       (usesInlines titleCx { acc with runs := acc.runs + 2 } title.toList) body.toList
   | .disclosure summary _ body =>
     usesBlocks cx (usesInlines cx acc.focusable (Ir.disclosureSummary summary).toList) body.toList
-  | .role n body =>
-    let acc := if cx.slides && (Ir.displayPicture? (.role n body)).isSome then acc.focusable else acc
-    usesBlocks cx acc body.toList
+  | .role _ body => usesBlocks cx acc body.toList
   | .link _ body => usesBlocks cx acc.focusable body.toList
   | .spaced _ body => usesBlocks cx acc body.toList
   | .columns cols => usesColumns cx acc cols.toList
@@ -456,13 +460,14 @@ private def docWalk (doc : Doc) (sitesOnly : Bool := false) : UseAcc :=
       styles := doc.styles
       slides := stageOf doc
       stageFocus := stageOf doc && doc.declaresFocus
+      sectionPages := doc.sectionPages, outside := stageOf doc
       chromeFoot := doc.docClass.record.chrome && doc.foot.isNone &&
         (doc.chrome.hasFooter || hasFrameFoot) }
   let walk := usesBlocks cx { pal := doc.palette } doc.body.toList
   -- premise: Tests.DeclaredColors.focusGateChecks — css=none and pdf-only pages draw no focus ring
   if doc.output.css == some "none" ||
       (!doc.output.formats.isEmpty && !doc.output.formats.contains "html") then
-    { walk with linkPals := #[] } else walk
+    { walk with focusPals := #[] } else walk
 
 /-- The body walk's uses plus the running heads, feet and chrome footer. -/
 private def docUses (doc : Doc) (walk : UseAcc) : UseAcc := Id.run do
@@ -562,7 +567,7 @@ private def elementEvents (walk : UseAcc) : Array (Judged × Palette) :=
     walk.titledPals.map (.element .frameTitle, ·) ++
     walk.standoutPals.map (.element .standout, ·) ++
     walk.titlePagePals.map (.element .titlePage, ·) ++
-    walk.linkPals.map (.element .focusRing, ·)
+    walk.focusPals.map (.element .focusRing, ·)
 
 private def pageSites (doc : Doc) (walk : UseAcc) : Array (Role × Palette) :=
   (pageEvents doc walk).flatMap fun (ev, pal) => eventSites ev pal
