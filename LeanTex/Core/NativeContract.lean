@@ -1,6 +1,8 @@
 module
 
 public import LeanTex.Core.Native
+public import LeanTex.Core.Decl
+import all LeanTex.Core.NativeKey
 import all LeanTex.Core.Native
 import all LeanTex.Core.Decl
 import all LeanTex.Core.KeyVal
@@ -10,7 +12,7 @@ reader reads back as exactly its entries. -/
 
 namespace LeanTex.Core.Native
 
-open LeanTex.Core.Decl LeanTex.Core.KeyVal
+open LeanTex.Core.Decl LeanTex.Core.KeyVal LeanTex.Core.Parse
 
 private theorem dropWhile_self (cs : List Char) (h : cs.head?.any Char.isWhitespace = false) :
     cs.dropWhile Char.isWhitespace = cs := by
@@ -389,9 +391,8 @@ private theorem kept_carried (s : Setting) : ∀ kv ∈ s.kept.pairs, Setting.ca
     simp only [Setting.kept, Setting.pairs, Array.mem_toList_iff, Array.mem_filter] at hkv
     exact hkv.2
 
-/-- The block a setting's carrier holds reads back, entry by entry, as exactly its kept entries: every
-translation note's spelling is the declaration the elaborator reads. -/
-public theorem render_parse_exact (s : Setting) :
+/-- A setting's block reads back, entry by entry, as exactly its kept entries. -/
+public theorem body_read_exact (s : Setting) :
     (splitEntries s.kept.body).map entryOf = s.kept.pairs := by
   have hc := kept_carried s
   have hfacts : ∀ kv ∈ s.kept.pairs, Good (kv.1 ++ " = " ++ kv.2).toList ∧
@@ -410,6 +411,18 @@ public theorem render_parse_exact (s : Setting) :
   · intro e he
     obtain ⟨⟨k, v⟩, hkv, rfl⟩ := List.mem_map.mp he
     exact (hfacts (k, v) hkv).2.1
+
+private theorem kept_head (s : Setting) : s.kept.head = s.head := by
+  cases s <;> rfl
+
+/-- A setting's carrier is its control and a group whose block, the one its translation note names,
+the declaration reader reads back entry by entry as exactly the setting's kept entries. -/
+public theorem render_parse_exact (s : Setting) (pos : Pos) :
+    ∃ body, s.raws pos = #[.ctrl s.head pos, .group body pos] ∧
+      s.kept.render = "\\" ++ s.head ++ "{ " ++ declSrc body ++ " }" ∧
+      (splitEntries (declSrc body)).map entryOf = s.kept.pairs :=
+  ⟨#[.word s.kept.body pos], rfl, by simp [Setting.render, kept_head, declSrc],
+    by simpa [declSrc] using body_read_exact s⟩
 
 /-- Every page key reads back from its name. -/
 public theorem PageKey.ofName_name (k : PageKey) : PageKey.ofName? k.name = some k := by

@@ -166,9 +166,19 @@ def nativeCarrierChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
       "\\end{frame}\n\\end{document}"
   t "a poster width holding another entry sets no other page key"
     (pagesOf oneFace (poster "30, margin=1") == pagesOf oneFace (poster "30, gutter=1"))
-  t "a poster width holding another entry is named dropped"
-    ((dvE (poster "30, margin=1")).any fun d => d.code == "W0101" &&
-      (d.detail.getD "").startsWith "'width = 30, margin=1cm'")
+  t "a poster width holding another entry drops the custom size, named"
+    ((dvE (poster "30, margin=1")).any fun d => d.code == "W0367" && hasStr d.message "size=custom")
+  let geometry (opts : String) : String :=
+    "\\documentclass{article}\n\\usepackage[" ++ opts ++ "]{geometry}\n\\begin{document}\n" ++
+      "Alpha words.\n\\end{document}"
+  t "a geometry value opening a bracket swallows no later key"
+    (pagesOf oneFace (geometry "headsep={(1pt},margin=1in") == pagesOf oneFace (geometry "margin=1in"))
+  t "a geometry value standing as no single entry is that key's loss"
+    ((dvE (geometry "headsep={(1pt},margin=1in")).any fun d =>
+      d.code == "W0104" && d.subject == some "param:usepackage:geometry:headsep")
+  let held : Native.Setting := .page #[(.margin, "1in, numbers = off"), (.parskip, "2pt")]
+  t "a value holding another entry is dropped and the rest kept"
+    (held.kept == .page #[(.parskip, "2pt")] && held.dropped == [("margin", "1in, numbers = off")])
   let whole (s : Native.Setting) : Bool := s.kept == s
   t "every lineno native carries whole" (Compat.linenoNatives.all (whole ·.2))
   t "every package option native carries whole"

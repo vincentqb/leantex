@@ -1,73 +1,15 @@
 module
 
+public import LeanTex.Core.NativeKey
 public import LeanTex.Core.Parse
-public import LeanTex.Core.Decl
+import LeanTex.Core.Decl
 
-/-! The native declarations the surfaces lower into: each head's keys a closed vocabulary, and a
-setting carried to the elaborator as one word its entry reader reads back exactly
-(`Native.render_parse_exact`). -/
+/-! The native settings the surfaces lower into, each carried to the elaborator as one word its entry
+reader reads back exactly (`Native.render_parse_exact`). -/
 
 namespace LeanTex.Core.Native
 
 open LeanTex.Core.Parse
-
-/-- The keys of `\page`. -/
-public inductive PageKey where
-  | size | width | height | margin | vmargin | hmargin | textwidth | textheight | leading
-  | baselineskip | parskip | measure | fontsize | bleed | hyphenate | justify | protrusion
-  | expansion | numbers | marks | markGap | markThickness | linenumbers | modulo | furnituregap
-  | headsep | footskip | rule | frontRule | cropbox | bleedbox | trimbox | artbox | bottom
-  deriving DecidableEq, Repr, Inhabited
-
-public def PageKey.names : List (String × PageKey) :=
-  [("size", .size), ("width", .width), ("height", .height), ("margin", .margin),
-   ("vmargin", .vmargin), ("hmargin", .hmargin), ("textwidth", .textwidth),
-   ("textheight", .textheight), ("leading", .leading), ("baselineskip", .baselineskip),
-   ("parskip", .parskip), ("measure", .measure), ("fontsize", .fontsize), ("bleed", .bleed),
-   ("hyphenate", .hyphenate), ("justify", .justify), ("protrusion", .protrusion),
-   ("expansion", .expansion), ("numbers", .numbers), ("marks", .marks), ("mark-gap", .markGap),
-   ("mark-thickness", .markThickness), ("linenumbers", .linenumbers), ("modulo", .modulo),
-   ("furnituregap", .furnituregap), ("headsep", .headsep), ("footskip", .footskip),
-   ("rule", .rule), ("front-rule", .frontRule), ("cropbox", .cropbox), ("bleedbox", .bleedbox),
-   ("trimbox", .trimbox), ("artbox", .artbox), ("bottom", .bottom)]
-
-public def PageKey.name (k : PageKey) : String := ((PageKey.names.find? (·.2 == k)).map (·.1)).getD ""
-
-public def PageKey.ofName? (n : String) : Option PageKey := PageKey.names.lookup n
-
-/-- Whether an unknown key's help lists the key; LaTeX spellings and riders stay unlisted. -/
-public def PageKey.listed : PageKey → Bool
-  | .headsep | .footskip | .textwidth | .textheight | .baselineskip | .markGap | .markThickness
-  | .modulo | .rule | .frontRule | .cropbox | .bleedbox | .trimbox | .artbox | .bottom => false
-  | _ => true
-
-/-- Whether the key declares the page's physical extent, and so claims the page as declared. -/
-public def PageKey.claims : PageKey → Bool
-  | .size | .width | .height | .margin | .vmargin | .hmargin | .textwidth | .textheight
-  | .bleed => true
-  | _ => false
-
-/-- The keys of `\pdfmeta`. -/
-public inductive MetaKey where
-  | title | author | subject | keywords | url | image | favicon | language | version | standard
-  | intent | intentCondition | intentInfo | intentRegistry | intentComponents | created
-  | modified | trapped
-  deriving DecidableEq, Repr, Inhabited
-
-public def MetaKey.names : List (String × MetaKey) :=
-  [("title", .title), ("author", .author), ("subject", .subject), ("keywords", .keywords),
-   ("url", .url), ("image", .image), ("favicon", .favicon), ("language", .language),
-   ("version", .version), ("standard", .standard), ("intent", .intent),
-   ("intent-condition", .intentCondition), ("intent-info", .intentInfo),
-   ("intent-registry", .intentRegistry), ("intent-components", .intentComponents),
-   ("created", .created), ("modified", .modified), ("trapped", .trapped)]
-
-public def MetaKey.name (k : MetaKey) : String := ((MetaKey.names.find? (·.2 == k)).map (·.1)).getD ""
-
-public def MetaKey.ofName? (n : String) : Option MetaKey := MetaKey.names.lookup n
-
-/-- The keys hyperref's `pdf`-prefixed options give as TeX the elaborator sets as text. -/
-public def MetaKey.hyperref : List MetaKey := [.title, .author, .subject, .keywords]
 
 /-- A native setting a surface lowers into: `\page` entries by key, or `\tokens` entries by the
 length each names, every value spelled as the declaration grammar reads it. -/
@@ -102,14 +44,16 @@ public def kept : Setting → Setting
   | .page es => .page (es.filter fun (k, v) => carried (k.name, v))
   | .tokens es => .tokens (es.filter carried)
 
+/-- The declaration a translation note names, where the setting keeps an entry. -/
+public def note? (s : Setting) : Option String := if s.kept.pairs.isEmpty then none else some s.kept.render
+
 /-- The entries `kept` drops, as written. -/
 public def dropped (s : Setting) : List (String × String) := s.pairs.filter (!carried ·)
 
 /-- The setting's kept entries as the elaborator reads them: its control and one word holding its
 block, never lexed as TeX. -/
 public def raws (s : Setting) (pos : Pos) : Array Raw :=
-  let body := s.kept.body
-  #[.ctrl s.head pos, .group (if body.isEmpty then #[] else #[.word body pos]) pos]
+  #[.ctrl s.head pos, .group #[.word s.kept.body pos] pos]
 
 end Setting
 

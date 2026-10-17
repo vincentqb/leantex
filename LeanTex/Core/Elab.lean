@@ -9677,7 +9677,7 @@ private def flowStyleArm (ctx : Ctx) (n : String) (raws : Array Raw)
     | some (.group body _) =>
       -- A list margin stays fixed as the preamble's are, one value per backend.
       let tk := ctx.preamble.fixLengths Ir.leftMarginNamed
-        (← applyTokens ctx ctx.tokens (rawSrc body) pos (engine := ctx.engineTokens))
+        (← applyTokens ctx ctx.tokens (declSrc body) pos (engine := ctx.engineTokens))
       modify fun st => { st with flowTokens := some tk, flowGen := st.flowGen + 1 }
       return (⟨{ ctx with tokens := tk }, rfl, rfl, rfl, rfl⟩,
         ⟨j + 1, by omega⟩, blocks.push (.setTokens tk), (← get).flowGen)
@@ -13366,7 +13366,7 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
           evs := say evs .E0323 s!"'bottom' in '\\page' expects flush or ragged, got '{v}'"
       | key, v => evs := wrong key v evs
     -- A clean count means the entry applied; a `rule` adds, so it overwrites nothing.
-    if evs.size == before && e.key != "rule" && e.key != "front-rule" then
+    if evs.size == before && !(Native.PageKey.ofName? e.key matches some .rule | some .frontRule) then
       evs := evs.push (.scalar "page" e.key (renderValue e.value) pos)
   return (composeLeading spec, evs)
 
@@ -14221,41 +14221,44 @@ private def applyMeta (ctx : Ctx) (m0 : Meta) (entries : Array Decl.Entry)
     (pos : Pos) : Meta × Array PEvent := Id.run do
   let mut m := m0
   let mut evs : Array PEvent := #[]
+  let undated (key s : String) : PEvent := .say (diagOf ctx .E0323
+    s!"'{key}' in '\\pdfmeta' expects a date, 2026-01-31 or 2026-01-31T09:00:00Z, got '{s}'"
+    (some pos) none)
   for e in entries do
     let before := evs.size
-    match e.key, e.value with
-    | "title", .str s => m := { m with title := some (Ir.metaClean s) }
-    | "language", .str s =>
+    match Native.MetaKey.ofName? e.key, e.value with
+    | some .title, .str s => m := { m with title := some (Ir.metaClean s) }
+    | some .language, .str s =>
       if (Locale.forTag s).isNone then
         evs := evs.push (.say (Diag.of .W0368
           s!"no locale for language '{s}'; English captions and patterns stand in" (some ⟨ctx.file, pos⟩)
           (help := some "the engine ships locale records for: en, fr, de")))
       m := { m with language := some s }
-    | "author", .str s => m := { m with author := some (Ir.metaClean s) }
-    | "subject", .str s => m := { m with subject := some (Ir.metaClean s) }
-    | "keywords", .str s => m := { m with keywords := some (Ir.metaClean s) }
-    | "url", .str s => m := { m with url := some s }
-    | "image", .str s => m := { m with image := some s }
-    | "favicon", .str s => m := { m with favicon := some s }
-    | "version", .str s =>
+    | some .author, .str s => m := { m with author := some (Ir.metaClean s) }
+    | some .subject, .str s => m := { m with subject := some (Ir.metaClean s) }
+    | some .keywords, .str s => m := { m with keywords := some (Ir.metaClean s) }
+    | some .url, .str s => m := { m with url := some s }
+    | some .image, .str s => m := { m with image := some s }
+    | some .favicon, .str s => m := { m with favicon := some s }
+    | some .version, .str s =>
       if s == "1.6" || s == "1.7" || s == "2.0" then
         m := { m with pdfVersion := some s, versionSpan := some ⟨ctx.file, pos⟩ }
       else
         evs := evs.push (.say (diagOf ctx .E0323
           s!"'version' in '\\pdfmeta' expects \"1.6\", \"1.7\" or \"2.0\", got '{s}'" (some pos) none))
-    | "standard", .str s =>
+    | some .standard, .str s =>
       if s == "X-4" then m := { m with pdfx := some s }
       else
         evs := evs.push (.say (diagOf ctx .E0323
           s!"'standard' in '\\pdfmeta' expects \"X-4\", got '{s}'" (some pos) none))
-    | "intent", .str s =>
+    | some .intent, .str s =>
       m := { m with intent := some { m.intent.getD {} with profile := s, span := some ⟨ctx.file, pos⟩ } }
-    | "intent-condition", .str s =>
+    | some .intentCondition, .str s =>
       m := { m with intent := some { m.intent.getD {} with condition := some s } }
-    | "intent-info", .str s => m := { m with intent := some { m.intent.getD {} with info := some s } }
-    | "intent-registry", .str s =>
+    | some .intentInfo, .str s => m := { m with intent := some { m.intent.getD {} with info := some s } }
+    | some .intentRegistry, .str s =>
       m := { m with intent := some { m.intent.getD {} with registry := some s } }
-    | "intent-components", .str c =>
+    | some .intentComponents, .str c =>
       match c.toNat? with
       | some n =>
         if n == 1 || n == 3 || n == 4 then
@@ -14266,20 +14269,19 @@ private def applyMeta (ctx : Ctx) (m0 : Meta) (entries : Array Decl.Entry)
       | none =>
         evs := evs.push (.say (diagOf ctx .E0323
           s!"'intent-components' in '\\pdfmeta' expects 1, 3 or 4, got '{c}'" (some pos) none))
-    | "intent-components", .int n =>
+    | some .intentComponents, .int n =>
       if n == 1 || n == 3 || n == 4 then
         m := { m with intent := some { m.intent.getD {} with components := some n.toNat } }
       else
         evs := evs.push (.say (diagOf ctx .E0323
           s!"'intent-components' in '\\pdfmeta' expects 1, 3 or 4, got {n}" (some pos) none))
-    | "created", .str s | "modified", .str s =>
-      if (PdfDate.parse? s).isSome then
-        m := if e.key == "created" then { m with created := some s } else { m with modified := some s }
-      else
-        evs := evs.push (.say (diagOf ctx .E0323
-          s!"'{e.key}' in '\\pdfmeta' expects a date, 2026-01-31 or 2026-01-31T09:00:00Z, got '{s}'"
-          (some pos) none))
-    | "trapped", .ident w | "trapped", .str w =>
+    | some .created, .str s =>
+      if (PdfDate.parse? s).isSome then m := { m with created := some s }
+      else evs := evs.push (undated e.key s)
+    | some .modified, .str s =>
+      if (PdfDate.parse? s).isSome then m := { m with modified := some s }
+      else evs := evs.push (undated e.key s)
+    | some .trapped, .ident w | some .trapped, .str w =>
       let v := w.toLower
       if v == "true" || v == "false" then
         m := { m with trapped := some (v == "true"), trappedUnknownAt := none }
@@ -14288,13 +14290,15 @@ private def applyMeta (ctx : Ctx) (m0 : Meta) (entries : Array Decl.Entry)
       else
         evs := evs.push (.say (diagOf ctx .E0323
           s!"'trapped' in '\\pdfmeta' expects true, false or unknown, got '{v}'" (some pos) none))
-    | key, v =>
-      if (Native.MetaKey.ofName? key).isSome then
-        let expected := if key == "trapped" then "true, false or unknown"
-          else if key == "intent-components" then "1, 3 or 4" else "a string"
-        evs := evs.push (.say (Decl.wrongType ctx.file "pdfmeta" key expected v pos))
-      else
-        evs := evs.push (.say (Decl.unknownKey ctx.file "pdfmeta" key (Native.MetaKey.names.map (·.1)) pos))
+    | some key, v =>
+      let expected := match key with
+        | .trapped => "true, false or unknown"
+        | .intentComponents => "1, 3 or 4"
+        | _ => "a string"
+      evs := evs.push (.say (Decl.wrongType ctx.file "pdfmeta" e.key expected v pos))
+    | none, _ =>
+      evs := evs.push (.say (Decl.unknownKey ctx.file "pdfmeta" e.key
+        (Native.MetaKey.names.map (·.1)) pos))
     if evs.size == before then
       evs := evs.push (.scalar "pdfmeta" e.key (renderValue e.value) pos)
   return (m, evs)
@@ -14376,7 +14380,7 @@ public inductive PDecl where
   | pdfmeta (src : Option String) (pos : Pos)
   /-- hyperref's metadata lowered by Compat: the construct, its link styles, its dates and trapping
   as `\pdfmeta` entries, each key's TeX. -/
-  | pdfmetaText (what links words : String) (pairs : Array (Native.MetaKey × Array Raw)) (pos : Pos)
+  | pdfmetaText (what links words : String) (pairs : Array (Native.TextMetaKey × Array Raw)) (pos : Pos)
   | captionsetup (scope : Option String) (unclosed : Option Pos) (body : Option String) (pos : Pos)
   /-- url.sty's `\urlstyle`: the family `\url` and `\nolinkurl` set in. -/
   | urlstyle (v : Option String) (pos : Pos)
@@ -14465,17 +14469,17 @@ private def takeOptRun (preamble : Array Raw) (j : Nat) :
   else (none, j)
 
 /-- Each key's group and its value's group, from a lowered metadata group. -/
-private def metaTextPairs : List Raw → Array (Native.MetaKey × Array Raw) →
-    Array (Native.MetaKey × Array Raw)
+private def metaTextPairs : List Raw → Array (Native.TextMetaKey × Array Raw) →
+    Array (Native.TextMetaKey × Array Raw)
   | .group k _ :: .group v _ :: rest, acc =>
-    metaTextPairs rest (match Native.MetaKey.hyperref.find? (·.name == rawSrc k) with
+    metaTextPairs rest (match Native.TextMetaKey.all.find? (·.key.name == rawSrc k) with
       | some key => acc.push (key, v)
       | none => acc)
   | _, acc => acc
 
 /-- The `\pdfmeta` group at `j` when Compat lowered it from TeX values (`Compat.metaTextMark`). -/
 private def metaTextAt (raws : Array Raw) (j : Nat) :
-    Option (String × String × String × Array (Native.MetaKey × Array Raw) × Nat) :=
+    Option (String × String × String × Array (Native.TextMetaKey × Array Raw) × Nat) :=
   match raws[j]? with
   | some (.group body _) =>
     match body.toList with
@@ -14711,7 +14715,7 @@ public def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run d
         else if declCtrl.contains name then
           let j := skipSpaces preamble i
           let src : Option String := match preamble[j]? with
-            | some (.group body _) => some (rawSrc body)
+            | some (.group body _) => some (declSrc body)
             | _ => none
           if src.isSome then
             i := j + 1
@@ -15353,19 +15357,18 @@ convert = none refuses both")
         Ir.foldInline (fun b y => b || y matches .ref .. || y matches .cite ..) false x
       if unresolved then
         modify fun st => { st with diags := st.diags.push (diagOf s.ctx .W0349
-          s!"pdf{key.name} holds a reference or citation, which metadata reads before the page \
+          s!"pdf{key.key.name} holds a reference or citation, which metadata reads before the page \
 numbers it; set as '??' or '?'" (some pos)
           (help := "write the number or the source as text in the metadata value")
-          (subject := some s!"pdf{key.name}")) }
+          (subject := some s!"pdf{key.key.name}")) }
       if text.trimAscii.isEmpty then continue
       info := match key with
         | .title => { info with title := some text }
         | .author => { info with author := some text }
         | .subject => { info with subject := some text }
         | .keywords => { info with keywords := some text }
-        | _ => info
-      evs := evs.push (.scalar "pdfmeta" key.name text pos)
-      said := said.push s!"{key.name} = {Decl.quote text}"
+      evs := evs.push (.scalar "pdfmeta" key.key.name text pos)
+      said := said.push s!"{key.key.name} = {Decl.quote text}"
     let (worded, wordEvs) := stepPdfmeta { s with info } words pos
     unless words.isEmpty do said := said.push words
     let native := (if said.isEmpty then "" else

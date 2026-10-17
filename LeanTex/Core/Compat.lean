@@ -1443,12 +1443,12 @@ private def carry (s : Native.Setting) (pos : Pos) : M (Array Raw) := do
     say .W0101 "a value that stands as no single native entry was dropped" pos
       (detail := some s!"'{k} = {v}' in '\\{s.head}'")
       (help := "write the value as one length, number or name")
-  return s.raws pos
+  return if s.kept.pairs.isEmpty then #[] else s.raws pos
 
-/-- A native setting where it stands, named as `what`'s translation. -/
+/-- A native setting where it stands, named as `what`'s translation where it keeps an entry. -/
 private def setting (what : String) (s : Native.Setting) (pos : Pos)
     (subject : Option String := none) : M (Array Raw) := do
-  became what s.kept.render pos (subject := subject)
+  if let some n := s.note? then became what n pos (subject := subject)
   carry s pos
 
 mutual
@@ -5657,8 +5657,9 @@ with the space its level sets in the preamble, and only the trivlists after it r
     -- A preamble `\topsep` reaches only a trivlist outside every list.
     else if !st.inDef && preamble && n == Ir.trivlistSkipName then
       let native : Native.Setting := .tokens #[(t, src)]
-      became what s!"{native.kept.render}, which a trivlist outside a list reads; \
-every list sets '\\topsep' again from its class's parameters" pos
+      if let some n := native.note? then
+        became what s!"{n}, which a trivlist outside a list reads; every list sets '\\topsep' \
+again from its class's parameters" pos
       carry native pos
     else emit (.tokens #[(t, src)])
   | _, true => emit own
@@ -6122,7 +6123,7 @@ private def dimexprValue (v : String) : M String := do
 `\newgeometry{...}` as `\page{...}`. -/
 private def geometry (opts : String) (pos : Pos)
     (spelling : String := "\\usepackage{geometry}") : M (Array Raw) := do
-  let mut keys : Array (Native.PageKey × String) := #[]
+  let mut keys : Array (Native.PageKey × String × Array String) := #[]
   let mut dropped : Array String := #[]
   let mut droppedExpr : Array String := #[]
   let mut sides : Array (String × String) := #[]
@@ -6130,11 +6131,11 @@ private def geometry (opts : String) (pos : Pos)
     match KeyVal.entry e with
     | (f, none) =>
       if f.endsWith "paper" then
-        keys := keys.push (.size, (f.dropEnd "paper".length).toString)
+        keys := keys.push (.size, (f.dropEnd "paper".length).toString, #[e])
       else if geometryNoFurniture.contains f then
         -- geometry's flags zero the head's separation, the foot's skip, or both.
-        if f != "nofoot" then keys := keys.push (.headsep, "0pt")
-        if f != "nohead" then keys := keys.push (.footskip, "0pt")
+        if f != "nofoot" then keys := keys.push (.headsep, "0pt", #[e])
+        if f != "nohead" then keys := keys.push (.footskip, "0pt", #[e])
       -- premise: driverOptionChecks — a driver option ships the page without it
       else if driverOptions.contains f then
         inertParam "geometry" f spelling "the engine writes its own output" pos
@@ -6155,14 +6156,14 @@ private def geometry (opts : String) (pos : Pos)
         if a.startsWith "\\dimexpr" || b.startsWith "\\dimexpr" then
           droppedExpr := droppedExpr.push s!"{k} = {v}"
         else if k == "margin" then
-          keys := keys ++ #[(.hmargin, lengthOfTeX a), (.vmargin, lengthOfTeX b)]
+          keys := keys ++ #[(.hmargin, lengthOfTeX a, #[e]), (.vmargin, lengthOfTeX b, #[e])]
         else if lengthOfTeX a == lengthOfTeX b then
-          keys := keys.push (if k == "hmargin" then .hmargin else .vmargin, lengthOfTeX a)
+          keys := keys.push (if k == "hmargin" then .hmargin else .vmargin, lengthOfTeX a, #[e])
         else dropped := dropped.push k
       | _, _ :: _ :: _ => dropped := dropped.push k
       | _, _ =>
         if let some key := geometryPageKeys.find? (·.name == k) then
-          keys := keys.push (key, lengthOfTeX v)
+          keys := keys.push (key, lengthOfTeX v, #[e])
         else if k == "headheight" then
           inertParam "geometry" k spelling
             "the running head takes its content's height, and the text block stays where the margins put it" pos
@@ -6175,17 +6176,21 @@ private def geometry (opts : String) (pos : Pos)
   for (a, b, key) in [("top", "bottom", Native.PageKey.vmargin), ("left", "right", .hmargin)] do
     match side a, side b with
     | some va, some vb =>
-      if va == vb then keys := keys.push (key, va)
+      if va == vb then keys := keys.push (key, va, #[a, b])
       else dropped := dropped ++ #[a, b]
     | some _, none => dropped := dropped.push a
     | none, some _ => dropped := dropped.push b
     | none, none => pure ()
   -- geometry reads its keys in order, a later value of a key replacing the earlier one.
   let read := keys.foldl (init := #[]) fun acc kv => (acc.filter (·.1 != kv.1)).push kv
-  let native : Native.Setting := .page read
-  if read.any fun (k, _) => k == .margin || k == .hmargin || k == .textwidth then
+  -- A value standing as no single entry is its keys' loss, named with the others dropped.
+  let (fit, unfit) := read.partition fun (k, v, _) => Native.Setting.carried (k.name, v)
+  for (_, _, items) in unfit do
+    for i in items do unless dropped.contains i do dropped := dropped.push i
+  let native : Native.Setting := .page (fit.map fun (k, v, _) => (k, v))
+  if fit.any fun (k, _, _) => k == .margin || k == .hmargin || k == .textwidth then
     write fun st => { st with measureKnown := true }
-  became spelling native.kept.render pos
+  if let some n := native.note? then became spelling n pos
   for k in dropped do
     unreadParam "usepackage:geometry" (KeyVal.entry k).1 s!"geometry key '{k}'" pos
   unless droppedExpr.isEmpty do
@@ -6268,7 +6273,9 @@ private def beamerposter (opts : String) (pos : Pos) : M (Array Raw) := do
     match customW, customH with
     | some w, some h =>
       let (w, h) := if portrait then (h, w) else (w, h)
-      keys := keys ++ #[(.width, s!"{w}cm"), (.height, s!"{h}cm")]
+      if Decl.wholeValue s!"{w}cm" && Decl.wholeValue s!"{h}cm" then
+        keys := keys ++ #[(.width, s!"{w}cm"), (.height, s!"{h}cm")]
+      else dropped := dropped.push "size=custom (needs width= and height= as numbers)"
     | _, _ =>
       dropped := dropped.push "size=custom (needs width= and height=)"
   else
@@ -6283,7 +6290,7 @@ private def beamerposter (opts : String) (pos : Pos) : M (Array Raw) := do
   let cents := (scaleNum * (fontscale : Int) * 100 + den / 2) / den
   keys := keys.push (.fontsize, ptTenThousandths (2488 * cents))
   let page : Native.Setting := .page keys
-  became "\\usepackage{beamerposter}" ("\\documentclass{poster}" ++ page.kept.render) pos
+  became "\\usepackage{beamerposter}" ("\\documentclass{poster}" ++ (page.note?.getD "")) pos
   for o in dropped do
     sayOnce ("param:usepackage:beamerposter:" ++ (KeyVal.entry o).1) .W0367
       s!"beamerposter option '{o}' is outside the poster model; ignored" pos
@@ -6364,7 +6371,7 @@ private def MetaWord.read (w : MetaWord) (v : String) : Option String :=
 /-- What hyperref's keys declare: its metadata keys with their TeX values, its dates and trapping
 as words, whether a link key was read, and whether a dropped key was named. -/
 private structure HyperrefRead where
-  metadata : Array (Native.MetaKey × String)
+  metadata : Array (Native.TextMetaKey × String)
   words : Array (MetaWord × String)
   linked : Bool
   warned : Bool
@@ -6399,7 +6406,7 @@ UTF-16 otherwise, as the option asks"),
 /-- hyperref's keys, as `\hypersetup` and the package options give them, with its link keys
 written into the setup. -/
 private def hyperrefKeys (opts : String) (pos : Pos) : M HyperrefRead := do
-  let mut metadata : Array (Native.MetaKey × String) := #[]
+  let mut metadata : Array (Native.TextMetaKey × String) := #[]
   let mut words : Array (MetaWord × String) := #[]
   let mut links := (← get).links
   let mut linked := false
@@ -6409,7 +6416,7 @@ private def hyperrefKeys (opts : String) (pos : Pos) : M HyperrefRead := do
   for e in KeyVal.items opts do
     let (k, value) := KeyVal.entry e
     let v := value.getD ""
-    if let some m := Native.MetaKey.hyperref.find? (k == "pdf" ++ ·.name) then
+    if let some m := Native.TextMetaKey.all.find? (k == "pdf" ++ ·.key.name) then
       metadata := metadata.push (m, v)
     if let some w := MetaWord.all.find? (k == ·.hyperref) then
       unless v.trimAscii.isEmpty do
@@ -6425,7 +6432,7 @@ private def hyperrefKeys (opts : String) (pos : Pos) : M HyperrefRead := do
       links := l
       linked := true
     else if value.isNone && KeyVal.unbalanced e then cut := cut.push s!"'{e}'"
-    else if (Native.MetaKey.hyperref.find? (k == "pdf" ++ ·.name)).isNone &&
+    else if (Native.TextMetaKey.all.find? (k == "pdf" ++ ·.key.name)).isNone &&
         (MetaWord.all.find? (k == ·.hyperref)).isNone then
       match hyperrefInert.lookup (optionSpelling e) with
       | some why => inertParam "hyperref" k e why pos
@@ -6503,7 +6510,7 @@ private def hyperrefLowered (what key : String) (r : HyperrefRead) (pos : Pos) :
     #[.ctrl metaTextMark pos, .group #[.word what pos] pos, .group #[.word links pos] pos,
       wordGroup entries pos]
   for (k, v) in r.metadata do
-    body := (body.push (.group #[.word k.name pos] pos)).push
+    body := (body.push (.group #[.word k.key.name pos] pos)).push
       (.group (pdfStringList #[] (← synthAt v pos).toList) pos)
   return #[Raw.ctrl "pdfmeta" pos, .group body pos] ++ styles
 
@@ -6725,7 +6732,7 @@ dictionary itself, without it"
     | some e => some e
     | none => if keep then old.find? (·.1 == key) else none
   let native : Native.Setting := .page boxes.toArray
-  became what (if boxes.isEmpty then "no page box" else native.kept.render) pos
+  became what (native.note?.getD "no page box") pos
   let declared ← if boxes.isEmpty then pure #[] else carry native pos
   write fun st => { st with pageBoxes := boxes.toArray, pageAttr := declared }
 
@@ -7135,8 +7142,8 @@ private def floatRedef? (envName : String) (raws : Array Raw) (j : Nat) (pos : P
     let caption := s!"\\captionsetup[{envName}]\{position=bottom}"
     let (out, natives) ← if assigned.isEmpty then pure (#[], []) else do
       let out ← carry tokens pos
-      if packaged then pure (out, [tokens.kept.render])
-      else pure (out ++ (← synthAt caption pos), [tokens.kept.render, caption])
+      if packaged then pure (out, tokens.note?.toList)
+      else pure (out ++ (← synthAt caption pos), tokens.note?.toList ++ [caption])
     let what := if natives.isEmpty then s!"the built-in \{{envName}}"
       else String.intercalate " " natives
     became s!"\\renewenvironment\{{envName}}" what pos
@@ -8148,11 +8155,12 @@ private def rewriteCtrlLaterNamed (name : String) (pos : Pos) (raws : Array Raw)
     if ← paramArgs args then
       unappliedParam name "the leading keeps its value" pos
       return some (#[], k)
-    unless oneEntry (rawSrc (args.getD 0 #[])) do
+    let factor := (rawSrc (args.getD 0 #[])).trimAscii.toString
+    unless Decl.wholeValue factor do
       sayOnce ("ctrl:" ++ name) .W0104 s!"'\\{name}' is given a factor this engine cannot read; \
 skipped, and the leading keeps its value" pos (help := "give a number, such as \\linespread{1.2}")
       return some (#[], k)
-    return some (← setting s!"\\{name}" (.page #[(.leading, rawSrc (args.getD 0 #[]))]) pos, k)
+    return some (← setting s!"\\{name}" (.page #[(.leading, factor)]) pos, k)
   | "xspace" =>
     -- xspace: a space unless punctuation follows.
     let punct (c : Char) : Bool :=
@@ -9229,7 +9237,7 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
         | _ => none
       let cls0 := s!"\\documentclass{o}\{{native0}}"
       let page : Native.Setting := .page #[(.parskip, komaSkip.getD "0pt")]
-      became s!"\\documentclass\{{cls}}" (cls0 ++ page.kept.render) pos
+      became s!"\\documentclass\{{cls}}" (cls0 ++ (page.note?.getD "")) pos
       return some ((← synthAt cls0 pos) ++ (← carry page pos), k)
     else if cls == "beamer" then
       let o := match opt with
@@ -9533,9 +9541,8 @@ skipped, and the length keeps its value" pos
                 let tokens : Native.Setting := .tokens skips
                 write fun st => { st with listiKept := !resetsListi sbody }
                 became "\\renewcommand{\\normalsize}"
-                  (page.kept.render ++ if skips.isEmpty then "" else tokens.kept.render) pos
-                return some ((← carry page pos) ++
-                  (← if skips.isEmpty then pure #[] else carry tokens pos), js + 1)
+                  ((page.note?.getD "") ++ (tokens.note?.getD "")) pos
+                return some ((← carry page pos) ++ (← carry tokens pos), js + 1)
     let native := s!"\\define \\{cmd}({spec})"
     -- premise: ignoredDefinitionChecks — an ignored built-in's refusal is its one accounting
     unless st.ignoredDefs.contains cmd do

@@ -262,8 +262,8 @@ public def splitEntries (s : String) : List String :=
 
 /-- An entry's key and value: the text before its first `=` and the text after it, each trimmed. -/
 public def entryOf (e : String) : String × String :=
-  let (k, v) := KeyVal.cutAt '=' e.toList
-  (String.ofList (trimChars k), String.ofList (trimChars (v.getD [])))
+  let cut := KeyVal.cutAt '=' e.toList
+  (String.ofList (trimChars cut.1), String.ofList (trimChars (cut.2.getD [])))
 
 /-- Whether a character leaves an entry's split and its cut alike: no space, `=`, comma, quote or
 bracket. -/
