@@ -12614,7 +12614,8 @@ private def collectQuoteList (r : Rd) (a : Acc) (kind : Ir.QuoteKind) (blocks : 
   | .onSteps spec inner :: rest =>
     let a := if r.hides spec then
         (collectQuoteList r a.openHidden kind inner.toList indent first prevRule cont brk).closeHidden
-      else collectQuoteList (r.pendingStep spec) a kind inner.toList indent first prevRule cont brk
+      else collectQuoteList (r.pendingStep spec a.dimHere.cover) a kind inner.toList indent first
+        prevRule cont brk
     collectQuoteList r a kind rest indent (first && inner.all quoteTransparent)
       ((inner.back?.map ruleBlock).getD prevRule) ((inner.back?.map (·.continuesPar)).getD cont)
       false
