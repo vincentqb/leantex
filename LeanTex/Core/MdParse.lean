@@ -119,14 +119,14 @@ public instance : Inhabited Blk := ⟨.rule {}⟩
 
 /-- Which markdown a reader reads: a document's strict dialect, a code file's documentation, where
 an indented block is code, a lazy line continues its paragraph and HTML is literal text, or a Lean
-declaration's, which doc-gen4 also reads formulas between dollars in. -/
+file's, which doc-gen4 also reads formulas between dollars in. -/
 public inductive Dialect where
   | document
   | docstring
   | lean
   deriving Repr, BEq, DecidableEq, Inhabited
 
-/-- Whether a dialect reads a formula between dollars, as doc-gen4 reads a Lean declaration's. -/
+/-- Whether a dialect reads a formula between dollars, as doc-gen4 reads a Lean file's documentation. -/
 @[expose] public def Dialect.formulas : Dialect → Bool
   | .lean => true
   | .document | .docstring => false
@@ -144,8 +144,7 @@ def isMdSpace (c : Char) : Bool :=
   c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\x0c'
 
 /-- ASCII punctuation, the characters a backslash escapes. -/
-def isMdPunct (c : Char) : Bool :=
-  "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~".any (· == c)
+def isMdPunct (c : Char) : Bool := c.toNat < 0x80 && Nfc.isPunctuation c
 
 /-- The spec's Unicode whitespace, which flanking reads: Zs, tab, line feed, form feed, carriage
 return. -/

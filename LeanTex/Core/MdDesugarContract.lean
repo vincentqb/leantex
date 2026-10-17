@@ -61,7 +61,7 @@ public structure Vocab where
   mathKnown := true
 
 /-- The vocabulary a dialect lowers into: a document's with its Lean divisions' requests, a Lean
-docstring's with its formulas. -/
+file's documentation with its formulas. -/
 @[expose] public def vocabularyFor (dialect : Dialect) : Vocab :=
   { vocabulary with requests := if dialect.divisions then [leanDivisionEnv] else []
                     formulas := dialect.formulas }

@@ -1316,7 +1316,8 @@ def benchPasses (n : Nat) : IO Unit := do
     return ns
   let growth : List (String × Nat × String) :=
     [("anchors", 600, "same-titled"), ("frames", 600, "same-titled frames"),
-     ("families", 30000, "faces"), ("merge", 400000, "keys"), ("legible", 20000, "runs"),
+     ("families", 30000, "faces"), ("merge", 400000, "keys"), ("references", 2000, "definitions"),
+     ("legible", 20000, "runs"),
      ("failing", 6000, "uses"), ("arrays", 100000, "elements"),
      ("dictionaries", 100000, "entries")]
   for (label, size, what) in growth do

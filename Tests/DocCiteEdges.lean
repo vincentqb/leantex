@@ -118,7 +118,8 @@ def documentChecks (ref : IO.Ref (List String)) : IO Unit := do
       "[see @ash2001]: https://example.org/x\n\nSee [see @ash2001]."] do
     let src := worksMeta ++ body ++ "\n"
     t s!"md refs: a defined label spelling a citation links to the definition's destination, as \
-commonmark_x links it, the definition set nowhere ({repr body}: {mdLinks src})"
+commonmark_x links it, its text read as a link's text, which cites as Pandoc's reader cites in one, \
+the definition set nowhere ({repr body}: {mdLinks src})"
       ((mdLinks src).any (·.1 == "https://example.org/x") && !hasStr (mdText src) "example.org")
   let src := worksMeta ++ "[p. 3]: https://example.org/x\n\nSee @ash2001 [p. 3].\n"
   t s!"md refs: a defined label after an author's citation links and is no note of it \
@@ -134,6 +135,13 @@ def flankChecks (ref : IO.Ref (List String)) : IO Unit := do
   t s!"md emphasis: underscores between dashes open and close emphasis \
 ({repr (docHtmlOf (elabMd "\u2014_word_\u2014\n").1)})"
     (hasStr (docHtmlOf (elabMd "\u2014_word_\u2014\n").1) "<em>word</em>")
+  for tex in ["a\\emph{\u2014b\u2014}c", "a\\textbf{\u00abb\u00bb}c", "a\\emph{b\u2014}c",
+      "a\\emph{(b)}c", "x \\emph{(b)} y"] do
+    let d := (elabStr (dvDoc "" tex)).1
+    let twin := MarkdownDoc.emit d
+    let marks (h : String) : Nat := (h.splitOn "<em>").length + (h.splitOn "<strong>").length
+    t s!"md twin: emphasis opening or closing on punctuation reads back as emphasis ({repr twin})"
+      (marks (docHtmlOf (elabMd twin).1) == marks (docHtmlOf d) && marks (docHtmlOf d) == 3)
 
 /-- Unicode's full case folding, which CommonMark's labels match under. -/
 def caseFoldChecks (ref : IO.Ref (List String)) : IO Unit := do
@@ -159,7 +167,8 @@ def docstringChecks (ref : IO.Ref (List String)) : IO Unit := do
       (keysOf d == [] && linksOf d == #[("https://example.org/a", "ash2001")])
   let (d, _) := Tests.LeanCite.page "See [@ash2001].\n\n[@ash2001]: https://example.org/x"
   t s!"lean refs: a docstring's defined label spelling a citation links to the definition's \
-destination, as md4c links it, the definition set nowhere ({linksOf d})"
+destination, as md4c links it, its text read as a link's text, which cites where md4c shows the \
+label, the definition set nowhere ({linksOf d})"
     ((linksOf d).any (·.1 == "https://example.org/x") && !hasStr (Ir.blocksText d.body) "example.org")
   let (d, _) := Tests.LeanCite.page "See [the notes][docs] and [ash2001].\n\n[docs]: https://example.org/d"
   t s!"lean refs: a full reference to a docstring's definition is a link beside a citation \

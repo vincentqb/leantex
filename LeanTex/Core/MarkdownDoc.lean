@@ -2,6 +2,7 @@ module
 
 public import LeanTex.Core.Ir
 import LeanTex.Core.CiteKey
+import LeanTex.Core.Nfc
 import Std.Data.HashSet
 
 /-! The markdown backend: the llms.txt twin of the IR the HTML and PDF backends
@@ -437,6 +438,10 @@ markdown door reads it. -/
 private def mdWhite (c : Char) : Bool :=
   c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\x0C'
 
+/-- Whether a delimiter run beside `c` flanks as beside whitespace or punctuation, Unicode's as the
+reader reads them (§6.2). -/
+private def flankEdge (c : Char) : Bool := mdWhite c || Nfc.isSpaceSeparator c || Nfc.isPunctuation c
+
 /-- A run's opening white space, and the rest. -/
 private def leadWhite : List Char → List Char × List Char
   | [] => ([], [])
@@ -460,7 +465,7 @@ close after a `<br>` (§6.2). -/
 private def closesAfterTag (after : Bool) : List Inline → Bool
   | [] => after
   | .text s :: _ => match s.toList with
-    | c :: _ => mdWhite c || (c.toNat < 128 && !c.isAlphanum && c.toNat > 32)
+    | c :: _ => flankEdge c
     | [] => false
   | .linebreak _ :: _ => true
   | .italicCorr _ :: rest => closesAfterTag after rest
@@ -568,6 +573,13 @@ private def inTextAfter (acc : String) : Bool :=
 
 /-- What both readers skip between two spellings that would otherwise read as one. -/
 private def apart : String := "<!-- -->"
+
+/-- What stands apart before and after a run whose content opens or closes on punctuation, where
+`before` ends on neither whitespace nor punctuation or `blocked` says what follows lets no closer
+close: an empty comment, punctuation the run then flanks (§6.2). -/
+private def runApart (before core : String) (blocked : Bool) : String × String :=
+  (if Nfc.isPunctuation core.front && !before.isEmpty && !flankEdge before.back then apart else "",
+   if Nfc.isPunctuation core.back && blocked then apart else "")
 
 /-- What a twin declaring its bibliography writes before a citation it cannot spell, which then
 writes its citations as their marks instead. -/
@@ -727,7 +739,9 @@ private def inlineInto (site : Site) (cites : Bool) (acc : String) (after : Bool
       match styleMark st with
       | some m =>
         let (lead, core, trail) := spaceSplit inner
-        if core.isEmpty then acc ++ lead ++ trail else acc ++ lead ++ m ++ core ++ m ++ trail
+        let (pre, post) := runApart (acc ++ lead) core (trail.isEmpty && !after)
+        if core.isEmpty then acc ++ lead ++ trail
+        else acc ++ lead ++ pre ++ m ++ core ++ m ++ post ++ trail
       | none => acc ++ inner
   | .colored _ _ body => inlinesInto site cites acc none after 0 body.toList
   | .located _ body => inlinesInto site cites acc none after 0 body.toList
@@ -810,14 +824,16 @@ private def inlinesInto (site : Site) (cites : Bool) (acc : String) (prev : Opti
             let (opening, core) := leadingTags core
             let (core, closing) := if closes then (core, "") else trailingTags core
             (lead ++ opening, core, closing ++ trail)
-        let ends := if trail.isEmpty then some m else none
+        let (pre, post) := runApart (acc ++ lead) core (trail.isEmpty && !closes)
+        let ends := if trail.isEmpty && post.isEmpty then some m else none
         if core.isEmpty then
           inlinesInto site cites (acc ++ lead ++ trail) (if (lead ++ trail).isEmpty then prev else none)
             after 0 rest
         else if prev == some m then
-          inlinesInto site cites ((acc.dropEnd m.length).toString ++ lead ++ core ++ m ++ trail) ends
-            after 0 rest
-        else inlinesInto site cites (acc ++ lead ++ m ++ core ++ m ++ trail) ends after 0 rest
+          inlinesInto site cites ((acc.dropEnd m.length).toString ++ lead ++ core ++ m ++ post ++ trail)
+            ends after 0 rest
+        else inlinesInto site cites (acc ++ lead ++ pre ++ m ++ core ++ m ++ post ++ trail) ends after 0
+          rest
       | none =>
         inlinesInto site cites (inlineInto site cites acc (closesAfterTag after rest) (.styled st body)) none
           after 0 rest

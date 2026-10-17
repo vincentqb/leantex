@@ -3,6 +3,7 @@ import LeanTex.Core.Elab
 import LeanTex.Core.FontDb
 import LeanTex.Core.HtmlDoc
 import LeanTex.Core.PdfObj
+import LeanTex.Core.MdDesugar
 
 /-
 The in-process passes bench.lean judges by growth, compiled so they time the engine's code: one
@@ -34,6 +35,12 @@ def sameTitledDeck (n : Nat) : Ir.Doc :=
   (Elab.run "t" ("\\documentclass{slides}\\begin{document}" ++
     String.join (List.replicate n "\\begin{frame}{Topic}\nx\\only<2>{y}\n\\end{frame}\n") ++
     "\\end{document}")).1
+
+/-- A markdown text of `n` paragraphs, each a reference to a label one of `n` definitions after them
+gives. -/
+def referenced (n : Nat) : String :=
+  String.join ((List.range n).map fun i => s!"See [w{i}] here.\n\n") ++
+    String.join ((List.range n).map fun i => s!"[w{i}]: https://example.org/{i}\n")
 
 /-- An invented palette entry coloured over `n` paragraphs, one run each. -/
 def colouredRuns (n : Nat) (name : String) (c : Ir.Color) : Ir.Doc :=
@@ -68,6 +75,10 @@ def main (args : List String) : IO UInt32 := do
       merged.size == s && match merged.back? with
         | some (_, some b) => b.num == toString (s - 1)
         | _ => false
+  for s in [2000, 8000] do
+    let src := referenced s
+    timeRuns n "references" s fun _ =>
+      ((Md.read "t.md" src).1.filter (· matches .ctrl "href" _)).size == s
   for s in [20000, 80000] do
     let doc := colouredRuns s "dk" { r := 0x10, g := 0x10, b := 0x10 }
     timeRuns n "legible" s fun _ => (Contrast.docDiags doc).isEmpty
