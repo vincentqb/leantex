@@ -475,6 +475,8 @@ def declSettingSuiteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   Tests.UnusedSettings.faceChecks ref
   Tests.UnusedSettings.metadataChecks ref
   Tests.DeclSettings.setlistChecks ref oneFace font
+  Tests.DeclSettings.styleFontChecks ref oneFace
+  Tests.DeclSettings.markerScopeChecks ref
   Tests.DeclSettings.listSpacingChecks ref oneFace
   Tests.DeclSettings.listSpacingStyleChecks ref oneFace
   Tests.DeclSettings.frameTitleKeyChecks ref oneFace

@@ -8198,7 +8198,7 @@ were dropped: {o}" pos
     match Ir.Weight.parseSeries code with
     | some (w, width) =>
       -- premise: compatMarkerChecks — a top-level discard leaves the Doc without it
-      if ← preambleProper then
+      if ← docPreamble then
         discard s!"\\fontseries\{{code}}" "'\\begin{document}' selects the normal series"
           s!"fontseries:{code}" pos
         return some (#[], k)
@@ -8224,7 +8224,7 @@ the weight in force stands" pos
       return some (#[], k)
     let lname := rawSrc (args.getD 0 #[])
     -- premise: compatMarkerChecks — a top-level discard leaves the Doc without it
-    if ← preambleProper then
+    if ← docPreamble then
       discard s!"\\selectlanguage\{{lname}}" "'\\begin{document}' selects the main language"
         s!"selectlanguage:{lname}" pos
       return some (#[], k)

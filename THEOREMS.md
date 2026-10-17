@@ -27,7 +27,7 @@ one declaration and fails an owed name once it resolves.
 |---|---|---|
 | Termination | Owed: elaboration terminates. No declaration is marked partial and both knots recurse on lexicographic measures the kernel checks, but do-notation repeat loops still compile to a partial combinator. | owed (U72): a semantic lint over reachable constants, the repeat loops rewritten |
 | Macro visibility | Owed: a call resolves to the definition visible at that point. | owed (U77): `lookupUser_latest_exact` |
-| Registry and input stack | Owed: classification comes from one table; frame pushes decrease the measure; independent keys commute. | owed (U87): `Elab.classify_exact`, `Elab.push_frame_lt`, `Elab.keyed_comm` |
+| Registry and input stack | Owed: classification comes from one table, each marker decoded once before the knot reads it; frame pushes decrease the measure; independent keys commute. | owed (U87): `Elab.classify_exact`, `Elab.push_frame_lt`, `Elab.keyed_comm` |
 | Group scope | A group's end, block or inline, restores the declaration state its start held, with the global assignments logged inside replayed over it; with none logged, a group, an environment holding block content and a braced group of block content with no paragraph end inside each leave the state as they found it. | `texGroup_scope_id`, `elabBlocks_env_scope_id`, `elabBlocks_group_scope_id`; by unfolding: `texGroup_scope_exact`, `inlineGroup_scope_exact` |
 
 ## IR

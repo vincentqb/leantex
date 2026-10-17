@@ -175,7 +175,8 @@ def reservedNameChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
      Compat.vspaceAnchorMark, Compat.frameRestartMark, Compat.cancelOptionsMark,
      Compat.blueprintSiteMark, Compat.linkedBoxRowMark, Compat.alertMark true,
      Compat.alertMark false, BeamerColor.marker, BeamerColor.starMarker,
-     BeamerColor.standoutMarker, BeamerColor.siteMarker] ++
+     BeamerColor.standoutMarker, BeamerColor.siteMarker, Ir.titlePageBeginRole,
+     Ir.titlePageEndRole, Picture.scopeCtrl] ++
     [Ir.HeadingLevel.title, .h1, .h2, .h3, .h4, .h5, .h6].map Parse.headingControl
   let names := markers ++ others
   for n in names do
@@ -203,13 +204,6 @@ def reservedNameChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
     let unknown := doc (" \\zzprobe" ++ rest)
     t s!"'\\{name}{rest}' is an unknown command like any other" (codes spelled == codes unknown)
     t s!"and ships its page ('\\{name}{rest}')" (pageLines fonts spelled == pageLines fonts unknown)
-  let styled (font : String) := dvDoc s!"\\style\{subsection}\{ font = \{{font}\\bfseries} }\n"
-    "\\section{Lead}\n\\subsection{Second}\nBody words."
-  for cmd in ["\\color{red}", "\\normalcolor", "\\selectlanguage{french}", "\\fontseries{b}",
-      "\\fontsize{14pt}{16pt}\\selectfont"] do
-    t s!"a style's '{cmd}' sets the text it styles and nothing beside it"
-      (pageTextOf fonts (styled cmd) == pageTextOf fonts (styled "") &&
-        (dvE (styled cmd)).all (·.code != "W0301"))
   for n in [Parse.splitOpen "center", Parse.splitClose "center",
       Parse.inputEnv "probe.sty", Parse.scopeEnv, Tcolorbox.boxEnv, Parse.markdownTableEnv,
       Parse.markdownDisclosureEnv, Md.leanDivisionEnv, Parse.keptInputEnv "probe.md",

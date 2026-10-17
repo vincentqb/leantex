@@ -1283,6 +1283,30 @@ private def declStyleOf (name : String) : Option Ir.Style :=
   | some (.family, slot) => slot.toNat?.map .family
   | _ => declStyles.lookup name
 
+/-- Whether a control declares a style, size or ink for the rest of its group: a named style or a
+declaring marker. -/
+private def declaresScope (n : String) : Bool :=
+  (declStyles.lookup n).isSome || (Marker.readingOf? n).any (·.declares)
+
+private theorem declStyleOf_none_of_declaresScope {n : String} (h : declaresScope n = false) :
+    declStyleOf n = none := by
+  simp only [declaresScope, Bool.or_eq_false_iff, Option.isSome_eq_false_iff,
+    Option.isNone_iff_eq_none] at h
+  obtain ⟨hl, hd⟩ := h
+  unfold declStyleOf
+  cases hr : Marker.read? n with
+  | none => exact hl
+  | some p =>
+    obtain ⟨k, v⟩ := p
+    rw [Marker.readingOf?_of_read? hr] at hd
+    cases k <;> first | exact hl | simp [Marker.Kind.reading] at hd
+
+private theorem value?_none_of_declaresScope {k : Marker.Kind} {n : String}
+    (hk : k.reading.declares = true) (h : declaresScope n = false) : Marker.value? k n = none :=
+  Marker.value?_none_of_declares hk (by
+    simp only [declaresScope, Bool.or_eq_false_iff] at h
+    exact h.2)
+
 /-- The block-level language switch; a switch back to the main language
 clears the attribute. -/
 private def flowLangUpdate (ctx : Ctx) (tag : String) (st : ESt) : ESt :=
@@ -5654,8 +5678,7 @@ public def recoversInlineName (ctx : Ctx) (name : String) : Bool :=
     else if name.startsWith "insert" then
       TitleDatum.ofName? (name.drop "insert".length).copy
     else none).isNone &&
-  (Marker.value? .ink name).isNone && (ctx.palette.resolve name).isNone &&
-  (Marker.value? .fontSize name).isNone && (declStyleOf name).isNone &&
+  !declaresScope name && (ctx.palette.resolve name).isNone &&
   !(overlayCtrls.contains name) && (Ir.raggedSideOf? name).isNone &&
   (reservedCtrl.lookup name).isNone &&
   !(declCtrl.contains name || runningCtrl.contains name) &&
@@ -5676,7 +5699,9 @@ private theorem elabInlinesCtrl2_unknown (ctx : Ctx) (raws : Array Raw) (i : Nat
     Bool.or_eq_false_iff, Bool.or_false] at hn
   rw [elabInlinesCtrl2]
   simp only [hn, reservedCtrlAt, Bool.false_and, Bool.false_eq_true, ↓reduceIte, pure_bind,
-    Option.isSome_none, Bool.false_or, Option.getD_none]
+    Option.isSome_none, Bool.false_or, Option.getD_none,
+    value?_none_of_declaresScope (k := .ink) rfl, value?_none_of_declaresScope (k := .fontSize) rfl,
+    declStyleOf_none_of_declaresScope]
 
 private theorem recoversInlineName_title (ctx : Ctx) (name : String)
     (hn : recoversInlineName ctx name = true) (st : ESt) :
@@ -6350,9 +6375,8 @@ private def bodySectionHook (ctx : Ctx) (name : String) (raws : Array Raw) (i : 
 /-- Whether a raw sets a style, size, alignment or colour for its group. -/
 private def isDeclaration (ctx : Ctx) : Raw → Bool
   | .ctrl n _ =>
-    n == "centering" || (Ir.raggedSideOf? n).isSome
-      || (declStyles.lookup n).isSome || (ctx.palette.find? n).isSome
-      || (Marker.readingOf? n).any (·.declares)
+    n == "centering" || (Ir.raggedSideOf? n).isSome || declaresScope n
+      || (ctx.palette.find? n).isSome
   | _ => false
 
 /-- False exactly for a palette name followed by a group, its argument. -/
@@ -6570,8 +6594,7 @@ private def pageGroundReset (ctx : Ctx) : EM Ir.Palette := do
   return ctx.palette.restore ctx.basePalette (.role .page)
 
 /-- Whether a control is `\pagecolor`'s or `\nopagecolor`'s marker. -/
-private def isPageGround (n : String) : Bool :=
-  (Marker.read? n).any fun (k, _) => k == .pageColor || k == .pageColorReset
+private def isPageGround (n : String) : Bool := (Marker.readingOf? n).any (·.ground)
 
 /-- The page ground a page-ground marker sets, globally. -/
 private def pageGround (ctx : Ctx) (n : String) (pos : Pos) : EM (Option Ir.Palette) :=
@@ -9403,9 +9426,7 @@ decreasing_by all_goals (simp only [rawWeightList, rawWeight]; omega)
 /-- Whether a declaration at a paragraph's top level stays in force after
 the paragraph, since a paragraph end closes no group (TeXbook ch. 24). -/
 private def carriesPar (ctx : Ctx) (n : String) : Bool :=
-  n != "ttfamily" &&
-    ((Marker.value? .ink n).isSome || (Marker.value? .fontSize n).isSome || (declStyleOf n).isSome
-      || (ctx.palette.resolve n).isSome)
+  n != "ttfamily" && (declaresScope n || (ctx.palette.resolve n).isSome)
 
 /-- `readFontSizeStyle` without its diagnostics. -/
 private def fontSizeStyle? (ctx : Ctx) (spec : String) : Option Style :=

@@ -11,6 +11,49 @@ where they are set; positions are lualatex's, measured on the same documents. -/
 
 namespace Tests.DeclSettings
 
+/-- A style's or KOMA's font value takes each command a declaration marker carries, on the web page
+as written, and sets no word of its own. -/
+def styleFontChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let styled (koma : Bool) (font : String) :=
+    s!"\\documentclass\{{if koma then "scrartcl" else "article"}}\n" ++
+    "\\usepackage[french,english]{babel}\n" ++
+    (if koma then s!"\\setkomafont\{subsection}\{{font}}\n"
+      else s!"\\style\{subsection}\{ font = \{{font}} }\n") ++
+    "\\begin{document}\n\\section{Lead}\n\\subsection{Second}\nBody.\n\\end{document}"
+  let heading (src : String) : String :=
+    ((HtmlDoc.emit {} (elabStr src).1).1.splitOn "<h3>").getD 1 ""
+  for koma in [false, true] do
+    for (cmd, shown) in [("\\color{red}", "ff0000"),
+        ("\\fontseries{l}\\selectfont", "font-weight: 300"), ("\\selectlanguage{french}", "lang=\"fr\""),
+        ("\\fontsize{14pt}{16pt}\\selectfont", "font-size:14pt")] do
+      let src := styled koma cmd
+      t s!"a font value's '{cmd}' styles its heading ({koma}: {heading src})"
+        (hasStr (heading src) shown && !hasStr (heading (styled koma "")) shown)
+      t s!"and sets no word of its own ('{cmd}', {koma})"
+        (pageTextOf oneFace src == pageTextOf oneFace (styled koma "") &&
+          (dvE src).all (·.code != "W0301"))
+
+/-- A declaration a marker carries holds for the rest of its group, past each paragraph break in it
+as a named declaration's does, and the group after a marker taking no argument is a scope. -/
+def markerScopeChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let second (decl : String) : String :=
+    let html := (HtmlDoc.emit {} (elabStr (dvDoc "\\usepackage[french,english]{babel}\n"
+      s!"Lead words.\n\n\{{decl} One words.\\par Two words.}\n\nTail words.")).1).1
+    (((html.splitOn "Two words.").getD 0 "").splitOn "<p").getLast?.getD ""
+  for (decl, shown) in [("\\fontseries{b}\\selectfont", "font-weight: 700"),
+      ("\\color{red}", "color: var(--ltx--ff0000"), ("\\selectlanguage{french}", "lang=\"fr\""),
+      ("\\fontsize{14pt}{16pt}\\selectfont", "font-size:14pt"), ("\\bfseries", "<strong>")] do
+    t s!"'{decl}' holds past a paragraph break in its group ({second decl})"
+      (hasStr (second decl) shown)
+  let w0302 (src : String) := ((dvE src).filter (·.code == "W0302")).map (·.help)
+  let env := "\\newenvironment{probeenv}{Begun }{ Ended}"
+  let use := "\\begin{probeenv}Body words\\end{probeenv} tail words."
+  let after := w0302 (dvDoc "" s!"Lead words. \\nopagecolor\{{env}}{use}")
+  t "a group after '\\nopagecolor' is a scope, as after any marker taking no argument"
+    (!after.isEmpty && after == w0302 (dvDoc "" s!"Lead words. \{{env}}{use}"))
+
 /-- Four nested itemize and four nested enumerate levels, one word on each item. -/
 def nestedLists : String :=
   "\\begin{itemize}\\item Ione\\begin{itemize}\\item Itwo\\begin{itemize}\\item Ithree" ++

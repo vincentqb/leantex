@@ -23,20 +23,22 @@ public def Kind.words : List (String × Kind) :=
 public def Kind.word (k : Kind) : String := ((Kind.words.find? (·.2 == k)).map (·.1)).getD ""
 
 /-- How the passes read a marker: whether it declares a style, size or ink for the rest of its
-group, changes the flowing palette, opens a block where no paragraph is open, and takes the group
-after it as its argument. -/
+group, past each paragraph break in it; changes the flowing palette; sets the page ground; and takes
+the group after it as its argument. -/
 public structure Reading where
   declares : Bool
   flows : Bool
-  opensBlock : Bool
+  ground : Bool
   takesGroup : Bool
 
-public def Kind.reading : Kind → Reading
-  | .ink => ⟨true, true, true, false⟩
-  | .lang => ⟨true, false, true, false⟩
-  | .series | .family | .file | .environBody => ⟨false, false, false, false⟩
+/-- Whether a marker opens a block where no paragraph is open. -/
+public def Reading.opensBlock (r : Reading) : Bool := r.declares || r.ground
+
+@[expose] public def Kind.reading : Kind → Reading
+  | .ink => ⟨true, true, false, false⟩
+  | .lang | .series | .family | .fontSize => ⟨true, false, false, false⟩
   | .pageColor | .pageColorReset => ⟨false, true, true, false⟩
-  | .fontSize => ⟨true, false, false, false⟩
+  | .file | .environBody => ⟨false, false, false, false⟩
   | .crefRange | .crefRangeUp => ⟨false, false, false, true⟩
 
 /-- A marker's control name: a space, its kind's word, a space and the value it carries. -/
@@ -55,6 +57,26 @@ public def readingOf? (n : String) : Option Reading := (read? n).map (·.1.readi
 /-- The value a control's name carries, where it is a marker of kind `k`. -/
 public def value? (k : Kind) (n : String) : Option String :=
   (read? n).bind fun (k', v) => if k' == k then some v else none
+
+/-- A control no declaring marker names carries no value of a declaring kind. -/
+public theorem value?_none_of_declares {k : Kind} {n : String} (hk : k.reading.declares = true)
+    (h : (readingOf? n).any (·.declares) = false) : value? k n = none := by
+  unfold value?
+  unfold readingOf? at h
+  cases hr : read? n with
+  | none => rfl
+  | some p =>
+    obtain ⟨k', v⟩ := p
+    rw [hr] at h
+    by_cases hkk : k' = k
+    · subst hkk
+      simp [hk] at h
+    · simp [hkk]
+
+/-- The reading of a control a marker names is its kind's. -/
+public theorem readingOf?_of_read? {n : String} {k : Kind} {v : String}
+    (h : read? n = some (k, v)) : readingOf? n = some k.reading := by
+  simp [readingOf?, h]
 
 /-- `\fontsize`'s size and leading as one marker's name. -/
 public def fontSizeName (size leading : String) : String :=
