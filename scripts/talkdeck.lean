@@ -4,7 +4,7 @@ import Tests.Support.Rand
 
 /-
 An invented talk-sized deck and its figures, or a deck of distinct rasters, for `bench.lean`.
-Usage: lake build talkDeck && .lake/build/bin/talkDeck <dir> [frames] [rasters] [flat]
+Usage: lake build talkDeck && .lake/build/bin/talkDeck <dir> [frames] [rasters] [flat] [side]
 -/
 
 open LeanTex.Core
@@ -266,17 +266,18 @@ def main (args : List String) : IO UInt32 := do
   let frames := ((args[1]?).bind (·.toNat?)).getD 60
   let rasters := ((args[2]?).bind (·.toNat?)).getD 0
   let flat := args[3]? == some "flat"
+  let side := ((args[4]?).bind (·.toNat?)).getD 2048
   let dir := System.FilePath.mk dir
   IO.FS.createDirAll (dir / "figures")
   if rasters > 0 then
     IO.FS.writeFile (dir / "deck.tex") (rasterDeck rasters)
     for i in [0:rasters] do
       let png := if flat then
-          PngEncode.encodeIdat { width := 2048, height := 2048, bitDepth := 8, colorType := 2 }
-            (Flate.deflate (grainRaw 2048 (731 + i.toUInt64)))
+          PngEncode.encodeIdat { width := side, height := side, bitDepth := 8, colorType := 2 }
+            (Flate.deflate (grainRaw side (731 + i.toUInt64)))
         else
-          PngEncode.encodeIdat { width := 2048, height := 2048, bitDepth := 8, colorType := 6 }
-            (Flate.deflate (panelsRaw 2048 (731 + i.toUInt64)))
+          PngEncode.encodeIdat { width := side, height := side, bitDepth := 8, colorType := 6 }
+            (Flate.deflate (panelsRaw side (731 + i.toUInt64)))
       IO.FS.writeBinFile (dir / "figures" / s!"raster{i}.png") png
     return 0
   IO.FS.writeFile (dir / "deck.tex") (deck frames)

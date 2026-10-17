@@ -57,7 +57,6 @@ private theorem ascii_char (n : Nat) (h : n < 128) :
 /-- `n` bytes, each ASCII, so the string they spell needs no validation. -/
 private abbrev AsciiOf (n : Nat) := { b : ByteArray // b.size = n ∧ ∀ i (h : i < b.size), b[i] < 128 }
 
-/-- Bytes each ASCII spell a string, a character per byte. -/
 private theorem isValidUTF8_of_ascii (b : ByteArray) (h : ∀ i (hi : i < b.size), b[i] < 128) :
     b.IsValidUTF8 := by
   refine .intro (b.data.toList.map fun x => Char.ofNat x.toNat) ?_
@@ -84,7 +83,6 @@ private theorem isValidUTF8_of_ascii (b : ByteArray) (h : ∀ i (hi : i < b.size
   ext1
   simp
 
-/-- `out` with the ASCII byte `x` at `i`. -/
 @[inline] private def setAscii (out : AsciiOf n) (i : Nat) (x : UInt8) (hx : x < 128)
     (hi : i < n) : AsciiOf n :=
   ⟨out.1.set i x (by rw [out.2.1]; exact hi), by
@@ -117,7 +115,7 @@ private theorem grown_spec (n : Nat) (a : ByteArray) (ha : 0 < a.size)
 termination_by n - a.size
 decreasing_by simp; omega
 
-/-- `n` bytes of `=`, base64's padding. -/
+/-- `n` bytes of `=`, base64's padding, built by doubling. -/
 private def pads (n : Nat) : AsciiOf n :=
   let one : ByteArray := ⟨#[61]⟩
   have hone : ∀ i (hi : i < one.size), one[i] < 128 := by
@@ -132,11 +130,64 @@ private def pads (n : Nat) : AsciiOf n :=
     rw [ByteArray.getElem_extract]
     exact spec.2 _ _⟩
 
+/-- 4096 bytes of padding, the block a buffer is filled from. -/
+private def block : AsciiOf 4096 := pads 4096
+
+private theorem fill_size (a : ByteArray) (k : Nat) (hk : k ≤ 4096) :
+    (block.1.copySlice 0 a a.size k).size = a.size + k := by
+  rw [ByteArray.copySlice_eq_append]
+  simp only [ByteArray.size_append, ByteArray.size_extract, ByteArray.size_data, block.2.1]
+  omega
+
+/-- `a` filled with padding to `n` bytes, a block at a time within its capacity. -/
+private def fill (n : Nat) (a : ByteArray) : ByteArray :=
+  if a.size < n then fill n (block.1.copySlice 0 a a.size (min 4096 (n - a.size))) else a
+termination_by n - a.size
+decreasing_by rw [fill_size _ _ (Nat.min_le_left _ _)]; omega
+
+private theorem fill_spec (n : Nat) (a : ByteArray) (ha : a.size ≤ n)
+    (h : ∀ i (hi : i < a.size), a[i] < 128) :
+    (fill n a).size = n ∧ ∀ i (hi : i < (fill n a).size), (fill n a)[i] < 128 := by
+  unfold fill
+  split
+  · next hlt =>
+    have hs := fill_size a (min 4096 (n - a.size)) (Nat.min_le_left _ _)
+    apply fill_spec
+    · omega
+    · intro i hi
+      have hb := block.2.2
+      have hb1 := block.2.1
+      simp only [ByteArray.copySlice_eq_append] at hi ⊢
+      by_cases hia : i < a.size
+      · rw [ByteArray.getElem_append_left (by simp [ByteArray.size_append]; omega),
+          ByteArray.getElem_append_left (by simp; omega),
+          ByteArray.getElem_extract]
+        exact h _ (by omega)
+      · rw [ByteArray.getElem_append_left (by simp [ByteArray.size_append, hb1]; omega),
+          ByteArray.getElem_append_right (by simp; omega),
+          ByteArray.getElem_extract]
+        exact hb _ (by simp [ByteArray.size_extract, ByteArray.size_append, hb1] at hi ⊢; omega)
+  · next hge => exact ⟨by omega, h⟩
+termination_by n - a.size
+decreasing_by rw [fill_size _ _ (Nat.min_le_left _ _)]; omega
+
+/-- `n` bytes of `=` in a buffer of exactly that capacity. -/
+private def padsExact (n : Nat) : AsciiOf n :=
+  let spec := fill_spec n (ByteArray.emptyWithCapacity n) (Nat.zero_le n)
+    (fun _ hi => absurd hi (Nat.not_lt_zero _))
+  ⟨fill n (ByteArray.emptyWithCapacity n), spec.1, spec.2⟩
+
 /-- RFC 4648's base64 alphabet as bytes, read by a sextet's index. -/
 private def alphabet : ByteArray := ⟨(Array.range 64).map fun k => sextet k.toUInt8⟩
 
 private theorem alphabet_size : alphabet.size = 64 := by
   simp [alphabet, ← ByteArray.size_data]
+
+/-- The alphabet is RFC 4648's, a sextet's character at its index. -/
+theorem alphabet_rfc4648 : alphabet.data.toList.map UInt8.toNat =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/".toList.map Char.toNat := by
+  rw [← sextet_rfc4648]
+  simp [alphabet, Array.toList_map, Array.toList_range, List.map_map, Function.comp_def]
 
 /-- The alphabet's character for the low six bits of `k`. -/
 @[inline] private def char (k : UInt32) : UInt8 :=
@@ -163,7 +214,7 @@ termination_by bytes.size - i
 
 public def base64 (bytes : ByteArray) : String :=
   let n := (bytes.size + 2) / 3 * 4
-  let out := groups bytes (pads n) 0 0
+  let out := groups bytes (padsExact n) 0 0
   let whole := bytes.size / 3 * 3
   let o := bytes.size / 3 * 4
   let a := (byteAt bytes whole).toUInt32

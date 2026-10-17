@@ -365,18 +365,21 @@ Only the shared families change the page's bytes, in its `@font-face` rules and 
 A web page carries each image and face program as a base64 data URL. Each character of the URL was
 found through a chain of comparisons on its sextet, which mispredicts on most bytes, and pushed
 onto the URL by a call. The four characters of each group of three bytes are now read from the
-alphabet by index and written over a buffer of the URL's length filled with padding, held ASCII
-throughout so its string needs no validation. Median of 5 per round, two rounds at load 90-135,
-`LEANTEX_BENCH_COMPARE_BINARY` naming the parent's compiler so the two alternate (the pages the
-median of 9):
+alphabet by index and written over a buffer of exactly the URL's length, first filled with padding
+a 4 KiB block at a time, and held ASCII throughout so its string needs no validation.
+`--rasters-only` also builds the large raster deck: one frame showing a 6144×6144 RGB PNG of
+about 105 MB, its URL about 140 MB. Median of 5, two rounds at load 105-200,
+`LEANTEX_BENCH_COMPARE_BINARY` naming the parent's compiler so the two alternate; the second
+round's large deck ran at load 115-128, the first's during a load spike:
 
 | Build | before | after |
 |---|---:|---:|
-| Flat raster deck HTML, cold | 1,962, 1,837 ms (html 1,652, 1,446) | 1,090, 927 ms (html 776, 669) |
-| Flat raster deck HTML, warm | 1,880, 1,950 ms (html 1,618, 1,601) | 1,091, 931 ms (html 792, 674) |
-| Raster deck HTML, warm | 152, 153 ms (html 90, 90) | 122, 122 ms (html 57, 57) |
-| Talk deck HTML, warm | 526, 439 ms (html 198, 177) | 477, 399 ms (html 161, 137) |
-| md-code.md to HTML | 251, 253 ms | 230, 217 ms |
+| Large raster deck HTML, cold | 1,932 ms (html 1,578), peak 774 MiB | 1,046 ms (html 708), peak 775 MiB |
+| Large raster deck HTML, warm | 1,929 ms (html 1,590), peak 764 MiB | 1,051 ms (html 725), peak 767 MiB |
+| Flat raster deck HTML, cold | 2,211, 1,921 ms (html 1,711, 1,596) | 1,144, 1,135 ms (html 749, 736) |
+| Flat raster deck HTML, warm | 2,266, 1,908 ms (html 1,633, 1,597) | 1,346, 1,126 ms (html 765, 717) |
+| Raster deck HTML, warm | 249, 155 ms (html 121, 90) | 184, 127 ms (html 70, 58) |
+| Talk deck HTML, warm | 577, 686 ms (html 207, 194) | 540, 542 ms (html 157, 153) |
 
-The cold talk deck, md-emphasis.md, themed.tex and every PDF build move within the host's noise.
-The artifacts are byte-identical before and after.
+Peaks are unchanged. The cold talk deck, the small pages of `--pages-only` and every PDF build
+move within the host's noise; the artifacts are byte-identical before and after.

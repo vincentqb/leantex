@@ -1104,15 +1104,16 @@ open Slides (say)
 def require (ok : Bool) (why : String) : IO Unit := do
   unless ok do throw (IO.userError s!"talk benchmark: {why}")
 
-/-- The invented talk deck of `scripts/talkdeck.lean`, or its deck of `rasters` distinct rasters,
-`flat` ones passing through planning, staged in `dir` beside the corpus fonts, after building its
-generator. -/
-def stage (dir : System.FilePath) (frames rasters : Nat) (flat : Bool) : IO Unit := do
+/-- The invented talk deck of `scripts/talkdeck.lean`, or its deck of `rasters` distinct rasters
+`side` pixels square, `flat` ones passing through planning, staged in `dir` beside the corpus
+fonts, after building its generator. -/
+def stage (dir : System.FilePath) (frames rasters : Nat) (flat : Bool) (side : Nat) : IO Unit := do
   let built ← (← IO.Process.spawn { cmd := "lake", args := #["build", "-q", "talkDeck"] }).wait
   if built != 0 then die "lake build talkDeck failed"
   let out ← IO.Process.output {
     cmd := ".lake/build/bin/talkDeck"
-    args := #[dir.toString, toString frames, toString rasters] ++ (if flat then #["flat"] else #[]) }
+    args := #[dir.toString, toString frames, toString rasters, if flat then "flat" else "alpha",
+      toString side] }
   if out.exitCode != 0 then die s!"talkDeck failed:\n{out.stderr}"
   Slides.copyFonts dir
 
@@ -1164,18 +1165,20 @@ def pair (binary dir cache : System.FilePath) (format : String) :
 /-- The median of `n` cold and warm pairs of the talk deck, or of `rasters` rasters, in each format,
 each pair reproducing the artifact, and as many of a `LEANTEX_BENCH_COMPARE_BINARY` compiler's
 pairs, alternating with them, reproducing it too. -/
-def run (n frames : Nat) (rasters : Nat := 0) (flat : Bool := false) : IO Unit := do
+def run (n frames : Nat) (rasters : Nat := 0) (flat : Bool := false) (side : Nat := 2048) :
+    IO Unit := do
   let binary ← IO.FS.realPath (← compiler)
   let before ← stamp binary
   let comparison ← match ← IO.getEnv "LEANTEX_BENCH_COMPARE_BINARY" with
     | some path => pure (some (← IO.FS.realPath path))
     | none => pure none
-  let name := if rasters == 0 then "talk deck" else if flat then "flat raster deck" else "raster deck"
+  let name := if rasters == 0 then "talk deck" else if side > 2048 then "large raster deck"
+    else if flat then "flat raster deck" else "raster deck"
   let count := if rasters > 0 then rasters else frames
   say s!"{name} benchmark; N={n}; frames={count}; binary={binary} ({before.1} bytes)"
   say s!"host load before: {← Slides.load}"
   IO.FS.withTempDir fun dir => do
-    stage dir frames rasters flat
+    stage dir frames rasters flat side
     for format in ["pdf", "html"] do
       let mut cold : Array Sample := #[]
       let mut warm : Array Sample := #[]
@@ -1425,6 +1428,7 @@ def main (args : List String) : IO UInt32 := do
   if args == ["--rasters-only"] then
     Talk.run n 0 8
     Talk.run n 0 8 true
+    Talk.run n 0 1 true 6144
     return 0
   if args == ["--families-only"] then
     familyGrowth n
