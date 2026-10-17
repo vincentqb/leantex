@@ -9714,7 +9714,7 @@ private def flowStyleArm (ctx : Ctx) (n : String) (raws : Array Raw)
       match raws[jf]? with
       | some (.group body _) =>
         let pal? ← if skipBlock then pure none else
-          some <$> applyPalette ctx ctx.palette (rawSrc body) pos (decorative := decorative)
+          some <$> applyPalette ctx ctx.palette (declSrc body) pos (decorative := decorative)
             (seeds := seeds) (depth := ctx.groundDepth) (inBody := true)
         pure ⟨(pal?, jf + 1), by omega⟩
       | _ =>
@@ -14485,7 +14485,7 @@ private def metaTextAt (raws : Array Raw) (j : Nat) :
     match body.toList with
     | .ctrl m _ :: .group what _ :: .group links _ :: .group words _ :: rest =>
       if m == Compat.metaTextMark then
-        some (rawSrc what, rawSrc links, rawSrc words, metaTextPairs rest #[], j + 1)
+        some (declSrc what, declSrc links, declSrc words, metaTextPairs rest #[], j + 1)
       else none
     | _ => none
   | _ => none
@@ -14671,7 +14671,7 @@ public def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run d
           match preamble[j]? with
           | some (.group body _) =>
             i := j + 1
-            out := out.push (.palette opts (some (rawSrc body)) pos)
+            out := out.push (.palette opts (some (declSrc body)) pos)
           | _ =>
             out := out.push (.palette opts none pos)
         else if name == "style" then
@@ -14680,7 +14680,7 @@ public def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run d
           match preamble[j]?, preamble[j2]? with
           | some (.group elem _), some (.group body _) =>
             i := j2 + 1
-            out := out.push (.style (some (rawSrc elem, rawSrc body)) pos)
+            out := out.push (.style (some (declSrc elem, declSrc body)) pos)
           | _, _ =>
             out := out.push (.style none pos)
         else if name == "allow" then
@@ -14688,7 +14688,7 @@ public def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run d
           match preamble[j]? with
           | some (.group body _) =>
             i := j + 1
-            out := out.push (.allow (some (rawSrc body)) pos)
+            out := out.push (.allow (some (declSrc body)) pos)
           | _ =>
             out := out.push (.allow none pos)
         else if name == "tikzexternalize" then

@@ -5657,8 +5657,8 @@ with the space its level sets in the preamble, and only the trivlists after it r
     -- A preamble `\topsep` reaches only a trivlist outside every list.
     else if !st.inDef && preamble && n == Ir.trivlistSkipName then
       let native : Native.Setting := .tokens #[(t, src)]
-      if let some n := native.note? then
-        became what s!"{n}, which a trivlist outside a list reads; every list sets '\\topsep' \
+      if let some note := native.note? then
+        became what s!"{note}, which a trivlist outside a list reads; every list sets '\\topsep' \
 again from its class's parameters" pos
       carry native pos
     else emit (.tokens #[(t, src)])
@@ -6191,6 +6191,12 @@ private def geometry (opts : String) (pos : Pos)
   if fit.any fun (k, _, _) => k == .margin || k == .hmargin || k == .textwidth then
     write fun st => { st with measureKnown := true }
   if let some n := native.note? then became spelling n pos
+  -- premise: nativeCarrierChecks — a load setting no key ships the class's page
+  if read.isEmpty && dropped.isEmpty && droppedExpr.isEmpty then
+    if spelling == "\\geometry" then discard spelling "it sets no key" "geometry" pos
+    else
+      unreadParam "usepackage:geometry" "layout" "geometry's default layout" pos
+        (help := "declare the layout with geometry's keys, such as margin=1in")
   for k in dropped do
     unreadParam "usepackage:geometry" (KeyVal.entry k).1 s!"geometry key '{k}'" pos
   unless droppedExpr.isEmpty do
@@ -6273,7 +6279,7 @@ private def beamerposter (opts : String) (pos : Pos) : M (Array Raw) := do
     match customW, customH with
     | some w, some h =>
       let (w, h) := if portrait then (h, w) else (w, h)
-      if Decl.wholeValue s!"{w}cm" && Decl.wholeValue s!"{h}cm" then
+      if (Decl.parseDecimal w).isSome && (Decl.parseDecimal h).isSome then
         keys := keys ++ #[(.width, s!"{w}cm"), (.height, s!"{h}cm")]
       else dropped := dropped.push "size=custom (needs width= and height= as numbers)"
     | _, _ =>
@@ -9840,6 +9846,8 @@ ICC-based colour space; the engine paints each ink in its own separation; skippe
         let key : Native.PageKey := if hook == "shipout/foreground" then .frontRule else .rule
         let entries := rules.map fun (x, y, w, h, ink) =>
           (key, Decl.quote s!"{x}; {y}; {w}; {h}; {ink}")
+        if entries.isEmpty then
+          discard s!"\\AddToHook\{{hook}}" "the hook draws no rule" s!"AddToHook:{hook}" pos
         return (← setting s!"\\AddToHook\{{hook}}" (.page entries) pos)
       | none => pure ()
     if hook == "shipout/before" then
@@ -9936,7 +9944,7 @@ ICC-based colour space; the engine paints each ink in its own separation; skippe
     | "empty" =>
       write fun st => { st with head := #[], foot := #[] }
       let page : Native.Setting := .page #[(.numbers, "off")]
-      became "\\pagestyle{empty}" s!"{page.kept.render}, and no running fields" c.pos
+      became "\\pagestyle{empty}" s!"{page.note?.getD ""}, and no running fields" c.pos
       carry page c.pos
     | _ =>
       sayOnce "ctrl:pagestyle" .W0104

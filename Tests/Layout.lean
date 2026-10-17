@@ -3895,8 +3895,10 @@ def flushBottomChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
   t "kept: raggedbottom is the undeclared page's natural glue" (ragged == bare)
   t "kept: the document's last page stays ragged under flushbottom"
     ((flush.back?.bind (·.back?)).map (fun v => decide (v < floor)) |>.getD false)
+  let unread (s : String) : Array String :=
+    ((elabStr s).2.filter (·.code == "W0104")).map (·.message)
   t "flushbottom is read, not named as a setting ignored"
-    ((elabStr (src "\\flushbottom")).2.all fun d => d.code != "W0104")
+    (unread (src "\\flushbottom") == unread (src ""))
 
 /-- `\vspace*`'s space stays at a page's top, and the line below it takes TeX's interline glue. -/
 def vspaceStarChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do

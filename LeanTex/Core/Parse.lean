@@ -674,6 +674,7 @@ end
 /-- A declaration's group as its reader reads it: one word as written, else its tokens' source. -/
 @[expose] public def declSrc (raws : Array Raw) : String :=
   match raws.toList with
+  | [] => ""
   | [.word w _] => w
   | _ => rawSrc raws
 

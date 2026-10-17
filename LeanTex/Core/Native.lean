@@ -53,7 +53,8 @@ public def dropped (s : Setting) : List (String × String) := s.pairs.filter (!c
 /-- The setting's kept entries as the elaborator reads them: its control and one word holding its
 block, never lexed as TeX. -/
 public def raws (s : Setting) (pos : Pos) : Array Raw :=
-  #[.ctrl s.head pos, .group #[.word s.kept.body pos] pos]
+  let body := s.kept.body
+  #[.ctrl s.head pos, .group (if body.isEmpty then #[] else #[.word body pos]) pos]
 
 end Setting
 

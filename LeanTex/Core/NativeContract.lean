@@ -421,8 +421,13 @@ public theorem render_parse_exact (s : Setting) (pos : Pos) :
     ∃ body, s.raws pos = #[.ctrl s.head pos, .group body pos] ∧
       s.kept.render = "\\" ++ s.head ++ "{ " ++ declSrc body ++ " }" ∧
       (splitEntries (declSrc body)).map entryOf = s.kept.pairs :=
-  ⟨#[.word s.kept.body pos], rfl, by simp [Setting.render, kept_head, declSrc],
-    by simpa [declSrc] using body_read_exact s⟩
+  ⟨if s.kept.body.isEmpty then #[] else #[.word s.kept.body pos], rfl, by
+    have hsrc : declSrc (if s.kept.body.isEmpty then #[] else #[.word s.kept.body pos]) =
+        s.kept.body := by
+      split
+      · next h => simp [declSrc, String.isEmpty_iff.mp h]
+      · rfl
+    exact ⟨by rw [hsrc]; simp [Setting.render, kept_head], by rw [hsrc]; exact body_read_exact s⟩⟩
 
 /-- Every page key reads back from its name. -/
 public theorem PageKey.ofName_name (k : PageKey) : PageKey.ofName? k.name = some k := by

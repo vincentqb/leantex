@@ -168,6 +168,10 @@ def nativeCarrierChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
     (pagesOf oneFace (poster "30, margin=1") == pagesOf oneFace (poster "30, gutter=1"))
   t "a poster width holding another entry drops the custom size, named"
     ((dvE (poster "30, margin=1")).any fun d => d.code == "W0367" && hasStr d.message "size=custom")
+  let unnumbered := dvE (poster "abc")
+  t "a poster width that is no number drops the custom size, named, and ships"
+    (unnumbered.any (fun d => d.code == "W0367" && hasStr d.message "size=custom") &&
+      !unnumbered.any (·.severity == .error))
   let geometry (opts : String) : String :=
     "\\documentclass{article}\n\\usepackage[" ++ opts ++ "]{geometry}\n\\begin{document}\n" ++
       "Alpha words.\n\\end{document}"
@@ -176,6 +180,14 @@ def nativeCarrierChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
   t "a geometry value standing as no single entry is that key's loss"
     ((dvE (geometry "headsep={(1pt},margin=1in")).any fun d =>
       d.code == "W0104" && d.subject == some "param:usepackage:geometry:headsep")
+  t "a geometry load setting no key names the default layout it leaves"
+    ((dvE (geometry "")).any fun d =>
+      d.code == "W0104" && d.subject == some "param:usepackage:geometry:layout")
+  let hook := dvE ("\\documentclass{article}\n\\AddToHook{shipout/background}{}\n" ++
+    "\\begin{document}\nAlpha words.\n\\end{document}")
+  t "an empty shipout hook is noted as nothing, never warned"
+    (hook.any (·.subject == some "ctrl:nothing:AddToHook:shipout/background") &&
+      !hook.any (·.severity == .warning))
   let held : Native.Setting := .page #[(.margin, "1in, numbers = off"), (.parskip, "2pt")]
   t "a value holding another entry is dropped and the rest kept"
     (held.kept == .page #[(.parskip, "2pt")] && held.dropped == [("margin", "1in, numbers = off")])
