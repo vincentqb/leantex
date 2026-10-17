@@ -114,7 +114,7 @@ private def rem (m : Nat) : String :=
 upper's space below with the lower's opening as the page does. -/
 private def htmlPairChecks (ref : IO.Ref (List String)) : IO Unit := do
   let size := Dim.pt 10
-  let rules := HtmlDoc.blockGapRules .beamer size {}
+  let rules := HtmlDoc.blockGapRules .beamer size (HtmlDoc.exAt none size) {}
   let bounds := (rules.filterMap fun
     | .boundary sel v => some (cssSelectorParts sel, v)
     | _ => none).toArray
@@ -173,7 +173,7 @@ private def htmlPairChecks (ref : IO.Ref (List String)) : IO Unit := do
     check ref s!"element boundaries (beamer, browser): the slide's spacer after {name} meets its own space alone"
       (!own.isEmpty && own.all fun (_, v) => !hasStr v "parskip")
   -- A templated block's skips are its padding: the element above meets it on its own space.
-  let shapedBounds := (HtmlDoc.blockGapRules .beamer size {} (shaped := true)).filterMap fun
+  let shapedBounds := (HtmlDoc.blockGapRules .beamer size (HtmlDoc.exAt none size) {} (shaped := true)).filterMap fun
     | .boundary sel v => some (cssSelectorParts sel, v)
     | _ => none
   check ref "element boundaries (beamer, browser): a templated block meets the list above it on the list's own space"
@@ -191,7 +191,7 @@ private def htmlPairChecks (ref : IO.Ref (List String)) : IO Unit := do
     (shapedBounds.all fun (parts, _) => parts.all fun p =>
       !(p.startsWith top && hasStr p "section.block" && !hasStr p "section.block:not(.block-shaped)"))
   check ref "element boundaries (article, browser): the article's sheet owes no adding pair"
-    ((HtmlDoc.blockGapRules .sizeFile size {}).all fun
+    ((HtmlDoc.blockGapRules .sizeFile size (HtmlDoc.exAt none size) {}).all fun
       | .boundary sel _ => !hasStr sel top
       | _ => true)
 

@@ -486,7 +486,8 @@ def htmlRhythmChecks (ref : IO.Ref (List String)) : IO Unit := do
      !hasStr plainPage "    --parskip:")
   -- A selector reaches what its rightmost compound matches, so both sides are read there.
   let subjects : List String := ([Ir.ListLineage.sizeFile, .beamer, .web].flatMap fun l =>
-    (HtmlDoc.blockGapRules l Ir.baseFontSize {}).flatMap fun r => match r with
+    let ex := HtmlDoc.exAt none Ir.baseFontSize
+    (HtmlDoc.blockGapRules l Ir.baseFontSize ex {}).flatMap fun r => match r with
     | .boundary sel _ => (cssSelectorParts sel).filterMap fun part =>
         let s := selSubject part
         if s == "*" || s.isEmpty then none else some s
@@ -698,7 +699,7 @@ def htmlListGapChecks (ref : IO.Ref (List String)) : IO Unit := do
      (s!"{lv n}dl > *", s!"{lv n}blockquote > *")]
   for (cls, lineage, size) in [("article", Ir.ListLineage.sizeFile, Dim.pt 10),
       ("beamer", .beamer, Dim.pt 11)] do
-    let rules := HtmlDoc.blockGapRules lineage size {}
+    let rules := HtmlDoc.blockGapRules lineage size (HtmlDoc.exAt none size) {}
     t s!"html a {cls} description's boundaries are an itemize's at every level"
       (descPairs.all fun (d, u) => (lastGap rules d).isSome && lastGap rules d == lastGap rules u)
 

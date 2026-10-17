@@ -963,8 +963,10 @@ def overlayGapChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
   let d := HtmlDoc.carrierPairs on
   let lists := ovDoc.docClass.record.lists
   let kinds := (Ir.quoteKindsOf ovDoc.body).toList
-  let through := HtmlDoc.blockGapCss lists ovDoc.page.fontSize ovDoc.tokens d (kinds := kinds)
-  let plain := HtmlDoc.blockGapCss lists ovDoc.page.fontSize ovDoc.tokens (kinds := kinds)
+  let through := HtmlDoc.blockGapCss lists ovDoc.page.fontSize (HtmlDoc.exAt none ovDoc.page.fontSize)
+    ovDoc.tokens d (kinds := kinds)
+  let plain := HtmlDoc.blockGapCss lists ovDoc.page.fontSize (HtmlDoc.exAt none ovDoc.page.fontSize)
+    ovDoc.tokens (kinds := kinds)
   t "the overlay deck's carriers stand between its blocks, so its sheet reads through them"
     (!d.isEmpty && hasStr ovCss through && through != plain)
   t "without reading through carriers the judge finds the gaps that vanish"
@@ -1006,7 +1008,8 @@ def overlayGapChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
     (pausePairs 40 == pausePairs 1 && !(pausePairs 1).isEmpty)
   let sheetOf (n : Nat) : String :=
     let doc := pausesDoc n
-    HtmlDoc.blockGapCss doc.docClass.record.lists doc.page.fontSize doc.tokens (pausePairs n)
+    HtmlDoc.blockGapCss doc.docClass.record.lists doc.page.fontSize
+      (HtmlDoc.exAt none doc.page.fontSize) doc.tokens (pausePairs n)
   t "a frame of forty pauses ships the gap sheet of one"
     (sheetOf 40 == sheetOf 1)
 

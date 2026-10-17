@@ -310,12 +310,12 @@ private def htmlChecks (ref : IO.Ref (List String)) : IO Unit := do
       hasStr d "display: flow-root" && hasStr d "height: max(0rem, var(--skip, 0rem))" &&
         hasStr d "--frame-body-before: calc(0rem - var(--parskip, 0rem))")
   check ref "block skips HTML: a negative skip is the box's bottom margin, its only own margin"
-    (HtmlDoc.blockGapRules doc.docClass.record.lists size doc.tokens |>.contains
+    (HtmlDoc.blockGapRules doc.docClass.record.lists size (HtmlDoc.exAt none size) doc.tokens |>.contains
       (.reset ".vskip" "0 0 min(0rem, var(--skip, 0rem))"))
   -- An element owning its space below owns it before a skip too; the follower pays its own.
   for (lineage, lname) in [(Ir.ListLineage.sizeFile, "size file"), (.beamer, "beamer"), (.web, "web")] do
     for sz in [Dim.pt 10, Dim.pt 12] do
-      let rules := HtmlDoc.blockGapRules lineage sz {}
+      let rules := HtmlDoc.blockGapRules lineage sz (HtmlDoc.exAt none sz) {}
       let bounds := rules.filterMap fun
         | .boundary sel v => some (sel, v)
         | _ => none
@@ -329,7 +329,7 @@ private def htmlChecks (ref : IO.Ref (List String)) : IO Unit := do
             ((companion.map fun (_, own) =>
               !hasStr own "+ var(--parskip" && (own == v || hasStr v own || hasStr own v)).getD false)
   -- Across `\bigskip`: `\smallskipamount`, the skip, `\medskipamount` and `\lineskip`, 22 pt.
-  let rules := HtmlDoc.blockGapRules doc.docClass.record.lists size doc.tokens
+  let rules := HtmlDoc.blockGapRules doc.docClass.record.lists size (HtmlDoc.exAt none size) doc.tokens
   let valueOf (p : String → Bool) : Option Int := rules.findSome? fun
     | .boundary sel v => if p sel then remMilliOf v else none
     | _ => none
@@ -426,7 +426,7 @@ private def filOrderChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
 frame opening, a step carrier, a paragraph after a list, and a rule's `<hr>`. -/
 private def sheetChecks (ref : IO.Ref (List String)) : IO Unit := do
   for (lineage, lname) in [(Ir.ListLineage.sizeFile, "size file"), (.beamer, "beamer")] do
-    let rules := HtmlDoc.blockGapRules lineage (Dim.pt 10) {}
+    let rules := HtmlDoc.blockGapRules lineage (Dim.pt 10) (HtmlDoc.exAt none (Dim.pt 10)) {}
     let has (p : String → String → Bool) : Bool := rules.any fun
       | .boundary sel v => p sel v
       | _ => false

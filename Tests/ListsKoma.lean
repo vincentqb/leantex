@@ -450,20 +450,35 @@ def exSpaced (t : String) : String × String :=
    "Alpha paragraph.\n\\begin{itemize}\n\\item Bravo item.\n\\end{itemize}\n\n" ++
      s!"\\vspace\{{t}}\n\nCharlie after.")
 
-/-- A declaration's value in a style attribute or a declaration block, the last one standing. -/
-def styleValue (style key : String) : Option String :=
-  ((style.splitOn ";").filterMap fun d => match d.splitOn ":" with
-    | k :: rest@(_ :: _) =>
-      if k.trimAscii.toString == key then some (":".intercalate rest).trimAscii.toString else none
-    | _ => none).getLast?
-
 /-- A `calc(⟨rem⟩ + …)` margin's leading length, in thousandths of a rem. -/
 def calcRemMilli (v : String) : Option Int :=
   if v.startsWith "calc(" then remMilliOf (((v.drop 5).toString.splitOn " + ").headD "")
   else remMilliOf v
 
-/-- Lengths declared in ex as the web page reads them: at the x-height of the face it ships, the one
-the PDF reads, and at half an em, CSS's own, where it ships none. -/
+/-- The lengths the equivalence documents declare, each in thousandths of an ex. -/
+def exLengths : List (String × Nat) :=
+  [("topsep", 1500), ("partopsep", 1000), ("parsep", 500), ("itemsep", 700),
+   ("smallskipamount", 800), ("medskipamount", 1600), ("bigskipamount", 3200),
+   ("parskip", 600), ("floatsep", 2400)]
+
+/-- An article's body whose lists, quote, centre and skips those lengths space, then a skip. -/
+def exArticle (skip : String) : String :=
+  "Alpha paragraph.\n\\begin{itemize}\n\\item Bravo item.\n\\begin{itemize}\n" ++
+  "\\item Charlie nested.\n\\end{itemize}\n\\item Delta item.\n\\end{itemize}\n\\smallskip\n" ++
+  "Echo after.\n\\medskip\n\n\\begin{quote}\nFoxtrot quoted.\n\\end{quote}\n" ++
+  "\\begin{center}\nGolf centred.\n\\end{center}\n\\vspace{" ++ skip ++ "}\n\nHotel last."
+
+/-- A deck's frames opening on a list, with a block, a centre, a float, a skip and a squeezed list. -/
+def exDeck (skip : String) : String :=
+  "\\begin{frame}[t]\n\\begin{itemize}\n\\item India first.\n\\item Juliet second.\n" ++
+  "\\end{itemize}\n\\begin{block}{Kilo title}\nLima block.\n\\end{block}\n\\begin{center}\n" ++
+  "Mike centred.\n\\end{center}\n\\begin{figure}\nNovember figure.\n\\end{figure}\n" ++
+  "\\vspace{" ++ skip ++ "}\nOscar last.\n\\end{frame}\n\\begin{frame}[squeeze]\n" ++
+  "\\begin{itemize}\n\\item Papa squeezed.\n\\begin{itemize}\n\\item Quebec nested.\n" ++
+  "\\end{itemize}\n\\end{itemize}\n\\end{frame}"
+
+/-- Lengths declared in ex as both backends read them: at the x-height of the face the page ships,
+the one the PDF reads, and at half an em where the page ships none. -/
 def exChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let size := Dim.pt 10
@@ -474,7 +489,8 @@ def exChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := 
     pure ((← y "Bravo") - (← y "Alpha"))
   -- the PDF's 10ex: the list's drop with its topsep, less the drop without
   let pdfEx : Option Dim.Sp := do pure ((← drop "10ex") - (← drop "0pt"))
-  let xh := oneFace.body.xHeight * size / oneFace.body.unitsPerEm
+  let xhAt (sz : Dim.Sp) : Dim.Sp := oneFace.body.xHeight * sz / oneFace.body.unitsPerEm
+  let xh := xhAt size
   let d := (elabStr (src "10ex")).1
   let opening (fonts : Option Font.FontSet) : Option Int := do
     let decls ← screenRuleOf (HtmlDoc.baseCss { fonts := fonts } d) ":where(* + .list-set-1)"
@@ -489,7 +505,7 @@ def exChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := 
   let (_, tree, _) := HtmlDoc.emitTree { fonts := some oneFace } d
   let skips := (elemAttrsList (· == "div") #[] tree.toList).filterMap fun (_, attrs) =>
     if (((HtmlDoc.attrOf? attrs "class").getD "").splitOn " ").contains HtmlDoc.skipClass then
-      (HtmlDoc.attrOf? attrs "style").bind (styleValue · "--skip") |>.bind remMilliOf
+      (HtmlDoc.attrOf? attrs "style").bind (cssProperty · "--skip") |>.bind remMilliOf
     else none
   t "ex lengths: the web page's skip box stands the PDF's 10ex where it ships the face"
     (match pdfEx with
@@ -501,7 +517,32 @@ def exChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := 
     "--parskip" |>.bind remMilliOf
   t "ex lengths: the web page's declared parskip of 1ex reads the face it ships"
     (parskip == some (screen xh))
-  t "ex lengths: a page shipping no face reads an ex as half an em, as CSS does"
+  t "ex lengths: a page shipping no face reads an ex as half an em, its x-height unknown"
     (opening none == some (screen (10 * (size / 2))))
+  -- Each length in ex against the same in sp at the face's x-height: one document to both backends.
+  let pair (cls : String) (body : String → String) : Ir.Doc × Ir.Doc :=
+    let spell (m : Nat) : String := s!"{m / 1000}.{((toString (m % 1000 + 1000)).drop 1).toString}ex"
+    let pre (sp : Nat → String) : String :=
+      String.join (exLengths.map fun (n, m) => "\\setlength{\\" ++ n ++ "}{" ++ sp m ++ "}\n")
+    let exDoc := (elabStr (doc cls (pre spell) (body (spell 2500)))).1
+    let at_ := xhAt exDoc.page.fontSize
+    let inSp (m : Nat) : String := s!"{(m : Int) * at_ / 1000}sp"
+    (exDoc, (elabStr (doc cls (pre inSp) (body (inSp 2500)))).1)
+  let places (d : Ir.Doc) : List (Nat × Dim.Sp × Dim.Sp) :=
+    (layoutOf oneFace d).pages.toList.zipIdx.flatMap fun (p, i) =>
+      (p.lines.filter (!·.furniture)).toList.map fun l => (i, l.x, l.y)
+  let page (d : Ir.Doc) : String :=
+    let css := HtmlDoc.baseCss { fonts := some oneFace } d
+    let (_, tree, _) := HtmlDoc.emitTree { fonts := some oneFace } d
+    "\n".intercalate ((css.splitOn "\n").filter fun line =>
+      !exLengths.any fun (n, _) => line.startsWith ("    --" ++ n ++ ":")) ++
+      String.join (tree.toList.map (Html.render · 0))
+  for (name, cls, body) in [("an article", "[10pt]{article}", exArticle),
+      ("a deck", "{beamer}", exDeck)] do
+    let (exDoc, spDoc) := pair cls body
+    t s!"ex lengths: {name} declaring its spaces in ex sets the PDF of the same spaces in sp"
+      (!(places exDoc).isEmpty && places exDoc == places spDoc)
+    t s!"ex lengths: {name} declaring its spaces in ex sets the web page of the same spaces in sp"
+      (page exDoc == page spDoc)
 
 end Tests.ListsKoma

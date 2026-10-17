@@ -1969,10 +1969,11 @@ def reports : List Report := [
       "seven assertions; five fail built against c9dd4f3d6's tree; the two that hold there guard the label staying off the next item and off a list the inner first item holds, where that item opens on a centre or a description term, which the reviews found the first cuts let through; flush right the labels stand by their line's text as a lone label does, where LaTeX sets the whole list flush left"]
     state := .guarded "c9dd4f3d" .before .author },
   { id := "R219", date := "2026-10-17"
-    what := "the web page read an ex as half an em in its list, quotation and skip gaps and its declared parskip, and as nothing in its skip registers and beamer's trivlist and float spaces, where the PDF and the browser read the x-height of the face the page ships"
+    what := "the web page read an ex as half an em in its list, quotation and skip gaps and its declared parskip, and as nothing in its skip registers, beamer's trivlist and float spaces and a frame's opening, where the PDF and the browser read the x-height of the face the page ships"
     pins := [check% Tests.ListsKoma.exChecks]
     accept := ["lualatex on invented probes, article at 10pt with enumitem's topsep at 10ex and itemsep at 2ex: a serif face of 475 thousandths opens the list 47.5pt down, Latin Modern 43.1pt; in Chromium this tree's web page stands those gaps at 3.957 and 0.790 of its line height where lualatex's stand at 3.958 and 0.792 of its baselineskip, and at 3.590 and 0.717 in Latin Modern against 3.592 and 0.718, where the tree before stood 4.165 and 0.832 in both",
-      "five assertions; three fail built against a22f93197's tree; the two that hold there guard the PDF's own reading of the face and CSS's half em where the page ships no face"]
+      "a deck in a sans face declaring its partopsep at 3ex opens a frame's list with lualatex's 42.19pt to the first baseline and the PDF's 42.17; the web page's frame opening now stands at 7.493vh, its pt equivalent's 7.492vh, where it stood at 1.102vh, the partopsep read as nothing",
+      "nine assertions; five fail built against a22f93197's tree, among them an article's and a deck's web page declaring nine lengths and a skip in ex against the same in sp; the four that hold there guard the PDF's own reading of the face and the half em of a page shipping no face"]
     state := .guarded "a22f9319" .before .author }
 ]
 

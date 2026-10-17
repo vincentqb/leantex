@@ -4108,7 +4108,7 @@ private def MathEnv.forStyles (geom : Geom) (fs : FontSet)
     (styles : Array Ir.Style) (measures : Option MeasureValues) : Option MathEnv := do
   let (idx, font, consts) ← fs.mathFont?
   let sty := styles.foldl (applyStyle geom.scale) {}
-  let xHeight := fs.body.xHeight * geom.fontSize / fs.body.unitsPerEm
+  let xHeight := fs.xHeightAt geom.fontSize
   let values := measures.getD (MeasureValues.horizontal geom.textWidth geom.textHeight)
   let (runSize, _) := sty.metricsIn geom.fontSize xHeight values
   let around := fs.get (fs.lookup sty.slot sty.weight.css sty.italic)
@@ -10360,7 +10360,7 @@ public def tableFit (geom : Geom) (fs : FontSet) (imgs : Image.Store) (colsep av
     (cols : Array Ir.ColSpec) (padL padR : Bool) (rows : Array (Array (Array Ir.Inline)))
     (spans : Array Ir.ColSpan) : TableFit := Id.run do
   unless cols.any (·.narrows) do return {}
-  let xHeight := fs.body.xHeight * geom.fontSize / fs.body.unitsPerEm
+  let xHeight := fs.xHeightAt geom.fontSize
   let need (step : Option String) : Sp :=
     tableNeed fs geom xHeight imgs cols padL padR rows spans colsep
       (match step with
@@ -12124,7 +12124,7 @@ public def blockTitleRule (geom : Geom) (fs : FontSet) (styles : Ir.Styles) (kin
   | .box => none
   | .lines height depth =>
     let font := Ir.blockTitleFont styles kind
-    let xHeight := fs.body.xHeight * geom.fontSize / fs.body.unitsPerEm
+    let xHeight := fs.xHeightAt geom.fontSize
     let (lead, cap) := titleMetricsIn geom fs xHeight font
     let (face, size) := titleFaceIn geom fs xHeight font
     let leaded (f : Font) (sz : Sp) : Sp × Sp :=
@@ -19323,7 +19323,7 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
   -- One `furnitureBand` per side from one ink and gap (`furniture_symmetric`).
   let runInk := scale font.ascent + scale (-font.descent)
   let corr := scale (-font.descent)
-  let xHeight := scale font.xHeight
+  let xHeight := fs.xHeightAt geom.fontSize
   let tokenLen (n : String) : Option Sp :=
     (doc.tokens.find? n).map fun g => (g.resolve geom.fontSize xHeight).width
   let headsep := doc.page.headsep <|> tokenLen "headsep"

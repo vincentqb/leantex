@@ -1089,6 +1089,10 @@ namespace FontSet
 
 public def body (fs : FontSet) : Font := fs.fonts[0]!
 
+/-- The body face's x-height at `size`, the length an ex reads in either backend. -/
+public def xHeightAt (fs : FontSet) (size : Int) : Int :=
+  fs.body.xHeight * size / fs.body.unitsPerEm
+
 public def get (fs : FontSet) (i : Nat) : Font := fs.fonts[i]?.getD fs.body
 
 /-- The set of one face, every slot and variant mapped to it. -/
