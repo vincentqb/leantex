@@ -338,8 +338,16 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
   | .W0381 => dvE (w := w) (dvDoc "" "\\qty{9.81}{\\banana}")
   | .W0001 => dvE (w := w) (dvDoc "" "x\n\\end{document}\nleft over")
   | .W0003 => dvL (w := w) one (dvDoc "" "$x^2$")
-  | .W0005 => dvL (w := w) one (dvDoc "\\page{ width = 60pt, margin = 10pt, justify = on }\n"
-      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+  | .W0005 =>
+    -- Located, so each states how far it runs, a stage's with its frame or section page.
+    let w := { w with located := true }
+    let wide := String.ofList (List.replicate 90 'w')
+    dvL (w := w) one (dvDoc "\\page{ width = 60pt, margin = 10pt, justify = on }\n"
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") ++
+    dvL (w := w) one (dvDeck "\\theme{moloch}\n" ("\\begin{frame}\n" ++ wide ++ "\\footnote{" ++
+      wide ++ "}\n\\end{frame}\n\\begin{frame}\n\\begin{columns}\\column{0.7\\textwidth}Left." ++
+      "\\column{0.7\\textwidth}Right.\n\\end{columns}\n\\end{frame}\n\\section{" ++ wide ++ "}\n" ++
+      "\\begin{frame}\nx\n\\end{frame}"))
   | .W0006 =>
     let face : FontDb.Face := { path := "fonts/DemoSerif-Regular.otf"
                                 family := "Demo Serif"

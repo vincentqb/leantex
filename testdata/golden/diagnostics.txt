@@ -341,6 +341,19 @@
 ── W0005 (degraded) overfull line, no feasible break, where no re-flowed declared line accounts for it
 ⚠ [W0005]
   overfull line; no feasible break
+  160.215pt too wide
+⚠ [W0005]
+  a frame's columns run past its measure
+  frame 2: 122.457pt too wide
+⚠ [W0005]
+  a frame's footnote runs past its measure; no feasible break
+  frame 1: 313.422pt too wide
+⚠ [W0005]
+  a frame's line runs past its measure; no feasible break
+  frame 1: 468.315pt too wide
+⚠ [W0005]
+  a section page's line runs past its measure; no feasible break
+  the section page: 835.262pt too wide
 ── W0006 (degraded) declared face variant missing; another face substitutes
 ⚠ [W0006]
   'Demo Serif' has no bold face; 'Demo Serif Regular' substitutes

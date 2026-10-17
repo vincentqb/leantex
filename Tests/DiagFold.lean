@@ -204,7 +204,8 @@ def foldChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((headLines err "E0304").length == 3 && r.errors == 3)
 
 /-- A re-flowed declared line is one W0386 per paragraph, carrying any overrun of its lines (W0005's
-loss), so every line past its margin is accounted once, in the PDF's output only. -/
+loss), so every line past its margin is accounted once, for the PDF and where a run no space breaks
+overruns, the web page too. -/
 def reflowAccountChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let some font ← loadTestFont "OpenSans-Regular.ttf"
@@ -262,10 +263,11 @@ where it opens ({reflows.map (·.detail)})"
       (headLines err "W0005").all (fun l => hasStr l s!"{file}:12:1"))
   let (htmlErr, _, _) ← sink plain #[] out.diags #[.html]
   let (pdfErr, _, _) ← sink plain #[] out.diags #[.pdf]
-  t "reflow account: an HTML build prints neither page loss, a PDF build both"
-    ((headLines htmlErr "W0386").isEmpty && (headLines htmlErr "W0005").isEmpty &&
+  t s!"reflow account: an HTML build prints the losses a run no space breaks makes, a PDF build all \
+({(reflows ++ overfull).map (·.output.map (·.label))})"
+    ((headLines htmlErr "W0386").length == 1 && (headLines htmlErr "W0005").length == 1 &&
       (headLines pdfErr "W0386").length == 2 && (headLines pdfErr "W0005").length == 1 &&
-      (reflows ++ overfull).all (·.output == some .pdf))
+      reflows.map (·.output) == #[some .pdf, none] && overfull.all (·.output.isNone))
   let (err, _, r) ← sink plain #["W0386"] out.diags
   t s!"reflow account: accepting the re-flow accepts the overrun it carries and no other \
 ({Diag.acceptedLosses r.accepted})"
@@ -336,8 +338,9 @@ carry it ({oReflows.map (·.message)})"
       sReflows.all (fun d => d.detail.any (hasStr · "2 declared lines ship as")) &&
       (headLines sErr "W0386").length == 1 && !hasStr sErr "sites)")
 
-/-- A stage's line past its measure, overfull or re-flowed, is named by an HTML build too, once per
-site at the furthest any step set it, as TeX's Overfull \hbox states how far; a poster's are the PDF's. -/
+/-- A stage's line, footnote or columns past its measure, overfull or re-flowed, is named in its
+stage's words by an HTML build too, once per site at the furthest any step set it, as TeX's Overfull
+\hbox states how far past its protrusion; a flow page's is the PDF's but a run no space breaks. -/
 def frameOverfullChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let some font ← loadTestFont "OpenSans-Regular.ttf"
@@ -386,9 +389,47 @@ words, at the furthest its steps set it ({(overfull deck).map (·.detail)}, \
     ((overfull flow).size == 1 && (overfull flow).all fun d =>
       d.message == "overfull line; no feasible break" &&
       d.detail == some s!"{(furthest flow flowRight).toPtString}pt too wide")
-  t s!"frame overfull: a poster, a face the web page re-flows, keeps its lines the PDF's \
-({(overfull poster).map (·.output.map (·.label))})"
-    (!(overfull poster).isEmpty && (overfull poster).all (·.output == some .pdf))
+  t s!"frame overfull: a run no space breaks overruns the web page's measure too, a flow page's or \
+a poster's ({(overfull flow ++ overfull poster).map (·.output.map (·.label))})"
+    (!(overfull poster).isEmpty && (overfull flow ++ overfull poster).all (·.output.isNone))
+  -- A footnote, a row of columns and a section page's title past their measure, in their stage's
+  -- words; the web page sets the notes apart, overrun there by a run no space breaks.
+  let stagedDoc := located (String.intercalate "\n" [
+    "\\documentclass{slides}", "\\theme{moloch}", "\\begin{document}", "\\begin{frame}",
+    "Opening.\\footnote{" ++ wide ++ "}", "\\end{frame}", "\\begin{frame}",
+    "\\begin{columns}\\column{0.7\\textwidth}Left words.\\column{0.7\\textwidth}Right words.",
+    "\\end{columns}", "\\end{frame}", "\\section{" ++ wide ++ "}", "\\begin{frame}", "Closing.",
+    "\\end{frame}", "\\end{document}"])
+  let staged := layoutOf fs stagedDoc
+  let said (start : String) := (overfull staged).filter (·.message.startsWith start)
+  let tooWide (lead : String) (d : Diag) := (d.detail.getD "").startsWith lead &&
+    (d.detail.getD "").endsWith "pt too wide"
+  t s!"frame overfull: a frame's footnote past its measure says so, with its frame and how far \
+({(said "a frame's footnote").map (·.detail)})"
+    ((said "a frame's footnote runs past its measure").size == 1 &&
+      (said "a frame's footnote").all fun d => tooWide "frame 1: " d && d.output.isNone)
+  t s!"frame overfull: columns wider together than their frame's measure overrun it in both \
+artifacts ({(said "a frame's columns").map (·.detail)})"
+    ((said "a frame's columns run past its measure").size == 1 &&
+      (said "a frame's columns").all fun d => tooWide "frame 2: " d && d.output.isNone)
+  t s!"frame overfull: a section page's line past its measure names the section page, no frame \
+({(said "a section page's").map (·.detail)})"
+    ((said "a section page's line runs past its measure").size == 1 &&
+      (said "a section page's").all fun d => tooWide "the section page: " d && d.output.isNone &&
+        !(overfull staged).any (hasStr ·.message "a frame's line"))
+  -- Protrusion hangs a line's first quote into the margin; the overrun is what runs past it.
+  let zeds := String.ofList (List.replicate 90 'z')
+  let protruded := layoutOf fs (located (String.intercalate "\n" [
+    "\\documentclass{article}", "\\usepackage{microtype}", "\\page{ width = 220pt, margin = 20pt }",
+    "\\begin{document}", "Opening.", "", "``" ++ zeds ++ " and more words after it.",
+    "\\end{document}"]))
+  let hung := (bodyLines protruded).filter fun l => hasStr (lineText l) zeds
+  let ran := hung.foldl (fun m l => max m (l.x + l.setWidth - flowRight)) 0
+  t s!"frame overfull: a protruding line states how far its ink runs past the measure, as TeX's \
+margin kerns stand inside its box ({(overfull protruded).map (·.detail)}, {ran.toPtString}, \
+{hung.map (·.x.toPtString)})"
+    ((overfull protruded).size == 1 && hung.any (·.x < Dim.pt 20) &&
+      (overfull protruded).all fun d => d.detail == some s!"{ran.toPtString}pt too wide")
 
 /-- The doors a diagnostic is made through, by their call heads, with whether each takes a subject. -/
 def receiverDoors : List (String × Bool) := [("diag", false), ("diagOf", true), ("warn", false)]
