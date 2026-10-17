@@ -12,10 +12,12 @@ import Std.Data.String.ToNat
 
 namespace LeanTex.Core.Parse
 
-/-- The raws the compatibility pass left alone return exactly at the place standing for them. -/
-public theorem spliceNatives_nativeRaw (natives : Array (Array Raw)) (k : Nat) (p : Pos)
-    (h : k < natives.size) : spliceNatives natives #[] [nativeRaw k p] = natives[k] := by
-  simp [spliceNatives, spliceNative, nativeRaw, Array.getD, h]
+/-- The raws the compatibility pass left alone return at the place standing for them, under the
+invocations enclosing the place. -/
+public theorem spliceKeptList_keptRaw (kept : Array (Array Raw)) (k : Nat) (p : Pos)
+    (h : k < kept.size) :
+    spliceKeptList kept #[] [keptRaw k p] = kept[k].map (withOrigins p.origins) := by
+  simp [spliceKeptList, spliceKept, keptRaw, Array.getD, h]
 
 end LeanTex.Core.Parse
 
@@ -205,23 +207,20 @@ private theorem inputEnvFile?_inputEnv (f : String) :
   apply String.ext
   simp [String.toList_append, show "input ".length = 6 by decide]
 
-private theorem inputEnvFile?_nativeInputEnv (f : String) :
-    Parse.inputEnvFile? (Parse.nativeInputEnv f) = some f := by
-  have hs : ("native " ++ f).startsWith "native " = true := by
+private theorem inputEnvFile?_keptInputEnv (f : String) :
+    Parse.inputEnvFile? (Parse.keptInputEnv f) = some f := by
+  have hs : ("kept input " ++ f).startsWith "kept input " = true := by
     simp [String.toList_append]
-  have hi : ("native " ++ f).startsWith "input " = false := by
+  have hi : ("kept input " ++ f).startsWith "input " = false := by
     simp [String.toList_append]
-  simp only [Parse.inputEnvFile?, Parse.nativeInputEnv, hs, hi, ite_true, Bool.false_eq_true,
+  simp only [Parse.inputEnvFile?, Parse.keptInputEnv, hs, hi, ite_true, Bool.false_eq_true,
     ite_false, Option.some.injEq]
   apply String.ext
-  simp [String.toList_append, show "native ".length = 7 by decide]
+  simp [String.toList_append, show "kept input ".length = 11 by decide]
 
-private theorem isNativeInput_inputEnv (f : String) : Parse.isNativeInput (Parse.inputEnv f) = false := by
-  simp [Parse.isNativeInput, Parse.inputEnv, String.toList_append]
-
-private theorem isNativeInput_nativeInputEnv (f : String) :
-    Parse.isNativeInput (Parse.nativeInputEnv f) = true := by
-  simp [Parse.isNativeInput, Parse.nativeInputEnv, String.toList_append]
+private theorem isKeptInput_keptInputEnv (f : String) :
+    Parse.isKeptInput (Parse.keptInputEnv f) = true := by
+  simp [Parse.isKeptInput, Parse.keptInputEnv, String.toList_append]
 
 private theorem input_ne_scopeEnv {n f : String} (hn : Parse.inputEnvFile? n = some f) :
     n ≠ Parse.scopeEnv := by
@@ -372,7 +371,7 @@ private theorem elabEnvArm_input_scope (ctx : Ctx) (n f : String) (hn : Parse.in
     (body : Array Raw) (pos : Pos) (hlen : lengthScopeKeys? body = none) :
     elabEnvArm ctx n body pos #[] =
       splicedFrameScope (some 0) (elabBlockScope
-        { ctx with file := f, callSite := none, native := ctx.native || Parse.isNativeInput n } body) := by
+        { ctx with file := f, callSite := none, kept := ctx.kept || Parse.isKeptInput n } body) := by
   rw [elabEnvArm, openLengthScope_inert ctx body hlen]
   simp [input_ne_scopeEnv hn, hn, closeLengthScope]
   rfl
@@ -494,12 +493,12 @@ private theorem elabBlockScope_input_exact (ctx : Ctx) (n f : String)
     (hpre : pre.all sourceBlank = true) (hpost : post.all sourceBlank = true) :
     (elabBlockScope ctx (pre ++ #[.env n body pos] ++ post)).run st =
       let r := (elabBlockScope
-        { ctx with file := f, callSite := none, native := ctx.native || Parse.isNativeInput n }
+        { ctx with file := f, callSite := none, kept := ctx.kept || Parse.isKeptInput n }
         body).run st
       (Ir.markDisplay false (post.any (· matches .par _)) false 0 r.1, r.2) := by
   obtain ⟨hm, hp, hb, hl⟩ := h
   have hlen := lengthScopeKeys?_back body hl
-  have hmF : ({ ctx with file := f, callSite := none, native := ctx.native || Parse.isNativeInput n }
+  have hmF : ({ ctx with file := f, callSite := none, kept := ctx.kept || Parse.isKeptInput n }
       : Ctx).macroRoles = ({file := ""} : Ctx).macroRoles := hm
   have hsize : (pre ++ #[Raw.env n body pos] ++ post).size =
       pre.size + 1 + post.size := by simp
@@ -534,7 +533,7 @@ private theorem elabBlockScope_input_exact (ctx : Ctx) (n f : String)
       : ESt).flowGen = st.flowGen := rfl
   rw [he, hg]
   rcases hx : (elabBlocksGo
-    { ctx with file := f, callSite := none, native := ctx.native || Parse.isNativeInput n } body 0
+    { ctx with file := f, callSite := none, kept := ctx.kept || Parse.isKeptInput n } body 0
     #[] #[] st.flowGen).run (openScope st) with ⟨bs, s4⟩
   have hend := fun s b => elabBlocksGo_blanks_end
     (pre ++ #[Raw.env n body pos] ++ post) b _ (pre.size + 1) st.flowGen ctx s
@@ -548,7 +547,7 @@ public theorem elabBlocks_input_exact (ctx : Ctx) (n f : String)
     (hpre : pre.all sourceBlank = true) (hpost : post.all sourceBlank = true) :
     (elabBlocks ctx (pre ++ #[.env n body pos] ++ post)).run st =
       let r := (elabBlocks
-        { ctx with file := f, callSite := none, native := ctx.native || Parse.isNativeInput n }
+        { ctx with file := f, callSite := none, kept := ctx.kept || Parse.isKeptInput n }
         body).run st
       (Ir.markDisplay false (post.any (· matches .par _)) false 0 r.1, r.2) := by
   rw [elabBlocks_run, elabBlocks_run]
@@ -561,7 +560,7 @@ public theorem runDocBody_input_exact (plan : DocBodyPlan) (n f : String)
     (hpre : pre.all sourceBlank = true) (hpost : post.all sourceBlank = true) :
     (runDocBody plan).run st =
       let r := (elabBlocks { plan.ctx with
-        file := f, callSite := none, native := plan.ctx.native || Parse.isNativeInput n } body).run st
+        file := f, callSite := none, kept := plan.ctx.kept || Parse.isKeptInput n } body).run st
       (finishDocBody plan
         (Ir.markDisplay false (post.any (· matches .par _)) false 0 r.1)).run r.2 := by
   unfold runDocBody
@@ -640,49 +639,47 @@ private theorem markdownInput_splice (ctx : Ctx) (f t : String) (cites : Bool) (
   simp only [Md.Vocab.admits, Bool.or_eq_true, List.contains_iff_mem] at hadm
   exact markdownVocabulary_contract.2 n (List.mem_append.mpr hadm)
 
-private theorem fragmentEnv_exact (f : String) (native : Bool) :
-    Parse.inputEnvFile? (if native then Parse.nativeInputEnv f else Parse.inputEnv f) = some f ∧
-      Parse.isNativeInput (if native then Parse.nativeInputEnv f else Parse.inputEnv f) = native := by
-  cases native
-  · exact ⟨inputEnvFile?_inputEnv f, isNativeInput_inputEnv f⟩
-  · exact ⟨inputEnvFile?_nativeInputEnv f, isNativeInput_nativeInputEnv f⟩
+private theorem fragment_markdown_exact (f t : String) (pos : Pos) (cites : Bool) :
+    (Surface.fragment .markdown f t pos cites).1 =
+      #[.env (Parse.keptInputEnv f) (Md.readIncluded f t cites).1 pos] := rfl
 
-private theorem markdownInput_scope_exact (ctx : Ctx) (f t : String) (cites native : Bool)
+private theorem markdownInput_scope_exact (ctx : Ctx) (f t : String) (cites : Bool)
     (pre post : Array Raw) (pos : Pos) (st : ESt)
     (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles) (hp : pos.origins = [])
     (hne : (Md.readIncluded f t cites).1 ≠ #[])
     (hpre : pre.all sourceBlank = true) (hpost : post.all sourceBlank = true) :
-    (elabBlockScope ctx (pre ++ (Surface.fragment .markdown f t pos cites native).1 ++ post)).run st =
-      let r := (elabBlockScope { ctx with file := f, callSite := none, native := ctx.native || native }
+    (elabBlockScope ctx (pre ++ (Surface.fragment .markdown f t pos cites).1 ++ post)).run st =
+      let r := (elabBlockScope { ctx with file := f, callSite := none, kept := true }
         (Md.readIncluded f t cites).1).run st
       (Ir.markDisplay false (post.any (· matches .par _)) false 0 r.1, r.2) := by
-  have h := elabBlockScope_input_exact ctx _ f (fragmentEnv_exact f native).1 _ pre post pos st
+  rw [fragment_markdown_exact]
+  have h := elabBlockScope_input_exact ctx _ f (inputEnvFile?_keptInputEnv f) _ pre post pos st
     (markdownInput_splice ctx f t cites pos hm hp hne) hpre hpost
-  rw [(fragmentEnv_exact f native).2] at h
+  rw [isKeptInput_keptInputEnv, Bool.or_true] at h
   exact h
 
-public theorem markdownInput_blocks_exact (ctx : Ctx) (f t : String) (cites native : Bool)
+public theorem markdownInput_blocks_exact (ctx : Ctx) (f t : String) (cites : Bool)
     (pre post : Array Raw) (pos : Pos) (st : ESt)
     (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles) (hp : pos.origins = [])
     (hne : (Md.readIncluded f t cites).1 ≠ #[])
     (hpre : pre.all sourceBlank = true) (hpost : post.all sourceBlank = true) :
-    (elabBlocks ctx (pre ++ (Surface.fragment .markdown f t pos cites native).1 ++ post)).run st =
-      let r := (elabBlocks { ctx with file := f, callSite := none, native := ctx.native || native }
+    (elabBlocks ctx (pre ++ (Surface.fragment .markdown f t pos cites).1 ++ post)).run st =
+      let r := (elabBlocks { ctx with file := f, callSite := none, kept := true }
         (Md.readIncluded f t cites).1).run st
       (Ir.markDisplay false (post.any (· matches .par _)) false 0 r.1, r.2) := by
   rw [elabBlocks_run, elabBlocks_run]
-  exact markdownInput_scope_exact ctx f t cites native pre post pos _ hm hp hne hpre hpost
+  exact markdownInput_scope_exact ctx f t cites pre post pos _ hm hp hne hpre hpost
 
-public theorem markdownInput_blocks_text (ctx : Ctx) (f t : String) (cites native : Bool)
+public theorem markdownInput_blocks_text (ctx : Ctx) (f t : String) (cites : Bool)
     (pre post : Array Raw) (pos : Pos) (st : ESt)
     (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles) (hp : pos.origins = [])
     (hne : (Md.readIncluded f t cites).1 ≠ #[])
     (hpre : pre.all sourceBlank = true) (hpost : post.all sourceBlank = true) :
     Ir.blocksText
-        ((elabBlocks ctx (pre ++ (Surface.fragment .markdown f t pos cites native).1 ++ post)).run st).1 =
-      Ir.blocksText ((elabBlocks { ctx with file := f, callSite := none, native := ctx.native || native }
+        ((elabBlocks ctx (pre ++ (Surface.fragment .markdown f t pos cites).1 ++ post)).run st).1 =
+      Ir.blocksText ((elabBlocks { ctx with file := f, callSite := none, kept := true }
         (Md.readIncluded f t cites).1).run st).1 := by
-  rw [markdownInput_blocks_exact ctx f t cites native pre post pos st hm hp hne hpre hpost]
+  rw [markdownInput_blocks_exact ctx f t cites pre post pos st hm hp hne hpre hpost]
   exact Ir.markDisplay_text false _ false 0 _
 
 end LeanTex.Core.Elab

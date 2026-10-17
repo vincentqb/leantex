@@ -240,7 +240,7 @@ public structure Ctx where
   surface : Ir.Surface := .tex
   /-- Inside raws markdown or a code file lowered, which the document's own commands and
   environments do not reach. -/
-  native : Bool := false
+  kept : Bool := false
   /-- The class's list lineage, which a listing's frame reads. -/
   lists : Ir.ListLineage := .sizeFile
   /-- The class's preamble font, in which a length the class fixes at load is fixed. -/
@@ -1325,7 +1325,7 @@ private theorem latestNamed_lt {α : Type} {nameOf : α → String} {xs : Array 
   | case4 m _ ih => exact Nat.lt_succ_of_lt (ih h)
 
 private def lookupUser (ctx : Ctx) (name : String) : Option (Nat × UserCmd) :=
-  if ctx.native then none else latestNamed (·.name) ctx.user name ctx.limit
+  if ctx.kept then none else latestNamed (·.name) ctx.user name ctx.limit
 
 private theorem lookupUser_latest {ctx : Ctx} {name : String} {x : Nat × UserCmd}
     (h : lookupUser ctx name = some x) : latestNamed (·.name) ctx.user name ctx.limit = some x := by
@@ -1339,7 +1339,7 @@ private theorem lookupUser_lt {ctx : Ctx} {name : String} {k : Nat}
   latestNamed_lt (lookupUser_latest h)
 
 private def lookupUserEnv (ctx : Ctx) (name : String) : Option (Nat × UserEnv) :=
-  if ctx.native then none else latestNamed (·.name) ctx.userEnvs name ctx.envLimit
+  if ctx.kept then none else latestNamed (·.name) ctx.userEnvs name ctx.envLimit
 
 private theorem lookupUserEnv_lt {ctx : Ctx} {name : String} {k : Nat}
     {env : UserEnv} (h : lookupUserEnv ctx name = some (k, env)) :
@@ -1468,6 +1468,10 @@ private def bindMathArgs (params : Array Param) (rest : Array Raw) :
         bindings := bindings.push (p.name, #[])
   return (bindings, rest.extract i rest.size)
 
+/-- How many of the document's definitions a formula reads: none inside raws markdown or a code
+file lowered. -/
+private def mathLimit (ctx : Ctx) : Nat := if ctx.kept then 0 else ctx.limit
+
 /-- Expands `\define`d commands inside a formula's raws, right to left, each
 body under only the definitions before it. -/
 private def expandMathList (user : Array UserCmd) (limit : Nat)
@@ -1587,7 +1591,7 @@ colour" (some pos)
 warning naming the construct it cannot model. -/
 private def elabMathInline (ctx : Ctx) (display : Bool) (body : Array Parse.Raw)
     (pos : Pos) : EM Ir.Inline := do
-  let expanded := expandMathList ctx.user ctx.limit #[] body.toList
+  let expanded := expandMathList ctx.user (mathLimit ctx) #[] body.toList
   match MathParse.parseMath display expanded (mathEnv ctx) with
   | .ok (l, notes) =>
     for note in notes do
@@ -1606,7 +1610,7 @@ private def elabMathInline (ctx : Ctx) (display : Bool) (body : Array Parse.Raw)
 display grid formula, or its text content when the parser cannot model it. -/
 private def elabMathEnv (ctx : Ctx) (name : String) (kind : Math.GridKind)
     (numbered : Bool) (body : Array Parse.Raw) (pos : Pos) : EM Ir.Inline := do
-  let expanded := expandMathList ctx.user ctx.limit #[] body.toList
+  let expanded := expandMathList ctx.user (mathLimit ctx) #[] body.toList
   match MathParse.parseMathRows kind expanded (mathEnv ctx) with
   | .ok (l, notes) =>
     for note in notes do
@@ -4003,7 +4007,7 @@ private def splitPictureAlt (body : Array Raw) (pos0 : Pos) : Ir.Alt × Array Ra
 not parse. -/
 private def pictureMath (ctx : Ctx) (d : Bool) (raws : Array Parse.Raw) :
     Ir.Inline × Array Picture.PDiag :=
-  let expanded := expandMathList ctx.user ctx.limit #[] raws.toList
+  let expanded := expandMathList ctx.user (mathLimit ctx) #[] raws.toList
   match MathParse.parseMath d expanded (mathEnv ctx) with
   | .ok (l, _) => (.formula d (Parse.rawSrc raws) l, #[])
   | .error what => (.math d (Parse.rawSrc raws),
@@ -4673,7 +4677,7 @@ private def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
       else if let some f := Parse.inputEnvFile? name then
         let acc := flushText acc sb
         let inner ← elabInlinesCore
-          { ctx with file := f, callSite := none, native := ctx.native || Parse.isNativeInput name } body
+          { ctx with file := f, callSite := none, kept := ctx.kept || Parse.isKeptInput name } body
         elabInlinesFrom ctx raws (i + 1) (acc ++ inner) ""
       else if let some numbered := displayMathEnvs.lookup name then
         let acc := flushText acc sb
@@ -11460,7 +11464,7 @@ private def elabEnvArm (ctx : Ctx) (n : String) (scope : Array Raw)
     blocks := blocks ++ (← splicedFrameScope (some blocks.size) (elabBlockScope ctx body))
   else if let some f := Parse.inputEnvFile? n then
     let ⟨fileCtx, _⟩ : MCtx ctx ←
-      pure ⟨{ ctx with file := f, callSite := none, native := ctx.native || Parse.isNativeInput n },
+      pure ⟨{ ctx with file := f, callSite := none, kept := ctx.kept || Parse.isKeptInput n },
         rfl, rfl, rfl, rfl⟩
     blocks := blocks ++ (← splicedFrameScope (some blocks.size) (elabBlockScope fileCtx body))
   else if let some numbered := displayMathEnvs.lookup n then
@@ -16616,6 +16620,16 @@ public def resumeInput [Monad m] (reader : Compat.InputReader m) (context : Comp
   let (raws, splitDiags) := settleSplits file raws
   Compat.resumeInput reader context raws splitDiags
 
+/-- An included markdown file's answer: under hybrid its TeX reading run through the walk, the
+package's options it sets ending with it, else its raws kept from the walk at `pos`. -/
+public def markdownAnswer [Monad m] (reader : Compat.InputReader m) (context : Compat.InputContext)
+    (file : String) (raws : Array Raw) (hybrid : Bool) (pos : Pos) :
+    m (Array Raw × Compat.InputContext) := do
+  if hybrid then
+    let (answer, after) ← resumeInput reader context file raws
+    return (answer, after.restoreMarkdown context.markdown)
+  return context.keep raws pos
+
 /-- Finishes preparation: text rewriting over the compatibility walk's
 output, with the caller's scans. -/
 public def prepareRewritten (file : String) (picScan : Compat.BoundaryScan)
@@ -16967,6 +16981,11 @@ public def runRaws (file : String) (raws : Array Raw) (earlier : Array Diag := #
 public def runExecuted (file : String) (executed : Compat.Executed) (earlier : Array Diag := #[])
     (picMetric : Ir.Pic.LabelMetric := fun _ _ => {}) : Doc × Array Diag :=
   runPreparedFinal file (prepareExecuted file executed) earlier picMetric
+
+/-- A markdown or code file's raws elaborated as the driver runs them, the walk left out. -/
+public def runKept (file : String) (raws : Array Raw) (earlier : Array Diag := #[])
+    (picMetric : Ir.Pic.LabelMetric := fun _ _ => {}) : Doc × Array Diag :=
+  runExecuted file (Compat.kept file raws) earlier picMetric
 
 public def run (file input : String) : Doc × Array Diag :=
   let (toks, lexDiags) := Lex.lex file input

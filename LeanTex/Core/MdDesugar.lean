@@ -2,6 +2,7 @@ module
 
 public import LeanTex.Core.MdParse
 public import LeanTex.Core.Parse
+import LeanTex.Core.Lex
 public import LeanTex.Core.Ir
 import LeanTex.Core.Decl
 import LeanTex.Core.UnusedSetting
@@ -422,73 +423,10 @@ private def closeLeading (rs : Array Raw) : Array Raw :=
   | .word w p :: rest => (Raw.word (closingQuote w) p :: rest).toArray
   | _ => rs
 
-/-- Text as TeX reads it where it stands: the markdown package's hybrid option's reading of text. -/
-private def texRaws (file s : String) (p : Pos) : Array Raw × Array Diag :=
-  let (toks, lexDs) := Lex.lex file s
-  let (raws, parseDs) := Parse.parse file toks
-  let place (q : Pos) : Pos := if q.line ≤ 1 then { q with line := p.line, col := p.col + q.col - 1 }
-    else { q with line := p.line + q.line - 1 }
-  (Parse.mapPosList place #[] raws.toList,
-    (lexDs ++ parseDs).map fun d => { d with span := d.span.map fun sp => { sp with pos := place sp.pos } })
-
 mutual
 
-/-- An inline node with each of its runs of text and soft breaks one text. -/
-private def texRunOne : Inl → Inl
-  | .emph body p => .emph (texRunList #[] body.toList) p
-  | .strong body p => .strong (texRunList #[] body.toList) p
-  | .link d t body p => .link d t (texRunList #[] body.toList) p
-  | .citeText k body p => .citeText k (texRunList #[] body.toList) p
-  | .text s p => .text s p
-  | .code s p => .code s p
-  | .image d t alt p => .image d t alt p
-  | .anchor k p => .anchor k p
-  | .soft p => .soft p
-  | .hard p => .hard p
-  | .cite items p => .cite items p
-
-/-- Inline nodes with each run of text and soft breaks one text, each break a newline in it. -/
-private def texRunList (acc : Array Inl) : List Inl → Array Inl
-  | [] => acc
-  | x :: rest =>
-    match texRunOne x, acc.back? with
-    | .text s _, some (.text t q) => texRunList (acc.pop.push (.text (t ++ s) q)) rest
-    | .soft _, some (.text t q) => texRunList (acc.pop.push (.text (t ++ "\n") q)) rest
-    | y, _ => texRunList (acc.push y) rest
-
-end
-
-mutual
-
-/-- A block whose inline runs of text and soft breaks are each one text, as TeX reads them. -/
-private def texRunBlk : Blk → Blk
-  | .para body p => .para (texRunList #[] body.toList) p
-  | .heading l body p => .heading l (texRunList #[] body.toList) p
-  | .quote body p => .quote (texRunBlks #[] body.toList) p
-  | .disclosure s e body p => .disclosure (texRunList #[] s.toList) e (texRunBlks #[] body.toList) p
-  | .list o st t items p => .list o st t (texRunItems #[] items.toList) p
-  | .table al h rows p =>
-    .table al (h.map fun c => texRunList #[] c.toList) (rows.map (·.map fun c => texRunList #[] c.toList)) p
-  | .code i t p => .code i t p
-  | .rule p => .rule p
-  | .lean a p => .lean a p
-  | .metadata f p => .metadata f p
-  | .refs p => .refs p
-
-private def texRunBlks (acc : Array Blk) : List Blk → Array Blk
-  | [] => acc
-  | b :: rest => texRunBlks (acc.push (texRunBlk b)) rest
-
-private def texRunItems (acc : Array (Array Blk)) : List (Array Blk) → Array (Array Blk)
-  | [] => acc
-  | it :: rest => texRunItems (acc.push (texRunBlks #[] it.toList)) rest
-
-end
-
-mutual
-
-private def inlRaws (file : String) (tex : Bool) : Inl → Array Raw × Array Diag
-  | .text s p => if tex then texRaws file s p else (textRaws s p, #[])
+private def inlRaws (file : String) : Inl → Array Raw × Array Diag
+  | .text s p => (textRaws s p, #[])
   | .code s p => (#[.ctrl "texttt" p, .group (textRaws s p) p], #[])
   | .soft _ => (#[.space], #[])
   | .hard p => (#[.ctrl "\\" p], #[])
@@ -501,13 +439,13 @@ private def inlRaws (file : String) (tex : Bool) : Inl → Array Raw × Array Di
         (some ⟨file, p⟩) (some "use letters, digits, :, ., - or _ in the target key")
         (some "md:raw-html")])
   | .emph body p =>
-    let (rs, ds) := inlListRaws file tex #[] #[] body.toList
+    let (rs, ds) := inlListRaws file #[] #[] body.toList
     (#[.ctrl "emph" p, .group rs p], ds)
   | .strong body p =>
-    let (rs, ds) := inlListRaws file tex #[] #[] body.toList
+    let (rs, ds) := inlListRaws file #[] #[] body.toList
     (#[.ctrl "textbf" p, .group rs p], ds)
   | .link dest title body p =>
-    let (rs, ds) := inlListRaws file tex #[] #[] body.toList
+    let (rs, ds) := inlListRaws file #[] #[] body.toList
     let ds := if title.isEmpty then ds else
       ds.push (routeDegraded file "link-title"
         "a link's title is not carried: the link sets without it" p)
@@ -538,11 +476,11 @@ the image option cannot carry them as written" p
          ++ #[.sym ']' p, .group (textRaws dest p) p], ds)
   -- The author's text links to the work's entry, which `\nocite` lists.
   | .citeText key body p =>
-    let (rs, ds) := inlListRaws file tex #[] #[] body.toList
+    let (rs, ds) := inlListRaws file #[] #[] body.toList
     let listed := citeCmdRaws "nocite" #[] #[] #[key] p
     (#[.ctrl "href" p, .group (textRaws ("#" ++ Ir.bibAnchor key) p) p, .group rs p] ++ listed, ds)
   | .cite items p =>
-    let cs := citeItemsRaws file tex #[] #[] items.toList
+    let cs := citeItemsRaws file #[] #[] items.toList
     let g := citeGroupRaws file cs.1 p
     let plain (xs : Array Inl) : Bool := xs.all fun x => x matches .text .. | .soft _
     let styled := if items.all (fun it => plain it.pre && plain it.post) then #[] else
@@ -551,21 +489,21 @@ the image option cannot carry them as written" p
     (g.1, cs.2 ++ g.2 ++ styled)
 
 /-- Each citation of a group with its notes as raws, accumulating. -/
-private def citeItemsRaws (file : String) (tex : Bool) (out : Array CiteRaws) (ds : Array Diag) :
+private def citeItemsRaws (file : String) (out : Array CiteRaws) (ds : Array Diag) :
     List CiteItem → Array CiteRaws × Array Diag
   | [] => (out, ds)
   | .mk key mode pre post :: rest =>
-    let a := inlListRaws file tex #[] #[] pre.toList
-    let b := inlListRaws file tex #[] #[] post.toList
-    citeItemsRaws file tex (out.push { key, mode, pre := a.1, post := postNote b.1 }) (ds ++ a.2 ++ b.2)
+    let a := inlListRaws file #[] #[] pre.toList
+    let b := inlListRaws file #[] #[] post.toList
+    citeItemsRaws file (out.push { key, mode, pre := a.1, post := postNote b.1 }) (ds ++ a.2 ++ b.2)
       rest
 
 /-- A list of inline nodes, accumulating. -/
-private def inlListRaws (file : String) (tex : Bool) (out : Array Raw) (ds : Array Diag) :
+private def inlListRaws (file : String) (out : Array Raw) (ds : Array Diag) :
     List Inl → Array Raw × Array Diag
   | [] => (out, ds)
   | x :: rest =>
-    let (rs, ds') := inlRaws file tex x
+    let (rs, ds') := inlRaws file x
     let emphasis := match out[out.size - 2]? with
       | some (.ctrl "emph" _) | some (.ctrl "textbf" _) => true
       | _ => false
@@ -576,7 +514,7 @@ private def inlListRaws (file : String) (tex : Bool) (out : Array Raw) (ds : Arr
     let guard := match out.back? with
       | some (.group _ p) => selectorGuard rs p
       | _ => #[]
-    inlListRaws file tex (out ++ guard ++ rs) (ds ++ ds') rest
+    inlListRaws file (out ++ guard ++ rs) (ds ++ ds') rest
 
 end
 
@@ -587,44 +525,49 @@ public def TableAlign.specLetter : TableAlign → Char
   | .right => 'r'
   | .center => 'c'
 
+/-- A table cell's inline content as raws. -/
+private def cellRaws (file : String) (cell : Array Inl) : Array Raw × Array Diag :=
+  inlListRaws file #[] #[] cell.toList
+
 /-- The cells of a row after its first, each after its `&`, each one group. -/
-private def laterCellsRaws (file : String) (tex : Bool) (p : Pos) (out : Array Raw) (ds : Array Diag) :
-    List (Array Inl) → Array Raw × Array Diag
+private def laterCellsRaws (cell : Array Inl → Array Raw × Array Diag) (p : Pos) (out : Array Raw)
+    (ds : Array Diag) : List (Array Inl) → Array Raw × Array Diag
   | [] => (out, ds)
-  | cell :: rest =>
-    let (rs, cds) := inlListRaws file tex #[] #[] cell.toList
-    laterCellsRaws file tex p ((out.push (.sym '&' p)).push (.group rs p)) (ds ++ cds) rest
+  | c :: rest =>
+    let (rs, cds) := cell c
+    laterCellsRaws cell p ((out.push (.sym '&' p)).push (.group rs p)) (ds ++ cds) rest
 
 /-- A row's cells as groups, `&` between each two. -/
-private def rowCellsRaws (file : String) (tex : Bool) (p : Pos) : List (Array Inl) → Array Raw × Array Diag
+private def rowCellsRaws (cell : Array Inl → Array Raw × Array Diag) (p : Pos) :
+    List (Array Inl) → Array Raw × Array Diag
   | [] => (#[], #[])
-  | cell :: rest =>
-    let (rs, cds) := inlListRaws file tex #[] #[] cell.toList
-    laterCellsRaws file tex p #[.group rs p] cds rest
+  | c :: rest =>
+    let (rs, cds) := cell c
+    laterCellsRaws cell p #[.group rs p] cds rest
 
 /-- One row: its cells, closed by `\\`. -/
-private def rowRaws (file : String) (tex : Bool) (row : Array (Array Inl)) (p : Pos) :
+private def rowRaws (cell : Array Inl → Array Raw × Array Diag) (row : Array (Array Inl)) (p : Pos) :
     Array Raw × Array Diag :=
-  let cells := rowCellsRaws file tex p row.toList
+  let cells := rowCellsRaws cell p row.toList
   (cells.1.push (.ctrl "\\" p), cells.2)
 
 /-- The data rows, each after the one before, the accumulator threaded. -/
-private def rowsRaws (file : String) (tex : Bool) (p : Pos) (out : Array Raw) (ds : Array Diag) :
-    List (Array (Array Inl)) → Array Raw × Array Diag
+private def rowsRaws (cell : Array Inl → Array Raw × Array Diag) (p : Pos) (out : Array Raw)
+    (ds : Array Diag) : List (Array (Array Inl)) → Array Raw × Array Diag
   | [] => (out, ds)
   | row :: rest =>
-    let (rs, rds) := rowRaws file tex row p
-    rowsRaws file tex p (out ++ rs) (ds ++ rds) rest
+    let (rs, rds) := rowRaws cell row p
+    rowsRaws cell p (out ++ rs) (ds ++ rds) rest
 
-/-- A table as the booktabs `{tabular}` the surface AST already has. -/
-public def tableRaws (file : String) (tex : Bool) (aligns : Array TableAlign)
+/-- A table as the booktabs `{tabular}` the surface AST already has, each cell lowered by `cell`. -/
+public def tableRaws (cell : Array Inl → Array Raw × Array Diag) (aligns : Array TableAlign)
     (header : Array (Array Inl)) (rows : Array (Array (Array Inl))) (p : Pos) :
     Array Raw × Array Diag :=
   let spec := String.ofList (aligns.toList.map TableAlign.specLetter)
-  let (hr, hds) := rowRaws file tex header p
+  let (hr, hds) := rowRaws cell header p
   let head : Array Raw := #[.group #[.sym '@' p, .group #[] p, .word spec p,
     .sym '@' p, .group #[] p] p, .ctrl "toprule" p]
-  let (body, ds) := rowsRaws file tex p ((head ++ hr).push (.ctrl "midrule" p)) hds rows.toList
+  let (body, ds) := rowsRaws cell p ((head ++ hr).push (.ctrl "midrule" p)) hds rows.toList
   (#[.env Parse.markdownTableEnv (body.push (.ctrl "bottomrule" p)) p], ds)
 
 /-- What a markdown table may put at a `{tabular}` body's top level: groups,
@@ -640,43 +583,45 @@ private theorem tableTop_push (p : Pos) (xs : Array Raw) (r : Raw)
   · exact h x hx
   · exact hr
 
-private theorem laterCellsRaws_tableTop (file : String) (tex : Bool) (p : Pos) (cells : List (Array Inl)) :
+private theorem laterCellsRaws_tableTop (cell : Array Inl → Array Raw × Array Diag) (p : Pos)
+    (cells : List (Array Inl)) :
     ∀ (out : Array Raw) (ds : Array Diag), (∀ x ∈ out, TableTop p x) →
-      ∀ x ∈ (laterCellsRaws file tex p out ds cells).1, TableTop p x := by
+      ∀ x ∈ (laterCellsRaws cell p out ds cells).1, TableTop p x := by
   induction cells with
   | nil => intro out _ h; exact h
-  | cons cell rest ih =>
+  | cons c rest ih =>
     intro out ds h
     unfold laterCellsRaws
-    rcases inlListRaws file tex #[] #[] cell.toList with ⟨rs, cds⟩
+    rcases cell c with ⟨rs, cds⟩
     exact ih _ _ (tableTop_push p _ _ (tableTop_push p _ _ h (Or.inr (Or.inl rfl)))
       (Or.inl ⟨rs, rfl⟩))
 
-private theorem rowCellsRaws_tableTop (file : String) (tex : Bool) (p : Pos) (cells : List (Array Inl)) :
-    ∀ x ∈ (rowCellsRaws file tex p cells).1, TableTop p x := by
+private theorem rowCellsRaws_tableTop (cell : Array Inl → Array Raw × Array Diag) (p : Pos)
+    (cells : List (Array Inl)) : ∀ x ∈ (rowCellsRaws cell p cells).1, TableTop p x := by
   cases cells with
   | nil => simp [rowCellsRaws]
-  | cons cell rest =>
+  | cons c rest =>
     unfold rowCellsRaws
-    exact laterCellsRaws_tableTop file tex p rest _ _ (by
+    exact laterCellsRaws_tableTop cell p rest _ _ (by
       intro x hx
       simp at hx
       exact hx ▸ Or.inl ⟨_, rfl⟩)
 
-private theorem rowRaws_tableTop (file : String) (tex : Bool) (row : Array (Array Inl)) (p : Pos) :
-    ∀ x ∈ (rowRaws file tex row p).1, TableTop p x :=
-  tableTop_push p _ _ (rowCellsRaws_tableTop file tex p row.toList) (Or.inr (Or.inr (Or.inl rfl)))
+private theorem rowRaws_tableTop (cell : Array Inl → Array Raw × Array Diag)
+    (row : Array (Array Inl)) (p : Pos) : ∀ x ∈ (rowRaws cell row p).1, TableTop p x :=
+  tableTop_push p _ _ (rowCellsRaws_tableTop cell p row.toList) (Or.inr (Or.inr (Or.inl rfl)))
 
-private theorem rowsRaws_tableTop (file : String) (tex : Bool) (p : Pos) (rows : List (Array (Array Inl))) :
+private theorem rowsRaws_tableTop (cell : Array Inl → Array Raw × Array Diag) (p : Pos)
+    (rows : List (Array (Array Inl))) :
     ∀ (out : Array Raw) (ds : Array Diag), (∀ x ∈ out, TableTop p x) →
-      ∀ x ∈ (rowsRaws file tex p out ds rows).1, TableTop p x := by
+      ∀ x ∈ (rowsRaws cell p out ds rows).1, TableTop p x := by
   induction rows with
   | nil => intro out _ h; exact h
   | cons row rest ih =>
     intro out ds h
     unfold rowsRaws
-    have hr := rowRaws_tableTop file tex row p
-    rcases hrow : rowRaws file tex row p with ⟨rs, rds⟩
+    have hr := rowRaws_tableTop cell row p
+    rcases hrow : rowRaws cell row p with ⟨rs, rds⟩
     rw [hrow] at hr
     refine ih _ _ ?_
     intro x hx
@@ -684,18 +629,19 @@ private theorem rowsRaws_tableTop (file : String) (tex : Bool) (p : Pos) (rows :
     · exact h x hx
     · exact hr x hx
 
-public theorem tableRaws_contract (file : String) (tex : Bool) (aligns : Array TableAlign)
-    (header : Array (Array Inl)) (rows : Array (Array (Array Inl))) (p : Pos) :
-    ∃ body, (tableRaws file tex aligns header rows p).1 = #[.env Parse.markdownTableEnv body p] ∧
+public theorem tableRaws_contract (cell : Array Inl → Array Raw × Array Diag)
+    (aligns : Array TableAlign) (header : Array (Array Inl)) (rows : Array (Array (Array Inl)))
+    (p : Pos) :
+    ∃ body, (tableRaws cell aligns header rows p).1 = #[.env Parse.markdownTableEnv body p] ∧
       ∀ x ∈ body, TableTop p x := by
   unfold tableRaws
-  have hh := rowRaws_tableTop file tex header p
-  rcases hhr : rowRaws file tex header p with ⟨hr, hds⟩
+  have hh := rowRaws_tableTop cell header p
+  rcases hhr : rowRaws cell header p with ⟨hr, hds⟩
   rw [hhr] at hh
   dsimp only
   refine ⟨_, rfl, ?_⟩
   refine tableTop_push p _ _ ?_ (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr rfl)))))
-  refine rowsRaws_tableTop file tex p _ _ _ ?_
+  refine rowsRaws_tableTop cell p _ _ _ ?_
   refine tableTop_push p _ _ ?_ (Or.inr (Or.inr (Or.inr (Or.inr (Or.inl rfl)))))
   intro x hx
   rcases Array.mem_append.mp hx with hx | hx
@@ -705,14 +651,22 @@ public theorem tableRaws_contract (file : String) (tex : Bool) (aligns : Array T
     · exact Or.inr (Or.inr (Or.inr (Or.inl rfl)))
   · exact hh x hx
 
+/-- What a list's markdown says that its lowering does not carry. -/
+private def listLosses (file : String) (ordered : Bool) (start : Nat) (tight : Bool) (p : Pos) :
+    Array Diag :=
+  (if ordered && start != 1 then #[routeDegraded file "list-start"
+      "an ordered list's start number is not carried and the list counts from one" p] else #[]) ++
+  (if tight then #[] else #[routeDegraded file "loose-list"
+      "a loose list sets as a tight one: its items' paragraph spacing is not carried" p])
+
 mutual
 
-private def blkRaws (file : String) (refs : Array Raw) (divisions tex : Bool) : Blk → Array Raw × Array Diag
+private def blkRaws (file : String) (refs : Array Raw) (divisions : Bool) : Blk → Array Raw × Array Diag
   | .para body p =>
-    let (rs, ds) := inlListRaws file tex #[] #[] body.toList
+    let (rs, ds) := inlListRaws file #[] #[] body.toList
     (rs.push (.par p), ds)
   | .heading level body p =>
-    let (rs, ds) := inlListRaws file tex #[] #[] body.toList
+    let (rs, ds) := inlListRaws file #[] #[] body.toList
     (Parse.headingRaws level rs p, ds)
   | .code info text p =>
     -- The info string's first word is the language, crossing as an `Ir.ListingLang`.
@@ -733,47 +687,202 @@ without a language" p
     (#[], #[route file "thematic-break"
       "a thematic break has no block in this engine and is not drawn" p])
   | .quote body p =>
-    let (rs, ds) := blkListRaws file refs divisions tex #[] #[] body.toList
+    let (rs, ds) := blkListRaws file refs divisions #[] #[] body.toList
     (#[.env "quote" rs p], ds)
   | .disclosure summary expanded body p =>
-    let (ss, sds) := inlListRaws file tex #[] #[] summary.toList
-    let (rs, ds) := blkListRaws file refs divisions tex #[] #[] body.toList
+    let (ss, sds) := inlListRaws file #[] #[] summary.toList
+    let (rs, ds) := blkListRaws file refs divisions #[] #[] body.toList
     (disclosureRaws ss rs expanded p, sds ++ ds)
   | .list ordered start tight items p =>
-    let (rs, ds) := itemsRaws file refs divisions tex #[] #[] items.toList p
-    let ds := if ordered && start != 1 then
-        ds.push (routeDegraded file "list-start"
-          "an ordered list's start number is not carried and the list counts from one" p)
-      else ds
-    let ds := if tight then ds else
-      ds.push (routeDegraded file "loose-list"
-        "a loose list sets as a tight one: its items' paragraph spacing is not carried" p)
-    (#[.env (if ordered then "enumerate" else "itemize") rs p], ds)
-  | .table aligns header rows p => tableRaws file tex aligns header rows p
+    let (rs, ds) := itemsRaws file refs divisions #[] #[] items.toList p
+    (#[.env (if ordered then "enumerate" else "itemize") rs p],
+      ds ++ listLosses file ordered start tight p)
+  | .table aligns header rows p => tableRaws (cellRaws file) aligns header rows p
   | .lean attrs p => (if divisions then #[.par p, (LeanDivision.ofAttrs attrs).raw p] else #[], #[])
   -- The metadata block is read whole by `desugar`, before the blocks.
   | .metadata _ _ => (#[], #[])
   | .refs _ => (refs, #[])
 
-private def blkListRaws (file : String) (refs : Array Raw) (divisions tex : Bool) (out : Array Raw)
+private def blkListRaws (file : String) (refs : Array Raw) (divisions : Bool) (out : Array Raw)
     (ds : Array Diag) :
     List Blk → Array Raw × Array Diag
   | [] => (out, ds)
   | b :: rest =>
-    let (rs, ds') := blkRaws file refs divisions tex b
-    blkListRaws file refs divisions tex (out ++ rs) (ds ++ ds') rest
+    let (rs, ds') := blkRaws file refs divisions b
+    blkListRaws file refs divisions (out ++ rs) (ds ++ ds') rest
 
 /-- One `\item` per list item, its blocks inside. -/
-private def itemsRaws (file : String) (refs : Array Raw) (divisions tex : Bool) (out : Array Raw)
+private def itemsRaws (file : String) (refs : Array Raw) (divisions : Bool) (out : Array Raw)
     (ds : Array Diag) :
     List (Array Blk) → Pos → Array Raw × Array Diag
   | [], _ => (out, ds)
   | it :: rest, p =>
-    let (rs, ds') := blkListRaws file refs divisions tex #[] #[] it.toList
-    itemsRaws file refs divisions tex ((out.push (.ctrl "item" p)) ++ selectorGuard rs p ++ rs) (ds ++ ds')
+    let (rs, ds') := blkListRaws file refs divisions #[] #[] it.toList
+    itemsRaws file refs divisions ((out.push (.ctrl "item" p)) ++ selectorGuard rs p ++ rs) (ds ++ ds')
       rest p
 
 end
+
+/-! ## Hybrid: a file's text as TeX -/
+
+/-- A file's TeX comments cut after their `%`, as the markdown package's hybrid option strips them
+before it reads the file's markdown, each line keeping its place. -/
+private def stripTexComments (input : String) : String :=
+  "\n".intercalate ((input.splitOn "\n").map fun line => Id.run do
+    let mut out := ""
+    let mut backslashes := 0
+    for c in line.toList do
+      if c == '%' && backslashes % 2 == 0 then return out.push '%'
+      out := out.push c
+      backslashes := if c == '\\' then backslashes + 1 else 0
+    return out)
+
+/-- Where each line of `s` starts, counted in characters. -/
+private def lineStartsOf (s : String) : Array Nat := Id.run do
+  let mut out := #[0]
+  let mut i := 0
+  for c in s.toList do
+    i := i + 1
+    if c == '\n' then out := out.push i
+  return out
+
+/-- A hybrid file's TeX as one token stream: its text lexed where it stands, markdown's nodes
+spelled around it, and every other node kept whole at its place. -/
+private structure TexStream where
+  toks : Array Lex.Token := #[]
+  kept : Array (Array Raw) := #[]
+  diags : Array Diag := #[]
+  /-- Text not yet lexed, its length in characters, and where each of its pieces starts in it and
+  in the file. -/
+  buf : String := ""
+  len : Nat := 0
+  anchors : Array (Nat × Pos) := #[]
+
+/-- The text not yet lexed, lexed into the stream at the file places its pieces came from. -/
+private def TexStream.flush (st : TexStream) (file : String) : TexStream :=
+  if st.buf.isEmpty then st else
+  let (toks, ds) := Lex.lex file st.buf
+  let starts := lineStartsOf st.buf
+  let anchors := st.anchors.toList.reverse
+  let place (q : Pos) : Pos :=
+    let off := starts.getD (q.line - 1) 0 + (q.col - 1)
+    match anchors.find? (·.1 ≤ off) with
+    | some (start, p) => { q with line := p.line, col := p.col + (off - start) }
+    | none => q
+  { st with
+    toks := st.toks ++ toks.map fun t => { t with pos := place t.pos }
+    diags := st.diags ++ ds.map fun d =>
+      { d with span := d.span.map fun sp => { sp with pos := place sp.pos } }
+    buf := "", len := 0, anchors := #[] }
+
+/-- Text at `p` into the stream. -/
+private def TexStream.text (st : TexStream) (s : String) (p : Pos) : TexStream :=
+  { st with buf := st.buf ++ s, len := st.len + s.length, anchors := st.anchors.push (st.len, p) }
+
+/-- A token at `p`, after the text before it. -/
+private def TexStream.tok (st : TexStream) (file : String) (t : Lex.Tok) (p : Pos) : TexStream :=
+  let st := st.flush file
+  { st with toks := st.toks.push ⟨t, p⟩ }
+
+/-- Raws a node lowers to, kept whole at `p`. -/
+private def TexStream.keep (st : TexStream) (file : String) (rs : Array Raw × Array Diag)
+    (p : Pos) : TexStream :=
+  let st := st.flush file
+  { st with
+    toks := st.toks.push ⟨.verb Parse.keptEnv (toString st.kept.size), p⟩
+    kept := st.kept.push rs.1, diags := st.diags ++ rs.2 }
+
+/-- The stream read as TeX once, each kept node back at its place. -/
+private def TexStream.close (st : TexStream) (file : String) : Array Raw × Array Diag :=
+  let st := st.flush file
+  let (raws, ds) := Parse.parse file st.toks
+  (Parse.spliceKeptList st.kept #[] raws.toList, st.diags ++ ds)
+
+mutual
+
+/-- One inline node into a hybrid file's stream: its text as TeX reads it, emphasis and links
+spelled around their content, every other node kept whole. -/
+private def texInl (file : String) (st : TexStream) : Inl → TexStream
+  | .text s p => st.text s p
+  | .soft p => st.text "\n" p
+  | .hard p => st.tok file (.ctrl "\\") p
+  | .emph body p =>
+    (texInls file ((st.tok file (.ctrl "emph") p).tok file .lbrace p) body.toList).tok file .rbrace p
+  | .strong body p =>
+    (texInls file ((st.tok file (.ctrl "textbf") p).tok file .lbrace p) body.toList).tok file
+      .rbrace p
+  | .link dest title body p =>
+    let st := (st.tok file (.ctrl "href") p).keep file (#[.group (textRaws dest p) p], #[]) p
+    let st := (texInls file (st.tok file .lbrace p) body.toList).tok file .rbrace p
+    if title.isEmpty then st else
+      { st with diags := st.diags.push (routeDegraded file "link-title"
+        "a link's title is not carried: the link sets without it" p) }
+  | .citeText key body p =>
+    let st := (st.tok file (.ctrl "href") p).keep file
+      (#[.group (textRaws ("#" ++ Ir.bibAnchor key) p) p], #[]) p
+    let st := (texInls file (st.tok file .lbrace p) body.toList).tok file .rbrace p
+    st.keep file (citeCmdRaws "nocite" #[] #[] #[key] p, #[]) p
+  | x@(.code _ p) => st.keep file (inlRaws file x) p
+  | x@(.image _ _ _ p) => st.keep file (inlRaws file x) p
+  | x@(.anchor _ p) => st.keep file (inlRaws file x) p
+  | x@(.cite _ p) => st.keep file (inlRaws file x) p
+
+private def texInls (file : String) (st : TexStream) : List Inl → TexStream
+  | [] => st
+  | x :: rest => texInls file (texInl file st x) rest
+
+end
+
+mutual
+
+/-- One block into a hybrid file's stream, a paragraph's text joining it and a container's blocks
+read as a stream of their own, kept whole. -/
+private def texBlk (file : String) (refs : Array Raw) (divisions : Bool) (st : TexStream) :
+    Blk → TexStream
+  | .para body p => (texInls file st body.toList).tok file .par p
+  | .heading level body p =>
+    let (rs, ds) := (texInls file {} body.toList).close file
+    st.keep file (Parse.headingRaws level rs p, ds) p
+  | .quote body p =>
+    let (rs, ds) := (texBlks file refs divisions {} body.toList).close file
+    st.keep file (#[.env "quote" rs p], ds) p
+  | .disclosure summary expanded body p =>
+    let (ss, sds) := (texInls file {} summary.toList).close file
+    let (rs, ds) := (texBlks file refs divisions {} body.toList).close file
+    st.keep file (disclosureRaws ss rs expanded p, sds ++ ds) p
+  | .list ordered start tight items p =>
+    let (rs, ds) := texItems file refs divisions #[] #[] items.toList p
+    st.keep file (#[.env (if ordered then "enumerate" else "itemize") rs p],
+      ds ++ listLosses file ordered start tight p) p
+  | .table aligns header rows p =>
+    st.keep file (tableRaws (fun c => (texInls file {} c.toList).close file) aligns header rows p) p
+  | b@(.code _ _ p) => st.keep file (blkRaws file refs divisions b) p
+  | b@(.rule p) => st.keep file (blkRaws file refs divisions b) p
+  | b@(.lean _ p) => st.keep file (blkRaws file refs divisions b) p
+  | b@(.metadata _ p) => st.keep file (blkRaws file refs divisions b) p
+  | b@(.refs p) => st.keep file (blkRaws file refs divisions b) p
+
+private def texBlks (file : String) (refs : Array Raw) (divisions : Bool) (st : TexStream) :
+    List Blk → TexStream
+  | [] => st
+  | b :: rest => texBlks file refs divisions (texBlk file refs divisions st b) rest
+
+/-- One `\item` per list item, its blocks a stream of their own. -/
+private def texItems (file : String) (refs : Array Raw) (divisions : Bool) (out : Array Raw)
+    (ds : Array Diag) : List (Array Blk) → Pos → Array Raw × Array Diag
+  | [], _ => (out, ds)
+  | it :: rest, p =>
+    let (rs, ds') := (texBlks file refs divisions {} it.toList).close file
+    texItems file refs divisions ((out.push (.ctrl "item" p)) ++ selectorGuard rs p ++ rs)
+      (ds ++ ds') rest p
+
+end
+
+/-- A file's blocks as raws, read as TeX within markdown's structure where `tex` says. -/
+private def bodyRaws (file : String) (refs : Array Raw) (divisions tex : Bool) (blocks : List Blk) :
+    Array Raw × Array Diag :=
+  if tex then (texBlks file refs divisions {} blocks).close file
+  else blkListRaws file refs divisions #[] #[] blocks
 
 mutual
 
@@ -936,7 +1045,7 @@ without a comma" (some ⟨file, f.pos⟩) (some "convert the entries to a .bib f
       | none => out := { out with diags := out.diags.push (unread f "its value is not text") }
     | "reference-section-title", .scalar t =>
       let (title, ds) := metaInlines file t.trimAscii.toString f.pos
-      let lowered := inlListRaws file false #[] #[] title.toList
+      let lowered := inlListRaws file #[] #[] title.toList
       out := { out with title := some (title, f.pos), diags := out.diags ++ ds ++ lowered.2 }
     | "link-citations", v =>
       match v.bool? with
@@ -976,7 +1085,7 @@ public def MetaRead.list (m : MetaRead) (cited : Bool) : Array Raw :=
 /-- The heading over a reference list set at the file's end: `reference-section-title`. -/
 public def MetaRead.titleRaws (file : String) (m : MetaRead) : Array Raw :=
   match m.title with
-  | some (title, q) => Parse.headingRaws .h1 (inlListRaws file false #[] #[] title.toList).1 q
+  | some (title, q) => Parse.headingRaws .h1 (inlListRaws file #[] #[] title.toList).1 q
   | none => #[]
 
 /-- What a file ends with: the `nocite` keys, after every citation as Pandoc's LaTeX template sets
@@ -1000,16 +1109,17 @@ its first `::: {#refs}` division, else at its end, as Pandoc places it. -/
 public def desugar (file : String) (input : String) (dialect : Dialect := .document)
     (role : Role := .document) (citing : Bool := false)
     (known : Option (Std.HashSet String) := none) (tex : Bool := false) : Array Raw × Array Diag :=
-  let read := blocksIn dialect file input (included := role == .included && citing) (known := known)
+  let read := blocksIn dialect file (if tex then stripTexComments input else input)
+    (included := role == .included && citing) (known := known) (tex := tex)
   let split := splitMetadata read.1
   let m := metaRead file role split.1
-  let blocks := if tex then (texRunBlks #[] split.2.toList).toList else split.2.toList
+  let blocks := split.2.toList
   let cited := citesBlks citesInls blocks
   -- premise: Tests.UnusedSettings.metadataChecks — a document spelling no citation reads none
   let unused := if role != .document || m.sources.isEmpty || m.nocite.isSome ||
       citesBlks spellsCiteInls blocks then #[]
     else m.taken.map fun (key, pos) => UnusedSetting.metaDiag file key pos
-  let body := blkListRaws file (m.list cited) (dialect matches .document) tex #[] #[] blocks
+  let body := bodyRaws file (m.list cited) (dialect matches .document) tex blocks
   let placed := refsAt blocks
   -- premise: mdMetadataChecks — a division with no bibliography to place is named
   let unplaced := match placed with

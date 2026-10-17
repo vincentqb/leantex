@@ -799,7 +799,7 @@ public theorem includeLean_vocabulary_mem (file text : String) (showing : Showin
     (facts : Option LeanFacts.Facts) (place : LinkPlace) (request : Span) (entry : String)
     (refs : Option Refs) :
     ∃ body, (includeLean file text showing facts place request entry refs).1 =
-        #[.env (Parse.nativeInputEnv file) body request.pos] ∧ ∀ r ∈ body, vocabulary.admits r = true := by
+        #[.env (Parse.keptInputEnv file) body request.pos] ∧ ∀ r ∈ body, vocabulary.admits r = true := by
   unfold includeLean
   dsimp only
   split

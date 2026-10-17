@@ -843,7 +843,7 @@ private structure St where
   names. -/
   mentions : Array String := #[]
   /-- The raws the walk leaves alone, each returning at its place after the rewrite. -/
-  natives : Array (Array Raw) := #[]
+  kept : Array (Array Raw) := #[]
 
 private abbrev M := StateM St
 
@@ -886,27 +886,11 @@ public structure InputContext where
 public def InputContext.inputAttempts (context : InputContext) : Array InputAttempt :=
   context.state.inputAttempts
 
-/-- The flag holding `\markdownSetup`'s `citations` for its group, named by no control word. -/
-private def markdownCitationsFlag : String := "markdown citations"
-
-/-- The flag holding `\markdownSetup`'s `hybrid` for its group, named by no control word. -/
-private def markdownHybridFlag : String := "markdown hybrid"
-
-/-- The markdown package's `citations` and `hybrid` in force where a request stands: the latest
-`\markdownSetup` of its groups, else the options the package loaded with. -/
-public def InputContext.markdown (context : InputContext) : MarkdownOptions :=
-  let loads := context.state.loads
-  let given := (loads.passed.filter (·.1 == "markdown")).toList.flatMap (·.2.toList) ++
-    (((loads.pkgs.find? (·.1 == "markdown")).bind (·.2)).getD #[]).toList
-  let loaded := MarkdownOptions.read (",".intercalate given)
-  { citations := context.state.flags[markdownCitationsFlag]?.orElse fun _ => loaded.citations
-    hybrid := context.state.flags[markdownHybridFlag]?.orElse fun _ => loaded.hybrid }
-
 /-- An answer the walk leaves alone: its place, at `pos`, and the context keeping its raws. -/
-public def InputContext.native (context : InputContext) (raws : Array Raw) (pos : Pos) :
+public def InputContext.keep (context : InputContext) (raws : Array Raw) (pos : Pos) :
     Array Raw × InputContext :=
-  (#[Parse.nativeRaw context.state.natives.size pos],
-    { state := { context.state with natives := context.state.natives.push raws } })
+  (#[Parse.keptRaw context.state.kept.size { pos with origins := [] }],
+    { state := { context.state with kept := context.state.kept.push raws } })
 
 /-- A file reader whose parsed answer runs in the requesting context; `none`
 leaves the original call. -/
@@ -4679,6 +4663,54 @@ private def inputRequestAt (st : St) (n : String) (pos : Pos)
         callPos := pos
         operands := raws.extract start (j + 1) }, j + 1)
 
+/-- The flag holding the markdown package's `citations` where a request stands, named by no control
+word. -/
+private def markdownCitationsFlag : String := "markdown citations"
+
+/-- The flag holding the markdown package's `hybrid` where a request stands, named by no control
+word. -/
+private def markdownHybridFlag : String := "markdown hybrid"
+
+/-- The markdown package's `citations` and `hybrid` set where they are given. -/
+private def setMarkdown (opts : MarkdownOptions) : M Unit := do
+  if let some b := opts.citations then setFlag markdownCitationsFlag b
+  if let some b := opts.hybrid then setFlag markdownHybridFlag b
+
+/-- The markdown package's `citations` and `hybrid` in force where a request stands: as it loaded,
+then as `\markdownSetup` sets them for the rest of a group. -/
+public def InputContext.markdown (context : InputContext) : MarkdownOptions :=
+  { citations := context.state.flags[markdownCitationsFlag]?
+    hybrid := context.state.flags[markdownHybridFlag]? }
+
+/-- The context once the markdown package loads with `options`, after the options passed to it
+before, as LaTeX applies them. -/
+public def InputContext.loadMarkdown (context : InputContext) (options : String) : InputContext :=
+  let passed := (context.state.loads.passed.filter (·.1 == "markdown")).toList.flatMap (·.2.toList)
+  let opts := MarkdownOptions.read (",".intercalate (passed ++ PackageImports.literalOptions options))
+  { state := (setMarkdown opts context.state).2 }
+
+/-- The context with the markdown package's options as `saved` holds them, a file that set them
+having ended. -/
+public def InputContext.restoreMarkdown (context : InputContext) (saved : MarkdownOptions) :
+    InputContext :=
+  let put (flags : Std.HashMap String Bool) (x : String) : Option Bool → Std.HashMap String Bool
+    | some b => flags.insert x b
+    | none => flags.erase x
+  { state := { context.state with
+      flags := put (put context.state.flags markdownCitationsFlag saved.citations)
+        markdownHybridFlag saved.hybrid } }
+
+/-- What an inclusion with `options` reads under, its own over those in force where it stands, and
+a note naming every other option it writes. -/
+public def InputContext.markdownFor (context : InputContext) (options : String) (site : Span) :
+    Bool × Bool × Array Diag :=
+  let opts := MarkdownOptions.read options
+  let note := if opts.others.isEmpty then #[] else #[Diag.of .W0110 s!"'\\markdownInput' options \
+'{", ".intercalate opts.others.toList}' are not applied; the Markdown document dialect reads only \
+'citations' and 'hybrid'" (some site) (subject := some "markdownInput:options")]
+  (opts.citations.getD (context.markdown.citations.getD false),
+    opts.hybrid.getD (context.markdown.hybrid.getD false), note)
+
 /-- `\markdownSetup{options}`: the markdown package's `citations` and `hybrid` set for the rest of
 its group, every other option named. -/
 private def markdownSetupAt (n : String) (pos : Pos) (raws : Array Raw) (start : Nat) :
@@ -4688,8 +4720,8 @@ private def markdownSetupAt (n : String) (pos : Pos) (raws : Array Raw) (start :
   let j := skipSpaces raws start
   let some (.group body _) := raws[j]? | return none
   let opts := MarkdownOptions.read (rawSrc body)
-  if let some b := opts.citations then setFlag markdownCitationsFlag b
-  if let some b := opts.hybrid then setFlag markdownHybridFlag b
+  setMarkdown opts
+  -- premise: markdownHybridChecks — the driver reads citations and hybrid where the package does
   unless opts.others.isEmpty do
     say .W0110 s!"'\\markdownSetup' options '{", ".intercalate opts.others.toList}' are not \
 applied; the Markdown document dialect reads only 'citations' and 'hybrid'" (st.useSite.getD pos)
@@ -9463,7 +9495,7 @@ English captions and patterns stand in" pos
           (help := "put poster and size options on each '\\animategraphics'; playback settings remain unsupported")
   else if p == "markdown" then
     -- premise: markdownInputChecks — the driver reads native fragments
-    -- The driver's reader reads the package's `citations` and `hybrid` at each `\markdownInput`.
+    -- premise: markdownHybridChecks — the driver reads citations and hybrid where the package does
     let others := (MarkdownOptions.read (opt.getD "")).others
     if others.isEmpty then
       discard s!"\\{name}\{{p}}"
@@ -9473,7 +9505,7 @@ English captions and patterns stand in" pos
       for o in others do
         sayOnce ("param:usepackage:markdown:" ++ (KeyVal.entry o).1) .W0110
           s!"'markdown' package option '{o}' is not applied; \
-the native Markdown dialect reads only 'citations' and 'hybrid'" pos
+the Markdown document dialect reads only 'citations' and 'hybrid'" pos
           (help := "remove the package options")
   else if p == "unicode-math" && opt.isSome then
     out := out ++ (← unicodeMathOptions
@@ -12982,8 +13014,8 @@ private def executeBy [Monad m] (reader : Option (InputReader m))
 
 /-- A surface the walk leaves alone whole, markdown or a code file: nothing executes, and its raws
 return as they are after the rewrite. -/
-public def native (file : String) (raws : Array Raw) : Executed :=
-  { raws := #[Parse.nativeRaw 0 {}], state := { file, docFile := file, natives := #[raws] } }
+public def kept (file : String) (raws : Array Raw) : Executed :=
+  { raws := #[Parse.keptRaw 0 {}], state := { file, docFile := file, kept := #[raws] } }
 
 /-- Executes a file-free surface once, retaining the same source evidence as the
 input-fulfilling path. -/
@@ -13323,7 +13355,7 @@ private def finishRewritten (result : Array Raw × St) :
   let (out, st) := finishRewrittenState result
   let out := if st.beamerBlockBegin.isEmpty then out
     else blockHookList st.beamerBlockBegin #[] out.toList
-  let out := if st.natives.isEmpty then out else Parse.spliceNatives st.natives #[] out.toList
+  let out := if st.kept.isEmpty then out else Parse.spliceKeptList st.kept #[] out.toList
   (out, st.diags, st.warned)
 
 attribute [local irreducible] boxRowList boxRowEmit finishDeclarations

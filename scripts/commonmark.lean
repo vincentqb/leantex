@@ -663,7 +663,7 @@ def fragmentOf (body : Array Html.Node) : Array Html.Node :=
 backend: the fragment tree and the diagnostics. -/
 def engineFragment (src : String) : Array Html.Node × Array Diag :=
   let (raws, readDiags) := Surface.read .markdown "case.md" src
-  let (doc, diags) := Elab.runRaws "case.md" raws readDiags
+  let (doc, diags) := Elab.runKept "case.md" raws readDiags
   let (_, body, htmlDiags) := HtmlDoc.emitTree {} doc
   (fragmentOf body, diags ++ htmlDiags)
 
@@ -1094,7 +1094,7 @@ def hopTwins (exs : Array Example) : IO (Array (String × String × Option Nat))
     out := out.push (p, MarkdownDoc.emit d, none)
   for ex in exs do
     let (raws, readDiags) := Surface.read .markdown "case.md" ex.md
-    let (d, ds) := Elab.runRaws "case.md" raws readDiags
+    let (d, ds) := Elab.runKept "case.md" raws readDiags
     unless ds.any (·.severity == .error) do
       out := out.push (s!"example {ex.id} ({ex.section_})", MarkdownDoc.emit d, some ex.id)
   return out

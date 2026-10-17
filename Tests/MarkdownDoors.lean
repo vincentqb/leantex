@@ -125,11 +125,12 @@ def spliceOne (name : String) (wrap : Pos → Array Raw) : Raw → Raw
 end
 
 /-- The host with the fragment's raws spliced at the call, executed with no reader. -/
-def splicedDoc (host src : String) : Ir.Doc × Array Diag :=
+def splicedDoc (host src : String) (hybrid : Bool := false) : Ir.Doc × Array Diag :=
   let (raws, ds) := Surface.read .tex hostFile host
-  let fds := (Surface.read .markdown mdName src).2
-  let raws := spliceList mdName (fun p => (Surface.fragment .markdown mdName src p).1) #[]
-    raws.toList
+  let fds := if hybrid then (Surface.fragment .markdown mdName src {} false true).2
+    else (Surface.read .markdown mdName src).2
+  let raws := spliceList mdName (fun p => (Surface.fragment .markdown mdName src p false hybrid).1)
+    #[] raws.toList
   Elab.runExecuted hostFile (Elab.executeInputs nullReader hostFile raws) (ds ++ fds)
 
 /-- D6's right side: the host with the file's raws, read under the host's own name, standing at each
@@ -209,6 +210,10 @@ def captureFragment : String :=
   "Words *em* **bold** `mono` [link](http://example.org/l) ![alt](pic.png) " ++
     "<a id=\"k2\"></a>tail\\\nnext line\n\n- item one\n- item two\n"
 
+/-- The capture fragment with TeX in its text, which only a hybrid reading reads as TeX. -/
+def texFragment : String :=
+  captureFragment ++ "\nTeX \\textbf{bold word} and $x^2$ here.\n"
+
 /-- Which vocabulary controls a host's redefinition reaches inside markdown it includes under the
 markdown package's hybrid option: all but `\item`; without the option, none. -/
 def captureRule : List (String × Bool) :=
@@ -255,8 +260,10 @@ def markdownDoorChecks (ref : IO.Ref (List String)) : IO Unit := do
       (iDoc.body == neutralDoc.body)
     let host := hybridHostWith pre
     let (hDoc, _) := includedDoc hostFile host [(mdName, mdName, captureFragment)]
+    let (tDoc, _) := includedDoc hostFile host [(mdName, mdName, texFragment)]
     t s!"doors D2: under hybrid, a host redefining \\{n} includes as it splices"
-      (hDoc == (splicedDoc host captureFragment).1)
+      (tDoc == (splicedDoc host texFragment (hybrid := true)).1 &&
+        tDoc != (splicedDoc host texFragment).1)
     t s!"doors D2: under hybrid, the capture rule for \\{n} is {captured}"
       ((hDoc.body != hybridNeutral.body) == captured)
   let (frameDoc, _) := includedDoc hostFile frameHost [(mdName, mdName, captureFragment)]
@@ -322,7 +329,7 @@ def markdownDoorChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "doors D6: the domain judge refuses an include beside text (the corpus article)"
     (!includeStands (← fixturePlanRaws "md-include"))
   let prepared (f : String) (raws : Array Raw) : Array Raw :=
-    (Elab.prepareExecuted f (Compat.native f raws)).raws
+    (Elab.prepareExecuted f (Compat.kept f raws)).raws
   let kept := family.filter fun src =>
     let raws := (Surface.read .markdown mdName src).1
     prepared mdName raws == raws
@@ -351,7 +358,7 @@ def markdownDoorDriverChecks (ref : IO.Ref (List String)) : IO Unit := do
       IO.FS.writeFile path src
       let read ← Input.readDocument path src.toUTF8
       t s!"doors D7: the driver hands the walk {name} as one place it leaves alone"
-        (read.executed.raws == #[Parse.nativeRaw 0 {}])
+        (read.executed.raws == #[Parse.keptRaw 0 {}])
 
 /-- The markdown package's `hybrid` option where LaTeX's package reads it: a file's text is TeX under
 it and text without it, and a Lean file it or a host includes stays as its page sets it. -/
@@ -360,12 +367,12 @@ def markdownHybridChecks (ref : IO.Ref (List String)) : IO Unit := do
   IO.FS.withTempDir fun dir => do
     let host := (dir / hostFile).toString
     IO.FS.writeFile (dir / mdName) "Words \\textbf{Boldword} and \\zed here.\n"
-    let run (pre body : String) : IO (Array Html.Node × Array Diag) := do
-      let (doc, ds) ← elabInputSrc host ("\\documentclass{article}" ++ pre ++
-        "\\newcommand{\\zed}{Zed}\\renewcommand{\\emph}[1]{Emzed}\\begin{document}" ++ body ++
-        "\\end{document}")
+    let runWith (defs pre body : String) : IO (Array Html.Node × Array Diag) := do
+      let (doc, ds) ← elabInputSrc host ("\\documentclass{article}" ++ pre ++ defs ++
+        "\\begin{document}" ++ body ++ "\\end{document}")
       let (_, html, _) := HtmlDoc.emitTree {} doc
       return (html, ds)
+    let run := runWith "\\newcommand{\\zed}{Zed}\\renewcommand{\\emph}[1]{Emzed}"
     let input := "\\markdownInput{" ++ mdName ++ "}"
     for (label, pre, body, tex, text) in [
         ("without the option", "\\usepackage{markdown}", input, 0, 1),
@@ -405,5 +412,62 @@ and never the Lean file its division includes"
     let (leanHtml, _) ← run "" "\\inputlean[show = docs]{ex.lean}"
     t "markdown hybrid: a host's emphasis leaves a Lean file it includes as its page sets it"
       (treeShownOccurs leanHtml "docword" == 1 && treeShownOccurs leanHtml "Emzed" == 0)
+    -- A hybrid file is one TeX stream: a group, an environment or math may span markdown's nodes.
+    let hybridPre := "\\usepackage[hybrid]{markdown}\\usepackage{xcolor}"
+    for (name, text, shown, gone) in [
+        ("span.md", "Case \\textbf{alpha *beta* gamma} end.\n", ["alpha", "beta", "gamma"],
+          ["textbf"]),
+        ("note.md", "Words\\footnote{see [the site](http://example.org/f) here} on.\n",
+          ["the site"], ["footnote"]),
+        ("ink.md", "\\textcolor{red}{**bold red**} words.\n", ["bold red"], ["textcolor"]),
+        ("centre.md", "\\begin{center}\n\nA centred paragraph.\n\n\\end{center}\n",
+          ["A centred paragraph"], ["center"]),
+        ("math.md", "Inline $x *y* z$ math.\n", ["Inline", "math"], ["$"]),
+        ("escapes.md", "Hash \\#3 and \\% sign and more words.\n", ["#3", "% sign and more words"],
+          ["\\#"]),
+        ("comment.md", "Alpha % comment with *hidden* words\nBeta after the comment.\n",
+          ["Alpha Beta after the comment."], ["hidden"])] do
+      IO.FS.writeFile (dir / name) text
+      let (html, ds) ← runWith "" hybridPre ("\\markdownInput{" ++ name ++ "}")
+      t s!"markdown hybrid: {name} reads as one TeX stream ({ds.filter (·.severity == .error) |>.map (·.code)})"
+        (ds.all (·.severity != .error) && shown.all (treeShownOccurs html · ≥ 1) &&
+          gone.all (treeShownOccurs html · == 0))
+    IO.FS.writeFile (dir / "place.md") "> quoted \\unknownzz here\n\n- item \\otherzz\n"
+    let (_, placeDs) ← runWith "" hybridPre "\\markdownInput{place.md}"
+    let at? (name : String) : Option (Nat × Nat) :=
+      (placeDs.find? fun d => hasStr d.message name).bind fun d => d.span.map fun sp =>
+        (sp.pos.line, sp.pos.col)
+    t s!"markdown hybrid: a diagnostic in a quotation or a list item names its own column \
+({at? "unknownzz"}, {at? "otherzz"})"
+      (at? "unknownzz" == some (1, 10) && at? "otherzz" == some (3, 8))
+    IO.FS.writeFile (dir / "inner.md") "\\markdownSetup{hybrid=false}Inner \\zed words.\n"
+    let (leakHtml, _) ← run "\\usepackage[hybrid]{markdown}" ("\\markdownInput{inner.md}" ++ input)
+    t "markdown hybrid: a setup inside an included file ends with it"
+      (treeShownOccurs leakHtml "Zed" == 2 && treeShownOccurs leakHtml "\\zed" == 0)
+    let (lateHtml, _) ← run "\\usepackage{markdown}\\PassOptionsToPackage{hybrid}{markdown}" input
+    t "markdown hybrid: an option passed after the package loads applies to nothing"
+      (treeShownOccurs lateHtml "Zed" == 0 && treeShownOccurs lateHtml "\\zed" == 1)
+    let (earlyHtml, _) ← run "\\PassOptionsToPackage{hybrid}{markdown}\\usepackage{markdown}" input
+    t "markdown hybrid: an option passed before the package loads is its own"
+      (treeShownOccurs earlyHtml "Zed" == 1 && treeShownOccurs earlyHtml "\\zed" == 0)
+    -- A Lean file's formulas read none of the document's definitions.
+    for f in ["statements.lean", "statements.facts"] do
+      IO.FS.writeFile (dir / f) (← IO.FS.readFile s!"testdata/codedoc/lean/{f}")
+    let statements := "\\inputlean[show = math, facts = statements.facts]{statements.lean}"
+    let (mathHtml, _) ← run "\\renewcommand{\\forall}{\\exists}\\renewcommand{\\leq}{\\neq}" statements
+    let (plainHtml, _) ← run "" statements
+    t "markdown hybrid: a host renewing math commands leaves a Lean file's formulas as its page sets them"
+      (treeShownOccurs plainHtml "∀" ≥ 1 &&
+        nodeTextList "" mathHtml.toList == nodeTextList "" plainHtml.toList)
+    -- A macro around an inclusion still names what it wraps.
+    let classes (html : Array Html.Node) : Array String :=
+      html.flatMap (attrValuesOf (fun _ => true) "class")
+    let (incHtml, _) ← run "\\usepackage{markdown}\\newcommand{\\inc}[1]{\\markdownInput{#1}}"
+      ("\\inc{" ++ mdName ++ "}")
+    let (wrapHtml, _) ← run "\\newcommand{\\showlean}[1]{\\inputlean[show = docs]{#1}}"
+      "\\showlean{ex.lean}"
+    t "markdown hybrid: a macro wrapping an inclusion keeps its role around what it includes"
+      ((classes incHtml).any (fun c => (c.splitOn " ").contains (HtmlDoc.roleClass "inc")) &&
+        (classes wrapHtml).any fun c => (c.splitOn " ").contains (HtmlDoc.roleClass "showlean"))
 
 end Tests.MarkdownDoors

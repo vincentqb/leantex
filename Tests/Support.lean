@@ -300,13 +300,13 @@ def firstFormula (d : Ir.Doc) : Option Math.MList :=
 it. -/
 def elabMd (s : String) : Ir.Doc × Array Diag :=
   let (raws, ds) := Surface.read .markdown "t.md" s
-  Elab.runRaws "t.md" raws ds
+  Elab.runKept "t.md" raws ds
 
 /-- A code file's source elaborated as `leantex <file>` reads it, its language from `file`'s
 extension. -/
 def elabCode (file src : String) : Ir.Doc × Array Diag :=
   let (raws, ds) := Surface.read (Ir.Surface.ofPath file) file src
-  Elab.runRaws file raws ds
+  Elab.runKept file raws ds
 
 /-- How a witness runs: its source as written or transformed (`rep`), with or without its locations
 (`located`). -/
@@ -340,26 +340,21 @@ def nullReader : Compat.InputReader Id := fun _ context => (none, context)
 /-- A markdown file as a document of its own, elaborated as the driver runs one: nothing executes. -/
 def standaloneDoc (f t : String) : Ir.Doc × Array Diag :=
   let (raws, ds) := Surface.read .markdown f t
-  Elab.runExecuted f (Compat.native f raws) ds
+  Elab.runKept f raws ds
 
 /-- The included door's reader: `\markdownInput{name}` answered with the markdown fragment of the
-file `files` maps it to, which the walk leaves alone unless its options declare `hybrid`. -/
+file `files` maps it to, read and answered as the driver reads and answers it. -/
 def mdFileReader (files : List (String × String × String)) :
     Compat.InputReader (StateM (Array Diag)) := fun request context => do
   if request.command != "markdownInput" then return (none, context)
   match files.find? (·.1 == request.name.trimAscii.toString) with
   | none => return (none, context)
   | some (_, path, text) =>
-    let opts := Compat.MarkdownOptions.read request.options
-    let hybrid := opts.hybrid.getD (context.markdown.hybrid.getD false)
-    let cites := opts.citations.getD (context.markdown.citations.getD false)
-    let (sub, ds) := Surface.fragment .markdown path text request.pos cites (native := !hybrid)
-      (hybrid := hybrid)
-    modify (· ++ ds)
-    if hybrid then
-      let (answer, context) := Elab.resumeInput nullReader context request.file sub
-      return (some answer, context)
-    let (answer, context) := context.native sub request.pos
+    let (cites, hybrid, note) := context.markdownFor request.options ⟨request.file, request.pos⟩
+    let (sub, ds) := Surface.fragment .markdown path text request.pos cites hybrid
+    modify (· ++ ds ++ note)
+    let (answer, context) :=
+      Elab.markdownAnswer (m := Id) nullReader context request.file sub hybrid request.pos
     return (some answer, context)
 
 /-- A tex host through its door, executed with the included door's reader. -/
@@ -371,8 +366,8 @@ def includedDoc (hostFile host : String) (files : List (String × String × Stri
 
 /-- A markdown file alone as a document named `docFile`: its fragment and nothing else. -/
 def aloneDoc (docFile f t : String) : Ir.Doc × Array Diag :=
-  let (raws, ds) := Surface.fragment .markdown f t {} (native := true)
-  Elab.runExecuted docFile (Compat.native docFile raws) ds
+  let (raws, ds) := Surface.fragment .markdown f t {}
+  Elab.runKept docFile raws ds
 
 /-- An article whose body is one `\markdownInput` and nothing else. -/
 def neutralHost (name : String) : String :=
@@ -862,7 +857,8 @@ def elabFixture (n src : String) : IO (Ir.Doc × Array Diag) := do
 def bibBuildRun (src : String) (bibs : Array (String × String)) (surface : Ir.Surface := .tex)
     (file : String := "t.tex") : Ir.Doc × Array Diag × Array Diag × Array Diag :=
   let (raws, readDs) := Surface.read surface file src
-  let prepared := Elab.prepareExecuted file (Elab.executeInputs nullReader file raws)
+  let prepared := Elab.prepareExecuted file
+    (if surface == .tex then Elab.executeInputs nullReader file raws else Compat.kept file raws)
   let pass (prepared : Elab.Prepared) : Ir.Doc × Array Diag × Array Diag × Array Diag :=
     let (doc, ds, spans) := Elab.runPrepared file prepared readDs (fun _ _ => {})
     let sources := (Ir.bibRefs doc).filterMap fun r => bibs.find? (·.1 == r)
@@ -984,9 +980,9 @@ def mdCiteTwinCases : List (String × String) :=
 def elabMdFixture (n src : String) : IO (Ir.Doc × Array Diag) := do
   let file := s!"{n}.md"
   let (raws, ds) := Md.read file src
-  let (doc, diags) := Elab.runRaws file raws ds
+  let (doc, diags) := Elab.runKept file raws ds
   if (Ir.bibRefs doc).isEmpty then return (doc, diags)
-  let prepared := Elab.prepareExecuted file (Elab.executeInputs nullReader file raws)
+  let prepared := Elab.prepareExecuted file (Compat.kept file raws)
   let (doc, diags) := Elab.runPreparedFinal file prepared ds (fun _ _ => {})
   let mut sources : Array (String × String) := #[]
   for srcName in Ir.bibRefs doc do
@@ -1003,7 +999,7 @@ def leanCiteBuild (file src : String) (sources : Array (String × String)) : Ir.
                             keys := sources.foldl (init := {}) fun ks (_, bib) =>
                               (Bib.keysOf bib).foldl (·.insert ·) ks }
   let (raws, ds) := Surface.readCode .lean file src none {} (some refs)
-  let prepared := Elab.prepareExecuted file (Elab.executeInputs nullReader file raws)
+  let prepared := Elab.prepareExecuted file (Compat.kept file raws)
   let (doc, diags) := Elab.runPreparedFinal file prepared ds (fun _ _ => {})
   let (doc, bibDiags) := Bib.resolve file prepared sources doc
   (Ir.eraseLocations doc, diags ++ bibDiags)

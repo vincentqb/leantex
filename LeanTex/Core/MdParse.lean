@@ -2,6 +2,7 @@ module
 
 public import LeanTex.Core.Diag
 public import LeanTex.Core.Heading
+import LeanTex.Core.Lex
 import LeanTex.Core.Loop
 import LeanTex.Core.Blank
 import LeanTex.Core.Hex
@@ -1904,7 +1905,7 @@ public def docGenRead (text : String) (known : Std.HashSet String) : CiteRead :=
 /-- The scan: characters to a flat token array, brackets resolved against a
 stack and refusals raised where seen. -/
 def scanInlines (file : String) (c : Chars) (dialect : Dialect := .document)
-    (cr : CiteRead := {}) :
+    (cr : CiteRead := {}) (tex : Bool := false) :
     Array ITok × Array BPair × Array CPair × Array ShownRef × Array Diag := Id.run do
   let cites := cr.on
   let mut toks : Array ITok := #[]
@@ -1948,7 +1949,8 @@ def scanInlines (file : String) (c : Chars) (dialect : Dialect := .document)
       if ch == '\\' then
         match escaped? c i with
         | some d =>
-          pending := pending.push d
+          -- Where text is TeX, an escaped TeX special stays TeX's.
+          pending := if tex && Lex.special d then (pending.push '\\').push d else pending.push d
           i := i + 2
         | none =>
           -- A backslash before a line ending is a hard break.
@@ -2424,9 +2426,9 @@ separated by ';'") (subject := some "md:cite-nested"))
   return out
 
 /-- Inline structure for one stretch of text, in three passes, citations read as `cr` says. -/
-def inlines (file : String) (c : Chars) (dialect : Dialect := .document) (cr : CiteRead := {}) :
-    Array Inl × Array Diag :=
-  let (toks, bpairs, cpairs, shownRefs, diags) := scanInlines file c dialect cr
+def inlines (file : String) (c : Chars) (dialect : Dialect := .document) (cr : CiteRead := {})
+    (tex : Bool := false) : Array Inl × Array Diag :=
+  let (toks, bpairs, cpairs, shownRefs, diags) := scanInlines file c dialect cr tex
   let grouped := (cpairs.filter fun cp => cp.openTok < cp.closeTok).map fun cp =>
     ({ openTok := cp.openTok, closeTok := cp.closeTok, image := false, dest := "", title := "" } :
       BPair)
@@ -2592,13 +2594,13 @@ def tableCells (c : Chars) : Array Chars := Id.run do
 /-- A row's cells as inline content, exactly `n` of them: a missing cell is
 empty and an excess one dropped. -/
 def tableRow (file : String) (n : Nat) (cells : Array Chars) (dialect : Dialect := .document)
-    (cr : CiteRead := {}) : Array (Array Inl) × Array Diag := Id.run do
+    (cr : CiteRead := {}) (tex : Bool := false) : Array (Array Inl) × Array Diag := Id.run do
   let mut row : Array (Array Inl) := #[]
   let mut diags : Array Diag := #[]
   for k in [0:n] do
     match cells[k]? with
     | some c =>
-      let (inl, ds) := inlines file c dialect cr
+      let (inl, ds) := inlines file c dialect cr tex
       row := row.push inl
       diags := diags ++ ds
     | none => row := row.push #[]
@@ -2761,7 +2763,8 @@ private def indentedBlock (lines : Array String) (pos : Pos) : Blk :=
 
 /-- Blocks for one markdown text in a dialect, and the diagnostics the reader raised. -/
 public def blocksIn (dialect : Dialect) (file : String) (input : String) (included : Bool := false)
-    (known : Option (Std.HashSet String) := none) : Array Blk × Array Diag := Id.run do
+    (known : Option (Std.HashSet String) := none) (tex : Bool := false) :
+    Array Blk × Array Diag := Id.run do
   let doc := dialect == .document
   let lines := splitLines input
   let mut frames : Array Frame := #[]
@@ -2888,7 +2891,7 @@ public def blocksIn (dialect : Dialect) (file : String) (input : String) (includ
       fun l a fallback =>
         match l with
         | .para pls =>
-          let (inl, ds) := inlines file (charsOf pls) dialect cites
+          let (inl, ds) := inlines file (charsOf pls) dialect cites tex
           (a.push (.para inl ((pls[0]?.map (·.2)).getD fallback)), ds)
         | .table aligns header rows p => (a.push (.table aligns header rows p), #[])
         | _ => (a, #[])
@@ -3036,7 +3039,7 @@ public def blocksIn (dialect : Dialect) (file : String) (input : String) (includ
         acc := acc.push (.table aligns header rows tpos)
         leaf := .none
       else
-        let (row, ds) := tableRow file aligns.size cells dialect cites
+        let (row, ds) := tableRow file aligns.size cells dialect cites tex
         diags := diags ++ ds
         leaf := .table aligns header (rows.push row) tpos
         sawBlank := false
@@ -3116,7 +3119,7 @@ public def blocksIn (dialect : Dialect) (file : String) (input : String) (includ
           rstrip (String.ofList (raw.toList.take (raw.length - hashes)))
         else raw
       let (inl, ds2) := inlines file
-        (charsOfOne (body.trimAscii.toString) { line := ln.no, col := k + 1 }) dialect cites
+        (charsOfOne (body.trimAscii.toString) { line := ln.no, col := k + 1 }) dialect cites tex
       acc := acc.push (.heading level inl lpos)
       diags := diags ++ ds2
     else if leaf.isPara && (setextAt cs j).isSome then
@@ -3124,7 +3127,7 @@ public def blocksIn (dialect : Dialect) (file : String) (input : String) (includ
       let level := (setextAt cs j).getD 1
       match leaf with
       | .para pls =>
-        let (inl, ds) := inlines file (charsOf pls) dialect cites
+        let (inl, ds) := inlines file (charsOf pls) dialect cites tex
         acc := acc.push (.heading level inl ((pls[0]?.map (·.2)).getD lpos))
         diags := diags ++ ds
       | _ => pure ()
@@ -3186,7 +3189,7 @@ other attributes" (some ⟨file, p⟩) (subject := some "md:refs-attrs"))
         leaf := if htmlEndsIn cs j e then .none else .html e
     else if let some (before, hp, cells, aligns) := tableStart then
       let (a, ds) := closePara (if before.isEmpty then .none else .para before) acc lpos
-      let (header, ds2) := tableRow file aligns.size cells dialect cites
+      let (header, ds2) := tableRow file aligns.size cells dialect cites tex
       acc := a
       diags := diags ++ ds ++ ds2
       leaf := .table aligns header #[] hp
@@ -3202,7 +3205,7 @@ other attributes" (some ⟨file, p⟩) (subject := some "md:refs-attrs"))
     blankAfterSummary := none
   match leaf with
   | .para pls =>
-    let (inl, ds) := inlines file (charsOf pls) dialect cites
+    let (inl, ds) := inlines file (charsOf pls) dialect cites tex
     acc := acc.push (.para inl ((pls[0]?.map (·.2)).getD {}))
     diags := diags ++ ds
   | .fenced _ _ finfo fpos _ flines =>

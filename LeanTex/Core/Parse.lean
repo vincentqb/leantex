@@ -489,15 +489,15 @@ public def inputEnv (file : String) : String := "input " ++ file
 
 /-- The environment wrapping an included markdown or code file's raws, which neither the
 compatibility pass nor the document's own commands reach. -/
-public def nativeInputEnv (file : String) : String := "native " ++ file
+public def keptInputEnv (file : String) : String := "kept input " ++ file
 
 @[expose] public def inputEnvFile? (name : String) : Option String :=
   if name.startsWith "input " then some ((name.drop "input ".length).toString)
-  else if name.startsWith "native " then some ((name.drop "native ".length).toString)
+  else if name.startsWith "kept input " then some ((name.drop "kept input ".length).toString)
   else none
 
 /-- Whether an input environment holds an included markdown or code file's raws. -/
-@[expose] public def isNativeInput (name : String) : Bool := name.startsWith "native "
+@[expose] public def isKeptInput (name : String) : Bool := name.startsWith "kept input "
 
 /-- The environment of a generated declaration scope,
 unforgeable because its name holds a space. -/
@@ -548,52 +548,37 @@ public def citeSetupOf (body : Array Raw) : Array CiteDecl :=
 @[expose] public def markdownEnv (name : String) : Bool :=
   name == markdownTableEnv || name == markdownDisclosureEnv
 
-mutual
-
-/-- A raw with every position moved by `f`. -/
-@[expose] public def mapPos (f : Pos → Pos) : Raw → Raw
-  | .word s p => .word s (f p)
-  | .space => .space
-  | .par p => .par (f p)
-  | .ctrl n p => .ctrl n (f p)
-  | .sym c p => .sym c (f p)
-  | .group body p => .group (mapPosList f #[] body.toList) (f p)
-  | .math d body p => .math d (mapPosList f #[] body.toList) (f p)
-  | .env n body p => .env n (mapPosList f #[] body.toList) (f p)
-  | .verb e s p => .verb e s (f p)
-
-@[expose] public def mapPosList (f : Pos → Pos) (acc : Array Raw) : List Raw → Array Raw
-  | [] => acc
-  | r :: rest => mapPosList f (acc.push (mapPos f r)) rest
-
-end
-
 /-- The verbatim environment standing for raws the compatibility pass leaves alone until they return,
 unforgeable because its name holds a space. -/
 public def keptEnv : String := "kept raws"
 
 /-- Where the `k`th raws the compatibility pass leaves alone return. -/
-@[expose] public def nativeRaw (k : Nat) (p : Pos) : Raw := .verb keptEnv (toString k) p
+@[expose] public def keptRaw (k : Nat) (p : Pos) : Raw := .verb keptEnv (toString k) p
+
+/-- A raw under the macro invocations `os`, outermost first, before its own. -/
+@[expose] public def withOrigins (os : List MacroOrigin) (r : Raw) : Raw := os.foldr markMacro r
 
 mutual
 
-/-- A raw with each place of raws the compatibility pass left alone replaced by those raws. -/
-@[expose] public def spliceNative (natives : Array (Array Raw)) : Raw → Array Raw
+/-- A raw with each place of raws the compatibility pass left alone replaced by those raws, under
+the invocations enclosing the place. -/
+@[expose] public def spliceKept (kept : Array (Array Raw)) : Raw → Array Raw
   | .verb e s p =>
-    if e == keptEnv then natives.getD (s.toNat?.getD natives.size) #[] else #[.verb e s p]
-  | .group body p => #[.group (spliceNatives natives #[] body.toList) p]
-  | .env n body p => #[.env n (spliceNatives natives #[] body.toList) p]
-  | .math d body p => #[.math d (spliceNatives natives #[] body.toList) p]
+    if e == keptEnv then (kept.getD (s.toNat?.getD kept.size) #[]).map (withOrigins p.origins)
+    else #[.verb e s p]
+  | .group body p => #[.group (spliceKeptList kept #[] body.toList) p]
+  | .env n body p => #[.env n (spliceKeptList kept #[] body.toList) p]
+  | .math d body p => #[.math d (spliceKeptList kept #[] body.toList) p]
   | .word s p => #[.word s p]
   | .space => #[.space]
   | .par p => #[.par p]
   | .ctrl n p => #[.ctrl n p]
   | .sym c p => #[.sym c p]
 
-@[expose] public def spliceNatives (natives : Array (Array Raw)) (acc : Array Raw) :
+@[expose] public def spliceKeptList (kept : Array (Array Raw)) (acc : Array Raw) :
     List Raw → Array Raw
   | [] => acc
-  | r :: rest => spliceNatives natives (acc ++ spliceNative natives r) rest
+  | r :: rest => spliceKeptList kept (acc ++ spliceKept kept r) rest
 
 end
 

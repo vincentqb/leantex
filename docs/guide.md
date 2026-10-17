@@ -61,15 +61,19 @@ line breaks from the TeX document around it. Include one with:
 An included file's text is Markdown alone, as the markdown package reads it
 by default: a command, a brace or a `$` in it is text. Its emphasis, links
 and code are the document's own constructs, which the TeX document's command
-definitions do not reach: renewing `\emph` leaves its emphasis as it was.
-Under the package's `hybrid` option, declared by
-`\usepackage[hybrid]{markdown}`, `\markdownSetup{hybrid}` for the rest of its
-group or `\markdownInput[hybrid]{…}` for one file (and `hybrid = false` to
-turn it off), its text is TeX within Markdown's structure, as the package
-reads it then: its commands and math are TeX's, and the document's
-definitions reach it as they reach the TeX around it, though never a Lean
-file one of its divisions includes. A Lean file `\inputlean` includes sets as
-its page sets it, whatever the document defines.
+definitions do not reach: renewing `\emph` leaves its emphasis as it was,
+where LaTeX's markdown package sets emphasis through `\emph` and follows the
+renewal. The document's listing settings, such as `\lstset`'s, do reach its
+code blocks, as the package's listings do. Under the package's `hybrid`
+option, declared by `\usepackage[hybrid]{markdown}`, `\markdownSetup{hybrid}`
+for the rest of its group or `\markdownInput[hybrid]{…}` for one file (and
+`hybrid = false` to turn it off), its text is TeX within Markdown's
+structure, as the package reads it then: its commands, groups, environments
+and math are TeX's, even across its emphasis, links and paragraphs, a `%`
+comments out the rest of its line before the Markdown is read, and the
+document's definitions reach it as they reach the TeX around it, though never
+a Lean file one of its divisions includes. A Lean file `\inputlean` includes
+sets as its page sets it, whatever commands the document defines.
 
 Markdown cites as Pandoc does: `[@key]`, `[see @key, p. 33; @other]`,
 `[-@key]` without the author's name, and `@key` or `@key [p. 33]` within a
