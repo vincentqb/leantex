@@ -1878,7 +1878,7 @@ def reports : List Report := [
       "the review's guards: a break opening an untitled frame ships no page of its own, for each of three breaks, and a label meeting a section's slug keeps its name in both artifacts, the section taking the numbered form",
       "a deck's sections claim their slugs in one ledger with its frames in flow order: a section and a later frame of one title take x and x-2 in both artifacts; a page-less section's slug stands on its heading at the next stage's corner, a section page's on its stage"]
     state := .guarded "f27361cd" .revert .author },
-  { id := "R206", date := "2026-10-17"
+  { id := "R209", date := "2026-10-17"
     what := "a deck's overruns named apart from what they ran past: a frame's footnote past its measure said overfull line with no frame or amount, columns wider than their frame's measure ran past it in silence, a section page's title past its measure was a frame's line on a frame, and a protruding line's stated overrun counted its protrusion"
     pins := [check% Tests.DiagFold.frameOverfullChecks]
     accept := ["lualatex: beamer warns of two columns of 0.7 text widths an overfull box 66pt wide, its columns allowed the margins, and microtype's protrusion shortens an invented overfull line's stated amount from 23.6pt to 20.51pt; this tree names the columns past its own text width in a record of their own, and states a protruding line's overrun past the target its protrusion widens",
