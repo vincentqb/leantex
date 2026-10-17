@@ -241,3 +241,23 @@ with `LEANTEX_BENCH_COMPARE_BINARY` naming it for the byte comparison:
 
 The comparison found the artifacts and diagnostics byte-identical; `scripts/flate-fuzz.lean` still
 reads and refuses exactly what zlib does, and `scripts/img-fuzz.lean` passes.
+
+## Web pages — 2026-10-17
+
+`--pages-only` builds three small web pages, `testdata/corpus/md-emphasis.md`, `md-code.md` and
+`themed.tex`, the median of `N` builds each.
+
+A page's style and script payloads were searched for their closing tag through a list of the
+payload's characters, lowered, and the stylesheet's own check lowered and split the whole sheet;
+on a small page the sheet is mostly the embedded fonts' data URLs. Both now search the payload's
+UTF-8 bytes (`Html.holdsTerm`, which `holdsTerm_iff` proves finds exactly what the character
+search finds). Median of 15, three rounds alternating on a host at load 61-77, the before column
+with `LEANTEX_BENCH_BINARY` naming the parent's compiler:
+
+| Page | before | after |
+|---|---:|---:|
+| md-emphasis.md | 853 ms | 351 ms |
+| md-code.md | 754 ms | 332 ms |
+| themed.tex | 242 ms | 169 ms |
+
+Every corpus document's PDF and HTML is byte-identical before and after.

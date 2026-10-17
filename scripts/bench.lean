@@ -6,7 +6,7 @@ import LeanTex.Core.PngEncode
 /-
 Benchmark leantex against lualatex on the bench corpus, median of `N` runs (default 5), or the
 measurement a flag selects; never a gate. `LEANTEX_BENCH_BINARY` names a saved compiler.
-Usage: lake build && lake env lean --run scripts/bench.lean [--boundary-only | --concurrency-only | --slides-only | --slides-compressed-only | --slides-selftest | --talk-only | --decode-only | --listings-only | --bib-only | --passes-only | --svg-only | --pdf-pages-only <f.pdf> | --faces-only <f.pdf>... | --doc-cost [--record] [--history <path>]]
+Usage: lake build && lake env lean --run scripts/bench.lean [--boundary-only | --concurrency-only | --slides-only | --slides-compressed-only | --slides-selftest | --talk-only | --decode-only | --pages-only | --listings-only | --bib-only | --passes-only | --svg-only | --pdf-pages-only <f.pdf> | --faces-only <f.pdf>... | --doc-cost [--record] [--history <path>]]
 -/
 
 def compiler : IO String := do
@@ -51,6 +51,15 @@ def bench (n : Nat) (label : String) (cmd : String) (args : Array String) : IO U
   for _ in [0:n] do
     times := times.push (← runMs cmd args)
   IO.println s!"{padRight label 42} {padLeft (toString (median times)) 6} ms (median of {n})"
+
+/-- Small web pages, each the median of `n` builds: two markdown pages and the themed deck. -/
+def benchPages (n : Nat) (leantex : String) : IO Unit := do
+  let outDir ← IO.FS.createTempDir
+  for (label, doc) in [("md-emphasis.md", "testdata/corpus/md-emphasis.md"),
+      ("md-code.md", "testdata/corpus/md-code.md"), ("themed.tex", "testdata/corpus/themed.tex")] do
+    bench n s!"leantex  {label} -o html" leantex
+      #["-q", "build", doc, "-o", (outDir / "page.html").toString]
+  IO.FS.removeDirAll outDir
 
 def hasCmd (cmd : String) (args : Array String := #["--version"]) : IO Bool := do
   try
@@ -1264,6 +1273,9 @@ def main (args : List String) : IO UInt32 := do
     return 0
   if args == ["--decode-only"] then
     benchDecode n
+    return 0
+  if args == ["--pages-only"] then
+    benchPages n leantex
     return 0
   if args == ["--concurrency-only"] then
     for count in [8, 32] do benchConcurrent n count false

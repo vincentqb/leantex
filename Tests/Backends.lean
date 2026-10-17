@@ -1717,6 +1717,29 @@ def rawPayloadChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "html script payload with a spaced terminator is removed"
     (((Html.render (Html.elem "p" #[Html.Node.script #[] "x</script >bad"]) 0).splitOn
       "/* removed */").length == 2)
+  let lowered (s term : String) : Bool := hasStr s.toLower term
+  let edges := ["é</StYlE", "</sty\u0130le", "<</style", "</</style>", "x</styl", "😀</style",
+    "</STYLE", "</s\u0000tyle", "", "</style"]
+  t "html raw payload: the byte search finds a terminator where the lowered characters hold one"
+    (edges.all fun s => Html.holdsTerm s "</style" == lowered s "</style" &&
+      Html.holdsTerm s "</script" == lowered s "</script")
+  let alphabet : Array Char := #['<', '/', 's', 'S', 't', 'T', 'y', 'Y', 'l', 'L', 'e', 'E', 'c',
+    'r', 'i', 'p', 'P', 'é', '\u0130', '😀', ' ', '>']
+  let mut seed : UInt64 := 1709
+  let mut misses : Array String := #[]
+  for _ in [0:3000] do
+    let (len, s1) := rand seed 14
+    seed := s1
+    let mut text := ""
+    for _ in [0:len] do
+      let (pick, s2) := rand seed alphabet.size
+      seed := s2
+      text := text.push (alphabet[pick]?.getD 'x')
+    unless Html.holdsTerm text "</style" == lowered text "</style" &&
+        Html.holdsTerm text "</script" == lowered text "</script" do
+      misses := misses.push text
+  t s!"html raw payload: random texts read alike off bytes and characters (differing: \
+{misses.toList.take 3})" misses.isEmpty
 
 /-- The pre-commit gate's own predicates, through the script's `--selftest` mode. -/
 def precommitChecks (ref : IO.Ref (List String)) : IO Unit := do

@@ -203,7 +203,7 @@ public def cssRequests (css : String) : Array Request :=
   let s := flushWord (css.foldl cssStep {})
   let requests := if s.state == .plain || s.state == .slash then s.requests else
     s.requests.push (.refused "unterminated CSS token")
-  if (css.toLower.splitOn "</style").length > 1 then
+  if Html.holdsTerm css "</style" then
     requests.push (.refused "CSS contains an HTML raw-text terminator")
   else requests
 
