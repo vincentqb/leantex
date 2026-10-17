@@ -156,8 +156,8 @@ def paramSiteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
 
 
 /-- A native setting a translation writes reaches the elaborator entry by entry: a value whose text
-holds another entry sets nothing beyond its own key and is named dropped, and every native a table
-writes is carried whole. -/
+holds another entry sets nothing beyond its own key and is named dropped, every native a table
+writes is carried whole, and a native head reads as its spelling. -/
 def nativeCarrierChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let poster (width : String) : String :=
@@ -199,6 +199,19 @@ def nativeCarrierChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
     (Compat.ctrlRows.all fun row => match row.action with
       | .native s => whole s
       | .tokens .. | .skip _ | .refuse .. | .discard .. | .inert | .lower .. => true)
+  -- A head's carrier, read as text, is the lexer's reading of the spelling its note names.
+  let lexed (src : String) : Array Parse.Raw :=
+    ((Parse.parse "head.tex" (Lex.lex "head.tex" src).1).1).map (Compat.rebase (fun _ => {}) true)
+  let heads : List Native.Head :=
+    [.documentclass #[] "poster", .documentclass #["10pt", "aspectratio=169"] "slides",
+     .theme "moloch", .theoremStyle "plain", .define "probe" "",
+     .define "probe" "a1: content, a2?: content", .defineEnv "probe env" "a1: content",
+     .textcolor "alert", .framefoot, .bibliography none #["refs"],
+     .bibliography (some "plain") #["alpha", "beta"], .captionsetup none "font=small, labelfont=bf",
+     .captionsetup (some "figure") "position=bottom"]
+  for h in heads do
+    t s!"the head {h.render} reads as its spelling"
+      (lexed (Parse.rawSrc (h.raws {})) == lexed h.render)
 
 /-- A parameter set in a loaded style file ships the page its document spelling ships; only the
 diagnostic's severity moves. -/

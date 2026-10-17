@@ -183,16 +183,16 @@ public def classNormalPt (cls : String) (opts : List String) : Option Nat :=
 
 /-- Font-selection packages whose whole documented effect is
 naming families for the generic slots. -/
-private def fontPackages : List (String × String) :=
-  [("times", "body = \"TeX Gyre Termes\", sans = \"TeX Gyre Heros\", mono = \"TeX Gyre Cursor\""),
-   ("mathptmx", "body = \"TeX Gyre Termes\", math = \"TeX Gyre Termes Math\""),
-   ("palatino", "body = \"TeX Gyre Pagella\", sans = \"TeX Gyre Heros\", mono = \"TeX Gyre Cursor\""),
-   ("mathpazo", "body = \"TeX Gyre Pagella\", math = \"TeX Gyre Pagella Math\""),
-   ("helvet", "sans = \"TeX Gyre Heros\""),
-   ("courier", "mono = \"TeX Gyre Cursor\""),
-   ("libertine", "body = \"Linux Libertine O\", sans = \"Linux Biolinum O\", \
-mono = \"Linux Libertine Mono O\""),
-   ("carlito", "sans = \"Carlito\"")]
+private def fontPackages : List (String × Array (String × String)) :=
+  [("times", #[("body", "TeX Gyre Termes"), ("sans", "TeX Gyre Heros"), ("mono", "TeX Gyre Cursor")]),
+   ("mathptmx", #[("body", "TeX Gyre Termes"), ("math", "TeX Gyre Termes Math")]),
+   ("palatino", #[("body", "TeX Gyre Pagella"), ("sans", "TeX Gyre Heros"), ("mono", "TeX Gyre Cursor")]),
+   ("mathpazo", #[("body", "TeX Gyre Pagella"), ("math", "TeX Gyre Pagella Math")]),
+   ("helvet", #[("sans", "TeX Gyre Heros")]),
+   ("courier", #[("mono", "TeX Gyre Cursor")]),
+   ("libertine", #[("body", "Linux Libertine O"), ("sans", "Linux Biolinum O"),
+     ("mono", "Linux Libertine Mono O")]),
+   ("carlito", #[("sans", "Carlito")])]
 
 /-- Where a LaTeX length parameter's value goes. -/
 public inductive ParamSite where
@@ -455,13 +455,12 @@ that sets no link colour. -/
 private def LinkSetup.read (l : LinkSetup) (k v : String) : Option LinkSetup :=
   (linkKeys.lookup k).map (· l v)
 
-/-- The setup as native declarations: each link kind's colour style under
-`colorlinks`, nothing otherwise. -/
-private def LinkSetup.native (l : LinkSetup) : String :=
+/-- The setup as native settings: each link kind's colour style under `colorlinks`, none otherwise. -/
+private def LinkSetup.native (l : LinkSetup) : Array Native.Setting :=
   if l.colorlinks then
-    s!"\\style\{link}\{ color = {l.link} }\\style\{url}\{ color = {l.url} }" ++
-      s!"\\style\{cite}\{ color = {l.cite} }"
-  else ""
+    #[.style "link" #[("color", l.link)], .style "url" #[("color", l.url)],
+      .style "cite" #[("color", l.cite)]]
+  else #[]
 
 /-- Written tokens indexed before execution; generated commands inherit the
 written call's coordinates and spelling. -/
@@ -1331,7 +1330,7 @@ private def beamerTemplateFont (element : String) (fields : List (String × Stri
 /-- One `FontFace = {series}{shape}{font}` entry as the native slot part it
 becomes, or `none` after a warning naming what could not be honoured. -/
 private def fontFacePart (family slot v : String) (pos : Pos) :
-    M (Option String) := do
+    M (Option (String × String)) := do
   match (braceGroups v).toList with
   | [code, shape, f] =>
     match Ir.Weight.parseSeries code.trimAscii.toString,
@@ -1356,7 +1355,7 @@ is skipped" pos
       -- fontspec's `*` stands for the family name, as in `UprightFont`.
       let f := if f.startsWith "*" then family ++ (f.drop 1).toString else f
       let ext := if ital then ".italic" else ""
-      return some s!"{slot}.{w.series}{ext} = {Decl.quote f}"
+      return some (s!"{slot}.{w.series}{ext}", Decl.quote f)
     | none, _ =>
       sayOnce ("fontface:series:" ++ code) .W0104
         s!"'FontFace = \{{code}}...' names no NFSS series; \
@@ -2220,13 +2219,13 @@ the engine does not have; continuous numbers in the left margin stand" pos
 /-- unicode-math's option-driven legacy alphabets, carried into the typed font
 specification; other options are named. -/
 private def unicodeMathOptions (what opt : String) (pos : Pos) : M (Array Raw) := do
-  let mut sources : Array String := #[]
+  let mut sources : Array (String × String) := #[]
   let mut dropped : Array String := #[]
   for entry in KeyVal.items opt do
     match KeyVal.entry entry with
     | (key, some value) =>
       match Math.MathAlphabet.sourceKey? key, Math.MathAlphabetSource.ofName? value with
-      | some _, some source => sources := sources.push s!"{key} = {source.name}"
+      | some _, some source => sources := sources.push (key, source.name)
       | _, _ => dropped := dropped.push entry
     | (_, none) => dropped := dropped.push entry
   for e in dropped do
@@ -2236,9 +2235,7 @@ private def unicodeMathOptions (what opt : String) (pos : Pos) : M (Array Raw) :
     discard what "the engine keeps its existing math-source policy"
       "usepackage:unicode-math" pos
     return #[]
-  let native := s!"\\fonts\{ {String.intercalate ", " sources.toList} }"
-  became what native pos
-  synthAt native pos
+  setting what (.fonts sources) pos
 
 /-- A citation setup carried to the document, replayed at `\begin{document}`. -/
 private def natbibDefer (decls : Array CiteDecl) (pos : Pos) : M Unit :=
@@ -5958,18 +5955,15 @@ private def flushListLevels : M (Array Raw) := do
       if let some v := op "leftmargin" then
         unless v == Ir.leftMarginName level do
           out := out ++ (← carry (.tokens #[(Ir.leftMarginName level, v)]) pos)
-      let mut native := ""
-      let mut keys : Array String := #[]
+      let mut keys : Array (String × String) := #[]
       if level ≤ 4 then
-        if let some v := op "topsep" then keys := keys.push s!"before = {v}"
+        if let some v := op "topsep" then keys := keys.push ("before", v)
         if let (some i, some p) := (op "itemsep", op "parsep") then
           out := out ++ (← carry (.tokens #[(s!"itemsep{r}", i), (s!"parsep{r}", p)]) pos)
-          keys := keys.push s!"gap = itemsep{r} + parsep{r}"
+          keys := keys.push ("gap", s!"itemsep{r} + parsep{r}")
       unless keys.isEmpty do
         for kind in ["itemize", "enumerate"] do
-          let el := if level == 1 then kind else s!"{kind}{level}"
-          native := native ++ s!"\\style\{{el}}\{ {String.intercalate ", " keys.toList} }"
-      unless native.isEmpty do out := out ++ (← synthAt native pos)
+          out := out ++ (← carry (.style (if level == 1 then kind else s!"{kind}{level}") keys) pos)
   return out
 
 /-- A TeX length from option text: `3\\gapunit` is
@@ -6071,7 +6065,7 @@ private def listOptions (n : String) (body : Array Raw) (pos : Pos) : M (Array R
   -- A value or key the list does not read is named where it stands, which accounts for the options.
   unless named || rest.any fun e => !(KeyVal.entry e).1.isEmpty do
     became what s!"\\begin\{{n}}[{native}]" pos
-  return (← synthAt s!"[{native}]" pos) ++ body.extract k body.size
+  return #[.sym '[' pos, .word native pos, .sym ']' pos] ++ body.extract k body.size
 
 /-- Each run of letters a native length spells, a unit after its number included. -/
 private def letterRuns (s : String) : Array String := Id.run do
@@ -6283,11 +6277,7 @@ private def beamerposter (opts : String) (pos : Pos) : M (Array Raw) := do
       s!"beamerposter option '{o}' is outside the poster model; ignored" pos
       (help := "size, orientation, scale, and custom width/height carry over; \
 \\page{ ... } declares anything further")
-  return (← synthAt "\\documentclass{poster}" pos) ++ (← carry page pos)
-
-/-- Whether a value stands as one entry of a native declaration, so spliced into one it sets no
-other key. -/
-private def oneEntry (v : String) : Bool := (Decl.splitEntries ("k = " ++ v)).length == 1
+  return (Native.Head.documentclass #[] "poster").raws pos ++ (← carry page pos)
 
 /-- Whether a name spells a key of a native declaration. -/
 private def nativeName (n : String) : Bool :=
@@ -6440,7 +6430,7 @@ private def hyperrefKeys (opts : String) (pos : Pos) : M HyperrefRead := do
         | none =>
           misread := misread.push s!"'{e}'"
           unless grammars.contains w.grammar do grammars := grammars.push w.grammar
-    if ["linkcolor", "urlcolor", "citecolor", "allcolors"].contains k && !oneEntry v then
+    if ["linkcolor", "urlcolor", "citecolor", "allcolors"].contains k && !Decl.wholeValue v then
       unread := unread.push s!"'{e}'"
     else if let some l := links.read k v then
       -- A colour style an earlier setup declared stands, so turning colouring off is not read.
@@ -6519,8 +6509,9 @@ elaborator sets as text, the dates and trapping as quoted `\pdfmeta` entries it 
 and all named in its note. -/
 private def hyperrefLowered (what key : String) (r : HyperrefRead) (pos : Pos) : M (Array Raw) := do
   let setup := (← get).links
-  let links := if r.linked then setup.native else ""
-  let styles ← if links.isEmpty then pure #[] else synthAt links pos
+  let settings := if r.linked then setup.native else #[]
+  let links := String.join (settings.toList.map (·.render))
+  let styles ← settings.foldlM (init := #[]) fun out s => return out ++ (← carry s pos)
   if r.metadata.isEmpty && r.words.isEmpty then
     if !links.isEmpty then became what links pos
     else unless r.warned do discard what "the engine does this itself" key pos
@@ -6959,8 +6950,8 @@ is not defined" pos (help := "name the colorant without double quotes, as \\defi
   match alternate with
   | some (c, mg, y, kk) =>
     let modeled := s!"spot(\"{ink}\", cmyk({c.pdfUnit}, {mg.pdfUnit}, {y.pdfUnit}, {kk.pdfUnit}))"
-    became s!"\\definespotcolor\{{n}}" s!"\\palette\{ {n} = {modeled} }" pos
-    return some (← synthAt s!"\\palette\{ {n} = {Decl.xcolorDefinitionPrefix}{modeled} }" pos, k)
+    became s!"\\definespotcolor\{{n}}" (Native.Setting.palette #[(n, modeled)]).render pos
+    return some (← carry (.palette #[(n, Decl.xcolorDefinitionPrefix ++ modeled)]) pos, k)
   | none =>
     say .W0102 s!"'\\definespotcolor\{{n}}' gives the alternate of '{ink}' in a model or values the \
 engine does not convert to CMYK; the colour is not defined" pos
@@ -7014,9 +7005,8 @@ rule; \\allow{E0113} accepts the loss")
         else none
       match height? with
       | some h =>
-        let native := s!"\\style\{section}\{ rule = {color}, rule-position = baseline, rule-thickness = {h} }"
-        became "\\sectionlinesformat" native pos
-        synthAt native pos
+        setting "\\sectionlinesformat"
+          (.style "section" #[("rule", color), ("rule-position", "baseline"), ("rule-thickness", h)]) pos
       | none => dropped s!" (rule dimensions '{spec}' other than a height)"
     | none => dropped ""
   | none => dropped ""
@@ -7159,11 +7149,11 @@ private def floatRedef? (envName : String) (raws : Array Raw) (j : Nat) (pos : P
       (kind.captionScope ++ (if r == "abovecaptionskip" then "captionsep" else "belowcaptionskip"), src))
     -- premise: captionScopeChecks — the kernel's order applies without a caption package
     let packaged := (← get).loads.pkgs.any fun (p, _) => p == "caption" || p == "subcaption"
-    let caption := s!"\\captionsetup[{envName}]\{position=bottom}"
+    let caption := Native.Head.captionsetup (some envName) "position=bottom"
     let (out, natives) ← if assigned.isEmpty then pure (#[], []) else do
       let out ← carry tokens pos
       if packaged then pure (out, tokens.note?.toList)
-      else pure (out ++ (← synthAt caption pos), tokens.note?.toList ++ [caption])
+      else pure (out ++ caption.raws pos, tokens.note?.toList ++ [caption.render])
     let what := if natives.isEmpty then s!"the built-in \{{envName}}"
       else String.intercalate " " natives
     became s!"\\renewenvironment\{{envName}}" what pos
@@ -7216,11 +7206,9 @@ redefinition is skipped") pos
           if alignments.contains n then none
           else some s!"\\{(aliases.lookup n).getD n}"
         | _ => none
-      let font := if fonts.isEmpty then ""
-        else s!", font = \{{String.join fonts.toList}}"
-      let native := s!"\\style\{{element}}\{ before = {before}, after = {after}{font} }"
-      became s!"\\{cmd} = \\@startsection\{{element}}" native pos
-      return some (← synthAt native pos)
+      let font := if fonts.isEmpty then #[] else #[("font", "{" ++ String.join fonts.toList ++ "}")]
+      return some (← setting s!"\\{cmd} = \\@startsection\{{element}}"
+        (.style element (#[("before", before), ("after", after)] ++ font)) pos)
     else return none
   | _ => return none
 
@@ -7251,11 +7239,10 @@ private def skipSrc (src : String) : SkipSpelling :=
     | none => { width := src }
   | _ => { width := src }
 
-/-- A skip's native spelling: one block, its width and its infinite stretch. -/
-private def skipNative (sp : SkipSpelling) (kind : String := "") : String :=
-  let opts := s!"before = {sp.width}" ++ (if kind.isEmpty then "" else s!", kind = {kind}") ++
-    (if sp.unranked then ", stretch = unranked" else if sp.fill then ", stretch = fill" else "")
-  s!"\\block[{opts}]\{}"
+/-- A skip as the native block it is: its width and its infinite stretch. -/
+private def skipNative (sp : SkipSpelling) (kind : String := "") : Native.Setting :=
+  .block (#[("before", sp.width)] ++ (if kind.isEmpty then #[] else #[("kind", kind)]) ++
+    (if sp.unranked then #[("stretch", "unranked")] else if sp.fill then #[("stretch", "fill")] else #[]))
 
 /-- One argument a control's signature reads: a star right after it, an optional `[...]`, a group
 or bare control word where one stands, one that must stand or the control is left to elaboration,
@@ -7662,8 +7649,8 @@ private def molochOptions (cmd src : String) (pos : Pos) : M (Array Raw) := do
       | "block", some decls =>
         became s!"{cmd} block={value}" "moloch's block colours, declared with \\setbeamercolor" pos
         for (element, body) in decls do
-          out := out ++ #[.ctrl BeamerColor.marker pos, .group (← synthAt element pos) pos,
-            .group (← synthAt body pos) pos]
+          out := out ++ #[.ctrl BeamerColor.marker pos, .group #[.word element pos] pos,
+            .group #[.word body pos] pos]
       | "block", none =>
         sayOnce ("moloch:" ++ key) .W0104
           s!"'{cmd}' option '{key}={value}' is moloch configuration the engine does not have; skipped" pos
@@ -7687,7 +7674,7 @@ private def themeOptions (cmd load tname opts : String) (pos : Pos) : M (Array R
 
 /-- The finite block-hook grammar: whitespace and the kernel's skip commands at their default
 amounts. -/
-private def blockHookSkips (out : Array String) : List Raw → Option (Array String)
+private def blockHookSkips (out : Array Native.Setting) : List Raw → Option (Array Native.Setting)
   | [] => some out
   | .space :: rest => blockHookSkips out rest
   | .ctrl name _ :: rest =>
@@ -7709,8 +7696,8 @@ private def blockHookArm (pos : Pos) (raws : Array Raw) (start : Nat) :
   | some before, some after =>
     -- premise: beamerHookChecks — scoped additions cannot set a global gap
     if args.size == 3 && element == "block begin" && before.isEmpty && (← docPreamble) then
-      let native := String.join after.toList
-      let spacing ← synthAt native pos
+      let native := String.join (after.toList.map (·.render))
+      let spacing ← after.foldlM (init := #[]) fun out s => return out ++ (← carry s pos)
       write fun st => { st with beamerBlockBegin := st.beamerBlockBegin ++ spacing }
       if spacing.isEmpty then
         discard "\\addtobeamertemplate{block begin}" "both additions are empty"
@@ -7778,9 +7765,8 @@ private def standoutFootHookArm (pos : Pos) (raws : Array Raw) (start : Nat) :
       ctrlName (args.getD 0 #[]) == some "KV@beamerframe@standout" &&
       (args.getD 2 #[]).all (· matches .space) then
     if standoutFootBody (args.getD 1 #[]) then
-      let native := "\\chrome{standout-note=true}"
-      became "\\apptocmd{\\KV@beamerframe@standout}" native pos
-      return some ((← synthAt native pos) ++ tail, k)
+      return some ((← setting "\\apptocmd{\\KV@beamerframe@standout}"
+        (.chrome #[("standout-note", "true")]) pos) ++ tail, k)
     -- premise: standoutPaletteChecks — aliases change only standout frames
     if let some aliases := standoutAliasList #[]
         ((args.getD 1 #[]).filter (!· matches .space)).toList then
@@ -7815,8 +7801,9 @@ private def alertPlain (pos : Pos) (raws : Array Raw) (start : Nat) (picture : B
     return some (alertStyled themed body pos, k)
   | none =>
     if themed then
-      became "\\alert" "\\textcolor{alert}" pos
-      return some (← synthAt "\\textcolor{alert}" pos, start)
+      let alert := Native.Head.textcolor "alert"
+      became "\\alert" alert.render pos
+      return some (alert.raws pos, start)
     else
       became "\\alert" "\\textbf" pos
       return some (#[.ctrl "textbf" pos], start)
@@ -7938,9 +7925,9 @@ which they run, before a block"]
               let role := kind.roleStem ++ "edge" ++ (if i == 0 then "" else toString (i + 1))
               match edge.paint with
               | some (.beamer chain ch) =>
-                let elements ← chain.toArray.mapM fun el => do return Raw.group (← synth el) pos
+                let elements := chain.toArray.map fun el => Raw.group #[.word el pos] pos
                 out := out ++ wrap #[.ctrl BeamerColor.siteMarker pos, .group elements pos,
-                  .group (← synth ch) pos, .group (← synth role) pos]
+                  .group #[.word ch pos] pos, .group #[.word role pos] pos]
                 colors := colors.push role
               | some (.named n) =>
                 out := out ++ wrap (← carry (.palette #[(role, n)]) pos)
@@ -7968,7 +7955,7 @@ private def flushBeamerFootline : M (Array Raw × Array Raw) := do
   let wrap (rs : Array Raw) : Array Raw :=
     if file == savedFile then rs else #[Raw.env (Parse.inputEnv file) rs pos]
   if body.isEmpty then
-    return (wrap (← synthAt "\\runningfoot{\\hfill}" pos),
+    return (wrap #[.ctrl "runningfoot" pos, .group #[.ctrl "hfill" pos] pos],
       wrap #[Raw.ctrl "framefoot" pos, Raw.group #[] pos])
   let some (left, counter, fontName, options) := numberedFootline? body
     | return (#[], #[])
@@ -7995,7 +7982,7 @@ private def flushBeamerFootline : M (Array Raw × Array Raw) := do
       s!"the footer note and frame counter use the native footer band; not applied: \
 {String.intercalate ", " unread.toList}" pos
       (help := "use \\framefoot{...} for its note and \\chrome{footer={right=\\framefraction}} for numbering")
-  let pre ← synthAt s!"\\chrome\{footer=\{right=\\{counter}}}" pos
+  let pre ← carry (.chrome #[("footer", "{right=\\" ++ counter ++ "}")]) pos
   let note := #[Raw.ctrl "framefoot" pos, Raw.group (fontPrefix ++ left) pos]
   write fun st => { st with file := savedFile }
   return (wrap pre, wrap note)
@@ -8261,9 +8248,7 @@ and patterns stand in" pos
     let e := glueEnd raws v0
     let sp := skipSrc (lengthSrc (raws.extract v0 e))
     if e ≤ v0 || (sp.width != "fill" && (Decl.parseGlue sp.width).isNone) then return none
-    let native := skipNative sp "vskip"
-    became "\\vskip" native pos
-    return some (← synthAt native pos, e)
+    return some (← setting "\\vskip" (skipNative sp "vskip") pos, e)
   | "varul" =>
     let mut j := skipSpaces raws start
     if let some (.word w _) := raws[j]? then
@@ -8304,12 +8289,8 @@ and patterns stand in" pos
           match KeyVal.entry kv with
           | ("Path", some v) => some v
           | _ => none
-    let dirPart := match path with
-      | some d => s!"dir = {Decl.quote d}, "
-      | none => ""
-    let native := s!"\\fonts\{ {dirPart}math = {Decl.quote family} }"
-    became "\\setmathfont" native pos
-    return some (← synthAt native pos, k)
+    let dir := (path.map fun d => #[("dir", Decl.quote d)]).getD #[]
+    return some (← setting "\\setmathfont" (.fonts (dir.push ("math", Decl.quote family))) pos, k)
   | "def" | "edef" | "gdef" | "xdef" =>
     -- A plain `\def` with undelimited parameters declares exactly what `\define` declares.
     let expanding := name == "edef" || name == "xdef"
@@ -8342,14 +8323,14 @@ and patterns stand in" pos
       if found && !expanding && arity.isSome then
         let n := arity.getD 0
         let spec := String.ofList (List.replicate n 'm')
-        let native := s!"\\define \\{cmd}({signature spec})"
+        let native := Native.Head.define cmd (signature spec)
         -- premise: ignoredDefinitionChecks — an ignored built-in's refusal is its one accounting
         unless (← get).ignoredDefs.contains cmd do
           write fun st => { st with
             bound := if st.bound.contains cmd then st.bound else st.bound.push cmd }
-          became s!"\\{name}\{\\{cmd}}" (native ++ " {...}") pos
+          became s!"\\{name}\{\\{cmd}}" (native.render ++ " {...}") pos
         write fun st => { st with bodyNext := 1, quietNext := st.templateCode.contains cmd }
-        return some (← synthAt native pos, k)
+        return some (native.raws pos, k)
       else
         let k2 := if found then k + 1 else k
         let demote := styInternal (← get).file name
@@ -8384,20 +8365,20 @@ the definition is skipped" pos
       -- premise: captionScopeChecks — the float-core idiom reads as its native kind
       if let some (out, k) ← floatRedef? envName.trimAscii.toString raws jd pos then
         return some (out, k)
-    let native := s!"\\defineenv\{{envName}}({signature spec})"
+    let native := Native.Head.defineEnv envName (signature spec)
     let env := envName.trimAscii.toString
     -- premise: ignoredDefinitionChecks — a refused built-in's refusal is its one accounting
     unless (← get).ignoredDefs.contains (Tcolorbox.bindingName env) ||
         floatRedefEnvs.contains env || env == "abstract" do
       became s!"\\{name}\{{envName}}"
-        (native ++ (if dflt.isSome then " [default]" else "") ++ " {begin} {end}") pos
+        (native.render ++ (if dflt.isSome then " [default]" else "") ++ " {begin} {end}") pos
     -- The default stays in the walk, rewritten where it stands, its groups no body.
     write fun st => { st with
       bodyNext := 2, envNext := 2, defaultAt := if dflt.isSome then .awaiting else .none }
     unless (← get).inDef do
       write fun st => { st with
         discardEnvs := st.discardEnvs.filter (·.1 != envName.trimAscii.toString) }
-    return some (← synthAt native pos, j)
+    return some (native.raws pos, j)
   | "newtheorem" =>
     let (env, _) := takeGroups raws (skipStar raws start) 1
     unless ← refusedEnvDef name (rawSrc (env.getD 0 #[])) "o" false pos do return none
@@ -8430,7 +8411,7 @@ the definition is skipped" pos
           | (none, _) => skipSpaces raws (b + 1)
         else j
       return some (#[.group #[] pos], k)
-    let native := s!"\\defineenv\{{envName}}({signature spec})"
+    let native := Native.Head.defineEnv envName (signature spec)
     match raws[b]? with
     | some (.group code _) =>
       let slot := (bodySlot? code).isSome
@@ -8440,7 +8421,7 @@ the definition is skipped" pos
         let ignored := (← get).ignoredDefs.contains (Tcolorbox.bindingName env) ||
           floatRedefEnvs.contains env
         unless ignored do
-          became s!"\\{name}\{{envName}}" (native ++ (if dflt.isSome then " [default]" else "") ++
+          became s!"\\{name}\{{envName}}" (native.render ++ (if dflt.isSome then " [default]" else "") ++
             (if slot then " {code before \\BODY} {code after it}"
               else " {} {code}, its body discarded")) pos
         write fun st => { st with
@@ -8451,7 +8432,7 @@ the definition is skipped" pos
             discardEnvs := if slot then st.discardEnvs.filter (·.1 != env)
               else Ir.redeclare st.discardEnvs env spec }
         let mark := if (← get).inDoc then #[] else #[Raw.ctrl (Marker.name .environBody "") pos]
-        return some ((← synthAt native pos) ++ mark, j0)
+        return some (native.raws pos ++ mark, j0)
       else
         let (_, k) := takeOpt raws (b + 1)
         sayOnce ("ctrl:" ++ name) .W0104
@@ -8570,7 +8551,7 @@ defines; those blocks keep beamer's default template" pos
       return some (#[], k)
     if element == "frame footer" then
       became "\\setbeamertemplate{frame footer}" "\\framefoot{...}" pos
-      return some (← synthAt "\\framefoot" pos, j)
+      return some (Native.Head.framefoot.raws pos, j)
     else if let some native := beamerMarkerElement element then
       let (predefined, past) := takeOpt raws j
       if let some name := predefined then
@@ -8580,9 +8561,8 @@ defines; those blocks keep beamer's default template" pos
       let (bodyArgs, k) := takeGroups raws j 1
       if bodyArgs.size != 1 then return none
       let marker := rawSrc (bodyArgs.getD 0 #[])
-      let source := s!"\\style\{{native}}\{marker=\{{marker}}}"
-      became s!"\\setbeamertemplate\{{element}}" source pos
-      return some (← synthAt source pos, k)
+      return some (← setting s!"\\setbeamertemplate\{{element}}"
+        (.style native #[("marker", "{" ++ marker ++ "}")]) pos, k)
     -- premise: beamerTemplateChecks — footer content reaches the frame furniture
     else if element == "footline" &&
         (← get).wholeDoc && !(← get).inDoc && !(← get).inDef then
@@ -8687,9 +8667,10 @@ the built-in title page stands" pos
           #[.ctrl titlePageMark pos, .group #[.word (toString index) pos] pos], k)
       | none =>
       -- `\setbeamertemplate{title page}` is beamer's spelling of `\renewcommand{\maketitle}`.
-      became "\\setbeamertemplate{title page}" "\\define \\maketitle() {...}" pos
+      let head := Native.Head.define "maketitle" ""
+      became "\\setbeamertemplate{title page}" (head.render ++ " {...}") pos
       write fun st => { st with bodyNext := 1 }
-      return some (← synthAt "\\define \\maketitle()" pos, j)
+      return some (head.raws pos, j)
     else
       let (rawPredefined, _) := takeRawOpt raws j
       let (predefined, j) := takeOpt raws j
@@ -8926,15 +8907,15 @@ private def rewritePackageBody (name p : String) (opt : Option String) (pos : Po
     out := out ++ (← packageOptions name p (given.filter fun o => (KeyVal.entry o).1 != "skip") pos)
   else if p == "amsthm" then
     -- amsthm's documented default style is plain.
-    let native := "\\theoremstyle{plain}"
-    became "\\usepackage{amsthm}" native pos
-    out := out ++ (← synthAt native pos)
+    let native := Native.Head.theoremStyle "plain"
+    became "\\usepackage{amsthm}" native.render pos
+    out := out ++ native.raws pos
     out := out ++ (← packageOptions name p given pos)
   else if (p == "caption" || p == "subcaption") && opt.isSome then
     -- The package options are `\captionsetup` keys, judged at that one site.
-    let native := s!"\\captionsetup\{{opt.getD ""}}"
-    became s!"\\usepackage[{opt.getD ""}]\{{p}}" native pos
-    out := out ++ (← synthAt native pos)
+    let native := Native.Head.captionsetup none (opt.getD "")
+    became s!"\\usepackage[{opt.getD ""}]\{{p}}" native.render pos
+    out := out ++ native.raws pos
   else if p == "babel" then
     -- babel's `main` key, else its last language option, is the main one, which becomes metadata.
     let names := given.filter fun o => (KeyVal.entry o).2.isNone
@@ -8963,10 +8944,8 @@ private def rewritePackageBody (name p : String) (opt : Option String) (pos : Po
       write fun st => { st with babelMain := some main }
       if (← get).biblatexLoaded then natbibDefer #[.set .mainlang main] pos
       if (Locale.forTag tag).isSome then
-        let native := s!"\\pdfmeta\{ language = {Decl.quote tag} }"
-        became s!"\\usepackage[{main}]\{babel}" native pos
         write fun st => { st with mainLang := tag }
-        out := out ++ (← synthAt native pos)
+        out := out ++ (← setting s!"\\usepackage[{main}]\{babel}" (.pdfmeta #[(.language, Decl.quote tag)]) pos)
       else
         sayOnce ("param:usepackage:babel:" ++ main) .W0368 s!"no locale for language '{main}'; \
 English captions and patterns stand in" pos
@@ -8981,13 +8960,11 @@ English captions and patterns stand in" pos
     -- carlito's `sfdefault` promotes its sans face to the body slot; every other option is named.
     let opts := (KeyVal.items (opt.getD "")).toList
     let sfdefault := p == "carlito" && opts.contains "sfdefault"
-    let spec := if sfdefault then spec ++ ", body = \"Carlito\"" else spec
+    let spec := if sfdefault then spec.push ("body", "Carlito") else spec
     let dropped := opts.filter (· != "sfdefault")
     for o in dropped do
       unreadParam s!"usepackage:{p}" (KeyVal.entry o).1 s!"'{p}' option '{o}'" pos
-    let native := s!"\\fonts\{ {spec} }"
-    became s!"\\usepackage\{{p}}" native pos
-    out := out ++ (← synthAt native pos)
+    out := out ++ (← setting s!"\\usepackage\{{p}}" (.fonts (spec.map fun (k, f) => (k, Decl.quote f))) pos)
   else if p == "lineno" && opt.isSome then
     out := out ++ (← linenoLoad (opt.getD "") pos)
   else if p == "cancel" then
@@ -9098,12 +9075,12 @@ rendered subset is drawn whole at the boundary" pos
     -- A `beamerthemeX` package is `\usetheme{X}`.
     if slot == "usetheme" then
       let nm := themeAlias nm
-      let native := s!"\\theme\{{nm}}"
-      became s!"\\{name}\{{p}}" native pos
+      let native := Native.Head.theme nm
+      became s!"\\{name}\{{p}}" native.render pos
       write fun st => { st with themeNamed := true }
       if (Theme.find? nm).isSome then
         write fun st => { st with themed := true }
-      out := out ++ (← synthAt native pos) ++ (← themeOptions s!"\\{name}\{{p}}" s!"\\{name}\{{p}}" nm (opt.getD "") pos)
+      out := out ++ native.raws pos ++ (← themeOptions s!"\\{name}\{{p}}" s!"\\{name}\{{p}}" nm (opt.getD "") pos)
     else
       -- The four sub-theme slots have no bundle of their own here.
       sayOnce ("beamer:" ++ slot) .W0104
@@ -9273,7 +9250,6 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
       let opt := if extra.isEmpty then opt else some (",".intercalate (opt.toList ++ extra))
       -- KOMA's `parskip` is read here.
       let kept := (keptItems ++ extra).filter fun kv => (KeyVal.entry kv).1 != "parskip"
-      let o := if kept.isEmpty then "" else s!"[{String.intercalate "," kept}]"
       -- A class's `\parskip` is zero unless KOMA's `parskip=` asks for a skip.
       let komaSkip := (KeyVal.items (opt.getD "")).findSome? fun kv =>
         match KeyVal.entry kv with
@@ -9284,31 +9260,28 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
           else some "0.6em plus 0.12em"
         | ("parskip", none) => some "1.2em plus 0.24em"
         | _ => none
-      let cls0 := s!"\\documentclass{o}\{{native0}}"
+      let cls0 := Native.Head.documentclass kept.toArray native0
       let page : Native.Setting := .page #[(.parskip, komaSkip.getD "0pt")]
-      became s!"\\documentclass\{{cls}}" (cls0 ++ (page.note?.getD "")) pos
-      return some ((← synthAt cls0 pos) ++ (← carry page pos), k)
+      became s!"\\documentclass\{{cls}}" (cls0.render ++ (page.note?.getD "")) pos
+      return some (cls0.raws pos ++ (← carry page pos), k)
     else if cls == "beamer" then
-      let o := match opt with
-        | some _ => if keptItems.isEmpty then "" else s!"[{String.intercalate "," keptItems}]"
-        | none => ""
-      became "\\documentclass{beamer}" s!"\\documentclass{o}\{slides}" pos
+      let declaration := Native.Head.documentclass (if opt.isSome then keptItems.toArray else #[])
+        "slides"
+      became "\\documentclass{beamer}" declaration.render pos
       let passed := (← get).loads.rewriteClassPassed.toList.flatMap fun (name, options) =>
         if name == cls then options.toList else []
       let packages := classPackages cls (passed ++ PackageImports.literalOptions (opt.getD ""))
-      let declaration ← synthAt s!"\\documentclass{o}\{slides}" pos
       let dependencies ← rewritePackages "RequirePackage" packages none pos
-      return some (declaration ++ dependencies, k)
+      return some (declaration.raws pos ++ dependencies, k)
     else
       -- The options passed to a class before it loads are its own, before its written ones.
       let passed := (← get).loads.rewriteClassPassed.toList.flatMap fun (name, options) =>
         if name == cls then options.toList.filter (!keptItems.contains ·) else []
       if offered.isEmpty && passed.isEmpty then return none
       let kept := passed ++ keptItems
-      let o := if kept.isEmpty then "" else s!"[{String.intercalate "," kept}]"
-      let native := s!"\\documentclass{o}\{{cls}}"
-      became s!"\\documentclass[{opt.getD ""}]\{{cls}}" native pos
-      return some (← synthAt native pos, k)
+      let native := Native.Head.documentclass kept.toArray cls
+      became s!"\\documentclass[{opt.getD ""}]\{{cls}}" native.render pos
+      return some (native.raws pos, k)
   | "babelfont" | "setmainfont" | "setsansfont" | "setmonofont"
   | "newfontfamily" | "setfontfamily" | "renewfontfamily" | "providefontfamily"
   | "newfontface" | "setfontface" | "renewfontface" | "providefontface" =>
@@ -9352,7 +9325,7 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
         sayOnce ("ctrl:" ++ name) .W0340
           (Diag.bodyDeclaration name ++ s!", and '\\{c}' selects no family") pos
           (help := Diag.declareInPreamble)
-        return some ((← synthAt s!"\\define \\{c}() " pos) ++ #[Raw.group #[] pos], k)
+        return some ((Native.Head.define c "").raws pos ++ #[.space, Raw.group #[] pos], k)
     let slot := match name, declared with
       | _, some c => "family." ++ c
       | "babelfont", _ => match rawSrc (slotArgs.getD 0 #[]) with
@@ -9366,19 +9339,17 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
           match KeyVal.entry kv with
           | (key, some v) => if key == k then some v else none
           | (_, none) => none
-    let dirPart := match feature "Path" with
-      | some d => s!"dir = {Decl.quote d}, "
-      | none => ""
-    let mut parts := #[s!"{slot} = {Decl.quote family}"]
+    let mut parts : Array (String × String) :=
+      ((feature "Path").map fun d => #[("dir", Decl.quote d)]).getD #[] |>.push (slot, Decl.quote family)
     if name.endsWith "fontface" then
       for variant in ["bold", "italic", "bolditalic"] do
-        parts := parts.push s!"{slot}.{variant} = {Decl.quote family}"
+        parts := parts.push (s!"{slot}.{variant}", Decl.quote family)
     for (opt, variant) in [("UprightFont", "upright"), ("BoldFont", "bold"),
         ("ItalicFont", "italic"), ("BoldItalicFont", "bolditalic")] do
       if let some f := feature opt then
         -- fontspec's `*` stands for the family name.
         let f := if f.startsWith "*" then family ++ (f.drop 1).toString else f
-        parts := parts.push s!"{slot}.{variant} = {Decl.quote f}"
+        parts := parts.push (s!"{slot}.{variant}", Decl.quote f)
     for opts in [optBefore, optAfter].filterMap id do
       for kv in KeyVal.items opts do
         if let ("FontFace", some v) := KeyVal.entry kv then
@@ -9390,10 +9361,8 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
 face serves every language, so the binding is dropped" pos
           (help := "\\fonts{ body = \"...\" } names the face every language uses")
         return some (#[], k)
-    let native := s!"\\fonts\{ {dirPart}{String.intercalate ", " parts.toList} }"
-    became s!"\\{name}" native pos
+    let fonts ← setting s!"\\{name}" (.fonts parts) pos
     write fun st => { st with facesDeclared := st.facesDeclared.push slot }
-    let fonts ← synthAt native pos
     match declared with
     | none => return some (fonts, k)
     | some c =>
@@ -9402,8 +9371,8 @@ face serves every language, so the binding is dropped" pos
       let slot := Ir.familySlotBase + ((st.fontFamilies.findIdx? (· == c)).getD st.fontFamilies.size)
       unless st.fontFamilies.contains c do
         write fun st => { st with fontFamilies := st.fontFamilies.push c }
-      let switch := (← synthAt s!"\\define \\{c}() " pos) ++
-        #[Raw.group #[Raw.ctrl (Marker.name .family (toString slot)) pos] pos]
+      let switch := (Native.Head.define c "").raws pos ++
+        #[.space, Raw.group #[Raw.ctrl (Marker.name .family (toString slot)) pos] pos]
       return some (fonts ++ switch, k)
   | "definespotcolor" => defineSpotColor raws start pos
   | "pdfvariable" | "pdfpageattr" =>
@@ -9596,14 +9565,14 @@ skipped, and the length keeps its value" pos
                 became "\\renewcommand{\\normalsize}"
                   ((page.note?.getD "") ++ (tokens.note?.getD "")) pos
                 return some ((← carry page pos) ++ (← carry tokens pos), js + 1)
-    let native := s!"\\define \\{cmd}({spec})"
+    let native := Native.Head.define cmd spec
     -- premise: ignoredDefinitionChecks — an ignored built-in's refusal is its one accounting
     unless st.ignoredDefs.contains cmd do
       write fun st => { st with
         bound := if st.bound.contains cmd then st.bound else st.bound.push cmd }
-      became s!"\\{name}\{\\{cmd}}" (native ++ " {...}") pos
+      became s!"\\{name}\{\\{cmd}}" (native.render ++ " {...}") pos
     write fun st => { st with bodyNext := 1, quietNext := st.templateCode.contains cmd }
-    return some (← synthAt native pos, j)
+    return some (native.raws pos, j)
   | _ => rewriteCtrlLater name pos raws start
 
 private def lowerBeamerFont (c : CtrlCall) : M (Array Raw) := do
@@ -9665,14 +9634,14 @@ its value is skipped" pos
       let cmds := beamerFontCommands (blockTitleFields element fields)
       let alerted := "block title alerted"
       let seed := themeBlockFont (← get).beamerTheme alerted
-      let own := if target == "block" && !seed.isEmpty &&
+      let own : Array Native.Setting := if target == "block" && !seed.isEmpty &&
           ((← get).beamerFonts.toList.lookup alerted).isNone then
-        s!" \\style\{alertblock}\{ font = \{{beamerFontCommands seed}} }" else ""
+        #[.style "alertblock" #[("font", "{" ++ beamerFontCommands seed ++ "}")]] else #[]
       unless own.isEmpty do
         write fun st => { st with beamerFonts := st.beamerFonts.push (alerted, seed) }
-      let native := s!"\\style\{{target}}\{ {styleKey} = \{{cmds}} }" ++ own
-      became written native pos
-      synthAt native pos
+      let natives := #[Native.Setting.style target #[(styleKey, "{" ++ cmds ++ "}")]] ++ own
+      became written (" ".intercalate (natives.toList.map (·.render))) pos
+      natives.foldlM (init := #[]) fun out s => return out ++ (← carry s pos)
     else return #[]
 
 private def lowerSetList (c : CtrlCall) : M (Array Raw) := do
@@ -9797,14 +9766,10 @@ description scopes")) ++
   for (el, es) in spaced do
     let held := ((records.find? (·.1 == el)).map (·.2)).getD #[]
     records := Ir.redeclare records el (held ++ es)
-  let natives := records.map fun (el, es) =>
-    s!"\\style\{{el}}\{ {", ".intercalate (es.toList.map fun e => s!"{e.1} = {e.2}")} }"
+  let natives := records.map fun (el, es) => Native.Setting.style el es
   if natives.isEmpty then return #[]
-  became what (String.join natives.toList) pos
-  let mut out : Array Raw := #[]
-  for native in natives do
-    out := out ++ (← synthAt native pos)
-  return out
+  became what (String.join (natives.toList.map (·.render))) pos
+  natives.foldlM (init := #[]) fun out s => return out ++ (← carry s pos)
 
 /-- A registered control's lowering over its arguments. -/
 private def lowerCall (c : CtrlCall) : Lowering → M (Array Raw)
@@ -9822,25 +9787,21 @@ private def lowerCall (c : CtrlCall) : Lowering → M (Array Raw)
   | .defineColor => do
     let n := c.src 0
     let modeled := modeledColorSource (some (c.src 1)) (c.src 2)
-    unless nativeName n && oneEntry modeled do
+    unless nativeName n && Decl.wholeValue modeled do
       say .W0102 s!"'\\definecolor\{{n}}' gives a name or a value no palette entry spells; \
 the colour is not defined" c.pos (help := "name the colour with ASCII letters, digits, '.' or '_'")
       return #[]
-    let native := s!"\\palette\{ {n} = {modeled} }"
-    let carried := s!"\\palette\{ {n} = {Decl.xcolorDefinitionPrefix}{modeled} }"
-    became s!"\\definecolor\{{n}}" native c.pos
-    synthAt carried c.pos
+    became s!"\\definecolor\{{n}}" (Native.Setting.palette #[(n, modeled)]).render c.pos
+    carry (.palette #[(n, Decl.xcolorDefinitionPrefix ++ modeled)]) c.pos
   | .colorLet => do
     -- xcolor's `.` names the current colour, black in the preamble.
     let src := if (c.src 1).trimAscii.toString == "." then "#000000" else c.src 1
-    unless nativeName (c.src 0) && oneEntry src do
+    unless nativeName (c.src 0) && Decl.wholeValue src do
       say .W0102 s!"'\\colorlet\{{c.src 0}}' gives a name or a colour no palette entry \
 spells; the colour is not defined" c.pos (help := "name the colour with ASCII letters, digits, '.' or '_'")
       return #[]
-    let native := s!"\\palette\{ {c.src 0} = {src} }"
-    let carried := s!"\\palette\{ {c.src 0} = {Decl.xcolorDefinitionPrefix}{src} }"
-    became "\\colorlet" native c.pos
-    synthAt carried c.pos
+    became "\\colorlet" (Native.Setting.palette #[(c.src 0, src)]).render c.pos
+    carry (.palette #[(c.src 0, Decl.xcolorDefinitionPrefix ++ src)]) c.pos
   | .pageColor => pageColor (modeledColorSource (c.optSrc 0) (c.src 1)) c.pos
   | .geometry =>
     -- The command forms take the same keys the package options carry.
@@ -9930,8 +9891,8 @@ ICC-based colour space; the engine paints each ink in its own separation; skippe
     let cmd := (ctrlName (c.arg 1)).getD ""
     became s!"\\DeclareMathOperator\{\\{cmd}}"
       s!"\\define \\{cmd}() \{\\operatorname\{...}}" c.pos
-    let head ← synthAt s!"\\define \\{cmd}()" c.pos
-    return head.push (.group #[.ctrl "operatorname" c.pos, .group (c.arg 2) c.pos] c.pos)
+    return (Native.Head.define cmd "").raws c.pos |>.push
+      (.group #[.ctrl "operatorname" c.pos, .group (c.arg 2) c.pos] c.pos)
   | .hyperSetup => do
     hyperrefLowered "\\hypersetup" "hypersetup" (← hyperrefKeys (c.src 0) c.pos) c.pos
   | .runningField => do
@@ -10054,13 +10015,9 @@ were dropped: {o}" c.pos
       discard "\\printbibliography" "no \\addbibresource declared a file"
         "printbibliography" c.pos
       return #[]
-    let stylePart := match (← get).bibStyle with
-      | some s => s!"\\bibliographystyle\{{s}}"
-      | none => ""
-    let native := s!"{stylePart}\\bibliography\{{",".intercalate srcs.toList}}"
     became "\\printbibliography"
       s!"biblatex's reference list of '{"', '".intercalate srcs.toList}'" c.pos
-    synthAt native c.pos
+    return (Native.Head.bibliography (← get).bibStyle srcs).raws c.pos
   | .crefRange => do
     -- A starred range sets both halves unlinked, as hyperref's starred references do.
     let starred := (c.given 0).isSome
@@ -10113,10 +10070,9 @@ and patterns stand in" c.pos
     -- The star's zero rule goes before the space, keeping it at a page's top.
     let native := skipNative (skipSrc (lengthSrc (c.arg 2)))
     if (c.given 0).isSome then
-      became "\\vspace*" s!"a page-top anchor, then {native}" c.pos
-      return #[.ctrl vspaceAnchorMark c.pos] ++ (← synthAt native c.pos)
-    became "\\vspace" native c.pos
-    synthAt native c.pos
+      became "\\vspace*" s!"a page-top anchor, then {native.render}" c.pos
+      return #[.ctrl vspaceAnchorMark c.pos] ++ (← carry native c.pos)
+    setting "\\vspace" native c.pos
   | .pageBreak => do
     -- Every `\pagebreak` is taken whole; the demand level is not weighed.
     if (c.given 0).isSome then
@@ -10131,17 +10087,15 @@ and patterns stand in" c.pos
       became "\\setkomafont{disposition}" native pos
       let mut out : Array Raw := #[]
       for lvl in ["section", "subsection", "subsubsection"] do
-        let font : Raw := .group #[.word "font" pos, .space, .sym '=' pos, .space,
-          .group (c.arg 1) pos] pos
-        out := out ++ (← synthAt s!"\\style\{{lvl}}" pos).push font
+        out := out ++ (Native.Setting.style lvl #[]).frame
+          #[.word "font" pos, .space, .sym '=' pos, .space, .group (c.arg 1) pos] pos
       return out
     else if Ir.styleableElements.contains element then
       -- The font spec travels as a group, so its own idioms are still rewritten.
       let native := s!"\\style\{{element}}"
       became s!"\\setkomafont\{{element}}" (native ++ "{ font = {...} }") pos
-      let font : Raw := .group #[.word "font" pos, .space, .sym '=' pos, .space,
-        .group (c.arg 1) pos] pos
-      return (← synthAt native pos).push font
+      return (Native.Setting.style element #[]).frame
+        #[.word "font" pos, .space, .sym '=' pos, .space, .group (c.arg 1) pos] pos
     else
       say .W0111 s!"'\\setkomafont\{{element}}' names no styleable element; ignored" pos
         (help := "\\style{element}{ font = {...} } styles the elements the engine draws")
@@ -10149,11 +10103,11 @@ and patterns stand in" c.pos
   | .sectionSkips => do
     let opt := c.optSrc 0
     let element := c.src 1
-    let mut keys : Array String := #[]
+    let mut keys : Array (String × String) := #[]
     for e in KeyVal.items (opt.getD "") do
       match KeyVal.entry e with
-      | ("beforeskip", some v) => keys := keys.push s!"before = {lengthOfTeX v}"
-      | ("afterskip", some v) => keys := keys.push s!"after = {lengthOfTeX v}"
+      | ("beforeskip", some v) => keys := keys.push ("before", lengthOfTeX v)
+      | ("afterskip", some v) => keys := keys.push ("after", lengthOfTeX v)
       | _ => pure ()
     if !Ir.styleableElements.contains element then
       say .W0111 s!"'\\RedeclareSectionCommand\{{element}}' names no styleable element; \
@@ -10167,9 +10121,7 @@ the engine draws")
         say .W0101 s!"'\\RedeclareSectionCommand\{{element}}' entries without a \
 native equivalent were dropped: {dropped}" c.pos
       return #[]
-    let native := s!"\\style\{{element}}\{ {String.intercalate ", " keys.toList} }"
-    became s!"\\RedeclareSectionCommand\{{element}}" native c.pos
-    synthAt native c.pos
+    setting s!"\\RedeclareSectionCommand\{{element}}" (.style element keys) c.pos
   | .setList => lowerSetList c
   | .sectionLines => sectionRule (c.src 1) c.pos
   | .uniMathSetup => unicodeMathOptions s!"\\unimathsetup\{{c.src 0}}" (c.src 0) c.pos
@@ -10217,7 +10169,7 @@ native equivalent were dropped: {dropped}" c.pos
   | .useTheme => do
     let pos := c.pos
     let tname := themeAlias (c.src 1).trimAscii.toString
-    let mut reseated : Array String := #[]
+    let mut reseated : Array Native.Setting := #[]
     for (element, target, styleKey) in beamerFontElements do
       let seed := themeBlockFont tname element
       let some stored := (← get).beamerFonts.toList.lookup element | continue
@@ -10225,15 +10177,16 @@ native equivalent were dropped: {dropped}" c.pos
       let fields := themeOver stored seed
       write fun st => { st with
         beamerFonts := Ir.redeclare st.beamerFonts element fields }
-      reseated := reseated.push
-        s!"\\style\{{target}}\{ {styleKey} = \{{beamerFontCommands (blockTitleFields element fields)}} }"
-    let native := String.intercalate " " (s!"\\theme\{{tname}}" :: reseated.toList)
-    became "\\usetheme" native pos
+      reseated := reseated.push (.style target
+        #[(styleKey, "{" ++ beamerFontCommands (blockTitleFields element fields) ++ "}")])
+    let theme := Native.Head.theme tname
+    became "\\usetheme" (" ".intercalate (theme.render :: reseated.toList.map (·.render))) pos
     write fun st => { st with themeNamed := true }
     if (Theme.find? tname).isSome then
       write fun st => { st with themed := true, beamerTheme := tname }
     let options ← themeOptions "\\usetheme" s!"\\usetheme\{{tname}}" tname ((c.optSrc 0).getD "") pos
-    return (← synthAt native pos) ++ options
+    return theme.raws pos ++ (← reseated.foldlM (init := #[]) fun out s => return out ++ (← carry s pos)) ++
+      options
   | .molochSet => molochOptions s!"\\{c.name}" (c.src 0) c.pos
   | .titleGraphic => do
     if (c.src 0).trimAscii.toString.isEmpty then
@@ -10278,7 +10231,7 @@ and \\tokens declare the design directly")
       | _ => none
     match pct? with
     | some n =>
-      let native := s!"\\palette\{ covered = {min n 99}\\% }"
+      let native : Native.Setting := .palette #[("covered", s!"{min n 99}\\%")]
       if 99 < n then
         sayOnce ("param:setbeamercovered:" ++ src) .W0109
           s!"'\\setbeamercovered\{{src}}' asks for undimmed covered content; it covers at the \
@@ -10289,8 +10242,8 @@ largest share the engine sets" pos
           s!"'\\setbeamercovered\{{src}}' fades each step by its distance; every pending step \
 covers at its next steps' share" pos
           (help := "\\palette{ covered = <n>% } sets the covered share") (detail := some s!"{n}%")
-      else became "\\setbeamercovered" native pos
-      synthAt native pos
+      else became "\\setbeamercovered" native.render pos
+      carry native pos
     | none =>
       sayOnce ("param:setbeamercovered:" ++ src) .W0104
         s!"'\\setbeamercovered\{{src}}' is not modelled; covered content keeps the share in force, \
@@ -10378,8 +10331,7 @@ private def ctrlRowRun (row : CtrlRow) (c : CtrlCall) : M (Array Raw) := do
     let native := match (← get).lens.find? (·.1 == amount) with
       | some (_, v) => skipNative { width := v }
       | none => skipNative { width := (kernelSkip amount).getD "" }
-    became s!"\\{row.name}" native pos
-    synthAt native pos
+    setting s!"\\{row.name}" native pos
   | .refuse code .ctrl msg help =>
     sayOnce ("ctrl:" ++ row.name) code msg pos (help := help)
     return #[]

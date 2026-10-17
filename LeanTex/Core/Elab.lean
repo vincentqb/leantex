@@ -11227,7 +11227,7 @@ private def blockSkipTokens (ctx : Ctx) : Array (String × Dim.SymGlue) :=
 /-- A `\block`'s option: its `before` skip, whether it stretches as `\fill`,
 and whether it is a primitive `\vskip`. -/
 private def blockOptions (ctx : Ctx) (optSrc : Array Raw) (pos : Pos) : EM (SymGlue × Bool) := do
-  let (opts, ds) := Decl.parseBlock ctx.file (rawSrc optSrc) pos "block" (blockSkipTokens ctx)
+  let (opts, ds) := Decl.parseBlock ctx.file (declSrc optSrc) pos "block" (blockSkipTokens ctx)
   modify fun st => { st with diags := st.diags ++ ds }
   let mut before : SymGlue := {}
   let mut primitive := false

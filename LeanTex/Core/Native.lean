@@ -4,19 +4,26 @@ public import LeanTex.Core.NativeKey
 public import LeanTex.Core.Parse
 import LeanTex.Core.Decl
 
-/-! The native settings the surfaces lower into, each carried to the elaborator as one word its entry
-reader reads back exactly (`Native.render_parse_exact`). -/
+/-! The native declarations the surfaces lower into: settings, each carried to the elaborator as one
+word its entry reader reads back exactly (`Native.render_parse_exact`), and heads, whose operands are
+names, carried as the lexer reads their spelling. -/
 
 namespace LeanTex.Core.Native
 
 open LeanTex.Core.Parse
 
-/-- A native setting a surface lowers into: `\page` entries by key, `\tokens` entries by the length
-each names, or `\palette` entries by role, every value spelled as the declaration grammar reads it. -/
+/-- A native setting a surface lowers into, by its entries: `\page` by key, `\tokens` by the length
+each names, `\palette` by role, one element's `\style`, `\fonts` by slot, `\pdfmeta` by key, `\chrome`,
+or a `\block`'s options, every value spelled as the declaration grammar reads it. -/
 public inductive Setting where
   | page (entries : Array (PageKey × String))
   | tokens (entries : Array (String × String))
   | palette (entries : Array (String × String))
+  | style (element : String) (entries : Array (String × String))
+  | fonts (entries : Array (String × String))
+  | pdfmeta (entries : Array (MetaKey × String))
+  | chrome (entries : Array (String × String))
+  | block (entries : Array (String × String))
   deriving DecidableEq, Repr, Inhabited
 
 namespace Setting
@@ -26,17 +33,31 @@ public def head : Setting → String
   | .page _ => "page"
   | .tokens _ => "tokens"
   | .palette _ => "palette"
+  | .style _ _ => "style"
+  | .fonts _ => "fonts"
+  | .pdfmeta _ => "pdfmeta"
+  | .chrome _ => "chrome"
+  | .block _ => "block"
 
 /-- Each entry's key and value as written. -/
 public def pairs : Setting → List (String × String)
   | .page es => es.toList.map fun (k, v) => (k.name, v)
-  | .tokens es | .palette es => es.toList
+  | .pdfmeta es => es.toList.map fun (k, v) => (k.name, v)
+  | .tokens es | .palette es | .style _ es | .fonts es | .chrome es | .block es => es.toList
 
 /-- The declaration's block, its entries joined as an author writes them. -/
 public def body (s : Setting) : String := ", ".intercalate (s.pairs.map fun (k, v) => k ++ " = " ++ v)
 
+/-- The declaration around a block `b`, as an author writes it. -/
+public def spell (s : Setting) (b : String) : String :=
+  match s with
+  | .style el _ => "\\style{" ++ el ++ "}{ " ++ b ++ " }"
+  | .block _ => "\\block[" ++ b ++ "]{}"
+  | .page _ | .tokens _ | .palette _ | .fonts _ | .pdfmeta _ | .chrome _ =>
+    "\\" ++ s.head ++ "{ " ++ b ++ " }"
+
 /-- The declaration as a translation note names it. -/
-public def render (s : Setting) : String := "\\" ++ s.head ++ "{ " ++ s.body ++ " }"
+public def render (s : Setting) : String := s.spell s.body
 
 /-- Whether an entry's key and value read back from the block, beside any other entries. -/
 public def carried (kv : String × String) : Bool := Decl.plainKey kv.1 && Decl.wholeValue kv.2
@@ -44,8 +65,13 @@ public def carried (kv : String × String) : Bool := Decl.plainKey kv.1 && Decl.
 /-- The setting without the entries its block cannot carry whole. -/
 public def kept : Setting → Setting
   | .page es => .page (es.filter fun (k, v) => carried (k.name, v))
+  | .pdfmeta es => .pdfmeta (es.filter fun (k, v) => carried (k.name, v))
   | .tokens es => .tokens (es.filter carried)
   | .palette es => .palette (es.filter carried)
+  | .style el es => .style el (es.filter carried)
+  | .fonts es => .fonts (es.filter carried)
+  | .chrome es => .chrome (es.filter carried)
+  | .block es => .block (es.filter carried)
 
 /-- The declaration a translation note names, where the setting keeps an entry. -/
 public def note? (s : Setting) : Option String := if s.kept.pairs.isEmpty then none else some s.kept.render
@@ -53,12 +79,75 @@ public def note? (s : Setting) : Option String := if s.kept.pairs.isEmpty then n
 /-- The entries `kept` drops, as written. -/
 public def dropped (s : Setting) : List (String × String) := s.pairs.filter (!carried ·)
 
-/-- The setting's kept entries as the elaborator reads them: its control and one word holding its
-block, never lexed as TeX. -/
+/-- The declaration's tokens around its block's raws `b`. -/
+public def frame (s : Setting) (b : Array Raw) (pos : Pos) : Array Raw :=
+  match s with
+  | .style el _ => #[.ctrl "style" pos, .group #[.word el pos] pos, .group b pos]
+  | .block _ => #[.ctrl "block" pos, .sym '[' pos] ++ b ++ #[.sym ']' pos, .group #[] pos]
+  | .page _ | .tokens _ | .palette _ | .fonts _ | .pdfmeta _ | .chrome _ =>
+    #[.ctrl s.head pos, .group b pos]
+
+/-- The setting's kept entries as the elaborator reads them: one word holding its block, never
+lexed as TeX, in its declaration's tokens. -/
 public def raws (s : Setting) (pos : Pos) : Array Raw :=
   let body := s.kept.body
-  #[.ctrl s.head pos, .group (if body.isEmpty then #[] else #[.word body pos]) pos]
+  s.frame (if body.isEmpty then #[] else #[.word body pos]) pos
 
 end Setting
+
+/-- A native command a surface lowers into whose operands are names: a class, a theme, a theorem
+style, a command's or environment's signature, a colour, the frame footer, a reference list, or a
+caption setup. -/
+public inductive Head where
+  | documentclass (options : Array String) (cls : String)
+  | theme (name : String)
+  | theoremStyle (name : String)
+  | define (cmd spec : String)
+  | defineEnv (env spec : String)
+  | textcolor (name : String)
+  | framefoot
+  | bibliography (style : Option String) (sources : Array String)
+  | captionsetup (scope : Option String) (options : String)
+  deriving DecidableEq, Repr, Inhabited
+
+namespace Head
+
+/-- The command as an author writes it. -/
+public def render : Head → String
+  | .documentclass os c =>
+    "\\documentclass" ++ (if os.isEmpty then "" else "[" ++ ",".intercalate os.toList ++ "]") ++
+      "{" ++ c ++ "}"
+  | .theme n => "\\theme{" ++ n ++ "}"
+  | .theoremStyle n => "\\theoremstyle{" ++ n ++ "}"
+  | .define c sp => "\\define \\" ++ c ++ "(" ++ sp ++ ")"
+  | .defineEnv e sp => "\\defineenv{" ++ e ++ "}(" ++ sp ++ ")"
+  | .textcolor n => "\\textcolor{" ++ n ++ "}"
+  | .framefoot => "\\framefoot"
+  | .bibliography st ss =>
+    (st.map ("\\bibliographystyle{" ++ · ++ "}")).getD "" ++
+      "\\bibliography{" ++ ",".intercalate ss.toList ++ "}"
+  | .captionsetup sc os => "\\captionsetup" ++ (sc.map ("[" ++ · ++ "]")).getD "" ++ "{" ++ os ++ "}"
+
+/-- The command's tokens, each operand one word. -/
+public def raws (h : Head) (pos : Pos) : Array Raw :=
+  let word (s : String) : Array Raw := if s.isEmpty then #[] else #[.word s pos]
+  let bracket (s : String) : Array Raw := #[.sym '[' pos] ++ word s ++ #[.sym ']' pos]
+  match h with
+  | .documentclass os c =>
+    #[.ctrl "documentclass" pos] ++ (if os.isEmpty then #[] else bracket (",".intercalate os.toList)) ++
+      #[.group (word c) pos]
+  | .theme n => #[.ctrl "theme" pos, .group (word n) pos]
+  | .theoremStyle n => #[.ctrl "theoremstyle" pos, .group (word n) pos]
+  | .define c sp => #[.ctrl "define" pos, .ctrl c pos, .word ("(" ++ sp ++ ")") pos]
+  | .defineEnv e sp => #[.ctrl "defineenv" pos, .group (word e) pos, .word ("(" ++ sp ++ ")") pos]
+  | .textcolor n => #[.ctrl "textcolor" pos, .group (word n) pos]
+  | .framefoot => #[.ctrl "framefoot" pos]
+  | .bibliography st ss =>
+    (st.map fun s => #[.ctrl "bibliographystyle" pos, .group (word s) pos]).getD #[] ++
+      #[.ctrl "bibliography" pos, .group (word (",".intercalate ss.toList)) pos]
+  | .captionsetup sc os =>
+    #[.ctrl "captionsetup" pos] ++ (sc.map bracket).getD #[] ++ #[.group (word os) pos]
+
+end Head
 
 end LeanTex.Core.Native

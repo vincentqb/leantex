@@ -381,12 +381,12 @@ private theorem entry_facts (k v : String) (hk : plainKey k = true) (hv : wholeV
 
 private theorem kept_carried (s : Setting) : ∀ kv ∈ s.kept.pairs, Setting.carried kv = true := by
   cases s with
-  | page es =>
+  | page es | pdfmeta es =>
     intro kv hkv
     simp only [Setting.kept, Setting.pairs, List.mem_map, Array.mem_toList_iff, Array.mem_filter] at hkv
     obtain ⟨⟨k, v⟩, ⟨_, hc⟩, rfl⟩ := hkv
     exact hc
-  | tokens es | palette es =>
+  | tokens es | palette es | style _ es | fonts es | chrome es | block es =>
     intro kv hkv
     simp only [Setting.kept, Setting.pairs, Array.mem_toList_iff, Array.mem_filter] at hkv
     exact hkv.2
@@ -412,14 +412,13 @@ public theorem body_read_exact (s : Setting) :
     obtain ⟨⟨k, v⟩, hkv, rfl⟩ := List.mem_map.mp he
     exact (hfacts (k, v) hkv).2.1
 
-private theorem kept_head (s : Setting) : s.kept.head = s.head := by
+private theorem kept_spell (s : Setting) (b : String) : s.kept.spell b = s.spell b := by
   cases s <;> rfl
 
-/-- A setting's carrier is its control and a group whose block, the one its translation note names,
-the declaration reader reads back entry by entry as exactly the setting's kept entries. -/
+/-- A setting's carrier is its declaration's tokens around a block, the one its translation note
+names, that the declaration reader reads back entry by entry as exactly the setting's kept entries. -/
 public theorem render_parse_exact (s : Setting) (pos : Pos) :
-    ∃ body, s.raws pos = #[.ctrl s.head pos, .group body pos] ∧
-      s.kept.render = "\\" ++ s.head ++ "{ " ++ declSrc body ++ " }" ∧
+    ∃ body, s.raws pos = s.frame body pos ∧ s.kept.render = s.spell (declSrc body) ∧
       (splitEntries (declSrc body)).map entryOf = s.kept.pairs :=
   ⟨if s.kept.body.isEmpty then #[] else #[.word s.kept.body pos], rfl, by
     have hsrc : declSrc (if s.kept.body.isEmpty then #[] else #[.word s.kept.body pos]) =
@@ -427,7 +426,7 @@ public theorem render_parse_exact (s : Setting) (pos : Pos) :
       split
       · next h => simp [declSrc, String.isEmpty_iff.mp h]
       · rfl
-    exact ⟨by rw [hsrc]; simp [Setting.render, kept_head], by rw [hsrc]; exact body_read_exact s⟩⟩
+    exact ⟨by rw [hsrc]; simp [Setting.render, kept_spell], by rw [hsrc]; exact body_read_exact s⟩⟩
 
 /-- Every page key reads back from its name. -/
 public theorem PageKey.ofName_name (k : PageKey) : PageKey.ofName? k.name = some k := by
