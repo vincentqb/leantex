@@ -5,6 +5,49 @@ namespace LeanTex.Core.Html
 /-! Typed HTML tree and its renderer: text and attribute values are escaped, and a
 `style` or `script` payload cannot close its own element. -/
 
+/-- Whether a byte of `s`'s UTF-8 encoding from index `i` on is one `p` selects. -/
+@[specialize] def anyByteFrom (s : String) (p : UInt8 → Bool) (i : Nat) : Bool :=
+  if h : i < s.utf8ByteSize then
+    if p (s.getUTF8Byte ⟨i⟩ (String.Pos.Raw.lt_iff.mpr h)) then true else anyByteFrom s p (i + 1)
+  else false
+termination_by s.utf8ByteSize - i
+
+theorem anyByteFrom_false (s : String) (p : UInt8 → Bool) :
+    ∀ i, anyByteFrom s p i = false → ∀ j, i ≤ j → ∀ hj : j < s.toByteArray.size,
+      p s.toByteArray[j] = false
+  | i, h, j, hij, hj => by
+    unfold anyByteFrom at h
+    split at h
+    · next hi =>
+      split at h
+      · contradiction
+      · next hp =>
+        by_cases hji : j = i
+        · subst hji
+          simpa [String.getUTF8Byte_eq_getElem] using hp
+        · exact anyByteFrom_false s p (i + 1) h j (by omega) hj
+    · next hi => exact absurd hj (by simp only [String.utf8ByteSize] at hi; omega)
+termination_by i => s.toByteArray.size - i
+decreasing_by omega
+
+/-- A one-byte character of `s` stands in its UTF-8 encoding as that byte. -/
+theorem ascii_byte_mem (s : String) (c : Char) (hc : c ∈ s.toList) (h1 : c.utf8Size = 1) :
+    ∃ j, ∃ hj : j < s.toByteArray.size, s.toByteArray[j] = c.toUInt8 := by
+  have henc : s.toByteArray = (s.toList.flatMap String.utf8EncodeChar).toByteArray := by
+    rw [← String.utf8Encode_toList]
+    rfl
+  have hmem : c.toUInt8 ∈ s.toList.flatMap String.utf8EncodeChar :=
+    List.mem_flatMap.mpr ⟨c, hc, by simp [String.utf8EncodeChar_eq_singleton h1]⟩
+  obtain ⟨j, hj, hget⟩ := List.mem_iff_getElem.mp hmem
+  refine ⟨j, by rw [henc, List.size_toByteArray]; exact hj, ?_⟩
+  simp only [henc, List.getElem_toByteArray, hget]
+
+/-- A byte that encodes `&`, `<` or `>`. -/
+def textByte (b : UInt8) : Bool := b == 38 || b == 60 || b == 62
+
+/-- A byte that encodes `&`, `<`, `>`, `"` or `'`. -/
+def attrByte (b : UInt8) : Bool := b == 38 || b == 60 || b == 62 || b == 34 || b == 39
+
 def escapeCharText (c : Char) : List Char :=
   if c == '&' then "&amp;".toList
   else if c == '<' then "&lt;".toList
@@ -22,7 +65,7 @@ def escapeStepText (acc : String) (c : Char) : String :=
 /-- The text with `&`, `<` and `>` replaced by their references; a text holding none is returned
 as it stands. -/
 public def escapeText (s : String) : String :=
-  if s.contains needsText then s.foldl escapeStepText "" else s
+  if anyByteFrom s textByte 0 then s.foldl escapeStepText "" else s
 where
   go : List Char → List Char
     | [] => []
@@ -49,7 +92,7 @@ def escapeStepAttr (acc : String) (c : Char) : String :=
 /-- The attribute value with `&`, `<`, `>` and both quotes replaced by their references; a value
 holding none is returned as it stands. -/
 public def escapeAttr (s : String) : String :=
-  if s.contains needsAttr then s.foldl escapeStepAttr "" else s
+  if anyByteFrom s attrByte 0 then s.foldl escapeStepAttr "" else s
 where
   go : List Char → List Char
     | [] => []
@@ -112,6 +155,19 @@ theorem escapeText_go_plain (l : List Char) (h : l.any needsText = false) :
       simp_all
     simp only [escapeText.go, hc, ih h.2, List.singleton_append]
 
+theorem needsText_plain (s : String) (h : anyByteFrom s textByte 0 = false) :
+    s.toList.any needsText = false := by
+  apply List.any_eq_false.mpr
+  intro c hc hn
+  have hc' : c = '&' ∨ c = '<' ∨ c = '>' := by
+    simp only [needsText, Bool.or_eq_true, beq_iff_eq] at hn
+    rcases hn with (h | h) | h <;> simp [h]
+  have h1 : c.utf8Size = 1 := by rcases hc' with rfl | rfl | rfl <;> rfl
+  obtain ⟨j, hj, hb⟩ := ascii_byte_mem s c hc h1
+  have hf := anyByteFrom_false s textByte 0 h j (Nat.zero_le _) hj
+  rw [hb] at hf
+  rcases hc' with rfl | rfl | rfl <;> simp_all [textByte] <;> contradiction
+
 /-- The escaper is its character-by-character specification. -/
 theorem escapeText_spec (s : String) :
     escapeText s = String.ofList (escapeText.go s.toList) := by
@@ -122,7 +178,7 @@ theorem escapeText_spec (s : String) :
   · rw [String.foldl_eq_foldl_toList, escapeStepText_go]
     rfl
   · next h =>
-    rw [escapeText_go_plain _ (by simpa [String.contains_bool_eq] using h)]
+    rw [escapeText_go_plain _ (needsText_plain s (by simpa using h))]
 
 theorem escapeStepAttr_go (l : List Char) (acc : String) :
     (l.foldl escapeStepAttr acc).toList = acc.toList ++ escapeAttr.go l := by
@@ -157,6 +213,19 @@ theorem escapeAttr_go_plain (l : List Char) (h : l.any needsAttr = false) :
       simp_all
     simp only [escapeAttr.go, hc, ih h.2, List.singleton_append]
 
+theorem needsAttr_plain (s : String) (h : anyByteFrom s attrByte 0 = false) :
+    s.toList.any needsAttr = false := by
+  apply List.any_eq_false.mpr
+  intro c hc hn
+  have hc' : c = '&' ∨ c = '<' ∨ c = '>' ∨ c = '"' ∨ c = '\'' := by
+    simp only [needsAttr, Bool.or_eq_true, beq_iff_eq] at hn
+    rcases hn with (((h | h) | h) | h) | h <;> simp [h]
+  have h1 : c.utf8Size = 1 := by rcases hc' with rfl | rfl | rfl | rfl | rfl <;> rfl
+  obtain ⟨j, hj, hb⟩ := ascii_byte_mem s c hc h1
+  have hf := anyByteFrom_false s attrByte 0 h j (Nat.zero_le _) hj
+  rw [hb] at hf
+  rcases hc' with rfl | rfl | rfl | rfl | rfl <;> simp_all [attrByte] <;> contradiction
+
 /-- The escaper is its character-by-character specification. -/
 theorem escapeAttr_spec (s : String) :
     escapeAttr s = String.ofList (escapeAttr.go s.toList) := by
@@ -167,7 +236,7 @@ theorem escapeAttr_spec (s : String) :
   · rw [String.foldl_eq_foldl_toList, escapeStepAttr_go]
     rfl
   · next h =>
-    rw [escapeAttr_go_plain _ (by simpa [String.contains_bool_eq] using h)]
+    rw [escapeAttr_go_plain _ (needsAttr_plain s (by simpa using h))]
 
 public theorem escapeText_no_lt (s : String) : '<' ∉ (escapeText s).toList := by
   simp only [escapeText_spec, String.toList_ofList]
