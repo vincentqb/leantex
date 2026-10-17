@@ -2,6 +2,7 @@ module
 
 public import LeanTex.Core.Lex
 public import LeanTex.Core.Parse
+import LeanTex.Core.Marker
 public import LeanTex.Core.PackageImports
 import LeanTex.Core.Theme
 import LeanTex.Core.Decl
@@ -977,8 +978,8 @@ private def withGroupScope (arg : Bool) (act : Bool → Nat → M α) : M α := 
     (act (st.defaultAt matches .inside _) st.bodyNext { st with defaultAt := .none })
 
 /-- Whether a group the walk reaches after `out` may be an argument, whose braces TeX does not
-scope: past blanks and at most nine groups, an optional argument or a control word, neither one
-whose name holds a colon, a marker but cleveref's range, nor one of TeX's grouping primitives. -/
+scope: past blanks and at most nine groups, an optional argument or a control word, neither `\:`,
+a marker taking none, nor one of TeX's grouping primitives. -/
 private def argGroupAt (out : Array Raw) : Bool := Id.run do
   let mut k := out.size
   for _ in [0:20] do
@@ -986,7 +987,7 @@ private def argGroupAt (out : Array Raw) : Bool := Id.run do
     match out[k - 1]? with
     | some .space | some (.group _ _) => k := k - 1
     | some (.ctrl n _) =>
-      return !n.contains ':' && (Marker.read? n).all (·.1 matches .crefRange | .crefRangeUp) &&
+      return n != ":" && (Marker.readingOf? n).all (·.takesGroup) &&
         !["begingroup", "endgroup", "bgroup", "egroup", "relax"].contains n
     | some (.sym ']' _) => return true
     | _ => return false
@@ -1068,14 +1069,14 @@ public def texPrimitives : Array String := #[
   "vfuzz", "voffset", "vrule", "vsize", "vskip", "vsplit", "vss", "vtop",
   "wd", "widowpenalty", "wlog", "xdef", "xleaders", "xspaceskip", "year"]
 
-/-- Whether a control word is a TeX internal: an `@`-name or a TeX primitive. -/
+/-- Whether a control word is a TeX internal: an `@`-name, an engine marker or a TeX primitive. -/
 public def texInternal (name : String) : Bool :=
-  name.contains '@' || texPrimitives.contains name
+  name.contains '@' || (Marker.read? name).isSome || texPrimitives.contains name
 
-/-- Whether a control word is a LaTeX internal whose `{...}`
-arguments are code. -/
+/-- Whether a control word is a LaTeX internal or an engine marker, whose `{...}` arguments are
+code. -/
 public def codeInternal (name : String) : Bool :=
-  name.contains '@'
+  name.contains '@' || (Marker.read? name).isSome
 
 /-- Whether a site in `file` is package code rather than the
 document's own text. -/
@@ -7659,12 +7660,11 @@ colour aliases or explicit-footer restoration with an empty success callback are
   return some (tail, k)
 
 /-- cleveref's `\crefrange{key1}{key2}` as the pair the resolver renders. -/
-private def crefRangeArm (name : String) (pos : Pos) (raws : Array Raw)
+private def crefRangeArm (name : String) (kind : Marker.Kind) (pos : Pos) (raws : Array Raw)
     (start : Nat) : M (Option (Array Raw × Nat)) := do
   let (args, k) := takeGroups raws start 2
   if h : args.size = 2 then
     became s!"\\{name}" "the range pair: plural name, both numbers" pos
-    let kind := if name == "Crefrange" then Marker.Kind.crefRangeUp else .crefRange
     return some (#[.ctrl (Marker.name kind "") pos, .group args[0] pos,
       .ctrl "labelcref" pos, .group args[1] pos], k)
   else return none
@@ -8174,8 +8174,8 @@ were dropped: {o}" pos
     became "\\printbibliography"
       s!"biblatex's reference list of '{"', '".intercalate srcs.toList}'" pos
     return some (← synthAt native pos, k)
-  | "crefrange" | "Crefrange" =>
-    crefRangeArm name pos raws start
+  | "crefrange" => crefRangeArm name .crefRange pos raws start
+  | "Crefrange" => crefRangeArm name .crefRangeUp pos raws start
   | "fontsize" =>
     -- NFSS records the two dimensions and `\selectfont` commits them.
     write fun st => { st with strutSkip := none }
@@ -8723,6 +8723,10 @@ is skipped" pos
       became s!"\\alert{w}" "a conditional alert style" pos
       return some (#[.ctrl (alertMark (← alertThemed)) pos, spec], j + 1)
     | _ => alertPlain pos raws start
+  | "style" =>
+    let (args, k) := takeGroups raws start 2
+    if args.size != 2 then return none
+    return some (#[.ctrl name pos] ++ raws.extract start k, k)
   | "fonts" =>
     -- Counted so a later `\newfontfamily` takes the next slot.
     let (args, _) := takeGroups raws start 1

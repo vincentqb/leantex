@@ -1,6 +1,7 @@
 module
 
 public import Tests.Artifact
+import LeanTex.Core.Marker
 
 public section
 

@@ -3,7 +3,6 @@ module
 public import LeanTex.Core.Lex
 public import LeanTex.Core.Heading
 public import LeanTex.Core.CiteDecl
-public import LeanTex.Core.Marker
 
 namespace LeanTex.Core.Parse
 

@@ -1,6 +1,7 @@
 module
 
 public import Tests.Support
+import LeanTex.Core.Marker
 
 public section
 
@@ -150,21 +151,40 @@ def groupedBlockChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
     t s!"and ships the unwrapped body's text ('{o}')"
       (pageTextOf fonts grouped == pageTextOf fonts (wrap tab))
 
+mutual
+
+/-- Whether a raw is the control `n`, its children included. -/
+def ctrlIn (n : String) : Parse.Raw → Bool
+  | .ctrl m _ => m == n
+  | .group body _ | .math _ body _ | .env _ body _ => ctrlInList n body.toList
+  | _ => false
+
+def ctrlInList (n : String) : List Parse.Raw → Bool
+  | [] => false
+  | r :: rest => ctrlIn n r || ctrlInList n rest
+
+end
+
 /-- No document spells an environment or control name the engine makes: each holds a character no
-word holds, a written marker reads as a control space and text, and a former spelling as an unknown
-command or environment. -/
+word holds and writing it spells no such control, a marker reads as a control space and text, and
+an `@`-spelling of one is an unknown command or environment. -/
 def reservedNameChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
   let markers := Marker.Kind.words.map fun (w, k) => Marker.name k (w.take 1).toString
-  let names := markers ++
-    [Parse.citeSetupMark, Parse.markdownBibControl, Parse.headingControl .h1, Compat.metaTextMark,
+  let others := [Parse.citeSetupMark, Parse.markdownBibControl, Compat.metaTextMark,
      Compat.vspaceAnchorMark, Compat.frameRestartMark, Compat.cancelOptionsMark,
      Compat.blueprintSiteMark, Compat.linkedBoxRowMark, Compat.alertMark true,
      Compat.alertMark false, BeamerColor.marker, BeamerColor.starMarker,
-     BeamerColor.standoutMarker, BeamerColor.siteMarker]
+     BeamerColor.standoutMarker, BeamerColor.siteMarker] ++
+    [Ir.HeadingLevel.title, .h1, .h2, .h3, .h4, .h5, .h6].map Parse.headingControl
+  let names := markers ++ others
   for n in names do
     t s!"the engine's control '{n}' holds a character no word holds"
-      (n.any fun c => Lex.special c || Lex.isWs c)
+      (n.length > 1 && n.any fun c => Lex.special c || Lex.isWs c)
+    let (raws, _) := Surface.read .tex "t.tex" (dvDoc "" s!"Lead words \{n} tail words.")
+    t s!"and a document writing it spells no such control ('{n}')" (!raws.any (ctrlIn n))
+  for n in others do
+    t s!"the engine's control '{n}' is no marker" (Marker.read? n).isNone
   let doc (s : String) := dvDoc "\\usepackage{cleveref}\n"
     s!"\\section\{Lead}\\label\{a}\nLead words{s} tail words."
   let codes (src : String) := (dvE src).toList.map (·.code)
@@ -173,6 +193,8 @@ def reservedNameChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
     let text := doc (" " ++ (m.drop 1).toString)
     t s!"a written '\\{m}' reads as text" (pageLines fonts spelled == pageLines fonts text)
     t s!"and raises what its text does ('{m}')" (codes spelled == codes text)
+    t s!"and is code where package code holds it ('{m}')"
+      (Compat.texInternal m && Compat.codeInternal m)
   for (name, rest) in [("@ink", ":red"), ("@lang", ":fr"), ("@series", ":b"), ("@family", ":1"),
       ("@file", ":probe.sty"), ("@pagecolor", ":red"), ("@pagecolor", "-reset"),
       ("@fontsize", ":1em"), ("@environ", ":BODY"), ("@crefrange", "{a}{b}"),
@@ -181,6 +203,13 @@ def reservedNameChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
     let unknown := doc (" \\zzprobe" ++ rest)
     t s!"'\\{name}{rest}' is an unknown command like any other" (codes spelled == codes unknown)
     t s!"and ships its page ('\\{name}{rest}')" (pageLines fonts spelled == pageLines fonts unknown)
+  let styled (font : String) := dvDoc s!"\\style\{subsection}\{ font = \{{font}\\bfseries} }\n"
+    "\\section{Lead}\n\\subsection{Second}\nBody words."
+  for cmd in ["\\color{red}", "\\normalcolor", "\\selectlanguage{french}", "\\fontseries{b}",
+      "\\fontsize{14pt}{16pt}\\selectfont"] do
+    t s!"a style's '{cmd}' sets the text it styles and nothing beside it"
+      (pageTextOf fonts (styled cmd) == pageTextOf fonts (styled "") &&
+        (dvE (styled cmd)).all (·.code != "W0301"))
   for n in [Parse.splitOpen "center", Parse.splitClose "center",
       Parse.inputEnv "probe.sty", Parse.scopeEnv, Tcolorbox.boxEnv, Parse.markdownTableEnv,
       Parse.markdownDisclosureEnv, Md.leanDivisionEnv, Parse.keptInputEnv "probe.md",

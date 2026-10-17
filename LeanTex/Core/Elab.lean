@@ -3,6 +3,7 @@ module
 public import Std.Data.HashSet
 public import LeanTex.Core.Lex
 public import LeanTex.Core.Parse
+import LeanTex.Core.Marker
 import LeanTex.Core.MathParse
 import LeanTex.Core.TextSymData
 public import LeanTex.Core.Ir
@@ -5247,8 +5248,9 @@ private def elabInlinesCtrl2 (ctx : Ctx) (raws : Array Raw) (i : Nat)
     -- knot_dec's `assumption` consumes it on the fall-through edges.
     (_hadv1 : sliceWeight raws (i + 1) < sliceWeight raws i) :
     EM (Array Inline) := do
-  let inkMarker := (Marker.value? .ink name).isSome
-  let source := (Marker.value? .ink name).getD name
+  let ink := Marker.value? .ink name
+  let inkMarker := ink.isSome
+  let source := ink.getD name
   let read ← if inkMarker then
       readColor ctx ctx.palette none source pos
     else
@@ -6350,7 +6352,7 @@ private def isDeclaration (ctx : Ctx) : Raw → Bool
   | .ctrl n _ =>
     n == "centering" || (Ir.raggedSideOf? n).isSome
       || (declStyles.lookup n).isSome || (ctx.palette.find? n).isSome
-      || (Marker.read? n).any fun (k, _) => k == .fontSize || k == .ink || k == .lang
+      || (Marker.readingOf? n).any (·.declares)
   | _ => false
 
 /-- False exactly for a palette name followed by a group, its argument. -/
@@ -9584,7 +9586,7 @@ private def blockMacroStep (ctx : Ctx) (st : ESt) (gen : Nat)
 
 /-- Declarations that change the flowing palette or spacing tokens. -/
 private def flowStyleCtrl (n : String) : Bool :=
-  (Marker.value? .ink n).isSome || isPageGround n || n == BeamerColor.marker ||
+  (Marker.readingOf? n).any (·.flows) || n == BeamerColor.marker ||
     n == BeamerColor.starMarker || n == "palette" || n == "tokens"
 
 /-- Reads a flow declaration after its command, publishing it to the state and
@@ -10824,8 +10826,7 @@ private def isBlockStart (ctx' : Ctx) (n : String) (raws : Array Raw) (i : Nat)
     || (n == "note" && cur.isEmpty)
     || isDeclBlock ctx' n raws i cur
     -- Mid-paragraph these markers stay inline: splitting there would move text.
-    || (cur.isEmpty &&
-      ((Marker.read? n).any (fun (k, _) => k == .ink || k == .lang) || isPageGround n))
+    || (cur.isEmpty && (Marker.readingOf? n).any (·.opensBlock))
     || n == BeamerColor.marker || n == BeamerColor.starMarker
     || ((lookupUser ctx' sourceName).isNone && !(ctx'.args.any (·.1 == sourceName)) &&
       (n == "href" || n == "link" || n == "hyperlink" || n == "hypertarget") &&

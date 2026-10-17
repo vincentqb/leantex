@@ -1,6 +1,7 @@
 module
 
 public import LeanTex.Core.Parse
+import LeanTex.Core.Marker
 import LeanTex.Core.Decl
 
 namespace LeanTex.Core.Tcolorbox

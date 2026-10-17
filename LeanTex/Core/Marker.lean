@@ -22,16 +22,35 @@ public def Kind.words : List (String × Kind) :=
 
 public def Kind.word (k : Kind) : String := ((Kind.words.find? (·.2 == k)).map (·.1)).getD ""
 
+/-- How the passes read a marker: whether it declares a style, size or ink for the rest of its
+group, changes the flowing palette, opens a block where no paragraph is open, and takes the group
+after it as its argument. -/
+public structure Reading where
+  declares : Bool
+  flows : Bool
+  opensBlock : Bool
+  takesGroup : Bool
+
+public def Kind.reading : Kind → Reading
+  | .ink => ⟨true, true, true, false⟩
+  | .lang => ⟨true, false, true, false⟩
+  | .series | .family | .file | .environBody => ⟨false, false, false, false⟩
+  | .pageColor | .pageColorReset => ⟨false, true, true, false⟩
+  | .fontSize => ⟨true, false, false, false⟩
+  | .crefRange | .crefRangeUp => ⟨false, false, false, true⟩
+
 /-- A marker's control name: a space, its kind's word, a space and the value it carries. -/
 public def name (k : Kind) (v : String) : String := " " ++ k.word ++ " " ++ v
 
 /-- The kind and value a control's name spells, where it is a marker's. -/
 public def read? (n : String) : Option (Kind × String) :=
-  if n.startsWith " " then
-    match KeyVal.cutAt ' ' (n.toList.drop 1) with
-    | (w, some v) => (Kind.words.lookup (String.ofList w)).map (·, String.ofList v)
-    | (_, none) => none
+  if n.front? == some ' ' then
+    let cut := KeyVal.cutAt ' ' (n.toList.drop 1)
+    cut.2.bind fun v => (Kind.words.lookup (String.ofList cut.1)).map (·, String.ofList v)
   else none
+
+/-- How the passes read a control, where it is a marker. -/
+public def readingOf? (n : String) : Option Reading := (read? n).map (·.1.reading)
 
 /-- The value a control's name carries, where it is a marker of kind `k`. -/
 public def value? (k : Kind) (n : String) : Option String :=

@@ -102,11 +102,13 @@ public def spelling : CiteDecl → String
 
 /-- The declaration a word spells, where it spells one. -/
 public def ofSpelling? (s : String) : Option CiteDecl :=
-  match KeyVal.cutAt '=' s.toList with
-  | (w, none) => (Word.names.lookup (String.ofList w)).map .word
-  | (k, some v) =>
-    if String.ofList k == "option" then (Opt.names.lookup (String.ofList v)).map .option
-    else (Key.names.lookup (String.ofList k)).map (.set · (String.ofList v))
+  let cut := KeyVal.cutAt '=' s.toList
+  let head := String.ofList cut.1
+  match cut.2 with
+  | none => (Word.names.lookup head).map .word
+  | some v =>
+    if head == "option" then (Opt.names.lookup (String.ofList v)).map .option
+    else (Key.names.lookup head).map (.set · (String.ofList v))
 
 /-- natbib loaded with the options given: one declaration per option it has, in its own order, and
 the options it has none for. -/

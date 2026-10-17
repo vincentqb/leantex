@@ -1,6 +1,7 @@
 module
 
 public import Tests.Support
+import LeanTex.Core.Marker
 public import Lean.Data.Json.Parser
 public import Lean.Data.Json
 
