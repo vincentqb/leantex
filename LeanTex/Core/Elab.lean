@@ -14200,6 +14200,8 @@ public inductive PDecl where
   /-- `\pagecolor`, or `\nopagecolor` as `none`. -/
   | pageGround (source : Option String) (pos : Pos)
   | style (args : Option (String × String)) (pos : Pos)
+  /-- A read title-page template standing here, by its index in the rewrite's templates. -/
+  | titlePage (index : Nat) (pos : Pos)
   | allow (body : Option String) (pos : Pos)
   | theme (src : Option String) (pos : Pos)
   | assert (src : Option String) (pos : Pos)
@@ -14251,6 +14253,8 @@ public inductive PDecl where
 /-- The preamble fold's state. -/
 public structure PreState where
   ctx : Ctx
+  /-- The templates the rewrite read typed, a title page's marker indexing them. -/
+  templates : Array Compat.TemplateDecl := #[]
   docClass : Ir.DocClass := .article
   sawClass : Bool := false
   /-- The class named is not one the engine has, whose error accounts for its options. -/
@@ -14472,6 +14476,12 @@ public def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run d
             out := out.push (.logoSlot (name == "logoleft") (some body) pos)
           | _ =>
             out := out.push (.logoSlot (name == "logoleft") none pos)
+        else if name == Compat.titlePageMark then
+          match preamble[i]? with
+          | some (.group #[.word idx _] _) =>
+            i := i + 1
+            if let some index := idx.toNat? then out := out.push (.titlePage index pos)
+          | _ => pure ()
         else if name == BeamerColor.siteMarker then
           let j := skipSpaces preamble i
           let j2 := skipSpaces preamble (j + 1)
@@ -14803,6 +14813,44 @@ private def stepMissing (s : PreState) (name : String) (what : String) (pos : Po
     PreState × Array PEvent :=
   (s, #[.say (diagOf s.ctx .E0304 s!"'\\{name}' needs {what}" (some pos))])
 
+/-- The title page a beamer template reads: no separator and one slot per node, its literal text and
+fonts set as inline content. -/
+private def applyTitlePage (s : PreState) (rd : TitleTemplate.Read) (file : String) (pos : Pos) :
+    EM PreState := do
+  let ctx := { s.ctx with
+    file := file, engineTokens := engineLengthTokens s.docClass s.classOptions s.page }
+  let len (key : String) : Option String → EM (Option SymGlue)
+    | some v => styleLength ctx key v.trimAscii.toString pos (what := "the title-page template")
+    | none => pure none
+  let mut slots : Array Ir.TitleSlot := #[]
+  for n in rd.nodes do
+    let mut parts : Array Ir.TitlePart := #[]
+    for p in n.parts do
+      let content : Array Inline ← if p.datum.isSome then pure #[] else
+        do pure ((← styleInline ctx p.content pos).getD #[])
+      let before ← len "before" p.before
+      let size ← len "size" p.size
+      let leading ← len "leading" p.leading
+      let font ← match TitleTemplate.partFont rd p with
+        | some f => styleInline ctx f pos
+        | none => pure none
+      parts := parts.push { datum := p.datum, content, font, align := p.align, size, leading
+                            newLine := p.newLine, before }
+    if !n.pinned then
+      slots := slots.push (Ir.TitleSlot.ofNodeParts parts none none)
+      continue
+    let xshift ← len "xshift" n.xshift
+    let yshift ← len "yshift" n.yshift
+    let width ← len "width" n.width
+    let innerSep ← len "inner-sep" n.innerSep
+    slots := slots.push (Ir.TitleSlot.ofNodeParts parts width
+      (some { anchor := n.anchor, pagePoint := n.pagePoint, xshift, yshift, innerSep }))
+  let st : ElementStyle := (s.styles.find? "titlepage").getD {}
+  noteDeclared ctx "style" "titlepage"
+  noteSetting ctx (.style "titlepage") pos
+  let st := { st with separator := none, slots := st.slots ++ slots }
+  return { s with styles := s.styles.declare "titlepage" st }
+
 /-- Applies one preamble declaration to the fold state. -/
 public def applyDecl (s : PreState) (d : PDecl) : EM PreState := do
   match d with
@@ -15001,6 +15049,10 @@ optional; the default is ignored" pos
     | none =>
       diag s.ctx .E0304 "'\\palette' needs a {...} block" pos
       return s
+  | .titlePage index _ =>
+    match s.templates[index]? with
+    | some (.titlePage rd file pos) => applyTitlePage s rd file pos
+    | some (.block ..) | none => return s
   | .style args pos =>
     match args with
     | some (elem, body) =>
@@ -16079,70 +16131,11 @@ private def applyBlockShape (s : PreState) (element : String) (r : BlockTemplate
   noteSetting ctx (.style element) pos
   return { s with styles := s.styles.declare element { st with shape := some shape } }
 
-/-- The title page a beamer template reads: no separator and one slot per node, its literal text and
-fonts set as inline content. -/
-private def applyTitlePage (s : PreState) (rd : TitleTemplate.Read) (file : String) (pos : Pos) :
-    EM PreState := do
-  let ctx := { s.ctx with
-    file := file, engineTokens := engineLengthTokens s.docClass s.classOptions s.page }
-  let what := "the title-page template"
-  let len (key : String) : Option String → EM (Option SymGlue)
-    | some v => styleLength ctx key v.trimAscii.toString pos (what := what)
-    | none => pure none
-  let point (key v : String) : EM (Option Ir.BoxPoint) := do
-    match Ir.BoxPoint.ofName? v.trimAscii.toString with
-    | some p => return some p
-    | none =>
-      diag ctx .E0323 s!"'{key}' in {what} expects a compass point such as north west, got '{v}'" pos
-      return none
-  let mut slots : Array Ir.TitleSlot := #[]
-  for n in rd.nodes do
-    let mut parts : Array Ir.TitlePart := #[]
-    let mut ok := true
-    for p in n.parts do
-      let datum := p.datum.bind Ir.TitleDatum.ofName?
-      if p.datum.isSome && datum.isNone then
-        ok := false
-        diag ctx .E0323 s!"'{p.datum.getD ""}' in {what} is no title, subtitle, author, institute \
-or date" pos
-      let content : Array Inline ← if p.datum.isSome then pure #[] else
-        do pure ((← styleInline ctx p.content pos).getD #[])
-      let before ← len "before" p.before
-      let size ← len "size" p.size
-      let leading ← len "leading" p.leading
-      if p.align.any (!["left", "center", "right"].contains ·) then
-        ok := false
-        diag ctx .E0323 s!"'align' in {what} expects left, center, or right, got '{p.align.getD ""}'" pos
-      let font ← match TitleTemplate.partFont rd p with
-        | some f => styleInline ctx f pos
-        | none => pure none
-      parts := parts.push { datum, content, font, align := p.align, size, leading
-                            newLine := p.newLine, before }
-    unless ok do continue
-    if !n.pinned then
-      slots := slots.push (Ir.TitleSlot.ofNodeParts parts none none)
-      continue
-    let anchor ← point "anchor" n.anchor
-    let pagePoint ← point "at" n.pagePoint
-    let xshift ← len "xshift" n.xshift
-    let yshift ← len "yshift" n.yshift
-    let width ← len "width" n.width
-    let innerSep ← len "inner-sep" n.innerSep
-    let place : Option Ir.TitlePlace :=
-      if anchor.isNone && pagePoint.isNone then none
-      else some { anchor := anchor.getD .center, pagePoint := pagePoint.getD .center
-                  xshift, yshift, innerSep }
-    slots := slots.push (Ir.TitleSlot.ofNodeParts parts width place)
-  let st : ElementStyle := (s.styles.find? "titlepage").getD {}
-  noteDeclared ctx "style" "titlepage"
-  noteSetting ctx (.style "titlepage") pos
-  let st := { st with separator := none, slots := st.slots ++ slots }
-  return { s with styles := s.styles.declare "titlepage" st }
-
-/-- A template the preamble installed, applied where it ends. -/
+/-- A block template the preamble installed, applied where it ends; a title page applies where its
+marker stands. -/
 private def applyTemplate (s : PreState) : Compat.TemplateDecl → EM PreState
   | .block element r colors file pos => applyBlockShape s element r colors file pos
-  | .titlePage rd file pos => applyTitlePage s rd file pos
+  | .titlePage .. => pure s
 
 private def beginDoc (file : String) (raws : Array Raw) (picPre : String)
     (picSets : Array (Span × Array Raw)) (picMacros : Array (String × String))
@@ -16185,12 +16178,13 @@ private def beginDoc (file : String) (raws : Array Raw) (picPre : String)
   -- Every palette descends from these, so each colour resolves through the output profile.
   let shown : Palette := { profile }
   let s ← decls.foldlM applyDecl
-    { ctx := { file := file, listingReplies := listingReplies, palette := shown, basePalette := shown
+    { templates := templates
+      ctx := { file := file, listingReplies := listingReplies, palette := shown, basePalette := shown
                pic := { tool := picTool0, preamble := picPre, metric := picMetric
                         withdrawn := picWithdrawn, macros := picMacros
                         sets := picSets, graphics := Compat.graphicsPath file raws } }
       palette := shown }
-  -- The templates stand where the preamble ends, past every declaration of its own.
+  -- The block templates stand where the preamble ends, past every declaration of its own.
   let s ← if docIdx.isSome then templates.foldlM applyTemplate s else pure s
   return { state := s, decls, body, trailing }
 
@@ -16733,7 +16727,7 @@ private theorem prepareRewritten_carried_exact (file : String)
         attempts ∧
       (prepareRewritten file scan macros triggers prior rewritten attempts mentions).sourceTriggers =
         triggers := by
-  rcases rewritten with ⟨raws, diags, warned, shapes⟩
+  rcases rewritten with ⟨raws, diags, warned, templates⟩
   unfold prepareRewritten
   cases Compat.rewriteText file raws warned
   exact ⟨rfl, rfl⟩

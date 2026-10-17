@@ -15,7 +15,7 @@ open LeanTex.Core.Picture (Tok)
 
 /-- One ordered datum or literal part inside a source node; placement belongs to its node. -/
 public structure Part where
-  datum : Option String
+  datum : Option Ir.TitleDatum
   content : String := ""
   font : String := ""
   size : Option String := none
@@ -32,8 +32,8 @@ public structure Node where
   /-- Whether the node stands pinned to a point of the page; an unpinned node sets its parts at
   the default place. -/
   pinned : Bool := true
-  anchor : String := "center"
-  pagePoint : String := "center"
+  anchor : Ir.BoxPoint := .center
+  pagePoint : Ir.BoxPoint := .center
   xshift : Option String := none
   yshift : Option String := none
   width : Option String := none
@@ -66,12 +66,12 @@ public structure Font where
   deriving Repr, BEq, Inhabited
 
 /-- beamer's inserts, by the datum each sets (beamerbasetitle.sty). -/
-private def insertDatum : String → Option String
-  | "inserttitle" | "insertshorttitle" => some "title"
-  | "insertsubtitle" | "insertshortsubtitle" => some "subtitle"
-  | "insertauthor" | "insertshortauthor" => some "author"
-  | "insertinstitute" | "insertshortinstitute" => some "institute"
-  | "insertdate" | "insertshortdate" => some "date"
+private def insertDatum : String → Option Ir.TitleDatum
+  | "inserttitle" | "insertshorttitle" => some .title
+  | "insertsubtitle" | "insertshortsubtitle" => some .subtitle
+  | "insertauthor" | "insertshortauthor" => some .author
+  | "insertinstitute" | "insertshortinstitute" => some .institute
+  | "insertdate" | "insertshortdate" => some .date
   | _ => none
 
 /-- TeX's integer parameters a template sets to keep a title from breaking, which set no ink. -/
@@ -180,7 +180,7 @@ private structure Style where
 
 /-- One datum found in node content, with the style and boundary in force where it stands. -/
 private structure ScannedPart where
-  datum : String
+  datum : Ir.TitleDatum
   style : Style
   newLine : Bool := false
   before : Option String := none
@@ -225,7 +225,7 @@ private def lineCtrls : List String := ["par", "\\", "newline", "null"]
 
 /-- Facts needed to admit exactly the final scoped optional-datum arm. -/
 private structure OptionalFacts where
-  data : Array String := #[]
+  data : Array Ir.TitleDatum := #[]
   clean : Bool := true
 
 private def optionalFacts (acc : OptionalFacts) : List Tok → OptionalFacts
@@ -352,7 +352,7 @@ decreasing_by
   all_goals omega
 where
   /-- Record a datum with the line and gap boundary immediately before it. -/
-  push (acc : Scan) (d : String) (st : Style) : Scan :=
+  push (acc : Scan) (d : Ir.TitleDatum) (st : Style) : Scan :=
     { acc with
       data := acc.data.push
         { datum := d, style := st, newLine := acc.broke, before := acc.before }
@@ -480,9 +480,9 @@ private def nodeStmt (fonts : List (String × Font)) (rd : Read) (ts : List Tok)
       bad := true
       break
   -- A node with no readable pin still sets what it inserts, unpinned.
-  let pin : Option (String × Option String × Option String) :=
+  let pin : Option (Ir.BoxPoint × Option String × Option String) :=
     if bad then none else
-    (coord.bind pagePointOf).filter fun (point, _, _) => (Ir.BoxPoint.ofName? point).isSome
+    (coord.bind pagePointOf).bind fun (point, xs, ys) => (Ir.BoxPoint.ofName? point).map (·, xs, ys)
   let some body := content | return { rd with unread := rd.unread.push "a node with no content" }
   let mut n : Node := match pin with
     | some (point, xs, ys) => { pagePoint := point, xshift := xs, yshift := ys }
@@ -494,8 +494,9 @@ private def nodeStmt (fonts : List (String × Font)) (rd : Read) (ts : List Tok)
     match entryOf o with
     | ("anchor", some v) =>
       let a := srcList v
-      if (Ir.BoxPoint.ofName? a).isSome then n := { n with anchor := a }
-      else unread := unread.push s!"anchor={a}"
+      match Ir.BoxPoint.ofName? a with
+      | some p => n := { n with anchor := p }
+      | none => unread := unread.push s!"anchor={a}"
     | ("align", some v) =>
       let a := srcList v
       if a == "left" || a == "center" || a == "right" then
@@ -516,7 +517,7 @@ private def nodeStmt (fonts : List (String × Font)) (rd : Read) (ts : List Tok)
   let sc := scanList fonts base {} body
   used := used ++ sc.used
   if sc.words && !sc.data.isEmpty then
-    return { rd with mixed := rd.mixed <|> sc.data[0]?.map (·.datum) }
+    return { rd with mixed := rd.mixed <|> sc.data[0]?.map (·.datum.name) }
   let rd := { rd with unread := unread, fonts := used }
   match sc.data[0]? with
   | none =>
@@ -532,9 +533,9 @@ private def nodeStmt (fonts : List (String × Font)) (rd : Read) (ts : List Tok)
       { datum := some p.datum, font := p.style.font, size := p.style.size,
         leading := p.style.leading, ink := p.style.ink, align := p.style.align,
         newLine := p.newLine, before := p.before }
-    let data := sc.data.map (·.datum)
+    let data := sc.data.map (·.datum.name)
     let node := { n with parts := parts }
-    let rd := { rd with skipped := rd.skipped ++ sc.skipped.map (·, first.datum) }
+    let rd := { rd with skipped := rd.skipped ++ sc.skipped.map (·, first.datum.name) }
     return { rd with
       nodes := rd.nodes.push node
       unplaced := if node.pinned then rd.unplaced else rd.unplaced.push data }
@@ -607,7 +608,7 @@ public def read (fonts : List (String × Font)) (body : Array Parse.Raw) : Optio
 
 /-- The ink of the part setting the title. -/
 private def titleInk (rd : Read) : Option String :=
-  rd.nodes.toList.findSome? fun n => (n.parts.find? (·.datum == some "title")).bind (·.ink)
+  rd.nodes.toList.findSome? fun n => (n.parts.find? (·.datum == some .title)).bind (·.ink)
 
 /-- The palette roles a template with a ground declares: the ground, and the title's ink on it. -/
 public def roles (rd : Read) : Array (String × String) :=

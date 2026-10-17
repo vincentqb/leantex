@@ -2392,8 +2392,14 @@ private def skipSumChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : 
       (a.isSome && a == b)
 
 /-- A block template no `\begin{document}` ends a preamble for, or whose rule's colour no palette
-entry spells, is named unread once, and its blocks keep the default pair. -/
-private def unreadTemplateChecks (ref : IO.Ref (List String)) : IO Unit := do
+entry spells, is named unread once, and its blocks stand where the default pair sets them. -/
+private def unreadTemplateChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  let untemplated (src : String) : String :=
+    "\n".intercalate ((src.splitOn "\n").filter (!·.startsWith "\\defbeamertemplate"))
+  let bodyAt (name src : String) : Option Dim.Sp := do
+    let (_, out, _) := layout fonts name src
+    let page ← out.pages[0]?
+    return (← lineOf page "Body words here.").y
   let bare := ((hanging.replace "\\documentclass[10pt,aspectratio=169]{beamer}\n" "").replace
     "\\begin{document}\n" "").replace "\\end{document}\n" ""
   let paint := "{\\usebeamercolor[bg]{probe edge}%\n        \\vrule width .3em"
@@ -2401,17 +2407,23 @@ private def unreadTemplateChecks (ref : IO.Ref (List String)) : IO Unit := do
   let cases : List (String × String × String) :=
     [("bare", bare, "begin{document}"),
      ("unspelled", unspelled, "a rule painted in a colour no palette entry spells")]
+  let (_, out, _) := layout fonts "unread-bare-page" bare
+  check ref "unread template bare: no page paints the template's rule"
+    (!out.pages.isEmpty && out.pages.all fun p => p.fills.all (·.color != edgeColor))
   for (name, src, why) in cases do
     check ref s!"unread template {name}: the probe differs from the probe" (src != hanging)
-    let (doc, diags) := Elab.run s!"block-template-{name}.tex" src
+    let (_, diags) := Elab.run s!"block-template-{name}.tex" src
     let named := diags.filter fun d =>
       d.code == "W0110" && d.subject == some "beamer:template:block begin"
     check ref s!"unread template {name}: named once, for its reading ({diags.map (·.code)})"
       (named.size == 1 && named.all (hasStr ·.message why) &&
         diags.all fun d => d.code != "W0101" && d.code != "E0326" &&
           !(d.code == "N0100" && hasStr d.message "the shape of each 'block'"))
-    check ref s!"unread template {name}: its blocks keep the default pair"
-      (((doc.styles.find? "block").bind (·.shape)).isNone)
+    unless name == "bare" do
+      let a := bodyAt s!"unread-{name}" src
+      let b := bodyAt s!"unread-{name}-default" (untemplated src)
+      check ref s!"unread template {name}: its block's body stands where the default pair sets it ({a}, {b})"
+        (untemplated src != src && a.isSome && a == b)
 
 def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   pageChecks ref fonts
@@ -2440,6 +2452,6 @@ def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   templateCodeChecks ref
   braceEolChecks ref
   skipSumChecks ref fonts
-  unreadTemplateChecks ref
+  unreadTemplateChecks ref fonts
 
 end Tests.BlockTemplate

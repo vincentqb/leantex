@@ -578,9 +578,8 @@ private structure ListingDefault where
   file : String
   read : Bool := false
 
-/-- A beamer template the preamble installs, read typed for the elaborator to apply where the
-preamble ends: a block kind's shape on the element it styles, each rule painted by the palette
-entry it names, or the title page; each with the file and site it stands at. -/
+/-- A beamer template the preamble installs, read typed: a block kind's shape on the element it
+styles, its rules painted by the palette entries it names, or the title page; each with its site. -/
 public inductive TemplateDecl where
   | block (element : String) (read : BlockTemplate.Read) (colors : Array String) (file : String)
       (pos : Pos)
@@ -6480,6 +6479,10 @@ private def declaredRaws (name body : String) (pos : Pos) : Array Raw :=
 its dates and trapping as `\pdfmeta` entries, then each key's group and its value's group. -/
 public def metaTextMark : String := "pdfmeta text"
 
+/-- The marker standing where a read title-page template applies, its group the template's index
+in the rewrite's typed templates. -/
+public def titlePageMark : String := "title page template"
+
 private theorem toList_sizeOf_lt (b : Array Raw) : sizeOf b.toList < sizeOf b := by
   cases b; simp
 
@@ -7899,6 +7902,7 @@ private def flushBeamerBlocks : M (Array Raw) := do
     let flags : String → Option Bool := fun x => st.templateFlags[x]?
     let unread : Array String ← match b, e with
       | some (_, _, _, bb), some (_, _, _, eb) =>
+        -- premise: unreadTemplateChecks — templates no document follows shape no block
         if !st.wholeDoc then pure #["no '\\begin{document}' ends a preamble for them"] else
         -- premise: capitalRegisterChecks — no text outside the templates reads their registers
         let lengths : String → Option (Option BlockTemplate.Dimen) := fun n =>
@@ -8545,7 +8549,9 @@ only preamble block templates are read" pos
         match (← get).beamerTemplateDefs.find? (·.1 == (element, name)) with
         | some (_, body) =>
           installBlockTemplate element body pos
-          became s!"\\setbeamertemplate\{{element}}[{name}]" "a block template, read where the preamble ends" pos
+          -- premise: unreadTemplateChecks — with no document the flush names the template unread
+          if (← get).wholeDoc then
+            became s!"\\setbeamertemplate\{{element}}[{name}]" "a block template, read where the preamble ends" pos
         | none =>
           write fun st => { st with
             beamerTemplates := st.beamerTemplates.filter (·.1 != element)
@@ -8556,7 +8562,9 @@ only preamble block templates are read" pos
 defines; those blocks keep beamer's default template" pos
       | none, some body =>
         installBlockTemplate element (BlockTemplate.edged (bodyEdges raws j') body) pos
-        became s!"\\setbeamertemplate\{{element}}" "a block template, read where the preamble ends" pos
+        -- premise: unreadTemplateChecks — with no document the flush names the template unread
+        if (← get).wholeDoc then
+          became s!"\\setbeamertemplate\{{element}}" "a block template, read where the preamble ends" pos
       | none, none => return none
       return some (#[], k)
     if element == "frame footer" then
@@ -8638,18 +8646,24 @@ defines; those blocks keep beamer's default template" pos
         | some ground => return some (← carry (.palette #[("titlepagebg", ground)]) pos, k)
         | none => return some (#[], k)
       | some rd =>
+        let palette : Native.Setting := .palette (TitleTemplate.roles rd)
+        -- premise: titleTemplateTextChecks — a body template's ground stands, its slots on no page
         if (← get).inDoc then
+          let what := if palette.pairs.isEmpty then "is skipped" else "sets its ground alone"
           sayOnce "beamer:template:title page" .W0104
-            "'\\setbeamertemplate{title page}' in the document body is skipped: only a preamble \
-title-page template is read" pos (help := "set the title-page template in the preamble")
-          return some (#[], k)
-        -- premise: titleTemplateTextChecks — a template no document follows applies to no page
+            s!"'\\setbeamertemplate\{title page}' in the document body {what}: only a preamble \
+title-page template sets the title page" pos (help := "set the title-page template in the preamble")
+          return some (← carry palette pos, k)
+        -- premise: titleTemplateTextChecks — a template no document follows sets no title page
         unless (← get).wholeDoc do
           sayOnce "beamer:template:title page" .W0110
             "the title-page template is not read: no '\\begin{document}' ends a preamble for it; \
 the built-in title page stands" pos
           return some (#[], k)
-        let palette : Native.Setting := .palette (TitleTemplate.roles rd)
+        -- A definition's template stands where its uses do, each walked in its place.
+        if (← get).inDef then
+          became "\\setbeamertemplate{title page}" "the title page where the definition is used" pos
+          return some (← carry palette pos, k)
         -- premise: themeTitleShipChecks — a selected theme font's size reaches the page
         let skips := rd.fonts.map ("beamer:setbeamerfont:" ++ ·)
         write fun st => { st with diags := st.diags.filter fun d =>
@@ -8666,8 +8680,10 @@ the built-in title page stands" pos
         for (construct, datum) in rd.skipped do
           let (sfx, msg) := TitleTemplate.skippedLoss construct datum
           sayOnce ("beamer:setbeamertemplate:title page:" ++ sfx) .W0104 msg pos
+        let index := (← get).templates.size
         write fun st => { st with templates := st.templates.push (.titlePage rd st.file pos) }
-        return some (← carry palette pos, k)
+        return some ((← carry palette pos) ++
+          #[.ctrl titlePageMark pos, .group #[.word (toString index) pos] pos], k)
       | none =>
       -- `\setbeamertemplate{title page}` is beamer's spelling of `\renewcommand{\maketitle}`.
       became "\\setbeamertemplate{title page}" "\\define \\maketitle() {...}" pos
@@ -13103,6 +13119,9 @@ private def seamSplit (raws : Array Raw) : List Raw → Nat → Nat →
       let (_, k) := takeGroups raws j (if name == "style" then 2 else 1)
       seamSplit raws rest (i + 1) (k - (i + 1))
         (pre ++ raws.extract i k, body)
+    else if name == titlePageMark then
+      let (_, k) := takeGroups raws (i + 1) 1
+      seamSplit raws rest (i + 1) (k - (i + 1)) (pre ++ raws.extract i k, body)
     else if name == "defineenv" || name == "newtheorem" || name == "theoremstyle" then
       -- A definition a hook makes at the seam is the preamble's, as LaTeX's stands from there.
       let k := if name == "defineenv" then defineEnvEnd raws (i + 1)

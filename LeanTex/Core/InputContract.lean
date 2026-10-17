@@ -131,7 +131,7 @@ public theorem prepareRewritten_diags_covers (file : String)
     (attempts : Array Compat.InputAttempt) (mentions : Array String) (d : Diag)
     (h : d ∈ rewritten.2.1) :
     d ∈ (prepareRewritten file scan macros triggers prior rewritten attempts mentions).compatDiags := by
-  rcases rewritten with ⟨raws, diags, warned, shapes⟩
+  rcases rewritten with ⟨raws, diags, warned, templates⟩
   unfold prepareRewritten
   cases Compat.rewriteText file raws warned
   exact Array.mem_append.mpr (Or.inl (Array.mem_append.mpr (Or.inr h)))

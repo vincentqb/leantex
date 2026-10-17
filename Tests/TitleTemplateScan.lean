@@ -19,7 +19,7 @@ public def checks (check : String → Bool → IO Unit) : IO Unit := do
       "\\ifx\\insertsubtitle\\@empty\\else\\vskip0.5cm" ++
       "{\\large\\insertsubtitle\\par}\\fi"))
   check "unit: an empty-check conditional scans each datum once and no literal ink"
-    (scan.data.map (·.datum) == #["title", "subtitle"] && !scan.words)
+    (scan.data.map (·.datum) == #[.title, .subtitle] && !scan.words)
   let read := TitleTemplate.nodeStmt [] {}
     (micro "[anchor=west] at (current page.west) {\\insertauthor\\\\\\small\\insertinstitute}")
   check "unit: one source node stays one pinned reader node across style changes"

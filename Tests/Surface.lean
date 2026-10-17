@@ -4526,14 +4526,26 @@ def translationOwedChecks (ref : IO.Ref (List String)) : IO Unit := do
     t s!"the refusal row for '\\{construct}' is a live row"
       ((Compat.beamerNative.lookup construct).any fun help => !(named help).isEmpty)
 
-/-- A read title-page template's literal text ships whatever brackets or quotes it holds; one in
-the body is skipped, and one no `\begin{document}` follows is not read, each named once. -/
+/-- A read title-page template's text ships whatever brackets or quotes it holds, and the template
+applies where it stands: through a definition's uses, before the document's own style, in the body
+as its ground alone, and with no `\begin{document}` not at all. -/
 def titleTemplateTextChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
+  let night : Ir.Color := { r := 0x1B, g := 0x23, b := 0x30 }
+  let ruleInk : Ir.Color := { r := 0xC0, g := 0x30, b := 0x30 }
+  let colors := "\\definecolor{probeNight}{HTML}{1B2330}\\definecolor{probeRule}{HTML}{C03030}"
   let tpl (node : String) : String :=
     "\\setbeamertemplate{title page}{\\begin{tikzpicture}[remember picture,overlay]" ++
     "\\node[anchor=west, align=left] at (current page.west) {\\inserttitle};" ++ node ++
     "\\end{tikzpicture}}"
+  let ground (node : String) : String :=
+    "\\setbeamertemplate{title page}{\\begin{tikzpicture}[remember picture,overlay]" ++
+    "\\fill[probeNight] (current page.north west) rectangle (current page.south east);" ++ node ++
+    "\\end{tikzpicture}}"
+  let page (src : String) : Layout.PageOut := ((layoutOf oneFace (elabStr src).1).pages[0]?).getD {}
+  let occurs (p : Layout.PageOut) (text : String) : Nat :=
+    (p.lines.filter fun l => hasStr (lineText l) text).size
+  let grounded (p : Layout.PageOut) : Bool := p.fills.any fun f => f.color == night && f.x == 0
   let cases : List (String × String × String) :=
     [("unpinned parenthesis", "\\node {Invented Series (draft};", "Invented Series (draft"),
      ("unpinned quote", "\\node {Invented 12\" Series};", "Invented 12” Series"),
@@ -4542,20 +4554,40 @@ def titleTemplateTextChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet
      ("pinned bracket", "\\node[anchor=east] at (current page.east) {Invented [draft};",
        "Invented [draft")]
   for (name, node, text) in cases do
-    let (doc, ds) := elabStr (deck169 (tpl node ++ "\\title{Probe Title}") "\\titlepage")
-    t s!"title template {name}: its text ships on the title page"
-      (((layoutOf oneFace doc).pages[0]?.map (·.lines)).getD #[] |>.any fun l => hasStr (lineText l) text)
+    let src := deck169 (tpl node ++ "\\title{Probe Title}") "\\titlepage"
+    let (_, ds) := elabStr src
+    t s!"title template {name}: its text ships on the title page" (occurs (page src) text == 1)
     t s!"title template {name}: nothing is dropped or refused ({ds.filter (·.severity != .note) |>.map (·.code)})"
       (ds.all fun d => d.code != "W0101" && d.severity != .error)
   let node := "\\node[anchor=east] at (current page.east) {Invented Series};"
-  let (bdoc, bds) := elabStr (deck169 "\\title{Probe Title}" (tpl node ++ "\\titlepage"))
-  t s!"title template in the body: skipped and named once ({bds.map (·.code)})"
+  let defined (use : String) : String :=
+    deck169 ("\\newcommand{\\probesetup}{" ++ tpl node ++ "}" ++ use ++ "\\title{Probe Title}") "\\titlepage"
+  t "title template in an unused definition: no page shows it"
+    (occurs (page (defined "")) "Invented Series" == 0)
+  t "title template in a definition used once: its page shows it once"
+    (occurs (page (defined "\\probesetup")) "Invented Series" == 1)
+  let param := deck169 ("\\newcommand{\\probetitle}[1]{" ++
+    tpl "\\node[anchor=east] at (current page.east) {#1};" ++ "}\\probetitle{Invented Series}" ++
+    "\\title{Probe Title}") "\\titlepage"
+  t s!"title template through a definition's argument: its page shows the argument ({(elabStr param).2.filter (·.severity == .error) |>.map (·.message)})"
+    (occurs (page param) "Invented Series" == 1 && (elabStr param).2.all (·.severity != .error))
+  let ruled := deck169 (colors ++ ground "" ++ "\\style{titlepage}{ separator = probeRule }" ++
+    "\\title{Probe Title}\\author{R. Placeholder}") "\\titlepage"
+  t "title template before the document's own separator: the declared separator draws"
+    ((page ruled).lines.any fun l => l.segs.any fun s => match s with
+      | .rule _ _ _ c => c == ruleInk
+      | _ => false)
+  let bodySrc := deck169 (colors ++ "\\title{Probe Title}") (ground node ++ "\\titlepage")
+  let (_, bds) := elabStr bodySrc
+  t s!"title template in the body: its ground stands, its slots on no page, named once ({bds.map (·.code)})"
     ((bds.filter fun d => d.code == "W0104" && d.subject == some "beamer:template:title page").size == 1 &&
-      ((bdoc.styles.find? "titlepage").all (·.slots.isEmpty)))
-  let (_, nds) := elabStr (tpl node)
-  t s!"title template with no document: named unread once ({nds.map (·.code)})"
+      grounded (page bodySrc) && occurs (page bodySrc) "Invented Series" == 0)
+  let alone := tpl node
+  let bare := colors ++ alone
+  let (_, nds) := elabStr bare
+  t s!"title template with no document: named unread once, on no page ({nds.map (·.code)})"
     ((nds.filter fun d => d.code == "W0110" && d.subject == some "beamer:template:title page" &&
-      hasStr d.message "begin{document}").size == 1)
+      hasStr d.message "begin{document}").size == 1 && occurs (page bare) "Invented Series" == 0)
 
 /-- A deck whose theme redefined the title page still ships it with the document's declared
 metadata. -/
