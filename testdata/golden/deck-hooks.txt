@@ -4,7 +4,6 @@ font dir "fonts"
 font body "Open Sans"
 meta title "Sections Behind Hooks"
 meta author "Pat Placeholder"
-section-hook page starred none
 frame golden
   center
     section* 0
@@ -13,6 +12,11 @@ frame golden
       text "Pat Placeholder"
 section 1
   text "Wheels"
+frame
+  title
+    text "Outline"
+  para
+    text "The next part opens here."
 para
   label "sec:wheels"
 frame
@@ -31,6 +35,11 @@ frame
     text "The rim runs true."
 section 1
   text "Chains"
+frame
+  title
+    text "Outline"
+  para
+    text "The next part opens here."
 para
   label "sec:chains"
 frame
@@ -48,8 +57,7 @@ frame
   para
     text "The last frame keeps a spare tube."
 -- diagnostics
-note[N0100] 7:1 '\documentclass{beamer}' → \documentclass[aspectratio=169]{slides}
-note[N0100] 7:1 '\RequirePackage{amsmath}' → nothing: the engine does this itself
-note[N0100] 7:1 '\usepackage{amsthm}' → \theoremstyle{plain}
-note[N0100] 9:1 '\usetheme' → \theme{default}
-warning[W0307] 10:1 '\AtBeginSection' is not set yet: each section it opens stands on a page showing its title | help: beamer sets the hook's own frame there
+note[N0100] 6:1 '\documentclass{beamer}' → \documentclass[aspectratio=169]{slides}
+note[N0100] 6:1 '\RequirePackage{amsmath}' → nothing: the engine does this itself
+note[N0100] 6:1 '\usepackage{amsthm}' → \theoremstyle{plain}
+note[N0100] 8:1 '\usetheme' → \theme{default}

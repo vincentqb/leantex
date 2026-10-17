@@ -2012,7 +2012,14 @@ def reports : List Report := [
       check% Tests.MdCiteEdges.twinChecks]
     accept := ["main's binary at e5afdc63 on invented probes: a key with an Arabic-Indic digit named no entry, the bracketed star key set as escaped text, a group before braces holding x set as bracket text, an in-text citation before two spaces and a locator on the next line set a line break and the bracket, and p. 3 kept a plain space; this tree's binary cites each key, sets and lists nothing for the star and names it, cites before the braces, reads the locator and joins the space",
       "pandoc 3.12 over the probes with citeproc: the Arabic-Indic key whole, the citation id star printing and listing nothing, the group before braces a citation, the two-space line end and the next line's bracket one in-text citation whose suffix joins p. and 3 by a no-break space, and p. 3 joined so; its natbib writer joins a locator's p. and 33 by a tie"]
-    state := .guarded "e5afdc63" .before .author }
+    state := .guarded "e5afdc63" .before .author },
+  { id := "R224", date := "2026-10-18"
+    what := "a deck's section hook set a page showing each section's title instead of its own frame, a hook declared after a section was ignored and one declared in a group outlived it; the commands naming the section in force were unknown; a frame's label option was dropped, its references showing question marks; and a frame holding only the section page was a frame"
+    pins := [check% sectionPageChecks, check% slideLabelChecks, check% frameHeadingScopeChecks]
+    accept := ["invented probes under lualatex with beamer: a section hook's frame stands right after each section it opens, its starred code after a starred section or one with a blank title, the code itself when no starred code is given and nothing when it is empty; a hook declared after a section opens the later sections; a hook declared in a group ends with the group; insertsection names the section in force; a frame's label option refers to the frame's number; this tree ships the same, a theme's section page standing as the theme's own hook sets it",
+      "the corpus built by the binary this branch stacks on and by this tree's: every artifact and diagnostics log byte-identical but the hooked deck's, whose hook frames stand where its section title pages stood and whose stand-in warning is gone",
+      "main at 320e1b58 sets a page showing the title for each hooked section, ignores a hook after a section and drops a frame's label option; the guards fail there"]
+    state := .guarded "320e1b58" .before .author }
 ]
 
 /-- The reports guarded but never seen failing, a count held in both directions. -/

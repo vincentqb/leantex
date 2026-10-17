@@ -24,7 +24,6 @@ token institutegap 1000/1000em
 chrome footer left sectiontitle right framenumber
 meta title "Slide Chrome"
 meta author "Pat Placeholder"
-section-pages theme
 frame golden
   section* 0
     text "Slide Chrome"
@@ -35,6 +34,7 @@ frame golden
       text "Pat Placeholder"
 section 1
   text "Footers"
+role section-page
 frame
   title
     text "Default"

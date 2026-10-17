@@ -1476,11 +1476,14 @@ def compatRowScaffold (load : Bool) (pkg place call : String) : String :=
 \\begin\{document}\n\\begin\{lemma}\\label\{lem:probe}\n{call}\nx\n\\end\{lemma}\n\\end\{document}"
   else if place == "pre" then
     s!"\\documentclass\{article}\n{load}{call}\n\\begin\{document}\nx\n\\end\{document}"
-  else if place == "frame" then
+  else if place == "frame" || place == "deck" then
     let isClass := Compat.presentationClasses.contains pkg
     let cls := if isClass then pkg else "beamer"
     let load := if isClass then "" else load
-    s!"\\documentclass\{{cls}}\n{load}\\begin\{document}\n\\begin\{frame}\n{call}\n\\end\{frame}\n\\end\{document}"
+    if place == "deck" then
+      s!"\\documentclass\{{cls}}\n{load}\\begin\{document}\n{call}\n\\end\{document}"
+    else
+      s!"\\documentclass\{{cls}}\n{load}\\begin\{document}\n\\begin\{frame}\n{call}\n\\end\{frame}\n\\end\{document}"
   else
     s!"\\documentclass\{article}\n{load}\\begin\{document}\n{call}\n\\end\{document}"
 
@@ -2114,9 +2117,10 @@ def navSectionLeaves (doc : Ir.Doc) : Array Nat := Id.run do
   if doc.docClass.record.model != .frame then return #[]
   let mut next := 0
   let mut out : Array Nat := #[]
-  for b in doc.body do
+  for h : i in [0:doc.body.size] do
+    let b := doc.body[i]
     let n := Struct.leafCountBlocks #[b]
-    if b matches .section .. && doc.outside b == .none then
+    if b matches .section .. && doc.outside i b == .none then
       out := out ++ (Array.range n).map (next + ·)
     next := next + n
   return out

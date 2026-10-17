@@ -24,7 +24,6 @@ token institutegap 1000/1000em
 chrome footer left sectiontitle right framenumber
 meta title "Footline Slots"
 meta author "Pat Placeholder"
-section-pages theme
 frame golden
   section* 0
     text "Footline Slots"
@@ -40,6 +39,7 @@ frame
     text "No section is in force, so the left slot is empty."
 section 1
   text "Placement"
+role section-page
 frame
   title
     text "Inside a section"

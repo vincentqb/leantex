@@ -172,20 +172,20 @@ private def pageless : Expected :=
     headings := #[("h2", "Alpha Part", "FirstWords"), ("h3", "Alpha Detail", "SecondWords"),
       ("h2", "Beta Part", "ThirdWords"), ("h2", "Gamma Part", "FourthWords")] }
 
-/-- A hook setting a frame for each section and, its optional argument empty, none for a starred
+/-- A hook setting a frame naming each section and, its optional argument empty, none for a starred
 one. -/
 private def outlineHook : String :=
-  "\\AtBeginSection[]{\\begin{frame}{Outline}OutlineWords\\end{frame}}"
+  "\\AtBeginSection[]{\\begin{frame}{Outline}OutlineWords \\insertsection\\end{frame}}"
 
-/-- What `sectioned` ships where each unstarred section stands on a page of its own. -/
+/-- What `sectioned` ships where the hook's frame follows each unstarred section, as beamer's. -/
 private def hooked : Expected :=
-  { pages := #[(.frame, "OpeningWords"), (.section, "Alpha Part"), (.frame, "FirstWords"),
-      (.frame, "SecondWords"), (.section, "Beta Part"), (.frame, "ThirdWords"),
+  { pages := #[(.frame, "OpeningWords"), (.frame, "OutlineWords Alpha Part"), (.frame, "FirstWords"),
+      (.frame, "SecondWords"), (.frame, "OutlineWords Beta Part"), (.frame, "ThirdWords"),
       (.frame, "FourthWords")]
     labels := #[("sec:alpha", "FirstWords"), ("sub:detail", "SecondWords"), ("sec:beta", "ThirdWords")]
-    anchors := #[("Alpha Part", "Alpha Part"), ("Beta Part", "Beta Part")]
-    headings := #[("h3", "Alpha Detail", "SecondWords"), ("h2", "Gamma Part", "FourthWords")]
-    warns := #["W0307"] }
+    anchors := #[("Alpha Part", "OutlineWords Alpha Part"), ("Beta Part", "OutlineWords Beta Part")]
+    headings := #[("h2", "Alpha Part", "OutlineWords Alpha Part"), ("h3", "Alpha Detail", "SecondWords"),
+      ("h2", "Beta Part", "OutlineWords Beta Part"), ("h2", "Gamma Part", "FourthWords")] }
 
 /-- Content outside every frame, then a section, then a frame. -/
 private def looseThenSection : String :=
@@ -210,7 +210,7 @@ private def trailing : String :=
   "\\begin{frame}{Last}LastWords\\end{frame}\n" ++
   "\\section{Last Part}\\label{sec:last}\n\\label{deck:end}\n\n\\note{LateNoteWords}"
 
-/-- A hook declared after a section, which the earlier section cannot read. -/
+/-- A hook declared after a section, which opens the later sections only. -/
 private def lateHook : String :=
   "\\begin{frame}{Opening}OpeningWords\\end{frame}\n\\section{Alpha Part}\n" ++ outlineHook ++
   "\n\\begin{frame}{First}FirstWords\\end{frame}\n\\section{Beta Part}\n" ++
@@ -239,7 +239,7 @@ private def nestedSection : String :=
 /-- A subsection hook declared after a section, before any subsection it opens. -/
 private def lateSubHook : String :=
   "\\begin{frame}{Opening}OpeningWords\\end{frame}\n\\section{Alpha Part}\n" ++
-  "\\AtBeginSubsection[]{\\begin{frame}{Sub}SubWords\\end{frame}}\n" ++
+  "\\AtBeginSubsection[]{\\begin{frame}{Sub}SubWords \\insertsubsection\\end{frame}}\n" ++
   "\\subsection{Alpha One}\n\\begin{frame}{First}FirstWords\\end{frame}\n" ++
   "\\subsection{Alpha Two}\n\\begin{frame}{Second}SecondWords\\end{frame}"
 
@@ -286,35 +286,36 @@ def sectionPageChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
     "\\usetheme[sectionpage=none]{moloch}" sectioned pageless
   verify ref fonts "the document's subsection hook"
     "\\theme{default}\n\\AtBeginSubsection{\\begin{frame}{Sub}SubWords\\end{frame}}" sectioned
-    { pages := #[(.frame, "OpeningWords"), (.frame, "FirstWords"), (.section, "Alpha Detail"),
+    { pages := #[(.frame, "OpeningWords"), (.frame, "FirstWords"), (.frame, "SubWords"),
         (.frame, "SecondWords"), (.frame, "ThirdWords"), (.frame, "FourthWords")]
       labels := #[("sec:alpha", "FirstWords"), ("sub:detail", "SecondWords"),
         ("sec:beta", "ThirdWords")]
       anchors := #[("Alpha Part", "FirstWords"), ("Beta Part", "ThirdWords")]
-      headings := #[("h2", "Alpha Part", "FirstWords"), ("h2", "Beta Part", "ThirdWords"),
-        ("h2", "Gamma Part", "FourthWords")]
-      warns := #["W0307"] }
+      headings := #[("h2", "Alpha Part", "FirstWords"), ("h3", "Alpha Detail", "SubWords"),
+        ("h2", "Beta Part", "ThirdWords"), ("h2", "Gamma Part", "FourthWords")] }
   verify ref fonts "a hook reaching its frame through the document's command"
-    ("\\theme{default}\n\\newcommand{\\outlineframe}{\\begin{frame}{Outline}OutlineWords\\end{frame}}\n" ++
+    ("\\theme{default}\n" ++
+      "\\newcommand{\\outlineframe}{\\begin{frame}{Outline}OutlineWords \\insertsection\\end{frame}}\n" ++
       "\\AtBeginSection[]{\\outlineframe}") sectioned hooked
   verify ref fonts "a hook reaching its frame through the document's environment"
     ("\\theme{default}\n" ++
-      "\\newenvironment{outline}{\\begin{frame}{Outline}OutlineWords\\end{frame}}{}\n" ++
+      "\\newenvironment{outline}{\\begin{frame}{Outline}OutlineWords \\insertsection\\end{frame}}{}\n" ++
       "\\AtBeginSection[]{\\begin{outline}\\end{outline}}") sectioned hooked
   verify ref fonts "a subsection hook after a section opens every subsection" "\\theme{default}"
     lateSubHook
-    { pages := #[(.frame, "OpeningWords"), (.section, "Alpha One"), (.frame, "FirstWords"),
-        (.section, "Alpha Two"), (.frame, "SecondWords")]
+    { pages := #[(.frame, "OpeningWords"), (.frame, "SubWords Alpha One"), (.frame, "FirstWords"),
+        (.frame, "SubWords Alpha Two"), (.frame, "SecondWords")]
       labels := #[]
-      anchors := #[("Alpha Part", "Alpha One")]
-      headings := #[("h2", "Alpha Part", "Alpha One")]
-      warns := #["W0307"] }
-  verify ref fonts "a hook after a section is named and read by none" "\\theme{default}" lateHook
-    { pages := #[(.frame, "OpeningWords"), (.frame, "FirstWords"), (.frame, "SecondWords")]
+      anchors := #[("Alpha Part", "SubWords Alpha One")]
+      headings := #[("h2", "Alpha Part", "SubWords Alpha One"), ("h3", "Alpha One", "SubWords Alpha One"),
+        ("h3", "Alpha Two", "SubWords Alpha Two")] }
+  verify ref fonts "a hook declared after a section opens the later ones, as beamer's"
+    "\\theme{default}" lateHook
+    { pages := #[(.frame, "OpeningWords"), (.frame, "FirstWords"), (.frame, "OutlineWords Beta Part"),
+        (.frame, "SecondWords")]
       labels := #[]
-      anchors := #[("Alpha Part", "FirstWords"), ("Beta Part", "SecondWords")]
-      headings := #[("h2", "Alpha Part", "FirstWords"), ("h2", "Beta Part", "SecondWords")]
-      warns := #["W0340"] }
+      anchors := #[("Alpha Part", "FirstWords"), ("Beta Part", "OutlineWords Beta Part")]
+      headings := #[("h2", "Alpha Part", "FirstWords"), ("h2", "Beta Part", "OutlineWords Beta Part")] }
   verify ref fonts "a label in a section's title" "\\theme{default}" titleLabel
     { pages := #[(.frame, "OpeningWords"), (.frame, "FirstWords")]
       labels := #[("sec:kettle", "FirstWords")]
@@ -450,24 +451,41 @@ def sectionPageChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
   t "a label after a frame binds its section's number again, as beamer's"
     ((pageWith c "OpeningWords").any (pageHas c · "see 1."))
   let (_, lds) := elabStr (deck169 ("\\theme{default}\n" ++ outlineHook) lateHook)
-  t "a hook after a section is named as a warning beside the hook it cannot replace"
-    (lds.any (fun d => d.code == "W0307" && d.severity == .warning) &&
-      lds.any fun d => d.code == "W0340" && d.severity == .warning)
+  t "a hook after a section replaces the earlier one silently, as beamer's"
+    (!lds.any fun d => d.code == "W0307" || d.code == "W0340")
+  let labelled := "\\begin{frame}{One}OneWords, see \\ref{fl}.\\end{frame}\n" ++
+    "\\begin{frame}[label=fl]{Two}TwoWords\\end{frame}"
+  let c := censusOfSrc fonts (deck169 "\\theme{default}" labelled)
+  t "a frame's label option labels the frame, its number the frame's, as beamer's"
+    (!(elabStr (deck169 "\\theme{default}" labelled)).2.any (·.code == "W0349") &&
+      (pageWith c "OneWords").any (pageHas c · "see 2."))
+  verify ref fonts "a hook in the body ends the theme's section pages from there on, as beamer's"
+    "\\theme{moloch}"
+    ("\\begin{frame}{Zero}ZeroWords\\end{frame}\n\\section{Alpha Part}\n" ++
+      "\\begin{frame}{One}OneWords\\end{frame}\n\\AtBeginSection{}\n\\section{Beta Part}\n" ++
+      "\\begin{frame}{Two}TwoWords\\end{frame}")
+    { pages := #[(.frame, "ZeroWords"), (.section, "Alpha Part"), (.frame, "OneWords"),
+        (.frame, "TwoWords")]
+      labels := #[]
+      anchors := #[("Alpha Part", "Alpha Part"), ("Beta Part", "TwoWords")]
+      headings := #[("h2", "Beta Part", "TwoWords")] }
+  -- A hook a group declares ends with the group, as beamer's `\def`.
+  let grouped := "\\begin{frame}{Zero}ZeroWords\\end{frame}\n" ++ outlineHook ++
+    "\n\\section{Alpha Part}\n\\begin{frame}{One}OneWords\\end{frame}\n" ++
+    "{\\AtBeginSection{\\begin{frame}{Inner}InnerWords \\insertsection\\end{frame}}}\n" ++
+    "\\section{Beta Part}\n\\begin{frame}{Two}TwoWords\\end{frame}\n" ++
+    "\\section*{Gamma Part}\n\\begin{frame}{Three}ThreeWords\\end{frame}"
+  let c := censusOfSrc fonts (deck169 "\\theme{default}" grouped)
+  t "a hook a group declares ends with the group, the outer one opening the next section"
+    ((pageWith c "OutlineWords Beta Part").isSome && !hasStr (censusText c) "InnerWords")
   let art := "\\documentclass{article}\n\\AtBeginSection[]{\\begin{frame}{Outline}\\end{frame}}\n" ++
     "\\begin{document}\n\\section{Alpha}\nAlpha words.\n\\AtBeginSubsection{KeptWords}\n" ++
-    "\\subsection{Beta}\nBeta words.\n\\end{document}"
+    "\\subsection{Beta}\nBeta words.\\sectionpage\n\\end{document}"
   let ads := (elabStr art).2
-  t "outside a deck the hooks stay unknown commands, the body's argument kept as text"
-    ((ads.filter (·.code == "W0301")).size == 2 && !ads.any (·.code == "W0307") &&
+  t "outside a deck the hooks and the section page stay unknown commands, the body's argument kept"
+    ((ads.filter (·.code == "W0301")).size == 3 && !ads.any (·.code == "W0307") &&
       hasStr (censusText (censusOfSrc fonts art)) "KeptWords")
   let kidsOf (pre body : String) := mainKids (HtmlDoc.emitTree {} (elabStr (deck169 pre body)).1).2.1
-  let kids := kidsOf "\\theme{default}\n\\AtBeginSubsection{\\begin{frame}{Sub}SubWords\\end{frame}}" sectioned
-  let pages := kids.filter fun k => stageKind k == some .section
-  t "a subsection's page heads it at the subsection's rank, as the tagged PDF does"
-    (!pages.isEmpty && pages.all fun k =>
-      (elemNodesList (fun t => t == "h2" || t == "h3") #[] [k]).any fun h => match h with
-        | .elem tag _ _ => tag == "h3" && !outOfSight h
-        | _ => false)
   let kids := kidsOf "\\theme{default}" trailing
   t "a note between frames rides the frame before it, a trailing one the last"
     (stageWith kids "EarlyNoteWords" == stageWith kids "OpeningWords" &&

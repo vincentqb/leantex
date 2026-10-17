@@ -114,8 +114,7 @@ private structure UseCx where
   markUnder : Option (Option Color × Option Role) := none
   /-- Whether a focused stage standing on the page marks its focus in the focus role. -/
   stageFocus : Bool := false
-  /-- The deck's section pages, and whether this content stands outside every frame. -/
-  sectionPages : SectionPages := {}
+  /-- Whether this content stands outside every frame. -/
   outside : Bool := false
 
 private def UseCx.atEpoch (cx : UseCx) (pal : Palette) (epoch : Nat) : UseCx :=
@@ -266,7 +265,7 @@ private def usesBlocks (cx : UseCx) (acc : UseAcc) (xs : List Block) :
     let cx := cx.atEpoch acc.pal acc.epochs.size
     -- A section page or the run of content outside the frames is a stage of its own.
     let acc := if cx.stageFocus && cx.outside && !(b matches .frame ..) &&
-        Ir.outsideUnder cx.sectionPages b != .none then acc.focusable else acc
+        Ir.outsideUnder rest.head? b != .none then acc.focusable else acc
     usesBlocks cx (usesBlock { cx with outside := false } acc b) rest
 
 private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
@@ -460,7 +459,7 @@ private def docWalk (doc : Doc) (sitesOnly : Bool := false) : UseAcc :=
       styles := doc.styles
       slides := stageOf doc
       stageFocus := stageOf doc && doc.declaresFocus
-      sectionPages := doc.sectionPages, outside := stageOf doc
+      outside := stageOf doc
       chromeFoot := doc.docClass.record.chrome && doc.foot.isNone &&
         (doc.chrome.hasFooter || hasFrameFoot) }
   let walk := usesBlocks cx { pal := doc.palette } doc.body.toList

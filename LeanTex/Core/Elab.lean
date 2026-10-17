@@ -511,6 +511,37 @@ public inductive GlobalWrite where
   | seeded (state : Option SeedPalette.SeedState)
   deriving Repr, BEq, Inhabited
 
+/-- The section and subsection in force, as beamer's `\insertsection` family reads them: titles as
+`\nameref` sets them, numbers as the deck's counters print them. -/
+public structure SectionInForce where
+  sectionTitle : Array Inline := #[]
+  sectionNum : String := ""
+  subsectionTitle : Array Inline := #[]
+  subsectionNum : String := ""
+  deriving Inhabited
+
+/-- The commands beamer's `\insertsection` family names. -/
+public def SectionInForce.names : List String :=
+  ["insertsection", "insertsectionhead", "secname", "insertsectionnumber", "insertsubsection",
+   "insertsubsectionhead", "subsecname", "insertsubsectionnumber"]
+
+/-- What one of beamer's `\insertsection` family sets. -/
+public def SectionInForce.insert? (s : SectionInForce) (name : String) : Option (Array Inline) :=
+  if name == "insertsection" || name == "insertsectionhead" || name == "secname" then
+    some s.sectionTitle
+  else if name == "insertsectionnumber" then some #[.text s.sectionNum]
+  else if name == "insertsubsection" || name == "insertsubsectionhead" || name == "subsecname" then
+    some s.subsectionTitle
+  else if name == "insertsubsectionnumber" then some #[.text s.subsectionNum]
+  else none
+
+private theorem SectionInForce.insert?_none (s : SectionInForce) (name : String)
+    (h : SectionInForce.names.contains name = false) : s.insert? name = none := by
+  simp only [SectionInForce.names, List.contains_cons, List.contains_nil, Bool.or_false,
+    Bool.or_eq_false_iff, beq_eq_false_iff_ne, ne_eq] at h
+  obtain ⟨h1, h2, h3, h4, h5, h6, h7, h8⟩ := h
+  simp [SectionInForce.insert?, h1, h2, h3, h4, h5, h6, h7, h8]
+
 /-- The declaration state TeX's save stack governs, and the log of global
 assignments each group's end replays. -/
 public structure GroupScope where
@@ -527,6 +558,8 @@ public structure GroupScope where
   blockDecls : List Ir.Decl := []
   /-- Every global assignment in flow order, which a group's end keeps. -/
   globals : Array GlobalWrite := #[]
+  /-- The deck's section and subsection in force, which a section sets as beamer's `\def` does. -/
+  sectionInForce : SectionInForce := {}
   deriving Inhabited
 
 /-- Replays one global assignment over a restored colour state; `base` is the
@@ -605,11 +638,6 @@ public structure ESt where
   salvage : Array Ir.Recovered := #[]
   /-- The top-level block index where the deck's frame count starts over. -/
   frameRestart : Option Nat := none
-  /-- What the document's own `\AtBeginSection` and `\AtBeginSubsection` declare. -/
-  sectionHook : Option Ir.SectionHook := none
-  subsectionHook : Option Ir.SectionHook := none
-  /-- Whether a deck has set a section and a subsection, which a later hook cannot open. -/
-  sectionsSeen : Bool × Bool := (false, false)
   /-- The `\bibliographystyle` name, wherever it appears. -/
   bibStyle : Option String := none
   /-- The citation setup, `none` until natbib or biblatex is loaded. -/
@@ -665,8 +693,9 @@ public def ESt.titlePart (st : ESt) : TitleDatum → Array Inline
   | .institute => st.institute.getD #[]
   | .date => st.date.getD #[]
 
-/-- A Beamer `\insert…` command's content, from the elaborated metadata. -/
+/-- A Beamer `\insert…` command's content, from the elaborated metadata or the section in force. -/
 public def ESt.titleInsert? (st : ESt) (name : String) : Option (Array Inline) := do
+  if let some x := st.scope.sectionInForce.insert? name then return x
   if name.startsWith "insertshort" then
     let datum ← TitleDatum.ofName? (name.drop "insertshort".length).copy
     return (st.shortTitles.lookup datum).getD (st.titlePart datum)
@@ -680,7 +709,11 @@ public theorem ESt.titleInsert_exact (st : ESt) (datum : TitleDatum) :
   have hdrop : (("insert" ++ datum.name).drop "insert".length).copy = datum.name := by
     apply String.toList_injective
     simp [← String.length_toList]
+  have hsec : st.scope.sectionInForce.insert? ("insert" ++ datum.name) = none :=
+    SectionInForce.insert?_none _ _ (by cases datum <;> simp +decide [TitleDatum.name_exact,
+      SectionInForce.names])
   dsimp only [ESt.titleInsert?]
+  simp only [hsec]
   rw [hdrop]
   rw [TitleDatum.ofName_name]
   have hshort : ("insert" ++ datum.name).startsWith "insertshort" = false := by
@@ -5840,6 +5873,7 @@ public def recoversInlineName (ctx : Ctx) (name : String) : Bool :=
     else if name.startsWith "insert" then
       TitleDatum.ofName? (name.drop "insert".length).copy
     else none).isNone &&
+  !(SectionInForce.names.contains name) &&
   !declaresScope name && (ctx.palette.resolve name).isNone &&
   !(overlayCtrls.contains name) && (Ir.raggedSideOf? name).isNone &&
   (reservedCtrl.lookup name).isNone &&
@@ -5875,7 +5909,10 @@ private theorem recoversInlineName_title (ctx : Ctx) (name : String)
     else if name.startsWith "insert" then
       TitleDatum.ofName? (name.drop "insert".length).copy
     else none) = none := by simp only [hn]
+  have hs : st.scope.sectionInForce.insert? name = none :=
+    SectionInForce.insert?_none _ _ (by simp only [hn])
   unfold ESt.titleInsert?
+  simp only [hs]
   split
   · rename_i hs
     simp only [hs, ↓reduceIte] at ht
@@ -6430,8 +6467,6 @@ private def sectionNumber (ctx : Ctx) (level : Nat) (starred : Bool) :
     EM (Option String) := do
   let st ← get
   let deck := ctx.slides
-  if deck && level == 1 then modify fun st => { st with sectionsSeen := (true, st.sectionsSeen.2) }
-  if deck && level == 2 then modify fun st => { st with sectionsSeen := (st.sectionsSeen.1, true) }
   if (starred && !deck) || (!ctx.numberHeadings && !deck) || level == 0 || level > 3 ||
       (level : Int) > st.ctr.secDepth then
     return none
@@ -6448,41 +6483,18 @@ private def sectionNumber (ctx : Ctx) (level : Nat) (starred : Bool) :
                              refTarget := some { kind := some .heading, num := num } }
   return if deck then none else some num
 
-/-- Whether raws open with a `{frame}` group, as an environment's begin half spells `\begin{frame}`. -/
-private def opensFrameGroup : List Raw → Bool
-  | .group g _ :: _ => g.size == 1 && (g[0]? matches some (Raw.word "frame" _))
-  | _ => false
-
-mutual
-
-/-- Whether code sets a page of its own: a frame, a section page outside one, or a command or
-environment of the document's that does. -/
-private def hookSetsPageOne (cmds envs : String → Bool) : Raw → Bool
-  | .ctrl n _ =>
-    n == "frame" || n == "againframe" || n == "sectionpage" || n == "subsectionpage" || cmds n
-  | .env n body _ => n == "frame" || envs n || hookSetsPageList cmds envs body.toList
-  | .group body _ => hookSetsPageList cmds envs body.toList
-  | .word .. | .space | .par _ | .sym .. | .math .. | .verb .. => false
-
-private def hookSetsPageList (cmds envs : String → Bool) : List Raw → Bool
-  | [] => false
-  | r :: rest =>
-    hookSetsPageOne cmds envs r || (r matches .ctrl "begin" _ && opensFrameGroup rest) ||
-      hookSetsPageList cmds envs rest
-
-end
-
-/-- Whether each command and environment the document defines sets a page of its own, a command
-reading only those defined before it. -/
-private def pageDefs (ctx : Ctx) : Array Bool × Array Bool := Id.run do
-  let mut cmds : Array Bool := #[]
-  for h : j in [0:ctx.user.size] do
-    let seen := cmds
-    let sets := fun n => ((latestNamed (·.name) ctx.user n j).bind fun (k, _) => seen[k]?) == some true
-    cmds := cmds.push (hookSetsPageList sets (fun _ => false) ctx.user[j].body.toList)
-  let sets := fun n => ((lookupUser ctx n).bind fun (k, _) => cmds[k]?) == some true
-  return (cmds, ctx.userEnvs.map fun e =>
-    hookSetsPageList sets (fun _ => false) (e.beginBody ++ e.endBody).toList)
+/-- Sets the deck's section in force after a section or subsection heading, as beamer's `\section`
+defines `\insertsection` and clears `\insertsubsection`. -/
+private def setSectionInForce (level : Nat) (title : Array Inline) : EM Unit :=
+  modify fun st =>
+    let (s1, s2, _) := st.ctr.secNums
+    let cur := st.scope.sectionInForce
+    let next : SectionInForce :=
+      if level == 1 then { sectionTitle := Ir.nameOf title, sectionNum := toString s1 }
+      else if level == 2 then
+        { cur with subsectionTitle := Ir.nameOf title, subsectionNum := toString s2 }
+      else cur
+    { st with scope := { st.scope with sectionInForce := next } }
 
 /-- A hook's `[starred]` code, its `{code}` group and the index past them, after its control word. -/
 private def hookArgsAt (raws : Array Raw) (i : Nat) :
@@ -6498,41 +6510,34 @@ private def hookArgsAt (raws : Array Raw) (i : Nat) :
   | some (.group g _) => (starred, some g, j2 + 1)
   | _ => (starred, none, j1)
 
-/-- Records the document's own `\AtBeginSection` or `\AtBeginSubsection`: whether each section it
-opens, and each starred one, stands on a page of its own. -/
-private def recordSectionHook (ctx : Ctx) (name : String) (starred : Option (Array Raw))
-    (code : Array Raw) (pos : Pos) : EM Unit := do
-  let (cmds, envs) := pageDefs ctx
-  let sets := hookSetsPageList
-    (fun n => ((lookupUser ctx n).bind fun (k, _) => cmds[k]?) == some true)
-    (fun n => ((lookupUserEnv ctx n).bind fun (k, _) => envs[k]?) == some true)
-  let hook : Ir.SectionHook :=
-    { page := sets code.toList, starredPage := sets (starred.getD code).toList }
-  if name == "AtBeginSubsection" then
-    modify fun st => { st with subsectionHook := some hook }
-  else
-    modify fun st => { st with sectionHook := some hook }
-  if hook.page || hook.starredPage then
-    warnOnce ctx ("ctrl:" ++ name) .W0307
-      s!"'\\{name}' is not set yet: each section it opens stands on a page showing its title" pos
-      (help := "beamer sets the hook's own frame there")
-
-/-- A hook declared in the body: read where no section it opens precedes it, else named and
-ignored. -/
-private def bodySectionHook (ctx : Ctx) (name : String) (raws : Array Raw) (i : Nat) (pos : Pos) :
-    EM Unit := do
-  let (starred, code, _) := hookArgsAt raws i
+/-- The commands a deck's `\AtBeginSection` or `\AtBeginSubsection` defines: its code, and its
+starred code or, given none, a call of the first, as beamer's starred hook defaults to the code. -/
+private def hookCmds (file : String) (name : String) (starred : Option (Array Raw))
+    (code : Array Raw) (pos : Pos) : UserCmd × UserCmd :=
   let sub := name == "AtBeginSubsection"
-  let what := if sub then "subsection" else "section"
-  let (secs, subs) := (← get).sectionsSeen
-  -- premise: sectionPageChecks — one hook decides every section's page
-  if (if sub then subs else secs) then
-    warnOnce ctx ("ctrl:" ++ name ++ ":body") .W0340
-      s!"'\\{name}' after a {what} is ignored: the hook decides every {what}'s page" pos
-      (help := s!"declare it before the first '\\{what}', or in the preamble")
-  else match code with
-    | some c => recordSectionHook ctx name starred c pos
-    | none => diag ctx .E0304 s!"'\\{name}' needs a \{...} group" pos
+  let plain := Ir.sectionHookName sub false
+  ({ name := plain, params := #[], body := code, span := ⟨file, pos⟩ },
+   { name := Ir.sectionHookName sub true, params := #[]
+     body := starred.getD #[.ctrl plain pos], span := ⟨file, pos⟩ })
+
+/-- The hooks a theme with a section page sets, as metropolis's `\AtBeginSection` does: each
+section, starred or not, opens on its section page. -/
+private def themeHookCmds (pos : Pos) : UserCmd × UserCmd :=
+  hookCmds "" "AtBeginSection" none #[.ctrl Ir.sectionPageCtrl pos] pos
+
+/-- The blocks with a last frame that sets only its section's page standing as that page. -/
+private def sectionPageFrame (blocks : Array Block) : Array Block :=
+  if let some (.frame title _ _ _ body) := blocks.back? then
+    if title.isEmpty && body.size == 1 && Ir.standsOnPage body[0]? then
+      blocks.pop.push (.role Ir.sectionPageRole #[])
+    else blocks
+  else blocks
+
+/-- Whether a defined section hook is a theme's own section page. -/
+private def themeHook (cmd : UserCmd) : Bool :=
+  match cmd.body.toList with
+  | [.ctrl n _] => n == Ir.sectionPageCtrl
+  | _ => false
 
 /-- Whether a raw sets a style, size, alignment or colour for its group. -/
 private def isDeclaration (ctx : Ctx) : Raw → Bool
@@ -8294,6 +8299,153 @@ private def takeDefine (ctx : Ctx) (raws : Array Raw) (i : Nat) (pos : Pos) :
       refine ⟨show i ≤ j + 1 by omega, ?_⟩
       intro _ h; simp at h⟩
 
+private theorem sliceMeas_extract_split (μ : α → Nat) (raws : Array α) {a b : Nat}
+    (hab : a ≤ b) : measList μ (raws.extract a b).toList + sliceMeas μ raws b = sliceMeas μ raws a := by
+  unfold sliceMeas
+  rw [Array.toList_extract]
+  have hd : raws.toList.drop b = (raws.toList.drop a).drop (b - a) := by
+    rw [List.drop_drop]; congr 1; omega
+  rw [hd, ← measList_append]
+  exact congrArg (measList μ) (List.take_append_drop (b - a) (raws.toList.drop a))
+
+private theorem sliceWeight_extract_split (raws : Array Raw) {a b : Nat} (hab : a ≤ b) :
+    rawWeightList (raws.extract a b).toList + sliceWeight raws b = sliceWeight raws a := by
+  rw [rawWeightList_eq, sliceWeight_eq, sliceWeight_eq]
+  exact sliceMeas_extract_split rawWeight raws hab
+
+private theorem slicePars_extract_split (raws : Array Raw) {a b : Nat} (hab : a ≤ b) :
+    nestedParsList (raws.extract a b).toList + slicePars raws b = slicePars raws a := by
+  rw [nestedParsList_eq, slicePars_eq, slicePars_eq]
+  exact sliceMeas_extract_split nestedPars raws hab
+
+private theorem rawParsList_nonpar_le (xs : List Raw) :
+    rawParsList (xs.filter (!isParRaw ·)) ≤ nestedParsList xs := by
+  induction xs with
+  | nil => simp [rawParsList, nestedParsList]
+  | cons x xs ih =>
+    have hs := rawPars_split x
+    cases hp : isParRaw x with
+    | true =>
+      simp only [List.filter_cons, hp, Bool.not_true, Bool.false_eq_true, ↓reduceIte,
+        nestedParsList]
+      omega
+    | false =>
+      simp only [List.filter_cons, hp, Bool.not_false, ↓reduceIte, rawParsList, nestedParsList]
+      simp only [hp, Bool.false_eq_true, ↓reduceIte] at hs
+      omega
+
+/-- A hook's `[starred]` code from `j0` and the index past it, a paragraph end at its top level,
+which vertical mode drops, dropped. -/
+private def hookStarred (raws : Array Raw) (j0 : Nat) :
+    { o : Option (Array Raw) × Nat // j0 ≤ o.2 ∧
+      rawWeightList (o.1.getD #[]).toList + sliceWeight raws o.2 ≤ sliceWeight raws j0 ∧
+      rawParsList (o.1.getD #[]).toList + slicePars raws o.2 ≤ slicePars raws j0 } :=
+  if raws[j0]? matches some (.sym '[' _) then
+    match hc : closeBracketFrom raws (j0 + 1) with
+    | some c =>
+      ⟨(some ((raws.extract (j0 + 1) c).filter (!isParRaw ·)), c + 1), by
+        have hcge := closeBracketFrom_ge hc
+        have h1 := rawWeightList_filter_monotone (!isParRaw ·) (raws.extract (j0 + 1) c).toList
+        have h2 := sliceWeight_extract_split raws (show j0 + 1 ≤ c by omega)
+        have h3 := sliceWeight_le raws (show c ≤ c + 1 by omega)
+        have h4 := sliceWeight_le raws (show j0 ≤ j0 + 1 by omega)
+        have h5 := rawParsList_nonpar_le (raws.extract (j0 + 1) c).toList
+        have h6 := slicePars_extract_split raws (show j0 + 1 ≤ c by omega)
+        have h7 := slicePars_le raws (show c ≤ c + 1 by omega)
+        have h8 := slicePars_le raws (show j0 ≤ j0 + 1 by omega)
+        simp only [Option.getD_some, Array.toList_filter]
+        exact ⟨by omega, by omega, by omega⟩⟩
+    | none => ⟨(none, j0), by simp [rawWeightList, rawParsList]⟩
+  else ⟨(none, j0), by simp [rawWeightList, rawParsList]⟩
+
+/-- A deck hook's `[starred]` code and `{code}` group from `i`, past its control word, and the index
+past them, with the measures the binding arm reads. -/
+private def takeHook (raws : Array Raw) (i : Nat) :
+    { r : Option (Array Raw × Option (Array Raw)) × Nat // i ≤ r.2 ∧
+      ∀ c s, r.1 = some (c, s) →
+        rawWeightList c.toList + rawWeightList (s.getD #[]).toList + sliceWeight raws r.2 + 1
+            ≤ sliceWeight raws i
+          ∧ rawParsList c.toList + rawParsList (s.getD #[]).toList + slicePars raws r.2
+            ≤ slicePars raws i } :=
+  let j0 := skipSpaces raws i
+  have hj0 : i ≤ j0 := skipSpaces_ge raws i
+  let opt := hookStarred raws j0
+  let j2 := skipSpaces raws opt.1.2
+  have hj2 : opt.1.2 ≤ j2 := skipSpaces_ge raws opt.1.2
+  match hg : raws[j2]? with
+  | some (.group g _) => ⟨(some (g, opt.1.1), j2 + 1), by
+      obtain ⟨_, _, _⟩ := opt.2
+      have hlt := getElem?_lt hg
+      have hw2 := sliceWeight_here raws hlt
+      have hp2 := slicePars_here raws hlt
+      obtain ⟨_, hgv⟩ := Array.getElem?_eq_some_iff.mp hg
+      rw [hgv] at hw2 hp2
+      simp only [rawWeight] at hw2
+      simp only [nestedPars] at hp2
+      have h5 := sliceWeight_le raws hj2
+      have h6 := slicePars_le raws hj2
+      have h7 := sliceWeight_le raws hj0
+      have h8 := slicePars_le raws hj0
+      refine ⟨by omega, ?_⟩
+      intro c s h
+      simp only [Option.some.injEq, Prod.mk.injEq] at h
+      obtain ⟨rfl, rfl⟩ := h
+      dsimp only
+      exact ⟨by omega, by omega⟩⟩
+  | _ => ⟨(none, j2), by
+      refine ⟨by have := opt.2.1; omega, ?_⟩
+      intro _ _ h; simp at h⟩
+
+/-- The hook a deck's section heading calls after its title, the starred one for a starred section
+or one with a blank title as beamer's `\section`; none outside a deck, in a frame, or undefined. -/
+private def sectionHookCall (ctx : Ctx) (n : String) (blocks : Array Block) : Option String :=
+  if !ctx.slides || ctx.inFrame || !(n == "section" || n == "subsection") then none
+  else match blocks.back? with
+    | some (.section _ starred _ title) =>
+      let name := Ir.sectionHookName (n == "subsection")
+        (starred || (Ir.metaText title).trimAscii.isEmpty)
+      if (lookupUser ctx name).isSome then some name else none
+    | _ => none
+
+private theorem splice_call_measures (raws : Array Raw) {i j : Nat} (hi : i < raws.size)
+    (hij : i + 2 ≤ j) (hj : j ≤ raws.size) (r : Raw) (hw : rawWeight r = 1)
+    (hp : nestedPars r = 0) :
+    sliceWeight (raws.extract 0 j ++ #[r] ++ raws.extract j raws.size) j < sliceWeight raws i ∧
+      slicePars (raws.extract 0 j ++ #[r] ++ raws.extract j raws.size) j ≤ slicePars raws i := by
+  have hlen : (raws.extract 0 j).toList.length = j := by simp; omega
+  have hrest : (raws.extract j raws.size).toList = raws.toList.drop j := by
+    rw [Array.toList_extract]
+    exact List.take_of_length_le (by simp)
+  have hdrop : (raws.extract 0 j ++ #[r] ++ raws.extract j raws.size).toList.drop j
+      = r :: raws.toList.drop j := by
+    simp only [Array.toList_append, List.append_assoc]
+    rw [List.drop_left' hlen, hrest]
+    rfl
+  have hw1 : sliceWeight (raws.extract 0 j ++ #[r] ++ raws.extract j raws.size) j
+      = rawWeight r + sliceWeight raws j := by
+    unfold sliceWeight; rw [hdrop]; rfl
+  have hp1 : slicePars (raws.extract 0 j ++ #[r] ++ raws.extract j raws.size) j
+      = nestedPars r + slicePars raws j := by
+    unfold slicePars; rw [hdrop]; rfl
+  have h1 := sliceWeight_lt raws hi (show i < i + 1 by omega)
+  have h2 := sliceWeight_lt raws (show i + 1 < raws.size by omega) (show i + 1 < j by omega)
+  have h3 := slicePars_le raws (show i ≤ j by omega)
+  rw [hw1, hp1, hw, hp]
+  exact ⟨by omega, by omega⟩
+
+/-- The raws a control's walk goes on over from `j`, a deck section's hook called there, right
+after its title, as beamer's `\section` calls it. -/
+private def withHookCall (raws : Array Raw) {i j : Nat} (hi : i < raws.size) (hij : i < j)
+    (hook : Option (String × Pos)) :
+    { r : Array Raw // sliceWeight r j < sliceWeight raws i ∧ slicePars r j ≤ slicePars raws i } :=
+  match hook with
+  | some (name, p) =>
+    if hj2 : i + 2 ≤ j ∧ j ≤ raws.size then
+      ⟨raws.extract 0 j ++ #[.ctrl name p] ++ raws.extract j raws.size,
+        splice_call_measures raws hi hj2.1 hj2.2 (.ctrl name p) rfl rfl⟩
+    else ⟨raws, advance_measures raws hi hij⟩
+  | none => ⟨raws, advance_measures raws hi hij⟩
+
 /-- Binds a document-defined command at the visibility boundary, which then
 advances past it alone. -/
 private def bindCmd (ctx : Ctx) (cmd : UserCmd) : Ctx :=
@@ -8301,6 +8453,9 @@ private def bindCmd (ctx : Ctx) (cmd : UserCmd) : Ctx :=
   { ctx with
     user := (ctx.user.extract 0 b).push cmd ++ ctx.user.extract b ctx.user.size
     limit := b + 1 }
+
+private theorem bindCmd_envLimit (ctx : Ctx) (cmd : UserCmd) :
+    (bindCmd ctx cmd).envLimit = ctx.envLimit := rfl
 
 private theorem bindCmd_monotone (ctx : Ctx) (cmd : UserCmd) {j : Nat}
     (hj : ctx.limit ≤ j) (hs : j < ctx.user.size) :
@@ -8366,6 +8521,9 @@ private def noteFlag (ctx : Ctx) : Nat :=
   | true => 0
   | false => 2
 
+private theorem bindCmd_noteFlag (ctx : Ctx) (cmd : UserCmd) :
+    noteFlag (bindCmd ctx cmd) = noteFlag ctx := rfl
+
 
 private theorem lex6_of {a₁ a₂ b₁ b₂ c₁ c₂ d₁ d₂ e₁ e₂ f₁ f₂ : Nat}
     (h : a₁ < a₂ ∨ (a₁ = a₂ ∧ (b₁ < b₂ ∨ (b₁ = b₂ ∧ (c₁ < c₂ ∨ (c₁ = c₂ ∧
@@ -8395,6 +8553,102 @@ macro "blocks_dec" : tactic =>
          <;> (first
            | omega
            | (apply lex6_of; omega)))))
+
+private theorem sectionHookName_ne_par (sub st : Bool) : Ir.sectionHookName sub st ≠ "par" := by
+  cases sub <;> cases st <;> decide
+
+/-- A deck hook's binding at `raws[i]`: the context binding its commands, the index past its
+arguments, and the measures the block knot reads; a hook missing its code group is named. -/
+private def hookBind (ctx : Ctx) (raws : Array Raw) (i : Nat) (h : i < raws.size) (n : String)
+    (pos : Pos) (hr : raws[i] = .ctrl n pos) :
+    EM { r : Ctx × Nat // r.1.envLimit = ctx.envLimit ∧ noteFlag r.1 = noteFlag ctx ∧
+      visParsGo r.1.user r.1.limit + slicePars raws r.2
+        ≤ visParsGo ctx.user ctx.limit + slicePars raws i ∧
+      visWeightGo r.1.user r.1.limit + sliceWeight raws r.2
+        < visWeightGo ctx.user ctx.limit + sliceWeight raws i } := do
+  let ⟨(hook?, k), hhook⟩ := takeHook raws (i + 1)
+  have hw0 : sliceWeight raws i = 1 + sliceWeight raws (i + 1) := by
+    have := sliceWeight_here raws h
+    rw [hr] at this
+    simpa [rawWeight] using this
+  have hp0 : slicePars raws i = slicePars raws (i + 1) := by
+    have := slicePars_here raws h
+    rw [hr] at this
+    simpa [nestedPars] using this
+  have hk : i + 1 ≤ k := hhook.1
+  have hwk := sliceWeight_le raws hk
+  have hpk := slicePars_le raws hk
+  match hh : hook? with
+  | some (code, starred) =>
+    have hm := hhook.2 code starred hh
+    let cmds := hookCmds ctx.file n starred code pos
+    return ⟨(bindCmd (bindCmd ctx cmds.1) cmds.2, k), by
+      dsimp only at hm ⊢
+      have h1 := bindCmd_visPars ctx cmds.1
+      have h2 := bindCmd_visWeight ctx cmds.1
+      have h3 := bindCmd_visPars (bindCmd ctx cmds.1) cmds.2
+      have h4 := bindCmd_visWeight (bindCmd ctx cmds.1) cmds.2
+      have hw1 : rawWeightList cmds.1.body.toList = rawWeightList code.toList := rfl
+      have hp1 : rawParsList cmds.1.body.toList = rawParsList code.toList := rfl
+      have hw2 : rawWeightList cmds.2.body.toList
+          ≤ rawWeightList (starred.getD #[]).toList + 1 := by
+        cases starred <;> simp [cmds, hookCmds, rawWeightList, rawWeight]
+      have hp2 : rawParsList cmds.2.body.toList = rawParsList (starred.getD #[]).toList := by
+        cases starred <;> simp [cmds, hookCmds, rawParsList, rawPars, sectionHookName_ne_par]
+      exact ⟨by rw [bindCmd_envLimit, bindCmd_envLimit], by rw [bindCmd_noteFlag, bindCmd_noteFlag],
+        by omega, by omega⟩⟩
+  | none =>
+    diag ctx .E0304 s!"'\\{n}' needs a \{...} group" pos
+    return ⟨(ctx, k), by
+      have := sliceWeight_lt raws h (show i < k by omega)
+      dsimp only
+      exact ⟨rfl, rfl, by omega, by omega⟩⟩
+
+/-- A `\define` at `raws[i]` read up to `k`: the context binding its command where `keep` says the
+definition stands, a heading-number format applied where it is one, and the measures the block
+knot reads. -/
+private def defineBind (ctx : Ctx) (raws : Array Raw) (i : Nat) (h : i < raws.size) (n : String)
+    (pos : Pos) (hr : raws[i] = .ctrl n pos) (cmd? : Option UserCmd) (k : Nat)
+    (hdef : i + 1 ≤ k ∧ ∀ cmd, cmd? = some cmd →
+      rawWeightList cmd.body.toList + sliceWeight raws k + 2 ≤ sliceWeight raws (i + 1) ∧
+        rawParsList cmd.body.toList + slicePars raws k ≤ slicePars raws (i + 1))
+    (keep : Bool) :
+    EM { r : Ctx × Nat // r.1.envLimit = ctx.envLimit ∧ noteFlag r.1 = noteFlag ctx ∧
+      visParsGo r.1.user r.1.limit + slicePars raws r.2
+        ≤ visParsGo ctx.user ctx.limit + slicePars raws i ∧
+      visWeightGo r.1.user r.1.limit + sliceWeight raws r.2
+        < visWeightGo ctx.user ctx.limit + sliceWeight raws i } := do
+  have hw0 : sliceWeight raws i = 1 + sliceWeight raws (i + 1) := by
+    have := sliceWeight_here raws h
+    rw [hr] at this
+    simpa [rawWeight] using this
+  have hp0 : slicePars raws i = slicePars raws (i + 1) := by
+    have := slicePars_here raws h
+    rw [hr] at this
+    simpa [nestedPars] using this
+  have hwk := sliceWeight_le raws hdef.1
+  have hpk := slicePars_le raws hdef.1
+  let past : { r : Ctx × Nat // r.1.envLimit = ctx.envLimit ∧ noteFlag r.1 = noteFlag ctx ∧
+      visParsGo r.1.user r.1.limit + slicePars raws r.2
+        ≤ visParsGo ctx.user ctx.limit + slicePars raws i ∧
+      visWeightGo r.1.user r.1.limit + sliceWeight raws r.2
+        < visWeightGo ctx.user ctx.limit + sliceWeight raws i } :=
+    ⟨(ctx, k), rfl, rfl, by dsimp only; omega, by dsimp only; omega⟩
+  match hcm : cmd? with
+  | some cmd =>
+    if let some (lvl, parts) := secFmtDefine? cmd then
+      -- Not a macro: a heading-number format declaration.
+      applySecFmt lvl parts
+      return past
+    else if keep then
+      -- Binding at the visibility boundary keeps expansion terminating.
+      have ⟨hm1, hm2⟩ := hdef.2 cmd hcm
+      have h1 := bindCmd_visPars ctx cmd
+      have h2 := bindCmd_visWeight ctx cmd
+      return ⟨(bindCmd ctx cmd, k), bindCmd_envLimit ctx cmd, bindCmd_noteFlag ctx cmd,
+        by dsimp only; omega, by dsimp only; omega⟩
+    else return past
+  | none => return past
 
 private theorem rawWeightList_push (a : Array Raw) (r : Raw) :
     rawWeightList (a.push r).toList = rawWeightList a.toList + rawWeight r := by
@@ -11063,7 +11317,8 @@ private def isBlockStart (ctx' : Ctx) (n : String) (raws : Array Raw) (i : Nat)
   n == "par" || n == "block" || n == "centering" || n == "pause"
     || (Ir.raggedSideOf? n).isSome
     || n == "framefoot" || n == "pagebreak" || n == "appendix"
-    || (ctx'.slides && (n == "AtBeginSection" || n == "AtBeginSubsection"))
+    || (ctx'.slides && (n == "AtBeginSection" || n == "AtBeginSubsection"
+      || Ir.isSectionHookName n || n == Ir.sectionPageCtrl || n == "sectionpage"))
     || n == Compat.frameRestartMark || n == Compat.vspaceAnchorMark
     || (Ir.pageOpeningOfRole? n).isSome
     -- `\prevdepth` is vertical mode's: TeX refuses it mid-paragraph.
@@ -11148,6 +11403,8 @@ private structure FrameOpts where
   valign : VAlign := .center
   /-- The alignment options the frame names, in order. -/
   aligns : Array String := #[]
+  /-- beamer's `[label=name]`: a label the frame binds, its number the frame's. -/
+  label : Option String := none
   /-- The index past the last bracket group read. -/
   next : Nat := 0
 
@@ -11182,6 +11439,10 @@ private def frameOpts (ctx : Ctx) (body : Array Raw) (pos : Pos) : EM FrameOpts 
         | ("t", none) => o := { o with valign := .top, aligns := o.aligns.push "t" }
         | ("c", none) => o := { o with valign := .center, aligns := o.aligns.push "c" }
         | ("b", none) => o := { o with valign := .bottom, aligns := o.aligns.push "b" }
+        | ("label", some v) =>
+          if v.trimAscii.isEmpty then
+            warnOnce ctx ("frame:opt:" ++ opt) .N0102 s!"frame option '{opt}' names no label; ignored" pos
+          else o := { o with label := some v.trimAscii.toString }
         | _ =>
           warnOnce ctx ("frame:opt:" ++ opt) .N0102
             s!"frame option '{opt}' is not modelled; ignored" pos
@@ -11832,7 +12093,10 @@ private def elabEnvArm (ctx : Ctx) (n : String) (scope : Array Raw)
     let outerPauses := (← get).ctr.pauses
     modify fun st => { st with ctr := { st.ctr with pauses := some 0 } }
     let ⟨bodyCtx, _⟩ : MCtx frameCtx ← pure ⟨{ frameCtx with inFrame := true }, rfl, rfl, rfl, rfl⟩
+    -- beamer's `[label=name]` labels the frame where its content opens.
+    if let some key := opts.label then recordLabel ctx key (← get).refTarget pos
     let mut inner ← elabBlockScope bodyCtx rest
+    if let some key := opts.label then inner := #[.para #[.label key]] ++ inner
     let stash := (← get).pendingNotes
     modify fun st => { st with pendingNotes := #[], ctr := { st.ctr with pauses := outerPauses } }
     if hnb : ctx.noteBody then
@@ -11846,6 +12110,8 @@ private def elabEnvArm (ctx : Ctx) (n : String) (scope : Array Raw)
       inner ← drainNotesGo frameCtx stash.toList inner
     -- A frame nests no frame: an inner title frame flattens into this one.
     blocks ← closeFramePalette ctx pos blocks title opts inner aliasScope
+    -- A frame setting only `\sectionpage`, as metropolis's hook writes it, is the section's page.
+    if ctx.slides && !ctx.inFrame then blocks := sectionPageFrame blocks
     if ctx.slides then modify fun st => { st with refTarget := outer }
   else if n == "itemize" || n == "enumerate" || n == "description" then
     let (bodyFrom, spacing, parsep) ← listOptsArm ctx n body pos
@@ -12230,12 +12496,10 @@ when it is empty — '{}'")
     if let some p ← mkPara ctx junk then
       blocks := blocks.push p
     return (blocks, ⟨j, by omega⟩)
-  -- premise: sectionPageChecks — outside a deck the hooks are unknown, their arguments kept
-  else if ctx.slides && (n == "AtBeginSection" || n == "AtBeginSubsection") then
-    let ju := skipReservedArgs raws (i + 1) pos
-    have hj : i + 1 ≤ ju.1 := skipReservedArgs_ge raws (i + 1) pos 1
-    bodySectionHook ctx n raws (i + 1) pos
-    return (blocks, ⟨ju.1, by omega⟩)
+  -- premise: sectionPageChecks — outside a deck the section page is an unknown command
+  else if ctx.slides && (n == Ir.sectionPageCtrl || n == "sectionpage") then
+    -- A theme's section hook or beamer's `\sectionpage`: the section just set stands on its page.
+    return (blocks.push (.role Ir.sectionPageRole #[]), ⟨i + 1, by omega⟩)
   else if n == "logo" then
     let j := skipSpaces raws (i + 1)
     have hjge := skipSpaces_ge raws (i + 1)
@@ -12265,8 +12529,10 @@ when it is empty — '{}'")
       blocks := blocks.push p
     match raws[j]? with
     | some (.group title _) =>
+      let title ← elabInlines ctx title
       blocks := blocks.push (.section ((blockHeading? n).getD .h2) starred
-        (← sectionNumber ctx level starred) (← elabInlines ctx title))
+        (← sectionNumber ctx level starred) title)
+      if ctx.slides && !ctx.inFrame then setSectionInForce level title
       return (blocks, ⟨j + 1, by omega⟩)
     | _ =>
       if recovered then
@@ -12494,36 +12760,27 @@ a side channel, never slide content" cpos
           flowStyleArm ctx' n raws (i + 1) (by omega) cpos blocks gen'
         have _ := advance_measures raws h (show i < j by omega)
         elabBlocksGo styleCtx raws j blocks #[] nextGen
-      else if n == "define" then
-        let ⟨(cmd?, k), hdef⟩ ← takeDefine ctx' raws (i + 1) cpos
-        have hk : i + 1 ≤ k := hdef.1
-        have _ : sliceWeight raws k ≤ sliceWeight raws (i + 1) :=
-          sliceWeight_le raws hk
-        have _ : slicePars raws k ≤ slicePars raws (i + 1) :=
-          slicePars_le raws hk
-        match hcm : cmd? with
-        | some cmd =>
-          if let some (lvl, parts) := secFmtDefine? cmd then
-            -- Not a macro: a heading-number format declaration.
-            applySecFmt lvl parts
-            elabBlocksGo ctx' raws k blocks #[] gen'
-          else
-            have _ : rawWeightList cmd.body.toList + sliceWeight raws k + 2
-                ≤ sliceWeight raws (i + 1) := (hdef.2 cmd hcm).1
-            have _ : rawParsList cmd.body.toList + slicePars raws k
-                ≤ slicePars raws (i + 1) := (hdef.2 cmd hcm).2
-            let keep ← gateRedefB ctx' cmd
-            if keep then
-              -- Binding at the visibility boundary keeps expansion terminating.
-              have _ := bindCmd_visPars ctx' cmd
-              have _ := bindCmd_visWeight ctx' cmd
-              have _ : (bindCmd ctx' cmd).envLimit = ctx'.envLimit
-                  ∧ noteFlag (bindCmd ctx' cmd) = noteFlag ctx' := ⟨rfl, rfl⟩
-              elabBlocksGo (bindCmd ctx' cmd) raws k blocks #[] gen'
-            else
-              elabBlocksGo ctx' raws k blocks #[] gen'
-        | none =>
-          elabBlocksGo ctx' raws k blocks #[] gen'
+      else if n == "define" || (ctx'.slides && (n == "AtBeginSection" || n == "AtBeginSubsection")) then
+        -- A definition binds its command, a deck's hook the commands its sections call, both scoped.
+        let r ← if n == "define" then do
+            let ⟨(cmd?, k), hdef⟩ ← takeDefine ctx' raws (i + 1) cpos
+            have hk : i + 1 ≤ k := hdef.1
+            have _ : sliceWeight raws k ≤ sliceWeight raws (i + 1) := sliceWeight_le raws hk
+            have _ : slicePars raws k ≤ slicePars raws (i + 1) := slicePars_le raws hk
+            let keep ← match hcm : cmd? with
+              | some cmd =>
+                if (secFmtDefine? cmd).isSome then pure false
+                else
+                  have _ : rawWeightList cmd.body.toList + sliceWeight raws k + 2
+                      ≤ sliceWeight raws (i + 1) := (hdef.2 cmd hcm).1
+                  have _ : rawParsList cmd.body.toList + slicePars raws k
+                      ≤ slicePars raws (i + 1) := (hdef.2 cmd hcm).2
+                  gateRedefB ctx' cmd
+              | none => pure false
+            defineBind ctx' raws i h n cpos hr cmd? k hdef keep
+          else hookBind ctx' raws i h n cpos hr
+        have _ := r.2
+        elabBlocksGo r.1.1 raws r.1.2 blocks #[] gen'
       else if counterCtrl n then
         let ⟨j2, hj2⟩ ← counterArm ctx' raws (i + 1) n cpos
         have _ := advance_measures raws h (show i < j2 by omega)
@@ -12599,9 +12856,10 @@ a side channel, never slide content" cpos
       else
         let (⟨ctx', _⟩, blocks) ← blockControlContext ctx' n raws i blocks
         let (blocks, ⟨j, hij⟩) ← elabCtrlArm ctx' raws i h n cpos blocks
+        let hook := sectionHookCall ctx' n blocks
         let blocks ← drainLoose ctx' blocks
-        have _ := advance_measures raws h hij
-        elabBlocksNext ctx' raws j blocks gen'
+        let ⟨raws', _⟩ := withHookCall raws h hij (hook.map (·, cpos))
+        elabBlocksNext ctx' raws' j blocks gen'
     | _ =>
       if cur.isEmpty && isSpaceOrPar raws[i] then
         elabBlocksGo ctx' raws (i + 1) blocks cur gen'
@@ -14532,8 +14790,6 @@ public structure PreState where
   sawTheme : Bool := false
   /-- The frame-alignment keys the installed theme sets. -/
   frameKeys : Ir.FrameKeys := .beamer
-  /-- Whether the installed theme sets each section on a page of its own. -/
-  themeSectionPage : Bool := false
   /-- The form a refused abstract redefinition sets its body in, where it opens a quotation. -/
   abstractForm : Option Ir.AbstractForm := none
 
@@ -15324,7 +15580,7 @@ draws; skipped" pos
       let tname := src.trimAscii.toString
       -- beamer's `default` installs no bundle and displaces the class default.
       if tname == "default" then
-        return { s with themeSectionPage := false }
+        return s
       match Theme.find? tname with
       | some th =>
         if !s.docClass.record.chrome then
@@ -15349,13 +15605,17 @@ draws; skipped" pos
               s!"theme '{tname}' replaces the document's earlier '{key}' from '\\{kind.name}'"
               (some pos)
               (help := "overrides go after '\\theme': move the declaration below it")
-        -- A theme with a section page sets its own hook, as beamer's does, over an earlier one.
+        -- A theme with a section page sets its own hooks, as beamer's does, over earlier ones.
         -- premise: sectionPageChecks — the replaced hook is named
-        if th.sectionPage && (← get).sectionHook.isSome then
-          diag s.ctx .W0348
-            s!"theme '{tname}' replaces the document's earlier '\\AtBeginSection'" (some pos)
-            (help := "overrides go after '\\theme': move the declaration below it")
-          modify fun st => { st with sectionHook := none }
+        let mut hooked := s.ctx
+        if th.sectionPage then
+          if let some (_, cmd) := lookupUser s.ctx (Ir.sectionHookName false false) then
+            unless themeHook cmd do
+              diag s.ctx .W0348
+                s!"theme '{tname}' replaces the document's earlier '\\AtBeginSection'" (some pos)
+                (help := "overrides go after '\\theme': move the declaration below it")
+          let (c1, c2) := themeHookCmds pos
+          hooked := bindCmd (bindCmd s.ctx c1) c2
         let installed := (Theme.declares th s.palette.classColors.depth).map
           fun (k, key) => (k.name, key)
         let ownRoles (rs : Array Role) : Array Role :=
@@ -15381,14 +15641,13 @@ draws; skipped" pos
           styles := ds.styles
           chrome := ds.chrome
           frameKeys := th.frameKeys
-          themeSectionPage := th.sectionPage
-          ctx := { s.ctx with palette := pal, tokens := ds.tokens } }
+          ctx := { hooked with palette := pal, tokens := ds.tokens } }
       | none =>
         diag s.ctx .W0319 s!"unknown theme '{tname}'; the document is unthemed"
           (some pos)
           (help := s!"themes: {String.intercalate ", " Theme.names}")
           (refused := some tname)
-        return { s with themeSectionPage := false }
+        return s
     | none =>
       diag s.ctx .E0304 "'\\theme' needs a {...} block" pos
       return s
@@ -15731,9 +15990,12 @@ a heading; its numbers stand alone" pos
         (help := unknownCmdHelp name false)
       return s
     match code with
-    | some c => recordSectionHook s.ctx name starred c pos
-    | none => diag s.ctx .E0304 s!"'\\{name}' needs a \{...} group" pos
-    return s
+    | some c =>
+      let (c1, c2) := hookCmds s.ctx.file name starred c pos
+      return { s with ctx := bindCmd (bindCmd s.ctx c1) c2 }
+    | none =>
+      diag s.ctx .E0304 s!"'\\{name}' needs a \{...} group" pos
+      return s
   | .cancelOpts src _ =>
     -- Compat named every option the package does not declare at the load.
     let opts := (KeyVal.items src).toList
@@ -16430,6 +16692,11 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
   let sawPage := s.sawPage
   let fonts := s.fonts
   let defaultBundle := s.docClass == Ir.DocClass.slides && !s.sawTheme
+  -- The class's default bundle sets its section page as its theme's hook, under one the document set.
+  if defaultBundle && Theme.daylight.sectionPage &&
+      (lookupUser ctx (Ir.sectionHookName false false)).isNone then
+    let (c1, c2) := themeHookCmds {}
+    ctx := bindCmd (bindCmd ctx c1) c2
   -- A seeded palette is the whole palette: the bundle's colours do not install.
   let bundle := if s.palette.seeded.isSome then
       { Theme.daylight with palette := {}, seeds := none, derived := [] }
@@ -16725,10 +16992,6 @@ the .bib file"
       chrome := chrome
       chromeDeclared := chromeDeclared
       frameKeys := if defaultBundle then Theme.daylight.frameKeys else s.frameKeys
-      sectionPages := { theme := if defaultBundle then Theme.daylight.sectionPage
-                                   else s.themeSectionPage
-                        atSection := (← get).sectionHook
-                        atSubsection := (← get).subsectionHook }
       ownRoles := (← get).spans.docRoles
       styles := styles
       info := info

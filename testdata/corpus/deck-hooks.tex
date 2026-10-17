@@ -1,9 +1,8 @@
 % Invented deck: beamer's default theme declares no section page, and the
-% document's own \AtBeginSection sets a frame before each section it opens and,
-% its optional argument empty, none before a starred one. The hook's frame is not
-% set yet, so each section it opens stands on a page showing its title, the loss
-% named once; a subsection opens no page, as no hook declares one. Nothing here
-% derives from any private document.
+% document's own \AtBeginSection sets its frame right after each section it
+% opens and, its optional argument empty, none after a starred one; a subsection
+% opens no page, as no hook declares one. Nothing here derives from any private
+% document.
 \documentclass[aspectratio=169]{beamer}
 
 \usetheme{default}

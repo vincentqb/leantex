@@ -9342,7 +9342,7 @@ private def emitTreeCore (cfg : Config) (doc : Doc)
         let b := doc.body[i]
         total := doc.frameCountAt i
         if doc.frameRestart == some i then done := 0
-        let kind := doc.outside b
+        let kind := doc.outside i b
         -- a run outside the frames ships as its page does, under the ground and logo in force there
         if kind == .stage && !loose.isEmpty then
           let (node, named2) := claimStageName named

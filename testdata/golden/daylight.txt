@@ -48,7 +48,6 @@ token institutegap 1000/1000em
 chrome footer right framenumber
 meta title "A Daylight Deck"
 meta author "Pat Placeholder"
-section-pages theme
 frame golden
   section* 0
     text "A Daylight Deck"
@@ -59,6 +58,7 @@ frame golden
       text "Pat Placeholder"
 section 1
   text "Warm paper"
+role section-page
 frame
   title
     text "A default bundle"

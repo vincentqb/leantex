@@ -200,9 +200,10 @@ private def sectionChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : 
     pageFooters := #[none, some ("", "1"), none, some ("", "2")]
     htmlFooters := #[("", "1"), ("", "2")]
   }
-  -- A hook with an empty starred argument sets a divider for each section and none for a starred one.
+  -- A hook setting the section page, its starred argument empty, sets a divider for each section
+  -- and none for a starred one.
   verify ref fonts "only emitted dividers consume section labels" (elabStr (deck169
-    "\\theme{default}\n\\AtBeginSection[]{\\begin{frame}{Outline}x\\end{frame}}"
+    "\\theme{default}\n\\AtBeginSection[]{\\begin{frame}\\sectionpage\\end{frame}}"
     ("\\section*{UnmarkedSection}\n\\begin{frame}{One}FirstBody\\end{frame}\n" ++
      "\\section{RepeatSection}\n" ++
      "\\begin{frame}[standout]{Aside}AsideBody\\end{frame}\n" ++

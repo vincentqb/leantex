@@ -7823,33 +7823,28 @@ diagram environment, after the size switch in force. -/
   | none => core
   | some z => "\\" ++ z ++ " " ++ core
 
-/-- What a document's own `\AtBeginSection` or `\AtBeginSubsection` declares: a page for each
-section it opens, and for each starred one. -/
-public structure SectionHook where
-  page : Bool
-  starredPage : Bool
-  deriving Repr, BEq, Inhabited
+/-- The macro a deck's `\AtBeginSection` or `\AtBeginSubsection` defines and each section it
+opens calls: the starred one for a starred section or one with a blank title, as beamer's. -/
+@[expose] public def sectionHookName (sub starred : Bool) : String :=
+  " atbegin" ++ (if sub then "subsection" else "section") ++ (if starred then "s" else "")
 
-/-- Where a deck's sections stand on pages of their own: the theme's section page, which the
-document's own hooks replace. -/
-public structure SectionPages where
-  theme : Bool := false
-  atSection : Option SectionHook := none
-  atSubsection : Option SectionHook := none
-  deriving Repr, BEq, Inhabited
+/-- Whether a control is one of the hooks a deck's sections call. -/
+@[expose] public def isSectionHookName (n : String) : Bool :=
+  [sectionHookName false false, sectionHookName false true, sectionHookName true false,
+    sectionHookName true true].contains n
 
-/-- Whether a deck's section outside every frame stands on a page of its own; any other names
-navigation alone, as beamer's `\section` does. -/
-@[expose] public def SectionPages.pageFor (p : SectionPages) (level : HeadingLevel) (starred : Bool) :
-    Bool :=
-  let hooked (h : Option SectionHook) (otherwise : Bool) : Bool :=
-    match h with
-    | some h => if starred then h.starredPage else h.page
-    | none => otherwise
-  match level with
-  | .h1 | .h2 => hooked p.atSection p.theme
-  | .h3 => hooked p.atSubsection false
-  | .title | .h4 | .h5 | .h6 => false
+/-- The control a theme's section hook calls: the section's own page. -/
+public def sectionPageCtrl : String := " sectionpage"
+
+/-- The block a theme's section hook leaves right after its section: the section's own page. -/
+public def sectionPageRole : String := "section-page"
+
+/-- Whether the block after a deck's section is its section page, so the section stands on a page
+of its own; any other names navigation alone, as beamer's `\section` does. -/
+@[expose] public def standsOnPage (next : Option Block) : Bool :=
+  match next with
+  | some (.role n body) => n == sectionPageRole && body.isEmpty
+  | _ => false
 
 public structure Doc where
   docClass : DocClass := .article
@@ -7925,8 +7920,6 @@ public structure Doc where
   /-- Where the frame numbering starts over: the body index of the first block
   after `\appendix` under appendixnumberbeamer. -/
   frameRestart : Option Nat := none
-  /-- Which of a deck's sections stand on pages of their own. -/
-  sectionPages : SectionPages := {}
   /-- The roles the document's own colour declarations set, a theme's aside. -/
   ownRoles : Array Role := #[]
   /-- Where each `\bibliography` list's footnotes number from, in document
@@ -9079,25 +9072,25 @@ public def setsNothing : Block → Bool
   | .frame .. | .framefoot _ | .setPalette _ | .setTokens _ | .rule .. | .picture _ | .table ..
   | .float .. | .bibliography .. => false
 
-/-- What a deck sets for a top-level block outside every frame under its section pages: a stage of
+/-- What a deck sets for a top-level block outside every frame, given the block after it: a stage of
 its own, content on a page of its own, or nothing a page shows. -/
-public def outsideUnder (sp : SectionPages) (b : Block) : Outside :=
+public def outsideUnder (next : Option Block) (b : Block) : Outside :=
   if holdsFrame #[b] then .stage
   else if setsNothing b then .none
   else match b with
     | .frame .. | .pagebreak => .stage
     | .setPalette _ | .setTokens _ | .logo _ | .framefoot _ | .note _ => .none
-    | .section level starred _ _ =>
+    | .section level _ _ _ =>
       if level == .title then .content
-      else if sp.pageFor level starred then .stage
+      else if standsOnPage next then .stage
       else .none
     | .para _ | .list .. | .center .. | .ragged .. | .spaced .. | .role .. | .link .. | .quote .. | .lines ..
     | .abstract .. | .titled .. | .disclosure .. | .equation .. | .verbatim .. | .algorithm ..
     | .columns .. | .onSteps .. | .altSteps .. | .only .. | .nav .. | .rule .. | .picture ..
     | .table .. | .float .. | .bibliography .. => .content
 
-/-- What a deck sets for a top-level block outside every frame (`outsideUnder`). -/
-public def Doc.outside (doc : Doc) (b : Block) : Outside := outsideUnder doc.sectionPages b
+/-- What a deck sets for its top-level block `i` outside every frame (`outsideUnder`). -/
+public def Doc.outside (doc : Doc) (i : Nat) (b : Block) : Outside := outsideUnder doc.body[i + 1]? b
 
 /-- The spacings a body's lists and quotations declare, each once, in flow order. -/
 public def listSetsOf (body : Array Block) : Array ListSet :=
@@ -18305,14 +18298,6 @@ public def dump (doc : Doc) (diags : Array Diag) : String :=
     s!"assert {a.kind.source}\n")
   let allowLine := if doc.allow.isEmpty then ""
     else s!"allow {String.intercalate ", " doc.allow.toList}\n"
-  let hookLine (label : String) : Option SectionHook → String
-    | some h => s!"{label} {if h.page then "page" else "none"} starred \
-{if h.starredPage then "page" else "none"}\n"
-    | none => ""
-  let sectionLines :=
-    (if doc.sectionPages.theme then "section-pages theme\n" else "") ++
-    hookLine "section-hook" doc.sectionPages.atSection ++
-    hookLine "subsection-hook" doc.sectionPages.atSubsection
   let body := dumpBlocks "" doc.body
   let ds :=
     if diags.isEmpty then
@@ -18320,6 +18305,6 @@ public def dump (doc : Doc) (diags : Array Diag) : String :=
     else
       "-- diagnostics\n" ++ String.join (diags.toList.map dumpDiag)
   head ++ page ++ fontLines ++ paletteLines ++ tokenLines ++ runLines ++ infoLines ++ outputLines ++
-    asserts ++ allowLine ++ sectionLines ++ body ++ ds
+    asserts ++ allowLine ++ body ++ ds
 
 end LeanTex.Core.Ir

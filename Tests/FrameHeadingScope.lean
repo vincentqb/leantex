@@ -26,7 +26,6 @@ def doc (progress footer : Bool) (valign : Ir.VAlign)
     #[Ir.Block.para #[.text "After"]]
   { base with
     palette := palette
-    sectionPages := if progress then base.sectionPages else {}
     chrome := if footer then { footerRight := some .frameNumber } else {}
     body := prologue ++ #[.frame #[.text "Frame title"] false valign false body] }
 
@@ -145,13 +144,15 @@ def frameHeadingScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) 
        FrameHeadingScope.bodyShape stages[0]! == FrameHeadingScope.expectedShape .golden #[1])
     for level in [1, 2, 3] do
       let base := FrameHeadingScope.doc progress true .center
+      -- A section-page design's hook leaves the section's page after it, as a top-level section's.
+      let page : Array Ir.Block := if progress && level == 1 then #[.role Ir.sectionPageRole #[]] else #[]
       let doc := { base with body := #[
         .framefoot #[.text "Frame footer"],
         .frame #[] false .center false #[.para #[.text "First frame"]],
-        .section level true none #[.text "Divider"],
+        .section level true none #[.text "Divider"]] ++ page ++ #[
         .frame #[] false .center false #[.para #[.text "Second frame"]]] }
       let out := layoutOf fonts doc
-      -- a top-level heading opens a divider only as a section under a design with a section page
+      -- a top-level heading opens a divider only where its section page follows it
       if progress && level == 1 then
         t s!"frame heading scope preserves top-level divider {progress}/{level}"
           (out.pages.size == 3 && out.pages[0]!.frame == some 1 &&
@@ -169,7 +170,7 @@ def frameHeadingScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) 
   let doc := { base with
     chrome := { footerLeft := some .sectionTitle }
     body := #[
-      .section 1 true none #[.text "Outer section"],
+      .section 1 true none #[.text "Outer section"], .role Ir.sectionPageRole #[],
       .frame #[] false .center false #[
         .para #[.text "Before"], .section 1 true none #[.text "Local heading"], .para #[.text "After"]],
       .frame #[] false .center false #[.para #[.text "Next frame"]]] }

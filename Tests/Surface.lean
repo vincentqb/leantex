@@ -1754,7 +1754,8 @@ private def checkCompatRow (ref : IO.Ref (List String)) (pkg : String)
     check ref s!"compat index {pkg}: '{call}' is marked {ann} but its source \
 fails with {String.intercalate ", " (errors.map (·.code)).toList}"
       errors.isEmpty
-  if place != "pre" && place != "body" && place != "frame" && place != "statement" then
+  if place != "pre" && place != "body" && place != "frame" && place != "deck" &&
+      place != "statement" then
     failures ref s!"compat index {pkg}: unreadable place in: {line}"
   else if ann == "impl" then
     check ref s!"compat index {pkg}: '{call}' is marked impl but warns unknown"

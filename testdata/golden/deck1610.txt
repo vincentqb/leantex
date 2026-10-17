@@ -46,7 +46,6 @@ token institutegap 1000/1000em
 chrome footer right framenumber
 meta title "A Widened Stage"
 meta author "Pat Placeholder"
-section-pages theme
 frame
   title
     text "One declared key"

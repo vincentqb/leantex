@@ -86,8 +86,9 @@ public def frameStepNames (anchors : Array (Option FrameAnchors)) (labels : Arra
 public def Doc.sectionRoutes (doc : Doc) : Array (Option String) := Id.run do
   let mut n := 0
   let mut out : Array (Option String) := #[]
-  for b in doc.body do
-    if b matches .section .. && doc.outside b == .stage then
+  for h : i in [0:doc.body.size] do
+    let b := doc.body[i]
+    if b matches .section .. && doc.outside i b == .stage then
       out := out.push (some (sectionRoute n))
       n := n + 1
     else out := out.push none

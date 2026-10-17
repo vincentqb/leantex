@@ -1400,13 +1400,14 @@ def censusRows7 :
     ("the text outside every frame shares its page with no frame",
       !pageHas c 4 "Serving" && !pageHas c 4 "Drying")]),
   ("deck-hooks", fun _ c => [
-    ("a page per frame and one per section the document's hook opens, none for a starred one",
+    ("a page per frame, the hook's own before each section it opens, none for a starred one",
       c.size == 7),
-    ("each page holds its frame's words or its section's title, in order",
-      [(0, "Sections Behind Hooks"), (1, "Wheels"), (2, "holds its spokes"), (3, "runs true"),
-        (4, "Chains"), (5, "Chains follow"), (6, "spare tube")].all fun (i, w) => pageHas c i w),
-    ("a section's page shows its title alone, and a starred section inks nothing",
-      !pageHas c 1 "Spokes" && !pageHas c 4 "Links" && !pageHas c 6 "Spare parts"),
+    ("each page holds its frame's words, the hook's before each unstarred section, in order",
+      [(0, "Sections Behind Hooks"), (1, "next part opens here"), (2, "holds its spokes"),
+        (3, "runs true"), (4, "next part opens here"), (5, "Chains follow"),
+        (6, "spare tube")].all fun (i, w) => pageHas c i w),
+    ("the hook's frame sets its own words, no section's title, and a starred section inks nothing",
+      !pageHas c 1 "Wheels" && !pageHas c 4 "Chains" && !pageHas c 6 "Spare parts"),
     ("a reference to a section shows beamer's number", pageHas c 2 "2 drives" && pageHas c 5 "1 said")])]
 
 /-- Whether `a` ships above `b` on page 0. -/

@@ -9245,8 +9245,6 @@ public structure Spacing.Context where
   private locale : Locale := Locale.en
   /-- The `slides` class: frames open fresh pages. -/
   private slides : Bool := false
-  /-- Which of the deck's sections stand on pages of their own (`Ir.Doc.sectionPages`). -/
-  private sectionPages : Ir.SectionPages := {}
   /-- How the abstract's body sets (`Ir.Doc.abstractForm`). -/
   private abstractForm : Ir.AbstractForm := .quotation
   /-- A frame body owns its headings: they neither open section dividers
@@ -11220,9 +11218,9 @@ private def openFrameBody (r : Rd) (a : Acc) (hasTitle : Bool) (valign : VAlign)
   | .paper => { a with ops := (a.ops.push (.bodyOpen g none)).push .noInterline, wantDefault := false,
                        frameTop := true }
 
-private def collectSection (r : Rd) (a : Acc) (level : Ir.HeadingLevel) (starred : Bool)
+private def collectSection (r : Rd) (a : Acc) (level : Ir.HeadingLevel)
     (num : Option String) (title : Array Inline) (indent : Sp) (top : Bool := false)
-    (anchor : Option String := none) : Acc :=
+    (anchor : Option String := none) (page : Bool := false) : Acc :=
   if level == 0 then
     -- The document title opens no page of its own, even in slides.
     collectTitle r a title indent false
@@ -11241,7 +11239,7 @@ private def collectSection (r : Rd) (a : Acc) (level : Ir.HeadingLevel) (starred
   let design := Ir.Design.ofPalette a.pal
   -- A deck's top-level section names navigation; one nested in a block outside the frames is its ink.
   let divider := r.slides && !r.inFrame && top
-  if divider && r.sectionPages.pageFor level starred then
+  if divider && page then
     let a := a.pageBreak
     -- A divider is moloch's `\frame[plain,c,noframenumbering]`: a plain frame's text area.
     let area : FrameArea := if a.footAllowed then .paper else .margins
@@ -12905,7 +12903,7 @@ private def collectBlock (r : Rd) (a : Acc)
   | .para content => collectParaBlock r a content indent
   | .lines ls => collectLaid r a ls.toList indent
   | .equation num content => collectEquation r a num content indent
-  | .section level starred num title => collectSection r a level starred num title indent
+  | .section level _ num title => collectSection r a level num title indent
   | .list ordered spacing items =>
     -- Past the class's four levels, where LaTeX errors, the fourth level is reused and named.
     let depth := (if ordered then a.enumDepth else a.itemDepth) + 1
@@ -18626,14 +18624,15 @@ private def collectDocBlock (rd : Rd) (doc : Doc)
         acc := collectBlock { rd with step := k, steps := steps }
           (named { acc.reopenFrame opening with leafNext := leafStart, frameOrigin := some ⟨i, k⟩ } k)
           (.frame title standout valign breakable (Ir.dimBlocks opening.dimHere k body)) 0
-  | .section level starred num title =>
+  | .section level _ num title =>
     let routed := match rd.sectionRoutes[i]?.join with
       | some route => { acc with ops := acc.ops.push (.anchor route) }
       | none => acc
     let routed := if rd.outlineMarks.contains i then
         { routed with ops := routed.ops.push (.anchor (Ir.outlineMark i)) }
       else routed
-    acc := collectSection rd routed level starred num title 0 (top := true)
+    acc := collectSection rd routed level num title 0 (top := true)
+      (page := Ir.standsOnPage doc.body[i + 1]?)
       (anchor := (rd.sectionAnchors[i]?.join).map (·.id))
   | other => acc := collectBlock rd acc other 0
   return (acc, firstBlk)
@@ -19381,7 +19380,6 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
                    lists := doc.docClass.record.lists
                    quotationIndent := doc.docClass.record.quotationIndent
                    frameKeys := doc.frameKeys
-                   sectionPages := doc.sectionPages
                    frameLabels := doc.frameLabels
                    sectionAnchors := if doc.docClass.record.model == .flow then
                      Ir.sectionAnchors doc.body

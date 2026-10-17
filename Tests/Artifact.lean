@@ -1705,8 +1705,9 @@ def artFrameGrounds (doc : Ir.Doc) (includeStandout : Bool := false) :
   let mut pal := doc.palette
   let mut out : Array (Option Ir.Color) := #[]
   let mut outsideRun := false
-  for b in doc.body do
-    if deck && outsideRun && doc.outside b == .stage then
+  for h : i in [0:doc.body.size] do
+    let b := doc.body[i]
+    if deck && outsideRun && doc.outside i b == .stage then
       out := out.push (Ir.Design.declared? pal .page)
       outsideRun := false
     match b with
@@ -1715,7 +1716,7 @@ def artFrameGrounds (doc : Ir.Doc) (includeStandout : Bool := false) :
       if (includeStandout || !standout) && !(valign matches .golden) then
         out := out.push (Ir.frameGroundOf pal standout valign)
     | _ => pure ()
-    if deck && doc.outside b == .content then outsideRun := true
+    if deck && doc.outside i b == .content then outsideRun := true
   if outsideRun then out := out.push (Ir.Design.declared? pal .page)
   return out
 
