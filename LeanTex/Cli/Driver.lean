@@ -342,6 +342,8 @@ public structure SvgFetch where
   diags : Array Diag := #[]
   /-- The figure's own `<title>`, whichever route drew it. -/
   title : Option String := none
+  /-- The source bytes the native judge accepted, which the page need not judge again. -/
+  judged : Option ByteArray := none
 
 /-- What the store keeps of a route's answer: the drawn figure, whether it moves, and its
 rasters' plans. -/
@@ -376,8 +378,10 @@ public def svgFetch (src : String) (bytes : ByteArray) (page : PdfRead.PageSelec
   let losses := fig.losses
   -- An inkless import note, such as a dropped link, is named once on any route.
   let notes := i.notes.map (FigureLoss.svgNoteDiag src)
+  -- premise: Tests.svgRouteChecks — the page skips judging only the bytes this judge accepted
   let native : SvgFetch :=
-    { res := .ok (vectorPlan fig), vector := some fig, plans, moving, title := fig.title, diags := notes }
+    { res := .ok (vectorPlan fig), vector := some fig, plans, moving, title := fig.title, diags := notes
+      judged := some bytes }
   let verdict : Boundary.Verdict := if losses.isEmpty then .exact else .lossy losses
   let decl : Boundary.Refusal := if convert.isSome then .none else .declared
   if !verdict.asksTool decl then
@@ -396,7 +400,8 @@ public def svgFetch (src : String) (bytes : ByteArray) (page : PdfRead.PageSelec
   let owed := Boundary.svgRouteDiags moving src why losses route
   let diags := notes ++ owed
   match route, answer with
-  | .tool, some (.ok plan) => return { res := .ok plan, moving, title := fig.title, diags }
+  | .tool, some (.ok plan) =>
+    return { res := .ok plan, moving, title := fig.title, diags, judged := some bytes }
   | _, _ => return { native with diags }
 
 /-- The converter a lossy SVG may ask when the document allows it: `run`, while `probe`,
@@ -501,11 +506,13 @@ def planLocated (params : Image.PlanParams) (lang : String) (convert : Option Co
 
 /-- The document's image requests fulfilled: each source found and read in request order
 (`locateImage`), planned (`planLocated`) and judged by `Image.fulfil`, every unplanned fact named;
-also the cache-hit count, drawn SVGs' titles by source, and the files read. -/
+also the cache-hit count, drawn SVGs' titles by source, the files read, and the SVG bytes the native
+judge accepted. -/
 def loadImages (file : String) (doc : Ir.Doc) (pics : Array PicResult := #[])
     (refused : Array (String × Diag) := #[])
     (imageSpans : Array (String × Span) := #[]) (cache : Option Engine.Cache := none) :
-    IO (Image.Store × Array Diag × Nat × Array (String × String) × Array String) := do
+    IO (Image.Store × Array Diag × Nat × Array (String × String) × Array String ×
+      Array ByteArray) := do
   let dir := (System.FilePath.mk file).parent.getD "."
   let params := Image.PlanParams.default
   let mut fetched : Array (Image.Request × Image.Fetch) := #[]
@@ -535,7 +542,7 @@ def loadImages (file : String) (doc : Ir.Doc) (pics : Array PicResult := #[])
     | none => d
   let titles := (store.entries.zip svgs).filterMap fun (en, f) =>
     if en.info.isSome then f.title.map (en.src, ·) else none
-  return (store, diags, hits, titles, reads)
+  return (store, diags, hits, titles, reads, svgs.filterMap (·.judged))
 
 /-- The output intent's ICC profile read beside the document, W0446 where it is not there or is
 no output profile. -/
@@ -873,7 +880,8 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
     let failingNow := (Diag.resolveAll doc.allow allowAll (Diag.forOutputs outputs diags)).errors > 0
     let cache ← Engine.cache (← FontDiscovery.cacheDir)
     let tImg ← IO.monoMsNow
-    let (imgs0, imgDiags0, imgHits, titles, imgReads0) ← if failingNow then pure ({}, #[], 0, #[], #[])
+    let (imgs0, imgDiags0, imgHits, titles, imgReads0, judged0) ←
+      if failingNow then pure ({}, #[], 0, #[], #[], #[])
       else loadImages file doc pics refused reqSpans.images cache
     let imgMs ← since tImg
     let doc := FigureAlt.titled titles doc
@@ -920,9 +928,9 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
         let family := fs.math.bind (fs.fonts[·]?) |>.map (·.family) |>.getD "math face"
         pure (FigureAlt.titled titles (Ir.resolveMathAlphas fs.mathAlphabets family doc2).1, spans2)
       let t ← IO.monoMsNow
-      let (imgs, imgDiags, imgHits, _, imgReads) ←
+      let (imgs, imgDiags, imgHits, _, imgReads, judged) ←
         if Ir.imageRequests doc == Ir.imageRequests front.doc then
-          pure (imgs0, imgDiags0, imgHits, titles, imgReads0)
+          pure (imgs0, imgDiags0, imgHits, titles, imgReads0, judged0)
         else loadImages file doc pics refused reqSpans.images cache
       let (imgs, shapeNotes) := FigureStore.settle fs imgs
       let imgDiags := imgDiags ++ shapeNotes.map fun (src, d) =>
@@ -1037,7 +1045,7 @@ in the HTML" (← since t)
             (fit.step, fit.overhang > 0)
         }
         let htmlDoc := { htmlDoc with body := Ir.squeezeFrames htmlDoc.body squeezed }
-        let (result, hdiags) ← prepareHtml file hcfg htmlDoc (picNatives ++ faceNatives)
+        let (result, hdiags) ← prepareHtml file hcfg htmlDoc (picNatives ++ faceNatives ++ judged)
           (mathBoundary := ui.cfg.mathBoundary)
         resolved := resolved.append (← ui.resolve doc.allow allowAll (outputs := outputs)
           (hdiags.map front.prepared.sourceTriggers.attribute))

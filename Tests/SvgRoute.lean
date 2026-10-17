@@ -158,6 +158,10 @@ def svgRouteChecks (ref : IO.Ref (List String)) : IO Unit := do
     (match refused.res with
       | .error e => hasStr e "SVG resource boundary"
       | .ok _ => false)
+  check ref "figure route: the page skips judging a figure's bytes only once the judge accepted them"
+    (withTool.judged == some svgTextFixture && converted.judged == some svgFilterFixture &&
+      degraded.judged == some svgFilterFixture && failed.judged == some svgFilterFixture &&
+      refused.judged.isNone)
 
 
 /-- A figure whose text forms paint: a translucent caption, a caption in a translucent group, and a

@@ -480,6 +480,14 @@ def htmlContainedSvgColorChecks (ref : IO.Ref (List String)) : IO Unit := do
           info := some { pxW := 20, pxH := 20 } }] } }
       let (closed, _) ← prepareHtml (dir / "source.tex").toString cfg doc
       t ("contained SVG color: refuses " ++ name) (svgBoundaryError closed)
+    let figureCfg : HtmlDoc.Config := { imgs := { entries := #[
+      { src := "figure.svg", source := some blue, info := some { pxW := 20, pxH := 20 } }] } }
+    let (skipped, _) ← prepareHtml (dir / "source.tex").toString figureCfg doc (checked := #[blue])
+    let (judged, _) ← prepareHtml (dir / "source.tex").toString figureCfg doc
+    t "contained SVG: a figure the judge accepted ships the same page judged again or not"
+      (match skipped, judged with
+       | .ok a, .ok b => a.render == b.render
+       | _, _ => false)
 
 /-- Refusal precedes the CLI's output writes, best-effort mode included. -/
 def htmlContainedCliChecks (ref : IO.Ref (List String)) : IO Unit := do

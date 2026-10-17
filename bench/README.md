@@ -327,3 +327,24 @@ md-emphasis.md to HTML, whose page embeds its fonts' programs, moved within the 
 few per cent of its build (median of 7: PDF 2,838 → 2,699 ms, facts read 81 → 72 ms; HTML 3,721 →
 3,854 ms, facts read 76 → 81 ms). Every corpus document's artifact is byte-identical before and
 after.
+
+## Talk deck web page — 2026-10-17
+
+The page then shipped a face serving two slots under each slot's family, its program's data URL
+standing twice; decoded every value to find its characters to escape; and judged each SVG
+figure's bytes again after the image phase had judged them. Slots resolving to the same faces now
+share the first one's family, values are scanned by their UTF-8 bytes, and the page skips the
+bytes the image phase's judge accepted. Median of 5, back to back on a host at load 124-137, the
+before column with `LEANTEX_BENCH_BINARY` naming the compiler without these three changes. The
+cold builds' totals moved with the host's images phase (cold 4,346 and 3,781 ms), so the cold row
+gives the html phase alone; the PDF build's bytes and times are unchanged, its only changed code
+the image phase's keeping of the bytes it judged:
+
+| Build | before | after |
+|---|---:|---:|
+| HTML, warm | 1,311 ms (html 427) | 1,082 ms (html 283) |
+| HTML, cold, html phase | 1,836 ms | 1,504 ms |
+| HTML page | 21,162,460 bytes | 20,650,008 bytes |
+
+Only the shared families change the page's bytes, in its `@font-face` rules and font stacks, and
+`scripts/visualdiff.lean` finds the deck's page unchanged.
