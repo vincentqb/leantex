@@ -2067,17 +2067,16 @@ public def read (beginRaws endRaws : Array Raw) (defs : String → Option Macro 
       else if titleEdges.any (fun _ => !title.boxed) then
         .error #["a rule beside a title with no box of its own"]
       else
-        let whole := if t.title.isSome && !untitledBox then u.whole else t.whole
         let spansides := t.edges.map fun e => (e.span, e.side)
         if spansides.toList.eraseDups.length != spansides.size then
           .error #["two rules on one side of one box"]
-        else if t.edges.any lineRule && (whole.isSome || t.edges.any fun e => lineRule e && !e.hang) then
-          .error #["a rule reaching by the block's lines inside its line or beside a box holding \
-title and body"]
+        else if t.edges.any fun e => lineRule e && !e.hang then
+          .error #["a rule reaching by the block's lines inside its line"]
         else .ok
           { before := t.before, title := title
             bare := if untitledBox then none else some { before := u.before, between := u.between }
-            between := t.between, after := t.after, whole
+            between := t.between, after := t.after
+            whole := if t.title.isSome && !untitledBox then u.whole else t.whole
             edges := t.edges, titleFont := t.titleFont, titlePaint := t.titlePaint
             bodyFont := t.bodyFont, bodyPaint := t.bodyPaint }
 

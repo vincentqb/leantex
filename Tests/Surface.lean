@@ -4526,6 +4526,37 @@ def translationOwedChecks (ref : IO.Ref (List String)) : IO Unit := do
     t s!"the refusal row for '\\{construct}' is a live row"
       ((Compat.beamerNative.lookup construct).any fun help => !(named help).isEmpty)
 
+/-- A read title-page template's literal text ships whatever brackets or quotes it holds; one in
+the body is skipped, and one no `\begin{document}` follows is not read, each named once. -/
+def titleTemplateTextChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let tpl (node : String) : String :=
+    "\\setbeamertemplate{title page}{\\begin{tikzpicture}[remember picture,overlay]" ++
+    "\\node[anchor=west, align=left] at (current page.west) {\\inserttitle};" ++ node ++
+    "\\end{tikzpicture}}"
+  let cases : List (String × String × String) :=
+    [("unpinned parenthesis", "\\node {Invented Series (draft};", "Invented Series (draft"),
+     ("unpinned quote", "\\node {Invented 12\" Series};", "Invented 12” Series"),
+     ("pinned parenthesis", "\\node[anchor=east] at (current page.east) {Invented Series (draft};",
+       "Invented Series (draft"),
+     ("pinned bracket", "\\node[anchor=east] at (current page.east) {Invented [draft};",
+       "Invented [draft")]
+  for (name, node, text) in cases do
+    let (doc, ds) := elabStr (deck169 (tpl node ++ "\\title{Probe Title}") "\\titlepage")
+    t s!"title template {name}: its text ships on the title page"
+      (((layoutOf oneFace doc).pages[0]?.map (·.lines)).getD #[] |>.any fun l => hasStr (lineText l) text)
+    t s!"title template {name}: nothing is dropped or refused ({ds.filter (·.severity != .note) |>.map (·.code)})"
+      (ds.all fun d => d.code != "W0101" && d.severity != .error)
+  let node := "\\node[anchor=east] at (current page.east) {Invented Series};"
+  let (bdoc, bds) := elabStr (deck169 "\\title{Probe Title}" (tpl node ++ "\\titlepage"))
+  t s!"title template in the body: skipped and named once ({bds.map (·.code)})"
+    ((bds.filter fun d => d.code == "W0104" && d.subject == some "beamer:template:title page").size == 1 &&
+      ((bdoc.styles.find? "titlepage").all (·.slots.isEmpty)))
+  let (_, nds) := elabStr (tpl node)
+  t s!"title template with no document: named unread once ({nds.map (·.code)})"
+    ((nds.filter fun d => d.code == "W0110" && d.subject == some "beamer:template:title page" &&
+      hasStr d.message "begin{document}").size == 1)
+
 /-- A deck whose theme redefined the title page still ships it with the document's declared
 metadata. -/
 def themeTitleShipChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
@@ -4636,6 +4667,7 @@ def themeTitleShipChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
         t s!"an unread custom font key preserves the declared leading in the {site}"
           ((lineYOf c 0 "Font Alpha").any fun y =>
             lineYOf c 0 "Font Beta" == some (y + Dim.pt 33))
+  titleTemplateTextChecks ref oneFace
 
 mutual
 

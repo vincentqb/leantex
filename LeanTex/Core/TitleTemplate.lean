@@ -2,7 +2,6 @@ module
 
 public import LeanTex.Core.Parse
 public import LeanTex.Core.Ir
-public import LeanTex.Core.Native
 import LeanTex.Core.Picture
 import LeanTex.Core.KeyVal
 
@@ -606,41 +605,21 @@ public def read (fonts : List (String × Font)) (body : Array Parse.Raw) : Optio
     | _ => rd := { rd with unread := rd.unread.push "a statement that is not a fill or a node" }
   return rd
 
-/-- The read template as the engine's own settings: the ground and title ink as palette roles, and
-one title-page slot per node. -/
-public def settings (rd : Read) : Array Native.Setting :=
-  let titleInk := rd.nodes.toList.findSome? fun n =>
-    (n.parts.find? (·.datum == some "title")).bind (·.ink)
-  let roles := (rd.ground.map ("titlepagebg", ·)).toList ++
-    (if rd.ground.isSome then (titleInk.map ("titlepagefg", ·)).toList else [])
-  let part (p : Part) : String :=
-    let ink := match p.ink with
-      | some c =>
-        if rd.ground.isSome && p.ink == titleInk then "" else s!"\\color\{{c}} "
-      | none => ""
-    let font := p.font ++ (if p.font.isEmpty || ink.isEmpty then "" else " ") ++ ink
-    let fields :=
-      (match p.datum with
-       | some d => [s!"set = {d}"]
-       | none => ["content = {" ++ p.content ++ "}"]) ++
-      (if p.newLine then ["new-line = true"] else []) ++
-      (p.before.map (s!"before = {·}")).toList ++
-      (p.size.map (s!"size = {·}")).toList ++
-      (p.leading.map (s!"leading = {·}")).toList ++
-      (p.align.map (s!"align = {·}")).toList ++
-      (if font.isEmpty then [] else ["font = {" ++ font.trimAscii.toString ++ "}"])
-    "part = { " ++ String.intercalate ", " fields ++ " }"
-  let slot (n : Node) : String :=
-    let fields := n.parts.toList.map part ++
-      (if n.pinned then
-        [s!"anchor = {n.anchor}", s!"at = {n.pagePoint}"] ++
-        (n.xshift.map (s!"xshift = {·}")).toList ++
-        (n.yshift.map (s!"yshift = {·}")).toList ++
-        (n.width.map (s!"width = {·}")).toList
-      else []) ++
-      (if n.pinned then (n.innerSep.map (s!"inner-sep = {·}")).toList else [])
-    "{ " ++ String.intercalate ", " fields ++ " }"
-  (if roles.isEmpty then #[] else #[.palette roles.toArray]) ++
-    #[.style "titlepage" (#[("separator", "none")] ++ rd.nodes.map fun n => ("slot", slot n))]
+/-- The ink of the part setting the title. -/
+private def titleInk (rd : Read) : Option String :=
+  rd.nodes.toList.findSome? fun n => (n.parts.find? (·.datum == some "title")).bind (·.ink)
+
+/-- The palette roles a template with a ground declares: the ground, and the title's ink on it. -/
+public def roles (rd : Read) : Array (String × String) :=
+  ((rd.ground.map ("titlepagebg", ·)).toList ++
+    (if rd.ground.isSome then ((titleInk rd).map ("titlepagefg", ·)).toList else [])).toArray
+
+/-- A part's font as inline TeX, its ink after its font commands where no palette role carries it. -/
+public def partFont (rd : Read) (p : Part) : Option String :=
+  let ink := match p.ink with
+    | some c => if rd.ground.isSome && p.ink == titleInk rd then "" else s!"\\color\{{c}} "
+    | none => ""
+  let font := p.font ++ (if p.font.isEmpty || ink.isEmpty then "" else " ") ++ ink
+  if font.isEmpty then none else some font.trimAscii.toString
 
 end LeanTex.Core.TitleTemplate

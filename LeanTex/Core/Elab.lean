@@ -13513,6 +13513,38 @@ private def titleSlotKeys : List String :=
 private def titlePartKeys : List String :=
   ["set", "content", "font", "align", "size", "leading", "new-line", "before"]
 
+/-- A style value's TeX as inline content, its idioms translated where it stands. -/
+private def styleInline (ctx : Ctx) (src : String) (pos : Pos) : EM (Option (Array Inline)) := do
+  let fragmentCtx := ctx.atCall "style" pos
+  let (toks, _) := Lex.lex ctx.file src
+  let (raws, _) := Parse.parse ctx.file toks
+  -- Warn-once keys are read, never merged back: this site drops the notes.
+  let inherited := (ctx.user.extract 0 ctx.limit).toList.map (·.name)
+  let (raws, ds, _) := Compat.rewrite ctx.file raws
+    (warned := (← get).warnedUnknown) (inherited := inherited)
+  let ds := (ds.filter (·.severity != .note)).map fun d =>
+    { d with span := some (fragmentCtx.sourceSpan pos) }
+  modify fun st => { st with diags := st.diags ++ ds }
+  return some (← elabInlines fragmentCtx raws)
+
+/-- A style value's length against the tokens declared so far, named unreadable in `what`. -/
+private def styleLength (ctx : Ctx) (key src : String) (pos : Pos) (what : String := "'\\style'") :
+    EM (Option SymGlue) := do
+  -- The length grammar spells tokens bare, so the backslash is dropped.
+  let expr := fun (_ : Unit) =>
+    match Decl.parseLengthExpr (ctx.tokens.entries ++ ctx.engineTokens)
+        (String.join (src.splitOn "\\")) with
+    | .ok g => some g
+    | .error _ => none
+  match Decl.parseValue src ctx.tokens.entries with
+  | some (.glue g) => return some g
+  | some (.dim d) => return some { width := Dim.Length.ofSp d }
+  | _ =>
+    if let some g := expr () then return some g
+    diag ctx .E0321 s!"cannot read length for '{key}' in {what}: {src.quote}" pos
+      (help := "lengths look like 10pt, 1.5ex, or a token name")
+    return none
+
 /-- Applies `\style{element}{...}`, each entry read against the tokens
 declared so far. -/
 private def applyStyle (ctx : Ctx) (styles : Styles) (element src : String) (pos : Pos) :
@@ -13530,35 +13562,10 @@ private def applyStyle (ctx : Ctx) (styles : Styles) (element src : String) (pos
       (help := s!"elements: {String.intercalate ", " named}")
     return styles
   let mut st : ElementStyle := (styles.find? element).getD {}
-  let inlineOf (src : String) : EM (Option (Array Inline)) := do
-    let inner := if src.startsWith "{" && src.endsWith "}" && src.length ≥ 2
-      then (src.drop 1).dropEnd 1 |>.toString else src
-    let fragmentCtx := ctx.atCall "style" pos
-    let (toks, _) := Lex.lex ctx.file inner
-    let (raws, _) := Parse.parse ctx.file toks
-    -- Warn-once keys are read, never merged back: this site drops the notes.
-    let inherited := (ctx.user.extract 0 ctx.limit).toList.map (·.name)
-    let (raws, ds, _) := Compat.rewrite ctx.file raws
-      (warned := (← get).warnedUnknown) (inherited := inherited)
-    let ds := (ds.filter (·.severity != .note)).map fun d =>
-      { d with span := some (fragmentCtx.sourceSpan pos) }
-    modify fun st => { st with diags := st.diags ++ ds }
-    return some (← elabInlines fragmentCtx raws)
-  let lengthOf (key src : String) : EM (Option SymGlue) := do
-    -- The length grammar spells tokens bare, so the backslash is dropped.
-    let expr := fun (_ : Unit) =>
-      match Decl.parseLengthExpr (ctx.tokens.entries ++ ctx.engineTokens)
-          (String.join (src.splitOn "\\")) with
-      | .ok g => some g
-      | .error _ => none
-    match Decl.parseValue src ctx.tokens.entries with
-    | some (.glue g) => return some g
-    | some (.dim d) => return some { width := Dim.Length.ofSp d }
-    | _ =>
-      if let some g := expr () then return some g
-      diag ctx .E0321 s!"cannot read length for '{key}' in '\\style': {src.quote}" pos
-        (help := "lengths look like 10pt, 1.5ex, or a token name")
-      return none
+  let inlineOf (src : String) : EM (Option (Array Inline)) :=
+    styleInline ctx (if src.startsWith "{" && src.endsWith "}" && src.length ≥ 2
+      then (src.drop 1).dropEnd 1 |>.toString else src) pos
+  let lengthOf (key src : String) : EM (Option SymGlue) := styleLength ctx key src pos
   for entry in Decl.splitEntries src do
     match Decl.splitEntry entry with
     | none =>
@@ -16050,32 +16057,97 @@ public theorem runDocBody_recovered_word_exact (plan : DocBodyPlan) (st : ESt) (
   · exact recovered_para_census plan.ctx wordPos word lang ds
 
 /-- A block kind's shape as its templates read it, each rule painted by the palette entry it names. -/
-private def applyBlockShape (s : PreState) (d : Compat.BlockShapeDecl) : EM PreState := do
-  let ctx := { s.ctx with file := d.file }
+private def applyBlockShape (s : PreState) (element : String) (r : BlockTemplate.Read)
+    (colors : Array String) (file : String) (pos : Pos) : EM PreState := do
+  let ctx := { s.ctx with file := file }
   let mut edges : Array BlockEdge := #[]
-  for (e, i) in d.read.edges.zipIdx do
-    let role := d.colors.getD i "fg"
-    match ← readColor ctx ctx.palette none role d.pos with
+  for (e, i) in r.edges.zipIdx do
+    let role := colors.getD i "fg"
+    match ← readColor ctx ctx.palette none role pos with
     | .resolved c token =>
       edges := edges.push { span := e.span, side := e.side, width := { width := e.width }
                             sep := { width := e.sep }, hang := e.hang, color := c, name := token
                             reach := e.reach }
     | .rejected => return s
     | .missing =>
-      diag ctx .E0326 s!"'{role}' is not in the palette" d.pos
+      diag ctx .E0326 s!"'{role}' is not in the palette" pos
       return s
-  let r := d.read
   let shape : BlockShape := { before := r.before, title := r.title, bare := r.bare
                               between := r.between, after := r.after, whole := r.whole, edges }
-  let st : ElementStyle := (s.styles.find? d.element).getD {}
-  noteDeclared ctx "style" d.element
-  noteSetting ctx (.style d.element) d.pos
-  return { s with styles := s.styles.declare d.element { st with shape := some shape } }
+  let st : ElementStyle := (s.styles.find? element).getD {}
+  noteDeclared ctx "style" element
+  noteSetting ctx (.style element) pos
+  return { s with styles := s.styles.declare element { st with shape := some shape } }
+
+/-- The title page a beamer template reads: no separator and one slot per node, its literal text and
+fonts set as inline content. -/
+private def applyTitlePage (s : PreState) (rd : TitleTemplate.Read) (file : String) (pos : Pos) :
+    EM PreState := do
+  let ctx := { s.ctx with
+    file := file, engineTokens := engineLengthTokens s.docClass s.classOptions s.page }
+  let what := "the title-page template"
+  let len (key : String) : Option String → EM (Option SymGlue)
+    | some v => styleLength ctx key v.trimAscii.toString pos (what := what)
+    | none => pure none
+  let point (key v : String) : EM (Option Ir.BoxPoint) := do
+    match Ir.BoxPoint.ofName? v.trimAscii.toString with
+    | some p => return some p
+    | none =>
+      diag ctx .E0323 s!"'{key}' in {what} expects a compass point such as north west, got '{v}'" pos
+      return none
+  let mut slots : Array Ir.TitleSlot := #[]
+  for n in rd.nodes do
+    let mut parts : Array Ir.TitlePart := #[]
+    let mut ok := true
+    for p in n.parts do
+      let datum := p.datum.bind Ir.TitleDatum.ofName?
+      if p.datum.isSome && datum.isNone then
+        ok := false
+        diag ctx .E0323 s!"'{p.datum.getD ""}' in {what} is no title, subtitle, author, institute \
+or date" pos
+      let content : Array Inline ← if p.datum.isSome then pure #[] else
+        do pure ((← styleInline ctx p.content pos).getD #[])
+      let before ← len "before" p.before
+      let size ← len "size" p.size
+      let leading ← len "leading" p.leading
+      if p.align.any (!["left", "center", "right"].contains ·) then
+        ok := false
+        diag ctx .E0323 s!"'align' in {what} expects left, center, or right, got '{p.align.getD ""}'" pos
+      let font ← match TitleTemplate.partFont rd p with
+        | some f => styleInline ctx f pos
+        | none => pure none
+      parts := parts.push { datum, content, font, align := p.align, size, leading
+                            newLine := p.newLine, before }
+    unless ok do continue
+    if !n.pinned then
+      slots := slots.push (Ir.TitleSlot.ofNodeParts parts none none)
+      continue
+    let anchor ← point "anchor" n.anchor
+    let pagePoint ← point "at" n.pagePoint
+    let xshift ← len "xshift" n.xshift
+    let yshift ← len "yshift" n.yshift
+    let width ← len "width" n.width
+    let innerSep ← len "inner-sep" n.innerSep
+    let place : Option Ir.TitlePlace :=
+      if anchor.isNone && pagePoint.isNone then none
+      else some { anchor := anchor.getD .center, pagePoint := pagePoint.getD .center
+                  xshift, yshift, innerSep }
+    slots := slots.push (Ir.TitleSlot.ofNodeParts parts width place)
+  let st : ElementStyle := (s.styles.find? "titlepage").getD {}
+  noteDeclared ctx "style" "titlepage"
+  noteSetting ctx (.style "titlepage") pos
+  let st := { st with separator := none, slots := st.slots ++ slots }
+  return { s with styles := s.styles.declare "titlepage" st }
+
+/-- A template the preamble installed, applied where it ends. -/
+private def applyTemplate (s : PreState) : Compat.TemplateDecl → EM PreState
+  | .block element r colors file pos => applyBlockShape s element r colors file pos
+  | .titlePage rd file pos => applyTitlePage s rd file pos
 
 private def beginDoc (file : String) (raws : Array Raw) (picPre : String)
     (picSets : Array (Span × Array Raw)) (picMacros : Array (String × String))
     (picMetric : Ir.Pic.LabelMetric) (picWithdrawn : Array String)
-    (listingReplies : Array ListingReply.Answer) (blockShapes : Array Compat.BlockShapeDecl)
+    (listingReplies : Array ListingReply.Answer) (templates : Array Compat.TemplateDecl)
     (profile : Option Icc.Transform := none) : EM DocPreamble := do
   let docIdx := raws.findIdx? fun r =>
     match r with
@@ -16118,8 +16190,8 @@ private def beginDoc (file : String) (raws : Array Raw) (picPre : String)
                         withdrawn := picWithdrawn, macros := picMacros
                         sets := picSets, graphics := Compat.graphicsPath file raws } }
       palette := shown }
-  -- The templates' shapes stand where the preamble ends, past every declaration of its own.
-  let s ← if docIdx.isSome then blockShapes.foldlM applyBlockShape s else pure s
+  -- The templates stand where the preamble ends, past every declaration of its own.
+  let s ← if docIdx.isSome then templates.foldlM applyTemplate s else pure s
   return { state := s, decls, body, trailing }
 
 private def prepareStyledBody (file : String) (decls : Array PDecl)
@@ -16459,10 +16531,10 @@ public theorem finishPreamble_run_congr (file : String) (preamble : DocPreamble)
 private def elabDocCore (file : String) (raws : Array Raw) (picPre : String)
     (picSets : Array (Span × Array Raw)) (picMacros : Array (String × String))
     (picMetric : Ir.Pic.LabelMetric) (picWithdrawn : Array String)
-    (listingReplies : Array ListingReply.Answer) (blockShapes : Array Compat.BlockShapeDecl) :
+    (listingReplies : Array ListingReply.Answer) (templates : Array Compat.TemplateDecl) :
     EM (Doc × Ir.RefTable × PictureReportContext) := do
   let preamble ← beginDoc file raws picPre picSets picMacros picMetric picWithdrawn listingReplies
-    blockShapes
+    templates
   finishPreamble file preamble
 
 /-- Elaborates a document and names the unread settings of its engine-drawn
@@ -16473,11 +16545,11 @@ public def elabDoc (file : String) (raws : Array Raw) (picPre : String := "")
     (picMetric : Ir.Pic.LabelMetric := fun _ _ => {})
     (picWithdrawn : Array String := #[])
     (listingReplies : Array ListingReply.Answer := #[])
-    (blockShapes : Array Compat.BlockShapeDecl := #[]) :
+    (templates : Array Compat.TemplateDecl := #[]) :
     EM (Doc × Ir.RefTable) := fun initial =>
   let ((doc, table, report), st) :=
     (elabDocCore file raws picPre picSets picMacros picMetric picWithdrawn listingReplies
-      blockShapes).run initial
+      templates).run initial
   ((doc, table), finishPictureKeys report doc picSets st)
 
 /-- Where a document's requests were declared, for the driver's missing-file
@@ -16531,8 +16603,8 @@ public structure Prepared where
   listNotes : Array Nat := #[]
   /-- The declared output profile's transform, which the host read for this input. -/
   profile : Option Icc.Transform := none
-  /-- The block shapes beamer's templates read, applied where the preamble ends. -/
-  blockShapes : Array Compat.BlockShapeDecl := #[]
+  /-- The templates beamer's preamble installs, applied where it ends. -/
+  templates : Array Compat.TemplateDecl := #[]
 
 /-- The name a definer's head binds, when its next item (past spaces and a
 `*`) is a one-word group. -/
@@ -16633,16 +16705,16 @@ output, with the caller's scans. -/
 public def prepareRewritten (file : String) (picScan : Compat.BoundaryScan)
     (picMacros : Array (String × String)) (sourceTriggers : Compat.SourceTriggers)
     (priorDiags : Array Diag)
-    (rewritten : Array Raw × Array Diag × Array String × Array Compat.BlockShapeDecl)
+    (rewritten : Array Raw × Array Diag × Array String × Array Compat.TemplateDecl)
     (inputAttempts : Array Compat.InputAttempt := #[]) (mentions : Array String := #[]) :
     Prepared :=
-  let (raws, compatDiags, warned, blockShapes) := rewritten
+  let (raws, compatDiags, warned, templates) := rewritten
   let (raws, textDiags, warned) := Compat.rewriteText file raws warned
   { raws := raws, picPre := picScan.pre, picSets := picScan.sets
     picMacros := picMacros, warned := warned
     compatDiags := priorDiags ++ compatDiags ++ textDiags
     sourceTriggers := sourceTriggers, inputAttempts := inputAttempts, mentions := mentions
-    blockShapes := blockShapes }
+    templates := templates }
 
 /-- Prepares a document whose macro and input execution already ran. -/
 public def prepareExecuted (file : String) (executed : Compat.Executed) : Prepared :=
@@ -16655,7 +16727,7 @@ public def prepareExecuted (file : String) (executed : Compat.Executed) : Prepar
 private theorem prepareRewritten_carried_exact (file : String)
     (scan : Compat.BoundaryScan) (macros : Array (String × String))
     (triggers : Compat.SourceTriggers) (prior : Array Diag)
-    (rewritten : Array Raw × Array Diag × Array String × Array Compat.BlockShapeDecl)
+    (rewritten : Array Raw × Array Diag × Array String × Array Compat.TemplateDecl)
     (attempts : Array Compat.InputAttempt) (mentions : Array String) :
     (prepareRewritten file scan macros triggers prior rewritten attempts mentions).inputAttempts =
         attempts ∧
@@ -16749,7 +16821,7 @@ public def preambleDoc (file : String) (p : Prepared) : Doc :=
   let raws := match docIdx with
     | some idx => (p.raws.extract 0 idx).push (.env "document" #[] { line := 0, col := 0 })
     | none => #[.env "document" #[] { line := 0, col := 0 }]
-  ((elabDoc file raws p.picPre p.picSets p.picMacros (blockShapes := p.blockShapes)).run
+  ((elabDoc file raws p.picPre p.picSets p.picMacros (templates := p.templates)).run
     { warnedUnknown := p.warned }).1.1
 
 /-- An unlocated report for a recovery that arrived without its producer's
@@ -16904,7 +16976,7 @@ public def preparedPreamble (file : String) (p : Prepared)
     (picWithdrawn : Array String := #[]) : DocPreamble × ESt :=
   -- Starts from the rewrite's warn-once keys, so no warning is said twice.
   (beginDoc file p.raws p.picPre p.picSets p.picMacros picMetric picWithdrawn
-    p.listingReplies p.blockShapes p.profile).run
+    p.listingReplies p.templates p.profile).run
       { warnedUnknown := p.warned, ctr := { listNotes := p.listNotes } }
 
 /-- The body plan and state after the declaration fold and class defaults. -/

@@ -127,7 +127,7 @@ attribute [local irreducible] Compat.rewriteText in
 public theorem prepareRewritten_diags_covers (file : String)
     (scan : Compat.BoundaryScan) (macros : Array (String × String))
     (triggers : Compat.SourceTriggers) (prior : Array Diag)
-    (rewritten : Array Parse.Raw × Array Diag × Array String × Array Compat.BlockShapeDecl)
+    (rewritten : Array Parse.Raw × Array Diag × Array String × Array Compat.TemplateDecl)
     (attempts : Array Compat.InputAttempt) (mentions : Array String) (d : Diag)
     (h : d ∈ rewritten.2.1) :
     d ∈ (prepareRewritten file scan macros triggers prior rewritten attempts mentions).compatDiags := by

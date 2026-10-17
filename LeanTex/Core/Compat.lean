@@ -11,7 +11,7 @@ import LeanTex.Core.KeyVal
 import LeanTex.Core.PdfDate
 public import LeanTex.Core.Ir
 import LeanTex.Core.BeamerColor
-import LeanTex.Core.TitleTemplate
+public import LeanTex.Core.TitleTemplate
 public import LeanTex.Core.BlockTemplate
 public import LeanTex.Core.Tcolorbox
 import LeanTex.Core.LoopProgress
@@ -578,14 +578,13 @@ private structure ListingDefault where
   file : String
   read : Bool := false
 
-/-- A beamer block kind's shape as its templates read it: the element it styles, the palette entry
-each rule paints, and the file and site the templates stand at. -/
-public structure BlockShapeDecl where
-  element : String
-  read : BlockTemplate.Read
-  colors : Array String
-  file : String
-  pos : Pos
+/-- A beamer template the preamble installs, read typed for the elaborator to apply where the
+preamble ends: a block kind's shape on the element it styles, each rule painted by the palette
+entry it names, or the title page; each with the file and site it stands at. -/
+public inductive TemplateDecl where
+  | block (element : String) (read : BlockTemplate.Read) (colors : Array String) (file : String)
+      (pos : Pos)
+  | titlePage (read : TitleTemplate.Read) (file : String) (pos : Pos)
 
 private structure St where
   file : String
@@ -834,8 +833,8 @@ private structure St where
   /-- beamer's block templates the preamble installs, by element, read as pairs
   where the preamble ends. -/
   beamerTemplates : Array (String × String × Pos × Array Raw) := #[]
-  /-- The block shapes the templates read, handed to the elaborator typed. -/
-  blockShapes : Array BlockShapeDecl := #[]
+  /-- The templates read, handed to the elaborator typed. -/
+  templates : Array TemplateDecl := #[]
   /-- Named block templates a `\setbeamertemplate{element}[name]` installs. -/
   beamerTemplateDefs : Array ((String × String) × Array Raw) := #[]
   /-- The families declared beside the three slots, in the
@@ -7900,6 +7899,7 @@ private def flushBeamerBlocks : M (Array Raw) := do
     let flags : String → Option Bool := fun x => st.templateFlags[x]?
     let unread : Array String ← match b, e with
       | some (_, _, _, bb), some (_, _, _, eb) =>
+        if !st.wholeDoc then pure #["no '\\begin{document}' ends a preamble for them"] else
         -- premise: capitalRegisterChecks — no text outside the templates reads their registers
         let lengths : String → Option (Option BlockTemplate.Dimen) := fun n =>
           if st.allocated.contains n then some none else none
@@ -7923,6 +7923,10 @@ which they run, before a block"]
             (r.bodyPaint.isNone || inks r.bodyPaint bodyEl)
           if !titleOk then pure #[s!"a title set in another font or colour than '{titleEl}'"]
           else if !bodyOk then pure #[s!"a body set in another font or colour than '{bodyEl}'"]
+          else if r.edges.any (fun e => e.paint.any fun
+              | .named n => !Decl.wholeValue n
+              | .beamer .. => false) then
+            pure #["a rule painted in a colour no palette entry spells"]
           else
             let mut colors : Array String := #[]
             for (edge, i) in r.edges.zipIdx do
@@ -7938,9 +7942,8 @@ which they run, before a block"]
                 colors := colors.push role
               | none => colors := colors.push "fg"
             became s!"{beginEl} / {endEl}" s!"the shape of each '{styleEl}'" pos
-            let decl : BlockShapeDecl :=
-              { element := styleEl, read := r, colors := colors, file := file, pos := pos }
-            write fun st => { st with blockShapes := st.blockShapes.push decl }
+            let decl := TemplateDecl.block styleEl r colors file pos
+            write fun st => { st with templates := st.templates.push decl }
             pure #[]
       | some _, none => pure #[s!"its '{endEl}' half, which the document never sets"]
       | none, _ => pure #[s!"its '{beginEl}' half, which the document never sets"]
@@ -7948,7 +7951,7 @@ which they run, before a block"]
       sayOnce ("beamer:template:" ++ beginEl) .W0110
         s!"the '{beginEl}' and '{endEl}' templates are not read: \
 {String.intercalate "; " unread.toList}; those blocks keep beamer's default template" pos
-        (help := "write the template with \\setbox, \\vbox, \\llap, \\vrule, \\strut and \\usebeamercolor, or style the block with \\style{block}{...}")
+        (help := "write the template with \\setbox, \\vbox, \\llap, \\vrule, \\strut and \\usebeamercolor")
     write fun st => { st with file := savedFile }
   return out
 
@@ -8635,12 +8638,24 @@ defines; those blocks keep beamer's default template" pos
         | some ground => return some (← carry (.palette #[("titlepagebg", ground)]) pos, k)
         | none => return some (#[], k)
       | some rd =>
-        let settings := TitleTemplate.settings rd
+        if (← get).inDoc then
+          sayOnce "beamer:template:title page" .W0104
+            "'\\setbeamertemplate{title page}' in the document body is skipped: only a preamble \
+title-page template is read" pos (help := "set the title-page template in the preamble")
+          return some (#[], k)
+        -- premise: titleTemplateTextChecks — a template no document follows applies to no page
+        unless (← get).wholeDoc do
+          sayOnce "beamer:template:title page" .W0110
+            "the title-page template is not read: no '\\begin{document}' ends a preamble for it; \
+the built-in title page stands" pos
+          return some (#[], k)
+        let palette : Native.Setting := .palette (TitleTemplate.roles rd)
         -- premise: themeTitleShipChecks — a selected theme font's size reaches the page
         let skips := rd.fonts.map ("beamer:setbeamerfont:" ++ ·)
         write fun st => { st with diags := st.diags.filter fun d =>
           !(d.code == DiagCode.W0104.code && d.subject.any skips.contains) }
-        became "\\setbeamertemplate{title page}" (String.join (settings.toList.filterMap (·.note?))) pos
+        became "\\setbeamertemplate{title page}"
+          ((palette.note?.map (· ++ " and ")).getD "" ++ "the title page, one slot per node") pos
         unless rd.unread.isEmpty do
           sayOnce "beamer:setbeamertemplate:title page" .W0110
             s!"not read from the title-page template: \
@@ -8651,7 +8666,8 @@ defines; those blocks keep beamer's default template" pos
         for (construct, datum) in rd.skipped do
           let (sfx, msg) := TitleTemplate.skippedLoss construct datum
           sayOnce ("beamer:setbeamertemplate:title page:" ++ sfx) .W0104 msg pos
-        return some (← settings.foldlM (init := #[]) fun out s => return out ++ (← carry s pos), k)
+        write fun st => { st with templates := st.templates.push (.titlePage rd st.file pos) }
+        return some (← carry palette pos, k)
       | none =>
       -- `\setbeamertemplate{title page}` is beamer's spelling of `\renewcommand{\maketitle}`.
       became "\\setbeamertemplate{title page}" "\\define \\maketitle() {...}" pos
@@ -13521,12 +13537,12 @@ private def finishRewrittenState (result : Array Raw × St) : Array Raw × St :=
 
 /-- The production tail after the compatibility walk. -/
 private def finishRewritten (result : Array Raw × St) :
-    Array Raw × Array Diag × Array String × Array BlockShapeDecl :=
+    Array Raw × Array Diag × Array String × Array TemplateDecl :=
   let (out, st) := finishRewrittenState result
   let out := if st.beamerBlockBegin.isEmpty then out
     else blockHookList st.beamerBlockBegin #[] out.toList
   let out := if st.kept.isEmpty then out else Parse.spliceKeptList st.kept #[] out.toList
-  (out, st.diags, st.warned, st.blockShapes)
+  (out, st.diags, st.warned, st.templates)
 
 attribute [local irreducible] boxRowList boxRowEmit finishDeclarations
   finishRewrittenState in
@@ -13552,12 +13568,12 @@ private theorem finishRewritten_named (result : Array Raw × St) (d : Diag)
 /-- Completes a rewrite checkpoint: boxes, running content, deferred hooks,
 counters and block hooks. -/
 public def finishRewrite (cursor : RewriteCursor) :
-    Array Raw × Array Diag × Array String × Array BlockShapeDecl :=
+    Array Raw × Array Diag × Array String × Array TemplateDecl :=
   finishRewritten (rewriteCursor cursor)
 
 /-- The compatibility rewrite finished after execution and file fulfilment. -/
 @[expose] public def rewriteExecuted (executed : Executed) :
-    Array Raw × Array Diag × Array String × Array BlockShapeDecl :=
+    Array Raw × Array Diag × Array String × Array TemplateDecl :=
   finishRewrite (beginRewrite executed)
 
 /-- Names for which the package dispatcher has no native, external-picture or
@@ -13635,7 +13651,7 @@ public theorem executeInputs_package_refusal_contract (reader : InputReader Id)
 `call` and from the state it leaves. -/
 public def finishCtrlRowDocument (cursor : RewriteCursor) (row : CtrlRow) (call : CtrlCall)
     (docPos : Pos) (pre post : Array Raw) :
-    Array Raw × Array Diag × Array String × Array BlockShapeDecl :=
+    Array Raw × Array Diag × Array String × Array TemplateDecl :=
   finishRewritten (closeLastDocument cursor docPos
     (pre ++ (ctrlRowRun row call (openDocumentBody cursor.state).2).1 ++ post,
       ctrlRowState (openDocumentBody cursor.state).2 row call))

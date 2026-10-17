@@ -2368,6 +2368,51 @@ private def braceEolChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((raws "{\n x}").toList matches [.group #[.word "x" _] _] &&
       (raws "{x\n}").toList matches [.group #[.word "x" _] _])
 
+/-- A skip below the block sums its terms as TeX does: a negative em term and a stretch of several
+terms put the next paragraph where their one-length spellings put it. -/
+private def skipSumChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  let close := "\\newcommand{\\probe@close}{\\par\\vskip\\smallskipamount}\n"
+  let closing (skip : String) : String :=
+    hanging.replace close ("\\newcommand{\\probe@close}{\\par\\vskip " ++ skip ++ "}\n")
+  let below (name skip : String) : Option Dim.Sp := do
+    let (_, out, _) := layout fonts name (closing skip)
+    let page ← out.pages[0]?
+    let body ← lineOf page "Second body paragraph."
+    let trail ← lineOf page "Trailing paragraph below."
+    return trail.y - body.y
+  let cases : List (String × String × String) :=
+    [("negative em", "\\dimexpr 2pt-0.5em\\relax", "-3pt"),
+     ("summed stretch", "2pt plus \\dimexpr 1pt+0.5em\\relax", "2pt plus 6pt")]
+  for (name, summed, single) in cases do
+    check ref s!"skip sum {name}: the probes differ from the probe"
+      (closing summed != hanging && closing single != hanging)
+    let a := below s!"skipsum-{name}" summed
+    let b := below s!"skipsum-{name}-single" single
+    check ref s!"skip sum {name}: the next paragraph stands where the one-length skip puts it ({a}, {b})"
+      (a.isSome && a == b)
+
+/-- A block template no `\begin{document}` ends a preamble for, or whose rule's colour no palette
+entry spells, is named unread once, and its blocks keep the default pair. -/
+private def unreadTemplateChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let bare := ((hanging.replace "\\documentclass[10pt,aspectratio=169]{beamer}\n" "").replace
+    "\\begin{document}\n" "").replace "\\end{document}\n" ""
+  let paint := "{\\usebeamercolor[bg]{probe edge}%\n        \\vrule width .3em"
+  let unspelled := hanging.replace paint "{\\color{rgb:red,4;green,2;yellow,1}%\n        \\vrule width .3em"
+  let cases : List (String × String × String) :=
+    [("bare", bare, "begin{document}"),
+     ("unspelled", unspelled, "a rule painted in a colour no palette entry spells")]
+  for (name, src, why) in cases do
+    check ref s!"unread template {name}: the probe differs from the probe" (src != hanging)
+    let (doc, diags) := Elab.run s!"block-template-{name}.tex" src
+    let named := diags.filter fun d =>
+      d.code == "W0110" && d.subject == some "beamer:template:block begin"
+    check ref s!"unread template {name}: named once, for its reading ({diags.map (·.code)})"
+      (named.size == 1 && named.all (hasStr ·.message why) &&
+        diags.all fun d => d.code != "W0101" && d.code != "E0326" &&
+          !(d.code == "N0100" && hasStr d.message "the shape of each 'block'"))
+    check ref s!"unread template {name}: its blocks keep the default pair"
+      (((doc.styles.find? "block").bind (·.shape)).isNone)
+
 def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   pageChecks ref fonts
   voidedChecks ref fonts
@@ -2394,5 +2439,7 @@ def checks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   wholeBarReadingChecks ref
   templateCodeChecks ref
   braceEolChecks ref
+  skipSumChecks ref fonts
+  unreadTemplateChecks ref
 
 end Tests.BlockTemplate
