@@ -341,6 +341,28 @@ private theorem elabBlocksGo_blank (ctx : Ctx) (st : ESt) (raws : Array Raw) (i 
   · rename_i heq; rw [heq] at hb; simp [sourceBlank] at hb
   · simp [sourceBlank_spaceOrPar _ hb]
 
+/-- What follows a blank tail is the end or a paragraph break, so no paragraph goes on past it. -/
+private theorem parContinues_blank (ctx : Ctx) (raws : Array Raw) (j : Nat) (bs : Array Block)
+    (hblank : ∀ k (hk : k < raws.size), j ≤ k → sourceBlank raws[k] = true) :
+    parContinues ctx raws j bs = bs := by
+  have key : ∀ k, j ≤ k → raws[skipSpaces raws k]? = none ∨
+      ∃ p, raws[skipSpaces raws k]? = some (.par p) := by
+    intro k hk
+    induction k using Parse.skipSpaces.induct raws with
+    | case1 k h hsp ih =>
+      rw [Parse.skipSpaces]; simp only [h, hsp, dite_true, ite_true]; exact ih (by omega)
+    | case2 k h hsp =>
+      rw [Parse.skipSpaces]; simp only [h, hsp, dite_true, ite_false, Bool.false_eq_true]
+      have hb := hblank k h hk
+      cases hr : raws[k] with
+      | space => simp [hr] at hsp
+      | par p => exact .inr ⟨p, by simp [Array.getElem?_eq_getElem h, hr]⟩
+      | _ => simp [hr, sourceBlank] at hb
+    | case3 k h =>
+      rw [Parse.skipSpaces]; simp only [h, dite_false]; exact .inl (by simp [h])
+  unfold parContinues
+  rcases key j (Nat.le_refl _) with h | ⟨p, h⟩ <;> simp [h]
+
 private theorem elabBlocksGo_input_at (ctx : Ctx) (st : ESt) (raws : Array Raw) (i : Nat)
     (n f : String) (hn : Parse.inputEnvFile? n = some f) (body : Array Raw) (pos : Pos) (gen : Nat)
     (hg : st.flowGen = gen)
@@ -351,7 +373,8 @@ private theorem elabBlocksGo_input_at (ctx : Ctx) (st : ESt) (raws : Array Raw) 
       ((do
         let bs ← elabEnvArm ctx n body pos #[]
         elabBlocksNext ctx raws (i + 1)
-          (Ir.markDisplay false (parFollows raws (i + 1)) false 0 bs) gen) :
+          (parContinues ctx raws (i + 1)
+            (Ir.markDisplay false (parFollows raws (i + 1)) false 0 bs)) gen) :
         EM (Array Block)).run st := by
   subst hg
   rw [elabBlocksGo, run_get]
@@ -551,7 +574,11 @@ private theorem elabBlockScope_input_exact (ctx : Ctx) (n f : String)
   have hend := fun s b => elabBlocksGo_blanks_end
     (pre ++ #[Raw.env n body pos] ++ post) b _ (pre.size + 1) st.flowGen ctx s
     rfl hm (fun j hj hij => hblank j hj (by omega))
-  simp only [StateT.run_bind, hx, closeBlockScope_base, hend, parFollows_include pre post _ hpost]
+  have hcont := fun b => parContinues_blank ctx
+    (pre ++ #[Raw.env (Parse.inputEnv f) body pos] ++ post) (pre.size + 1) b
+    (fun j hj hij => hblank j hj (by omega))
+  simp only [StateT.run_bind, hx, closeBlockScope_base, hend, hcont,
+    parFollows_include pre post _ hpost]
   rfl
 
 public theorem elabBlocks_input_exact (ctx : Ctx) (n f : String)

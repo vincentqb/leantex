@@ -88,15 +88,16 @@ private def inlineReads (acc : Shown) : Inline → Shown
   | .linebreak _ => acc
 
 /-- The inline walk, carrying the lists' nesting depths through. -/
-private def inlineFold : CtxFold (Nat × Nat) Shown where
+private def inlineFold : CtxFold (Nat × Nat × Nat) Shown where
   openBlock := fun ctx acc _ => (acc, ctx)
   closeBlock := fun _ acc _ => acc
   openInline := fun ctx acc x => (inlineReads acc x, ctx)
   closeInline := fun _ acc _ => acc
 
 /-- The elements one block reads on entry, every element of a tag the web page's rules address
-counted, and the list depths its content stands at. -/
-private def blockReads (ctx : Nat × Nat) (acc : Shown) (b : Block) : Shown × (Nat × Nat) :=
+counted, and the itemize, enumerate and quotation depths its content stands at. -/
+private def blockReads (ctx : Nat × Nat × Nat) (acc : Shown) (b : Block) :
+    Shown × (Nat × Nat × Nat) :=
   let inlines (acc : Shown) (xs : Array Inline) : Shown := foldCtxInlines inlineFold ctx acc xs
   match b with
   | .section level _ _ _ =>
@@ -108,17 +109,17 @@ private def blockReads (ctx : Nat × Nat) (acc : Shown) (b : Block) : Shown × (
   | .bibliography _ _ _ => (acc.element "itemize", ctx)
   | .list ordered _ _ =>
     let kind := if ordered then "enumerate" else "itemize"
-    let depth := (if ordered then ctx.2 else ctx.1) + 1
+    let depth := (if ordered then ctx.2.1 else ctx.1) + 1
     let acc := acc.element kind
     -- An unordered list may be a description list, whose scopes it reads too.
     let kinds := if ordered then [(kind, depth)]
       else (kind, depth) :: [1, 2, 3, 4].map ("description", ·)
     let acc := kinds.foldl (fun acc (k, kd) =>
-      (Ir.listSetScopes k (ctx.1 + ctx.2 + 1) kd).foldl Shown.element acc) acc
+      (Ir.listSetScopes k (ctx.1 + ctx.2.1 + ctx.2.2 + 1) kd).foldl Shown.element acc) acc
     let acc := match listLevel kind depth with
       | some el => acc.element el
       | none => acc
-    (acc, if ordered then (ctx.1, depth) else (depth, ctx.2))
+    (acc, if ordered then (ctx.1, depth, ctx.2.2) else (depth, ctx.2))
   | .frame title standout _ _ _ =>
     let acc := if standout then acc.element "standout" else acc
     (if title.isEmpty then acc
@@ -133,13 +134,14 @@ private def blockReads (ctx : Nat × Nat) (acc : Shown) (b : Block) : Shown × (
     let acc := acc.face "mono"
     ((spec.caption.map fun (_, c) => inlines acc c).getD acc, ctx)
   | .picture pic => (pic.labelContents.foldl inlines acc, ctx)
-  | .para _ | .lines _ | .center _ | .ragged _ _ | .spaced _ _ | .link _ _ | .quote _ _
+  | .quote _ _ => (acc, (ctx.1, ctx.2.1, ctx.2.2 + 1))
+  | .para _ | .lines _ | .center _ | .ragged _ _ | .spaced _ _ | .link _ _
   | .disclosure _ _ _ | .columns _ | .onSteps _ _ | .altSteps _ _ _
   | .note _ | .only _ _ | .pagebreak | .framefoot _ | .setPalette _ | .setTokens _
   | .rule _ _ _ | .table _ _ _ _ _ _ | .float _ _ _ _ _ => (acc, ctx)
 
 /-- The block walk, each block read on entry. -/
-private def blockFold : CtxFold (Nat × Nat) Shown :=
+private def blockFold : CtxFold (Nat × Nat × Nat) Shown :=
   { inlineFold with openBlock := blockReads }
 
 /-- The text faces a drawing the engine reads later may set its words in: an image's, which an
@@ -151,8 +153,8 @@ them: a formula's text alphabet reads its text face, and an image or a boundary 
 face. -/
 -- conserves: none — reads what the content sets.
 public def shown (doc : Doc) (consumed : Array String := #[]) : Shown :=
-  let body := foldCtxBlocks blockFold (0, 0) { elements := consumed } doc.body
-  let acc := (furnitureInlines doc).foldl (foldCtxInlines inlineFold (0, 0)) body
+  let body := foldCtxBlocks blockFold (0, 0, 0) { elements := consumed } doc.body
+  let acc := (furnitureInlines doc).foldl (foldCtxInlines inlineFold (0, 0, 0)) body
   let acc := if doc.headline.isSome then { acc.element "titlepage" with headings := true } else acc
   let acc := if doc.logo.isSome || doc.logoLeft.isSome || doc.logoRight.isSome then
     acc.element "logo" else acc

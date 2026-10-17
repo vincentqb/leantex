@@ -820,10 +820,15 @@ public theorem titlepage_empty_exact (s : PageState) :
         { folio := some 1 } = { folio := 1, furniture := false } := by
   simp [PageState.applyOpening]
 
+/-- The role an empty marker rides in after an environment whose paragraph goes on past it, as
+`\@endpe` sets the text after it with no first-line indent. -/
+public def parContinuesRole : String := "par continues"
+
 /-- The engine roles that mark a fact of the page model and carry no content. -/
 @[expose] public def pageMarkerRole (n : String) : Bool :=
   n == pageAnchorRole || n == noInterlineRole || n == primitiveSkipRole ||
-    (pageOpeningOfRole? n).isSome || n == squeezeRole || n == squeezeFitRole || fitMarkRole n
+    (pageOpeningOfRole? n).isSome || n == squeezeRole || n == squeezeFitRole || fitMarkRole n ||
+    n == parContinuesRole
 
 public theorem pageOpening_marker_exact (n : String) (opening : PageOpening)
     (h : pageOpeningOfRole? n = some opening) : pageMarkerRole n = true := by
@@ -4721,20 +4726,50 @@ public theorem QuoteKind.ofName?_name (k : QuoteKind) : ofName? k.name = some k 
   cases k <;> rfl
 
 /-- The vertical keys an environment's own list setting declares over its level's: quotation's
-`\parsep 0pt plus 1pt` and verse's `\itemsep 0pt` (classes.dtx). -/
-public def QuoteKind.own : QuoteKind → ListSet
+`\parsep 0pt plus 1pt`, verse's `\itemsep 0pt`, and under beamer verse's
+`\parsep .75em plus .25em minus .25em` (classes.dtx, beamerbaselocalstructure.sty). -/
+public def QuoteKind.own (l : ListLineage) : QuoteKind → ListSet
   | .quote => {}
   | .quotation => { parsep := some { stretch := Dim.Length.ofSp (Dim.pt 1) } }
-  | .verse => { itemsep := some {} }
+  | .verse =>
+    if l == .beamer then
+      { itemsep := some {}
+        parsep := some { width := { em := 750 }, stretch := { em := 250 }, shrink := { em := 250 } } }
+    else { itemsep := some {} }
 
 /-- How far verse's lines hang from its margin, its `\itemindent -1.5em` (classes.dtx). -/
 public def verseHang : Dim.Length := { em := 1500 }
 
-/-- A quote's environment and its spacing over its level's, as a list's (`listSpacing`). -/
+/-- A quote's environment and what it keeps of the lists around it over its level's, its
+environment's own keys standing over both (`quoteSpacing`). -/
 public structure QuoteSpec where
   kind : QuoteKind
   spacing : ListSet
   deriving Repr, BEq, Inhabited, Hashable
+
+/-- A quotation's spacing and `\partopsep` at `\@listdepth` `level`: its level's under what it keeps
+and its environment's own keys over both; the web's quotations declare only what they keep. -/
+public def quoteSpacing (l : ListLineage) (size : Sp) (level : Nat) (tokens : Tokens) (q : QuoteSpec) :
+    Option (ListSkips × SymGlue) :=
+  match listSkips l size level with
+  | some _ => listSpacing l size level tokens (q.spacing.over (q.kind.own l))
+  | none => listSpacing l size level tokens q.spacing
+
+public theorem quoteSpacing_own_exact (l : ListLineage) (size : Sp) (level : Nat) (tokens : Tokens)
+    (q : QuoteSpec) (sk : ListSkips) (p : SymGlue) (hl : l ≠ .web)
+    (h : quoteSpacing l size level tokens q = some (sk, p)) :
+    (∀ g, (q.kind.own l).parsep = some g → sk.parsep = g) ∧
+      (∀ g, (q.kind.own l).itemsep = some g → sk.itemsep = g) := by
+  have hsome : (listSkips l size level).isSome := by
+    cases l with
+    | web => exact absurd rfl hl
+    | beamer => rfl
+    | sizeFile => unfold listSkips; dsimp only; split <;> rfl
+  unfold quoteSpacing at h
+  obtain ⟨sk0, hs⟩ := Option.isSome_iff_exists.mp hsome
+  rw [hs] at h
+  obtain ⟨-, hi, hp, -⟩ := listSpacing_declared_exact l size level tokens _ sk p h
+  exact ⟨fun g hg => hp g (by simp [ListSet.over, hg]), fun g hg => hi g (by simp [ListSet.over, hg])⟩
 
 public inductive Block where
   | para (content : Array Inline)
@@ -5035,6 +5070,23 @@ public def displayCtxOf (b : Block) : DisplayCtx × Block :=
     | some c, [d] => (c, d)
     | _, _ => ({}, b)
   | _ => ({}, b)
+
+/-- Whether the paragraph after `b` goes on with the one `b` stood in: after an environment's
+`parContinuesRole` marker, or a display its paragraph does not end at. -/
+public def Block.continuesPar (b : Block) : Bool :=
+  match b with
+  | .role n body =>
+    if body.isEmpty then n == parContinuesRole
+    else (displayCtxOf b).2.isDisplay && !(displayCtxOf b).1.parEnd
+  | _ => b.isDisplay
+
+public theorem pageOpening_continuesPar (n : String) (opening : PageOpening)
+    (h : pageOpeningOfRole? n = some opening) : (Block.role n #[]).continuesPar = false := by
+  have hn : n ≠ parContinuesRole := by
+    intro e
+    subst e
+    simp [pageOpeningOfRole?, parContinuesRole, titlePageBeginRole, titlePageEndRole] at h
+  simp [Block.continuesPar, hn]
 
 /-- Record where the display an arm pushed past `k` stands in its paragraph (`DisplayCtx`). -/
 public def markDisplay (inPar parEnd afterEnv : Bool) (k : Nat) (blocks : Array Block) : Array Block :=
@@ -7452,6 +7504,15 @@ public def classParskip? (value : Option String) (skip : Sp) : Option SymGlue :=
   | "false" | "off" | "no" => some texParskipDefault
   | "full" | "full-" | "full+" | "full*" | "true" | "on" | "yes" => some (lines 10 1)
   | "half" | "half-" | "half+" | "half*" => some (lines 5 5)
+  | _ => none
+
+/-- The space a class's `parskip` option keeps free after a paragraph's last line, as
+`\setparsizes` sets `\parfillskip`; `none` where the line may run to the margin. -/
+public def classParfill? (value : Option String) : Option String :=
+  match value.getD "true" with
+  | "full" | "half" | "true" | "on" | "yes" => some "1em"
+  | "full+" | "half+" => some "a third of the line"
+  | "full*" | "half*" => some "a quarter of the line"
   | _ => none
 
 /-- The font a package measures its lengths in as it loads: Latin Modern at

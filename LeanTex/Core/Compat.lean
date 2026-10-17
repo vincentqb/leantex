@@ -163,11 +163,8 @@ private def classNormalSkip (pt : Nat) : Int :=
   let milli := (Ir.sizeFileLeading (Dim.pt pt) 1000 "normalsize" * 1000 + 32768) / 65536
   (milli * 65536 + 500) / 1000
 
-/-- KOMA-Script's classes, whose `\normalsize` defaults to 11pt where the native article's is 10pt. -/
-private def komaClasses : List String := ["scrartcl", "scrreprt", "scrbook"]
-
 /-- The point size a standard class's options set `\normalsize` at: its one size option of 10, 11
-or 12pt, else 10pt, a KOMA-Script class's 11pt; none past a size option of any other size. -/
+or 12pt, else its record's size or 10pt; none past a size option of any other size. -/
 public def classNormalPt (cls : String) (opts : List String) : Option Nat :=
   let sized (v : String) : Bool :=
     2 < v.length && v.endsWith "pt" && (v.dropEnd 2).toString.toList.all fun c => c.isDigit || c == '.'
@@ -176,10 +173,11 @@ public def classNormalPt (cls : String) (opts : List String) : Option Nat :=
       if v == "10pt" then some (some 10) else if v == "11pt" then some (some 11)
       else if v == "12pt" then some (some 12) else if sized v then some none else none
     | _ => none
-  if cls != "article" && !articleClasses.contains cls && !komaClasses.contains cls then none
+  let native := Ir.DocClass.ofString? cls
+  if cls != "article" && !articleClasses.contains cls && native != some .koma then none
   else match sizes with
     | [some n] => some n
-    | [] => some (if komaClasses.contains cls then 11 else 10)
+    | [] => some (((native.bind (·.record.fontSize)).map fun s => (s / Dim.pt 1).toNat).getD 10)
     | _ => none
 
 /-- Font-selection packages whose whole documented effect is
@@ -9296,9 +9294,13 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
       let declaration ← synthAt s!"\\documentclass{o}\{slides}" pos
       let dependencies ← rewritePackages "RequirePackage" packages none pos
       return some (declaration ++ dependencies, k)
-    else if offered.isEmpty then return none
     else
-      let o := if keptItems.isEmpty then "" else s!"[{String.intercalate "," keptItems}]"
+      -- The options passed to a class before it loads are its own beside its written ones.
+      let passed := (← get).loads.rewriteClassPassed.toList.flatMap fun (name, options) =>
+        if name == cls then options.toList.filter (!keptItems.contains ·) else []
+      if offered.isEmpty && passed.isEmpty then return none
+      let kept := keptItems ++ passed
+      let o := if kept.isEmpty then "" else s!"[{String.intercalate "," kept}]"
       let native := s!"\\documentclass{o}\{{cls}}"
       became s!"\\documentclass[{opt.getD ""}]\{{cls}}" native pos
       return some (← synthAt native pos, k)

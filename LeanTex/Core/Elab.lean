@@ -193,6 +193,8 @@ public structure ListNest where
   set : Ir.ListSet := {}
   /-- TeX's `\parskip` inside the innermost list, its `\parsep`; `none` outside every list. -/
   parskip : Option Dim.SymGlue := none
+  /-- Directly in a quotation or a verse, whose paragraphs' first lines its class shapes. -/
+  shaped : Bool := false
   deriving Repr, BEq, Inhabited
 
 /-- A list kind's own depth, as enumitem counts its levels. -/
@@ -203,19 +205,25 @@ public def ListNest.kindDepth (nest : ListNest) (kind : String) : Nat :=
 /-- One list of `kind` deeper, its declared spacing and `\parsep` in force. -/
 public def ListNest.enter (nest : ListNest) (kind : String) (set : Ir.ListSet)
     (parsep : Dim.SymGlue) : ListNest :=
-  { nest with depth := nest.depth + 1, set := set, parskip := some parsep
+  { nest with depth := nest.depth + 1, set := set, parskip := some parsep, shaped := false
               itemize := if kind == "itemize" then nest.itemize + 1 else nest.itemize
               enumerate := if kind == "enumerate" then nest.enumerate + 1 else nest.enumerate
               description := if kind == "description" then nest.description + 1
                 else nest.description }
+
+/-- What a quotation opening here keeps over its level's: what its level keeps of the lists around
+it, under what its level's macro sets from the `\parskip` in force. -/
+public def ListNest.quoteSet (nest : ListNest) (l : Ir.ListLineage) (extra : Ir.ListExtra) (size : Sp)
+    (outer : Dim.SymGlue) : Ir.ListSet :=
+  let depth := nest.depth + 1
+  (Ir.ListSet.within l size depth nest.set).over (extra.over size depth (nest.parskip.getD outer))
 
 /-- One quotation deeper: a level whose own macro sets the skips again over what the `\parskip` in
 force asks of it, under what its environment sets (`own`), its `\parsep` TeX's `\parskip` inside. -/
 public def ListNest.quoted (nest : ListNest) (l : Ir.ListLineage) (extra : Ir.ListExtra) (size : Sp)
     (tokens : Ir.Tokens) (outer : Dim.SymGlue) (own : Ir.ListSet) : ListNest :=
   let depth := nest.depth + 1
-  let set := ((Ir.ListSet.within l size depth nest.set).over
-    (extra.over size depth (nest.parskip.getD outer))).over own
+  let set := (nest.quoteSet l extra size outer).over own
   { nest with depth, set
               parskip := some (((Ir.listSpacing l size depth tokens set).map (·.1.parsep)).getD {}) }
 
@@ -316,6 +324,10 @@ public theorem Ctx.sourceSpan_call_projects (ctx : Ctx) (span : Span) (name : St
 public def Ctx.quotedNest (ctx : Ctx) (own : Ir.ListSet) : ListNest :=
   ctx.listNest.quoted ctx.lists ctx.listExtra ctx.page.fontSize ctx.tokens (Ir.texParskipOf ctx.page)
     own
+
+/-- What a quotation opening here keeps over its level's (`ListNest.quoteSet`). -/
+public def Ctx.quoteSet (ctx : Ctx) : Ir.ListSet :=
+  ctx.listNest.quoteSet ctx.lists ctx.listExtra ctx.page.fontSize (Ir.texParskipOf ctx.page)
 
 /-- A counter's numeral style: `\arabic`, `\alph`, `\Alph`, `\roman` or
 `\Roman`. -/
@@ -8685,6 +8697,10 @@ private def regionCtx (ctx : Ctx) (ground : Option Color) : MCtx ctx :=
 private def pastCtx (ctx : Ctx) (past : Nat) : MCtx ctx :=
   ⟨{ ctx with stepBase := ctx.stepBase + past }, rfl, rfl, rfl, rfl⟩
 
+/-- A box's body, where `\@parboxrestore` sets `\parskip` to zero for the lists in it. -/
+private def parboxCtx (ctx : Ctx) : MCtx ctx :=
+  ⟨{ ctx with listNest := { ctx.listNest with parskip := some {}, shaped := false } }, rfl, rfl, rfl, rfl⟩
+
 private def barCtx (ctx : Ctx) (bar : Role) : Ctx :=
   (regionCtx ctx (Design.declared? ctx.palette bar)).1
 
@@ -9878,9 +9894,9 @@ private def wrapScopedEnv (n : String) (spacing : Ir.ListSet) (blocks inner : Ar
 
 /-- What a scoped environment's own list setting declares: a quotation's, or an abstract's, which
 is a quotation. -/
-private def scopedEnvOwn (n : String) : Ir.ListSet :=
+private def scopedEnvOwn (l : Ir.ListLineage) (n : String) : Ir.ListSet :=
   (((Ir.QuoteKind.ofName? n).orElse fun _ => if n == "abstract" then some .quotation else none).map
-    (·.own)).getD {}
+    (·.own l)).getD {}
 
 private theorem wrapScopedEnv_text (n : String) (spacing : Ir.ListSet) :
     Ir.Conserves Ir.blocksText (wrapScopedEnv n spacing #[]) := fun inner => by
@@ -10957,6 +10973,26 @@ private def isBlockStart (ctx' : Ctx) (n : String) (raws : Array Raw) (i : Nat)
               titleCtrls.contains n || n == "maketitle"
                 || n == "titlepage" || n == "logo")))
 
+/-- `blocks` with `Ir.parContinuesRole`'s marker after an environment that leaves `\@endpe` in a
+quotation or a verse, where inline text follows it with no paragraph break between, and it did not
+open in a list's or a quotation's label, which `\@noparlist` leaves without one. -/
+private def parContinues (ctx : Ctx) (raws : Array Raw) (j : Nat) (blocks : Array Block) :
+    Array Block :=
+  let k := skipSpaces raws j
+  let text := match raws[k]? with
+    | some (.word ..) | some (.sym ..) | some (.group ..) | some (.verb ..)
+    | some (.math false ..) => true
+    | some (.ctrl n _) => !isBlockStart ctx n raws k #[]
+    | _ => false
+  let content := blocks.filter fun b =>
+    !Ir.pageMarkerBlock b && !(b matches .setPalette _ | .setTokens _)
+  let labelled := 0 < ctx.listNest.depth && content.size ≤ 1
+  if text && ctx.listNest.shaped && !labelled && Ir.lastLeavesEndPe blocks then
+    blocks.push (.role Ir.parContinuesRole #[])
+  else blocks
+
+seal parContinues
+
 /-- The `\begin{frame}` options the frame model reads; a standout frame is
 centred whatever its options say. -/
 private structure FrameOpts where
@@ -11708,8 +11744,9 @@ the text width; the box takes the whole measure" pos
     else
       diag ctx .E0304 "'\\begin{minipage}' needs a {width} group" pos
     have _ := tail_measures body m2
+    let ⟨boxCtx, _⟩ : MCtx ctx ← pure (parboxCtx ctx)
     blocks := blocks.push
-      (.columns #[({ width with pos := boxPos }, ← elabBlockScope ctx (body.extract m2 body.size))])
+      (.columns #[({ width with pos := boxPos }, ← elabBlockScope boxCtx (body.extract m2 body.size))])
   else if let some kind := titledKind? n then
     let (head, k) := selectorHead body 0
     let spec ← selectorSpec ctx head pos
@@ -11737,12 +11774,13 @@ the text width; the box takes the whole measure" pos
     -- A quotation is a list level, which its enclosing lists' spacing reaches as LaTeX's does.
     let ⟨quoteCtx, _⟩ : MCtx ctx ← pure ⟨
       if n == "appendices" || (n == "abstract" && !ctx.abstractNests) then ctx
-      else { ctx with listNest := ctx.quotedNest (scopedEnvOwn n) },
+      else { ctx with listNest := { ctx.quotedNest (scopedEnvOwn ctx.lists n) with
+        shaped := ctx.lists != Ir.ListLineage.web && (n == "quotation" || n == "verse") } },
       by split <;> rfl, by split <;> rfl, by split <;> rfl, by split <;> rfl⟩
     let inner ← splicedFrameScope (if n == "appendices" then some blocks.size else none)
       (elabBlockScope quoteCtx body)
     leaveAppendices saved
-    blocks := wrapScopedEnv n quoteCtx.listNest.set blocks inner
+    blocks := wrapScopedEnv n ctx.quoteSet blocks inner
   else if n == "figure" || n == "figure*" || n == "table" || n == "table*" then
     let kind : Ir.FloatKind :=
       if n == "table" || n == "table*" then .table else .figure
@@ -11753,7 +11791,8 @@ the text width; the box takes the whole measure" pos
     let ⟨fbody, _, _⟩ ← pure (spliceCenterGo (body.extract k body.size).toList #[]
       (rawWeightList body.toList) (nestedParsList body.toList)
       (by simpa [rawWeightList] using hxm.1) (by simpa [nestedParsList] using hxm.2.1))
-    blocks ← figureGo ctx n kind fbody 0 #[] #[] #[] #[] false blocks
+    let ⟨boxCtx, _⟩ : MCtx ctx ← pure (parboxCtx ctx)
+    blocks ← figureGo boxCtx n kind fbody 0 #[] #[] #[] #[] false blocks
       (SliceFits.whole fbody 0)
   else if n == "algorithm" || n == "algorithm*" || n == "algorithm2e" then
     blocks ← algorithmArm ctx n body pos blocks
@@ -12174,7 +12213,7 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
         let afterEnv := endPeAt raws i inPar flushed
         let blocks ← envGroup n ctx'.palette inPar (parFollows raws (i + 1)) afterEnv
           flushed.size (elabEnvArm ctx' n body epos flushed)
-        elabBlocksNext ctx' raws (i + 1) blocks gen'
+        elabBlocksNext ctx' raws (i + 1) (parContinues ctx' raws (i + 1) blocks) gen'
       else
         elabBlocksGo ctx' raws (i + 1) blocks (cur.push raws[i]) gen'
     | .ctrl n cpos =>
@@ -12482,6 +12521,7 @@ unseal displayMathEnvs alignEnvs isMathEnv sectionLevel specWord? blockHeading?
 unseal lookupUser lookupUserEnv isArgument isCenteringRaw isParRaw splitAtPars sizeParScope
 unseal isColumnStray
 unseal parFollows parPrecedes endPeAt displayAtBlock
+unseal parContinues
 unseal scanBracketArg
 unseal nativeLinkedRow linkedRowChoice noteLinkedRow
 unseal texGroup groupBlocks restoringGroup envGroup
@@ -16319,7 +16359,11 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
         "class option 'draft' asks for a proofing mode the engine does not have; the document is rendered in full"
     else if let some why := (classOptionsInert.lookup record.model).bind (·.lookup o) then
       classSay .N0100 key s!"'\\documentclass[{o}]' → nothing: {why}"
-    else unless classOptionRead record.model o || (optionSkip o).isSome || key.isEmpty do
+    else if (optionSkip o).isSome then
+      if let some space := Ir.classParfill? (KeyVal.entry o).2 then
+        classSay .W0356 key s!"class option '{o}' leaves {space} free after a paragraph's last \
+line; here the last line may run to the margin"
+    else unless classOptionRead record.model o || key.isEmpty do
       classSay .W0356 key s!"class option '{o}' is not honoured; the document renders without it"
   let surface := Ir.Surface.ofPath file
   if record.model == .flow && !sawPage then

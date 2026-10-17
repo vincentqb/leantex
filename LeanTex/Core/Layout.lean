@@ -9050,6 +9050,9 @@ public structure Spacing.Paragraph where
   /-- Every forced break but the last restarts the hang past its kern, as verse's `\\` ends its
   paragraph. -/
   private hangLines : Bool := false
+  /-- The first line hangs past its kern, as a paragraph's does; `false` where `\@endpe` took its
+  indent box off. -/
+  private hangFirst : Bool := true
   /-- A rule filling the first line after the content. -/
   private rule : Option HeadingRule := none
   /-- The paragraph's pre-broken footnotes, each with its mark's item index. -/
@@ -9305,6 +9308,11 @@ public structure Spacing.Context where
   private covering : Option Ir.Cover := none
   /-- The surface the document was written in (`Ir.Doc.surface`). -/
   private surface : Ir.Surface := .tex
+
+/-- A box's geometry, where `\@parboxrestore` sets TeX's `\parskip` to zero, and the gap between
+its paragraphs with it where that gap is TeX's own. -/
+private def Geom.parboxed (g : Geom) : Geom :=
+  { g with texParskip := {}, parskip := if g.parskip == g.texParskip then {} else g.parskip }
 
 private abbrev Rd := Spacing.Context
 
@@ -9717,9 +9725,9 @@ private def columnsOverfull (r : Rd) (a : Acc) (cols : Array (BoxWidth × Array 
 
 /-- A paragraph's items with `box` before the first and, where `restart`, after each forced break
 but the last; with how many boxes stand before each original item. -/
-private def withKerns (items : Array Item) (box : Item) (restart : Bool) :
+private def withKerns (items : Array Item) (first box : Item) (restart : Bool) :
     Array Item × Array Nat := Id.run do
-  let mut out : Array Item := #[box]
+  let mut out : Array Item := #[first]
   let mut shift : Array Nat := #[]
   for h : i in [0:items.size] do
     shift := shift.push (out.size - i)
@@ -9741,7 +9749,7 @@ private def collectPara (r : Rd) (a : Acc)
     (display : Bool := false)
     (leaf : Option Nat := none) (span : Nat := 0) (keepNext : Sp := 0)
     (hangIndent : Sp := 0) (firstIndent : Sp := 0) (hangLines : Bool := false)
-    (literalLines : Bool := false)
+    (hangFirst : Bool := true) (literalLines : Bool := false)
     (dispJob : Option DisplayJob := none) (paintPadding : Option Sp := none)
     (rowStrut : Option (Sp × Sp) := none) (strut : Option Sp := none)
     (inserted : Bool := false) (background : Sp := 0)
@@ -9855,8 +9863,9 @@ private def collectPara (r : Rd) (a : Acc)
   let (items, extras, noteBlocks, wordOffsets, anchors, itemSources) :=
     if kern == 0 then (items, extras, noteBlocks, wordOffsets, anchors, itemSources)
     else
+      let kernBox (w : Sp) : Item := Item.box w 0 a.fg none #[] size {} {} 0 a.ground .unattributed
       let (items, shift) :=
-        withKerns items (Item.box kern 0 a.fg none #[] size {} {} 0 a.ground .unattributed) restart
+        withKerns items (kernBox (if hangFirst then kern else 0)) (kernBox kern) restart
       let move (k : Nat) : Nat := k + shift.getD k (shift.back?.getD 1)
       (items, extras.fold (fun m k v => m.insert (move k) v) {},
         noteBlocks.map (fun (i, nb) => (move i, nb)),
@@ -9888,6 +9897,7 @@ private def collectPara (r : Rd) (a : Acc)
       markerSegs := markerSegs, markerIndent := markerIndent, markerLeft := markerLeft
       hangIndent := hangIndent
       hangLines := restart
+      hangFirst := hangFirst
       rule := rule
       notes := noteBlocks
       inFloat := r.inFloat
@@ -12596,33 +12606,35 @@ private def collectInsetList (r ri : Rd) (a : Acc) (blocks : List Block) (indent
 label, under `quotation` each paragraph's first line takes the class's `\listparindent`, and under
 `verse` every line hangs from the margin past its own (`Ir.verseHang`). -/
 private def collectQuoteList (r : Rd) (a : Acc) (kind : Ir.QuoteKind) (blocks : List Block)
-    (indent : Sp) (first prevRule : Bool) : Acc :=
+    (indent : Sp) (first prevRule cont : Bool) : Acc :=
   match blocks with
   | [] => a
   | blk :: rest =>
     if statefulBlock blk then
       collectQuoteList r (collectBlock r a blk indent) kind rest indent first prevRule
+        (cont || blk.continuesPar)
     else
     let a := if first || a.frameTop then a else a.wantGap
     let a := if ruleBlock blk then { a with declaredSkip := false } else a
     let a := match kind, blk, first with
-      | _, .list .., true => collectBlock { r with inLabel := true } a blk indent
+      | _, .list .., true | _, .quote .., true => collectBlock { r with inLabel := true } a blk indent
       | .quotation, .para content, _ =>
         if Ir.anchorsOnly content then collectParaBlock r a content indent else
         let (a, leaf) := a.leafRange (Struct.leafCountInlines content)
         collectPara r a content indent false r.geom.fontSize (leaf := leaf)
           (span := Struct.leafCountInlines content)
-          (firstIndent := (r.resolve { width := r.quotationIndent }).width)
+          (firstIndent := if cont then 0 else (r.resolve { width := r.quotationIndent }).width)
       | .verse, .para content, _ =>
         if Ir.anchorsOnly content then collectParaBlock r a content indent else
         let (a, leaf) := a.leafRange (Struct.leafCountInlines content)
         collectPara r a content indent false r.geom.fontSize (leaf := leaf)
           (span := Struct.leafCountInlines content)
           (hangIndent := (r.resolve { width := Ir.verseHang }).width) (hangLines := true)
+          (hangFirst := !cont)
       | .verse, _, _ => collectBlock r a blk (indent + (r.resolve { width := Ir.verseHang }).width)
       | _, _, _ => collectBlock r a blk indent
     let a := if prevRule then { a with declaredSkip := false } else a
-    collectQuoteList r a kind rest indent false (ruleBlock blk)
+    collectQuoteList r a kind rest indent false (ruleBlock blk) blk.continuesPar
 
 /-- The title frame's body when the title page declares slots: each
 slot set as one box from the shared start and pinned where declared. -/
@@ -12931,19 +12943,21 @@ private def collectBlock (r : Rd) (a : Acc)
     let lv := a.itemDepth + a.enumDepth + a.quoteDepth + 1
     let lm := r.leftMargin lv a.tokens
     let narrow := some ((a.measure.getD r.geom.textWidth) - lm)
-    match Ir.listSpacing r.lists r.geom.fontSize lv a.tokens q.spacing with
+    match Ir.quoteSpacing r.lists r.geom.fontSize lv a.tokens q with
     | some (sk, pts) =>
       let g := if r.inPar then r.resolve sk.topsep else (r.resolve sk.topsep).add (r.resolve pts)
-      let top := if a.afterHeading then a.flushGap r else (a.listSpace g).flushGap r
+      -- In an item's label `\@noparlist` sets no skip above or below it.
+      let top := if a.afterHeading || r.inLabel then a.flushGap r else (a.listSpace g).flushGap r
       let sub := { top with measure := narrow, quoteDepth := a.quoteDepth + 1 }
       let ri := { (r.within blk) with
-        inPar := false, geom := { r.geom with parskip := sk.parsep, texParskip := sk.parsep } }
-      let sub := collectQuoteList ri sub q.kind body.toList (indent + lm) true false
+        inPar := false, inLabel := false
+        geom := { r.geom with parskip := sk.parsep, texParskip := sk.parsep } }
+      let sub := collectQuoteList ri sub q.kind body.toList (indent + lm) true false false
       -- `\endtrivlist`: a quotation closing on a nested list or quotation re-skips as an item does.
       let sub := match Ir.itemCloses? body with
         | some _ => sub.endReskip (r.resolve sk.parsep) (r.resolve r.geom.texParskip)
         | none => sub
-      { sub.listSpace g with measure := saved, quoteDepth := a.quoteDepth }
+      { (if r.inLabel then sub else sub.listSpace g) with measure := saved, quoteDepth := a.quoteDepth }
     | none =>
       let g := r.resolve (Ir.trivlistSkipFor r.lists a.tokens r.geom.fontSize
           (a.itemDepth + a.enumDepth + a.quoteDepth))
@@ -13062,9 +13076,9 @@ private def collectBlock (r : Rd) (a : Acc)
       else if r.geom.flushRight then .right else .left
     let off := if cols.size == 1 && unspecified == 0 then side.boxOffset rem else 0
     let a := { a with ops := a.ops.push (.colOpen (cols.map (·.1.pos))) }
-    -- `\@parboxrestore` (latex.ltx) zeroes the side skips inside every minipage and `\parbox`.
+    -- `\@parboxrestore` (latex.ltx) zeroes the side skips and TeX's `\parskip` in every minipage.
     let inner := { (r.within blk) with
-      centreBoxes := false, geom := { r.geom with flushRight := false } }
+      centreBoxes := false, geom := { r.geom.parboxed with flushRight := false } }
     let a := collectColumns inner a cols.toList (indent + off) shareW gutter total
     { a with ops := a.ops.push .colClose }
   | .bibliography _ _ items => collectBibliography r a items indent
@@ -13127,7 +13141,7 @@ private def collectBlock (r : Rd) (a : Acc)
     let capSep := skip objSkip
     let farSep := skip farSkip
     let a := a.pushOp .floatOpen
-    let rf := { (r.within blk) with inFloat := true }
+    let rf := { (r.within blk) with inFloat := true, geom := r.geom.parboxed }
     -- In beamer's lineage the text-side gaps are the trivlist's (`Ir.floatSpaceFor`).
     let plan := floatPlan capAbove (!caption.isEmpty) floatSep capSep farSep
     let a := plan.zipIdx.foldl
@@ -13211,7 +13225,7 @@ private theorem role_transparent_collect (r : Rd) (a : Acc) (n : String)
   have h : (n == Ir.trivlistRole) = false := by simpa using htl
   have h' : (n == Ir.inParagraphRole) = false := by simpa using hip
   simp only [Ir.pageMarkerRole, Bool.or_eq_false_iff] at hpm
-  obtain ⟨⟨⟨⟨⟨⟨hpa, hni⟩, hps⟩, hos⟩, -⟩, -⟩, -⟩ := hpm
+  obtain ⟨⟨⟨⟨⟨⟨⟨hpa, hni⟩, hps⟩, hos⟩, -⟩, -⟩, -⟩, -⟩ := hpm
   have hop : Ir.pageOpeningOfRole? n = none :=
     Option.isNone_iff_eq_none.mp (Option.isSome_eq_false_iff.mp hos)
   simp only [collectBlock, Spacing.Context.style, hst, Option.getD, h, h', hth, hpa, hni, hps,
@@ -13930,15 +13944,15 @@ private theorem sourceBound_paintLines {n : Nat} (fs : FontSet) (lines : Array L
     · exact h r hl hf
 
 /-- Whether the line after break `prev` hangs as a first line does, past the kern after a forced
-break (`hangLines`). -/
+break (`hangLines`), keeping what follows the kern as a paragraph's start keeps it. -/
 private def Spacing.Paragraph.restarts (j : ParaJob) (first : Bool) (prev : Nat) : Bool :=
-  first || (j.hangLines && j.hangIndent != 0 && match j.items[prev]? with
+  (first && j.hangFirst) || (j.hangLines && j.hangIndent != 0 && match j.items[prev]? with
     | some (.pen _ cost _ _ _ _) => cost ≤ forcedCost
     | _ => false)
 
 private def Spacing.Paragraph.lineStart (j : ParaJob) (first : Bool) (prev : Nat) : Nat :=
   if first then Layout.lineStart j.items (if j.hangIndent == 0 then 0 else 1)
-  else if j.restarts first prev then Layout.lineStart j.items (prev + 2)
+  else if j.restarts first prev then prev + 2
   else Layout.lineStart j.items (prev + 1)
 
 /-- The geometry of one paragraph line: its segs, x, set
