@@ -166,15 +166,27 @@ public theorem fillContents_para (doc : Doc) (c : Array Inline) (h : doc.body = 
   simp only [fillContents, rewriteContents, h]
   rfl
 
-/-- The anchors a flow's contents print the pages of, in flow order. -/
+/-- The anchors the document prints the pages of, in flow order: each page reference's label's and
+a flow's contents entries'. -/
 public def pageTargets (doc : Doc) : Array String :=
-  if doc.docClass.record.model == .frame then #[] else
+  let flow := doc.docClass.record.model != .frame
   foldBlocks (fun out b =>
-    if let .contents _ entries := b then out ++ entries.filterMap (·.target) else out)
-    (fun out _ => out) #[] doc.body
+    if let .contents _ entries := b then
+      (if flow then out ++ entries.filterMap (·.target) else out)
+    else out)
+    (fun out x => if let .ref _ form _ (some t) := x then (if form.paged then out.push t else out)
+      else out) #[] doc.body
 
-/-- The document with each flow contents entry carrying the folio `folio` lands its anchor on. -/
+/-- A page reference showing the folio `folio` lands its label on, `??` where none. -/
+private def pagedRef (folio : String → Option Nat) (x : Inline) : Inline :=
+  if let .ref key form _ (some t) := x then
+    if form.paged then .ref key form (((folio t).map toString).getD "??") (some t) else x
+  else x
+
+/-- The document with each page reference and flow contents entry carrying the folio `folio` lands
+its anchor on. -/
 public def fillPages (folio : String → Option Nat) (doc : Doc) : Doc :=
+  let doc := mapDoc (mapInlines (pagedRef folio)) (mapBlocks (pagedRef folio)) doc
   if doc.docClass.record.model == .frame then doc else
   { doc with body := rewriteContents (fun spec entries =>
       .contents spec (entries.map fun e => { e with page := e.target.bind folio })) doc.body }

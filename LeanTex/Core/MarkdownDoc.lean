@@ -768,7 +768,9 @@ private def inlineInto (site : Site) (cites : Bool) (acc : String) (after : Bool
     acc ++ escaped
   -- An anchor is written as the empty target the markdown reader reads back.
   | .label key => acc ++ "<a name=\"" ++ Ir.labelAnchor key ++ "\"></a>"
-  | .ref _ _ text _ =>
+  -- A continuous medium has no page for a folio to name.
+  | .ref _ form text _ =>
+    if form.paged then acc else
     let escaped := escapeText (site != .cell) cites text
     acc ++ escaped
   | .styled st body =>

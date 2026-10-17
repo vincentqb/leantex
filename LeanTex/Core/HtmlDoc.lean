@@ -6313,7 +6313,9 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
       #[("href", url), ("style", "color: inherit")])
   | .label key => acc.push (labelSpan key)
   -- an unresolved reference shows LaTeX's `??`, already diagnosed
+  -- a page's folio is paged-media text the web page has no page for
   | .ref _ form text target =>
+    if form.paged then acc else
     match target with
     | some a =>
       if cfg.inLink || !form.linked then acc.push (Html.text text)
@@ -6387,10 +6389,10 @@ private def inlineNodesInto (cfg : Config) (acc : Array Node) : List Inline → 
 end
 
 private theorem ref_link_projects (cfg : Config) (acc : Array Node) (key : String)
-    (form : Ir.RefForm) (shown a : String) (h : form.linked = true) :
+    (form : Ir.RefForm) (shown a : String) (h : form.linked = true) (hp : form.paged = false) :
     (Inline.ref key form shown (some a)).refLink?.map (inlineNodeInto cfg acc) =
       some (inlineNodeInto cfg acc (.ref key form shown (some a))) := by
-  simp [Inline.refLink?, h, inlineNodeInto, inlineNodesInto]
+  simp [Inline.refLink?, h, hp, inlineNodeInto, inlineNodesInto]
 
 private def inlines (cfg : Config) (xs : Array Inline) : Array Node :=
   inlineNodesInto cfg #[] xs.toList
@@ -9257,6 +9259,11 @@ private def emitTreeCore (cfg : Config) (doc : Doc)
     if cfg.frames.isEmpty then (Contrast.docPalettes doc).map (.light, ·)
     else judge.views.flatMap fun (_, vs) => (cfg.frames.zip vs).map fun (f, v) => (f.scheme, v)
   let mut diags : Array Diag := judge.diags
+  if Ir.foldBlocks (fun b _ => b) (fun b x => b || x matches .ref _ (.page) _ _ ||
+      x matches .ref _ (.starred .page) _ _) false doc.body then
+    diags := diags.push (Diag.of .W0007
+      "a page reference names a paged-media folio; omitted from HTML"
+      (help := "say where the target stands in words, or link it with \\ref"))
   if doc.head.isSome || doc.foot.isSome then
     diags := diags.push (Diag.of .W0007
       "running head/foot is paged-media furniture; omitted from HTML"

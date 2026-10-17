@@ -20337,15 +20337,20 @@ public structure Fitted where
 private def folioOf (out : Out) (name : String) : Option Nat :=
   ((anchorIndex out.pages)[name]?).bind fun (i, _) => (out.pages[i]?).map (·.pageState.folio)
 
-/-- The pages pass: a flow whose contents print folios is set again with the folios its setting
-`laid` lands their anchors on, else it stands as laid. -/
+/-- The pages pass: a document printing folios is set again with those its setting `laid` lands
+their anchors on, and once more where a folio's width moved one, else it stands as laid. -/
 private def pagesPass (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
     (imgs : Image.Store) (frameSpans pictureSpans : Array (Nat × Span)) (setting : Doc)
     (laid : Out) : Doc × Out :=
-  if (Ir.pageTargets setting).isEmpty then (setting, laid)
+  let targets := Ir.pageTargets setting
+  if targets.isEmpty then (setting, laid)
   else
     let paged := Ir.fillPages (folioOf laid) setting
-    (paged, run geom fs pats paged imgs frameSpans pictureSpans)
+    let again := run geom fs pats paged imgs frameSpans pictureSpans
+    if targets.all fun t => folioOf again t == folioOf laid t then (paged, again)
+    else
+      let repaged := Ir.fillPages (folioOf again) setting
+      (repaged, run geom fs pats repaged imgs frameSpans pictureSpans)
 
 private theorem pagesPass_run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
     (imgs : Image.Store) (frameSpans pictureSpans : Array (Nat × Span)) (setting : Doc)
@@ -20354,9 +20359,10 @@ private theorem pagesPass_run (geom : Geom) (fs : FontSet) (pats : Option Hyphen
       run geom fs pats (pagesPass geom fs pats imgs frameSpans pictureSpans setting laid).1
         imgs frameSpans pictureSpans := by
   unfold pagesPass
+  dsimp only
   split
   · exact h
-  · rfl
+  · split <;> rfl
 
 /-- The overflow ladder (`Ir.frameFit`): set every unbreakable frame to measure, decide each
 step as beamer sets it, set the document again where needed, name every frame moved once, set a flow

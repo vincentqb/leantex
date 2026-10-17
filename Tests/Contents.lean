@@ -192,6 +192,28 @@ def contentsChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit
     (fnav.size == 1 && fnav.all fun es =>
       es.map (·.2.1) == #["1Kettles", "1.1Spouts", "2Teapots", "2.0.1Lids"] &&
         es.all fun (_, _, href) => holdsId fbody (href.drop 1).toString)
+  -- A page reference prints the folio its label lands on, in a flow and in a deck.
+  let (paged, pagedDiags) := elabStr ("\\documentclass{article}\n\\begin{document}\n" ++
+    "\\section{Kettles}\\label{sec:k}\nWater boils, as page~\\pageref{sec:t} says.\n\\newpage\n" ++
+    "\\section{Teapots}\\label{sec:t}\nBack to page~\\pageref*{sec:k} again.\n\\end{document}\n")
+  let pout := (fittedOf fonts paged).out
+  t s!"a page reference builds clean ({pagedDiags.toList.map (·.code)})"
+    (!pagedDiags.any fun d => d.severity == .error || d.code == "W0307" || d.code == "W0349")
+  let said (i : Nat) (w : String) : String := ((lineWith pout i w).map fun l => letters (lineText l)).getD ""
+  t "a page reference prints the folio of its label's page, its link opening it"
+    (hasStr (said 0 "as page") "aspage2says" && (lineWith pout 0 "as page").bind (landsOn pout) == some 1)
+  t "a starred page reference prints its folio unlinked"
+    (hasStr (said 1 "Back to") "page1again" && ((lineWith pout 1 "Back to").bind (landsOn pout)).isNone)
+  let (_, pbody, pds) := HtmlDoc.emitTree {} paged
+  t "the web page, which has no pages, sets no folio for it and names the loss"
+    (!hasStr (nodeTextList "" pbody.toList) "??" && pds.any (·.code == "W0007"))
+  let (pdeck, _) := elabStr ("\\documentclass{beamer}\n\\begin{document}\n" ++
+    "\\begin{frame}{One}See page \\pageref{three}.\\end{frame}\n" ++
+    "\\begin{frame}{Two}\\only<1>{A}\\only<2>{B}\\end{frame}\n" ++
+    "\\begin{frame}{Three}\\label{three}Words.\\end{frame}\n\\end{document}\n")
+  let dout := (fittedOf fonts pdeck).out
+  t "a deck's page reference prints its frame's first page, as beamer's"
+    (((lineWith dout 0 "See page").map lineText).any (hasStr · "See page 4"))
   -- The twin lists the entries as the list its reader reads back, a fixed point of the round trip.
   let twin := MarkdownDoc.emit flow
   t "the twin lists the entries, nested as the headings are"

@@ -1105,7 +1105,7 @@ private def urlStyleHelp : String := s!"url.sty defines {Diag.prose "and" (urlSt
 /-- Reserved control words with the code each skip earns. -/
 private def reservedCtrl : List (String × DiagCode) :=
   [("vspace", .W0329), ("noindent", .W0329),
-   ("fontfallback", .W0329), ("figure", .W0307), ("pageref", .W0307)]
+   ("fontfallback", .W0329), ("figure", .W0307)]
 
 /-- Declarations that take a `{...}` block and are handled in the preamble. -/
 public def declCtrl : List String := Decl.blockDeclarations
@@ -4142,13 +4142,13 @@ private def refCtrlForm? (name : String) : Option Ir.RefForm :=
   [("ref", Ir.RefForm.plain), ("eqref", .paren),
    ("cref", .cref false), ("Cref", .cref true),
    ("labelcref", .labelOnly),
-   ("namecref", .name false), ("nameCref", .name true), ("nameref", .title),
+   ("namecref", .name false), ("nameCref", .name true), ("nameref", .title), ("pageref", .page),
    (Marker.name .crefRange "", .crefRange false),
    (Marker.name .crefRangeUp "", .crefRange true)].lookup name
 
 private def refFormNeedsKind : Ir.RefForm → Bool
   | .cref _ | .crefRange _ | .name _ => true
-  | .plain | .paren | .labelOnly | .headed | .title => false
+  | .plain | .paren | .labelOnly | .headed | .title | .page => false
   | .starred f => refFormNeedsKind f
 
 -- Sealed so the knot's fixpoint never unfolds their string code.

@@ -2735,6 +2735,8 @@ public inductive RefForm where
   | headed
   /-- hyperref's `\nameref`: the title of what the label names. -/
   | title
+  /-- `\pageref`: the folio of the page its label lands on, once a setting places it. -/
+  | page
   /-- hyperref's starred form: as its form, without the link. -/
   | starred (form : RefForm)
   deriving Repr, BEq
@@ -2743,12 +2745,18 @@ public inductive RefForm where
 public def RefForm.titled : RefForm → Bool
   | .title => true
   | .starred f => f.titled
-  | .plain | .paren | .cref _ | .crefRange _ | .labelOnly | .name _ | .headed => false
+  | .plain | .paren | .cref _ | .crefRange _ | .labelOnly | .name _ | .headed | .page => false
+
+/-- Whether a reference form prints its label's page, starred or not. -/
+public def RefForm.paged : RefForm → Bool
+  | .page => true
+  | .starred f => f.paged
+  | .plain | .paren | .cref _ | .crefRange _ | .labelOnly | .name _ | .headed | .title => false
 
 /-- Whether a reference form links to its target: every form but a starred one. -/
 public def RefForm.linked : RefForm → Bool
   | .starred _ => false
-  | .plain | .paren | .cref _ | .crefRange _ | .labelOnly | .name _ | .headed | .title => true
+  | .plain | .paren | .cref _ | .crefRange _ | .labelOnly | .name _ | .headed | .title | .page => true
 
 /-- A reference form as the IR dump spells it, a starred one with its star. -/
 public def RefForm.spelling : RefForm → String
@@ -2763,6 +2771,7 @@ public def RefForm.spelling : RefForm → String
   | .name true => "nameCref"
   | .headed => "headed"
   | .title => "nameref"
+  | .page => "pageref"
   | .starred f => f.spelling ++ "*"
 
 /-- What a field citation prints of its entry instead of its label (biblatex manual §3.8.4). -/
@@ -17913,6 +17922,8 @@ public def refText (loc : Locale) (form : RefForm) (b : RefBinding) : String :=
     | none, some k => (crefNameOf loc k).capOne ++ "\u00a0" ++ numText
     | none, none => b.num
   | .title => (b.name.map metaText).getD ""
+  -- A page's folio is known only once a setting places the label (`fillPages`).
+  | .page => "??"
   | .starred f => refText loc f b
 
 /-- What a resolved reference shows: `\nameref` the title it names as set, linked unless starred,
@@ -17926,7 +17937,8 @@ public def refInline (loc : Locale) (key : String) (form : RefForm) (b : RefBind
 /-- A reference against its label's binding: a label nothing numbered keeps `??` and no target
 unless the form prints its title. -/
 public def refResolved (loc : Locale) (key : String) (form : RefForm) (b : RefBinding) : Inline :=
-  if b.num.isEmpty && !form.titled then .ref key form "??" none else refInline loc key form b
+  if b.num.isEmpty && !form.titled && !form.paged then .ref key form "??" none
+  else refInline loc key form b
 
 public def resolveOneRefWith (loc : Locale)
     (look : String → Option (String × Option RefBinding)) (key : String)
