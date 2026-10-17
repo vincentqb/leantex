@@ -15298,14 +15298,16 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
   | .bodyOpen g box => b := b.openBody fs g box
   | .anchor sl => b := { b with pendingAnchors := b.pendingAnchors.push sl }
   | .brk =>
-    -- A boundary closes a page that holds something, or a frame's that shipped no page, as beamer
-    -- ships an empty frame's; anchors a frame leaves pending stand on its page, while those outside
-    -- every frame, as a section's, wait for what is set next.
-    if !b.cur.blank || (b.frameBreak.isSome && b.pages.size == b.framePagesAt) then
+    -- A boundary closes a page that holds something, anchors a frame leaves pending standing on it
+    -- while those outside every frame, as a section's, wait for what is set next; at the top of a
+    -- frame that set nothing it does nothing, as beamer's.
+    if !b.cur.blank then
       let shipped := b.finishPage b.closingOwed
       b := { (if b.frameBreak.isSome then landTrailing shipped else shipped) with
                chrome := none, frameBreak := none, frameSource := none, spillWarned := false,
                curFit := .spill }
+    else if b.frameBreak.isSome && b.pages.size == b.framePagesAt then
+      pure ()
     else
       b := { b with pageBg := none, vdist := .top, pageFils := 0, filsAbove := #[],
                     pinnedLines := 0, pinnedFills := 0, pinnedInks := 0, chrome := none,
@@ -15324,6 +15326,11 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
                     (bandBox fs imgs b.geom b.xHeight (b.pages.size + 1))
                   frameArea := opening.area }
   | .frameClose =>
+    -- A frame that set nothing ships its page, blank but for its furniture, as beamer ships it.
+    if !b.noBreak && b.frameBreak.isSome && b.pages.size == b.framePagesAt then
+      b := { landTrailing (b.finishPage b.closingOwed) with
+               chrome := none, frameBreak := none, frameSource := none, spillWarned := false,
+               curFit := .spill }
     b := { b with curFrame := none, curFrameLabel := none, curFrameOrigin := none, curStage := false,
                   curFoot := none, footBox := none, curFootLook := none,
                   frameArea := .margins }
@@ -15544,19 +15551,11 @@ private theorem break_frame_projects (fs : FontSet) (imgs : Image.Store) (st : S
   repeat' split
   all_goals exact ⟨rfl, rfl, rfl⟩
 
-private theorem frameClose_step_projects (fs : FontSet) (imgs : Image.Store) (st : StepSt) :
-    let next := (stepStaged fs imgs st .frameClose).b
-    next.curFrameOrigin = none ∧ next.curFrame = none ∧ next.curFoot = none ∧
-      next.pages = st.b.pages :=
-  ⟨rfl, rfl, rfl, rfl⟩
-
 private theorem emptyBreak_pageState (fs : FontSet) (imgs : Image.Store)
-    (st : StepSt) (hb : st.b.cur.blank = true)
-    (hf : (st.b.frameBreak.isSome && st.b.pages.size == st.b.framePagesAt) = false) :
+    (st : StepSt) (hb : st.b.cur.blank = true) :
     (stepStaged fs imgs st .brk).b.pageState = st.b.pageState := by
-  simp only [Bool.and_eq_false_iff, beq_eq_false_iff_ne] at hf
-  simp [stepStaged, hb]
-  rcases hf with h | h <;> simp [h]
+  simp only [stepStaged, hb, Bool.not_true, Bool.false_eq_true, ite_false, Id.run, pure]
+  split <;> rfl
 
 private theorem landTrailing_pages_size (b : B) : (landTrailing b).pages.size = b.pages.size := by
   simp [landTrailing]
@@ -15571,21 +15570,15 @@ private theorem brk_ships_exact (fs : FontSet) (imgs : Image.Store)
     (stepStaged fs imgs st .brk).b.pages.size = st.b.pages.size + 1 ∧
       ((stepStaged fs imgs st .brk).b.pages.back?.map (·.inks.size)) = some st.b.cur.inks.size := by
   constructor
-  · simp only [stepStaged, hb, Bool.not_false, Bool.true_or, ite_true, Id.run, pure]
+  · simp only [stepStaged, hb, Bool.not_false, ite_true, Id.run, pure]
     split <;> simp [landTrailing_pages_size, Spacing.Page.finishPage]
-  · simp only [stepStaged, hb, Bool.not_false, Bool.true_or, ite_true, Id.run, pure]
+  · simp only [stepStaged, hb, Bool.not_false, ite_true, Id.run, pure]
     split
     · rw [landTrailing_back_inks]
       simp [Spacing.Page.finishPage]
       split <;> simp
     · simp [Spacing.Page.finishPage]
       split <;> simp
-
-/-- A frame that set no page ships its own at its boundary, blank as beamer ships it. -/
-private theorem emptyFrame_ships (fs : FontSet) (imgs : Image.Store) (st : StepSt)
-    (hf : st.b.frameBreak.isSome = true) (hp : st.b.pages.size = st.b.framePagesAt) :
-    (stepStaged fs imgs st .brk).b.pages.size = st.b.pages.size + 1 := by
-  simp [stepStaged, hf, hp, landTrailing_pages_size, Spacing.Page.finishPage]
 
 /-- Place a float group whole: tried where it stands, else replayed under `noBreak` on a page
 holding nothing else; a group taller than the text block ships alone, named (W0358), and a note
@@ -15949,6 +15942,7 @@ private theorem stepStaged_noBreak (fs : FontSet) (imgs : Image.Store)
   all_goals first
     | exact absurd rfl hs
     | (exfalso; exact ‹¬(_ ∨ _ = true)› (Or.inr h))
+    | (exfalso; simp_all; done)
     | exact placeSlot_noBreak (h := h) ..
     | exact alignRow_pages_noBreak (h := h) ..
     | (refine ⟨?_, ?_⟩ <;> simp [h, Spacing.Page.pushSibling, Spacing.Page.displaySkip]; done)
@@ -16872,7 +16866,11 @@ private theorem stepStaged_frames (fs : FontSet) (imgs : Image.Store)
   | frameOpen br source opening =>
     exact ⟨Or.inr ⟨opening, ho opening rfl, rfl⟩, hb.2⟩
   | frameClose =>
-    exact ⟨Or.inl rfl, hb.2⟩
+    simp only [stepStaged, Id.run, Id, pure]
+    split
+    · exact ⟨Or.inl rfl, (hb.step ((frameStep_landTrailing_finishPage _ st.b.closingOwed false).trans
+        (FrameStep.of_eq rfl rfl))).2⟩
+    · exact ⟨Or.inl rfl, hb.2⟩
   | regionClose =>
     rw [stepStaged_regionClose_b]
     exact hb.step (FrameStep.of_eq (closeRegion_shipped_id fs st.b).2.2.2.2.1

@@ -240,6 +240,24 @@ def deckDestinationChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO 
   t "an empty frame: the web deck sets a stage for each page, the PDF's frame numbers on them"
     ((attrValuesOf (fun _ => true) "data-frame-number"
       (Html.elem "body" (docNodesOf edoc) #[])) == #["1", "2", "3", "4"])
+  -- A break at the top of a frame that set nothing does nothing, as beamer's.
+  for brk in ["\\newpage", "\\pagebreak", "\\clearpage"] do
+    let (bdoc, _) := elabStr ("\\documentclass{beamer}\n\\begin{document}\n" ++
+      "\\begin{frame}{One}OneWords\\end{frame}\n\\begin{frame}" ++ brk ++ " TextWords\\end{frame}\n" ++
+      "\\begin{frame}{Two}TwoWords\\end{frame}\n\\end{document}\n")
+    let bout := layoutOf fs bdoc
+    t s!"a break opening an untitled frame ships no page of its own ({brk}: {bout.pages.size} pages)"
+      (bout.pages.size == 3 && pageWith bout "TextWords" == some 1)
+  -- An author's label keeps its name; a section or frame slug meeting it takes a numbered form.
+  let (ldoc, _) := elabStr ("\\documentclass{beamer}\n\\usetheme{moloch}\n\\begin{document}\n" ++
+    "\\begin{frame}{Opening}\\hyperlink{intro}{to the label}\\end{frame}\n\\section{Intro}\n" ++
+    "\\begin{frame}{First}\\label{intro}FirstWords\\end{frame}\n\\end{document}\n")
+  let lout := layoutOf fs ldoc
+  let lids := attrValuesOf (fun _ => true) "id" (Html.elem "body" (docNodesOf ldoc) #[])
+  t s!"a label and a section of one slug: one id each, the label keeping its name ({lids.filter (·.startsWith "intro")})"
+    ((lids.filter (· == "intro")).size == 1 && lids.contains "intro-2" &&
+      (Layout.landing? (Layout.anchorIndex lout.pages) lout.pages "intro").map (·.page) ==
+        pageWith lout "FirstWords")
 
 /-- Every navigation of a corpus file reaches a destination the file defines, a target stands at
 what it names, and a resolved reference or citation links in both artifacts, equally often. -/

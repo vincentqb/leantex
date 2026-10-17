@@ -33,9 +33,12 @@ public structure DeckAnchors where
   frames : Array (Option FrameAnchors)
   sections : Array (Option SectionAnchor)
 
-/-- A deck's frames, their steps and its sections claim their anchors in one ledger in flow order. -/
+/-- A deck's frames, their steps and its sections claim their anchors in one ledger in flow order,
+after its labels, whose names the author wrote. -/
 public def deckAnchors (body : Array Block) : DeckAnchors := Id.run do
   let mut taken : NameClaim.Claims .dashed := {}
+  for key in blockLabelKeys body do
+    taken := (taken.claim (labelAnchor key) key).2.2
   let mut frames : Array (Option FrameAnchors) := #[]
   let mut sections : Array (Option SectionAnchor) := #[]
   for b in body do

@@ -8569,10 +8569,10 @@ private def snapWalk (id text label : String) (stepAnchors : Array Ir.SectionAnc
     let sa := (stepAnchors[k - 1]?).getD { base := s!"{id}-{k}", id := s!"{id}-{k}", clash := none }
     let diags := match sa.clash with
       | some holder => diags.push (Diag.of .W0327
-          s!"frames share the step anchor '{sa.base}'; each after the first takes a \
+          s!"titles share the step anchor '{sa.base}'; each after the first takes a \
 numbered anchor"
           (help := some s!"an in-page link '#{sa.base}' reaches only the first; \
-retitle the frames apart, or link to the numbered anchor")
+retitle them apart, or link to the numbered anchor")
           (detail := some s!"{text.quote} takes '{sa.id}', after {holder.quote}"))
       | none => diags
     snapWalk id text label stepAnchors
