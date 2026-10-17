@@ -705,20 +705,29 @@ private def opensInlineMath : List Inline → Bool
     | _ => false
   | _ => false
 
-/-- An alternative's runs as the twin spells them: its words escaped and each citation in Pandoc's
-syntax, one with none marked unspelled before its text. -/
-private def altSpelling (pipes : Bool) (runs : Array Ir.AltRun) : String :=
-  runs.zipIdx.foldl (fun acc (r, i) => match r with
-    | .text t =>
-      let escaped := escapeText pipes true t
-      acc ++ escaped
-    | .cite f keys ink =>
-      let after := match runs[i + 1]? with
-        | some (.text t) => t
-        | _ => ""
-      match citeSpelling pipes f keys acc after [] with
-      | some (spelled, _) => acc ++ spelled
-      | none => acc ++ unspelled ++ ink.getD (Ir.citeMarks keys)) ""
+/-- An alternative's runs as the twin spells them: its words escaped and its citations as the
+body's citation runs spell them, one with none marked unspelled before its text. -/
+private def altSpelling (pipes : Bool) (runs : Array Ir.AltRun) : String := Id.run do
+  let xs : Array Inline := runs.map fun r => match r with
+    | .text t => .text t
+    | .cite f keys _ => .cite f keys
+  let mut acc := ""
+  let mut i := 0
+  for _ in [0:runs.size + 1] do
+    let some x := xs[i]? | break
+    match citeRun pipes acc x (xs.extract (i + 1) xs.size).toList with
+    | some (spelled, n) =>
+      acc := acc ++ spelled
+      i := i + 1 + n
+    | none =>
+      match runs[i]? with
+      | some (.text t) =>
+        let escaped := escapeText pipes true t
+        acc := acc ++ escaped
+      | some (.cite _ keys ink) => acc := acc ++ unspelled ++ ink.getD (Ir.citeMarks keys)
+      | none => pure ()
+      i := i + 1
+  return acc
 
 mutual
 
@@ -1370,9 +1379,21 @@ private def tighten (s : String) : String :=
   let trimmed := String.ofList ((tightenGo 0 [] s.toList).dropWhile (· == '\n')).reverse
   if trimmed.isEmpty then trimmed else trimmed ++ "\n"
 
-/-- The twin's view of a document's body: source locations erased and backend
-conditionals resolved for markdown. -/
-public def twinBody (doc : Doc) : Array Block := Ir.keepFor "md" (Ir.eraseLocations doc).body
+/-- Footnotes numbered by the place of their first equal one among the body's, so a twin's label
+names one note whatever marks the document repeats. -/
+-- conserves: none — renumbers notes only, through the generic map's sibling hook.
+private def notesByPlace (body : Array Block) : Array Block :=
+  let notes := Ir.footnotesOf body
+  if notes.isEmpty then body else
+  Ir.mapBlocks id body (finish := fun xs => xs.map fun x => match x with
+    | .footnote n content =>
+      .footnote (((notes.findIdx? (· == (n, content))).map (· + 1)).orElse fun _ => n) content
+    | x => x)
+
+/-- The twin's view of a document's body: source locations erased, backend conditionals resolved
+for markdown and footnotes numbered by their place. -/
+public def twinBody (doc : Doc) : Array Block :=
+  notesByPlace (Ir.keepFor "md" (Ir.eraseLocations doc).body)
 
 /-- The `[^k]: …` definitions, one per footnote in flow
 order; empty without notes. -/
@@ -1380,9 +1401,13 @@ private def noteDefs (cites : Bool) (body : Array Block) : String := Id.run do
   let notes := Ir.footnotesOf body
   if notes.isEmpty then return ""
   let mut out := ""
+  let mut written : Std.HashSet Nat := {}
   for (num, content) in notes do
-    -- The reader sets a definition at its reference, so a note's citation keeps its place.
-    out := out ++ "\n" ++ paraText s!"[^{num.getD 0}]: " "    " (inlineText content cites) ++ "\n"
+    let label := num.getD 0
+    unless written.contains label do
+      written := written.insert label
+      -- The reader sets a definition at its reference, so a note's citation keeps its place.
+      out := out ++ "\n" ++ paraText s!"[^{label}]: " "    " (inlineText content cites) ++ "\n"
   return out
 
 /-- A YAML scalar the twin's metadata writes: plain where the reader reads it so, else quoted. -/

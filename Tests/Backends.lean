@@ -2102,11 +2102,11 @@ def footnoteBackendChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "html: the apparatus ships no script"
     ((html.splitOn "<script").length == 1)
   let md := MarkdownDoc.emit doc
-  t "md: the marks are [^k] labels"
-    ((md.splitOn "[^1]").length ≥ 2 && (md.splitOn "[^7]").length ≥ 2)
+  t "md: the marks are labels numbered by their place, whatever mark a note shows"
+    ((md.splitOn "[^1]").length ≥ 2 && (md.splitOn "[^2]").length ≥ 2 && !hasStr md "[^7]")
   t "md: the definitions land after the body"
     ((md.splitOn "[^1]: the note text").length == 2 &&
-     (md.splitOn "[^7]: a seventh aside").length == 2)
+     (md.splitOn "[^2]: a seventh aside").length == 2)
   t "md: a noted document keeps one trailing newline"
     (md.endsWith "\n" && !(md.endsWith "\n\n"))
   t "md: an unnoted document is unchanged in shape"

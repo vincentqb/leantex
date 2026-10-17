@@ -52,7 +52,7 @@ public structure Vocab where
   ctrls := ["emph", "textbf", "texttt", "href", "includegraphics", "item", "hypertarget", "\\",
     "toprule", "midrule", "bottomrule", "footnote"] ++ citeCtrls
   bridged := ([Ir.HeadingLevel.title, .h1, .h2, .h3, .h4, .h5, .h6].map Parse.headingControl) ++
-    [Parse.markdownBibControl, Parse.citeSetupMark]
+    [Parse.markdownBibControl, Parse.citeSetupMark, Parse.markdownImageControl]
   envs := ["quote", "itemize", "enumerate", Parse.markdownDisclosureEnv, Parse.markdownTableEnv]
   verbs := ["verbatim", "lstlisting"]
   syms := ['[', ']', '&', '@']
@@ -544,12 +544,10 @@ private theorem inlRaws_adm (file : String) : (x : Inl) → Adm d (inlRaws file 
       exact adm_lit (by
         intro r hr
         simp only [List.mem_cons, List.not_mem_nil, or_false] at hr
-        rcases hr with rfl | rfl | rfl | rfl | rfl | rfl
-        · exact ctrl_mem _ _ (by simp [vocabulary])
-        · rfl
-        · rfl
+        rcases hr with rfl | rfl | rfl
+        · simp only [Vocab.admits, Bool.or_eq_true]
+          exact Or.inr (List.contains_iff_mem.mpr (List.mem_append.mpr (Or.inr (by simp))))
         · exact adm_group _ _ h
-        · rfl
         · exact adm_group _ _ (adm_text dest p))
     split
     · exact adm_lit (by
@@ -947,7 +945,8 @@ public theorem readIncluded_desugar_exact (file input : String) (cites : Bool) :
 
 /-- A raw that opens a block wherever it stands. -/
 @[expose] public def BlockStart (r : Raw) : Prop :=
-  (∃ p, r = .par p) ∨ (∃ n p, r = .ctrl n p ∧ n ∈ vocabulary.bridged) ∨
+  (∃ p, r = .par p) ∨
+    (∃ n p, r = .ctrl n p ∧ n ∈ vocabulary.bridged ∧ n ≠ Parse.markdownImageControl) ∨
     (∃ e s p, r = .verb e s p ∧ e ∈ vocabulary.verbs) ∨
     (∃ n b p, r = .env n b p ∧ n ∈ vocabulary.envs)
 
@@ -979,7 +978,8 @@ private theorem blkRaws_starts (file : String) (refs : Array Raw) (hrefs : Start
   | heading level body p =>
     simp only [blkRaws, Parse.headingRaws_contract]
     exact Or.inr ⟨.ctrl (Parse.headingControl level) p, by simp,
-      Or.inr (Or.inl ⟨_, p, rfl, bridged_mem level⟩)⟩
+      Or.inr (Or.inl ⟨_, p, rfl, bridged_mem level, by
+        cases level <;> simp [Parse.headingControl, Parse.markdownImageControl]⟩)⟩
   | code info text p =>
     simp only [blkRaws]
     split
@@ -1070,7 +1070,7 @@ public theorem vocabulary_contract :
       Parse.splitOpen? n = none ∧ Parse.splitClose? n = none) ∧
     (∀ n ∈ vocabulary.ctrls, ' ' ∉ n.toList) ∧
     (∀ n ∈ vocabulary.bridged, ((Parse.headingControl? n).isSome ∨ n = Parse.markdownBibControl ∨
-      n = Parse.citeSetupMark) ∧ ' ' ∈ n.toList) ∧
+      n = Parse.citeSetupMark ∨ n = Parse.markdownImageControl) ∧ ' ' ∈ n.toList) ∧
     (∀ n ∈ (vocabularyFor .document).requests, n ∉ vocabulary.envs ∧ Parse.inputEnvFile? n = none ∧
       ' ' ∈ n.toList) := by
   refine ⟨?_, ?_, ?_, ?_⟩
@@ -1089,7 +1089,8 @@ public theorem vocabulary_contract :
     · obtain ⟨level, _, rfl⟩ := List.mem_map.mp hn
       cases level <;> simp [Parse.headingControl, Parse.headingControl?]
     · simp only [List.mem_cons, List.not_mem_nil, or_false] at hn
-      rcases hn with rfl | rfl <;> simp [Parse.markdownBibControl, Parse.citeSetupMark]
+      rcases hn with rfl | rfl | rfl <;>
+        simp [Parse.markdownBibControl, Parse.citeSetupMark, Parse.markdownImageControl]
   · intro n hn
     simp only [vocabularyFor, Dialect.divisions, ↓reduceIte, List.mem_cons, List.not_mem_nil,
       or_false] at hn

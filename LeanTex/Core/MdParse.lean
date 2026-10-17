@@ -2269,7 +2269,8 @@ def scanInlines (file : String) (c : Chars) (dialect : Dialect := .document)
         else
           for _ in [0:n] do pending := pending.push '$'
         i := i + n
-      else if ch == '!' && c.at? (i + 1) == some '[' then
+      else if ch == '!' && c.at? (i + 1) == some '[' &&
+          !(noteLabelAt c (i + 1)).any (defs.notes.contains ·.1) then
         toks := flush toks pending pendingPos
         pending := ""
         stack := stack.push (toks.size, true, i + 1, none)
@@ -2315,7 +2316,9 @@ def scanInlines (file : String) (c : Chars) (dialect : Dialect := .document)
           | none =>
             -- premise: mdCiteChecks — a bracket is a citation group only where Pandoc reads one
             let after := c.at? (i + 1)
-            let free := !(after == some '[' || after == some '{')
+            -- A footnote's reference after the bracket is no label of it.
+            let noteNext := (noteLabelAt c (i + 1)).any (defs.notes.contains ·.1)
+            let free := noteNext || !(after == some '[' || after == some '{')
             let tailFree := free && after != some '('
             let scan : CiteScan := { closers, keyEnds, braces }
             -- A reference (§6.3): `[text][label]`, `[label][]`, or `[label]` before no label, the
@@ -2325,7 +2328,7 @@ def scanInlines (file : String) (c : Chars) (dialect : Dialect := .document)
             let collapsed := after == some '[' && c.at? (i + 2) == some ']'
             let reference : Option (String × Nat) :=
               if collapsed then own.map (·, i + 3)
-              else if after == some '[' then
+              else if after == some '[' && !noteNext then
                 match labelAt c (i + 1) with
                 | some found => some found
                 | none => own.map (·, i + 1)
@@ -3153,8 +3156,9 @@ defines, each link label's first definition and its footnotes' labels; a collect
 inline content. -/
 private def blocksPass (dialect : Dialect) (file : String) (input : String) (included : Bool)
     (known : Option (Std.HashSet String)) (tex : Bool) (refs : Defs)
-    (collect : Bool) : Array Blk × Array Diag × Defs := Id.run do
+    (collect : Bool) (notes : Bool) : Array Blk × Array Diag × Defs := Id.run do
   let doc := dialect == .document
+  let readsNotes := doc && notes
   let lines := splitLines input
   let mut frames : Array Frame := #[]
   let mut acc : Array Blk := #[]
@@ -3300,11 +3304,13 @@ private def blocksPass (dialect : Dialect) (file : String) (input : String) (inc
           (a.push (.para inl ((rest[0]?.map (·.2)).getD fallback)), ds, dd)
         | .table aligns header rows p => (a.push (.table aligns header rows p), #[], #[])
         | _ => (a, #[], #[])
-    -- An unmatched container under an open paragraph is lazy when the line starts no block.
+    -- An unmatched container under an open paragraph is lazy when the line starts no block, which
+    -- a document refuses outside a footnote, whose paragraph Pandoc's reader continues so.
     let (jl, indl) := indentAt cs i col
+    let inNotes := (frames.extract matched frames.size).all (·.kind matches .note _)
     if !ok && leaf.isPara && !blank &&
-        !(indl < 4 && (startsAnyBlock cs jl || (doc && (noteDefAt cs jl).isSome))) then
-      if doc then diags := diags.push (refuse file .lazyContinuation lpos)
+        !(indl < 4 && (startsAnyBlock cs jl || (readsNotes && (noteDefAt cs jl).isSome))) then
+      if doc && !inNotes then diags := diags.push (refuse file .lazyContinuation lpos)
       else
         leaf := match leaf with
           | .para pls => .para (pls.push (sliceStr cs jl cs.size, { line := ln.no, col := jl + 1 }))
@@ -3343,7 +3349,7 @@ private def blocksPass (dialect : Dialect) (file : String) (input : String) (inc
         opened := false
         let (j, ind) := indentAt cs i col
         -- A footnote's definition stands at the top level after a blank line or another definition.
-        if doc && frames.isEmpty && !leaf.isPara && ind ≤ 3 && (noteDefAt cs j).isSome then
+        if readsNotes && frames.isEmpty && !leaf.isPara && ind ≤ 3 && (noteDefAt cs j).isSome then
           let (a, ds, dd) := closePara leaf acc lpos
           defs := addDefs defs dd
           acc := a
@@ -3671,124 +3677,206 @@ other attributes" (some ⟨file, p⟩) (subject := some "md:refs-attrs"))
     | _ => n
   return (acc, diags, { links := defs, notes })
 
+/-- What filling footnotes has met: the labels references name, and the references standing where a
+note cannot, by label and place. -/
+private structure NoteSt where
+  used : Std.HashSet String := {}
+  dropped : Array (String × Pos) := #[]
+
 mutual
 
-/-- An inline node with each footnote reference holding its definition's content, and the labels
-referenced so far. -/
-private def fillNote (m : Std.HashMap String (Array Inl)) (used : Std.HashSet String) :
-    Inl → Inl × Std.HashSet String
-  | .note label _ p => match m.get? label with
-    | some body => (.note label body p, used.insert label)
-    | none => (.text s!"[^{label}]" p, used)
-  | .emph b p => let (b, used) := fillNotes m #[] used b.toList; (.emph b p, used)
-  | .strong b p => let (b, used) := fillNotes m #[] used b.toList; (.strong b p, used)
-  | .link d t b p => let (b, used) := fillNotes m #[] used b.toList; (.link d t b p, used)
-  | .image d t a p => let (a, used) := fillNotes m #[] used a.toList; (.image d t a p, used)
-  | .citeText k b p => let (b, used) := fillNotes m #[] used b.toList; (.citeText k b p, used)
-  | x@(.text ..) | x@(.code ..) | x@(.anchor ..) | x@(.soft _) | x@(.hard _) | x@(.math ..)
-  | x@(.cite ..) => (x, used)
+/-- Inline content without the footnote references in it, each one met. -/
+private def dropNotes (st : NoteSt) (acc : Array Inl) : List Inl → Array Inl × NoteSt
+  | [] => (acc, st)
+  | x :: rest =>
+    let (y, st) := dropNote st x
+    dropNotes st (acc ++ y) rest
 
-private def fillNotes (m : Std.HashMap String (Array Inl)) (acc : Array Inl)
-    (used : Std.HashSet String) : List Inl → Array Inl × Std.HashSet String
-  | [] => (acc, used)
-  | x :: rest => let (y, used) := fillNote m used x; fillNotes m (acc.push y) used rest
+private def dropNote (st : NoteSt) : Inl → Array Inl × NoteSt
+  | .note label _ p => (#[], { st with used := st.used.insert label, dropped := st.dropped.push (label, p) })
+  | .emph b p => let (b, st) := dropNotes st #[] b.toList; (#[.emph b p], st)
+  | .strong b p => let (b, st) := dropNotes st #[] b.toList; (#[.strong b p], st)
+  | .link d t b p => let (b, st) := dropNotes st #[] b.toList; (#[.link d t b p], st)
+  | .image d t a p => let (a, st) := dropNotes st #[] a.toList; (#[.image d t a p], st)
+  | .citeText k b p => let (b, st) := dropNotes st #[] b.toList; (#[.citeText k b p], st)
+  | .cite items p => let (items, st) := dropItemNotes st #[] items.toList; (#[.cite items p], st)
+  | x@(.text ..) | x@(.code ..) | x@(.anchor ..) | x@(.soft _) | x@(.hard _) | x@(.math ..) =>
+    (#[x], st)
+
+private def dropItemNotes (st : NoteSt) (acc : Array CiteItem) : List CiteItem → Array CiteItem × NoteSt
+  | [] => (acc, st)
+  | .mk key mode pre post :: rest =>
+    let (pre, st) := dropNotes st #[] pre.toList
+    let (post, st) := dropNotes st #[] post.toList
+    dropItemNotes st (acc.push (.mk key mode pre post)) rest
 
 end
 
 mutual
 
-/-- A block with each footnote reference in it holding its definition's content, and the labels
-referenced so far. -/
-private def fillNoteBlk (m : Std.HashMap String (Array Inl)) (used : Std.HashSet String) :
-    Blk → Blk × Std.HashSet String
-  | .para b p => let (b, used) := fillNotes m #[] used b.toList; (.para b p, used)
-  | .heading l b p => let (b, used) := fillNotes m #[] used b.toList; (.heading l b p, used)
-  | .quote b p => let (b, used) := fillNoteBlks m #[] used b.toList; (.quote b p, used)
+/-- An inline node with each footnote reference holding its definition's content; one in an image's
+text alternative or a citation's note, which hold text, is met and dropped. -/
+private def fillNote (m : Std.HashMap String (Array Inl)) (st : NoteSt) : Inl → Inl × NoteSt
+  | .note label _ p => match m.get? label with
+    | some body => (.note label body p, { st with used := st.used.insert label })
+    | none => (.text s!"[^{label}]" p, st)
+  | .emph b p => let (b, st) := fillNotes m #[] st b.toList; (.emph b p, st)
+  | .strong b p => let (b, st) := fillNotes m #[] st b.toList; (.strong b p, st)
+  | .link d t b p => let (b, st) := fillNotes m #[] st b.toList; (.link d t b p, st)
+  | .image d t a p => let (a, st) := dropNotes st #[] a.toList; (.image d t a p, st)
+  | .citeText k b p => let (b, st) := fillNotes m #[] st b.toList; (.citeText k b p, st)
+  | .cite items p => let (items, st) := dropItemNotes st #[] items.toList; (.cite items p, st)
+  | x@(.text ..) | x@(.code ..) | x@(.anchor ..) | x@(.soft _) | x@(.hard _) | x@(.math ..) => (x, st)
+
+private def fillNotes (m : Std.HashMap String (Array Inl)) (acc : Array Inl) (st : NoteSt) :
+    List Inl → Array Inl × NoteSt
+  | [] => (acc, st)
+  | x :: rest => let (y, st) := fillNote m st x; fillNotes m (acc.push y) st rest
+
+end
+
+mutual
+
+/-- A block with each footnote reference in it holding its definition's content. -/
+private def fillNoteBlk (m : Std.HashMap String (Array Inl)) (st : NoteSt) : Blk → Blk × NoteSt
+  | .para b p => let (b, st) := fillNotes m #[] st b.toList; (.para b p, st)
+  | .heading l b p => let (b, st) := fillNotes m #[] st b.toList; (.heading l b p, st)
+  | .quote b p => let (b, st) := fillNoteBlks m #[] st b.toList; (.quote b p, st)
   | .disclosure sm e b p =>
-    let (sm, used) := fillNotes m #[] used sm.toList
-    let (b, used) := fillNoteBlks m #[] used b.toList
-    (.disclosure sm e b p, used)
-  | .list o st t items p => let (items, used) := fillNoteItems m #[] used items.toList
-    (.list o st t items p, used)
+    let (sm, st) := fillNotes m #[] st sm.toList
+    let (b, st) := fillNoteBlks m #[] st b.toList
+    (.disclosure sm e b p, st)
+  | .list o s t items p => let (items, st) := fillNoteItems m #[] st items.toList
+    (.list o s t items p, st)
   | .table al h rows p =>
-    let (h, used) := fillNoteCells m #[] used h.toList
-    let (rows, used) := fillNoteRows m #[] used rows.toList
-    (.table al h rows p, used)
-  | .note l b p => let (b, used) := fillNoteBlks m #[] used b.toList; (.note l b p, used)
-  | x@(.code ..) | x@(.rule _) | x@(.lean ..) | x@(.metadata ..) | x@(.refs _) => (x, used)
+    let (h, st) := fillNoteCells m #[] st h.toList
+    let (rows, st) := fillNoteRows m #[] st rows.toList
+    (.table al h rows p, st)
+  | .note l b p => let (b, st) := fillNoteBlks m #[] st b.toList; (.note l b p, st)
+  | x@(.code ..) | x@(.rule _) | x@(.lean ..) | x@(.metadata ..) | x@(.refs _) => (x, st)
 
-private def fillNoteBlks (m : Std.HashMap String (Array Inl)) (acc : Array Blk)
-    (used : Std.HashSet String) : List Blk → Array Blk × Std.HashSet String
-  | [] => (acc, used)
-  | b :: rest => let (c, used) := fillNoteBlk m used b; fillNoteBlks m (acc.push c) used rest
+private def fillNoteBlks (m : Std.HashMap String (Array Inl)) (acc : Array Blk) (st : NoteSt) :
+    List Blk → Array Blk × NoteSt
+  | [] => (acc, st)
+  | b :: rest => let (c, st) := fillNoteBlk m st b; fillNoteBlks m (acc.push c) st rest
 
-private def fillNoteItems (m : Std.HashMap String (Array Inl)) (acc : Array (Array Blk))
-    (used : Std.HashSet String) : List (Array Blk) → Array (Array Blk) × Std.HashSet String
-  | [] => (acc, used)
+private def fillNoteItems (m : Std.HashMap String (Array Inl)) (acc : Array (Array Blk)) (st : NoteSt) :
+    List (Array Blk) → Array (Array Blk) × NoteSt
+  | [] => (acc, st)
   | it :: rest =>
-    let (c, used) := fillNoteBlks m #[] used it.toList
-    fillNoteItems m (acc.push c) used rest
+    let (c, st) := fillNoteBlks m #[] st it.toList
+    fillNoteItems m (acc.push c) st rest
 
-private def fillNoteCells (m : Std.HashMap String (Array Inl)) (acc : Array (Array Inl))
-    (used : Std.HashSet String) : List (Array Inl) → Array (Array Inl) × Std.HashSet String
-  | [] => (acc, used)
+private def fillNoteCells (m : Std.HashMap String (Array Inl)) (acc : Array (Array Inl)) (st : NoteSt) :
+    List (Array Inl) → Array (Array Inl) × NoteSt
+  | [] => (acc, st)
   | cell :: rest =>
-    let (c, used) := fillNotes m #[] used cell.toList
-    fillNoteCells m (acc.push c) used rest
+    let (c, st) := fillNotes m #[] st cell.toList
+    fillNoteCells m (acc.push c) st rest
 
 private def fillNoteRows (m : Std.HashMap String (Array Inl)) (acc : Array (Array (Array Inl)))
-    (used : Std.HashSet String) :
-    List (Array (Array Inl)) → Array (Array (Array Inl)) × Std.HashSet String
-  | [] => (acc, used)
+    (st : NoteSt) : List (Array (Array Inl)) → Array (Array (Array Inl)) × NoteSt
+  | [] => (acc, st)
   | row :: rest =>
-    let (c, used) := fillNoteCells m #[] used row.toList
-    fillNoteRows m (acc.push c) used rest
+    let (c, st) := fillNoteCells m #[] st row.toList
+    fillNoteRows m (acc.push c) st rest
 
 end
 
-/-- The footnotes a text defines set at their references: each reference holds its definition's
-paragraphs, a hard break between two, and the definitions set nothing where they stand; a
-definition no reference names, a label's second, and a block other than a paragraph are named. -/
+/-- A table row's cells as one line, a space between two. -/
+private def noteRowLine (p : Pos) (cells : Array (Array Inl)) : Array Inl :=
+  cells.foldl (fun acc c => if acc.isEmpty then c else (acc.push (.text " " p)) ++ c) #[]
+
+mutual
+
+/-- A footnote's block as the lines of text a note holds: a paragraph's or heading's text, a code
+block's lines as code, each item, row and contained block its own lines. -/
+private def noteLines (out : Array (Array Inl)) : Blk → Array (Array Inl)
+  | .para b _ => out.push b
+  | .heading _ b _ => out.push b
+  | .code _ text p =>
+    (text.splitOn "\n").foldl (fun o l => if l.isEmpty then o else o.push #[.code l p]) out
+  | .quote b _ => noteLinesList out b.toList
+  | .note _ b _ => noteLinesList out b.toList
+  | .disclosure sm _ b _ => noteLinesList (out.push sm) b.toList
+  | .list _ _ _ items _ => noteLinesItems out items.toList
+  | .table _ h rows p => rows.foldl (fun o r => o.push (noteRowLine p r)) (out.push (noteRowLine p h))
+  | .rule _ | .lean .. | .metadata .. | .refs _ => out
+
+private def noteLinesList (out : Array (Array Inl)) : List Blk → Array (Array Inl)
+  | [] => out
+  | b :: rest => noteLinesList (noteLines out b) rest
+
+private def noteLinesItems (out : Array (Array Inl)) : List (Array Blk) → Array (Array Inl)
+  | [] => out
+  | it :: rest => noteLinesItems (noteLinesList out it.toList) rest
+
+end
+
+/-- A block's name and place, as a footnote's loss of its structure names it. -/
+private def blkKind : Blk → String × Pos
+  | .para _ p => ("paragraph", p)
+  | .heading _ _ p => ("heading", p)
+  | .code _ _ p => ("code block", p)
+  | .rule p => ("thematic break", p)
+  | .quote _ p => ("block quote", p)
+  | .disclosure _ _ _ p => ("disclosure", p)
+  | .list _ _ _ _ p => ("list", p)
+  | .table _ _ _ p => ("table", p)
+  | .lean _ p => ("Lean division", p)
+  | .metadata _ p => ("metadata block", p)
+  | .refs p => ("reference list division", p)
+  | .note _ _ p => ("footnote", p)
+
+/-- The footnotes a text defines set at their references, a hard break between two lines and a
+label's last definition standing, as Pandoc's reader takes it; each loss on the way is named. -/
 def resolveNotes (file : String) (blocks : Array Blk) : Array Blk × Array Diag := Id.run do
   let mut defs : Std.HashMap String (Array Inl) := {}
-  let mut placed : Array (String × Pos) := #[]
+  let mut placed : Std.HashMap String Pos := {}
+  let mut order : Array String := #[]
   let mut diags : Array Diag := #[]
   for b in blocks do
     if let .note label body p := b then
-      if defs.contains label then
-        diags := diags.push (Diag.of .W0392 s!"a second footnote '{label}' sets nothing: the \
-first definition of a label stands" (some ⟨file, p⟩)
-          (some "give the footnote a label of its own") (subject := some "md:note-again"))
-      else
-        let mut content : Array Inl := #[]
-        for part in body do
-          match part with
-          | .para inl q =>
-            unless content.isEmpty do content := content.push (.hard q)
-            content := content ++ inl
-          | _ =>
-            diags := diags.push (Diag.of .W0392 s!"a block in footnote '{label}' other than a \
-paragraph sets nothing: a footnote holds its paragraphs' text" (some ⟨file, p⟩)
-              (some "write the footnote's content as paragraphs") (subject := some "md:note-block"))
-        defs := defs.insert label content
-        placed := placed.push (label, p)
-  let (filled, used) := fillNoteBlks defs #[] {} blocks.toList
-  for (label, p) in placed do
-    unless used.contains label do
+      if let some earlier := placed.get? label then
+        diags := diags.push (Diag.of .W0392 s!"footnote '{label}' sets nothing: a later \
+definition of its label stands, as Pandoc's reader takes it" (some ⟨file, earlier⟩)
+          (some "give each footnote a label of its own") (subject := some "md:note-again"))
+      else order := order.push label
+      let mut lines : Array (Array Inl) := #[]
+      for part in body do
+        match part with
+        | .para inl _ => lines := lines.push inl
+        | other =>
+          let (kind, q) := blkKind other
+          diags := diags.push (Diag.of .W0392 s!"a {kind} in footnote '{label}' sets as its \
+lines of text: a footnote holds text" (some ⟨file, q⟩)
+            (some "write the footnote's content as paragraphs") (subject := some "md:note-block"))
+          lines := noteLines lines other
+      let content := lines.foldl (init := #[]) fun acc l =>
+        if acc.isEmpty then l else (acc.push (.hard p)) ++ l
+      defs := defs.insert label content
+      placed := placed.insert label p
+  let (filled, st) := fillNoteBlks defs #[] {} blocks.toList
+  for label in order do
+    unless st.used.contains label do
       diags := diags.push (Diag.of .W0392 s!"footnote '{label}' sets nothing: no reference names \
-it" (some ⟨file, p⟩) (some s!"name it where it belongs with [^{label}], or remove it")
+it" (placed.get? label |>.map fun p => ⟨file, p⟩) (some s!"name it where it belongs with [^{label}], or remove it")
         (subject := some "md:note-unused"))
+  for (label, q) in st.dropped do
+    diags := diags.push (Diag.of .W0392 s!"footnote '{label}' sets nothing where it is named: an \
+image's text alternative and a citation's note hold text" (some ⟨file, q⟩)
+      (some "name the footnote outside the alternative or the citation") (subject := some "md:note-in-text"))
   return (filled.filter (!· matches .note ..), diags)
 
 /-- Blocks for one markdown text in a dialect, and the diagnostics the reader raised; a first pass
 reads its link reference definitions, which a link may use before or after they stand (§4.7). -/
 public def blocksIn (dialect : Dialect) (file : String) (input : String) (included : Bool := false)
-    (known : Option (Std.HashSet String) := none) (tex : Bool := false) :
+    (known : Option (Std.HashSet String) := none) (tex : Bool := false) (notes : Bool := true) :
     Array Blk × Array Diag :=
   let refs := if holdsRefColon input then
-      (blocksPass dialect file input included known tex {} true).2.2
+      (blocksPass dialect file input included known tex {} true notes).2.2
     else {}
-  let (blocks, diags, _) := blocksPass dialect file input included known tex refs false
+  let (blocks, diags, _) := blocksPass dialect file input included known tex refs false notes
   if refs.notes.isEmpty then (blocks, diags) else
   let (blocks, noteDs) := resolveNotes file blocks
   (blocks, diags ++ noteDs)

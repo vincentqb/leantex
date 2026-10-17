@@ -6,7 +6,7 @@ public section
 
 open LeanTex.Core LeanTex.Cli
 
-/-! A markdown image's citations in its text alternative, and footnotes as Pandoc and GFM spell
+/-! A markdown image's citations in its text alternative, and footnotes as Pandoc's manual spells
 them. -/
 
 namespace Tests.MdNoteEdges
@@ -76,6 +76,31 @@ def altChecks (ref : IO.Ref (List String)) : IO Unit := do
 \\includegraphics[alt={See \\cite{a} here}]{chart.svg}\n\\end{document}\n"
   t s!"tex alt: a TeX image's alternative reads as it did, its source as written ({imageNames d})"
     ((imageNames d).contains "See \\cite {a} here")
+  for (body, name) in [("![*see [@a]* here](chart.svg)", "see [Ash, 2001] here"),
+      ("![see [link @a](https://example.org)](chart.svg)", "see link Ash [2001]")] do
+    let (d, _) := mdBibBuild (worksMeta ++ body ++ "\n") #[("works.bib", worksBib)]
+    t s!"md alt: a citation inside emphasis or a link in an alternative cites ({imageNames d})"
+      ((imageNames d).contains name && !(imageNames d).any (hasStr · "\\"))
+  let (one, _) := mdBibBuild (worksMeta ++ "One ![see [@a]](chart.svg) end.\n") #[("works.bib", worksBib)]
+  let (two, _) := mdBibBuild (worksMeta ++ "Two ![](chart.svg) and ![see [@a]](chart.svg) end.\n")
+    #[("works.bib", worksBib)]
+  t s!"md alt: an image with no alternative takes none from the next ({imageNames two})"
+    (((imageNames two).filter (hasStr · "see")).size == ((imageNames one).filter (hasStr · "see")).size)
+  let (d, ds) := mdBibBuild (worksMeta ++ "Only ![see [@a]](chart.svg) here.\n") #[("works.bib", worksBib)]
+  let listed := Ir.foldBlocks (fun out b => match b with
+    | .bibliography _ _ items => out ++ items.map (·.key)
+    | _ => out) (fun out _ => out) #[] d.body
+  t s!"md alt: a document citing only in an alternative lists the work ({listed})"
+    (listed == #["a"] && !ds.any (·.kind == .W0351))
+  let (d, _) := leanCiteBuild "F.lean"
+    "/-! A chart ![see [@roe2020]](chart.svg) here. -/\n\ndef x := 1\n" #[("refs.bib", worksBib)]
+  t s!"lean alt: a docstring's image cites in its alternative ({imageNames d})"
+    ((imageNames d).any fun n => hasStr n "see " && !hasStr n "\\" && !hasStr n "@")
+  let mixed := worksMeta ++ "![see [@a; -@b, p. 2]](chart.svg)\n\nText cites [@roe2020].\n"
+  let (d, _) := mdBibBuild mixed #[("works.bib", worksBib)]
+  let twin := MarkdownDoc.emit d
+  t s!"md alt: the twin spells an alternative's mixed group and keeps the body's ({repr twin})"
+    (hasStr twin "[@a; -@b, p. 2]" && hasStr twin "Text cites [@roe2020].")
 
 /-- A markdown document's twin, its footnotes' definitions after its body. -/
 def twinOf (src : String) : String := MarkdownDoc.emit (elabMd src).1
@@ -107,6 +132,35 @@ def noteChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (_, ds) := elabMd "Text[^a].\n\n[^a]: A paragraph.\n\n    - and a list\n"
   t s!"md notes: a block other than a paragraph in a note is named ({repr (ds.map (·.subject))})"
     (ds.any (·.subject == some "md:note-block"))
+  let lazy := "Text[^1] here.\n\n[^1]: A long note that\nwraps without indent.\n\nAfter.\n"
+  let (_, ds) := elabMd lazy
+  t s!"md notes: a note's paragraph takes a line left unindented, as Pandoc's ({repr (twinOf lazy)})"
+    (hasStr (twinOf lazy) "[^1]: A long note that wraps without indent." && !ds.any (·.kind == .E0390))
+  let dup := "Text[^a].\n\n[^a]: Once.\n\n[^a]: Twice.\n"
+  t s!"md notes: a label's last definition stands, as Pandoc's ({repr (twinOf dup)})"
+    (hasStr (twinOf dup) "[^1]: Twice." && !hasStr (twinOf dup) "Once")
+  let blocks := "Text[^a].\n\n[^a]: Para.\n\n    ```\n    code line\n    ```\n\n    - item one\n"
+  t s!"md notes: a note's other blocks set as its lines ({repr (twinOf blocks)})"
+    (hasStr (twinOf blocks) "`code line`" && hasStr (twinOf blocks) "item one")
+  let seams := worksMeta ++ "Cites [@a][^n], links [x][^n] and ![^n](x.png).\n\n[x]: https://example.org\n\n\
+[^n]: The note.\n"
+  let (d, _) := elabMd seams
+  t s!"md notes: a note after a citation, a reference or a bang is a note ({repr (twinOf seams)}, \
+{keysOf d})"
+    (keysOf d == ["a"] && hasStr (twinOf seams) "[x](https://example.org)[^2]" &&
+      hasStr (twinOf seams) "and ![^3](x.png)" && hasStr (twinOf seams) "[^3]: The note.")
+  let inside := worksMeta ++ "Cite [see[^n] @a, p. 3] and ![a chart[^n]](chart.svg).\n\n[^n]: The note.\n"
+  let (_, ds) := elabMd inside
+  t s!"md notes: a note named in a citation's note or an alternative is named, not unused \
+({repr (ds.map (·.subject))})"
+    ((ds.filter (·.subject == some "md:note-in-text")).size == 2 &&
+      !ds.any (·.subject == some "md:note-unused"))
+  let (d, ds) := includedDoc "h.tex" (dvDoc "\\usepackage{markdown}\n" "\\markdownInput{p.md}")
+    [("p.md", "p.md", "Text[^a].\n\n[^a]: A note.\n")]
+  t s!"md notes: an included file reads no footnote, as the markdown package's default \
+({repr (Ir.blocksText d.body)})"
+    (hasStr (Ir.blocksText d.body) "[^a]: A note." &&
+      !ds.any fun x => (x.subject.getD "").startsWith "md:note")
 
 /-- A TeX document's footnote holding a citation: its twin spells the citation in Pandoc's syntax,
 which reads back where the note stands, so a numbered list keeps its order. -/
@@ -125,5 +179,12 @@ A claim.\\footnote{See \\citet{b} and \\citep{roe2020}.} More text \\citep{a}.\n
     | _ => out) (fun out _ => out) #[] x.body
   t s!"tex note twin: read back, the list numbers as the document's ({order d}, {order back})"
     (order d == #["b", "roe2020", "a"] && order back == order d && MarkdownDoc.emit back == twin)
+  let marks := "\\documentclass{article}\n\\begin{document}\nOne\\footnote{Note one.} \
+two\\footnote{Note two.}\\setcounter{footnote}{0} again\\footnote{Note three.} \
+and\\footnote[7]{Note seven.} also\\footnote[7]{Another seven.}.\n\\end{document}\n"
+  let twin := MarkdownDoc.emit (elabStr marks).1
+  let back := MarkdownDoc.emit (elabMd twin).1
+  t s!"tex note twin: notes whose marks repeat keep their own text read back ({repr twin})"
+    (["Note one.", "Note two.", "Note three.", "Note seven.", "Another seven."].all (hasStr back ·))
 
 end Tests.MdNoteEdges

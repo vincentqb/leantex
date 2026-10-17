@@ -402,15 +402,14 @@ work sets as its key, uncited" p (help := some "spell the key as its .bib entry 
 
 mutual
 
-/-- Whether inline content holds a citation of a work natbib's key list carries, outside an image's
-text alternative, which sets it as text. -/
+/-- Whether inline content holds a citation of a work natbib's key list carries. -/
 private def citesInl : Inl → Bool
   | .cite items _ => items.any (keyCrosses ·.key)
   | .citeText key _ _ => keyCrosses key
   | .emph body _ => citesInls body.toList
   | .strong body _ => citesInls body.toList
   | .link _ _ body _ => citesInls body.toList
-  | .image _ _ _ _ => false
+  | .image _ _ alt _ => citesInls alt.toList
   | .note _ body _ => citesInls body.toList
   | .text .. | .code .. | .anchor .. | .soft _ | .hard _ | .math .. => false
 
@@ -422,8 +421,7 @@ end
 
 mutual
 
-/-- Whether inline content spells a citation at all, one no key list carries and one an image's
-text alternative sets as text included. -/
+/-- Whether inline content spells a citation at all, one no key list carries included. -/
 private def spellsCiteInl : Inl → Bool
   | .cite _ _ => true
   | .citeText _ _ _ => true
@@ -516,11 +514,10 @@ a formula, or holds a control or a character the math model does not read" p])
     let ds := if title.isEmpty then #[] else
       #[routeDegraded file "image-title"
         "an image's title is not carried: the image sets without it" p]
-    -- An alternative holding a citation rides its `alt` key's group, which the elaborator reads.
+    -- An alternative holding a citation rides its own control, which the elaborator reads whole.
     if citesInls alt.toList then
       let (rs, ads) := inlListRaws file dialect #[] #[] alt.toList
-      (#[.ctrl "includegraphics" p, .sym '[' p, .word "alt=" p, .group rs p, .sym ']' p,
-        .group (textRaws dest p) p], ds ++ ads)
+      (#[.ctrl Parse.markdownImageControl p, .group rs p, .group (textRaws dest p) p], ds ++ ads)
     else if text.isEmpty then
       (#[.ctrl "includegraphics" p, .group (textRaws dest p) p], ds)
     else
@@ -1243,6 +1240,7 @@ public def desugar (file : String) (input : String) (dialect : Dialect := .docum
     (known : Option (Std.HashSet String) := none) (tex : Bool := false) : Array Raw × Array Diag :=
   let read := blocksIn dialect file (if tex then stripTexComments input else input)
     (included := role == .included && citing) (known := known) (tex := tex)
+    (notes := role == .document)
   let split := splitMetadata read.1
   let m := metaRead file role split.1
   let blocks := split.2.toList

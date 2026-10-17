@@ -146,9 +146,14 @@ def mdCiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "cite: a key natbib cannot carry sets as its text, the group's other works cited"
     (keysOf d == ["a"] && hasStr (Ir.blocksText d.body) "@{c,d}" &&
       ds.any (·.subject == some "md:cite-key"))
-  let (_, ds) := elabCited "An image ![see @a here](img.svg) end."
-  t "cite: a citation in an image's text alternative names nothing"
-    (!ds.any (·.subject == some "md:image-alt-cite"))
+  let (d, ds) := elabCited "An image ![see @a here](img.svg) end."
+  t s!"cite: a citation in an image's text alternative cites, naming nothing ({repr (ds.map (·.code))})"
+    (!ds.any (·.kind == .W0392) &&
+      (match (Ir.foldBlocks (fun out _ => out) (fun out x => match x with
+        | .image _ _ alt => out ++ alt.cites.map (·.2)
+        | _ => out) #[] d.body) with
+       | #[ks] => ks == #["a"]
+       | _ => false))
   -- An included file reads citations where the TeX document's markdown package says to.
   let part := "Thanks to @octocat and [@a].\n"
   for (pre, opts, cites) in [("\\usepackage{markdown}", "", false),

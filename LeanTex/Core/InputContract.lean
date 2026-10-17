@@ -629,8 +629,9 @@ public theorem markdownVocabulary_contract :
       · obtain ⟨level, _, rfl⟩ := List.mem_map.mp hn
         cases level <;> simp [Parse.headingControl, Compat.lengthRestoreKeys?]
       · simp only [List.mem_cons, List.not_mem_nil, or_false] at hn
-        rcases hn with rfl | rfl <;>
-          simp [Parse.markdownBibControl, Parse.citeSetupMark, Compat.lengthRestoreKeys?]
+        rcases hn with rfl | rfl | rfl <;>
+          simp [Parse.markdownBibControl, Parse.citeSetupMark, Parse.markdownImageControl,
+            Compat.lengthRestoreKeys?]
 
 private theorem bodyIsBlockList_of_mem : (l : List Raw) → (r : Raw) → r ∈ l →
     bodyIsBlockOne r = true → bodyIsBlockList l = true
@@ -643,13 +644,16 @@ private theorem bodyIsBlockList_of_mem : (l : List Raw) → (r : Raw) → r ∈ 
 
 private theorem bodyIsBlockOne_of_blockStart (r : Raw) (h : Md.BlockStart r) :
     bodyIsBlockOne r = true := by
-  rcases h with ⟨p, rfl⟩ | ⟨n, p, rfl, hn⟩ | ⟨e, s, p, rfl, he⟩ | ⟨n, b, p, rfl, hn⟩
+  rcases h with ⟨p, rfl⟩ | ⟨n, p, rfl, hn, hne⟩ | ⟨e, s, p, rfl, he⟩ | ⟨n, b, p, rfl, hn⟩
   · simp [bodyIsBlockOne]
   · rcases List.mem_append.mp hn with hn | hn
     · obtain ⟨level, _, rfl⟩ := List.mem_map.mp hn
       cases level <;> simp [bodyIsBlockOne, blockHeading?, Parse.headingControl, Parse.headingControl?]
     · simp only [List.mem_cons, List.not_mem_nil, or_false] at hn
-      rcases hn with rfl | rfl <;> simp [bodyIsBlockOne]
+      rcases hn with rfl | rfl | rfl
+      · simp [bodyIsBlockOne]
+      · simp [bodyIsBlockOne]
+      · exact absurd rfl hne
   · simp only [Md.vocabulary, List.mem_cons, List.not_mem_nil, or_false] at he
     rcases he with rfl | rfl <;> simp [bodyIsBlockOne]
   · simp only [Md.vocabulary, List.mem_cons, List.not_mem_nil, or_false] at hn

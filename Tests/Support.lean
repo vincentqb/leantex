@@ -977,7 +977,9 @@ def mdCiteTwinCases : List (String × String) :=
    ("@a [@b] says", "@a [@b] says"), ("[-@a, p. 3]", "[-@a, p. 3]"),
    ("[@a; -@b]", "[@a; -@b]"), ("@Foo_bar.baz. ends", "@{Foo_bar.baz}. ends"),
    ("@{a;b} ends", "@{a;b} ends"), ("[@a, x\\; y]", "[@a, x\\; y]"),
-   ("[@a, x \\@b]", "[@a, x \\@b]")]
+   ("[@a, x \\@b]", "[@a, x \\@b]"), ("![see @a here](chart.svg)", "![see @a here](chart.svg)"),
+   ("![see [@a; -@b]](chart.svg)", "![see [@a; -@b]](chart.svg)"),
+   ("Text[^1] here.\n\n[^1]: See [@a].", "[^1]: See [@a].")]
 
 /-- A markdown fixture elaborated as the driver builds it: its bibliography read beside it. -/
 def elabMdFixture (n src : String) : IO (Ir.Doc × Array Diag) := do

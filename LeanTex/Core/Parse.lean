@@ -557,6 +557,10 @@ public def markdownBibControl : String := "markdown bibliography"
 /-- The control carrying a citation setup to the elaborator, unforgeable as it holds a space. -/
 public def citeSetupMark : String := "citation setup"
 
+/-- The control a markdown image whose alternative cites desugars to, then its alternative's group
+and its file's, unforgeable because it holds a space. -/
+public def markdownImageControl : String := "markdown image"
+
 /-- A citation setup as the raws that carry it: its mark, then a group of a word per declaration. -/
 public def citeSetupRaws (ds : Array CiteDecl) (pos : Pos) : Array Raw :=
   #[.ctrl citeSetupMark pos, .group (ds.map fun d => .word d.spelling pos) pos]

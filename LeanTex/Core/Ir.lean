@@ -2870,7 +2870,8 @@ public inductive Alt where
 public def Alt.declare (s : String) : Alt :=
   if s.trimAscii.toString.isEmpty then .undeclared else .described s.trimAscii.toString
 
-/-- The text a described alternative carries, `""` for the other two. -/
+/-- The text an alternative carries: a described one's, a citing one's runs as they stand, `""` for
+an undeclared or decorative one. -/
 public def Alt.text : Alt → String
   | .described t => t
   | .citing runs => String.join (runs.toList.map AltRun.said)

@@ -3171,26 +3171,15 @@ private def imageGroups (raws : Array Raw) (start : Nat) :
       (#[arg] ++ args, ⟨k, by omega⟩)
     | _ => (#[], ⟨j, hj⟩)
 
-/-- The index of the group a markdown image's option run gives its alternative after `alt=`, where
-it holds a citation command. -/
-private def citedAltAt (raws : Array Raw) (j : Nat) : Option Nat := Id.run do
-  let stop := (closeBracketFrom raws (j + 1)).getD raws.size
-  for k in [j + 1:stop] do
-    match raws[k]?, raws[k + 1]? with
-    | some (.word "alt=" _), some (.group body _) =>
-      if body.any (fun r => match r with
-          | .ctrl n _ => (Ir.natbibCites.lookup n).isSome
-          | _ => false) then return some (k + 1)
-    | _, _ => pure ()
-  return none
-
 mutual
 
 /-- An alternative's runs from its elaborated text: each citation its own, the rest its words. -/
+-- conserves: none — a fold cannot keep a citation one run, and a note is no alternative's text.
 private def altRunsOne (out : Array Ir.AltRun) : Inline → Array Ir.AltRun
   | .cite form keys => if form.cmd == .nocite then out else out.push (.cite form keys none)
+  | .footnote _ _ => out
   | .located _ body | .styled _ body | .colored _ _ body | .role _ body | .link _ body
-  | .decorated _ body | .onSteps _ body | .footnote _ body | .cited _ _ body
+  | .decorated _ body | .onSteps _ body | .cited _ _ body
   | .altSteps _ body _ => altRunsList out body.toList
   | x@(.text _) | x@(.math _ _) | x@(.formula _ _ _) | x@(.label _) | x@(.ref _ _ _ _) | x@.fill
   | x@(.hspace _ _) | x@(.rule _ _ _) | x@.pageNumber | x@.pageCount | x@(.linebreak _)
@@ -3214,8 +3203,7 @@ private def altOfInlines (xs : Array Inline) : Ir.Alt :=
 /-- `\includegraphics` and `\animategraphics`; an animation ships its static
 poster with its playback named as lost. -/
 private def imageArm (ctx : Ctx) (raws : Array Raw) (i : Nat)
-    (pos : Pos) (animated : Bool)
-    (el : (sub : Array Raw) → rawWeightList sub.toList < sliceWeight raws i → EM (Array Inline)) :
+    (pos : Pos) (animated : Bool) :
     EM (Option Inline × { j : Nat // i < j }) := do
   let j0 := skipSpaces raws (i + 1)
   have hj0 := skipSpaces_ge raws (i + 1)
@@ -3258,17 +3246,23 @@ private def imageArm (ctx : Ctx) (raws : Array Raw) (i : Nat)
       (trigger := "\\animategraphics") (recovery := some .ignored) (output := some .html)
   let src := argText ctx (args.getD (if animated then 1 else 0) #[])
   recordImageSpan ctx src pos
-  -- A markdown image's citations in its alternative cite where the image stands.
-  let alt ← match (if spelledSurface ctx == .markdown then citedAltAt raws j0 else none) with
-    | some k =>
-      match hk : raws[k]? with
-      | some (.group body _) =>
-        if hik : i ≤ k then
-          pure (altOfInlines (← el body (body_lt_slice hk (by simp only [rawWeight]; omega) hik)))
-        else pure opts.alt
-      | _ => pure opts.alt
-    | none => pure opts.alt
-  return (some (.image src opts.spec alt), next)
+  return (some (.image src opts.spec opts.alt), next)
+
+/-- A markdown image whose alternative cites, `Parse.markdownImageControl` then the alternative's
+group and the file's: the alternative elaborated where the image stands, its citations cited. -/
+private def markdownImageArm (ctx : Ctx) (raws : Array Raw) (i : Nat) (pos : Pos)
+    (el : (sub : Array Raw) → rawWeightList sub.toList < sliceWeight raws i → EM (Array Inline)) :
+    EM (Option Inline × { j : Nat // i < j }) := do
+  let j0 := skipSpaces raws (i + 1)
+  have hj0 := skipSpaces_ge raws (i + 1)
+  match hk : raws[j0]? with
+  | some (.group body _) =>
+    let xs ← el body (body_lt_slice hk (by simp only [rawWeight]; omega) (by omega))
+    let (args, ⟨j, hj⟩) := imageGroups raws (j0 + 1) 1
+    let src := argText ctx (args.getD 0 #[])
+    recordImageSpan ctx src pos
+    return (some (.image src {} (altOfInlines xs)), ⟨j, by omega⟩)
+  | _ => return (none, ⟨i + 1, by omega⟩)
 
 /-- `\\faIcon`'s option run: only `label = ...` is modelled, overriding the
 icon's default text alternative. -/
@@ -5319,7 +5313,12 @@ private def elabInlinesCtrl (ctx : Ctx) (raws : Array Raw) (i : Nat)
     elabInlinesFrom ctx raws j acc ""
   else if name == "includegraphics" || name == "animategraphics" then
     let (node, ⟨j, hj⟩) ← imageArm ctx raws i pos (name == "animategraphics")
-      fun sub _hsub => elabInlinesCore ctx sub
+    let acc := flushText acc sb
+    let acc := match node with | some x => acc.push x | none => acc
+    have _ : sliceWeight raws j < sliceWeight raws i := sliceWeight_lt raws h hj
+    elabInlinesFrom ctx raws j acc ""
+  else if name == Parse.markdownImageControl then
+    let (node, ⟨j, hj⟩) ← markdownImageArm ctx raws i pos fun sub _hsub => elabInlinesCore ctx sub
     let acc := flushText acc sb
     let acc := match node with | some x => acc.push x | none => acc
     have _ : sliceWeight raws j < sliceWeight raws i := sliceWeight_lt raws h hj
@@ -5814,7 +5813,7 @@ public def recoversInlineName (ctx : Ctx) (name : String) : Bool :=
     "subparagraph", "hyperlink", "hypertarget", "href", "link", "urlstyle", "url",
     "nolinkurl", "hspace", "rule", "includegraphics", "animategraphics", "faIcon",
     "pagenumber", "pagecount", "textcolor", "ifgiven", "alt", "pause", "note",
-    "centering", "footnote", "thanks"].contains name &&
+    "centering", "footnote", "thanks", Parse.markdownImageControl].contains name &&
   (accentMarkOf name).isNone && (escapeOf name).isNone &&
   (Lex.textSymbols.lookup name).isNone && (modifierStyle? name).isNone &&
   (decorationCtrls.lookup name).isNone && (phantomAxes.lookup name).isNone &&
