@@ -271,24 +271,27 @@ and after.
 ## Raster deck — 2026-10-17
 
 `--rasters-only` builds the deck `scripts/talkdeck.lean` writes when given a raster count: 8
-frames, each showing its own invented 2048×2048 RGBA PNG (the talk deck's panels, grained from
-another seed), sealed as the talk deck is.
+frames, each showing its own invented 2048×2048 RGBA PNG (the talk deck's panels grained from
+seeds 731 to 738, the first the talk deck's own), sealed as the talk deck is. The report gives
+each format's median peak resident memory beside its times.
 
 Images were fetched one at a time, and a raster's colour and alpha planes were deflated one after
-the other. Requests are now fetched four at a time, never two of one source, their answers kept in
-request order, and the alpha plane deflates beside the colour plane. Median of 5, back to back,
-the before column with `LEANTEX_BENCH_BINARY` naming the parent's saved compiler, the after
-column with `LEANTEX_BENCH_COMPARE_BINARY` naming it; the raster deck on a host at load 57-62,
-the talk deck at load 56-70:
+the other. Every source is now found and read in request order, then planned four at a time,
+never two of one content, so each plan cache slot has one writer, and the alpha plane deflates
+beside the colour plane. Median of 5, back to back on a host at load 70-94, the before column
+with `LEANTEX_BENCH_BINARY` naming the parent's saved compiler, the after column with
+`LEANTEX_BENCH_COMPARE_BINARY` naming it:
 
 | Build | before | after |
 |---|---:|---:|
-| Raster deck PDF, cold | 2,384 ms (images 2,221) | 772 ms (images 581) |
-| Raster deck HTML, cold | 2,585 ms (images 2,208) | 889 ms (images 540) |
-| Talk deck PDF, cold | 1,793 ms (images 1,284) | 1,626 ms (images 1,076) |
-| Talk deck PDF, warm | 487 ms (images 154) | 420 ms (images 87) |
-| Talk deck HTML, cold | 2,725 ms (images 1,313) | 2,412 ms (images 1,000) |
-| Talk deck HTML, warm | 740 ms (images 164) | 627 ms (images 89) |
+| Raster deck PDF, cold | 2,321 ms (images 2,162), peak 177 MiB | 695 ms (images 561), peak 319 MiB |
+| Raster deck HTML, cold | 2,456 ms (images 2,155), peak 221 MiB | 1,018 ms (images 558), peak 330 MiB |
+| Talk deck PDF, cold | 1,917 ms (images 1,235), peak 257 MiB | 1,688 ms (images 1,003), peak 298 MiB |
+| Talk deck PDF, warm | 509 ms (images 162) | 423 ms (images 94) |
+| Talk deck HTML, cold | 2,600 ms (images 1,220), peak 287 MiB | 2,381 ms (images 1,011), peak 284 MiB |
+| Talk deck HTML, warm | 685 ms (images 152) | 651 ms (images 94) |
 
-The raster deck's warm builds read the cache and stay within the host's noise (PDF 147 and 129 ms,
-HTML 327 and 292 ms). The comparison found the artifacts and diagnostics byte-identical.
+The cold builds trade memory for time, four rasters decoding at once: the raster deck's cold PDF
+build peaks 142 MiB higher. The raster deck's warm builds read the cache and
+move within the host's noise (PDF 112 and 114 ms, HTML 296 and 293 ms). The comparison found the
+artifacts and diagnostics byte-identical.

@@ -213,7 +213,7 @@ def svgConverterProbeChecks (ref : IO.Ref (List String)) : IO Unit := do
   check ref "converter probe: a refusing document offers no converter"
     ((← Driver.svgConverterWith probe (fun _ _ => return pdfPlan) false).isNone && (← probes.get) == 1)
   let asks ← IO.mkRef 0
-  -- A probe slow enough that every figure asking at once reaches it before the first answer.
+  -- A probe slow enough that every figure asks before the first answer.
   let slow : IO Bool := do
     IO.sleep 20
     asks.modify (· + 1)

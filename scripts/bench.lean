@@ -459,6 +459,7 @@ structure Sample where
   diagnostics : Array String
   pages : Nat
   phases : Array Phase
+  rssKiB : Nat := 0
 
 def Sample.phase? (r : Sample) (name : String) : Option Phase :=
   r.phases.find? (·.name == name)
@@ -468,7 +469,7 @@ keep every structured field, in emission order. -/
 def parseSample (log : String) : Except String Sample := do
   let mut diagnostics := #[]
   let mut phases : Array Phase := #[]
-  let mut summary : Option (Nat × Nat) := none
+  let mut summary : Option (Nat × Nat × Nat) := none
   for line in log.splitOn "\n" do
     if line.trimAscii.isEmpty then continue
     let j ← Lean.Json.parse line
@@ -490,10 +491,11 @@ def parseSample (log : String) : Except String Sample := do
       if (← j.getObjValAs? String "output").isEmpty then throw "summary names no output"
       let pages ← j.getObjValAs? Nat "pages"
       if pages == 0 then throw "summary has no pages"
-      summary := some (pages, ← j.getObjValAs? Nat "ms")
+      let rss := (j.getObjValAs? Nat "rssKiB").toOption.getD 0
+      summary := some (pages, ← j.getObjValAs? Nat "ms", rss)
     | event => throw s!"unexpected porcelain event: {event}"
-  let some (pages, compilerMs) := summary | throw "no output summary"
-  return { pages, compilerMs, diagnostics, phases }
+  let some (pages, compilerMs, rssKiB) := summary | throw "no output summary"
+  return { pages, compilerMs, diagnostics, phases, rssKiB }
 
 def sample (binary input output cache : System.FilePath) (verbose : Bool := false)
     (env : Array (String × Option String) := #[]) : IO Sample := do
@@ -1080,6 +1082,8 @@ def run (n frames : Nat) (rasters : Nat := 0) : IO Unit := do
       for p in first.phases do
         let time := fun r : Sample => ((r.phase? p.name).map (·.ms)).getD 0
         say s!"  phase {padRight p.name 12} cold={median (cold.map time)} warm={median (warm.map time)} ms"
+      say s!"  peak RSS           cold={median (cold.map (·.rssKiB)) / 1024} \
+warm={median (warm.map (·.rssKiB)) / 1024} MiB"
       if let some other := comparison then
         let otherCache := dir / s!"compare-{format}"
         if ← otherCache.pathExists then IO.FS.removeDirAll otherCache

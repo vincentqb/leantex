@@ -63,7 +63,6 @@ import LeanTex.Cli.ListingHighlight
 import LeanTex.Cli.PublicationPaths
 import LeanTex.Cli.Publication
 import LeanTex.Cli.RunCost
-import Std.Sync.Mutex
 
 namespace LeanTex.Cli.Driver
 
@@ -406,16 +405,9 @@ public def svgConverterWith (probe : IO Bool)
     (run : ByteArray → Bool → IO (Except PicCache.Outcome Image.Plan))
     (allowed : Bool) : IO (Option Converter) := do
   if !allowed then return none
-  let found ← Std.Mutex.new (none : Option Bool)
+  let present ← ToolProbe.once probe
   return some fun canonical independent => do
-    let present ← found.atomically do
-      match ← get with
-      | some p => pure p
-      | none =>
-        let p ← probe
-        set (some p)
-        pure p
-    if present then some <$> run canonical independent else pure none
+    if ← present then some <$> run canonical independent else pure none
 
 /-- librsvg's `rsvg-convert` as that converter (`\figures{ convert = none }`
 refuses it). -/
@@ -423,26 +415,29 @@ public def svgConverter (params : Image.PlanParams) (allowed : Bool) : IO (Optio
   svgConverterWith (do return (← ToolProbe.onPath "rsvg-convert").isSome)
     (ImageAssets.canonicalPlan params) allowed
 
-/-- One image source's read, the effect half of `Image.fulfil`: a boundary picture from
-its results, a path beside the document through graphicx's extensions, an SVG through
-`svgFetch`; also whether the cache answered, and the files read. -/
-def fetchImage (dir : System.FilePath) (pics : Array PicResult)
-    (refused : Array (String × Diag)) (params : Image.PlanParams) (lang : String)
-    (convert : Option Converter)
-    (req : Image.Request) (paths : Array String := #[]) (cache : Option Engine.Cache := none) :
-    IO (Image.Fetch × Bool × SvgFetch × Array String) := do
+/-- A request's source as found: its answer already, or bytes read at a path still to plan. -/
+inductive Located where
+  | done (answer : Image.Fetch × Bool × SvgFetch × Array String)
+  | read (cand : String) (path : System.FilePath) (bytes : ByteArray)
+
+/-- One image source found and read, the effect half of `Image.fulfil`: a boundary picture from
+its results, else a path beside the document through graphicx's extensions. -/
+def locateImage (dir : System.FilePath) (pics : Array PicResult)
+    (refused : Array (String × Diag)) (params : Image.PlanParams) (req : Image.Request)
+    (paths : Array String := #[]) : IO Located := do
   let src := req.src
   let none' : SvgFetch := { res := .error "" }
   if src.startsWith Ir.picSrcPrefix then
     match pics.find? (·.src == src) with
     | some r =>
-      return (.decoded "" (Image.probe r.bytes >>= Image.plan params) none none none none,
+      return .done (.decoded "" (Image.probe r.bytes >>= Image.plan params) none none none none,
         false, none', #[])
     | none =>
       match refused.find? (·.1 == src) with
-      | some (_, why) => return (.refused why, false, none', #[])
+      | some (_, why) => return .done (.refused why, false, none', #[])
       | none =>
-        return (.missing "the boundary cache (no picture declares this source)", false, none', #[])
+        return .done (.missing "the boundary cache (no picture declares this source)", false, none',
+          #[])
   let mut hit : Option (String × System.FilePath) := none
   for cand in Image.searchCandidates paths src do
     let p := if (System.FilePath.mk cand).isAbsolute then System.FilePath.mk cand
@@ -454,37 +449,55 @@ def fetchImage (dir : System.FilePath) (pics : Array PicResult)
   | none =>
     let p := if (System.FilePath.mk src).isAbsolute then System.FilePath.mk src
       else dir / src
-    return (.missing p.toString, false, none', #[])
+    return .done (.missing p.toString, false, none', #[])
   | some (cand, p) =>
     let bytes : Except String ByteArray ← try pure (.ok (← IO.FS.readBinFile p))
       catch e => pure (.error (toString e))
     match bytes with
-    | .error e => return (.unreadable e, false, none', #[p.toString])
-    | .ok bytes =>
-      let href := if cand == src then "" else cand
-      if Image.isSvg cand then
-        let f ← svgFetch src bytes req.page lang convert params
-        return (.decoded href f.res (some bytes) none (some bytes) none, false, f, #[p.toString])
-      else if req.page != .first || req.animated then
-        let res := Image.decodeRequest params bytes req
-        -- An animation's companion SVG is read once, here, beside its PDF.
-        let companion ← if req.animated then do
-            match ← (IO.FS.readBinFile (p.withExtension "svg")).toBaseIO with
-            | .ok svg => pure (some (svg, p.withExtension "svg"))
-            | .error _ =>
-              let upper := p.withExtension "SVG"
-              pure ((← (IO.FS.readBinFile upper).toBaseIO).toOption.map (·, upper))
-          else pure none
-        return (.decoded href (res.map (·.1)) none (res.toOption.bind (·.2))
-          (some bytes) (companion.map (·.1)), false, none',
-          #[p.toString] ++ (companion.map (·.2.toString)).toArray)
-      else
-        let (res, fromCache) ← PlanCache.decodeCached cache params bytes
-        return (.decoded href res none none (some bytes) none, fromCache, none', #[p.toString])
+    | .error e => return .done (.unreadable e, false, none', #[p.toString])
+    | .ok bytes => return .read cand p bytes
 
-/-- The document's image requests fulfilled: each source read by `fetchImage` and judged
-by `Image.fulfil`, every unplanned fact named; also the cache-hit count, drawn SVGs'
-titles by source, and the files read. -/
+/-- A found source's batch key: its bytes' content key, so two sources of one content never plan
+at once and each cache slot has one writer, else its position. -/
+def Located.key (l : Located) (index : Nat) : Sum Nat String :=
+  match l with
+  | .done _ => .inl index
+  | .read _ _ bytes => .inr (Flate.contentKey bytes)
+
+/-- A found source planned: an SVG through `svgFetch`, a page or animation through
+`Image.decodeRequest`, else through the plan cache; also whether the cache answered, and the
+files read. -/
+def planLocated (params : Image.PlanParams) (lang : String) (convert : Option Converter)
+    (req : Image.Request) (cache : Option Engine.Cache) : Located →
+    IO (Image.Fetch × Bool × SvgFetch × Array String)
+  | .done answer => return answer
+  | .read cand p bytes => do
+    let src := req.src
+    let none' : SvgFetch := { res := .error "" }
+    let href := if cand == src then "" else cand
+    if Image.isSvg cand then
+      let f ← svgFetch src bytes req.page lang convert params
+      return (.decoded href f.res (some bytes) none (some bytes) none, false, f, #[p.toString])
+    else if req.page != .first || req.animated then
+      let res := Image.decodeRequest params bytes req
+      -- An animation's companion SVG is read once, here, beside its PDF.
+      let companion ← if req.animated then do
+          match ← (IO.FS.readBinFile (p.withExtension "svg")).toBaseIO with
+          | .ok svg => pure (some (svg, p.withExtension "svg"))
+          | .error _ =>
+            let upper := p.withExtension "SVG"
+            pure ((← (IO.FS.readBinFile upper).toBaseIO).toOption.map (·, upper))
+        else pure none
+      return (.decoded href (res.map (·.1)) none (res.toOption.bind (·.2))
+        (some bytes) (companion.map (·.1)), false, none',
+        #[p.toString] ++ (companion.map (·.2.toString)).toArray)
+    else
+      let (res, fromCache) ← PlanCache.decodeCached cache params bytes
+      return (.decoded href res none none (some bytes) none, fromCache, none', #[p.toString])
+
+/-- The document's image requests fulfilled: each source found and read in request order
+(`locateImage`), planned (`planLocated`) and judged by `Image.fulfil`, every unplanned fact named;
+also the cache-hit count, drawn SVGs' titles by source, and the files read. -/
 def loadImages (file : String) (doc : Ir.Doc) (pics : Array PicResult := #[])
     (refused : Array (String × Diag) := #[])
     (imageSpans : Array (String × Span) := #[]) (cache : Option Engine.Cache := none) :
@@ -497,9 +510,11 @@ def loadImages (file : String) (doc : Ir.Doc) (pics : Array PicResult := #[])
   let mut reads : Array String := #[]
   let convert ← svgConverter params doc.figureConvert
   let reqs := Ir.imageRequests doc
-  -- Four at a time bound peak memory, never two of one source; results stand in request order.
-  let answers ← Batch.map 4 (·.src) (fun req =>
-    fetchImage dir pics refused params doc.info.locale.tag convert req doc.graphicsPath cache) reqs
+  let located ← reqs.mapM fun req => locateImage dir pics refused params req doc.graphicsPath
+  -- Four at a time bounds peak memory; answers stand in request order.
+  let answers ← Batch.map 4 (fun (k, l) => Located.key l k)
+    (fun (k, l) => planLocated params doc.info.locale.tag convert (reqs[k]?.getD { src := "" })
+      cache l) (located.mapIdx fun k l => (k, l))
   for (req, (f, fromCache, svg, read)) in reqs.zip answers do
     if fromCache then hits := hits + 1
     fetched := fetched.push (req, f)

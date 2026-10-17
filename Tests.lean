@@ -1034,6 +1034,7 @@ def surfaceSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   Tests.compressionChecks ref
   Tests.engineCacheChecks ref
   Tests.engineIdentityChecks ref
+  Tests.imageCopyChecks ref
   Tests.engineWatchChecks ref
   Tests.browserFaceBatchChecks ref
   Tests.cacheIdentityChecks ref

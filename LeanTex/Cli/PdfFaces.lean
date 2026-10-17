@@ -12,7 +12,6 @@ import LeanTex.Cli.Engine
 import LeanTex.Cli.FontDiscovery
 import LeanTex.Cli.ToolProbe
 import LeanTex.Cli.ImageAssets
-import Std.Sync.Mutex
 
 /-! A PDF figure's web face, native first: the engine's drawing when the import names no
 loss, else the converter's face where it draws one, else the lossy drawing with each loss
@@ -99,16 +98,9 @@ public abbrev Door := IO (Except PicCache.Outcome ByteArray) → IO (Option (Exc
 /-- A converter door that asks `probe` once, the first time a face needs the converter,
 however many faces ask at once. -/
 public def doorWith (probe : IO Bool) : BaseIO Door := do
-  let found ← Std.Mutex.new (none : Option Bool)
+  let present ← ToolProbe.once probe
   return fun convert => do
-    let present ← found.atomically do
-      match ← get with
-      | some p => pure p
-      | none =>
-        let p ← probe
-        set (some p)
-        pure p
-    if present then some <$> convert else pure none
+    if ← present then some <$> convert else pure none
 
 /-- poppler's pdftocairo behind that door, opened once per build. -/
 public def door : BaseIO Door :=

@@ -3,6 +3,7 @@ module
 public import LeanTex.Cli.PicCache
 import LeanTex.Cli.Host
 import LeanTex.Core.Flate
+import Std.Sync.Mutex
 
 /-! Asking a boundary tool who it is: the host half of `PicCache`'s version policy. -/
 
@@ -10,6 +11,17 @@ namespace LeanTex.Cli.ToolProbe
 
 open LeanTex.Core
 open LeanTex.Cli.World
+
+/-- `probe`'s answer, asked once, the first time it is needed, however many ask at once. -/
+public def once (probe : IO Bool) : BaseIO (IO Bool) := do
+  let found ← Std.Mutex.new (none : Option Bool)
+  return found.atomically do
+    match ← get with
+    | some p => pure p
+    | none =>
+      let p ← probe
+      set (some p)
+      pure p
 
 /-- The first regular file `tool` reaches on PATH, relative entries anchored to the
 working directory; mode bits are not read, and no run is asked. -/

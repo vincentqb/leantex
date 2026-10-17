@@ -75,6 +75,29 @@ def engineCacheChecks (ref : IO.Ref (List String)) : IO Unit := do
     ([{ st with size := 1001 }, { st with mtimeSec := 1700000001 }, { st with mtimeNsec := 6 },
       { st with real := "/opt/b/leantex" }].all (Engine.identity · != Engine.identity st))
 
+/-- Two sources of one content plan once a build, however their fetches are scheduled: a cold
+build names both and reads the second's plan from the first's slot. -/
+def imageCopyChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let binary ← IO.FS.realPath ".lake/build/bin/leantex"
+  let font ← IO.FS.realPath "testdata/corpus/fonts/OpenSans-Regular.ttf"
+  let alpha ← IO.FS.readBinFile "testdata/corpus/rects-alpha.png"
+  IO.FS.withTempDir fun root => do
+    IO.FS.writeBinFile (root / "first.png") alpha
+    IO.FS.writeBinFile (root / "second.png") alpha
+    IO.FS.writeFile (root / "doc.tex")
+      ("\\documentclass{article}\n\\begin{document}\n" ++
+        "\\includegraphics[alt={Invented rectangles}]{first}\n\n" ++
+        "\\includegraphics[alt={The same invented rectangles}]{second}\n\\end{document}\n")
+    let run ← IO.Process.output {
+      cmd := binary.toString, cwd := some root,
+      args := #["doc.tex", "-o", "doc.pdf", "-v", "--porcelain"],
+      env := #[("LEANTEX_FONT", some font.toString),
+        ("XDG_CACHE_HOME", some (root / "cache").toString)] }
+    let images := (run.stdout.splitOn "\n").filter fun line =>
+      hasStr line "\"event\":\"phase\"" && hasStr line "\"name\":\"images\""
+    check ref s!"image copies: a cold build plans one content once and reads it back: {images}"
+      (run.exitCode == 0 && images.length == 1 && images.all (hasStr · "2 files, 1 cached"))
+
 /-- A rebuilt engine reads none of an earlier engine's answers: over planted slots the first engine
 ships another PDF while the second ships a cold build's bytes. -/
 def engineIdentityChecks (ref : IO.Ref (List String)) : IO Unit := do
