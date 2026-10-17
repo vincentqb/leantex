@@ -381,7 +381,7 @@ private theorem tokRaws_adm (pos : Pos) (opening : Bool) (t : LeanProse.Tok Lean
 /-- A lines environment over admitted raws is admitted. -/
 private theorem adm_lines (body : Array Raw) (p : Pos) (h : Adm body) :
     vocabulary.admits (.env Parse.linesEnv body p) = true := by
-  simp only [Md.Vocab.admits, Bool.and_eq_true, List.contains_iff_mem]
+  simp only [Md.Vocab.admits, Bool.and_eq_true]
   exact ⟨by simp [vocabulary, Md.vocabulary],
     (admitsList_iff _ _).mpr fun x hx => h x (by simpa using hx)⟩
 

@@ -227,6 +227,11 @@ private theorem input_ne_scopeEnv {n f : String} (hn : Parse.inputEnvFile? n = s
   rintro rfl
   simp [Parse.inputEnvFile?, Parse.scopeEnv] at hn
 
+private theorem input_ne_linesEnv {n f : String} (hn : Parse.inputEnvFile? n = some f) :
+    n ≠ Parse.linesEnv := by
+  rintro rfl
+  simp [Parse.inputEnvFile?, Parse.linesEnv] at hn
+
 private theorem input_ne_linkedBoxRowMark {n f : String} (hn : Parse.inputEnvFile? n = some f) :
     n ≠ Compat.linkedBoxRowMark := by
   rintro rfl
@@ -373,7 +378,7 @@ private theorem elabEnvArm_input_scope (ctx : Ctx) (n f : String) (hn : Parse.in
       splicedFrameScope (some 0) (elabBlockScope
         { ctx with file := f, callSite := none, kept := ctx.kept || Parse.isKeptInput n } body) := by
   rw [elabEnvArm, openLengthScope_inert ctx body hlen]
-  simp [input_ne_scopeEnv hn, hn, closeLengthScope]
+  simp [input_ne_scopeEnv hn, input_ne_linesEnv hn, hn, closeLengthScope]
   rfl
 
 private theorem elabBlocksGo_blanks_end (raws : Array Raw) (blocks : Array Block) :
