@@ -297,7 +297,7 @@ def biblatexSample (k : String) : String :=
 /-- The settings a census reads for a package beyond its native and inert tables. -/
 def packageSettings : String → List String
   | "geometry" =>
-    Compat.geometryPageKeys.map (· ++ "=3cm") ++
+    Compat.geometryPageKeys.map (·.name ++ "=3cm") ++
       ["left=3cm,right=3cm", "top=3cm,bottom=3cm", "left=3cm", "a4paper", "a5paper",
        "legalpaper", "paperwidth=10cm,paperheight=12cm", "headheight=20pt", "verbose"] ++
       Compat.geometryNoFurniture ++ Compat.driverOptions ++ geometryDocumented
@@ -391,7 +391,7 @@ def packageTries (p s : String) (i : Nat) : Bool :=
   else if p == "geometry" then i == 1 || !(k.startsWith "head" || k == "nohead")
   else if p == "microtype" then
     match (Compat.packageOptionNatives.lookup p).bind (·.lookup s) with
-    | some native => if hasStr native "= on" then i == 1 else i == 0
+    | some native => if hasStr native.render "= on" then i == 1 else i == 0
     | none => true
   else if p == "crop" then if s == "off" then i == 1 else i == 0
   else if p == "natbib" then

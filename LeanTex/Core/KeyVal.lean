@@ -198,7 +198,7 @@ public theorem split_join_id (s : String) :
 
 /-- One element's step through a scan for a separator outside groups: the depth after it, `none`
 once a separator stands at depth 0. -/
-private def cutStep {α : Type} (opens closes isSep : α → Bool) : Option Nat → α → Option Nat
+public def cutStep {α : Type} (opens closes isSep : α → Bool) : Option Nat → α → Option Nat
   | none, _ => none
   | some d, x =>
     if opens x then some (d + 1) else if closes x then some (d - 1)

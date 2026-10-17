@@ -155,6 +155,29 @@ def paramSiteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
       flush.any (·.subject == some "ctrl:nothing:setlength:parindent"))
 
 
+/-- A native setting a translation writes reaches the elaborator entry by entry: a value whose text
+holds another entry sets nothing beyond its own key and is named dropped, and every native a table
+writes is carried whole. -/
+def nativeCarrierChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let poster (width : String) : String :=
+    "\\documentclass{beamer}\n\\usepackage[size=custom,width={" ++ width ++
+      "},height=20]{beamerposter}\n\\begin{document}\n\\begin{frame}\nAlpha words.\n" ++
+      "\\end{frame}\n\\end{document}"
+  t "a poster width holding another entry sets no other page key"
+    (pagesOf oneFace (poster "30, margin=1") == pagesOf oneFace (poster "30, gutter=1"))
+  t "a poster width holding another entry is named dropped"
+    ((dvE (poster "30, margin=1")).any fun d => d.code == "W0101" &&
+      (d.detail.getD "").startsWith "'width = 30, margin=1cm'")
+  let whole (s : Native.Setting) : Bool := s.kept == s
+  t "every lineno native carries whole" (Compat.linenoNatives.all (whole ·.2))
+  t "every package option native carries whole"
+    (Compat.packageOptionNatives.all (·.2.all (whole ·.2)))
+  t "every control row's native carries whole"
+    (Compat.ctrlRows.all fun row => match row.action with
+      | .native s => whole s
+      | .tokens .. | .skip _ | .refuse .. | .discard .. | .inert => true)
+
 /-- A parameter set in a loaded style file ships the page its document spelling ships; only the
 diagnostic's severity moves. -/
 def paramDemoteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do

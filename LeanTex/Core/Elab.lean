@@ -4,6 +4,7 @@ public import Std.Data.HashSet
 public import LeanTex.Core.Lex
 public import LeanTex.Core.Parse
 import LeanTex.Core.Marker
+public import LeanTex.Core.Native
 import LeanTex.Core.MathParse
 import LeanTex.Core.TextSymData
 public import LeanTex.Core.Ir
@@ -1039,25 +1040,6 @@ private def picTools : List String := ["lualatex"]
 
 /-- Preamble declarations that take one inline-content group. -/
 public def runningCtrl : List String := ["runninghead", "runningfoot"]
-
-private def pageKeys : List String :=
-  ["size", "width", "height", "margin", "vmargin", "hmargin",
-   "textwidth", "textheight", "leading", "baselineskip", "parskip",
-   "measure", "fontsize", "bleed", "hyphenate", "justify", "protrusion",
-   "expansion", "numbers", "marks", "mark-gap", "mark-thickness", "linenumbers", "modulo",
-   "furnituregap", "headsep", "footskip", "rule", "front-rule", "cropbox", "bleedbox", "trimbox",
-   "artbox", "bottom"]
-
-/-- The `\page` keys that declare the page's physical extent, and so claim
-the page as declared. -/
-private def pageGeometryKeys : List String :=
-  ["size", "width", "height", "margin", "vmargin", "hmargin",
-   "textwidth", "textheight", "bleed"]
-
-private def metaKeys : List String :=
-  ["title", "author", "subject", "keywords", "url", "image", "favicon",
-   "language", "version", "standard", "intent", "intent-condition", "intent-info",
-   "intent-registry", "intent-components", "created", "modified", "trapped"]
 
 private def fontKeys : List String :=
   ["body", "sans", "mono", "math", "rm", "sf", "tt", "dir",
@@ -13202,6 +13184,42 @@ private def pageBoxOf (kind : BoxKind) (s : String) (span : Option Span) : Optio
   let [a, b, c, d] := nums.map fun (m, sc) => toSp m sc | none
   some { kind, x0 := min a c, y0 := min b d, x1 := max a c, y1 := max b d, span }
 
+/-- The page field a dimension key sets. -/
+private def pageDim : Native.PageKey → Option (Sp → PageSpec → PageSpec)
+  | .width => some fun d s => { s with width := d }
+  | .height => some fun d s => { s with height := d }
+  | .margin => some fun d s => { s with vmargin := d, hmargin := d }
+  | .vmargin => some fun d s => { s with vmargin := d }
+  | .hmargin => some fun d s => { s with hmargin := d }
+  | .markGap => some fun d s => { s with markGap := d }
+  | .markThickness => some fun d s => { s with markThickness := d }
+  -- `furnituregap` is in ink terms; `headsep` and `footskip` keep their baselines.
+  | .furnituregap => some fun d s => { s with furnitureGap := some d }
+  | .headsep => some fun d s => { s with headsep := some d }
+  | .footskip => some fun d s => { s with footskip := some d }
+  | _ => none
+
+/-- The page switch an on-or-off key sets; lineno's `\linenumbers` is `linenumbers`. -/
+private def pageSwitch : Native.PageKey → Option (Bool → PageSpec → PageSpec)
+  | .hyphenate => some fun b s => { s with hyphenate := some b }
+  | .justify => some fun b s => { s with justify := some b }
+  | .protrusion => some fun b s => { s with protrude := some b }
+  | .expansion => some fun b s => { s with expand := some b }
+  | .numbers => some fun b s => { s with numbers := some b }
+  | .linenumbers => some fun b s => { s with linenumbers := some b }
+  | _ => none
+
+/-- What a page key's value must be, as its type error names it. -/
+private def pageExpects (k : Native.PageKey) : String :=
+  match k with
+  | .size => "a page size name"
+  | .measure => "'checked' or 'free'"
+  | .marks => "'cut' or 'none'"
+  | .modulo => "a count of at least 1"
+  | .bottom => "'flush' or 'ragged'"
+  | .rule | .frontRule => "\"x; y; width; height; colour\""
+  | k => if (pageSwitch k).isSome then "on or off" else "a dimension"
+
 private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
     (pos : Pos) (tokens : Array (String × SymGlue) := #[]) : PageSpec × Array PEvent := Id.run do
   -- A page dimension may be glue over tokens with nothing font-relative in it.
@@ -13217,207 +13235,136 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
   let mut evs : Array PEvent := #[]
   for e in entries do
     let before := evs.size
-    match e.key, e.value with
-    | "size", .ident name =>
-      match (pageSizes.lookup name.toLower).orElse
-          (fun _ => Ir.slidesStageNamed name) with
-      | some (w, h) => spec := { spec with width := w, height := h }
-      | none =>
-        evs := say evs .E0324 s!"unknown page size '{name}'"
-          (help := s!"known sizes: {String.intercalate ", "
-            (pageSizes.map (·.1) ++ (Ir.slidesStages.map (·.1)).toList)}")
-    | "size", .int n =>
-      match Ir.slidesStageNamed (toString n) with
-      | some (w, h) => spec := { spec with width := w, height := h }
-      | none =>
-        evs := say evs .E0324 s!"unknown page size '{n}'"
-          (help := s!"known sizes: {String.intercalate ", "
-            (pageSizes.map (·.1) ++ (Ir.slidesStages.map (·.1)).toList)}")
-    | "width", v =>
-      if let some d := asDim v then spec := { spec with width := d }
-      else evs := evs.push (.say (Decl.wrongType ctx.file "page" "width" "a dimension" v pos))
-    | "height", v =>
-      if let some d := asDim v then spec := { spec with height := d }
-      else evs := evs.push (.say (Decl.wrongType ctx.file "page" "height" "a dimension" v pos))
-    | "margin", v =>
-      if let some d := asDim v then spec := { spec with vmargin := d, hmargin := d }
-      else evs := evs.push (.say (Decl.wrongType ctx.file "page" "margin" "a dimension" v pos))
-    | "vmargin", v =>
-      if let some d := asDim v then spec := { spec with vmargin := d }
-      else evs := evs.push (.say (Decl.wrongType ctx.file "page" "vmargin" "a dimension" v pos))
-    | "hmargin", v =>
-      if let some d := asDim v then spec := { spec with hmargin := d }
-      else evs := evs.push (.say (Decl.wrongType ctx.file "page" "hmargin" "a dimension" v pos))
-    -- geometry's `textwidth` and `textheight` centre the block (§5.2).
-    | "textwidth", v =>
-      if let some d := asDim v then
-        if 0 < d && d ≤ spec.width then
-          spec := { spec with hmargin := (spec.width - d) / 2 }
-        else
-          evs := say evs .E0323
-            "'textwidth' in '\\page' expects a dimension between zero and the page width"
-      else evs := evs.push (.say (Decl.wrongType ctx.file "page" "textwidth" "a dimension" v pos))
-    | "textheight", v =>
-      if let some d := asDim v then
-        if 0 < d && d ≤ spec.height then
-          spec := { spec with vmargin := (spec.height - d) / 2 }
-        else
-          evs := say evs .E0323
-            "'textheight' in '\\page' expects a dimension between zero and the page height"
-      else evs := evs.push (.say (Decl.wrongType ctx.file "page" "textheight" "a dimension" v pos))
-    -- `leading` is `\linespread`'s stretch, composed when the block ends.
-    | "leading", .int n => spec := { spec with spread := n.toNat * 1000 }
-    | "leading", .dim d =>
-      -- A bare decimal like 1.15 reads as points; the factor is meant.
-      spec := { spec with spread := (d * 1000 / pt 1).toNat }
-    | "leading", .ident f =>
-      -- A decimal without a unit arrives as a name.
-      match Decl.parseDecimal f with
-      | some (m, s) => spec := { spec with spread := (m * 1000 / s).toNat }
-      | none => evs := say evs .E0323 s!"'leading' in '\\page' expects a factor like 1.15, got '{f}'"
-    | "baselineskip", v =>
-      if let some d := asDim v then
-        if 0 < d then spec := { spec with bodySkip := some d }
-        else
-          evs := say evs .E0323 "'baselineskip' in '\\page' expects a positive dimension"
-      else evs := evs.push (.say (Decl.wrongType ctx.file "page" "baselineskip" "a dimension" v pos))
-    | "parskip", .glue g => spec := { spec with parskip := some g }
-    | "parskip", .dim d => spec := { spec with parskip := some { width := Dim.Length.ofSp d } }
-    | "fontsize", .dim d =>
-      -- From 1pt the default ladder's headings stand in order (`Layout.heading_hierarchy`).
-      if d ≥ Dim.pt 1 then
-        spec := { spec with fontSize := d }
-      else
-        evs := say evs .E0323 "'fontsize' in '\\page' expects a dimension of at least 1pt"
-    | "measure", .ident v =>
-      match v with
-      | "free" => spec := { spec with measureChecked := false }
-      | "checked" => spec := { spec with measureChecked := true }
-      | _ =>
-        evs := say evs .E0323 s!"'measure' in '\\page' expects 'checked' or 'free', got '{v}'"
-    | "bleed", .int 0 => spec := { spec with bleed := 0 }
-    | "bleed", v =>
-      if let some d := asDim v then spec := { spec with bleed := d }
-      else evs := evs.push (.say (Decl.wrongType ctx.file "page" "bleed" "a dimension" v pos))
-    | "marks", .ident v =>
-      match v with
-      | "cut" => spec := { spec with marks := true }
-      | "none" | "off" => spec := { spec with marks := false }
-      | _ =>
-        evs := say evs .E0323 s!"'marks' in '\\page' expects 'cut' or 'none', got '{v}'"
-    | "mark-gap", v =>
-      if let some d := asDim v then spec := { spec with markGap := d }
-      else evs := evs.push (.say (Decl.wrongType ctx.file "page" "mark-gap" "a dimension" v pos))
-    | "mark-thickness", v =>
-      if let some d := asDim v then spec := { spec with markThickness := d }
-      else
-        evs := evs.push
-          (.say (Decl.wrongType ctx.file "page" "mark-thickness" "a dimension" v pos))
-    -- `rule` reads y up from the page's top-left; it is stored y down.
-    | "rule", .str s | "front-rule", .str s =>
-      match s.splitOn ";" |>.map (·.trimAscii.toString) with
-      | [x, y, w, h, c] =>
-        match [x, y, w, h].map fun p => (Decl.parseValue p tokens).bind asDim with
-        | [some x, some y, some w, some h] =>
-          spec := { spec with drawn := spec.drawn.push ⟨x, -(y + h), w, h, c, e.key == "front-rule"⟩ }
-        | _ => evs := say evs .E0323 s!"'{e.key}' in '\\page' expects four dimensions, got '{s}'"
-      | _ =>
-        let msg := s!"'{e.key}' in '\\page' expects \"x; y; width; height; colour\", got '{s}'"
-        evs := say evs .E0323 msg
-    | "cropbox", v | "bleedbox", v | "trimbox", v | "artbox", v =>
-      let kind : BoxKind := match e.key with
-        | "cropbox" => .crop
-        | "bleedbox" => .bleed
-        | "trimbox" => .trim
-        | _ => .art
-      match v with
-      | .str s =>
-        match pageBoxOf kind s (some ⟨ctx.file, pos⟩) with
-        | some b => spec := { spec with boxes := (spec.boxes.filter (·.kind != kind)).push b }
-        | none =>
-          evs := say evs .E0323 s!"'{e.key}' in '\\page' expects four numbers in PDF points, got '{s}'"
-      | v => evs := evs.push (.say (Decl.wrongType ctx.file "page" e.key
-          "four quoted numbers in PDF points" v pos))
-    | "hyphenate", .ident v =>
-      match v with
-      | "on" | "true" => spec := { spec with hyphenate := some true }
-      | "off" | "false" => spec := { spec with hyphenate := some false }
-      | _ =>
-        evs := say evs .E0323 s!"'hyphenate' in '\\page' expects on or off, got '{v}'"
-    | "justify", .ident v =>
-      match v with
-      | "on" | "true" => spec := { spec with justify := some true }
-      | "off" | "false" => spec := { spec with justify := some false }
-      | _ =>
-        evs := say evs .E0323 s!"'justify' in '\\page' expects on or off, got '{v}'"
-    | "protrusion", .ident v =>
-      match v with
-      | "on" | "true" => spec := { spec with protrude := some true }
-      | "off" | "false" => spec := { spec with protrude := some false }
-      | _ =>
-        evs := say evs .E0323 s!"'protrusion' in '\\page' expects on or off, got '{v}'"
-    | "expansion", .ident v =>
-      match v with
-      | "on" | "true" => spec := { spec with expand := some true }
-      | "off" | "false" => spec := { spec with expand := some false }
-      | _ =>
-        evs := say evs .E0323 s!"'expansion' in '\\page' expects on or off, got '{v}'"
-    | "numbers", .ident v =>
-      match v with
-      | "on" | "true" => spec := { spec with numbers := some true }
-      | "off" | "false" => spec := { spec with numbers := some false }
-      | _ =>
-        evs := say evs .E0323 s!"'numbers' in '\\page' expects on or off, got '{v}'"
-    -- lineno's `\linenumbers`; `modulo` is its `\modulolinenumbers[n]`.
-    | "linenumbers", .ident v =>
-      match v with
-      | "on" | "true" => spec := { spec with linenumbers := some true }
-      | "off" | "false" => spec := { spec with linenumbers := some false }
-      | _ =>
-        evs := say evs .E0323 s!"'linenumbers' in '\\page' expects on or off, got '{v}'"
-    | "modulo", .int n =>
-      if n ≥ 1 then spec := { spec with lineModulo := some n.toNat }
-      else evs := say evs .E0323 "'modulo' in '\\page' expects a count of at least 1"
-    -- `furnituregap` is in ink terms; `headsep` and `footskip` keep their baselines.
-    | "furnituregap", v =>
-      if let some d := asDim v then spec := { spec with furnitureGap := some d }
-      else evs := evs.push (.say (Decl.wrongType ctx.file "page" "furnituregap" "a dimension" v pos))
-    | "headsep", v =>
-      if let some d := asDim v then spec := { spec with headsep := some d }
-      else evs := evs.push (.say (Decl.wrongType ctx.file "page" "headsep" "a dimension" v pos))
-    | "footskip", v =>
-      if let some d := asDim v then spec := { spec with footskip := some d }
-      else evs := evs.push (.say (Decl.wrongType ctx.file "page" "footskip" "a dimension" v pos))
-    | "bottom", .ident v =>
-      match v with
-      | "flush" => spec := { spec with flushBottom := some true }
-      | "ragged" => spec := { spec with flushBottom := some false }
-      | _ =>
-        evs := say evs .E0323 s!"'bottom' in '\\page' expects flush or ragged, got '{v}'"
-    | key, v =>
-      if key == "header" || key == "footer" then
-        let cmd := if key == "header" then "\\runninghead" else "\\runningfoot"
-        evs := say evs .E0327 s!"'{key}' is not a '\\page' key"
+    let wrong (k : Native.PageKey) (v : Decl.Value) : Array PEvent → Array PEvent :=
+      (·.push (.say (Decl.wrongType ctx.file "page" e.key (pageExpects k) v pos)))
+    match Native.PageKey.ofName? e.key with
+    | none =>
+      if e.key == "header" || e.key == "footer" then
+        let cmd := if e.key == "header" then "\\runninghead" else "\\runningfoot"
+        evs := say evs .E0327 s!"'{e.key}' is not a '\\page' key"
           (help := s!"{cmd}\{...} declares it; \\hfill pushes content to the right")
-      else if pageKeys.contains key then
-        let expected := if key == "size" then "a page size name"
-          else if key == "measure" then "'checked' or 'free'"
-          else if key == "marks" then "'cut' or 'none'"
-          else if key == "modulo" then "a count of at least 1"
-          else if key == "bottom" then "'flush' or 'ragged'"
-          else if key == "rule" || key == "front-rule" then "\"x; y; width; height; colour\""
-          else if key == "hyphenate" || key == "justify" || key == "protrusion"
-            || key == "expansion" || key == "numbers"
-            || key == "linenumbers" then "on or off"
-          else "a dimension"
-        evs := evs.push (.say (Decl.wrongType ctx.file "page" key expected v pos))
       else
         -- The help lists the native keys; LaTeX spellings and riders stay unlisted.
-        evs := evs.push (.say (Decl.unknownKey ctx.file "page" key
-          (pageKeys.filter
-            (!["headsep", "footskip", "textwidth", "textheight", "baselineskip",
-               "mark-gap", "mark-thickness", "modulo", "rule", "front-rule", "cropbox", "bleedbox",
-               "trimbox", "artbox", "bottom"].contains ·)) pos))
+        evs := evs.push (.say (Decl.unknownKey ctx.file "page" e.key
+          ((Native.PageKey.names.filter (·.2.listed)).map (·.1)) pos))
+    | some key =>
+      if let some set := pageDim key then
+        if let some d := asDim e.value then spec := set d spec else evs := wrong key e.value evs
+      else if let some set := pageSwitch key then
+        match e.value with
+        | .ident "on" | .ident "true" => spec := set true spec
+        | .ident "off" | .ident "false" => spec := set false spec
+        | .ident v => evs := say evs .E0323 s!"'{e.key}' in '\\page' expects on or off, got '{v}'"
+        | v => evs := wrong key v evs
+      else match key, e.value with
+      | .size, .ident name =>
+        match (pageSizes.lookup name.toLower).orElse
+            (fun _ => Ir.slidesStageNamed name) with
+        | some (w, h) => spec := { spec with width := w, height := h }
+        | none =>
+          evs := say evs .E0324 s!"unknown page size '{name}'"
+            (help := s!"known sizes: {String.intercalate ", "
+              (pageSizes.map (·.1) ++ (Ir.slidesStages.map (·.1)).toList)}")
+      | .size, .int n =>
+        match Ir.slidesStageNamed (toString n) with
+        | some (w, h) => spec := { spec with width := w, height := h }
+        | none =>
+          evs := say evs .E0324 s!"unknown page size '{n}'"
+            (help := s!"known sizes: {String.intercalate ", "
+              (pageSizes.map (·.1) ++ (Ir.slidesStages.map (·.1)).toList)}")
+      -- geometry's `textwidth` and `textheight` centre the block (§5.2).
+      | .textwidth, v =>
+        if let some d := asDim v then
+          if 0 < d && d ≤ spec.width then
+            spec := { spec with hmargin := (spec.width - d) / 2 }
+          else
+            evs := say evs .E0323
+              "'textwidth' in '\\page' expects a dimension between zero and the page width"
+        else evs := wrong key v evs
+      | .textheight, v =>
+        if let some d := asDim v then
+          if 0 < d && d ≤ spec.height then
+            spec := { spec with vmargin := (spec.height - d) / 2 }
+          else
+            evs := say evs .E0323
+              "'textheight' in '\\page' expects a dimension between zero and the page height"
+        else evs := wrong key v evs
+      -- `leading` is `\linespread`'s stretch, composed when the block ends.
+      | .leading, .int n => spec := { spec with spread := n.toNat * 1000 }
+      | .leading, .dim d =>
+        -- A bare decimal like 1.15 reads as points; the factor is meant.
+        spec := { spec with spread := (d * 1000 / pt 1).toNat }
+      | .leading, .ident f =>
+        -- A decimal without a unit arrives as a name.
+        match Decl.parseDecimal f with
+        | some (m, s) => spec := { spec with spread := (m * 1000 / s).toNat }
+        | none => evs := say evs .E0323 s!"'leading' in '\\page' expects a factor like 1.15, got '{f}'"
+      | .baselineskip, v =>
+        if let some d := asDim v then
+          if 0 < d then spec := { spec with bodySkip := some d }
+          else
+            evs := say evs .E0323 "'baselineskip' in '\\page' expects a positive dimension"
+        else evs := wrong key v evs
+      | .parskip, .glue g => spec := { spec with parskip := some g }
+      | .parskip, .dim d => spec := { spec with parskip := some { width := Dim.Length.ofSp d } }
+      | .fontsize, .dim d =>
+        -- From 1pt the default ladder's headings stand in order (`Layout.heading_hierarchy`).
+        if d ≥ Dim.pt 1 then
+          spec := { spec with fontSize := d }
+        else
+          evs := say evs .E0323 "'fontsize' in '\\page' expects a dimension of at least 1pt"
+      | .measure, .ident v =>
+        match v with
+        | "free" => spec := { spec with measureChecked := false }
+        | "checked" => spec := { spec with measureChecked := true }
+        | _ =>
+          evs := say evs .E0323 s!"'measure' in '\\page' expects 'checked' or 'free', got '{v}'"
+      | .bleed, .int 0 => spec := { spec with bleed := 0 }
+      | .bleed, v =>
+        if let some d := asDim v then spec := { spec with bleed := d }
+        else evs := wrong key v evs
+      | .marks, .ident v =>
+        match v with
+        | "cut" => spec := { spec with marks := true }
+        | "none" | "off" => spec := { spec with marks := false }
+        | _ =>
+          evs := say evs .E0323 s!"'marks' in '\\page' expects 'cut' or 'none', got '{v}'"
+      -- `rule` reads y up from the page's top-left; it is stored y down.
+      | .rule, .str s | .frontRule, .str s =>
+        match s.splitOn ";" |>.map (·.trimAscii.toString) with
+        | [x, y, w, h, c] =>
+          match [x, y, w, h].map fun p => (Decl.parseValue p tokens).bind asDim with
+          | [some x, some y, some w, some h] =>
+            spec := { spec with drawn := spec.drawn.push ⟨x, -(y + h), w, h, c, key == .frontRule⟩ }
+          | _ => evs := say evs .E0323 s!"'{e.key}' in '\\page' expects four dimensions, got '{s}'"
+        | _ =>
+          let msg := s!"'{e.key}' in '\\page' expects \"x; y; width; height; colour\", got '{s}'"
+          evs := say evs .E0323 msg
+      | .cropbox, v | .bleedbox, v | .trimbox, v | .artbox, v =>
+        let kind : BoxKind := match key with
+          | .cropbox => .crop
+          | .bleedbox => .bleed
+          | .trimbox => .trim
+          | _ => .art
+        match v with
+        | .str s =>
+          match pageBoxOf kind s (some ⟨ctx.file, pos⟩) with
+          | some b => spec := { spec with boxes := (spec.boxes.filter (·.kind != kind)).push b }
+          | none =>
+            evs := say evs .E0323 s!"'{e.key}' in '\\page' expects four numbers in PDF points, got '{s}'"
+        | v => evs := evs.push (.say (Decl.wrongType ctx.file "page" e.key
+            "four quoted numbers in PDF points" v pos))
+      -- lineno's `\modulolinenumbers[n]`.
+      | .modulo, .int n =>
+        if n ≥ 1 then spec := { spec with lineModulo := some n.toNat }
+        else evs := say evs .E0323 "'modulo' in '\\page' expects a count of at least 1"
+      | .bottom, .ident v =>
+        match v with
+        | "flush" => spec := { spec with flushBottom := some true }
+        | "ragged" => spec := { spec with flushBottom := some false }
+        | _ =>
+          evs := say evs .E0323 s!"'bottom' in '\\page' expects flush or ragged, got '{v}'"
+      | key, v => evs := wrong key v evs
     -- A clean count means the entry applied; a `rule` adds, so it overwrites nothing.
     if evs.size == before && e.key != "rule" && e.key != "front-rule" then
       evs := evs.push (.scalar "page" e.key (renderValue e.value) pos)
@@ -14342,12 +14289,12 @@ private def applyMeta (ctx : Ctx) (m0 : Meta) (entries : Array Decl.Entry)
         evs := evs.push (.say (diagOf ctx .E0323
           s!"'trapped' in '\\pdfmeta' expects true, false or unknown, got '{v}'" (some pos) none))
     | key, v =>
-      if metaKeys.contains key then
+      if (Native.MetaKey.ofName? key).isSome then
         let expected := if key == "trapped" then "true, false or unknown"
           else if key == "intent-components" then "1, 3 or 4" else "a string"
         evs := evs.push (.say (Decl.wrongType ctx.file "pdfmeta" key expected v pos))
       else
-        evs := evs.push (.say (Decl.unknownKey ctx.file "pdfmeta" key metaKeys pos))
+        evs := evs.push (.say (Decl.unknownKey ctx.file "pdfmeta" key (Native.MetaKey.names.map (·.1)) pos))
     if evs.size == before then
       evs := evs.push (.scalar "pdfmeta" e.key (renderValue e.value) pos)
   return (m, evs)
@@ -14429,7 +14376,7 @@ public inductive PDecl where
   | pdfmeta (src : Option String) (pos : Pos)
   /-- hyperref's metadata lowered by Compat: the construct, its link styles, its dates and trapping
   as `\pdfmeta` entries, each key's TeX. -/
-  | pdfmetaText (what links words : String) (pairs : Array (Compat.MetaKey × Array Raw)) (pos : Pos)
+  | pdfmetaText (what links words : String) (pairs : Array (Native.MetaKey × Array Raw)) (pos : Pos)
   | captionsetup (scope : Option String) (unclosed : Option Pos) (body : Option String) (pos : Pos)
   /-- url.sty's `\urlstyle`: the family `\url` and `\nolinkurl` set in. -/
   | urlstyle (v : Option String) (pos : Pos)
@@ -14518,17 +14465,17 @@ private def takeOptRun (preamble : Array Raw) (j : Nat) :
   else (none, j)
 
 /-- Each key's group and its value's group, from a lowered metadata group. -/
-private def metaTextPairs : List Raw → Array (Compat.MetaKey × Array Raw) →
-    Array (Compat.MetaKey × Array Raw)
+private def metaTextPairs : List Raw → Array (Native.MetaKey × Array Raw) →
+    Array (Native.MetaKey × Array Raw)
   | .group k _ :: .group v _ :: rest, acc =>
-    metaTextPairs rest (match Compat.MetaKey.ofName? (rawSrc k) with
+    metaTextPairs rest (match Native.MetaKey.hyperref.find? (·.name == rawSrc k) with
       | some key => acc.push (key, v)
       | none => acc)
   | _, acc => acc
 
 /-- The `\pdfmeta` group at `j` when Compat lowered it from TeX values (`Compat.metaTextMark`). -/
 private def metaTextAt (raws : Array Raw) (j : Nat) :
-    Option (String × String × String × Array (Compat.MetaKey × Array Raw) × Nat) :=
+    Option (String × String × String × Array (Native.MetaKey × Array Raw) × Nat) :=
   match raws[j]? with
   | some (.group body _) =>
     match body.toList with
@@ -14971,7 +14918,7 @@ private def stepPage (s : PreState) (src : String) (pos : Pos) :
   -- Only geometry keys claim the page, so a parskip alone keeps the default margin.
   ({ s with
       page := pe.1
-      sawPage := pb.1.any (pageGeometryKeys.contains ·.key) || s.sawPage },
+      sawPage := pb.1.any (fun e => (Native.PageKey.ofName? e.key).any (·.claims)) || s.sawPage },
    pb.2.map .say ++ pe.2)
 
 private def stepFonts (s : PreState) (src : String) (pos : Pos) :
@@ -15416,6 +15363,7 @@ numbers it; set as '??' or '?'" (some pos)
         | .author => { info with author := some text }
         | .subject => { info with subject := some text }
         | .keywords => { info with keywords := some text }
+        | _ => info
       evs := evs.push (.scalar "pdfmeta" key.name text pos)
       said := said.push s!"{key.name} = {Decl.quote text}"
     let (worded, wordEvs) := stepPdfmeta { s with info } words pos

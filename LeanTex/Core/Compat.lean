@@ -3,6 +3,7 @@ module
 public import LeanTex.Core.Lex
 public import LeanTex.Core.Parse
 import LeanTex.Core.Marker
+public import LeanTex.Core.Native
 public import LeanTex.Core.PackageImports
 import LeanTex.Core.Theme
 import LeanTex.Core.Decl
@@ -199,7 +200,7 @@ mono = \"Linux Libertine Mono O\""),
 /-- Where a LaTeX length parameter's value goes. -/
 public inductive ParamSite where
   /-- A page property: `\page{ key = ... }`. -/
-  | page (key : String)
+  | page (key : Native.PageKey)
   /-- A token an engine site reads under this name. -/
   | token (name : String)
   /-- `\leftmargin` at list depth `level`, which the class's
@@ -230,12 +231,12 @@ private def pageTokens : List String := ["footins", "topskip", "partopsep"]
 /-- The kernel and booktabs length parameters, each with its site; any other
 name is a length of the document's own. -/
 public def paramSites : List (String × ParamSite) :=
-  [("parskip", .page "parskip"),
-   ("textwidth", .page "textwidth"),
+  [("parskip", .page .parskip),
+   ("textwidth", .page .textwidth),
    ("textheight", .unmodelled "sets the text block's height under its top margin; the page here \
 keeps its top and bottom margins equal"),
-   ("headsep", .page "headsep"),
-   ("footskip", .page "footskip"),
+   ("headsep", .page .headsep),
+   ("footskip", .page .footskip),
    ("abovecaptionskip", .token "captionsep"),
    ("topsep", .token "topsep"),
    ("floatsep", .token "floatsep"),
@@ -764,7 +765,7 @@ private structure St where
   /-- The dimen registers the document allocates with `\newdimen`. -/
   allocated : Array String := #[]
   /-- The page boxes the page-attribute assignments leave, by native key. -/
-  pageBoxes : Array (String × String) := #[]
+  pageBoxes : Array (Native.PageKey × String) := #[]
   /-- Their native declaration, which goes out once at the preamble's end. -/
   pageAttr : Array Raw := #[]
   /-- Token sites assigned directly in this scope. -/
@@ -1434,6 +1435,21 @@ public theorem rebase_source_exact (mapPos : Pos → Pos) (groups : Bool) (r : R
 
 private def synthAt (s : String) (pos : Pos) : M (Array Raw) := do
   return (← synth s).map (rebase (fun _ => pos) true)
+
+/-- A native setting's carrier where it stands, each entry its block cannot carry whole named and
+dropped, so the elaborator reads the rest exactly (`Native.render_parse_exact`). -/
+private def carry (s : Native.Setting) (pos : Pos) : M (Array Raw) := do
+  for (k, v) in s.dropped do
+    say .W0101 "a value that stands as no single native entry was dropped" pos
+      (detail := some s!"'{k} = {v}' in '\\{s.head}'")
+      (help := "write the value as one length, number or name")
+  return s.raws pos
+
+/-- A native setting where it stands, named as `what`'s translation. -/
+private def setting (what : String) (s : Native.Setting) (pos : Pos)
+    (subject : Option String := none) : M (Array Raw) := do
+  became what s.kept.render pos (subject := subject)
+  carry s pos
 
 mutual
 
@@ -2177,7 +2193,7 @@ public def defaultTemplates : List String :=
 public def linenoInert : List String := ["left", "running", "displaymath", "mathlines"]
 
 /-- lineno's options read as one native declaration each. -/
-public def linenoNatives : List (String × String) := [("modulo", "\\page{ modulo = 5 }")]
+public def linenoNatives : List (String × Native.Setting) := [("modulo", .page #[(.modulo, "5")])]
 
 /-- `\usepackage[...]{lineno}`'s options, natively the declared page keys. -/
 private def linenoLoad (opt : String) (pos : Pos) : M (Array Raw) := do
@@ -2187,8 +2203,8 @@ private def linenoLoad (opt : String) (pos : Pos) : M (Array Raw) := do
       inertParam "usepackage:lineno" o s!"\\usepackage[{o}]\{lineno}"
         "where line numbers are on, every galley line, display math's too, is numbered in the left margin, running on" pos
     else if let some native := linenoNatives.lookup o then
-      became s!"\\usepackage[{o}]\{lineno}" native pos (subject := some (paramSubject "usepackage:lineno" o))
-      out := out ++ (← synthAt native pos)
+      out := out ++ (← setting s!"\\usepackage[{o}]\{lineno}" native pos
+        (subject := some (paramSubject "usepackage:lineno" o)))
     else
       sayOnce ("param:usepackage:lineno:" ++ o) .W0104 s!"lineno option '{o}' selects a numbering mode \
 the engine does not have; continuous numbers in the left margin stand" pos
@@ -2419,18 +2435,14 @@ private def natbibStyle (name : String) (notes : Option (Array Raw)) (args : Arr
 private def lineNumbers (name : String) (opt : Option String) (pos : Pos) : M (Array Raw) := do
   if name == "modulolinenumbers" then
     let n := (opt.bind (fun o => o.trimAscii.toString.toNat?)).getD 5
-    let native := s!"\\page\{ modulo = {max 1 n} }"
-    became "\\modulolinenumbers" native pos
-    return (← synthAt native pos)
+    setting "\\modulolinenumbers" (.page #[(.modulo, toString (max 1 n))]) pos
   let on := name != "nolinenumbers"
   if on then
     if let some n := opt then
       unless n.trimAscii.toString == "1" do
         say .W0101 s!"'\\{name}[{n}]' asks to start numbering at {n}; \
 line numbers here always run from 1" pos
-  let native := s!"\\page\{ linenumbers = {if on then "on" else "off"} }"
-  became s!"\\{name}" native pos
-  synthAt native pos
+  setting s!"\\{name}" (.page #[(.linenumbers, if on then "on" else "off")]) pos
 
 /-- The kernel's point-size macros in milli-points, at the values the size files
 and ltplain give them. -/
@@ -5603,13 +5615,11 @@ private def setLength (n src what : String) (pos : Pos) : M (Array Raw) := do
   unless st.inDef do
     write fun st => { st with lens := Ir.redeclare st.lens n src }
   let preamble ← docPreamble
-  let own := s!"\\tokens\{ {n} = {src} }"
-  let emit (native : String) : M (Array Raw) := do
-    became what native pos
-    synthAt native pos
+  let own : Native.Setting := .tokens #[(n, src)]
+  let emit (native : Native.Setting) : M (Array Raw) := setting what native pos
   let nothing (why : String) (tokens : Bool := true) : M (Array Raw) := do
     discard what why s!"setlength:{n}" pos
-    if tokens then synthAt own pos else pure #[]
+    if tokens then carry own pos else pure #[]
   let named (why : String) : M (Array Raw) := do
     nameParam n why pos
     return #[]
@@ -5625,14 +5635,14 @@ private def setLength (n src what : String) (pos : Pos) : M (Array Raw) := do
     return #[]
   match (paramSites.lookup n).getD (.token n), st.inDef with
   | .page key, _ =>
-    if preamble && key == "textwidth" then write fun st => { st with measureKnown := true }
-    if st.inDoc && !st.inDef && key == "textwidth" then
+    if preamble && key == .textwidth then write fun st => { st with measureKnown := true }
+    if st.inDoc && !st.inDef && key == .textwidth then
       return ← nothing "'\\begin{document}' set the lines' measure from it, and no later value \
 moves a line" (tokens := false)
     -- premise: paramCensusChecks — a page setting in the body ships the page without it
     if st.inDoc && !st.inDef then
       return ← named "sets the page, which the body leaves as the preamble declared it"
-    emit s!"\\page\{ {key} = {src} }"
+    emit (.page #[(key, src)])
   | .token t, _ =>
     unless st.inDef do
       write fun st => { st with localLengths :=
@@ -5646,10 +5656,11 @@ with the space its level sets in the preamble, and only the trivlists after it r
       named "is read where the preamble sets it; the body leaves the page as declared"
     -- A preamble `\topsep` reaches only a trivlist outside every list.
     else if !st.inDef && preamble && n == Ir.trivlistSkipName then
-      became what s!"\\tokens\{ {t} = {src} }, which a trivlist outside a list reads; \
+      let native : Native.Setting := .tokens #[(t, src)]
+      became what s!"{native.kept.render}, which a trivlist outside a list reads; \
 every list sets '\\topsep' again from its class's parameters" pos
-      synthAt s!"\\tokens\{ {t} = {src} }" pos
-    else emit s!"\\tokens\{ {t} = {src} }"
+      carry native pos
+    else emit (.tokens #[(t, src)])
   | _, true => emit own
   | .listIndent _, false => emit own
   | .sizeReset body, false =>
@@ -5657,13 +5668,13 @@ every list sets '\\topsep' again from its class's parameters" pos
       nothing "'\\begin{document}' runs '\\normalsize', which sets it again"
         (tokens := !(body matches .token _))
     else match body with
-      | .token t => emit s!"\\tokens\{ {t} = {src} }"
+      | .token t => emit (.tokens #[(t, src)])
       | .unmodelled why => named why
       | _ => emit own
   | .listReset, false =>
     if preamble then
       write fun st => { st with listResets := st.listResets.push (n, what, st.file, pos) }
-      synthAt own pos
+      carry own pos
     else if reachesLists st n then
       -- premise: listLevelChecks — a body setting under a kept `\@listi` ships the page without it
       named "spaces the lists after it, whose level macro leaves it be; a list here is \
@@ -5697,10 +5708,10 @@ private def doorValue? (value : Array Raw) : M (Option String) := do
   return (← spelledValue? value).filter fun _ => texWordsOnly (rawSrc value)
 
 /-- The native declaration a length assignment translates to. -/
-private def lengthNative (n src : String) : String :=
+private def lengthNative (n src : String) : Native.Setting :=
   match paramSites.lookup n with
-  | some (.page key) => s!"\\page\{ {key} = {src} }"
-  | _ => s!"\\tokens\{ {n} = {src} }"
+  | some (.page key) => .page #[(key, src)]
+  | _ => .tokens #[(n, src)]
 
 /-- A length assignment from its value's raws, landed by `setLength` or named and skipped; a
 `\setlength` whose value is a word keeps the translation it spells. -/
@@ -5708,7 +5719,7 @@ private def assignLength (n : String) (value : Array Raw) (what : String) (pos :
     (noted : Bool := false) : M (Array Raw) := do
   if let some src ← doorValue? value then return ← setLength n src what pos
   if noted then
-    if let some src ← spelledValue? value then became what (lengthNative n src) pos
+    if let some src ← spelledValue? value then became what (lengthNative n src).render pos
   unreadableLength n (rawSrc value).trimAscii.toString pos
 
 /-- A document macro used in a list's body whose definition is only length
@@ -5826,16 +5837,17 @@ private def skipEq (raws : Array Raw) (i : Nat) : Nat :=
 
 /-- The display skips a redefined `\normalsize` assigns from `start`, each read
 through the length door in order. -/
-private def sizeSkips (body : Array Raw) (start : Nat) (pos : Pos) : M (Array String) := do
+private def sizeSkips (body : Array Raw) (start : Nat) (pos : Pos) :
+    M (Array (String × String)) := do
   let mut lens := (← get).lens
   let known := (← get).measureKnown
   let flow := (← get).flowPage
-  let mut out : Array String := #[]
+  let mut out : Array (String × String) := #[]
   for a in (readAssigns body start).1 do
     if !a.add && (paramSites.lookup a.name) matches some (.sizeReset (.token _)) then
       if let some src := (lenValue lens a.value (preamble := true) (measureKnown := known)
           (flowPage := flow)).filter readsAsLength then
-        out := out.push s!"{a.name} = {src}"
+        out := out.push (a.name, src)
         lens := Ir.redeclare lens a.name src
       else
         let _ ← unreadableLength a.name (rawSrc a.value).trimAscii.toString pos
@@ -5961,15 +5973,15 @@ private def flushListLevels : M (Array Raw) := do
       let op (n : String) : Option String := (run.lookup n).bind id
       let r := (["i", "ii", "iii", "iv"][level - 1]?).getD ""
       -- The margin is the depth's, which every kind of list and quotation that deep reads.
-      let mut native := match op "leftmargin" with
-        | some v => if v == Ir.leftMarginName level then "" else
-          s!"\\tokens\{ {Ir.leftMarginName level} = {v} }"
-        | none => ""
+      if let some v := op "leftmargin" then
+        unless v == Ir.leftMarginName level do
+          out := out ++ (← carry (.tokens #[(Ir.leftMarginName level, v)]) pos)
+      let mut native := ""
       let mut keys : Array String := #[]
       if level ≤ 4 then
         if let some v := op "topsep" then keys := keys.push s!"before = {v}"
         if let (some i, some p) := (op "itemsep", op "parsep") then
-          native := native ++ s!"\\tokens\{ itemsep{r} = {i}, parsep{r} = {p} }"
+          out := out ++ (← carry (.tokens #[(s!"itemsep{r}", i), (s!"parsep{r}", p)]) pos)
           keys := keys.push s!"gap = itemsep{r} + parsep{r}"
       unless keys.isEmpty do
         for kind in ["itemize", "enumerate"] do
@@ -6020,8 +6032,8 @@ public def cropInert : List (String × String) :=
     driverOptions.map (·, "the engine writes its own output")
 
 /-- The geometry keys read as the `\page` key of the same name. -/
-public def geometryPageKeys : List String :=
-  ["margin", "vmargin", "hmargin", "width", "height", "textwidth", "textheight", "headsep", "footskip"]
+public def geometryPageKeys : List Native.PageKey :=
+  [.margin, .vmargin, .hmargin, .width, .height, .textwidth, .textheight, .headsep, .footskip]
 
 /-- The geometry keys read as one side's margin, which its opposite side's equal value completes. -/
 public def geometrySideKeys : List String := ["top", "bottom", "left", "right"]
@@ -6110,7 +6122,7 @@ private def dimexprValue (v : String) : M String := do
 `\newgeometry{...}` as `\page{...}`. -/
 private def geometry (opts : String) (pos : Pos)
     (spelling : String := "\\usepackage{geometry}") : M (Array Raw) := do
-  let mut keys : Array String := #[]
+  let mut keys : Array (Native.PageKey × String) := #[]
   let mut dropped : Array String := #[]
   let mut droppedExpr : Array String := #[]
   let mut sides : Array (String × String) := #[]
@@ -6118,11 +6130,11 @@ private def geometry (opts : String) (pos : Pos)
     match KeyVal.entry e with
     | (f, none) =>
       if f.endsWith "paper" then
-        keys := keys.push s!"size = {(f.dropEnd "paper".length).toString}"
+        keys := keys.push (.size, (f.dropEnd "paper".length).toString)
       else if geometryNoFurniture.contains f then
         -- geometry's flags zero the head's separation, the foot's skip, or both.
-        if f != "nofoot" then keys := keys.push "headsep = 0pt"
-        if f != "nohead" then keys := keys.push "footskip = 0pt"
+        if f != "nofoot" then keys := keys.push (.headsep, "0pt")
+        if f != "nohead" then keys := keys.push (.footskip, "0pt")
       -- premise: driverOptionChecks — a driver option ships the page without it
       else if driverOptions.contains f then
         inertParam "geometry" f spelling "the engine writes its own output" pos
@@ -6143,13 +6155,14 @@ private def geometry (opts : String) (pos : Pos)
         if a.startsWith "\\dimexpr" || b.startsWith "\\dimexpr" then
           droppedExpr := droppedExpr.push s!"{k} = {v}"
         else if k == "margin" then
-          keys := keys ++ #[s!"hmargin = {lengthOfTeX a}", s!"vmargin = {lengthOfTeX b}"]
-        else if lengthOfTeX a == lengthOfTeX b then keys := keys.push s!"{k} = {lengthOfTeX a}"
+          keys := keys ++ #[(.hmargin, lengthOfTeX a), (.vmargin, lengthOfTeX b)]
+        else if lengthOfTeX a == lengthOfTeX b then
+          keys := keys.push (if k == "hmargin" then .hmargin else .vmargin, lengthOfTeX a)
         else dropped := dropped.push k
       | _, _ :: _ :: _ => dropped := dropped.push k
       | _, _ =>
-        if geometryPageKeys.contains k then
-          keys := keys.push s!"{k} = {lengthOfTeX v}"
+        if let some key := geometryPageKeys.find? (·.name == k) then
+          keys := keys.push (key, lengthOfTeX v)
         else if k == "headheight" then
           inertParam "geometry" k spelling
             "the running head takes its content's height, and the text block stays where the margins put it" pos
@@ -6159,22 +6172,20 @@ private def geometry (opts : String) (pos : Pos)
   -- An equal pair of side margins is the symmetric margin; an unequal or lone side stays named.
   let side (n : String) : Option String :=
     (sides.findRev? (·.1 == n)).map (·.2)
-  for (a, b, key) in [("top", "bottom", "vmargin"), ("left", "right", "hmargin")] do
+  for (a, b, key) in [("top", "bottom", Native.PageKey.vmargin), ("left", "right", .hmargin)] do
     match side a, side b with
     | some va, some vb =>
-      if va == vb then keys := keys.push s!"{key} = {va}"
+      if va == vb then keys := keys.push (key, va)
       else dropped := dropped ++ #[a, b]
     | some _, none => dropped := dropped.push a
     | none, some _ => dropped := dropped.push b
     | none, none => pure ()
   -- geometry reads its keys in order, a later value of a key replacing the earlier one.
-  let read := keys.foldl (init := #[]) fun acc kv =>
-    let name := (kv.splitOn " = ").headD kv
-    (acc.filter fun e => (e.splitOn " = ").headD e != name).push kv
-  let native := s!"\\page\{ {String.intercalate ", " read.toList} }"
-  if read.any fun k => ["margin =", "hmargin =", "textwidth ="].any (k.startsWith ·) then
+  let read := keys.foldl (init := #[]) fun acc kv => (acc.filter (·.1 != kv.1)).push kv
+  let native : Native.Setting := .page read
+  if read.any fun (k, _) => k == .margin || k == .hmargin || k == .textwidth then
     write fun st => { st with measureKnown := true }
-  became spelling native pos
+  became spelling native.kept.render pos
   for k in dropped do
     unreadParam "usepackage:geometry" (KeyVal.entry k).1 s!"geometry key '{k}'" pos
   unless droppedExpr.isEmpty do
@@ -6182,7 +6193,7 @@ private def geometry (opts : String) (pos : Pos)
 {String.intercalate ", " droppedExpr.toList}" pos
       (help := "TeX register arithmetic has no value here; write the \
 length as one literal")
-  synthAt native pos
+  carry native pos
 
 /-- `\usepackage[opts]{crop}` and `\crop[opts]` as `\page{ marks = cut }`. -/
 private def crop (opts : String) (pos : Pos)
@@ -6200,9 +6211,8 @@ private def crop (opts : String) (pos : Pos)
     unreadParam "usepackage:crop" (KeyVal.entry o).1 s!"crop option '{o}'" pos
   match mode with
   | some on =>
-    let native := s!"\\page\{ marks = {if on then "cut" else "none"} }"
-    became spelling native pos (subject := some (paramSubject "crop" (if on then "cam" else "off")))
-    synthAt native pos
+    setting spelling (.page #[(.marks, if on then "cut" else "none")]) pos
+      (subject := some (paramSubject "crop" (if on then "cam" else "off")))
   | none =>
     discard spelling "crop draws no marks until an option asks for them" key pos
     return #[]
@@ -6252,14 +6262,13 @@ private def beamerposter (opts : String) (pos : Pos) : M (Array Raw) := do
     | ("width", some v) => customW := some v
     | ("height", some v) => customH := some v
     | _ => dropped := dropped.push e
-  let mut keys : Array String := #[]
+  let mut keys : Array (Native.PageKey × String) := #[]
   let mut fontscale : Nat := 100000000
   if size == "custom" then
     match customW, customH with
     | some w, some h =>
       let (w, h) := if portrait then (h, w) else (w, h)
-      keys := keys.push s!"width = {w}cm"
-      keys := keys.push s!"height = {h}cm"
+      keys := keys ++ #[(.width, s!"{w}cm"), (.height, s!"{h}cm")]
     | _, _ =>
       dropped := dropped.push "size=custom (needs width= and height=)"
   else
@@ -6267,21 +6276,20 @@ private def beamerposter (opts : String) (pos : Pos) : M (Array Raw) := do
     | some ((w, h), fs) =>
       fontscale := fs
       let (w, h) := if portrait then (h, w) else (w, h)
-      keys := keys.push s!"width = {w}mm"
-      keys := keys.push s!"height = {h}mm"
+      keys := keys ++ #[(.width, s!"{w}mm"), (.height, s!"{h}mm")]
     | none => dropped := dropped.push s!"size={size}"
   -- myfontscale is scale × fontscale rounded to two decimals; normalsize is 24.88 pt × myfontscale.
   let den : Int := (scaleDen : Int) * 100000000
   let cents := (scaleNum * (fontscale : Int) * 100 + den / 2) / den
-  keys := keys.push s!"fontsize = {ptTenThousandths (2488 * cents)}"
-  let native := s!"\\documentclass\{poster}\\page\{ {String.intercalate ", " keys.toList} }"
-  became "\\usepackage{beamerposter}" native pos
+  keys := keys.push (.fontsize, ptTenThousandths (2488 * cents))
+  let page : Native.Setting := .page keys
+  became "\\usepackage{beamerposter}" ("\\documentclass{poster}" ++ page.kept.render) pos
   for o in dropped do
     sayOnce ("param:usepackage:beamerposter:" ++ (KeyVal.entry o).1) .W0367
       s!"beamerposter option '{o}' is outside the poster model; ignored" pos
       (help := "size, orientation, scale, and custom width/height carry over; \
 \\page{ ... } declares anything further")
-  synthAt native pos
+  return (← synthAt "\\documentclass{poster}" pos) ++ (← carry page pos)
 
 /-- Whether a value stands as one entry of a native declaration, so spliced into one it sets no
 other key. -/
@@ -6325,27 +6333,6 @@ which this engine does not substitute there; skipped, and {stands}" pos
       (help := s!"write '\\{cmd}' with its value where the environment is used")
   else became s!"\\{cmd}" "a rewrite at each use, where its parameters hold their values" pos
 
-/-- The metadata keys hyperref's options set, each as its `\pdfmeta` key. -/
-public inductive MetaKey where
-  | title
-  | author
-  | subject
-  | keywords
-  deriving BEq, Repr
-
-public def MetaKey.name : MetaKey → String
-  | .title => "title"
-  | .author => "author"
-  | .subject => "subject"
-  | .keywords => "keywords"
-
-public def MetaKey.all : List MetaKey := [.title, .author, .subject, .keywords]
-
-public def MetaKey.ofName? (n : String) : Option MetaKey := MetaKey.all.find? (·.name == n)
-
-public theorem MetaKey.ofName?_name (k : MetaKey) : MetaKey.ofName? k.name = some k := by
-  cases k <;> rfl
-
 /-- hyperref's keys whose values the engine reads as words, not TeX it sets: its dates and its
 trapping state, each as its `\pdfmeta` key. -/
 private inductive MetaWord where
@@ -6377,7 +6364,7 @@ private def MetaWord.read (w : MetaWord) (v : String) : Option String :=
 /-- What hyperref's keys declare: its metadata keys with their TeX values, its dates and trapping
 as words, whether a link key was read, and whether a dropped key was named. -/
 private structure HyperrefRead where
-  metadata : Array (MetaKey × String)
+  metadata : Array (Native.MetaKey × String)
   words : Array (MetaWord × String)
   linked : Bool
   warned : Bool
@@ -6412,7 +6399,7 @@ UTF-16 otherwise, as the option asks"),
 /-- hyperref's keys, as `\hypersetup` and the package options give them, with its link keys
 written into the setup. -/
 private def hyperrefKeys (opts : String) (pos : Pos) : M HyperrefRead := do
-  let mut metadata : Array (MetaKey × String) := #[]
+  let mut metadata : Array (Native.MetaKey × String) := #[]
   let mut words : Array (MetaWord × String) := #[]
   let mut links := (← get).links
   let mut linked := false
@@ -6422,7 +6409,7 @@ private def hyperrefKeys (opts : String) (pos : Pos) : M HyperrefRead := do
   for e in KeyVal.items opts do
     let (k, value) := KeyVal.entry e
     let v := value.getD ""
-    if let some m := MetaKey.all.find? (k == "pdf" ++ ·.name) then
+    if let some m := Native.MetaKey.hyperref.find? (k == "pdf" ++ ·.name) then
       metadata := metadata.push (m, v)
     if let some w := MetaWord.all.find? (k == ·.hyperref) then
       unless v.trimAscii.isEmpty do
@@ -6438,7 +6425,7 @@ private def hyperrefKeys (opts : String) (pos : Pos) : M HyperrefRead := do
       links := l
       linked := true
     else if value.isNone && KeyVal.unbalanced e then cut := cut.push s!"'{e}'"
-    else if (MetaKey.all.find? (k == "pdf" ++ ·.name)).isNone &&
+    else if (Native.MetaKey.hyperref.find? (k == "pdf" ++ ·.name)).isNone &&
         (MetaWord.all.find? (k == ·.hyperref)).isNone then
       match hyperrefInert.lookup (optionSpelling e) with
       | some why => inertParam "hyperref" k e why pos
@@ -6714,13 +6701,13 @@ private def pageAttrBoxes (text : Option String) (keep : Bool) (what : String) (
   if entries.isNone then
     lost "the page attribute is not literal PDF entries; none of it is written, and it replaces \
 the boxes before it" "write the entries themselves: '/TrimBox [9 9 261 153]'" "pageattr"
-  let mut keys : Array (String × String) := #[]
+  let mut keys : Array (Native.PageKey × String) := #[]
   for (k, v) in entries.getD #[] do
-    let native? := match k with
-      | "TrimBox" => some "trimbox"
-      | "BleedBox" => some "bleedbox"
-      | "ArtBox" => some "artbox"
-      | "CropBox" => some "cropbox"
+    let native? : Option Native.PageKey := match k with
+      | "TrimBox" => some .trimbox
+      | "BleedBox" => some .bleedbox
+      | "ArtBox" => some .artbox
+      | "CropBox" => some .cropbox
       | _ => none
     match native?, boxCorners v with
     | some key, some cs => keys := keys.push (key, s!"\"{" ".intercalate cs}\"")
@@ -6733,13 +6720,13 @@ dictionary itself, without it"
         "a page attribute's '/TrimBox', '/BleedBox', '/ArtBox' and '/CropBox' are written; \
 '\\page' declares the rest of the page" s!"pageattr:{k}"
   let old := (← get).pageBoxes
-  let boxes := ["trimbox", "bleedbox", "artbox", "cropbox"].filterMap fun key =>
+  let boxes := [Native.PageKey.trimbox, .bleedbox, .artbox, .cropbox].filterMap fun key =>
     match (keys.filter (·.1 == key)).back? with
     | some e => some e
     | none => if keep then old.find? (·.1 == key) else none
-  let native := s!"\\page\{ {", ".intercalate (boxes.map fun (k, v) => s!"{k} = {v}")} }"
-  became what (if boxes.isEmpty then "no page box" else native) pos
-  let declared ← if boxes.isEmpty then pure #[] else synthAt native pos
+  let native : Native.Setting := .page boxes.toArray
+  became what (if boxes.isEmpty then "no page box" else native.kept.render) pos
+  let declared ← if boxes.isEmpty then pure #[] else carry native pos
   write fun st => { st with pageBoxes := boxes.toArray, pageAttr := declared }
 
 /-- A shipout picture flattened to a token stream with its
@@ -7141,17 +7128,15 @@ private def floatRedef? (envName : String) (raws : Array Raw) (j : Nat) (pos : P
       match ← floatSkipValue? assigned v with
       | some src => assigned := Ir.redeclare assigned r src
       | none => let _ ← unreadableLength r (rawSrc v).trimAscii.toString pos
-    let entries := assigned.toList.map fun (r, src) =>
-      let tok := if r == "abovecaptionskip" then "captionsep" else "belowcaptionskip"
-      s!"{kind.captionScope}{tok} = {src}"
+    let tokens : Native.Setting := .tokens (assigned.map fun (r, src) =>
+      (kind.captionScope ++ (if r == "abovecaptionskip" then "captionsep" else "belowcaptionskip"), src))
     -- premise: captionScopeChecks — the kernel's order applies without a caption package
     let packaged := (← get).loads.pkgs.any fun (p, _) => p == "caption" || p == "subcaption"
-    let natives := if entries.isEmpty then [] else
-      s!"\\tokens\{ {String.intercalate ", " entries} }" ::
-        (if packaged then [] else [s!"\\captionsetup[{envName}]\{position=bottom}"])
-    let mut out : Array Raw := #[]
-    for native in natives do
-      out := out ++ (← synthAt native pos)
+    let caption := s!"\\captionsetup[{envName}]\{position=bottom}"
+    let (out, natives) ← if assigned.isEmpty then pure (#[], []) else do
+      let out ← carry tokens pos
+      if packaged then pure (out, [tokens.kept.render])
+      else pure (out ++ (← synthAt caption pos), [tokens.kept.render, caption])
     let what := if natives.isEmpty then s!"the built-in \{{envName}}"
       else String.intercalate " " natives
     became s!"\\renewenvironment\{{envName}}" what pos
@@ -7318,8 +7303,8 @@ public inductive Lowering where
 public inductive CtrlAction where
   /-- Fixed tokens, named in a translation note where one spells their native form. -/
   | tokens (toks : List Raw) (note : Option String)
-  /-- A native declaration, named in its translation note. -/
-  | native (src : String)
+  /-- A native setting, named in its translation note. -/
+  | native (s : Native.Setting)
   /-- The kernel skip `amount`: its declared value, else its default. -/
   | skip (amount : String)
   /-- Refused with `code`. -/
@@ -7468,14 +7453,14 @@ it starts no column there and is skipped" "\\column{width} splits the body of \\
 does not run Lua, so it is skipped" "\\allow{W0104} accepts the skip",
    ⟨"dochome", [.needed],
      .lower .blueprintSite { declared with leaves := [.without "blueprint"] }⟩,
-   ⟨"doublespacing", [], .native "\\page{ leading = 1.667 }"⟩,
+   ⟨"doublespacing", [], .native (.page #[(.leading, "1.667")])⟩,
    nothingRow "endlinenomath" 0 "display math lines are numbered like every galley line",
    ⟨"ensuremath", [.needed], .lower .ensureMath {}⟩,
    ⟨"fancyfoot", [.opt, .group], .lower .fancyField {}⟩,
    ⟨"fancyhead", [.opt, .group], .lower .fancyField {}⟩,
    ⟨"fancyhf", [.opt, .group], .lower .fancyField {}⟩,
    -- The page's bottom (latex.ltx `\flushbottom`, `\raggedbottom`).
-   ⟨"flushbottom", [], .native "\\page{ bottom = flush }"⟩,
+   ⟨"flushbottom", [], .native (.page #[(.bottom, "flush")])⟩,
    ⟨"fontseries", [.needed],
      .lower .fontSeries { paramStands := some "the weight in force stands" }⟩]
 
@@ -7526,7 +7511,7 @@ private def ctrlRows6 : List CtrlRow :=
      (some "the document's normal ink, to the end of the group")⟩,
    ⟨"ofoot", [.group], .lower .runningField {}⟩,
    ⟨"ohead", [.group], .lower .runningField {}⟩,
-   ⟨"onehalfspacing", [], .native "\\page{ leading = 1.25 }"⟩,
+   ⟨"onehalfspacing", [], .native (.page #[(.leading, "1.25")])⟩,
    ⟨"overprintstate", [.needed], .refuse .W0104 .each "'\\overprintstate' sets the \
 overprint state; the engine knocks out every colour it paints; skipped" none⟩,
    ⟨"pagebreak", [.opt], .lower .pageBreak {}⟩,
@@ -7535,7 +7520,7 @@ overprint state; the engine knocks out every colour it paints; skipped" none⟩,
    ⟨"pagestyle", [.group],
      .lower .pageStyle { paramStands := some "the page style in force stands" }⟩,
    ⟨"printbibliography", [.opt], .lower .printBibliography {}⟩,
-   ⟨"raggedbottom", [], .native "\\page{ bottom = ragged }"⟩,
+   ⟨"raggedbottom", [], .native (.page #[(.bottom, "ragged")])⟩,
    refusedRow "raisebox" [.needed, .opt, .opt] "'\\raisebox' lift, height and depth are not \
 applied; its content is set as if unboxed" "remove the box dimensions to use the surrounding \
 line's natural spacing",
@@ -7560,7 +7545,7 @@ private def ctrlRows7 : List CtrlRow :=
    ⟨"setkomafont", [.needed, .needed], .lower .komaFont {}⟩,
    ⟨"setlist", [.star, .opt, .group], .lower .setList declared⟩,
    nothingRow "shortcites" 1 "citations are set short throughout, which is what it asks",
-   ⟨"singlespacing", [], .native "\\page{ leading = 1 }"⟩,
+   ⟨"singlespacing", [], .native (.page #[(.leading, "1")])⟩,
    ⟨"sloppy", [], .refuse .W0104 .ctrl "'\\sloppy' loosens TeX's line-breaking \
 tolerance; the breaker keeps its own and an overfull line warns by itself" none⟩]
 
@@ -7593,7 +7578,8 @@ private def ctrlRows9 : List CtrlRow :=
    beamerConfigRow "useoutertheme" 1,
    packageRow "usepackage",
    ⟨"usetheme", [.opt, .group], .lower .useTheme {}⟩,
-   ⟨"vfill", [], .native "\\block[before = fill]{}"⟩,
+   ⟨"vfill", [], .tokens [.ctrl "block" {}, .sym '[' {}, .word "before" {}, .space, .word "=" {},
+     .space, .word "fill" {}, .sym ']' {}, .group #[] {}] (some "\\block[before = fill]{}")⟩,
    ⟨"vspace", [.star, .opt, .group], .lower .vspace {}⟩]
 
 /-- The controls the dispatcher answers from its table, in byte order of their names. -/
@@ -7604,8 +7590,8 @@ public def ctrlRows : List CtrlRow :=
 /-- The row answering a control. -/
 public def ctrlRow? (name : String) : Option CtrlRow := ctrlRows.find? (·.name == name)
 
-/-- A row's native declaration, where it is one. -/
-private def ctrlNative? (name : String) : Option String :=
+/-- A row's native setting, where it is one. -/
+private def ctrlNative? (name : String) : Option Native.Setting :=
   match (ctrlRow? name).map (·.action) with
   | some (CtrlAction.native src) => some src
   | none | some (.tokens ..) | some (.skip _) | some (.refuse ..) | some (.discard ..)
@@ -7613,17 +7599,16 @@ private def ctrlNative? (name : String) : Option String :=
 
 /-- Options of a native package without an option reader of its own whose meaning is one native
 declaration: setspace's spacings as its commands read, and microtype's switches. -/
-public def packageOptionNatives : List (String × List (String × String)) :=
+public def packageOptionNatives : List (String × List (String × Native.Setting)) :=
+  let off : Native.Setting := .page #[(.protrusion, "off"), (.expansion, "off")]
   [("setspace", ["singlespacing", "onehalfspacing", "doublespacing"].filterMap fun o =>
      (ctrlNative? o).map (o, ·)),
-   ("microtype", [("protrusion", "\\page{ protrusion = on }"),
-     ("protrusion=true", "\\page{ protrusion = on }"),
-     ("protrusion=false", "\\page{ protrusion = off }"),
-     ("expansion", "\\page{ expansion = on }"), ("expansion=true", "\\page{ expansion = on }"),
-     ("expansion=false", "\\page{ expansion = off }"),
-     ("disable", "\\page{ protrusion = off, expansion = off }"),
-     ("disable=true", "\\page{ protrusion = off, expansion = off }"),
-     ("activate=false", "\\page{ protrusion = off, expansion = off }")])]
+   ("microtype", [("protrusion", .page #[(.protrusion, "on")]),
+     ("protrusion=true", .page #[(.protrusion, "on")]),
+     ("protrusion=false", .page #[(.protrusion, "off")]),
+     ("expansion", .page #[(.expansion, "on")]), ("expansion=true", .page #[(.expansion, "on")]),
+     ("expansion=false", .page #[(.expansion, "off")]),
+     ("disable", off), ("disable=true", off), ("activate=false", off)])]
 
 /-- moloch's `block` option values as the theme's own block
 colour declarations. -/
@@ -8167,9 +8152,7 @@ private def rewriteCtrlLaterNamed (name : String) (pos : Pos) (raws : Array Raw)
       sayOnce ("ctrl:" ++ name) .W0104 s!"'\\{name}' is given a factor this engine cannot read; \
 skipped, and the leading keeps its value" pos (help := "give a number, such as \\linespread{1.2}")
       return some (#[], k)
-    let native := s!"\\page\{ leading = {rawSrc (args.getD 0 #[])} }"
-    became s!"\\{name}" native pos
-    return some (← synthAt native pos, k)
+    return some (← setting s!"\\{name}" (.page #[(.leading, rawSrc (args.getD 0 #[]))]) pos, k)
   | "xspace" =>
     -- xspace: a space unless punctuation follows.
     let punct (c : Char) : Bool :=
@@ -8843,8 +8826,7 @@ in its own script's glyphs," pos
     else if let some native := (packageOptionNatives.lookup p).bind (·.lookup spelled) then
       -- setspace's spacings set the strut box again as the package loads.
       if p == "setspace" then write fun st => { st with strutSkip := none }
-      became what native pos (subject := some (paramSubject s!"usepackage:{p}" key))
-      out := out ++ (← synthAt native pos)
+      out := out ++ (← setting what native pos (subject := some (paramSubject s!"usepackage:{p}" key)))
     else if let some why := (packageOptionsInert.lookup p).bind fun rows =>
         (rows.lookup spelled).orElse fun _ =>
           if (KeyVal.entry o).2.isSome then rows.lookup (key ++ "=*") else none then
@@ -8882,9 +8864,7 @@ private def rewritePackageBody (name p : String) (opt : Option String) (pos : Po
     | some v, some src =>
       out := out ++ (← setLength "parskip" src s!"\\usepackage[skip={v}]\{parskip}" pos)
     | _, _ =>
-      let native := "\\page{ parskip = 0.6em plus 2pt }"
-      became "\\usepackage{parskip}" native pos
-      out := out ++ (← synthAt native pos)
+      out := out ++ (← setting "\\usepackage{parskip}" (.page #[(.parskip, "0.6em plus 2pt")]) pos)
       if let some v := skip then out := out ++ (← unreadableLength "parskip" v pos)
     out := out ++ (← packageOptions name p (given.filter fun o => (KeyVal.entry o).1 != "skip") pos)
   else if p == "amsthm" then
@@ -9247,9 +9227,10 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
           else some "0.6em plus 0.12em"
         | ("parskip", none) => some "1.2em plus 0.24em"
         | _ => none
-      let native := s!"\\documentclass{o}\{{native0}}\\page\{ parskip = {komaSkip.getD "0pt"} }"
-      became s!"\\documentclass\{{cls}}" native pos
-      return some (← synthAt native pos, k)
+      let cls0 := s!"\\documentclass{o}\{{native0}}"
+      let page : Native.Setting := .page #[(.parskip, komaSkip.getD "0pt")]
+      became s!"\\documentclass\{{cls}}" (cls0 ++ page.kept.render) pos
+      return some ((← synthAt cls0 pos) ++ (← carry page pos), k)
     else if cls == "beamer" then
       let o := match opt with
         | some _ => if keptItems.isEmpty then "" else s!"[{String.intercalate "," keptItems}]"
@@ -9547,12 +9528,14 @@ skipped, and the length keeps its value" pos
             if let (some sz, some ld) := (ptMacroArg fsArgs[1], ptMacroArg fsArgs[2]) then
               if sz > 0 && ld > 0 then
                 let skips ← sizeSkips sbody afterFs pos
-                let native := s!"\\page\{ fontsize = {milliStr sz}pt, \
-baselineskip = {milliStr ld}pt }" ++
-                  (if skips.isEmpty then "" else s!"\\tokens\{ {String.intercalate ", " skips.toList} }")
+                let page : Native.Setting :=
+                  .page #[(.fontsize, s!"{milliStr sz}pt"), (.baselineskip, s!"{milliStr ld}pt")]
+                let tokens : Native.Setting := .tokens skips
                 write fun st => { st with listiKept := !resetsListi sbody }
-                became "\\renewcommand{\\normalsize}" native pos
-                return some (← synthAt native pos, js + 1)
+                became "\\renewcommand{\\normalsize}"
+                  (page.kept.render ++ if skips.isEmpty then "" else tokens.kept.render) pos
+                return some ((← carry page pos) ++
+                  (← if skips.isEmpty then pure #[] else carry tokens pos), js + 1)
     let native := s!"\\define \\{cmd}({spec})"
     -- premise: ignoredDefinitionChecks — an ignored built-in's refusal is its one accounting
     unless st.ignoredDefs.contains cmd do
@@ -9807,28 +9790,27 @@ spells; the colour is not defined" c.pos (help := "name the colour with ASCII le
     crop ((c.optSrc 0).getD "cam,noaxes") c.pos "\\crop" "crop"
   | .microtypeSetup => do
     -- microtype's `protrusion`, `expansion` and `activate` reach the native gates.
-    let mut keys : Array String := #[]
+    let mut keys : Array (Native.PageKey × String) := #[]
     let mut dropped : Array String := #[]
     for e in KeyVal.items (c.src 0) do
       let (key, v) := KeyVal.entry e
       let v := v.getD ""
-      let native := if key == "activate" then ["protrusion", "expansion"]
-        else if key == "protrusion" || key == "expansion" then [key]
+      let native : List Native.PageKey := if key == "activate" then [.protrusion, .expansion]
+        else if key == "protrusion" then [.protrusion]
+        else if key == "expansion" then [.expansion]
         else []
       if native.isEmpty then
         if !key.isEmpty then dropped := dropped.push key
       else
         match v with
         | "" | "true" | "compatibility" | "nocompatibility" =>
-          keys := keys ++ (native.map (s!"{·} = on")).toArray
-        | "false" => keys := keys ++ (native.map (s!"{·} = off")).toArray
+          keys := keys ++ (native.map (·, "on")).toArray
+        | "false" => keys := keys ++ (native.map (·, "off")).toArray
         | _ => dropped := dropped.push key
     for k in dropped do
       unreadParam "microtypesetup" (KeyVal.entry k).1 s!"microtype key '{k}'" c.pos
     if keys.isEmpty then return #[]
-    let native := s!"\\page\{ {String.intercalate ", " keys.toList} }"
-    became "\\microtypesetup" native c.pos
-    synthAt native c.pos
+    setting "\\microtypesetup" (.page keys) c.pos
   | .documentMetadata => documentMetadata (c.src 0) c.pos
   | .defineColorspace => do
     say .W0104 s!"'\\definecolorspace\{{c.src 1}}' declares a DeviceN or \
@@ -9848,12 +9830,10 @@ ICC-based colour space; the engine paints each ink in its own separation; skippe
         | _ => none
       match shipoutRules look lengths (c.arg 2) with
       | some rules =>
-        let key := if hook == "shipout/foreground" then "front-rule" else "rule"
+        let key : Native.PageKey := if hook == "shipout/foreground" then .frontRule else .rule
         let entries := rules.map fun (x, y, w, h, ink) =>
-          s!"{key} = {Decl.quote s!"{x}; {y}; {w}; {h}; {ink}"}"
-        let native := s!"\\page\{ {String.intercalate ", " entries.toList} }"
-        became s!"\\AddToHook\{{hook}}" native pos
-        return (← synthAt native pos)
+          (key, Decl.quote s!"{x}; {y}; {w}; {h}; {ink}")
+        return (← setting s!"\\AddToHook\{{hook}}" (.page entries) pos)
       | none => pure ()
     if hook == "shipout/before" then
       let st ← get
@@ -9945,12 +9925,12 @@ ICC-based colour space; the engine paints each ink in its own separation; skippe
       return #[]
     | "plain" =>
       -- article's initial style is the centred page number in the foot.
-      became "\\pagestyle{plain}" "\\page{ numbers = on }" c.pos
-      synthAt "\\page{ numbers = on }" c.pos
+      setting "\\pagestyle{plain}" (.page #[(.numbers, "on")]) c.pos
     | "empty" =>
       write fun st => { st with head := #[], foot := #[] }
-      became "\\pagestyle{empty}" "\\page{ numbers = off }, and no running fields" c.pos
-      synthAt "\\page{ numbers = off }" c.pos
+      let page : Native.Setting := .page #[(.numbers, "off")]
+      became "\\pagestyle{empty}" s!"{page.kept.render}, and no running fields" c.pos
+      carry page c.pos
     | _ =>
       sayOnce "ctrl:pagestyle" .W0104
         s!"'\\pagestyle\{{v}}' names running furniture the engine does not model; ignored" c.pos
@@ -10326,8 +10306,7 @@ private def ctrlRowRun (row : CtrlRow) (c : CtrlCall) : M (Array Raw) := do
     -- setspace's spacings set the strut box again where they stand.
     if (packageOptionNatives.lookup "setspace").any (·.any (·.1 == row.name)) then
       write fun st => { st with strutSkip := none }
-    became s!"\\{row.name}" src pos
-    synthAt src pos
+    setting s!"\\{row.name}" src pos
   | .skip amount =>
     -- premise: kernelLengthChecks — a declared skip amount ships at its command
     let native := match (← get).lens.find? (·.1 == amount) with

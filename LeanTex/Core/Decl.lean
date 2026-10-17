@@ -245,14 +245,45 @@ private def quoteAtoms : List Char → Array (List Char) → Array (List Char)
 termination_by l => l.length
 decreasing_by all_goals simp only [List.length_cons, List.length_drop]; omega
 
+/-- Text trimmed as `String.trimAscii` trims it. -/
+public def trimChars (cs : List Char) : List Char :=
+  ((cs.dropWhile Char.isWhitespace).reverse.dropWhile Char.isWhitespace).reverse
+
+private def entryOpens (a : List Char) : Bool := a == ['{'] || a == ['['] || a == ['(']
+
+private def entryCloses (a : List Char) : Bool := a == ['}'] || a == [']'] || a == [')']
+
 /-- Splits on commas outside braces, brackets, parentheses and quotes. -/
 public def splitEntries (s : String) : List String :=
-  let opens (a : List Char) : Bool := a == ['{'] || a == ['['] || a == ['(']
-  let closes (a : List Char) : Bool := a == ['}'] || a == [']'] || a == [')']
-  ((KeyVal.splitTopAt opens closes (· == [',']) (quoteAtoms s.toList #[]).toList).toList.filterMap
+  ((KeyVal.splitTopAt entryOpens entryCloses (· == [',']) (quoteAtoms s.toList #[]).toList).toList.filterMap
     fun e =>
-      let t := (String.ofList (e.toList.flatMap id)).trimAscii.toString
-      if t.isEmpty then none else some t)
+      let t := trimChars (e.toList.flatMap id)
+      if t.isEmpty then none else some (String.ofList t))
+
+/-- An entry's key and value: the text before its first `=` and the text after it, each trimmed. -/
+public def entryOf (e : String) : String × String :=
+  let (k, v) := KeyVal.cutAt '=' e.toList
+  (String.ofList (trimChars k), String.ofList (trimChars (v.getD [])))
+
+/-- Whether a character leaves an entry's split and its cut alike: no space, `=`, comma, quote or
+bracket. -/
+public def plainChar (c : Char) : Bool :=
+  !(c.isWhitespace || c == '=' || c == ',' || c == '"' || c == '{' || c == '}' || c == '[' ||
+    c == ']' || c == '(' || c == ')')
+
+/-- Whether a key reads back from an entry beside any others. -/
+public def plainKey (k : String) : Bool := !k.toList.isEmpty && k.toList.all plainChar
+
+private def closedAtom (a : List Char) : Bool :=
+  a.head? != some '"' || (2 ≤ a.length && a.getLast? == some '"')
+
+/-- Whether a value reads back whole from an entry beside any others: written, trimmed, every quote
+closed, and no comma or open bracket left outside them. -/
+public def wholeValue (v : String) : Bool :=
+  let atoms := (quoteAtoms v.toList #[]).toList
+  !v.toList.isEmpty && !(v.toList.head?.any Char.isWhitespace) &&
+    !(v.toList.getLast?.any Char.isWhitespace) && atoms.all closedAtom &&
+    atoms.foldl (KeyVal.cutStep entryOpens entryCloses (· == [','])) (some 0) == some 0
 
 /-- Decimal literal as mantissa and scale: "0.5" ↦ (5, 10). -/
 public def parseDecimal (s : String) : Option (Int × Nat) := Id.run do
@@ -1192,43 +1223,35 @@ public def parseBlock (file : String) (src : String) (pos : Pos) (what : String)
   let mut entries : Array Entry := #[]
   let mut diags : Array Diag := #[]
   for entry in splitEntries src do
-    match entry.splitOn "=" with
-    | key :: rest =>
-      let key := key.trimAscii.toString
-      let valueSrc := String.intercalate "=" rest |>.trimAscii.toString
-      -- Keys admit `-`; in values it is subtraction.
-      if key.isEmpty || !key.toList.all (fun c => isIdentChar c || c == '-') then
-        diags := diags.push (Diag.of .E0320
-          s!"invalid key in '\\{what}': {entry.quote}" (some ⟨file, pos⟩)
-          (help := "entries look like: key = value"))
-      else if valueSrc.isEmpty then
-        diags := diags.push (Diag.of .E0320
-          s!"'{key}' in '\\{what}' has no value" (some ⟨file, pos⟩)
-          (help := "entries look like: key = value"))
-      else
-        match parseValue valueSrc tokens with
-        | some v => entries := entries.push ⟨key, v⟩
-        | none =>
-          let detail := if looksLikeExpr valueSrc then
-              match parseLengthExpr tokens valueSrc with
-              | .error e => s!": {e}"
-              | .ok _ => ""
-            else ""
-          diags := diags.push (Diag.of .E0321
-            s!"cannot read value for '{key}' in '\\{what}': {valueSrc.quote}{detail}"
-            (some ⟨file, pos⟩) (help :=
-              "values are \"strings\", dimensions (10pt, 0.5in), length expressions \
+    let (key, valueSrc) := entryOf entry
+    -- Keys admit `-`; in values it is subtraction.
+    if key.isEmpty || !key.toList.all (fun c => isIdentChar c || c == '-') then
+      diags := diags.push (Diag.of .E0320
+        s!"invalid key in '\\{what}': {entry.quote}" (some ⟨file, pos⟩)
+        (help := "entries look like: key = value"))
+    else if valueSrc.isEmpty then
+      diags := diags.push (Diag.of .E0320
+        s!"'{key}' in '\\{what}' has no value" (some ⟨file, pos⟩)
+        (help := "entries look like: key = value"))
+    else
+      match parseValue valueSrc tokens with
+      | some v => entries := entries.push ⟨key, v⟩
+      | none =>
+        let detail := if looksLikeExpr valueSrc then
+            match parseLengthExpr tokens valueSrc with
+            | .error e => s!": {e}"
+            | .ok _ => ""
+          else ""
+        diags := diags.push (Diag.of .E0321
+          s!"cannot read value for '{key}' in '\\{what}': {valueSrc.quote}{detail}"
+          (some ⟨file, pos⟩) (help :=
+            "values are \"strings\", dimensions (10pt, 0.5in), length expressions \
 (a + 2b), numbers, names, or #RRGGBB colors"))
-    | [] => pure ()
   return (entries, diags)
 
 public def splitEntry (entry : String) : Option (String × String) :=
-  match entry.splitOn "=" with
-  | key :: rest =>
-    let k := key.trimAscii.toString
-    let v := (String.intercalate "=" rest).trimAscii.toString
-    if k.isEmpty || v.isEmpty then none else some (k, v)
-  | [] => none
+  let (k, v) := entryOf entry
+  if k.isEmpty || v.isEmpty then none else some (k, v)
 
 /-- Rejects keys the declaration does not define, naming the ones it does. -/
 public def unknownKey (file : String) (what key : String) (known : List String)
