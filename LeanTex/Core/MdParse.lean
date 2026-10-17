@@ -3011,6 +3011,9 @@ private structure Frame where
   refused : Bool := false
   /-- A disclosure opened by a tag that carries `open`. -/
   expanded : Bool := false
+  /-- A footnote whose definition's line holds nothing: the lines Pandoc's reader takes into it
+whatever their indent, the next and, past one blank line, the one after. -/
+  fresh : Nat := 0
 
 private instance : Inhabited Frame := ⟨{ kind := .quote, pos := {} }⟩
 
@@ -3232,16 +3235,24 @@ private def blocksPass (dialect : Dialect) (file : String) (input : String) (inc
               matched := matched + 1
             | none => ok := false
         | some (FKind.note _) =>
+          let fresh := ((frames[fi]?).map (·.fresh)).getD 0
           if i ≥ inkEnd then
             i := cs.size
             matched := matched + 1
+            if fresh > 0 then frames := frames.modify fi ({ · with fresh := fresh - 1 })
           else
             match consumeIndent cs i col 4 with
             | some (k, c2) =>
               i := k
               col := c2
               matched := matched + 1
-            | none => ok := false
+            | none =>
+              if fresh > 0 then
+                i := (indentAt cs i col).1
+                col := 0
+                matched := matched + 1
+              else ok := false
+            if fresh > 0 then frames := frames.modify fi ({ · with fresh := 0 })
         | some (FKind.list _ _ _) | some FKind.disclosure => matched := matched + 1
     -- An open fence's closer is tested after the container prefixes (§4.5).
     match leaf with
@@ -3348,15 +3359,21 @@ private def blocksPass (dialect : Dialect) (file : String) (input : String) (inc
       if opened then
         opened := false
         let (j, ind) := indentAt cs i col
-        -- A footnote's definition stands at the top level after a blank line or another definition.
-        if readsNotes && frames.isEmpty && !leaf.isPara && ind ≤ 3 && (noteDefAt cs j).isSome then
+        -- A footnote's definition stands at the top level after a blank line or another definition,
+        -- past any list whose item did not match this line.
+        if readsNotes && frames.all (·.kind matches .list ..) && !leaf.isPara && ind ≤ 3 &&
+            (noteDefAt cs j).isSome then
           let (a, ds, dd) := closePara leaf acc lpos
           defs := addDefs defs dd
           acc := a
           diags := diags ++ ds
           leaf := .none
+          let (fs, a2) := closeLists frames acc
+          frames := fs
+          acc := a2
           let (label, k) := (noteDefAt cs j).getD ("", j)
-          frames := frames.push { kind := .note label, pos := lpos, outer := acc }
+          frames := frames.push { kind := .note label, pos := lpos, outer := acc,
+                                  fresh := if isBlankFrom cs k then 2 else 0 }
           acc := #[]
           i := (indentAt cs k 0).1
           col := 0
@@ -3828,13 +3845,23 @@ private def blkKind : Blk → String × Pos
   | .refs p => ("reference list division", p)
   | .note _ _ p => ("footnote", p)
 
-/-- The footnotes a text defines set at their references, a hard break between two lines and a
-label's last definition standing, as Pandoc's reader takes it; each loss on the way is named. -/
+/-- What a footnote's block other than a paragraph becomes in the note: its lines of text, or
+nothing for a block that holds none. -/
+private def blockLoss : Blk → String
+  | .rule _ | .lean .. | .metadata .. | .refs _ => "sets nothing"
+  | .para .. | .heading .. | .code .. | .quote .. | .disclosure .. | .list .. | .table .. | .note .. =>
+    "sets as its lines of text"
+
+/-- The footnotes a text defines set at their references, a hard break between two lines, a
+label's last definition standing and a reference inside a definition its text, as Pandoc's reader
+takes them; each loss on the way is named. -/
 def resolveNotes (file : String) (blocks : Array Blk) : Array Blk × Array Diag := Id.run do
   let mut defs : Std.HashMap String (Array Inl) := {}
   let mut placed : Std.HashMap String Pos := {}
+  let mut losses : Std.HashMap String (Array Diag) := {}
   let mut order : Array String := #[]
   let mut diags : Array Diag := #[]
+  let mut dropped : Array (String × Pos) := #[]
   for b in blocks do
     if let .note label body p := b then
       if let some earlier := placed.get? label then
@@ -3843,30 +3870,37 @@ definition of its label stands, as Pandoc's reader takes it" (some ⟨file, earl
           (some "give each footnote a label of its own") (subject := some "md:note-again"))
       else order := order.push label
       let mut lines : Array (Array Inl) := #[]
+      let mut lost : Array Diag := #[]
       for part in body do
         match part with
         | .para inl _ => lines := lines.push inl
         | other =>
           let (kind, q) := blkKind other
-          diags := diags.push (Diag.of .W0392 s!"a {kind} in footnote '{label}' sets as its \
-lines of text: a footnote holds text" (some ⟨file, q⟩)
+          lost := lost.push (Diag.of .W0392 s!"a {kind} in footnote '{label}' {blockLoss other}: a \
+footnote holds text" (some ⟨file, q⟩)
             (some "write the footnote's content as paragraphs") (subject := some "md:note-block"))
           lines := noteLines lines other
       let content := lines.foldl (init := #[]) fun acc l =>
         if acc.isEmpty then l else (acc.push (.hard p)) ++ l
+      -- A reference inside a definition stays its text, as Pandoc's reader keeps it.
+      let (content, st) := fillNotes {} #[] {} content.toList
+      dropped := dropped ++ st.dropped
       defs := defs.insert label content
       placed := placed.insert label p
-  let (filled, st) := fillNoteBlks defs #[] {} blocks.toList
+      losses := losses.insert label lost
+  let (filled, st) := fillNoteBlks defs #[] {} (blocks.filter (!· matches .note ..)).toList
   for label in order do
-    unless st.used.contains label do
+    if st.used.contains label then diags := diags ++ losses.getD label #[]
+    else
       diags := diags.push (Diag.of .W0392 s!"footnote '{label}' sets nothing: no reference names \
 it" (placed.get? label |>.map fun p => ⟨file, p⟩) (some s!"name it where it belongs with [^{label}], or remove it")
         (subject := some "md:note-unused"))
-  for (label, q) in st.dropped do
+  let named := dropped ++ st.dropped
+  for (label, q) in named do
     diags := diags.push (Diag.of .W0392 s!"footnote '{label}' sets nothing where it is named: an \
 image's text alternative and a citation's note hold text" (some ⟨file, q⟩)
       (some "name the footnote outside the alternative or the citation") (subject := some "md:note-in-text"))
-  return (filled.filter (!· matches .note ..), diags)
+  return (filled, diags)
 
 /-- Blocks for one markdown text in a dialect, and the diagnostics the reader raised; a first pass
 reads its link reference definitions, which a link may use before or after they stand (§4.7). -/

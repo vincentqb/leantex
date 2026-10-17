@@ -707,27 +707,24 @@ private def opensInlineMath : List Inline → Bool
 
 /-- An alternative's runs as the twin spells them: its words escaped and its citations as the
 body's citation runs spell them, one with none marked unspelled before its text. -/
-private def altSpelling (pipes : Bool) (runs : Array Ir.AltRun) : String := Id.run do
-  let xs : Array Inline := runs.map fun r => match r with
+private def altSpelling (pipes : Bool) (runs : Array Ir.AltRun) : String :=
+  altSpellFrom pipes "" (runs.toList.map fun r => match r with
     | .text t => .text t
-    | .cite f keys _ => .cite f keys
-  let mut acc := ""
-  let mut i := 0
-  for _ in [0:runs.size + 1] do
-    let some x := xs[i]? | break
-    match citeRun pipes acc x (xs.extract (i + 1) xs.size).toList with
-    | some (spelled, n) =>
-      acc := acc ++ spelled
-      i := i + 1 + n
-    | none =>
-      match runs[i]? with
-      | some (.text t) =>
-        let escaped := escapeText pipes true t
-        acc := acc ++ escaped
-      | some (.cite _ keys ink) => acc := acc ++ unspelled ++ ink.getD (Ir.citeMarks keys)
-      | none => pure ()
-      i := i + 1
-  return acc
+    | .cite f keys _ => .cite f keys) runs.toList
+where
+  /-- The spelling onto `acc` of the runs `rs`, `xs` their nodes. -/
+  altSpellFrom (pipes : Bool) (acc : String) : List Inline → List Ir.AltRun → String
+    | [], _ | _ :: _, [] => acc
+    | x :: rest, r :: rrest =>
+      match citeRun pipes acc x rest with
+      | some (spelled, n) => altSpellFrom pipes (acc ++ spelled) (rest.drop n) (rrest.drop n)
+      | none =>
+        let said := match r with
+          | .text t => escapeText pipes true t
+          | .cite _ keys ink => unspelled ++ ink.getD (Ir.citeMarks keys)
+        altSpellFrom pipes (acc ++ said) rest rrest
+  termination_by xs => xs.length
+  decreasing_by all_goals simp_wf; all_goals (try simp [List.length_drop]); all_goals omega
 
 mutual
 
@@ -1379,15 +1376,30 @@ private def tighten (s : String) : String :=
   let trimmed := String.ofList ((tightenGo 0 [] s.toList).dropWhile (· == '\n')).reverse
   if trimmed.isEmpty then trimmed else trimmed ++ "\n"
 
+/-- A note's content with each note nested in it spelled in place, in parentheses: markdown's notes
+hold no note. -/
+-- conserves: none — moves a nested note's text into the note holding it.
+private def unnest (content : Array Inline) : Array Inline :=
+  Ir.mapInlines id content (finish := fun ys => ys.foldl (init := #[]) fun acc y => match y with
+    | .footnote _ inner => acc.push (.text " (") ++ inner |>.push (.text ")")
+    | y => acc.push y)
+
 /-- Footnotes numbered by the place of their first equal one among the body's, so a twin's label
-names one note whatever marks the document repeats. -/
+names one note whatever marks the document repeats, a nested note spelled inside its own. -/
 -- conserves: none — renumbers notes only, through the generic map's sibling hook.
 private def notesByPlace (body : Array Block) : Array Block :=
-  let notes := Ir.footnotesOf body
-  if notes.isEmpty then body else
-  Ir.mapBlocks id body (finish := fun xs => xs.map fun x => match x with
-    | .footnote n content =>
-      .footnote (((notes.findIdx? (· == (n, content))).map (· + 1)).orElse fun _ => n) content
+  let flat := Ir.mapBlocks id body (finish := fun xs => xs.map fun x => match x with
+    | .footnote n content => .footnote n (unnest content)
+    | x => x)
+  let notes := Ir.footnotesOf flat
+  if notes.isEmpty then flat else
+  let key (n : Option Nat) (content : Array Inline) : String := s!"{n}|{Ir.plainText content}"
+  let table : Std.HashMap String (Array ((Option Nat × Array Inline) × Nat)) :=
+    notes.zipIdx.foldl (init := {}) fun m (e, i) => m.insert (key e.1 e.2) ((m.getD (key e.1 e.2) #[]).push (e, i + 1))
+  let place (n : Option Nat) (content : Array Inline) : Option Nat :=
+    ((table.getD (key n content) #[]).find? (·.1 == (n, content))).map (·.2)
+  Ir.mapBlocks id flat (finish := fun xs => xs.map fun x => match x with
+    | .footnote n content => .footnote ((place n content).orElse fun _ => n) content
     | x => x)
 
 /-- The twin's view of a document's body: source locations erased, backend conditionals resolved

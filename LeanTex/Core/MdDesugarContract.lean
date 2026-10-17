@@ -472,17 +472,15 @@ private theorem inlRaws_adm (file : String) : (x : Inl) → Adm d (inlRaws file 
         rcases hr with rfl | rfl
         · exact ctrl_mem _ _ (by simp [vocabulary])
         · exact adm_group _ _ (adm_text _ p))
-  | .note label body p => by
+  | .note _ body p => by
     simp only [inlRaws]
-    split
-    · exact adm_text _ p
-    · have h := inlListRaws_adm file body.toList #[] #[] (adm_empty (d := d))
-      exact adm_lit (by
-        intro r hr
-        simp only [List.mem_cons, List.not_mem_nil, or_false] at hr
-        rcases hr with rfl | rfl
-        · exact ctrl_mem _ _ (by simp [vocabulary])
-        · exact adm_group _ _ h)
+    have h := inlListRaws_adm file body.toList #[] #[] (adm_empty (d := d))
+    exact adm_lit (by
+      intro r hr
+      simp only [List.mem_cons, List.not_mem_nil, or_false] at hr
+      rcases hr with rfl | rfl
+      · exact ctrl_mem _ _ (by simp [vocabulary])
+      · exact adm_group _ _ h)
   | .soft _ => by
     simp only [inlRaws]
     exact adm_lit (by simp [Vocab.admits])

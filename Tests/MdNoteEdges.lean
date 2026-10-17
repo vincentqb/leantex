@@ -96,6 +96,14 @@ def altChecks (ref : IO.Ref (List String)) : IO Unit := do
     "/-! A chart ![see [@roe2020]](chart.svg) here. -/\n\ndef x := 1\n" #[("refs.bib", worksBib)]
   t s!"lean alt: a docstring's image cites in its alternative ({imageNames d})"
     ((imageNames d).any fun n => hasStr n "see " && !hasStr n "\\" && !hasStr n "@")
+  let (d, _) := mdBibBuild (worksMeta ++ "Nested ![outer ![inner [@b]](chart.svg) text](chart.svg) end.\n")
+    #[("works.bib", worksBib)]
+  t s!"md alt: a nested image's alternative stands in the one holding it, its work cited ({imageNames d})"
+    ((imageNames d).contains "outer inner [Birch, 2002] text")
+  let (d, _) := leanCiteBuild "F.lean"
+    "/-! A chart ![see [the notes][roe2020]](chart.svg) here. -/\n\ndef x := 1\n" #[("refs.bib", worksBib)]
+  t s!"lean alt: a docstring alternative's link to an entry keeps its words, no mark ({imageNames d})"
+    ((imageNames d).contains "see the notes")
   let mixed := worksMeta ++ "![see [@a; -@b, p. 2]](chart.svg)\n\nText cites [@roe2020].\n"
   let (d, _) := mdBibBuild mixed #[("works.bib", worksBib)]
   let twin := MarkdownDoc.emit d
@@ -155,6 +163,25 @@ def noteChecks (ref : IO.Ref (List String)) : IO Unit := do
 ({repr (ds.map (·.subject))})"
     ((ds.filter (·.subject == some "md:note-in-text")).size == 2 &&
       !ds.any (·.subject == some "md:note-unused"))
+  let listed := "Intro[^m] text.\n\n- item one[^n]\n- item two\n\n[^n]: First note.\n[^m]: Second note.\n"
+  t s!"md notes: definitions after a list are read ({repr (twinOf listed)})"
+    (hasStr (twinOf listed) "[^1]: Second note." && hasStr (twinOf listed) "[^2]: First note.")
+  for (src, note) in [("Text[^a].\n\n[^a]:\nUnindented content.\n\nBody.\n", "[^1]: Unindented content."),
+      ("Text[^a] end.\n\n[^a]:\n\nBody.\n", "[^1]: Body.")] do
+    t s!"md notes: a definition's empty line takes the next line, as Pandoc's ({repr (twinOf src)})"
+      (hasStr (twinOf src) note)
+  let (d, _) := elabMd "Text[^a] end.\n\n[^a]:\n"
+  t s!"md notes: an empty definition is an empty note ({repr (Ir.blocksText d.body)})"
+    (!hasStr (Ir.blocksText d.body) "[^a]" && (Ir.footnotesOf d.body).size == 1)
+  let nested := "Text[^a].\n\n[^a]: Outer[^b] text.\n\n[^b]: Inner.\n"
+  let (_, ds) := elabMd nested
+  t s!"md notes: a reference inside a definition is its text and leaves its note unused, as \
+Pandoc's ({repr (twinOf nested)})"
+    (hasStr (twinOf nested) "Outer\\[^b\\] text." && ds.any (·.subject == some "md:note-unused"))
+  let (_, ds) := elabMd "Text[^a].\n\n[^a]: Once.\n\n    - a list\n\n[^a]: Twice.\n\n[^c]: Never.\n\n    - a list\n"
+  t s!"md notes: a block is named only in a definition that stands and is named \
+({repr (ds.map (·.subject))})"
+    (!ds.any (·.subject == some "md:note-block"))
   let (d, ds) := includedDoc "h.tex" (dvDoc "\\usepackage{markdown}\n" "\\markdownInput{p.md}")
     [("p.md", "p.md", "Text[^a].\n\n[^a]: A note.\n")]
   t s!"md notes: an included file reads no footnote, as the markdown package's default \
@@ -186,5 +213,12 @@ and\\footnote[7]{Note seven.} also\\footnote[7]{Another seven.}.\n\\end{document
   let back := MarkdownDoc.emit (elabMd twin).1
   t s!"tex note twin: notes whose marks repeat keep their own text read back ({repr twin})"
     (["Note one.", "Note two.", "Note three.", "Note seven.", "Another seven."].all (hasStr back ·))
+  let nest := "\\documentclass{article}\n\\begin{document}\nOne\\footnote{Outer\\footnote{Inner.} \
+text.}. Two\\footnote{Plain.}.\n\\end{document}\n"
+  let twin := MarkdownDoc.emit (elabStr nest).1
+  t s!"tex note twin: a nested note's text stands in its note, the twin its round trip's fixed point \
+({repr twin})"
+    (hasStr twin "[^1]: Outer (Inner.) text." && hasStr twin "[^2]: Plain." &&
+      MarkdownDoc.emit (elabMd twin).1 == twin)
 
 end Tests.MdNoteEdges

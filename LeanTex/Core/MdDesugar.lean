@@ -473,9 +473,8 @@ mutual
 private def inlRaws (file : String) (dialect : Dialect) : Inl → Array Raw × Array Diag
   | .text s p => (textRaws s p, #[])
   | .code s p => (#[.ctrl "texttt" p, .group (textRaws s p) p], #[])
-  -- A footnote's content sets where its reference stands; one the reader left unfilled is its text.
-  | .note label body p =>
-    if body.isEmpty then (textRaws s!"[^{label}]" p, #[]) else
+  -- A footnote's content sets where its reference stands, an empty definition's an empty note.
+  | .note _ body p =>
     let (rs, ds) := inlListRaws file dialect #[] #[] body.toList
     (#[.ctrl "footnote" p, .group rs p], ds)
   | .math display src p =>

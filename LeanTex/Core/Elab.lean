@@ -3171,22 +3171,34 @@ private def imageGroups (raws : Array Raw) (start : Nat) :
       (#[arg] ++ args, ⟨k, by omega⟩)
     | _ => (#[], ⟨j, hj⟩)
 
+/-- Runs with text joined to the last run where it is text. -/
+private def pushAltText (out : Array Ir.AltRun) (t : String) : Array Ir.AltRun :=
+  if t.isEmpty then out else
+  match out.back? with
+  | some (.text s) => out.pop.push (.text (s ++ t))
+  | _ => out.push (.text t)
+
 mutual
 
-/-- An alternative's runs from its elaborated text: each citation its own, the rest its words. -/
+/-- An alternative's runs from its elaborated text: each citation its own, a nested image's
+alternative its runs, a formula its source, the rest its words. -/
 -- conserves: none — a fold cannot keep a citation one run, and a note is no alternative's text.
 private def altRunsOne (out : Array Ir.AltRun) : Inline → Array Ir.AltRun
   | .cite form keys => if form.cmd == .nocite then out else out.push (.cite form keys none)
   | .footnote _ _ => out
+  | .image _ _ alt => match alt with
+    | .citing runs => runs.foldl (fun o r => match r with
+        | .text t => pushAltText o t
+        | .cite .. => o.push r) out
+    | .described t => pushAltText out t
+    | .undeclared | .decorative => out
+  | .formula _ src _ => pushAltText out src
   | .located _ body | .styled _ body | .colored _ _ body | .role _ body | .link _ body
   | .decorated _ body | .onSteps _ body | .cited _ _ body
   | .altSteps _ body _ => altRunsList out body.toList
-  | x@(.text _) | x@(.math _ _) | x@(.formula _ _ _) | x@(.label _) | x@(.ref _ _ _ _) | x@.fill
+  | x@(.text _) | x@(.math _ _) | x@(.label _) | x@(.ref _ _ _ _) | x@.fill
   | x@(.hspace _ _) | x@(.rule _ _ _) | x@.pageNumber | x@.pageCount | x@(.linebreak _)
-  | x@(.strut _) | x@(.italicCorr _) | x@(.image _ _ _) | x@(.icon _ _) =>
-    match out.back? with
-    | some (.text t) => out.pop.push (.text (t ++ Ir.plainTextOne x))
-    | _ => out.push (.text (Ir.plainTextOne x))
+  | x@(.strut _) | x@(.italicCorr _) | x@(.icon _ _) => pushAltText out (Ir.plainTextOne x)
 
 private def altRunsList (out : Array Ir.AltRun) : List Inline → Array Ir.AltRun
   | [] => out
@@ -3195,10 +3207,11 @@ private def altRunsList (out : Array Ir.AltRun) : List Inline → Array Ir.AltRu
 end
 
 /-- A markdown image's alternative from its elaborated text: its runs where it holds a citation,
-its plain words otherwise. -/
+their words otherwise. -/
 private def altOfInlines (xs : Array Inline) : Ir.Alt :=
   let runs := altRunsList #[] xs.toList
-  if runs.any (· matches .cite ..) then .citing runs else Ir.Alt.declare (Ir.plainText xs)
+  if runs.any (· matches .cite ..) then .citing runs
+  else Ir.Alt.declare (String.join (runs.toList.map Ir.AltRun.said))
 
 /-- `\includegraphics` and `\animategraphics`; an animation ships its static
 poster with its playback named as lost. -/
