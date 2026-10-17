@@ -63,6 +63,7 @@ import LeanTex.Cli.ListingHighlight
 import LeanTex.Cli.PublicationPaths
 import LeanTex.Cli.Publication
 import LeanTex.Cli.RunCost
+import Std.Sync.Mutex
 
 namespace LeanTex.Cli.Driver
 
@@ -405,13 +406,14 @@ public def svgConverterWith (probe : IO Bool)
     (run : ByteArray → Bool → IO (Except PicCache.Outcome Image.Plan))
     (allowed : Bool) : IO (Option Converter) := do
   if !allowed then return none
-  let found ← IO.mkRef (none : Option Bool)
+  let found ← Std.Mutex.new (none : Option Bool)
   return some fun canonical independent => do
-    let present ← match ← found.get with
+    let present ← found.atomically do
+      match ← get with
       | some p => pure p
       | none =>
         let p ← probe
-        found.set (some p)
+        set (some p)
         pure p
     if present then some <$> run canonical independent else pure none
 
@@ -494,9 +496,11 @@ def loadImages (file : String) (doc : Ir.Doc) (pics : Array PicResult := #[])
   let mut hits := 0
   let mut reads : Array String := #[]
   let convert ← svgConverter params doc.figureConvert
-  for req in Ir.imageRequests doc do
-    let (f, fromCache, svg, read) ← fetchImage dir pics refused params doc.info.locale.tag convert req
-      doc.graphicsPath cache
+  let reqs := Ir.imageRequests doc
+  -- Four at a time bound peak memory, never two of one source; results stand in request order.
+  let answers ← Batch.map 4 (·.src) (fun req =>
+    fetchImage dir pics refused params doc.info.locale.tag convert req doc.graphicsPath cache) reqs
+  for (req, (f, fromCache, svg, read)) in reqs.zip answers do
     if fromCache then hits := hits + 1
     fetched := fetched.push (req, f)
     reads := reads ++ read

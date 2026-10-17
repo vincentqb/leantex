@@ -1366,9 +1366,10 @@ flatten it onto a background and re-export"
           .error (pngInflateWhy .budget)
         else
           let planes := splitPredictedAlpha raw s.pxH s.pxW channels
+          let alpha := Task.spawn fun _ => Flate.deflate planes.2
           .ok { pxW := s.pxW, pxH := s.pxH, dpiX := s.dpiX, dpiY := s.dpiY, bitDepth := 8,
                 color := colorOf p s space, filter := .flatePredictor,
-                data := Flate.deflate planes.1, alpha := .soft (Flate.deflate planes.2) 8,
+                data := Flate.deflate planes.1, alpha := .soft alpha.get 8,
                 recoded := true, losses := lossesOf p s space, orientation := s.orientation }
 
 private def planJpeg (p : PlanParams) (s : Source) : Except String Plan :=

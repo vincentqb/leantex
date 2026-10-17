@@ -6,7 +6,7 @@ import LeanTex.Core.PngEncode
 /-
 Benchmark leantex against lualatex on the bench corpus, median of `N` runs (default 5), or the
 measurement a flag selects; never a gate. `LEANTEX_BENCH_BINARY` names a saved compiler.
-Usage: lake build && lake env lean --run scripts/bench.lean [--boundary-only | --concurrency-only | --slides-only | --slides-compressed-only | --slides-selftest | --talk-only | --decode-only | --pages-only | --listings-only | --bib-only | --passes-only | --svg-only | --pdf-pages-only <f.pdf> | --faces-only <f.pdf>... | --doc-cost [--record] [--history <path>]]
+Usage: lake build && lake env lean --run scripts/bench.lean [--boundary-only | --concurrency-only | --slides-only | --slides-compressed-only | --slides-selftest | --talk-only | --rasters-only | --decode-only | --pages-only | --listings-only | --bib-only | --passes-only | --svg-only | --pdf-pages-only <f.pdf> | --faces-only <f.pdf>... | --doc-cost [--record] [--history <path>]]
 -/
 
 def compiler : IO String := do
@@ -1013,13 +1013,13 @@ open Slides (say)
 def require (ok : Bool) (why : String) : IO Unit := do
   unless ok do throw (IO.userError s!"talk benchmark: {why}")
 
-/-- The invented talk deck of `scripts/talkdeck.lean` staged in `dir` beside the corpus fonts,
-after building its generator. -/
-def stage (dir : System.FilePath) (frames : Nat) : IO Unit := do
+/-- The invented talk deck of `scripts/talkdeck.lean`, or its deck of `rasters` distinct rasters,
+staged in `dir` beside the corpus fonts, after building its generator. -/
+def stage (dir : System.FilePath) (frames rasters : Nat) : IO Unit := do
   let built ← (← IO.Process.spawn { cmd := "lake", args := #["build", "-q", "talkDeck"] }).wait
   if built != 0 then die "lake build talkDeck failed"
   let out ← IO.Process.output
-    { cmd := ".lake/build/bin/talkDeck", args := #[dir.toString, toString frames] }
+    { cmd := ".lake/build/bin/talkDeck", args := #[dir.toString, toString frames, toString rasters] }
   if out.exitCode != 0 then die s!"talkDeck failed:\n{out.stderr}"
   Slides.copyFonts dir
 
@@ -1039,19 +1039,21 @@ def stamp (binary : System.FilePath) : IO (Nat × IO.FS.SystemTime) := do
   let m ← binary.metadata
   return (m.byteSize.toNat, m.modified)
 
-/-- Cold (an empty application cache) and warm builds of the talk deck in each format, the
-median of `n` pairs: wall and compiler time, every phase, and the artifact, which every build
-must reproduce byte for byte, as must `LEANTEX_BENCH_COMPARE_BINARY` when it names a compiler. -/
-def run (n frames : Nat) : IO Unit := do
+/-- Cold (an empty application cache) and warm builds of the talk deck, or of the raster deck when
+`rasters` is positive, in each format: the median of `n` pairs, every phase, and the artifact every
+build and any `LEANTEX_BENCH_COMPARE_BINARY` compiler must reproduce byte for byte. -/
+def run (n frames : Nat) (rasters : Nat := 0) : IO Unit := do
   let binary ← IO.FS.realPath (← compiler)
   let before ← stamp binary
   let comparison ← match ← IO.getEnv "LEANTEX_BENCH_COMPARE_BINARY" with
     | some path => pure (some (← IO.FS.realPath path))
     | none => pure none
-  say s!"talk deck benchmark; N={n}; frames={frames}; binary={binary} ({before.1} bytes)"
+  let name := if rasters > 0 then "raster deck" else "talk deck"
+  let count := if rasters > 0 then rasters else frames
+  say s!"{name} benchmark; N={n}; frames={count}; binary={binary} ({before.1} bytes)"
   say s!"host load before: {← Slides.load}"
   IO.FS.withTempDir fun dir => do
-    stage dir frames
+    stage dir frames rasters
     for format in ["pdf", "html"] do
       let cache := dir / s!"cache-{format}"
       let mut cold : Array Sample := #[]
@@ -1070,9 +1072,9 @@ def run (n frames : Nat) : IO Unit := do
         warm := warm.push second
       let some first := cold[0]? | die "the talk benchmark needs at least one pair"
       let bytes := (artifact.map (·.size)).getD 0
-      say s!"leantex  talk deck, {frames} frames ({format}): {first.pages} pages, {bytes} bytes"
+      say s!"leantex  {name}, {count} frames ({format}): {first.pages} pages, {bytes} bytes"
       for (label, samples) in [("cold", cold), ("warm", warm)] do
-        IO.println s!"{padRight s!"leantex  talk deck {format} ({label})" 42} \
+        IO.println s!"{padRight s!"leantex  {name} {format} ({label})" 42} \
 {padLeft (toString (median (samples.map (·.ms)))) 6} ms, compiler \
 {median (samples.map (·.compilerMs))} ms (median of {n})"
       for p in first.phases do
@@ -1273,6 +1275,9 @@ def main (args : List String) : IO UInt32 := do
     return 0
   if args == ["--talk-only"] then
     Talk.run n 60
+    return 0
+  if args == ["--rasters-only"] then
+    Talk.run n 0 8
     return 0
   if args == ["--slides-compressed-only"] then
     Slides.run n true

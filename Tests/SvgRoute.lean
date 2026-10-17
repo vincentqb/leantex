@@ -212,6 +212,19 @@ def svgConverterProbeChecks (ref : IO.Ref (List String)) : IO Unit := do
   check ref "converter probe: lossy figures probe the host once" ((← probes.get) == 1)
   check ref "converter probe: a refusing document offers no converter"
     ((← Driver.svgConverterWith probe (fun _ _ => return pdfPlan) false).isNone && (← probes.get) == 1)
+  let asks ← IO.mkRef 0
+  -- A probe slow enough that every figure asking at once reaches it before the first answer.
+  let slow : IO Bool := do
+    IO.sleep 20
+    asks.modify (· + 1)
+    return true
+  let some shared ← Driver.svgConverterWith slow (fun _ _ => return pdfPlan) true
+    | check ref "converter probe: an allowed converter is offered" false
+  let asked ← (List.range 8).mapM fun i =>
+    IO.asTask (prio := .dedicated) (Driver.svgFetch s!"d{i}.svg" svgFilterFixture .first "en" (some shared))
+  let figures ← asked.mapM fun task => IO.ofExcept task.get
+  check ref s!"converter probe: eight lossy figures asking at once probe the host once ({← asks.get})"
+    ((← asks.get) == 1 && figures.all (·.res.toBool))
 
 /-- A character no face covers is a figure loss (W0609), never an error. -/
 def svgGlyphGapChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do

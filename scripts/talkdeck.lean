@@ -3,8 +3,8 @@ import LeanTex.Core.PngEncode
 import Tests.Support.Rand
 
 /-
-An invented talk-sized deck and its figures, written into a directory for `bench.lean --talk-only`.
-Usage: lake build talkDeck && .lake/build/bin/talkDeck <dir> [frames]
+An invented talk-sized deck and its figures, or a deck of distinct rasters, for `bench.lean`.
+Usage: lake build talkDeck && .lake/build/bin/talkDeck <dir> [frames] [rasters]
 -/
 
 open LeanTex.Core
@@ -135,13 +135,23 @@ def deck (frames : Nat) : String := Id.run do
     s := s ++ frame i
   return s ++ "\\end{document}\n"
 
+/-- An invented deck of `count` frames, each showing its own panels raster. -/
+def rasterDeck (count : Nat) : String := Id.run do
+  let mut s := "\\documentclass[aspectratio=169]{beamer}\n\\usetheme{moloch}\n\\usepackage{graphicx}\n" ++
+    fontsDecl ++ "\\begin{document}\n"
+  for i in [0:count] do
+    s := s ++ s!"\\begin\{frame}\{Invented panels {i + 1}}\n\\centering\n" ++
+      s!"\\includegraphics[height=0.75\\textheight,alt=\{Invented panels {i + 1}}]\{figures/raster{i}.png}\n" ++
+      "\\end{frame}\n"
+  return s ++ "\\end{document}\n"
+
 /-! Figures. -/
 
 /-- A diagram-like RGBA raster: panels on a light ground, flat, graded or grained, ruled with
 text-like strokes, inside transparent margins. -/
-def panelsRaw (side : Nat) : ByteArray := Id.run do
+def panelsRaw (side : Nat) (start : UInt64 := 731) : ByteArray := Id.run do
   let mut out := ByteArray.emptyWithCapacity (side * (4 * side + 1))
-  let mut seed : UInt64 := 731
+  let mut seed : UInt64 := start
   for y in [:side] do
     out := out.push 0
     for x in [:side] do
@@ -237,10 +247,18 @@ end TalkDeck
 
 open TalkDeck in
 def main (args : List String) : IO UInt32 := do
-  let some dir := args.head? | IO.eprintln "usage: talkDeck <dir> [frames]"; return 2
+  let some dir := args.head? | IO.eprintln "usage: talkDeck <dir> [frames] [rasters]"; return 2
   let frames := ((args[1]?).bind (·.toNat?)).getD 60
+  let rasters := ((args[2]?).bind (·.toNat?)).getD 0
   let dir := System.FilePath.mk dir
   IO.FS.createDirAll (dir / "figures")
+  if rasters > 0 then
+    IO.FS.writeFile (dir / "deck.tex") (rasterDeck rasters)
+    for i in [0:rasters] do
+      IO.FS.writeBinFile (dir / "figures" / s!"raster{i}.png") (PngEncode.encodeIdat
+        { width := 2048, height := 2048, bitDepth := 8, colorType := 6 }
+        (Flate.deflate (panelsRaw 2048 (731 + i.toUInt64))))
+    return 0
   IO.FS.writeFile (dir / "deck.tex") (deck frames)
   IO.FS.writeBinFile (dir / "figures" / "panels.png") (PngEncode.encodeIdat
     { width := 4096, height := 4096, bitDepth := 8, colorType := 6 } (Flate.deflate (panelsRaw 4096)))
