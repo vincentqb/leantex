@@ -1994,10 +1994,7 @@ def fontShipChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- Each slot's stack opens on a family whose @font-face rules are exactly that slot's faces.
   let slotFacesOf (set : Font.FontSet) (slot : Nat) : List Nat :=
     (List.range set.fonts.size).filter fun i => set.index.any fun e => e.1.1 == slot && e.2 == i
-  let opening (page var : String) : Option String :=
-    match page.splitOn s!"--font-{var}: \"" with
-    | _ :: rest :: _ => (rest.splitOn "\"").head?
-    | _ => none
+  let opening := stackOpening
   let familyFaces (set : Font.FontSet) (fam : String) : List Nat :=
     ((((HtmlDoc.shipFaces set).filter (·.family == fam)).toList.map (·.index)).eraseDups).mergeSort
       (· ≤ ·)
@@ -2026,6 +2023,19 @@ def fontShipChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "font ship: a declared family resolving to the body's faces ships under the body's family"
     (!((HtmlDoc.shipFaces fsFamily).any (·.family == s!"ltx-{Ir.familySlotBase}")) &&
       (HtmlDoc.familiesOf fsFamily 0).contains "ltx-body")
+  let (famDoc, _) ← elabFixture "deck-family"
+    (src.replace "\\begin{document}" "\\newfontfamily\\probeA{Open Sans}\n\\begin{document}")
+  let famPage (set : Font.FontSet) : String := (HtmlDoc.emit { cfg with fonts := some set } famDoc).1
+  let declared := toString Ir.familySlotBase
+  t "font ship: a declared family's stack opens on a family shipping exactly its slot's faces"
+    (opensOnOwnFaces fsFamily (famPage fsFamily) &&
+      (opening (famPage fsFamily) declared).any fun fam =>
+        familyFaces fsFamily fam == slotFacesOf fsFamily Ir.familySlotBase)
+  t "font ship: a declared family resolving to the body's faces opens on the body's family"
+    (opening (famPage fsFamily) declared == some "ltx-body")
+  t "font ship: a declared family resolving no face opens on the body's family, naming none undefined"
+    (opening (famPage fs) declared == some "ltx-body" &&
+      !hasStr (famPage fs) s!"\"ltx-{declared}\"")
   t "font ship: every captured face is embedded in the page"
     ((HtmlDoc.fontResources fs).all fun a => (html.splitOn a.uri).length ≥ 2)
   t "font ship: one captured resource per face, carrying its bytes"

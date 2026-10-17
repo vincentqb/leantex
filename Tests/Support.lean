@@ -1329,6 +1329,12 @@ def phaseLines (run : IO.Process.Output) (name : String) : List String :=
   (run.stdout.splitOn "\n").filter fun line =>
     hasStr line "\"event\":\"phase\"" && hasStr line s!"\"name\":\"{name}\""
 
+/-- The family a page's `--font-{var}` stack opens on. -/
+def stackOpening (page var : String) : Option String :=
+  match page.splitOn s!"--font-{var}: \"" with
+  | _ :: rest :: _ => (rest.splitOn "\"").head?
+  | _ => none
+
 /-- The animations a stylesheet's step rules run: each name an `animation:` lists in a rule whose
 selector names a step, `none` aside. -/
 def stepAnimations (css : String) : List String :=

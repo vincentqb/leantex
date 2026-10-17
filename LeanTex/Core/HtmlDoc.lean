@@ -2713,12 +2713,12 @@ private def slotFaces (fs : Font.FontSet) (s : Nat) : List Nat :=
   let own := fs.index.filterMap fun e => if e.1.1 == s then some e.2 else none
   (List.range fs.fonts.size).filter own.contains
 
-/-- The slots a face set names: body, sans, mono and each declared family's. -/
+/-- How many slots a face set names: body, sans, mono and each declared family. -/
 private def slotCount (fs : Font.FontSet) : Nat :=
   fs.index.foldl (fun n e => max n (e.1.1 + 1)) 3
 
-/-- A face set's slots as the page's families read them, once per page: each slot's faces, and
-the first slot resolving to the same faces, whose family serves both. -/
+/-- A face set's slots as the page's families read them, once per use: each slot's faces, and the
+first slot resolving to the same faces, whose family serves both. -/
 private structure Families where
   faces : Array (List Nat)
   first : Array Nat
@@ -2779,7 +2779,7 @@ private theorem Families.familySlot_faces (fs : Font.FontSet) (s : Nat) :
   · exact firstSame_faces _ s
   · rfl
 
-/-- The slot whose family serves another serves itself, so its family is shipped. -/
+/-- The slot whose family serves another serves itself. -/
 private theorem Families.familySlot_idem (fs : Font.FontSet) (s : Nat) :
     (Families.of fs).familySlot ((Families.of fs).familySlot s) = (Families.of fs).familySlot s := by
   simp only [Families.familySlot_eq]
@@ -2791,6 +2791,24 @@ private theorem Families.familySlot_idem (fs : Font.FontSet) (s : Nat) :
       exact hlt
     simp [hs, hlt, firstSame_idem]
   · simp [hs]
+
+/-- The slot whose family a slot's stack opens on: its family's, or the body's for a slot resolving
+no face, which sets in the body's faces as the PDF does. -/
+private def Families.stackSlot (t : Families) (s : Nat) : Nat :=
+  if (t.faces[s]?.getD []).isEmpty then t.familySlot 0 else t.familySlot s
+
+/-- Every stack opens on a slot resolving a face and serving itself, once the body resolves one. -/
+private theorem Families.stackSlot_resolves (fs : Font.FontSet) (s : Nat)
+    (hbody : ((Families.of fs).faces[0]?.getD []) ≠ []) :
+    ((Families.of fs).faces[(Families.of fs).stackSlot s]?.getD []) ≠ [] ∧
+      (Families.of fs).familySlot ((Families.of fs).stackSlot s) = (Families.of fs).stackSlot s := by
+  unfold Families.stackSlot
+  split
+  · exact ⟨by rw [Families.familySlot_faces]; exact hbody, Families.familySlot_idem fs 0⟩
+  · next h =>
+    refine ⟨?_, Families.familySlot_idem fs s⟩
+    rw [Families.familySlot_faces]
+    simpa using h
 
 /-- The synthetic families face `i` serves: the family of each slot resolving to it, one for
 slots resolving to the same faces, and `ltx-math` for the math face. -/
@@ -3231,7 +3249,7 @@ private def tokenVars (cfg : Config) (doc : Doc) (roles : List Ir.Role)
       let t := Families.of fs
       let all := allFamilies t fs
       let slot (s : Nat) (declared : String) : String :=
-        stackIn all s!"ltx-{slotName (t.familySlot s)}" (genericFor fs s declared)
+        stackIn all s!"ltx-{slotName (t.stackSlot s)}" (genericFor fs s declared)
       [s!"    --font-body: {slot 0 bodyDeclared};",
        s!"    --font-sans: {slot 1 "sans-serif"};",
        s!"    --font-mono: {slot 2 "monospace"};"] ++

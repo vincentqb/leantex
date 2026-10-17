@@ -6,7 +6,7 @@ import LeanTex.Core.PngEncode
 /-
 Benchmark leantex against lualatex on the bench corpus, median of `N` runs (default 5), or the
 measurement a flag selects; never a gate. `LEANTEX_BENCH_BINARY` names a saved compiler.
-Usage: lake build && lake env lean --run scripts/bench.lean [--boundary-only | --concurrency-only | --slides-only | --slides-compressed-only | --slides-selftest | --talk-only | --rasters-only | --decode-only | --pages-only | --startup-only | --facts-only | --listings-only | --bib-only | --passes-only | --svg-only | --pdf-pages-only <f.pdf> | --faces-only <f.pdf>... | --doc-cost [--record] [--history <path>]]
+Usage: lake build && lake env lean --run scripts/bench.lean [--boundary-only | --concurrency-only | --slides-only | --slides-compressed-only | --slides-selftest | --talk-only | --rasters-only | --families-only | --decode-only | --pages-only | --startup-only | --facts-only | --listings-only | --bib-only | --passes-only | --svg-only | --pdf-pages-only <f.pdf> | --faces-only <f.pdf>... | --doc-cost [--record] [--history <path>]]
 -/
 
 def compiler : IO String := do
@@ -1208,6 +1208,36 @@ and diagnostics"
 
 end Talk
 
+/-- The html phase of a page declaring `k` families over three faces, the median of `n` builds. -/
+def familyHtmlMs (n k : Nat) : IO Nat := do
+  let leantex ← compiler
+  let fonts ← IO.FS.realPath "testdata/corpus/fonts"
+  let faces := #["Open Sans", "Source Serif Pro", "Source Code Pro"]
+  let letters (i : Nat) : String := (toString i).map fun c => Char.ofNat (c.toNat - 48 + 97)
+  let decls := String.join ((List.range k).map fun i =>
+    s!"\\newfontfamily\\fam{letters i}\{{faces.getD (i % faces.size) ""}}\n")
+  let uses := String.join ((List.range (min k 4)).map fun i => s!"\{\\fam{letters i} Words in a family.}\n")
+  IO.FS.withTempDir fun tmp => do
+    IO.FS.writeFile (tmp / "families.tex") ("\\documentclass{article}\n\\fonts{ dir = \"" ++
+      fonts.toString ++ "\", body = \"Open Sans\", mono = \"Source Code Pro\" }\n" ++ decls ++
+      "\\begin{document}\n" ++ uses ++ "\\end{document}\n")
+    let mut times : Array Nat := #[]
+    for _ in [0:n] do
+      let out ← IO.Process.output { cmd := leantex, args := #["-v", "build",
+        (tmp / "families.tex").toString, "-o", (tmp / "families.html").toString] }
+      if out.exitCode != 0 then die s!"benchmark command failed: {leantex} on {k} families"
+      match phaseMs "html" (out.stdout ++ out.stderr) with
+      | some ms => times := times.push ms
+      | none => die "no html phase in the -v report"
+    let ms := median times
+    IO.println s!"{padRight s!"leantex  html, {k} declared families" 42} {padLeft (toString ms) 6} ms (median of {n})"
+    return ms
+
+/-- The page's families are read once per face set: four times the declared families may cost at
+most eight times the html phase. -/
+def familyGrowth (n : Nat) : IO Unit := do
+  growthBound "html, 100 / 25 declared families" (← familyHtmlMs n 25) (← familyHtmlMs n 100)
+
 /-- A listing's lexing and setting are linear in its length, in lines and within a
 line. -/
 def listingGrowth (n : Nat) : IO Unit := do
@@ -1395,6 +1425,9 @@ def main (args : List String) : IO UInt32 := do
   if args == ["--rasters-only"] then
     Talk.run n 0 8
     Talk.run n 0 8 true
+    return 0
+  if args == ["--families-only"] then
+    familyGrowth n
     return 0
   if args == ["--slides-compressed-only"] then
     Slides.run n true

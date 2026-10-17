@@ -336,15 +336,26 @@ figure's bytes again after the image phase had judged them. Slots resolving to t
 share the first one's family, values are scanned by their UTF-8 bytes, and the page skips the
 bytes the image phase's judge accepted. Median of 5, back to back on a host at load 124-137, the
 before column with `LEANTEX_BENCH_BINARY` naming the compiler without these three changes. The
-cold builds' totals moved with the host's images phase (cold 4,346 and 3,781 ms), so the cold row
-gives the html phase alone; the PDF build's bytes and times are unchanged, its only changed code
-the image phase's keeping of the bytes it judged:
+builds' totals moved with the host's images phase (cold 4,346 and 3,781 ms), so the rows give the
+html phase alone; the PDF build's bytes and times are unchanged, its only changed code the image
+phase's keeping of the bytes it judged:
 
 | Build | before | after |
 |---|---:|---:|
-| HTML, warm | 1,311 ms (html 427) | 1,082 ms (html 283) |
+| HTML, warm, html phase | 427 ms | 283 ms |
 | HTML, cold, html phase | 1,836 ms | 1,504 ms |
 | HTML page | 21,162,460 bytes | 20,650,008 bytes |
+
+`--families-only` builds a page declaring 25 and 100 families over three faces and bounds the
+html phase's growth. The family each slot's stack opens on was read again for every earlier slot,
+every face and every stack; it is now read once per face set. Median of 3, at load 129-151, the
+compiler before that change against the one after:
+
+| Page | before | after |
+|---|---:|---:|
+| 25 declared families, html phase | 277 ms | 185 ms |
+| 100 declared families, html phase | 2,624 ms | 237 ms |
+| growth, 100 / 25 (bound 8) | 9.5× | 1.3× |
 
 Only the shared families change the page's bytes, in its `@font-face` rules and font stacks, and
 `scripts/visualdiff.lean` finds the deck's page unchanged.

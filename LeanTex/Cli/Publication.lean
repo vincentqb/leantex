@@ -107,7 +107,8 @@ public def prepareHtml (file : String) (cfg : HtmlDoc.Config) (doc : Ir.Doc)
   let cfg ← match ← captureHtmlResources file cfg doc mathBoundary with
     | .ok cfg => pure cfg
     | .error why => return (.error why, #[])
-  -- premise: nativeFaceClosedChecks — engine-drawn faces and bytes the judge accepted skip it
+  -- premise: nativeFaceClosedChecks — engine-drawn faces skip the judge
+  -- premise: htmlContainedSvgColorChecks — a figure's bytes the judge accepted skip it alike
   let svgChecked ← match attestSvg (HtmlDoc.resources cfg) checked with
     | .ok checked => pure checked
     | .error why => return (.error why, #[])
