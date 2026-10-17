@@ -14,6 +14,7 @@ import Tests.ContrastInterface
 import Tests.PresentationInterfaces
 import Tests.Support
 import Tests.BuildGraph
+import Tests.JsonParity
 import Tests.CliFoundationInterface
 import Tests.BoundaryInterface
 import Tests.DriverDiagInterface
@@ -377,6 +378,7 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   pygmentsLinearChecks ref
   shellReplyChecks ref
   shellHighlightChecks ref
+  jsonParityChecks ref
   listingProviderChecks ref
   listingStyleTableChecks ref
   hashCommandChecks ref

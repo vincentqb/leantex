@@ -1,13 +1,13 @@
 module
 
-import Lean.Data.Json
+import LeanTex.Core.Json
 public import LeanTex.Core.Ir
 
 /-! The pure boundary for external listing classification (Pygments' token interface): a tool
 supplies class names and exact text, never markup, colours, fonts or code. -/
 namespace LeanTex.Core.ListingReply
 
-open Lean (Json toJson)
+open LeanTex.Core.JsonText (Json)
 open LeanTex.Core.ListingHighlight (Token Kind lineText)
 
 public structure Request where
@@ -177,10 +177,10 @@ public def withinBudget (rs : Array Request) : Bool :=
 /-- The batch's wire form: only language and normalized source cross the process boundary. -/
 public def encode (rs : Array Request) : String :=
   (Json.mkObj [
-    ("version", toJson (1 : Nat)),
-    ("requests", Json.arr (rs.map fun request => Json.mkObj [
-      ("language", toJson request.language),
-      ("source", toJson request.source)]))]).compress
+    ("version", .num ⟨1, 0⟩),
+    ("requests", .arr (rs.map fun request => Json.mkObj [
+      ("language", .str request.language),
+      ("source", .str request.source)]))]).compress
 
 private def classified (value : Json) : Except String Classified := do
   return { offset := ← value.getObjValAs? Nat "offset"

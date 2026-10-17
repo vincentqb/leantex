@@ -299,3 +299,22 @@ The cold builds trade memory for time, four rasters decoding at once: the raster
 build peaks 151 MiB higher. The flat raster deck has nothing to plan in parallel: its images phase
 stays near 50 ms, about 5 ms slower over ten alternating cold builds of each format, and its
 builds move within the host's noise, the html phase about 1.9 s of a 125 MB page either way. The comparisons found the artifacts and diagnostics byte-identical.
+
+## Start — 2026-10-17
+
+`--startup-only` times `leantex --version`, which reads no document, then the small markdown page
+`testdata/corpus/md-emphasis.md` built to each format, the median of `N` runs each.
+
+The engine read its two JSON messages, a Lean facts file and the listing highlighter's reply, and
+wrote the highlighter's batch, through Lean's `Lean.Data.Json`, a module of Lean's own package, so
+every start initialized all of Lean's compiler. It now reads and writes them through
+`LeanTex.Core.Json`, held to Lean's reader text by text, and the compiler links no module of
+Lean's package: the binary went from 153,565,640 to 38,840,760 bytes. Median of 15, back to back
+on a host at load 33-48, the before column with `LEANTEX_BENCH_BINARY` naming the parent's saved
+compiler:
+
+| Run | before | after |
+|---|---:|---:|
+| `--version` | 55 ms | 19 ms |
+| md-emphasis.md to PDF | 146 ms | 87 ms |
+| md-emphasis.md to HTML | 1,064 ms | 944 ms |

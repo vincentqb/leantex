@@ -2,14 +2,14 @@ module
 
 public import LeanTex.Core.LeanFacts
 public import LeanTex.Core.Diag
-import Lean.Data.Json
+import LeanTex.Core.Json
 
 /-! A page's facts as read: kept only where they line up with its file, else the code alone, with
 the one note or warning that names what to run. -/
 
 namespace LeanTex.Core.LeanFacts
 
-open Lean (Json)
+open LeanTex.Core.JsonText (Json)
 
 /-- What to run where a page's facts stand absent, no longer line up, or are of an older or a newer
 schema than this leantex reads. -/

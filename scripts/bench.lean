@@ -6,7 +6,7 @@ import LeanTex.Core.PngEncode
 /-
 Benchmark leantex against lualatex on the bench corpus, median of `N` runs (default 5), or the
 measurement a flag selects; never a gate. `LEANTEX_BENCH_BINARY` names a saved compiler.
-Usage: lake build && lake env lean --run scripts/bench.lean [--boundary-only | --concurrency-only | --slides-only | --slides-compressed-only | --slides-selftest | --talk-only | --rasters-only | --decode-only | --pages-only | --listings-only | --bib-only | --passes-only | --svg-only | --pdf-pages-only <f.pdf> | --faces-only <f.pdf>... | --doc-cost [--record] [--history <path>]]
+Usage: lake build && lake env lean --run scripts/bench.lean [--boundary-only | --concurrency-only | --slides-only | --slides-compressed-only | --slides-selftest | --talk-only | --rasters-only | --decode-only | --pages-only | --startup-only | --listings-only | --bib-only | --passes-only | --svg-only | --pdf-pages-only <f.pdf> | --faces-only <f.pdf>... | --doc-cost [--record] [--history <path>]]
 -/
 
 def compiler : IO String := do
@@ -52,6 +52,15 @@ def bench (n : Nat) (label : String) (cmd : String) (args : Array String) : IO U
     times := times.push (← runMs cmd args)
   IO.println s!"{padRight label 42} {padLeft (toString (median times)) 6} ms (median of {n})"
 
+/-- The compiler's start, `--version` reading no document, then a small markdown page built to each
+format, the median of `n` runs each. -/
+def benchStart (n : Nat) (leantex : String) : IO Unit := do
+  bench n "leantex  --version" leantex #["--version"]
+  let outDir ← IO.FS.createTempDir
+  for format in ["pdf", "html"] do
+    bench n s!"leantex  md-emphasis.md -o {format}" leantex
+      #["-q", "build", "testdata/corpus/md-emphasis.md", "-o", (outDir / s!"md.{format}").toString]
+  IO.FS.removeDirAll outDir
 
 def hasCmd (cmd : String) (args : Array String := #["--version"]) : IO Bool := do
   try
@@ -1335,6 +1344,9 @@ def main (args : List String) : IO UInt32 := do
   if args == ["--pages-only"] then
     benchPages n leantex
     return 0
+  if args == ["--startup-only"] then
+    benchStart n leantex
+    return 0
   if args == ["--concurrency-only"] then
     for count in [8, 32] do benchConcurrent n count false
     for count in [8, 16] do benchConcurrent n count true
@@ -1347,6 +1359,7 @@ def main (args : List String) : IO UInt32 := do
     { cmd := "lake", args := #["env", "lean", "--run", "scripts/gen-paper.lean"] }
   if genPaper.exitCode != 0 then
     die s!"gen-paper failed:\n{genPaper.stderr}"
+  benchStart n leantex
   let haveLualatex ← hasCmd "lualatex"
   for doc in ["testdata/corpus/paragraphs.tex", "bench/lorem.tex", "bench/underline.tex"] do
     let base := (doc.splitOn "/").getLastD doc

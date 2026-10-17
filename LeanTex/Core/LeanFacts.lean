@@ -1,6 +1,6 @@
 module
 
-import Lean.Data.Json
+import LeanTex.Core.Json
 
 /-! # What Lean says about a Lean file
 
@@ -9,7 +9,7 @@ range and type, and each command it read by span and text, read whole or refused
 
 namespace LeanTex.Core.LeanFacts
 
-open Lean (Json)
+open LeanTex.Core.JsonText (Json)
 
 /-- A binder's kind, as Lean elaborates it. -/
 public inductive Binder where

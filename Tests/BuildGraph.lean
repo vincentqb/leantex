@@ -70,6 +70,26 @@ def surfaceReach (graph : Std.HashMap String Header) (root : String)
   (reach graph root (fun _ => true) fun m => surfaceModules.contains m || stop m).filter fun chain =>
     chain.getLast?.any surfaceModules.contains
 
+/-- The modules `root`'s build links: its whole import closure among `graph`. -/
+def closure (graph : Std.HashMap String Header) (root : String) : Array String := Id.run do
+  let mut seen : Array String := #[root]
+  for _ in [0:graph.size] do
+    let mut next := seen
+    for m in seen do
+      for i in (graph.get? m).map (·.imports) |>.getD #[] do
+        if graph.contains i.mod && !next.contains i.mod then
+          next := next.push i.mod
+    if next.size == seen.size then break
+    seen := next
+  return seen
+
+/-- Each import of a module of Lean's own package among `root`'s closure, as `importer imports
+module`. -/
+def leanPackageImports (graph : Std.HashMap String Header) (root : String) : Array String :=
+  (closure graph root).flatMap fun m =>
+    ((graph.get? m).map (·.imports) |>.getD #[]).filterMap fun i =>
+      if i.mod == "Lean" || i.mod.startsWith "Lean." then some s!"{m} imports {i.mod}" else none
+
 /-- The files outside the module system, each small and imported by no module. -/
 def legacyFiles : List String :=
   ["Tests", "Tests.DiagAudit", "Tests.PdfReadRepresentability", "Tests.Premises",
@@ -169,6 +189,8 @@ def judge (files : Array (String × String)) (tools : Array (String × String) :
       legacy.toList.mergeSort (· ≤ ·) == legacyFiles.mergeSort (· ≤ ·)),
      ("every declared large file exists",
       (largeReads ++ largeReaders).all fun (n, _) => graph.contains n),
+     (s!"the compiler imports no module of Lean's own package (found \
+{(leanPackageImports graph "Main").toList})", (leanPackageImports graph "Main").isEmpty),
      (s!"every surface module, backend and floor's end is in the tree (missing: \
 {layers.filter (!graph.contains ·)})", layers.all graph.contains),
      (s!"every module of the library the surfaces' door reads and no backend reads is a surface \
@@ -221,6 +243,9 @@ def selfTest : IO (List (String × Bool)) := do
   let unrowed ← judge #[("Synthetic.Big", big)]
   let smallRow ← judge #[("LeanTex.Core.Compat", "module\n")]
   let refused ← judge #[("Synthetic.Bad", "import all G\n")]
+  let leaning ← judge #[("Main", "module\nimport Synthetic.Mid\n"),
+    ("Synthetic.Mid", "module\nimport Synthetic.Leaf\n"),
+    ("Synthetic.Leaf", "module\npublic import Lean.Data.Json\n")]
   let chained ← judge #[("LeanTex.Core.Picture", big),
     ("Synthetic.Mid", "module\nimport all LeanTex.Core.Picture\n"),
     ("Synthetic.Contract", "module\nimport all Synthetic.Mid\n")]
@@ -267,6 +292,8 @@ def selfTest : IO (List (String × Bool)) := do
      (graph.get? "K4").map (·.isModule) == some true && reads "K4" == #["G"]),
    ("a header Lake refuses fails, naming its file",
      refused.any fun (n, ok) => !ok && hasStr n "as Lake reads it" && hasStr n "Synthetic.Bad"),
+   ("a module of Lean's package anywhere in the compiler's closure fails, naming its importer",
+     leaning.any fun (n, ok) => !ok && hasStr n "Synthetic.Leaf imports Lean.Data.Json"),
    ("a large file without a declared row fails",
      unrowed.any fun (n, ok) => !ok && hasStr n "Synthetic.Big"),
    ("a declared row on a small file fails",
