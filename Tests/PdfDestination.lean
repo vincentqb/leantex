@@ -372,6 +372,28 @@ def pdfOutlineChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit 
     ((outlineRead mpdf).map (·.2.map fun (d, ti, _, _) => (d, ti)) ==
       .ok #[(0, PdfRead.textString "One"), (1, PdfRead.textString "Two"),
         (2, PdfRead.textString "Three")])
+  -- A declared menu stands as the outline; a declared bookmarks switch adds the heading tree.
+  let menued (pre : String) : ByteArray :=
+    let (d, _) := elabStr (dvDoc pre ("\\begin{nav}\\href{#sec:one}{Menu One} " ++
+      "\\href{#sec:two}{Menu Two}\\end{nav}\\section{Heading One}\\label{sec:one}Words." ++
+      "\\section{Heading Two}\\label{sec:two}Words."))
+    let o := layoutOf fs d
+    Pdf.write (Layout.Geom.ofPage d.page) fs o.pages d.info (outline := o.outline)
+  t "outline: a declared menu stands as the outline, the headings unlisted beside it"
+    ((outlineRead (menued "")).map (·.2.map fun (_, ti, _, _) => ti) ==
+      .ok #[PdfRead.textString "Menu One", PdfRead.textString "Menu Two"])
+  t "outline: a declared bookmarks switch lists the headings before the menu"
+    ((outlineRead (menued "\\usepackage[bookmarks]{hyperref}\n")).map
+      (·.2.map fun (_, ti, _, _) => ti) ==
+      .ok #[PdfRead.textString "Heading One", PdfRead.textString "Heading Two",
+        PdfRead.textString "Menu One", PdfRead.textString "Menu Two"])
+  -- A heading's note marks the heading alone: its bookmark leaves the note's words out.
+  let (fdoc, _) := elabStr (dvDoc "" "\\section{Plain Head\\footnote{Aside words.}}Words.")
+  let fout := layoutOf fs fdoc
+  t "outline: a bookmark leaves its heading's footnote out"
+    ((outlineRead (Pdf.write (Layout.Geom.ofPage fdoc.page) fs fout.pages fdoc.info
+      (outline := fout.outline))).map (·.2.map fun (_, ti, _, _) => ti) ==
+      .ok #[PdfRead.textString "Plain Head"])
 
 /-- Every navigation of a corpus file reaches a destination the file defines, a target stands at
 what it names, and a resolved reference or citation links in both artifacts, equally often. -/

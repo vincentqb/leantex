@@ -1651,8 +1651,10 @@ def censusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     for (label, ok) in ((censusOutlineTable.lookup n).map (· declared)).getD [] do
       check ref s!"census {n} outline: {label}" ok
     let bookmarks := out.outline.filter (·.bookmark)
+    -- A declared menu stands as the outline unless the document declares the bookmarks switch.
+    let tree := doc.info.outline == some true || (doc.info.outline.isNone && declared.isEmpty)
     check ref s!"census {n}: the outline bookmarks the document's listed headings ({bookmarks.map (·.title)})"
-      (bookmarks.map (·.title) == (Ir.outlineHeadings doc).map (·.title))
+      (bookmarks.map (·.title) == if tree then (Ir.outlineHeadings doc).map (·.title) else #[])
     -- In a flow each bookmark lands on the line its heading sets.
     let idx := Layout.anchorIndex out.pages
     let squeeze := fun (s : String) => String.ofList (s.toList.filter (!·.isWhitespace))

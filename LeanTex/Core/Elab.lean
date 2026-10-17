@@ -11489,7 +11489,7 @@ private def elabItemsGo (ctx : Ctx) (items : Array (Array Raw))
     have _ : sliceWeight it 0 = rawWeightList it.toList := sliceWeight_zero _
     have _ : slicePars it 0 = nestedParsList it.toList := slicePars_zero _
     let ⟨stepCtx, _⟩ := pastCtx ctx past
-    let inner ← elabBlockScope stepCtx it
+    let inner ← drainLoose stepCtx (← elabBlockScope stepCtx it)
     let acc := acc.push (past, inner)
     elabItemsGo ctx items (m + 1) acc bound pbound hb hpb
   else return acc
@@ -12048,6 +12048,7 @@ private def elabCtrlArm (ctx : Ctx) (raws : Array Raw) (i : Nat)
       sliceWeight_zero _
     let expanded ← splicedFrameScope (if cmd.params.isEmpty then some blocks.size else none)
       (elabBlockScope callCtx cmd.body)
+    let expanded ← drainLoose callCtx expanded
     if cmd.params.isEmpty then
       blocks := blocks ++ expanded
     else
@@ -12216,14 +12217,15 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
           blocks cur gen'
       else if body.any isParRaw && !isArgument cur then
         -- A restoring scope stays whole so its snapshot predates every assignment.
-        let inner ← restoringGroup ctx' cur
-          (splicedFrameScope (some blocks.size) (elabBlockScope ctx' body cur))
+        let inner ← restoringGroup ctx' cur (do
+          drainLoose ctx' (← splicedFrameScope (some blocks.size) (elabBlockScope ctx' body cur)))
         elabBlocksNext ctx' raws (i + 1) (blocks ++ inner) gen'
       else if (body.any isCenteringRaw || bodyIsBlock body) && !isArgument cur then
         groupPictureInSentence ctx' body cur raws i
         let (⟨ctx', _⟩, blocks) ← flushPara ctx' blocks cur
-        let inner ← groupBlocks ctx'.palette
-          (splicedFrameScope (some blocks.size) (elabBlockScope ctx' body))
+        let blocks ← if cur.isEmpty then pure blocks else drainLoose ctx' blocks
+        let inner ← groupBlocks ctx'.palette (do
+          drainLoose ctx' (← splicedFrameScope (some blocks.size) (elabBlockScope ctx' body)))
         elabBlocksNext ctx' raws (i + 1) (blocks ++ inner) gen'
       else
         elabBlocksGo ctx' raws (i + 1) blocks (cur.push raws[i]) gen'
@@ -12237,6 +12239,7 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
         elabBlocksGo ctx' raws (i + 1) blocks (cur.push raws[i]) gen'
       else
       let (⟨ctx', hm⟩, blocks) ← flushPara ctx' blocks cur
+      let blocks ← if cur.isEmpty then pure blocks else drainLoose ctx' blocks
       let b ← listingBlock ctx' env s vpos
       -- A display listing's environment is a trivlist, which leaves `\@endpe`.
       elabBlocksGo ctx' raws (i + 1) (parContinues ctx' raws (i + 1) true (blocks.push b)) #[] gen'
@@ -12282,6 +12285,7 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
         let (⟨ctx', hm⟩, flushed) ← flushPara ctx' blocks cur
         let inPar := Ir.flushedText k flushed
         let afterEnv := endPeAt raws i inPar flushed
+        let flushed ← if cur.isEmpty then pure flushed else drainLoose ctx' flushed
         let blocks ← envGroup n ctx'.palette inPar (parFollows raws (i + 1)) afterEnv
           flushed.size (elabEnvArm ctx' n body epos flushed)
         elabBlocksNext ctx' raws (i + 1)
@@ -12310,6 +12314,7 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
       macroPictureInSentence ctx' n cur raws i cpos
       noteSplitDecl ctx' n cur cpos
       let (⟨ctx', _⟩, blocks) ← flushPara ctx' blocks cur
+      let blocks ← if cur.isEmpty then pure blocks else drainLoose ctx' blocks
       if n == "par" then
         elabBlocksGo ctx' raws (i + 1) blocks #[] gen'
       else if n == "centering" || (Ir.raggedSideOf? n).isSome
@@ -12495,7 +12500,7 @@ a side channel, never slide content" cpos
         match hgf : raws[jf]? with
         | some (.group body _) =>
           have hbm := group_measures hgf (show i ≤ jf by omega)
-          let inner ← elabBlockScope ctx' body
+          let inner ← drainLoose ctx' (← elabBlockScope ctx' body)
           have hadv := advance_measures raws h (show i < jf + 1 by omega)
           elabBlocksNext ctx' raws (jf + 1)
             (pushSkipBlock blocks (.spaced (Ir.Sourced.bare before) inner) primitive) gen'
@@ -12505,6 +12510,7 @@ a side channel, never slide content" cpos
       else
         let (⟨ctx', _⟩, blocks) ← blockControlContext ctx' n raws i blocks
         let (blocks, ⟨j, hij⟩) ← elabCtrlArm ctx' raws i h n cpos blocks
+        let blocks ← drainLoose ctx' blocks
         have _ := advance_measures raws h hij
         elabBlocksNext ctx' raws j blocks gen'
     | _ =>
@@ -16524,7 +16530,7 @@ marks its level" (some pos) (help := some s!"redefine it as text, a symbol or a 
     let stRefs ← get
     -- A deck's frame label takes its frame's number, and every label the title of what it names.
     let table := if stRefs.labels.isEmpty then stRefs.labels
-      else Ir.withLabelNames (Ir.withUnboundRows
+      else Ir.withLabelNames ctx.locale (Ir.withUnboundRows
         (Ir.withFloatRows stRefs.labels (Ir.floatLabelRows blocks))
         (Ir.frameLabelRows blocks (Ir.frameNumbersFrom stRefs.frameRestart blocks))) blocks
     let mut warnedRefs : Array String := #[]

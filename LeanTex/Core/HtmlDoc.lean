@@ -6282,10 +6282,10 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
       #[("href", url), ("style", "color: inherit")])
   | .label key => acc.push (labelSpan key)
   -- an unresolved reference shows LaTeX's `??`, already diagnosed
-  | .ref _ _ text target =>
+  | .ref _ form text target =>
     match target with
     | some a =>
-      if cfg.inLink then acc.push (Html.text text)
+      if cfg.inLink || !form.linked then acc.push (Html.text text)
       else acc.push (Html.elem "a" #[Html.text text]
         #[("href", "#" ++ a), ("style", "color: inherit")])
     | none => acc.push (Html.text text)
@@ -6356,10 +6356,10 @@ private def inlineNodesInto (cfg : Config) (acc : Array Node) : List Inline → 
 end
 
 private theorem ref_link_projects (cfg : Config) (acc : Array Node) (key : String)
-    (form : Ir.RefForm) (shown a : String) :
+    (form : Ir.RefForm) (shown a : String) (h : form.linked = true) :
     (Inline.ref key form shown (some a)).refLink?.map (inlineNodeInto cfg acc) =
       some (inlineNodeInto cfg acc (.ref key form shown (some a))) := by
-  simp [Inline.refLink?, inlineNodeInto, inlineNodesInto]
+  simp [Inline.refLink?, h, inlineNodeInto, inlineNodesInto]
 
 private def inlines (cfg : Config) (xs : Array Inline) : Array Node :=
   inlineNodesInto cfg #[] xs.toList

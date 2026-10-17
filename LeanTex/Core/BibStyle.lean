@@ -2718,13 +2718,10 @@ private theorem citeFree_census (x : Ir.Inline) (h : citeFreeOne x = true) :
     simp only [Ir.foldInline, Ir.pendingStep] at hq
     cases target with
     | none =>
-      simp only [Ir.pendingLeaf, Array.mem_append] at hq
-      rcases hq with hq | hq
+      simp only [Ir.pendingLeaf, Array.mem_append, Array.mem_singleton] at hq
+      rcases hq with hq | rfl
       · exact .inl hq
-      · split at hq
-        · simp only [Array.mem_singleton] at hq
-          exact .inr (by rw [hq]; rfl)
-        · simp at hq
+      · exact .inr rfl
     | some a =>
       simp only [Ir.pendingLeaf, Array.append_empty] at hq
       exact .inl hq
@@ -2913,13 +2910,10 @@ private theorem resolveInline_pending (p : CitePunct) (find : Resolver) (x : Ir.
       Ir.foldInlineList, Ir.foldInline, Ir.pendingStep] at h
     cases target with
     | none =>
-      simp only [Ir.pendingLeaf, Array.mem_append] at h
-      rcases h with h | h
+      simp only [Ir.pendingLeaf, Array.mem_append, Array.mem_singleton] at h
+      rcases h with h | rfl
       · exact .inl h
-      · split at h
-        · simp only [Array.mem_singleton] at h
-          exact .inr (by rw [h]; rfl)
-        · simp at h
+      · exact .inr rfl
     | some a =>
       simp only [Ir.pendingLeaf, Array.append_empty] at h
       exact .inl h

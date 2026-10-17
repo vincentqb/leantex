@@ -1589,8 +1589,8 @@ private def flattenOne (mathOk noteOk : Bool) (st : FlattenSt) (sty : TextStyle)
   match x with
   | .text s => pushText st sty s
   | .label name => { st with toks := st.toks.push (.anchor (Ir.labelAnchor name)) }
-  | .ref _ _ text target => match target with
-    | some a => pushText st (sty.linked ("#" ++ a)) text
+  | .ref _ form text target => match target with
+    | some a => pushText st (if form.linked then sty.linked ("#" ++ a) else sty) text
     | none => pushText st sty text
   | .cite _ keys => pushText st sty (Ir.citeMarks keys)
   | .cited _ _ ink => flatten mathOk noteOk st sty ink
@@ -1679,10 +1679,10 @@ OpenType math face; `leantex fonts` lists families") with warnedMath := true }
 end
 
 private theorem ref_link_projects (mathOk noteOk : Bool) (st : FlattenSt) (sty : TextStyle)
-    (key : String) (form : Ir.RefForm) (shown a : String) :
+    (key : String) (form : Ir.RefForm) (shown a : String) (h : form.linked = true) :
     (Inline.ref key form shown (some a)).refLink?.map (flattenOne mathOk noteOk st sty) =
       some (flattenOne mathOk noteOk st sty (.ref key form shown (some a))) := by
-  simp [Ir.Inline.refLink?, flattenOne, flatten, flattenList]
+  simp [Ir.Inline.refLink?, h, flattenOne, flatten, flattenList]
 
 private theorem role_transparent_layout (mathOk noteOk : Bool) (st : FlattenSt)
     (sty : TextStyle) (n : String) (body : Array Inline) (h : n ≠ leafRole)
@@ -1841,7 +1841,7 @@ private theorem flattenOne_attr_covers (mathOk noteOk : Bool) (st : FlattenSt) (
   | .ref _ _ text target =>
     cases target with
     | none => exact pushText_toks st sty text h
-    | some a => exact pushText_toks st (sty.linked ("#" ++ a)) text h
+    | some a => exact pushText_toks st _ text h
   | .cite _ keys => exact pushText_toks st sty (Ir.citeMarks keys) h
   | .cited _ _ ink => exact flatten_attr_covers mathOk noteOk st sty ink h
   | .footnote num body =>
@@ -18385,11 +18385,12 @@ slot yields in place: shorten the content or drop a slot")
   let idx := anchorIndex out
   let unique := reportOnce sh.paragraphBreaks sh.overfullMost
     (diags ++ deadLinks doc.surface idx out sh.navEntries)
-  -- The heading tree first, open in a deck; an outline target lands as a PDF link annotation does,
-  -- and one landing nowhere is left out.
+  -- The heading tree, open in a deck, unless the document turns it off or declares a menu as its
+  -- outline; an outline target lands as a PDF link annotation does, one landing nowhere left out.
   let deck := doc.docClass.record.model == .frame
   let numbered := doc.info.outlineNumbered == some true
-  let headings := if doc.info.outline == some false then #[] else
+  let tree := doc.info.outline == some true || (doc.info.outline.isNone && sh.navEntries.isEmpty)
+  let headings := if !tree then #[] else
     (Ir.outlineHeadings doc).filterMap fun h =>
       (landing? idx out (Ir.outlineMark h.index)).map fun l =>
         ({ title := (if numbered then (h.number.map (· ++ " ")).getD "" else "") ++ h.title

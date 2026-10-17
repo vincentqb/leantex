@@ -401,6 +401,48 @@ def sectionPageChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
     (!sds.any (fun d => d.code == "W0349" || d.severity == .error) &&
       (pageWith c "See Intro").any (pageHas c · "See Intro Words, Plain emph, Plain emph and 1.") &&
       ((HtmlDoc.emit {} sdoc).1.splitOn "href=\"#m\"").length == 2)
+  let (tdoc, _) := elabStr (dvDoc "" ("\\section{Plain \\emph{emph} $x^2$}\\label{m}" ++
+    "See \\nameref*{m}."))
+  let titled := (elemNodesList (· == "span") #[] (docNodesOf tdoc).toList).filter fun n =>
+    match n with
+    | .elem _ attrs _ => HtmlDoc.attrOf? attrs "class" == some (HtmlDoc.roleClass Ir.titleTextRole)
+    | _ => false
+  t "a starred nameref sets its title as typeset, emphasis and formula kept, unlinked"
+    (titled.size == 1 && titled.all (fun n =>
+      (elemNodesList (· == "em") #[] [n]).size == 1 &&
+        (elemNodesList (· == "math") #[] [n]).size == 1 &&
+        (elemNodesList (· == "a") #[] [n]).isEmpty))
+  let chained := "\\section{Alpha}\\label{a}Words.\\section{More on \\nameref{a}}\\label{b}Words." ++
+    "\\section{Eq \\eqref{e} and \\ref{a}}\\label{c}\\begin{equation}x\\label{e}\\end{equation}" ++
+    "\\section{Further \\nameref{b}}\\label{d}See \\nameref{b}; \\nameref{c}; \\nameref{d}."
+  let c := censusOfSrc fonts (dvDoc "" chained)
+  t "nameref sets a title's own references resolved, along a chain of titles, as hyperref's"
+    (!(elabStr (dvDoc "" chained)).2.any (·.code == "W0349") &&
+      (pageWith c "See More").any
+        (pageHas c · "See More on Alpha; Eq (1) and 1; Further More on Alpha."))
+  let looped := "\\section{Self \\nameref{s}}\\label{s}See \\nameref{s}."
+  let c := censusOfSrc fonts (dvDoc "" looped)
+  t "a title naming itself ends its chain at ??, named"
+    ((elabStr (dvDoc "" looped)).2.any (·.code == "W0349") &&
+      (pageWith c "See Self").any (pageHas c · "See Self ??."))
+  let capless := "\\section{Sec Words}\\begin{figure}[h]Body.\\label{f}\\end{figure}" ++
+    "\\section{}\\label{z}See \\nameref{f} and \\nameref{z}."
+  let (fdoc, fds) := elabStr (dvDoc "" capless)
+  let c := censusOfSrc fonts (dvDoc "" capless)
+  t "a captionless float's label names its heading, a blank title nothing, named, no link empty"
+    ((pageWith c "See Sec").any (pageHas c · "See Sec Words and ??.") &&
+      fds.any (·.code == "W0349") &&
+      ((HtmlDoc.emit {} fdoc).1.splitOn "\"></a>").length == 1)
+  let ranged (star : String) : String := "\\documentclass{article}\n\\usepackage{cleveref}\n" ++
+    "\\begin{document}\n\\section{One}\\label{s1}Words.\\section{Two}\\label{s2}" ++
+    s!"See \\crefrange{star}\{s1}\{s2}.\n\\end\{document}\n"
+  let (rdoc, rds) := elabStr (ranged "*")
+  let inked := fun (src : String) =>
+    String.ofList ((censusText (censusOfSrc fonts src)).toList.filter (!·.isWhitespace))
+  t "a starred cleveref range sets the unstarred range's text, unlinked"
+    (!rds.any (·.code == "W0301") && hasStr (inked (ranged "*")) "sections1to2." &&
+      inked (ranged "*") == inked (ranged "") &&
+      !hasStr (HtmlDoc.emit {} rdoc).1 "href=\"#s1\"")
   let afterFrame := "\\begin{frame}{Opening}OpeningWords, see \\ref{after}.\\end{frame}\n" ++
     "\\section{Alpha Part}\n\\begin{frame}{First}FirstWords\\end{frame}\n\\label{after}\n" ++
     "\\begin{frame}{Second}SecondWords\\end{frame}"

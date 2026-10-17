@@ -437,6 +437,31 @@ def altWalkChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
   t "the shipped pages place no unexplained placeholder"
     (!imgSegs.isEmpty && imgSegs.all (·.isSome))
 
+mutual
+
+/-- An emitted tree's text in document order, each aside's text bracketed. -/
+def notedTextOne (acc : String) : Html.Node → String
+  | .text s => acc ++ s
+  | .style _ => acc
+  | .script _ _ => acc
+  | .elem tag _ kids =>
+    if tag == "aside" then notedTextList (acc ++ "[") kids.toList ++ "]"
+    else notedTextList acc kids.toList
+
+def notedTextList (acc : String) : List Html.Node → String
+  | [] => acc
+  | k :: rest => notedTextList (notedTextOne acc k) rest
+
+end
+
+/-- Whether each word first occurs in `s`, in the order given. -/
+def inOrder (s : String) (words : List String) : Bool :=
+  let at? := fun (w : String) => match s.splitOn w with
+    | first :: _ :: _ => some first.length
+    | _ => none
+  let ps := words.filterMap at?
+  ps.length == words.length && (ps.zip (ps.drop 1)).all fun (a, b) => a < b
+
 /-- Speaker notes are a side channel: absent from the PDF handout, an inert hidden aside in HTML. -/
 def noteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
@@ -497,6 +522,32 @@ def noteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit :
   t "an article's notes after a label and in its last paragraph stay its side channel"
     (asides.size == 2 && hasStr (asideIn (Html.elem "div" asides #[])) "After a label." &&
       hasStr (asideIn (Html.elem "div" asides #[])) "In the last paragraph.")
+  -- A note stands right after the paragraph that stashed it, whatever block comes next.
+  let noted (src : String) : String := notedTextList "" (docNodesOf (elabStr (dvDoc "" src)).1).toList
+  t "a note before a heading stands before it, after its paragraph's display"
+    (inOrder (noted ("Para two.\\note{Note two}\n\\[x=1\\]\nPara three.\\note{Note three}\n" ++
+      "\\section{Sec Two}\nSec two words."))
+      ["Para three.", "[Note two]", "[Note three]", "Sec Two", "Sec two words."])
+  t "a note before an environment or a verbatim block stands before it"
+    (inOrder (noted ("Para one.\\note{Note one}\n\\begin{center}Centre words.\\end{center}\n" ++
+      "Para four.\\note{Note four}\n\\begin{verbatim}\ncode words\n\\end{verbatim}"))
+      ["Para one.", "[Note one]", "Centre words.", "Para four.", "[Note four]", "code words"])
+  t "a note in an item stands in that item, before the next item and the item's next block"
+    (inOrder (noted ("\\begin{itemize}\\item Words.\\note{Note five}\\begin{center}Centred." ++
+      "\\end{center}\\item Alpha.\\note{Note six}\\item Beta.\\end{itemize}After words."))
+      ["Words.", "[Note five]", "Centred.", "Alpha.", "[Note six]", "Beta.", "After words."])
+  t "a heading's note stands after the heading, before its section's words"
+    (inOrder (noted "\\section{Title Words\\note{Note seven}}\nBody words.\\par\\section{Other}")
+      ["Title Words", "[Note seven]", "Body words."])
+  let (sectioned, _) := elabStr (deck169Body ("\\begin{frame}{One}One words.\\end{frame}\n" ++
+    "\\label{x}\\note{Loose words.}\n\\section{Sec Words}\n\\begin{frame}{Two}Two words.\\end{frame}"))
+  let sstages := elemNodesList (· == "section") #[] (docNodesOf sectioned).toList
+  let labelOf (n : Html.Node) : Option String := match n with
+    | .elem _ attrs _ => HtmlDoc.attrOf? attrs "aria-label"
+    | _ => none
+  t "a note after a frame stands with that frame, not past the section after it"
+    (sstages.any (fun n => labelOf n == some "One" && hasStr (asideIn n) "Loose words.") &&
+      sstages.all fun n => (labelOf n).all (· == "One") || !hasStr (asideIn n) "Loose words.")
   let (nested, nestedDs) := elabStr (deck169Body
     "\\note{\\begin{frame}{T}\nspoken \\note{inner aside} words\n\\end{frame}}")
   t "a note inside a note's frame is refused, named"

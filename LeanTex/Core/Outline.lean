@@ -33,7 +33,7 @@ private def outlineStep (deck tex : Bool) (ranks : Array Nat) (i : Nat) (b : Blo
     if outlineListed deck tex level starred then
       let kept := ranks.takeWhile (· < headingRank level)
       (kept.push (headingRank level),
-        some { index := i, depth := kept.size, title := (metaText title).trimAscii.toString
+        some { index := i, depth := kept.size, title := (metaText (nameOf title)).trimAscii.toString
                number := num })
     else (ranks, none)
   else (ranks, none)

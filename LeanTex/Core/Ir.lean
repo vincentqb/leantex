@@ -845,6 +845,9 @@ public def descLabelRole : String := "description-label"
 whose first line it opens with no indent, as `\@afterindentfalse` sets it. -/
 public def runInHeadRole : String := "run-in-head"
 
+/-- The inline role a starred `\nameref`'s title rides in, set without its link. -/
+public def titleTextRole : String := "nameref-text"
+
 public theorem trivlist_between :
     Dim.pt 4 ≤ (trivlistSkipDefault (Dim.pt 10)).width.sp ∧
       (trivlistSkipDefault (Dim.pt 10)).width.sp ≤ Dim.pt 10 ∧
@@ -2699,12 +2702,12 @@ public inductive RefForm where
 public def RefForm.titled : RefForm → Bool
   | .title => true
   | .starred f => f.titled
-  | _ => false
+  | .plain | .paren | .cref _ | .crefRange _ | .labelOnly | .name _ | .headed => false
 
 /-- Whether a reference form links to its target: every form but a starred one. -/
 public def RefForm.linked : RefForm → Bool
   | .starred _ => false
-  | _ => true
+  | .plain | .paren | .cref _ | .crefRange _ | .labelOnly | .name _ | .headed | .title => true
 
 /-- A reference form as the IR dump spells it, a starred one with its star. -/
 public def RefForm.spelling : RefForm → String
@@ -3102,9 +3105,10 @@ correction, and the trailing correction under the surrounding face. -/
 /-- The anchor a reference-list entry carries and its citations link to. -/
 public def bibAnchor (key : String) : String := "ref-" ++ key
 
-/-- The link a resolved reference is: its text, linked to its label's anchor. -/
+/-- The link a resolved reference is: its text, linked to its label's anchor unless its form is
+starred. -/
 @[expose] public def Inline.refLink? : Inline → Option Inline
-  | .ref _ _ shown (some a) => some (.link ("#" ++ a) #[.text shown])
+  | .ref _ form shown (some a) => if form.linked then some (.link ("#" ++ a) #[.text shown]) else none
   | _ => none
 
 /-- The in-page fragment a link's URL names, where it names one. -/
@@ -17529,13 +17533,12 @@ public def refText (loc : Locale) (form : RefForm) (b : RefBinding) : String :=
   | .starred f => refText loc f b
 
 /-- What a resolved reference shows: `\nameref` the title it names as set, linked unless starred,
-nothing where nothing gave a title, any other form its text, linked unless starred. -/
+and `??` where nothing gave a title; any other form its text, targeting the label's anchor. -/
 public def refInline (loc : Locale) (key : String) (form : RefForm) (b : RefBinding) : Inline :=
-  match form, b.name with
-  | .title, some n => .link ("#" ++ labelAnchor key) n
-  | f, _ =>
-    if f.titled && b.name.isNone then .ref key f "" none
-    else .ref key f (refText loc f b) (if f.linked then some (labelAnchor key) else none)
+  match form.titled, b.name with
+  | true, some n => if form.linked then .link ("#" ++ labelAnchor key) n else .role titleTextRole n
+  | true, none => .ref key form "??" none
+  | false, _ => .ref key form (refText loc form b) (some (labelAnchor key))
 
 /-- A reference against its label's binding: a label nothing numbered keeps `??` and no target
 unless the form prints its title. -/
@@ -17681,7 +17684,7 @@ public def _root_.LeanTex.Core.Diag.mentions (d : Diag) (p : Pending) : Bool :=
 /-- One node's contribution: a `.ref` with no target, or any `.cite`, which
 `Bib.apply` replaces when it answers. -/
 @[expose] public def pendingLeaf : Inline → Array Unresolved
-  | .ref key _ text none => if text == "??" then #[.ref key] else #[]
+  | .ref key _ _ none => #[.ref key]
   | .cite _ keys => keys.map .cite
   | _ => #[]
 
@@ -17723,12 +17726,19 @@ public def pendingRefKeys (doc : Doc) : Array String :=
 its first site with the cause the table knows. -/
 private def refDiagLeaf (look : String → Option (String × Option RefBinding))
     (spanOf : String → Option Span) (key : String) : Diag :=
+  let unnumbered := Diag.of .W0349 s!"'{key}' is \\label'ed where nothing is numbered; set as '??'"
+    (spanOf key)
+    (help := "move the \\label after a numbered heading, a captioned float, or into an equation")
+    (subject := some key)
   match look key with
-  | some _ =>
-    Diag.of .W0349 s!"'{key}' is \\label'ed where nothing is numbered; set as '??'"
-      (spanOf key)
-      (help := "move the \\label after a numbered heading, a captioned float, or into an equation")
-      (subject := some key)
+  | some (_, some b) =>
+    if b.num.isEmpty then unnumbered
+    else
+      Diag.of .W0349 s!"'{key}' is \\label'ed where no heading or caption gives it a title; set as '??'"
+        (spanOf key)
+        (help := "\\nameref sets the title of the heading or caption its \\label follows")
+        (subject := some key)
+  | some (_, none) => unnumbered
   | _ =>
     Diag.of .W0349 s!"no \\label\{{key}} in the document; set as '??'" (spanOf key)
       (help := s!"declare \\label\{{key}} after the numbered thing it names")
@@ -17795,7 +17805,11 @@ public theorem refDiags_named (table : RefTable) (spanOf : String → Option Spa
   | none => simp [Diag.mentions, Diag.of_subject, Pending.key]
   | some e =>
     obtain ⟨_, b⟩ := e
-    cases b <;> simp [Diag.mentions, Diag.of_subject, Pending.key]
+    cases b with
+    | none => simp [Diag.mentions, Diag.of_subject, Pending.key]
+    | some b =>
+      simp only [Diag.mentions, Pending.key]
+      split <;> simp [Diag.of_subject]
 
 /-- One label leaf into the rows, bound to the float binding in force. -/
 private def floatLabelPush (float : Option RefBinding)
@@ -17876,37 +17890,113 @@ public def withUnboundRows (labels rows : RefTable) : RefTable :=
     | none, some (_, some b) => (e.1, some b)
     | _, _ => e
 
-/-- A title as `\nameref` sets it: without the labels and notes it holds, which name and mark
-the heading alone. -/
-private def nameOf (title : Array Inline) : Array Inline :=
+/-- A title as `\nameref` and a bookmark set it: without the labels and notes it holds, which
+name and mark the heading alone. -/
+-- conserves: none — drops the labels and notes a title holds.
+public def nameOf (title : Array Inline) : Array Inline :=
   let keep := fun (x : Inline) => match x with
     | .label _ | .footnote _ _ => false
     | _ => true
   mapInlines id title (finish := fun xs => xs.filter keep)
 
 /-- The title each label names, as hyperref's `\@currentlabelname` holds it: a float's caption
-inside the float, else the last heading's title before it. -/
+inside the float, else the last heading's title before it; a blank one names nothing. -/
 public def labelNames (xs : Array Block) : Std.HashMap String (Array Inline) := Id.run do
   let keyOf := fun (out : Array String) (x : Inline) =>
     if let .label k := x then out.push k else out
   let named := fun (m : Std.HashMap String (Array Inline)) (keys : Array String)
       (n : Array Inline) =>
     keys.foldl (fun m k => if m.contains k then m else m.insert k n) m
+  let titled := fun (n : Array Inline) => if (metaText n).trimAscii.isEmpty then none else some n
   let mut current : Option (Array Inline) := none
   let mut out : Std.HashMap String (Array Inline) := {}
   for b in xs do
-    if let .section _ _ _ title := b then current := some (nameOf title)
+    if let .section _ _ _ title := b then current := titled (nameOf title)
     if let .float _ _ _ body caption := b then
-      let keys := foldBlocks (fun out _ => out) keyOf (foldInlines keyOf #[] caption) body
-      out := named out keys (nameOf caption)
+      if let some n := (titled (nameOf caption)).orElse fun _ => current then
+        out := named out (foldBlocks (fun out _ => out) keyOf (foldInlines keyOf #[] caption) body) n
     else if let some n := current then
       out := named out (foldBlocks (fun out _ => out) keyOf #[] #[b]) n
   return out
 
-/-- The table with each binding carrying the title its label names (`labelNames`), a label nothing
-numbered taking a binding with its title alone. -/
-public def withLabelNames (labels : RefTable) (xs : Array Block) : RefTable :=
-  let names := labelNames xs
+/-- The label keys a name's own `\nameref`s reach. -/
+private def titleRefKeys (n : Array Inline) : Array String :=
+  foldInlines (fun out x =>
+    if let .ref k f _ _ := x then (if f.titled then out.push k else out) else out) #[] n
+
+/-- A table lookup whose bindings carry the names resolved so far. -/
+private def namedLook (base : String → Option (String × Option RefBinding))
+    (memo : Std.HashMap String (Array Inline)) (k : String) : Option (String × Option RefBinding) :=
+  match base k, memo[k]? with
+  | some (key, some b), n => some (key, some { b with name := n })
+  | some (key, none), some n => some (key, some { kind := none, num := "", name := some n })
+  | some (key, none), none => some (key, none)
+  | none, some n => some (k, some { kind := none, num := "", name := some n })
+  | none, none => none
+
+private theorem filter_length_le {α : Type} (p q : α → Bool) (hqp : ∀ x, q x = true → p x = true) :
+    ∀ l : List α, (l.filter q).length ≤ (l.filter p).length
+  | [] => by simp
+  | x :: xs => by
+    have ih := filter_length_le p q hqp xs
+    by_cases hq : q x = true
+    · simp [hq, hqp x hq]; omega
+    · by_cases hp : p x = true
+      · simp [hq, hp]; omega
+      · simp [hq, hp]; omega
+
+private theorem filter_length_lt {α : Type} (p q : α → Bool) (hqp : ∀ x, q x = true → p x = true) :
+    ∀ (l : List α) (k : α), k ∈ l → p k = true → q k = false →
+      (l.filter q).length < (l.filter p).length
+  | [], _, hk, _, _ => absurd hk List.not_mem_nil
+  | x :: xs, k, hk, hpk, hqk => by
+    have hle := filter_length_le p q hqp xs
+    rcases List.mem_cons.mp hk with rfl | hk'
+    · simp [hpk, hqk]; omega
+    · have ih := filter_length_lt p q hqp xs k hk' hpk hqk
+      by_cases hq : q x = true
+      · simp [hq, hqp x hq]; omega
+      · by_cases hp : p x = true
+        · simp [hq, hp]; omega
+        · simp [hq, hp]; omega
+
+/-- One label's name with its references resolved, after the names it reaches, into `memo`; a name
+reached again on its own chain is left out, so the `\nameref` closing the loop keeps `??`. -/
+private def nameClose (loc : Locale) (base : String → Option (String × Option RefBinding))
+    (raw : Std.HashMap String (Array Inline)) (visiting : Std.HashSet String)
+    (memo : Std.HashMap String (Array Inline)) (k : String) : Std.HashMap String (Array Inline) :=
+  if _hc : memo.contains k || visiting.contains k then memo
+  else match _h : raw[k]? with
+    | none => memo
+    | some n =>
+      let memo := (titleRefKeys n).foldl (init := memo) fun memo d =>
+        nameClose loc base raw (visiting.insert k) memo d
+      memo.insert k (mapInlines (resolveRefLeaf loc (namedLook base memo)) n)
+termination_by (raw.keys.filter (fun x => !visiting.contains x)).length
+decreasing_by
+  have hv : visiting.contains k = false := by
+    simp only [Bool.or_eq_true, not_or, Bool.not_eq_true] at _hc
+    exact _hc.2
+  have hk : k ∈ raw.keys := by
+    rw [Std.HashMap.mem_keys]
+    exact (Std.HashMap.getElem?_eq_some_iff.mp _h).1
+  apply filter_length_lt (fun x => !visiting.contains x) (fun x => !(visiting.insert k).contains x)
+    _ _ k hk (by simp [hv]) (by simp)
+  intro x hx
+  simp only [Std.HashSet.contains_insert, Bool.not_or, Bool.and_eq_true] at hx
+  exact hx.2
+
+/-- Every label's name with the references inside it resolved, numbers from `base` and titles from
+the names they reach. -/
+private def resolvedNames (loc : Locale) (base : String → Option (String × Option RefBinding))
+    (raw : Std.HashMap String (Array Inline)) : Std.HashMap String (Array Inline) :=
+  raw.fold (init := {}) fun memo k _ => nameClose loc base raw {} memo k
+
+/-- The table with each binding carrying the title its label names (`labelNames`), the references
+inside it resolved, a label nothing numbered taking a binding with its title alone. -/
+public def withLabelNames (loc : Locale) (labels : RefTable) (xs : Array Block) : RefTable :=
+  let idx := keyIndex labels
+  let names := resolvedNames loc (fun k => idx[k]?) (labelNames xs)
   labels.map fun e => match e.2, names[e.1]? with
     | some b, n => (e.1, some { b with name := n })
     | none, some n => (e.1, some { kind := none, num := "", name := some n })

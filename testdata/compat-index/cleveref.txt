@@ -13,6 +13,10 @@ body impl \section{A}\label{s}\cref{s}
 body impl \section{A}\label{s}\Cref{s}
 body impl \section{A}\label{s}x\subsection{B}\label{t}\crefrange{s}{t}
 body impl \section{A}\label{s}x\subsection{B}\label{t}\Crefrange{s}{t}
+body impl \section{A}\label{s}\cref*{s}
+body impl \section{A}\label{s}\Cref*{s}
+body impl \section{A}\label{s}x\subsection{B}\label{t}\crefrange*{s}{t}
+body impl \section{A}\label{s}x\subsection{B}\label{t}\Crefrange*{s}{t}
 body impl \section{A}\label{s}\labelcref{s}
 body impl \section{A}\label{s}\namecref{s}
 body impl \section{A}\label{s}\nameCref{s}

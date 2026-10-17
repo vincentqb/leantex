@@ -6400,6 +6400,13 @@ private def MetaWord.read (w : MetaWord) (v : String) : Option String :=
     if ["true", "false"].contains t.toLower then some t.toLower else none
   | .pageMode => if Ir.pageModes.contains t then some t else none
 
+/-- How a word's value reads, for the help a misread one draws. -/
+private def MetaWord.grammar : MetaWord → String
+  | .created | .modified => "a date reads as D:20260131090000Z or 2026-01-31"
+  | .trapped => "trapping reads as True or False"
+  | .outline | .outlineOpen | .outlineNumbered => "a bookmark switch reads as true or false"
+  | .pageMode => "a page mode reads as " ++ String.intercalate ", " Ir.pageModes
+
 /-- What hyperref's keys declare: its metadata keys with their TeX values, its dates and trapping
 as words, whether a link key was read, and whether a dropped key was named. -/
 private structure HyperrefRead where
@@ -6443,6 +6450,7 @@ private def hyperrefKeys (opts : String) (pos : Pos) : M HyperrefRead := do
   let mut cut : Array String := #[]
   let mut unread : Array String := #[]
   let mut misread : Array String := #[]
+  let mut grammars : Array String := #[]
   for e in KeyVal.items opts do
     let (k, value) := KeyVal.entry e
     let v := value.getD ""
@@ -6453,7 +6461,9 @@ private def hyperrefKeys (opts : String) (pos : Pos) : M HyperrefRead := do
       unless v.trimAscii.isEmpty do
         match w.read v with
         | some x => words := words.push (w, x)
-        | none => misread := misread.push s!"'{e}'"
+        | none =>
+          misread := misread.push s!"'{e}'"
+          unless grammars.contains w.grammar do grammars := grammars.push w.grammar
     if ["linkcolor", "urlcolor", "citecolor", "allcolors"].contains k && !oneEntry v then
       unread := unread.push s!"'{e}'"
     else if let some l := links.read k v then
@@ -6472,8 +6482,7 @@ private def hyperrefKeys (opts : String) (pos : Pos) : M HyperrefRead := do
   let dropped := cut ++ misread
   unless dropped.isEmpty do
     let hints := (if cut.isEmpty then [] else ["brace a value that holds a comma: key={...}"]) ++
-      if misread.isEmpty then [] else
-        ["a date reads as D:20260131090000Z or 2026-01-31, trapping as True or False"]
+      grammars.toList
     say .W0101 s!"hyperref entries without a native equivalent were dropped: \
 {String.intercalate ", " dropped.toList}" pos (help := String.intercalate "; " hints)
   unless unread.isEmpty do
@@ -7438,7 +7447,7 @@ private def ctrlRows0 : List CtrlRow :=
    nothingRow "ClassNoteNoLine" 2 classLog,
    nothingRow "ClassWarning" 2 classLog,
    nothingRow "ClassWarningNoLine" 2 classLog,
-   ⟨"Crefrange", [.needed, .needed], .lower .crefRange {}⟩]
+   ⟨"Crefrange", [.star, .needed, .needed], .lower .crefRange {}⟩]
 
 private def ctrlRows1 : List CtrlRow :=
   [⟨"DeclareMathOperator", [.star, .needed, .needed],
@@ -7485,7 +7494,7 @@ private def ctrlRows3 : List CtrlRow :=
 it starts no column there and is skipped" "\\column{width} splits the body of \\begin{columns} \
 ... \\end{columns}",
    ⟨"columnratio", [.needed, .opt], .lower .columnRatio {}⟩,
-   ⟨"crefrange", [.needed, .needed], .lower .crefRange {}⟩,
+   ⟨"crefrange", [.star, .needed, .needed], .lower .crefRange {}⟩,
    ⟨"crop", [.opt], .lower .crop {}⟩,
    ⟨"definecolor", [.needed, .needed, .needed],
      .lower .defineColor { paramStands := some "the colour is not defined" }⟩,
@@ -10077,10 +10086,14 @@ were dropped: {o}" c.pos
       s!"biblatex's reference list of '{"', '".intercalate srcs.toList}'" c.pos
     synthAt native c.pos
   | .crefRange => do
-    became s!"\\{c.name}" "the range pair: plural name, both numbers" c.pos
+    -- A starred range sets both halves unlinked, as hyperref's starred references do.
+    let starred := (c.given 0).isSome
+    let star : Array Raw := if starred then #[.word "*" c.pos] else #[]
+    became s!"\\{c.name}{if starred then "*" else ""}" "the range pair: plural name, both numbers"
+      c.pos
     let kind : Marker.Kind := if c.name == "Crefrange" then .crefRangeUp else .crefRange
-    return #[.ctrl (Marker.name kind "") c.pos, .group (c.arg 0) c.pos,
-      .ctrl "labelcref" c.pos, .group (c.arg 1) c.pos]
+    return #[.ctrl (Marker.name kind "") c.pos] ++ star ++ #[.group (c.arg 1) c.pos,
+      .ctrl "labelcref" c.pos] ++ star ++ #[.group (c.arg 2) c.pos]
   | .fontSeries => do
     -- The series' weight half rides its marker; its width half has no engine axis.
     let code := (c.src 0).trimAscii.toString
