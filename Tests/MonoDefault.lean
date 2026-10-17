@@ -187,7 +187,8 @@ beside them.\n\n\\begin{verbatim}\nfenced code\n\\end{verbatim}"))).1
           && runFace out "upright" == some upright)
       let (html, _) := HtmlDoc.emit { fonts := some fs } resolved
       t s!"{surface} html: the page ships no italic typewriter face and synthesises no slant"
-        (!hasStr html "font-family: \"ltx-mono\"; font-weight: 400; font-style: italic"
+        ((monoFamily html).any (fun family =>
+            !hasStr html s!"font-family: \"{family}\"; font-weight: 400; font-style: italic")
           && hasStr html "font-synthesis: small-caps;")
     | .error d => t s!"{surface}: the upright-only assembly succeeds ({d.message})" false
   for (what, doc, named) in

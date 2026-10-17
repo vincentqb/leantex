@@ -2710,36 +2710,120 @@ private def slotName : Nat → String
 
 /-- The faces slot `s` resolves to, in face order. -/
 private def slotFaces (fs : Font.FontSet) (s : Nat) : List Nat :=
-  (List.range fs.fonts.size).filter fun i => fs.index.any fun e => e.1.1 == s && e.2 == i
+  let own := fs.index.filterMap fun e => if e.1.1 == s then some e.2 else none
+  (List.range fs.fonts.size).filter own.contains
 
-/-- The first slot resolving to exactly the faces slot `s` resolves to, whose family serves both. -/
-private def familySlot (fs : Font.FontSet) (s : Nat) : Nat :=
-  ((List.range s).find? fun t => slotFaces fs t == slotFaces fs s).getD s
+/-- The slots a face set names: body, sans, mono and each declared family's. -/
+private def slotCount (fs : Font.FontSet) : Nat :=
+  fs.index.foldl (fun n e => max n (e.1.1 + 1)) 3
 
-/-- The synthetic families face `i` serves: each slot's that resolves to it, one for slots resolving
-to the same faces, and `ltx-math` for the math face. -/
-private def namedFamiliesOf (fs : Font.FontSet) (i : Nat) : List String :=
-  let slots := fs.index.foldl (fun n e => max n (e.1.1 + 1)) 3
-  ((List.range slots).filterMap fun s =>
-    if familySlot fs s == s && fs.index.any (fun e => e.1.1 == s && e.2 == i) then
-      some s!"ltx-{slotName s}"
+/-- A face set's slots as the page's families read them, once per page: each slot's faces, and
+the first slot resolving to the same faces, whose family serves both. -/
+private structure Families where
+  faces : Array (List Nat)
+  first : Array Nat
+
+/-- The first slot before `s` whose faces are slot `s`'s, else `s`. -/
+private def firstSame (faces : Array (List Nat)) (s : Nat) : Nat :=
+  ((List.range s).find? fun t => faces[t]? == faces[s]?).getD s
+
+private def Families.of (fs : Font.FontSet) : Families :=
+  let faces := (Array.range (slotCount fs)).map (slotFaces fs)
+  { faces, first := (Array.range faces.size).map (firstSame faces) }
+
+/-- The slot whose family serves slot `s`. -/
+private def Families.familySlot (t : Families) (s : Nat) : Nat := t.first[s]?.getD s
+
+/-- A slot whose family serves another resolves to the same faces. -/
+private theorem firstSame_faces (faces : Array (List Nat)) (s : Nat) :
+    faces[firstSame faces s]? = faces[s]? := by
+  unfold firstSame
+  cases h : (List.range s).find? fun t => faces[t]? == faces[s]? with
+  | none => rfl
+  | some t => simpa using (List.find?_range_eq_some.mp h).1
+
+/-- The slot whose family serves another serves itself. -/
+private theorem firstSame_idem (faces : Array (List Nat)) (s : Nat) :
+    firstSame faces (firstSame faces s) = firstSame faces s := by
+  unfold firstSame
+  cases h : (List.range s).find? fun t => faces[t]? == faces[s]? with
+  | none => simp only [Option.getD_none]; rw [h]; rfl
+  | some t =>
+    simp only [Option.getD_some]
+    obtain ⟨ht, -, hmin⟩ := List.find?_range_eq_some.mp h
+    cases h' : (List.range t).find? fun u => faces[u]? == faces[t]? with
+    | none => rfl
+    | some u =>
+      exfalso
+      obtain ⟨hu, hur, -⟩ := List.find?_range_eq_some.mp h'
+      have hu' : faces[u]? = faces[t]? := by simpa using hu
+      have ht' : faces[t]? = faces[s]? := by simpa using ht
+      have := hmin u (List.mem_range.mp hur)
+      simp [hu', ht'] at this
+
+/-- The slot whose family serves slot `s`: the first with its faces, read off the table. -/
+private theorem Families.familySlot_eq (fs : Font.FontSet) (s : Nat) :
+    (Families.of fs).familySlot s =
+      if s < (Families.of fs).faces.size then firstSame (Families.of fs).faces s else s := by
+  show ((Array.range (Families.of fs).faces.size).map (firstSame (Families.of fs).faces))[s]?.getD s
+    = _
+  generalize (Families.of fs).faces = F
+  simp only [Array.getElem?_map, Array.getElem?_range]
+  split <;> rfl
+
+/-- The slot whose family serves slot `s` resolves to slot `s`'s faces. -/
+private theorem Families.familySlot_faces (fs : Font.FontSet) (s : Nat) :
+    (Families.of fs).faces[(Families.of fs).familySlot s]? = (Families.of fs).faces[s]? := by
+  rw [Families.familySlot_eq]
+  split
+  · exact firstSame_faces _ s
+  · rfl
+
+/-- The slot whose family serves another serves itself, so its family is shipped. -/
+private theorem Families.familySlot_idem (fs : Font.FontSet) (s : Nat) :
+    (Families.of fs).familySlot ((Families.of fs).familySlot s) = (Families.of fs).familySlot s := by
+  simp only [Families.familySlot_eq]
+  by_cases hs : s < (Families.of fs).faces.size
+  · have hlt : firstSame (Families.of fs).faces s < (Families.of fs).faces.size := by
+      have h := firstSame_faces (Families.of fs).faces s
+      rw [Array.getElem?_eq_getElem hs] at h
+      obtain ⟨hlt, -⟩ := Array.getElem?_eq_some_iff.mp h
+      exact hlt
+    simp [hs, hlt, firstSame_idem]
+  · simp [hs]
+
+/-- The synthetic families face `i` serves: the family of each slot resolving to it, one for
+slots resolving to the same faces, and `ltx-math` for the math face. -/
+private def namedIn (t : Families) (fs : Font.FontSet) (i : Nat) : List String :=
+  ((List.range t.faces.size).filterMap fun s =>
+    if t.familySlot s == s && (t.faces[s]?.getD []).contains i then some s!"ltx-{slotName s}"
     else none) ++
   (if fs.math == some i then ["ltx-math"] else [])
 
 /-- The families face `i` ships under: its slots', or a fallback family of its own. -/
-public def familiesOf (fs : Font.FontSet) (i : Nat) : List String :=
-  if (namedFamiliesOf fs i).isEmpty then [s!"ltx-fb{i}"] else namedFamiliesOf fs i
+private def familiesIn (t : Families) (fs : Font.FontSet) (i : Nat) : List String :=
+  if (namedIn t fs i).isEmpty then [s!"ltx-fb{i}"] else namedIn t fs i
 
-public theorem familiesOf_ne_nil (fs : Font.FontSet) (i : Nat) : familiesOf fs i ≠ [] := by
-  unfold familiesOf
+private theorem familiesIn_ne_nil (t : Families) (fs : Font.FontSet) (i : Nat) :
+    familiesIn t fs i ≠ [] := by
+  unfold familiesIn
   split
   · simp
   · next h => exact fun hn => h (by simp [hn])
 
+/-- The families face `i` ships under: its slots', or a fallback family of its own. -/
+public def familiesOf (fs : Font.FontSet) (i : Nat) : List String := familiesIn (Families.of fs) fs i
+
+public theorem familiesOf_ne_nil (fs : Font.FontSet) (i : Nat) : familiesOf fs i ≠ [] :=
+  familiesIn_ne_nil _ fs i
+
+/-- Every face's families in face order, each once. -/
+private def allFamilies (t : Families) (fs : Font.FontSet) : List String :=
+  ((List.range fs.fonts.size).flatMap (familiesIn t fs)).eraseDups
+
 /-- A slot's font stack: its own family, every other family in face order, then the generic. -/
-private def stackFor (fs : Font.FontSet) (own generic : String) : String :=
-  let rest := (((List.range fs.fonts.size).flatMap fun i =>
-    familiesOf fs i).eraseDups.filter (· != own)).map fun f => s!"\"{cssString f}\""
+private def stackIn (all : List String) (own generic : String) : String :=
+  let rest := (all.filter (· != own)).map fun f => s!"\"{cssString f}\""
   String.intercalate ", " ([s!"\"{cssString own}\""] ++ rest ++ [generic])
 
 /-- The face's file name: its index and its PostScript name's safe characters. -/
@@ -2768,8 +2852,9 @@ public structure FontFace where
 /-- The `@font-face` list: every face of the resolved set, under every synthetic family it
 serves. -/
 public def shipFaces (fs : Font.FontSet) : Array FontFace :=
+  let t := Families.of fs
   (Array.range fs.fonts.size).flatMap fun i =>
-    (familiesOf fs i).toArray.map fun fam =>
+    (familiesIn t fs i).toArray.map fun fam =>
       { index := i
         family := fam
         weight := (fs.get i).weight
@@ -2779,9 +2864,9 @@ public def shipFaces (fs : Font.FontSet) : Array FontFace :=
 
 public theorem shipFaces_covers (fs : Font.FontSet) {k : Nat} (hk : k < fs.fonts.size) :
     ∃ ff ∈ shipFaces fs, ff.index = k := by
-  obtain ⟨fam, rest, heq⟩ : ∃ a l, familiesOf fs k = a :: l := by
-    cases h : familiesOf fs k with
-    | nil => exact absurd h (familiesOf_ne_nil fs k)
+  obtain ⟨fam, rest, heq⟩ : ∃ a l, familiesIn (Families.of fs) fs k = a :: l := by
+    cases h : familiesIn (Families.of fs) fs k with
+    | nil => exact absurd h (familiesIn_ne_nil _ fs k)
     | cons a l => exact ⟨a, l, rfl⟩
   refine ⟨{ index := k, family := fam, weight := (fs.get k).weight
             italic := (fs.get k).isItalic, file := fontFileName k (fs.get k)
@@ -3143,8 +3228,10 @@ private def tokenVars (cfg : Config) (doc : Doc) (roles : List Ir.Role)
       let bodyDeclared :=
         if doc.docClass == DocClass.slides && doc.fonts.sans.isSome then "sans-serif"
         else "serif"
+      let t := Families.of fs
+      let all := allFamilies t fs
       let slot (s : Nat) (declared : String) : String :=
-        stackFor fs s!"ltx-{slotName (familySlot fs s)}" (genericFor fs s declared)
+        stackIn all s!"ltx-{slotName (t.familySlot s)}" (genericFor fs s declared)
       [s!"    --font-body: {slot 0 bodyDeclared};",
        s!"    --font-sans: {slot 1 "sans-serif"};",
        s!"    --font-mono: {slot 2 "monospace"};"] ++
@@ -3152,7 +3239,7 @@ private def tokenVars (cfg : Config) (doc : Doc) (roles : List Ir.Role)
         let s := Ir.familySlotBase + i
         s!"    --font-{s}: {slot s bodyDeclared};") ++
       (if fs.math.isSome then
-        [s!"    --font-math: {stackFor fs "ltx-math" "math"};"]
+        [s!"    --font-math: {stackIn all "ltx-math" "math"};"]
        else [])
     | none =>
       (match doc.fonts.body with

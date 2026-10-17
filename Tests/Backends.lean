@@ -1991,6 +1991,41 @@ def fontShipChecks (ref : IO.Ref (List String)) : IO Unit := do
     (((html.splitOn "--font-sans: \"ltx-body\"").length == 2) &&
      !hasStr html "font-family: \"ltx-sans\"" &&
      (html.splitOn (HtmlDoc.fontResource sans).uri).length == 2)
+  -- Each slot's stack opens on a family whose @font-face rules are exactly that slot's faces.
+  let slotFacesOf (set : Font.FontSet) (slot : Nat) : List Nat :=
+    (List.range set.fonts.size).filter fun i => set.index.any fun e => e.1.1 == slot && e.2 == i
+  let opening (page var : String) : Option String :=
+    match page.splitOn s!"--font-{var}: \"" with
+    | _ :: rest :: _ => (rest.splitOn "\"").head?
+    | _ => none
+  let familyFaces (set : Font.FontSet) (fam : String) : List Nat :=
+    ((((HtmlDoc.shipFaces set).filter (·.family == fam)).toList.map (·.index)).eraseDups).mergeSort
+      (· ≤ ·)
+  let opensOnOwnFaces (set : Font.FontSet) (page : String) : Bool :=
+    [("body", 0), ("sans", 1), ("mono", 2)].all fun (var, slot) =>
+      (opening page var).any fun fam => familyFaces set fam == slotFacesOf set slot
+  let variants (slot face : Nat) : Array ((Nat × Nat × Bool) × Nat) :=
+    #[((slot, 400, false), face), ((slot, 700, false), face), ((slot, 400, true), face),
+      ((slot, 700, true), face)]
+  let fsMonoBody : Font.FontSet :=
+    { fonts := #[sans, code], index := variants 0 0 ++ variants 1 1 ++ variants 2 0 }
+  let fsPartial : Font.FontSet :=
+    { fonts := #[sans, code], index := variants 0 0 ++ variants 2 1 ++
+        #[((1, 400, false), 0), ((1, 700, false), 1), ((1, 400, true), 0), ((1, 700, true), 1)] }
+  let fsFamily : Font.FontSet :=
+    { fonts := #[sans, code], index := variants 0 0 ++ variants 1 0 ++ variants 2 1 ++
+        variants Ir.familySlotBase 0 }
+  let pageOf (set : Font.FontSet) : String := (HtmlDoc.emit { cfg with fonts := some set } doc).1
+  t "font ship: every slot's stack opens on a family shipping exactly that slot's faces"
+    ([fs, fsMonoBody, fsPartial, fsFamily].all fun set => opensOnOwnFaces set (pageOf set))
+  t "font ship: a typewriter slot resolving to the body's faces opens on the body's family"
+    (opening (pageOf fsMonoBody) "mono" == some "ltx-body")
+  t "font ship: slots sharing only some faces keep families of their own"
+    (opening (pageOf fsPartial) "sans" == some "ltx-sans" &&
+      hasStr (pageOf fsPartial) "font-family: \"ltx-sans\"")
+  t "font ship: a declared family resolving to the body's faces ships under the body's family"
+    (!((HtmlDoc.shipFaces fsFamily).any (·.family == s!"ltx-{Ir.familySlotBase}")) &&
+      (HtmlDoc.familiesOf fsFamily 0).contains "ltx-body")
   t "font ship: every captured face is embedded in the page"
     ((HtmlDoc.fontResources fs).all fun a => (html.splitOn a.uri).length ≥ 2)
   t "font ship: one captured resource per face, carrying its bytes"
