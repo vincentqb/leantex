@@ -397,7 +397,10 @@ public def nucNode (mk : Marks) (disp : Bool) (cls : MathClass) : MNucleus → H
         if text > 0 && math > 0 then s!"; font-size: calc({measuredEm text math})" else ""
       | _, _ => ""
     .elem tag (base.push ("style", style.css ++ sizing)) #[.text (charText c)]
-  | .word s => .elem "mi" #[("style", keepLineCss)] #[.text s]
+  -- A word sets upright, so a one-scalar word cancels `math-auto` italic as a lone scalar does.
+  | .word s =>
+    .elem "mi" ((if s.length == 1 then #[("mathvariant", "normal")] else #[]).push
+      ("style", keepLineCss)) #[.text s]
   | .list body => .elem "mrow" #[] (listNodes mk disp none #[] body)
   | .alpha _ _ body =>
     -- An unresolved alphabet is an `merror` around its content.
@@ -814,7 +817,7 @@ theorem nucNode_chars (mk : Marks) (disp : Bool) (cls : MathClass) :
   | .styled _ ch, c => by
     show pushChars c (charText ch).toList = c.push ch
     exact pushChars_charText c ch
-  | .word _, c => rfl
+  | .word _, c => by simp only [nucNode]; split <;> rfl
   | .list body, c => by
     show nodeListChars c (listNodes mk disp none #[] body).toList = listChars c body
     rw [listNodes_chars mk disp none body #[] c]
@@ -1202,7 +1205,9 @@ theorem nucNode_tagFree (p : String → Bool) (hp : ∀ t ∈ contentTags, p t =
   | .styled _ c, _ => by
     simp only [nucNode]
     exact leafNode_tagFree p hp cls c _ _ rfl
-  | .word _, _ => by simp [nucNode, tagFree, tagFreeList, contentTags_false hp]
+  | .word _, _ => by
+    simp only [nucNode]
+    split <;> simp [tagFree, tagFreeList, contentTags_false hp]
   | .list body, hm => by
     simp only [nucNode, tagFree, hp "mrow" (by simp [contentTags]), Bool.not_false,
       Bool.true_and]
@@ -1523,7 +1528,9 @@ theorem nucNode_held (mk : Marks) (disp : Bool) (cls : MathClass) :
   | .styled _ c => by
     simp only [nucNode]
     exact charText_held _ _ c
-  | .word _ => by simp [nucNode, linesHeld, keepsLine, keepsValue]
+  | .word _ => by
+    simp only [nucNode]
+    split <;> simp [linesHeld, keepsLine, keepsValue]
   | .list body => by
     simp only [nucNode, linesHeld]
     rw [listNodes_held mk disp none body #[] rfl, Bool.or_true]

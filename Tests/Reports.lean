@@ -149,6 +149,7 @@ import Tests.SeedPalette
 import Tests.PaletteCover
 import Tests.UnusedSettings
 import Tests.LeanProseReading
+import Tests.AmsMath
 
 /-! Every breakage the user reported, as a row whose pins hold it closed; a report closes only as
 `guarded`, and the unwitnessed and owed counts are held both ways. -/
@@ -1883,7 +1884,12 @@ def reports : List Report := [
     pins := [check% Tests.DiagFold.frameOverfullChecks]
     accept := ["lualatex: beamer warns of two columns of 0.7 text widths an overfull box 66pt wide, its columns allowed the margins, and microtype's protrusion shortens an invented overfull line's stated amount from 23.6pt to 20.51pt; this tree names the columns past its own text width in a record of their own, and states a protruding line's overrun past the target its protrusion widens",
       "the guards fail with the fix reverted onto b7efbc12, the guards kept: the footnote, columns and section page wordings and the protruding line's amount, its protrusion counted"]
-    state := .guarded "b7efbc12" .revert .author }
+    state := .guarded "b7efbc12" .revert .author },
+  { id := "R210", date := "2026-10-17"
+    what := "a one-letter word in math, from a text command or an operator name, was an identifier the browser set in italic on the web page, where the PDF sets it upright"
+    pins := [check% textInMathChecks]
+    accept := ["main's binary at b7efbc12 writes such a word as an identifier with no variant, which MathML sets italic; this tree marks a one-scalar word normal, as it marks a lone scalar, and a longer word stays as it was"]
+    state := .guarded "b7efbc12" .before .author }
 ]
 
 /-- The reports guarded but never seen failing, a count held in both directions. -/

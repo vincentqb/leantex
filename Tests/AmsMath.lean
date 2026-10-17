@@ -503,6 +503,17 @@ past the appendix (got '{page}')" (page == expected)
     ((warnCodes (dvDoc "\\usepackage{amsmath}\n\\numberwithin{figure}{section}\n" "x")).contains
       "W0110")
 
+/-- A word in math sets upright on the web page, however short: a one-scalar word cancels MathML's
+automatic italic as a lone scalar does. -/
+def textInMathChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let page (body : String) := (HtmlDoc.emit {} (elabStr (dvDoc "" body)).1).1
+  for (src, word) in [("$\\text{a}$", "a"), ("$\\mbox{b}$", "b"), ("$\\operatorname{d}x$", "d")] do
+    t s!"word in math: {src} sets its one letter upright"
+      (hasStr (page src) s!"<mi mathvariant=\"normal\" style=\"white-space: pre\">{word}</mi>")
+  t "word in math: a longer word stays an identifier MathML sets upright"
+    (hasStr (page "$\\sin x$") "<mi style=\"white-space: pre\">sin</mi>")
+
 def amsmathChecks (ref : IO.Ref (List String)) : IO Unit := do
   let serif ← match Font.parse (← IO.FS.readBinFile (testFonts ++ "/SourceSerifPro-Regular.otf")) with
     | .ok f => pure f
@@ -514,4 +525,5 @@ def amsmathChecks (ref : IO.Ref (List String)) : IO Unit := do
   amsTagTextChecks ref
   amsFracChecks ref fs
   amsModChecks ref fs
+  textInMathChecks ref
   amsIndexInkChecks ref fs
