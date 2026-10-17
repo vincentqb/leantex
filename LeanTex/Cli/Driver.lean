@@ -504,10 +504,9 @@ def planLocated (params : Image.PlanParams) (lang : String) (convert : Option Co
       let (res, fromCache) ← PlanCache.decodeCached cache params bytes
       return (.decoded href res none none (some bytes) none, fromCache, none', #[p.toString])
 
-/-- The document's image requests fulfilled: each source found and read in request order
-(`locateImage`), planned (`planLocated`) and judged by `Image.fulfil`, every unplanned fact named;
-also the cache-hit count, drawn SVGs' titles by source, the files read, and the SVG bytes the native
-judge accepted. -/
+/-- The document's image requests fulfilled in request order (`locateImage`, `planLocated`,
+`Image.fulfil`), every unplanned fact named, with the cache-hit count, drawn SVGs' titles, the files
+read and the SVG bytes the native judge accepted. -/
 def loadImages (file : String) (doc : Ir.Doc) (pics : Array PicResult := #[])
     (refused : Array (String × Diag) := #[])
     (imageSpans : Array (String × Span) := #[]) (cache : Option Engine.Cache := none) :
