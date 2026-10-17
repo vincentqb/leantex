@@ -1896,14 +1896,14 @@ def reports : List Report := [
     pins := [check% textInMathChecks]
     accept := ["main's binary at b7efbc12 writes such a word as an identifier with no variant, which MathML sets italic; this tree marks a one-scalar word normal, as it marks a lone scalar, and a longer word stays as it was"]
     state := .guarded "b7efbc12" .before .author },
-  { id := "R999", date := "2026-10-16"
+  { id := "R211", date := "2026-10-17"
     what := "the PDF X-4 judge took a figure's halftone named for a device for one the standard admits and resolved every reference by a linear search of the file, and the fonts-embedded census passed a copied figure printing in an unembedded font whose dictionary stood directly in its resources"
     pins := [check% Tests.PrintX4.checks, check% censusDirectFontChecks,
       thm% PdfCensus.Index.find?_exact, thm% PdfCensus.Index.deref_exact]
     accept := ["probe documents built by the engine at da86ec89: a card copying a figure whose graphics state names its halftone keeps its PDF X-4 claim, and a document asserting its fonts embedded over a figure with a direct unembedded Helvetica passes; built here the claim is withheld, the construct named, and the assertion fails naming the font",
       "the guards fail on da86ec89 with the halftone case and the census's direct fonts, and hold here; the index finds what the linear search finds by proof"]
     state := .guarded "da86ec89" .before .author },
-  { id := "R208", date := "2026-10-16"
+  { id := "R212", date := "2026-10-17"
     what := "a print document declaring its output intent's profile showed its CMYK colours on the web page, and judged their contrast, as xcolor projects them rather than as the press the profile characterizes prints them, a listing's fitted ink, a shading's stops and an ink declared again among them; the engine's own colours, a theme's, a listing's, a missing image's and a shading's, stood in RGB, so a document whose own colours were CMYK lost its PDF X-4 claim to them; and xcolor's cyan, magenta, yellow and olive were RGB where xcolor declares them in CMYK"
     pins := [check% Tests.Icc.checks, check% Tests.PrintColour.checks,
       check% Tests.PrintColour.previewChecks, check% Tests.PrintColour.driverChecks,
@@ -1914,20 +1914,20 @@ def reports : List Report := [
       "the review's cases, its invented probes rebuilt here under FOGRA39L: the first cut pressed the document's RGB mixes into CMYK, and painted a moloch deck's colours in DeviceRGB, losing the claim; here the mixes paint the RGB main paints, 1 0.702 0.702 for red at 30, and the deck paints in DeviceCMYK, its page's grey in black ink alone, the claim standing; a listing's ink fitted from a CMYK colour, a shading's middle and ball stops and an ink declared again showed xcolor's projection and raised a contrast warning on the fitted ink, here they show through the profile and the warning is gone",
       "the second review's cases: the answer still painted in DeviceRGB what the engine derives at a site, a covered overlay step's ink, a generated tone on a block or a standout frame and a picture pin's grey, so a themed deck with transparent covering lost the claim, and pressed a palette's declared seeds; a colour is now the engine's unless a source reader declares it, those paint in the press and the seeds as declared; a listing ink fitted from a CMYK colour took up to a hundred profile conversions, 1379 ms against main's 797 for 320 listings, now found by bisection, 794 against 749, the press computed once per colour"]
     state := .guarded "da86ec89" .before .author },
-  { id := "R209", date := "2026-10-16"
+  { id := "R213", date := "2026-10-17"
     what := "a print document naming one of the profiles l3pdfmeta describes, FOGRA39L coated or sRGB, got no output intent: the engine looked for the profile beside the document alone, where LaTeX finds it in the colorprofiles package, and gave it none of l3pdfmeta's description"
     pins := [check% Tests.colorProfileLayoutChecks, check% Tests.colorProfileDiskChecks,
       check% Tests.PrintX4.checks, thm% LeanTex.Cli.TexFontTrees.colorProfile_runless_exact]
     accept := ["lualatex on an invented card naming FOGRA39L coated: the output intent embeds the colorprofiles package's profile with the condition FOGRA39L Coated, the FOGRA registry and l3pdfmeta's description of the press; the engine at da86ec89 names the profile missing and writes no intent; here, under a TeX Live layout holding an invented profile of that name, it embeds that profile with the same description and claims PDF X-4, running no TeX program"]
     state := .guarded "da86ec89" .before .author },
-  { id := "R210", date := "2026-10-16"
+  { id := "R214", date := "2026-10-17"
     what := "an itemize label a document redefined, its colour and its glyph, marked nothing: the class's bullet and dash stood on the page and the web page, and nothing named the definition"
     pins := [check% Tests.ItemLabels.checks, thm% HtmlDoc.cssString_no_lt]
     accept := ["lualatex on an invented article redefining the first and second labels: a red bullet and a plain dash, the third level's asterisk as the class sets it; the engine at da86ec89 sets the class's black bullet and bold dash; here the red bullet and the plain dash on the page and the web page, an enumitem label over the redefinition, and a redefinition in the body named",
       "the review's cases: the first cut loaded no math face for a label's formula and set a typewriter label in the body face, printed a ding's number or nothing for labels the engine cannot set, named a formula label inexpressible on the web page, named a begin-document hook's label as the body's, and let a label spelling a closing style tag end the web page's stylesheet; here the faces load, the class's bullet stands with the loss named once, the web page marks the formula's symbol, the hook's label marks every list, and the CSS string escapes its angle bracket by proof",
       "the second review's cases: a label whose loss had been named before raised only a note, so its ding printed again; the rollback now reads the loss, not its presentation; a structured formula label reached the web page linearized, now named; the fallback's help names the level's own command"]
     state := .guarded "da86ec89" .before .author },
-  { id := "R9999", date := "2026-10-16"
+  { id := "R215", date := "2026-10-17"
     what := "a share or covered colour a deck's body declared was ignored, named W0340, where beamer covers the frames after it; a pending item's marker in its own colour shipped at full ink, an item whose text was all one colour lent its marker that colour, and a covered description item set a bullet and moved its label; a covered run with no colour of its own took the preamble ink's cover whatever ink the body set or colour enclosed it; and a pause revealed after it only the rest of its own column, list or block, so a frame's later columns, items and paragraphs showed on the steps before it, and the rest of a pause inside a block uncover or only showed on no step; a bare pause between frames stepped the rest of the deck; and each later step of a frame opened in the colours its body had left on the step before"
     pins := [check% Tests.CoveredSteps.bodyShareChecks, check% Tests.CoveredSteps.dimPathChecks,
       check% Tests.CoveredSteps.pauseScopeChecks, check% Tests.PaletteCover.deckChecks,
