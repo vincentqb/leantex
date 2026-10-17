@@ -893,13 +893,13 @@ private def warnOnce (ctx : Ctx) (key : String) (code : DiagCode) (msg : String)
     (output : Option Diag.Output := none) (detail : Option String := none) : EM Unit :=
   modify fun st => warnOnceState ctx key code msg pos help demote st trigger recovery output detail
 
-/-- Records each citation key's first `\cite` span, and whether markdown's or code's text spelled it. -/
-private def recordCiteSites (ctx : Ctx) (keys : List String) (pos : Pos) : EM Unit :=
+/-- Records each citation key's first site, shown or listed only, and the surface that spelled it. -/
+private def recordCiteSites (ctx : Ctx) (keys : List String) (pos : Pos) (nocite : Bool) : EM Unit :=
+  let surface := if ctx.kept then Ir.Surface.ofPath ctx.file else ctx.surface
   modify fun st => { st with spans := keys.foldl (fun sp k =>
-    if sp.cites.any (·.key == k) then sp
+    if sp.cites.any fun c => c.key == k && c.nocite == nocite then sp
     else
-      let site : Ir.CiteSite :=
-        { key := k, span := ctx.sourceSpan pos, pandoc := ctx.kept || ctx.surface != .tex }
+      let site : Ir.CiteSite := { key := k, span := ctx.sourceSpan pos, surface, nocite }
       { sp with cites := sp.cites.push site }) st.spans }
 
 /-- Records a non-text object's census key with its first span. -/
@@ -2755,14 +2755,14 @@ private def citeArm (ctx : Ctx) (raws : Array Raw) (i : Nat) (name : String)
       return (#[mark true] ++ text ++ #[mark false], ⟨j3 + 1, by omega⟩)
     else
       let keys := KeyVal.items (argText ctx body)
+      -- Judged in elabDoc: the `\bibliography` may follow the citation.
+      recordCiteSites ctx keys.toList pos (base.cmd == .nocite)
       if base.cmd == .nocite then
         -- `\@bsphack`/`\@esphack`: a space before swallows the spaces after.
         let j4 := skipSpaces raws (j3 + 1)
         have hj4 := skipSpaces_ge raws (j3 + 1)
         return (#[.cite form keys],
           if raws[i - 1]? matches some .space then ⟨j4, by omega⟩ else ⟨j3 + 1, by omega⟩)
-      -- Judged in elabDoc: the `\bibliography` may follow the citation.
-      recordCiteSites ctx keys.toList pos
       return (#[.cite form keys], ⟨j3 + 1, by omega⟩)
   | _ =>
     diag ctx .E0304 s!"'\\{name}' needs a \{keys} group" pos
@@ -16366,7 +16366,7 @@ marks its level" (some pos) (help := some s!"redefine it as text, a symbol or a 
               (some rpos)
               (help := "reference it with \\ref, or move the \\label after the numbered thing it should name")
     if (Ir.bibRefsBlocks blocks).isEmpty && (Ir.ownBibItemsBlocks blocks).isEmpty then
-      for site in stRefs.spans.cites do
+      for site in stRefs.spans.cites.filter (!·.nocite) do
         let help := if ctx.surface == .markdown then
             "the document declares no bibliography; its metadata's 'bibliography: refs.bib' names \
 the .bib file"

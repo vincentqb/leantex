@@ -1468,7 +1468,7 @@ def pageFor (cache : IO.Ref (Array (String × Font))) (oneFace : Font.FontSet)
   let metric := Layout.labelMetric (Layout.Geom.ofPage pre.page) preFs
   let (doc, elabDiags, spans) := Elab.runPrepared file prepared src.diags metric
   let (doc, bibDiags, ledger) ← Input.resolveBibliography file doc
-    (Bib.FieldDoor.of file prepared).read spans.labels spans.bib src.ledger
+    (Bib.FieldDoor.of file prepared).read spans.labels spans.bib src.ledger spans.cites
   let bibDiags := bibDiags ++ ledger.notes
   let fs ← fontSetFor cache oneFace faces fontsDir doc
   let family := fs.math.bind (fs.fonts[·]?) |>.map (·.family) |>.getD "math face"

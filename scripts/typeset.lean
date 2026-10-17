@@ -96,7 +96,7 @@ def build (cache : FontEnv.Cache) (faces : Array FontDb.Face) (file : String) :
     let (doc, ds, spans) := Elab.runPrepared file prepared earlier metric
     let ds := ds ++ spliced.map fun (sty, s, pos) => Compat.styRead (s.getD file) sty pos ds
     let (doc, bibDiags, ledger) ← Input.resolveBibliography file doc
-      (Bib.FieldDoor.of file prepared).read spans.labels spans.bib src.ledger
+      (Bib.FieldDoor.of file prepared).read spans.labels spans.bib src.ledger spans.cites
     return (doc, ds ++ bibDiags ++ ledger.notes ++ Bib.refJudge spans doc, spans)
   let (doc, elabDiags, spans) ← elaborate (provisional.getD fun _ _ => {})
   let needs := toolNeeds doc spans.code

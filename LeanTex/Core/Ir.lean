@@ -2669,12 +2669,13 @@ public structure CiteForm where
   post : String := ""
   deriving Repr, BEq, Inhabited
 
-/-- Where a key is first cited, and whether in Pandoc's syntax rather than a TeX command, which the
-reporting layer reads beside the span-free document. -/
+/-- Where a key is first cited, shown or listed only (`\nocite`), and the surface whose spelling
+cited it, which the reporting layer reads beside the span-free document. -/
 public structure CiteSite where
   key : String
   span : Span
-  pandoc : Bool
+  surface : Surface
+  nocite : Bool
   deriving Repr, BEq
 
 /-- natbib's citation commands, each with the form it selects. -/
@@ -8369,34 +8370,45 @@ private def leadChar (c : Char) : Char :=
 
 mutual
 
-/-- The character text set after `x` follows in reading order, `lead` where `x` sets none: a text's
-last character, a space after glue or a break, and U+FFFC after other ink, a note's mark too. -/
--- conserves: none — reads the reading order's last character, a note's body behind its mark.
-public def quoteLeadOne (lead : Option Char) (x : Inline) : Option Char :=
+/-- The last character `x` sets in reading order, `none` where it sets none: a text's last
+character, a space for glue or a break, and U+FFFC for other ink, a note's mark too. -/
+-- conserves: none — reads the last character set, from the end, a note's body behind its mark.
+public def lastSet (x : Inline) : Option Char :=
   match x with
-  | .text s => match s.toList.getLast? with
-    | some c => some (leadChar c)
-    | none => lead
+  | .text s => if s.isEmpty then none else some (leadChar s.back)
   | .styled _ body | .colored _ _ body | .located _ body | .role _ body | .link _ body
-  | .decorated _ body | .onSteps _ body => quoteLeadList lead body.toList
-  | .altSteps _ firstPage _ => quoteLeadList lead firstPage.toList
-  | .cited _ _ ink => quoteLeadList (some objectLead) ink.toList
+  | .decorated _ body | .onSteps _ body => lastSetBefore body body.size
+  | .altSteps _ firstPage _ => lastSetBefore firstPage firstPage.size
+  | .cited _ _ ink => (lastSetBefore ink ink.size).orElse fun _ => some objectLead
   | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _ | .ref _ _ _ _ | .cite _ _
   | .rule _ _ _ | .pageNumber | .pageCount | .footnote _ _ => some objectLead
   | .fill | .hspace _ _ | .linebreak _ => some ' '
-  | .label _ | .strut _ | .italicCorr _ => lead
+  | .label _ | .strut _ | .italicCorr _ => none
+termination_by (sizeOf x, 0)
+decreasing_by all_goals (simp_wf; omega)
 
-public def quoteLeadList (lead : Option Char) : List Inline → Option Char
-  | [] => lead
-  | x :: rest => quoteLeadList (quoteLeadOne lead x) rest
+/-- The last character the inlines of `xs` before index `n` set, read back from there. -/
+public def lastSetBefore (xs : Array Inline) (n : Nat) : Option Char :=
+  match n with
+  | 0 => none
+  | k + 1 =>
+    if h : k < xs.size then (lastSet xs[k]).orElse fun _ => lastSetBefore xs k
+    else none
+termination_by (sizeOf xs, n)
+decreasing_by
+  · simp_wf
+    have := Array.sizeOf_getElem xs k h
+    omega
+  · simp_wf
+    exact Prod.Lex.right _ (Nat.lt_succ_self k)
 
 end
 
 /-- The character text set after `xs` follows in reading order, `none` where `xs` sets none. -/
-public def quoteLead (xs : Array Inline) : Option Char := quoteLeadList none xs.toList
+public def quoteLead (xs : Array Inline) : Option Char := lastSetBefore xs xs.size
 
 @[simp] public theorem quoteLead_empty : quoteLead #[] = none := by
-  simp [quoteLead, quoteLeadList]
+  simp [quoteLead, lastSetBefore]
 
 /-- One run onto a merge: a text run after a text run joins it. -/
 @[expose] public def mergeStep (out : Array Inline) (x : Inline) : Array Inline :=

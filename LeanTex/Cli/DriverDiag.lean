@@ -317,19 +317,30 @@ public def inputMissing (name : String) (span : Option Span) (command : String :
   Diag.of .E0502 s!"{what} '{name}' is not there; its content is absent" span
     (help := "\\allow{E0502} accepts the loss")
 
-/-- W0503: a `.bib` file `\bibliography` names is not there; the reference list stays
-empty and every citation shows `?`. -/
-public def bibMissing (name looked : String) (span : Option Span) : Diag :=
-  Diag.of .W0503 s!"'\\bibliography' file '{name}' is not there; the reference list is empty \
-and every citation shows '?'"
-    span (help := s!"put the file at {looked}, or correct its name in \\bibliography")
-    (subject := some ("bibfile:" ++ name)) (carries := [.W0351])
+/-- What names a missing `.bib` file: the `\bibliography` command that requested it, else
+biblatex's resource. -/
+private def bibNamed (name : String) (command : Option String) : String × String :=
+  match command with
+  | some c => (s!"'{c}' file '{name}'", s!"correct its name in {c}")
+  | none => (s!"the bibliography resource '{name}'", "correct the resource's name")
+
+/-- W0503: a `.bib` file the list's `command` names is not there; the reference list stays empty
+and every citation shows `?`, unless the document lists entries of its own. -/
+public def bibMissing (name looked : String) (span : Option Span)
+    (command : Option String := some "\\bibliography") (own : Bool := false) : Diag :=
+  let rest := if own then "the reference list holds only the document's own entries"
+    else "the reference list is empty and every citation shows '?'"
+  let (what, fix) := bibNamed name command
+  Diag.of .W0503 s!"{what} is not there; {rest}"
+    span (help := s!"put the file at {looked}, or {fix}")
+    (subject := some ("bibfile:" ++ name)) (carries := if own then [] else [.W0351])
 
 /-- W0424: one `.bib` file of several a bibliography names is not there;
 the list holds the entries of the files that are, and every citation of
 an entry only the missing file holds shows `?`, named (W0351). -/
-public def bibMissingAmong (name looked : String) (span : Option Span) : Diag :=
-  Diag.of .W0424 s!"'\\bibliography' file '{name}' is not there; the reference list holds the \
+public def bibMissingAmong (name looked : String) (span : Option Span)
+    (command : Option String := some "\\bibliography") : Diag :=
+  Diag.of .W0424 s!"{(bibNamed name command).1} is not there; the reference list holds the \
 entries of the other files" span
     (help := s!"put the file at {looked}, or drop '{name}' from the list of files")
     (subject := some ("bibfile:" ++ name))

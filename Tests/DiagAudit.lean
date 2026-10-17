@@ -173,7 +173,7 @@ def registry : List AuditRow :=
    ⟨.W0423, .keep, .degraded, check% bibRelatedChecks⟩,
    ⟨.W0424, .keep, .degraded, check% bibSourcesChecks⟩,
    ⟨.W0503, .keep, .degraded, check% Tests.BibEdges.missingChecks⟩,
-   ⟨.W0450, .keep, .native, check% Tests.BibEdges.duplicateChecks⟩,
+   ⟨.W0450, .keep, .degraded, check% Tests.BibEdges.duplicateChecks⟩,
    ⟨.W0425, .keep, .degraded, check% biblatexXdataChecks⟩,
    ⟨.W0426, .keep, .degraded, check% bibStringStoreChecks⟩,
    ⟨.W0427, .keep, .degraded, check% biblatexLocaleSortChecks⟩,

@@ -13,10 +13,12 @@ open Ir
 
 public theorem pending_named (table : RefTable) (spanOf : String → Option Span)
     (sources : Array (String × String)) (doc : Doc) (cv : Bib.FieldReading)
+    {sites : Array CiteSite}
     (fetched : Array (Image.Request × Image.Fetch))
-    (hcov : fetched.map (·.1) = imageRequests (Bib.apply sources doc cv).1) :
-    ∀ p ∈ pending (Bib.apply sources doc cv).1 (Image.fulfilRequests fetched).1,
-      ∃ d ∈ refDiags table spanOf (Bib.apply sources doc cv).1 ++ (Image.fulfilRequests fetched).2,
+    (hcov : fetched.map (·.1) = imageRequests (Bib.apply sources doc cv sites).1) :
+    ∀ p ∈ pending (Bib.apply sources doc cv sites).1 (Image.fulfilRequests fetched).1,
+      ∃ d ∈ refDiags table spanOf (Bib.apply sources doc cv sites).1 ++
+          (Image.fulfilRequests fetched).2,
         d.mentions p = true := by
   intro p hp
   unfold pending at hp

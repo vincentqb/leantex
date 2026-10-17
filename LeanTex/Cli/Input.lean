@@ -163,19 +163,17 @@ private def listable (found : Array LeanFactsFile.BibFile) (span : Span) :
 reference list's file names cannot hold; its entries are not read" (some span)
     (help := "rename the file or its folder without a comma") (subject := some "code:bibliography"))
 
-/-- A bibliography file's text as the document's reference list reads it at `shown`: under the
-declaration in force in a TeX document, else as UTF-8, its help in the document's surface. -/
-private def bibTextAt (shown : String) (bytes : ByteArray) : ReadM Encoding.FileText := do
+/-- A bibliography file's keys, parsed once a run from its text as the document's reference list
+decodes it: under the declaration in force in a TeX document, else as UTF-8; the list's own read
+names what the decoding replaced. -/
+private def keysOnce (f : LeanFactsFile.BibFile) : ReadM (Std.HashSet String) := do
   let log ← get
+  if let some (_, ks) := log.bibKeys.find? (·.1 == f.path) then return ks
   let under := match log.fixed with
     | some d => d
     | none => log.ledger.declared <|> log.guess
-  return if log.surface == .tex then Encoding.readTex under shown bytes
-    else Encoding.readMarkdown shown bytes
-
-/-- A bibliography file's keys, parsed once a run from the text its reference list reads. -/
-private def keysOnce (f : LeanFactsFile.BibFile) (text : String) : ReadM (Std.HashSet String) := do
-  if let some (_, ks) := (← get).bibKeys.find? (·.1 == f.path) then return ks
+  let text := if log.surface == .tex then (Encoding.readTex under f.path f.bytes).text
+    else (Encoding.readMarkdown f.path f.bytes).text
   let ks := (Bib.keysOf text).foldl (·.insert ·) {}
   modify fun log => { log with bibKeys := log.bibKeys.push (f.path, ks) }
   return ks
@@ -219,11 +217,7 @@ private def readLean (dir : System.FilePath) (ask : LeanAsk) : ReadM (Array Pars
           (base := some dir.toString) (entry := some entry))
       else pure (#[], #[])
     let (found, commaDiags) := listable found ask.site
-    let read ← found.mapM fun f =>
-      bibTextAt (if (System.FilePath.mk f.name).isAbsolute then f.name else (dir / f.name).toString)
-        f.bytes
-    let keyed ← (found.zip read).mapM fun (f, r) => return (f, ← keysOnce f r.text)
-    let readDiags := read.foldl (init := #[]) fun ds r => ds ++ r.diags
+    let keyed ← found.mapM fun f => return (f, ← keysOnce f)
     let keys := keyed.foldl (init := {}) fun ks (_, k) => k.fold (init := ks) fun acc x => acc.insert x
     let (raws, ds) := Code.includeLean path.toString text showing facts place ask.site entry
       (codeRefs found keys)
@@ -233,7 +227,7 @@ private def readLean (dir : System.FilePath) (ask : LeanAsk) : ReadM (Array Pars
       joins := citing.foldl (fun js (f, _) => if js.contains f.name then js else js.push f.name)
         log.joins
       reads := log.reads ++ found.map (·.path) }
-    return (raws, ds ++ factDiags ++ bibDiags ++ commaDiags ++ readDiags)
+    return (raws, ds ++ factDiags ++ bibDiags ++ commaDiags)
 
 /-- `\inputlean[options]{file}`, its options read as TeX spells them. -/
 private def inputleanAsk (request : Compat.InputRequest) : LeanAsk :=
@@ -420,11 +414,17 @@ public def resolveBibliography (file : String) (doc : Ir.Doc) (cv : Bib.FieldRea
       | .error d => diags := diags.push { d with span := spanOf src }
     else
       missing := missing.push (src, path.toString)
+  -- A missing file is named in the command that requested it, a biblatex list's as its resource.
+  let commandOf (src : String) : Option String :=
+    match (spanOf src).bind (·.pos.command) with
+    | some "\\printbibliography" => none
+    | _ => some "\\bibliography"
+  let own := !(Ir.ownBibItemsBlocks doc.body).isEmpty
   let missingDiags := missing.map fun (src, looked) =>
     if doc.surface == .markdown then
       DriverDiag.bibMissingMarkdown (!sources.isEmpty) src looked (spanOf src)
-    else if sources.isEmpty then DriverDiag.bibMissing src looked (spanOf src)
-    else DriverDiag.bibMissingAmong src looked (spanOf src)
+    else if sources.isEmpty then DriverDiag.bibMissing src looked (spanOf src) (commandOf src) own
+    else DriverDiag.bibMissingAmong src looked (spanOf src) (commandOf src)
   let (doc, applyDiags) := Bib.apply sources doc cv sites
   return (Bib.resolveListRefs labels doc, diags ++ missingDiags ++ applyDiags, ledger)
 
@@ -514,11 +514,9 @@ public def readDocument (file : String) (bytes : ByteArray)
           Host.runIO (LeanFactsFile.bibFor file showing.bibliography ⟨file, {}⟩)
         else pure (#[], #[])
       let (found, commaDiags) := listable found ⟨file, {}⟩
-      -- The keys a page cites by are the ones its reference list reads.
-      let read := found.map fun f => Encoding.readMarkdown (besideDocument file f.name).toString f.bytes
-      let refs := codeRefs found (read.foldl (init := {}) fun ks r =>
-        (Bib.keysOf r.text).foldl (·.insert ·) ks)
-      let commaDiags := commaDiags ++ read.foldl (init := #[]) fun ds r => ds ++ r.diags
+      -- The keys a page cites by are the ones its reference list decodes; the list names the bytes.
+      let refs := codeRefs found (found.foldl (init := {}) fun ks f =>
+        (Bib.keysOf (Encoding.readMarkdown f.path f.bytes).text).foldl (·.insert ·) ks)
       let bibRead := found.map (·.path)
       let t ← IO.monoMsNow
       let (raws, ds) := Surface.readCode lang file text facts place refs

@@ -1070,12 +1070,12 @@
 ⚠ [W0449]
   the 'math' face is declared here, and the document sets no mathematics
   suggestion: delete the 'math' face's entry, or \allow{W0449} keeps it
-── W0450 (config) a .bib key names a second entry; the first entry stands
+── W0450 (degraded) a .bib key names a second entry setting other fields; the first entry stands
 ⚠ [W0450]
   'k' is already the key of an earlier entry; the first entry stands
   the first at refs.bib:1
   suggestion: one entry per key: delete this one or give it a key of its own
-── W0503 (degraded) a bibliography file is not there; the reference list is empty and every citation shows ?
+── W0503 (degraded) a bibliography file is not there; its entries are absent and what cites them is unresolved
 ⚠ [W0503]
   '\bibliography' file 'references' is not there; the reference list is empty and every citation shows '?'
   suggestion: put the file at ./references.bib, or correct its name in \bibliography

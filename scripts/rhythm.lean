@@ -445,7 +445,7 @@ def engineOut (cache : IO.Ref (Array (String × Font))) (faces : Array FontDb.Fa
   let metric := Layout.labelMetric (Layout.Geom.ofPage pre.page) preFs
   let (doc, elabDiags, spans) := Elab.runPrepared file prepared src.diags metric
   let (doc, bibDiags, ledger) ← Input.resolveBibliography file doc
-    (Bib.FieldDoor.of file prepared).read spans.labels spans.bib src.ledger
+    (Bib.FieldDoor.of file prepared).read spans.labels spans.bib src.ledger spans.cites
   let bibDiags := bibDiags ++ ledger.notes
   let fs ← Hermetic.fontSetFor cache oneFace faces fontsDir doc
   let (store, imgDiags, _, _) ← Hermetic.storeFor rhythmDir doc
@@ -713,7 +713,7 @@ def engineHtml (cache : IO.Ref (Array (String × Font))) (faces : Array FontDb.F
   let metric := Layout.labelMetric (Layout.Geom.ofPage pre.page) preFs
   let (doc, _, spans) := Elab.runPrepared file prepared src.diags metric
   let (doc, _, _) ← Input.resolveBibliography file doc
-    (Bib.FieldDoor.of file prepared).read spans.labels spans.bib src.ledger
+    (Bib.FieldDoor.of file prepared).read spans.labels spans.bib src.ledger spans.cites
   let fs ← Hermetic.fontSetFor cache oneFace faces fontsDir doc
   let (store, _, read, _) ← Hermetic.storeFor rhythmDir doc
   let css : HtmlDoc.CssMode := match cssFor doc.output.css with

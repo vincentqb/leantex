@@ -2114,6 +2114,16 @@ private def settleFieldCites (run : Array String → ListRun) (canon : String �
     settleFieldCites run canon left more
 termination_by uncited.length
 
+/-- An entry's fields as BibTeX sets them, white space runs one space, in name order. -/
+private def setFields (e : Entry) : List (String × String) :=
+  let one (v : String) : String :=
+    " ".intercalate ((v.splitOn " ").flatMap (·.splitOn "\n") |>.flatMap (·.splitOn "\t")
+      |>.flatMap (·.splitOn "\r") |>.filter (!·.isEmpty))
+  (e.fields.toList.map fun (k, v) => (k, one v)).mergeSort fun a b => a.1 ≤ b.1
+
+/-- Whether a repeated entry sets what the first does, its fields in any order. -/
+private def sameEntry (a b : Entry) : Bool := a.kind == b.kind && setFields a == setFields b
+
 /-- The document's citations and reference lists resolved
 against its `.bib` sources. -/
 private def analyse (sources : Array (String × String)) (doc : Ir.Doc) (rd : FieldReading)
@@ -2153,7 +2163,7 @@ private def analyse (sources : Array (String × String)) (doc : Ir.Doc) (rd : Fi
       for e in parsed.entries do
         if seen.contains e.key then
           if let some (f, first) := firstAt.get? e.key then
-            unless first.kind == e.kind && first.fields == e.fields do
+            unless sameEntry first e do
               repeats := repeats.push (e.key, ⟨sourceName src, e.pos⟩, s!"{sourceName f}:{first.pos.line}")
         else
           entries := entries.push e
@@ -2499,20 +2509,30 @@ private def analyse (sources : Array (String × String)) (doc : Ir.Doc) (rd : Fi
             (subject := some s!"bibdate:{r.key}:month"))
   let citedBy : Std.HashMap String String := (fieldCites rendered).foldl (init := {})
     fun m (k, by_) => if m.contains (canon k) then m else m.insert (canon k) by_
-  -- A list no file of which was read is the missing files' loss, its citations' marks with it.
-  let unread := !requested.isEmpty && requested.all fun src => !sources.any (·.1 == src)
+  -- premise: Tests.BibEdges.missingChecks — a list no file of which was read is the missing
+  -- files' loss, its citations' marks with it
+  let unread := own.isEmpty && !requested.isEmpty &&
+    requested.all fun src => !sources.any (·.1 == src)
+  let siteOf : Std.HashMap (String × Bool) Ir.CiteSite := sites.foldl (init := {}) fun m c =>
+    if m.contains (c.key, c.nocite) then m else m.insert (c.key, c.nocite) c
   unless (requested.isEmpty && own.isEmpty) || unread do
     for k in cited do
       if (find k).isNone then
-        let site := sites.find? (·.key == k)
-        let md := (site.map (·.pandoc)).getD (doc.surface != .tex)
-        let (cmd, loss) := if shown.contains k || citedBy.contains k then ("cite", "it shows as '?'")
+        let shownHere := shown.contains k
+        let site := siteOf.get? (k, !shownHere)
+        -- A key a field alone cites is spelled in TeX, as the field is read.
+        let surface := if shownHere || !citedBy.contains k then
+            (site.map (·.surface)).getD doc.surface
+          else .tex
+        let md := surface != .tex
+        let (cmd, loss) := if shownHere || citedBy.contains k then ("cite", "it shows as '?'")
           else ("nocite", if md then "its 'nocite' adds nothing" else "\\nocite adds nothing for it")
-        let atEntry : Option Span := if shown.contains k then site.map (·.span) else
+        let atEntry : Option Span := if shownHere || !citedBy.contains k then site.map (·.span) else
           (citedBy.get? k).bind fun e => (origin.get? e).map fun src =>
             ⟨sourceName src, (positions.get? e).getD {}⟩
-        -- The fix is spelled in the surface the citation was written in.
-        let spelling := if md then s!"@{k}" else s!"\\{cmd}"
+        -- The fix is spelled in the surface the citation was written in, its own command's name.
+        let written := (site.bind (·.span.pos.command)).filter (·.startsWith "\\")
+        let spelling := if md then s!"@{k}" else written.getD s!"\\{cmd}"
         diags := diags.push (Diag.of .W0351 s!"citation '{k}' has no entry in the \
           bibliography; {loss}" atEntry
           (help := if own.isEmpty then s!"add an entry with key '{k}' to the .bib file, \

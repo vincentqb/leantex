@@ -31,6 +31,19 @@ def quoteChecks (ref : IO.Ref (List String)) : IO Unit := do
       (hasStr (body src) want)
   t s!"tex quotes: literal text keeps its quote ({repr (body "\\texttt{'s}")})"
     (hasStr (body "\\texttt{'s}") "'s")
+  -- Markdown and a Lean file's documentation keep Pandoc's reading: after a citation a single quote
+  -- a later one pairs with opens.
+  let md := Ir.blocksText (elabMd (worksMeta ++ "See [@a]'quoted' here.\n")).1.body
+  t s!"md quotes: a quote after a citation opens where a later one pairs with it ({repr md})"
+    (hasStr md "‘quoted’")
+  let host := "\\documentclass{article}\n\\usepackage[citations]{markdown}\n\\begin{document}\n\
+\\markdownInput{p.md}\n\\bibliography{works}\n\\end{document}\n"
+  let inc := Ir.blocksText (includedDoc "h.tex" host [("p.md", "p.md", "See [@a]'quoted' here.\n")]).1.body
+  t s!"md quotes: an included file's quote after a citation opens as in markdown ({repr inc})"
+    (hasStr inc "‘quoted’")
+  let lean := Ir.blocksText (elabCode "M.lean" "/-! See `c`'quoted' here. -/\ndef x := 1\n").1.body
+  t s!"lean quotes: a docstring's quote after code opens as in markdown ({repr lean})"
+    (hasStr lean "‘quoted’")
   let bib := "@book{q, author = {Ash, Ada}, title = {The {GPU}'s Role, $x$'s Value and \
 \"{Best}\" Case}, publisher = {Example Press}, year = {2001}}\n"
   let (d, _) := bibBuild (citingDoc "\\nocite{q}") #[("refs", bib)]
@@ -67,6 +80,11 @@ its words ({repr (named.map fun x => (x.message, x.sites, x.span))})"
     (!ds.any (·.kind == .W0450))
   let (_, ds) := bibBuild (citingDoc "See \\cite{other}." (files := "a,b")) #[("a", a), ("b", b)]
   t "bib duplicate: a key the list does not set names nothing" (!ds.any (·.kind == .W0450))
+  let reordered := "@book{dup, year = {2001}, publisher = {Example Press},\n  title = {First\n    Notes}, \
+author = {Ash,  Ada}}\n"
+  let (_, ds) := bibBuild (citingDoc "See \\cite{dup}." (files := "a,c")) #[("a", a), ("c", reordered)]
+  t "bib duplicate: a repeat setting the same fields in another order or wrapping names nothing"
+    (!ds.any (·.kind == .W0450))
 
 /-- Invented entries over the name forms alpha.bst labels: von parts, braces, initials, a key, an
 organization, an empty author, missing and odd years. -/
@@ -88,7 +106,7 @@ def alphaBib : String :=
 @book{b6, author = {Ludo von}, title = {U6}, publisher = {P}, year = {1928}}
 @book{b7, author = {von}, title = {U7}, publisher = {P}, year = {1928}}
 @book{b8, author = {Ludo vonAshford}, title = {U8}, publisher = {P}, year = {1928}}
-@book{b9, author = {{\\v{C}}apek, Karel}, title = {U9}, publisher = {P}, year = {1928}}
+@book{b9, author = {{\\v{Z}}orbel, Ada}, title = {U9}, publisher = {P}, year = {1928}}
 @book{c1, author = {Ludo von Ashford and Bea von Birch and Cy von Cole}, title = {V1}, publisher = {P}, year = {1928}}
 @book{c2, editor = {Ludo von Ashford}, author = {}, title = {V2}, publisher = {P}, year = {1928}}
 @book{c3, author = {Ludo von Ashford}, title = {V3}, publisher = {P}}
@@ -106,12 +124,12 @@ def alphaBib : String :=
 /-- bibtex 0.99e's `alpha.bst` over `alphaBib`, its list in its order with each label as lualatex
 prints it; its et al. mark prints raised there. -/
 def alphaBst : List (String × String) :=
-  [("b5", "Ash28a"), ("a5", "Ash28b"), ("c9", "c928"), ("b9", "Čap28"), ("b3", "d’A28"),
-   ("b4", "dAB28"), ("d3", "Org28"), ("c3", "vA"), ("a8", "vA28a"), ("a1", "vA28b"),
-   ("a7", "va28c"), ("c2", "vA28d"), ("c5", "vA28e"), ("c7", "vA28f"), ("d2", "vA28g"),
-   ("c4", "vA28h"), ("a9", "vA+28i"), ("a6", "vA28j"), ("c6", "vA28"), ("c1", "vAvBvC28"),
-   ("a4", "vdA28"), ("b7", "von28a"), ("b6", "von28b"), ("a2", "von28c"), ("a3", "von28d"),
-   ("c8", "von28e"), ("d1", "von28f"), ("b8", "von28g"), ("b1", "vonA28a"), ("b2", "vonA28b")]
+  [("b5", "Ash28a"), ("a5", "Ash28b"), ("c9", "c928"), ("b3", "d’A28"), ("b4", "dAB28"),
+   ("d3", "Org28"), ("c3", "vA"), ("a8", "vA28a"), ("a1", "vA28b"), ("a7", "va28c"),
+   ("c2", "vA28d"), ("c5", "vA28e"), ("c7", "vA28f"), ("d2", "vA28g"), ("c4", "vA28h"),
+   ("a9", "vA+28i"), ("a6", "vA28j"), ("c6", "vA28"), ("c1", "vAvBvC28"), ("a4", "vdA28"),
+   ("b7", "von28a"), ("b6", "von28b"), ("a2", "von28c"), ("a3", "von28d"), ("c8", "von28e"),
+   ("d1", "von28f"), ("b8", "von28g"), ("b1", "vonA28a"), ("b2", "vonA28b"), ("b9", "Žor28")]
 
 /-- alpha's labels and order as alpha.bst sets them. -/
 def alphaChecks (ref : IO.Ref (List String)) : IO Unit := do
@@ -124,9 +142,9 @@ def alphaChecks (ref : IO.Ref (List String)) : IO Unit := do
   t s!"alpha: every label and the list's order are alpha.bst's ({repr off})"
     (items.toList == alphaBst)
 
-/-- A list whose one file is not there ships with its loss named once. -/
-def missingChecks (ref : IO.Ref (List String)) (binary : System.FilePath :=
-    ".lake/build/bin/leantex") : IO Unit := do
+/-- A list whose one file is not there ships with its loss named once, in the command that
+requested it. -/
+def missingChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let src := citingDoc "A claim \\cite{a} and \\cite{b}." (files := "absent")
   let doc := (elabStr src).1
@@ -136,23 +154,33 @@ def missingChecks (ref : IO.Ref (List String)) (binary : System.FilePath :=
     (ds.map (·.kind) == #[.W0503] && ds.all (·.severity == .warning) &&
       ds.all (·.carries == [.W0351]))
   t "bib missing: both citations show their mark" ((citesOf out).size == 2)
-  let binary ← IO.FS.realPath binary
+  let blx := "\\documentclass{article}\n\\usepackage{biblatex}\n\\addbibresource{absent.bib}\n\
+\\begin{document}\nA claim \\cite{a}.\n\\printbibliography\n\\end{document}\n"
+  let (bdoc, _, spans) := Elab.runRawsSpanned "doc.tex" (Parse.parse "doc.tex" (Lex.lex "doc.tex" blx).1).1
+  let (_, bds, _) ← Input.resolveBibliography "doc.tex" bdoc Bib.plainReading #[] spans.bib
+  t s!"bib missing: biblatex's file is named as its resource, never as a command it was not \
+({repr (bds.map fun d => (d.message, d.help))})"
+    (bds.map (·.kind) == #[.W0503] && bds.all fun d =>
+      hasStr d.message "resource 'absent" && !hasStr d.message "\\bibliography" &&
+        !hasStr d.message "\\printbibliography" && !d.help.any (hasStr · "\\bibliography"))
+  let ownDoc := (elabStr ("\\documentclass{article}\n\\begin{document}\nSee \\cite{o} and \\cite{a}.\n\
+\\begin{thebibliography}{9}\n\\bibitem{o} Own Notes.\n\\end{thebibliography}\n\\bibliography{absent}\n\
+\\end{document}\n")).1
+  let (_, ods, _) ← Input.resolveBibliography "doc.tex" ownDoc Bib.plainReading #[]
+  t s!"bib missing: beside the document's own entries the file's loss leaves each '?' named \
+({repr (ods.map fun d => (d.code, d.message))})"
+    (ods.any (fun d => d.kind == .W0503 && hasStr d.message "own entries" && d.carries.isEmpty) &&
+      ods.any (fun d => d.kind == .W0351 && d.subject == some "a"))
   let font ← IO.FS.realPath "testdata/corpus/fonts/OpenSans-Regular.ttf"
   IO.FS.withTempDir fun dir => do
     let dir ← IO.FS.realPath dir
-    IO.FS.createDirAll (dir / "bin")
     IO.FS.writeFile (dir / "doc.tex") src
-    let run ← IO.Process.output {
-      cmd := binary.toString, cwd := some dir
-      args := #["doc.tex", "-o", "doc.html", "--porcelain"]
-      env := #[("PATH", some (dir / "bin").toString),
-        ("XDG_CACHE_HOME", some (dir / "cache").toString), ("LEANTEX_FONT", some font.toString)] }
-    let codes := ((run.stdout.splitOn "\n").filter (!·.isEmpty)).filterMap fun line =>
-      ((Lean.Json.parse line).toOption.bind fun j => (j.getObjValAs? String "code").toOption)
+    let run ← engineRun dir #["doc.tex", "-o", "doc.html", "--porcelain"] font (dir / "cache")
+    let codes := (porcelainCodes run.stdout).map (·.1)
     t s!"bib missing CLI: the page ships (exit {run.exitCode}, {codes})"
       (run.exitCode == 0 && (← (dir / "doc.html").pathExists))
     t s!"bib missing CLI: the file's loss is named once, no citation apart ({codes})"
-      (codes.count "W0503" == 1 && codes.count "W0351" == 0)
+      (codes.toList.count "W0503" == 1 && codes.toList.count "W0351" == 0)
 
 /-- A TeX host including markdown, read as the driver reads it, its reference list resolved with
 the elaboration's citation sites. -/
@@ -189,33 +217,55 @@ year = {2001}}\n"
     (missing.size == 1 && missing.all fun d =>
       d.span.any (fun s => s.file == "p.md" && s.pos.line == 2) &&
         d.help.any (hasStr · "@ghost") && !d.help.any (hasStr · "\\cite"))
+  let (_, ds) := bibBuild (citingDoc "See \\citep{a}.\n\\nocite{lost}" (style := "plainnat"))
+    #[("refs", bib)]
+  let missing := ds.filter (·.kind == .W0351)
+  t s!"cite site: a listed-only key with no entry is named at its command, in its own name \
+({repr (missing.map fun d => (d.span, d.help))})"
+    (missing.size == 1 && missing.all fun d =>
+      d.span.any (fun s => s.pos.line == 4) && d.help.any (hasStr · "\\nocite"))
+  let fieldBib := bib ++ "@misc{f, title = {Field Notes}, note = {See \\cite{ghost}}, year = {2001}}\n"
+  let (_, ds) := mdBibBuild (worksMeta ++ "Cites [@f].\n") #[("works.bib", fieldBib)]
+  let missing := ds.filter (·.kind == .W0351)
+  t s!"cite site: a markdown document's field citation is named in TeX, as the field reads \
+({repr (missing.map fun d => d.help)})"
+    (missing.size == 1 && missing.all fun d =>
+      d.help.any (hasStr · "\\cite") && !d.help.any (hasStr · "@ghost"))
 
-/-- A Lean page's bibliography that is not UTF-8: its keys are the ones its reference list reads,
-so a key holding a byte that is not text stays as written, the file's loss named once. -/
+/-- A Lean page's bibliography that is not UTF-8: its keys are the ones its reference list decodes,
+so a key holding a byte that is not text stays as written, the bytes named once where the list reads
+them and nowhere for a page that cites nothing. -/
 def encodingKeyChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let latin1 : ByteArray := "@book{caf".toUTF8 ++ ⟨#[0xE9]⟩ ++ "2001, author = {Ash, Ada}, \
 title = {Caf".toUTF8 ++ ⟨#[0xE9]⟩ ++ " Notes}, publisher = {Example Press}, year = {2001}}\n\
 @book{ash2001, author = {Ash, Ada}, title = {Alpha Notes}, publisher = {Example Press}, \
 year = {2001}}\n".toUTF8
-  IO.FS.withTempDir fun dir => do
-    IO.FS.writeBinFile (dir / "refs.bib") latin1
+  let build (dir : System.FilePath) (text : String) : IO (Ir.Doc × Array Diag) := do
     let page := (dir / "F.lean").toString
-    let text := "-- leantex: bibliography = refs.bib\n/-! See [café2001] and [ash2001]. -/\n\n\
-def x := 1\n"
     let read ← Input.readDocument page text.toUTF8
     let prepared := Elab.prepareExecuted page read.executed
     let (doc, ds, spans) := Elab.runPrepared page prepared read.diags (fun _ _ => {})
     let (doc, bds, ledger) ← Input.resolveBibliography page doc (Bib.FieldDoor.of page prepared).read
       spans.labels spans.bib read.ledger spans.cites
-    let all := Bib.accountFront ds bds ledger.notes (Bib.refJudge spans doc)
-    let bytes := all.filter fun d => d.kind == .W0002 && d.severity == .warning
+    return (doc, Bib.accountFront ds bds ledger.notes (Bib.refJudge spans doc))
+  IO.FS.withTempDir fun dir => do
+    IO.FS.writeBinFile (dir / "refs.bib") latin1
+    let (doc, all) ← build dir "-- leantex: bibliography = refs.bib\n\
+/-! See [café2001] and [ash2001]. -/\n\ndef x := 1\n"
+    let bytes := all.filter (·.kind == .W0002)
     t s!"bib encoding: the page cites the key its list holds, the other as written \
 ({keysOf doc}, {repr (inkText doc.body)})"
       (keysOf doc == ["ash2001"] && hasStr (inkText doc.body) "[café2001]" &&
         !all.any (·.kind == .W0351))
     t s!"bib encoding: the file's bytes are named once, in no TeX package's words \
-({repr (bytes.map (·.help))})"
-      (bytes.size == 1 && bytes.all fun d => !d.help.any (hasStr · "inputenc"))
+({repr (bytes.map fun d => (d.severity, d.sites, d.help))})"
+      (bytes.size == 1 && bytes.all fun d => d.severity == .warning &&
+        !d.help.any (hasStr · "inputenc"))
+    let (_, quiet) ← build dir "-- leantex: bibliography = refs.bib\n/-! Cites nothing. -/\n\n\
+def x := 1\n"
+    t s!"bib encoding: a page citing nothing reads no list and names no bytes \
+({repr (quiet.map (·.code))})"
+      (!quiet.any (·.kind == .W0002))
 
 end Tests.BibEdges
