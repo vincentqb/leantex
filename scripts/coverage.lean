@@ -509,6 +509,8 @@ counting witness was the dimension-operand place, whose own complaint it stood b
     usage := ⟨true, "\\newenvironment{zzbox}{[}{]}\n\\renewenvironment{zzbox}{(}{)}"⟩,
     why := "a preamble definer of three arguments; no probe shape has three, and its one \
 counting witness was the dimension-operand place, whose own complaint it stood beside" },
+  { name := "raisebox", side := .probe, usage := ⟨false, "a\\raisebox{1pt}{x}b"⟩,
+    why := "a native box whose lift is a length, which no probe token is" },
   { name := "right", side := .probe, usage := ⟨false, "$\\left( x \\right)$"⟩,
     why := "a delimiter operand: no probe token is a delimiter" },
   { name := "rule", side := .probe, usage := ⟨false, "\\rule{1pt}{1pt}"⟩,

@@ -68,6 +68,7 @@ def readCases : List (String × String) :=
   [("a colour painting text", article probeColor "\\textcolor{probeink}{Words.}"),
    ("a colour in a mix", article probeColor "\\textcolor{probeink!50!white}{Words.}"),
    ("a colour as a declaration", article probeColor "{\\color{probeink} Words.}"),
+   ("a colour grounding a box", article probeColor "\\colorbox{probeink}{Words.}"),
    ("a colour its own command sets", article probeColor "\\probeink{Words.}"),
    ("a colour another declares from", article (probeColor ++ "\\colorlet{probedeep}{probeink!60!black}")
      "\\textcolor{probedeep}{Words.}"),
@@ -123,7 +124,7 @@ def readCases : List (String × String) :=
 /-- Each colour named only by a construct the engine refuses or cannot resolve, with that refusal's
 code: the refusal is the one accounting, and the colour is the document's in use. -/
 def refusedCases : List (String × DiagCode × String) :=
-  [("an unknown command", .W0301, article probeColor "\\colorbox{probeink}{Words.}"),
+  [("an unknown command", .W0301, article probeColor "\\probebox{probeink}{Words.}"),
    ("an unknown preamble command", .W0301,
      article (probeColor ++ "\\titleformat{\\section}{\\color{probeink}}{\\thesection}{1em}{}")
        "\\section{Opening}Words."),

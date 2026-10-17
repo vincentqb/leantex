@@ -325,14 +325,19 @@ def cssListChecks (ref : IO.Ref (List String)) : IO Unit := do
   let after (pre : String) (s : String) : Option String :=
     if s.startsWith pre then some (s.drop pre.length).toString else none
   let named := subjects.filterMap fun s =>
-    (after "figure:svg:property:style: the selector '" s).map (·.dropEnd 1 |>.toString)
+    (after "figure:svg:css:selector '" s).map (·.dropEnd 1 |>.toString)
   check ref s!"CSS lists: each dropped rule names its whole selector ({named})"
     (named.toList == selectors)
   let families := subjects.filterMap (after "svg:font:")
   check ref s!"CSS lists: a quoted family holding a comma is named whole ({families})"
     (families == #["Invented Grotesk, Narrow", "Bang!"])
   check ref s!"CSS lists: a semicolon inside brackets ends no declaration ({subjects})"
-    (subjects.all fun s => !hasStr s "the declaration")
+    (subjects.all fun s => !hasStr s "css:declaration")
+  let words := (f.diags ++ shaped.map (·.2)).filterMap fun d =>
+    if hasStr d.message "CSS selector" then some d.message else none
+  check ref s!"CSS lists: a dropped rule's line names its selector inside one pair of quotes ({words})"
+    (!words.isEmpty && words.all fun w =>
+      !hasStr w "''" && !hasStr w "style:" && hasStr w "without its CSS selector 'rect")
   let fills := ((f.vector.map (·.marks)).getD #[]).filterMap fun m => match m with
     | .paint _ _ (some fl) _ _ _ => match fl.paint with
       | .solid c => some (c.r.toNat, c.g.toNat, c.b.toNat)
@@ -362,7 +367,7 @@ def cssListChecks (ref : IO.Ref (List String)) : IO Unit := do
     (bytesContain pdf "0 0 1 rg" && bytesContain pdf "1 1 0 rg")
   let blockSubjects := (bf.diags ++ blockShaped.map (·.2)).filterMap (·.subject)
   let blockNamed := blockSubjects.filterMap fun s =>
-    (after "figure:svg:property:style: the selector '" s).map (·.dropEnd 1 |>.toString)
+    (after "figure:svg:css:selector '" s).map (·.dropEnd 1 |>.toString)
   check ref s!"CSS lists: a selector is named whole and on one line ({blockNamed})"
     (blockNamed == #["rect[title=x), y]", "rect .ok..bad"])
   check ref s!"CSS lists: a family list CSS reads whole or drops names no family it lacks ({blockSubjects})"

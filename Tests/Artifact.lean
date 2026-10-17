@@ -835,7 +835,7 @@ def artLaidGlyphs (geom : Layout.Geom) (p : Layout.PageOut) : Array Dim.Sp := Id
         x := x + w
       | .gap w _ | .decoratedGap w _ _ => x := x + w
       | .rule w _ _ _ | .decoration _ w _ _ _ => x := x + w
-      | .image _ w _ _ => x := x + w
+      | .image _ w _ _ _ => x := x + w
       | .poly _ _ => pure ()
   return out
 

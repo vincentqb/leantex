@@ -325,7 +325,7 @@ def inkSpanOf (l : Layout.LineOut) : Option (Dim.Sp × Dim.Sp) := Id.run do
       if first.isNone then first := some px
       px := px + w
       last := some px
-    | .gap w _ | .decoratedGap w _ _ | .rule w .. | .decoration _ w .. | .image _ w _ _ =>
+    | .gap w _ | .decoratedGap w _ _ | .rule w .. | .decoration _ w .. | .image _ w _ _ _ =>
       px := px + w
     | .poly .. => pure ()
   return match first, last with

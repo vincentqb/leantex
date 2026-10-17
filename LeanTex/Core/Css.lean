@@ -17,10 +17,47 @@ public structure Decl where
   important : Bool
   deriving Repr, BEq, Inhabited
 
+/-- What a sheet holds that this reader does not read: a rule's selector outside the subset or an
+empty one, text no rule holds, a declaration it cannot read, whose string a line end breaks where
+`broken`, or a spelling it refuses. -/
+public inductive Unread where
+  | selector (text : String)
+  | emptySelector
+  | stray (text : String)
+  | declaration (text : String) (broken : Bool)
+  | escape
+  | atRule
+  | nestedCall (fn : String)
+  | openCall (fn : String)
+  | call (fn : String)
+  | openString
+  deriving Repr, BEq, Inhabited
+
+/-- The noun phrase naming what is unread. -/
+@[expose] public def Unread.words : Unread → String
+  | .selector t => s!"selector '{t}'"
+  | .emptySelector => "empty selector"
+  | .stray t => s!"text '{t}' outside any rule"
+  | .declaration t broken =>
+    s!"declaration '{t}'" ++ if broken then ", whose string a line end breaks" else ""
+  | .escape => "escape"
+  | .atRule => "at-rule"
+  | .nestedCall f => s!"nested function in {f}()"
+  | .openCall f => s!"unterminated {f}()"
+  | .call f => s!"function {f}()"
+  | .openString => "unterminated string"
+
+/-- The same noun phrase with its article. -/
+@[expose] public def Unread.prose (u : Unread) : String :=
+  match u with
+  | .selector _ | .stray _ | .declaration .. | .call _ => "the " ++ u.words
+  | .emptySelector | .escape | .atRule | .openCall _ | .openString => "an " ++ u.words
+  | .nestedCall _ => "a " ++ u.words
+
 /-- What a text says that this reader does not read: a refused spelling, or one outside the subset. -/
 public inductive Problem where
-  | refused (what : String)
-  | unsupported (what : String)
+  | refused (what : Unread)
+  | unsupported (what : Unread)
   deriving Repr, BEq, Inhabited
 
 public inductive Combinator where
@@ -190,7 +227,7 @@ public def admitsCall (name arg : String) : Bool :=
 
 /-- The first spelling this reader refuses: an escape or an at-sign anywhere, an unterminated
 string, or a function outside strings that is nested, unterminated or not admitted. -/
-public def refusedIn (s : String) : Option String := Id.run do
+public def refusedIn (s : String) : Option Unread := Id.run do
   let cs := s.toList.toArray
   let mut i := 0
   let mut quote : Option Char := none
@@ -198,8 +235,8 @@ public def refusedIn (s : String) : Option String := Id.run do
   for _ in [0:cs.size + 1] do
     if i ≥ cs.size then break
     let c := cs[i]?.getD ' '
-    if c == '\\' then return some "an escape"
-    if c == '@' then return some "an at-rule"
+    if c == '\\' then return some .escape
+    if c == '@' then return some .atRule
     match quote with
     | some q =>
       if c == q || isLineEnd c then quote := none
@@ -218,17 +255,17 @@ public def refusedIn (s : String) : Option String := Id.run do
           if cs[j]? == some ')' then
             closed := true
             break
-          if cs[j]? == some '(' then return some s!"a nested function in {ident}()"
+          if cs[j]? == some '(' then return some (.nestedCall ident)
           arg := arg.push (cs[j]?.getD ' ')
           j := j + 1
-        if !closed then return some s!"an unterminated {ident}()"
-        if !admitsCall ident arg then return some s!"the function {ident}()"
+        if !closed then return some (.openCall ident)
+        if !admitsCall ident arg then return some (.call ident)
         ident := ""
         i := j + 1
       else
         if c.isAlphanum || c == '-' || c == '_' then ident := ident.push c else ident := ""
         i := i + 1
-  if quote.isSome then return some "an unterminated string"
+  if quote.isSome then return some .openString
   return none
 
 /-- Whether a string in `s` is broken by a line end (CSS Syntax 3 §4.3.5). -/
@@ -295,15 +332,15 @@ public def parseDecls (text : String) : Except Problem (Array Decl) := do
     let p := part.trimAscii.toString
     if p.isEmpty then continue
     if brokenString part then
-      throw (.unsupported s!"the declaration '{oneLine p}', whose string a line end breaks")
+      throw (.unsupported (.declaration (oneLine p) true))
     match p.splitOn ":" with
     | prop :: rest@(_ :: _) =>
       let prop := prop.trimAscii.toString.toLower
       let (value, important) := importance (":".intercalate rest).trimAscii.toString
       if prop.isEmpty || !prop.all (fun c => c.isAlphanum || c == '-') then
-        throw (.unsupported s!"the declaration '{oneLine p}'")
+        throw (.unsupported (.declaration (oneLine p) false))
       out := out.push { prop, value, important }
-    | _ => throw (.unsupported s!"the declaration '{oneLine p}'")
+    | _ => throw (.unsupported (.declaration (oneLine p) false))
   return out
 
 /-- A character of a CSS identifier: a letter, digit, `-`, `_` or non-ASCII. -/
@@ -432,12 +469,12 @@ public def parseCompound (s : String) : Option Compound := do
 
 /-- One complex selector's text: compounds joined by white space (descendant) or `>` (child); one
 outside the subset is named whole. -/
-public def parseSelector (s : String) : Except String Selector := do
-  let outside := s!"the selector '{oneLine s}'"
+public def parseSelector (s : String) : Except Unread Selector := do
+  let outside := Unread.selector (oneLine s)
   let spaced := (s.replace ">" " > ").trimAscii.toString
   let words := (spaced.split isWs).toList.map (·.toString) |>.filter (!·.isEmpty)
   match words with
-  | [] => throw "an empty selector"
+  | [] => throw .emptySelector
   | first :: more =>
     let some head := parseCompound first | throw outside
     let mut rest : Array (Combinator × Compound) := #[]
@@ -460,11 +497,11 @@ public def parseSelector (s : String) : Except String Selector := do
 /-- A style sheet's rules in order, each the text before a `{` block and the block, the end of the
 text closing a block still open (CSS Syntax 3 §5.5.3, §5.5.9), a rule outside the subset dropped and
 named and a refused spelling refusing the sheet. -/
-public def parseSheet (text : String) : Except String (Array Rule × Array String) := do
+public def parseSheet (text : String) : Except Unread (Array Rule × Array Unread) := do
   let text := stripComments text
   if let some what := refusedIn text then throw what
   let mut rules : Array Rule := #[]
-  let mut dropped : Array String := #[]
+  let mut dropped : Array Unread := #[]
   let mut prelude := ""
   for a in atoms text do
     if a.head? != some '{' then
@@ -479,7 +516,7 @@ public def parseSheet (text : String) : Except String (Array Rule × Array Strin
       | _, .error (.refused why) => throw why
       prelude := ""
   unless prelude.trimAscii.isEmpty do
-    dropped := dropped.push s!"the text '{oneLine prelude}'"
+    dropped := dropped.push (.stray (oneLine prelude))
   return (rules, dropped)
 
 /-- What a selector reads of an element: its type, classes and id. -/

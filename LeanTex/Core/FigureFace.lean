@@ -31,11 +31,12 @@ public abbrev Answer := Except String Drawing
   | .resource _ => 5
   | .font _ => 6
   | .budget _ => 7
+  | .css _ => 8
 
 /-- A loss's name. -/
 @[expose] public def lossName : Gfx.Loss → String
   | .element n | .attribute n | .property n | .value n | .operator n | .resource n
-  | .font n | .budget n => n
+  | .font n | .budget n | .css n => n
 
 /-- A loss from its record's tag and name. -/
 @[expose] public def lossOf : Nat → String → Option Gfx.Loss
@@ -47,6 +48,7 @@ public abbrev Answer := Except String Drawing
   | 5, n => some (.resource n)
   | 6, n => some (.font n)
   | 7, n => some (.budget n)
+  | 8, n => some (.css n)
   | _, _ => none
 
 /-- A loss's record: its tag, then its name. -/

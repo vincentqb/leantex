@@ -151,8 +151,9 @@ private def definesNext (toks : Array Token) : Bool := Id.run do
   return false
 
 /-- minted's `\mintinline` and `\mint`, read from just past the command name as
-minted.sty reads them. -/
-private def mintedCall (cs : Array Char) (j : Nat) : Option (Nat × Bool × String) := Id.run do
+minted.sty reads them, or listings' `\lstinline`, which names no `{language}`, where `lang` is false. -/
+private def mintedCall (cs : Array Char) (j : Nat) (lang : Bool := true) :
+    Option (Nat × Bool × String) := Id.run do
   let some start := argGap cs j | return none
   let mut k := start
   let mut head := ""
@@ -175,11 +176,13 @@ private def mintedCall (cs : Array Char) (j : Nat) : Option (Nat × Bool × Stri
     head := strFrom cs k (m + 1)
     let some next := argGap cs (m + 1) | return none
     k := next
-  unless cs[k]? == some '{' do return none
-  let close := scanWhile cs (k + 1) (fun c => c != '}' && c != '\n' && c != '\r')
-  unless cs[close]? == some '}' do return none
-  head := head ++ strFrom cs k (close + 1)
-  let some code := argGap cs (close + 1) (comments := false) | return some (close + 1, false, head)
+  if lang then
+    unless cs[k]? == some '{' do return none
+    let close := scanWhile cs (k + 1) (fun c => c != '}' && c != '\n' && c != '\r')
+    unless cs[close]? == some '}' do return none
+    head := head ++ strFrom cs k (close + 1)
+    k := close + 1
+  let some code := argGap cs k (comments := false) | return some (k, false, head)
   -- A closing brace opens no code.
   if cs[code]? == some '}' then return none
   -- A blank line ends the code.
@@ -221,6 +224,24 @@ private def writtenControl (source : Array Char) (i : Nat) : Option String := do
   let stop := if nameChar c then scanWhile source (i + 1) nameChar
     else if c == '\r' && source[i + 2]? == some '\n' then i + 3 else i + 2
   return strFrom source i stop
+
+/-- url.sty's commands, which read their argument verbatim. -/
+@[expose] public def urlCommands : List String := ["url", "nolinkurl", "path"]
+
+/-- A url.sty command's delimited argument, read from just past the command name to its
+delimiter's next copy on the line; none where a brace, a letter, a TeX special or what opens a TikZ
+path's operation stands there (`(`, `[`, `;`, `<`, `:`, `+(`, `++`, `--`, `-|`, `|-`). -/
+private def urlDelimited (cs : Array Char) (j : Nat) : Option (Nat × Bool × String) := do
+  let k ← argGap cs j (comments := false)
+  let d ← cs[k]?
+  guard (!d.isAlphanum && !d.isWhitespace && !"{}\\%$&#^_~([;<:".contains d)
+  let next := cs[k + 1]?
+  guard (d != '+' || !(next == some '(' || next == some '+'))
+  guard (d != '-' || !(next == some '-' || next == some '|'))
+  guard (d != '|' || next != some '-')
+  let e := scanWhile cs (k + 1) (fun c => c != d && c != '\n' && c != '\r')
+  let stop := if cs[e]? == some d then e + 1 else e
+  return (stop, cs[e]? == some d, strFrom cs k stop)
 
 private structure SourceChunk where
   first : Nat
@@ -332,6 +353,8 @@ public def lex (file : String) (input : String) : Array Token × Array Diag := I
   let mut i := 0
   let mut pos : Pos := {}
   let mut closeEol := false
+  -- How deep the scan stands in TikZ pictures, whose `\path` is TikZ's own.
+  let mut tikz : Nat := 0
   for _ in [0:cs.size + 1] do
     if h : i < cs.size then
       let c := cs[i]
@@ -370,6 +393,8 @@ public def lex (file : String) (input : String) : Array Token × Array Diag := I
           if nameChar c1 then
             let j := scanWhile cs (i + 1) nameChar
             let name := strFrom cs (i + 1) j
+            if (name == "begin" || name == "end") && matchAt cs j "{tikzpicture}".toList.toArray then
+              tikz := if name == "begin" then tikz + 1 else tikz - 1
             if name == "begin" &&
                 verbEnvs.any (fun e => matchAt cs j e.2.1) then
               -- verbatim and the listing environments capture raw content in one token.
@@ -409,11 +434,18 @@ public def lex (file : String) (input : String) : Array Token × Array Diag := I
               i := stop
             else if let some (stop, closed, call) :=
                 (if (name == "mintinline" || name == "mint") && !definesNext toks then
-                  mintedCall cs j else none) then
-              -- minted's commands read their code raw, as `\verb` does.
+                  mintedCall cs j
+                else if name == "lstinline" && !definesNext toks then mintedCall cs j (lang := false)
+                else if urlCommands.contains name && tikz == 0 && !definesNext toks then
+                  urlDelimited cs j
+                else none) then
+              -- minted's, listings' and url.sty's inline commands read their argument raw, as
+              -- `\verb` does.
               unless closed do
                 diags := diags.push (Diag.of .E0102
-                  s!"unclosed \\{name}: its code's closing delimiter must come before a blank line"
+                  (if urlCommands.contains name then
+                    s!"unclosed \\{name}: its delimiter's second copy must end the argument on its line"
+                  else s!"unclosed \\{name}: its code's closing delimiter must come before a blank line")
                   (some ⟨file, here⟩))
               toks := toks.push ⟨.verb name call, here⟩
               pos := posOver cs i stop pos

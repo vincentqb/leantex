@@ -24,7 +24,7 @@ def animatedFacesChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
   let out := layoutOf fonts doc (imgs := imgs)
   let placements (out : Layout.Out) := (allLines out).flatMap fun line =>
     line.segs.filterMap fun seg => match seg with
-      | .image idx w h _ => some (idx, w, h)
+      | .image idx w h _ _ => some (idx, w, h)
       | _ => none
   let shipped := placements out
   t "a differently sized poster preserves the animation's first-frame canvas"

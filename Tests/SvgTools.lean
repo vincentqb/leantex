@@ -45,7 +45,7 @@ def svgToolChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit 
     let out := layoutOf fonts doc geom none imgs
     out.pages.flatMap fun page => page.lines.flatMap fun line =>
       line.segs.filterMap fun
-        | .image idx _ _ _ => some idx
+        | .image idx _ _ _ _ => some idx
         | _ => none
   let calls ← IO.mkRef (#[] : Array String)
   let failure ← IO.mkRef (none : Option (Except IO.Error IO.Process.Output))

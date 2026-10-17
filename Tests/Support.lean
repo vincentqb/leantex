@@ -547,7 +547,7 @@ def goldenNames : List String :=
    "algorithm", "lineno", "lineno-modulo",
    "cond-newif", "cond-ifdefined", "cond-ifx", "cond-ifnum", "cond-loaded",
    "md-include", "md-include-deck", "md-cite-include", "lean-cite-include", "palette-seeds",
-   "alert-mark", "deck-sections", "deck-hooks", "contents"] ++
+   "alert-mark", "deck-sections", "deck-hooks", "contents", "boxes"] ++
   mdGoldenNames ++ codeGoldenNames.map (·.1)
 
 /-- A TikZ picture of `body`, its environment on lines of their own. -/
@@ -1097,6 +1097,8 @@ structure CensusLine where
   counted : Bool := false
   /-- The face each glyph run sets in, in run order: the page side of `Picture.labelFace_agree`. -/
   runFonts : Array Nat := #[]
+  /-- How far each glyph run's baseline stands above the line's, in run order. -/
+  runRaises : Array Dim.Sp := #[]
 
 structure CensusPage where
   lines : Array CensusLine
@@ -1254,12 +1256,14 @@ def censusOf (coveredColors : Array Ir.Color) (out : Layout.Out) (imgs : Image.S
       let mut chars := ""
       let mut runSize : Dim.Sp := 0
       let mut runFonts : Array Nat := #[]
+      let mut runRaises : Array Dim.Sp := #[]
       for seg in l.segs do
         match seg with
-        | .run idx color _ w glyphs size _ _ _ _ _ =>
+        | .run idx color _ w glyphs size _ _ raise _ _ =>
           px := px + w
           runSize := max runSize size
           runFonts := runFonts.push idx
+          unless glyphs.isEmpty do runRaises := runRaises.push raise
           if coveredColors.contains color then
             for (_, c, _) in glyphs do
               chars := chars.push c
@@ -1282,7 +1286,7 @@ def censusOf (coveredColors : Array Ir.Color) (out : Layout.Out) (imgs : Image.S
           ruleSegs := ruleSegs.push (l.y, th)
           decorations := decorations.push (kind, l.y, w, th, raise, color)
         -- an image is decorative ink to the text census, like a rule
-        | .image k w _ _ =>
+        | .image k w _ _ _ =>
           px := px + w
           images := images + 1
           if let some fig := k.bind fun i => (imgs.shaped[i]?).join then
@@ -1294,7 +1298,7 @@ def censusOf (coveredColors : Array Ir.Color) (out : Layout.Out) (imgs : Image.S
       lines := lines.push { x := l.x + l.hang, y := l.y, size := runSize
                             width := l.setWidth, text := chars
                             furniture := l.furniture, counted := l.counted
-                            runFonts := runFonts }
+                            runFonts := runFonts, runRaises := runRaises }
       covered := covered.push ' '
     pages := pages.push { lines := lines
                           covered := covered
@@ -1468,7 +1472,8 @@ def compatRowSelfLoads (pkg call : String) : Bool :=
   hasStr call "\\usepackage" && hasStr call ("{" ++ pkg ++ "}")
 
 /-- The scaffold a compat-index row's call stands in at its place, its package loaded where `load`;
-a `statement` call stands in an amsthm lemma labelled `lem:probe`. -/
+a `statement` call stands in an amsthm lemma labelled `lem:probe`, a `class` call in the body of a
+document of the index's class. -/
 def compatRowScaffold (load : Bool) (pkg place call : String) : String :=
   let load := if load then s!"\\usepackage\{{pkg}}\n" else ""
   if place == "statement" then
@@ -1476,6 +1481,8 @@ def compatRowScaffold (load : Bool) (pkg place call : String) : String :=
 \\begin\{document}\n\\begin\{lemma}\\label\{lem:probe}\n{call}\nx\n\\end\{lemma}\n\\end\{document}"
   else if place == "pre" then
     s!"\\documentclass\{article}\n{load}{call}\n\\begin\{document}\nx\n\\end\{document}"
+  else if place == "class" then
+    s!"\\documentclass\{{pkg}}\n\\begin\{document}\n{call}\nx\n\\end\{document}"
   else if place == "frame" || place == "deck" then
     let isClass := Compat.presentationClasses.contains pkg
     let cls := if isClass then pkg else "beamer"
@@ -1591,7 +1598,7 @@ def glyphX (l : Layout.LineOut) (wanted : Char) : Option Dim.Sp := Id.run do
         pen := pen + advance
       x := x + w
     | .gap w _ | .decoratedGap w _ _ | .decoration _ w _ _ _
-    | .rule w _ _ _ | .image _ w _ _ => x := x + w
+    | .rule w _ _ _ | .image _ w _ _ _ => x := x + w
     | .poly _ _ => pure ()
   return none
 
@@ -1607,7 +1614,7 @@ def lineRuns (l : Layout.LineOut) : Array (Nat × String × Dim.Sp × Dim.Sp) :=
     | .gap w _ | .decoratedGap w _ _ => x := x + w
     | .rule w _ _ _ | .decoration _ w _ _ _ => x := x + w
     | .poly _ _ => pure ()
-    | .image _ w _ _ => x := x + w
+    | .image _ w _ _ _ => x := x + w
   return out
 
 /-- Material 3's disliked region as the box `scripts/dislike-oracle.lean` holds it in, stated here so
@@ -2173,7 +2180,7 @@ def metricRunsAt (l : Layout.LineOut) : Array (String × Dim.Sp) := Id.run do
     | .gap w _ | .decoratedGap w _ _ => x := x + w
     | .rule w _ _ _ | .decoration _ w _ _ _ => x := x + w
     | .poly _ _ => pure ()
-    | .image _ w _ _ => x := x + w
+    | .image _ w _ _ _ => x := x + w
   return out
 
 /-- A body glyph's shipped position and paint, independent of run segmentation and leaf
@@ -2215,7 +2222,7 @@ def shippedBodyGlyphs (out : Layout.Out) : Array ShippedGlyph := Id.run do
             dx := dx + advance
           x := x + width
         | .gap width _ | .decoratedGap width _ _ | .rule width _ _ _
-          | .decoration _ width _ _ _ | .image _ width _ _ => x := x + width
+          | .decoration _ width _ _ _ | .image _ width _ _ _ => x := x + width
         | .poly _ _ => pure ()
   return acc
 
@@ -2295,7 +2302,7 @@ def polygonPens (line : Layout.LineOut) : Array (Dim.Sp × Array (Dim.Sp × Dim.
   for seg in line.segs do
     match seg with
     | .run _ _ _ w _ _ _ _ _ _ _ | .gap w _ | .decoratedGap w _ _
-    | .rule w _ _ _ | .decoration _ w _ _ _ | .image _ w _ _ =>
+    | .rule w _ _ _ | .decoration _ w _ _ _ | .image _ w _ _ _ =>
       pen := pen + w
     | .poly points _ => polys := polys.push (pen, points)
   return polys
@@ -2318,7 +2325,7 @@ def metricInnerGaps (l : Layout.LineOut) : Array Dim.Sp := Id.run do
       unless glyphs.isEmpty do
         out := out ++ pending
         pending := #[]
-    | .rule _ _ _ _ | .decoration _ _ _ _ _ | .poly _ _ | .image _ _ _ _ => pure ()
+    | .rule _ _ _ _ | .decoration _ _ _ _ _ | .poly _ _ | .image _ _ _ _ _ => pure ()
   return out
 
 /-- Painted inline rules on shipped body pages. -/

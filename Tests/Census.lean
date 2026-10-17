@@ -438,8 +438,11 @@ def censusRows0 :
     ("the line numbers keep one left column whatever the depth",
       ((lineXOf c 0 "swap").bind fun sx =>
         (lineXOf c 0 "keep the pair").bind fun kx =>
-        (lineXOf c 0 "Input:").map fun ix =>
-          decide (sx = kx ∧ kx = ix)).getD false)]),
+        (lineXOf c 0 "one pass floats").map fun cx =>
+          decide (sx = kx ∧ kx = cx)).getD false),
+    ("an io line takes no number, standing where the numbered lines' text does",
+      ((lineXOf c 0 "swap").bind fun sx =>
+        (lineXOf c 0 "Input:").map fun ix => decide (sx < ix)).getD false)]),
   ("paragraphs", fun _ c => [
     ("one page", c.size == 1),
     ("the opening sentence ships", hasStr (censusText c) "Typesetting is the arrangement of type"),
@@ -1537,12 +1540,33 @@ def censusCodeRows :
         (fun s => pageOccurs c 0 s == 1) && pageOccurs c 0 "References" == 1 &&
         hasStr (censusProse c) "Notes on placeholder text")])]
 
+def censusRows8 :
+    List (String × (Layout.Geom → Array CensusPage → List (String × Bool))) := [
+  ("boxes", fun _ c =>
+    let lineWith (s : String) : Option CensusLine :=
+      (c[0]?).bind fun p => p.lines.find? fun l => hasStr l.text s
+    let marks := ((c[0]?).map fun p => p.decorations.filter fun d =>
+      d.1 matches .highlight _ _).getD #[]
+    let thin := ((c[0]?).map fun p => p.ruleSegs.filter (·.2 == Dim.pt 2 / 5)).getD #[]
+    [("one page", c.size == 1),
+     ("the raised word stands 3pt above its line and the lowered one 2pt below",
+       ((lineWith "raised").map fun l => l.runRaises.contains (Dim.pt 3) &&
+         l.runRaises.contains (-Dim.pt 2) && l.runRaises.contains 0).getD false),
+     ("the two grounds are one yellow mark each, under their words",
+       marks.size == 2 && marks.all fun d => d.2.2.2.2.2.hex == "#FFFF00"),
+     ("the two frames draw a top and a bottom side of fboxrule each", thin.size == 4),
+     ("each box's words ship whole on one line",
+       ((lineWith "grounded").map fun l => hasStr l.text "framed ground").getD false &&
+         (lineWith "outlined").isSome),
+     ("the address's tilde stands raised in its own run",
+       ((lineWith "example.org").map fun l => l.runRaises.any (0 < ·)).getD false)])]
+
 /-- The census rows in parts of at most `censusPartRows`, since a list literal's elaboration grows
 faster than its rows. -/
 def censusParts :
     List (List (String × (Layout.Geom → Array CensusPage → List (String × Bool)))) :=
   [censusRows0, censusRows1, censusRows2, censusRows3, censusRows4, censusRows5,
-    censusRows6, censusRows7, censusMdRows, censusCodeRows]
+    censusRows6, censusRows7, censusRows8, censusMdRows, censusCodeRows]
 
 def censusPartRows : Nat := 16
 

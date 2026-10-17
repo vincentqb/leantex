@@ -5,8 +5,10 @@
 # The environment's body is captured raw, and its language (its own or
 # the last \lstset's) classifies the code as a minted listing's does; its
 # keys are honoured or named W0110 at the one validation site. \lstinputlisting
-# reads a file — a driver request later — and \lstinline's free-form
-# delimiter has no lexer door; both refuse by name.
+# reads its file beside the document, as \inputminted does, into the listing a
+# lstlisting environment of those options sets; \lstinline reads its code raw,
+# braced or between two copies of a delimiter, as \mintinline's inline code,
+# its keys after the \lstset defaults and a display's keys reading to nothing.
 pre inert:binds \lstset{language=Python}
 pre inert:binds \lstset{numbers=left}
 pre inert:binds \lstset{caption={An invented default}}
@@ -23,8 +25,14 @@ body impl \begin{lstlisting}[numbers=left] x = 1 \end{lstlisting}
 body impl \begin{lstlisting}[language=Python] x = 1 \end{lstlisting}
 body impl \begin{lstlisting}[language=C++] x = 1 \end{lstlisting}
 body refuse:W0110 \begin{lstlisting}[language={[LaTeX]TeX}] x = 1 \end{lstlisting}
-body refuse:W0301 \lstinline|x|
-body refuse:W0301 \lstinputlisting{example.py}
+body impl \lstinline|x|
+body impl \lstinline{x}
+body impl \lstinline[language=Python]!x = 1!
+body impl \lstset{frame=single,numbers=left}\lstinline|x|
+body refuse:W0110 \lstinline[keywordstyle=\bfseries]|x|
+body impl \lstinputlisting{fixtures/example.py}
+body impl \lstinputlisting[language=Python,numbers=left]{fixtures/example.py}
+body refuse:E0502 \lstinputlisting{absent.py}
 pre refuse:W0301 \lstnewenvironment{code}{}{}
 pre refuse:W0301 \lstdefinestyle{plain}{numbers=none}
 pre refuse:W0301 \lstdefinelanguage{invented}{keywords={probe}}

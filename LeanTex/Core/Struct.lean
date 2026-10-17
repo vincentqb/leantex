@@ -145,7 +145,7 @@ mutual
   | .link url body => out.push (.node (.link url) (inlinesRaw #[] body.toList))
   | .label _ => out
   | .ref _ _ text target => out.push (.node (.reference target) #[.leaf 0 (.text text)])
-  | .decorated _ body => inlinesRaw out body.toList
+  | .decorated _ body | .boxed _ body => inlinesRaw out body.toList
   | .fill => out
   | .hspace _ _ => out
   | .rule _ _ _ => out.push (.node .artifact #[])
@@ -373,6 +373,7 @@ private structure Sim (F : NodeFold α) (G : Census α) : Prop where
   iRef : ∀ a key form text target,
     G.inline a (.ref key form text target) = F.node a (.reference target) (F.leaf · 0 (.text text))
   iDecorated : ∀ a k body, G.inline a (.decorated k body) = G.inlines a body.toList
+  iBoxed : ∀ a b body, G.inline a (.boxed b body) = G.inlines a body.toList
   iFill : ∀ a, G.inline a .fill = a
   iHspace : ∀ a g keep, G.inline a (.hspace g keep) = a
   iRule : ∀ a w h r, G.inline a (.rule w h r) = F.node a .artifact id
@@ -684,6 +685,7 @@ private theorem inlineRaw_fold_exact (h : Sim F G) (a : α) (out : Array Node) (
   | .label key => rw [h.iLabel]; rfl
   | .ref key form text target => simp only [inlineRaw, foldNodeList_push, h.iRef]; rfl
   | .decorated k body => rw [h.iDecorated]; exact inlinesRaw_fold_exact h a out body.toList
+  | .boxed b body => rw [h.iBoxed]; exact inlinesRaw_fold_exact h a out body.toList
   | .fill => rw [h.iFill]; rfl
   | .hspace g keep => rw [h.iHspace]; rfl
   | .rule w hh r => simp only [inlineRaw, foldNodeList_push, h.iRule]; rfl
@@ -1095,6 +1097,9 @@ theorem inlineRaw_acc (out : Array Node) (x : Inline) :
   | .label key => simp [inlineRaw]
   | .ref key form text target => simp [inlineRaw]
   | .decorated kind body =>
+    simp only [inlineRaw]
+    exact inlinesRaw_acc out body.toList
+  | .boxed b body =>
     simp only [inlineRaw]
     exact inlinesRaw_acc out body.toList
   | .fill => simp [inlineRaw]

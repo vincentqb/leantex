@@ -31,6 +31,7 @@ body impl \begin{algorithm}x\tcp*{an invented remark}\end{algorithm}
 body impl \begin{algorithm}\LinesNumbered x\;\end{algorithm}
 body impl \begin{algorithm}\DontPrintSemicolon x\;\end{algorithm}
 body impl \begin{algorithm}\SetKwInOut{Params}{params}\Params{a knob}\end{algorithm}
+body impl \begin{algorithm}\SetKwData{DTot}{total}\DTot{x}\;\end{algorithm}
 pre inert:binds \SetKw{KwGoal}{goal}
 pre inert:binds \SetKwInOut{Params}{params}
 pre inert:binds \SetKwInput{KwReq}{requires}

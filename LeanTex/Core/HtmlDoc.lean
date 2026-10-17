@@ -56,6 +56,8 @@ public structure Config where
   css : CssMode := .own
   /-- The document's main locale, in which generated furniture is worded. -/
   locale : Locale := Locale.en
+  /-- Whether a body h1 is a chapter, its label a line of its own (`Ir.Doc.chapters`). -/
+  chapters : Bool := false
   /-- The script of the client-side math renderer the run declares, shipped inline. -/
   mathRenderer : Option String := none
   styles : Styles := {}
@@ -78,6 +80,8 @@ public structure Config where
   paletteViews : List (Ir.Palette × List Ir.Palette) := []
   /-- The screen scheme the page's `:root` holds. -/
   floor : Ir.Scheme := .light
+  /-- The literal ground of the box the content stands in, which a literal ink reads on. -/
+  ground : Option Ir.Color := none
   /-- The code roles' colours the page's `:root` states for a listing on the page's code ground. -/
   codeRoot : CodeRoot := []
   /-- Ground, text and code-role colours per shipped scheme for a listing that declares nothing. -/
@@ -356,10 +360,28 @@ public def schemeValue (texts colours : List (Ir.Scheme × Option String)) (floo
   else if colours.all (·.2.all (·.startsWith "#")) then s!"var({schemeVar colours})"
   else f.getD "initial"
 
-/-- A literal colour as the page ships it in every shipped scheme. -/
+/-- A literal ground as the `i`th shipped scheme carries it, as the scheme judge reads it
+(`Ir.Palette.useGround`). -/
+private def Config.groundIn (cfg : Config) (i : Nat) (f : Ir.SchemeFrame) (g : Ir.Color) :
+    Ir.Color :=
+  match cfg.views[i]? with
+  | some v => (cfg.pal.useGround v f g).1
+  | none => f.ground g
+
+/-- A literal colour as the page ships it in every shipped scheme, carried on the box's literal
+ground it stands on, else on the page. -/
 public def Config.literal (cfg : Config) (c : Ir.Color) : String :=
   if cfg.frames.isEmpty then cssColor c else
-  let texts := cfg.frames.map fun f => (f.scheme, some (cssColor (Ir.Design.literalIn f c)))
+  let texts := cfg.frames.zipIdx.map fun (f, i) => (f.scheme, some (cssColor (match cfg.ground with
+    | some g => Ir.Design.literalOn f (cfg.groundIn i f g) c
+    | none => Ir.Design.literalIn f c)))
+  schemeValue texts texts cfg.floor
+
+/-- A literal ground as the page ships it in every shipped scheme: carried as a ground, as the
+scheme judge reads it, never as an ink. -/
+public def Config.groundLiteral (cfg : Config) (c : Ir.Color) : String :=
+  if cfg.frames.isEmpty then cssColor c else
+  let texts := cfg.frames.zipIdx.map fun (f, i) => (f.scheme, some (cssColor (cfg.groundIn i f c)))
   schemeValue texts texts cfg.floor
 
 /-- The math face's cancel-mark metrics in thousandths of an em, or TeX's defaults without faces. -/
@@ -510,7 +532,7 @@ private def markerTextOne (acc : String) : Inline → Option String
   | .located _ body => markerTextInto acc body.toList
   | .role _ _ => none
   | .link _ _ => none
-  | .decorated _ _ => none
+  | .decorated _ _ | .boxed _ _ => none
   | .fill => none
   | .hspace _ _ => none
   | .rule _ _ _ => none
@@ -557,7 +579,7 @@ private def markerCssOne (scale : List (String × Nat)) (decls : Array String) :
     if (Ir.plainTextOne x).length == 1 then some { text := Ir.plainTextOne x, decls := decls }
     else none
   | .link _ _ => none
-  | .decorated _ _ => none
+  | .decorated _ _ | .boxed _ _ => none
   | .fill => none
   | .hspace _ _ => none
   | .rule _ _ _ => none
@@ -605,7 +627,7 @@ private theorem markerTextOne_text (x : Inline) (acc t : String)
   | .located _ body => exact markerTextInto_text body.toList acc t h
   | .math _ _ | .formula _ _ _ | .styled _ _
   | .colored _ _ _ | .role _ _ | .link _ _
-  | .decorated _ _ | .fill | .hspace _ _ | .rule _ _ _
+  | .decorated _ _ | .boxed _ _ | .fill | .hspace _ _ | .rule _ _ _
   | .strut _ | .pageNumber | .pageCount | .linebreak _
   | .onSteps _ _ | .altSteps _ _ _ | .image _ _ _ | .icon _ _
   | .label _ | .ref _ _ _ _ | .cite _ _ | .cited _ _ _ | .footnote _ _ =>
@@ -673,7 +695,7 @@ private theorem markerCssOne_text (scale : List (String × Nat)) (decls : Array 
     · simp only [Option.some.injEq] at h
       simp [← h]
     · simp at h
-  | .link _ _ | .decorated _ _ | .fill
+  | .link _ _ | .decorated _ _ | .boxed _ _ | .fill
   | .hspace _ _ | .rule _ _ _ | .strut _ | .italicCorr _ | .pageNumber | .pageCount
   | .linebreak _ | .onSteps _ _ | .image _ _ _ | .icon _ _ | .label _ | .ref _ _ _ _
   | .cite _ _ | .cited _ _ _ | .footnote _ _ =>
@@ -2258,6 +2280,12 @@ public def Config.paint (cfg : Config) (name : Option Ir.ColorRef) (c : Ir.Color
   match name with
   | some _ => colorRead cfg name c
   | none => cfg.literal c
+
+/-- A ground's paint: a named colour's custom property, a literal carried as a ground. -/
+public def Config.groundPaint (cfg : Config) (name : Option Ir.ColorRef) (c : Ir.Color) : String :=
+  match name with
+  | some _ => colorRead cfg name c
+  | none => cfg.groundLiteral c
 
 @[expose] public def cssDeclValue : Ir.CssDecl → String
   | .value c => cssColor c
@@ -5474,6 +5502,9 @@ public def baseRules (doc : Doc) (ex : Int) (pairs : List (Nat × Nat) := []) : 
   s!"h3 \{ font-size: {scaleSize doc.page.scale "large" "rem"}; }\n" ++
   -- the deeper ranks share the body size, in `em` to follow the local scale
   s!"h4, h5, h6 \{ font-size: {scaleSize doc.page.scale "normalsize" "em"}; }\n" ++
+  -- report.cls's chapter head: the title at `\Huge`, its word and number a line above at `\huge`
+  s!"h1.chapter \{ font-size: {scaleSize doc.page.scale "Huge" "rem"}; }\n" ++
+  s!".chapter-label \{ display: block; font-size: {scaleSize doc.page.scale "huge" "rem"}; }\n" ++
   -- hyphenation follows the declared language; a ragged or unhyphenated page hyphenates nothing
   s!"p \{ hyphens: {if autoHyphens doc.page then "auto" else "manual"}; }\n" ++
   -- inline code outside tex may break rather than overflow its line, as its page breaks it
@@ -5597,6 +5628,17 @@ public def baseRules (doc : Doc) (ex : Int) (pairs : List (Nat × Nat) := []) : 
   "ol.algorithm.numbered li::before { content: counter(algline);\n" ++
   s!"  color: {roleRef .marker}; font-size: 0.8em; width: 1.5em;\n" ++
   "  position: absolute; left: 0; text-align: right; }\n" ++
+  -- algorithm2e numbers no io line, nor counts one
+  "ol.algorithm.numbered li.alg-io { counter-increment: none; }\n" ++
+  "ol.algorithm.numbered li.alg-io::before { content: none; }\n" ++
+  -- a `\SetKwInOut` word's column holds every word it aligns with, so each is the widest's width
+  ".alg-inout { display: grid; grid-template-columns: max-content 1fr; }\n" ++
+  ".alg-key { display: grid; grid-template-columns: max-content max-content; }\n" ++
+  ".alg-key::before { content: attr(data-column); white-space: pre; visibility: hidden;\n" ++
+  "  height: 0; overflow: hidden; grid-row: 1; grid-column: 1; font-weight: bold; }\n" ++
+  ".alg-key-word { grid-row: 1; grid-column: 1; font-weight: bold; }\n" ++
+  ".alg-key-colon { grid-row: 1; grid-column: 2; white-space: pre; }\n" ++
+  ".alg-key-mark { font-weight: bold; }\n" ++
   "figure.float > table { margin-left: auto; margin-right: auto; }\n" ++
   "figure.float > img { display: block; margin: 0 auto; }\n" ++
   captionScopeCss doc ++
@@ -6134,6 +6176,45 @@ public def imageElement (cfg : Config) (index? : Option Nat) (req : Image.Reques
           ("srcset", poster)], img]
     | none => img
 
+/-- A box length's page part in CSS, the box's own `\height`, `\depth`, `\width` and `\totalheight`
+read as zero: a web page cannot measure its content, which Elab names (W0110). -/
+private def boxLengthCss : Affine Ir.BoxMeasure → Affine Measure
+  | .lit g => .lit g
+  | .ref (.page m) => .ref m
+  | .ref .height | .ref .totalHeight | .ref .depth | .ref .width => .lit {}
+  | .scale n d e => .scale n d (boxLengthCss e)
+  | .add a b => .add (boxLengthCss a) (boxLengthCss b)
+  | .sub a b => .sub (boxLengthCss a) (boxLengthCss b)
+
+/-- A box's CSS: one unbreakable line on its ground, inside its frame, raised by its lift where it
+declares no extent, else claiming no line of its own (`boxExtentCss`). -/
+private def boxCss (cfg : Config) (b : Ir.InlineBox) : String :=
+  let lift := boxLengthCss b.raise
+  let paint (p : Ir.BoxPaint) : String := match p with
+    | .ink => "currentColor"
+    | .color c name => cfg.paint name c
+  let decls :=
+    ["display: inline-block", "white-space: nowrap"] ++
+    (if b.height.isSome || b.depth.isSome then ["line-height: 0"]
+     else if lift == .lit {} then [] else [s!"vertical-align: {Ir.Track.contextCss lift}"]) ++
+    (b.ground.map fun (c, name) => s!"background-color: {cfg.groundPaint name c}").toList ++
+    (b.frame.map fun f => s!"border: {cssLength b.rule.width} solid {paint f}").toList ++
+    (if b.ground.isSome || b.frame.isSome then [s!"padding: {cssLength b.pad.width}"] else [])
+  "; ".intercalate decls
+
+/-- A box with a declared extent, as `\raisebox{lift}[height][depth]` sets it: its content raised by
+its lift in place, and a zero-width strut claiming the declared height above the baseline and the
+depth below it. -/
+private def boxExtentCss (b : Ir.InlineBox) : String × String :=
+  let side (e : Option (Affine Ir.BoxMeasure)) : Affine Measure := (e.map boxLengthCss).getD (.lit {})
+  -- A sum of lengths alone is one length.
+  let css (e : Affine Measure) : String :=
+    Ir.Track.contextCss (if e.anyRef (fun _ => true) then e else .lit (e.eval fun _ => {}))
+  let lift := boxLengthCss b.raise
+  let (h, d) := (side b.height, side b.depth)
+  (if lift == .lit {} then "" else s!"position: relative; top: {css (.scale (-1) 1 lift)}",
+   s!"display: inline-block; width: 0; height: {css (.add h d)}; vertical-align: {css (.scale (-1) 1 d)}")
+
 /-- A font length in CSS: on a deck an absolute length as its stage share, else its CSS form. -/
 private def fontLengthCss (cfg : Config) (e : Affine Measure) : String :=
   if cfg.deck && e.rigidAbsolute && !(e.anyRef fun _ => true) then
@@ -6330,7 +6411,21 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
     -- alert's own semantics, which `mark`'s highlight role would replace
     | .highlight c name =>
       acc.push (Html.elem "span" (inlineNodesInto cfg #[] body.toList)
-        #[("style", "background-color: " ++ cfg.paint name c)])
+        #[("style", "background-color: " ++ cfg.groundPaint name c)])
+  -- one unbreakable inline box, raised, grounded and framed as the PDF sets it
+  | .boxed b body =>
+    -- A literal ink inside reads on the box's literal ground; a named ground reads as its name does.
+    let inner := match b.ground with
+      | some (g, none) => { cfg with ground := some g }
+      | some (_, some _) => { cfg with ground := none }
+      | none => cfg
+    let content := inlineNodesInto inner #[] body.toList
+    if b.height.isSome || b.depth.isSome then
+      let (lifted, strut) := boxExtentCss b
+      let inner := if lifted.isEmpty then content else #[Html.elem "span" content #[("style", lifted)]]
+      acc.push (Html.elem "span" (inner.push (Html.elem "span" #[] #[("style", strut)]))
+        #[("style", boxCss cfg b)])
+    else acc.push (Html.elem "span" content #[("style", boxCss cfg b)])
   | .onSteps spec body =>
     acc.push (overlayNode "span" cfg.overlaySteps spec (inlineNodesInto cfg #[] body.toList))
   | .altSteps spec firstPage otherPage =>
@@ -6421,7 +6516,7 @@ private def contextUnitLeaf (found : Bool) : Inline → Bool
   | .image _ size _ => found || size.height.any fun l =>
     readsInlineMeasure l.value && !l.value.anyRef (· == .textHeight)
   | .text _ | .math _ _ | .formula _ _ _ | .colored _ _ _ | .located _ _ | .role _ _
-  | .link _ _ | .decorated _ _ | .onSteps _ _ | .altSteps _ _ _ | .fill
+  | .link _ _ | .decorated _ _ | .boxed _ _ | .onSteps _ _ | .altSteps _ _ _ | .fill
   | .hspace _ _ | .strut _ | .italicCorr _ | .pageNumber | .pageCount
   | .icon _ _ | .label _ | .ref _ _ _ _ | .cite _ _ | .cited _ _ _ | .footnote _ _
   | .linebreak _ => found
@@ -7366,6 +7461,20 @@ private theorem algorithm_lines_agree (lines : Array Ir.AlgLine) :
     rw [List.headD_cons, ← hpres, algStackLines_cons, algStackLines_nil,
       Array.empty_append]
 
+/-- An aligned io line: its key cell holds its word and, unseen and unread, every word of `column`
+on a line of its own, so each such line's key column is the widest word's; then its colon and the
+tie, and its content hanging past them. -/
+private def alignedIo (word : String) (column : Array String) (body : Array Node) : Node :=
+  let colon := Html.elem "span"
+    #[Html.elem "span" #[Html.text ":"] #[("class", "alg-key-mark")], Html.text " "]
+    #[("class", "alg-key-colon")]
+  Html.elem "span"
+    #[Html.elem "span" #[Html.elem "span" #[Html.text word] #[("class", "alg-key-word")], colon]
+        #[("class", "alg-key"), ("data-column",
+          "\n".intercalate (if column.contains word then column else column.push word).toList)],
+      Html.elem "span" body #[("class", "alg-inout-body")]]
+    #[("class", "alg-inout")]
+
 mutual
 
 /-- One nesting node as a list item: its line's inlines, then its kids' nested list. -/
@@ -7374,8 +7483,9 @@ private def algRenderOne (payload : Ir.AlgLine → Array Node) : AlgTree → Nod
     let pay := match l with
       | some l => payload l
       | none => #[]
+    let attrs := if l.any (·.kind matches .io _) then #[("class", "alg-io")] else #[]
     Html.elem "li" (if kids.isEmpty then pay
-      else pay.push (Html.elem "ol" (algRenderList payload #[] kids.toList) #[])) #[]
+      else pay.push (Html.elem "ol" (algRenderList payload #[] kids.toList) #[])) attrs
 
 private def algRenderList (payload : Ir.AlgLine → Array Node) (acc : Array Node) :
     List AlgTree → Array Node
@@ -7496,7 +7606,7 @@ public def labelNodesOne (f : LabelFace) (acc : Array Node) (x : Inline)
       (labelNodesList f #[] body.toList mathCfg) #[("class", roleClass n)])
   | .located _ body => labelNodesList f acc body.toList mathCfg
   | .italicCorr _ => acc
-  | .link _ _ | .decorated _ _ | .onSteps _ _ | .altSteps _ _ _ | .fill | .hspace _ _ | .rule _ _ _ | .strut _
+  | .link _ _ | .decorated _ _ | .boxed _ _ | .onSteps _ _ | .altSteps _ _ _ | .fill | .hspace _ _ | .rule _ _ _ | .strut _
   | .pageNumber | .pageCount | .linebreak _ | .image _ _ _ | .icon _ _ | .label _
   | .ref _ _ _ _ | .cite _ _ | .cited _ _ _ | .footnote _ _ => acc.push (f.run (labelPiece x) native)
 
@@ -7563,7 +7673,7 @@ public theorem labelNodesOne_mathFree_contract (f : LabelFace) (acc : Array Node
     simp only [labelNodesOne]
     exact labelNodesList_mathFree_contract f acc body.toList mathCfg ha
   | .italicCorr _ => simpa only [labelNodesOne] using ha
-  | .link _ _ | .decorated _ _ | .onSteps _ _ | .altSteps _ _ _ | .fill | .hspace _ _
+  | .link _ _ | .decorated _ _ | .boxed _ _ | .onSteps _ _ | .altSteps _ _ _ | .fill | .hspace _ _
   | .rule _ _ _ | .strut _ | .pageNumber | .pageCount | .linebreak _ | .image _ _ _
   | .icon _ _ | .label _ | .ref _ _ _ _ | .cite _ _ | .cited _ _ _ | .footnote _ _ =>
     simp only [labelNodesOne, MathMl.tagFreeList_push, ha, labelRun_mathFree, Bool.and_self]
@@ -7614,7 +7724,7 @@ public theorem labelNodesOne_linesHeld_contract (f : LabelFace) (acc : Array Nod
     simp only [labelNodesOne]
     exact labelNodesList_linesHeld_contract f acc body.toList cfg ha
   | .italicCorr _ => simpa only [labelNodesOne] using ha
-  | .link _ _ | .decorated _ _ | .onSteps _ _ | .altSteps _ _ _ | .fill | .hspace _ _
+  | .link _ _ | .decorated _ _ | .boxed _ _ | .onSteps _ _ | .altSteps _ _ _ | .fill | .hspace _ _
   | .rule _ _ _ | .strut _ | .pageNumber | .pageCount | .linebreak _ | .image _ _ _
   | .icon _ _ | .label _ | .ref _ _ _ _ | .cite _ _ | .cited _ _ _ | .footnote _ _ =>
     simp only [labelNodesOne, Option.isSome_some, MathMl.linesHeldList_push, ha,
@@ -8422,8 +8532,11 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
       | _, _ => title
     -- the number is its own span, so the anchor slug reads the title alone
     let kids := inlines cfg title
+    let chapter := level == .h1 && cfg.chapters
     let kids := match num with
-      | some n => #[Html.elem "span" #[Html.text n]
+      | some n =>
+        if chapter then #[Html.elem "span" #[Html.text n] #[("class", "chapter-label")], Html.text " "] ++ kids
+        else #[Html.elem "span" #[Html.text n]
           #[("class", "section-number")], Html.text "\u2003"] ++ kids
       | none => kids
     let attrs := if st.rule.isSome then #[("class", "ruled")] else #[]
@@ -8433,7 +8546,8 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
           (Ir.Design.declared? cfg.pal .ink).isSome) then
       attrs.push ("style", s!"color: {roleRef .sectionTitleInk}") else attrs
     let node := withLead cfg title (Html.elem tag kids attrs)
-    if level == .h1 then withClass "body-heading" node else node
+    if chapter then withClass "body-heading chapter" node
+    else if level == .h1 then withClass "body-heading" node else node
   | .list ordered spacing items =>
     let desc := Ir.listIsDesc ordered items
     let n := Ir.frameFillsOne cfg.lists cfg.styles .deck 0 b
@@ -8707,9 +8821,11 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
   | .algorithm numbered semis lines =>
     let words := Ir.algWords cfg.locale.tag
     let muted := Ir.mutedOf cfg.pal
-    Html.elem "ol"
-      (algRenderList (fun l => inlines cfg (Ir.AlgLine.rendered words semis muted l))
-        #[] (algNest lines).toList)
+    let payload (l : Ir.AlgLine) : Array Node := match l.kind.aligned? with
+      | some (word, _, column) =>
+        #[alignedIo word column (inlines cfg (Ir.AlgLine.close semis muted l false l.content))]
+      | none => inlines cfg (Ir.AlgLine.rendered words semis muted l)
+    Html.elem "ol" (algRenderList payload #[] (algNest lines).toList)
       #[("class", if numbered then "algorithm numbered" else "algorithm")]
   | .rule color name thickness =>
     let c := colorRead cfg name color
@@ -9277,7 +9393,7 @@ private def emitTreeCore (cfg : Config) (doc : Doc)
     Array Node × Array Node × Array Diag := Id.run do
   -- backend conditionals resolve here, so every walk below sees only this page's content
   let doc := { doc with body := Ir.keepFor "html" doc.body }
-  let cfg := { cfg with locale := doc.info.locale }
+  let cfg := { cfg with locale := doc.info.locale, chapters := doc.chapters }
   let judge := if cfg.css == .own then Contrast.schemeJudge doc else {}
   let cfg := { cfg with pal := doc.palette, docPal := doc.palette, frames := judge.frames
                         views := (judge.views.head?.map (·.2)).getD []

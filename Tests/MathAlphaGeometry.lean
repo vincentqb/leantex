@@ -46,7 +46,7 @@ private def alphaLaidInk (fs : Font.FontSet) (geom : Layout.Geom)
           x0 := x, x1 := x + w, y0 := y + raise, y1 := y + raise + thick } }
         x := x + w
       | .gap w _ | .decoratedGap w _ _ => x := x + w
-      | .poly _ _ | .image _ _ _ _ | .decoration _ _ _ _ _ =>
+      | .poly _ _ | .image _ _ _ _ _ | .decoration _ _ _ _ _ =>
         throw "unexpected ink in the math probe"
   return ink
 

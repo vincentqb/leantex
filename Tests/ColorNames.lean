@@ -329,7 +329,8 @@ public def unreadKeyFlipChecks (ref : IO.Ref (List String)) (fonts : Font.FontSe
       "\\begin{tikzpicture}\\fill[ink] (0,0) rectangle (1,1);\\end{tikzpicture}", true),
     ("a listing ground", "surface", "\\usepackage{minted}\n",
       "\\begin{minted}[bgcolor=surface]{python}\nx = 1\n\\end{minted}", true),
-    ("an unpainted box", "surface", "", "\\colorbox{surface}{Probe}.", false)]
+    ("a box's ground", "surface", "", "\\colorbox{surface}{Probe}.", true),
+    ("an unknown command's argument", "surface", "", "\\probebox{surface}{Probe}.", false)]
   for (what, key, pre, body, read) in probes do
     let build (v : String) := Id.run do
       let (doc, ds) := elabStr (article (s!"\\palette\{ {key} = {v} }\n" ++ pre) body)

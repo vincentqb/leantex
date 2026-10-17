@@ -490,6 +490,11 @@ the ambient text box with the formula's measured bounds. -/
 public structure RunMetrics where
   leading : Option Sp := none
   math : Option MathLineMetrics := none
+  /-- The height and depth a box declares in place of the run's own (`Ir.InlineBox.height`). -/
+  extent : Option (Sp × Sp) := none
+  /-- The run sets at its natural width, an `\hbox`'s content TeX packs before its line: font
+  expansion leaves it be. -/
+  fixed : Bool := false
   deriving Repr, BEq, Inhabited
 
 public inductive Item where
@@ -502,20 +507,23 @@ public inductive Item where
   | decoratedGlue (g : Glue) (decorations : Decorations (Option DecorationRule))
   | pen (w : Sp) (cost : Int) (flagged : Bool) (fontIdx : Nat) (color : Ir.Color)
       (glyphs : Array (Nat × Char × Sp))
-  /-- An unbreakable image box `w` wide standing `h` above the baseline; `store` indexes the
-  `Image.Store`, `none` places a placeholder, and `ink` false ships nothing in its box. -/
-  | img (store : Option Nat) (w : Sp) (h : Sp) (ink : Bool)
+  /-- An unbreakable image box `w` wide standing `h` above the baseline plus `raise`; `store` indexes
+  the `Image.Store`, `none` places a placeholder, and `ink` false ships nothing in its box. -/
+  | img (store : Option Nat) (w : Sp) (h : Sp) (ink : Bool) (raise : Sp)
   /-- A horizontal rule `w` wide and `thickness` tall, its
   bottom at the baseline plus `raise`; never a breakpoint. -/
   | rule (w : Sp) (thickness : Sp) (raise : Sp) (color : Ir.Color)
   /-- A filled polygon taking no width, its points from where
   it stands and the baseline, y up; never a breakpoint. -/
   | poly (pts : Array (Sp × Sp)) (color : Ir.Color)
+  /-- A band `w` wide and `thickness` tall painted under the line's text, its bottom at the
+  baseline plus `raise`: a box's ground; never a breakpoint. -/
+  | mark (w : Sp) (thickness : Sp) (raise : Sp) (color : Ir.Color)
   deriving Repr, Inhabited
 
 private def Item.boxChars : Item → List Char
   | .box _ _ _ _ glyphs .. => glyphs.toList.map (·.2.1)
-  | .glue _ | .decoratedGlue _ _ | .pen .. | .img .. | .rule .. | .poly .. => []
+  | .glue _ | .decoratedGlue _ _ | .pen .. | .img .. | .rule .. | .poly .. | .mark .. => []
 
 public def forcedCost : Int := -10000
 
@@ -561,9 +569,9 @@ public inductive Seg where
       (color : Ir.Color)
   /-- A horizontal rule `w` wide and `thickness` thick, on the baseline plus `raise`. -/
   | rule (w : Sp) (thickness : Sp) (raise : Sp) (color : Ir.Color)
-  /-- An image box standing `h` up from the baseline; `store` indexes the backends'
+  /-- An image box standing `h` up from the baseline plus `raise`; `store` indexes the backends'
   `Image.Store`, an entry that did not load renders as a placeholder, and `ink` false ships nothing. -/
-  | image (store : Option Nat) (w : Sp) (h : Sp) (ink : Bool)
+  | image (store : Option Nat) (w : Sp) (h : Sp) (ink : Bool) (raise : Sp)
   /-- A filled polygon with no width, its points from the pen position and the baseline, y up. -/
   | poly (pts : Array (Sp × Sp)) (color : Ir.Color)
   deriving Repr, Inhabited
@@ -1239,7 +1247,7 @@ public structure Out where
   | .decoratedGap _ _ d =>
     hiddenRule d.underline || hiddenRule d.lineThrough || hiddenRule d.highlight
   | .gap .. => false
-  | .image _ _ _ ink => !ink
+  | .image _ _ _ ink _ => !ink
 
 /-- A segment repainted to ship nothing, its kind and box kept. -/
 @[expose] public def Seg.hide : Seg → Seg
@@ -1252,7 +1260,7 @@ public structure Out where
                            lineThrough := d.lineThrough.map ({ · with color := hiddenPaint })
                            highlight := d.highlight.map ({ · with color := hiddenPaint }) }
   | .gap w word => .gap w word
-  | .image s w h _ => .image s w h false
+  | .image s w h _ r => .image s w h false r
 
 /-- A segment as it ships: hidden ink a gap as wide, a hidden polygon nothing. -/
 @[expose] public def Seg.shipped (s : Seg) : Option Seg :=
@@ -1282,7 +1290,7 @@ public structure Out where
   | .run f c l w gs sz m d r g a => .run f c l w gs sz m d r g a
   | .decoration k w t r c => .decoration k w t r c
   | .rule w t r c => .rule w t r c
-  | .image st w h ink => .image st w h ink
+  | .image st w h ink r => .image st w h ink r
   | .poly pts c => .poly pts c
 
 @[expose] public def Seg.isWordGap : Seg → Bool
@@ -1351,6 +1359,8 @@ public structure TextStyle where
   /-- Where a filling `\hspace` sets dotted leaders: how far before its end the line box's left
   edge stands. -/
   leaderReach : Option Sp := none
+  /-- Inside an unbreakable box (`Ir.Inline.boxed`): no break, hyphen or stretch within it. -/
+  boxed : Bool := false
   deriving Repr, BEq, Inhabited
 
 /-- The paint the style's ink takes: its colour, or the hidden paint inside hidden content. -/
@@ -1361,7 +1371,8 @@ public structure TextStyle where
 character, unhyphenated, given its neighbours in the word. -/
 private def TextStyle.explicitBreak (sty : TextStyle) :
     Option Char → Char → Option Char → Option Nat :=
-  if sty.slot == 2 && sty.urlBreaks then fun _ c _ => urlBreak c
+  if sty.boxed then fun _ _ _ => none
+  else if sty.slot == 2 && sty.urlBreaks then fun _ c _ => urlBreak c
   else if sty.slot == 2 && sty.cellCode then cellCodeBreak
   else fun _ c _ => proseBreak c
 
@@ -1394,6 +1405,9 @@ private inductive Tk where
   | note (num : Nat) (style : TextStyle) (body : Array Ir.Inline) (bodyLeaf : Option Nat)
   /-- TeX's italic correction (`Ir.Inline.italicCorr`) under the style in force. -/
   | corr (maybe : Bool) (style : TextStyle)
+  /-- An unbreakable box opens in the style around it; `boxClose` sets what it holds. -/
+  | boxOpen (box : Ir.InlineBox) (style : TextStyle)
+  | boxClose
   deriving Repr
 
 /-- The attribution a token's ink carries; `none` for a token that ships no run of its own. -/
@@ -1402,7 +1416,8 @@ private def Tk.attr? : Tk → Option Attribution
   | .icon _ _ a => some a
   | .formula _ _ _ a => some a
   | .note num _ _ _ => some (.noteMark num)
-  | .origin _ | .anchor _ | .space _ | .fill | .hskip _ _ _ | .rule _ _ _ _ | .strut _ | .brk _ | .img _ _ _ | .corr _ _ => none
+  | .origin _ | .anchor _ | .space _ | .fill | .hskip _ _ _ | .rule _ _ _ _ | .strut _ | .brk _ | .img _ _ _ | .corr _ _
+  | .boxOpen _ _ | .boxClose => none
 
 /-- The Layout-private role a decorating site wraps its
 declared content in; a NUL cannot come from source text. -/
@@ -1622,7 +1637,8 @@ private def flattenOne (mathOk noteOk : Bool) (st : FlattenSt) (sty : TextStyle)
     { st with toks := st.toks.push (.img src spec !sty.hidden),
               ctr := st.ctr.skip 1 }
   | .linebreak extra => { st with toks := st.toks.push (.brk extra), ctr := st.ctr.skip 1 }
-  | .fill => { st with toks := st.toks.push .fill }
+  -- A natural-width box gives its fill glue no width, as TeX's `\hbox` does.
+  | .fill => if sty.boxed then st else { st with toks := st.toks.push .fill }
   | .hspace g keep => { st with toks := st.toks.push (.hskip sty g keep) }
   | .rule width height raise =>
     { st with toks := st.toks.push (.rule sty width height raise) }
@@ -1674,6 +1690,11 @@ OpenType math face; `leantex fonts` lists families") with warnedMath := true }
             { sty.decorations with highlight := some (if sty.hidden then hiddenPaint else c,
                 sty.decorationSource) }
                    ground := some c } body
+  -- a box's content stands on its ground where it declares one
+  | .boxed b body =>
+    let inner := flatten mathOk noteOk { st with toks := st.toks.push (.boxOpen b sty) }
+      { sty with boxed := true, ground := (b.ground.map (·.1)).orElse fun _ => sty.ground } body
+    { inner with toks := inner.toks.push .boxClose }
   -- The PDF dims pending content by recolouring copies before layout, and hides invisible content here.
   | .onSteps spec body =>
     flatten mathOk noteOk st
@@ -1888,7 +1909,16 @@ private theorem flattenOne_attr_covers (mathOk noteOk : Bool) (st : FlattenSt) (
     rcases hm with hm | hm
     · exact Or.inl hm
     · subst hm; exact Or.inr rfl
-  | .fill | .hspace _ _ | .rule _ _ _ =>
+  | .fill =>
+    simp only [flattenOne]
+    split
+    · exact ⟨h, fun tk hm => Or.inl hm⟩
+    · refine ⟨h, fun tk hm => ?_⟩
+      simp only [Array.mem_push] at hm
+      rcases hm with hm | hm
+      · exact Or.inl hm
+      · subst hm; exact Or.inr rfl
+  | .hspace _ _ | .rule _ _ _ =>
     refine ⟨h, fun tk hm => ?_⟩
     simp only [flattenOne, Array.mem_push] at hm
     rcases hm with hm | hm
@@ -1948,6 +1978,20 @@ private theorem flattenOne_attr_covers (mathOk noteOk : Bool) (st : FlattenSt) (
   | .link url body => exact flatten_attr_covers mathOk noteOk st _ body h
   | .decorated kind body =>
     cases kind <;> exact flatten_attr_covers mathOk noteOk st _ body h
+  | .boxed b body =>
+    obtain ⟨h1, m1⟩ := flatten_attr_covers mathOk noteOk
+      { st with toks := st.toks.push (.boxOpen b sty) }
+      { sty with boxed := true, ground := (b.ground.map (·.1)).orElse fun _ => sty.ground } body h
+    refine ⟨by simp only [flattenOne]; exact h1, fun tk hm => ?_⟩
+    simp only [flattenOne, Array.mem_push] at hm
+    rcases hm with hm | hm
+    · rcases m1 tk hm with hm | hm
+      · simp only [Array.mem_push] at hm
+        rcases hm with hm | hm
+        · exact Or.inl hm
+        · subst hm; exact Or.inr rfl
+      · exact Or.inr hm
+    · subst hm; exact Or.inr rfl
   | .onSteps _ body => exact flatten_attr_covers mathOk noteOk st _ body h
   | .altSteps _ firstPage otherPage =>
     simp only [flattenOne]
@@ -2769,7 +2813,7 @@ public def raggedItems (items : Array Item) : Array Item :=
       else
         let g' : Glue := { width := g.width, stretch := g.width * 6, word := g.word }
         .decoratedGlue g' r
-    | .box .. | .pen .. | .img .. | .rule .. | .poly .. => it
+    | .box .. | .pen .. | .img .. | .rule .. | .poly .. | .mark .. => it
 
 /-- Ragged setting for display lines: interword glue gains finite stretch and
 the closing parfill stretches by half the measure, balancing the lines. -/
@@ -2790,7 +2834,7 @@ public def displayItems (target : Sp) (items : Array Item) : Array Item :=
         else
           { width := g.width, stretch := g.width * 6, word := g.word }
         .decoratedGlue g' r
-    | .box .. | .pen .. | .img .. | .rule .. | .poly .. => it
+    | .box .. | .pen .. | .img .. | .rule .. | .poly .. | .mark .. => it
 
 /-- The scalars a run's leaves ask a face for beyond its plain
 text: formula scalars into `math`, icon glyphs into `icons`. -/
@@ -3012,7 +3056,7 @@ private def weightKeysInline (corners : Bool) (acc : Array (Nat × Nat × Bool))
   | .role _ body => weightKeysInlineList corners acc sty body.toList
   | .link _ body => weightKeysInlineList corners acc sty body.toList
   | .cited _ _ ink => weightKeysInlineList corners acc sty ink.toList
-  | .decorated _ body => weightKeysInlineList corners acc sty body.toList
+  | .decorated _ body | .boxed _ body => weightKeysInlineList corners acc sty body.toList
   | .onSteps _ body => weightKeysInlineList corners acc sty body.toList
   | .altSteps _ active otherwise =>
     weightKeysInlineList corners (weightKeysInlineList corners acc sty active.toList) sty otherwise.toList
@@ -3347,7 +3391,7 @@ private def mathItemsBounds (fs : FontSet) (items : Array Item) (paintOnly : Boo
           bounds := add bounds ⟨gx, raise, gx + adv, raise + font.capHeight * size / upem⟩
         gx := gx + adv
       pen := pen + w
-    | .rule w t r _ =>
+    | .rule w t r _ | .mark w t r _ =>
       if !paintOnly || (w != 0 && t != 0) then
         bounds := add bounds ⟨min pen (pen + w), r, max pen (pen + w), r + t⟩
       pen := pen + w
@@ -3360,7 +3404,7 @@ private def mathItemsBounds (fs : FontSet) (items : Array Item) (paintOnly : Boo
       if !paintOnly || paints then
         for (x, y) in pts do
           bounds := add bounds ⟨pen + x, y, pen + x, y⟩
-    | .glue _ | .decoratedGlue _ _ | .pen _ _ _ _ _ _ | .img _ _ _ _ => pure ()
+    | .glue _ | .decoratedGlue _ _ | .pen _ _ _ _ _ _ | .img _ _ _ _ _ => pure ()
   return bounds
 
 /-- Measured attachment ink, without the baseline or nonpainting spacing items. -/
@@ -3379,11 +3423,12 @@ private def raiseItems (delta : Sp) (items : Array Item) : Array Item :=
   items.map fun it => match it with
     | .box w i c l g s ld u r gr a => .box w i c l g s ld u (r + delta) gr a
     | .rule w t r c => .rule w t (r + delta) c
+    | .mark w t r c => .mark w t (r + delta) c
     | .poly pts c => .poly (pts.map fun (x, y) => (x, y + delta)) c
     | .glue g => .glue g
     | .decoratedGlue g r => .decoratedGlue g r
     | .pen w c f i col g => .pen w c f i col g
-    | .img s w h i => .img s w h i
+    | .img s w h i r => .img s w h i r
 
 /-- The zero-size rule a display alignment leaves at its
 last row's baseline, which `LineOut.lastBase` reads. -/
@@ -4038,6 +4083,13 @@ private def markBox (fs : FontSet) (sty : TextStyle) (around : Sp)
     | none => miss := miss.push (idx, c)
   return (.box w idx sty.paint sty.link gs markSize {} decorations raise sty.ground attr, miss)
 
+/-- A box being set: where its reserved paint items stand, its declaration, and the style around
+it. -/
+private structure OpenBox where
+  start : Nat
+  box : Ir.InlineBox
+  style : TextStyle
+
 /-- The token fold's state: what the walk has built and, in
 `dropped`, `substs` and `unstyled`, what it lost or substituted. -/
 private structure ItemsAcc where
@@ -4062,6 +4114,8 @@ private structure ItemsAcc where
   /-- The item count before the token being folded in,
   set by the caller so the fold writes in place. -/
   before : Nat := 0
+  /-- The boxes open where the fold stands, innermost last. -/
+  boxes : Array OpenBox := #[]
 
 /-- The pair kern a set glyph declares with its own face's space glyph (luaotfload's
 space kerning), at the box's size; 0 for anything but a box of glyphs. -/
@@ -4290,6 +4344,126 @@ private def Item.ofDecoratedGlue (g : Glue) (d : Decorations) (font : Font)
     .decoratedGlue g (d.resolve font size color)
   else .glue g
 
+/-- Glue at its natural width, as TeX sets a box's glue. -/
+private def rigidGlue (g : Glue) : Glue := { g with stretch := 0, shrink := 0, fil := false }
+
+/-- The penalty that keeps a line from breaking at the glue after it. -/
+private def unbreakable : Item := .pen 0 10000 false 0 Ir.Color.black #[]
+
+/-- The paint items a box reserves where it opens: its frame's left side, its ground, the kern back
+across the ground, and its padding. -/
+private def boxReserve : Nat := 4
+
+/-- A kern `w` wide in a style's face, under its decorations: a box with no glyphs. -/
+private def kernItem (fs : FontSet) (sty : TextStyle) (size xHeight textW textH w : Sp) : Item :=
+  let (sz, _) := sty.metrics size xHeight textW textH
+  .box w (fs.lookup sty.slot sty.weight.css sty.italic) sty.paint sty.link #[] sz {}
+    (sty.resolvedDecorations size xHeight textW textH fs) 0 sty.ground .unattributed
+
+/-- An item raised by `r`; with `flat` a run claims no extent, the box's declared one standing for
+it. -/
+private def raiseItem (r : Sp) (flat : Bool) : Item → Item
+  | .box w idx color link glyphs size metrics decorations raise ground attr =>
+    .box w idx color link glyphs size (if flat then { metrics with extent := some (0, 0) } else metrics)
+      decorations (raise + r) ground attr
+  | .rule w t raise color => .rule w t (raise + r) color
+  | .mark w t raise color => .mark w t (raise + r) color
+  | .img s w h ink raise => .img s w h ink (raise + r)
+  | .poly pts color => .poly (pts.map fun (x, y) => (x, y + r)) color
+  | .glue g => .glue g
+  | .decoratedGlue g d => .decoratedGlue g d
+  | .pen w c f i k gs => .pen w c f i k gs
+
+/-- An item packed in an `\hbox` before its line: a run set at its natural width, font expansion
+leaving it be (`RunMetrics.fixed`). -/
+private def fixRun : Item → Item
+  | .box w idx c l g sz m d ra gr att => .box w idx c l g sz { m with fixed := true } d ra gr att
+  | .glue g => .glue g
+  | .decoratedGlue g d => .decoratedGlue g d
+  | .pen w c f i k gs => .pen w c f i k gs
+  | .img s w h ink r => .img s w h ink r
+  | .rule w t r c => .rule w t r c
+  | .poly pts c => .poly pts c
+  | .mark w t r c => .mark w t r c
+
+/-- The natural width, height and depth TeX's `\hbox` gives a run of items, its glyphs measured by
+their outlines and a run whose box declares its extent by that extent. -/
+private def itemsBox (fs : FontSet) (items : Array Item) : Sp × Sp × Sp :=
+  items.foldl (fun (w, h, d) it => match it with
+    | .box bw idx _ _ glyphs sz metrics _ raise _ _ =>
+      match metrics.extent with
+      | some (eh, ed) => (w + bw, max h eh, max d ed)
+      | none =>
+        let font := fs.get idx
+        let sc (v : Int) : Sp := v * sz / (font.unitsPerEm : Int)
+        let (h, d) := glyphs.foldl (fun (h, d) (g, _) =>
+          let (lo, hi) := (font.yExtent g).getD (font.descent, font.ascent)
+          (max h (sc hi + raise), max d (-(sc lo) - raise))) (h, d)
+        (w + bw, h, d)
+    | .glue g | .decoratedGlue g _ => (w + g.width, h, d)
+    | .pen .. => (w, h, d)
+    | .img _ iw ih _ raise => (w + iw, max h (ih + raise), max d (-raise))
+    | .rule rw t raise _ | .mark rw t raise _ => (w + rw, max h (raise + t), max d (-raise))
+    | .poly pts _ =>
+      (w, pts.foldl (fun m (_, y) => max m y) h, pts.foldl (fun m (_, y) => max m (-y)) d))
+    (0, 0, 0)
+
+/-- A box's content set as its box declares: raised, its extent the declared one where given, its
+reserved paint items and its closing ones set from the content's measure. -/
+private def closeBox (fs : FontSet) (size xHeight textW textH : Sp) (acc : ItemsAcc)
+    (ob : OpenBox) : ItemsAcc := Id.run do
+  let sty := ob.style
+  let (sz, _) := sty.metrics size xHeight textW textH
+  let xh := xHeight * sz / max size 1
+  let first := ob.start + boxReserve
+  let (w0, h0, d0) := itemsBox fs (acc.items.extract first acc.items.size)
+  let values := MeasureValues.horizontal textW textH
+  let find : Ir.BoxMeasure → Dim.SymGlue
+    | .page m => values.find m
+    | .height => { width := .ofSp h0 }
+    | .depth => { width := .ofSp d0 }
+    | .width => { width := .ofSp w0 }
+    | .totalHeight => { width := .ofSp (h0 + d0) }
+  let len (e : Affine Ir.BoxMeasure) : Sp := (e.eval find).width.resolve sz xh
+  let b := ob.box
+  let r := len b.raise
+  let p := if b.ground.isSome || b.frame.isSome then b.pad.width.resolve sz xh else 0
+  let t := if b.frame.isSome then b.rule.width.resolve sz xh else 0
+  let paint (c : Ir.Color) : Ir.Color := if sty.hidden then hiddenPaint else c
+  let frame := b.frame.map fun f => match f with
+    | .ink => sty.paint
+    | .color c _ => paint c
+  let kern (w : Sp) : Item := kernItem fs sty size xHeight textW textH w
+  let win := w0 + 2 * p
+  let full := h0 + d0 + 2 * p + 2 * t
+  let base := r - d0 - p - t
+  let declared := b.height.isSome || b.depth.isSome
+  let mut items := acc.items
+  for i in [first:items.size] do
+    items := items.modify i (raiseItem r declared)
+  let reserved : Array Item := #[
+    (match frame with
+     | some c => .rule t full base c
+     | none => kern 0),
+    (match b.ground with
+     | some (c, _) => .mark win (h0 + d0 + 2 * p) (r - d0 - p) (paint c)
+     | none => kern 0),
+    kern (if b.ground.isSome then -win else 0),
+    kern p]
+  for k in [0:boxReserve] do
+    items := items.modify (ob.start + k) fun it => reserved[k]?.getD it
+  items := items.push (kern p)
+  if let some c := frame then
+    items := items ++ #[.rule t full base c, kern (-(win + t)), .rule win t (r + h0 + p) c,
+      kern (-win), .rule win t base c, kern t]
+  if declared then
+    let ht := (b.height.map len).getD (max 0 (h0 + r))
+    let dp := (b.depth.map len).getD (max 0 (d0 - r))
+    items := items.push (.rule 0 (ht + dp) (-dp) Ir.Color.black)
+  for k in [ob.start:items.size] do
+    items := items.modify k fixRun
+  return { acc with items := items }
+
 /-- One flatten token into the accumulator: its ink becomes
 items, an entry in `dropped`, or a note body carried whole. -/
 private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
@@ -4311,7 +4485,7 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
     let (sz, leading) := sty.metrics size xHeight textW textH
     let decorations := sty.resolvedDecorations size xHeight textW textH fs
     -- A typewriter run never hyphenates: LaTeX's typewriter `\hyphenchar` is −1 (t1cmtt.fd).
-    let wordPats := if sty.slot == 2 then none else patsOf pats sty.lang
+    let wordPats := if sty.slot == 2 || sty.boxed then none else patsOf pats sty.lang
     let (ws, m, s, c', offsets, sources, sites) :=
       wordItems wordPats (sty.lang.getD "") sty.explicitBreak sz leading idx sty.paint
         sty.ground sty.link decorations useGsub attr fs font chars
@@ -4411,8 +4585,10 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
     let g := interword sz (fs.get idx)
     let after := if acc.wordEnd == acc.items.size then spaceKern fs true acc.items.back? else 0
     let g := { g with width := g.width + after }
-    let item := Item.ofDecoratedGlue g decorations (fs.get idx) sz sty.paint
-    { acc with items := acc.items.push item }
+    -- In a box a space keeps its natural width and breaks nothing, as in TeX's `\hbox`.
+    let item := Item.ofDecoratedGlue (if sty.boxed then rigidGlue g else g) decorations (fs.get idx)
+      sz sty.paint
+    { acc with items := (if sty.boxed then acc.items.push unbreakable else acc.items).push item }
   | .fill =>
     -- Stretchable but not a legal breakpoint on its own.
     { acc with items := acc.items.push (.glue { fil := true }) }
@@ -4423,9 +4599,10 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
     let xh := xHeight * sz / max size 1
     let glue := g.resolve sz xh
     let items := if keep then
-        (acc.items.push (.rule 0 0 0 Ir.Color.black)).push
-          (.pen 0 10000 false 0 Ir.Color.black #[])
+        (acc.items.push (.rule 0 0 0 Ir.Color.black)).push unbreakable
+      else if sty.boxed then acc.items.push unbreakable
       else acc.items
+    let glue := if sty.boxed then rigidGlue glue else glue
     let decorations := sty.resolvedDecorations size xHeight textW textH fs
     let fontIdx := fs.lookup sty.slot sty.weight.css sty.italic
     let decorations := match sty.leaderReach with
@@ -4447,6 +4624,14 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
     let item : Item := .rule (max 0 w) (max 0 h) r sty.paint
     { acc with items := acc.items.push item }
   | .corr maybe sty => correctItalic fs maybe sty acc
+  | .boxOpen b sty =>
+    { acc with
+      items := acc.items ++ Array.replicate boxReserve (kernItem fs sty size xHeight textW textH 0)
+      boxes := acc.boxes.push ⟨acc.items.size, b, sty⟩ }
+  | .boxClose =>
+    match acc.boxes.back? with
+    | some ob => closeBox fs size xHeight textW textH { acc with boxes := acc.boxes.pop } ob
+    | none => acc
   | .strut g =>
     let strut : Item := .rule 0 (max 0 (g.width.resolve size xHeight)) 0
       Ir.Color.black
@@ -4464,7 +4649,7 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
           spec.height.isNone && w > textW && w > 0 then
         (textW, textW * h / w)
       else (w, h)
-    { acc with items := acc.items.push (.img idx? (max 0 w) (max 0 h) ink) }
+    { acc with items := acc.items.push (.img idx? (max 0 w) (max 0 h) ink 0) }
   | .brk extra =>
     let items := acc.items.push (.glue { fil := true, parfill := true })
     let extras :=
@@ -4659,7 +4844,7 @@ private def Tk.sourceChars : Tk → List Char
   | .space _ => [' ']
   | .origin _ | .anchor _ | .fill | .hskip _ _ _ | .rule _ _ _ _
     | .strut _ | .brk _ | .img _ _ _ | .formula _ _ _ _
-    | .icon _ _ _ | .note _ _ _ _ | .corr _ _ => []
+    | .icon _ _ _ | .note _ _ _ _ | .corr _ _ | .boxOpen _ _ | .boxClose => []
 
 private theorem pushWord_sourceChars (st : FlattenSt) (sty : TextStyle)
     (cur : Array Char) (attr : Attribution) :
@@ -4849,7 +5034,9 @@ private theorem itemsOfTok_none_chars (size xHeight : Sp)
     dsimp only
     intro hc
     refine ⟨hc, ?_⟩
-    simp [itemsOfTok, ItemsAcc.chars, Tk.itemChars, decoratedGlue_boxChars]
+    simp only [itemsOfTok, ItemsAcc.chars, Tk.itemChars]
+    have hu : unbreakable.boxChars = [] := rfl
+    by_cases hb : sty.boxed <;> simp [hb, decoratedGlue_boxChars, hu]
 
 private theorem cleanLoop_inv_census {α β γ : Type} (Inv Clean : β → Prop)
     (read : β → List γ) (emit : α → List γ) (f : α → β → Id (ForInStep β)) :
@@ -5243,7 +5430,7 @@ public def canBreakAt (items : Array Item) (j : Nat) : Bool :=
   | some (.glue _) | some (.decoratedGlue _ _) =>
     match items[j-1]? with
     | some (.box _ _ _ _ _ _ _ _ _ _ _) => j > 0
-    | some (.img _ _ _ _) => j > 0
+    | some (.img _ _ _ _ _) => j > 0
     | some (.rule _ _ _ _) => j > 0
     | _ => false
   | some (.pen _ cost _ _ _ _) => cost < 10000
@@ -5379,10 +5566,10 @@ public def measure (items : Array Item) (a j : Nat) (protrude : Bool := false) :
   let mut m : Measure := {}
   for k in [a:j] do
     match items[k]! with
-    | .box w _ _ _ _ _ _ _ _ _ _ =>
-      m := { m with natural := m.natural + w, boxW := m.boxW + w }
-    | .img _ w _ _ => m := { m with natural := m.natural + w }
-    | .rule w _ _ _ => m := { m with natural := m.natural + w }
+    | .box w _ _ _ _ _ metrics _ _ _ _ =>
+      m := { m with natural := m.natural + w, boxW := if metrics.fixed then m.boxW else m.boxW + w }
+    | .img _ w _ _ _ => m := { m with natural := m.natural + w }
+    | .rule w _ _ _ | .mark w _ _ _ => m := { m with natural := m.natural + w }
     | .poly _ _ => pure ()
     | .glue g | .decoratedGlue g _ => m := { m with
         natural := m.natural + g.width
@@ -5457,7 +5644,7 @@ public def runtDemerits : Int := 1
 public def oneWordLine (items : Array Item) (a j : Nat) : Bool :=
   !((List.range (j - a)).any fun i => match items[a + i]? with
     | some (.glue g) | some (.decoratedGlue g _) => g.word
-    | some (.box ..) | some (.pen ..) | some (.img ..) | some (.rule ..) | some (.poly ..)
+    | some (.box ..) | some (.pen ..) | some (.img ..) | some (.rule ..) | some (.poly ..) | some (.mark ..)
     | none => false)
 
 /-- Prefix sums over item width, stretch, shrink, fil and forced counts, one slot past the end. -/
@@ -5490,9 +5677,9 @@ public def kpSums (items : Array Item) : KpSums := Id.run do
   pb := pb.push 0
   for k in [0:n] do
     let (dw, dst, dsh, dfil, db) : Sp × Sp × Sp × Nat × Sp := match items[k]! with
-      | .box w _ _ _ _ _ _ _ _ _ _ => (w, 0, 0, 0, w)
-      | .img _ w _ _ => (w, 0, 0, 0, 0)
-      | .rule w _ _ _ => (w, 0, 0, 0, 0)
+      | .box w _ _ _ _ _ metrics _ _ _ _ => (w, 0, 0, 0, if metrics.fixed then 0 else w)
+      | .img _ w _ _ _ => (w, 0, 0, 0, 0)
+      | .rule w _ _ _ | .mark w _ _ _ => (w, 0, 0, 0, 0)
       | .poly _ _ => (0, 0, 0, 0, 0)
       | .glue g | .decoratedGlue g _ =>
         (g.width, g.stretch, g.shrink, if g.fil then 1 else 0, 0)
@@ -6389,13 +6576,13 @@ public def kpTwoPass (items : Array Item) (target : Sp) (protrude : Bool := fals
     Array Nat := Id.run do
   let sealable : Item → Bool := fun it => match it with
     | .pen _ cost flagged _ _ _ => flagged && forcedCost < cost && cost < 10000
-    | .box .. | .glue .. | .decoratedGlue .. | .img .. | .rule .. | .poly .. => false
+    | .box .. | .glue .. | .decoratedGlue .. | .img .. | .rule .. | .poly .. | .mark .. => false
   if !items.any sealable then return kp items target protrude expand bg fil runt
   let plain := items.map fun it => match it with
     | .pen w cost flagged f c g =>
       if flagged && forcedCost < cost && cost < 10000 then .pen w 10000 flagged f c g
       else .pen w cost flagged f c g
-    | .box .. | .glue .. | .decoratedGlue .. | .img .. | .rule .. | .poly .. => it
+    | .box .. | .glue .. | .decoratedGlue .. | .img .. | .rule .. | .poly .. | .mark .. => it
   let breaks := kp plain target protrude expand bg fil runt
   if breaks.isEmpty then return kp items target protrude expand bg fil runt
   let mut prev := plain.size
@@ -6611,14 +6798,18 @@ private def setLineSegments (items : Array Item) (a j : Nat) (m : Measure)
     | .box w fontIdx color link glyphs size leading decorations raise ground attr =>
       -- The declared width is authoritative: a kern is a box with a width and no glyphs.
       let offset := wordOffsets[k]?.getD 0
+      let f := if leading.fixed then 0 else f
       segs := setWordBox segs f offset w fontIdx color link glyphs size leading
         decorations raise ground attr
       width := width + expandSpan f offset w
-    | .img idx w h ink =>
-      segs := segs.push (.image idx w h ink)
+    | .img idx w h ink raise =>
+      segs := segs.push (.image idx w h ink raise)
       width := width + w
     | .rule w thickness raise color =>
       segs := segs.push (.rule w thickness raise color)
+      width := width + w
+    | .mark w thickness raise color =>
+      segs := segs.push (.decoration (.highlight color none) w thickness raise color)
       width := width + w
     | .poly pts color =>
       segs := segs.push (.poly (pts.map fun (x, y) => (x + x * f / 1000, y)) color)
@@ -6689,7 +6880,7 @@ private theorem setLineSegments_glyphChars (items : Array Item) (a j : Nat) (m :
 
 private def Item.NoGlyph : Item → Prop
   | .box _ _ _ _ glyphs .. | .pen _ _ _ _ _ glyphs => glyphs = #[]
-  | .glue _ | .decoratedGlue .. | .img .. | .rule .. | .poly .. => True
+  | .glue _ | .decoratedGlue .. | .img .. | .rule .. | .poly .. | .mark .. => True
 
 private def Seg.NoGlyph : Seg → Prop
   | .run _ _ _ _ glyphs .. => glyphs = #[]
@@ -6930,8 +7121,8 @@ private def lineRegionBox (box : Option RegionBox) (l : LineOut) : Option Region
     | .rule w thickness raise _ | .decoration _ w thickness raise _ =>
       out := addRegionBox out x (l.y - raise - thickness) (x + w) (l.y - raise)
       x := x + w
-    | .image _ w h _ =>
-      out := addRegionBox out x (l.y - h) (x + w) l.y
+    | .image _ w h _ raise =>
+      out := addRegionBox out x (l.y - raise - h) (x + w) (l.y - raise)
       x := x + w
     | .poly pts _ =>
       -- A polygon advances no pen; its vertices stand at the pen x, `py` up from the baseline.
@@ -8155,7 +8346,7 @@ public def Seg.advance : Seg → Sp
   | .decoratedGap w _ _ => w
   | .decoration _ w _ _ _ => w
   | .rule w .. => w
-  | .image _ w _ _ => w
+  | .image _ w _ _ _ => w
   | .poly _ _ => 0
 
 /-- Shipping keeps a segment's advance: hidden ink a gap as wide, a hidden polygon none. -/
@@ -8280,7 +8471,7 @@ public def Seg.stripGlyphs : Seg → Seg
   | .decoratedGap w word paint => .decoratedGap w word paint
   | .decoration kind w t r c => .decoration kind w t r c
   | .rule w t r c => .rule w t r c
-  | .image s w h i => .image s w h i
+  | .image s w h i r => .image s w h i r
   | .poly pts c => .poly pts c
 
 /-- Whether a segment contributes a text strut. -/
@@ -8349,14 +8540,15 @@ private def mergeLineBox (acc : Option LineBox) (box : LineBox) : Option LineBox
 private def lineBoxStep (fs : FontSet) (nominal : Sp) (leadFactor : Nat) (lead : Option Sp)
     (acc : Option LineBox) : Seg → Option LineBox
   | .run idx _ _ _ _ sz metrics _ raise _ _ =>
-    match metrics.math with
-    | some m =>
+    match metrics.extent, metrics.math with
+    | some (h, d), _ => mergeLineBox acc ⟨h, d, h, d⟩
+    | none, some m =>
       let lineHeight := metrics.leading.getD (Ir.runLead lead nominal m.size leadFactor)
       let strut := leadedBox m.ascent m.descent lineHeight
       let top := max 0 (m.top + raise)
       let below := max 0 (-m.bottom - raise)
       mergeLineBox acc ⟨max strut.1 top, max strut.2 below, top, below⟩
-    | none =>
+    | none, none =>
       let font := fs.get idx
       let sz := if sz == 0 then nominal else sz
       let lineHeight := metrics.leading.getD (Ir.runLead lead nominal sz leadFactor)
@@ -8365,7 +8557,7 @@ private def lineBoxStep (fs : FontSet) (nominal : Sp) (leadFactor : Nat) (lead :
       mergeLineBox acc ⟨box.1 + max 0 raise, box.2 + max 0 (-raise),
         scaledAt sz font font.inkAscent.toNat + max 0 raise,
         scaledAt sz font (-font.descent).toNat + max 0 (-raise)⟩
-  | .image _ _ h _ => mergeLineBox acc ⟨h, 0, h, 0⟩
+  | .image _ _ h _ r => mergeLineBox acc ⟨max 0 (h + r), max 0 (-r), max 0 (h + r), max 0 (-r)⟩
   | .rule _ t r _ | .decoration _ _ t r _ =>
     mergeLineBox acc ⟨r + t, -r, r + t, -r⟩
   | .poly pts _ =>
@@ -8428,13 +8620,16 @@ public theorem line_box_glyph_free (fs : FontSet)
 the tallest glyph above the baseline and the deepest below it. -/
 public def segsInk (fs : FontSet) (segs : Array Seg) : Sp × Sp :=
   segs.foldl (fun (acc : Sp × Sp) s => match s with
-    | .run idx _ _ _ glyphs sz _ _ raise _ _ =>
-      let font := fs.get idx
-      let sc (v : Int) : Sp := v * sz / (font.unitsPerEm : Int)
-      glyphs.foldl (fun (acc : Sp × Sp) (g, _) =>
-        let (lo, hi) := (font.yExtent g).getD (font.descent, font.ascent)
-        (max acc.1 (sc hi + raise), max acc.2 (-(sc lo) - raise))) acc
-    | .image _ _ h _ => (max acc.1 h, acc.2)
+    | .run idx _ _ _ glyphs sz metrics _ raise _ _ =>
+      match metrics.extent with
+      | some (h, d) => (max acc.1 h, max acc.2 d)
+      | none =>
+        let font := fs.get idx
+        let sc (v : Int) : Sp := v * sz / (font.unitsPerEm : Int)
+        glyphs.foldl (fun (acc : Sp × Sp) (g, _) =>
+          let (lo, hi) := (font.yExtent g).getD (font.descent, font.ascent)
+          (max acc.1 (sc hi + raise), max acc.2 (-(sc lo) - raise))) acc
+    | .image _ _ h _ r => (max acc.1 (h + r), max acc.2 (-r))
     | .rule _ t r _ | .decoration _ _ t r _ =>
       (max acc.1 (r + t), max acc.2 (-r))
     | .poly pts _ =>
@@ -9270,6 +9465,10 @@ private inductive Op where
   | anchorRule (parskip : Glue)
   /-- `\nointerlineskip` (`Ir.noInterlineRole`). -/
   | noInterline
+  /-- The next line's interline glue is TeX's: its `\baselineskip` from the depth of the box above. -/
+  | texInterline
+  /-- `\clearpage`'s empty box: the depth the next interline glue reads is zero. -/
+  | clearDepth
   /-- A display a picture stands for opens here (`Ir.displayPicture?`),
   its skip above chosen as a display line's. -/
   | displayOpen (dj : DisplayJob) (left size : Sp)
@@ -9300,6 +9499,8 @@ public structure Spacing.Context where
   private slides : Bool := false
   /-- How the abstract's body sets (`Ir.Doc.abstractForm`). -/
   private abstractForm : Ir.AbstractForm := .quotation
+  /-- Whether a body h1 is a chapter (`Ir.Doc.chapters`). -/
+  private chapters : Bool := false
   /-- A frame body owns its headings: they neither open section dividers
   nor replace the enclosing top-level section or its footer. -/
   private inFrame : Bool := false
@@ -10064,8 +10265,8 @@ private def itemsNaturalWidth (items : Array Item) : Sp :=
     | .box bw .. => w + bw
     | .glue g | .decoratedGlue g _ => w + g.width
     | .pen .. => w
-    | .img _ bw _ _ => w + bw
-    | .rule bw .. => w + bw
+    | .img _ bw _ _ _ => w + bw
+    | .rule bw .. | .mark bw .. => w + bw
     | .poly .. => w) 0
 
 /-- The natural width of `content` set at `size` on a line `avail` wide, measured and never
@@ -10091,7 +10292,7 @@ private def itemsLinesWidth (items : Array Item) : Sp := Id.run do
   let mut run : Sp := 0
   for it in items do
     match it with
-    | .box bw .. | .img _ bw _ _ | .rule bw .. => run := run + bw
+    | .box bw .. | .img _ bw _ _ _ | .rule bw .. | .mark bw .. => run := run + bw
     | .glue g | .decoratedGlue g _ => run := run + g.width
     | .pen _ cost .. =>
       if cost ≤ forcedCost then
@@ -10334,8 +10535,8 @@ private def itemsMinWidth (items : Array Item) : Sp := Id.run do
   for it in items do
     match it with
     | .box w .. => run := run + w
-    | .img _ w _ _ => run := run + w
-    | .rule w .. => run := run + w
+    | .img _ w _ _ _ => run := run + w
+    | .rule w .. | .mark w .. => run := run + w
     | .glue _ | .decoratedGlue _ _ =>
       widest := max widest run
       run := 0
@@ -10748,7 +10949,7 @@ public def labelGlyphStep (fs : FontSet) (size : Sp) (acc : Sp × Sp) (seg : Seg
       let font := fs.get idx
       let sz := if sz == 0 then size else sz
       glyphs.foldl (fun acc (g, _) => growExtent acc (glyphVExtent font sz raise g)) acc
-    | .image _ _ h _ => (max acc.1 h, acc.2)
+    | .image _ _ h _ r => (max acc.1 (h + r), max acc.2 (-r))
     | .rule _ t raise _ | .decoration _ _ t raise _ =>
       growExtent acc (raise + t, -raise)
     | .poly pts _ => pts.foldl (fun acc (_, y) => growExtent acc (y, -y)) acc
@@ -10764,7 +10965,7 @@ private theorem labelGlyphStep_grows (fs : FontSet) (size : Sp)
   cases seg with
   | run =>
     exact foldExtent_preserves _ (fun _ _ => growExtent_left _ _) _ _
-  | image => exact ⟨Int.le_max_left _ _, Int.le_refl _⟩
+  | image => exact ⟨Int.le_max_left _ _, Int.le_max_left _ _⟩
   | rule | decoration => exact growExtent_left _ _
   | poly => exact foldExtent_preserves _ (fun _ _ => growExtent_left _ _) _ _
   | gap | decoratedGap => exact ⟨Int.le_refl _, Int.le_refl _⟩
@@ -10833,6 +11034,12 @@ public def measureLabelLine (fs : FontSet) (size width ex : Sp) (segs : Array Se
   { w := width, height := band.1, depth := band.2
     boxHeight := ink.1, boxDepth := ink.2, ex := ex, axis, rule, script }
 
+private theorem measureLabelLine_w (fs : FontSet) (size width ex : Sp) (segs : Array Seg) :
+    (measureLabelLine fs size width ex segs).w = width := rfl
+
+private theorem measureLabelLine_ex (fs : FontSet) (size width ex : Sp) (segs : Array Seg) :
+    (measureLabelLine fs size width ex segs).ex = ex := rfl
+
 /-- The backend projection of the two extent fields of `Ir.Pic.LabelInk`. -/
 public theorem measureLabelLine_projects (fs : FontSet) (size width ex : Sp)
     (segs : Array Seg) :
@@ -10877,7 +11084,7 @@ public theorem labelResult_projects (fs : FontSet) (imgs : Image.Store) (geom : 
   simp only [labelResult, Option.map_eq_some_iff] at h
   obtain ⟨brk, _, heq⟩ := h
   cases heq
-  rfl
+  rw [measureLabelLine_w, measureLabelLine_ex]
 
 /-- Place a measured label by the IR's baseline and horizontal anchor. -/
 public def labelLine (place : Ir.Pic.Place) (x y : Sp) (align : Ir.Pic.LabelAlign)
@@ -10954,7 +11161,7 @@ public def labelGlyphUnknown (fs : FontSet) (size : Sp) (segs : Array Seg) : Boo
   | .run idx _ _ _ glyphs sz _ _ raise _ _ =>
     glyphs.any fun g =>
       (GlyphBounds.glyph (fs.get idx) (if sz == 0 then size else sz) raise g.1).unresolved
-  | .image _ _ _ _ | .rule _ _ _ _ | .decoration _ _ _ _ _
+  | .image _ _ _ _ _ | .rule _ _ _ _ | .decoration _ _ _ _ _
     | .poly _ _ | .gap _ _ | .decoratedGap _ _ _ => false
 
 /-- Read each painted run in its own face, size and raise against the producer's reserve. -/
@@ -10971,7 +11178,7 @@ public def observeLabel (fs : FontSet) (line : LineOut) (stamp : LabelAudit.Stam
           | some (lo, hi) =>
             decide (hi * size / (font.unitsPerEm : Int) + raise ≤ stamp.above ∧
               (-lo) * size / (font.unitsPerEm : Int) - raise ≤ stamp.below)
-      | .image _ _ _ _ | .rule _ _ _ _ | .decoration _ _ _ _ _
+      | .image _ _ _ _ _ | .rule _ _ _ _ | .decoration _ _ _ _ _
         | .poly _ _ | .gap _ _ | .decoratedGap _ _ _ => true }
 
 /-- The label census over the final page lines, after placement and furniture. -/
@@ -11271,6 +11478,29 @@ private def openFrameBody (r : Rd) (a : Acc) (hasTitle : Bool) (valign : VAlign)
   | .paper => { a with ops := (a.ops.push (.bodyOpen g none)).push .noInterline, wantDefault := false,
                        frameTop := true }
 
+/-- A class's chapter head on the next page, as report.cls's `\@makechapterhead` and
+`\@makeschapterhead` set it, each part by TeX's interline glue at its size's `\baselineskip`. -/
+private def collectChapter (r : Rd) (a : Acc) (num : Option String) (title : Array Inline)
+    (indent : Sp) (leaf : Option Nat) (span : Nat) (anchor : String) : Acc :=
+  let a := a.pageBreak
+  -- A label in the title lands where the chapter opens, as hyperref's anchor at `\refstepcounter`.
+  let a := { a with ops := (a.ops.push .clearDepth).push (.anchor anchor) ++
+    (Ir.labelKeys title).map (Op.anchor ∘ Ir.labelAnchor), anchorAt := some a.owed.size }
+  let a := a.vskip { width := pt 50 } -- report.cls `\@makechapterhead`: `\vspace*{50\p@}`
+  let sized (step : String) (xs : Array Inline) : Array Inline := #[.styled (.size step) #[.styled .bold xs]]
+  let keep := pt 40 + 2 * Ir.leadingFor r.geom.fontSize r.geom.leading -- report.cls: `\vskip 40\p@`
+  let a := match num with
+    | some label =>
+      -- The word and number are the heading's generated ink, read with its title.
+      let a := collectDisplay r a (sized "huge" #[.text label]) indent false r.geom.fontSize
+        (leaf := leaf) (keepNext := pt 50 + keep) -- report.cls: `\vskip 20\p@`, `\Huge`'s 30pt leading
+      ({ a with ops := a.ops.push .texInterline }).vskip { width := pt 20 } -- report.cls: `\vskip 20\p@`
+    | none => a
+  let a := collectDisplay r a (sized "Huge" title) indent false r.geom.fontSize (leaf := leaf)
+    (span := span) (keepNext := keep)
+  { ({ a with ops := a.ops.push .texInterline }).vskip { width := pt 40 } with -- report.cls: `\vskip 40\p@`
+    afterHeading := true }
+
 private def collectSection (r : Rd) (a : Acc) (level : Ir.HeadingLevel)
     (num : Option String) (title : Array Inline) (indent : Sp) (top : Bool := false)
     (anchor : Option String := none) (page : Bool := false) : Acc :=
@@ -11335,6 +11565,8 @@ private def collectSection (r : Rd) (a : Acc) (level : Ir.HeadingLevel)
   -- Without a section page a deck's section inks nothing: its anchors ride the next line set.
   else if divider then
     { a with ops := a.ops ++ (Ir.labelKeys title).map (Op.anchor ∘ Ir.labelAnchor) }
+  else if level == .h1 && r.chapters then
+    collectChapter r a num title indent leaf span (anchor.getD (Ir.slug title))
   else
   let st := r.style level.element
   -- The number stands before the title with a `\quad` kern (classes.dtx `\@seccntformat`).
@@ -12162,6 +12394,27 @@ private def collectListing (r : Rd) (a : Acc) (covered : Option Ir.Color) (s : S
     | none => collectVerbatim r a covered s spec indent
   | .none => collectVerbatim r a covered s spec indent
 
+/-- An aligned io line's word in its column, as algorithm2e's `\parbox[t]{\inoutsize}{\KwSty{word\hfill:}}~`
+sets it: the column as wide as the widest of `column`'s words with their colon, the word at its
+start, the colon at its end; with the width the content hangs at, past the tie. -/
+private def alignedKey (r : Rd) (a : Acc) (word : String) (site : Option Span)
+    (column : Array String) : Array Inline × Sp × Acc :=
+  let size := r.geom.fontSize
+  let bold (t : String) : Inline := .styled .bold #[.text t]
+  let (colW, a) := (column.push word).foldl (init := ((0 : Sp), a)) fun (w, a) c =>
+    let (cw, a) := a.naturalWidth r size #[bold (c ++ ":")] r.geom.textWidth
+    (max w cw, a)
+  let (ownW, a) := a.naturalWidth r size #[bold (word ++ ":")] r.geom.textWidth
+  let (wordW, a) := a.naturalWidth r size #[bold word] r.geom.textWidth
+  let (colonW, a) := a.naturalWidth r size #[bold ":"] r.geom.textWidth
+  let body := r.fs.get (r.fs.lookup 0 400 false)
+  let tie := scaledAt size body body.spaceAdvance
+  let key := if colW ≤ ownW then #[bold (word ++ ":")]
+    else #[bold word, .hspace (.lit { width := .ofSp (colW - wordW - colonW) }) true, bold ":"]
+  (match site with
+    | some s => #[Inline.located s key]
+    | none => key, colW + tie, a)
+
 private def collectAlgorithm (r : Rd) (a : Acc) (numbered semis : Bool) (lines : Array Ir.AlgLine) (indent : Sp) : Acc :=
   -- Pseudocode: unhyphenated, unjustified display lines, one `algindent` per depth (algorithm2e).
   let words := Ir.algWords r.locale.tag
@@ -12191,16 +12444,25 @@ private def collectAlgorithm (r : Rd) (a : Acc) (numbered semis : Bool) (lines :
       content := if l.content.all (· matches Inline.label _) then l.content
         else markContent l.content
       comment := l.comment.map fun c => if Struct.leafCountInlines c == 0 then c else markContent c }
-    let content := Ir.AlgLine.rendered words semis muted l
-    let marker : Option (Array Ir.Inline) := if numbered then
+    -- algorithm2e numbers no io line, nor counts one, unless `inoutnumbered` asks.
+    let io := l.kind matches .io _
+    let marker : Option (Array Ir.Inline) := if numbered && !io then
         some #[Ir.Inline.colored muted (some (.role .muted)) #[.text s!"{i}"]]
       else none
     let span := Struct.leafCountInlines l.content + Struct.leafCountInlines (l.comment.getD #[])
     let (a, leaf) := a.leafRange span
-    (collectPara rAlg a content (indent + stepInd * (l.depth : Int)) false
-      r.geom.fontSize (marker := marker) (markerIndent := some indent)
-      (leaf := leaf <|> codeLeaf) (span := span),
-      i + 1)) (a, 1)).1
+    let lineIndent := indent + stepInd * (l.depth : Int)
+    let a := match l.kind.aligned? with
+      | some (word, site, column) =>
+        let (key, keyW, a) := alignedKey r a word site column
+        collectPara rAlg a (Ir.AlgLine.close semis muted l false l.content) (lineIndent + keyW)
+          false r.geom.fontSize (marker := some key) (markerLeft := some lineIndent)
+          (leaf := leaf <|> codeLeaf) (span := span)
+      | none =>
+        collectPara rAlg a (Ir.AlgLine.rendered words semis muted l) lineIndent false
+          r.geom.fontSize (marker := marker) (markerIndent := some indent)
+          (leaf := leaf <|> codeLeaf) (span := span)
+    (a, if io then i else i + 1)) (a, 1)).1
 
 private def collectFramefoot (a : Acc) (content : Array Inline) : Acc :=
   -- A `\framefoot` state change: no line; empty clears back to the chrome default.
@@ -13661,7 +13923,7 @@ public def Seg.underlineRule (fs : FontSet) (lineSize : Sp) : Seg → Option Dec
   | .run fontIdx color _ _ _ size _ decorations _ _ _ =>
     (decorations.resolve (fs.get fontIdx) (if size == 0 then lineSize else size) color).underline
   | .decoratedGap _ _ decorations => decorations.underline
-  | .gap _ _ | .rule _ _ _ _ | .decoration _ _ _ _ _ | .image _ _ _ _ | .poly _ _ => none
+  | .gap _ _ | .rule _ _ _ _ | .decoration _ _ _ _ _ | .image _ _ _ _ _ | .poly _ _ => none
 
 /-- Append a segment's skip-ink paint, its full advance kept as gaps between the surviving spans. -/
 public def appendUnderline (fs : FontSet) (size : Sp) (obs : List (Int × Int))
@@ -13723,7 +13985,7 @@ private def underlineSegs (fs : FontSet) (lineSize : Sp) (segs : Array Seg) :
     match seg with
     | .gap w _ | .decoratedGap w _ _ => x := x + w
     | .rule w _ _ _ | .decoration _ w _ _ _ => x := x + w
-    | .image _ w _ _ => x := x + w
+    | .image _ w _ _ _ => x := x + w
     | .poly _ _ => pure ()
     | .run fontIdx _ _ w glyphs size _ _ _ _ _ =>
       let font := fs.get fontIdx
@@ -13767,7 +14029,7 @@ private def lineThroughSegs (segs : Array Seg) : Array Seg := Id.run do
       | none => out := out.push (.gap w false)
     | .gap w _ => out := out.push (.gap w false)
     | .rule w _ _ _ | .decoration _ w _ _ _ => out := out.push (.gap w false)
-    | .image _ w _ _ => out := out.push (.gap w false)
+    | .image _ w _ _ _ => out := out.push (.gap w false)
     | .poly _ _ => pure ()
   return out
 
@@ -13801,7 +14063,7 @@ private def markSegs (segs : Array Seg) : Array Seg := Id.run do
       | none => out := out.push (.gap w false)
     | .gap w _ => out := out.push (.gap w false)
     | .rule w _ _ _ | .decoration _ w _ _ _ => out := out.push (.gap w false)
-    | .image _ w _ _ => out := out.push (.gap w false)
+    | .image _ w _ _ _ => out := out.push (.gap w false)
     | .poly _ _ => pure ()
   return out
 
@@ -14704,7 +14966,7 @@ private theorem sourceBound_placePara {n : Nat} (fs : FontSet) (b : B)
 private def Item.Prose : Item → Prop
   | .pen _ cost flagged _ _ glyphs =>
     forcedCost < cost ∧ flagged = false ∧ glyphs = #[]
-  | .box .. | .glue .. | .decoratedGlue .. | .img .. | .rule .. | .poly .. => True
+  | .box .. | .glue .. | .decoratedGlue .. | .img .. | .rule .. | .poly .. | .mark .. => True
 
 private def ItemsProse (items : Array Item) : Prop :=
   ∀ it ∈ items, it.Prose
@@ -14869,7 +15131,12 @@ private theorem itemsOfTok_none_prose (size xHeight : Sp)
     exact (itemsProse_append _ _).mpr ⟨widenLast_prose _ _ hi,
       wordItems_none_prose _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _⟩
   case space sty =>
-    exact (itemsProse_push _ _).mpr ⟨hi, decoratedGlue_prose _ _ _ _ _⟩
+    refine (itemsProse_push _ _).mpr ⟨?_, decoratedGlue_prose _ _ _ _ _⟩
+    by_cases hb : sty.boxed
+    · simp only [hb, ↓reduceIte]
+      exact (itemsProse_push _ _).mpr ⟨hi, by simp [unbreakable, Item.Prose, forcedCost]⟩
+    · simp only [hb, Bool.false_eq_true, ↓reduceIte]
+      exact hi
 
 private theorem itemsOfToks_none_prose (size xHeight : Sp)
     (fs : FontSet) (imgs : Image.Store) (textW textH : Sp)
@@ -14937,7 +15204,7 @@ private theorem itemsOfInlines_none_prose (size xHeight : Sp)
   let st := flatten fs.mathFont?.isSome noteOk
     (FlattenSt.mk #[] false #[] ladder roleMetrics ctr step steps) baseStyle xs
   let acc := itemsOfToks none size xHeight fs imgs textW textH
-    (ItemsAcc.mk #[] #[] #[] #[] #[] #[] #[] #[] {} {} cache 0 0) (FlattenSt.toks st)
+    (ItemsAcc.mk #[] #[] #[] #[] #[] #[] #[] #[] {} {} cache 0 0 #[]) (FlattenSt.toks st)
   have ht := flatten_textSource fs.mathFont?.isSome noteOk
     (FlattenSt.mk #[] false #[] ladder roleMetrics ctr step steps)
     baseStyle xs hp hs (by simp)
@@ -14994,7 +15261,7 @@ private theorem paraItems_noEarlierForced (items : Array Item) (hp : ItemsProse 
 
 private def Item.UnflaggedEmpty : Item → Prop
   | .pen _ _ flagged _ _ glyphs => flagged = false ∧ glyphs = #[]
-  | .box .. | .glue .. | .decoratedGlue .. | .img .. | .rule .. | .poly .. => True
+  | .box .. | .glue .. | .decoratedGlue .. | .img .. | .rule .. | .poly .. | .mark .. => True
 
 private theorem itemsProse_unflagged (items : Array Item) (hp : ItemsProse items) :
     ∀ it ∈ paraItems items, it.UnflaggedEmpty := by
@@ -15420,7 +15687,7 @@ private def stagedLabelRequests (ops : Array Op) : Array LabelAudit.Request :=
       | .pin | .progress _ _ _ _ _ _ _ | .para _ _ | .regionOpen _
       | .regionClose | .colOpen _ | .colNext | .colClose | .setLogo _
       | .floatOpen | .floatClose | .anchor _ | .slotOpen | .slotClose _
-      | .anchorRule _ | .noInterline | .displayOpen _ _ _ => #[]
+      | .anchorRule _ | .noInterline | .texInterline | .clearDepth | .displayOpen _ _ _ => #[]
 
 /-- One column of a row as placed: where its ink starts, its first baseline
 when a picture opened it, and where the builder stood at its end. -/
@@ -15788,6 +16055,8 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
     -- `\vspace*`'s zero rule is a page's first item, below `\topskip`; mid-page it holds nothing.
     if b.fresh then b := { b with anchored := true, skip := g }
   | .noInterline => b := { b with ignoreDepth := true }
+  | .texInterline => b := { b with texAfter := true }
+  | .clearDepth => b := { b with prevDepth := 0, lastInk := none }
   | .displayOpen dj left size =>
     -- TeX's skip above, over the empty line `$$` sets where the display opens a paragraph.
     let b1 := b.displaySkip dj left size
@@ -16823,18 +17092,24 @@ private def restartColumn (start latest : B) (inked : Nat) : B :=
                overfullMost := latest.overfullMost
                pendingAnchors := latest.pendingAnchors }
 
-/-- Join ink on a physical page, a second flow's ground preceding both flows' ink. -/
+/-- Whether a page's first fill is its ground, one fill over the whole medium. -/
+private def groundFirst (g : Geom) (p : PageOut) : Bool :=
+  p.fills[0]?.any fun f => f.x == -g.bleed && f.y == -g.bleed &&
+    f.w == g.pageW + 2 * g.bleed && f.h == g.pageH + 2 * g.bleed
+
+/-- Join ink on a physical page under one ground, the first flow's else the second's, preceding
+both flows' ink. -/
 private def mergeColumnPage (g : Geom) (a b : PageOut) : PageOut :=
-  let ground := match b.fills[0]? with
-    | some f => if f.x == -g.bleed && f.y == -g.bleed &&
-        f.w == g.pageW + 2 * g.bleed && f.h == g.pageH + 2 * g.bleed then 1 else 0
-    | none => 0
+  let own := if groundFirst g b then 1 else 0
+  let lead := if groundFirst g a then 0 else own
   { a with lines := a.lines ++ b.lines, inks := a.inks ++ b.inks
            links := a.links ++ b.links
-           fills := b.fills.extract 0 ground ++ a.fills ++ b.fills.extract ground b.fills.size
+           fills := b.fills.extract 0 lead ++ a.fills ++ b.fills.extract own b.fills.size
            hidden :=
-             { fills := a.hidden.fills.map (ground + ·) ++
-                 b.hidden.fills.map fun i => if i < ground then i else a.fills.size + i
+             { fills := a.hidden.fills.map (lead + ·) ++
+                 b.hidden.fills.filterMap fun i =>
+                   if i < own then (if lead == 1 then some i else none)
+                   else some (lead + a.fills.size + (i - own))
                inks := a.hidden.inks ++ b.hidden.inks.map (a.inks.size + ·)
                links := a.hidden.links ++ b.hidden.links.map (a.links.size + ·) } }
 
@@ -18574,7 +18849,7 @@ public def runPost (sh : Shipped) : Out := Id.run do
             let (segs, w, _) := setLine items (lineStart items 0) brk geom.textWidth false
             -- A glyph run's size stands in for its ascent, the band centring's only estimate.
             let inkH := segs.foldl (init := (0 : Sp)) fun m sg => match sg with
-              | .image _ _ h _ => max m h
+              | .image _ _ h _ r => max m (h + r)
               | .run _ _ _ _ _ size _ _ raise _ _ => max m (size + raise)
               | _ => m
             let x := if left then geom.hmargin else geom.pageW - geom.hmargin - w
@@ -19630,6 +19905,7 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
                    locale := doc.info.locale
                    slides := doc.docClass.record.model == .frame
                    abstractForm := doc.abstractForm
+                   chapters := doc.chapters
                    lists := doc.docClass.record.lists
                    quotationIndent := doc.docClass.record.quotationIndent
                    frameKeys := doc.frameKeys
@@ -21519,7 +21795,7 @@ public def textInk : Seg → List Char
     (String.ofList (glyphs.toList.map (·.2.1))).toList.filter fun c =>
       !(c.isWhitespace || c == ' ' || c == '\u00a0' || c == '\u00ad')
   | .gap _ _ | .decoratedGap _ _ _ | .rule _ _ _ _ | .decoration _ _ _ _ _
-    | .image _ _ _ _ | .poly _ _ => []
+    | .image _ _ _ _ _ | .poly _ _ => []
 
 public def inkLine (l : LineOut) : Bool :=
   !l.furniture && !l.note && l.segs.toList.flatMap textInk != []

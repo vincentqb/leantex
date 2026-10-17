@@ -8,6 +8,8 @@
 # brace revert, so {\urlstyle{sf}\url{a}}\url{b} also sets b in sans, where
 # url.sty's local definition reverts it at the brace. A preamble \urlstyle
 # is the whole document's, in either order against \author or \title.
+# \path is url.sty's \DeclareUrlCommand\path{\urlstyle{tt}}: \url's reading,
+# unlinked, in typewriter whatever \urlstyle names.
 body impl \url{https://example.org}
 pre inert:noop \urlstyle{tt}
 pre refuse:W0301 \urldef\myurl\url{https://example.org}
@@ -15,3 +17,5 @@ pre refuse:W0301 \DeclareUrlCommand\myp{\urlstyle{tt}}
 body impl \urlstyle{same}\url{https://example.org}
 body impl \urlstyle{rm}\url{https://example.org}
 body impl \urlstyle{sf}\url{https://example.org}
+body impl \path{/usr/local/share}
+body impl \urlstyle{rm}\path{/usr/local/share}

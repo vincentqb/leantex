@@ -131,22 +131,33 @@ public def readInput (dir : System.FilePath) (file name : String) (pos : Pos) :
   let ((raws, ds), log) ← (readInputAt dir file name pos).run {}
   return (raws, log.diags ++ ds)
 
-/-- minted's `\inputminted[options]{lang}{file}`: the file's text as the listing a `minted`
-environment of that language and those options sets. -/
-private def readMinted (dir : System.FilePath) (request : Compat.InputRequest) :
-    ReadM (Array Parse.Raw × Array Diag) := do
-  let name := request.second.trimAscii.toString
+/-- A listing command's file `name` beside the document, as the captured `env` its request's options
+and `head` open. -/
+private def readCodeFile (dir : System.FilePath) (request : Compat.InputRequest) (name env : String)
+    (head : String) : ReadM (Array Parse.Raw × Array Diag) := do
   let path := dir / name
   unless ← path.pathExists do
-    return (#[], #[DriverDiag.inputMissing name (some ⟨request.file, request.pos⟩) "inputminted"])
+    return (#[], #[DriverDiag.inputMissing name (some ⟨request.file, request.pos⟩) request.command])
   match ← readSource path.toString with
   | .error d => return (#[], #[{ d with span := some ⟨request.file, request.pos⟩ }])
   | .ok bytes =>
     modify fun log => { log with reads := log.reads.push path.toString }
     let text := (← decodeOnce path.toString fun _ => Encoding.readMarkdown path.toString bytes).1.text
-    let head := if request.options.isEmpty then "" else "[" ++ request.options ++ "]"
-    let lang := request.name.trimAscii.toString
-    return (#[.verb "minted" (head ++ "{" ++ lang ++ "}\n" ++ text) request.pos], #[])
+    let opts := if request.options.isEmpty then "" else "[" ++ request.options ++ "]"
+    return (#[.verb env (opts ++ head ++ "\n" ++ text) request.pos], #[])
+
+/-- minted's `\inputminted[options]{lang}{file}`: the file's text as the listing a `minted`
+environment of that language and those options sets. -/
+private def readMinted (dir : System.FilePath) (request : Compat.InputRequest) :
+    ReadM (Array Parse.Raw × Array Diag) :=
+  readCodeFile dir request request.second.trimAscii.toString "minted"
+    ("{" ++ request.name.trimAscii.toString ++ "}")
+
+/-- listings' `\lstinputlisting[options]{file}`: the file's text as the listing a `lstlisting`
+environment of those options sets. -/
+private def readListing (dir : System.FilePath) (request : Compat.InputRequest) :
+    ReadM (Array Parse.Raw × Array Diag) :=
+  readCodeFile dir request request.name.trimAscii.toString "lstlisting" ""
 
 /-- The bibliography a Lean page or inclusion cites into: its files as the document names them, and
 their entries' keys. -/
@@ -289,6 +300,7 @@ private def readAt (dir : System.FilePath) (root : String) (depth : Nat) :
           Elab.markdownAnswer (readAt dir root depth) context request.file sub hybrid request.pos
         return (some answer, context)
       let (sub, diags) ← if request.command == "inputminted" then readMinted dir request
+        else if request.command == "lstinputlisting" then readListing dir request
         else if request.command == "inputlean" then readLean dir (inputleanAsk request)
         else readInputAt dir request.file request.name request.pos
       modify fun log => { log with diags := log.diags ++ diags }

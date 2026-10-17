@@ -1,0 +1,8 @@
+# source: LaTeX2e's standard classes (classes.dtx), the book class's chapters and divisions: \chapter
+# opens a page under its word and number, as report's does; \frontmatter, \mainmatter and
+# \backmatter each open a page, and only the main matter's chapters number. The rows probe the
+# body of a book (the `class` place).
+class impl \chapter{An invented title}
+class impl \frontmatter
+class impl \mainmatter
+class impl \backmatter

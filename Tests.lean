@@ -231,6 +231,10 @@ import Tests.MachineLoss
 import Tests.HtmlA11y
 import Tests.Conditionals
 import Tests.StringConditionals
+import Tests.FlagCommands
+import Tests.InlineBoxes
+import Tests.EnvCode
+import Tests.Chapters
 import Tests.MacroBinding
 import Tests.MacroArguments
 import Tests.MacroDefaults
@@ -1054,6 +1058,27 @@ def worldPremiseChecks (ref : IO.Ref (List String)) : IO Unit := do
   toolchainSpawnChecks ref
   premiseChecks ref
 
+/-- The url, listings, flag, column-ground, inline-box, environment-code, algorithm-word and chapter
+blocks, dispatched apart so the surface and layout suites stay within their elaboration budgets; a
+missing or unparsable font skips the face blocks. -/
+def commandSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
+  pathFaceChecks ref
+  Tests.lstInlineChecks ref
+  let some fontData ← findFont | return ()
+  let .ok font := Font.parse fontData | return ()
+  let oneFace := oneFaceOf font
+  Tests.FlagCommands.flagCommandChecks ref oneFace
+  columnGroundChecks ref oneFace
+  Tests.InlineBoxes.inlineBoxChecks ref oneFace
+  Tests.InlineBoxes.boxArgumentChecks ref oneFace
+  Tests.InlineBoxes.boxScopeChecks ref oneFace
+  Tests.EnvCode.templateCodeUseChecks ref oneFace
+  Tests.EnvCode.inlineEnvScopeChecks ref oneFace
+  if let some faces ← serifFacesSet then algWordChecks ref faces
+  Tests.Chapters.chapterChecks ref oneFace
+  Tests.Chapters.chapterReadingChecks ref oneFace
+  Tests.Chapters.chapterDeclarationChecks ref oneFace
+
 /-- The compat, class, bibliography and math elaboration blocks, dispatched together so `main` stays
 within its elaboration budget. -/
 def surfaceSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
@@ -1263,6 +1288,7 @@ def main (args : List String) : IO UInt32 := do
   missingFileSpanChecks ref
   citeNoBibChecks ref
   surfaceSuiteChecks ref
+  commandSuiteChecks ref
   backendSuiteChecks ref
   themeSuiteChecks ref
   fontFaceSuiteChecks ref

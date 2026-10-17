@@ -43,9 +43,13 @@ public def headingControl : Ir.HeadingLevel → String
   | .h5 => "heading 5"
   | .h6 => "heading 6"
 
-/-- Decode only the finite native heading vocabulary. -/
+/-- The native control a class's `\chapter` rewrites to; no source control word spells it. -/
+@[expose] public def chapterControl : String := "heading chapter"
+
+/-- Decode only the finite native heading vocabulary, a class's chapter its body h1. -/
 public def headingControl? : String → Option Ir.HeadingLevel
   | "heading title" => some .title
+  | "heading chapter" => some .h1
   | "heading 1" => some .h1
   | "heading 2" => some .h2
   | "heading 3" => some .h3
@@ -713,7 +717,8 @@ mutual
     if env == "verb" then
       let d := (['|', '!', '+', '=', '/', '"', '@'].find? (fun c => !s.contains c)).getD '|'
       s!"\\verb{d}{s}{d}"
-    else if env == "mintinline" || env == "mint" then "\\" ++ env ++ s
+    else if env == "mintinline" || env == "mint" || env == "lstinline" || Lex.urlCommands.contains env
+      then "\\" ++ env ++ s
     else s!"\\begin\{{env}}{s}\\end\{{env}}"
 
 end

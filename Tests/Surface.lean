@@ -1740,6 +1740,46 @@ def urlFaceChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "nolinkurl is recognised, not dropped"
     (warnCodes (dvDoc "" s!"\\nolinkurl\{{url}}") == [])
 
+/-- url.sty's `\path` reads its argument as `\url` does and sets it as `\nolinkurl` does, but always
+in the typewriter family, whatever `\urlstyle` names. -/
+def pathFaceChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let load (p : String) : IO Font := do
+    match Font.parse (← IO.FS.readBinFile (testFonts ++ "/" ++ p)) with
+    | .ok f => pure f
+    | .error e => throw (IO.userError s!"path face fixture: {p}: {e}")
+  let body ← load "SourceSerifPro-Regular.otf"
+  let code ← load "SourceCodePro-Regular.otf"
+  let twoFace : Font.FontSet :=
+    { fonts := #[body, code]
+      index := ((List.range 3).flatMap fun slot =>
+        let i := if slot == 2 then 1 else 0
+        [((slot, 400, false), i), ((slot, 700, false), i),
+         ((slot, 400, true), i), ((slot, 700, true), i)]).toArray }
+  let path := "/srv/data_set/~probe"
+  let runsOf (pre call : String) : Array (Nat × Bool) :=
+    let doc := (elabStr ("\\documentclass{article}\n" ++ pre ++ "\\begin{document}\nsee " ++
+      call ++ " here\n\\end{document}")).1
+    let segs := (allLines (layoutOf twoFace doc)).flatMap (·.segs)
+    segs.filterMap fun s => match s with
+      | .run fi _ link _ gs _ _ _ _ _ _ =>
+        if String.ofList (gs.map (·.2.1)).toList == path then some (fi, link.isSome) else none
+      | _ => none
+  let src := dvDoc "" s!"see \\path\{{path}} here"
+  t s!"path reads its argument as url does: no unknown command or reserved character \
+({warnCodes src}, {errCodes src})"
+    (warnCodes src == [] && errCodes src == [])
+  t "path ships its argument whole in the mono face, unlinked"
+    (runsOf "" s!"\\path\{{path}}" == #[(1, false)])
+  t "path and nolinkurl ship the same run under url's own style"
+    (runsOf "" s!"\\path\{{path}}" == runsOf "" s!"\\nolinkurl\{{path}}")
+  t "path stays in the mono face where urlstyle sets nolinkurl in the roman"
+    (runsOf "\\urlstyle{rm}" s!"\\path\{{path}}" == #[(1, false)] &&
+      runsOf "\\urlstyle{rm}" s!"\\nolinkurl\{{path}}" == #[(0, false)])
+  let (_, _, html, _) := sourceArtifacts twoFace src
+  let (_, _, nolink, _) := sourceArtifacts twoFace (dvDoc "" s!"see \\nolinkurl\{{path}} here")
+  t "path's web page is nolinkurl's" (html == nolink)
+
 private def checkCompatRow (ref : IO.Ref (List String)) (pkg : String)
     (row : IndexRow) : IO Unit := do
   let place := row.place
@@ -1755,7 +1795,7 @@ private def checkCompatRow (ref : IO.Ref (List String)) (pkg : String)
 fails with {String.intercalate ", " (errors.map (·.code)).toList}"
       errors.isEmpty
   if place != "pre" && place != "body" && place != "frame" && place != "deck" &&
-      place != "statement" then
+      place != "statement" && place != "class" then
     failures ref s!"compat index {pkg}: unreadable place in: {line}"
   else if ann == "impl" then
     check ref s!"compat index {pkg}: '{call}' is marked impl but warns unknown"
@@ -3894,7 +3934,7 @@ def segStarts (l : Layout.LineOut) : Array (Dim.Sp × Layout.Seg) := Id.run do
       | .run _ _ _ w _ _ _ _ _ _ _ => w
       | .gap w _ | .decoratedGap w _ _ => w
       | .rule w _ _ _ | .decoration _ w _ _ _ => w
-      | .image _ w _ _ => w
+      | .image _ w _ _ _ => w
       | .poly _ _ => 0
   return out
 
@@ -5680,7 +5720,7 @@ def boundaryFitChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
   let out := layoutOf oneFace fitDoc (imgs := store)
   let geom := Layout.Geom.ofPage fitDoc.page
   let widths := (allLines out).flatMap (·.segs.filterMap fun s => match s with
-    | .image _ w _ _ => some w
+    | .image _ w _ _ _ => some w
     | _ => none)
   t "an unsized boundary picture wider than the measure fits it exactly"
     (widths == #[geom.textWidth])
@@ -5693,7 +5733,7 @@ def boundaryFitChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
   let imgOut := layoutOf oneFace imgDoc (imgs := imgStore)
   t "an ordinary wide image keeps its natural size and the overfull is named"
     (((allLines imgOut).flatMap (·.segs.filterMap fun s => match s with
-        | .image _ w _ _ => some w
+        | .image _ w _ _ _ => some w
         | _ => none)) == #[Dim.pt 2000] &&
      imgOut.diags.any (·.code == "W0005"))
 

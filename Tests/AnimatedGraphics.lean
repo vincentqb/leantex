@@ -14,7 +14,7 @@ private def animatedImageSegs (out : Layout.Out) :
     Array (Option Nat × Dim.Sp × Dim.Sp) :=
   (allLines out).foldl (fun acc line =>
     line.segs.foldl (fun acc seg => match seg with
-      | .image idx w h _ => acc.push (idx, w, h)
+      | .image idx w h _ _ => acc.push (idx, w, h)
       | _ => acc) acc) #[]
 
 private def graphicsInk (out : Layout.Out) : String :=

@@ -408,6 +408,8 @@ public inductive Loss where
   | resource (n : String)
   | font (kind : String)
   | budget (what : String)
+  /-- A part of a style sheet the reader does not read, by the noun phrase naming it. -/
+  | css (what : String)
   deriving Repr, BEq, DecidableEq, Inhabited
 
 /-- A figure: the box layout reserves and whether it clips, its nodes and symbols, and its losses. -/

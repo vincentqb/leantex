@@ -302,7 +302,7 @@ private def citeFreeOne : Ir.Inline → Bool
   | .located _ body => citeFreeList body.toList
   | .role _ body => citeFreeList body.toList
   | .link _ body => citeFreeList body.toList
-  | .decorated _ body => citeFreeList body.toList
+  | .decorated _ body | .boxed _ body => citeFreeList body.toList
   | .onSteps _ body => citeFreeList body.toList
   | .altSteps _ active otherwise =>
     citeFreeList active.toList && citeFreeList otherwise.toList
@@ -1719,6 +1719,8 @@ private def resolveInline (p : CitePunct) (find : Resolver)
   | .link u body => out.push (.link u (resolveInlines p find #[] body.toList))
   | .decorated kind body =>
     out.push (.decorated kind (resolveInlines p find #[] body.toList))
+  | .boxed b body =>
+    out.push (.boxed b (resolveInlines p find #[] body.toList))
   | .onSteps spec body => out.push (.onSteps spec (resolveInlines p find #[] body.toList))
   | .altSteps spec active otherwise =>
     out.push (.altSteps spec (resolveInlines p find #[] active.toList)
@@ -1767,7 +1769,7 @@ where
     match x with
     | .cite _ _ => simp only [resolveInline]; split <;> simp
     | .styled _ body | .colored _ _ body | .located _ body | .role _ body | .link _ body
-    | .decorated kind body | .onSteps _ body | .footnote _ body | .cited _ _ body =>
+    | .decorated kind body | .boxed _ body | .onSteps _ body | .footnote _ body | .cited _ _ body =>
       simp [resolveInline]
     | .altSteps _ _ _ => simp [resolveInline]
     | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
@@ -1800,6 +1802,9 @@ private theorem resolveInline_id (p : CitePunct) (find : Resolver)
     rw [citeFreeOne] at h
     rw [resolveInline, resolveInlines_id p find ink.toList h]
   | .decorated kind body =>
+    rw [citeFreeOne] at h
+    rw [resolveInline, resolveInlines_id p find body.toList h]
+  | .boxed b body =>
     rw [citeFreeOne] at h
     rw [resolveInline, resolveInlines_id p find body.toList h]
   | .onSteps spec body =>
@@ -2738,7 +2743,7 @@ private theorem citeFree_census (x : Ir.Inline) (h : citeFreeOne x = true) :
       q ∈ Ir.foldInline Ir.pendingStep acc x → q ∈ acc ∨ q.isCite = false := by
   match x with
   | .styled _ body | .colored _ _ body | .located _ body | .role _ body | .link _ body
-  | .decorated _ body | .onSteps _ body | .footnote _ body | .cited _ _ body =>
+  | .decorated _ body | .boxed _ body | .onSteps _ body | .footnote _ body | .cited _ _ body =>
     intro acc q hq
     simp only [citeFreeOne] at h
     simp only [Ir.foldInline, Ir.pendingStep, Ir.pendingLeaf, Array.append_empty] at hq
@@ -2928,7 +2933,7 @@ private theorem resolveInline_pending (p : CitePunct) (find : Resolver) (x : Ir.
       q ∈ acc ∨ q.isCite = false := by
   match x with
   | .styled _ body | .colored _ _ body | .located _ body | .role _ body | .link _ body
-  | .decorated kind body | .onSteps _ body | .footnote _ body | .cited _ _ body =>
+  | .decorated kind body | .boxed _ body | .onSteps _ body | .footnote _ body | .cited _ _ body =>
     intro acc q h
     simp only [resolveInline, Array.toList_push, List.nil_append,
       Ir.foldInlineList, Ir.foldInline, Ir.pendingStep, Ir.pendingLeaf,

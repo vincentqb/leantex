@@ -794,7 +794,7 @@ private def inlineInto (site : Site) (cites : Bool) (acc : String) (after : Bool
       let inner := inlinesInto site cites "" none true 0 body.toList
       let dest := linkDest url
       bangApart acc ++ "[" ++ inner ++ "](" ++ dest ++ ")"
-  | .decorated _ body => inlinesInto site cites acc none after 0 body.toList
+  | .decorated _ body | .boxed _ body => inlinesInto site cites acc none after 0 body.toList
   | .onSteps _ body => inlinesInto site cites acc none after 0 body.toList
   | .altSteps _ active otherwise =>
     inlinesInto site cites (inlinesInto site cites acc none false 0 active.toList) none after 0

@@ -70,12 +70,14 @@ def beamerTemplateChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : I
     "\\setbeamertemplate{itemize item}{\\raisebox{0.18ex}[1ex][0pt]{\\scriptsize A}}"
     items)
   let raisedNative := (elabStr (templateDeck
-    "\\style{itemize}{marker={\\scriptsize A}}" items)).1
-  t "raised marker: unmodelled geometry is named and never becomes ink"
-    (raiseDs.any (fun d => d.code == "W0104" && d.subject == some "ctrl:raisebox") &&
-      !raiseDs.any (fun d => d.severity == .error || d.code == "W0301") &&
+    "\\style{itemize}{marker={\\raisebox{0.18ex}[1ex][0pt]{\\scriptsize A}}}" items)).1
+  let flat := (elabStr (templateDeck "\\style{itemize}{marker={\\scriptsize A}}" items)).1
+  t "raised marker: the template's box is its native spelling's, raised off the flat marker"
+    (!raiseDs.any (fun d => d.severity == .error || d.code == "W0301" ||
+        d.subject == some "ctrl:raisebox") &&
       reprStr (layoutOf fonts raised).pages == reprStr (layoutOf fonts raisedNative).pages &&
-      templateHtmlFacts raised == templateHtmlFacts raisedNative)
+      templateHtmlFacts raised == templateHtmlFacts raisedNative &&
+      reprStr (layoutOf fonts raised).pages != reprStr (layoutOf fonts flat).pages)
   let mathFonts ← mathSetOf fonts
   let mathModes := [("dollar", "$", "$"), ("parentheses", "\\(", "\\)"),
       ("brackets", "\\[", "\\]"), ("ensuremath", "\\ensuremath{", "}")] ++

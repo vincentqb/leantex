@@ -469,9 +469,9 @@ public def subjectOf (name : String) (attrs : Array Xml.Attr) : Css.Subject :=
 /-- What an element declares: its presentation attributes, the sheet rules matching it, and its
 `style` attribute, by level. -/
 public def declsOf (ix : Css.RuleIndex) (subject : Css.Subject) (up : List Css.Subject)
-    (attrs : Array Xml.Attr) : Decls × Array String := Id.run do
+    (attrs : Array Xml.Attr) : Decls × Array Css.Unread := Id.run do
   let mut out : Decls := #[]
-  let mut problems : Array String := #[]
+  let mut problems : Array Css.Unread := #[]
   for h : i in [0:attrs.size] do
     let a := attrs[i]
     if a.ns == "" && properties.contains a.name then
@@ -1567,7 +1567,7 @@ public def walkOne (env : Env) (bud : Budget) (cx : Ctx) (acc : St × Array (Nod
     else
     let subject := subjectOf name attrs
     let (d, problems) := declsOf env.rules subject cx.up attrs
-    let st := problems.foldl (fun s p => s.lose (.property s!"style: {p}")) st
+    let st := problems.foldl (fun s p => s.lose (.css p.words)) st
     let r := computeStyle d cx.parent cx.vp attrs
     if !r.display then (st, out) else
     let st := r.losses.foldl St.lose st
@@ -1778,7 +1778,7 @@ public def indexIds (t : Xml.Item) : Std.HashMap String Entry := idsOne {} [] []
 
 /-- Every `style` element's sheet, in document order, with what each said
 outside the subset. -/
-public def sheetsOf (t : Xml.Item) : Array Css.Rule × Array String :=
+public def sheetsOf (t : Xml.Item) : Array Css.Rule × Array Css.Unread :=
   let styles := (elemsOne #[] t).filter (·.1 == "style")
   styles.foldl (fun (rules, dropped) (_, text) =>
     match Css.parseSheet text with
@@ -1981,7 +1981,7 @@ public def importTree (t : Xml.Item) (lang : String := "en") (bud : Budget := Bu
   let r := computeStyle d Style.initial vp attrs
   let st0 : St := { losses := #[], notes := #[], rasters := #[], requests := #[], requestIds := {}
                     nodes := 0, animated := false, text := false }
-  let st0 := (dropped ++ problems).foldl (fun s p => s.lose (.property s!"style: {p}")) st0
+  let st0 := (dropped ++ problems).foldl (fun s p => s.lose (.css p.words)) st0
   let st0 := r.losses.foldl St.lose st0
   let cx : Ctx := { up := [rootSubject], parent := r.style, vp }
   let (st, body) := walkList env bud cx false (st0, #[]) rootKids.toList
@@ -1999,7 +1999,7 @@ public def importTree (t : Xml.Item) (lang : String := "en") (bud : Budget := Bu
             -- The instantiated element stands in the use's shadow tree (SVG 2 §5.6.3).
             let subject := subjectOf name tattrs
             let (d, problems) := declsOf env.rules subject e.up tattrs
-            let st := problems.foldl (fun s p => s.lose (.property s!"style: {p}")) st
+            let st := problems.foldl (fun s p => s.lose (.css p.words)) st
             let r := computeStyle d req.style req.vp tattrs
             if name != "symbol" && !r.display then (st, #[]) else
             let st := r.losses.foldl St.lose st

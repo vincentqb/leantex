@@ -27,6 +27,9 @@ public structure Locale where
   /-- `\proofname` and `\contentsname`: the ini's `captions` `proof` and `contents` keys. -/
   proof : String
   contents : String
+  /-- `\chaptername` and `\appendixname`: the ini's `captions` `chapter` and `appendix` keys. -/
+  chapter : String
+  appendix : String
   /-- The twelve wide month names, January first (`months.wide.*`). -/
   months : Array String
   /-- The outer and inner quote delimiters (`delimiters.quotes`). -/
@@ -41,6 +44,8 @@ public structure Locale where
   /-- cleveref's names per kind (cleveref.sty v0.21.4 language blocks); `crefSection` serves
   every heading level. -/
   crefSection : CrefName
+  /-- cleveref's chapter names (cleveref.sty v0.21.4, `\crefname{chapter}`). -/
+  crefChapter : CrefName
   crefEquation : CrefName
   crefFigure : CrefName
   crefTable : CrefName

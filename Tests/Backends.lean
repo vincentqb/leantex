@@ -2159,7 +2159,7 @@ def pdfFormChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
     for p in out.pages do
       for l in p.lines do
         for s in l.segs do
-          if let .image idx w h _ := s then acc := acc.push (idx, w, h)
+          if let .image idx w h _ _ := s then acc := acc.push (idx, w, h)
     return acc
   t "pdf figure places at the declared width"
     (match inf?, segs with
@@ -2614,6 +2614,7 @@ def pdfCensusTable :
   ("wrapper", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("centering", (2, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("columns", (3, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("boxes", (1, 1, 0, 0, 0, 1, 0, none, ["FlateDecode"])),
   ("overlays", (10, 1, 0, 0, 0, 9, 0, none, ["FlateDecode"])),
   ("overlays-blocks", (12, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
   ("overprint", (6, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
@@ -2896,9 +2897,9 @@ def contentOpsTextPage : Layout.PageOut := {
         contentOpsRun 0 Ir.Color.black (Dim.pt 10) [(53, 'd')] (Dim.pt 12) (Dim.pt (-3)) ] },
     { x := Dim.pt 10, y := Dim.pt 80, size := Dim.pt 12, setWidth := Dim.pt 100, segs := #[
         .rule (Dim.pt 40) (Dim.pt 1) (Dim.pt 2) contentOpsRed,
-        .image (some 0) (Dim.pt 20) (Dim.pt 15) true,
-        .image (some 1) (Dim.pt 20) (Dim.pt 15) true,
-        .image none (Dim.pt 10) (Dim.pt 5) true,
+        .image (some 0) (Dim.pt 20) (Dim.pt 15) true 0,
+        .image (some 1) (Dim.pt 20) (Dim.pt 15) true 0,
+        .image none (Dim.pt 10) (Dim.pt 5) true 0,
         contentOpsRun 0 Ir.Color.black (Dim.pt 10) [(54, 'e')],
         .rule (Dim.pt 10) (Dim.pt 2) 0 Ir.Color.black ] } ],
   fills := #[{ x := 0, y := 0, w := Dim.pt 200, h := Dim.pt 100, color := contentOpsGrey },
@@ -3250,7 +3251,7 @@ def objTableChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
 def featurePlacingPages : Array Layout.PageOut :=
   #[{ lines := #[
     { x := Dim.pt 10, y := Dim.pt 40, size := Dim.pt 10, setWidth := Dim.pt 100,
-      segs := #[.image (some 0) (Dim.pt 20) (Dim.pt 15) true] }] }]
+      segs := #[.image (some 0) (Dim.pt 20) (Dim.pt 15) true 0] }] }]
 
 /-- The typed feature census: the registry is closed and one-to-one, each row is decided by its
 shape, and over the corpus the unemitted features stay unreached and the bookkeeping ones are always
@@ -3388,7 +3389,7 @@ def artifactFurnitureExpected : String :=
 def lineInks (l : Layout.LineOut) : Bool :=
   l.segs.any fun s => match s with
     | .run _ _ _ _ glyphs _ _ _ _ _ _ => !glyphs.isEmpty
-    | .image _ _ _ _ | .rule _ _ _ _ | .decoration _ _ _ _ _
+    | .image _ _ _ _ _ | .rule _ _ _ _ | .decoration _ _ _ _ _
     | .gap _ _ | .decoratedGap _ _ _ | .poly _ _ => false
 
 /-- The artifact count a page owes, read from `Layout.PageOut` and the leaf tags rather than the
@@ -3397,19 +3398,28 @@ def expectedArtifacts (page : Layout.PageOut) (tags : Array (Option String)) : N
   let rules := page.lines.foldl (init := 0) fun acc l =>
     acc + l.segs.foldl (init := 0) fun acc s =>
       match s with
-      -- the layout block holds the rules and the polygons alike
-      | .rule _ _ _ _ | .decoration _ _ _ _ _ | .poly _ _ => acc + 1
-      | .image _ _ _ _ | .run _ _ _ _ _ _ _ _ _ _ _ | .gap _ _ | .decoratedGap _ _ _ => acc
+      -- the layout block over the text holds the rules and the polygons alike
+      | .rule _ _ _ _ | .poly _ _ => acc + 1
+      | .decoration kind _ _ _ _ => if kind.isMark then acc else acc + 1
+      | .image _ _ _ _ _ | .run _ _ _ _ _ _ _ _ _ _ _ | .gap _ _ | .decoratedGap _ _ _ => acc
+  -- the marks a line paints under its text stand in a layout block of their own
+  let marks := page.lines.foldl (init := 0) fun acc l =>
+    acc + l.segs.foldl (init := 0) fun acc s =>
+      match s with
+      | .decoration kind _ _ _ _ => if kind.isMark then acc + 1 else acc
+      | .rule _ _ _ _ | .poly _ _ | .image _ _ _ _ _ | .run _ _ _ _ _ _ _ _ _ _ _ | .gap _ _
+      | .decoratedGap _ _ _ => acc
   let images := page.lines.foldl (init := 0) fun acc l =>
     acc + l.segs.foldl (init := 0) fun acc s =>
       match s with
-      | .image _ _ _ _ => acc + 1
+      | .image _ _ _ _ _ => acc + 1
       | .rule _ _ _ _ | .decoration _ _ _ _ _ | .run _ _ _ _ _ _ _ _ _ _ _
       | .gap _ _ | .decoratedGap _ _ _ | .poly _ _ => acc
   let (unattributed, _) := page.lines.foldl (init := ((0 : Nat), (0 : Int))) fun (acc, tz) l =>
     let nonEmpty := lineInks l || l.expand != tz
     (if Pdf.Origin.of tags l == .unattributed && nonEmpty then acc + 1 else acc, l.expand)
-  (if page.fills.isEmpty then 0 else 1) + (if rules == 0 then 0 else 1) + images
+  (if page.fills.isEmpty then 0 else 1) + (if marks == 0 then 0 else 1) + (if rules == 0 then 0 else 1)
+    + images
     + (page.lines.filter (·.furniture)).size + unattributed
 
 /-- The runs under a text object's pagination wrappers. -/

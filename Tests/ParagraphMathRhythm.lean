@@ -40,7 +40,7 @@ def reach (fs : Font.FontSet) (line : Layout.LineOut) : Except String (Sp × Sp)
       for (_, y) in points do
         above := max above y
         below := max below (-y)
-    | .image _ _ h _ => above := max above h
+    | .image _ _ h _ _ => above := max above h
     | .gap .. | .decoratedGap .. => pure ()
   return (above, below)
 

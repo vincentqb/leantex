@@ -155,6 +155,9 @@ private def asksTitlePage (opts : List String) : Bool :=
 /-- The article-like classes whose default is a title page. -/
 private def titlepageClasses : List String := ["report", "book"]
 
+/-- The article-like classes whose `\chapter` heads a chapter, numbering what it holds within it. -/
+private def chapterClasses : List String := ["report", "book"]
+
 /-- Résumé classes, mapped onto the native `resume` class. -/
 private def resumeClasses : List String :=
   ["moderncv", "res"]
@@ -201,6 +204,9 @@ public inductive ParamSite where
   | page (key : Native.PageKey)
   /-- A token an engine site reads under this name. -/
   | token (name : String)
+  /-- A token each inline box reads where it sets: the preamble's value its default, a body
+  assignment holding to the end of its group. -/
+  | boxScoped (name : String)
   /-- `\leftmargin` at list depth `level`, which the class's
   `\@list` reads at every list. -/
   | listIndent (level : Nat)
@@ -268,8 +274,8 @@ keeps its top and bottom margins equal"),
    ("columnsep", .token "columnsep"),
    ("arraycolsep", .unmodelled "pads an array's columns; the padding here is half an em"),
    ("jot", .unmodelled "adds space between an alignment's rows, which no site here reads"),
-   ("fboxsep", .unmodelled "pads a framed box, which no site here reads"),
-   ("fboxrule", .unmodelled "rules a framed box, which no site here reads"),
+   ("fboxsep", .boxScoped "fboxsep"),
+   ("fboxrule", .boxScoped "fboxrule"),
    ("arrayrulewidth", .unmodelled "sets a table rule's thickness, which no site here reads"),
    ("unitlength", .unmodelled "scales a picture environment, which no site here reads")]
 
@@ -278,6 +284,21 @@ private def sizeReset (n : String) : Bool :=
   match paramSites.lookup n with
   | some (.sizeReset _) => true
   | _ => false
+
+/-- The control book.cls's `\frontmatter`, `\mainmatter` and `\backmatter` leave: whether the
+chapters after it are the main matter's, which number. -/
+public def matterMark (main : Bool) : String := if main then "matter main" else "matter other"
+
+/-- Whether a control is a division's mark, and the main matter's (`matterMark`). -/
+public def matterOf? (n : String) : Option Bool :=
+  if n == "matter main" then some true else if n == "matter other" then some false else none
+
+/-- The control a box parameter's assignment in running text becomes, its value the group after. -/
+public def boxParamMark (name : String) : String := "@box:" ++ name
+
+/-- The box parameter a control assigns, where it is one (`boxParamMark`). -/
+public def boxParamOf? (n : String) : Option String :=
+  ["fboxsep", "fboxrule"].find? (boxParamMark · == n)
 
 /-- The native spelling of a skipped beamer construct, named
 in its warning's help. -/
@@ -780,6 +801,11 @@ private structure St where
   countersRead : Std.HashSet String := {}
   /-- Whether an article's author asked for a title page, which its title and abstract lack. -/
   titlePageAsked : Bool := false
+  /-- Whether the class heads chapters (report.cls, book.cls), which its `\chapter` opens. -/
+  chapters : Bool := false
+  /-- Whether the class opens each chapter on a right-hand page of two-sided pages (book.cls's
+  `openright`), which one-sided pages here do not. -/
+  chaptersRight : Bool := false
   /-- biblatex's declared resources (`\addbibresource`). -/
   bibResources : Array String := #[]
   /-- The record name biblatex's style option mapped to, emitted beside the
@@ -872,7 +898,7 @@ public def MarkdownOptions.read (opts : String) : MarkdownOptions :=
 
 /-- The commands whose execution asks the driver's reader, in source order, for a file. -/
 public def inputCommands : List String :=
-  ["input", "include", "markdownInput", "inputminted", "inputlean"]
+  ["input", "include", "markdownInput", "inputminted", "inputlean", "lstinputlisting"]
 
 /-- The actual call offered to the driver's candidate and splice readers. -/
 @[expose] public def InputRequest.call (request : InputRequest) : Array Raw :=
@@ -1191,6 +1217,18 @@ public def mintedDisplayKeys : List String :=
    "numberfirstline", "frame", "framerule", "framesep", "rulecolor", "label",
    "labelposition", "xleftmargin", "xrightmargin", "resetmargins", "samepage", "vspace",
    "listparameters", "firstline", "lastline", "highlightlines", "highlightcolor"]
+
+/-- listings' keys that act on a display alone (manual §4.3, §4.4, §4.8–§4.11), which `\lstinline`
+reads to no effect. -/
+public def listingDisplayKeys : List String :=
+  ["float", "floatplacement", "aboveskip", "belowskip", "lineskip", "boxpos", "print",
+   "firstline", "lastline", "linerange", "consecutivenumbers", "showlines", "emptylines", "gobble",
+   "numbers", "stepnumber", "numberfirstline", "numberstyle", "numbersep", "numberblanklines",
+   "firstnumber", "name", "title", "caption", "label", "nolol", "numberbychapter", "captionpos",
+   "abovecaptionskip", "belowcaptionskip", "linewidth", "xleftmargin", "xrightmargin",
+   "resetmargins", "frame", "frameround", "framesep", "rulesep", "framerule", "framexleftmargin",
+   "framexrightmargin", "framextopmargin", "framexbottommargin", "backgroundcolor", "rulecolor",
+   "fillcolor", "rulesepcolor", "frameshape"]
 
 /-- A `\\setlist` scope as enumitem reads its optional argument: names are list kinds and numbers
 levels, none of either standing for every kind or level. -/
@@ -1755,7 +1793,9 @@ private def bindRawArgsRaw (args : Array (Array Raw)) : Raw → Raw
   | .ctrl n p => .ctrl n p
   | .sym c p => .sym c p
   | .verb e s p =>
-    if e == "mintinline" || e == "mint" then .verb e (bindMintedParams args s) p else .verb e s p
+    if e == "mintinline" || e == "mint" || e == "lstinline" || Lex.urlCommands.contains e then
+      .verb e (bindMintedParams args s) p
+    else .verb e s p
 
 end
 
@@ -3132,6 +3172,57 @@ private def loadedMsg (test : LoadedTest) (q : LoadQuery) (ans : Bool) :
     | .t, false | .f, true => "its branch is dropped"
   s!"'\\{test.ctrl}': {fact} here, so {kept}"
 
+/-- What an etoolbox flag command does to the flag its first group names: declares it, `provide`
+keeping one that stands; sets it, from the second group's `true` or `false` where `none`; or tests
+it, `negate` swapping its branches. -/
+private inductive FlagAct where
+  | declare (provide : Bool)
+  | set (value : Option Bool)
+  | test (negate : Bool)
+  deriving BEq, Repr
+
+/-- etoolbox's flag commands (manual §3.5), each with whether it reads a toggle rather than a
+boolean, which is the `\newif` flag of its name. -/
+private def flagCmds : List (String × Bool × FlagAct) :=
+  [("newbool", false, .declare false), ("providebool", false, .declare true),
+   ("setbool", false, .set none), ("booltrue", false, .set (some true)),
+   ("boolfalse", false, .set (some false)), ("ifbool", false, .test false),
+   ("notbool", false, .test true),
+   ("newtoggle", true, .declare false), ("providetoggle", true, .declare true),
+   ("settoggle", true, .set none), ("toggletrue", true, .set (some true)),
+   ("togglefalse", true, .set (some false)), ("iftoggle", true, .test false),
+   ("nottoggle", true, .test true)]
+
+/-- The groups a flag command reads: its name, a value, then two branches. -/
+private def FlagAct.groups : FlagAct → Nat
+  | .declare _ | .set (some _) => 1
+  | .set none => 2
+  | .test _ => 3
+
+/-- The flag a toggle keys, under a name no control word spells. -/
+private def toggleKey (name : String) : String := "toggle " ++ name
+
+/-- The flag command at `raws[i]`'s name, flag key and the value it sets, `none` for a value neither
+`true` nor `false`; `none` where its groups are not all there or its name is not plain text. -/
+private def flagOperands (raws : Array Raw) (i : Nat) (toggle : Bool) (act : FlagAct) :
+    Option (String × String × Option Bool) := do
+  let args ← argGroupsAt raws i act.groups
+  let nameRaws := args.getD 0 #[]
+  let name := (rawSrc nameRaws).trimAscii.toString
+  guard (plainName nameRaws && !name.isEmpty)
+  let value := match act with
+    | .set none => match (rawSrc (args.getD 1 #[])).trimAscii.toString with
+      | "true" => some true
+      | "false" => some false
+      | _ => none
+    | .set v => v
+    | _ => some false
+  some (name, if toggle then toggleKey name else name, value)
+
+/-- What a flag command names its flag as in its notes. -/
+private def flagWhat (toggle : Bool) (name : String) : String :=
+  if toggle then s!"toggle '{name}'" else s!"boolean '\\if{name}'"
+
 /-- A load the flow performs where it stands: a package line, the class line, an
 option pass, or a theme slot. -/
 private def recordLoad (raws : Array Raw) (name : String) (i : Nat) : M Unit := do
@@ -3207,8 +3298,9 @@ private def condLiveRaw (flags : Std.HashMap String Bool)
     (binds : Std.HashMap String (Option CondVal)) : Raw → Bool
   | .ctrl n _ =>
     isCondHead flags n || n == "unless" || n == "newif" || n == "ifstrequal" ||
-      Definer.readAsDefinition.contains n ||
-      (overlayArity? n).isSome ||
+      (flagCmds.lookup n).isSome || Definer.readAsDefinition.contains n ||
+      -- A box command's arguments may follow the use, as an overlay command's may.
+      (overlayArity? n).isSome || Ir.boxCommands.contains n ||
       isFlagSetter flags n || loadedTests.any (·.ctrl == n) ||
       (deferredHooks.lookup n).isSome ||
       inputCommands.contains n || n == "markdownSetup" ||
@@ -3389,6 +3481,11 @@ private def condStripList (flags : Std.HashMap String Bool) (raws : Array Raw)
       condStripList flags raws acc true rest (i + 1) 0
     else if n == "newif" then
       condStripList flags raws acc true rest (i + 1) 1
+    else if let some (_, act) := flagCmds.lookup n then
+      match argGroupsAt raws (i + 1) act.groups with
+      | some _ =>
+        condStripList flags raws acc true rest (i + 1) ((takeGroups raws (i + 1) act.groups).2 - (i + 1))
+      | none => condStripList flags raws (acc.push (.ctrl n p)) hit rest (i + 1) 0
     else if Definer.readAsDefinition.contains n then
       match definerShape raws i n (stored := true) with
       | some sh => condStripList flags raws acc true rest (i + 1) (sh.stop - (i + 1))
@@ -4130,6 +4227,65 @@ private def condNoteLength (raws : Array Raw) (i : Nat) (n : String) (undecided 
       if assigned.length < texts.size then forgetLengths (st.exactLens.keys.toArray.push "global")
       else forgetLengths (assigned.foldl (· ++ ·) #[])
 
+/-- The settings a macro's argument can give their value, controls and environments by name, each
+of which a definition body leaves to its uses to rewrite (`unappliedParam`). -/
+public def paramSettings : List String :=
+  ["color", "definecolor", "colorlet", "definespotcolor", "linespread", "setstretch", "fontseries",
+   "selectlanguage", "foreignlanguage", "setmathfont", "setbeamertemplate", "newcounter",
+   "newfontface", "setfontface", "renewfontface", "providefontface", "setlength", "addtolength",
+   "hypersetup", "pagestyle", "otherlanguage", "otherlanguage*"]
+
+mutual
+
+-- conserves: none — the control words and environments a raw list names
+private def settingNamesIn (acc : Array String) : List Raw → Array String
+  | [] => acc
+  | r :: rest => settingNamesIn (settingNamesOf acc r) rest
+
+private def settingNamesOf (acc : Array String) : Raw → Array String
+  | .ctrl n _ => if acc.contains n then acc else acc.push n
+  | .env n body _ => settingNamesIn (if acc.contains n then acc else acc.push n) body.toList
+  | .group body _ | .math _ body _ => settingNamesIn acc body.toList
+  | .word .. | .space | .par _ | .sym .. | .verb .. => acc
+
+end
+
+/-- Whether the macro `n` reaches, through the definitions `binds` holds, a setting a macro's
+argument can give its value. -/
+private def reachesParamSetting (binds : Std.HashMap String (Option CondVal)) (n : String) : Bool :=
+  (binds[n]? matches some (some _)) && (closeNames binds #[n]).any fun m =>
+    match binds[m]? with
+    | some (some v) => (settingNamesIn #[] v.raws.toList).any paramSettings.contains
+    | _ => false
+
+mutual
+
+/-- Environment code with each use of a macro reaching a setting its argument gives expanded where
+the definition stands, as a use in the text is: the elaborator expands the code at each use, where
+the macro's own definition holds no such setting. -/
+private def condCodeList [Monad m]
+    (ex : String → Pos → Array Raw → Nat → EvalM m (Option CondRun))
+    (code : Array Raw) (out : Array Raw) : List Raw → Nat → Nat → EvalM m (Array Raw)
+  | [], _, _ => pure out
+  | _ :: rest, i, skip + 1 => condCodeList ex code out rest (i + 1) skip
+  | .ctrl n p :: rest, i, 0 => do
+    -- premise: templateCodeUseChecks — a use in environment code sets what a use in the text sets
+    if reachesParamSetting (← get).binds n then
+      if let some run ← ex n p code (i + 1) then
+        return ← condCodeList ex code (out ++ run.raws ++ run.tail) rest (i + 1)
+          (run.stop - (i + 1))
+    condCodeList ex code (out.push (.ctrl n p)) rest (i + 1) 0
+  | r :: rest, i, 0 => do
+    condCodeList ex code (out.push (← condCodeRaw ex r)) rest (i + 1) 0
+
+private def condCodeRaw [Monad m]
+    (ex : String → Pos → Array Raw → Nat → EvalM m (Option CondRun)) : Raw → EvalM m Raw
+  | .group body p => return .group (← condCodeList ex body #[] body.toList 0 0) p
+  | .env n body p => return .env n (← condCodeList ex body #[] body.toList 0 0) p
+  | r => pure r
+
+end
+
 mutual
 
 /-- The decidable conditionals resolved at one level; `stack` holds every open
@@ -4308,6 +4464,57 @@ private def condList [Monad m]
         else "'\\ifstrequal': the literal strings differ, so the second branch is kept"
       sayOnce ("string-test:" ++ msg) .N0114 msg (st.useSite.getD pos)
       condList ex [false, false, ans, !ans] raws following out stack rest (i + 1) 0
+    else if let some (toggle, act, name, key, value) := (flagCmds.lookup n).bind fun (toggle, act) =>
+        (flagOperands raws (i + 1) toggle act).map fun (name, key, value) =>
+          (toggle, act, name, key, value) then
+      -- premise: flagCommandChecks — a flag is declared, set and tested where its command stands
+      condStopSpaces
+      let site := st.useSite.getD pos
+      let what := flagWhat toggle name
+      let call := s!"\\{n}\{{name}}"
+      let kind := if toggle then "toggle" else "bool"
+      let drop := List.replicate act.groups false
+      match act, st.flags[key]?, value with
+      | .declare _, none, _ =>
+        setFlag key false
+        unless toggle do
+          recordDefined ("if" ++ name)
+          recordDefined (name ++ "true")
+          recordDefined (name ++ "false")
+        unless st.settling.isSome do
+          let msg := s!"'{call}': the {what} is resolved from here on, initially false"
+          sayOnce ("cond:flag:" ++ msg) .N0114 msg site
+        condList ex drop raws following out stack rest (i + 1) 0
+      | .declare provide, some _, _ =>
+        unless provide do
+          sayOnce ("cond:flag:again:" ++ key) .W0104
+            s!"'{call}' declares the {what} again, which LaTeX refuses; it keeps its value" site
+            (help := s!"\\provide{kind}\{{name}} declares it only where it does not stand")
+        condList ex drop raws following out stack rest (i + 1) 0
+      | .set given, some _, some v =>
+        setFlag key v
+        unless st.settling.isSome do
+          let call := if given.isNone then call ++ s!"\{{v}}" else call
+          let msg := s!"'{call}': the {what} is {v} from here on"
+          sayOnce ("cond:flag:" ++ msg) .N0114 msg site
+        condList ex drop raws following out stack rest (i + 1) 0
+      | .set _, some _, none =>
+        sayOnce ("cond:flag:value:" ++ key) .W0104
+          s!"'{call}' gives the {what} a value other than true or false, which LaTeX refuses; \
+nothing is set" site (help := s!"write \\set{kind}\{{name}}\{true} or \\set{kind}\{{name}}\{false}")
+        condList ex drop raws following out stack rest (i + 1) 0
+      | .test negate, some v, _ =>
+        let ans := v != negate
+        let msg := s!"'{call}': the {what} is {v} here, so " ++
+          if ans then "the first branch is kept" else "only the second branch is kept"
+        sayOnce ("cond:flag:" ++ msg) .N0114 msg site
+        condList ex [false, ans, !ans] raws following out stack rest (i + 1) 0
+      | .set _, none, _ | .test _, none, _ =>
+        sayOnce ("cond:flag:undeclared:" ++ key) .W0104
+          (s!"'{call}' names a {what} nothing declares, which LaTeX refuses; " ++
+            if act matches .test _ then "neither branch is kept" else "nothing is set") site
+          (help := s!"declare it with \\new{kind}\{{name}} before its first use")
+        condList ex drop raws following out stack rest (i + 1) 0
     else if let some (test, query) := (loadedTests.find? (·.ctrl == n)).bind fun test =>
         (loadedAt raws (i + 1) test).map (test, ·) then
       -- premise: loadedTestChecks — selected branches execute where the test stands
@@ -4468,11 +4675,12 @@ private def condList [Monad m]
         let mut ops : Array Raw := #[]
         let mut stripped := false
         let mut texts : Array Pos := #[]
+        let code := ["newenvironment", "renewenvironment", "NewEnviron", "RenewEnviron"].contains n
         for k in [i + 1:sh.stop] do
           if let some r := raws[k]? then
             if sh.bodies.contains k then
               let (r', h) := condStripRaw flags r
-              ops := ops.push r'
+              ops := ops.push (← if code then condCodeRaw ex r' else pure r')
               stripped := stripped || h
               if let .group _ gp := r then texts := texts.push gp
             else ops := ops.push r
@@ -4657,7 +4865,7 @@ private def inputRequestAt (st : St) (n : String) (pos : Pos)
     let style := !st.condInDoc &&
       (n == "usepackage" || n == "RequirePackage" || (themeAsking.lookup n).isSome)
     if !(input || style) then none else do
-      let optioned := ["markdownInput", "inputminted", "inputlean"].contains n
+      let optioned := ["markdownInput", "inputminted", "inputlean", "lstinputlisting"].contains n
       let (_, k) := if optioned || style then takeOpt raws start else (none, start)
       let j := skipSpaces raws k
       let some (.group _ _) := raws[j]? | none
@@ -5053,6 +5261,8 @@ private theorem condList_package_read_step
     rcases hc with rfl | rfl <;> decide
   have hl : loadedTests.find? (·.ctrl == name) = none := by
     rcases hc with rfl | rfl <;> decide
+  have hflag : flagCmds.lookup name = none := by
+    rcases hc with rfl | rfl <;> decide
   have ht : (name.endsWith "true" &&
       st.flags.contains (name.dropEnd 4).toString) = false := by simp [hflags]
   have hf : (name.endsWith "false" &&
@@ -5084,7 +5294,7 @@ private theorem condList_package_read_step
   simp only [hn.2.2.2.2.2.1, beq_iff_eq, ↓reduceIte, Option.map_none,
     Option.getD_none, hcond, List.all_nil,
     Bool.not_true, Bool.false_eq_true, hg, hp, Array.back?_empty,
-    Option.any_none, hh, hn.2.2.2.2.2.2.1, hl, Option.bind_none,
+    Option.any_none, hh, hn.2.2.2.2.2.2.1, hflag, hl, Option.bind_none,
     hn.2.2.2.2.2.2.2.1, ht, hf,
     hbox, htcb, hdef, hno, hd, Bool.not_false, ho, htpl, hlen, hxp]
   cases hload : recordLoad raws name i st with
@@ -5676,6 +5886,9 @@ with the space its level sets in the preamble, and only the trivlists after it r
 again from its class's parameters" pos
       carry native pos
     else emit (.tokens #[(t, src)])
+  | .boxScoped t, _ =>
+    if preamble && !st.inDef then emit (.tokens #[(t, src)])
+    else return #[.ctrl (boxParamMark t) pos, .group #[.word src pos] pos]
   | _, true => emit own
   | .listIndent _, false => emit own
   | .sizeReset body, false =>
@@ -7559,9 +7772,6 @@ overprint state; the engine knocks out every colour it paints; skipped" none⟩,
      .lower .pageStyle { paramStands := some "the page style in force stands" }⟩,
    ⟨"printbibliography", [.opt], .lower .printBibliography {}⟩,
    ⟨"raggedbottom", [], .native (.page #[(.bottom, "ragged")])⟩,
-   refusedRow "raisebox" [.needed, .opt, .opt] "'\\raisebox' lift, height and depth are not \
-applied; its content is set as if unboxed" "remove the box dimensions to use the surrounding \
-line's natural spacing",
    ⟨"refstepcounter", [.needed], .lower .counter { leaves := [.outsidePreamble] }⟩,
    nothingRow "relax" 0 "it means do nothing",
    ⟨"resetpagecolorspace", [], .discard pageInks "pagecolorspace"⟩,
@@ -7635,9 +7845,10 @@ private def ctrlNative? (name : String) : Option Native.Setting :=
   | some .inert | some (.lower ..) => none
 
 /-- Options of a native package without an option reader of its own whose meaning is one native
-declaration: setspace's spacings as its commands read, and microtype's switches. -/
+declaration: setspace's spacings as its commands read, microtype's switches, and url's `lowtilde`. -/
 public def packageOptionNatives : List (String × List (String × Native.Setting)) :=
   let off : Native.Setting := .page #[(.protrusion, "off"), (.expansion, "off")]
+  let lowTilde : Native.Setting := .style "url" #[("tilde", "low")]
   [("setspace", ["singlespacing", "onehalfspacing", "doublespacing"].filterMap fun o =>
      (ctrlNative? o).map (o, ·)),
    ("microtype", [("protrusion", .page #[(.protrusion, "on")]),
@@ -7645,7 +7856,8 @@ public def packageOptionNatives : List (String × List (String × Native.Setting
      ("protrusion=false", .page #[(.protrusion, "off")]),
      ("expansion", .page #[(.expansion, "on")]), ("expansion=true", .page #[(.expansion, "on")]),
      ("expansion=false", .page #[(.expansion, "off")]),
-     ("disable", off), ("disable=true", off), ("activate=false", off)])]
+     ("disable", off), ("disable=true", off), ("activate=false", off)]),
+   ("url", [("lowtilde", lowTilde)]), ("xurl", [("lowtilde", lowTilde)])]
 
 /-- moloch's `block` option values as the theme's own block
 colour declarations. -/
@@ -8255,9 +8467,13 @@ and patterns stand in" pos
       return some (#[.word o pos, g, .word c pos], k + 1)
     | _ => return none
   | "color" =>
-    let (model, j) := takeOpt raws start
+    let (modelRaws, j) := takeRawOpt raws start
+    let model := modelRaws.map rawSrc
     let (args, k) := takeGroups raws j 1
     if args.isEmpty then return none
+    if ← paramArgs args #[modelRaws] then
+      unappliedParam "color" "its text sets in the ink in force" pos
+      return some (#[], skipSpaces raws k)
     let value := rawSrc (args.getD 0 #[])
     let source := modeledColorSource model value
     match model with
@@ -8314,6 +8530,28 @@ and patterns stand in" pos
           | _ => none
     let dir := (path.map fun d => #[("dir", Decl.quote d)]).getD #[]
     return some (← setting "\\setmathfont" (.fonts (dir.push ("math", Decl.quote family))) pos, k)
+  | "chapter" =>
+    -- A class without chapters has no `\chapter`.
+    if !(← get).chapters then return none
+    -- premise: chapterChecks — the openings are named only where the class opens right-hand pages
+    if (← get).chaptersRight then
+      sayOnce "chapters:openright" .W0110
+        "the class opens each chapter on a right-hand page, leaving a blank page where it would \
+fall on a left; the pages here are one-sided, so each opens the next page" pos
+        (help := "the class option openany opens a chapter on the next page, as here")
+    became "\\chapter" "the class's chapter heading" pos
+    return some (#[.ctrl Parse.chapterControl pos], start)
+  | "frontmatter" | "mainmatter" | "backmatter" =>
+    -- book.cls's divisions; a class without them has none.
+    unless (← get).loads.cls.any (·.1 == "book") do return none
+    -- premise: chapterDeclarationChecks — the pages number on through the divisions, named once
+    if name != "backmatter" then
+      sayOnce "matter:pages" .W0110
+        "the front matter's pages are numbered in roman numerals and the main matter's from 1 \
+again; here the pages number on in arabic numerals through the book" pos
+        (help := "a page number here counts the book's pages from its first")
+    became s!"\\{name}" "a page break and the chapters' numbering" pos
+    return some (#[.ctrl "pagebreak" pos, .ctrl (matterMark (name == "mainmatter")) pos], start)
   | "def" | "edef" | "gdef" | "xdef" =>
     -- A plain `\def` with undelimited parameters declares exactly what `\define` declares.
     let expanding := name == "edef" || name == "xdef"
@@ -9256,6 +9494,11 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
     write fun st => { st with strutSkip := strut }
     if cls == "article" && asksTitlePage keptItems then
       write fun st => { st with titlePageAsked := true }
+    if chapterClasses.contains cls || keptItems.contains "chapters" then
+      let twoside := (cls == "book" && !keptItems.contains "oneside") || keptItems.contains "twoside"
+      -- book.cls and report.cls declare `openright` before `openany`, which so wins given both.
+      let right := (cls == "book" || keptItems.contains "openright") && !keptItems.contains "openany"
+      write fun st => { st with chapters := true, chaptersRight := twoside && right }
     if presentationClasses.contains cls then
       write fun st => { st with deck := true }
     let native := if articleClasses.contains cls then "article"
@@ -9274,10 +9517,14 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
       let passed := (← get).loads.rewriteClassPassed.toList.flatMap fun (name, options) =>
         if name == cls then options.toList.filter titleOpts.contains else []
       let given := (KeyVal.items (opt.getD "")).any titleOpts.contains || !passed.isEmpty
-      let extra := passed ++ (if titlepageClasses.contains cls && !given then ["titlepage"] else [])
+      let extra := passed ++ (if titlepageClasses.contains cls && !given then ["titlepage"] else []) ++
+        (if chapterClasses.contains cls then ["chapters"] else [])
       let opt := if extra.isEmpty then opt else some (",".intercalate (opt.toList ++ extra))
-      -- KOMA's `parskip` is read here.
-      let kept := (keptItems ++ extra).filter fun kv => (KeyVal.entry kv).1 != "parskip"
+      -- KOMA's `parskip` is read here; a two-sided chapter class's `openright` is named where a
+      -- chapter opens.
+      let rightNamed := (← get).chaptersRight
+      let kept := (keptItems ++ extra).filter fun kv =>
+        (KeyVal.entry kv).1 != "parskip" && !(rightNamed && kv == "openright")
       -- A class's `\parskip` is zero unless KOMA's `parskip=` asks for a skip.
       let komaSkip := (KeyVal.items (opt.getD "")).findSome? fun kv =>
         match KeyVal.entry kv with
@@ -9459,8 +9706,8 @@ skipped, and the length keeps its value" pos
           (demote := styInternal (← get).file name)
         return some (#[], k)
       | _, _ =>
-        -- In a definition's body the command stands, for the use to read.
-        if (← get).inDef then return none
+        -- A macro body's command stands for the use to read; environment code is read here.
+        if (← get).inDef && !(← get).envCode then return none
         return some (← unreadableLength n
           s!"\\{n} + {(rawSrc args[1]).trimAscii.toString}" pos, k)
     else return none
@@ -14635,11 +14882,11 @@ private def injectListingOpts (opts : Array String) (s : String) : String :=
   | none => "[" ++ joined ++ "]" ++ s
 
 /-- The layers a listing of `env` in `lang` reads, in the order its options stack: `\lstset`'s for
-a `lstlisting`, minted's global and lexer layers for minted's display, and the inline layers too
-for `\mintinline`. -/
+a `lstlisting` and `\lstinline`, minted's global and lexer layers for minted's display, and the
+inline layers too for `\mintinline`. -/
 private def readLayers (st : TextSt) (env lang : String) : Array DefaultLayer :=
   let layer (l : Array (String × DefaultLayer)) := ((l.find? (·.1 == lang)).map (·.2)).getD #[]
-  if env == "lstlisting" then #[st.lstOpts]
+  if env == "lstlisting" || env == "lstinline" then #[st.lstOpts]
   else if env == "mintinline" then
     #[st.mintedOpts, layer st.mintedLangOpts, st.inlineOpts, layer st.inlineLangOpts]
   else #[st.mintedOpts, layer st.mintedLangOpts]
@@ -14863,12 +15110,15 @@ private def textList (loc : Locale) (st : TextSt) (raws : Array Raw)
       textList loc st raws (out.push (.ctrl n pos)) rest (i + 1) 0
   | .verb env s vpos :: rest, i, 0 => do
     -- A document's own `\mintinline` is the command its calls run.
-    if (env == "mintinline" || env == "mint") && st.defined.contains env then
+    if (env == "mintinline" || env == "mint" || env == "lstinline" || Lex.urlCommands.contains env) &&
+        st.defined.contains env then
       let args := (verbatimRaws (← get).file s).map (rebase (fun _ => vpos) true)
       return ← textList loc st raws ((out.push (.ctrl env vpos)) ++ args) rest (i + 1) 0
-    if env == "lstlisting" || env == "minted" || env == "mint" || env == "mintinline" then
+    if env == "lstlisting" || env == "lstinline" then markRead (readIds st env "")
+    else if env == "minted" || env == "mint" || env == "mintinline" then
       markRead (readIds st env (mintedLang s))
-    let s := if env == "lstlisting" then injectListingOpts (readEntries st env "") s
+    let s := if env == "lstlisting" || env == "lstinline" then
+        injectListingOpts (readEntries st env "") s
       else if env == "minted" || env == "mint" || env == "mintinline" then injectMinted st env s
       else s
     textList loc st raws (out.push (.verb env s vpos)) rest (i + 1) 0

@@ -21,7 +21,7 @@ private theorem inlinePictureCount_id (n : Nat) (x : Inline) :
     foldInline (fun n _ => n) n x = n := by
   match x with
   | .styled _ body | .colored _ _ body | .located _ body | .role _ body
-  | .link _ body | .decorated _ body | .onSteps _ body | .footnote _ body | .cited _ _ body =>
+  | .link _ body | .decorated _ body | .boxed _ body | .onSteps _ body | .footnote _ body | .cited _ _ body =>
     exact inlineListPictureCount_id n body.toList
   | .altSteps _ active other =>
     simp only [foldInline, inlineListPictureCount_id]

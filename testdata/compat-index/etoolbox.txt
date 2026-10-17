@@ -1,6 +1,9 @@
 # source: etoolbox manual §2 (\newrobustcmd, \robustify), §3 (hooks and
-# patching), §3.5 (boolean flags). TeX conditionals resolve from the
+# patching), §3.5 (boolean flags and toggles). TeX conditionals resolve from the
 # document's own definitions (N0114).
+# A boolean is the \newif flag of its name and a toggle a flag of its own;
+# declaring or setting one in the preamble moves no ink (inert:binds), and
+# each test keeps the branch the flag picks where it stands.
 # The hooks are one deferral mechanism, a row each: \AtBeginDocument replays
 # its body at \begin{document}, \AtEndPreamble at the end of the preamble.
 # A body carrying content therefore lands in the document (the \AtBeginDocument
@@ -13,7 +16,19 @@ pre impl \AtBeginDocument{x}
 pre impl \AtEndPreamble{\newgeometry{textwidth=396pt}}
 pre refuse:W0301 \newrobustcmd{\zz}[1]{#1}
 pre refuse:W0301 \robustify{\emph}
-pre refuse:W0301 \newbool{mybool}
-pre refuse:W0301 \newbool{mybool}\setbool{mybool}{true}
+pre inert:binds \newbool{mybool}
+pre inert:binds \providebool{mybool}
+pre inert:binds \newbool{mybool}\setbool{mybool}{true}
+pre inert:binds \newbool{mybool}\booltrue{mybool}
+pre inert:binds \newbool{mybool}\boolfalse{mybool}
+body impl \newbool{mybool}\ifbool{mybool}{a}{b}
+body impl \newbool{mybool}\notbool{mybool}{a}{b}
+pre inert:binds \newtoggle{mytoggle}
+pre inert:binds \providetoggle{mytoggle}
+pre inert:binds \newtoggle{mytoggle}\settoggle{mytoggle}{true}
+pre inert:binds \newtoggle{mytoggle}\toggletrue{mytoggle}
+pre inert:binds \newtoggle{mytoggle}\togglefalse{mytoggle}
+body impl \newtoggle{mytoggle}\iftoggle{mytoggle}{a}{b}
+body impl \newtoggle{mytoggle}\nottoggle{mytoggle}{a}{b}
 pre refuse:W0301 \patchcmd{\emph}{a}{b}{}{}
 pre refuse:E0111 \apptocmd{\emph}{x}{}{}

@@ -428,13 +428,14 @@ def leafSpan (p : PageOut) : Option (Nat × Nat) :=
     | some k, none => some (k, k)
     | none, acc => acc) none
 
-/-- The leaves a declared boundary opens a page on (`\newpage`,
-`\pagebreak`): the leaf count of the page view's blocks ahead of each of its
-top-level `.pagebreak`s, the counter `LineOut.leaf` reads
-(`Struct.leafCountBlocks`). -/
+/-- The leaves a declared boundary opens a page on (`\newpage`, `\pagebreak`, a class's
+chapter): the leaf count of the page view's blocks ahead of each of its top-level `.pagebreak`s
+and chapter headings, the counter `LineOut.leaf` reads (`Struct.leafCountBlocks`). -/
 public def declaredOpenings (doc : Ir.Doc) : Array Nat :=
   ((pdfView doc).body.foldl (fun (acc : Array Nat × Nat) b => match b with
     | .pagebreak => (acc.1.push acc.2, acc.2)
+    | .section .h1 _ _ _ =>
+      ((if doc.chapters then acc.1.push acc.2 else acc.1), acc.2 + Struct.leafCountBlocks #[b])
     | _ => (acc.1, acc.2 + Struct.leafCountBlocks #[b])) (#[], 0)).1
 
 /-- Does the flow run from page `a` into page `b` with nothing declared

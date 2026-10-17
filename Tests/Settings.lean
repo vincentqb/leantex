@@ -45,6 +45,7 @@ def settingsBodies : List (String × String) :=
       "\\begin{quote}\nEcho\n\\begin{quote}\nFoxtrot\n\\end{quote}\n\\end{quote}\n" ++
       "\\end{description}\n\\end{itemize}\n\\end{enumerate}\n\\end{itemize}"),
    ("display", "Alpha words before.\n\\[ x = y \\]\nBravo words after."),
+   ("boxes", "Alpha \\fbox{Bravo} words."),
    ("displaylong", "Alpha words before this display reach past it.\n\\[ x = y \\]\n" ++
       "Bravo words after.")]
 
@@ -52,6 +53,8 @@ def settingsBodies : List (String × String) :=
 same value, and the body that reads it. -/
 def paramProbes : List (String × String × String × String) :=
   [("parskip", "\\setlength{\\parskip}{19pt}", "\\page{ parskip = 19pt }", "paras"),
+   ("fboxsep", "\\setlength{\\fboxsep}{7pt}", "\\tokens{ fboxsep = 7pt }", "boxes"),
+   ("fboxrule", "\\setlength{\\fboxrule}{2pt}", "\\tokens{ fboxrule = 2pt }", "boxes"),
    ("textwidth", "\\setlength{\\textwidth}{4in}", "\\page{ textwidth = 4in }", "paras"),
    ("headsep", "\\runninghead{Alpha head}\\setlength{\\headsep}{40pt}",
      "\\runninghead{Alpha head}\\page{ headsep = 40pt }", "paras"),
@@ -91,7 +94,7 @@ def paramProbes : List (String × String × String × String) :=
 /-- Does a row's site carry the value onto the page: a page key, a token, or a list level the engine
 nests to? -/
 def carried : Compat.ParamSite → Bool
-  | .page _ | .token _ => true
+  | .page _ | .token _ | .boxScoped _ => true
   | .listIndent _ => true
   | .sizeReset _ | .listReset | .unmodelled _ => false
 

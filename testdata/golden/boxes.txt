@@ -1,0 +1,36 @@
+class article
+page 612x792 vmargin 72 hmargin 150
+para
+  text "An invented line with a "
+  box raise 3pt
+    text "raised"
+  text " word and a "
+  box raise -1/1*(2pt)
+    text "lowered"
+  text " one."
+para
+  text "An invented "
+  box raise 0 ground #FFFF00 pad 3pt
+    text "grounded"
+  text " word, a "
+  box raise 0 ground #FFFF00 frame #FF0000 pad 3pt rule 0.4pt
+    text "framed ground"
+  text " and an "
+  box raise 0 frame ink pad 3pt rule 0.4pt
+    text "outlined"
+  text " pair."
+para
+  text "An invented address "
+  link "https://example.org/~probe"
+    styled mono
+      text "https://example.org/"
+      box raise 200/1000ex
+        styled size:scriptsize
+          formula inline "\\sim"
+            rel:∼
+      text "probe"
+  text " keeps its tilde low."
+-- diagnostics
+note[N0100] 5:1 '\usepackage{xcolor}' → nothing: the engine does this itself
+note[N0100] 6:1 '\usepackage{url}' → nothing: the engine does this itself
+note[N0100] 6:1 '\usepackage[lowtilde]{url}' → \style{url}{ tilde = low }

@@ -262,6 +262,7 @@ def packageBody : String → String
   | "xcolor" | "color" => "\\textcolor{blue}{Coloured words} and \\colorbox{yellow}{boxed}."
   | "cleveref" => "\\cref{s:a} and \\Cref{f:a}."
   | "cancel" => "$\\cancel{x} + \\bcancel{y}$"
+  | "url" | "xurl" => "See \\url{https://example.org/~probe} here."
   | "lineno" => "\\linenumbers Numbered words."
   | "appendix" => "\\appendix\\section{Extra}More words."
   | "amsthm" => "\\newtheorem{theorem}{Theorem}\\begin{theorem}Words.\\end{theorem}"
@@ -426,10 +427,11 @@ def abstracted (cls : String) (o : Option String) : String :=
     "Body words.\n\\end{document}\n"
 
 /-- The class options an article, a deck, a card and the two abstracts' classes already take, or
-give nothing to act on: a one-page abstract has no facing page. -/
+give nothing to act on: a one-page abstract has no facing page, nor a heading to number. -/
 def classSkipped : List (List String) :=
   [["10pt", "letterpaper", "notitlepage"], ["11pt"], ["10pt"],
-   ["10pt", "letterpaper", "notitlepage", "twoside"], ["10pt", "letterpaper", "titlepage", "twoside"]]
+   ["10pt", "letterpaper", "notitlepage", "twoside", "chapters"],
+   ["10pt", "letterpaper", "titlepage", "twoside", "chapters"]]
 
 /-- The class options: each model's reads, the inert and refused ones, and others, in an article,
 a deck, a card and the abstracts of an article and a report. -/

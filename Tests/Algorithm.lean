@@ -151,6 +151,94 @@ def algorithmReadChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO
     (let (ls, _, ds) := algArtifacts fonts listed
      ls.any (hasStr · "Delta words") && !ls.any (hasStr · "label") && !ds.any (·.code == "E0310"))
 
+/-- Each run of a shipped line with its x and its font's index, words and gaps in order. -/
+private def runsAt (l : Layout.LineOut) : Array (String × Dim.Sp × Nat) := Id.run do
+  let mut x := l.x
+  let mut out := #[]
+  for s in l.segs do
+    match s with
+    | .run idx _ _ w glyphs .. =>
+      out := out.push (String.ofList (glyphs.toList.map (·.2.1)), x, idx)
+      x := x + w
+    | .gap w _ | .decoratedGap w _ _ | .decoration _ w _ _ _ | .rule w _ _ _
+    | .image _ w _ _ _ => x := x + w
+    | .poly _ _ => pure ()
+  return out
+
+/-- algorithm2e's data words, with their parentheses and xspace's space, and its aligned io words,
+in the column their declared words share, set as the package sets them, no io line numbered. -/
+def algWordChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let a2e (pre body : String) : String := dvDoc ("\\usepackage[ruled]{algorithm2e}\n" ++ pre) body
+  let data := a2e "\\SetKwData{Left}{left}\n\\SetKwData{Up}{up}\n"
+    ("\\begin{algorithm}\n\\Left$\\leftarrow$ \\Left(x)\\;\n\\Up$\\leftarrow$ \\Left{y} and \\Up\\;\n" ++
+      "\\Left, \\Up\\;\n\\end{algorithm}")
+  let (lines, lists, _) := algArtifacts fonts data
+  let want := #["left ← left (x);", "up ← left(y) and up;", "left, up;"]
+  t s!"algorithm2e data: xspace's space after a word, none before its exceptions or a statement's end ({lines})"
+    (want.all lines.contains && lists.map (·.2) == #[want])
+  let out := layoutOf fonts (elabStr data).1
+  let argLine := (bodyLines out).find? (fun l => hasStr (lineText l) "left(y)")
+  let regular := fonts.lookup 0 400 false
+  let italic := fonts.lookup 0 400 true
+  t "algorithm2e data: a braced argument sets in ArgSty, the parentheses in the word's DataSty"
+    (match argLine with
+     | some l =>
+       let runs := runsAt l
+       runs.any (fun (w, _, f) => w == "left(" && f == regular) &&
+         runs.any (fun (w, _, f) => w == "y" && f == italic) &&
+         runs.any (fun (w, _, f) => w == ")" && f == regular)
+     | none => false)
+  let long := "alpha words with a long description that runs past the measure of the line so that it wraps"
+  let io := a2e "\\SetKwInOut{Input}{Input}\n\\SetKwInOut{Output}{Output}\n"
+    ("\\begin{algorithm}\n\\Input{" ++ long ++ "}\n\\Output{bravo words}\n\\KwIn{charlie words}\n" ++
+      "delta words\\;\n\\end{algorithm}")
+  let ioOut := layoutOf fonts (elabStr io).1
+  let ls := bodyLines ioOut
+  let lineOf (w : String) : Option Layout.LineOut := ls.find? fun l => (runsAt l).any (·.1 == w)
+  let colonEnd (l : Layout.LineOut) : Option Dim.Sp := (runsAt l).findSome? fun (w, x, _) =>
+    if w.endsWith ":" then
+      let width := ((l.segs.filterMap fun s => match s with
+        | .run _ _ _ rw glyphs .. =>
+          if String.ofList (glyphs.toList.map (·.2.1)) == w then some rw else none
+        | _ => none)[0]?).getD 0
+      some (x + width)
+    else none
+  let startOf (l : Layout.LineOut) (w : String) : Option Dim.Sp :=
+    (runsAt l).findSome? fun (r, x, _) => if r == w then some x else none
+  let body := fonts.get regular
+  let tie : Dim.Sp := ((body.spaceAdvance * (Dim.pt 10).toNat / body.unitsPerEm : Nat) : Int)
+  match lineOf "Input", lineOf "Output:", ls.find? (fun l => hasStr (lineText l) "wraps") with
+  | some inLine, some outLine, some wrapped =>
+    t "algorithm2e io: the aligned words start where their lines do, their colons where the widest's ends"
+      (startOf inLine "Input" == startOf outLine "Output:" && colonEnd inLine == colonEnd outLine &&
+        colonEnd inLine != none)
+    t "algorithm2e io: each content stands the tie past the column, and a wrapped one hangs there"
+      (match colonEnd inLine, startOf inLine "alpha", startOf outLine "bravo", wrapped.segs[0]? with
+       | some c, some a, some b, some _ => a == c + tie && b == c + tie &&
+         (runsAt wrapped)[0]?.map (·.2.1) == some a && !hasStr (lineText wrapped) "Input"
+       | _, _, _, _ => false)
+    t "algorithm2e io: the words and colons set in KwSty's bold"
+      ((runsAt inLine ++ runsAt outLine).all fun (w, _, f) =>
+        !(w == "Input" || w == ":" || w == "Output:") || f == fonts.lookup 0 700 false)
+  | _, _, _ => t "algorithm2e io: the aligned lines ship" false
+  t "algorithm2e io: an unaligned io word keeps its own colon and space"
+    ((bodyLines ioOut).any fun l => lineText l == "Input: charlie words")
+  let html := Html.document "en" #[] (docNodesOf (elabStr io).1)
+  t "algorithm2e io: the web page's key column holds every word it aligns with, unread"
+    (hasStr html "data-column=\"Input\nOutput\"" &&
+      hasStr html "<span class=\"alg-key-word\">Input</span>")
+  let numbered := a2e "\\SetKwInOut{Input}{Input}\n"
+    "\\begin{algorithm}\n\\LinesNumbered\n\\Input{alpha words}\n\\KwIn{bravo words}\ncharlie words\\;\ndelta words\\;\n\\end{algorithm}"
+  let (nlines, nlists, _) := algArtifacts fonts numbered
+  t s!"algorithm2e io: no io line is numbered or counted ({nlines})"
+    (nlines.contains "Input: alpha words" && nlines.contains "Input: bravo words" &&
+      nlines.contains "1 charlie words;" && nlines.contains "2 delta words;" &&
+      nlists.map (·.1) == #[true])
+  let nhtml := Html.document "en" #[] (docNodesOf (elabStr numbered).1)
+  t "algorithm2e io: the web page's io lines step no line number"
+    ((nhtml.splitOn "<li class=\"alg-io\">").length == 3)
+
 /-- A declared io word the slots' faces lack sets from the face the document ships for it, in both
 artifacts, through the driver's own fallback assembly. -/
 def algLabelFaceChecks (ref : IO.Ref (List String))

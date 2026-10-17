@@ -1383,7 +1383,7 @@ whether it loaded. -/
 def bibEntryImages (store : Image.Store) (out : Layout.Out) : Array (String × Bool) :=
   (bibEntryLines (bodyLines out)).flatMap fun e => e.flatMap fun l => l.segs.filterMap fun s =>
     match s with
-    | .image (some i) _ _ _ => store.entries[i]?.map fun en => (en.src, en.info.isSome)
+    | .image (some i) _ _ _ _ => store.entries[i]?.map fun en => (en.src, en.info.isSome)
     | _ => none
 
 /-- The reference list's HTML elements: the `ul` the list is, and every

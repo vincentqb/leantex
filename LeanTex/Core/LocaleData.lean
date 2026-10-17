@@ -31,6 +31,8 @@ namespace LeanTex.Core.Locale
   references := "References"
   proof := "Proof"
   contents := "Contents"
+  chapter := "Chapter"
+  appendix := "Appendix"
   months := #["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
   quoteOpen := "“"
   quoteClose := "”"
@@ -39,6 +41,7 @@ namespace LeanTex.Core.Locale
   leftMin := 2
   rightMin := 3
   crefSection := { one := "section", many := "sections", capOne := "Section", capMany := "Sections" }
+  crefChapter := { one := "chapter", many := "chapters", capOne := "Chapter", capMany := "Chapters" }
   crefEquation := { one := "eq.", many := "eqs.", capOne := "Equation", capMany := "Equations" }
   crefFigure := { one := "fig.", many := "figs.", capOne := "Figure", capMany := "Figures" }
   crefTable := { one := "table", many := "tables", capOne := "Table", capMany := "Tables" }
@@ -58,6 +61,8 @@ namespace LeanTex.Core.Locale
   references := "Références"
   proof := "Démonstration"
   contents := "Table des matières"
+  chapter := "Chapitre"
+  appendix := "Annexe"
   months := #["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"]
   quoteOpen := "«"
   quoteClose := "»"
@@ -66,6 +71,7 @@ namespace LeanTex.Core.Locale
   leftMin := 2
   rightMin := 3
   crefSection := { one := "section", many := "sections", capOne := "Section", capMany := "Sections" }
+  crefChapter := { one := "chapitre", many := "chapitres", capOne := "Chapitre", capMany := "Chapitres" }
   crefEquation := { one := "équation", many := "équations", capOne := "Équation", capMany := "Équations" }
   crefFigure := { one := "figure", many := "figures", capOne := "Figure", capMany := "Figures" }
   crefTable := { one := "tableau", many := "tableaux", capOne := "Tableau", capMany := "Tableaux" }
@@ -85,6 +91,8 @@ namespace LeanTex.Core.Locale
   references := "Literatur"
   proof := "Beweis"
   contents := "Inhaltsverzeichnis"
+  chapter := "Kapitel"
+  appendix := "Anhang"
   months := #["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"]
   quoteOpen := "„"
   quoteClose := "“"
@@ -93,6 +101,7 @@ namespace LeanTex.Core.Locale
   leftMin := 2
   rightMin := 2
   crefSection := { one := "Abschnitt", many := "Abschnitte", capOne := "Abschnitt", capMany := "Abschnitte" }
+  crefChapter := { one := "Kapitel", many := "Kapitel", capOne := "Kapitel", capMany := "Kapitel" }
   crefEquation := { one := "Gleichung", many := "Gleichungen", capOne := "Gleichung", capMany := "Gleichungen" }
   crefFigure := { one := "Abb.", many := "Abb.", capOne := "Abbildung", capMany := "Abbildungen" }
   crefTable := { one := "Tabelle", many := "Tabellen", capOne := "Tabelle", capMany := "Tabellen" }

@@ -1769,7 +1769,7 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
         x := x + w
       | .gap w _ | .decoratedGap w _ _ => x := x + w
       | .rule w _ _ _ | .decoration _ w _ _ _ => x := x + w
-      | .image _ w _ _ => x := x + w
+      | .image _ w _ _ _ => x := x + w
       | .poly _ _ => pure ()
     return none
   let hatG := (fira.gid '\u0302').getD 0
@@ -1933,7 +1933,7 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
           match s with
           | .gap w _ | .decoratedGap w _ _ => x := x + w
           | .rule w _ _ _ | .decoration _ w _ _ _ => x := x + w
-          | .image _ w _ _ => x := x + w
+          | .image _ w _ _ _ => x := x + w
           | .poly _ _ => pure ()
           | .run _ _ _ w glyphs sz _ _ raise _ _ =>
             let mut gx := x

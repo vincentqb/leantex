@@ -527,4 +527,51 @@ def inlineCodeRequestChecks (ref : IO.Ref (List String)) : IO Unit := do
       (left.size == 1 && ds.all (·.code == "W0393") && ds.size == 1)
   | .error _ => failures ref "inline code request: the registry refusal was rejected"
 
+/-- listings' `\lstinline` sets its code as `\mintinline` does in both artifacts, braced or between
+two copies of a delimiter, its `\lstset` defaults read first and a display's keys to nothing, and
+`\lstinputlisting` sets its file as a `lstlisting` holding the file's text does. -/
+def lstInlineChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let some fonts ← facesSet | failures ref "lstinline: the shipped faces did not load"
+  let shipped (src : String) := glyphs (layoutOf fonts (elabStr src).1)
+  let codes (src : String) : Array Html.Node :=
+    let (_, body, _) := HtmlDoc.emitTree {} (elabStr src).1
+    inlineCodesList #[] false body.toList
+  let said (src : String) := ((elabStr src).2.filter (·.severity != .note)).toList.map (·.code)
+  let mint := mintedDoc "" "Alpha \\mintinline{python}{def probe(arg)} omega."
+  let lst (pre call : String) := dvDoc ("\\usepackage{listings}\n" ++ pre) ("Alpha " ++ call ++ " omega.")
+  for (label, src) in [
+      ("delimited", lst "" "\\lstinline[language=Python]|def probe(arg)|"),
+      ("braced", lst "" "\\lstinline[language=Python]{def probe(arg)}"),
+      ("defaults", lst "\\lstset{language=Python, frame=single, numbers=left, caption={Probe}}\n"
+        "\\lstinline!def probe(arg)!"),
+      ("later language", lst "\\lstset{language=C}\n" "\\lstinline[language=Python]|def probe(arg)|")] do
+    t s!"lstinline {label}: no warning ({said src})" (said src == [])
+    t s!"lstinline {label}: the code ships mintinline's glyphs, faces and inks"
+      (!(shipped mint).isEmpty && shipped src == shipped mint)
+    t s!"lstinline {label}: the web page holds mintinline's code element"
+      ((codes mint).size == 1 &&
+        (codes src).map (Html.render · 0) == (codes mint).map (Html.render · 0))
+  let small := lst "\\lstset{basicstyle=\\ttfamily\\small}\n" "\\lstinline|probe|"
+  t "lstinline basicstyle: its size command sets the code's size, its family nothing"
+    (said small == [] &&
+      probeSize (shipped small) == probeSize (shipped (mintedDoc ""
+        "Alpha \\mintinline[fontsize=\\small]{text}{probe} omega.")))
+  let file := "testdata/compat-index/probe.tex"
+  let text ← IO.FS.readFile "testdata/compat-index/fixtures/example.py"
+  let viaFile ← elabInputSrc file (dvDoc "\\usepackage{listings}\n"
+    "\\lstinputlisting[language=Python]{fixtures/example.py}")
+  let inlined ← elabInputSrc file (dvDoc "\\usepackage{listings}\n"
+    ("\\begin{lstlisting}[language=Python]\n" ++ text ++ "\\end{lstlisting}"))
+  t s!"lstinputlisting: the file reads with no warning ({viaFile.2.filter (·.severity != .note) |>.map (·.code)})"
+    (viaFile.2.all (·.severity == .note))
+  t "lstinputlisting: the file ships the listing its text in lstlisting ships"
+    (reprStr (layoutOf fonts viaFile.1).pages == reprStr (layoutOf fonts inlined.1).pages)
+  t "lstinputlisting: the web page holds the same listing"
+    (Html.render (Html.elem "div" (HtmlDoc.emitTree {} viaFile.1).2.1) 0 ==
+      Html.render (Html.elem "div" (HtmlDoc.emitTree {} inlined.1).2.1) 0)
+  let missing ← elabInputSrc file (dvDoc "\\usepackage{listings}\n" "\\lstinputlisting{absent.py}")
+  t "lstinputlisting: a missing file is named by its command"
+    (missing.2.any fun d => d.code == "E0502" && hasStr d.message "lstinputlisting")
+
 end Tests

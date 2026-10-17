@@ -1,0 +1,7 @@
+# source: LaTeX2e's standard classes (classes.dtx), the report class's sectioning: \chapter opens
+# a page of its own under its word and number, and numbers the sections, equations and footnotes
+# it holds within it; \chapter* heads one unnumbered. The rows probe the body of a report
+# (the `class` place). An article has no \chapter, and the engine names it unknown there.
+class impl \chapter{An invented title}
+class impl \chapter*{An invented title}
+class impl \chapter[Short]{An invented title}

@@ -4,7 +4,9 @@ pre impl \definecolor{c}{rgb}{1,0,0}
 body impl \textcolor{black}{x}
 body impl {\color{black} x}
 body impl {\color{black}\normalcolor x}
-body refuse:W0301 \colorbox{black}{x}
-body refuse:W0301 \fcolorbox{black}{white}{x}
+body impl \colorbox{yellow}{x}
+body impl \colorbox[rgb]{1,0.9,0.5}{x}
+body impl \fcolorbox{black}{yellow}{x}
+body impl \fcolorbox[rgb]{0,0,0}{1,1,0.8}{x}
 pre impl \pagecolor{black}
 body impl \nopagecolor

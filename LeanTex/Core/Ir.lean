@@ -663,6 +663,8 @@ public def kernelSkip : String → Option SymGlue
     some { width := .ofSp (Dim.pt 6), stretch := .ofSp (Dim.pt 2), shrink := .ofSp (Dim.pt 2) }
   | "bigskipamount" =>
     some { width := .ofSp (Dim.pt 12), stretch := .ofSp (Dim.pt 4), shrink := .ofSp (Dim.pt 4) }
+  | "fboxsep" => some { width := .ofSp (Dim.pt 3) }
+  | "fboxrule" => some { width := .ofSp (Dim.pt 2 / 5) }
   | _ => none
 
 /-- A skip register's value: the document's setting where declared, else the kernel's. -/
@@ -3099,6 +3101,38 @@ it. -/
   | .underline | .lineThrough => false
   | .highlight _ _ => true
 
+/-- A length a box's dimension may name: a page measure, or its content's natural height, depth,
+width or total height (LaTeX's `\height`, `\depth`, `\width`, `\totalheight`). -/
+public inductive BoxMeasure where
+  | page (m : Measure)
+  | height
+  | depth
+  | width
+  | totalHeight
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+/-- The paint of a box's frame: the text's colour, or a declared colour and its palette name. -/
+public inductive BoxPaint where
+  | ink
+  | color (c : Color) (name : Option ColorRef)
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+/-- The box commands, each setting its content in one `InlineBox`. -/
+public def boxCommands : List String := ["raisebox", "colorbox", "fcolorbox", "fbox"]
+
+/-- The box LaTeX's `\raisebox`, `\colorbox`, `\fcolorbox` and `\fbox` set their content in:
+unbreakable at its natural width, `raise` above the baseline, its height and depth the declared ones
+where given, padded by `pad` on a `ground` and inside a `frame` `rule` wide where declared. -/
+public structure InlineBox where
+  raise : Affine BoxMeasure
+  height : Option (Affine BoxMeasure)
+  depth : Option (Affine BoxMeasure)
+  ground : Option (Color × Option ColorRef)
+  frame : Option BoxPaint
+  pad : SymGlue
+  rule : SymGlue
+  deriving Repr, BEq, DecidableEq, Inhabited
+
 public inductive Inline where
   | text (s : String)
   | math (display : Bool) (src : String)
@@ -3123,6 +3157,8 @@ public inductive Inline where
   | ref (key : String) (form : RefForm) (text : String) (target : Option String)
   /-- A drawn text decoration, its geometry resolved from the active face by layout. -/
   | decorated (kind : Decoration) (body : Array Inline)
+  /-- Content set in one unbreakable box, raised, grounded or framed as `box` declares. -/
+  | boxed (box : InlineBox) (body : Array Inline)
   /-- `\hfill`: stretch that pushes what follows to the far margin. -/
   | fill
   /-- `\hspace{...}`: affine horizontal glue; the starred form survives a
@@ -4462,6 +4498,9 @@ public inductive AlgIo where
   | result
   /-- The document's declared word, with the use site its ink is reported at. -/
   | named (label : String) (site : Option Span)
+  /-- algorithm2e's `\SetKwInOut` word: set in a column as wide as the widest of `column`'s words
+  with their colon, its own colon at the column's end and its content hanging past it. -/
+  | aligned (label : String) (site : Option Span) (column : Array String)
   deriving Repr, BEq, Inhabited
 
 /-- The block forms an algorithm line can open, onto which algorithm2e and
@@ -4486,6 +4525,12 @@ public inductive AlgKind where
   | closer (o : AlgOpen)
   | ret
   deriving Repr, BEq, Inhabited
+
+/-- The aligned io word a line opens with (`\SetKwInOut`), its site and its column's words. -/
+public def AlgKind.aligned? : AlgKind → Option (String × Option Span × Array String)
+  | .io (.aligned word site column) => some (word, site, column)
+  | .io .input | .io .output | .io .data | .io .result | .io (.named _ _) => none
+  | .statement | .opener _ | .closer _ | .ret => none
 
 /-- One pseudocode line: its nesting depth, its kind, the author's content and
 an optional end-of-line comment. -/
@@ -4565,6 +4610,7 @@ public def AlgIo.word (w : AlgWords) : AlgIo → String
   | .data => w.dataKw
   | .result => w.resultKw
   | .named label _ => label
+  | .aligned label _ _ => label
 
 /-- The opener's dump spelling, for goldens. -/
 public def AlgOpen.name : AlgOpen → String
@@ -4585,6 +4631,7 @@ public def AlgIo.name : AlgIo → String
   | .data => "data"
   | .result => "result"
   | .named label _ => s!"named {label.quote}"
+  | .aligned label _ column => s!"aligned {label.quote} {column.toList.map String.quote}"
 
 /-- The line kind's dump spelling, for goldens. -/
 public def AlgKind.name : AlgKind → String
@@ -4593,6 +4640,17 @@ public def AlgKind.name : AlgKind → String
   | .opener o => s!"open {o.name}"
   | .closer o => s!"close {o.name}"
   | .ret => "return"
+
+/-- A line's ink `out` closed as every backend closes it: `;` where `semi` and `semis` ask, then its
+comment, muted. -/
+public def AlgLine.close (semis : Bool) (muted : Color) (l : AlgLine) (semi : Bool)
+    (out : Array Inline) : Array Inline :=
+  let out := if semi && semis then out.push (.text ";") else out
+  match l.comment with
+  | some c =>
+    (if out.isEmpty then out else out.push (.text " ")).push (.colored muted (some (.role .muted))
+      (#[Inline.text "/* "] ++ c ++ #[Inline.text " */"]))
+  | none => out
 
 /-- One algorithm line as display inlines: keywords bold, the comment muted,
 `semis` closing statements with `;`. -/
@@ -4608,7 +4666,7 @@ public def AlgLine.rendered (w : AlgWords) (semis : Bool) (muted : Color)
   | .io k =>
     let label := bold (k.word w ++ ":")
     out := #[(match k with
-      | .named _ (some site) => .located site #[label]
+      | .named _ (some site) | .aligned _ (some site) _ => .located site #[label]
       | _ => label), .text " "] ++ l.content
   | .opener o =>
     let (lead, trail) := o.words w
@@ -4630,14 +4688,7 @@ public def AlgLine.rendered (w : AlgWords) (semis : Bool) (muted : Color)
     unless l.content.isEmpty do
       out := out.push (.text " ") ++ l.content
     semi := true
-  if semi && semis then
-    out := out.push (.text ";")
-  if let some c := l.comment then
-    unless out.isEmpty do
-      out := out.push (.text " ")
-    out := out.push (.colored muted (some (.role .muted))
-      (#[Inline.text "/* "] ++ c ++ #[Inline.text " */"]))
-  return out
+  return l.close semis muted semi out
 
 /-- Pad each table row to `n` cells with empty cells. -/
 public def padTableRows (rows : Array (Array (Array Inline))) (n : Nat) :
@@ -5199,7 +5250,7 @@ public def inParagraph (b : Block) : Block :=
   | .label _ => true
   | .styled _ body | .colored _ _ body | .located _ body | .role _ body =>
     body.attach.all fun ⟨x, _⟩ => anchorInline x
-  | .text _ | .math _ _ | .formula _ _ _ | .link _ _ | .ref _ _ _ _ | .decorated _ _ | .fill
+  | .text _ | .math _ _ | .formula _ _ _ | .link _ _ | .ref _ _ _ _ | .decorated _ _ | .boxed _ _ | .fill
   | .hspace _ _ | .rule _ _ _ | .pageNumber | .pageCount | .linebreak _ | .strut _ | .italicCorr _
   | .onSteps _ _ | .altSteps _ _ _ | .image _ _ _ | .icon _ _ | .cite _ _ | .cited .. | .footnote _ _ =>
     false
@@ -6236,7 +6287,8 @@ public def engineTokenNames : List String :=
   let kinds : List FloatKind := [.figure, .table, .sub, .algorithm]
   [trivlistSkipName, "partopsep", "floatsep", "footins", bibHangName, bibSepName,
    displaySkipAbove, displaySkipBelow, displaySkipAboveShort, displaySkipBelowShort,
-   "smallskipamount", "medskipamount", "bigskipamount", "headsep", "footskip", "topskip",
+   "smallskipamount", "medskipamount", "bigskipamount", "fboxsep", "fboxrule", "headsep", "footskip",
+   "topskip",
    "progressheight", "frametitlepadding", "algindent", "algnumindent", "subtitlegap",
    "separatorheight", "separatorgap", "authorgap", "institutegap", "captionmargin"] ++
     ([1, 2, 3, 4, 5, 6].map leftMarginName) ++ tableLengths.map (·.1) ++
@@ -6628,6 +6680,13 @@ public def BlockShape.inset (s : BlockShape) (span : BlockSpan) (side : FlushSid
   s.edges.foldl (fun acc e =>
     if e.span == span && e.side == side && !e.hang then (acc.add e.width).add e.sep else acc) {}
 
+/-- How a URL sets its `~`: as its face's glyph, or as url.sty's `lowtilde` draws it, a script-size
+math `\sim` raised 0.2ex. -/
+public inductive UrlTilde where
+  | glyph
+  | low
+  deriving Repr, BEq, DecidableEq, Inhabited
+
 /-- How an element kind looks, from `\style{element}{...}`. -/
 public structure ElementStyle where
   font : Option (Array Inline) := none
@@ -6686,6 +6745,8 @@ public structure ElementStyle where
   shape : Option BlockShape := none
   /-- The spacing the lists of the element's scope declare, read where each opens (`listSetScopes`). -/
   list : ListSet := {}
+  /-- How the `url` element sets a URL's `~`. -/
+  tilde : Option UrlTilde := none
   deriving Repr, BEq, Inhabited
 
 /-- The part of the `titlepage` style the title heading itself takes: every
@@ -6753,7 +6814,7 @@ public def styleKeys : List String :=
   ["font", "before", "after", "rule", "rule-position", "rule-thickness", "marker", "indent", "gap",
    "align", "separator", "rule-above", "rule-above-skip", "rule-above-gap",
    "rule-below", "rule-below-gap", "rule-below-skip", "author-font",
-   "author-strut", "body-size", "hover", "focus", "motion", "slot", "color"] ++ listSetKeys
+   "author-strut", "body-size", "hover", "focus", "motion", "slot", "color", "tilde"] ++ listSetKeys
 
 /-- The keys a heading, a list and the navigation landmark read: their spacing, rule, marker,
 indent and gap, and the web page's interaction states. -/
@@ -6769,7 +6830,8 @@ public def styleKeysRead : String → List String
   | "titlepage" => ["font", "before", "after", "separator", "rule-above", "rule-above-skip",
       "rule-above-gap", "rule-below", "rule-below-gap", "rule-below-skip", "author-font",
       "author-strut", "hover", "focus", "motion", "slot", "align"]
-  | "link" | "url" | "cite" => ["color"]
+  | "link" | "cite" => ["color"]
+  | "url" => ["color", "tilde"]
   | "logo" => ["align"]
   | "frametitle" | "sectionpage" | "standout" | "block" | "alertblock" | "exampleblock" => ["font"]
   | e =>
@@ -7477,6 +7539,8 @@ private def fillOne (content : Array Inline) : Inline → Inline
     .role n (if body.isEmpty then content else (fillList content body.toList).toArray)
   | .decorated kind body =>
     .decorated kind (if body.isEmpty then content else (fillList content body.toList).toArray)
+  | .boxed b body =>
+    .boxed b (if body.isEmpty then content else (fillList content body.toList).toArray)
   | .link u body =>
     .link u (if body.isEmpty then content else (fillList content body.toList).toArray)
   | .onSteps spec body =>
@@ -7972,6 +8036,8 @@ public structure Doc where
   docClass : DocClass := .article
   surface : Surface := .tex
   classOptions : String := ""
+  /-- The class heads chapters (report.cls, book.cls): a body h1 is a chapter. -/
+  chapters : Bool := false
   /-- How the abstract's body sets: its class's form under the title-page options, or a
   redefinition's quotation. -/
   abstractForm : AbstractForm := .quotation
@@ -8876,7 +8942,7 @@ public def lastSet (x : Inline) : Option Char :=
   match x with
   | .text s => if s.isEmpty then none else some (leadChar s.back)
   | .styled _ body | .colored _ _ body | .located _ body | .role _ body | .link _ body
-  | .decorated _ body | .onSteps _ body => lastSetBefore body body.size
+  | .decorated _ body | .boxed _ body | .onSteps _ body => lastSetBefore body body.size
   | .altSteps _ firstPage _ => lastSetBefore firstPage firstPage.size
   | .cited _ _ ink => (lastSetBefore ink ink.size).orElse fun _ => some objectLead
   | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _ | .ref _ _ _ _ | .cite _ _
@@ -8942,7 +9008,7 @@ mutual
   | .located _ body => plainTextList body.toList
   | .role _ body => plainTextList body.toList
   | .link _ body => plainTextList body.toList
-  | .decorated _ body => plainTextList body.toList
+  | .decorated _ body | .boxed _ body => plainTextList body.toList
   | .onSteps _ body => plainTextList body.toList
   | .altSteps _ firstPage otherPage =>
     plainTextList firstPage.toList ++ plainTextList otherPage.toList
@@ -8972,7 +9038,7 @@ public def firstPageTextOne (acc : String) (x : Inline) : String :=
       firstPageTextList acc otherPage.toList
     else firstPageTextList acc firstPage.toList
   | .styled _ body | .colored _ _ body | .located _ body | .role _ body
-  | .link _ body | .decorated _ body | .onSteps _ body | .footnote _ body | .cited _ _ body =>
+  | .link _ body | .decorated _ body | .boxed _ body | .onSteps _ body | .footnote _ body | .cited _ _ body =>
     firstPageTextList acc body.toList
   | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _ | .label _
   | .ref _ _ _ _ | .cite _ _ | .fill | .hspace _ _ | .rule _ _ _ | .strut _
@@ -9031,7 +9097,7 @@ node in document order, a node before its content. -/
   | .located _ body => foldInlineList fi (fi acc x) body.toList
   | .role _ body => foldInlineList fi (fi acc x) body.toList
   | .link _ body => foldInlineList fi (fi acc x) body.toList
-  | .decorated _ body => foldInlineList fi (fi acc x) body.toList
+  | .decorated _ body | .boxed _ body => foldInlineList fi (fi acc x) body.toList
   | .onSteps _ body => foldInlineList fi (fi acc x) body.toList
   | .altSteps _ firstPage otherPage =>
     foldInlineList fi (foldInlineList fi (fi acc x) firstPage.toList) otherPage.toList
@@ -9063,7 +9129,7 @@ public def inlineSource (content : Array Inline) : Option Span :=
     | .located span _ => source.orElse (fun _ => some span)
     | .text _ | .math _ _ | .formula _ _ _ | .styled _ _
       | .colored _ _ _ | .role _ _ | .link _ _ | .label _
-      | .ref _ _ _ _ | .decorated _ _ | .fill | .hspace _ _
+      | .ref _ _ _ _ | .decorated _ _ | .boxed _ _ | .fill | .hspace _ _
       | .rule _ _ _ | .pageNumber | .pageCount | .linebreak _
       | .strut _ | .italicCorr _ | .onSteps _ _ | .altSteps _ _ _
       | .image _ _ _ | .icon _ _ | .cite _ _ | .cited _ _ _ | .footnote _ _ => source)
@@ -9322,7 +9388,7 @@ public def foldCtxInline (w : CtxFold γ α) (ctx : γ) (acc : α) (x : Inline) 
   | .link _ body =>
     let r := w.openInline ctx acc x
     w.closeInline ctx (foldCtxInlineList w r.2 r.1 body.toList) x
-  | .decorated _ body =>
+  | .decorated _ body | .boxed _ body =>
     let r := w.openInline ctx acc x
     w.closeInline ctx (foldCtxInlineList w r.2 r.1 body.toList) x
   | .onSteps _ body =>
@@ -9554,6 +9620,10 @@ public theorem foldCtxInline_covers (fb : α → Block → α) (fi : α → Inli
       CtxFold.ofFold_closeInline]
     exact foldCtxInlineList_covers fb fi _ body.toList
   | .decorated kind body =>
+    simp only [foldCtxInline, foldInline, CtxFold.ofFold_openInline,
+      CtxFold.ofFold_closeInline]
+    exact foldCtxInlineList_covers fb fi _ body.toList
+  | .boxed b body =>
     simp only [foldCtxInline, foldInline, CtxFold.ofFold_openInline,
       CtxFold.ofFold_closeInline]
     exact foldCtxInlineList_covers fb fi _ body.toList
@@ -9809,7 +9879,7 @@ public theorem foldCtxBlocks_covers (fb : α → Block → α) (fi : α → Inli
 public def Inline.anchorBearing : Inline → Bool
   | .link _ _ | .ref _ _ _ _ | .cite _ _ | .cited _ _ _ | .footnote _ _ => true
   | .text _ | .math _ _ | .formula _ _ _ | .styled _ _ | .colored _ _ _
-  | .located _ _ | .role _ _ | .decorated _ _ | .fill | .hspace _ _ | .rule _ _ _
+  | .located _ _ | .role _ _ | .decorated _ _ | .boxed _ _ | .fill | .hspace _ _ | .rule _ _ _
   | .strut _ | .italicCorr _
   | .pageNumber | .pageCount | .linebreak _ | .onSteps _ _ | .altSteps _ _ _
   | .image _ _ _ | .icon _ _ | .label _ => false
@@ -9825,7 +9895,7 @@ public def Inline.bearsLinkText : Inline → Bool
   | .icon _ _ | .pageNumber | .pageCount => true
   | .image _ _ _ | .label _ | .fill | .hspace _ _ | .rule _ _ _
   | .strut _ | .italicCorr _ | .linebreak _
-  | .styled _ _ | .colored _ _ _ | .located _ _ | .role _ _ | .link _ _ | .decorated _ _
+  | .styled _ _ | .colored _ _ _ | .located _ _ | .role _ _ | .link _ _ | .decorated _ _ | .boxed _ _
   | .onSteps _ _ | .altSteps _ _ _ | .footnote _ _ | .cited _ _ _ => false
 
 /-- One link-body leaf given its kind's affordance: a text-bearing leaf is
@@ -9861,7 +9931,7 @@ public theorem Styles.linkLeafAfford_text (s : Styles) (kind : String) (x : Inli
 /-- The accessible reading of a block link, from the generic fold that censuses the block tree. -/
 private def blockLinkInlineReading (acc : String) (x : Inline) : String :=
   match x with
-  | .styled _ _ | .colored _ _ _ | .located _ _ | .role _ _ | .link _ _ | .decorated _ _
+  | .styled _ _ | .colored _ _ _ | .located _ _ | .role _ _ | .link _ _ | .decorated _ _ | .boxed _ _
   | .onSteps _ _ | .altSteps _ _ _ | .footnote _ _ | .cited _ _ _ => acc
   | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
   | .label _ | .ref _ _ _ _ | .cite _ _ | .fill | .hspace _ _ | .rule _ _ _
@@ -10100,7 +10170,7 @@ private def navLinkInline (out : Array (String × String)) : Inline → Array (S
   | .colored _ _ body => navLinkInlineList out body.toList
   | .located _ body => navLinkInlineList out body.toList
   | .role _ body => navLinkInlineList out body.toList
-  | .decorated _ body => navLinkInlineList out body.toList
+  | .decorated _ body | .boxed _ body => navLinkInlineList out body.toList
   | .onSteps _ body => navLinkInlineList out body.toList
   | .altSteps _ firstPage otherPage =>
     navLinkInlineList (navLinkInlineList out firstPage.toList) otherPage.toList
@@ -10121,6 +10191,33 @@ private def dumpOverlayRange (kind : String) (spec : OverlaySpec) : String :=
     match last with
     | some u => s!"{n}-{u}"
     | none => toString n) ++ (if spec.invisible then " invisible" else "")
+
+/-- A box length for goldens: its literals as `dumpGlue` spells them, its references by name. -/
+private def dumpBoxLength : Affine BoxMeasure → String
+  | .lit g => dumpGlue g
+  | .ref (.page m) => m.label
+  | .ref .height => "\\height"
+  | .ref .depth => "\\depth"
+  | .ref .width => "\\width"
+  | .ref .totalHeight => "\\totalheight"
+  | .scale n d e => s!"{n}/{d}*({dumpBoxLength e})"
+  | .add a b => s!"{dumpBoxLength a}+{dumpBoxLength b}"
+  | .sub a b => s!"{dumpBoxLength a}-({dumpBoxLength b})"
+
+/-- A box for goldens: its raise, declared extents, paints and padding. -/
+public def InlineBox.dump (b : InlineBox) : String :=
+  let paint (c : Color) (n : Option ColorRef) : String :=
+    c.hex ++ (match n with | some n => s!"({n.key})" | none => "")
+  String.intercalate " " (
+    [s!"raise {dumpBoxLength b.raise}"] ++
+    (b.height.map fun h => s!"height {dumpBoxLength h}").toList ++
+    (b.depth.map fun d => s!"depth {dumpBoxLength d}").toList ++
+    (b.ground.map fun (c, n) => s!"ground {paint c n}").toList ++
+    (b.frame.map fun f => match f with
+      | .ink => "frame ink"
+      | .color c n => s!"frame {paint c n}").toList ++
+    (if b.ground.isSome || b.frame.isSome then [s!"pad {dumpGlue b.pad}"] else []) ++
+    (if b.frame.isSome then [s!"rule {dumpGlue b.rule}"] else []))
 
 mutual
 
@@ -10280,6 +10377,7 @@ private def dumpInline (ind : String) (x : Inline) : String :=
         | some n => s!"highlight {n.key} {hex}"
         | none => s!"highlight {hex}"
     s!"{ind}decoration {label}\n" ++ dumpInlines (ind ++ "  ") body
+  | .boxed b body => s!"{ind}box {b.dump}\n" ++ dumpInlines (ind ++ "  ") body
   | .onSteps spec body =>
     s!"{ind}{dumpOverlayRange "step" spec}\n" ++ dumpInlines (ind ++ "  ") body
   | .altSteps spec firstPage otherPage =>
@@ -11787,6 +11885,13 @@ public def Design.literalIn (f : SchemeFrame) (c : Color) : Color :=
   (Design.carryInk f.flip (Contrast.requiredIn f.scheme (Need.text.atStage f.stage)) f.homePage
     f.page f.page c).getD (if f.flip then ContrastSolve.reflect f.homePage f.page c else c)
 
+/-- A colour no palette names standing on a declared ground, `ground` as the scheme carries it:
+itself where palettes ship as declared, else carried as a declared ink on that ground. -/
+public def Design.literalOn (f : SchemeFrame) (ground c : Color) : Color :=
+  if f.home then c else
+  (Design.carryInk f.flip (Contrast.requiredIn f.scheme (Need.text.atStage f.stage)) f.homePage
+    f.page ground c).getD (if f.flip then ContrastSolve.reflect f.homePage f.page c else c)
+
 /-- The roles a colour stands on: the page and every role a row names as
 its ground. -/
 public def Role.grounds : List Role :=
@@ -12264,7 +12369,7 @@ private def maxStepInline : Inline → Nat
   | .located _ body => maxStepInlineList body.toList
   | .role _ body => maxStepInlineList body.toList
   | .link _ body => maxStepInlineList body.toList
-  | .decorated _ body => maxStepInlineList body.toList
+  | .decorated _ body | .boxed _ body => maxStepInlineList body.toList
   | .footnote _ body => maxStepInlineList body.toList
   | .cited _ _ ink => maxStepInlineList ink.toList
   | .onSteps spec body => max (spec.maxStep) (maxStepInlineList body.toList)
@@ -12315,7 +12420,7 @@ public def altUnreachable (doc : Doc) : Nat :=
           | .altSteps spec _ o => if reached spec o.isEmpty then k else k + 1
           | .text _ | .math _ _ | .formula _ _ _ | .styled _ _ | .colored _ _ _
           | .located _ _ | .role _ _ | .link _ _ | .label _ | .ref _ _ _ _
-          | .decorated _ _ | .fill | .hspace _ _ | .rule _ _ _
+          | .decorated _ _ | .boxed _ _ | .fill | .hspace _ _ | .rule _ _ _
           | .pageNumber | .pageCount | .linebreak _ | .strut _ | .italicCorr _
           | .onSteps _ _ | .image _ _ _ | .icon _ _ | .cite _ _ | .cited _ _ _
           | .footnote _ _ => k)
@@ -12337,6 +12442,16 @@ private def Decoration.dimmed (d : Decoration) (pend : Option DimHere) : Decorat
   | .highlight c nm => match pend with
     | some cv => .highlight (cv.cover.of c) none
     | none => .highlight c nm
+
+/-- A box's declared paints under a cover, as a mark's is. -/
+private def InlineBox.dimmed (b : InlineBox) (pend : Option DimHere) : InlineBox :=
+  match pend with
+  | some cv =>
+    { b with ground := b.ground.map fun (c, _) => (cv.cover.of c, none)
+             frame := b.frame.map fun
+               | .ink => .ink
+               | .color c _ => .color (cv.cover.of c) none }
+  | none => b
 
 mutual
 
@@ -12362,6 +12477,7 @@ private def dimInline (k : Nat) (pend : Option DimHere) (here : DimHere) (own : 
   -- a covered mark is quieted with the text it stands behind
   | .decorated kind body =>
     .decorated (kind.dimmed pend) (dimInlineList k pend here own #[] body.toList)
+  | .boxed b body => .boxed (b.dimmed pend) (dimInlineList k pend here own #[] body.toList)
   -- A pending inline step brings its own cover; a covered paragraph's comes from its block.
   | .onSteps spec body =>
     if here.cover.hidden then
@@ -13135,7 +13251,7 @@ private def footnoteInlineOne (out : Array (Option Nat × Array Inline)) :
   | .role _ body => footnoteInlineList out body.toList
   | .link _ body => footnoteInlineList out body.toList
   | .cited _ _ ink => footnoteInlineList out ink.toList
-  | .decorated _ body => footnoteInlineList out body.toList
+  | .decorated _ body | .boxed _ body => footnoteInlineList out body.toList
   | .onSteps _ body => footnoteInlineList out body.toList
   | .altSteps _ firstPage otherPage =>
     out ++ exclusiveOccurrences (footnoteInlineList #[] firstPage.toList)
@@ -13179,6 +13295,9 @@ public def numberNotesInline (k : Nat) (x : Inline) : Nat × Inline :=
   | .decorated d body =>
     let r := numberNotesList k #[] body.toList
     (r.1, .decorated d r.2)
+  | .boxed b body =>
+    let r := numberNotesList k #[] body.toList
+    (r.1, .boxed b r.2)
   | .onSteps spec body =>
     let r := numberNotesList k #[] body.toList
     (r.1, .onSteps spec r.2)
@@ -13490,6 +13609,9 @@ private theorem dimInline_text (k : Nat) (pend : Option DimHere) (here : DimHere
   | .decorated kind body =>
     rw [dimInline]
     simp [plainTextOne, dimInlineList_text k pend here own body.toList #[], plainTextList]
+  | .boxed b body =>
+    rw [dimInline]
+    simp [plainTextOne, dimInlineList_text k pend here own body.toList #[], plainTextList]
   | .onSteps spec body =>
     rw [dimInline]
     by_cases hc : here.cover.hidden = true
@@ -13732,6 +13854,10 @@ public theorem algorithm_text (numbered semis : Bool) (lines : Array AlgLine) :
 public theorem decorated_text (kind : Decoration) :
     Conserves plainText (fun xs => #[Inline.decorated kind xs]) :=
   wrap_text (.decorated kind) fun _ => rfl
+
+public theorem boxed_text (b : InlineBox) :
+    Conserves plainText (fun xs => #[Inline.boxed b xs]) :=
+  wrap_text (.boxed b) fun _ => rfl
 
 mutual
 
@@ -14903,7 +15029,7 @@ private def imageRequestPush (out : Array Image.Request) : Inline → Array Imag
     let req := spec.request src
     if out.contains req then out else out.push req
   | .text _ | .math _ _ | .formula _ _ _ | .styled _ _ | .colored _ _ _
-  | .located _ _ | .role _ _ | .link _ _ | .label _ | .ref _ _ _ _ | .decorated _ _ | .fill
+  | .located _ _ | .role _ _ | .link _ _ | .label _ | .ref _ _ _ _ | .decorated _ _ | .boxed _ _ | .fill
   | .hspace _ _ | .rule _ _ _ | .pageNumber | .pageCount | .linebreak _
   | .strut _ | .italicCorr _ | .onSteps _ _ | .altSteps _ _ _ | .icon _ _
   | .cite _ _ | .cited _ _ _ | .footnote _ _ => out
@@ -15490,6 +15616,7 @@ nodes, `finish` combines each completed sibling array. -/
   | .role n body => .role n (mapInlineList f #[] body.toList finish)
   | .link u body => .link u (mapInlineList f #[] body.toList finish)
   | .decorated kind body => .decorated kind (mapInlineList f #[] body.toList finish)
+  | .boxed b body => .boxed b (mapInlineList f #[] body.toList finish)
   | .onSteps spec body => .onSteps spec (mapInlineList f #[] body.toList finish)
   | .altSteps spec firstPage otherPage =>
     .altSteps spec (mapInlineList f #[] firstPage.toList finish)
@@ -15671,6 +15798,7 @@ end
   | .role n body => .role n body
   | .link u body => .link u body
   | .decorated kind body => .decorated kind body
+  | .boxed b body => .boxed b body
   | .onSteps spec body => .onSteps spec body
   | .altSteps spec active otherwise => .altSteps spec active otherwise
   | .footnote n body => .footnote n body
@@ -15722,7 +15850,7 @@ private def mathRequestInlines : CtxFold (Option Span × Bool) (Array MathReques
     | .formula _ _ body =>
       (if ctx.2 then out.push ⟨body, ctx.1⟩ else out, ctx)
     | .text _ | .math _ _ | .styled _ _ | .colored _ _ _ | .role _ _
-    | .link _ _ | .decorated _ _ | .onSteps _ _ | .altSteps _ _ _
+    | .link _ _ | .decorated _ _ | .boxed _ _ | .onSteps _ _ | .altSteps _ _ _
     | .footnote _ _ | .image _ _ _ | .icon _ _ | .label _ | .ref _ _ _ _
     | .cite _ _ | .cited _ _ _ | .fill | .hspace _ _ | .rule _ _ _ | .strut _ | .italicCorr _
     | .pageNumber | .pageCount | .linebreak _ => (out, ctx)
@@ -15865,6 +15993,7 @@ private theorem mapMathInline_fixed_point (coverage : Math.MathAlphabetCoverage)
   | .located n body | .role n body
   | .link u body
   | .decorated kind body
+  | .boxed _ body
   | .onSteps spec body
   | .footnote n body
   | .cited f ks body =>
@@ -16252,7 +16381,7 @@ private theorem requestsInline_resolve_covers (coverage : Math.MathAlphabetCover
     RequestsFree (foldCtxInline w ctx out (mapInline (resolveMathAlphaInline coverage) x)) := by
   match x with
   | .styled _ body | .colored _ _ body | .located _ body | .role _ body | .link _ body
-  | .decorated _ body | .onSteps _ body | .footnote _ body | .cited _ _ body =>
+  | .decorated _ body | .boxed _ body | .onSteps _ body | .footnote _ body | .cited _ _ body =>
     simp only [mapInline, foldCtxInline, ho, hc, mathRequestInlines, mapInlineList_toList,
       List.nil_append]
     exact requestsInlineList_resolve_covers coverage w ho hc _ out body.toList h
@@ -16618,6 +16747,10 @@ public theorem mapInlineFinish_text (f : Inline → Inline)
     show plainTextList (mapInlineList (finish := finish) f #[] body.toList).toList = _
     rw [mapInlineListFinish_text f hf finish hfinish body.toList #[]]
     simp [plainTextList, plainTextOne]
+  | .boxed b body =>
+    show plainTextList (mapInlineList (finish := finish) f #[] body.toList).toList = _
+    rw [mapInlineListFinish_text f hf finish hfinish body.toList #[]]
+    simp [plainTextList, plainTextOne]
   | .onSteps spec body =>
     show plainTextList (mapInlineList (finish := finish) f #[] body.toList).toList = _
     rw [mapInlineListFinish_text f hf finish hfinish body.toList #[]]
@@ -16733,6 +16866,9 @@ public theorem foldInline_or (p : Inline → Bool) (b : Bool) (x : Inline) :
   | .decorated kind body =>
     rw [foldInline, foldInline, foldInlineList_or, foldInlineList_or p (false || p _)]
     simp [Bool.or_assoc]
+  | .boxed b body =>
+    rw [foldInline, foldInline, foldInlineList_or, foldInlineList_or p (false || p _)]
+    simp [Bool.or_assoc]
   | .onSteps spec body =>
     rw [foldInline, foldInline, foldInlineList_or, foldInlineList_or p (false || p _)]
     simp [Bool.or_assoc]
@@ -16799,6 +16935,11 @@ public theorem mapInline_id (f : Inline → Inline) (p : Inline → Bool)
     rw [mapInline, mapInlineList_id f p hf body.toList #[] h2]
     simp
   | .decorated kind body =>
+    rw [foldInline, foldInlineList_or] at h
+    rcases Bool.or_eq_false_iff.mp h with ⟨-, h2⟩
+    rw [mapInline, mapInlineList_id f p hf body.toList #[] h2]
+    simp
+  | .boxed b body =>
     rw [foldInline, foldInlineList_or] at h
     rcases Bool.or_eq_false_iff.mp h with ⟨-, h2⟩
     rw [mapInline, mapInlineList_id f p hf body.toList #[] h2]
@@ -17146,7 +17287,7 @@ private def pushLocationText (out : List Inline) (x : Inline) : List Inline :=
     | .text t :: rest => .text (t ++ s) :: rest
     | _ => x :: out
   | .math _ _ | .formula _ _ _ | .styled _ _ | .colored _ _ _ | .located _ _
-  | .role _ _ | .link _ _ | .label _ | .ref _ _ _ _ | .decorated _ _
+  | .role _ _ | .link _ _ | .label _ | .ref _ _ _ _ | .decorated _ _ | .boxed _ _
   | .fill | .hspace _ _ | .rule _ _ _ | .pageNumber | .pageCount | .linebreak _
   | .strut _ | .italicCorr _ | .onSteps _ _ | .altSteps _ _ _ | .image _ _ _
   | .icon _ _ | .cite _ _ | .cited _ _ _ | .footnote _ _ => x :: out
@@ -17159,7 +17300,7 @@ private def spliceLocationOne (out : List Inline) (x : Inline) : List Inline :=
   match x with
   | .located _ body => joinLocationBody out body.toList
   | .text _ | .math _ _ | .formula _ _ _ | .styled _ _ | .colored _ _ _
-  | .role _ _ | .link _ _ | .label _ | .ref _ _ _ _ | .decorated _ _
+  | .role _ _ | .link _ _ | .label _ | .ref _ _ _ _ | .decorated _ _ | .boxed _ _
   | .fill | .hspace _ _ | .rule _ _ _ | .pageNumber | .pageCount | .linebreak _
   | .strut _ | .italicCorr _ | .onSteps _ _ | .altSteps _ _ _ | .image _ _ _
   | .icon _ _ | .cite _ _ | .cited _ _ _ | .footnote _ _ => pushLocationText out x
@@ -17415,7 +17556,7 @@ public def paraStepOne (x : Inline) : Option String :=
   | .colored _ _ body => paraStepIn body.toList
   | .located _ body => paraStepIn body.toList
   | .text _ | .math _ _ | .formula _ _ _ | .role _ _ | .link _ _ | .label _
-  | .ref _ _ _ _ | .decorated _ _ | .fill | .hspace _ _ | .rule _ _ _ | .pageNumber
+  | .ref _ _ _ _ | .decorated _ _ | .boxed _ _ | .fill | .hspace _ _ | .rule _ _ _ | .pageNumber
   | .pageCount | .linebreak _ | .strut _ | .italicCorr _ | .onSteps _ _
   | .altSteps _ _ _ | .image _ _ _ | .icon _ _ | .cite _ _ | .cited _ _ _
   | .footnote _ _ => none
@@ -17470,6 +17611,7 @@ public def liftParaStepOne (x : Inline) : Array Inline :=
   | .label k => #[.label k]
   | .ref k f t g => #[.ref k f t g]
   | .decorated k body => #[.decorated k body]
+  | .boxed b body => #[.boxed b body]
   | .fill => #[.fill]
   | .hspace g k => #[.hspace g k]
   | .rule w h r => #[.rule w h r]
@@ -17519,7 +17661,7 @@ private theorem liftParaStepOne_text (x : Inline) :
     simp only [liftParaStepOne, plainText, plainTextList, plainTextOne] at ih ⊢
     simp [ih]
   | .text _ | .math _ _ | .formula _ _ _ | .role _ _ | .link _ _ | .label _
-  | .ref _ _ _ _ | .decorated _ _ | .fill | .hspace _ _ | .rule _ _ _ | .pageNumber
+  | .ref _ _ _ _ | .decorated _ _ | .boxed _ _ | .fill | .hspace _ _ | .rule _ _ _ | .pageNumber
   | .pageCount | .linebreak _ | .strut _ | .italicCorr _ | .onSteps _ _
   | .altSteps _ _ _ | .image _ _ _ | .icon _ _ | .cite _ _ | .cited _ _ _ | .footnote _ _ =>
     rw [liftParaStepOne]; simp [plainText, plainTextList]
@@ -17713,7 +17855,7 @@ public def textUnder (p : Style → Bool) (x : Inline) : String :=
   | .located _ body => textUnderList p "" body.toList
   | .role _ body => textUnderList p "" body.toList
   | .link _ body => textUnderList p "" body.toList
-  | .decorated _ body => textUnderList p "" body.toList
+  | .decorated _ body | .boxed _ body => textUnderList p "" body.toList
   | .onSteps _ body => textUnderList p "" body.toList
   | .altSteps _ firstPage otherPage =>
     textUnderList p (textUnderList p "" firstPage.toList) otherPage.toList
@@ -17846,7 +17988,7 @@ public theorem labelAnchor_single_token (key : String) :
 /-- What a label names: the kind of the numbered thing it bound to, read by
 cleveref's name prefixes. -/
 public inductive RefKind where
-  | heading | equation | figure | table | algorithm
+  | heading | chapter | equation | figure | table | algorithm
   deriving Repr, BEq
 
 /-- One label's binding: the number it bound to, with the kind of the numbered
@@ -17920,9 +18062,10 @@ public theorem keyIndex_find? {α : Type} (xs : Array (String × α)) (k : Strin
 where nothing numbers. -/
 public abbrev RefTable := Array (String × Option RefBinding)
 
-/-- cleveref's name for a kind; every heading level takes the section name. -/
+/-- cleveref's name for a kind; every heading level below the chapter takes the section name. -/
 public def crefNameOf (loc : Locale) : RefKind → CrefName
   | .heading => loc.crefSection
+  | .chapter => loc.crefChapter
   | .equation => loc.crefEquation
   | .figure => loc.crefFigure
   | .table => loc.crefTable
@@ -17930,7 +18073,7 @@ public def crefNameOf (loc : Locale) : RefKind → CrefName
 
 /-- Every kind, for the coverage contract. -/
 public def RefKind.all : List RefKind :=
-  [.heading, .equation, .figure, .table, .algorithm]
+  [.heading, .chapter, .equation, .figure, .table, .algorithm]
 
 public theorem RefKind.all_complete (k : RefKind) : RefKind.all.contains k := by
   cases k <;> rfl

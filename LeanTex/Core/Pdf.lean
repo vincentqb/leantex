@@ -95,7 +95,7 @@ private def markUsed (fs : FontSet) (pages : Array PageOut)
                   marks := marks.set g (some c)
             return marks
         -- A drawn figure's text sets in the document's faces, so its glyphs are the file's.
-        if let .image (some k) _ _ _ := s then
+        if let .image (some k) _ _ _ _ := s then
           if let some fig := (shaped[k]?).join then
             -- A symbol's glyphs are the same however many uses paint it: bodies are read unexpanded.
             let runs := fig.symbols.foldl (fun acc b => Gfx.Node.labelsList Gfx.Affine.unit acc b.toList)
@@ -188,7 +188,7 @@ private def linkRects (geom : Geom) (page : PageOut) :
         x := x + w
       | .gap w _ | .decoratedGap w _ _ => x := x + w
       | .rule w _ _ _ | .decoration _ w _ _ _ => x := x + w
-      | .image _ w _ _ => x := x + w
+      | .image _ w _ _ _ => x := x + w
       | .poly _ _ => pure ()
   return out
 
@@ -431,7 +431,7 @@ private def usedImagesOf (imgs : Image.Store) (pages : Array PageOut) : Array Na
   for p in pages do
     for l in p.lines do
       for s in l.segs do
-        if let .image (some k) _ _ _ := s then
+        if let .image (some k) _ _ _ _ := s then
           if ((imgs.get? k).bind (·.info)).isSome && ((imgs.get? k).all (·.vector.isNone)) &&
               !out.contains k then
             out := out.push k
@@ -488,7 +488,7 @@ public def docFigs (fs : FontSet) (pages : Array PageOut) (imgs : Image.Store) :
 /-- The drawn figures a page places, by store index, in line order. -/
 public def pageFigureForms (figs : Array (Option FigForm)) (p : PageOut) : Array FigForm :=
   p.lines.foldl (fun out l => l.segs.foldl (fun out s => match s with
-    | .image (some k) _ _ _ => match (figs[k]?).join with
+    | .image (some k) _ _ _ _ => match (figs[k]?).join with
       | some f => out.push f
       | none => out
     | _ => out) out) #[]

@@ -145,7 +145,7 @@ public def attrRefusal (site : Site) : Option Refused :=
   else if (n == "href" || n == "src") && !refOk el a.value then some (.attribute el n)
   else if n == "style" then
     match Css.parseDecls a.value with
-    | .error (.refused why) => some (.style why)
+    | .error (.refused why) => some (.style why.prose)
     | _ => none
   else if !(callAttrs.contains n) && cssSyntax a.value &&
       !(localUrl a.value || numericColor n a.value) then some (.attribute el n)
@@ -158,7 +158,7 @@ public def elemRefusal (e : String × String) : Option Refused :=
   if e.1 == "script" || e.1 == "foreignObject" then some (.element e.1)
   else if e.1 == "style" then
     match Css.parseSheet e.2 with
-    | .error why => some (.style why)
+    | .error why => some (.style why.prose)
     | .ok _ => none
   else none
 

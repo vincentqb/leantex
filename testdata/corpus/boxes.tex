@@ -1,0 +1,14 @@
+% Invented fixture: LaTeX's boxes set their content in one unbreakable box, as latex.ltx and
+% xcolor build it. \raisebox lifts a word, \colorbox grounds one, \fcolorbox and \fbox frame
+% them, and url.sty's lowtilde sets an address's tilde in a raised box. Every word is invented.
+\documentclass{article}
+\usepackage{xcolor}
+\usepackage[lowtilde]{url}
+\begin{document}
+An invented line with a \raisebox{3pt}{raised} word and a \raisebox{-2pt}{lowered} one.
+
+An invented \colorbox{yellow}{grounded} word, a \fcolorbox{red}{yellow}{framed ground} and an
+\fbox{outlined} pair.
+
+An invented address \url{https://example.org/~probe} keeps its tilde low.
+\end{document}

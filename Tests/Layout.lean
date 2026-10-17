@@ -606,7 +606,7 @@ def titleHeadingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
   let values : List (String × String) :=
     [("rule", "quiet"), ("rule-position", "baseline"), ("rule-thickness", "1pt"),
      ("marker", "{x}"), ("indent", "2em"), ("gap", "1em"), ("body-size", "small"),
-     ("color", "quiet")]
+     ("color", "quiet"), ("tilde", "low")]
   t "every unread title key is exercised" (values.map (·.1) == Ir.styleKeys.filter fun k =>
     !(Ir.styleKeysRead "titlepage").contains k && !Ir.listSetKeys.contains k)
   for (key, v) in values do
@@ -2918,7 +2918,7 @@ def tableChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
           | .gap g _ | .decoratedGap g _ _ => x := x + g
           | .decoration _ w _ _ _ => x := x + w
           | .run _ _ _ w _ _ _ _ _ _ _ => x := x + w
-          | .image _ w _ _ => x := x + w
+          | .image _ w _ _ _ => x := x + w
           | .poly _ _ => pure ()
     return acc
   t "the three rules ship" (ruleSegs.size == 3)
@@ -2955,7 +2955,7 @@ def multicolumnSpanChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) 
             | .decoratedGap w _ _ => a + w
             | .decoration _ w .. => a + w
             | .rule w .. => a + w
-            | .image _ w _ _ => a + w
+            | .image _ w _ _ _ => a + w
             | .poly .. => a) (0 : Dim.Sp)
           return some (l.x + l.hang, l.x + w)
     return none
@@ -3287,7 +3287,7 @@ def cardChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   t "the area judge holds a rule to all four edges"
     (namesEveryEdge (areaEdges fun w h => .rule w h 0 Ir.Color.black))
   t "the area judge holds an image box to all four edges"
-    (namesEveryEdge (areaEdges fun w h => .image none w h true))
+    (namesEveryEdge (areaEdges fun w h => .image none w h true 0))
   t "a running head does not fail text.in_area"
     ((judge ("\\runninghead{Pat Placeholder \\hfill \\pagenumber}\n" ++
       "\\assert{ text.in_area }\n" ++
@@ -5045,11 +5045,12 @@ def attrInk (s : String) : Array Char :=
     !(c.isWhitespace || c == '\u00a0' || c == '\u00ad' || c == '-'
       || (Layout.fixedSpace c).isSome)).map Char.toLower
 
-/-- The glyph text of one line for the attribution census, raised runs skipped. -/
+/-- The glyph text of one line for the attribution census, raised runs no leaf owns skipped. -/
 def attrLineText (l : Layout.LineOut) : String :=
   l.segs.foldl (fun s seg => match seg with
-    | .run _ _ _ _ glyphs _ _ _ raise _ _ =>
-      if raise != 0 then s else glyphs.foldl (fun s (_, c, _) => s.push c) s
+    | .run _ _ _ _ glyphs _ _ _ raise _ attr =>
+      if raise != 0 && !(attr matches .leaf _) then s
+      else glyphs.foldl (fun s (_, c, _) => s.push c) s
     | .gap _ _ => s.push ' '
     | _ => s) ""
 
@@ -5211,7 +5212,7 @@ def isGlyphRun : Layout.Seg → Bool
 
 def isInkSeg : Layout.Seg → Bool
   | .run _ _ _ _ glyphs _ _ _ _ _ _ => !glyphs.isEmpty
-  | .image _ _ _ _ => true
+  | .image _ _ _ _ _ => true
   | _ => false
 
 def isWordGap : Layout.Seg → Bool
@@ -5370,7 +5371,8 @@ the text sets ({badGap.getD ""})"
               blk matches .setPalette _ | .setTokens _).head? with
           | some (.para _) => true
           | _ => false).size
-      | .algorithm numbered _ ls => if numbered then acc + ls.size else acc
+      | .algorithm numbered _ ls =>
+        if numbered then acc + (ls.filter fun l => !(l.kind matches .io _)).size else acc
       | .bibliography _ _ items => acc + (items.filter (·.marker.isSome)).size
       | .contents _ entries => acc + (entries.filter (·.number.isSome)).size
       | _ => acc) (fun acc _ => acc) 0 doc.body

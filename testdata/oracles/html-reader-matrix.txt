@@ -2,8 +2,8 @@
 target: chromium
 tools: node v26.11.1  chromium 151.0.7922.34 (playwright 1.62.0)  firefox untested (browserType.launch: Failed to launch the browser process.)  xmllint: using libxml version 21504  Using libxml 21504, libxslt 10145 and libexslt 825  rsvg-convert version 2.63.2  pdftocairo version 26.09.0  pdftotext version 26.09.0
 date: 2026-10-18
-src-key: de9b9c7da86b6add
-browser-face-src-key: a12e342c845de49e
+src-key: b505b472c0676ba8
+browser-face-src-key: 09b1ec46c7c29b39
 browser-face-key: abb77f6fc1e8ff09
 browser-face: diagram-boundary diagram-boundary/i0-bb1520d73065ce7ecf58276e0e5761ca2e75276fca849593477370f9d49c6dfb.svg ok:372:a473a562a6bbd5eb62b4dbb92025ce67d2ce5c71b3d63ea4e4f19764a5bc5644
 browser-face: figures figures/i0-796bbca861ab48356fbadcbcae87a11c849aa9b0b28402b5b16076908b033651.svg ok:9883:0eda4a8ef6ab82c77fe69c8cc22542991eb1bd0888325d46d07ab953b45fa648
@@ -11,7 +11,7 @@ browser-face: figures figures/i1-796bbca861ab48356fbadcbcae87a11c849aa9b0b28402b
 browser-face: svg-figures svg-figures/i0-1ead914945397c7ce6a522020919ac28a4331668d9c5333c477bc1c391698e1c.svg ok:472:5c46997e41fdecd5c564f6699a59063f457fbc594d4699765edc8294af277d02
 browser-face: svg-figures svg-figures/i1-84db39dfee1408d4a02293f4945e160d33b66670a04a1219c53029f3df435a42.svg ok:793:422786e757d84ecc6e43595429ec367aba84ad9e965dc7e1473e83e5b15eb7d7
 browser-face: svg-figures svg-figures/p0-721ef14b7c944f5e1a1a1660221605de967f4abac08db6a5c8d3720aa4812ef6.svg ok:4947:5b5e6fb9bc82cb16ffbae13705950a627b000409ae98b075af6f0cf4de2039fd
-fixtures: 119 built
+fixtures: 120 built
 
 [feature]
 # feature         chromium      firefox
@@ -51,6 +51,7 @@ algorithm         pass          untested      load,fonts,mathml,lang,landmarks,c
 bibliography      pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script
 blocks            pass          untested      load,fonts,lang,landmarks,snaps,color-scheme,reduced-motion,print,print-sheets,no-script,stage-fit,stage-focus,deck-links
 box-sides         pass          untested      load,fonts,lang,landmarks,box-side,color-scheme,reduced-motion,print,no-script
+boxes             pass          untested      load,fonts,mathml,lang,landmarks,color-scheme,reduced-motion,print,no-script
 centering         pass          untested      load,fonts,lang,landmarks,snaps,color-scheme,reduced-motion,print,print-sheets,no-script,stage-fit,stage-focus,deck-links
 chrome            pass          untested      load,fonts,lang,landmarks,snaps,color-scheme,reduced-motion,print,print-sheets,no-script,stage-fit,stage-focus,deck-links
 code-bash         pass          untested      load,fonts,lang,landmarks,color-scheme,reduced-motion,print,no-script,code-wrap,print-code

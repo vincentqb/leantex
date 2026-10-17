@@ -38,6 +38,8 @@ structure IniLocale where
   references : String := ""
   proof : String := ""
   contents : String := ""
+  chapter : String := ""
+  appendix : String := ""
   months : Array String := #[]
   quotes : String := ""
   leftMin : Nat := 0
@@ -66,6 +68,8 @@ def parseIni (text : String) : IniLocale := Id.run do
         else if k == "ref" then loc := { loc with references := v }
         else if k == "proof" then loc := { loc with proof := v }
         else if k == "contents" then loc := { loc with contents := v }
+        else if k == "chapter" then loc := { loc with chapter := v }
+        else if k == "appendix" then loc := { loc with appendix := v }
       else if sec == "date.gregorian" && k.startsWith "months.wide." then
         loc := { loc with months := loc.months.push v }
       else if sec == "typography" then
@@ -90,12 +94,14 @@ structure CrefGen where
   capMany : String
 
 /-- cleveref's names per language, from cleveref.sty v0.21.4 (2018/03/27) under its
-defaults (`abbrev` on, `capitalise` off): section, equation, figure, table, algorithm,
+defaults (`abbrev` on, `capitalise` off): section, chapter, equation, figure, table, algorithm,
 then `\crefrangeconjunction`'s word. -/
 def crefData :
-    List (String × (CrefGen × CrefGen × CrefGen × CrefGen × CrefGen × String)) :=
+    List (String × (CrefGen × CrefGen × CrefGen × CrefGen × CrefGen × CrefGen × String)) :=
   [("en", ({ one := "section", many := "sections",
              capOne := "Section", capMany := "Sections" },
+           { one := "chapter", many := "chapters",
+             capOne := "Chapter", capMany := "Chapters" },
            { one := "eq.", many := "eqs.",
              capOne := "Equation", capMany := "Equations" },
            { one := "fig.", many := "figs.",
@@ -106,6 +112,8 @@ def crefData :
              capOne := "Algorithm", capMany := "Algorithms" }, "to")),
    ("fr", ({ one := "section", many := "sections",
              capOne := "Section", capMany := "Sections" },
+           { one := "chapitre", many := "chapitres",
+             capOne := "Chapitre", capMany := "Chapitres" },
            { one := "équation", many := "équations",
              capOne := "Équation", capMany := "Équations" },
            { one := "figure", many := "figures",
@@ -116,6 +124,8 @@ def crefData :
              capOne := "Algorithme", capMany := "Algorithmes" }, "à")),
    ("de", ({ one := "Abschnitt", many := "Abschnitte",
              capOne := "Abschnitt", capMany := "Abschnitte" },
+           { one := "Kapitel", many := "Kapitel",
+             capOne := "Kapitel", capMany := "Kapitel" },
            { one := "Gleichung", many := "Gleichungen",
              capOne := "Gleichung", capMany := "Gleichungen" },
            { one := "Abb.", many := "Abb.",
@@ -166,8 +176,9 @@ def emit (name : String) (l : IniLocale) : String :=
      { one := "", many := "", capOne := "", capMany := "" },
      { one := "", many := "", capOne := "", capMany := "" },
      { one := "", many := "", capOne := "", capMany := "" },
+     { one := "", many := "", capOne := "", capMany := "" },
      { one := "", many := "", capOne := "", capMany := "" }, "")
-  let (sec, eq, fig, tab, alg, to) := cref
+  let (sec, chap, eq, fig, tab, alg, to) := cref
   s!"/-- {name}: babel-{l.tag}.ini; cref names from cleveref.sty v0.21.4. -/
 @[expose] public def {name} : Locale := \{
   tag := {leanStr l.tag}
@@ -178,6 +189,8 @@ def emit (name : String) (l : IniLocale) : String :=
   references := {leanStr l.references}
   proof := {leanStr l.proof}
   contents := {leanStr l.contents}
+  chapter := {leanStr l.chapter}
+  appendix := {leanStr l.appendix}
   months := #[{String.intercalate ", " (l.months.toList.map leanStr)}]
   quoteOpen := {leanStr (quoteAt l.quotes 0)}
   quoteClose := {leanStr (quoteAt l.quotes 1)}
@@ -186,6 +199,7 @@ def emit (name : String) (l : IniLocale) : String :=
   leftMin := {l.leftMin}
   rightMin := {l.rightMin}
   crefSection := {emitCref sec}
+  crefChapter := {emitCref chap}
   crefEquation := {emitCref eq}
   crefFigure := {emitCref fig}
   crefTable := {emitCref tab}

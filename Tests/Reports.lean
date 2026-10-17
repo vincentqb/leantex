@@ -163,6 +163,11 @@ import Tests.LeanProseReading
 import Tests.AmsMath
 import Tests.CoveredSteps
 import Tests.ListsKoma
+import Tests.FlagCommands
+import Tests.InlineBoxes
+import Tests.EnvCode
+import Tests.Chapters
+import Tests.SvgHtml
 
 /-! Every breakage the user reported, as a row whose pins hold it closed; a report closes only as
 `guarded`, and the unwitnessed and owed counts are held both ways. -/
@@ -2028,7 +2033,53 @@ def reports : List Report := [
     accept := ["invented probes under lualatex: beamer's contents list the unstarred sections and subsections, a subsection 1.5em in, a fill before each section's entry and after the last sharing the frame's leftover, the currentsection option shading the other sections and their subsections; article's list the numbered headings to tocdepth under their heading, a section's bold after 1em with its folio right-aligned in 1.55em, a subsection's at 1.5em behind a 2.3em number with dotted leaders a stop and half an em apart from the line box's edge; this tree sets the same",
       "the corpus built by main's binary at f753a486 and by this tree's, past what the list and outline units this stacks on change: every PDF visually identical but the hooked deck's and the new contents article's, and every web page the same but theirs and the section gap rule each stylesheet carries",
       "main at 320e1b58 refuses the command and lists nothing; the guards fail there"]
-    state := .guarded "320e1b58" .before .author }
+    state := .guarded "320e1b58" .before .author },
+  { id := "R226", date := "2026-10-18"
+    what := "listings' inline code and file listing commands, url's path command and etoolbox's toggles and booleans were unknown commands: their arguments set as text, a path holding an underscore stopped the build, and every toggle test kept both branches"
+    pins := [check% Tests.lstInlineChecks, check% pathFaceChecks,
+      check% Tests.FlagCommands.flagCommandChecks]
+    accept := ["main's binary at e5afdc63 on invented probes: the inline code command at three sites and the file listing command warn W0301 with their arguments set as text, the path command warns W0301 and its underscore stops the build (E0311), and each of the six toggle commands warns W0301, every test shipping both branches; the three checks fail on that tree (17, 5 and 52 assertions)",
+      "lualatex on the same probes: the inline code sets as listings' inline code, braced or between two copies of a delimiter, the file listing sets the file as a listing, the path its argument whole in typewriter and unlinked, and each toggle or boolean test keeps one branch, a group's end restoring a setting and a boolean being the newif flag of its name"]
+    state := .guarded "e5afdc63" .before .author },
+  { id := "R227", date := "2026-10-18"
+    what := "LaTeX's boxes were missing or set unboxed: the colour box commands were unknown, their colour names set as text, a raised box set its content on the baseline and breakable, and url's lowtilde option was not honoured"
+    pins := [check% Tests.InlineBoxes.inlineBoxChecks, check% censusChecks]
+    accept := ["main's binary at e5afdc63 on invented probes: both colour box commands warn W0301 with their colour names set as text, the raised box warns W0104 that its lift, height and depth are not applied, and the lowtilde option warns W0104; the check fails on that tree (19 assertions)",
+      "lualatex: a raised box sets its content in one box lifted by its length, a declared height and depth the line's extent; a colour box grounds its content's box padded by the box separation (3pt), the framed one frames that ground by the box rule (0.4pt) in its frame colour and the plain frame in the text's; url's lowtilde sets a URL's tilde as a script-size similar sign raised 0.2ex in a box"]
+    state := .guarded "e5afdc63" .before .author },
+  { id := "R228", date := "2026-10-18"
+    what := "a macro whose body takes a setting from its argument, called from an environment's code, dropped the setting silently or, for a colour, stopped the build; and a colour, language, size or shape an environment's begin code declares, the environment used inside a paragraph, set around nothing, its content outside it"
+    pins := [check% Tests.EnvCode.templateCodeUseChecks, check% Tests.EnvCode.inlineEnvScopeChecks]
+    accept := ["main's binary at e5afdc63 on invented probes: a colour through a macro in an environment's code stops the build (E0321, its parameter read as a colour), a language switch through one sets nothing, and a colour or language an inline environment's begin code declares leaves its content in the text's ink and language; the two checks fail on that tree (24 and 7 assertions)",
+      "lualatex: each sets the environment's content in the colour or language its code gives, the setting ending with the environment",
+      "a value from the environment's own arguments, which LaTeX substitutes, is named once (W0104) and set nowhere, as such a setting written in the code itself is"]
+    state := .guarded "e5afdc63" .before .author },
+  { id := "R229", date := "2026-10-18"
+    what := "algorithm2e's data and io words set unlike the package: a data word lost its argument's parentheses and xspace's space, an aligned io word's colon followed its own word instead of standing where the widest declared word's ends, its wrapped content returned to the margin, and io lines took line numbers"
+    pins := [check% algWordChecks, check% censusChecks]
+    accept := ["main's binary at e5afdc63 on an invented probe: 'left← left(x);' and 'up← lefty and up;', each aligned io line with its content after its own colon and a wrapped line back at the margin, and with lines numbered the io lines numbered 1 and 2; the check fails on that tree (6 assertions)",
+      "lualatex: 'left ← left (x);' and 'up ← left(y) and up;', the y in the argument style's italic; the Input and Output colons both end at 188.50bp, each content 3.32bp past them and a wrapped line's text where its content starts; the io lines take no number, the first statement 1"]
+    state := .guarded "e5afdc63" .before .author },
+  { id := "R230", date := "2026-10-18"
+    what := "a page two paracol flows shared painted the page colour twice"
+    pins := [check% columnGroundChecks]
+    accept := ["main's binary at e5afdc63 on an invented paracol document under a page colour: two full-page grounds on each page both flows reach, one where one flow ends; the check fails on that tree",
+      "the documents before and after are the same to visualdiff: the second ground covered the first exactly"]
+    state := .guarded "e5afdc63" .before .author },
+  { id := "R231", date := "2026-10-18"
+    what := "a figure's dropped CSS rule was named with its selector inside a second pair of quotes, 'style: the selector' read as the property"
+    pins := [check% Tests.svgHtmlChecks]
+    accept := ["main's binary at e5afdc63 on an invented SVG figure: W0609 names each dropped rule as its style property's 'the selector ...' inside the property's quotes; the CSS list check fails on that tree (3 assertions)"]
+    state := .guarded "e5afdc63" .before .author },
+  { id := "R232", date := "2026-10-18"
+    what := "report's and book's chapter command was unknown: its title set as text in the paragraph, no page opened, and the sections, equations and footnotes numbered through the document"
+    pins := [check% Tests.Chapters.chapterChecks, check% Tests.Chapters.chapterReadingChecks,
+      check% Tests.Chapters.chapterDeclarationChecks]
+    accept := ["main's binary at e5afdc63 on an invented report: the chapter command warns W0301, every title set as text in the paragraph, the sections numbered 1 and 2 and the equations (1) and (2); the three checks fail on that tree (9, 3 and 6 assertions)",
+      "lualatex on the same report: each chapter opens a page, 'Chapter 1' at the huge size 85pt below the text's top, its title at the Huge size 50pt below that and the text 52pt below the title, an unnumbered chapter's title 90pt below the top; sections 1.1 and 2.1, equations (1.1) and (2.1), footnotes from 1 in each chapter, and after the appendix 'Appendix A' with section A.1",
+      "lualatex: cleveref names a chapter 'chapter 1' and an appendix chapter 'chapter A', a label in a chapter's title leads to its head, and book's front and back matter chapters stand unnumbered",
+      "figures, tables, algorithms and listings still number through the document, where report and listings number them within each chapter, and book's divisions number their pages in roman numerals and from 1 again: each named once (W0110)"]
+    state := .guarded "e5afdc63" .before .author }
 ]
 
 /-- The reports guarded but never seen failing, a count held in both directions. -/

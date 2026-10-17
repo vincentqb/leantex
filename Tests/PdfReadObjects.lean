@@ -175,7 +175,7 @@ private def objectWrapper (fonts : Font.FontSet) (programs : Array (ByteArray ×
   let imgs : Image.Store := { entries := #[{ src := "drawing.pdf", info := some plan }] }
   let line : Layout.LineOut :=
     { x := 0, y := f.val.h, size := Dim.pt 12, setWidth := f.val.w,
-      segs := #[.image (some 0) f.val.w f.val.h true] }
+      segs := #[.image (some 0) f.val.w f.val.h true 0] }
   Pdf.write { pageW := f.val.w, pageH := f.val.h, hmargin := 0, vmargin := 0 }
     fonts #[{ lines := #[line] }] (imgs := imgs) (programs := programs)
 

@@ -253,6 +253,7 @@ def styleSample (element key : String) : String :=
     if element == "logo" then "center" else if element == "titlepage" then "left" else "right"
   else if key == "motion" then "400ms"
   else if key == "slot" then "{ set = date, anchor = south, at = south }"
+  else if key == "tilde" then "low"
   else "17pt"
 
 /-- A document showing every element a `\style` may name: an article's headings at every level, its
@@ -271,7 +272,7 @@ def styledArticle (pre : String) : String :=
     "\\begin{description}\\item[One] Words\\begin{description}\\item[Two] Words" ++
     "\\begin{description}\\item[Three] Words\\begin{description}\\item[Four] Words" ++
     "\\end{description}\\end{description}\\end{description}\\end{description}\n" ++
-    "See Section~\\ref{s:a}, \\href{https://example.org}{a place}, \\url{https://example.org/a} and " ++
+    "See Section~\\ref{s:a}, \\href{https://example.org}{a place}, \\url{https://example.org/~a} and " ++
     "\\cite{key1}.\n" ++ bibtexList ++ "\n\\end{document}\n"
 
 /-- `\style`'s keys on every element a document styles, each in a document that shows the element:
@@ -317,12 +318,12 @@ def styleRow : Row :=
       elements.map fun e => shown e s!"\\style\{{e}}\{ rule = {probeColor} }" }
 
 /-- An article setting every element an engine token spaces: a running head, lists at every depth,
-floats with captions above and below, a booktabs table, displays, footnotes, skips, an algorithm and
-a natbib reference list. -/
+floats with captions above and below, a booktabs table, displays, footnotes, a framed box, skips, an
+algorithm and a natbib reference list. -/
 def tokenedArticle (pre : String) : String :=
   s!"\\documentclass\{article}\n\\usepackage\{natbib}\\usepackage\{booktabs}\\usepackage\{algpseudocode}" ++
     s!"\\usepackage\{subcaption}\\runninghead\{Head words}\n{pre}\n\\begin\{document}\n" ++
-    "Words before.\\footnote{Note words.}\n" ++ setlistLists ++
+    "Words before.\\footnote{Note words.} A \\fbox{boxed} word.\n" ++ setlistLists ++
     "\\begin{itemize}\\item One\\begin{itemize}\\item Two\\begin{itemize}\\item Three\\begin{itemize}" ++
     "\\item Four\\end{itemize}\\end{itemize}\\end{itemize}\\end{itemize}\n" ++
     "\\begin{figure}[ht]\\centering\\rule{2cm}{1cm}\\caption{Figure words}\\end{figure}\n" ++

@@ -89,3 +89,20 @@ def columnFlowChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
       match flowPlaces nested mark, flowPlaces alone mark with
       | #[a], #[b] => a.1 == 0 && a == b
       | _, _ => false)
+
+/-- A page two column flows share carries one ground, as a page with one flow does: each flow
+finishes the shared pages under the page colour, and the joined page keeps one of the two. -/
+def columnGroundChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  for (leftCount, rightCount) in #[(24, 1), (1, 24), (24, 24)] do
+    let src := (flowSource (flowText "Left" leftCount) (flowText "Right" rightCount)).replace
+      "\\usepackage{paracol}\n" "\\usepackage{paracol}\n\\usepackage{xcolor}\n\\pagecolor{yellow}\n"
+    let doc := (elabStr src).1
+    let out := layoutOf oneFace doc
+    let g := Layout.Geom.ofPage doc.page
+    let grounds (p : Layout.PageOut) : Nat := (p.fills.filter fun f =>
+      f.x == -g.bleed && f.y == -g.bleed && f.w == g.pageW + 2 * g.bleed &&
+        f.h == g.pageH + 2 * g.bleed).size
+    t s!"columns {leftCount}/{rightCount} under a page colour: every page paints one ground \
+({out.pages.map grounds})"
+      (1 < out.pages.size && out.pages.all (grounds · == 1))

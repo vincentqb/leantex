@@ -20,6 +20,7 @@ open LeanTex.Core LeanTex.Core.Gfx
   | .resource n => "resource:" ++ n
   | .font k => "font:" ++ k
   | .budget w => "budget:" ++ w
+  | .css w => "css:" ++ w
 
 /-- The subject a loss is censused under. -/
 @[expose] public def subject (kind : String) (l : Gfx.Loss) : String :=
@@ -35,6 +36,7 @@ open LeanTex.Core LeanTex.Core.Gfx
   | .resource n => s!"{n} resource"
   | .font k => s!"'{k}' font"
   | .budget w => s!"{w} beyond the reader's budget"
+  | .css w => s!"CSS {w}"
 
 /-- Where a lossy SVG figure's drawing ships: the PDF always, the HTML too when the figure moves. -/
 @[expose] public def shipsIn (moving : Bool) : Option Diag.Output :=

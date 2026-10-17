@@ -8,8 +8,10 @@ body impl \textcolor{black}{x}
 body impl {\color{black} x}
 body impl {\color{black}\normalcolor x}
 body impl {\color{black!50!white} x}
-body refuse:W0301 \colorbox{black}{x}
-body refuse:W0301 \fcolorbox{black}{white}{x}
+body impl \colorbox{yellow}{x}
+body impl \colorbox[HTML]{FFEE88}{x}
+body impl \fcolorbox{black}{yellow}{x}
+body impl \fcolorbox[rgb]{0,0,0}{1,1,0.8}{x}
 pre impl \pagecolor{black}
 body impl \nopagecolor
 body refuse:W0301 \rowcolors{1}{black}{white}

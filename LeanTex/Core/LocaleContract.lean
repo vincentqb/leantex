@@ -21,7 +21,7 @@ public theorem builtin_total : builtin.all (fun l =>
     !l.tag.isEmpty && !l.figure.isEmpty && !l.table.isEmpty &&
     !l.algorithm.isEmpty &&
     !l.abstract.isEmpty && !l.references.isEmpty &&
-    !l.proof.isEmpty && !l.contents.isEmpty &&
+    !l.proof.isEmpty && !l.contents.isEmpty && !l.chapter.isEmpty && !l.appendix.isEmpty &&
     l.months.size == 12 && l.months.all (!·.isEmpty) &&
     !l.quoteOpen.isEmpty && !l.quoteClose.isEmpty &&
     !l.quoteInnerOpen.isEmpty && !l.quoteInnerClose.isEmpty &&

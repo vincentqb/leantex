@@ -43,6 +43,8 @@ private structure Use where
   styleName : Option String := none
   /-- The surface under the use's mark and its role, read where a scheme ships no mark. -/
   under : Option (Color × Option Role) := none
+  /-- The use stands on a box's literal ground, against which a scheme carries a literal ink. -/
+  onLiteral : Bool := false
   deriving BEq
 
 /-- The walk's fold state: the palette in force, the uses, and each design site's epochs. -/
@@ -112,6 +114,8 @@ private structure UseCx where
   styles : Styles := {}
   /-- The ground under a mark this content stands on, and its role. -/
   markUnder : Option (Option Color × Option Role) := none
+  /-- The literal ground of the box this content stands in, which its literal inks read on. -/
+  literalGround : Option Color := none
   /-- Whether a focused stage standing on the page marks its focus in the focus role. -/
   stageFocus : Bool := false
   /-- Whether this content stands outside every frame. -/
@@ -127,6 +131,13 @@ private def UseCx.atEpoch (cx : UseCx) (pal : Palette) (epoch : Nat) : UseCx :=
     { cx with ground := none, groundName := none, groundRole := none, groundEpoch := none
               inheritedInk := none }
   else cx
+
+/-- The context under a local ground: text in the default ink judged there as the ink role's use,
+a coloured run's ink as before. -/
+private def UseCx.inkOnGround (cx : UseCx) (acc : UseAcc) : UseCx :=
+  match cx.cur with
+  | some _ => cx
+  | none => { cx with cur := some (some (.role .ink), Design.printInk acc.pal, acc.runs) }
 
 /-- Whether a use is large-scale text at the size its medium shows it; slide text always is. -/
 private def UseCx.large (cx : UseCx) : Bool :=
@@ -170,7 +181,8 @@ private def UseAcc.use (acc : UseAcc) (cx : UseCx) (nm : Option ColorRef)
                      | none => acc.runs
                    styleName
                    under := cx.markUnder.map fun (g, r) =>
-                     (g.getD (surfaceOf acc.pal), if g.isSome then r else some .page) }
+                     (g.getD (surfaceOf acc.pal), if g.isSome then r else some .page)
+                   onLiteral := cx.ground.isSome && cx.literalGround == cx.ground }
   let coveredNames := match nm with
     | some n => if cx.covering then pushUnique acc.coveredNames (acc.pal, n) else acc.coveredNames
     | none => acc.coveredNames
@@ -235,8 +247,22 @@ private def usesInline (cx : UseCx) (acc : UseAcc) : Inline → UseAcc
       let role := match nm with
         | some (.role r) => some r
         | _ => none
+      let cx := cx.inkOnGround acc
       usesInlines { cx with ground := some c, groundName := (role.bind (·.row.noun)).getD "the mark",
                             groundRole := role, markUnder := some (cx.ground, cx.groundRole) }
+        acc body.toList
+  -- a box's content stands on the box's ground where it declares one
+  | .boxed b body =>
+    match b.ground with
+    | none => usesInlines cx acc body.toList
+    | some (c, nm) =>
+      let role := match nm with
+        | some (.role r) => some r
+        | _ => none
+      let cx := cx.inkOnGround acc
+      usesInlines { cx with ground := some c, groundName := (role.bind (·.row.noun)).getD "the box",
+                            groundRole := role, markUnder := some (cx.ground, cx.groundRole)
+                            literalGround := if nm.isNone then some c else none }
         acc body.toList
   | .onSteps spec body =>
     usesInlines { cx with covering := cx.covering || spec.maxStep ≥ 2 } (acc.step spec) body.toList
@@ -603,7 +629,8 @@ public def docPalettes (doc : Doc) : List Palette :=
 what it reads there and what that scheme owes. -/
 public structure SchemeLoss where
   name : ColorRef
-  on : Role
+  /-- The ground it is judged on: a role, or a box's literal colour. -/
+  on : ColorRef
   ratio : Nat
   gate : Nat
   deriving Repr, BEq, Inhabited
@@ -641,13 +668,15 @@ private def schemeLosses (s : Scheme) (f : SchemeFrame) (stage : Bool)
       let (ratio, gate) := u.measured.getD ((match ink, Design.at v s u.on with
         | some a, some b => contrastMilli a b
         | _, _ => 0), requiredIn s (need.atStage stage))
-      out := push out { name := u.name, on := u.on, ratio, gate }
+      out := push out { name := u.name, on := .role u.on, ratio, gate }
     for u in used do
       if u.name.isSome then continue
-      let c := Design.literalIn f u.color
       let (surface, role) := if u.surfaceRole == some .alertMark && (Design.at v s .alertMark).isNone
         then u.under.getD (u.surface, u.surfaceRole) else (u.surface, u.surfaceRole)
       let (g, on) := p.useGround v f surface role
+      -- A literal ink on a box's literal ground is carried on that ground, as the web page sets it.
+      let c := if u.onLiteral then Design.literalOn f g u.color else Design.literalIn f u.color
+      let on : ColorRef := if u.onLiteral then .color u.surface.hex else .role on
       let gate := requiredIn s (if u.large then .largeText else .text)
       if contrastMilli c g < gate then
         out := push out { name := .color u.color.hex, on, ratio := contrastMilli c g, gate }
@@ -656,14 +685,14 @@ private def schemeLosses (s : Scheme) (f : SchemeFrame) (stage : Bool)
     if let some st := Design.site? v s r then
       let st := { st with need := st.need.atStage stage }
       if !st.passes then
-        out := push out { name := .role r, on := st.on, ratio := contrastMilli st.ink st.ground
+        out := push out { name := .role r, on := .role st.on, ratio := contrastMilli st.ink st.ground
                           gate := requiredIn s st.need }
   return out.toList
 
 /-- A dropped scheme's diagnostic for one colour it could not carry (`scheme:name@ground`). -/
 public def schemeLossDiag (s : Scheme) (l : SchemeLoss) : Diag :=
   let key := l.name.key
-  let ground := (ColorRef.role l.on).key
+  let ground := l.on.key
   Diag.of .W0308
     s!"the {s.name} scheme cannot carry '{key}' legibly on '{ground}'; the page ships without it"
     (help := some "declare a colour that reaches the gate on its ground in that scheme, or name \
@@ -725,7 +754,7 @@ public theorem scheme_drop_accounts (doc : Doc) :
 
 /-- A scheme loss's census key `scheme:name@ground`, its diagnostic's subject. -/
 public def SchemeLoss.key (s : Scheme) (l : SchemeLoss) : String :=
-  s!"{s.name}:{l.name.key}@{(ColorRef.role l.on).key}"
+  s!"{s.name}:{l.name.key}@{l.on.key}"
 
 public theorem sites_named (doc : Doc) :
     ∀ d ∈ (schemeJudge doc).dropped, ∀ l ∈ d.2,

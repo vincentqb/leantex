@@ -356,6 +356,8 @@ public inductive SecPart where
 public inductive AlgKwDef where
   | word (body : Array Raw)
   | io (label : String)
+  /-- `\SetKwInOut`'s word, set in the column its declared words share. -/
+  | inout (label : String)
   | func (name : Array Raw)
   | data (name : Array Raw)
   deriving Repr, BEq
@@ -482,6 +484,12 @@ public structure Counters where
   secFmts : Array (Nat × Array SecPart) := #[]
   /-- `\appendix` was declared: headings from here on letter (`A`, `B`, …). -/
   inAppendix : Bool := false
+  /-- The class heads chapters, numbering sections, equations and footnotes within each. -/
+  chapters : Bool := false
+  /-- The chapter counter. -/
+  chapNum : Nat := 0
+  /-- Chapters number here: book.cls's main matter, or a class without its divisions. -/
+  mainMatter : Bool := true
   /-- The equation counter, restarting under the `\numberwithin` level
   `eqWithin` when one is declared. -/
   eqNum : Nat := 0
@@ -559,6 +567,9 @@ public structure GroupScope where
   /-- The family a `\url` sets in, from url.sty's `\urlstyle`; `none` is the
   running face. -/
   urlFamily : Option Ir.Style := some .mono
+  /-- `\fboxsep` and `\fboxrule` as an assignment in the body set them; `none` is the preamble's. -/
+  boxSep : Option Dim.SymGlue := none
+  boxRule : Option Dim.SymGlue := none
   /-- The declarations met between blocks in the enclosing scopes, outermost
   first, which wrap every inline region built under them. -/
   blockDecls : List Ir.Decl := []
@@ -1213,8 +1224,8 @@ public def escapes : List (String × String) :=
    ("lq", "‘"), ("rq", "’")]
 
 private def blockOnly : List String :=
-  ["section", "subsection", "subsubsection", "item", "documentclass", "define",
-   "defineenv", "block", "framefoot", "pagebreak"]
+  ["section", "subsection", "subsubsection", Parse.chapterControl, "item", "documentclass",
+   "define", "defineenv", "block", "framefoot", "pagebreak"]
 
 /-- The overlay commands, whose content dims off its steps, or with `\visible` is invisible
 there; `\only` only where `Compat.onlyAlternations` leaves it unread. -/
@@ -1242,7 +1253,7 @@ walks' shape depends on, the underline family and `\tabularxcolumn`. -/
 public def structuralNames : List String :=
   ["begin", "end", "par", "define", "ifgiven", "documentclass",
    "ul", "varul", "tabularxcolumn",
-   "item", "defineenv", "block", "framefoot", "pagebreak"] ++
+   "item", "defineenv", "block", "framefoot", "pagebreak", Parse.chapterControl] ++
   (decorationCtrls.map (·.1)) ++
   (escapes.map (·.1)) ++ (reservedCtrl.map (·.1)) ++ declCtrl
 
@@ -1253,12 +1264,13 @@ public def renderedBuiltins : List String :=
    "centering", "alt", "hfill", "ensuremath", "label", "ref", "eqref",
    "cref", "Cref", "crefrange", "Crefrange", "labelcref", "namecref", "nameCref", "nameref",
    "paragraph", "subparagraph", "href", "link", "hyperlink", "hypertarget",
-   "url", "nolinkurl", "hspace", "rule", "fontsize", "includegraphics",
+   "url", "nolinkurl", "path", "hspace", "rule", "fontsize", "includegraphics",
    "animategraphics", "faIcon", "pagenumber", "pagecount",
    "bibliography", "bibliographystyle", "textcolor",
    "refstepcounter", "stepcounter", "addtocounter", "setcounter",
    "section", "subsection", "subsubsection",
-   "vphantom", "hphantom", "phantom", "mintinline", "mint"] ++ Ir.natbibCites.map (·.1) ++
+   "vphantom", "hphantom", "phantom", "mintinline", "mint", "lstinline"] ++ Ir.boxCommands ++
+  Ir.natbibCites.map (·.1) ++
   titleCtrls ++ overlayCtrls ++ runningCtrl ++ (argStyles.map (·.1)) ++
   (declStyles.map (·.1)) ++ (Lex.textSymbols.map (·.1))
 
@@ -1373,6 +1385,13 @@ private theorem value?_none_of_declaresScope {k : Marker.Kind} {n : String}
     simp only [declaresScope, Bool.or_eq_false_iff] at h
     exact h.2)
 
+/-- Whether an environment's begin code declares the typewriter family at its top level, so the
+content it spans reads literally, as `{\ttfamily ...}`'s does. -/
+private def declaresMono (body : Array Raw) : Bool :=
+  body.any fun r => match r with
+    | .ctrl n _ => declStyleOf n == some .mono
+    | _ => false
+
 /-- The block-level language switch; a switch back to the main language
 clears the attribute. -/
 private def flowLangUpdate (ctx : Ctx) (tag : String) (st : ESt) : ESt :=
@@ -1479,7 +1498,7 @@ private def trimTail (raws : Array Raw) : Array Raw :=
 private def referencesParamCode (name : String) : List Raw → Bool
   | [] => false
   | .verb e s _ :: rest =>
-    ((e == "mintinline" || e == "mint") && name.startsWith "a" &&
+    ((e == "mintinline" || e == "mint" || e == "lstinline") && name.startsWith "a" &&
       (s.splitOn ("#" ++ (name.drop 1).toString)).length > 1) || referencesParamCode name rest
   | .group body _ :: rest => referencesParamCode name body.toList || referencesParamCode name rest
   | .env _ body _ :: rest => referencesParamCode name body.toList || referencesParamCode name rest
@@ -1487,6 +1506,23 @@ private def referencesParamCode (name : String) : List Raw → Bool
   | _ :: rest => referencesParamCode name rest
 termination_by l => sizeOf l
 decreasing_by raws_dec
+
+/-- The parameter an inline environment's halves bind to its content, set between them; no control
+word spells it. -/
+private def envContentArg : String := "environment content"
+
+/-- The mark an inline environment's begin code sets where its content stands, under the
+declarations it leaves open. -/
+private def envContentMark : Ir.Inline := .role envContentArg #[]
+
+-- conserves: none — a placement, not a rewrite
+/-- An inline environment's begin code with its content and end code set where its mark stands,
+else after it. -/
+private def placeEnvContent (opened rest : Array Ir.Inline) : Array Ir.Inline :=
+  if Ir.foldInlines (fun found x => found || x == envContentMark) false opened then
+    Ir.mapInlines id opened (finish := fun ys => ys.foldl (fun out y =>
+      if y == envContentMark then out ++ rest else out.push y) #[])
+  else opened ++ rest
 
 /-- A defined environment from its halves, with the space rules
 `\ignorespaces`, environ and `\ignorespacesafterend` state at its seams. -/
@@ -2862,7 +2898,7 @@ private def mapSmartText (when? : Option OverlaySpec) : Inline → Inline
   | .located source inner => .located source (mapSmartTextList when? #[] inner.toList)
   | x@(.math ..) | x@(.formula ..) | x@(.styled ..)
   | x@(.colored ..) | x@(.link ..) | x@(.label ..) | x@(.ref ..)
-  | x@(.decorated ..) | x@(.fill) | x@(.hspace ..) | x@(.rule ..)
+  | x@(.decorated ..) | x@(.boxed ..) | x@(.fill) | x@(.hspace ..) | x@(.rule ..)
   | x@(.pageNumber) | x@(.pageCount) | x@(.linebreak ..) | x@(.strut ..)
   | x@(.italicCorr ..) | x@(.onSteps ..) | x@(.altSteps ..)
   | x@(.image ..) | x@(.icon ..) | x@(.cite ..) | x@(.cited ..) | x@(.footnote ..) => x
@@ -3246,7 +3282,7 @@ private def altRunsOne (out : Array Ir.AltRun) : Inline → Array Ir.AltRun
     | .undeclared | .decorative => out
   | .formula _ src _ => pushAltText out src
   | .located _ body | .styled _ body | .colored _ _ body | .role _ body | .link _ body
-  | .decorated _ body | .onSteps _ body | .cited _ _ body
+  | .decorated _ body | .boxed _ body | .onSteps _ body | .cited _ _ body
   | .altSteps _ body _ => altRunsList out body.toList
   | x@(.text _) | x@(.math _ _) | x@(.label _) | x@(.ref _ _ _ _) | x@.fill
   | x@(.hspace _ _) | x@(.rule _ _ _) | x@.pageNumber | x@.pageCount | x@(.linebreak _)
@@ -3406,19 +3442,29 @@ private def counterAt (nums : Nat × Nat × Nat) (level : Nat) : Nat :=
   | 2 => nums.2.1
   | _ => nums.2.2
 
+/-- How a heading number's first level reads: arabic, lettered after an article's `\appendix`,
+or after its chapter's number in a class with chapters. -/
+private inductive SecBase where
+  | arabic
+  | appendix
+  | chapter (label : String)
+
 /-- classes.dtx's default heading number: `\arabic{section}`, `\Alph` after
 `\appendix`, each deeper level prefixed by its parent. -/
-private def defaultSecNum (nums : Nat × Nat × Nat) (inApp : Bool)
+private def defaultSecNum (nums : Nat × Nat × Nat) (base : SecBase)
     (level : Nat) : String :=
   let (n1, n2, n3) := nums
-  let base := if inApp then ListMark.AlphN n1 else ListMark.arabicN n1
+  let base := match base with
+    | .arabic => ListMark.arabicN n1
+    | .appendix => ListMark.AlphN n1
+    | .chapter c => s!"{c}.{ListMark.arabicN n1}"
   match level with
   | 1 => base
   | 2 => s!"{base}.{n2}"
   | _ => s!"{base}.{n2}.{n3}"
 
 private theorem defaultSecNum_appendix_inj (m n : Nat × Nat × Nat)
-    (h : defaultSecNum m true 1 = defaultSecNum n true 1) : m.1 = n.1 :=
+    (h : defaultSecNum m .appendix 1 = defaultSecNum n .appendix 1) : m.1 = n.1 :=
   match m, n with
   | (_, _, _), (_, _, _) => ListMark.letterN_inj (.inr rfl) h
 
@@ -3426,7 +3472,7 @@ mutual
 /-- One level's heading number: its last declared format, else the class
 default; an exhausted `fuel` gives the bare arabic value. -/
 private def renderSecLevel (fmts : Array (Nat × Array SecPart))
-    (nums : Nat × Nat × Nat) (inApp : Bool) (fuel level : Nat) : String :=
+    (nums : Nat × Nat × Nat) (inApp : SecBase) (fuel level : Nat) : String :=
   match fuel with
   | 0 => ListMark.arabicN (counterAt nums level)
   | fuel + 1 =>
@@ -3436,7 +3482,7 @@ private def renderSecLevel (fmts : Array (Nat × Array SecPart))
 termination_by (fuel, 0)
 
 private def renderSecParts (fmts : Array (Nat × Array SecPart))
-    (nums : Nat × Nat × Nat) (inApp : Bool) (fuel : Nat) :
+    (nums : Nat × Nat × Nat) (inApp : SecBase) (fuel : Nat) :
     List SecPart → String → String
   | [], acc => acc
   | p :: rest, acc =>
@@ -3451,9 +3497,27 @@ end
 /-- Three section levels chain through each other at most once each. -/
 private def secFmtFuel : Nat := 3
 
+/-- One part of a declared `\thechapter` at chapter `n`: its words, and its numeral of the chapter. -/
+private def chapterPart (n : Nat) : SecPart → String
+  | .lit s => s
+  | .num style _ => secStyleRender style n
+  | .the _ => ""
+
+/-- The chapter number's reading: its declared `\thechapter` (level 0 of the formats), else lettered
+after `\appendix`, as report.cls's appendix sets it. -/
+private def chapterLabel (c : Counters) : String :=
+  match c.secFmts.findRev? (·.1 == 0) with
+  | some (_, parts) => String.join (parts.toList.map (chapterPart c.chapNum))
+  | none => if c.inAppendix then ListMark.AlphN c.chapNum else ListMark.arabicN c.chapNum
+
+/-- The first heading level's reading the counters stand in. -/
+private def secBase (c : Counters) : SecBase :=
+  if c.chapters then .chapter (chapterLabel c) else if c.inAppendix then .appendix else .arabic
+
 /-- A definition body as a heading-number format (words, spaces, numerals
-over section counters, `\the<level>` references), or `none`. -/
-private def secFmtOfBody (body : Array Raw) : Option (Array SecPart) := Id.run do
+over the counters `counter` levels, `\the<level>` references), or `none`. -/
+private def secFmtOfBody (counter : String → Option Nat) (body : Array Raw) :
+    Option (Array SecPart) := Id.run do
   let mut parts : Array SecPart := #[]
   let mut i : Nat := 0
   for _ in [0:body.size + 1] do
@@ -3474,7 +3538,7 @@ private def secFmtOfBody (body : Array Raw) : Option (Array SecPart) := Id.run d
         | some (.group g _) =>
           match g.toList.filter (fun r => match r with | .space => false | _ => true) with
           | [.word cn _] =>
-            match sectionLevel cn with
+            match counter cn with
             | some lvl =>
               parts := parts.push (.num style lvl)
               i := i + 2
@@ -3485,22 +3549,25 @@ private def secFmtOfBody (body : Array Raw) : Option (Array SecPart) := Id.run d
     | some _ => return none
   return some parts
 
-/-- A parameterless `\the<section counter>` definition whose body reads as a
-heading-number format. -/
+/-- A parameterless `\the<section counter>` or `\thechapter` definition whose body reads as a
+heading-number format, the chapter's at level 0. -/
 private def secFmtDefine? (cmd : UserCmd) : Option (Nat × Array SecPart) :=
   if !cmd.params.isEmpty then none
+  else if cmd.name == "thechapter" then
+    (secFmtOfBody (fun n => if n == "chapter" then some 0 else none) cmd.body).map ((0, ·))
   else (theCounterLevel? cmd.name).bind fun lvl =>
-    (secFmtOfBody cmd.body).map ((lvl, ·))
+    (secFmtOfBody sectionLevel cmd.body).map ((lvl, ·))
 
 /-- The itemize level a class label macro names: `\labelitemi`…`\labelitemiv` (classes.dtx). -/
 private def itemLabelLevel? (name : String) : Option Nat :=
   [1, 2, 3, 4].find? (Ir.itemLabelName · == name)
 
-/-- Whether one leaf of a label sets ink: a word, a symbol, a formula, an icon, an image or a
-rule; a wrapper's ink is its leaves'. -/
+/-- Whether one leaf of a label sets ink: a word, a symbol, a formula, an icon, an image, a rule or
+a box's own frame or ground; a wrapper's ink is its leaves'. -/
 private def labelLeafInks : Inline → Bool
   | .text t => t.toList.any fun (c : Char) => !c.isWhitespace
   | .math .. | .formula .. | .icon .. | .image .. | .rule .. => true
+  | .boxed b _ => b.frame.isSome || b.ground.isSome
   | .styled .. | .colored .. | .located .. | .role .. | .link .. | .decorated .. | .onSteps ..
   | .altSteps .. | .cited .. | .footnote .. | .ref .. | .cite .. | .label _ | .fill | .hspace ..
   | .pageNumber | .pageCount | .linebreak _ | .strut _ | .italicCorr _ => false
@@ -3575,7 +3642,7 @@ private def applyCounter (name : String) (lvl : Nat) (n : Int) : EM Unit := do
   modify fun st => { st with ctr := { st.ctr with secNums := nums,
                                                   runNums := if step then (0, 0) else st.ctr.runNums } }
   if name == "refstepcounter" then
-    let num := renderSecLevel st.ctr.secFmts nums st.ctr.inAppendix secFmtFuel lvl
+    let num := renderSecLevel st.ctr.secFmts nums (secBase st.ctr) secFmtFuel lvl
     -- A bare counter step numbers no node, so its label is kindless.
     modify fun st => { st with refTarget := some { kind := none, num := num } }
 
@@ -3587,6 +3654,7 @@ private def flowCounter? (ctr : String) :
   | "tocdepth" => some (fun c => c.tocDepth, fun c v => { c with tocDepth := v })
   | "footnote" => some (fun c => c.fnNum, fun c v => { c with fnNum := v.toNat })
   | "equation" => some (fun c => c.eqNum, fun c v => { c with eqNum := v.toNat })
+  | "chapter" => some (fun c => c.chapNum, fun c v => { c with chapNum := v.toNat })
   | _ => none
 
 /-- Sets, adds to or steps a flow counter; `secnumdepth` alone may go below
@@ -3696,7 +3764,7 @@ private def runInHead (ctx : Ctx) (name : String) (starred : Bool) (title : Arra
     return shaped (.styled .bold title)
   let (n4, n5) := st.ctr.runNums
   let runs := if level == 4 then (n4 + 1, 0) else (n4, n5 + 1)
-  let parent := renderSecLevel st.ctr.secFmts st.ctr.secNums st.ctr.inAppendix secFmtFuel 3
+  let parent := renderSecLevel st.ctr.secFmts st.ctr.secNums (secBase st.ctr) secFmtFuel 3
   let num := if level == 4 then s!"{parent}.{runs.1}" else s!"{parent}.{runs.1}.{runs.2}"
   modify fun st => { st with ctr := { st.ctr with runNums := runs }
                              refTarget := some { kind := some .heading, num := num } }
@@ -4082,6 +4150,184 @@ private def coloredRun (ctx : Ctx) (c : Color) (ref : Option ColorRef) (body : A
   | some g => ctx.palette.groundRun g (.colored c ref body)
   | none => .colored c ref body
 
+/-- A URL's text as its command sets it, in the family `fam`: each `~` as the `url` element's tilde
+declares, url.sty's `lowtilde` a script-size `\sim` raised 0.2ex. -/
+private def urlInk (ctx : Ctx) (url : String) (fam : Option Ir.Style) (pos : Pos) :
+    EM (Array Inline) := do
+  let low := (ctx.styles.find? "url").bind (·.tilde) == some .low
+  let parts ← if !low || !url.contains '~' then pure #[Inline.text url] else do
+    let sim ← elabMathInline ctx false #[.ctrl "sim" pos] pos
+    let tilde : Inline := .boxed
+      { raise := .lit { width := { ex := 200 } }, height := none, depth := none, ground := none,
+        frame := none, pad := {}, rule := {} } #[.styled (.size "scriptsize") #[sim]]
+    pure ((url.splitOn "~").zipIdx.foldl (fun (acc : Array Inline) (piece, i) =>
+      let acc := if i == 0 then acc else acc.push tilde
+      if piece.isEmpty then acc else acc.push (.text piece)) #[])
+  return match fam with
+    | some s => #[.styled s parts]
+    | none => parts
+
+/-- What url.sty's `\url`, `\nolinkurl` and `\path` set for `url`: a link for `\url`, in the face
+`\urlstyle` declares, and `\path` unlinked in typewriter whatever it declares. -/
+private def urlSet (ctx : Ctx) (name url : String) (pos : Pos) : EM (Array Inline) := do
+  let urlFamily := (← get).scope.urlFamily
+  let fam := if name == "path" then some .mono else urlFamily
+  let set ← urlInk ctx url fam pos
+  return if name == "url" then #[.link url (ctx.styles.linkInk "url" set)] else set
+
+/-- A box length through the shared length grammar: the box's own `\height`, `\depth`, `\width` and
+`\totalheight` as references to its content, local measures as page references, tokens as values;
+none where it cannot be read, named with what the box sets instead. -/
+private def readBoxDim (ctx : Ctx) (command role instead : String) (body : Array Raw) (pos : Pos) :
+    EM (Option (Affine Ir.BoxMeasure)) := do
+  let src := inlineLengthSrc ctx body
+  let tokens := ctx.tokens.entries ++ ctx.engineTokens
+  let parsed : Except String (Affine Ir.BoxMeasure) := do
+    let e ← Decl.parseLengthSyntax src
+    Affine.bind (fun n => match n with
+      | "height" => .ok (.ref .height)
+      | "depth" => .ok (.ref .depth)
+      | "width" => .ok (.ref .width)
+      | "totalheight" => .ok (.ref .totalHeight)
+      | _ => match Measure.ofName? n with
+        | some m => .ok (.ref (.page m))
+        | none => match tokens.find? (·.1 == n) with
+          | some (_, g) => .ok (.lit g)
+          | none => .error s!"'{n}' is not a declared token or local measure") e
+  let help := "write an affine dimension over local measures, the box's \\height, \\depth, \\width \
+or \\totalheight, points, em, or ex"
+  let why := match parsed with
+    | .ok e => if e.rigid then none else some "rubber is not a dimension"
+    | .error why => some (lengthFormError body why)
+  match parsed, why with
+  | .ok e, none => return some e
+  | _, _ =>
+    warnOnce ctx ("box:" ++ command ++ ":" ++ role ++ ":" ++ src) .W0107
+      s!"'\\{command}' takes its {role} from '{src}', a length this engine cannot read \
+({why.getD ""}): {instead}" pos (help := help)
+    return none
+
+/-- Whether a box length reads its content's height, depth or width, which a web page cannot
+measure. -/
+private def readsContent (e : Affine Ir.BoxMeasure) : Bool :=
+  e.anyRef fun m => !(m matches .page _)
+
+-- conserves: none — a line break inside a box breaks nothing, so the box drops it
+/-- A box's content as TeX's `\hbox` sets it: each line break dropped with the spaces before it,
+as latex.ltx's `\\` unskips and breaks nothing in restricted horizontal mode. -/
+private def hboxContent (xs : Array Inline) : Array Inline :=
+  Ir.mapInlines id xs (finish := fun ys => ys.foldl (fun out y => match y with
+    | .linebreak _ => (match out.back? with
+      | some (.text s) => out.pop.push (.text s.trimAsciiEnd.toString)
+      | _ => out)
+    | .text _ | .math .. | .formula .. | .styled .. | .colored .. | .located .. | .role ..
+    | .link .. | .label _ | .ref .. | .decorated .. | .boxed .. | .fill | .hspace .. | .rule ..
+    | .pageNumber | .pageCount | .strut _ | .italicCorr _ | .onSteps .. | .altSteps ..
+    | .image .. | .icon .. | .cite .. | .cited .. | .footnote .. => out.push y) #[])
+
+/-- Names a declared box extent its content's image, rule, frame or ground still claims beside it:
+the line measures those by their own height and depth. -/
+private def boxExtentNote (ctx : Ctx) (b : Ir.InlineBox) (content : Array Inline) (pos : Pos) :
+    EM Unit := do
+  let paints := Ir.foldInlines (fun found x => found || match x with
+    | .image .. | .rule .. => true
+    | .boxed inner _ => inner.ground.isSome || inner.frame.isSome
+    | _ => false) false content
+  -- premise: boxScopeChecks — a declared extent holds for a box's text alone
+  if (b.height.isSome || b.depth.isSome) && paints then
+    warnOnce ctx "raisebox:extent" .W0110
+      "a raised box's declared height and depth hold for its text; an image, rule, frame or ground \
+inside it still claims its own height and depth on the line" pos
+      (help := "an image's height option sets the height it takes on the line")
+      (trigger := "\\raisebox") (recovery := some .ignored)
+
+/-- A box parameter's assignment in running text (`\setlength{\fboxsep}{1pt}`), holding to the end
+of its group; a value the length reader cannot read leaves the parameter as it was, named. -/
+private def boxParamArm (ctx : Ctx) (which : String) (value : Array Raw) (pos : Pos) : EM Unit := do
+  let src := (rawSrc value).trimAscii.toString
+  let read : Option Dim.SymGlue :=
+    match Decl.parseValue src (ctx.tokens.entries ++ ctx.engineTokens) with
+    | some (.glue g) => some g
+    | some (.dim d) => some { width := Dim.Length.ofSp d }
+    | _ => none
+  match read with
+  | some g => modify fun st => { st with scope :=
+      if which == "fboxrule" then { st.scope with boxRule := some g }
+      else { st.scope with boxSep := some g } }
+  | none =>
+    warnOnce ctx ("length:" ++ which ++ ":" ++ src) .W0107
+      s!"'\\{which}' is set to '{src}', a value this engine cannot read: skipped, and the length \
+keeps its value" pos
+
+/-- The box `\raisebox`, `\colorbox`, `\fcolorbox` or `\fbox` declares and its content's index, a
+group or the one token TeX takes (a word's first character); none where a group it reads is not
+there. -/
+private def boxHead (ctx : Ctx) (name : String) (raws : Array Raw) (i : Nat) (pos : Pos) :
+    EM (Option (Ir.InlineBox × { k : Nat // i < k })) := do
+  let zero : Affine Ir.BoxMeasure := .lit ({} : Dim.SymGlue)
+  let scope := (← get).scope
+  let plain : Ir.InlineBox :=
+    { raise := zero, height := none, depth := none, ground := none, frame := none
+      pad := scope.boxSep.getD (Ir.skipAmount ctx.tokens "fboxsep")
+      rule := scope.boxRule.getD (Ir.skipAmount ctx.tokens "fboxrule") }
+  let content (b : Ir.InlineBox) (j : Nat) : Option (Ir.InlineBox × { k : Nat // i < k }) :=
+    let k := skipSpaces raws j
+    if h : i < k then
+      match raws[k]? with
+      | some (.group _ _) | some (.word _ _) | some (.ctrl _ _) | some (.sym _ _) => some (b, ⟨k, h⟩)
+      | _ => none
+    else none
+  let j0 := skipSpaces raws (i + 1)
+  if name == "raisebox" then
+    let some (.group lift _) := raws[j0]? | return none
+    let j1 := skipSpaces raws (j0 + 1)
+    let hRaws := bracketRunSrc raws j1
+    let j2 := skipBracketRun raws j1
+    let dRaws := if hRaws.isSome then bracketRunSrc raws j2 else none
+    let j3 := if dRaws.isSome then skipBracketRun raws j2 else j2
+    let raise ← readBoxDim ctx name "lift" "the content stands on the baseline" lift pos
+    let height ← hRaws.mapM fun r =>
+      readBoxDim ctx name "height" "the box keeps its content's height" r pos
+    let depth ← dRaws.mapM fun r =>
+      readBoxDim ctx name "depth" "the box keeps its content's depth" r pos
+    let (height, depth) := (height.join, depth.join)
+    let raise := raise.getD zero
+    -- premise: inlineBoxChecks — the web page reads a content measure as zero, and says so once
+    if readsContent raise || height.any readsContent || depth.any readsContent ||
+        height.isSome != depth.isSome then
+      warnOnce ctx "raisebox:content" .W0110
+        "a raised box reads its content's height, depth or width, which a web page cannot \
+measure; there it reads it as zero" pos
+        (help := "declare the box's lift, height and depth as lengths: \\raisebox{1ex}[1em][0pt]{...}")
+        (trigger := "\\raisebox") (recovery := some .ignored) (output := some .html)
+    return content { plain with raise, height, depth } j3
+  let model := (bracketRunSrc raws j0).map fun opt => (rawSrc opt).trimAscii.toString
+  let j := skipBracketRun raws j0
+  let paint (g : Array Raw) : EM (Option (Color × Option ColorRef)) := do
+    let source := argText ctx g
+    match ← readColor ctx ctx.palette model source pos with
+    | .resolved c ref =>
+      recordColorSpan ctx (match model with | some m => s!"{m}({source})" | none => source) c
+        ref.isSome pos
+      return some (c, ref)
+    | .missing =>
+      warnPaletteMiss ctx source pos
+      return none
+    | .rejected => return none
+  if name == "colorbox" then
+    let some (.group g _) := raws[skipSpaces raws j]? | return none
+    let ground ← paint g
+    return content { plain with ground } (skipSpaces raws j + 1)
+  if name == "fcolorbox" then
+    let k := skipSpaces raws j
+    let some (.group f _) := raws[k]? | return none
+    let some (.group g _) := raws[skipSpaces raws (k + 1)]? | return none
+    let frame ← paint f
+    let ground ← paint g
+    return content { plain with ground, frame := frame.map fun (c, ref) => .color c ref }
+      (skipSpaces raws (k + 1) + 1)
+  return content { plain with frame := some .ink } j0
+
 /-- Whether an alert in `c` sets on the mark `m`: a generated mark stands under the generated alert
 only, and not on a ground the accent reads on as text, where the alert takes its tone there. -/
 private def marksAlert (ctx : Ctx) (c m : Color) : Bool :=
@@ -4445,6 +4691,25 @@ private def keepsSize (bare : String) : Bool :=
   | ("fontsize", some v) => let v := listingVal v; v.isEmpty || v == "auto" || v == "\\relax"
   | _ => false
 
+/-- A `\lstinline`'s options as inline code reads them: its language apart, a display's keys dropped,
+and a `basicstyle` of `\ttfamily` and size commands as the size its code sets in. -/
+private def lstInlineEntries (opts : String) : Option String × String :=
+  let entries := (KeyVal.items opts).toList.filter fun e =>
+    !Compat.listingDisplayKeys.contains (((KeyVal.pair? e).map (·.1)).getD e)
+  let lang := entries.foldl (fun l e => match KeyVal.pair? e with
+    | some ("language", v) => some (listingVal v)
+    | _ => l) none
+  let kept := entries.filterMap fun e => match KeyVal.pair? e with
+    | some ("language", _) => none
+    | some ("basicstyle", v) =>
+      let names := ((listingVal v).splitOn "\\").map (·.trimAscii.toString)
+      let sizes := names.tail.filter (· != "ttfamily")
+      if (names.headD "").isEmpty && sizes.all (fun n => Ir.sizeScale.any (·.1 == n)) then
+        sizes.getLast?.map ("fontsize=\\" ++ ·)
+      else some e
+    | _ => some e
+  (lang, ",".intercalate kept)
+
 private def noteFormatcom (ctx : Ctx) (pos : Pos) : EM Unit :=
   warnOnce ctx "lstopt:formatcom" .N0102
     "minted's formatcom runs TeX on the Pygments formatter's macros, which only a TeX \
@@ -4491,7 +4756,8 @@ private structure InlineCodeOpts where
 
 /-- Inline code's options as minted reads them there; a key inline code does
 not honour is named. -/
-private def inlineCodeOpts (ctx : Ctx) (opts : String) (pos : Pos) : EM InlineCodeOpts := do
+private def inlineCodeOpts (ctx : Ctx) (opts : String) (pos : Pos) (listings : Bool := false) :
+    EM InlineCodeOpts := do
   let unhonoured (item key msg : String) (help : Option String) : EM Unit := do
     noteMentions item
     warnOnce ctx ("lstopt:" ++ msg ++ ":" ++ key) .W0110 msg pos (help := help)
@@ -4518,9 +4784,13 @@ private def inlineCodeOpts (ctx : Ctx) (opts : String) (pos : Pos) : EM InlineCo
 around it stands" "use a named size command such as fontsize=\\small, or fontsize=\\relax"
     | some ("style", v) =>
       let v := listingVal v
-      match Ir.ListingStyle.ofName? v with
-      | some selected => o := { o with style := some selected }
-      | none =>
+      -- listings' `style` names an `\lstdefinestyle` style, minted's a highlighting style.
+      match Ir.ListingStyle.ofName? v, listings with
+      | some selected, false => o := { o with style := some selected }
+      | _, true =>
+        unhonoured bare key s!"listing named style '{v}' is not supported; the current style stands"
+          none
+      | none, false =>
         unhonoured bare key s!"listing style '{v}' is not supported; the current style stands"
           "use style=default or style=friendly"
     | some ("tabsize", v) =>
@@ -4588,8 +4858,14 @@ private def inlineCodeOf (ctx : Ctx) (lang : Option Ir.ListingLang) (lines : Arr
     | none => code
 
 /-- Verbatim inside inline content: `\verb` in the mono face, `\mintinline`
-as inline code, and a display listing named and set as inline code. -/
+as inline code, url.sty's delimited commands as their braced forms, and a display listing named
+and set as inline code. -/
 private def inlineVerbatim (ctx : Ctx) (env s : String) (pos : Pos) : EM (Array Inline) := do
+  if Lex.urlCommands.contains env then
+    -- url.sty's delimited argument: the text between its delimiter's two copies.
+    let inner := (s.drop 1).toString
+    let d := String.ofList (s.toList.take 1)
+    return ← urlSet ctx env (if inner.endsWith d then (inner.dropEnd 1).toString else inner) pos
   if env == "verb" then
     let kept := s.map fun c => if c == ' ' then '\u00a0' else c
     return if kept.isEmpty then #[] else #[.styled .mono #[.text kept]]
@@ -4605,6 +4881,13 @@ display there, or cannot set it" pos
     let o ← inlineCodeOpts ctx opts pos
     let lang ← codeLanguage ctx rawLang true pos
     return ← inlineCodeOf ctx lang #[bindCodeParams ctx (Parse.mintedCode s afterLang)] o
+  if env == "lstinline" then
+    let (rawLang, rest) := lstInlineEntries opts
+    let o ← inlineCodeOpts ctx rest pos (listings := true)
+    let lang ← match rawLang with
+      | some l => codeLanguage ctx l false pos
+      | none => pure none
+    return ← inlineCodeOf ctx lang #[bindCodeParams ctx (Parse.mintedCode s afterOpt)] o
   let lines := Ir.verbatimLines (s.drop (listingContentStart env s)).toString
   let (rawLang, opts) : Option String × String :=
     if env == "minted" then (((Parse.mintedLangHead s afterOpt).map (·.1)), opts)
@@ -4946,10 +5229,18 @@ private def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
             else ⟨i + 1, Nat.le_refl _⟩
           have _ : sliceWeight raws next < sliceWeight raws i :=
             Nat.lt_of_le_of_lt (sliceWeight_le raws hnext) hadv1
-          let a1 ← elabInlinesCore envCtx env.beginBody
-          let a2 ← elabInlinesCore ctx inner
-          let a3 ← elabInlinesCore envCtx env.endBody
-          elabInlinesFrom ctx raws next (acc ++ a1 ++ a2 ++ a3) ""
+          -- premise: inlineEnvScopeChecks — the begin code runs first and its open declarations
+          -- span the content and the end code, the environment one group
+          let halves : Ctx := { envCtx with args := envCtx.args.push (envContentArg, some #[envContentMark]) }
+          let literal := declaresMono env.beginBody
+          let set ← inlineGroup ctx.palette do
+            let opened ← elabInlinesCore halves
+              (env.beginBody.push (.ctrl envContentArg { pos with origins := [] }))
+            let content ← elabInlinesCore { ctx with literalText := ctx.literalText || literal } inner
+            let closed ← elabInlinesCore { halves with literalText := halves.literalText || literal }
+              env.endBody
+            pure (placeEnvContent opened (content ++ closed))
+          elabInlinesFrom ctx raws next (acc ++ set) ""
         | none =>
         if reservedEnv.contains name then
           warnOnce ctx ("env:" ++ name) .W0307
@@ -5326,22 +5617,16 @@ no extent is reserved for it" pos
           | _ =>
             diag ctx .E0304 s!"'\\{name}' needs a \{tt|rm|sf|same} group" pos
             elabInlinesFrom ctx raws (i + 1) acc sb
-        else if name == "url" || name == "nolinkurl" then
+        else if name == "url" || name == "nolinkurl" || name == "path" then
           let j := skipSpaces raws (i + 1)
           have hjge := skipSpaces_ge raws (i + 1)
-          let fam := (← get).scope.urlFamily
           match hj : raws[j]? with
           | some (.group urlRaw _) =>
-            have hjlt := getElem?_lt hj
-            let url := argText ctx urlRaw
-            let set : Ir.Inline := match fam with
-              | some s => .styled s #[.text url]
-              | none => .text url
-            have hadv : sliceWeight raws (j + 1) < sliceWeight raws i :=
+            have _hjlt := getElem?_lt hj
+            let set ← urlSet ctx name (argText ctx urlRaw) pos
+            have _hadv : sliceWeight raws (j + 1) < sliceWeight raws i :=
               sliceWeight_lt raws h (by omega)
-            elabInlinesFrom ctx raws (j + 1)
-              ((flushText acc sb).push
-                (if name == "url" then .link url (ctx.styles.linkInk "url" #[set]) else set)) ""
+            elabInlinesFrom ctx raws (j + 1) (flushText acc sb ++ set) ""
           | _ =>
             diag ctx .E0304 s!"'\\{name}' needs a \{url} group" pos
             elabInlinesFrom ctx raws (i + 1) acc sb
@@ -5377,6 +5662,44 @@ private def elabInlinesCtrl (ctx : Ctx) (raws : Array Raw) (i : Nat)
     let acc := match node with | some x => acc.push x | none => acc
     have _ : sliceWeight raws j < sliceWeight raws i := sliceWeight_lt raws h hj
     elabInlinesFrom ctx raws j acc ""
+  else if Ir.boxCommands.contains name then
+    let acc := flushText acc sb
+    match ← boxHead ctx name raws i pos with
+    | some (b, ⟨k, hk⟩) =>
+      have _ : sliceWeight raws (k + 1) < sliceWeight raws i := sliceWeight_lt raws h (by omega)
+      match hb : raws[k]? with
+      | some (.group body _) =>
+        have _ : rawWeightList body.toList < sliceWeight raws i :=
+          body_lt_slice hb (by simp only [rawWeight]; omega) (by omega)
+        let inner ← inlineGroup ctx.palette (elabInlinesCore ctx body)
+        boxExtentNote ctx b inner pos
+        elabInlinesFrom ctx raws (k + 1) (acc.push (.boxed b (hboxContent inner))) ""
+      | some (.word s p) =>
+        -- TeX's argument is the word's first character; the rest follows the box.
+        let rest := (s.drop 1).toString
+        let after := if rest.isEmpty then #[] else wordInlines ctx rest { p with col := p.col + 1 }
+        elabInlinesFrom ctx raws (k + 1)
+          (acc.push (.boxed b (wordInlines ctx (String.ofList (s.toList.take 1)) p)) ++ after) ""
+      | some (.ctrl _ _) | some (.sym _ _) =>
+        -- A control or a special character is the one token TeX takes as the argument.
+        have _ : rawWeightList (raws.extract k (k + 1)).toList < sliceWeight raws i :=
+          extract_lt_slice (k + 1) h hk
+        let inner ← inlineGroup ctx.palette (elabInlinesCore ctx (raws.extract k (k + 1)))
+        boxExtentNote ctx b inner pos
+        elabInlinesFrom ctx raws (k + 1) (acc.push (.boxed b (hboxContent inner))) ""
+      | _ => elabInlinesFrom ctx raws (i + 1) acc ""
+    | none =>
+      diag ctx .E0304 s!"'\\{name}' needs its \{...} groups" pos
+      elabInlinesFrom ctx raws (i + 1) acc ""
+  else if let some which := Compat.boxParamOf? name then
+    let j := skipSpaces raws (i + 1)
+    have hjge := skipSpaces_ge raws (i + 1)
+    match raws[j]? with
+    | some (.group value _) =>
+      boxParamArm ctx which value pos
+      have _ : sliceWeight raws (j + 1) < sliceWeight raws i := sliceWeight_lt raws h (by omega)
+      elabInlinesFrom ctx raws (j + 1) acc sb
+    | _ => elabInlinesFrom ctx raws (i + 1) acc sb
   else if name == "includegraphics" || name == "animategraphics" then
     let (node, ⟨j, hj⟩) ← imageArm ctx raws i pos (name == "animategraphics")
     let acc := flushText acc sb
@@ -5877,9 +6200,11 @@ public def recoversInlineName (ctx : Ctx) (name : String) : Bool :=
   (ctx.args.find? (·.1 == name)).isNone && (lookupUser ctx name).isNone &&
   !["hfill", "qedhere", "ensuremath", "\\", "par", "label", "paragraph",
     "subparagraph", "hyperlink", "hypertarget", "href", "link", "urlstyle", "url",
-    "nolinkurl", "hspace", "rule", "includegraphics", "animategraphics", "faIcon",
+    "nolinkurl", "path", "hspace", "rule", "includegraphics", "animategraphics", "faIcon",
     "pagenumber", "pagecount", "textcolor", "ifgiven", "alt", "pause", "note",
     "centering", "footnote", "thanks", Parse.markdownImageControl].contains name &&
+    !Ir.boxCommands.contains name &&
+  (Compat.boxParamOf? name).isNone &&
   (accentMarkOf name).isNone && (escapeOf name).isNone &&
   (Lex.textSymbols.lookup name).isNone && (modifierStyle? name).isNone &&
   (decorationCtrls.lookup name).isNone && (phantomAxes.lookup name).isNone &&
@@ -6350,14 +6675,15 @@ private def classPageDefaults (record : Ir.ClassRecord) (opts : List String)
 /-- Class options asking for what a page model's class already is, each with why. -/
 public def classOptionsInert : List (Ir.PageModel × List (String × String)) :=
   let final := ("final", "the document is rendered in full, as without the option")
-  let opensNoPage := "a part or chapter here opens no page of its own, so where one would open \
-changes nothing"
+  let opensNoPage := "the pages are one-sided, so a chapter opens wherever the next page falls, \
+as without the option"
   [(.flow, [("oneside", "the page is one-sided, as without the option"),
      ("twoside=false", "the page is one-sided, as without the option"),
      ("onecolumn", "the text is set in one column, as without the option"),
      final,
      ("reqno", "equation numbers stand on the right, as without the option"),
      ("openany", opensNoPage), ("open=any", opensNoPage), ("headings=openany", opensNoPage),
+     ("openright", opensNoPage),
      ("titlepage=false", "the title opens the first page, as without the option"),
      ("version=last", "the layout is KOMA-Script's current one, as without the option"),
      ("footinclude=false", "the foot stands below the text block, as without the option")]),
@@ -6369,7 +6695,7 @@ changes nothing"
 
 /-- The bare class options each page model's readers read beside a body size and a paper size. -/
 public def classOptionFlags : List (Ir.PageModel × List String) :=
-  [(.flow, ["landscape", "twoside"]), (.frame, ["t", "slidestop", "noamsthm"]),
+  [(.flow, ["landscape", "twoside", "chapters"]), (.frame, ["t", "slidestop", "noamsthm"]),
    (.face, ["us", "jis"])]
 
 /-- The class options the abstract's form reads in the flow model (`abstractFormUnder`). -/
@@ -6420,6 +6746,11 @@ private def columnWidth (ctx : Ctx) (src : String) : Option Ir.BoxWidth := Id.ru
         else return none
       | none => return none
 
+/-- The verbatim captures that always run inline: `\verb`, the inline code commands and url.sty's
+delimited commands. -/
+private def verbAlwaysInline (env : String) : Bool :=
+  env == "verb" || env == "mintinline" || env == "lstinline" || Lex.urlCommands.contains env
+
 mutual
 
 /-- Whether one raw makes a body block content, as `elabBlocks`' boundary
@@ -6434,7 +6765,7 @@ private def bodyIsBlockOne : Raw → Bool
       || (Compat.lengthRestoreKeys? n).isSome
       || (blockHeading? n).isSome
   | .par _ => true
-  | .verb env _ _ => env != "verb" && env != "mintinline"
+  | .verb env _ _ => !verbAlwaysInline env
   | .math display _ _ => display
   | .env n body _ =>
     if (Parse.inputEnvFile? n).isSome then bodyIsBlockList body.toList
@@ -6497,7 +6828,7 @@ private def sectionNumber (ctx : Ctx) (level : Nat) (starred : Bool) :
   -- beamer's `\thesubsection` is `\arabic{subsection}` alone
   let num := if deck && (st.ctr.secFmts.findRev? (·.1 == level)).isNone then
       ListMark.arabicN (counterAt nums level)
-    else renderSecLevel st.ctr.secFmts nums st.ctr.inAppendix secFmtFuel level
+    else renderSecLevel st.ctr.secFmts nums (secBase st.ctr) secFmtFuel level
   modify fun st => { st with ctr := { st.ctr with secNums := nums, runNums := (0, 0) }
                              refTarget := some { kind := some .heading, num := num } }
   return if deck then none else some num
@@ -6511,6 +6842,30 @@ private def contentsStyle (parts : List String) : Option (List Ir.ContentsShow) 
     | "hide" => some .hidden
     | _ => none
   parts.mapM word
+/-- Steps the chapter counter at a numbered chapter of the main matter, its sections and footnotes
+restarting within it (report.cls's `\@addtoreset`); the number it ships, and whether lettered. -/
+private def chapterNumber (ctx : Ctx) (starred : Bool) : EM (Option (String × Bool)) := do
+  let st ← get
+  if starred || !ctx.numberHeadings || st.ctr.secDepth < 0 || !st.ctr.mainMatter then return none
+  let ctr := { st.ctr with chapNum := st.ctr.chapNum + 1, secNums := (0, 0, 0), runNums := (0, 0),
+                           fnNum := 0 }
+  let num := chapterLabel ctr
+  modify fun st => { st with ctr := ctr, refTarget := some { kind := some .chapter, num := num } }
+  return some (num, ctr.inAppendix)
+
+/-- Whether a captioned float or listing stands after a numbered chapter, its number one a chapter
+would restart. -/
+private def chapterFloats (blocks : Array Block) : Bool := Id.run do
+  let mut chaptered := false
+  for b in blocks do
+    if b matches .section .h1 _ (some _) _ then chaptered := true
+    else if chaptered && Ir.foldBlocks (fun acc x => acc || match x with
+        | .float _ _ _ _ caption => !caption.isEmpty
+        | .verbatim _ _ spec => spec.caption.isSome
+        | _ => false) (fun acc _ => acc) false #[b] then
+      return true
+  return false
+
 
 /-- What a `\tableofcontents` declares where it stands: the depth it lists to and, in a deck, the
 section and subsection in force and how its options set the entries about them (beamerbasetoc.sty);
@@ -6569,27 +6924,6 @@ private def setSectionInForce (level : Nat) (title head : Array Inline) : EM Uni
                    subsectionNum := toString s2 }
       else cur
     { st with scope := { st.scope with sectionInForce := next } }
-
-/-- A heading's block from its title's and short title's raws: numbered, its short title held for
-the contents and bookmarks (`Ir.Doc.shortTitles`), a deck's section set in force. -/
-private def headingArm (ctx : Ctx) (n : String) (level : Nat) (starred : Bool)
-    (short : Option (Array Raw)) (title : Array Raw) (blocks : Array Block) : EM (Array Block) := do
-  let title ← elabInlines ctx title
-  let number ← sectionNumber ctx level starred
-  let words := Ir.plainText title
-  let nth := ((← get).headingCounts.getD (number, words) 0)
-  unless starred do
-    modify fun st => { st with headingCounts := st.headingCounts.insert (number, words) (nth + 1) }
-  let head ← match short with
-    | some s =>
-      let s ← elabInlines ctx s
-      unless starred do
-        modify fun st =>
-          { st with headingShorts := st.headingShorts.push { number, words, nth, short := s } }
-      pure s
-    | none => pure title
-  if ctx.slides && !ctx.inFrame then setSectionInForce level title head
-  return blocks.push (.section ((blockHeading? n).getD .h2) starred number title)
 
 /-- A hook's `[starred]` code, its `{code}` group and the index past them, after its control word. -/
 private def hookArgsAt (raws : Array Raw) (i : Nat) :
@@ -7194,7 +7528,7 @@ private def trimParaOne (leading : Bool) : Inline → Array Inline × Bool
   | .label name => (#[.label name], leading)
   | .linebreak g => if leading then (#[.linebreak g], false) else (#[], true)
   | x@(.math ..) | x@(.formula ..) | x@(.styled ..)
-  | x@(.colored ..) | x@(.link ..) | x@(.ref ..) | x@(.decorated ..)
+  | x@(.colored ..) | x@(.link ..) | x@(.ref ..) | x@(.decorated ..) | x@(.boxed ..)
   | x@(.fill) | x@(.hspace ..) | x@(.rule ..) | x@(.pageNumber)
   | x@(.pageCount) | x@(.strut ..) | x@(.italicCorr ..)
   | x@(.onSteps ..) | x@(.altSteps ..) | x@(.image ..)
@@ -9422,7 +9756,7 @@ private def verbRunsInline (env s : String) (cur raws : Array Raw) (i : Nat) : B
   let text (r : Raw) : Bool := match r with
     | .word .. => true
     | .math display _ _ => !display
-    | .verb e _ _ => e == "verb" || e == "mintinline"
+    | .verb e _ _ => verbAlwaysInline e
     | _ => false
   let after : Bool := Id.run do
     for k in [i + 1:raws.size] do
@@ -9430,7 +9764,7 @@ private def verbRunsInline (env s : String) (cur raws : Array Raw) (i : Nat) : B
       if text r then return true
       if bodyIsBlockOne r then return false
     return false
-  env == "verb" || env == "mintinline" ||
+  verbAlwaysInline env ||
     ((env == "minted" || env == "lstlisting") && !s.contains '\n' && (cur.any text || after))
 
 /-- A listing block from a lexically blind capture, honouring the supported
@@ -9646,6 +9980,45 @@ private def definedOr (ctx : Ctx) (name : String) (pos : Pos) (dflt : EM (Array 
     EM (Array Inline) := do
   if (lookupUser ctx name).isSome then elabInlines ctx #[.ctrl name pos] else dflt
 
+/-- A chapter's head label, report.cls's `\@chapapp\space\thechapter`: `\chaptername`, or
+`\appendixname` after `\appendix`, as the document declares or the language names it. -/
+private def chapterHead (ctx : Ctx) (starred : Bool) (pos : Pos) : EM (Option String) := do
+  let some (num, lettered) ← chapterNumber ctx starred | return none
+  let word ← if lettered then definedOr ctx "appendixname" pos (pure #[.text ctx.locale.appendix])
+    else definedOr ctx "chaptername" pos (pure #[.text ctx.locale.chapter])
+  return some s!"{Ir.plainText word} {num}"
+
+/-- A heading control as its messages name it. -/
+private def headingShown (n : String) : String :=
+  if n == Parse.chapterControl then "chapter" else n
+
+/-- A heading's number: a chapter's head label, or a section's number at its level. -/
+private def headingNumber (ctx : Ctx) (n : String) (level : Nat) (starred : Bool) (pos : Pos) :
+    EM (Option String) :=
+  if n == Parse.chapterControl then chapterHead ctx starred pos else sectionNumber ctx level starred
+
+/-- A heading's block from its title's and short title's raws: numbered, its short title held for
+the contents and bookmarks (`Ir.Doc.shortTitles`), a deck's section set in force. -/
+private def headingArm (ctx : Ctx) (n : String) (level : Nat) (starred : Bool)
+    (short : Option (Array Raw)) (title : Array Raw) (pos : Pos) (blocks : Array Block) :
+    EM (Array Block) := do
+  let title ← elabInlines ctx title
+  let number ← headingNumber ctx n level starred pos
+  let words := Ir.plainText title
+  let nth := ((← get).headingCounts.getD (number, words) 0)
+  unless starred do
+    modify fun st => { st with headingCounts := st.headingCounts.insert (number, words) (nth + 1) }
+  let head ← match short with
+    | some s =>
+      let s ← elabInlines ctx s
+      unless starred do
+        modify fun st =>
+          { st with headingShorts := st.headingShorts.push { number, words, nth, short := s } }
+      pure s
+    | none => pure title
+  if ctx.slides && !ctx.inFrame then setSectionInForce level title head
+  return blocks.push (.section ((blockHeading? n).getD .h2) starred number title)
+
 /-- The `\qedsymbol` in force; by default amsthm's box, the math face's □. -/
 private def qedMark (ctx : Ctx) (pos : Pos) : EM (Array Inline) :=
   definedOr ctx "qedsymbol" pos (return #[← elabMathInline ctx false #[.ctrl "square" pos] pos])
@@ -9679,16 +10052,19 @@ private def withinSnap (c : Counters) : Option Nat → String
   | some lvl =>
     let (s1, s2, s3) := c.secNums
     let levels := match lvl with
+      | 0 => ""
       | 1 => s!"{s1}"
       | 2 => s!"{s1}.{s2}"
       | _ => s!"{s1}.{s2}.{s3}"
-    (if c.inAppendix then "A" else "") ++ levels
+    (if c.inAppendix then "A" else "") ++ (if c.chapters then s!"{c.chapNum}:" else "") ++ levels
 
 /-- `\the<counter>` for value `v`: `\arabic`, after `\the<within>.` when
 numbered within a heading counter. -/
 private def withinNumber (c : Counters) (within : Option Nat) (v : Nat) : String :=
   match within with
-  | some lvl => s!"{renderSecLevel c.secFmts c.secNums c.inAppendix secFmtFuel lvl}.{v}"
+  -- report.cls's `\theequation`: `\thechapter.` only once a chapter is numbered.
+  | some 0 => if c.chapNum > 0 then s!"{chapterLabel c}.{v}" else toString v
+  | some lvl => s!"{renderSecLevel c.secFmts c.secNums (secBase c) secFmtFuel lvl}.{v}"
   | none => toString v
 
 /-- Steps the equation counter and renders `\theequation`, restarting within
@@ -10750,6 +11126,9 @@ private def algIoOf (kws : Array (String × AlgKwDef)) (acx : Bool) (name : Stri
     Option Ir.AlgIo :=
   match ((kws.find? (·.1 == name)).map (·.2) : Option AlgKwDef) with
   | some (.io label) => some (.named label (some site))
+  | some (.inout label) => some (.aligned label (some site) (kws.filterMap fun (_, d) => match d with
+    | .inout w => some w
+    | _ => none))
   | some _ => none
   | none => if acx then none else algA2eIo.lookup name
 
@@ -10793,6 +11172,16 @@ private def algAcxEnds : List (String × Ir.AlgOpen) :=
 content group. -/
 private def algAcxRefused : List String := ["Loop", "EndLoop"]
 
+/-- Whether xspace, which algorithm2e's data words end with, adds a space before `next`: not before
+its exceptions (`,.'/?;:!~-)`, a control space or italic correction, a group's end, a footnote),
+algorithm2e's statement end, which sets its `;` first, nor where the line ends. -/
+private def xspaceAdds : Option Raw → Bool
+  | none | some .space | some (.par _) => false
+  | some (.word w _) => !(",.'/?;:!~-)".toList.contains (w.toList.headD ' '))
+  | some (.sym c _) => !(",.'/?;:!~-)".toList.contains c)
+  | some (.ctrl n _) => ![" ", "/", ";", "footnote", "footnotemark"].contains n
+  | some (.group ..) | some (.math ..) | some (.env ..) | some (.verb ..) => true
+
 /-- Rewrites document-defined algorithm keywords in content raws to the
 styled text algorithm2e prints. -/
 private def algSubstList (kws : Array (String × AlgKwDef)) (out : Array Raw) :
@@ -10806,12 +11195,20 @@ private def algSubstList (kws : Array (String × AlgKwDef)) (out : Array Raw) :
       -- the space TeX ate after the control word returns beside the word
       algSubstList kws
         (((out.push (.ctrl "textbf" p)).push (.group w p)).push .space) rest
-    | some (.io label) =>
+    | some (.io label) | some (.inout label) =>
       algSubstList kws
         ((out.push (.ctrl "textbf" p)).push (.group #[.word (label ++ ":") p] p)) rest
     | some (.data name) =>
-      algSubstList kws
-        ((out.push (.ctrl "textsf" p)).push (.group name p)) rest
+      match rest with
+      | .group arg gp :: rest2 =>
+        -- `\Kw{arg}`: the word and its parentheses in algorithm2e's DataSty, the argument in ArgSty.
+        let out := (out.push (.ctrl "textsf" p)).push (.group (name.push (.word "(" gp)) p)
+        let out := (out.push (.ctrl "textnormal" gp)).push
+          (.group #[.ctrl "emph" gp, .group (algSubstList kws #[] arg.toList) gp] gp)
+        algSubstList kws ((out.push (.ctrl "textsf" gp)).push (.group #[.word ")" gp] gp)) rest2
+      | other =>
+        let out := (out.push (.ctrl "textsf" p)).push (.group name p)
+        algSubstList kws (if xspaceAdds other.head? then out.push .space else out) other
     | some (.func name) =>
       let out := (out.push (.ctrl "textsc" p)).push (.group name p)
       match rest with
@@ -10940,6 +11337,8 @@ private def algorithmLines (ctx : Ctx) (acx : Bool) (body : Array Raw)
               modify fun st => { st with alg := { st.alg with
                 kws := Ir.redeclare st.alg.kws key (.func val) } }
             else if name == "SetKwData" then kws := Ir.redeclare kws key (.data val)
+            else if name == "SetKwInOut" then
+              kws := Ir.redeclare kws key (.inout (Ir.plainText (← elabInlines ctx val)))
             else kws := Ir.redeclare kws key (.io (Ir.plainText (← elabInlines ctx val)))
           | _, _ =>
             diag ctx .E0304 s!"'\\{name}' needs its \{name}\{text} groups" p
@@ -11434,7 +11833,7 @@ private def isBlockStart (ctx' : Ctx) (n : String) (raws : Array Raw) (i : Nat)
   let n := Compat.overlayName n
   n == "par" || n == "block" || n == "centering" || n == "pause"
     || (Ir.raggedSideOf? n).isSome
-    || n == "framefoot" || n == "pagebreak" || n == "appendix"
+    || n == "framefoot" || n == "pagebreak" || n == "appendix" || (Compat.matterOf? n).isSome
     || (ctx'.slides && (n == "AtBeginSection" || n == "AtBeginSubsection"
       || Ir.isSectionHookName n || isSectionPageCtrl n))
     || n == Compat.frameRestartMark || n == Compat.vspaceAnchorMark
@@ -11682,7 +12081,7 @@ private def columnPosOf (cbody : Array Raw) (cpos : Pos) : Ir.BoxPos × Nat :=
   | _ => (.top, skipSpaces cbody 0)
 
 /-- The flow-state update a declaration between blocks makes: a language
-switch, a frame-count restart, or `\appendix`. -/
+switch, a frame-count restart, `\appendix`, or a book's division. -/
 private def flowDecl? (ctx : Ctx) (n : String) (next : Nat) : Option (ESt → ESt) :=
   if let some tag := Marker.value? .lang n then some (flowLangUpdate ctx tag)
   else if n == Compat.frameRestartMark then
@@ -11690,7 +12089,12 @@ private def flowDecl? (ctx : Ctx) (n : String) (next : Nat) : Option (ESt → ES
   -- beamer's `\appendix` opens a part, which numbers no section anew
   else if n == "appendix" then
     if ctx.slides then some id
-    else some fun st => { st with ctr := { st.ctr with inAppendix := true, secNums := (0, 0, 0) } }
+    -- report.cls's `\appendix` also sets `\thechapter` to `\Alph`.
+    else some fun st => { st with ctr := { st.ctr with inAppendix := true, secNums := (0, 0, 0),
+                                                        chapNum := 0,
+                                                        secFmts := st.ctr.secFmts.filter (·.1 != 0) } }
+  else if let some main := Compat.matterOf? n then
+    some fun st => { st with ctr := { st.ctr with mainMatter := main } }
   else none
 
 /-- The tokens a `\block`'s `before` reads: the document's, then the engine's
@@ -12652,20 +13056,21 @@ when it is empty — '{}'")
       | some (.word "*" _) => ⟨i + 2, by omega⟩
       | _ => ⟨i + 1, by omega⟩
     let i1 := i1p.1
+    let shown := headingShown n
     let short := shortTitleRaws raws i1 pos
-    let (⟨j, hj⟩, recovered, junk) ← skipOptArg ctx n raws i1 pos
+    let (⟨j, hj⟩, recovered, junk) ← skipOptArg ctx shown raws i1 pos
     if let some p ← mkPara ctx junk then
       blocks := blocks.push p
     match raws[j]? with
     | some (.group title _) =>
-      blocks ← headingArm ctx n level starred short title blocks
+      blocks ← headingArm ctx n level starred short title pos blocks
       return (blocks, ⟨j + 1, by omega⟩)
     | _ =>
       if recovered then
-        warnSkippedDecl ctx n pos
+        warnSkippedDecl ctx shown pos
         return (blocks, ⟨j, by omega⟩)
       else
-        diag ctx .E0304 s!"'\\{n}' needs a \{title}" pos
+        diag ctx .E0304 s!"'\\{shown}' needs a \{title}" pos
         return (blocks, ⟨i + 1, by omega⟩)
 termination_by (ctx.envLimit, noteFlag ctx,
   visParsGo ctx.user ctx.limit + slicePars raws i,
@@ -14441,6 +14846,13 @@ institute, or date, got '{vt}'" pos
         if let some v ← asColor then st := { st with focus := some v }
       | "color" =>
         if let some v ← asColor then st := { st with color := some v }
+      | "tilde" =>
+        match valueSrc.trimAscii.toString with
+        | "low" => st := { st with tilde := some .low }
+        | "glyph" => st := { st with tilde := some .glyph }
+        | v =>
+          diag ctx .E0323 s!"'tilde' in '\\style' expects low or glyph, got '{v}'" pos
+            (help := "write tilde = low for url.sty's lowtilde")
       | "motion" =>
         let v := valueSrc.trimAscii.toString
         let digits := if v.endsWith "ms" then (v.dropEnd 2).toString.trimAscii.toString else v
@@ -15485,6 +15897,10 @@ public def applyDecl (s : PreState) (d : PDecl) : EM PreState := do
     let s := match options with
       | some o => { s with classOptions := o }
       | none => s
+    -- report.cls: chapters, `secnumdepth` 2, and equations numbered within each chapter.
+    if (KeyVal.items (options.getD "")).contains "chapters" then
+      modify fun st => { st with ctr := { st.ctr with chapters := true, secDepth := 2,
+                                                       eqWithin := some 0 } }
     match cls with
     | some named =>
       match Ir.DocClass.ofString? named with
@@ -16010,6 +16426,7 @@ its declared layout" pos
         if name == "SetKw" then pure (.word val)
         else if name == "SetKwFunction" then pure (.func val)
         else if name == "SetKwData" then pure (.data val)
+        else if name == "SetKwInOut" then pure (.inout (Ir.plainText (← elabInlines s.ctx val)))
         else pure (.io (Ir.plainText (← elabInlines s.ctx val)))
       modify fun st => { st with alg := { st.alg with kws := Ir.redeclare st.alg.kws key kd } }
       return s
@@ -16998,6 +17415,11 @@ marks its level" (some pos) (help := some s!"redefine it as text, a symbol or a 
     let mut output := output
     let mut info := info
     finishBeamerColors ctx
+    if (← get).ctr.chapters && chapterFloats blocks then
+      modify fun st => { st with diags := st.diags.push (diagOf ctx .W0110
+        "figure, table, algorithm and listing numbers run through the document, where the class \
+and listings number them within each chapter" none (subject := some "chapters:floats")
+        (help := "\\ref names each by the number it carries here")) }
     let pictureReport : PictureReportContext := { ctx, offset := (← get).diags.size }
     let stRefs ← get
     -- A deck's frame label takes its frame's number, and every label the title of what it names.
@@ -17125,6 +17547,7 @@ the .bib file"
       docClass := docClass
       surface := surface
       classOptions := classOptions
+      chapters := (← get).ctr.chapters
       abstractForm := s.abstractForm.getD (abstractFormUnder record.abstractForm classOpts)
       page := page
       fonts := fonts
