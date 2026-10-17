@@ -282,6 +282,10 @@ def sectionPageChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
     (outlineHook ++ "\n" ++ sectioned) hooked
   verify ref fonts "the document's empty hook replaces the theme's"
     "\\theme{moloch}\n\\AtBeginSection{}" sectioned pageless
+  verify ref fonts "moloch's sectionpage=none sets none, as its own empty hook"
+    "\\usetheme[sectionpage=none]{moloch}" sectioned pageless
+  verify ref fonts "moloch's sectionpage=progressbar keeps the theme's"
+    "\\usetheme[sectionpage=progressbar]{moloch}" sectioned themed
   verify ref fonts "the document's subsection hook"
     "\\theme{default}\n\\AtBeginSubsection{\\begin{frame}{Sub}SubWords\\end{frame}}" sectioned
     { pages := #[(.frame, "OpeningWords"), (.frame, "FirstWords"), (.section, "Alpha Detail"),
@@ -361,6 +365,10 @@ def sectionPageChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
       anchors := #[("Late Part", "TwoWords")]
       headings := #[("h2", "Late Part", "TwoWords")] }
   let t := fun claim => check ref ("section pages / " ++ claim)
+  for opt in ["none", "progressbar"] do
+    let ds := (elabStr (deck169 s!"\\usetheme[sectionpage={opt}]\{moloch}" sectioned)).2
+    t s!"moloch's sectionpage={opt} is read, never skipped ({ds.toList.map (·.code)})"
+      (!ds.any (·.code == "W0104"))
   let census (pre : String) := censusOfSrc fonts (deck169 pre sectioned)
   for pre in ["\\theme{default}", "\\theme{moloch}"] do
     let c := census pre

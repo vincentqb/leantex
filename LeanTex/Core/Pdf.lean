@@ -2095,7 +2095,7 @@ public def iccRows (t : ObjTable) (profile : Option ByteArray) : Array Row :=
   | some _, none | none, _ => #[]
 
 /-- The explicit destination a landing is (§12.3.2.2): its line's left edge and ink top, its
-picture's top-left corner, or the first page's, the reader's zoom kept. -/
+picture's top-left corner, or its page's or the first page's, the reader's zoom kept. -/
 public def destObj (t : ObjTable) (geom : Geom) (fs : FontSet) : Layout.Landing → PdfRead.Obj
   | .site page (.line line) =>
     .arr #[.ref (t.pageId page) 0, .name "XYZ", ptObj (line.x + geom.bleed),
@@ -2103,6 +2103,8 @@ public def destObj (t : ObjTable) (geom : Geom) (fs : FontSet) : Layout.Landing 
   | .site page (.ink k) =>
     .arr #[.ref (t.pageId page) 0, .name "XYZ", ptObj (k.topLeft.1 + geom.bleed),
       ptObj (geom.pageH + geom.bleed - k.topLeft.2), .null]
+  | .site page .page =>
+    .arr #[.ref (t.pageId page) 0, .name "XYZ", .int 0, ptObj (geom.pageH + 2 * geom.bleed), .null]
   | .top =>
     .arr #[.ref (t.pageId 0) 0, .name "XYZ", .int 0, ptObj (geom.pageH + 2 * geom.bleed), .null]
 

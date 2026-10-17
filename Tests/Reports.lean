@@ -1869,7 +1869,14 @@ def reports : List Report := [
       "the guards fail with the fix reverted onto 0e5db3b5, the guards kept: a declared focus colour judged on no stage, the stage's own outline and its background mark, no declared colour on it, a ring on its edge in forced colours, code blocks, summaries and displays in the browser's ring, the pager keeping a stage's focus and every key, no display the pager marks wide, and a page-less section's heading and label away from its stage's corner",
       "the first review's probes rerun on this tree: a Tab across stages keeps the element it reaches as main does, a focused stage scrolls nowhere sideways, a display that fits is no scroller and no tab stop, under the pager a wide one at a phone's shape, in a step's alternative too, scrolls in its own box holding its ink's height, while without the pager it still scrolls its stage as main's does, and a diagram set as a display is as main sets it; a page that pauses or blinks between the shots reads inconclusive",
       "every corpus deck passes the stage-focus judge at 1x, 1.5x and 2x and at every reader shape; unfocused, each deck's web page shows no visible difference from main's, and every corpus document's diagnostics are main's"]
-    state := .guarded "0e5db3b5" .revert .author }
+    state := .guarded "0e5db3b5" .revert .author },
+  { id := "R205", date := "2026-10-17"
+    what := "a deck's stages and sections apart in the two artifacts: an empty frame set a web stage but no PDF page, where beamer ships one, so the frames after it were numbered apart, and what it named, or what a last frame setting nothing named, landed on another page or nowhere; a web deck gave its sections no anchor, so a link to a section's slug went nowhere on the web page while the PDF reached a slug no ledger claimed; and moloch's sectionpage=none was skipped, its section pages kept"
+    pins := [check% sectionPageChecks, check% deckDestinationChecks]
+    accept := ["lualatex with beamer: an invented deck of four frames, two of them empty, ships four pages and defines each empty frame's target; moloch's sectionpage=none sets no section page, as its own empty section hook does; this tree ships the same pages, opens each target at its page's top, and sets a web stage for each with the PDF's frame numbers",
+      "the guards fail with the fix reverted onto f27361cd, the guards kept: the empty frames ship two pages of four and their targets open elsewhere, the sections' slugs land in neither artifact as the web deck names them, moloch's sectionpage=none keeps its section pages and both its values are skipped (W0104)",
+      "a deck's sections claim their slugs in one ledger with its frames in flow order: a section and a later frame of one title take x and x-2 in both artifacts; a page-less section's slug stands on its heading at the next stage's corner, a section page's on its stage"]
+    state := .guarded "f27361cd" .revert .author }
 ]
 
 /-- The reports guarded but never seen failing, a count held in both directions. -/

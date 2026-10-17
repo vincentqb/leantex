@@ -27,13 +27,20 @@ public structure FrameAnchors where
   steps : Array SectionAnchor
   deriving Repr, BEq
 
-/-- Each top-level frame's anchors at its body index, the frames' and their steps' in one ledger
-in flow order. -/
-public def frameAnchors (body : Array Block) : Array (Option FrameAnchors) := Id.run do
+/-- The anchors a deck's top-level blocks claim at their body indices: each frame's and its steps',
+and each level-one section's, from its title's slug or `section`. -/
+public structure DeckAnchors where
+  frames : Array (Option FrameAnchors)
+  sections : Array (Option SectionAnchor)
+
+/-- A deck's frames, their steps and its sections claim their anchors in one ledger in flow order. -/
+public def deckAnchors (body : Array Block) : DeckAnchors := Id.run do
   let mut taken : NameClaim.Claims .dashed := {}
-  let mut out : Array (Option FrameAnchors) := #[]
+  let mut frames : Array (Option FrameAnchors) := #[]
+  let mut sections : Array (Option SectionAnchor) := #[]
   for b in body do
-    if let .frame title _ _ _ _ := b then
+    match b with
+    | .frame title _ _ _ _ =>
       let text := firstPageText title
       let base := if (slug title).isEmpty then "slide" else slug title
       let (id, clash, next) := taken.claim base text
@@ -45,9 +52,22 @@ public def frameAnchors (body : Array Block) : Array (Option FrameAnchors) := Id
           let (sid, sclash, next) := taken.claim stepBase text
           taken := next
           steps := steps.push { base := stepBase, id := sid, clash := sclash }
-      out := out.push (some { frame := { base, id, clash }, steps })
-    else out := out.push none
-  return out
+      frames := frames.push (some { frame := { base, id, clash }, steps })
+      sections := sections.push none
+    | .section 1 _ _ title =>
+      let base := if (slug title).isEmpty then "section" else slug title
+      let (id, clash, next) := taken.claim base (firstPageText title)
+      taken := next
+      frames := frames.push none
+      sections := sections.push (some { base, id, clash })
+    | _ =>
+      frames := frames.push none
+      sections := sections.push none
+  return { frames, sections }
+
+/-- Each top-level frame's anchors at its body index (`deckAnchors`). -/
+public def frameAnchors (body : Array Block) : Array (Option FrameAnchors) :=
+  (deckAnchors body).frames
 
 /-- The names step `k` of the frame at body index `i` answers to: on its first step the frame's
 anchor, past one step the step's anchor, and its routes. -/

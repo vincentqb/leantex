@@ -5067,6 +5067,14 @@ private def linesCss : String :=
   ".lines-line, .lines-scope { display: block; }\n" ++
   s!".lines-scope \{ padding-inline-start: {cssLength Ir.linesStep}; }\n" ++
   s!".lines-mark \{ {visuallyHidden} }\n"
+/-- A scroll margin a stage wide past a target at its stage's left edge, so a scroll into view by
+its own default lands on its stage. -/
+public def stageScrollMargin : String := "scroll-margin-inline-end: 100vw;"
+
+/-- Out of sight and out of flow at its stage's top left corner, where a scroll into view lands on
+its stage. -/
+public def stageCornerHidden : String := visuallyHidden ++ " left: 0; top: 0; " ++ stageScrollMargin
+
 
 /-- A label's anchor: an empty span with its id. -/
 public def labelSpan (key : String) (attrs : Array (String × String) := #[]) : Node :=
@@ -6528,6 +6536,13 @@ private def Config.applyEpoch (cfg : Config) (node : Node) : Node :=
     | .text _ | .style _ | .script .. => false
   if stage then withEpoch cfg.epochStyle false node
   else withEpoch cfg.flowEpochStyle cfg.epochGround node
+
+/-- An element with attributes appended. -/
+public def withAttrs (extra : Array (String × String)) : Node → Node
+  | .elem t attrs kids => .elem t (attrs ++ extra) kids
+  | .text s => .text s
+  | .style css => .style css
+  | .script attrs code => .script attrs code
 
 public def withClass (c : String) : Node → Node
   | .elem t attrs kids =>
@@ -8511,14 +8526,10 @@ private def withHeld (held : Array Node) : Node → Node
   | .style s => .style s
   | .script attrs s => .script attrs s
 
-/-- A scroll margin a stage wide past a target at its stage's left edge, so a scroll into view by
-its own default lands on its stage. -/
-public def stageScrollMargin : String := "scroll-margin-inline-end: 100vw;"
-
 /-- A deck's section on no page of its own: its heading out of sight and out of flow at its stage's
 top left corner, naming the section to assistive technology as beamer's bookmark names it. -/
 private def navHeading (cfg : Config) (b : Block) : Node :=
-  withStyle (visuallyHidden ++ " left: 0; top: 0; " ++ stageScrollMargin) (blockNode cfg b)
+  withStyle stageCornerHidden (blockNode cfg b)
 
 /-- The label anchors of what sets nothing, at the top left corner of the stage set next. -/
 private def heldAnchors (keys : Array String) : Node :=
@@ -8906,7 +8917,8 @@ private def emitTreeCore (cfg : Config) (doc : Doc)
       let mut logoSpans : Array (Nat × Array Inline) := #[]
       let mut acc : Array Node := #[]
       let mut walkDiags : Array Diag := #[]
-      let frameIds := Ir.frameAnchors doc.body
+      let deckIds := Ir.deckAnchors doc.body
+      let frameIds := deckIds.frames
       let mut named : NameClaim.Claims .parenthesized := {}
       let mut cfg := cfg
       -- what waits for the next stage: page-less sections' headings and label anchors
@@ -8973,10 +8985,10 @@ on the web slide"
           let id := fa.frame.id
           if let some holder := fa.frame.clash then
             walkDiags := walkDiags.push (Diag.of .W0327
-              s!"frames share the anchor '{fa.frame.base}'; each after the first takes a numbered \
+              s!"titles share the anchor '{fa.frame.base}'; each after the first takes a numbered \
 anchor"
               (help := some s!"an in-page link '#{fa.frame.base}' reaches only the first; \
-retitle the frames apart, or link to the numbered anchor")
+retitle them apart, or link to the numbered anchor")
               (detail := some s!"{text.quote} takes '{id}', after {holder.quote}"))
           let steps := frameCfg.overlaySteps
           let (spacers, diags2) :=
@@ -9023,6 +9035,17 @@ retitle the frames apart, or link to the numbered anchor")
           lastStage := some (acc.size - 1)
           cfg := cfg.afterBlock b
         | .section level _ _ title =>
+          -- a level-one section answers to the anchor the deck's ledger claims for it
+          let sa := deckIds.sections[i]?.join
+          if let some a := sa then
+            if let some holder := a.clash then
+              walkDiags := walkDiags.push (Diag.of .W0327
+                s!"titles share the anchor '{a.base}'; each after the first takes a numbered anchor"
+                (help := some s!"an in-page link '#{a.base}' reaches only the first; \
+retitle them apart, or link to the numbered anchor")
+                (detail := some s!"{(Ir.firstPageText title).quote} takes '{a.id}', after \
+{holder.quote}"))
+          let idAttr := sa.map (fun a => #[("id", a.id)]) |>.getD #[]
           if kind == .content then
             loose := (loose ++ held).push (cfg.applyEpoch (blockNode cfg b))
             held := #[]
@@ -9041,13 +9064,13 @@ retitle the frames apart, or link to the numbered anchor")
               (attachLogo cfg
                 (Html.elem "section" kids
                   (#[("class", "section-page")] ++
-                    stageAttrs cfg.deck name ++ #[("data-snap", ""),
+                    stageAttrs cfg.deck name ++ idAttr ++ #[("data-snap", ""),
                       ("data-slide-label", (sectionRoutes[i]?.join).getD (Ir.sectionRoute 0))]))
                 (Ir.logoInForce doc.logo logoSpans i)))
             lastStage := some (acc.size - 1)
           else
             if level == 1 then curSection := title
-            held := held.push (cfg.applyEpoch (navHeading cfg b))
+            held := held.push (cfg.applyEpoch (withAttrs idAttr (navHeading cfg b)))
         | .pagebreak => pure ()
         | .spaced _ #[] =>
           unless loose.isEmpty do loose := loose.push (cfg.applyEpoch (blockNode cfg b))

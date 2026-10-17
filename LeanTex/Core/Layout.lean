@@ -1015,6 +1015,8 @@ public structure PageOut where
   band : Option Sp := none
   /-- What hidden overlay content placed, which keeps its place and ships nothing (`shipped`). -/
   hidden : PageHidden := {}
+  /-- The anchors a page with no line stands at its top. -/
+  anchors : Array String := #[]
   deriving Repr, Inhabited
 
 /-- A page that shows nothing: no line, no fill and no
@@ -1025,10 +1027,70 @@ placed picture ink; every emptiness test reads this. -/
 public def PageOut.frameStamp (p : PageOut) : FrameStamp :=
   (p.frameOrigin, p.frame, p.foot)
 
-/-- What an anchor stands on: the shipped line declaring it, or the picture it opens. -/
+/-- A page with anchors standing on its last line, else at its top. -/
+public def PageOut.landAnchors (p : PageOut) (as : Array String) : PageOut :=
+  if as.isEmpty then p
+  else if p.lines.isEmpty then { p with anchors := p.anchors ++ as }
+  else { p with lines := p.lines.modify (p.lines.size - 1) fun l => { l with anchors := l.anchors ++ as } }
+
+@[simp] theorem PageOut.landAnchors_inks (p : PageOut) (as : Array String) :
+    (p.landAnchors as).inks = p.inks := by
+  unfold PageOut.landAnchors; split <;> (try split) <;> rfl
+
+@[simp] theorem PageOut.landAnchors_fills (p : PageOut) (as : Array String) :
+    (p.landAnchors as).fills = p.fills := by
+  unfold PageOut.landAnchors; split <;> (try split) <;> rfl
+
+@[simp] theorem PageOut.landAnchors_front (p : PageOut) (as : Array String) :
+    (p.landAnchors as).front = p.front := by
+  unfold PageOut.landAnchors; split <;> (try split) <;> rfl
+
+@[simp] theorem PageOut.landAnchors_frameStamp (p : PageOut) (as : Array String) :
+    (p.landAnchors as).frameStamp = p.frameStamp := by
+  unfold PageOut.landAnchors; split <;> (try split) <;> rfl
+
+@[simp] theorem PageOut.landAnchors_lines_size (p : PageOut) (as : Array String) :
+    (p.landAnchors as).lines.size = p.lines.size := by
+  unfold PageOut.landAnchors; split <;> (try split) <;> simp
+
+/-- What a page's lines show, their anchors aside, its landed anchors leave as they were. -/
+theorem PageOut.landAnchors_lines_map {α : Type} (p : PageOut) (as : Array String)
+    (g : LineOut → α) (hg : ∀ l (bs : Array String), g { l with anchors := bs } = g l) :
+    (p.landAnchors as).lines.map g = p.lines.map g := by
+  unfold PageOut.landAnchors
+  split
+  · rfl
+  · split
+    · rfl
+    · apply Array.ext
+      · simp
+      · intro j h1 h2
+        simp only [Array.getElem_map, Array.getElem_modify]
+        split <;> simp [hg]
+
+/-- A property of a page's lines their anchors leave alone holds of its lines with anchors landed. -/
+theorem PageOut.landAnchors_lines_forall (p : PageOut) (as : Array String) (Q : LineOut → Prop)
+    (hQ : ∀ l (bs : Array String), Q l → Q { l with anchors := bs }) (h : ∀ l ∈ p.lines, Q l) :
+    ∀ l ∈ (p.landAnchors as).lines, Q l := by
+  unfold PageOut.landAnchors
+  split
+  · exact h
+  · split
+    · exact h
+    · intro l hl
+      obtain ⟨j, hj, rfl⟩ := Array.mem_iff_getElem.mp hl
+      have hj' : j < p.lines.size := by simpa using hj
+      simp only [Array.getElem_modify]
+      split
+      · exact hQ _ _ (h _ (Array.getElem_mem hj'))
+      · exact h _ (Array.getElem_mem hj')
+
+/-- What an anchor stands on: the shipped line declaring it, the picture it opens, or the top of a
+page with no line. -/
 public inductive AnchorSite where
   | line (l : LineOut)
   | ink (k : InkOut)
+  | page
   deriving Repr, Inhabited
 
 /-- Every anchor's first shipped site by name, in page order, a page's lines before its pictures:
@@ -1037,8 +1099,9 @@ public def anchorIndex (pages : Array PageOut) : Std.HashMap String (Nat × Anch
   pages.zipIdx.foldl (init := {}) fun m (p, i) =>
     let m := p.lines.foldl (init := m) fun m l =>
       l.anchors.foldl (init := m) fun m a => if m.contains a then m else m.insert a (i, .line l)
-    p.inks.foldl (init := m) fun m k =>
+    let m := p.inks.foldl (init := m) fun m k =>
       k.anchors.foldl (init := m) fun m a => if m.contains a then m else m.insert a (i, .ink k)
+    p.anchors.foldl (init := m) fun m a => if m.contains a then m else m.insert a (i, .page)
 
 private theorem foldl_inv {α β : Type} (xs : Array α) (f : β → α → β) (init : β) (P : β → Prop)
     (h0 : P init) (hs : ∀ b x, x ∈ xs → P b → P (f b x)) : P (xs.foldl f init) :=
@@ -1066,6 +1129,7 @@ public theorem anchorIndex_page_lt (pages : Array PageOut) (name : String) (i : 
     refine foldl_inv _ _ _ P (fun k v hk => by simp at hk) ?_
     rintro m ⟨p, j⟩ hm hP
     have hj : j < pages.size := by simpa using (Array.mem_zipIdx hm).2.1
+    refine foldl_inv _ _ _ P ?_ fun m a _ hP => insert_ok m a j _ hj hP
     refine foldl_inv _ _ _ P ?_ ?_
     · refine foldl_inv _ _ _ P hP ?_
       intro m l _ hP
@@ -7198,6 +7262,8 @@ public structure Spacing.Page where
   private opened : Bool := false
   /-- Inside a frame, whether the author declared `[allowframebreaks]`; `none` outside a frame. -/
   private frameBreak : Option Bool := none
+  /-- The pages shipped when the open frame opened, so a frame that set none still ships its own. -/
+  private framePagesAt : Nat := 0
   /-- Opening environment of the current logical frame. -/
   private frameSource : Option Span := none
   /-- The open frame has already been reported once (W0384). -/
@@ -7286,6 +7352,29 @@ private def Spacing.Page.unpinned (b : B) : PageOut :=
 /-- The open page shows nothing past its pinned chrome and holds no row's earlier columns. -/
 private def Spacing.Page.holdsNothing (b : B) : Bool :=
   b.unpinned.blank && !b.rewound
+
+/-- Anchors no later line holds land on the last line shipped, else at the top of a last page with
+no line, as TeX ships them with its last page. -/
+private def landTrailing (b : B) : B :=
+  { b with pages := b.pages.modify (b.pages.size - 1) (·.landAnchors b.pendingAnchors)
+           pendingAnchors := #[] }
+
+@[simp] private theorem landTrailing_geom (b : B) : (landTrailing b).geom = b.geom := rfl
+@[simp] private theorem landTrailing_docBg (b : B) : (landTrailing b).docBg = b.docBg := rfl
+@[simp] private theorem landTrailing_diags (b : B) : (landTrailing b).diags = b.diags := rfl
+@[simp] private theorem landTrailing_paragraphBreaks (b : B) :
+    (landTrailing b).paragraphBreaks = b.paragraphBreaks := rfl
+
+private theorem modify_push_last {α : Type} (a : Array α) (x : α) (g : α → α) :
+    (a.push x).modify a.size g = a.push (g x) := by
+  apply Array.ext
+  · simp
+  · intro i h1 h2
+    simp only [Array.getElem_modify, Array.getElem_push]
+    by_cases h : i = a.size
+    · subst h; simp
+    · have hi : i < a.size := by simp at h2; omega
+      simp [hi, Ne.symm h]
 
 /-- Attach a committed line's notes to the open page, each note whole. -/
 private def Spacing.Page.attachNotes (b : B) (notes : Array NoteBlock) : B :=
@@ -7593,7 +7682,8 @@ private def Spacing.Page.finishPage (b : B) (owed : Sp := 0) (flush : Bool := fa
                                    frameArea := b.frameArea,
                                    footLook := b.curFootLook,
                                    frame := b.curFrame, frameOrigin := b.curFrameOrigin,
-                                   fils := pageFils, band := b.curBand, hidden := hidden },
+                                   fils := pageFils, band := b.curBand, hidden := hidden,
+                                   anchors := b.cur.anchors },
            cur := {}, curBand := none, pageState := b.pageState.ship,
            shrinkAbove := #[], fillShrinkAbove := #[], inkShrinkAbove := #[],
            fillStretchAbove := #[], inkStretchAbove := #[],
@@ -7621,6 +7711,13 @@ private theorem finishPage_frame_projects (b : B) (owed : Sp) (flush : Bool) :
     (b.finishPage owed flush).curFrame = b.curFrame ∧
     (b.finishPage owed flush).curFoot = b.curFoot := by
   exact ⟨by simp [Spacing.Page.finishPage], rfl, rfl, rfl⟩
+
+/-- A page closed with the anchors still pending standing on it. -/
+private theorem landTrailing_finishPage_pages (b : B) (o : Sp) (f : Bool) :
+    ∃ P, (b.finishPage o f).pages = b.pages.push P ∧
+      (landTrailing (b.finishPage o f)).pages = b.pages.push (P.landAnchors b.pendingAnchors) :=
+  ⟨_, rfl, by simp only [landTrailing, Spacing.Page.finishPage, Array.size_push,
+    Nat.add_sub_cancel]; exact modify_push_last _ _ _⟩
 
 private theorem map_segs_mapIdx (xs : Array LineOut) (f : Nat → LineOut → LineOut)
     (hf : ∀ i l, (f i l).segs = l.segs) :
@@ -9131,10 +9228,10 @@ public structure Spacing.Context where
   private frameKeys : Ir.FrameKeys := .beamer
   /-- Every frame's label at its body index (`Ir.Doc.frameLabels`). -/
   private frameLabels : Array (Option String) := #[]
-  /-- Each top-level section's claimed anchor at its body index, in a flow document
-  (`Ir.sectionAnchors`). -/
+  /-- Each top-level section's claimed anchor at its body index (`Ir.sectionAnchors`, in a deck
+  `Ir.deckAnchors`). -/
   private sectionAnchors : Array (Option Ir.SectionAnchor) := #[]
-  /-- Each top-level frame's claimed anchors at its body index, in a deck (`Ir.frameAnchors`). -/
+  /-- Each top-level frame's claimed anchors at its body index, in a deck (`Ir.deckAnchors`). -/
   private frameAnchorIds : Array (Option Ir.FrameAnchors) := #[]
   /-- Each section page's route at its body index, in a deck (`Ir.Doc.sectionRoutes`). -/
   private sectionRoutes : Array (Option String) := #[]
@@ -10995,10 +11092,13 @@ private def collectSection (r : Rd) (a : Acc) (level : Ir.HeadingLevel) (starred
     -- The document title opens no page of its own, even in slides.
     collectTitle r a title indent false
   else
-  -- The top-level section in force, for the footer's `\sectiontitle` slot.
+  -- The section in force for the footer's `\sectiontitle` slot, and its anchor, a deck's claimed.
   let a := if level == 1 then
       { a with curSection := if r.inFrame then a.curSection else title
-               ops := a.ops.push (.anchor (anchor.getD (Ir.slug title))) }
+               ops := match anchor, r.slides with
+                 | some id, _ => a.ops.push (.anchor id)
+                 | none, false => a.ops.push (.anchor (Ir.slug title))
+                 | none, true => a.ops }
     else a
   -- The number the walk sets before the title is generated ink.
   let span := Struct.leafCountInlines title
@@ -15198,9 +15298,12 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
   | .bodyOpen g box => b := b.openBody fs g box
   | .anchor sl => b := { b with pendingAnchors := b.pendingAnchors.push sl }
   | .brk =>
-    -- A boundary closes only a page that holds something, so adjacent frames share one.
-    if !b.cur.blank then
-      b := { b.finishPage b.closingOwed with
+    -- A boundary closes a page that holds something, or a frame's that shipped no page, as beamer
+    -- ships an empty frame's; anchors a frame leaves pending stand on its page, while those outside
+    -- every frame, as a section's, wait for what is set next.
+    if !b.cur.blank || (b.frameBreak.isSome && b.pages.size == b.framePagesAt) then
+      let shipped := b.finishPage b.closingOwed
+      b := { (if b.frameBreak.isSome then landTrailing shipped else shipped) with
                chrome := none, frameBreak := none, frameSource := none, spillWarned := false,
                curFit := .spill }
     else
@@ -15211,7 +15314,8 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
                     curFit := .spill,
                     freshStart := false }
   | .frameOpen br source opening =>
-    b := { b with frameBreak := some br, frameSource := source, spillWarned := false,
+    b := { b with frameBreak := some br, framePagesAt := b.pages.size, frameSource := source,
+                  spillWarned := false,
                   curFit := opening.fit,
                   curFrame := opening.number, curFrameLabel := opening.label
                   curFrameOrigin := opening.origin, curStage := opening.stage
@@ -15437,7 +15541,8 @@ private theorem break_frame_projects (fs : FontSet) (imgs : Image.Store) (st : S
     next.curFrameOrigin = st.b.curFrameOrigin ∧
       next.curFrame = st.b.curFrame ∧ next.curFoot = st.b.curFoot := by
   simp only [stepStaged, Id.run, pure]
-  split <;> exact ⟨rfl, rfl, rfl⟩
+  repeat' split
+  all_goals exact ⟨rfl, rfl, rfl⟩
 
 private theorem frameClose_step_projects (fs : FontSet) (imgs : Image.Store) (st : StepSt) :
     let next := (stepStaged fs imgs st .frameClose).b
@@ -15446,18 +15551,41 @@ private theorem frameClose_step_projects (fs : FontSet) (imgs : Image.Store) (st
   ⟨rfl, rfl, rfl, rfl⟩
 
 private theorem emptyBreak_pageState (fs : FontSet) (imgs : Image.Store)
-    (st : StepSt) (hb : st.b.cur.blank = true) :
+    (st : StepSt) (hb : st.b.cur.blank = true)
+    (hf : (st.b.frameBreak.isSome && st.b.pages.size == st.b.framePagesAt) = false) :
     (stepStaged fs imgs st .brk).b.pageState = st.b.pageState := by
+  simp only [Bool.and_eq_false_iff, beq_eq_false_iff_ne] at hf
   simp [stepStaged, hb]
+  rcases hf with h | h <;> simp [h]
+
+private theorem landTrailing_pages_size (b : B) : (landTrailing b).pages.size = b.pages.size := by
+  simp [landTrailing]
+
+private theorem landTrailing_back_inks (b : B) :
+    (landTrailing b).pages.back?.map (·.inks.size) = b.pages.back?.map (·.inks.size) := by
+  simp only [landTrailing, Array.back?_eq_getElem?, Array.size_modify, Array.getElem?_modify]
+  split <;> simp [Function.comp_def]
 
 private theorem brk_ships_exact (fs : FontSet) (imgs : Image.Store)
     (st : StepSt) (hb : st.b.cur.blank = false) :
     (stepStaged fs imgs st .brk).b.pages.size = st.b.pages.size + 1 ∧
       ((stepStaged fs imgs st .brk).b.pages.back?.map (·.inks.size)) = some st.b.cur.inks.size := by
   constructor
-  · simp [stepStaged, hb, Spacing.Page.finishPage]
-  · simp [stepStaged, hb, Spacing.Page.finishPage]
-    split <;> simp
+  · simp only [stepStaged, hb, Bool.not_false, Bool.true_or, ite_true, Id.run, pure]
+    split <;> simp [landTrailing_pages_size, Spacing.Page.finishPage]
+  · simp only [stepStaged, hb, Bool.not_false, Bool.true_or, ite_true, Id.run, pure]
+    split
+    · rw [landTrailing_back_inks]
+      simp [Spacing.Page.finishPage]
+      split <;> simp
+    · simp [Spacing.Page.finishPage]
+      split <;> simp
+
+/-- A frame that set no page ships its own at its boundary, blank as beamer ships it. -/
+private theorem emptyFrame_ships (fs : FontSet) (imgs : Image.Store) (st : StepSt)
+    (hf : st.b.frameBreak.isSome = true) (hp : st.b.pages.size = st.b.framePagesAt) :
+    (stepStaged fs imgs st .brk).b.pages.size = st.b.pages.size + 1 := by
+  simp [stepStaged, hf, hp, landTrailing_pages_size, Spacing.Page.finishPage]
 
 /-- Place a float group whole: tried where it stands, else replayed under `noBreak` on a page
 holding nothing else; a group taller than the text block ships alone, named (W0358), and a note
@@ -15530,6 +15658,11 @@ private theorem pagesExtend_congr {b b' c : B} (h : c.pages = b'.pages)
 private theorem finishPage_extends (b : B) {o : Sp} {f : Bool} :
     PagesExtend b (b.finishPage o f) :=
   ⟨#[_], rfl⟩
+
+private theorem landTrailing_finishPage_extends (b : B) {o : Sp} {f : Bool} :
+    PagesExtend b (landTrailing (b.finishPage o f)) := by
+  obtain ⟨P, -, h⟩ := landTrailing_finishPage_pages b o f
+  exact ⟨#[P.landAnchors b.pendingAnchors], by rw [h]; rfl⟩
 
 private theorem fitWith_extends (b : B) (place : B → Sp → Bool → Sp → B)
     (settle : B → Sp → Sp → B) (firstY stepY retryY : B → Sp) (inkBelow bottom : Sp)
@@ -15746,6 +15879,7 @@ private theorem stepStaged_extends (fs : FontSet) (imgs : Image.Store)
     | exact pagesExtend_of_eq (placeSlot_keeps ..).1
     | exact pagesExtend_of_eq (alignRow_shipped_id ..).1
     | (refine pagesExtend_congr ?_ (finishPage_extends _ (o := st.b.closingOwed) (f := false)); simp; done)
+    | exact pagesExtend_congr rfl (landTrailing_finishPage_extends _ (o := st.b.closingOwed) (f := false))
 
 private theorem placeAnchor_noBreak (fs : FontSet) (b : B) (h' : AnchorRule) (shift : Sp)
     (paints : Bool) (h : b.noBreak = true) :
@@ -15897,6 +16031,24 @@ private theorem bgStep_finishPage (b : B) {o : Sp} {f : Bool} :
     BgStep b (b.finishPage o f) :=
   ⟨rfl, id, finishPage_bg b⟩
 
+private theorem bgStep_landTrailing_finishPage (b : B) {o : Sp} {f : Bool} :
+    BgStep b (landTrailing (b.finishPage o f)) := by
+  refine ⟨rfl, id, fun hd p hp => ?_⟩
+  simp only [landTrailing, Spacing.Page.finishPage, Array.size_push, Nat.add_sub_cancel,
+    modify_push_last, Array.mem_push] at hp
+  rcases hp with hp | rfl
+  · exact Or.inl hp
+  · right
+    unfold bgFilled
+    simp only [PageOut.landAnchors_fills]
+    rcases hpb : b.pageBg with _ | c
+    · rcases hdb : b.docBg with _ | c'
+      · rw [hdb] at hd; simp at hd
+      · refine ⟨b.geom.ground c', ?_, rfl, rfl, rfl, rfl⟩
+        simp [effectivePageGround]
+    · refine ⟨b.geom.ground c, ?_, rfl, rfl, rfl, rfl⟩
+      simp [effectivePageGround]
+
 /-- The full-page fill in colour `c`. -/
 private def bgFilledWith (g : Geom) (c : Ir.Color) (p : PageOut) : Prop :=
   ∃ f ∈ p.fills.toList, f.x = -g.bleed ∧ f.y = -g.bleed ∧
@@ -16038,6 +16190,8 @@ private theorem bgStep_stepStaged (fs : FontSet) (imgs : Image.Store)
         (alignRow_shipped_id ..).1
     | (refine (bgStep_finishPage _ (o := st.b.closingOwed) (f := false)).trans (BgStep.of_eq ?_ ?_ ?_) <;> simp
        done)
+    | exact (bgStep_landTrailing_finishPage _ (o := st.b.closingOwed) (f := false)).trans
+        (BgStep.of_eq rfl rfl rfl)
 
 private theorem bgStep_foldSteps (fs : FontSet) (imgs : Image.Store)
     (group : Array Op) (st : StepSt)
@@ -16552,6 +16706,15 @@ private theorem frameStep_finishPage (b : B) (owed : Sp) (flush : Bool) :
   · exact Or.inl hp
   · exact Or.inr rfl
 
+private theorem frameStep_landTrailing_finishPage (b : B) (owed : Sp) (flush : Bool) :
+    FrameStep b (landTrailing (b.finishPage owed flush)) := by
+  refine ⟨rfl, fun p hp => ?_⟩
+  simp only [landTrailing, Spacing.Page.finishPage, Array.size_push, Nat.add_sub_cancel,
+    modify_push_last, Array.mem_push] at hp
+  rcases hp with hp | rfl
+  · exact Or.inl hp
+  · exact Or.inr (by rw [PageOut.landAnchors_frameStamp]; rfl)
+
 @[simp] private theorem reopenChrome_frameStamp (b : B) :
     b.reopenChrome.frameStamp = b.frameStamp := by
   unfold Spacing.Page.reopenChrome
@@ -16736,10 +16899,12 @@ private theorem stepStaged_frames (fs : FontSet) (imgs : Image.Store)
     · exact hb
   | brk =>
     simp only [stepStaged, Id.run, Id, pure]
-    split
-    · exact hb.step ((frameStep_finishPage _ st.b.closingOwed false).trans
-        (FrameStep.of_eq rfl rfl))
-    · exact hb.step (FrameStep.of_eq rfl rfl)
+    repeat' split
+    all_goals first
+      | exact hb.step ((frameStep_landTrailing_finishPage _ st.b.closingOwed false).trans
+          (FrameStep.of_eq rfl rfl))
+      | exact hb.step ((frameStep_finishPage _ st.b.closingOwed false).trans (FrameStep.of_eq rfl rfl))
+      | exact hb.step (FrameStep.of_eq rfl rfl)
   | colClose =>
     simp only [stepStaged, Id.run, Id, pure]
     repeat' split
@@ -18842,12 +19007,6 @@ private theorem collectDocBody_census (rd : Rd) (doc : Doc) (cover : Ir.Cover)
     exact ⟨collectDocBlock rd doc cover frameSpans doc.frameNumbers i hib st, rfl,
       step i hib st hs⟩
 
-/-- Anchors no later line holds land on the last line shipped, as TeX ships them with its last page. -/
-private def landTrailing (b : B) : B :=
-  { b with pages := b.pages.modify (b.pages.size - 1) (fun p =>
-             { p with lines := p.lines.modify (p.lines.size - 1) fun l =>
-                 { l with anchors := l.anchors ++ b.pendingAnchors } })
-           pendingAnchors := #[] }
 
 private theorem map_modify_of {α β : Type} (xs : Array α) (i : Nat) (f : α → α) (g : α → β)
     (h : ∀ x, g (f x) = g x) : (xs.modify i f).map g = xs.map g := by
@@ -18876,28 +19035,26 @@ private theorem sourceBound_landTrailing {n : Nat} (b : B) (hb : b.SourceBound n
     (landTrailing b).SourceBound n := by
   refine ⟨hb.current, ?_, hb.notes, hb.chrome, hb.ledger⟩
   exact forall_mem_modify (Q := fun (p : PageOut) => ∀ l ∈ p.lines, l.SourceBound n) b.pages _ _
-    hb.pages fun p hp => forall_mem_modify (Q := LineOut.SourceBound n) p.lines _
-      (fun l => { l with anchors := l.anchors ++ b.pendingAnchors }) hp fun _ hl => hl
+    hb.pages fun p hp =>
+      p.landAnchors_lines_forall _ (LineOut.SourceBound n) (fun _ _ hl => hl) hp
 
 private theorem census_landTrailing (pick : Option Nat → Bool → Bool) (b : B) :
     (landTrailing b).pages.toList.flatMap (pageCensus pick) =
       b.pages.toList.flatMap (pageCensus pick) := by
   apply flatMap_eq_of_map_eq
   refine map_modify_of _ _ _ _ fun p => ?_
-  exact flatMap_eq_of_map_eq _ _ _ (map_modify_of p.lines _
-    (fun l => { l with anchors := l.anchors ++ b.pendingAnchors }) _ fun _ => rfl)
+  exact flatMap_eq_of_map_eq _ _ _ (p.landAnchors_lines_map _ (lineCensus pick) fun _ _ => rfl)
 
 private theorem framesFooted_landTrailing {openings : Array FrameOpening} {b : B}
     (hb : FramesFooted openings b) : FramesFooted openings (landTrailing b) :=
   ⟨hb.1, forall_mem_modify (Q := fun (p : PageOut) => SelectedFrame openings p.frameStamp)
-    b.pages _ _ hb.2 fun _ h => h⟩
+    b.pages _ _ hb.2 fun p h => by simpa using h⟩
 
 private theorem bgStep_landTrailing {b0 X : B} (h : BgStep b0 X) (h0 : b0.pages = #[]) :
     BgStep b0 (landTrailing X) := by
   refine ⟨h.1, h.2.1, fun hd p hp => Or.inr ?_⟩
-  refine forall_mem_modify (Q := bgFilled b0.geom) X.pages _ (fun p =>
-    { p with lines := p.lines.modify (p.lines.size - 1) fun l =>
-        { l with anchors := l.anchors ++ X.pendingAnchors } }) (fun q hq => ?_) (fun _ hq => hq) p hp
+  refine forall_mem_modify (Q := bgFilled b0.geom) X.pages _ (·.landAnchors X.pendingAnchors)
+    (fun q hq => ?_) (fun q hq => by simpa [bgFilled] using hq) p hp
   rcases h.2.2 hd q hq with hin | hf
   · rw [h0] at hin
     simp at hin
@@ -18949,6 +19106,7 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
   let design := Ir.Design.ofDoc doc
   let cover := design.cover
   let footGap := doc.page.furnitureGap.getD Ir.footline.sep
+  let deckIds := Ir.deckAnchors doc.body
   let rd : Rd := { geom := geom, xHeight := xHeight, pats := pats, fs := fs
                    preamble := doc.preambleFace
                    styles := doc.styles
@@ -18961,9 +19119,10 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
                    sectionPages := doc.sectionPages
                    frameLabels := doc.frameLabels
                    sectionAnchors := if doc.docClass.record.model == .flow then
-                     Ir.sectionAnchors doc.body else #[]
+                     Ir.sectionAnchors doc.body
+                     else if doc.docClass.record.model == .frame then deckIds.sections else #[]
                    frameAnchorIds := if doc.docClass.record.model == .frame then
-                     Ir.frameAnchors doc.body else #[]
+                     deckIds.frames else #[]
                    sectionRoutes := if doc.docClass.record.model == .frame then
                      doc.sectionRoutes else #[]
                    imgs := imgs
@@ -19033,7 +19192,7 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
     let prose := st.prose
     -- A final frame's trailing boundary has already closed its page; no empty page is added.
     let b := if !st.b.cur.blank || st.b.pages.isEmpty then
-        st.b.finishPage st.b.closingOwed
+        landTrailing (st.b.finishPage st.b.closingOwed)
       else landTrailing st.b
     -- The measure against the readable band (Bringhurst §2.1.2), via memoir's copy-fitting lines.
     let shipDiags :=
@@ -19119,10 +19278,10 @@ private theorem shipCore_source (geom : Geom) (fs : FontSet)
     ∀ p ∈ (shipCore geom fs pats doc imgs frameSpans).pages, ∀ l ∈ p.lines,
       l.SourceBound (Struct.ofDoc (pdfView doc)).leaves.size := by
   have close : ∀ (c : Prop) [Decidable c] (b : B) (n : Nat), b.SourceBound n →
-      (if c then b.finishPage b.closingOwed else landTrailing b).SourceBound n := by
+      (if c then landTrailing (b.finishPage b.closingOwed) else landTrailing b).SourceBound n := by
     intro c inst b n hb
     split
-    · exact sourceBound_finishPage _ _ _ hb
+    · exact sourceBound_landTrailing _ (sourceBound_finishPage _ _ _ hb)
     · exact sourceBound_landTrailing _ hb
   unfold shipCore withLayoutOps
   dsimp only [Id.run, bind, pure, Id]
@@ -19300,12 +19459,13 @@ private theorem census_placeFrom {n : Nat} (pick : Option Nat → Bool → Bool)
 private theorem census_close {n : Nat} (pick : Option Nat → Bool → Bool)
     (b : B) (hb : b.SourceBound n) :
     let out := if !(Spacing.Page.cur b).blank || (Spacing.Page.pages b).isEmpty
-      then b.finishPage b.closingOwed else landTrailing b
+      then landTrailing (b.finishPage b.closingOwed) else landTrailing b
     (Spacing.Page.pages out).toList.flatMap (pageCensus pick) = Spacing.Page.census pick b := by
   dsimp only
   split
   · have hc := census_finishPage pick b b.closingOwed false hb
     change _ ++ [] = _ at hc
+    rw [census_landTrailing]
     simpa only [List.append_nil] using hc
   · rename_i hn
     have he : (Spacing.Page.cur b).lines = #[] := by
@@ -19317,7 +19477,7 @@ private theorem census_close {n : Nat} (pick : Option Nat → Bool → Bool)
 
 private theorem clean_close (b : B) :
     let out := if !(Spacing.Page.cur b).blank || (Spacing.Page.pages b).isEmpty
-      then b.finishPage b.closingOwed else landTrailing b
+      then landTrailing (b.finishPage b.closingOwed) else landTrailing b
     GlyphClean (Spacing.Page.diags out) → GlyphClean (Spacing.Page.diags b) := by
   dsimp only
   split
@@ -19345,7 +19505,7 @@ private theorem shipCore_census (geom : Geom) (fs : FontSet)
   dsimp (config := { zeta := false }) only [Id.run, bind, pure, Id]
   extract_lets d ps _ _ _ _ _ _ _ _
     _ _ _ _ _ _ _ _ _ _ _
-    _ cover _ rd acc0 acc accF _ _ _ b0
+    _ cover _ _ rd acc0 acc accF _ _ _ b0
     alphabet _ _ cpl10 dir post
   have hacc := collectDocBody_census rd d cover frameSpans acc0 hp
     (by rcases hh with hh | hh <;>
@@ -19983,10 +20143,10 @@ private theorem shipCore_frames (geom : Geom) (fs : FontSet)
       SelectedFrame (frameOpeningsCore geom fs pats doc imgs frameSpans) p.frameStamp := by
   have close : ∀ (c : Prop) [Decidable c] (b : B) (openings : Array FrameOpening),
       FramesFooted openings b →
-      FramesFooted openings (if c then b.finishPage b.closingOwed else landTrailing b) := by
+      FramesFooted openings (if c then landTrailing (b.finishPage b.closingOwed) else landTrailing b) := by
     intro c inst b openings hb
     split
-    · exact hb.step (frameStep_finishPage ..)
+    · exact hb.step (frameStep_landTrailing_finishPage ..)
     · exact framesFooted_landTrailing hb
   unfold shipCore frameOpeningsCore withLayoutOps
   dsimp only [Id.run, bind, pure, Id]
@@ -20009,10 +20169,10 @@ private theorem shipCore_reflows (geom : Geom) (fs : FontSet)
     ReflowsNamed (shipCore geom fs pats doc imgs frameSpans).paragraphBreaks
       (shipCore geom fs pats doc imgs frameSpans).diags := by
   have close : ∀ (c : Prop) [Decidable c] (b : B), b.ReflowsNamed →
-      (if c then b.finishPage b.closingOwed else landTrailing b).ReflowsNamed := by
+      (if c then landTrailing (b.finishPage b.closingOwed) else landTrailing b).ReflowsNamed := by
     intro c inst b hb
     split
-    · exact hb.step (reflowStep_finishPage ..)
+    · exact hb.step ((reflowStep_finishPage b b.closingOwed false).trans (ReflowStep.of_eq rfl rfl))
     · exact hb
   have measured : ∀ (a b c : Prop) [Decidable a] [Decidable b] [Decidable c]
       (ps : Array ParagraphBreaks) (ds : Array Diag) (d : Diag),
@@ -20177,10 +20337,10 @@ private theorem runCore_bg
     · rw [← hW, ← hB]; exact hw
     · rw [← hH, ← hB]; exact hh
   have bgStep_close : ∀ (c : Prop) [inst : Decidable c] (b0 X : B), b0.pages = #[] →
-      BgStep b0 X → BgStep b0 (if c then X.finishPage X.closingOwed else landTrailing X) := by
+      BgStep b0 X → BgStep b0 (if c then landTrailing (X.finishPage X.closingOwed) else landTrailing X) := by
     intro c inst b0 X h0 h
     split
-    · exact h.trans (bgStep_finishPage _)
+    · exact h.trans (bgStep_landTrailing_finishPage _)
     · exact bgStep_landTrailing h h0
   refine fin _ (key _ _ (bgStep_close _ _ _ rfl
     (bgStep_placeFrom _ _ _ _ _ (Array.all_eq_true'.mp hepoch) (by simp))) ?_ rfl q hq)
@@ -20439,7 +20599,7 @@ public def program (geom : Geom) (fs : FontSet) (doc : Ir.Doc) : Program :=
 
 private def closeLast (b : B) : B :=
   if !b.cur.blank || b.pages.isEmpty then
-    b.finishPage b.closingOwed
+    landTrailing (b.finishPage b.closingOwed)
   else landTrailing b
 
 private theorem program_ship (geom : Geom) (fs : FontSet) (doc : Ir.Doc) :
@@ -20452,18 +20612,29 @@ private theorem close_natural (b : B)
     (hcur : b.cur.lines.isEmpty = false)
     (hn : b.needed ≤ 0) (hv : b.vdist = .top)
     (hf : b.pageFils = 0) (hs : b.skip.fil = false)
-    (hp : b.pendingNotes.isEmpty = true) :
+    (hp : b.pendingNotes.isEmpty = true) (ha : b.pendingAnchors = #[]) :
     (closeLast b).pages.map (fun p => p.lines) =
       (b.pages.map (fun p => p.lines)).push b.cur.lines := by
-  simp [closeLast, PageOut.blank, hcur, Spacing.Page.finishPage, Int.not_lt.mpr hn, hf, hs,
+  obtain ⟨P, hP, h⟩ := landTrailing_finishPage_pages b b.closingOwed false
+  have hl : (closeLast b).pages = b.pages.push P := by
+    simp only [closeLast, PageOut.blank, hcur, Bool.false_and, Bool.not_false, Bool.true_or,
+      ite_true]
+    rw [h, ha]
+    simp [PageOut.landAnchors]
+  rw [hl]
+  have hm := congrArg (Array.map (fun p => p.lines)) hP
+  rw [← hm]
+  simp [Spacing.Page.finishPage, Int.not_lt.mpr hn, hf, hs,
     hv, VDist.aboveShare, VDist.top, filShare, Spacing.Page.noteLines, hp]
 
 private theorem closeLast_ships_exact (b : B) (hb : b.cur.blank = false) :
     (closeLast b).pages.size = b.pages.size + 1 ∧
       ((closeLast b).pages.back?.map (·.inks.size)) = some b.cur.inks.size := by
   constructor
-  · simp [closeLast, hb, Spacing.Page.finishPage]
-  · simp [closeLast, hb, Spacing.Page.finishPage]
+  · simp [closeLast, hb, landTrailing_pages_size, Spacing.Page.finishPage]
+  · simp only [closeLast, hb, Bool.not_false, Bool.true_or, ite_true]
+    rw [landTrailing_back_inks]
+    simp [Spacing.Page.finishPage]
     split <;> simp
 
 end LeanTex.Core.Layout.Spacing
@@ -20990,7 +21161,7 @@ open LeanTex.Core LeanTex.Core.Dim LeanTex.Core.Font
 baseline: natural fit, top distribution and no fil. -/
 private def NaturalClose (b : B) : Prop :=
   b.cur.lines.isEmpty = false ∧ b.needed ≤ 0 ∧ b.vdist = .top ∧
-    b.pageFils = 0 ∧ b.skip.fil = false ∧ b.pendingNotes.isEmpty = true
+    b.pageFils = 0 ∧ b.skip.fil = false ∧ b.pendingNotes.isEmpty = true ∧ b.pendingAnchors = #[]
 
 private def boundaryStart (b : B) (gs : Array Glue) : B :=
   { b with skip := gs.foldl Glue.add b.skip }
@@ -21029,8 +21200,8 @@ private theorem tail_baselines (geom : Geom) (fs : FontSet) (doc : Ir.Doc)
           paintedInk fs (boundaryEnd fs b j breaks gs).cur.lines).map (·.y) := by
   have hr := run_ink_projects geom fs doc
   rw [tail_ship geom fs doc b j breaks gs ha hs.2.1 hs.1] at hr
-  rcases hs.2.2.2.2.2 with ⟨hc, hn, hv, hf, hg, hp⟩
-  have hclose := close_natural (boundaryEnd fs b j breaks gs) hc hn hv hf hg hp
+  rcases hs.2.2.2.2.2 with ⟨hc, hn, hv, hf, hg, hp, hq⟩
+  have hclose := close_natural (boundaryEnd fs b j breaks gs) hc hn hv hf hg hp hq
   have hm := congrArg (fun xs : Array (Array LineOut) =>
     (xs.toList.flatMap (paintedInk fs)).map (·.y)) hclose
   have ho := congrArg (fun xs : Array (List LineOut) =>

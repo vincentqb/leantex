@@ -7516,12 +7516,18 @@ private def molochBlockColors : String → Option (List (String × String))
       ("block title alerted", "bg="), ("block title example", "bg=")]
   | _ => none
 
-/-- moloch's options: `block` declares the theme's block
-colours; every other key is named. -/
+/-- moloch's options: `block` declares the theme's block colours, `sectionpage` keeps or drops
+its section page as its own `\AtBeginSection` does; every other key is named. -/
 private def molochOptions (cmd src : String) (pos : Pos) : M (Array Raw) := do
   let mut out := #[]
   for entry in KeyVal.items src do
     match KeyVal.entry entry with
+    | ("sectionpage", some "none") =>
+      became s!"{cmd} sectionpage=none" "\\AtBeginSection{}: no section page, as moloch's own" pos
+      out := out ++ #[.ctrl "AtBeginSection" pos, .group #[] pos]
+    | ("sectionpage", some "progressbar") =>
+      inertParam "moloch" "sectionpage" s!"{cmd} sectionpage=progressbar"
+        "moloch's default section page, which the theme sets" pos
     | (key, some value) =>
       match key, molochBlockColors value with
       | "block", some decls =>

@@ -181,6 +181,66 @@ private def judgeCases : List (String × ByteArray × List PdfDests.Why) :=
       #["<< /Type /Outlines /First 7 0 R /Last 7 0 R /Count 1 >>", "<< /Title (Item) >>"],
     [.nowhere])]
 
+/-- A deck's stages and sections land in both artifacts: an empty frame ships a page of its own, as
+beamer's, what it names opening at that page's top, and a section answers to its slug, claimed in
+one ledger with the frames, on its section page or the frame set next. -/
+def deckDestinationChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit := do
+  let t := check ref
+  -- A deck's sections answer to their slugs, claimed in one ledger with its frames, in both
+  -- artifacts: on a section page, or riding the frame set next.
+  for (pre, onPage) in [("\\usetheme{moloch}\n", true), ("\\AtBeginSection{}\n", false)] do
+    let secSrc := "\\documentclass{beamer}\n" ++ pre ++ "\\begin{document}\n" ++
+      "\\begin{frame}{Opening}\\href{#alpha}{to alpha} \\href{#gamma}{to gamma} " ++
+      "\\href{#gamma-2}{to its frame}\\end{frame}\n" ++
+      "\\section{Alpha}\n\\begin{frame}{First}FirstWords\\end{frame}\n" ++
+      "\\section{Gamma}\n\\begin{frame}{Gamma}GammaWords\\end{frame}\n\\end{document}\n"
+    let (sdoc, sds) := elabStr secSrc
+    let sout := layoutOf fs sdoc
+    let sanchors := Layout.anchorIndex sout.pages
+    let shtml := HtmlDoc.emitTree {} sdoc
+    let lands (f : String) := (Layout.landing? sanchors sout.pages f).map (·.page)
+    let first := pageWith sout "FirstWords"
+    let gammaFrame := pageWith sout "GammaWords"
+    let unlanded := (shtml.2.2.filter (·.code == "W0326")).map (·.message)
+    t s!"a deck's sections answer to their slugs in the web deck ({unlanded})"
+      (sds.all (·.code != "W0301") && shtml.2.2.all (·.code != "W0326") &&
+        ["alpha", "gamma", "gamma-2"].all fun id =>
+          (attrValuesOf (fun _ => true) "id" (Html.elem "body" shtml.2.1 #[])).contains id)
+    t s!"a deck's sections answer to their slugs in the PDF, each where it stands ({pdfLinks sout})"
+      (pdfLinks sout == htmlLinks sdoc && (htmlLinks sdoc).size == 3 &&
+        lands "gamma-2" == gammaFrame && gammaFrame.isSome &&
+        (if onPage then lands "alpha" == first.map (· - 1) && lands "gamma" == gammaFrame.map (· - 1)
+          else lands "alpha" == first && lands "gamma" == gammaFrame))
+  -- An empty frame ships a page of its own, as beamer's, and what it names lands on that page's
+  -- top, as does what a last frame setting nothing names.
+  let emptySrc := "\\documentclass{beamer}\n\\begin{document}\n" ++
+    "\\begin{frame}{One}OneWords, \\hyperlink{blank}{blank} \\hyperlink{fin}{end}.\\end{frame}\n" ++
+    "\\begin{frame}\\hypertarget{blank}{}\\end{frame}\n" ++
+    "\\begin{frame}{Two}TwoWords\\end{frame}\n" ++
+    "\\begin{frame}\\hypertarget{fin}{}\\end{frame}\n\\end{document}\n"
+  let (edoc, _) := elabStr emptySrc
+  let eout := layoutOf fs edoc
+  let egeom := Layout.Geom.ofPage edoc.page
+  let epdf := Pdf.write egeom fs eout.pages edoc.info
+  -- PDF coordinates round to a millipoint.
+  let atTop (i : Nat) : Option (Nat × Array Obj) → Bool
+    | some (j, ds) => j == i && ds[1]? == some (.name "XYZ") &&
+        (ds[3]?.bind Obj.sp?).any fun y =>
+          (y - (egeom.pageH + 2 * egeom.bleed)).natAbs ≤ ((spPerPt + 999) / 1000).toNat
+    | none => false
+  t s!"an empty frame ships a page of its own, its ink furniture alone ({eout.pages.size} pages)"
+    (eout.pages.size == 4 && [1, 3].all fun i =>
+      (eout.pages[i]?.any fun p => p.lines.all (·.furniture) && p.inks.isEmpty))
+  t "what an empty frame names, and what a last frame setting nothing names, opens at its page's top"
+    (match linkDestinations epdf with
+     | .ok ds => atTop 1 ds[0]? && atTop 3 ds[1]?
+     | .error _ => false)
+  t "an empty frame: every navigation reaches a destination the file defines"
+    ((PdfDests.ofBytes epdf).map (·.isEmpty) == .ok true)
+  t "an empty frame: the web deck sets a stage for each page, the PDF's frame numbers on them"
+    ((attrValuesOf (fun _ => true) "data-frame-number"
+      (Html.elem "body" (docNodesOf edoc) #[])) == #["1", "2", "3", "4"])
+
 /-- Every navigation of a corpus file reaches a destination the file defines, a target stands at
 what it names, and a resolved reference or citation links in both artifacts, equally often. -/
 def pdfDestinationChecks (ref : IO.Ref (List String))
@@ -433,3 +493,4 @@ def pdfDestinationChecks (ref : IO.Ref (List String))
   t "a citation of an entry no list sets: unlinked in both artifacts, the listed one linked"
     (htmlLinks kdoc == #["ref-b"] && pdfLinks kout == #["ref-b"] &&
       (PdfCensus.census kpdf).map (·.linkAnnots) == .ok 1)
+  deckDestinationChecks ref fs
