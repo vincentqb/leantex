@@ -6024,12 +6024,14 @@ public def attrOf? (attrs : Array (String × String)) (k : String) : Option Stri
 /-- An `<img>`'s alternative attributes, from its one `Alt`. -/
 public def imgAltAttrs : Ir.Alt → Array (String × String)
   | .described t => #[("alt", t)]
+  | a@(.citing _) => #[("alt", a.text)]
   | .decorative => #[("alt", ""), ("role", "presentation")]
   | .undeclared => #[("alt", "")]
 
 /-- A picture's role and name, from its one `Alt`. -/
 public def pictureAltAttrs (floor : String) : Ir.Alt → Array (String × String)
   | .described t => #[("role", "img"), ("aria-label", firstNonBlank t floor)]
+  | a@(.citing _) => #[("role", "img"), ("aria-label", firstNonBlank a.text floor)]
   | .decorative => #[("aria-hidden", "true")]
   | .undeclared => #[("role", "img"), ("aria-label", floor)]
 
@@ -6132,7 +6134,8 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
         (match alt with
           | .undeclared => .described (figureWord cfg.locale)
           | .decorative => .decorative
-          | .described t => .described t) else alt
+          | .described t => .described t
+          | .citing runs => .citing runs) else alt
     -- an unresolved request keeps its source spelling, so publication can name the loss
     let href := cfg.captured.imageHref cfg.imgs (size.request src)
     let horizontal (l : Image.Len) : Bool :=
@@ -9928,6 +9931,9 @@ public theorem picture_svg_named_contract (cfg : Config) (pic : Ir.Pic.Picture) 
   cases ha : pic.alternative with
   | decorative => exact absurd ha hd
   | described t =>
+    simp [blockNode, Ir.Block.listScope, pictureSvg, h, Html.elem, carriesName, pictureRole,
+      pictureAltAttrs, ha, firstNonBlank_contract _ _ (figureWord_contract cfg.locale)]
+  | citing runs =>
     simp [blockNode, Ir.Block.listScope, pictureSvg, h, Html.elem, carriesName, pictureRole,
       pictureAltAttrs, ha, firstNonBlank_contract _ _ (figureWord_contract cfg.locale)]
   | undeclared =>

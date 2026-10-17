@@ -924,10 +924,14 @@ private def warnOnce (ctx : Ctx) (key : String) (code : DiagCode) (msg : String)
     (output : Option Diag.Output := none) (detail : Option String := none) : EM Unit :=
   modify fun st => warnOnceState ctx key code msg pos help demote st trigger recovery output detail
 
+/-- The surface that spelled what the context reads: an included file's own, else the document's. -/
+private def spelledSurface (ctx : Ctx) : Ir.Surface :=
+  if ctx.kept then Ir.Surface.ofPath ctx.file else ctx.surface
+
 /-- Records each citation key's site, shown or listed only, and the surface that spelled it; a
 reader takes each key's first. -/
 private def recordCiteSites (ctx : Ctx) (keys : List String) (pos : Pos) (nocite : Bool) : EM Unit :=
-  let surface := if ctx.kept then Ir.Surface.ofPath ctx.file else ctx.surface
+  let surface := spelledSurface ctx
   modify fun st => { st with spans := keys.foldl (fun sp k =>
     let site : Ir.CiteSite := { key := k, span := ctx.sourceSpan pos, surface, nocite }
     { sp with cites := sp.cites.push site }) st.spans }
@@ -3167,10 +3171,51 @@ private def imageGroups (raws : Array Raw) (start : Nat) :
       (#[arg] ++ args, ⟨k, by omega⟩)
     | _ => (#[], ⟨j, hj⟩)
 
+/-- The index of the group a markdown image's option run gives its alternative after `alt=`, where
+it holds a citation command. -/
+private def citedAltAt (raws : Array Raw) (j : Nat) : Option Nat := Id.run do
+  let stop := (closeBracketFrom raws (j + 1)).getD raws.size
+  for k in [j + 1:stop] do
+    match raws[k]?, raws[k + 1]? with
+    | some (.word "alt=" _), some (.group body _) =>
+      if body.any (fun r => match r with
+          | .ctrl n _ => (Ir.natbibCites.lookup n).isSome
+          | _ => false) then return some (k + 1)
+    | _, _ => pure ()
+  return none
+
+mutual
+
+/-- An alternative's runs from its elaborated text: each citation its own, the rest its words. -/
+private def altRunsOne (out : Array Ir.AltRun) : Inline → Array Ir.AltRun
+  | .cite form keys => if form.cmd == .nocite then out else out.push (.cite form keys none)
+  | .located _ body | .styled _ body | .colored _ _ body | .role _ body | .link _ body
+  | .decorated _ body | .onSteps _ body | .footnote _ body | .cited _ _ body
+  | .altSteps _ body _ => altRunsList out body.toList
+  | x@(.text _) | x@(.math _ _) | x@(.formula _ _ _) | x@(.label _) | x@(.ref _ _ _ _) | x@.fill
+  | x@(.hspace _ _) | x@(.rule _ _ _) | x@.pageNumber | x@.pageCount | x@(.linebreak _)
+  | x@(.strut _) | x@(.italicCorr _) | x@(.image _ _ _) | x@(.icon _ _) =>
+    match out.back? with
+    | some (.text t) => out.pop.push (.text (t ++ Ir.plainTextOne x))
+    | _ => out.push (.text (Ir.plainTextOne x))
+
+private def altRunsList (out : Array Ir.AltRun) : List Inline → Array Ir.AltRun
+  | [] => out
+  | x :: rest => altRunsList (altRunsOne out x) rest
+
+end
+
+/-- A markdown image's alternative from its elaborated text: its runs where it holds a citation,
+its plain words otherwise. -/
+private def altOfInlines (xs : Array Inline) : Ir.Alt :=
+  let runs := altRunsList #[] xs.toList
+  if runs.any (· matches .cite ..) then .citing runs else Ir.Alt.declare (Ir.plainText xs)
+
 /-- `\includegraphics` and `\animategraphics`; an animation ships its static
 poster with its playback named as lost. -/
 private def imageArm (ctx : Ctx) (raws : Array Raw) (i : Nat)
-    (pos : Pos) (animated : Bool) :
+    (pos : Pos) (animated : Bool)
+    (el : (sub : Array Raw) → rawWeightList sub.toList < sliceWeight raws i → EM (Array Inline)) :
     EM (Option Inline × { j : Nat // i < j }) := do
   let j0 := skipSpaces raws (i + 1)
   have hj0 := skipSpaces_ge raws (i + 1)
@@ -3213,7 +3258,17 @@ private def imageArm (ctx : Ctx) (raws : Array Raw) (i : Nat)
       (trigger := "\\animategraphics") (recovery := some .ignored) (output := some .html)
   let src := argText ctx (args.getD (if animated then 1 else 0) #[])
   recordImageSpan ctx src pos
-  return (some (.image src opts.spec opts.alt), next)
+  -- A markdown image's citations in its alternative cite where the image stands.
+  let alt ← match (if spelledSurface ctx == .markdown then citedAltAt raws j0 else none) with
+    | some k =>
+      match hk : raws[k]? with
+      | some (.group body _) =>
+        if hik : i ≤ k then
+          pure (altOfInlines (← el body (body_lt_slice hk (by simp only [rawWeight]; omega) hik)))
+        else pure opts.alt
+      | _ => pure opts.alt
+    | none => pure opts.alt
+  return (some (.image src opts.spec alt), next)
 
 /-- `\\faIcon`'s option run: only `label = ...` is modelled, overriding the
 icon's default text alternative. -/
@@ -5264,6 +5319,7 @@ private def elabInlinesCtrl (ctx : Ctx) (raws : Array Raw) (i : Nat)
     elabInlinesFrom ctx raws j acc ""
   else if name == "includegraphics" || name == "animategraphics" then
     let (node, ⟨j, hj⟩) ← imageArm ctx raws i pos (name == "animategraphics")
+      fun sub _hsub => elabInlinesCore ctx sub
     let acc := flushText acc sb
     let acc := match node with | some x => acc.push x | none => acc
     have _ : sliceWeight raws j < sliceWeight raws i := sliceWeight_lt raws h hj

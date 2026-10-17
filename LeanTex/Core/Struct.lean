@@ -85,8 +85,8 @@ def Leaf.altCensus (out : Array (Option String × Alt)) :
 /-- Whether a structure element holds the leaf: every leaf but a decorative image or picture. -/
 @[expose] public def Leaf.held : Leaf → Bool
   | .image _ .decorative | .picture .decorative => false
-  | .image _ .undeclared | .image _ (.described _) | .picture .undeclared
-  | .picture (.described _) | .text _ | .linebreak => true
+  | .image _ .undeclared | .image _ (.described _) | .image _ (.citing _) | .picture .undeclared
+  | .picture (.described _) | .picture (.citing _) | .text _ | .linebreak => true
 
 /-- What a kind contributes to the outline census: an outline heading its level. -/
 def Kind.outlineEmit (out : Array Ir.HeadingLevel) : Kind → Array Ir.HeadingLevel

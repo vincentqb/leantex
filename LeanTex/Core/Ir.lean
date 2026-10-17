@@ -2838,12 +2838,33 @@ public def CiteForm.command (f : CiteForm) : String :=
   | .normal => some .m
   | _ => none
 
+/-- What an unresolved citation shows for each key, as LaTeX renders an undefined citation. -/
+public def citeMark : String := "?"
+
+/-- The text an unresolved citation shows: one mark per key, comma separated. -/
+public def citeMarks (keys : Array String) : String :=
+  String.intercalate ", " (keys.toList.map fun _ => citeMark)
+
+/-- One run of a text alternative: words, or a citation its bibliography sets, with the text its
+style prints once the list is read. -/
+public inductive AltRun where
+  | text (s : String)
+  | cite (form : CiteForm) (keys : Array String) (ink : Option String)
+  deriving Repr, BEq, Inhabited
+
+/-- What a run of an alternative says: its words, or its citation's text, its marks unset. -/
+public def AltRun.said : AltRun → String
+  | .text s => s
+  | .cite _ keys ink => ink.getD (citeMarks keys)
+
 /-- The text alternative a non-text object declares (WCAG 2.2 SC 1.1.1, ISO 32000-2 §14.9.3). -/
 public inductive Alt where
   | undeclared
   | decorative
   | described (text : String)
-  deriving Repr, BEq, DecidableEq, Inhabited
+  /-- An alternative holding citations, which the reference list sets. -/
+  | citing (runs : Array AltRun)
+  deriving Repr, BEq, Inhabited
 
 /-- A described alternative from text; blank text stays `.undeclared`. -/
 public def Alt.declare (s : String) : Alt :=
@@ -2852,13 +2873,32 @@ public def Alt.declare (s : String) : Alt :=
 /-- The text a described alternative carries, `""` for the other two. -/
 public def Alt.text : Alt → String
   | .described t => t
+  | .citing runs => String.join (runs.toList.map AltRun.said)
   | .undeclared | .decorative => ""
+
+/-- The citations an alternative holds, each with its form and keys. -/
+public def Alt.cites : Alt → Array (CiteForm × Array String)
+  | .citing runs => runs.filterMap fun r => match r with
+    | .cite form keys _ => some (form, keys)
+    | .text _ => none
+  | .undeclared | .decorative | .described _ => #[]
+
+/-- The keys of a run's citation whose text no list has set. -/
+@[expose] public def AltRun.pending : AltRun → Array String
+  | .cite _ keys none => keys
+  | .cite _ _ (some _) | .text _ => #[]
+
+/-- The keys of an alternative's citations whose text no list has set. -/
+@[expose] public def Alt.pendingKeys : Alt → Array String
+  | .citing runs => runs.flatMap AltRun.pending
+  | .undeclared | .decorative | .described _ => #[]
 
 /-- An alternative as the IR dump spells it after its node: nothing when undeclared. -/
 public def Alt.dumpSuffix : Alt → String
   | .undeclared => ""
   | .decorative => " artifact"
   | .described t => s!" alt {t.quote}"
+  | .citing runs => s!" alt {(String.join (runs.toList.map AltRun.said)).quote} citing"
 
 public theorem Alt.declare_nonempty (s t : String) (h : Alt.declare s = .described t) :
     ¬ t.isEmpty := by
@@ -3159,12 +3199,6 @@ starred. -/
 @[expose] public def fragmentTop (frag : String) : Bool :=
   frag.isEmpty || frag.map Char.toLower == "top"
 
-/-- What an unresolved citation shows for each key, as LaTeX renders an undefined citation. -/
-public def citeMark : String := "?"
-
-/-- The text an unresolved citation shows: one mark per key, comma separated. -/
-public def citeMarks (keys : Array String) : String :=
-  String.intercalate ", " (keys.toList.map fun _ => citeMark)
 
 /-- How far a footnote mark's baseline stands above its line's, per mille of
 the surrounding size. -/
@@ -8839,6 +8873,7 @@ public def Pic.Picture.alternative (pic : Pic.Picture) : Alt :=
   | .undeclared => Alt.declare pic.said
   | .decorative => .decorative
   | .described t => .described t
+  | .citing runs => .citing runs
 
 public theorem role_plaintext (n : String) (body : Array Inline) :
     plainTextOne (.role n body) = plainTextList body.toList := by rfl
@@ -16958,6 +16993,7 @@ private def setAltFill (alt : String) : Alt → Alt
   | .undeclared => Alt.declare alt
   | .decorative => .decorative
   | .described t => .described t
+  | .citing runs => .citing runs
 
 private theorem setAltFill_fixed_point (alt : String) (a : Alt) (h : a ≠ .undeclared) :
     setAltFill alt a = a := by
@@ -16965,6 +17001,7 @@ private theorem setAltFill_fixed_point (alt : String) (a : Alt) (h : a ≠ .unde
   | undeclared => exact absurd rfl h
   | decorative => rfl
   | described _ => rfl
+  | citing _ => rfl
 
 /-- Give every non-text object with no alternative yet this text, as a
 `figure` caption names what it captions. -/
@@ -17749,6 +17786,7 @@ public def _root_.LeanTex.Core.Diag.mentions (d : Diag) (p : Pending) : Bool :=
 @[expose] public def pendingLeaf : Inline → Array Unresolved
   | .ref key _ _ none => #[.ref key]
   | .cite _ keys => keys.map .cite
+  | .image _ _ alt => alt.pendingKeys.map .cite
   | _ => #[]
 
 /-- The fold step of the census: each node's leaf appended. -/

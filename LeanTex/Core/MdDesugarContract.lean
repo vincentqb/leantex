@@ -50,7 +50,7 @@ public structure Vocab where
 /-- The vocabulary the elaborator reads markdown in. -/
 @[expose] public def vocabulary : Vocab where
   ctrls := ["emph", "textbf", "texttt", "href", "includegraphics", "item", "hypertarget", "\\",
-    "toprule", "midrule", "bottomrule"] ++ citeCtrls
+    "toprule", "midrule", "bottomrule", "footnote"] ++ citeCtrls
   bridged := ([Ir.HeadingLevel.title, .h1, .h2, .h3, .h4, .h5, .h6].map Parse.headingControl) ++
     [Parse.markdownBibControl, Parse.citeSetupMark]
   envs := ["quote", "itemize", "enumerate", Parse.markdownDisclosureEnv, Parse.markdownTableEnv]
@@ -472,6 +472,17 @@ private theorem inlRaws_adm (file : String) : (x : Inl) → Adm d (inlRaws file 
         rcases hr with rfl | rfl
         · exact ctrl_mem _ _ (by simp [vocabulary])
         · exact adm_group _ _ (adm_text _ p))
+  | .note label body p => by
+    simp only [inlRaws]
+    split
+    · exact adm_text _ p
+    · have h := inlListRaws_adm file body.toList #[] #[] (adm_empty (d := d))
+      exact adm_lit (by
+        intro r hr
+        simp only [List.mem_cons, List.not_mem_nil, or_false] at hr
+        rcases hr with rfl | rfl
+        · exact ctrl_mem _ _ (by simp [vocabulary])
+        · exact adm_group _ _ h)
   | .soft _ => by
     simp only [inlRaws]
     exact adm_lit (by simp [Vocab.admits])
@@ -528,6 +539,18 @@ private theorem inlRaws_adm (file : String) : (x : Inl) → Adm d (inlRaws file 
       · exact adm_group _ _ h)
   | .image dest title alt p => by
     simp only [inlRaws]
+    split
+    · have h := inlListRaws_adm file alt.toList #[] #[] (adm_empty (d := d))
+      exact adm_lit (by
+        intro r hr
+        simp only [List.mem_cons, List.not_mem_nil, or_false] at hr
+        rcases hr with rfl | rfl | rfl | rfl | rfl | rfl
+        · exact ctrl_mem _ _ (by simp [vocabulary])
+        · rfl
+        · rfl
+        · exact adm_group _ _ h
+        · rfl
+        · exact adm_group _ _ (adm_text dest p))
     split
     · exact adm_lit (by
         intro r hr
@@ -816,6 +839,9 @@ private theorem blkRaws_adm (file : String) (refs : Array Raw) (hrefs : Adm d re
   | .refs _ => by
     simp only [blkRaws]
     exact hrefs
+  | .note _ _ _ => by
+    simp only [blkRaws]
+    exact adm_empty
 
 private theorem blkListRaws_adm (file : String) (refs : Array Raw) (hrefs : Adm d refs) :
     (l : List Blk) → (out : Array Raw) →
@@ -990,6 +1016,9 @@ private theorem blkRaws_starts (file : String) (refs : Array Raw) (hrefs : Start
   | refs p =>
     simp only [blkRaws]
     exact hrefs
+  | note label body p =>
+    simp only [blkRaws]
+    exact Or.inl rfl
 
 private theorem blkListRaws_starts (file : String) (refs : Array Raw) (hrefs : Starts refs) :
     (l : List Blk) → (out : Array Raw) →

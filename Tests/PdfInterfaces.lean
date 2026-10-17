@@ -137,6 +137,7 @@ example (alternative : Ir.Alt) :
     (Pdf.altElem #[Pdf.rootElem] 0 0 alternative).back?.bind (·.alt) =
       match alternative with
       | .described text => some text
+      | .citing runs => some (Ir.Alt.citing runs).text
       | .undeclared | .decorative => none :=
   Pdf.altElem_root_alt_exact alternative
 
@@ -144,7 +145,7 @@ example (elements : Array Pdf.StructElem) (parent leaf : Nat) (alternative : Ir.
     (Pdf.altElem elements parent leaf alternative).size =
       elements.size + match alternative with
       | .decorative => 0
-      | .undeclared | .described _ => 1 :=
+      | .undeclared | .described _ | .citing _ => 1 :=
   Pdf.altElem_size_exact elements parent leaf alternative
 
 example : True := by

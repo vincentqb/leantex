@@ -118,6 +118,7 @@ public def figureElem (k : Nat) (alt : Option String) : StructElem :=
 element when decorative. -/
 public def altElem (es : Array StructElem) (parent k : Nat) : Ir.Alt → Array StructElem
   | .described t => (pushElem es parent (figureElem k (some t))).1
+  | a@(.citing _) => (pushElem es parent (figureElem k (some a.text))).1
   | .undeclared => (pushElem es parent (figureElem k none)).1
   | .decorative => es
 
@@ -125,7 +126,7 @@ public theorem altElem_size_exact (es : Array StructElem) (parent k : Nat) (a : 
     (altElem es parent k a).size =
       es.size + match a with
         | .decorative => 0
-        | .undeclared | .described _ => 1 := by
+        | .undeclared | .described _ | .citing _ => 1 := by
   cases a <;> simp [altElem, pushElem]
 
 /-- A laid-out paragraph's line as a reader of the file gets it, where it bounds a scope: its words
@@ -178,6 +179,7 @@ public theorem altElem_root_alt_exact (a : Ir.Alt) :
     (altElem #[rootElem] 0 0 a).back?.bind (·.alt) =
       match a with
       | .described text => some text
+      | .citing runs => some (Ir.Alt.citing runs).text
       | .undeclared | .decorative => none := by
   cases a <;> simp [altElem, pushElem, figureElem, rootElem]
 
@@ -335,10 +337,12 @@ private theorem headingsOf_altElem (es : Array StructElem) (parent k : Nat) (a :
 public theorem pdf_alt_projects (es : Array StructElem) (parent k : Nat) :
     (∀ t, (altElem es parent k (.described t)).back? =
         some { figureElem k (some t) with parent := some parent }) ∧
+    (∀ runs, (altElem es parent k (.citing runs)).back? =
+        some { figureElem k (some (Ir.Alt.citing runs).text) with parent := some parent }) ∧
     (altElem es parent k .undeclared).back? =
         some { figureElem k none with parent := some parent } ∧
     altElem es parent k .decorative = es := by
-  refine ⟨fun t => ?_, ?_, rfl⟩ <;> simp [altElem, pushElem]
+  refine ⟨fun t => ?_, fun runs => ?_, ?_, rfl⟩ <;> simp [altElem, pushElem]
 
 private theorem headingsOf_bibEntryElems (es : Array StructElem) (parent : Nat) (openList : Option Nat) :
     headingsOf (bibEntryElems es parent openList).1 = headingsOf es := by

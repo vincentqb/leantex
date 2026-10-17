@@ -307,7 +307,9 @@ private def citeFreeOne : Ir.Inline → Bool
   | .altSteps _ active otherwise =>
     citeFreeList active.toList && citeFreeList otherwise.toList
   | .footnote _ body => citeFreeList body.toList
-  | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
+  | .image _ _ (.citing _) => false
+  | .image _ _ .undeclared | .image _ _ .decorative | .image _ _ (.described _) => true
+  | .text _ | .math _ _ | .formula _ _ _ | .icon _ _
   | .label _ | .ref _ _ _ _
   | .fill | .hspace _ _ | .rule _ _ _ | .strut _ | .italicCorr _ | .pageNumber | .pageCount | .linebreak _ => true
 
@@ -1103,6 +1105,8 @@ private def citedKeys (doc : Ir.Doc) (keep : Ir.CiteForm → Bool := fun _ => tr
   (Ir.foldDoc
     (fun acc x => match x with
       | .cite f keys => if keep f then keys.foldl addKey acc else acc
+      | .image _ _ alt => alt.cites.foldl (fun acc (f, keys) =>
+          if keep f then keys.foldl addKey acc else acc) acc
       | _ => acc) (#[], {}) doc).1
 
 /-- `\nocite{*}`: every `.bib` entry but an `@xdata` one enters the list where
@@ -1673,6 +1677,30 @@ public theorem sortResolved_sorted_citation (xs : List Resolved) :
   simp [SortOrder.compare, Nat.compare_eq_gt] at hab ⊢
   omega
 
+/-- A run of an alternative set: a citation its style's text. -/
+private def resolveRun (p : CitePunct) (find : Resolver) : Ir.AltRun → Ir.AltRun
+  | .cite form keys _ => .cite form keys (some (Ir.plainText (renderCite p form (keys.map find))))
+  | .text t => .text t
+
+/-- An alternative's citations set: each its style's text. -/
+private def resolveAlt (p : CitePunct) (find : Resolver) : Ir.Alt → Ir.Alt
+  | .citing runs => .citing (runs.map (resolveRun p find))
+  | .undeclared => .undeclared
+  | .decorative => .decorative
+  | .described t => .described t
+
+private theorem pendingKeys_resolveAlt (p : CitePunct) (find : Resolver) (a : Ir.Alt) :
+    (resolveAlt p find a).pendingKeys = #[] := by
+  cases a with
+  | citing runs =>
+    have hr : ∀ r, (resolveRun p find r).pending = #[] := by
+      intro r; cases r <;> rfl
+    rcases runs with ⟨l⟩
+    simp only [resolveAlt, Ir.Alt.pendingKeys]
+    apply Array.toList_inj.mp
+    simp [hr]
+  | undeclared | decorative | described _ => rfl
+
 mutual
 
 /-- The citation rewrite: every `.cite` node becomes its rendering under the
@@ -1699,7 +1727,7 @@ private def resolveInline (p : CitePunct) (find : Resolver)
   | .text s => out.push (.text s)
   | .math d src => out.push (.math d src)
   | .formula d src body => out.push (.formula d src body)
-  | .image src size alt => out.push (.image src size alt)
+  | .image src size alt => out.push (.image src size (resolveAlt p find alt))
   | .icon c label => out.push (.icon c label)
   | .label k => out.push (.label k)
   | .ref k form text anchor => out.push (.ref k form text anchor)
@@ -1784,7 +1812,11 @@ private theorem resolveInline_id (p : CitePunct) (find : Resolver)
   | .footnote n body =>
     rw [citeFreeOne] at h
     rw [resolveInline, resolveInlines_id p find body.toList h]
-  | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
+  | .image src size alt =>
+    cases alt with
+    | citing _ => simp [citeFreeOne] at h
+    | undeclared | decorative | described _ => rw [resolveInline]; rfl
+  | .text _ | .math _ _ | .formula _ _ _ | .icon _ _
   | .label _ | .ref _ _ _ _
   | .fill | .hspace _ _ | .rule _ _ _ | .strut _ | .italicCorr _ | .pageNumber | .pageCount | .linebreak _ =>
     rw [resolveInline]
@@ -2717,7 +2749,15 @@ private theorem citeFree_census (x : Ir.Inline) (h : citeFreeOne x = true) :
     | some a =>
       simp only [Ir.pendingLeaf, Array.append_empty] at hq
       exact .inl hq
-  | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _ | .label _
+  | .image _ _ alt =>
+    intro acc q hq
+    cases alt with
+    | citing _ => simp [citeFreeOne] at h
+    | undeclared | decorative | described _ =>
+      simp only [Ir.foldInline, Ir.pendingStep, Ir.pendingLeaf, Ir.Alt.pendingKeys, Array.map_empty,
+        Array.append_empty] at hq
+      exact .inl hq
+  | .text _ | .math _ _ | .formula _ _ _ | .icon _ _ | .label _
   | .fill | .hspace _ _ | .rule _ _ _ | .strut _ | .italicCorr _ | .pageNumber | .pageCount
   | .linebreak _ =>
     intro acc q hq
@@ -2909,7 +2949,13 @@ private theorem resolveInline_pending (p : CitePunct) (find : Resolver) (x : Ir.
     | some a =>
       simp only [Ir.pendingLeaf, Array.append_empty] at h
       exact .inl h
-  | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _ | .label _
+  | .image src size alt =>
+    intro acc q h
+    simp only [resolveInline, Array.toList_push, List.nil_append,
+      Ir.foldInlineList, Ir.foldInline, Ir.pendingStep, Ir.pendingLeaf, pendingKeys_resolveAlt,
+      Array.map_empty, Array.append_empty] at h
+    exact .inl h
+  | .text _ | .math _ _ | .formula _ _ _ | .icon _ _ | .label _
   | .fill | .hspace _ _ | .rule _ _ _ | .strut _ | .italicCorr _ | .pageNumber | .pageCount | .linebreak _ =>
     intro acc q h
     simp only [resolveInline, Array.toList_push, List.nil_append,

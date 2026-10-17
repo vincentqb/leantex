@@ -58,6 +58,10 @@ public theorem alt_text_agree (floor : String) (a : Ir.Alt) (t : String)
     simp only [Option.some.injEq] at h
     subst h
     simp [HtmlDoc.pictureAltAttrs, HtmlDoc.imgAltAttrs, HtmlDoc.attrOf?, HtmlDoc.firstNonBlank, ht]
+  | citing runs =>
+    simp only [Option.some.injEq] at h
+    subst h
+    simp [HtmlDoc.pictureAltAttrs, HtmlDoc.imgAltAttrs, HtmlDoc.attrOf?, HtmlDoc.firstNonBlank, ht]
   | undeclared => contradiction
   | decorative => contradiction
 

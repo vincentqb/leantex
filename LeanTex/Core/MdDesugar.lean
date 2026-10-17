@@ -276,6 +276,7 @@ private def inlText1 : Inl → String
   | .cite items _ => " ".intercalate (items.toList.map fun it => "@" ++ it.key)
   | .citeText _ body _ => inlTextList "" body.toList
   | .math _ src _ => src
+  | .note _ _ _ => ""
 
 private def inlTextList (acc : String) : List Inl → String
   | [] => acc
@@ -410,6 +411,7 @@ private def citesInl : Inl → Bool
   | .strong body _ => citesInls body.toList
   | .link _ _ body _ => citesInls body.toList
   | .image _ _ _ _ => false
+  | .note _ body _ => citesInls body.toList
   | .text .. | .code .. | .anchor .. | .soft _ | .hard _ | .math .. => false
 
 private def citesInls : List Inl → Bool
@@ -429,6 +431,7 @@ private def spellsCiteInl : Inl → Bool
   | .strong body _ => spellsCiteInls body.toList
   | .link _ _ body _ => spellsCiteInls body.toList
   | .image _ _ alt _ => spellsCiteInls alt.toList
+  | .note _ body _ => spellsCiteInls body.toList
   | .text .. | .code .. | .anchor .. | .soft _ | .hard _ | .math .. => false
 
 private def spellsCiteInls : List Inl → Bool
@@ -472,6 +475,11 @@ mutual
 private def inlRaws (file : String) (dialect : Dialect) : Inl → Array Raw × Array Diag
   | .text s p => (textRaws s p, #[])
   | .code s p => (#[.ctrl "texttt" p, .group (textRaws s p) p], #[])
+  -- A footnote's content sets where its reference stands; one the reader left unfilled is its text.
+  | .note label body p =>
+    if body.isEmpty then (textRaws s!"[^{label}]" p, #[]) else
+    let (rs, ds) := inlListRaws file dialect #[] #[] body.toList
+    (#[.ctrl "footnote" p, .group rs p], ds)
   | .math display src p =>
     match (if dialect.formulas then docMathRaw display src p else none) with
     | some r => (#[r], #[])
@@ -508,10 +516,12 @@ a formula, or holds a control or a character the math model does not read" p])
     let ds := if title.isEmpty then #[] else
       #[routeDegraded file "image-title"
         "an image's title is not carried: the image sets without it" p]
-    let ds := if citesInls alt.toList then ds.push (routeDegraded file "image-alt-cite"
-        "a citation in an image's text alternative sets as its text, and its work is not cited" p)
-      else ds
-    if text.isEmpty then
+    -- An alternative holding a citation rides its `alt` key's group, which the elaborator reads.
+    if citesInls alt.toList then
+      let (rs, ads) := inlListRaws file dialect #[] #[] alt.toList
+      (#[.ctrl "includegraphics" p, .sym '[' p, .word "alt=" p, .group rs p, .sym ']' p,
+        .group (textRaws dest p) p], ds ++ ads)
+    else if text.isEmpty then
       (#[.ctrl "includegraphics" p, .group (textRaws dest p) p], ds)
     else
       let (src, ds) := match altSource text with
@@ -759,6 +769,7 @@ without a language" p
   -- The metadata block is read whole by `desugar`, before the blocks.
   | .metadata _ _ => (#[], #[])
   | .refs _ => (refs, #[])
+  | .note _ _ _ => (#[], #[])
 
 private def blkListRaws (file : String) (refs : Array Raw) (dialect : Dialect) (out : Array Raw)
     (ds : Array Diag) :
@@ -888,6 +899,7 @@ private def inlSpelling : Inl → String
   | .cite items _ =>
     "[" ++ "; ".intercalate (items.toList.map fun ⟨key, _, _, _⟩ => "@" ++ key) ++ "]"
   | .math display src _ => if display then "$$" ++ src ++ "$$" else "$" ++ src ++ "$"
+  | .note label _ _ => "[^" ++ label ++ "]"
 
 private def inlsSpelling (acc : String) : List Inl → String
   | [] => acc
@@ -936,6 +948,7 @@ private def texInl (file : String) (dialect : Dialect) (st : TexStream) : Inl �
   | x@(.code _ p) => (st.spelled? file x p).getD (st.keep file (inlRaws file dialect x) p)
   | x@(.image _ _ _ p) => (st.spelled? file x p).getD (st.keep file (inlRaws file dialect x) p)
   | x@(.math _ _ p) => (st.spelled? file x p).getD (st.keep file (inlRaws file dialect x) p)
+  | x@(.note _ _ p) => (st.spelled? file x p).getD (st.keep file (inlRaws file dialect x) p)
   | x@(.anchor _ p) => (st.spelled? file x p).getD (st.keep file (inlRaws file dialect x) p)
   | x@(.cite _ p) => (st.spelled? file x p).getD (st.keep file (inlRaws file dialect x) p)
 
@@ -975,6 +988,7 @@ private def texBlk (file : String) (refs : Array Raw) (dialect : Dialect) (st : 
   | b@(.lean _ p) => st.keep file (blkRaws file refs dialect b) p
   | b@(.metadata _ p) => st.keep file (blkRaws file refs dialect b) p
   | b@(.refs p) => st.keep file (blkRaws file refs dialect b) p
+  | b@(.note _ _ p) => st.keep file (blkRaws file refs dialect b) p
 
 private def texBlks (file : String) (refs : Array Raw) (dialect : Dialect) (st : TexStream) :
     List Blk → TexStream
@@ -1007,7 +1021,8 @@ private def refsAtOne : Blk → Option Pos
   | .quote body _ => refsAt body.toList
   | .disclosure _ _ body _ => refsAt body.toList
   | .list _ _ _ items _ => refsAtItems items.toList
-  | .para .. | .heading .. | .code .. | .rule _ | .table .. | .lean .. | .metadata .. => none
+  | .para .. | .heading .. | .code .. | .rule _ | .table .. | .lean .. | .metadata .. | .note .. =>
+    none
 
 private def refsAt : List Blk → Option Pos
   | [] => none
@@ -1037,6 +1052,7 @@ private def citesBlk (inl : List Inl → Bool) : Blk → Bool
   -- A Lean division's documentation view cites into the document's list.
   | .lean attrs _ => attrs.any fun (k, v) =>
     k == "show" && ((v.splitOn ",").map (·.trimAscii.toString)).contains "docs"
+  | .note _ body _ => citesBlks inl body.toList
   | .code .. | .rule _ | .metadata .. | .refs _ => false
 
 private def citesBlks (inl : List Inl → Bool) : List Blk → Bool

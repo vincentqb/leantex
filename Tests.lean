@@ -142,6 +142,7 @@ import Tests.MarkdownCite
 import Tests.LeanCite
 import Tests.BibEdges
 import Tests.DocCiteEdges
+import Tests.MdNoteEdges
 import Tests.InputUse
 import Tests.XparseProvide
 import Tests.XparseIgnoredOperands
@@ -414,6 +415,9 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   Tests.DocCiteEdges.mathChecks ref
   Tests.DocCiteEdges.flankChecks ref
   Tests.DocCiteEdges.caseFoldChecks ref
+  Tests.MdNoteEdges.altChecks ref
+  Tests.MdNoteEdges.noteChecks ref
+  Tests.MdNoteEdges.noteTwinChecks ref
   Tests.LeanCite.selfDocChecks ref
   markdownInputHtmlChecks ref
   inputUseChecks ref

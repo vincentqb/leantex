@@ -15,7 +15,7 @@ open LeanTex.Core LeanTex.Core.Ir
   | .image src size alt =>
     match alt, titles.find? (·.1 == src) with
     | .undeclared, some (_, t) => .image src size (Alt.declare t)
-    | .undeclared, none | .decorative, _ | .described _, _ => x
+    | .undeclared, none | .decorative, _ | .described _, _ | .citing _, _ => x
   | .text _ | .math _ _ | .formula _ _ _ | .styled _ _ | .colored _ _ _ | .located _ _
   | .role _ _ | .link _ _ | .label _ | .ref _ _ _ _ | .decorated _ _ | .fill | .hspace _ _
   | .rule _ _ _ | .pageNumber | .pageCount | .linebreak _ | .strut _ | .italicCorr _

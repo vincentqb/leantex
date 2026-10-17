@@ -705,6 +705,21 @@ private def opensInlineMath : List Inline → Bool
     | _ => false
   | _ => false
 
+/-- An alternative's runs as the twin spells them: its words escaped and each citation in Pandoc's
+syntax, one with none marked unspelled before its text. -/
+private def altSpelling (pipes : Bool) (runs : Array Ir.AltRun) : String :=
+  runs.zipIdx.foldl (fun acc (r, i) => match r with
+    | .text t =>
+      let escaped := escapeText pipes true t
+      acc ++ escaped
+    | .cite f keys ink =>
+      let after := match runs[i + 1]? with
+        | some (.text t) => t
+        | _ => ""
+      match citeSpelling pipes f keys acc after [] with
+      | some (spelled, _) => acc ++ spelled
+      | none => acc ++ unspelled ++ ink.getD (Ir.citeMarks keys)) ""
+
 mutual
 
 /-- Inline content onto `acc`: meaning survives, decoration degrades. -/
@@ -719,7 +734,9 @@ private def inlineInto (site : Site) (cites : Bool) (acc : String) (after : Bool
   | .formula display src _ =>
     if display then acc ++ s!"$${src}$$" else acc ++ s!"${src}$"
   | .image src _ alt =>
-    let shown := escapeText (site != .cell) cites alt.text
+    let shown := match alt, cites with
+      | .citing runs, true => altSpelling (site != .cell) runs
+      | _, _ => escapeText (site != .cell) cites alt.text
     let dest := linkDest src
     acc ++ "![" ++ shown ++ "](" ++ dest ++ ")"
   -- An icon's markdown spelling is its text alternative.
@@ -1364,12 +1381,8 @@ private def noteDefs (cites : Bool) (body : Array Block) : String := Id.run do
   if notes.isEmpty then return ""
   let mut out := ""
   for (num, content) in notes do
-    -- A note's citation stands after the body, out of the order a list numbers in.
-    let moved := cites && Ir.foldInlines (fun b x => b || x matches .cite .. || x matches .cited ..)
-      false content
-    let written := inlineText content cites
-    let text := (if moved then unspelled else "") ++ written
-    out := out ++ "\n" ++ paraText s!"[^{num.getD 0}]: " "    " text ++ "\n"
+    -- The reader sets a definition at its reference, so a note's citation keeps its place.
+    out := out ++ "\n" ++ paraText s!"[^{num.getD 0}]: " "    " (inlineText content cites) ++ "\n"
   return out
 
 /-- A YAML scalar the twin's metadata writes: plain where the reader reads it so, else quoted. -/

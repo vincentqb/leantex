@@ -147,8 +147,8 @@ def mdCiteChecks (ref : IO.Ref (List String)) : IO Unit := do
     (keysOf d == ["a"] && hasStr (Ir.blocksText d.body) "@{c,d}" &&
       ds.any (·.subject == some "md:cite-key"))
   let (_, ds) := elabCited "An image ![see @a here](img.svg) end."
-  t "cite: a citation in an image's text alternative is named, its work uncited"
-    (ds.any (·.subject == some "md:image-alt-cite"))
+  t "cite: a citation in an image's text alternative names nothing"
+    (!ds.any (·.subject == some "md:image-alt-cite"))
   -- An included file reads citations where the TeX document's markdown package says to.
   let part := "Thanks to @octocat and [@a].\n"
   for (pre, opts, cites) in [("\\usepackage{markdown}", "", false),
@@ -200,9 +200,11 @@ bibliography ({repr twin})" ((citesOf (elabMd twin).1).isEmpty && !hasStr twin "
   let (d, _) := bibBuild (numbered "Body\\footnote{See \\citet{a}.} and \\citep{b}.")
     #[("works.bib", worksBib)]
   let twin := MarkdownDoc.emit d
-  t s!"twin: a citation in a footnote, which the twin writes after the body, sets the twin's \
-citations as their marks ({repr twin})"
-    (!hasStr twin "bibliography:" && hasStr twin "See Ash \\[[1](#ref-a)\\]")
+  let (back, _) := mdBibBuild twin #[("works.bib", worksBib)]
+  t s!"twin: a citation in a footnote is spelled, the note read back where its mark stands, so \
+the list keeps its numbers ({repr twin})"
+    (hasStr twin "bibliography:" && hasStr twin "[^1]: See @{a}." &&
+      inkText back.body == inkText d.body)
   let (d, _) := bibBuild (numbered "\\citep{a} and \\citep{b}.\n\n\\bibliography{works.bib}")
     #[("works.bib", worksBib)]
   t "twin: a document with two lists sets its citations as their marks"

@@ -156,6 +156,7 @@ import Tests.PaletteCover
 import Tests.UnusedSettings
 import Tests.BibEdges
 import Tests.DocCiteEdges
+import Tests.MdNoteEdges
 import Tests.LeanProseReading
 import Tests.AmsMath
 import Tests.CoveredSteps
@@ -1993,6 +1994,13 @@ def reports : List Report := [
     accept := ["main's binary at e5afdc63 on invented probes: a document's reference, collapsed and full links and a reference image set their brackets and the definition lines as text; a Lean page's own definition of a cited key's label set as text, the key cited inside it and where the label stood, a label alike to a key in case stayed bracketed, a bracket before braces stayed text and a formula's bracket cited; this tree's binary links each reference and hides each definition, links the defined key's label to the author's address, the label alike in case to the key's entry under its own text, cites before the braces and sets the formula",
       "md4c's own source built with doc-gen4's flags (GitHub's dialect, LaTeX math spans, no HTML) over the docstring probe with the definitions doc-gen4 appends: the author's definition links its label, the label alike in case links to the key's entry, the bracket before braces is a reference and the formula's bracket no link, as this tree reads them; a formula between dollars that whitespace, punctuation (Unicode's P and S categories) or the text's edge flanks on their outer sides takes no link, citation or emphasis inside, a link read before it keeps its dollar and emphasis closing before it takes the dollar it passes; md4c links a defined label that spells a citation, as Pandoc's commonmark_x reader does and this tree does, though md4c and commonmark_x show the label as its text where this tree reads the link's text, citing in it as Pandoc's markdown reader cites in a link's text, and md4c and Pandoc's commonmark reader read a dash underline under definitions alone as a thematic break, as this tree does; doc-gen4 reads formulas only in a Lean file's documentation, and this tree reads none in a shell or Python file's",
       "the CommonMark tier: link reference definitions' examples matching rise from 3 to 14, links' from 35 to 61, images' from 5 to 8 and emphasis's from 121 to 123, none falling"]
+    state := .guarded "e5afdc63" .before .author },
+  { id := "R210", date := "2026-10-17"
+    what := "a markdown image's text alternative holding a citation read its key, the work uncited; and the markdown reader read no footnote, so a document's references and definitions set as bracket text, and the twin of a document whose footnote held a citation set every citation as its marks, a footnote's citation read back after the body out of a numbered list's order"
+    pins := [check% Tests.MdNoteEdges.altChecks, check% Tests.MdNoteEdges.noteChecks,
+      check% Tests.MdNoteEdges.noteTwinChecks]
+    accept := ["main's binary at e5afdc63 on invented probes: an image's alternative with two citations set their keys as its name and named the loss, the works unlisted; a document's footnote references and definitions set as text; a TeX document citing in a footnote twinned every citation as its marks and its twin read the note back as a paragraph after the body",
+      "pandoc 3.12 over the probes: an alternative's citations print as the style sets them and their works are listed; a footnote's definition stands at the top level after a blank line or another definition, its label matched exactly, its first paragraph's wrapped lines and its indented paragraphs its own, an unused one warned of; this tree reads each so but a wrapped line left unindented, which it refuses as it refuses one in any container, and sets a note's paragraphs with a line break between, as a TeX note's paragraphs set"]
     state := .guarded "e5afdc63" .before .author }
 ]
 
