@@ -38,8 +38,8 @@ private theorem elabBlocksGo_group_alone (ctx : Ctx) (st : ESt) (body : Array Ra
     (hpar : body.any isParRaw = false) (hb : bodyIsBlock body = true) :
     (elabBlocksGo ctx #[.group body pos] 0 #[] #[] st.flowGen).run st =
       ((do
-        let inner ← groupBlocks ctx.palette (do
-          drainLoose ctx (← splicedFrameScope (some 0) (elabBlockScope ctx body)))
+        let inner ← groupBlocks ctx.palette
+          (splicedFrameScope (some 0) (elabBlockScope ctx body))
         elabBlocksGo ctx #[.group body pos] 1 (#[] ++ inner) #[] st.flowGen) :
         EM (Array Block)).run st := by
   have ha : isArgument #[] = false := by
@@ -111,8 +111,7 @@ public theorem elabBlocks_group_scope_id (ctx : Ctx) (st : ESt) (body : Array Ra
   have hrun := elabBlocks_scope ctx st #[.group body pos] hm hlen
   have hgo := elabBlocksGo_group_alone ctx (enterBodyScope st) body pos hm hp hpar hb
   rw [show (enterBodyScope st).flowGen = st.flowGen from rfl] at hgo
-  let act : EM (Array Block) := do
-    drainLoose ctx (← splicedFrameScope (some 0) (elabBlockScope ctx body))
+  let act := splicedFrameScope (some 0) (elabBlockScope ctx body)
   let s1 := (groupBlocks ctx.palette act).run (enterBodyScope st)
   have hpast := elabBlocksGo_end ctx s1.2 #[.group body pos] 1 (#[] ++ s1.1) st.flowGen hm
     (by simp)
