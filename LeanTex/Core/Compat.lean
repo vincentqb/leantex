@@ -2444,7 +2444,7 @@ private def natbibStyle (name : String) (notes : Option (Array Raw)) (args : Arr
 private def lineNumbers (name : String) (opt : Option String) (pos : Pos) : M (Array Raw) := do
   if name == "modulolinenumbers" then
     let n := (opt.bind (fun o => o.trimAscii.toString.toNat?)).getD 5
-    setting "\\modulolinenumbers" (.page #[(.modulo, toString (max 1 n))]) pos
+    return (← setting "\\modulolinenumbers" (.page #[(.modulo, toString (max 1 n))]) pos)
   let on := name != "nolinenumbers"
   if on then
     if let some n := opt then

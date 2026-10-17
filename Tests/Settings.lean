@@ -198,7 +198,7 @@ def nativeCarrierChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
   t "every control row's native carries whole"
     (Compat.ctrlRows.all fun row => match row.action with
       | .native s => whole s
-      | .tokens .. | .skip _ | .refuse .. | .discard .. | .inert => true)
+      | .tokens .. | .skip _ | .refuse .. | .discard .. | .inert | .lower .. => true)
 
 /-- A parameter set in a loaded style file ships the page its document spelling ships; only the
 diagnostic's severity moves. -/
