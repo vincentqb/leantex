@@ -415,17 +415,18 @@ public def resolveBibliography (file : String) (doc : Ir.Doc) (cv : Bib.FieldRea
     else
       missing := missing.push (src, path.toString)
   -- A missing file is named in the command that requested it, a biblatex list's as its resource.
-  let commandOf (src : String) : Option String :=
-    match (spanOf src).bind (·.pos.command) with
-    | some "\\printbibliography" => none
-    | _ => some "\\bibliography"
+  let command : Option String :=
+    if (doc.citeSetup.map CiteDecl.biblatex).getD false then none else some "\\bibliography"
   let own := !(Ir.ownBibItemsBlocks doc.body).isEmpty
+  let shows := Ir.foldDoc (fun b x => b || match x with
+    | .cite f _ => f.cmd != .nocite
+    | _ => false) false doc
   let missingDiags := missing.map fun (src, looked) =>
     if doc.surface == .markdown then
-      DriverDiag.bibMissingMarkdown (!sources.isEmpty) src looked (spanOf src)
-    else if sources.isEmpty then DriverDiag.bibMissing src looked (spanOf src) (commandOf src) own
-    else DriverDiag.bibMissingAmong src looked (spanOf src) (commandOf src)
-  let (doc, applyDiags) := Bib.apply sources doc cv sites
+      DriverDiag.bibMissingMarkdown (!sources.isEmpty) src looked (spanOf src) shows
+    else if sources.isEmpty then DriverDiag.bibMissing src looked (spanOf src) command own shows
+    else DriverDiag.bibMissingAmong src looked (spanOf src) command
+  let (doc, applyDiags) := Bib.apply sources doc cv sites (missing.map (·.1))
   return (Bib.resolveListRefs labels doc, diags ++ missingDiags ++ applyDiags, ledger)
 
 /-- The document's data requests fulfilled before elaboration: each named `.bib` read

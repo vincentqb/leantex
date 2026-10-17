@@ -31,6 +31,13 @@ def quoteChecks (ref : IO.Ref (List String)) : IO Unit := do
       (hasStr (body src) want)
   t s!"tex quotes: literal text keeps its quote ({repr (body "\\texttt{'s}")})"
     (hasStr (body "\\texttt{'s}") "'s")
+  t s!"tex quotes: literal text keeps its quote after an object \
+({repr (body "\\texttt{\\emph{y}'s}")})"
+    (hasStr (body "\\texttt{\\emph{y}'s}") "y's")
+  let deck := Ir.blocksText (elabStr ("\\documentclass{beamer}\n\\begin{document}\n\\begin{frame}\n\
+\\texttt<2>{\\emph{y}'s} z\n\\end{frame}\n\\end{document}\n")).1.body
+  t s!"tex quotes: a monospace selector's step keeps its quote after an object ({repr deck})"
+    (hasStr deck "'s")
   -- Markdown and a Lean file's documentation keep Pandoc's reading: after a citation a single quote
   -- a later one pairs with opens.
   let md := Ir.blocksText (elabMd (worksMeta ++ "See [@a]'quoted' here.\n")).1.body
@@ -85,6 +92,34 @@ author = {Ash,  Ada}}\n"
   let (_, ds) := bibBuild (citingDoc "See \\cite{dup}." (files := "a,c")) #[("a", a), ("c", reordered)]
   t "bib duplicate: a repeat setting the same fields in another order or wrapping names nothing"
     (!ds.any (·.kind == .W0450))
+  for (note, what) in [("{}", "an empty field"), ("{   }", "a blank field")] do
+    let (_, ds) := bibBuild (citingDoc "See \\cite{dup}." (files := "a,c"))
+      #[("a", a), ("c", (a.dropEnd 2).toString ++ s!", note = {note}}\n")]
+    t s!"bib duplicate: a repeat adding only {what} names nothing" (!ds.any (·.kind == .W0450))
+  let parent (title : String) : String :=
+    s!"@proceedings\{parent, editor = \{Cole, Cy}, title = \{{title}}, booktitle = \{{title}}, \
+publisher = \{Example Press}, year = \{2001}}\n"
+  let child := "@inproceedings{child, author = {Roe, Sam}, title = {Child Paper}, crossref = {parent}, \
+pages = {1--2}}\n"
+  let (d, ds) := bibBuild (citingDoc "See \\cite{child}." (files := "a,b"))
+    #[("a", child ++ parent "First Proceedings"), ("b", parent "Second Proceedings")]
+  t s!"bib duplicate: a repeated parent a cited entry inherits from is named \
+({repr (inkText d.body)})"
+    (hasStr (inkText d.body) "First Proceedings" &&
+      ds.any fun x => x.kind == .W0450 && x.subject == some "bibkey:parent")
+  let fieldCiting := "@misc{f, title = {Field Notes}, note = {See \\cite{dup}}, year = {2001}}\n"
+  let (_, ds) := bibBuild (citingDoc "See \\cite{f}." (files := "a,b"))
+    #[("a", a ++ fieldCiting), ("b", entry "dup" "Second Notes")]
+  t "bib duplicate: a repeated key a field alone cites is named"
+    (ds.any fun x => x.kind == .W0450 && x.subject == some "bibkey:dup")
+  let member (title year : String) : String :=
+    s!"@article\{m1, author = \{Ash, Ada}, title = \{{title}}, journal = \{J}, year = \{{year}}}\n"
+  let blx := "\\documentclass{article}\n\\usepackage{biblatex}\n\\addbibresource{a.bib}\n\
+\\addbibresource{b.bib}\n\\begin{document}\nSee \\cite{s}.\n\\printbibliography\n\\end{document}\n"
+  let (_, ds) := bibBuild blx #[("a", "@set{s, entryset = {m1}}\n" ++ member "First Member" "2001"),
+    ("b", member "Other Member" "2003")]
+  t s!"bib duplicate: a repeated member of a cited set is named ({repr (ds.map (·.code))})"
+    (ds.any fun x => x.kind == .W0450 && x.subject == some "bibkey:m1")
 
 /-- Invented entries over the name forms alpha.bst labels: von parts, braces, initials, a key, an
 organization, an empty author, missing and odd years. -/
@@ -171,6 +206,29 @@ def missingChecks (ref : IO.Ref (List String)) : IO Unit := do
 ({repr (ods.map fun d => (d.code, d.message))})"
     (ods.any (fun d => d.kind == .W0503 && hasStr d.message "own entries" && d.carries.isEmpty) &&
       ods.any (fun d => d.kind == .W0351 && d.subject == some "a"))
+  let macroBlx := "\\documentclass{article}\n\\usepackage{biblatex}\n\\addbibresource{absent.bib}\n\
+\\newcommand{\\refs}{\\printbibliography}\n\\begin{document}\nA claim \\cite{a}.\n\\refs\n\\end{document}\n"
+  let (mdoc, _, mspans) := Elab.runRawsSpanned "doc.tex"
+    (Parse.parse "doc.tex" (Lex.lex "doc.tex" macroBlx).1).1
+  let (_, mds, _) ← Input.resolveBibliography "doc.tex" mdoc Bib.plainReading #[] mspans.bib
+  t s!"bib missing: a biblatex list a macro prints names its file as a resource \
+({repr (mds.map fun d => (d.message, d.help))})"
+    (mds.map (·.kind) == #[.W0503] && mds.all fun d =>
+      hasStr d.message "resource 'absent" && !d.help.any (hasStr · "\\bibliography"))
+  let quiet := (elabStr (citingDoc "No citation here." (files := "absent"))).1
+  let (_, qds, _) ← Input.resolveBibliography "doc.tex" quiet Bib.plainReading #[]
+  t s!"bib missing: with no citation the file's loss claims no mark \
+({repr (qds.map fun d => (d.message, d.carries))})"
+    (qds.map (·.kind) == #[.W0503] && qds.all fun d =>
+      !hasStr d.message "every citation" && d.carries.isEmpty)
+  IO.FS.withTempDir fun dir => do
+    let dir ← IO.FS.realPath dir
+    IO.FS.createDirAll (dir / "absent.bib")
+    let (_, uds, _) ← Input.resolveBibliography (dir / "doc.tex").toString doc Bib.plainReading #[]
+    t s!"bib missing: a file there but unreadable leaves each citation's mark named \
+({repr (uds.map (·.code))})"
+      (uds.any (·.kind == .E0001) && !uds.any (·.kind == .W0503) &&
+        (uds.filter (·.kind == .W0351)).size == 2)
   let font ← IO.FS.realPath "testdata/corpus/fonts/OpenSans-Regular.ttf"
   IO.FS.withTempDir fun dir => do
     let dir ← IO.FS.realPath dir

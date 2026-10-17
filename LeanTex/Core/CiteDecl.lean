@@ -125,6 +125,9 @@ public def last? (ds : Array CiteDecl) (k : Key) : Option String :=
     | .set k' v => if k' == k then some v else acc
     | .word _ | .option _ => acc
 
+/-- Whether a setup is biblatex's, whose files are the resources its list prints. -/
+public def biblatex (ds : Array CiteDecl) : Bool := ds.contains (.word .biblatex)
+
 /-- The natbib package options `ds` declares, where it declares nothing else. -/
 public def options? (ds : Array CiteDecl) : Option (Array String) :=
   ds.mapM fun

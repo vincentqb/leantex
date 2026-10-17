@@ -2114,12 +2114,14 @@ private def settleFieldCites (run : Array String → ListRun) (canon : String �
     settleFieldCites run canon left more
 termination_by uncited.length
 
-/-- An entry's fields as BibTeX sets them, white space runs one space, in name order. -/
+/-- An entry's fields as BibTeX sets them, white space runs one space, in name order, one empty$
+reads as missing left out. -/
 private def setFields (e : Entry) : List (String × String) :=
   let one (v : String) : String :=
     " ".intercalate ((v.splitOn " ").flatMap (·.splitOn "\n") |>.flatMap (·.splitOn "\t")
       |>.flatMap (·.splitOn "\r") |>.filter (!·.isEmpty))
-  (e.fields.toList.map fun (k, v) => (k, one v)).mergeSort fun a b => a.1 ≤ b.1
+  ((e.fields.toList.map fun (k, v) => (k, one v)).filter (!·.2.isEmpty)).mergeSort
+    fun a b => a.1 ≤ b.1
 
 /-- Whether a repeated entry sets what the first does, its fields in any order. -/
 private def sameEntry (a b : Entry) : Bool := a.kind == b.kind && setFields a == setFields b
@@ -2127,7 +2129,7 @@ private def sameEntry (a b : Entry) : Bool := a.kind == b.kind && setFields a ==
 /-- The document's citations and reference lists resolved
 against its `.bib` sources. -/
 private def analyse (sources : Array (String × String)) (doc : Ir.Doc) (rd : FieldReading)
-    (sites : Array Ir.CiteSite) :
+    (sites : Array Ir.CiteSite) (absent : Array String) :
     CitePunct × Resolver × Array Ir.BibItem × Array Diag × Array (String × Ir.PicSrc) × Nat :=
     Id.run do
   let requested := Ir.bibRefs doc
@@ -2203,14 +2205,6 @@ private def analyse (sources : Array (String × String)) (doc : Ir.Doc) (rd : Fi
       if keys.contains a || m.contains a then m else m.insert a e.key
   let canon (k : String) : String := aliases.getD k k
   let cited := expandStar entries ((citedKeys doc).map canon)
-  -- A key named twice loses the later entry where the list sets the key.
-  let listed : Std.HashSet String := cited.foldl (·.insert ·) {}
-  for (k, at_, first) in repeats do
-    if listed.contains k then
-      diags := diags.push (Diag.of .W0450 s!"'{k}' is already the key of an earlier entry; the \
-        first entry stands" (some at_)
-        (help := "one entry per key: delete this one or give it a key of its own")
-        (subject := some ("bibkey:" ++ k)) (detail := some s!"the first at {first}"))
   let shown := (citedKeys doc (·.cmd != .nocite)).foldl (·.insert ·) (∅ : Std.HashSet String)
   -- Each `@set` member is listed as its own entry; the set is cited as its first member.
   let sets : Std.HashMap String (Array String) := if proc != .biber then {} else
@@ -2268,6 +2262,27 @@ private def analyse (sources : Array (String × String)) (doc : Ir.Doc) (rd : Fi
       rendered := #[], readSets := #[] }
   let cited := run.cited
   let db := run.db
+  -- A key named twice loses the later entry where the list reads the key: cited, listed, or
+  -- lending its fields by crossref or xdata.
+  let reads : Std.HashSet String := Id.run do
+    let mut seen : Std.HashSet String := {}
+    let mut todo : Array String := cited ++ db.list
+    for _ in [0:todo.size + entries.size + 1] do
+      match todo.back? with
+      | none => break
+      | some k =>
+        todo := todo.pop
+        unless seen.contains k do
+          seen := seen.insert k
+          if let some e := prepared.own.get? k then
+            todo := todo ++ ((e.refsBy "crossref" ++ e.refsBy "xdata").filter (!seen.contains ·)).toArray
+    return seen
+  for (k, at_, first) in repeats do
+    if reads.contains k then
+      diags := diags.push (Diag.of .W0450 s!"'{k}' is already the key of an earlier entry; the \
+        first entry stands" (some at_)
+        (help := "one entry per key: delete this one or give it a key of its own")
+        (subject := some ("bibkey:" ++ k)) (detail := some s!"the first at {first}"))
   let findEntry (k : String) : Option Entry := db.entries.get? k
   let (p, resolved, rendered, readSets) :=
     if own.isEmpty then (p, run.resolved, run.rendered, run.readSets)
@@ -2509,10 +2524,9 @@ private def analyse (sources : Array (String × String)) (doc : Ir.Doc) (rd : Fi
             (subject := some s!"bibdate:{r.key}:month"))
   let citedBy : Std.HashMap String String := (fieldCites rendered).foldl (init := {})
     fun m (k, by_) => if m.contains (canon k) then m else m.insert (canon k) by_
-  -- premise: Tests.BibEdges.missingChecks — a list no file of which was read is the missing
-  -- files' loss, its citations' marks with it
-  let unread := own.isEmpty && !requested.isEmpty &&
-    requested.all fun src => !sources.any (·.1 == src)
+  -- premise: Tests.BibEdges.missingChecks — a list every file of which the driver named absent is
+  -- those files' loss, its citations' marks with it
+  let unread := own.isEmpty && !requested.isEmpty && requested.all absent.contains
   let siteOf : Std.HashMap (String × Bool) Ir.CiteSite := sites.foldl (init := {}) fun m c =>
     if m.contains (c.key, c.nocite) then m else m.insert (c.key, c.nocite) c
   unless (requested.isEmpty && own.isEmpty) || unread do
@@ -2565,8 +2579,9 @@ public def demoteRepeated (prior ds : Array Diag) : Array Diag :=
 /-- The document's citations and reference lists resolved against its `.bib`
 sources, every field read through `rd`. -/
 public def apply (sources : Array (String × String)) (doc : Ir.Doc)
-    (rd : FieldReading) (sites : Array Ir.CiteSite := #[]) : Ir.Doc × Array Diag :=
-  match analyse sources doc rd sites with
+    (rd : FieldReading) (sites : Array Ir.CiteSite := #[]) (absent : Array String := #[]) :
+    Ir.Doc × Array Diag :=
+  match analyse sources doc rd sites absent with
   | (p, find, items, diags, pictures, notes) =>
     (((resolveDoc p find items doc).addPictures pictures).withListNotes notes, diags)
 
@@ -3173,11 +3188,11 @@ public theorem resolveDoc_no_cite (p : CitePunct) (find : Resolver) (items : Arr
   · exact hc
 
 public theorem apply_no_cite (sources : Array (String × String)) (doc : Ir.Doc)
-    (rd : FieldReading) {sites : Array Ir.CiteSite} :
-    ∀ u ∈ Ir.pendingNodes (apply sources doc rd sites).1, u.isCite = false := by
+    (rd : FieldReading) {sites : Array Ir.CiteSite} {absent : Array String} :
+    ∀ u ∈ Ir.pendingNodes (apply sources doc rd sites absent).1, u.isCite = false := by
   intro u hu
   unfold apply at hu
-  rcases h : analyse sources doc rd sites with ⟨p, find, items, diags, pictures, notes⟩
+  rcases h : analyse sources doc rd sites absent with ⟨p, find, items, diags, pictures, notes⟩
   rw [h, Ir.pendingNodes_withListNotes, Ir.pendingNodes_addPictures] at hu
   exact resolveDoc_no_cite p find items doc u hu
 
