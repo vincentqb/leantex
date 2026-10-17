@@ -1019,8 +1019,9 @@ private def ownsBelow (sels : List String) (peer own : String) (after : Option S
     [.boundary (follow s!" + .{skipClass} + p" ++ ", " ++ follow s!" + .{skipClass} + .{skipClass} + p") v]).getD []
 
 /-- A document skip as a box of its own, carrying the skip's natural width as `--skip`. -/
-private def skipNode (size : Int) (g : Ir.Sourced SymGlue) (grow : Option Nat := none) : Node :=
-  let v := g.value.width.resolve size (size / 2)
+private def skipNode (size ex : Int) (g : Ir.Sourced SymGlue) (grow : Option Nat := none) :
+    Node :=
+  let v := g.value.width.resolve size ex
   let rem := milliRem (screenMilli size v.natAbs)
   let len := if v < 0 then s!"-{rem}" else rem
   let len := match g.token.bind tokenVar? with
@@ -1052,17 +1053,25 @@ private def listSpace (m : Nat) : String := s!"calc({milliRem m} + var(--parskip
 /-- The `\parskip` term a list's space folds in, alone. -/
 private def texParskip : Option String := some "var(--parskip, 0rem)"
 
-/-- A list skip's natural width at the page's size, an ex half of it as a skip box reads one. -/
-public def listSkipSp (size : Int) (g : SymGlue) : Int := g.width.resolve size (size / 2)
+/-- The x-height an ex reads on the page at `size`: the shipped body face's, as the PDF and the
+browser read it, else half an em, CSS's own where the page ships no face. -/
+public def exAt (fonts : Option Font.FontSet) (size : Int) : Int :=
+  match fonts with
+  | some fs => fs.body.xHeight * size / fs.body.unitsPerEm
+  | none => size / 2
+
+/-- A list skip's natural width at the page's size and x-height (`exAt`). -/
+public def listSkipSp (size ex : Int) (g : SymGlue) : Int := g.width.resolve size ex
 
 /-- One list level's `\topsep`, `\itemsep` and `\parsep`, in screen milli-rem. -/
-public def listLevelGaps (size : Int) (sk : Ir.ListSkips) : Nat × Nat × Nat :=
-  (screenMilli size (listSkipSp size sk.topsep), screenMilli size (listSkipSp size sk.itemsep),
-   screenMilli size (listSkipSp size sk.parsep))
+public def listLevelGaps (size ex : Int) (sk : Ir.ListSkips) : Nat × Nat × Nat :=
+  (screenMilli size (listSkipSp size ex sk.topsep),
+   screenMilli size (listSkipSp size ex sk.itemsep),
+   screenMilli size (listSkipSp size ex sk.parsep))
 
 /-- A list level's `\@topsepadd` where the list opens a paragraph, in screen milli-rem. -/
-public def listOpenGap (size : Int) (sk : Ir.ListSkips) (partopsep : SymGlue) : Nat :=
-  screenMilli size (listSkipSp size sk.topsep + listSkipSp size partopsep)
+public def listOpenGap (size ex : Int) (sk : Ir.ListSkips) (partopsep : SymGlue) : Nat :=
+  screenMilli size (listSkipSp size ex sk.topsep + listSkipSp size ex partopsep)
 
 /-- One list level's rules, `pre` reaching the level through an item ancestor per enclosing list. -/
 private def listLevelRules (pre : String) (g : Nat × Nat × Nat) (opened : Nat)
@@ -1108,22 +1117,23 @@ private def listSetLevelRules (pre cls : String) (g : Nat × Nat × Nat) (opened
 
 /-- The rules of the lists declaring their own spacing, each spacing at the class's three levels:
 the level's skips under what it declares (`Ir.listSpacing`). -/
-public def listSetRules (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens)
+public def listSetRules (l : Ir.ListLineage) (size ex : Int) (tokens : Ir.Tokens)
     (sets : List Ir.ListSet) (disc : String := "details[open]") : List GapRule :=
   sets.zipIdx.flatMap fun (set, i) => [1, 2, 3].flatMap fun n =>
     match Ir.listSpacing l size n tokens set with
     | some (sk, pts) =>
       let nested := match Ir.listSkips l size (n + 1) with
         | some nsk =>
-          ((listLevelGaps size nsk).1, listOpenGap size nsk (Ir.partopsepFor l size (n + 1) tokens))
+          ((listLevelGaps size ex nsk).1,
+            listOpenGap size ex nsk (Ir.partopsepFor l size (n + 1) tokens))
         | none => (0, 0)
       listSetLevelRules (String.join (List.replicate (n - 1) itemAncestor)) (listSetClass i)
-        (listLevelGaps size sk) (listOpenGap size sk pts) nested disc
+        (listLevelGaps size ex sk) (listOpenGap size ex sk pts) nested disc
     | none => []
 
 /-- The own `\parsep` of the quotation kinds a page holds on their paragraphs, standing over every
 level's and spacing's rule; the web's quotations keep the page's. -/
-public def quoteKindRules (l : Ir.ListLineage) (size : Int) (kinds : List Ir.QuoteKind) :
+public def quoteKindRules (l : Ir.ListLineage) (size ex : Int) (kinds : List Ir.QuoteKind) :
     List GapRule :=
   if l == .web || kinds.isEmpty then [] else
   -- a list or quotation opening a quotation stands in its item's label, leaving no skip below it
@@ -1134,7 +1144,7 @@ public def quoteKindRules (l : Ir.ListLineage) (size : Int) (kinds : List Ir.Quo
    else []) ++
   kinds.filterMap fun k =>
     (k.own l).parsep.map fun g =>
-      .parskip s!"blockquote.{k.name} > *" (milliRem (screenMilli size (listSkipSp size g)))
+      .parskip s!"blockquote.{k.name} > *" (milliRem (screenMilli size (listSkipSp size ex g)))
 
 /-- One block of a closing spine: a list with its declared spacing or a quotation, opened inside a
 paragraph or not. -/
@@ -1149,26 +1159,26 @@ mutual
 -- conserves: none — reads the skip a closing list or quotation leaves, no content
 /-- The spine a block closing an item hangs down each last item, and the natural width of the skip
 it leaves: its own, or where larger the one it closes on, a list's with its `\parsep` less `outer`. -/
-public def blockSpine (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens) (level : Nat)
+public def blockSpine (l : Ir.ListLineage) (size ex : Int) (tokens : Ir.Tokens) (level : Nat)
     (outer : Int) (inPar : Bool) : Block → Option (List SpineStep × Int)
   | .list _ s items =>
     (Ir.listSpacing l size level tokens s).map fun (sk, pts) =>
-      let own := listSkipSp size sk.topsep + (if inPar then 0 else listSkipSp size pts)
-      let parsep := listSkipSp size sk.parsep
+      let own := listSkipSp size ex sk.topsep + (if inPar then 0 else listSkipSp size ex pts)
+      let parsep := listSkipSp size ex sk.parsep
       let step : SpineStep := { quote := false, set := s, inPar }
-      match itemsSpine l size tokens (level + 1) parsep items.toList with
+      match itemsSpine l size ex tokens (level + 1) parsep items.toList with
       | some (rest, e) => (step :: rest, max (e + parsep - outer) own)
       | none => ([step], own)
   | .quote q body =>
     (Ir.quoteSpacing l size level tokens q).map fun (sk, pts) =>
-      let own := listSkipSp size sk.topsep + (if inPar then 0 else listSkipSp size pts)
-      let parsep := listSkipSp size sk.parsep
+      let own := listSkipSp size ex sk.topsep + (if inPar then 0 else listSkipSp size ex pts)
+      let parsep := listSkipSp size ex sk.parsep
       let step : SpineStep := { quote := true, set := q.spacing, inPar }
-      match lastSpine l size tokens (level + 1) parsep body.toList with
+      match lastSpine l size ex tokens (level + 1) parsep body.toList with
       | some (rest, e) => (step :: rest, max (e + parsep - outer) own)
       | none => ([step], own)
   | .role n body =>
-    if n == Ir.inParagraphRole then roleSpine l size tokens level outer body.toList else none
+    if n == Ir.inParagraphRole then roleSpine l size ex tokens level outer body.toList else none
   | .para _ | .lines _ | .center _ | .ragged .. | .spaced .. | .link .. | .onSteps .. | .only ..
   | .section .. | .abstract _ | .titled .. | .disclosure .. | .equation .. | .verbatim ..
   | .algorithm .. | .columns _ | .altSteps .. | .note _ | .nav .. | .logo _ | .pagebreak
@@ -1176,24 +1186,24 @@ public def blockSpine (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens) (le
   | .float .. | .bibliography .. => none
 
 /-- The spine the last item closes on. -/
-public def itemsSpine (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens) (level : Nat)
+public def itemsSpine (l : Ir.ListLineage) (size ex : Int) (tokens : Ir.Tokens) (level : Nat)
     (outer : Int) : List (Array Block) → Option (List SpineStep × Int)
   | [] => none
-  | [item] => lastSpine l size tokens level outer item.toList
-  | _ :: rest => itemsSpine l size tokens level outer rest
+  | [item] => lastSpine l size ex tokens level outer item.toList
+  | _ :: rest => itemsSpine l size ex tokens level outer rest
 
 /-- The spine the last block hangs, none from an item's one block, which stands in its label. -/
-public def lastSpine (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens) (level : Nat)
+public def lastSpine (l : Ir.ListLineage) (size ex : Int) (tokens : Ir.Tokens) (level : Nat)
     (outer : Int) : List Block → Option (List SpineStep × Int)
   | [] => none
   | [_] => none
-  | [_, b] => blockSpine l size tokens level outer false b
-  | _ :: rest => lastSpine l size tokens level outer rest
+  | [_, b] => blockSpine l size ex tokens level outer false b
+  | _ :: rest => lastSpine l size ex tokens level outer rest
 
 /-- The spine an in-paragraph wrapper's one block hangs. -/
-public def roleSpine (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens) (level : Nat)
+public def roleSpine (l : Ir.ListLineage) (size ex : Int) (tokens : Ir.Tokens) (level : Nat)
     (outer : Int) : List Block → Option (List SpineStep × Int)
-  | [b] => blockSpine l size tokens level outer true b
+  | [b] => blockSpine l size ex tokens level outer true b
   | _ => none
 
 end
@@ -1227,20 +1237,20 @@ private def NestedClose.owed (c : NestedClose) : Bool :=
 /-- The nested closes a body's lists, quotations and abstracts hold that `NestedClose.owed` keeps,
 each once, ordered so a deeper level's rule, a declared side's and a longer spine's follow the
 rules they refine; `abstractNests` counts an abstract as a quotation. -/
-public def nestedClosesOf (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens)
+public def nestedClosesOf (l : Ir.ListLineage) (size ex : Int) (tokens : Ir.Tokens)
     (abstractNests : Bool) (body : Array Block) : List NestedClose :=
   let note (level : Nat) (parent : CloseParent) (s : Ir.ListSet) (inPar : Bool) (outer : Int)
       (items : Array (Array Block)) (acc : Array NestedClose × Std.HashSet NestedClose) :
       Array NestedClose × Std.HashSet NestedClose :=
     items.zipIdx.foldl (fun acc (item, i) =>
-      match lastSpine l size tokens (level + 1) outer item.toList with
+      match lastSpine l size ex tokens (level + 1) outer item.toList with
       | some (spine, close) =>
         let c : NestedClose := { level, parent, outer := s, outerInPar := inPar, spine, close
                                  last := i + 1 == items.size }
         if !c.owed || acc.2.contains c then acc else (acc.1.push c, acc.2.insert c)
       | none => acc) acc
   let parsepAt (level : Nat) (s : Ir.ListSet) : Int :=
-    ((Ir.listSpacing l size level tokens s).map fun (sk, _) => listSkipSp size sk.parsep).getD 0
+    ((Ir.listSpacing l size level tokens s).map fun (sk, _) => listSkipSp size ex sk.parsep).getD 0
   let walk : Ir.CtxFold (Nat × Bool) (Array NestedClose × Std.HashSet NestedClose) := {
     openBlock := fun (depth, inPar) acc b =>
       match b with
@@ -1248,7 +1258,7 @@ public def nestedClosesOf (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens)
         (note (depth + 1) .list s inPar (parsepAt (depth + 1) s) items acc, (depth + 1, false))
       | .quote q body =>
         let parsep := ((Ir.quoteSpacing l size (depth + 1) tokens q).map fun (sk, _) =>
-          listSkipSp size sk.parsep).getD 0
+          listSkipSp size ex sk.parsep).getD 0
         (note (depth + 1) (.quote q.kind) q.spacing inPar parsep #[body] acc, (depth + 1, false))
       | .abstract body =>
         if abstractNests then (note (depth + 1) .abstract {} false 0 #[body] acc, (depth + 1, false))
@@ -1269,7 +1279,7 @@ public def nestedClosesOf (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens)
 
 /-- The rules of a page's nested closes: the larger of a spine's skip and the item skip before the
 next item, and below what holds the last item its close as the page sets it. -/
-public def nestedCloseRules (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens)
+public def nestedCloseRules (l : Ir.ListLineage) (size ex : Int) (tokens : Ir.Tokens)
     (sets : List Ir.ListSet) (closes : List NestedClose) (disc : String := "details[open]") :
     List GapRule :=
   let index : Std.HashMap Ir.ListSet Nat := sets.zipIdx.foldl (fun m (s, i) => m.insert s i) {}
@@ -1302,14 +1312,14 @@ public def nestedCloseRules (l : Ir.ListLineage) (size : Int) (tokens : Ir.Token
       let ends := chain c.spine
       let close := screenMilli size c.close
       let own := screenMilli size
-        (listSkipSp size osk.topsep + (if c.outerInPar then 0 else listSkipSp size opts))
+        (listSkipSp size ex osk.topsep + (if c.outerInPar then 0 else listSkipSp size ex opts))
       -- `:has` admits no `:has` inside it, so the item and its close are one relative chain.
       let held (items : List String) : String :=
         s!":has({", ".intercalate (items.flatMap fun item =>
           [s!"> {item}{ends}", s!"> {item}{disc}:last-child > {ends}"])})"
       match c.parent, c.last with
       | .list, true =>
-        let parsep := screenMilli size (listSkipSp size osk.parsep)
+        let parsep := screenMilli size (listSkipSp size ex osk.parsep)
         let reskip := s!"max(calc({milliRem (close + parsep)} - var(--parskip, 0rem)), {milliRem own})"
         ownsBelow [pre ++ classed c.outer ++ opened c.outerInPar ++
             held ["li:last-child > ", "dd:last-child > "]]
@@ -1318,9 +1328,9 @@ public def nestedCloseRules (l : Ir.ListLineage) (size : Int) (tokens : Ir.Token
         let lastSel := s!":has(> {ends}, > {disc}:last-child > {ends})"
         let outerSel := pre ++ classed c.outer
         [.boundary s!"{outerSel} > li{lastSel} + {itemSubject}, {outerSel} > dd{lastSel} + dt"
-          (listSpace (max close (screenMilli size (listSkipSp size osk.itemsep))))]
+          (listSpace (max close (screenMilli size (listSkipSp size ex osk.itemsep))))]
       | .quote _, _ =>
-        let parsep := screenMilli size (listSkipSp size osk.parsep)
+        let parsep := screenMilli size (listSkipSp size ex osk.parsep)
         let reskip := s!"max(calc({milliRem (close + parsep)} - var(--parskip, 0rem)), {milliRem own})"
         ownsBelow [pre ++ quoteClassed c.outer ++ opened c.outerInPar ++ held [""]]
           s!"calc({reskip} + var(--parskip, 0rem))" reskip texParskip
@@ -1331,28 +1341,30 @@ public def nestedCloseRules (l : Ir.ListLineage) (size : Int) (tokens : Ir.Token
 
 /-- The list rules a page's class owes, `\@list⟨n⟩` for levels one to three; the web lineage
 owes none. -/
-public def listRules (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens)
+public def listRules (l : Ir.ListLineage) (size ex : Int) (tokens : Ir.Tokens)
     (disc : String := "details[open]") : List GapRule :=
   let spaces (n : Nat) : Nat × Nat := match Ir.listSkips l size n with
-    | some sk => ((listLevelGaps size sk).1, listOpenGap size sk (Ir.partopsepFor l size n tokens))
+    | some sk =>
+      ((listLevelGaps size ex sk).1, listOpenGap size ex sk (Ir.partopsepFor l size n tokens))
     | none => (0, 0)
   [1, 2, 3].flatMap fun n => match Ir.listSkips l size n with
     | some sk => listLevelRules (String.join (List.replicate (n - 1) itemAncestor))
-        (listLevelGaps size sk) (spaces n).2 (spaces (n + 1)) disc
+        (listLevelGaps size ex sk) (spaces n).2 (spaces (n + 1)) disc
     | none => []
 
 /-- A squeezed frame's list rules: the class's levels with beamer's `\itemsep0pt`. -/
-public def squeezeListRules (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens)
+public def squeezeListRules (l : Ir.ListLineage) (size ex : Int) (tokens : Ir.Tokens)
     (disc : String := "details[open]") : List GapRule :=
   let squeezed (n : Nat) : Option Ir.ListSkips :=
     (Ir.listSkips l size n).map fun sk => { sk with itemsep := {} }
   let spaces (n : Nat) : Nat × Nat := match squeezed n with
-    | some sk => ((listLevelGaps size sk).1, listOpenGap size sk (Ir.partopsepFor l size n tokens))
+    | some sk =>
+      ((listLevelGaps size ex sk).1, listOpenGap size ex sk (Ir.partopsepFor l size n tokens))
     | none => (0, 0)
   [1, 2, 3].flatMap fun n => match squeezed n with
     | some sk =>
       listLevelRules ("section.slide.squeeze " ++ String.join (List.replicate (n - 1) itemAncestor))
-        (listLevelGaps size sk) (spaces n).2 (spaces (n + 1)) disc
+        (listLevelGaps size ex sk) (spaces n).2 (spaces (n + 1)) disc
     | none => []
 
 /-- A lineage's list indents as CSS for the kernel's six levels, under the custom property of
@@ -1467,14 +1479,14 @@ private def gapAfterLists : List GapRule :=
 /-- The heading's follower takes no gap: the band below is the heading's own. -/
 private def headingFollowerRule : GapRule := .boundary ":is(h1, h2, h3, h4, h5, h6) + *" "0"
 
-/-- A skip register in force, as a print length; an `ex` part stands at zero. -/
-private def skipSp (size : Int) (tokens : Ir.Tokens) (name : String) : Int :=
-  (Ir.skipAmount tokens name).width.resolve size 0
+/-- A skip register in force, as a print length at the page's x-height (`exAt`). -/
+private def skipSp (size ex : Int) (tokens : Ir.Tokens) (name : String) : Int :=
+  (Ir.skipAmount tokens name).width.resolve size ex
 
 /-- A block's own space above it, `\medskipamount` and `\lineskip` (beamerinnerthemedefault.sty),
 in screen milli-rem. -/
-private def blockAboveMilli (size : Int) (tokens : Ir.Tokens) : Nat :=
-  screenMilli size (skipSp size tokens "medskipamount" + Ir.inkClearance)
+private def blockAboveMilli (size ex : Int) (tokens : Ir.Tokens) : Nat :=
+  screenMilli size (skipSp size ex tokens "medskipamount" + Ir.inkClearance)
 
 /-- What stands for a block at a frame's opening: the block, or the overlay step carrier it
 opens. -/
@@ -1483,9 +1495,9 @@ private def blockAt (edge : String) : String :=
     s!":is(.step, .step-set):has(> .step-end > section.block:{edge}))"
 
 /-- A block's boundaries: its space above, and `\smallskipamount` below its body box. -/
-private def blockRules (size : Int) (tokens : Ir.Tokens) (shaped : Bool) : List GapRule :=
-  let above := blockAboveMilli size tokens
-  let below := screenMilli size (skipSp size tokens "smallskipamount")
+private def blockRules (size ex : Int) (tokens : Ir.Tokens) (shaped : Bool) : List GapRule :=
+  let above := blockAboveMilli size ex tokens
+  let below := screenMilli size (skipSp size ex tokens "smallskipamount")
   -- tcolorbox's `beforeafter skip balanced=0.5\baselineskip`
   let balanced := milliRem (screenMilli size (Ir.rhythmQuantum size))
   let shapedRules : List GapRule := if !shaped then [] else
@@ -1506,13 +1518,13 @@ private def blockRules (size : Int) (tokens : Ir.Tokens) (shaped : Bool) : List 
   [.parskip "section.tcolorbox > *" "0rem"]
 
 /-- The boundaries beamer sets by adding where `\addvspace` would take the larger. -/
-private def beamerPairRules (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens) :
+private def beamerPairRules (l : Ir.ListLineage) (size ex : Int) (tokens : Ir.Tokens) :
     List GapRule :=
   match l, Ir.listSkips l size 1 with
   | .beamer, some sk =>
-    let opened := milliRem (listOpenGap size sk (Ir.partopsepFor l size 1 tokens))
-    let below := milliRem (screenMilli size (skipSp size tokens "smallskipamount"))
-    let above := milliRem (blockAboveMilli size tokens)
+    let opened := milliRem (listOpenGap size ex sk (Ir.partopsepFor l size 1 tokens))
+    let below := milliRem (screenMilli size (skipSp size ex tokens "smallskipamount"))
+    let above := milliRem (blockAboveMilli size ex tokens)
     let display := s!"var(--{Ir.displaySkipBelow}, {displayGapRem})"
     let triv := "." ++ roleClass Ir.trivlistRole
     let top := ":not(li, dd, blockquote) > "
@@ -1536,12 +1548,13 @@ private def beamerPairRules (l : Ir.ListLineage) (size : Int) (tokens : Ir.Token
 public def blockGapRules (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens)
     (shaped : Bool := false) (squeezed : Bool := false) (disc : String := "details[open]")
     (sets : List Ir.ListSet := []) (closes : List NestedClose := [])
-    (kinds : List Ir.QuoteKind := []) : List GapRule :=
-  gapResets ++ gapBeforeLists ++ blockRules size tokens shaped ++ thmRules l size ++
-    listRules l size tokens disc ++ (if squeezed then squeezeListRules l size tokens disc else []) ++
-    listSetRules l size tokens sets disc ++ quoteKindRules l size kinds ++
-    nestedCloseRules l size tokens sets closes disc ++ gapAfterLists ++ beamerPairRules l size tokens ++
-    [skipFollowerRule, headingFollowerRule]
+    (kinds : List Ir.QuoteKind := []) (ex : Int := size / 2) : List GapRule :=
+  gapResets ++ gapBeforeLists ++ blockRules size ex tokens shaped ++ thmRules l size ++
+    listRules l size ex tokens disc ++
+    (if squeezed then squeezeListRules l size ex tokens disc else []) ++
+    listSetRules l size ex tokens sets disc ++ quoteKindRules l size ex kinds ++
+    nestedCloseRules l size ex tokens sets closes disc ++ gapAfterLists ++
+    beamerPairRules l size ex tokens ++ [skipFollowerRule, headingFollowerRule]
 
 /-! ## Overlay carriers -/
 
@@ -1799,18 +1812,18 @@ public theorem GapRule.throughCarriers_isReset (pairs : List (Nat × Nat)) (r : 
 public def blockGapCss (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens)
     (pairs : List (Nat × Nat) := []) (shaped : Bool := false) (squeezed : Bool := false)
     (sets : List Ir.ListSet := []) (closes : List NestedClose := [])
-    (kinds : List Ir.QuoteKind := []) : String :=
+    (kinds : List Ir.QuoteKind := []) (ex : Int := size / 2) : String :=
   String.join ((blockGapRules l size tokens shaped squeezed (sets := sets) (closes := closes)
-    (kinds := kinds)).map fun r => (r.throughCarriers pairs).render)
+    (kinds := kinds) (ex := ex)).map fun r => (r.throughCarriers pairs).render)
 
 /-- The boundaries paper reads through a closed disclosure, whose body it sets. -/
 public def disclosurePrintGapCss (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens)
     (pairs : List (Nat × Nat) := []) (shaped : Bool := false) (squeezed : Bool := false)
     (sets : List Ir.ListSet := []) (closes : List NestedClose := [])
-    (kinds : List Ir.QuoteKind := []) : String :=
+    (kinds : List Ir.QuoteKind := []) (ex : Int := size / 2) : String :=
   let reads (m : String) : Bool := (m.splitOn "details").length > 1
-  String.join ((blockGapRules l size tokens shaped squeezed "details" sets closes kinds).filterMap
-    fun r =>
+  let rules := blockGapRules l size tokens shaped squeezed "details" sets closes kinds ex
+  String.join (rules.filterMap fun r =>
     match r.throughCarriers pairs "details" with
     | .boundary sel v =>
       let kept := (splitTop ',' sel).filter reads
@@ -1838,14 +1851,14 @@ private theorem listLevelRules_noReset (pre : String) (g : Nat × Nat × Nat) (o
   unfold listLevelRules
   split <;> split <;> split <;> rfl
 
-private theorem listRules_noReset (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens) :
-    (listRules l size tokens).all (fun r => !r.isReset) = true := by
+private theorem listRules_noReset (l : Ir.ListLineage) (size ex : Int) (tokens : Ir.Tokens) :
+    (listRules l size ex tokens).all (fun r => !r.isReset) = true := by
   simp only [listRules, List.all_flatMap, List.all_cons, List.all_nil, Bool.and_true,
     Bool.and_eq_true]
   refine ⟨?_, ?_, ?_⟩ <;> split <;> first | rfl | exact listLevelRules_noReset _ _ _ _
 
-private theorem beamerPairRules_noReset (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens) :
-    (beamerPairRules l size tokens).all (fun r => !r.isReset) = true := by
+private theorem beamerPairRules_noReset (l : Ir.ListLineage) (size ex : Int) (tokens : Ir.Tokens) :
+    (beamerPairRules l size ex tokens).all (fun r => !r.isReset) = true := by
   unfold beamerPairRules
   split
   · simp only [List.all_flatMap, List.all_eq_true]
@@ -1853,8 +1866,9 @@ private theorem beamerPairRules_noReset (l : Ir.ListLineage) (size : Int) (token
     split <;> split <;> simp [GapRule.isReset]
   · rfl
 
-private theorem squeezeListRules_noReset (l : Ir.ListLineage) (size : Int)
-    (tokens : Ir.Tokens) : (squeezeListRules l size tokens).all (fun r => !r.isReset) = true := by
+private theorem squeezeListRules_noReset (l : Ir.ListLineage) (size ex : Int)
+    (tokens : Ir.Tokens) :
+    (squeezeListRules l size ex tokens).all (fun r => !r.isReset) = true := by
   simp only [squeezeListRules, List.all_flatMap, List.all_cons, List.all_nil, Bool.and_true,
     Bool.and_eq_true]
   refine ⟨?_, ?_, ?_⟩ <;> split <;> first | rfl | exact listLevelRules_noReset _ _ _ _
@@ -1865,9 +1879,9 @@ private theorem listSetLevelRules_noReset (pre cls : String) (g : Nat × Nat × 
   unfold listSetLevelRules
   split <;> split <;> split <;> rfl
 
-private theorem listSetRules_noReset (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens)
+private theorem listSetRules_noReset (l : Ir.ListLineage) (size ex : Int) (tokens : Ir.Tokens)
     (sets : List Ir.ListSet) (disc : String) :
-    (listSetRules l size tokens sets disc).all (fun r => !r.isReset) = true := by
+    (listSetRules l size ex tokens sets disc).all (fun r => !r.isReset) = true := by
   simp only [listSetRules, List.all_flatMap, List.all_eq_true]
   intro _ _ _ _
   split
@@ -1875,8 +1889,9 @@ private theorem listSetRules_noReset (l : Ir.ListLineage) (size : Int) (tokens :
   · intro _ h
     cases h
 
-private theorem quoteKindRules_noReset (l : Ir.ListLineage) (size : Int) (kinds : List Ir.QuoteKind) :
-    (quoteKindRules l size kinds).all (fun r => !r.isReset) = true := by
+private theorem quoteKindRules_noReset (l : Ir.ListLineage) (size ex : Int)
+    (kinds : List Ir.QuoteKind) :
+    (quoteKindRules l size ex kinds).all (fun r => !r.isReset) = true := by
   unfold quoteKindRules
   split
   · rfl
@@ -1888,9 +1903,9 @@ private theorem quoteKindRules_noReset (l : Ir.ListLineage) (size : Int) (kinds 
     obtain ⟨g, -, rfl⟩ := Option.map_eq_some_iff.mp hk
     rfl
 
-private theorem nestedCloseRules_noReset (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens)
+private theorem nestedCloseRules_noReset (l : Ir.ListLineage) (size ex : Int) (tokens : Ir.Tokens)
     (sets : List Ir.ListSet) (closes : List NestedClose) (disc : String) :
-    (nestedCloseRules l size tokens sets closes disc).all (fun r => !r.isReset) = true := by
+    (nestedCloseRules l size ex tokens sets closes disc).all (fun r => !r.isReset) = true := by
   simp only [nestedCloseRules, List.all_flatMap, List.all_eq_true]
   intro _ _
   split
@@ -1904,30 +1919,30 @@ private theorem thmRules_noReset (l : Ir.ListLineage) (size : Int) :
   intro k _
   split <;> simp [ownsBelow, GapRule.isReset, texParskip]
 
-public theorem blockGap_owner_contract (l : Ir.ListLineage) (size : Int) (tokens : Ir.Tokens)
+public theorem blockGap_owner_contract (l : Ir.ListLineage) (size ex : Int) (tokens : Ir.Tokens)
     (shaped : Bool) (squeezed : Bool := false) (sets : List Ir.ListSet := [])
     (closes : List NestedClose := []) (kinds : List Ir.QuoteKind := []) :
     ((blockGapRules l size tokens shaped squeezed (sets := sets) (closes := closes)
-        (kinds := kinds)).dropWhile GapRule.isReset).all (fun r => !r.isReset) = true ∧
+        (kinds := kinds) (ex := ex)).dropWhile GapRule.isReset).all (fun r => !r.isReset) = true ∧
     (blockGapRules l size tokens shaped squeezed (sets := sets) (closes := closes)
-        (kinds := kinds)).getLast? =
+        (kinds := kinds) (ex := ex)).getLast? =
       some (.boundary ":is(h1, h2, h3, h4, h5, h6) + *" "0") := by
   have hbefore : gapBeforeLists.all (fun r => !r.isReset) = true := by decide
   have hafter : gapAfterLists.all (fun r => !r.isReset) = true := by decide
   have htail : [skipFollowerRule, headingFollowerRule].all (fun r => !r.isReset) = true := by
     decide
-  have hblock : (blockRules size tokens shaped).all (fun r => !r.isReset) = true := by
+  have hblock : (blockRules size ex tokens shaped).all (fun r => !r.isReset) = true := by
     cases shaped <;> simp [blockRules, ownsBelow, GapRule.isReset]
-  have hsq : (if squeezed then squeezeListRules l size tokens else []).all
+  have hsq : (if squeezed then squeezeListRules l size ex tokens else []).all
       (fun r => !r.isReset) = true := by
     cases squeezed
     · rfl
-    · exact squeezeListRules_noReset l size tokens
-  have hall : (gapBeforeLists ++ blockRules size tokens shaped ++ thmRules l size ++
-      listRules l size tokens ++ (if squeezed then squeezeListRules l size tokens else []) ++
-      listSetRules l size tokens sets ++ quoteKindRules l size kinds ++
-      nestedCloseRules l size tokens sets closes ++
-      gapAfterLists ++ beamerPairRules l size tokens ++
+    · exact squeezeListRules_noReset l size ex tokens
+  have hall : (gapBeforeLists ++ blockRules size ex tokens shaped ++ thmRules l size ++
+      listRules l size ex tokens ++ (if squeezed then squeezeListRules l size ex tokens else []) ++
+      listSetRules l size ex tokens sets ++ quoteKindRules l size ex kinds ++
+      nestedCloseRules l size ex tokens sets closes ++
+      gapAfterLists ++ beamerPairRules l size ex tokens ++
       [skipFollowerRule, headingFollowerRule]).all (fun r => !r.isReset) = true := by
     simp only [List.all_append, hbefore, hafter, htail, hblock, thmRules_noReset,
       listRules_noReset, beamerPairRules_noReset, hsq, listSetRules_noReset,
@@ -1938,16 +1953,16 @@ public theorem blockGap_owner_contract (l : Ir.ListLineage) (size : Int) (tokens
     exact hall
   · simp [blockGapRules, headingFollowerRule]
 
-public theorem blockGapThrough_owner_contract (l : Ir.ListLineage) (size : Int)
+public theorem blockGapThrough_owner_contract (l : Ir.ListLineage) (size ex : Int)
     (tokens : Ir.Tokens) (d : List (Nat × Nat)) (shaped : Bool) (squeezed : Bool := false)
     (sets : List Ir.ListSet := []) (closes : List NestedClose := []) (kinds : List Ir.QuoteKind := []) :
     (((blockGapRules l size tokens shaped squeezed (sets := sets) (closes := closes)
-        (kinds := kinds)).map (GapRule.throughCarriers d)).dropWhile GapRule.isReset).all
+        (kinds := kinds) (ex := ex)).map (GapRule.throughCarriers d)).dropWhile GapRule.isReset).all
           (fun r => !r.isReset) = true ∧
       ((blockGapRules l size tokens shaped squeezed (sets := sets) (closes := closes)
-        (kinds := kinds)).map (GapRule.throughCarriers d)).getLast? =
+        (kinds := kinds) (ex := ex)).map (GapRule.throughCarriers d)).getLast? =
         some ((GapRule.boundary ":is(h1, h2, h3, h4, h5, h6) + *" "0").throughCarriers d) := by
-  have hc := blockGap_owner_contract l size tokens shaped squeezed sets closes kinds
+  have hc := blockGap_owner_contract l size ex tokens shaped squeezed sets closes kinds
   have hp : (GapRule.isReset ∘ GapRule.throughCarriers d) = GapRule.isReset := by
     funext r
     exact GapRule.throughCarriers_isReset d r
@@ -1960,41 +1975,42 @@ public theorem blockGapThrough_owner_contract (l : Ir.ListLineage) (size : Int)
   · rw [List.getLast?_map, hc.2]
     rfl
 
-public theorem listGaps_agree (size : Int) (sk : Ir.ListSkips) (pt : SymGlue)
+public theorem listGaps_agree (size ex : Int) (sk : Ir.ListSkips) (pt : SymGlue)
     (hq : 0 < Ir.rhythmQuantum size)
-    (h0 : 0 ≤ listSkipSp size sk.topsep ∧ 0 ≤ listSkipSp size sk.itemsep ∧
-      0 ≤ listSkipSp size sk.parsep)
-    (hp : 0 ≤ listSkipSp size sk.topsep + listSkipSp size pt) :
+    (h0 : 0 ≤ listSkipSp size ex sk.topsep ∧ 0 ≤ listSkipSp size ex sk.itemsep ∧
+      0 ≤ listSkipSp size ex sk.parsep)
+    (hp : 0 ≤ listSkipSp size ex sk.topsep + listSkipSp size ex pt) :
     let h : Int := ((bodyLeadingMilli / 2 : Nat) : Int)
     let q := Ir.rhythmQuantum size
-    let g := listLevelGaps size sk
-    let o := listOpenGap size sk pt
-    ((g.1 : Int) * q ≤ listSkipSp size sk.topsep * h ∧
-      listSkipSp size sk.topsep * h < ((g.1 : Int) + 1) * q) ∧
-    ((g.2.1 : Int) * q ≤ listSkipSp size sk.itemsep * h ∧
-      listSkipSp size sk.itemsep * h < ((g.2.1 : Int) + 1) * q) ∧
-    ((g.2.2 : Int) * q ≤ listSkipSp size sk.parsep * h ∧
-      listSkipSp size sk.parsep * h < ((g.2.2 : Int) + 1) * q) ∧
-    ((o : Int) * q ≤ (listSkipSp size sk.topsep + listSkipSp size pt) * h ∧
-      (listSkipSp size sk.topsep + listSkipSp size pt) * h < ((o : Int) + 1) * q) :=
+    let g := listLevelGaps size ex sk
+    let o := listOpenGap size ex sk pt
+    ((g.1 : Int) * q ≤ listSkipSp size ex sk.topsep * h ∧
+      listSkipSp size ex sk.topsep * h < ((g.1 : Int) + 1) * q) ∧
+    ((g.2.1 : Int) * q ≤ listSkipSp size ex sk.itemsep * h ∧
+      listSkipSp size ex sk.itemsep * h < ((g.2.1 : Int) + 1) * q) ∧
+    ((g.2.2 : Int) * q ≤ listSkipSp size ex sk.parsep * h ∧
+      listSkipSp size ex sk.parsep * h < ((g.2.2 : Int) + 1) * q) ∧
+    ((o : Int) * q ≤ (listSkipSp size ex sk.topsep + listSkipSp size ex pt) * h ∧
+      (listSkipSp size ex sk.topsep + listSkipSp size ex pt) * h < ((o : Int) + 1) * q) :=
   ⟨screenMilli_between size _ hq h0.1, screenMilli_between size _ hq h0.2.1,
    screenMilli_between size _ hq h0.2.2, screenMilli_between size _ hq hp⟩
 
-public theorem listRules_web_exact (size : Int) (tokens : Ir.Tokens) :
-    listRules .web size tokens = [] := by
+public theorem listRules_web_exact (size ex : Int) (tokens : Ir.Tokens) :
+    listRules .web size ex tokens = [] := by
   simp only [listRules, Ir.listSkips_web_exact]
   rfl
 
-/-- A declared `\parskip`'s natural width in sp, at the body size it was set under. -/
-public def parskipSp (page : Ir.PageSpec) (g : SymGlue) : Dim.Sp :=
-  g.width.resolve page.fontSize (page.fontSize / 2)
+/-- A declared `\parskip`'s natural width in sp, at the body size it was set under and the page's
+x-height (`exAt`). -/
+public def parskipSp (page : Ir.PageSpec) (ex : Int) (g : SymGlue) : Dim.Sp :=
+  g.width.resolve page.fontSize ex
 
 /-- The document's declared `\parskip` as the screen peer gap, written only where the page
 declares one. -/
-public def parskipVar (page : Ir.PageSpec) : String :=
+public def parskipVar (page : Ir.PageSpec) (ex : Int) : String :=
   match page.parskip with
   | none => ""
-  | some g => s!"    --parskip: {milliRem (screenMilli page.fontSize (parskipSp page g))};\n"
+  | some g => s!"    --parskip: {milliRem (screenMilli page.fontSize (parskipSp page ex g))};\n"
 
 /-- The PDF backend's default gap at a boundary kind; an unknown kind is zero. -/
 public def pdfGapSp : String → Dim.Sp
@@ -2595,15 +2611,16 @@ private def lineageLength (doc : Doc) (x : Sp) : String :=
 
 /-- The trivlist's and the float's spaces at a list depth in beamer's lineage, in the page's
 unit. -/
-private def lineageSkipDecls (doc : Doc) (depth : Nat) (squeezed : Bool := false) : String :=
+private def lineageSkipDecls (doc : Doc) (ex : Int) (depth : Nat) (squeezed : Bool := false) :
+    String :=
   let size := doc.page.fontSize
-  let t := (Ir.trivlistSkipFor .beamer doc.tokens size depth).width.resolve size 0
+  let t := (Ir.trivlistSkipFor .beamer doc.tokens size depth).width.resolve size ex
   let float := match Ir.floatSpaceFor .beamer doc.tokens size depth with
     | (_, true) => if squeezed then s!"calc({lineageLength doc t} + var(--parskip, 0rem))"
       else s!"calc(var(--{Ir.trivlistSkipName}) + var(--parskip, 0rem))"
-    | (g, false) => lineageLength doc (g.width.resolve size 0)
+    | (g, false) => lineageLength doc (g.width.resolve size ex)
   -- a squeezed frame keeps beamer's `\topsep0.5pt`; its floats keep their own space
-  let topsep := if squeezed then Ir.squeezedTopsep.width.resolve size 0 else t
+  let topsep := if squeezed then Ir.squeezedTopsep.width.resolve size ex else t
   s!"--{Ir.trivlistSkipName}: {lineageLength doc topsep}; --floatsep: {float};"
 
 private def anySqueezed (doc : Doc) : Bool :=
@@ -2613,23 +2630,23 @@ private def anySqueezed (doc : Doc) : Bool :=
     (fun acc _ => acc) false doc.body
 
 /-- In beamer's lineage, the top level's trivlist and float spaces on the root. -/
-private def lineageSkipVars (doc : Doc) : String :=
+private def lineageSkipVars (doc : Doc) (ex : Int) : String :=
   match doc.docClass.record.lists with
-  | .beamer => s!"    {lineageSkipDecls doc 0}\n"
+  | .beamer => s!"    {lineageSkipDecls doc ex 0}\n"
   | .sizeFile | .web => ""
 
 /-- Each list level's spaces in beamer's lineage. -/
-private def lineageLevelRules (doc : Doc) : String :=
+private def lineageLevelRules (doc : Doc) (ex : Int) : String :=
   match doc.docClass.record.lists with
   | .beamer =>
     let within := ["li", "dd", "blockquote"]
     let deep := within.flatMap fun o => within.map (o ++ " " ++ ·)
     let sq (sels : List String) := sels.map ("section.slide.squeeze " ++ ·)
-    s!"{", ".intercalate within} \{ {lineageSkipDecls doc 1} }\n" ++
-    s!"{", ".intercalate deep} \{ {lineageSkipDecls doc 2} }\n" ++
+    s!"{", ".intercalate within} \{ {lineageSkipDecls doc ex 1} }\n" ++
+    s!"{", ".intercalate deep} \{ {lineageSkipDecls doc ex 2} }\n" ++
     (if anySqueezed doc then
-      s!"{", ".intercalate (sq within)} \{ {lineageSkipDecls doc 1 true} }\n" ++
-      s!"{", ".intercalate (sq deep)} \{ {lineageSkipDecls doc 2 true} }\n"
+      s!"{", ".intercalate (sq within)} \{ {lineageSkipDecls doc ex 1 true} }\n" ++
+      s!"{", ".intercalate (sq deep)} \{ {lineageSkipDecls doc ex 2 true} }\n"
     else "")
   | .sizeFile | .web => ""
 
@@ -2677,7 +2694,7 @@ private def footlineCss (page : PageSpec) : String :=
 /-- The furniture rules the semantic palette keys turn on, shared by every theme. -/
 public def themeCss (doc : Doc)
     (titleRule : Ir.TitledKind → Ir.BlockReach → Option Ir.BlockTitlePlace := fun _ _ => none)
-    (lit : Ir.Color → String := cssColor) : String :=
+    (lit : Ir.Color → String := cssColor) (ex : Int := doc.page.fontSize / 2) : String :=
   let d := Design.ofDoc doc
   let sectionMeasure :=
     s!"min({stageVh doc.page (Ir.sectionPageMeasure (doc.page.width - 2 * doc.page.hmargin))}, 100%)"
@@ -2718,7 +2735,7 @@ public def themeCss (doc : Doc)
   s!"section.tcolorbox > header \{ padding: {tcbLength (Ir.tcbRule + Ir.tcbBoxsep)} {tcbLength Ir.tcbInset}; }\n" ++
   s!"section.tcolorbox > .tcolorbox-body \{ padding: {tcbLength (Ir.tcbBoxsep + Ir.tcbTop)} {tcbLength Ir.tcbInset} {tcbLength (Ir.tcbBottom + Ir.tcbBoxsep + Ir.tcbRule)}; }\n" ++
   s!"section.tcolorbox > .tcolorbox-body:first-child \{ padding-top: {tcbLength (Ir.tcbRule + Ir.tcbBoxsep + Ir.tcbTop)}; }\n" ++
-  s!"{blockAt "first-child"} \{ --frame-body-before: calc({milliFactor (blockAboveMilli doc.page.fontSize doc.tokens)}rem - var(--parskip, 0rem)); }\n" ++
+  s!"{blockAt "first-child"} \{ --frame-body-before: calc({milliFactor (blockAboveMilli doc.page.fontSize ex doc.tokens)}rem - var(--parskip, 0rem)); }\n" ++
   (if d.frametitle.isSome then barRules "section.slide > header" else
     -- an undeclared title ink inherits, as every heading's does
     (if declares .frameTitleInk then
@@ -4108,7 +4125,7 @@ private def looseStageCss (doc : Doc) : String :=
 
 /-- A frame's content as TeX opens it below its `\vbox{}` (beamerbaseframe.sty): the first
 baseline one `\baselineskip` down, the last line trimmed to its baseline. -/
-private def frameOpeningCss (doc : Doc) : String :=
+private def frameOpeningCss (doc : Doc) (ex : Int) : String :=
   let l := doc.docClass.record.lists
   let size := doc.page.fontSize
   -- One set of rules per edge: the frame's opening element, the stage's
@@ -4129,8 +4146,8 @@ private def frameOpeningCss (doc : Doc) : String :=
        s!"{pre}:is({", ".intercalate listElems}){cls} \{ \
 --frame-body-open: {stageVh doc.page opened}; }\n"
      | none => "") ++
-    s!"{triv} \{ --frame-body-open: {stageVh doc.page ((Ir.trivlistSkipFor l doc.tokens size 0).width.resolve size 0)}; }\n" ++
-    s!"{float} \{ --frame-body-open: {stageVh doc.page ((Ir.floatSpaceFor l doc.tokens size 0).1.width.resolve size 0)}; }\n" ++
+    s!"{triv} \{ --frame-body-open: {stageVh doc.page ((Ir.trivlistSkipFor l doc.tokens size 0).width.resolve size ex)}; }\n" ++
+    s!"{float} \{ --frame-body-open: {stageVh doc.page ((Ir.floatSpaceFor l doc.tokens size 0).1.width.resolve size ex)}; }\n" ++
     s!"{pre}p{cls}::before,\n" ++
     s!"{firstPara triv}, {float} > :is(p, figcaption):first-child::before,\n" ++
     s!"{pre}dl{cls} > dt:first-child::before,\n" ++
@@ -5400,7 +5417,8 @@ public def figureWordsNode (words : String) : Node :=
     #[("class", figureWordsClass), ("aria-hidden", "true"), ("style", visuallyHidden)]
 
 /-- The base stylesheet's rules, after its custom properties. -/
-public def baseRules (doc : Doc) (pairs : List (Nat × Nat) := []) : String :=
+public def baseRules (doc : Doc) (pairs : List (Nat × Nat) := [])
+    (ex : Int := doc.page.fontSize / 2) : String :=
   let tl := tableLengthFallback doc
   "*, *::before, *::after { box-sizing: border-box; }\n" ++
   "body {\n" ++
@@ -5564,8 +5582,9 @@ public def baseRules (doc : Doc) (pairs : List (Nat × Nat) := []) : String :=
   blockGapCss doc.docClass.record.lists doc.page.fontSize doc.tokens pairs
     (shaped := [Ir.TitledKind.block, .alert, .example].any fun k => (Ir.blockShapeOf doc.styles k).isSome)
     (squeezed := anySqueezed doc) (sets := (Ir.listSetsOf doc.body).toList)
-    (closes := nestedClosesOf doc.docClass.record.lists doc.page.fontSize doc.tokens
-      (doc.abstractForm == .quotation) doc.body) (kinds := (Ir.quoteKindsOf doc.body).toList) ++
+    (closes := nestedClosesOf doc.docClass.record.lists doc.page.fontSize ex doc.tokens
+      (doc.abstractForm == .quotation) doc.body) (kinds := (Ir.quoteKindsOf doc.body).toList)
+    (ex := ex) ++
   slideCss doc ++
   -- a standout frame inverts, at the scale's Large step for the whole frame
   s!"section.slide.standout \{ background: {roleRef .standoutGround};\n" ++
@@ -5575,7 +5594,7 @@ public def baseRules (doc : Doc) (pairs : List (Nat × Nat) := []) : String :=
   deckAreaCss doc ++
   (if doc.docClass == .slides then
     looseStageCss doc ++
-      frameOpeningCss doc ++ fillBeforeCss
+      frameOpeningCss doc ex ++ fillBeforeCss
    else "") ++
   -- a deck's steps set their own leading; a reading page keeps one line height
   sizeRules doc.page.scale
@@ -5600,8 +5619,9 @@ public def baseRules (doc : Doc) (pairs : List (Nat × Nat) := []) : String :=
         (shaped := [Ir.TitledKind.block, .alert, .example].any fun k =>
           (Ir.blockShapeOf doc.styles k).isSome)
         (squeezed := anySqueezed doc) (sets := (Ir.listSetsOf doc.body).toList)
-        (closes := nestedClosesOf doc.docClass.record.lists doc.page.fontSize doc.tokens
+        (closes := nestedClosesOf doc.docClass.record.lists doc.page.fontSize ex doc.tokens
       (doc.abstractForm == .quotation) doc.body) (kinds := (Ir.quoteKindsOf doc.body).toList)
+        (ex := ex)
   else "") ++
   -- an overhanging markdown table stands centred over both margins, as its page sets it
   (if docHasNarrowingTable doc then
@@ -5634,7 +5654,8 @@ own screen furniture, each overridable. -/
 public def baseCss (cfg : Config) (doc : Doc) (pairs : List (Nat × Nat) := [])
     (roles : Option (List Ir.Role) := none) (taken : List String := [])
     (rules : Option String := none) (epochVars : String := "") : String :=
-  let parskip := parskipVar doc.page
+  let ex := exAt cfg.fonts doc.page.fontSize
+  let parskip := parskipVar doc.page ex
   let roles := roles.getD (pageRoles cfg doc)
   -- role defaults come from the registry, never literals here
   let floorPal := cfg.floorPal
@@ -5642,7 +5663,7 @@ public def baseCss (cfg : Config) (doc : Doc) (pairs : List (Nat × Nat) := [])
   s!"    color-scheme: {if cfg.floor.onDark then "dark" else "light"};\n" ++
   s!"    --measure: {measureEm doc.page};\n" ++
   parskip ++
-  lineageSkipVars doc ++
+  lineageSkipVars doc ex ++
   String.join ((roleDefaultVars floorPal cfg.floor roles cfg.codeRoot).map (· ++ "\n")) ++
   "    --font-body: Georgia, \"Times New Roman\", serif;\n" ++
   "    --font-sans: system-ui, -apple-system, \"Segoe UI\", sans-serif;\n" ++
@@ -5652,8 +5673,8 @@ public def baseCss (cfg : Config) (doc : Doc) (pairs : List (Nat × Nat) := [])
   (let tv := tokenVars cfg doc roles taken
    if tv.isEmpty then "" else ":root {\n" ++ tv ++ "\n}\n") ++
   schemeBlocks cfg.tables cfg.floor roles cfg.codeRoot ++ epochVars ++
-  lineageLevelRules doc ++
-  rules.getD (baseRules doc pairs)
+  lineageLevelRules doc ex ++
+  rules.getD (baseRules doc pairs ex)
 
 private def styleClass : Style → String
   | .bold => "b"
@@ -8528,7 +8549,8 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
   | .spaced before body =>
     let grows := cfg.deck && !cfg.fillsInert && before.value.fil
     if body.isEmpty then
-      skipNode cfg.page.fontSize before (if grows then some Ir.fillUnit else none)
+      skipNode cfg.page.fontSize (exAt cfg.fonts cfg.page.fontSize) before
+        (if grows then some Ir.fillUnit else none)
     else
     let style := s!"margin-top: {if cfg.deck then sourcedIn (stageLengthCss cfg.page.height) before
       else cssSourced before}"
@@ -9582,9 +9604,10 @@ one in the article class"
   let mut shipped := body
   if cssCfg.css == .own then
     let pairs := carrierPairs body
-    let theme := themeCss doc cssCfg.blockTitleRule cssCfg.literal
+    let ex := exAt cssCfg.fonts doc.page.fontSize
+    let theme := themeCss doc cssCfg.blockTitleRule cssCfg.literal ex
     let tokens := tokenRules doc
-    let base := baseRules doc pairs ++
+    let base := baseRules doc pairs ex ++
       schemeRules cssCfg ++ tokens
     let rules := base ++ "\n" ++ theme ++ styled
     let (bodyReads, bodyDecls) := nodeRefs.list () (#[], #[]) body.toList

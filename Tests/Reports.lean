@@ -1967,7 +1967,13 @@ def reports : List Report := [
     pins := [check% Tests.ListsKoma.labelChecks]
     accept := ["lualatex on invented probes, article at 10pt: an enumerate item opening on an itemize sets 1. and the bullet on the inner first item's line, the number right-aligned where 2. stands, a label anchor before the list included; with the second level's left margin at 9pt its label overlaps the outer one, (a) at 16.22 to 29.00 over 1. at 12.22 to 20.00, the text at 34.00, where this tree sets 1. and (a) from 12.22 to 29.06 and the text at 34.00; beamer's invisible cover hides the outer label with an inner first item a later step reveals, its transparent cover leaves it black; the web page drew both labels already",
       "seven assertions; five fail built against c9dd4f3d6's tree; the two that hold there guard the label staying off the next item and off a list the inner first item holds, where that item opens on a centre or a description term, which the reviews found the first cuts let through; flush right the labels stand by their line's text as a lone label does, where LaTeX sets the whole list flush left"]
-    state := .guarded "c9dd4f3d" .before .author }
+    state := .guarded "c9dd4f3d" .before .author },
+  { id := "R219", date := "2026-10-17"
+    what := "the web page read an ex as half an em in its list, quotation and skip gaps and its declared parskip, and as nothing in its skip registers and beamer's trivlist and float spaces, where the PDF and the browser read the x-height of the face the page ships"
+    pins := [check% Tests.ListsKoma.exChecks]
+    accept := ["lualatex on invented probes, article at 10pt with enumitem's topsep at 10ex and itemsep at 2ex: a serif face of 475 thousandths opens the list 47.5pt down, Latin Modern 43.1pt; in Chromium this tree's web page stands those gaps at 3.957 and 0.790 of its line height where lualatex's stand at 3.958 and 0.792 of its baselineskip, and at 3.590 and 0.717 in Latin Modern against 3.592 and 0.718, where the tree before stood 4.165 and 0.832 in both",
+      "five assertions; three fail built against a22f93197's tree; the two that hold there guard the PDF's own reading of the face and CSS's half em where the page ships no face"]
+    state := .guarded "a22f9319" .before .author }
 ]
 
 /-- The reports guarded but never seen failing, a count held in both directions. -/

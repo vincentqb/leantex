@@ -444,4 +444,64 @@ def labelChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
     (deck.pages.size == 2 && (stepLines 0).all (fun l => !hasStr (lineText l) "1.") &&
       (stepLines 1).any fun l => hasStr (lineText l) "1." && hasStr (lineText l) "Hotel")
 
+/-- A list whose enumitem spacing `t` declares, after a paragraph, then a skip of `t`. -/
+def exSpaced (t : String) : String × String :=
+  (s!"\\usepackage\{enumitem}\n\\setlist\{topsep={t},itemsep=0pt,parsep=0pt,partopsep=0pt}",
+   "Alpha paragraph.\n\\begin{itemize}\n\\item Bravo item.\n\\end{itemize}\n\n" ++
+     s!"\\vspace\{{t}}\n\nCharlie after.")
+
+/-- A declaration's value in a style attribute or a declaration block, the last one standing. -/
+def styleValue (style key : String) : Option String :=
+  ((style.splitOn ";").filterMap fun d => match d.splitOn ":" with
+    | k :: rest@(_ :: _) =>
+      if k.trimAscii.toString == key then some (":".intercalate rest).trimAscii.toString else none
+    | _ => none).getLast?
+
+/-- A `calc(⟨rem⟩ + …)` margin's leading length, in thousandths of a rem. -/
+def calcRemMilli (v : String) : Option Int :=
+  if v.startsWith "calc(" then remMilliOf (((v.drop 5).toString.splitOn " + ").headD "")
+  else remMilliOf v
+
+/-- Lengths declared in ex as the web page reads them: at the x-height of the face it ships, the one
+the PDF reads, and at half an em, CSS's own, where it ships none. -/
+def exChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let size := Dim.pt 10
+  let src (len : String) : String := doc "[10pt]{article}" (exSpaced len).1 (exSpaced len).2
+  let drop (len : String) : Option Dim.Sp := do
+    let lines := bodyLines (layoutOf oneFace (elabStr (src len)).1)
+    let y (w : String) := (lines.find? fun l => hasStr (lineText l) w).map (·.y)
+    pure ((← y "Bravo") - (← y "Alpha"))
+  -- the PDF's 10ex: the list's drop with its topsep, less the drop without
+  let pdfEx : Option Dim.Sp := do pure ((← drop "10ex") - (← drop "0pt"))
+  let xh := oneFace.body.xHeight * size / oneFace.body.unitsPerEm
+  let d := (elabStr (src "10ex")).1
+  let opening (fonts : Option Font.FontSet) : Option Int := do
+    let decls ← screenRuleOf (HtmlDoc.baseCss { fonts := fonts } d) ":where(* + .list-set-1)"
+    calcRemMilli (← cssProperty decls "margin-top")
+  let screen (v : Dim.Sp) : Int := (HtmlDoc.screenMilli size v : Int)
+  t "ex lengths: the PDF reads a list's declared 10ex at its body face's x-height"
+    (pdfEx == some (10 * xh))
+  t "ex lengths: the web page opens that list by the PDF's 10ex where it ships the face"
+    (match pdfEx with
+     | some v => opening (some oneFace) == some (screen v)
+     | none => false)
+  let (_, tree, _) := HtmlDoc.emitTree { fonts := some oneFace } d
+  let skips := (elemAttrsList (· == "div") #[] tree.toList).filterMap fun (_, attrs) =>
+    if (((HtmlDoc.attrOf? attrs "class").getD "").splitOn " ").contains HtmlDoc.skipClass then
+      (HtmlDoc.attrOf? attrs "style").bind (styleValue · "--skip") |>.bind remMilliOf
+    else none
+  t "ex lengths: the web page's skip box stands the PDF's 10ex where it ships the face"
+    (match pdfEx with
+     | some v => skips == #[screen v]
+     | none => false)
+  let parDoc := (elabStr (doc "[10pt]{article}" "\\setlength{\\parskip}{1ex}"
+    "Delta paragraph.\n\nEcho paragraph.")).1
+  let parskip := (screenRootVars (HtmlDoc.baseCss { fonts := some oneFace } parDoc)).lookup
+    "--parskip" |>.bind remMilliOf
+  t "ex lengths: the web page's declared parskip of 1ex reads the face it ships"
+    (parskip == some (screen xh))
+  t "ex lengths: a page shipping no face reads an ex as half an em, as CSS does"
+    (opening none == some (screen (10 * (size / 2))))
+
 end Tests.ListsKoma
