@@ -715,7 +715,42 @@ private def cssChar (c : Char) : List Char :=
   if c == '\\' then ['\\', '\\'] else if c == '"' then ['\\', '"']
   else if c == '<' then ['\\', '3', 'c', ' '] else [c]
 
-public def cssString (s : String) : String := String.ofList (s.toList.flatMap cssChar)
+private def cssNeeds (c : Char) : Bool := c == '\\' || c == '"' || c == '<'
+
+private def cssStep (acc : String) (c : Char) : String := acc ++ String.ofList (cssChar c)
+
+/-- A CSS string's characters escaped (`cssChar`); a string holding none to escape stands as it is. -/
+public def cssString (s : String) : String :=
+  if s.contains cssNeeds then s.foldl cssStep "" else s
+
+private theorem cssStep_go (l : List Char) (acc : String) :
+    (l.foldl cssStep acc).toList = acc.toList ++ l.flatMap cssChar := by
+  induction l generalizing acc with
+  | nil => simp
+  | cons c rest ih =>
+    simp only [List.foldl_cons, ih, List.flatMap_cons, cssStep, String.toList_append,
+      String.toList_ofList, List.append_assoc]
+
+private theorem cssString_plain (l : List Char) (h : l.any cssNeeds = false) :
+    l.flatMap cssChar = l := by
+  induction l with
+  | nil => rfl
+  | cons c rest ih =>
+    simp only [List.any_cons, Bool.or_eq_false_iff] at h
+    have hc : cssChar c = [c] := by
+      have := h.1
+      unfold cssNeeds at this
+      unfold cssChar
+      simp_all
+    simp only [List.flatMap_cons, hc, ih h.2, List.singleton_append]
+
+/-- The escaper is its character-by-character specification. -/
+private theorem cssString_spec (s : String) : (cssString s).toList = s.toList.flatMap cssChar := by
+  unfold cssString
+  split
+  · rw [String.foldl_eq_foldl_toList, cssStep_go]
+    rfl
+  · next h => rw [cssString_plain _ (by simpa [String.contains_bool_eq] using h)]
 
 private theorem cssChar_no_lt (c : Char) : '<' ∉ cssChar c := by
   unfold cssChar
@@ -732,7 +767,7 @@ private theorem cssChar_no_lt (c : Char) : '<' ∉ cssChar c := by
         simp at h
 
 public theorem cssString_no_lt (s : String) : '<' ∉ (cssString s).toList := by
-  simp only [cssString, String.toList_ofList, List.mem_flatMap, not_exists, not_and]
+  simp only [cssString_spec, List.mem_flatMap, not_exists, not_and]
   exact fun c _ => cssChar_no_lt c
 
 /-- A list type's selector for its declared indent: the first level's at every level no deeper
