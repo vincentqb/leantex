@@ -259,6 +259,13 @@ def deckDestinationChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO 
       (Layout.landing? (Layout.anchorIndex lout.pages) lout.pages "intro").map (·.page) ==
         pageWith lout "FirstWords")
 
+/-- The page index a destination array's first element names, among the file's pages in order. -/
+private def linkPageOf (pdf : ByteArray) (ds : Array Obj) : Option Nat :=
+  match PdfRead.objects pdf, ds[0]? with
+  | .ok es, some (Obj.ref n _) =>
+    (es.val.filter (fun e => PdfCensus.kindOf e.val == .page)).findIdx? (·.num == n)
+  | _, _ => none
+
 /-- The outline a file's bytes hold, in reading order from the catalog's `/Outlines`: each item's
 depth, title, count and destination, with the root's count. -/
 private def outlineRead (pdf : ByteArray) :
@@ -316,23 +323,55 @@ def pdfOutlineChecks (ref : IO.Ref (List String)) (fs : Font.FontSet) : IO Unit 
      | .error _ => false)
   t "outline: every navigation reaches a destination the file defines"
     ((PdfDests.ofBytes pdf).map (·.isEmpty) == .ok true)
-  -- A deck's sections and subsections, open, each at the page set next; a starred one is left out.
-  let (deck, _) := elabStr ("\\documentclass{beamer}\n\\begin{document}\n" ++
+  -- A deck's sections and subsections, starred or not and open, each at the page set next.
+  let (deck, _) := elabStr ("\\documentclass{beamer}\n\\theme{default}\n\\begin{document}\n" ++
     "\\begin{frame}{Opening}Opening words.\\end{frame}\n\\section{Part One}\n" ++
     "\\begin{frame}{First}First words.\\end{frame}\n\\subsection{Part Detail}\n" ++
     "\\begin{frame}{Second}Second words.\\end{frame}\n\\section*{Aside}\n" ++
     "\\begin{frame}{Third}Third words.\\end{frame}\n\\end{document}\n")
   let dout := layoutOf fs deck
-  let dpdf := Pdf.write (Layout.Geom.ofPage deck.page) fs dout.pages deck.info
-    (outline := dout.outline)
+  let dgeom := Layout.Geom.ofPage deck.page
+  let dpdf := Pdf.write dgeom fs dout.pages deck.info (outline := dout.outline)
   match outlineRead dpdf with
   | .error e => t s!"deck outline: the file reads ({e})" false
   | .ok (rootCount, items) =>
-    t s!"deck outline: its sections and subsections, open ({repr (items.map fun (d, ti, c, _) => (d, ti, c))})"
-      (rootCount == some 2 && items.map (fun (d, ti, c, _) => (d, ti, c)) ==
-        #[(0, PdfRead.textString "Part One", some 1), (1, PdfRead.textString "Part Detail", none)])
+    t s!"deck outline: its sections and subsections, starred too, open ({repr (items.map fun (d, ti, c, _) => (d, ti, c))})"
+      (rootCount == some 3 && items.map (fun (d, ti, c, _) => (d, ti, c)) ==
+        #[(0, PdfRead.textString "Part One", some 1), (1, PdfRead.textString "Part Detail", none),
+          (0, PdfRead.textString "Aside", none)])
+    t "deck outline: each section opens at the first line of the frame set next"
+      ((items.zip #["First words.", "Second words.", "Third words."]).all fun ((_, _, _, dest), w) =>
+        match dest, lineWith dout w with
+        | some (.arr ds), some _ => (linkPageOf dpdf ds) == pageWith dout w
+        | _, _ => false)
   t "deck outline: every navigation reaches a destination the file defines"
     ((PdfDests.ofBytes dpdf).map (·.isEmpty) == .ok true)
+  -- The outline keys a document declares: none, open, numbered, and the page mode.
+  let keyed (opts : String) : ByteArray :=
+    let (d, _) := elabStr (dvDoc s!"\\usepackage[{opts}]\{hyperref}\n"
+      "\\section{Alpha}Words.\\subsection{Detail}Words.\\section{Beta}Words.")
+    let o := layoutOf fs d
+    Pdf.write (Layout.Geom.ofPage d.page) fs o.pages d.info (outline := o.outline)
+  let modeOf (pdf : ByteArray) : Option Obj := match PdfRead.objects pdf with
+    | .ok es => (PdfCensus.catalogOf es.val .null).get? "PageMode"
+    | .error _ => none
+  t "outline keys: bookmarks=false ships no outline, pdfpagemode=UseNone its mode"
+    ((outlineRead (keyed "bookmarks=false,pdfpagemode=UseNone")).map (·.2.size) == .ok 0 &&
+      modeOf (keyed "bookmarks=false,pdfpagemode=UseNone") == some (.name "UseNone"))
+  t "outline keys: bookmarksopen opens the subtrees and bookmarksnumbered leads with the numbers"
+    ((outlineRead (keyed "bookmarksopen,bookmarksnumbered")).map
+      (fun (c, items) => (c, items.map fun (d, ti, c, _) => (d, ti, c))) ==
+      .ok (some 3, #[(0, PdfRead.textString "1 Alpha", some 1),
+        (1, PdfRead.textString "1.1 Detail", none), (0, PdfRead.textString "2 Beta", none)]))
+  -- A markdown document's headings are its contents down to the third rank, as pandoc's are.
+  let (mdoc, _) := elabMd "# One\n\nWords.\n\n## Two\n\nMore.\n\n### Three\n\nEven.\n\n#### Four\n\nDeep.\n"
+  let mout := layoutOf fs mdoc
+  let mpdf := Pdf.write (Layout.Geom.ofPage mdoc.page) fs mout.pages mdoc.info
+    (outline := mout.outline)
+  t "markdown outline: its headings nest down to the third rank"
+    ((outlineRead mpdf).map (·.2.map fun (d, ti, _, _) => (d, ti)) ==
+      .ok #[(0, PdfRead.textString "One"), (1, PdfRead.textString "Two"),
+        (2, PdfRead.textString "Three")])
 
 /-- Every navigation of a corpus file reaches a destination the file defines, a target stands at
 what it names, and a resolved reference or citation links in both artifacts, equally often. -/

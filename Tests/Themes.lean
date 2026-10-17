@@ -486,6 +486,14 @@ def noteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit :
   let (art, _) := elabStr (dvDoc "" ("Words.\\label{y}\\note{After a label.}\n\n" ++
     "Last words.\\note{In the last paragraph.}"))
   let asides := elemNodesList (· == "aside") #[] (docNodesOf art).toList
+  let (scopedDoc, _) := elabStr (dvDoc "" ("First words.\\begin{itemize}\\item Item words." ++
+    "\\note{In an item.}\\end{itemize}\\begin{center}Centre words.\\note{In a centre.}" ++
+    "\\end{center}"))
+  let scopedAsides := elemNodesList (· == "aside") #[] (docNodesOf scopedDoc).toList
+  t "an article's notes inside a list and a centred block stay its side channel"
+    (scopedAsides.size == 2 &&
+      hasStr (asideIn (Html.elem "div" scopedAsides #[])) "In an item." &&
+      hasStr (asideIn (Html.elem "div" scopedAsides #[])) "In a centre.")
   t "an article's notes after a label and in its last paragraph stay its side channel"
     (asides.size == 2 && hasStr (asideIn (Html.elem "div" asides #[])) "After a label." &&
       hasStr (asideIn (Html.elem "div" asides #[])) "In the last paragraph.")

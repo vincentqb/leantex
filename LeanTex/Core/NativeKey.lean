@@ -44,7 +44,7 @@ public def PageKey.claims : PageKey → Bool
 public inductive MetaKey where
   | title | author | subject | keywords | url | image | favicon | language | version | standard
   | intent | intentCondition | intentInfo | intentRegistry | intentComponents | created
-  | modified | trapped
+  | modified | trapped | outline | outlineOpen | outlineNumbered | pagemode
   deriving DecidableEq, Repr, Inhabited
 
 public def MetaKey.names : List (String × MetaKey) :=
@@ -53,7 +53,8 @@ public def MetaKey.names : List (String × MetaKey) :=
    ("version", .version), ("standard", .standard), ("intent", .intent),
    ("intent-condition", .intentCondition), ("intent-info", .intentInfo),
    ("intent-registry", .intentRegistry), ("intent-components", .intentComponents),
-   ("created", .created), ("modified", .modified), ("trapped", .trapped)]
+   ("created", .created), ("modified", .modified), ("trapped", .trapped), ("outline", .outline),
+   ("outline-open", .outlineOpen), ("outline-numbered", .outlineNumbered), ("pagemode", .pagemode)]
 
 public def MetaKey.name (k : MetaKey) : String := ((MetaKey.names.find? (·.2 == k)).map (·.1)).getD ""
 

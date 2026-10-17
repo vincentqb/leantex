@@ -2189,7 +2189,19 @@ public structure Meta where
   modified : Option String := none
   /-- Whether the document declares itself trapped for press. -/
   trapped : Option Bool := none
+  /-- Whether the PDF outline bookmarks the headings (hyperref's `bookmarks`). -/
+  outline : Option Bool := none
+  /-- Whether the outline's subtrees stand open (hyperref's `bookmarksopen`). -/
+  outlineOpen : Option Bool := none
+  /-- Whether a bookmark leads with its heading's number (hyperref's `bookmarksnumbered`). -/
+  outlineNumbered : Option Bool := none
+  /-- The page mode a viewer opens the file in (ISO 32000-2 Table 29; hyperref's `pdfpagemode`). -/
+  pageMode : Option String := none
   deriving Repr, BEq, Inhabited
+
+/-- The page modes a catalog may name (ISO 32000-2 Table 29). -/
+public def pageModes : List String :=
+  ["UseNone", "UseOutlines", "UseThumbs", "FullScreen", "UseOC", "UseAttachments"]
 
 /-- The PDF version the file is written in: the 1.6 a PDF/X standard is defined on under its
 claim, else as declared. -/
@@ -2679,7 +2691,35 @@ public inductive RefForm where
   | headed
   /-- hyperref's `\nameref`: the title of what the label names. -/
   | title
+  /-- hyperref's starred form: as its form, without the link. -/
+  | starred (form : RefForm)
   deriving Repr, BEq
+
+/-- Whether a reference form prints a title, starred or not. -/
+public def RefForm.titled : RefForm → Bool
+  | .title => true
+  | .starred f => f.titled
+  | _ => false
+
+/-- Whether a reference form links to its target: every form but a starred one. -/
+public def RefForm.linked : RefForm → Bool
+  | .starred _ => false
+  | _ => true
+
+/-- A reference form as the IR dump spells it, a starred one with its star. -/
+public def RefForm.spelling : RefForm → String
+  | .plain => "ref"
+  | .paren => "eqref"
+  | .cref false => "cref"
+  | .cref true => "Cref"
+  | .crefRange false => "crefrange"
+  | .crefRange true => "Crefrange"
+  | .labelOnly => "labelcref"
+  | .name false => "namecref"
+  | .name true => "nameCref"
+  | .headed => "headed"
+  | .title => "nameref"
+  | .starred f => f.spelling ++ "*"
 
 /-- What a field citation prints of its entry instead of its label (biblatex manual §3.8.4). -/
 public inductive CiteField where
@@ -9945,18 +9985,7 @@ private def dumpInline (ind : String) (x : Inline) : String :=
   | .italicCorr maybe => s!"{ind}italicCorr{if maybe then " maybe" else ""}\n"
   | .label key => s!"{ind}label {key.quote}\n"
   | .ref key form text target =>
-    let form := match form with
-      | .plain => "ref"
-      | .paren => "eqref"
-      | .cref false => "cref"
-      | .cref true => "Cref"
-      | .crefRange false => "crefrange"
-      | .crefRange true => "Crefrange"
-      | .labelOnly => "labelcref"
-      | .name false => "namecref"
-      | .name true => "nameCref"
-      | .headed => "headed"
-      | .title => "nameref"
+    let form := form.spelling
     let tgt := match target with
       | some a => s!" -> #{a}"
       | none => ""
@@ -17373,8 +17402,8 @@ public structure RefBinding where
   kind : Option RefKind
   num : String
   statement : Option (String × Option String) := none
-  /-- The title of what the label names, as hyperref's `\nameref` prints it. -/
-  name : Option String := none
+  /-- The title of what the label names, as hyperref's `\nameref` sets it. -/
+  name : Option (Array Inline) := none
   deriving Repr, BEq
 
 private def indexStep {α : Type} (m : Std.HashMap String (String × α))
@@ -17496,14 +17525,28 @@ public def refText (loc : Locale) (form : RefForm) (b : RefBinding) : String :=
     | some (h, none), _ => h
     | none, some k => (crefNameOf loc k).capOne ++ "\u00a0" ++ numText
     | none, none => b.num
-  | .title => b.name.getD b.num
+  | .title => (b.name.map metaText).getD ""
+  | .starred f => refText loc f b
+
+/-- What a resolved reference shows: `\nameref` the title it names as set, linked unless starred,
+nothing where nothing gave a title, any other form its text, linked unless starred. -/
+public def refInline (loc : Locale) (key : String) (form : RefForm) (b : RefBinding) : Inline :=
+  match form, b.name with
+  | .title, some n => .link ("#" ++ labelAnchor key) n
+  | f, _ =>
+    if f.titled && b.name.isNone then .ref key f "" none
+    else .ref key f (refText loc f b) (if f.linked then some (labelAnchor key) else none)
+
+/-- A reference against its label's binding: a label nothing numbered keeps `??` and no target
+unless the form prints its title. -/
+public def refResolved (loc : Locale) (key : String) (form : RefForm) (b : RefBinding) : Inline :=
+  if b.num.isEmpty && !form.titled then .ref key form "??" none else refInline loc key form b
 
 public def resolveOneRefWith (loc : Locale)
     (look : String → Option (String × Option RefBinding)) (key : String)
     (form : RefForm) : Inline :=
   match look key with
-  | some (_, some b) =>
-    .ref key form (refText loc form b) (some (labelAnchor key))
+  | some (_, some b) => refResolved loc key form b
   | _ => .ref key form "??" none
 
 /-- One reference against the table: a numbered key takes its form's text and
@@ -17516,8 +17559,7 @@ public theorem resolveOneRef_scan (loc : Locale) (table : RefTable) (key : Strin
     (form : RefForm) :
     resolveOneRef loc table key form =
       match table.find? (·.1 == key) with
-      | some (_, some b) =>
-        .ref key form (refText loc form b) (some (labelAnchor key))
+      | some (_, some b) => refResolved loc key form b
       | _ => .ref key form "??" none := by rfl
 
 /-- Resolution's one rewrite: every `.ref` rewritten from the lookup,
@@ -17570,9 +17612,7 @@ public theorem resolveOneRef_exact (loc : Locale) (table : RefTable) (key : Stri
     (form : RefForm)
     (b : RefBinding) (h : ∃ e ∈ table, e.1 = key ∧ e.2 = some b)
     (huniq : ∀ e ∈ table, e.1 = key → e.2 = some b) :
-    resolveOneRef loc table key form =
-      .ref key form (refText loc form b)
-        (some (labelAnchor key)) := by
+    resolveOneRef loc table key form = refResolved loc key form b := by
   rw [resolveOneRef_scan]
   obtain ⟨e, hmem, hkey, _⟩ := h
   have hfind : ∃ f, table.find? (·.1 == key) = some f := by
@@ -17641,7 +17681,7 @@ public def _root_.LeanTex.Core.Diag.mentions (d : Diag) (p : Pending) : Bool :=
 /-- One node's contribution: a `.ref` with no target, or any `.cite`, which
 `Bib.apply` replaces when it answers. -/
 @[expose] public def pendingLeaf : Inline → Array Unresolved
-  | .ref key _ _ none => #[.ref key]
+  | .ref key _ text none => if text == "??" then #[.ref key] else #[]
   | .cite _ keys => keys.map .cite
   | _ => #[]
 
@@ -17684,7 +17724,7 @@ its first site with the cause the table knows. -/
 private def refDiagLeaf (look : String → Option (String × Option RefBinding))
     (spanOf : String → Option Span) (key : String) : Diag :=
   match look key with
-  | some (_, none) =>
+  | some _ =>
     Diag.of .W0349 s!"'{key}' is \\label'ed where nothing is numbered; set as '??'"
       (spanOf key)
       (help := "move the \\label after a numbered heading, a captioned float, or into an equation")
@@ -17836,28 +17876,41 @@ public def withUnboundRows (labels rows : RefTable) : RefTable :=
     | none, some (_, some b) => (e.1, some b)
     | _, _ => e
 
+/-- A title as `\nameref` sets it: without the labels and notes it holds, which name and mark
+the heading alone. -/
+private def nameOf (title : Array Inline) : Array Inline :=
+  let keep := fun (x : Inline) => match x with
+    | .label _ | .footnote _ _ => false
+    | _ => true
+  mapInlines id title (finish := fun xs => xs.filter keep)
+
 /-- The title each label names, as hyperref's `\@currentlabelname` holds it: a float's caption
 inside the float, else the last heading's title before it. -/
-public def labelNames (xs : Array Block) : Std.HashMap String String := Id.run do
+public def labelNames (xs : Array Block) : Std.HashMap String (Array Inline) := Id.run do
   let keyOf := fun (out : Array String) (x : Inline) =>
     if let .label k := x then out.push k else out
-  let named := fun (m : Std.HashMap String String) (keys : Array String) (n : String) =>
+  let named := fun (m : Std.HashMap String (Array Inline)) (keys : Array String)
+      (n : Array Inline) =>
     keys.foldl (fun m k => if m.contains k then m else m.insert k n) m
-  let mut current : Option String := none
-  let mut out : Std.HashMap String String := {}
+  let mut current : Option (Array Inline) := none
+  let mut out : Std.HashMap String (Array Inline) := {}
   for b in xs do
-    if let .section _ _ _ title := b then current := some (firstPageText title).trimAscii.toString
+    if let .section _ _ _ title := b then current := some (nameOf title)
     if let .float _ _ _ body caption := b then
       let keys := foldBlocks (fun out _ => out) keyOf (foldInlines keyOf #[] caption) body
-      out := named out keys (firstPageText caption).trimAscii.toString
+      out := named out keys (nameOf caption)
     else if let some n := current then
       out := named out (foldBlocks (fun out _ => out) keyOf #[] #[b]) n
   return out
 
-/-- The table with each binding carrying the title its label names (`labelNames`). -/
+/-- The table with each binding carrying the title its label names (`labelNames`), a label nothing
+numbered taking a binding with its title alone. -/
 public def withLabelNames (labels : RefTable) (xs : Array Block) : RefTable :=
   let names := labelNames xs
-  labels.map fun e => (e.1, e.2.map fun b => { b with name := names[e.1]? })
+  labels.map fun e => match e.2, names[e.1]? with
+    | some b, n => (e.1, some { b with name := n })
+    | none, some n => (e.1, some { kind := none, num := "", name := some n })
+    | none, none => e
 
 private theorem withFloatRows_agree (labels rows : RefTable) :
     withFloatRows labels rows
@@ -17895,8 +17948,7 @@ public theorem refs_agree_with_numbering (loc : Locale) (labels : RefTable) (xs 
     (hkey : (labels.find? (·.1 == key)).isSome) :
     resolveRefInline loc (withFloatRows labels (floatLabelRows (numberFloats xs)))
         (.ref key form t a)
-      = .ref key form (refText loc form b)
-        (some (labelAnchor key)) := by
+      = refResolved loc key form b := by
   have h := withFloatRows_finds labels _ key b hrow hkey
   show resolveOneRef _ _ key form = _
   rw [resolveOneRef_scan]

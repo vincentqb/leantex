@@ -18388,10 +18388,13 @@ slot yields in place: shorten the content or drop a slot")
   -- The heading tree first, open in a deck; an outline target lands as a PDF link annotation does,
   -- and one landing nowhere is left out.
   let deck := doc.docClass.record.model == .frame
-  let headings := (Ir.outlineHeadings doc).filterMap fun h =>
-    (landing? idx out (Ir.outlineMark h.index)).map fun l =>
-      ({ title := h.title, page := some l.page, fragment := some (Ir.outlineMark h.index)
-         depth := h.depth, expanded := deck, bookmark := true } : OutlineEntry)
+  let numbered := doc.info.outlineNumbered == some true
+  let headings := if doc.info.outline == some false then #[] else
+    (Ir.outlineHeadings doc).filterMap fun h =>
+      (landing? idx out (Ir.outlineMark h.index)).map fun l =>
+        ({ title := (if numbered then (h.number.map (· ++ " ")).getD "" else "") ++ h.title
+           page := some l.page, fragment := some (Ir.outlineMark h.index), depth := h.depth
+           expanded := doc.info.outlineOpen.getD deck, bookmark := true } : OutlineEntry)
   let outline := headings ++ sh.navEntries.filterMap fun (title, target) =>
     match Ir.linkFragment? target with
     | some frag => (landing? idx out frag).map fun l =>
@@ -19386,7 +19389,8 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
                      deckIds.frames else #[]
                    sectionRoutes := if doc.docClass.record.model == .frame then
                      doc.sectionRoutes else #[]
-                   outlineMarks := (Ir.outlineHeadings doc).foldl (·.insert ·.index) {}
+                   outlineMarks := if doc.info.outline == some false then {} else
+                     (Ir.outlineHeadings doc).foldl (·.insert ·.index) {}
                    imgs := imgs
                    pictureSpans := pictureSpans
                    headline := doc.headline

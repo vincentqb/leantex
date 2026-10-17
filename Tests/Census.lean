@@ -1651,9 +1651,16 @@ def censusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     for (label, ok) in ((censusOutlineTable.lookup n).map (· declared)).getD [] do
       check ref s!"census {n} outline: {label}" ok
     let bookmarks := out.outline.filter (·.bookmark)
-    check ref s!"census {n}: the outline bookmarks the document's listed headings, each landing ({bookmarks.map (·.title)})"
-      (bookmarks.map (·.title) == (Ir.outlineHeadings doc).map (·.title) &&
-        bookmarks.all (·.page.isSome))
+    check ref s!"census {n}: the outline bookmarks the document's listed headings ({bookmarks.map (·.title)})"
+      (bookmarks.map (·.title) == (Ir.outlineHeadings doc).map (·.title))
+    -- In a flow each bookmark lands on the line its heading sets.
+    let idx := Layout.anchorIndex out.pages
+    let squeeze := fun (s : String) => String.ofList (s.toList.filter (!·.isWhitespace))
+    if doc.docClass.record.model == .flow then
+      check ref s!"census {n}: each bookmark lands on its heading's line"
+        (bookmarks.all fun e => match e.fragment.bind (Layout.landing? idx out.pages ·) with
+          | some (.site _ (.line l)) => hasStr (squeeze (lineText l)) (squeeze e.title)
+          | _ => false)
   silentLossChecks ref seen
 
 /-- A resolved reference to a key inside a captioned float shows the number the numbered node

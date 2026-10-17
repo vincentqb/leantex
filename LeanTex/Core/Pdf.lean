@@ -376,35 +376,45 @@ public def ocEntries (figs : Array (String × Nat × PdfRead.FormOc)) :
       ("OFF", all (·.off)), ("RBGroups", .arr radio), ("Locked", all (·.locked))])])]
 
 /-- The document catalog (ISO 32000-2 §7.7.2) as a typed object. -/
-public def catalogDict (outlineRoot : Option Nat) (xmpId : Nat) (lang : Option String)
-    (structTreeRoot : Nat) (oc : Array (String × PdfRead.Obj))
+public def catalogDict (outlineRoot : Option Nat) (pageMode : Option String) (xmpId : Nat)
+    (lang : Option String) (structTreeRoot : Nat) (oc : Array (String × PdfRead.Obj))
     (intents : Array (String × PdfRead.Obj) := #[]) : PdfRead.Obj :=
   .dict (#[("Type", .name "Catalog"), ("Pages", .ref 2 0)]
     ++ (match outlineRoot with
-        | some r => #[("Outlines", PdfRead.Obj.ref r 0), ("PageMode", .name "UseOutlines")]
+        | some r => #[("Outlines", PdfRead.Obj.ref r 0)]
+        | none => #[])
+    ++ (match pageMode with
+        | some m => #[("PageMode", PdfRead.Obj.name m)]
         | none => #[])
     ++ #[("Metadata", .ref xmpId 0)]
     ++ langEntry lang ++ markedEntry structTreeRoot ++ viewerEntry ++ oc ++ intents)
 
-public theorem pdf_lang_declared (outlineRoot : Option Nat) (xmpId : Nat) (lang : Option String)
-    (structTreeRoot : Nat) (oc intents : Array (String × PdfRead.Obj)) :
-    ∃ pre post, catalogDict outlineRoot xmpId lang structTreeRoot oc intents
+public theorem pdf_lang_declared (outlineRoot : Option Nat) (pageMode : Option String) (xmpId : Nat)
+    (lang : Option String) (structTreeRoot : Nat) (oc intents : Array (String × PdfRead.Obj)) :
+    ∃ pre post, catalogDict outlineRoot pageMode xmpId lang structTreeRoot oc intents
       = .dict (pre ++ langEntry lang ++ post) :=
   ⟨#[("Type", .name "Catalog"), ("Pages", .ref 2 0)]
     ++ (match outlineRoot with
-        | some r => #[("Outlines", PdfRead.Obj.ref r 0), ("PageMode", .name "UseOutlines")]
+        | some r => #[("Outlines", PdfRead.Obj.ref r 0)]
+        | none => #[])
+    ++ (match pageMode with
+        | some m => #[("PageMode", PdfRead.Obj.name m)]
         | none => #[])
     ++ #[("Metadata", .ref xmpId 0)],
    markedEntry structTreeRoot ++ viewerEntry ++ oc ++ intents, by
     simp only [catalogDict, Array.append_assoc]⟩
 
-public theorem pdf_marked_declared (outlineRoot : Option Nat) (xmpId : Nat) (lang : Option String)
-    (structTreeRoot : Nat) (oc intents : Array (String × PdfRead.Obj)) :
-    ∃ pre post, catalogDict outlineRoot xmpId lang structTreeRoot oc intents
+public theorem pdf_marked_declared (outlineRoot : Option Nat) (pageMode : Option String)
+    (xmpId : Nat) (lang : Option String) (structTreeRoot : Nat)
+    (oc intents : Array (String × PdfRead.Obj)) :
+    ∃ pre post, catalogDict outlineRoot pageMode xmpId lang structTreeRoot oc intents
       = .dict (pre ++ markedEntry structTreeRoot ++ post) :=
   ⟨#[("Type", .name "Catalog"), ("Pages", .ref 2 0)]
     ++ (match outlineRoot with
-        | some r => #[("Outlines", PdfRead.Obj.ref r 0), ("PageMode", .name "UseOutlines")]
+        | some r => #[("Outlines", PdfRead.Obj.ref r 0)]
+        | none => #[])
+    ++ (match pageMode with
+        | some m => #[("PageMode", PdfRead.Obj.name m)]
         | none => #[])
     ++ #[("Metadata", .ref xmpId 0)] ++ langEntry lang,
    viewerEntry ++ oc ++ intents, by
@@ -2193,8 +2203,8 @@ public theorem linkEntry_fragment_dest (t : ObjTable) (geom : Geom) (fs : FontSe
   exact he.1.symm
 
 /-- An outline item's place in the tree its entries' depths spell (ISO 32000-2 §12.3.3): its parent,
-its siblings before and after it, its first and last children, and its count, every descendant where
-it opens and its children negated where it stays closed. -/
+its siblings before and after it, its first and last children, and its count, what it shows opened,
+negated where it stays closed. -/
 public structure OutlineLink where
   parent : Option Nat
   prev : Option Nat
@@ -2214,10 +2224,8 @@ public def outlineLinks (es : Array OutlineEntry) :
   let mut next : Array (Option Nat) := Array.replicate n none
   let mut first : Array (Option Nat) := Array.replicate n none
   let mut last : Array (Option Nat) := Array.replicate n none
-  let mut kids : Array Nat := Array.replicate n 0
   let mut rootFirst : Option Nat := none
   let mut rootLast : Option Nat := none
-  let mut rootKids : Nat := 0
   let mut stack : Array Nat := #[]
   for (e, k) in es.zipIdx do
     stack := stack.extract 0 (min e.depth stack.size)
@@ -2232,23 +2240,24 @@ public def outlineLinks (es : Array OutlineEntry) :
     | some p =>
       if (first[p]?.join).isNone then first := first.modify p fun _ => some k
       last := last.modify p fun _ => some k
-      kids := kids.modify p (· + 1)
     | none =>
       if rootFirst.isNone then rootFirst := some k
       rootLast := some k
-      rootKids := rootKids + 1
     stack := stack.push k
-  -- Descendants accumulate from the last entry back, each entry's parent standing before it.
-  let mut desc : Array Nat := Array.replicate n 0
+  -- What each entry shows opened, from the last entry back, each entry's parent standing before
+  -- it: its children and what each open child shows.
+  let mut shown : Array Nat := Array.replicate n 0
   for k in (List.range n).reverse do
     if let some p := parent[k]?.join then
-      desc := desc.modify p (· + 1 + desc[k]?.getD 0)
+      let opened := if (es[k]?.map (·.expanded)).getD false then shown[k]?.getD 0 else 0
+      shown := shown.modify p (· + 1 + opened)
   let links := es.zipIdx.map fun (e, k) =>
-    let c : Nat := kids[k]?.getD 0
+    let c : Int := shown[k]?.getD 0
     { parent := parent[k]?.join, prev := prev[k]?.join, next := next[k]?.join
-      first := first[k]?.join, last := last[k]?.join
-      count := if e.expanded then (desc[k]?.getD 0 : Int) else -(c : Int) }
-  let visible : Int := if es.all (·.expanded) then n else rootKids
+      first := first[k]?.join, last := last[k]?.join, count := if e.expanded then c else -c }
+  let visible : Int := es.zipIdx.foldl (fun acc (e, k) =>
+    if (parent[k]?.join).isNone then
+      acc + 1 + (if e.expanded then (shown[k]?.getD 0 : Int) else 0) else acc) 0
   return (links, rootFirst, rootLast, visible)
 
 /-- A dictionary entry where its value is present. -/
@@ -2395,7 +2404,9 @@ public def prepare (geom : Geom) (fs : FontSet) (pages : Array PageOut)
       let en ← imgs.get? k
       let f ← (← en.info).form
       return ((en.src, f.val.page), ← (t.formBases[n]?).join, ← f.val.oc)
-  let catalog := catalogDict outlineRoot t.xmpId info.language t.structTreeRoot
+  -- The outline opens beside the pages, hyperref's default, unless the document names a mode.
+  let pageMode := info.pageMode.orElse fun _ => if outline.isEmpty then none else some "UseOutlines"
+  let catalog := catalogDict outlineRoot pageMode t.xmpId info.language t.structTreeRoot
     (ocEntries ((ocLabels (ocFigs.map (·.1))).zip (ocFigs.map (·.2))))
     (intentEntry info t.icc imgs.profile)
   let pagesObj : PdfRead.Obj := .dict

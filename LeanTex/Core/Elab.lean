@@ -4048,6 +4048,7 @@ private def refCtrlForm? (name : String) : Option Ir.RefForm :=
 private def refFormNeedsKind : Ir.RefForm → Bool
   | .cref _ | .crefRange _ | .name _ => true
   | .plain | .paren | .labelOnly | .headed | .title => false
+  | .starred f => refFormNeedsKind f
 
 -- Sealed so the knot's fixpoint never unfolds their string code.
 seal footnoteOverride hasParRaw footnoteWarnPar footnoteWarnFace
@@ -5093,9 +5094,15 @@ no extent is reserved for it" pos
             diag ctx .E0304 s!"'\\label' needs a \{key} group" pos
             elabInlinesFrom ctx raws (i + 1) acc sb
         else if hform : (refCtrlForm? name).isSome then
-          let form := (refCtrlForm? name).get hform
-          let j := skipSpaces raws (i + 1)
-          have hjge := skipSpaces_ge raws (i + 1)
+          -- A starred reference sets its form without the link, as hyperref's does.
+          let j0 := skipSpaces raws (i + 1)
+          have hj0 := skipSpaces_ge raws (i + 1)
+          let j1 := skipStar raws j0
+          have hj1 := skipStar_ge raws j0
+          let form := if j1 != j0 then .starred ((refCtrlForm? name).get hform)
+            else (refCtrlForm? name).get hform
+          let j := skipSpaces raws j1
+          have hjge := skipSpaces_ge raws j1
           match hj : raws[j]? with
           | some (.group keyRaw _) =>
             have hjlt := getElem?_lt hj
@@ -11451,6 +11458,20 @@ private def drainNotesGo (ctx : Ctx) (stash : List (Array Raw × Pos))
 termination_by (ctx.envLimit, 1, 0, 0, 0, stash.length)
 decreasing_by all_goals blocks_dec
 
+/-- Outside a frame, the notes stashed so far stand after `blocks`; inside one they wait for its
+end. -/
+private def drainLoose (ctx : Ctx) (blocks : Array Block) : EM (Array Block) := do
+  if hnb : ctx.noteBody then return blocks
+  else if ctx.inFrame then return blocks
+  else
+    let stash := (← get).pendingNotes
+    if stash.isEmpty then return blocks
+    modify fun st => { st with pendingNotes := #[] }
+    have _ : noteFlag ctx = 2 := by simp [noteFlag, hnb]
+    drainNotesGo ctx stash.toList blocks
+termination_by (ctx.envLimit, noteFlag ctx, 0, 0, 0, 1)
+decreasing_by all_goals blocks_dec
+
 /-- Elaborates each list item beside the `\pause`s its frame met before it past the list's own
 steps, which its cover reveals it after. -/
 private def elabItemsGo (ctx : Ctx) (items : Array (Array Raw))
@@ -11689,6 +11710,9 @@ private def elabEnvArm (ctx : Ctx) (n : String) (scope : Array Raw)
   else if n == "thebibliography" then
     blocks := blocks ++ (← ownBibList ctx body)
   else if n == "frame" then
+    -- Notes the content before the frame stashed stand before it; its title's and body's are its.
+    blocks ← drainLoose ctx blocks
+    modify fun st => { st with pendingNotes := #[] }
     -- A label in a deck's frame binds no section's number, and one after it the section's again.
     let outer := (← get).refTarget
     if ctx.slides then modify fun st => { st with refTarget := none }
@@ -11706,14 +11730,6 @@ private def elabEnvArm (ctx : Ctx) (n : String) (scope : Array Raw)
     title := title2
     have _ : sliceWeight rest 0 = rawWeightList rest.toList := sliceWeight_zero _
     have _ : slicePars rest 0 = nestedParsList rest.toList := slicePars_zero _
-    -- Notes the content before the frame stashed stand before it; a note's own frame refuses its.
-    let early := (← get).pendingNotes
-    modify fun st => { st with pendingNotes := #[] }
-    if hnb : ctx.noteBody then pure ()
-    else if ctx.inFrame then pure ()
-    else
-      have _ : noteFlag ctx = 2 := by simp [noteFlag, hnb]
-      blocks ← drainNotesGo ctx early.toList blocks
     -- Only a frame's body counts `\pause`s, from zero, as beamer's frame resets `beamerpauses`.
     let outerPauses := (← get).ctr.pauses
     modify fun st => { st with ctr := { st.ctr with pauses := some 0 } }
@@ -11936,6 +11952,9 @@ prefer the construct or the class, and keep '\\begin{ifbackend}' for the true re
     have _ : sliceWeight kept 0 = rawWeightList kept.toList := sliceWeight_zero _
     have _ : slicePars kept 0 = nestedParsList kept.toList := slicePars_zero _
     blocks := blocks ++ (← splicedFrameScope (some blocks.size) (elabBlockScope ctx kept))
+  -- Outside a frame, notes the environment's content stashed stand after it.
+  if (Parse.inputEnvFile? n).isNone && n != Parse.scopeEnv then
+    blocks ← drainLoose ctx blocks
   closeLengthScope ctx savedLengths blocks
 termination_by (ctx.envLimit, noteFlag ctx,
   visParsGo ctx.user ctx.limit + rawParsList scope.toList,
@@ -12211,14 +12230,7 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
     | .par _ =>
       let (⟨ctx', hm⟩, blocks) ← flushPara ctx' blocks cur
       -- Outside a frame, notes the paragraph's inline content stashed stand after it.
-      let blocks ← if cur.isEmpty then pure blocks
-        else if hnb : ctx.noteBody then pure blocks
-        else if ctx.inFrame then pure blocks
-        else do
-          let stash := (← get).pendingNotes
-          modify fun st => { st with pendingNotes := #[] }
-          have _ : noteFlag ctx = 2 := by simp [noteFlag, hnb]
-          drainNotesGo ctx stash.toList blocks
+      let blocks ← if cur.isEmpty then pure blocks else drainLoose ctx blocks
       elabBlocksGo ctx' raws (i + 1) blocks #[] gen'
     | .verb env s vpos =>
       if verbRunsInline env s cur raws i then
@@ -14262,10 +14274,29 @@ private def applyMeta (ctx : Ctx) (m0 : Meta) (entries : Array Decl.Entry)
       else
         evs := evs.push (.say (diagOf ctx .E0323
           s!"'trapped' in '\\pdfmeta' expects true, false or unknown, got '{v}'" (some pos) none))
+    | some .outline, .ident w | some .outline, .str w | some .outlineOpen, .ident w
+    | some .outlineOpen, .str w | some .outlineNumbered, .ident w | some .outlineNumbered, .str w =>
+      let v := w.toLower
+      if v == "true" || v == "false" then
+        let on := v == "true"
+        m := if e.key == "outline" then { m with outline := some on }
+          else if e.key == "outline-open" then { m with outlineOpen := some on }
+          else { m with outlineNumbered := some on }
+      else
+        evs := evs.push (.say (diagOf ctx .E0323
+          s!"'{e.key}' in '\\pdfmeta' expects true or false, got '{w}'" (some pos) none))
+    | some .pagemode, .ident w | some .pagemode, .str w =>
+      if Ir.pageModes.contains w then m := { m with pageMode := some w }
+      else
+        evs := evs.push (.say (diagOf ctx .E0323
+          s!"'pagemode' in '\\pdfmeta' expects {String.intercalate ", " Ir.pageModes}, got '{w}'"
+          (some pos) none))
     | some key, v =>
       let expected := match key with
         | .trapped => "true, false or unknown"
         | .intentComponents => "1, 3 or 4"
+        | .pagemode => String.intercalate ", " Ir.pageModes
+        | .outline | .outlineOpen | .outlineNumbered => "true or false"
         | _ => "a string"
       evs := evs.push (.say (Decl.wrongType ctx.file "pdfmeta" e.key expected v pos))
     | none, _ =>

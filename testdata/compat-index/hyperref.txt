@@ -1,7 +1,7 @@
 # source: the hyperref manual, "User macros" chapter — link commands,
 # bookmark commands, starred cross-references, \texorpdfstring, \hypersetup.
-# The starred \ref* breaks argument scanning (E0304, the star-scan defect the
-# \citet* row also pins); \pageref* is pending as a whole (W0307).
+# A starred reference sets its form without the link; \pageref* is pending as a
+# whole (W0307).
 body impl \href{https://example.org}{x}
 body impl \url{https://example.org}
 body impl \nolinkurl{https://example.org}
@@ -12,7 +12,8 @@ body refuse:W0301 \phantomsection
 body refuse:W0301 \autoref{sec}
 body refuse:W0301 \autopageref{sec}
 body impl \section{A}\label{s}\nameref{s}
-body refuse:E0304 \section{A}\label{s}\ref*{s}
+body impl \section{A}\label{s}\nameref*{s}
+body impl \section{A}\label{s}\ref*{s}
 body refuse:W0307 \section{A}\label{s}\pageref*{s}
 body refuse:W0301 \pdfbookmark[1]{T}{n}
 body refuse:W0301 \belowpdfbookmark{T}{n}

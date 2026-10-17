@@ -1976,12 +1976,13 @@ def reports : List Report := [
       "a deck in a sans face declaring its partopsep at 3ex opens a frame's list with lualatex's 42.19pt to the first baseline and the PDF's 42.17; the web page's frame opening now stands at 7.493vh, its pt equivalent's 7.492vh, where it stood at 1.102vh, the partopsep read as nothing",
       "nine assertions; five fail built against a22f93197's tree, among them an article's and a deck's web page declaring nine lengths and a skip in ex against the same in sp; the four that hold there guard the PDF's own reading of the face and the half em of a page shipping no face"]
     state := .guarded "a22f9319" .before .author },
-  { id := "R220", date := "2026-10-16"
-    what := "a PDF's outline held only a declared navigation menu, never its headings; a deck's label in a frame set question marks; nameref was an unknown command printing its key; and a note a paragraph's inline content held outside every frame, as after a loose label, vanished without a word"
+  { id := "R220", date := "2026-10-17"
+    what := "a PDF's outline held only a declared navigation menu, never its headings, and hyperref's outline keys were named as lost or as honoured where they were neither; a deck's label in a frame set question marks; nameref was an unknown command printing its key; and a note a paragraph's or an environment's inline content held outside every frame, as after a loose label, vanished without a word"
     pins := [check% pdfOutlineChecks, check% sectionPageChecks, check% noteChecks,
       thm% Ir.outlineHeadings_depth_step]
-    accept := ["invented probes under lualatex: hyperref's outline holds an article's unstarred headings down to the subsubsection, titled without numbers, nested and closed, the catalog opening it; beamer's holds a deck's unstarred sections and subsections, open; a label in a frame refers to the frame's number, and nameref prints a section's title, a float's caption, and for a frame's label its section's title; this tree ships the same",
-      "main at 0e5db3b5 bookmarks no heading, sets a frame's label as question marks, keeps nameref's key as text and drops the stashed notes; the guards fail there"]
+    accept := ["invented probes under lualatex: hyperref's outline holds an article's unstarred headings down to the subsubsection, titled without numbers, nested and closed, the catalog opening it, and its bookmarks, bookmarksopen, bookmarksnumbered and pdfpagemode keys turn it off, open it, number it and name the mode; beamer's holds a deck's sections and subsections, starred too, open; pandoc's holds a markdown document's headings down to the third rank; this tree ships the same",
+      "invented probes under lualatex: a label in a beamer frame refers to the frame's number; nameref sets a section's title as typeset, a float's caption, an unnumbered heading's title, and for a frame's label its section's title; a starred reference sets its text without the link; this tree ships the same, a starred nameref setting its title's words alone",
+      "main at 0e5db3b5 bookmarks no heading, sets a frame's label as question marks, keeps nameref's key as text, stops on a starred reference and drops the stashed notes; the guards fail there"]
     state := .guarded "0e5db3b5" .before .author }
 ]
 

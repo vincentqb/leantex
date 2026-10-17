@@ -6357,19 +6357,37 @@ private inductive MetaWord where
   | created
   | modified
   | trapped
+  | outline
+  | outlineOpen
+  | outlineNumbered
+  | pageMode
 
 /-- The hyperref key a word is read from. -/
 private def MetaWord.hyperref : MetaWord → String
   | .created => "pdfcreationdate"
   | .modified => "pdfmoddate"
   | .trapped => "pdftrapped"
+  | .outline => "bookmarks"
+  | .outlineOpen => "bookmarksopen"
+  | .outlineNumbered => "bookmarksnumbered"
+  | .pageMode => "pdfpagemode"
 
 private def MetaWord.name : MetaWord → String
   | .created => "created"
   | .modified => "modified"
   | .trapped => "trapped"
+  | .outline => "outline"
+  | .outlineOpen => "outline-open"
+  | .outlineNumbered => "outline-numbered"
+  | .pageMode => "pagemode"
 
-private def MetaWord.all : List MetaWord := [.created, .modified, .trapped]
+private def MetaWord.all : List MetaWord :=
+  [.created, .modified, .trapped, .outline, .outlineOpen, .outlineNumbered, .pageMode]
+
+/-- Whether a word is a switch, which hyperref reads as `true` when written bare. -/
+private def MetaWord.isSwitch : MetaWord → Bool
+  | .outline | .outlineOpen | .outlineNumbered => true
+  | .created | .modified | .trapped | .pageMode => false
 
 /-- A word's value as its `\pdfmeta` key reads it: a date in either spelling, or a trapping state
 in any case, as hyperref lowers it. -/
@@ -6378,6 +6396,9 @@ private def MetaWord.read (w : MetaWord) (v : String) : Option String :=
   match w with
   | .created | .modified => if (PdfDate.parse? t).isSome then some t else none
   | .trapped => if ["true", "false", "unknown"].contains t.toLower then some t.toLower else none
+  | .outline | .outlineOpen | .outlineNumbered =>
+    if ["true", "false"].contains t.toLower then some t.toLower else none
+  | .pageMode => if Ir.pageModes.contains t then some t else none
 
 /-- What hyperref's keys declare: its metadata keys with their TeX values, its dates and trapping
 as words, whether a link key was read, and whether a dropped key was named. -/
@@ -6395,7 +6416,6 @@ public def hyperrefInert : List (String × String) :=
     [(k, why), (k ++ "=true", why), (k ++ "=false", why)]
   either "unicode" "the PDF's text strings are Unicode" ++
   either "final" "links are written, as without the option" ++
-  [("bookmarks=false", "the PDF carries no outline of its headings, as the option asks")] ++
   either "breaklinks" "a link's text breaks across lines as other text does" ++
   either "pdfusetitle" "the title and author fall back to the document's own" ++
   either "pdfdisplaydoctitle" "the viewer shows the document's title" ++
@@ -6411,8 +6431,7 @@ public def hyperrefInert : List (String × String) :=
 UTF-16 otherwise, as the option asks"),
    ("pdfencoding=unicode", "text strings read as the same Unicode text in either encoding"),
    ("hyperfootnotes=false", "a footnote mark carries no link here, as the option asks"),
-   ("pdfpagelabels=false", "the PDF carries no page labels, as the option asks"),
-   ("pdfpagemode=UseNone", "the PDF names no page mode, which a viewer reads as UseNone")]
+   ("pdfpagelabels=false", "the PDF carries no page labels, as the option asks")]
 
 /-- hyperref's keys, as `\hypersetup` and the package options give them, with its link keys
 written into the setup. -/
@@ -6430,6 +6449,7 @@ private def hyperrefKeys (opts : String) (pos : Pos) : M HyperrefRead := do
     if let some m := Native.TextMetaKey.all.find? (k == "pdf" ++ ·.key.name) then
       metadata := metadata.push (m, v)
     if let some w := MetaWord.all.find? (k == ·.hyperref) then
+      let v := if v.trimAscii.isEmpty && w.isSwitch then "true" else v
       unless v.trimAscii.isEmpty do
         match w.read v with
         | some x => words := words.push (w, x)

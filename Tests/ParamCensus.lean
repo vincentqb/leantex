@@ -548,9 +548,10 @@ def paramTruthChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
   let titled := "\\usepackage{hyperref}\\hypersetup{pdftitle={Probe}, " ++ invented ++ "=1}"
   t "hyperref: a key after a metadata key is read as one before it"
     (warnsOf (plain "" titled) invented)
-  t "hyperref: the outline it asks for is named, and the none it asks for is not"
-    (warnsOf (hyper "bookmarks") "bookmarks" && warnsOf (hyper "bookmarks=true") "bookmarks" &&
-      !warnsOf (hyper "bookmarks=false") "bookmarks")
+  t "hyperref: the outline keys it is given are honoured, none named as lost"
+    (["bookmarks", "bookmarks=true", "bookmarks=false", "bookmarksopen", "bookmarksopen=false",
+      "bookmarksnumbered", "bookmarksnumbered=false", "pdfpagemode=UseOutlines",
+      "pdfpagemode=UseNone"].all fun o => !warnsOf (hyper o) (KeyVal.entry o).1)
   t "hyperref: its drivers, log switches and default page anchors are silent"
     (["pdftex", "dvips", "xetex", "luatex", "dvipdfmx", "hypertex", "verbose", "debug",
       "pageanchor=true"].all fun o => !warnsOf (hyper o) (KeyVal.entry o).1)

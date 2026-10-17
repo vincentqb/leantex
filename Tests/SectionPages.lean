@@ -393,6 +393,14 @@ def sectionPageChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO U
     "See \\nameref{a} and \\nameref{f}."))
   t "nameref sets a section's title and a float's caption in an article, as hyperref's"
     ((pageWith c "See Alpha").any (pageHas c · "See Alpha and Panel words."))
+  let starred := "\\section*{Intro Words}\\label{i}Words.\\section{Plain \\emph{emph}}\\label{m}" ++
+    "See \\nameref{i}, \\nameref{m}, \\nameref*{m} and \\ref*{m}."
+  let (sdoc, sds) := elabStr (dvDoc "" starred)
+  let c := censusOfSrc fonts (dvDoc "" starred)
+  t "nameref names an unnumbered heading, and starred references set their text unlinked"
+    (!sds.any (fun d => d.code == "W0349" || d.severity == .error) &&
+      (pageWith c "See Intro").any (pageHas c · "See Intro Words, Plain emph, Plain emph and 1.") &&
+      ((HtmlDoc.emit {} sdoc).1.splitOn "href=\"#m\"").length == 2)
   let afterFrame := "\\begin{frame}{Opening}OpeningWords, see \\ref{after}.\\end{frame}\n" ++
     "\\section{Alpha Part}\n\\begin{frame}{First}FirstWords\\end{frame}\n\\label{after}\n" ++
     "\\begin{frame}{Second}SecondWords\\end{frame}"

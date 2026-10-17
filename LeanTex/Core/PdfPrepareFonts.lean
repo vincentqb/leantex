@@ -15,9 +15,9 @@ private theorem find_choice {α : Type} (p : α → Bool)
     (if c then xs else ys).find? p = if c then xs.find? p else ys.find? p := by
   split <;> rfl
 
-private theorem catalog_not_font (root : Option Nat) (xmp : Nat)
+private theorem catalog_not_font (root : Option Nat) (mode : Option String) (xmp : Nat)
     (lang : Option String) (structRoot : Nat) (oc intents : Array (String × Obj)) :
-    kindOf (catalogDict root xmp lang structRoot oc intents) ≠ .font := by
+    kindOf (catalogDict root mode xmp lang structRoot oc intents) ≠ .font := by
   rw [kindOf_catalog_exact _ (by simp [catalogDict, Obj.get?, Array.find?_append])]
   decide
 
@@ -48,7 +48,7 @@ public theorem prepare_census_fonts_exact (geom : Layout.Geom) (fs : Font.FontSe
     Prod.mk.injEq] at hm
   rcases hm with (((((((hcat | hpages) | hfont) | hinfo) | hout) | hpage) | hstruct) | hres) | hfig
   · rw [hcat.2] at hf
-    exact False.elim (catalog_not_font _ _ _ _ _ _ hf)
+    exact False.elim (catalog_not_font _ _ _ _ _ _ _ hf)
   · rw [hpages.2, kindOf_pages_exact _ (by simp [Obj.get?])] at hf
     contradiction
   · obtain ⟨k, hk, hrow⟩ := List.mem_flatMap.mp hfont
