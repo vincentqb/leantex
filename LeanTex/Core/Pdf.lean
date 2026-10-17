@@ -769,13 +769,13 @@ public theorem figDictObj_untyped_exact (r : FigRes) (cmyk : Bool) :
 public def pressOps (press : Option Icc.Transform) (ops : Array (Array ContentOp)) :
     Array (Array ContentOp) :=
   match press with
-  | some t => ops.map (·.map (ContentOp.recolor (pressColor t)))
+  | some t => pressedOps t ops
   | none => ops
 
 /-- A figure resource with the engine's own colours in the output intent's press. -/
 public def pressFig (press : Option Icc.Transform) (r : FigRes) : FigRes :=
   match press with
-  | some t => r.recolor (pressColor t)
+  | some t => pressedFig t r
   | none => r
 
 /-- Each page's typed operators, resolved against the used faces, images and leaf tags. -/

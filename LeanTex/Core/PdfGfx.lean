@@ -212,11 +212,12 @@ public def cmykRgb8 (c m y k : UInt8) : UInt8 × UInt8 × UInt8 := Id.run do
   let round (x : UInt64) : UInt8 := ((2 * x + n) / (2 * n)).toUInt8
   return (round r, round g, round bl)
 
-/-- A device colour from its components (§8.6.4): its screen preview and its device model as spelled. -/
+/-- A device colour from its components (§8.6.4): its screen preview and its device model as spelled,
+the figure's declaration. -/
 public def deviceColor (sp : Space) (cs : Array Obj) : Ir.Color :=
   let v (i : Nat) : Rat := unit01 ((cs[i]?.bind ratOf).getD 0)
   let raw (i : Nat) : String := spelling (cs[i]?.getD (.int 0))
-  match sp with
+  Ir.Color.declared <| match sp with
   | .gray =>
     let g := byteOf (v 0)
     { r := g, g := g, b := g, pdfModel := some (.gray (raw 0)) }
@@ -250,7 +251,7 @@ public def colorIn (sp : Space) (cs : Array Obj) : Ir.Color :=
   | .indexed base hival lookup =>
     let i := min hival (((cs[0]?.bind ratOf).getD 0).floor.toNat)
     let (r, g, b) := (palette base hival lookup)[i]?.getD (0, 0, 0)
-    { r, g, b }
+    { r, g, b, origin := .declared }
   | sp => deviceColor sp cs
 
 /-- A space's initial colour (§8.6.8): black, the first index, none for a
@@ -305,8 +306,8 @@ public structure GState where
 
 /-- PDF's initial graphics state under a frame. -/
 public def GState.initial (ctm : Affine) : GState :=
-  { ctm, fillSpace := .gray, strokeSpace := .gray, fill := .color { r := 0, g := 0, b := 0 }
-    stroke := .color { r := 0, g := 0, b := 0 }, width := 65536, cap := .butt, join := .miter
+  { ctm, fillSpace := .gray, strokeSpace := .gray, fill := .color { r := 0, g := 0, b := 0, origin := .declared }
+    stroke := .color { r := 0, g := 0, b := 0, origin := .declared }, width := 65536, cap := .butt, join := .miter
     miter := 10, dash := #[], phase := 0, ca := Alpha.opaque, cA := Alpha.opaque, font := none
     size := 0, charSpace := 0, wordSpace := 0, hScale := 1, leading := 0, rise := 0, render := 0
     mask := Alpha.opaque, maskClip := none }
@@ -680,7 +681,7 @@ private def shadingStops (cx : Ctx) (sh : Obj) (sp : Space) : Option (Array Stop
 where
   deviceColorRat (sp : Space) (comps : Array Rat) : Ir.Color :=
     let v (i : Nat) : Rat := unit01 (comps[i]?.getD 0)
-    match sp with
+    Ir.Color.declared <| match sp with
     | .gray => let g := byteOf (v 0); { r := g, g := g, b := g }
     | .rgb => { r := byteOf (v 0), g := byteOf (v 1), b := byteOf (v 2) }
     | .cmyk =>
@@ -2065,7 +2066,7 @@ private def type3Glyph (cx : Ctx) (e : Entered) (font : PdfFont.Loaded) (key : N
               let isD1 := toks.any fun t => match t with
                 | .op "d1" => true
                 | _ => false
-              let black : Ink := .color { r := 0, g := 0, b := 0 }
+              let black : Ink := .color { r := 0, g := 0, b := 0, origin := .declared }
               -- The store goes with each reading, held once.
               let store := st.store
               let asked := store.asked

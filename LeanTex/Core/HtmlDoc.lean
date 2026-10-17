@@ -546,7 +546,10 @@ private def markerCssOne (scale : List (String × Nat)) (decls : Array String) :
     markerCssList scale (decls.push (markerColorDecl c name)) body.toList
   | .located _ body => markerCssList scale decls body.toList
   | .role _ body => markerCssList scale decls body.toList
-  | x@(.math _ _) | x@(.formula _ _ _) => some { text := Ir.plainTextOne x, decls := decls }
+  | x@(.math _ _) | x@(.formula _ _ _) =>
+    -- A formula reaches a marker as its one symbol; a structured one does not.
+    if (Ir.plainTextOne x).length == 1 then some { text := Ir.plainTextOne x, decls := decls }
+    else none
   | .link _ _ => none
   | .decorated _ _ => none
   | .fill => none
@@ -659,8 +662,11 @@ private theorem markerCssOne_text (scale : List (String × Nat)) (decls : Array 
     rw [Ir.plainTextOne]
     exact markerCssList_text scale _ body.toList r h
   | .math _ _ | .formula _ _ _ =>
-    simp [markerCssOne] at h
-    simp [← h]
+    simp only [markerCssOne] at h
+    split at h
+    · simp only [Option.some.injEq] at h
+      simp [← h]
+    · simp at h
   | .link _ _ | .decorated _ _ | .fill
   | .hspace _ _ | .rule _ _ _ | .strut _ | .italicCorr _ | .pageNumber | .pageCount
   | .linebreak _ | .onSteps _ _ | .image _ _ _ | .icon _ _ | .label _ | .ref _ _ _ _

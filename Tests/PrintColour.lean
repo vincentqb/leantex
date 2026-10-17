@@ -99,13 +99,13 @@ def checks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
     (match placeholder.pdfModel with
       | some (.cmyk ..) => placeholder.r == 158 && placeholder.b == 168
       | _ => false)
-  let neutral := Pdf.pressColor press ({ r := 128, g := 128, b := 128 } : Ir.Color).engine
+  let neutral := Pdf.pressColor press ({ r := 128, g := 128, b := 128 } : Ir.Color)
   t "an engine grey prints in black ink alone, as light as the press shows it"
     (match neutral.pdfModel with
       | some (.gray v) => v == Ir.Color.pdfMilli ((65535 - press.blackFor 128) * 1000 / 65535)
       | _ => false)
   t "a declared grey and a declared RGB colour are not pressed"
-    ((Pdf.pressColor press ({ r := 128, g := 128, b := 128 } : Ir.Color)).pdfModel == none &&
+    ((Pdf.pressColor press ({ r := 128, g := 128, b := 128 } : Ir.Color).declared).pdfModel == none &&
       (Pdf.pressColor press (Ir.Color.ofHtml 255 0 0)).pdfModel == (Ir.Color.ofHtml 255 0 0).pdfModel)
   -- A themed deck's colours are the engine's: none of them paints in DeviceRGB under the press.
   let deck := "\\documentclass{beamer}\n\\usetheme{moloch}\n\\begin{document}\n" ++
@@ -116,6 +116,26 @@ def checks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   t "a theme's colours paint in DeviceRGB under no profile and in the press under a CMYK one"
     ((devices themedPlain).contains "DeviceRGB" && !(devices themedPdf).contains "DeviceRGB" &&
       (devices themedPdf).contains "DeviceCMYK")
+  -- Colours the engine derives at a site, not from a palette slot, are its own too.
+  let derived := [("covered steps", "\\documentclass{beamer}\n\\usetheme{moloch}\n" ++
+      "\\setbeamercovered{transparent}\n\\begin{document}\n\\begin{frame}{Probe}\n" ++
+      "\\begin{itemize}\n\\item<1-> Alpha\n\\item<2-> Beta\n\\end{itemize}\n\\end{frame}\n\\end{document}"),
+    ("generated tones on a block and a standout frame", "\\documentclass{beamer}\n\\begin{document}\n" ++
+      "\\begin{frame}{Probe}\n\\begin{block}{Block}\n\\textcolor{muted}{Quiet} \\alert{Loud}\n" ++
+      "\\end{block}\n\\end{frame}\n\\begin{frame}[standout]\n\\alert{Loud} \\textcolor{muted}{Quiet}\n" ++
+      "\\end{frame}\n\\end{document}"),
+    ("a pin's grey", "\\documentclass{article}\n\\usepackage{tikz}\n\\begin{document}\n" ++
+      "\\tikz \\node[draw, pin=above:Note] {Alpha};\n\\end{document}")]
+  for (what, src) in derived do
+    let (ddoc, _) := elabThrough (some press) src
+    let (_, dpdf) := artifacts oneFace ddoc true
+    t s!"under the press, {what} paint in no DeviceRGB: {devices dpdf}" (!(devices dpdf).contains "DeviceRGB")
+  let seeded := "\\documentclass{article}\n\\palette[seeds]{ ink = #2B2440, paper = #FFFFFF, " ++
+    "accent = #1D4ED8 }\n\\begin{document}\nAlpha \\textcolor{accent}{Beta}\n\\end{document}"
+  let (sdoc, _) := elabThrough (some press) seeded
+  let (_, spdf) := artifacts oneFace sdoc true
+  t "a seed a palette declares paints as declared under the press"
+    (paints spdf (Ir.Color.ofHtml 0x1D 0x4E 0xD8).pdfFill)
 
 /-- Every CMYK colour the engine mixes shows through the profile as the palette's do: a listing's
 ink fitted to its ground, a shading's stops, a ball's and an ink declared again, the contrast the
@@ -129,6 +149,32 @@ def previewChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
     ({ r := ch 0, g := ch 1, b := ch 2 } : Ir.Color).css
   let listing := card "\\usepackage{listings}\n\\palette{ tint = gray!50 }\n"
     "{\\color{accent}\nSome text.\n\\begin{lstlisting}\nplain words here\n\\end{lstlisting}\n}"
+  -- The bisection finds the step the scan of every step finds.
+  let scan (pal : Ir.Palette) (req : Nat) (ground seed : Ir.Color) : Ir.Color := Id.run do
+    if Contrast.contrastMilli seed ground ≥ req then return seed
+    let pole := if Contrast.contrastMilli Ir.Color.black ground >
+        Contrast.contrastMilli Ir.Color.white ground then Ir.Color.black else Ir.Color.white
+    for step in [1:101] do
+      let c := pal.mix seed (100 - step) pole
+      if Contrast.contrastMilli c ground ≥ req then return c
+    return pole
+  let shownPal : Ir.Palette := { profile := some press }
+  let mut st : UInt64 := 88172645463325252
+  let mut same := true
+  for i in [0:400] do
+    let (r, s1) := rand st 256
+    let (g, s2) := rand s1 256
+    let (b, s3) := rand s2 256
+    let (gr, s4) := rand s3 256
+    st := s4
+    let seed : Ir.Color := if i % 2 == 0 then { r := UInt8.ofNat r, g := UInt8.ofNat g, b := UInt8.ofNat b }
+      else shownPal.shown (Ir.Color.ofCmyk (r * 1000 / 255) (g * 1000 / 255) (b * 1000 / 255) 0)
+    let ground : Ir.Color := { r := UInt8.ofNat gr, g := UInt8.ofNat gr, b := UInt8.ofNat ((gr + 40) % 256) }
+    for req in [3000, 4500, 7000] do
+      let a := Listing.fitInk shownPal req ground seed
+      let z := scan shownPal req ground seed
+      same := same && a == z
+  t "a fitted ink found by bisection is the one the scan of every step finds" same
   let (_, lds) := elabThrough (some press) listing
   t "a listing's ink fitted to its ground from a CMYK colour is judged as the profile shows it"
     (!lds.any fun d => d.code == DiagCode.W0315.code && ((d.detail.getD "") ++ d.message).contains "listing")

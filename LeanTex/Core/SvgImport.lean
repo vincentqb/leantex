@@ -281,7 +281,7 @@ public inductive PaintSpec where
   | url (id : String) (fallback : Option PaintSpec)
   deriving Repr, Inhabited, BEq
 
-@[expose] public def black : Ir.Color := { r := 0, g := 0, b := 0 }
+@[expose] public def black : Ir.Color := { r := 0, g := 0, b := 0, origin := .declared }
 
 /-- The inherited properties the importer reads, computed. -/
 public structure Style where
@@ -539,7 +539,7 @@ public def pick {α : Type} (d : Decls) (prop : String) (inherited : Bool) (pare
 /-- A colour value with its alpha, `currentColor` the caller's. -/
 public def colorValue? (current : Ir.Color × Nat) (s : String) : Option (Ir.Color × Nat) :=
   if s.trimAscii.toString.toLower == "currentcolor" then some current
-  else (CssColor.parse s).map fun v => (v.color, v.alpha)
+  else (CssColor.parse s).map fun v => (v.color.declared, v.alpha)
 
 /-- A paint (SVG 2 §13.2): `none`, `currentColor`, a colour, or a paint
 server reference with an optional fallback. -/
@@ -560,10 +560,10 @@ public def paint? (s : String) : Option PaintSpec :=
         if fb.isEmpty then none
         else if fb.toLower == "none" then some .none
         else if fb.toLower == "currentcolor" then some .current
-        else (CssColor.parse fb).map fun v => .color v.color v.alpha
+        else (CssColor.parse fb).map fun v => .color v.color.declared v.alpha
       some (.url (inner.drop 1).toString fallback)
     | [] => none
-  else (CssColor.parse t).map fun v => .color v.color v.alpha
+  else (CssColor.parse t).map fun v => .color v.color.declared v.alpha
 
 /-- An opacity: a number or a percentage, clamped to [0, 1], in thousandths. -/
 public def opacity? (s : String) : Option Nat :=

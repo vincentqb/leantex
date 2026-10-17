@@ -16371,16 +16371,17 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
     let name := Ir.itemLabelName lvl
     let saved ← get
     let marker ← elabInlines (ctx.atCall name pos) labelBody
+    -- A loss counts whatever its presentation: a repeat of one named before is a note.
     let lost := ((← get).diags.extract saved.diags.size (← get).diags.size).filter
-      (·.severity != .note)
+      (·.kind.loss != .info)
     if lost.isEmpty && labelInks marker then
       itemLabels := itemLabels.push (lvl, #[.located (ctx.sourceSpan pos) marker])
     else
       -- The label is not set, so nothing it did stands, and its losses are named once.
       let what := if lost.isEmpty then "sets no ink" else "holds what the engine cannot set"
       let named := diagOf ctx .W0331 s!"the redefined '\\{name}' {what}; the class's marker \
-marks its level" (some pos) (help := some "redefine it as text, a symbol or a formula: \
-\\renewcommand{\\labelitemi}{\\textbullet}") (subject := some s!"labelitem:{name}")
+marks its level" (some pos) (help := some s!"redefine it as text, a symbol or a formula: \
+\\renewcommand\{\\{name}}\{\\textbullet}") (subject := some s!"labelitem:{name}")
         (detail := if lost.isEmpty then none else some ("; ".intercalate (lost.map (·.message)).toList))
       set { saved with diags := saved.diags.push named }
   for (name, pos) in itemLabelDefines #[] body.toList do

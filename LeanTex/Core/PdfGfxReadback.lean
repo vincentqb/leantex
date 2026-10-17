@@ -528,7 +528,7 @@ theorem byteOf_milli (c : UInt8) :
 /-- The colour the importer reads back from a written plain colour: its
 three bytes, and the components as the PDF spelled them. -/
 def colorRead (c : Ir.Color) : Ir.Color :=
-  { r := c.r, g := c.g, b := c.b
+  { r := c.r, g := c.g, b := c.b, origin := .declared
     pdfModel := some (.rgb (Ir.Color.pdfMilli (Ir.Color.milli c.r))
       (Ir.Color.pdfMilli (Ir.Color.milli c.g)) (Ir.Color.pdfMilli (Ir.Color.milli c.b))) }
 
@@ -558,7 +558,7 @@ theorem milli_le (c : UInt8) : Ir.Color.milli c ≤ 1000 := by
 theorem deviceColor_milli (c : Ir.Color) :
     deviceColor .rgb #[milliObj (Ir.Color.milli c.r), milliObj (Ir.Color.milli c.g),
       milliObj (Ir.Color.milli c.b)] = colorRead c := by
-  unfold deviceColor colorRead
+  unfold deviceColor colorRead Ir.Color.declared
   simp only [List.getElem?_toArray, List.getElem?_cons_succ, List.getElem?_cons_zero,
     Option.bind_some, Option.getD_some]
   rw [byteOf_milli, byteOf_milli, byteOf_milli, spelling_milliObj _ (milli_le _),

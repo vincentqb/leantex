@@ -33,15 +33,22 @@ public theorem paint_derived_exact (pal : Palette) (ground : Color) (style : Opt
   resolve_derived_exact pal ground style k.role p h hd
 
 /-- A derived colour kept where it reads at `req` on its ground, else the first whole-percent
-xcolor tint or shade that does, each judged as the palette shows it. -/
+xcolor tint or shade toward the farther pole that does, each judged as the palette shows it: past
+the ground's lightness, the contrast only grows, so the first is found by bisection. -/
 public def fitInk (pal : Palette) (req : Nat) (ground seed : Color) : Color := Id.run do
   if Contrast.contrastMilli seed ground ≥ req then return seed
   let pole := if Contrast.contrastMilli Color.black ground >
       Contrast.contrastMilli Color.white ground then Color.black else Color.white
-  for step in [1:101] do
-    let c := pal.mix seed (100 - step) pole
-    if Contrast.contrastMilli c ground ≥ req then return c
-  return pole
+  let mixAt (step : Nat) : Color := pal.mix seed (100 - step) pole
+  let reads (step : Nat) : Bool := Contrast.contrastMilli (mixAt step) ground ≥ req
+  if !reads 100 then return pole
+  let mut lo : Nat := 1
+  let mut hi : Nat := 100
+  for _ in [0:7] do
+    if lo < hi then
+      let mid := (lo + hi) / 2
+      if reads mid then hi := mid else lo := mid + 1
+  return mixAt lo
 
 /-- A derived colour fitted to WCAG AA text on its ground (`fitInk`). -/
 public def defaultInk (pal : Palette) (ground seed : Color) : Color :=

@@ -69,6 +69,15 @@ def checks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
     t s!"a label of {label} the engine cannot set leaves the class's bullet, named once: {markers oneFace lost |>.map (·.1)}"
       ((markers oneFace lost)[0]?.any (·.1 == "•") && named.size == 1 &&
         named.all (·.code == DiagCode.W0331.code) && !lostDs.any (·.code == DiagCode.W0301.code))
+  let (again, againDs) := elabStr (labelDoc ("\\usepackage{pifont}\n\\usepackage{enumitem}\n" ++
+    "\\setlist[itemize,2]{label=\\ding{52}}\n\\renewcommand{\\labelitemi}{\\ding{51}}\n"))
+  t s!"a label whose loss was named before still leaves the class's bullet: {markers oneFace again |>.map (·.1)}"
+    ((markers oneFace again)[0]?.any (·.1 == "•") &&
+      againDs.any (·.subject == some "labelitem:labelitemi"))
+  let (_, secondDs) := elabStr (labelDoc "\\usepackage{amssymb}\n\\renewcommand{\\labelitemii}{\\checkmark}\n")
+  t "a lost label's help names its own level's command"
+    (secondDs.any fun d => d.subject == some "labelitem:labelitemii" &&
+      (d.help.getD "").contains "\\renewcommand{\\labelitemii}")
   -- The web page carries a label's text as written, its formula as its symbol.
   let (lt, _) := elabStr (labelDoc "\\renewcommand{\\labelitemi}{\\textless/style}\n")
   let (ltHtml, ltDs) := HtmlDoc.emit {} lt
@@ -79,5 +88,9 @@ def checks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let (bulletHtml, bulletDs) := HtmlDoc.emit {} bullet
   t "a label's formula marks the web page in its symbol, unnamed"
     (hasStr bulletHtml "ul > li::marker { content: \"∙  \"" && !bulletDs.any (·.code == DiagCode.W0331.code))
+  let (power, _) := elabStr (labelDoc "\\renewcommand{\\labelitemi}{$x^2$}\n")
+  let (powerHtml, powerDs) := HtmlDoc.emit {} power
+  t "a structured formula label is named on the web page, not linearized"
+    (powerDs.any (·.code == DiagCode.W0331.code) && !hasStr powerHtml "ul > li::marker { content: \"(")
 
 end Tests.ItemLabels

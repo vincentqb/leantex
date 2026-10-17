@@ -330,31 +330,31 @@ public def Color.milli (v : UInt8) : Nat := (v.toNat * 1000 + 127) / 255
 five-decimal DeviceRGB values. -/
 public def Color.ofHtml (r g b : UInt8) : Color :=
   let part (v : UInt8) : Decl.ColorComponent := { num := v.toNat, scale := 1 }
-  { r := r, g := g, b := b,
+  { r := r, g := g, b := b, origin := .declared,
     pdfModel := some (.rgb (part r).xcolorRgb (part g).xcolorRgb (part b).xcolorRgb) }
 
 /-- An RGB-range source, keeping decimal components for the PDF and projecting
 each to an HTML byte. -/
 public def Color.ofRgbByte (r g b : Decl.ColorComponent) : Color :=
-  { r := r.rgbByte, g := g.rgbByte, b := b.rgbByte,
+  { r := r.rgbByte, g := g.rgbByte, b := b.rgbByte, origin := .declared,
     pdfModel := some (.rgb r.pdfRgb g.pdfRgb b.pdfRgb) }
 
 /-- A unit-rgb source, keeping exact components for the PDF and using xcolor's
 fixed-point projection on screen. -/
 public def Color.ofRgbUnit (r g b : Decl.ColorComponent) : Color :=
-  { r := r.unitByte, g := g.unitByte, b := b.unitByte,
+  { r := r.unitByte, g := g.unitByte, b := b.unitByte, origin := .declared,
     pdfModel := some (.rgb r.pdfUnit g.pdfUnit b.pdfUnit) }
 
 /-- A gray source: DeviceGray in the PDF, xcolor's byte projection on screen. -/
 public def Color.ofGray (v : Decl.ColorComponent) : Color :=
-  { r := v.unitByte, g := v.unitByte, b := v.unitByte,
+  { r := v.unitByte, g := v.unitByte, b := v.unitByte, origin := .declared,
     pdfModel := some (.gray v.pdfUnit) }
 
 /-- A source CMYK value, keeping every decimal digit for DeviceCMYK. -/
 public def Color.ofCmykSource (c m y k : Decl.ColorComponent) : Color :=
   { r := cmykPreviewByte c k, g := cmykPreviewByte m k, b := cmykPreviewByte y k,
     pdfModel := some (.cmyk c.pdfUnit m.pdfUnit y.pdfUnit k.pdfUnit),
-    cmyk := some (c.milli, m.milli, y.milli, k.milli) }
+    cmyk := some (c.milli, m.milli, y.milli, k.milli), origin := .declared }
 
 /-- A declared DeviceCMYK decimal as an exact fraction. -/
 private def decimalRat? (s : String) : Option Rat :=
@@ -1786,8 +1786,8 @@ public def Palette.resolveSpec (p : Palette) : Decl.ColorSpec → Option Color
   | .gray v => some (Color.ofGray v)
   | .cmyk c m y k => some (p.shown (Color.ofCmykSource c m y k))
   | .spot n c m y k => some (p.shown (Color.ofInk (Ink.ofSource n c m y k) 1))
-  | .oklab L a b => (Decl.ColorSpec.oklab L a b).okLab?.map Oklab.ofLab
-  | .oklch L C H => (Decl.ColorSpec.oklch L C H).okLab?.map Oklab.ofLab
+  | .oklab L a b => (Decl.ColorSpec.oklab L a b).okLab?.map fun lab => (Oklab.ofLab lab).declared
+  | .oklch L C H => (Decl.ColorSpec.oklch L C H).okLab?.map fun lab => (Oklab.ofLab lab).declared
 
 /-- Parse and resolve a colour given in source syntax, optionally under a model. -/
 public def Palette.resolveSource (p : Palette) (model : Option String) (src : String) :
@@ -10768,9 +10768,13 @@ public theorem Design.chase_restrict_exact (t : Role → Option CssDecl) (roles 
 public def mutedOf (pal : Palette) : Color :=
   (Design.at pal .print .muted).getD Color.black
 
-/-- One generated declaration installed, at its 8-bit sRGB colour. -/
+/-- One generated declaration installed, at its 8-bit sRGB colour, the engine's. -/
 @[expose] public def Palette.declareSeeded (p : Palette) (e : Role × Color) : Palette :=
   p.declare (.role e.1) (Color.ofHtml e.2.r e.2.g e.2.b).engine
+
+/-- One seed a palette declares installed, at its 8-bit sRGB colour. -/
+@[expose] public def Palette.declareSeed (p : Palette) (e : Role × Color) : Palette :=
+  p.declare (.role e.1) (Color.ofHtml e.2.r e.2.g e.2.b)
 
 /-- One derived role installed, unless the document declared it (`keep`). -/
 private def Palette.installDerived (keep : Role → Bool) (p : Palette) (e : Role × Color) :
@@ -10791,7 +10795,7 @@ public def Palette.applySeedsUnder (pal : Palette) (st : SeedPalette.SeedState)
     (keep : Role → Bool) : Palette :=
   let seeds : List (Role × Color) :=
     [(.page, st.seeds.paper), (.ink, st.seeds.ink), (.accent, st.seeds.accent)]
-  let withSeeds := seeds.foldl Palette.declareSeeded { pal with seeded := some st }
+  let withSeeds := seeds.foldl Palette.declareSeed { pal with seeded := some st }
   let withDerived := (SeedPalette.derivedEntries st).foldl (Palette.installDerived keep) withSeeds
   (SeedPalette.bound st).foldl (Palette.installBound keep) withDerived
 
@@ -10929,7 +10933,7 @@ public theorem Palette.applySeedsUnder_keep_exact (pal : Palette) (st : SeedPale
     (pal.applySeedsUnder st keep).lookup (.role r) = pal.lookup (.role r) := by
   simp only [Palette.applySeedsUnder, List.foldl_cons, List.foldl_nil]
   rw [Palette.installBound_kept _ _ _ _ hk, Palette.installDerived_kept _ _ _ _ hk]
-  unfold Palette.declareSeeded
+  unfold Palette.declareSeed
   rw [Palette.declare_keeps_others _ (.role .accent) (.role r) _ _ (by simpa using hs.2.2),
     Palette.declare_keeps_others _ (.role .ink) (.role r) _ _ (by simpa using hs.1),
     Palette.declare_keeps_others _ (.role .page) (.role r) _ _ (by simpa using hs.2.1)]
@@ -10938,29 +10942,29 @@ public theorem Palette.applySeedsUnder_keep_exact (pal : Palette) (st : SeedPale
 public theorem Palette.applySeedsUnder_seeds_exact (pal : Palette) (st : SeedPalette.SeedState)
     (keep : Role → Bool) :
     Design.declared? (pal.applySeedsUnder st keep) .ink =
-        some (Color.ofHtml st.seeds.ink.r st.seeds.ink.g st.seeds.ink.b).engine ∧
+        some (Color.ofHtml st.seeds.ink.r st.seeds.ink.g st.seeds.ink.b) ∧
       Design.declared? (pal.applySeedsUnder st keep) .page =
-        some (Color.ofHtml st.seeds.paper.r st.seeds.paper.g st.seeds.paper.b).engine ∧
+        some (Color.ofHtml st.seeds.paper.r st.seeds.paper.g st.seeds.paper.b) ∧
       Design.declared? (pal.applySeedsUnder st keep) .accent =
-        some (Color.ofHtml st.seeds.accent.r st.seeds.accent.g st.seeds.accent.b).engine := by
+        some (Color.ofHtml st.seeds.accent.r st.seeds.accent.g st.seeds.accent.b) := by
   have hd := (SeedPalette.generate_seeds_exact st).1
   have hb := (SeedPalette.generate_seeds_exact st).2
   simp only [Design.declared?, Palette.applySeedsUnder, List.foldl_cons, List.foldl_nil]
   refine ⟨?_, ?_, ?_⟩
   · rw [Palette.installBound_keeps _ _ _ _ fun e he => (hb e he).1,
       Palette.installDerived_keeps _ _ _ _ fun e he => (hd e he).1]
-    unfold Palette.declareSeeded
+    unfold Palette.declareSeed
     rw [Palette.declare_keeps_others _ (.role .accent) (.role .ink) _ _ (by simp),
       Palette.declare_last_wins]
   · rw [Palette.installBound_keeps _ _ _ _ fun e he => (hb e he).2.1,
       Palette.installDerived_keeps _ _ _ _ fun e he => (hd e he).2.1]
-    unfold Palette.declareSeeded
+    unfold Palette.declareSeed
     rw [Palette.declare_keeps_others _ (.role .accent) (.role .page) _ _ (by simp),
       Palette.declare_keeps_others _ (.role .ink) (.role .page) _ _ (by simp),
       Palette.declare_last_wins]
   · rw [Palette.installBound_keeps _ _ _ _ fun e he => (hb e he).2.2,
       Palette.installDerived_keeps _ _ _ _ fun e he => (hd e he).2.2]
-    unfold Palette.declareSeeded
+    unfold Palette.declareSeed
     rw [Palette.declare_last_wins]
 
 /-- The text target a generated run owes on a ground: the ink's own on the ink, the page's

@@ -26,7 +26,7 @@ public inductive PdfColor where
   deriving Repr, BEq, DecidableEq
 
 /-- Who chose a colour: a source declared it, so the PDF paints its device model as declared, or
-the engine chose it, so an output intent's press prints it. -/
+the engine chose it, so an output intent's press prints it; only a source reader declares one. -/
 public inductive Color.Origin where
   | declared
   | engine
@@ -41,11 +41,14 @@ public structure Color where
   /-- CMYK components in thousandths, for mix arithmetic. -/
   cmyk : Option (Nat × Nat × Nat × Nat) := none
   pdfModel : Option PdfColor := none
-  origin : Color.Origin := .declared
+  origin : Color.Origin := .engine
   deriving Repr, Inhabited, DecidableEq
 
 /-- The colour as the engine's own choice. -/
 @[expose] public def Color.engine (c : Color) : Color := { c with origin := .engine }
+
+/-- The colour as a source declares it. -/
+@[expose] public def Color.declared (c : Color) : Color := { c with origin := .declared }
 
 /-- The ink and tint a colour paints with. -/
 @[expose] public def Color.ink? (c : Color) : Option (Ink × Rat) :=
@@ -81,7 +84,7 @@ itself in the PDF. -/
   { r := inkPreviewByte (part i.c) black, g := inkPreviewByte (part i.m) black,
     b := inkPreviewByte (part i.y) black,
     cmyk := some (milli (part i.c), milli (part i.m), milli (part i.y), milli black),
-    pdfModel := some (.separation i t) }
+    pdfModel := some (.separation i t), origin := .declared }
 
 /-- Whether a colour is the paper itself: white with no ink, in any model. -/
 @[expose] public def Color.isPaper (c : Color) : Bool :=

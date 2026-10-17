@@ -57,35 +57,46 @@ public def pressColor (t : Icc.Transform) (c : Ir.Color) : Ir.Color :=
   | "GRAY", none => { c with pdfModel := some (.gray (Ir.Color.pdfMilli (xcolorGray c))) }
   | _, _ => c
 
+/-- A gradient's stops recoloured. -/
+private def gradientM {m : Type → Type} [Monad m] (f : Ir.Color → m Ir.Color) :
+    Gfx.Gradient → m Gfx.Gradient
+  | .linear p0 p1 st xf => return .linear p0 p1 (← st.mapM fun s => return { s with color := ← f s.color }) xf
+  | .radial c0 r0 c1 r1 st xf =>
+    return .radial c0 r0 c1 r1 (← st.mapM fun s => return { s with color := ← f s.color }) xf
+
 /-- A paint recoloured. -/
-private def PdfPaint.recolor (f : Ir.Color → Ir.Color) : PdfPaint → PdfPaint
-  | .solid c => .solid (f c)
-  | .pattern res g => .pattern res (g.recolor f)
+private def PdfPaint.recolorM {m : Type → Type} [Monad m] (f : Ir.Color → m Ir.Color) :
+    PdfPaint → m PdfPaint
+  | .solid c => return .solid (← f c)
+  | .pattern res g => return .pattern res (← gradientM f g)
 
-private def PaintStroke.recolor (f : Ir.Color → Ir.Color) (s : PaintStroke) : PaintStroke :=
-  { s with paint := s.paint.recolor f }
+private def PaintStroke.recolorM {m : Type → Type} [Monad m] (f : Ir.Color → m Ir.Color)
+    (s : PaintStroke) : m PaintStroke :=
+  return { s with paint := ← s.paint.recolorM f }
 
-private def XKind.recolor (f : Ir.Color → Ir.Color) : XKind → XKind
-  | .stamp fp sp gs => .stamp (fp.map (·.recolor f)) (sp.map (·.recolor f)) gs
-  | .symbol => .symbol
-  | .group => .group
-  | .raster k => .raster k
+private def XKind.recolorM {m : Type → Type} [Monad m] (f : Ir.Color → m Ir.Color) :
+    XKind → m XKind
+  | .stamp fp sp gs => return .stamp (← fp.mapM (·.recolorM f)) (← sp.mapM (·.recolorM f)) gs
+  | .symbol => return .symbol
+  | .group => return .group
+  | .raster k => return .raster k
 
 mutual
 
 /-- A text operator recoloured. -/
-public def TextOp.recolor (f : Ir.Color → Ir.Color) : TextOp → TextOp
-  | .color c => .color (f c)
-  | .marked tag body => .marked tag (TextOp.recolorList f #[] body.toList)
-  | .scale p => .scale p
-  | .move x y => .move x y
-  | .font res size => .font res size
-  | .show items => .show items
+private def TextOp.recolorM {m : Type → Type} [Monad m] (f : Ir.Color → m Ir.Color) :
+    TextOp → m TextOp
+  | .color c => return .color (← f c)
+  | .marked tag body => return .marked tag (← TextOp.recolorListM f #[] body.toList)
+  | .scale p => return .scale p
+  | .move x y => return .move x y
+  | .font res size => return .font res size
+  | .show items => return .show items
 
-private def TextOp.recolorList (f : Ir.Color → Ir.Color) (acc : Array TextOp) :
-    List TextOp → Array TextOp
-  | [] => acc
-  | o :: rest => TextOp.recolorList f (acc.push (TextOp.recolor f o)) rest
+private def TextOp.recolorListM {m : Type → Type} [Monad m] (f : Ir.Color → m Ir.Color)
+    (acc : Array TextOp) : List TextOp → m (Array TextOp)
+  | [] => return acc
+  | o :: rest => do TextOp.recolorListM f (acc.push (← TextOp.recolorM f o)) rest
 
 end
 
@@ -93,35 +104,57 @@ mutual
 
 /-- A content operator recoloured, the placeholder box drawn as a stroke in its ink so the ink can
 be recoloured too. -/
-public def ContentOp.recolor (f : Ir.Color → Ir.Color) : ContentOp → ContentOp
-  | .fill c x y w h => .fill (f c) x y w h
-  | .paint fl st gs segs =>
-    .paint (fl.map fun p => { p with paint := p.paint.recolor f }) (st.map (·.recolor f)) gs segs
-  | .text ops => .text (TextOp.recolorList f #[] ops.toList)
-  | .image x y w h res => .image x y w h res
-  | .imageMissing x y w h =>
-    .paint none (some { paint := .solid (f placeholderInk), width := Dim.pt 3 / 4, cap := none
-                        join := none, miter := none, dash := none }) none #[.rect x y w h]
-  | .marked tag body => .marked tag (ContentOp.recolorList f #[] body.toList)
-  | .group m gs clips body => .group m gs clips (ContentOp.recolorList f #[] body.toList)
-  | .shade res g => .shade res (g.recolor f)
-  | .outline fl st segs => .outline fl st segs
-  | .xobject m res kind body =>
-    .xobject m res (kind.recolor f) (ContentOp.recolorList f #[] body.toList)
+private def ContentOp.recolorM {m : Type → Type} [Monad m] (f : Ir.Color → m Ir.Color) :
+    ContentOp → m ContentOp
+  | .fill c x y w h => return .fill (← f c) x y w h
+  | .paint fl st gs segs => do
+    let fl ← fl.mapM fun p => return { p with paint := ← p.paint.recolorM f }
+    return .paint fl (← st.mapM (·.recolorM f)) gs segs
+  | .text ops => return .text (← TextOp.recolorListM f #[] ops.toList)
+  | .image x y w h res => return .image x y w h res
+  | .imageMissing x y w h => do
+    let ink ← f placeholderInk
+    return .paint none (some { paint := .solid ink, width := Dim.pt 3 / 4, cap := none
+                               join := none, miter := none, dash := none }) none #[.rect x y w h]
+  | .marked tag body => return .marked tag (← ContentOp.recolorListM f #[] body.toList)
+  | .group mx gs clips body => return .group mx gs clips (← ContentOp.recolorListM f #[] body.toList)
+  | .shade res g => return .shade res (← gradientM f g)
+  | .outline fl st segs => return .outline fl st segs
+  | .xobject mx res kind body =>
+    return .xobject mx res (← kind.recolorM f) (← ContentOp.recolorListM f #[] body.toList)
 
-private def ContentOp.recolorList (f : Ir.Color → Ir.Color) (acc : Array ContentOp) :
-    List ContentOp → Array ContentOp
-  | [] => acc
-  | o :: rest => ContentOp.recolorList f (acc.push (ContentOp.recolor f o)) rest
+private def ContentOp.recolorListM {m : Type → Type} [Monad m] (f : Ir.Color → m Ir.Color)
+    (acc : Array ContentOp) : List ContentOp → m (Array ContentOp)
+  | [] => return acc
+  | o :: rest => do ContentOp.recolorListM f (acc.push (← ContentOp.recolorM f o)) rest
 
 end
 
-/-- A figure resource recoloured. -/
-public def FigRes.recolor (f : Ir.Color → Ir.Color) : FigRes → FigRes
+/-- The press's colours computed so far, keyed by screen value. -/
+private abbrev PressCache := Std.HashMap UInt32 Ir.PdfColor
+
+/-- `pressColor`, computed once per screen value the engine chose. -/
+private def pressCached (t : Icc.Transform) (c : Ir.Color) : StateM PressCache Ir.Color := do
+  if !enginesRgb c then return c
+  let key := (c.r.toUInt32 <<< 16) ||| (c.g.toUInt32 <<< 8) ||| c.b.toUInt32
+  match (← get)[key]? with
+  | some model => return { c with pdfModel := some model }
+  | none =>
+    let pressed := pressColor t c
+    if let some model := pressed.pdfModel then modify (·.insert key model)
+    return pressed
+
+/-- Pages' or forms' operators with the engine's own colours in the press, each computed once. -/
+public def pressedOps (t : Icc.Transform) (ops : Array (Array ContentOp)) :
+    Array (Array ContentOp) :=
+  (ops.mapM fun (page : Array ContentOp) => page.mapM (ContentOp.recolorM (pressCached t))).run' {}
+
+/-- A figure resource with the engine's own colours in the press. -/
+public def pressedFig (t : Icc.Transform) : FigRes → FigRes
   | .extG a b => .extG a b
-  | .pattern g => .pattern (g.recolor f)
-  | .shading g => .shading (g.recolor f)
-  | .form kind body => .form kind (body.map (ContentOp.recolor f))
+  | .pattern g => .pattern ((gradientM (pressCached t) g).run' {})
+  | .shading g => .shading ((gradientM (pressCached t) g).run' {})
+  | .form kind body => .form kind ((body.mapM (ContentOp.recolorM (pressCached t))).run' {})
 
 /-- The transform of the output profile a file embeds, when it characterizes CMYK or gray, the
 spaces whose press the engine's own colours are printed in. -/
