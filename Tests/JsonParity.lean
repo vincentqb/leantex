@@ -8,8 +8,8 @@ public import Lean.Data.Json
 
 public section
 
-/-! The engine's JSON reader and speller against Lean's own `Lean.Json`, which the compiler no
-longer links: the same values, failures, spellings and layouts over invented texts. -/
+/-! The engine's JSON reader and speller against Lean's own `Lean.Json`, which the engine does not
+link: the same values, failures, spellings and layouts over invented texts. -/
 
 namespace Tests.JsonParity
 
@@ -43,6 +43,9 @@ def edgeTexts : List String :=
    "\"\\ude00\"", "\"\\ud83d\\u0041\"", "\"\\ud83d\\ud83d\"", "\"\\uD83D\\uDE00\"", "\"\\ud83dx\"",
    "\"\\ud83d\\", "\"\\ud83d\\u", "\"\\ud83d\\ude0\"", "\"\\x\"", "\"\\/\\b\\f\\n\\r\\t\"",
    "\"é😀\"", "é", "😀", "[\"\\uD800\\uDC00\"]", "\"\u007f\"", "[1,\"two\",true,null,{\"k\":[]}]",
+   "1ex", "1e+x", "1E-x", "\"\\ud83d\\n\"", "\"\\ud83d", "\"\\u00E9\\t\\u20ac\\uFFFF\"",
+   "".pushn '7' 200, "-" ++ "".pushn '9' 45, "0." ++ "".pushn '3' 200, "1e" ++ "".pushn '0' 30 ++ "12",
+   "2e-" ++ "".pushn '8' 40, "1" ++ "".pushn '0' 19, "18446744073709551616", "9999999999999999999",
    "{\"leantex-lean-export\":2,\"lean\":\"4.0.0\",\"errors\":0}",
    "{\"version\":1,\"provider\":\"Pygments\",\"answers\":[{\"language\":\"lean\",\"source\":\"x\",\"tokens\":[{\"offset\":0,\"kind\":\"Token.Name\",\"text\":\"x\"}]}]}"]
 
@@ -50,7 +53,8 @@ def edgeTexts : List String :=
 characters outside ASCII. -/
 def alphabet : Array Char :=
   #['{', '}', '[', ']', '"', ',', ':', '\\', 'u', 'd', 'D', 'e', 'E', '.', '+', '-', '0', '1', '9',
-    'a', 'f', 't', 'n', 'l', 'r', 's', ' ', '\n', '\t', 'é', '😀', '\x01']
+    'a', 'f', 't', 'n', 'l', 'r', 's', ' ', '\n', '\t', 'é', '😀', '\x01', '\x0b', '\x0c',
+    '\u00A0', '\uFEFF']
 
 /-- `text` with `count` random edits, each inserting, deleting or replacing one character. -/
 def mutate (text : String) (count : Nat) (seed : UInt64) : String × UInt64 := Id.run do
@@ -137,6 +141,13 @@ def agrees (text : String) : Bool :=
         (toLean (a.getObjValD k) == b.getObjValD k) &&
         ((a.getArr?).map (·.map toLean) == b.getArr?) && (a.getStr? == b.getStr?)
 
+/-- Whether both readers read a text as one value or fail at one offset with one message. -/
+def readsAlike (text : String) : Bool :=
+  match Json.parse text, Lean.Json.parse text with
+  | .ok a, .ok b => toLean a == b
+  | .error e, .error f => e == f
+  | _, _ => false
+
 end Tests.JsonParity
 
 open LeanTex.Core LeanTex.Core.JsonText Tests.JsonParity in
@@ -169,15 +180,13 @@ def jsonParityChecks (ref : IO.Ref (List String)) : IO Unit := do
 (differing: {spelled.toList.take 3})" spelled.isEmpty
   let strings := ["", "plain", "quote \" and \\ back", "line\nfeed\rreturn\ttab",
     "\x00\x01\x1f\x7f", "é 😀 ∀", "</script>", "\u2028\u2029"]
-  t "json parity: positive exponents within the bound read as Lean reads them"
-    (["1e4096", "1E5", "2.5E+2", "[1.0e+2]", "-3e+0", "7E4096"].all agrees)
-  let long := "\"" ++ "".pushn 'a' 16000000 ++ "\\u00e9\""
-  let spaced := "".pushn ' ' 16000000 ++ "[" ++ "".pushn '1' 1000 ++ "]"
-  let readsAlike (text : String) : Bool :=
-    match Json.parse text, Lean.Json.parse text with
-    | .ok a, .ok b => toLean a == b
-    | .error e, .error f => e == f
-    | _, _ => false
+  t "json parity: positive exponents up to the bound read as Lean reads them"
+    (["1e4096", "1E5", "2.5E+2", "[1.0e+2]", "-3e+0", "7E4096"].all readsAlike)
+  -- Read through a ref, so no closed term holds the long texts for the whole run.
+  let size ← IO.mkRef 16000000
+  let n ← size.get
+  let long := "\"" ++ "".pushn 'a' n ++ "\\u00e9\""
+  let spaced := "".pushn ' ' n ++ "[" ++ "".pushn '1' 1000 ++ "]"
   t "json parity: a string and white space of sixteen million characters read as Lean reads them"
     (readsAlike long && readsAlike spaced)
   t "json parity: an exponent past the bound is refused where Lean would build its power"

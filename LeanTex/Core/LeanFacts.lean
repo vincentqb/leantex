@@ -209,7 +209,7 @@ private def spanOf (j : Json) : Except String (Option ((Nat × Nat) × (Nat × N
 
 /-- One record line: a command, a declaration, one that failed, or a constant's binders. -/
 private def record (facts : Facts) (j : Json) : Except String Facts := do
-  if let .ok span := j.getObjValAs? (Array Json) "command" then
+  if let .arr span := j.getObjValD "command" then
     let text ← j.getObjValAs? String "text"
     let command := { start := ← pairOf span 0, stop := ← pairOf span 2, text }
     return { facts with commands := facts.commands.push command }

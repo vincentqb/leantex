@@ -52,13 +52,28 @@ def bench (n : Nat) (label : String) (cmd : String) (args : Array String) : IO U
     times := times.push (← runMs cmd args)
   IO.println s!"{padRight label 42} {padLeft (toString (median times)) 6} ms (median of {n})"
 
+/-- The compiler a measurement alternates with, which `LEANTEX_BENCH_COMPARE_BINARY` names. -/
+def comparedCompiler : IO (Option String) := IO.getEnv "LEANTEX_BENCH_COMPARE_BINARY"
+
+/-- `bench`, each run followed by one of the compared compiler, whose median is printed after. -/
+def benchCompared (n : Nat) (label : String) (cmd : String) (args : Array String) : IO Unit := do
+  let other ← comparedCompiler
+  let mut times : Array Nat := #[]
+  let mut theirs : Array Nat := #[]
+  for _ in [0:n] do
+    times := times.push (← runMs cmd args)
+    if let some o := other then theirs := theirs.push (← runMs o args)
+  IO.println s!"{padRight label 42} {padLeft (toString (median times)) 6} ms (median of {n})"
+  if let some o := other then
+    IO.println s!"{padRight s!"  compared ({o})" 42} {padLeft (toString (median theirs)) 6} ms"
+
 /-- The compiler's start, `--version` reading no document, then a small markdown page built to each
 format, the median of `n` runs each. -/
 def benchStart (n : Nat) (leantex : String) : IO Unit := do
-  bench n "leantex  --version" leantex #["--version"]
+  benchCompared n "leantex  --version" leantex #["--version"]
   let outDir ← IO.FS.createTempDir
   for format in ["pdf", "html"] do
-    bench n s!"leantex  md-emphasis.md -o {format}" leantex
+    benchCompared n s!"leantex  md-emphasis.md -o {format}" leantex
       #["-q", "build", "testdata/corpus/md-emphasis.md", "-o", (outDir / s!"md.{format}").toString]
   IO.FS.removeDirAll outDir
 
@@ -174,32 +189,69 @@ def benchPages (n : Nat) (leantex : String) : IO Unit := do
     (← stylesheetHtmlMs n 32000 leantex)
 
 
-/-- A Lean page read with a facts file of the fixture's records a hundred times over, about 4.5 MB
-of JSON lines, built to each format, the median of `n` runs each. -/
+/-- A facts record with each span's lines `by_` further down. -/
+def moveSpans (j : Lean.Json) (by_ : Nat) : Lean.Json :=
+  ["range", "signature", "proof", "command", "head"].foldl (init := j) fun j k =>
+    match j.getObjVal? k with
+    | .ok (.arr a) => j.setObjVal! k (.arr (a.mapIdx fun i x =>
+        match x with
+        | .num n => if i % 2 == 0 then .num ⟨n.mantissa + by_, n.exponent⟩ else x
+        | _ => x))
+    | _ => j
+
+/-- The fixture's Lean file twenty-five times over, read with its facts moved to each copy's lines,
+about 1.1 MB of JSON lines, built to each format, the median of `n` runs each; every build must
+read each declaration the facts count. -/
 def benchFacts (n : Nat) (leantex : String) : IO Unit := do
   let src := "testdata/codedoc/lean"
+  let text ← IO.FS.readFile s!"{src}/statements.lean"
   let lines := ((← IO.FS.readFile s!"{src}/statements.facts").splitOn "\n").filter (!·.isEmpty)
-  let body := (lines.drop 1).dropLast
-  let records := [lines.headD ""] ++ (List.replicate 100 body).flatten ++ [lines.getLastD ""]
+  let some head := lines.head? | die "the facts fixture is empty"
+  let some last := lines.getLast? | die "the facts fixture is empty"
+  let height := (text.splitOn "\n").length - 1
+  let copies := 25
+  let count ← match Lean.Json.parse last >>= (·.getObjValAs? Nat "leantex-lean-export-end") with
+    | .ok c => pure (c * copies)
+    | .error e => die s!"the facts fixture has no end count: {e}"
+  let errors ← match Lean.Json.parse head >>= (·.getObjValAs? Nat "errors") with
+    | .ok c => pure (c * copies)
+    | .error e => die s!"the facts fixture has no error count: {e}"
+  let mut records := #[(← IO.ofExcept (Lean.Json.parse head)).setObjVal! "errors" errors |>.compress]
+  for k in [0:copies] do
+    for line in (lines.drop 1).dropLast do
+      records := records.push (moveSpans (← IO.ofExcept (Lean.Json.parse line)) (k * height)).compress
+  records := records.push s!"\{\"leantex-lean-export-end\":{count}}"
   IO.FS.withTempDir fun dir => do
-    IO.FS.writeFile (dir / "statements.lean") (← IO.FS.readFile s!"{src}/statements.lean")
+    IO.FS.writeFile (dir / "statements.lean") (String.join (List.replicate copies text))
     IO.FS.createDirAll (dir / ".lake" / "build" / "leantex")
     IO.FS.writeFile (dir / ".lake" / "build" / "leantex" / "statements.facts")
-      ("\n".intercalate records ++ "\n")
+      ("\n".intercalate records.toList ++ "\n")
+    let other ← comparedCompiler
+    let page (binary format : String) : IO (Nat × Nat) := do
+      let t0 ← IO.monoMsNow
+      let out ← IO.Process.output { cmd := binary, args := #["-v", "build",
+        (dir / "statements.lean").toString, "-o", (dir / s!"page.{format}").toString] }
+      let wall := (← IO.monoMsNow) - t0
+      let log := out.stdout ++ out.stderr
+      if out.exitCode != 0 then die s!"benchmark command failed: {binary} on the facts page"
+      unless (log.splitOn "\n").any (fun l => l.startsWith s!"lean: {count} declarations") &&
+          (log.splitOn "W0433").length == 1 do
+        die s!"the facts page did not read its {count} declarations:\n{log}"
+      match phaseMs "lean" log with
+      | some ms => return (wall, ms)
+      | none => die "no lean phase in the -v report"
     for format in ["pdf", "html"] do
-      let mut walls : Array Nat := #[]
-      let mut reads : Array Nat := #[]
+      let mut ours : Array (Nat × Nat) := #[]
+      let mut theirs : Array (Nat × Nat) := #[]
       for _ in [0:n] do
-        let t0 ← IO.monoMsNow
-        let out ← IO.Process.output { cmd := leantex, args := #["-v", "build",
-          (dir / "statements.lean").toString, "-o", (dir / s!"page.{format}").toString] }
-        walls := walls.push ((← IO.monoMsNow) - t0)
-        if out.exitCode != 0 then die s!"benchmark command failed: {leantex} on the facts page"
-        match phaseMs "lean" (out.stdout ++ out.stderr) with
-        | some ms => reads := reads.push ms
-        | none => die "no lean phase in the -v report"
-      IO.println s!"{padRight s!"leantex  statements.lean, 100x facts -o {format}" 42} \
-{padLeft (toString (median walls)) 6} ms, facts read {median reads} ms (median of {n})"
+        ours := ours.push (← page leantex format)
+        if let some o := other then theirs := theirs.push (← page o format)
+      IO.println s!"{padRight s!"leantex  statements.lean x{copies}, its facts -o {format}" 42} \
+{padLeft (toString (median (ours.map (·.1)))) 6} ms, facts read {median (ours.map (·.2))} ms \
+(median of {n})"
+      if let some o := other then
+        IO.println s!"{padRight s!"  compared ({o})" 42} \
+{padLeft (toString (median (theirs.map (·.1)))) 6} ms, facts read {median (theirs.map (·.2))} ms"
 
 /-- The reference-list phase over `entries` invented entries, all listed under plainnat's
 `\nocite{*}`: the median of `n` runs. -/

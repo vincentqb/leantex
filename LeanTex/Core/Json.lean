@@ -61,6 +61,17 @@ end JsonNumber
 
 namespace Json
 
+/-- A failure as Lean's parser names it: the byte offset it stands at and its message. -/
+structure Failure where
+  pos : Nat
+  msg : String
+
+/-- A container a value is read into: an array's elements so far, or an object's members so far
+and the key whose value comes next. -/
+inductive Frame where
+  | arr (elems : Array Json)
+  | obj (members : Array (String × Json)) (key : String)
+
 /-! Spelling. -/
 
 /-- One character of a string literal as Lean's `Json.escape` spells it. -/
@@ -162,11 +173,6 @@ public def pretty (j : Json) : String := Std.Format.pretty (render j) 80
 public def mkObj (members : List (String × Json)) : Json := .obj members.toArray
 
 /-! Reading. -/
-
-/-- A failure as Lean's parser names it: the byte offset it stands at and its message. -/
-structure Failure where
-  pos : Nat
-  msg : String
 
 def endOfInput : String := "unexpected end of input"
 
@@ -279,6 +285,31 @@ def escapeAt (s : String) (i : Nat) : Except Failure (Char × { j : Nat // i < j
           Nat.lt_trans val.toFin.isLt (by decide)⟩⟩, ⟨k, by omega⟩)
     | _ => .error ⟨j, "illegal \\u escape"⟩
 
+/-- The code of the character a one-letter escape's letter `b` stands for, or `0x110000`. -/
+def oneLetter : Nat → Nat
+  | 34 => 34
+  | 92 => 92
+  | 47 => 47
+  | 98 => 8
+  | 102 => 12
+  | 110 => 10
+  | 114 => 13
+  | 116 => 9
+  | _ => 0x110000
+
+/-- The code of the character the escape after a backslash at `i` stands for, read from its bytes
+when it is one letter or four hexadecimal digits outside the surrogates, else `0x110000`. -/
+def quickEscape (s : String) (i : Nat) : Nat :=
+  let b := peek s i
+  if b == 117 then
+    match Hex.val? (peek s (i + 1)), Hex.val? (peek s (i + 2)), Hex.val? (peek s (i + 3)),
+        Hex.val? (peek s (i + 4)) with
+    | some d1, some d2, some d3, some d4 =>
+      let u := ((d1 * 16 + d2) * 16 + d3) * 16 + d4
+      if u < 0xD800 || 0xE000 ≤ u then u else 0x110000
+    | _, _, _, _ => 0x110000
+  else oneLetter b
+
 /-- A string literal's characters onto `acc`, read from `i` after its opening quote at `start`,
 and the offset after its closing quote, as Lean's parser's `strCore` reads them; a run of plain
 characters is copied whole. -/
@@ -288,9 +319,14 @@ def strFrom (s : String) (start i : Nat) (h0 : start < i) (acc : String) :
     let b := s.getUTF8Byte ⟨i⟩ (String.Pos.Raw.lt_iff.mpr h)
     if b == 34 then .ok (acc, ⟨i + 1, by omega⟩)
     else if b == 92 then
-      match escapeAt s (i + 1) with
-      | .error f => .error f
-      | .ok (e, ⟨k, hk⟩) => strFrom s start k (by omega) (acc.push e)
+      let q := quickEscape s (i + 1)
+      if q < 0x110000 then
+        if peek s (i + 1) == 117 then strFrom s start (i + 6) (by omega) (acc.push (Char.ofNat q))
+        else strFrom s start (i + 2) (by omega) (acc.push (Char.ofNat q))
+      else
+        match escapeAt s (i + 1) with
+        | .error f => .error f
+        | .ok (e, ⟨k, hk⟩) => strFrom s start k (by omega) (acc.push e)
     else if b < 32 then .error ⟨i + 1, "unexpected character in string"⟩
     else
       let ⟨j, hj⟩ := plainEnd s (i + 1) (i + 1) (Nat.le_refl _)
@@ -299,14 +335,25 @@ def strFrom (s : String) (start i : Nat) (h0 : start < i) (acc : String) :
 termination_by s.utf8ByteSize - i
 decreasing_by all_goals omega
 
-/-- Decimal digits from `i` onto `acc`, with their count onto `count`, and the offset after them. -/
-def digitsFrom (s : String) (i acc count : Nat) : Nat × Nat × Nat :=
+/-- The offset after the decimal digits from `i`. -/
+def digitsEnd (s : String) (i : Nat) : Nat :=
   if h : i < s.utf8ByteSize then
     let b := s.getUTF8Byte ⟨i⟩ (String.Pos.Raw.lt_iff.mpr h)
-    if 48 ≤ b && b ≤ 57 then digitsFrom s (i + 1) (10 * acc + (b.toNat - 48)) (count + 1)
-    else (acc, count, i)
-  else (acc, count, i)
+    if 48 ≤ b && b ≤ 57 then digitsEnd s (i + 1) else i
+  else i
 termination_by s.utf8ByteSize - i
+
+/-- `acc` followed by the decimal digits from `i` to `j`, at most nineteen of them. -/
+def smallValue (s : String) (i j : Nat) (acc : UInt64) : UInt64 :=
+  if i < j then smallValue s (i + 1) j (10 * acc + (peek s i - 48).toUInt64) else acc
+termination_by j - i
+
+/-- The value of the decimal digits from `i` to `j`, a long run's halves read apart and joined, so
+it costs a few large products rather than one per digit. -/
+def digitsValue (s : String) (i j : Nat) : Nat :=
+  if j ≤ i + 19 then (smallValue s i j 0).toNat
+  else digitsValue s i ((i + j) / 2) * 10 ^ (j - (i + j) / 2) + digitsValue s ((i + j) / 2) j
+termination_by j - i
 
 /-- Whether the byte at `i` is a decimal digit, failing as Lean's parser's `lookahead` fails. -/
 def digitAhead (s : String) (i : Nat) (lo : Nat) (desc : String) : Except Failure Unit :=
@@ -326,12 +373,14 @@ def numFrom (s : String) (i : Nat) : Except Failure (JsonNumber × { j : Nat // 
     else if first == 48 then pure (0, i1 + 1)
     else do
       digitAhead s i1 49 "1-9"
-      let (v, _, j) := digitsFrom s i1 0 0
-      pure (v, j)
+      let j := digitsEnd s i1
+      pure (digitsValue s i1 j, j)
   let (value, i3) ← if peek s i2 == 46 then do
       digitAhead s (i2 + 1) 48 "digit"
-      let (n, d, j) := digitsFrom s (i2 + 1) 0 0
+      let j := digitsEnd s (i2 + 1)
+      let d := j - (i2 + 1)
       if d > USize.size then .error ⟨j, "too many decimals"⟩
+      let n := digitsValue s (i2 + 1) j
       pure (({ mantissa := sign * (whole * (10 ^ d : Nat) + n), exponent := d } : JsonNumber), j)
     else pure (({ mantissa := sign * whole, exponent := 0 } : JsonNumber), i2)
   let e := peek s i3
@@ -340,12 +389,13 @@ def numFrom (s : String) (i : Nat) : Except Failure (JsonNumber × { j : Nat // 
       if b == 256 then .error ⟨i3 + 1, endOfInput⟩
       else if b == 45 then do
         digitAhead s (i3 + 2) 48 "0-9"
-        let (n, _, j) := digitsFrom s (i3 + 2) 0 0
-        pure (value.shiftr n, j)
+        let j := digitsEnd s (i3 + 2)
+        pure (value.shiftr (digitsValue s (i3 + 2) j), j)
       else do
         let k := if b == 43 then i3 + 2 else i3 + 1
         digitAhead s k 48 "0-9"
-        let (n, _, j) := digitsFrom s k 0 0
+        let j := digitsEnd s k
+        let n := digitsValue s k j
         if n > maxShift then .error ⟨j, "exp too large"⟩
         pure (value.shiftl n, j)
     else pure (value, i3)
@@ -372,12 +422,6 @@ def keyFrom (s : String) (i : Nat) : Except Failure (String × { j : Nat // i < 
         .ok (k, ⟨m, by omega⟩)
       else .error ⟨j', "expected :"⟩
   else .error ⟨i, "expected \""⟩
-
-/-- A container a value is read into: an array's elements so far, or an object's members so far
-and the key whose value comes next. -/
-inductive Frame where
-  | arr (elems : Array Json)
-  | obj (members : Array (String × Json)) (key : String)
 
 /-- The value from `i` on, white space before it skipped, with `stack` the containers it closes
 into and `done` a finished value awaiting its container's next character: the outermost value and
@@ -451,11 +495,21 @@ def run (s : String) (stack : List Frame) (i : Nat) (done : Option Json) :
           run s stack k (some .null)
         else .error ⟨i, "expected: null"⟩
       else if b == 45 || (48 ≤ b && b ≤ 57) then
-        match numFrom s i with
-        | .error f => .error f
-        | .ok (n, ⟨j, _hj⟩) =>
+        -- An integer is read with none of a fraction's or an exponent's steps.
+        let first := if b == 45 then peek s (i + 1) else b
+        let next := if b == 45 then i + 2 else i + 1
+        let j := if first == 48 then next else digitsEnd s next
+        let after := peek s j
+        if _h : i < j ∧ (48 ≤ first && first ≤ 57 && after != 46 && after != 101 && after != 69) then
+          let v : Int := digitsValue s (next - 1) j
           let ⟨k, _hk⟩ := skipWs s j
-          run s stack k (some (.num n))
+          run s stack k (some (.num ⟨if b == 45 then -v else v, 0⟩))
+        else
+          match numFrom s i with
+          | .error f => .error f
+          | .ok (n, ⟨j, _hj⟩) =>
+            let ⟨k, _hk⟩ := skipWs s j
+            run s stack k (some (.num n))
       else .error ⟨i, "unexpected input"⟩
     else .error ⟨i, endOfInput⟩
 termination_by s.utf8ByteSize - i
@@ -469,17 +523,14 @@ public def parse (s : String) : Except String Json :=
 
 /-! Lookup. -/
 
-/-- An array's elements. -/
 public def getArr? : Json → Except String (Array Json)
   | .arr a => .ok a
   | _ => .error "array expected"
 
-/-- A string's text. -/
 public def getStr? : Json → Except String String
   | .str s => .ok s
   | _ => .error "String expected"
 
-/-- An object member's value. -/
 public def getObjVal? : Json → String → Except String Json
   | .obj kvs, k =>
     match kvs.findRev? (·.1 == k) with

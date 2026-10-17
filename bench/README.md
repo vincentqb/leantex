@@ -304,30 +304,26 @@ builds move within the host's noise, the html phase about 1.9 s of a 125 MB page
 
 `--startup-only` times `leantex --version`, which reads no document, then the small markdown page
 `testdata/corpus/md-emphasis.md` built to each format, the median of `N` runs each.
-`--facts-only` builds the Lean page `testdata/codedoc/lean/statements.lean` reading a facts file
-of its records a hundred times over, about 4.5 MB of JSON lines, and reports the facts-reading
-phase beside each build's time.
+`--facts-only` builds the Lean page `testdata/codedoc/lean/statements.lean` twenty-five times
+over, reading its facts moved to each copy's lines, about 1.1 MB of JSON lines; each build must
+read every declaration they count, and the report gives the facts-reading phase beside its time.
+In both, `LEANTEX_BENCH_COMPARE_BINARY` names a compiler whose run follows each run.
 
 The engine read its two JSON messages, a Lean facts file and the listing highlighter's reply, and
 wrote the highlighter's batch, through Lean's `Lean.Data.Json`, a module of Lean's own package, so
 every start initialized all of Lean's compiler. It now reads and writes them through
 `LeanTex.Core.Json`, held to Lean's reader text by text, and the compiler links no module of
-Lean's package: the binary went from 153,565,640 to 38,842,456 bytes. The before column names the
-parent's saved compiler through `LEANTEX_BENCH_BINARY`. Median of 15, back to back on a host at
-load 33-48, with the reader's first version, whose start and markdown pages read no JSON:
+Lean's package: the binary went from 153,565,640 to 38,855,256 bytes. Median of 15, two rounds on
+a host at load 130-140, the parent's saved compiler alternating with this one:
 
 | Run | before | after |
 |---|---:|---:|
-| `--version` | 55 ms | 19 ms |
-| md-emphasis.md to PDF | 146 ms | 87 ms |
-| md-emphasis.md to HTML | 1,064 ms | 944 ms |
+| `--version` | 308, 339 ms | 64, 91 ms |
+| md-emphasis.md to PDF | 230, 261 ms | 170, 188 ms |
 
-With the reader as committed, which reads bytes without allocating and copies a string's plain
-runs whole, the median of three alternating rounds' medians of 9 at load 120-163:
-
-| Run | before | after |
-|---|---:|---:|
-| `--version` | 78 ms | 27 ms |
-| md-emphasis.md to PDF | 180 ms | 121 ms |
-| statements.lean, 100x facts, to PDF | 594 ms (facts read 352) | 482 ms (facts read 333) |
-| statements.lean, 100x facts, to HTML | 1,383 ms (facts read 329) | 1,190 ms (facts read 302) |
+On a quieter host (load 33-48), back to back, the same rows read 55 → 19 ms and 146 → 87 ms.
+md-emphasis.md to HTML, whose page embeds its fonts' programs, moved within the host's noise
+(1,543 and 1,987 ms before, 1,550 and 2,484 ms after), as did the facts page, whose reading is a
+few per cent of its build (median of 7: PDF 2,838 → 2,699 ms, facts read 81 → 72 ms; HTML 3,721 →
+3,854 ms, facts read 76 → 81 ms). Every corpus document's artifact is byte-identical before and
+after.
