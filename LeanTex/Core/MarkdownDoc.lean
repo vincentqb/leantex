@@ -380,11 +380,20 @@ private def longestRun (c : Char) (s : String) : Nat :=
   (s.foldl (fun (best, cur) x => if x == c then (max best (cur + 1), cur + 1) else (best, 0))
     (0, 0)).1
 
+/-- The byte `acc` holds at `i`, if any. -/
+private def byteAt (acc : String) (i : Nat) : Option UInt8 :=
+  if h : i < acc.utf8ByteSize then some (acc.getUTF8Byte ⟨i⟩ (by simpa [String.Pos.Raw.lt_iff] using h))
+  else none
+
 /-- `acc` with the bang it ends on escaped, which before a link's bracket would open an image. -/
-private def bangApart (acc : String) : String :=
-  if !acc.endsWith "!" then acc else
-  let before := (acc.dropEnd 1).toString
-  if (before.toList.reverse.takeWhile (· == '\\')).length % 2 == 0 then before ++ "\\!" else acc
+private def bangApart (acc : String) : String := Id.run do
+  let n := acc.utf8ByteSize
+  unless n > 0 && byteAt acc (n - 1) == some 33 do return acc
+  let mut slashes := 0
+  for k in [0:n - 1] do
+    if byteAt acc (n - 2 - k) == some 92 then slashes := slashes + 1 else break
+  if slashes % 2 == 1 then return acc
+  return (String.Pos.Raw.set acc ⟨n - 1⟩ '\\').push '!'
 
 /-- A code span holding `s` exactly (CommonMark §6.1). -/
 private def codeSpan (s : String) : String :=

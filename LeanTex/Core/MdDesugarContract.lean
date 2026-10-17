@@ -60,9 +60,11 @@ public structure Vocab where
   mathSyms := docMathSyms
   mathKnown := true
 
-/-- The vocabulary markdown lowers into: a document's with its Lean divisions' requests. -/
-@[expose] public def vocabularyFor (divisions : Bool) : Vocab :=
-  { vocabulary with requests := if divisions then [leanDivisionEnv] else [] }
+/-- The vocabulary a dialect lowers into: a document's with its Lean divisions' requests, a Lean
+docstring's with its formulas. -/
+@[expose] public def vocabularyFor (dialect : Dialect) : Vocab :=
+  { vocabulary with requests := if dialect.divisions then [leanDivisionEnv] else []
+                    formulas := dialect.formulas }
 
 mutual
 
@@ -97,10 +99,57 @@ mutual
 
 end
 
-/-- Every raw of a sequence is admitted. -/
-private def Adm (d : Bool) (rs : Array Raw) : Prop := ∀ r ∈ rs, (vocabularyFor d).admits r = true
+mutual
 
-variable {d : Bool}
+private theorem mathAdmits_formulas (v : Vocab) (b : Bool) : (r : Raw) →
+    { v with formulas := b }.mathAdmits r = v.mathAdmits r
+  | .word _ _ | .space | .ctrl _ _ | .sym _ _ | .par _ | .math .. | .env .. | .verb .. => rfl
+  | .group body _ => by
+    simp only [Vocab.mathAdmits]
+    exact mathAdmitsList_formulas v b body.toList
+
+private theorem mathAdmitsList_formulas (v : Vocab) (b : Bool) : (l : List Raw) →
+    { v with formulas := b }.mathAdmitsList l = v.mathAdmitsList l
+  | [] => rfl
+  | r :: rest => by
+    simp only [Vocab.mathAdmitsList, mathAdmits_formulas v b r, mathAdmitsList_formulas v b rest]
+
+end
+
+mutual
+
+/-- A vocabulary admitting formulas admits whatever it admits without them. -/
+public theorem Vocab.admits_formulas (v : Vocab) : (r : Raw) → v.admits r = true →
+    { v with formulas := true }.admits r = true
+  | .word _ _, _ => rfl
+  | .space, _ => rfl
+  | .par _, _ => rfl
+  | .ctrl _ _, h => h
+  | .sym _ _, h => h
+  | .verb _ _ _, h => h
+  | .group body _, h => by
+    simp only [Vocab.admits] at h ⊢
+    exact Vocab.admitsList_formulas v body.toList h
+  | .env _ body _, h => by
+    simp only [Vocab.admits, Bool.and_eq_true] at h ⊢
+    exact ⟨h.1, Vocab.admitsList_formulas v body.toList h.2⟩
+  | .math _ body _, h => by
+    simp only [Vocab.admits, Bool.and_eq_true] at h ⊢
+    exact ⟨trivial, (mathAdmitsList_formulas v true body.toList).trans h.2⟩
+
+public theorem Vocab.admitsList_formulas (v : Vocab) : (l : List Raw) → v.admitsList l = true →
+    { v with formulas := true }.admitsList l = true
+  | [], _ => rfl
+  | r :: rest, h => by
+    simp only [Vocab.admitsList, Bool.and_eq_true] at h ⊢
+    exact ⟨Vocab.admits_formulas v r h.1, Vocab.admitsList_formulas v rest h.2⟩
+
+end
+
+/-- Every raw of a sequence is admitted. -/
+private def Adm (d : Dialect) (rs : Array Raw) : Prop := ∀ r ∈ rs, (vocabularyFor d).admits r = true
+
+variable {d : Dialect}
 
 private theorem admitsList_of_adm : (l : List Raw) → (∀ r ∈ l, (vocabularyFor d).admits r = true) →
     (vocabularyFor d).admitsList l = true
@@ -197,7 +246,8 @@ private theorem mathAdmitsList_mapPos (v : Vocab) (f : Pos → Pos) (acc : Array
 end
 
 private theorem docMathAt_admits {display : Bool} {p : Pos} {raws : Array Raw} {clean : Bool}
-    {r : Raw} (h : docMathAt display p raws clean = some r) : (vocabularyFor d).admits r = true := by
+    {r : Raw} (hf : d.formulas = true) (h : docMathAt display p raws clean = some r) :
+    (vocabularyFor d).admits r = true := by
   unfold docMathAt at h
   split at h
   · split at h
@@ -205,7 +255,7 @@ private theorem docMathAt_admits {display : Bool} {p : Pos} {raws : Array Raw} {
       cases h
       simp only [Bool.and_eq_true] at hok
       simp only [Vocab.admits, Bool.and_eq_true]
-      refine ⟨by simp [vocabularyFor, vocabulary], ?_⟩
+      refine ⟨by simp [vocabularyFor, hf], ?_⟩
       rw [mathAdmitsList_mapPos]
       simp only [Vocab.mathAdmitsList, Bool.true_and]
       exact docMathList_admits _ hok.2
@@ -213,9 +263,10 @@ private theorem docMathAt_admits {display : Bool} {p : Pos} {raws : Array Raw} {
   · cases h
 
 private theorem docMathRaw_admits {display : Bool} {src : String} {p : Pos} {r : Raw}
-    (h : docMathRaw display src p = some r) : (vocabularyFor d).admits r = true := by
+    (hf : d.formulas = true) (h : docMathRaw display src p = some r) :
+    (vocabularyFor d).admits r = true := by
   unfold docMathRaw at h
-  exact docMathAt_admits h
+  exact docMathAt_admits hf h
 
 private theorem ctrl_mem (n : String) (p : Pos) (h : n ∈ vocabulary.ctrls) :
     (vocabularyFor d).admits (.ctrl n p) = true := by
@@ -278,7 +329,7 @@ private theorem citeCmdRaws_adm (cmd : String) (pre post : Array Raw) (keys : Ar
     exact adm_group _ _ (adm_lit (by intro y hy; simp at hy; subst hy; rfl))
 
 /-- Every citation of a group carries admitted notes. -/
-private def NotesAdm (d : Bool) (cs : List CiteRaws) : Prop := ∀ c ∈ cs, Adm d c.pre ∧ Adm d c.post
+private def NotesAdm (d : Dialect) (cs : List CiteRaws) : Prop := ∀ c ∈ cs, Adm d c.pre ∧ Adm d c.post
 
 private theorem textCmd_mem (m : CiteMode) : textCmd m ∈ citeCtrls := by
   cases m <;> simp [textCmd, citeCtrls]
@@ -393,7 +444,7 @@ private theorem selectorGuard_adm (rs : Array Raw) (p : Pos) : Adm d (selectorGu
 
 mutual
 
-private theorem inlRaws_adm (file : String) : (x : Inl) → Adm d (inlRaws file x).1
+private theorem inlRaws_adm (file : String) : (x : Inl) → Adm d (inlRaws file d x).1
   | .text s p => by
     simp only [inlRaws]
     exact adm_text s p
@@ -412,7 +463,9 @@ private theorem inlRaws_adm (file : String) : (x : Inl) → Adm d (inlRaws file 
       intro x hx
       simp only [List.mem_toArray, List.mem_cons, List.not_mem_nil, or_false] at hx
       subst hx
-      exact docMathRaw_admits heq
+      split at heq
+      · next hf => exact docMathRaw_admits hf heq
+      · cases heq
     · exact adm_lit (by
         intro r hr
         simp only [List.mem_cons, List.not_mem_nil, or_false] at hr
@@ -506,7 +559,7 @@ private theorem inlRaws_adm (file : String) : (x : Inl) → Adm d (inlRaws file 
   | .cite items p => by
     simp only [inlRaws]
     have hn := citeItemsRaws_adm file items.toList #[] #[] (by intro c hc; simp at hc)
-    have hl : NotesAdm d (citeItemsRaws file #[] #[] items.toList).1.toList :=
+    have hl : NotesAdm d (citeItemsRaws file d #[] #[] items.toList).1.toList :=
       fun c hc => hn c (Array.mem_toList_iff.mp hc)
     unfold citeGroupRaws
     dsimp only
@@ -540,7 +593,7 @@ private theorem closeLeading_adm (rs : Array Raw) (h : Adm d rs) : Adm d (closeL
   · exact h
 
 private theorem inlListRaws_adm (file : String) : (l : List Inl) → (out : Array Raw) →
-    (ds : Array Diag) → Adm d out → Adm d (inlListRaws file out ds l).1
+    (ds : Array Diag) → Adm d out → Adm d (inlListRaws file d out ds l).1
   | [], _, _, h => by simpa [inlListRaws] using h
   | x :: rest, out, ds, h => by
     simp only [inlListRaws]
@@ -558,7 +611,7 @@ private theorem inlListRaws_adm (file : String) : (l : List Inl) → (out : Arra
 
 private theorem citeItemsRaws_adm (file : String) : (l : List CiteItem) → (out : Array CiteRaws) →
     (ds : Array Diag) → (∀ c ∈ out, Adm d c.pre ∧ Adm d c.post) →
-    ∀ c ∈ (citeItemsRaws file out ds l).1, Adm d c.pre ∧ Adm d c.post
+    ∀ c ∈ (citeItemsRaws file d out ds l).1, Adm d c.pre ∧ Adm d c.post
   | [], _, _, h => by simpa [citeItemsRaws] using h
   | .mk key mode pre post :: rest, out, ds, h => by
     simp only [citeItemsRaws]
@@ -578,18 +631,18 @@ private theorem sym_mem (c : Char) (p : Pos) (h : c ∈ vocabulary.syms) :
 
 private theorem laterCellsRaws_adm (file : String) (p : Pos) : (cells : List (Array Inl)) →
     (out : Array Raw) → (ds : Array Diag) → Adm d out →
-      Adm d (laterCellsRaws (cellRaws file) p out ds cells).1
+      Adm d (laterCellsRaws (cellRaws file d) p out ds cells).1
   | [], _, _, h => by simpa [laterCellsRaws] using h
   | cell :: rest, out, ds, h => by
     have hc := inlListRaws_adm file cell.toList #[] #[] (adm_empty (d := d))
     unfold laterCellsRaws cellRaws
-    rcases hr : inlListRaws file #[] #[] cell.toList with ⟨rs, cds⟩
+    rcases hr : inlListRaws file d #[] #[] cell.toList with ⟨rs, cds⟩
     rw [hr] at hc
     exact laterCellsRaws_adm file p rest _ _
       (adm_push (adm_push h (sym_mem '&' p (by simp [vocabulary]))) (adm_group rs p hc))
 
 private theorem rowCellsRaws_adm (file : String) (p : Pos) :
-    (cells : List (Array Inl)) → Adm d (rowCellsRaws (cellRaws file) p cells).1
+    (cells : List (Array Inl)) → Adm d (rowCellsRaws (cellRaws file d) p cells).1
   | [] => by simpa [rowCellsRaws] using adm_empty
   | cell :: rest => by
     have hc := inlListRaws_adm file cell.toList #[] #[] (adm_empty (d := d))
@@ -601,27 +654,27 @@ private theorem rowCellsRaws_adm (file : String) (p : Pos) :
       exact adm_group _ p hc))
 
 private theorem rowRaws_adm (file : String) (row : Array (Array Inl)) (p : Pos) :
-    Adm d (rowRaws (cellRaws file) row p).1 := by
+    Adm d (rowRaws (cellRaws file d) row p).1 := by
   unfold rowRaws
   exact adm_push (rowCellsRaws_adm file p row.toList) (ctrl_mem _ _ (by simp [vocabulary]))
 
 private theorem rowsRaws_adm (file : String) (p : Pos) : (rows : List (Array (Array Inl))) →
     (out : Array Raw) → (ds : Array Diag) → Adm d out →
-      Adm d (rowsRaws (cellRaws file) p out ds rows).1
+      Adm d (rowsRaws (cellRaws file d) p out ds rows).1
   | [], _, _, h => by simpa [rowsRaws] using h
   | row :: rest, out, ds, h => by
     have hr := rowRaws_adm (d := d) file row p
     unfold rowsRaws
-    rcases hrow : rowRaws (cellRaws file) row p with ⟨rs, rds⟩
+    rcases hrow : rowRaws (cellRaws file d) row p with ⟨rs, rds⟩
     rw [hrow] at hr
     exact rowsRaws_adm file p rest _ _ (adm_append h hr)
 
 private theorem tableRaws_adm (file : String) (aligns : Array TableAlign)
     (header : Array (Array Inl)) (rows : Array (Array (Array Inl))) (p : Pos) :
-    Adm d (tableRaws (cellRaws file) aligns header rows p).1 := by
+    Adm d (tableRaws (cellRaws file d) aligns header rows p).1 := by
   have hh := rowRaws_adm (d := d) file header p
   unfold tableRaws
-  rcases hhr : rowRaws (cellRaws file) header p with ⟨hr, hds⟩
+  rcases hhr : rowRaws (cellRaws file d) header p with ⟨hr, hds⟩
   rw [hhr] at hh
   simp only at hh
   dsimp only
@@ -653,15 +706,15 @@ private theorem tableRaws_adm (file : String) (aligns : Array TableAlign)
       admitsList_of_adm _ fun x hx => hfull x (Array.mem_toList_iff.mp hx)⟩)
 
 private theorem division_adm (q : LeanDivision) (p : Pos) :
-    (vocabularyFor true).admits (q.raw p) = true := by
-  have hattrs : Adm true (q.attrs.map fun (k, v) => Raw.group #[.word k p, .word v p] p) := by
+    (vocabularyFor .document).admits (q.raw p) = true := by
+  have hattrs : Adm .document (q.attrs.map fun (k, v) => Raw.group #[.word k p, .word v p] p) := by
     intro r hr
     obtain ⟨⟨k, v⟩, _, rfl⟩ := Array.mem_map.mp hr
     exact adm_group _ _ (adm_lit (by
       intro x hx
       simp only [List.mem_cons, List.not_mem_nil, or_false] at hx
       rcases hx with rfl | rfl <;> rfl))
-  have hbody : Adm true #[Raw.group #[.word q.file p] p,
+  have hbody : Adm .document #[Raw.group #[.word q.file p] p,
       .group (q.attrs.map fun (k, v) => Raw.group #[.word k p, .word v p] p) p] := adm_lit (by
     intro r hr
     simp only [List.mem_cons, List.not_mem_nil, or_false] at hr
@@ -669,7 +722,8 @@ private theorem division_adm (q : LeanDivision) (p : Pos) :
     · exact adm_group _ _ (adm_lit (by intro x hx; simp at hx; subst hx; rfl))
     · exact adm_group _ _ hattrs)
   simp only [LeanDivision.raw, Vocab.admits, Bool.and_eq_true, Bool.or_eq_true]
-  exact ⟨Or.inr (by simp [vocabularyFor]), admitsList_of_adm _ fun r hr => hbody r (by simpa using hr)⟩
+  exact ⟨Or.inr (by simp [vocabularyFor, Dialect.divisions]),
+    admitsList_of_adm _ fun r hr => hbody r (by simpa using hr)⟩
 
 mutual
 
@@ -748,8 +802,9 @@ private theorem blkRaws_adm (file : String) (refs : Array Raw) (hrefs : Adm d re
   | .lean attrs p => by
     simp only [blkRaws]
     cases d with
-    | false => exact adm_empty
-    | true => exact adm_lit (by
+    | docstring => exact adm_empty
+    | lean => exact adm_empty
+    | document => exact adm_lit (by
       intro r hr
       simp only [List.mem_cons, List.not_mem_nil, or_false] at hr
       rcases hr with rfl | rfl
@@ -821,7 +876,7 @@ private theorem list_adm (m : MetaRead) (cited : Bool) : Adm d (m.list cited) :=
       · exact adm_group _ _ (adm_lit (by intro y hy; simp at hy; subst hy; rfl))
       · exact adm_group _ _ (adm_lit (by intro y hy; simp at hy; subst hy; rfl)))
 
-private theorem titleRaws_adm (file : String) (m : MetaRead) : Adm d (m.titleRaws file) := by
+private theorem titleRaws_adm (file : String) (m : MetaRead) : Adm d (m.titleRaws file d) := by
   unfold MetaRead.titleRaws
   split
   · next title q _ =>
@@ -836,7 +891,7 @@ private theorem titleRaws_adm (file : String) (m : MetaRead) : Adm d (m.titleRaw
   · exact adm_empty
 
 private theorem tail_adm (file : String) (m : MetaRead) (cited placed : Bool) :
-    Adm d (m.tail file cited placed) := by
+    Adm d (m.tail file d cited placed) := by
   unfold MetaRead.tail
   refine adm_append ?_ ?_
   · split
@@ -850,7 +905,7 @@ public theorem desugar_vocabulary_mem (file input : String) (dialect : Dialect :
     (role : Role := .document) (citing : Bool := false)
     (known : Option (Std.HashSet String) := none) :
     ∀ r ∈ (desugar file input dialect role citing known false).1,
-      (vocabularyFor (dialect matches .document)).admits r = true := by
+      (vocabularyFor dialect).admits r = true := by
   unfold desugar bodyRaws
   exact adm_append (adm_append (prelude_adm _) (blkListRaws_adm file _ (list_adm _ _) _ #[] #[]
     adm_empty)) (tail_adm _ _ _ _)
@@ -920,14 +975,15 @@ private theorem blkRaws_starts (file : String) (refs : Array Raw) (hrefs : Start
     exact starts_single (env_start _ _ _ (by cases ordered <;> simp [vocabulary]))
   | table aligns header rows p =>
     simp only [blkRaws]
-    obtain ⟨body, hbody, _⟩ := tableRaws_contract (cellRaws file) aligns header rows p
+    obtain ⟨body, hbody, _⟩ := tableRaws_contract (cellRaws file d) aligns header rows p
     rw [hbody]
     exact starts_single (env_start _ _ _ (by simp [vocabulary]))
   | lean attrs p =>
     simp only [blkRaws]
     cases d with
-    | false => exact Or.inl rfl
-    | true => exact Or.inr ⟨.par p, by simp, Or.inl ⟨p, rfl⟩⟩
+    | docstring => exact Or.inl rfl
+    | lean => exact Or.inl rfl
+    | document => exact Or.inr ⟨.par p, by simp [Dialect.divisions], Or.inl ⟨p, rfl⟩⟩
   | metadata fields p =>
     simp only [blkRaws]
     exact Or.inl rfl
@@ -956,8 +1012,8 @@ private theorem prelude_starts (m : MetaRead) : Starts m.prelude := by
   · exact Or.inl rfl
   · exact Or.inr ⟨.par m.bibPos, Array.mem_push_self, Or.inl ⟨_, rfl⟩⟩
 
-private theorem tail_starts (file : String) (m : MetaRead) (cited placed : Bool) :
-    Starts (m.tail file cited placed) := by
+private theorem tail_starts (file : String) (dialect : Dialect) (m : MetaRead) (cited placed : Bool) :
+    Starts (m.tail file dialect cited placed) := by
   unfold MetaRead.tail
   refine starts_append ?_ ?_
   · split
@@ -978,7 +1034,7 @@ public theorem desugar_blockStart_contract (file input : String) (dialect : Dial
   unfold desugar bodyRaws at h ⊢
   exact (starts_append (starts_append (prelude_starts _)
     (blkListRaws_starts file _ (list_starts _ _) _ #[] #[] (Or.inl rfl)))
-    (tail_starts _ _ _ _)).resolve_left h
+    (tail_starts _ _ _ _ _)).resolve_left h
 
 public theorem vocabulary_contract :
     (∀ n ∈ vocabulary.envs, Parse.inputEnvFile? n = none ∧ n ≠ Parse.scopeEnv ∧
@@ -986,7 +1042,7 @@ public theorem vocabulary_contract :
     (∀ n ∈ vocabulary.ctrls, ' ' ∉ n.toList) ∧
     (∀ n ∈ vocabulary.bridged, ((Parse.headingControl? n).isSome ∨ n = Parse.markdownBibControl ∨
       n = Parse.citeSetupMark) ∧ ' ' ∈ n.toList) ∧
-    (∀ n ∈ (vocabularyFor true).requests, n ∉ vocabulary.envs ∧ Parse.inputEnvFile? n = none ∧
+    (∀ n ∈ (vocabularyFor .document).requests, n ∉ vocabulary.envs ∧ Parse.inputEnvFile? n = none ∧
       ' ' ∈ n.toList) := by
   refine ⟨?_, ?_, ?_, ?_⟩
   · intro n hn
@@ -1006,7 +1062,8 @@ public theorem vocabulary_contract :
     · simp only [List.mem_cons, List.not_mem_nil, or_false] at hn
       rcases hn with rfl | rfl <;> simp [Parse.markdownBibControl, Parse.citeSetupMark]
   · intro n hn
-    simp only [vocabularyFor, ↓reduceIte, List.mem_cons, List.not_mem_nil, or_false] at hn
+    simp only [vocabularyFor, Dialect.divisions, ↓reduceIte, List.mem_cons, List.not_mem_nil,
+      or_false] at hn
     subst hn
     simp [vocabulary, leanDivisionEnv, Parse.inputEnvFile?, Parse.markdownTableEnv,
       Parse.markdownDisclosureEnv]

@@ -1,6 +1,7 @@
 module
 
 public import Tests.LeanCite
+import LeanTex.Core.CaseFold
 
 public section
 
@@ -93,6 +94,11 @@ def documentChecks (ref : IO.Ref (List String)) : IO Unit := do
 ({repr (mdText "[foo]: /url\n===\n[foo]\n")})"
     (mdLinks "[foo]: /url\n===\n[foo]\n" == #[("/url", "foo")] &&
       hasStr (mdText "[foo]: /url\n===\n[foo]\n") "===")
+  let hr := "[docs]: https://example.org/d\n---\nSee [docs]\n"
+  t s!"md refs: under definitions alone a dash underline is a thematic break \
+({repr (mdText hr)}, {repr ((elabMd hr).2.map (·.subject))})"
+    (mdLinks hr == #[("https://example.org/d", "docs")] && !hasStr (mdText hr) "\u2014" &&
+      (elabMd hr).2.any (·.subject == some "md:thematic-break"))
   t "md refs: definitions open a setext heading's lines, the rest its text"
     (mdLinks "[foo]: /url\nbar\n===\n[foo]\n" == #[("/url", "foo")] &&
       (elabMd "[foo]: /url\nbar\n===\n[foo]\n").1.body.any (· matches .section ..))
@@ -105,6 +111,36 @@ def documentChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "md refs: a title past which the line goes on leaves the definition its destination"
     (mdLinks "[foo]: /url\n\"title\" ok\n\n[foo]\n" == #[("/url", "foo")] &&
       hasStr (mdText "[foo]: /url\n\"title\" ok\n\n[foo]\n") "title")
+  t "md refs: labels match under Unicode's full case folding"
+    (mdLinks "[Stra\u00dfe]: /url\n\n[STRASSE] and [stra\u1e9ee].\n" ==
+      #[("/url", "STRASSE"), ("/url", "stra\u1e9ee")])
+  for body in ["[@ash2001]: https://example.org/x\n\nSee [@ash2001].",
+      "[see @ash2001]: https://example.org/x\n\nSee [see @ash2001]."] do
+    let src := worksMeta ++ body ++ "\n"
+    t s!"md refs: a defined label spelling a citation links to the definition's destination, as \
+commonmark_x links it, the definition set nowhere ({repr body}: {mdLinks src})"
+      ((mdLinks src).any (·.1 == "https://example.org/x") && !hasStr (mdText src) "example.org")
+  let src := worksMeta ++ "[p. 3]: https://example.org/x\n\nSee @ash2001 [p. 3].\n"
+  t s!"md refs: a defined label after an author's citation links and is no note of it \
+({keysOf (elabMd src).1}, {mdLinks src})"
+    (keysOf (elabMd src).1 == ["ash2001"] && (mdLinks src).contains ("https://example.org/x", "p. 3"))
+
+/-- Emphasis flanks as the spec reads Unicode's whitespace and punctuation (examples 353 and 354). -/
+def flankChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  for src in ["*\u00a0a\u00a0*\n", "*$*alpha.\n", "*\u00a3*bravo.\n", "*\u20ac*charlie.\n"] do
+    t s!"md emphasis: {repr src} sets no emphasis ({repr (docHtmlOf (elabMd src).1)})"
+      (!hasStr (docHtmlOf (elabMd src).1) "<em>")
+  t s!"md emphasis: underscores between dashes open and close emphasis \
+({repr (docHtmlOf (elabMd "\u2014_word_\u2014\n").1)})"
+    (hasStr (docHtmlOf (elabMd "\u2014_word_\u2014\n").1) "<em>word</em>")
+
+/-- Unicode's full case folding, which CommonMark's labels match under. -/
+def caseFoldChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  for (c, folded) in [("\u1e9e", "ss"), ("\u0130", "i\u0307"), ("\ufb03", "ffi"), ("\u03c2", "\u03c3"),
+      ("\u03a3", "\u03c3"), ("\u0041", "a"), ("\u4e2d", "\u4e2d"), ("\u00e9", "\u00e9")] do
+    t s!"case fold: {repr c} folds to {repr folded} ({repr (CaseFold.fold c)})" (CaseFold.fold c == folded)
 
 /-- A docstring's own link reference definitions stand ahead of the ones doc-gen4 appends for the
 keys it cites: its labels link to them, a key's label among them. -/
@@ -121,6 +157,10 @@ def docstringChecks (ref : IO.Ref (List String)) : IO Unit := do
     t s!"lean refs: a docstring's definition of a key's label links it there, no citation \
 ({repr doc}: {keysOf d}, {linksOf d})"
       (keysOf d == [] && linksOf d == #[("https://example.org/a", "ash2001")])
+  let (d, _) := Tests.LeanCite.page "See [@ash2001].\n\n[@ash2001]: https://example.org/x"
+  t s!"lean refs: a docstring's defined label spelling a citation links to the definition's \
+destination, as md4c links it, the definition set nowhere ({linksOf d})"
+    ((linksOf d).any (·.1 == "https://example.org/x") && !hasStr (Ir.blocksText d.body) "example.org")
   let (d, _) := Tests.LeanCite.page "See [the notes][docs] and [ash2001].\n\n[docs]: https://example.org/d"
   t s!"lean refs: a full reference to a docstring's definition is a link beside a citation \
 ({keysOf d}, {linksOf d})"
@@ -151,10 +191,32 @@ def caseChecks (ref : IO.Ref (List String)) : IO Unit := do
 ({linksOf d})"
     ((linksOf d).contains ("#ref-Ash2001", "ASH2001"))
 
-/-- A docstring's math span is md4c's: a formula whose source no link, citation or emphasis reads,
-between dollars no letter or digit flanks on their outer sides. -/
+/-- A Lean docstring's math span is md4c's: a formula whose source no link, citation or emphasis
+reads, between dollars whitespace, punctuation or the text's edge flanks on their outer sides. -/
 def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
+  for doc in ["Bound \u2014$f[ash2001]$\u2014 here.", "Twice 2\u00d7$f[ash2001]$ here.",
+      "Quoted \u00ab$f[ash2001]$\u00bb here.", "Quoted \u201c$f[ash2001]$\u201d here.",
+      "Dots \u2026$f[ash2001]$\u2026 here.", "Bullet \u2022$f[ash2001]$ here.",
+      "Stop $f[ash2001]$\u3002", "Spaced\u00a0$f[ash2001]$ here.", "Spaced\u2003$f[ash2001]$ here.",
+      "Spaced\u2009$f[ash2001]$ here.", "Spaced\u3000$f[ash2001]$ here."] do
+    let (d, _) := Tests.LeanCite.page doc
+    t s!"lean math: Unicode punctuation or whitespace flanks a formula: {repr doc} cites nothing \
+({keysOf d})"
+      (keysOf d == [] && hasStr (docHtmlOf d) "<math")
+  let (d, _) := Tests.LeanCite.page "Arrow $a$\u2192$b$ here."
+  t s!"lean math: an arrow between two formulas closes one and opens the other \
+({repr (docHtmlOf d)})"
+    (((docHtmlOf d).splitOn "<math").length == 3)
+  for (file, src, shown) in [("run.sh", "#!/bin/sh\n# Exits with $? when the count $# is zero.\necho x\n",
+        "Exits with $? when the count $# is zero."),
+      ("run.py", "\"\"\"Forwards \"$@\" and then \"$@\" again.\"\"\"\nx = 1\n",
+        "Forwards \u201c$@\u201d and then \u201c$@\u201d again.")] do
+    let (d, ds) := elabCode file src
+    t s!"code math: {file}'s documentation keeps its dollars as text, doc-gen4's formulas being \
+Lean's ({repr (Ir.blocksText d.body)})"
+      (hasStr (Ir.blocksText d.body) shown && !hasStr (docHtmlOf d) "<math" &&
+        !ds.any (·.kind == .W0392))
   let (d, ds) := Tests.LeanCite.page "Math $f[ash2001]$ and $$g[birch2002]$$ and [roe2020]."
   let html := docHtmlOf d
   t s!"lean math: a bracket inside a formula cites nothing, the formula set as one \

@@ -7,6 +7,7 @@ import LeanTex.Core.Blank
 import LeanTex.Core.Hex
 import LeanTex.Core.CiteKey
 import LeanTex.Core.CaseFold
+import LeanTex.Core.Nfc
 import Std.Data.HashMap
 public import Std.Data.HashSet
 
@@ -116,12 +117,24 @@ public inductive Blk where
 
 public instance : Inhabited Blk := ⟨.rule {}⟩
 
-/-- Which markdown a reader reads: a document's strict dialect, or a code file's documentation,
-where an indented block is code, a lazy line continues its paragraph and HTML is literal text. -/
+/-- Which markdown a reader reads: a document's strict dialect, a code file's documentation, where
+an indented block is code, a lazy line continues its paragraph and HTML is literal text, or a Lean
+declaration's, which doc-gen4 also reads formulas between dollars in. -/
 public inductive Dialect where
   | document
   | docstring
+  | lean
   deriving Repr, BEq, DecidableEq, Inhabited
+
+/-- Whether a dialect reads a formula between dollars, as doc-gen4 reads a Lean declaration's. -/
+@[expose] public def Dialect.formulas : Dialect → Bool
+  | .lean => true
+  | .document | .docstring => false
+
+/-- Whether a dialect reads a Lean division, as a document does. -/
+@[expose] public def Dialect.divisions : Dialect → Bool
+  | .document => true
+  | .docstring | .lean => false
 
 def isSpaceOrTab (c : Char) : Bool := c == ' ' || c == '\t'
 
@@ -130,9 +143,16 @@ form feed, carriage return. -/
 def isMdSpace (c : Char) : Bool :=
   c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\x0c'
 
-/-- ASCII punctuation, the spec's `punctuation` for flanking purposes. -/
+/-- ASCII punctuation, the characters a backslash escapes. -/
 def isMdPunct (c : Char) : Bool :=
   "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~".any (· == c)
+
+/-- The spec's Unicode whitespace, which flanking reads: Zs, tab, line feed, form feed, carriage
+return. -/
+def isFlankSpace (c : Char) : Bool := isMdSpace c || Nfc.isSpaceSeparator c
+
+/-- The spec's Unicode punctuation, which flanking reads: general categories P and S. -/
+def isFlankPunct (c : Char) : Bool := Nfc.isPunctuation c
 
 def isAsciiAlpha (c : Char) : Bool :=
   ('a' ≤ c && c ≤ 'z') || ('A' ≤ c && c ≤ 'Z')
@@ -1241,10 +1261,10 @@ def Chars.str (c : Chars) (from_ to_ : Nat) : String := Id.run do
 
 /-- A delimiter run's flanking verdicts (CommonMark §6.2). -/
 def flanking (before after : Option Char) : Bool × Bool :=
-  let wsBefore := (before.map isMdSpace).getD true
-  let wsAfter := (after.map isMdSpace).getD true
-  let puBefore := (before.map isMdPunct).getD false
-  let puAfter := (after.map isMdPunct).getD false
+  let wsBefore := (before.map isFlankSpace).getD true
+  let wsAfter := (after.map isFlankSpace).getD true
+  let puBefore := (before.map isFlankPunct).getD false
+  let puAfter := (after.map isFlankPunct).getD false
   let left := !wsAfter && (!puAfter || wsBefore || puBefore)
   let right := !wsBefore && (!puBefore || wsAfter || puAfter)
   (left, right)
@@ -2178,7 +2198,7 @@ def scanInlines (file : String) (c : Chars) (dialect : Dialect := .document)
           toks := toks.push (.auto dest text p)
           i := next
         | none =>
-          if dialect == .docstring then
+          if dialect != .document then
             pending := pending.push '<'
             i := i + 1
             continue
@@ -2204,11 +2224,11 @@ def scanInlines (file : String) (c : Chars) (dialect : Dialect := .document)
         pending := ""
         toks := toks.push (if hard then .hard p else .soft p)
         i := i + 1
-      else if ch == '$' && dialect == .docstring then
-        -- md4c's math span: a run of one or two dollars opens where no letter or digit stands
-        -- before it and closes where none follows.
+      else if ch == '$' && dialect.formulas then
+        -- md4c's math span: a run of one or two dollars opens after whitespace or punctuation and
+        -- closes before either, a paragraph's edge counting as both.
         let n := dollarRun c i
-        let edge : Option Char → Bool := fun x => x.all fun d => isMdSpace d || isMdPunct d
+        let edge : Option Char → Bool := fun x => x.all fun d => isFlankSpace d || isFlankPunct d
         let opens := edge (if i == 0 then none else c.at? (i - 1))
         let closes := edge (c.at? (i + n))
         if n ≤ 2 && (opens || closes) then
@@ -2284,8 +2304,9 @@ def scanInlines (file : String) (c : Chars) (dialect : Dialect := .document)
               let (l, n) ← reference
               let key ← cr.keyFor? l
               pure (key, n)
-            -- A group of Pandoc's is read where its bibliography holds one of its works.
-            let normal := if cites && free && docGen.isNone then
+            -- A group of Pandoc's is read where its bibliography holds one of its works and the text
+            -- defines no label it spells, a defined label linking first as commonmark_x links it.
+            let normal := if cites && free && docGen.isNone && defined.isNone then
                 (citeListAt c scan ticks closeOf (openAt + 1) i).filter (·.any (cr.takes ·.key))
               else none
             let closeTok := toks.size + (if pending.isEmpty then 0 else 1)
@@ -2294,7 +2315,7 @@ def scanInlines (file : String) (c : Chars) (dialect : Dialect := .document)
                 match normal with
                 | some list => some (k, { cp with closeTok, spans := cp.spans ++ list })
                 | none =>
-                  if !cites || !tailFree || docGen.isSome then none
+                  if !cites || !tailFree || docGen.isSome || defined.isSome then none
                   else match (citeTailAt c scan ticks closeOf (openAt + 1) i).filter
                       (·.2.all (cr.takes ·.key)), cp.spans[0]? with
                     | some ((a, b), rest), some first =>
@@ -2353,9 +2374,9 @@ def scanInlines (file : String) (c : Chars) (dialect : Dialect := .document)
         let before := if i == 0 then none else c.at? (i - 1)
         let (left, right) := flanking before (c.at? k)
         let canOpen := if ch == '*' then left else
-          left && (!right || (before.map isMdPunct).getD false)
+          left && (!right || (before.map isFlankPunct).getD false)
         let canClose := if ch == '*' then right else
-          right && (!left || ((c.at? k).map isMdPunct).getD false)
+          right && (!left || ((c.at? k).map isFlankPunct).getD false)
         let waiting := if ch == '*' then starOpen else lineOpen
         if canClose && waiting > 0 then
           closers := closers.insert k
@@ -3100,7 +3121,7 @@ private def blocksPass (dialect : Dialect) (file : String) (input : String) (inc
   if let some fields := meta? then acc := acc.push (.metadata fields { line := 1, col := 1 })
   -- premise: mdCiteChecks — citations are read only where a bibliography takes them
   let cites := match known with
-    | some keys => if dialect == .docstring then docGenRead input keys else {}
+    | some keys => if dialect != .document then docGenRead input keys else {}
     | none => { on := doc && (included || meta?.any bibDeclared) }
   let mut leaf : Leaf := .none
   let mut defs : Std.HashMap String LinkDef := {}
@@ -3454,13 +3475,17 @@ private def blocksPass (dialect : Dialect) (file : String) (input : String) (inc
       acc := acc.push (.heading level inl lpos)
       diags := diags ++ ds2
     else if leaf.isPara && (setextAt cs j).isSome then
-      -- A `---` line under a paragraph is a setext underline, not a thematic break; under one only
-      -- link reference definitions open, it is the paragraph's text (§4.7).
+      -- An underline under only link reference definitions underlines no paragraph (§4.3): `---`
+      -- is then a thematic break, `===` a paragraph's text.
       let level := (setextAt cs j).getD 1
       match leaf with
       | .para pls =>
         let (dd, rest) := paraDefs pls
-        if rest.isEmpty then
+        if rest.isEmpty && thematicAt cs j then
+          defs := addDefs defs dd
+          leaf := .none
+          acc := acc.push (.rule lpos)
+        else if rest.isEmpty then
           leaf := .para (pls.push (sliceStr cs j cs.size, { line := ln.no, col := j + 1 }))
         else
           defs := addDefs defs dd

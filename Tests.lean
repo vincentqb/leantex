@@ -412,6 +412,8 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   Tests.DocCiteEdges.docstringChecks ref
   Tests.DocCiteEdges.caseChecks ref
   Tests.DocCiteEdges.mathChecks ref
+  Tests.DocCiteEdges.flankChecks ref
+  Tests.DocCiteEdges.caseFoldChecks ref
   Tests.LeanCite.selfDocChecks ref
   markdownInputHtmlChecks ref
   inputUseChecks ref

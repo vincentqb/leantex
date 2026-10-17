@@ -21,6 +21,10 @@ private structure Tables where
   lower : HashMap UInt32 Char
   /-- The lowercase half of every case pair. -/
   lowered : HashSet UInt32
+  /-- Merged codepoint ranges of general categories P* and S*, sorted. -/
+  puncts : Array (UInt32 × UInt32)
+  /-- Merged codepoint ranges of general category Zs, sorted. -/
+  spaces : Array (UInt32 × UInt32)
 
 private def load (_ : Unit) : Tables := Id.run do
   let field := Hex.field
@@ -46,11 +50,12 @@ private def load (_ : Unit) : Tables := Id.run do
     let key := UInt64.ofNat (field mb (i * 18) 6) * 0x100000000
       + UInt64.ofNat (field mb (i * 18 + 6) 6)
     comp := comp.insert key (Char.ofNat (field mb (i * 18 + 12) 6))
-  let lb := NfcData.letters.toUTF8
-  let mut letters : Array (UInt32 × UInt32) := Array.mkEmpty (lb.size / 12)
-  for i in [0:lb.size / 12] do
-    letters := letters.push
-      (UInt32.ofNat (field lb (i * 12) 6), UInt32.ofNat (field lb (i * 12 + 6) 6))
+  let ranges (bs : ByteArray) : Array (UInt32 × UInt32) := Id.run do
+    let mut out : Array (UInt32 × UInt32) := Array.mkEmpty (bs.size / 12)
+    for i in [0:bs.size / 12] do
+      out := out.push (UInt32.ofNat (field bs (i * 12) 6), UInt32.ofNat (field bs (i * 12 + 6) 6))
+    return out
+  let letters := ranges NfcData.letters.toUTF8
   let wb := NfcData.lower.toUTF8
   let mut lower : HashMap UInt32 Char := {}
   let mut lowered : HashSet UInt32 := {}
@@ -58,7 +63,8 @@ private def load (_ : Unit) : Tables := Id.run do
     let lc := Char.ofNat (field wb (i * 12 + 6) 6)
     lower := lower.insert (UInt32.ofNat (field wb (i * 12) 6)) lc
     lowered := lowered.insert lc.val
-  return { ccc, decomp, comp, letters, lower, lowered }
+  return { ccc, decomp, comp, letters, lower, lowered, puncts := ranges NfcData.puncts.toUTF8,
+           spaces := ranges NfcData.spaces.toUTF8 }
 
 /-- The tables, built once per process on first use; `load` takes `Unit` to defer the cost. -/
 private def tables : Thunk Tables := Thunk.mk load
@@ -177,11 +183,8 @@ public def normalize (s : String) : String := Id.run do
     r := r.push c
   return r
 
-/-- A letter by Unicode's general category (L*); `Char.isAlpha` is ASCII-only. -/
-public def isLetter (c : Char) : Bool := Id.run do
-  if c.toNat < 0x80 then
-    return c.isAlpha
-  let rs := tables.get.letters
+/-- Whether `c` falls in one of the sorted, disjoint ranges `rs`. -/
+private def inRanges (rs : Array (UInt32 × UInt32)) (c : Char) : Bool := Id.run do
   let mut lo := 0
   let mut hi := rs.size
   for _ in [0:rs.size + 1] do
@@ -194,6 +197,20 @@ public def isLetter (c : Char) : Bool := Id.run do
     else
       break
   return false
+
+/-- A letter by Unicode's general category (L*); `Char.isAlpha` is ASCII-only. -/
+public def isLetter (c : Char) : Bool :=
+  if c.toNat < 0x80 then c.isAlpha else inRanges tables.get.letters c
+
+/-- A punctuation character or symbol by Unicode's general categories (P*, S*), CommonMark's
+Unicode punctuation. -/
+public def isPunctuation (c : Char) : Bool :=
+  if c.toNat < 0x80 then "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~".contains c
+  else inRanges tables.get.puncts c
+
+/-- A space separator by Unicode's general category (Zs). -/
+public def isSpaceSeparator (c : Char) : Bool :=
+  if c.toNat < 0x80 then c == ' ' else inRanges tables.get.spaces c
 
 /-- Unicode simple lowercase (UnicodeData field 13); `Char.toLower` is ASCII-only. -/
 public def toLower (c : Char) : Char :=

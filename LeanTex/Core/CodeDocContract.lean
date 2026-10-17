@@ -240,25 +240,37 @@ private theorem retitle_adm : (l : List Raw) → (∀ r ∈ l, vocabulary.admits
       · exact hrest x hx
     · exact hl
 
+private theorem desugar_adm (file text : String) (k : Option (Std.HashSet String)) :
+    (d : Md.Dialect) → d ≠ .document →
+      ∀ r ∈ (Md.desugar file text d .document false k).1, Md.vocabulary.admits r = true
+  | .document, h => absurd rfl h
+  | .docstring, _ => fun r hr =>
+    Md.Vocab.admits_formulas _ r (Md.desugar_vocabulary_mem file text .docstring .document false k r hr)
+  | .lean, _ => Md.desugar_vocabulary_mem file text .lean .document false k
+
 private theorem proseRaws_adm (lang : Ir.CodeLang) (file : String) (starts : Array Nat)
     (known : Option (Std.HashSet String)) (seg : Seg) (opens : Bool) :
     Adm (proseRaws lang file starts known seg opens).1 := by
   let k := if lang == .lean then known else none
+  let dl : Md.Dialect := if lang == .lean then .lean else .docstring
+  have hdl : dl ≠ .document := by
+    show (if lang == .lean then Md.Dialect.lean else .docstring) ≠ .document
+    split <;> decide
   have hraws : ∀ (pr : Prose),
-      Adm (mapPosList pr.place #[] (Md.desugar file pr.text .docstring .document false k).1.toList) := by
+      Adm (mapPosList pr.place #[] (Md.desugar file pr.text dl .document false k).1.toList) := by
     intro pr
     apply adm_mapPos
-    exact Md.desugar_vocabulary_mem file pr.text .docstring .document false k
+    exact desugar_adm file pr.text k dl hdl
   let pr := proseIn lang seg.text (lineCol starts seg.start).1 ((lineCol starts seg.start).2 - 1)
   have h := hraws pr
   cases opens with
   | true =>
     have hl : ∀ x ∈ (mapPosList pr.place #[]
-        (Md.desugar file pr.text .docstring .document false k).1.toList).toList,
+        (Md.desugar file pr.text dl .document false k).1.toList).toList,
         vocabulary.admits x = true := fun x hx => h x (by simpa using hx)
     intro r hr
-    exact retitle_adm _ hl r (by simpa [proseRaws, k] using hr)
-  | false => simpa [proseRaws, k] using h
+    exact retitle_adm _ hl r (by simpa [proseRaws, k, dl] using hr)
+  | false => simpa [proseRaws, k, dl] using h
 
 private theorem caret_sym : '^' ∈ vocabulary.mathSyms := by
   simp [vocabulary, Md.vocabulary, Md.docMathSyms]

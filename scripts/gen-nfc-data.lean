@@ -19,10 +19,13 @@ primary composites (canonical pairs minus the composition exclusions of
 UAX #15 §5 and Unicode's CompositionExclusions.txt, whose listed
 script-specific set is embedded in the generator; singleton and
 non-starter exclusions are derived from the data). Hangul is algorithmic
-(Unicode §3.12) and appears in no table. The last two are the general
+(Unicode §3.12) and appears in no table. The next two are the general
 categories' letter ranges (L*) and the simple lowercase mappings —
 `Char.isAlpha`/`Char.toLower` are ASCII-only, and a word boundary that
-excludes é neither hyphenates an accented word nor keeps it one box.
+excludes é neither hyphenates an accented word nor keeps it one box. The
+last two are the ranges of the punctuation and symbol categories (P*, S*)
+and of the space separators (Zs), CommonMark's Unicode punctuation and
+whitespace, which decide where emphasis and a formula's dollars flank.
 
 Every table is fixed-width lowercase hex with no separators, so the loader
 addresses a field by byte offset instead of splitting and re-parsing text:
@@ -89,6 +92,12 @@ def hexOf (width n : Nat) : IO String := do
     die s!"{n} does not fit in {width} hex digits"
   return String.ofList (List.replicate (width - ds.length) '0') ++ ds
 
+/-- Ranges with a codepoint added at their end, merged into the last range it continues. -/
+def extend (rs : Array (Nat × Nat)) (cp : Nat) : Array (Nat × Nat) :=
+  match rs.back? with
+  | some (a, b) => if cp == b + 1 then rs.pop.push (a, cp) else rs.push (cp, cp)
+  | none => rs.push (cp, cp)
+
 def main (args : List String) : IO UInt32 := do
   let mut source : Option String := none
   let mut output := "LeanTex/Core/NfcData.lean"
@@ -106,6 +115,8 @@ def main (args : List String) : IO UInt32 := do
   let mut ccc : Array (Nat × Nat) := #[]
   let mut canon : Std.HashMap Nat (List Nat) := {}
   let mut letters : Array (Nat × Nat) := #[]   -- merged L* ranges
+  let mut puncts : Array (Nat × Nat) := #[]   -- merged P* and S* ranges
+  let mut spaces : Array (Nat × Nat) := #[]   -- merged Zs ranges
   let mut lower : Array (Nat × Nat) := #[]
   let mut rangeFirst : Option Nat := none
   for line in text.splitOn "\n" do
@@ -125,6 +136,8 @@ def main (args : List String) : IO UInt32 := do
             if lo == b + 1 then letters := letters.pop.push (a, cp)
             else letters := letters.push (lo, cp)
           | none => letters := letters.push (lo, cp)
+      if cat.startsWith "P" || cat.startsWith "S" then puncts := extend puncts cp
+      if cat == "Zs" then spaces := extend spaces cp
       if let some lc := tailFields[7]? then  -- field 13: simple lowercase
         let lc := lc.trimAscii.toString
         if !lc.isEmpty then
@@ -168,6 +181,12 @@ def main (args : List String) : IO UInt32 := do
   let mut lowerStr := ""
   for (a, b) in lower do
     lowerStr := lowerStr ++ (← hexOf 6 a) ++ (← hexOf 6 b)
+  let mut punctsStr := ""
+  for (a, b) in puncts do
+    punctsStr := punctsStr ++ (← hexOf 6 a) ++ (← hexOf 6 b)
+  let mut spacesStr := ""
+  for (a, b) in spaces do
+    spacesStr := spacesStr ++ (← hexOf 6 a) ++ (← hexOf 6 b)
   let content := "module\n\n" ++ notice
     ++ "namespace LeanTex.Core.NfcData\n\n"
     ++ "/-- Nonzero canonical combining classes, 8 hex digits per entry:\n"
@@ -186,8 +205,15 @@ def main (args : List String) : IO UInt32 := do
     ++ "/-- The simple lowercase mappings, 12 hex digits per entry:\n"
     ++ "codepoint then its lowercase. Ascending. -/\n"
     ++ s!"public def lower : String := \"{lowerStr}\"\n\n"
+    ++ "/-- The merged codepoint ranges of general categories P* and S*, 12 hex\n"
+    ++ "digits per entry: low then high, inclusive. Ascending. -/\n"
+    ++ s!"public def puncts : String := \"{punctsStr}\"\n\n"
+    ++ "/-- The merged codepoint ranges of general category Zs, 12 hex digits\n"
+    ++ "per entry: low then high, inclusive. Ascending. -/\n"
+    ++ s!"public def spaces : String := \"{spacesStr}\"\n\n"
     ++ "end LeanTex.Core.NfcData\n"
   IO.FS.writeFile output content
   IO.println s!"wrote {output}: {ccc.size} ccc, {decompEntries.size} decomps, \
-{compEntries.size} composites, {letters.size} letter ranges, {lower.size} lowercase"
+{compEntries.size} composites, {letters.size} letter ranges, {lower.size} lowercase, \
+{puncts.size} punctuation ranges, {spaces.size} space ranges"
   return 0

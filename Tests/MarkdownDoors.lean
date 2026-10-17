@@ -224,12 +224,14 @@ def markdownDoorChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   for src in family do
     t s!"doors: the desugaring of {repr src} lies in the vocabulary"
-      (Md.vocabulary.admitsList (Surface.read .markdown mdName src).1.toList)
-  t "doors: the vocabulary judge refuses a formula holding a control the math model does not \
-read, and an unlisted control, and admits a formula of the math model's controls"
-    (!Md.vocabulary.admits (.math false #[.ctrl "input" {}] {}) &&
-      !Md.vocabulary.admits (.ctrl "section" {}) &&
-      Md.vocabulary.admits (.math false #[.ctrl "alpha" {}, .sym '^' {}, .word "2" {}] {}))
+      ((Md.vocabularyFor .document).admitsList (Surface.read .markdown mdName src).1.toList)
+  t "doors: a document's vocabulary refuses a formula and an unlisted control; a Lean docstring's \
+admits a formula of the math model's controls and refuses one holding a control it does not read"
+    (!(Md.vocabularyFor .document).admits (.math false #[.ctrl "alpha" {}] {}) &&
+      !(Md.vocabularyFor .document).admits (.ctrl "section" {}) &&
+      !(Md.vocabularyFor .lean).admits (.math false #[.ctrl "input" {}] {}) &&
+      (Md.vocabularyFor .lean).admits (.math false #[.ctrl "alpha" {}, .sym '^' {}, .word "2" {}] {}) &&
+      !(Md.vocabularyFor .docstring).admits (.math false #[.ctrl "alpha" {}] {}))
   let mut plantedTex := 0
   let mut plantedRenamed := 0
   for src in family do

@@ -1327,7 +1327,8 @@ the heading it opens on to the document's title. -/
     (known : Option (Std.HashSet String)) (seg : Seg) (opens : Bool) : Array Raw × Array Diag :=
   let place := lineCol starts seg.start
   let prose := proseIn lang seg.text place.1 (place.2 - 1)
-  let read := Md.desugar file prose.text .docstring (known := if lang == .lean then known else none)
+  let read := Md.desugar file prose.text (if lang == .lean then .lean else .docstring)
+    (known := if lang == .lean then known else none)
   let raws := mapPosList prose.place #[] read.1.toList
   (if opens then (retitle raws.toList).toArray else raws,
     read.2.map fun d => { d with span := d.span.map fun sp => { sp with pos := prose.place sp.pos } })
