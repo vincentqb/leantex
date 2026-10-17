@@ -4,7 +4,7 @@ import Tests.Support.Rand
 
 /-
 An invented talk-sized deck and its figures, or a deck of distinct rasters, for `bench.lean`.
-Usage: lake build talkDeck && .lake/build/bin/talkDeck <dir> [frames] [rasters]
+Usage: lake build talkDeck && .lake/build/bin/talkDeck <dir> [frames] [rasters] [flat]
 -/
 
 open LeanTex.Core
@@ -174,6 +174,21 @@ def panelsRaw (side : Nat) (start : UInt64 := 731) : ByteArray := Id.run do
       out := out.push r |>.push g |>.push b |>.push (if margin then 0 else 255)
   return out
 
+/-- A photograph-like RGB raster with no alpha, which planning passes through: gradients under
+per-pixel grain that deflate barely shrinks. -/
+def grainRaw (side : Nat) (start : UInt64) : ByteArray := Id.run do
+  let mut out := ByteArray.emptyWithCapacity (side * (3 * side + 1))
+  let mut seed : UInt64 := start
+  for y in [:side] do
+    out := out.push 0
+    for x in [:side] do
+      let (next, v) := nextRand seed
+      seed := next
+      out := out.push ((x * 160 / side + 40).toUInt8 + (v >>> 59).toUInt8)
+        |>.push ((y * 160 / side + 40).toUInt8 + ((v >>> 54) &&& 31).toUInt8)
+        |>.push (((x + y) * 80 / side + 60).toUInt8 + ((v >>> 49) &&& 31).toUInt8)
+  return out
+
 def pdfOf (content : ByteArray) (width height : Nat) : ByteArray := Id.run do
   let z := Flate.deflate content
   let objs : Array ByteArray := #[
@@ -250,14 +265,19 @@ def main (args : List String) : IO UInt32 := do
   let some dir := args.head? | IO.eprintln "usage: talkDeck <dir> [frames] [rasters]"; return 2
   let frames := ((args[1]?).bind (·.toNat?)).getD 60
   let rasters := ((args[2]?).bind (·.toNat?)).getD 0
+  let flat := args[3]? == some "flat"
   let dir := System.FilePath.mk dir
   IO.FS.createDirAll (dir / "figures")
   if rasters > 0 then
     IO.FS.writeFile (dir / "deck.tex") (rasterDeck rasters)
     for i in [0:rasters] do
-      IO.FS.writeBinFile (dir / "figures" / s!"raster{i}.png") (PngEncode.encodeIdat
-        { width := 2048, height := 2048, bitDepth := 8, colorType := 6 }
-        (Flate.deflate (panelsRaw 2048 (731 + i.toUInt64))))
+      let png := if flat then
+          PngEncode.encodeIdat { width := 2048, height := 2048, bitDepth := 8, colorType := 2 }
+            (Flate.deflate (grainRaw 2048 (731 + i.toUInt64)))
+        else
+          PngEncode.encodeIdat { width := 2048, height := 2048, bitDepth := 8, colorType := 6 }
+            (Flate.deflate (panelsRaw 2048 (731 + i.toUInt64)))
+      IO.FS.writeBinFile (dir / "figures" / s!"raster{i}.png") png
     return 0
   IO.FS.writeFile (dir / "deck.tex") (deck frames)
   IO.FS.writeBinFile (dir / "figures" / "panels.png") (PngEncode.encodeIdat

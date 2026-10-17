@@ -78,7 +78,6 @@ def engineCacheChecks (ref : IO.Ref (List String)) : IO Unit := do
 /-- Two sources of one content plan once a build, however their fetches are scheduled: a cold
 build names both and reads the second's plan from the first's slot. -/
 def imageCopyChecks (ref : IO.Ref (List String)) : IO Unit := do
-  let binary ← IO.FS.realPath ".lake/build/bin/leantex"
   let font ← IO.FS.realPath "testdata/corpus/fonts/OpenSans-Regular.ttf"
   let alpha ← IO.FS.readBinFile "testdata/corpus/rects-alpha.png"
   IO.FS.withTempDir fun root => do
@@ -88,13 +87,9 @@ def imageCopyChecks (ref : IO.Ref (List String)) : IO Unit := do
       ("\\documentclass{article}\n\\begin{document}\n" ++
         "\\includegraphics[alt={Invented rectangles}]{first}\n\n" ++
         "\\includegraphics[alt={The same invented rectangles}]{second}\n\\end{document}\n")
-    let run ← IO.Process.output {
-      cmd := binary.toString, cwd := some root,
-      args := #["doc.tex", "-o", "doc.pdf", "-v", "--porcelain"],
-      env := #[("LEANTEX_FONT", some font.toString),
-        ("XDG_CACHE_HOME", some (root / "cache").toString)] }
-    let images := (run.stdout.splitOn "\n").filter fun line =>
-      hasStr line "\"event\":\"phase\"" && hasStr line "\"name\":\"images\""
+    let run ← engineRun root #["doc.tex", "-o", "doc.pdf", "-v", "--porcelain"] font
+      (root / "cache")
+    let images := phaseLines run "images"
     check ref s!"image copies: a cold build plans one content once and reads it back: {images}"
       (run.exitCode == 0 && images.length == 1 && images.all (hasStr · "2 files, 1 cached"))
 
@@ -138,17 +133,14 @@ def engineIdentityChecks (ref : IO.Ref (List String)) : IO Unit := do
       (cold.exitCode == 0 && filled.exitCode == 0 &&
         (← IO.FS.readBinFile (root / "filled.pdf")) == coldPdf)
     -- Over the first engine's cache the second plans its image afresh.
-    let imagesPhase (run : IO.Process.Output) : List String :=
-      (run.stdout.splitOn "\n").filter fun line =>
-        hasStr line "\"event\":\"phase\"" && hasStr line "\"name\":\"images\""
     let warmA ← build "a" "cache" "warm.pdf" #["-v", "--porcelain"]
     let probeB ← build "b" "cache" "probe.pdf" #["-v", "--porcelain"]
-    t s!"engine identity: the engine that planned the image reads its plan back: {imagesPhase warmA}"
-      (warmA.exitCode == 0 && (imagesPhase warmA).length == 1 &&
-        (imagesPhase warmA).all (hasStr · "cached"))
-    t s!"engine identity: another engine reads no plan the first stored: {imagesPhase probeB}"
-      (probeB.exitCode == 0 && (imagesPhase probeB).length == 1 &&
-        (imagesPhase probeB).all (!hasStr · "cached") &&
+    t s!"engine identity: the engine that planned the image reads its plan back: {phaseLines warmA "images"}"
+      (warmA.exitCode == 0 && (phaseLines warmA "images").length == 1 &&
+        (phaseLines warmA "images").all (hasStr · "cached"))
+    t s!"engine identity: another engine reads no plan the first stored: {phaseLines probeB "images"}"
+      (probeB.exitCode == 0 && (phaseLines probeB "images").length == 1 &&
+        (phaseLines probeB "images").all (!hasStr · "cached") &&
         (← IO.FS.readBinFile (root / "probe.pdf")) == coldPdf)
     let refilled ← build "a" "cache" "refilled.pdf"
     t s!"engine identity: the first engine fills the cache again ({refilled.exitCode})"

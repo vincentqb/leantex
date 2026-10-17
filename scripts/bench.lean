@@ -459,7 +459,7 @@ structure Sample where
   diagnostics : Array String
   pages : Nat
   phases : Array Phase
-  rssKiB : Nat := 0
+  rssKiB : Option Nat := none
 
 def Sample.phase? (r : Sample) (name : String) : Option Phase :=
   r.phases.find? (·.name == name)
@@ -469,7 +469,7 @@ keep every structured field, in emission order. -/
 def parseSample (log : String) : Except String Sample := do
   let mut diagnostics := #[]
   let mut phases : Array Phase := #[]
-  let mut summary : Option (Nat × Nat × Nat) := none
+  let mut summary : Option (Nat × Nat × Option Nat) := none
   for line in log.splitOn "\n" do
     if line.trimAscii.isEmpty then continue
     let j ← Lean.Json.parse line
@@ -491,7 +491,7 @@ def parseSample (log : String) : Except String Sample := do
       if (← j.getObjValAs? String "output").isEmpty then throw "summary names no output"
       let pages ← j.getObjValAs? Nat "pages"
       if pages == 0 then throw "summary has no pages"
-      let rss := (j.getObjValAs? Nat "rssKiB").toOption.getD 0
+      let rss := (j.getObjValAs? Nat "rssKiB").toOption
       summary := some (pages, ← j.getObjValAs? Nat "ms", rss)
     | event => throw s!"unexpected porcelain event: {event}"
   let some (pages, compilerMs, rssKiB) := summary | throw "no output summary"
@@ -1016,12 +1016,14 @@ def require (ok : Bool) (why : String) : IO Unit := do
   unless ok do throw (IO.userError s!"talk benchmark: {why}")
 
 /-- The invented talk deck of `scripts/talkdeck.lean`, or its deck of `rasters` distinct rasters,
-staged in `dir` beside the corpus fonts, after building its generator. -/
-def stage (dir : System.FilePath) (frames rasters : Nat) : IO Unit := do
+`flat` ones passing through planning, staged in `dir` beside the corpus fonts, after building its
+generator. -/
+def stage (dir : System.FilePath) (frames rasters : Nat) (flat : Bool) : IO Unit := do
   let built ← (← IO.Process.spawn { cmd := "lake", args := #["build", "-q", "talkDeck"] }).wait
   if built != 0 then die "lake build talkDeck failed"
-  let out ← IO.Process.output
-    { cmd := ".lake/build/bin/talkDeck", args := #[dir.toString, toString frames, toString rasters] }
+  let out ← IO.Process.output {
+    cmd := ".lake/build/bin/talkDeck"
+    args := #[dir.toString, toString frames, toString rasters] ++ (if flat then #["flat"] else #[]) }
   if out.exitCode != 0 then die s!"talkDeck failed:\n{out.stderr}"
   Slides.copyFonts dir
 
@@ -1041,56 +1043,77 @@ def stamp (binary : System.FilePath) : IO (Nat × IO.FS.SystemTime) := do
   let m ← binary.metadata
   return (m.byteSize.toNat, m.modified)
 
-/-- Cold (an empty application cache) and warm builds of the talk deck, or of the raster deck when
-`rasters` is positive, in each format: the median of `n` pairs, every phase, and the artifact every
-build and any `LEANTEX_BENCH_COMPARE_BINARY` compiler must reproduce byte for byte. -/
-def run (n frames : Nat) (rasters : Nat := 0) : IO Unit := do
+/-- The median of `samples`' peaks in MiB, unknown when a build reported none. -/
+def peakMiB (samples : Array Sample) : String :=
+  match samples.mapM (·.rssKiB) with
+  | some kib => s!"{median kib / 1024} MiB"
+  | none => "unknown"
+
+/-- The medians of `n` cold and warm samples under `label`: wall and compiler time, each of
+`phases`, and the peak. -/
+def report (label : String) (n : Nat) (phases : Array Phase) (cold warm : Array Sample) :
+    IO Unit := do
+  for (kind, samples) in [("cold", cold), ("warm", warm)] do
+    IO.println s!"{padRight s!"{label} ({kind})" 42} \
+{padLeft (toString (median (samples.map (·.ms)))) 6} ms, compiler \
+{median (samples.map (·.compilerMs))} ms (median of {n})"
+  for p in phases do
+    let time := fun r : Sample => ((r.phase? p.name).map (·.ms)).getD 0
+    say s!"  phase {padRight p.name 12} cold={median (cold.map time)} warm={median (warm.map time)} ms"
+  say s!"  peak RSS           cold={peakMiB cold} warm={peakMiB warm}"
+
+/-- A cold build at an emptied `cache` and the warm build after it, which must agree. -/
+def pair (binary dir cache : System.FilePath) (format : String) :
+    IO (Sample × Sample × ByteArray) := do
+  if ← cache.pathExists then IO.FS.removeDirAll cache
+  let (first, a) ← build binary dir cache format
+  let (second, b) ← build binary dir cache format
+  require (a == b && first.diagnostics == second.diagnostics)
+    s!"{format}: the warm build changed the artifact or its diagnostics"
+  return (first, second, a)
+
+/-- The median of `n` cold and warm pairs of the talk deck, or of `rasters` rasters, in each format,
+each pair reproducing the artifact, and as many of a `LEANTEX_BENCH_COMPARE_BINARY` compiler's
+pairs, alternating with them, reproducing it too. -/
+def run (n frames : Nat) (rasters : Nat := 0) (flat : Bool := false) : IO Unit := do
   let binary ← IO.FS.realPath (← compiler)
   let before ← stamp binary
   let comparison ← match ← IO.getEnv "LEANTEX_BENCH_COMPARE_BINARY" with
     | some path => pure (some (← IO.FS.realPath path))
     | none => pure none
-  let name := if rasters > 0 then "raster deck" else "talk deck"
+  let name := if rasters == 0 then "talk deck" else if flat then "flat raster deck" else "raster deck"
   let count := if rasters > 0 then rasters else frames
   say s!"{name} benchmark; N={n}; frames={count}; binary={binary} ({before.1} bytes)"
   say s!"host load before: {← Slides.load}"
   IO.FS.withTempDir fun dir => do
-    stage dir frames rasters
+    stage dir frames rasters flat
     for format in ["pdf", "html"] do
-      let cache := dir / s!"cache-{format}"
       let mut cold : Array Sample := #[]
       let mut warm : Array Sample := #[]
+      let mut otherCold : Array Sample := #[]
+      let mut otherWarm : Array Sample := #[]
       let mut artifact : Option ByteArray := none
       for _ in [:n] do
-        if ← cache.pathExists then IO.FS.removeDirAll cache
-        let (first, a) ← build binary dir cache format
-        let (second, b) ← build binary dir cache format
-        require (a == b && first.diagnostics == second.diagnostics)
-          s!"{format}: the warm build changed the artifact or its diagnostics"
+        let (first, second, a) ← pair binary dir (dir / s!"cache-{format}") format
         if let some earlier := artifact then
           require (earlier == a) s!"{format}: cold builds disagree"
         artifact := some a
         cold := cold.push first
         warm := warm.push second
+        if let some other := comparison then
+          let (c1, c2, c) ← pair other dir (dir / s!"compare-{format}") format
+          require (c == a && c1.diagnostics == first.diagnostics)
+            s!"{format}: {other} built a different artifact or diagnostics"
+          otherCold := otherCold.push c1
+          otherWarm := otherWarm.push c2
       let some first := cold[0]? | die "the talk benchmark needs at least one pair"
       let bytes := (artifact.map (·.size)).getD 0
       say s!"leantex  {name}, {count} frames ({format}): {first.pages} pages, {bytes} bytes"
-      for (label, samples) in [("cold", cold), ("warm", warm)] do
-        IO.println s!"{padRight s!"leantex  {name} {format} ({label})" 42} \
-{padLeft (toString (median (samples.map (·.ms)))) 6} ms, compiler \
-{median (samples.map (·.compilerMs))} ms (median of {n})"
-      for p in first.phases do
-        let time := fun r : Sample => ((r.phase? p.name).map (·.ms)).getD 0
-        say s!"  phase {padRight p.name 12} cold={median (cold.map time)} warm={median (warm.map time)} ms"
-      say s!"  peak RSS           cold={median (cold.map (·.rssKiB)) / 1024} \
-warm={median (warm.map (·.rssKiB)) / 1024} MiB"
+      report s!"leantex  {name} {format}" n first.phases cold warm
       if let some other := comparison then
-        let otherCache := dir / s!"compare-{format}"
-        if ← otherCache.pathExists then IO.FS.removeDirAll otherCache
-        let (reference, c) ← build other dir otherCache format
-        require (artifact == some c && first.diagnostics == reference.diagnostics)
-          s!"{format}: {other} built a different artifact or diagnostics"
-        say s!"  compiler comparison ({other}): byte-identical artifact and diagnostics"
+        say s!"  compiler comparison ({other}), its pairs alternating: byte-identical artifact \
+and diagnostics"
+        report s!"compared {name} {format}" n first.phases otherCold otherWarm
   require ((← stamp binary) == before) "the compiler changed during the benchmark"
   say s!"host load after: {← Slides.load}"
 
@@ -1282,6 +1305,7 @@ def main (args : List String) : IO UInt32 := do
     return 0
   if args == ["--rasters-only"] then
     Talk.run n 0 8
+    Talk.run n 0 8 true
     return 0
   if args == ["--slides-compressed-only"] then
     Slides.run n true

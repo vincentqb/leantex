@@ -415,23 +415,23 @@ public def svgConverter (params : Image.PlanParams) (allowed : Bool) : IO (Optio
   svgConverterWith (do return (← ToolProbe.onPath "rsvg-convert").isSome)
     (ImageAssets.canonicalPlan params) allowed
 
-/-- A request's source as found: its answer already, or bytes read at a path still to plan. -/
+/-- A request's source as found: its answer already, a boundary picture's bytes, or bytes read at
+a path, the last two still to plan. -/
 inductive Located where
   | done (answer : Image.Fetch × Bool × SvgFetch × Array String)
+  | picture (bytes : ByteArray)
   | read (cand : String) (path : System.FilePath) (bytes : ByteArray)
 
 /-- One image source found and read, the effect half of `Image.fulfil`: a boundary picture from
 its results, else a path beside the document through graphicx's extensions. -/
 def locateImage (dir : System.FilePath) (pics : Array PicResult)
-    (refused : Array (String × Diag)) (params : Image.PlanParams) (req : Image.Request)
-    (paths : Array String := #[]) : IO Located := do
+    (refused : Array (String × Diag)) (req : Image.Request) (paths : Array String := #[]) :
+    IO Located := do
   let src := req.src
   let none' : SvgFetch := { res := .error "" }
   if src.startsWith Ir.picSrcPrefix then
     match pics.find? (·.src == src) with
-    | some r =>
-      return .done (.decoded "" (Image.probe r.bytes >>= Image.plan params) none none none none,
-        false, none', #[])
+    | some r => return .picture r.bytes
     | none =>
       match refused.find? (·.1 == src) with
       | some (_, why) => return .done (.refused why, false, none', #[])
@@ -457,20 +457,24 @@ def locateImage (dir : System.FilePath) (pics : Array PicResult)
     | .error e => return .done (.unreadable e, false, none', #[p.toString])
     | .ok bytes => return .read cand p bytes
 
-/-- A found source's batch key: its bytes' content key, so two sources of one content never plan
-at once and each cache slot has one writer, else its position. -/
-def Located.key (l : Located) (index : Nat) : Sum Nat String :=
+/-- A source's batch key: a read file's size, so two files of one content never plan at once and
+each plan cache slot has one writer, or its position for a source no plan cache slot holds. -/
+def Located.key (l : Located) (index : Nat) : Sum Nat Nat :=
   match l with
   | .done _ => .inl index
-  | .read _ _ bytes => .inr (Flate.contentKey bytes)
+  | .picture _ => .inl index
+  | .read _ _ bytes => .inr bytes.size
 
-/-- A found source planned: an SVG through `svgFetch`, a page or animation through
-`Image.decodeRequest`, else through the plan cache; also whether the cache answered, and the
-files read. -/
+/-- A found source planned: a boundary picture as it stands, an SVG through `svgFetch`, a page or
+animation through `Image.decodeRequest`, else through the plan cache; also whether the cache
+answered, and the files read. -/
 def planLocated (params : Image.PlanParams) (lang : String) (convert : Option Converter)
     (req : Image.Request) (cache : Option Engine.Cache) : Located →
     IO (Image.Fetch × Bool × SvgFetch × Array String)
   | .done answer => return answer
+  | .picture bytes =>
+    return (.decoded "" (Image.probe bytes >>= Image.plan params) none none none none, false,
+      { res := .error "" }, #[])
   | .read cand p bytes => do
     let src := req.src
     let none' : SvgFetch := { res := .error "" }
@@ -510,11 +514,11 @@ def loadImages (file : String) (doc : Ir.Doc) (pics : Array PicResult := #[])
   let mut reads : Array String := #[]
   let convert ← svgConverter params doc.figureConvert
   let reqs := Ir.imageRequests doc
-  let located ← reqs.mapM fun req => locateImage dir pics refused params req doc.graphicsPath
+  let located ← reqs.mapM fun req => locateImage dir pics refused req doc.graphicsPath
   -- Four at a time bounds peak memory; answers stand in request order.
-  let answers ← Batch.map 4 (fun (k, l) => Located.key l k)
-    (fun (k, l) => planLocated params doc.info.locale.tag convert (reqs[k]?.getD { src := "" })
-      cache l) (located.mapIdx fun k l => (k, l))
+  let answers ← Batch.map 4 (fun (k, _, l) => Located.key l k)
+    (fun (_, req, l) => planLocated params doc.info.locale.tag convert req cache l)
+    ((reqs.zip located).mapIdx fun k (req, l) => (k, req, l))
   for (req, (f, fromCache, svg, read)) in reqs.zip answers do
     if fromCache then hits := hits + 1
     fetched := fetched.push (req, f)

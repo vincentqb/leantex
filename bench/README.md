@@ -204,8 +204,9 @@ streams deflate at the engine's speed. Each build has no tool on `PATH`, an empt
 corpus fonts staged beside the deck (font discovery still reads the host's system font
 directories), and must ship no loss; the report gives the median of `N` pairs of a cold build
 (an empty application cache) and a warm one, in each format, with every phase, and fails when a
-warm or a later cold build changes the artifact, or when `LEANTEX_BENCH_COMPARE_BINARY` names a
-compiler whose cold build differs.
+warm or a later cold build changes the artifact. When `LEANTEX_BENCH_COMPARE_BINARY` names another
+compiler, a pair of its builds follows each pair, must reproduce the artifact and diagnostics, and
+is reported beside, so load drift falls on both.
 
 The web page's writer escaped every text node and attribute value through a list of characters and
 encoded each data URL once per use, and once more for its closure check. It now returns a value
@@ -272,26 +273,29 @@ and after.
 
 `--rasters-only` builds the deck `scripts/talkdeck.lean` writes when given a raster count: 8
 frames, each showing its own invented 2048×2048 RGBA PNG (the talk deck's panels grained from
-seeds 731 to 738, the first the talk deck's own), sealed as the talk deck is. The report gives
-each format's median peak resident memory beside its times.
+seeds 731 to 738, the first the talk deck's own), sealed as the talk deck is; then the flat raster
+deck, the same frames over photograph-like RGB PNGs of about 11.6 MB each, which planning passes
+through. The report gives each format's median peak resident memory beside its times.
 
 Images were fetched one at a time, and a raster's colour and alpha planes were deflated one after
 the other. Every source is now found and read in request order, then planned four at a time,
-never two of one content, so each plan cache slot has one writer, and the alpha plane deflates
-beside the colour plane. Median of 5, back to back on a host at load 70-94, the before column
-with `LEANTEX_BENCH_BINARY` naming the parent's saved compiler, the after column with
-`LEANTEX_BENCH_COMPARE_BINARY` naming it:
+never two files of one size at once, so two of one content never plan at once and each plan
+cache slot has one writer, and the alpha plane deflates beside the colour plane. Median of 5 per
+round, the median of three rounds on a host at load 70-150, `LEANTEX_BENCH_COMPARE_BINARY` naming
+the parent's saved compiler so the two compilers' builds alternate:
 
 | Build | before | after |
 |---|---:|---:|
-| Raster deck PDF, cold | 2,321 ms (images 2,162), peak 177 MiB | 695 ms (images 561), peak 319 MiB |
-| Raster deck HTML, cold | 2,456 ms (images 2,155), peak 221 MiB | 1,018 ms (images 558), peak 330 MiB |
-| Talk deck PDF, cold | 1,917 ms (images 1,235), peak 257 MiB | 1,688 ms (images 1,003), peak 298 MiB |
-| Talk deck PDF, warm | 509 ms (images 162) | 423 ms (images 94) |
-| Talk deck HTML, cold | 2,600 ms (images 1,220), peak 287 MiB | 2,381 ms (images 1,011), peak 284 MiB |
-| Talk deck HTML, warm | 685 ms (images 152) | 651 ms (images 94) |
+| Raster deck PDF, cold | 2,410 ms (images 2,277), peak 174 MiB | 712 ms (images 568), peak 325 MiB |
+| Raster deck PDF, warm | 125 ms (images 25) | 109 ms (images 11) |
+| Raster deck HTML, cold | 2,951 ms (images 2,496), peak 217 MiB | 1,046 ms (images 670), peak 329 MiB |
+| Raster deck HTML, warm | 342 ms (images 29) | 355 ms (images 13) |
+| Talk deck PDF, cold | 2,059 ms (images 1,344), peak 255 MiB | 1,960 ms (images 1,200), peak 281 MiB |
+| Talk deck PDF, warm | 576 ms (images 181) | 462 ms (images 95) |
+| Talk deck HTML, cold | 3,103 ms (images 1,386), peak 270 MiB | 2,775 ms (images 1,158), peak 296 MiB |
+| Talk deck HTML, warm | 803 ms (images 172) | 737 ms (images 105) |
 
 The cold builds trade memory for time, four rasters decoding at once: the raster deck's cold PDF
-build peaks 142 MiB higher. The raster deck's warm builds read the cache and
-move within the host's noise (PDF 112 and 114 ms, HTML 296 and 293 ms). The comparison found the
-artifacts and diagnostics byte-identical.
+build peaks 151 MiB higher. The flat raster deck has nothing to plan in parallel: its images phase
+stays near 50 ms, about 5 ms slower over ten alternating cold builds of each format, and its
+builds move within the host's noise, the html phase about 1.9 s of a 125 MB page either way. The comparisons found the artifacts and diagnostics byte-identical.

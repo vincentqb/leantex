@@ -1324,6 +1324,11 @@ def censusOf (coveredColors : Array Ir.Color) (out : Layout.Out) (imgs : Image.S
 
 def hasStr (hay needle : String) : Bool := (hay.splitOn needle).length > 1
 
+/-- The porcelain lines of a `-v` run's phase `name`. -/
+def phaseLines (run : IO.Process.Output) (name : String) : List String :=
+  (run.stdout.splitOn "\n").filter fun line =>
+    hasStr line "\"event\":\"phase\"" && hasStr line s!"\"name\":\"{name}\""
+
 /-- The animations a stylesheet's step rules run: each name an `animation:` lists in a rule whose
 selector names a step, `none` aside. -/
 def stepAnimations (css : String) : List String :=
