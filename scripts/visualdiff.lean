@@ -633,43 +633,58 @@ def heatPng (page : Raster) (k x0 y0 w h : Nat) (cls : ByteArray) : ByteArray :=
       rows := rows.push r |>.push g |>.push b
   return PngEncode.encode { width := page.w, height := page.h, bitDepth := 8, colorType := 2 } rows
 
-/-- Sample `(x, y)` of `s` grown beside `o`: its own where it covers it, else paper where `o` shows
-paper there and `s`'s nearest sample otherwise, one past both pages read as the nearest either covers. -/
-def grownAt (s o : Raster) (x y : Nat) : Nat × Nat × Nat :=
+/-- Sample `(x, y)` of a raster. -/
+def sampleAt (r : Raster) (x y : Nat) : Nat × Nat × Nat :=
+  let i := 3 * (y * r.w + x)
+  (byteAt r.rgb i, byteAt r.rgb (i + 1), byteAt r.rgb (i + 2))
+
+/-- A page's ground: the colour its corners and those of its last whole column and row share, or
+paper white where they differ. -/
+def groundOf (r : Raster) : Nat × Nat × Nat :=
+  let c := sampleAt r 0 0
+  if r.w < 2 || r.h < 2 then (255, 255, 255)
+  else if [(r.w - 2, 0), (0, r.h - 2), (r.w - 2, r.h - 2)].all (fun (x, y) => sampleAt r x y == c)
+  then c
+  else (255, 255, 255)
+
+/-- Sample `(x, y)` of `s` grown beside `o`, whose ground is `og`: its own where it covers it, else
+`og` where `o` shows its ground there and `s`'s nearest sample otherwise; one past both pages reads
+as the nearest within their larger width and height. -/
+def grownAt (s o : Raster) (og : Nat × Nat × Nat) (x y : Nat) : Nat × Nat × Nat :=
   let (x, y) := (min x (max s.w o.w - 1), min y (max s.h o.h - 1))
-  let px (r : Raster) (x y : Nat) :=
-    let i := 3 * (y * r.w + x)
-    (byteAt r.rgb i, byteAt r.rgb (i + 1), byteAt r.rgb (i + 2))
-  if x < s.w && y < s.h then px s x y
-  else if s.w == 0 || s.h == 0 || (x < o.w && y < o.h && px o x y == (255, 255, 255)) then
-    (255, 255, 255)
-  else px s (min x (s.w - 1)) (min y (s.h - 1))
+  if x < s.w && y < s.h then sampleAt s x y
+  else if s.w == 0 || s.h == 0 then (255, 255, 255)
+  else if x < o.w && y < o.h && sampleAt o x y == og then og
+  else sampleAt s (min x (s.w - 1)) (min y (s.h - 1))
 
 /-- Row `y` of `s` grown to `w` samples beside `o` by `grownAt`. -/
-def grownRow (s o : Raster) (w y : Nat) (acc : ByteArray) : ByteArray := Id.run do
+def grownRow (s o : Raster) (og : Nat × Nat × Nat) (w y : Nat) (acc : ByteArray) : ByteArray :=
+    Id.run do
   let mut acc := acc
   let own := if y < s.h then min s.w w else 0
   if own > 0 then acc := acc ++ s.rgb.extract (3 * (y * s.w)) (3 * (y * s.w + own))
   for x in [own:w] do
-    let (r, g, b) := grownAt s o x y
+    let (r, g, b) := grownAt s o og x y
     acc := acc.push r.toUInt8 |>.push g.toUInt8 |>.push b.toUInt8
   return acc
 
 /-- `s` grown to `w × h` beside `o` by `grownRow`, or itself where it is that size. -/
-def grownTo (s o : Raster) (w h : Nat) : Raster := Id.run do
+def grownTo (s o : Raster) (og : Nat × Nat × Nat) (w h : Nat) : Raster := Id.run do
   if s.w == w && s.h == h then return s
   let mut rgb := ByteArray.emptyWithCapacity (3 * w * h)
-  for y in [0:h] do rgb := grownRow s o w y rgb
+  for y in [0:h] do rgb := grownRow s o og w y rgb
   return { w, h, rgb }
 
-def growTogether (a b : Raster) (w h : Nat) : Raster × Raster := (grownTo a b w h, grownTo b a w h)
+/-- Two rasters grown to `w × h` together, of pages whose grounds are `ga` and `gb`. -/
+def growTogether (a b : Raster) (w h : Nat) (ga gb : Nat × Nat × Nat) : Raster × Raster :=
+  (grownTo a b gb w h, grownTo b a ga w h)
 
 /-- Pages whose sizes differ by at most the reach, grown to one size together; `none` where they
 differ by more. -/
 def sized (m : Medium) (a b : Raster) : Option (Raster × Raster) :=
   let r := m.pixels m.reach.ceil.toUInt64.toNat
   if a.w + r < b.w || b.w + r < a.w || a.h + r < b.h || b.h + r < a.h then none
-  else some (growTogether a b (max a.w b.w) (max a.h b.h))
+  else some (growTogether a b (max a.w b.w) (max a.h b.h) (groundOf a) (groundOf b))
 
 /-- The page rows a band holds as its own, and the rows of context it reads beyond them. -/
 def bandRows (m : Medium) : Nat × Nat := (tileSide / m.split, m.pixels (m.scope + m.apron))
@@ -751,7 +766,7 @@ def pdfPage (drawer : Drawer) (pdf : String) (page : Nat) (stem : System.FilePat
   let (code, _, err) ← runOut drawer.tool (#["-tiff", "-tiffcompression", "none", "-cropbox", "-r",
     toString dpi, "-f", toString page, "-l", toString page] ++ cut ++ #["-singlefile", pdf, stem.toString])
   if code != 0 then throw s!"{drawer.tool} exited {code}: {errorLine err}"
-  if (err.splitOn "Bogus memory allocation").length > 1 then
+  if ["Bogus memory allocation", "Out of memory"].any fun m => (err.splitOn m).length > 1 then
     throw s!"{pdf} page {page} at {dpi} dpi: {drawer.tool} could not allocate an image it draws"
   let file := stem.toString ++ ".tif"
   let bytes ← IO.FS.readBinFile file
@@ -823,18 +838,35 @@ def pdfBoxes (pdf : String) : ExceptT String IO (Array (Nat × Nat)) := do
     let (w, h) := ((x1 - x0).natAbs, (y1 - y0).natAbs)
     return if turns.getD (toString (i + 1)) 0 % 180 == 90 then (h, w) else (w, h)
 
-/-- Each page's largest image side in source pixels, as `pdfimages -list` prints its images, masks
-and soft masks. -/
-def pdfImageSides (pdf : String) : ExceptT String IO (Std.HashMap Nat Nat) := do
+/-- Each page's largest image side in source pixels, as `pdfimages -list` prints the images, masks
+and soft masks a page draws, and the objects it names them by. -/
+def pdfImageSides (pdf : String) : ExceptT String IO (Std.HashMap Nat Nat × Std.HashSet Nat) := do
   let out ← run "pdfimages" #["-list", pdf]
   let mut sides : Std.HashMap Nat Nat := {}
+  let mut listed : Std.HashSet Nat := {}
   for l in (out.splitOn "\n").drop 2 do
-    match (l.splitOn " ").filter (!·.isEmpty) with
-    | page :: _ :: _ :: w :: h :: _ =>
-      if let (some p, some w, some h) := (page.toNat?, w.toNat?, h.toNat?) then
-        sides := sides.insert p (max (sides.getD p 0) (max w h))
-    | _ => pure ()
-  return sides
+    let ws := (l.splitOn " ").filter (!·.isEmpty)
+    if let (some p, some w, some h) := ((ws[0]?.bind (·.toNat?)), (ws[3]?.bind (·.toNat?)),
+        (ws[4]?.bind (·.toNat?))) then
+      sides := sides.insert p (max (sides.getD p 0) (max w h))
+      if let some n := ws[10]?.bind (·.toNat?) then listed := listed.insert n
+  return (sides, listed)
+
+/-- Every image object `pdf` holds, by number, with its largest side in source pixels, as the
+engine's reader finds them, inside patterns, glyph procedures and unused ones too. -/
+def pdfImageObjects (pdf : String) : ExceptT String IO (Array (Nat × Nat)) := do
+  let b ← IO.FS.readBinFile pdf
+  let x ← match PdfRead.readXref b with
+    | .ok x => pure x
+    | .error e => throw e
+  let es ← match PdfRead.objectsOf b x with
+    | .ok es => pure es.val
+    | .error e => throw e
+  let side (o : PdfRead.Obj) (k : String) : Nat :=
+    (((PdfCensus.deref es ((o.get? k).getD .null)).int?).map (·.toNat)).getD 0
+  return es.filterMap fun e =>
+    if PdfCensus.kindOf e.val == .image then some (e.num, max (side e.val "Width") (side e.val "Height"))
+    else none
 
 /-- How far a composite's extents stay inside pixman's 16-bit range, for its filter's reach. -/
 def pixmanMargin : Nat := 64
@@ -890,6 +922,7 @@ def judgePdfPage (plan : Plan) (a b : String) (n : Nat) (ca cb : Nat × Nat) (he
   let fa ← pdfFind plan a n (dir / s!"a-{n}") dpi pw ph
   let fb ← pdfFind plan b n (dir / s!"b-{n}") dpi pw ph
   let pages := #[(a, "a", fa.w, fa.h), (b, "b", fb.w, fb.h)]
+  let grounds := (groundOf fa, groundOf fb)
   let some (ra, rb) := sized m fa fb | return { verdict := .visible, reason := "size" }
   let some first := window m ra rb | return alike fa fb
   let (dxs, dys) := disc m.reach
@@ -906,7 +939,7 @@ def judgePdfPage (plan : Plan) (a b : String) (n : Nat) (ca cb : Nat × Nat) (he
       let drawn ← parMap 2 pages fun (pdf, side, pw, ph) =>
         pdfBand plan pdf n (dir / s!"{side}-{n}") pw ph x0 (y0 + r0) w (r1 - r0)
       let (ca, cb) := growTogether (drawn[0]?.getD ⟨0, 0, .empty⟩) (drawn[1]?.getD ⟨0, 0, .empty⟩)
-        (k * w) (k * (r1 - r0))
+        (k * w) (k * (r1 - r0)) grounds.1 grounds.2
       if attempt < 8 then
         if let some (bx0, by0, bx1, by1) := diffBox ca cb then
           let left := bx0 < mg && x0 > 0
@@ -1150,16 +1183,28 @@ def comparePdf (a b : String) (heat : Bool) (dir : System.FilePath) : ExceptT St
   IO.FS.createDirAll dir
   let boxA ← pdfBoxes a
   let boxB ← pdfBoxes b
-  -- Image sizes that cannot be read leave every page to cairo's whole pieces, as the note says.
-  let (sides, notes) ← try
-      pure ((← pdfImageSides a, ← pdfImageSides b), (#[] : Array String))
-    catch e =>
-      pure (({}, {}), #[s!"image-sizes-unread why=\"{e}\" plan=cairo"])
+  -- A page's plan reads the images it draws, and every image no page is seen to draw, wherever it
+  -- stands; what cannot be read is noted, and the rest plans without it.
+  let mut notes : Array String := #[]
+  let mut pages : Array (Std.HashMap Nat Nat) := #[]
+  let mut unseen := 0
+  for (pdf, side) in [(a, "a"), (b, "b")] do
+    let (drawn, listed) ← try pdfImageSides pdf
+      catch e => do
+        notes := notes.push s!"image-sizes-unread side={side} why=\"{e}\""
+        pure ({}, {})
+    let objects ← try pdfImageObjects pdf
+      catch e => do
+        notes := notes.push s!"image-objects-unread side={side} why=\"{e}\""
+        pure #[]
+    pages := pages.push drawn
+    unseen := objects.foldl (fun m (n, w) => if listed.contains n then m else max m w) unseen
+  let sides := (pages[0]?.getD {}, pages[1]?.getD {})
   let (na, nb) := (boxA.size, boxB.size)
   let units ← parMap workers ((List.range (max na nb)).toArray.map (· + 1)) fun n => do
     if n > na then return (toString n, { verdict := .visible, reason := "only-in-b" })
     if n > nb then return (toString n, { verdict := .visible, reason := "only-in-a" })
-    let plan := planFor (max (sides.1.getD n 0) (sides.2.getD n 0))
+    let plan := planFor (max unseen (max (sides.1.getD n 0) (sides.2.getD n 0)))
     let j ← judgePdfPage plan a b n (boxA[n - 1]?.getD (0, 0)) (boxB[n - 1]?.getD (0, 0)) heat dir
     return (toString n, { j with plan })
   return { medium := print, unit := "page", units, notes }
@@ -1287,12 +1332,15 @@ def strip (shift : String) (image : String := "rects.png") (width : String := "2
     String.join (List.replicate 12 "Plain words set in a paragraph across a wide invented strip. ") ++
     "\n\\end{document}\n"
 
-/-- An invented letter-wide page `width` wide without margins: a hairline and a 1 cm bar `rule`
-long from its left edge, a line of words, then `tail`. -/
-def edge (width : String) (rule : String := "612pt") (tail : String := "") : String :=
+/-- An invented letter-wide page `width` wide without margins, on `ground` unless that is empty: a
+hairline and a 1 cm bar `rule` long from its left edge, a line of words, then `tail`. -/
+def edge (width : String) (rule : String := "612pt") (tail : String := "") (ground : String := "") :
+    String :=
+  let paint := if ground.isEmpty then ""
+    else "\\definecolor{ground}{HTML}{" ++ ground ++ "}\n\\pagecolor{ground}\n"
   "\\documentclass{article}\n\\usepackage[paperwidth=" ++ width ++ ", paperheight=792pt, " ++
-    "margin=0pt]{geometry}\n" ++ selftestFonts ++ "\\begin{document}\n\\noindent\\rule{" ++ rule ++
-    "}{0.4pt}\n\n\\noindent\\rule{" ++ rule ++ "}{1cm}\n\n" ++ baseWords ++ "\n\n" ++ tail ++
+    "margin=0pt]{geometry}\n" ++ selftestFonts ++ paint ++ "\\begin{document}\n\\noindent\\rule{" ++
+    rule ++ "}{0.4pt}\n\n\\noindent\\rule{" ++ rule ++ "}{1cm}\n\n" ++ baseWords ++ "\n\n" ++ tail ++
     "\\end{document}\n"
 
 /-- An invented image file a selftest case writes: its name, its width in pixels and each column's
@@ -1435,6 +1483,11 @@ def sizedCases : List Case :=
      paper := .seen, screen := .skip },
    { name := "edge-wider-0.29pt-hairline", a := edge "612pt",
      b := edge "612.29pt" "612pt" "\\noindent\\hspace*{612.07pt}\\rule{0.22pt}{600pt}\n",
+     paper := .seen, screen := .skip },
+   { name := "edge-wider-0.29pt-on-ground", a := edge "612pt" (ground := "FFF4CC"),
+     b := edge "612.29pt" (ground := "FFF4CC"), paper := .unseen, screen := .skip },
+   { name := "edge-wider-0.29pt-hairline-on-ground", a := edge "612pt" (ground := "FFF4CC"),
+     b := edge "612.29pt" "612pt" "\\noindent\\hspace*{612.07pt}\\rule{0.22pt}{600pt}\n" "FFF4CC",
      paper := .seen, screen := .skip },
    { name := "wide-image-recoloured", a := strip "0pt" wideBlue.name, b := strip "0pt" wideRed.name,
      images := [wideBlue, wideRed], paper := .seen, screen := .skip },
@@ -1639,6 +1692,57 @@ def windowCheck (dir : System.FilePath) : ExceptT String IO (Option String) := d
           unless ← shows r x y h c do return some s!"{name}-pieced-differs-at-{x + c}"
   return none
 
+/-- A PDF of `objs`, numbered from 1, the first the catalog: each a dictionary and a stream if any,
+the stream's length added to its dictionary. -/
+def rawPdf (objs : Array (String × Option ByteArray)) : ByteArray := Id.run do
+  let mut out := "%PDF-1.7\n".toUTF8
+  let mut offsets : Array Nat := #[]
+  for i in [0:objs.size] do
+    let (dict, stream) := objs[i]?.getD ("<< >>", none)
+    offsets := offsets.push out.size
+    match stream with
+    | some data =>
+      out := out ++ s!"{i + 1} 0 obj\n<< {dict} /Length {data.size} >>\nstream\n".toUTF8 ++ data ++
+        "\nendstream\nendobj\n".toUTF8
+    | none => out := out ++ s!"{i + 1} 0 obj\n<< {dict} >>\nendobj\n".toUTF8
+  let xref := out.size
+  out := out ++ s!"xref\n0 {objs.size + 1}\n0000000000 65535 f \n".toUTF8
+  for o in offsets do
+    let digits := toString o
+    out := out ++ (String.ofList (List.replicate (10 - digits.length) '0') ++ digits ++ " 00000 n \n").toUTF8
+  return out ++ s!"trailer\n<< /Size {objs.size + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n".toUTF8
+
+/-- An invented 3500 by 200 pt page drawing `img` across it 1 cm high, but only inside the cell of a
+tiling pattern that fills the page, which no `pdfimages -list` names. -/
+def patternPdf (img : Stripes) : ByteArray := Id.run do
+  let mut row := ByteArray.emptyWithCapacity (3 * img.width)
+  for x in [0:img.width] do
+    let (r, g, b) := img.colour x
+    row := row.push r.toUInt8 |>.push g.toUInt8 |>.push b.toUInt8
+  let mut pixels := ByteArray.emptyWithCapacity (8 * row.size)
+  for _ in [0:8] do pixels := pixels ++ row
+  rawPdf #[("/Type /Catalog /Pages 2 0 R", none), ("/Type /Pages /Kids [3 0 R] /Count 1", none),
+    ("/Type /Page /Parent 2 0 R /MediaBox [0 0 3500 200] /Resources << /Pattern << /P1 5 0 R >> >> " ++
+      "/Contents 4 0 R", none),
+    ("", some "/Pattern cs /P1 scn 0 0 3500 200 re f\n".toUTF8),
+    ("/Type /Pattern /PatternType 1 /PaintType 1 /TilingType 1 /BBox [0 0 3500 200] /XStep 7000 " ++
+      "/YStep 400 /Resources << /XObject << /Im1 6 0 R >> >>",
+      some "q 3352.25 0 0 28.35 56.69 114.96 cm /Im1 Do Q\n".toUTF8),
+    (s!"/Type /XObject /Subtype /Image /Width {img.width} /Height 8 /ColorSpace /DeviceRGB " ++
+      "/BitsPerComponent 8", some pixels)]
+
+/-- What goes wrong, if anything, judging an image drawn only through a tiling pattern: recoloured at
+its far end, it reads visible, its page drawn in the narrow pieces its source side asks for. -/
+def patternCheck (dir : System.FilePath) : ExceptT String IO (Option String) := do
+  let (a, b) := ((dir / "pa.pdf").toString, (dir / "pb.pdf").toString)
+  IO.FS.writeBinFile a (patternPdf farBlue)
+  IO.FS.writeBinFile b (patternPdf farRed)
+  let o ← comparePdf a b false (dir / "pattern")
+  let some (_, j) := o.units[0]? | return some "no-unit"
+  unless j.plan == planFor farBlue.width do return some s!"planned-{j.plan.side}"
+  unless o.visible do return some s!"read-{j.verdict.name}"
+  return none
+
 /-- What goes wrong, if anything, drawing images wider than a piece at the judging resolution: cairo
 must lose a 30000-pixel image's far end from a whole piece and draw it in its plan's pieces, and draw
 none of a 40000-pixel image, which Splash draws, each plan's pieces laid together as narrow windows. -/
@@ -1707,7 +1811,8 @@ not below 0.5 and above 3"
   let mut unjudged := 0
   let checks : List (String × String × (System.FilePath → ExceptT String IO (Option String))) :=
     [("undrawable-window", "refused-then-pieced", windowCheck),
-     ("wide-image-window", "drawn-by-its-plan", wideImageCheck)]
+     ("wide-image-window", "drawn-by-its-plan", wideImageCheck),
+     ("pattern-image-recoloured", "visible-in-its-plan", patternCheck)]
   for (name, want, check) in checks do
     match ← withAssets fun dir => (check dir).run with
     | .error e =>
