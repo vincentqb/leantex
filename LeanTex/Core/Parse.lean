@@ -98,6 +98,26 @@ public def markMacroList (origin : MacroOrigin) (acc : Array Raw) : List Raw →
 
 end
 
+mutual
+
+/-- A raw with every position moved by `f`. -/
+@[expose] public def mapPos (f : Pos → Pos) : Raw → Raw
+  | .word s p => .word s (f p)
+  | .space => .space
+  | .par p => .par (f p)
+  | .ctrl n p => .ctrl n (f p)
+  | .sym c p => .sym c (f p)
+  | .group body p => .group (mapPosList f #[] body.toList) (f p)
+  | .math d body p => .math d (mapPosList f #[] body.toList) (f p)
+  | .env n body p => .env n (mapPosList f #[] body.toList) (f p)
+  | .verb e s p => .verb e s (f p)
+
+@[expose] public def mapPosList (f : Pos → Pos) (acc : Array Raw) : List Raw → Array Raw
+  | [] => acc
+  | r :: rest => mapPosList f (acc.push (mapPos f r)) rest
+
+end
+
 public theorem markMacro_origins_exact (origin : MacroOrigin) (r : Raw) :
     (markMacro origin r).origins? = r.origins?.map (origin :: ·) := by
   cases r <;> rfl

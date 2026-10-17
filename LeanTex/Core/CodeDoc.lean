@@ -1235,26 +1235,6 @@ public def Prose.place (pr : Prose) (p : Pos) : Pos :=
   | some (ln, col) => if p.line == 0 then p else { p with line := ln, col := col + p.col }
   | none => p
 
-mutual
-
-/-- A raw with every position moved by `f`. -/
-public def mapPos (f : Pos → Pos) : Raw → Raw
-  | .word s p => .word s (f p)
-  | .space => .space
-  | .par p => .par (f p)
-  | .ctrl n p => .ctrl n (f p)
-  | .sym c p => .sym c (f p)
-  | .group body p => .group (mapPosList f #[] body.toList) (f p)
-  | .math d body p => .math d (mapPosList f #[] body.toList) (f p)
-  | .env n body p => .env n (mapPosList f #[] body.toList) (f p)
-  | .verb e s p => .verb e s (f p)
-
-public def mapPosList (f : Pos → Pos) (acc : Array Raw) : List Raw → Array Raw
-  | [] => acc
-  | r :: rest => mapPosList f (acc.push (mapPos f r)) rest
-
-end
-
 /-! ## The document -/
 
 /-- The option head of a code language's listings, its language crossing as the IR's own value. -/

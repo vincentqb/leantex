@@ -22,14 +22,8 @@ private structure Tables where
   /-- The lowercase half of every case pair. -/
   lowered : HashSet UInt32
 
-/-- A fixed-width hex field read by byte offset; a short read reads as zero. -/
-private def field (bs : ByteArray) (start width : Nat) : Nat := Id.run do
-  let mut v := 0
-  for k in [0:width] do
-    v := v * 16 + (Hex.val? (bs[start + k]?.getD 0).toNat).getD 0
-  return v
-
 private def load (_ : Unit) : Tables := Id.run do
+  let field := Hex.field
   let cb := NfcData.ccc.toUTF8
   let mut ccc : HashMap UInt32 Nat := {}
   for i in [0:cb.size / 8] do

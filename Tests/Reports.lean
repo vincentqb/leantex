@@ -155,6 +155,7 @@ import Tests.SeedPalette
 import Tests.PaletteCover
 import Tests.UnusedSettings
 import Tests.BibEdges
+import Tests.DocCiteEdges
 import Tests.LeanProseReading
 import Tests.AmsMath
 import Tests.CoveredSteps
@@ -1984,7 +1985,15 @@ def reports : List Report := [
       "invented probes under lualatex: a label in a beamer frame refers to the frame's number; nameref sets a section's title as typeset with the references in it resolved, a float's caption, an unnumbered heading's title, and for a frame's label its section's title; a starred reference sets its text without the link; this tree ships the same, numbering a frame label as its frame's number shows, which leaves out a title frame beamer counts, and naming a theorem's label and a run-in heading's by the section before them",
       "a note outside every frame stands right after the paragraph, heading or item that held it, before any block that follows, as a note in a frame stands with its frame",
       "main at 0e5db3b5 bookmarks no heading, sets a frame's label as question marks, keeps nameref's key as text, stops on a starred reference and drops the stashed notes; the guards fail there"]
-    state := .guarded "0e5db3b5" .before .author }
+    state := .guarded "0e5db3b5" .before .author },
+  { id := "R221", date := "2026-10-17"
+    what := "a markdown text's link reference definitions read as text, so a document's reference links and images stayed brackets, and a Lean docstring's own definition of a key's label still cited the key, where doc-gen4's definitions it appends come after the author's; a docstring's label alike to a cited key but in case stayed text, where doc-gen4 links it to the key's entry; a docstring's bracket before braces cited nothing; and a docstring's formula between dollars read as markdown, a bracket in it citing where doc-gen4 sets a formula"
+    pins := [check% Tests.DocCiteEdges.documentChecks, check% Tests.DocCiteEdges.docstringChecks,
+      check% Tests.DocCiteEdges.caseChecks, check% Tests.DocCiteEdges.mathChecks]
+    accept := ["main's binary at e5afdc63 on invented probes: a document's reference, collapsed and full links and a reference image set their brackets and the definition lines as text; a Lean page's own definition of a cited key's label set as text, the key cited inside it and where the label stood, a label alike to a key in case stayed bracketed, a bracket before braces stayed text and a formula's bracket cited; this tree's binary links each reference and hides each definition, links the defined key's label to the author's address, the label alike in case to the key's entry under its own text, cites before the braces and sets the formula",
+      "md4c's own source built with doc-gen4's flags (GitHub's dialect, LaTeX math spans, no HTML) over the docstring probe with the definitions doc-gen4 appends: the author's definition links its label, the label alike in case links to the key's entry, the bracket before braces is a reference and the formula's bracket no link, as this tree reads them; a formula between dollars no letter or digit flanks on their outer sides takes no link, citation or emphasis inside, a link read before it keeps its dollar and emphasis closing before it takes the dollar it passes",
+      "the CommonMark tier: link reference definitions' examples matching rise from 3 to 14, links' from 35 to 61 and images' from 5 to 8, none falling"]
+    state := .guarded "e5afdc63" .before .author }
 ]
 
 /-- The reports guarded but never seen failing, a count held in both directions. -/

@@ -380,6 +380,12 @@ private def longestRun (c : Char) (s : String) : Nat :=
   (s.foldl (fun (best, cur) x => if x == c then (max best (cur + 1), cur + 1) else (best, 0))
     (0, 0)).1
 
+/-- `acc` with the bang it ends on escaped, which before a link's bracket would open an image. -/
+private def bangApart (acc : String) : String :=
+  if !acc.endsWith "!" then acc else
+  let before := (acc.dropEnd 1).toString
+  if (before.toList.reverse.takeWhile (· == '\\')).length % 2 == 0 then before ++ "\\!" else acc
+
 /-- A code span holding `s` exactly (CommonMark §6.1). -/
 private def codeSpan (s : String) : String :=
   if s.isEmpty then "" else
@@ -498,7 +504,7 @@ private def monoInto (acc : String) (run : Array Inline) : List Inline → Strin
     let span := codeSpan (Ir.plainText run)
     let text := codeSpan (Ir.plainText body)
     let dest := linkDest url
-    monoInto (acc ++ span ++ "[" ++ text ++ "](" ++ dest ++ ")") #[] rest
+    monoInto (bangApart (acc ++ span) ++ "[" ++ text ++ "](" ++ dest ++ ")") #[] rest
   | .footnote num _ :: rest =>
     let span := codeSpan (Ir.plainText run)
     monoInto (acc ++ span ++ s!"[^{num.getD 0}]") #[] rest
@@ -722,7 +728,7 @@ private def inlineInto (site : Site) (cites : Bool) (acc : String) (after : Bool
     else
       let inner := inlinesInto site cites "" none true 0 body.toList
       let dest := linkDest url
-      acc ++ "[" ++ inner ++ "](" ++ dest ++ ")"
+      bangApart acc ++ "[" ++ inner ++ "](" ++ dest ++ ")"
   | .decorated _ body => inlinesInto site cites acc none after 0 body.toList
   | .onSteps _ body => inlinesInto site cites acc none after 0 body.toList
   | .altSteps _ active otherwise =>

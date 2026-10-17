@@ -23,6 +23,13 @@ namespace LeanTex.Core.Hex
 public def value? (cs : List Char) : Option Nat :=
   cs.foldl (fun acc c => acc.bind fun n => (digit? c).map (n * 16 + ·)) (some 0)
 
+/-- A generated table's fixed-width hexadecimal field at a byte offset; a short read reads as zero. -/
+public def field (bs : ByteArray) (start width : Nat) : Nat := Id.run do
+  let mut v := 0
+  for k in [0:width] do
+    v := v * 16 + (val? (bs[start + k]?.getD 0).toNat).getD 0
+  return v
+
 /-- The hexadecimal digit of `n`'s low four bits. -/
 @[expose] public def spell (upper : Bool) (n : Nat) : Char :=
   let d := n % 16

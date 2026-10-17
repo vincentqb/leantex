@@ -1747,7 +1747,8 @@ def coreTexReaders : List (String × String) :=
    ("LeanTex/Core/BibElab.lean", "FieldDoor.readWith"),
    ("LeanTex/Core/MdDesugar.lean", "TexStream.flush"),
    ("LeanTex/Core/MdDesugar.lean", "TexStream.close"),
-   ("LeanTex/Core/MdDesugar.lean", "TexStream.verbOpen")]
+   ("LeanTex/Core/MdDesugar.lean", "TexStream.verbOpen"),
+   ("LeanTex/Core/MdDesugar.lean", "docMathRaw")]
 
 /-- The tex door's own stages and the door. -/
 def texDoorFiles : List String :=

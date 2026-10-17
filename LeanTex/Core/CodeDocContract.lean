@@ -22,8 +22,7 @@ breaks at between them. -/
       "bibliography"]
     envs := Md.vocabulary.envs ++ ["document", "flushleft", Parse.linesEnv]
     formulas := true
-    mathCtrls := LeanNotation.MathCtrl.all.map (·.name)
-    mathSyms := ['^', '_'] }
+    mathCtrls := LeanNotation.MathCtrl.all.map (·.name) }
 
 private theorem admitsList_append (v : Md.Vocab) (a b : List Raw) :
     v.admitsList (a ++ b) = (v.admitsList a && v.admitsList b) := by
@@ -45,6 +44,32 @@ private theorem mathAdmitsList_append (v : Md.Vocab) (a b : List Raw) :
 
 mutual
 
+private theorem mathMono_one : (r : Raw) → Md.vocabulary.mathAdmits r = true →
+    vocabulary.mathAdmits r = true
+  | .word _ _, _ => rfl
+  | .space, _ => rfl
+  | .ctrl n _, h => by
+    simp only [Md.Vocab.mathAdmits, Bool.or_eq_true, Bool.and_eq_true] at h ⊢
+    rcases h with h | h
+    · simp [Md.vocabulary] at h
+    · exact Or.inr ⟨by simp [vocabulary, Md.vocabulary], h.2⟩
+  | .sym c _, h => by simpa [Md.Vocab.mathAdmits, vocabulary] using h
+  | .group body _, h => by
+    simp only [Md.Vocab.mathAdmits] at h ⊢
+    exact mathMono_list body.toList h
+  | .par _, h | .math .., h | .env .., h | .verb .., h => by simp [Md.Vocab.mathAdmits] at h
+
+private theorem mathMono_list : (l : List Raw) → Md.vocabulary.mathAdmitsList l = true →
+    vocabulary.mathAdmitsList l = true
+  | [], _ => rfl
+  | r :: rest, h => by
+    simp only [Md.Vocab.mathAdmitsList, Bool.and_eq_true] at h ⊢
+    exact ⟨mathMono_one r h.1, mathMono_list rest h.2⟩
+
+end
+
+mutual
+
 private theorem mono_one : (r : Raw) → Md.vocabulary.admits r = true →
     vocabulary.admits r = true
   | .word _ _, _ => rfl
@@ -60,7 +85,9 @@ private theorem mono_one : (r : Raw) → Md.vocabulary.admits r = true →
   | .group body _, h => by
     simp only [Md.Vocab.admits] at h ⊢
     exact mono_list body.toList h
-  | .math _ _ _, h => by simp [Md.Vocab.admits, Md.vocabulary] at h
+  | .math _ body _, h => by
+    simp only [Md.Vocab.admits, Bool.and_eq_true] at h ⊢
+    exact ⟨by simp [vocabulary], mathMono_list body.toList h.2⟩
   | .env n body _, h => by
     simp only [Md.Vocab.admits, Bool.and_eq_true, Bool.or_eq_true, List.contains_iff_mem] at h ⊢
     refine ⟨?_, mono_list body.toList h.2⟩
@@ -233,9 +260,11 @@ private theorem proseRaws_adm (lang : Ir.CodeLang) (file : String) (starts : Arr
     exact retitle_adm _ hl r (by simpa [proseRaws, k] using hr)
   | false => simpa [proseRaws, k] using h
 
-private theorem caret_sym : '^' ∈ vocabulary.mathSyms := by simp [vocabulary]
+private theorem caret_sym : '^' ∈ vocabulary.mathSyms := by
+  simp [vocabulary, Md.vocabulary, Md.docMathSyms]
 
-private theorem under_sym : '_' ∈ vocabulary.mathSyms := by simp [vocabulary]
+private theorem under_sym : '_' ∈ vocabulary.mathSyms := by
+  simp [vocabulary, Md.vocabulary, Md.docMathSyms]
 
 mutual
 
@@ -247,9 +276,9 @@ private theorem pushRaws_adm (pos : Pos) : (m : LeanNotation.Math) → (acc : Ar
       Md.Vocab.mathAdmits]
   | .ctrl c, acc, h => by
     simp only [LeanStatement.Math.pushRaws, Array.toList_push, mathAdmitsList_append, h,
-      Md.Vocab.mathAdmitsList, Md.Vocab.mathAdmits, Bool.true_and, Bool.and_true,
-      List.contains_iff_mem]
-    exact List.mem_map.mpr ⟨c, LeanNotation.MathCtrl.mem_all c, rfl⟩
+      Md.Vocab.mathAdmitsList, Md.Vocab.mathAdmits, Bool.true_and, Bool.and_true, Bool.or_eq_true]
+    exact Or.inl (List.contains_iff_mem.mpr
+      (List.mem_map.mpr ⟨c, LeanNotation.MathCtrl.mem_all c, rfl⟩))
   | .arg body, acc, h => by
     have hb := listRaws_adm pos body #[] (by simp [Md.Vocab.mathAdmitsList])
     simp [LeanStatement.Math.pushRaws, mathAdmitsList_append, h, Md.Vocab.mathAdmitsList,

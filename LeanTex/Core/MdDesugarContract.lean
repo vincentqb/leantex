@@ -39,6 +39,8 @@ public structure Vocab where
   formulas : Bool := false
   mathCtrls : List String := []
   mathSyms : List Char := []
+  /-- Whether a formula may also hold every control the math model reads. -/
+  mathKnown : Bool := false
 
 /-- natbib's citation commands a markdown citation or its metadata lowers to. -/
 @[expose] public def citeCtrls : List String :=
@@ -54,6 +56,9 @@ public structure Vocab where
   envs := ["quote", "itemize", "enumerate", Parse.markdownDisclosureEnv, Parse.markdownTableEnv]
   verbs := ["verbatim", "lstlisting"]
   syms := ['[', ']', '&', '@']
+  formulas := true
+  mathSyms := docMathSyms
+  mathKnown := true
 
 /-- The vocabulary markdown lowers into: a document's with its Lean divisions' requests. -/
 @[expose] public def vocabularyFor (divisions : Bool) : Vocab :=
@@ -81,7 +86,7 @@ mutual
 @[expose] public def Vocab.mathAdmits (v : Vocab) : Raw → Bool
   | .word _ _ => true
   | .space => true
-  | .ctrl n _ => v.mathCtrls.contains n
+  | .ctrl n _ => v.mathCtrls.contains n || (v.mathKnown && MathParse.knownCtrl n)
   | .sym c _ => v.mathSyms.contains c
   | .group body _ => v.mathAdmitsList body.toList
   | .par _ | .math _ _ _ | .env _ _ _ | .verb _ _ _ => false
@@ -131,6 +136,86 @@ private theorem adm_lit {l : List Raw} (h : ∀ r ∈ l, (vocabularyFor d).admit
 private theorem adm_text (s : String) (p : Pos) : Adm d (textRaws s p) := by
   intro r hr
   rcases textRaws_covers s p r hr with rfl | ⟨t, q, rfl⟩ <;> rfl
+
+mutual
+
+private theorem docMath_admits : (r : Raw) → docMathOk r = true →
+    (vocabularyFor d).mathAdmits r = true
+  | .word _ _, _ => rfl
+  | .space, _ => rfl
+  | .ctrl n _, h => by
+    simp only [docMathOk] at h
+    simp [Vocab.mathAdmits, vocabularyFor, vocabulary, h]
+  | .sym c _, h => by
+    simp only [docMathOk] at h
+    simpa [Vocab.mathAdmits, vocabularyFor, vocabulary] using h
+  | .group body _, h => by
+    simp only [docMathOk] at h
+    simp only [Vocab.mathAdmits]
+    exact docMathList_admits body.toList h
+  | .par _, h | .math .., h | .env .., h | .verb .., h => by simp [docMathOk] at h
+
+private theorem docMathList_admits : (l : List Raw) → docMathOkList l = true →
+    (vocabularyFor d).mathAdmitsList l = true
+  | [], _ => rfl
+  | r :: rest, h => by
+    simp only [docMathOkList, Bool.and_eq_true] at h
+    simp only [Vocab.mathAdmitsList, Bool.and_eq_true]
+    exact ⟨docMath_admits r h.1, docMathList_admits rest h.2⟩
+
+end
+
+private theorem mathAdmitsList_append_one (v : Vocab) : (a : List Raw) → (r : Raw) →
+    v.mathAdmitsList (a ++ [r]) = (v.mathAdmitsList a && v.mathAdmits r)
+  | [], r => by simp [Vocab.mathAdmitsList]
+  | x :: rest, r => by
+    simp only [List.cons_append, Vocab.mathAdmitsList, mathAdmitsList_append_one v rest r,
+      Bool.and_assoc]
+
+mutual
+
+private theorem mathAdmits_mapPos (v : Vocab) (f : Pos → Pos) : (r : Raw) →
+    v.mathAdmits (mapPos f r) = v.mathAdmits r
+  | .word _ _ | .space | .ctrl _ _ | .sym _ _ | .par _ | .math .. | .env .. | .verb .. => by
+    simp only [mapPos, Vocab.mathAdmits]
+  | .group body _ => by
+    simp only [mapPos, Vocab.mathAdmits]
+    rw [mathAdmitsList_mapPos v f #[] body.toList]
+    rfl
+
+private theorem mathAdmitsList_mapPos (v : Vocab) (f : Pos → Pos) (acc : Array Raw) :
+    (l : List Raw) → v.mathAdmitsList (mapPosList f acc l).toList =
+      (v.mathAdmitsList acc.toList && v.mathAdmitsList l)
+  | [] => by simp [mapPosList, Vocab.mathAdmitsList]
+  | r :: rest => by
+    simp only [mapPosList]
+    rw [mathAdmitsList_mapPos v f (acc.push (mapPos f r)) rest]
+    simp only [Array.toList_push]
+    rw [mathAdmitsList_append_one v acc.toList (mapPos f r), mathAdmits_mapPos v f r]
+    simp only [Vocab.mathAdmitsList, Bool.and_assoc]
+
+end
+
+private theorem docMathAt_admits {display : Bool} {p : Pos} {raws : Array Raw} {clean : Bool}
+    {r : Raw} (h : docMathAt display p raws clean = some r) : (vocabularyFor d).admits r = true := by
+  unfold docMathAt at h
+  split at h
+  · split at h
+    · rename_i hok
+      cases h
+      simp only [Bool.and_eq_true] at hok
+      simp only [Vocab.admits, Bool.and_eq_true]
+      refine ⟨by simp [vocabularyFor, vocabulary], ?_⟩
+      rw [mathAdmitsList_mapPos]
+      simp only [Vocab.mathAdmitsList, Bool.true_and]
+      exact docMathList_admits _ hok.2
+    · cases h
+  · cases h
+
+private theorem docMathRaw_admits {display : Bool} {src : String} {p : Pos} {r : Raw}
+    (h : docMathRaw display src p = some r) : (vocabularyFor d).admits r = true := by
+  unfold docMathRaw at h
+  exact docMathAt_admits h
 
 private theorem ctrl_mem (n : String) (p : Pos) (h : n ∈ vocabulary.ctrls) :
     (vocabularyFor d).admits (.ctrl n p) = true := by
@@ -320,6 +405,20 @@ private theorem inlRaws_adm (file : String) : (x : Inl) → Adm d (inlRaws file 
       rcases hr with rfl | rfl
       · exact ctrl_mem _ _ (by simp [vocabulary])
       · exact adm_group _ _ (adm_text s p))
+  | .math display src p => by
+    simp only [inlRaws]
+    split
+    · next r heq =>
+      intro x hx
+      simp only [List.mem_toArray, List.mem_cons, List.not_mem_nil, or_false] at hx
+      subst hx
+      exact docMathRaw_admits heq
+    · exact adm_lit (by
+        intro r hr
+        simp only [List.mem_cons, List.not_mem_nil, or_false] at hr
+        rcases hr with rfl | rfl
+        · exact ctrl_mem _ _ (by simp [vocabulary])
+        · exact adm_group _ _ (adm_text _ p))
   | .soft _ => by
     simp only [inlRaws]
     exact adm_lit (by simp [Vocab.admits])

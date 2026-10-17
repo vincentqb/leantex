@@ -225,8 +225,11 @@ def markdownDoorChecks (ref : IO.Ref (List String)) : IO Unit := do
   for src in family do
     t s!"doors: the desugaring of {repr src} lies in the vocabulary"
       (Md.vocabulary.admitsList (Surface.read .markdown mdName src).1.toList)
-  t "doors: the vocabulary judge refuses math and an unlisted control"
-    (!Md.vocabulary.admits (.math false #[] {}) && !Md.vocabulary.admits (.ctrl "section" {}))
+  t "doors: the vocabulary judge refuses a formula holding a control the math model does not \
+read, and an unlisted control, and admits a formula of the math model's controls"
+    (!Md.vocabulary.admits (.math false #[.ctrl "input" {}] {}) &&
+      !Md.vocabulary.admits (.ctrl "section" {}) &&
+      Md.vocabulary.admits (.math false #[.ctrl "alpha" {}, .sym '^' {}, .word "2" {}] {}))
   let mut plantedTex := 0
   let mut plantedRenamed := 0
   for src in family do

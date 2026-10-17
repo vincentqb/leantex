@@ -11,7 +11,13 @@ para
     text "https://example.org/a/path/that/goes/on/for/quite/a/while/before/it/finally/stops/somewhere.html"
   text " appear in one paragraph."
 para
-  text "A reference link to [the field guide][guide] and a collapsed one to [Guide][] use definitions given below."
+  text "A reference link to "
+  link "https://example.org/field-guide"
+    text "the field guide"
+  text " and a collapsed one to "
+  link "https://example.org/field-guide"
+    text "Guide"
+  text " use definitions given below."
 para
   text "Emphasis around a link: "
   styled emph
@@ -27,7 +33,5 @@ para
       text "a link"
   italicCorr maybe
   text " inside it."
-para
-  text "[guide]: https://example.org/field-guide [Guide]: https://example.org/guide"
 -- diagnostics
 warning[W0392] 3:19 a link's title is not carried: the link sets without it

@@ -27,7 +27,7 @@
 20	Backslash escapes	owed
 21	Backslash escapes	rejected	refused:md:raw-html
 22	Backslash escapes	owed	blocked-by:md:link-title
-23	Backslash escapes	owed
+23	Backslash escapes	owed	blocked-by:md:link-title
 24	Backslash escapes	match
 25	Entity and numeric character references	owed
 26	Entity and numeric character references	match
@@ -196,33 +196,33 @@
 189	HTML blocks	rejected	refused:md:raw-html
 190	HTML blocks	rejected	refused:md:raw-html
 191	HTML blocks	rejected	refused:md:indented-code,md:raw-html
-192	Link reference definitions	owed
-193	Link reference definitions	owed
-194	Link reference definitions	owed
-195	Link reference definitions	owed	uncorroborated:md:raw-html
-196	Link reference definitions	owed
+192	Link reference definitions	owed	blocked-by:md:link-title
+193	Link reference definitions	owed	blocked-by:md:link-title
+194	Link reference definitions	owed	blocked-by:md:link-title
+195	Link reference definitions	owed
+196	Link reference definitions	owed	blocked-by:md:link-title
 197	Link reference definitions	owed	pending-decision:smart-punctuation
-198	Link reference definitions	owed
+198	Link reference definitions	match
 199	Link reference definitions	match
-200	Link reference definitions	owed
+200	Link reference definitions	match
 201	Link reference definitions	rejected	refused:md:raw-html
 202	Link reference definitions	owed
-203	Link reference definitions	owed
-204	Link reference definitions	owed
-205	Link reference definitions	owed
+203	Link reference definitions	match
+204	Link reference definitions	match
+205	Link reference definitions	match
 206	Link reference definitions	owed
-207	Link reference definitions	owed
-208	Link reference definitions	owed
+207	Link reference definitions	match
+208	Link reference definitions	match
 209	Link reference definitions	owed	pending-decision:smart-punctuation
-210	Link reference definitions	owed
+210	Link reference definitions	owed	pending-decision:smart-punctuation
 211	Link reference definitions	rejected	refused:md:indented-code
 212	Link reference definitions	match
 213	Link reference definitions	match
-214	Link reference definitions	owed
-215	Link reference definitions	owed
-216	Link reference definitions	owed
-217	Link reference definitions	owed
-218	Link reference definitions	owed
+214	Link reference definitions	match
+215	Link reference definitions	match
+216	Link reference definitions	match
+217	Link reference definitions	owed	blocked-by:md:link-title
+218	Link reference definitions	match
 219	Paragraphs	match
 220	Paragraphs	match
 221	Paragraphs	match
@@ -321,7 +321,7 @@
 314	Lists	owed	blocked-by:md:loose-list
 315	Lists	owed	blocked-by:md:loose-list
 316	Lists	owed	blocked-by:md:loose-list
-317	Lists	owed
+317	Lists	owed	blocked-by:md:loose-list
 318	Lists	owed
 319	Lists	owed
 320	Lists	owed
@@ -531,73 +531,73 @@
 524	Links	rejected	refused:md:raw-html
 525	Links	match
 526	Links	owed
-527	Links	owed
-528	Links	owed
-529	Links	owed
-530	Links	owed
-531	Links	owed
-532	Links	owed
-533	Links	owed
-534	Links	owed
-535	Links	owed
+527	Links	owed	blocked-by:md:link-title
+528	Links	match
+529	Links	match
+530	Links	match
+531	Links	match
+532	Links	match
+533	Links	match
+534	Links	match
+535	Links	match
 536	Links	rejected	refused:md:raw-html
-537	Links	owed
+537	Links	match
 538	Links	owed
-539	Links	owed
-540	Links	owed
-541	Links	owed
-542	Links	owed
-543	Links	owed
-544	Links	owed
-545	Links	owed
+539	Links	owed	blocked-by:md:link-title
+540	Links	match
+541	Links	match
+542	Links	owed	blocked-by:md:link-title
+543	Links	owed	blocked-by:md:link-title
+544	Links	match
+545	Links	match
 546	Links	match
 547	Links	match
 548	Links	match
-549	Links	owed
-550	Links	owed
+549	Links	match
+550	Links	match
 551	Links	match
 552	Links	match
-553	Links	owed
-554	Links	owed
-555	Links	owed
-556	Links	owed
-557	Links	owed
-558	Links	owed
-559	Links	owed
-560	Links	owed
-561	Links	owed
-562	Links	owed
-563	Links	owed
-564	Links	owed
-565	Links	owed
-566	Links	owed
-567	Links	owed
-568	Links	owed
-569	Links	owed
-570	Links	owed
-571	Links	owed
+553	Links	owed	blocked-by:md:link-title
+554	Links	owed	blocked-by:md:link-title
+555	Links	owed	blocked-by:md:link-title
+556	Links	owed	blocked-by:md:link-title
+557	Links	owed	blocked-by:md:link-title
+558	Links	owed	blocked-by:md:link-title
+559	Links	owed	blocked-by:md:link-title
+560	Links	match
+561	Links	owed	blocked-by:md:link-title
+562	Links	match
+563	Links	match
+564	Links	match
+565	Links	match
+566	Links	match
+567	Links	match
+568	Links	match
+569	Links	match
+570	Links	match
+571	Links	match
 572	Images	owed	blocked-by:md:image-title
-573	Images	owed
+573	Images	owed	blocked-by:md:image-title
 574	Images	match
 575	Images	match
-576	Images	owed
-577	Images	owed
+576	Images	owed	blocked-by:md:image-title
+577	Images	owed	blocked-by:md:image-title
 578	Images	match
 579	Images	owed	blocked-by:md:image-title
 580	Images	match
 581	Images	match
-582	Images	owed
-583	Images	owed
-584	Images	owed
-585	Images	owed
-586	Images	owed
-587	Images	owed
-588	Images	owed
-589	Images	owed
+582	Images	match
+583	Images	match
+584	Images	owed	blocked-by:md:image-title
+585	Images	owed	blocked-by:md:image-title
+586	Images	owed	blocked-by:md:image-title
+587	Images	owed	blocked-by:md:image-title
+588	Images	owed	blocked-by:md:image-title
+589	Images	owed	blocked-by:md:image-title
 590	Images	owed	pending-decision:smart-punctuation
-591	Images	owed
-592	Images	owed
-593	Images	owed
+591	Images	owed	blocked-by:md:image-title
+592	Images	match
+593	Images	owed	blocked-by:md:link-title
 594	Autolinks	match
 595	Autolinks	match
 596	Autolinks	match

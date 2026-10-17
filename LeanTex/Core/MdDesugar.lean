@@ -3,6 +3,7 @@ module
 public import LeanTex.Core.MdParse
 public import LeanTex.Core.Parse
 import LeanTex.Core.Lex
+public import LeanTex.Core.MathParse
 public import LeanTex.Core.Ir
 import LeanTex.Core.Decl
 import LeanTex.Core.UnusedSetting
@@ -95,6 +96,48 @@ decreasing_by raws_dec
 content does not reach the page. -/
 private def route (file : String) (subject : String) (what : String) (pos : Pos) : Diag :=
   Diag.of .W0307 what (some ⟨file, pos⟩) (subject := some ("md:" ++ subject))
+
+/-- The characters a docstring's formula may hold beside words, spaces, groups and controls. -/
+@[expose] public def docMathSyms : List Char := ['^', '_', '~', '[', ']']
+
+mutual
+
+/-- Whether a raw is one a docstring's formula lowers to: words, spaces, groups, the controls the
+math model reads and `docMathSyms`. -/
+@[expose] public def docMathOk : Raw → Bool
+  | .word _ _ | .space => true
+  | .ctrl n _ => MathParse.knownCtrl n
+  | .sym c _ => docMathSyms.contains c
+  | .group body _ => docMathOkList body.toList
+  | .par _ | .math .. | .env .. | .verb .. => false
+
+@[expose] public def docMathOkList : List Raw → Bool
+  | [] => true
+  | r :: rest => docMathOk r && docMathOkList rest
+
+end
+
+/-- A position read in a fragment that begins at `p`, moved to its place there. -/
+@[expose] public def fromFragment (p q : Pos) : Pos :=
+  { q with line := p.line + q.line - 1, col := if q.line == 1 then p.col + q.col - 1 else q.col }
+
+/-- The one formula `raws` hold, at `p`, where they were read `clean` and `docMathOk` admits it. -/
+@[expose] public def docMathAt (display : Bool) (p : Pos) (raws : Array Raw) (clean : Bool) :
+    Option Raw :=
+  match raws.toList with
+  | [.math d body _] =>
+    if clean && d == display && docMathOkList body.toList then
+      some (.math display (mapPosList (fromFragment p) #[] body.toList) p)
+    else none
+  | _ => none
+
+/-- The formula a docstring's math span spells, at the span's place, where it lexes and parses
+whole to one formula `docMathOk` admits. -/
+public def docMathRaw (display : Bool) (src : String) (p : Pos) : Option Raw :=
+  let delim := if display then "$$" else "$"
+  let lexed := Lex.lex "" (delim ++ src ++ delim)
+  let parsed := Parse.parse "" lexed.1
+  docMathAt display p parsed.1 (lexed.2.isEmpty && parsed.2.isEmpty)
 
 /-- A `W0392`: the construct sets, with part of its declaration dropped. -/
 private def routeDegraded (file : String) (subject : String) (what : String) (pos : Pos)
@@ -232,6 +275,7 @@ private def inlText1 : Inl → String
   | .image _ _ a _ => inlTextList "" a.toList
   | .cite items _ => " ".intercalate (items.toList.map fun it => "@" ++ it.key)
   | .citeText _ body _ => inlTextList "" body.toList
+  | .math _ src _ => src
 
 private def inlTextList (acc : String) : List Inl → String
   | [] => acc
@@ -366,7 +410,7 @@ private def citesInl : Inl → Bool
   | .strong body _ => citesInls body.toList
   | .link _ _ body _ => citesInls body.toList
   | .image _ _ _ _ => false
-  | .text .. | .code .. | .anchor .. | .soft _ | .hard _ => false
+  | .text .. | .code .. | .anchor .. | .soft _ | .hard _ | .math .. => false
 
 private def citesInls : List Inl → Bool
   | [] => false
@@ -385,7 +429,7 @@ private def spellsCiteInl : Inl → Bool
   | .strong body _ => spellsCiteInls body.toList
   | .link _ _ body _ => spellsCiteInls body.toList
   | .image _ _ alt _ => spellsCiteInls alt.toList
-  | .text .. | .code .. | .anchor .. | .soft _ | .hard _ => false
+  | .text .. | .code .. | .anchor .. | .soft _ | .hard _ | .math .. => false
 
 private def spellsCiteInls : List Inl → Bool
   | [] => false
@@ -428,6 +472,14 @@ mutual
 private def inlRaws (file : String) : Inl → Array Raw × Array Diag
   | .text s p => (textRaws s p, #[])
   | .code s p => (#[.ctrl "texttt" p, .group (textRaws s p) p], #[])
+  | .math display src p =>
+    match docMathRaw display src p with
+    | some r => (#[r], #[])
+    | none =>
+      let delim := if display then "$$" else "$"
+      (#[.ctrl "texttt" p, .group (textRaws (delim ++ src ++ delim) p) p],
+        #[routeDegraded file "docstring-math" "a formula sets as its source: it holds a control \
+the math model does not read or a character a formula takes no part in" p])
   | .soft _ => (#[.space], #[])
   | .hard p => (#[.ctrl "\\" p], #[])
   | .anchor key p =>
@@ -830,6 +882,7 @@ private def inlSpelling : Inl → String
   | .citeText _ body _ => inlsSpelling "[" body.toList ++ "]"
   | .cite items _ =>
     "[" ++ "; ".intercalate (items.toList.map fun ⟨key, _, _, _⟩ => "@" ++ key) ++ "]"
+  | .math display src _ => if display then "$$" ++ src ++ "$$" else "$" ++ src ++ "$"
 
 private def inlsSpelling (acc : String) : List Inl → String
   | [] => acc
@@ -877,6 +930,7 @@ private def texInl (file : String) (st : TexStream) : Inl → TexStream
       st.keep file (citeCmdRaws "nocite" #[] #[] #[key] p, #[]) p
   | x@(.code _ p) => (st.spelled? file x p).getD (st.keep file (inlRaws file x) p)
   | x@(.image _ _ _ p) => (st.spelled? file x p).getD (st.keep file (inlRaws file x) p)
+  | x@(.math _ _ p) => (st.spelled? file x p).getD (st.keep file (inlRaws file x) p)
   | x@(.anchor _ p) => (st.spelled? file x p).getD (st.keep file (inlRaws file x) p)
   | x@(.cite _ p) => (st.spelled? file x p).getD (st.keep file (inlRaws file x) p)
 

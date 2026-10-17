@@ -272,10 +272,6 @@ def silentLosses : List SilentLoss := [
     owner := "list items that carry a task state, set as a box in both artifacts"
     fixtures := ["md-readme"]
     shows := fun _ _ c _ => hasStr (censusText c) "[ ] " || hasStr (censusText c) "[x] " },
-  { what := "a reference link ships its brackets, and its definition ships as a paragraph"
-    owner := "link reference definitions, resolved by the markdown reader"
-    fixtures := ["md-links"]
-    shows := fun _ _ c _ => hasStr (censusText c) "][" && hasStr (censusText c) "]: https://" },
   { what := "an image a link wraps ships without its link: no linked run or link rectangle carries its target"
     owner := "a link annotation over a linked image"
     fixtures := ["md-images"]
