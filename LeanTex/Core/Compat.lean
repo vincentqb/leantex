@@ -331,11 +331,6 @@ public def themeSlotOfPackage? (p : String) : Option (String × String × String
       some (slot, pre, (p.drop pre.length).toString)
     else none
 
-/-- The kernel's box commands, as the number of `[...]` runs before the content
-and of `{...}` groups before the content group. -/
-public def boxShape : List (String × Nat × Nat) :=
-  [("mbox", 0, 0), ("makebox", 2, 0), ("parbox", 3, 1)]
-
 /-- Where a deferred declaration replays: the end of the preamble or the opening
 of `\begin{document}`. -/
 private inductive DeferPoint where
@@ -2386,18 +2381,9 @@ are told apart whatever their year" pos (subject := some "usepackage:biblatex")
 
 /-- `\setcitestyle{…}` and `\bibpunct`: natbib's
 declarations in the preamble. -/
-private def natbibStyleArm (name : String) (pos : Pos) (raws : Array Raw) (start : Nat) :
-    M (Option (Array Raw × Nat)) := do
+private def natbibStyle (name : String) (notes : Option (Array Raw)) (args : Array (Array Raw))
+    (pos : Pos) : M (Array Raw) := do
   let punct := name == "bibpunct"
-  let (opt, j) := if punct then takeOpt raws start else (none, start)
-  let (args, k) := takeGroups raws j (if punct then 6 else 1)
-  if args.size != (if punct then 6 else 1) then return none
-  -- premise: natbibChecks — a body declaration leaves no ink
-  if (← get).inDoc then
-    sayOnce ("ctrl:" ++ name) .W0340
-      s!"'\\{name}' is read in the preamble; in the body it is ignored" pos
-      (help := "declare it in the preamble, before '\\begin{document}'")
-    return some (#[], k)
   -- natbib's values are token lists, so groups are read one deep as written.
   let verbatim (body : Array Raw) : String := body.foldl (init := "") fun s r =>
     let t := match r with
@@ -2405,8 +2391,9 @@ private def natbibStyleArm (name : String) (pos : Pos) (raws : Array Raw) (start
       | r => rawSrcOne r
     s ++ t
   let src (i : Nat) : String := verbatim (args.getD i #[])
-  let notesep := if opt.isSome then
-      verbatim (raws.extract (skipSpaces raws start + 1) (j - 1)) else ", "
+  let notesep := match notes with
+    | some n => verbatim n
+    | none => ", "
   let (decls, dropped) : Array CiteDecl × Array String :=
     if punct then
       (#[.punct .open (src 0), .punct .close (src 1), .punct .citesep (src 2),
@@ -2426,18 +2413,15 @@ private def natbibStyleArm (name : String) (pos : Pos) (raws : Array Raw) (start
       (subject := some "ctrl:bibpunct")
   became s!"\\{name}" "natbib's citation punctuation, read at \\begin{document}" pos
   natbibDefer (#[.word .nobibstyle] ++ decls) pos
-  return some (#[], k)
+  return #[]
 
 /-- lineno's switch and modulo commands, natively the declared page keys. -/
-private def linenoCtrl (name : String) (pos : Pos) (raws : Array Raw)
-    (start : Nat) : M (Option (Array Raw × Nat)) := do
-  let k := skipStar raws start
-  let (opt, k) := takeOpt raws k
+private def lineNumbers (name : String) (opt : Option String) (pos : Pos) : M (Array Raw) := do
   if name == "modulolinenumbers" then
     let n := (opt.bind (fun o => o.trimAscii.toString.toNat?)).getD 5
     let native := s!"\\page\{ modulo = {max 1 n} }"
     became "\\modulolinenumbers" native pos
-    return some (← synthAt native pos, k)
+    return (← synthAt native pos)
   let on := name != "nolinenumbers"
   if on then
     if let some n := opt then
@@ -2446,7 +2430,7 @@ private def linenoCtrl (name : String) (pos : Pos) (raws : Array Raw)
 line numbers here always run from 1" pos
   let native := s!"\\page\{ linenumbers = {if on then "on" else "off"} }"
   became s!"\\{name}" native pos
-  return some (← synthAt native pos, k)
+  synthAt native pos
 
 /-- The kernel's point-size macros in milli-points, at the values the size files
 and ltplain give them. -/
@@ -6536,16 +6520,6 @@ private def hyperrefLowered (what key : String) (r : HyperrefRead) (pos : Pos) :
       (.group (pdfStringList #[] (← synthAt v pos).toList) pos)
   return #[Raw.ctrl "pdfmeta" pos, .group body pos] ++ styles
 
-/-- `\hypersetup` as `\pdfmeta` for its metadata keys, dates and trapping, and link-kind colour
-styles for its link colours; in the body, which reads none of them, named and set aside. -/
-private def hypersetup (opts : String) (pos : Pos) : M (Array Raw) := do
-  -- premise: Tests.PrintX4.checks — a setup in the body leaves its page as written
-  if (← get).inDoc then
-    sayOnce "ctrl:hypersetup" .W0340 "'\\hypersetup' is read in the preamble; in the body it is ignored"
-      pos (help := "declare it in the preamble, before '\\begin{document}'")
-    return #[]
-  hyperrefLowered "\\hypersetup" "hypersetup" (← hyperrefKeys opts pos) pos
-
 /-- `\DocumentMetadata{...}`: `lang`, `pdfversion`, `pdfstandard=X-4` and the `X` entry of
 `colorprofiles` land on the native `\pdfmeta` keys. -/
 private def documentMetadata (opts : String) (pos : Pos) : M (Array Raw) := do
@@ -6979,17 +6953,6 @@ engine does not convert to CMYK; the colour is not defined" pos
       (help := "give the alternate as '[cmyk]', '[rgb]', '[RGB]', '[HTML]' or '[gray]' values")
     return some (#[], k)
 
-/-- colorspace's `\definecolorspace`, a DeviceN or ICC-based space refused by name, its arguments
-read whole. -/
-private def defineColorspace (raws : Array Raw) (start : Nat) (pos : Pos) :
-    M (Option (Array Raw × Nat)) := do
-  let (args, k) := takeGroups raws (skipStar raws start) 3
-  if args.size < 3 then return none
-  say .W0104 s!"'\\definecolorspace\{{rawSrc (args.getD 0 #[])}}' declares a DeviceN or \
-ICC-based colour space; the engine paints each ink in its own separation; skipped" pos
-    (help := "declare each ink with \\definespotcolor")
-  return some (#[], k)
-
 /-- colorspace's options: the overprint mode and a Lab alternate's illuminant, which the engine
 has no state for. -/
 private def colorspaceOptions (opts : String) (pos : Pos) : M Unit := do
@@ -7282,27 +7245,54 @@ private def skipNative (sp : SkipSpelling) (kind : String := "") : String :=
     (if sp.unranked then ", stretch = unranked" else if sp.fill then ", stretch = fill" else "")
   s!"\\block[{opts}]\{}"
 
-/-- One argument a control's signature reads: an optional `[...]`, a group or bare control word
-where one stands, one that must stand or the control is left to elaboration, and a brace group that
-must stand next and stays in the walk. -/
+/-- One argument a control's signature reads: a star right after it, an optional `[...]`, a group
+or bare control word where one stands, one that must stand or the control is left to elaboration,
+and a brace group that must stand next and stays in the walk. -/
 public inductive ArgKind where
+  | star
   | opt
   | group
   | needed
   | kept
   deriving BEq, Repr
 
-/-- The index past a signature's arguments read from `i`, or none where one that must stand does
-not. -/
-public def argsEnd (raws : Array Raw) : List ArgKind → Nat → Option Nat
-  | [], i => some i
-  | .opt :: sig, i => argsEnd raws sig (takeOpt raws i).2
-  | .group :: sig, i => argsEnd raws sig (takeGroups raws i 1).2
-  | .needed :: sig, i =>
-    if (takeGroups raws i 1).1.isEmpty then none else argsEnd raws sig (takeGroups raws i 1).2
+/-- A signature's arguments read from `i` after `acc`, each as written or none where it does not
+stand, with the index past them; none where one that must stand does not. -/
+public def argsRead (raws : Array Raw) (acc : Array (Option (Array Raw))) :
+    List ArgKind → Nat → Option (Array (Option (Array Raw)) × Nat)
+  | [], i => some (acc, i)
+  | .star :: sig, i =>
+    if raws[i]? matches some (.word "*" _) then argsRead raws (acc.push (some #[])) sig (i + 1)
+    else argsRead raws (acc.push none) sig i
+  | .opt :: sig, i => argsRead raws (acc.push (takeRawOpt raws i).1) sig (takeRawOpt raws i).2
+  | .group :: sig, i =>
+    argsRead raws (acc.push (takeGroups raws i 1).1[0]?) sig (takeGroups raws i 1).2
+  | .needed :: sig, i => (takeGroups raws i 1).1[0]?.bind fun g =>
+    argsRead raws (acc.push (some g)) sig (takeGroups raws i 1).2
   | .kept :: sig, i =>
-    if raws[skipSpaces raws i]? matches some (.group _ _) then argsEnd raws sig (skipSpaces raws i)
-    else none
+    match raws[skipSpaces raws i]? with
+    | some (.group body _) => argsRead raws (acc.push (some body)) sig (skipSpaces raws i)
+    | _ => none
+
+/-- Where a lowered control is left, as written, to elaboration: in a definition body, whose uses
+read it; in the document body; in a hook's seam; outside the whole document's preamble proper;
+without a package loaded; or where argument `i` is not one control word. -/
+public inductive CtrlLeave where
+  | inDef
+  | inBody
+  | inSeam
+  | outsidePreamble
+  | without (pkg : String)
+  | notCtrl (i : Nat)
+  deriving BEq, Repr
+
+/-- A lowered control's gates: where it is left to elaboration, what stands while an argument holds
+a macro parameter only a use settles, and the help where the body ignores it as a declaration. -/
+public structure CtrlGates where
+  leaves : List CtrlLeave := []
+  paramStands : Option String := none
+  bodyHelp : Option String := none
+  deriving Repr
 
 /-- Where a row's refusal says itself: once per control under `ctrl:` or `beamer:`, or at each
 use. -/
@@ -7310,6 +7300,18 @@ public inductive RefusalKey where
   | ctrl
   | beamer
   | each
+  deriving BEq, Repr
+
+/-- The code a lowered control's arguments run through, one per family of controls. -/
+public inductive Lowering where
+  | packages | passOptions | defineColor | colorLet | pageColor | geometry | crop | microtypeSetup
+  | documentMetadata | defineColorspace | addToHook | counter | newLength | newDimen
+  | mathOperator | hyperSetup | runningField | fancyField | clearPageStyles | pageStyle
+  | thisPageStyle | addBibResource | bibResources | natbibStyle | bibliographyStyle
+  | printBibliography | crefRange | fontSeries | lineNumbers | selectLanguage | vspace | pageBreak
+  | komaFont | sectionSkips | setList | sectionLines | uniMathSetup | unreadKeys | newCounter
+  | ensureMath | box | beamerFont | columnRatio | useTheme | molochSet | titleGraphic | fontTheme
+  | beamerOption | beamerCovered | inputEncoding | komaOptions | graphColor | blueprintSite
   deriving BEq, Repr
 
 /-- What a table row's control does where it stands. -/
@@ -7326,6 +7328,8 @@ public inductive CtrlAction where
   | discard (why key : String)
   /-- Read to nothing with no report of its own, so the dispatcher's guard names it. -/
   | inert
+  /-- Its arguments run through a lowering, behind its gates. -/
+  | lower (l : Lowering) (gates : CtrlGates)
 
 /-- A control the dispatcher answers from data: the arguments it consumes and what it does. -/
 public structure CtrlRow where
@@ -7333,120 +7337,269 @@ public structure CtrlRow where
   sig : List ArgKind
   action : CtrlAction
 
-/-- Controls that are fixed tokens by another name. -/
-private def tokenRows : List CtrlRow :=
-  let tok (name : String) (r : Raw) (note : Option String) : CtrlRow := ⟨name, [], .tokens [r] note⟩
-  [tok "thepage" (.ctrl "pagenumber" {}) none,
-   tok "textbar" (.word "|" {}) none,
-   tok "textperiodcentered" (.ctrl "middot" {}) none,
-   tok "textendash" (.ctrl "endash" {}) none,
-   tok "textemdash" (.ctrl "emdash" {}) none,
-   tok "textbackslash" (.word "\\" {}) none,
-   tok "textasciitilde" (.word "~" {}) none,
-   -- With no floats to flush, `\clearpage` and `\newpage` are the declared page break.
-   tok "newpage" (.ctrl "pagebreak" {}) (some "\\pagebreak"),
-   tok "clearpage" (.ctrl "pagebreak" {}) (some "\\pagebreak"),
-   tok "ul" (.ctrl "underline" {}) (some "\\underline"),
-   tok "IfValueT" (.ctrl "ifgiven" {}) none,
-   tok "IfValueTF" (.ctrl "ifgiven" {}) none,
-   tok "footercontent" (.ctrl "runningfoot" {}) (some "\\runningfoot{...}"),
-   tok "nopagecolor" (.ctrl (Marker.name .pageColorReset "") {})
-    (some "the document's default page ground"),
-   tok "normalcolor" (.ctrl (Marker.name .ink normalInkSource) {})
-     (some "the document's normal ink, to the end of the group")]
+/-- A registered control where it stands: its arguments as its signature reads them, and the walk's
+raws with the span they occupy. -/
+public structure CtrlCall where
+  name : String
+  pos : Pos
+  args : Array (Option (Array Raw))
+  raws : Array Raw
+  start : Nat
+  stop : Nat
 
-/-- Commands whose whole meaning is one native declaration. -/
-private def nativeRows : List CtrlRow :=
-  [⟨"vfill", [], .native "\\block[before = fill]{}"⟩,
+/-- Argument `i` as written, if it stands. -/
+public def CtrlCall.given (c : CtrlCall) (i : Nat) : Option (Array Raw) := c.args[i]?.join
+
+/-- Argument `i`'s raws, empty where it does not stand. -/
+public def CtrlCall.arg (c : CtrlCall) (i : Nat) : Array Raw := (c.given i).getD #[]
+
+/-- Argument `i` as source text. -/
+public def CtrlCall.src (c : CtrlCall) (i : Nat) : String := rawSrc (c.arg i)
+
+/-- Optional argument `i` as source text, if it stands. -/
+public def CtrlCall.optSrc (c : CtrlCall) (i : Nat) : Option String := (c.given i).map rawSrc
+
+/-- A control read to nothing, its arguments `n` groups, named by why. -/
+private def nothingRow (name : String) (n : Nat) (why : String) : CtrlRow :=
+  ⟨name, List.replicate n .group, .discard why name⟩
+
+private def packageLog : String := "package diagnostics address TeX's log, not the document"
+private def classLog : String := "class diagnostics address TeX's log, not the document"
+private def kernelLog : String := "kernel diagnostics address TeX's log, not the document"
+private def pageInks : String := "every page lists each ink it paints"
+private def packageHelp : String := "load the package in the preamble, before '\\begin{document}'"
+
+/-- A declaration's gates: the body ignores it, named with the help to declare it in the
+preamble. -/
+private def declared : CtrlGates := { bodyHelp := some Diag.declareInPreamble }
+
+/-- A package load: in a definition body left to its uses, in the body ignored as a declaration. -/
+public def packageRow (name : String) : CtrlRow :=
+  ⟨name, [.opt, .needed], .lower .packages { leaves := [.inDef], bodyHelp := some packageHelp }⟩
+
+/-- A control refused once by name. -/
+private def refusedRow (name : String) (sig : List ArgKind) (msg help : String) : CtrlRow :=
+  ⟨name, sig, .refuse .W0104 .ctrl msg (some help)⟩
+
+/-- A beamer configuration command the engine does not have, with its `{...}` groups. -/
+private def beamerConfigRow (name : String) (n : Nat) : CtrlRow :=
+  ⟨name, .opt :: List.replicate n .group, .refuse .W0104 .beamer
+    s!"'\\{name}' is beamer configuration the engine does not have; skipped"
+    (some ((beamerNative.lookup name).getD "a theme is a token bundle here: \\theme selects one, \
+and \\palette and \\tokens declare the design directly"))⟩
+
+/-- A hook reached past its moment: every hook was collected before this pass, so its group is read
+where it stands. -/
+private def hookRow (name : String) : CtrlRow :=
+  ⟨name, [], .refuse .W0340 .ctrl
+    s!"'\\{name}' cannot defer from here; its group is read where it stands"
+    (some "declare the hook before '\\begin{document}'")⟩
+
+private def ctrlRows0 : List CtrlRow :=
+  [⟨"@latex@error", List.replicate 2 .group, .inert⟩,
+   nothingRow "@latex@info" 1 kernelLog,
+   nothingRow "@latex@info@no@line" 1 kernelLog,
+   nothingRow "@latex@note" 1 kernelLog,
+   nothingRow "@latex@note@no@line" 1 kernelLog,
+   nothingRow "@latex@warning" 1 kernelLog,
+   nothingRow "@latex@warning@no@line" 1 kernelLog,
+   ⟨"AddToHook", [.group, .opt, .group], .lower .addToHook {}⟩] ++
+  deferredHooks.map (hookRow ·.1) ++
+  [⟨"ClassError", List.replicate 3 .group, .inert⟩,
+   nothingRow "ClassInfo" 2 classLog,
+   nothingRow "ClassNote" 2 classLog,
+   nothingRow "ClassNoteNoLine" 2 classLog,
+   nothingRow "ClassWarning" 2 classLog,
+   nothingRow "ClassWarningNoLine" 2 classLog,
+   ⟨"Crefrange", [.needed, .needed], .lower .crefRange {}⟩]
+
+private def ctrlRows1 : List CtrlRow :=
+  [⟨"DeclareMathOperator", [.star, .needed, .needed],
+     .lower .mathOperator { leaves := [.notCtrl 1] }⟩,
+   ⟨"DocumentMetadata", [.needed], .lower .documentMetadata {}⟩,
+   ⟨"GenericError", List.replicate 4 .group, .inert⟩,
+   nothingRow "GenericInfo" 2 packageLog,
+   nothingRow "GenericWarning" 2 packageLog,
+   ⟨"IfValueT", [], .tokens [.ctrl "ifgiven" {}] none⟩,
+   ⟨"IfValueTF", [], .tokens [.ctrl "ifgiven" {}] none⟩,
+   ⟨"KOMAoptions", [.group], .lower .komaOptions {}⟩,
+   nothingRow "MessageBreak" 0 "a line break in a log message, not in the document",
+   ⟨"PackageError", List.replicate 3 .group, .inert⟩,
+   nothingRow "PackageInfo" 2 packageLog,
+   nothingRow "PackageNote" 2 packageLog,
+   nothingRow "PackageNoteNoLine" 2 packageLog,
+   nothingRow "PackageWarning" 2 packageLog,
+   nothingRow "PackageWarningNoLine" 2 packageLog,
+   ⟨"PassOptionsToClass", [.needed, .needed], .lower .passOptions { leaves := [.inDef] }⟩]
+
+private def ctrlRows2 : List CtrlRow :=
+  [⟨"PassOptionsToPackage", [.needed, .needed], .lower .passOptions { leaves := [.inDef] }⟩,
+   ⟨"RedeclareSectionCommand", [.opt, .group], .lower .sectionSkips {}⟩,
+   packageRow "RequirePackage",
+   ⟨"addbibresource", [.opt, .needed], .lower .addBibResource {}⟩,
+   ⟨"addtocounter", [.needed, .needed], .lower .counter { leaves := [.outsidePreamble] }⟩,
+   beamerConfigRow "beamertemplatenavigationsymbolsempty" 0,
+   ⟨"bibliography", [.needed], .lower .bibResources { leaves := [.inBody, .without "biblatex"] }⟩,
+   ⟨"bibliographystyle", [.needed], .lower .bibliographyStyle { leaves := [.inBody, .inSeam] }⟩,
+   ⟨"bibpunct", [.opt, .needed, .needed, .needed, .needed, .needed, .needed],
+     .lower .natbibStyle declared⟩,
    ⟨"bigskip", [], .skip "bigskipamount"⟩,
-   ⟨"medskip", [], .skip "medskipamount"⟩,
-   ⟨"smallskip", [], .skip "smallskipamount"⟩,
-   ⟨"singlespacing", [], .native "\\page{ leading = 1 }"⟩,
+   ⟨"cfoot", [.group], .lower .runningField {}⟩,
+   ⟨"chead", [.group], .lower .runningField {}⟩,
+   ⟨"citestyle", [.needed], .lower .natbibStyle declared⟩,
+   -- With no floats to flush, `\clearpage` and `\newpage` are the declared page break.
+   ⟨"clearpage", [], .tokens [.ctrl "pagebreak" {}] (some "\\pagebreak")⟩,
+   ⟨"clearpairofpagestyles", [], .lower .clearPageStyles {}⟩,
+   ⟨"colorlet", [.needed, .needed],
+     .lower .colorLet { paramStands := some "the colour is not defined" }⟩]
+
+private def ctrlRows3 : List CtrlRow :=
+  [refusedRow "column" [.group] "'\\column' is not at the top level of a {columns} body; \
+it starts no column there and is skipped" "\\column{width} splits the body of \\begin{columns} \
+... \\end{columns}",
+   ⟨"columnratio", [.needed, .opt], .lower .columnRatio {}⟩,
+   ⟨"crefrange", [.needed, .needed], .lower .crefRange {}⟩,
+   ⟨"crop", [.opt], .lower .crop {}⟩,
+   ⟨"definecolor", [.needed, .needed, .needed],
+     .lower .defineColor { paramStands := some "the colour is not defined" }⟩,
+   ⟨"definecolorspace", [.star, .needed, .needed, .needed], .lower .defineColorspace {}⟩,
+   -- Running Lua is refused by design.
+   refusedRow "directlua" [.group] "'\\directlua' is Lua code for luatex; the engine \
+does not run Lua, so it is skipped" "\\allow{W0104} accepts the skip",
+   ⟨"dochome", [.needed],
+     .lower .blueprintSite { declared with leaves := [.without "blueprint"] }⟩,
+   ⟨"doublespacing", [], .native "\\page{ leading = 1.667 }"⟩,
+   nothingRow "endlinenomath" 0 "display math lines are numbered like every galley line",
+   ⟨"ensuremath", [.needed], .lower .ensureMath {}⟩,
+   ⟨"fancyfoot", [.opt, .group], .lower .fancyField {}⟩,
+   ⟨"fancyhead", [.opt, .group], .lower .fancyField {}⟩,
+   ⟨"fancyhf", [.opt, .group], .lower .fancyField {}⟩,
    -- The page's bottom (latex.ltx `\flushbottom`, `\raggedbottom`).
    ⟨"flushbottom", [], .native "\\page{ bottom = flush }"⟩,
-   ⟨"raggedbottom", [], .native "\\page{ bottom = ragged }"⟩,
+   ⟨"fontseries", [.needed],
+     .lower .fontSeries { paramStands := some "the weight in force stands" }⟩]
+
+private def ctrlRows4 : List CtrlRow :=
+  [⟨"footercontent", [], .tokens [.ctrl "runningfoot" {}] (some "\\runningfoot{...}")⟩,
+   nothingRow "frenchspacing" 0 "inter-sentence space is uniform here either way",
+   ⟨"geometry", [.needed], .lower .geometry {}⟩,
+   ⟨"github", [.needed],
+     .lower .blueprintSite { declared with leaves := [.without "blueprint"] }⟩,
+   ⟨"graphcolor", [.needed, .needed, .needed],
+     .lower .graphColor { leaves := [.without "blueprint"] }⟩,
+   ⟨"home", [.needed],
+     .lower .blueprintSite { declared with leaves := [.without "blueprint"] }⟩,
+   ⟨"hypersetup", [.group], .lower .hyperSetup
+     { declared with paramStands := some "hyperref's settings stand" }⟩,
+   ⟨"ifoot", [.group], .lower .runningField {}⟩,
+   ⟨"ihead", [.group], .lower .runningField {}⟩,
+   ⟨"inputencoding", [.group], .lower .inputEncoding {}⟩,
+   ⟨"lfoot", [.group], .lower .runningField {}⟩,
+   ⟨"lhead", [.group], .lower .runningField {}⟩,
+   nothingRow "linenomath" 0 "display math lines are numbered like every galley line",
+   ⟨"linenumbers", [.star, .opt], .lower .lineNumbers {}⟩,
+   nothingRow "makeatletter" 0 "@-names are always readable here",
+   nothingRow "makeatother" 0 "@-names are always readable here"]
+
+private def ctrlRows5 : List CtrlRow :=
+  [⟨"makebox", [.opt, .opt], .lower .box {}⟩,
+   ⟨"mbox", [], .lower .box {}⟩,
+   ⟨"medskip", [], .skip "medskipamount"⟩,
+   beamerConfigRow "metroset" 1,
+   ⟨"microtypesetup", [.needed], .lower .microtypeSetup {}⟩,
+   ⟨"modulolinenumbers", [.star, .opt], .lower .lineNumbers {}⟩,
+   ⟨"molochset", [.needed], .lower .molochSet {}⟩,
+   ⟨"newcounter", [.needed, .opt],
+     .lower .newCounter { paramStands := some "no counter is allocated" }⟩,
+   ⟨"newdimen", [.group], .lower .newDimen { leaves := [.notCtrl 0] }⟩,
+   ⟨"newgeometry", [.needed], .lower .geometry {}⟩,
+   ⟨"newlength", [.group], .lower .newLength { leaves := [.notCtrl 0] }⟩,
+   ⟨"newpage", [], .tokens [.ctrl "pagebreak" {}] (some "\\pagebreak")⟩,
+   nothingRow "noindent" 0 "no paragraph carries a first-line indent here",
+   ⟨"nolinenumbers", [.star, .opt], .lower .lineNumbers {}⟩,
+   nothingRow "nonfrenchspacing" 0 "inter-sentence space is uniform here either way",
+   ⟨"nopagecolor", [], .tokens [.ctrl (Marker.name .pageColorReset "") {}]
+     (some "the document's default page ground")⟩]
+
+private def ctrlRows6 : List CtrlRow :=
+  [⟨"normalcolor", [], .tokens [.ctrl (Marker.name .ink normalInkSource) {}]
+     (some "the document's normal ink, to the end of the group")⟩,
+   ⟨"ofoot", [.group], .lower .runningField {}⟩,
+   ⟨"ohead", [.group], .lower .runningField {}⟩,
    ⟨"onehalfspacing", [], .native "\\page{ leading = 1.25 }"⟩,
-   ⟨"doublespacing", [], .native "\\page{ leading = 1.667 }"⟩]
+   ⟨"overprintstate", [.needed], .refuse .W0104 .each "'\\overprintstate' sets the \
+overprint state; the engine knocks out every colour it paints; skipped" none⟩,
+   ⟨"pagebreak", [.opt], .lower .pageBreak {}⟩,
+   ⟨"pagecolor", [.opt, .needed], .lower .pageColor {}⟩,
+   ⟨"pagecolorspace", [.needed], .discard pageInks "pagecolorspace"⟩,
+   ⟨"pagestyle", [.group],
+     .lower .pageStyle { paramStands := some "the page style in force stands" }⟩,
+   ⟨"printbibliography", [.opt], .lower .printBibliography {}⟩,
+   ⟨"raggedbottom", [], .native "\\page{ bottom = ragged }"⟩,
+   refusedRow "raisebox" [.needed, .opt, .opt] "'\\raisebox' lift, height and depth are not \
+applied; its content is set as if unboxed" "remove the box dimensions to use the surrounding \
+line's natural spacing",
+   ⟨"refstepcounter", [.needed], .lower .counter { leaves := [.outsidePreamble] }⟩,
+   nothingRow "relax" 0 "it means do nothing",
+   ⟨"resetpagecolorspace", [], .discard pageInks "pagecolorspace"⟩,
+   ⟨"rfoot", [.group], .lower .runningField {}⟩]
 
-/-- LaTeX's package, class and kernel diagnostics, at latex.ltx's arities: an error spelling is
-consumed and named (W0387), any other is nothing here. -/
-private def logRows : List CtrlRow :=
-  let free (name : String) (n : Nat) (why : String) : CtrlRow :=
-    ⟨name, List.replicate n .group, .discard why name⟩
-  let pkg := "package diagnostics address TeX's log, not the document"
-  let cls := "class diagnostics address TeX's log, not the document"
-  let kernel := "kernel diagnostics address TeX's log, not the document"
-  [free "PackageWarning" 2 pkg, free "PackageWarningNoLine" 2 pkg, free "PackageInfo" 2 pkg,
-   free "PackageNote" 2 pkg, free "PackageNoteNoLine" 2 pkg,
-   free "ClassWarning" 2 cls, free "ClassWarningNoLine" 2 cls, free "ClassInfo" 2 cls,
-   free "ClassNote" 2 cls, free "ClassNoteNoLine" 2 cls,
-   free "GenericWarning" 2 pkg, free "GenericInfo" 2 pkg,
-   free "MessageBreak" 0 "a line break in a log message, not in the document",
-   free "@latex@warning" 1 kernel, free "@latex@warning@no@line" 1 kernel,
-   free "@latex@info" 1 kernel, free "@latex@info@no@line" 1 kernel,
-   free "@latex@note" 1 kernel, free "@latex@note@no@line" 1 kernel,
-   ⟨"PackageError", List.replicate 3 .group, .inert⟩,
-   ⟨"ClassError", List.replicate 3 .group, .inert⟩,
-   ⟨"GenericError", List.replicate 4 .group, .inert⟩,
-   ⟨"@latex@error", List.replicate 2 .group, .inert⟩]
+private def ctrlRows7 : List CtrlRow :=
+  [⟨"rhead", [.group], .lower .runningField {}⟩,
+   ⟨"runninglinenumbers", [.star, .opt], .lower .lineNumbers {}⟩,
+   ⟨"sectionlinesformat", [.opt, .group], .lower .sectionLines {}⟩,
+   nothingRow "selectfont" 0 "font declarations apply where they stand",
+   ⟨"selectlanguage", [.needed],
+     .lower .selectLanguage { paramStands := some "the language in force stands" }⟩,
+   ⟨"setbeamercovered", [.group], .lower .beamerCovered {}⟩,
+   ⟨"setbeamerfont", [.star, .needed, .needed], .lower .beamerFont {}⟩,
+   ⟨"setbeameroption", [.opt, .group], .lower .beamerOption {}⟩,
+   ⟨"setbeamersize", [.needed], .lower .unreadKeys {}⟩,
+   ⟨"setcitestyle", [.needed], .lower .natbibStyle declared⟩,
+   ⟨"setcounter", [.needed, .needed], .lower .counter { leaves := [.outsidePreamble] }⟩,
+   ⟨"setkomafont", [.needed, .needed], .lower .komaFont {}⟩,
+   ⟨"setlist", [.star, .opt, .group], .lower .setList declared⟩,
+   nothingRow "shortcites" 1 "citations are set short throughout, which is what it asks",
+   ⟨"singlespacing", [], .native "\\page{ leading = 1 }"⟩,
+   ⟨"sloppy", [], .refuse .W0104 .ctrl "'\\sloppy' loosens TeX's line-breaking \
+tolerance; the breaker keeps its own and an overfull line warns by itself" none⟩]
 
-/-- Commands that configure TeX's own machinery or the page's colour spaces, and change nothing
-this engine models. -/
-private def machineryRows : List CtrlRow :=
-  let free (name : String) (n : Nat) (why : String) : CtrlRow :=
-    ⟨name, List.replicate n .group, .discard why name⟩
-  [free "makeatletter" 0 "@-names are always readable here",
-   free "makeatother" 0 "@-names are always readable here",
-   free "relax" 0 "it means do nothing",
-   free "noindent" 0 "no paragraph carries a first-line indent here",
-   free "frenchspacing" 0 "inter-sentence space is uniform here either way",
-   free "nonfrenchspacing" 0 "inter-sentence space is uniform here either way",
-   free "selectfont" 0 "font declarations apply where they stand",
-   free "linenomath" 0 "display math lines are numbered like every galley line",
-   free "endlinenomath" 0 "display math lines are numbered like every galley line",
-   free "shortcites" 1 "citations are set short throughout, which is what it asks",
-   ⟨"pagecolorspace", [.needed], .discard "every page lists each ink it paints" "pagecolorspace"⟩,
-   ⟨"resetpagecolorspace", [], .discard "every page lists each ink it paints" "pagecolorspace"⟩]
-
-/-- Controls refused by name, each with its loss. -/
-private def refusalRows : List CtrlRow :=
-  let once (name : String) (sig : List ArgKind) (msg help : String) : CtrlRow :=
-    ⟨name, sig, .refuse .W0104 .ctrl msg (some help)⟩
-  let beamer (name : String) (n : Nat) : CtrlRow :=
-    ⟨name, .opt :: List.replicate n .group, .refuse .W0104 .beamer
-      s!"'\\{name}' is beamer configuration the engine does not have; skipped"
-      (some ((beamerNative.lookup name).getD "a theme is a token bundle here: \\theme selects one, \
-and \\palette and \\tokens declare the design directly"))⟩
-  [⟨"sloppy", [], .refuse .W0104 .ctrl "'\\sloppy' loosens TeX's line-breaking \
-tolerance; the breaker keeps its own and an overfull line warns by itself" none⟩,
-   beamer "usecolortheme" 1, beamer "useinnertheme" 1, beamer "useoutertheme" 1,
-   beamer "metroset" 1, beamer "beamertemplatenavigationsymbolsempty" 0,
+private def ctrlRows8 : List CtrlRow :=
+  [⟨"smallskip", [], .skip "smallskipamount"⟩,
+   ⟨"stepcounter", [.needed], .lower .counter { leaves := [.outsidePreamble] }⟩,
+   ⟨"tcbset", [.needed], .lower .unreadKeys {}⟩,
+   ⟨"textasciitilde", [], .tokens [.word "~" {}] none⟩,
+   ⟨"textbackslash", [], .tokens [.word "\\" {}] none⟩,
+   ⟨"textbar", [], .tokens [.word "|" {}] none⟩,
+   ⟨"textemdash", [], .tokens [.ctrl "emdash" {}] none⟩,
+   ⟨"textendash", [], .tokens [.ctrl "endash" {}] none⟩,
+   ⟨"textoverprint", [.opt, .kept], .refuse .W0104 .each "'\\textoverprint' overprints \
+its text; the engine knocks it out, and the text is kept" none⟩,
+   ⟨"textperiodcentered", [], .tokens [.ctrl "middot" {}] none⟩,
+   ⟨"thepage", [], .tokens [.ctrl "pagenumber" {}] none⟩,
+   ⟨"thispagestyle", [.group], .lower .thisPageStyle {}⟩,
+   ⟨"titlegraphic", [.group], .lower .titleGraphic {}⟩,
    -- Core reads no clock, so `\today` is refused.
-   once "today" [] "'\\today' asks for the day the document is built; the engine reads no \
-clock, so nothing is inserted" "write the date as text where it should appear; \\allow{W0104} \
-accepts the skip",
-   -- Running Lua is refused by design.
-   once "directlua" [.group] "'\\directlua' is Lua code for luatex; the engine does not run Lua, \
-so it is skipped" "\\allow{W0104} accepts the skip",
-   once "column" [.group] "'\\column' is not at the top level of a {columns} body; it starts \
-no column there and is skipped" "\\column{width} splits the body of \\begin{columns} ... \
-\\end{columns}",
-   once "raisebox" [.needed, .opt, .opt] "'\\raisebox' lift, height and depth are not applied; \
-its content is set as if unboxed" "remove the box dimensions to use the surrounding line's \
-natural spacing",
-   ⟨"overprintstate", [.needed], .refuse .W0104 .each "'\\overprintstate' sets the overprint \
-state; the engine knocks out every colour it paints; skipped" none⟩,
-   ⟨"textoverprint", [.opt, .kept], .refuse .W0104 .each "'\\textoverprint' overprints its text; \
-the engine knocks it out, and the text is kept" none⟩] ++
-  -- Every hook was collected before this pass, so a hook here is already at its moment.
-  deferredHooks.map fun (name, _) =>
-    ⟨name, [], .refuse .W0340 .ctrl
-      s!"'\\{name}' cannot defer from here; its group is read where it stands"
-      (some "declare the hook before '\\begin{document}'")⟩
+   refusedRow "today" [] "'\\today' asks for the day the document is built; the engine \
+reads no clock, so nothing is inserted" "write the date as text where it should appear; \
+\\allow{W0104} accepts the skip",
+   ⟨"ul", [], .tokens [.ctrl "underline" {}] (some "\\underline")⟩,
+   ⟨"unimathsetup", [.needed], .lower .uniMathSetup {}⟩]
 
-/-- The controls the dispatcher answers from data alone. -/
+private def ctrlRows9 : List CtrlRow :=
+  [beamerConfigRow "usecolortheme" 1,
+   ⟨"usefonttheme", [.opt, .group], .lower .fontTheme {}⟩,
+   beamerConfigRow "useinnertheme" 1,
+   beamerConfigRow "useoutertheme" 1,
+   packageRow "usepackage",
+   ⟨"usetheme", [.opt, .group], .lower .useTheme {}⟩,
+   ⟨"vfill", [], .native "\\block[before = fill]{}"⟩,
+   ⟨"vspace", [.star, .opt, .group], .lower .vspace {}⟩]
+
+/-- The controls the dispatcher answers from its table, in byte order of their names. -/
 public def ctrlRows : List CtrlRow :=
-  tokenRows ++ nativeRows ++ logRows ++ machineryRows ++ refusalRows
+  [ctrlRows0, ctrlRows1, ctrlRows2, ctrlRows3, ctrlRows4,
+   ctrlRows5, ctrlRows6, ctrlRows7, ctrlRows8, ctrlRows9].flatten
 
 /-- The row answering a control. -/
 public def ctrlRow? (name : String) : Option CtrlRow := ctrlRows.find? (·.name == name)
@@ -7456,7 +7609,7 @@ private def ctrlNative? (name : String) : Option String :=
   match (ctrlRow? name).map (·.action) with
   | some (CtrlAction.native src) => some src
   | none | some (.tokens ..) | some (.skip _) | some (.refuse ..) | some (.discard ..)
-  | some .inert => none
+  | some .inert | some (.lower ..) => none
 
 /-- Options of a native package without an option reader of its own whose meaning is one native
 declaration: setspace's spacings as its commands read, and microtype's switches. -/
@@ -7471,39 +7624,6 @@ public def packageOptionNatives : List (String × List (String × String)) :=
      ("disable", "\\page{ protrusion = off, expansion = off }"),
      ("disable=true", "\\page{ protrusion = off, expansion = off }"),
      ("activate=false", "\\page{ protrusion = off, expansion = off }")])]
-
-/-- A row's action where its control stands: its emission, with its report. -/
-private def ctrlRowRun (row : CtrlRow) (pos : Pos) : M (Array Raw) := do
-  match row.action with
-  | .tokens toks note =>
-    if let some native := note then became s!"\\{row.name}" native pos
-    return toks.toArray.map (rebase (fun _ => pos) true)
-  | .native src =>
-    -- setspace's spacings set the strut box again where they stand.
-    if (packageOptionNatives.lookup "setspace").any (·.any (·.1 == row.name)) then
-      write fun st => { st with strutSkip := none }
-    became s!"\\{row.name}" src pos
-    synthAt src pos
-  | .skip amount =>
-    -- premise: kernelLengthChecks — a declared skip amount ships at its command
-    let native := match (← get).lens.find? (·.1 == amount) with
-      | some (_, v) => skipNative { width := v }
-      | none => skipNative { width := (kernelSkip amount).getD "" }
-    became s!"\\{row.name}" native pos
-    synthAt native pos
-  | .refuse code .ctrl msg help =>
-    sayOnce ("ctrl:" ++ row.name) code msg pos (help := help)
-    return #[]
-  | .refuse code .beamer msg help =>
-    sayOnce ("beamer:" ++ row.name) code msg pos (help := help)
-    return #[]
-  | .refuse code .each msg help =>
-    say code msg pos (help := help)
-    return #[]
-  | .discard why key =>
-    discard s!"\\{row.name}" why key pos
-    return #[]
-  | .inert => return #[]
 
 /-- moloch's `block` option values as the theme's own block
 colour declarations. -/
@@ -7563,7 +7683,7 @@ private def blockHookSkips (out : Array String) : List Raw → Option (Array Str
     | some (CtrlAction.skip amount) =>
       (kernelSkip amount).bind fun v => blockHookSkips (out.push (skipNative { width := v })) rest
     | none | some (.tokens ..) | some (.native ..) | some (.refuse ..) | some (.discard ..)
-    | some .inert => none
+    | some .inert | some (.lower ..) => none
   | _ => none
 
 /-- `\addtobeamertemplate` on the block templates, read
@@ -7661,16 +7781,6 @@ colour aliases or explicit-footer restoration with an empty success callback are
 '\\chrome{standout-note=true}' to restore explicit notes")
     (subject := some "ctrl:apptocmd")
   return some (tail, k)
-
-/-- cleveref's `\crefrange{key1}{key2}` as the pair the resolver renders. -/
-private def crefRangeArm (name : String) (kind : Marker.Kind) (pos : Pos) (raws : Array Raw)
-    (start : Nat) : M (Option (Array Raw × Nat)) := do
-  let (args, k) := takeGroups raws start 2
-  if h : args.size = 2 then
-    became s!"\\{name}" "the range pair: plural name, both numbers" pos
-    return some (#[.ctrl (Marker.name kind "") pos, .group args[0] pos,
-      .ctrl "labelcref" pos, .group args[1] pos], k)
-  else return none
 
 /-- Whether `\alert` takes the alert colour: a shipped theme
 stands, or the deck names none. -/
@@ -7998,9 +8108,6 @@ private def biblatexMulticiteArm (name : String) (pos : Pos) (raws : Array Raw) 
 its URL in the groups after it. -/
 public def blueprintSiteMark : String := "blueprint site"
 
-private def blueprintLoaded : M Bool := do
-  return (← get).loads.pkgs.any (·.1 == "blueprint")
-
 /-- Names leanblueprint's dependency graph, which the engine does not draw, at one site asking for
 it, the site's particulars its detail. -/
 private def blueprintGraph (pos : Pos) (detail : Option String) : M Unit :=
@@ -8038,34 +8145,6 @@ private def urlOption (v : String) : String :=
 private def blueprintSiteRaws (key : String) (url : String) (pos : Pos) : Array Raw :=
   #[.ctrl blueprintSiteMark pos, .group #[.word key pos] pos, .group #[.word url pos] pos]
 
-/-- leanblueprint's `\graphcolor{type}{colour}{description}`, a colour of the dependency graph,
-named with that graph. -/
-private def blueprintGraphColorArm (pos : Pos) (raws : Array Raw) (start : Nat) :
-    M (Option (Array Raw × Nat)) := do
-  unless ← blueprintLoaded do return none
-  let (args, k) := takeGroups raws start 3
-  if args.size != 3 then return none
-  blueprintGraph pos (some s!"'\\graphcolor\{{(rawSrc (args.getD 0 #[])).trimAscii.toString}}' colours \
-that graph")
-  return some (#[], k)
-
-/-- leanblueprint's preamble declarations: `\home`, which its web page links nothing to, and
-`\github` and `\dochome`, the roots its discussions and Lean names link into. -/
-private def blueprintSiteArm (name : String) (pos : Pos) (raws : Array Raw) (start : Nat) :
-    M (Option (Array Raw × Nat)) := do
-  unless ← blueprintLoaded do return none
-  let (args, k) := takeGroups raws start 1
-  let some url := args[0]? | return none
-  if (← get).inDoc then
-    sayOnce ("ctrl:" ++ name) .W0340
-      s!"'\\{name}' is read in the preamble; in the body it is ignored" pos
-      (help := "declare it in the preamble, before '\\begin{document}'")
-    return some (#[], k)
-  if name == "home" then
-    discard "\\home" "the web blueprint links nothing to the project's home page" "home" pos
-    return some (#[], k)
-  return some (blueprintSiteRaws name (urlText url) pos, k)
-
 private def rewriteCtrlLaterNamed (name : String) (pos : Pos) (raws : Array Raw)
     (start : Nat) : M (Option (Array Raw × Nat)) := do
   match name with
@@ -8102,31 +8181,6 @@ skipped, and the leading keeps its value" pos (help := "give a number, such as \
       | some .space | some (.par _) => true
       | _ => false
     return some (if noSpace then #[] else #[.ctrl " " pos], start)
-  | "addbibresource" =>
-    -- biblatex's `\addbibresource`: a `.bib` file `\printbibliography` later prints.
-    let (opt, j) := takeOpt raws start
-    let (args, k) := takeGroups raws j 1
-    if h : args.size = 1 then
-      let src := (rawSrc args[0]).trimAscii.toString
-      let val (key : String) : Option String := (KeyVal.items (opt.getD "")).findSome? fun o =>
-        match KeyVal.entry o with
-        | (k, some v) => if k == key then some v else none
-        | _ => none
-      let remote := val "location" == some "remote"
-      let format := (val "datatype").filter (· != "bibtex")
-      if remote || format.isSome then
-        let what := if remote then "a remote resource" else s!"a '{format.getD ""}' resource"
-        say .W0104 s!"'\\addbibresource' names {what} '{src}'; the engine reads local \
-.bib files only, so it is skipped" pos
-          (help := "save the entries as a .bib file beside the document and name it")
-          (subject := some "addbibresource")
-        return some (#[], k)
-      let src := if src.endsWith ".bib" then (src.dropEnd 4).toString else src
-      unless (← get).bibResources.contains src do
-        write fun st => { st with bibResources := st.bibResources.push src }
-      became "\\addbibresource" s!"\\bibliography\{{src}}, at \\printbibliography" pos
-      return some (#[], k)
-    else return none
   | "autocite" | "Autocite" | "parencite" | "Parencite" | "textcite" | "Textcite" | "Cite"
   | "footcite" | "Footcite" | "smartcite" | "Smartcite" | "footcitetext" | "footfullcite"
   | "supercite" =>
@@ -8134,51 +8188,6 @@ skipped, and the leading keeps its value" pos (help := "give a number, such as \
   | "cites" | "Cites" | "parencites" | "Parencites" | "textcites" | "Textcites"
   | "autocites" | "Autocites" | "footcites" | "smartcites" | "Smartcites" =>
     biblatexMulticiteArm name pos raws start
-  | "bibliography" =>
-    -- Under biblatex a preamble `\bibliography{refs}` adds the resource `refs.bib`.
-    if (← get).inDoc || !(← get).loads.pkgs.any (·.1 == "biblatex") then return none
-    let (args, k) := takeGroups raws start 1
-    match args[0]? with
-    | some g =>
-      for src in KeyVal.items (rawSrc g) do
-        let src := if src.endsWith ".bib" then (src.dropEnd 4).toString else src
-        unless src.isEmpty || (← get).bibResources.contains src do
-          write fun st => { st with bibResources := st.bibResources.push src }
-      became "\\bibliography" "biblatex's \\addbibresource, at \\printbibliography" pos
-      return some (#[], k)
-    | none => return none
-  | "setcitestyle" | "bibpunct" | "citestyle" => natbibStyleArm name pos raws start
-  | "bibliographystyle" =>
-    -- premise: compatIndexChecks — body `\bibliographystyle` rows set their style
-    if (← get).inDoc || (← get).seam then return none
-    let (args, k) := takeGroups raws start 1
-    match args[0]? with
-    | some g =>
-      became "\\bibliographystyle" "read at \\begin{document}, as natbib reads the .aux" pos
-      write fun st => { st with deferred := st.deferred.push (.beginDocument, st.file, pos,
-        #[.ctrl "bibliographystyle" pos, .group g pos]) }
-      return some (#[], k)
-    | none => return none
-  | "printbibliography" =>
-    let (o, k) := takeOpt raws start
-    if let some o := o then
-      unless o.trimAscii.toString.isEmpty do
-        say .W0101 s!"\\printbibliography options without a native equivalent \
-were dropped: {o}" pos
-    let srcs := (← get).bibResources
-    if srcs.isEmpty then
-      discard "\\printbibliography" "no \\addbibresource declared a file"
-        "printbibliography" pos
-      return some (#[], k)
-    let stylePart := match (← get).bibStyle with
-      | some s => s!"\\bibliographystyle\{{s}}"
-      | none => ""
-    let native := s!"{stylePart}\\bibliography\{{",".intercalate srcs.toList}}"
-    became "\\printbibliography"
-      s!"biblatex's reference list of '{"', '".intercalate srcs.toList}'" pos
-    return some (← synthAt native pos, k)
-  | "crefrange" => crefRangeArm name .crefRange pos raws start
-  | "Crefrange" => crefRangeArm name .crefRangeUp pos raws start
   | "fontsize" =>
     -- NFSS records the two dimensions and `\selectfont` commits them.
     write fun st => { st with strutSkip := none }
@@ -8190,57 +8199,6 @@ were dropped: {o}" pos
     let leading := rawSrc (args.getD 1 #[])
     became "\\fontsize" "an affine font size and baseline skip" pos
     return some (#[.ctrl (Marker.fontSizeName size leading) pos], k)
-  | "fontseries" =>
-    -- The series' weight half rides its marker; its width half has no engine axis.
-    let (args, k) := takeGroups raws start 1
-    if args.isEmpty then return none
-    if ← paramArgs args then
-      unappliedParam "fontseries" "the weight in force stands" pos
-      return some (#[], k)
-    let code := (rawSrc (args.getD 0 #[])).trimAscii.toString
-    match Ir.Weight.parseSeries code with
-    | some (w, width) =>
-      -- premise: compatMarkerChecks — a top-level discard leaves the Doc without it
-      if ← docPreamble then
-        discard s!"\\fontseries\{{code}}" "'\\begin{document}' selects the normal series"
-          s!"fontseries:{code}" pos
-        return some (#[], k)
-      if !width.isEmpty then
-        sayOnce ("ctrl:fontseries:" ++ width) .W0104
-          s!"'\\fontseries\{{code}}' also asks for the '{width}' width; \
-the engine has no width axis, so only the weight is honoured" pos
-      became s!"\\fontseries\{{code}}" s!"the {w.series} series" pos
-      return some (#[.ctrl (Marker.name .series w.series) pos], k)
-    | none =>
-      sayOnce "ctrl:fontseries" .W0104
-        s!"'\\fontseries\{{code}}' names no NFSS series; \
-the weight in force stands" pos
-      return some (#[], k)
-  | "linenumbers" | "runninglinenumbers" | "nolinenumbers"
-  | "modulolinenumbers" =>
-    linenoCtrl name pos raws start
-  | "selectlanguage" =>
-    let (args, k) := takeGroups raws start 1
-    if args.isEmpty then return none
-    if ← paramArgs args then
-      unappliedParam "selectlanguage" "the language in force stands" pos
-      return some (#[], k)
-    let lname := rawSrc (args.getD 0 #[])
-    -- premise: compatMarkerChecks — a top-level discard leaves the Doc without it
-    if ← docPreamble then
-      discard s!"\\selectlanguage\{{lname}}" "'\\begin{document}' selects the main language"
-        s!"selectlanguage:{lname}" pos
-      return some (#[], k)
-    let tag := Locale.babelTagOf lname
-    if (Locale.forTag tag).isNone then
-      say .W0368 s!"no locale for language '{lname}'; English captions \
-and patterns stand in" pos
-        (help := "the engine ships locale records for: en, fr, de")
-    -- Only a switch in the body moves the language `\enquote` reads its quotes through.
-    if (← get).inDoc then
-      write fun st => { st with mainLang := tag }
-    became s!"\\selectlanguage\{{lname}}" s!"the '{tag}' language attribute" pos
-    return some (#[.ctrl (Marker.name .lang tag) pos], k)
   | "foreignlanguage" =>
     let (_, j) := takeOpt raws start
     let (args, k) := takeGroups raws j 2
@@ -8279,18 +8237,6 @@ and patterns stand in" pos
     | some m => became s!"\\color[{m}]\{{value}}" s!"the {source} ink declaration" pos
     | none => became s!"\\color\{{value}}" s!"\\{value}" pos
     return some (#[.ctrl (Marker.name .ink source) pos], skipSpaces raws k)
-  | "vspace" =>
-    -- The star's zero rule goes before the space, keeping it at a page's top.
-    let starred := skipStar raws start != start
-    let start := skipStar raws start
-    let (_, j) := takeOpt raws start
-    let (args, k) := takeGroups raws j 1
-    let native := skipNative (skipSrc (lengthSrc (args.getD 0 #[])))
-    if starred then
-      became "\\vspace*" s!"a page-top anchor, then {native}" pos
-      return some (#[.ctrl vspaceAnchorMark pos] ++ (← synthAt native pos), k)
-    became "\\vspace" native pos
-    return some (← synthAt native pos, k)
   | "vskip" =>
     -- Unlike `\vspace`, `\vskip` leaves its own glue as the last skip (`kind = vskip`).
     if (← get).inDef then return none
@@ -8301,12 +8247,6 @@ and patterns stand in" pos
     let native := skipNative sp "vskip"
     became "\\vskip" native pos
     return some (← synthAt native pos, e)
-  | "pagebreak" =>
-    -- Every `\pagebreak` is taken whole; the demand level is not weighed.
-    let (opt, j) := takeOpt raws start
-    if opt.isSome then
-      say .N0102 "'\\pagebreak' demand levels are ignored: the break is taken" pos
-    return some (#[.ctrl "pagebreak" pos], j)
   | "varul" =>
     let mut j := skipSpaces raws start
     if let some (.word w _) := raws[j]? then
@@ -8332,198 +8272,6 @@ and patterns stand in" pos
     if rest then
       say .W0106 "code between '\\ExplSyntaxOn' and '\\ExplSyntaxOff' is not supported; skipped" pos
     return some (out, k)
-  | "setkomafont" =>
-    let (args, k) := takeGroups raws start 2
-    if h : args.size = 2 then
-      let element := rawSrc args[0]
-      if element == "disposition" then
-        -- KOMA's `disposition` is the base font of every sectioning level at once.
-        let native := "\\style{section}{ font = {...} }, per heading level"
-        became "\\setkomafont{disposition}" native pos
-        let mut out : Array Raw := #[]
-        for lvl in ["section", "subsection", "subsubsection"] do
-          let font : Raw := .group #[.word "font" pos, .space, .sym '=' pos, .space,
-            .group args[1] pos] pos
-          out := out ++ (← synthAt s!"\\style\{{lvl}}" pos).push font
-        return some (out, k)
-      else if Ir.styleableElements.contains element then
-        -- The font spec travels as a group, so its own idioms are still rewritten.
-        let native := s!"\\style\{{element}}"
-        became s!"\\setkomafont\{{element}}" (native ++ "{ font = {...} }") pos
-        let font : Raw := .group #[.word "font" pos, .space, .sym '=' pos, .space,
-          .group args[1] pos] pos
-        return some ((← synthAt native pos).push font, k)
-      else
-        say .W0111 s!"'\\setkomafont\{{element}}' names no styleable element; ignored" pos
-          (help := "\\style{element}{ font = {...} } styles the elements the engine draws")
-        return some (#[], k)
-    else return none
-  | "RedeclareSectionCommand" =>
-    let (opt, j) := takeOpt raws start
-    let (args, k) := takeGroups raws j 1
-    let element := rawSrc (args.getD 0 #[])
-    let mut keys : Array String := #[]
-    for e in KeyVal.items (opt.getD "") do
-      match KeyVal.entry e with
-      | ("beforeskip", some v) => keys := keys.push s!"before = {lengthOfTeX v}"
-      | ("afterskip", some v) => keys := keys.push s!"after = {lengthOfTeX v}"
-      | _ => pure ()
-    if !Ir.styleableElements.contains element then
-      say .W0111 s!"'\\RedeclareSectionCommand\{{element}}' names no styleable element; \
-ignored" pos
-        (help := "\\style{element}{ before = ..., after = ... } spaces the elements \
-the engine draws")
-      return some (#[], k)
-    if keys.isEmpty then
-      let dropped := (opt.getD "").trimAscii.toString
-      unless dropped.isEmpty do
-        say .W0101 s!"'\\RedeclareSectionCommand\{{element}}' entries without a \
-native equivalent were dropped: {dropped}" pos
-      return some (#[], k)
-    let native := s!"\\style\{{element}}\{ {String.intercalate ", " keys.toList} }"
-    became s!"\\RedeclareSectionCommand\{{element}}" native pos
-    return some (← synthAt native pos, k)
-  | "setlist" =>
-    let j0 := skipStar raws start
-    let (opt, j) := takeOpt raws j0
-    let (args, k) := takeGroups raws j 1
-    let scope := (opt.getD "").trimAscii.toString
-    let what := s!"\\setlist{if j0 != start then "*" else ""}{bracketed scope}"
-    -- premise: setlistChecks — a body declaration leaves no ink
-    if (← get).inDoc then
-      sayOnce "ctrl:setlist" .W0340 s!"'{what}' is read in the preamble; in the body it is ignored"
-        pos (help := "declare it in the preamble, before '\\begin{document}'")
-      return some (#[], k)
-    let (kinds, levels) := setlistScope scope
-    let kindsIn : List (Option String) :=
-      if kinds.isEmpty then [none] else (kinds.filter setlistKinds.contains).map some
-    let levelsIn : List (Option Nat) :=
-      if levels.isEmpty then [none] else (levels.filter fun l => 2 ≤ l && l ≤ 4).map some
-    let scopes := kindsIn.flatMap fun kd => levelsIn.map fun l => (kd, l)
-    -- The vertical keys' scopes are enumitem's own, each kind and level its element.
-    let vKindsIn : List (Option String) :=
-      if kinds.isEmpty then [none] else (kinds.filter Ir.listSetKinds.contains).map some
-    let vLevelsIn : List (Option Nat) :=
-      if levels.isEmpty then [none] else (levels.filter fun l => 1 ≤ l && l ≤ 4).map some
-    let vScopes := vKindsIn.flatMap fun kd => vLevelsIn.map fun l => (kd, l)
-    let items := KeyVal.items (rawSrc (args.getD 0 #[]))
-    let mut vertical : Array (String × String) := #[]
-    let mut styled : Array String := #[]
-    for e in items do
-      match ← listSpacingEntries what "\\setlist" e pos with
-      | some vs => for (key, v) in vs do vertical := Ir.redeclare vertical key v
-      | none => styled := styled.push e
-    -- The parts of the scope no element styles, each with what its keys would need.
-    let listHelp := "\\style{element}{ indent = ..., gap = ... } styles the lists the engine draws"
-    let firstHelp := "\\setlist[itemize]{...} styles every level of a kind, \\setlist[itemize,2]{...} \
-a deeper level apart"
-    let unstyled : List (String × String × String) :=
-      (kinds.filter (!setlistKinds.contains ·)).map (fun kd =>
-          (kd, s!"'{what}' for '{kd}' lists", listHelp)) ++
-        levels.filterMap fun l =>
-          if l == 1 then some ("1", s!"'{what}', a first level alone,", firstHelp)
-          else if l == 0 || 4 < l then some (toString l, s!"'{what}' at level {l}",
-            "lists nest four levels")
-          else none
-    let vUnstyled : List (String × String × String) :=
-      (kinds.filter (!Ir.listSetKinds.contains ·)).map (fun kd =>
-          (kd, s!"'{what}' for '{kd}' lists", "a list's spacing reads itemize, enumerate and \
-description scopes")) ++
-        levels.filterMap fun l =>
-          if l == 0 || 4 < l then some (toString l, s!"'{what}' at level {l}", "lists nest four levels")
-          else none
-    let mut entries : Array (String × String) := #[]
-    for e in styled do
-      if scopes.isEmpty then
-        let key := (KeyVal.entry e).1
-        unreadParam "\\setlist" key s!"'{what}' key '{key}'" pos
-          (help := ((unstyled.head?.map (·.2.2)).getD listHelp))
-        continue
-      match KeyVal.entry e with
-      | (key, some v) =>
-        if let some native := setlistLengthKeys.lookup key then
-          if v.contains '*' then
-            unreadParam "\\setlist" key s!"'{what}' key '{key}={v}'" pos
-              (help := "the widest label is not measured; give the margin a length")
-          else entries := Ir.redeclare entries native (lengthOfTeX v)
-        else if key == "label" then
-          let v := (KeyVal.rawEntry e).2.getD ""
-          if v.contains '*' then
-            unreadParam "\\setlist" "label" s!"'{what}' key 'label={v}', a label counting its items,"
-              pos (help := "a declared marker is the same on every item; the list keeps its numbering")
-          else entries := Ir.redeclare entries "marker" v
-        else unreadParam "\\setlist" key s!"'{what}' key '{key}'" pos
-      | (key, none) =>
-        unreadParam "\\setlist" key s!"'{what}' key '{key}'" pos
-    if vScopes.isEmpty then
-      for (key, _) in vertical do
-        unreadParam "\\setlist" key s!"'{what}' key '{key}'" pos
-          (help := ((vUnstyled.head?.map (·.2.2)).getD listHelp))
-    -- A scope part no element styles is named once, its keys standing for the parts styled.
-    unless scopes.isEmpty || styled.isEmpty do
-      for (name, part, help) in unstyled do
-        unreadParam "\\setlist" name part pos (help := help)
-    unless vScopes.isEmpty || vertical.isEmpty do
-      for (name, part, help) in vUnstyled do
-        unreadParam "\\setlist" name part pos (help := help)
-    let star := j0 != start
-    for sc in scopes do
-      write fun st =>
-        let old := ((st.setlists.find? (·.1 == sc)).map (·.2)).getD #[]
-        let new := if star then entries.foldl (fun a e => Ir.redeclare a e.1 e.2) old else entries
-        { st with setlists := Ir.redeclare st.setlists sc new }
-    -- A scope's vertical keys replace the ones it held, as enumitem's `\\setlist` replaces every key.
-    let mut spaced : Array (String × Array (String × String)) := #[]
-    unless star && vertical.isEmpty do
-      for sc in vScopes do
-        let old := (((← get).listSpacings.find? (·.1 == sc)).map (·.2)).getD #[]
-        let new := if star then vertical.foldl (fun a e => Ir.redeclare a e.1 e.2) old
-          else vertical
-        write fun st => { st with listSpacings := Ir.redeclare st.listSpacings sc new }
-        let cleared := (old.filter fun e => !new.any (·.1 == e.1)).map fun e => (e.1, "none")
-        unless new.isEmpty && cleared.isEmpty do
-          spaced := spaced.push (Ir.listSetElement sc, new ++ cleared)
-    let stored := (← get).setlists
-    let spacings := (← get).listSpacings
-    -- A kind's level is its own element once any scope declares through it.
-    let declaredLevels (kind : String) : List Nat := [2, 3, 4].filter fun l =>
-      stored.any (fun (sc, _) => sc == (some kind, some l) || sc == (none, some l)) ||
-        spacings.any (·.1 == (some kind, some l))
-    let styledTouched : List (String × Option Nat) := if styled.isEmpty then [] else
-      scopes.flatMap fun (kd, l) =>
-        (match kd with | some k => [k] | none => setlistKinds).flatMap fun k =>
-          match l with
-          | some n => [(k, some n)]
-          | none => (k, none) :: (declaredLevels k).map fun n => (k, some n)
-    -- A level element a spacing creates takes its kind's label and margin with it.
-    let spacedTouched : List (String × Option Nat) := vScopes.filterMap fun
-      | (some k, some n) =>
-        if setlistKinds.contains k && 2 ≤ n && n ≤ 4 &&
-            spaced.any (·.1 == setlistElement k (some n)) then some (k, some n)
-        else none
-      | _ => none
-    -- Each element's entries, the kind's style keys and the scope's spacing in one declaration.
-    let mut records : Array (String × Array (String × String)) := #[]
-    let touched := styledTouched ++ spacedTouched
-    for (kind, level) in touched do
-      let entriesAt := setlistRecord stored kind level
-      unless entriesAt.isEmpty do
-        records := Ir.redeclare records (setlistElement kind level) entriesAt
-    for (el, es) in spaced do
-      let held := ((records.find? (·.1 == el)).map (·.2)).getD #[]
-      records := Ir.redeclare records el (held ++ es)
-    let natives := records.map fun (el, es) =>
-      s!"\\style\{{el}}\{ {", ".intercalate (es.toList.map fun e => s!"{e.1} = {e.2}")} }"
-    if natives.isEmpty then return some (#[], k)
-    became what (String.join natives.toList) pos
-    let mut out : Array Raw := #[]
-    for native in natives do
-      out := out ++ (← synthAt native pos)
-    return some (out, k)
-  | "sectionlinesformat" =>
-    let (_, j) := takeOpt raws start
-    let (args, k) := takeGroups raws j 1
-    return some (← sectionRule (rawSrc (args.getD 0 #[])) pos, k)
   | "setmathfont" =>
     let (beforeRaws, j) := takeRawOpt raws start
     let (args, k) := takeGroups raws j 1
@@ -8545,11 +8293,6 @@ description scopes")) ++
     let native := s!"\\fonts\{ {dirPart}math = {Decl.quote family} }"
     became "\\setmathfont" native pos
     return some (← synthAt native pos, k)
-  | "unimathsetup" =>
-    let (args, k) := takeGroups raws start 1
-    if args.isEmpty then return none
-    let opts := rawSrc (args.getD 0 #[])
-    return some (← unicodeMathOptions s!"\\unimathsetup\{{opts}}" opts pos, k)
   | "def" | "edef" | "gdef" | "xdef" =>
     -- A plain `\def` with undelimited parameters declares exactly what `\define` declares.
     let expanding := name == "edef" || name == "xdef"
@@ -8951,14 +8694,6 @@ template around it; the engine's own {element} stands" pos
           (help := ((beamerNative.lookup "setbeamertemplate").getD "") ++
             "; \\allow{E0111} accepts the loss")
       return some (#[], k)
-  | "setbeamersize" | "tcbset" =>
-    let (args, k) := takeGroups raws start 1
-    if args.isEmpty then return none
-    for e in KeyVal.items (rawSrc (args.getD 0 #[])) do
-      let key := (KeyVal.entry e).1
-      unless key.isEmpty do
-        unreadParam s!"\\{name}" key s!"'\\{name}' key '{key}'" pos
-    return some (#[], k)
   | "maketitle" =>
     -- premise: titlePageChecks — under an article's titlepage the title stands above the text
     if (← get).titlePageAsked && !(← get).inDef then
@@ -8966,24 +8701,6 @@ template around it; the engine's own {element} stands" pos
         "'\\maketitle' sets the title above the text, where class option 'titlepage' gives it a \
 page of its own" pos (help := "\\begin{titlepage}...\\end{titlepage} sets a page of its own")
     return none
-  | "newcounter" =>
-    let (args, j) := takeGroups raws start 1
-    let (_, k) := takeOpt raws j
-    if args.isEmpty then return none
-    if ← paramArgs args then
-      unappliedParam "newcounter" "no counter is allocated" pos
-      return some (#[], k)
-    let counter := (rawSrc (args.getD 0 #[])).trimAscii.toString
-    -- premise: counterReadChecks — a counter's uses name what they lose
-    if (← get).countersRead.contains counter then
-      discard s!"\\newcounter\{{counter}}"
-        "the engine does not model counters, and each use names what it loses"
-        ("newcounter:" ++ counter) pos
-    else
-      sayOnce ("param:\\newcounter:" ++ counter) .W0104
-        s!"counter '{counter}' is allocated, but nothing in the document reads it; \
-'\\newcounter' changes nothing" pos (help := "use the counter where it should count, or drop it")
-    return some (#[], k)
   | "setbeamercolor" =>
     -- A later parent declaration changes its children, so nothing is flattened here.
     let j := skipStar raws start
@@ -8994,94 +8711,6 @@ page of its own" pos (help := "\\begin{titlepage}...\\end{titlepage} sets a page
       let marker := if j == skipSpaces raws start then BeamerColor.marker
         else BeamerColor.starMarker
       return some (#[.ctrl marker pos, .group args[0] pos, .group args[1] pos], k)
-    else return none
-  | "ensuremath" =>
-    let (args, j) := takeGroups raws start 1
-    if args.size != 1 then return none
-    return some (#[.ctrl name pos] ++ raws.extract start j, j)
-  | "mbox" | "makebox" =>
-    -- An hbox's geometry is not modelled, so its drop is named once and its content stays.
-    let (opts, widths) := match boxShape.lookup name with
-      | some (o, w) => (o, w)
-      | none => (0, 0)
-    let (declared, j) := takeOpts raws start opts
-    let (_, k) := takeGroups raws j widths
-    if declared || widths > 0 then
-      sayOnce ("ctrl:" ++ name) .W0104
-        s!"'\\{name}' width and alignment are dropped; its content is kept" pos
-        (help := "\\hfill spaces content apart; \\allow{W0104} accepts the drop")
-    became s!"\\{name}" "its content" pos
-    return some (#[], k)
-  | "setbeamerfont" =>
-    let j := skipStar raws start
-    let starred := j != start
-    let (args, k) := takeGroups raws j 2
-    if h : args.size = 2 then
-      let element := (rawSrc args[0]).trimAscii.toString
-      let source := rawSrc args[1]
-      let stored := (← get).beamerFonts.toList.lookup element |>.getD
-        (themeBlockFont (← get).beamerTheme element)
-      let previous := if starred then [] else stored
-      let fields := beamerFontUpdate previous source
-      unless element == "normal text" do
-        write fun st => { st with
-          beamerFonts := Ir.redeclare st.beamerFonts element fields
-          beamerCaptures := st.beamerCaptures + 1 }
-      match beamerFontElements.lookup element with
-      | none =>
-        if element == "normal text" then
-          sayOnce ("beamer:setbeamerfont:" ++ element) .W0104
-            s!"'\\setbeamerfont\{{element}}' sets the document's font, which is \
-not an element style; skipped" pos
-            (help := "\\fonts selects the document's families; \
-\\style{element}{ font = {...} } styles one element")
-        else
-          sayOnce ("beamer:setbeamerfont:" ++ element) .W0104
-            s!"'\\setbeamerfont\{{element}}' names a beamer font element the engine \
-has no styleable element for; skipped" pos
-            (help := beamerNative.lookup "setbeamerfont")
-        return some (#[], k)
-      | some (target, styleKey) =>
-        let updates := beamerFontUpdate [] source
-        for (key, value) in updates do
-          if key == "parent" then
-            sayOnce ("beamer:setbeamerfont:" ++ element ++ ":" ++ key) .W0104
-              (if target.endsWith "block" then
-                s!"'\\setbeamerfont\{{element}}' names its parents with '{key}'; the \
-engine's alerted and example block titles inherit the plain block title's font, and nothing \
-else, so only declared commands are taken"
-              else s!"'\\setbeamerfont\{{element}}' inherits with '{key}'; the engine has \
-no font inheritance, so only declared commands are taken") pos
-              (help := beamerNative.lookup "setbeamerfont")
-          else if key == "size*" && (braceGroups value).size != 2 then
-            sayOnce ("beamer:setbeamerfont:" ++ element ++ ":" ++ key) .W0104
-              s!"'\\setbeamerfont\{{element}}' needs two braced dimensions for 'size*'; \
-its value is skipped" pos
-              (help := "write size*={font size}{baseline distance}")
-          else if !beamerFontKeys.contains (beamerFontAxis key) then
-            sayOnce ("beamer:setbeamerfont:" ++ element ++ ":" ++ key) .W0104
-              s!"'\\setbeamerfont\{{element}}' key '{key}' is not a beamer font key; \
-its value is skipped" pos
-              (help := beamerNative.lookup "setbeamerfont")
-        -- premise: beamerTemplateChecks — an empty declared field clears that field
-        if starred || updates.any (fun e => beamerFontKeys.contains (beamerFontAxis e.1)) then
-          -- premise: beamerTemplateChecks — no native style escapes its scope
-          let written := s!"\\setbeamerfont{if starred then "*" else ""}\{{element}}"
-          if !(← get).inDoc && ((← get).inGroup || !(← get).beamerScopes.isEmpty) then
-            became written "local font fields" pos
-            return some (#[], k)
-          let cmds := beamerFontCommands (blockTitleFields element fields)
-          let alerted := "block title alerted"
-          let seed := themeBlockFont (← get).beamerTheme alerted
-          let own := if target == "block" && !seed.isEmpty &&
-              ((← get).beamerFonts.toList.lookup alerted).isNone then
-            s!" \\style\{alertblock}\{ font = \{{beamerFontCommands seed}} }" else ""
-          unless own.isEmpty do
-            write fun st => { st with beamerFonts := st.beamerFonts.push (alerted, seed) }
-          let native := s!"\\style\{{target}}\{ {styleKey} = \{{cmds}} }" ++ own
-          became written native pos
-          return some (← synthAt native pos, k)
-        else return some (#[], k)
     else return none
   | "tikz" =>
     -- `\tikz` is the `tikzpicture` with that body.
@@ -9096,22 +8725,6 @@ its value is skipped" pos
       became "\\tikz" "\\begin{tikzpicture}...\\end{tikzpicture}" pos
       return some (#[.env "tikzpicture" (opts ++ body) pos] ++ rest, k)
     | none => return none
-  | "columnratio" =>
-    let (args, j) := takeGroups raws start 1
-    let (right, k) := takeOpt raws j
-    if args.isEmpty then return none
-    let src := rawSrc (args.getD 0 #[])
-    if let some ratio := paracolRatio? src then
-      write fun st => { st with paracolRatio := ratio }
-    else
-      sayOnce "paracol:ratio" .W0104
-        s!"cannot read two-column ratio '{src}'; the previous ratio stands" pos
-        (help := "write one fraction between zero and one, like \\columnratio{0.35}")
-    if right.isSome then
-      sayOnce "paracol:right-ratio" .W0104
-        "'\\columnratio{...}[...]' declares a paired-page ratio; the same-page ratio is used" pos
-    became "\\columnratio" "the widths of the next two-column flow" pos
-    return some (#[], k)
   | "switchcolumn" =>
     -- premise: columnGeometryChecks — the flow consumes the switch as a column boundary
     if (← get).inParacol then return none
@@ -9129,43 +8742,6 @@ its value is skipped" pos
     became "\\parbox" "\\begin{minipage}{<width>}...\\end{minipage}" pos
     let widthGroup : Array Raw := #[.group (args[0]?.getD #[]) pos]
     return some (#[.env "minipage" (raws.extract start j ++ widthGroup ++ (args[1]?.getD #[])) pos], k)
-  | "usetheme" =>
-    let (opt, j) := takeOpt raws start
-    let (args, k) := takeGroups raws j 1
-    let tname := (rawSrc (args.getD 0 #[])).trimAscii.toString
-    let tname := themeAlias tname
-    let mut reseated : Array String := #[]
-    for (element, target, styleKey) in beamerFontElements do
-      let seed := themeBlockFont tname element
-      let some stored := (← get).beamerFonts.toList.lookup element | continue
-      if seed.isEmpty then continue
-      let fields := themeOver stored seed
-      write fun st => { st with
-        beamerFonts := Ir.redeclare st.beamerFonts element fields }
-      reseated := reseated.push
-        s!"\\style\{{target}}\{ {styleKey} = \{{beamerFontCommands (blockTitleFields element fields)}} }"
-    let native := String.intercalate " " (s!"\\theme\{{tname}}" :: reseated.toList)
-    became "\\usetheme" native pos
-    write fun st => { st with themeNamed := true }
-    if (Theme.find? tname).isSome then
-      write fun st => { st with themed := true, beamerTheme := tname }
-    let options ← themeOptions "\\usetheme" s!"\\usetheme\{{tname}}" tname (opt.getD "") pos
-    return some ((← synthAt native pos) ++ options, k)
-  | "molochset" =>
-    let (args, k) := takeGroups raws start 1
-    if h : args.size = 1 then
-      return some (← molochOptions s!"\\{name}" (rawSrc args[0]) pos, k)
-    else return none
-  | "titlegraphic" =>
-    let (args, k) := takeGroups raws start 1
-    if (rawSrc (args.getD 0 #[])).trimAscii.toString.isEmpty then
-      sayOnce "beamer:titlegraphic" .W0104
-        "'\\titlegraphic{}' clears beamer configuration the engine does not have; skipped" pos
-    else
-      say .E0112
-        "'\\titlegraphic' declares title-page content the engine does not place; the content is dropped" pos
-        (help := "\\logo places an image on running pages; \\allow{E0112} accepts the loss")
-    return some (#[], k)
   | "multicolumn" =>
     -- premise: multicolumnSpanChecks — the tabular arm sets what this keeps
     if (← get).tableTop || ((← get).defTop && skipSpaces raws 0 + 1 == start) then
@@ -9178,98 +8754,6 @@ its value is skipped" pos
         (help := multicolumnMisplacedHelp)
       return some (#[], j)
     | _, _ => return none
-  | "usefonttheme" =>
-    -- `professionalfonts` asks for the engine's only behaviour, so it is agreement.
-    let (_, j) := takeOpt raws start
-    let (args, k) := takeGroups raws j 1
-    if (rawSrc (args.getD 0 #[])).trimAscii.toString == "professionalfonts" then
-      discard "\\usefonttheme{professionalfonts}"
-        "the engine always uses the declared fonts" "usefonttheme" pos
-    else
-      sayOnce "beamer:usefonttheme" .W0104
-        "'\\usefonttheme' is beamer configuration the engine does not have; skipped" pos
-        (help := beamerNative.lookup "usefonttheme")
-    return some (#[], k)
-  | "setbeameroption" =>
-    -- `hide notes` asks for what `\note` already is here.
-    let (_, j) := takeOpt raws start
-    let (args, k) := takeGroups raws j 1
-    if (rawSrc (args.getD 0 #[])).trimAscii.toString == "hide notes" then
-      discard "\\setbeameroption{hide notes}"
-        "notes never enter the delivered pages" "setbeameroption" pos
-    else
-      sayOnce "beamer:setbeameroption" .W0104
-        "'\\setbeameroption' is beamer configuration the engine does not have; skipped" pos
-        (help := "a theme is a token bundle here: \\theme selects one, and \\palette \
-and \\tokens declare the design directly")
-    return some (#[], k)
-  | "setbeamercovered" =>
-    let (args, k) := takeGroups raws start 1
-    let src := (rawSrc (args.getD 0 #[])).trimAscii.toString
-    -- beamerbaseoverlay.sty: `invisible` hides, `transparent` keeps 15% unless given a share.
-    let pct? : Option Nat := match KeyVal.entry src with
-      | ("invisible", none) => some 0
-      | ("transparent", none) => some Ir.transparentShare
-      | ("transparent", some v) => v.toNat?
-      | ("dynamic", none) => some Ir.dynamicShare
-      | ("highly dynamic", none) => some Ir.highlyDynamicShare
-      | _ => none
-    match pct? with
-    | some n =>
-      let native := s!"\\palette\{ covered = {min n 99}\\% }"
-      if 99 < n then
-        sayOnce ("param:setbeamercovered:" ++ src) .W0109
-          s!"'\\setbeamercovered\{{src}}' asks for undimmed covered content; it covers at the \
-largest share the engine sets" pos
-          (help := "\\palette{ covered = <n>% } sets the covered share") (detail := some "99%")
-      else if src.startsWith "dynamic" || src.startsWith "highly dynamic" then
-        sayOnce ("param:setbeamercovered:" ++ src) .W0109
-          s!"'\\setbeamercovered\{{src}}' fades each step by its distance; every pending step \
-covers at its next steps' share" pos
-          (help := "\\palette{ covered = <n>% } sets the covered share") (detail := some s!"{n}%")
-      else became "\\setbeamercovered" native pos
-      return some (← synthAt native pos, k)
-    | none =>
-      sayOnce ("param:setbeamercovered:" ++ src) .W0104
-        s!"'\\setbeamercovered\{{src}}' is not modelled; covered content keeps the share in force, \
-hidden unless one is declared" pos
-        (help := "\\palette{ covered = <n>% } sets the covered share; 'invisible', 'transparent' \
-and 'transparent=<n>' are understood")
-      return some (#[], k)
-  | "inputencoding" =>
-    -- A file reads in one encoding, so a switch to the encoding in force changes nothing.
-    let (args, k) := takeGroups raws start 1
-    let arg := (rawSrc (args.getD 0 #[])).trimAscii.toString
-    if Encoding.sameEncoding arg ((← get).inputenc.getD "utf8") then
-      -- premise: inputDecodingChecks — a switch to the encoding in force ships the page without it
-      discard s!"\\inputencoding\{{arg}}" "the file already reads in that encoding"
-        ("inputencoding:" ++ arg) pos
-    else
-      sayOnce ("inputencoding:" ++ arg) .W0104
-        s!"'\\inputencoding\{{arg}}' is not applied: each file reads in one encoding throughout"
-        pos (help := s!"save the file in one encoding, UTF-8 best, and delete \
-'\\inputencoding\{{arg}}'")
-    return some (#[], k)
-  | "KOMAoptions" =>
-    let (args, k) := takeGroups raws start 1
-    let entries := (KeyVal.items (rawSrc (args.getD 0 #[]))).toList
-    if entries.any fun e => (KeyVal.entry e).1 == "fontsize" then
-      write fun st => { st with strutSkip := none }
-    let satisfied (e : String) : Bool :=
-      match KeyVal.entry e with
-      | (key, some v) => (key == "headsepline" || key == "footsepline")
-          && (v == "false" || v == "off" || v == "no")
-      | _ => false
-    let dropped := entries.filter (!satisfied ·)
-    if dropped.isEmpty then
-      unless entries.isEmpty do
-        discard "\\KOMAoptions" "no head or foot separation rule is drawn" "KOMAoptions" pos
-    else
-      for e in dropped do
-        unreadParam "KOMAoptions" (KeyVal.entry e).1 s!"'\\KOMAoptions' entry '{e}'" pos
-    return some (#[], k)
-  | "graphcolor" => blueprintGraphColorArm pos raws start
-  | "home" | "github" | "dochome" => blueprintSiteArm name pos raws start
   | _ =>
     -- `\begin{document}` runs `\normalsize`, so a preamble size command sets nothing kept.
     if (Ir.sizeScale.lookup name).isSome && (← docPreamble) then
@@ -9717,35 +9201,6 @@ private theorem rewritePackages_external_exact (name : String)
 private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
     (start : Nat) : M (Option (Array Raw × Nat)) := do
   match name with
-  | "usepackage" | "RequirePackage" =>
-    -- `\RequirePackage` is `\usepackage`; replacement text is stored, not a load.
-    if (← get).inDef then return none
-    if (← get).inDoc then
-      -- In the body `\usepackage` is a placement defect, whatever the package's support.
-      let (_, j) := takeOpt raws start
-      let (_, k) := takeGroups raws j 1
-      sayOnce ("ctrl:" ++ name) .W0340
-        s!"'\\{name}' is a preamble declaration; in the body it is ignored" pos
-        (help := "load the package in the preamble, before '\\begin{document}'")
-      return some (#[], k)
-    let (opt, j) := takeOpt raws start
-    let (args, k) := takeGroups raws j 1
-    if args.isEmpty then return none
-    let pkgs := (rawSrc (args.getD 0 #[])).splitOn "," |>.map (·.trimAscii.toString)
-    let out ← rewritePackages name pkgs opt pos
-    return some (out, k)
-  | "PassOptionsToPackage" | "PassOptionsToClass" =>
-    if (← get).inDef then return none
-    let (args, k) := takeGroups raws start 2
-    if args.size != 2 then return none
-    let options := (PackageImports.literalOptions (rawSrc (args.getD 0 #[]))).toArray
-    let packages := optionItems (rawSrc (args.getD 1 #[]))
-    write fun st => { st with loads := if name == "PassOptionsToClass" then
-      { st.loads with
-        rewriteClassPassed := st.loads.rewriteClassPassed ++ packages.map (·, options) }
-      else { st.loads with rewritePassed := st.loads.rewritePassed ++ packages.map (·, options) } }
-    discard s!"\\{name}\{...}\{...}" "load options are recorded" name pos
-    return some (#[], k)
   | "documentclass" =>
     let (opt, j) := takeOpt raws start
     let (args, k) := takeGroups raws j 1
@@ -9853,8 +9308,8 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
     if (← get).inDoc then
       if let some c := declared then
         sayOnce ("ctrl:" ++ name) .W0340
-          s!"'\\{name}' is a declaration; in the body it is ignored, and '\\{c}' selects no family" pos
-          (help := "declare it in the preamble, before '\\begin{document}'")
+          (Diag.bodyDeclaration name ++ s!", and '\\{c}' selects no family") pos
+          (help := Diag.declareInPreamble)
         return some ((← synthAt s!"\\define \\{c}() " pos) ++ #[Raw.group #[] pos], k)
     let slot := match name, declared with
       | _, some c => "family." ++ c
@@ -9908,91 +9363,7 @@ face serves every language, so the binding is dropped" pos
       let switch := (← synthAt s!"\\define \\{c}() " pos) ++
         #[Raw.group #[Raw.ctrl (Marker.name .family (toString slot)) pos] pos]
       return some (fonts ++ switch, k)
-  | "definecolor" =>
-    let (args, k) := takeGroups raws start 3
-    if h : args.size = 3 then
-      if ← paramArgs args then
-        unappliedParam "definecolor" "the colour is not defined" pos
-        return some (#[], k)
-      let n := rawSrc args[0]
-      let model := rawSrc args[1]
-      let modeled := modeledColorSource (some model) (rawSrc args[2])
-      unless nativeName n && oneEntry modeled do
-        say .W0102 s!"'\\definecolor\{{n}}' gives a name or a value no palette entry spells; \
-the colour is not defined" pos (help := "name the colour with ASCII letters, digits, '.' or '_'")
-        return some (#[], k)
-      let native := s!"\\palette\{ {n} = {modeled} }"
-      let carried := s!"\\palette\{ {n} = {Decl.xcolorDefinitionPrefix}{modeled} }"
-      became s!"\\definecolor\{{n}}" native pos
-      return some (← synthAt carried pos, k)
-    else return none
   | "definespotcolor" => defineSpotColor raws start pos
-  | "definecolorspace" => defineColorspace raws start pos
-  | "colorlet" =>
-    let (args, k) := takeGroups raws start 2
-    if h : args.size = 2 then
-      if ← paramArgs args then
-        unappliedParam "colorlet" "the colour is not defined" pos
-        return some (#[], k)
-      -- xcolor's `.` names the current colour, black in the preamble.
-      let src := if (rawSrc args[1]).trimAscii.toString == "." then "#000000"
-        else rawSrc args[1]
-      unless nativeName (rawSrc args[0]) && oneEntry src do
-        say .W0102 s!"'\\colorlet\{{rawSrc args[0]}}' gives a name or a colour no palette entry \
-spells; the colour is not defined" pos (help := "name the colour with ASCII letters, digits, '.' or '_'")
-        return some (#[], k)
-      let native := s!"\\palette\{ {rawSrc args[0]} = {src} }"
-      let carried := s!"\\palette\{ {rawSrc args[0]} = {Decl.xcolorDefinitionPrefix}{src} }"
-      became "\\colorlet" native pos
-      return some (← synthAt carried pos, k)
-    else return none
-  | "pagecolor" =>
-    let (model, j) := takeOpt raws start
-    let (args, k) := takeGroups raws j 1
-    if h : args.size = 1 then
-      let value := modeledColorSource model (rawSrc args[0])
-      return some (← pageColor value pos, k)
-    else return none
-  | "geometry" | "newgeometry" =>
-    -- The command forms take the same keys the package options carry.
-    let (args, k) := takeGroups raws start 1
-    if args.isEmpty then return none
-    return some (← geometry (rawSrc (args.getD 0 #[])) pos s!"\\{name}", k)
-  | "crop" =>
-    -- A bare `\crop` is `[cam,noaxes]`, the command's own default argument.
-    let (opt, k) := takeOpt raws start
-    return some (← crop (opt.getD "cam,noaxes") pos "\\crop" "crop", k)
-  | "microtypesetup" =>
-    -- microtype's `protrusion`, `expansion` and `activate` reach the native gates.
-    let (args, k) := takeGroups raws start 1
-    if args.isEmpty then return none
-    let mut keys : Array String := #[]
-    let mut dropped : Array String := #[]
-    for e in KeyVal.items (rawSrc (args.getD 0 #[])) do
-      let (key, v) := KeyVal.entry e
-      let v := v.getD ""
-      let native := if key == "activate" then ["protrusion", "expansion"]
-        else if key == "protrusion" || key == "expansion" then [key]
-        else []
-      if native.isEmpty then
-        if !key.isEmpty then dropped := dropped.push key
-      else
-        match v with
-        | "" | "true" | "compatibility" | "nocompatibility" =>
-          keys := keys ++ (native.map (s!"{·} = on")).toArray
-        | "false" => keys := keys ++ (native.map (s!"{·} = off")).toArray
-        | _ => dropped := dropped.push key
-    for k in dropped do
-      unreadParam "microtypesetup" (KeyVal.entry k).1 s!"microtype key '{k}'" pos
-    if keys.isEmpty then return some (#[], k)
-    let native := s!"\\page\{ {String.intercalate ", " keys.toList} }"
-    became "\\microtypesetup" native pos
-    return some (← synthAt native pos, k)
-  | "DocumentMetadata" =>
-    let (args, k) := takeGroups raws start 1
-    if h : args.size = 1 then
-      return some (← documentMetadata (rawSrc args[0]) pos, k)
-    else return none
   | "pdfvariable" | "pdfpageattr" =>
     let some k := pageAttrEnd raws (start - 1) | return none
     let st ← get
@@ -10001,62 +9372,6 @@ spells; the colour is not defined" pos (help := "name the colour with ASCII lett
       | _ => none
     let some (text, keep) := pageAttrText look (raws.extract (start - 1) k) | return none
     pageAttrBoxes text keep s!"\\{name} pageattr" pos
-    return some (#[], k)
-  | "AddToHook" =>
-    let (hookArgs, j) := takeGroups raws start 1
-    let (_, j) := takeOpt raws j
-    let (codeArgs, k) := takeGroups raws j 1
-    let hook := rawSrc (hookArgs.getD 0 #[])
-    if hook == "shipout/background" || hook == "shipout/foreground" then
-      let st ← get
-      let look (n : String) : Option (Array Raw) := match st.binds[n]? with
-        | some (some v) => if v.arity == 0 then some v.raws else none
-        | _ => none
-      let lengths := (Array.range start).filterMap fun i => match raws[i]? with
-        | some (Raw.ctrl "newlength" _) => (takeGroups raws (i + 1) 1).1[0]?.bind ctrlName
-        | _ => none
-      match shipoutRules look lengths (codeArgs.getD 0 #[]) with
-      | some rules =>
-        let key := if hook == "shipout/foreground" then "front-rule" else "rule"
-        let entries := rules.map fun (x, y, w, h, c) => s!"{key} = {Decl.quote s!"{x}; {y}; {w}; {h}; {c}"}"
-        let native := s!"\\page\{ {String.intercalate ", " entries.toList} }"
-        became s!"\\AddToHook\{{hook}}" native pos
-        return some (← synthAt native pos, k)
-      | none => pure ()
-    if hook == "shipout/before" then
-      let st ← get
-      let look (n : String) : Option (Array Raw) := match st.binds[n]? with
-        | some (some v) => if v.arity == 0 then some v.raws else none
-        | _ => none
-      if let some (text, keep) := pageAttrText look (codeArgs.getD 0 #[]) then
-        pageAttrBoxes text keep s!"\\AddToHook\{{hook}}" pos
-        return some (#[], k)
-    addToHook pos
-    return some (#[], k)
-  | "setcounter" | "addtocounter" | "stepcounter" | "refstepcounter" =>
-    -- premise: counterChecks — a preamble counter numbers the body as at its start
-    if !(← docPreamble) then return none
-    let n := if name == "setcounter" || name == "addtocounter" then 2 else 1
-    let (args, k) := takeGroups raws start n
-    if args.size < n then return none
-    let st ← get
-    let cmd := raws.extract (start - 1) k
-    let cmd := if st.file == st.docFile then cmd
-      else #[Raw.env (Parse.inputEnv st.file) cmd pos]
-    write fun st => { st with preCounters := st.preCounters ++ cmd }
-    return some (#[], k)
-  | "newlength" =>
-    -- `\newlength{\x}` allocates a length register at 0pt.
-    let (args, k) := takeGroups raws start 1
-    let some n := ctrlName (args.getD 0 #[]) | return none
-    return some (← setLength n "0pt" s!"\\newlength\{\\{n}}" pos, k)
-  | "newdimen" =>
-    -- `\newdimen\x` allocates a register only block templates read, so it is no native token.
-    let (args, k) := takeGroups raws start 1
-    let some n := ctrlName (args.getD 0 #[]) | return none
-    write fun st => { st with
-      allocated := if st.allocated.contains n then st.allocated else st.allocated.push n }
-    discard s!"\\newdimen\\{n}" "a register only the block templates assign and read" "newdimen" pos
     return some (#[], k)
   | "setlength" =>
     let (args, k) := takeGroups raws start 2
@@ -10246,57 +9561,368 @@ baselineskip = {milliStr ld}pt }" ++
       became s!"\\{name}\{\\{cmd}}" (native ++ " {...}") pos
     write fun st => { st with bodyNext := 1, quietNext := st.templateCode.contains cmd }
     return some (← synthAt native pos, j)
-  | "DeclareMathOperator" =>
+  | _ => rewriteCtrlLater name pos raws start
+
+private def lowerBeamerFont (c : CtrlCall) : M (Array Raw) := do
+  let pos := c.pos
+  let starred := (c.given 0).isSome
+  let element := (c.src 1).trimAscii.toString
+  let source := c.src 2
+  let stored := (← get).beamerFonts.toList.lookup element |>.getD
+    (themeBlockFont (← get).beamerTheme element)
+  let previous := if starred then [] else stored
+  let fields := beamerFontUpdate previous source
+  unless element == "normal text" do
+    write fun st => { st with
+      beamerFonts := Ir.redeclare st.beamerFonts element fields
+      beamerCaptures := st.beamerCaptures + 1 }
+  match beamerFontElements.lookup element with
+  | none =>
+    if element == "normal text" then
+      sayOnce ("beamer:setbeamerfont:" ++ element) .W0104
+        s!"'\\setbeamerfont\{{element}}' sets the document's font, which is \
+not an element style; skipped" pos
+        (help := "\\fonts selects the document's families; \
+\\style{element}{ font = {...} } styles one element")
+    else
+      sayOnce ("beamer:setbeamerfont:" ++ element) .W0104
+        s!"'\\setbeamerfont\{{element}}' names a beamer font element the engine \
+has no styleable element for; skipped" pos
+        (help := beamerNative.lookup "setbeamerfont")
+    return #[]
+  | some (target, styleKey) =>
+    let updates := beamerFontUpdate [] source
+    for (key, value) in updates do
+      if key == "parent" then
+        sayOnce ("beamer:setbeamerfont:" ++ element ++ ":" ++ key) .W0104
+          (if target.endsWith "block" then
+            s!"'\\setbeamerfont\{{element}}' names its parents with '{key}'; the \
+engine's alerted and example block titles inherit the plain block title's font, and nothing \
+else, so only declared commands are taken"
+          else s!"'\\setbeamerfont\{{element}}' inherits with '{key}'; the engine has \
+no font inheritance, so only declared commands are taken") pos
+          (help := beamerNative.lookup "setbeamerfont")
+      else if key == "size*" && (braceGroups value).size != 2 then
+        sayOnce ("beamer:setbeamerfont:" ++ element ++ ":" ++ key) .W0104
+          s!"'\\setbeamerfont\{{element}}' needs two braced dimensions for 'size*'; \
+its value is skipped" pos
+          (help := "write size*={font size}{baseline distance}")
+      else if !beamerFontKeys.contains (beamerFontAxis key) then
+        sayOnce ("beamer:setbeamerfont:" ++ element ++ ":" ++ key) .W0104
+          s!"'\\setbeamerfont\{{element}}' key '{key}' is not a beamer font key; \
+its value is skipped" pos
+          (help := beamerNative.lookup "setbeamerfont")
+    -- premise: beamerTemplateChecks — an empty declared field clears that field
+    if starred || updates.any (fun e => beamerFontKeys.contains (beamerFontAxis e.1)) then
+      -- premise: beamerTemplateChecks — no native style escapes its scope
+      let written := s!"\\setbeamerfont{if starred then "*" else ""}\{{element}}"
+      if !(← get).inDoc && ((← get).inGroup || !(← get).beamerScopes.isEmpty) then
+        became written "local font fields" pos
+        return #[]
+      let cmds := beamerFontCommands (blockTitleFields element fields)
+      let alerted := "block title alerted"
+      let seed := themeBlockFont (← get).beamerTheme alerted
+      let own := if target == "block" && !seed.isEmpty &&
+          ((← get).beamerFonts.toList.lookup alerted).isNone then
+        s!" \\style\{alertblock}\{ font = \{{beamerFontCommands seed}} }" else ""
+      unless own.isEmpty do
+        write fun st => { st with beamerFonts := st.beamerFonts.push (alerted, seed) }
+      let native := s!"\\style\{{target}}\{ {styleKey} = \{{cmds}} }" ++ own
+      became written native pos
+      synthAt native pos
+    else return #[]
+
+private def lowerSetList (c : CtrlCall) : M (Array Raw) := do
+  let pos := c.pos
+  let star := (c.given 0).isSome
+  let scope := ((c.optSrc 1).getD "").trimAscii.toString
+  let what := s!"\\setlist{if star then "*" else ""}{bracketed scope}"
+  let (kinds, levels) := setlistScope scope
+  let kindsIn : List (Option String) :=
+    if kinds.isEmpty then [none] else (kinds.filter setlistKinds.contains).map some
+  let levelsIn : List (Option Nat) :=
+    if levels.isEmpty then [none] else (levels.filter fun l => 2 ≤ l && l ≤ 4).map some
+  let scopes := kindsIn.flatMap fun kd => levelsIn.map fun l => (kd, l)
+  -- The vertical keys' scopes are enumitem's own, each kind and level its element.
+  let vKindsIn : List (Option String) :=
+    if kinds.isEmpty then [none] else (kinds.filter Ir.listSetKinds.contains).map some
+  let vLevelsIn : List (Option Nat) :=
+    if levels.isEmpty then [none] else (levels.filter fun l => 1 ≤ l && l ≤ 4).map some
+  let vScopes := vKindsIn.flatMap fun kd => vLevelsIn.map fun l => (kd, l)
+  let items := KeyVal.items (c.src 2)
+  let mut vertical : Array (String × String) := #[]
+  let mut styled : Array String := #[]
+  for e in items do
+    match ← listSpacingEntries what "\\setlist" e pos with
+    | some vs => for (key, v) in vs do vertical := Ir.redeclare vertical key v
+    | none => styled := styled.push e
+  -- The parts of the scope no element styles, each with what its keys would need.
+  let listHelp := "\\style{element}{ indent = ..., gap = ... } styles the lists the engine draws"
+  let firstHelp := "\\setlist[itemize]{...} styles every level of a kind, \\setlist[itemize,2]{...} \
+a deeper level apart"
+  let unstyled : List (String × String × String) :=
+    (kinds.filter (!setlistKinds.contains ·)).map (fun kd =>
+        (kd, s!"'{what}' for '{kd}' lists", listHelp)) ++
+      levels.filterMap fun l =>
+        if l == 1 then some ("1", s!"'{what}', a first level alone,", firstHelp)
+        else if l == 0 || 4 < l then some (toString l, s!"'{what}' at level {l}",
+          "lists nest four levels")
+        else none
+  let vUnstyled : List (String × String × String) :=
+    (kinds.filter (!Ir.listSetKinds.contains ·)).map (fun kd =>
+        (kd, s!"'{what}' for '{kd}' lists", "a list's spacing reads itemize, enumerate and \
+description scopes")) ++
+      levels.filterMap fun l =>
+        if l == 0 || 4 < l then some (toString l, s!"'{what}' at level {l}", "lists nest four levels")
+        else none
+  let mut entries : Array (String × String) := #[]
+  for e in styled do
+    if scopes.isEmpty then
+      let key := (KeyVal.entry e).1
+      unreadParam "\\setlist" key s!"'{what}' key '{key}'" pos
+        (help := ((unstyled.head?.map (·.2.2)).getD listHelp))
+      continue
+    match KeyVal.entry e with
+    | (key, some v) =>
+      if let some native := setlistLengthKeys.lookup key then
+        if v.contains '*' then
+          unreadParam "\\setlist" key s!"'{what}' key '{key}={v}'" pos
+            (help := "the widest label is not measured; give the margin a length")
+        else entries := Ir.redeclare entries native (lengthOfTeX v)
+      else if key == "label" then
+        let v := (KeyVal.rawEntry e).2.getD ""
+        if v.contains '*' then
+          unreadParam "\\setlist" "label" s!"'{what}' key 'label={v}', a label counting its items,"
+            pos (help := "a declared marker is the same on every item; the list keeps its numbering")
+        else entries := Ir.redeclare entries "marker" v
+      else unreadParam "\\setlist" key s!"'{what}' key '{key}'" pos
+    | (key, none) =>
+      unreadParam "\\setlist" key s!"'{what}' key '{key}'" pos
+  if vScopes.isEmpty then
+    for (key, _) in vertical do
+      unreadParam "\\setlist" key s!"'{what}' key '{key}'" pos
+        (help := ((vUnstyled.head?.map (·.2.2)).getD listHelp))
+  -- A scope part no element styles is named once, its keys standing for the parts styled.
+  unless scopes.isEmpty || styled.isEmpty do
+    for (name, part, help) in unstyled do
+      unreadParam "\\setlist" name part pos (help := help)
+  unless vScopes.isEmpty || vertical.isEmpty do
+    for (name, part, help) in vUnstyled do
+      unreadParam "\\setlist" name part pos (help := help)
+  for sc in scopes do
+    write fun st =>
+      let old := ((st.setlists.find? (·.1 == sc)).map (·.2)).getD #[]
+      let new := if star then entries.foldl (fun a e => Ir.redeclare a e.1 e.2) old else entries
+      { st with setlists := Ir.redeclare st.setlists sc new }
+  -- A scope's vertical keys replace the ones it held, as enumitem's `\\setlist` replaces every key.
+  let mut spaced : Array (String × Array (String × String)) := #[]
+  unless star && vertical.isEmpty do
+    for sc in vScopes do
+      let old := (((← get).listSpacings.find? (·.1 == sc)).map (·.2)).getD #[]
+      let new := if star then vertical.foldl (fun a e => Ir.redeclare a e.1 e.2) old
+        else vertical
+      write fun st => { st with listSpacings := Ir.redeclare st.listSpacings sc new }
+      let cleared := (old.filter fun e => !new.any (·.1 == e.1)).map fun e => (e.1, "none")
+      unless new.isEmpty && cleared.isEmpty do
+        spaced := spaced.push (Ir.listSetElement sc, new ++ cleared)
+  let stored := (← get).setlists
+  let spacings := (← get).listSpacings
+  -- A kind's level is its own element once any scope declares through it.
+  let declaredLevels (kind : String) : List Nat := [2, 3, 4].filter fun l =>
+    stored.any (fun (sc, _) => sc == (some kind, some l) || sc == (none, some l)) ||
+      spacings.any (·.1 == (some kind, some l))
+  let styledTouched : List (String × Option Nat) := if styled.isEmpty then [] else
+    scopes.flatMap fun (kd, l) =>
+      (match kd with | some k => [k] | none => setlistKinds).flatMap fun k =>
+        match l with
+        | some n => [(k, some n)]
+        | none => (k, none) :: (declaredLevels k).map fun n => (k, some n)
+  -- A level element a spacing creates takes its kind's label and margin with it.
+  let spacedTouched : List (String × Option Nat) := vScopes.filterMap fun
+    | (some k, some n) =>
+      if setlistKinds.contains k && 2 ≤ n && n ≤ 4 &&
+          spaced.any (·.1 == setlistElement k (some n)) then some (k, some n)
+      else none
+    | _ => none
+  -- Each element's entries, the kind's style keys and the scope's spacing in one declaration.
+  let mut records : Array (String × Array (String × String)) := #[]
+  let touched := styledTouched ++ spacedTouched
+  for (kind, level) in touched do
+    let entriesAt := setlistRecord stored kind level
+    unless entriesAt.isEmpty do
+      records := Ir.redeclare records (setlistElement kind level) entriesAt
+  for (el, es) in spaced do
+    let held := ((records.find? (·.1 == el)).map (·.2)).getD #[]
+    records := Ir.redeclare records el (held ++ es)
+  let natives := records.map fun (el, es) =>
+    s!"\\style\{{el}}\{ {", ".intercalate (es.toList.map fun e => s!"{e.1} = {e.2}")} }"
+  if natives.isEmpty then return #[]
+  became what (String.join natives.toList) pos
+  let mut out : Array Raw := #[]
+  for native in natives do
+    out := out ++ (← synthAt native pos)
+  return out
+
+/-- A registered control's lowering over its arguments. -/
+private def lowerCall (c : CtrlCall) : Lowering → M (Array Raw)
+  | .packages =>
+    rewritePackages c.name ((c.src 1).splitOn "," |>.map (·.trimAscii.toString)) (c.optSrc 0) c.pos
+  | .passOptions => do
+    let options := (PackageImports.literalOptions (c.src 0)).toArray
+    let packages := optionItems (c.src 1)
+    write fun st => { st with loads := if c.name == "PassOptionsToClass" then
+      { st.loads with
+        rewriteClassPassed := st.loads.rewriteClassPassed ++ packages.map (·, options) }
+      else { st.loads with rewritePassed := st.loads.rewritePassed ++ packages.map (·, options) } }
+    discard s!"\\{c.name}\{...}\{...}" "load options are recorded" c.name c.pos
+    return #[]
+  | .defineColor => do
+    let n := c.src 0
+    let modeled := modeledColorSource (some (c.src 1)) (c.src 2)
+    unless nativeName n && oneEntry modeled do
+      say .W0102 s!"'\\definecolor\{{n}}' gives a name or a value no palette entry spells; \
+the colour is not defined" c.pos (help := "name the colour with ASCII letters, digits, '.' or '_'")
+      return #[]
+    let native := s!"\\palette\{ {n} = {modeled} }"
+    let carried := s!"\\palette\{ {n} = {Decl.xcolorDefinitionPrefix}{modeled} }"
+    became s!"\\definecolor\{{n}}" native c.pos
+    synthAt carried c.pos
+  | .colorLet => do
+    -- xcolor's `.` names the current colour, black in the preamble.
+    let src := if (c.src 1).trimAscii.toString == "." then "#000000" else c.src 1
+    unless nativeName (c.src 0) && oneEntry src do
+      say .W0102 s!"'\\colorlet\{{c.src 0}}' gives a name or a colour no palette entry \
+spells; the colour is not defined" c.pos (help := "name the colour with ASCII letters, digits, '.' or '_'")
+      return #[]
+    let native := s!"\\palette\{ {c.src 0} = {src} }"
+    let carried := s!"\\palette\{ {c.src 0} = {Decl.xcolorDefinitionPrefix}{src} }"
+    became "\\colorlet" native c.pos
+    synthAt carried c.pos
+  | .pageColor => pageColor (modeledColorSource (c.optSrc 0) (c.src 1)) c.pos
+  | .geometry =>
+    -- The command forms take the same keys the package options carry.
+    geometry (c.src 0) c.pos s!"\\{c.name}"
+  | .crop =>
+    -- A bare `\crop` is `[cam,noaxes]`, the command's own default argument.
+    crop ((c.optSrc 0).getD "cam,noaxes") c.pos "\\crop" "crop"
+  | .microtypeSetup => do
+    -- microtype's `protrusion`, `expansion` and `activate` reach the native gates.
+    let mut keys : Array String := #[]
+    let mut dropped : Array String := #[]
+    for e in KeyVal.items (c.src 0) do
+      let (key, v) := KeyVal.entry e
+      let v := v.getD ""
+      let native := if key == "activate" then ["protrusion", "expansion"]
+        else if key == "protrusion" || key == "expansion" then [key]
+        else []
+      if native.isEmpty then
+        if !key.isEmpty then dropped := dropped.push key
+      else
+        match v with
+        | "" | "true" | "compatibility" | "nocompatibility" =>
+          keys := keys ++ (native.map (s!"{·} = on")).toArray
+        | "false" => keys := keys ++ (native.map (s!"{·} = off")).toArray
+        | _ => dropped := dropped.push key
+    for k in dropped do
+      unreadParam "microtypesetup" (KeyVal.entry k).1 s!"microtype key '{k}'" c.pos
+    if keys.isEmpty then return #[]
+    let native := s!"\\page\{ {String.intercalate ", " keys.toList} }"
+    became "\\microtypesetup" native c.pos
+    synthAt native c.pos
+  | .documentMetadata => documentMetadata (c.src 0) c.pos
+  | .defineColorspace => do
+    say .W0104 s!"'\\definecolorspace\{{c.src 1}}' declares a DeviceN or \
+ICC-based colour space; the engine paints each ink in its own separation; skipped" c.pos
+      (help := "declare each ink with \\definespotcolor")
+    return #[]
+  | .addToHook => do
+    let hook := c.src 0
+    let pos := c.pos
+    if hook == "shipout/background" || hook == "shipout/foreground" then
+      let st ← get
+      let look (n : String) : Option (Array Raw) := match st.binds[n]? with
+        | some (some v) => if v.arity == 0 then some v.raws else none
+        | _ => none
+      let lengths := (Array.range c.start).filterMap fun i => match c.raws[i]? with
+        | some (Raw.ctrl "newlength" _) => (takeGroups c.raws (i + 1) 1).1[0]?.bind ctrlName
+        | _ => none
+      match shipoutRules look lengths (c.arg 2) with
+      | some rules =>
+        let key := if hook == "shipout/foreground" then "front-rule" else "rule"
+        let entries := rules.map fun (x, y, w, h, ink) =>
+          s!"{key} = {Decl.quote s!"{x}; {y}; {w}; {h}; {ink}"}"
+        let native := s!"\\page\{ {String.intercalate ", " entries.toList} }"
+        became s!"\\AddToHook\{{hook}}" native pos
+        return (← synthAt native pos)
+      | none => pure ()
+    if hook == "shipout/before" then
+      let st ← get
+      let look (n : String) : Option (Array Raw) := match st.binds[n]? with
+        | some (some v) => if v.arity == 0 then some v.raws else none
+        | _ => none
+      if let some (text, keep) := pageAttrText look (c.arg 2) then
+        pageAttrBoxes text keep s!"\\AddToHook\{{hook}}" pos
+        return #[]
+    addToHook pos
+    return #[]
+  | .counter => do
+    let st ← get
+    let cmd := c.raws.extract (c.start - 1) c.stop
+    let cmd := if st.file == st.docFile then cmd
+      else #[Raw.env (Parse.inputEnv st.file) cmd c.pos]
+    write fun st => { st with preCounters := st.preCounters ++ cmd }
+    return #[]
+  | .newLength => do
+    -- `\newlength{\x}` allocates a length register at 0pt.
+    let n := (ctrlName (c.arg 0)).getD ""
+    setLength n "0pt" s!"\\newlength\{\\{n}}" c.pos
+  | .newDimen => do
+    -- `\newdimen\x` allocates a register only block templates read, so it is no native token.
+    let n := (ctrlName (c.arg 0)).getD ""
+    write fun st => { st with
+      allocated := if st.allocated.contains n then st.allocated else st.allocated.push n }
+    discard s!"\\newdimen\\{n}" "a register only the block templates assign and read" "newdimen" c.pos
+    return #[]
+  | .mathOperator => do
     -- `\DeclareMathOperator{\f}{name}` is a definition whose body is `\operatorname{name}`.
-    let start := skipStar raws start
-    let (args, k) := takeGroups raws start 2
-    let some cmd := ctrlName (args.getD 0 #[]) | return none
-    if args.size < 2 then return none
-    let body := args.getD 1 #[]
+    let cmd := (ctrlName (c.arg 1)).getD ""
     became s!"\\DeclareMathOperator\{\\{cmd}}"
-      s!"\\define \\{cmd}() \{\\operatorname\{...}}" pos
-    let head ← synthAt s!"\\define \\{cmd}()" pos
-    return some (head.push (.group #[.ctrl "operatorname" pos, .group body pos] pos), k)
-  | "hypersetup" =>
-    let (args, k) := takeGroups raws start 1
-    if ← paramArgs args then
-      unappliedParam "hypersetup" "hyperref's settings stand" pos
-      return some (#[], k)
-    return some (← hypersetup (rawSrc (args.getD 0 #[])) pos, k)
-  | "ihead" | "chead" | "ohead" | "ifoot" | "cfoot" | "ofoot"
-  | "lhead" | "rhead" | "lfoot" | "rfoot" =>
-    let (args, k) := takeGroups raws start 1
-    let src := rawSrc (args.getD 0 #[])
+      s!"\\define \\{cmd}() \{\\operatorname\{...}}" c.pos
+    let head ← synthAt s!"\\define \\{cmd}()" c.pos
+    return head.push (.group #[.ctrl "operatorname" c.pos, .group (c.arg 2) c.pos] c.pos)
+  | .hyperSetup => do
+    hyperrefLowered "\\hypersetup" "hypersetup" (← hyperrefKeys (c.src 0) c.pos) c.pos
+  | .runningField => do
+    let src := c.src 0
+    let name := c.name
     let slot := if name.startsWith "i" || name.startsWith "l" then 0
       else if name.startsWith "c" then 1 else 2
     write fun st =>
-      let st := if st.head.isEmpty && st.foot.isEmpty then { st with runPos := pos } else st
+      let st := if st.head.isEmpty && st.foot.isEmpty then { st with runPos := c.pos } else st
       if name.endsWith "head" then
         { st with head := Ir.redeclare st.head slot src }
       else
         { st with foot := Ir.redeclare st.foot slot src }
-    return some (#[], k)
-  | "fancyhead" | "fancyfoot" | "fancyhf" =>
+    return #[]
+  | .fancyField => do
     -- fancyhdr's `[places]`: one page sequence, so even and odd collapse onto the slot letter.
-    let (opt, j) := takeOpt raws start
-    let (args, k) := takeGroups raws j 1
-    let src := rawSrc (args.getD 0 #[])
+    let src := c.src 1
     let mut slots : Array Nat := #[]
     let mut evenOdd := false
-    for e in KeyVal.items (opt.getD "LCR") do
-      for c in e.toList do
-        let c := c.toUpper
-        if c == 'L' && !slots.contains 0 then slots := slots.push 0
-        else if c == 'C' && !slots.contains 1 then slots := slots.push 1
-        else if c == 'R' && !slots.contains 2 then slots := slots.push 2
-        else if c == 'E' || c == 'O' then evenOdd := true
+    for e in KeyVal.items ((c.optSrc 0).getD "LCR") do
+      for ch in e.toList do
+        let ch := ch.toUpper
+        if ch == 'L' && !slots.contains 0 then slots := slots.push 0
+        else if ch == 'C' && !slots.contains 1 then slots := slots.push 1
+        else if ch == 'R' && !slots.contains 2 then slots := slots.push 2
+        else if ch == 'E' || ch == 'O' then evenOdd := true
     if evenOdd then
       sayOnce "fancyhdr:evenodd" .N0102
-        "even and odd pages are one sequence here; the field applies to every page" pos
-    let toHead := name != "fancyfoot"
-    let toFoot := name != "fancyhead"
+        "even and odd pages are one sequence here; the field applies to every page" c.pos
+    let toHead := c.name != "fancyfoot"
+    let toFoot := c.name != "fancyhead"
     write fun st =>
-      let st := if st.head.isEmpty && st.foot.isEmpty then { st with runPos := pos } else st
+      let st := if st.head.isEmpty && st.foot.isEmpty then { st with runPos := c.pos } else st
       let put (parts : Array (Nat × String)) : Array (Nat × String) :=
         slots.foldl (init := parts) fun parts slot =>
           let parts := parts.filter (·.1 != slot)
@@ -10304,45 +9930,436 @@ baselineskip = {milliStr ld}pt }" ++
       { st with
         head := if toHead then put st.head else st.head
         foot := if toFoot then put st.foot else st.foot }
-    return some (#[], k)
-  | "clearpairofpagestyles" =>
+    return #[]
+  | .clearPageStyles => do
     -- scrlayer-scrpage's field reset clears every gathered head and foot field.
     write fun st => { st with head := #[], foot := #[] }
-    became "\\clearpairofpagestyles" "no running fields; fields declared after apply" pos
-    return some (#[], start)
-  | "pagestyle" =>
-    let (args, k) := takeGroups raws start 1
-    if ← paramArgs args then
-      unappliedParam "pagestyle" "the page style in force stands" pos
-      return some (#[], k)
-    let v := (rawSrc (args.getD 0 #[])).trimAscii.toString
+    became "\\clearpairofpagestyles" "no running fields; fields declared after apply" c.pos
+    return #[]
+  | .pageStyle => do
+    let v := (c.src 0).trimAscii.toString
     match v with
     | "fancy" | "scrheadings" =>
       discard s!"\\pagestyle\{{v}}" "declared running fields apply by themselves"
-        s!"pagestyle:{v}" pos
-      return some (#[], k)
+        s!"pagestyle:{v}" c.pos
+      return #[]
     | "plain" =>
       -- article's initial style is the centred page number in the foot.
-      became "\\pagestyle{plain}" "\\page{ numbers = on }" pos
-      return some (← synthAt "\\page{ numbers = on }" pos, k)
+      became "\\pagestyle{plain}" "\\page{ numbers = on }" c.pos
+      synthAt "\\page{ numbers = on }" c.pos
     | "empty" =>
       write fun st => { st with head := #[], foot := #[] }
-      became "\\pagestyle{empty}" "\\page{ numbers = off }, and no running fields" pos
-      return some (← synthAt "\\page{ numbers = off }" pos, k)
+      became "\\pagestyle{empty}" "\\page{ numbers = off }, and no running fields" c.pos
+      synthAt "\\page{ numbers = off }" c.pos
     | _ =>
       sayOnce "ctrl:pagestyle" .W0104
-        s!"'\\pagestyle\{{v}}' names running furniture the engine does not model; ignored" pos
+        s!"'\\pagestyle\{{v}}' names running furniture the engine does not model; ignored" c.pos
         (help := "plain, empty, and fancy are modelled; \\runninghead / \\runningfoot \
 declare the furniture directly")
-      return some (#[], k)
-  | "thispagestyle" =>
+      return #[]
+  | .thisPageStyle => do
     -- Only the opening page can be meant from the preamble or the document's first line.
-    let (args, k) := takeGroups raws start 1
-    if rawSrc (args.getD 0 #[]) == "empty" then
+    if c.src 0 == "empty" then
       write fun st => { st with runFrom := 2 }
-      became "\\thispagestyle{empty}" "\\runninghead[from = 2]{...}" pos
-    return some (#[], k)
-  | _ => rewriteCtrlLater name pos raws start
+      became "\\thispagestyle{empty}" "\\runninghead[from = 2]{...}" c.pos
+    return #[]
+  | .addBibResource => do
+    -- biblatex's `\addbibresource`: a `.bib` file `\printbibliography` later prints.
+    let src := (c.src 1).trimAscii.toString
+    let val (key : String) : Option String :=
+      (KeyVal.items ((c.optSrc 0).getD "")).findSome? fun o =>
+        match KeyVal.entry o with
+        | (k, some v) => if k == key then some v else none
+        | _ => none
+    let remote := val "location" == some "remote"
+    let format := (val "datatype").filter (· != "bibtex")
+    if remote || format.isSome then
+      let what := if remote then "a remote resource" else s!"a '{format.getD ""}' resource"
+      say .W0104 s!"'\\addbibresource' names {what} '{src}'; the engine reads local \
+.bib files only, so it is skipped" c.pos
+        (help := "save the entries as a .bib file beside the document and name it")
+        (subject := some "addbibresource")
+      return #[]
+    let src := if src.endsWith ".bib" then (src.dropEnd 4).toString else src
+    unless (← get).bibResources.contains src do
+      write fun st => { st with bibResources := st.bibResources.push src }
+    became "\\addbibresource" s!"\\bibliography\{{src}}, at \\printbibliography" c.pos
+    return #[]
+  | .bibResources => do
+    -- Under biblatex a preamble `\bibliography{refs}` adds the resource `refs.bib`.
+    for src in KeyVal.items (c.src 0) do
+      let src := if src.endsWith ".bib" then (src.dropEnd 4).toString else src
+      unless src.isEmpty || (← get).bibResources.contains src do
+        write fun st => { st with bibResources := st.bibResources.push src }
+    became "\\bibliography" "biblatex's \\addbibresource, at \\printbibliography" c.pos
+    return #[]
+  | .natbibStyle =>
+    if c.name == "bibpunct" then
+      natbibStyle c.name (c.given 0) ((List.range 6).toArray.map fun i => c.arg (i + 1)) c.pos
+    else natbibStyle c.name none #[c.arg 0] c.pos
+  | .bibliographyStyle => do
+    became "\\bibliographystyle" "read at \\begin{document}, as natbib reads the .aux" c.pos
+    write fun st => { st with deferred := st.deferred.push (.beginDocument, st.file, c.pos,
+      #[.ctrl "bibliographystyle" c.pos, .group (c.arg 0) c.pos]) }
+    return #[]
+  | .printBibliography => do
+    if let some o := c.optSrc 0 then
+      unless o.trimAscii.toString.isEmpty do
+        say .W0101 s!"\\printbibliography options without a native equivalent \
+were dropped: {o}" c.pos
+    let srcs := (← get).bibResources
+    if srcs.isEmpty then
+      discard "\\printbibliography" "no \\addbibresource declared a file"
+        "printbibliography" c.pos
+      return #[]
+    let stylePart := match (← get).bibStyle with
+      | some s => s!"\\bibliographystyle\{{s}}"
+      | none => ""
+    let native := s!"{stylePart}\\bibliography\{{",".intercalate srcs.toList}}"
+    became "\\printbibliography"
+      s!"biblatex's reference list of '{"', '".intercalate srcs.toList}'" c.pos
+    synthAt native c.pos
+  | .crefRange => do
+    became s!"\\{c.name}" "the range pair: plural name, both numbers" c.pos
+    let kind : Marker.Kind := if c.name == "Crefrange" then .crefRangeUp else .crefRange
+    return #[.ctrl (Marker.name kind "") c.pos, .group (c.arg 0) c.pos,
+      .ctrl "labelcref" c.pos, .group (c.arg 1) c.pos]
+  | .fontSeries => do
+    -- The series' weight half rides its marker; its width half has no engine axis.
+    let code := (c.src 0).trimAscii.toString
+    match Ir.Weight.parseSeries code with
+    | some (w, width) =>
+      -- premise: compatMarkerChecks — a top-level discard leaves the Doc without it
+      if ← docPreamble then
+        discard s!"\\fontseries\{{code}}" "'\\begin{document}' selects the normal series"
+          s!"fontseries:{code}" c.pos
+        return #[]
+      if !width.isEmpty then
+        sayOnce ("ctrl:fontseries:" ++ width) .W0104
+          s!"'\\fontseries\{{code}}' also asks for the '{width}' width; \
+the engine has no width axis, so only the weight is honoured" c.pos
+      became s!"\\fontseries\{{code}}" s!"the {w.series} series" c.pos
+      return #[.ctrl (Marker.name .series w.series) c.pos]
+    | none =>
+      sayOnce "ctrl:fontseries" .W0104
+        s!"'\\fontseries\{{code}}' names no NFSS series; \
+the weight in force stands" c.pos
+      return #[]
+  | .lineNumbers => lineNumbers c.name (c.optSrc 1) c.pos
+  | .selectLanguage => do
+    let lname := c.src 0
+    -- premise: compatMarkerChecks — a top-level discard leaves the Doc without it
+    if ← docPreamble then
+      discard s!"\\selectlanguage\{{lname}}" "'\\begin{document}' selects the main language"
+        s!"selectlanguage:{lname}" c.pos
+      return #[]
+    let tag := Locale.babelTagOf lname
+    if (Locale.forTag tag).isNone then
+      say .W0368 s!"no locale for language '{lname}'; English captions \
+and patterns stand in" c.pos
+        (help := "the engine ships locale records for: en, fr, de")
+    -- Only a switch in the body moves the language `\enquote` reads its quotes through.
+    if (← get).inDoc then
+      write fun st => { st with mainLang := tag }
+    became s!"\\selectlanguage\{{lname}}" s!"the '{tag}' language attribute" c.pos
+    return #[.ctrl (Marker.name .lang tag) c.pos]
+  | .vspace => do
+    -- The star's zero rule goes before the space, keeping it at a page's top.
+    let native := skipNative (skipSrc (lengthSrc (c.arg 2)))
+    if (c.given 0).isSome then
+      became "\\vspace*" s!"a page-top anchor, then {native}" c.pos
+      return #[.ctrl vspaceAnchorMark c.pos] ++ (← synthAt native c.pos)
+    became "\\vspace" native c.pos
+    synthAt native c.pos
+  | .pageBreak => do
+    -- Every `\pagebreak` is taken whole; the demand level is not weighed.
+    if (c.given 0).isSome then
+      say .N0102 "'\\pagebreak' demand levels are ignored: the break is taken" c.pos
+    return #[.ctrl "pagebreak" c.pos]
+  | .komaFont => do
+    let pos := c.pos
+    let element := c.src 0
+    if element == "disposition" then
+      -- KOMA's `disposition` is the base font of every sectioning level at once.
+      let native := "\\style{section}{ font = {...} }, per heading level"
+      became "\\setkomafont{disposition}" native pos
+      let mut out : Array Raw := #[]
+      for lvl in ["section", "subsection", "subsubsection"] do
+        let font : Raw := .group #[.word "font" pos, .space, .sym '=' pos, .space,
+          .group (c.arg 1) pos] pos
+        out := out ++ (← synthAt s!"\\style\{{lvl}}" pos).push font
+      return out
+    else if Ir.styleableElements.contains element then
+      -- The font spec travels as a group, so its own idioms are still rewritten.
+      let native := s!"\\style\{{element}}"
+      became s!"\\setkomafont\{{element}}" (native ++ "{ font = {...} }") pos
+      let font : Raw := .group #[.word "font" pos, .space, .sym '=' pos, .space,
+        .group (c.arg 1) pos] pos
+      return (← synthAt native pos).push font
+    else
+      say .W0111 s!"'\\setkomafont\{{element}}' names no styleable element; ignored" pos
+        (help := "\\style{element}{ font = {...} } styles the elements the engine draws")
+      return #[]
+  | .sectionSkips => do
+    let opt := c.optSrc 0
+    let element := c.src 1
+    let mut keys : Array String := #[]
+    for e in KeyVal.items (opt.getD "") do
+      match KeyVal.entry e with
+      | ("beforeskip", some v) => keys := keys.push s!"before = {lengthOfTeX v}"
+      | ("afterskip", some v) => keys := keys.push s!"after = {lengthOfTeX v}"
+      | _ => pure ()
+    if !Ir.styleableElements.contains element then
+      say .W0111 s!"'\\RedeclareSectionCommand\{{element}}' names no styleable element; \
+ignored" c.pos
+        (help := "\\style{element}{ before = ..., after = ... } spaces the elements \
+the engine draws")
+      return #[]
+    if keys.isEmpty then
+      let dropped := (opt.getD "").trimAscii.toString
+      unless dropped.isEmpty do
+        say .W0101 s!"'\\RedeclareSectionCommand\{{element}}' entries without a \
+native equivalent were dropped: {dropped}" c.pos
+      return #[]
+    let native := s!"\\style\{{element}}\{ {String.intercalate ", " keys.toList} }"
+    became s!"\\RedeclareSectionCommand\{{element}}" native c.pos
+    synthAt native c.pos
+  | .setList => lowerSetList c
+  | .sectionLines => sectionRule (c.src 1) c.pos
+  | .uniMathSetup => unicodeMathOptions s!"\\unimathsetup\{{c.src 0}}" (c.src 0) c.pos
+  | .unreadKeys => do
+    for e in KeyVal.items (c.src 0) do
+      let key := (KeyVal.entry e).1
+      unless key.isEmpty do
+        unreadParam s!"\\{c.name}" key s!"'\\{c.name}' key '{key}'" c.pos
+    return #[]
+  | .newCounter => do
+    let counter := (c.src 0).trimAscii.toString
+    -- premise: counterReadChecks — a counter's uses name what they lose
+    if (← get).countersRead.contains counter then
+      discard s!"\\newcounter\{{counter}}"
+        "the engine does not model counters, and each use names what it loses"
+        ("newcounter:" ++ counter) c.pos
+    else
+      sayOnce ("param:\\newcounter:" ++ counter) .W0104
+        s!"counter '{counter}' is allocated, but nothing in the document reads it; \
+'\\newcounter' changes nothing" c.pos (help := "use the counter where it should count, or drop it")
+    return #[]
+  | .ensureMath => return #[.ctrl c.name c.pos] ++ c.raws.extract c.start c.stop
+  | .box => do
+    -- An hbox's geometry is not modelled, so its drop is named once and its content stays.
+    if c.args.any (·.isSome) then
+      sayOnce ("ctrl:" ++ c.name) .W0104
+        s!"'\\{c.name}' width and alignment are dropped; its content is kept" c.pos
+        (help := "\\hfill spaces content apart; \\allow{W0104} accepts the drop")
+    became s!"\\{c.name}" "its content" c.pos
+    return #[]
+  | .beamerFont => lowerBeamerFont c
+  | .columnRatio => do
+    let src := c.src 0
+    if let some ratio := paracolRatio? src then
+      write fun st => { st with paracolRatio := ratio }
+    else
+      sayOnce "paracol:ratio" .W0104
+        s!"cannot read two-column ratio '{src}'; the previous ratio stands" c.pos
+        (help := "write one fraction between zero and one, like \\columnratio{0.35}")
+    if (c.given 1).isSome then
+      sayOnce "paracol:right-ratio" .W0104
+        "'\\columnratio{...}[...]' declares a paired-page ratio; the same-page ratio is used" c.pos
+    became "\\columnratio" "the widths of the next two-column flow" c.pos
+    return #[]
+  | .useTheme => do
+    let pos := c.pos
+    let tname := themeAlias (c.src 1).trimAscii.toString
+    let mut reseated : Array String := #[]
+    for (element, target, styleKey) in beamerFontElements do
+      let seed := themeBlockFont tname element
+      let some stored := (← get).beamerFonts.toList.lookup element | continue
+      if seed.isEmpty then continue
+      let fields := themeOver stored seed
+      write fun st => { st with
+        beamerFonts := Ir.redeclare st.beamerFonts element fields }
+      reseated := reseated.push
+        s!"\\style\{{target}}\{ {styleKey} = \{{beamerFontCommands (blockTitleFields element fields)}} }"
+    let native := String.intercalate " " (s!"\\theme\{{tname}}" :: reseated.toList)
+    became "\\usetheme" native pos
+    write fun st => { st with themeNamed := true }
+    if (Theme.find? tname).isSome then
+      write fun st => { st with themed := true, beamerTheme := tname }
+    let options ← themeOptions "\\usetheme" s!"\\usetheme\{{tname}}" tname ((c.optSrc 0).getD "") pos
+    return (← synthAt native pos) ++ options
+  | .molochSet => molochOptions s!"\\{c.name}" (c.src 0) c.pos
+  | .titleGraphic => do
+    if (c.src 0).trimAscii.toString.isEmpty then
+      sayOnce "beamer:titlegraphic" .W0104
+        "'\\titlegraphic{}' clears beamer configuration the engine does not have; skipped" c.pos
+    else
+      say .E0112
+        "'\\titlegraphic' declares title-page content the engine does not place; the content is dropped" c.pos
+        (help := "\\logo places an image on running pages; \\allow{E0112} accepts the loss")
+    return #[]
+  | .fontTheme => do
+    -- `professionalfonts` asks for the engine's only behaviour, so it is agreement.
+    if (c.src 1).trimAscii.toString == "professionalfonts" then
+      discard "\\usefonttheme{professionalfonts}"
+        "the engine always uses the declared fonts" "usefonttheme" c.pos
+    else
+      sayOnce "beamer:usefonttheme" .W0104
+        "'\\usefonttheme' is beamer configuration the engine does not have; skipped" c.pos
+        (help := beamerNative.lookup "usefonttheme")
+    return #[]
+  | .beamerOption => do
+    -- `hide notes` asks for what `\note` already is here.
+    if (c.src 1).trimAscii.toString == "hide notes" then
+      discard "\\setbeameroption{hide notes}"
+        "notes never enter the delivered pages" "setbeameroption" c.pos
+    else
+      sayOnce "beamer:setbeameroption" .W0104
+        "'\\setbeameroption' is beamer configuration the engine does not have; skipped" c.pos
+        (help := "a theme is a token bundle here: \\theme selects one, and \\palette \
+and \\tokens declare the design directly")
+    return #[]
+  | .beamerCovered => do
+    let pos := c.pos
+    let src := (c.src 0).trimAscii.toString
+    -- beamerbaseoverlay.sty: `invisible` hides, `transparent` keeps 15% unless given a share.
+    let pct? : Option Nat := match KeyVal.entry src with
+      | ("invisible", none) => some 0
+      | ("transparent", none) => some Ir.transparentShare
+      | ("transparent", some v) => v.toNat?
+      | ("dynamic", none) => some Ir.dynamicShare
+      | ("highly dynamic", none) => some Ir.highlyDynamicShare
+      | _ => none
+    match pct? with
+    | some n =>
+      let native := s!"\\palette\{ covered = {min n 99}\\% }"
+      if 99 < n then
+        sayOnce ("param:setbeamercovered:" ++ src) .W0109
+          s!"'\\setbeamercovered\{{src}}' asks for undimmed covered content; it covers at the \
+largest share the engine sets" pos
+          (help := "\\palette{ covered = <n>% } sets the covered share") (detail := some "99%")
+      else if src.startsWith "dynamic" || src.startsWith "highly dynamic" then
+        sayOnce ("param:setbeamercovered:" ++ src) .W0109
+          s!"'\\setbeamercovered\{{src}}' fades each step by its distance; every pending step \
+covers at its next steps' share" pos
+          (help := "\\palette{ covered = <n>% } sets the covered share") (detail := some s!"{n}%")
+      else became "\\setbeamercovered" native pos
+      synthAt native pos
+    | none =>
+      sayOnce ("param:setbeamercovered:" ++ src) .W0104
+        s!"'\\setbeamercovered\{{src}}' is not modelled; covered content keeps the share in force, \
+hidden unless one is declared" pos
+        (help := "\\palette{ covered = <n>% } sets the covered share; 'invisible', 'transparent' \
+and 'transparent=<n>' are understood")
+      return #[]
+  | .inputEncoding => do
+    -- A file reads in one encoding, so a switch to the encoding in force changes nothing.
+    let arg := (c.src 0).trimAscii.toString
+    if Encoding.sameEncoding arg ((← get).inputenc.getD "utf8") then
+      -- premise: inputDecodingChecks — a switch to the encoding in force ships the page without it
+      discard s!"\\inputencoding\{{arg}}" "the file already reads in that encoding"
+        ("inputencoding:" ++ arg) c.pos
+    else
+      sayOnce ("inputencoding:" ++ arg) .W0104
+        s!"'\\inputencoding\{{arg}}' is not applied: each file reads in one encoding throughout"
+        c.pos (help := s!"save the file in one encoding, UTF-8 best, and delete \
+'\\inputencoding\{{arg}}'")
+    return #[]
+  | .komaOptions => do
+    let entries := (KeyVal.items (c.src 0)).toList
+    if entries.any fun e => (KeyVal.entry e).1 == "fontsize" then
+      write fun st => { st with strutSkip := none }
+    let satisfied (e : String) : Bool :=
+      match KeyVal.entry e with
+      | (key, some v) => (key == "headsepline" || key == "footsepline")
+          && (v == "false" || v == "off" || v == "no")
+      | _ => false
+    let dropped := entries.filter (!satisfied ·)
+    if dropped.isEmpty then
+      unless entries.isEmpty do
+        discard "\\KOMAoptions" "no head or foot separation rule is drawn" "KOMAoptions" c.pos
+    else
+      for e in dropped do
+        unreadParam "KOMAoptions" (KeyVal.entry e).1 s!"'\\KOMAoptions' entry '{e}'" c.pos
+    return #[]
+  | .graphColor => do
+    -- leanblueprint's `\graphcolor{type}{colour}{description}` colours the dependency graph.
+    blueprintGraph c.pos (some s!"'\\graphcolor\{{(c.src 0).trimAscii.toString}}' colours \
+that graph")
+    return #[]
+  | .blueprintSite => do
+    -- leanblueprint's `\home` links nothing; `\github` and `\dochome` root the web page's links.
+    if c.name == "home" then
+      discard "\\home" "the web blueprint links nothing to the project's home page" "home" c.pos
+      return #[]
+    return blueprintSiteRaws c.name (urlText (c.arg 0)) c.pos
+
+/-- Whether a lowered control is left, as written, to elaboration where it stands. -/
+private def CtrlLeave.holds (st : St) (args : Array (Option (Array Raw))) : CtrlLeave → Bool
+  -- premise: ctrlLeaveChecks — each leave keeps its control as written where its condition holds
+  | .inDef => st.inDef
+  | .inBody => st.inDoc
+  | .inSeam => st.seam
+  -- premise: counterChecks — a preamble counter numbers the body as at its start
+  | .outsidePreamble => !(docPreamble st).1
+  | .without pkg => !st.loads.pkgs.any (·.1 == pkg)
+  | .notCtrl i => (args[i]?.join.bind ctrlName).isNone
+
+/-- Whether a row's control is left, as written, to elaboration where it stands. -/
+private def ctrlLeft (st : St) (row : CtrlRow) (args : Array (Option (Array Raw))) : Bool :=
+  match row.action with
+  | .lower _ gates => gates.leaves.any (·.holds st args)
+  | .tokens .. | .native _ | .skip _ | .refuse .. | .discard .. | .inert => false
+
+/-- The arguments a signature reads as brace groups, those that stand. -/
+private def braceArgs (sig : List ArgKind) (args : Array (Option (Array Raw))) : Array (Array Raw) :=
+  ((sig.zip args.toList).filterMap fun (k, a) => if k == .opt || k == .star then none else a).toArray
+
+/-- A row's action where its control stands: its emission, with its report and writes. -/
+private def ctrlRowRun (row : CtrlRow) (c : CtrlCall) : M (Array Raw) := do
+  let pos := c.pos
+  match row.action with
+  | .tokens toks note =>
+    if let some native := note then became s!"\\{row.name}" native pos
+    return toks.toArray.map (rebase (fun _ => pos) true)
+  | .native src =>
+    -- setspace's spacings set the strut box again where they stand.
+    if (packageOptionNatives.lookup "setspace").any (·.any (·.1 == row.name)) then
+      write fun st => { st with strutSkip := none }
+    became s!"\\{row.name}" src pos
+    synthAt src pos
+  | .skip amount =>
+    -- premise: kernelLengthChecks — a declared skip amount ships at its command
+    let native := match (← get).lens.find? (·.1 == amount) with
+      | some (_, v) => skipNative { width := v }
+      | none => skipNative { width := (kernelSkip amount).getD "" }
+    became s!"\\{row.name}" native pos
+    synthAt native pos
+  | .refuse code .ctrl msg help =>
+    sayOnce ("ctrl:" ++ row.name) code msg pos (help := help)
+    return #[]
+  | .refuse code .beamer msg help =>
+    sayOnce ("beamer:" ++ row.name) code msg pos (help := help)
+    return #[]
+  | .refuse code .each msg help =>
+    say code msg pos (help := help)
+    return #[]
+  | .discard why key =>
+    discard s!"\\{row.name}" why key pos
+    return #[]
+  | .inert => return #[]
+  | .lower l gates =>
+    if let some stands := gates.paramStands then
+      if ← paramArgs (braceArgs row.sig c.args) then
+        unappliedParam row.name stands pos
+        return #[]
+    if let some help := gates.bodyHelp then
+      -- premise: ctrlGateChecks — a declaration in the body leaves none of its arguments' ink
+      if (← get).inDoc then
+        sayOnce ("ctrl:" ++ row.name) .W0340
+          (Diag.bodyDeclaration row.name) pos (help := help)
+        return #[]
+    lowerCall c l
 
 /-- The rewrite of the control sequence `name` given what follows it: the
 replacement and how many elements it consumed, or `none`. -/
@@ -10376,8 +10393,9 @@ where
   if name == "appendix" && (← get).loads.pkgs.any (·.1 == "appendixnumberbeamer") then
     return some (#[.ctrl frameRestartMark pos, .ctrl name pos], start)
   if let some row := ctrlRow? name then
-    let some k := argsEnd raws row.sig start | return none
-    return some (← ctrlRowRun row pos, k)
+    let some (args, k) := argsRead raws #[] row.sig start | return none
+    if ctrlLeft (← get) row args then return none
+    return some (← ctrlRowRun row ⟨name, pos, args, raws, start, k⟩, k)
   if let some (value, e) := plainAssign? name raws start then
     return some (← assignLength name value s!"\\{name}" pos, e)
   if let some settings := listSettings? (← get) name then
@@ -12314,75 +12332,39 @@ private theorem rewriteCtrlAt_named_scope (name : String) (pos : Pos)
   simp [bind, StateT.bind, pure, get, getThe, MonadStateOf.get,
     StateT.get, hd, hCite, hAppendix, hAssign, hSettings, hRow]
 
-private theorem rewriteCtrl_package_named (command names : String) (pos gp np : Pos)
-    (st : St) (hc : command = "usepackage" ∨ command = "RequirePackage")
-    (hrow : ctrlRow? command = none) (hd : st.wholeDoc = false) (hl : st.inList = false) :
-    rewriteCtrl.rewriteCtrlAt command pos (packageCall command names pos gp np) 1 st =
-      rewriteCtrlNamed command pos (packageCall command names pos gp np) 1 st := by
-  apply rewriteCtrlAt_named_scope _ _ _ _ _ (by simp [hd]) hl _ _ _ hrow
-  all_goals rcases hc with rfl | rfl <;> rfl
+/-- A name's bytes, the order the control table is sorted in. -/
+public def nameKey (n : String) : List Nat := n.toByteArray.data.toList.map UInt8.toNat
 
-private theorem rewriteCtrlNamed_package_external_exact
-    (command names : String) (pos gp np : Pos) (st : St)
-    (hc : command = "usepackage" ∨ command = "RequirePackage")
-    (hd : st.inDoc = false) (hdef : st.inDef = false)
-    (hn : ∀ p ∈ names.trimAscii.toString.splitOn "," |>.map (·.trimAscii.toString),
-      nativePackages.contains p = false)
-    (hb : ∀ p ∈ names.trimAscii.toString.splitOn "," |>.map (·.trimAscii.toString),
-      (boundaryPkgs.contains p && st.boundaryOpen) = false)
-    (ht : ∀ p ∈ names.trimAscii.toString.splitOn "," |>.map (·.trimAscii.toString),
-      themeSlotOfPackage? p = none) :
-    rewriteCtrlNamed command pos (packageCall command names pos gp np) 1 st =
-      (some (#[], 2), { st with diags := st.diags ++
-        ((names.trimAscii.toString.splitOn ",").map fun p =>
-          atSource st pos (packageRefusal st.file pos p.trimAscii.toString)).toArray }) := by
-  have hread := packageCall_readers command names pos gp np
-  have hempty : (#[#[Raw.word names np]] : Array (Array Raw)).isEmpty = false := by rfl
-  have hsrc : rawSrc ((#[#[Raw.word names np]] : Array (Array Raw)).getD 0 #[]) =
-      names.trimAscii.toString := by simp [rawSrc, rawSrcList, rawSrcOne]
-  have hpkgs := rewritePackages_external_exact command
-    ((names.trimAscii.toString.splitOn ",").map (·.trimAscii.toString)) none pos st hn hb ht
-  rcases hc with rfl | rfl <;>
-    simp only [rewriteCtrlNamed, bind, StateT.bind, get, getThe,
-      MonadStateOf.get, StateT.get, hd, hdef, Bool.false_eq_true, ↓reduceIte,
-      hread.2.1, hread.2.2, hempty, hsrc, hpkgs, pure, StateT.pure, List.map_map,
-      Function.comp_def]
+/-- Whether each name's bytes sort strictly before the next one's. -/
+public def bytesAscending : List String → Bool
+  | a :: b :: rest => decide (nameKey a < nameKey b) && bytesAscending (b :: rest)
+  | _ => true
 
-private theorem rewriteCtrl_package_external_exact
-    (command names : String) (pos gp np : Pos) (st : St)
-    (hc : command = "usepackage" ∨ command = "RequirePackage") (hrow : ctrlRow? command = none)
-    (hd : st.inDoc = false) (hdef : st.inDef = false)
-    (hw : st.wholeDoc = false) (hl : st.inList = false)
-    (hn : ∀ p ∈ names.trimAscii.toString.splitOn "," |>.map (·.trimAscii.toString),
-      nativePackages.contains p = false)
-    (hb : ∀ p ∈ names.trimAscii.toString.splitOn "," |>.map (·.trimAscii.toString),
-      (boundaryPkgs.contains p && st.boundaryOpen) = false)
-    (ht : ∀ p ∈ names.trimAscii.toString.splitOn "," |>.map (·.trimAscii.toString),
-      themeSlotOfPackage? p = none)
-    (part : String) (hp : part ∈ names.trimAscii.toString.splitOn ",") :
-    rewriteCtrl command pos (packageCall command names pos gp np) 1 st =
-      (some (#[], 1), { st with diags := st.diags ++
-        ((names.trimAscii.toString.splitOn ",").map fun p =>
-          atSource st pos (packageRefusal st.file pos p.trimAscii.toString)).toArray }) := by
-  have hlen := List.length_pos_of_mem hp
-  have hsize : (st.diags ++
-      ((names.trimAscii.toString.splitOn ",").map fun p =>
-        atSource st pos (packageRefusal st.file pos p.trimAscii.toString)).toArray).size >
-      st.diags.size := by
-    simp only [Array.size_append, List.size_toArray, List.length_map]
-    omega
-  simp only [rewriteCtrl, rewriteCtrl_package_named command names pos gp np st hc hrow hw hl,
-    rewriteCtrlNamed_package_external_exact command names pos gp np st hc hd hdef hn hb ht,
-    Array.isEmpty_empty, ↓reduceIte, account]
-  rw [ite_eq_left (Or.inl hsize)]
-
-/-- The table's names are distinct; none is `\cite` or `\appendix`, which a body's dispatch reads
-before the table, or the walk's own `\define` head; and none is spelled as a saved overlay-native
-name. -/
+/-- The table's names stand in strictly ascending byte order; none is `\cite` or `\appendix`, which
+a body's dispatch reads before the table, or the walk's own `\define` head; and none is spelled as a
+saved overlay-native name. -/
 public def CtrlRowsSound : Prop :=
-  (ctrlRows.map (·.name)).Nodup ∧
+  bytesAscending (ctrlRows.map (·.name)) = true ∧
     ∀ row ∈ ctrlRows, row.name ∉ ["cite", "appendix", "define"] ∧
       ¬ ("overlay native ".toByteArray.data.toList <+: row.name.toByteArray.data.toList)
+
+private theorem ascending_pairwise : ∀ names : List String, bytesAscending names = true →
+    names.Pairwise (fun a b => nameKey a < nameKey b)
+  | [], _ => .nil
+  | [_], _ => List.pairwise_singleton _ _
+  | a :: b :: rest, h => by
+    simp only [bytesAscending, Bool.and_eq_true, decide_eq_true_eq] at h
+    have ih := ascending_pairwise (b :: rest) h.2
+    refine List.Pairwise.cons (fun c hc => ?_) ih
+    rcases List.mem_cons.mp hc with rfl | hc
+    · exact h.1
+    · exact List.lt_trans h.1 ((List.pairwise_cons.mp ih).1 c hc)
+
+private theorem ctrlRows_nodup (hsound : CtrlRowsSound) : (ctrlRows.map (·.name)).Nodup := by
+  unfold List.Nodup
+  refine (ascending_pairwise _ hsound.1).imp fun {a b} h he => ?_
+  subst he
+  exact List.lt_irrefl _ h
 
 private theorem find_row_exact (rows : List CtrlRow) (row : CtrlRow) (h : row ∈ rows)
     (hnd : (rows.map (·.name)).Nodup) : rows.find? (·.name == row.name) = some row := by
@@ -12420,16 +12402,21 @@ private theorem ctrlRow_names (hsound : CtrlRowsSound) (row : CtrlRow) (hrow : r
       (row.name == "appendix") = false ∧ row.name ≠ "define" ∧ overlayName row.name = row.name := by
   obtain ⟨hnames, hsaved⟩ := hsound.2 row hrow
   simp only [List.mem_cons, List.not_mem_nil, or_false, not_or] at hnames
-  exact ⟨find_row_exact ctrlRows row hrow hsound.1, beq_false_of_ne hnames.1,
+  exact ⟨find_row_exact ctrlRows row hrow (ctrlRows_nodup hsound), beq_false_of_ne hnames.1,
     beq_false_of_ne hnames.2.1, hnames.2.2, overlayName_unsaved row.name hsaved⟩
 
 /-- Whether a row's action emits nothing, its report its whole effect. -/
 @[expose] public def CtrlAction.silent : CtrlAction → Bool
   | .refuse .. | .discard .. | .inert => true
-  | .tokens .. | .native .. | .skip _ => false
+  | .tokens .. | .native .. | .skip _ | .lower .. => false
 
-private theorem ctrlRowRun_silent (row : CtrlRow) (pos : Pos) (s : St)
-    (h : row.action.silent = true) : (ctrlRowRun row pos s).1 = #[] := by
+/-- Whether a row's action may read its arguments. -/
+@[expose] public def CtrlAction.reads : CtrlAction → Bool
+  | .lower .. => true
+  | .tokens .. | .native .. | .skip _ | .refuse .. | .discard .. | .inert => false
+
+private theorem ctrlRowRun_silent (row : CtrlRow) (c : CtrlCall) (s : St)
+    (h : row.action.silent = true) : (ctrlRowRun row c s).1 = #[] := by
   rcases row with ⟨name, sig, action⟩
   cases action with
   | refuse code key msg help =>
@@ -12439,52 +12426,227 @@ private theorem ctrlRowRun_silent (row : CtrlRow) (pos : Pos) (s : St)
   | tokens toks note => simp [CtrlAction.silent] at h
   | native src => simp [CtrlAction.silent] at h
   | skip amount => simp [CtrlAction.silent] at h
+  | lower l gates => simp [CtrlAction.silent] at h
 
-/-- The state a row's control leaves: its action's report, with the dispatcher's guard where it
-emits nothing. -/
-private def ctrlRowState (s : St) (row : CtrlRow) (pos : Pos) : St :=
-  if (ctrlRowRun row pos s).1.isEmpty then (account row.name pos s (ctrlRowRun row pos s).2).2
-  else (ctrlRowRun row pos s).2
+private theorem ctrlRowRun_fixed (row : CtrlRow) (c c' : CtrlCall) (h : row.action.reads = false)
+    (hpos : c.pos = c'.pos) : ctrlRowRun row c = ctrlRowRun row c' := by
+  rcases c with ⟨n, p, a, r, i, j⟩
+  rcases c' with ⟨n', p', a', r', i', j'⟩
+  simp only at hpos
+  subst hpos
+  rcases row with ⟨name, sig, action⟩
+  cases action
+  case refuse code key msg help => cases key <;> rfl
+  all_goals first | rfl | simp [CtrlAction.reads] at h
 
-private theorem rewriteCtrlAt_row (hsound : CtrlRowsSound) (row : CtrlRow) (hrow : row ∈ ctrlRows)
-    (pos : Pos) (raws : Array Raw) (start : Nat) (s : St) (hd : s.inDoc = true) :
+private theorem ctrlLeft_fixed (row : CtrlRow) (s : St) (args : Array (Option (Array Raw)))
+    (h : row.action.reads = false) : ctrlLeft s row args = false := by
+  rcases row with ⟨name, sig, action⟩
+  cases action <;> first | rfl | simp [CtrlAction.reads] at h
+
+private theorem silent_fixed (action : CtrlAction) (h : action.silent = true) :
+    action.reads = false := by
+  cases action <;> simp_all [CtrlAction.silent, CtrlAction.reads]
+
+private theorem ctrlRowRun_declared (row : CtrlRow) (c : CtrlCall) (s : St) (l : Lowering)
+    (g : CtrlGates) (help : String) (hact : row.action = .lower l g)
+    (hh : g.bodyHelp = some help) (hd : s.inDoc = true) : (ctrlRowRun row c s).1 = #[] := by
+  rcases row with ⟨name, sig, action⟩
+  simp only at hact
+  subst hact
+  rcases g with ⟨leaves, stands, bodyHelp⟩
+  simp only at hh
+  subst hh
+  cases stands with
+  | none =>
+    simp only [ctrlRowRun, bind, StateT.bind, get, getThe, MonadStateOf.get, StateT.get, pure,
+      StateT.pure, hd, ↓reduceIte]
+    rfl
+  | some w =>
+    simp only [ctrlRowRun, paramArgs, bind, StateT.bind, get, getThe, MonadStateOf.get,
+      StateT.get, pure, StateT.pure]
+    split
+    · rfl
+    · simp [StateT.bind, StateT.get, StateT.pure, hd]
+      rfl
+
+/-- Whether a row is known to emit nothing at a body cursor: a silent row, or a declaration the body
+ignores whose row keeps it nowhere. -/
+@[expose] public def CtrlRow.quiet (row : CtrlRow) : Bool :=
+  match row.action with
+  | .lower _ g => g.bodyHelp.isSome && g.leaves.isEmpty
+  | .tokens .. | .native .. | .skip _ | .refuse .. | .discard .. | .inert => row.action.silent
+
+private theorem ctrlRowRun_quiet (row : CtrlRow) (c : CtrlCall) (s : St)
+    (hq : row.quiet = true) (hd : s.inDoc = true) : (ctrlRowRun row c s).1 = #[] := by
+  rcases row with ⟨name, sig, action⟩
+  cases action with
+  | lower l g =>
+    simp only [CtrlRow.quiet, Bool.and_eq_true, Option.isSome_iff_exists] at hq
+    obtain ⟨⟨help, hh⟩, _⟩ := hq
+    exact ctrlRowRun_declared _ c s l g help rfl hh hd
+  | _ => exact ctrlRowRun_silent _ c s (by simpa [CtrlRow.quiet] using hq)
+
+private theorem ctrlLeft_quiet (row : CtrlRow) (s : St) (args : Array (Option (Array Raw)))
+    (hq : row.quiet = true) : ctrlLeft s row args = false := by
+  rcases row with ⟨name, sig, action⟩
+  cases action with
+  | lower l g =>
+    simp only [CtrlRow.quiet, Bool.and_eq_true, List.isEmpty_iff] at hq
+    simp [ctrlLeft, hq.2]
+  | _ => rfl
+
+/-- The state a row's control leaves: its action's report and writes, with the dispatcher's guard
+where it emits nothing. -/
+private def ctrlRowState (s : St) (row : CtrlRow) (c : CtrlCall) : St :=
+  if (ctrlRowRun row c s).1.isEmpty then (account row.name c.pos s (ctrlRowRun row c s).2).2
+  else (ctrlRowRun row c s).2
+
+private theorem rewriteCtrlAt_found (row : CtrlRow) (hfind : ctrlRow? row.name = some row)
+    (hCite : (row.name == "cite") = false) (hAppendix : (row.name == "appendix") = false)
+    (pos : Pos) (raws : Array Raw) (start : Nat) (s : St)
+    (hd : (s.wholeDoc && s.deck && !s.inDoc && !s.inDef) = false) :
     rewriteCtrl.rewriteCtrlAt row.name pos raws start s =
-      match argsEnd raws row.sig start with
-      | some k => (some ((ctrlRowRun row pos s).1, k), (ctrlRowRun row pos s).2)
+      match argsRead raws #[] row.sig start with
+      | some (args, k) =>
+        if ctrlLeft s row args then (none, s)
+        else (some ((ctrlRowRun row ⟨row.name, pos, args, raws, start, k⟩ s).1, k),
+          (ctrlRowRun row ⟨row.name, pos, args, raws, start, k⟩ s).2)
       | none => (none, s) := by
-  obtain ⟨hfind, hCite, hAppendix, _, _⟩ := ctrlRow_names hsound row hrow
   simp only [rewriteCtrl.rewriteCtrlAt]
-  cases hk : argsEnd raws row.sig start with
+  cases hk : argsRead raws #[] row.sig start with
   | none =>
     simp [bind, StateT.bind, pure, get, getThe, MonadStateOf.get, StateT.get, hd, hCite,
       hAppendix, hfind, hk]
     rfl
-  | some k =>
-    simp [bind, StateT.bind, pure, get, getThe, MonadStateOf.get, StateT.get, hd, hCite,
-      hAppendix, hfind, hk]
-    cases ctrlRowRun row pos s
-    rfl
+  | some r =>
+    obtain ⟨args, k⟩ := r
+    cases hl : ctrlLeft s row args with
+    | true =>
+      simp [bind, StateT.bind, pure, get, getThe, MonadStateOf.get, StateT.get, hd, hCite,
+        hAppendix, hfind, hk, hl]
+      rfl
+    | false =>
+      simp [bind, StateT.bind, pure, get, getThe, MonadStateOf.get, StateT.get, hd, hCite,
+        hAppendix, hfind, hk, hl]
+      cases ctrlRowRun row ⟨row.name, pos, args, raws, start, k⟩ s
+      rfl
+
+private theorem rewriteCtrlAt_row (hsound : CtrlRowsSound) (row : CtrlRow) (hrow : row ∈ ctrlRows)
+    (pos : Pos) (raws : Array Raw) (start : Nat) (s : St)
+    (hd : (s.wholeDoc && s.deck && !s.inDoc && !s.inDef) = false) :
+    rewriteCtrl.rewriteCtrlAt row.name pos raws start s =
+      match argsRead raws #[] row.sig start with
+      | some (args, k) =>
+        if ctrlLeft s row args then (none, s)
+        else (some ((ctrlRowRun row ⟨row.name, pos, args, raws, start, k⟩ s).1, k),
+          (ctrlRowRun row ⟨row.name, pos, args, raws, start, k⟩ s).2)
+      | none => (none, s) := by
+  obtain ⟨hfind, hCite, hAppendix, _, _⟩ := ctrlRow_names hsound row hrow
+  exact rewriteCtrlAt_found row hfind hCite hAppendix pos raws start s hd
+
+private theorem rewriteCtrl_found_exact (row : CtrlRow) (hfind : ctrlRow? row.name = some row)
+    (hCite : (row.name == "cite") = false) (hAppendix : (row.name == "appendix") = false)
+    (pos : Pos) (raws : Array Raw) (start k : Nat) (s : St) (args : Array (Option (Array Raw)))
+    (hd : (s.wholeDoc && s.deck && !s.inDoc && !s.inDef) = false)
+    (hk : argsRead raws #[] row.sig start = some (args, k))
+    (hl : ctrlLeft s row args = false) :
+    rewriteCtrl row.name pos raws start s =
+      (some ((ctrlRowRun row ⟨row.name, pos, args, raws, start, k⟩ s).1, k - start),
+        ctrlRowState s row ⟨row.name, pos, args, raws, start, k⟩) := by
+  unfold rewriteCtrl
+  rw [rewriteCtrlAt_found row hfind hCite hAppendix pos raws start s hd, hk]
+  simp only [hl, Bool.false_eq_true, ↓reduceIte]
+  rfl
 
 private theorem rewriteCtrl_row_exact (hsound : CtrlRowsSound) (row : CtrlRow)
     (hrow : row ∈ ctrlRows) (pos : Pos) (raws : Array Raw) (start k : Nat) (s : St)
-    (hd : s.inDoc = true) (hk : argsEnd raws row.sig start = some k) :
+    (args : Array (Option (Array Raw)))
+    (hd : (s.wholeDoc && s.deck && !s.inDoc && !s.inDef) = false)
+    (hk : argsRead raws #[] row.sig start = some (args, k))
+    (hl : ctrlLeft s row args = false) :
     rewriteCtrl row.name pos raws start s =
-      (some ((ctrlRowRun row pos s).1, k - start), ctrlRowState s row pos) := by
-  unfold rewriteCtrl
-  rw [rewriteCtrlAt_row hsound row hrow pos raws start s hd, hk]
-  rfl
+      (some ((ctrlRowRun row ⟨row.name, pos, args, raws, start, k⟩ s).1, k - start),
+        ctrlRowState s row ⟨row.name, pos, args, raws, start, k⟩) := by
+  obtain ⟨hfind, hCite, hAppendix, _, _⟩ := ctrlRow_names hsound row hrow
+  exact rewriteCtrl_found_exact row hfind hCite hAppendix pos raws start k s args hd hk hl
 
-/-- A row's control whose signature finds an argument that must stand missing is left, with the
-state, to elaboration. -/
+/-- At a body cursor, or a preamble one outside a deck, a row's control whose signature finds an
+argument that must stand missing, or that a leave of its row holds for, is left with the state to
+elaboration. -/
 public def CtrlRowDeclines (row : CtrlRow) : Prop :=
-  ∀ (pos : Pos) (raws : Array Raw) (start : Nat) (s : St), St.inDoc s = true →
-    argsEnd raws row.sig start = none → rewriteCtrl row.name pos raws start s = (none, s)
+  ∀ (pos : Pos) (raws : Array Raw) (start : Nat) (s : St),
+    (St.wholeDoc s && St.deck s && !St.inDoc s && !St.inDef s) = false →
+    (argsRead raws #[] row.sig start = none ∨
+      ∃ args k, argsRead raws #[] row.sig start = some (args, k) ∧
+        ctrlLeft s row args = true) →
+    rewriteCtrl row.name pos raws start s = (none, s)
 
 public theorem ctrlRow_declines_contract (hsound : CtrlRowsSound) (row : CtrlRow)
     (hrow : row ∈ ctrlRows) : CtrlRowDeclines row := by
-  intro pos raws start s hd hk
+  intro pos raws start s hd h
   unfold rewriteCtrl
-  rw [rewriteCtrlAt_row hsound row hrow pos raws start s hd, hk]
+  rw [rewriteCtrlAt_row hsound row hrow pos raws start s hd]
+  rcases h with hk | ⟨args, k, hk, hl⟩
+  · rw [hk]
+  · rw [hk]
+    simp only [hl, ↓reduceIte]
+
+private theorem packageCall_args (command names : String) (pos groupPos namePos : Pos) :
+    argsRead (packageCall command names pos groupPos namePos) #[] [.opt, .needed] 1 =
+      some (#[none, some #[.word names namePos]], 2) := by
+  have hs := (packageCall_readers command names pos groupPos namePos).1
+  have hopt : takeRawOpt (packageCall command names pos groupPos namePos) 1 = (none, 1) := by
+    simp only [takeRawOpt, hs, Id.run]
+    simp [packageCall]
+  simp only [argsRead, hopt, (packageCall_readers command names pos groupPos namePos).2.2]
+  rfl
+
+private theorem rewriteCtrl_package_external_exact
+    (command names : String) (pos gp np : Pos) (st : St)
+    (hc : command = "usepackage" ∨ command = "RequirePackage")
+    (hrow : ctrlRow? command = some (packageRow command))
+    (hd : st.inDoc = false) (hdef : st.inDef = false) (hw : st.wholeDoc = false)
+    (hn : ∀ p ∈ names.trimAscii.toString.splitOn "," |>.map (·.trimAscii.toString),
+      nativePackages.contains p = false)
+    (hb : ∀ p ∈ names.trimAscii.toString.splitOn "," |>.map (·.trimAscii.toString),
+      (boundaryPkgs.contains p && st.boundaryOpen) = false)
+    (ht : ∀ p ∈ names.trimAscii.toString.splitOn "," |>.map (·.trimAscii.toString),
+      themeSlotOfPackage? p = none)
+    (part : String) (hp : part ∈ names.trimAscii.toString.splitOn ",") :
+    rewriteCtrl command pos (packageCall command names pos gp np) 1 st =
+      (some (#[], 1), { st with diags := st.diags ++
+        ((names.trimAscii.toString.splitOn ",").map fun p =>
+          atSource st pos (packageRefusal st.file pos p.trimAscii.toString)).toArray }) := by
+  have hlen := List.length_pos_of_mem hp
+  have hsize : (st.diags ++
+      ((names.trimAscii.toString.splitOn ",").map fun p =>
+        atSource st pos (packageRefusal st.file pos p.trimAscii.toString)).toArray).size >
+      st.diags.size := by
+    simp only [Array.size_append, List.size_toArray, List.length_map]
+    omega
+  have hsrc : rawSrc #[Raw.word names np] = names.trimAscii.toString := by
+    simp [rawSrc, rawSrcList, rawSrcOne]
+  have hpkgs := rewritePackages_external_exact command
+    ((names.trimAscii.toString.splitOn ",").map (·.trimAscii.toString)) none pos st hn hb ht
+  have hstep := rewriteCtrl_found_exact (packageRow command) hrow
+    (by rcases hc with rfl | rfl <;> rfl) (by rcases hc with rfl | rfl <;> rfl)
+    pos (packageCall command names pos gp np) 1 2 st _ (by simp [hw])
+    (packageCall_args command names pos gp np)
+    (by simp [ctrlLeft, packageRow, CtrlLeave.holds, hdef])
+  have hname : (packageRow command).name = command := rfl
+  rw [hname] at hstep
+  have hlower : ctrlRowRun (packageRow command)
+      ⟨command, pos, #[none, some #[.word names np]], packageCall command names pos gp np, 1, 2⟩
+      st = rewritePackages command
+        ((names.trimAscii.toString.splitOn ",").map (·.trimAscii.toString)) none pos st := by
+    simp [ctrlRowRun, packageRow, lowerCall, CtrlCall.src, CtrlCall.arg, CtrlCall.given,
+      CtrlCall.optSrc, bind, StateT.bind, pure, get, getThe, MonadStateOf.get, StateT.get, hd,
+      hsrc]
+  rw [hstep]
+  simp only [ctrlRowState, hlower, hpkgs, Array.isEmpty_empty, ↓reduceIte, account, List.map_map,
+    Function.comp_def]
+  rw [ite_eq_left (Or.inl hsize)]
 
 private theorem rewriteCtrl_unknown_exact (s : St) (pos : Pos)
     (raws : Array Raw) (start : Nat) (hz : ctrlRow? "zzNotAControl" = none)
@@ -12574,9 +12736,10 @@ private theorem rewriteList_control_exact (inBody : Bool) (raws out repl : Array
 
 private theorem rewriteList_package_external_exact
     (command names : String) (pos gp np : Pos) (st : St)
-    (hc : command = "usepackage" ∨ command = "RequirePackage") (hrow : ctrlRow? command = none)
+    (hc : command = "usepackage" ∨ command = "RequirePackage")
+    (hrow : ctrlRow? command = some (packageRow command))
     (hd : st.inDoc = false) (hf : st.inDef = false) (hw : st.wholeDoc = false)
-    (hl : st.inList = false) (hpic : st.inPicture = false)
+    (hpic : st.inPicture = false)
     (hn : ∀ p ∈ names.trimAscii.toString.splitOn "," |>.map (·.trimAscii.toString),
       nativePackages.contains p = false)
     (hb : ∀ p ∈ names.trimAscii.toString.splitOn "," |>.map (·.trimAscii.toString),
@@ -12593,7 +12756,7 @@ private theorem rewriteList_package_external_exact
   have ho : overlayName command = command := by
     rcases hc with rfl | rfl <;> simp [overlayName, String.startsWith_string_iff]
   have hstep := rewriteCtrl_package_external_exact command names pos gp np st
-    hc hrow hd hf hw hl hn hb ht part hp
+    hc hrow hd hf hw hn hb ht part hp
   have h := rewriteList_control_exact false (packageCall command names pos gp np) #[] #[]
     command pos [.group #[.word names np] gp] [] 0 st _ hdef hpic
     (by simpa only [ho, Nat.zero_add, List.length_cons, List.length_nil] using hstep)
@@ -12602,16 +12765,20 @@ private theorem rewriteList_package_external_exact
 
 private theorem rewriteList_row_exact (hsound : CtrlRowsSound) (inBody : Bool)
     (raws out : Array Raw) (row : CtrlRow) (hrow : row ∈ ctrlRows) (pos : Pos)
-    (taken rest : List Raw) (i : Nat) (s : St)
-    (hd : s.inDoc = true) (hp : s.inPicture = false)
-    (hk : argsEnd raws row.sig (i + 1) = some (i + 1 + taken.length)) :
+    (args : Array (Option (Array Raw))) (taken rest : List Raw) (i : Nat) (s : St)
+    (hd : (s.wholeDoc && s.deck && !s.inDoc && !s.inDef) = false) (hp : s.inPicture = false)
+    (hk : argsRead raws #[] row.sig (i + 1) = some (args, i + 1 + taken.length))
+    (hl : ctrlLeft s row args = false) :
     rewriteCtrl row.name pos raws (i + 1) s =
-      (some ((ctrlRowRun row pos s).1, taken.length), ctrlRowState s row pos) ∧
+      (some ((ctrlRowRun row ⟨row.name, pos, args, raws, i + 1, i + 1 + taken.length⟩ s).1,
+        taken.length), ctrlRowState s row ⟨row.name, pos, args, raws, i + 1, i + 1 + taken.length⟩) ∧
     rewriteList inBody raws out (.ctrl row.name pos :: (taken ++ rest)) i 0 s =
-      rewriteList inBody raws (out ++ (ctrlRowRun row pos s).1) rest (i + 1 + taken.length) 0
-        (ctrlRowState s row pos) := by
+      rewriteList inBody raws
+        (out ++ (ctrlRowRun row ⟨row.name, pos, args, raws, i + 1, i + 1 + taken.length⟩ s).1)
+        rest (i + 1 + taken.length) 0
+        (ctrlRowState s row ⟨row.name, pos, args, raws, i + 1, i + 1 + taken.length⟩) := by
   have hstep := rewriteCtrl_row_exact hsound row hrow pos raws (i + 1) (i + 1 + taken.length) s
-    hd hk
+    args hd hk hl
   rw [Nat.add_sub_cancel_left] at hstep
   obtain ⟨_, _, _, hdef, hoverlay⟩ := ctrlRow_names hsound row hrow
   refine ⟨hstep, ?_⟩
@@ -12621,64 +12788,91 @@ private theorem rewriteList_row_exact (hsound : CtrlRowsSound) (inBody : Bool)
 
 private theorem rewriteList_row_body_exact (hsound : CtrlRowsSound) (inBody : Bool)
     (raws out : Array Raw) (row : CtrlRow) (hrow : row ∈ ctrlRows) (pos : Pos)
-    (pre taken post : List Raw) (i : Nat) (s : St)
-    (hd : s.inDoc = true) (hp : s.inPicture = false)
+    (args : Array (Option (Array Raw))) (pre taken post : List Raw) (i : Nat) (s : St)
+    (hd : (s.wholeDoc && s.deck && !s.inDoc && !s.inDef) = false) (hp : s.inPicture = false)
     (hpre : LiteralRaws pre) (hpost : LiteralRaws post)
-    (hk : argsEnd raws row.sig (i + pre.length + 1) =
-      some (i + pre.length + 1 + taken.length)) :
+    (hk : argsRead raws #[] row.sig (i + pre.length + 1) =
+      some (args, i + pre.length + 1 + taken.length))
+    (hl : ctrlLeft s row args = false) :
     rewriteList inBody raws out (pre ++ .ctrl row.name pos :: (taken ++ post)) i 0 s =
-      (out ++ pre.toArray ++ (ctrlRowRun row pos s).1 ++ post.toArray,
-        ctrlRowState s row pos) := by
+      (out ++ pre.toArray ++ (ctrlRowRun row
+          ⟨row.name, pos, args, raws, i + pre.length + 1, i + pre.length + 1 + taken.length⟩ s).1 ++
+        post.toArray, ctrlRowState s row
+          ⟨row.name, pos, args, raws, i + pre.length + 1, i + pre.length + 1 + taken.length⟩) := by
   rw [rewriteList_literal_prefix _ _ _ _ _ _ hpre,
-    (rewriteList_row_exact hsound inBody raws (out ++ pre.toArray) row hrow pos taken post
-      (i + pre.length) s hd hp hk).2,
+    (rewriteList_row_exact hsound inBody raws (out ++ pre.toArray) row hrow pos args taken post
+      (i + pre.length) s hd hp hk hl).2,
     rewriteList_literal_exact _ _ _ _ _ _ hpost]
 
-/-- At an ordinary body cursor a row's control consumes exactly what its signature reads: its
-emission takes its place, the walk resumes where the reading stops, and a silent row emits nothing
-and is paid for. -/
+/-- At a body cursor, or a preamble one outside a deck, a row's control its leaves do not keep
+consumes exactly what its signature reads there: its emission takes its place, the walk resumes
+where the reading stops, and a silent row emits nothing and is paid for. -/
 public def CtrlRowConsumed (row : CtrlRow) : Prop :=
-  ∀ (inBody : Bool) (raws out : Array Raw) (pos : Pos) (taken rest : List Raw) (i : Nat)
-    (s : St),
-    St.inDoc s = true → St.inPicture s = false →
+  ∀ (inBody : Bool) (raws out : Array Raw) (pos : Pos) (args : Array (Option (Array Raw)))
+    (taken rest : List Raw) (i : Nat) (s : St),
+    (St.wholeDoc s && St.deck s && !St.inDoc s && !St.inDef s) = false →
+    St.inPicture s = false →
     raws.toList.drop i = .ctrl row.name pos :: (taken ++ rest) →
-    argsEnd raws row.sig (i + 1) = some (i + 1 + taken.length) →
+    argsRead raws #[] row.sig (i + 1) = some (args, i + 1 + taken.length) →
+    ctrlLeft s row args = false →
     rewriteCtrl row.name pos raws (i + 1) s =
-      (some ((ctrlRowRun row pos s).1, taken.length), ctrlRowState s row pos) ∧
+      (some ((ctrlRowRun row ⟨row.name, pos, args, raws, i + 1, i + 1 + taken.length⟩ s).1,
+        taken.length), ctrlRowState s row ⟨row.name, pos, args, raws, i + 1, i + 1 + taken.length⟩) ∧
     rewriteList inBody raws out (raws.toList.drop i) i 0 s =
-      rewriteList inBody raws (out ++ (ctrlRowRun row pos s).1) rest (i + 1 + taken.length) 0
-        (ctrlRowState s row pos) ∧
-    (row.action.silent = true → (ctrlRowRun row pos s).1 = #[] ∧
-      ((St.diags (ctrlRowState s row pos)).size > (St.diags s).size ∨
-        St.writes (ctrlRowState s row pos) > St.writes s))
+      rewriteList inBody raws
+        (out ++ (ctrlRowRun row ⟨row.name, pos, args, raws, i + 1, i + 1 + taken.length⟩ s).1)
+        rest (i + 1 + taken.length) 0
+        (ctrlRowState s row ⟨row.name, pos, args, raws, i + 1, i + 1 + taken.length⟩) ∧
+    (row.action.silent = true →
+      (ctrlRowRun row ⟨row.name, pos, args, raws, i + 1, i + 1 + taken.length⟩ s).1 = #[] ∧
+      ((St.diags (ctrlRowState s row
+          ⟨row.name, pos, args, raws, i + 1, i + 1 + taken.length⟩)).size > (St.diags s).size ∨
+        St.writes (ctrlRowState s row ⟨row.name, pos, args, raws, i + 1, i + 1 + taken.length⟩) >
+          St.writes s))
 
 public theorem ctrlRow_control_contract (hsound : CtrlRowsSound) (row : CtrlRow)
     (hrow : row ∈ ctrlRows) : CtrlRowConsumed row := by
-  intro inBody raws out pos taken rest i s hd hp hsource hk
-  obtain ⟨hstep, hwalk⟩ := rewriteList_row_exact hsound inBody raws out row hrow pos taken rest
-    i s hd hp hk
+  intro inBody raws out pos args taken rest i s hd hp hsource hk hl
+  obtain ⟨hstep, hwalk⟩ := rewriteList_row_exact hsound inBody raws out row hrow pos args taken
+    rest i s hd hp hk hl
   refine ⟨hstep, by rw [hsource]; exact hwalk, fun hsilent => ?_⟩
-  have hempty := ctrlRowRun_silent row pos s hsilent
+  have hempty := ctrlRowRun_silent row ⟨row.name, pos, args, raws, i + 1, i + 1 + taken.length⟩
+    s hsilent
   refine ⟨hempty, ?_⟩
   rw [hempty] at hstep
   exact rewriteCtrl_accounts row.name pos raws (i + 1) s _ taken.length hstep
 
-/-- A signature of groups reads exactly a group prefix. -/
-public theorem argsEnd_groups_exact {raws : Array Raw} {i args stop}
-    (h : GroupPrefix raws i args stop) :
-    argsEnd raws (List.replicate args.length .group) i = some stop := by
-  induction h with
-  | nil => rfl
+/-- A signature of groups, standing or needed, reads exactly a group prefix, each group standing. -/
+public theorem argsRead_groups_exact {raws : Array Raw} {i args stop}
+    (h : GroupPrefix raws i args stop) (acc : Array (Option (Array Raw))) (sig : List ArgKind)
+    (hlen : sig.length = args.length) (hsig : ∀ k ∈ sig, k = .group ∨ k = .needed) :
+    argsRead raws acc sig i = some (acc ++ (args.map some).toArray, stop) := by
+  induction h generalizing acc sig with
+  | nil =>
+    cases sig with
+    | nil => simp [argsRead]
+    | cons _ _ => simp at hlen
   | @group i body p args stop hg _ ih =>
-    have hone := takeGroups_prefix_exact (GroupPrefix.group hg GroupPrefix.nil)
-    simp only [List.length_cons, List.length_nil, Nat.zero_add] at hone
-    simp only [List.length_cons, List.replicate_succ, argsEnd, hone]
-    exact ih
+    cases sig with
+    | nil => simp at hlen
+    | cons k sig =>
+      have hone := takeGroups_prefix_exact (GroupPrefix.group hg GroupPrefix.nil)
+      simp only [List.length_cons, List.length_nil, Nat.zero_add] at hone
+      simp only [List.length_cons, Nat.add_right_cancel_iff] at hlen
+      have hrest := ih (acc.push (some body)) sig hlen fun k hk => hsig k (List.mem_cons_of_mem _ hk)
+      rcases hsig k List.mem_cons_self with rfl | rfl <;>
+        simp [argsRead, hone, hrest]
   | @ctrl i name p args stop hg _ ih =>
-    have hone := takeGroups_prefix_exact (GroupPrefix.ctrl hg GroupPrefix.nil)
-    simp only [List.length_cons, List.length_nil, Nat.zero_add] at hone
-    simp only [List.length_cons, List.replicate_succ, argsEnd, hone]
-    exact ih
+    cases sig with
+    | nil => simp at hlen
+    | cons k sig =>
+      have hone := takeGroups_prefix_exact (GroupPrefix.ctrl hg GroupPrefix.nil)
+      simp only [List.length_cons, List.length_nil, Nat.zero_add] at hone
+      simp only [List.length_cons, Nat.add_right_cancel_iff] at hlen
+      have hrest := ih (acc.push (some #[.ctrl name p])) sig hlen
+        fun k hk => hsig k (List.mem_cons_of_mem _ hk)
+      rcases hsig k List.mem_cons_self with rfl | rfl <;>
+        simp [argsRead, hone, hrest]
 
 /-- An ordinary body control consumes exactly its declared argument prefix. -/
 public def ControlGroupsConsumed (name : String) (arity : Nat) : Prop :=
@@ -12695,22 +12889,24 @@ public def ControlGroupsConsumed (name : String) (arity : Nat) : Prop :=
     ((St.diags dispatched.2).size > (St.diags s).size ∨
       St.writes dispatched.2 > St.writes s)
 
-/-- A silent row whose arguments are groups consumes exactly a group prefix of its arity. -/
+/-- At a body cursor a quiet row whose arguments are groups consumes exactly a group prefix of its
+arity and is paid for. -/
 public theorem ctrlRow_groups_consumed (hsound : CtrlRowsSound) (row : CtrlRow)
-    (hrow : row ∈ ctrlRows) (hsilent : row.action.silent = true)
-    (hsig : ∀ k ∈ row.sig, k = .group) : ControlGroupsConsumed row.name row.sig.length := by
+    (hrow : row ∈ ctrlRows) (hquiet : row.quiet = true)
+    (hsig : ∀ k ∈ row.sig, k = .group ∨ k = .needed) :
+    ControlGroupsConsumed row.name row.sig.length := by
   intro inBody raws out pos args taken rest i s hd _ hp hsource hn hg
-  have hk : argsEnd raws row.sig (i + 1) = some (i + 1 + taken.length) := by
-    rw [List.eq_replicate_iff.mpr ⟨rfl, hsig⟩, ← hn]
-    exact argsEnd_groups_exact hg
-  obtain ⟨hstep, hwalk, hpaid⟩ :=
-    ctrlRow_control_contract hsound row hrow inBody raws out pos taken rest i s hd hp hsource hk
-  obtain ⟨hempty, hgrew⟩ := hpaid hsilent
+  have hk := argsRead_groups_exact hg #[] row.sig hn.symm hsig
+  have hl := ctrlLeft_quiet row s (#[] ++ (args.map some).toArray) hquiet
+  obtain ⟨hstep, hwalk, _⟩ := ctrlRow_control_contract hsound row hrow inBody raws out pos _ taken
+    rest i s (by simp [hd]) hp hsource hk hl
+  have hempty := ctrlRowRun_quiet row
+    ⟨row.name, pos, #[] ++ (args.map some).toArray, raws, i + 1, i + 1 + taken.length⟩ s hquiet hd
   rw [hempty, Array.append_empty] at hwalk
   rw [hempty] at hstep
   dsimp only
   rw [hstep]
-  exact ⟨rfl, hwalk, hgrew⟩
+  exact ⟨rfl, hwalk, rewriteCtrl_accounts row.name pos raws (i + 1) s _ taken.length hstep⟩
 
 /-- The dispatcher leaves a command and every following raw to elaboration. -/
 public def UnknownControlPreserved (name : String) : Prop :=
@@ -12739,12 +12935,6 @@ public structure RewriteCursor where
   private state : St
   private complete : (Array Raw × St) → (Array Raw × St) := id
 
-/-- The ordinary document-body dispatch, excluding the list-parameter and
-picture interpreters. -/
-public def RewriteCursor.inDocument (cursor : RewriteCursor) : Prop :=
-  cursor.state.inDoc = true ∧ cursor.state.inList = false ∧
-    cursor.state.inPicture = false
-
 /-- The scope permits entry into an ordinary document environment. -/
 public def RewriteCursor.outsidePicture (cursor : RewriteCursor) : Prop :=
   cursor.state.inPicture = false
@@ -12763,13 +12953,11 @@ private def rewriteCursor (cursor : RewriteCursor) : Array Raw × St :=
   cursor.complete (rewriteList cursor.inBody cursor.raws cursor.out
     (cursor.raws.toList.drop cursor.index) cursor.index 0 cursor.state)
 
-/-- The continuation after a row's control, where its signature's reading stops. -/
-public def RewriteCursor.afterRow (cursor : RewriteCursor) (row : CtrlRow) (pos : Pos)
-    (consumed : Nat) : RewriteCursor :=
-  { cursor with
-    out := cursor.out ++ (ctrlRowRun row pos cursor.state).1
-    index := cursor.index + 1 + consumed
-    state := ctrlRowState cursor.state row pos }
+/-- A row's control with arguments `args` stands, no leave of its row holding, at the opening of
+the document environment entered from this checkpoint. -/
+public def RewriteCursor.rowStandsInBody (cursor : RewriteCursor) (row : CtrlRow)
+    (args : Array (Option (Array Raw))) : Prop :=
+  ctrlLeft (openDocumentBody cursor.state).2 row args = false
 
 /-- Descends into the document environment at this checkpoint, its continuation
 restoring the enclosing scope. -/
@@ -12829,26 +13017,6 @@ private theorem rewriteCursor_last_document_exact (cursor : RewriteCursor)
   simp only [rewriteCursor, RewriteCursor.enterDocument, List.drop_zero, ht,
     rewriteList, closeLastDocument]
   rfl
-
-private theorem drop_control_rest (raws : Array Raw) (i : Nat)
-    (name : String) (pos : Pos) (taken rest : List Raw)
-    (h : raws.toList.drop i = .ctrl name pos :: (taken ++ rest)) :
-    raws.toList.drop (i + 1 + taken.length) = rest := by
-  rw [Nat.add_assoc, ← List.drop_drop, h, Nat.add_comm 1,
-    List.drop_succ_cons, List.drop_left]
-
-private theorem rewriteCursor_row_exact (hsound : CtrlRowsSound) (cursor : RewriteCursor)
-    (row : CtrlRow) (hrow : row ∈ ctrlRows) (pos : Pos) (taken rest : List Raw)
-    (hd : cursor.inDocument)
-    (hs : cursor.raws.toList.drop cursor.index = .ctrl row.name pos :: (taken ++ rest))
-    (hk : argsEnd cursor.raws row.sig (cursor.index + 1) =
-      some (cursor.index + 1 + taken.length)) :
-    rewriteCursor cursor = rewriteCursor (cursor.afterRow row pos taken.length) := by
-  obtain ⟨hd, _, hp⟩ := hd
-  have h := (ctrlRow_control_contract hsound row hrow cursor.inBody cursor.raws cursor.out pos
-    taken rest cursor.index cursor.state hd hp hs hk).2.1
-  simpa only [rewriteCursor, RewriteCursor.afterRow,
-    drop_control_rest _ _ _ _ _ _ hs] using congrArg cursor.complete h
 
 /-- The gathered running content, one declaration each. -/
 private def flushRunning : M (Array Raw) := do
@@ -13401,8 +13569,8 @@ named by the compatibility producer. -/
 public theorem executeInputs_package_refusal_contract (reader : InputReader Id)
     (file command names : String) (pos groupPos namePos : Pos)
     (keeps : List String) (ds : Array Diag) (ignored : List String)
-    (hc : command = "usepackage" ∨ command = "RequirePackage") (hrow : ctrlRow? command = none)
-    (hnames : ExternalPackageNames names)
+    (hc : command = "usepackage" ∨ command = "RequirePackage")
+    (hrow : ctrlRow? command = some (packageRow command)) (hnames : ExternalPackageNames names)
     (hr : ∀ request context, reader request context = (none, context)) :
     let executed := executeInputs reader file
       (packageCall command names pos groupPos namePos) keeps ds ignored
@@ -13435,7 +13603,7 @@ public theorem executeInputs_package_refusal_contract (reader : InputReader Id)
       obtain ⟨q, hq, rfl⟩ := List.mem_map.mp hp
       exact (hnames q hq).2.2.2
     have hstep := rewriteList_package_external_exact command names pos groupPos namePos st
-      hc hrow rfl rfl rfl rfl rfl hn hb ht part hpart
+      hc hrow rfl rfl rfl rfl hn hb ht part hpart
     let reports := ((names.trimAscii.toString.splitOn ",").map fun p =>
       atSource st pos (packageRefusal st.file pos p.trimAscii.toString)).toArray
     let after := { st with diags := st.diags ++ reports }
@@ -13457,43 +13625,48 @@ public theorem executeInputs_package_refusal_contract (reader : InputReader Id)
     rw [← atSource_package_exact st pos part.trimAscii.toString]
     exact hfinish
 
-public theorem finishRewrite_row_exact (hsound : CtrlRowsSound) (cursor : RewriteCursor)
-    (row : CtrlRow) (hrow : row ∈ ctrlRows) (pos : Pos) (taken rest : List Raw)
-    (hd : cursor.inDocument)
-    (hs : cursor.raws.toList.drop cursor.index = .ctrl row.name pos :: (taken ++ rest))
-    (hk : argsEnd cursor.raws row.sig (cursor.index + 1) =
-      some (cursor.index + 1 + taken.length)) :
-    finishRewrite cursor = finishRewrite (cursor.afterRow row pos taken.length) :=
-  congrArg finishRewritten
-    (rewriteCursor_row_exact hsound cursor row hrow pos taken rest hd hs hk)
-
-/-- A row's control's document completed from the retained body around the row's emission and
-from its report alone. -/
-public def finishCtrlRowDocument (cursor : RewriteCursor) (row : CtrlRow) (pos docPos : Pos)
-    (pre post : Array Raw) : Array Raw × Array Diag × Array String :=
+/-- A row's control's document completed from the retained body around the row's emission at
+`call` and from the state it leaves. -/
+public def finishCtrlRowDocument (cursor : RewriteCursor) (row : CtrlRow) (call : CtrlCall)
+    (docPos : Pos) (pre post : Array Raw) : Array Raw × Array Diag × Array String :=
   finishRewritten (closeLastDocument cursor docPos
-    (pre ++ (ctrlRowRun row pos (openDocumentBody cursor.state).2).1 ++ post,
-      ctrlRowState (openDocumentBody cursor.state).2 row pos))
+    (pre ++ (ctrlRowRun row call (openDocumentBody cursor.state).2).1 ++ post,
+      ctrlRowState (openDocumentBody cursor.state).2 row call))
 
 public theorem finishCtrlRowDocument_source_exact (cursor : RewriteCursor) (body : Array Raw)
-    (row : CtrlRow) (pos docPos : Pos) (pre post : Array Raw) :
-    finishCtrlRowDocument (cursor.withDocument body docPos) row pos docPos pre post =
-      finishCtrlRowDocument cursor row pos docPos pre post := by rfl
+    (row : CtrlRow) (call : CtrlCall) (docPos : Pos) (pre post : Array Raw) :
+    finishCtrlRowDocument (cursor.withDocument body docPos) row call docPos pre post =
+      finishCtrlRowDocument cursor row call docPos pre post := by rfl
+
+/-- A row whose action reads no argument completes its document alike wherever its call stands. -/
+public theorem finishCtrlRowDocument_fixed_exact (cursor : RewriteCursor) (row : CtrlRow)
+    (call call' : CtrlCall) (h : row.action.reads = false) (hpos : call.pos = call'.pos)
+    (docPos : Pos) (pre post : Array Raw) :
+    finishCtrlRowDocument cursor row call docPos pre post =
+      finishCtrlRowDocument cursor row call' docPos pre post := by
+  simp only [finishCtrlRowDocument, ctrlRowState, ctrlRowRun_fixed row call call' h hpos, hpos]
 
 public theorem finishRewrite_row_document_exact (hsound : CtrlRowsSound)
     (cursor : RewriteCursor) (body : Array Raw) (row : CtrlRow) (hrow : row ∈ ctrlRows)
-    (pos docPos : Pos) (pre taken post : List Raw) (hp : cursor.outsidePicture)
+    (pos docPos : Pos) (args : Array (Option (Array Raw))) (pre taken post : List Raw)
+    (hp : cursor.outsidePicture)
     (hs : cursor.raws.toList.drop cursor.index = [.env "document" body docPos])
     (hb : body.toList = pre ++ .ctrl row.name pos :: (taken ++ post))
     (hpre : LiteralRaws pre) (hpost : LiteralRaws post)
-    (hk : argsEnd body row.sig (pre.length + 1) = some (pre.length + 1 + taken.length)) :
+    (hk : argsRead body #[] row.sig (pre.length + 1) =
+      some (args, pre.length + 1 + taken.length))
+    (hl : cursor.rowStandsInBody row args) :
     finishRewrite cursor =
-      finishCtrlRowDocument cursor row pos docPos pre.toArray post.toArray := by
+      finishCtrlRowDocument cursor row
+        ⟨row.name, pos, args, body, pre.length + 1, pre.length + 1 + taken.length⟩
+        docPos pre.toArray post.toArray := by
   unfold finishRewrite
   rw [rewriteCursor_last_document_exact cursor body docPos hp hs, hb]
-  have hbody := rewriteList_row_body_exact hsound cursor.inBody body #[] row hrow pos pre taken
-    post 0 (openDocumentBody cursor.state).2 rfl hp hpre hpost
-    (by simpa only [Nat.zero_add] using hk)
+  have hbody := rewriteList_row_body_exact hsound cursor.inBody body #[] row hrow pos args pre
+    taken post 0 (openDocumentBody cursor.state).2
+    (by simp [show (openDocumentBody cursor.state).2.inDoc = true from rfl]) hp hpre hpost
+    (by simpa only [Nat.zero_add] using hk) hl
+  simp only [Nat.zero_add] at hbody
   rw [hbody]
   simp only [Array.empty_append, finishCtrlRowDocument]
 

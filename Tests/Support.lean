@@ -422,7 +422,7 @@ def nothingRows : List (String × Nat × Option String) :=
       match row.action with
       | .discard _ key => some (row.name, row.sig.length, some key)
       | .inert => some (row.name, row.sig.length, none)
-      | .tokens .. | .native _ | .skip _ | .refuse .. => none
+      | .tokens .. | .native _ | .skip _ | .refuse .. | .lower .. => none
     else none
 
 /-- The sites the raw-HTML family places a construct at: in a paragraph, opening a line, as a block,

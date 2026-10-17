@@ -31,23 +31,23 @@ public theorem runExecuted_rewrite_exact (file : String) (executed : Compat.Exec
         executed.sourceTriggers (Compat.unusedLengths file executed.raws) earlier metric
         (Compat.beginRewrite executed) executed.inputAttempts executed.mentions := by rfl
 
-/-- The control table's names are distinct, clear of `\cite`, `\appendix` and `\define`, and none is
-spelled as a saved overlay-native name. -/
+/-- The control table's names stand in strictly ascending byte order, so are distinct, clear of
+`\cite`, `\appendix` and `\define`, and none is spelled as a saved overlay-native name. -/
 public theorem ctrlRows_sound : Compat.CtrlRowsSound := by
   unfold Compat.CtrlRowsSound
   decide +kernel
 
-/-- At an ordinary body cursor every row of the control table consumes exactly what its signature
-reads, a silent row whose arguments are groups exactly its group prefix, a row missing an argument
-that must stand is left to elaboration, and so is an unknown control. -/
+/-- At a body cursor, or a preamble one outside a deck, a table row no leave keeps consumes exactly
+what its signature reads, and one missing an argument that must stand or kept by a leave is left to
+elaboration; at a body cursor a quiet row of groups consumes exactly its group prefix. -/
 public theorem ctrl_rows_consumed_contract :
     (∀ row ∈ Compat.ctrlRows, Compat.CtrlRowConsumed row) ∧
-    (∀ row ∈ Compat.ctrlRows, row.action.silent = true → (∀ k ∈ row.sig, k = .group) →
+    (∀ row ∈ Compat.ctrlRows, row.quiet = true → (∀ k ∈ row.sig, k = .group ∨ k = .needed) →
       Compat.ControlGroupsConsumed row.name row.sig.length) ∧
     (∀ row ∈ Compat.ctrlRows, Compat.CtrlRowDeclines row) ∧
     Compat.UnknownControlPreserved "zzNotAControl" :=
   ⟨Compat.ctrlRow_control_contract ctrlRows_sound,
-    fun row hrow hsilent hsig => Compat.ctrlRow_groups_consumed ctrlRows_sound row hrow hsilent hsig,
+    fun row hrow hquiet hsig => Compat.ctrlRow_groups_consumed ctrlRows_sound row hrow hquiet hsig,
     Compat.ctrlRow_declines_contract ctrlRows_sound,
     Compat.unknown_control_contract (by decide +kernel)⟩
 
@@ -55,47 +55,60 @@ public theorem ctrlRow_document_exact (file : String) (scan : Compat.BoundarySca
     (macros : Array (String × String)) (triggers : Compat.SourceTriggers)
     (priorDiags earlier : Array Diag) (metric : Ir.Pic.LabelMetric)
     (cursor : Compat.RewriteCursor) (body : Array Raw)
-    (row : Compat.CtrlRow) (pos docPos : Pos) (pre taken post : List Raw)
+    (row : Compat.CtrlRow) (pos docPos : Pos) (args : Array (Option (Array Raw)))
+    (pre taken post : List Raw)
     (hrow : row ∈ Compat.ctrlRows) (hp : cursor.outsidePicture)
     (hs : cursor.raws.toList.drop cursor.index = [.env "document" body docPos])
     (hb : body.toList = pre ++ .ctrl row.name pos :: (taken ++ post))
     (hpre : Compat.LiteralRaws pre) (hpost : Compat.LiteralRaws post)
-    (hk : Compat.argsEnd body row.sig (pre.length + 1) = some (pre.length + 1 + taken.length))
+    (hk : Compat.argsRead body #[] row.sig (pre.length + 1) =
+      some (args, pre.length + 1 + taken.length))
+    (hl : cursor.rowStandsInBody row args)
     (attempts : Array Compat.InputAttempt := #[]) (mentions : Array String := #[]) :
     runRewriteFinal file scan macros triggers priorDiags earlier metric cursor attempts mentions =
       runPreparedFinal file
         (prepareRewritten file scan macros triggers priorDiags
-          (Compat.finishCtrlRowDocument cursor row pos docPos pre.toArray post.toArray)
+          (Compat.finishCtrlRowDocument cursor row
+            ⟨row.name, pos, args, body, pre.length + 1, pre.length + 1 + taken.length⟩
+            docPos pre.toArray post.toArray)
           attempts mentions) earlier metric := by
   unfold runRewriteFinal
   rw [Compat.finishRewrite_row_document_exact ctrlRows_sound cursor body row hrow pos docPos
-    pre taken post hp hs hb hpre hpost hk]
+    args pre taken post hp hs hb hpre hpost hk hl]
 
 public theorem ctrlRow_operands_agree (file : String) (scan : Compat.BoundaryScan)
     (macros : Array (String × String)) (triggers : Compat.SourceTriggers)
     (priorDiags earlier : Array Diag) (metric : Ir.Pic.LabelMetric)
     (cursor : Compat.RewriteCursor) (left right : Array Raw)
-    (row : Compat.CtrlRow) (pos docPos : Pos) (pre post takenLeft takenRight : List Raw)
-    (hrow : row ∈ Compat.ctrlRows) (hp : cursor.outsidePicture)
+    (row : Compat.CtrlRow) (pos docPos : Pos) (argsLeft argsRight : Array (Option (Array Raw)))
+    (pre post takenLeft takenRight : List Raw)
+    (hrow : row ∈ Compat.ctrlRows) (hfixed : row.action.reads = false)
+    (hp : cursor.outsidePicture)
     (hleft : left.toList = pre ++ .ctrl row.name pos :: (takenLeft ++ post))
     (hright : right.toList = pre ++ .ctrl row.name pos :: (takenRight ++ post))
     (hpre : Compat.LiteralRaws pre) (hpost : Compat.LiteralRaws post)
-    (hkleft : Compat.argsEnd left row.sig (pre.length + 1) =
-      some (pre.length + 1 + takenLeft.length))
-    (hkright : Compat.argsEnd right row.sig (pre.length + 1) =
-      some (pre.length + 1 + takenRight.length))
+    (hkleft : Compat.argsRead left #[] row.sig (pre.length + 1) =
+      some (argsLeft, pre.length + 1 + takenLeft.length))
+    (hkright : Compat.argsRead right #[] row.sig (pre.length + 1) =
+      some (argsRight, pre.length + 1 + takenRight.length))
     (attempts : Array Compat.InputAttempt := #[]) (mentions : Array String := #[]) :
     runRewriteFinal file scan macros triggers priorDiags earlier metric
       (cursor.withDocument left docPos) attempts mentions =
     runRewriteFinal file scan macros triggers priorDiags earlier metric
       (cursor.withDocument right docPos) attempts mentions := by
   rw [ctrlRow_document_exact file scan macros triggers priorDiags earlier metric
-    (cursor.withDocument left docPos) left row pos docPos pre takenLeft post hrow hp rfl
-    hleft hpre hpost hkleft attempts mentions,
+    (cursor.withDocument left docPos) left row pos docPos argsLeft pre takenLeft post hrow hp rfl
+    hleft hpre hpost hkleft (Compat.ctrlLeft_fixed row _ argsLeft hfixed)
+    attempts mentions,
     ctrlRow_document_exact file scan macros triggers priorDiags earlier metric
-    (cursor.withDocument right docPos) right row pos docPos pre takenRight post hrow hp
-    rfl hright hpre hpost hkright attempts mentions,
-    Compat.finishCtrlRowDocument_source_exact, Compat.finishCtrlRowDocument_source_exact]
+    (cursor.withDocument right docPos) right row pos docPos argsRight pre takenRight post hrow hp
+    rfl hright hpre hpost hkright (Compat.ctrlLeft_fixed row _ argsRight hfixed)
+    attempts mentions,
+    Compat.finishCtrlRowDocument_source_exact, Compat.finishCtrlRowDocument_source_exact,
+    Compat.finishCtrlRowDocument_fixed_exact cursor row
+      ⟨row.name, pos, argsLeft, left, pre.length + 1, pre.length + 1 + takenLeft.length⟩
+      ⟨row.name, pos, argsRight, right, pre.length + 1, pre.length + 1 + takenRight.length⟩
+      hfixed rfl]
 
 /-- A recovery accounted by its producer's diagnostic code and its command identity. -/
 @[expose] public def RecoveryNamed (ds : Array Diag) (item : Ir.Recovered) : Prop :=
@@ -373,11 +386,12 @@ public theorem runRaws_recovery_group_contract (file : String) (raws : Array Raw
     fun item hi => runPreparedFinal_recovery_named file _ earlier metric item hi⟩
 
 /-- An executed document holding a table row's control between literal neighbours, its operands
-unrestricted. -/
+unrestricted but for those its signature reads, which no leave of its row keeps. -/
 public structure ControlDocument (executed : Compat.Executed) (row : Compat.CtrlRow) where
   body : Array Raw
   pos : Pos
   docPos : Pos
+  args : Array (Option (Array Raw))
   pre : List Raw
   taken : List Raw
   post : List Raw
@@ -387,7 +401,15 @@ public structure ControlDocument (executed : Compat.Executed) (row : Compat.Ctrl
   source : body.toList = pre ++ .ctrl row.name pos :: (taken ++ post)
   before : Compat.LiteralRaws pre
   after : Compat.LiteralRaws post
-  operands : Compat.argsEnd body row.sig (pre.length + 1) = some (pre.length + 1 + taken.length)
+  operands : Compat.argsRead body #[] row.sig (pre.length + 1) =
+    some (args, pre.length + 1 + taken.length)
+  stands : (Compat.beginRewrite executed).rowStandsInBody row args
+
+/-- The call a control document's row control stands at. -/
+public def ControlDocument.call {executed : Compat.Executed} {row : Compat.CtrlRow}
+    (input : ControlDocument executed row) : Compat.CtrlCall :=
+  ⟨row.name, input.pos, input.args, input.body, input.pre.length + 1,
+    input.pre.length + 1 + input.taken.length⟩
 
 public theorem runExecuted_ctrlRow_contract (file : String) (executed : Compat.Executed)
     (earlier : Array Diag) (metric : Ir.Pic.LabelMetric) (row : Compat.CtrlRow)
@@ -397,18 +419,18 @@ public theorem runExecuted_ctrlRow_contract (file : String) (executed : Compat.E
         (prepareRewritten file (Compat.boundaryScan file executed.raws) (macroScan executed.raws)
           executed.sourceTriggers (Compat.unusedLengths file executed.raws)
           (Compat.finishCtrlRowDocument (Compat.beginRewrite executed)
-            row input.pos input.docPos input.pre.toArray input.post.toArray)
+            row input.call input.docPos input.pre.toArray input.post.toArray)
           executed.inputAttempts executed.mentions) earlier metric := by
   rw [runExecuted_rewrite_exact]
   exact ctrlRow_document_exact file _ _ _ (Compat.unusedLengths file executed.raws) earlier metric
-    (Compat.beginRewrite executed) input.body row input.pos input.docPos
+    (Compat.beginRewrite executed) input.body row input.pos input.docPos input.args
     input.pre input.taken input.post hrow input.outsidePicture
-    input.document input.source input.before input.after input.operands
+    input.document input.source input.before input.after input.operands input.stands
     executed.inputAttempts executed.mentions
 
 /-- The consuming-control contract at the executed frontend: a table row's control between literal
-neighbours leaves the document its emission and report alone, unhandled controls keep their braced
-content, and every recovery is named. -/
+neighbours leaves the document its emission and the state it leaves alone, unhandled controls keep
+their braced content, and every recovery is named. -/
 public theorem control_completion_contract (file : String) (executed : Compat.Executed)
     (earlier : Array Diag) (metric : Ir.Pic.LabelMetric) :
     (∀ row ∈ Compat.ctrlRows,
@@ -418,7 +440,7 @@ public theorem control_completion_contract (file : String) (executed : Compat.Ex
             (prepareRewritten file (Compat.boundaryScan file executed.raws) (macroScan executed.raws)
               executed.sourceTriggers (Compat.unusedLengths file executed.raws)
               (Compat.finishCtrlRowDocument (Compat.beginRewrite executed)
-                row input.pos input.docPos input.pre.toArray input.post.toArray)
+                row input.call input.docPos input.pre.toArray input.post.toArray)
               executed.inputAttempts executed.mentions) earlier metric) ∧
     (∀ group : RecoveryGroup,
       PreparedRecoveryGroup file (prepareExecuted file executed) metric group →

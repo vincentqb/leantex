@@ -683,6 +683,13 @@ public def Diag.triggerText (d : Diag) : Option String := d.trigger.map (·.text
 /-- The wording of a declared setting the engine skips, whatever surface declares it. -/
 public def Diag.notHonoured (what : String) : String := s!"{what} is not honoured; skipped"
 
+/-- The one wording of a declaration the document body ignores. -/
+public def Diag.bodyDeclaration (name : String) : String :=
+  s!"'\\{name}' is a declaration; in the body it is ignored"
+
+/-- The help of a declaration standing where it is not read. -/
+public def Diag.declareInPreamble : String := "declare it in the preamble, before '\\begin{document}'"
+
 public theorem Diag.of_record_exact (c : DiagCode) (message : String)
     (span : Option Span) (help subject refused trigger : Option String)
     (recovery : Option Diag.Recovery) (output : Option Diag.Output) (detail : Option String)

@@ -19,6 +19,7 @@ def frontendControlContractChecks (ref : IO.Ref (List String)) : IO Unit := do
       (fun _ _ => {}) (cursor.withDocument body {})
   let operands (sig : List Compat.ArgKind) (payload : Array Parse.Raw) : Array Parse.Raw :=
     sig.foldl (init := #[]) fun acc k => match k with
+      | .star => acc.push (.word "*" {})
       | .opt => acc ++ #[.sym '[' {}] ++ payload ++ #[.sym ']' {}]
       | .group | .needed => acc.push (.group payload {})
       | .kept => acc.push (.group #[.word "kept" {}] {})
@@ -33,6 +34,7 @@ def frontendControlContractChecks (ref : IO.Ref (List String)) : IO Unit := do
       .group #[.word "neverRequested" {}] {}]
   let written (sig : List Compat.ArgKind) : String :=
     String.join (sig.map fun k => match k with
+      | .star => "*"
       | .opt => "[zzkeyword]"
       | .group | .needed => "{zzkeyword}"
       | .kept => "{kept}")
@@ -55,10 +57,11 @@ def frontendControlContractChecks (ref : IO.Ref (List String)) : IO Unit := do
     | .discard _ key =>
       ds.any fun d => d.kind == .N0100 && d.subject == some ("ctrl:nothing:" ++ key)
     | .inert => ds.any fun d => d.kind == .W0387 && d.subject == some ("ctrl:" ++ row.name)
+    | .lower .. => true
   t "control table: every skip row names a kernel skip amount"
     (Compat.ctrlRows.all fun row => match row.action with
       | .skip amount => (Compat.kernelSkip amount).isSome
-      | .tokens .. | .native _ | .refuse .. | .discard .. | .inert => true)
+      | .tokens .. | .native _ | .refuse .. | .discard .. | .inert | .lower .. => true)
   -- A row answers its control after the \cite guard and before a document's list settings.
   let listed (preamble use after : String) : Array Diag :=
     (Elab.run file ("\\documentclass{article}" ++ preamble ++
@@ -78,7 +81,32 @@ def frontendControlContractChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "dispatch order: a use before a later definition keeps the row's meaning"
     (later.any (fun d => d.kind == .N0100 && d.message.startsWith "'\\newpage' →") &&
       !settled later)
-  for row in Compat.ctrlRows do
+  let lowered := listed "" "\\pagestyle{zzstyle}" "\\gdef\\pagestyle{\\setlength{\\itemsep}{9pt}}"
+  t "dispatch order: a lowered control used before a later definition keeps its meaning"
+    (lowered.any (fun d => d.kind == .W0104 &&
+        (d.message.splitOn "pagestyle{zzstyle}").length > 1) &&
+      !settled lowered)
+  let earlier := listed "\\renewcommand{\\ensuremath}{\\setlength{\\itemsep}{9pt}}"
+    "\\ensuremath{x^2}" ""
+  t "dispatch order: a lowered control after a redefinition the built-in overrides keeps meaning"
+    (earlier.any (·.kind == .W0361) && !settled earlier && earlier.all (·.severity != .error))
+  let missing := Elab.run file ("\\documentclass{article}\\usepackage{natbib}\\begin{document}" ++
+    "alpha \\bibpunct{(}{)} \\section{Zzsec} omega\\end{document}")
+  t "body declaration: one missing a group is left to elaboration with what follows it"
+    (((Ir.blocksText missing.1.body).splitOn "(").length == 2 &&
+      ((Ir.blocksText missing.1.body).splitOn "Zzsec").length == 2 &&
+      !missing.2.any (·.kind == .W0340))
+  let bare := Elab.run file ("\\documentclass{article}\\begin{document}alpha \\usepackage omega" ++
+    "\\end{document}")
+  t "body declaration: a body \\usepackage naming no package is left to elaboration"
+    (bare.2.any (fun d => d.kind == .W0301 && (d.message.splitOn "'\\usepackage'").length > 1) &&
+      !bare.2.any (·.kind == .W0340))
+  let deferred := Elab.run file ("\\documentclass{article}\\usepackage{natbib}\\begin{document}" ++
+    "\\newcommand{\\zzmac}{\\bibpunct{(}{)}}alpha \\zzmac{;} omega\\end{document}")
+  t "body declaration: in a definition body one missing groups waits for its uses"
+    (!deferred.2.any (·.kind == .W0340) &&
+      ((Ir.blocksText deferred.1.body).splitOn "(").length == 2)
+  for row in Compat.ctrlRows.filter (!·.action.reads) do
     let l ← pure (finish (body row left))
     let r ← pure (finish (body row right))
     t s!"control completion: {row.name} consumes arbitrary nested operands"
@@ -202,3 +230,77 @@ def frontendControlContractChecks (ref : IO.Ref (List String)) : IO Unit := do
       Ir.blocksText executedRight.1.body == "right" &&
       executedLeft.2.any (·.kind == .N0100) &&
       executedRight.2.any (·.kind == .N0100))
+
+/-- A lowered control's gates read from its row: a declaration the body ignores is named in one
+wording and leaves no ink, and a setting whose value is a macro parameter waits for its uses. -/
+def ctrlGateChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let file := "gates.tex"
+  let operandText (sig : List Compat.ArgKind) : String :=
+    String.join (sig.map fun k => match k with
+      | .star => ""
+      | .opt => "[zzkeyword]"
+      | .group | .needed | .kept => "{zzkeyword}")
+  for row in Compat.ctrlRows do
+    let .lower _ gates := row.action | continue
+    let loads := String.join (gates.leaves.filterMap fun leave => match leave with
+      | .without pkg => some s!"\\usepackage\{{pkg}}"
+      | .inDef | .inBody | .inSeam | .outsidePreamble | .notCtrl _ => none)
+    if let some help := gates.bodyHelp then
+      let (doc, ds) := Elab.run file ("\\documentclass{article}" ++ loads ++
+        "\\begin{document}alpha \\" ++ row.name ++ operandText row.sig ++ " omega\\end{document}")
+      t s!"control gate: a body \\{row.name} leaves no ink, its neighbours kept"
+        (((Ir.blocksText doc.body).splitOn "zzkeyword").length == 1 &&
+          ((Ir.blocksText doc.body).splitOn "alpha").length == 2 &&
+          ((Ir.blocksText doc.body).splitOn "omega").length == 2)
+      t s!"control gate: a body \\{row.name} is named in the one wording"
+        (ds.any fun d => d.kind == .W0340 && d.subject == some ("ctrl:" ++ row.name) &&
+          d.message == s!"'\\{row.name}' is a declaration; in the body it is ignored" &&
+          d.help == some help)
+      let (_, early) := Elab.run file ("\\documentclass{article}" ++ loads ++ "\\" ++ row.name ++
+        operandText row.sig ++ "\\begin{document}alpha omega\\end{document}")
+      t s!"control gate: a preamble \\{row.name} is not named as a body declaration"
+        (!early.any fun d => d.kind == .W0340 && d.subject == some ("ctrl:" ++ row.name))
+    if gates.paramStands.isSome then
+      let groups := row.sig.filter fun k => k != .opt && k != .star
+      let params := String.join (groups.map fun _ => "{#1}")
+      let waits (ds : Array Diag) : Bool := ds.any fun d => d.kind == .N0100 &&
+        d.message ==
+          s!"'\\{row.name}' → a rewrite at each use, where its parameters hold their values"
+      let (_, ds) := Elab.run file ("\\documentclass{article}\\newcommand{\\zzwrap}[1]{\\" ++
+        row.name ++ params ++ "}\\begin{document}omega\\end{document}")
+      t s!"control gate: \\{row.name} holding a parameter waits for its uses"
+        (waits ds && ds.all (·.severity == .note))
+      let (_, written) := Elab.run file ("\\documentclass{article}\\newcommand{\\zzwrap}[1]{\\" ++
+        row.name ++ operandText row.sig ++ "}\\begin{document}omega\\end{document}")
+      t s!"control gate: \\{row.name} holding written values does not wait"
+        (!waits written)
+
+/-- Each leave a lowered row names keeps its control as written exactly where its condition holds,
+checked by two builds differing by the condition. -/
+def ctrlLeaveChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let run (pre body : String) : Array Diag :=
+    (Elab.run "leaves.tex" ("\\documentclass{article}" ++ pre ++ "\\begin{document}" ++ body ++
+      "\\end{document}")).2
+  let noted (ds : Array Diag) (s : String) : Bool :=
+    ds.any fun d => d.kind == .N0100 && (d.message.splitOn s).length > 1
+  let unknown (ds : Array Diag) (n : String) : Bool :=
+    ds.any fun d => d.kind == .W0301 && (d.message.splitOn s!"'\\{n}'").length > 1
+  let defined := "\\newcommand{\\zzmac}{\\usepackage{xcolor}}"
+  t "control leave: a load in a definition body waits for the definition's use"
+    (!noted (run defined "Alpha.") "usepackage{xcolor}" &&
+      noted (run (defined ++ "\\zzmac") "Alpha.") "usepackage{xcolor}")
+  t "control leave: a blueprint declaration without the package is left to elaboration"
+    (unknown (run "\\graphcolor{a}{b}{c}" "Alpha.") "graphcolor" &&
+      !unknown (run "\\usepackage{blueprint}\\graphcolor{a}{b}{c}" "Alpha.") "graphcolor")
+  t "control leave: an allocation naming no control word is left to elaboration"
+    (unknown (run "\\newlength{zz}" "Alpha.") "newlength" &&
+      noted (run "\\newlength{\\zz}" "Alpha.") "newlength")
+  t "control leave: a biblatex resource in the body is left to elaboration"
+    (noted (run "\\usepackage{biblatex}\\bibliography{refs}" "Alpha.") "addbibresource" &&
+      !noted (run "\\usepackage{biblatex}" "Alpha.\\bibliography{refs}") "addbibresource")
+  t "control leave: a style in a hook's seam is left to elaboration"
+    (noted (run "\\usepackage{natbib}\\bibliographystyle{plainnat}" "Alpha.") "as natbib reads" &&
+      !noted (run "\\usepackage{natbib}\\AtBeginDocument{\\bibliographystyle{plainnat}}" "Alpha.")
+        "as natbib reads")

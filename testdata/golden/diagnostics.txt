@@ -636,7 +636,7 @@
   '\page' is a declaration; in the body it is ignored
   suggestion: declare it in the preamble, before '\begin{document}'
 ⚠ [W0340] - \usepackage
-  '\usepackage' is a preamble declaration; in the body it is ignored
+  '\usepackage' is a declaration; in the body it is ignored
   suggestion: load the package in the preamble, before '\begin{document}'
 ── W0342 (degraded) a definition shadows a palette role; the role is frozen where it is used
 ⚠ [W0342] - \muted

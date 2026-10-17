@@ -235,6 +235,12 @@ def counterChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
   let eq := censusOfSrc oneFace (doc "\\addtocounter{equation}{6}"
     "Alpha.\n\\begin{equation}\nx = y\n\\end{equation}")
   t "a preamble equation counter numbers the next equation after it" (pageHas eq 0 "(7)")
+  -- A counter set in the body is left where it stands, so numbers only what follows it.
+  t "a body counter numbers from where it stands, a preamble one from the body's start"
+    (!pageHas (censusOfSrc oneFace (doc "" "\\section{Alpha}\nOne.\n\n\\setcounter{section}{4}\n\
+\\section{Bravo}\nTwo.")) 0 "6" &&
+      pageHas (censusOfSrc oneFace (doc "\\setcounter{section}{4}" "\\section{Alpha}\nOne.\n\n\
+\\section{Bravo}\nTwo.")) 0 "6")
   t "a preamble counter command is not unknown"
     (!(dvE (doc "\\setcounter{secnumdepth}{1}\\stepcounter{footnote}" heads)).any
       (·.code == "W0301"))

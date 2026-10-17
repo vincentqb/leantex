@@ -1172,6 +1172,8 @@ def main (args : List String) : IO UInt32 := do
   frontendInputRequestChecks ref
   frontendPictureCompositionChecks ref
   frontendControlContractChecks ref
+  ctrlGateChecks ref
+  ctrlLeaveChecks ref
   elabUnknownDispatchChecks ref
   elabFrameSourceChecks ref
   porcelainCensusChecks ref

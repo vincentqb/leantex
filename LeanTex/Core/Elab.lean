@@ -3847,14 +3847,14 @@ private def noteSalvage (code : DiagCode) (name text : String) : EM Unit := do
 private def warnMisplacedDecl (ctx : Ctx) (name : String) (pos : Pos) : EM Unit :=
   if runningCtrl.contains name then
     diag ctx .E0347 s!"'\\{name}' in the body is dropped with its content" pos
-      (help := "declare it in the preamble, before '\\begin{document}'")
+      (help := Diag.declareInPreamble)
   else
     warnOnce ctx ("ctrl:" ++ name) .W0346
       s!"'\\{name}' is a declaration; inside inline content it is ignored" pos
       (help := if name == "palette" || name == "tokens" then
           s!"write '\\{name}' between paragraphs, after a blank line; there it applies \
 from where it stands"
-        else "declare it in the preamble, before '\\begin{document}'")
+        else Diag.declareInPreamble)
 
 private def warnReservedCtrl (ctx : Ctx) (name : String) (code : DiagCode)
     (pos : Pos) : EM Unit :=
@@ -11843,8 +11843,8 @@ private def elabCtrlArm (ctx : Ctx) (raws : Array Raw) (i : Nat)
   let mut blocks := blocks
   if declCtrl.contains n then
     warnOnce ctx ("ctrl:" ++ n) .W0340
-      s!"'\\{n}' is a declaration; in the body it is ignored" pos
-      (help := "declare it in the preamble, before '\\begin{document}'")
+      (Diag.bodyDeclaration n) pos
+      (help := Diag.declareInPreamble)
     let ju := skipReservedArgs raws (i + 1) pos (maxGroups := 2)
     have hj : i + 1 ≤ ju.1 := skipReservedArgs_ge raws (i + 1) pos 2
     if let some bpos := ju.2 then
@@ -11852,7 +11852,7 @@ private def elabCtrlArm (ctx : Ctx) (raws : Array Raw) (i : Nat)
     return (blocks, ⟨ju.1, by omega⟩)
   else if runningCtrl.contains n then
     diag ctx .E0347 s!"'\\{n}' in the body is dropped with its content" pos
-      (help := "declare it in the preamble, before '\\begin{document}'")
+      (help := Diag.declareInPreamble)
     let ju := skipReservedArgs raws (i + 1) pos
     have hj : i + 1 ≤ ju.1 := skipReservedArgs_ge raws (i + 1) pos 1
     if let some bpos := ju.2 then

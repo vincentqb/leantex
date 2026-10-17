@@ -7584,9 +7584,9 @@ def boxArgChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit
   t "a makebox's width is not ink, and its drop is named"
     (has (pageText mk) "Label four" && !has (allText mk) "2cm" &&
      (warnCodes mk).contains "W0104")
-  -- A name in `boxShape` the arm forgot would keep its width as prose.
-  for (name, _, _) in Compat.boxShape do
-    t s!"boxShape row '{name}' is a known command"
+  -- A box command the dispatcher forgot would keep its width as prose.
+  for name in ["mbox", "makebox", "parbox"] do
+    t s!"box command '{name}' is a known command"
       (!(warnCodes (deck169Frame s!"\\{name}\{Label five}")).contains "W0301")
   let ms := deck169Frame "\\metroset{block=fill}Body sentence."
   t "a theme option setter's key list is not ink"
