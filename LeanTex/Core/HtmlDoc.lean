@@ -1055,13 +1055,10 @@ private def texParskip : Option String := some "var(--parskip, 0rem)"
 
 /-- The x-height an ex reads on the page at `size`: the shipped body face's, the PDF's, else half an
 em, the value CSS takes for an x-height it cannot know, where the page ships no face. -/
-@[expose] public def exAt (fonts : Option Font.FontSet) (size : Int) : Int :=
+public def exAt (fonts : Option Font.FontSet) (size : Int) : Int :=
   match fonts with
   | some fs => fs.xHeightAt size
   | none => size / 2
-
-public theorem exAt_some_exact (fs : Font.FontSet) (size : Int) :
-    exAt (some fs) size = fs.xHeightAt size := rfl
 
 /-- A list skip's natural width at the page's size and x-height (`exAt`). -/
 public def listSkipSp (size ex : Int) (g : SymGlue) : Int := g.width.resolve size ex

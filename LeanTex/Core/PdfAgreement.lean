@@ -40,7 +40,7 @@ public theorem table_length_agree (doc : Ir.Doc) (name : String) :
         (Dim.Length.ofSp (Layout.tableLength none doc.preambleFace name)) := rfl
 
 public theorem picture_box_agree (geom : Layout.Geom) (fs : FontSet) (pic : Ir.Pic.Picture) :
-    Layout.pictureBox geom fs {} (fs.body.xHeight * geom.fontSize / fs.body.unitsPerEm) pic =
+    Layout.pictureBox geom fs {} (fs.xHeightAt geom.fontSize) pic =
       (Gfx.ofPicture (Layout.labelMetric geom fs) pic).box ∧
     (Gfx.ofPicture (Layout.labelMetric geom fs) pic).box =
       HtmlDoc.pictureBoxOf { labelMetric := Layout.labelMetric geom fs } pic :=

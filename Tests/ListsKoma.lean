@@ -468,8 +468,10 @@ def exArticle (skip : String) : String :=
   "Echo after.\n\\medskip\n\n\\begin{quote}\nFoxtrot quoted.\n\\end{quote}\n" ++
   "\\begin{center}\nGolf centred.\n\\end{center}\n\\vspace{" ++ skip ++ "}\n\nHotel last."
 
-/-- A deck's frames opening on a list, with a block, a centre, a float, a skip and a squeezed list. -/
+/-- A deck's frames opening on a list and on a block, with a centre, a float, a skip and a squeezed
+list. -/
 def exDeck (skip : String) : String :=
+  "\\begin{frame}[t]\n\\begin{block}{Romeo title}\nSierra block.\n\\end{block}\n\\end{frame}\n" ++
   "\\begin{frame}[t]\n\\begin{itemize}\n\\item India first.\n\\item Juliet second.\n" ++
   "\\end{itemize}\n\\begin{block}{Kilo title}\nLima block.\n\\end{block}\n\\begin{center}\n" ++
   "Mike centred.\n\\end{center}\n\\begin{figure}\nNovember figure.\n\\end{figure}\n" ++
@@ -531,11 +533,14 @@ def exChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := 
   let places (d : Ir.Doc) : List (Nat × Dim.Sp × Dim.Sp) :=
     (layoutOf oneFace d).pages.toList.zipIdx.flatMap fun (p, i) =>
       (p.lines.filter (!·.furniture)).toList.map fun l => (i, l.x, l.y)
+  -- A declared length's custom property keeps the author's spelling for the browser.
+  let spelled (line : String) : Bool :=
+    exLengths.any (fun (n, _) => line.startsWith ("    --" ++ n ++ ": ")) &&
+      (line.splitOn ";").length == 2 && (line.endsWith "ex;" || line.endsWith "pt;")
   let page (d : Ir.Doc) : String :=
-    let css := HtmlDoc.baseCss { fonts := some oneFace } d
-    let (_, tree, _) := HtmlDoc.emitTree { fonts := some oneFace } d
-    "\n".intercalate ((css.splitOn "\n").filter fun line =>
-      !exLengths.any fun (n, _) => line.startsWith ("    --" ++ n ++ ":")) ++
+    let (head, tree, _) := HtmlDoc.emitTree { fonts := some oneFace } d
+    let css := pageSheets (String.join (head.toList.map (Html.render · 0)))
+    "\n".intercalate ((css.splitOn "\n").filter (!spelled ·)) ++
       String.join (tree.toList.map (Html.render · 0))
   for (name, cls, body) in [("an article", "[10pt]{article}", exArticle),
       ("a deck", "{beamer}", exDeck)] do

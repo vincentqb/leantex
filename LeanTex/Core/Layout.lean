@@ -11008,7 +11008,7 @@ public def emitLabel (fs : FontSet) (imgs : Image.Store) (geom : Geom)
 layout: the one function placement and elaboration both read. -/
 public def labelMetric (geom : Geom) (fs : FontSet) (imgs : Image.Store := {}) :
     Ir.Pic.LabelMetric :=
-  picMetric fs imgs geom (fs.body.xHeight * geom.fontSize / fs.body.unitsPerEm)
+  picMetric fs imgs geom (fs.xHeightAt geom.fontSize)
 
 /-- The box a picture occupies on the page:
 `Ir.Pic.Picture.box` under layout's label measurement. -/
@@ -11031,7 +11031,7 @@ public theorem resolveMathAlphaPicture_box_id (geom : Geom) (fs : FontSet)
 
 public theorem pictureBox_projects (geom : Geom) (fs : FontSet)
     (imgs : Image.Store) (pic : Ir.Pic.Picture) :
-    pictureBox geom fs imgs (fs.body.xHeight * geom.fontSize / fs.body.unitsPerEm) pic =
+    pictureBox geom fs imgs (fs.xHeightAt geom.fontSize) pic =
       pic.box (labelMetric geom fs imgs) := by
   rfl
 
@@ -12089,7 +12089,7 @@ public theorem titledPadding_projects (fontSize xHeight : Sp) :
 
 /-- The inset a font set's body face resolves at the page's body size. -/
 public def titledPaddingOf (fs : FontSet) (geom : Geom) : Sp :=
-  titledPadding geom.fontSize (fs.body.xHeight * geom.fontSize / fs.body.unitsPerEm)
+  titledPadding geom.fontSize (fs.xHeightAt geom.fontSize)
 
 /-- A block title's `\baselineskip` under its font template
 (`Ir.blockTitleLeading`), resolved in the body's font. -/
@@ -12518,7 +12518,7 @@ private def bandBox (fs : FontSet) (imgs : Image.Store) (geom : Geom) (xHeight :
 for the web deck (`HtmlDoc.Config.footBox`). -/
 public def footBandBox (geom : Geom) (fs : FontSet) (imgs : Image.Store) (n : Nat)
     (band : Array Ir.BandSlot) : Sp × Sp :=
-  bandBox fs imgs geom (fs.body.xHeight * geom.fontSize / fs.body.unitsPerEm) n band
+  bandBox fs imgs geom (fs.xHeightAt geom.fontSize) n band
 
 /-- A frame opens a page: the boundary, the `frameOpen` marker, and the frame's
 footer; title and standout pages carry none (beamerinnerthememoloch.dtx). -/
