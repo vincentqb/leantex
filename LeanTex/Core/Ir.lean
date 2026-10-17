@@ -1582,9 +1582,8 @@ private def Color.mixGray (x y : Decl.ColorComponent) (pct : Nat) : Color :=
   Color.ofGray { num := x.num * y.scale * pct + y.num * x.scale * (100 - pct)
                  scale := x.scale * y.scale * 100 }
 
-/-- One step of xcolor's `!` mix: `pct`% of `a` over the rest of `b`, in `a`'s model; the paper
-over an ink is a tint of the ink, as the ink over the paper is. -/
-public def Color.mix (a : Color) (pct : Nat) (b : Color) : Color :=
+/-- One step of xcolor's `!` mix in `a`'s model, before it takes `a`'s origin. -/
+private def Color.mixed (a : Color) (pct : Nat) (b : Color) : Color :=
   match a.ink?, b.ink? with
   | some (i, t), _ => a.mixInk i t pct b
   | none, some (j, u) =>
@@ -1598,6 +1597,11 @@ public def Color.mix (a : Color) (pct : Nat) (b : Color) : Color :=
       | some x, some y => mixGray x y pct
       | _, _ => mixSrgb a pct b.xcolorRgb
 
+/-- One step of xcolor's `!` mix: `pct`% of `a` over the rest of `b`, in `a`'s model and chosen as
+`a` was; the paper over an ink is a tint of the ink, as the ink over the paper is. -/
+public def Color.mix (a : Color) (pct : Nat) (b : Color) : Color :=
+  { a.mixed pct b with origin := a.origin }
+
 private theorem Color.ofInk_model (i : Ink) (t : Rat) : (Color.ofInk i t).model = .cmyk := rfl
 
 private theorem Color.mixCmyk_model (q : Nat × Nat × Nat × Nat) (pct : Nat) (b : Color) :
@@ -1606,7 +1610,8 @@ private theorem Color.mixCmyk_model (q : Nat × Nat × Nat × Nat) (pct : Nat) (
 public theorem Color.mix_model_exact (a b : Color) (pct : Nat) :
     (a.mix pct b).model =
       if a.ink?.isNone && a.isPaper && b.ink?.isSome then .cmyk else a.model := by
-  unfold Color.mix
+  show (a.mixed pct b).model = _
+  unfold Color.mixed
   cases hi : a.ink? with
   | some it =>
     obtain ⟨i, t⟩ := it
@@ -1658,7 +1663,7 @@ public theorem Color.mix_model_exact (a b : Color) (pct : Nat) :
 private theorem Color.mix_srgb_id (a b : Color) (pct : Nat) (h : a.cmyk = none)
     (hi : a.ink? = none) (hb : b.ink? = none) (hg : a.grayOf? = none) :
     a.mix pct b = a.mixSrgb pct b.xcolorRgb := by
-  simp [Color.mix, h, hi, hb, hg]
+  simp [Color.mix, Color.mixed, Color.mixSrgb, h, hi, hb, hg]
 
 public def asciiBlank (c : Char) : Bool := c == ' ' || c == '\t' || c == '\n' || c == '\r'
 
@@ -1712,6 +1717,10 @@ private def xcolorBase (s : String) : Option Color :=
   | "lightgray" => some (Color.ofGray (part 75 100))
   | _ => none
 
+/-- xcolor's `!` mix (`Color.mix`) as the palette shows colours. -/
+public def Palette.mix (p : Palette) (a : Color) (pct : Nat) (b : Color) : Color :=
+  p.shown (a.mix pct b)
+
 /-- One atom of a palette expression: a declared entry first, then xcolor's base colours as the
 palette shows them. -/
 private def Palette.atom (p : Palette) (s : String) : Option Color :=
@@ -1728,10 +1737,10 @@ public def Palette.resolve (p : Palette) (expr : String) : Option Color :=
       | some pct =>
         if pct > 100 then none
         else match rest with
-          | [] => some (p.shown (c.mix pct (Color.ofGray (part 1 1))))
+          | [] => some (p.mix c pct (Color.ofGray (part 1 1)))
           | name :: rest' =>
             match p.atom name with
-            | some b => go (p.shown (c.mix pct b)) rest'
+            | some b => go (p.mix c pct b) rest'
             | none => none
   match bangParts [] expr.toList with
   | [] => none
@@ -2081,6 +2090,15 @@ public def OutputIntent.builtin? (file : String) : Option OutputIntent :=
              "1 or 2 = coated art, 115 g/m2, tone value increase curves A (CMY) and B (K)")
            registry := some "http://www.fogra.org", components := some 4 }
   | _ => none
+
+/-- An intent as the file describes it: what the document declares, the rest of a profile
+l3pdfmeta describes from its description. -/
+public def OutputIntent.described (oi : OutputIntent) : OutputIntent :=
+  match OutputIntent.builtin? oi.profile with
+  | some b => { oi with condition := oi.condition <|> b.condition, info := oi.info <|> b.info
+                        registry := oi.registry <|> b.registry
+                        components := oi.components <|> b.components }
+  | none => oi
 
 /-- Document metadata, as declared by `\pdfmeta`: the one record every surface derives from. -/
 public structure Meta where
@@ -9913,7 +9931,7 @@ document's own seeds where declared, else the class's. -/
     | none =>
       let cd := Design.classDefaults pal.classColors.depth s
       (SeedPalette.seedRole cd.1 r).or (cd.2.bind fun c => SeedPalette.Colors.role cd.1 c r)
-  raw.map fun c => Color.ofHtml c.r c.g c.b
+  raw.map fun c => (Color.ofHtml c.r c.g c.b).engine
 
 /-- One default, read through `look` for the roles it names, and through
 `printLook` for a role it reads as printed. -/
@@ -10752,7 +10770,7 @@ public def mutedOf (pal : Palette) : Color :=
 
 /-- One generated declaration installed, at its 8-bit sRGB colour. -/
 @[expose] public def Palette.declareSeeded (p : Palette) (e : Role × Color) : Palette :=
-  p.declare (.role e.1) (Color.ofHtml e.2.r e.2.g e.2.b)
+  p.declare (.role e.1) (Color.ofHtml e.2.r e.2.g e.2.b).engine
 
 /-- One derived role installed, unless the document declared it (`keep`). -/
 private def Palette.installDerived (keep : Role → Bool) (p : Palette) (e : Role × Color) :
@@ -10789,7 +10807,7 @@ public def Palette.applySeeds (pal : Palette) (st : SeedPalette.SeedState) : Pal
 @[expose] public def Design.installed (st : SeedPalette.SeedState) (r : Role) :
     Option Color :=
   (SeedPalette.Colors.role st.seeds st.colors (((SeedPalette.bound st).lookup r).getD r)).map
-    fun c => Color.ofHtml c.r c.g c.b
+    fun c => (Color.ofHtml c.r c.g c.b).engine
 
 /-- The palette with each bound element ink the document does not declare
 erased where its ground stands off its generated colour, and reinstated where
@@ -10920,11 +10938,11 @@ public theorem Palette.applySeedsUnder_keep_exact (pal : Palette) (st : SeedPale
 public theorem Palette.applySeedsUnder_seeds_exact (pal : Palette) (st : SeedPalette.SeedState)
     (keep : Role → Bool) :
     Design.declared? (pal.applySeedsUnder st keep) .ink =
-        some (Color.ofHtml st.seeds.ink.r st.seeds.ink.g st.seeds.ink.b) ∧
+        some (Color.ofHtml st.seeds.ink.r st.seeds.ink.g st.seeds.ink.b).engine ∧
       Design.declared? (pal.applySeedsUnder st keep) .page =
-        some (Color.ofHtml st.seeds.paper.r st.seeds.paper.g st.seeds.paper.b) ∧
+        some (Color.ofHtml st.seeds.paper.r st.seeds.paper.g st.seeds.paper.b).engine ∧
       Design.declared? (pal.applySeedsUnder st keep) .accent =
-        some (Color.ofHtml st.seeds.accent.r st.seeds.accent.g st.seeds.accent.b) := by
+        some (Color.ofHtml st.seeds.accent.r st.seeds.accent.g st.seeds.accent.b).engine := by
   have hd := (SeedPalette.generate_seeds_exact st).1
   have hb := (SeedPalette.generate_seeds_exact st).2
   simp only [Design.declared?, Palette.applySeedsUnder, List.foldl_cons, List.foldl_nil]
@@ -14305,10 +14323,11 @@ public def furnitureInlines (doc : Doc) : Array (Array Inline) :=
       | some hl => #[hl.title, hl.author, hl.institute]
       | none => #[]) ++
     optRegion doc.logoLeft ++ optRegion doc.logoRight ++
-    doc.styles.entries.flatMap fun (_, st) =>
+    doc.styles.entries.flatMap (fun (_, st) =>
       optRegion st.font ++ optRegion st.authorFont ++ optRegion st.marker ++
         st.slots.flatMap fun slot =>
-          slot.parts.flatMap fun part => #[part.content] ++ optRegion part.font
+          slot.parts.flatMap fun part => #[part.content] ++ optRegion part.font) ++
+    doc.itemLabels.map Prod.snd
 where
   /-- An optional region as zero or one entries. -/
   optRegion : Option (Array Inline) → Array (Array Inline)
@@ -14341,7 +14360,8 @@ every furniture region, in `furnitureInlines`' order. -/
         marker := st.marker.map fi
         slots := st.slots.map fun slot =>
           { slot with parts := slot.parts.map fun part =>
-            { part with content := fi part.content, font := part.font.map fi } } }) } }
+            { part with content := fi part.content, font := part.font.map fi } } }) }
+    itemLabels := doc.itemLabels.map fun (lvl, l) => (lvl, fi l) }
 
 private theorem optRegion_map (fi : Array Inline → Array Inline) (o : Option (Array Inline)) :
     furnitureInlines.optRegion (o.map fi) = (furnitureInlines.optRegion o).map fi := by
@@ -15265,7 +15285,8 @@ public def mathRequests (scope : MathRequestScope) (doc : Doc) : Array MathReque
         (match doc.headline with
           | some hl => #[hl.title, hl.author, hl.institute]
           | none => #[]) ++
-        furnitureInlines.optRegion doc.logoLeft ++ furnitureInlines.optRegion doc.logoRight
+        furnitureInlines.optRegion doc.logoLeft ++ furnitureInlines.optRegion doc.logoRight ++
+        doc.itemLabels.map Prod.snd
   furniture.foldl (fun out xs => foldCtxInlines mathRequestInlines (none, true) out xs) body
 
 /-- One request's missing alphabets onto a census that keeps first use
@@ -15997,17 +16018,21 @@ public theorem mathRequests_resolve_covers (scope : MathRequestScope)
     | none =>
       have := furniture (furnitureInlines.optRegion doc.head ++
         furnitureInlines.optRegion doc.foot ++ #[] ++
-        furnitureInlines.optRegion doc.logoLeft ++ furnitureInlines.optRegion doc.logoRight)
+        furnitureInlines.optRegion doc.logoLeft ++ furnitureInlines.optRegion doc.logoRight ++
+        doc.itemLabels.map Prod.snd)
         _ body
       simp only [RequestsFree] at this
-      simpa [mapDoc, hh, optRegion_map, Array.map_append] using this
+      simpa [mapDoc, hh, optRegion_map, Array.map_append, Array.map_map, Function.comp_def]
+        using this
     | some hl =>
       have := furniture (furnitureInlines.optRegion doc.head ++
         furnitureInlines.optRegion doc.foot ++ #[hl.title, hl.author, hl.institute] ++
-        furnitureInlines.optRegion doc.logoLeft ++ furnitureInlines.optRegion doc.logoRight)
+        furnitureInlines.optRegion doc.logoLeft ++ furnitureInlines.optRegion doc.logoRight ++
+        doc.itemLabels.map Prod.snd)
         _ body
       simp only [RequestsFree] at this
-      simpa [mapDoc, hh, optRegion_map, Array.map_append] using this
+      simpa [mapDoc, hh, optRegion_map, Array.map_append, Array.map_map, Function.comp_def]
+        using this
 
 public theorem missingMathAlphas_resolve_exact (coverage : Math.MathAlphabetCoverage)
     (family : String) (doc : Doc) :

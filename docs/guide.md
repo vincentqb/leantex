@@ -582,9 +582,10 @@ an ink with anything but the paper prints as a process colour, named.
 A CMYK colour shows on the web page as xcolor projects it, unless the
 document names the press it prints for: under an output profile
 (`\DocumentMetadata{ colorprofiles = { X = press.icc } }`) it shows, and is
-judged for contrast, as that profile prints it, and the engine's own colours,
-such as highlighted code and a missing image's box, print in the profile's
-CMYK.
+judged for contrast, as that profile prints it. The engine's own colours, a
+theme's, highlighted code's and a missing image's box, then print in the
+profile's CMYK, a grey in black ink alone; the document's own RGB colours
+print as declared.
 
 To use the same palette under lualatex, export it as xcolor and beamer
 declarations:

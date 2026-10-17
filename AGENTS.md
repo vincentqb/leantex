@@ -58,7 +58,7 @@ export LIBRARY_PATH="$(lean --print-prefix)/lib:$(lean --print-prefix)/lib/lean"
   (`surfaceReach`), a judge only an artifact's bytes, never its writer (`writerReach`).
 - Plain import for implementation, public for interface types, import all only for a small proof or
   contract companion (`buildGraphChecks`); in a large module types precede theorems (owed (U28)).
-- HTML is a typed tree with certified escapers (`tagStringEmit`, `escapeText_no_lt`; CSS owed (U62):
+- HTML is a typed tree with certified escapers (`tagStringEmit`, `escapeText_no_lt`,
   `cssString_no_lt`); no page runs script but the slides pager, a constant (`deck_script_constant`),
   and the math boundary (`htmlContainedCorpusChecks`).
 - The artifact is a function of the document, the font environment and the output name: a flag says

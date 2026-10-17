@@ -3354,6 +3354,40 @@ private def secFmtDefine? (cmd : UserCmd) : Option (Nat × Array SecPart) :=
 private def itemLabelLevel? (name : String) : Option Nat :=
   [1, 2, 3, 4].find? (Ir.itemLabelName · == name)
 
+/-- Whether one leaf of a label sets ink: a word, a symbol, a formula, an icon, an image or a
+rule; a wrapper's ink is its leaves'. -/
+private def labelLeafInks : Inline → Bool
+  | .text t => t.toList.any fun (c : Char) => !c.isWhitespace
+  | .math .. | .formula .. | .icon .. | .image .. | .rule .. => true
+  | .styled .. | .colored .. | .located .. | .role .. | .link .. | .decorated .. | .onSteps ..
+  | .altSteps .. | .cited .. | .footnote .. | .ref .. | .cite .. | .label _ | .fill | .hspace ..
+  | .pageNumber | .pageCount | .linebreak _ | .strut _ | .italicCorr _ => false
+
+/-- Whether a label sets ink anywhere. -/
+private def labelInks (marker : Array Inline) : Bool :=
+  Ir.foldInlines (fun inks x => inks || labelLeafInks x) false marker
+
+/-- Whether raws hold an itemize list at any depth. -/
+private def holdsItemize : List Raw → Bool
+  | [] => false
+  | .env "itemize" _ _ :: _ => true
+  | .env _ body _ :: rest => holdsItemize body.toList || holdsItemize rest
+  | .group body _ :: rest => holdsItemize body.toList || holdsItemize rest
+  | _ :: rest => holdsItemize rest
+termination_by l => sizeOf l
+decreasing_by raws_dec
+
+/-- The itemize labels the body redefines at its top level before its first list, a begin-document
+hook's among them, each with its level, replacement text and place: every list follows them. -/
+private def leadingLabels (acc : Array (Nat × Array Raw × Pos)) :
+    List Raw → Array (Nat × Array Raw × Pos)
+  | [] => acc
+  | .ctrl "define" p :: .ctrl n _ :: .word "()" _ :: .group body _ :: rest =>
+    match itemLabelLevel? n with
+    | some lvl => leadingLabels ((acc.filter (·.1 != lvl)).push (lvl, body, p)) rest
+    | none => leadingLabels acc rest
+  | r :: rest => if holdsItemize [r] then acc else leadingLabels acc rest
+
 /-- Each definition of an itemize level's label inside the raws, at any depth, with its place. -/
 private def itemLabelDefines (acc : Array (String × Pos)) : List Raw → Array (String × Pos)
   | [] => acc
@@ -3856,7 +3890,7 @@ private def inkOnce (ctx : Ctx) (c : Color) (pos : Pos) : EM Color := do
         s!"the ink '{i.name}' is declared again with another alternate; its first alternate stands"
         (some pos) (help := "a colorant names one ink: give each ink its own colorant, as \\definespotcolor{name}{Other Ink}{c,m,y,k}")
         (subject := some s!"ink:{i.name}")) }
-      return Color.ofInk j t
+      return ctx.palette.shown (Color.ofInk j t)
     | none =>
       modify fun st => { st with inks := st.inks.push i }
       return c
@@ -14197,15 +14231,7 @@ private def applyMeta (ctx : Ctx) (m0 : Meta) (entries : Array Decl.Entry)
         evs := evs.push (.say (diagOf ctx .E0323
           s!"'standard' in '\\pdfmeta' expects \"X-4\", got '{s}'" (some pos) none))
     | "intent", .str s =>
-      -- A profile l3pdfmeta describes takes its description where the document gives none.
-      let own := m.intent.getD {}
-      let b := (OutputIntent.builtin? s).getD {}
-      let described : OutputIntent :=
-        { own with profile := s, span := some ⟨ctx.file, pos⟩
-                   condition := own.condition <|> b.condition, info := own.info <|> b.info
-                   registry := own.registry <|> b.registry
-                   components := own.components <|> b.components }
-      m := { m with intent := some described }
+      m := { m with intent := some { m.intent.getD {} with profile := s, span := some ⟨ctx.file, pos⟩ } }
     | "intent-condition", .str s =>
       m := { m with intent := some { m.intent.getD {} with condition := some s } }
     | "intent-info", .str s => m := { m with intent := some { m.intent.getD {} with info := some s } }
@@ -16336,14 +16362,32 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
                     abstractNests := s.abstractForm.getD
                       (abstractFormUnder record.abstractForm classOpts) == .quotation }
   -- A redefined itemize label is read once the preamble's colours and macros all stand.
+  let leading := leadingLabels #[] body.toList
+  let labelDefs : Array (Nat × Array Raw × Pos) :=
+    (s.itemLabels.filter fun (lvl, _, _) => !leading.any (·.1 == lvl)).map
+      (fun (lvl, cmd, pos) => (lvl, cmd.body, pos)) ++ leading
   let mut itemLabels : Array (Nat × Array Inline) := #[]
-  for (lvl, cmd, pos) in s.itemLabels do
-    let marker ← elabInlines (ctx.atCall cmd.name pos) cmd.body
-    itemLabels := itemLabels.push (lvl, #[.located (ctx.sourceSpan pos) marker])
+  for (lvl, labelBody, pos) in labelDefs do
+    let name := Ir.itemLabelName lvl
+    let saved ← get
+    let marker ← elabInlines (ctx.atCall name pos) labelBody
+    let lost := ((← get).diags.extract saved.diags.size (← get).diags.size).filter
+      (·.severity != .note)
+    if lost.isEmpty && labelInks marker then
+      itemLabels := itemLabels.push (lvl, #[.located (ctx.sourceSpan pos) marker])
+    else
+      -- The label is not set, so nothing it did stands, and its losses are named once.
+      let what := if lost.isEmpty then "sets no ink" else "holds what the engine cannot set"
+      let named := diagOf ctx .W0331 s!"the redefined '\\{name}' {what}; the class's marker \
+marks its level" (some pos) (help := some "redefine it as text, a symbol or a formula: \
+\\renewcommand{\\labelitemi}{\\textbullet}") (subject := some s!"labelitem:{name}")
+        (detail := if lost.isEmpty then none else some ("; ".intercalate (lost.map (·.message)).toList))
+      set { saved with diags := saved.diags.push named }
   for (name, pos) in itemLabelDefines #[] body.toList do
-    warnOnce ctx ("labelitem:" ++ name) .W0340
-      s!"'\\{name}' is read in the preamble; in the body it is ignored" pos
-      (help := "declare it in the preamble, before '\\begin{document}'")
+    unless leading.any (·.2.2 == pos) do
+      warnOnce ctx ("labelitem:" ++ name) .W0340
+        s!"'\\{name}' redefined after the document's first list, or inside a group, is ignored" pos
+        (help := "redefine it in the preamble, or before the document's first list")
   let opening : Array Raw := decls.filterMap fun d =>
     match d with
     | .bodyStart source p => some (.ctrl (Marker.name .ink source) p)
@@ -16466,6 +16510,8 @@ the .bib file"
     info := { info with
       title := fallback info.title st.title
       author := fallback info.author st.author }
+    -- A profile l3pdfmeta describes takes its description where the document gives none.
+    info := { info with intent := info.intent.map OutputIntent.described }
     let doc : Doc := {
       docClass := docClass
       surface := surface
@@ -16799,6 +16845,21 @@ end
 picture is ever measured. -/
 public def picWants (raws : Array Raw) : PicWants :=
   picWantsLevel false {} raws.toList
+
+/-- Whether raws outside the document environment declare document metadata, where an output
+intent is named. -/
+private def namesMeta : List Raw → Bool
+  | [] => false
+  | .ctrl "pdfmeta" _ :: _ => true
+  | .env "document" _ _ :: rest => namesMeta rest
+  | .env _ body _ :: rest => namesMeta body.toList || namesMeta rest
+  | .group body _ :: rest => namesMeta body.toList || namesMeta rest
+  | _ :: rest => namesMeta rest
+termination_by l => sizeOf l
+decreasing_by raws_dec
+
+/-- Whether the preamble declares document metadata (`\pdfmeta`). -/
+public def preambleNamesMeta (p : Prepared) : Bool := namesMeta p.raws.toList
 
 /-- The preamble elaborated as a document with an empty body, its diagnostics
 discarded. -/

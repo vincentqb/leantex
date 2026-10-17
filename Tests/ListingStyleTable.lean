@@ -402,8 +402,9 @@ def codeRoleChecks (ref : IO.Ref (List String)) : IO Unit := do
           | some p => if p.declared then
               ground == d.bg && p.role.any fun key => Ir.Design.declared? (deckBundle theme) key == some p.color
             else p.role == some (Ir.Role.ofCode role) &&
-              Contrast.contrastMilli (Listing.fitInk (CodeColor.codeFloor (deckBundle theme) ground)
-                ground p.color) ground ≥ CodeColor.codeFloor (deckBundle theme) ground
+              Contrast.contrastMilli (Listing.fitInk (deckBundle theme)
+                (CodeColor.codeFloor (deckBundle theme) ground) ground p.color) ground ≥
+                CodeColor.codeFloor (deckBundle theme) ground
           | none => true)
   let palette := "\\palette{fg=#202440,bg=#FFFFFF,alert=#B01030,muted=#5A6068,example=#1A6A3A}"
   let some fonts ← serifFacesSet | failures ref "code roles: the serif faces load"

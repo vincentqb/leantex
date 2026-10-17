@@ -193,5 +193,18 @@ def checks (ref : IO.Ref (List String)) : IO Unit := do
   t "two transforms of one profile are one, another profile's another"
     ((Icc.Transform.of? press == Icc.Transform.of? press) &&
       !(Icc.Transform.of? press == Icc.Transform.of? pressV4))
+  let roots := (List.range 30).foldl (fun (acc : Array Nat × Nat) _ =>
+    let v := Nat.sqrt (acc.2 * 1073741824); (acc.1.push v, v)) (#[], 2147483648)
+  t "the power table holds each square root of the one before" (Icc.expTable == roots.1)
+  t "the midpoint table holds sRGB's transfer function at each half step"
+    (Icc.srgbMidpoints.size == 255 &&
+      (List.range 255).all fun v => Icc.srgbMidpoints[v]? == some (Icc.srgbDecode (2 * v + 1) 510))
+  let some v2 := Icc.Transform.of? press | t "the invented press reads" false
+  let shown (k : Nat) : Nat := (v2.toSrgb #[0, 0, 0, k]).2.1.toNat
+  t "a grey's black alone is the least tint showing no lighter than the grey, full black past the darkest"
+    (v2.blackFor 255 == 0 && v2.blackFor 0 == 65535 && 40 < shown 65535 && v2.blackFor 40 == 65535 &&
+      [128, 200].all fun g =>
+        let k := v2.blackFor (UInt8.ofNat g)
+        shown k ≤ g && (k == 0 || g < shown (k - 1)))
 
 end Tests.Icc

@@ -22,10 +22,20 @@ private def card (pre body : String) : String :=
     "\\definecolor{accent}{cmyk}{0,.7,1,0}\n\\definespotcolor{ink}{Probe Ink}{.2,.9,0,.1}\n" ++ pre ++
     "\\begin{document}\n" ++ body ++ "\n\\end{document}"
 
-/-- A document's web page and its PDF with streams inflated. -/
-private def artifacts (oneFace : Font.FontSet) (doc : Ir.Doc) : String × ByteArray :=
+/-- A document's web page and its PDF, written under the invented press's output profile when
+`pressed`. -/
+private def artifacts (oneFace : Font.FontSet) (doc : Ir.Doc) (pressed : Bool) :
+    String × ByteArray :=
   let geom := Layout.Geom.ofPage doc.page
-  ((HtmlDoc.emit {} doc).1, pdfText (Pdf.write geom oneFace (layoutOf oneFace doc geom).pages doc.info))
+  let imgs : Image.Store := { profile := if pressed then some Tests.Icc.press else none }
+  ((HtmlDoc.emit {} doc).1, Pdf.write geom oneFace (layoutOf oneFace doc geom).pages doc.info imgs)
+
+/-- The device spaces a PDF paints in, as the PDF/X judge reads them. -/
+private def devices (b : ByteArray) : Array String :=
+  ((PdfX.read b).toOption.map (·.devices)).getD #["unread"]
+
+/-- Whether a PDF's inflated streams hold `s`. -/
+private def paints (b : ByteArray) (s : String) : Bool := bytesContain (pdfText b) s
 
 /-- Unit components as the 16-bit values a transform reads. -/
 private def at16 (vs : List Rat) : Array Nat := vs.toArray.map fun v => (v * 65535 + 1 / 2).floor.toNat
@@ -47,16 +57,21 @@ def checks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let src := card "" ("\\textcolor{accent}{Alpha} \\textcolor{accent!50}{Beta} " ++
     "\\textcolor{ink!50}{Gamma} \\textcolor{red!50!accent}{Delta}")
   let (doc, ds) := elabThrough (some press) src
-  let (html, pdf) := artifacts oneFace doc
+  let (html, pdf) := artifacts oneFace doc true
   let (plain, plainDs) := elabThrough none src
-  let (plainHtml, plainPdf) := artifacts oneFace plain
+  let (plainHtml, plainPdf) := artifacts oneFace plain false
   t s!"the web page shows the accent, its mix and the ink's tint through the profile: {accent}, {half}, {tint}"
     (hasStr html accent && hasStr html half && hasStr html tint && !hasStr html "#ff4d00")
   t "the PDF paints the declared inks either way"
-    (bytesContain pdf "0 0.7 1 0 k" && bytesContain pdf "/Ink.Probe#20Ink cs 0.5 scn" &&
-      bytesContain plainPdf "0 0.7 1 0 k")
-  t "an RGB mix of the accent paints xcolor's numbers, whatever the profile shows"
-    (bytesContain pdf "1 0.153 0 rg" && bytesContain plainPdf "1 0.153 0 rg")
+    (paints pdf "0 0.7 1 0 k" && paints pdf "/Ink.Probe#20Ink cs 0.5 scn" &&
+      paints plainPdf "0 0.7 1 0 k")
+  t "an RGB mix of the accent paints the same RGB under the press as under no profile"
+    (paints pdf "1 0.153 0 rg" && paints plainPdf "1 0.153 0 rg")
+  let mixes := card "" "\\textcolor{red!30}{Alpha} \\textcolor{blue!20}{Beta} \\textcolor{red}{Gamma}"
+  let (_, mixPdf) := artifacts oneFace (elabThrough (some press) mixes).1 true
+  t "a declared RGB colour and its mixes paint as declared under the press, none of them pressed"
+    (paints mixPdf "1 0.702 0.702 rg" && paints mixPdf "0.8 0.8 1 rg" &&
+      paints mixPdf "1 0 0 rg" && (devices mixPdf).contains "DeviceRGB")
   t "under no profile the accent shows as xcolor projects it"
     (hasStr plainHtml "#ff4d00" && !hasStr plainHtml accent)
   let judged (ds : Array Diag) (hex : String) : Bool :=
@@ -74,7 +89,6 @@ def checks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let pages := (layoutOf oneFace edoc geom).pages
   let pressed := Pdf.write geom oneFace pages edoc.info { profile := some Tests.Icc.press }
   let unpressed := Pdf.write geom oneFace pages edoc.info
-  let devices (b : ByteArray) : Array String := ((PdfX.read b).toOption.map (·.devices)).getD #["unread"]
   t "under no output profile the engine's own colours paint in DeviceRGB"
     ((devices unpressed).contains "DeviceRGB")
   t "under a CMYK output profile nothing paints in DeviceRGB: the listing, the placeholder and the shading print in the press"
@@ -85,6 +99,56 @@ def checks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
     (match placeholder.pdfModel with
       | some (.cmyk ..) => placeholder.r == 158 && placeholder.b == 168
       | _ => false)
+  let neutral := Pdf.pressColor press ({ r := 128, g := 128, b := 128 } : Ir.Color).engine
+  t "an engine grey prints in black ink alone, as light as the press shows it"
+    (match neutral.pdfModel with
+      | some (.gray v) => v == Ir.Color.pdfMilli ((65535 - press.blackFor 128) * 1000 / 65535)
+      | _ => false)
+  t "a declared grey and a declared RGB colour are not pressed"
+    ((Pdf.pressColor press ({ r := 128, g := 128, b := 128 } : Ir.Color)).pdfModel == none &&
+      (Pdf.pressColor press (Ir.Color.ofHtml 255 0 0)).pdfModel == (Ir.Color.ofHtml 255 0 0).pdfModel)
+  -- A themed deck's colours are the engine's: none of them paints in DeviceRGB under the press.
+  let deck := "\\documentclass{beamer}\n\\usetheme{moloch}\n\\begin{document}\n" ++
+    "\\begin{frame}{Probe}\nAlpha \\alert{Beta}\n\\end{frame}\n\\end{document}"
+  let (themed, _) := elabThrough (some press) deck
+  let (_, themedPdf) := artifacts oneFace themed true
+  let (_, themedPlain) := artifacts oneFace themed false
+  t "a theme's colours paint in DeviceRGB under no profile and in the press under a CMYK one"
+    ((devices themedPlain).contains "DeviceRGB" && !(devices themedPdf).contains "DeviceRGB" &&
+      (devices themedPdf).contains "DeviceCMYK")
+
+/-- Every CMYK colour the engine mixes shows through the profile as the palette's do: a listing's
+ink fitted to its ground, a shading's stops, a ball's and an ink declared again, the contrast the
+page is judged by reading the same colour. -/
+def previewChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let some press := Icc.Transform.of? Tests.Icc.press | t "the invented press reads" false
+  let shown (vs : List Rat) : String := css (press.toSrgb (at16 vs))
+  let naive (vs : List Rat) : String :=
+    let ch (i : Nat) : UInt8 := Ir.inkPreviewByte (vs.getD i 0) (vs.getD 3 0)
+    ({ r := ch 0, g := ch 1, b := ch 2 } : Ir.Color).css
+  let listing := card "\\usepackage{listings}\n\\palette{ tint = gray!50 }\n"
+    "{\\color{accent}\nSome text.\n\\begin{lstlisting}\nplain words here\n\\end{lstlisting}\n}"
+  let (_, lds) := elabThrough (some press) listing
+  t "a listing's ink fitted to its ground from a CMYK colour is judged as the profile shows it"
+    (!lds.any fun d => d.code == DiagCode.W0315.code && ((d.detail.getD "") ++ d.message).contains "listing")
+  let shades := card "\\usepackage{tikz}\n"
+    ("\\tikz \\shade[left color=accent, right color=white] (0,0) rectangle (2,1);\n" ++
+      "\\tikz \\shade[ball color=cyan] (0,0) circle (1);")
+  let (sdoc, _) := elabThrough (some press) shades
+  let (shtml, spdf) := artifacts oneFace sdoc true
+  t s!"a shading's mixed stop shows through the profile: {shown [0, 7 / 20, 1 / 2, 0]}"
+    (hasStr shtml (shown [0, 7 / 20, 1 / 2, 0]) && !hasStr shtml (naive [0, 7 / 20, 1 / 2, 0]))
+  t s!"a ball's stops show through the profile: {shown [15 / 100, 0, 0, 0]}"
+    (hasStr shtml (shown [15 / 100, 0, 0, 0]) && !hasStr shtml (naive [15 / 100, 0, 0, 0]))
+  t "a CMYK shading to white prints its white stop in black ink alone, in DeviceCMYK"
+    (paints spdf "/ShadingType 2 /ColorSpace /DeviceCMYK" && !(devices spdf).contains "DeviceRGB")
+  let inks := card "" ("\\definespotcolor{again}{Probe Ink}{.3,.8,0,.1}\n" ++
+    "\\textcolor{ink}{Alpha} \\textcolor{again}{Beta}")
+  let (idoc, _) := elabThrough (some press) inks
+  let (ihtml, _) := artifacts oneFace idoc false
+  t s!"an ink declared again shows its first alternate through the profile: {shown [2 / 10, 9 / 10, 0, 1 / 10]}"
+    (hasStr ihtml (shown [2 / 10, 9 / 10, 0, 1 / 10]) && !hasStr ihtml (naive [2 / 10, 9 / 10, 0, 1 / 10]))
 
 /-- The driver reads a declared output profile beside the document before it elaborates, so the
 built web page shows a CMYK colour through it and the built PDF embeds it as its intent and paints

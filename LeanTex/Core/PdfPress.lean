@@ -5,14 +5,15 @@ public import LeanTex.Core.Icc
 import LeanTex.Core.Ir
 
 /-! The press a document's output intent characterizes, and the engine's own colours in its space:
-a colour no declaration gave a device model is printed as the intent's profile prints its sRGB. -/
+a colour the engine chose that would paint in RGB is printed as the intent's profile prints its
+sRGB, a declared colour as declared. -/
 
 namespace LeanTex.Core.Pdf
 
 open LeanTex.Core LeanTex.Core.Gfx
 
 /-- The hairline drawn where an image did not load, a neutral grey. -/
-public def placeholderInk : Ir.Color := { r := 158, g := 158, b := 168 }
+public def placeholderInk : Ir.Color := { r := 158, g := 158, b := 168, origin := .engine }
 
 /-- A 16-bit device value in thousandths, as a PDF decimal. -/
 private def decimal16 (v : Nat) : String := Ir.Color.pdfMilli ((v * 1000 + 32767) / 65535)
@@ -30,10 +31,20 @@ private def xcolorCmyk (c : Ir.Color) : Nat × Nat × Nat × Nat :=
 private def xcolorGray (c : Ir.Color) : Nat :=
   (300 * Ir.Color.milli c.r + 590 * Ir.Color.milli c.g + 110 * Ir.Color.milli c.b + 500) / 1000
 
-/-- An engine colour, which no declaration gave a device model, in a CMYK or gray profile's space
-through its way back, else as xcolor converts, its screen value kept; any other as it stands. -/
+/-- Whether a colour is the engine's that would paint in DeviceRGB. -/
+public def enginesRgb (c : Ir.Color) : Bool :=
+  c.origin == .engine && c.cmyk.isNone && match c.pdfModel with
+    | none | some (.rgb ..) => true
+    | some (.gray _) | some (.cmyk ..) | some (.separation ..) => false
+
+/-- An engine colour that would paint in RGB, in a CMYK or gray profile's space through its way
+back, else as xcolor converts, an engine neutral in black ink alone as light as the profile shows
+it, its screen value kept; any other as it stands. -/
 public def pressColor (t : Icc.Transform) (c : Ir.Color) : Ir.Color :=
-  if c.pdfModel.isSome || c.cmyk.isSome || c.ink?.isSome then c else
+  if !enginesRgb c then c else
+  if t.space == "CMYK" && c.r == c.g && c.g == c.b then
+    { c with pdfModel := some (.gray (decimal16 (65535 - t.blackFor c.g))) }
+  else
   match t.space, t.fromSrgb c.r c.g c.b with
   | "CMYK", some vs =>
     { c with pdfModel := some (.cmyk (decimal16 (vs[0]?.getD 0)) (decimal16 (vs[1]?.getD 0))

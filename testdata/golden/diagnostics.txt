@@ -590,7 +590,7 @@
 ── W0331 (degraded) declared marker not expressible in this backend; default substituted
 ⚠ [W0331]
   the declared 'itemize' marker is not expressible in HTML; the level default marks these items
-  suggestion: marker = {...} reaches HTML as text with colour and font styling (CSS Pseudo-Elements 4 §4.1); a link, an image, math, or an overlay step does not
+  suggestion: marker = {...} reaches HTML as text or a formula's symbol with colour and font styling (CSS Pseudo-Elements 4 §4.1); a link, an image or an overlay step does not
 ── W0332 (degraded) footer mixes the frame and physical page sequences undeclared
 ⚠ [W0332]
   the footer mixes the physical page number with the frame number; a stepped frame advances one and not the other

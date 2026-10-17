@@ -2665,8 +2665,9 @@ theorem readStream_render (cx : Ctx) (ops : Array Pdf.ContentOp) (h : opsPlain o
 /-- The identity placement: a figure read where it was written. -/
 @[expose] public def isoId : Iso := { flipY := false, dx := 0, dy := 0 }
 
-/-- A colour as a screen compares it: its device spelling forgotten. -/
-@[expose] public def colorScreen (c : Ir.Color) : Ir.Color := { c with pdfModel := none }
+/-- A colour as a screen compares it: its device spelling and who chose it forgotten. -/
+@[expose] public def colorScreen (c : Ir.Color) : Ir.Color :=
+  { c with pdfModel := none, origin := .declared }
 
 @[expose] public def stopScreen (s : Stop) : Stop := { s with color := colorScreen s.color }
 
@@ -2778,7 +2779,7 @@ theorem agree_root : Agree Gfx.Ctx.root (GfxPdf.RState.root isoId) := by
   exact isoId_toAffine
 
 theorem colorScreen_read (c : Ir.Color) (h : c.cmyk = none) : colorScreen (colorRead c) = colorScreen c := by
-  obtain ⟨r, g, b, cm, pm⟩ := c
+  obtain ⟨r, g, b, cm, pm, o⟩ := c
   simp only at h
   subst h
   rfl

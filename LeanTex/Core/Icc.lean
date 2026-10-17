@@ -67,7 +67,7 @@ public def description? (b : ByteArray) : Option String := do
 /-! ## Colour transforms -/
 
 /-- A channel's curve over [0, 1] at 16 bits: the identity, a sampled table, or one of ICC's
-parametric functions with its s15Fixed16 parameters (ICC.1:2010 §10.15, §10.18). -/
+parametric functions with its s15Fixed16 parameters ([ICC1] §10.15, §10.18). -/
 public inductive Curve where
   | identity
   | table (samples : Array Nat)
@@ -150,14 +150,13 @@ private def sample (t : Array Nat) (x : Nat) : Nat :=
 /-- 2^30, the unit of the fixed-point power. -/
 private def one30 : Nat := 1073741824
 
-/-- `2^(2^-i)` at 2^30 for `i` = 1…30, each the square root of the one before. -/
-private def expTable : Array Nat := Id.run do
-  let mut out : Array Nat := #[]
-  let mut v : Nat := 2 * one30
-  for _ in [0:30] do
-    v := Nat.sqrt (v * one30)
-    out := out.push v
-  return out
+/-- `2^(2^-i)` at 2^30 for `i` = 1…30: from 2^31, each the floor of `√(v · 2^30)` of the one before. -/
+public def expTable : Array Nat := #[
+  1518500249, 1276901416, 1170923761, 1121280435, 1097253707, 1085434105,
+  1079572135, 1076653032, 1075196442, 1074468886, 1074105293, 1073923543,
+  1073832679, 1073787250, 1073764536, 1073753179, 1073747501, 1073744662,
+  1073743242, 1073742532, 1073742177, 1073742000, 1073741911, 1073741867,
+  1073741845, 1073741834, 1073741828, 1073741825, 1073741824, 1073741824]
 
 /-- `log2 (x / 2^30)` at 2^30, for `0 < x ≤ 2^30`. -/
 private def log2Unit (x : Nat) : Int := Id.run do
@@ -231,16 +230,18 @@ private def strides (c : Clut) : Array Nat :=
   (Array.range c.grid.size).map fun d =>
     c.outputs * ((c.grid.extract (d + 1) c.grid.size).foldl (· * ·) 1)
 
-/-- Tetrahedral interpolation over the last three inputs at `base`, as ICC's reference
-implementations interpolate three inputs. -/
-private def tetra (c : Clut) (st : Array Nat) (d : Nat) (base : Nat) (xs : Array Nat) :
-    Array Nat :=
-  let (x0, rx) := cell (c.grid[d]?.getD 1) (xs[d]?.getD 0)
-  let (y0, ry) := cell (c.grid[d + 1]?.getD 1) (xs[d + 1]?.getD 0)
-  let (z0, rz) := cell (c.grid[d + 2]?.getD 1) (xs[d + 2]?.getD 0)
-  let sx := st[d]?.getD 0
-  let sy := st[d + 1]?.getD 0
-  let sz := st[d + 2]?.getD 0
+/-- One input of a table: its grid's size, the coordinate it is read at, and its stride. -/
+private abbrev Axis := Nat × Nat × Nat
+
+/-- Tetrahedral interpolation over three inputs at `base`, as ICC's reference implementations
+interpolate three inputs. -/
+private def tetra (c : Clut) (ax ay az : Axis) (base : Nat) : Array Nat :=
+  let (gx, x, sx) := ax
+  let (gy, y, sy) := ay
+  let (gz, z, sz) := az
+  let (x0, rx) := cell gx x
+  let (y0, ry) := cell gy y
+  let (z0, rz) := cell gz z
   let o0 := base + x0 * sx + y0 * sy + z0 * sz
   let dx := if rx == 0 then 0 else sx
   let dy := if ry == 0 then 0 else sy
@@ -263,27 +264,24 @@ private def tetra (c : Clut) (st : Array Nat) (d : Nat) (base : Nat) (xs : Array
         (v (dx + dy + dz) k - v (dy + dz) k, v (dy + dz) k - v dz k, v dz k - c0)
     clamp16 (c0 + rdiv (c1 * rx + c2 * ry + c3 * rz) full)
 
-/-- The table at `xs` from input `d` on: tetrahedral over three inputs, linear and bilinear over
-fewer, and linear in each input before the last three, as ICC's reference implementations
+/-- The table over its remaining inputs at `base`: tetrahedral over the last three, linear and
+bilinear over fewer, and linear in each input before them, as ICC's reference implementations
 interpolate; linear in every input for a multilinear table. -/
-private def interp (c : Clut) (st : Array Nat) (xs : Array Nat) : Nat → Nat → Nat → Array Nat
-  | 0, _, base => gridAt c base
-  | fuel + 1, d, base =>
-    let left := c.grid.size - d
-    if left == 0 then gridAt c base
-    else if left == 3 && !c.multilinear then tetra c st d base xs
-    else
-      let (i, f) := cell (c.grid[d]?.getD 1) (xs[d]?.getD 0)
-      let s := st[d]?.getD 0
-      let lo := interp c st xs fuel (d + 1) (base + i * s)
+private def interp (c : Clut) : List Axis → Nat → Array Nat
+  | [], base => gridAt c base
+  | (g, x, s) :: rest, base =>
+    match rest, c.multilinear with
+    | [ay, az], false => tetra c (g, x, s) ay az base
+    | _, _ =>
+      let (i, f) := cell g x
+      let lo := interp c rest (base + i * s)
       if f == 0 then lo
-      else
-        let hi := interp c st xs fuel (d + 1) (base + (i + 1) * s)
-        (lo.zip hi).map fun (a, b) => lerp a b f
+      else (lo.zip (interp c rest (base + (i + 1) * s))).map fun (a, b) => lerp a b f
 
 /-- The table at a point of its inputs. -/
 public def Clut.eval (c : Clut) (xs : Array Nat) : Array Nat :=
-  interp c (strides c) xs c.grid.size 0 0
+  let st := strides c
+  interp c ((List.range c.grid.size).map fun d => (c.grid[d]?.getD 1, xs[d]?.getD 0, st[d]?.getD 0)) 0
 
 /-! ### Pipelines -/
 
@@ -520,18 +518,46 @@ private def pow125 (n d : Nat) : Nat := Id.run do
       if mid ^ 5 ≤ target then lo := mid else hi := mid
   return lo
 
-/-- sRGB's transfer function at an encoded `n / d` (IEC 61966-2-1, CSS Color 4 §10.2): linear
-light at 10⁹. -/
-private def srgbDecode (n d : Nat) : Nat :=
+/-- sRGB's transfer function at an encoded `n / d` ([CSSColor4] §10.2): linear light at 10⁹. -/
+public def srgbDecode (n d : Nat) : Nat :=
   if 100000 * n ≤ 4045 * d then n * 1000000000 * 100 / (1292 * d)
   else pow125 (200 * n + 11 * d) (211 * d)
 
-/-- Each 8-bit channel's linear light at 10⁹. -/
-private def srgbLinear : Array Nat := (Array.range 256).map fun v => srgbDecode v 255
-
 /-- The linear light half way between each two neighbouring 8-bit channels, at 10⁹, below which a
-channel rounds down. -/
-private def srgbMidpoints : Array Nat := (Array.range 255).map fun v => srgbDecode (2 * v + 1) 510
+channel rounds down: `srgbDecode (2 * v + 1) 510` tabulated. -/
+public def srgbMidpoints : Array Nat := #[
+  151763, 455290, 758817, 1062344, 1365871, 1669398, 1972925, 2276452,
+  2579979, 2883506, 3188300, 3509259, 3848314, 4205748, 4581832, 4976837,
+  5391024, 5824650, 6277969, 6751227, 7244668, 7758530, 8293048, 8848452,
+  9424970, 10022825, 10642236, 11283421, 11946592, 12631959, 13339731, 14070112,
+  14823302, 15599503, 16398909, 17221716, 18068114, 18938294, 19832442, 20750744,
+  21693382, 22660538, 23652390, 24669114, 25710888, 26777882, 27870270, 28988220,
+  30131901, 31301480, 32497121, 33718988, 34967242, 36242044, 37543552, 38871925,
+  40227319, 41609887, 43019784, 44457162, 45922172, 47414964, 48935685, 50484484,
+  52061506, 53666897, 55300801, 56963360, 58654716, 60375011, 62124383, 63902972,
+  65710916, 67548350, 69415412, 71312236, 73238955, 75195704, 77182615, 79199818,
+  81247444, 83325624, 85434485, 87574156, 89744765, 91946438, 94179300, 96443477,
+  98739092, 101066270, 103425132, 105815802, 108238400, 110693048, 113179864, 115698969,
+  118250482, 120834519, 123451199, 126100639, 128782954, 131498260, 134246673, 137028305,
+  139843272, 142691686, 145573659, 148489305, 151438734, 154422057, 157439385, 160490827,
+  163576493, 166696492, 169850931, 173039920, 176263564, 179521971, 182815247, 186143498,
+  189506829, 192905345, 196339150, 199808349, 203313045, 206853340, 210429338, 214041140,
+  217688848, 221372564, 225092389, 228848422, 232640764, 236469514, 240334772, 244236636,
+  248175205, 252150576, 256162848, 260212118, 264298482, 268422037, 272582878, 276781103,
+  281016805, 285290080, 289601023, 293949728, 298336288, 302760798, 307223351, 311724039,
+  316262955, 320840192, 325455840, 330109992, 334802739, 339534172, 344304382, 349113458,
+  353961491, 358848570, 363774784, 368740223, 373744976, 378789130, 383872775, 388995997,
+  394158885, 399361525, 404604005, 409886411, 415208829, 420571347, 425974049, 431417021,
+  436900349, 442424118, 447988412, 453593316, 459238914, 464925290, 470652527, 476420711,
+  482229922, 488080245, 493971762, 499904556, 505878709, 511894302, 517951418, 524050138,
+  530190544, 536372715, 542596734, 548862680, 555170634, 561520676, 567912886, 574347344,
+  580824128, 587343318, 593904994, 600509233, 607156114, 613845716, 620578117, 627353394,
+  634171626, 641032889, 647937261, 654884819, 661875640, 668909800, 675987376, 683108445,
+  690273081, 697481361, 704733361, 712029156, 719368821, 726752431, 734180062, 741651787,
+  749167682, 756727821, 764332277, 771981124, 779674437, 787412289, 795194753, 803021903,
+  810893811, 818810550, 826772193, 834778813, 842830481, 850927270, 859069252, 867256499,
+  875489082, 883767072, 892090541, 900459561, 908874201, 917334533, 925840628, 934392555,
+  942990385, 951634189, 960324036, 969059996, 977842138, 986670533, 995545249]
 
 /-- The 8-bit channel nearest a linear light at 10⁹ in sRGB's encoding, clamped to the gamut. -/
 private def srgbByte (v : Int) : UInt8 := Id.run do
@@ -556,8 +582,8 @@ private def srgbOfXyz (xyz : Array Int) : UInt8 × UInt8 × UInt8 :=
 
 /-- sRGB's 8-bit channels as XYZ at 10⁹ relative to D50. -/
 private def xyzOfSrgb (r g b : UInt8) : Array Int :=
-  let lin : Array Int := #[(srgbLinear[r.toNat]?.getD 0 : Int), (srgbLinear[g.toNat]?.getD 0 : Int),
-    (srgbLinear[b.toNat]?.getD 0 : Int)]
+  let ch (v : UInt8) : Int := 100 * ((Oklab.channelLinear[v.toNat]?.getD 0 : Nat) : Int)
+  let lin : Array Int := #[ch r, ch g, ch b]
   (Array.range 3).map fun i =>
     (List.range 3).foldl (fun acc j => acc + mat srgbColorants i j * (lin[j]?.getD 0)) 0 / 65536
 
@@ -606,5 +632,16 @@ public def Transform.toSrgb (t : Transform) (device : Array Nat) : UInt8 × UInt
 /-- An sRGB colour as the device values the profile prints it with, where it states the way back. -/
 public def Transform.fromSrgb (t : Transform) (r g b : UInt8) : Option (Array Nat) :=
   t.fromPcs.map fun l => l.eval (encodePcs t.pcs l.encoding (xyzOfSrgb r g b))
+
+/-- The least 16-bit black of a CMYK profile whose tint alone shows no lighter than the sRGB grey
+`v`, by bisection; full black where none is that light. -/
+public def Transform.blackFor (t : Transform) (v : UInt8) : Nat := Id.run do
+  let mut lo : Nat := 0
+  let mut hi : Nat := full
+  for _ in [0:17] do
+    if lo < hi then
+      let mid := (lo + hi) / 2
+      if v < (t.toSrgb #[0, 0, 0, mid]).2.1 then lo := mid + 1 else hi := mid
+  return lo
 
 end LeanTex.Core.Icc

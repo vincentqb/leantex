@@ -555,8 +555,7 @@ def loadProfile (file : String) (info : Ir.Meta) : IO (Option (String × ByteArr
   let (path, reply) ← match reply with
     | .error .absent =>
       if !builtin then pure (p.toString, reply) else do
-      let found ← ((TexFontTrees.colorProfile (← IO.getEnv "HOME") oi.profile).runM Host.answer :
-        BaseIO (Option String))
+      let found ← ((TexFontTrees.colorProfile oi.profile).runM Host.answer : BaseIO (Option String))
       match found with
       | some q => pure (q, ← (Host.answer (.readFile q) : IO (Except World.Failure ByteArray)))
       | none => pure (p.toString, reply)
@@ -786,23 +785,25 @@ def frontend (ui : Ui) (file : String) : IO (Option Front) := do
         let m := Layout.labelMetric (Layout.Geom.ofPage pre.page) fsPre
         ui.phase "provisional" s!"{fsPre.fonts.size} faces" (← since t)
         pure (some scan, some m)
+  -- The output intent is the preamble's to declare, so its profile is read once, before the first
+  -- elaboration, and a CMYK one shows every elaboration's CMYK.
+  let profile ← if Elab.preambleNamesMeta prepared then
+      loadProfile file (Elab.preambleDoc file prepared).info
+    else pure (none, #[])
+  let screen := (profile.1.bind (Icc.Transform.of? ·.2)).filter (·.space == "CMYK")
+  let prepared := { prepared with profile := screen }
   let (doc, diags, reqSpans) ←
     elaborate ui file prepared earlier spliced (provisional.getD (fun _ _ => {}))
       (ledger := src.ledger)
   -- Highlighting is discovered once; every later elaboration reuses this snapshot.
   let requests := LeanTex.Core.ListingReply.requests doc reqSpans.code
-  -- The declared output profile is read once; a CMYK one shows every later elaboration's CMYK.
-  let profile ← loadProfile file doc.info
-  let screen := (profile.1.bind (Icc.Transform.of? ·.2)).filter (·.space == "CMYK")
-  let (doc, diags, reqSpans, prepared, earlier) ← if requests.isEmpty && screen.isNone then
+  let (doc, diags, reqSpans, prepared, earlier) ← if requests.isEmpty then
       pure (doc, diags, reqSpans, prepared, earlier)
     else do
       let t ← IO.monoMsNow
-      let (replies, listingDiags) ← if requests.isEmpty then pure (#[], #[])
-        else LeanTex.Cli.ListingHighlight.fulfil requests
-      unless requests.isEmpty do
-        ui.phase "highlight" s!"{replies.size} of {requests.size} listings" (← since t)
-      let prepared := { prepared with listingReplies := replies, profile := screen }
+      let (replies, listingDiags) ← LeanTex.Cli.ListingHighlight.fulfil requests
+      ui.phase "highlight" s!"{replies.size} of {requests.size} listings" (← since t)
+      let prepared := { prepared with listingReplies := replies }
       let earlier := earlier ++ listingDiags
       let (doc, diags, reqSpans) ← elaborate ui file prepared earlier spliced
         (provisional.getD (fun _ _ => {})) (phases := false) (ledger := src.ledger)

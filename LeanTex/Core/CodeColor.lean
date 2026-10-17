@@ -455,10 +455,10 @@ public def resolve (pal : Palette) (ground : Color) (style : Option ListingStyle
       | .role key => (Design.declared? pal key).map fun c =>
           if ground == page then { color := c, role := some key, declared := true }
           else { color := c, role := some (Ir.Role.ofCode r), declared := false }
-      | .color c => some { color := c, role := some (Ir.Role.ofCode r), declared := false }
+      | .color c => some { color := c.engine, role := some (Ir.Role.ofCode r), declared := false }
       | .ink => none
       | .none => (styleColor (style.getD .default) r).map fun c =>
-          { color := c, role := some (Ir.Role.ofCode r), declared := false
+          { color := c.engine, role := some (Ir.Role.ofCode r), declared := false
             styled := style.isSome }
 
 public theorem resolve_declared_mem (pal : Palette) (ground : Color) (style : Option ListingStyle)

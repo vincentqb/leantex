@@ -202,6 +202,11 @@ public theorem answer_runless_exact (q : Ask) (h : ToolPath.Lookup q) :
     answer q = answerRunless q := by
   cases q <;> first | rfl | exact absurd h id
 
+/-- Every question but a run is answered alike by both hosts. -/
+public theorem answer_runless_of_ask (q : Ask) (h : q.isRun = false) :
+    answer q = answerRunless q := by
+  cases q <;> first | rfl | exact absurd h (by simp [Ask.isRun])
+
 public theorem record_replay_exact {α : Type} (p : Prog α) :
     (fun x => (x, p.replay x.2 = some x.1)) <$> recordIO p =
       (fun x => (x, True)) <$> recordIO p :=

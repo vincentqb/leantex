@@ -71,8 +71,8 @@ public def realize (th : Theme) (d : GroundDepth)
       ({} : Palette).applySeeds
         { seeds, targets := seeds.targetsAt d share, blocks, colors, bundle := true }
     | _, _ => {}
-  let lit := th.palette.entries.foldl (fun p e => p.declare e.1 e.2) gen
-  let full := th.derived.foldl (fun p e => p.declare (.role e.1) (th.derivedColor e.1 e.2)) lit
+  let lit := th.palette.entries.foldl (fun p e => p.declare e.1 e.2.engine) gen
+  let full := th.derived.foldl (fun p e => p.declare (.role e.1) (th.derivedColor e.1 e.2).engine) lit
   { full with coveredFraction := th.palette.coveredFraction, decorative := th.palette.decorative }
 
 public theorem realize_depth_exact (th : Theme) (h : th.seeds = none) (d d' : GroundDepth) :

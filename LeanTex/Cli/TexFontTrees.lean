@@ -72,9 +72,10 @@ of them reach through links searched once, in order. -/
       | none => firstFileIn name ds
 
 /-- The colorprofiles package's profile `name` in the TeX distribution on `PATH`, in its trees'
-search order; none when `PATH` reaches no TeX program or no tree holds it. -/
-@[expose] public def colorProfile (home : Option String) (name : String) : Prog (Option String) :=
-  programIn programs >>= fun
+search order, the user's under `HOME` first; none when `PATH` reaches no TeX program or no tree
+holds it. -/
+@[expose] public def colorProfile (name : String) : Prog (Option String) :=
+  .ask (.env "HOME") fun home => programIn programs >>= fun
     | none => .pure none
     | some program => firstFileIn name (profileDirs (trees program home))
 
@@ -110,6 +111,40 @@ public theorem roots_only (home : Option String) : (roots home).Only ToolPath.Lo
 public theorem roots_runless_exact (home : Option String) :
     (roots home).runM Host.answer = (roots home).runM Host.answerRunless :=
   Prog.runM_only_exact (roots_only home) Host.answer Host.answerRunless Host.answer_runless_exact
+
+/-- A question finding a colour profile asks: a lookup's, or the user's home. -/
+@[expose] public def ProfileAsk (q : Ask) : Prop := ToolPath.Lookup q ∨ q = .env "HOME"
+
+private theorem onlyProfile {α : Type} {p : Prog α} (h : p.Only ToolPath.Lookup) :
+    p.Only ProfileAsk := by
+  induction h with
+  | pure a => exact .pure a
+  | ask q k hq _ ih => exact .ask q k (.inl hq) ih
+
+public theorem firstFileIn_only (name : String) (ds : List String) :
+    (firstFileIn name ds).Only ToolPath.Lookup := by
+  induction ds with
+  | nil => exact .pure _
+  | cons d ds ih =>
+    refine .ask (.stat (ToolPath.join d name)) _ trivial fun st => ?_
+    cases ToolPath.regular (ToolPath.join d name) st with
+    | some _ => exact .pure _
+    | none => exact ih
+
+public theorem colorProfile_only (name : String) : (colorProfile name).Only ProfileAsk := by
+  refine .ask (.env "HOME") _ (.inr rfl) fun home => ?_
+  refine (onlyProfile (programIn_only programs)).bind fun program => ?_
+  cases program with
+  | none => exact .pure _
+  | some p => exact onlyProfile (firstFileIn_only name _)
+
+/-- Finding a colour profile starts no process. -/
+public theorem colorProfile_runless_exact (name : String) :
+    (colorProfile name).runM Host.answer = (colorProfile name).runM Host.answerRunless :=
+  Prog.runM_only_exact (colorProfile_only name) Host.answer Host.answerRunless fun q h => by
+    rcases h with h | rfl
+    · exact Host.answer_runless_exact q h
+    · exact Host.answer_runless_of_ask _ rfl
 
 /-- The font directories of the TeX distribution on this host's `PATH`. -/
 public def hostRoots : IO (List String) := do

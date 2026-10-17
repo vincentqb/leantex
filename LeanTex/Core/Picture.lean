@@ -4437,8 +4437,8 @@ public def ShadeSpec.setColor (s : ShadeSpec) (side : String) (c : Ir.Color) :
   | .radial => #[stopAt 0 50 s.inner, stopAt 25 50 s.outer, stopAt 50 50 s.outer]
   | .ball => #[stopAt 0 50 (Ir.Color.mix s.ball 15 Ir.Color.white),
       stopAt 9 50 (Ir.Color.mix s.ball 75 Ir.Color.white),
-      stopAt 18 50 (Ir.Color.mix s.ball 70 Ir.Color.black),
-      stopAt 25 50 (Ir.Color.mix s.ball 50 Ir.Color.black), stopAt 50 50 Ir.Color.black]
+      stopAt 18 50 (Ir.Color.mix s.ball 70 Ir.Color.blackInk),
+      stopAt 25 50 (Ir.Color.mix s.ball 50 Ir.Color.blackInk), stopAt 50 50 Ir.Color.blackInk]
 
 private def shadeFrame (angle : Int) (box : Gfx.Box) : Option Gfx.Affine :=
   let ((x0, y0), (x1, y1)) := box
@@ -6584,7 +6584,7 @@ or node; the option is dropped")
     unless seen.contains d.2 do
       seen := seen.push d.2
       out := out.push d
-  return (ev.toPicture baseline, out)
+  return ((ev.toPicture baseline).recolor pal.shown, out)
 
 /-- The stand-in for a picture whose every construct was refused: a 1 in outlined box carrying the
 code, as an image placeholder is drawn. -/
@@ -7124,7 +7124,7 @@ it is not drawn") diags
     else
       some ((ys.getD 0 0 + rowUp.getD 0 0 + ys.getD (ys.size - 1) 0 -
         rowDown.getD (ys.size - 1) 0) / 2)
-  return ({ shapes, borders, baseline }, diags)
+  return (({ shapes, borders, baseline } : Ir.Pic.Picture).recolor pal.shown, diags)
 
 end Cd
 

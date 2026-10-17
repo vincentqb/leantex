@@ -195,9 +195,9 @@ l3pdfmeta finds the profiles it describes: the first tree holding it, in search 
 def colorProfileLayoutChecks (ref : IO.Ref (List String)) : IO Unit := do
   let found (path : Option String) (home : Option String) (stats : List (String × Stat)) :
       Option String :=
-    let facts : List Fact := (⟨.env "PATH", path⟩ : Fact) :: (⟨.cwd, .ok "/"⟩ : Fact) ::
-      stats.map fun (p, st) => (⟨.stat p, .ok st⟩ : Fact)
-    (TexFontTrees.colorProfile home "FOGRA39L_coated.icc").run (World.traceWorld facts World.quiet)
+    let facts : List Fact := (⟨.env "PATH", path⟩ : Fact) :: (⟨.env "HOME", home⟩ : Fact) ::
+      (⟨.cwd, .ok "/"⟩ : Fact) :: stats.map fun (p, st) => (⟨.stat p, .ok st⟩ : Fact)
+    (TexFontTrees.colorProfile "FOGRA39L_coated.icc").run (World.traceWorld facts World.quiet)
   let dist := "/tl/2099/texmf-dist/tex/generic/colorprofiles/FOGRA39L_coated.icc"
   let user := "/people/ada/texmf/tex/generic/colorprofiles/FOGRA39L_coated.icc"
   let program := ("/links/lualatex", fileAt "/tl/2099/bin/x86_64-linux/luahbtex")

@@ -25,7 +25,15 @@ public inductive PdfColor where
   | separation (ink : Ink) (tint : Rat)
   deriving Repr, BEq, DecidableEq
 
-/-- A colour: its sRGB screen preview, a CMYK mix rider, and the exact PDF device model. -/
+/-- Who chose a colour: a source declared it, so the PDF paints its device model as declared, or
+the engine chose it, so an output intent's press prints it. -/
+public inductive Color.Origin where
+  | declared
+  | engine
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+/-- A colour: its sRGB screen preview, a CMYK mix rider, the exact PDF device model, and who
+chose it. -/
 public structure Color where
   r : UInt8
   g : UInt8
@@ -33,7 +41,11 @@ public structure Color where
   /-- CMYK components in thousandths, for mix arithmetic. -/
   cmyk : Option (Nat × Nat × Nat × Nat) := none
   pdfModel : Option PdfColor := none
+  origin : Color.Origin := .declared
   deriving Repr, Inhabited, DecidableEq
+
+/-- The colour as the engine's own choice. -/
+@[expose] public def Color.engine (c : Color) : Color := { c with origin := .engine }
 
 /-- The ink and tint a colour paints with. -/
 @[expose] public def Color.ink? (c : Color) : Option (Ink × Rat) :=
@@ -98,7 +110,8 @@ composites an opacity and xcolor mixes. -/
   let ch (x y : UInt8) : UInt8 := UInt8.ofNat ((x.toNat * num + y.toNat * (den - num) + den / 2) / den)
   { r := ch a.r b.r, g := ch a.g b.g, b := ch a.b b.b }
 
-/-- xcolor's `!` mix in sRGB: `pct`% of `a` over the rest of `b`. -/
-@[expose] public def Color.mixSrgb (a : Color) (pct : Nat) (b : Color) : Color := a.overSrgb pct 100 b
+/-- xcolor's `!` mix in sRGB: `pct`% of `a` over the rest of `b`, chosen as `a` was. -/
+@[expose] public def Color.mixSrgb (a : Color) (pct : Nat) (b : Color) : Color :=
+  { a.overSrgb pct 100 b with origin := a.origin }
 
 end LeanTex.Core.Ir

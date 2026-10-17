@@ -20,7 +20,7 @@ example {s : SeedPalette.Seeds} {t : SeedPalette.Targets} (p : SeedPalette.Gener
 
 example (pal : Ir.Palette) (st : SeedPalette.SeedState) (keep : Ir.Role → Bool) :
     Ir.Design.declared? (pal.applySeedsUnder st keep) .accent =
-      some (Ir.Color.ofHtml st.seeds.accent.r st.seeds.accent.g st.seeds.accent.b) :=
+      some (Ir.Color.ofHtml st.seeds.accent.r st.seeds.accent.g st.seeds.accent.b).engine :=
   (Ir.Palette.applySeedsUnder_seeds_exact pal st keep).2.2
 
 private def hex (r g b : UInt8) : Ir.Color := { r, g, b }

@@ -546,8 +546,7 @@ private def markerCssOne (scale : List (String × Nat)) (decls : Array String) :
     markerCssList scale (decls.push (markerColorDecl c name)) body.toList
   | .located _ body => markerCssList scale decls body.toList
   | .role _ body => markerCssList scale decls body.toList
-  | .math _ _ => none
-  | .formula _ _ _ => none
+  | x@(.math _ _) | x@(.formula _ _ _) => some { text := Ir.plainTextOne x, decls := decls }
   | .link _ _ => none
   | .decorated _ _ => none
   | .fill => none
@@ -659,7 +658,10 @@ private theorem markerCssOne_text (scale : List (String × Nat)) (decls : Array 
     rw [markerCssOne] at h
     rw [Ir.plainTextOne]
     exact markerCssList_text scale _ body.toList r h
-  | .math _ _ | .formula _ _ _ | .link _ _ | .decorated _ _ | .fill
+  | .math _ _ | .formula _ _ _ =>
+    simp [markerCssOne] at h
+    simp [← h]
+  | .link _ _ | .decorated _ _ | .fill
   | .hspace _ _ | .rule _ _ _ | .strut _ | .italicCorr _ | .pageNumber | .pageCount
   | .linebreak _ | .onSteps _ _ | .image _ _ _ | .icon _ _ | .label _ | .ref _ _ _ _
   | .cite _ _ | .cited _ _ _ | .footnote _ _ =>
@@ -701,8 +703,31 @@ public theorem markerCss?_text (m : Array Inline) (r : MarkerCss)
       markerCssList_text scale #[] (Ir.eraseLocationInlines m).toList r h
     _ = Ir.plainText m := Ir.eraseLocationInlines_text m
 
-public def cssString (s : String) : String :=
-  (s.replace "\\" "\\\\").replace "\"" "\\\""
+/-- One character as a CSS string spells it: a backslash, a quote and `<` escaped, so no string
+closes early or opens a tag (CSS Syntax 3 §4.3.7). -/
+private def cssChar (c : Char) : List Char :=
+  if c == '\\' then ['\\', '\\'] else if c == '"' then ['\\', '"']
+  else if c == '<' then ['\\', '3', 'c', ' '] else [c]
+
+public def cssString (s : String) : String := String.ofList (s.toList.flatMap cssChar)
+
+private theorem cssChar_no_lt (c : Char) : '<' ∉ cssChar c := by
+  unfold cssChar
+  split
+  · simp
+  · split
+    · simp
+    · split
+      · simp
+      · rename_i h
+        intro hm
+        simp only [List.mem_singleton] at hm
+        subst hm
+        simp at h
+
+public theorem cssString_no_lt (s : String) : '<' ∉ (cssString s).toList := by
+  simp only [cssString, String.toList_ofList, List.mem_flatMap, not_exists, not_and]
+  exact fun c _ => cssChar_no_lt c
 
 /-- A list type's selector for its declared indent: the first level's at every level no deeper
 declaration takes, as the page reads it, a second or third at its level alone. -/
@@ -715,6 +740,24 @@ private def typeLevelSel (tag : String) : String :=
       s!"{tag}:not({tag} {base})"
     else tag
   | [] => tag
+
+/-- A declared marker as the `::marker` rule at `sel`, or W0331 naming `what`, declared as
+`spelling`, where CSS cannot carry it. -/
+private def markerRule (lit : Ir.Color → String) (scale : List (String × Nat))
+    (sel what spelling : String) (m : Array Inline) : Except Diag String :=
+  match markerCss? m scale with
+  | some r =>
+    let decls := r.decls.map fun d => match literalColorDecl? d with
+      | some c => s!"color: {lit c};"
+      | none => d
+    let body := String.join (decls.toList.map (" " ++ ·))
+    .ok s!"{sel} \{ content: \"{cssString r.text}  \";{body} }\n"
+  | none =>
+    .error (Diag.of .W0331
+      s!"the declared {what} marker is not expressible in HTML; the level default marks these items"
+      (span := Ir.inlineSource m)
+      (help := some s!"{spelling} reaches HTML as text or a formula's symbol with colour and font \
+styling (CSS Pseudo-Elements 4 §4.1); a link, an image or an overlay step does not"))
 
 /-- `\style` declarations as CSS rules, with a diagnostic for each marker `::marker` cannot
 express. -/
@@ -744,21 +787,10 @@ public def styleRules (doc : Doc) (lit : Ir.Color → String := cssColor) : Stri
   -- A redefined itemize label marks its level over the class's, under a declared level style.
   for (level, m) in doc.itemLabels do
     let levelSel := " ".intercalate (List.replicate level "ul")
-    match markerCss? m doc.page.scale with
-    | some r =>
-      let decls := r.decls.map fun d => match literalColorDecl? d with
-        | some c => s!"color: {lit c};"
-        | none => d
-      let body := String.join (decls.toList.map (" " ++ ·))
-      css := css ++ s!"{levelSel} > li::marker \{ content: \"{cssString r.text}  \";{body} }\n"
-    | none =>
-      diags := diags.push (Diag.of .W0331
-        s!"the declared '\\{Ir.itemLabelName level}' marker is not expressible in HTML; \
-the level default marks these items"
-        (span := Ir.inlineSource m)
-        (help := some "marker = {...} reaches HTML as text with colour \
-and font styling (CSS Pseudo-Elements 4 §4.1); a link, an image, math, or \
-an overlay step does not"))
+    match markerRule lit doc.page.scale s!"{levelSel} > li::marker"
+        s!"'\\{Ir.itemLabelName level}'" s!"\\renewcommand\{\\{Ir.itemLabelName level}}\{...}" m with
+    | .ok rule => css := css ++ rule
+    | .error d => diags := diags.push d
   for (element, st) in doc.styles.entries do
     let some tag := sel element | continue
     -- the title block's `after` is a skip of its own, not the heading's margin
@@ -776,22 +808,9 @@ an overlay step does not"))
     let mut liDecls :=
       (st.gap.map fun g => s!"{tag} > li \{ margin-top: {cssLength g.width}; }\n").toList
     if let some m := st.marker then
-      match markerCss? m doc.page.scale with
-      | some r =>
-        let decls := r.decls.map fun d => match literalColorDecl? d with
-          | some c => s!"color: {lit c};"
-          | none => d
-        let body := String.join (decls.toList.map (" " ++ ·))
-        liDecls := liDecls ++
-          [s!"{markerSel tag} \{ content: \"{cssString r.text}  \";{body} }\n"]
-      | none =>
-        diags := diags.push (Diag.of .W0331
-          s!"the declared '{element}' marker is not expressible in HTML; \
-the level default marks these items"
-          (span := Ir.inlineSource m)
-          (help := some "marker = {...} reaches HTML as text with colour \
-and font styling (CSS Pseudo-Elements 4 §4.1); a link, an image, math, or \
-an overlay step does not"))
+      match markerRule lit doc.page.scale (markerSel tag) s!"'{element}'" "marker = {...}" m with
+      | .ok rule => liDecls := liDecls ++ [rule]
+      | .error d => diags := diags.push d
     -- interaction states apply to the element's links
     let iSel := s!"{tag} a"
     let tokenColor (c : Ir.Color) (n : Option Ir.ColorRef) : String := match n with
@@ -7906,7 +7925,7 @@ private def listingAround (cfg : Config) (f : Ir.SchemeFrame) (v : Ir.Palette) :
     | some c =>
       if c == Ir.Design.printInk cfg.pal then (Ir.Design.at v s .ink).getD c
       else if f.home then c
-      else (Ir.Design.carryInk f.flip req f.homePage f.page ground c).getD (Listing.fitInk req ground c)
+      else (Ir.Design.carryInk f.flip req f.homePage f.page ground c).getD (Listing.fitInk v req ground c)
     | none => (Ir.Design.at v s .ink).getD Ir.Color.black
   (around, ink)
 
@@ -7924,9 +7943,9 @@ private def listingPaintIn (cfg : Config) (spec : Ir.ListingSpec) (f : Ir.Scheme
   let ground : Ir.Color := (own.or around).getD page
   let req := Contrast.requiredIn s (Ir.Need.text.atStage f.stage)
   let carry (c : Ir.Color) : Ir.Color :=
-    (Ir.Design.carryInk f.flip req f.homePage f.page ground c).getD (Listing.fitInk req ground c)
-  let fit := if f.home then Listing.defaultInk ground else Listing.fitInk req ground
-  let fitRole := if f.home then Listing.fitInk (CodeColor.codeFloor v ground) ground else fit
+    (Ir.Design.carryInk f.flip req f.homePage f.page ground c).getD (Listing.fitInk v req ground c)
+  let fit := if f.home then Listing.defaultInk v ground else Listing.fitInk v req ground
+  let fitRole := if f.home then Listing.fitInk v (CodeColor.codeFloor v ground) ground else fit
   -- schemes shipping the palette as declared share one resolution per ground
   let reuse := known.bind fun (g, rs) => if f.home && g == ground then some rs else none
   let roles := match reuse with
@@ -7940,7 +7959,7 @@ private def listingPaintIn (cfg : Config) (spec : Ir.ListingSpec) (f : Ir.Scheme
       let again := fitRole c
       match homePaints.bind (·.get r) with
       | some hp =>
-        let h := Listing.fitInk (CodeColor.codeFloor cfg.pal ground) ground hp.color
+        let h := Listing.fitInk cfg.pal (CodeColor.codeFloor cfg.pal ground) ground hp.color
         if req ≤ Contrast.contrastMilli h ground &&
             Contrast.contrastMilli again ground ≤ Contrast.contrastMilli h ground then h else again
       | none => again

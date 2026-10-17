@@ -33,36 +33,37 @@ public theorem paint_derived_exact (pal : Palette) (ground : Color) (style : Opt
   resolve_derived_exact pal ground style k.role p h hd
 
 /-- A derived colour kept where it reads at `req` on its ground, else the first whole-percent
-xcolor tint or shade that does. -/
-public def fitInk (req : Nat) (ground seed : Color) : Color := Id.run do
+xcolor tint or shade that does, each judged as the palette shows it. -/
+public def fitInk (pal : Palette) (req : Nat) (ground seed : Color) : Color := Id.run do
   if Contrast.contrastMilli seed ground ≥ req then return seed
   let pole := if Contrast.contrastMilli Color.black ground >
       Contrast.contrastMilli Color.white ground then Color.black else Color.white
   for step in [1:101] do
-    let c := seed.mix (100 - step) pole
+    let c := pal.mix seed (100 - step) pole
     if Contrast.contrastMilli c ground ≥ req then return c
   return pole
 
 /-- A derived colour fitted to WCAG AA text on its ground (`fitInk`). -/
-public def defaultInk (ground seed : Color) : Color := fitInk Contrast.aaText ground seed
+public def defaultInk (pal : Palette) (ground seed : Color) : Color :=
+  fitInk pal Contrast.aaText ground seed
 
 /-- A listing's plain text colour on its own ground: the declared `codeink`, else the text
-colour around it fitted to that ground, as the palette shows it. -/
+colour around it fitted to that ground. -/
 public def groundInk (pal : Palette) (ground inherited : Color) : Color :=
   match Design.declared? pal .codeInk with
   | some c => c
-  | none => pal.shown (defaultInk ground inherited)
+  | none => defaultInk pal ground inherited
 
 /-- A paint's colour on the actual ground: stated colours as stated, derived ones fitted here to the
 palette's code floor. -/
-private def shipped (floor : Nat) (bg : Color) (p : CodeColor.Paint) : Color :=
-  if p.declared || p.styled then p.color else fitInk floor bg p.color
+private def shipped (pal : Palette) (floor : Nat) (bg : Color) (p : CodeColor.Paint) : Color :=
+  if p.declared || p.styled then p.color else fitInk pal floor bg p.color
 
 /-- One type's colour on the actual ground. -/
 public def ink (pal : Palette) (ground : Option Color) (kind : Kind)
     (style : Option ListingStyle := none) : Option Color :=
   let bg := ground.getD (Design.printPage pal)
-  (paint pal bg style kind).map (shipped (codeFloor pal bg) bg)
+  (paint pal bg style kind).map (shipped pal (codeFloor pal bg) bg)
 
 /-- A role's weights around a token's text, nested as `\PYG@do` nests them. -/
 private def weighted (look : Look) (text : String) : Inline :=
@@ -85,12 +86,12 @@ public structure Brush where
   deriving Repr, BEq
 
 /-- A role's brush, from its resolved paint. -/
-private def roleBrush (d : Design) (floor : Nat) (bg : Color) (covered : Option Color)
-    (r : ListingHighlight.Role) (p : Option CodeColor.Paint) : Brush :=
+private def roleBrush (pal : Palette) (d : Design) (floor : Nat) (bg : Color)
+    (covered : Option Color) (r : ListingHighlight.Role) (p : Option CodeColor.Paint) : Brush :=
   let look : Look := { bold := r.weights.1, italic := r.weights.2 }
   match p with
   | some p =>
-    let c := shipped floor bg p
+    let c := shipped pal floor bg p
     let c := if covered.isSome then ({ d with bg := bg }).cover.of c else c
     -- Covered ink is literal: a CSS role would replace the per-token mixture.
     { look, ink := some c, role := if covered.isSome then none else p.role.map .role }
@@ -102,7 +103,7 @@ public def roleBrushes (pal : Palette) (ground covered : Option Color) (style : 
   let d := Design.ofPalette pal
   let bg := ground.getD d.bg
   let paints := resolve pal bg style
-  RoleTable.ofFn fun r => roleBrush d (codeFloor pal bg) bg covered r (paints.get r)
+  RoleTable.ofFn fun r => roleBrush pal d (codeFloor pal bg) bg covered r (paints.get r)
 
 public def brush (pal : Palette) (ground covered : Option Color) (style : Option ListingStyle)
     (k : Kind) : Brush :=
@@ -494,7 +495,7 @@ public def contract (pal : Palette) (ground : Option Color) (style : Option List
   let paints := resolve pal bg style
   ListingHighlight.Role.all.all fun r => match paints.get r with
     | some p => p.declared ||
-        decide (codeFloor pal bg ≤ Contrast.contrastMilli (shipped (codeFloor pal bg) bg p) bg)
+        decide (codeFloor pal bg ≤ Contrast.contrastMilli (shipped pal (codeFloor pal bg) bg p) bg)
     | none => true
 
 /-- Whether a character is Thai's or Lao's, which a browser wraps between words (UAX #14 SA). -/

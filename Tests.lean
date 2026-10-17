@@ -501,6 +501,7 @@ def printColourChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
   Tests.PrintX4.checks ref oneFace
   Tests.Icc.checks ref
   Tests.PrintColour.checks ref oneFace
+  Tests.PrintColour.previewChecks ref oneFace
   Tests.PrintColour.driverChecks ref
 
 /-- The layout, census, theme and chrome blocks over the shipped face; a missing or unparsable font

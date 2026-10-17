@@ -2918,7 +2918,9 @@ private def docScalarAcc (doc : Doc) : ScalarAcc := Id.run do
     if let some tpl := st.font then
       acc := { acc with texts := acc.texts.push (Ir.plainText tpl) }
     if let some m := st.marker then
-      acc := { acc with texts := acc.texts.push (Ir.plainText m) }
+      acc := textAndMath acc m
+  for (_, label) in doc.itemLabels do
+    acc := textAndMath acc label
   return acc
 
 /-- The scalars the document's formulas ask the math face
@@ -3173,6 +3175,11 @@ private def docKeys (corners : Bool) (doc : Doc) : Array (Nat × Nat × Bool) :=
         acc := weightKeysInlineList corners acc {} tpl.toList
       if let some tpl := st.authorFont then
         acc := weightKeysInlineList corners acc {} tpl.toList
+  for (_, st) in doc.styles.entries do
+    if let some m := st.marker then
+      acc := weightKeysInlineList corners acc {} m.toList
+  for (_, label) in doc.itemLabels do
+    acc := weightKeysInlineList corners acc {} label.toList
   return acc
 
 /-- Every off-corner face key the document's styles can ask

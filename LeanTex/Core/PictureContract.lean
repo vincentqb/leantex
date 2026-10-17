@@ -224,8 +224,8 @@ public theorem shade_stops_exact (s : ShadeSpec) :
       | .axis => #[s.bottom, s.bottom, s.middle, s.top, s.top]
       | .radial => #[s.inner, s.outer, s.outer]
       | .ball => #[Ir.Color.mix s.ball 15 Ir.Color.white, Ir.Color.mix s.ball 75 Ir.Color.white,
-          Ir.Color.mix s.ball 70 Ir.Color.black, Ir.Color.mix s.ball 50 Ir.Color.black,
-          Ir.Color.black]) := by
+          Ir.Color.mix s.ball 70 Ir.Color.blackInk, Ir.Color.mix s.ball 50 Ir.Color.blackInk,
+          Ir.Color.blackInk]) := by
   cases h : s.kind <;> simp [ShadeSpec.stops, stopAt, h] <;> decide
 
 end LeanTex.Core.Picture

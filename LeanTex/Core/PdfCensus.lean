@@ -282,6 +282,7 @@ public def ofEntries (trailer : Obj) (es : Array Entry) : Census :=
   let catalog := catalogOf es trailer
   let images := es.filter fun e => kindOf e.val == .image
   let pages := es.filter fun e => kindOf e.val == .page
+  let ix := Index.of es
   {
     size := ((trailer.get? "Size").bind Obj.int?).map (·.toNat)
     objects := es.size
@@ -289,24 +290,24 @@ public def ofEntries (trailer : Obj) (es : Array Entry) : Census :=
     fonts := (fontEntries es).size
     type0Fonts := ((fontEntries es).filter fun e => nameOf e.val "Subtype" == some "Type0").size
     fontsEmbedded := (fontEntries es).all (fontEmbedded es)
-    unembedded := unembeddedFonts (Index.of es)
+    unembedded := unembeddedFonts ix
     images := images.size
     smasks := (images.filter fun e => (e.val.get? "SMask").isSome).size
     forms := count .form
     linkAnnots := pages.foldl (fun acc e =>
-      match deref es ((e.val.get? "Annots").getD .null) with
-      | .arr xs => acc + (xs.filter fun a => kindOf (deref es a) == .annot "Link").size
+      match ix.deref ((e.val.get? "Annots").getD .null) with
+      | .arr xs => acc + (xs.filter fun a => kindOf (ix.deref a) == .annot "Link").size
       | _ => acc) 0
     outlineItems := count .outlineItem
     lang := (catalog.get? "Lang").bind strOf
     filters := sortedUnique (es.foldl (fun acc e =>
       if e.stream.isSome then acc ++ filtersOf e.val else acc) #[])
     colorSpaces := sortedUnique (images.filterMap fun e => colorSpaceOf e.val)
-    markInfo := match deref es ((catalog.get? "MarkInfo").getD .null) with
+    markInfo := match ix.deref ((catalog.get? "MarkInfo").getD .null) with
       | .dict _ => true
       | _ => false
     structTreeRoot := (catalog.get? "StructTreeRoot").isSome
-    outputIntents := match deref es ((catalog.get? "OutputIntents").getD .null) with
+    outputIntents := match ix.deref ((catalog.get? "OutputIntents").getD .null) with
       | .arr xs => xs.size
       | _ => 0
     info := (trailer.get? "Info").isSome

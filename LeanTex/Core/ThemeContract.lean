@@ -80,9 +80,9 @@ public theorem builtin_sites_contract :
 @[expose] public def molochLineage : Color := Color.ofHtml 0xEB 0x81 0x1B
 
 public theorem moloch_lineage_exact (d : GroundDepth) :
-    Design.declared? (moloch.realize d) .alert = some molochLineage ∧
-      Design.declared? (moloch.realize d) .progressFill = some molochLineage ∧
-      Design.declared? (moloch.realize d) .separator = some molochLineage := by
+    Design.declared? (moloch.realize d) .alert = some molochLineage.engine ∧
+      Design.declared? (moloch.realize d) .progressFill = some molochLineage.engine ∧
+      Design.declared? (moloch.realize d) .separator = some molochLineage.engine := by
   rw [realize_depth_exact moloch rfl d .decks]
   exact ⟨rfl, rfl, rfl⟩
 
