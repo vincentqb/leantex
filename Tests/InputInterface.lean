@@ -18,7 +18,8 @@ example : String → Array Parse.Raw →
 example (file : String) (bytes : ByteArray) (phase : String → String → Nat → IO Unit) :
     IO Source := readDocument file bytes phase
 example : String → Ir.Doc → Bib.FieldReading → Ir.RefTable → Array (String × Span) →
-    Encoding.Ledger → IO (Ir.Doc × Array Diag × Encoding.Ledger) := @resolveBibliography
+    Encoding.Ledger → Array Ir.CiteSite → IO (Ir.Doc × Array Diag × Encoding.Ledger) :=
+  @resolveBibliography
 example : String → Array Parse.Raw → IO (Array Parse.Raw × Array Diag) := resolveData
 example : String → String → System.FilePath := besideDocument
 example : String → Ir.Doc → Array System.FilePath := bibPaths

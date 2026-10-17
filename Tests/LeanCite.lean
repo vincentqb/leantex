@@ -230,7 +230,7 @@ the page ({repr (found.1.map (·.name))})"
     (declared.1.map (·.name) == #["refs.bib", "more.bib"] && declared.2.isEmpty)
   let absent := (LeanFactsFile.bibFor "Sub/F.lean" ["refs.bib"] at_).run (factsWorld [lakefile])
   t "lean cite: a declared bibliography that is not there is named"
-    (absent.1.isEmpty && absent.2.map (·.kind) == #[.E0503])
+    (absent.1.isEmpty && absent.2.map (·.kind) == #[.W0503])
   let none0 := (LeanFactsFile.bibFor "Sub/F.lean" [] at_).run (factsWorld [lakefile])
   t "lean cite: a project without docs/references.bib reads none, named nowhere"
     (none0.1.isEmpty && none0.2.isEmpty)
@@ -244,9 +244,10 @@ the page ({repr (found.1.map (·.name))})"
     ", title = {T}}\n@misc{ash2001, title = {T}}\n".toUTF8
   let latin := (LeanFactsFile.bibFor "Sub/F.lean" [] at_).run
     (factsWorld [lakefile, ("/work/docs/references.bib", latin1)])
-  t s!"lean cite: a bibliography that is no UTF-8 still gives its keys \
-({repr (latin.1.map fun f => Bib.keysOf f.text)})"
-    (latin.1.any fun f => (Bib.keysOf f.text).contains "ash2001")
+  let keysRead (f : LeanFactsFile.BibFile) := Bib.keysOf (Encoding.readMarkdown f.path f.bytes).text
+  t s!"lean cite: a bibliography that is no UTF-8 still gives its keys, read as its list reads them \
+({repr (latin.1.map keysRead)})"
+    (latin.1.any fun f => (keysRead f).contains "ash2001" && !(keysRead f).contains "café")
   let linkedFolder := (LeanFactsFile.bibFor "projlink/Sub/F.lean" [] ⟨"projlink/Sub/F.lean", {}⟩).run
     (linkedWorld [("/work/src/proj/lakefile.toml", "".toUTF8), ("/work/src/proj/Sub/F.lean", "".toUTF8),
       ("/work/src/proj/docs/references.bib", bibBytes)]
@@ -318,7 +319,7 @@ cites nothing ({repr (listFilesOf d)}, {repr (listsOf d)}, {repr (ds.map (·.mes
     let (_, ds) ← driverBuild (tmp / "missing.tex").toString
     t s!"lean cite: an inclusion's declared bibliography that is not there is named at the inclusion \
 ({repr (ds.map (·.message))})"
-      (ds.any fun d => d.kind == .E0503 && d.span.any (·.file.endsWith "missing.tex") &&
+      (ds.any fun d => d.kind == .W0503 && d.span.any (·.file.endsWith "missing.tex") &&
         !hasStr d.message "reference list" && !hasStr (d.help.getD "") "/./")
     IO.FS.writeFile (tmp / "bl.tex") ("\\documentclass{article}\n\\usepackage{biblatex}\n\
 \\addbibresource{own.bib}\n\\begin{document}\n\\inputlean[show = docs]{proj/Sub/F.lean}\n\

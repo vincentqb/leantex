@@ -154,7 +154,7 @@ public inductive DiagCode where
   | E0316 | E0320 | E0321 | E0322 | E0323 | E0324 | E0325 | E0326 | E0327
   | E0328 | E0329 | E0330 | E0331 | E0332 | E0333 | E0334 | E0336 | E0340
   | E0401 | E0402 | E0403 | E0404 | E0405
-  | E0501 | E0502 | E0503
+  | E0501 | E0502
   | N0100 | N0102 | N0103 | N0104 | N0105 | N0114 | N0200
   | W0001 | W0003 | W0005 | W0006 | W0007 | W0008 | W0009 | W0010
   | W0011 | W0012 | W0013 | W0014 | W0015 | W0016
@@ -263,6 +263,8 @@ public inductive DiagCode where
   | W0107
   | W0109
   | W0449
+  | W0503
+  | W0450
   deriving Repr, BEq, DecidableEq
 
 /-- The registry: each code's digits, its declared `Loss`, and its one meaning. -/
@@ -405,7 +407,6 @@ private def DiagCode.spec : DiagCode → String × Loss × String
   | .W0352 => ("0352", .degraded, "a malformed .bib entry is skipped; the rest of the file is kept")
   | .W0353 => ("0353", .degraded, "an unknown bibliography style; the reference list is set as unsrtnat")
   | .E0502 => ("0502", .dropped, "\\input file not found; skipped")
-  | .E0503 => ("0503", .dropped, "\\bibliography file not found; the reference list is empty")
   | .W0601 => ("0601", .degraded, "image unreadable or not found; placeholder box placed")
   | .W0602 => ("0602", .degraded, "image format unusable; placeholder box placed")
   | .E0359 => ("0359", .dropped, "a \\note nested inside another note's frame is dropped")
@@ -501,6 +502,8 @@ private def DiagCode.spec : DiagCode → String × Loss × String
   | .W0444 => ("0444", .degraded, "links on the printed sheet, which the PDF/X standard the file claims does not admit; the PDF carries none, the web page keeps them")
   | .N0448 => ("0448", .info, "a file claiming a PDF/X standard on the checks the engine makes; a print service's preflight judges what they leave")
   | .W0449 => ("0449", .config, "a setting the document declares that nothing it sets uses; every artifact is the same without it")
+  | .W0503 => ("0503", .degraded, "a bibliography file is not there; the reference list is empty and every citation shows ?")
+  | .W0450 => ("0450", .config, "a .bib key names a second entry; the first entry stands")
 
 public def DiagCode.digits (c : DiagCode) : String := c.spec.1
 
@@ -534,7 +537,10 @@ public def DiagCode.all : List DiagCode :=
   (List.range DiagCode.count).map DiagCode.ofNat
 
 public theorem DiagCode.all_complete (c : DiagCode) : DiagCode.all.contains c := by
-  cases c <;> rfl
+  have hc : c.ctorIdx < DiagCode.count := by cases c <;> decide
+  have hb : (c == c) = true := by cases c <;> rfl
+  rw [List.contains_eq_any_beq, List.any_eq_true]
+  exact ⟨c, List.mem_map.2 ⟨c.ctorIdx, List.mem_range.2 hc, DiagCode.ofNat_ctorIdx c⟩, hb⟩
 
 public theorem DiagCode.all_nodup : DiagCode.all.Nodup := by decide +kernel
 
@@ -555,7 +561,8 @@ public def DiagCode.retired : List (String × Option String) :=
 old spelling accepts the successor. -/
 public def DiagCode.renumbered : List (String × String) :=
   [("E0382", "W0382"),
-   ("E0002", "W0002")]
+   ("E0002", "W0002"),
+   ("E0503", "W0503")]
 
 /-- An artifact whose diagnostics apply only when that output is requested. -/
 public inductive Diag.Output where

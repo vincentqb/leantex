@@ -317,11 +317,13 @@ public def inputMissing (name : String) (span : Option Span) (command : String :
   Diag.of .E0502 s!"{what} '{name}' is not there; its content is absent" span
     (help := "\\allow{E0502} accepts the loss")
 
-/-- E0503: a `.bib` file `\bibliography` names is not there; the reference list stays
+/-- W0503: a `.bib` file `\bibliography` names is not there; the reference list stays
 empty and every citation shows `?`. -/
 public def bibMissing (name looked : String) (span : Option Span) : Diag :=
-  Diag.of .E0503 s!"'\\bibliography' file '{name}' is not there; the reference list is empty"
-    span (help := s!"looked at: {looked}; \\allow\{E0503} accepts the loss")
+  Diag.of .W0503 s!"'\\bibliography' file '{name}' is not there; the reference list is empty \
+and every citation shows '?'"
+    span (help := s!"put the file at {looked}, or correct its name in \\bibliography")
+    (subject := some ("bibfile:" ++ name)) (carries := [.W0351])
 
 /-- W0424: one `.bib` file of several a bibliography names is not there;
 the list holds the entries of the files that are, and every citation of
@@ -332,18 +334,17 @@ entries of the other files" span
     (help := s!"put the file at {looked}, or drop '{name}' from the list of files")
     (subject := some ("bibfile:" ++ name))
 
-/-- E0503 as a Lean page's directive, or the inclusion `entry` names, names its bibliography: the
+/-- W0503 as a Lean page's directive, or the inclusion `entry` names, names its bibliography: the
 file is not there, so its documentation's citations stay as written and nothing is listed. -/
 public def bibMissingLean (name looked : String) (span : Span) (entry : Option String) : Diag :=
   let (names, loss) := match entry with
     | some e => (s!"{e} names", "the included documentation's citations stay as written")
     | none => ("the directive names",
         "the page's citations stay as written and its reference list is empty")
-  Diag.of .E0503 s!"the bibliography file '{name}' {names} is not there; {loss}" (some span)
-    (help := s!"put the file at {looked}")
+  Diag.of .W0503 s!"the bibliography file '{name}' {names} is not there; {loss}" (some span)
+    (help := s!"put the file at {looked}") (subject := some ("bibfile:" ++ name))
 
-/-- E0503 or W0424 as a markdown document's metadata names its bibliography, where no `\allow` is
-written. -/
+/-- W0503 or W0424 as a markdown document's metadata names its bibliography. -/
 public def bibMissingMarkdown (among : Bool) (name looked : String) (span : Option Span) : Diag :=
   if among then
     Diag.of .W0424 s!"the bibliography file '{name}' is not there; the reference list holds the \
@@ -351,8 +352,10 @@ entries of the other files" span
       (help := s!"put the file at {looked}, or drop '{name}' from 'bibliography:'")
       (subject := some ("bibfile:" ++ name))
   else
-    Diag.of .E0503 s!"the bibliography file '{name}' is not there; the reference list is empty"
-      span (help := s!"put the file at {looked}")
+    Diag.of .W0503 s!"the bibliography file '{name}' is not there; the reference list is empty \
+and every citation shows '?'"
+      span (help := s!"put the file at {looked}, or correct its name in 'bibliography:'")
+      (subject := some ("bibfile:" ++ name)) (carries := [.W0351])
 
 /-- E0365: a `.bib` file `\data` names is not there; its records are absent and every read
 of them stays unresolved. -/

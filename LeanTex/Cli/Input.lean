@@ -63,6 +63,9 @@ private structure InputLog where
   joins : Array String := #[]
   /-- Each bibliography file's keys by its path, parsed once a run. -/
   bibKeys : Array (String × Std.HashSet String) := #[]
+  /-- The surface of the document the run reads, whose reference list's reading a bibliography's
+  keys follow. -/
+  surface : Ir.Surface := .tex
 
 private abbrev ReadM := StateT InputLog IO
 
@@ -160,10 +163,20 @@ private def listable (found : Array LeanFactsFile.BibFile) (span : Span) :
 reference list's file names cannot hold; its entries are not read" (some span)
     (help := "rename the file or its folder without a comma") (subject := some "code:bibliography"))
 
-/-- A bibliography file's keys, parsed once a run. -/
-private def keysOnce (f : LeanFactsFile.BibFile) : ReadM (Std.HashSet String) := do
+/-- A bibliography file's text as the document's reference list reads it at `shown`: under the
+declaration in force in a TeX document, else as UTF-8, its help in the document's surface. -/
+private def bibTextAt (shown : String) (bytes : ByteArray) : ReadM Encoding.FileText := do
+  let log ← get
+  let under := match log.fixed with
+    | some d => d
+    | none => log.ledger.declared <|> log.guess
+  return if log.surface == .tex then Encoding.readTex under shown bytes
+    else Encoding.readMarkdown shown bytes
+
+/-- A bibliography file's keys, parsed once a run from the text its reference list reads. -/
+private def keysOnce (f : LeanFactsFile.BibFile) (text : String) : ReadM (Std.HashSet String) := do
   if let some (_, ks) := (← get).bibKeys.find? (·.1 == f.path) then return ks
-  let ks := (Bib.keysOf f.text).foldl (·.insert ·) {}
+  let ks := (Bib.keysOf text).foldl (·.insert ·) {}
   modify fun log => { log with bibKeys := log.bibKeys.push (f.path, ks) }
   return ks
 
@@ -206,7 +219,11 @@ private def readLean (dir : System.FilePath) (ask : LeanAsk) : ReadM (Array Pars
           (base := some dir.toString) (entry := some entry))
       else pure (#[], #[])
     let (found, commaDiags) := listable found ask.site
-    let keyed ← found.mapM fun f => return (f, ← keysOnce f)
+    let read ← found.mapM fun f =>
+      bibTextAt (if (System.FilePath.mk f.name).isAbsolute then f.name else (dir / f.name).toString)
+        f.bytes
+    let keyed ← (found.zip read).mapM fun (f, r) => return (f, ← keysOnce f r.text)
+    let readDiags := read.foldl (init := #[]) fun ds r => ds ++ r.diags
     let keys := keyed.foldl (init := {}) fun ks (_, k) => k.fold (init := ks) fun acc x => acc.insert x
     let (raws, ds) := Code.includeLean path.toString text showing facts place ask.site entry
       (codeRefs found keys)
@@ -216,7 +233,7 @@ private def readLean (dir : System.FilePath) (ask : LeanAsk) : ReadM (Array Pars
       joins := citing.foldl (fun js (f, _) => if js.contains f.name then js else js.push f.name)
         log.joins
       reads := log.reads ++ found.map (·.path) }
-    return (raws, ds ++ factDiags ++ bibDiags ++ commaDiags)
+    return (raws, ds ++ factDiags ++ bibDiags ++ commaDiags ++ readDiags)
 
 /-- `\inputlean[options]{file}`, its options read as TeX spells them. -/
 private def inputleanAsk (request : Compat.InputRequest) : LeanAsk :=
@@ -351,7 +368,8 @@ private def executeWith (file : String) (raws : Array Parse.Raw) (log : InputLog
       modify fun (l : InputLog) => { l with diags := l.diags ++ ds }
       return Compat.kept file (Code.joinBibliography raws (← get).joins)
     | .code _ => return Compat.kept file raws
-    | .tex => Elab.executeInputs (readAt dir file 8) file raws).run log
+    | .tex => Elab.executeInputs (readAt dir file 8) file raws).run
+      { log with surface := Ir.Surface.ofPath file }
 
 /-- Execute macros and fulfil input requests in source order, resolving beside the
 document unless `dir` says otherwise; the execution continues through
@@ -376,11 +394,11 @@ public def bibPaths (file : String) (doc : Ir.Doc) : Array System.FilePath :=
   (Ir.bibRefs doc).map fun src => besideDocument file (Bib.sourceName src)
 
 /-- The document's bibliography request fulfilled: each named `.bib` read beside the
-document and applied by `Bib.apply`; a list with no file read is E0503, a partly read one
+document and applied by `Bib.apply`; a list with no file read is W0503, a partly read one
 W0424. -/
 public def resolveBibliography (file : String) (doc : Ir.Doc) (cv : Bib.FieldReading)
     (labels : Ir.RefTable) (bibSpans : Array (String × Span) := #[])
-    (ledger : Encoding.Ledger := {}) :
+    (ledger : Encoding.Ledger := {}) (sites : Array Ir.CiteSite := #[]) :
     IO (Ir.Doc × Array Diag × Encoding.Ledger) := do
   let requested := Ir.bibRefs doc
   let spanOf (src : String) : Option Span :=
@@ -394,7 +412,8 @@ public def resolveBibliography (file : String) (doc : Ir.Doc) (cv : Bib.FieldRea
     if ← path.pathExists then
       match ← readSource path.toString with
       | .ok bytes =>
-        let read := Encoding.readTex ledger.declared path.toString bytes
+        let read := if doc.surface == .tex then Encoding.readTex ledger.declared path.toString bytes
+          else Encoding.readMarkdown path.toString bytes
         sources := sources.push (src, read.text)
         diags := diags ++ read.diags
         ledger := ledger.record (read.read path.toString ledger.declared)
@@ -406,7 +425,7 @@ public def resolveBibliography (file : String) (doc : Ir.Doc) (cv : Bib.FieldRea
       DriverDiag.bibMissingMarkdown (!sources.isEmpty) src looked (spanOf src)
     else if sources.isEmpty then DriverDiag.bibMissing src looked (spanOf src)
     else DriverDiag.bibMissingAmong src looked (spanOf src)
-  let (doc, applyDiags) := Bib.apply sources doc cv
+  let (doc, applyDiags) := Bib.apply sources doc cv sites
   return (Bib.resolveListRefs labels doc, diags ++ missingDiags ++ applyDiags, ledger)
 
 /-- The document's data requests fulfilled before elaboration: each named `.bib` read
@@ -495,8 +514,11 @@ public def readDocument (file : String) (bytes : ByteArray)
           Host.runIO (LeanFactsFile.bibFor file showing.bibliography ⟨file, {}⟩)
         else pure (#[], #[])
       let (found, commaDiags) := listable found ⟨file, {}⟩
-      let refs := codeRefs found (found.foldl (init := {}) fun ks f =>
-        (Bib.keysOf f.text).foldl (·.insert ·) ks)
+      -- The keys a page cites by are the ones its reference list reads.
+      let read := found.map fun f => Encoding.readMarkdown (besideDocument file f.name).toString f.bytes
+      let refs := codeRefs found (read.foldl (init := {}) fun ks r =>
+        (Bib.keysOf r.text).foldl (·.insert ·) ks)
+      let commaDiags := commaDiags ++ read.foldl (init := #[]) fun ds r => ds ++ r.diags
       let bibRead := found.map (·.path)
       let t ← IO.monoMsNow
       let (raws, ds) := Surface.readCode lang file text facts place refs

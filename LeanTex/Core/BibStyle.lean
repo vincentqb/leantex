@@ -185,15 +185,15 @@ private def labelSource (e : Entry) (biblatex : Bool) (useprefix : Bool := false
     | some (_, l) => citeNamesTeX { useprefix } l {}
     | none => (e.field? "title").getD e.key
   else
-    let key := (e.field? "key").getD ((e.key.take 3).toString)
-    let org := (e.field? "organization").map fun o => ((text (chopThe o)).take 3).toString
+    let key := (e.value? "key").getD ((e.key.take 3).toString)
+    let org := (e.value? "organization").map fun o => ((text (chopThe o)).take 3).toString
     let first (fs : List (Option String)) : String := (fs.findSome? id).getD key
-    let au := (e.field? "author").map names
-    let ed := (e.field? "editor").map names
+    let au := (e.value? "author").map names
+    let ed := (e.value? "editor").map names
     match e.kind with
     | "book" | "inbook" => first [au, ed]
-    | "proceedings" => first [ed, e.field? "key", org]
-    | "manual" => first [au, e.field? "key", org]
+    | "proceedings" => first [ed, e.value? "key", org]
+    | "manual" => first [au, e.value? "key", org]
     | _ => first [au]
 
 /-- The label names a citation prints, never silently empty. -/
@@ -265,7 +265,7 @@ public def Resolved.anchor? (r : Resolved) : Option String :=
 
 /-- The full author list natbib's starred forms print, or the key. -/
 private def citeFullAuthors (e : Entry) : String :=
-  match e.field? "author" with
+  match e.value? "author" with
   | some a => Ir.smartPunct (fullNames a)
   | none => e.key
 
@@ -1140,10 +1140,10 @@ private def sortTitle (v : String) : String :=
 
 /-- The names plain.bst's `presort` reads by entry type. -/
 private def sortWho (e : Entry) : String :=
-  let key := ((e.field? "key").map sortify).getD ""
-  let org := (e.field? "organization").map fun o => sortify (chopThe o)
-  let au := (e.field? "author").map sortNames
-  let ed := (e.field? "editor").map sortNames
+  let key := ((e.value? "key").map sortify).getD ""
+  let org := (e.value? "organization").map fun o => sortify (chopThe o)
+  let au := (e.value? "author").map sortNames
+  let ed := (e.value? "editor").map sortNames
   let first (fs : List (Option String)) : String := (fs.findSome? id).getD key
   match e.kind with
   | "book" | "inbook" => first [au, ed]
@@ -1176,12 +1176,12 @@ private def alphaNames (v : String) : String :=
 
 /-- alpha.bst's label stem by entry type (`calc.label`). -/
 private def alphaWho (e : Entry) (key : String) : String :=
-  let k := (e.field? "key").map (textPrefix · 3)
-  let org := (e.field? "organization").map fun o => textPrefix (chopThe o) 3
+  let k := (e.value? "key").map (textPrefix · 3)
+  let org := (e.value? "organization").map fun o => textPrefix (chopThe o) 3
   let first (fs : List (Option String)) : String :=
     ((fs ++ [k]).findSome? id).getD ((key.take 3).toString)
-  let au := (e.field? "author").map alphaNames
-  let ed := (e.field? "editor").map alphaNames
+  let au := (e.value? "author").map alphaNames
+  let ed := (e.value? "editor").map alphaNames
   match e.kind with
   | "book" | "inbook" => first [au, ed]
   | "proceedings" => first [ed, k, org]
@@ -1218,10 +1218,10 @@ private def sortNamesNat (v year : String) : String :=
 private def plainnatKey (r : Resolved) : String × String :=
   let e := r.sortEntry
   let year := (e.field? "year").getD ""
-  let key := ((e.field? "key").map sortify).getD ""
-  let org := (e.field? "organization").map fun o => sortify (chopThe o)
-  let au := (e.field? "author").map (sortNamesNat · year)
-  let ed := (e.field? "editor").map (sortNamesNat · year)
+  let key := ((e.value? "key").map sortify).getD ""
+  let org := (e.value? "organization").map fun o => sortify (chopThe o)
+  let au := (e.value? "author").map (sortNamesNat · year)
+  let ed := (e.value? "editor").map (sortNamesNat · year)
   let first (fs : List (Option String)) : String := (fs.findSome? id).getD key
   let who := match e.kind with
     | "book" | "inbook" => first [au, ed]
@@ -1526,7 +1526,7 @@ private def alphaMarks (rs : Array Resolved) : Array Resolved :=
     let letter := if run then extraLetter rank else ""
     let year := yearTail r.sortEntry 2
     let tex := alphaWho r.sortEntry r.key ++ year
-    { r with label := some (text tex ++ letter), labelTeX := some (tex ++ letter) }
+    { r with label := some (Ir.smartPunctInWord (text tex) ++ letter), labelTeX := some (tex ++ letter) }
 
 /-- What biber reads of a biblatex list before it sorts and labels it, each
 entry under its own options. -/
@@ -2116,7 +2116,8 @@ termination_by uncited.length
 
 /-- The document's citations and reference lists resolved
 against its `.bib` sources. -/
-private def analyse (sources : Array (String × String)) (doc : Ir.Doc) (rd : FieldReading) :
+private def analyse (sources : Array (String × String)) (doc : Ir.Doc) (rd : FieldReading)
+    (sites : Array Ir.CiteSite) :
     CitePunct × Resolver × Array Ir.BibItem × Array Diag × Array (String × Ir.PicSrc) × Nat :=
     Id.run do
   let requested := Ir.bibRefs doc
@@ -2128,6 +2129,9 @@ private def analyse (sources : Array (String × String)) (doc : Ir.Doc) (rd : Fi
   let mut entries : Array Entry := #[]
   let mut origin : Std.HashMap String String := {}
   let mut seen : Std.HashSet String := {}
+  let mut firstAt : Std.HashMap String (String × Entry) := {}
+  -- Each later entry of a key whose fields differ from the first's: the key, its place, the first's.
+  let mut repeats : Array (String × Span × String) := #[]
   let mut preambles : Array String := #[]
   -- One `@string` store for the list's files, read in turn.
   let mut store := monthMacros months
@@ -2147,10 +2151,15 @@ private def analyse (sources : Array (String × String)) (doc : Ir.Doc) (rd : Fi
           the entry is skipped and the rest of '{sourceName src}' is kept"
           (some ⟨sourceName src, pos⟩))
       for e in parsed.entries do
-        unless seen.contains e.key do
+        if seen.contains e.key then
+          if let some (f, first) := firstAt.get? e.key then
+            unless first.kind == e.kind && first.fields == e.fields do
+              repeats := repeats.push (e.key, ⟨sourceName src, e.pos⟩, s!"{sourceName f}:{first.pos.line}")
+        else
           entries := entries.push e
           seen := seen.insert e.key
           origin := origin.insert e.key src
+          firstAt := firstAt.insert e.key (src, e)
   let declared ← do
     match declared with
     | none => pure none
@@ -2184,6 +2193,14 @@ private def analyse (sources : Array (String × String)) (doc : Ir.Doc) (rd : Fi
       if keys.contains a || m.contains a then m else m.insert a e.key
   let canon (k : String) : String := aliases.getD k k
   let cited := expandStar entries ((citedKeys doc).map canon)
+  -- A key named twice loses the later entry where the list sets the key.
+  let listed : Std.HashSet String := cited.foldl (·.insert ·) {}
+  for (k, at_, first) in repeats do
+    if listed.contains k then
+      diags := diags.push (Diag.of .W0450 s!"'{k}' is already the key of an earlier entry; the \
+        first entry stands" (some at_)
+        (help := "one entry per key: delete this one or give it a key of its own")
+        (subject := some ("bibkey:" ++ k)) (detail := some s!"the first at {first}"))
   let shown := (citedKeys doc (·.cmd != .nocite)).foldl (·.insert ·) (∅ : Std.HashSet String)
   -- Each `@set` member is listed as its own entry; the set is cited as its first member.
   let sets : Std.HashMap String (Array String) := if proc != .biber then {} else
@@ -2482,16 +2499,19 @@ private def analyse (sources : Array (String × String)) (doc : Ir.Doc) (rd : Fi
             (subject := some s!"bibdate:{r.key}:month"))
   let citedBy : Std.HashMap String String := (fieldCites rendered).foldl (init := {})
     fun m (k, by_) => if m.contains (canon k) then m else m.insert (canon k) by_
-  unless requested.isEmpty && own.isEmpty do
+  -- A list no file of which was read is the missing files' loss, its citations' marks with it.
+  let unread := !requested.isEmpty && requested.all fun src => !sources.any (·.1 == src)
+  unless (requested.isEmpty && own.isEmpty) || unread do
     for k in cited do
       if (find k).isNone then
-        let md := doc.surface != .tex
+        let site := sites.find? (·.key == k)
+        let md := (site.map (·.pandoc)).getD (doc.surface != .tex)
         let (cmd, loss) := if shown.contains k || citedBy.contains k then ("cite", "it shows as '?'")
           else ("nocite", if md then "its 'nocite' adds nothing" else "\\nocite adds nothing for it")
-        let atEntry : Option Span := if shown.contains k then none else
+        let atEntry : Option Span := if shown.contains k then site.map (·.span) else
           (citedBy.get? k).bind fun e => (origin.get? e).map fun src =>
             ⟨sourceName src, (positions.get? e).getD {}⟩
-        -- The fix is spelled in the document's own surface.
+        -- The fix is spelled in the surface the citation was written in.
         let spelling := if md then s!"@{k}" else s!"\\{cmd}"
         diags := diags.push (Diag.of .W0351 s!"citation '{k}' has no entry in the \
           bibliography; {loss}" atEntry
@@ -2525,8 +2545,8 @@ public def demoteRepeated (prior ds : Array Diag) : Array Diag :=
 /-- The document's citations and reference lists resolved against its `.bib`
 sources, every field read through `rd`. -/
 public def apply (sources : Array (String × String)) (doc : Ir.Doc)
-    (rd : FieldReading) : Ir.Doc × Array Diag :=
-  match analyse sources doc rd with
+    (rd : FieldReading) (sites : Array Ir.CiteSite := #[]) : Ir.Doc × Array Diag :=
+  match analyse sources doc rd sites with
   | (p, find, items, diags, pictures, notes) =>
     (((resolveDoc p find items doc).addPictures pictures).withListNotes notes, diags)
 
@@ -3133,11 +3153,11 @@ public theorem resolveDoc_no_cite (p : CitePunct) (find : Resolver) (items : Arr
   · exact hc
 
 public theorem apply_no_cite (sources : Array (String × String)) (doc : Ir.Doc)
-    (rd : FieldReading) :
-    ∀ u ∈ Ir.pendingNodes (apply sources doc rd).1, u.isCite = false := by
+    (rd : FieldReading) {sites : Array Ir.CiteSite} :
+    ∀ u ∈ Ir.pendingNodes (apply sources doc rd sites).1, u.isCite = false := by
   intro u hu
   unfold apply at hu
-  rcases h : analyse sources doc rd with ⟨p, find, items, diags, pictures, notes⟩
+  rcases h : analyse sources doc rd sites with ⟨p, find, items, diags, pictures, notes⟩
   rw [h, Ir.pendingNodes_withListNotes, Ir.pendingNodes_addPictures] at hu
   exact resolveDoc_no_cite p find items doc u hu
 

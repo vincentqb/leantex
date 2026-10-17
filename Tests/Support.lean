@@ -865,7 +865,7 @@ def bibBuildRun (src : String) (bibs : Array (String × String)) (surface : Ir.S
   let pass (prepared : Elab.Prepared) : Ir.Doc × Array Diag × Array Diag × Array Diag :=
     let (doc, ds, spans) := Elab.runPrepared file prepared readDs (fun _ _ => {})
     let sources := (Ir.bibRefs doc).filterMap fun r => bibs.find? (·.1 == r)
-    let (doc, bds) := Bib.resolve file prepared sources doc
+    let (doc, bds) := Bib.resolve file prepared sources doc spans.cites
     let doc := Bib.resolveListRefs spans.labels doc
     (doc, ds, bds, Bib.refJudge spans doc)
   let first := pass prepared

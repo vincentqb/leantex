@@ -100,7 +100,7 @@ def driverProbes : Array (DiagCode × DriverProbe) :=
         "\\usepackage[latin1]{inputenc}\n\\begin{document}\nCaf").toUTF8 ++ ⟨#[0xE9]⟩ ++
         ".\n\\end{document}\n".toUTF8)
       return src.ledger.notes),
-    (.E0503, fun _ => do
+    (.W0503, fun _ => do
       let doc := (elabStr ("\\documentclass{article}\n\\begin{document}\n" ++
         "A claim\\cite{k}.\n\\bibliography{references}\n\\end{document}\n")).1
       return (← Input.resolveBibliography "doc.tex" doc Bib.plainReading #[]).2.1),
@@ -279,7 +279,6 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
   | .E0405 => dvL (w := w) mapped "lost \u27e8 here"
   | .E0501 => probed .E0501
   | .E0502 => probed .E0502
-  | .E0503 => probed .E0503
   | .N0100 => dvE (w := w) (dvDoc "\\usepackage[margin=1in]{geometry}\n" "x")
   | .N0102 => dvE (w := w) (dvDeck "" "\\begin{frame}[plain]{T}\nx\n\\end{frame}")
   | .N0103 => dvE (w := w) (dvDoc "" "\\section[short]{A long title}\nx")
@@ -505,6 +504,8 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
   | .W0351 => dvBib (w := w) "@misc{real, year = 2024}" "ghost" none ++
       dvE (w := w) (dvDoc "" "x \\cite{ghost}")
   | .W0352 => dvBib (w := w) "@misc{broken, year = ?}\n@misc{kept, year = 2024}" "kept" none
+  | .W0450 => dvBib (w := w) "@misc{k, title = {First}, year = 2024}\n@misc{k, title = {Second}, year = 2024}"
+      "k" none
   | .W0353 => dvBib (w := w) "@misc{k, year = 2024}" "k" (some "mystery")
   | .N0029 => dvBib (w := w) "@misc{k, title = {T}, url = {https://example.org/k}, year = 2024}" "k"
       (some "plain")
@@ -515,6 +516,7 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
   | .W0423 => dvBbl (w := w) "@misc{k, title = {T}, date = {2020}, related = {r}}\n\
       @misc{r, title = {R}, date = {2019}}" "k"
   | .W0424 => probed .W0424
+  | .W0503 => probed .W0503
   | .W0425 => dvBib (w := w) "@inbook{k, title = {T}, crossref = {nowhere}, year = 2024}" "k" none ++
       dvBbl (w := w) "@xdata{d, publisher = {P}, location = {L}, xdata = {e}}\n@xdata{e, xdata = {d}}\n\
         @book{r, title = {R}, date = {2001}}\n@book{k, title = {T}, date = {2020}, xdata = {d, r}, \
@@ -1392,7 +1394,7 @@ def repeatFoldUnexercised : List (String × String) :=
 font assembly's records are held by `weightSubstitutionRecordChecks`")
     ["W0366"] ++
   unexercisedAs "its witness is one driver run, with no source to write twice"
-    ["W0008", "W0011", "W0379", "W0390", "W0419", "W0424"] ++
+    ["W0008", "W0011", "W0379", "W0390", "W0419", "W0424", "W0503"] ++
   unexercisedAs ("one record per file, its sites the offsets in its detail; a second file is a \
 second loss, named in its words")
     ["W0002", "W0004"] ++
@@ -1427,7 +1429,7 @@ keeps once (`Layout.uniqueDiags`)")
   unexercisedAs "a loss of a reference-list entry, which the list sets once however often it is cited"
     ["W0420", "W0422", "W0423", "W0425", "W0426", "W0429"] ++
   unexercisedAs "a loss of the .bib file, read once however often the body cites it"
-    ["W0352"] ++
+    ["W0352", "W0450"] ++
   unexercisedAs "a judgement of the bibliography style, made once per list"
     ["W0353"] ++
   unexercisedAs "one record per scheme, colour and ground, which the repetition paints again"

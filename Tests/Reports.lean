@@ -153,6 +153,7 @@ import Tests.SectionPages
 import Tests.SeedPalette
 import Tests.PaletteCover
 import Tests.UnusedSettings
+import Tests.BibEdges
 import Tests.LeanProseReading
 import Tests.AmsMath
 import Tests.CoveredSteps
@@ -1939,6 +1940,16 @@ def reports : List Report := [
       "lualatex: a pause in a note leaves the next frame its two steps; a bare pause between frames, where beamer ships an empty page and sets the next frame on one step, and a pause in a list between frames, where beamer drops the rest of the list, reveal nothing here",
       "twenty-eight of the guards' thirty-eight assertions fail built on main at e5afdc634 with only the guards added: the body's covers are named ignored and its frames hidden, approximated body coverings unnamed as W0109, the web page restating no share, markers and runs covered in the ink's cover, the description item's bullet, a step's colours, the next column, item and paragraph after a pause shown on the step before it, the rest inside uncover<3> and only<2> never, and pauses in a note or between frames unnamed; nine of the first thirty-six fail on this change's first reviewed state: a pause in a note or between frames, a share declared mid-frame on later steps, a step nested in a covered one, a share past only<3> on the web page, a share-only epoch's ink, a marker in the covered colour, and a step's colours; on its second, an article's markers after a pause and an item stepped between frames lose their marker's ink",
       "the corpus's overlays-blocks deck covers its second column on the step before the pause in its first, as beamer does"]
+    state := .guarded "e5afdc63" .before .author },
+  { id := "R216", date := "2026-10-17"
+    what := "a quote after a citation, emphasis, a group or a formula opened in TeX text and in a bibliography field, so a possessive read as an opening quote; a key two entries of one reference list held took the first without a word; alpha's label read an empty author as present, where alpha.bst labels by the editor, and set an apostrophe straight; a bibliography file that is not there stopped the build with no artifact; a citation with no entry was named at no place, and for an included markdown file in TeX's words; a Lean page's bibliography that is not UTF-8 registered its keys from Latin-1 bytes while its list read UTF-8, so such a key showed '?'"
+    pins := [check% Tests.BibEdges.quoteChecks, check% Tests.BibEdges.duplicateChecks,
+      check% Tests.BibEdges.alphaChecks, check% Tests.BibEdges.missingChecks,
+      check% Tests.BibEdges.siteChecks, check% Tests.BibEdges.encodingKeyChecks]
+    accept := ["main's binary at e5afdc63 on invented probes: a citation's, an emphasized word's and a group's possessive, and a field's possessive after a braced group or a formula, set an opening quote; a key in two files of one list, and twice in one file, took the first entry with no diagnostic; a missing bibliography file was an error and wrote no artifact; a citation with no entry carried no span, and one in an included markdown file was told to fix a TeX command; a Lean page citing a key of a Latin-1 bibliography showed '?' beside the replaced bytes' warning",
+      "bibtex 0.99e's alpha.bst over thirty invented entries, von parts, braced and accented names, an initial, keys, organizations, an empty author and odd years: every label's text and the list's order are the engine's but the empty author's, which alpha.bst reads as missing and labels by its editor, and lualatex prints a label's apostrophe curly; its et al. mark prints raised, which a list's plain marker cannot carry",
+      "biber 2.22 and bibtex on two files sharing keys: both keep the first entry and name each later one, bibtex case-blind; here a later entry is named where the list sets its key and its fields differ, the first's place in its detail",
+      "the corpus built by main's binary at e5afdc63 and by this tree's: all 350 artifacts both build are byte-identical; their diagnostics differ in three fixtures, a citation with no entry now at its command in two and a Lean inclusion's bibliography naming the key the document's file holds first"]
     state := .guarded "e5afdc63" .before .author }
 ]
 

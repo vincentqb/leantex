@@ -2669,6 +2669,14 @@ public structure CiteForm where
   post : String := ""
   deriving Repr, BEq, Inhabited
 
+/-- Where a key is first cited, and whether in Pandoc's syntax rather than a TeX command, which the
+reporting layer reads beside the span-free document. -/
+public structure CiteSite where
+  key : String
+  span : Span
+  pandoc : Bool
+  deriving Repr, BEq
+
 /-- natbib's citation commands, each with the form it selects. -/
 public def natbibCites : List (String × CiteForm) :=
   [("citet", { cmd := .textual }), ("citep", { cmd := .paren }),
@@ -8339,6 +8347,56 @@ where
         | c :: _ => c == ' ' || c == '(' || c == '[' || c == '“'
       go rest ((if opening then '‘' else '’') :: prev)
     | c :: rest, prev => go rest (c :: prev)
+
+/-- `smartPunct` for text set right after `lead`, the character before it in reading order, which
+an opening quote decides against as a quote inside the text decides against its own. -/
+public def smartPunctAfter (lead : Option Char) (s : String) : String :=
+  match lead with
+  | none => smartPunct s
+  | some c => String.ofList ((smartPunct.go s.toList [c]).drop 1)
+
+/-- What an object a quote follows reads as: U+FFFC, which no opening test admits. -/
+private def objectLead : Char := '\ufffc'
+
+/-- `smartPunct` for text TeX sets whole inside a word, a label's, where a quote opening it closes
+as TeX's own ligature sets it. -/
+public def smartPunctInWord (s : String) : String := smartPunctAfter (some objectLead) s
+
+/-- The character a lead reads for a white-space character: a space, as `smartPunct` reads it. -/
+private def leadChar (c : Char) : Char :=
+  if c.isWhitespace || c == '\u00a0' || c == '\u202f' || c == '\u3000' ||
+      ('\u2000' ≤ c && c ≤ '\u200a') then ' ' else c
+
+mutual
+
+/-- The character text set after `x` follows in reading order, `lead` where `x` sets none: a text's
+last character, a space after glue or a break, and U+FFFC after other ink, a note's mark too. -/
+-- conserves: none — reads the reading order's last character, a note's body behind its mark.
+public def quoteLeadOne (lead : Option Char) (x : Inline) : Option Char :=
+  match x with
+  | .text s => match s.toList.getLast? with
+    | some c => some (leadChar c)
+    | none => lead
+  | .styled _ body | .colored _ _ body | .located _ body | .role _ body | .link _ body
+  | .decorated _ body | .onSteps _ body => quoteLeadList lead body.toList
+  | .altSteps _ firstPage _ => quoteLeadList lead firstPage.toList
+  | .cited _ _ ink => quoteLeadList (some objectLead) ink.toList
+  | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _ | .ref _ _ _ _ | .cite _ _
+  | .rule _ _ _ | .pageNumber | .pageCount | .footnote _ _ => some objectLead
+  | .fill | .hspace _ _ | .linebreak _ => some ' '
+  | .label _ | .strut _ | .italicCorr _ => lead
+
+public def quoteLeadList (lead : Option Char) : List Inline → Option Char
+  | [] => lead
+  | x :: rest => quoteLeadList (quoteLeadOne lead x) rest
+
+end
+
+/-- The character text set after `xs` follows in reading order, `none` where `xs` sets none. -/
+public def quoteLead (xs : Array Inline) : Option Char := quoteLeadList none xs.toList
+
+@[simp] public theorem quoteLead_empty : quoteLead #[] = none := by
+  simp [quoteLead, quoteLeadList]
 
 /-- One run onto a merge: a text run after a text run joins it. -/
 @[expose] public def mergeStep (out : Array Inline) (x : Inline) : Array Inline :=

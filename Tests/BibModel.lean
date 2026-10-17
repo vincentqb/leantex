@@ -705,9 +705,10 @@ def bibSourcesChecks (ref : IO.Ref (List String)) : IO Unit := do
   let bad (ds : Array Diag) := ds.filter fun d => d.code.startsWith "W" || d.code.startsWith "E"
   let (ndoc, nds) := bibBuild (bibProbeDoc "\\usepackage{natbib}"
     "\\bibliographystyle{plainnat}\\bibliography{a, b}" "a1,b1,dup") #[("a", a), ("b", b)]
-  t s!"sources: \\bibliography\{a, b} reads both files ({(items ndoc).map (·.key)}, {(bad nds).map (·.code)})"
+  t s!"sources: \\bibliography\{a, b} reads both files, the second entry of a key named \
+({(items ndoc).map (·.key)}, {(bad nds).map (·.code)})"
     ((items ndoc).size == 3 && (["a1", "b1", "dup"].all fun k => (items ndoc).any (·.key == k)) &&
-      (bad nds).isEmpty)
+      (bad nds).map (·.code) == #["W0450"])
   t "sources: a key two files hold is the first file's"
     ((items ndoc).any fun it => it.key == "dup" && hasStr (Ir.plainText it.content) "First")
   let (missingDs, kept) ← IO.FS.withTempDir fun dir => do

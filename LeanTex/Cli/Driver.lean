@@ -709,7 +709,7 @@ def elaborate (ui : Ui) (file : String) (prepared : Elab.Prepared)
     let t ← IO.monoMsNow
     let reqSpans := { reqSpans with frames := Bib.remapSources doc reqSpans.frames }
     let (doc, bibDiags, ledger) ← Input.resolveBibliography file doc
-      (Bib.FieldDoor.of file prepared).read reqSpans.labels reqSpans.bib ledger
+      (Bib.FieldDoor.of file prepared).read reqSpans.labels reqSpans.bib ledger reqSpans.cites
     unless bibDiags.isEmpty && (Ir.bibRefs doc).isEmpty || !phases do
       ui.phase "bib" s!"{(Ir.bibRefs doc).size} sources" (← since t)
     let refDiags := Bib.refJudge reqSpans doc

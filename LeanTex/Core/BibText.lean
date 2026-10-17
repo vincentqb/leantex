@@ -84,13 +84,13 @@ public def fieldInlines (v : String) : Array Ir.Inline := Id.run do
   let mut pending := ""
   for (math, s) in spans, k in [0:spans.size] do
     if math then
-      unless pending.isEmpty do out := out.push (.text (Ir.smartPunct pending))
+      unless pending.isEmpty do out := out.push (.text (Ir.smartPunctAfter (Ir.quoteLead out) pending))
       pending := ""
       out := out.push (formulaOf s)
     else
       let t := textSpan s (lead := k != 0)
       pending := pending ++ (if k + 1 == spans.size then t.trimAsciiEnd.toString else t)
-  unless pending.isEmpty do out := out.push (.text (Ir.smartPunct pending))
+  unless pending.isEmpty do out := out.push (.text (Ir.smartPunctAfter (Ir.quoteLead out) pending))
   return out
 
 /-- The diagnostic naming a formula the math parser cannot model (W0012). -/

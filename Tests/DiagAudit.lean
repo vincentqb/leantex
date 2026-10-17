@@ -31,6 +31,7 @@ import Tests.LeanProse
 import Tests.Blueprint
 import Tests.Settings
 import Tests.UnusedSettings
+import Tests.BibEdges
 
 /-! The diagnostics audit: each code's decided verdict, the construct rung it aims at, and the pin
 that fails when the decision regresses; `scripts/diagaudit.lean` ratchets the codes no row binds. -/
@@ -171,6 +172,8 @@ def registry : List AuditRow :=
    ⟨.W0422, .keep, .degraded, check% bibSetChecks⟩,
    ⟨.W0423, .keep, .degraded, check% bibRelatedChecks⟩,
    ⟨.W0424, .keep, .degraded, check% bibSourcesChecks⟩,
+   ⟨.W0503, .keep, .degraded, check% Tests.BibEdges.missingChecks⟩,
+   ⟨.W0450, .keep, .native, check% Tests.BibEdges.duplicateChecks⟩,
    ⟨.W0425, .keep, .degraded, check% biblatexXdataChecks⟩,
    ⟨.W0426, .keep, .degraded, check% bibStringStoreChecks⟩,
    ⟨.W0427, .keep, .degraded, check% biblatexLocaleSortChecks⟩,

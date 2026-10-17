@@ -200,10 +200,6 @@
 ✖ [E0502]
   '\input' file 'chapter1.tex' is not there; its content is absent
   suggestion: \allow{E0502} accepts the loss
-── E0503 (dropped) \bibliography file not found; the reference list is empty
-✖ [E0503]
-  '\bibliography' file 'references' is not there; the reference list is empty
-  suggestion: looked at: ./references.bib; \allow{E0503} accepts the loss
 ── E0606 (dropped) the HTML page has unresolved rendering resources; publication is refused
 ✖ [E0606]
   cannot publish self-contained HTML: an image still names 'figures/plot.svg'
@@ -1074,6 +1070,15 @@
 ⚠ [W0449]
   the 'math' face is declared here, and the document sets no mathematics
   suggestion: delete the 'math' face's entry, or \allow{W0449} keeps it
+── W0450 (config) a .bib key names a second entry; the first entry stands
+⚠ [W0450]
+  'k' is already the key of an earlier entry; the first entry stands
+  the first at refs.bib:1
+  suggestion: one entry per key: delete this one or give it a key of its own
+── W0503 (degraded) a bibliography file is not there; the reference list is empty and every citation shows ?
+⚠ [W0503]
+  '\bibliography' file 'references' is not there; the reference list is empty and every citation shows '?'
+  suggestion: put the file at ./references.bib, or correct its name in \bibliography
 ── W0601 (degraded) image unreadable or not found; placeholder box placed
 ⚠ [W0601]
   image file not found: 'figures/plot.png'; a placeholder box holds its place

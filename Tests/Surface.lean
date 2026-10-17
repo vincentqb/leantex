@@ -5208,7 +5208,7 @@ def titleTemplateColorChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSe
           d.code != "W0361" && d.code != "W0363") &&
          dsK.all (·.severity != .error))
 
-/-- E0502 and E0503 name the file and line of the failing reference, never a directory. -/
+/-- E0502 and W0503 name the file and line of the failing reference, never a directory. -/
 def missingFileSpanChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let run (name : String) : IO (Array Diag) := do
@@ -5226,10 +5226,10 @@ def missingFileSpanChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a nested input's E0502 names the input file it sits in"
     (dsN.any fun d => d.code == "E0502" &&
       d.span.any fun sp => sp.file.endsWith "inner.tex" && sp.pos == { line := 2, col := 1 })
-  -- The marker's span travels beside the Doc (`Elab.ReqSpans`), so E0503 names the `\bibliography` line and the Doc stays span-free.
+  -- The marker's span travels beside the Doc (`Elab.ReqSpans`), so W0503 names the `\bibliography` line and the Doc stays span-free.
   let srcB := dvDoc "" "x \\cite{k}\n\\bibliography{refs}"
   let (_, _, reqsB) := Elab.runRawsSpanned "t" (Parse.parse "t" (Lex.lex "t" srcB).1).1
-  t "the bibliography marker records its span for E0503"
+  t "the bibliography marker records its span for W0503"
     (reqsB.bib.any fun (s, sp) => s == "refs" && sp.file == "t" && sp.pos.col == 1)
 
 /-- A `\cite` with no declared bibliography fires W0351 at the cite, once per key; a declared

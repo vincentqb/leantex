@@ -361,7 +361,7 @@ public def FrameSources.keepPrefix (s : FrameSources) (n : Nat) : FrameSources :
 public structure SpanRecords where
   bib : Array (String × Span) := #[]
   images : Array (String × Span) := #[]
-  cites : Array (String × Span) := #[]
+  cites : Array Ir.CiteSite := #[]
   /-- Each colour expression's and source value's first use in its palette. -/
   colors : Array (Palette × String × Color × Bool × Span) := #[]
   /-- The declaration sites furniture and implicit foregrounds report. -/
@@ -893,11 +893,14 @@ private def warnOnce (ctx : Ctx) (key : String) (code : DiagCode) (msg : String)
     (output : Option Diag.Output := none) (detail : Option String := none) : EM Unit :=
   modify fun st => warnOnceState ctx key code msg pos help demote st trigger recovery output detail
 
-/-- Records each citation key's first `\cite` span. -/
+/-- Records each citation key's first `\cite` span, and whether markdown's or code's text spelled it. -/
 private def recordCiteSites (ctx : Ctx) (keys : List String) (pos : Pos) : EM Unit :=
   modify fun st => { st with spans := keys.foldl (fun sp k =>
-    if sp.cites.any (·.1 == k) then sp
-    else { sp with cites := sp.cites.push (k, ctx.sourceSpan pos) }) st.spans }
+    if sp.cites.any (·.key == k) then sp
+    else
+      let site : Ir.CiteSite :=
+        { key := k, span := ctx.sourceSpan pos, pandoc := ctx.kept || ctx.surface != .tex }
+      { sp with cites := sp.cites.push site }) st.spans }
 
 /-- Records a non-text object's census key with its first span. -/
 private def recordImageSpan (ctx : Ctx) (src : String) (pos : Pos) : EM Unit :=
@@ -1722,6 +1725,18 @@ private def selectedCover {α : Type} (wrap : OverlaySpec → Array α → α)
 
 private def flushText (acc : Array Inline) (sb : String) : Array Inline :=
   if sb == "" then acc else acc.push (.text sb)
+
+/-- A TeX word's punctuation read after what its level set before it, so an opening quote decides
+against that character; other surfaces, literal text and a monospace selector's spellings keep theirs. -/
+private def wordAfter (ctx : Ctx) (acc : Array Inline) (sb : String) (w : String) : String :=
+  if ctx.surface != .tex || ctx.kept || ctx.literalText || ctx.literalWhen.isSome || !sb.isEmpty
+  then w
+  else match Ir.quoteLead acc with
+    | some c => Ir.smartPunctAfter (some c) w
+    | none => w
+
+@[simp] private theorem wordAfter_empty (ctx : Ctx) (sb w : String) : wordAfter ctx #[] sb w = w := by
+  simp [wordAfter]
 
 /-- Moves the open macro roles to a token's owners; a separator keeps only
 the ancestry its neighbours share. -/
@@ -4682,7 +4697,8 @@ private def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
       sliceWeight_lt raws h (Nat.lt_succ_self i)
     match hr : raws[i] with
     | .word s pos =>
-      elabInlinesFrom ctx raws (i + 1) ((flushText acc sb).push (sourceInline ctx pos (.text s))) ""
+      elabInlinesFrom ctx raws (i + 1)
+        ((flushText acc sb).push (sourceInline ctx pos (.text (wordAfter ctx acc sb s)))) ""
     | .space =>
       -- A splice sets one separator per run, and no paragraph opens with one.
       elabInlinesFrom ctx raws (i + 1) acc
@@ -16350,14 +16366,14 @@ marks its level" (some pos) (help := some s!"redefine it as text, a symbol or a 
               (some rpos)
               (help := "reference it with \\ref, or move the \\label after the numbered thing it should name")
     if (Ir.bibRefsBlocks blocks).isEmpty && (Ir.ownBibItemsBlocks blocks).isEmpty then
-      for (key, span) in stRefs.spans.cites do
+      for site in stRefs.spans.cites do
         let help := if ctx.surface == .markdown then
             "the document declares no bibliography; its metadata's 'bibliography: refs.bib' names \
 the .bib file"
           else "the document declares no bibliography; \\bibliography{file} names the .bib file"
         modify fun st => { st with diags := st.diags.push (Diag.of .W0351
-          s!"citation '{key}' has no bibliography to resolve against; it shows as '?'"
-          (some span) (help := help) (subject := some key)) }
+          s!"citation '{site.key}' has no bibliography to resolve against; it shows as '?'"
+          (some site.span) (help := help) (subject := some site.key)) }
     -- The final flow palette only judges shadowing; the document keeps epoch 0.
     let stBody ← get
     let finalPalette := stBody.scope.palette.current.getD palette
@@ -16566,6 +16582,8 @@ public structure ReqSpans where
   declined : Array String := #[]
   /-- Each reference key's first site. -/
   refs : Array (String × Span) := #[]
+  /-- Each cited key's first site. -/
+  cites : Array Ir.CiteSite := #[]
   /-- The label table resolution read. -/
   labels : Ir.RefTable := #[]
   /-- Inline code in a language only the highlighter reads, as language and
@@ -16956,6 +16974,7 @@ public def completePrepared (file : String) (p : Prepared) (earlier : Array Diag
           if seen.contains key then (out, seen)
           else (out.push (key, ⟨file, pos⟩), seen.insert key)).1
       labels := table
+      cites := st.spans.cites
       faces := UnusedSetting.faceSites settings named })
 
 public theorem completePrepared_inputAttempts_exact (file : String) (p : Prepared)

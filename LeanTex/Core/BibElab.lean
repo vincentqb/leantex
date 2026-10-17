@@ -258,7 +258,8 @@ public def FieldDoor.readWith (door : FieldDoor) (alwaysCompat : Bool) : FieldRe
       else Compat.rewrite span.file raws (warned := d.st0.warnedUnknown) (inherited := d.inherited)
     let (here, textDs, _) := Compat.rewriteText span.file rs warned
     (here, here.map (Compat.rebase (fun _ => span.pos) true), compatDs ++ textDs)
-  let ctx := { d.plan.ctx with file := span.file, argBody := true }
+  -- A field is TeX whatever the document's own surface.
+  let ctx := { d.plan.ctx with file := span.file, argBody := true, surface := .tex, kept := false }
   let inline := translated alwaysCompat
   let read := (Elab.elabInlines ctx inline.2.1).run d.st0
   let ds := lexed.2 ++ parsed.2 ++ inline.2.2 ++
@@ -338,9 +339,9 @@ public theorem FieldDoor.read_ships_contract (door : FieldDoor) (span : Span) (s
 /-- The bibliography resolution a build runs, every field
 read by the document's own elaborator. -/
 public def resolve (file : String) (p : Elab.Prepared) (sources : Array (String × String))
-    (doc : Ir.Doc) : Ir.Doc × Array Diag :=
+    (doc : Ir.Doc) (sites : Array Ir.CiteSite := #[]) : Ir.Doc × Array Diag :=
   let door := FieldDoor.of file p
-  apply sources doc door.read
+  apply sources doc door.read sites
 
 /-- W0349 over the document a build ships, as the driver judges it. -/
 public def refJudge (spans : Elab.ReqSpans) (doc : Ir.Doc) : Array Diag :=

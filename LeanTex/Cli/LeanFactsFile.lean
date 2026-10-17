@@ -71,15 +71,15 @@ public def factsFor (file text : String) (declared : Option String)
   return (facts, ds, read.map fun _ => path)
 
 /-- A bibliography file a Lean file's documentation cites into: the name its document gives it, the
-path it is read at, and its text. -/
+path it is read at, and its bytes, which its reader decodes as the document's reference list does. -/
 public structure BibFile where
   name : String
   path : String
-  text : String
+  bytes : ByteArray
 
 /-- The bibliography a Lean file's documentation cites into: the files declared beside `base` (else
-the file's folder), else its project's `docs/references.bib`, each named from `base` with its text,
-and E0503 at `span` for a declared one that is not there. -/
+the file's folder), else its project's `docs/references.bib`, each named from `base` with its bytes,
+and W0503 at `span` for a declared one that is not there. -/
 public def bibFor (file : String) (declared : List String) (span : Span)
     (base : Option String := none) (entry : Option String := none) :
     Prog (Array BibFile × Array Diag) := do
@@ -109,11 +109,7 @@ public def bibFor (file : String) (declared : List String) (span : Span)
   let mut diags : Array Diag := #[]
   for (name, path, isDeclared) in wanted do
     match ← ask (.readFile path) with
-    | .ok bytes =>
-      -- A file that is no UTF-8 is read byte for byte, its keys ASCII; the list's own read names it.
-      let text := (String.fromUTF8? bytes).getD
-        (String.ofList (bytes.toList.map fun b => Char.ofNat b.toNat))
-      found := found.push { name, path, text }
+    | .ok bytes => found := found.push { name, path, bytes }
     | .error _ =>
       if isDeclared then diags := diags.push (DriverDiag.bibMissingLean name path span entry)
   return (found, diags)
