@@ -855,10 +855,10 @@ def readingChecks (ref : IO.Ref (List String)) : IO Unit := do
   let named (rows : Array (String × Bound × Bool)) := (rows.map (·.1)).toList.eraseDups
   let count (b : Bound) := (census.filter (·.2.1 == b)).size
   t s!"reading: set at its margin, a block bounding an equivalence leaves a reader reading its sentence otherwise ({count .equivalence} blocks; {named (kept .equivalence)})"
-    (kept .equivalence).isEmpty
+    (0 < count .equivalence && (kept .equivalence).isEmpty)
   t s!"reading: set at its margin, a block a scope opens leaves a reader reading its sentence otherwise ({count .scope} blocks; {named (kept .scope)})"
-    (kept .scope).isEmpty
+    (0 < count .scope && (kept .scope).isEmpty)
   t s!"reading: a block bounding neither is for the eye, both readers reading its sentence without it ({count .neither} blocks; {named (census.filter fun (_, k, r) => k == .neither && !r)})"
-    (census.all fun (_, k, r) => k != .neither || r)
+    (0 < count .neither && census.all fun (_, k, r) => k != .neither || r)
 
 end Tests.LeanProseReading

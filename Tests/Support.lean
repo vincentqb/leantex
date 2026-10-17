@@ -3312,6 +3312,32 @@ def leafWord : Leaf → String
 def factsWith (binders : Array (String × Array LeanFacts.Binder)) : LeanFacts.Facts :=
   { lean := "4.34.1", errors := 0, decls := #[], binders }
 
+/-- A sentence's lines, each with its depth and its tokens, a block's lines one deeper than the line
+before it. -/
+def layoutLines {α : Type} (l : List (Tok α)) : Array (Nat × List (Tok α)) :=
+  let flush (acc : Nat × Array (Tok α) × Array (Nat × List (Tok α))) :=
+    if acc.2.1.isEmpty then acc.2.2 else acc.2.2.push (acc.1, acc.2.1.toList)
+  let step (acc : Nat × Array (Tok α) × Array (Nat × List (Tok α))) (t : Tok α) :=
+    match t with
+    | .indent => (acc.1 + 1, #[], flush acc)
+    | .dedent => (acc.1 - 1, #[], flush acc)
+    | .w _ | .leaf _ => (acc.1, acc.2.1.push t, acc.2.2)
+  flush (l.foldl step (0, #[], #[]))
+
+/-- One line's tokens as text, a space between two but where they join. -/
+def tokLineText {α : Type} (f : α → String) (l : List (Tok α)) : String :=
+  (l.foldl (fun (acc : String × Bool) t =>
+    let text := match t with
+      | .w s => s
+      | .leaf a => f a
+      | .indent | .dedent => ""
+    ((if acc.2 || t.joins then acc.1 else acc.1.push ' ') ++ text, false)) ("", true)).1
+
+/-- The tokens as text in their lines, four spaces of indent for each step of depth. -/
+def showToks {α : Type} (f : α → String) (l : List (Tok α)) : String :=
+  "\n".intercalate ((layoutLines l).toList.map fun (d, ts) =>
+    String.ofList (List.replicate (4 * d) ' ') ++ tokLineText f ts)
+
 /-- A random term for a slot: a leaf, or a phrase of the table over leaves. -/
 def randTerm (tb : Table) (s : UInt64) : Term Leaf × UInt64 :=
   let (k, s) := rand s (tb.phrases.length + 2)

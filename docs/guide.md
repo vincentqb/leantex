@@ -304,11 +304,12 @@ or full stop that closes the block ending its last line. A quantifier's, an
 existential's or a conditional's scope runs to the end of the block it stands
 in, so one that more of its sentence follows is a block, as a hypothesis or a
 first side is. An equivalence is a block wherever it stands below the
-sentence's top, its first side one where it is more than a plain relation, and
-its second side then one too, so the two stand alike. A negation, conjunction
-or disjunction as a first side, and a relation whose words hold `and`, `or`,
-`if` or `then` where more of the sentence follows it, are blocks too, for the
-eye:
+sentence's top; its first side is a block where it is more than a formula or a
+plain relation, one whose words hold none of `and`, `or`, `if`, `then`, `both`
+and `either`, and its second side then too where it is, so the two stand alike.
+A negation, conjunction or disjunction as a conjunction's or a disjunction's
+first side or as a hypothesis before another, and a relation that is not plain
+where more of its sentence follows it, are blocks too, for the eye:
 
 ```text
 Theorem (Tide.strict_hyp). If
@@ -317,24 +318,25 @@ then False.
 ```
 
 The web page sets the same lines, and bounds each scope with a parenthesis at
-either end, out of sight, which assistive technology and a copy read; a tagged
-PDF's lines carry the same parentheses in their replacement text. The markdown
-twin opens each line after the first with a hard break and an em and an en
-space for each step. The words, with their blocks' bounds, parse back to the
-statement they say, implicit arguments hidden as in the math view. A declaration
-whose type is no proposition, or a statement the words cannot say (a hypothesis
-the rest names, a `let`), is set as mathematics, once on a page that also shows
-the math view, and the run says so. A directive may give a constant its own
-words, `#k` standing for its k-th explicit argument:
+either end, out of sight, which a braille display, a copy and a screen reader
+set to say parentheses read; a tagged PDF's lines carry the same parentheses in
+their replacement text. The markdown twin opens each line after the first with
+a hard break and an em and an en space for each step. The words, with their
+blocks' bounds, parse back to the statement they say, implicit arguments hidden
+as in the math view. A declaration whose type is no proposition, or a statement
+the words cannot say (a hypothesis the rest names, a `let`), is set as
+mathematics, once on a page that also shows the math view, and the run says so.
+A directive may give a constant its own words, `#k` standing for its k-th
+explicit argument:
 `phrase.Tide.height = "the height after #2 steps of #1"` says its terms, and a
 phrase that opens with a slot, `phrase.Calm = "#1 is calm"`, its propositions,
 each in place of the core wording of its kind. The run names each phrase it does
 not take (for no constant, or several, a second for one constant, for a
 connective, with other slots than the explicit arguments, with a comma, a
-parenthesis, a brace or a quote, or words that would not read back) and each no
-sentence on the page uses, as on a page that says nothing in words. Views
-combine in the order given, as `show = prose, code`, `show = code, prose` or
-`show = math, prose, code`.
+parenthesis, a brace, a quote or a full stop standing alone, or words that would
+not read back) and each no sentence on the page uses, as on a page that says
+nothing in words. Views combine in the order given, as `show = prose, code`,
+`show = code, prose` or `show = math, prose, code`.
 
 Two more options shape a Lean file's page. `proofs = collapse` folds each
 top-level theorem's proof into a disclosure whose summary is Proof, after its

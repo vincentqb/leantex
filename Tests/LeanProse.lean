@@ -94,11 +94,12 @@ def leanProseChecks (ref : IO.Ref (List String)) : IO Unit := do
       declare #[("A.f", #[.explicit]), ("B.f", #[.explicit])] [("f", "the f of #1")] == #[.ambiguous] &&
       declare two [("height", "the height of #1 and #2"), ("Tide.height", "the rise of #1 and #2")] ==
         #[.twice])
-  t "prose: a phrase is refused when its slots are no template's, are not its constant's explicit arguments, or open as another template's"
+  t "prose: a phrase is refused when its slots are no template's, it holds a word that joins the one before, its slots are not its constant's explicit arguments, or it opens as another template's"
     (declare two [("height", "the height after #3 steps of #1")] == #[.shape] &&
       declare two [("height", "#1 #2")] == #[.shape] &&
       declare two [("height", "if #1 then #2")] == #[.shape] &&
       declare two [("height", "the height after #2 steps, of #1")] == #[.shape] &&
+      declare two [("height", "the height after #2 steps . of #1")] == #[.shape] &&
       declare two [("height", "the height of #1")] == #[.arity 1 2] &&
       declare two [("height", "#1 is at most #2")] == #[.clash])
   let below := (tableFor (factsWith #[("LE.le", #[.implicit, .implicit, .explicit, .explicit])])

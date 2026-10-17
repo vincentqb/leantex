@@ -350,32 +350,6 @@ public def Tok.joins : Tok α → Bool
   | .w s => s == "," || s == "."
   | .leaf _ | .indent | .dedent => false
 
-/-- A sentence's lines, each with its depth and its tokens, a block's lines one deeper than the line
-before it. -/
-public def layoutLines (l : List (Tok α)) : Array (Nat × List (Tok α)) :=
-  let flush (acc : Nat × Array (Tok α) × Array (Nat × List (Tok α))) :=
-    if acc.2.1.isEmpty then acc.2.2 else acc.2.2.push (acc.1, acc.2.1.toList)
-  let step (acc : Nat × Array (Tok α) × Array (Nat × List (Tok α))) (t : Tok α) :=
-    match t with
-    | .indent => (acc.1 + 1, #[], flush acc)
-    | .dedent => (acc.1 - 1, #[], flush acc)
-    | .w _ | .leaf _ => (acc.1, acc.2.1.push t, acc.2.2)
-  flush (l.foldl step (0, #[], #[]))
-
-/-- One line's tokens as text, a space between two but where they join. -/
-public def lineText (f : α → String) (l : List (Tok α)) : String :=
-  (l.foldl (fun (acc : String × Bool) t =>
-    let text := match t with
-      | .w s => s
-      | .leaf a => f a
-      | .indent | .dedent => ""
-    ((if acc.2 || t.joins then acc.1 else acc.1.push ' ') ++ text, false)) ("", true)).1
-
-/-- The tokens as text in their lines, four spaces of indent for each step of depth. -/
-public def showToks (f : α → String) (l : List (Tok α)) : String :=
-  "\n".intercalate ((layoutLines l).toList.map fun (d, ts) =>
-    String.ofList (List.replicate (4 * d) ' ') ++ lineText f ts)
-
 private def spanWords : List (Tok α) → List String × List (Tok α)
   | .w s :: t => let p := spanWords t; (s :: p.1, p.2)
   | t => ([], t)
@@ -1547,10 +1521,11 @@ public def Table.with (tb : Table) (c : String) (t : Template) : Table :=
 /-- The constants the grammar says in its own words. -/
 public def connectives : List String := ["Exists", "And", "Or", "Iff", "Not"]
 
-/-- Whether a template's words hold no comma, parenthesis, brace or quote. -/
+/-- Whether no word of a template holds a comma, parenthesis, brace or quote, or is a full stop. -/
 private def plainWords (t : Template) : Bool :=
   t.parts.all fun
-    | .word w => !w.any fun c => c == ',' || c == '(' || c == ')' || c == '{' || c == '}' || c == '"'
+    | .word w => w != "." &&
+      !w.any fun c => c == ',' || c == '(' || c == ')' || c == '{' || c == '}' || c == '"'
     | .slot _ => true
 
 /-- The constant a declared phrase names and its template, or why it is refused before a table
