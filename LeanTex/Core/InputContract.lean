@@ -576,7 +576,7 @@ private theorem elabBlockScope_input_exact (ctx : Ctx) (n f : String)
     (pre ++ #[Raw.env n body pos] ++ post) b _ (pre.size + 1) st.flowGen ctx s
     rfl hm (fun j hj hij => hblank j hj (by omega))
   have hcont := fun e b => parContinues_blank ctx
-    (pre ++ #[Raw.env (Parse.inputEnv f) body pos] ++ post) (pre.size + 1) e b
+    (pre ++ #[Raw.env n body pos] ++ post) (pre.size + 1) e b
     (fun j hj hij => hblank j hj (by omega))
   simp only [StateT.run_bind, hx, closeBlockScope_base, hend, hcont,
     parFollows_include pre post _ hpost]
