@@ -1879,10 +1879,10 @@ def reports : List Report := [
       "a deck's sections claim their slugs in one ledger with its frames in flow order: a section and a later frame of one title take x and x-2 in both artifacts; a page-less section's slug stands on its heading at the next stage's corner, a section page's on its stage"]
     state := .guarded "f27361cd" .revert .author },
   { id := "R206", date := "2026-10-17"
-    what := "a deck's overruns named apart from what they ran past: a frame's footnote past its measure said overfull line with no frame or amount, columns wider than their frame's measure ran past it in silence, a section page's title past its measure was a frame's line on a frame, a protruding line's stated overrun counted its protrusion, and a flow page's run no space breaks, which overruns the web page's column too, was named for the PDF alone"
-    pins := [check% Tests.DiagFold.frameOverfullChecks, check% Tests.DiagFold.reflowAccountChecks]
-    accept := ["lualatex: beamer warns of two columns of 0.7 text widths an overfull box 66pt wide, its columns allowed the margins, and microtype's protrusion shortens an invented overfull line's stated amount from 23.6pt to 20.51pt; this tree names the columns past its own text width and states a protruding line's overrun past the target its protrusion widens",
-      "the guards fail with the fix reverted onto b7efbc12, the guards kept: the footnote, columns and section page wordings, the protruding line's amount, its protrusion counted, and the unbreakable runs of a flow page, a poster and a re-flow named for the PDF alone"]
+    what := "a deck's overruns named apart from what they ran past: a frame's footnote past its measure said overfull line with no frame or amount, columns wider than their frame's measure ran past it in silence, a section page's title past its measure was a frame's line on a frame, and a protruding line's stated overrun counted its protrusion"
+    pins := [check% Tests.DiagFold.frameOverfullChecks]
+    accept := ["lualatex: beamer warns of two columns of 0.7 text widths an overfull box 66pt wide, its columns allowed the margins, and microtype's protrusion shortens an invented overfull line's stated amount from 23.6pt to 20.51pt; this tree names the columns past its own text width in a record of their own, and states a protruding line's overrun past the target its protrusion widens",
+      "the guards fail with the fix reverted onto b7efbc12, the guards kept: the footnote, columns and section page wordings and the protruding line's amount, its protrusion counted"]
     state := .guarded "b7efbc12" .revert .author }
 ]
 

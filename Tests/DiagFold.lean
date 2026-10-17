@@ -204,8 +204,7 @@ def foldChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((headLines err "E0304").length == 3 && r.errors == 3)
 
 /-- A re-flowed declared line is one W0386 per paragraph, carrying any overrun of its lines (W0005's
-loss), so every line past its margin is accounted once, for the PDF and where a run no space breaks
-overruns, the web page too. -/
+loss), so every line past its margin is accounted once, in the PDF's output only. -/
 def reflowAccountChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let some font ← loadTestFont "OpenSans-Regular.ttf"
@@ -263,11 +262,10 @@ where it opens ({reflows.map (·.detail)})"
       (headLines err "W0005").all (fun l => hasStr l s!"{file}:12:1"))
   let (htmlErr, _, _) ← sink plain #[] out.diags #[.html]
   let (pdfErr, _, _) ← sink plain #[] out.diags #[.pdf]
-  t s!"reflow account: an HTML build prints the losses a run no space breaks makes, a PDF build all \
-({(reflows ++ overfull).map (·.output.map (·.label))})"
-    ((headLines htmlErr "W0386").length == 1 && (headLines htmlErr "W0005").length == 1 &&
+  t "reflow account: an HTML build prints neither page loss, a PDF build both"
+    ((headLines htmlErr "W0386").isEmpty && (headLines htmlErr "W0005").isEmpty &&
       (headLines pdfErr "W0386").length == 2 && (headLines pdfErr "W0005").length == 1 &&
-      reflows.map (·.output) == #[some .pdf, none] && overfull.all (·.output.isNone))
+      (reflows ++ overfull).all (·.output == some .pdf))
   let (err, _, r) ← sink plain #["W0386"] out.diags
   t s!"reflow account: accepting the re-flow accepts the overrun it carries and no other \
 ({Diag.acceptedLosses r.accepted})"
@@ -338,9 +336,9 @@ carry it ({oReflows.map (·.message)})"
       sReflows.all (fun d => d.detail.any (hasStr · "2 declared lines ship as")) &&
       (headLines sErr "W0386").length == 1 && !hasStr sErr "sites)")
 
-/-- A stage's line, footnote or columns past its measure, overfull or re-flowed, is named in its
-stage's words by an HTML build too, once per site at the furthest any step set it, as TeX's Overfull
-\hbox states how far past its protrusion; a flow page's is the PDF's but a run no space breaks. -/
+/-- A stage's line or columns past its measure, overfull or re-flowed, is named in its stage's words
+by an HTML build too, once per site at the furthest any step set it, as TeX's Overfull \hbox states
+how far past its protrusion; a footnote's, a flow page's and a poster's are the PDF's. -/
 def frameOverfullChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let some font ← loadTestFont "OpenSans-Regular.ttf"
@@ -389,11 +387,11 @@ words, at the furthest its steps set it ({(overfull deck).map (·.detail)}, \
     ((overfull flow).size == 1 && (overfull flow).all fun d =>
       d.message == "overfull line; no feasible break" &&
       d.detail == some s!"{(furthest flow flowRight).toPtString}pt too wide")
-  t s!"frame overfull: a run no space breaks overruns the web page's measure too, a flow page's or \
-a poster's ({(overfull flow ++ overfull poster).map (·.output.map (·.label))})"
-    (!(overfull poster).isEmpty && (overfull flow ++ overfull poster).all (·.output.isNone))
+  t s!"frame overfull: a poster, a face the web page re-flows, keeps its lines the PDF's \
+({(overfull poster).map (·.output.map (·.label))})"
+    (!(overfull poster).isEmpty && (overfull poster).all (·.output == some .pdf))
   -- A footnote, a row of columns and a section page's title past their measure, in their stage's
-  -- words; the web page sets the notes apart, overrun there by a run no space breaks.
+  -- words; the web page sets the notes apart, so theirs are the PDF's.
   let stagedDoc := located (String.intercalate "\n" [
     "\\documentclass{slides}", "\\theme{moloch}", "\\begin{document}", "\\begin{frame}",
     "Opening.\\footnote{" ++ wide ++ "}", "\\end{frame}", "\\begin{frame}",
@@ -407,11 +405,12 @@ a poster's ({(overfull flow ++ overfull poster).map (·.output.map (·.label))})
   t s!"frame overfull: a frame's footnote past its measure says so, with its frame and how far \
 ({(said "a frame's footnote").map (·.detail)})"
     ((said "a frame's footnote runs past its measure").size == 1 &&
-      (said "a frame's footnote").all fun d => tooWide "frame 1: " d && d.output.isNone)
+      (said "a frame's footnote").all fun d => tooWide "frame 1: " d && d.output == some .pdf)
   t s!"frame overfull: columns wider together than their frame's measure overrun it in both \
-artifacts ({(said "a frame's columns").map (·.detail)})"
+artifacts, a record of their own ({(said "a frame's columns").map (·.detail)})"
     ((said "a frame's columns run past its measure").size == 1 &&
-      (said "a frame's columns").all fun d => tooWide "frame 2: " d && d.output.isNone)
+      (said "a frame's columns").all fun d => tooWide "frame 2: " d && d.output.isNone &&
+        d.subject.any (·.startsWith "columns:"))
   t s!"frame overfull: a section page's line past its measure names the section page, no frame \
 ({(said "a section page's").map (·.detail)})"
     ((said "a section page's line runs past its measure").size == 1 &&
