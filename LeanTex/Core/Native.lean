@@ -5,8 +5,8 @@ public import LeanTex.Core.Parse
 import LeanTex.Core.Decl
 
 /-! The native declarations the surfaces lower into: settings, each carried to the elaborator as one
-word its entry reader reads back exactly (`Native.render_parse_exact`), TeX-valued styles as the
-lexer reads them, and heads, each operand one word. -/
+word its entry reader reads back exactly (`Native.render_parse_exact`), TeX-valued styles with each
+value one group, and heads, each operand one word. -/
 
 namespace LeanTex.Core.Native
 
@@ -107,8 +107,8 @@ public def raws (s : Setting) (pos : Pos) : Array Raw :=
 
 end Setting
 
-/-- A style whose values are TeX, `\style{element}{ key = {...}, ... }` as the lexer reads it, each
-value one group its reader sets as inline content. -/
+/-- A style whose values are TeX, `\style{element}{ key = {...}, ... }`, each value one group its
+reader sets as inline content. -/
 public def texStyle (element : String) (entries : Array (String × Array Raw)) (pos : Pos) :
     Array Raw :=
   let body := entries.foldl (init := #[]) fun out (k, v) =>

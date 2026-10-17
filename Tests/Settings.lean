@@ -248,6 +248,49 @@ def nativeCarrierChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
       (Parse.parse "setting.tex" (Lex.lex "setting.tex" (s.opening ++ "{" ++ s.kept.body ++ "}")).1).1).map declOf
     t s!"the setting {s.render} scans as its spelling's one declaration ({scanned}, {spelled})"
       (scanned.size == 1 && scanned == spelled && scanned.all (· != "another declaration"))
+  -- A TeX-valued style's carrier is the lexer's reading of the spelling its note names.
+  let lexedRaws (src : String) : Array Parse.Raw :=
+    (Parse.parse "style.tex" (Lex.lex "style.tex" src).1).1
+  let texStyles : List (String × Array (String × Array Parse.Raw)) :=
+    [("itemize", #[("marker", lexedRaws "\\num{12345}")]),
+     ("titlepage", #[("font", lexedRaws "\\bfseries\\color{red}"),
+       ("author-font", lexedRaws "\\itshape x")])]
+  for (el, es) in texStyles do
+    t s!"the style {Native.texStyleRender el es} is carried as the lexer reads it"
+      (mergedRuns (Native.texStyle el es {}).toList "" #[] == lexed (Native.texStyleRender el es))
+  -- A translated value of TeX reaches the passes reading Compat's output, as main's carrier did.
+  let htmlPage (src : String) : String := (HtmlDoc.emit {} (elabStr src).1).1
+  let siDeck := "\\documentclass{beamer}\n\\usepackage{siunitx}\n" ++
+    "\\setbeamertemplate{itemize item}{\\num{12345}}\n\\begin{document}\n" ++
+    "\\begin{frame}{Placeholder}\n\\begin{itemize}\n\\item First item.\n\\end{itemize}\n" ++
+    "\\end{frame}\n\\end{document}"
+  t "a marker template holding \\num sets the number siunitx groups"
+    (hasStr (htmlPage siDeck) "content: \"12\u2009345  \"")
+  let siList := "\\documentclass{article}\n\\usepackage{siunitx}\n\\usepackage{enumitem}\n" ++
+    "\\setlist[itemize]{label=\\SI{2}{\\metre}}\n\\begin{document}\n\\begin{itemize}\n" ++
+    "\\item First item.\n\\end{itemize}\n\\end{document}"
+  t "a list label holding \\SI sets the quantity siunitx spaces"
+    (hasStr (htmlPage siList) "content: \"2\u202Fm  \"")
+  let quotedFont := "\\documentclass{beamer}\n\\setbeamerfont{block title}{family=\\char\"41}\n" ++
+    "\\begin{document}\n\\begin{frame}{Placeholder}\n\\begin{block}{Title}\nBody words.\n" ++
+    "\\end{block}\n\\end{frame}\n\\end{document}"
+  t "a beamer font holding a quote is carried as TeX, none of it dropped"
+    (!(dvE quotedFont).any (·.code == "W0101"))
+  -- An empty translated value reaches its reader, which refuses it as it refuses the author's.
+  let doc (cls pre body : String) : String :=
+    "\\documentclass{" ++ cls ++ "}\n" ++ pre ++ "\n\\begin{document}\n" ++ body ++ "\n\\end{document}"
+  t "an empty skip is refused as a block entry with no value"
+    ((dvE (doc "article" "" "Before.\n\\vspace{}\nAfter.")).any fun d =>
+      d.code == "E0320" && hasStr d.message "has no value")
+  t "an empty section skip is refused as an invalid style entry"
+    ((dvE (doc "scrartcl" "\\RedeclareSectionCommand[beforeskip=, afterskip=1ex]{section}"
+      "\\section{One}\nWords.")).any fun d => d.code == "E0320" && hasStr d.message "invalid entry")
+  -- A skip whose width stands as no entry is dropped whole, its stretch with it.
+  let commaSkip := doc "article" "" "Top line.\n\\vspace{1,5cm plus 1fill}\nBottom line."
+  t "a skip whose width stands as no entry sets the page its absence sets"
+    (pagesOf oneFace commaSkip == pagesOf oneFace (doc "article" "" "Top line.\n%\nBottom line."))
+  t "a skip whose width stands as no entry is named dropped"
+    ((dvE commaSkip).any (·.code == "W0101"))
 
 /-- A parameter set in a loaded style file ships the page its document spelling ships; only the
 diagnostic's severity moves. -/

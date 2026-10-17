@@ -3,6 +3,7 @@ module
 public import LeanTex.Core.Parse
 import LeanTex.Core.Marker
 import LeanTex.Core.Decl
+import LeanTex.Core.Native
 
 namespace LeanTex.Core.Tcolorbox
 
@@ -137,9 +138,7 @@ private def ink (v : Option (Array Raw)) (pos : Pos) : Array Raw :=
 private def gap (v : Option String) (pos : Pos) : Array Raw :=
   match v with
   | none => #[]
-  | some s =>
-    #[.ctrl "block" pos, .sym '[' pos, .word ("before = " ++ s) pos,
-      .sym ']' pos, .group #[] pos]
+  | some s => (Native.Setting.block #[("before", s)]).raws pos
 
 /-- Selected content and declarations, apart from the keys the engine cannot apply. -/
 public structure Prepared where

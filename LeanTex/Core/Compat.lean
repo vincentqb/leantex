@@ -1447,7 +1447,7 @@ private def carry (s : Native.Setting) (pos : Pos) : M (Array Raw) := do
   for (k, v) in s.dropped do
     say .W0101 "a value that stands as no single native entry was dropped" pos
       (detail := some s!"'{k} = {v}' in '{s.opening}'")
-      (help := "write the value as one length, number or name")
+      (help := "write the value so it stands as one entry: its commas, quotes and brackets inside braces")
   return if s.kept.pairs.isEmpty then #[] else s.raws pos
 
 /-- A native setting where it stands, named as `what`'s translation where it keeps an entry. -/
@@ -6066,7 +6066,8 @@ private def listOptions (n : String) (body : Array Raw) (pos : Pos) : M (Array R
   -- A value or key the list does not read is named where it stands, which accounts for the options.
   unless named || rest.any fun e => !(KeyVal.entry e).1.isEmpty do
     became what s!"\\begin\{{n}}[{native}]" pos
-  return #[.sym '[' pos, .word native pos, .sym ']' pos] ++ body.extract k body.size
+  return #[.sym '[' pos] ++ (if native.isEmpty then #[] else #[.word native pos]) ++ #[.sym ']' pos] ++
+    body.extract k body.size
 
 /-- Each run of letters a native length spells, a unit after its number included. -/
 private def letterRuns (s : String) : Array String := Id.run do
@@ -7233,8 +7234,10 @@ private def skipSrc (src : String) : SkipSpelling :=
     | none => { width := src }
   | _ => { width := src }
 
-/-- A skip as the native block it is: its width and its infinite stretch. -/
+/-- A skip as the native block it is: its width and its infinite stretch, or its width alone where
+no entry carries it, so the skip is dropped whole. -/
 private def skipNative (sp : SkipSpelling) (kind : String := "") : Native.Setting :=
+  if !Native.Setting.carried ("before", sp.width) then .block #[("before", sp.width)] else
   .block (#[("before", sp.width)] ++ (if kind.isEmpty then #[] else #[("kind", kind)]) ++
     (if sp.unranked then #[("stretch", "unranked")] else if sp.fill then #[("stretch", "fill")] else #[]))
 
@@ -7586,8 +7589,7 @@ private def ctrlRows9 : List CtrlRow :=
    beamerConfigRow "useoutertheme" 1,
    packageRow "usepackage",
    ⟨"usetheme", [.opt, .group], .lower .useTheme {}⟩,
-   ⟨"vfill", [], .tokens [.ctrl "block" {}, .sym '[' {}, .word "before" {}, .space, .word "=" {},
-     .space, .word "fill" {}, .sym ']' {}, .group #[] {}] (some "\\block[before = fill]{}")⟩,
+   ⟨"vfill", [], .native (.block #[("before", "fill")])⟩,
    ⟨"vspace", [.star, .opt, .group], .lower .vspace {}⟩]
 
 /-- The controls the dispatcher answers from its table, in byte order of their names. -/
@@ -8554,7 +8556,7 @@ defines; those blocks keep beamer's default template" pos
         return some (#[], predefinedEnd raws past)
       let (bodyArgs, k) := takeGroups raws j 1
       if bodyArgs.size != 1 then return none
-      let entries := #[("marker", bodyArgs.getD 0 #[])]
+      let entries := #[("marker", (bodyArgs.getD 0 #[]).map (rebase (fun _ => pos) true))]
       became s!"\\setbeamertemplate\{{element}}" (Native.texStyleRender native entries) pos
       return some (Native.texStyle native entries pos, k)
     -- premise: beamerTemplateChecks — footer content reaches the frame furniture
@@ -9628,14 +9630,16 @@ its value is skipped" pos
       let cmds := beamerFontCommands (blockTitleFields element fields)
       let alerted := "block title alerted"
       let seed := themeBlockFont (← get).beamerTheme alerted
-      let own : Array Native.Setting := if target == "block" && !seed.isEmpty &&
-          ((← get).beamerFonts.toList.lookup alerted).isNone then
-        #[.style "alertblock" #[("font", "{" ++ beamerFontCommands seed ++ "}")]] else #[]
+      let own ← if target == "block" && !seed.isEmpty &&
+          ((← get).beamerFonts.toList.lookup alerted).isNone then do
+        pure #[("alertblock", #[("font", ← synthAt (beamerFontCommands seed) pos)])] else pure #[]
       unless own.isEmpty do
         write fun st => { st with beamerFonts := st.beamerFonts.push (alerted, seed) }
-      let natives := #[Native.Setting.style target #[(styleKey, "{" ++ cmds ++ "}")]] ++ own
-      became written (" ".intercalate (natives.toList.filterMap (·.note?))) pos
-      natives.foldlM (init := #[]) fun out s => return out ++ (← carry s pos)
+      let styles := #[(target, #[(styleKey, ← synthAt cmds pos)])] ++ own
+      became written (" ".intercalate (styles.toList.map fun (el, es) => Native.texStyleRender el es)) pos
+      return styles.foldl (init := #[]) fun out (el, es) =>
+        let style := Native.texStyle el es pos
+        out ++ style
     else return #[]
 
 private def lowerSetList (c : CtrlCall) : M (Array Raw) := do
@@ -10165,7 +10169,7 @@ native equivalent were dropped: {dropped}" c.pos
   | .useTheme => do
     let pos := c.pos
     let tname := themeAlias (c.src 1).trimAscii.toString
-    let mut reseated : Array Native.Setting := #[]
+    let mut reseated : Array (String × Array (String × Array Raw)) := #[]
     for (element, target, styleKey) in beamerFontElements do
       let seed := themeBlockFont tname element
       let some stored := (← get).beamerFonts.toList.lookup element | continue
@@ -10173,16 +10177,19 @@ native equivalent were dropped: {dropped}" c.pos
       let fields := themeOver stored seed
       write fun st => { st with
         beamerFonts := Ir.redeclare st.beamerFonts element fields }
-      reseated := reseated.push (.style target
-        #[(styleKey, "{" ++ beamerFontCommands (blockTitleFields element fields) ++ "}")])
+      reseated := reseated.push (target,
+        #[(styleKey, ← synthAt (beamerFontCommands (blockTitleFields element fields)) pos)])
     let theme := Native.Head.theme tname
-    became "\\usetheme" (" ".intercalate (theme.render :: reseated.toList.filterMap (·.note?))) pos
+    became "\\usetheme" (" ".intercalate
+      (theme.render :: reseated.toList.map fun (el, es) => Native.texStyleRender el es)) pos
     write fun st => { st with themeNamed := true }
     if (Theme.find? tname).isSome then
       write fun st => { st with themed := true, beamerTheme := tname }
     let options ← themeOptions "\\usetheme" s!"\\usetheme\{{tname}}" tname ((c.optSrc 0).getD "") pos
-    return theme.raws pos ++ (← reseated.foldlM (init := #[]) fun out s => return out ++ (← carry s pos)) ++
-      options
+    let styles := reseated.foldl (init := #[]) fun out (el, es) =>
+      let style := Native.texStyle el es pos
+      out ++ style
+    return theme.raws pos ++ styles ++ options
   | .molochSet => molochOptions s!"\\{c.name}" (c.src 0) c.pos
   | .titleGraphic => do
     if (c.src 0).trimAscii.toString.isEmpty then
