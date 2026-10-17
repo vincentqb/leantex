@@ -11186,22 +11186,24 @@ seal lengthScopeKeys? openLengthScope closeLengthScope openBlockScope closeBlock
   openStandoutPalette closeFramePalette
 
 /-- A laid-out paragraph's line from its raws, onto `out`: none where they hold only space. -/
-private def linesFlush (ctx : Ctx) (cur : Array Raw) (out : Array Block) : EM (Array Block) := do
+private def linesFlush (ctx : Ctx) (depth : Nat) (cur : Array Raw) (out : Array LaidLine) :
+    EM (Array LaidLine) := do
   let raws := trimRaws cur
   if raws.isEmpty then return out
-  return out.push (.para (← elabInlines ctx raws))
+  return out.push { depth, content := ← elabInlines ctx raws }
 
-/-- A laid-out paragraph's blocks from its raws, onto `out`: each run of inline raws one line, each
-nested lines environment a block of lines one step in. -/
-private def linesBlocks (ctx : Ctx) : List Raw → Array Raw → Array Block → EM (Array Block)
-  | [], cur, out => linesFlush ctx cur out
+/-- A laid-out paragraph's lines from its raws, onto `out`: each run of inline raws one line at
+`depth`, each nested lines environment's lines one deeper. -/
+private def linesLaid (ctx : Ctx) (depth : Nat) :
+    List Raw → Array Raw → Array LaidLine → EM (Array LaidLine)
+  | [], cur, out => linesFlush ctx depth cur out
   | .env n inner p :: rest, cur, out => do
     if n == Parse.linesEnv then
-      let out ← linesFlush ctx cur out
-      let sub ← linesBlocks ctx inner.toList #[] #[]
-      linesBlocks ctx rest #[] (out.push (.lines sub))
-    else linesBlocks ctx rest (cur.push (.env n inner p)) out
-  | r :: rest, cur, out => linesBlocks ctx rest (cur.push r) out
+      let out ← linesFlush ctx depth cur out
+      let out ← linesLaid ctx (depth + 1) inner.toList #[] out
+      linesLaid ctx depth rest #[] out
+    else linesLaid ctx depth rest (cur.push (.env n inner p)) out
+  | r :: rest, cur, out => linesLaid ctx depth rest (cur.push r) out
 termination_by l => sizeOf l
 decreasing_by raws_dec
 
@@ -11483,7 +11485,7 @@ private def elabEnvArm (ctx : Ctx) (n : String) (scope : Array Raw)
   if n == Parse.scopeEnv then
     blocks := blocks ++ (← splicedFrameScope (some blocks.size) (elabBlockScope ctx body))
   else if n == Parse.linesEnv then
-    blocks := blocks.push (.lines (← linesBlocks ctx body.toList #[] #[]))
+    blocks := blocks.push (.lines (← linesLaid ctx 0 body.toList #[] #[]))
   else if let some f := Parse.inputEnvFile? n then
     let ⟨fileCtx, _⟩ : MCtx ctx ←
       pure ⟨{ ctx with file := f, callSite := none, kept := ctx.kept || Parse.isKeptInput n },

@@ -1,13 +1,14 @@
 module
 
+public import Tests.Artifact
 public import Tests.LeanProse
 
 public section
 
-open LeanTex.Core LeanTex.Core.LeanProse
+open LeanTex.Core LeanTex.Core.LeanProse Prose
 
-/-! Invented statements read back from the page, the web page and the markdown twin by a reader
-sharing no grammar with the renderer, which takes a scope's extent from indentation alone. -/
+/-! Invented statements read back from every artifact, by indentation or by marks, by two readers
+sharing no grammar with the renderer: one weighing every reading, one running scopes to block ends. -/
 
 namespace Tests.LeanProseReading
 
@@ -17,7 +18,7 @@ inductive Item where
   | leaf (s : String)
   deriving BEq, Repr, Inhabited
 
-/-- A sentence as indentation shows it: items, and blocks a step in. -/
+/-- A sentence as its layout shows it: items, and blocks. -/
 inductive Piece where
   | item (i : Item)
   | block (body : List Piece)
@@ -32,20 +33,31 @@ def seqSize : List Piece → Nat
   | p :: ps => pieceSize p + seqSize ps
 end
 
-/-- The innermost open block closed into the one around it, a comma or full stop ending it standing
-after it. -/
+def word (w : String) : Piece := .item (.word w)
+
+/-- The innermost open block closed into the one around it, a comma or full stop ending it, which
+the page sets inside the block it closes, standing after it. -/
 def closeTop : List (Array Piece) → List (Array Piece)
   | inner :: outer :: rest =>
     match inner.back? with
     | some (.item (.word w)) =>
-      if w == "," || w == "." then
-        ((outer.push (.block inner.pop.toList)).push (.item (.word w))) :: rest
+      if w == "," || w == "." then ((outer.push (.block inner.pop.toList)).push (word w)) :: rest
       else (outer.push (.block inner.toList)) :: rest
     | _ => (outer.push (.block inner.toList)) :: rest
   | stack => stack
 
+/-- The sentence once every block is closed, its full stop dropped. -/
+def closeAll (stack : List (Array Piece)) : List Piece :=
+  let closed := (List.range (stack.length - 1)).foldl (fun s _ => closeTop s) stack
+  let top := match closed with
+    | [top] => top.toList
+    | _ => []
+  match top.getLast? with
+  | some (.item (.word ".")) => top.dropLast
+  | _ => top
+
 /-- Lines with their depths as indentation shows them: a deeper line opens blocks, a shallower one
-closes them, and the sentence's full stop is dropped. -/
+closes them. -/
 def nest (lines : List (Nat × List Item)) : List Piece :=
   let step (stack : List (Array Piece)) (line : Nat × List Item) : List (Array Piece) :=
     let stack := (List.range (stack.length - 1 - line.1)).foldl (fun s _ => closeTop s) stack
@@ -53,14 +65,19 @@ def nest (lines : List (Nat × List Item)) : List Piece :=
     match stack with
     | top :: rest => (top ++ line.2.toArray.map Piece.item) :: rest
     | [] => [line.2.toArray.map Piece.item]
-  let done := lines.foldl step [#[]]
-  let closed := (List.range (done.length - 1)).foldl (fun s _ => closeTop s) done
-  let top := match closed with
-    | [top] => top.toList
-    | _ => []
-  match top.getLast? with
-  | some (.item (.word ".")) => top.dropLast
-  | _ => top
+  closeAll (lines.foldl step [#[]])
+
+/-- Items with scope marks as a sentence: an opening parenthesis opens a block, a closing one closes
+it. -/
+def byMarks (items : List Item) : List Piece :=
+  let step (stack : List (Array Piece)) (i : Item) : List (Array Piece) :=
+    match i with
+    | .word "(" => #[] :: stack
+    | .word ")" => closeTop stack
+    | _ => match stack with
+      | top :: rest => top.push (.item i) :: rest
+      | [] => [#[.item i]]
+  closeAll (items.foldl step [#[]])
 
 /-- The vocabulary a reader knows: the relations and phrases a page says. -/
 structure Vocab where
@@ -73,28 +90,15 @@ def afterWords : List String → List Piece → Option (List Piece)
   | w :: ws, .item (.word w') :: l => if w == w' then afterWords ws l else none
   | _ :: _, _ => none
 
-/-- `l` around the first of its top-level runs of the words `ws`. -/
-def splitWords (ws : List String) (acc : Array Piece) : List Piece →
-    Option (List Piece × List Piece)
-  | [] => none
+/-- `l` around each of its top-level runs of the words `ws`. -/
+def wordSplits (ws : List String) (acc : Array Piece) : List Piece →
+    List (List Piece × List Piece)
+  | [] => []
   | p :: rest =>
-    match afterWords ws (p :: rest) with
-    | some r => some (acc.toList, r)
-    | none => splitWords ws (acc.push p) rest
-
-/-- `l` around the first word `closer` at its top level no `opener` before it claims, each opener
-claiming the next closer. -/
-def splitPaired (opener closer : String) (n : Nat) (acc : Array Piece) : List Piece →
-    Option (List Piece × List Piece)
-  | [] => none
-  | p :: rest =>
-    match p with
-    | .item (.word w) =>
-      if w == closer then
-        if n == 0 then some (acc.toList, rest) else splitPaired opener closer (n - 1) (acc.push p) rest
-      else if w == opener then splitPaired opener closer (n + 1) (acc.push p) rest
-      else splitPaired opener closer n (acc.push p) rest
-    | .item (.leaf _) | .block _ => splitPaired opener closer n (acc.push p) rest
+    let here := match afterWords ws (p :: rest) with
+      | some r => [(acc.toList, r)]
+      | none => []
+    here ++ wordSplits ws (acc.push p) rest
 
 /-- A binder's noun: the words before its first name. -/
 def nounWords : List Piece → List String × List Piece
@@ -119,6 +123,28 @@ def readBinder (many : Bool) (l : List Piece) : Option (Binder String × List Pi
       if d == "of" || d == "in" then (⟨noun, x, xs, some v⟩, r'') else (⟨noun, x, xs, none⟩, r')
     | _ => (⟨noun, x, xs, none⟩, r')
 
+/-- A quantifier's binder and the body after its comma, or an existential's after "such that". -/
+def quantified (l : List Piece) : Option (Bool × Binder String × List Piece) :=
+  match l with
+  | .item (.word "for") :: .item (.word q) :: rest =>
+    if q == "every" || q == "all" then
+      match readBinder (q == "all") rest with
+      | some (bd, .item (.word ",") :: body) => some (true, bd, body)
+      | _ => none
+    else none
+  | .item (.word "there") :: .item (.word "is") :: .item (.word _) :: rest =>
+    match readBinder false rest with
+    | some (bd, .item (.word "such") :: .item (.word "that") :: body) => some (false, bd, body)
+    | _ => none
+  | .item (.word "there") :: .item (.word "are") :: rest =>
+    match readBinder true rest with
+    | some (bd, .item (.word "such") :: .item (.word "that") :: body) => some (false, bd, body)
+    | _ => none
+  | _ => none
+
+def quantOf (all : Bool) (bd : Binder String) (s : Stmt String) : Stmt String :=
+  if all then .all bd s else .ex bd s
+
 /-- The arguments a template's slots took, in slot order. -/
 def ordered {β : Type} (t : Template) (pairs : List (Nat × β)) : Option (List β) :=
   (List.range' 1 t.arity).mapM (pairs.lookup ·)
@@ -138,115 +164,204 @@ def termsAt (vc : Vocab) (is : List Item) : List (Term String × List Item) :=
   leaf ++ vc.phrases.filterMap fun p => (leafSlots p.parts is).bind fun (pairs, rest) =>
     (ordered p pairs).map fun args => (.phrase p args, rest)
 
-/-- Every way a relation's parts read the whole of `is`, each slot's term with its index. -/
-def matchParts (vc : Vocab) : List Part → List Item → List (List (Nat × Term String))
-  | [], [] => [[]]
-  | [], _ :: _ => []
-  | .word w :: ps, .word w' :: is => if w == w' then matchParts vc ps is else []
+/-- Every way a relation's parts read a prefix of `is`, each slot's term with its index, with what
+follows. -/
+def prefixParts (vc : Vocab) : List Part → List Item → List (List (Nat × Term String) × List Item)
+  | [], is => [([], is)]
+  | .word w :: ps, .word w' :: is => if w == w' then prefixParts vc ps is else []
   | .word _ :: _, _ => []
   | .slot k :: ps, is =>
-    (termsAt vc is).flatMap fun (t, rest) => (matchParts vc ps rest).map ((k, t) :: ·)
+    (termsAt vc is).flatMap fun (t, rest) =>
+      (prefixParts vc ps rest).map fun (pairs, r) => ((k, t) :: pairs, r)
 
-/-- A run of items no connective splits: the one relation reading it, else a formula alone. -/
-def readAtomic (vc : Vocab) (l : List Piece) : Option (Stmt String) :=
-  let items := l.filterMap fun
+/-- Every relation or lone formula opening `is`, with what follows. -/
+def atomsAt (vc : Vocab) (is : List Item) : List (Stmt String × List Item) :=
+  let rels := vc.rels.flatMap fun t =>
+    (prefixParts vc t.parts is).filterMap fun (pairs, r) => (ordered t pairs).map (.rel t ·, r)
+  let lone := match is with
+    | .leaf x :: r => [(Stmt.atom x, r)]
+    | _ => []
+  rels ++ lone
+
+/-- A list's leading items. -/
+def leadItems : List Piece → List Item
+  | .item i :: rest => i :: leadItems rest
+  | _ => []
+
+/-- The items of a list of items alone. -/
+def onlyItems (l : List Piece) : Option (List Item) :=
+  l.mapM fun
     | .item i => some i
     | .block _ => none
-  if items.length != l.length then none else
-  let found := vc.rels.flatMap fun t =>
-    (matchParts vc t.parts items).filterMap fun pairs => (ordered t pairs).map (.rel t)
-  match found, items with
-  | [s], _ => some s
-  | [], [.leaf x] => some (.atom x)
-  | _, _ => none
 
-def quantWords (q : String) : Bool := q == "every" || q == "all"
+def chainOf : List (Stmt String) → Stmt String → Stmt String
+  | [], c => c
+  | h :: hs, c => .imp h (chainOf hs c)
 
-/-- A sentence's statement: a block is one operand; a top-level "if and only if" splits it; else its
-opening words name its connective, each operand but the last ends at the first word closing it at
-the top level, and the last runs to the end. -/
-def read (vc : Vocab) (l : List Piece) : Option (Stmt String) :=
-  match _hl : l with
-  | [.block b] => if _h : seqSize b < seqSize l then read vc b else none
-  | _ =>
-  match splitWords ["if", "and", "only", "if"] #[] l with
-  | some (a, b) =>
+/-! ## A reader weighing every reading
+
+Every reading the words allow of the whole of a list, at most two: a block reads as what it holds,
+and every connective's every split is weighed, its operands read in turn. -/
+
+mutual
+
+def readsN (vc : Vocab) (l : List Piece) : List (Stmt String) :=
+  let lone : List (Stmt String) := match _hl : l with
+    | [.block b] => if _h : seqSize b < seqSize l then readsN vc b else []
+    | _ => []
+  let iffs := (wordSplits ["if", "and", "only", "if"] #[] l).flatMap fun (a, b) =>
     if _h1 : seqSize a < seqSize l then
       if _h2 : seqSize b < seqSize l then
-        match read vc a, read vc b with
-        | some x, some y => some (.iff x y)
-        | _, _ => none
-      else none
-    else none
-  | none =>
-  match _hm : l with
-  | .item (.word "for") :: .item (.word q) :: rest =>
-    if quantWords q then
-      match readBinder (q == "all") rest with
-      | some (bd, .item (.word ",") :: body) =>
-        if _h : seqSize body < seqSize l then (read vc body).map (.all bd) else none
+        (readsN vc a).flatMap fun x => (readsN vc b).map (.iff x ·)
+      else []
+    else []
+  let quants := match quantified l with
+    | some (all, bd, body) =>
+      if _h : seqSize body < seqSize l then (readsN vc body).map (quantOf all bd) else []
+    | none => []
+  let opened : List (Stmt String) := match _hl : l with
+    | .item (.word "if") :: rest =>
+      (wordSplits [",", "then"] #[] rest).flatMap fun (hyps, concl) =>
+        if _h1 : seqSize hyps < seqSize l then
+          if _h2 : seqSize concl < seqSize l then
+            (hypsN vc hyps).flatMap fun hs => (readsN vc concl).map (chainOf hs ·)
+          else []
+        else []
+    | .item (.word "both") :: rest =>
+      (wordSplits ["and"] #[] rest).flatMap fun (a, b) =>
+        if _h1 : seqSize a < seqSize l then
+          if _h2 : seqSize b < seqSize l then
+            (readsN vc a).flatMap fun x => (readsN vc b).map (.conj x ·)
+          else []
+        else []
+    | .item (.word "either") :: rest =>
+      (wordSplits ["or"] #[] rest).flatMap fun (a, b) =>
+        if _h1 : seqSize a < seqSize l then
+          if _h2 : seqSize b < seqSize l then
+            (readsN vc a).flatMap fun x => (readsN vc b).map (.disj x ·)
+          else []
+        else []
+    | .item (.word "it") :: .item (.word "is") :: .item (.word "not") :: .item (.word "the") ::
+        .item (.word "case") :: .item (.word "that") :: rest =>
+      if _h : seqSize rest < seqSize l then (readsN vc rest).map .neg else []
+    | _ => []
+  let atoms := match onlyItems l with
+    | some is => (atomsAt vc is).filterMap fun (s, r) => if r.isEmpty then some s else none
+    | none => []
+  (lone ++ iffs ++ quants ++ opened ++ atoms).take 2
+termination_by (seqSize l, 0)
+decreasing_by all_goals (subst_vars; apply Prod.Lex.left; assumption)
+
+/-- Every way a curried implication's hypotheses read, "and" between two. -/
+def hypsN (vc : Vocab) (l : List Piece) : List (List (Stmt String)) :=
+  let one := (readsN vc l).map ([·])
+  let more := (wordSplits ["and"] #[] l).flatMap fun (a, b) =>
+    if _h1 : seqSize a < seqSize l then
+      if _h2 : seqSize b < seqSize l then
+        (readsN vc a).flatMap fun x => (hypsN vc b).map (x :: ·)
+      else []
+    else []
+  (one ++ more).take 2
+termination_by (seqSize l, 1)
+decreasing_by all_goals (subst_vars; first | (apply Prod.Lex.left; assumption) | (apply Prod.Lex.right; omega))
+
+end
+
+/-! ## A reader running each scope to its block's end
+
+One reading, left to right: a block one unit, a prefix scope to its block's end, a clause to its
+last word, the longest relation, and an equivalence joining the clauses around it. -/
+
+mutual
+
+def unitG (vc : Vocab) (l : List Piece) : Option (Stmt String × List Piece) :=
+  match _hl : l with
+  | .block b :: r =>
+    if _h : seqSize b < seqSize l then
+      match stmtG vc b with
+      | some (s, []) => some (s, r)
       | _ => none
     else none
-  | .item (.word "there") :: .item (.word "is") :: .item (.word _) :: rest =>
-    match readBinder false rest with
-    | some (bd, .item (.word "such") :: .item (.word "that") :: body) =>
-      if _h : seqSize body < seqSize l then (read vc body).map (.ex bd) else none
-    | _ => none
-  | .item (.word "there") :: .item (.word "are") :: rest =>
-    match readBinder true rest with
-    | some (bd, .item (.word "such") :: .item (.word "that") :: body) =>
-      if _h : seqSize body < seqSize l then (read vc body).map (.ex bd) else none
-    | _ => none
   | .item (.word "if") :: rest =>
-    match splitWords [",", "then"] #[] rest with
-    | some (hyps, concl) =>
-      match splitPaired "both" "and" 0 #[] hyps with
-      | some (h1, more) =>
-        let chain := .item (.word "if") :: more ++ .item (.word ",") :: .item (.word "then") :: concl
-        if _hh : seqSize h1 < seqSize l then
-          if _hc : seqSize chain < seqSize l then
-            match read vc h1, read vc chain with
-            | some x, some y => some (.imp x y)
-            | _, _ => none
-          else none
+    if _h : seqSize rest < seqSize l then
+      match hypsG vc rest with
+      | some (hs, concl) =>
+        if _h2 : seqSize concl < seqSize l then
+          match stmtG vc concl with
+          | some (c, []) => some (chainOf hs c, [])
+          | _ => none
         else none
-      | none =>
-        if _hh : seqSize hyps < seqSize l then
-          if _hc : seqSize concl < seqSize l then
-            match read vc hyps, read vc concl with
-            | some x, some y => some (.imp x y)
-            | _, _ => none
-          else none
-        else none
-    | none => none
+      | none => none
+    else none
   | .item (.word "both") :: rest =>
-    match splitPaired "both" "and" 0 #[] rest with
-    | some (a, b) =>
-      if _h1 : seqSize a < seqSize l then
-        if _h2 : seqSize b < seqSize l then
-          match read vc a, read vc b with
-          | some x, some y => some (.conj x y)
-          | _, _ => none
+    if _h : seqSize rest < seqSize l then
+      match unitG vc rest with
+      | some (a, .item (.word "and") :: r) =>
+        if _h2 : seqSize r < seqSize l then (unitG vc r).map fun (b, r') => (.conj a b, r')
         else none
-      else none
-    | none => none
+      | _ => none
+    else none
   | .item (.word "either") :: rest =>
-    match splitPaired "either" "or" 0 #[] rest with
-    | some (a, b) =>
-      if _h1 : seqSize a < seqSize l then
-        if _h2 : seqSize b < seqSize l then
-          match read vc a, read vc b with
-          | some x, some y => some (.disj x y)
-          | _, _ => none
+    if _h : seqSize rest < seqSize l then
+      match unitG vc rest with
+      | some (a, .item (.word "or") :: r) =>
+        if _h2 : seqSize r < seqSize l then (unitG vc r).map fun (b, r') => (.disj a b, r')
         else none
-      else none
-    | none => none
+      | _ => none
+    else none
   | .item (.word "it") :: .item (.word "is") :: .item (.word "not") :: .item (.word "the") ::
       .item (.word "case") :: .item (.word "that") :: rest =>
-    if _h : seqSize rest < seqSize l then (read vc rest).map .neg else none
-  | _ => readAtomic vc l
-termination_by seqSize l
-decreasing_by all_goals (subst_vars; assumption)
+    if _h : seqSize rest < seqSize l then (unitG vc rest).map fun (a, r) => (.neg a, r) else none
+  | _ =>
+    match quantified l with
+    | some (all, bd, body) =>
+      if _h : seqSize body < seqSize l then
+        match stmtG vc body with
+        | some (s, []) => some (quantOf all bd s, [])
+        | _ => none
+      else none
+    | none =>
+      let is := leadItems l
+      let found := atomsAt vc is
+      match (found.map (·.2.length)).min? with
+      | some least =>
+        match found.filter (·.2.length == least) with
+        | [(s, r)] => some (s, l.drop (is.length - r.length))
+        | _ => none
+      | none => none
+termination_by (seqSize l, 0)
+decreasing_by all_goals (subst_vars; apply Prod.Lex.left; assumption)
+
+def stmtG (vc : Vocab) (l : List Piece) : Option (Stmt String × List Piece) :=
+  match unitG vc l with
+  | some (s, r) =>
+    match afterWords ["if", "and", "only", "if"] r with
+    | some r' =>
+      if _h : seqSize r' < seqSize l then (stmtG vc r').map fun (t, r'') => (.iff s t, r'')
+      else none
+    | none => some (s, r)
+  | none => none
+termination_by (seqSize l, 1)
+decreasing_by all_goals (subst_vars; first | (apply Prod.Lex.left; assumption) | (apply Prod.Lex.right; omega))
+
+/-- A curried implication's hypotheses, each a unit, "and" between two, and what follows its
+", then". -/
+def hypsG (vc : Vocab) (l : List Piece) : Option (List (Stmt String) × List Piece) :=
+  match unitG vc l with
+  | some (h, .item (.word ",") :: .item (.word "then") :: concl) => some ([h], concl)
+  | some (h, .item (.word "and") :: r) =>
+    if _h : seqSize r < seqSize l then (hypsG vc r).map fun (hs, c) => (h :: hs, c) else none
+  | _ => none
+termination_by (seqSize l, 1)
+decreasing_by all_goals (subst_vars; first | (apply Prod.Lex.left; assumption) | (apply Prod.Lex.right; omega))
+
+end
+
+/-- The one reading that reads the whole sentence. -/
+def readG (vc : Vocab) (l : List Piece) : Option (Stmt String) :=
+  match stmtG vc l with
+  | some (s, []) => some s
+  | _ => none
 
 /-! ## Lines from each artifact -/
 
@@ -273,8 +388,8 @@ def joinLeaves (items : List Item) : List Item :=
     | _, _ => acc.push it) #[]).toList
 
 /-- A sentence's lines as a reader reads them: its head through its closing parenthesis aside, each
-word's closing comma or full stop apart, each formula's pieces one formula, and its opening word in
-lower case. -/
+word's closing comma or full stop apart, each formula's pieces one formula, and its opening word,
+past any marks, in lower case. -/
 def finish (lines : List (Nat × List Item)) : List (Nat × List Item) :=
   let dropHead (items : List Item) : List Item :=
     match items.findIdx? (fun | .word w => w.endsWith ")." | .leaf _ => false) with
@@ -289,8 +404,10 @@ def finish (lines : List (Nat × List Item)) : List (Nat × List Item) :=
   let lower (items : List Item) : List Item := match items with
     | .word w :: rest => .word (w.decapitalize) :: rest
     | _ => items
-  match lines.span (·.2.isEmpty) with
-  | (empty, (d, items) :: rest) => empty ++ (d, lower items) :: rest
+  match lines.span (fun l => (l.2.filter (· != .word "(")).isEmpty) with
+  | (empty, (d, items) :: rest) =>
+    let marks := items.takeWhile (· == .word "(")
+    empty ++ (d, marks ++ lower (items.drop marks.length)) :: rest
   | (empty, []) => empty
 
 /-- A text's words, white space between them. -/
@@ -302,24 +419,30 @@ def classOf (attrs : Array (String × String)) : String :=
   ((attrs.find? (·.1 == "class")).map (·.2)).getD ""
 
 mutual
-/-- A web line's items: its text's words, each formula's text one leaf. -/
-def htmlItemsOne : Html.Node → Array Item → Array Item
+/-- A web line's items: its text's words, each formula's text one leaf, and, where `marks`, each
+hidden scope mark's parentheses. -/
+def htmlItemsOne (marks : Bool) : Html.Node → Array Item → Array Item
   | .text s, acc => (rawWords s).foldl Array.push acc
-  | .elem tag _ kids, acc =>
+  | .elem tag attrs kids, acc =>
     if tag == "math" then acc.push (.leaf (plainName (nodeTextList "" kids.toList)))
-    else htmlItemsList kids.toList acc
+    else if classOf attrs == "lines-mark" then
+      if marks then
+        (nodeTextList "" kids.toList).toList.foldl (fun a c => a.push (.word c.toString)) acc
+      else acc
+    else htmlItemsList marks kids.toList acc
   | .style _, acc | .script _ _, acc => acc
-def htmlItemsList : List Html.Node → Array Item → Array Item
+def htmlItemsList (marks : Bool) : List Html.Node → Array Item → Array Item
   | [], acc => acc
-  | n :: rest, acc => htmlItemsList rest (htmlItemsOne n acc)
+  | n :: rest, acc => htmlItemsList marks rest (htmlItemsOne marks n acc)
 end
 
 mutual
-/-- A laid-out paragraph's lines, each with its depth: a line one, a scope one step in. -/
+/-- A laid-out paragraph's lines as the page shows them, each with its depth: a line one, a scope
+one step in. -/
 def htmlLinesOne (depth : Nat) : Html.Node → Array (Nat × List Item) → Array (Nat × List Item)
   | .elem tag attrs kids, acc =>
     if tag == "span" && classOf attrs == "lines-line" then
-      acc.push (depth, (htmlItemsList kids.toList #[]).toList)
+      acc.push (depth, (htmlItemsList false kids.toList #[]).toList)
     else if tag == "span" && classOf attrs == "lines-scope" then
       htmlLinesList (depth + 1) kids.toList acc
     else acc
@@ -331,17 +454,20 @@ def htmlLinesList (depth : Nat) : List Html.Node → Array (Nat × List Item) �
 end
 
 mutual
-/-- Every laid-out paragraph of a web page, in order. -/
-def htmlParasOne : Html.Node → Array (List (Nat × List Item)) → Array (List (Nat × List Item))
+/-- Every laid-out paragraph of a web page, in order: its lines with their depths, or, where
+`spoken`, its words and marks as assistive technology reads them, the indentation unseen. -/
+def htmlParasOne (spoken : Bool) : Html.Node → Array (List (Nat × List Item)) →
+    Array (List (Nat × List Item))
   | .elem tag attrs kids, acc =>
     if tag == "p" && classOf attrs == "lines" then
-      acc.push (htmlLinesList 0 kids.toList #[]).toList
-    else htmlParasList kids.toList acc
+      if spoken then acc.push [(0, (htmlItemsList true kids.toList #[]).toList)]
+      else acc.push (htmlLinesList 0 kids.toList #[]).toList
+    else htmlParasList spoken kids.toList acc
   | .text _, acc | .style _, acc | .script _ _, acc => acc
-def htmlParasList : List Html.Node → Array (List (Nat × List Item)) →
+def htmlParasList (spoken : Bool) : List Html.Node → Array (List (Nat × List Item)) →
     Array (List (Nat × List Item))
   | [], acc => acc
-  | n :: rest, acc => htmlParasList rest (htmlParasOne n acc)
+  | n :: rest, acc => htmlParasList spoken rest (htmlParasOne spoken n acc)
 end
 
 /-- A shipped line's items: each word between gaps, each run of formula glyphs one leaf. -/
@@ -403,7 +529,7 @@ def twinItems (s : String) : List Item := Id.run do
 def twinDepth (s : String) : Nat × String :=
   let rec go (cs : List Char) (n : Nat) : Nat × List Char :=
     match cs with
-    | ' ' :: ' ' :: rest => go rest (n + 1)
+    | '\u2003' :: '\u2002' :: rest => go rest (n + 1)
     | _ => (n, cs)
   let r := go s.toList 0
   (r.1, String.ofList r.2)
@@ -415,14 +541,59 @@ def twinParas (md : String) : Array (List (Nat × List Item)) :=
       let (d, rest) := twinDepth line
       (d, twinItems rest)
 
+/-- A page's lines as a laid-out paragraph's: a line wrapping stays at its depth, and two lines of
+one paragraph never share one. -/
+def depthRuns (lines : List (Nat × List Item)) : List (Nat × List Item) :=
+  (lines.foldl (fun (acc : Array (Nat × List Item)) (d, items) => match acc.back? with
+    | some (d', prev) => if d == d' then acc.pop.push (d, prev ++ items) else acc.push (d, items)
+    | none => acc.push (d, items)) #[]).toList
+
+/-- The scope marks a line's replacement text sets around its words: the parentheses opening it,
+those closing it, and the words between. -/
+def marksOf (text : String) : Nat × Nat × String :=
+  let opens := (text.toList.takeWhile (· == '(')).length
+  let rest := text.toList.drop opens
+  let closes := (rest.reverse.takeWhile (· == ')')).length
+  (opens, closes, String.ofList (rest.take (rest.length - closes)))
+
+/-- The tagged file's laid-out paragraphs: each `P` holding only its lines' `Span`s, each line's
+replacement text where it has one. -/
+def taggedParas (es : Array ReadElem) : Array (List (Option String)) :=
+  let byNum (n : Nat) : Option ReadElem := es.find? (·.num == n)
+  es.filterMap fun e =>
+    if e.s != "P" || e.kids.isEmpty || !e.mcids.isEmpty then none else
+    let kids := e.kids.toList.filterMap byNum
+    if kids.length == e.kids.size && kids.all (·.s == "Span") then some (kids.map (·.actualText))
+    else none
+
+/-- A tagged paragraph as assistive technology reads it: each line's words as the page sets them,
+between the parentheses its replacement text adds; none where a replacement's words are not the
+line's. -/
+def spokenPara (texts : List (Option String)) (lines : List (Nat × List Item)) :
+    Option (List (Nat × List Item)) :=
+  let runs := depthRuns lines
+  if runs.length != texts.length then none else
+  let squash (s : String) : String := String.ofList (s.toList.filter (!·.isWhitespace))
+  let itemText (items : List Item) : String := squash (String.join (items.map fun
+    | .word w => w
+    | .leaf x => x))
+  (texts.zip runs).foldlM (fun (acc : List (Nat × List Item)) (t, (_, items)) =>
+    match t with
+    | none => some (acc ++ [(0, items)])
+    | some text =>
+      let (o, c, core) := marksOf text
+      if plainName (squash core) != itemText items then none
+      else some (acc ++ [(0, List.replicate o (.word "(") ++ items ++ List.replicate c (.word ")"))]))
+    []
+
 /-! ## Invented statements -/
 
-def L (s : String) : Leaf := Tests.LeanProse.wordLeaf s
+def L (s : String) : Leaf := wordLeaf s
 
 /-- The table invented statements are said through: the core table's relations and four declared
 phrases, two holding a connective's word. -/
 def tb (_ : Unit) : Table :=
-  (tableFor (Tests.LeanProse.factsWith #[("Tide.height", #[.explicit, .explicit]),
+  (tableFor (factsWith #[("Tide.height", #[.explicit, .explicit]),
       ("Tide.Calm", #[.explicit]), ("Tide.Between", #[.explicit, .explicit, .explicit]),
       ("Tide.gap", #[.explicit, .explicit])])
     [("Tide.height", "the height after #2 steps of #1"), ("Calm", "#1 is calm"),
@@ -470,13 +641,19 @@ def corpus : List (String × Stmt Leaf) :=
    ("three curried hypotheses", .imp (P "P") (.imp (P "Q") (.imp (P "R") (P "S")))),
    ("an implication as a hypothesis", .imp (.imp (P "P") (P "Q")) (P "R")),
    ("a quantifier as a hypothesis", .imp (.all (nat "x") (le "x" "y")) (P "Q")),
+   ("an existential as a hypothesis", .imp (.ex (nat "x") (lt "y" "x")) (P "Q")),
    ("implications nested in hypotheses", .imp (.imp (.imp (P "P") (P "Q")) (P "R")) (P "S")),
    ("a quantifier among curried hypotheses",
      .imp (P "P") (.imp (.all (nat "x") (lt "x" "y")) (P "Q"))),
+   ("a quantifier opening curried hypotheses",
+     .imp (.all (nat "x") (lt "x" "y")) (.imp (P "P") (P "Q"))),
    ("a conjunction as the one hypothesis", .imp (.conj (P "P") (P "Q")) (P "R")),
    ("a conjunction among curried hypotheses", .imp (P "P") (.imp (.conj (P "Q") (P "R")) (P "S"))),
    ("a conjunction as the last curried hypothesis",
      .imp (P "P") (.imp (P "Q") (.imp (.conj (P "R") (P "S")) (P "T")))),
+   ("a conjunction closing on a quantifier as a hypothesis",
+     .imp (.conj (P "P") (.all (nat "x") (le "x" "x"))) (P "Q")),
+   ("a negated quantifier as a hypothesis", .imp (.neg (.all (nat "x") (le "x" "y"))) (P "Q")),
    ("a disjunction as a conclusion", .imp (P "P") (.disj (P "Q") (P "R"))),
    ("a conjunction of quantified statements",
      .conj (.all (nat "x") (le "x" "x")) (.ex (nat "y") (eq "y" "y"))),
@@ -503,6 +680,7 @@ def corpus : List (String × Stmt Leaf) :=
    ("a negated equivalence", .neg (.iff (P "P") (P "Q"))),
    ("an equivalence of equivalences", .iff (.iff (P "P") (P "Q")) (P "R")),
    ("an equivalence closing a conjunction", .conj (P "P") (.iff (P "Q") (P "R"))),
+   ("an equivalence as a hypothesis", .imp (.iff (P "P") (P "Q")) (P "R")),
    ("a phrase in a quantified equation",
      .all (nats "a" ["n"]) (.rel (relT "Eq") [heightOf "a" "n", heightOf "n" "a"])),
    ("a declared relation in a conditional", .all (nat "x") (.imp (calm "x") (.ex (nat "y") (calm "y")))),
@@ -528,69 +706,10 @@ def corpus : List (String × Stmt Leaf) :=
    ("a term holding 'and' in a conjunction's hypothesis",
      .imp (.conj (P "P") (.rel (relT "Eq") [gapOf "a" "b", gapOf "b" "a"])) (P "R"))]
 
-/-- A random one-letter leaf. -/
-def randLeaf (s : UInt64) : Leaf × UInt64 :=
-  let letters := ["a", "b", "c", "d", "k", "m", "n", "u", "v", "w"]
-  let (k, s) := rand s letters.length
-  (L (letters.getD k "a"), s)
-
-/-- A random term: a leaf, or a declared phrase over leaves. -/
-def randTerm (s : UInt64) : Term Leaf × UInt64 :=
-  let (k, s) := rand s 6
-  let (a, s) := randLeaf s
-  let (b, s) := randLeaf s
-  match k with
-  | 0 => (.phrase (((tb ()).phrases.lookup "Tide.height").getD ⟨[]⟩) [a, b], s)
-  | 1 => (.phrase (((tb ()).phrases.lookup "Tide.gap").getD ⟨[]⟩) [a, b], s)
-  | _ => (.leaf a, s)
-
-/-- A random binder over one to three one-letter names. -/
-def randBinder (s : UInt64) : Binder Leaf × UInt64 :=
-  let (k, s) := rand s 4
-  let (more, s) := rand s 3
-  let (x, s) := randLeaf s
-  let (ys, s) := (List.range more).foldl (fun (acc : List Leaf × UInt64) _ =>
-    let (y, s) := randLeaf acc.2
-    (acc.1 ++ [y], s)) ([], s)
-  let pick (one many : List String) : List String := if more == 0 then one else many
-  match k with
-  | 0 => (⟨pick ["natural", "number"] ["natural", "numbers"], x, ys, none⟩, s)
-  | 1 => (⟨pick ["proposition"] ["propositions"], x, ys, none⟩, s)
-  | 2 => (⟨pick ["type"] ["types"], x, ys, none⟩, s)
-  | _ => (⟨pick ["element"] ["elements"], x, ys, some (L "T")⟩, s)
-
-/-- A random statement of depth at most `d` over the core table's relations and the declared
-phrase and relation. -/
-def randStmt : Nat → UInt64 → Stmt Leaf × UInt64
-  | 0, s =>
-    let rels := (tb ()).rels
-    let (k, s) := rand s (rels.length + 1)
-    match rels[k]? with
-    | some (_, r) =>
-      let (args, s) := (List.range r.arity).foldl (fun (acc : List (Term Leaf) × UInt64) _ =>
-        let (x, s) := randTerm acc.2
-        (acc.1 ++ [x], s)) ([], s)
-      (.rel r args, s)
-    | none => let (a, s) := randLeaf s; (.atom a, s)
-  | d + 1, s =>
-    let (k, s) := rand s 9
-    let (a, s) := randStmt d s
-    let (b, s) := randStmt d s
-    let (q, s) := randBinder s
-    match k with
-    | 0 => (.all q a, s)
-    | 1 => (.ex q a, s)
-    | 2 => (.imp a b, s)
-    | 3 => (.conj a b, s)
-    | 4 => (.disj a b, s)
-    | 5 => (.iff a b, s)
-    | 6 => (.neg a, s)
-    | _ => (a, s)
-
-/-- `n` random statements of depth at most four. -/
+/-- `n` random statements of depth at most four over the invented table. -/
 def randoms (n : Nat) : List (Stmt Leaf) :=
   ((List.range n).foldl (fun (acc : Array (Stmt Leaf) × UInt64) _ =>
-    let (st, s) := randStmt 4 acc.2
+    let (st, s) := randStmt (tb ()) 4 acc.2
     (acc.1.push st, s)) (#[], 0x2545F4914F6CDD1D)).1.toList
 
 def termMap {α β : Type} (f : α → β) : Term α → Term β
@@ -615,20 +734,68 @@ def stmtMap {α β : Type} (f : α → β) : Stmt α → Stmt β
 /-- A page setting each statement in words, the `i`-th as theorem `s<i>`. -/
 def pageOf (stmts : List (Stmt Leaf)) : Ir.Doc × Array Diag :=
   let paras := stmts.toArray.mapIdx fun i st =>
-    Code.wordsRaws (Tests.LeanProse.theoremAt s!"s{i}" (i + 1) (Tests.LeanProse.selfEq 0)) st {}
+    Code.wordsRaws (theoremAt s!"s{i}" (i + 1) (selfEq 0)) st {}
   let raws : Array Parse.Raw := #[.ctrl "title" {}, .group #[.word "Readings" {}] {},
     .env "document" (paras.foldl (· ++ ·) #[]) {}]
   Elab.runRaws "readings.lean" raws
 
-/-- Each statement's reading off each artifact's paragraphs, by position: the failures, labelled. -/
+/-- Whether both readers take a sentence for exactly the statement. -/
+def readsBack (vc : Vocab) (want : Stmt String) (l : List Piece) : Bool :=
+  readsN vc l == [want] && readG vc l == some want
+
+/-- Each statement's reading off an artifact's paragraphs, by position: the failures, labelled. -/
 def failuresOf (vc : Vocab) (labels : List String) (want : List (Stmt String))
-    (paras : Array (List (Nat × List Item))) : List String :=
+    (paras : Array (List Piece)) : List String :=
   (labels.zip want).zipIdx.filterMap fun ((label, w), i) =>
     match paras[i]? with
     | none => some s!"{label}: no paragraph"
-    | some lines =>
-      let got := read vc (nest (finish lines))
-      if got == some w then none else some s!"{label}: {repr got}"
+    | some l =>
+      if readsBack vc w l then none
+      else some s!"{label}: {(readsN vc l).length} readings, {repr (readG vc l)}"
+
+/-! ## Each block set at its scope's margin -/
+
+/-- Every block of a sentence, each as the sentence with that block's lines set at the margin of the
+lines around it. -/
+def flattenings : List Piece → List (List Piece)
+  | [] => []
+  | .item i :: rest => (flattenings rest).map (.item i :: ·)
+  | .block b :: rest =>
+    (b ++ rest) :: (flattenings b).map (fun b' => .block b' :: rest) ++
+      (flattenings rest).map (.block b :: ·)
+termination_by l => seqSize l
+decreasing_by all_goals (simp only [seqSize, pieceSize]; omega)
+
+/-- What a block bounds, as a reader sees it: an equivalence it holds, or whose left side it is
+and could otherwise run on past; a scope its first words open; or neither. -/
+inductive Bound where
+  | equivalence
+  | scope
+  | neither
+  deriving BEq, Repr, Inhabited
+
+def iffWords : List String := ["if", "and", "only", "if"]
+
+/-- Every block of a sentence with what it bounds, in the order `flattenings` takes them; `prev`
+holds what stands before, nearest first. -/
+def bounds (vc : Vocab) (prev : List Piece) : List Piece → List Bound
+  | [] => []
+  | .item i :: rest => bounds vc (.item i :: prev) rest
+  | .block b :: rest =>
+    let after := prev.take 4 == iffWords.reverse.map word
+    let before := (afterWords iffWords rest).isSome
+    let holds := !(wordSplits iffWords #[] b).isEmpty
+    let atomic := match onlyItems b with
+      | some is => (atomsAt vc is).any (·.2.isEmpty)
+      | none => false
+    let opens := match b with
+      | .item (.word w) :: _ => w == "for" || w == "there" || w == "if"
+      | _ => false
+    let kind := if holds then Bound.equivalence else if after then .neither
+      else if before && !atomic then .equivalence else if opens then .scope else .neither
+    kind :: bounds vc [] b ++ bounds vc (.block b :: prev) rest
+termination_by l => seqSize l
+decreasing_by all_goals (simp only [seqSize, pieceSize]; omega)
 
 def readingChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
@@ -636,31 +803,62 @@ def readingChecks (ref : IO.Ref (List String)) : IO Unit := do
   let rnd := randoms 300
   let stmts := corpus.map (·.2) ++ rnd
   let labels := corpus.map (·.1) ++ (List.range rnd.length).map (s!"random {·}")
-  let want := stmts.map (stmtMap Tests.LeanProse.leafWord)
+  let want := stmts.map (stmtMap leafWord)
   let (doc, _) := pageOf stmts
   let some text ← loadTestFont "OpenSans-Regular.ttf" | t "reading: the text face loads" false
   let some mono ← loadTestFont "SourceCodePro-Regular.otf" | t "reading: the mono face loads" false
   let fonts ← mathSetOf (slotPairOf 2 text mono)
   let geom := Layout.Geom.ofPage doc.page
+  let out := layoutOf fonts doc
   let step := Ir.linesStep.resolve geom.fontSize 0
-  let pdf := pdfParas (fonts.math.getD 0) step (bodyLines (layoutOf fonts doc))
-  let html := htmlParasList (docNodesOf doc).toList #[]
+  let pageLines := pdfParas (fonts.math.getD 0) step (bodyLines out)
+  let page := pageLines.map (nest ∘ finish)
+  let nodes := (docNodesOf doc).toList
+  let web := (htmlParasList false nodes #[]).map (nest ∘ finish)
+  let webSpoken := (htmlParasList true nodes #[]).map fun ls => byMarks ((finish ls).flatMap (·.2))
   let sheet := (HtmlDoc.emit {} doc).1
-  t "reading: the web page's stylesheet sets each line a block of its own and each scope a step in"
+  t "reading: the web page's stylesheet sets each line a block, each scope a step in and each mark out of sight"
     (hasStr sheet ".lines-line, .lines-scope { display: block; }" &&
-      hasStr sheet s!".lines-scope \{ padding-inline-start: {HtmlDoc.cssLength Ir.linesStep}; }")
-  let twin := twinParas (MarkdownDoc.emit doc)
-  for (what, paras) in [("the page", pdf), ("the web page", html), ("the twin", twin)] do
+      hasStr sheet s!".lines-scope \{ padding-inline-start: {HtmlDoc.cssLength Ir.linesStep}; }" &&
+      hasStr sheet s!".lines-mark \{ {HtmlDoc.visuallyHidden} }")
+  let twin := (twinParas (MarkdownDoc.emit doc)).map (nest ∘ finish)
+  let pdf := driverPdf fonts geom doc out
+  let elems := match PdfRead.objects pdf, PdfRead.trailer pdf with
+    | .ok es, .ok trailer =>
+      let es := es.val
+      match (PdfCensus.catalogOf es trailer).get? "StructTreeRoot" with
+      | some (.ref r _) => match es.find? (·.num == r) with
+        | some root => readStructTree es root.val
+        | none => #[]
+      | _ => #[]
+    | _, _ => #[]
+  let tagged := taggedParas elems
+  t s!"reading: the tagged file holds each laid-out paragraph as one P of its lines' Spans ({tagged.size} of {stmts.length})"
+    (tagged.size == stmts.length)
+  let spokenPdf := (tagged.zip pageLines).filterMap fun (texts, lines) =>
+    (spokenPara texts lines).map fun ls => byMarks ((finish ls).flatMap (·.2))
+  t s!"reading: each line's replacement text in the tagged file says the line's words between its marks ({spokenPdf.size} of {tagged.size})"
+    (spokenPdf.size == tagged.size)
+  for (what, paras) in [("the page", page), ("the web page", web), ("the twin", twin),
+      ("the web page as assistive technology reads it", webSpoken),
+      ("the tagged file as assistive technology reads it", spokenPdf)] do
     let failed := failuresOf vc labels want paras
-    t s!"reading: every invented statement reads back from {what}'s lines ({failed.take 3})"
+    t s!"reading: every invented statement reads back from {what}, by both readers ({failed.take 3})"
       (paras.size == stmts.length && failed.isEmpty)
-  -- Planted: the same lines all at the margin lose the scopes their blocks bound.
-  let flat := pdf.map (·.map fun (_, items) => (0, items))
-  let misread := (failuresOf vc labels want flat).filterMap fun f => (f.splitOn ":").head?
-  let bound := ["an equivalence holding one", "an equivalence as a conclusion",
-    "an equivalence under an existential", "an equivalence closing a conjunction",
-    "a quantified equivalence of conjunctions", "a negated equivalence"]
-  t s!"reading: set at the margin, the statements whose blocks bound an 'if and only if' read otherwise ({misread.length} of {stmts.length}: {bound.filter (!misread.contains ·)})"
-    (bound.all misread.contains)
+  -- Planted: each block of an invented statement set at the margin of the lines around it.
+  let census := (corpus.zip page.toList).foldl (fun (acc : Array (String × Bound × Bool))
+      ((label, st), l) =>
+    let w := stmtMap leafWord st
+    ((flattenings l).zip (bounds vc [] l)).foldl (fun acc (flat, b) =>
+      acc.push (label, b, readsBack vc w flat)) acc) #[]
+  let kept (b : Bound) := census.filter fun (_, k, r) => k == b && r
+  let named (rows : Array (String × Bound × Bool)) := (rows.map (·.1)).toList.eraseDups
+  let count (b : Bound) := (census.filter (·.2.1 == b)).size
+  t s!"reading: set at its margin, a block bounding an equivalence leaves a reader reading its sentence otherwise ({count .equivalence} blocks; {named (kept .equivalence)})"
+    (kept .equivalence).isEmpty
+  t s!"reading: set at its margin, a block a scope opens leaves a reader reading its sentence otherwise ({count .scope} blocks; {named (kept .scope)})"
+    (kept .scope).isEmpty
+  t s!"reading: a block bounding neither is for the eye, both readers reading its sentence without it ({count .neither} blocks; {named (census.filter fun (_, k, r) => k == .neither && !r)})"
+    (census.all fun (_, k, r) => k != .neither || r)
 
 end Tests.LeanProseReading

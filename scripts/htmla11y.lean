@@ -1,5 +1,5 @@
 /-
-The htmla11y tier: per golden fixture's HTML page, the seven deficits `HtmlDoc.a11yFacts` counts,
+The htmla11y tier: per golden fixture's HTML page, the eight deficits `HtmlDoc.a11yFacts` counts,
 as headroom; hermetic.
 Usage: lake env lean --run scripts/htmla11y.lean [--check | --selftest]
 -/
@@ -114,6 +114,20 @@ def a11ySelftest : IO UInt32 := tierSelftest "htmla11y" fun no => do
     ((facts #[a11yEl "pre" #[("tabindex", "0")]]).scrollsUnreachable == 0)
   no "scroll: under a stylesheet the engine does not own, nothing is declared"
     ((facts #[a11yEl "pre", stage #[]] (own := false)).scrolls == 0)
+  -- scope-marks: a laid-out paragraph's hidden marks spell each scope's bounds.
+  let line (kids : Array Html.Node) := a11yEl "span" #[("class", "lines-line")] kids
+  let scope (kids : Array Html.Node) := a11yEl "span" #[("class", "lines-scope")] kids
+  let laid (kids : Array Html.Node) := a11yEl "p" #[("class", "lines")] kids
+  let marked := line (HtmlDoc.laidMark '(' 1 ++ #[.text "q"] ++ HtmlDoc.laidMark ')' 1)
+  no "scope-marks: a scope its marks bound is marked"
+    (let f := facts #[laid #[line #[.text "p"], scope #[marked]]]
+     f.laidParas == 1 && f.laidUnmarked == 0)
+  no "scope-marks: a scope indentation alone shows is unmarked"
+    ((facts #[laid #[line #[.text "p"], scope #[line #[.text "q"]]]]).laidUnmarked == 1)
+  no "scope-marks: a mark under aria-hidden is unspoken"
+    ((facts #[laid #[scope #[line (#[a11yEl "span" #[("class", "lines-mark"),
+        ("aria-hidden", "true")] #[.text "("], .text "q"] ++ HtmlDoc.laidMark ')' 1)]]]).laidUnmarked
+      == 1)
   -- contrast: engine tokens pass every scheme; a declared colour is judged on its own screen.
   let plain := (elabStr (dvDoc "" "x")).1
   no s!"contrast: an undeclared page passes every scheme: {HtmlDoc.schemeFailures true plain}"

@@ -47,6 +47,9 @@ public inductive Kind where
   | link (url : String)
   /-- A language span, the BCP 47 tag it declares. -/
   | span (lang : String)
+  /-- One line of a laid-out paragraph, with how many scopes it opens and how many it closes, which
+  a reader of the tagged file gets as parentheses. -/
+  | line (opens closes : Nat)
   /-- A cross-reference and the anchor it resolved to. -/
   | reference (target : Option String)
   /-- Generated furniture the census counts: a deck logo, a frame footer. -/
@@ -90,14 +93,14 @@ def Kind.outlineEmit (out : Array Ir.HeadingLevel) : Kind → Array Ir.HeadingLe
   | .heading level => out.push level
   | .document | .section | .title | .paragraph | .list _ | .item | .label | .body
   | .table | .row | .cell | .caption | .figure | .formula | .code | .quote | .note
-  | .aside | .nav | .bibEntry | .link _ | .span _ | .reference _ | .artifact => out
+  | .aside | .nav | .bibEntry | .link _ | .span _ | .line _ _ | .reference _ | .artifact => out
 
 /-- Whether the outline census reads a kind's content: every kind's but a speaker note's. -/
 @[expose] public def Kind.outlineDescends : Kind → Bool
   | .aside => false
   | .document | .section | .title | .heading _ | .paragraph | .list _ | .item | .label
   | .body | .table | .row | .cell | .caption | .figure | .formula | .code | .quote
-  | .note | .nav | .bibEntry | .link _ | .span _ | .reference _ | .artifact => true
+  | .note | .nav | .bibEntry | .link _ | .span _ | .line _ _ | .reference _ | .artifact => true
 
 theorem Kind.outlineEmit_acc (out : Array Ir.HeadingLevel) (kind : Kind) :
     kind.outlineEmit out = out ++ kind.outlineEmit #[] := by
@@ -187,6 +190,14 @@ public def algRaw (out : Array Node) : List AlgLine → Array Node
       | some c => inlinesRaw (inlinesRaw out l.content.toList) c.toList
       | none => inlinesRaw out l.content.toList) rest
 
+/-- A laid-out paragraph's lines, each a `.line` over its content with the scopes it opens past the
+line before, at depth `prev`, and closes before the next. -/
+public def laidRaw (prev : Nat) (out : Array Node) : List LaidLine → Array Node
+  | [] => out
+  | l :: rest =>
+    let b := l.bounds prev ((rest.head?.map (·.depth)).getD 0)
+    laidRaw l.depth (out.push (.node (.line b.1 b.2) (inlinesRaw #[] l.content.toList))) rest
+
 mutual
 
 @[expose] public def blocksRaw (out : Array Node) : List Block → Array Node
@@ -198,7 +209,7 @@ mutual
   | .section level _ _ title => out.push (.node (.heading level) (inlinesRaw #[] title.toList))
   | .list ordered _ items => out.push (.node (.list ordered) (itemsRaw #[] items.toList))
   | .center body => blocksRaw out body.toList
-  | .lines body => blocksRaw out body.toList
+  | .lines ls => out.push (.node .paragraph (laidRaw 0 #[] ls.toList))
   | .ragged _ body => blocksRaw out body.toList
   | .spaced _ body => blocksRaw out body.toList
   | .role _ body => blocksRaw out body.toList
@@ -321,6 +332,7 @@ private structure Census (α : Type) where
   cells : α → List (Array Inline) → α
   bib : α → List BibItem → α
   alg : α → List AlgLine → α
+  laid : α → Nat → List LaidLine → α
 
 /-- What `F` reads over a title or caption region's node, absent when the content is empty. -/
 private def Census.region (G : Census α) (F : NodeFold α) (kind : Kind) (a : α) (xs : Array Inline) : α :=
@@ -372,6 +384,10 @@ private structure Sim (F : NodeFold α) (G : Census α) : Prop where
   algCons : ∀ a l rest, G.alg a (l :: rest) = G.alg (match l.comment with
     | some c => G.inlines (G.inlines a l.content.toList) c.toList
     | none => G.inlines a l.content.toList) rest
+  laidNil : ∀ a p, G.laid a p [] = a
+  laidCons : ∀ a p l rest, G.laid a p (l :: rest) =
+    let b := l.bounds p ((rest.head?.map (·.depth)).getD 0)
+    G.laid (F.node a (.line b.1 b.2) (G.inlines · l.content.toList)) l.depth rest
   blocksNil : ∀ a, G.blocks a [] = a
   blocksCons : ∀ a b bs, G.blocks a (b :: bs) = G.blocks (G.block a b) bs
   itemsNil : ∀ a, G.items a [] = a
@@ -384,7 +400,7 @@ private structure Sim (F : NodeFold α) (G : Census α) : Prop where
     G.block a (.section level st num title) = F.node a (.heading level) (G.inlines · title.toList)
   bList : ∀ a o s items, G.block a (.list o s items) = F.node a (.list o) (G.items · items.toList)
   bCenter : ∀ a body, G.block a (.center body) = G.blocks a body.toList
-  bLines : ∀ a body, G.block a (.lines body) = G.blocks a body.toList
+  bLines : ∀ a ls, G.block a (.lines ls) = F.node a .paragraph (G.laid · 0 ls.toList)
   bRagged : ∀ a fl body, G.block a (.ragged fl body) = G.blocks a body.toList
   bSpaced : ∀ a g body, G.block a (.spaced g body) = G.blocks a body.toList
   bRole : ∀ a n body, G.block a (.role n body) = G.blocks a body.toList
@@ -712,6 +728,13 @@ private theorem algRaw_fold_exact (h : Sim F G) (a : α) (out : Array Node) (lin
     rw [algRaw, ih, h.algCons]
     cases l.comment <;> simp only [inlinesRaw_fold_exact h]
 
+private theorem laidRaw_fold_exact (h : Sim F G) (a : α) (p : Nat) (out : Array Node)
+    (lines : List LaidLine) :
+    foldNodeList F a (laidRaw p out lines).toList = G.laid (foldNodeList F a out.toList) p lines := by
+  induction lines generalizing p out with
+  | nil => exact (h.laidNil _ _).symm
+  | cons l rest ih => rw [laidRaw, ih, foldNodeList_push, inlinesNode_fold_exact h, h.laidCons]
+
 mutual
 
 private theorem blocksRaw_fold_exact (h : Sim F G) (a : α) (out : Array Node) (bs : List Block) :
@@ -730,7 +753,9 @@ private theorem blockRaw_fold_exact (h : Sim F G) (a : α) (out : Array Node) (b
     rw [blockRaw, foldNodeList_push, foldNode_node, h.bList]
     exact congrArg (F.node _ _) (funext fun a' => itemsRaw_fold_exact h a' #[] items.toList)
   | .center body => rw [h.bCenter]; exact blocksRaw_fold_exact h a out body.toList
-  | .lines body => rw [h.bLines]; exact blocksRaw_fold_exact h a out body.toList
+  | .lines ls =>
+    rw [blockRaw, foldNodeList_push, foldNode_node, h.bLines]
+    exact congrArg (F.node _ _) (funext fun a' => laidRaw_fold_exact h a' 0 #[] ls.toList)
   | .ragged fl body => rw [h.bRagged]; exact blocksRaw_fold_exact h a out body.toList
   | .spaced g body => rw [h.bSpaced]; exact blocksRaw_fold_exact h a out body.toList
   | .role n body => rw [h.bRole]; exact blocksRaw_fold_exact h a out body.toList
@@ -854,6 +879,7 @@ private def textCensus : Census String where
   cells := blockTextTableCells
   bib := blockTextBibItems
   alg := algLineText
+  laid a _ ls := laidText a ls
 
 private def headingsCensus : Census (Array Ir.HeadingLevel) where
   inline a _ := a
@@ -866,6 +892,7 @@ private def headingsCensus : Census (Array Ir.HeadingLevel) where
   cells a _ := a
   bib a _ := a
   alg a _ := a
+  laid a _ _ := a
 
 private def altsCensus : Census (Array (Option String × Alt)) where
   inline := foldInline altPush
@@ -878,13 +905,14 @@ private def altsCensus : Census (Array (Option String × Alt)) where
   cells := foldTableCells altPush
   bib := foldBibItems altPush
   alg := foldAlgLines altPush
+  laid a _ ls := foldLaidLines altPush a ls
 
 private theorem textSim : Sim leafTextFold textCensus := by
   constructor <;> intros <;>
     simp [textCensus, Census.region, NodeFold.node, leafTextFold, Leaf.census, plainTextOne,
       plainTextList, plainText, blockTextOne, blockTextList, blockTextItems, blockTextColumns,
-      blockTextTableRows, blockTextTableCells, blockTextBibItems, algLineText, ListingSpec.capText,
-      String.append_assoc] <;>
+      blockTextTableRows, blockTextTableCells, blockTextBibItems, algLineText, laidText,
+      ListingSpec.capText, String.append_assoc] <;>
     first | rfl | (split <;> simp_all [plainTextList])
 
 private theorem headingsSim : Sim headingsFold headingsCensus := by
@@ -897,7 +925,7 @@ private theorem altsSim : Sim altsFold altsCensus := by
   constructor <;> intros <;>
     simp [altsCensus, Census.region, NodeFold.node, altsFold, Leaf.altCensus, foldInline, foldInlineList,
       foldBlock, foldBlockList, foldBlockItems, foldBlockCols, foldTableRows, foldTableCells, foldBibItems,
-      foldAlgLines, altPush, altPicPush] <;>
+      foldAlgLines, foldLaidLines, altPush, altPicPush] <;>
     first | rfl | (split <;> simp_all [foldInlineList])
 
 public theorem number_text (k : Nat) : Conserves leafText (number k) := by
@@ -1078,8 +1106,7 @@ public theorem blockRaw_acc (out : Array Node) (b : Block) :
   | .list ordered _ items => simp [blockRaw]
   | .center body =>
     simp only [blockRaw]; exact blocksRaw_acc out body.toList
-  | .lines body =>
-    simp only [blockRaw]; exact blocksRaw_acc out body.toList
+  | .lines ls => simp [blockRaw]
   | .ragged _ body =>
     simp only [blockRaw]; exact blocksRaw_acc out body.toList
   | .spaced g body =>

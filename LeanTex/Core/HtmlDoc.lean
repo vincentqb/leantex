@@ -232,9 +232,8 @@ public def engineClasses : List String :=
    "band-left", "band-right", "booktabs", "bt-center", "bt-cmid", "bt-heavy-above", "bt-left",
    "bt-light-above", "bt-nowrap", "bt-overhang", "bt-right", "cell-measure", "centered", "ragged", "ragged-right", "column", "columns", "content",
    "deck-progress", "entry",
-   "entry-pair", "entry-row", "entry-rows", "fill", "float", "frame-body-end", "lines",
-   "lines-line", "lines-scope",
-   "frame-body-start", "group", "icon",
+   "entry-pair", "entry-row", "entry-rows", "fill", "float", "frame-body-end",
+   "frame-body-start", "group", "icon", "lines", "lines-line", "lines-mark", "lines-scope",
    "math", "math-display", "nopadl", "nopadr", "note", "picture", "progress",
    "reveal-scroll", "ruled", "section-page", "separator", "slide",
    "slide-foot", "slide-logo", "slide-track", "slides", "snap", "spaced",
@@ -4851,11 +4850,6 @@ private def docHasDisclosure (doc : Doc) : Bool :=
 private def docHasLines (doc : Doc) : Bool :=
   Ir.foldBlocks (fun b bl => b || bl matches .lines ..) (fun b _ => b) false doc.body
 
-/-- A laid-out paragraph's rules: each line a block of its own, each scope `Ir.linesStep` in. -/
-private def linesCss : String :=
-  ".lines-line, .lines-scope { display: block; }\n" ++
-  s!".lines-scope \{ padding-inline-start: {cssLength Ir.linesStep}; }\n"
-
 private def disclosureCss : String :=
   s!"summary \{ {" ".intercalate ((fontStyleDecls [] Ir.disclosureSummaryStyle).getD #[]).toList} }\n"
 
@@ -4943,6 +4937,13 @@ pattern. -/
 public def visuallyHidden : String :=
   "position: absolute; width: 1px; height: 1px; overflow: hidden; \
 clip-path: inset(50%); white-space: nowrap;"
+
+/-- A laid-out paragraph's rules: each line a block of its own, each scope `Ir.linesStep` in, and
+the marks bounding a scope out of sight. -/
+private def linesCss : String :=
+  ".lines-line, .lines-scope { display: block; }\n" ++
+  s!".lines-scope \{ padding-inline-start: {cssLength Ir.linesStep}; }\n" ++
+  s!".lines-mark \{ {visuallyHidden} }\n"
 
 /-- A figure's words as the page carries them, out of sight and out of the accessibility tree. -/
 public def figureWordsNode (words : String) : Node :=
@@ -7752,28 +7753,52 @@ private def Config.listingStyle (cfg : Config) (spec : Ir.ListingSpec)
       bg ++ [s!"color: {value ink [.ink]};"] ++ roles
   " ".intercalate decls
 
-/-- A laid-out paragraph's lines: each paragraph a line, each lines block in it a scope a step in,
-any other block a line of its text, a word space between two that the line boxes collapse. -/
-private def linesNodesInto (cfg : Config) (acc : Array Node) : List Block → Array Node
-  | [] => acc
-  | .lines body :: rest =>
-    let acc := if acc.isEmpty then acc else acc.push (Html.text " ")
-    linesNodesInto cfg
-      (acc.push (Html.elem "span" (linesNodesInto cfg #[] body.toList) #[("class", "lines-scope")]))
-      rest
-  | b :: rest =>
-    let acc := if acc.isEmpty then acc else acc.push (Html.text " ")
-    let kids := match b with
-      | .para content => inlines cfg content
-      | b => #[Html.text (Ir.blockTextOne "" b)]
-    linesNodesInto cfg (acc.push (Html.elem "span" kids #[("class", "lines-line")])) rest
-termination_by l => sizeOf l
-decreasing_by
-  all_goals simp_wf
-  all_goals
-    (have hb : ∀ (a : Array Block), sizeOf a = 1 + sizeOf a.toList := fun _ => rfl
-     (try simp only [hb])
-     omega)
+/-- A laid-out paragraph's open scopes' nodes, innermost first, the paragraph's own last. -/
+private abbrev LaidStack := List (Array Node)
+
+/-- A node onto the innermost open scope, after a word space the line boxes collapse. -/
+private def laidPush (node : Node) : LaidStack → LaidStack
+  | top :: rest => (if top.isEmpty then top else top.push (Html.text " ")).push node :: rest
+  | [] => [#[node]]
+
+/-- The innermost open scope closed into the one around it. -/
+private def laidClose : LaidStack → LaidStack
+  | inner :: outer :: rest =>
+    laidPush (Html.elem "span" inner #[("class", "lines-scope")]) (outer :: rest)
+  | [top] => [top]
+  | [] => []
+
+private def laidCloseN : Nat → LaidStack → LaidStack
+  | 0, st => st
+  | n + 1, st => laidCloseN n (laidClose st)
+
+private def laidOpenN : Nat → LaidStack → LaidStack
+  | 0, st => st
+  | n + 1, st => laidOpenN n (#[] :: st)
+
+/-- The hidden mark of `n` scope bounds, an opening or a closing parenthesis for each, which
+assistive technology reads where the page shows indentation. -/
+public def laidMark (c : Char) (n : Nat) : Array Node :=
+  if n == 0 then #[] else
+    #[Html.elem "span" #[Html.text (String.ofList (List.replicate n c))] #[("class", "lines-mark")]]
+
+/-- One line's node: the marks of the scopes it opens, its content, the marks of those it closes. -/
+private def laidLineNode (cfg : Config) (opens closes : Nat) (content : Array Inline) : Node :=
+  Html.elem "span" (laidMark '(' opens ++ inlines cfg content ++ laidMark ')' closes)
+    #[("class", "lines-line")]
+
+/-- A laid-out paragraph's lines onto the open scopes at depth `d`: each line into the scope of its
+depth, a scope a run of lines deeper than the lines around it. -/
+private def laidNodesInto (cfg : Config) (d : Nat) (st : LaidStack) : List Ir.LaidLine → LaidStack
+  | [] => laidCloseN d st
+  | l :: rest =>
+    let b := l.bounds d ((rest.head?.map (·.depth)).getD 0)
+    let st := if l.depth > d then laidOpenN (l.depth - d) st else laidCloseN (d - l.depth) st
+    laidNodesInto cfg l.depth (laidPush (laidLineNode cfg b.1 b.2 l.content) st) rest
+
+/-- A laid-out paragraph's nodes: its lines, each scope a span a step in. -/
+public def laidNodes (cfg : Config) (ls : Array Ir.LaidLine) : Array Node :=
+  ((laidNodesInto cfg 0 [#[]] ls.toList).head?).getD #[]
 
 mutual
 
@@ -7783,7 +7808,7 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     | .box | .aside => { cfg with fillsInert := true }
   match b with
   | .para content => paragraphNode cfg content
-  | .lines body => Html.elem "p" (linesNodesInto cfg #[] body.toList) #[("class", "lines")]
+  | .lines ls => Html.elem "p" (laidNodes cfg ls) #[("class", "lines")]
   | .section level _ num title =>
     let element := level.element
     let tag := headingTag level
@@ -9181,6 +9206,10 @@ public structure A11yFacts where
   /-- Tab stops inside an overlay step a later snap uncovers, which a deck hiding its pending
   steps keeps out of reach while each is pending. -/
   stepTabStops : Nat := 0
+  /-- Laid-out paragraphs, whose scopes the page shows by indentation. -/
+  laidParas : Nat := 0
+  /-- Laid-out paragraphs whose hidden marks do not spell their scopes' bounds. -/
+  laidUnmarked : Nat := 0
   deriving Repr, BEq, Inhabited
 
 private def textHeld : Html.Walk Unit Bool where
@@ -9208,6 +9237,32 @@ public def scrollReachable : Node → Bool
   | .style _ => false
   | .script _ _ => false
 
+mutual
+
+/-- The scope bounds of a laid-out paragraph's subtree and the parentheses of its hidden marks, in
+reading order, each subtree assistive technology skips left out. -/
+private def scopeSpell (acc : String × String) : Node → String × String
+  | .elem _ attrs kids =>
+    if attrs.any (fun kv => kv.1 == "hidden" || (kv.1 == "aria-hidden" && kv.2 == "true")) then acc
+    else if (classTokens attrs).contains "lines-mark" then
+      (acc.1, shownWords.list () acc.2 kids.toList)
+    else if (classTokens attrs).contains "lines-scope" then
+      let r := scopeSpellList (acc.1.push '(', acc.2) kids.toList
+      (r.1.push ')', r.2)
+    else scopeSpellList acc kids.toList
+  | .text _ | .style _ | .script _ _ => acc
+
+private def scopeSpellList (acc : String × String) : List Node → String × String
+  | [] => acc
+  | n :: rest => scopeSpellList (scopeSpell acc n) rest
+
+end
+
+/-- Whether a laid-out paragraph's hidden marks spell its scopes' bounds, a parenthesis for each. -/
+public def scopesMarked (kids : Array Node) : Bool :=
+  let r := scopeSpellList ("", "") kids.toList
+  r.1 == String.ofList (r.2.toList.filter (· != ' '))
+
 /-- One element's own contribution to the facts, its children aside. -/
 private def a11yElem (own deck : Bool) (tag : String) (attrs : Array (String × String))
     (kids : Array Node) (acc : A11yFacts) : A11yFacts :=
@@ -9231,6 +9286,10 @@ private def a11yElem (own deck : Bool) (tag : String) (attrs : Array (String × 
                  summariesUnnamed := acc.summariesUnnamed +
                    (if holdsTextList kids.toList || carriesName (.elem tag attrs kids) then 0
                     else 1) }
+    else acc
+  let acc := if tag == "p" && (classTokens attrs).contains "lines" then
+      { acc with laidParas := acc.laidParas + 1
+                 laidUnmarked := acc.laidUnmarked + (if scopesMarked kids then 0 else 1) }
     else acc
   if declaresScroll own deck tag attrs then
     { acc with scrolls := acc.scrolls + 1

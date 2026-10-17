@@ -12,7 +12,7 @@ theorem none_all (h : forall n : Nat, n = 0) : False :=
 /-- An equivalence a conclusion holds stands as a block under it. -/
 theorem iff_after (p q : Prop) (_hp : p) : q <-> q := Iff.rfl
 
-/-- An equivalence of conjunctions under a quantifier sets its first side a block deeper. -/
+/-- An equivalence of conjunctions under a quantifier sets each side a block deeper. -/
 theorem swap (p q : Prop) : And p q <-> And q p := And.comm
 
 theorem neg_all : Not (forall n : Nat, n = 0) :=

@@ -64,6 +64,12 @@ private theorem algPictureCount_id (n : Nat) (xs : List AlgLine) :
     cases h : line.comment <;>
       simpa only [foldAlgLines, h, inlineListPictureCount_id] using ih
 
+private theorem laidPictureCount_id (n : Nat) (xs : List LaidLine) :
+    foldLaidLines (fun n _ => n) n xs = n := by
+  induction xs with
+  | nil => rfl
+  | cons _ _ ih => simpa only [foldLaidLines, inlineListPictureCount_id] using ih
+
 private theorem mapBlockListWith_toList (gp : Pic.Picture → Pic.Picture)
     (f : Inline → Inline) (finish : Array Inline → Array Inline)
     (listing : ListingSpec → ListingSpec) (out : Array Block) (xs : List Block) :
@@ -109,7 +115,7 @@ private theorem mapBlock_pictureCount (gp : Pic.Picture → Pic.Picture)
   | .columns cols =>
     simp only [mapBlock, foldBlock, pictureCountStep, mapBlockColsWith_toList, List.nil_append]
     exact mapCols_pictureCount gp f finish listing n cols.toList
-  | .center body | .ragged _ body | .quote body | .lines body | .abstract body
+  | .center body | .ragged _ body | .quote body | .abstract body
   | .role _ body | .link _ body | .spaced _ body | .onSteps _ body
   | .only _ body | .nav _ body | .note body
   | .titled _ _ body | .disclosure _ _ body | .frame _ _ _ _ body | .float _ _ _ body _ =>
@@ -124,6 +130,8 @@ private theorem mapBlock_pictureCount (gp : Pic.Picture → Pic.Picture)
     simp only [mapBlock, foldBlock, pictureCountStep, rowsPictureCount_id]
   | .algorithm _ _ _ =>
     simp only [mapBlock, foldBlock, pictureCountStep, algPictureCount_id]
+  | .lines _ =>
+    simp only [mapBlock, foldBlock, pictureCountStep, laidPictureCount_id]
   | .bibliography _ _ _ =>
     simp only [mapBlock, foldBlock, pictureCountStep, bibPictureCount_id]
   | .verbatim _ _ _ | .setPalette _ | .setTokens _

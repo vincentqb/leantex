@@ -1725,10 +1725,9 @@ public def closeAll (pos : Pos) : List (Array Raw) → Array Raw
 termination_by l => l.length
 
 /-- A sentence's tokens as text, its opening word capitalized, each leaf as inline mathematics, a
-word space between tokens but where they join, each block a nested lines environment, and a full
-stop closing its last line. -/
+word space between tokens but where they join, and each block a nested lines environment. -/
 public def sentenceRaws (pos : Pos) (toks : List (LeanProse.Tok LeanProse.Leaf)) : Array Raw :=
-  closeAll pos ((LeanProse.closeIn (toks ++ [.w "."])).foldl (sentenceStep pos) ([#[]], true, true)).1
+  closeAll pos (toks.foldl (sentenceStep pos) ([#[]], true, true)).1
 
 /-- The paragraph a declaration's statement sets as in words, ragged right: its head, then its
 sentence in its lines, each block indented a step, a line free to break between words. -/

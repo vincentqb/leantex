@@ -61,6 +61,7 @@ private def structTypeOf : Struct.Kind → String
   | .bibEntry => "LBody"
   | .link _ => "Link"
   | .span _ => "Span"
+  | .line _ _ => "Span"
   | .reference _ => "Reference"
   | .artifact => "NonStruct"
 
@@ -73,18 +74,18 @@ private def inPdf2Namespace : Struct.Kind → Bool
   | .reference _ => false
   | .document | .section | .title | .heading _ | .paragraph | .list _ | .item | .label | .body
   | .table | .row | .cell | .caption | .figure | .formula | .note | .aside | .nav | .bibEntry
-  | .link _ | .span _ | .artifact => true
+  | .link _ | .span _ | .line _ _ | .artifact => true
 
 private def headingLevelOf : Struct.Kind → Option Ir.HeadingLevel
   | .heading level => some level
   | .document | .section | .title | .paragraph | .list _ | .item | .label | .body | .table
   | .row | .cell | .caption | .figure | .formula | .code | .quote | .note | .aside | .nav
-  | .bibEntry | .link _ | .span _ | .reference _ | .artifact => none
+  | .bibEntry | .link _ | .span _ | .line _ _ | .reference _ | .artifact => none
 
 private def isHolder (kind : Struct.Kind) (inline : Bool) : Bool :=
   match kind with
   | .paragraph | .title | .heading _ | .caption | .cell | .code | .label | .body | .note
-  | .bibEntry | .figure | .artifact => true
+  | .bibEntry | .figure | .line _ _ | .artifact => true
   | .formula => !inline
   | .document | .section | .list _ | .item | .table | .row | .quote | .aside | .nav
   | .link _ | .span _ | .reference _ => false
@@ -127,6 +128,13 @@ public theorem altElem_size_exact (es : Array StructElem) (parent k : Nat) (a : 
         | .undeclared | .described _ => 1 := by
   cases a <;> simp [altElem, pushElem]
 
+/-- A laid-out paragraph's line as a reader of the file gets it, where it bounds a scope: its words
+after a parenthesis for each scope it opens and before one for each it closes. -/
+public def lineMarks (opens closes : Nat) (kids : Array Struct.Node) : Option String :=
+  if opens + closes == 0 then none else
+    some (String.ofList (List.replicate opens '(') ++ Struct.leafText kids ++
+      String.ofList (List.replicate closes ')'))
+
 mutual
 
 private def skelList (es : Array StructElem) (parent holder : Nat) (inline : Bool)
@@ -151,6 +159,9 @@ private def skelStep (es : Array StructElem) (parent holder : Nat) (inline : Boo
     | .bibEntry =>
       let (es, l, lb) := bibEntryElems es parent openList
       (skelList es lb lb true none kids.toList, some l)
+    | .line opens closes =>
+      let (es, i) := pushElem es parent { elemOf kind with actualText := lineMarks opens closes kids }
+      (skelList es i i true none kids.toList, none)
     | .document | .section | .title | .heading _ | .paragraph | .list _ | .item
     | .body | .table | .row | .cell | .caption | .figure | .formula | .code | .quote | .note
     | .nav | .link _ | .span _ | .reference _ | .artifact =>
@@ -633,6 +644,11 @@ private theorem skelStep_leafKids : ∀ (n : Struct.Node) (es : Array StructElem
       simp only [Struct.Kind.outlineDescends, ite_true, skelStep]
       refine (skelList_leafKids kids.toList _ _ _ _ none (bibEntryElems_lb_lt es parent openList)).trans ?_
       rw [leafKids_bibEntryElems]
+    case line opens closes =>
+      rw [skelLeafIdsOne_node]
+      simp only [Struct.Kind.outlineDescends, ite_true, skelStep]
+      refine (skelList_leafKids kids.toList _ _ _ _ none (by simp [pushElem])).trans ?_
+      rw [leafKids_pushElem_empty _ _ _ (by simp [elemOf])]
     all_goals
       rw [skelLeafIdsOne_node]
       simp only [Struct.Kind.outlineDescends, ite_true, skelStep]
@@ -768,6 +784,9 @@ private theorem unfilled_skelStep : ∀ (n : Struct.Node) (es : Array StructElem
     case bibEntry =>
       exact unfilled_skelList kids.toList _ _ _ _ _
         (unfilled_bibEntryElems es h parent openList)
+    case line opens closes =>
+      exact unfilled_skelList kids.toList _ _ _ _ _
+        (unfilled_pushElem es h parent _ (by simp [elemOf]))
     all_goals
       simp only [skelStep]
       split <;> exact unfilled_skelList kids.toList _ _ _ _ _

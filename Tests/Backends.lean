@@ -3622,62 +3622,6 @@ def pdfContractChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
       (code == 0 && (← (outDir / "none.pdf").pathExists))
     IO.FS.removeDirAll dir
 
-/-- One structure element as the reader sees it: object number, type, parent reference, child
-element numbers in `/K` order, `(page object, mcid)` references, and its `/Alt` as spelled. -/
-structure ReadElem where
-  num : Nat
-  s : String
-  parent : Option Nat
-  kids : Array Nat
-  mcids : Array (Nat × Nat)
-  ns : Option Nat
-  alt : Option String
-  deriving Repr, Inhabited
-
-/-- The reader's view of a file's structure tree: the root's `/K` chain in preorder. -/
-def readStructTree (es : Array PdfRead.Entry) (root : PdfRead.Obj) : Array ReadElem := Id.run do
-  let byNum (n : Nat) : Option PdfRead.Obj := (es.find? (·.num == n)).map (·.val)
-  let mut out : Array ReadElem := #[]
-  let mut stack : List Nat := match root.get? "K" with
-    | some (.arr xs) => xs.toList.filterMap fun o => match o with
-      | .ref n _ => some n
-      | _ => none
-    | some (.ref n _) => [n]
-    | _ => []
-  -- A tree visits each object once: the object count bounds the walk.
-  for _ in [0:es.size + 1] do
-    match stack with
-    | [] => break
-    | n :: rest =>
-      stack := rest
-      match byNum n with
-      | none => pure ()
-      | some d =>
-        let s := match d.get? "S" with | some (.name s) => s | _ => ""
-        let parent := match d.get? "P" with | some (.ref p _) => some p | _ => none
-        let ns := match d.get? "NS" with | some (.ref p _) => some p | _ => none
-        let kidObjs : List PdfRead.Obj := match d.get? "K" with
-          | some (.arr xs) => xs.toList
-          | some (.ref n g) => [.ref n g]
-          | some (.dict es) => [.dict es]
-          | _ => []
-        let kids := kidObjs.filterMap fun o => match o with
-          | .ref n _ => some n
-          | _ => none
-        let mcids := kidObjs.filterMap fun o => match o with
-          | .dict _ =>
-            match o.get? "Pg", (o.get? "MCID").bind PdfRead.Obj.int? with
-            | some (.ref pg _), some m => some (pg, m.toNat)
-            | _, _ => none
-          | _ => none
-        let alt := match d.get? "Alt" with
-          | some (.str raw) => String.fromUTF8? raw
-          | _ => none
-        out := out.push { num := n, s, parent, kids := kids.toArray, mcids := mcids.toArray, ns,
-                          alt }
-        stack := kids ++ stack
-  return out
-
 /-- The `/MCID n` identifiers a decoded content stream opens, in stream order. -/
 def streamMcids (data : ByteArray) : List Nat :=
   ((String.fromUTF8! data).splitOn "\n").filterMap fun l =>

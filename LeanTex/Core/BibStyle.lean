@@ -1841,7 +1841,7 @@ private def resolveBlock (p : CitePunct) (find : Resolver)
   | .center body => out.push (.center (resolveBlocks p find items #[] body.toList))
   | .ragged s body => out.push (.ragged s (resolveBlocks p find items #[] body.toList))
   | .quote body => out.push (.quote (resolveBlocks p find items #[] body.toList))
-  | .lines body => out.push (.lines (resolveBlocks p find items #[] body.toList))
+  | .lines ls => out.push (.lines (ls.map fun l => { l with content := resolveArr p find l.content }))
   | .titled kind title body =>
     out.push (.titled kind (resolveArr p find title)
       (resolveBlocks p find items #[] body.toList))
@@ -2939,6 +2939,21 @@ private theorem algLines_pending (p : CitePunct) (find : Resolver) :
         · exact .inr hcc
     · exact .inr hc
 
+private theorem laidLines_pending (p : CitePunct) (find : Resolver) :
+    ∀ (lines : List Ir.LaidLine) (acc : Array Ir.Unresolved) (q : Ir.Unresolved),
+      q ∈ Ir.foldLaidLines Ir.pendingStep acc (lines.map fun l =>
+        { l with content := resolveArr p find l.content }) →
+      q ∈ acc ∨ q.isCite = false := by
+  intro lines
+  induction lines with
+  | nil => intro acc q h; exact .inl h
+  | cons l rest ih =>
+    intro acc q h
+    rw [List.map_cons, Ir.foldLaidLines] at h
+    rcases ih _ q h with h' | hc
+    · exact resolveInlines_pending p find l.content.toList acc q h'
+    · exact .inr hc
+
 private theorem bibItems_pending (p : CitePunct) (find : Resolver) :
     ∀ (items : List Ir.BibItem) (acc : Array Ir.Unresolved) (q : Ir.Unresolved),
       q ∈ Ir.foldBibItems Ir.pendingStep acc
@@ -2984,7 +2999,7 @@ private theorem resolveBlock_pending (p : CitePunct) (find : Resolver) (items : 
     intro out acc q h
     simp only [resolveBlock, Ir.foldBlockList_push, Ir.foldBlock] at h
     exact resolveInlines_pending p find title.toList _ q h
-  | .abstract body | .center body | .ragged _ body | .quote body | .lines body | .role _ body
+  | .abstract body | .center body | .ragged _ body | .quote body | .role _ body
   | .link _ body | .spaced _ body | .onSteps _ body | .only _ body | .nav _ body | .note body =>
     intro out acc q h
     simp only [resolveBlock, Ir.foldBlockList_push, Ir.foldBlock] at h
@@ -3023,6 +3038,10 @@ private theorem resolveBlock_pending (p : CitePunct) (find : Resolver) (items : 
     intro out acc q h
     simp only [resolveBlock, Ir.foldBlockList_push, Ir.foldBlock, Array.toList_map] at h
     exact algLines_pending p find lines.toList _ q h
+  | .lines ls =>
+    intro out acc q h
+    simp only [resolveBlock, Ir.foldBlockList_push, Ir.foldBlock, Array.toList_map] at h
+    exact laidLines_pending p find ls.toList _ q h
   | .bibliography _ _ _ =>
     intro out acc q h
     simp only [resolveBlock, Ir.foldBlockList_push, Ir.foldBlock, Array.toList_map] at h

@@ -410,9 +410,9 @@ indent, and reads back as that paragraph: its lines' text kept, a long line's wr
 indent the loss. -/
 def twinLinesChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
-  let doc : Ir.Doc := { body := #[.lines #[.para #[.text "If"],
-    .lines #[.para #[.text "for every n, n is 0,"], .lines #[.para #[.text "deeper"]]],
-    .para #[.text "then False."]]] }
+  let doc : Ir.Doc := { body := #[.lines #[{ depth := 0, content := #[.text "If"] },
+    { depth := 1, content := #[.text "for every n, n is 0,"] },
+    { depth := 2, content := #[.text "deeper"] }, { depth := 0, content := #[.text "then False."] }]] }
   let (tw, back, ds) := roundTrip doc
   let step := "\u2003\u2002"
   t s!"twin: a laid-out paragraph is one paragraph, each line after a hard break and its indent ({repr tw})"

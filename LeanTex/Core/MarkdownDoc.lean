@@ -848,22 +848,12 @@ private def linesIndent (depth : Nat) : String :=
 
 /-- A laid-out paragraph's lines after `acc` as one paragraph's text, each line after the first
 opening a hard break and its indent. -/
-private def linesText (cites : Bool) (depth : Nat) (acc : String) : List Block → String
+private def linesText (cites : Bool) (acc : String) : List Ir.LaidLine → String
   | [] => acc
-  | .lines body :: rest => linesText cites depth (linesText cites (depth + 1) acc body.toList) rest
-  | b :: rest =>
-    let text := match b with
-      | .para xs => inlineText xs cites
-      | b => Ir.blockTextOne "" b
-    linesText cites depth
-      (acc ++ (if acc.isEmpty then "" else "\\\n") ++ linesIndent depth ++ text) rest
-termination_by l => sizeOf l
-decreasing_by
-  all_goals simp_wf
-  all_goals
-    (have hb : ∀ (a : Array Block), sizeOf a = 1 + sizeOf a.toList := fun _ => rfl
-     (try simp only [hb])
-     omega)
+  | l :: rest =>
+    linesText cites
+      (acc ++ (if acc.isEmpty then "" else "\\\n") ++ linesIndent l.depth ++ inlineText l.content cites)
+      rest
 
 private theorem oneLine_mem (s : String) : ∀ x ∈ (oneLine s).toList, x ≠ '\n' ∧ x ≠ '\r' := by
   intro x hx
@@ -1109,7 +1099,7 @@ mutual
 line of the block carries. -/
 private def blockInto (tw : Twin) (summary ind acc : String) : Block → String
   | .para xs => acc ++ paraText ind ind (inlineText xs tw.cites) ++ "\n\n"
-  | .lines body => acc ++ paraText ind ind (linesText tw.cites 0 "" body.toList) ++ "\n\n"
+  | .lines ls => acc ++ paraText ind ind (linesText tw.cites "" ls.toList) ++ "\n\n"
   -- the number rides beside the formula, as it does on the page
   | .equation num xs => acc ++ paraText ind ind (inlineText xs tw.cites ++ " " ++ inlineText num tw.cites) ++ "\n\n"
   | .section level _ num title =>
@@ -1699,7 +1689,7 @@ private theorem headingLevelOne_mem (x : Ir.HeadingLevel) :
   | .center body, out, h => headingLevelList_mem x body.toList out h
   | .ragged _ body, out, h => headingLevelList_mem x body.toList out h
   | .quote body, out, h => headingLevelList_mem x body.toList out h
-  | .lines body, out, h => headingLevelList_mem x body.toList out h
+  | .lines _, _, h => h
   | .abstract body, out, h => headingLevelList_mem x body.toList out h
   | .titled _ _ body, out, h => headingLevelList_mem x body.toList out h
   | .disclosure _ _ body, out, h => headingLevelList_mem x body.toList out h

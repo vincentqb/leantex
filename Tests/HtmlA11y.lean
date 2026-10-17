@@ -50,7 +50,7 @@ def pendingTabStops (head : Array Html.Node) (f : HtmlDoc.A11yFacts) : Nat :=
   if stepsFadeFromNothing css && !pendingStepsOutOfReach css then f.stepTabStops else 0
 
 /-- A page's accessibility deficits, one count per check (`contrast`, `h1`, `hidden-focus`, `img`,
-`pending-focus`, `scroll`, `svg`), sorted by check name. -/
+`pending-focus`, `scope-marks`, `scroll`, `svg`), sorted by check name. -/
 def a11yDeficits (doc : Ir.Doc) (head body : Array Html.Node) :
     List (String × Nat) :=
   let f := a11yFactsOf doc body
@@ -59,6 +59,7 @@ def a11yDeficits (doc : Ir.Doc) (head body : Array Html.Node) :
    ("hidden-focus", f.hiddenTabStops),
    ("img", f.imgsUnnamed),
    ("pending-focus", pendingTabStops head f),
+   ("scope-marks", f.laidUnmarked),
    ("scroll", f.scrollsUnreachable),
    ("svg", f.svgsUnnamed)]
 
@@ -146,9 +147,13 @@ def htmlA11yChecks (ref : IO.Ref (List String)) : IO Unit := do
   let mut scrollsSeen := 0
   let mut summariesSeen := 0
   let mut undecodableSeen := 0
+  let mut laidSeen := 0
   for n in goldenNames do
     let (doc, store, _, body, diags) ← a11yCorpusPage n
     let f := a11yFactsOf doc body
+    laidSeen := laidSeen + f.laidParas
+    t s!"html a11y {n}: every laid-out paragraph's hidden marks spell its scopes \
+({f.laidUnmarked} of {f.laidParas} not)" (f.laidUnmarked == 0)
     svgsSeen := svgsSeen + f.svgs
     scrollsSeen := scrollsSeen + f.scrolls
     t s!"html a11y {n}: every svg is named ({f.svgsUnnamed} of {f.svgs} unnamed)"
@@ -195,6 +200,17 @@ def htmlA11yChecks (ref : IO.Ref (List String)) : IO Unit := do
   t s!"html a11y: the corpus ships inline pictures ({svgsSeen})" (0 < svgsSeen)
   t s!"html a11y: the corpus ships scroll containers ({scrollsSeen})" (0 < scrollsSeen)
   t s!"html a11y: the corpus ships disclosures ({summariesSeen})" (0 < summariesSeen)
+  t s!"html a11y: the corpus ships laid-out paragraphs ({laidSeen})" (0 < laidSeen)
+  -- A scope the page shows by indentation alone, or a mark too few, leaves its bounds unspoken.
+  let line (kids : Array Html.Node) := Html.elem "span" kids #[("class", "lines-line")]
+  let scope (kids : Array Html.Node) := Html.elem "span" kids #[("class", "lines-scope")]
+  let laid (kids : Array Html.Node) : Nat :=
+    (HtmlDoc.a11yFacts true false #[Html.elem "p" kids #[("class", "lines")]]).laidUnmarked
+  let opened := line (HtmlDoc.laidMark '(' 1 ++ #[Html.text "q"] ++ HtmlDoc.laidMark ')' 1)
+  t "html a11y: a laid-out paragraph's scope spoken by its marks is marked, one unspoken is not"
+    (laid #[line #[Html.text "p"], scope #[opened]] == 0 &&
+      laid #[line #[Html.text "p"], scope #[line #[Html.text "q"]]] == 1 &&
+      laid #[line #[Html.text "p"], scope #[scope #[opened]]] == 1)
   -- A summary holding no text, or only hidden text, names nothing.
   let judged (kids : Array Html.Node) (attrs : Array (String × String)) : Nat :=
     (HtmlDoc.a11yFacts true false #[Html.elem "details" #[Html.elem "summary" kids attrs]]).summariesUnnamed

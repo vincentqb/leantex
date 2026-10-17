@@ -12,7 +12,7 @@ para
 role trivlist-env
   ragged left
     lines
-      para
+      line 0
         styled bold
           italicCorr maybe
           text "Theorem"
@@ -23,19 +23,18 @@ role trivlist-env
           text "Ebb.none_all"
         italicCorr maybe
         text "). If"
-      lines
-        para
-          text "for every natural number "
-          formula inline "n"
-            ord:𝑛
-          text ", "
-          formula inline "n"
-            ord:𝑛
-          text " is equal to "
-          formula inline "0"
-            ord:0
-          text ","
-      para
+      line 1
+        text "for every natural number "
+        formula inline "n"
+          ord:𝑛
+        text ", "
+        formula inline "n"
+          ord:𝑛
+        text " is equal to "
+        formula inline "0"
+          ord:0
+        text ","
+      line 0
         text "then "
         formula inline "\\operatorname {False}"
           op:"False"
@@ -48,7 +47,7 @@ para
 role trivlist-env
   ragged left
     lines
-      para
+      line 0
         styled bold
           italicCorr maybe
           text "Theorem"
@@ -68,22 +67,21 @@ role trivlist-env
         formula inline "p"
           ord:𝑝
         text ", then"
-      lines
-        para
-          formula inline "q"
-            ord:𝑞
-          text " if and only if "
-          formula inline "q"
-            ord:𝑞
-          text "."
+      line 1
+        formula inline "q"
+          ord:𝑞
+        text " if and only if "
+        formula inline "q"
+          ord:𝑞
+        text "."
 verbatim language lean4
   "theorem iff_after (p q : Prop) (_hp : p) : q <-> q := Iff.rfl"
 para
-  text "An equivalence of conjunctions under a quantifier sets its first side a block deeper."
+  text "An equivalence of conjunctions under a quantifier sets each side a block deeper."
 role trivlist-env
   ragged left
     lines
-      para
+      line 0
         styled bold
           italicCorr maybe
           text "Theorem"
@@ -100,29 +98,29 @@ role trivlist-env
         formula inline "q"
           ord:𝑞
         text ","
-      lines
-        lines
-          para
-            text "both "
-            formula inline "p"
-              ord:𝑝
-            text " and "
-            formula inline "q"
-              ord:𝑞
-        para
-          text "if and only if both "
-          formula inline "q"
-            ord:𝑞
-          text " and "
-          formula inline "p"
-            ord:𝑝
-          text "."
+      line 2
+        text "both "
+        formula inline "p"
+          ord:𝑝
+        text " and "
+        formula inline "q"
+          ord:𝑞
+      line 1
+        text "if and only if"
+      line 2
+        text "both "
+        formula inline "q"
+          ord:𝑞
+        text " and "
+        formula inline "p"
+          ord:𝑝
+        text "."
 verbatim language lean4
   "theorem swap (p q : Prop) : And p q <-> And q p := And.comm"
 role trivlist-env
   ragged left
     lines
-      para
+      line 0
         styled bold
           italicCorr maybe
           text "Theorem"
@@ -132,26 +130,23 @@ role trivlist-env
           italicCorr maybe
           text "Ebb.neg_all"
         italicCorr maybe
-        text "). It is not the case that"
-      lines
-        para
-          text "for every natural number "
-          formula inline "n"
-            ord:𝑛
-          text ", "
-          formula inline "n"
-            ord:𝑛
-          text " is equal to "
-          formula inline "0"
-            ord:0
-          text "."
+        text "). It is not the case that for every natural number "
+        formula inline "n"
+          ord:𝑛
+        text ", "
+        formula inline "n"
+          ord:𝑛
+        text " is equal to "
+        formula inline "0"
+          ord:0
+        text "."
 verbatim language lean4
   "theorem neg_all : Not (forall n : Nat, n = 0) :="
   "  fun h => absurd (h 1) (by omega)"
 role trivlist-env
   ragged left
     lines
-      para
+      line 0
         styled bold
           italicCorr maybe
           text "Theorem"
@@ -162,38 +157,34 @@ role trivlist-env
           text "Ebb.both_all"
         italicCorr maybe
         text "). Both"
-      lines
-        para
-          text "for every natural number "
-          formula inline "n"
-            ord:𝑛
-          text ", "
-          formula inline "0"
-            ord:0
-          text " is at most "
-          formula inline "n"
-            ord:𝑛
-      para
-        text "and"
-      lines
-        para
-          text "there is a natural number "
-          formula inline "m"
-            ord:𝑚
-          text " such that "
-          formula inline "m"
-            ord:𝑚
-          text " is equal to "
-          formula inline "m"
-            ord:𝑚
-          text "."
+      line 1
+        text "for every natural number "
+        formula inline "n"
+          ord:𝑛
+        text ", "
+        formula inline "0"
+          ord:0
+        text " is at most "
+        formula inline "n"
+          ord:𝑛
+      line 0
+        text "and there is a natural number "
+        formula inline "m"
+          ord:𝑚
+        text " such that "
+        formula inline "m"
+          ord:𝑚
+        text " is equal to "
+        formula inline "m"
+          ord:𝑚
+        text "."
 verbatim language lean4
   "theorem both_all : And (forall n : Nat, 0 <= n) (exists m : Nat, m = m) :="
   "  And.intro Nat.zero_le (Exists.intro 0 rfl)"
 role trivlist-env
   ragged left
     lines
-      para
+      line 0
         styled bold
           italicCorr maybe
           text "Theorem"

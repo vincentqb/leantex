@@ -99,6 +99,7 @@ private def referentOne (keys : ReferentKeys) : Block → Block
   | .nav spec body => .nav spec (referentList keys #[] body.toList)
   | .frame t s v br body => .frame t s v br (referentList keys #[] body.toList)
   | .para content => .para content
+  | .lines ls => .lines ls
   | .equation n content => .equation n content
   | .section l st num title => .section l st num title
   | .verbatim c s sp => .verbatim c s sp
@@ -409,8 +410,8 @@ private theorem referentOne_text (keys : ReferentKeys) (b : Block) (acc : String
     rw [referentOne]
     simp [blockTextOne, referentList_text keys body.toList #[] _,
       blockTextList]
-  | .para _ | .equation _ _ | .section _ _ _ _ | .verbatim _ _ _ | .note _ | .framefoot _
-  | .pagebreak | .setPalette _ | .setTokens _ | .algorithm _ _ _ | .logo _ | .rule _ _ _
+  | .para _ | .lines _ | .equation _ _ | .section _ _ _ _ | .verbatim _ _ _ | .note _
+  | .framefoot _ | .pagebreak | .setPalette _ | .setTokens _ | .algorithm _ _ _ | .logo _ | .rule _ _ _
   | .picture _ | .table _ _ _ _ _ _ | .bibliography _ _ _ => rfl
 
 private theorem referentItems_text (keys : ReferentKeys) (items : List (Array Block))

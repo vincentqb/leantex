@@ -3193,3 +3193,178 @@ def headLine (src : String) (line : Nat) : String :=
 /-- A page's shipped lines: whether each is set in the typewriter face alone, and its ink. -/
 def codePageLines (fonts : Font.FontSet) (doc : Ir.Doc) : Array (Bool × String) :=
   (bodyLines (layoutOf fonts doc)).map fun l => (monoLine l, lineInk l)
+
+/-- UTF-16BE code units as characters, a surrogate pair as one. -/
+def utf16beChars : List Nat → List Char
+  | hi :: lo :: rest =>
+    let u := hi * 256 + lo
+    if 0xD800 ≤ u && u < 0xDC00 then
+      match rest with
+      | hi2 :: lo2 :: more =>
+        Char.ofNat (0x10000 + (u - 0xD800) * 1024 + (hi2 * 256 + lo2 - 0xDC00)) :: utf16beChars more
+      | _ => []
+    else Char.ofNat u :: utf16beChars rest
+  | _ => []
+
+/-- A literal string's body bytes, its escapes read (§7.3.4.2). -/
+def literalBody : List Nat → List Nat
+  | 92 :: c :: rest =>
+    if c == 110 then 10 :: literalBody rest
+    else if c == 114 then 13 :: literalBody rest
+    else if c == 116 then 9 :: literalBody rest
+    else c :: literalBody rest
+  | c :: rest => c :: literalBody rest
+  | [] => []
+
+/-- A hex string's body bytes, two digits each (§7.3.4.3). -/
+def hexBody : List Nat → List Nat
+  | a :: b :: rest =>
+    let v (c : Nat) : Nat := if c ≤ 57 then c - 48 else if c ≤ 70 then c - 55 else c - 87
+    (v a * 16 + v b) :: hexBody rest
+  | _ => []
+
+/-- A text string's characters (§7.9.2.2), from its verbatim bytes: UTF-16BE after its byte-order
+mark, else the printable ASCII PDFDocEncoding reads as itself. -/
+def pdfTextOf (raw : ByteArray) : Option String :=
+  let bs := raw.data.toList.map UInt8.toNat
+  let body := match bs with
+    | 40 :: rest => literalBody rest.dropLast
+    | 60 :: rest => hexBody (rest.dropLast.filter (fun c => c != 32 && c != 10 && c != 13))
+    | _ => bs
+  match body with
+  | 0xFE :: 0xFF :: rest => some (String.ofList (utf16beChars rest))
+  | _ => if body.all (· < 128) then some (String.ofList (body.map Char.ofNat)) else none
+
+/-- One structure element as the reader sees it: object number, type, parent reference, child
+element numbers in `/K` order, `(page object, mcid)` references, its `/Alt` as spelled and its
+`/ActualText` as read. -/
+structure ReadElem where
+  num : Nat
+  s : String
+  parent : Option Nat
+  kids : Array Nat
+  mcids : Array (Nat × Nat)
+  ns : Option Nat
+  alt : Option String
+  actualText : Option String
+  deriving Repr, Inhabited
+
+/-- The reader's view of a file's structure tree: the root's `/K` chain in preorder. -/
+def readStructTree (es : Array PdfRead.Entry) (root : PdfRead.Obj) : Array ReadElem := Id.run do
+  let byNum (n : Nat) : Option PdfRead.Obj := (es.find? (·.num == n)).map (·.val)
+  let mut out : Array ReadElem := #[]
+  let mut stack : List Nat := match root.get? "K" with
+    | some (.arr xs) => xs.toList.filterMap fun o => match o with
+      | .ref n _ => some n
+      | _ => none
+    | some (.ref n _) => [n]
+    | _ => []
+  -- A tree visits each object once: the object count bounds the walk.
+  for _ in [0:es.size + 1] do
+    match stack with
+    | [] => break
+    | n :: rest =>
+      stack := rest
+      match byNum n with
+      | none => pure ()
+      | some d =>
+        let s := match d.get? "S" with | some (.name s) => s | _ => ""
+        let parent := match d.get? "P" with | some (.ref p _) => some p | _ => none
+        let ns := match d.get? "NS" with | some (.ref p _) => some p | _ => none
+        let kidObjs : List PdfRead.Obj := match d.get? "K" with
+          | some (.arr xs) => xs.toList
+          | some (.ref n g) => [.ref n g]
+          | some (.dict es) => [.dict es]
+          | _ => []
+        let kids := kidObjs.filterMap fun o => match o with
+          | .ref n _ => some n
+          | _ => none
+        let mcids := kidObjs.filterMap fun o => match o with
+          | .dict _ =>
+            match o.get? "Pg", (o.get? "MCID").bind PdfRead.Obj.int? with
+            | some (.ref pg _), some m => some (pg, m.toNat)
+            | _, _ => none
+          | _ => none
+        let alt := match d.get? "Alt" with
+          | some (.str raw) => String.fromUTF8? raw
+          | _ => none
+        let actualText := match d.get? "ActualText" with
+          | some (.str raw) => pdfTextOf raw
+          | _ => none
+        out := out.push { num := n, s, parent, kids := kids.toArray, mcids := mcids.toArray, ns,
+                          alt, actualText }
+        stack := kids ++ stack
+  return out
+
+namespace Prose
+
+open LeanTex.Core.LeanProse
+
+/-- A one-word formula, the leaf of an invented statement. -/
+def wordLeaf (s : String) : Leaf := [#[.word s]]
+
+/-- The word a one-word formula holds. -/
+def leafWord : Leaf → String
+  | [#[.word w]] => w
+  | _ => "?"
+
+/-- An invented answer whose constants have the given leading binders. -/
+def factsWith (binders : Array (String × Array LeanFacts.Binder)) : LeanFacts.Facts :=
+  { lean := "4.34.1", errors := 0, decls := #[], binders }
+
+/-- A random term for a slot: a leaf, or a phrase of the table over leaves. -/
+def randTerm (tb : Table) (s : UInt64) : Term Leaf × UInt64 :=
+  let (k, s) := rand s (tb.phrases.length + 2)
+  match tb.phrases[k]? with
+  | some (_, p) => (.phrase p ((List.range p.arity).map fun i => wordLeaf s!"t{i}"), s)
+  | none => (.leaf (wordLeaf s!"u{k}"), s)
+
+/-- A random binder: a number set's noun, a proposition's, or an element of a type, over one to
+three names. -/
+def randBinder (s : UInt64) : Binder Leaf × UInt64 :=
+  let (k, s) := rand s (numberNouns.length + 2)
+  let (more, s) := rand s 3
+  let names := (List.range more).map fun i => wordLeaf s!"y{i}"
+  let pick (one many : List String) : List String := if more == 0 then one else many
+  match numberNouns[k]? with
+  | some (_, one, many) => (⟨pick one many, wordLeaf "x", names, none⟩, s)
+  | none =>
+    if k == numberNouns.length then (⟨pick ["proposition"] ["propositions"], wordLeaf "p", names,
+      none⟩, s)
+    else (⟨pick ["element"] ["elements"], wordLeaf "x", names, some (wordLeaf "T")⟩, s)
+
+/-- A random statement of depth at most `d` over a table's relations and phrases. -/
+def randStmt (tb : Table) : Nat → UInt64 → Stmt Leaf × UInt64
+  | 0, s =>
+    let (k, s) := rand s (tb.rels.length + 1)
+    match tb.rels[k]? with
+    | some (_, r) =>
+      let (args, s) := (List.range r.arity).foldl (fun (acc : List (Term Leaf) × UInt64) _ =>
+        let (x, s) := randTerm tb acc.2
+        (acc.1 ++ [x], s)) ([], s)
+      (.rel r args, s)
+    | none => (.atom (wordLeaf "P"), s)
+  | d + 1, s =>
+    let (k, s) := rand s 9
+    let (a, s) := randStmt tb d s
+    let (b, s) := randStmt tb d s
+    let (q, s) := randBinder s
+    match k with
+    | 0 => (.all q a, s)
+    | 1 => (.ex q a, s)
+    | 2 => (.imp a b, s)
+    | 3 => (.conj a b, s)
+    | 4 => (.disj a b, s)
+    | 5 => (.iff a b, s)
+    | 6 => (.neg a, s)
+    | _ => (a, s)
+
+/-- A theorem of an invented file: its name, the line it stands on, and its type. -/
+def theoremAt (name : String) (line : Nat) (type : LeanFacts.Term) : LeanFacts.Decl :=
+  { name, kind := .theorem, prop := true, start := (line, 0), stop := (line, 25), type }
+
+/-- `n = n` for a numeral `n`, as a facts file gives it. -/
+def selfEq (n : Nat) : LeanFacts.Term :=
+  .apps (.const "Eq") [.apps (.const "Nat") [], .apps (.nat n) [], .apps (.nat n) []]
+
+end Prose

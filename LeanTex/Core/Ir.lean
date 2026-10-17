@@ -4504,11 +4504,23 @@ public theorem listing_language_agree (spec : ListingSpec) :
 `\parindent`, 1.5em. -/
 @[expose] public def linesStep : Length := { em := 1500 }
 
+/-- One line of a laid-out paragraph: how many scopes hold it, each a `linesStep` in, and its
+content. -/
+public structure LaidLine where
+  depth : Nat
+  content : Array Inline
+  deriving Repr, BEq, Inhabited
+
+/-- The scopes a laid-out paragraph's line opens past a line at depth `prev` and closes before one
+at depth `next`. -/
+@[expose] public def LaidLine.bounds (l : LaidLine) (prev next : Nat) : Nat × Nat :=
+  (l.depth - prev, l.depth - next)
+
 public inductive Block where
   | para (content : Array Inline)
-  /-- A paragraph laid out in lines, each paragraph in it one line under the last at the leading and
-  continuing at its indent when it wraps, each `lines` in it standing `linesStep` further in. -/
-  | lines (body : Array Block)
+  /-- A paragraph laid out in lines, each under the last at the leading, continuing at its indent
+  when it wraps; a scope is a run of lines deeper than the lines around it. -/
+  | lines (lines : Array LaidLine)
   /-- A heading; `number` is the section's resolved number, assigned at
   elaboration in flow order. -/
   | section (level : HeadingLevel) (starred : Bool) (number : Option String) (title : Array Inline)
@@ -5060,9 +5072,7 @@ private def numberFloatOne (c : FloatCtr) : Block → FloatCtr × Block
   | .quote body =>
     let (c2, body2) := numberFloatList c #[] body.toList
     (c2, .quote body2)
-  | .lines body =>
-    let (c2, body2) := numberFloatList c #[] body.toList
-    (c2, .lines body2)
+  | .lines ls => (c, .lines ls)
   | .abstract body =>
     let (c2, body2) := numberFloatList c #[] body.toList
     (c2, .abstract body2)
@@ -5157,7 +5167,7 @@ private def floatNumsOne (k : FloatKind) (out : List Nat) : Block → List Nat
   | .center body => floatNumsList k out body.toList
   | .ragged _ body => floatNumsList k out body.toList
   | .quote body => floatNumsList k out body.toList
-  | .lines body => floatNumsList k out body.toList
+  | .lines _ => out
   | .abstract body => floatNumsList k out body.toList
   | .titled _ _ body => floatNumsList k out body.toList
   | .disclosure _ _ body => floatNumsList k out body.toList
@@ -5243,7 +5253,7 @@ private theorem numberFloatOne_exact (k : FloatKind) (c : FloatCtr) (out : List 
       floatNumsOne k out (numberFloatOne c b).2
         = out ++ List.range' (c.get k + 1) n := by
   match b with
-  | .para _ | .equation _ _ | .section _ _ _ _ | .note _ | .verbatim _ _ _ | .logo _
+  | .para _ | .lines _ | .equation _ _ | .section _ _ _ _ | .note _ | .verbatim _ _ _ | .logo _
   | .algorithm _ _ _
   | .bibliography _ _ _
   | .framefoot _ | .setPalette _ | .setTokens _ | .pagebreak
@@ -5262,10 +5272,6 @@ private theorem numberFloatOne_exact (k : FloatKind) (c : FloatCtr) (out : List 
     exact ⟨n, by simpa [numberFloatOne] using hc,
       by simpa [numberFloatOne, floatNumsOne, floatNumsList] using hn⟩
   | .quote body =>
-    obtain ⟨n, hc, hn⟩ := numberFloatList_exact k c #[] out body.toList
-    exact ⟨n, by simpa [numberFloatOne] using hc,
-      by simpa [numberFloatOne, floatNumsOne, floatNumsList] using hn⟩
-  | .lines body =>
     obtain ⟨n, hc, hn⟩ := numberFloatList_exact k c #[] out body.toList
     exact ⟨n, by simpa [numberFloatOne] using hc,
       by simpa [numberFloatOne, floatNumsOne, floatNumsList] using hn⟩
@@ -6414,7 +6420,6 @@ public def frameFillsOne (l : ListLineage) (styles : Styles) (v : FillView) (acc
       else items.foldl (fun n item => n + itemTrailingFills item) acc
     | .page _ | .every => frameFillsItems l styles v acc items.toList
   | .center body => frameFillsList l styles v acc body.toList
-  | .lines body => frameFillsList l styles v acc body.toList
   | .ragged _ body => frameFillsList l styles v acc body.toList
   | .role _ body => frameFillsList l styles v acc body.toList
   | .link _ body => frameFillsList l styles v acc body.toList
@@ -6447,7 +6452,7 @@ public def frameFillsOne (l : ListLineage) (styles : Styles) (v : FillView) (acc
     if (Block.disclosure summary expanded body).listScope l styles == .onList then
       frameFillsList l styles v acc body.toList
     else acc
-  | .para _ | .section .. | .equation .. | .verbatim .. | .algorithm .. | .columns _
+  | .para _ | .lines _ | .section .. | .equation .. | .verbatim .. | .algorithm .. | .columns _
   | .note _ | .logo _ | .pagebreak | .frame .. | .framefoot _ | .setPalette _ | .setTokens _
   | .rule .. | .picture _ | .table .. | .bibliography .. =>
     acc
@@ -8366,6 +8371,11 @@ public def inlineSource (content : Array Inline) : Option Span :=
       | some c => foldInlineList fi (foldInlineList fi acc l.content.toList) c.toList
       | none => foldInlineList fi acc l.content.toList) rest
 
+/-- `foldInline` over a laid-out paragraph's lines, in reading order. -/
+@[expose] public def foldLaidLines (fi : α → Inline → α) (acc : α) : List LaidLine → α
+  | [] => acc
+  | l :: rest => foldLaidLines fi (foldInlineList fi acc l.content.toList) rest
+
 @[expose] public def foldTableRows (fi : α → Inline → α) (acc : α) :
     List (Array (Array Inline)) → α
   | [] => acc
@@ -8390,7 +8400,7 @@ node first, a frame's title and a float's caption before their bodies. -/
   | .center body => foldBlockList fb fi (fb acc b) body.toList
   | .ragged _ body => foldBlockList fb fi (fb acc b) body.toList
   | .quote body => foldBlockList fb fi (fb acc b) body.toList
-  | .lines body => foldBlockList fb fi (fb acc b) body.toList
+  | .lines ls => foldLaidLines fi (fb acc b) ls.toList
   | .abstract body => foldBlockList fb fi (fb acc b) body.toList
   | .titled _ title body =>
     foldBlockList fb fi (foldInlineList fi (fb acc b) title.toList) body.toList
@@ -8467,8 +8477,9 @@ public inductive Outside where
 list, or a container holding only such blocks. -/
 public def setsNothing : Block → Bool
   | .para content => content.isEmpty || anchorsOnly content
+  | .lines ls => ls.all fun l => l.content.isEmpty || anchorsOnly l.content
   | .list _ _ items => items.isEmpty
-  | .center body | .ragged _ body | .spaced _ body | .role _ body | .link _ body | .quote body | .lines body
+  | .center body | .ragged _ body | .spaced _ body | .role _ body | .link _ body | .quote body
   | .onSteps _ body | .only _ body => body.attach.all fun ⟨b, _⟩ => setsNothing b
   | .section .. | .abstract _ | .titled .. | .disclosure .. | .equation .. | .verbatim ..
   | .algorithm .. | .columns _ | .altSteps .. | .note _ | .nav .. | .logo _ | .pagebreak
@@ -8596,6 +8607,11 @@ public def foldCtxAlgLines (w : CtxFold γ α) (ctx : γ) (acc : α) : List AlgL
       | some c => foldCtxInlineList w ctx (foldCtxInlineList w ctx acc l.content.toList) c.toList
       | none => foldCtxInlineList w ctx acc l.content.toList) rest
 
+/-- `foldCtxInline` over a laid-out paragraph's lines, in reading order. -/
+public def foldCtxLaidLines (w : CtxFold γ α) (ctx : γ) (acc : α) : List LaidLine → α
+  | [] => acc
+  | l :: rest => foldCtxLaidLines w ctx (foldCtxInlineList w ctx acc l.content.toList) rest
+
 /-- `foldCtxInline` over a reference list's items, entry by entry. -/
 public def foldCtxBibItems (w : CtxFold γ α) (ctx : γ) (acc : α) : List BibItem → α
   | [] => acc
@@ -8629,9 +8645,9 @@ returns in force over the node's content and `closeBlock` called after it. -/
   | .quote body =>
     let r := w.openBlock ctx acc b
     w.closeBlock ctx (foldCtxBlockList w r.2 r.1 body.toList) b
-  | .lines body =>
+  | .lines ls =>
     let r := w.openBlock ctx acc b
-    w.closeBlock ctx (foldCtxBlockList w r.2 r.1 body.toList) b
+    w.closeBlock ctx (foldCtxLaidLines w r.2 r.1 ls.toList) b
   | .abstract body =>
     let r := w.openBlock ctx acc b
     w.closeBlock ctx (foldCtxBlockList w r.2 r.1 body.toList) b
@@ -8837,6 +8853,13 @@ public theorem foldCtxAlgLines_covers (fb : α → Block → α) (fi : α → In
     | none => simp only [foldCtxInlineList_covers, ih]
     | some c => simp only [foldCtxInlineList_covers, ih]
 
+public theorem foldCtxLaidLines_covers (fb : α → Block → α) (fi : α → Inline → α) (acc : α)
+    (lines : List LaidLine) :
+    foldCtxLaidLines (CtxFold.ofFold fb fi) () acc lines = foldLaidLines fi acc lines := by
+  induction lines generalizing acc with
+  | nil => rfl
+  | cons l rest ih => rw [foldCtxLaidLines, foldLaidLines, foldCtxInlineList_covers, ih]
+
 mutual
 
 public theorem foldCtxBlock_covers (fb : α → Block → α) (fi : α → Inline → α) (acc : α)
@@ -8871,10 +8894,10 @@ public theorem foldCtxBlock_covers (fb : α → Block → α) (fi : α → Inlin
     simp only [foldCtxBlock, foldBlock, CtxFold.ofFold_openBlock,
       CtxFold.ofFold_closeBlock]
     exact foldCtxBlockList_covers fb fi _ body.toList
-  | .lines body =>
+  | .lines ls =>
     simp only [foldCtxBlock, foldBlock, CtxFold.ofFold_openBlock,
       CtxFold.ofFold_closeBlock]
-    exact foldCtxBlockList_covers fb fi _ body.toList
+    exact foldCtxLaidLines_covers fb fi _ ls.toList
   | .abstract body =>
     simp only [foldCtxBlock, foldBlock, CtxFold.ofFold_openBlock,
       CtxFold.ofFold_closeBlock]
@@ -9218,7 +9241,7 @@ private def navLinkOne (out : Array (String × String)) : Block → Array (Strin
   | .center body => navLinkList out body.toList
   | .ragged _ body => navLinkList out body.toList
   | .quote body => navLinkList out body.toList
-  | .lines body => navLinkList out body.toList
+  | .lines ls => navLinkLaid out ls.toList
   | .abstract body => navLinkList out body.toList
   | .titled _ title body => navLinkList (navLinkInlineList out title.toList) body.toList
   | .disclosure title _ body => navLinkList (navLinkInlineList out title.toList) body.toList
@@ -9270,6 +9293,11 @@ private def navLinkAlgLines (out : Array (String × String)) :
     navLinkAlgLines (match l.comment with
       | some c => navLinkInlineList (navLinkInlineList out l.content.toList) c.toList
       | none => navLinkInlineList out l.content.toList) rest
+
+private def navLinkLaid (out : Array (String × String)) :
+    List LaidLine → Array (String × String)
+  | [] => out
+  | l :: rest => navLinkLaid (navLinkInlineList out l.content.toList) rest
 
 private def navLinkInlineList (out : Array (String × String)) :
     List Inline → Array (String × String)
@@ -9623,7 +9651,8 @@ private def dumpBlock (ind : String) (b : Block) : String :=
   | .center body => s!"{ind}center\n" ++ dumpBlocks (ind ++ "  ") body
   | .ragged s body => s!"{ind}ragged {s.align}\n" ++ dumpBlocks (ind ++ "  ") body
   | .quote body => s!"{ind}quote\n" ++ dumpBlocks (ind ++ "  ") body
-  | .lines body => s!"{ind}lines\n" ++ dumpBlocks (ind ++ "  ") body
+  | .lines ls => s!"{ind}lines\n" ++
+    String.join (ls.toList.map fun l => s!"{ind}  line {l.depth}\n" ++ dumpInlines (ind ++ "    ") l.content)
   | .abstract body => s!"{ind}abstract\n" ++ dumpBlocks (ind ++ "  ") body
   | .titled kind title body =>
     s!"{ind}titled {kind.name}\n" ++
@@ -11333,7 +11362,7 @@ private def maxStepBlock : Block → Nat
   | .center body => maxStepBlockList body.toList
   | .ragged _ body => maxStepBlockList body.toList
   | .quote body => maxStepBlockList body.toList
-  | .lines body => maxStepBlockList body.toList
+  | .lines ls => maxStepLaid ls.toList
   | .abstract body => maxStepBlockList body.toList
   | .titled _ title body => max (maxStepInlines title) (maxStepBlockList body.toList)
   | .disclosure summary _ body => max (maxStepInlines summary) (maxStepBlockList body.toList)
@@ -11387,6 +11416,10 @@ private def maxStepAlgLines : List AlgLine → Nat
        | some c => maxStepInlineList c.toList
        | none => 1))
       (maxStepAlgLines rest)
+
+private def maxStepLaid : List LaidLine → Nat
+  | [] => 1
+  | l :: rest => max (maxStepInlineList l.content.toList) (maxStepLaid rest)
 
 public def maxStepInlines (xs : Array Inline) : Nat := maxStepInlineList xs.toList
 
@@ -11526,7 +11559,7 @@ private def dimBlock (cover : Cover) (k : Nat) (pending : Bool) : Block → Bloc
   | .center body => .center (dimBlockList cover k pending #[] body.toList)
   | .ragged s body => .ragged s (dimBlockList cover k pending #[] body.toList)
   | .quote body => .quote (dimBlockList cover k pending #[] body.toList)
-  | .lines body => .lines (dimBlockList cover k pending #[] body.toList)
+  | .lines ls => .lines (dimLaid cover k pending #[] ls.toList)
   | .abstract body => .abstract (dimBlockList cover k pending #[] body.toList)
   | .titled kind title body =>
     .titled kind (dimInlineList cover k pending #[] title.toList)
@@ -11627,6 +11660,15 @@ private def dimAlgLines (cover : Cover) (k : Nat) (pending : Bool) (out : Array 
         content := content
         comment := comment }) rest
 
+private def dimLaid (cover : Cover) (k : Nat) (pending : Bool) (out : Array LaidLine) :
+    List LaidLine → Array LaidLine
+  | [] => out
+  | l :: rest =>
+    let content := if pending then
+        #[.colored cover.plain none (dimInlineList cover k true #[] l.content.toList)]
+      else dimInlineList cover k false #[] l.content.toList
+    dimLaid cover k pending (out.push { depth := l.depth, content := content }) rest
+
 private def dimInlineList (cover : Cover) (k : Nat) (pending : Bool) (out : Array Inline) :
     List Inline → Array Inline
   | [] => out
@@ -11724,7 +11766,6 @@ public def unwrapItemStep : Block → Block
   | .center body => .center (unwrapItemStepList #[] body.toList)
   | .ragged s body => .ragged s (unwrapItemStepList #[] body.toList)
   | .quote body => .quote (unwrapItemStepList #[] body.toList)
-  | .lines body => .lines (unwrapItemStepList #[] body.toList)
   | .abstract body => .abstract (unwrapItemStepList #[] body.toList)
   | .titled kind title body => .titled kind title (unwrapItemStepList #[] body.toList)
   | .disclosure summary expanded body =>
@@ -11741,6 +11782,7 @@ public def unwrapItemStep : Block → Block
   | .nav spec body => .nav spec (unwrapItemStepList #[] body.toList)
   | .frame t s v br body => .frame t s v br (unwrapItemStepList #[] body.toList)
   | .para content => .para content
+  | .lines ls => .lines ls
   | .equation n content => .equation n content
   | .section l st num title => .section l st num title
   | .verbatim c s sp => .verbatim c s sp
@@ -11850,6 +11892,11 @@ comment; generated keywords never count. -/
         (acc ++ plainText l.content) ++ pc
       | none => acc ++ plainText l.content) rest
 
+/-- A laid-out paragraph's census: each line's content, in reading order. -/
+@[expose] public def laidText (acc : String) : List LaidLine → String
+  | [] => acc
+  | l :: rest => laidText (acc ++ plainText l.content) rest
+
 mutual
 
 /-- The characters of block content with every mark stripped, the block companion of `plainText`. -/
@@ -11874,7 +11921,7 @@ mutual
   | .center body => blockTextList acc body.toList
   | .ragged _ body => blockTextList acc body.toList
   | .quote body => blockTextList acc body.toList
-  | .lines body => blockTextList acc body.toList
+  | .lines ls => laidText acc ls.toList
   | .abstract body => blockTextList acc body.toList
   | .titled _ title body => blockTextList (acc ++ plainText title) body.toList
   | .disclosure title _ body => blockTextList (acc ++ plainText title) body.toList
@@ -12165,7 +12212,7 @@ frame bodies are walked, notes are not. -/
   | .center body => headingLevelList out body.toList
   | .ragged _ body => headingLevelList out body.toList
   | .quote body => headingLevelList out body.toList
-  | .lines body => headingLevelList out body.toList
+  | .lines _ => out
   | .abstract body => headingLevelList out body.toList
   | .titled _ _ body => headingLevelList out body.toList
   | .disclosure _ _ body => headingLevelList out body.toList
@@ -12248,7 +12295,7 @@ private def footnoteBlockOne (out : Array (Option Nat × Array Inline)) :
   | .center body => footnoteBlockList out body.toList
   | .ragged _ body => footnoteBlockList out body.toList
   | .quote body => footnoteBlockList out body.toList
-  | .lines body => footnoteBlockList out body.toList
+  | .lines ls => footnoteLaid out ls.toList
   | .abstract body => footnoteBlockList out body.toList
   | .titled _ title body =>
     footnoteBlockList (footnoteInlineList out title.toList) body.toList
@@ -12313,6 +12360,11 @@ private def footnoteAlgLines (out : Array (Option Nat × Array Inline)) :
     footnoteAlgLines (match l.comment with
       | some c => footnoteInlineList (footnoteInlineList out l.content.toList) c.toList
       | none => footnoteInlineList out l.content.toList) rest
+
+private def footnoteLaid (out : Array (Option Nat × Array Inline)) :
+    List LaidLine → Array (Option Nat × Array Inline)
+  | [] => out
+  | l :: rest => footnoteLaid (footnoteInlineList out l.content.toList) rest
 
 private def footnoteInlineList (out : Array (Option Nat × Array Inline)) :
     List Inline → Array (Option Nat × Array Inline)
@@ -12601,6 +12653,12 @@ private theorem algLineText_chain (l1 l2 : List AlgLine) (acc : String) :
   | nil => simp [algLineText]
   | cons l rest ih => cases hc : l.comment <;> simp [algLineText, hc, ih]
 
+private theorem laidText_chain (l1 l2 : List LaidLine) (acc : String) :
+    laidText acc (l1 ++ l2) = laidText (laidText acc l1) l2 := by
+  induction l1 generalizing acc with
+  | nil => simp [laidText]
+  | cons l rest ih => simp [laidText, ih]
+
 private theorem blockTextItems_chain (l1 l2 : List (Array Block)) (acc : String) :
     blockTextItems acc (l1 ++ l2) = blockTextItems (blockTextItems acc l1) l2 := by
   induction l1 generalizing acc with
@@ -12734,6 +12792,21 @@ private theorem dimAlgLines_text (cover : Cover) (k : Nat) (pending : Bool)
           dimInlineList_text cover k false l.content.toList #[],
           dimInlineList_text cover k false c.toList #[]]
 
+private theorem dimLaid_text (cover : Cover) (k : Nat) (pending : Bool)
+    (ls : List LaidLine) (out : Array LaidLine) (acc : String) :
+    laidText acc (dimLaid cover k pending out ls).toList
+      = laidText (laidText acc out.toList) ls := by
+  match ls with
+  | [] => simp [dimLaid, laidText]
+  | l :: rest =>
+    rw [dimLaid, dimLaid_text cover k pending rest]
+    rw [Array.toList_push, laidText_chain]
+    by_cases h : pending = true
+    · simp [h, laidText, plainText, plainTextList, plainTextOne,
+        dimInlineList_text cover k true l.content.toList #[]]
+    · simp [h, laidText, plainText, plainTextList,
+        dimInlineList_text cover k false l.content.toList #[]]
+
 private theorem dimTableCells_text (cover : Cover) (k : Nat) (pending : Bool)
     (cells : List (Array Inline))
     (out : Array (Array Inline)) (acc : String) :
@@ -12831,9 +12904,11 @@ private theorem dimBlock_text (cover : Cover) (k : Nat) (pending : Bool) (b : Bl
   | .quote body =>
     rw [dimBlock]
     simp [blockTextOne, dimBlockList_text cover k pending body.toList #[] acc, blockTextList]
-  | .lines body =>
+  | .lines ls =>
     rw [dimBlock]
-    simp [blockTextOne, dimBlockList_text cover k pending body.toList #[] acc, blockTextList]
+    show laidText acc (dimLaid cover k pending #[] ls.toList).toList = _
+    rw [dimLaid_text cover k pending ls.toList #[] acc]
+    rfl
   | .abstract body =>
     rw [dimBlock]
     simp [blockTextOne, dimBlockList_text cover k pending body.toList #[] acc, blockTextList]
@@ -13027,10 +13102,6 @@ private theorem unwrapItemStep_text (b : Block) (acc : String) :
     rw [unwrapItemStep]
     simp [blockTextOne, unwrapItemStepList_text body.toList #[] acc,
       blockTextList]
-  | .lines body =>
-    rw [unwrapItemStep]
-    simp [blockTextOne, unwrapItemStepList_text body.toList #[] acc,
-      blockTextList]
   | .abstract body =>
     rw [unwrapItemStep]
     simp [blockTextOne, unwrapItemStepList_text body.toList #[] acc,
@@ -13083,8 +13154,8 @@ private theorem unwrapItemStep_text (b : Block) (acc : String) :
     rw [unwrapItemStep]
     simp [blockTextOne, unwrapItemStepList_text body.toList #[] _,
       blockTextList]
-  | .para _ | .equation _ _ | .section _ _ _ _ | .verbatim _ _ _ | .note _ | .framefoot _
-  | .pagebreak
+  | .para _ | .lines _ | .equation _ _ | .section _ _ _ _ | .verbatim _ _ _ | .note _
+  | .framefoot _ | .pagebreak
   | .setPalette _ | .setTokens _ | .algorithm _ _ _
   | .logo _ | .rule _ _ _ | .picture _ | .table _ _ _ _ _ _
   | .bibliography _ _ _ => rfl
@@ -13140,7 +13211,7 @@ private theorem numberFloatList_text (c : FloatCtr) (acc : Array Block)
 private theorem numberFloatOne_text (c : FloatCtr) (b : Block) (s : String) :
     blockTextOne s (numberFloatOne c b).2 = blockTextOne s b := by
   match b with
-  | .para _ | .equation _ _ | .section _ _ _ _ | .note _ | .verbatim _ _ _ | .logo _
+  | .para _ | .lines _ | .equation _ _ | .section _ _ _ _ | .note _ | .verbatim _ _ _ | .logo _
   | .bibliography _ _ _ | .algorithm _ _ _
   | .framefoot _ | .setPalette _ | .setTokens _ | .pagebreak
   | .rule _ _ _ | .picture _ | .table _ _ _ _ _ _ => rfl
@@ -13154,9 +13225,6 @@ private theorem numberFloatOne_text (c : FloatCtr) (b : Block) (s : String) :
     simp [numberFloatOne, blockTextOne,
       numberFloatList_text c #[] body.toList, blockTextList]
   | .quote body =>
-    simp [numberFloatOne, blockTextOne,
-      numberFloatList_text c #[] body.toList, blockTextList]
-  | .lines body =>
     simp [numberFloatOne, blockTextOne,
       numberFloatList_text c #[] body.toList, blockTextList]
   | .abstract body =>
@@ -13267,7 +13335,6 @@ exclude `t` is dropped whole, everything else kept. -/
   | .center body => .center (keepForList t body.toList).toArray
   | .ragged s body => .ragged s (keepForList t body.toList).toArray
   | .quote body => .quote (keepForList t body.toList).toArray
-  | .lines body => .lines (keepForList t body.toList).toArray
   | .abstract body => .abstract (keepForList t body.toList).toArray
   | .titled kind title body => .titled kind title (keepForList t body.toList).toArray
   | .disclosure summary expanded body =>
@@ -13282,6 +13349,7 @@ exclude `t` is dropped whole, everything else kept. -/
   | .note body => .note (keepForList t body.toList).toArray
   | .frame ti st v br body => .frame ti st v br (keepForList t body.toList).toArray
   | .para c => .para c
+  | .lines ls => .lines ls
   | .equation n c => .equation n c
   | .section l st num title => .section l st num title
   | .verbatim c s sp => .verbatim c s sp
@@ -13351,7 +13419,7 @@ private def textLeavesOne (acc : List String) : Block → List String
   | .center body => textLeavesList acc body.toList
   | .ragged _ body => textLeavesList acc body.toList
   | .quote body => textLeavesList acc body.toList
-  | .lines body => textLeavesList acc body.toList
+  | .lines ls => textLeavesTableCells acc (ls.toList.map (·.content))
   | .abstract body => textLeavesList acc body.toList
   | .titled _ title body => textLeavesList (plainText title :: acc) body.toList
   | .disclosure title _ body => textLeavesList (plainText title :: acc) body.toList
@@ -13414,7 +13482,6 @@ private def orphanFreeOne (avail : List String) : Block → Bool
   | .center body => orphanFreeList avail body.toList
   | .ragged _ body => orphanFreeList avail body.toList
   | .quote body => orphanFreeList avail body.toList
-  | .lines body => orphanFreeList avail body.toList
   | .abstract body => orphanFreeList avail body.toList
   | .titled _ _ body => orphanFreeList avail body.toList
   | .disclosure _ _ body => orphanFreeList avail body.toList
@@ -13428,8 +13495,8 @@ private def orphanFreeOne (avail : List String) : Block → Bool
   | .note body => orphanFreeList avail body.toList
   | .nav _ body => orphanFreeList avail body.toList
   | .frame _ _ _ _ body => orphanFreeList avail body.toList
-  | .para _ | .equation _ _ | .section _ _ _ _ | .verbatim _ _ _ | .logo _ | .framefoot _
-  | .setPalette _ | .setTokens _ | .algorithm _ _ _
+  | .para _ | .lines _ | .equation _ _ | .section _ _ _ _ | .verbatim _ _ _ | .logo _
+  | .framefoot _ | .setPalette _ | .setTokens _ | .algorithm _ _ _
   | .rule _ _ _ | .picture _ | .table _ _ _ _ _ _ | .pagebreak
   | .bibliography _ _ _ => true
   | .float _ _ _ body _ => orphanFreeList avail body.toList
@@ -13531,9 +13598,9 @@ private theorem textLeavesOne_acc (acc : List String) (b : Block) :
   | .quote body =>
     rw [textLeavesOne, textLeavesOne]
     exact textLeavesList_acc acc body.toList
-  | .lines body =>
+  | .lines ls =>
     rw [textLeavesOne, textLeavesOne]
-    exact textLeavesList_acc acc body.toList
+    exact textLeavesTableCells_acc acc _
   | .abstract body =>
     rw [textLeavesOne, textLeavesOne]
     exact textLeavesList_acc acc body.toList
@@ -13679,6 +13746,9 @@ private theorem keepForOne_covers (avail : List String) (t0 : String) (h0 : t0 �
   | .para c =>
     intro s hs
     exact ⟨t0, h0, rfl, hs⟩
+  | .lines ls =>
+    intro s hs
+    exact ⟨t0, h0, rfl, hs⟩
   | .equation n c =>
     intro s hs
     exact ⟨t0, h0, rfl, hs⟩
@@ -13747,11 +13817,6 @@ private theorem keepForOne_covers (avail : List String) (t0 : String) (h0 : t0 �
     obtain ⟨t, ht, hmem⟩ := keepForList_covers avail t0 h0 body.toList h s hs
     exact ⟨t, ht, rfl, by simpa [keepForOne, textLeavesOne] using hmem⟩
   | .quote body =>
-    intro s hs
-    rw [textLeavesOne] at hs
-    obtain ⟨t, ht, hmem⟩ := keepForList_covers avail t0 h0 body.toList h s hs
-    exact ⟨t, ht, rfl, by simpa [keepForOne, textLeavesOne] using hmem⟩
-  | .lines body =>
     intro s hs
     rw [textLeavesOne] at hs
     obtain ⟨t, ht, hmem⟩ := keepForList_covers avail t0 h0 body.toList h s hs
@@ -13966,7 +14031,6 @@ on `keepForList`'s skeleton for its proofs. -/
   | .center body => onlyFreeList body.toList
   | .ragged _ body => onlyFreeList body.toList
   | .quote body => onlyFreeList body.toList
-  | .lines body => onlyFreeList body.toList
   | .abstract body => onlyFreeList body.toList
   | .titled _ _ body => onlyFreeList body.toList
   | .disclosure _ _ body => onlyFreeList body.toList
@@ -13981,8 +14045,8 @@ on `keepForList`'s skeleton for its proofs. -/
   | .nav _ body => onlyFreeList body.toList
   | .frame _ _ _ _ body => onlyFreeList body.toList
   | .float _ _ _ body _ => onlyFreeList body.toList
-  | .para _ | .equation _ _ | .section _ _ _ _ | .verbatim _ _ _ | .logo _ | .framefoot _
-  | .setPalette _ | .setTokens _ | .rule _ _ _ | .picture _ | .algorithm _ _ _
+  | .para _ | .lines _ | .equation _ _ | .section _ _ _ _ | .verbatim _ _ _ | .logo _
+  | .framefoot _ | .setPalette _ | .setTokens _ | .rule _ _ _ | .picture _ | .algorithm _ _ _
   | .table _ _ _ _ _ _ | .pagebreak | .bibliography _ _ _ => true
 
 public def onlyFreeItems : List (Array Block) → Bool
@@ -14017,6 +14081,7 @@ public theorem keepForOne_id (t : String) (b : Block)
   match b with
   | .only targets body => exact absurd h (by simp [onlyFreeOne])
   | .para c => rfl
+  | .lines ls => rfl
   | .equation n c => rfl
   | .section l st num title => rfl
   | .verbatim c s sp => rfl
@@ -14040,9 +14105,6 @@ public theorem keepForOne_id (t : String) (b : Block)
     rw [onlyFreeOne] at h
     simp [keepForOne, keepForList_id t body.toList h]
   | .quote body =>
-    rw [onlyFreeOne] at h
-    simp [keepForOne, keepForList_id t body.toList h]
-  | .lines body =>
     rw [onlyFreeOne] at h
     simp [keepForOne, keepForList_id t body.toList h]
   | .abstract body =>
@@ -14913,6 +14975,13 @@ end
         content := mapInlines f l.content finish
         comment := l.comment.map (mapInlines f · finish) }) rest finish
 
+@[expose] public def mapLaidLines (f : Inline → Inline) (out : Array LaidLine) (ls : List LaidLine)
+    (finish : Array Inline → Array Inline := id) : Array LaidLine :=
+  match ls with
+  | [] => out
+  | l :: rest =>
+    mapLaidLines f (out.push { depth := l.depth, content := mapInlines f l.content finish }) rest finish
+
 mutual
 
 /-- The block face of the generic map: `gp` rewrites native pictures, `f`
@@ -14949,7 +15018,7 @@ that must reach label text uses `mapBlocksPic`. -/
   | .center body => .center (mapBlockList gp f #[] body.toList finish listing)
   | .ragged s body => .ragged s (mapBlockList gp f #[] body.toList finish listing)
   | .quote body => .quote (mapBlockList gp f #[] body.toList finish listing)
-  | .lines body => .lines (mapBlockList gp f #[] body.toList finish listing)
+  | .lines ls => .lines (mapLaidLines f #[] ls.toList finish)
   | .abstract body => .abstract (mapBlockList gp f #[] body.toList finish listing)
   | .titled kind title body =>
     .titled kind (mapInlines f title finish) (mapBlockList gp f #[] body.toList finish listing)
@@ -15307,6 +15376,15 @@ public theorem mapAlgLines_toList (f : Inline → Inline) :
     rw [mapAlgLines, mapAlgLines_toList f (out.push { depth := l.depth, kind := l.kind, content := mapInlines f l.content, comment := l.comment.map (mapInlines f) }) rest]
     simp [Array.toList_push, List.append_assoc]
 
+public theorem mapLaidLines_toList (f : Inline → Inline) :
+    ∀ (out : Array LaidLine) (ls : List LaidLine),
+      (mapLaidLines f out ls).toList
+        = out.toList ++ ls.map (fun l => ({ depth := l.depth, content := mapInlines f l.content } : LaidLine))
+  | _, [] => by simp [mapLaidLines]
+  | out, l :: rest => by
+    rw [mapLaidLines, mapLaidLines_toList f (out.push { depth := l.depth, content := mapInlines f l.content }) rest]
+    simp [Array.toList_push, List.append_assoc]
+
 public theorem mapBibItems_toList (f : Inline → Inline) :
     ∀ (out : Array BibItem) (items : List BibItem),
       (mapBibItems f out items).toList
@@ -15360,6 +15438,16 @@ private theorem mapMathAlgLines_fixed_point (coverage : Math.MathAlphabetCoverag
     | some c => simp [mapMathInlines_fixed_point coverage]
   simp only [mapMathInlines_fixed_point coverage, hcomment]
 
+private theorem mapMathLaidLines_fixed_point (coverage : Math.MathAlphabetCoverage) (ls : List LaidLine) :
+    mapLaidLines (resolveMathAlphaInline coverage) #[]
+        (mapLaidLines (resolveMathAlphaInline coverage) #[] ls).toList
+      = mapLaidLines (resolveMathAlphaInline coverage) #[] ls := by
+  apply Array.toList_inj.mp
+  simp only [mapLaidLines_toList, List.nil_append]
+  apply map_map_fixed_point
+  intro l
+  simp only [mapMathInlines_fixed_point coverage]
+
 private theorem mapMathBibItems_fixed_point (coverage : Math.MathAlphabetCoverage) (items : List BibItem) :
     mapBibItems (resolveMathAlphaInline coverage) #[]
         (mapBibItems (resolveMathAlphaInline coverage) #[] items).toList
@@ -15393,7 +15481,6 @@ private theorem mapMathBlock_fixed_point (coverage : Math.MathAlphabetCoverage) 
   | .center body
   | .ragged s body
   | .quote body
-  | .lines body
   | .abstract body
   | .role n body
   | .link target body
@@ -15435,6 +15522,9 @@ private theorem mapMathBlock_fixed_point (coverage : Math.MathAlphabetCoverage) 
   | .algorithm n sm lines =>
     simp only [mapBlock]
     rw [mapMathAlgLines_fixed_point coverage lines.toList]
+  | .lines ls =>
+    simp only [mapBlock]
+    rw [mapMathLaidLines_fixed_point coverage ls.toList]
   | .bibliography src style items =>
     simp only [mapBlock]
     rw [mapMathBibItems_fixed_point coverage items.toList]
@@ -15654,6 +15744,18 @@ private theorem requestsAlgLines_resolve_covers (scope : MathRequestScope)
       exact requestsFoldInlines_resolve_covers scope coverage ctx _ c
         (requestsFoldInlines_resolve_covers scope coverage ctx out line.content h)
 
+private theorem requestsLaid_resolve_covers (scope : MathRequestScope)
+    (coverage : Math.MathAlphabetCoverage) (ctx : Option Span × Bool) :
+    ∀ (lines : List LaidLine) (out : Array MathRequest), RequestsFree out →
+      RequestsFree (foldCtxLaidLines (mathRequestFold scope) ctx out
+        (mapLaidLines (resolveMathAlphaInline coverage) #[] lines).toList)
+  | [], _, h => h
+  | line :: rest, out, h => by
+    have step := requestsLaid_resolve_covers scope coverage ctx rest
+    simp only [mapLaidLines_toList, List.nil_append] at step ⊢
+    rw [List.map_cons, foldCtxLaidLines]
+    exact step _ (requestsFoldInlines_resolve_covers scope coverage ctx out line.content h)
+
 private theorem requestsBibItems_resolve_covers (scope : MathRequestScope)
     (coverage : Math.MathAlphabetCoverage) (ctx : Option Span × Bool) :
     ∀ (items : List BibItem) (out : Array MathRequest), RequestsFree out →
@@ -15690,7 +15792,7 @@ private theorem requestsBlock_resolve_covers (scope : MathRequestScope)
     simp only [mapBlock, foldCtxBlock, mathRequestFold_openBlock, mathRequestOpen,
       mathRequestFold_closeBlock, mapBlockCols_toList, List.nil_append]
     exact requestsCols_resolve_covers scope coverage ctx out cols.toList h
-  | .center body | .ragged _ body | .quote body | .lines body | .abstract body | .role _ body
+  | .center body | .ragged _ body | .quote body | .abstract body | .role _ body
   | .link _ body | .spaced _ body | .onSteps _ body | .only _ body | .nav _ body =>
     simp only [mapBlock, foldCtxBlock, mathRequestFold_openBlock, mathRequestOpen,
       mathRequestFold_closeBlock, mapBlockList_toList, List.nil_append]
@@ -15717,6 +15819,10 @@ private theorem requestsBlock_resolve_covers (scope : MathRequestScope)
     simp only [mapBlock, foldCtxBlock, mathRequestFold_openBlock, mathRequestOpen,
       mathRequestFold_closeBlock]
     exact requestsAlgLines_resolve_covers scope coverage ctx lines.toList out h
+  | .lines ls =>
+    simp only [mapBlock, foldCtxBlock, mathRequestFold_openBlock, mathRequestOpen,
+      mathRequestFold_closeBlock]
+    exact requestsLaid_resolve_covers scope coverage ctx ls.toList out h
   | .verbatim _ _ spec =>
     cases hc : spec.caption with
     | none =>
@@ -15961,6 +16067,20 @@ private theorem mapAlgLines_text (f : Inline → Inline)
     have hm : ∀ xs, plainText (mapInlines (finish := finish) f xs) = plainText xs := mapInlinesFinish_text f hf finish hfinish
     cases hc : l.comment <;> simp [algLineText, hc, hm]
 
+private theorem mapLaidLines_text (f : Inline → Inline)
+    (hf : ∀ x, plainTextOne (f x) = plainTextOne x)
+    (finish : Array Inline → Array Inline) (hfinish : Conserves plainText finish) (ls : List LaidLine)
+    (out : Array LaidLine) (acc : String) :
+    laidText acc (mapLaidLines (finish := finish) f out ls).toList
+      = laidText (laidText acc out.toList) ls := by
+  match ls with
+  | [] => simp [mapLaidLines, laidText]
+  | l :: rest =>
+    rw [mapLaidLines, mapLaidLines_text f hf finish hfinish rest]
+    rw [Array.toList_push, laidText_chain]
+    have hm : ∀ xs, plainText (mapInlines (finish := finish) f xs) = plainText xs :=
+      mapInlinesFinish_text f hf finish hfinish
+    simp [laidText, hm]
 
 mutual
 
@@ -16174,9 +16294,9 @@ public theorem mapBlockWith_text (gp : Pic.Picture → Pic.Picture) (f : Inline 
     show blockTextList acc (mapBlockList (finish := finish) (listing := listing) gp f #[] body.toList).toList = _
     rw [mapBlockListWith_text gp f hf finish hfinish listing hlisting body.toList #[]]
     rfl
-  | .lines body =>
-    show blockTextList acc (mapBlockList (finish := finish) (listing := listing) gp f #[] body.toList).toList = _
-    rw [mapBlockListWith_text gp f hf finish hfinish listing hlisting body.toList #[]]
+  | .lines ls =>
+    show laidText acc (mapLaidLines (finish := finish) f #[] ls.toList).toList = _
+    rw [mapLaidLines_text f hf finish hfinish ls.toList #[]]
     rfl
   | .abstract body =>
     show blockTextList acc (mapBlockList (finish := finish) (listing := listing) gp f #[] body.toList).toList = _

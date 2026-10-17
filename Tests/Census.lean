@@ -1471,16 +1471,17 @@ def censusCodeRows :
     [("one page", c.size == 1),
      ("a quantified hypothesis stands a step in under its condition, the conclusion back at its margin",
        linesStepAt step hyp 1 "for every natural number" 1 && linesStepAt step hyp 2 "then False." 0),
-     ("a laid-out paragraph's lines stand a leading apart, as a paragraph's do, no gap between them",
-       let apart (a b : CensusLine) : Bool := lead ≤ b.y - a.y && b.y - a.y < lead + lead / 2
+     ("a laid-out paragraph's lines stand a leading apart, no gap between them, the head's taller faces aside",
        match hyp[0]?, hyp[1]?, hyp[2]? with
-       | some a, some b, some d => apart a b && apart b d && d.y - b.y == lead
+       | some a, some b, some d =>
+         lead ≤ b.y - a.y && b.y - a.y < lead + lead / 2 && d.y - b.y == lead
        | _, _, _ => false),
-     ("an equivalence a quantifier holds stands a step in, its first side a step further",
-       linesStepAt step swap 1 "both" 2 && linesStepAt step swap 2 "if and only if both" 1),
-     ("a conjunction's quantified sides each stand a step in, its 'and' at its margin",
-       linesStepAt step both 1 "for every natural number" 1 && linesStepAt step both 2 "and" 0 &&
-         linesStepAt step both 3 "there is a natural number" 1)]),
+     ("an equivalence a quantifier holds stands a step in, each of its compound sides a step further",
+       linesStepAt step swap 1 "both" 2 && linesStepAt step swap 2 "if and only if" 1 &&
+         linesStepAt step swap 3 "both" 2),
+     ("a conjunction's quantified first side stands a step in, its last side running on at its margin",
+       linesStepAt step both 1 "for every natural number" 1 &&
+         linesStepAt step both 2 "and there is a natural number" 0)]),
   ("code-python", fun _ c => [
     ("one page", c.size == 1),
     ("the file's name ships first, as its title", shipsAbove c "code-python.py" "Kettle timings."),

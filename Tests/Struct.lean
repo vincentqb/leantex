@@ -48,6 +48,18 @@ def structChecks (ref : IO.Ref (List String)) : IO Unit := do
     (structKinds lst == #[.list true]
       && structKinds (structKids lst) == #[.item, .item]
       && structKinds (structKids (structKids lst)) == #[.label, .body])
+  -- A laid-out paragraph is one paragraph of its lines, each naming the scopes it opens and closes.
+  let laid := Struct.ofBlocks #[.lines #[{ depth := 0, content := #[.text "a"] },
+    { depth := 1, content := #[.text "b"] }, { depth := 2, content := #[.text "c"] },
+    { depth := 1, content := #[.text "d"] }]]
+  t "a laid-out paragraph is one paragraph of its lines, each with the scopes it opens and closes"
+    (structKinds laid == #[.paragraph] &&
+      structKinds (structKids laid) == #[.line 0 0, .line 1 0, .line 1 1, .line 0 1] &&
+      structTexts laid == #["a", "b", "c", "d"])
+  let laidElems := Pdf.skeleton ⟨laid⟩
+  t "a laid-out paragraph's lines are Spans in one P, each bounding a scope saying so in its text"
+    ((laidElems.map (·.s)).toList == ["Document", "P", "Span", "Span", "Span", "Span"] &&
+      (laidElems.map (·.actualText)).toList == [none, none, none, some "(b", some "(c)", some "d)"])
   t "quote is a quote" (structKinds (Struct.ofBlocks #[.quote #[para]]) == #[.quote])
   t "abstract is a section" (structKinds (Struct.ofBlocks #[.abstract #[para]]) == #[.section])
   let titled := Struct.ofBlocks #[.titled .block #[.text "T"] #[para]]

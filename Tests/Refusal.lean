@@ -156,7 +156,7 @@ def reservedEnvNameChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : 
   for n in [Parse.splitOpen "center", Parse.splitClose "center",
       Parse.inputEnv "probe.sty", Parse.scopeEnv, Tcolorbox.boxEnv, Parse.markdownTableEnv,
       Parse.markdownDisclosureEnv, Md.leanDivisionEnv, Parse.keptInputEnv "probe.md",
-      Parse.keptEnv] do
+      Parse.keptEnv, Parse.linesEnv] do
     t s!"the engine's environment name '{n}' holds a character no word holds"
       (n.any fun c => Lex.special c || Lex.isWs c)
   let use (n : String) :=

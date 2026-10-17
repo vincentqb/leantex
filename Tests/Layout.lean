@@ -5077,7 +5077,7 @@ def ownerKind : Struct.Kind → Bool
   | .paragraph | .heading _ | .title | .cell | .caption | .code | .bibEntry
   | .artifact | .note | .formula | .label => true
   | .document | .section | .list _ | .item | .body | .table | .row | .figure
-  | .quote | .aside | .nav | .link _ | .span _ | .reference _ => false
+  | .quote | .aside | .nav | .link _ | .span _ | .line _ _ | .reference _ => false
 
 def ownerOf (r : LeafRow) : Option Struct.Kind := (r.path.filter ownerKind).getLast?
 
