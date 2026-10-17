@@ -304,17 +304,30 @@ builds move within the host's noise, the html phase about 1.9 s of a 125 MB page
 
 `--startup-only` times `leantex --version`, which reads no document, then the small markdown page
 `testdata/corpus/md-emphasis.md` built to each format, the median of `N` runs each.
+`--facts-only` builds the Lean page `testdata/codedoc/lean/statements.lean` reading a facts file
+of its records a hundred times over, about 4.5 MB of JSON lines, and reports the facts-reading
+phase beside each build's time.
 
 The engine read its two JSON messages, a Lean facts file and the listing highlighter's reply, and
 wrote the highlighter's batch, through Lean's `Lean.Data.Json`, a module of Lean's own package, so
 every start initialized all of Lean's compiler. It now reads and writes them through
 `LeanTex.Core.Json`, held to Lean's reader text by text, and the compiler links no module of
-Lean's package: the binary went from 153,565,640 to 38,840,760 bytes. Median of 15, back to back
-on a host at load 33-48, the before column with `LEANTEX_BENCH_BINARY` naming the parent's saved
-compiler:
+Lean's package: the binary went from 153,565,640 to 38,842,456 bytes. The before column names the
+parent's saved compiler through `LEANTEX_BENCH_BINARY`. Median of 15, back to back on a host at
+load 33-48, with the reader's first version, whose start and markdown pages read no JSON:
 
 | Run | before | after |
 |---|---:|---:|
 | `--version` | 55 ms | 19 ms |
 | md-emphasis.md to PDF | 146 ms | 87 ms |
 | md-emphasis.md to HTML | 1,064 ms | 944 ms |
+
+With the reader as committed, which reads bytes without allocating and copies a string's plain
+runs whole, the median of three alternating rounds' medians of 9 at load 120-163:
+
+| Run | before | after |
+|---|---:|---:|
+| `--version` | 78 ms | 27 ms |
+| md-emphasis.md to PDF | 180 ms | 121 ms |
+| statements.lean, 100x facts, to PDF | 594 ms (facts read 352) | 482 ms (facts read 333) |
+| statements.lean, 100x facts, to HTML | 1,383 ms (facts read 329) | 1,190 ms (facts read 302) |

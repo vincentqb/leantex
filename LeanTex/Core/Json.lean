@@ -1,6 +1,6 @@
 module
 
-public import Std.Data.HashSet
+import Std.Data.HashSet
 import LeanTex.Core.Hex
 
 /-! JSON values (RFC 8259) read, compressed and laid out as Lean's own `Lean.Json` reads, compresses
@@ -14,7 +14,8 @@ public structure JsonNumber where
   exponent : Nat
   deriving BEq, Inhabited, Repr
 
-/-- A JSON value; an object's members are sorted by key, each key once. -/
+/-- A JSON value; an object's members stand as written, a later member of a key replacing an
+earlier one wherever it is read. -/
 public inductive Json where
   | null
   | bool (b : Bool)
@@ -87,6 +88,25 @@ public def renderString (s : String) (acc : String := "") : String :=
   let acc := if escapesFrom s 0 then s.foldl escapeStep acc else acc ++ s
   acc ++ "\""
 
+/-- The positions of the members Lean's `Std.TreeMap.Raw.insert` keeps, in its key order: each
+key's last member, sorted by key. -/
+def keptOrder (members : Array (String × Json)) : Array (Fin members.size) := Id.run do
+  let mut seen : Std.HashSet String := {}
+  let mut kept : Array (Fin members.size) := #[]
+  for i in (Array.finRange members.size).reverse do
+    unless seen.contains members[i].1 do
+      seen := seen.insert members[i].1
+      kept := kept.push i
+  return kept.qsort fun a b => members[a].1 < members[b].1
+
+private theorem sizeOf_member_lt (members : Array (String × Json)) (i : Fin members.size) :
+    sizeOf members[i].2 < 1 + sizeOf members := by
+  show sizeOf members[i.1].2 < 1 + sizeOf members
+  have h1 := Array.sizeOf_lt_of_mem (Array.getElem_mem (xs := members) i.isLt)
+  have h2 : sizeOf members[i.1].2 < sizeOf members[i.1] := by
+    cases members[i.1]; simp; omega
+  omega
+
 /-- The value onto `acc` with no white space, an object's members in key order, as Lean's
 `Json.compress` spells it. -/
 def compressOnto (acc : String) : Json → String
@@ -100,14 +120,15 @@ def compressOnto (acc : String) : Json → String
       (compressOnto (if first then out else out ++ ",") e, false)
     body.1 ++ "]"
   | .obj kvs =>
-    let body := kvs.attach.foldl (init := (acc ++ "{", true)) fun (out, first) ⟨(k, v), _⟩ =>
-      (compressOnto (renderString k (if first then out else out ++ ",") ++ ":") v, false)
+    let body := (keptOrder kvs).foldl (init := (acc ++ "{", true)) fun (out, first) i =>
+      (compressOnto (renderString kvs[i].1 (if first then out else out ++ ",") ++ ":") kvs[i].2,
+        false)
     body.1 ++ "}"
 termination_by j => sizeOf j
 decreasing_by
   all_goals simp_wf
   · have := Array.sizeOf_lt_of_mem ‹_ ∈ elems›; omega
-  · have := Array.sizeOf_lt_of_mem ‹_ ∈ kvs›; simp at this; omega
+  · exact sizeOf_member_lt kvs i
 
 /-- The value with no white space, as Lean's `Json.compress` spells it. -/
 public def compress (j : Json) : String := compressOnto "" j
@@ -124,32 +145,21 @@ public def render : Json → Std.Format
       ("," ++ Std.Format.line)
     Std.Format.bracket "[" elems "]"
   | .obj kvs =>
-    let kvs := Std.Format.joinSep (kvs.attach.foldl (fun acc ⟨(k, v), _⟩ =>
-      Std.Format.group (renderString k ++ ":" ++ Std.Format.line ++ render v) :: acc) [])
-      ("," ++ Std.Format.line)
-    Std.Format.bracket "{" kvs "}"
+    let fields := Std.Format.joinSep ((keptOrder kvs).foldl (fun acc i =>
+      Std.Format.group (renderString kvs[i].1 ++ ":" ++ Std.Format.line ++ render kvs[i].2) :: acc)
+      []) ("," ++ Std.Format.line)
+    Std.Format.bracket "{" fields "}"
 termination_by j => sizeOf j
 decreasing_by
   all_goals simp_wf
   · have := Array.sizeOf_lt_of_mem ‹_ ∈ elems›; omega
-  · have := Array.sizeOf_lt_of_mem ‹_ ∈ kvs›; simp at this; omega
+  · exact sizeOf_member_lt kvs i
 
 /-- The value as Lean's `Json.pretty` lays it out at eighty columns. -/
 public def pretty (j : Json) : String := Std.Format.pretty (render j) 80
 
-/-- An object's members as Lean's `Std.TreeMap.Raw.insert` leaves them: sorted by key, each key
-holding its last value. -/
-def settle (members : Array (String × Json)) : Array (String × Json) := Id.run do
-  let mut seen : Std.HashSet String := {}
-  let mut kept : Array (String × Json) := #[]
-  for m in members.reverse do
-    unless seen.contains m.1 do
-      seen := seen.insert m.1
-      kept := kept.push m
-  return kept.qsort fun a b => a.1 < b.1
-
 /-- An object of these members, a later spelling of a key replacing an earlier one. -/
-public def mkObj (members : List (String × Json)) : Json := .obj (settle members.toArray)
+public def mkObj (members : List (String × Json)) : Json := .obj members.toArray
 
 /-! Reading. -/
 
@@ -160,9 +170,12 @@ structure Failure where
 
 def endOfInput : String := "unexpected end of input"
 
-/-- The byte at `i`, if the text holds one. -/
-def byteAt? (s : String) (i : Nat) : Option UInt8 :=
-  if h : i < s.utf8ByteSize then some (s.getUTF8Byte ⟨i⟩ (String.Pos.Raw.lt_iff.mpr h)) else none
+/-- The byte at `i`, or 256 past the text's end. -/
+def peek (s : String) (i : Nat) : Nat :=
+  if h : i < s.utf8ByteSize then (s.getUTF8Byte ⟨i⟩ (String.Pos.Raw.lt_iff.mpr h)).toNat else 256
+
+/-- The offset after the character at `i`, as Lean's parser's `any` steps past it. -/
+def nextOffset (s : String) (i : Nat) : Nat := (String.Pos.Raw.next s ⟨i⟩).byteIdx
 
 /-- The character at `i` and the offset after it, as Lean's parser's `any` takes it. -/
 def anyAt (s : String) (i : Nat) :
@@ -172,15 +185,25 @@ def anyAt (s : String) (i : Nat) :
       String.Pos.Raw.byteIdx_lt_byteIdx_next s ⟨i⟩, h⟩)
   else .error ⟨i, endOfInput⟩
 
-/-- The first offset from `i` that holds no JSON white space. -/
-def skipWs (s : String) (i : Nat) : { j : Nat // i ≤ j } :=
+/-- The first offset from `i` on that holds no JSON white space, at least `start`. -/
+def skipWsFrom (s : String) (start i : Nat) (h0 : start ≤ i) : { j : Nat // start ≤ j } :=
   if h : i < s.utf8ByteSize then
     let b := s.getUTF8Byte ⟨i⟩ (String.Pos.Raw.lt_iff.mpr h)
-    if b == 9 || b == 10 || b == 13 || b == 32 then
-      let ⟨j, hj⟩ := skipWs s (i + 1)
-      ⟨j, by omega⟩
-    else ⟨i, Nat.le_refl _⟩
-  else ⟨i, Nat.le_refl _⟩
+    if b == 9 || b == 10 || b == 13 || b == 32 then skipWsFrom s start (i + 1) (by omega)
+    else ⟨i, h0⟩
+  else ⟨i, h0⟩
+termination_by s.utf8ByteSize - i
+
+/-- The first offset from `i` that holds no JSON white space. -/
+def skipWs (s : String) (i : Nat) : { j : Nat // i ≤ j } := skipWsFrom s i i (Nat.le_refl _)
+
+/-- The first offset from `i` on holding a quote, a backslash or a control character, or the
+end, at least `start`. -/
+def plainEnd (s : String) (start i : Nat) (h0 : start ≤ i) : { j : Nat // start ≤ j } :=
+  if h : i < s.utf8ByteSize then
+    let b := s.getUTF8Byte ⟨i⟩ (String.Pos.Raw.lt_iff.mpr h)
+    if b == 34 || b == 92 || b < 32 then ⟨i, h0⟩ else plainEnd s start (i + 1) (by omega)
+  else ⟨i, h0⟩
 termination_by s.utf8ByteSize - i
 
 /-- A hexadecimal digit's value, as Lean's parser's `hexChar` reads one. -/
@@ -256,112 +279,99 @@ def escapeAt (s : String) (i : Nat) : Except Failure (Char × { j : Nat // i < j
           Nat.lt_trans val.toFin.isLt (by decide)⟩⟩, ⟨k, by omega⟩)
     | _ => .error ⟨j, "illegal \\u escape"⟩
 
-/-- A string literal's characters onto `acc`, read after its opening quote, and the offset after its
-closing quote, as Lean's parser's `strCore` reads them. -/
-def strFrom (s : String) (i : Nat) (acc : String) : Except Failure (String × { j : Nat // i < j }) :=
-  match byteAt? s i with
-  | none => .error ⟨i, endOfInput⟩
-  | some 34 => .ok (acc, ⟨i + 1, by omega⟩)
-  | some _ =>
-    match anyAt s i with
-    | .error f => .error f
-    | .ok (c, ⟨j, hj⟩) =>
-      if c == '\\' then
-        match escapeAt s j with
-        | .error f => .error f
-        | .ok (e, ⟨k, hk⟩) =>
-          match strFrom s k (acc.push e) with
-          | .error f => .error f
-          | .ok (out, ⟨m, hm⟩) => .ok (out, ⟨m, by omega⟩)
-      else if 0x20 ≤ c.val then
-        match strFrom s j (acc.push c) with
-        | .error f => .error f
-        | .ok (out, ⟨m, hm⟩) => .ok (out, ⟨m, by omega⟩)
-      else .error ⟨j, "unexpected character in string"⟩
+/-- A string literal's characters onto `acc`, read from `i` after its opening quote at `start`,
+and the offset after its closing quote, as Lean's parser's `strCore` reads them; a run of plain
+characters is copied whole. -/
+def strFrom (s : String) (start i : Nat) (h0 : start < i) (acc : String) :
+    Except Failure (String × { j : Nat // start < j }) :=
+  if h : i < s.utf8ByteSize then
+    let b := s.getUTF8Byte ⟨i⟩ (String.Pos.Raw.lt_iff.mpr h)
+    if b == 34 then .ok (acc, ⟨i + 1, by omega⟩)
+    else if b == 92 then
+      match escapeAt s (i + 1) with
+      | .error f => .error f
+      | .ok (e, ⟨k, hk⟩) => strFrom s start k (by omega) (acc.push e)
+    else if b < 32 then .error ⟨i + 1, "unexpected character in string"⟩
+    else
+      let ⟨j, hj⟩ := plainEnd s (i + 1) (i + 1) (Nat.le_refl _)
+      strFrom s start j (by omega) (acc ++ String.Pos.Raw.extract s ⟨i⟩ ⟨j⟩)
+  else .error ⟨i, endOfInput⟩
 termination_by s.utf8ByteSize - i
 decreasing_by all_goals omega
 
 /-- Decimal digits from `i` onto `acc`, with their count onto `count`, and the offset after them. -/
-def digitsFrom (s : String) (i acc count : Nat) : Nat × Nat × { j : Nat // i ≤ j } :=
-  match hb : byteAt? s i with
-  | some b =>
-    if 48 ≤ b && b ≤ 57 then
-      have : i < s.utf8ByteSize := by
-        unfold byteAt? at hb; split at hb
-        · assumption
-        · exact absurd hb (by simp)
-      let (v, n, ⟨j, hj⟩) := digitsFrom s (i + 1) (10 * acc + (b.toNat - 48)) (count + 1)
-      (v, n, ⟨j, by omega⟩)
-    else (acc, count, ⟨i, Nat.le_refl _⟩)
-  | none => (acc, count, ⟨i, Nat.le_refl _⟩)
+def digitsFrom (s : String) (i acc count : Nat) : Nat × Nat × Nat :=
+  if h : i < s.utf8ByteSize then
+    let b := s.getUTF8Byte ⟨i⟩ (String.Pos.Raw.lt_iff.mpr h)
+    if 48 ≤ b && b ≤ 57 then digitsFrom s (i + 1) (10 * acc + (b.toNat - 48)) (count + 1)
+    else (acc, count, i)
+  else (acc, count, i)
 termination_by s.utf8ByteSize - i
 
 /-- Whether the byte at `i` is a decimal digit, failing as Lean's parser's `lookahead` fails. -/
-def digitAhead (s : String) (i : Nat) (lo : UInt8) (desc : String) : Except Failure Unit :=
-  match byteAt? s i with
-  | none => .error ⟨i, endOfInput⟩
-  | some b => if lo ≤ b && b ≤ 57 then .ok () else .error ⟨i, "expected " ++ desc⟩
+def digitAhead (s : String) (i : Nat) (lo : Nat) (desc : String) : Except Failure Unit :=
+  let b := peek s i
+  if b == 256 then .error ⟨i, endOfInput⟩
+  else if lo ≤ b && b ≤ 57 then .ok () else .error ⟨i, "expected " ++ desc⟩
 
-/-- The largest positive exponent a number is read with: its power of ten is built, which past this
-grows without bound where Lean's reader would build it or abort. -/
+/-- The largest positive exponent a number is read with. -/
 public def maxShift : Nat := 4096
 
 /-- A number from `i`, its first byte a sign or a digit, and the offset after it, as Lean's
 parser's `num` reads it. -/
 def numFrom (s : String) (i : Nat) : Except Failure (JsonNumber × { j : Nat // i < j }) := do
-  let (sign, i1) : Int × Nat := if byteAt? s i == some 45 then (-1, i + 1) else (1, i)
-  let (whole, i2) ← match byteAt? s i1 with
-    | none => .error ⟨i1, endOfInput⟩
-    | some 48 => pure (0, i1 + 1)
-    | some _ => do
+  let (sign, i1) : Int × Nat := if peek s i == 45 then (-1, i + 1) else (1, i)
+  let first := peek s i1
+  let (whole, i2) ← if first == 256 then .error ⟨i1, endOfInput⟩
+    else if first == 48 then pure (0, i1 + 1)
+    else do
       digitAhead s i1 49 "1-9"
-      let (v, _, ⟨j, _⟩) := digitsFrom s i1 0 0
+      let (v, _, j) := digitsFrom s i1 0 0
       pure (v, j)
-  let (value, i3) ← match byteAt? s i2 with
-    | some 46 => do
+  let (value, i3) ← if peek s i2 == 46 then do
       digitAhead s (i2 + 1) 48 "digit"
-      let (n, d, ⟨j, _⟩) := digitsFrom s (i2 + 1) 0 0
+      let (n, d, j) := digitsFrom s (i2 + 1) 0 0
       if d > USize.size then .error ⟨j, "too many decimals"⟩
       pure (({ mantissa := sign * (whole * (10 ^ d : Nat) + n), exponent := d } : JsonNumber), j)
-    | _ => pure (({ mantissa := sign * whole, exponent := 0 } : JsonNumber), i2)
-  let (value, i4) ← match byteAt? s i3 with
-    | some 101 | some 69 =>
-      match byteAt? s (i3 + 1) with
-      | none => .error ⟨i3 + 1, endOfInput⟩
-      | some 45 => do
+    else pure (({ mantissa := sign * whole, exponent := 0 } : JsonNumber), i2)
+  let e := peek s i3
+  let (value, i4) ← if e == 101 || e == 69 then
+      let b := peek s (i3 + 1)
+      if b == 256 then .error ⟨i3 + 1, endOfInput⟩
+      else if b == 45 then do
         digitAhead s (i3 + 2) 48 "0-9"
-        let (n, _, ⟨j, _⟩) := digitsFrom s (i3 + 2) 0 0
+        let (n, _, j) := digitsFrom s (i3 + 2) 0 0
         pure (value.shiftr n, j)
-      | some b => do
+      else do
         let k := if b == 43 then i3 + 2 else i3 + 1
         digitAhead s k 48 "0-9"
-        let (n, _, ⟨j, _⟩) := digitsFrom s k 0 0
+        let (n, _, j) := digitsFrom s k 0 0
         if n > maxShift then .error ⟨j, "exp too large"⟩
         pure (value.shiftl n, j)
-    | _ => pure (value, i3)
+    else pure (value, i3)
   if h : i < i4 then pure (value, ⟨i4, h⟩) else .error ⟨i4, endOfInput⟩
 
 /-- Whether the text at `i` spells `word`, which is ASCII. -/
 def spells (s : String) (i : Nat) (word : String) : Bool :=
-  (List.range word.utf8ByteSize).all fun k => byteAt? s (i + k) == byteAt? word k
+  (List.range word.utf8ByteSize).all fun k => peek s (i + k) == peek word k
 
 /-- An object's key and colon from `i`, and the offset of its value, as Lean's parser's
 `objectCore` reads them. -/
 def keyFrom (s : String) (i : Nat) : Except Failure (String × { j : Nat // i < j }) :=
-  match byteAt? s i with
-  | none => .error ⟨i, endOfInput⟩
-  | some 34 =>
-    match strFrom s (i + 1) "" with
+  let b := peek s i
+  if b == 256 then .error ⟨i, endOfInput⟩
+  else if b == 34 then
+    match strFrom s i (i + 1) (by omega) "" with
     | .error f => .error f
     | .ok (k, ⟨j, hj⟩) =>
-      let ⟨j, hw⟩ := skipWs s j
-      match byteAt? s j with
-      | none => .error ⟨j, endOfInput⟩
-      | some 58 =>
-        let ⟨m, hm⟩ := skipWs s (j + 1)
+      let ⟨j', hw⟩ := skipWs s j
+      let c := peek s j'
+      if c == 256 then .error ⟨j', endOfInput⟩
+      else if c == 58 then
+        let ⟨m, hm⟩ := skipWs s (j' + 1)
         .ok (k, ⟨m, by omega⟩)
-      | some _ => .error ⟨j, "expected :"⟩
-  | some _ => .error ⟨i, "expected \""⟩
+      else .error ⟨j', "expected :"⟩
+  else .error ⟨i, "expected \""⟩
 
 /-- A container a value is read into: an array's elements so far, or an object's members so far
 and the key whose value comes next. -/
@@ -379,53 +389,48 @@ def run (s : String) (stack : List Frame) (i : Nat) (done : Option Json) :
     match stack with
     | [] => .ok (v, i)
     | .arr elems :: rest =>
-      match anyAt s i with
-      | .error f => .error f
-      | .ok (c, ⟨j, _hj⟩) =>
-        let ⟨k, _hk⟩ := skipWs s j
-        if c == ']' then run s rest k (some (.arr (elems.push v)))
-        else if c == ',' then run s (.arr (elems.push v) :: rest) k none
-        else .error ⟨j, "unexpected character in array"⟩
+      if _hi : i < s.utf8ByteSize then
+        let c := s.getUTF8Byte ⟨i⟩ (String.Pos.Raw.lt_iff.mpr _hi)
+        let ⟨k, _hk⟩ := skipWs s (i + 1)
+        if c == 93 then run s rest k (some (.arr (elems.push v)))
+        else if c == 44 then run s (.arr (elems.push v) :: rest) k none
+        else .error ⟨nextOffset s i, "unexpected character in array"⟩
+      else .error ⟨i, endOfInput⟩
     | .obj members key :: rest =>
-      match anyAt s i with
-      | .error f => .error f
-      | .ok (c, ⟨j, _hj⟩) =>
-        let ⟨k, _hk⟩ := skipWs s j
-        if c == '}' then run s rest k (some (.obj (settle (members.push (key, v)))))
-        else if c == ',' then
+      if _hi : i < s.utf8ByteSize then
+        let c := s.getUTF8Byte ⟨i⟩ (String.Pos.Raw.lt_iff.mpr _hi)
+        let ⟨k, _hk⟩ := skipWs s (i + 1)
+        if c == 125 then run s rest k (some (.obj (members.push (key, v))))
+        else if c == 44 then
           match keyFrom s k with
           | .error f => .error f
           | .ok (key', ⟨m, _hm⟩) => run s (.obj (members.push (key, v)) key' :: rest) m none
-        else .error ⟨j, "unexpected character in object"⟩
+        else .error ⟨nextOffset s i, "unexpected character in object"⟩
+      else .error ⟨i, endOfInput⟩
   | none =>
-    match hb : byteAt? s i with
-    | none => .error ⟨i, endOfInput⟩
-    | some b =>
-      have _hi : i < s.utf8ByteSize := by
-        unfold byteAt? at hb; split at hb
-        · assumption
-        · exact absurd hb (by simp)
+    if _hi : i < s.utf8ByteSize then
+      let b := (s.getUTF8Byte ⟨i⟩ (String.Pos.Raw.lt_iff.mpr _hi)).toNat
       if b == 91 then
         let ⟨j, _hj⟩ := skipWs s (i + 1)
-        match byteAt? s j with
-        | none => .error ⟨j, endOfInput⟩
-        | some 93 =>
+        let c := peek s j
+        if c == 256 then .error ⟨j, endOfInput⟩
+        else if c == 93 then
           let ⟨k, _hk⟩ := skipWs s (j + 1)
           run s stack k (some (.arr #[]))
-        | some _ => run s (.arr #[] :: stack) j none
+        else run s (.arr #[] :: stack) j none
       else if b == 123 then
         let ⟨j, _hj⟩ := skipWs s (i + 1)
-        match byteAt? s j with
-        | none => .error ⟨j, endOfInput⟩
-        | some 125 =>
+        let c := peek s j
+        if c == 256 then .error ⟨j, endOfInput⟩
+        else if c == 125 then
           let ⟨k, _hk⟩ := skipWs s (j + 1)
           run s stack k (some (.obj #[]))
-        | some _ =>
+        else
           match keyFrom s j with
           | .error f => .error f
           | .ok (key, ⟨m, _hm⟩) => run s (.obj #[] key :: stack) m none
       else if b == 34 then
-        match strFrom s (i + 1) "" with
+        match strFrom s i (i + 1) (by omega) "" with
         | .error f => .error f
         | .ok (text, ⟨j, _hj⟩) =>
           let ⟨k, _hk⟩ := skipWs s j
@@ -452,6 +457,7 @@ def run (s : String) (stack : List Frame) (i : Nat) (done : Option Json) :
           let ⟨k, _hk⟩ := skipWs s j
           run s stack k (some (.num n))
       else .error ⟨i, "unexpected input"⟩
+    else .error ⟨i, endOfInput⟩
 termination_by s.utf8ByteSize - i
 decreasing_by all_goals omega
 
@@ -476,7 +482,7 @@ public def getStr? : Json → Except String String
 /-- An object member's value. -/
 public def getObjVal? : Json → String → Except String Json
   | .obj kvs, k =>
-    match kvs.find? (·.1 == k) with
+    match kvs.findRev? (·.1 == k) with
     | some (_, v) => .ok v
     | none => .error s!"property not found: {k}"
   | _, _ => .error "object expected"

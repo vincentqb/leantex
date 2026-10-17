@@ -1372,6 +1372,10 @@ def toolchainSpawnChecks (ref : IO.Ref (List String)) : IO Unit := do
     match ← toolchainClosure roots seeds with
     | .error why => t s!"toolchain spawns: {why}" false
     | .ok closure =>
+      let leanPackage (reached : Array (String × String)) : Array String :=
+        (reached.filter fun (m, _) => m == "Lean" || m.startsWith "Lean.").map (·.1)
+      t s!"toolchain closure: the engine reaches no module of Lean's own package \
+({(leanPackage closure).toList.take 5})" (leanPackage closure).isEmpty
       let faults := toolchainSpawnFaults closure
       t s!"toolchain spawns: the engine reaches no process start the scan misses ({faults})"
         faults.isEmpty
@@ -1385,6 +1389,11 @@ def toolchainSpawnChecks (ref : IO.Ref (List String)) : IO Unit := do
           | .error _ => false
         t s!"toolchain spawns selftest: an engine module's `{planted}` fires" fired
       let home := ((closure.find? (·.1 == spawnerHome)).map (·.2)).getD ""
+      let leaning := headerImports "module\n\npublic import LeanTex.Cli.RunBounded\nimport Lean.Data.Json\n"
+      t "toolchain closure selftest: an engine module importing a module of Lean's package fires"
+        (match ← toolchainClosure roots leaning known with
+          | .ok reached => !(leanPackage reached).isEmpty
+          | .error _ => false)
       t "toolchain spawns selftest: a spawner planted in the home fires"
         ((toolchainSpawnFaults #[(spawnerHome, home ++
           "\nnamespace IO.Process\ndef zzShell (c : String) : IO Unit := discard <| output { cmd := c }\nend IO.Process\n")]).any

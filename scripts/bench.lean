@@ -6,7 +6,7 @@ import LeanTex.Core.PngEncode
 /-
 Benchmark leantex against lualatex on the bench corpus, median of `N` runs (default 5), or the
 measurement a flag selects; never a gate. `LEANTEX_BENCH_BINARY` names a saved compiler.
-Usage: lake build && lake env lean --run scripts/bench.lean [--boundary-only | --concurrency-only | --slides-only | --slides-compressed-only | --slides-selftest | --talk-only | --rasters-only | --decode-only | --pages-only | --startup-only | --listings-only | --bib-only | --passes-only | --svg-only | --pdf-pages-only <f.pdf> | --faces-only <f.pdf>... | --doc-cost [--record] [--history <path>]]
+Usage: lake build && lake env lean --run scripts/bench.lean [--boundary-only | --concurrency-only | --slides-only | --slides-compressed-only | --slides-selftest | --talk-only | --rasters-only | --decode-only | --pages-only | --startup-only | --facts-only | --listings-only | --bib-only | --passes-only | --svg-only | --pdf-pages-only <f.pdf> | --faces-only <f.pdf>... | --doc-cost [--record] [--history <path>]]
 -/
 
 def compiler : IO String := do
@@ -172,6 +172,34 @@ def benchPages (n : Nat) (leantex : String) : IO Unit := do
   IO.FS.removeDirAll outDir
   growthBound "html, 32000 / 8000 stylesheet rules" (← stylesheetHtmlMs n 8000 leantex)
     (← stylesheetHtmlMs n 32000 leantex)
+
+
+/-- A Lean page read with a facts file of the fixture's records a hundred times over, about 4.5 MB
+of JSON lines, built to each format, the median of `n` runs each. -/
+def benchFacts (n : Nat) (leantex : String) : IO Unit := do
+  let src := "testdata/codedoc/lean"
+  let lines := ((← IO.FS.readFile s!"{src}/statements.facts").splitOn "\n").filter (!·.isEmpty)
+  let body := (lines.drop 1).dropLast
+  let records := [lines.headD ""] ++ (List.replicate 100 body).flatten ++ [lines.getLastD ""]
+  IO.FS.withTempDir fun dir => do
+    IO.FS.writeFile (dir / "statements.lean") (← IO.FS.readFile s!"{src}/statements.lean")
+    IO.FS.createDirAll (dir / ".lake" / "build" / "leantex")
+    IO.FS.writeFile (dir / ".lake" / "build" / "leantex" / "statements.facts")
+      ("\n".intercalate records ++ "\n")
+    for format in ["pdf", "html"] do
+      let mut walls : Array Nat := #[]
+      let mut reads : Array Nat := #[]
+      for _ in [0:n] do
+        let t0 ← IO.monoMsNow
+        let out ← IO.Process.output { cmd := leantex, args := #["-v", "build",
+          (dir / "statements.lean").toString, "-o", (dir / s!"page.{format}").toString] }
+        walls := walls.push ((← IO.monoMsNow) - t0)
+        if out.exitCode != 0 then die s!"benchmark command failed: {leantex} on the facts page"
+        match phaseMs "lean" (out.stdout ++ out.stderr) with
+        | some ms => reads := reads.push ms
+        | none => die "no lean phase in the -v report"
+      IO.println s!"{padRight s!"leantex  statements.lean, 100x facts -o {format}" 42} \
+{padLeft (toString (median walls)) 6} ms, facts read {median reads} ms (median of {n})"
 
 /-- The reference-list phase over `entries` invented entries, all listed under plainnat's
 `\nocite{*}`: the median of `n` runs. -/
@@ -1346,6 +1374,9 @@ def main (args : List String) : IO UInt32 := do
     return 0
   if args == ["--startup-only"] then
     benchStart n leantex
+    return 0
+  if args == ["--facts-only"] then
+    benchFacts n leantex
     return 0
   if args == ["--concurrency-only"] then
     for count in [8, 32] do benchConcurrent n count false

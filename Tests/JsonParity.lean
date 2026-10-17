@@ -29,7 +29,7 @@ decreasing_by
   · have := Array.sizeOf_lt_of_mem ‹_ ∈ a›; omega
   · have := Array.sizeOf_lt_of_mem ‹_ ∈ kvs›; simp at this; omega
 
-/-- Texts that reach every branch of Lean's reader, failures included. -/
+/-- Texts that reach every reachable branch of Lean's reader, failures included. -/
 def edgeTexts : List String :=
   ["", " ", "\t\n\r 7 ", "[", "[1", "[1,", "[1,]", "[1 2]", "[1] x", "1 2", "]", "}", ",", ":",
    "{", "{\"a\"", "{\"a\":", "{\"a\":1", "{\"a\" 1}", "{a:1}", "{\"a\":1,}", "{\"a\":1 \"b\":2}",
@@ -114,7 +114,8 @@ def refusedShift (text e : String) : Bool :=
   e.endsWith ": exp too large" &&
     let at_ := (String.ofList ((e.toList.drop "offset ".length).takeWhile Char.isDigit)).toNat?.getD 0
     let digits := ((text.toUTF8.extract 0 at_).toList.reverse.takeWhile fun b => 48 ≤ b && b ≤ 57).reverse
-    digits.foldl (fun n b => 10 * n + (b.toNat - 48)) 0 ≤ USize.size
+    let n := digits.foldl (fun n b => 10 * n + (b.toNat - 48)) 0
+    Json.maxShift < n && n ≤ USize.size
 
 /-- Whether both readers agree on a text: the same value, spelled and laid out the same, and the
 same reading of each key as each type the engine asks for; or the same failure. -/
@@ -168,6 +169,17 @@ def jsonParityChecks (ref : IO.Ref (List String)) : IO Unit := do
 (differing: {spelled.toList.take 3})" spelled.isEmpty
   let strings := ["", "plain", "quote \" and \\ back", "line\nfeed\rreturn\ttab",
     "\x00\x01\x1f\x7f", "é 😀 ∀", "</script>", "\u2028\u2029"]
+  t "json parity: positive exponents within the bound read as Lean reads them"
+    (["1e4096", "1E5", "2.5E+2", "[1.0e+2]", "-3e+0", "7E4096"].all agrees)
+  let long := "\"" ++ "".pushn 'a' 16000000 ++ "\\u00e9\""
+  let spaced := "".pushn ' ' 16000000 ++ "[" ++ "".pushn '1' 1000 ++ "]"
+  let readsAlike (text : String) : Bool :=
+    match Json.parse text, Lean.Json.parse text with
+    | .ok a, .ok b => toLean a == b
+    | .error e, .error f => e == f
+    | _, _ => false
+  t "json parity: a string and white space of sixteen million characters read as Lean reads them"
+    (readsAlike long && readsAlike spaced)
   t "json parity: an exponent past the bound is refused where Lean would build its power"
     (["[1e4097]", "1e9999999999"].zip ["offset 7: exp too large", "offset 12: exp too large"]
       |>.all fun (text, why) => match Json.parse text with
