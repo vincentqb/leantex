@@ -115,7 +115,7 @@ def markdownWarningChecks (ref : IO.Ref (List String)) : IO Unit := do
   let wide := String.ofList (List.replicate 90 '7')
   let paras := String.intercalate "\n\n" (List.replicate 4 s!"Before {wide} after.") ++ "\n"
   let (raws, readDiags) := Md.read "t.md" paras
-  let (located, _, _) := Elab.runRawsSpanned "t.md" raws readDiags
+  let (located, _, _) := Elab.runKeptSpanned "t.md" raws readDiags
   let out := layoutOf (oneFaceOf font) located
   let overfull := out.diags.filter (·.kind == .W0005)
   t s!"every overfull line is reported at its own source line ({overfull.size})"
@@ -141,7 +141,7 @@ def markdownWarningChecks (ref : IO.Ref (List String)) : IO Unit := do
   let code := String.intercalate "_" (List.replicate 24 "gadget")
   let fence (src : String) : Layout.Out :=
     let (fRaws, fReads) := Md.read "f.md" src
-    let (fDoc, _, _) := Elab.runRawsSpanned "f.md" fRaws fReads
+    let (fDoc, _, _) := Elab.runKeptSpanned "f.md" fRaws fReads
     layoutOf split fDoc
   let sitesOf (o : Layout.Out) := (o.diags.filter (·.kind == .W0005)).map
     (·.span.map fun s => (s.pos.line, s.pos.col))

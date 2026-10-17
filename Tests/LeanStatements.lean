@@ -179,7 +179,7 @@ def leanStatementChecks (ref : IO.Ref (List String)) : IO Unit := do
     "-- leantex: " ++ views ++ "\n" ++ "\n".intercalate ((src.splitOn "\n").drop 1)
   let readWith (views : String) (given : Option LeanFacts.Facts) : Ir.Doc × Array Diag :=
     let (raws, ds) := Surface.readCode .lean "statements.lean" (withShow views) given
-    Elab.runRaws "statements.lean" raws ds
+    Elab.runKept "statements.lean" raws ds
   let readAs (views : String) : Ir.Doc × Array Diag := readWith views (some facts)
   let (doc, ds) := readAs "show = math, code"
   let codeOnly := Code.codeOf (Code.segmentsOf .lean src)

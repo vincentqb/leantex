@@ -30,7 +30,8 @@ def prepared (markdown : Bool) (input : String) : Elab.Prepared × Array Diag :=
     let (toks, ld) := Lex.lex "listing.tex" input
     let (raws, pd) := Parse.parse "listing.tex" toks
     (raws, ld ++ pd)
-  (Elab.prepare "listing" raws, ds)
+  (if markdown then Elab.prepareExecuted "listing" (Compat.kept "listing" raws)
+    else Elab.prepare "listing" raws, ds)
 
 def invocationReply (kind : String) : String :=
   ShellHighlight.shellBatchJson #[ShellHighlight.shellSuccessJson

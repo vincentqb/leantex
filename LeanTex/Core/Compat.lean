@@ -4671,6 +4671,10 @@ private def markdownCitationsFlag : String := "markdown citations"
 word. -/
 private def markdownHybridFlag : String := "markdown hybrid"
 
+/-- The flag naming the markdown package loaded, its first load's options standing, named by no
+control word. -/
+private def markdownLoadedFlag : String := "markdown loaded"
+
 /-- The markdown package's `citations` and `hybrid` set where they are given. -/
 private def setMarkdown (opts : MarkdownOptions) : M Unit := do
   if let some b := opts.citations then setFlag markdownCitationsFlag b
@@ -4683,11 +4687,13 @@ public def InputContext.markdown (context : InputContext) : MarkdownOptions :=
     hybrid := context.state.flags[markdownHybridFlag]? }
 
 /-- The context once the markdown package loads with `options`, after the options passed to it
-before, as LaTeX applies them. -/
+before, as LaTeX applies them; a later load's options apply to nothing. -/
 public def InputContext.loadMarkdown (context : InputContext) (options : String) : InputContext :=
+  if context.state.flags.contains markdownLoadedFlag then context else
   let passed := (context.state.loads.passed.filter (·.1 == "markdown")).toList.flatMap (·.2.toList)
   let opts := MarkdownOptions.read (",".intercalate (passed ++ PackageImports.literalOptions options))
-  { state := (setMarkdown opts context.state).2 }
+  let st := (setMarkdown opts context.state).2
+  { state := { st with flags := st.flags.insert markdownLoadedFlag true } }
 
 /-- The context with the markdown package's options as `saved` holds them, a file that set them
 having ended. -/

@@ -16987,6 +16987,11 @@ public def runKept (file : String) (raws : Array Raw) (earlier : Array Diag := #
     (picMetric : Ir.Pic.LabelMetric := fun _ _ => {}) : Doc × Array Diag :=
   runExecuted file (Compat.kept file raws) earlier picMetric
 
+/-- The same with the spans its requests name. -/
+public def runKeptSpanned (file : String) (raws : Array Raw) (earlier : Array Diag := #[])
+    (picMetric : Ir.Pic.LabelMetric := fun _ _ => {}) : Doc × Array Diag × ReqSpans :=
+  runPrepared file (prepareExecuted file (Compat.kept file raws)) earlier picMetric
+
 public def run (file input : String) : Doc × Array Diag :=
   let (toks, lexDiags) := Lex.lex file input
   let (raws, parseDiags) := Parse.parse file toks

@@ -240,7 +240,7 @@ def leanProseChecks (ref : IO.Ref (List String)) : IO Unit := do
     "-- leantex: " ++ views ++ "\n" ++ "\n".intercalate ((src.splitOn "\n").drop 1)
   let readWith (views : String) (given : Option LeanFacts.Facts) : Ir.Doc × Array Diag :=
     let (raws, ds) := Surface.readCode .lean "statements.lean" (withShow views) given
-    Elab.runRaws "statements.lean" raws ds
+    Elab.runKept "statements.lean" raws ds
   let readAs (views : String) : Ir.Doc × Array Diag := readWith views (some facts)
   t "prose: a page that shows prose reads its facts, alone or beside the other views"
     (["show = prose", "show = prose, code", "show = code, prose", "show = math, prose"].all fun v =>
@@ -339,7 +339,7 @@ def leanProseChecks (ref : IO.Ref (List String)) : IO Unit := do
     let src := s!"-- leantex: show = {views}\ntheorem aa : 0 = 0 := rfl\ntheorem bb : 1 = 1 := rfl\n" ++
       "theorem cc : 2 = 2 := rfl\n"
     let (raws, ds) := Surface.readCode .lean "adjacent.lean" src (some adjFacts)
-    (codePageLines fonts (Elab.runRaws "adjacent.lean" raws ds).1).map fun (mono, ink) =>
+    (codePageLines fonts (Elab.runKept "adjacent.lean" raws ds).1).map fun (mono, ink) =>
       let one := " ".intercalate ((ink.splitOn " ").filter (!·.isEmpty))
       if mono then s!"code {one}" else one
   let rising (lines : Array String) (want : List String) : Bool :=
@@ -366,7 +366,7 @@ def leanProseChecks (ref : IO.Ref (List String)) : IO Unit := do
   let swapFacts : LeanFacts.Facts := { factsWith #[] with decls := #[theoremAt "tt" 2 swapType] }
   let (swapRaws, swapDs) := Surface.readCode .lean "swap.lean"
     "-- leantex: show = prose\ntheorem tt {p q : Prop} : p ∧ q ↔ q ∧ p := And.comm\n" (some swapFacts)
-  let swapLines := codePageLines fonts (Elab.runRaws "swap.lean" swapRaws swapDs).1
+  let swapLines := codePageLines fonts (Elab.runKept "swap.lean" swapRaws swapDs).1
   t s!"prose: a sentence opening on a parenthesis capitalizes the word after it ({swapLines.map (·.2)})"
     (swapLines.any (·.2.startsWith "Theorem (tt). (Both") &&
       ((proseOf swapFacts (coreTable true) (theoremAt "tt" 2 swapType) swapType).toOption.map

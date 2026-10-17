@@ -564,8 +564,9 @@ mutual
 the invocations enclosing the place. -/
 @[expose] public def spliceKept (kept : Array (Array Raw)) : Raw → Array Raw
   | .verb e s p =>
-    if e == keptEnv then (kept.getD (s.toNat?.getD kept.size) #[]).map (withOrigins p.origins)
-    else #[.verb e s p]
+    match if e == keptEnv then s.toNat?.bind (kept[·]?) else none with
+    | some rs => rs.map (withOrigins p.origins)
+    | none => #[.verb e s p]
   | .group body p => #[.group (spliceKeptList kept #[] body.toList) p]
   | .env n body p => #[.env n (spliceKeptList kept #[] body.toList) p]
   | .math d body p => #[.math d (spliceKeptList kept #[] body.toList) p]

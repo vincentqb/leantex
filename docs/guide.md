@@ -69,11 +69,15 @@ option, declared by `\usepackage[hybrid]{markdown}`, `\markdownSetup{hybrid}`
 for the rest of its group or `\markdownInput[hybrid]{…}` for one file (and
 `hybrid = false` to turn it off), its text is TeX within Markdown's
 structure, as the package reads it then: its commands, groups, environments
-and math are TeX's, even across its emphasis, links and paragraphs, a `%`
-comments out the rest of its line before the Markdown is read, and the
+and math are TeX's, even across its emphasis, links and paragraphs, and the
 document's definitions reach it as they reach the TeX around it, though never
-a Lean file one of its divisions includes. A Lean file `\inputlean` includes
-sets as its page sets it, whatever commands the document defines.
+a Lean file one of its divisions includes. A verbatim span holding Markdown
+syntax and an escaped TeX special such as `\_` stay TeX's as well, which the
+package's reading mangles. A `%` comments out the rest of its line before the
+Markdown is read, the line's end staying, so the next line begins its own
+block where the package would join it to the commented one. A Lean file
+`\inputlean` includes sets as its page sets it, whatever commands the
+document defines.
 
 Markdown cites as Pandoc does: `[@key]`, `[see @key, p. 33; @other]`,
 `[-@key]` without the author's name, and `@key` or `@key [p. 33]` within a

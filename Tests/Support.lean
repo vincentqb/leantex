@@ -346,6 +346,8 @@ def standaloneDoc (f t : String) : Ir.Doc × Array Diag :=
 file `files` maps it to, read and answered as the driver reads and answers it. -/
 def mdFileReader (files : List (String × String × String)) :
     Compat.InputReader (StateM (Array Diag)) := fun request context => do
+  if request.packageCalls.any (·.1 == "markdown") then
+    return (none, context.loadMarkdown request.options)
   if request.command != "markdownInput" then return (none, context)
   match files.find? (·.1 == request.name.trimAscii.toString) with
   | none => return (none, context)

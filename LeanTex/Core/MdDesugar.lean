@@ -725,8 +725,8 @@ end
 
 /-! ## Hybrid: a file's text as TeX -/
 
-/-- A file's TeX comments cut after their `%`, as the markdown package's hybrid option strips them
-before it reads the file's markdown, each line keeping its place. -/
+/-- A file's TeX comments cut after their `%`, so the markdown read under the hybrid option holds
+none of their text, each line keeping its place and its end. -/
 private def stripTexComments (input : String) : String :=
   "\n".intercalate ((input.splitOn "\n").map fun line => Id.run do
     let mut out := ""
@@ -746,6 +746,19 @@ private def lineStartsOf (s : String) : Array Nat := Id.run do
     if c == '\n' then out := out.push i
   return out
 
+/-- The file place of `q`, a place the lexer gives in a buffer of pieces whose starts in it and in
+the file `anchors` holds, at the latest piece starting at or before it, searched from piece `k`. -/
+private def placeFrom (starts : Array Nat) (anchors : Array (Nat × Pos)) (k : Nat) (q : Pos) :
+    Nat × Pos := Id.run do
+  let off := starts.getD (q.line - 1) 0 + (q.col - 1)
+  let mut k := if (anchors.getD k (0, {})).1 ≤ off then k else 0
+  for _ in [0:anchors.size] do
+    if (anchors.getD (k + 1) (off + 1, {})).1 ≤ off then k := k + 1 else break
+  match anchors[k]? with
+  | some (start, p) =>
+    (k, if start ≤ off then { q with line := p.line, col := p.col + (off - start) } else q)
+  | none => (k, q)
+
 /-- A hybrid file's TeX as one token stream: its text lexed where it stands, markdown's nodes
 spelled around it, and every other node kept whole at its place. -/
 private structure TexStream where
@@ -760,43 +773,74 @@ private structure TexStream where
 
 /-- The text not yet lexed, lexed into the stream at the file places its pieces came from. -/
 private def TexStream.flush (st : TexStream) (file : String) : TexStream :=
-  if st.buf.isEmpty then st else
-  let (toks, ds) := Lex.lex file st.buf
-  let starts := lineStartsOf st.buf
-  let anchors := st.anchors.toList.reverse
-  let place (q : Pos) : Pos :=
-    let off := starts.getD (q.line - 1) 0 + (q.col - 1)
-    match anchors.find? (·.1 ≤ off) with
-    | some (start, p) => { q with line := p.line, col := p.col + (off - start) }
-    | none => q
-  { st with
-    toks := st.toks ++ toks.map fun t => { t with pos := place t.pos }
-    diags := st.diags ++ ds.map fun d =>
-      { d with span := d.span.map fun sp => { sp with pos := place sp.pos } }
-    buf := "", len := 0, anchors := #[] }
+  let ⟨toks, kept, diags, buf, len, anchors⟩ := st
+  if buf.isEmpty then ⟨toks, kept, diags, buf, len, anchors⟩ else
+  let (lexed, ds) := Lex.lex file buf
+  let starts := lineStartsOf buf
+  let (toks, _) := lexed.foldl (init := (toks, 0)) fun (out, k) t =>
+    let (k, q) := placeFrom starts anchors k t.pos
+    (out.push { t with pos := q }, k)
+  let diags := ds.foldl (init := diags) fun out d =>
+    out.push { d with span := d.span.map fun sp =>
+      { sp with pos := (placeFrom starts anchors 0 sp.pos).2 } }
+  ⟨toks, kept, diags, "", 0, #[]⟩
+
+/-- Whether the text not yet lexed ends inside a verbatim capture, which a node after it joins as
+markdown spells it. -/
+private def TexStream.verbOpen (st : TexStream) (file : String) : Bool :=
+  !st.buf.isEmpty && (Lex.lex file st.buf).2.any (·.kind == .E0102)
 
 /-- Text at `p` into the stream. -/
 private def TexStream.text (st : TexStream) (s : String) (p : Pos) : TexStream :=
-  { st with buf := st.buf ++ s, len := st.len + s.length, anchors := st.anchors.push (st.len, p) }
+  let ⟨toks, kept, diags, buf, len, anchors⟩ := st
+  ⟨toks, kept, diags, buf ++ s, len + s.length, anchors.push (len, p)⟩
 
 /-- A token at `p`, after the text before it. -/
 private def TexStream.tok (st : TexStream) (file : String) (t : Lex.Tok) (p : Pos) : TexStream :=
-  let st := st.flush file
-  { st with toks := st.toks.push ⟨t, p⟩ }
+  let ⟨toks, kept, diags, buf, len, anchors⟩ := st.flush file
+  ⟨toks.push ⟨t, p⟩, kept, diags, buf, len, anchors⟩
 
 /-- Raws a node lowers to, kept whole at `p`. -/
 private def TexStream.keep (st : TexStream) (file : String) (rs : Array Raw × Array Diag)
     (p : Pos) : TexStream :=
-  let st := st.flush file
-  { st with
-    toks := st.toks.push ⟨.verb Parse.keptEnv (toString st.kept.size), p⟩
-    kept := st.kept.push rs.1, diags := st.diags ++ rs.2 }
+  let ⟨toks, kept, diags, buf, len, anchors⟩ := st.flush file
+  let k := kept.size
+  ⟨toks.push ⟨.verb Parse.keptEnv (toString k), p⟩, kept.push rs.1, diags ++ rs.2, buf, len,
+    anchors⟩
 
 /-- The stream read as TeX once, each kept node back at its place. -/
 private def TexStream.close (st : TexStream) (file : String) : Array Raw × Array Diag :=
-  let st := st.flush file
-  let (raws, ds) := Parse.parse file st.toks
-  (Parse.spliceKeptList st.kept #[] raws.toList, st.diags ++ ds)
+  let ⟨toks, kept, diags, _, _, _⟩ := st.flush file
+  let (raws, ds) := Parse.parse file toks
+  (Parse.spliceKeptList kept #[] raws.toList, diags ++ ds)
+
+mutual
+
+/-- An inline node as markdown spells it, near enough for a verbatim capture holding it. -/
+private def inlSpelling : Inl → String
+  | .text s _ => s
+  | .soft _ => "\n"
+  | .hard _ => "\n"
+  | .code s _ => "`" ++ s ++ "`"
+  | .emph body _ => inlsSpelling "*" body.toList ++ "*"
+  | .strong body _ => inlsSpelling "**" body.toList ++ "**"
+  | .link dest _ body _ => inlsSpelling "[" body.toList ++ "](" ++ dest ++ ")"
+  | .image dest _ alt _ => inlsSpelling "![" alt.toList ++ "](" ++ dest ++ ")"
+  | .anchor key _ => "<a id=\"" ++ key ++ "\"></a>"
+  | .citeText _ body _ => inlsSpelling "[" body.toList ++ "]"
+  | .cite items _ =>
+    "[" ++ "; ".intercalate (items.toList.map fun ⟨key, _, _, _⟩ => "@" ++ key) ++ "]"
+
+private def inlsSpelling (acc : String) : List Inl → String
+  | [] => acc
+  | x :: rest => inlsSpelling (acc ++ inlSpelling x) rest
+
+end
+
+/-- The stream with `x` joining a verbatim capture the text before it left open, if it did. -/
+private def TexStream.spelled? (st : TexStream) (file : String) (x : Inl) (p : Pos) :
+    Option TexStream :=
+  if st.verbOpen file then some (st.text (inlSpelling x) p) else none
 
 mutual
 
@@ -805,27 +849,36 @@ spelled around their content, every other node kept whole. -/
 private def texInl (file : String) (st : TexStream) : Inl → TexStream
   | .text s p => st.text s p
   | .soft p => st.text "\n" p
-  | .hard p => st.tok file (.ctrl "\\") p
-  | .emph body p =>
-    (texInls file ((st.tok file (.ctrl "emph") p).tok file .lbrace p) body.toList).tok file .rbrace p
-  | .strong body p =>
-    (texInls file ((st.tok file (.ctrl "textbf") p).tok file .lbrace p) body.toList).tok file
-      .rbrace p
-  | .link dest title body p =>
-    let st := (st.tok file (.ctrl "href") p).keep file (#[.group (textRaws dest p) p], #[]) p
-    let st := (texInls file (st.tok file .lbrace p) body.toList).tok file .rbrace p
-    if title.isEmpty then st else
-      { st with diags := st.diags.push (routeDegraded file "link-title"
-        "a link's title is not carried: the link sets without it" p) }
-  | .citeText key body p =>
-    let st := (st.tok file (.ctrl "href") p).keep file
-      (#[.group (textRaws ("#" ++ Ir.bibAnchor key) p) p], #[]) p
-    let st := (texInls file (st.tok file .lbrace p) body.toList).tok file .rbrace p
-    st.keep file (citeCmdRaws "nocite" #[] #[] #[key] p, #[]) p
-  | x@(.code _ p) => st.keep file (inlRaws file x) p
-  | x@(.image _ _ _ p) => st.keep file (inlRaws file x) p
-  | x@(.anchor _ p) => st.keep file (inlRaws file x) p
-  | x@(.cite _ p) => st.keep file (inlRaws file x) p
+  | x@(.hard p) => (st.spelled? file x p).getD (st.tok file (.ctrl "\\") p)
+  | x@(.emph body p) => match st.spelled? file x p with
+    | some st => st
+    | none =>
+      (texInls file ((st.tok file (.ctrl "emph") p).tok file .lbrace p) body.toList).tok file
+        .rbrace p
+  | x@(.strong body p) => match st.spelled? file x p with
+    | some st => st
+    | none =>
+      (texInls file ((st.tok file (.ctrl "textbf") p).tok file .lbrace p) body.toList).tok file
+        .rbrace p
+  | x@(.link dest title body p) => match st.spelled? file x p with
+    | some st => st
+    | none =>
+      let st := (st.tok file (.ctrl "href") p).keep file (#[.group (textRaws dest p) p], #[]) p
+      let st := (texInls file (st.tok file .lbrace p) body.toList).tok file .rbrace p
+      if title.isEmpty then st else
+        { st with diags := st.diags.push (routeDegraded file "link-title"
+          "a link's title is not carried: the link sets without it" p) }
+  | x@(.citeText key body p) => match st.spelled? file x p with
+    | some st => st
+    | none =>
+      let st := (st.tok file (.ctrl "href") p).keep file
+        (#[.group (textRaws ("#" ++ Ir.bibAnchor key) p) p], #[]) p
+      let st := (texInls file (st.tok file .lbrace p) body.toList).tok file .rbrace p
+      st.keep file (citeCmdRaws "nocite" #[] #[] #[key] p, #[]) p
+  | x@(.code _ p) => (st.spelled? file x p).getD (st.keep file (inlRaws file x) p)
+  | x@(.image _ _ _ p) => (st.spelled? file x p).getD (st.keep file (inlRaws file x) p)
+  | x@(.anchor _ p) => (st.spelled? file x p).getD (st.keep file (inlRaws file x) p)
+  | x@(.cite _ p) => (st.spelled? file x p).getD (st.keep file (inlRaws file x) p)
 
 private def texInls (file : String) (st : TexStream) : List Inl → TexStream
   | [] => st
@@ -839,7 +892,9 @@ mutual
 read as a stream of their own, kept whole. -/
 private def texBlk (file : String) (refs : Array Raw) (divisions : Bool) (st : TexStream) :
     Blk → TexStream
-  | .para body p => (texInls file st body.toList).tok file .par p
+  | .para body p =>
+    let st := texInls file st body.toList
+    if st.verbOpen file then st.text "\n\n" p else st.tok file .par p
   | .heading level body p =>
     let (rs, ds) := (texInls file {} body.toList).close file
     st.keep file (Parse.headingRaws level rs p, ds) p

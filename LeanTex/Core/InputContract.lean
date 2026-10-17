@@ -17,7 +17,7 @@ invocations enclosing the place. -/
 public theorem spliceKeptList_keptRaw (kept : Array (Array Raw)) (k : Nat) (p : Pos)
     (h : k < kept.size) :
     spliceKeptList kept #[] [keptRaw k p] = kept[k].map (withOrigins p.origins) := by
-  simp [spliceKeptList, spliceKept, keptRaw, Array.getD, h]
+  simp [spliceKeptList, spliceKept, keptRaw, h]
 
 end LeanTex.Core.Parse
 

@@ -2,7 +2,6 @@ module
 
 public import LeanTex.Core.Diag
 public import LeanTex.Core.Heading
-import LeanTex.Core.Lex
 import LeanTex.Core.Loop
 import LeanTex.Core.Blank
 import LeanTex.Core.Hex
@@ -1245,6 +1244,9 @@ def flanking (before after : Option Char) : Bool × Bool :=
   let right := !wsBefore && (!puBefore || wsAfter || puAfter)
   (left, right)
 
+/-- TeX's special characters, whose escape stays TeX's where a text is TeX. -/
+def texSpecial (c : Char) : Bool := "\\{}$&#^_~%".contains c
+
 /-- An ASCII-punctuation backslash escape, or `none` where
 the backslash is literal. -/
 def escaped? (c : Chars) (i : Nat) : Option Char := do
@@ -1949,8 +1951,12 @@ def scanInlines (file : String) (c : Chars) (dialect : Dialect := .document)
       if ch == '\\' then
         match escaped? c i with
         | some d =>
-          -- Where text is TeX, an escaped TeX special stays TeX's.
-          pending := if tex && Lex.special d then (pending.push '\\').push d else pending.push d
+          if tex then
+            -- Where text is TeX, an escape is a piece of its own at its place.
+            toks := flush toks pending pendingPos
+            pending := ""
+            toks := toks.push (.txt (if texSpecial d then "\\" ++ d.toString else d.toString) p)
+          else pending := pending.push d
           i := i + 2
         | none =>
           -- A backslash before a line ending is a hard break.
@@ -1976,7 +1982,11 @@ def scanInlines (file : String) (c : Chars) (dialect : Dialect := .document)
       else if ch == '&' then
         match entityAt c i with
         | some (v, next) =>
-          pending := pending ++ v
+          if tex then
+            toks := flush toks pending pendingPos
+            pending := ""
+            toks := toks.push (.txt v p)
+          else pending := pending ++ v
           i := next
         | none =>
           pending := pending.push '&'

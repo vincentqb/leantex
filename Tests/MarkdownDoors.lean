@@ -426,7 +426,12 @@ and never the Lean file its division includes"
         ("escapes.md", "Hash \\#3 and \\% sign and more words.\n", ["#3", "% sign and more words"],
           ["\\#"]),
         ("comment.md", "Alpha % comment with *hidden* words\nBeta after the comment.\n",
-          ["Alpha Beta after the comment."], ["hidden"])] do
+          ["Alpha Beta after the comment."], ["hidden"]),
+        ("brackets.md", "See \\[citation needed\\] here and \\[1, 2\\].\n",
+          ["See [citation needed] here and [1, 2]."], []),
+        ("verb.md", "Code \\verb|x*y*z| here.\n", ["x*y*z"], []),
+        ("verbatim.md", "\\begin{verbatim}\nline *one* `two`\n\nline three\n\\end{verbatim}\n",
+          ["line *one* `two`", "line three"], ["verbatim"])] do
       IO.FS.writeFile (dir / name) text
       let (html, ds) ← runWith "" hybridPre ("\\markdownInput{" ++ name ++ "}")
       t s!"markdown hybrid: {name} reads as one TeX stream ({ds.filter (·.severity == .error) |>.map (·.code)})"
@@ -440,6 +445,21 @@ and never the Lean file its division includes"
     t s!"markdown hybrid: a diagnostic in a quotation or a list item names its own column \
 ({at? "unknownzz"}, {at? "otherzz"})"
       (at? "unknownzz" == some (1, 10) && at? "otherzz" == some (3, 8))
+    IO.FS.writeFile (dir / "escapes2.md") "a \\* b \\escapezz\n\na &copy; b \\entityzz\n"
+    let (_, escDs) ← runWith "" hybridPre "\\markdownInput{escapes2.md}"
+    let escAt (name : String) : Option (Nat × Nat) :=
+      (escDs.find? fun d => hasStr d.message name).bind fun d => d.span.map fun sp =>
+        (sp.pos.line, sp.pos.col)
+    t s!"markdown hybrid: a diagnostic after an escape or an entity names its own column \
+({escAt "escapezz"}, {escAt "entityzz"})"
+      (escAt "escapezz" == some (1, 8) && escAt "entityzz" == some (3, 12))
+    for (label, pre, set) in [
+        ("a second load's option", "\\usepackage{markdown}\\usepackage[hybrid]{markdown}", 0),
+        ("a second load turning it off", "\\usepackage[hybrid]{markdown}\\usepackage[hybrid=false]{markdown}",
+          1)] do
+      let (html, _) ← run pre input
+      t s!"markdown hybrid: {label} applies to nothing, as the first load's options stand"
+        (treeShownOccurs html "Zed" == set && treeShownOccurs html "\\zed" == 1 - set)
     IO.FS.writeFile (dir / "inner.md") "\\markdownSetup{hybrid=false}Inner \\zed words.\n"
     let (leakHtml, _) ← run "\\usepackage[hybrid]{markdown}" ("\\markdownInput{inner.md}" ++ input)
     t "markdown hybrid: a setup inside an included file ends with it"
