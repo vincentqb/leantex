@@ -9832,14 +9832,25 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
       became s!"\\documentclass\{{cls}}" (cls0.render ++ (page.note?.getD "")) pos
       return some (cls0.raws pos ++ (← carry page pos), k)
     else if cls == "beamer" then
+      -- beamer's `hyperref={...}` option is `\hypersetup`'s keys.
+      let hyper := ((takeRawOpt raws start).1.map (Entries.read .keyval ·)).getD #[]
+        |>.filter (·.key == "hyperref")
+      let keptItems := keptItems.filter fun kv => (KeyVal.entry kv).1 != "hyperref"
       let declaration := Native.Head.documentclass (if opt.isSome then keptItems.toArray else #[])
         "slides"
       became "\\documentclass{beamer}" declaration.render pos
+      let mut setup : Array Raw := #[]
+      for e in hyper do
+        let v := (e.value.getD #[]).foldl (fun out r => match r with
+          | .group g _ => out ++ g
+          | r => out.push r) #[]
+        setup := setup ++ (← hyperrefLowered "\\documentclass[hyperref={...}]{beamer}"
+          "documentclass:hyperref" (← hyperrefKeys v pos) pos)
       let passed := (← get).loads.rewriteClassPassed.toList.flatMap fun (name, options) =>
         if name == cls then options.toList else []
       let packages := classPackages cls (passed ++ PackageImports.literalOptions (opt.getD ""))
       let dependencies ← rewritePackages "RequirePackage" packages none #[] pos
-      return some (declaration.raws pos ++ dependencies, k)
+      return some (declaration.raws pos ++ dependencies ++ setup, k)
     else
       -- The options passed to a class before it loads are its own, before its written ones.
       let passed := (← get).loads.rewriteClassPassed.toList.flatMap fun (name, options) =>
@@ -11882,18 +11893,47 @@ private def frameCommands (raws : Array Raw) : Array Raw :=
   if declaresPresentation raws then frameCommandsLevel (frameCommandsList raws.toList).toArray
   else raws
 
+/-- beamer's mode names. -/
+private def beamerModes : List String :=
+  ["article", "beamer", "handout", "trans", "second", "presentation", "all"]
+
+/-- A frame specification's reading for a presentation: `some (some ov)` where its last part naming
+a presentation mode, or naming none, gives the overlay `ov` (empty for a bare mode name), `some
+none` where it names only other modes' parts, `none` where it is no specification. -/
+private def modeOverlay (w : String) : Option (Option String) :=
+  if w.startsWith "<" && w.endsWith ">" && w.length ≥ 3 then
+    let inner := ((w.drop 1).dropEnd 1).toString
+    some ((inner.splitOn "|").foldl (init := none) fun acc e =>
+      match e.splitOn ":" with
+      | [ov] =>
+        let ov := ov.trimAscii.toString
+        if presentationModes.contains ov then some ""
+        else if beamerModes.contains ov then acc else some ov
+      | [m, ov] => if presentationModes.contains m.trimAscii.toString then
+          some ov.trimAscii.toString else acc
+      | _ => acc)
+  else none
+
+/-- Whether a specification names a mode bare, which keeps the frame to the modes it names. -/
+private def modeNamesBare (w : String) : Bool :=
+  let inner := ((w.drop 1).dropEnd 1).toString
+  (inner.splitOn "|").any fun e => beamerModes.contains e.trimAscii.toString
+
 /-- Whether a specification declares that the presentation
 has no slides here. -/
 public def modeSilencesPresentation (w : String) : Bool :=
-  if w.startsWith "<" && w.endsWith ">" && w.length ≥ 3 then
-    let inner := ((w.drop 1).dropEnd 1).toString
-    let decided := (inner.splitOn "|").foldl (init := none) fun acc e =>
-      match e.splitOn ":" with
-      | [ov] => some ov
-      | [m, ov] => if presentationModes.contains m.trimAscii.toString then some ov else acc
-      | _ => acc
-    (decided.bind (·.trimAscii.toString.toNat?)) == some 0
-  else false
+  match modeOverlay w with
+  | some (some ov) => ov.toNat? == some 0
+  | some none => modeNamesBare w
+  | none => false
+
+/-- Whether a frame specification leaves a presentation's slides as its body makes them: it
+names only modes, or gives a presentation mode no overlay of its own. -/
+public def modeLeavesPresentation (w : String) : Bool :=
+  match modeOverlay w with
+  | some (some ov) => ov.isEmpty
+  | some none => true
+  | none => false
 
 /-- An `{overprint}` body split into its content before the first item and the
 items, each an `\onslide` spec with its content. -/
@@ -12915,6 +12955,12 @@ and patterns stand in" p
             say .N0104
               s!"'{w}' declares no presentation slides; this frame ships no page" p
             return .group #[] p
+          else if modeLeavesPresentation w then
+            let body' ← rewriteList inBody body #[] body.toList 0 0
+            let i := skipSpaces body' 0
+            match specWordAt body' i with
+            | some _ => return .env n (body'.extract (i + 1) body'.size) p
+            | none => return .env n body' p
           else
             sayOnce "spec:frame" .W0110
               s!"'\\begin\{frame}{w}' specification is not honoured; a frame's \

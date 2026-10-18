@@ -9654,6 +9654,8 @@ public structure Spacing.Pending where
   private frameFoot : Option (Array Inline) := none
   /-- Title of the section in force: what a `\sectiontitle` slot shows. -/
   private curSection : Array Inline := #[]
+  /-- The deck's level-one sections met so far: beamer's section counter. -/
+  private sections : Nat := 0
   private wantDefault : Bool := false
   /-- A document `\vskip` stands in the owed glue, so it adds to the
   peer gap rather than replacing it (`Spacing.Pending.gapGlue`). -/
@@ -11577,6 +11579,7 @@ private def collectSection (r : Rd) (a : Acc) (level : Ir.HeadingLevel)
   -- The section in force for the footer's `\sectiontitle` slot, and its anchor, a deck's claimed.
   let a := if level == 1 then
       { a with curSection := if r.inFrame then a.curSection else title
+               sections := if r.inFrame then a.sections else a.sections + 1
                ops := match anchor, r.slides with
                  | some id, _ => a.ops.push (.anchor id)
                  | none, false => a.ops.push (.anchor (Ir.slug title))
@@ -11610,8 +11613,13 @@ private def collectSection (r : Rd) (a : Acc) (level : Ir.HeadingLevel)
         collectDisplay r a (Ir.fillTemplate tpl title) indent false r.geom.fontSize
           (leaf := leaf) (span := span)
       | none =>
-        collectDisplay r a title indent false (Ir.scaleStepIn r.geom.scale r.geom.fontSize "Large")
-          (baseStyle := { weight := .b }) (leaf := leaf) (span := span)
+        -- beamer's default `section page`: `\sectionname~\insertsectionnumber` over the title,
+        -- both centred in the section title's font.
+        let large := Ir.scaleStepIn r.geom.scale r.geom.fontSize "Large"
+        let named := collectDisplay r a #[.text s!"{r.locale.crefSection.capOne}\u00A0{a.sections}"]
+          0 true large
+        let named := named.vspace { width := Ir.sectionNameSkip r.geom.fontSize large }
+        collectDisplay r named title 0 true large (leaf := leaf) (span := span)
     let a := { a with fg := saved.1, ground := saved.2 }
     let thick := ((a.tokens.find? "progressheight").map
       fun g => (r.resolve g).width).getD (pt 1) -- moloch's default progressbar linewidth=1pt
@@ -13765,7 +13773,7 @@ private theorem role_transparent_collect (r : Rd) (a : Acc) (n : String)
   have h : (n == Ir.trivlistRole) = false := by simpa using htl
   have h' : (n == Ir.inParagraphRole) = false := by simpa using hip
   simp only [Ir.pageMarkerRole, Bool.or_eq_false_iff] at hpm
-  obtain ⟨⟨⟨⟨⟨⟨⟨⟨hpa, hni⟩, hps⟩, hos⟩, -⟩, -⟩, -⟩, -⟩, -⟩ := hpm
+  obtain ⟨⟨⟨⟨⟨⟨⟨⟨⟨hpa, hni⟩, hps⟩, hos⟩, -⟩, -⟩, -⟩, -⟩, -⟩, -⟩ := hpm
   have hop : Ir.pageOpeningOfRole? n = none :=
     Option.isNone_iff_eq_none.mp (Option.isSome_eq_false_iff.mp hos)
   simp only [collectBlock, Spacing.Context.style, hst, Option.getD, h, h', hth, hpa, hni, hps,

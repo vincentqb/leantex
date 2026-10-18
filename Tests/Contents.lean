@@ -503,3 +503,83 @@ inside a paragraph ({mwords})" (mwords == #["Ahead", "Past", "Unit"])
     "\\begin{frame}{Four}Body.\\end{frame}\n\\end{document}\n")
   t s!"each frame a macro sets is numbered after the one before ({deck.frameNumbers})"
     (deck.frameNumbers.filterMap id == #[1, 2, 3, 4])
+
+open ContentsChecks in
+/-- A deck's contents and frames as beamer's options set them: pausesections stepping the entries,
+sections= choosing them, firstsection reading to the same page, a mode specification keeping a frame
+to its modes, and noframenumbering leaving a frame out of the count. -/
+def contentsDeckChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  let t := fun claim => check ref ("contents deck / " ++ claim)
+  let body := "\\section{Kettles}\n\\begin{frame}{Boiling}Water boils.\\end{frame}\n" ++
+    "\\section{Teapots}\n\\begin{frame}{Steeping}Leaves steep.\\end{frame}\n" ++
+    "\\section{Trays}\n\\begin{frame}{Carrying}Trays carry.\\end{frame}\n"
+  let deck (toc : String) : String :=
+    "\\documentclass{beamer}\n\\usetheme{default}\n\\begin{document}\n" ++
+      s!"\\begin\{frame}\{Overview}{toc}\\end\{frame}\n" ++ body ++ "\\end{document}\n"
+  let (paused, pds) := elabStr (deck "\\tableofcontents[pausesections,firstsection=2]")
+  let pout := (fittedOf fonts paused).out
+  let design := Ir.Design.ofPalette paused.palette
+  let shown (i : Nat) (w : String) : Bool :=
+    ((lineWith pout i w).bind firstRun).map (·.1) == some design.fg
+  t s!"pausesections sets an overview page per section, each showing one more entry \
+({pout.pages.size} pages)"
+    (pout.pages.size == 6 && shown 0 "Kettles" && !shown 0 "Teapots" && shown 1 "Teapots" &&
+      !shown 1 "Trays" && shown 2 "Trays")
+  t s!"firstsection reads to nothing it would name ({pds.toList.map (·.code)})"
+    (!pds.any fun d => d.code == "W0104")
+  let (chosen, _) := elabStr (deck "\\tableofcontents[sections={2-3}]")
+  let cout := (fittedOf fonts chosen).out
+  t "sections= lists the sections it names alone"
+    ((lineWith cout 0 "Kettles").isNone && (lineWith cout 0 "Teapots").isSome &&
+      (lineWith cout 0 "Trays").isSome)
+  let (moded, mds) := elabStr ("\\documentclass{beamer}\n\\begin{document}\n" ++
+    "\\begin{frame}{One}Body.\\end{frame}\n\\begin{frame}<article>{Article}Gone.\\end{frame}\n" ++
+    "\\begin{frame}<handout:0>{Kept}Body.\\end{frame}\n" ++
+    "\\begin{frame}[noframenumbering]{Backup}Body.\\end{frame}\n" ++
+    "\\begin{frame}{Last}Body.\\end{frame}\n\\end{document}\n")
+  t s!"an article frame ships no page, a handout-only spec leaves the frame as it is \
+({mds.toList.map (·.code)})"
+    (!hasStr (Ir.blocksText moded.body) "Gone" && hasStr (Ir.blocksText moded.body) "Kept" &&
+      !mds.any fun d => d.code == "W0110")
+  t s!"noframenumbering leaves its frame out of the count ({moded.frameNumbers})"
+    (moded.frameNumbers.filterMap id == #[1, 2, 3] && moded.frameCount == 3)
+  -- beamer's default section page names the section's number over its title, both centred.
+  let paged := "\\documentclass{beamer}\n\\usetheme{default}\n" ++
+    "\\AtBeginSection[]{\\begin{frame}\\sectionpage\\end{frame}}\n\\begin{document}\n" ++ body ++
+    "\\end{document}\n"
+  let (sp, _) := elabStr paged
+  let sout := (fittedOf fonts sp).out
+  let mid (l : Layout.LineOut) : Dim.Sp := l.x + (l.segs.foldl (fun w s => w + s.advance) 0) / 2
+  t "the default section page sets 'Section 2' over the second section's title, both centred"
+    (match lineWith sout 2 "Section", lineWith sout 2 "Teapots" with
+      | some n, some ti => n.y < ti.y && (hasStr (lineText n) "2") &&
+        (mid n - mid ti).natAbs * 50 < (Layout.Geom.ofPage sp.page).textWidth.natAbs
+      | _, _ => false)
+  -- A hook calls a command the preamble defines after it, a shaded entry mixes its declared colour,
+  -- and beamer's hyperref option is hypersetup's keys.
+  let (hooked, hds) := elabStr ("\\documentclass[hyperref={colorlinks}]{beamer}\n\\usetheme{default}\n" ++
+    "\\AtBeginSection[]{\\begin{frame}{Outline}\\mynote\\tableofcontents[currentsection]\\end{frame}}\n" ++
+    "\\newcommand{\\mynote}{Defined later.}\n\\begin{document}\n" ++
+    "\\section{Kettles \\textcolor{red}{hot}}\n\\begin{frame}{One}Body.\\end{frame}\n" ++
+    "\\section{Teapots}\n\\begin{frame}{Two}Body.\\end{frame}\n\\end{document}\n")
+  t s!"a section hook calls a command defined after it, and the hyperref option is read \
+({hds.toList.map (·.code)})"
+    (hasStr (Ir.blocksText hooked.body) "Defined later." &&
+      !hds.any fun d => d.code == "W0301" || d.code == "W0104")
+  let hout := (fittedOf fonts hooked).out
+  let hdesign := Ir.Design.ofPalette hooked.palette
+  let colorsOf (l : Layout.LineOut) : List Ir.Color := l.segs.toList.filterMap fun s => match s with
+    | .run _ color .. => some color
+    | _ => none
+  let red := ((lineWith hout 0 "Kettles").map colorsOf).bind fun cs => cs.find? (· != hdesign.fg)
+  t "a shaded entry's declared colour is mixed over the page as its other words are"
+    (match lineWith hout 2 "Kettles", red with
+      | some l, some red => (colorsOf l).contains (Oklab.cover Ir.contentsShadeShare hdesign.bg red) &&
+          !(colorsOf l).contains red
+      | _, _ => false)
+  let (_, sbody, _) := HtmlDoc.emitTree {} sp
+  t "the web deck's section page carries the same name line"
+    ((elemNodesList (· == "p") #[] sbody.toList).any fun k => match k with
+      | .elem _ attrs _ => HtmlDoc.attrOf? attrs "class" == some "section-name" &&
+          hasStr (nodeTextOne "" k) "Section"
+      | _ => false)

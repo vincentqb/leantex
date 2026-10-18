@@ -2130,7 +2130,13 @@ def reports : List Report := [
     accept := ["the new checks fail built against the tree before this commit and pass on it",
       "pandoc 3.12.1 on invented probes: a definition in an item or a quote defines its note; an inline note's content, citations included, is a note, an abbreviation before it joined; a note in a citation's prefix or suffix stands inside the citation, which this tree sets after it, named",
       "lualatex with natbib on invented probes: a footnote in a citation's note marks the note inside the brackets; this tree marks it after them, named once; a figure's caption citing sets its citations as the list does, which the image's alternative now reads"]
-    state := .guarded "dfebcc96" .before .author }
+    state := .guarded "dfebcc96" .before .author },
+  { id := "R239", date := "2026-10-18"
+    what := "a deck's contents read neither beamer's pausesections, sections= nor firstsection option; a frame kept to article or handout mode shipped as a page and a handout-only specification was named not honoured; a noframenumbering frame was counted; the default section page printed no section name and number over its title, set flush left; a section hook could not call a command the preamble defined after it; a shaded entry's declared colour stood unshaded; and beamer's hyperref class option was not read"
+    pins := [check% contentsDeckChecks, check% frameSpecChecks]
+    accept := ["invented probes under lualatex with beamer: pausesections sets a page per section with one more entry each, sections= lists the named sections, firstsection changes no page of the default templates, an article frame ships no page, a handout:0 frame stands, noframenumbering takes no number, and the default section page sets Section N over the title, both centred; this tree sets the same, the article frame taking no number where beamer leaves a gap",
+      "main at 03c2ff1d sets one overview page, lists every section, ships the article frame, names the handout specification, counts the unnumbered frame and sets the title alone; the guards fail there"]
+    state := .guarded "03c2ff1d" .before .author }
 ]
 
 /-- The reports guarded but never seen failing, a count held in both directions. -/

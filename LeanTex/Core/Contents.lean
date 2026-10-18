@@ -27,6 +27,12 @@ private def subsubsectionShow (spec : ContentsSpec) (s1 s2 s3 : Nat) : ContentsS
     else spec.subsubsections.2.2.1
   else spec.subsubsections.2.2.2
 
+/-- Whether beamer's `sections=` lists section `s1`, every section where it names none. -/
+private def listedSection (spec : ContentsSpec) (s1 : Nat) : Bool :=
+  match spec.listed with
+  | none => true
+  | some ranges => ranges.any fun (a, b) => a ≤ s1 && (b.all (s1 ≤ ·))
+
 /-- The stage each top-level block opens onto: a section page's route where the block is a section
 standing on one, else the anchor of the next frame after it. -/
 private def nextStages (doc : Doc) : Array (Option String) := Id.run do
@@ -44,9 +50,18 @@ private def nextStages (doc : Doc) : Array (Option String) := Id.run do
 private def blankTitle (title : Array Inline) : Bool :=
   (plainText title).all fun c => c.isWhitespace || c == '\u00A0'
 
-/-- One entry, unless its options hide it. -/
-private def entryUnless (look : ContentsShow) (e : ContentsEntry) : Option ContentsEntry :=
-  if look == .hidden then none else some { e with shaded := look == .shaded }
+/-- A shaded entry's declared colours at the share it keeps over the page, as beamer's `colormixin`
+mixes every colour inside it. -/
+private def shadeDeclared (bg : Color) (xs : Array Inline) : Array Inline :=
+  mapInlines id xs (finish := fun ys => ys.map fun x =>
+    if let .colored c _ b := x then .colored (Oklab.cover contentsShadeShare bg c) none b else x)
+
+/-- One entry, unless its options hide it, a shaded one's declared colours mixed over `bg`. -/
+private def entryUnless (bg : Color) (look : ContentsShow) (e : ContentsEntry) :
+    Option ContentsEntry :=
+  if look == .hidden then none
+  else if look == .shaded then some { e with shaded := true, title := shadeDeclared bg e.title }
+  else some { e with shaded := false }
 
 /-- The entries a deck's `\tableofcontents` lists, as beamerbasetoc.sty's: its unstarred titled
 headings to the depth, unnumbered, a subsubsection's in `\footnotesize`, each opening the stage set
@@ -55,6 +70,7 @@ public def deckContents (doc : Doc) (spec : ContentsSpec) : Array ContentsEntry 
   let stages := nextStages doc
   let mut out : Array ContentsEntry := #[]
   let mut counts : Nat × Nat × Nat := (0, 0, 0)
+  let mut step := spec.step
   for h : i in [0:doc.body.size] do
     if let .section level starred _ title := doc.body[i] then
       let (s1, s2, s3) := counts
@@ -65,12 +81,16 @@ public def deckContents (doc : Doc) (spec : ContentsSpec) : Array ContentsEntry 
         else if level == .h3 then some (1, subsectionShow spec s1 s2)
         else if level == .h4 then some (2, subsubsectionShow spec s1 s2 s3) else none
       if let some (depth, look) := at? then
+        let look := if listedSection spec s1 then look else .hidden
         if !starred && !blankTitle title && depth < spec.depth then
           let shown := if depth == 2 then #[.styled (.size "footnotesize") (nameOf title)]
             else nameOf title
-          if let some e := entryUnless look
+          if let some e := entryUnless (Design.ofPalette doc.palette).bg look
               { depth, number := none, title := shown, target := stages[i]?.join, shaded := false } then
-            out := out.push e
+            let pauses := if depth == 0 then spec.pauses.1 else depth == 1 && spec.pauses.2
+            step := if pauses && !out.isEmpty then step + 1 else step
+            out := out.push (if step == spec.step then e
+              else { e with title := #[.onSteps { first := step, last := none } e.title] })
   return out
 
 /-- The rank a flow's contents list a heading at, LaTeX's section level: a section one, a

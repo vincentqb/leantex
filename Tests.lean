@@ -563,6 +563,7 @@ def sectionSuiteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
   contentsEdgeChecks ref oneFace
   contentsEdgeChecks2 ref oneFace
   contentsGapChecks ref oneFace
+  contentsDeckChecks ref oneFace
 
 /-- The layout, census, theme and chrome blocks over the shipped face; a missing or unparsable font
 only skips them, `fontSuiteChecks` reporting it. -/

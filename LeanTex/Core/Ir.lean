@@ -810,6 +810,9 @@ public def primitiveSkipRole : String := "primitive vskip"
 for beamer's cramped list spacing. -/
 public def squeezeRole : String := "frame squeeze"
 
+/-- The mark opening a frame beamer's `[noframenumbering]` leaves out of the frame count. -/
+public def unnumberedRole : String := "frame unnumbered"
+
 /-- The squeezed list spacing as the overflow ladder sets it on an overfull
 frame, for the web deck alone. -/
 public def squeezeFitRole : String := "frame squeeze fit"
@@ -888,7 +891,7 @@ public def parRunsOnRole : String := "par runs on"
 @[expose] public def pageMarkerRole (n : String) : Bool :=
   n == pageAnchorRole || n == noInterlineRole || n == primitiveSkipRole ||
     (pageOpeningOfRole? n).isSome || n == squeezeRole || n == squeezeFitRole || fitMarkRole n ||
-    n == parContinuesRole || n == parRunsOnRole
+    n == parContinuesRole || n == parRunsOnRole || n == unnumberedRole
 
 public theorem pageOpening_marker_exact (n : String) (opening : PageOpening)
     (h : pageOpeningOfRole? n = some opening) : pageMarkerRole n = true := by
@@ -3431,6 +3434,12 @@ public structure FrameGlue where
 /-- The measure a section page centres its title and progress bar in: `0.7875\linewidth`. -/
 public def sectionPageMeasure (textWidth : Sp) : Sp := textWidth * 7875 / 10000
 
+/-- The skip beamer's default `section page` sets between its `\sectionname` line and its title's
+line past their leading: `\vskip1em` at the body size `size`, `\lineskip` and the title box's 12pt
+`sep`, over the title's cap height in the face of size `large` (beamerinnerthemedefault.sty). -/
+public def sectionNameSkip (size large : Sp) : Sp :=
+  size + Dim.pt 13 + large * 7 / 10 - leadingFor large
+
 /-- `\vfill`'s stretch, `0pt plus 1fill`, in `FrameGlue`'s thousandths. -/
 @[expose] public def fillUnit : Nat := 1000
 
@@ -5087,6 +5096,12 @@ public structure ContentsSpec where
   subsubsections : ContentsShow × ContentsShow × ContentsShow × ContentsShow :=
     (.shown, .shown, .shown, .shown)
   depth : Nat := 3
+  /-- beamer's `sections=`: the section numbers listed, every one where none is given. -/
+  listed : Option (List (Nat × Option Nat)) := none
+  /-- beamer's `pausesections` and `pausesubsections`: a `\pause` before each such entry after the
+  first, the frame's step where the contents open. -/
+  pauses : Bool × Bool := (false, false)
+  step : Nat := 1
   deriving Repr, BEq, Inhabited
 
 /-- One entry of a table of contents: its depth, the number its heading prints, its title as
@@ -5625,9 +5640,11 @@ public def carrierDisplays (inPar endPe parEnd broken : Bool) (blocks : Array Bl
     Array Block :=
   (carrierCloseList parEnd (carrierOpenList inPar endPe broken blocks.toList)).toArray
 
-/-- The frames the deck numbers: every `.frame` except a golden title page and a standout frame. -/
+/-- The frames the deck numbers: every `.frame` except a golden title page, a standout frame and one
+its first mark leaves unnumbered. -/
 public def Block.countable : Block → Bool
-  | .frame _ standout valign _ _ => !standout && !(valign matches .golden)
+  | .frame _ standout valign _ body => !standout && !(valign matches .golden) &&
+      !(body.toList.takeWhile (· matches .role _ #[])).contains (.role unnumberedRole #[])
   | _ => false
 
 public def countTrue : List Bool → Nat
@@ -7001,7 +7018,7 @@ public inductive FrameSqueeze where
 /-- Whether a block is one of a frame's marks: an empty engine role opening the frame's body. -/
 @[expose] public def Block.isFrameMark : Block → Bool
   | .role n inner => inner.isEmpty &&
-      (n == squeezeRole || n == squeezeFitRole || fitMarkRole n)
+      (n == squeezeRole || n == squeezeFitRole || fitMarkRole n || n == unnumberedRole)
   | _ => false
 
 /-- The marks a frame's body opens with, in order. -/
@@ -8285,16 +8302,20 @@ public def Doc.frameLabels (doc : Doc) : Array (Option String) := Id.run do
   let nums := doc.frameNumbers
   let mut standouts := 0
   let mut titlePages := 0
+  let mut unnumbered := 0
   let mut out : Array (Option String) := #[]
   for h : i in [0:doc.body.size] do
     match doc.body[i] with
-    | .frame _ standout _ _ _ =>
+    | .frame _ standout _ _ fbody =>
       match nums[i]?.getD none with
       | some n =>
         out := out.push (some (if doc.frameRestart.any (· ≤ i) then s!"appendix-{n}"
           else toString n))
       | none =>
-        if standout then
+        if (frameMarks fbody).contains unnumberedRole then
+          unnumbered := unnumbered + 1
+          out := out.push (some s!"unnumbered-{unnumbered}")
+        else if standout then
           out := out.push (some (if standouts == 0 then "standout"
             else s!"standout-{standouts + 1}"))
           standouts := standouts + 1
@@ -12439,7 +12460,8 @@ private def maxStepBlock : Block → Nat
   | .picture _ => 1
   | .table _ _ _ rows _ _ => maxStepTableRows rows.toList
   | .float _ _ _ body cap => max (maxStepInlines cap) (maxStepBlockList body.toList)
-  | .bibliography _ _ _ | .contents _ _ => 1
+  | .bibliography _ _ _ => 1
+  | .contents _ entries => entries.foldl (fun n e => max n (maxStepInlines e.title)) 1
 
 private def maxStepTableRows : List (Array (Array Inline)) → Nat
   | [] => 1
@@ -12761,7 +12783,8 @@ private def dimBlock (k : Nat) (pend : Option DimHere) (here : DimHere) : Block 
     let r := dimBlockList k pend here #[] body.toList
     (.float fk num ca r.1 (dimFilled k pend here caption), r.2)
   | .bibliography src style items => (.bibliography src style items, here)
-  | .contents spec entries => (.contents spec entries, here)
+  | .contents spec entries =>
+    (.contents spec (entries.map fun e => { e with title := dimFilled k pend here e.title }), here)
 
 private def dimItems (k : Nat) (pend : Option DimHere) (here : DimHere) (out : Array (Array Block)) :
     List (Array Block) → Array (Array Block) × DimHere
@@ -13814,6 +13837,14 @@ private theorem blockTextTableCells_map (f : Array Inline → Array Inline)
   | nil => rfl
   | cons c rest ih => simp [blockTextTableCells, hf, ih]
 
+private theorem blockTextContentsEntries_map (f : Array Inline → Array Inline)
+    (hf : ∀ x, plainText (f x) = plainText x) (es : List ContentsEntry) (acc : String) :
+    blockTextContentsEntries acc (es.map fun e => { e with title := f e.title }) =
+      blockTextContentsEntries acc es := by
+  induction es generalizing acc with
+  | nil => rfl
+  | cons e rest ih => simp [blockTextContentsEntries, hf, ih]
+
 private theorem dimAlgLines_text (k : Nat) (pend : Option DimHere) (here : DimHere)
     (ls : List AlgLine) (out : Array AlgLine) (acc : String) :
     algLineText acc (dimAlgLines k pend here out ls).toList
@@ -13918,7 +13949,10 @@ private theorem dimBlock_text (k : Nat) (pend : Option DimHere) (here : DimHere)
       plainTextList]
   | .note _ | .frame _ _ _ _ _ | .framefoot _
   | .setPalette _ | .setTokens _
-  | .rule _ _ _ | .picture _ | .pagebreak | .bibliography _ _ _ | .contents _ _ => rfl
+  | .rule _ _ _ | .picture _ | .pagebreak | .bibliography _ _ _ => rfl
+  | .contents _ entries =>
+    simpa [dimBlock, blockTextOne] using
+      blockTextContentsEntries_map _ (dimFilled_text k pend here) entries.toList acc
   | .algorithm n sm lines =>
     show algLineText acc (dimAlgLines k pend here #[] lines.toList).toList = _
     rw [dimAlgLines_text k pend here lines.toList #[] acc]

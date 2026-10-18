@@ -7753,9 +7753,14 @@ def frameSpecChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
        ("<second:0>", false),
        ("<beamer:0,2>", false), ("<presentation:0-3>", false),
        ("<beamer:1,3>", false), ("<2->", false), ("<+->", false),
-       ("<all:0|beamer:1->", false)] do
+       ("<all:0|beamer:1->", false), ("<article>", true), ("<handout|article>", true),
+       ("<presentation>", false), ("<beamer|article>", false), ("<article|beamer:0>", true)] do
     t s!"mode spec {spec} {if silent then "silences" else "shows"}"
       (Compat.modeSilencesPresentation spec == silent)
+  for (spec, leaves) in [("<handout:0>", true), ("<article:2>", true), ("<presentation>", true),
+      ("<2->", false), ("<beamer:1-2>", false)] do
+    t s!"mode spec {spec} {if leaves then "leaves a presentation's slides" else "steps them"}"
+      (Compat.modeLeavesPresentation spec == leaves)
   -- beamer's article mode keeps exactly the frames the presentation omits, so the spec deletes nothing outside a deck.
   let art := dvDoc "" ("\\begin{frame}<presentation:0>{Delta Heading}\n" ++
     "Article sentence.\n\\end{frame}")

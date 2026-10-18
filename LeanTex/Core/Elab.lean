@@ -6964,13 +6964,26 @@ private def chapterFloats (blocks : Array Block) : Bool := Id.run do
   return false
 
 
+/-- beamer's `sections=` value: section numbers and ranges (`2`, `2-3`, `3-`), braced or in angle
+brackets as an overlay specification, none where a part reads as neither. -/
+private def sectionRanges (v : String) : Option (List (Nat × Option Nat)) :=
+  let v := v.trimAscii.toString
+  let v := if (v.startsWith "{" && v.endsWith "}") || (v.startsWith "<" && v.endsWith ">") then
+    ((v.drop 1).dropEnd 1).toString else v
+  (v.splitOn ",").mapM fun part =>
+    match (part.trimAscii.toString).splitOn "-" with
+    | [a] => a.trimAscii.toString.toNat?.map fun n => (n, some n)
+    | [a, b] => (a.trimAscii.toString.toNat?).map fun n => (n, b.trimAscii.toString.toNat?)
+    | _ => none
+
 /-- What a `\tableofcontents` declares where it stands: the depth it lists to and, in a deck, the
 section and subsection in force and how its options set the entries about them (beamerbasetoc.sty);
 an option it does not model is named. -/
 private def contentsSpecOf (ctx : Ctx) (opts : Option String) (pos : Pos) :
     EM Ir.ContentsSpec := do
   let st ← get
-  let mut spec : Ir.ContentsSpec := { current := st.ctr.secNums, depth := st.ctr.tocDepth.toNat }
+  let mut spec : Ir.ContentsSpec := { current := st.ctr.secNums, depth := st.ctr.tocDepth.toNat
+                                      step := (st.ctr.pauses.getD 0) + 1 }
   -- premise: contentsChecks — a run-in paragraph heading is no heading block the contents list
   if !ctx.slides && st.ctr.tocDepth > 3 then
     warnOnce ctx "contents:tocdepth" .W0104
@@ -7002,6 +7015,16 @@ the contents stop at subsubsections" pos
     | "subsubsectionstyle", some [a, b, c] => spec := { spec with subsubsections := (a, b, c, c) }
     | "subsubsectionstyle", some [a, b, c, d] =>
       spec := { spec with subsubsections := (a, b, c, d) }
+    | "pausesections", _ => spec := { spec with pauses := (true, spec.pauses.2) }
+    | "pausesubsections", _ => spec := { spec with pauses := (true, true) }
+    -- premise: contentsDeckChecks — the default templates print no section number to renumber
+    | "firstsection", _ => pure ()
+    | "sections", _ =>
+      match sectionRanges (value.getD "") with
+      | some r => spec := { spec with listed := some r }
+      | none =>
+        warnOnce ctx ("contents:" ++ o) .W0104
+          s!"'\\tableofcontents' option '{o.trimAscii}' is not read; the contents list as without it" pos
     | _, _ =>
       warnOnce ctx ("contents:" ++ o) .W0104
         s!"'\\tableofcontents' option '{o.trimAscii}' is not read; the contents list as without it" pos
@@ -12170,6 +12193,8 @@ centred whatever its options say. -/
 private structure FrameOpts where
   standout : Bool := false
   breakable : Bool := false
+  /-- beamer's `[noframenumbering]`: the frame stands out of the frame count. -/
+  unnumbered : Bool := false
   /-- beamer's `[squeeze]` (beamerbaseframesize.sty): the frame's lists set
   tight. -/
   squeeze : Bool := false
@@ -12209,6 +12234,7 @@ private def frameOpts (ctx : Ctx) (body : Array Raw) (pos : Pos) : EM FrameOpts 
         | ("standout", none) => o := { o with standout := true }
         | ("allowframebreaks", none) => o := { o with breakable := true }
         | ("squeeze", none) => o := { o with squeeze := true }
+        | ("noframenumbering", none) => o := { o with unnumbered := true }
         | ("t", none) => o := { o with valign := .top, aligns := o.aligns.push "t" }
         | ("c", none) => o := { o with valign := .center, aligns := o.aligns.push "c" }
         | ("b", none) => o := { o with valign := .bottom, aligns := o.aligns.push "b" }
@@ -12477,7 +12503,8 @@ private def closeFramePalette (ctx : Ctx) (pos : Pos) (blocks : Array Block)
     (aliasScope : Bool) : EM (Array Block) := do
   recordFrameSource ctx pos blocks.size
   let frame := flattenFrame title opts.standout opts.valign opts.breakable inner
-  let blocks := blocks.push (if opts.squeeze then frame.markFrame Ir.squeezeRole else frame)
+  let frame := if opts.squeeze then frame.markFrame Ir.squeezeRole else frame
+  let blocks := blocks.push (if opts.unnumbered then frame.markFrame Ir.unnumberedRole else frame)
   if !aliasScope then return blocks
   let colors := (← get).scope.palette
   let pal := BeamerColor.restoreAliases ctx.palette (colors.current.getD ctx.palette)
@@ -17614,6 +17641,10 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
       (lookupUser ctx (Ir.sectionHookName false false)).isNone then
     let (c1, c2) := themeHookCmds {}
     ctx := bindCmd (bindCmd ctx c1) c2
+  -- beamer expands a section hook where a section calls it, so it calls every preamble command.
+  for (sub, star) in [(false, false), (false, true), (true, false), (true, true)] do
+    if let some (_, cmd) := lookupUser ctx (Ir.sectionHookName sub star) then
+      ctx := bindCmd ctx cmd
   -- A seeded palette is the whole palette: the bundle's colours do not install.
   let bundle := if s.palette.seeded.isSome then
       { Theme.daylight with palette := {}, seeds := none, derived := [] }

@@ -22,7 +22,7 @@
 # is the frame environment. §10.5 (Adding a Table of Contents): \tableofcontents
 # lists the unstarred sections, subsections and subsubsections to tocdepth, its
 # options showing, shading or hiding them about the heading in force;
-# pausesections, which steps the list, is named. These rows probe the deck's body outside the frames: the
+# pausesections steps the entries and sections= chooses them. These rows probe the deck's body outside the frames: the
 # `deck` place.
 frame impl \begin{columns}[T]\begin{column}{0.5\textwidth}x\end{column}\begin{column}{0.5\textwidth}y\end{column}\end{columns}
 frame impl \begin{columns}[T,onlytextwidth]\column{0.5\textwidth}x\column{0.5\textwidth}y\end{columns}
@@ -52,4 +52,5 @@ deck impl \begin{frame}\tableofcontents[hideallsubsections]\end{frame}\section{A
 deck impl \section{A}\begin{frame}\tableofcontents[hideothersubsections]\end{frame}\section{B}\subsection{C}\begin{frame}y\end{frame}
 deck impl \section{A}\begin{frame}\tableofcontents[sectionstyle=show/hide]\end{frame}\section{B}\begin{frame}y\end{frame}
 deck impl \section{A}\subsection{B}\begin{frame}\tableofcontents[subsectionstyle=show/shaded/hide]\end{frame}\section{C}\subsection{D}\begin{frame}y\end{frame}
-deck refuse:W0104 \begin{frame}\tableofcontents[pausesections]\end{frame}\section{A}\begin{frame}y\end{frame}
+deck impl \begin{frame}\tableofcontents[pausesections]\end{frame}\section{A}\section{B}\begin{frame}y\end{frame}
+deck impl \begin{frame}\tableofcontents[sections={2}]\end{frame}\section{A}\section{B}\begin{frame}y\end{frame}

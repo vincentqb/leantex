@@ -2938,6 +2938,10 @@ public def themeCss (doc : Doc) (ex : Int)
   let d := Design.ofDoc doc
   let sectionMeasure :=
     s!"min({stageVh doc.page (Ir.sectionPageMeasure (doc.page.width - 2 * doc.page.hmargin))}, 100%)"
+  let largeEm := s!"{stepFactor doc.page.scale "Large"}rem"
+  let size := doc.page.fontSize
+  let nameGapEm :=
+    s!"{decMilli (Ir.sectionNameSkip size (Ir.scaleStepIn doc.page.scale size "Large") * 1000 / max size 1)}rem"
   let declares (r : Ir.Role) : Bool :=
     (Ir.Design.declared? doc.palette r).isSome ||
       Ir.foldBlocks (fun a b => a || match b with
@@ -3039,6 +3043,11 @@ calc({stepFactor doc.page.scale Ir.plainFrameTitleStep} * \
     "section.section-page h1, section.section-page h2, section.section-page h3 {\n" ++
     "  display: inline-block; text-align: left;\n" ++
     s!"  width: {sectionMeasure}; margin: 0; color: {roleRef .sectionTitleInk}; }\n" ++
+    -- beamer's default template: the name over the title, both centred in the title's font
+    "section.section-page.named :is(h1, h2, h3), section.section-page.named > .section-name {\n" ++
+    s!"  display: block; width: auto; text-align: center; font-weight: normal; font-size: {largeEm}; \
+color: {roleRef .sectionTitleInk}; }\n" ++
+    s!"section.section-page.named > .section-name \{ margin: 0 0 {nameGapEm}; }\n" ++
     -- `progressheight`, with moloch's own 1pt fallback
     s!".progress \{ background: {roleRef .sectionProgressTrack};\n" ++
     "  height: var(--progressheight, 1pt);\n" ++
@@ -9758,6 +9767,7 @@ private def emitTreeCore (cfg : Config) (doc : Doc)
       let labels := doc.frameLabels
       let sectionRoutes := doc.sectionRoutes
       let mut curSection : Array Inline := #[]
+      let mut sections := 0
       let mut frameFoot : Option (Array Inline) := none
       let mut logoSpans : Array (Nat × Array Inline) := #[]
       let mut acc : Array Node := #[]
@@ -9896,7 +9906,13 @@ retitle them apart, or link to the numbered anchor")
             held := #[]
           else if kind == .stage then
             if level == 1 then curSection := title
-            let kids := held ++ #[Html.elem (headingTag level) (inlines cfg title)]
+            if level == 1 then sections := sections + 1
+            -- beamer's default `section page`: `\sectionname~\insertsectionnumber` over the title
+            let nameLine := level == 1 && ((cfg.styles.find? "sectionpage").bind (·.font)).isNone
+            let kids := held ++ (if nameLine then #[Html.elem "p"
+                #[Html.text s!"{cfg.locale.crefSection.capOne}\u00A0{sections}"]
+                #[("class", "section-name")]] else #[]) ++
+              #[Html.elem (headingTag level) (inlines cfg title)]
             held := #[]
             -- no clamp, as on the PDF path
             let kids := if total == 0 || (Design.ofPalette cfg.pal).sectionProgress.isNone then kids
@@ -9908,7 +9924,7 @@ retitle them apart, or link to the numbered anchor")
             acc := acc.push (cfg.applyEpoch
               (attachLogo cfg
                 (Html.elem "section" kids
-                  (#[("class", "section-page")] ++
+                  (#[("class", if nameLine then "section-page named" else "section-page")] ++
                     stageAttrs cfg.deck name ++ idAttr ++ #[("data-snap", ""),
                       ("data-slide-label", (sectionRoutes[i]?.join).getD (Ir.sectionRoute 0))]))
                 (Ir.logoInForce doc.logo logoSpans i)))
