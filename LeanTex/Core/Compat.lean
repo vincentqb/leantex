@@ -624,7 +624,7 @@ private structure St where
   deck : Bool := false
   /-- The class options the class leaves to the packages that take them, as LaTeX offers global
   options. -/
-  globalOffered : Array (String × Array Raw) := #[]
+  globalOffered : Array String := #[]
   /-- The font slots a fontspec or babel declaration has
   named so far, in preamble order. -/
   facesDeclared : Array String := #[]
@@ -1451,14 +1451,18 @@ public theorem rebase_source_exact (mapPos : Pos → Pos) (groups : Bool) (r : R
     rawSrcOne (rebase mapPos groups r) = rawSrcOne r :=
   rebase_source mapPos groups r
 
+/-- Each entry a carrier cannot read back whole, named dropped. -/
+private def dropUnfit (dropped : List (String × String)) (opening : String) (pos : Pos) : M Unit := do
+  -- premise: nativeCarrierChecks — a value no entry carries whole would read as other entries
+  for (k, v) in dropped do
+    say .W0101 "a value that stands as no single native entry was dropped" pos
+      (detail := some s!"'{k} = {v}' in '{opening}'")
+      (help := "write the value so it stands as one entry: its commas, quotes and brackets inside braces")
+
 /-- A native setting's carrier where it stands, each entry its block cannot carry whole named and
 dropped, so the elaborator reads the rest exactly (`Native.render_parse_exact`). -/
 private def carry (s : Native.Setting) (pos : Pos) : M (Array Raw) := do
-  -- premise: nativeCarrierChecks — a value no entry carries whole would read as other entries
-  for (k, v) in s.dropped do
-    say .W0101 "a value that stands as no single native entry was dropped" pos
-      (detail := some s!"'{k} = {v}' in '{s.opening}'")
-      (help := "write the value so it stands as one entry: its commas, quotes and brackets inside braces")
+  dropUnfit s.dropped s.opening pos
   return if s.kept.pairs.isEmpty then #[] else s.raws pos
 
 /-- A native setting where it stands, named as `what`'s translation where it keeps an entry. -/
@@ -1471,20 +1475,13 @@ private def setting (what : String) (s : Native.Setting) (pos : Pos)
 text entry its carrier cannot read back whole named and dropped. -/
 private def texSetting (what element : String) (entries : Array (String × Native.StyleValue))
     (pos : Pos) : M (Array Raw) := do
-  let mut kept := #[]
-  for (k, v) in entries do
-    match v with
-    | .text w =>
-      -- premise: nativeCarrierChecks — a value no entry carries whole would read as other entries
-      if Native.Setting.carried (k, w) then kept := kept.push (k, v)
-      else
-        say .W0101 "a value that stands as no single native entry was dropped" pos
-          (detail := some s!"'{k} = {w}' in '\\style\{{element}}'")
-          (help := "write the value so it stands as one entry: its commas, quotes and brackets inside braces")
-    | .tex _ => kept := kept.push (k, v)
-  if kept.isEmpty then return #[]
-  became what (Native.texStyleRender element kept) pos
-  return Native.texStyle element kept pos
+  let unfit (kv : String × Native.StyleValue) : Option (String × String) := match kv.2 with
+    | .text w => if Native.Setting.carried (kv.1, w) then none else some (kv.1, w)
+    | .tex _ => none
+  let kept := entries.filter (unfit · |>.isNone)
+  unless kept.isEmpty do became what (Native.texStyleRender element kept) pos
+  dropUnfit (entries.toList.filterMap unfit) s!"\\style\{{element}}" pos
+  return if kept.isEmpty then #[] else Native.texStyle element kept pos
 
 /-- Raws without the blanks at both ends, as their source trimmed reads. -/
 private def trimBlank (rs : Array Raw) : Array Raw :=
@@ -6462,7 +6459,7 @@ private def hyperrefKeys (opts : Array Raw) (pos : Pos) : M HyperrefRead := do
     let value := entry.value.map rawSrc
     let v := value.getD ""
     if let some m := Native.TextMetaKey.all.find? (k == "pdf" ++ ·.key.name) then
-      metadata := metadata.push (m, entry.value.getD #[])
+      metadata := metadata.push (m, Parse.trimSpace (Parse.asSpelled (entry.value.getD #[]).toList #[]))
     if let some w := MetaWord.all.find? (k == ·.hyperref) then
       let v := if v.trimAscii.isEmpty && w.isSwitch then "true" else v
       unless v.trimAscii.isEmpty do
@@ -8911,13 +8908,9 @@ private def rewritePackageBody (name p : String) (opt : Option String) (optRaws 
     (pos : Pos) : M (Array Raw) := do
   let mut out : Array Raw := #[]
   let own := (KeyVal.items (opt.getD "")).toList
-  let offeredItems := (← get).globalOffered.toList.filter fun (o, _) =>
+  let offered := (← get).globalOffered.toList.filter fun o =>
     packageTakes p o && !own.any fun g => (KeyVal.entry g).1 == (KeyVal.entry o).1
-  let offered := offeredItems.map (·.1)
   let given := offered ++ own
-  -- The entries `given` spells, with their raws.
-  let givenEntries := (offeredItems.map (·.2) ++ [optRaws]).flatMap fun rs =>
-    (Entries.read .keyval rs).toList
   if p == "geometry" then
     out := out ++ (← geometry optRaws pos)
   else if p == "crop" then
@@ -8929,19 +8922,18 @@ private def rewritePackageBody (name p : String) (opt : Option String) (optRaws 
   else if p == "parskip" then
     -- The package sets `\parskip` to half a line plus 2pt, or to its `skip` as `\setlength` reads
     -- it, and drops the indent.
-    let skip := (given.filterMap fun o => match KeyVal.entry o with
-      | ("skip", some v) => some v
-      | _ => none).getLast?
-    let skipRaws := (givenEntries.filterMap fun e => if e.key == "skip" then e.value else none).getLast?
-    let read ← match skipRaws with
+    -- No class option is offered to parskip but `indent`, so its own options hold its `skip`.
+    let skip := ((Entries.read .keyval optRaws).filterMap fun e =>
+      if e.key == "skip" then e.value else none).back?
+    let read ← match skip with
       | some v => doorValue? (v.map (rebase (fun _ => pos) true))
       | none => pure none
     match skip, read with
     | some v, some src =>
-      out := out ++ (← setLength "parskip" src s!"\\usepackage[skip={v}]\{parskip}" pos)
+      out := out ++ (← setLength "parskip" src s!"\\usepackage[skip={rawSrc v}]\{parskip}" pos)
     | _, _ =>
       out := out ++ (← setting "\\usepackage{parskip}" (.page #[(.parskip, "0.6em plus 2pt")]) pos)
-      if let some v := skip then out := out ++ (← unreadableLength "parskip" v pos)
+      if let some v := skip then out := out ++ (← unreadableLength "parskip" (rawSrc v) pos)
     out := out ++ (← packageOptions name p (given.filter fun o => (KeyVal.entry o).1 != "skip") pos)
   else if p == "amsthm" then
     -- amsthm's documented default style is plain.
@@ -9259,15 +9251,12 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
     (start : Nat) : M (Option (Array Raw × Nat)) := do
   match name with
   | "documentclass" =>
-    let (optRaws, j) := takeRawOpt raws start
-    let opt := optRaws.map rawSrc
+    let (opt, j) := takeOpt raws start
     let (args, k) := takeGroups raws j 1
     let cls := rawSrc (args.getD 0 #[])
     -- A package takes the class options it declares, and the class reads the rest.
     let offered := offeredOptions raws k (KeyVal.items (opt.getD "")).toList
-    unless offered.isEmpty do
-      let items := (Entries.read .keyval (optRaws.getD #[])).filter (offered.contains ·.src)
-      write fun st => { st with globalOffered := items.map fun e => (e.src, e.item) }
+    unless offered.isEmpty do write fun st => { st with globalOffered := offered.toArray }
     let keptItems := (KeyVal.items (opt.getD "")).toList.filter (!offered.contains ·)
     -- The class's `\normalsize` sets the strut box at its `\baselineskip` as the class loads.
     let strut := (classNormalPt cls keptItems).map classNormalSkip
@@ -13069,8 +13058,10 @@ private def flushRunning : M (Array Raw) := do
   let line (parts : Array (Nat × Array Raw)) : Array Raw :=
     (Parse.asSpelled (at' parts 0 ++ fill ++ at' parts 1 ++ fill ++ at' parts 2).toList #[]).map
       (rebase (fun _ => pos) true)
+  -- Each part spelled as its group's body is, a closing control space kept.
+  let partSrc (r : Array Raw) : String := ((rawSrcOne (.group r pos)).drop 1).dropEnd 1 |>.toString
   let lineSrc (parts : Array (Nat × Array Raw)) : String :=
-    s!"{rawSrc (at' parts 0)} \\hfill {rawSrc (at' parts 1)} \\hfill {rawSrc (at' parts 2)}"
+    s!"{partSrc (at' parts 0)} \\hfill {partSrc (at' parts 1)} \\hfill {partSrc (at' parts 2)}"
   let opt := if st.runFrom > 1 then s!"[from = {st.runFrom}]" else ""
   let optRaws : Array Raw := if st.runFrom > 1 then
     #[.sym '[' pos, .word s!"from = {st.runFrom}" pos, .sym ']' pos] else #[]

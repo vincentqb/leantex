@@ -116,7 +116,7 @@ public inductive StyleValue where
 /-- The value as its declaration spells it, TeX braced. -/
 public def StyleValue.spell : StyleValue → String
   | .text v => v
-  | .tex rs => "{" ++ rawSrc rs ++ "}"
+  | .tex rs => rawSrcOne (.group rs {})
 
 /-- A style holding TeX, `\style{element}{ key = value, ... }`: a text value one word, a TeX value
 one group. -/

@@ -1,6 +1,7 @@
 module
 
 public import Tests.Support
+import LeanTex.Core.KeyVal
 
 public section
 
@@ -256,7 +257,7 @@ def nativeCarrierChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
      ("titlepage", #[("font", .tex (lexedRaws "\\bfseries\\color{red}")),
        ("author-font", .tex (lexedRaws "\\itshape x"))]),
      ("section", #[("before", .text "1em plus 2pt"), ("font", .tex (lexedRaws "\\Large")),
-       ("after", .text "")])]
+       ("after", .text "1ex")])]
   for (el, es) in texStyles do
     t s!"the style {Native.texStyleRender el es} is carried as the lexer reads it"
       (mergedRuns (Native.texStyle el es {}).toList "" #[] == lexed (Native.texStyleRender el es))
@@ -267,6 +268,35 @@ def nativeCarrierChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
     let rs := lexedRaws src
     t s!"raws read as their spelling are the lexer's reading of it: {src.quote}"
       (unsited (Parse.trimSpace (Parse.asSpelled rs.toList #[])) == unsited (lexedRaws (Parse.rawSrc rs)))
+  -- The raw reader reads a list as the string readers read its spelling, but where a formula or a
+  -- control symbol holds a comma, which it keeps whole.
+  let kvOf (src : String) : List (String × Option String) :=
+    (Entries.read .keyval (lexedRaws src)).toList.map fun e => (e.key, e.value.map Parse.rawSrc)
+  let nativeOf (src : String) : List (String × Option String) :=
+    (Entries.read .native (lexedRaws src)).toList.map fun e => (e.key, e.value.map Parse.rawSrc)
+  for src in ["a=1, b = {x,y}, c, d={}", "{k=v}, e=f=g, , h = {a}{b}", "w=\\textbf{x, y} z"] do
+    t s!"the keyval reader reads {src.quote} as KeyVal does"
+      (kvOf src == ((KeyVal.items (Parse.rawSrc (lexedRaws src))).toList.map KeyVal.entry))
+  for src in ["a = 1, b = \"q, r\", c = [x, y], d = (1, 2)", "e = {x, y}, f =, g = h = i"] do
+    t s!"the native reader reads {src.quote} as the declaration grammar does"
+      (nativeOf src == ((Decl.splitEntries (Parse.rawSrc (lexedRaws src))).map fun e =>
+        let (k, v) := Decl.entryOf e
+        (k, if (KeyVal.cutAt '=' e.toList).2.isSome then some v else none)))
+  t "a comma in a formula or a control symbol cuts no keyval entry"
+    (kvOf "x=$a,b$, y=c\\,d" == [("x", some "$a,b$"), ("y", some "c\\,d")])
+  -- A passed option's spaces reach the package as the load's own option's do.
+  let parskipped (pre : String) : String :=
+    "\\documentclass{article}\n" ++ pre ++ "\n\\begin{document}\nAlpha words.\n\nBravo words.\n\\end{document}"
+  t "a passed parskip skip sets the skip the load's own option sets"
+    (pagesOf oneFace (parskipped "\\PassOptionsToPackage{skip=5pt plus 1pt}{parskip}\n\\usepackage{parskip}") ==
+      pagesOf oneFace (parskipped "\\usepackage[skip=5pt plus 1pt]{parskip}"))
+  -- A style value's TeX holding an opening bracket swallows no later entry.
+  let marked (styles : String) : String :=
+    "\\documentclass{article}\n" ++ styles ++ "\n\\begin{document}\n\\begin{itemize}\n\\item One.\n" ++
+      "\\end{itemize}\n\\end{document}"
+  t "a marker holding a parenthesis leaves the indent beside it read"
+    (pagesOf oneFace (marked "\\style{itemize}{ marker = {(}, indent = 4em }") ==
+      pagesOf oneFace (marked "\\style{itemize}{ marker = {(} }\\style{itemize}{ indent = 4em }"))
   -- A style value is read as the raws Compat leaves, never as their spelling read again.
   let p0 : Pos := {}
   let markedStyle := lexedRaws "\\documentclass{article}\n" ++

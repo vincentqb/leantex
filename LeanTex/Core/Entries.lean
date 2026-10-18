@@ -41,9 +41,9 @@ public def itemsOf : List Raw → Array Item → Array Item
   | .space :: rest, acc | .par _ :: rest, acc => itemsOf rest (acc.push .space)
   | r :: rest, acc => itemsOf rest (acc.push (.raw r))
 
-/-- The two grammars: the native declarations', whose braces, brackets, parentheses and quotes hold
-commas, and LaTeX's keyval lists', whose braces alone do and whose key and value lose the braces
-around the whole of them. -/
+/-- The two grammars: the native declarations', whose brackets, parentheses and quotes hold commas,
+and LaTeX's keyval lists', whose key and value lose the braces around the whole of them; in either a
+group, formula or control symbol stands whole, so no comma in one cuts, where keyval cuts a formula. -/
 public inductive Grammar where
   | native
   | keyval
@@ -84,13 +84,12 @@ private def trimItems (l : List Item) : List Item :=
 
 /-- Items cut at their first `=`, in the keyval grammar the first outside braces: those before it,
 and those after it where it stands. -/
-private def cutItems (g : Grammar) : List Item → Nat → List Item × Option (List Item)
-  | [], _ => ([], none)
-  | i :: rest, depth =>
-    if (g == .native || depth == 0) && i.is '=' then ([], some rest) else
-      let depth := if i.is '{' then depth + 1 else if i.is '}' then depth - 1 else depth
-      let r := cutItems g rest depth
-      (i :: r.1, r.2)
+private def cutItems (g : Grammar) : List Item → Nat → Array Item → List Item × Option (List Item)
+  | [], _, acc => (acc.toList, none)
+  | i :: rest, depth, acc =>
+    if (g == .native || depth == 0) && i.is '=' then (acc.toList, some rest) else
+      cutItems g rest (if i.is '{' then depth + 1 else if i.is '}' then depth - 1 else depth)
+        (acc.push i)
 
 /-- Items back as raws: a run of characters one word at its first character's site, a space a
 space, a raw itself. -/
@@ -136,7 +135,7 @@ public def read (g : Grammar) (body : Array Raw) : Array Entry :=
     let inner := match g, flat with
       | .keyval, [.raw (.group body _)] => trimItems (itemsOf body.toList #[]).toList
       | _, _ => flat
-    let (k, v) := cutItems g inner 0
+    let (k, v) := cutItems g inner 0 #[]
     some { item := rawsOf flat none #[], key := rawSrc (valueOf g k), value := v.map (valueOf g)
            written := v.map fun l => rawsOf (trimItems l) none #[] }
 
