@@ -188,6 +188,10 @@ and each later run of whitespace, vertical tab and Unicode's spaces included, on
       ((linksOf d).any (·.1 == "https://example.org/y") == linked)
   t "md refs: a document's label matches as CommonMark's, its trailing whitespace trimmed"
     (mdLinks "See [foo bar ].\n\n[foo bar]: /url\n" == #[("/url", "foo bar ")])
+  let (d, _) := Tests.LeanCite.page "Cites [see @ash2001, p.\\ 3] here."
+  t s!"lean cite: a docstring's escaped space stays md4c's text, its backslash set \
+({repr (pageText d)})"
+    (hasStr (pageText d) "p.\\ 3")
   let (d, _) := Tests.LeanCite.page "Cites [ash2001] and [ ASH2001] but not [ash2001 ]."
   t s!"lean cite: a label alike to a cited key links to its entry as md4c matches the label \
 ({linksOf d}, {repr (pageText d)})"

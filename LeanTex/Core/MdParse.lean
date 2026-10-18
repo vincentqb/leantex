@@ -6,6 +6,7 @@ import LeanTex.Core.Loop
 import LeanTex.Core.Blank
 import LeanTex.Core.Hex
 import LeanTex.Core.CiteKey
+import LeanTex.Core.MdSmart
 import LeanTex.Core.CaseFold
 import LeanTex.Core.Nfc
 import Std.Data.HashMap
@@ -2253,6 +2254,24 @@ public def docGenRead (text : String) (known : Std.HashSet String) : CiteRead :=
   { on := true, known := some known, bracketed := keys.foldl (·.insert ·) {}
     folded := keys.foldl (fun m k => if m.contains (md4cLabel k) then m else m.insert (md4cLabel k) k) {} }
 
+/-- The index the run of spaces and tabs ending at `i` starts at. -/
+def spacesBefore (c : Chars) (i : Nat) : Nat := Id.run do
+  let mut j := i
+  for _ in [0:i] do
+    match j with
+    | 0 => break
+    | k + 1 => if c.at? k == some ' ' || c.at? k == some '\t' then j := k else break
+  return j
+
+/-- Whether the word ending at `s` holds the character an escape or a character reference ending at
+`t` set, which Pandoc's `str` never reads. -/
+def taintedWord (c : Chars) (t : Option Nat) (s : Nat) : Bool := Id.run do
+  let some t := t | return false
+  unless t ≤ s && s - t ≤ MdSmart.longest () do return false
+  for k in [t:s] do
+    unless (c.at? k).any fun d => CiteKey.isAlnum d || d == '.' do return false
+  return true
+
 /-- The scan: characters to a flat token array, brackets resolved against a
 stack and refusals raised where seen. -/
 def scanInlines (file : String) (c : Chars) (dialect : Dialect := .document)
@@ -2275,6 +2294,8 @@ def scanInlines (file : String) (c : Chars) (dialect : Dialect := .document)
   let mut standalone : Std.HashSet Nat := {}
   -- The in-text citations a defined label's text shows as written.
   let mut dead : Std.HashSet Nat := {}
+  -- The index past the last escape or character reference that set a word's character.
+  let mut taintEnd : Option Nat := none
   -- The in-text citation whose bracket may follow, and the token count after its key.
   let mut tailFor : Option (Nat × Nat) := none
   let braces := if cites then braceMatches c else {}
@@ -2303,6 +2324,16 @@ def scanInlines (file : String) (c : Chars) (dialect : Dialect := .document)
           (toks.back? matches some (.soft _) | some (.hard _)))
         unless quiet && (ch == ' ' || ch == '\t' || ch == '\n' || ch == '[') do
           tailFor := none
+      -- premise: Tests.MdCiteEdges.abbrevEdgeChecks — a space Pandoc's smart punctuation cannot join,
+      -- before a citation's spelling or after a word an escape or a reference sets, stands apart.
+      if dialect == .document && !tex && ch != ' ' && ch != '\t' && ch != '\n' &&
+          (pending.endsWith " " || pending.endsWith "\t") &&
+          (MdSmart.citesAt c.cs i || taintedWord c taintEnd (spacesBefore c i)) then
+        let n := i - spacesBefore c i
+        toks := flush toks (String.ofList (pending.toList.take (pending.length - n))) pendingPos
+        toks := toks.push (.txt (c.str (i - n) i) (c.posAt (i - n)))
+        pending := ""
+        pendingPos := p
       if ch == '\\' then
         match escaped? c i with
         | some d =>
@@ -2311,12 +2342,9 @@ def scanInlines (file : String) (c : Chars) (dialect : Dialect := .document)
             toks := flush toks pending pendingPos
             pending := ""
             toks := toks.push (.txt (if texSpecial d then "\\" ++ d.toString else d.toString) p)
-          else if d == '.' && dialect == .document then
-            -- An escaped dot is no word's, as Pandoc's smart punctuation reads abbreviations.
-            toks := flush toks pending pendingPos
-            pending := ""
-            toks := toks.push (.txt "." p)
-          else pending := pending.push d
+          else
+            pending := pending.push d
+            if CiteKey.isAlnum d || d == '.' then taintEnd := some (i + 2)
           i := i + 2
         | none =>
           -- A backslash before a line ending is a hard break.
@@ -2326,7 +2354,7 @@ def scanInlines (file : String) (c : Chars) (dialect : Dialect := .document)
             toks := toks.push (.hard p)
             i := i + 2
           -- A citation's note is Pandoc's syntax, where an escaped space is a non-breaking one.
-          else if note && !tex && c.at? (i + 1) == some ' ' then
+          else if note && !tex && dialect == .document && c.at? (i + 1) == some ' ' then
             pending := pending.push '\u00a0'
             i := i + 2
           else
@@ -2347,13 +2375,13 @@ def scanInlines (file : String) (c : Chars) (dialect : Dialect := .document)
         match entityAt c i with
         | some (v, next) =>
           -- A reference to a space is the text it names, never the spaces smart punctuation joins.
-          -- nor a reference to a word's character, as Pandoc's smart punctuation reads abbreviations.
-          if tex || v == " " || v == "\t" ||
-              (dialect == .document && v.any fun d => CiteKey.isAlnum d || d == '.') then
+          if tex || v == " " || v == "\t" then
             toks := flush toks pending pendingPos
             pending := ""
             toks := toks.push (.txt v p)
-          else pending := pending ++ v
+          else
+            pending := pending ++ v
+            if v.any fun d => CiteKey.isAlnum d || d == '.' then taintEnd := some next
           i := next
         | none =>
           pending := pending.push '&'

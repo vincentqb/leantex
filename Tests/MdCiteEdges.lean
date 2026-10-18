@@ -137,14 +137,18 @@ def abbrevEdgeChecks (ref : IO.Ref (List String)) : IO Unit := do
   let page (src : String) : String := pageText (elabMd (src ++ "\n")).1
   for (src, joined) in [("See ...p. 3 here.", "p.\u00a03"), ("See (cf. 3) here.", "cf.\u00a03"),
       ("See cf. \\* here.", "cf.\u00a0*"), ("See ......p. 3 here.", "p.\u00a03"),
-      ("No list: cf. [x] and cf. a@b.", "cf.\u00a0[x]"), ("No list: cf. a@b.", "cf.\u00a0a@b")] do
+      ("No list: cf. [x] and cf. a@b.", "cf.\u00a0[x]"), ("No list: cf. a@b.", "cf.\u00a0a@b"),
+      ("No list: cf. \\@a here.", "cf.\u00a0@a"), ("No list: cf. \\[@a] here.", "cf.\u00a0[@a]"),
+      ("No list: cf. [\\@a] here.", "cf.\u00a0[@a]"), ("No list: cf. [x;@a] here.", "cf.\u00a0[x;@a]"),
+      ("No list: vol. @{a b} here.", "vol.\u00a0@{a b}")] do
     t s!"md abbreviation: {repr src} joins as Pandoc's smart punctuation does ({repr (page src)})"
       (hasStr (page src) joined)
   for (src, plain) in [("See e.g... x.", "e.g\u2026 x"), ("See cf\\. 3 here.", "cf. 3"),
       ("See c&#102;. 3 here.", "cf. 3"), ("See cf&#46; 3 here.", "cf. 3"),
       ("See a..p. 3 here.", "p. 3"), ("No list: cf. [@a] here.", "cf. [@a]"),
       ("No list: cf. @a here.", "cf. @a"), ("No list: cf. [see @a] here.", "cf. [see @a]"),
-      ("No list: cf. -@a here.", "cf. -@a")] do
+      ("No list: cf. -@a here.", "cf. -@a"), ("No list: cf. @_a here.", "cf. @_a"),
+      ("No list: cf. [`x` @a] here.", "cf. [x @a]"), ("No list: cf. [*see* @a] here.", "cf. [see @a]")] do
     t s!"md abbreviation: {repr src} keeps its space, as Pandoc's smart punctuation does \
 ({repr (page src)})"
       (hasStr (page src) plain)
@@ -152,9 +156,15 @@ def abbrevEdgeChecks (ref : IO.Ref (List String)) : IO Unit := do
 Cites [@a].\n" #[("works.bib", worksBib)]
   t s!"md abbreviation: the metadata's list heading joins as the text does ({repr (pageText d)})"
     (hasStr (pageText d) "Works cf.\u00a02001")
+  for src in ["See cf.&nbsp;[@a] here.", "See cf.&nbsp;[see @a] here.", "No list: cf. @_a here.",
+      "See cf. \\@a and cf.&nbsp;@b here."] do
+    let once := MarkdownDoc.emit (elabMd (src ++ "\n")).1
+    t s!"md twin: an abbreviation's space before a citation's spelling reads back as written \
+({repr src}: {repr once})"
+      (MarkdownDoc.emit (elabMd once).1 == once && pageText (elabMd once).1 == page src)
   t s!"md abbreviation: no abbreviation is longer than the bound the reader walks \
-({MdSmart.longest})"
-    (MdSmart.abbreviations.all (·.length ≤ MdSmart.longest) && MdSmart.longest == 6)
+({MdSmart.longest ()})"
+    (MdSmart.abbreviations.all (·.length ≤ MdSmart.longest ()) && MdSmart.longest () == 6)
 
 /-- A citation's note reads Pandoc's escaped space as a non-breaking one, the text CommonMark's
 backslash. -/

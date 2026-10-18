@@ -1209,10 +1209,9 @@ public def splitMetadata (bs : Array Blk) : Array MetaField × Array Blk :=
   | _ => (#[], bs)
 
 /-- Text with each abbreviation joined to the word after it by a non-breaking space where spaces
-follow it, as Pandoc's smart punctuation joins it, unless a citation's spelling or a note follows
-the spaces; `after` spells what follows the text, `noteNext` whether a note or citation does. -/
-private def joinAbbreviations (s : String) (after : Unit → Array Char) (noteNext : Bool) : String :=
-  Id.run do
+follow it, as Pandoc's smart punctuation joins it, unless a citation or a note's reference follows
+the spaces ending it. -/
+private def joinAbbreviations (s : String) (citeNext : Bool) : String := Id.run do
   let cs := s.toList.toArray
   let mut out := ""
   let mut i := 0
@@ -1222,25 +1221,12 @@ private def joinAbbreviations (s : String) (after : Unit → Array Char) (noteNe
       let mut j := i
       for _ in [i:cs.size] do
         if (cs[j]?.map fun d => d == ' ' || d == '\t').getD false then j := j + 1 else break
-      let joined := MdSmart.joinsAt cs i &&
-        (if j < cs.size then !MdSmart.citesAt cs j else !(noteNext || MdSmart.citesAt (after ()) 0))
+      let joined := MdSmart.joinsAt cs i && !(j ≥ cs.size && citeNext)
       out := if joined then out.push '\u00a0' else out ++ String.ofList (cs.extract i j).toList
       i := j
     else
       out := out.push c
       i := i + 1
-  return out
-
-/-- What the text opening `rest` spells, as far as a citation's spelling there reads: to its
-bracket's close, a second bracket, a node other than text, or three characters outside a bracket. -/
-private def spelledAhead (rest : List Inl) : Array Char := Id.run do
-  let mut out : Array Char := #[]
-  for x in rest do
-    let .text s _ := x | return out
-    for c in s.toList do
-      if out.size ≥ 3 && out[0]? != some '[' then return out
-      if c == ']' || (c == '[' && !out.isEmpty) then return out.push c
-      out := out.push c
   return out
 
 mutual
@@ -1249,13 +1235,13 @@ mutual
 private def abbrevInls : List Inl → List Inl
   | [] => []
   | x :: rest =>
-    let noteNext := match rest with
+    let citeNext := match rest with
       | .cite .. :: _ | .note .. :: _ => true
       | _ => false
-    abbrevInl (fun _ => spelledAhead rest) noteNext x :: abbrevInls rest
+    abbrevInl citeNext x :: abbrevInls rest
 
-private def abbrevInl (after : Unit → Array Char) (noteNext : Bool) : Inl → Inl
-  | .text s p => .text (joinAbbreviations s after noteNext) p
+private def abbrevInl (citeNext : Bool) : Inl → Inl
+  | .text s p => .text (joinAbbreviations s citeNext) p
   | .emph body p => .emph (abbrevInls body.toList).toArray p
   | .strong body p => .strong (abbrevInls body.toList).toArray p
   | .link dest title body p => .link dest title (abbrevInls body.toList).toArray p

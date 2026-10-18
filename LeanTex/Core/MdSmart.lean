@@ -19,17 +19,17 @@ public def abbreviations : List String :=
    "Sr.", "St.", "univ.", "viz.", "vol.", "vs."]
 
 /-- The longest abbreviation's length, past which no word is one. -/
-public def longest : Nat := abbreviations.foldl (fun m a => max m a.length) 0
+public def longest (_ : Unit) : Nat := abbreviations.foldl (fun m a => max m a.length) 0
 
 /-- A character Pandoc's `str` reads a word of: a letter or digit of any script, or a dot. -/
 def wordChar (c : Char) : Bool := CiteKey.isAlnum c || c == '.'
 
-/-- The word Pandoc's `str` reads ending at `i`, where it is no longer than an abbreviation; `""`
-otherwise. Its letters, digits and dots, but a dot before a dot, which no `str` holds: of a run of
-dots only an ellipsis's remainder's last one opens the word after it, as `str` resumes there. -/
+/-- The word Pandoc's `str` reads ending at `i`, which a run of dots opens past its ellipses, where
+it is no longer than an abbreviation, else `""`. -/
 public def strBefore (cs : Array Char) (i : Nat) : String := Id.run do
+  let bound := longest ()
   let mut j := i
-  for _ in [0:longest + 1] do
+  for _ in [0:bound + 1] do
     match j with
     | 0 => break
     | k + 1 => if (cs[k]?.map wordChar).getD false then j := k else break
@@ -51,7 +51,7 @@ public def strBefore (cs : Array Char) (i : Nat) : String := Id.run do
         | 0 => break
         | m + 1 => if cs[m]? == some '.' then s := m else break
       pure (if (e - s) % 3 == 0 then e else e - 1)
-  if i - start > longest then return ""
+  if i - start > bound then return ""
   return String.ofList (cs.extract start i).toList
 
 /-- Whether spaces at `i` follow an abbreviation, which Pandoc's smart punctuation joins to the
@@ -59,22 +59,36 @@ word after them. -/
 public def joinsAt (cs : Array Char) (i : Nat) : Bool := abbreviations.contains (strBefore cs i)
 
 /-- Whether a citation key Pandoc's `citeKey` reads opens at `j`: `@` or `-@` before a key's first
-character. -/
-def keyAt (cs : Array Char) (j : Nat) : Bool :=
+character or a brace holding no white space. -/
+def keyAt (cs : Array Char) (j : Nat) : Bool := Id.run do
   let k := if cs[j]? == some '-' then j + 1 else j
-  cs[k]? == some '@' &&
-    (cs[k + 1]?.any fun c => CiteKey.isAlnum c || c == '_' || c == '*' || c == '{')
+  unless cs[k]? == some '@' do return false
+  match cs[k + 1]? with
+  | some '{' =>
+    for m in [k + 2:cs.size] do
+      match cs[m]? with
+      | some '}' => return m > k + 2
+      | some d => if d == ' ' || d == '\t' || d == '\n' then return false
+      | none => return false
+    return false
+  | some d => return CiteKey.isAlnum d || d == '_' || d == '*'
+  | none => return false
 
-/-- Whether a citation's spelling opens at `j`, which Pandoc's smart punctuation joins nothing
-before: an author's key, or a bracket holding a key after no word before its close. -/
+/-- Whether a citation's spelling opens at `j` of written text, which Pandoc's smart punctuation
+joins nothing before: an author's key, or a bracket holding a key at its start or after white space
+before its close, an escaped character no key. -/
 public def citesAt (cs : Array Char) (j : Nat) : Bool := Id.run do
   if keyAt cs j then return true
   unless cs[j]? == some '[' do return false
-  for k in [j + 1:cs.size] do
+  let mut k := j + 1
+  for _ in [j + 1:cs.size] do
     match cs[k]? with
     | some ']' | some '[' | none => return false
+    | some '\\' => k := k + 2
     | some _ =>
-      if keyAt cs k && !(cs[k - 1]?.any CiteKey.isAlnum) then return true
+      let opens := k == j + 1 || (cs[k - 1]?.any fun d => d == ' ' || d == '\t' || d == '\n')
+      if opens && keyAt cs k then return true
+      k := k + 1
   return false
 
 end LeanTex.Core.MdSmart
