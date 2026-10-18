@@ -8165,6 +8165,8 @@ public structure ShortTitle where
   words : String
   nth : Nat
   short : Array Inline
+  /-- Whether `\nameref` reads it, as a heading's own short title, not a contents line's. -/
+  named : Bool
   deriving Repr, BEq, Inhabited
 
 public structure Doc where
@@ -18711,7 +18713,7 @@ public def labelNames (xs : Array Block) (shorts : Array ShortTitle := #[]) :
   let titled := fun (n : Array Inline) => if (metaText n).trimAscii.isEmpty then none else some n
   let mut current : Option (Array Inline) := none
   let mut out : Std.HashMap String (Array Inline) := {}
-  let listed := shortTitlesAt shorts xs
+  let listed := shortTitlesAt (shorts.filter (·.named)) xs
   for h : i in [0:xs.size] do
     let b := xs[i]
     if let .section _ _ _ title := b then

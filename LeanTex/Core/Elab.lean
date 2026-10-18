@@ -180,22 +180,12 @@ private def holdsOutline (bs : Array Block) : Bool :=
   bs.any fun b => b matches .section .. || b matches .frame ..
 
 /-- A block macro run's blocks under its role; a heading or a frame among them stands in the flow,
-a heading's title under the role, the blocks between them under it in runs. -/
-private def macroRunBlocks (name : String) (body : Array Block) : Array Block := Id.run do
-  if !holdsOutline body then return #[.role name body]
-  let mut out : Array Block := #[]
-  let mut run : Array Block := #[]
-  for b in body do
-    match b with
-    | .section l st num title =>
-      out := (if run.isEmpty then out else out.push (.role name run)).push
-        (.section l st num #[.role name title])
-      run := #[]
-    | .frame .. =>
-      out := (if run.isEmpty then out else out.push (.role name run)).push b
-      run := #[]
-    | _ => run := run.push b
-  return if run.isEmpty then out else out.push (.role name run)
+a heading's title under the role, each other block under it, so every block keeps its place. -/
+private def macroRunBlocks (name : String) (body : Array Block) : Array Block :=
+  if !holdsOutline body then #[.role name body] else body.map fun b => match b with
+    | .section l st num title => .section l st num #[.role name title]
+    | .frame .. => b
+    | b => .role name #[b]
 
 /-- An inline macro run under its role. -/
 private def macroRunInlines (name : String) (body : Array Inline) : Array Inline :=
@@ -676,8 +666,9 @@ public structure ESt where
   headingShorts : Array Ir.ShortTitle := #[]
   /-- How many unstarred headings so far set each number and words (`Ir.shortTitlesAt`). -/
   headingCounts : Std.HashMap (Option String × String) Nat := {}
-  /-- An `\addcontentsline` entry the starred heading after it lists, by the entry's words. -/
-  contentsLine : Option (Array Inline) := none
+  /-- An `\addcontentsline` entry waiting for the starred heading or reference list it stands
+  before: that opener's site, the entry's unit and its words. -/
+  contentsLine : Option (Pos × String × Array Inline) := none
   /-- A `\maketitle` already set the title, which LaTeX typesets once. -/
   titleDone : Bool := false
   /-- The last refused `\maketitle` redefinition's body, read again at the
@@ -1008,6 +999,24 @@ private def warnOnce (ctx : Ctx) (key : String) (code : DiagCode) (msg : String)
     (trigger : Option String := none) (recovery : Option Diag.Recovery := none)
     (output : Option Diag.Output := none) (detail : Option String := none) : EM Unit :=
   modify fun st => warnOnceState ctx key code msg pos help demote st trigger recovery output detail
+
+/-- The index past a contents line's groups, at least one past its control. -/
+private def contentsLineEnd (raws : Array Raw) (i : Nat) (n : String) :
+    Array (Array Raw) × { j : Nat // i < j } :=
+  let (gs, j) := Compat.takeGroups raws (i + 1) (if n == "addcontentsline" then 3 else 2)
+  (gs, ⟨max (i + 1) j, by omega⟩)
+
+/-- A contents line's loss, named once by its control. -/
+private def contentsLineLost (ctx : Ctx) (n why : String) (pos : Pos) : EM Unit :=
+  warnOnce ctx ("contents:" ++ n) .W0104 s!"'\\{n}' {why}; the contents list without it" pos
+
+/-- A contents line inside a paragraph: its groups read, nothing inked, its loss named. -/
+private def contentsLineInline (ctx : Ctx) (raws : Array Raw) (i : Nat) (n : String) (pos : Pos) :
+    EM { j : Nat // i < j } := do
+  let (gs, j) := contentsLineEnd raws i n
+  if (rawSrc (gs.getD 0 #[])).trimAscii.toString == "toc" then
+    contentsLineLost ctx n "stands inside a paragraph" pos
+  return j
 
 /-- The surface that spelled what the context reads: an included file's own, else the document's. -/
 private def spelledSurface (ctx : Ctx) : Ir.Surface :=
@@ -3769,9 +3778,7 @@ private def runInHead (ctx : Ctx) (name : String) (starred : Bool) (title : Arra
   -- hyperref's `\@currentlabelname`: a label after the head names it.
   let name := Ir.nameOf title
   if starred || !ctx.numberHeadings || level > st.ctr.secDepth then
-    modify fun st => { st with refTarget := some (match st.refTarget with
-      | some b => { b with name := some name }
-      | none => { kind := none, num := "", name := some name }) }
+    modify fun st => { st with refTarget := st.refTarget.map ({ · with name := some name }) }
     return shaped (.styled .bold title)
   let (n4, n5) := st.ctr.runNums
   let runs := if level == 4 then (n4 + 1, 0) else (n4, n5 + 1)
@@ -5332,7 +5339,11 @@ private def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
             elabInlinesFrom ctx raws j acc ""
         | none =>
         let name := Compat.overlayName name
-        if name == "hfill" then
+        if name == "addcontentsline" || name == "addtocontents" then
+          let ⟨j, hj⟩ ← contentsLineInline ctx raws i name pos
+          have _ : sliceWeight raws j < sliceWeight raws i := sliceWeight_lt raws h hj
+          elabInlinesFrom ctx raws j (flushText acc sb) ""
+        else if name == "hfill" then
           let acc := flushText acc sb
           elabInlinesFrom ctx raws (i + 1) (acc.push .fill) ""
         else if name == "qedhere" then
@@ -6224,8 +6235,8 @@ unseal inlineGroup
 public def recoversInlineName (ctx : Ctx) (name : String) : Bool :=
   Compat.overlayName name == name &&
   (ctx.args.find? (·.1 == name)).isNone && (lookupUser ctx name).isNone &&
-  !["hfill", "qedhere", "ensuremath", "\\", "par", "label", "paragraph",
-    "subparagraph", "hyperlink", "hypertarget", "href", "link", "urlstyle", "url",
+  !["addcontentsline", "addtocontents", "hfill", "qedhere", "ensuremath", "\\", "par", "label",
+    "paragraph", "subparagraph", "hyperlink", "hypertarget", "href", "link", "urlstyle", "url",
     "nolinkurl", "path", "hspace", "rule", "includegraphics", "animategraphics", "faIcon",
     "pagenumber", "pagecount", "textcolor", "ifgiven", "alt", "pause", "note",
     "centering", "footnote", "thanks", Parse.markdownImageControl].contains name &&
@@ -10042,77 +10053,131 @@ private def macroBlocks (name : String) (bare : Bool) (blocks expanded : Array B
   let spliced := macroRunBlocks name expanded
   return blocks ++ spliced
 
-/-- A starred heading an `\addcontentsline` entry lists: unnumbered and unstarred, as the contents and
-bookmarks list a heading past `secnumdepth`, its entry's words its short title where they differ. -/
-private def listedHeading (level : Ir.HeadingLevel) (title text : Array Inline) : EM Block := do
+/-- A starred heading an `\addcontentsline` entry of `unit` lists: unnumbered and unstarred, as the
+contents and bookmarks list a heading past `secnumdepth`, the entry's words its contents title where
+they differ, a unit other than the heading's own named. -/
+private def listedHeading (ctx : Ctx) (pos : Pos) (unit : String) (level : Ir.HeadingLevel)
+    (title text : Array Inline) : EM Block := do
   let words := Ir.plainText title
   let nth := (← get).headingCounts.getD (none, words) 0
   modify fun st => { st with headingCounts := st.headingCounts.insert (none, words) (nth + 1) }
   if Ir.plainText text != words then
-    modify fun st => { st with
-      headingShorts := st.headingShorts.push { number := none, words, nth, short := text } }
+    let short : Ir.ShortTitle := { number := none, words, nth, short := text, named := false }
+    modify fun st => { st with headingShorts := st.headingShorts.push short }
+  if blockHeading? unit != some level then
+    warnOnce ctx "contents:addcontentsline:unit" .W0104 s!"'\\addcontentsline' names a '{unit}' \
+entry beside a heading of another level; the contents list it at the heading's own" pos
   return .section level false none title
 
-/-- A starred heading as it stands, or listed where an `\addcontentsline` before it waits. -/
-private def pendingListed (b : Block) : EM Block := do
-  match b, (← get).contentsLine with
-  | .section level true none title, some text =>
-    modify fun st => { st with contentsLine := none }
-    listedHeading level title text
-  | b, _ => return b
+/-- Whether two sites are one: the same line and column. -/
+private def sameSite (p q : Pos) : Bool := p.line == q.line && p.col == q.col
 
-/-- Whether raw `r` sets nothing between a contents entry and its heading: a space, a paragraph
-break, a page break or hyperref's anchor. -/
-private def contentsLineGap (r : Raw) : Bool :=
-  match r with
-  | .space | .par _ => true
-  | .ctrl n _ => ["clearpage", "cleardoublepage", "newpage", "phantomsection"].contains n
-  | _ => false
+/-- A starred heading opening at `pos`, listed where an `\addcontentsline` before it waits for it; an
+entry waiting for another opener is named lost. -/
+private def pendingListed (ctx : Ctx) (pos : Pos) (b : Block) : EM Block := do
+  let some (at_, unit, text) := (← get).contentsLine | return b
+  modify fun st => { st with contentsLine := none }
+  if let .section level true none title := b then
+    if sameSite at_ pos then return ← listedHeading ctx pos unit level title text
+  warnOnce ctx "contents:addcontentsline" .W0104 "'\\addcontentsline' stands before nothing it \
+could list; the contents list without it" pos
+  return b
 
-/-- Whether the raws from `j` on open with a starred heading or a reference list, past what sets
-nothing. -/
-private def headingAhead (raws : Array Raw) (j : Nat) : Bool :=
-  let k := j + ((raws.extract j raws.size).findIdx? (!contentsLineGap ·)).getD raws.size
+/-- A reference list's blocks, its heading listed where an `\addcontentsline` waits for it. -/
+private def pendingListedHead (ctx : Ctx) (pos : Pos) (bs : Array Block) : EM (Array Block) := do
+  match bs[0]? with
+  | some b => return bs.set! 0 (← pendingListed ctx pos b)
+  | none => return bs
+
+/-- Where the raws from `j` on open past what sets nothing between a contents entry and what it
+lists: spaces, paragraph breaks, page breaks, hyperref's anchor and a bibliography style. -/
+private def contentsLineReach (raws : Array Raw) (j : Nat) : Nat := Id.run do
+  let mut k := j
+  for _ in [j:raws.size] do
+    match raws[k]? with
+    | some .space | some (.par _) => k := k + 1
+    | some (.ctrl n _) =>
+      if ["clearpage", "cleardoublepage", "newpage", "phantomsection"].contains n then k := k + 1
+      else if n == "bibliographystyle" then k := (Compat.takeGroups raws (k + 1) 1).2
+      else break
+    | _ => break
+  return k
+
+/-- The site of the starred heading or reference list the raws from `j` open with, if they do. -/
+private def headingAhead (raws : Array Raw) (j : Nat) : Option Pos :=
+  let k := contentsLineReach raws j
   match raws[k]?, raws[k + 1]? with
-  | some (.ctrl n _), next =>
-    ["bibliography", "printbibliography"].contains n ||
-      ((blockHeading? n).isSome && next matches some (Raw.word "*" _))
-  | some (.env n _ _), _ => n == "thebibliography"
-  | _, _ => false
+  | some (.ctrl n p), next =>
+    if n == "bibliography" || n == "printbibliography" ||
+      ((blockHeading? n).isSome && next matches some (Raw.word "*" _)) then some p else none
+  | some (.env n _ p), _ => if n == "thebibliography" then some p else none
+  | _, _ => none
+
+/-- Whether a paragraph sets nothing but label anchors. -/
+private def labelsOnly (content : Array Inline) : Bool :=
+  content.all fun x => x matches .label _ || x == .text " "
+
+/-- The raws a paragraph holding only labels gathers before a contents entry, so the entry still
+stands beside the heading before them. -/
+private def labelsOnlyRaws (cur : Array Raw) : Bool :=
+  cur.all fun r => r matches .space || r matches .group .. || r matches .ctrl "label" _
+
+/-- The starred heading a contents entry stands right after, past paragraphs of label anchors. -/
+private def starredBefore (blocks : Array Block) : Option Nat := Id.run do
+  let mut k := blocks.size
+  for _ in [0:blocks.size] do
+    match k with
+    | 0 => return none
+    | k' + 1 =>
+      match blocks[k']? with
+      | some (.section _ true none _) => return some k'
+      | some (.para c) => if labelsOnly c then k := k' else return none
+      | _ => return none
+  return none
+
+/-- An entry's words as the contents set them: hyperref's `\protect` dropped, `\numberline`'s
+number kept before them. -/
+private def entryWords (raws : Array Raw) : Array Raw :=
+  raws.foldl (fun out r => match r with
+    | .ctrl "protect" _ => out
+    | .ctrl "numberline" _ => out
+    | .group g p => if out.back? matches some (.ctrl "numberline" _) then out ++ g.push .space
+      else out.push (.group g p)
+    | r => out.push r) #[]
 
 /-- `\addcontentsline{toc}{unit}{entry}` and `\addtocontents{toc}{material}`: an entry beside a
 starred heading lists that heading, before it once it stands; material the contents would set, and
 an entry with no heading beside it, are named. -/
 private def contentsLineArm (ctx : Ctx) (raws : Array Raw) (i : Nat) (n : String) (pos : Pos)
     (blocks : Array Block) : EM (Array Block × { j : Nat // i < j }) := do
-  let line := n == "addcontentsline"
-  let (gs, j) := Compat.takeGroups raws (i + 1) (if line then 3 else 2)
-  let j := max (i + 1) j
-  let file := (rawSrc (gs.getD 0 #[])).trimAscii.toString
-  if file != "toc" then return (blocks, ⟨j, by omega⟩)
-  let lost (why : String) : EM Unit :=
-    warnOnce ctx ("contents:" ++ n) .W0104 s!"'\\{n}' {why}; the contents list without it" pos
-  if !line then
-    lost "material is not set in the contents"
-    return (blocks, ⟨j, by omega⟩)
-  let text ← elabInlines ctx (gs.getD 2 #[])
+  let (gs, j) := contentsLineEnd raws i n
+  if (rawSrc (gs.getD 0 #[])).trimAscii.toString != "toc" then return (blocks, j)
+  if n != "addcontentsline" then
+    contentsLineLost ctx n "material is not set in the contents" pos
+    return (blocks, j)
   if ctx.slides then
-    lost "writes an entry beamer's contents do not read"
-    return (blocks, ⟨j, by omega⟩)
-  match blocks.back? with
-  | some (.section level true none title) =>
-    return (blocks.pop.push (← listedHeading level title text), ⟨j, by omega⟩)
-  | _ =>
-    if headingAhead raws j then
-      modify fun st => { st with contentsLine := some text }
-    else lost "stands beside no starred heading it could list"
-    return (blocks, ⟨j, by omega⟩)
+    contentsLineLost ctx n "writes an entry beamer's contents do not read" pos
+    return (blocks, j)
+  let unit := (rawSrc (gs.getD 1 #[])).trimAscii.toString
+  match starredBefore blocks with
+  | some k =>
+    if let some (.section level true none title) := blocks[k]? then
+      let text ← elabInlines ctx (entryWords (gs.getD 2 #[]))
+      return (blocks.set! k (← listedHeading ctx pos unit level title text), j)
+    return (blocks, j)
+  | none =>
+    match headingAhead raws j.1 with
+    | some at_ =>
+      let text ← elabInlines ctx (entryWords (gs.getD 2 #[]))
+      modify fun st => { st with contentsLine := some (at_, unit, text) }
+    | none => contentsLineLost ctx n "stands beside no starred heading it could list" pos
+    return (blocks, j)
 
 /-- The unnumbered heading a class sets over its reference list: `\refname`, or report.cls's
 `\bibname` where the class heads chapters, as the document declares or the language names it. -/
 private def refsHeading (ctx : Ctx) (pos : Pos) : EM Block := do
   let name := if (← get).ctr.chapters then "bibname" else "refname"
-  pendingListed (.section 1 true none (← definedOr ctx name pos (pure #[.text ctx.locale.references])))
+  return .section 1 true none (← definedOr ctx name pos (pure #[.text ctx.locale.references]))
 
 /-- A chapter's head label, report.cls's `\@chapapp\space\thechapter`: `\chaptername`, or
 `\appendixname` after `\appendix`, as the document declares or the language names it. -/
@@ -10137,6 +10202,8 @@ private def headingArm (ctx : Ctx) (n : String) (level : Nat) (starred : Bool)
     (short : Option (Array Raw)) (title : Array Raw) (pos : Pos) (blocks : Array Block) :
     EM (Array Block) := do
   let title ← elabInlines ctx title
+  -- A heading ends the name a run-in heading gave the labels after it.
+  modify fun st => { st with refTarget := st.refTarget.map ({ · with name := none }) }
   let number ← headingNumber ctx n level starred pos
   let words := Ir.plainText title
   let nth := ((← get).headingCounts.getD (number, words) 0)
@@ -10147,11 +10214,11 @@ private def headingArm (ctx : Ctx) (n : String) (level : Nat) (starred : Bool)
       let s ← elabInlines ctx s
       unless starred do
         modify fun st =>
-          { st with headingShorts := st.headingShorts.push { number, words, nth, short := s } }
+          { st with headingShorts := st.headingShorts.push { number, words, nth, short := s, named := true } }
       pure s
     | none => pure title
   if ctx.slides && !ctx.inFrame then setSectionInForce level title head
-  return blocks.push (← pendingListed (.section ((blockHeading? n).getD .h2) starred number title))
+  return blocks.push (← pendingListed ctx pos (.section ((blockHeading? n).getD .h2) starred number title))
 
 /-- The `\qedsymbol` in force; by default amsthm's box, the math face's □. -/
 private def qedMark (ctx : Ctx) (pos : Pos) : EM (Array Inline) :=
@@ -11984,7 +12051,7 @@ private def isBlockStart (ctx' : Ctx) (n : String) (raws : Array Raw) (i : Nat)
     || (n == "nointerlineskip" && cur.isEmpty)
     || n == "bibliography" || n == Parse.markdownBibControl || n == "bibliographystyle"
     || n == Parse.citeSetupMark || n == "tableofcontents"
-    || ((n == "addcontentsline" || n == "addtocontents") && cur.isEmpty)
+    || ((n == "addcontentsline" || n == "addtocontents") && labelsOnlyRaws cur)
     || (n == "note" && cur.isEmpty)
     || isDeclBlock ctx' n raws i cur
     -- Mid-paragraph these markers stay inline: splitting there would move text.
@@ -12731,7 +12798,7 @@ private def elabEnvArm (ctx : Ctx) (n : String) (scope : Array Raw)
   else if Compat.tableEnvs.contains n || n == Parse.markdownTableEnv then
     blocks ← tabularArm ctx n body pos blocks
   else if n == "thebibliography" then
-    blocks := blocks ++ (← ownBibList ctx body)
+    blocks := blocks ++ (← pendingListedHead ctx pos (← ownBibList ctx body))
   else if n == "frame" then
     -- Notes the content before the frame stashed stand before it; its title's and body's are its.
     blocks ← drainLoose ctx blocks
@@ -13490,7 +13557,7 @@ a side channel, never slide content" cpos
           let src := (rawSrc body).trimAscii.toString
           let style := (← get).bibStyle
           recordBibSpan ctx' src cpos
-          let blocks := blocks.push (← refsHeading ctx' cpos)
+          let blocks := blocks.push (← pendingListed ctx' cpos (← refsHeading ctx' cpos))
           let blocks := blocks.push (.bibliography src style #[])
           have hadv := advance_measures raws h (show i < j + 1 by omega)
           elabBlocksGo ctx' raws (j + 1) blocks #[] gen'

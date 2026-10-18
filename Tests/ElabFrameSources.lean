@@ -51,6 +51,11 @@ def elabFrameSourceChecks (ref : IO.Ref (List String)) : IO Unit := do
   sites "frame source: a closed macro role's frame stands in the flow at its opening"
     #[frameAt owned, frameAt second]
     #[(0, ⟨ctx.file, owned⟩), (1, ⟨ctx.file, second⟩)]
+  let lead := { first with origins := [{ id := 42, name := "framelead" }] }
+  let leadFrame := { second with origins := [{ id := 42, name := "framelead" }] }
+  sites "frame source: a macro run's frame after two other blocks keeps its own index"
+    #[.word "One" lead, .par lead, .word "Two" lead, .par lead, frameAt leadFrame]
+    #[(2, ⟨ctx.file, leadFrame⟩)]
   let call : Pos :=
     { line := 31, col := 2, origins := [{ id := 53, name := "outer" }],
       command := some "\\framecommand" }

@@ -478,6 +478,24 @@ the TeX string and the reference list's renamed heading ({words})"
     | _ => false
   t s!"the web page's contents are one list of an item per entry ({items.size})"
     (uls.size == 1 && items.size == 6)
+  -- An entry before its starred heading, one past a label, one inside a paragraph, and a unit apart.
+  let (more, mds) := elabStr ("\\documentclass{article}\n\\begin{document}\n\\tableofcontents\n" ++
+    "\\addcontentsline{toc}{section}{Ahead}\n\\section*{Ahead long}\nWords.\n" ++
+    "\\section*{Past}\n\\label{past}\n\\addcontentsline{toc}{section}{Past}\nSee [\\nameref{past}] " ++
+    "and [\\nameref{other}].\n\\paragraph{Spouts} Tea pours.\n\\section*{Other}\\label{other}\n" ++
+    "Words \\addcontentsline{toc}{section}{Inside} more words.\n\\section*{Unit}\n" ++
+    "\\addcontentsline{toc}{subsection}{\\protect\\numberline{}Unit}\nText.\n\\end{document}\n")
+  let (_, mbody, _) := HtmlDoc.emitTree {} more
+  let mwords := ((navEntries mbody)[0]?.map (·.map (·.2.1))).getD #[]
+  t s!"an entry lists the starred heading after it and the one before it past a label, not one \
+inside a paragraph ({mwords})" (mwords == #["Ahead", "Past", "Unit"])
+  t "a listed heading's label names its own title, and a run-in heading's name ends at the next heading"
+    (hasStr (Ir.blocksText more.body) "See [Past] and [Other].")
+  t "an entry inside a paragraph and one of another unit are named, nothing inked"
+    (mds.any (fun d => d.code == "W0104" && d.subject == some "contents:addcontentsline") &&
+      mds.any (fun d => d.code == "W0104" && d.subject == some "contents:addcontentsline:unit") &&
+      !hasStr (Ir.blocksText more.body) "Inside" && hasStr (letters (Ir.blocksText more.body)) "Wordsmorewords" &&
+      !mds.any fun d => d.code == "W0301")
   -- A frame a macro with a parameter sets takes its own number.
   let (deck, _) := elabStr ("\\documentclass{beamer}\n" ++
     "\\newcommand{\\myframe}[1]{\\begin{frame}{#1}Body of #1.\\end{frame}}\n\\begin{document}\n" ++
