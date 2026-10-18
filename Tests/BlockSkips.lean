@@ -404,7 +404,9 @@ private def filOrderChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
     (wfill.isSome && wfill == wsplit && wdiags.all (·.code != "W0104"))
   -- Every spelling TeX reads as that glue, each set by lualatex.
   for (skip, same) in [("\\vspace{\\stretch{1}}", "\\vfill"), ("\\vspace{\\stretch1}", "\\vfill"),
-      ("\\vspace{\\stretch 1}", "\\vfill"), ("\\vspace{0pt plus 1 fill}", "\\vfill"),
+      ("\\vspace{\\stretch 1}", "\\vfill"), ("\\vspace{\\tw@\\p@}", "\\vspace{2pt}"),
+      ("\\vspace{\\thr@@\\baselineskip}", "\\vspace{3\\baselineskip}"),
+      ("\\vspace{0pt plus 1 fill}", "\\vfill"),
       ("\\vspace{0pt PLUS 1FILL}", "\\vfill"),
       ("\\vspace{12pt plus 1fill minus 3pt}", "\\vspace{12pt}\\vfill"),
       ("\\vspace{2\\baselineskip plus 1fill}", "\\vspace{2\\baselineskip}\\vfill"),

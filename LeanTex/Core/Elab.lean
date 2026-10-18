@@ -3674,25 +3674,10 @@ private inductive CounterArg where
   | unkept (c : String)
   | unread (shown : String)
 
-/-- The plain.tex integer constants a counter value may name. -/
-private def kernelInt : String → Option Int
-  | "z@" => some 0
-  | "m@ne" => some (-1)
-  | "@ne" => some 1
-  | "tw@" => some 2
-  | "thr@@" => some 3
-  | "sixt@@n" => some 16
-  | "@cclv" => some 255
-  | "@cclvi" => some 256
-  | "@m" => some 1000
-  | "@M" => some 10000
-  | "@MM" => some 20000
-  | _ => none
-
 private def counterValue (st : ESt) (nRaw : Array Raw) : CounterArg :=
   let shown := (rawSrc nRaw).trimAscii.toString
   let named (r : String) (sign : Int) : CounterArg :=
-    ((kernelInt r).map fun v => .int (sign * v)).getD (.unread shown)
+    ((Compat.kernelInt r).map fun v => .int (sign * v)).getD (.unread shown)
   match nRaw.toList.filter (!· matches .space) with
   | [.ctrl "value" _, .group c _] =>
     let c := (rawSrc c).trimAscii.toString

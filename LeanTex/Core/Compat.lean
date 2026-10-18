@@ -5718,6 +5718,21 @@ private theorem condDocument_package_failed_exact (reader : InputReader Id)
       hc hp hd hflags hlens hi hsettling hv hr) hdeferred]
   simp [packageFailed, packageLoaded, Nat.add_assoc, hdeferred]
 
+/-- The integer a plain.tex constant names. -/
+public def kernelInt : String → Option Int
+  | "z@" => some 0
+  | "m@ne" => some (-1)
+  | "@ne" => some 1
+  | "tw@" => some 2
+  | "thr@@" => some 3
+  | "sixt@@n" => some 16
+  | "@cclv" => some 255
+  | "@cclvi" => some 256
+  | "@m" => some 1000
+  | "@M" => some 10000
+  | "@MM" => some 20000
+  | _ => none
+
 /-- The dimension spelled past a glue keyword run into it,
 as TeX reads `plus2pt`. -/
 private def keyRun? (w key : String) : Option String :=
@@ -5731,14 +5746,10 @@ public def lengthSrcBy (ref : String → Bool → Option String) (raws : Array R
     Option String := Id.run do
   let mut s := ""
   let mut prevNumber := false
-  let mut prevRef := false
   let mut depth := 0
   let mut past := 0
   for h : k in [0:raws.size] do
     if k < past then continue
-    -- TeX multiplies a factor standing before a unit control or a register.
-    let times := if prevRef then " * " else ""
-    prevRef := prevRef && raws[k] matches .space
     match raws[k] with
     | .ctrl "stretch" _ =>
       let g := skipSpaces raws (k + 1)
@@ -5761,10 +5772,10 @@ public def lengthSrcBy (ref : String → Bool → Option String) (raws : Array R
       prevNumber := false
     | .ctrl "p@" _ =>
       -- `\p@` is 1pt and `\z@` 0pt (plain.tex); `\@plus`/`\@minus` are the glue keywords.
-      s := s ++ (if prevNumber then "pt" else times ++ "1pt")
+      s := s ++ (if prevNumber then "pt" else "1pt")
       prevNumber := false
     | .ctrl "z@" _ =>
-      s := s ++ (if prevNumber then "pt" else times ++ "0pt")
+      s := s ++ (if prevNumber then " * 0pt" else "0pt")
       prevNumber := false
     | .ctrl "@plus" _ =>
       s := s ++ " plus "
@@ -5773,14 +5784,18 @@ public def lengthSrcBy (ref : String → Bool → Option String) (raws : Array R
       s := s ++ " minus "
       prevNumber := false
     | .ctrl n _ =>
+      -- plain.tex's integer constants are numbers, so a unit or register after one multiplies.
+      if let some i := kernelInt n then
+        s := s ++ toString i
+        prevNumber := true
+        continue
       let some v := ref n (raws[skipSpaces raws (k + 1)]? matches some (.group _ _))
         | return none
       let t := s.trimAsciiEnd.toString
-      let pre := if prevNumber || !times.isEmpty || t.back.isDigit || t.back == '.' then " * "
+      let pre := if prevNumber || t.back.isDigit || t.back == '.' then " * "
         else if t == "-" || t.endsWith "(-" then "1 * " else ""
       s := (if pre.isEmpty then s else t) ++ pre ++ v
       prevNumber := false
-      prevRef := true
     | .word w _ =>
       let w := w.toLower
       let lead := if s.isEmpty || s.endsWith " " then "" else " "
@@ -7652,7 +7667,7 @@ private def startSection? (cmd : String) (body : Array Raw) (pos : Pos) :
     if h : args.size = 6 then
       let element := (rawSrc args[0]).trimAscii.toString
       -- TeX reads an empty skip as zero.
-      let skip (g : Array Raw) := if (lengthSrc g).isEmpty then "0pt" else lengthSrc g
+      let skip (g : Array Raw) := let v := lengthSrc g; if v.isEmpty then "0pt" else v
       let after := skip args[4]
       if after.startsWith "-" then
         -- A negative afterskip declares a run-in heading.
@@ -10630,10 +10645,10 @@ and patterns stand in" c.pos
     became s!"\\selectlanguage\{{lname}}" s!"the '{tag}' language attribute" c.pos
     return #[.ctrl (Marker.name .lang tag) c.pos]
   | .vspace => do
-    -- The star's zero rule goes before the space, keeping it at a page's top.
     if (c.given 2).isNone then
       say .E0304 "missing argument 'length' for '\\vspace'" c.pos
       return #[]
+    -- The star's zero rule goes before the space, keeping it at a page's top.
     let native := skipNative (skipSrc (lengthSrc (c.arg 2)))
     if (c.given 0).isSome then
       became "\\vspace*" s!"a page-top anchor, then {native.note?.getD "nothing"}" c.pos
