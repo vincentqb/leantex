@@ -6649,15 +6649,14 @@ private def flowStyleKeys : List String :=
   ["before", "after", "rule", "rule-position", "rule-thickness", "marker", "indent", "gap", "hover",
    "focus", "motion"]
 
-/-- The `\style` keys an element's sites read, a title page outside the flow model its alignment
-too, a `\define`d name a heading's. -/
-public def styleKeysRead (flow : Bool) : String → List String
+/-- The `\style` keys an element's sites read, a `\define`d name a heading's. -/
+public def styleKeysRead : String → List String
   | "section" | "subsection" | "subsubsection" => "font" :: flowStyleKeys
   | "heading1" | "heading5" | "heading6" | "nav" => flowStyleKeys
   | "abstract" => ["font", "align", "body-size"]
   | "titlepage" => ["font", "before", "after", "separator", "rule-above", "rule-above-skip",
       "rule-above-gap", "rule-below", "rule-below-gap", "rule-below-skip", "author-font",
-      "author-strut", "hover", "focus", "motion", "slot"] ++ (if flow then [] else ["align"])
+      "author-strut", "hover", "focus", "motion", "slot", "align"]
   | "link" | "url" | "cite" => ["color"]
   | "logo" => ["align"]
   | "frametitle" | "sectionpage" | "standout" | "block" | "alertblock" | "exampleblock" => ["font"]

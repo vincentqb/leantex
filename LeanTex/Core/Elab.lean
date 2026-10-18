@@ -401,6 +401,8 @@ public structure SpanRecords where
   /-- Each `\palette` entry that declares an author colour under the key
   `ink` or `surface`, at its first declaration. -/
   tokenKeys : Array (String × Span) := #[]
+  /-- Each token the document's own `\tokens` declares beside the engine's, at each declaration. -/
+  authorTokens : Array (String × Span) := #[]
   /-- The declared `tokenKeys` some resolved colour expression spells, once
   each. -/
   colorReads : Array String := #[]
@@ -7241,6 +7243,19 @@ named. -/
 private def noteDeclared (ctx : Ctx) (decl key : String) : EM Unit :=
   modify fun st => applyEvent ctx st (.declared decl key)
 
+/-- Whether a declaration at `pos` is the document's own: outside a package or class file and the
+files one inputs, and no definition's replacement text. -/
+private def ownDeclaration (ctx : Ctx) (pos : Pos) : EM Bool := do
+  let package := Compat.packageFile ctx.file || (← get).packageInputs.contains ctx.file
+  return UnusedSetting.ownSite package ctx.callSite.isSome pos
+
+/-- Records a token the document's own `\tokens` declares beside the engine's. -/
+private def noteAuthorToken (ctx : Ctx) (key : String) (pos : Pos) : EM Unit := do
+  unless Ir.engineTokenNames.contains key || !(pos.command.all (· == "\\tokens")) do
+    if ← ownDeclaration ctx pos then
+      modify fun st => { st with spans := { st.spans with
+        authorTokens := st.spans.authorTokens.push (key, ctx.sourceSpan pos) } }
+
 /-- Records a setting the document itself declares at `pos`. -/
 private def noteSetting (ctx : Ctx) (setting : UnusedSetting.Setting) (pos : Pos) : EM Unit :=
   modify fun st => applyEvent ctx st (.setting setting pos)
@@ -7316,9 +7331,11 @@ private def applyTokens (ctx : Ctx) (toks : Tokens) (src : String) (pos : Pos)
       | some (.glue g) =>
         acc := acc.declare key g
         noteDeclared ctx "tokens" key
+        noteAuthorToken ctx key pos
       | some (.dim d) =>
         acc := acc.declare key { width := Dim.Length.ofSp d }
         noteDeclared ctx "tokens" key
+        noteAuthorToken ctx key pos
       | some v =>
         modify fun st => { st with
           diags := st.diags.push (Decl.wrongType ctx.file "tokens" key
@@ -13781,16 +13798,10 @@ private def styleLength (ctx : Ctx) (key src : String) (pos : Pos) (what : Strin
       (help := "lengths look like 10pt, 1.5ex, or a token name")
     return none
 
-/-- Whether a declaration at `pos` is the document's own: outside a package or class file and the
-files one inputs, and no definition's replacement text. -/
-private def ownDeclaration (ctx : Ctx) (pos : Pos) : EM Bool := do
-  let package := Compat.packageFile ctx.file || (← get).packageInputs.contains ctx.file
-  return UnusedSetting.ownSite package ctx.callSite.isSome pos
-
 /-- Applies `\style{element}{...}`, each entry read against the tokens
 declared so far. -/
 private def applyStyle (ctx : Ctx) (styles : Styles) (element : String) (body : Array Raw)
-    (pos : Pos) (flow : Bool) : EM Styles := do
+    (pos : Pos) : EM Styles := do
   unless styleableElements.contains element || ctx.user.any (·.name == element) do
     let lists := "{" ++ ",".intercalate ("list" :: Ir.listSetKinds) ++ "}{,1..4}"
     let named := styleableElements.filterMap fun e =>
@@ -13815,14 +13826,15 @@ private def applyStyle (ctx : Ctx) (styles : Styles) (element : String) (body : 
     | some (key, value) =>
       let valueSrc := declSrc value
       -- premise: declCensusChecks — an element's sites read only the keys its row lists
-      if Ir.styleKeys.contains key && key != "slot" &&
-          !(Ir.styleKeysRead flow element).contains key then
+      if Ir.styleKeys.contains key && key != "slot" && !(Ir.styleKeysRead element).contains key then
         if ← ownDeclaration ctx pos then
           warnOnce ctx ("style:" ++ element ++ ":" ++ key) .W0104
             s!"'{key}' has no meaning on '{element}'; the element is set without it" pos
-            (help := s!"'{element}' reads {", ".intercalate (Ir.styleKeysRead flow element)}")
-        -- A title's unread keys stay in its style, which a refused title body's merge compares.
-        unless element == "titlepage" do continue
+            (help := if Ir.listSetKeys.contains key then
+                s!"a list's spacing reads {Diag.prose "and" Ir.listSetKeys} on its list, kind or \
+level, and its other keys on the kind's own element"
+              else s!"'{element}' reads {Diag.prose "and" (Ir.styleKeysRead element)}")
+        continue
       if element == "frametitle" && key == "font" then
         if restatesPlainTitle valueSrc then
           modify fun st => { st with spans := { st.spans with
@@ -15297,7 +15309,7 @@ draws; skipped" pos
         return s
       let ctx := { s.ctx with
         engineTokens := engineLengthTokens s.docClass s.classOptions s.page }
-      let styles ← applyStyle ctx s.styles elem body pos (s.docClass.record.model == .flow)
+      let styles ← applyStyle ctx s.styles elem body pos
       return { s with styles := styles }
     | none =>
       diag s.ctx .E0304 "'\\style' needs {element} and a {...} block" pos
@@ -17150,6 +17162,21 @@ public theorem accountRecovered_mem (items : Array Ir.Recovered) (diags observed
   rw [accountRecovered_run_exact, ← Array.foldl_toList]
   exact accountRecoveredFold_mem items.toList observed diags d h
 
+/-- Each token the document's own `\tokens` declares that nothing else it holds spells, named at its
+first declaration, unless a declared stylesheet may read it. -/
+private def unreadTokens (doc : Doc) (raws : Array Raw) (declared : Array (String × Span)) :
+    Array Diag :=
+  -- premise: none — a declared stylesheet may read any token's custom property, which no check reads
+  if declared.isEmpty || doc.output.stylesheet.isSome then #[] else
+  let spelled := Compat.tokenSpellings raws
+  (declared.foldl (init := (#[], (∅ : Std.HashSet String))) fun (out, seen) (n, span) =>
+    if seen.contains n || spelled.contains n then (out, seen)
+    else (out.push (Diag.of .W0104
+        s!"token '{n}' is declared, but nothing in the document reads it; only the web page \
+carries it, as a custom property" (some span)
+        (help := s!"name it where a length is read, as \\block[before = {n}] does, or drop it")
+        (subject := some (Compat.paramSubject "\\tokens" n))), seen.insert n)).1
+
 /-- Runs the document judges over an elaborated document and assembles its
 log and request spans. -/
 public def completePrepared (file : String) (p : Prepared) (earlier : Array Diag)
@@ -17168,6 +17195,7 @@ public def completePrepared (file : String) (p : Prepared) (earlier : Array Diag
     else unreadPaletteKeys (doc.page.drawn.foldl (fun acc r => acc ++ Ir.colorNames r.color)
       st.spans.colorReads) st.spans.tokenKeys
   let unread := unread ++ unreadFrameTitleFont doc st.spans.frameTitleFont st.spans.frameTitleRestated
+  let unread := unread ++ unreadTokens doc p.raws st.spans.authorTokens
   let said := earlier ++ p.compatDiags ++ st.diags ++ contrast ++ outline ++ alt ++ links ++
     sequences ++ unread ++ Ir.boxDiags doc.page
   -- A declaration a definition's replacement text makes at its call is the definition's.

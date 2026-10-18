@@ -249,7 +249,8 @@ def styleSample (element key : String) : String :=
   else if key == "body-size" then "footnotesize"
   else if ["rule", "separator", "hover", "focus", "color"].contains key then probeColor
   else if key == "rule-position" then "baseline"
-  else if key == "align" then if element == "logo" then "center" else "right"
+  else if key == "align" then
+    if element == "logo" then "center" else if element == "titlepage" then "left" else "right"
   else if key == "motion" then "400ms"
   else if key == "slot" then "{ set = date, anchor = south, at = south }"
   else "17pt"
@@ -293,13 +294,17 @@ def styleRow : Row :=
     else styledArticle (pre ++ decl o)
   let elements := Ir.styleableElements ++ ["probeentry"]
   { reader := "\\style"
-    settings := elements.flatMap fun e => Ir.styleKeys.map fun k => s!"{e}|{k} = {styleSample e k}"
+    -- moloch's title stands flush left and an article's centred, so each tries the other side.
+    settings := (elements.flatMap fun e => Ir.styleKeys.map fun k => s!"{e}|{k} = {styleSample e k}") ++
+      ["titlepage|align = right"]
     keyOf := fun s => (KeyVal.entry (elementSplit s).2).1
     tries := fun s i =>
       let (e, kv) := elementSplit s
       let k := (KeyVal.entry kv).1
       if ruled.contains k then i == 6 + (elements.idxOf e)
       else if e == "titlepage" && barKeys.contains k then i == 2 || i == 3
+      else if s == "titlepage|align = left" then i == 0
+      else if s == "titlepage|align = right" then i == 1
       else if e == "titlepage" then i == 0 || i == 1
       else if e == "logo" then i == 4
       else if e == "probeentry" then i == 5
@@ -379,6 +384,12 @@ def declaredScopeChecks (ref : IO.Ref (List String)) : IO Unit := do
     let defined := built (head ++ parse "root.tex" (definer ++ "{" ++ declared ++ "}\\probesetup\n") ++ tail)
     t s!"declared scope: a definition's replacement text is the definition's ({definer}: {named defined})"
       (named defined).isEmpty
+    let after := built (head ++ parse "root.tex" (definer ++ "{x}\n" ++ declared) ++ tail)
+    t s!"declared scope: a declaration after a definition is the document's ({definer}: {named after})"
+      (named after == subjects)
+    let blank := built (head ++ parse "root.tex" (definer ++ "{\n\n" ++ declared ++ "}\n") ++ tail)
+    t s!"declared scope: a definition's body holding a blank line is still its own ({definer})"
+      (named blank).isEmpty
 
 /-- The declaration census: every setting of every row is read or named, and none read is named
 unread. -/

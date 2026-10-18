@@ -92,7 +92,7 @@ def builtJudge (base trial : Built) (key : String) (inert : Bool) : Bool × Bool
     else #[]
   let unread := warned.any (fun d => unreadCodes.contains d.code &&
       !d.subject.any (·.startsWith "partial:")) || (warned.isEmpty && !noted.isEmpty)
-  (changed, !warned.isEmpty || !noted.isEmpty, shows && unread)
+  (changed, !warned.isEmpty || !noted.isEmpty, changed && unread)
 
 /-- One reader's vocabulary over binary builds: each setting, the trees it is tried in (`none`
 without it), the name its diagnostics carry, its inert rows and the trees it is tried in. -/
@@ -317,11 +317,10 @@ def builtCensusChecks (ref : IO.Ref (List String)) : IO Unit := do
     let src ← IO.FS.readFile leanFixture
     let facts ← IO.FS.readFile leanFacts
     let mut start := 0
-    let mut judged := #[]
+    -- One row's builds at a time, each row judged before the next starts.
     for row in builtRows src facts do
-      judged := judged.push (row, ← builtRowJudged root start row)
+      let js ← builtRowJudged root start row
       start := start + 1000
-    for (row, js) in judged do
       let faults := rowFaults { reader := row.reader, settings := row.settings, docs := [] } js
       check ref s!"settings census {row.reader}: every setting is read or named\
 {String.join (faults.map ("\n  " ++ ·))}" faults.isEmpty

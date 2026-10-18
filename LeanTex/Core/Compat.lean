@@ -13786,99 +13786,66 @@ termination_by structural r => r
 
 end
 
-/-- The tokens the document's own `\tokens` declares and the identifiers the rest of it spells. -/
-private structure TokenTally where
-  declared : Array (String × String × Pos) := #[]
+/-- The identifiers a walk has spelled outside a `\tokens` group's keys, the run being spelled, and
+a `\tokens` awaiting its group. -/
+private structure Spelling where
   spelled : Std.HashSet String := {}
   run : String := ""
-  pending : Option Pos := none
-  output : Bool := false
-  stylesheet : Bool := false
-  /-- A definer stands earlier in the paragraph, so a declaration here is its replacement text. -/
-  defining : Bool := false
+  pending : Bool := false
 
 /-- An identifier ends, standing spelled whole and in each part a `-` or `.` divides. -/
-private def TokenTally.flush (t : TokenTally) : TokenTally :=
+private def Spelling.flush (t : Spelling) : Spelling :=
   if t.run.isEmpty then t else
   let parts := (t.run.splitOn "-").flatMap (·.splitOn ".")
   { t with spelled := parts.foldl (·.insert ·) (t.spelled.insert t.run), run := "" }
 
-private def TokenTally.char (t : TokenTally) (c : Char) : TokenTally :=
+private def Spelling.char (t : Spelling) (c : Char) : Spelling :=
   if Decl.isIdentChar c || c == '-' then { t with run := t.run.push c } else t.flush
 
-/-- A raw past a control, which leaves no declaration awaiting its group. -/
-private def TokenTally.settle (t : TokenTally) : TokenTally := { t with pending := none, output := false }
-
-/-- A `\tokens` group's entries: each key the document's own site declares, and the identifiers its
-values spell. -/
-private def TokenTally.declare (t : TokenTally) (file : String) (owned : Bool) (p : Pos)
-    (body : Array Raw) : TokenTally :=
+/-- A `\tokens` group's values, each spelled; its keys declare, and spell nothing. -/
+private def Spelling.values (t : Spelling) (body : Array Raw) : Spelling :=
   (Decl.splitEntries (Parse.declSrc body)).foldl (init := t) fun t e =>
     match Decl.splitEntry e with
-    | some (key, value) =>
-      let t := if owned || !p.origins.isEmpty || Ir.engineTokenNames.contains key then t
-        else { t with declared := t.declared.push (key, file, p) }
-      (value.foldl TokenTally.char t).flush
+    | some (_, value) => (value.foldl Spelling.char t).flush
     | none => t
 
 mutual
 
-private def tokenTallyList (file : String) (owned : Bool) (t : TokenTally) : List Raw → TokenTally
+private def spellingList (t : Spelling) : List Raw → Spelling
   | [] => t.flush
-  | r :: rest => tokenTallyList file owned (tokenTallyOne file owned t r) rest
+  | r :: rest => spellingList (spellingOne t r) rest
 termination_by structural l => l
 
-private def tokenTallyOne (file : String) (owned : Bool) (t : TokenTally) : Raw → TokenTally
-  | .ctrl "tokens" p => { t.flush with pending := some p, output := false }
-  | .ctrl "output" _ => { t.flush with pending := none, output := true }
-  | .ctrl n _ =>
-    { t.flush.settle with spelled := t.flush.spelled.insert n
-                          defining := t.defining || (Definer.names fun _ => true).contains n }
+private def spellingOne (t : Spelling) : Raw → Spelling
+  | .ctrl "tokens" _ => { t.flush with pending := true }
+  | .ctrl n _ => { t.flush with spelled := t.flush.spelled.insert n, pending := false }
   | .space => t.flush
   | .group body _ =>
-    match t.pending with
-    | some p => (t.flush.declare file (owned || t.defining) p body).settle
-    | none =>
-      let sheet := t.output && (Decl.splitEntries (Parse.declSrc body)).any fun e =>
-        (Decl.splitEntry e).any (·.1 == "stylesheet")
-      let t := tokenTallyList file owned t.flush.settle body.toList
-      { t with stylesheet := t.stylesheet || sheet }
-  | .math _ body _ => tokenTallyList file owned t.flush.settle body.toList
-  | .env n body _ =>
-    match Parse.inputEnvFile? n with
-    | some f => tokenTallyList f (owned || packageFile f) t.flush.settle body.toList
-    | none => tokenTallyList file owned t.flush.settle body.toList
-  | .word s _ => s.foldl TokenTally.char t.settle
-  | .sym c _ => t.settle.char c
-  | .par _ => { t.flush.settle with defining := false }
-  | .verb .. => t.flush.settle
+    if t.pending then { t.flush.values body with pending := false }
+    else spellingList t.flush body.toList
+  | .math _ body _ | .env _ body _ => spellingList { t.flush with pending := false } body.toList
+  | .word s _ => s.foldl Spelling.char { t with pending := false }
+  | .sym c _ => { t with pending := false }.char c
+  | .par _ | .verb .. => { t.flush with pending := false }
 termination_by structural r => r
 
 end
 
+/-- Every identifier a document spells but a `\tokens` group's keys: a word run through adjacent
+symbols, whole and in its parts, and a control word's name. -/
+public def tokenSpellings (raws : Array Raw) : Std.HashSet String := (spellingList {} raws.toList).spelled
+
 /-- Each length the document assigns that neither it nor the engine reads, named at its first
-assignment, and each token its own `\tokens` declares that nothing else in it spells, named at its
-first declaration unless a declared stylesheet may read it. -/
+assignment. -/
 public def unusedLengths (file : String) (raws : Array Raw) : Array Diag :=
   let t := tallyList file {} raws.toList
-  let lengths := t.first.filterMap fun (n, f, p) =>
+  t.first.filterMap fun (n, f, p) =>
     if (paramSites.lookup n).isSome || Ir.engineTokenNames.contains n ||
         t.seen.getD n 0 > t.targets.getD n 0 then none
     else some (Diag.of .W0104
       s!"'\\{n}' is set, but nothing in the document or the engine reads it; the setting changes nothing"
       (some ⟨f, p⟩) (help := "use the length where the page should read it, or drop the setting")
       (subject := some (paramSubject "setlength" n)))
-  let k := tokenTallyList file (packageFile file) {} raws.toList
-  -- premise: none — a declared stylesheet may read any token's custom property, which no check reads
-  let tokens := if k.stylesheet then #[] else
-    (k.declared.foldl (init := (#[], (∅ : Std.HashSet String))) fun (out, seen) (n, f, p) =>
-      if seen.contains n || k.spelled.contains n then (out, seen)
-      else (out.push (Diag.of .W0104
-          s!"token '{n}' is declared, but nothing in the document reads it; only the web page \
-carries it, as a custom property" (some ⟨f, p⟩)
-          (help := s!"name it where a length is read, as \\block[before = {n}] does, or drop it")
-          (subject := some (paramSubject "\\tokens" n))), seen.insert n)).1
-  lengths ++ tokens
 
 /-- Rewrites a whole parsed document. -/
 public def rewrite (file : String) (raws : Array Raw) (provideKeeps : List String := [])
