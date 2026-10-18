@@ -506,6 +506,7 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
 stays within its elaboration budget. -/
 def declSettingSuiteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) (font : Font) :
     IO Unit := do
+  texEdgeChecks ref oneFace
   Tests.ParamCensus.declCensusChecks ref oneFace
   Tests.ParamCensus.builtCensusChecks ref
   Tests.ParamCensus.declaredScopeChecks ref
@@ -1028,7 +1029,6 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   operandChecks ref oneFace
   listBodyChecks ref oneFace
   kernelLengthChecks ref oneFace
-  texEdgeChecks ref oneFace
   natbibChecks ref oneFace
   natbibListChecks ref oneFace
   bibTextChecks ref oneFace
