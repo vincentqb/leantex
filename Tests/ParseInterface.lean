@@ -71,6 +71,7 @@ example (name : String) :
     inputEnvFile? name =
       (if name.startsWith "input " then some ((name.drop "input ".length).toString)
        else if name.startsWith "kept input " then some ((name.drop "kept input ".length).toString)
+       else if name.startsWith "owned input " then some ((name.drop "owned input ".length).toString)
        else none) := by rfl
 example (raws : Array Raw) :
     rawSrc raws = (rawSrcList raws.toList).trimAscii.toString := by rw [rawSrc]

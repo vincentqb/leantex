@@ -61,7 +61,12 @@ def unreadCases : List (String × String × String) :=
      "\\begin{lstlisting}[caption={A probeink example}]\nx = 1\n\\end{lstlisting}", "unused:color:probeink"),
    ("a colour only a picture style no picture reads names",
      article ("\\usepackage{tikz}" ++ probeColor ++ "\\tikzset{probe/.style={fill=probeink}}") "Words.",
-     "unused:color:probeink")]
+     "unused:color:probeink"),
+   ("a colour only a word of a refused command's prose spells", article probeColor
+     "Words \\probeunknowncmd{under the open probeink sky} more.", "unused:color:probeink"),
+   ("minted defaults only an unused minted environment's definition reads", article
+     "\\usepackage{minted}\\setminted{linenos}\\newminted{python}{}" "Words.",
+     "unused:listing:setminted")]
 
 /-- Each declaration with content that reads it. -/
 def readCases : List (String × String) :=
@@ -119,7 +124,20 @@ def readCases : List (String × String) :=
      "Inline \\lstinline|x = 1| code."),
    ("a list macro's definition", article
      "\\makeatletter\\def\\@listii{\\leftmargin 8em \\topsep 30pt}\\makeatother"
-     "\\begin{quote}Outer.\\begin{quote}Inner.\\end{quote}\\end{quote}")]
+     "\\begin{quote}Outer.\\begin{quote}Inner.\\end{quote}\\end{quote}"),
+   ("a colour whose name holds a dot", article "\\definecolor{probe.ink}{HTML}{8A2BE2}"
+     "\\textcolor{probe.ink!50!white}{Words.}"),
+   ("minted defaults an environment minted's definer makes reads", article
+     "\\usepackage{minted}\\setminted{linenos}\\newminted{python}{}"
+     "\\begin{pythoncode}\nx = 1\n\\end{pythoncode}"),
+   ("a lexer's minted defaults a named minted environment reads", article
+     "\\usepackage{minted}\\setminted[python]{linenos}\\newminted[probecode]{python}{}"
+     "\\begin{probecode}\nx = 1\n\\end{probecode}"),
+   ("minted defaults a command minted's definer makes reads", article
+     "\\usepackage{minted}\\setminted{linenos}\\newmint{python}{}" "\\python|x = 1|"),
+   ("inline-code defaults an inline command minted's definer makes reads", article
+     "\\usepackage{minted}\\setmintedinline{fontsize=\\small}\\newmintinline{python}{}"
+     "Inline \\pythoninline|x = 1| code.")]
 
 /-- Each colour named only by a construct the engine refuses or cannot resolve, with that refusal's
 code: the refusal is the one accounting, and the colour is the document's in use. -/
@@ -148,7 +166,21 @@ def refusedCases : List (String × DiagCode × String) :=
    ("a formula refused whole", .W0012, article probeColor "A formula $\\mathcolor{probeink}{x^2}$."),
    ("a link colour read before the colour is declared", .E0326, article
      ("\\usepackage{hyperref}\\hypersetup{colorlinks, urlcolor=probeink}" ++ probeColor)
-     "\\href{https://example.org}{A place}.")]
+     "\\href{https://example.org}{A place}."),
+   ("a refused hyperref key", .W0104, article
+     ("\\usepackage{hyperref}" ++ probeColor ++ "\\hypersetup{probecolor=probeink}") "Words."),
+   ("a refused hyperref package option", .W0104, article
+     (probeColor ++ "\\usepackage[probecolor=probeink]{hyperref}") "Words."),
+   ("a dropped beamer template", .E0111, deck
+     (probeColor ++ "\\setbeamertemplate{probe element}{\\color{probeink}Probe}")
+     "\\begin{frame}{Title}Words.\\end{frame}"),
+   ("a style value refused as malformed", .E0323, article
+     (probeColor ++ "\\style{section}{ rule-position = probeink }") "\\section{Opening}Words."),
+   ("a title slot off the title page", .E0323, article
+     (probeColor ++ "\\style{section}{ slot = { content = {\\color{probeink} Probe} } }")
+     "\\section{Opening}Words."),
+   ("a style key the element never reads", .W0104, article
+     (probeColor ++ "\\style{section}{ align = probeink }") "\\section{Opening}Words.")]
 
 /-- Each kind of declaration nothing reads is named once at its site, keyed by what it declares;
 one something reads is not. -/
@@ -228,6 +260,49 @@ def scopeChecks (ref : IO.Ref (List String)) : IO Unit := do
       (!ds.any (·.kind == .W0449) && spans.faces.isEmpty && doc.body.size ≥ 1)
   t "unused settings: a colour a document's macro declares where it is called is the macro's"
     (unused (article ("\\newcommand{\\probesetup}{" ++ probeColor ++ "}") "\\probesetup Words.")).isEmpty
+  let shared := parse "root.tex" "\\documentclass{article}\n" ++
+    #[Parse.Raw.env (Parse.inputEnv "probe.sty")
+      #[Parse.Raw.env (Parse.inputEnv "shared.tex") (parse "shared.tex" declared) {}] {},
+      Parse.Raw.env (Parse.inputEnv "shared.tex") (parse "shared.tex" declared) {}] ++
+    parse "root.tex" "\\begin{document}\nWords.\n\\end{document}"
+  let (_, ds, spans) := Elab.runRawsSpanned "root.tex" shared
+  t s!"unused settings: a file the document inputs is its own though a package inputs it too ({(ds.filter (·.kind == .W0449)).map (·.subject)})"
+    ((ds.filter (·.kind == .W0449)).size == 3 && spans.faces.size == 1)
+  IO.FS.withTempDir fun dir => do
+    IO.FS.writeFile (dir / "probepkg.sty")
+      "\\ProvidesPackage{probepkg}\n\\newcommand{\\probeload}{\\input{probeshared}}\n"
+    IO.FS.writeFile (dir / "probeshared.tex") (probeColor ++ "\n")
+    let named (body : String) : IO (Array Diag) := do
+      let root := (dir / "root.tex").toString
+      let src := article body "Words."
+      let (executed, _, _) ← Input.expandInputs root (Parse.parse root (Lex.lex root src).1).1
+      let (_, ds, _) := Elab.runPrepared root (Elab.prepareExecuted root executed)
+      return ds.filter (·.kind == .W0449)
+    let viaPackage ← named "\\usepackage{probepkg}\n\\probeload"
+    t s!"unused settings: a file a package's macro inputs where the document calls it is the package's ({viaPackage.map (·.subject)})"
+      viaPackage.isEmpty
+    let direct ← named "\\input{probeshared}"
+    t s!"unused settings: the same file the document inputs itself is its own ({direct.map (·.subject)})"
+      (direct.map (·.subject) == #[some "unused:color:probeink"])
+
+/-- A rendered built-in's redefinition the engine refuses whole is named once, by the refusal; a
+definition whose text execution skips in part, which nothing refuses, keeps that loss. -/
+def redefinitionChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let skipped (ds : Array Diag) : Bool :=
+    ds.any fun d => d.kind == .W0104 && d.subject.any (·.startsWith "cond:body:")
+  for (what, decl) in [("a redefined bold command",
+        "\\renewcommand{\\textbf}[1]{\\ifmmode #1\\else{\\bfseries #1}\\fi}"),
+      ("an xparse redefinition of italics",
+        "\\NewDocumentCommand{\\textit}{m}{\\ifx\\relax#1\\relax\\else\\underline{#1}\\fi}")] do
+    let (_, ds) := elabStr (article decl "Some \\textbf{bold} and \\textit{slanted} words.")
+    t s!"unused settings: {what} the gate refuses is its one accounting ({ds.map (·.kind.code)})"
+      (ds.any (·.kind == .W0361) && !skipped ds)
+  let (_, ds) := elabStr (article
+    "\\NewDocumentCommand{\\probecond}{m}{\\ifx\\relax#1\\relax\\else\\underline{#1}\\fi}"
+    "Some \\probecond{probe} words.")
+  t s!"unused settings: a definition nothing refuses keeps the loss of its skipped text ({ds.map (·.kind.code)})"
+    (skipped ds && !ds.any (·.kind == .W0361))
 
 /-- `\allow{W0449}` accepts the loss as a note; a site another warning names keeps that one
 accounting; a translated declaration's note stands beside the loss as its own fact. -/
@@ -516,6 +591,18 @@ def faceChecks (ref : IO.Ref (List String)) : IO Unit := do
   let headed ← judge "article" (serif ++ ", sans = \"Open Sans\"") "\\section{Opening}Words."
   t s!"unused faces: a sans face the web page's headings set in is not named ({keys headed})"
     (keys headed).isEmpty
+  let entry ← judge "article" (serif ++ ",\n  mono = \"Source Code Pro\"") "Plain words."
+  t s!"unused faces: a face is named at its entry ({((entry.map (·.1)).getD #[]).map (·.span.map (·.pos.line))})"
+    (((entry.map (·.1)).getD #[]).map (·.span.map (·.pos.line)) == #[some 3])
+  let missingSrc := s!"\\documentclass\{article}\n\\fonts\{ {serif}, mono = \"Probe Missing Mono\" }\n" ++
+    "\\begin{document}\nPlain words.\n\\end{document}\n"
+  let (missingDoc, _, missingSpans) := Elab.runRawsSpanned "t"
+    (Parse.parse "t" (Lex.lex "t" missingSrc).1).1
+  match ← FontAssembly.buildFontSet missingDoc scan cache .settled with
+  | .ok (fs, doc, ds, _) =>
+    t s!"unused faces: a family no installed face answers is named by its refusal alone ({(FaceUse.diags missingSpans.faces fs doc).map (·.subject)})"
+      (ds.any (·.kind == .E0403) && (FaceUse.diags missingSpans.faces fs doc).isEmpty)
+  | .error _ => t "unused faces: a document missing one family still settles its face set" false
   let deckFaces := serif ++ ", sans = \"Open Sans\", mono = \"Source Code Pro\""
   let deckBody := "\\begin{frame}{Title}Words.\\end{frame}"
   let slides ← judge "slides" deckFaces deckBody

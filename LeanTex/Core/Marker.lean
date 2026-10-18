@@ -8,15 +8,16 @@ space, so a document's control space and words read as text where one would spel
 namespace LeanTex.Core.Marker
 
 /-- What a marker declares: an ink, a BCP 47 language, an NFSS series, a font slot by number, the
-file the preamble's declarations come from, xcolor's page ground or its reset, `\fontsize`'s size
+file the preamble's declarations come from (a package's own, or the document's), xcolor's page ground or its reset, `\fontsize`'s size
 and leading, environ's `\BODY` in a definition's begin code, or cleveref's range of two labels. -/
 public inductive Kind where
-  | ink | lang | series | family | file | pageColor | pageColorReset | fontSize | environBody
-  | crefRange | crefRangeUp
+  | ink | lang | series | family | file | ownedFile | pageColor | pageColorReset | fontSize
+  | environBody | crefRange | crefRangeUp
   deriving DecidableEq, Repr, Inhabited
 
 public def Kind.words : List (String × Kind) :=
   [("ink", .ink), ("lang", .lang), ("series", .series), ("family", .family), ("file", .file),
+   ("ownedfile", .ownedFile),
    ("pagecolor", .pageColor), ("nopagecolor", .pageColorReset), ("fontsize", .fontSize),
    ("environ", .environBody), ("crefrange", .crefRange), ("Crefrange", .crefRangeUp)]
 
@@ -38,7 +39,7 @@ public def Reading.opensBlock (r : Reading) : Bool := r.declares || r.ground
   | .ink => ⟨true, true, false, false⟩
   | .lang | .series | .family | .fontSize => ⟨true, false, false, false⟩
   | .pageColor | .pageColorReset => ⟨false, true, true, false⟩
-  | .file | .environBody => ⟨false, false, false, false⟩
+  | .file | .ownedFile | .environBody => ⟨false, false, false, false⟩
   | .crefRange | .crefRangeUp => ⟨false, false, false, true⟩
 
 /-- A marker's control name: a space, its kind's word, a space and the value it carries. -/

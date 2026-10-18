@@ -15081,7 +15081,10 @@ public def picInlineKey (id : String) : String := "picture:inline:" ++ id
 /-- A picture body's or wrapped request's content key, in lower-case hex. -/
 public def picHash (s : String) : String := (Flate.contentKey s.toUTF8).toLower
 
-/-- xcolor's name grammar: every maximal run of ASCII letters and digits in a
+/-- A character a palette name holds: an ASCII letter or digit, `_` or `.`. -/
+public def colorNameChar (c : Char) : Bool := c.isAlphanum || c == '_' || c == '.'
+
+/-- The palette's name grammar: every maximal run of name characters in a colour expression or a
 picture body, deduplicated in first-seen order. -/
 private def colorNamesFlush (cur : String) (acc : Array String) : Array String :=
   if cur.isEmpty || acc.contains cur then acc else acc.push cur
@@ -15089,10 +15092,36 @@ private def colorNamesFlush (cur : String) (acc : Array String) : Array String :
 private def colorNamesGo : List Char → String → Array String → Array String
   | [], cur, acc => colorNamesFlush cur acc
   | c :: rest, cur, acc =>
-    if c.isAlphanum then colorNamesGo rest (cur.push c) acc
+    if colorNameChar c then colorNamesGo rest (cur.push c) acc
     else colorNamesGo rest "" (colorNamesFlush cur acc)
 
 public def colorNames (body : String) : Array String := colorNamesGo body.toList "" #[]
+
+/-- A character that ends a colour expression in TeX source: a group, option or argument
+delimiter, a key's `=`, or an extended expression's `:` and `;`. -/
+private def mentionCut (c : Char) : Bool :=
+  c == '{' || c == '}' || c == '[' || c == ']' || c == '(' || c == ')' || c == ',' || c == '=' ||
+    c == ';' || c == ':'
+
+/-- One unit of a source: its names where it stands as one colour expression, holding no space
+inside and no control sequence, or as the value a pass's marker carries, spelled `\ <kind> value`. -/
+private def mentionUnit (unit : String) (acc : Array String) : Array String :=
+  let u := unit.trimAscii.toString
+  let u := if u.startsWith "\\ " then
+      (((u.drop 2).toString.dropWhile (· != ' ')).toString.trimAscii).toString
+    else u
+  if u.isEmpty || u.any (fun c => c.isWhitespace || c == '\\') then acc
+  else (colorNamesGo u.toList "" #[]).foldl (·.push ·) acc
+
+private def mentionsGo : List Char → String → Array String → Array String
+  | [], cur, acc => mentionUnit cur acc
+  | c :: rest, cur, acc =>
+    if mentionCut c then mentionsGo rest "" (mentionUnit cur acc)
+    else mentionsGo rest (cur.push c) acc
+
+/-- The colour names a source spells where a colour expression stands: each argument, option or
+key's value that is one expression, so a word of prose names no colour. -/
+public def mentionedColorNames (src : String) : Array String := mentionsGo src.toList "" #[]
 
 /-- The palette roles a picture body mentions, each with the palette's value. -/
 public def paletteDecls (pal : Palette) (body : String) : Array (String × Color) :=

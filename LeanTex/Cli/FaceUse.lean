@@ -34,17 +34,29 @@ it, which a run in another face falls back to. -/
 public def servesFallback (fs : Font.FontSet) (own : Array Nat) : Bool :=
   fs.fallback.any fun (_, i) => own.contains i
 
+/-- The family a face's declaration names. -/
+private def familyOf (spec : Ir.FontSpec) : String → Option String
+  | "body" => spec.body
+  | "sans" => spec.sans
+  | "mono" => spec.mono
+  | "math" => spec.math
+  | k =>
+    if k.startsWith "family." then
+      (spec.families.find? (·.1 == (k.drop "family.".length).toString)).map (·.2)
+    else none
+
 /-- The W0449 of each declared face no content slot of the finished document resolves to and no
-fallback glyph reads; a math face the build refused is named where it is refused. -/
+fallback glyph reads; a math face the build refused, and a family no installed face answers, is
+named where it is refused. -/
 public def diags (faces : Array (String × Span)) (fs : Font.FontSet) (doc : Ir.Doc) :
     Array Diag :=
   if faces.isEmpty then #[] else
   let shown := UnusedSetting.shown doc
   let slides := doc.docClass == .slides
   faces.filterMap fun (key, span) =>
-    -- premise: Tests.UnusedSettings.faceChecks — a refused math face is named by its refusal
-    if (key == "math" && fs.math.isNone) || UnusedSetting.faceUsed doc.fonts slides shown key ||
-        servesFallback fs (ownFonts fs doc key)
+    -- premise: Tests.UnusedSettings.faceChecks — a refused face is named by its refusal
+    if (key == "math" && fs.math.isNone) || (familyOf doc.fonts key).any fs.missing.contains ||
+        UnusedSetting.faceUsed doc.fonts slides shown key || servesFallback fs (ownFonts fs doc key)
     then none else some (UnusedSetting.faceDiag key span)
 
 end LeanTex.Cli.FaceUse

@@ -22,10 +22,12 @@ public inductive Setting where
   | style (element : String)
   deriving Repr, BEq, DecidableEq, Inhabited
 
-/-- A setting at the site the document declares it. -/
+/-- A setting at the site the document declares it, and the entry in that declaration its loss is
+named at. -/
 public structure Declared where
   setting : Setting
   span : Span
+  site : Span
   deriving Repr, BEq
 
 /-- The written controls that load a package, class or theme, whose declarations are its own. -/
@@ -213,20 +215,21 @@ public def listingWords (reader : String) (lang : Option String) : String × Str
   (s!"{what} are declared here, and {which} after them reads them",
    s!"unused:listing:{reader}" ++ (lang.map (":" ++ ·)).getD "")
 
-/-- The loss of a face the document declares that no text is set in. -/
+/-- The loss of a face the document declares that no text is set in, at its entry in the declaring
+command. -/
 public def faceDiag (key : String) (span : Span) : Diag :=
   if key == "math" then
     Diag.of .W0449 "the 'math' face is declared here, and the document sets no mathematics"
-      (span := some span) (subject := some "unused:face:math")
+      (span := some span) (subject := some "unused:face:math") (trigger := span.pos.command)
       (help := some (unusedHelp "the 'math' face's entry"))
   else if key.startsWith "family." then
     let cmd := s!"'\\{(key.drop "family.".length).toString}'"
     Diag.of .W0449 s!"{cmd} declares a face here, and no text the document sets is set in it"
-      (span := some span) (subject := some s!"unused:face:{key}")
+      (span := some span) (subject := some s!"unused:face:{key}") (trigger := span.pos.command)
       (help := some (unusedHelp s!"{cmd}'s declaration"))
   else
     Diag.of .W0449 s!"the '{key}' face is declared here, and no text the document sets is set in it"
-      (span := some span) (subject := some s!"unused:face:{key}")
+      (span := some span) (subject := some s!"unused:face:{key}") (trigger := span.pos.command)
       (help := some (unusedHelp s!"the '{key}' face's entry"))
 
 /-- The loss of a markdown metadata key only a citation reads, in a document citing nothing. -/
@@ -263,7 +266,7 @@ public def diags (ledger : Array Declared) (shown : Shown) (read : Std.HashSet S
   let taken : Std.HashSet (String × Nat × Nat) := named.foldl (·.insert <| siteKey ·) {}
   let mut out : Array Diag := #[]
   let mut colors : Std.HashSet (String × String × Nat × Nat) := {}
-  let mut sites : Array Span := #[]
+  let mut sites : Array ((String × Nat × Nat) × Span) := #[]
   let mut styled : Std.HashMap (String × Nat × Nat) (Array String) := {}
   for d in ledger do
     let k := siteKey d.span
@@ -272,17 +275,17 @@ public def diags (ledger : Array Declared) (shown : Shown) (read : Std.HashSet S
     | .color name =>
       unless read.contains name || colors.contains (name, k) do
         colors := colors.insert (name, k)
-        out := out.push (colorDiag name d.span)
+        out := out.push (colorDiag name d.site)
     | .style el =>
       match styled[k]? with
       | some els => unless els.contains el do styled := styled.insert k (els.push el)
       | none =>
         styled := styled.insert k #[el]
-        sites := sites.push d.span
+        sites := sites.push (k, d.site)
     | .face _ => pure ()
-  for span in sites do
-    let els := styled[siteKey span]?.getD #[]
-    unless els.any shown.elements.contains do out := out.push (styleDiag els span)
+  for (k, site) in sites do
+    let els := styled[k]?.getD #[]
+    unless els.any shown.elements.contains do out := out.push (styleDiag els site)
   return out
 
 /-- The faces the document declares, once per face and site no other warning names, which the face
@@ -294,7 +297,7 @@ public def faceSites (ledger : Array Declared) (named : Array Span) : Array (Str
       | .face key =>
         let k := siteKey d.span
         if taken.contains k || seen.contains (key, k) then (out, seen)
-        else (out.push (key, d.span), seen.insert (key, k))
+        else (out.push (key, d.site), seen.insert (key, k))
       | .color _ | .style _ => (out, seen)).1
 
 end LeanTex.Core.UnusedSetting

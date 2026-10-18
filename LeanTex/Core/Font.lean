@@ -1083,6 +1083,8 @@ public structure FontSet where
   mathAlphabets : Math.MathAlphabetCoverage := {}
   /-- Per-face deflated program bytes from the driver's cache; empty means the writer compresses. -/
   zdata : Array (Option ByteArray) := #[]
+  /-- The declared families no installed face answers, each refused as not installed. -/
+  missing : Array String := #[]
   deriving Inhabited
 
 namespace FontSet

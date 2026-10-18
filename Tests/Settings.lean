@@ -255,7 +255,7 @@ def nativeCarrierChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
     | .tokens src _ => s!"tokens {src}"
     | .palette _ body _ => s!"palette {body}"
     | .style args _ => s!"style {args.map fun (e, b) => (e, Parse.declSrc b)}"
-    | .fonts src _ => s!"fonts {src}"
+    | .fonts src _ => s!"fonts {src.map (·.1)}"
     | .pdfmeta src _ => s!"pdfmeta {src}"
     | .chrome src _ => s!"chrome {src}"
     | _ => "another declaration"

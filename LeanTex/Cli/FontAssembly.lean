@@ -264,7 +264,8 @@ public def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
     index := index
     fallback := fallback
     math := mathIdx
-    mathAlphabets := mathAlphabets }
+    mathAlphabets := mathAlphabets
+    missing := missing }
   return .ok (set, doc, diags, paths)
 
 /-- The font roles a boundary standalone sets in: the document's declared roles and, for

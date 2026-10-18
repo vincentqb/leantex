@@ -512,6 +512,7 @@ def declSettingSuiteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   Tests.UnusedSettings.firesChecks ref
   Tests.UnusedSettings.scopeChecks ref
   Tests.UnusedSettings.accountingChecks ref
+  Tests.UnusedSettings.redefinitionChecks ref
   Tests.UnusedSettings.oracleChecks ref oneFace
   Tests.UnusedSettings.faceChecks ref
   Tests.UnusedSettings.metadataChecks ref

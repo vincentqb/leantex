@@ -586,10 +586,18 @@ public def inputEnv (file : String) : String := "input " ++ file
 compatibility pass nor the document's own commands reach. -/
 public def keptInputEnv (file : String) : String := "kept input " ++ file
 
+/-- The environment wrapping a file a package, class or theme inputs, or a macro one defines,
+whose declarations are that package's. -/
+public def ownedInputEnv (file : String) : String := "owned input " ++ file
+
 @[expose] public def inputEnvFile? (name : String) : Option String :=
   if name.startsWith "input " then some ((name.drop "input ".length).toString)
   else if name.startsWith "kept input " then some ((name.drop "kept input ".length).toString)
+  else if name.startsWith "owned input " then some ((name.drop "owned input ".length).toString)
   else none
+
+/-- Whether an input environment holds a file a package's code input. -/
+@[expose] public def isOwnedInput (name : String) : Bool := name.startsWith "owned input "
 
 /-- Whether an input environment holds an included markdown or code file's raws. -/
 @[expose] public def isKeptInput (name : String) : Bool := name.startsWith "kept input "

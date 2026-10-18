@@ -22,7 +22,7 @@ example : Compat.Executed → Array Parse.Raw → Compat.Executed :=
 example : Array Parse.Raw → Array String := Compat.localStyCandidates
 example : Compat.Executed → Compat.RewriteCursor := Compat.beginRewrite
 example : Compat.RewriteCursor →
-    Array Parse.Raw × Array Diag × Array String × Array Compat.TemplateDecl :=
+    Array Parse.Raw × Array Diag × Array String × Array Compat.TemplateDecl × Array String :=
   Compat.finishRewrite
 
 example (request : Compat.InputRequest)

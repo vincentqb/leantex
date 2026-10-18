@@ -402,6 +402,8 @@ private structure CondVal where
   /-- The line ends at the replacement text's braces, which
   TeX reads as spaces of the text. -/
   edges : Bool × Bool := (false, false)
+  /-- Defined in a package's, class's or theme's code, whose text is that package's. -/
+  owned : Bool := false
 
 /-- One change the conditional pass made to its definition
 state, with what it replaced. -/
@@ -750,6 +752,9 @@ private structure St where
   /-- Where the macro being expanded is used, the site its
   decisions are named at. -/
   useSite : Option Pos := none
+  /-- The walk stands in a package's, class's or theme's code: a file one inputs, or the text of a
+  macro one defines. -/
+  owned : Bool := false
   /-- The conditional pass is inside a picture, which reads
   a document macro at its own site. -/
   inPicture : Bool := false
@@ -880,6 +885,9 @@ private structure St where
   /-- The source of each value a construct the walk refused carried, which still names what it
   names. -/
   mentions : Array String := #[]
+  /-- Each definition execution skipped part of, by the name it defines, with that loss; the
+  elaborator reports it unless its gate refuses the definition whole. -/
+  stripped : Array (String × Diag) := #[]
   /-- The raws the walk leaves alone, each returning at its place after the rewrite. -/
   kept : Array (Array Raw) := #[]
 
@@ -1125,31 +1133,6 @@ package code and the name a TeX internal. -/
 public def styInternal (file name : String) : Bool :=
   packageFile file && texInternal name
 
-mutual
-
--- conserves: none — the result is the files the walk enters
-private def packageInputsList (owned : Bool) (acc : Array String) : List Raw → Array String
-  | [] => acc
-  | r :: rest => packageInputsList owned (packageInputsOne owned acc r) rest
-
-private def packageInputsOne (owned : Bool) (acc : Array String) : Raw → Array String
-  | .env n body _ =>
-    match Parse.inputEnvFile? n with
-    | some f =>
-      packageInputsList (owned || packageFile f)
-        (if owned && !acc.contains f then acc.push f else acc) body.toList
-    | none => packageInputsList owned acc body.toList
-  | .group body _ => packageInputsList owned acc body.toList
-  | .math _ body _ => packageInputsList owned acc body.toList
-  | .ctrl _ _ | .verb _ _ _ | .sym _ _ | .word _ _ | .space | .par _ => acc
-
-end
-
-/-- The files a package or class file inputs, directly or through another file it inputs, whose
-declarations are the package's. -/
-public def packageInputs (file : String) (raws : Array Raw) : Array String :=
-  packageInputsList (packageFile file) #[] raws.toList
-
 /-- A diagnostic attributed by its source site, keeping an explicit trigger; a
 loss about a place takes none. -/
 public def SourceTriggers.atSource (sources : SourceTriggers) (file : String)
@@ -1215,6 +1198,10 @@ private def discard (what why key : String) (pos : Pos) : M Unit :=
 
 /-- The census subject of a declared setting: its reader and its name. -/
 public def paramSubject (reader name : String) : String := s!"param:{reader}:{name}"
+
+/-- Records what a refused construct's source names, read wherever the document declares it. -/
+private def mention (src : String) : M Unit :=
+  unless src.isEmpty do write fun st => { st with mentions := st.mentions.push src }
 
 /-- A declared setting no engine site reads, named once where it is set. -/
 private def unreadParam (reader name what : String) (pos : Pos)
@@ -3534,6 +3521,7 @@ private def recordValue (n : String) (v : Option CondVal) (global : Bool)
   let v := v.map fun c =>
     { c with
       live := global || c.live || c.arity > 0 || c.optional.isSome || condLiveList st.flags st.binds c.raws.toList
+      owned := c.owned || st.owned || packageFile st.file
       serial := s
       -- premise: Tests.macroHookScopeChecks — a local let executes before scope closes
       textSerial := if copied then c.textSerial else s }
@@ -3544,7 +3532,7 @@ private def recordValue (n : String) (v : Option CondVal) (global : Bool)
 private def withSpaceBinding (st : St) : St :=
   let value : CondVal :=
     { raws := #[.space], long := false, prot := false, live := true,
-      serial := st.serial + 1, textSerial := st.serial + 1 }
+      serial := st.serial + 1, textSerial := st.serial + 1, owned := st.owned || packageFile st.file }
   { st with
     serial := st.serial + 1
     binds := st.binds.insert "space" (some value)
@@ -4708,6 +4696,10 @@ setting or another definition, which TeX executes where it is used; this engine 
 execute this definition there, so that part of the text is skipped whole")
             (site.getD pos)
             (help := "use \\def with undelimited arguments or \\newcommand")
+          if let some m := bound then
+            write fun st => match st.diags.back? with
+              | some d => { st with diags := st.diags.pop, stripped := st.stripped.push (m, d) }
+              | none => st
         -- An `\edef` the pass expanded is done: its uses expand to its text, so it goes out as nothing.
         let j := skipSpaces raws (i + 1)
         if (n == "edef" || n == "xdef") && expands then
@@ -4785,11 +4777,12 @@ private def condOne [Monad m]
         let pkg := (f.dropEnd ".sty".length).toString
         write fun st => { st with loads := st.loads.addPkg pkg none }
       let saved ← get
-      write fun st => { st with file := f, useSite := none }
+      write fun st => { st with file := f, useSite := none
+                                owned := st.owned || packageFile saved.file || Parse.isOwnedInput n }
       let top ← swapTop true
       let body' ← condList ex [] body #[] (OverlayPrefix.ofArray #[]) [] body.toList 0 0
       let _ ← swapTop top
-      write fun st => { st with file := saved.file, useSite := saved.useSite }
+      write fun st => { st with file := saved.file, useSite := saved.useSite, owned := saved.owned }
       return .env n body'.raws p
     | none =>
       if n == "document" then
@@ -4965,6 +4958,21 @@ applied; the Markdown document dialect reads only 'citations' and 'hybrid'" (st.
       (help := "remove the other options") (subject := some "markdownSetup:options")
   return some { raws := #[], stop := j + 1 }
 
+/-- An input file's wrapper as one a package's code made. -/
+private def ownInput : Raw → Raw
+  | .env n body p =>
+    match Parse.inputEnvFile? n with
+    | some f => if Parse.isKeptInput n then .env n body p else .env (Parse.ownedInputEnv f) body p
+    | none => .env n body p
+  | .word w p => .word w p
+  | .space => .space
+  | .par p => .par p
+  | .ctrl c p => .ctrl c p
+  | .sym c p => .sym c p
+  | .group body p => .group body p
+  | .math d body p => .math d body p
+  | .verb e s p => .verb e s p
+
 /-- The unbound-command arm of the production evaluator. -/
 private def condReadAt [Monad m] (reader : Option (InputReader m))
     (n : String) (pos : Pos) (raws : Array Raw) (start : Nat) :
@@ -4975,7 +4983,10 @@ private def condReadAt [Monad m] (reader : Option (InputReader m))
   let some reader := reader | return none
   let (answer, context) ← dispatchInput (m := m) reader request { state := st }
   write fun _ => context.state
-  return answer.map fun answer => { raws := answer, stop }
+  -- A file a package's code inputs, from its own file or a macro it defines, is the package's.
+  let owned := st.owned || packageFile st.file
+  return answer.map fun answer =>
+    { raws := if owned then answer.map ownInput else answer, stop }
 
 private theorem condReadAt_refused_exact (reader : InputReader Id)
     (st : St) (name : String) (pos : Pos) (raws : Array Raw) (start stop : Nat)
@@ -5063,6 +5074,7 @@ on a conditional this engine cannot decide; the call is left unexpanded"
       return none
     let serial := max v.serial body.serial
     let textSerial := max v.textSerial body.textSerial
+    let ownedText := v.owned || body.owned
     -- Replacement text executes in the using file, so it is relocated before binding.
     let usePos := site.getD pos
     let atUse := fun p : Pos => { p with line := usePos.line, col := usePos.col }
@@ -5092,7 +5104,8 @@ the argument boundary is unread here, so its optional selection and state change
       let following := tail ++ raws.extract stop raws.size
       let nextBound := if serial < bound then serial else bound
       write fun s => { s with
-        useSite := some (site.getD pos), macroClock := st.macroClock + 1 }
+        useSite := some (site.getD pos), macroClock := st.macroClock + 1
+        owned := st.owned || ownedText }
       let top ← swapTop false
       let run ← if _h : serial < bound ∨ textSerial < textBound then
           condList (fun n p rs k => condExpandAt reader nextBound textSerial prepareBox n p rs k)
@@ -5100,7 +5113,7 @@ the argument boundary is unread here, so its optional selection and state change
         else
           condList (fun _ _ _ _ => pure none) [] body following (OverlayPrefix.ofArray #[]) [] body.toList 0 0
       let _ ← swapTop top
-      write fun s => { s with useSite := site }
+      write fun s => { s with useSite := site, owned := st.owned }
       let out := match origin with
         | some origin => Parse.markMacroList origin #[] run.raws.toList
         | none => run.raws
@@ -6775,22 +6788,28 @@ private def hyperrefKeys (opts : Array Raw) (pos : Pos) : M HyperrefRead := do
         | some x => words := words.push (w, x)
         | none =>
           misread := misread.push s!"'{e}'"
+          mention e
           unless grammars.contains w.grammar do grammars := grammars.push w.grammar
     if ["linkcolor", "urlcolor", "citecolor", "allcolors"].contains k &&
         !(v.isEmpty || Decl.wholeValue v) then
       unread := unread.push s!"'{e}'"
+      mention e
     else if let some l := links.read k v then
       -- A colour style an earlier setup declared stands, so turning colouring off is not read.
       if (← get).links.colorlinks && !l.colorlinks then
         unreadParam "hyperref" k s!"hyperref key '{e}' after an earlier setup coloured links" pos
       links := l
       linked := true
-    else if value.isNone && KeyVal.unbalanced e then cut := cut.push s!"'{e}'"
+    else if value.isNone && KeyVal.unbalanced e then
+      cut := cut.push s!"'{e}'"
+      mention e
     else if (Native.TextMetaKey.all.find? (k == "pdf" ++ ·.key.name)).isNone &&
         (MetaWord.all.find? (k == ·.hyperref)).isNone then
       match hyperrefInert.lookup (optionSpelling e) with
       | some why => inertParam "hyperref" k e why pos
-      | none => unreadParam "hyperref" k s!"hyperref key '{e}'" pos
+      | none =>
+        unreadParam "hyperref" k s!"hyperref key '{e}'" pos
+        mention e
   if linked then write fun st => { st with links }
   let dropped := cut ++ misread
   unless dropped.isEmpty do
@@ -8960,6 +8979,7 @@ defines; those blocks keep beamer's default template" pos
         say .E0111
           "'\\setbeamertemplate{footline}' is dropped with its template body, which carries content" pos
           (help := beamerNative.lookup "setbeamertemplate")
+        mention (rawSrc body)
       return some (#[], k)
     else if element == "title page" then
       let (rawPredefined, _) := takeRawOpt raws j
@@ -9072,11 +9092,13 @@ skipped" pos
           s!"'\\setbeamertemplate\{{element}}' prints only the {element}, without beamer's \
 template around it; the engine's own {element} stands" pos
           (help := beamerNative.lookup "setbeamertemplate")
+        mention (rawSrc (bodyArgs.getD 0 #[]))
       else
         say .E0111
           s!"'\\setbeamertemplate\{{element}}' is dropped with its template body, which carries content" pos
           (help := ((beamerNative.lookup "setbeamertemplate").getD "") ++
             "; \\allow{E0111} accepts the loss")
+        mention (rawSrc (bodyArgs.getD 0 #[]))
       return some (#[], k)
   | "maketitle" =>
     -- premise: titlePageChecks — under an article's titlepage the title stands above the text
@@ -13606,6 +13628,10 @@ public def Executed.inputAttempts (executed : Executed) : Array InputAttempt :=
 public def Executed.mentions (executed : Executed) : Array String :=
   executed.state.mentions
 
+/-- Each definition execution skipped part of, by the name it defines, with that loss. -/
+public def Executed.stripped (executed : Executed) : Array (String × Diag) :=
+  executed.state.stripped
+
 public theorem Executed.withRaws_contract (executed : Executed) (raws : Array Raw) :
     (executed.withRaws raws).raws = raws ∧
       (executed.withRaws raws).sourceTriggers = executed.sourceTriggers ∧
@@ -13984,12 +14010,12 @@ private def finishRewrittenState (result : Array Raw × St) : Array Raw × St :=
 
 /-- The production tail after the compatibility walk. -/
 private def finishRewritten (result : Array Raw × St) :
-    Array Raw × Array Diag × Array String × Array TemplateDecl :=
+    Array Raw × Array Diag × Array String × Array TemplateDecl × Array String :=
   let (out, st) := finishRewrittenState result
   let out := if st.beamerBlockBegin.isEmpty then out
     else blockHookList st.beamerBlockBegin #[] out.toList
   let out := if st.kept.isEmpty then out else Parse.spliceKeptList st.kept #[] out.toList
-  (out, st.diags, st.warned, st.templates)
+  (out, st.diags, st.warned, st.templates, st.mentions)
 
 attribute [local irreducible] boxRowList boxRowEmit finishDeclarations
   finishRewrittenState in
@@ -14015,12 +14041,12 @@ private theorem finishRewritten_named (result : Array Raw × St) (d : Diag)
 /-- Completes a rewrite checkpoint: boxes, running content, deferred hooks,
 counters and block hooks. -/
 public def finishRewrite (cursor : RewriteCursor) :
-    Array Raw × Array Diag × Array String × Array TemplateDecl :=
+    Array Raw × Array Diag × Array String × Array TemplateDecl × Array String :=
   finishRewritten (rewriteCursor cursor)
 
 /-- The compatibility rewrite finished after execution and file fulfilment. -/
 @[expose] public def rewriteExecuted (executed : Executed) :
-    Array Raw × Array Diag × Array String × Array TemplateDecl :=
+    Array Raw × Array Diag × Array String × Array TemplateDecl × Array String :=
   finishRewrite (beginRewrite executed)
 
 /-- Names for which the package dispatcher has no native, external-picture or
@@ -14098,7 +14124,7 @@ public theorem executeInputs_package_refusal_contract (reader : InputReader Id)
 `call` and from the state it leaves. -/
 public def finishCtrlRowDocument (cursor : RewriteCursor) (row : CtrlRow) (call : CtrlCall)
     (docPos : Pos) (pre post : Array Raw) :
-    Array Raw × Array Diag × Array String × Array TemplateDecl :=
+    Array Raw × Array Diag × Array String × Array TemplateDecl × Array String :=
   finishRewritten (closeLastDocument cursor docPos
     (pre ++ (ctrlRowRun row call (openDocumentBody cursor.state).2).1 ++ post,
       ctrlRowState (openDocumentBody cursor.state).2 row call))
@@ -14969,6 +14995,9 @@ private structure TextSt where
   /-- The document's argument-free commands standing for a minted call short of
   its code, each with that call's head. -/
   shortcuts : Array (String × Array Raw) := #[]
+  /-- The names `\newminted` and its siblings define, each with the minted call it stands for and
+  its lexer. -/
+  mintedNames : Array (String × String × String) := #[]
   /-- Brace groups the pass stands inside, where a definition's body stands too. -/
   depth : Nat := 0
   /-- Inside a file a package or class file inputs, whose declarations are the package's. -/
@@ -14996,6 +15025,20 @@ private def readEntries (st : TextSt) (env lang : String) : Array String :=
 /-- The document's own declarations among the layers a listing reads. -/
 private def readIds (st : TextSt) (env lang : String) : Array Nat :=
   (readLayers st env lang).foldl (fun acc l => l.foldl (fun acc d => acc ++ d.1.toArray) acc) #[]
+
+/-- minted's definers: each with the minted call its definition stands for and the suffix its
+default name puts after the lexer. -/
+private def mintedDefiners : List (String × String × String) :=
+  [("newminted", "minted", "code"), ("newmint", "mint", ""), ("newmintinline", "mintinline", "inline"),
+   ("newmintedfile", "minted", "file")]
+
+/-- The name a minted definer's call defines, with the minted call it stands for and its lexer. -/
+private def mintedDefinition (raws : Array Raw) (start : Nat) (call suffix : String) :
+    Option (String × String × String) := do
+  let (name, j) := takeOpt raws start
+  let lang := (rawSrc (← (takeGroups raws j 1).1[0]?)).trimAscii.toString
+  guard !lang.isEmpty
+  return ((name.map (·.trimAscii.toString)).getD (lang ++ suffix), call, lang)
 
 /-- Marks the defaults a listing reads as read. -/
 private def markRead (ids : Array Nat) : M Unit :=
@@ -15205,6 +15248,15 @@ private def textList (loc : Locale) (st : TextSt) (raws : Array Raw)
     else if siCtrls.contains n && !st.defined.contains n then
       let (repl, k) ← siCtrl loc n pos raws (i + 1)
       textList loc st raws (out ++ repl) rest (i + 1) (k - (i + 1))
+    else if let some (_, call, suffix) := mintedDefiners.find? (·.1 == n) then
+      let st := match mintedDefinition raws (i + 1) call suffix with
+        | some d => { st with mintedNames := (st.mintedNames.filter (·.1 != d.1)).push d }
+        | none => st
+      textList loc st raws (out.push (.ctrl n pos)) rest (i + 1) 0
+    else if let some (_, call, lang) := st.mintedNames.find? (·.1 == n) then
+      -- A command minted's definer made reads the defaults its call would.
+      markRead (readIds st call lang)
+      textList loc st raws (out.push (.ctrl n pos)) rest (i + 1) 0
     else
       -- listings' inline and file readers read `\lstset`'s defaults, refused or not.
       if (n == "lstinline" || n == "lstinputlisting") && !st.defined.contains n then
@@ -15238,10 +15290,14 @@ private def textRaw (loc : Locale) (st : TextSt) : Raw → M (Raw × TextSt)
     if let some file := Parse.inputEnvFile? n then
       let savedFile := (← get).file
       write fun s => { s with file := file }
-      let (body, inner) ← textList loc { st with owned := st.owned || packageFile savedFile } body
+      let (body, inner) ← textList loc
+        { st with owned := st.owned || packageFile savedFile || Parse.isOwnedInput n } body
         #[] body.toList 0 0
       write fun s => { s with file := savedFile }
       return (.env n body p, { inner with owned := st.owned })
+    -- An environment minted's definer made reads the defaults its listing would.
+    if let some (_, call, lang) := st.mintedNames.find? fun d => d.1 == n || d.1 ++ "*" == n then
+      markRead (readIds st call lang)
     let (body, inner) ← textList loc st body #[] body.toList 0 0
     return (.env n body p, { st with defined := inner.defined })
   | r => return (r, st)
@@ -15285,7 +15341,7 @@ private def textNeededList : List Raw → Bool
   | [] => false
   | .ctrl n _ :: rest =>
     n == "lstset" || n == "setminted" || n == "setmintedinline" || siCtrls.contains n ||
-      n == "mintinline" || n == "mint" ||
+      n == "mintinline" || n == "mint" || mintedDefiners.any (·.1 == n) ||
       (n == "define" && ((rest.dropWhile (· matches .space)).head?.bind boundName).any
         (fun b => b == "mintinline" || b == "mint")) ||
       textNeededList rest

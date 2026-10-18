@@ -17,11 +17,12 @@ public def runRewriteFinal (file : String) (picScan : Compat.BoundaryScan)
     (picMacros : Array (String × String)) (triggers : Compat.SourceTriggers)
     (priorDiags earlier : Array Diag) (metric : Ir.Pic.LabelMetric)
     (cursor : Compat.RewriteCursor)
-    (attempts : Array Compat.InputAttempt := #[]) (mentions : Array String := #[]) :
+    (attempts : Array Compat.InputAttempt := #[]) (mentions : Array String := #[])
+    (stripped : Array (String × Diag) := #[]) :
     Ir.Doc × Array Diag :=
   runPreparedFinal file
     (prepareRewritten file picScan picMacros triggers priorDiags
-      (Compat.finishRewrite cursor) attempts mentions)
+      (Compat.finishRewrite cursor) attempts mentions stripped)
     earlier metric
 
 public theorem runExecuted_rewrite_exact (file : String) (executed : Compat.Executed)
@@ -29,7 +30,8 @@ public theorem runExecuted_rewrite_exact (file : String) (executed : Compat.Exec
     runExecuted file executed earlier metric =
       runRewriteFinal file (Compat.boundaryScan file executed.raws) (macroScan executed.raws)
         executed.sourceTriggers (Compat.unusedLengths file executed.raws) earlier metric
-        (Compat.beginRewrite executed) executed.inputAttempts executed.mentions := by rfl
+        (Compat.beginRewrite executed) executed.inputAttempts executed.mentions
+        executed.stripped := by rfl
 
 /-- The control table's names stand in strictly ascending byte order, so are distinct, clear of
 `\cite`, `\appendix` and `\define`, and none is spelled as a saved overlay-native name. -/
@@ -64,14 +66,16 @@ public theorem ctrlRow_document_exact (file : String) (scan : Compat.BoundarySca
     (hk : Compat.argsRead body #[] row.sig (pre.length + 1) =
       some (args, pre.length + 1 + taken.length))
     (hl : cursor.rowStandsInBody row args)
-    (attempts : Array Compat.InputAttempt := #[]) (mentions : Array String := #[]) :
-    runRewriteFinal file scan macros triggers priorDiags earlier metric cursor attempts mentions =
+    (attempts : Array Compat.InputAttempt := #[]) (mentions : Array String := #[])
+    (stripped : Array (String × Diag) := #[]) :
+    runRewriteFinal file scan macros triggers priorDiags earlier metric cursor attempts mentions
+        stripped =
       runPreparedFinal file
         (prepareRewritten file scan macros triggers priorDiags
           (Compat.finishCtrlRowDocument cursor row
             ⟨row.name, pos, args, body, pre.length + 1, pre.length + 1 + taken.length⟩
             docPos pre.toArray post.toArray)
-          attempts mentions) earlier metric := by
+          attempts mentions stripped) earlier metric := by
   unfold runRewriteFinal
   rw [Compat.finishRewrite_row_document_exact ctrlRows_sound cursor body row hrow pos docPos
     args pre taken post hp hs hb hpre hpost hk hl]
@@ -91,19 +95,20 @@ public theorem ctrlRow_operands_agree (file : String) (scan : Compat.BoundarySca
       some (argsLeft, pre.length + 1 + takenLeft.length))
     (hkright : Compat.argsRead right #[] row.sig (pre.length + 1) =
       some (argsRight, pre.length + 1 + takenRight.length))
-    (attempts : Array Compat.InputAttempt := #[]) (mentions : Array String := #[]) :
+    (attempts : Array Compat.InputAttempt := #[]) (mentions : Array String := #[])
+    (stripped : Array (String × Diag) := #[]) :
     runRewriteFinal file scan macros triggers priorDiags earlier metric
-      (cursor.withDocument left docPos) attempts mentions =
+      (cursor.withDocument left docPos) attempts mentions stripped =
     runRewriteFinal file scan macros triggers priorDiags earlier metric
-      (cursor.withDocument right docPos) attempts mentions := by
+      (cursor.withDocument right docPos) attempts mentions stripped := by
   rw [ctrlRow_document_exact file scan macros triggers priorDiags earlier metric
     (cursor.withDocument left docPos) left row pos docPos argsLeft pre takenLeft post hrow hp rfl
     hleft hpre hpost hkleft (Compat.ctrlLeft_fixed row _ argsLeft hfixed)
-    attempts mentions,
+    attempts mentions stripped,
     ctrlRow_document_exact file scan macros triggers priorDiags earlier metric
     (cursor.withDocument right docPos) right row pos docPos argsRight pre takenRight post hrow hp
     rfl hright hpre hpost hkright (Compat.ctrlLeft_fixed row _ argsRight hfixed)
-    attempts mentions,
+    attempts mentions stripped,
     Compat.finishCtrlRowDocument_source_exact, Compat.finishCtrlRowDocument_source_exact,
     Compat.finishCtrlRowDocument_fixed_exact cursor row
       ⟨row.name, pos, argsLeft, left, pre.length + 1, pre.length + 1 + takenLeft.length⟩
@@ -420,13 +425,13 @@ public theorem runExecuted_ctrlRow_contract (file : String) (executed : Compat.E
           executed.sourceTriggers (Compat.unusedLengths file executed.raws)
           (Compat.finishCtrlRowDocument (Compat.beginRewrite executed)
             row input.call input.docPos input.pre.toArray input.post.toArray)
-          executed.inputAttempts executed.mentions) earlier metric := by
+          executed.inputAttempts executed.mentions executed.stripped) earlier metric := by
   rw [runExecuted_rewrite_exact]
   exact ctrlRow_document_exact file _ _ _ (Compat.unusedLengths file executed.raws) earlier metric
     (Compat.beginRewrite executed) input.body row input.pos input.docPos input.args
     input.pre input.taken input.post hrow input.outsidePicture
     input.document input.source input.before input.after input.operands input.stands
-    executed.inputAttempts executed.mentions
+    executed.inputAttempts executed.mentions executed.stripped
 
 /-- The consuming-control contract at the executed frontend: a table row's control between literal
 neighbours leaves the document its emission and the state it leaves alone, unhandled controls keep
@@ -441,7 +446,7 @@ public theorem control_completion_contract (file : String) (executed : Compat.Ex
               executed.sourceTriggers (Compat.unusedLengths file executed.raws)
               (Compat.finishCtrlRowDocument (Compat.beginRewrite executed)
                 row input.call input.docPos input.pre.toArray input.post.toArray)
-              executed.inputAttempts executed.mentions) earlier metric) ∧
+              executed.inputAttempts executed.mentions executed.stripped) earlier metric) ∧
     (∀ group : RecoveryGroup,
       PreparedRecoveryGroup file (prepareExecuted file executed) metric group →
         runExecuted file executed earlier metric =

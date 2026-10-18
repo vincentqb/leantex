@@ -2079,7 +2079,14 @@ def reports : List Report := [
       "lualatex on the same report: each chapter opens a page, 'Chapter 1' at the huge size 85pt below the text's top, its title at the Huge size 50pt below that and the text 52pt below the title, an unnumbered chapter's title 90pt below the top; sections 1.1 and 2.1, equations (1.1) and (2.1), footnotes from 1 in each chapter, and after the appendix 'Appendix A' with section A.1",
       "lualatex: cleveref names a chapter 'chapter 1' and an appendix chapter 'chapter A', a label in a chapter's title leads to its head, and book's front and back matter chapters stand unnumbered",
       "figures, tables, algorithms and listings still number through the document, where report and listings number them within each chapter, and book's divisions number their pages in roman numerals and from 1 again: each named once (W0110)"]
-    state := .guarded "e5afdc63" .before .author }
+    state := .guarded "e5afdc63" .before .author },
+  { id := "R233", date := "2026-10-18"
+    what := "a refused redefinition of a rendered built-in whose text held a conditional drew two losses at one site; a colour only a refused hyperref key, a dropped beamer template or a refused style value named, or one whose name held a dot, was named unused, while one a word of refused prose spelled was not; a file a package's macro input at the document's call was the document's, and the document's own input of a file a package also input was the package's; listing defaults a minted definer's command or environment read were named unused; under --best-effort a missing family drew its refusal and an unused face beside it; and the face's loss stood at its declaration's first line"
+    pins := [check% Tests.UnusedSettings.firesChecks, check% Tests.UnusedSettings.scopeChecks,
+      check% Tests.UnusedSettings.redefinitionChecks, check% Tests.UnusedSettings.faceChecks]
+    accept := ["the 18 new checks fail built against 0c3dab52's sources and pass on this tree",
+      "this tree's binary on invented probes: a redefined bold command with a conditional draws W0361 alone, a hyperref key or package option, a dropped template body and a refused style value naming a declared colour draw their refusal alone, a dotted colour painted at half strength is read, a colour a refused command's prose spells is named, a colour a package's loading macro inputs is not, a minted environment and command a definer made read the defaults before them, a missing typewriter family under --best-effort accepts E0403 alone, and an unused typewriter face is named at its entry's line"]
+    state := .guarded "0c3dab52" .before .author }
 ]
 
 /-- The reports guarded but never seen failing, a count held in both directions. -/

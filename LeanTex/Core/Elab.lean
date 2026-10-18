@@ -234,6 +234,8 @@ public def ListNest.quoted (nest : ListNest) (l : Ir.ListLineage) (extra : Ir.Li
 sees. -/
 public structure Ctx where
   file : String
+  /-- Inside a file a package's, class's or theme's code input, whose declarations are its. -/
+  owned : Bool := false
   /-- The outer written call that stored replacement code is attributed to. -/
   callSite : Option (Span × String) := none
   /-- The highlighting replies the driver captured. -/
@@ -650,6 +652,8 @@ public structure ESt where
   /-- Refused size-command redefinitions' bodies, read again at the
   preamble's end for their `\@setfontsize` ladder. -/
   refusedSizeBodies : Array (String × Array Raw × Span) := #[]
+  /-- The rendered built-ins whose redefinition the gate refused, the built-in standing. -/
+  refusedRedefs : Array String := #[]
   /-- Speaker-note bodies met inside inline content, which the enclosing
   frame drains to its end. -/
   pendingNotes : Array (Array Raw × Pos) := #[]
@@ -683,8 +687,6 @@ public structure ESt where
   /-- The words a construct the engine refused or could not resolve spells, which still name what
   they name. -/
   mentions : Std.HashSet String := {}
-  /-- The files a package or class file inputs, whose declarations are the package's. -/
-  packageInputs : Array String := #[]
   /-- The declaration sites whose deletion changes an artifact otherwise, which the unused-setting
   judge skips. -/
   unjudged : Array Span := #[]
@@ -833,7 +835,7 @@ private inductive PEvent where
   | say (d : Diag)
   | scalar (decl key value : String) (pos : Pos)
   | declared (decl key : String)
-  | setting (s : UnusedSetting.Setting) (pos : Pos)
+  | setting (s : UnusedSetting.Setting) (pos site : Pos)
 
 private def applyEvent (ctx : Ctx) (st : ESt) : PEvent → ESt
   | .say d => { st with diags := st.diags.push d }
@@ -853,10 +855,10 @@ private def applyEvent (ctx : Ctx) (st : ESt) : PEvent → ESt
     { st with declaredKeys :=
       if st.declaredKeys.contains (decl, key) then st.declaredKeys
       else st.declaredKeys.push (decl, key) }
-  | .setting setting pos =>
-    let package := Compat.packageFile ctx.file || st.packageInputs.contains ctx.file
+  | .setting setting pos site =>
+    let package := Compat.packageFile ctx.file || ctx.owned
     if UnusedSetting.ownSite package ctx.callSite.isSome pos then
-      let st := { st with settings := st.settings.push ⟨setting, ctx.sourceSpan pos⟩ }
+      let st := { st with settings := st.settings.push ⟨setting, ctx.sourceSpan pos, ctx.sourceSpan site⟩ }
       match setting with
       | .color n => { st with owedColors := st.owedColors.insert n }
       | .face _ | .style _ => st
@@ -1030,7 +1032,7 @@ private def noteColorReads (expr : String) : EM Unit := do
 document declares them. -/
 private def noteMentions (src : String) : EM Unit :=
   unless src.isEmpty do
-    modify fun st => { st with mentions := (Ir.colorNames src).foldl (·.insert ·) st.mentions }
+    modify fun st => { st with mentions := (Ir.mentionedColorNames src).foldl (·.insert ·) st.mentions }
 
 private def noteDocRoles (rs : List Role) : EM Unit :=
   modify fun st =>
@@ -5180,7 +5182,8 @@ private def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
       else if let some f := Parse.inputEnvFile? name then
         let acc := flushText acc sb
         let inner ← elabInlinesCore
-          { ctx with file := f, callSite := none, kept := ctx.kept || Parse.isKeptInput name } body
+          { ctx with file := f, callSite := none, kept := ctx.kept || Parse.isKeptInput name
+                     owned := ctx.owned || Compat.packageFile ctx.file || Parse.isOwnedInput name } body
         elabInlinesFrom ctx raws (i + 1) (acc ++ inner) ""
       else if let some numbered := displayMathEnvs.lookup name then
         let acc := flushText acc sb
@@ -7720,7 +7723,7 @@ private def noteDeclared (ctx : Ctx) (decl key : String) : EM Unit :=
 /-- Whether a declaration at `pos` is the document's own: outside a package or class file and the
 files one inputs, and no definition's replacement text. -/
 private def ownDeclaration (ctx : Ctx) (pos : Pos) : EM Bool := do
-  let package := Compat.packageFile ctx.file || (← get).packageInputs.contains ctx.file
+  let package := Compat.packageFile ctx.file || ctx.owned
   return UnusedSetting.ownSite package ctx.callSite.isSome pos
 
 /-- Records a token the document's own `\tokens` declares beside the engine's. -/
@@ -7732,7 +7735,7 @@ private def noteAuthorToken (ctx : Ctx) (key : String) (pos : Pos) : EM Unit := 
 
 /-- Records a setting the document itself declares at `pos`. -/
 private def noteSetting (ctx : Ctx) (setting : UnusedSetting.Setting) (pos : Pos) : EM Unit :=
-  modify fun st => applyEvent ctx st (.setting setting pos)
+  modify fun st => applyEvent ctx st (.setting setting pos pos)
 
 /-- The `\leftmargin⟨n⟩` the class fixes as it loads, which a length may name. -/
 private def classMarginTokens (l : Ir.ListLineage) : Array (String × Dim.SymGlue) :=
@@ -8256,7 +8259,8 @@ engine cannot run; the built-in stands",
         d.span.map fun (sp : Span) => s!"{construct} at {sp.file}:{sp.pos.line}")
     | _ => (s!"the redefinition of '\\{cmd.name}' renders nothing; the built-in stands", none)
   modify fun st => { st with
-    diags := st.diags.push (Diag.of .W0361 msg (some cmd.span) (detail := detail)) }
+    diags := st.diags.push (Diag.of .W0361 msg (some cmd.span) (detail := detail))
+    refusedRedefs := st.refusedRedefs.push cmd.name }
 
 private theorem sliceWeight_end (raws : Array Raw) {j : Nat}
     (h : raws.size ≤ j) : sliceWeight raws j = 0 := by
@@ -12591,7 +12595,8 @@ private def elabEnvArm (ctx : Ctx) (n : String) (scope : Array Raw)
     blocks := blocks.push (.lines (← linesLaid ctx 0 body.toList #[] #[]))
   else if let some f := Parse.inputEnvFile? n then
     let ⟨fileCtx, _⟩ : MCtx ctx ←
-      pure ⟨{ ctx with file := f, callSite := none, kept := ctx.kept || Parse.isKeptInput n },
+      pure ⟨{ ctx with file := f, callSite := none, kept := ctx.kept || Parse.isKeptInput n
+                       owned := ctx.owned || Compat.packageFile ctx.file || Parse.isOwnedInput n },
         rfl, rfl, rfl, rfl⟩
     blocks := blocks ++ (← splicedFrameScope (some blocks.size) (elabBlockScope fileCtx body))
   else if let some numbered := displayMathEnvs.lookup n then
@@ -14527,10 +14532,17 @@ private def faceKeyOf? (key : String) : Option String :=
 /-- Applies `\fonts{...}`: family names per slot, variant faces and font
 directories. -/
 private def applyFonts (ctx : Ctx) (spec : FontSpec) (entries : Array Decl.Entry)
-    (pos : Pos) : FontSpec × Array PEvent := Id.run do
+    (sites : Array (String × Pos)) (pos : Pos) : FontSpec × Array PEvent := Id.run do
   let mut spec := spec
   let mut evs : Array PEvent := #[]
+  let mut sites := sites
   for e in entries do
+    -- An entry's site is the next one written under its key, in the declaration's command.
+    let (site, rest) := match sites.findIdx? (·.1 == e.key) with
+      | some i => ((sites[i]?.map fun (_, p) => { pos with line := p.line, col := p.col }).getD pos,
+          sites.eraseIdxIfInBounds i)
+      | none => (pos, sites)
+    sites := rest
     let before := evs.size
     match e.key, e.value with
     | "body", .str f => spec := { spec with body := some f }
@@ -14600,7 +14612,7 @@ private def applyFonts (ctx : Ctx) (spec : FontSpec) (entries : Array Decl.Entry
           (Math.MathAlphabet.sourceKey? canonical).isSome then
         evs := evs.push (.scalar "fonts" canonical (renderValue e.value) pos)
       if let some face := faceKeyOf? e.key then
-        evs := evs.push (.setting (.face face) pos)
+        evs := evs.push (.setting (.face face) pos site)
   return (spec, evs)
 
 /-- The keys of one `slot = {...}` group in `\style{titlepage}`. -/
@@ -14692,6 +14704,7 @@ private def applyStyle (ctx : Ctx) (styles : Styles) (element : String) (body : 
                 s!"a list's spacing reads {Diag.prose "and" Ir.listSetKeys} on its list, kind or \
 level, and its other keys on the kind's own element"
               else s!"'{element}' reads {Diag.prose "and" (Ir.styleKeysRead element)}")
+        noteMentions valueSrc
         continue
       if element == "frametitle" && key == "font" then
         if restatesPlainTitle valueSrc then
@@ -14736,6 +14749,7 @@ level, and its other keys on the kind's own element"
         else
           diag ctx .E0323 s!"'body-size' in '\\style' expects a size name, got '{v}'" pos
             (help := s!"sizes: {", ".intercalate sizeCtrlNames}")
+          noteMentions valueSrc
       | "rule" =>
         if let some v ← asColor then st := { st with rule := some v }
       | "rule-thickness" => st := { st with ruleThickness := ← asLength }
@@ -14745,6 +14759,7 @@ level, and its other keys on the kind's own element"
         | "xheight" => st := { st with rulePosition := some .xHeight }
         | v =>
           diag ctx .E0323 s!"'rule-position' in '\\style' expects baseline or xheight, got '{v}'" pos
+          noteMentions valueSrc
       | "separator" =>
         if valueSrc.trimAscii.toString == "none" then st := { st with separator := none }
         else if let some v ← asColor then st := { st with separator := some v }
@@ -14754,6 +14769,7 @@ level, and its other keys on the kind's own element"
             s!"'slot' in '\\style' belongs to the title page, not '{element}'" (some pos)
             (help := "write \\style{titlepage}{ slot = { set = title, anchor = west, at = west } }")
             (subject := some s!"style:{element}:slot")) }
+          noteMentions valueSrc
         else
           let partOf (partRaws : Array Raw) : EM (Option Ir.TitlePart) := do
             let mut p : Ir.TitlePart := { datum := none }
@@ -14898,6 +14914,7 @@ institute, or date, got '{vt}'" pos
             if anchor.isNone && pagePoint.isNone then none
             else some { anchor := anchor.getD .center, pagePoint := pagePoint.getD .center
                         xshift := xshift, yshift := yshift, innerSep := innerSep }
+          unless ok do noteMentions valueSrc
           if ok then
             let slot := Ir.TitleSlot.ofNodeParts
               (if parts.isEmpty then legacyParts else parts) width place
@@ -14909,6 +14926,7 @@ institute, or date, got '{vt}'" pos
         | "right" => st := { st with align := some .right }
         | v =>
           diag ctx .E0323 s!"'align' in '\\style' expects left, center, or right, got '{v}'" pos
+          noteMentions valueSrc
       | "hover" =>
         if let some v ← asColor then st := { st with hover := some v }
       | "focus" =>
@@ -14931,9 +14949,11 @@ institute, or date, got '{vt}'" pos
           diag ctx .E0323
             s!"'motion' in '\\style' expects a duration in milliseconds, got '{v}'" pos
             (help := "write motion = 150ms")
+          noteMentions valueSrc
       | _ =>
         modify fun st' => { st' with
           diags := st'.diags.push (Decl.unknownKey ctx.file "style" key Ir.styleKeys pos) }
+        noteMentions valueSrc
   noteDeclared ctx "style" element
   noteSetting ctx (.style element) pos
   return styles.declare element st
@@ -15294,7 +15314,7 @@ public inductive PDecl where
   | defineCmd (decl : Array Raw) (pos : Pos)
   | defineEnv (name : Option (String × Pos)) (sig : String) (dflt : Option (Array Raw))
       (beginB : Option (Array Raw)) (endB : Option (Array Raw)) (pos : Pos)
-  | fileMark (f : String)
+  | fileMark (f : String) (owned : Bool)
   | running (name : String) (opts : Option (Array Raw))
       (body : Option (Array Raw)) (pos : Pos)
   | logo (body : Option (Array Raw)) (pos : Pos)
@@ -15318,7 +15338,8 @@ public inductive PDecl where
   | tokens (src : Option String) (pos : Pos)
   | chrome (src : Option String) (pos : Pos)
   | page (src : Option String) (pos : Pos)
-  | fonts (src : Option String) (pos : Pos)
+  /-- The block's text, with each entry's key at its site. -/
+  | fonts (src : Option (String × Array (String × Pos))) (pos : Pos)
   | pdfmeta (src : Option String) (pos : Pos)
   /-- hyperref's metadata lowered by Compat: the construct, its link styles, its dates and trapping
   as `\pdfmeta` entries, each key's TeX. -/
@@ -15432,11 +15453,20 @@ private def metaTextAt (raws : Array Raw) (j : Nat) :
     | _ => none
   | _ => none
 
+/-- Each entry's key in a declaration's block, at the site its first raw stands. -/
+private def entrySites (body : Array Raw) : Array (String × Pos) :=
+  (Entries.read .native body).filterMap fun e =>
+    (e.item.findSome? fun r => match r with
+      | .word _ p | .ctrl _ p | .sym _ p | .group _ p | .math _ _ p | .env _ _ p | .verb _ _ p
+      | .par p => some p
+      | .space => none).map (e.key.trimAscii.toString, ·)
+
 /-- Segments the preamble into declaration values, `\input` wrappers
 spliced open between file markers. -/
 public def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run do
   let mut preamble := pre
   let mut curFile := file
+  let mut curOwned := false
   let mut out : Array PDecl := #[]
   let mut i : Nat := 0
   repeat
@@ -15444,9 +15474,11 @@ public def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run d
       let r := preamble[i]
       if let .env n wrapped pos := r then
         if let some f := Parse.inputEnvFile? n then
+          let owned := curOwned || Compat.packageFile curFile || Parse.isOwnedInput n
+          let mark (owned : Bool) := if owned then Marker.Kind.ownedFile else .file
           preamble := preamble.extract 0 i ++
-            #[Raw.ctrl (Marker.name .file f) pos] ++ wrapped ++
-            #[Raw.ctrl (Marker.name .file curFile) pos] ++
+            #[Raw.ctrl (Marker.name (mark owned) f) pos] ++ wrapped ++
+            #[Raw.ctrl (Marker.name (mark curOwned) curFile) pos] ++
             preamble.extract (i + 1) preamble.size
           continue
       match r with
@@ -15548,7 +15580,12 @@ public def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run d
         let marker := Marker.read? name
         if let some (.file, f) := marker then
           curFile := f
-          out := out.push (.fileMark f)
+          curOwned := false
+          out := out.push (.fileMark f false)
+        else if let some (.ownedFile, f) := marker then
+          curFile := f
+          curOwned := true
+          out := out.push (.fileMark f true)
         else if marker.any fun (k, _) => k == .series || k == .lang then
           -- premise: compatMarkerChecks — the Doc is the one without it
           pure ()
@@ -15674,7 +15711,11 @@ public def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run d
           | "tokens" => out := out.push (.tokens src pos)
           | "chrome" => out := out.push (.chrome src pos)
           | "page" => out := out.push (.page src pos)
-          | "fonts" => out := out.push (.fonts src pos)
+          | "fonts" =>
+            let sites := match preamble[j]? with
+              | some (.group body _) => entrySites body
+              | _ => #[]
+            out := out.push (.fonts (src.map (·, sites)) pos)
           | "pictures" => out := out.push (.pictures src pos)
           | "figures" => out := out.push (.figures src pos)
           | _ => out := out.push (.pdfmeta src pos)
@@ -15873,10 +15914,10 @@ private def stepPage (s : PreState) (src : String) (pos : Pos) :
       sawPage := pb.1.any (fun e => (Native.PageKey.ofName? e.key).any (·.claims)) || s.sawPage },
    pb.2.map .say ++ pe.2)
 
-private def stepFonts (s : PreState) (src : String) (pos : Pos) :
+private def stepFonts (s : PreState) (src : String) (sites : Array (String × Pos)) (pos : Pos) :
     PreState × Array PEvent :=
   let pb := Decl.parseBlock s.ctx.file src pos "fonts" s.tokens.entries
-  let fe := applyFonts s.ctx s.fonts pb.1 pos
+  let fe := applyFonts s.ctx s.fonts pb.1 sites pos
   ({ s with fonts := fe.1 }, pb.2.map .say ++ fe.2)
 
 private def stepPdfmeta (s : PreState) (src : String) (pos : Pos) :
@@ -16068,8 +16109,8 @@ optional; the default is ignored" pos
     | none =>
       diag s.ctx .E0303 "expected '\\defineenv {name}(...) {begin} {end}'" pos
       return s
-  | .fileMark f =>
-    return { s with ctx := { s.ctx with file := f, callSite := none } }
+  | .fileMark f owned =>
+    return { s with ctx := { s.ctx with file := f, callSite := none, owned } }
   | .running name opts body pos =>
     -- `from` gates only this head or foot; a redeclaration without it resets.
     let mut fromPage : Nat := 1
@@ -16279,7 +16320,7 @@ draws; skipped" pos
   | .chrome none pos => stepDone s.ctx (stepMissing s "chrome" "a {...} block" pos)
   | .page (some src) pos => stepDone s.ctx (stepPage s src pos)
   | .page none pos => stepDone s.ctx (stepMissing s "page" "a {...} block" pos)
-  | .fonts (some src) pos => stepDone s.ctx (stepFonts s src pos)
+  | .fonts (some block) pos => stepDone s.ctx (stepFonts s block.1 block.2 pos)
   | .fonts none pos => stepDone s.ctx (stepMissing s "fonts" "a {...} block" pos)
   | .pictures body pos =>
     match body with
@@ -16638,7 +16679,8 @@ a heading; its numbers stand alone" pos
 /-- The elaboration state with the stores only diagnostics read erased. -/
 public def ESt.sem (e : ESt) : ESt :=
   { e with diags := #[], warnedUnknown := #[], seenScalars := #[], declaredKeys := #[],
-           settings := #[], owedColors := {}, mentions := {}, packageInputs := #[], unjudged := #[] }
+           settings := #[], owedColors := {}, mentions := {}, unjudged := #[],
+           refusedRedefs := #[] }
 
 /-- The fold state with its reporting once-latch erased. -/
 public def PreState.sem (s : PreState) : PreState := { s with textDiagged := false }
@@ -16673,7 +16715,7 @@ private theorem applyEvent_sem (ctx : Ctx) (st : ESt) (ev : PEvent) :
     all_goals rfl
   | declared decl key =>
     simp only [applyEvent, ESt.sem]
-  | setting setting pos =>
+  | setting setting pos site =>
     simp only [applyEvent, ESt.sem]
     repeat' split
     all_goals rfl
@@ -16702,8 +16744,10 @@ private theorem applyDecl_page_some (s : PreState) (src : String) (pos : Pos) :
 private theorem applyDecl_page_none (s : PreState) (pos : Pos) :
     applyDecl s (.page none pos)
       = stepDone s.ctx (stepMissing s "page" "a {...} block" pos) := by rfl
-private theorem applyDecl_fonts_some (s : PreState) (src : String) (pos : Pos) :
-    applyDecl s (.fonts (some src) pos) = stepDone s.ctx (stepFonts s src pos) := by rfl
+private theorem applyDecl_fonts_some (s : PreState) (block : String × Array (String × Pos))
+    (pos : Pos) :
+    applyDecl s (.fonts (some block) pos) = stepDone s.ctx (stepFonts s block.1 block.2 pos) := by
+  rfl
 private theorem applyDecl_fonts_none (s : PreState) (pos : Pos) :
     applyDecl s (.fonts none pos)
       = stepDone s.ctx (stepMissing s "fonts" "a {...} block" pos) := by rfl
@@ -17303,8 +17347,7 @@ private def beginDoc (file : String) (raws : Array Raw) (picPre : String)
       match d with
       | .urlstyle (some v) _ => (urlStyleFamily? v).getD fam
       | _ => fam) (← get).scope.urlFamily
-  modify fun st => { st with scope := { st.scope with urlFamily := urlFamily0 }
-                             packageInputs := Compat.packageInputs file raws }
+  modify fun st => { st with scope := { st.scope with urlFamily := urlFamily0 } }
   -- Every palette descends from these, so each colour resolves through the output profile.
   let shown : Palette := { profile }
   let s ← decls.foldlM applyDecl
@@ -17758,6 +17801,9 @@ public structure Prepared where
   inputAttempts : Array Compat.InputAttempt := #[]
   /-- The source of each value a construct execution refused carried. -/
   mentions : Array String := #[]
+  /-- Each definition execution skipped part of, by the name it defines, with that loss, which a
+  refused redefinition of a rendered built-in accounts for instead. -/
+  stripped : Array (String × Diag) := #[]
   /-- The highlighter answers every elaboration of this input reads. -/
   listingReplies : Array ListingReply.Answer := #[]
   /-- The notes each bibliography list's fields set, in document order; empty
@@ -17867,16 +17913,17 @@ output, with the caller's scans. -/
 public def prepareRewritten (file : String) (picScan : Compat.BoundaryScan)
     (picMacros : Array (String × String)) (sourceTriggers : Compat.SourceTriggers)
     (priorDiags : Array Diag)
-    (rewritten : Array Raw × Array Diag × Array String × Array Compat.TemplateDecl)
-    (inputAttempts : Array Compat.InputAttempt := #[]) (mentions : Array String := #[]) :
+    (rewritten : Array Raw × Array Diag × Array String × Array Compat.TemplateDecl × Array String)
+    (inputAttempts : Array Compat.InputAttempt := #[]) (mentions : Array String := #[])
+    (stripped : Array (String × Diag) := #[]) :
     Prepared :=
-  let (raws, compatDiags, warned, templates) := rewritten
+  let (raws, compatDiags, warned, templates, rewriteMentions) := rewritten
   let (raws, textDiags, warned) := Compat.rewriteText file raws warned
   { raws := raws, picPre := picScan.pre, picSets := picScan.sets
     picMacros := picMacros, warned := warned
     compatDiags := priorDiags ++ compatDiags ++ textDiags
-    sourceTriggers := sourceTriggers, inputAttempts := inputAttempts, mentions := mentions
-    templates := templates }
+    sourceTriggers := sourceTriggers, inputAttempts := inputAttempts
+    mentions := mentions ++ rewriteMentions, stripped := stripped, templates := templates }
 
 /-- Prepares a document whose macro and input execution already ran. -/
 public def prepareExecuted (file : String) (executed : Compat.Executed) : Prepared :=
@@ -17884,18 +17931,19 @@ public def prepareExecuted (file : String) (executed : Compat.Executed) : Prepar
   let picMacros := macroScan executed.raws
   prepareRewritten file picScan picMacros executed.sourceTriggers
     (Compat.unusedLengths file executed.raws) (Compat.rewriteExecuted executed) executed.inputAttempts
-    executed.mentions
+    executed.mentions executed.stripped
 
 private theorem prepareRewritten_carried_exact (file : String)
     (scan : Compat.BoundaryScan) (macros : Array (String × String))
     (triggers : Compat.SourceTriggers) (prior : Array Diag)
-    (rewritten : Array Raw × Array Diag × Array String × Array Compat.TemplateDecl)
-    (attempts : Array Compat.InputAttempt) (mentions : Array String) :
-    (prepareRewritten file scan macros triggers prior rewritten attempts mentions).inputAttempts =
-        attempts ∧
-      (prepareRewritten file scan macros triggers prior rewritten attempts mentions).sourceTriggers =
-        triggers := by
-  rcases rewritten with ⟨raws, diags, warned, templates⟩
+    (rewritten : Array Raw × Array Diag × Array String × Array Compat.TemplateDecl × Array String)
+    (attempts : Array Compat.InputAttempt) (mentions : Array String)
+    (stripped : Array (String × Diag)) :
+    (prepareRewritten file scan macros triggers prior rewritten attempts mentions
+        stripped).inputAttempts = attempts ∧
+      (prepareRewritten file scan macros triggers prior rewritten attempts mentions
+        stripped).sourceTriggers = triggers := by
+  rcases rewritten with ⟨raws, diags, warned, templates, rewriteMentions⟩
   unfold prepareRewritten
   cases Compat.rewriteText file raws warned
   exact ⟨rfl, rfl⟩
@@ -17904,13 +17952,13 @@ attribute [local irreducible] prepareRewritten macroScan in
 public theorem prepareExecuted_inputAttempts_exact (file : String) (executed : Compat.Executed) :
     (prepareExecuted file executed).inputAttempts = executed.inputAttempts := by
   unfold prepareExecuted
-  exact (prepareRewritten_carried_exact file _ _ _ _ _ _ _).1
+  exact (prepareRewritten_carried_exact file _ _ _ _ _ _ _ _).1
 
 attribute [local irreducible] prepareRewritten macroScan in
 public theorem prepareExecuted_sourceTriggers_exact (file : String) (executed : Compat.Executed) :
     (prepareExecuted file executed).sourceTriggers = executed.sourceTriggers := by
   unfold prepareExecuted
-  exact (prepareRewritten_carried_exact file _ _ _ _ _ _ _).2
+  exact (prepareRewritten_carried_exact file _ _ _ _ _ _ _ _).2
 
 /-- Settles, scans, executes and rewrites a parsed document, once. -/
 public def prepare (file : String) (raws : Array Raw) : Prepared :=
@@ -17921,7 +17969,7 @@ public def prepare (file : String) (raws : Array Raw) : Prepared :=
     (provideKeeps := providedNames) (ignoredDefs := ignoredDefNames)
   prepareRewritten file picScan picMacros executed.sourceTriggers
     (splitDiags ++ Compat.unusedLengths file executed.raws) (Compat.rewriteExecuted executed)
-    (mentions := executed.mentions)
+    (mentions := executed.mentions) (stripped := executed.stripped)
 
 /-- Whether the source holds a natively drawn picture, and whether one sets a
 formula. -/
@@ -18109,7 +18157,9 @@ public def completePrepared (file : String) (p : Prepared) (earlier : Array Diag
       st.spans.colorReads) st.spans.tokenKeys
   let unread := unread ++ unreadFrameTitleFont doc st.spans.frameTitleFont st.spans.frameTitleRestated
   let unread := unread ++ unreadTokens doc p.raws st.spans.authorTokens
-  let said := earlier ++ p.compatDiags ++ st.diags ++ contrast ++ outline ++ alt ++ links ++
+  -- premise: Tests.UnusedSettings.redefinitionChecks — a refused redefinition is its one accounting
+  let stripped := p.stripped.filterMap fun (n, d) => if st.refusedRedefs.contains n then none else some d
+  let said := earlier ++ p.compatDiags ++ stripped ++ st.diags ++ contrast ++ outline ++ alt ++ links ++
     sequences ++ unread ++ Ir.boxDiags doc.page
   -- A declaration a definition's replacement text makes at its call is the definition's.
   let settings := st.settings.filter fun d =>
@@ -18121,9 +18171,10 @@ public def completePrepared (file : String) (p : Prepared) (earlier : Array Diag
     -- A title block reads the title page's style whatever datum it sets.
     let shown := UnusedSetting.shown doc (if st.titleDone then #["titlepage"] else #[])
     -- A construct the engine refused or could not resolve still names what it names.
-    let words (acc : Std.HashSet String) (src : String) := (Ir.colorNames src).foldl (·.insert ·) acc
+    let words (acc : Std.HashSet String) (src : String) :=
+      (Ir.mentionedColorNames src).foldl (·.insert ·) acc
     let read := doc.salvage.foldl (fun acc r => words acc r.text) (p.mentions.foldl words st.mentions)
-    let read := doc.page.drawn.foldl (fun acc r => words acc r.color)
+    let read := doc.page.drawn.foldl (fun acc r => (Ir.colorNames r.color).foldl (·.insert ·) acc)
       (st.spans.colorReads.foldl (·.insert ·) read)
     UnusedSetting.diags settings shown read named
   (doc, Diag.tallySites ((accountRecovered doc.salvage (said ++ unused)
