@@ -9,6 +9,7 @@
 # lowered (applied): report.short-page 10000→9999 — page 12 ends short where a line and its footnote moved to page 13
 # lowered (applied): report.page-hyphen 10000→9999 — the report's chapters open pages of their own, as report.cls sets them, so its prose falls on other pages and one turn lands in a hyphenated word
 # lowered (applied): report.degraded 9993→9992 — report.cls gives the title a page of its own, which the engine sets in the text and names (W0110)
+# lowered: centred.widow 10000→9999 — the centred paragraphs stand LaTeX's trivlist space apart, 10pt where they stood 12pt, which brings one paragraph's last line alone to the next page's head; the paginator keeps no widow back
 article.club	10000
 article.degraded	9992
 article.edge-step	9998

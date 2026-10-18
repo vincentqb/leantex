@@ -3748,7 +3748,7 @@ def trivlistChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
   t "a trivlist right after a display opens inside its paragraph, closing without partopsep"
     (steps (doc "{article}" "" ("Alpha.\n\\[ x = y \\]\n" ++ center ++ "\nCharlie.")) ["Bravo.", "Charlie."]
       == gaps [8])
-  t "a trivlist after a description label alone stands in its label"
+  t "a trivlist after a description label alone stands in its label, on the line below the label"
     (steps (doc "{article}" "" ("\\begin{description}\n\\item[Alpha] Text.\n\\item[Term] " ++ center ++
       "\nCharlie.\n\\end{description}")) ["Term", "Bravo.", "Charlie."] == [lead, lead + Dim.pt 4])
   -- enumitem's `\trivlist` runs `\@list@extra` again from the list's `\parsep`.
@@ -3799,6 +3799,17 @@ def trivlistChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
     (match at? (· == s!"{triv} + *"), at? (fun s => hasStr s s!"{triv}:not(" && hasStr s "+ :is(ul") with
      | some c, some o => c < o
      | _, _ => false)
+  t "html: a block after a description label alone stands in its label"
+    (rules.any fun r => match r with
+      | .boundary sel v => hasStr sel "p:empty):first-child + " && v == "0"
+      | _ => false)
+  let kdoc := (elabStr (doc "[parskip=half]{scrartcl}" "" (ul ("\\item Alpha.\n\\begin{center}\nBravo.\n" ++
+    ul "\\item Charlie." ++ "\n\\end{center}\nDelta.")))).1
+  let ksize := kdoc.page.fontSize
+  let kcloses := HtmlDoc.nestedClosesOf kdoc.docClass.record.lists ksize (HtmlDoc.exAt none ksize)
+    kdoc.tokens false kdoc.body kdoc.docClass.record.listExtra
+  t "html: a KOMA-Script trivlist closing on a list keeps the zero topsep \\@list@extra leaves"
+    (kcloses.any fun c => c.parent == .triv && c.own == 0)
   let csrc := doc "{article}" "" "Alpha.\n\n\\begin{center}\nBravo.\n\\end{center}\n\nCharlie."
   let body (src : String) : Array Html.Node := (HtmlDoc.emitTree {} (elabStr src).1).2.1
   let cbody := body csrc

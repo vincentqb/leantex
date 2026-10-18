@@ -1308,6 +1308,8 @@ public structure NestedClose where
   spine : List SpineStep
   close : Int
   last : Bool
+  /-- A trivlist parent's own `\@topsepadd`, the values in force where it stands. -/
+  own : Int
   deriving BEq, Hashable
 
 /-- Whether a nested close sets a space the class's level and spacing rules may not: a spine longer
@@ -1333,50 +1335,53 @@ public def nestedClosesOf (l : Ir.ListLineage) (size ex : Int) (tokens : Ir.Toke
     (spacing.map fun (sk, pts) => spineTrivIn l extra size tokens level sk pts).getD top
   let note (level : Nat) (parent : CloseParent) (s : Ir.ListSet) (inPar : Bool) (outer : Int)
       (t : Ir.TrivIn) (items : Array (Array Block))
-      (acc : Array NestedClose × Std.HashSet NestedClose) :
+      (acc : Array NestedClose × Std.HashSet NestedClose) (own : Int := 0) :
       Array NestedClose × Std.HashSet NestedClose :=
     items.zipIdx.foldl (fun acc (item, i) =>
       match lastSpine l extra size ex tokens (level + 1) outer t item.toList with
       | some (spine, close) =>
         let c : NestedClose := { level, parent, outer := s, outerInPar := inPar, spine, close
-                                 last := i + 1 == items.size }
+                                 last := i + 1 == items.size, own }
         if !c.owed || acc.2.contains c then acc else (acc.1.push c, acc.2.insert c)
       | none => acc) acc
   let parsepAt (level : Nat) (s : Ir.ListSet) : Int :=
     ((Ir.listSpacing l size level tokens s).map fun (sk, _) => listSkipSp size ex sk.parsep).getD 0
-  let walk : Ir.CtxFold (Nat × Bool) (Array NestedClose × Std.HashSet NestedClose) := {
-    openBlock := fun (depth, inPar) acc b =>
+  -- the walk's context: the `\@listdepth`, whether a block opens inside a paragraph, and the
+  -- trivlist values and `\parskip` in force
+  let walk : Ir.CtxFold (Nat × Bool × Ir.TrivIn × Int)
+      (Array NestedClose × Std.HashSet NestedClose) := {
+    openBlock := fun (depth, inPar, t, par) acc b =>
       match b with
       | .list _ s items =>
-        (note (depth + 1) .list s inPar (parsepAt (depth + 1) s)
-          (trivAt (Ir.listSpacing l size (depth + 1) tokens s) (depth + 1)) items acc,
-          (depth + 1, false))
+        let ti := trivAt (Ir.listSpacing l size (depth + 1) tokens s) (depth + 1)
+        let parsep := parsepAt (depth + 1) s
+        (note (depth + 1) .list s inPar parsep ti items acc, (depth + 1, false, ti, parsep))
       | .quote q body =>
         let spacing := Ir.quoteSpacing l size (depth + 1) tokens q
         let parsep := (spacing.map fun (sk, _) => listSkipSp size ex sk.parsep).getD 0
-        (note (depth + 1) (.quote q.kind) q.spacing inPar parsep (trivAt spacing (depth + 1)) #[body]
-          acc, (depth + 1, false))
+        let ti := trivAt spacing (depth + 1)
+        (note (depth + 1) (.quote q.kind) q.spacing inPar parsep ti #[body] acc,
+          (depth + 1, false, ti, parsep))
       | .abstract body =>
         if abstractNests then
-          (note (depth + 1) .abstract {} false 0 top #[body] acc, (depth + 1, false))
-        else (acc, (depth, false))
+          (note (depth + 1) .abstract {} false 0 top #[body] acc, (depth + 1, false, top, 0))
+        else (acc, (depth, false, t, par))
       | .role n body =>
         if n == Ir.trivlistRole then
-          let inner := (trivlistInner? body).getD body
-          let t := if depth == 0 then top else trivAt (Ir.listSpacing l size depth tokens {}) depth
-          (note depth .triv {} inPar (parsepAt depth {}) t #[inner] acc, (depth, false))
-        else (acc, (depth, n == Ir.inParagraphRole))
+          (note depth .triv {} inPar par t #[(trivlistInner? body).getD body] acc
+            (listSkipSp size ex (t.add !inPar)), (depth, false, t, par))
+        else (acc, (depth, n == Ir.inParagraphRole, t, par))
       | .para _ | .lines _ | .center _ | .ragged .. | .spaced .. | .link .. | .onSteps .. | .only ..
       | .section .. | .titled .. | .disclosure .. | .equation .. | .verbatim .. | .algorithm ..
       | .columns _ | .altSteps .. | .note _ | .nav .. | .logo _ | .pagebreak | .frame ..
       | .framefoot _ | .setPalette _ | .setTokens _ | .rule .. | .picture _ | .table .. | .float ..
-      | .bibliography .. | .contents .. => (acc, (depth, false))
+      | .bibliography .. | .contents .. => (acc, (depth, false, t, par))
     closeBlock := fun _ acc _ => acc
     openInline := fun c acc _ => (acc, c)
     closeInline := fun _ acc _ => acc }
   let rank (c : NestedClose) : Nat :=
     (8 * c.level + (if c.outer != {} then 4 else 0)) * 64 + min 63 c.spine.length
-  ((Ir.foldCtxBlocks walk (0, false) (#[], {}) body).1.toList.zipIdx.mergeSort fun a b =>
+  ((Ir.foldCtxBlocks walk (0, false, top, 0) (#[], {}) body).1.toList.zipIdx.mergeSort fun a b =>
     rank a.1 < rank b.1 || (rank a.1 == rank b.1 && a.2 ≤ b.2)).map (·.1)
 
 /-- The rules of a page's nested closes: the larger of a spine's skip and the item skip before the
@@ -1410,11 +1415,8 @@ public def nestedCloseRules (l : Ir.ListLineage) (size ex : Int) (tokens : Ir.To
     if c.parent == .triv then
       -- a trivlist's `\endtrivlist` keeps the larger of the skip it closes on and its own
       let pre := String.join (List.replicate c.level itemAncestor)
-      let t := if c.level == 0 then Ir.TrivIn.top l tokens size else
-        ((Ir.listSpacing l size c.level tokens {}).map fun (sk, pts) =>
-          spineTrivIn l .none size tokens c.level sk pts).getD (Ir.TrivIn.top l tokens size)
-      let own := milliRem (screenMilli size (listSkipSp size ex (t.add !c.outerInPar)))
-      let close := s!"max({milliRem (screenMilli size c.close)}, {own})"
+      let close :=
+        s!"max({milliRem (screenMilli size c.close)}, {milliRem (screenMilli size c.own)})"
       let par := if l.trivTexParskip then "var(--parskip, 0rem)" else peerGap
       ownsBelow [pre ++ s!".{roleClass Ir.trivlistRole}" ++ opened c.outerInPar ++
           s!":has(> {chain c.spine})"] s!"calc({close} + {par})" close (some par)
@@ -1532,14 +1534,22 @@ public def thmRules (l : Ir.ListLineage) (size : Int) : List GapRule :=
         ownsBelow [c] (listSpace below) (milliRem below) texParskip
     | none => .boundary s!"* + {c}" trivlistGap :: ownsBelow [c] trivlistGap trivlistOwn
 
-/-- A theorem-like block opening right after a trivlist, in vertical mode, keeps its own space
-above it. -/
+/-- A theorem-like block opening right after a trivlist, in vertical mode: the larger of the
+trivlist's close and the theorem's own space above. -/
 public def thmAfterTrivRules (l : Ir.ListLineage) (size : Int) : List GapRule :=
+  let top := Ir.TrivIn.top l {} size
+  let rem (g : SymGlue) : String := milliRem (screenMilli size g.width.sp)
+  let topsep := s!"var(--{Ir.trivlistSkipName}, {rem top.topsep})"
+  let vertical := s!"calc({topsep} + var(--partopsep, {rem top.partopsep}))"
+  let triv := "." ++ roleClass Ir.trivlistRole
+  let inPar := "." ++ roleClass Ir.inParagraphRole
   Ir.ThmSpace.all.flatMap fun k => match Ir.thmSkips l size 1 {} k true with
     | some sk =>
-      let above := screenMilli size sk.above.width.sp
-      [.boundary s!".{roleClass Ir.trivlistRole} + .{roleClass (Ir.thmSpaceRole k)}"
-        (if sk.parskipAbove then listSpace above else milliRem above)]
+      let m := screenMilli size sk.above.width.sp
+      let above := if sk.parskipAbove then listSpace m else milliRem m
+      let thm := "." ++ roleClass (Ir.thmSpaceRole k)
+      [.boundary s!"{triv}:not({inPar}) + {thm}" s!"max({vertical}, {above})",
+       .boundary s!"{triv}{inPar} + {thm}" s!"max({topsep}, {above})"]
     | none => []
 
 /-- The resets: every block element's own vertical margins. -/
@@ -1573,10 +1583,13 @@ private def labelHolder : String := s!":is(li, dd, blockquote, .{roleClass Ir.tr
 private def labelOpener : String :=
   s!":is(.{roleClass Ir.trivlistRole}, {", ".intercalate listElems})"
 
-/-- A block standing in its holder's label: its first, or past a label anchor or a skip. -/
+/-- What stands before a block opening its holder's label and sets no line: a label anchor, a
+skip, or the empty paragraph a description label alone leaves. -/
+private def labelPassed : String := s!":is(span, .{skipClass}, p:empty):first-child"
+
+/-- A block standing in its holder's label: its first, or past what `labelPassed` matches. -/
 private def labelledSels : List String :=
-  [s!"{labelHolder} > {labelOpener}:first-child",
-   s!"{labelHolder} > :is(span, .{skipClass}):first-child + {labelOpener}"]
+  [s!"{labelHolder} > {labelOpener}:first-child", s!"{labelHolder} > {labelPassed} + {labelOpener}"]
 
 /-- A trivlist's boundaries as `Ir.TrivIn` spends them under the `\parskip` in force, and none where
 it or a list opens its holder's label (`\@noparlist`), its follower taking the peer gap. -/
@@ -1593,7 +1606,7 @@ public def trivRules (l : Ir.ListLineage) (size ex : Int) : List GapRule :=
   ownsBelow labelledSels s!"calc(0rem + {peerGap})" "0rem" (some peerGap) ++
   [.boundary s!"* + {triv}" s!"calc({vertical} + {par})",
    .boundary s!"* + {triv}{inPar}" s!"calc({topsep} + {par})",
-   .boundary s!"{labelHolder} > :is(span, .{skipClass}):first-child + {labelOpener}" "0"]
+   .boundary s!"{labelHolder} > {labelPassed} + {labelOpener}" "0"]
 
 /-- `trivPairRules`' selectors and values. -/
 private def trivPairBounds (l : Ir.ListLineage) (size ex : Int) (tokens : Ir.Tokens)
