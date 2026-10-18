@@ -9362,6 +9362,9 @@ public structure Spacing.Paragraph where
   private texBox : Option TexBox := none
   /-- The paragraph follows a heading, which no page break may end (latex.ltx `\@afterheading`). -/
   private afterHead : Bool := false
+  /-- The lines are a listing's, each its own paragraph in TeX's verbatim, so none is a club or
+  widow. -/
+  private literal : Bool := false
 
 private abbrev ParaJob := Spacing.Paragraph
 
@@ -10276,6 +10279,7 @@ private def collectPara (r : Rd) (a : Acc)
       leaf := leaf
       keepNext := keepNext
       afterHead := afterHead
+      literal := literalLines
       display := dispJob
       rowStrut := rowStrut
       background := background
@@ -15030,12 +15034,6 @@ private def placeParaWith (fs : FontSet) (b : B) (j : ParaJob) (breaks turns : A
   (breaks.foldl (placeParaTurning fs (placedJob fs b j breaks) turns)
     (paragraphStart b j breaks)).1
 
-/-- TeX's badness of glue with stretch `s` set `t` past its natural size (tex.web §108). -/
-public def texBadness (t s : Sp) : Nat :=
-  if t ≤ 0 then 0 else if s ≤ 0 then 10000 else
-  let r := if t ≤ 7230584 then t * 297 / s else if 1663497 ≤ s then t / (s / 297) else t
-  if 1290 < r then 10000 else ((r * r * r + 131072) / 262144).toNat
-
 /-- What TeX's page builder reads where a page could end before a paragraph's line: the room below
 the line above, the glue's stretch, shrink and fills above it, and the pages already shipped. -/
 private structure TurnRoom where
@@ -15054,9 +15052,9 @@ private def Spacing.Page.turnRoom (b : B) : TurnRoom :=
 penalty, the deplorable cost past infinite badness, and `none` where no break stands. -/
 private def TurnRoom.cost (r : TurnRoom) (pen : Int) : Option Int :=
   if 10000 ≤ pen then none else
-  let bad : Option Nat := if 0 < r.fils then some 0
-    else if 0 ≤ r.room then some (texBadness r.room r.stretch)
-    else if -r.room ≤ r.shrink then some (texBadness (-r.room) r.shrink) else none
+  let bad : Option Nat := if 0 < r.fils || r.room == 0 then some 0
+    else if 0 < r.room then some (badness r.room r.stretch)
+    else if -r.room ≤ r.shrink then some (badness (-r.room) r.shrink) else none
   bad.map fun v => if v < 10000 then (v : Int) + pen else 100000
 
 /-- The penalty of a page turn before line `k` of a paragraph broken at `breaks`: the club's after
@@ -15120,10 +15118,10 @@ private def keptTurns (fs : FontSet) (b : B) (j : ParaJob) (breaks : Array Nat) 
   return turns
 
 /-- Whether widow and club control reads a paragraph: lines of a flow, not a heading's, a display's,
-a table row's or a float's. -/
+a table row's, a float's or a listing's. -/
 private def turnsRead (b : B) (j : ParaJob) (breaks : Array Nat) : Bool :=
   b.frameBreak.isNone && !b.noBreak && j.display.isNone && j.keepNext ≤ 0 && j.rowStrut.isNone &&
-    !j.inFloat && 2 ≤ breaks.size
+    !j.inFloat && !j.literal && 2 ≤ breaks.size
 
 private def placePara (fs : FontSet) (b : B) (j : ParaJob) (breaks : Array Nat) : B :=
   let plain := placeParaWith fs b j breaks #[]

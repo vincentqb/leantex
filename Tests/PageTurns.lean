@@ -55,8 +55,5 @@ def checks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   t "page turns: a preamble's \\widowpenalty assignment ships, read as the page's penalty"
     (ds.all (fun d => d.kind != .E0313 && d.kind != .W0301) && doc.page.penalties.widow == 10000 &&
       doc.page.penalties.club == 150)
-  t "page turns: TeX's badness of 12pt set on 6pt of stretch is 800, on none infinite"
-    (Layout.texBadness (Dim.pt 12) (Dim.pt 6) == 800 && Layout.texBadness (Dim.pt 12) 0 == 10000 &&
-      Layout.texBadness 0 0 == 0)
 
 end Tests.PageTurns

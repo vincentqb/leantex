@@ -48,6 +48,7 @@ import Tests.Redefine
 import Tests.NestedLedgers
 import Tests.DeclaredLadder
 import Tests.PageOverrun
+import Tests.PageTurns
 import Tests.ParamCensus
 import Tests.ParamCensusDecl
 import Tests.DeclSettings
@@ -2147,7 +2148,14 @@ def reports : List Report := [
     accept := ["main's binary at 6095f103 on invented probes: a declared colour in an unknown command's option, an unsupported package's option and a colour theme package's option each drew W0449, a refused bold redefinition after a conditional one said the built-in stands while the page set the conditional one's underline, E0403 and the floats' W0110 printed no site, a white ink in a yellow box was placed at an earlier white box ground, a page colour inside bold text drew W0301 naming ' pagecolor yellow' and left page 1 white, and a palette alert on a black box was dropped from the more-contrast light scheme on 'bg'; this tree answers each",
       "lualatex 1.24 on invented articles: a page colour inside bold text grounds page 1 yellow, a reset inside emphasis leaves page 2 white, one inside a framed box grounds page 3 blue, and one inside bold text at the head of a paragraph running over three pages grounds all three; this tree sets the same grounds",
       "the corpus built by main's binary at 03c2ff1d and by this tree's: every PDF and web page byte-identical but the trio page's and deck's, whose enquiries line now stands sep below what precedes it so that neither accepts W0104 whole; the diagnostics differ only in theme-modern, whose token 'large' only a bullet's prose spells, now named"]
-    state := .guarded "6095f103" .before .author }
+    state := .guarded "6095f103" .before .author },
+  { id := "R238", date := "2026-10-18"
+    what := "the paginator turned a page where the next line no longer fitted, so a paragraph's first line stood alone at a page's foot and its last alone at the next page's head whatever the page held to stretch, where TeX's page builder ends the page at the least cost, its badness and LaTeX's club, widow and broken penalties; and a widow penalty of 10000 assigned in the preamble stopped the build, one in the body printing its value"
+    pins := [check% Tests.PageTurns.checks]
+    accept := ["lualatex on invented probes: a nine-line paragraph after a 518pt rule on an article page keeps its first line alone at the page's foot with no stretch above it, and with 40pt of stretch above the rule moves whole to the next page; this tree sets the same at its own page height, a page with no stretch keeping its club or widow as TeX does",
+      "the guards' documents built by main's binary at 03c2ff1d: with 40pt of stretch on the page a club stands alone at its foot, and the preamble's widow penalty of 10000 stops the build (E0313); built here, the club moves with its paragraph and the declaration is read as the page's penalty",
+      "the corpus built by the trivlist-spacing tip's binary at 5c49de7c, this branch's parent, and by this tree's: every artifact byte-identical"]
+    state := .guarded "03c2ff1d" .before .author }
 ]
 
 /-- The reports guarded but never seen failing, a count held in both directions. -/
