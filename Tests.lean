@@ -245,6 +245,7 @@ import Tests.RoleShaping
 import Tests.MacroHookScope
 import Tests.MacroDelimiterScope
 import Tests.PackageOptions
+import Tests.InertProbes
 import Tests.BoxRow
 import Tests.RecipeStructure
 import Tests.PdfDestination
@@ -1055,9 +1056,10 @@ def coveredStepsChecks (ref : IO.Ref (List String)) : IO Unit := do
   Tests.CoveredSteps.dimPathChecks ref
   Tests.CoveredSteps.pauseScopeChecks ref
 
-/-- The world premises' blocks: the runtime's process boundary, the toolchain's spawners, and the
-registry held to the source. -/
+/-- The world premises' blocks: the inert rows' probes, the runtime's process boundary, the
+toolchain's spawners, and the registry held to the source. -/
 def worldPremiseChecks (ref : IO.Ref (List String)) : IO Unit := do
+  Tests.inertProbeChecks ref
   Tests.processRuntimeChecks ref
   toolchainSpawnChecks ref
   premiseChecks ref

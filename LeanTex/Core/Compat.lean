@@ -61,60 +61,90 @@ public def fontencEncodings : List String :=
   ["TU", "T1", "OT1", "OT2", "OT3", "OT4", "OT6", "LY1", "TS1", "TS3", "T2A", "T2B", "T2C", "X2",
    "T3", "T4", "T5", "T7", "LGR", "OML", "OMS", "OMX", "U", "L7x", "IL2", "QX", "LCY"]
 
+/-- What an inert setting's note stands on, and so what can falsify it. -/
+public inductive InertPremise where
+  /-- LaTeX's page with the setting is its page without it, which a lualatex probe of both
+  falsifies. -/
+  | asWithout
+  /-- The engine's page is what the setting asks whatever the document says, its census row
+  falsifying that. -/
+  | engineSets
+  /-- The setting reaches only TeX's run, its log or its output driver, which no artifact carries. -/
+  | texRun
+  deriving DecidableEq, Repr, Inhabited
+
+/-- An inert setting's note: why the page is the same without it, and the premise that stands on. -/
+public structure Inert where
+  why : String
+  premise : InertPremise
+  deriving Repr, Inhabited
+
+public def Inert.asWithout (why : String) : Inert := ⟨why, .asWithout⟩
+
+public def Inert.engineSets (why : String) : Inert := ⟨why, .engineSets⟩
+
+public def Inert.texRun (why : String) : Inert := ⟨why, .texRun⟩
+
+/-- The note of a driver option, which the engine's own output replaces. -/
+public def Inert.driver : Inert := .texRun "the engine writes its own output"
+
+/-- The note of a log option, which the engine writes none of. -/
+public def Inert.log : Inert := .texRun "the engine writes no TeX log"
+
 /-- Options of a native package without an option reader of its own that configure machinery the
 engine runs as they ask, each with why; every other such option is a setting nothing reads. -/
-public def packageOptionsInert : List (String × List (String × String)) :=
-  let drivers (why : String) : List (String × String) :=
-    ["dvips", "dvipdfm", "dvipdfmx", "dvisvgm", "pdftex", "luatex", "xetex"].map (·, why)
-  [("inputenc", ["utf8", "utf8x", "ascii"].map (·, "the input is read as UTF-8")),
-   ("fontenc", fontencEncodings.map (·, "text is set from Unicode faces, whatever encoding is named")),
-   ("csquotes", [("autostyle", "quotes follow the language in force, as the option asks"),
-     ("autostyle=true", "quotes follow the language in force, as the option asks"),
-     ("autostyle=try", "quotes follow the language in force, as the option asks"),
-     ("german=quotes", "German quotes are set as „…“, the style the option names"),
-     ("english=american", "English quotes take their American form, as without the option")]),
-   ("babel", [("shorthands=off", "the engine reads no shorthand characters, as the option asks")]),
-   ("parskip", [("indent=0pt", "paragraphs are set flush, as without the option")]),
-   ("graphicx", ("final", "images are drawn, as without the option") ::
-     drivers "the engine writes its own output"),
-   ("xcolor", [("natural", "colours ship in the model they are declared in"),
-     ("hyperref", "link colours are read from hyperref's own keys"),
-     ("usenames", "the option has had no effect since xcolor 2.11")] ++
-     drivers "the engine writes its own output"),
-   ("color", ("usenames", "the option has no effect") :: drivers "the engine writes its own output"),
-   ("amsmath", [("reqno", "equation numbers stand on the right, as without the option"),
-     ("sumlimits", "a sum's limits stand above and below it, as without the option"),
-     ("namelimits", "an operator name's limits stand below it, as without the option"),
-     ("nointlimits", "an integral's limits stand beside it, as without the option"),
-     ("centertags", "a split equation's number is centred on it, as without the option")]),
-   ("amssymb", [("psamsfonts", "the symbols are set from the math face")]),
-   ("amsfonts", [("psamsfonts", "the symbols are set from the math face")]),
-   ("url", [("hyphens", "a URL breaks after its hyphens here")]),
-   ("xurl", [("hyphens", "a URL breaks after its hyphens here")]),
-   ("fontspec", [("quiet", "the engine writes no TeX log"),
-     ("no-math", "the math faces stand as declared, as the option asks")]),
-   ("cleveref", [("english", "references are named in English, as without the option")]),
-   ("siunitx", [("output-decimal-marker=.", "the decimal marker is a point, as without the option"),
-     ("output-decimal-marker={.}", "the decimal marker is a point, as without the option")]),
-   ("microtype", [("final", "the document is set in final mode, as without the option"),
-     ("draft", "the features stay on: only 'disable=ifdraft' reads the flag"),
-     ("disable=ifdraft", "the features stay on: the flag disables them only beside 'draft'"),
-     ("disable=false", "the features stay on, as without the option"),
-     ("activate", "the features stay on, as without the option"),
-     ("activate=true", "the features stay on, as without the option"),
-     ("activate=true,nocompatibility", "the features stay on, as without the option"),
-     ("tracking=false", "no letterspacing is set, as without the option"),
-     ("kerning=false", "no extra kerning is set, as without the option"),
-     ("spacing=false", "interword spaces stay as the face sets them, as without the option"),
-     ("verbose", "the engine writes no TeX log")]),
-   ("listings", [("final", "listings are set, as without the option")]),
-   ("minted", [("newfloat", "a listing float is set as without the option"),
-     ("cache=false", "the engine keeps no minted cache"),
-     ("finalizecache", "the engine keeps no minted cache"),
-     ("frozencache", "the engine keeps no minted cache"),
-     ("outputdir=*", "the engine writes no minted temporaries")]),
-   ("nicefrac", [("nice", "the fraction is set as without the option")]),
-   ("algorithm2e", [("english", "the keywords are English, as without the option")])]
+public def packageOptionsInert : List (String × List (String × Inert)) :=
+  let drivers : List (String × Inert) :=
+    ["dvips", "dvipdfm", "dvipdfmx", "dvisvgm", "pdftex", "luatex", "xetex"].map (·, .driver)
+  [("inputenc", ["utf8", "utf8x", "ascii"].map (·, .engineSets "the input is read as UTF-8")),
+   ("fontenc", fontencEncodings.map (·, .engineSets "text is set from Unicode faces, whatever encoding is named")),
+   ("csquotes", [("autostyle", .engineSets "quotes follow the language in force, as the option asks"),
+     ("autostyle=true", .engineSets "quotes follow the language in force, as the option asks"),
+     ("autostyle=try", .engineSets "quotes follow the language in force, as the option asks"),
+     ("german=quotes", .engineSets "German quotes are set as „…“, the style the option names"),
+     ("english=american", .asWithout "English quotes take their American form, as without the option")]),
+   ("babel", [("shorthands=off", .engineSets "the engine reads no shorthand characters, as the option asks")]),
+   ("parskip", [("indent=0pt", .asWithout "paragraphs are set flush, as without the option")]),
+   ("graphicx", ("final", .asWithout "images are drawn, as without the option") ::
+     drivers),
+   ("xcolor", [("natural", .engineSets "colours ship in the model they are declared in"),
+     ("hyperref", .engineSets "link colours are read from hyperref's own keys"),
+     ("usenames", .asWithout "the option has had no effect since xcolor 2.11")] ++
+     drivers),
+   ("color", ("usenames", .asWithout "the option has no effect") :: drivers),
+   ("amsmath", [("reqno", .asWithout "equation numbers stand on the right, as without the option"),
+     ("sumlimits", .asWithout "a sum's limits stand above and below it, as without the option"),
+     ("namelimits", .asWithout "an operator name's limits stand below it, as without the option"),
+     ("nointlimits", .asWithout "an integral's limits stand beside it, as without the option"),
+     ("centertags", .asWithout "a split equation's number is centred on it, as without the option")]),
+   ("amssymb", [("psamsfonts", .engineSets "the symbols are set from the math face")]),
+   ("amsfonts", [("psamsfonts", .engineSets "the symbols are set from the math face")]),
+   ("url", [("hyphens", .engineSets "a URL breaks after its hyphens here")]),
+   ("xurl", [("hyphens", .engineSets "a URL breaks after its hyphens here")]),
+   ("fontspec", [("quiet", .texRun "the engine writes no TeX log"),
+     ("no-math", .engineSets "the math faces stand as declared, as the option asks")]),
+   ("cleveref", [("english", .asWithout "references are named in English, as without the option")]),
+   ("siunitx", [("output-decimal-marker=.", .asWithout "the decimal marker is a point, as without the option"),
+     ("output-decimal-marker={.}", .asWithout "the decimal marker is a point, as without the option")]),
+   ("microtype", [("final", .asWithout "the document is set in final mode, as without the option"),
+     ("draft", .engineSets "the features stay on: only 'disable=ifdraft' reads the flag"),
+     ("disable=ifdraft", .engineSets "the features stay on: the flag disables them only beside 'draft'"),
+     ("disable=false", .asWithout "the features stay on, as without the option"),
+     ("activate", .asWithout "the features stay on, as without the option"),
+     ("activate=true", .asWithout "the features stay on, as without the option"),
+     ("activate=true,nocompatibility", .asWithout "the features stay on, as without the option"),
+     ("tracking=false", .asWithout "no letterspacing is set, as without the option"),
+     ("kerning=false", .asWithout "no extra kerning is set, as without the option"),
+     ("spacing=false", .asWithout "interword spaces stay as the face sets them, as without the option"),
+     ("verbose", .texRun "the engine writes no TeX log")]),
+   ("listings", [("final", .asWithout "listings are set, as without the option")]),
+   ("minted", [("newfloat", .asWithout "a listing float is set as without the option"),
+     ("cache=false", .texRun "the engine keeps no minted cache"),
+     ("finalizecache", .texRun "the engine keeps no minted cache"),
+     ("frozencache", .texRun "the engine keeps no minted cache"),
+     ("outputdir=*", .texRun "the engine writes no minted temporaries")]),
+   ("nicefrac", [("nice", .asWithout "the fraction is set as without the option")]),
+   ("algorithm2e", [("english", .asWithout "the keywords are English, as without the option")])]
 
 /-- Beamer's colour elements, each mapped onto the palette roles its `fg=` and
 `bg=` declare; an empty role is a side the engine names rather than drops. -/
@@ -1292,8 +1322,8 @@ private def setlistElement (kind : String) : Option Nat → String
 private def bracketed (s : String) : String := if s.isEmpty then "" else s!"[{s}]"
 
 /-- A declared setting the engine's own machinery already answers, named in its note. -/
-private def inertParam (reader name what why : String) (pos : Pos) : M Unit :=
-  became what s!"nothing: {why}" pos (subject := some (paramSubject reader name))
+private def inertParam (reader name what : String) (inert : Inert) (pos : Pos) : M Unit :=
+  became what s!"nothing: {inert.why}" pos (subject := some (paramSubject reader name))
 
 /-- The preamble proper: outside the document environment, a `\begin{document}`
 hook's replay, and every brace group of the walk. -/
@@ -2307,7 +2337,7 @@ private def linenoLoad (opt : String) (pos : Pos) : M (Array Raw) := do
   for o in KeyVal.items opt do
     if linenoInert.contains o then
       inertParam "usepackage:lineno" o s!"\\usepackage[{o}]\{lineno}"
-        "where line numbers are on, every galley line, display math's too, is numbered in the left margin, running on" pos
+        (.engineSets "where line numbers are on, every galley line, display math's too, is numbered in the left margin, running on") pos
     else if let some native := linenoNatives.lookup o then
       out := out ++ (← setting s!"\\usepackage[{o}]\{lineno}" native pos
         (subject := some (paramSubject "usepackage:lineno" o)))
@@ -2444,7 +2474,7 @@ private def biblatexLoad (name opt : String) (pos : Pos) : M Unit := do
 to its entry," pos
     else if biblatexInert.contains k then
       inertParam "usepackage:biblatex" k s!"\\{name}[{k}={v}]\{biblatex}"
-        "the engine reads the bibliography and sets its citations itself" pos
+        (.engineSets "the engine reads the bibliography and sets its citations itself") pos
   for (k, v) in dropped do
     unreadParam "usepackage:biblatex" k
       s!"'biblatex' option '{if v == "true" then k else s!"{k}={v}"}'" pos
@@ -6356,9 +6386,9 @@ public def driverOptions : List String :=
 public def cropModes : List (String × Bool) := [("cam", true), ("off", false)]
 
 /-- crop's options the engine's marks already answer, each with why. -/
-public def cropInert : List (String × String) :=
-  [("noaxes", "the cut marks stand without axis marks, as drawn")] ++
-    driverOptions.map (·, "the engine writes its own output")
+public def cropInert : List (String × Inert) :=
+  [("noaxes", .engineSets "the cut marks stand without axis marks, as drawn")] ++
+    driverOptions.map (·, .driver)
 
 /-- The geometry keys read as the `\page` key of the same name. -/
 public def geometryPageKeys : List Native.PageKey :=
@@ -6473,8 +6503,8 @@ private def geometry (opts : Array Raw) (pos : Pos)
         if f != "nohead" then keys := keys.push (.footskip, "0pt", #[e])
       -- premise: driverOptionChecks — a driver option ships the page without it
       else if driverOptions.contains f then
-        inertParam "geometry" f spelling "the engine writes its own output" pos
-      else if f == "verbose" then inertParam "geometry" f spelling "the engine writes no TeX log" pos
+        inertParam "geometry" f spelling .driver pos
+      else if f == "verbose" then inertParam "geometry" f spelling .log pos
       -- geometry's `vcentering` and `centering` are a vertical ratio of 1:1 (manual §5.2).
       else if f == "vcentering" || f == "centering" then
         vb := { vb with ratio := some (f, "1:1") }
@@ -6488,8 +6518,8 @@ private def geometry (opts : Array Raw) (pos : Pos)
       let v := rawSrc vr
       -- premise: driverOptionChecks — a driver option ships the page without it
       if driverOptions.contains k then
-        inertParam "geometry" k spelling "the engine writes its own output" pos
-      else if k == "verbose" then inertParam "geometry" k spelling "the engine writes no TeX log" pos
+        inertParam "geometry" k spelling .driver pos
+      else if k == "verbose" then inertParam "geometry" k spelling .log pos
       else if v.startsWith "\\dimexpr" then
         droppedExpr := droppedExpr.push s!"{k0} = {v}"
       else
@@ -6533,7 +6563,7 @@ private def geometry (opts : Array Raw) (pos : Pos)
           keys := keys.push (key, a, #[e])
         else if k == "headheight" then
           inertParam "geometry" k spelling
-            "the running head takes its content's height, and the text block stays where the margins put it" pos
+            (.engineSets "the running head takes its content's height, and the text block stays where the margins put it") pos
         else dropped := dropped.push k
   -- Equal left and right margins are the symmetric margin; an unequal or lone side stays named.
   match hl, hr with
@@ -6568,7 +6598,7 @@ private def geometry (opts : Array Raw) (pos : Pos)
     if let some (k, r) := vb.ratio then
       if alone then ratio := some r
       else if let some k := mine (some (k, r)) then
-        let why := "the margins place the text block, so a ratio splits nothing"
+        let why := Inert.asWithout "the margins place the text block, so a ratio splits nothing"
         if placed then inertParam "geometry" k spelling why pos
         else dropped := dropped.push k
     let spelled (x : Option (String × String)) : Option String := if placed then x.map (·.2) else none
@@ -6823,28 +6853,28 @@ private structure HyperrefRead where
 
 /-- hyperref's settings, spelled `key` or `key=value`, whose meaning the engine's own output already
 carries, each with why. -/
-public def hyperrefInert : List (String × String) :=
-  let either (k why : String) : List (String × String) := [(k, why), (k ++ "=true", why)]
-  let any (k why : String) : List (String × String) :=
+public def hyperrefInert : List (String × Inert) :=
+  let either (k : String) (why : Inert) : List (String × Inert) := [(k, why), (k ++ "=true", why)]
+  let any (k : String) (why : Inert) : List (String × Inert) :=
     [(k, why), (k ++ "=true", why), (k ++ "=false", why)]
-  either "unicode" "the PDF's text strings are Unicode" ++
-  either "final" "links are written, as without the option" ++
-  either "breaklinks" "a link's text breaks across lines as other text does" ++
-  either "pdfusetitle" "the title and author fall back to the document's own" ++
-  either "pdfdisplaydoctitle" "the viewer shows the document's title" ++
-  any "hypertexnames" "anchors are named by the engine" ++
-  any "naturalnames" "anchors are named by the engine" ++
-  any "plainpages" "anchors are named by the engine" ++
-  either "pageanchor" "hyperref's default, as without the option" ++
+  either "unicode" (.asWithout "the PDF's text strings are Unicode, as without the option") ++
+  either "final" (.asWithout "links are written, as without the option") ++
+  either "breaklinks" (.engineSets "a link's text breaks across lines as other text does") ++
+  either "pdfusetitle" (.engineSets "the title and author fall back to the document's own") ++
+  either "pdfdisplaydoctitle" (.engineSets "the viewer shows the document's title") ++
+  any "hypertexnames" (.engineSets "anchors are named by the engine") ++
+  any "naturalnames" (.engineSets "anchors are named by the engine") ++
+  any "plainpages" (.engineSets "anchors are named by the engine") ++
+  either "pageanchor" (.asWithout "hyperref's default, as without the option") ++
   ["dvips", "dvipdfm", "dvipdfmx", "dvisvgm", "pdftex", "luatex", "xetex", "hypertex", "vtex"].map
-    (·, "the engine writes its own output") ++
-  [("verbose", "the engine writes no TeX log"), ("debug", "the engine writes no TeX log"),
-   ("pdfborder=0 0 0", "links are written without a border"),
-   ("pdfencoding=auto", "text strings are written in PDFDocEncoding where it holds them and in \
+    (·, .driver) ++
+  [("verbose", .log), ("debug", .log),
+   ("pdfborder=0 0 0", .engineSets "links are written without a border"),
+   ("pdfencoding=auto", .engineSets "text strings are written in PDFDocEncoding where it holds them and in \
 UTF-16 otherwise, as the option asks"),
-   ("pdfencoding=unicode", "text strings read as the same Unicode text in either encoding"),
-   ("hyperfootnotes=false", "a footnote mark carries no link here, as the option asks"),
-   ("pdfpagelabels=false", "the PDF carries no page labels, as the option asks")]
+   ("pdfencoding=unicode", .engineSets "text strings read as the same Unicode text in either encoding"),
+   ("hyperfootnotes=false", .engineSets "a footnote mark carries no link here, as the option asks"),
+   ("pdfpagelabels=false", .engineSets "the PDF carries no page labels, as the option asks")]
 
 /-- hyperref's keys, as `\hypersetup` and the package options give them, with its link keys
 written into the setup. -/
@@ -9040,7 +9070,7 @@ defines; those blocks keep beamer's default template" pos
         -- premise: defaultTemplateChecks — an unthemed deck draws each such default already
         if name.trimAscii.toString == "default" && (← get).beamerTheme.isEmpty then
           inertParam "\\setbeamertemplate" element s!"\\setbeamertemplate\{{element}}[default]"
-            "beamer's default, which an unthemed deck draws already" pos
+            (.asWithout "beamer's default, which an unthemed deck draws already") pos
           return some (#[], predefinedEnd raws k)
         unreadParam "\\setbeamertemplate" element
           s!"'\\setbeamertemplate\{{element}}[{name.trimAscii.toString}]' predefined template" pos
@@ -9075,7 +9105,7 @@ defines; those blocks keep beamer's default template" pos
         if name.trimAscii.toString == "default" && (← get).beamerTheme.isEmpty &&
             defaultTemplates.contains element then
           inertParam "\\setbeamertemplate" element s!"\\setbeamertemplate\{{element}}[default]"
-            "beamer's default, which an unthemed deck draws already" pos
+            (.asWithout "beamer's default, which an unthemed deck draws already") pos
           return some (#[], predefinedEnd raws j)
         unreadParam "\\setbeamertemplate" element
           s!"'\\setbeamertemplate\{{element}}[{name.trimAscii.toString}]' predefined template" pos
@@ -9148,7 +9178,7 @@ the built-in title page stands" pos
         if name.trimAscii.toString == "default" && (← get).beamerTheme.isEmpty &&
             defaultTemplates.contains element then
           inertParam "\\setbeamertemplate" element s!"\\setbeamertemplate\{{element}}[default]"
-            "beamer's default, which an unthemed deck draws already" pos
+            (.asWithout "beamer's default, which an unthemed deck draws already") pos
           return some (#[], predefinedEnd raws j)
         unreadParam "\\setbeamertemplate" element
           s!"'\\setbeamertemplate\{{element}}[{name.trimAscii.toString}]' predefined template" pos
@@ -9161,10 +9191,10 @@ the built-in title page stands" pos
       -- premise: emptyTemplateMeasuredChecks — each noted template is measured empty, or never drawn
       if emptyBody && element == "navigation symbols" then
         inertParam "\\setbeamertemplate" element s!"\\setbeamertemplate\{{element}}\{}"
-          "the engine draws no navigation symbols" pos
+          (.engineSets "the engine draws no navigation symbols") pos
       else if emptyBody && emptyTemplates.contains element then
         inertParam "\\setbeamertemplate" element s!"\\setbeamertemplate\{{element}}\{}"
-          s!"beamer's default {element} is empty, and the engine draws none" pos
+          (.asWithout s!"beamer's default {element} is empty, and the engine draws none") pos
       else if (rawSrc (bodyArgs.getD 0 #[])).trimAscii.toString.isEmpty then
         sayOnce ("param:\\setbeamertemplate:" ++ element) .W0104
           s!"'\\setbeamertemplate\{{element}}' is beamer configuration the engine does not have; \
@@ -9397,10 +9427,10 @@ private def rewritePackageBody (name p : String) (opt : Option String) (optRaws 
       if main? != some k then
         if (Locale.forTag (Locale.babelTagOf k)).isSome then
           inertParam "usepackage:babel" k s!"\\{name}[{k}]\{babel}"
-            "the body may select the language, whose locale the engine ships" pos
+            (.engineSets "the body may select the language, whose locale the engine ships") pos
         else
           inertParam "usepackage:babel" k s!"\\{name}[{k}]\{babel}"
-            "the body may select the language, and where it does that site names the locale it lacks" pos
+            (.engineSets "the body may select the language, and where it does that site names the locale it lacks") pos
     out := out ++ (← packageOptions name p (given.filter fun o =>
       match KeyVal.entry o with
       | ("main", some _) => false
@@ -9739,10 +9769,10 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
       -- premise: classRow — the engine sets every page one-sided
       for kv in keptItems.filter (oneSidedOf cls) do
         inertParam "documentclass" (KeyVal.entry kv).1 s!"\\documentclass[{kv}]\{{cls}}"
-          "the page is set one-sided, as the engine sets every page" pos
+          (.engineSets "the page is set one-sided, as the engine sets every page") pos
       for kv in keptItems.filter memoirTitle do
         inertParam "documentclass" kv s!"\\documentclass[{kv}]\{memoir}"
-          "memoir sets its title and abstract as without the option" pos
+          (.asWithout "memoir sets its title and abstract as without the option") pos
       -- KOMA's `parskip` is read here; a two-sided chapter class's `openright` is named where a
       -- chapter opens.
       let rightNamed := (← get).chaptersRight
@@ -9779,7 +9809,7 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
       -- premise: classRow — the engine sets every page one-sided
       for kv in keptItems.filter (oneSidedOf cls) do
         inertParam "documentclass" (KeyVal.entry kv).1 s!"\\documentclass[{kv}]\{{cls}}"
-          "the page is set one-sided, as the engine sets every page" pos
+          (.engineSets "the page is set one-sided, as the engine sets every page") pos
       -- KOMA-Script's `titlepage=true` is read by the title page, and its two sides mirror margins
       -- the engine does not, its page counter left alone.
       let twoSided (kv : String) : Bool :=
@@ -10800,7 +10830,7 @@ and 'transparent=<n>' are understood")
       -- premise: komaOptionsRow — KOMA-Script draws neither separation rule unless asked
       if satisfied e then
         inertParam "KOMAoptions" (KeyVal.entry e).1 s!"\\KOMAoptions\{{e}}"
-          "no head or foot separation rule is drawn" c.pos
+          (.asWithout "no head or foot separation rule is drawn, as without the option") c.pos
       else unreadParam "KOMAoptions" (KeyVal.entry e).1 s!"'\\KOMAoptions' entry '{e}'" c.pos
     return #[]
   | .graphColor => do
@@ -15366,7 +15396,7 @@ private def textList (loc : Locale) (st : TextSt) (raws : Array Raw)
           -- premise: inlineDisplayChecks — lualatex sets inline code alike under each display key
           if mintedDisplayKeys.contains key then
             inertParam "\\setmintedinline" key s!"\\setmintedinline\{{e}}"
-              "it configures a display, and inline code reads none" pos
+              (.asWithout "it configures a display, and inline code reads none") pos
       let lang := lang.map (·.trimAscii.toString)
       let decl := (← declareDefault st n lang pos, entries)
       let layered (layer : Array (String × DefaultLayer)) (lang : String) :=

@@ -300,7 +300,7 @@ def registry : List Premise := [
   { name := "lualatex-reference", residue := .oracle "lualatex", reach := .oracle
     statement := "The committed parity references, the probes' measurements and the differentials' readings are what an unmodified TeX Live's lualatex, and luatex for hyphenation, produce from the synthetic sources, so they stand for LaTeX's own behaviour."
     sites := [("scripts/parity-regen.lean", "main"), ("scripts/cancel-diff.lean", "main"),
-      ("scripts/hyphen-diff.lean", "main")]
+      ("scripts/hyphen-diff.lean", "main"), ("scripts/inert-diff.lean", "main")]
     tools := ["lualatex", "luatex"]
     owed := some "Regenerate every parity reference on a second TeX Live installation and require none to move." },
   { name := "pdf-readers", residue := .oracle "PDF readers", reach := .oracle

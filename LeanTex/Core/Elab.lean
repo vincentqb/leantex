@@ -6699,25 +6699,27 @@ private def classPageDefaults (record : Ir.ClassRecord) (opts : List String)
     page := { page with hmargin := (page.width - w) / 2 }
   return page
 
-/-- Class options asking for what a page model's class already is, each with why. -/
-public def classOptionsInert : List (Ir.PageModel × List (String × String)) :=
-  let final := ("final", "the document is rendered in full, as without the option")
-  let opensNoPage := "the pages are one-sided, so a chapter opens wherever the next page falls, \
-as without the option"
-  [(.flow, [("oneside", "the page is one-sided, as without the option"),
-     ("twoside=false", "the page is one-sided, as without the option"),
-     ("onecolumn", "the text is set in one column, as without the option"),
+/-- Class options leaving a page model's page as it stands, each with why. -/
+public def classOptionsInert : List (Ir.PageModel × List (String × Compat.Inert)) :=
+  let final := ("final", Compat.Inert.asWithout "the document is rendered in full, as without the \
+option")
+  let opensNoPage := Compat.Inert.engineSets "the pages are one-sided, so a chapter opens wherever the \
+next page falls, as without the option"
+  [(.flow, [("oneside", .engineSets "the page is one-sided, as the engine sets every page"),
+     ("twoside=false", .engineSets "the page is one-sided, as the engine sets every page"),
+     ("onecolumn", .asWithout "the text is set in one column, as without the option"),
      final,
-     ("reqno", "equation numbers stand on the right, as without the option"),
+     ("reqno", .asWithout "equation numbers stand on the right, as without the option"),
      ("openany", opensNoPage), ("open=any", opensNoPage), ("headings=openany", opensNoPage),
      ("openright", opensNoPage),
-     ("titlepage=false", "the title opens the first page, as without the option"),
-     ("version=last", "the layout is KOMA-Script's current one, as without the option"),
-     ("footinclude=false", "the foot stands below the text block, as without the option")]),
-   (.frame, [final, ("c", "frames are centred vertically, as without the option"),
-     ("slidescentered", "frames are centred vertically, as without the option"),
-     ("unicode", "the PDF's text strings are Unicode, as without the option"),
-     ("presentation", "the slides are set for presenting, as without the option")]),
+     ("titlepage=false", .engineSets "the title opens the first page, as the engine sets it"),
+     ("version=last", .asWithout "the layout is KOMA-Script's current one, as without the option"),
+     ("footinclude=false",
+       .asWithout "the foot stands below the text block, as without the option")]),
+   (.frame, [final, ("c", .asWithout "frames are centred vertically, as without the option"),
+     ("slidescentered", .asWithout "frames are centred vertically, as without the option"),
+     ("unicode", .asWithout "the PDF's text strings are Unicode, as without the option"),
+     ("presentation", .asWithout "the slides are set for presenting, as without the option")]),
    (.face, [final])]
 
 /-- The bare class options each page model's readers read beside a body size and a paper size. -/
@@ -17476,7 +17478,7 @@ margins stand" none (subject := some (Compat.paramSubject "\\page" (if lost == "
     else if KeyVal.entry o matches ("draft", none) | ("draft", some "true") then
       classSay .W0104 key
         "class option 'draft' asks for a proofing mode the engine does not have; the document is rendered in full"
-    else if let some why := (classOptionsInert.lookup record.model).bind (·.lookup o) then
+    else if let some why := ((classOptionsInert.lookup record.model).bind (·.lookup o)).map (·.why) then
       classSay .N0100 key s!"'\\documentclass[{o}]' → nothing: {why}"
     else if (optionSkip o).isSome then
       if let some space := Ir.classParfill? (KeyVal.entry o).2 then
