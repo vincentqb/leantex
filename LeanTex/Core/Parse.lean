@@ -5,7 +5,7 @@ public import LeanTex.Core.Heading
 public import LeanTex.Core.ListingLang
 public import LeanTex.Core.CiteDecl
 import LeanTex.Core.Definer
-public import LeanTex.Core.KeyVal
+import LeanTex.Core.KeyVal
 
 namespace LeanTex.Core.Parse
 
@@ -25,7 +25,7 @@ public structure Verbatim where
   opts : Array ListingOpt
   /-- minted's language argument as written. -/
   lang : Option String
-  /-- The spelling the head took in the source. -/
+  /-- The source the head took, empty where a surface reader builds the head. -/
   head : String
   text : String
   deriving Repr, BEq, Inhabited
@@ -33,8 +33,21 @@ public structure Verbatim where
 /-- A capture with no head. -/
 @[expose] public def Verbatim.plain (text : String) : Verbatim := ⟨#[], none, "", text⟩
 
-/-- The capture as its source spells it. -/
+/-- The capture's source: its head's and its text's. -/
 @[expose] public def Verbatim.src (v : Verbatim) : String := v.head ++ v.text
+
+/-- An option as a listing's head spells it. -/
+@[expose] public def ListingOpt.spelling : ListingOpt → String
+  | .spelled item => item
+  | .language lang => "language=" ++ lang.val
+  | .breakLines => "breaklines"
+
+/-- The capture as TeX spells it: its source, or a surface reader's head spelled from its options
+and language. -/
+@[expose] public def Verbatim.spelling (v : Verbatim) : String :=
+  if !v.head.isEmpty then v.src else
+  (if v.opts.isEmpty then "" else "[" ++ ",".intercalate (v.opts.map (·.spelling)).toList ++ "]") ++
+    ((v.lang.map fun l => "{" ++ l ++ "}").getD "") ++ v.text
 
 /-- The option head of a listing environment's captured body: spaces and tabs,
 then `[...]` with nested braces. -/
@@ -762,7 +775,7 @@ mutual
     if n == scopeEnv then "{" ++ rawSrc body ++ (if endsCtrlSpace body.toList then " " else "") ++ "}"
     else s!"\\begin\{{n}}" ++ rawSrc body ++ s!"\\end\{{n}}"
   | .verb env v _ =>
-    let s := v.src
+    let s := v.spelling
     if env == "verb" then
       let d := (['|', '!', '+', '=', '/', '"', '@'].find? (fun c => !s.contains c)).getD '|'
       s!"\\verb{d}{s}{d}"

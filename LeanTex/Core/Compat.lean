@@ -1805,7 +1805,7 @@ private def bindRawArgsRaw (args : Array (Array Raw)) : Raw → Raw
   | .sym c p => .sym c p
   | .verb e v p =>
     if e == "mintinline" || e == "mint" || e == "lstinline" || Lex.urlCommands.contains e then
-      .verb e (.read e (bindMintedParams args v.src)) p
+      .verb e (.read e (bindMintedParams args v.spelling)) p
     else .verb e v p
 
 end

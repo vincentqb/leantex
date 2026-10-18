@@ -305,6 +305,27 @@ def mintedSettingsChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "listing heads: a default holding a bracket stands as one entry ahead of the listing's own"
     (same bracketed (dvDoc "" (code "tabsize=3" "text" simple)) &&
       !(elabStr bracketed).2.any (·.kind == .E0304))
+  let inline (pre lang : String) := docHtmlOf (elabStr (dvDoc pre
+    ("Text \\begin{lstlisting}[language=" ++ lang ++ "] echo x \\end{lstlisting} more."))).1
+  t "listing heads: an inline listing reads the last language its options stack, its own"
+    (inline "\\lstset{language=python}" "bash" == inline "" "bash" &&
+      inline "" "bash" != inline "" "python")
+  let boxed := elabStr (dvDoc "" "\\fbox{\\begin{verbatim}[x] y\\end{verbatim}}")
+  t "listing heads: an inline verbatim keeps a leading bracket as its text, an option of none"
+    (hasStr ((docHtmlOf boxed.1).replace "\u00a0" " ") "[x] y" && !boxed.2.any (·.kind == .W0110))
+  let braced := docHtmlOf (elabStr (dvDoc "\\newcommand\\py{\\mintinline{{python}}}"
+    "Call \\py{x = 1} and \\mintinline{{python}}{y = 2} here.")).1 |>.replace "\u00a0" " "
+  t "listing heads: a braced language group is the language argument whole, the code after it"
+    (hasStr braced "x = 1" && hasStr braced "y = 2" && !hasStr braced "{x = 1" &&
+      !hasStr braced "{y = 2")
+  let unequal := Highlight.Lexer.all.flatMap fun lx => lx.aliases.toList.filterMap fun a =>
+    let read (doc : Ir.Doc) := (firstListing doc).map fun s => (s.language, s.highlight)
+    let md := read (elabMd ("```" ++ a ++ "\nx = 1\n```\n")).1
+    let tex := read (elabStr (dvDoc ""
+      ("\\begin{lstlisting}[language=" ++ a ++ "]\nx = 1\n\\end{lstlisting}"))).1
+    if (Ir.listingLang? a).isNone || md == tex then none else some a
+  t s!"listing heads: every lexer alias a fence carries typed sets as its spelled head does {unequal}"
+    unequal.isEmpty
   let mdFence := firstListing (elabMd "```python\nx = 1\n```\n").1
   let texFence := firstListing (elabStr (dvDoc "" "\\begin{lstlisting}[language=python]\nx = 1\n\\end{lstlisting}")).1
   t "listing heads: a markdown fence's typed language is the language its spelled head names"
