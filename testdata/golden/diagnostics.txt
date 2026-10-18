@@ -428,6 +428,10 @@
   suggestion: \palette{ covered = <n>% } sets the covered share; 'invisible', 'transparent' and 'transparent=<n>' are understood
 ⚠ [W0104] - \titlegraphic
   '\titlegraphic{}' clears beamer configuration the engine does not have; skipped
+⚠ [W0104]
+  class option 'twocolumn' asks for a two-column page; the text is set in one column
+⚠ [W0104]
+  class option 'draft' asks for a proofing mode the engine does not have; the document is rendered in full
 ── W0105 (degraded) overlay specification does not name a step
 ⚠ [W0105] - \uncover
   overlay specification '<zz>' does not name a step; its content is shown on every step
@@ -451,6 +455,9 @@
 ⚠ [W0110] - \includegraphics
   '\includegraphics' option 'angle=45' is not modelled; ignored
   suggestion: modelled keys: page, width, height, totalheight, scale, keepaspectratio, alt, artifact
+⚠ [W0110]
+  class option 'parskip=half' leaves space free after a paragraph's last line; here the last line may run to the margin
+  1em free
 ── W0111 (config) a styling declaration names no styleable element; ignored
 ⚠ [W0111] - \setkomafont
   '\setkomafont{banana}' names no styleable element; ignored
@@ -694,11 +701,6 @@
 ⚠ [W0355] - \theme
   theme 'moloch' installs slides furniture (chrome, frametitle, sectionpage, standout); the article class never draws it
   suggestion: the palette and tokens apply either way; \documentclass{slides} draws the furniture
-── W0356 (degraded) document class option refused by name; the document renders without it
-⚠ [W0356]
-  class option 'twocolumn' asks for a two-column page; the text is set in one column
-⚠ [W0356]
-  class option 'draft' asks for a proofing mode the engine does not have; the document is rendered in full
 ── W0357 (config) a definition is expansion-time TeX; refused by design
 ⚠ [W0357] - \edef
   '\edef' expands its text where it is defined; this text reaches past what the engine expands, so it is skipped

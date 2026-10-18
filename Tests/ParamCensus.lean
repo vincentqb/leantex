@@ -95,10 +95,30 @@ def refsBib : String :=
   "Title}, publisher = {Pub}, year = 2002}\n" ++
   "@book{key3, author = {Echo Writer}, title = {Third Title}, publisher = {Pub}, year = 2003}\n"
 
+/-- A bibliography whose entries exercise biblatex's options: shared and prefixed names, long name
+lists, editors, translators, identifiers, a language, and circa and uncertain dates. -/
+def richBib : String :=
+  "@book{rich1, author = {Anna von Probe and Bert Second and Carla Third and Dora Fourth}, " ++
+  "title = {Many Hands}, publisher = {Pub}, location = {Town and City and Village}, year = 2001, " ++
+  "isbn = {978-0-00-000000-2}, url = {https://example.org/rich1}, doi = {10.1000/rich1}, " ++
+  "langid = {french}}\n" ++
+  "@book{rich2, author = {Anna von Probe and Bert Second and Carla Third and Dora Fourth}, " ++
+  "title = {Second Hands}, publisher = {Pub}, date = {2002~}, editor = {Erin Editor}, " ++
+  "translator = {Finn Translator}, eprint = {1234.5678}, eprinttype = {arxiv}}\n" ++
+  "@article{rich3, author = {Bea Probe}, title = {Alone}, journaltitle = {Journal}, " ++
+  "date = {2003?}, editor = {Erin Editor}, language = {english}}\n" ++
+  "@book{rich4, editor = {Erin Editor}, title = {Edited Words}, publisher = {Pub}, year = 2004}\n" ++
+  "@book{rich5, author = {Anna von Probe and Zara Zed and Cara Third}, title = {Aardvark Words}, " ++
+  "publisher = {Pub}, year = 2009}\n" ++
+  "@book{rich6, translator = {Finn Translator}, title = {Translated Words}, publisher = {Pub}, " ++
+  "year = 2010}\n" ++
+  "@book{rich7, author = {Ola Öberg}, title = {Northern Words}, publisher = {Pub}, year = 2011}\n" ++
+  "@book{rich8, author = {Zack Zorn}, title = {Last Words}, publisher = {Pub}, year = 2012}\n"
+
 /-- A source's artifacts, its page's HTML emitted once and read without the custom properties no
 `var()` reads, which render nothing. -/
 def shipped (fonts : Font.FontSet) (src : String) : Shipped :=
-  let (doc, ds) := bibBuild src #[("refs", refsBib), ("refs.bib", refsBib)]
+  let (doc, ds) := bibBuild src #[("refs", refsBib), ("refs.bib", refsBib), ("rich", richBib)]
   let out := layoutOf fonts doc
   let (head, tree, hds) := HtmlDoc.emitTree {} doc
   let lang := doc.info.language.getD "en"
@@ -142,7 +162,7 @@ def warnsKeyed (key : String) (d : Diag) : Bool :=
 
 /-- The codes that say a setting is not read. -/
 def unreadCodes : List String :=
-  ["W0101", "W0103", "W0104", "W0110", "W0340", "W0354", "W0356", "W0367"]
+  ["W0101", "W0103", "W0104", "W0110", "W0340", "W0354", "W0367"]
 
 /-- Whether a keyed warning says the setting is applied in part, which a change bears out. -/
 def inPart (d : Diag) : Bool := d.subject.any (·.startsWith "partial:")
@@ -233,8 +253,9 @@ def articleBody : String :=
 /-- The bibliography an article prints: bibtex's by default. -/
 def bibtexList : String := "\\bibliographystyle{plainnat}\\bibliography{refs}"
 
-def article (opts pre body : String) (list : String := bibtexList) (lead : String := "") : String :=
-  s!"\\documentclass{opts}\{article}\n\\title\{Probe title}\\author\{Probe author}\n{pre}\n" ++
+def article (opts pre body : String) (list : String := bibtexList) (lead : String := "")
+    (cls : String := "article") : String :=
+  s!"\\documentclass{opts}\{{cls}}\n\\title\{Probe title}\\author\{Probe author}\n{pre}\n" ++
     s!"\\begin\{document}\n\\maketitle\n{lead}{articleBody}{body}\n{list}\n\\end\{document}\n"
 
 /-- An article whose settings need no body to read them. -/
@@ -288,11 +309,13 @@ def geometryDocumented : List String :=
 /-- A value a biblatex option reads, chosen to show in the census's bibliography. -/
 def biblatexSample (k : String) : String :=
   if k == "style" || k == "bibstyle" || k == "citestyle" then "authoryear"
-  else if k == "sorting" then "ydnt" else if k.startsWith "max" then "1"
-  else if k.startsWith "min" then "1" else if k == "language" || k == "sortlocale" then "french"
+  else if k == "sorting" then "ydnt" else if k == "maxsortnames" then "4" else if k.startsWith "max" then "1"
+  else if k.startsWith "min" then "2" else if k == "sortlocale" then "sv_SE"
+  else if k == "language" then "french"
   else if k == "backend" then "biber" else if k == "bibencoding" || k == "texencoding" then "utf8"
-  else if k == "autolang" then "other" else if k == "uniquename" || k == "uniquelist" then "false"
+  else if k == "autolang" || k == "babel" then "other" else if k == "uniquename" || k == "uniquelist" then "false"
   else if k == "dashed" || k == "isbn" || k == "url" || k == "doi" || k == "eprint" then "false"
+  else if ["useauthor", "useeditor", "abbreviate", "clearlang"].contains k then "false"
   else "true"
 
 /-- The settings a census reads for a package beyond its native and inert tables. -/
@@ -312,8 +335,8 @@ def packageSettings : String → List String
   | "beamerposter" => ["size=a1", "orientation=portrait", "scale=1.4"]
   | "caption" | "subcaption" => ["skip=20pt", "position=top", "font=small"]
   | "natbib" => CiteDecl.Opt.names.map (·.1) ++ ["super"]
-  | "biblatex" => ["style=authoryear", "maxnames=1", "giveninits=true", "sorting=ydnt"] ++
-    Compat.biblatexInert.map fun k => s!"{k}={biblatexSample k}"
+  | "biblatex" => (["style=authoryear", "maxnames=1", "giveninits=true", "sorting=ydnt"] ++
+    (Compat.biblatexRead ++ Compat.biblatexInert).map fun k => s!"{k}={biblatexSample k}").eraseDups
   | "carlito" => ["sfdefault"]
   | "ulem" => ["normalbf"]
   | _ => []
@@ -343,7 +366,14 @@ def packageDocs (p : String) : List (Option String → String) :=
     [fun o => article "" (pre o) "", fun o => article "" (pre o ++ "\\runninghead{Head words}") ""]
   else if p == "ulem" then [fun o => plain "" s!"\\usepackage[{along "normalem" o}]\{ulem}"]
   else if p == "biblatex" then
-    [fun o => article "" (pre o ++ "\\addbibresource{refs.bib}") "" (list := "\\printbibliography")]
+    let cited := "\\cite{rich1}, \\cite{rich2}, \\cite{rich3}, \\cite{rich4}, \\cite{rich5}, " ++
+      "\\cite{rich6}, \\cite{rich7}, \\cite{rich8} and \\textcite{rich1}."
+    let doc (lead : String) (o : Option String) : String :=
+      let given := if lead.isEmpty then o else some (along lead o)
+      article "" (pre given ++ "\\addbibresource{refs.bib}\\addbibresource{rich.bib}") cited
+        (list := "\\printbibliography")
+    [doc "", doc "style=authoryear", doc "style=authoryear,maxnames=2,maxitems=2",
+      doc "maxsortnames=2"]
   else if p == "crop" then
     [fun o => plain "" (pre o ++ "\\page{ bleed = 5mm }"),
      fun o => plain "" ("\\page{ marks = cut }" ++ pre o ++ "\\page{ bleed = 5mm }")]
@@ -397,6 +427,13 @@ def packageTries (p s : String) (i : Nat) : Bool :=
     | some native => if hasStr native.render "= on" then i == 1 else i == 0
     | none => true
   else if p == "crop" then if s == "off" then i == 1 else i == 0
+  else if p == "biblatex" then
+    -- A citation's names and a list's dashes and uniqueness show in author-year citations, a minimum
+    -- below a maximum that truncates, a sorting minimum where names sort before titles.
+    if k == "minsortnames" then i == 3
+    else if k.startsWith "min" then i == 2
+    else if ["maxcitenames", "dashed", "uniquename", "uniquelist"].contains k then i == 1
+    else i == 0
   else if p == "natbib" then
     !((natbibAsked[i]?).getD []).contains k && (i == 1 || !(k == "compress" || k == "sort&compress")) &&
       !(k == "bibstyle" && i == 0) && !(k == "nobibstyle" && i != 0)
@@ -410,6 +447,8 @@ def packageRows : List Row :=
       settings := packageVocabulary p ++ (if p == "inputenc" then [] else [invented])
       docs := packageDocs p
       inert := packageInert p
+      keyOf := fun s => let k := (KeyVal.entry s).1
+        if p == "biblatex" && k == "babel" then "autolang" else k
       tries := packageTries p }
 
 
@@ -435,6 +474,30 @@ def classSkipped : List (List String) :=
    ["10pt", "letterpaper", "notitlepage", "twoside", "chapters"],
    ["10pt", "letterpaper", "titlepage", "twoside", "chapters"]]
 
+/-- What each of `classDocsBeyond`'s classes already takes, as their sources declare their
+defaults; a title-page class's `notitlepage` only clears the title page's named loss. -/
+def classSkippedBeyond : List (List String) :=
+  [["10pt", "letterpaper", "oneside", "titlepage", "notitlepage", "openany", "onecolumn", "final",
+    "chapters"],
+   ["10pt", "letterpaper", "twoside", "titlepage", "notitlepage", "openright", "onecolumn", "final",
+    "chapters"],
+   ["10pt", "letterpaper", "twoside", "openright", "onecolumn", "final"],
+   ["11pt", "a4paper", "oneside", "notitlepage", "titlepage=false", "onecolumn", "final"],
+   ["11pt", "a4paper", "oneside", "titlepage", "titlepage=true", "notitlepage", "openany",
+    "onecolumn", "final"],
+   ["11pt", "a4paper", "twoside", "titlepage", "titlepage=true", "notitlepage", "twoside=true",
+    "openright", "onecolumn", "final"]]
+
+/-- The article-like classes whose options the census tries in an article's body. -/
+def classDocsBeyond : List String := ["report", "book", "memoir", "scrartcl", "scrreprt", "scrbook"]
+
+/-- KOMA-Script's class options and memoir's, each with a value its manual documents. -/
+def classOptionsBeyond : List String :=
+  ["parskip=full", "DIV=12", "BCOR=8mm", "headings=small", "titlepage=true", "twoside=true",
+   "open=right", "toc=bibliography", "numbers=noenddot", "captions=tableheading", "abstract=true",
+   "headinclude", "footinclude=true", "headsepline", "cleardoublepage=empty", "version=3.20",
+   "article", "extrafontsizes", "9pt", "14pt", "17pt", "ms", "showtrims", "oldfontcommands"]
+
 /-- The class options: each model's reads, the inert and refused ones, and others, in an article,
 a deck, a card and the abstracts of an article and a report. -/
 def classRow : Row :=
@@ -443,12 +506,26 @@ def classRow : Row :=
       "twocolumn", "draft", "leqno", "fleqn", "openright", "openbib", "parskip=half",
       "aspectratio=169", "handout", "compress"] ++ Elab.classPaperOptions ++
       Elab.classOptionFlags.flatMap (·.2) ++ Elab.classOptionsInert.flatMap (·.2.map (·.1)) ++
-      Elab.abstractFormOptions ++ [invented]
-    inert := fun s => Elab.classOptionsInert.any (·.2.any (·.1 == s))
-    tries := fun s i => !((classSkipped[i]?).getD []).contains s
+      Elab.abstractFormOptions ++ classOptionsBeyond ++ [invented]
+    inert := fun s => Elab.classOptionsInert.any (·.2.any (·.1 == s)) ||
+      Elab.abstractFormOptions.contains s
+    tries := fun s i =>
+      let skipped := ((classSkipped ++ classSkippedBeyond)[i]?).getD []
+      !skipped.contains s && !(s == "twoside=true" && skipped.contains "twoside")
     docs := [fun o => article (bracketed o) "" "", fun o => deck (bracketed o) "",
       fun o => s!"\\documentclass{bracketed o}\{card}\n\\begin\{document}\nCard words.\n" ++
-        "\\end{document}\n", abstracted "article", abstracted "report"] }
+        "\\end{document}\n", abstracted "article", abstracted "report"] ++
+      classDocsBeyond.map fun c o => article (bracketed o) "" "" (cls := c) }
+
+/-- `\KOMAoptions`' keys in a KOMA-Script document: the separation rules it draws none of, noted,
+and keys it names. -/
+def komaOptionsRow : Row :=
+  let drawn := ["headsepline=false", "footsepline=false"]
+  { reader := "\\KOMAoptions"
+    settings := ["fontsize=12pt", "parskip=half", "DIV=12", "headings=small", "twoside=true",
+      "headsepline", "footsepline=true"] ++ drawn ++ [invented ++ "=1"]
+    inert := drawn.contains
+    docs := [fun o => article "" ((o.map (s!"\\KOMAoptions\{{·}}")).getD "") "" (cls := "scrartcl")] }
 
 /-- The kernel's length parameters, set in the preamble and in the body. -/
 def lengthRow : Row :=
@@ -522,7 +599,8 @@ def themeRows : List Row :=
 
 /-- Every census row. -/
 def rows : List Row :=
-  packageRows ++ [hypersetupRow, classRow, lengthRow, counterRow, listRow, coveredRow] ++ themeRows
+  packageRows ++ [hypersetupRow, classRow, komaOptionsRow, lengthRow, counterRow, listRow,
+    coveredRow] ++ themeRows
 
 /-- Whether a source's diagnostics hold a warning or an error naming a setting. -/
 def warnsOf (src key : String) : Bool :=
@@ -678,7 +756,7 @@ nothing reads"
   t "the abstract's title-page options and report's own are read, never named"
     ([abstracted "report" none, abstracted "report" (some "notitlepage"),
         abstracted "article" (some "titlepage"), abstracted "book" none].all fun src =>
-      !(elabStr src).2.any (·.code == "W0356"))
+      !(elabStr src).2.any (·.subject.any (·.startsWith "param:documentclass:")))
   let geo (pre : String) : String :=
     s!"\\documentclass\{article}\n\\usepackage[margin=1in]\{geometry}\n{pre}\n\\begin\{document}\n" ++
       "Alpha words.\n\\end{document}\n"
@@ -698,7 +776,8 @@ nothing reads"
     ((elabStr overlay).2.any fun d => d.code == "W0104" && hasStr d.message "overlay" &&
       !(d.help.any (hasStr · "setlist")))
   t "an unknown class or theme accounts for its options"
-    (!((elabStr (cls "nosuchclass" "draft,twocolumn" "")).2.any (·.code == "W0356")) &&
+    (!((elabStr (cls "nosuchclass" "draft,twocolumn" "")).2.any
+        (·.subject.any (·.startsWith "param:documentclass:"))) &&
       !warnsOf (deck "" "\\usetheme[secheader]{Madrid}") "secheader")
 
 /-- A declared text height places the text block as lualatex does: under the top margin as the

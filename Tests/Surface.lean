@@ -1516,7 +1516,7 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
      !(preDs.filterMap (·.span)).any (·.file == "main.tex"))
 
 /-- Class options and `\page` keys are one vocabulary, a `\page` declaration winning; `twocolumn`
-and `draft` are refused by name (W0356). -/
+and `draft` are named unread (W0104). -/
 def classOptionChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let pageOf (opts : String) (pre : String := "") : Ir.PageSpec :=
@@ -1531,9 +1531,49 @@ def classOptionChecks (ref : IO.Ref (List String)) : IO Unit := do
      p.width == Dim.pt 842 && p.height == Dim.pt 595)
   t "a declared page wins over the class option"
     ((pageOf "a4paper" "\\page{ size = a5 }").width == Dim.pt 420)
-  t "class options twocolumn and draft are refused by name"
-    ((warnCodes "\\documentclass[twocolumn,draft]{article}\\begin{document}x\\end{document}")
-      == ["W0356", "W0356"])
+  let classDoc (cls pre body : String) : String :=
+    "\\documentclass" ++ cls ++ pre ++ "\\begin{document}" ++ body ++ "\\end{document}"
+  let loud (src : String) : Array (Option String) :=
+    ((elabStr src).2.filter (·.severity != .note)).map (·.subject)
+  t "class options twocolumn and draft are named, each by its key"
+    (loud (classDoc "[twocolumn,draft]{article}" "" "x") ==
+      #[some "param:documentclass:twocolumn", some "param:documentclass:draft"])
+  let titlePagedSrc (src : String) : Bool :=
+    (elabStr src).2.any (·.subject == some "partial:\\documentclass:titlepage:maketitle")
+  let komaOf (pre : String) : Ir.PageSpec := (elabStr (classDoc "{scrartcl}" pre "x")).1.page
+  t "a KOMA-Script class's page is A4 unless a declaration names one, letter included"
+    ((komaOf "").height == Dim.pt 842 &&
+      (komaOf "\\usepackage[letterpaper]{geometry}").height == Dim.pt 792 &&
+      (komaOf "\\page{ size = letter }").height == Dim.pt 792)
+  -- lualatex: a standard class's title page resets the counter only one-sided, book defaulting to
+  -- two sides, and KOMA-Script's never does, so the body after a titlepage is page 2 there.
+  let titled := "\\begin{titlepage}T\\end{titlepage}Body."
+  t "book is two-sided unless an option says one, here or passed before it loads"
+    ((elabStr (classDoc "{book}" "" titled)).1.body != (elabStr (classDoc "[oneside]{book}" "" titled)).1.body &&
+      (elabStr ("\\PassOptionsToClass{oneside}{book}" ++ classDoc "{book}" "" titled)).1.body ==
+        (elabStr (classDoc "[oneside]{book}" "" titled)).1.body)
+  t "a two-sided class's oneside is noted as the engine's one-sided page"
+    ((elabStr (classDoc "[oneside]{scrbook}" "" "x")).2.any fun d =>
+      d.code == "N0100" && d.subject == some "param:documentclass:oneside")
+  t "class landscape turns a declared paper, as geometry does"
+    (let p := (elabStr (classDoc "[landscape]{article}" "\\usepackage[letterpaper]{geometry}" "x")).1.page
+     p.width == Dim.pt 792 && p.height == Dim.pt 612)
+  t "a declared text width stands centred on the page the class settles"
+    (let p := komaOf "\\usepackage[textwidth=400pt]{geometry}"
+     p.width == Dim.pt 595 && p.hmargin == (Dim.pt 595 - Dim.pt 400) / 2)
+  t "titlepage=true is KOMA-Script's alone: read there, the standard classes' title page kept"
+    (!(loud (classDoc "[titlepage=true]{scrartcl}" "\\title{T}" "\\maketitle x")).contains
+        (some "param:documentclass:titlepage") &&
+      titlePagedSrc (classDoc "[titlepage=false]{report}" "\\title{T}" "\\maketitle x"))
+  t "scrbook, memoir and book agree with and without twoside"
+    (["{book}", "{scrbook}", "{memoir}"].all fun c =>
+      (elabStr (classDoc c "" titled)).1.body == (elabStr (classDoc ("[twoside]" ++ c) "" titled)).1.body)
+  let titlePaged (src : String) : Bool :=
+    (elabStr src).2.any (·.subject == some "partial:\\documentclass:titlepage:maketitle")
+  t "report and the KOMA-Script title-page classes name the title page they default to"
+    (["{report}", "{scrreprt}", "{scrbook}"].all (fun c => titlePaged (classDoc c "\\title{T}" "\\maketitle x")) &&
+      !titlePaged (classDoc "[notitlepage]{report}" "\\title{T}" "\\maketitle x") &&
+      titlePaged (classDoc "[titlepage=true]{scrartcl}" "\\title{T}" "\\maketitle x"))
   t "class option a4paper warns nothing"
     ((elabStr "\\documentclass[a4paper,11pt]{article}\\begin{document}x\\end{document}").2.all
       (·.severity == .note))
@@ -1549,7 +1589,7 @@ def classOptionChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "the native size key names the stage the option names"
     (let p := deckOf "" "\\page{ size = 16:10 }"
      p.width == Dim.mm 160 && p.height == Dim.mm 100 &&
-       p == deckOf "aspectratio=1610")
+       p == { deckOf "aspectratio=1610" with sized := true })
   t "beamer's bare digits name the root-two stage"
     (let p := deckOf "" "\\page{ size = 141 }"
      p.width == Dim.mm100 14850 && p.height == Dim.mm 105)
@@ -2631,7 +2671,7 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
     #[.list false {} #[#[.para #[.text "a"]], #[.para #[.text "b"]]]])
   let (doc6, d6) := elabStr "\\documentclass[x=1]{article}\n\\begin{document}\nhi\n\\end{document}"
   t "elab documentclass, an option nothing reads named once"
-    (d6.map (·.code) == #["W0356"] && doc6.docClass == .article && doc6.classOptions == "x=1")
+    (d6.map (·.code) == #["W0104"] && doc6.docClass == .article && doc6.classOptions == "x=1")
   -- The assumed class is named once on the .tex surface, and only when no `\documentclass` stands.
   let dcl (f s : String) : Array Diag := (Elab.run f s).2
   t "a classless .tex notes the assumed article page model"

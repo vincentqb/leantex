@@ -231,6 +231,10 @@ public structure PageSpec where
   drawn : Array DrawnRule := #[]
   /-- The page boxes the document declares, one per kind, the last declaration standing. -/
   boxes : Array PageBox := #[]
+  /-- Whether a declaration named the page's size, which the class's default then leaves. -/
+  sized : Bool := false
+  /-- The text block's declared width, which centres it on the page the class settles. -/
+  blockWidth : Option Sp := none
   deriving Repr, BEq, Inhabited
 
 public def PageSpec.bottomMargin (spec : PageSpec) : Sp := spec.bmargin.getD spec.vmargin
@@ -7703,6 +7707,9 @@ public inductive AbstractForm where
 (beamerinnerthemedefault.sty:325). -/
 public def abstractInset : Dim.Length := { em := 2000 }
 
+/-- ISO 216's A4 in PDF points, 210 × 297 mm. -/
+public def a4Page : Sp × Sp := (Dim.pt 595, Dim.pt 842)
+
 /-- A document class as a record over one of the kernel's page models:
 defaults, furniture flags, implied assertions, build intent. -/
 public structure ClassRecord where
@@ -7753,7 +7760,8 @@ public structure ClassRecord where
   inkInArea : Option String := none
   /-- `minXHeight` implied: the floor and its failure guidance. -/
   xHeightFloor : Option (Sp × String) := none
-  /-- The face's trade trim size (width × height), when the class fixes one. -/
+  /-- The page (width × height) the class sets where no option names one: a face's trade trim, a
+  KOMA-Script page's A4. -/
   trimDefault : Option (Sp × Sp) := none
   /-- The face's print safe zone: the default margins, inside which a drifting trim cannot cut. -/
   safeMargin : Option Sp := none
@@ -7892,6 +7900,8 @@ calibration reads fluently; declare \
   | .koma =>
     { model := .flow
       fontSize := some (Dim.pt 11)
+      -- typearea's `paper=a4`, its default.
+      trimDefault := some a4Page
       parskip := some texParskipDefault
       parskipOption := true
       listExtra := .koma

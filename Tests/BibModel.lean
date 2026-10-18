@@ -621,16 +621,22 @@ def bibLanguageChecks (ref : IO.Ref (List String)) : IO Unit := do
   t s!"language: babel's american is named ({named uds})" (named uds == #[some "bibstrings:american"])
   let (_, lds) := build "\\usepackage[ngerman]{babel}\n\\usepackage[style=numeric,language=english]{biblatex}"
   t s!"language: language=english names nothing ({named lds})" (named lds).isEmpty
+  let (_, fds) := build "\\usepackage[style=numeric,language=french]{biblatex}"
+  t s!"language: language=french is named by the option that asked ({named fds})"
+    (named fds == #[some "bibstrings:french:language"])
+  let (_, xds) := build "\\usepackage[ngerman]{babel}\n\\usepackage[style=numeric,language=autodetect]{biblatex}"
+  t s!"language: language=autodetect leaves babel's language its own ({named xds})"
+    (named xds == #[some "bibstrings:ngerman"])
   let (edoc, eds) := build "\\usepackage[style=numeric]{biblatex}"
   t s!"language: an English document names nothing ({named eds})" (named eds).isEmpty
   t s!"language: the German document's list is the English one ({words gdoc})"
     (words gdoc == words edoc && !(words edoc).isEmpty)
   let (_, ods) := build "\\usepackage[style=numeric,autolang=other]{biblatex}"
   t s!"language: under autolang=other the French entry is named, the English one not ({named ods})"
-    (named ods == #[some "bibstrings:french"])
+    (named ods == #[some "bibstrings:french:autolang"])
   let (_, bds) := build "\\usepackage[style=numeric,babel=other]{biblatex}"
   t s!"language: babel=other, autolang's former name, reads as it ({named bds})"
-    (named bds == #[some "bibstrings:french"])
+    (named bds == #[some "bibstrings:french:autolang"])
   let (_, nds) := bibBuild ("\\documentclass{article}\n\\usepackage[ngerman]{babel}\n" ++
     "\\usepackage[style=numeric]{biblatex}\n\\begin{document}\nx\n\\end{document}\n")
     #[("refs", bib)]

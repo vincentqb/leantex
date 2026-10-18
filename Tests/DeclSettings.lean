@@ -509,8 +509,8 @@ def titlePageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
     -- the premise the loss stands on: what LaTeX gives a page of its own shares the text's first page
     t s!"titlepage: {what} shares the first page with the text"
       (hasStr (firstPage d) "Body" && (hasStr (firstPage d) "Probe" || hasStr (firstPage d) "Abstract"))
-  t "titlepage: report's own title page names nothing"
-    (losses (elabStr (doc "report" "" "\\maketitle")).2).isEmpty
+  t "titlepage: report's own title page is named once, as an article's asked one is"
+    ((losses (elabStr (doc "report" "" "\\maketitle")).2).size == 1)
   t "titlepage: notitlepage names nothing"
     (losses (elabStr (doc "article" "[titlepage,notitlepage]" "\\maketitle")).2).isEmpty
 

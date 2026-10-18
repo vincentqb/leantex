@@ -2508,7 +2508,8 @@ private def analyse (sources : Array (String × String)) (doc : Ir.Doc) (rd : Fi
       if m != "english" then
         worded := worded.push m
         diags := diags.push (Diag.of .W0421 s!"biblatex words this reference list's strings \
-          and dates in '{m}'; the engine sets the English ones" (subject := some ("bibstrings:" ++ m))
+          and dates in '{m}'; the engine sets the English ones"
+          (subject := some ("bibstrings:" ++ m ++ if o.language.any (· != "autodetect") then ":language" else ""))
           (help := help))
     if ["other", "other*", "langname"].contains o.autolang then
       for k in db.list do
@@ -2519,7 +2520,7 @@ private def analyse (sources : Array (String × String)) (doc : Ir.Doc) (rd : Fi
             worded := worded.push l
             diags := diags.push (Diag.of .W0421 s!"under 'autolang={o.autolang}' biblatex words \
               entries with langid '{l}' in it; the engine sets the English strings"
-              (subject := some ("bibstrings:" ++ l)) (help := help))
+              (subject := some ("bibstrings:" ++ l ++ ":autolang")) (help := help))
   -- premise: biblatexLocaleSortChecks — carried tailorings sort as biber does
   if let some o := (if requested.isEmpty then none else bbl) then
     let file := bblSortFile o

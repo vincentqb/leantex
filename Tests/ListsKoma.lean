@@ -153,7 +153,7 @@ def komaListChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
       (elabStr (doc "{scrbook}" "" "Alpha.")).1.page.fontSize == Dim.pt 11)
   let ds := (elabStr (doc "[parskip=half]{scrartcl}" "" "Alpha.")).2
   t "koma lists: a KOMA-Script class's parskip option is read, its paragraphs' end fill named"
-    (ds.any (fun d => d.code == "W0356" && hasStr d.message "leaves 1em free") &&
+    (ds.any (fun d => d.code == "W0110" && d.detail == some "1em free") &&
       !ds.any (fun d => hasStr d.message "is not honoured"))
   t "koma lists: options passed to a KOMA-Script class before it loads are its own"
     ((elabStr ("\\PassOptionsToClass{titlepage}{scrartcl}\n" ++ doc "{scrartcl}" "" "Alpha.")).1.abstractForm ==

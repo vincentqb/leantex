@@ -382,12 +382,14 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
       ["\\directlua{tex.print('x')}", "\\raggedright",
        "\\sloppy", "\\selectlanguage{german}", "\\pagestyle{headings}",
        "\\ifx\\x\\y\\fi", "\\usecolortheme{dove}",
-       "\\setbeamercovered{again covered}", "\\titlegraphic{}"] ++ "\n") "x")
+       "\\setbeamercovered{again covered}", "\\titlegraphic{}"] ++ "\n") "x") ++
+      dvE (w := w) "\\documentclass[twocolumn,draft]{article}\n\\begin{document}\nx\n\\end{document}\n"
   | .W0105 => dvE (w := w) "\\uncover<zz>{x}"
   | .W0106 => dvE (w := w) (dvDoc "\\ExplSyntaxOn \\cs_new:Npn \\x { } \\ExplSyntaxOff\n" "x")
   | .W0107 => dvE (w := w) (dvDoc "" "x \\setlength{\\parskip}{foo}")
   | .W0108 => dvE (w := w) "\\textbf{\\centering x}"
-  | .W0110 => dvE (w := w) "\\includegraphics[angle=45]{x.png}"
+  | .W0110 => dvE (w := w) "\\includegraphics[angle=45]{x.png}" ++
+      dvE (w := w) "\\documentclass[parskip=half]{scrartcl}\n\\begin{document}\nx\n\\end{document}\n"
   | .W0111 => dvE (w := w) (dvDoc "\\setkomafont{banana}{\\bfseries}\n" "x")
   | .W0201 => dvL (w := w) one (dvDoc "\\page{ hmargin = 1in }\n"
       (String.intercalate " " (List.replicate 40 "typesetting is the arrangement of type")))
@@ -664,9 +666,6 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
   | .W0349 => dvE (w := w) "\\ref{nowhere}"
   | .W0350 => dvE (w := w) "\\section{A}\\label{twice}\\label{twice}"
   | .W0380 => dvE (w := w) "\\refstepcounter{section}\n\\label{stepped} see \\cref{stepped}"
-  | .W0356 =>
-    dvE (w := w) "\\documentclass[twocolumn]{article}\n\\begin{document}\nx\n\\end{document}" ++
-    dvE (w := w) "\\documentclass[draft]{article}\n\\begin{document}\nx\n\\end{document}"
   | .W0367 =>
     dvE (w := w) ("\\documentclass{beamer}\n\\usepackage[debug,size=a1]{beamerposter}\n" ++
       "\\begin{document}\n\\begin{frame}{T}\nx\n\\end{frame}\n\\end{document}")
@@ -1376,8 +1375,6 @@ def repeatFoldUnexercised : List (String × String) :=
      "W0312", "W0316", "W0317", "W0318", "W0319", "W0328", "W0329", "W0330", "W0331", "W0342",
      "W0343", "W0348", "W0354", "W0355", "W0357", "W0361", "W0363", "W0367", "W0368", "W0369",
      "W0373", "W0387", "W0398", "W0434", "W0442", "W0443", "W0109", "W0449"] ++
-  unexercisedAs "its construct is a class option, which the repetition does not write twice"
-    ["W0356"] ++
   unexercisedAs "its witness is the emitter's own record, with no source to write twice"
     ["W0006", "W0013", "W0378", "W0382", "W0391", "W0393", "W0394", "W0396", "W0601", "W0602",
      "W0603", "W0604", "W0605", "W0609", "W0701"] ++

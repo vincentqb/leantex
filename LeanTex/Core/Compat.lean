@@ -147,16 +147,30 @@ private def beamerFontKeys : List String := Ir.FontAxis.all.map (·.key)
 /-- Classes that are an `article` with different defaults. -/
 private def articleClasses : List String := ["report", "book", "memoir", "letter"]
 
-/-- Whether written class options ask for title pages, `notitlepage` winning as the classes declare
-it last. -/
-private def asksTitlePage (opts : List String) : Bool :=
-  !opts.contains "notitlepage" && opts.contains "titlepage"
+/-- Whether a class's options give its title a page of its own, from the class's default:
+`notitlepage` winning as the classes declare it last, KOMA-Script's `titlepage=` read by it alone. -/
+private def asksTitlePage (koma dflt : Bool) (opts : List String) : Bool :=
+  !(opts.contains "notitlepage" || (koma && opts.contains "titlepage=false")) &&
+    (dflt || opts.contains "titlepage" || (koma && opts.contains "titlepage=true"))
 
 /-- The article-like classes whose default is a title page. -/
 private def titlepageClasses : List String := ["report", "book"]
 
 /-- The article-like classes whose `\chapter` heads a chapter, numbering what it holds within it. -/
 private def chapterClasses : List String := ["report", "book"]
+
+/-- The classes whose title a `titlepage` option gives a page of its own, memoir's declaring none. -/
+private def titlepageAskers : List String := ["article", "report", "book", "scrartcl", "scrreprt", "scrbook"]
+
+/-- The classes whose title has a page of its own unless an option says otherwise. -/
+private def titlepageDefaults : List String := ["report", "book", "scrreprt", "scrbook"]
+
+/-- The classes two-sided unless an option says otherwise, as their `\ExecuteOptions` declare. -/
+private def twosideClasses : List String := ["book", "memoir", "scrbook"]
+
+/-- Whether an option asks a two-sided class for one side, which only book's title page reads. -/
+private def oneSidedOf (cls kv : String) : Bool :=
+  twosideClasses.contains cls && cls != "book" && (kv == "oneside" || kv == "twoside=false")
 
 /-- Résumé classes, mapped onto the native `resume` class. -/
 private def resumeClasses : List String :=
@@ -9121,7 +9135,7 @@ template around it; the engine's own {element} stands" pos
     -- premise: titlePageChecks — under an article's titlepage the title stands above the text
     if (← get).titlePageAsked && !(← get).inDef then
       sayOnce "partial:\\documentclass:titlepage:maketitle" .W0110
-        "'\\maketitle' sets the title above the text, where class option 'titlepage' gives it a \
+        "'\\maketitle' sets the title above the text, where the class's title page gives it a \
 page of its own" pos (help := "\\begin{titlepage}...\\end{titlepage} sets a page of its own")
     return none
   | "setbeamercolor" =>
@@ -9633,10 +9647,16 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
     -- The class's `\normalsize` sets the strut box at its `\baselineskip` as the class loads.
     let strut := (classNormalPt cls keptItems).map classNormalSkip
     write fun st => { st with strutSkip := strut }
-    if cls == "article" && asksTitlePage keptItems then
+    let passedAll := (← get).loads.rewriteClassPassed.toList.flatMap fun (name, options) =>
+      if name == cls then options.toList else []
+    let given := passedAll ++ keptItems
+    let koma := cls.startsWith "scr"
+    if titlepageAskers.contains cls &&
+        asksTitlePage koma (titlepageDefaults.contains cls) given then
       write fun st => { st with titlePageAsked := true }
+    let twoside := given.contains "twoside" || given.contains "twoside=true" ||
+      (twosideClasses.contains cls && !given.contains "oneside" && !given.contains "twoside=false")
     if chapterClasses.contains cls || keptItems.contains "chapters" then
-      let twoside := (cls == "book" && !keptItems.contains "oneside") || keptItems.contains "twoside"
       -- book.cls and report.cls declare `openright` before `openany`, which so wins given both.
       let right := (cls == "book" || keptItems.contains "openright") && !keptItems.contains "openany"
       write fun st => { st with chapters := true, chaptersRight := twoside && right }
@@ -9648,8 +9668,9 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
     let flow := ((Ir.DocClass.ofString? native).map (·.record.model == .flow)).getD true
     write fun st => { st with
       measureKnown := !flow, flowPage := flow,
-      titlepageReset := !(KeyVal.items (opt.getD "")).any fun o =>
-        KeyVal.entry o matches ("twoside", none) | ("twoside", some "true") }
+      -- KOMA-Script's titlepage environment never resets the page counter (scrbook.cls), and memoir
+      -- has none.
+      titlepageReset := !twoside && !koma && cls != "memoir" }
     if articleClasses.contains cls || resumeClasses.contains cls then
       let native0 := if resumeClasses.contains cls then "resume" else "article"
       -- A title-page option passed to the class is its own; report.cls and book.cls default to
@@ -9661,11 +9682,21 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
       let extra := passed ++ (if titlepageClasses.contains cls && !given then ["titlepage"] else []) ++
         (if chapterClasses.contains cls then ["chapters"] else [])
       let opt := if extra.isEmpty then opt else some (",".intercalate (opt.toList ++ extra))
+      -- premise: none — memoir.cls declares neither option, which LaTeX reports unused
+      let memoirTitle (kv : String) : Bool := cls == "memoir" && ["titlepage", "notitlepage"].contains kv
+      -- premise: classRow — the engine sets every page one-sided
+      for kv in keptItems.filter (oneSidedOf cls) do
+        inertParam "documentclass" (KeyVal.entry kv).1 s!"\\documentclass[{kv}]\{{cls}}"
+          "the page is set one-sided, as the engine sets every page" pos
+      for kv in keptItems.filter memoirTitle do
+        inertParam "documentclass" kv s!"\\documentclass[{kv}]\{memoir}"
+          "memoir sets its title and abstract as without the option" pos
       -- KOMA's `parskip` is read here; a two-sided chapter class's `openright` is named where a
       -- chapter opens.
       let rightNamed := (← get).chaptersRight
       let kept := (keptItems ++ extra).filter fun kv =>
-        (KeyVal.entry kv).1 != "parskip" && !(rightNamed && kv == "openright")
+        (KeyVal.entry kv).1 != "parskip" && !(rightNamed && kv == "openright") && !memoirTitle kv &&
+          !(cls == "book" && (kv == "oneside" || kv == "twoside=false")) && !oneSidedOf cls kv
       -- A class's `\parskip` is zero unless KOMA's `parskip=` asks for a skip.
       let komaSkip := (KeyVal.items (opt.getD "")).findSome? fun kv =>
         match KeyVal.entry kv with
@@ -9693,8 +9724,20 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
       -- The options passed to a class before it loads are its own, before its written ones.
       let passed := (← get).loads.rewriteClassPassed.toList.flatMap fun (name, options) =>
         if name == cls then options.toList.filter (!keptItems.contains ·) else []
-      if offered.isEmpty && passed.isEmpty then return none
-      let kept := passed ++ keptItems
+      -- premise: classRow — the engine sets every page one-sided
+      for kv in keptItems.filter (oneSidedOf cls) do
+        inertParam "documentclass" (KeyVal.entry kv).1 s!"\\documentclass[{kv}]\{{cls}}"
+          "the page is set one-sided, as the engine sets every page" pos
+      -- KOMA-Script's `titlepage=true` is read by the title page, and its two sides mirror margins
+      -- the engine does not, its page counter left alone.
+      let twoSided (kv : String) : Bool :=
+        koma && !twosideClasses.contains cls && (kv == "twoside" || kv == "twoside=true")
+      for kv in keptItems.filter twoSided do
+        unreadParam "documentclass" "twoside" s!"class option '{kv}', whose mirrored margins the \
+engine does not set," pos
+      let consumed (kv : String) : Bool := oneSidedOf cls kv || twoSided kv || (koma && kv == "titlepage=true")
+      if offered.isEmpty && passed.isEmpty && !keptItems.any consumed then return none
+      let kept := (passed ++ keptItems).filter (!consumed ·)
       let native := Native.Head.documentclass kept.toArray cls
       became s!"\\documentclass[{opt.getD ""}]\{{cls}}" native.render pos
       return some (native.raws pos, k)
@@ -10699,13 +10742,12 @@ and 'transparent=<n>' are understood")
       | (key, some v) => (key == "headsepline" || key == "footsepline")
           && (v == "false" || v == "off" || v == "no")
       | _ => false
-    let dropped := entries.filter (!satisfied ·)
-    if dropped.isEmpty then
-      unless entries.isEmpty do
-        discard "\\KOMAoptions" "no head or foot separation rule is drawn" "KOMAoptions" c.pos
-    else
-      for e in dropped do
-        unreadParam "KOMAoptions" (KeyVal.entry e).1 s!"'\\KOMAoptions' entry '{e}'" c.pos
+    for e in entries do
+      -- premise: komaOptionsRow — KOMA-Script draws neither separation rule unless asked
+      if satisfied e then
+        inertParam "KOMAoptions" (KeyVal.entry e).1 s!"\\KOMAoptions\{{e}}"
+          "no head or foot separation rule is drawn" c.pos
+      else unreadParam "KOMAoptions" (KeyVal.entry e).1 s!"'\\KOMAoptions' entry '{e}'" c.pos
     return #[]
   | .graphColor => do
     -- leanblueprint's `\graphcolor{type}{colour}{description}` colours the dependency graph.
@@ -12590,7 +12632,7 @@ private def abstractUnderTitlePage (pos : Pos) : M Unit := do
   -- premise: titlePageChecks — under an article's titlepage the abstract stands in the text
   if (← get).titlePageAsked && !(← get).inDef then
     sayOnce "partial:\\documentclass:titlepage:abstract" .W0110
-      "the abstract is set in the text, where class option 'titlepage' gives it a page of its own"
+      "the abstract is set in the text, where the class's title page gives it a page of its own"
       pos (help := "\\begin{titlepage}...\\end{titlepage} sets a page of its own")
 
 mutual

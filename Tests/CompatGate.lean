@@ -150,7 +150,6 @@ def discardSites : List (String × String × String) :=
    ("\\selectlanguage{french}\n", "", "selectlanguage:french"),
    ("\\usefonttheme{professionalfonts}\n", "", "usefonttheme"),
    ("\\setbeameroption{hide notes}\n", "", "setbeameroption"),
-   ("\\KOMAoptions{headsepline=false}\n", "", "KOMAoptions"),
    ("\\sectionlinesformat{}\n", "", "sectionlinesformat"),
    ("", "\\printbibliography", "printbibliography")]
 

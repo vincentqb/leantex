@@ -1143,7 +1143,7 @@ US letter and legal. -/
 private def pageSizes : List (String × (Sp × Sp)) :=
   [("letter", (pt 612, pt 792)),
    ("legal", (pt 612, pt 1008)),
-   ("a4", (Dim.pt 595, Dim.pt 842)),
+   ("a4", Ir.a4Page),
    ("a5", (Dim.pt 420, Dim.pt 595))]
 
 /-- The slides stage beamer's `aspectratio=` option selects, else beamer's
@@ -6651,7 +6651,7 @@ private def classPageDefaults (record : Ir.ClassRecord) (opts : List String)
   let dflt : PageSpec := {}
   let mut page := page
   if record.model == .flow then
-    if page.width == dflt.width && page.height == dflt.height then
+    if !page.sized then
       let sized := opts.findSome? fun o =>
         let o := match KeyVal.entry o with
           | ("paper", some v) => v ++ "paper"
@@ -6660,12 +6660,13 @@ private def classPageDefaults (record : Ir.ClassRecord) (opts : List String)
         if o.endsWith "paper" then
           pageSizes.lookup ((o.dropEnd "paper".length).toString)
         else none
-      if let some (w, h) := sized then
+      if let some (w, h) := sized.orElse fun _ => record.trimDefault then
         page := { page with width := w, height := h }
-      if opts.contains "landscape" then
-        page := { page with width := page.height, height := page.width }
+    -- geometry turns whatever paper it sets under the class's global `landscape`.
+    if opts.contains "landscape" then
+      page := { page with width := page.height, height := page.width }
   if record.model == .frame then
-    if page.width == dflt.width && page.height == dflt.height then
+    if !page.sized then
       let (w, h) := slidesStageOf opts
       page := { page with width := w, height := h }
     if page.hmargin == dflt.hmargin then
@@ -6677,7 +6678,7 @@ private def classPageDefaults (record : Ir.ClassRecord) (opts : List String)
       page := { page with justify := some false }
     page := { page with raggedFil := true }
   else if record.model == .face then
-    if page.width == dflt.width && page.height == dflt.height then
+    if !page.sized then
       let named :=
         if opts.contains "us" then some (Dim.pt 252, Dim.pt 144)
         else if opts.contains "jis" then some (Dim.mm 91, Dim.mm 55)
@@ -6694,6 +6695,8 @@ private def classPageDefaults (record : Ir.ClassRecord) (opts : List String)
       page := { page with hyphenate := some false }
     if page.justify.isNone then
       page := { page with justify := some false }
+  if let some w := page.blockWidth then
+    page := { page with hmargin := (page.width - w) / 2 }
   return page
 
 /-- Class options asking for what a page model's class already is, each with why. -/
@@ -7770,7 +7773,7 @@ private def engineLengthTokens (docClass : Ir.DocClass) (classOptions : String)
   let record := docClass.record
   let dflt : PageSpec := {}
   let opts := (KeyVal.items classOptions).toList
-  let whKnown := !(page.width == dflt.width && page.height == dflt.height) ||
+  let whKnown := page.sized ||
     (match record.model with
      | .face => opts.contains "us" || opts.contains "jis" || record.trimDefault.isSome
      | .frame => true
@@ -14242,8 +14245,8 @@ private def pageBoxOf (kind : BoxKind) (s : String) (span : Option Span) : Optio
 
 /-- The page field a dimension key sets. -/
 private def pageDim : Native.PageKey → Option (Sp → PageSpec → PageSpec)
-  | .width => some fun d s => { s with width := d }
-  | .height => some fun d s => { s with height := d }
+  | .width => some fun d s => { s with width := d, sized := true }
+  | .height => some fun d s => { s with height := d, sized := true }
   | .margin => some fun d s => { s with vmargin := d, hmargin := d }
   | .vmargin => some fun d s => { s with vmargin := d }
   | .hmargin => some fun d s => { s with hmargin := d }
@@ -14322,14 +14325,14 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
       | .size, .ident name =>
         match (pageSizes.lookup name.toLower).orElse
             (fun _ => Ir.slidesStageNamed name) with
-        | some (w, h) => spec := { spec with width := w, height := h }
+        | some (w, h) => spec := { spec with width := w, height := h, sized := true }
         | none =>
           evs := say evs .E0324 s!"unknown page size '{name}'"
             (help := s!"known sizes: {String.intercalate ", "
               (pageSizes.map (·.1) ++ (Ir.slidesStages.map (·.1)).toList)}")
       | .size, .int n =>
         match Ir.slidesStageNamed (toString n) with
-        | some (w, h) => spec := { spec with width := w, height := h }
+        | some (w, h) => spec := { spec with width := w, height := h, sized := true }
         | none =>
           evs := say evs .E0324 s!"unknown page size '{n}'"
             (help := s!"known sizes: {String.intercalate ", "
@@ -14338,7 +14341,7 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
       | .textwidth, v =>
         if let some d := asDim v then
           if 0 < d && d ≤ spec.width then
-            spec := { spec with hmargin := (spec.width - d) / 2 }
+            spec := { spec with hmargin := (spec.width - d) / 2, blockWidth := some d }
           else
             evs := say evs .E0323
               "'textwidth' in '\\page' expects a dimension between zero and the page width"
@@ -17458,19 +17461,21 @@ margins stand" none (subject := some (Compat.paramSubject "\\page" (if lost == "
   for o in if s.classUnknown then [] else classOpts do
     let key := (KeyVal.entry o).1
     if KeyVal.entry o matches ("twocolumn", none) | ("twocolumn", some "true") then
-      classSay .W0356 key
+      classSay .W0104 key
         "class option 'twocolumn' asks for a two-column page; the text is set in one column"
     else if KeyVal.entry o matches ("draft", none) | ("draft", some "true") then
-      classSay .W0356 key
+      classSay .W0104 key
         "class option 'draft' asks for a proofing mode the engine does not have; the document is rendered in full"
     else if let some why := (classOptionsInert.lookup record.model).bind (·.lookup o) then
       classSay .N0100 key s!"'\\documentclass[{o}]' → nothing: {why}"
     else if (optionSkip o).isSome then
       if let some space := Ir.classParfill? (KeyVal.entry o).2 then
-        classSay .W0356 key s!"class option '{o}' leaves {space} free after a paragraph's last \
-line; here the last line may run to the margin"
+        modify fun st => { st with diags := st.diags.push (diagOf ctx .W0110
+          s!"class option '{o}' leaves space free after a paragraph's last line; here the last \
+line may run to the margin" none (subject := some s!"partial:\\documentclass:{key}")
+          (detail := some s!"{space} free")) }
     else unless classOptionRead record.model o || key.isEmpty do
-      classSay .W0356 key s!"class option '{o}' is not honoured; the document renders without it"
+      classSay .W0104 key s!"class option '{o}' is not honoured; the document renders without it"
   let surface := Ir.Surface.ofPath file
   if record.model == .flow && !sawPage then
     page := { page with hmargin := (page.width - surface.textBlock) / 2 }
