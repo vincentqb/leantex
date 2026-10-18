@@ -51,6 +51,57 @@ theorem copy_eq_copyBytes (out : ByteArray) (len dist : Nat) :
   · next h => exact (copyBytes_slice out len dist h.2.1 h.2.2).symm
   · rfl
 
+theorem copy_size (out : ByteArray) (len dist : Nat) :
+    (copy out len dist).size = out.size + len := by
+  rw [copy_eq_copyBytes]
+  change (forIn [0:len] out (fun _ result =>
+    pure (.yield (result.push (result[result.size - dist]?.getD 0)))) : Id ByteArray).run.size = _
+  apply Progress.forIn_range_exact (fun k result => result.size = out.size + k)
+    (·.size = out.size + len) _ 0 len out (Nat.zero_le _) rfl _ (fun _ h => h)
+  intro k _ _ result hres
+  change (result.push _).size = _
+  rw [ByteArray.size_push, hres]
+  rfl
+
+/-- Each continuing step of a block's decode grows its output within the bound. -/
+theorem readStep_grows (lit dist : Huff) (maxOut : Nat) (out out' : ByteArray) (r r' : Br)
+    (h : readStep lit dist maxOut (out, r) = .ok (.inr (out', r'))) :
+    out.size < out'.size ∧ out'.size ≤ maxOut := by
+  have hbase : ∀ (i b : Nat), lenBase[i]? = some b → 3 ≤ b := by
+    intro i b hb
+    have hm := Array.mem_of_getElem? hb
+    have hall : lenBase.toList.all (3 ≤ ·) = true := by decide
+    exact of_decide_eq_true (List.all_eq_true.mp hall b (Array.mem_toList_iff.mpr hm))
+  unfold readStep at h
+  simp only [pure, Except.pure] at h
+  generalize lenBase = L at h hbase
+  repeat' split at h
+  all_goals first
+    | (simp only [reduceCtorEq] at h; done)
+    | skip
+  all_goals simp only [Except.ok.injEq, Sum.inr.injEq, Prod.mk.injEq] at h
+  all_goals obtain ⟨rfl, rfl⟩ := h
+  all_goals first
+    | (simp only [ByteArray.size_push]; omega)
+    | (rw [copy_size]
+       expose_names
+       have h3 := hbase _ _ heq_1
+       omega)
+
+/-- A decode that finishes in `count` steps is the block's read. -/
+theorem readGo_finishes (lit dist : Huff) (maxOut : Nat) {state : ByteArray × Br} {count : Nat}
+    {answer : ByteArray × Br}
+    (h : DecodeLoop.Finishes (readStep lit dist maxOut) state count answer) :
+    readGo lit dist maxOut state.1.size state.1 state.2 = .ok answer := by
+  induction h with
+  | @done state _ he =>
+    rw [readGo, show (state.1, state.2) = state from rfl, he]
+  | @next state state' _ _ he _ ih =>
+    rw [readGo, show (state.1, state.2) = state from rfl, he]
+    have hg := readStep_grows lit dist maxOut state.1 state'.1 state.2 state'.2 he
+    simp only [hg, and_self, ↓reduceDIte]
+    exact ih
+
 end TokenBlock
 
 theorem BytePrefix.complete {raw out : ByteArray} (hp : BytePrefix raw raw.size out) :
@@ -442,9 +493,7 @@ theorem read_write_bounded_exact (raw : ByteArray) (maxOut : Nat)
     at hread
   have hfinish := hsteps.finish
     (.done (readStep_end_exact _ _ out _ _ maxOut hread))
-  have h := DecodeLoop.run_exact _ _ _ _ (maxOut + 2)
-    (.malformed "deflate: block did not end")
-    hfinish (by have := ht.progress; omega)
+  have h := readGo_finishes _ _ maxOut hfinish
   simpa only [read, writePayload, hp.complete] using h
 
 theorem read_write_exact (raw : ByteArray) (tokens : Array UInt32)

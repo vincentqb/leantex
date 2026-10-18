@@ -4,7 +4,6 @@ public import LeanTex.Core.Flate.BitWriter
 public import LeanTex.Core.Flate.Huffman
 import LeanTex.Core.Flate.TokenSymbols
 import LeanTex.Core.Flate.BitStream
-import LeanTex.Core.Flate.DecodeLoop
 
 namespace LeanTex.Core.Flate.TokenBlock
 
@@ -23,7 +22,7 @@ def copy (out : ByteArray) (len dist : Nat) : ByteArray :=
   else copyBytes out len dist
 
 /-- Decodes one symbol, telling the end of block apart from a continuing state. -/
-def readStep (lit dist : Huff) (maxOut : Nat) (state : ByteArray × Br) :
+@[inline] def readStep (lit dist : Huff) (maxOut : Nat) (state : ByteArray × Br) :
     Except Error (Sum (ByteArray × Br) (ByteArray × Br)) := do
   let (out, r) := state
   let some (sym, r) := lit.decode r | .error (.malformed "deflate: truncated block")
@@ -47,11 +46,22 @@ def readStep (lit dist : Huff) (maxOut : Nat) (state : ByteArray × Br) :
     else if out.size + len > maxOut then .error .budget
     else return .inr (copy out len d, r)
 
+/-- Decodes symbols from `r` onto `out`, `size` bytes long, through the end of block, each step
+growing the output within `maxOut`. -/
+def readGo (lit dist : Huff) (maxOut size : Nat) (out : ByteArray) (r : Br) :
+    Except Error (ByteArray × Br) :=
+  match readStep lit dist maxOut (out, r) with
+  | .error e => .error e
+  | .ok (.inl answer) => .ok answer
+  | .ok (.inr (out', r')) =>
+    if _h : size < out'.size ∧ out'.size ≤ maxOut then readGo lit dist maxOut out'.size out' r'
+    else .error (.malformed "deflate: block did not end")
+termination_by maxOut - size
+
 /-- Decodes the block's symbols, bounded by the declared output size. -/
 public def read (lit dist : Huff) (r : Br) (out : ByteArray) (maxOut : Nat) :
     Except Error (ByteArray × Br) :=
-  DecodeLoop.run (maxOut + 2) (readStep lit dist maxOut) (out, r)
-    (.malformed "deflate: block did not end")
+  readGo lit dist maxOut out.size out r
 
 /-- Writes a match's length code, length extra bits, distance code and distance extra bits. -/
 def writeMatch (litLens litCodes distLens distCodes : Array Nat)

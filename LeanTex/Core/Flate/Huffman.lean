@@ -43,7 +43,7 @@ def bitsGo (data : ByteArray) (n k : Nat) (acc : UInt64) (pos : Nat) : Option (N
 termination_by n - k
 
 /-- Reads `n ≤ 16` bits, LSB-first. -/
-public def Br.bits (r : Br) (n : Nat) : Option (Nat × Br) :=
+@[inline] public def Br.bits (r : Br) (n : Nat) : Option (Nat × Br) :=
   (bitsGo r.data n 0 0 r.bitPos).map fun p => (p.1, { r with bitPos := p.2 })
 
 /-- A little-endian bit field in the actual input bytes. -/
@@ -195,7 +195,7 @@ def decodeGo (h : Huff) (data : ByteArray) (len : Nat) (code : UInt64) (first in
 termination_by 16 - len
 
 /-- Decode one symbol, MSB-first, bounded by the 15-bit maximum length. -/
-public def Huff.decode (h : Huff) (r : Br) : Option (Nat × Br) :=
+@[inline] public def Huff.decode (h : Huff) (r : Br) : Option (Nat × Br) :=
   (decodeGo h r.data 1 0 0 0 r.bitPos).map fun p => (p.1, { r with bitPos := p.2 })
 
 /-- A codeword's most-significant-first bits in the actual byte stream. -/
