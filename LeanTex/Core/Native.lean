@@ -107,19 +107,33 @@ public def raws (s : Setting) (pos : Pos) : Array Raw :=
 
 end Setting
 
-/-- A style whose values are TeX, `\style{element}{ key = {...}, ... }`, each value one group its
-reader sets as inline content. -/
-public def texStyle (element : String) (entries : Array (String × Array Raw)) (pos : Pos) :
+/-- A value a TeX-valued style carries: text the declaration grammar reads, which its translation
+keeps whole (`Setting.carried`), or TeX its reader sets as inline content. -/
+public inductive StyleValue where
+  | text (v : String)
+  | tex (raws : Array Raw)
+
+/-- The value as its declaration spells it, TeX braced. -/
+public def StyleValue.spell : StyleValue → String
+  | .text v => v
+  | .tex rs => "{" ++ rawSrc rs ++ "}"
+
+/-- A style holding TeX, `\style{element}{ key = value, ... }`: a text value one word, a TeX value
+one group. -/
+public def texStyle (element : String) (entries : Array (String × StyleValue)) (pos : Pos) :
     Array Raw :=
   let body := entries.foldl (init := #[]) fun out (k, v) =>
+    let value : Array Raw := match v with
+      | .text w => if w.isEmpty then #[] else #[.space, .word w pos]
+      | .tex rs => #[.space, .group rs pos]
     (if out.isEmpty then out else out ++ #[.word "," pos, .space]) ++
-      #[.word k pos, .space, .word "=" pos, .space, .group v pos]
+      #[.word k pos, .space, .word "=" pos] ++ value
   #[.ctrl "style" pos, .group #[.word element pos] pos, .group body pos]
 
 /-- That style as a translation note names it. -/
-public def texStyleRender (element : String) (entries : Array (String × Array Raw)) : String :=
+public def texStyleRender (element : String) (entries : Array (String × StyleValue)) : String :=
   "\\style{" ++ element ++ "}{ " ++
-    ", ".intercalate (entries.toList.map fun (k, v) => k ++ " = {" ++ rawSrc v ++ "}") ++ " }"
+    ", ".intercalate (entries.toList.map fun (k, v) => Setting.entryText (k, v.spell)) ++ " }"
 
 /-- A native command a surface lowers into, its operands words the elaborator reads as text: a
 class, a theme, a theorem style, a command's or environment's head, a colour, the frame footer, a

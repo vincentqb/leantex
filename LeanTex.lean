@@ -47,6 +47,7 @@ public import LeanTex.Core.BibContract
 public import LeanTex.Core.CiteDeclContract
 public import LeanTex.Core.MarkerContract
 public import LeanTex.Core.NativeContract
+public import LeanTex.Core.Entries
 public import LeanTex.Core.BibText
 public import LeanTex.Core.BibLatex
 public import LeanTex.Core.BibUnique

@@ -1741,9 +1741,9 @@ def surfaceDoorCalls : List String :=
 /-- The core's own tex readers around the door, by file and definition, each reading text the engine
 holds. -/
 def coreTexReaders : List (String × String) :=
-  [("LeanTex/Core/Elab.lean", "run"), ("LeanTex/Core/Elab.lean", "styleInline"),
-   ("LeanTex/Core/Data.lean", "valParsed"), ("LeanTex/Core/Compat.lean", "synth"),
-   ("LeanTex/Core/Picture.lean", "readMacro"), ("LeanTex/Core/BibText.lean", "formulaOf"),
+  [("LeanTex/Core/Elab.lean", "run"), ("LeanTex/Core/Elab.lean", "templateInline"),
+   ("LeanTex/Core/Data.lean", "valParsed"), ("LeanTex/Core/Picture.lean", "readMacro"),
+   ("LeanTex/Core/BibText.lean", "formulaOf"),
    ("LeanTex/Core/BibElab.lean", "FieldDoor.readWith"),
    ("LeanTex/Core/MdDesugar.lean", "TexStream.flush"),
    ("LeanTex/Core/MdDesugar.lean", "TexStream.close"),

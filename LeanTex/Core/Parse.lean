@@ -428,6 +428,9 @@ public def parse (file : String) (toks : Array Token) : Array Raw × Array Diag 
     | none => pure ()
   return (acc, diags)
 
+/-- A verbatim capture's text read as the TeX it is, where the document defines the command the
+lexer captured it for. -/
+public def verbatimRaws (file s : String) : Array Raw := (parse file (Lex.lex file s).1).1
 
 /-- The option head of a listing environment's captured body: spaces and tabs,
 then `[...]` with nested braces. -/
@@ -623,6 +626,28 @@ public theorem skipSpaces_ge (raws : Array Raw) (i : Nat) : i ≤ skipSpaces raw
 /-- A raw run without its leading and trailing spaces. -/
 public def trimSpace (rs : Array Raw) : Array Raw :=
   ((rs.toList.dropWhile (· matches .space)).reverse.dropWhile (· matches .space)).reverse.toArray
+
+/-- A run's raws with a space after `acc` as the lexer reads one: none after a control word or
+another space. -/
+private def pushSpelledSpace (acc : Array Raw) : Array Raw :=
+  match acc.back? with
+  | some (.ctrl n _) => if n.length == 1 && !Lex.nameChar n.front then acc.push .space else acc
+  | some .space => acc
+  | _ => acc.push .space
+
+/-- Raws as the lexer reads their spelling back: a paragraph break a space, a run of spaces one,
+none after a control word, each body without spaces at its ends; a control space stands once. -/
+public def asSpelled : List Raw → Array Raw → Array Raw
+  | [], acc => acc
+  | .par _ :: rest, acc | .space :: rest, acc => asSpelled rest (pushSpelledSpace acc)
+  | .group b p :: rest, acc => asSpelled rest (acc.push (.group (trimSpace (asSpelled b.toList #[])) p))
+  | .math d b p :: rest, acc =>
+    asSpelled rest (acc.push (.math d (trimSpace (asSpelled b.toList #[])) p))
+  | .env n b p :: rest, acc =>
+    asSpelled rest (acc.push (.env n (trimSpace (asSpelled b.toList #[])) p))
+  | r :: rest, acc => asSpelled rest (acc.push r)
+termination_by l => sizeOf l
+decreasing_by raws_dec
 
 /-- A raw run cut at its commas outside groups, inside words and standing alone; each word piece
 stands at its own column, and empty pieces are dropped. -/

@@ -8,6 +8,7 @@ public import LeanTex.Core.PackageImports
 import LeanTex.Core.Theme
 import LeanTex.Core.Decl
 import LeanTex.Core.KeyVal
+import LeanTex.Core.Entries
 import LeanTex.Core.PdfDate
 public import LeanTex.Core.Ir
 import LeanTex.Core.BeamerColor
@@ -135,9 +136,9 @@ public def beamerFontElements : List (String × String × String) :=
 
 /-- The block-title fonts a shipped theme declares, which a document's
 `\setbeamerfont` merges into. -/
-private def themeBlockFont (theme element : String) : List (String × String) :=
+private def themeBlockFont (theme element : String) (pos : Pos) : List (String × Array Raw) :=
   if theme == "moloch" && (element == "block title" || element == "block title alerted") then
-    [(Ir.FontAxis.series.key, "\\bfseries"), (Ir.FontAxis.size.key, "\\normalsize")]
+    [(Ir.FontAxis.series.key, #[.ctrl "bfseries" pos]), (Ir.FontAxis.size.key, #[.ctrl "normalsize" pos])]
   else []
 
 /-- Beamer's font axes in the order `\usebeamerfont` selects them. -/
@@ -414,7 +415,7 @@ private structure LoadSet where
   imports : PackageImports.Loads := []
   /-- Option passes replayed at their execution point, so a late pass cannot
   alter an earlier native load. -/
-  rewritePassed : Array (String × Array String) := #[]
+  rewritePassed : Array (String × Array (String × Array Raw)) := #[]
   /-- Class option passes, replayed at their execution point. -/
   rewriteClassPassed : Array (String × Array String) := #[]
   cls : Option (String × Array String) := none
@@ -586,8 +587,8 @@ private structure St where
   inputAttempts : Array InputAttempt := #[]
   /-- Running-content slots gathered across `\ihead`/`\chead`/`\ohead`: 0 inner,
   1 centre, 2 outer, a repeat replacing. -/
-  head : Array (Nat × String) := #[]
-  foot : Array (Nat × String) := #[]
+  head : Array (Nat × Array Raw) := #[]
+  foot : Array (Nat × Array Raw) := #[]
   runPos : Pos := { line := 1, col := 1 }
   runFrom : Nat := 1
   /-- Whether the counter resets after the title page:
@@ -623,7 +624,7 @@ private structure St where
   deck : Bool := false
   /-- The class options the class leaves to the packages that take them, as LaTeX offers global
   options. -/
-  globalOffered : Array String := #[]
+  globalOffered : Array (String × Array Raw) := #[]
   /-- The font slots a fontspec or babel declaration has
   named so far, in preamble order. -/
   facesDeclared : Array String := #[]
@@ -813,12 +814,12 @@ private structure St where
   beamerBlockBegin : Array Raw := #[]
   /-- Local field definitions shared by native element
   styles and template font selection. -/
-  beamerFonts : Array (String × List (String × String)) := #[]
+  beamerFonts : Array (String × List (String × Array Raw)) := #[]
   /-- A global numbered footer, read at the document seam
   after its font declarations. -/
   beamerFootline : Option (String × Pos × Array Raw) := none
   /-- The font and footer fields saved at each preamble group primitive. -/
-  beamerScopes : List (String × Array (String × List (String × String)) ×
+  beamerScopes : List (String × Array (String × List (String × Array Raw)) ×
     Option (String × Pos × Array Raw)) := []
   /-- Successful captures, which alone justify removing an
   otherwise empty preamble group. -/
@@ -834,7 +835,7 @@ private structure St where
   order the elaborator assigns them. -/
   fontFamilies : Array String := #[]
   /-- enumitem's stored settings by scope (kind, level) as native style entries. -/
-  setlists : Array ((Option String × Option Nat) × Array (String × String)) := #[]
+  setlists : Array ((Option String × Option Nat) × Array (String × Native.StyleValue)) := #[]
   /-- enumitem's stored vertical keys by scope, as native spacing entries (`Ir.listSetKeys`). -/
   listSpacings : Array ((Option String × Option Nat) × Array (String × String)) := #[]
   /-- The listing defaults the document declares, in the order the text pass meets them. -/
@@ -1206,8 +1207,9 @@ public def setlistLengthKeys : List (String × String) := [("leftmargin", "inden
 
 /-- The native entries one list level takes from enumitem's stored scopes, applied as enumitem
 applies them: every list, the level, the kind, then the kind at the level, a later key winning. -/
-private def setlistRecord (stored : Array ((Option String × Option Nat) × Array (String × String)))
-    (kind : String) (level : Option Nat) : Array (String × String) :=
+private def setlistRecord
+    (stored : Array ((Option String × Option Nat) × Array (String × Native.StyleValue)))
+    (kind : String) (level : Option Nat) : Array (String × Native.StyleValue) :=
   let scopes : List (Option String × Option Nat) := match level with
     | none => [(none, none), (some kind, none)]
     | some l => [(none, none), (none, some l), (some kind, none), (some kind, some l)]
@@ -1267,60 +1269,76 @@ private def beamerFontAxis (key : String) : String :=
 
 /-- The stored font fields updated by a declaration's key
 list; an empty value clears its field. -/
-private def beamerFontUpdate (old : List (String × String)) (src : String) :
-    List (String × String) := Id.run do
+private def beamerFontUpdate (old : List (String × Array Raw)) (src : Array Raw) :
+    List (String × Array Raw) := Id.run do
   let mut fields := old
-  for entry in KeyVal.items src do
-    if let (key, some value) := KeyVal.entry entry then
-      let value := if key == "size*" then ((KeyVal.rawEntry entry).2.getD value)
-        else value.trimAscii.toString
-      fields := (key, value) :: fields.filter (fun e => beamerFontAxis e.1 != beamerFontAxis key)
+  for e in Entries.read .keyval src do
+    -- `size*`'s two groups are read as written, a single one included.
+    if let some value := if e.key == "size*" then e.written else e.value then
+      fields := (e.key, value) :: fields.filter (fun f => beamerFontAxis f.1 != beamerFontAxis e.key)
   return fields
 
+/-- A value's top-level groups; what stands outside them is dropped. -/
+private def rawGroups (v : Array Raw) : Array (Array Raw) :=
+  v.filterMap fun r => match r with
+    | .group b _ => some b
+    | _ => none
+
 /-- Native font commands selecting the stored fields in beamer's order. -/
-private def beamerFontCommands (fields : List (String × String)) : String :=
-  String.join (beamerFontKeys.map fun axis =>
+private def beamerFontCommands (fields : List (String × Array Raw)) (pos : Pos) : Array Raw :=
+  beamerFontKeys.foldl (init := #[]) fun out axis =>
     match fields.find? (fun e => beamerFontAxis e.1 == axis) with
     | some ("size*", value) =>
-      let gs := braceGroups value
-      if gs.size == 2 then s!"\\fontsize\{{gs[0]!}}\{{gs[1]!}}\\selectfont" else ""
-    | some (_, value) => value
-    | none => "")
+      match (rawGroups value).toList with
+      | [size, skip] =>
+        out ++ #[.ctrl "fontsize" pos, .group size pos, .group skip pos, .ctrl "selectfont" pos]
+      | _ => out
+    | some (_, value) => out ++ value
+    | none => out
 
 /-- A theme's own block title fields over those declared before it loads. -/
-private def themeOver (stored seed : List (String × String)) : List (String × String) :=
+private def themeOver (stored seed : List (String × Array Raw)) : List (String × Array Raw) :=
   seed.foldl (fun fields (key, value) =>
     (key, value) :: fields.filter (fun e => beamerFontAxis e.1 != beamerFontAxis key)) stored
 
 /-- The fields the plain block title is set in: its own, with the regular series
 where they name none. -/
-private def blockTitleFields (element : String) (fields : List (String × String)) :
-    List (String × String) :=
+private def blockTitleFields (element : String) (fields : List (String × Array Raw)) (pos : Pos) :
+    List (String × Array Raw) :=
   if element == "block title" &&
-      !fields.any (fun e => e.1 == Ir.FontAxis.series.key && !e.2.trimAscii.isEmpty) then
-    (Ir.FontAxis.series.key, "\\mdseries") :: fields.filter (·.1 != Ir.FontAxis.series.key)
+      !fields.any (fun e => e.1 == Ir.FontAxis.series.key && !(rawSrc e.2).isEmpty) then
+    (Ir.FontAxis.series.key, #[.ctrl "mdseries" pos]) :: fields.filter (·.1 != Ir.FontAxis.series.key)
   else fields
+
+/-- The commands a template sets its font with, its measured size apart: a size beamer does not
+measure before the other fields. -/
+private def templateFontCommands (fields : List (String × Array Raw)) (pos : Pos) : Array Raw :=
+  let rest := beamerFontCommands (fields.filter fun e => beamerFontAxis e.1 != Ir.FontAxis.size.key) pos
+  match fields.find? (fun e => beamerFontAxis e.1 == Ir.FontAxis.size.key) with
+  | some ("size*", _) | none => rest
+  | some (_, value) =>
+    let src := rawSrc value
+    let name := if src.startsWith "\\" then (src.drop 1).toString else src
+    if (TitleTemplate.beamerSizes.lookup name).isSome then rest else value ++ rest
 
 /-- The title template's font, its measured size and leading
 carried separately. -/
-private def beamerTemplateFont (element : String) (fields : List (String × String)) :
+private def beamerTemplateFont (element : String) (fields : List (String × Array Raw)) (pos : Pos) :
     TitleTemplate.Font := Id.run do
-  let mut font : TitleTemplate.Font :=
-    { cmds := beamerFontCommands
-        (fields.filter fun e => beamerFontAxis e.1 != Ir.FontAxis.size.key) }
+  let mut font : TitleTemplate.Font := { cmds := rawSrc (templateFontCommands fields pos) }
   match fields.find? (fun e => beamerFontAxis e.1 == Ir.FontAxis.size.key) with
   | some ("size*", value) =>
-    let gs := braceGroups value
+    let gs := (rawGroups value).map rawSrc
     font := { font with size := gs[0]?, leading := gs[1]? }
     if gs.size < 2 then
       font := { font with unread := font.unread.push s!"'size*' of '{element}'" }
     if gs.size > 2 then
       font := { font with unread := font.unread.push s!"extra size fields of '{element}'" }
   | some (_, value) =>
-    let name := if value.startsWith "\\" then (value.drop 1).toString else value
-    match TitleTemplate.beamerSizes.lookup name with
-    | some (size, leading) => font := { font with size := some size, leading := some leading }
-    | none => font := { font with cmds := value ++ font.cmds }
+    let src := rawSrc value
+    let name := if src.startsWith "\\" then (src.drop 1).toString else src
+    if let some (size, leading) := TitleTemplate.beamerSizes.lookup name then
+      font := { font with size := some size, leading := some leading }
   | none => pure ()
   for (key, _) in fields do
     unless beamerFontKeys.contains (beamerFontAxis key) do
@@ -1366,10 +1384,6 @@ this declaration is skipped" pos
       "'FontFace' is read as {series}{shape}{font name}; \
 another form is skipped" pos
     return none
-
-private def synth (s : String) : M (Array Raw) := do
-  let file := (← get).file
-  return (Parse.parse file (Lex.lex file s).1).1
 
 mutual
 
@@ -1437,9 +1451,6 @@ public theorem rebase_source_exact (mapPos : Pos → Pos) (groups : Bool) (r : R
     rawSrcOne (rebase mapPos groups r) = rawSrcOne r :=
   rebase_source mapPos groups r
 
-private def synthAt (s : String) (pos : Pos) : M (Array Raw) := do
-  return (← synth s).map (rebase (fun _ => pos) true)
-
 /-- A native setting's carrier where it stands, each entry its block cannot carry whole named and
 dropped, so the elaborator reads the rest exactly (`Native.render_parse_exact`). -/
 private def carry (s : Native.Setting) (pos : Pos) : M (Array Raw) := do
@@ -1455,6 +1466,29 @@ private def setting (what : String) (s : Native.Setting) (pos : Pos)
     (subject : Option String := none) : M (Array Raw) := do
   if let some n := s.note? then became what n pos (subject := subject)
   carry s pos
+
+/-- A style holding TeX where it stands, named as `what`'s translation where it keeps an entry, each
+text entry its carrier cannot read back whole named and dropped. -/
+private def texSetting (what element : String) (entries : Array (String × Native.StyleValue))
+    (pos : Pos) : M (Array Raw) := do
+  let mut kept := #[]
+  for (k, v) in entries do
+    match v with
+    | .text w =>
+      -- premise: nativeCarrierChecks — a value no entry carries whole would read as other entries
+      if Native.Setting.carried (k, w) then kept := kept.push (k, v)
+      else
+        say .W0101 "a value that stands as no single native entry was dropped" pos
+          (detail := some s!"'{k} = {w}' in '\\style\{{element}}'")
+          (help := "write the value so it stands as one entry: its commas, quotes and brackets inside braces")
+    | .tex _ => kept := kept.push (k, v)
+  if kept.isEmpty then return #[]
+  became what (Native.texStyleRender element kept) pos
+  return Native.texStyle element kept pos
+
+/-- Raws without the blanks at both ends, as their source trimmed reads. -/
+private def trimBlank (rs : Array Raw) : Array Raw :=
+  ((rs.toList.dropWhile isBlankRaw).reverse.dropWhile isBlankRaw).reverse.toArray
 
 mutual
 
@@ -6020,18 +6054,18 @@ public def geometryNoFurniture : List String := ["noheadfoot", "nohead", "nofoot
 
 /-- The native spacing entries one enumitem option entry sets: a vertical key with its length as
 the length door reads it, or a shorthand's zeros; `none` for any other entry. -/
-private def listSpacingEntries (what reader e : String) (pos : Pos) :
+private def listSpacingEntries (what reader : String) (e : Entries.Entry) (pos : Pos) :
     M (Option (Array (String × String))) := do
   let zeros (keys : List String) : Array (String × String) := keys.toArray.map (·, "0pt")
-  match KeyVal.entry e with
-  | ("nosep", none) | ("nosep", some "true") => return some (zeros Ir.listSetKeys)
-  | ("noitemsep", none) | ("noitemsep", some "true") => return some (zeros ["itemsep", "parsep"])
-  | ("nolistsep", none) | ("nolistsep", some "true") =>
+  match e.key, e.value.map rawSrc with
+  | "nosep", none | "nosep", some "true" => return some (zeros Ir.listSetKeys)
+  | "noitemsep", none | "noitemsep", some "true" => return some (zeros ["itemsep", "parsep"])
+  | "nolistsep", none | "nolistsep", some "true" =>
     return some ((zeros ["partopsep", "itemsep", "parsep"]).push ("topsep", "0pt plus 0.1pt"))
-  | (key, some v) =>
+  | key, some v =>
     if !Ir.listSetKeys.contains key then return none
     let st ← get
-    let read := (lenValue st.lens (← synth v) (preamble := !st.inDoc)
+    let read := (lenValue st.lens (e.value.getD #[]) (preamble := !st.inDoc)
       (measureKnown := st.measureKnown) (flowPage := st.flowPage)).filter fun n =>
         readsAsLength n && texWordsOnly v
     match read with
@@ -6040,21 +6074,21 @@ private def listSpacingEntries (what reader e : String) (pos : Pos) :
       unreadParam reader key s!"'{what}' key '{key}={v}', a length this engine cannot read," pos
         (help := "give a length such as 2pt, 0.5em or \\smallskipamount")
       return some #[]
-  | _ => return none
+  | _, _ => return none
 
 /-- A list's options with enumitem's vertical keys and shorthands as native spacing keys, the rest
 as written, for the list to read where it opens. -/
 private def listOptions (n : String) (body : Array Raw) (pos : Pos) : M (Array Raw) := do
   let j := skipSpaces body 0
   unless body[j]? matches some (.sym '[' _) do return body
-  let (opt, k) := takeOpt body j
-  let some src := opt | return body
-  let what := s!"\\begin\{{n}}[{src}]"
-  let mut rest : Array String := #[]
+  let (opt, k) := takeRawOpt body j
+  let some optRaws := opt | return body
+  let what := s!"\\begin\{{n}}[{rawSrc optRaws}]"
+  let mut rest : Array Entries.Entry := #[]
   let mut spacing : Array (String × String) := #[]
   let mut read := false
   let mut named := false
-  for e in KeyVal.items src do
+  for e in Entries.read .keyval optRaws do
     match ← listSpacingEntries what n e pos with
     | some vs =>
       read := true
@@ -6062,9 +6096,10 @@ private def listOptions (n : String) (body : Array Raw) (pos : Pos) : M (Array R
       for (key, v) in vs do spacing := Ir.redeclare spacing key v
     | none => rest := rest.push e
   unless read do return body
-  let native := ", ".intercalate ((spacing.toList.map fun (key, v) => s!"{key} = {v}") ++ rest.toList)
+  let native := ", ".intercalate
+    ((spacing.toList.map fun (key, v) => s!"{key} = {v}") ++ rest.toList.map (·.src))
   -- A value or key the list does not read is named where it stands, which accounts for the options.
-  unless named || rest.any fun e => !(KeyVal.entry e).1.isEmpty do
+  unless named || rest.any fun e => !e.key.isEmpty do
     became what s!"\\begin\{{n}}[{native}]" pos
   return #[.sym '[' pos] ++ (if native.isEmpty then #[] else #[.word native pos]) ++ #[.sym ']' pos] ++
     body.extract k body.size
@@ -6086,27 +6121,28 @@ private def absoluteWords : List String :=
 
 /-- A key's value as the preamble's length door reads a `\dimexpr` to a literal, sums and scalings of
 lengths it holds, else the value as written. -/
-private def dimexprValue (v : String) : M String := do
-  if !v.startsWith "\\dimexpr" then return v
+private def dimexprValue (v : Array Raw) : M String := do
+  let src := rawSrc v
+  if !src.startsWith "\\dimexpr" then return src
   let st ← get
-  let raws ← synth v
   -- premise: strutLengthChecks — a value naming a length the page cannot resolve stays dropped
-  let read := (lenValue st.lens raws (preamble := !st.inDoc) (measureKnown := st.measureKnown)
+  let read := (lenValue st.lens v (preamble := !st.inDoc) (measureKnown := st.measureKnown)
     (flowPage := st.flowPage) (strut := if st.inDoc then none else st.strutSkip)).filter fun s =>
-      readsAsLength s && texWordsOnly v && !s.contains '/' && (letterRuns s).all absoluteWords.contains
-  return read.getD v
+      readsAsLength s && texWordsOnly src && !s.contains '/' && (letterRuns s).all absoluteWords.contains
+  return read.getD src
 
 /-- `\usepackage[opts]{geometry}`, `\geometry{...}` and
 `\newgeometry{...}` as `\page{...}`. -/
-private def geometry (opts : String) (pos : Pos)
+private def geometry (opts : Array Raw) (pos : Pos)
     (spelling : String := "\\usepackage{geometry}") : M (Array Raw) := do
   let mut keys : Array (Native.PageKey × String × Array String) := #[]
   let mut dropped : Array String := #[]
   let mut droppedExpr : Array String := #[]
   let mut sides : Array (String × String) := #[]
-  for e in KeyVal.items opts do
-    match KeyVal.entry e with
-    | (f, none) =>
+  for entry in Entries.read .keyval opts do
+    let e := entry.src
+    match entry.key, entry.value with
+    | f, none =>
       if f.endsWith "paper" then
         keys := keys.push (.size, (f.dropEnd "paper".length).toString, #[e])
       else if geometryNoFurniture.contains f then
@@ -6118,7 +6154,7 @@ private def geometry (opts : String) (pos : Pos)
         inertParam "geometry" f spelling "the engine writes its own output" pos
       else if f == "verbose" then inertParam "geometry" f spelling "the engine writes no TeX log" pos
       else dropped := dropped.push f
-    | (k, some v0) =>
+    | k, some v0 =>
       -- geometry's width/height size the text block, paperwidth/paperheight the page.
       let k := if k == "paperwidth" then "width" else if k == "paperheight" then "height" else k
       let v ← dimexprValue v0
@@ -6128,7 +6164,8 @@ private def geometry (opts : String) (pos : Pos)
       else if k == "verbose" then inertParam "geometry" k spelling "the engine writes no TeX log" pos
       else if v.startsWith "\\dimexpr" then
         droppedExpr := droppedExpr.push s!"{k} = {v}"
-      else match k, ← (KeyVal.items v).toList.mapM dimexprValue with
+      else match k, ← (if v == rawSrc v0 then (Entries.read .keyval v0).toList.mapM (dimexprValue ·.item)
+          else pure (KeyVal.items v).toList) with
       | "margin", a :: b :: _ | "hmargin", a :: b :: _ | "vmargin", a :: b :: _ =>
         if a.startsWith "\\dimexpr" || b.startsWith "\\dimexpr" then
           droppedExpr := droppedExpr.push s!"{k} = {v}"
@@ -6378,7 +6415,7 @@ private def MetaWord.grammar : MetaWord → String
 /-- What hyperref's keys declare: its metadata keys with their TeX values, its dates and trapping
 as words, whether a link key was read, and whether a dropped key was named. -/
 private structure HyperrefRead where
-  metadata : Array (Native.TextMetaKey × String)
+  metadata : Array (Native.TextMetaKey × Array Raw)
   words : Array (MetaWord × String)
   linked : Bool
   warned : Bool
@@ -6410,8 +6447,8 @@ UTF-16 otherwise, as the option asks"),
 
 /-- hyperref's keys, as `\hypersetup` and the package options give them, with its link keys
 written into the setup. -/
-private def hyperrefKeys (opts : String) (pos : Pos) : M HyperrefRead := do
-  let mut metadata : Array (Native.TextMetaKey × String) := #[]
+private def hyperrefKeys (opts : Array Raw) (pos : Pos) : M HyperrefRead := do
+  let mut metadata : Array (Native.TextMetaKey × Array Raw) := #[]
   let mut words : Array (MetaWord × String) := #[]
   let mut links := (← get).links
   let mut linked := false
@@ -6419,11 +6456,13 @@ private def hyperrefKeys (opts : String) (pos : Pos) : M HyperrefRead := do
   let mut unread : Array String := #[]
   let mut misread : Array String := #[]
   let mut grammars : Array String := #[]
-  for e in KeyVal.items opts do
-    let (k, value) := KeyVal.entry e
+  for entry in Entries.read .keyval opts do
+    let e := entry.src
+    let k := entry.key
+    let value := entry.value.map rawSrc
     let v := value.getD ""
     if let some m := Native.TextMetaKey.all.find? (k == "pdf" ++ ·.key.name) then
-      metadata := metadata.push (m, v)
+      metadata := metadata.push (m, entry.value.getD #[])
     if let some w := MetaWord.all.find? (k == ·.hyperref) then
       let v := if v.trimAscii.isEmpty && w.isSwitch then "true" else v
       unless v.trimAscii.isEmpty do
@@ -6520,7 +6559,7 @@ private def hyperrefLowered (what key : String) (r : HyperrefRead) (pos : Pos) :
       wordGroup entries pos]
   for (k, v) in r.metadata do
     body := (body.push (.group #[.word k.key.name pos] pos)).push
-      (.group (pdfStringList #[] (← synthAt v pos).toList) pos)
+      (.group (pdfStringList #[] (v.map (rebase (fun _ => pos) true)).toList) pos)
   return #[Raw.ctrl "pdfmeta" pos, .group body pos] ++ styles
 
 /-- `\DocumentMetadata{...}`: `lang`, `pdfversion`, `pdfstandard=X-4` and the `X` entry of
@@ -7197,13 +7236,11 @@ redefinition is skipped") pos
         ("sl", "slshape"), ("rm", "rmfamily"), ("sf", "sffamily"), ("tt", "ttfamily")]
       let alignments := ["raggedright", "raggedleft", "centering"]
       let fonts := args[5].filterMap fun r => match r with
-        | .ctrl n _ =>
-          if alignments.contains n then none
-          else some s!"\\{(aliases.lookup n).getD n}"
+        | .ctrl n _ => if alignments.contains n then none else some (Raw.ctrl ((aliases.lookup n).getD n) pos)
         | _ => none
-      let font := if fonts.isEmpty then #[] else #[("font", "{" ++ String.join fonts.toList ++ "}")]
-      return some (← setting s!"\\{cmd} = \\@startsection\{{element}}"
-        (.style element (#[("before", before), ("after", after)] ++ font)) pos)
+      let font := if fonts.isEmpty then #[] else #[("font", Native.StyleValue.tex fonts)]
+      return some (← texSetting s!"\\{cmd} = \\@startsection\{{element}}" element
+        (#[("before", .text before), ("after", .text after)] ++ font) pos)
     else return none
   | _ => return none
 
@@ -7960,10 +7997,10 @@ private def flushBeamerFootline : M (Array Raw × Array Raw) := do
   let mut unread : Array String := #[]
   if let some name := fontName then
     if let some fields := (← get).beamerFonts.toList.lookup name then
-      let font := beamerTemplateFont name fields
+      let font := beamerTemplateFont name fields pos
       if let some size := font.size then
         fontPrefix := fontPrefix.push (.ctrl (Marker.fontSizeName size (font.leading.getD "")) pos)
-      fontPrefix := fontPrefix ++ (← synthAt font.cmds pos)
+      fontPrefix := fontPrefix ++ (templateFontCommands fields pos).map (rebase (fun _ => pos) true)
       unread := font.unread
       -- premise: beamerTemplateChecks — the selected font reaches the footer note
       write fun st => { st with diags := st.diags.filter fun d =>
@@ -8556,7 +8593,7 @@ defines; those blocks keep beamer's default template" pos
         return some (#[], predefinedEnd raws past)
       let (bodyArgs, k) := takeGroups raws j 1
       if bodyArgs.size != 1 then return none
-      let entries := #[("marker", (bodyArgs.getD 0 #[]).map (rebase (fun _ => pos) true))]
+      let entries := #[("marker", Native.StyleValue.tex ((bodyArgs.getD 0 #[]).map (rebase (fun _ => pos) true)))]
       became s!"\\setbeamertemplate\{{element}}" (Native.texStyleRender native entries) pos
       return some (Native.texStyle native entries pos, k)
     -- premise: beamerTemplateChecks — footer content reaches the frame furniture
@@ -8613,7 +8650,7 @@ defines; those blocks keep beamer's default template" pos
       -- A title-page template of the overlay shape is read as the engine's own title page.
       let (bodyArgs, k) := takeGroups raws j 1
       let fonts := (← get).beamerFonts.toList.map fun (n, fields) =>
-        (n, beamerTemplateFont n fields)
+        (n, beamerTemplateFont n fields pos)
       match TitleTemplate.read fonts (bodyArgs.getD 0 #[]) with
       | some rd@{ mixed := some datum, .. } =>
         -- A datum beside literal text has no slot, so the built-in title page sets every datum.
@@ -8870,15 +8907,19 @@ in its own script's glyphs," pos
   return out
 
 /-- One package interpreted in the loading call's declared order. -/
-private def rewritePackageBody (name p : String) (opt : Option String) (pos : Pos) :
-    M (Array Raw) := do
+private def rewritePackageBody (name p : String) (opt : Option String) (optRaws : Array Raw)
+    (pos : Pos) : M (Array Raw) := do
   let mut out : Array Raw := #[]
   let own := (KeyVal.items (opt.getD "")).toList
-  let offered := (← get).globalOffered.toList.filter fun o =>
+  let offeredItems := (← get).globalOffered.toList.filter fun (o, _) =>
     packageTakes p o && !own.any fun g => (KeyVal.entry g).1 == (KeyVal.entry o).1
+  let offered := offeredItems.map (·.1)
   let given := offered ++ own
+  -- The entries `given` spells, with their raws.
+  let givenEntries := (offeredItems.map (·.2) ++ [optRaws]).flatMap fun rs =>
+    (Entries.read .keyval rs).toList
   if p == "geometry" then
-    out := out ++ (← geometry (opt.getD "") pos)
+    out := out ++ (← geometry optRaws pos)
   else if p == "crop" then
     out := out ++ (← crop (opt.getD "") pos)
   else if p == "colorspace" then
@@ -8891,8 +8932,9 @@ private def rewritePackageBody (name p : String) (opt : Option String) (pos : Po
     let skip := (given.filterMap fun o => match KeyVal.entry o with
       | ("skip", some v) => some v
       | _ => none).getLast?
-    let read ← match skip with
-      | some v => doorValue? (← synthAt v pos)
+    let skipRaws := (givenEntries.filterMap fun e => if e.key == "skip" then e.value else none).getLast?
+    let read ← match skipRaws with
+      | some v => doorValue? (v.map (rebase (fun _ => pos) true))
       | none => pure none
     match skip, read with
     | some v, some src =>
@@ -9004,7 +9046,7 @@ the Markdown document dialect reads only 'citations' and 'hybrid'" pos
       s!"\\{name}[{opt.getD ""}]\{unicode-math}" (opt.getD "") pos)
   else if p == "hyperref" && opt.isSome then
     -- hyperref's package options are `\hypersetup`'s keys.
-    let r ← hyperrefKeys (opt.getD "") pos
+    let r ← hyperrefKeys optRaws pos
     if r.metadata.isEmpty && r.words.isEmpty && !r.linked then
       discard s!"\\{name}\{{p}}" "the engine does this itself" s!"{name}:{p}" pos
     else
@@ -9090,26 +9132,31 @@ and \\tokens declare the design directly")
   return out
 
 /-- Admits a native package before installing its defaults. -/
-private def rewritePackage (name p : String) (opt : Option String) (pos : Pos) :
-    M (Array Raw) := do
+private def rewritePackage (name p : String) (opt : Option String) (optRaws : Array Raw)
+    (pos : Pos) : M (Array Raw) := do
   if nativePackages.contains p then
-    let passed := (← get).loads.rewritePassed.toList.flatMap fun (q, os) =>
+    let passedItems := (← get).loads.rewritePassed.toList.flatMap fun (q, os) =>
       if q == p then os.toList else []
+    let passed := passedItems.map (·.1)
     let some options ← admitPackage p (PackageImports.literalOptions (opt.getD "")) passed pos
       | return #[]
     let opt := if passed.isEmpty then opt else some (String.intercalate "," options)
-    rewritePackageBody name p opt pos
+    -- The passed options before the load's own, as `options` spells them.
+    let optRaws := if passed.isEmpty then optRaws else
+      (passedItems.map (·.2) ++ ((Entries.read .keyval optRaws).map (·.item)).toList).foldl
+        (init := #[]) fun acc item => if acc.isEmpty then item else (acc.push (.word "," pos)) ++ item
+    rewritePackageBody name p opt optRaws pos
   else
-    rewritePackageBody name p opt pos
+    rewritePackageBody name p opt optRaws pos
 
 private theorem rewritePackage_compatible_exact (name p : String) (opt : Option String)
-    (pos : Pos) (st : St) (first : List String)
+    (optRaws : Array Raw) (pos : Pos) (st : St) (first : List String)
     (native : nativePackages.contains p = true)
     (loaded : st.loads.imports.lookup p = some first)
     (compatible : ∀ o ∈ PackageImports.literalOptions (opt.getD ""),
-      o ∈ first ++ st.loads.rewritePassed.toList.flatMap
-        (fun (q, os) => if q == p then os.toList else [])) :
-    rewritePackage name p opt pos st = (#[], { st with writes := st.writes + 1 }) := by
+      o ∈ first ++ (st.loads.rewritePassed.toList.flatMap
+        (fun (q, os) => if q == p then os.toList else [])).map (·.1)) :
+    rewritePackage name p opt optRaws pos st = (#[], { st with writes := st.writes + 1 }) := by
   simp only [rewritePackage, native, ↓reduceIte, bind, StateT.bind,
     get, getThe, MonadStateOf.get, StateT.get, pure]
   rw [admitPackage_compatible_exact _ _ _ _ _ _ loaded compatible]
@@ -9128,11 +9175,11 @@ private theorem atSource_package_exact (st : St) (pos : Pos) (p : String) :
     packageRefusal, Diag.of_record_exact]
 
 private theorem rewritePackage_external_exact (name p : String)
-    (opt : Option String) (pos : Pos) (st : St)
+    (opt : Option String) (optRaws : Array Raw) (pos : Pos) (st : St)
     (hn : nativePackages.contains p = false)
     (hb : (boundaryPkgs.contains p && st.boundaryOpen) = false)
     (ht : themeSlotOfPackage? p = none) :
-    rewritePackage name p opt pos st =
+    rewritePackage name p opt optRaws pos st =
       (#[], { st with diags := st.diags.push (atSource st pos (packageRefusal st.file pos p)) }) := by
   have hn' := hn
   simp only [nativePackages, List.contains_cons, List.contains_nil,
@@ -9150,18 +9197,18 @@ private theorem rewritePackage_external_exact (name p : String)
 /-- The package-loading arm's loop, judging each name of one
 operand in order. -/
 private def rewritePackages (name : String) (pkgs : List String)
-    (opt : Option String) (pos : Pos) : M (Array Raw) := do
+    (opt : Option String) (optRaws : Array Raw) (pos : Pos) : M (Array Raw) := do
   let mut out : Array Raw := #[]
   for p in pkgs do
-    out := out ++ (← rewritePackage name p opt pos)
+    out := out ++ (← rewritePackage name p opt optRaws pos)
   return out
 
 private theorem rewritePackages_external_exact (name : String)
-    (pkgs : List String) (opt : Option String) (pos : Pos) (st : St)
+    (pkgs : List String) (opt : Option String) (optRaws : Array Raw) (pos : Pos) (st : St)
     (hn : ∀ p ∈ pkgs, nativePackages.contains p = false)
     (hb : ∀ p ∈ pkgs, (boundaryPkgs.contains p && st.boundaryOpen) = false)
     (ht : ∀ p ∈ pkgs, themeSlotOfPackage? p = none) :
-    rewritePackages name pkgs opt pos st =
+    rewritePackages name pkgs opt optRaws pos st =
       (#[], { st with diags := st.diags ++
         (pkgs.map fun p => atSource st pos (packageRefusal st.file pos p)).toArray }) := by
   have loop :
@@ -9170,7 +9217,7 @@ private theorem rewritePackages_external_exact (name : String)
         (∀ p ∈ xs, (boundaryPkgs.contains p && s.boundaryOpen) = false) →
         (∀ p ∈ xs, themeSlotOfPackage? p = none) →
         ((forIn xs out fun p acc => do
-          let repl ← rewritePackage name p opt pos
+          let repl ← rewritePackage name p opt optRaws pos
           pure (.yield (acc ++ repl))) : M (Array Raw)) s =
           (out, { s with diags := s.diags ++
             (xs.map fun p => atSource s pos (packageRefusal s.file pos p)).toArray }) := by
@@ -9184,7 +9231,7 @@ private theorem rewritePackages_external_exact (name : String)
       intro out s hn hb ht
       rw [List.forIn_cons]
       simp only [bind, StateT.bind, pure, StateT.pure,
-        rewritePackage_external_exact name p opt pos s
+        rewritePackage_external_exact name p opt optRaws pos s
           (hn p List.mem_cons_self) (hb p List.mem_cons_self) (ht p List.mem_cons_self),
         Array.append_empty]
       let next : St :=
@@ -9212,12 +9259,15 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
     (start : Nat) : M (Option (Array Raw × Nat)) := do
   match name with
   | "documentclass" =>
-    let (opt, j) := takeOpt raws start
+    let (optRaws, j) := takeRawOpt raws start
+    let opt := optRaws.map rawSrc
     let (args, k) := takeGroups raws j 1
     let cls := rawSrc (args.getD 0 #[])
     -- A package takes the class options it declares, and the class reads the rest.
     let offered := offeredOptions raws k (KeyVal.items (opt.getD "")).toList
-    unless offered.isEmpty do write fun st => { st with globalOffered := offered.toArray }
+    unless offered.isEmpty do
+      let items := (Entries.read .keyval (optRaws.getD #[])).filter (offered.contains ·.src)
+      write fun st => { st with globalOffered := items.map fun e => (e.src, e.item) }
     let keptItems := (KeyVal.items (opt.getD "")).toList.filter (!offered.contains ·)
     -- The class's `\normalsize` sets the strut box at its `\baselineskip` as the class loads.
     let strut := (classNormalPt cls keptItems).map classNormalSkip
@@ -9267,7 +9317,7 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
       let passed := (← get).loads.rewriteClassPassed.toList.flatMap fun (name, options) =>
         if name == cls then options.toList else []
       let packages := classPackages cls (passed ++ PackageImports.literalOptions (opt.getD ""))
-      let dependencies ← rewritePackages "RequirePackage" packages none pos
+      let dependencies ← rewritePackages "RequirePackage" packages none #[] pos
       return some (declaration.raws pos ++ dependencies, k)
     else
       -- The options passed to a class before it loads are its own, before its written ones.
@@ -9575,9 +9625,9 @@ private def lowerBeamerFont (c : CtrlCall) : M (Array Raw) := do
   let pos := c.pos
   let starred := (c.given 0).isSome
   let element := (c.src 1).trimAscii.toString
-  let source := c.src 2
+  let source := c.arg 2
   let stored := (← get).beamerFonts.toList.lookup element |>.getD
-    (themeBlockFont (← get).beamerTheme element)
+    (themeBlockFont (← get).beamerTheme element pos)
   let previous := if starred then [] else stored
   let fields := beamerFontUpdate previous source
   unless element == "normal text" do
@@ -9610,7 +9660,7 @@ else, so only declared commands are taken"
           else s!"'\\setbeamerfont\{{element}}' inherits with '{key}'; the engine has \
 no font inheritance, so only declared commands are taken") pos
           (help := beamerNative.lookup "setbeamerfont")
-      else if key == "size*" && (braceGroups value).size != 2 then
+      else if key == "size*" && (rawGroups value).size != 2 then
         sayOnce ("beamer:setbeamerfont:" ++ element ++ ":" ++ key) .W0104
           s!"'\\setbeamerfont\{{element}}' needs two braced dimensions for 'size*'; \
 its value is skipped" pos
@@ -9627,15 +9677,15 @@ its value is skipped" pos
       if !(← get).inDoc && ((← get).inGroup || !(← get).beamerScopes.isEmpty) then
         became written "local font fields" pos
         return #[]
-      let cmds := beamerFontCommands (blockTitleFields element fields)
+      let cmds := beamerFontCommands (blockTitleFields element fields pos) pos
       let alerted := "block title alerted"
-      let seed := themeBlockFont (← get).beamerTheme alerted
-      let own ← if target == "block" && !seed.isEmpty &&
-          ((← get).beamerFonts.toList.lookup alerted).isNone then do
-        pure #[("alertblock", #[("font", ← synthAt (beamerFontCommands seed) pos)])] else pure #[]
+      let seed := themeBlockFont (← get).beamerTheme alerted pos
+      let own := if target == "block" && !seed.isEmpty &&
+          ((← get).beamerFonts.toList.lookup alerted).isNone then
+        #[("alertblock", #[("font", Native.StyleValue.tex (beamerFontCommands seed pos))])] else #[]
       unless own.isEmpty do
         write fun st => { st with beamerFonts := st.beamerFonts.push (alerted, seed) }
-      let styles := #[(target, #[(styleKey, ← synthAt cmds pos)])] ++ own
+      let styles := #[(target, #[(styleKey, Native.StyleValue.tex cmds)])] ++ own
       became written (" ".intercalate (styles.toList.map fun (el, es) => Native.texStyleRender el es)) pos
       return styles.foldl (init := #[]) fun out (el, es) =>
         let style := Native.texStyle el es pos
@@ -9659,9 +9709,9 @@ private def lowerSetList (c : CtrlCall) : M (Array Raw) := do
   let vLevelsIn : List (Option Nat) :=
     if levels.isEmpty then [none] else (levels.filter fun l => 1 ≤ l && l ≤ 4).map some
   let vScopes := vKindsIn.flatMap fun kd => vLevelsIn.map fun l => (kd, l)
-  let items := KeyVal.items (c.src 2)
+  let items := Entries.read .keyval (c.arg 2)
   let mut vertical : Array (String × String) := #[]
-  let mut styled : Array String := #[]
+  let mut styled : Array Entries.Entry := #[]
   for e in items do
     match ← listSpacingEntries what "\\setlist" e pos with
     | some vs => for (key, v) in vs do vertical := Ir.redeclare vertical key v
@@ -9685,28 +9735,30 @@ description scopes")) ++
       levels.filterMap fun l =>
         if l == 0 || 4 < l then some (toString l, s!"'{what}' at level {l}", "lists nest four levels")
         else none
-  let mut entries : Array (String × String) := #[]
+  let mut entries : Array (String × Native.StyleValue) := #[]
   for e in styled do
+    let key := e.key
     if scopes.isEmpty then
-      let key := (KeyVal.entry e).1
       unreadParam "\\setlist" key s!"'{what}' key '{key}'" pos
         (help := ((unstyled.head?.map (·.2.2)).getD listHelp))
       continue
-    match KeyVal.entry e with
-    | (key, some v) =>
+    match e.value with
+    | some value =>
+      let v := rawSrc value
       if let some native := setlistLengthKeys.lookup key then
         if v.contains '*' then
           unreadParam "\\setlist" key s!"'{what}' key '{key}={v}'" pos
             (help := "the widest label is not measured; give the margin a length")
-        else entries := Ir.redeclare entries native (lengthOfTeX v)
+        else entries := Ir.redeclare entries native (.text (lengthOfTeX v))
       else if key == "label" then
-        let v := (KeyVal.rawEntry e).2.getD ""
-        if v.contains '*' then
-          unreadParam "\\setlist" "label" s!"'{what}' key 'label={v}', a label counting its items,"
-            pos (help := "a declared marker is the same on every item; the list keeps its numbering")
-        else entries := Ir.redeclare entries "marker" v
+        let written := (KeyVal.rawEntry e.src).2.getD ""
+        if written.contains '*' then
+          let part := s!"'{what}' key 'label={written}', a label counting its items,"
+          unreadParam "\\setlist" "label" part pos
+            (help := "a declared marker is the same on every item; the list keeps its numbering")
+        else entries := Ir.redeclare entries "marker" (.tex (value.map (rebase (fun _ => pos) true)))
       else unreadParam "\\setlist" key s!"'{what}' key '{key}'" pos
-    | (key, none) =>
+    | none =>
       unreadParam "\\setlist" key s!"'{what}' key '{key}'" pos
   if vScopes.isEmpty then
     for (key, _) in vertical do
@@ -9755,7 +9807,7 @@ description scopes")) ++
       else none
     | _ => none
   -- Each element's entries, the kind's style keys and the scope's spacing in one declaration.
-  let mut records : Array (String × Array (String × String)) := #[]
+  let mut records : Array (String × Array (String × Native.StyleValue)) := #[]
   let touched := styledTouched ++ spacedTouched
   for (kind, level) in touched do
     let entriesAt := setlistRecord stored kind level
@@ -9763,27 +9815,28 @@ description scopes")) ++
       records := Ir.redeclare records (setlistElement kind level) entriesAt
   for (el, es) in spaced do
     let held := ((records.find? (·.1 == el)).map (·.2)).getD #[]
-    records := Ir.redeclare records el (held ++ es)
-  let natives := records.map fun (el, es) =>
-    s!"\\style\{{el}}\{ {", ".intercalate (es.toList.map fun e => s!"{e.1} = {e.2}")} }"
-  if natives.isEmpty then return #[]
-  became what (String.join natives.toList) pos
-  let mut out : Array Raw := #[]
-  for native in natives do
-    out := out ++ (← synthAt native pos)
-  return out
+    records := Ir.redeclare records el (held ++ es.map fun (k, v) => (k, .text v))
+  if records.isEmpty then return #[]
+  became what (String.join (records.toList.map fun (el, es) => Native.texStyleRender el es)) pos
+  return records.foldl (init := #[]) fun out (el, es) =>
+    let style := Native.texStyle el es pos
+    out ++ style
 
 /-- A registered control's lowering over its arguments. -/
 private def lowerCall (c : CtrlCall) : Lowering → M (Array Raw)
   | .packages =>
-    rewritePackages c.name ((c.src 1).splitOn "," |>.map (·.trimAscii.toString)) (c.optSrc 0) c.pos
+    rewritePackages c.name ((c.src 1).splitOn "," |>.map (·.trimAscii.toString)) (c.optSrc 0)
+      ((c.given 0).getD #[]) c.pos
   | .passOptions => do
     let options := (PackageImports.literalOptions (c.src 0)).toArray
+    -- Each option keeps its raws beside its literal spelling, so a package reads its TeX.
+    let items := (Entries.read .keyval (c.arg 0)).filterMap fun e =>
+      (PackageImports.literalOptions e.src).head?.map (·, e.item)
     let packages := optionItems (c.src 1)
     write fun st => { st with loads := if c.name == "PassOptionsToClass" then
       { st.loads with
         rewriteClassPassed := st.loads.rewriteClassPassed ++ packages.map (·, options) }
-      else { st.loads with rewritePassed := st.loads.rewritePassed ++ packages.map (·, options) } }
+      else { st.loads with rewritePassed := st.loads.rewritePassed ++ packages.map (·, items) } }
     discard s!"\\{c.name}\{...}\{...}" "load options are recorded" c.name c.pos
     return #[]
   | .defineColor => do
@@ -9807,7 +9860,7 @@ spells; the colour is not defined" c.pos (help := "name the colour with ASCII le
   | .pageColor => pageColor (modeledColorSource (c.optSrc 0) (c.src 1)) c.pos
   | .geometry =>
     -- The command forms take the same keys the package options carry.
-    geometry (c.src 0) c.pos s!"\\{c.name}"
+    geometry (c.arg 0) c.pos s!"\\{c.name}"
   | .crop =>
     -- A bare `\crop` is `[cam,noaxes]`, the command's own default argument.
     crop ((c.optSrc 0).getD "cam,noaxes") c.pos "\\crop" "crop"
@@ -9896,9 +9949,9 @@ ICC-based colour space; the engine paints each ink in its own separation; skippe
     return (Native.Head.define cmd "").raws c.pos |>.push
       (.group #[.ctrl "operatorname" c.pos, .group (c.arg 2) c.pos] c.pos)
   | .hyperSetup => do
-    hyperrefLowered "\\hypersetup" "hypersetup" (← hyperrefKeys (c.src 0) c.pos) c.pos
+    hyperrefLowered "\\hypersetup" "hypersetup" (← hyperrefKeys (c.arg 0) c.pos) c.pos
   | .runningField => do
-    let src := c.src 0
+    let src := trimBlank (c.arg 0)
     let name := c.name
     let slot := if name.startsWith "i" || name.startsWith "l" then 0
       else if name.startsWith "c" then 1 else 2
@@ -9911,7 +9964,7 @@ ICC-based colour space; the engine paints each ink in its own separation; skippe
     return #[]
   | .fancyField => do
     -- fancyhdr's `[places]`: one page sequence, so even and odd collapse onto the slot letter.
-    let src := c.src 1
+    let src := trimBlank (c.arg 1)
     let mut slots : Array Nat := #[]
     let mut evenOdd := false
     for e in KeyVal.items ((c.optSrc 0).getD "LCR") do
@@ -9928,10 +9981,10 @@ ICC-based colour space; the engine paints each ink in its own separation; skippe
     let toFoot := c.name != "fancyhead"
     write fun st =>
       let st := if st.head.isEmpty && st.foot.isEmpty then { st with runPos := c.pos } else st
-      let put (parts : Array (Nat × String)) : Array (Nat × String) :=
+      let put (parts : Array (Nat × Array Raw)) : Array (Nat × Array Raw) :=
         slots.foldl (init := parts) fun parts slot =>
           let parts := parts.filter (·.1 != slot)
-          if src.trimAscii.toString.isEmpty then parts else parts.push (slot, src)
+          if src.isEmpty then parts else parts.push (slot, src)
       { st with
         head := if toHead then put st.head else st.head
         foot := if toFoot then put st.foot else st.foot }
@@ -10089,13 +10142,13 @@ and patterns stand in" c.pos
       became "\\setkomafont{disposition}" native pos
       let mut out : Array Raw := #[]
       for lvl in ["section", "subsection", "subsubsection"] do
-        out := out ++ Native.texStyle lvl #[("font", c.arg 1)] pos
+        out := out ++ Native.texStyle lvl #[("font", .tex (c.arg 1))] pos
       return out
     else if Ir.styleableElements.contains element then
       -- The font spec travels as a group, so its own idioms are still rewritten.
       let native := s!"\\style\{{element}}"
       became s!"\\setkomafont\{{element}}" (native ++ "{ font = {...} }") pos
-      return Native.texStyle element #[("font", c.arg 1)] pos
+      return Native.texStyle element #[("font", .tex (c.arg 1))] pos
     else
       say .W0111 s!"'\\setkomafont\{{element}}' names no styleable element; ignored" pos
         (help := "\\style{element}{ font = {...} } styles the elements the engine draws")
@@ -10169,16 +10222,16 @@ native equivalent were dropped: {dropped}" c.pos
   | .useTheme => do
     let pos := c.pos
     let tname := themeAlias (c.src 1).trimAscii.toString
-    let mut reseated : Array (String × Array (String × Array Raw)) := #[]
+    let mut reseated : Array (String × Array (String × Native.StyleValue)) := #[]
     for (element, target, styleKey) in beamerFontElements do
-      let seed := themeBlockFont tname element
+      let seed := themeBlockFont tname element pos
       let some stored := (← get).beamerFonts.toList.lookup element | continue
       if seed.isEmpty then continue
       let fields := themeOver stored seed
       write fun st => { st with
         beamerFonts := Ir.redeclare st.beamerFonts element fields }
       reseated := reseated.push (target,
-        #[(styleKey, ← synthAt (beamerFontCommands (blockTitleFields element fields)) pos)])
+        #[(styleKey, .tex (beamerFontCommands (blockTitleFields element fields pos) pos))])
     let theme := Native.Head.theme tname
     became "\\usetheme" (" ".intercalate
       (theme.render :: reseated.toList.map fun (el, es) => Native.texStyleRender el es)) pos
@@ -10451,7 +10504,7 @@ private def splitParacol (body : Array Raw) (start : Nat) :
       let ks := skipSpaces body k0
       let starred := body[ks]? matches some (.word "*" _)
       let afterStar := if starred then skipSpaces body (ks + 1) else k0
-      let (spanning, k) := if starred then takeOpt body afterStar else (none, k0)
+      let (spanning, k) := if starred then takeRawOpt body afterStar else (none, k0)
       if starred then
         sayOnce "paracol:synchronized-switch" .W0104
           ("'\\switchcolumn*' synchronization is not modelled" ++
@@ -10472,7 +10525,7 @@ private def splitParacol (body : Array Raw) (start : Nat) :
           pure fallback
       current := next
       if let some text := spanning then
-        let kept ← synthAt text spos
+        let kept := text.map (rebase (fun _ => spos) true)
         if current == 0 then left := left ++ kept else right := right ++ kept
       i := k
     | some r =>
@@ -12614,7 +12667,7 @@ private theorem rewriteCtrl_package_external_exact
   have hsrc : rawSrc #[Raw.word names np] = names.trimAscii.toString := by
     simp [rawSrc, rawSrcList, rawSrcOne]
   have hpkgs := rewritePackages_external_exact command
-    ((names.trimAscii.toString.splitOn ",").map (·.trimAscii.toString)) none pos st hn hb ht
+    ((names.trimAscii.toString.splitOn ",").map (·.trimAscii.toString)) none #[] pos st hn hb ht
   have hstep := rewriteCtrl_found_exact (packageRow command) hrow
     (by rcases hc with rfl | rfl <;> rfl) (by rcases hc with rfl | rfl <;> rfl)
     pos (packageCall command names pos gp np) 1 2 st _ (by simp [hw])
@@ -12625,7 +12678,7 @@ private theorem rewriteCtrl_package_external_exact
   have hlower : ctrlRowRun (packageRow command)
       ⟨command, pos, #[none, some #[.word names np]], packageCall command names pos gp np, 1, 2⟩
       st = rewritePackages command
-        ((names.trimAscii.toString.splitOn ",").map (·.trimAscii.toString)) none pos st := by
+        ((names.trimAscii.toString.splitOn ",").map (·.trimAscii.toString)) none #[] pos st := by
     simp [ctrlRowRun, packageRow, lowerCall, CtrlCall.src, CtrlCall.arg, CtrlCall.given,
       CtrlCall.optSrc, bind, StateT.bind, pure, get, getThe, MonadStateOf.get, StateT.get, hd,
       hsrc]
@@ -13007,19 +13060,27 @@ private theorem rewriteCursor_last_document_exact (cursor : RewriteCursor)
 /-- The gathered running content, one declaration each. -/
 private def flushRunning : M (Array Raw) := do
   let st ← get
-  let line (parts : Array (Nat × String)) : String :=
-    let at' (k : Nat) := (parts.filter (·.1 == k)).map (·.2) |>.toList |> String.intercalate " "
-    s!"{at' 0} \\hfill {at' 1} \\hfill {at' 2}"
-  let mut out : Array Raw := #[]
+  let pos := st.runPos
+  let at' (parts : Array (Nat × Array Raw)) (k : Nat) : Array Raw :=
+    (parts.filter (·.1 == k)).foldl (init := #[]) fun acc (_, r) =>
+      if acc.isEmpty then r else (acc.push .space) ++ r
+  let fill := #[Raw.space, Raw.ctrl "hfill" pos, Raw.space]
+  -- The line as the lexer reads its spelling, the one its note names.
+  let line (parts : Array (Nat × Array Raw)) : Array Raw :=
+    (Parse.asSpelled (at' parts 0 ++ fill ++ at' parts 1 ++ fill ++ at' parts 2).toList #[]).map
+      (rebase (fun _ => pos) true)
+  let lineSrc (parts : Array (Nat × Array Raw)) : String :=
+    s!"{rawSrc (at' parts 0)} \\hfill {rawSrc (at' parts 1)} \\hfill {rawSrc (at' parts 2)}"
   let opt := if st.runFrom > 1 then s!"[from = {st.runFrom}]" else ""
+  let optRaws : Array Raw := if st.runFrom > 1 then
+    #[.sym '[' pos, .word s!"from = {st.runFrom}" pos, .sym ']' pos] else #[]
+  let mut out : Array Raw := #[]
   unless st.head.isEmpty do
-    let native := s!"\\runninghead{opt}\{{line st.head}}"
-    became "\\ihead / \\chead / \\ohead" native st.runPos
-    out := out ++ (← synthAt native st.runPos)
+    became "\\ihead / \\chead / \\ohead" s!"\\runninghead{opt}\{{lineSrc st.head}}" pos
+    out := out ++ #[.ctrl "runninghead" pos] ++ optRaws ++ #[.group (line st.head) pos]
   unless st.foot.isEmpty do
-    let native := s!"\\runningfoot{opt}\{{line st.foot}}"
-    became "\\ifoot / \\cfoot / \\ofoot" native st.runPos
-    out := out ++ (← synthAt native st.runPos)
+    became "\\ifoot / \\cfoot / \\ofoot" s!"\\runningfoot{opt}\{{lineSrc st.foot}}" pos
+    out := out ++ #[.ctrl "runningfoot" pos] ++ optRaws ++ #[.group (line st.foot) pos]
   -- `\thispagestyle{empty}` with no field of its own still gates the opening page's furniture.
   if st.runFrom > 1 && st.head.isEmpty then
     out := out ++ (Native.Head.runningFrom false st.runFrom).raws st.runPos
@@ -14690,7 +14751,7 @@ private def textList (loc : Locale) (st : TextSt) (raws : Array Raw)
   | .verb env s vpos :: rest, i, 0 => do
     -- A document's own `\mintinline` is the command its calls run.
     if (env == "mintinline" || env == "mint") && st.defined.contains env then
-      let args := (← synth s).map (rebase (fun _ => vpos) true)
+      let args := (Parse.verbatimRaws (← get).file s).map (rebase (fun _ => vpos) true)
       return ← textList loc st raws ((out.push (.ctrl env vpos)) ++ args) rest (i + 1) 0
     if env == "lstlisting" || env == "minted" || env == "mint" || env == "mintinline" then
       markRead (readIds st env (mintedLang s))

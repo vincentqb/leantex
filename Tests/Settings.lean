@@ -237,7 +237,7 @@ def nativeCarrierChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
     | .page src _ => s!"page {src}"
     | .tokens src _ => s!"tokens {src}"
     | .palette _ body _ => s!"palette {body}"
-    | .style args _ => s!"style {args}"
+    | .style args _ => s!"style {args.map fun (e, b) => (e, Parse.declSrc b)}"
     | .fonts src _ => s!"fonts {src}"
     | .pdfmeta src _ => s!"pdfmeta {src}"
     | .chrome src _ => s!"chrome {src}"
@@ -251,13 +251,44 @@ def nativeCarrierChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
   -- A TeX-valued style's carrier is the lexer's reading of the spelling its note names.
   let lexedRaws (src : String) : Array Parse.Raw :=
     (Parse.parse "style.tex" (Lex.lex "style.tex" src).1).1
-  let texStyles : List (String × Array (String × Array Parse.Raw)) :=
-    [("itemize", #[("marker", lexedRaws "\\num{12345}")]),
-     ("titlepage", #[("font", lexedRaws "\\bfseries\\color{red}"),
-       ("author-font", lexedRaws "\\itshape x")])]
+  let texStyles : List (String × Array (String × Native.StyleValue)) :=
+    [("itemize", #[("marker", .tex (lexedRaws "\\num{12345}"))]),
+     ("titlepage", #[("font", .tex (lexedRaws "\\bfseries\\color{red}")),
+       ("author-font", .tex (lexedRaws "\\itshape x"))]),
+     ("section", #[("before", .text "1em plus 2pt"), ("font", .tex (lexedRaws "\\Large")),
+       ("after", .text "")])]
   for (el, es) in texStyles do
     t s!"the style {Native.texStyleRender el es} is carried as the lexer reads it"
       (mergedRuns (Native.texStyle el es {}).toList "" #[] == lexed (Native.texStyleRender el es))
+  -- Raws read as their spelling are the lexer's reading of it, but for a control space.
+  let unsited (rs : Array Parse.Raw) : Array Parse.Raw := rs.map (Compat.rebase (fun _ => {}) true)
+  for src in ["\\textbullet\n\n\\textbullet", "a\n\nb", "{ \\Large } x", "\\foo{ \\bar  {y} }z",
+      "$ x $ { $ y $ }", "\\begin{center} a \\end{center}", "a \\hfill \\hfill b ", "{x\n\n} {}"] do
+    let rs := lexedRaws src
+    t s!"raws read as their spelling are the lexer's reading of it: {src.quote}"
+      (unsited (Parse.trimSpace (Parse.asSpelled rs.toList #[])) == unsited (lexedRaws (Parse.rawSrc rs)))
+  -- A style value is read as the raws Compat leaves, never as their spelling read again.
+  let p0 : Pos := {}
+  let markedStyle := lexedRaws "\\documentclass{article}\n" ++
+    #[.ctrl "style" p0, .group #[.word "section" p0] p0,
+      .group #[.word "font = " p0, .group #[.ctrl (Marker.name .ink "red") p0] p0] p0] ++
+    lexedRaws "\n\\begin{document}\n\\section{Alpha}\nWords.\n\\end{document}"
+  t "a style value's marker, which no spelling reads back, sets what its command sets"
+    (reprStr (layoutOf oneFace (Elab.runRaws "style.tex" markedStyle).1).pages ==
+      pagesOf oneFace ("\\documentclass{article}\n\\style{section}{ font = {\\color{red}} }\n" ++
+        "\\begin{document}\n\\section{Alpha}\nWords.\n\\end{document}"))
+  -- An option a load is passed carries its TeX as the load's own option does.
+  let loaded (pre : String) : String :=
+    "\\documentclass{article}\n" ++ pre ++ "\n\\begin{document}\nWords.\n\\end{document}"
+  let ownTitle := (elabStr (loaded "\\usepackage[pdftitle={\\textbf{Alpha} Guide}]{hyperref}")).1.info.title
+  t "a passed hyperref title sets the title the load's own option sets"
+    (ownTitle == some "Alpha Guide" && ownTitle == (elabStr (loaded
+      "\\PassOptionsToPackage{pdftitle={\\textbf{Alpha} Guide}}{hyperref}\n\\usepackage{hyperref}")).1.info.title)
+  let margin := "margin=\\dimexpr 1in+2pt\\relax"
+  t "a passed geometry length sets the page the load's own option sets"
+    (pagesOf oneFace (loaded s!"\\PassOptionsToPackage\{{margin}}\{geometry}\n\\usepackage\{geometry}") ==
+      pagesOf oneFace (loaded s!"\\usepackage[{margin}]\{geometry}") &&
+     pagesOf oneFace (loaded s!"\\usepackage[{margin}]\{geometry}") != pagesOf oneFace (loaded ""))
   -- A translated value of TeX reaches the passes reading Compat's output, as main's carrier did.
   let htmlPage (src : String) : String := (HtmlDoc.emit {} (elabStr src).1).1
   let siDeck := "\\documentclass{beamer}\n\\usepackage{siunitx}\n" ++

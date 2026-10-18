@@ -11,6 +11,7 @@ public import LeanTex.Core.Ir
 import LeanTex.Core.ListMark
 public import LeanTex.Core.Dim
 import LeanTex.Core.Decl
+import LeanTex.Core.Entries
 import LeanTex.Core.KeyVal
 public import LeanTex.Core.Theme
 public import LeanTex.Core.Compat
@@ -13743,11 +13744,9 @@ private def titleSlotKeys : List String :=
 private def titlePartKeys : List String :=
   ["set", "content", "font", "align", "size", "leading", "new-line", "before"]
 
-/-- A style value's TeX as inline content, its idioms translated where it stands. -/
-private def styleInline (ctx : Ctx) (src : String) (pos : Pos) : EM (Option (Array Inline)) := do
+/-- A style value's TeX as inline content, its idioms translated where it stands, once. -/
+private def styleTeX (ctx : Ctx) (raws : Array Raw) (pos : Pos) : EM (Option (Array Inline)) := do
   let fragmentCtx := ctx.atCall "style" pos
-  let (toks, _) := Lex.lex ctx.file src
-  let (raws, _) := Parse.parse ctx.file toks
   -- Warn-once keys are read, never merged back: this site drops the notes.
   let inherited := (ctx.user.extract 0 ctx.limit).toList.map (·.name)
   let (raws, ds, _) := Compat.rewrite ctx.file raws
@@ -13756,6 +13755,20 @@ private def styleInline (ctx : Ctx) (src : String) (pos : Pos) : EM (Option (Arr
     { d with span := some (fragmentCtx.sourceSpan pos) }
   modify fun st => { st with diags := st.diags ++ ds }
   return some (← elabInlines fragmentCtx raws)
+
+/-- A title-page template's TeX, which its reader holds as text, as inline content. -/
+private def templateInline (ctx : Ctx) (src : String) (pos : Pos) : EM (Option (Array Inline)) :=
+  styleTeX ctx (Parse.parse ctx.file (Lex.lex ctx.file src).1).1 pos
+
+/-- A block entry's key and value, none where it holds no key or no value. -/
+private def entryKV (e : Entries.Entry) : Option (String × Array Raw) :=
+  e.value.bind fun v => if e.key.isEmpty || v.isEmpty then none else some (e.key, v)
+
+/-- A value's raws inside the one group around the whole of them. -/
+private def unbraceRaws (v : Array Raw) : Array Raw :=
+  match v.toList with
+  | [.group b _] => b
+  | _ => v
 
 /-- A style value's length against the tokens declared so far, named unreadable in `what`. -/
 private def styleLength (ctx : Ctx) (key src : String) (pos : Pos) (what : String := "'\\style'") :
@@ -13777,8 +13790,8 @@ private def styleLength (ctx : Ctx) (key src : String) (pos : Pos) (what : Strin
 
 /-- Applies `\style{element}{...}`, each entry read against the tokens
 declared so far. -/
-private def applyStyle (ctx : Ctx) (styles : Styles) (element src : String) (pos : Pos) :
-    EM Styles := do
+private def applyStyle (ctx : Ctx) (styles : Styles) (element : String) (body : Array Raw)
+    (pos : Pos) : EM Styles := do
   unless styleableElements.contains element || ctx.user.any (·.name == element) do
     let lists := "{" ++ ",".intercalate ("list" :: Ir.listSetKinds) ++ "}{,1..4}"
     let named := styleableElements.filterMap fun e =>
@@ -13792,16 +13805,16 @@ private def applyStyle (ctx : Ctx) (styles : Styles) (element src : String) (pos
       (help := s!"elements: {String.intercalate ", " named}")
     return styles
   let mut st : ElementStyle := (styles.find? element).getD {}
-  let inlineOf (src : String) : EM (Option (Array Inline)) :=
-    styleInline ctx (if src.startsWith "{" && src.endsWith "}" && src.length ≥ 2
-      then (src.drop 1).dropEnd 1 |>.toString else src) pos
+  let inlineOf (value : Array Raw) : EM (Option (Array Inline)) :=
+    styleTeX ctx (unbraceRaws (Parse.asSpelled value.toList #[])) pos
   let lengthOf (key src : String) : EM (Option SymGlue) := styleLength ctx key src pos
-  for entry in Decl.splitEntries src do
-    match Decl.splitEntry entry with
+  for entry in Entries.read .native body do
+    match entryKV entry with
     | none =>
-      diag ctx .E0320 s!"invalid entry in '\\style': {entry.quote}" pos
+      diag ctx .E0320 s!"invalid entry in '\\style': {entry.src.quote}" pos
         (help := "entries look like: key = value")
-    | some (key, valueSrc) =>
+    | some (key, value) =>
+      let valueSrc := declSrc value
       -- premise: titleHeadingChecks — no title-page site reads these keys
       if element == "titlepage" && Ir.titleUnreadKeys.contains key then
         warnOnce ctx ("style:titlepage:" ++ key) .W0104
@@ -13836,7 +13849,7 @@ or level, and its other keys on the kind's own element")
           s!"'{key}' has no meaning on a beamer block; the block is set without it" pos
           (help := "a block reads its title's font and its template's shape")
         continue
-      let asInline : EM (Option (Array Inline)) := inlineOf valueSrc
+      let asInline : EM (Option (Array Inline)) := inlineOf value
       let asLength : EM (Option SymGlue) := lengthOf key valueSrc
       let asColor : EM (Option (Ir.Color × Option Ir.ColorRef)) := do
         match ← readColor ctx ctx.palette none valueSrc pos with
@@ -13889,21 +13902,19 @@ or level, and its other keys on the kind's own element")
           diag ctx .E0323 s!"'slot' in '\\style' belongs to the title page, not '{element}'" pos
             (help := "write \\style{titlepage}{ slot = { set = title, anchor = west, at = west } }")
         else
-          let unbrace (src : String) : String :=
-            if src.startsWith "{" && src.endsWith "}" && src.length ≥ 2
-            then (src.drop 1).dropEnd 1 |>.toString else src
-          let partOf (src : String) : EM (Option Ir.TitlePart) := do
+          let partOf (partRaws : Array Raw) : EM (Option Ir.TitlePart) := do
             let mut p : Ir.TitlePart := { datum := none }
             let mut ok := true
             let mut hasDatum := false
             let mut hasContent := false
-            for sub in Decl.splitEntries (unbrace src) do
-              match Decl.splitEntry sub with
+            for sub in Entries.read .native (unbraceRaws partRaws) do
+              match entryKV sub with
               | none =>
                 ok := false
-                diag ctx .E0320 s!"invalid entry in a title part: {sub.quote}" pos
+                diag ctx .E0320 s!"invalid entry in a title part: {sub.src.quote}" pos
                   (help := "entries look like: key = value")
-              | some (k, v) =>
+              | some (k, vr) =>
+                let v := declSrc vr
                 let vt := v.trimAscii.toString
                 match k with
                 | "set" =>
@@ -13916,9 +13927,9 @@ or level, and its other keys on the kind's own element")
                     diag ctx .E0323 s!"'set' in a title part expects title, subtitle, author, \
 institute, or date, got '{vt}'" pos
                 | "content" =>
-                  p := { p with content := (← inlineOf v).getD #[] }
+                  p := { p with content := (← inlineOf vr).getD #[] }
                   hasContent := true
-                | "font" => p := { p with font := ← inlineOf v }
+                | "font" => p := { p with font := ← inlineOf vr }
                 | "align" =>
                   if vt == "left" || vt == "center" || vt == "right" then
                     p := { p with align := some vt }
@@ -13944,7 +13955,7 @@ institute, or date, got '{vt}'" pos
               ok := false
               diag ctx .E0323 "a title part cannot declare both 'set' and 'content'" pos
             return if ok then some p else none
-          let inner := unbrace valueSrc
+          let inner := unbraceRaws value
           let mut parts : Array Ir.TitlePart := #[]
           let mut legacyData : Array (Bool × Ir.TitleDatum) := #[]
           let mut legacyContent : Array Inline := #[]
@@ -13959,13 +13970,14 @@ institute, or date, got '{vt}'" pos
           let mut yshift : Option SymGlue := none
           let mut innerSep : Option SymGlue := none
           let mut ok := true
-          for sub in Decl.splitEntries inner do
-            match Decl.splitEntry sub with
+          for sub in Entries.read .native inner do
+            match entryKV sub with
             | none =>
               ok := false
-              diag ctx .E0320 s!"invalid entry in a title slot: {sub.quote}" pos
+              diag ctx .E0320 s!"invalid entry in a title slot: {sub.src.quote}" pos
                 (help := "entries look like: key = value")
-            | some (k, v) =>
+            | some (k, vr) =>
+              let v := declSrc vr
               let vt := v.trimAscii.toString
               let point (what : String) : EM (Option Ir.BoxPoint) := do
                 match Ir.BoxPoint.ofName? vt with
@@ -13976,7 +13988,7 @@ such as north west, got '{vt}'" pos
                   return none
               match k with
               | "part" =>
-                match ← partOf v with
+                match ← partOf vr with
                 | some p => parts := parts.push p
                 | none => ok := false
               | "set" =>
@@ -13993,10 +14005,10 @@ such as north west, got '{vt}'" pos
 institute, or date, got '{vt}'" pos
               | "content" =>
                 legacySeen := true
-                legacyContent := (← inlineOf v).getD #[]
+                legacyContent := (← inlineOf vr).getD #[]
               | "font" =>
                 legacySeen := true
-                legacyFont := ← inlineOf v
+                legacyFont := ← inlineOf vr
               | "align" =>
                 legacySeen := true
                 if vt == "left" || vt == "center" || vt == "right" then
@@ -14436,7 +14448,7 @@ public inductive PDecl where
   | beamerSite (chain : List String) (channel key : String) (pos : Pos)
   /-- `\pagecolor`, or `\nopagecolor` as `none`. -/
   | pageGround (source : Option String) (pos : Pos)
-  | style (args : Option (String × String)) (pos : Pos)
+  | style (args : Option (String × Array Raw)) (pos : Pos)
   /-- A read title-page template standing here, by its index in the rewrite's templates. -/
   | titlePage (index : Nat) (pos : Pos)
   | allow (body : Option String) (pos : Pos)
@@ -14758,7 +14770,7 @@ public def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run d
           match preamble[j]?, preamble[j2]? with
           | some (.group elem _), some (.group body _) =>
             i := j2 + 1
-            out := out.push (.style (some (declSrc elem, declSrc body)) pos)
+            out := out.push (.style (some (declSrc elem, body)) pos)
           | _, _ =>
             out := out.push (.style none pos)
         else if name == "allow" then
@@ -15064,12 +15076,12 @@ private def applyTitlePage (s : PreState) (rd : TitleTemplate.Read) (file : Stri
     let mut parts : Array Ir.TitlePart := #[]
     for p in n.parts do
       let content : Array Inline ← if p.datum.isSome then pure #[] else
-        do pure ((← styleInline ctx p.content pos).getD #[])
+        do pure ((← templateInline ctx p.content pos).getD #[])
       let before ← len "before" p.before
       let size ← len "size" p.size
       let leading ← len "leading" p.leading
       let font ← match TitleTemplate.partFont rd p with
-        | some f => styleInline ctx f pos
+        | some f => templateInline ctx f pos
         | none => pure none
       parts := parts.push { datum := p.datum, content, font, align := p.align, size, leading
                             newLine := p.newLine, before }
