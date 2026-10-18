@@ -58,6 +58,7 @@ public structure Geom where
   /-- Whether font boxes may expand within ±`expandLimit` (microtype's font expansion). -/
   expand : Bool := true
   flushBottom : Bool := false
+  penalties : Ir.PagePenalties := {}
   /-- Bleed past the trim edge, for the PDF writer; layout works in trim coordinates. -/
   bleed : Sp := 0
   /-- Whether the pages ship printer's cut marks (`cutMarks`). -/
@@ -777,6 +778,7 @@ public def Geom.ofPage (spec : Ir.PageSpec) (base : Geom := {}) : Geom :=
     protrude := spec.protrude.getD base.protrude
     expand := spec.expand.getD base.expand
     flushBottom := spec.flushBottom.getD base.flushBottom
+    penalties := spec.penalties
     bleed := spec.bleed
     marks := spec.marks
     markGap := spec.markGap
@@ -9358,6 +9360,8 @@ public structure Spacing.Paragraph where
   private background : Sp := 0
   /-- The paragraph opens a TeX box (`TexBox`). -/
   private texBox : Option TexBox := none
+  /-- The paragraph follows a heading, which no page break may end (latex.ltx `\@afterheading`). -/
+  private afterHead : Bool := false
 
 private abbrev ParaJob := Spacing.Paragraph
 
@@ -9670,6 +9674,9 @@ public structure Spacing.Pending where
   /-- A display heading was the last thing set, so a list's first `\item`
   spends `\@nbitem` (latex.ltx); cleared by the next line's gap. -/
   private afterHeading : Bool := false
+  /-- A heading was set and no paragraph since, so the next one takes no page break before its
+  second line (latex.ltx `\@nobreak`, read by `\@afterheading` and `\@item`). -/
+  private noBreakNext : Bool := false
   /-- A trivlist opened its item and nothing has set a line since, so a list, quote or trivlist
   here stands in its label (`Ir.Block.opensInLabel`); cleared by the next line's gap. -/
   private labelOpen : Bool := false
@@ -10106,7 +10113,8 @@ private def collectPara (r : Rd) (a : Acc)
     (urlBreaks : Bool := r.surface != .tex)
     (texBox : Option TexBox := none) : Acc :=
   let texBox := texBox.orElse fun _ => a.boxOpener
-  let a := { a.flushGap r with boxOpener := none }
+  let afterHead := a.noBreakNext && keepNext ≤ 0
+  let a := { a.flushGap r with boxOpener := none, noBreakNext := a.noBreakNext && 0 < keepNext }
   let indent := indent + hangIndent
   -- Inside a column the measure is the column's, as a minipage's `\textwidth` is (latex.ltx).
   let measure := (a.measure.getD r.geom.textWidth) - indent
@@ -10267,6 +10275,7 @@ private def collectPara (r : Rd) (a : Acc)
       inFloat := r.inFloat
       leaf := leaf
       keepNext := keepNext
+      afterHead := afterHead
       display := dispJob
       rowStrut := rowStrut
       background := background
@@ -11571,7 +11580,7 @@ private def collectChapter (r : Rd) (a : Acc) (num : Option String) (title : Arr
   let a := collectDisplay r a (sized "Huge" title) indent false r.geom.fontSize (leaf := leaf)
     (span := span) (keepNext := keep)
   { ({ a with ops := a.ops.push .texInterline }).vskip { width := pt 40 } with -- report.cls: `\vskip 40\p@`
-    afterHeading := true }
+    afterHeading := true, noBreakNext := true }
 
 private def collectSection (r : Rd) (a : Acc) (level : Ir.HeadingLevel)
     (num : Option String) (title : Array Inline) (indent : Sp) (top : Bool := false)
@@ -11677,7 +11686,7 @@ private def collectSection (r : Rd) (a : Acc) (level : Ir.HeadingLevel)
       collectDisplay r a title indent false (sectionSize r.geom level)
         (baseStyle := { weight := .b }) (rule := rule)
         (leaf := leaf) (span := span) (keepNext := keep)
-  { a.vskip after with afterHeading := true, fg := savedFg }
+  { a.vskip after with afterHeading := true, noBreakNext := true, fg := savedFg }
 
 private def collectBibliography (r : Rd) (a : Acc) (items : Array Ir.BibItem) (indent : Sp) : Acc :=
   -- natbib's `thebibliography`: labels right-aligned in a column as wide as the widest.
@@ -14986,11 +14995,151 @@ private def placedJob (fs : FontSet) (b : B) (j : ParaJob) (breaks : Array Nat) 
         let segs := (paraLineGeom fs j b (breaks.size == 1) prev last).1
         { tb with lastDepth := (lineStrutInk j.strut (segsInk fs segs)).2 } }
 
-private def placePara (fs : FontSet) (b : B) (j : ParaJob) (breaks : Array Nat) : B :=
+/-- The page turns before the line ending at `brk` where widow and club control moves it there. -/
+private def turnAt (turns : Array Nat) (st : B × Nat × Bool) (brk : Nat) : B × Nat × Bool :=
+  if turns.contains brk && !st.1.noBreak then (st.1.spillPage, st.2) else st
+
+/-- One break of a paragraph placed, its page turned first where `turns` holds it. -/
+private def placeParaTurning (fs : FontSet) (j : ParaJob) (turns : Array Nat)
+    (st : B × Nat × Bool) (brk : Nat) : B × Nat × Bool :=
+  placeParaLine fs j (turnAt turns st brk) brk
+
+private theorem turnAt_snd (turns : Array Nat) (st : B × Nat × Bool) (brk : Nat) :
+    (turnAt turns st brk).2 = st.2 := by
+  unfold turnAt
+  split <;> rfl
+
+private theorem turnAt_cases (turns : Array Nat) (st : B × Nat × Bool) (brk : Nat) :
+    (turnAt turns st brk).1 = st.1 ∨ (turnAt turns st brk).1 = st.1.spillPage := by
+  unfold turnAt
+  split
+  · exact Or.inr rfl
+  · exact Or.inl rfl
+
+private theorem turnAt_pair (turns : Array Nat) (st : B × Nat × Bool) (brk : Nat) :
+    turnAt turns st brk = ((turnAt turns st brk).1, st.2.1, st.2.2) := by
+  rw [← turnAt_snd turns st brk]
+
+private def paragraphStart (b : B) (j : ParaJob) (breaks : Array Nat) : B × Nat × Bool :=
   let p := paragraphRecord b j breaks
   let start := ({ b with diags := b.diags ++ j.diags }).warnReflow p (!p.reflows.isEmpty)
-  (breaks.foldl (placeParaLine fs (placedJob fs b j breaks))
-    ({ start with paragraphBreaks := b.paragraphBreaks.push p }, 0, true)).1
+  ({ start with paragraphBreaks := b.paragraphBreaks.push p }, 0, true)
+
+/-- A paragraph's lines placed, the page turning before each break `turns` holds. -/
+private def placeParaWith (fs : FontSet) (b : B) (j : ParaJob) (breaks turns : Array Nat) : B :=
+  (breaks.foldl (placeParaTurning fs (placedJob fs b j breaks) turns)
+    (paragraphStart b j breaks)).1
+
+/-- TeX's badness of glue with stretch `s` set `t` past its natural size (tex.web §108). -/
+public def texBadness (t s : Sp) : Nat :=
+  if t ≤ 0 then 0 else if s ≤ 0 then 10000 else
+  let r := if t ≤ 7230584 then t * 297 / s else if 1663497 ≤ s then t / (s / 297) else t
+  if 1290 < r then 10000 else ((r * r * r + 131072) / 262144).toNat
+
+/-- What TeX's page builder reads where a page could end before a paragraph's line: the room below
+the line above, the glue's stretch, shrink and fills above it, and the pages already shipped. -/
+private structure TurnRoom where
+  room : Sp
+  stretch : Sp
+  shrink : Sp
+  fils : Nat
+  shipped : Nat
+
+private def Spacing.Page.turnRoom (b : B) : TurnRoom :=
+  { room := noteFloor b.bottom b.noteGap b.notesH b.noteHang - (b.y + b.prevDepth)
+    stretch := b.pageStretch, shrink := b.pageShrink, fils := b.pageFils
+    shipped := b.pages.size }
+
+/-- TeX's cost of a page ending with this room at penalty `pen` (tex.web §1005): its badness and the
+penalty, the deplorable cost past infinite badness, and `none` where no break stands. -/
+private def TurnRoom.cost (r : TurnRoom) (pen : Int) : Option Int :=
+  if 10000 ≤ pen then none else
+  let bad : Option Nat := if 0 < r.fils then some 0
+    else if 0 ≤ r.room then some (texBadness r.room r.stretch)
+    else if -r.room ≤ r.shrink then some (texBadness (-r.room) r.shrink) else none
+  bad.map fun v => if v < 10000 then (v : Int) + pen else 100000
+
+/-- The penalty of a page turn before line `k` of a paragraph broken at `breaks`: the club's after
+its first line (none after a heading may stand), the widow's before its last, the broken one's after
+a hyphen. -/
+private def turnPenalty (pen : Ir.PagePenalties) (j : ParaJob) (breaks : Array Nat) (k : Nat) :
+    Int :=
+  let hyphen := match breaks[k - 1]? with
+    | some brk => match j.items[brk]? with
+      | some (.pen _ _ flagged _ _ _) => flagged
+      | _ => false
+    | none => false
+  (if k == 1 then (if j.afterHead then 10000 else pen.club) else 0)
+    + (if k + 1 == breaks.size then pen.widow else 0)
+    + (if 0 < k && hyphen then pen.broken else 0)
+
+/-- The line, from `lo` to `k`, before which TeX's page builder turns a page the line `k` overran:
+the latest at the least cost. -/
+private def bestTurn (rooms : Array TurnRoom) (pen : Nat → Int) (lo k : Nat) : Nat := Id.run do
+  let mut best := k
+  let mut bestCost : Option Int := (rooms[k]?).bind (·.cost (pen k))
+  for d in [1:k + 1 - lo] do
+    let i := k - d
+    match (rooms[i]?).bind (·.cost (pen i)) with
+    | some c =>
+      if bestCost.all (c < ·) then
+        best := i
+        bestCost := some c
+    | none => pure ()
+  return best
+
+/-- The rooms before each line of a paragraph placed with `turns`, and after its last. -/
+private def turnRooms (fs : FontSet) (b : B) (j : ParaJob) (breaks turns : Array Nat) :
+    Array TurnRoom :=
+  let (st, rooms) := breaks.foldl (fun (st, rooms) brk =>
+      (placeParaTurning fs (placedJob fs b j breaks) turns st brk, rooms.push st.1.turnRoom))
+    (paragraphStart b j breaks, #[])
+  rooms.push st.1.turnRoom
+
+/-- The breaks before which widow and club control turns the page: at each page turn the paragraph's
+lines make, the latest line at TeX's least cost (tex.web §1005), its first only off a heading. -/
+private def keptTurns (fs : FontSet) (b : B) (j : ParaJob) (breaks : Array Nat) : Array Nat :=
+  Id.run do
+  let mut turns : Array Nat := #[]
+  let mut done := 0
+  let startOk := !b.fresh && !j.afterHead
+  for _ in [0:breaks.size] do
+    let rooms := turnRooms fs b j breaks turns
+    let next := (List.range breaks.size).find? fun i =>
+      done < i && match rooms[i]?, rooms[i + 1]? with
+        | some r, some s => r.shipped < s.shipped
+        | _, _ => false
+    match next with
+    | none => return turns
+    | some k =>
+      let lo := if done == 0 && turns.isEmpty && startOk then 0 else done + 1
+      let t := bestTurn rooms (turnPenalty b.geom.penalties j breaks) lo k
+      if t < k then
+        if let some brk := breaks[t]? then turns := turns.push brk
+      done := t
+  return turns
+
+/-- Whether widow and club control reads a paragraph: lines of a flow, not a heading's, a display's,
+a table row's or a float's. -/
+private def turnsRead (b : B) (j : ParaJob) (breaks : Array Nat) : Bool :=
+  b.frameBreak.isNone && !b.noBreak && j.display.isNone && j.keepNext ≤ 0 && j.rowStrut.isNone &&
+    !j.inFloat && 2 ≤ breaks.size
+
+private def placePara (fs : FontSet) (b : B) (j : ParaJob) (breaks : Array Nat) : B :=
+  let plain := placeParaWith fs b j breaks #[]
+  if plain.pages.size == b.pages.size || !turnsRead b j breaks then plain else
+  let turns := keptTurns fs b j breaks
+  if turns.isEmpty then plain else placeParaWith fs b j breaks turns
+
+private theorem placePara_with (fs : FontSet) (b : B) (j : ParaJob) (breaks : Array Nat) :
+    ∃ turns, placePara fs b j breaks = placeParaWith fs b j breaks turns := by
+  unfold placePara
+  dsimp only
+  split
+  · exact ⟨_, rfl⟩
+  · split
+    · exact ⟨_, rfl⟩
+    · exact ⟨_, rfl⟩
 
 private theorem sourceBound_placedJob {n : Nat} {fs : FontSet} {b : B} {j : ParaJob}
     {breaks : Array Nat} (hj : j.SourceBound n) : (placedJob fs b j breaks).SourceBound n :=
@@ -15041,16 +15190,35 @@ private theorem sourceBound_placeParaLine {n : Nat} (fs : FontSet) (j : ParaJob)
     · exact hb
   · exact hg
 
-private theorem sourceBound_placePara {n : Nat} (fs : FontSet) (b : B)
-    (j : ParaJob) (breaks : Array Nat) (hj : j.SourceBound n)
-    (hb : b.SourceBound n) : (placePara fs b j breaks).SourceBound n := by
-  unfold placePara
+private theorem sourceBound_turnAt {n : Nat} (turns : Array Nat) (st : B × Nat × Bool) (brk : Nat)
+    (hb : st.1.SourceBound n) : (turnAt turns st brk).1.SourceBound n := by
+  rcases turnAt_cases turns st brk with e | e <;> rw [e]
+  · exact hb
+  · exact sourceBound_spillPage _ 0 hb
+
+private theorem sourceBound_placeParaTurning {n : Nat} (fs : FontSet) (j : ParaJob)
+    (turns : Array Nat) (st : B × Nat × Bool) (brk : Nat)
+    (hj : j.SourceBound n) (hb : st.1.SourceBound n) :
+    (placeParaTurning fs j turns st brk).1.SourceBound n :=
+  sourceBound_placeParaLine fs j _ brk hj (sourceBound_turnAt turns st brk hb)
+
+private theorem sourceBound_placeParaWith {n : Nat} (fs : FontSet) (b : B)
+    (j : ParaJob) (breaks turns : Array Nat) (hj : j.SourceBound n)
+    (hb : b.SourceBound n) : (placeParaWith fs b j breaks turns).SourceBound n := by
+  unfold placeParaWith paragraphStart
   refine Array.foldl_induction
     (motive := fun _ (st : B × Nat × Bool) => st.1.SourceBound n) ?_ ?_
   · simp only [Spacing.Page.warnReflow]
     split <;> exact hb.of_eq rfl rfl rfl rfl rfl
   · intro i st h
-    exact sourceBound_placeParaLine fs _ st breaks[i] (sourceBound_placedJob hj) h
+    exact sourceBound_placeParaTurning fs _ turns st breaks[i] (sourceBound_placedJob hj) h
+
+private theorem sourceBound_placePara {n : Nat} (fs : FontSet) (b : B)
+    (j : ParaJob) (breaks : Array Nat) (hj : j.SourceBound n)
+    (hb : b.SourceBound n) : (placePara fs b j breaks).SourceBound n := by
+  obtain ⟨turns, e⟩ := placePara_with fs b j breaks
+  rw [e]
+  exact sourceBound_placeParaWith fs b j breaks turns hj hb
 
 /-- Plain-text items: discretionary spacing penalties, but no authored break or hyphen glyph. -/
 private def Item.Prose : Item → Prop
@@ -15678,12 +15846,13 @@ private theorem spanFold_prefix (items : Array Item) (breaks : List Nat) (cs : L
     simp only [List.append_assoc]
 
 private theorem census_paraFold {n : Nat} (pick : Option Nat → Bool → Bool)
-    (fs : FontSet) (j : ParaJob) (breaks : List Nat) (st : B × Nat × Bool)
+    (fs : FontSet) (j : ParaJob) (turns : Array Nat) (breaks : List Nat) (st : B × Nat × Bool)
     (hj : j.SourceBound n) (hb : st.1.SourceBound n) (hh : (Spacing.Paragraph.hangIndent j) = 0)
     (hp : ∀ it ∈ (Spacing.Paragraph.items j), it.UnflaggedEmpty)
     (hk : ∀ k ∈ breaks, k < (Spacing.Paragraph.items j).size)
     (hc : st.2.2 = true ∨ st.2.1 < (Spacing.Paragraph.items j).size) :
-    Spacing.Page.census pick (breaks.foldl (placeParaLine fs j) st).1 = Spacing.Page.census pick st.1 ++
+    Spacing.Page.census pick (breaks.foldl (placeParaTurning fs j turns) st).1 =
+      Spacing.Page.census pick st.1 ++
       (if pick (Spacing.Paragraph.leaf j) (!(Spacing.Paragraph.inFloat j)) then
         (breaks.foldl (fun acc brk =>
           (acc.1 ++ itemSpan (Spacing.Paragraph.items j) (kpStart (Spacing.Paragraph.items j) acc.2) brk, brk))
@@ -15692,27 +15861,33 @@ private theorem census_paraFold {n : Nat} (pick : Option Nat → Bool → Bool)
   | nil => simp
   | cons brk breaks ih =>
     simp only [List.foldl_cons, List.nil_append]
-    rw [ih (placeParaLine fs j st brk) (sourceBound_placeParaLine fs j st brk hj hb)
+    have ht := sourceBound_turnAt turns st brk hb
+    have hcen : Spacing.Page.census pick (turnAt turns st brk).1 = Spacing.Page.census pick st.1 := by
+      rcases turnAt_cases turns st brk with e | e <;> rw [e]
+      exact census_spillPage pick _ 0 hb
+    rw [ih (placeParaTurning fs j turns st brk) (sourceBound_placeParaTurning fs j turns st brk hj hb)
       (fun k hm => hk k (List.mem_cons_of_mem _ hm))
       (Or.inr (hk brk (List.mem_cons_self))) ]
-    rw [census_placeParaLine pick fs j st brk hj hb hp, paraStart_cursor j _ _ hh hc]
+    unfold placeParaTurning
+    rw [census_placeParaLine pick fs j _ brk hj ht hp, hcen, turnAt_snd,
+      paraStart_cursor j _ _ hh hc]
     rw [spanFold_prefix (Spacing.Paragraph.items j) breaks (itemSpan (Spacing.Paragraph.items j) _ brk) brk]
     change _ = _ ++ if pick (Spacing.Paragraph.leaf j) (!(Spacing.Paragraph.inFloat j)) then _ else []
     dsimp only [placeParaLine]
     split <;> simp only [Bool.false_eq_true, ite_false, List.append_assoc, List.append_nil]
 
-private theorem census_placePara {n : Nat} (pick : Option Nat → Bool → Bool)
-    (fs : FontSet) (b : B) (j : ParaJob) (breaks : Array Nat)
+private theorem census_placeParaWith {n : Nat} (pick : Option Nat → Bool → Bool)
+    (fs : FontSet) (b : B) (j : ParaJob) (breaks turns : Array Nat)
     (hj : j.SourceBound n) (hb : b.SourceBound n) (hh : Spacing.Paragraph.hangIndent j = 0)
     (hp : ∀ it ∈ Spacing.Paragraph.items j, it.UnflaggedEmpty)
     (hk : ∀ k ∈ breaks, k < (Spacing.Paragraph.items j).size) :
-    Spacing.Page.census pick (placePara fs b j breaks) = Spacing.Page.census pick b ++
+    Spacing.Page.census pick (placeParaWith fs b j breaks turns) = Spacing.Page.census pick b ++
       (if pick (Spacing.Paragraph.leaf j) (!(Spacing.Paragraph.inFloat j)) then
         (breakSpans (Spacing.Paragraph.items j) breaks.toList).1 else []) := by
-  unfold placePara
+  unfold placeParaWith paragraphStart
   dsimp only
   rw [← Array.foldl_toList]
-  rw [census_paraFold pick fs (placedJob fs b j breaks) breaks.toList _
+  rw [census_paraFold pick fs (placedJob fs b j breaks) turns breaks.toList _
     (sourceBound_placedJob hj)]
   · simp only [breakSpans, ite_true, Spacing.Page.warnReflow]
     split <;> rfl
@@ -15722,6 +15897,18 @@ private theorem census_placePara {n : Nat} (pick : Option Nat → Bool → Bool)
   · exact hp
   · exact fun k hm => hk k (Array.mem_toList_iff.mp hm)
   · exact Or.inl rfl
+
+private theorem census_placePara {n : Nat} (pick : Option Nat → Bool → Bool)
+    (fs : FontSet) (b : B) (j : ParaJob) (breaks : Array Nat)
+    (hj : j.SourceBound n) (hb : b.SourceBound n) (hh : Spacing.Paragraph.hangIndent j = 0)
+    (hp : ∀ it ∈ Spacing.Paragraph.items j, it.UnflaggedEmpty)
+    (hk : ∀ k ∈ breaks, k < (Spacing.Paragraph.items j).size) :
+    Spacing.Page.census pick (placePara fs b j breaks) = Spacing.Page.census pick b ++
+      (if pick (Spacing.Paragraph.leaf j) (!(Spacing.Paragraph.inFloat j)) then
+        (breakSpans (Spacing.Paragraph.items j) breaks.toList).1 else []) := by
+  obtain ⟨turns, e⟩ := placePara_with fs b j breaks
+  rw [e]
+  exact census_placeParaWith pick fs b j breaks turns hj hb hh hp hk
 
 private theorem census_placePara_prose {n : Nat} (pick : Option Nat → Bool → Bool)
     (fs : FontSet) (b : B) (j : ParaJob) (items : Array Item) (protrude expand fil : Bool) {runt : Bool}
@@ -16668,26 +16855,48 @@ private theorem placeParaLine_noBreak (fs : FontSet) (j : ParaJob)
   · rw [placeParaTrailer_noBreak]
     split <;> rw [placeLine_keeps_noBreak] <;> simp [h, Spacing.Page.warnOverfull]
 
-private theorem placePara_extends (fs : FontSet) (b : B) (j : ParaJob)
-    (breaks : Array Nat) : PagesExtend b (placePara fs b j breaks) := by
-  unfold placePara
+private theorem turnAt_extends (turns : Array Nat) (st : B × Nat × Bool) (brk : Nat) :
+    PagesExtend st.1 (turnAt turns st brk).1 := by
+  rcases turnAt_cases turns st brk with e | e <;> rw [e]
+  · exact pagesExtend_refl _
+  · obtain ⟨s, hs⟩ := finishPage_extends st.1 (o := 0) (f := st.1.flushes)
+    exact ⟨s, by rw [spillPage_pages]; exact hs⟩
+
+private theorem turnAt_noBreak (turns : Array Nat) (st : B × Nat × Bool) (brk : Nat)
+    (h : st.1.noBreak = true) : turnAt turns st brk = st := by
+  unfold turnAt
+  simp [h]
+
+private theorem placeParaWith_extends (fs : FontSet) (b : B) (j : ParaJob)
+    (breaks turns : Array Nat) : PagesExtend b (placeParaWith fs b j breaks turns) := by
+  unfold placeParaWith paragraphStart
   exact Array.foldl_induction
     (motive := fun _ (acc : B × Nat × Bool) => PagesExtend b acc.1)
     (pagesExtend_of_eq (by simp))
-    (fun _ acc hacc => pagesExtend_trans hacc (placeParaLine_extends ..))
+    (fun _ acc hacc => pagesExtend_trans (pagesExtend_trans hacc (turnAt_extends ..))
+      (placeParaLine_extends ..))
+
+private theorem placePara_extends (fs : FontSet) (b : B) (j : ParaJob)
+    (breaks : Array Nat) : PagesExtend b (placePara fs b j breaks) := by
+  obtain ⟨turns, e⟩ := placePara_with fs b j breaks
+  rw [e]
+  exact placeParaWith_extends fs b j breaks turns
 
 private theorem placePara_noBreak (fs : FontSet) (b : B) (j : ParaJob)
     (breaks : Array Nat) (h : b.noBreak = true) :
     (placePara fs b j breaks).pages = b.pages ∧
     (placePara fs b j breaks).noBreak = true := by
-  unfold placePara
+  obtain ⟨turns, e⟩ := placePara_with fs b j breaks
+  rw [e]
+  unfold placeParaWith paragraphStart
   exact Array.foldl_induction
     (motive := fun _ (acc : B × Nat × Bool) =>
       acc.1.pages = b.pages ∧ acc.1.noBreak = true)
     ⟨by simp, by simp [h]⟩
     (fun _ acc hacc =>
       have step := placeParaLine_noBreak fs (placedJob fs b j breaks) acc _ hacc.2
-      ⟨step.1.trans hacc.1, step.2⟩)
+      ⟨by simpa only [placeParaTurning, turnAt_noBreak turns acc _ hacc.2] using step.1.trans hacc.1,
+        by simpa only [placeParaTurning, turnAt_noBreak turns acc _ hacc.2] using step.2⟩)
 
 private theorem keepHeading_extends (b : B) (j : ParaJob) (n : Nat) :
     PagesExtend b (b.keepHeading j n) := by
@@ -16993,13 +17202,21 @@ private theorem bgStep_placeParaLine (fs : FontSet) (j : ParaJob)
   split <;> exact BgStep.of_eq (by simp [Spacing.Page.warnOverfull])
     (by simp [Spacing.Page.warnOverfull]) (by simp [Spacing.Page.warnOverfull])
 
+private theorem bgStep_turnAt (turns : Array Nat) (st : B × Nat × Bool) (brk : Nat) :
+    BgStep st.1 (turnAt turns st brk).1 := by
+  rcases turnAt_cases turns st brk with e | e <;> rw [e]
+  · exact BgStep.refl _
+  · exact bgStep_spillPage _ 0
+
 private theorem bgStep_placePara (fs : FontSet) (b : B) (j : ParaJob)
     (breaks : Array Nat) : BgStep b (placePara fs b j breaks) := by
-  unfold placePara
+  obtain ⟨turns, e⟩ := placePara_with fs b j breaks
+  rw [e]
+  unfold placeParaWith paragraphStart
   exact Array.foldl_induction
     (motive := fun _ (acc : B × Nat × Bool) => BgStep b acc.1)
     (BgStep.of_eq (by simp) (by simp) (by simp))
-    (fun _ acc hacc => hacc.trans (bgStep_placeParaLine ..))
+    (fun _ acc hacc => (hacc.trans (bgStep_turnAt ..)).trans (bgStep_placeParaLine ..))
 
 private theorem bgStep_keepHeading (b : B) (j : ParaJob) (n : Nat) :
     BgStep b (b.keepHeading j n) := by
@@ -17682,12 +17899,21 @@ private theorem frameStep_placeParaLine (fs : FontSet) (j : ParaJob)
     (frameStep_placeLine ..)) (frameStep_placeParaTrailer ..)
   split <;> exact FrameStep.of_eq rfl rfl
 
+private theorem frameStep_turnAt (turns : Array Nat) (st : B × Nat × Bool) (brk : Nat) :
+    FrameStep st.1 (turnAt turns st brk).1 := by
+  rcases turnAt_cases turns st brk with e | e <;> rw [e]
+  · exact FrameStep.refl _
+  · exact frameStep_spillPage _ 0
+
 private theorem frameStep_placePara (fs : FontSet) (b : B) (j : ParaJob)
     (breaks : Array Nat) : FrameStep b (placePara fs b j breaks) := by
-  unfold placePara
+  obtain ⟨turns, e⟩ := placePara_with fs b j breaks
+  rw [e]
+  unfold placeParaWith paragraphStart
   refine Array.foldl_induction
     (motive := fun _ (acc : B × Nat × Bool) => FrameStep b acc.1)
-    ?_ (fun _ _ h => h.trans (frameStep_placeParaLine ..))
+    ?_ (fun _ _ h => (h.trans (frameStep_turnAt ..)).trans (frameStep_placeParaLine ..))
+  dsimp only
   unfold Spacing.Page.warnReflow
   split <;> exact FrameStep.of_eq rfl rfl
 
@@ -18122,18 +18348,27 @@ private theorem reflowStep_placeParaLine (fs : FontSet) (j : ParaJob)
   · exact reflowStep_warnOverfull ..
   · exact ReflowStep.refl _
 
+private theorem reflowStep_turnAt (turns : Array Nat) (st : B × Nat × Bool) (brk : Nat) :
+    ReflowStep st.1 (turnAt turns st brk).1 := by
+  rcases turnAt_cases turns st brk with e | e <;> rw [e]
+  · exact ReflowStep.refl _
+  · exact reflowStep_spillPage _ 0
+
 private theorem reflowStep_paraLines (fs : FontSet) (j : ParaJob)
-    (breaks : Array Nat) (st : B × Nat × Bool) :
-    ReflowStep st.1 (breaks.foldl (placeParaLine fs j) st).1 :=
+    (breaks turns : Array Nat) (st : B × Nat × Bool) :
+    ReflowStep st.1 (breaks.foldl (placeParaTurning fs j turns) st).1 :=
   Array.foldl_induction
     (motive := fun _ (acc : B × Nat × Bool) => ReflowStep st.1 acc.1)
-    (ReflowStep.refl _) (fun _ _ h => h.trans (reflowStep_placeParaLine ..))
+    (ReflowStep.refl _)
+    (fun _ _ h => (h.trans (reflowStep_turnAt ..)).trans (reflowStep_placeParaLine ..))
 
 private theorem placePara_breaks_exact (fs : FontSet) (b : B) (j : ParaJob)
     (breaks : Array Nat) :
     (placePara fs b j breaks).paragraphBreaks =
-      b.paragraphBreaks.push (paragraphRecord b j breaks) :=
-  (reflowStep_paraLines ..).1
+      b.paragraphBreaks.push (paragraphRecord b j breaks) := by
+  obtain ⟨turns, e⟩ := placePara_with fs b j breaks
+  rw [e]
+  exact (reflowStep_paraLines ..).1
 
 private theorem reflowStep_warnReflow (b : B) (q : ParagraphBreaks) (split : Bool) :
     ReflowStep b (b.warnReflow q split) := by
@@ -18171,7 +18406,9 @@ private theorem placePara_reflows (fs : FontSet) (b : B) (j : ParaJob)
           d.code = "W0386" ∧ d.subject = some p.subject
       rw [he]
       exact warnReflow_diag { b with diags := b.diags ++ j.diags } p
-  exact named.step (reflowStep_paraLines fs (placedJob fs b j breaks) breaks (_, 0, true))
+  obtain ⟨turns, e⟩ := placePara_with fs b j breaks
+  rw [e]
+  exact named.step (reflowStep_paraLines fs (placedJob fs b j breaks) breaks turns (_, 0, true))
 
 private theorem reflowStep_placePicture (fs : FontSet) (imgs : Image.Store)
     (b : B) (x : Sp) (pic : Ir.Pic.Picture) (leaf : Option Nat) (origin : Nat) :
@@ -20188,8 +20425,10 @@ private theorem placePara_diags (fs : FontSet) (b : B) (j : ParaJob)
     (breaks : Array Nat) :
     ∀ d ∈ Spacing.Page.diags b ++ Spacing.Paragraph.diags j, d ∈ Spacing.Page.diags (placePara fs b j breaks) := by
   intro d hd
-  unfold placePara
-  exact (reflowStep_paraLines fs (placedJob fs b j breaks) breaks _).2 d
+  obtain ⟨turns, e⟩ := placePara_with fs b j breaks
+  rw [e]
+  unfold placeParaWith paragraphStart
+  exact (reflowStep_paraLines fs (placedJob fs b j breaks) breaks turns _).2 d
     ((reflowStep_warnReflow { b with diags := b.diags ++ j.diags } (paragraphRecord b j breaks)
       (!(paragraphRecord b j breaks).reflows.isEmpty)).2 d hd)
 
@@ -21739,6 +21978,38 @@ private theorem paragraph_step (fs : FontSet) (j : ParaJob)
   · exact line_rise fs _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
       { h with } ha.1 hb.1 ha.2 hb.2
 
+private theorem placeLine_fits_pages (fs : FontSet) (b : B) (x size : Sp)
+    (segs : Array Seg) (w hang : Sp) (expand : Int) (counted : Bool)
+    (leaf : Option Nat) (first : Option Sp) (opens : Bool) (anchors : Array String)
+    (step : Option Sp) (strut : Option Sp)
+    (h : Ready b segs) (hf : LineFits fs b size segs first step) :
+    (b.placeLine fs x size segs w hang expand #[] counted leaf first none opens anchors none
+        step none strut).pages = b.pages := by
+  rw [ordinary_line fs b x size segs w hang expand counted leaf first opens anchors step strut h hf]
+  simp [Spacing.Page.displayState, Spacing.Page.keepInk, Spacing.Page.commit]
+
+private theorem paragraph_step_pages (fs : FontSet) (j : ParaJob) (s : B × Nat × Bool) (brk : Nat)
+    (hj : j.display = none) (hn : j.notes.isEmpty = true) (ha : ParaFits fs j s brk) :
+    (placeParaLine fs j s brk).1.pages = s.1.pages := by
+  rcases s with ⟨a, prev, first⟩
+  unfold ParaFits at ha
+  have hp := ha.1
+  have hr := ha.2.1
+  have ha := ha.2.2
+  unfold placeParaLine
+  dsimp only
+  simp only [hn, ite_true, Spacing.Page.openDisplayAt, hj, hp.1, hp.2, hr, ite_self,
+    placeParaTrailer_pages]
+  split
+  · refine Eq.trans (placeLine_fits_pages fs _ _ _ _ _ _ _ _ _ _ _ _ _ _ ?_ ?_) ?_
+    · exact ha.1
+    · exact ha.2
+    · simp [Spacing.Page.withPendingSource, Spacing.Page.warnOverfull]
+  · refine Eq.trans (placeLine_fits_pages fs _ _ _ _ _ _ _ _ _ _ _ _ _ _ ?_ ?_) ?_
+    · exact ha.1
+    · exact ha.2
+    · simp [Spacing.Page.withPendingSource]
+
 /-- A trace of the numeric input conditions at every iteration of the paragraph fold. -/
 private inductive ParagraphInputs (fs : FontSet) (j : ParaJob) :
     List Nat → (B × Nat × Bool) → Prop
@@ -21764,10 +22035,35 @@ private theorem paragraph_fold (fs : FontSet) (j : ParaJob)
       cases hm
       exact ih _ (paragraph_step fs j a b prev brk first hj hn h ha hb) rfl hrest'
 
-private def paragraphStart (b : B) (j : ParaJob) (breaks : Array Nat) : B × Nat × Bool :=
-  let p := paragraphRecord b j breaks
-  let start := ({ b with diags := b.diags ++ j.diags }).warnReflow p (!p.reflows.isEmpty)
-  ({ start with paragraphBreaks := b.paragraphBreaks.push p }, 0, true)
+private theorem paragraph_fold_pages (fs : FontSet) (j : ParaJob)
+    (hj : j.display = none) (hn : j.notes.isEmpty = true)
+    (breaks : List Nat) (s : B × Nat × Bool) (ha : ParagraphInputs fs j breaks s) :
+    (breaks.foldl (placeParaLine fs j) s).1.pages = s.1.pages := by
+  induction ha with
+  | nil => rfl
+  | @cons brk rest s hf _ ih =>
+    exact ih.trans (paragraph_step_pages fs j s brk hj hn hf)
+
+private theorem placeParaTurning_empty (fs : FontSet) (j : ParaJob) :
+    placeParaTurning fs j #[] = placeParaLine fs j := by
+  funext st brk
+  simp [placeParaTurning, turnAt]
+
+/-- A paragraph whose lines all fit where they stand is placed with no page turned. -/
+private theorem placePara_fits (fs : FontSet) (j : ParaJob) (breaks : Array Nat) (b : B)
+    (hj : j.display = none) (hn : j.notes.isEmpty = true)
+    (ha : ParagraphInputs fs (placedJob fs b j breaks) breaks.toList (paragraphStart b j breaks)) :
+    placePara fs b j breaks =
+      (breaks.foldl (placeParaLine fs (placedJob fs b j breaks)) (paragraphStart b j breaks)).1 := by
+  have hp := paragraph_fold_pages fs (placedJob fs b j breaks) (by simp only [placedJob]; exact hj)
+    (by simp only [placedJob]; exact hn) _ _ ha
+  have hs : (paragraphStart b j breaks).1.pages = b.pages := by
+    dsimp only [paragraphStart]
+    simp
+  rw [Array.foldl_toList] at hp
+  unfold placePara
+  simp only [placeParaWith, placeParaTurning_empty, hp, hs, beq_self_eq_true, Bool.true_or,
+    ite_true]
 
 private theorem paragraph_rise (fs : FontSet) (j : ParaJob) (breaks : Array Nat)
     (a b : B) (hj : j.display = none) (hn : j.notes.isEmpty = true) (h : PageRise a b)
@@ -21781,9 +22077,10 @@ private theorem paragraph_rise (fs : FontSet) (j : ParaJob) (breaks : Array Nat)
     all_goals exact { h with }
   have hw : placedJob fs a j breaks = placedJob fs b j breaks := by
     simp only [placedJob, paraLineGeom, h.geom, h.xHeight]
+  rw [placePara_fits fs j breaks a hj hn ha, placePara_fits fs j breaks b hj hn hb]
   rw [hw] at ha
   have hp := paragraph_fold fs (placedJob fs b j breaks) hj hn breaks.toList _ _ hs rfl ha hb
-  simpa only [placePara, paragraphStart, Array.foldl_toList, hw] using hp
+  simpa only [Array.foldl_toList, hw] using hp
 
 end LeanTex.Core.Layout.Spacing
 

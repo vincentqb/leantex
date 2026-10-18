@@ -112,6 +112,7 @@ import Tests.FrameFit
 import Tests.NestedLedgers
 import Tests.DeclaredLadder
 import Tests.PageOverrun
+import Tests.PageTurns
 import Tests.BlockFillConditionals
 import Tests.PaletteTextEpoch
 import Tests.GroupScope
@@ -557,6 +558,11 @@ def printColourChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
   Tests.PrintColour.previewChecks ref oneFace
   Tests.PrintColour.driverChecks ref
 
+/-- The page blocks: what overruns a page, and where a flow's pages turn. -/
+def pageSuiteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  Tests.PageOverrun.checks ref oneFace
+  Tests.PageTurns.checks ref oneFace
+
 /-- The section blocks: a deck's section pages and both models' tables of contents. -/
 def sectionSuiteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   sectionPageChecks ref oneFace
@@ -850,7 +856,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   Tests.FrameFit.titlePageSqueezeChecks ref
   Tests.NestedLedgers.checks ref oneFace
   Tests.DeclaredLadder.checks ref oneFace
-  Tests.PageOverrun.checks ref oneFace
+  pageSuiteChecks ref oneFace
   Tests.FrameArea.floatLevelChecks ref
   topskipChecks ref oneFace
   labelBaselineChecks ref oneFace

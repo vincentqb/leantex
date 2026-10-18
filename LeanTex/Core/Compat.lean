@@ -6496,6 +6496,34 @@ private def plainAssign? (register : String → Bool) (name : String) (raws : Ar
       | _ => false
     if opens && assigns && e > v0 then some (raws.extract v0 e, e) else none
 
+/-- TeX's page-break penalty parameters, which the paginator reads (latex.ltx `\clubpenalty=150`). -/
+private def penaltyParam? : String → Option Native.PageKey
+  | "clubpenalty" => some .clubpenalty
+  | "widowpenalty" => some .widowpenalty
+  | "brokenpenalty" => some .brokenpenalty
+  | _ => none
+
+/-- TeX's own assignment to a page-break penalty, `\widowpenalty=10000` or `\clubpenalty 150`: its
+key, its whole number and the raw past it, a space or `\relax` after the number taken as TeX takes
+them. -/
+private def penaltyAssign? (name : String) (raws : Array Raw) (start : Nat) :
+    Option (Native.PageKey × String × Nat) := do
+  let key ← penaltyParam? name
+  let j := skipSpaces raws start
+  let (w, k) ← match raws[j]? with
+    | some (.word "=" _) | some (.sym '=' _) =>
+      let k := skipSpaces raws (j + 1)
+      match raws[k]? with
+      | some (.word w _) => some (w, k + 1)
+      | _ => none
+    | some (.word w _) => some ((if w.startsWith "=" then (w.drop 1).toString else w), j + 1)
+    | _ => none
+  let digits := if w.startsWith "-" || w.startsWith "+" then (w.drop 1).toString else w
+  if digits.isEmpty || !digits.all Char.isDigit then none
+  let k := if raws[k]? matches some .space then k + 1 else k
+  let k := if raws[k]? matches some (.ctrl "relax" _) then k + 1 else k
+  return (key, (if w.startsWith "+" then digits else w), k)
+
 /-- The list depth a class's parameter macro sets up,
 `\@listi` to `\@listvi`. -/
 private def listLevelOf : String → Option Nat
@@ -11255,6 +11283,8 @@ private def rewriteCtrlTable (name : String) (pos : Pos) (raws : Array Raw) (sta
     return some (← ctrlRowRun row ⟨name, pos, args, raws, start, k⟩, k)
   if let some (value, e) := plainAssign? (lengthRegister (← get)) name raws start then
     return some (← assignLength name value s!"\\{name}" pos, e)
+  if let some (key, value, e) := penaltyAssign? name raws start then
+    return some (← setting s!"\\{name}" (.page #[(key, value)]) pos, e)
   if let some settings := listSettings? (← get) name then
     let mut out : Array Raw := #[]
     for (n, v) in settings do
@@ -13291,6 +13321,7 @@ private theorem rewriteCtrlAt_named_scope (name : String) (pos : Pos)
     (hCite : (name == "cite") = false)
     (hAppendix : (name == "appendix") = false)
     (hAssign : plainAssign? (lengthRegister s) name raws start = none)
+    (hPenalty : penaltyAssign? name raws start = none)
     (hRow : ctrlRow? name = none) :
     rewriteCtrl.rewriteCtrlAt name pos raws start s =
       rewriteCtrlNamed name pos raws start s := by
@@ -13298,7 +13329,7 @@ private theorem rewriteCtrlAt_named_scope (name : String) (pos : Pos)
     simp [listSettings?, hl]
   simp only [rewriteCtrl.rewriteCtrlAt, rewriteCtrlTable]
   simp [bind, StateT.bind, pure, get, getThe, MonadStateOf.get,
-    StateT.get, hd, hCite, hAppendix, hAssign, hSettings, hRow]
+    StateT.get, hd, hCite, hAppendix, hAssign, hPenalty, hSettings, hRow]
 
 /-- A name's bytes, the order the control table is sorted in. -/
 public def nameKey (n : String) : List Nat := n.toByteArray.data.toList.map UInt8.toNat
@@ -13721,7 +13752,7 @@ private theorem rewriteCtrl_unknown_exact (s : St) (pos : Pos)
     simp only [lengthRegister, hn]; rfl
   have hAt : rewriteCtrl.rewriteCtrlAt "zzNotAControl" pos raws start s = (none, s) := by
     rw [rewriteCtrlAt_named_scope "zzNotAControl" pos raws start s (by simp [hd]) hl
-      rfl rfl (by simp only [plainAssign?, hreg, Bool.not_false, ite_true]) hz]
+      rfl rfl (by simp only [plainAssign?, hreg, Bool.not_false, ite_true]) rfl hz]
     rfl
   unfold rewriteCtrl
   rw [hAt]

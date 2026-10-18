@@ -160,6 +160,14 @@ public theorem TextBlockDecl.place_bottom (b : TextBlockDecl) (page vm bm h m : 
   simp only [TextBlockDecl.place, hh, hm, ht]
   exact place_over _ _ _
 
+/-- TeX's page-break penalties after a paragraph's first line, before its last and after a
+hyphenated line, as latex.ltx sets them (`\clubpenalty`, `\widowpenalty`, `\brokenpenalty`). -/
+public structure PagePenalties where
+  club : Int := 150
+  widow : Int := 150
+  broken : Int := 100
+  deriving Repr, BEq, Inhabited, DecidableEq
+
 /-- Page geometry, as declared by `\page`. -/
 public structure PageSpec where
   width : Sp := pt 612
@@ -227,6 +235,8 @@ public structure PageSpec where
   /-- LaTeX's `\flushbottom` (`some true`) or `\raggedbottom` (`some false`);
   `none` is the class's own. -/
   flushBottom : Option Bool := none
+  /-- The page-break penalties a paragraph's lines carry, as declared over LaTeX's. -/
+  penalties : PagePenalties := {}
   /-- The rules the document draws on every page, in the order drawn. -/
   drawn : Array DrawnRule := #[]
   /-- The page boxes the document declares, one per kind, the last declaration standing. -/

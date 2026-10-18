@@ -14580,6 +14580,7 @@ private def pageExpects (k : Native.PageKey) : String :=
   | .rule | .frontRule => "\"x; y; width; height; colour\""
   | .tmargin | .bmargin | .textheight => "a dimension, or auto"
   | .vmarginratio => "a ratio such as 2:3, or auto"
+  | .clubpenalty | .widowpenalty | .brokenpenalty => "a whole number"
   | k => if (pageSwitch k).isSome then "on or off" else "a dimension"
 
 private def applyPage (ctx : Ctx) (spec : PageSpec) (face : Ir.PreambleFace)
@@ -14747,6 +14748,12 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (face : Ir.PreambleFace)
       | .modulo, .int n =>
         if n ≥ 1 then spec := { spec with lineModulo := some n.toNat }
         else evs := say evs .E0323 "'modulo' in '\\page' expects a count of at least 1"
+      -- TeX's page-break penalties, as `\clubpenalty` and its kin assign them.
+      | .clubpenalty, .int n => spec := { spec with penalties := { spec.penalties with club := n } }
+      | .widowpenalty, .int n =>
+        spec := { spec with penalties := { spec.penalties with widow := n } }
+      | .brokenpenalty, .int n =>
+        spec := { spec with penalties := { spec.penalties with broken := n } }
       | .bottom, .ident v =>
         match v with
         | "flush" => spec := { spec with flushBottom := some true }
