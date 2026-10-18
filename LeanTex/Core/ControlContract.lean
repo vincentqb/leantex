@@ -39,9 +39,9 @@ public theorem ctrlRows_sound : Compat.CtrlRowsSound := by
   unfold Compat.CtrlRowsSound
   decide +kernel
 
-/-- At a body cursor, or a preamble one outside a deck, a table row no leave keeps consumes exactly
-what its signature reads, and one missing an argument that must stand or kept by a leave is left to
-elaboration; at a body cursor a quiet row of groups consumes exactly its group prefix. -/
+/-- Where open scopes close at group primitives, a row no leave keeps consumes exactly what its
+signature reads and one lacking a standing argument or kept is left to elaboration; at a body cursor
+a quiet row of groups consumes exactly its group prefix. -/
 public theorem ctrl_rows_consumed_contract :
     (∀ row ∈ Compat.ctrlRows, Compat.CtrlRowConsumed row) ∧
     (∀ row ∈ Compat.ctrlRows, row.quiet = true → (∀ k ∈ row.sig, k = .group ∨ k = .needed) →
