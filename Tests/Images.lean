@@ -915,33 +915,35 @@ def planChecks (ref : IO.Ref (List String)) : IO Unit := do
   let build ← IO.Process.output { cmd := "lake", args := #["build", "leantex", "-q"] }
   t s!"leantex builds for the plan checks:\n{build.stdout}{build.stderr}" (build.exitCode == 0)
   if build.exitCode == 0 then
-    let dir ← IO.FS.createTempDir
-    IO.FS.createDirAll (dir / "fonts")
-    IO.FS.writeBinFile (dir / "fonts" / "SourceSerifPro-Regular.otf")
-      (← IO.FS.readBinFile (testFonts ++ "/SourceSerifPro-Regular.otf"))
-    IO.FS.writeBinFile (dir / "profiled.png") pngIccp
-    IO.FS.writeBinFile (dir / "oriented.jpg") jpgExif6
-    IO.FS.writeBinFile (dir / "plain.png") pngPlain
-    IO.FS.writeBinFile (dir / "photo.webp") webpX
-    IO.FS.writeFile (dir / "d.tex") "\\fonts{ dir = \"fonts\", body = \"Source Serif Pro\" }\n\
+    let made ← IO.FS.withTempDir fun dir => do
+      IO.FS.createDirAll (dir / "fonts")
+      IO.FS.writeBinFile (dir / "fonts" / "SourceSerifPro-Regular.otf")
+        (← IO.FS.readBinFile (testFonts ++ "/SourceSerifPro-Regular.otf"))
+      IO.FS.writeBinFile (dir / "profiled.png") pngIccp
+      IO.FS.writeBinFile (dir / "oriented.jpg") jpgExif6
+      IO.FS.writeBinFile (dir / "plain.png") pngPlain
+      IO.FS.writeBinFile (dir / "photo.webp") webpX
+      IO.FS.writeFile (dir / "d.tex") "\\fonts{ dir = \"fonts\", body = \"Source Serif Pro\" }\n\
 \\begin{document}\n\\includegraphics{profiled.png} \\includegraphics{oriented.jpg} \
 \\includegraphics{plain.png} \\includegraphics{oriented.jpg} \\includegraphics{photo.webp}\n\
 \\end{document}\n"
-    let r ← IO.Process.output {
-      cmd := ".lake/build/bin/leantex"
-      args := #[(dir / "d.tex").toString, "-o", (dir / "out").toString ++ "/"] }
-    let log := r.stdout ++ r.stderr
-    let count (needle : String) : Nat := (log.splitOn needle).length - 1
-    t s!"driver: a profiled PNG is one W0603, an oriented JPEG one W0604, per source: {log}"
-      (r.exitCode == 0 && count "[W0603]" == 1 && count "[W0604]" == 1 &&
-       hasStr log "profiled.png" && hasStr log "oriented.jpg" && hasStr log "tag 6")
-    t "driver: the WebP is refused by name as W0602"
-      (count "[W0602]" == 1 && hasStr log "WebP images cannot be embedded")
-    let pdf ← IO.FS.readBinFile (dir / "out" / "d.pdf")
-    let text := pdfText pdf
-    t "driver: the profiled PNG and the oriented JPEG embed pass-through"
-      (containsBytes text (bytes idat2) && containsBytes text jpgExif6 &&
-       bytesContain text "/DeviceRGB")
+      let r ← IO.Process.output {
+        cmd := ".lake/build/bin/leantex"
+        args := #[(dir / "d.tex").toString, "-o", (dir / "out").toString ++ "/"] }
+      let log := r.stdout ++ r.stderr
+      let count (needle : String) : Nat := (log.splitOn needle).length - 1
+      t s!"driver: a profiled PNG is one W0603, an oriented JPEG one W0604, per source: {log}"
+        (r.exitCode == 0 && count "[W0603]" == 1 && count "[W0604]" == 1 &&
+         hasStr log "profiled.png" && hasStr log "oriented.jpg" && hasStr log "tag 6")
+      t "driver: the WebP is refused by name as W0602"
+        (count "[W0602]" == 1 && hasStr log "WebP images cannot be embedded")
+      let pdf ← IO.FS.readBinFile (dir / "out" / "d.pdf")
+      let text := pdfText pdf
+      t "driver: the profiled PNG and the oriented JPEG embed pass-through"
+        (containsBytes text (bytes idat2) && containsBytes text jpgExif6 &&
+         bytesContain text "/DeviceRGB")
+      return dir
+    t "driver: the run's temporary directory is removed" !(← made.pathExists)
 
 /-- Images set in a row are spaced as TeX sets them, over `Layout.Out`. -/
 def imageRowChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do

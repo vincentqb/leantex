@@ -404,15 +404,18 @@ public def svgFetch (src : String) (bytes : ByteArray) (page : PdfRead.PageSelec
     return { res := .ok plan, moving, title := fig.title, diags, judged := some bytes }
   | _, _ => return { native with diags }
 
-/-- The converter a lossy SVG may ask when the document allows it: `run`, while `probe`,
-asked once on first need, says the host has it. -/
+/-- The converter a lossy SVG may ask when the document allows it: `run`, once at a time per
+canonical spelling, while `probe`, asked once on first need, says the host has it. -/
 public def svgConverterWith (probe : IO Bool)
     (run : ByteArray → Bool → IO (Except PicCache.Outcome Image.Plan))
     (allowed : Bool) : IO (Option Converter) := do
   if !allowed then return none
   let present ← ToolProbe.once probe
+  -- A waiter takes the attempt it met, unless that attempt reached no verdict.
+  let ask ← Batch.shared (· matches .error (.inconclusive _))
+    fun ((canonical, independent) : ByteArray × Bool) => run canonical independent
   return some fun canonical independent => do
-    if ← present then some <$> run canonical independent else pure none
+    if ← present then some <$> ask (canonical, independent) else pure none
 
 /-- librsvg's `rsvg-convert` as that converter (`\figures{ convert = none }`
 refuses it). -/

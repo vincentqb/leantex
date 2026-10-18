@@ -951,7 +951,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   Tests.svgCorpusHtmlChecks ref oneFace
   Tests.svgTitleAltChecks ref
   Tests.svgRouteChecks ref
-  Tests.svgConverterProbeChecks ref
+  Tests.svgConverterSuiteChecks ref
   Tests.svgLinkNoteChecks ref
   Tests.svgGlyphGapChecks ref oneFace
   Tests.figuresDeclChecks ref

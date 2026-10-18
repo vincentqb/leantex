@@ -5,6 +5,7 @@ import LeanTex.Cli.FontDiscovery
 import LeanTex.Cli.AtomicFile
 import LeanTex.Cli.RunBounded
 import LeanTex.Cli.ToolProbe
+import Std.Sync.Mutex
 import LeanTex.Cli.Engine
 import LeanTex.Core.Flate
 import LeanTex.Core.Flate.ContentKeyProof
@@ -224,12 +225,15 @@ private def probeVersion (tool : String) : IO PicCache.Tool := do
     (fun s => !s.trimAscii.isEmpty)
   return PicCache.probed got.ran (line.getD "").trimAscii.toString
 
+private initialize heard : ToolProbe.Versions ← Std.Mutex.new {}
+
 private def identify (dir : System.FilePath) (tool : String) : IO (Option String) := do
   let stamp ← ToolProbe.witness tool
   if stamp.isEmpty then return none
   let memoPath := dir / ("tool-" ++ Flate.contentKey tool.toUTF8 ++ ".ver")
-  let memo := (← (IO.FS.readFile memoPath).toBaseIO).toOption.bind PicCache.readVersionMemo
-  let answer ← match PicCache.versionStep memo stamp with
+  let answer ← ToolProbe.rememberedIn heard tool stamp do
+    let memo := (← (IO.FS.readFile memoPath).toBaseIO).toOption.bind PicCache.readVersionMemo
+    match PicCache.versionStep memo stamp with
     | .remembered version => pure (.present version)
     | .probe =>
       let answer ← probeVersion tool

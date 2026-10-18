@@ -3,7 +3,8 @@ module
 public import LeanTex.Cli.PicCache
 import LeanTex.Cli.Host
 import LeanTex.Core.Flate
-import Std.Sync.Mutex
+public import Std.Sync.Mutex
+public import Std.Data.HashMap
 
 /-! Asking a boundary tool who it is: the host half of `PicCache`'s version policy. -/
 
@@ -22,6 +23,19 @@ public def once (probe : IO Bool) : BaseIO (IO Bool) := do
       let p ← probe
       set (some p)
       pure p
+
+/-- What a run has heard tools say they are, by tool and witness. -/
+public abbrev Versions := Std.Mutex (Std.HashMap (String × String) String)
+
+/-- `probe`'s answer for `tool` under `stamp`, asked once however many ask at once, a present
+version remembered in `memo` and an absence asked again. -/
+public def rememberedIn (memo : Versions) (tool stamp : String) (probe : IO PicCache.Tool) :
+    IO PicCache.Tool :=
+  memo.atomically do
+    if let some version := (← get).get? (tool, stamp) then return .present version
+    let answer ← probe
+    if let .present version := answer then modify (·.insert (tool, stamp) version)
+    return answer
 
 /-- The first regular file `tool` reaches on PATH, relative entries anchored to the
 working directory; mode bits are not read, and no run is asked. -/

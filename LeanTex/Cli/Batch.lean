@@ -1,6 +1,8 @@
 module
 
 import Std
+public import Std.Sync.Mutex
+public import Std.Data.HashMap
 
 namespace LeanTex.Cli.Batch
 
@@ -147,5 +149,23 @@ public def map [DecidableEq κ] (limit : Nat) (key : α → κ)
       | .error error => if failure.isNone then failure := some error
     if let some error := failure then throw error
   return result
+
+/-- `run` asked once at a time per key: a caller meeting its key in flight takes that attempt's
+answer, asking anew only where `again` holds of it. -/
+public def shared [BEq κ] [Hashable κ] (again : β → Bool) (run : κ → IO β) :
+    BaseIO (κ → IO β) := do
+  let flying ← Std.Mutex.new (∅ : Std.HashMap κ (Task (Except IO.Error β)))
+  return fun k => do
+    let (task, mine) ← flying.atomically do
+      match (← get).get? k with
+      | some t => pure (t, false)
+      | none =>
+        let t ← IO.asTask (run k) Task.Priority.dedicated
+        modify (·.insert k t)
+        pure (t, true)
+    let got ← IO.wait task
+    if mine then flying.atomically (modify (·.erase k))
+    let answer ← IO.ofExcept got
+    if !mine && again answer then run k else pure answer
 
 end LeanTex.Cli.Batch

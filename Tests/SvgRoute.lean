@@ -1,6 +1,7 @@
 module
 
 public import LeanTex.Cli.Driver
+public import LeanTex.Cli.ToolProbe
 public import LeanTex.Core.LayoutFigure
 public import LeanTex.Core.FigureStore
 public import Tests.Artifact
@@ -229,6 +230,62 @@ def svgConverterProbeChecks (ref : IO.Ref (List String)) : IO Unit := do
   let figures ← asked.mapM fun task => IO.ofExcept task.get
   check ref s!"converter probe: eight lossy figures asking at once probe the host once ({← asks.get})"
     ((← asks.get) == 1 && figures.all (·.res.toBool))
+
+/-- Figures asking the converter at once over one canonical spelling share one attempt, a waiter
+asking anew only past an attempt that reached no verdict. -/
+def svgConverterSharedChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let pdfPlan : Except PicCache.Outcome Image.Plan :=
+    (Image.probe svgCanvasPdf >>= Image.plan {}).mapError .inconclusive
+  let commented := ((String.fromUTF8? svgFilterFixture).getD "").replace "an authored comment"
+    "another invented comment"
+  let runs ← IO.mkRef 0
+  let slow (answer : Except PicCache.Outcome Image.Plan) : ByteArray → Bool →
+      IO (Except PicCache.Outcome Image.Plan) := fun _ _ => do
+    runs.modify (· + 1)
+    IO.sleep 100
+    return answer
+  let both (convert : Driver.Converter) : IO (Array Driver.SvgFetch) := do
+    let asked ← [svgFilterFixture, commented.toUTF8].mapM fun bytes =>
+      IO.asTask (prio := .dedicated) (Driver.svgFetch "e.svg" bytes .first "en" (some convert))
+    asked.toArray.mapM fun task => IO.ofExcept task.get
+  let some drawing ← Driver.svgConverterWith (pure true) (slow pdfPlan) true
+    | check ref "converter sharing: an allowed converter is offered" false
+  let figures ← both drawing
+  check ref s!"converter sharing: two figures differing by a comment convert once ({← runs.get})"
+    ((← runs.get) == 1 && figures.all (·.res.toBool))
+  runs.set 0
+  let some unfinished ← Driver.svgConverterWith (pure true)
+      (slow (.error (.inconclusive "an invented timeout"))) true
+    | check ref "converter sharing: an allowed converter is offered" false
+  let _ ← both unfinished
+  check ref s!"converter sharing: an attempt with no verdict is asked anew by its waiter ({← runs.get})"
+    ((← runs.get) == 2)
+
+/-- A tool's version is asked once per witness however many ask at once; an absence is asked
+again. -/
+def toolVersionMemoChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let memo : ToolProbe.Versions ← Std.Mutex.new {}
+  let asks ← IO.mkRef 0
+  let probe (answer : PicCache.Tool) : IO PicCache.Tool := do
+    IO.sleep 20
+    asks.modify (· + 1)
+    return answer
+  let asked ← (List.range 4).mapM fun _ => IO.asTask (prio := .dedicated)
+    (ToolProbe.rememberedIn memo "invented-tool" "stamp-a" (probe (.present "invented 1.0")))
+  let answers ← asked.mapM fun task => IO.ofExcept task.get
+  check ref s!"tool version: four asking at once probe once ({← asks.get})"
+    ((← asks.get) == 1 && answers.all (· == .present "invented 1.0"))
+  let _ ← ToolProbe.rememberedIn memo "invented-tool" "stamp-b" (probe (.present "invented 2.0"))
+  check ref "tool version: a changed witness asks again" ((← asks.get) == 2)
+  let _ ← ToolProbe.rememberedIn memo "absent-tool" "stamp-a" (probe (.absent "an invented failure"))
+  let _ ← ToolProbe.rememberedIn memo "absent-tool" "stamp-a" (probe (.absent "an invented failure"))
+  check ref "tool version: an absence is asked again" ((← asks.get) == 4)
+
+/-- The converter's probe, its shared attempts and the tool versions a run hears. -/
+def svgConverterSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
+  svgConverterProbeChecks ref
+  svgConverterSharedChecks ref
+  toolVersionMemoChecks ref
 
 /-- A character no face covers is a figure loss (W0609), never an error. -/
 def svgGlyphGapChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do

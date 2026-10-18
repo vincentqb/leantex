@@ -42,9 +42,22 @@ def iccApp2 (seq count : Nat) (data : List UInt8) : List UInt8 :=
 def plan (b : ByteArray) : Except String Image.Plan :=
   Image.probe b >>= Image.plan Image.PlanParams.default
 
-/-- The longest one import of a fuzzed input may take, in milliseconds: two seconds, or
-five times the slowest fixture's own import when longer. -/
-def importBudgetMs (slowestFixture : Nat) : Nat := max 2000 (5 * slowestFixture)
+/-- `f`'s value, computed at this call between the readings around it. -/
+@[noinline] def forced (f : Unit → α) : IO α := pure (f ())
+
+/-- `f`'s value and the work it took: the heartbeats, allocations, its thread spent, a count the
+host's load does not move. -/
+def worked (f : Unit → α) : IO (α × Nat) := do
+  let h0 ← IO.getNumHeartbeats
+  let v ← forced f
+  return (v, (← IO.getNumHeartbeats) - h0)
+
+/-- The most work one import of a fuzzed input may take: five times the slowest fixture's own. -/
+def importBudget (slowestFixture : Nat) : Nat := 5 * slowestFixture
+
+/-- The most work one input built past a reader's depth or size limit may take, about four times
+what the deepest of them, an object nested a million levels, takes. -/
+def limitBudget : Nat := 200000000
 
 /-- A one-file PDF of the given objects' bytes, numbered from 1, the first
 the catalog. -/
@@ -162,16 +175,13 @@ structure Tally where
 
 /-- One import against the budget, its figure forced whole, and counted. -/
 def timedImport (tally : IO.Ref Tally) (budget : Nat) (what : String) (b : ByteArray) : IO Unit := do
-  let t0 ← IO.monoMsNow
-  let r := PdfGfx.importPage b
-  let forced := match r with
-    | .ok imp => imp.figure.marks.size + imp.figure.losses.size + (LeanTex.Cli.PdfFaces.svgOf imp.figure).size
-    | .error e => e.length
-  let t1 ← IO.monoMsNow
-  let ms := t1 - t0
-  if ms > budget then die s!"{what}: one import took {ms} ms, over {budget}"
-  tally.modify fun t => { runs := t.runs + 1, drawn := t.drawn + (if r.isOk && forced ≥ 0 then 1 else 0)
-                          worst := max t.worst ms }
+  let (drawn, work) ← worked fun _ => match PdfGfx.importPage b with
+    | .ok imp => imp.figure.marks.size + imp.figure.losses.size +
+        (LeanTex.Cli.PdfFaces.svgOf imp.figure).size != 0 || true
+    | .error e => e.length != 0 && false
+  if work > budget then die s!"{what}: one import took {work} heartbeats, over {budget}"
+  tally.modify fun t => { runs := t.runs + 1, drawn := t.drawn + (if drawn then 1 else 0)
+                          worst := max t.worst work }
 
 def pdfFigureFuzz : IO Unit := do
   let names := #["cairo-chart.pdf", "leantex-strokes.pdf", "lualatex-shade.pdf", "lualatex-text.pdf",
@@ -180,15 +190,15 @@ def pdfFigureFuzz : IO Unit := do
   let mut slowest := 0
   for n in names do
     let b ← IO.FS.readBinFile ("testdata/pdf-native/" ++ n)
-    let t0 ← IO.monoMsNow
-    match PdfGfx.importPage b with
-    | .ok imp =>
-      unless imp.figure.losses.isEmpty && (LeanTex.Cli.PdfFaces.svgOf imp.figure).size > 0 do
-        die s!"{n} imports with losses"
+    let (r, work) ← worked fun _ => (PdfGfx.importPage b).map fun imp =>
+      imp.figure.losses.isEmpty && (LeanTex.Cli.PdfFaces.svgOf imp.figure).size > 0
+    match r with
+    | .ok whole => unless whole do die s!"{n} imports with losses"
     | .error e => die s!"{n} does not import: {e}"
-    slowest := max slowest ((← IO.monoMsNow) - t0)
+    slowest := max slowest work
     fixtures := fixtures.push b
-  let budget := importBudgetMs slowest
+  let budget := importBudget slowest
+  IO.println s!"img-fuzz: the slowest fixture imports in {slowest} heartbeats, a fuzzed import's budget {budget}"
   -- A form that paints itself, and two that paint each other: refused by name, never followed.
   let selfForm := resourcePdf "/X1 Do" "/X1 Do"
   match PdfGfx.importPage selfForm with
@@ -215,48 +225,45 @@ def pdfFigureFuzz : IO Unit := do
         String.join (List.replicate 1000000 "]")) #[]),
     ("a visibility expression nested two thousand references", deepVe "7 0 R" notChain)]
   for (what, b) in deepCases do
-    let t0 ← IO.monoMsNow
-    match PdfGfx.importPage b with
-    | .ok imp =>
-      unless imp.figure.marks.size == 1 &&
-          imp.figure.losses.contains (.budget "visibility-expression-depth") do
-        die s!"{what}: not shown with its depth named"
+    let (r, work) ← worked fun _ => (PdfGfx.importPage b).map fun imp =>
+      imp.figure.marks.size == 1 && imp.figure.losses.contains (.budget "visibility-expression-depth")
+    match r with
+    | .ok named => unless named do die s!"{what}: not shown with its depth named"
     | .error e => die s!"{what}: refused whole: {e}"
-    let ms := (← IO.monoMsNow) - t0
-    if ms > budget then die s!"{what}: one import took {ms} ms, over {budget}"
+    if work > limitBudget then die s!"{what}: one import took {work} heartbeats, over {limitBudget}"
   let wideGroup := deepVe ("[/Or" ++ String.join (List.replicate 2000 " 7 0 R") ++ "]")
     #["<< /Type /OCG /Name (" ++ String.join (List.replicate 1000000 "x") ++ ") >>"]
-  let t0 ← IO.monoMsNow
-  match PdfGfx.importPage wideGroup with
-  | .ok imp => unless imp.figure.marks.size == 1 && imp.figure.losses.isEmpty do
-      die "an expression over one group two thousand times is not shown"
+  let (r, work) ← worked fun _ => (PdfGfx.importPage wideGroup).map fun imp =>
+    imp.figure.marks.size == 1 && imp.figure.losses.isEmpty
+  match r with
+  | .ok shown => unless shown do die "an expression over one group two thousand times is not shown"
   | .error e => die s!"an expression over one group two thousand times refused whole: {e}"
-  let ms := (← IO.monoMsNow) - t0
-  if ms > budget then die s!"an expression over one group two thousand times: one import took {ms} ms, over {budget}"
+  if work > limitBudget then
+    die s!"an expression over one group two thousand times: one import took {work} heartbeats, over {limitBudget}"
   let formChain : ByteArray := fuzzPdf (#[
     "<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
     "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 50 50] /Contents 4 0 R \
 /Resources << /XObject << /X 5 0 R >> >> >>", fuzzStream "/X Do"] ++
     (Array.range 20000).map fun i => fuzzStream "/X Do" s!"/Type /XObject /Subtype /Form \
 /BBox [0 0 50 50] /Resources << /XObject << /X {i + 6} 0 R >> >> ")
-  let t2 ← IO.monoMsNow
-  match PdfGfx.importPage formChain with
-  | .ok imp => unless imp.figure.losses.contains (.budget "form-recursion") do
-      die "twenty thousand nested forms are not named a recursion"
+  let (r, work) ← worked fun _ => (PdfGfx.importPage formChain).map fun imp =>
+    imp.figure.losses.contains (.budget "form-recursion")
+  match r with
+  | .ok named => unless named do die "twenty thousand nested forms are not named a recursion"
   | .error e => die s!"twenty thousand nested forms refused whole: {e}"
-  let ms := (← IO.monoMsNow) - t2
-  if ms > budget then die s!"twenty thousand nested forms: one import took {ms} ms, over {budget}"
+  if work > limitBudget then die s!"twenty thousand nested forms: one import took {work} heartbeats, over {limitBudget}"
   let deepObject : ByteArray := fuzzPdf #[
     "<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
     "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 50 50] /Contents 4 0 R /Resources 5 0 R >>",
     fuzzStream "0 0 5 5 re f",
     "<< /Spare " ++ String.join (List.replicate 1000000 "[") ++ "1" ++
       String.join (List.replicate 1000000 "]") ++ " >>"]
-  let t1 ← IO.monoMsNow
-  if let .error e := Image.probe deepObject then die s!"an object nested a million levels is not copied: {e}"
-  unless (PdfGfx.importPage deepObject).isOk do die "an unread deep object refuses the page"
-  let ms := (← IO.monoMsNow) - t1
-  if ms > budget then die s!"an object nested a million levels: copied and read in {ms} ms, over {budget}"
+  let ((copied, read), work) ← worked fun _ =>
+    (Image.probe deepObject |>.map fun _ => (), (PdfGfx.importPage deepObject).isOk)
+  if let .error e := copied then die s!"an object nested a million levels is not copied: {e}"
+  unless read do die "an unread deep object refuses the page"
+  if work > limitBudget then
+    die s!"an object nested a million levels: copied and read in {work} heartbeats, over {limitBudget}"
   -- A configured page, its copy and the converter's update, at any depth.
   let deepConfigured : ByteArray := fuzzPdf #[
     "<< /Type /Catalog /Pages 2 0 R /OCProperties << /OCGs [6 0 R] /D << /OFF [6 0 R] >> >> >>",
@@ -268,12 +275,11 @@ def pdfFigureFuzz : IO Unit := do
     "<< /Type /OCG /Name (Off) >>", "<< /Type /OCMD /OCGs [6 0 R] >>"]
   for (what, b) in deepCases.push ("a configured page holding an object nested a million levels",
       deepConfigured) do
-    let t0 ← IO.monoMsNow
-    if let .error e := Image.probe b then die s!"{what}: not copied: {e}"
-    unless (PdfRead.Doc.ofBytes (PdfRead.ocAsCopied b)).isOk do
-      die s!"{what}: the converter's update does not read"
-    let ms := (← IO.monoMsNow) - t0
-    if ms > budget then die s!"{what}: copied and updated in {ms} ms, over {budget}"
+    let ((copied, read), work) ← worked fun _ =>
+      (Image.probe b |>.map fun _ => (), (PdfRead.Doc.ofBytes (PdfRead.ocAsCopied b)).isOk)
+    if let .error e := copied then die s!"{what}: not copied: {e}"
+    unless read do die s!"{what}: the converter's update does not read"
+    if work > limitBudget then die s!"{what}: copied and updated in {work} heartbeats, over {limitBudget}"
   let tally ← IO.mkRef ({} : Tally)
   -- 1. Truncations: evenly spaced cuts of each fixture, at least 10 000 in all.
   let total := fixtures.foldl (fun a b => a + b.size) 0
@@ -378,7 +384,7 @@ def pdfFigureFuzz : IO Unit := do
     timedImport tally budget "an image dictionary" pdf
   let t ← tally.get
   IO.println s!"img-fuzz: the PDF figure importer read {t.runs} inputs ({t.drawn} drawn, the rest \
-refused), the slowest in {t.worst} ms, under {budget} ms"
+refused), the slowest in {t.worst} heartbeats, under {budget}"
 /-- Single-byte mutants of `bases`, `count` in all, each at a seeded random offset with a
 random value, `f` run on each; returns the new seed. -/
 def mutate (seed : UInt64) (bases : Array ByteArray) (count : Nat) (f : ByteArray → IO Unit) :
