@@ -1423,7 +1423,8 @@ def benchPasses (n : Nat) : IO Unit := do
      ("families", 30000, "faces"), ("merge", 400000, "keys"), ("references", 2000, "definitions"),
      ("legible", 20000, "runs"),
      ("failing", 6000, "uses"), ("arrays", 100000, "elements"),
-     ("dictionaries", 100000, "entries")]
+     ("dictionaries", 100000, "entries"), ("adler32", 1048576, "bytes"),
+     ("deflate", 1048576, "bytes"), ("inflate", 1048576, "bytes")]
   for (label, size, what) in growth do
     let small ← row label size s!"{label}, {size} {what}"
     let big ← row label (4 * size) s!"{label}, {4 * size} {what}"

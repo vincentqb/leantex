@@ -1,5 +1,6 @@
 import LeanTex.Core.Contrast
 import LeanTex.Core.Elab
+import LeanTex.Core.Flate
 import LeanTex.Core.FontDb
 import LeanTex.Core.HtmlDoc
 import LeanTex.Core.PdfObj
@@ -48,6 +49,33 @@ def colouredRuns (n : Nat) (name : String) (c : Ir.Color) : Ir.Doc :=
     body := (List.range n).toArray.map fun i =>
       Ir.Block.para #[.colored c (some (.color name)) #[.text s!"w{i}"]] }
 
+/-- `size` invented bytes: words with seeded noise, so the compressor meets literals and matches. -/
+def flateInput (size : Nat) : ByteArray := Id.run do
+  let words := #["orbit ", "radius ", "invented ", "step ", "lattice ", "placeholder "]
+  let mut out := ByteArray.emptyWithCapacity (size + 16)
+  let mut seed : UInt64 := 731
+  for _ in [0:size] do
+    if out.size ≥ size then break
+    seed := seed ^^^ (seed >>> 12)
+    seed := seed ^^^ (seed <<< 25)
+    seed := seed ^^^ (seed >>> 27)
+    let r := (seed * 2685821657736338717) >>> 40
+    if r % 4 == 0 then out := out.push (r >>> 8).toUInt8
+    else out := out ++ (words[(r % 6).toNat]?.getD "").toUTF8
+  return out.extract 0 size
+
+/-- Its bytes, behind a call the compiler neither inlines nor shares with another run's. -/
+@[noinline] def perRun (_ : Unit) (b : ByteArray) : ByteArray := b
+
+/-- Adler-32 as RFC 1950 §8.2 states it, one modulo per byte. -/
+def adlerSpec (data : ByteArray) : Nat := Id.run do
+  let mut a := 1
+  let mut b := 0
+  for x in data do
+    a := (a + x.toNat) % 65521
+    b := (b + a) % 65521
+  return b * 65536 + a
+
 def main (args : List String) : IO UInt32 := do
   let n := ((args.head?).bind (·.toNat?)).getD 5
   if n == 0 then die "runs must be positive"
@@ -95,6 +123,17 @@ def main (args : List String) : IO UInt32 := do
     timeRuns n "dictionaries" s fun _ => match PdfRead.parseVal dict 0 with
       | .ok (.dict es, _) => es.size == s
       | _ => false
+  for s in [1048576, 4194304] do
+    let raw := flateInput s
+    let sum := adlerSpec raw
+    timeRuns n "adler32" s fun _ => Flate.adler32 raw == sum
+    let packed := Flate.deflate raw
+    unless (match Flate.inflate packed s with | .ok b => b == raw | .error _ => false) do
+      die s!"inflate did not give {s} bytes back"
+    timeRuns n "deflate" s fun u => (Flate.deflate (perRun u raw)).size == packed.size
+    timeRuns n "inflate" s fun _ => match Flate.inflate packed s with
+      | .ok b => b == raw
+      | .error _ => false
   let .ok font := Font.parse (← IO.FS.readBinFile "testdata/corpus/fonts/OpenSans-Regular.ttf")
     | die "OpenSans-Regular.ttf does not parse"
   let g := (font.gid 'q').getD 0
