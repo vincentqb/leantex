@@ -237,6 +237,7 @@ private def identify (dir : System.FilePath) (tool : String) : IO (Option String
     | .remembered version => pure (.present version)
     | .probe =>
       let answer ← probeVersion tool
+      if stamp != (← ToolProbe.witness tool) then return .absent "the tool changed while it was asked"
       if let .present version := answer then
         discard <| (atomicWrite memoPath (PicCache.versionMemo stamp version).toUTF8).toBaseIO
       pure answer

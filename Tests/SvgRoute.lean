@@ -239,14 +239,23 @@ def svgConverterSharedChecks (ref : IO.Ref (List String)) : IO Unit := do
   let commented := ((String.fromUTF8? svgFilterFixture).getD "").replace "an authored comment"
     "another invented comment"
   let runs ← IO.mkRef 0
+  let arrived ← IO.mkRef 0
+  -- An attempt answers only once both figures have reached the converter.
   let slow (answer : Except PicCache.Outcome Image.Plan) : ByteArray → Bool →
       IO (Except PicCache.Outcome Image.Plan) := fun _ _ => do
     runs.modify (· + 1)
-    IO.sleep 100
+    for _ in [0:2000] do
+      if (← arrived.get) ≥ 2 then break
+      IO.sleep 5
+    IO.sleep 50
     return answer
   let both (convert : Driver.Converter) : IO (Array Driver.SvgFetch) := do
+    arrived.set 0
+    let counted : Driver.Converter := fun canonical independent => do
+      arrived.modify (· + 1)
+      convert canonical independent
     let asked ← [svgFilterFixture, commented.toUTF8].mapM fun bytes =>
-      IO.asTask (prio := .dedicated) (Driver.svgFetch "e.svg" bytes .first "en" (some convert))
+      IO.asTask (prio := .dedicated) (Driver.svgFetch "e.svg" bytes .first "en" (some counted))
     asked.toArray.mapM fun task => IO.ofExcept task.get
   let some drawing ← Driver.svgConverterWith (pure true) (slow pdfPlan) true
     | check ref "converter sharing: an allowed converter is offered" false

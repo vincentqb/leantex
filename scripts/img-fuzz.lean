@@ -45,19 +45,25 @@ def plan (b : ByteArray) : Except String Image.Plan :=
 /-- `f`'s value, computed at this call between the readings around it. -/
 @[noinline] def forced (f : Unit → α) : IO α := pure (f ())
 
-/-- `f`'s value and the work it took: the heartbeats, allocations, its thread spent, a count the
-host's load does not move. -/
-def worked (f : Unit → α) : IO (α × Nat) := do
+/-- The wall-clock milliseconds a step may take on a loaded host, a backstop for work the
+heartbeats do not count. -/
+def wallBackstopMs : Nat := 20000
+
+/-- `f`'s value and its small allocations on this thread, its heartbeats, a count the host's load
+does not move; a step past the wall-clock backstop fails here. -/
+def worked (what : String) (f : Unit → α) : IO (α × Nat) := do
   let h0 ← IO.getNumHeartbeats
+  let t0 ← IO.monoMsNow
   let v ← forced f
+  let ms := (← IO.monoMsNow) - t0
+  if ms > wallBackstopMs then die s!"{what}: took {ms} ms, over the {wallBackstopMs} ms backstop"
   return (v, (← IO.getNumHeartbeats) - h0)
 
 /-- The most work one import of a fuzzed input may take: five times the slowest fixture's own. -/
 def importBudget (slowestFixture : Nat) : Nat := 5 * slowestFixture
 
-/-- The most work one input built past a reader's depth or size limit may take, about four times
-what the deepest of them, an object nested a million levels, takes. -/
-def limitBudget : Nat := 200000000
+/-- The most work one input built past a reader's limits may take: four times what it takes. -/
+def limitBudget (measured : Nat) : Nat := 4 * measured
 
 /-- A one-file PDF of the given objects' bytes, numbered from 1, the first
 the catalog. -/
@@ -175,7 +181,7 @@ structure Tally where
 
 /-- One import against the budget, its figure forced whole, and counted. -/
 def timedImport (tally : IO.Ref Tally) (budget : Nat) (what : String) (b : ByteArray) : IO Unit := do
-  let (drawn, work) ← worked fun _ => match PdfGfx.importPage b with
+  let (drawn, work) ← worked what fun _ => match PdfGfx.importPage b with
     | .ok imp => imp.figure.marks.size + imp.figure.losses.size +
         (LeanTex.Cli.PdfFaces.svgOf imp.figure).size != 0 || true
     | .error e => e.length != 0 && false
@@ -190,7 +196,7 @@ def pdfFigureFuzz : IO Unit := do
   let mut slowest := 0
   for n in names do
     let b ← IO.FS.readBinFile ("testdata/pdf-native/" ++ n)
-    let (r, work) ← worked fun _ => (PdfGfx.importPage b).map fun imp =>
+    let (r, work) ← worked n fun _ => (PdfGfx.importPage b).map fun imp =>
       imp.figure.losses.isEmpty && (LeanTex.Cli.PdfFaces.svgOf imp.figure).size > 0
     match r with
     | .ok whole => unless whole do die s!"{n} imports with losses"
@@ -219,51 +225,55 @@ def pdfFigureFuzz : IO Unit := do
     "<< /Type /OCG /Name (Off) >>"] ++ extra)
   let notChain : Array String := (Array.range 2000).map fun i =>
     s!"[/Not {if i + 1 < 2000 then s!"{i + 8} 0 R" else "6 0 R"}]"
-  let deepCases : Array (String × ByteArray) := #[
+  -- Each case with the heartbeats its import and its copy and update took when measured.
+  let deepCases : Array (String × ByteArray × Nat × Nat) := #[
     ("a visibility expression nested a million levels",
       deepVe (String.join (List.replicate 1000000 "[/Not ") ++ "6 0 R" ++
-        String.join (List.replicate 1000000 "]")) #[]),
-    ("a visibility expression nested two thousand references", deepVe "7 0 R" notChain)]
-  for (what, b) in deepCases do
-    let (r, work) ← worked fun _ => (PdfGfx.importPage b).map fun imp =>
+        String.join (List.replicate 1000000 "]")) #[], 28002586, 56006237),
+    ("a visibility expression nested two thousand references", deepVe "7 0 R" notChain,
+      79422, 467730)]
+  for (what, b, measured, _) in deepCases do
+    let (r, work) ← worked what fun _ => (PdfGfx.importPage b).map fun imp =>
       imp.figure.marks.size == 1 && imp.figure.losses.contains (.budget "visibility-expression-depth")
     match r with
     | .ok named => unless named do die s!"{what}: not shown with its depth named"
     | .error e => die s!"{what}: refused whole: {e}"
-    if work > limitBudget then die s!"{what}: one import took {work} heartbeats, over {limitBudget}"
+    if work > limitBudget measured then
+      die s!"{what}: one import took {work} heartbeats, over {limitBudget measured}"
   let wideGroup := deepVe ("[/Or" ++ String.join (List.replicate 2000 " 7 0 R") ++ "]")
     #["<< /Type /OCG /Name (" ++ String.join (List.replicate 1000000 "x") ++ ") >>"]
-  let (r, work) ← worked fun _ => (PdfGfx.importPage wideGroup).map fun imp =>
+  let (r, work) ← worked "an expression over one group two thousand times" fun _ => (PdfGfx.importPage wideGroup).map fun imp =>
     imp.figure.marks.size == 1 && imp.figure.losses.isEmpty
   match r with
   | .ok shown => unless shown do die "an expression over one group two thousand times is not shown"
   | .error e => die s!"an expression over one group two thousand times refused whole: {e}"
-  if work > limitBudget then
-    die s!"an expression over one group two thousand times: one import took {work} heartbeats, over {limitBudget}"
+  if work > limitBudget 1062642 then
+    die s!"an expression over one group two thousand times: one import took {work} heartbeats, over {limitBudget 1062642}"
   let formChain : ByteArray := fuzzPdf (#[
     "<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
     "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 50 50] /Contents 4 0 R \
 /Resources << /XObject << /X 5 0 R >> >> >>", fuzzStream "/X Do"] ++
     (Array.range 20000).map fun i => fuzzStream "/X Do" s!"/Type /XObject /Subtype /Form \
 /BBox [0 0 50 50] /Resources << /XObject << /X {i + 6} 0 R >> >> ")
-  let (r, work) ← worked fun _ => (PdfGfx.importPage formChain).map fun imp =>
+  let (r, work) ← worked "twenty thousand nested forms" fun _ => (PdfGfx.importPage formChain).map fun imp =>
     imp.figure.losses.contains (.budget "form-recursion")
   match r with
   | .ok named => unless named do die "twenty thousand nested forms are not named a recursion"
   | .error e => die s!"twenty thousand nested forms refused whole: {e}"
-  if work > limitBudget then die s!"twenty thousand nested forms: one import took {work} heartbeats, over {limitBudget}"
+  if work > limitBudget 1150882 then
+    die s!"twenty thousand nested forms: one import took {work} heartbeats, over {limitBudget 1150882}"
   let deepObject : ByteArray := fuzzPdf #[
     "<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
     "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 50 50] /Contents 4 0 R /Resources 5 0 R >>",
     fuzzStream "0 0 5 5 re f",
     "<< /Spare " ++ String.join (List.replicate 1000000 "[") ++ "1" ++
       String.join (List.replicate 1000000 "]") ++ " >>"]
-  let ((copied, read), work) ← worked fun _ =>
+  let ((copied, read), work) ← worked "an object nested a million levels" fun _ =>
     (Image.probe deepObject |>.map fun _ => (), (PdfGfx.importPage deepObject).isOk)
   if let .error e := copied then die s!"an object nested a million levels is not copied: {e}"
   unless read do die "an unread deep object refuses the page"
-  if work > limitBudget then
-    die s!"an object nested a million levels: copied and read in {work} heartbeats, over {limitBudget}"
+  if work > limitBudget 30003468 then
+    die s!"an object nested a million levels: copied and read in {work} heartbeats, over {limitBudget 30003468}"
   -- A configured page, its copy and the converter's update, at any depth.
   let deepConfigured : ByteArray := fuzzPdf #[
     "<< /Type /Catalog /Pages 2 0 R /OCProperties << /OCGs [6 0 R] /D << /OFF [6 0 R] >> >> >>",
@@ -273,13 +283,14 @@ def pdfFigureFuzz : IO Unit := do
     "<< /Spare " ++ String.join (List.replicate 1000000 "[") ++ "<< /Type /OCMD /OCGs [6 0 R] >>" ++
       String.join (List.replicate 1000000 "]") ++ " /Properties << /M 7 0 R >> >>",
     "<< /Type /OCG /Name (Off) >>", "<< /Type /OCMD /OCGs [6 0 R] >>"]
-  for (what, b) in deepCases.push ("a configured page holding an object nested a million levels",
-      deepConfigured) do
-    let ((copied, read), work) ← worked fun _ =>
+  for (what, b, _, measured) in deepCases.push
+      ("a configured page holding an object nested a million levels", deepConfigured, 0, 34006880) do
+    let ((copied, read), work) ← worked what fun _ =>
       (Image.probe b |>.map fun _ => (), (PdfRead.Doc.ofBytes (PdfRead.ocAsCopied b)).isOk)
     if let .error e := copied then die s!"{what}: not copied: {e}"
     unless read do die s!"{what}: the converter's update does not read"
-    if work > limitBudget then die s!"{what}: copied and updated in {work} heartbeats, over {limitBudget}"
+    if work > limitBudget measured then
+      die s!"{what}: copied and updated in {work} heartbeats, over {limitBudget measured}"
   let tally ← IO.mkRef ({} : Tally)
   -- 1. Truncations: evenly spaced cuts of each fixture, at least 10 000 in all.
   let total := fixtures.foldl (fun a b => a + b.size) 0

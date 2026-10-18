@@ -24,18 +24,24 @@ public def once (probe : IO Bool) : BaseIO (IO Bool) := do
       set (some p)
       pure p
 
-/-- What a run has heard tools say they are, by tool and witness. -/
-public abbrev Versions := Std.Mutex (Std.HashMap (String × String) String)
+/-- What a run has heard tools say they are, by tool and witness, each answer's attempt kept while
+it is in flight and once it found the tool. -/
+public abbrev Versions := Std.Mutex (Std.HashMap (String × String) (Task (Except IO.Error PicCache.Tool)))
 
 /-- `probe`'s answer for `tool` under `stamp`, asked once however many ask at once, a present
 version remembered in `memo` and an absence asked again. -/
 public def rememberedIn (memo : Versions) (tool stamp : String) (probe : IO PicCache.Tool) :
-    IO PicCache.Tool :=
-  memo.atomically do
-    if let some version := (← get).get? (tool, stamp) then return .present version
-    let answer ← probe
-    if let .present version := answer then modify (·.insert (tool, stamp) version)
-    return answer
+    IO PicCache.Tool := do
+  let (task, mine) ← memo.atomically do
+    match (← get).get? (tool, stamp) with
+    | some t => pure (t, false)
+    | none =>
+      let t ← IO.asTask probe Task.Priority.dedicated
+      modify (·.insert (tool, stamp) t)
+      pure (t, true)
+  let got ← IO.wait task
+  if mine && !(got matches .ok (.present _)) then memo.atomically (modify (·.erase (tool, stamp)))
+  IO.ofExcept got
 
 /-- The first regular file `tool` reaches on PATH, relative entries anchored to the
 working directory; mode bits are not read, and no run is asked. -/

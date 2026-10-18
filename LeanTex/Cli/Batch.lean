@@ -150,22 +150,31 @@ public def map [DecidableEq κ] (limit : Nat) (key : α → κ)
     if let some error := failure then throw error
   return result
 
+/-- The attempt in flight for `k`, joined, or `run k` started as it; whether it is this caller's. -/
+private def joinOrRun [BEq κ] [Hashable κ]
+    (flying : Std.Mutex (Std.HashMap κ (Task (Except IO.Error β)))) (run : κ → IO β) (k : κ) :
+    IO (Except IO.Error β × Bool) := do
+  let (task, mine) ← flying.atomically do
+    match (← get).get? k with
+    | some t => pure (t, false)
+    | none =>
+      let t ← IO.asTask (run k) Task.Priority.dedicated
+      modify (·.insert k t)
+      pure (t, true)
+  let got ← IO.wait task
+  if mine then flying.atomically (modify (·.erase k))
+  return (got, mine)
+
 /-- `run` asked once at a time per key: a caller meeting its key in flight takes that attempt's
-answer, asking anew only where `again` holds of it. -/
+answer, and past one that failed or of which `again` holds, joins or starts the next attempt. -/
 public def shared [BEq κ] [Hashable κ] (again : β → Bool) (run : κ → IO β) :
     BaseIO (κ → IO β) := do
   let flying ← Std.Mutex.new (∅ : Std.HashMap κ (Task (Except IO.Error β)))
   return fun k => do
-    let (task, mine) ← flying.atomically do
-      match (← get).get? k with
-      | some t => pure (t, false)
-      | none =>
-        let t ← IO.asTask (run k) Task.Priority.dedicated
-        modify (·.insert k t)
-        pure (t, true)
-    let got ← IO.wait task
-    if mine then flying.atomically (modify (·.erase k))
-    let answer ← IO.ofExcept got
-    if !mine && again answer then run k else pure answer
+    let (got, mine) ← joinOrRun flying run k
+    match got with
+    | .ok answer => if mine || !again answer then return answer
+    | .error e => if mine then throw e
+    IO.ofExcept (← joinOrRun flying run k).1
 
 end LeanTex.Cli.Batch
