@@ -1068,7 +1068,7 @@ private def listElems : List String :=
 /-- A list block's item, and not a reference-list entry, an algorithm's
 line or an endnote. -/
 private def itemSubject : String :=
-  "li:not(.bibliography *):not(.algorithm *):not([role=doc-endnotes] *)"
+  "li:not(.bibliography *):not(.algorithm *):not([role=doc-endnotes] *):not(.contents *)"
 
 /-- An enclosing list's item, quotation or abstract, as `\@listdepth` counts the levels, at an
 element's specificity. -/
@@ -1572,7 +1572,7 @@ private def gapBeforeLists : List GapRule :=
   (blockGapKinds.filter (·.2 != "heading")).map (fun (sel, _) =>
     .boundary s!"* + {sel}" peerGap) ++
   [.boundary ".bibliography > li + li" peerGap,
-   .boundary "nav.contents:not(.deck) > .level-0" contentsSectionGap,
+   .boundary "nav.contents:not(.deck) > ul > .level-0" contentsSectionGap,
    .boundary s!"* + blockquote" trivlistGap] ++
   ownsBelow ["blockquote"] trivlistGap trivlistOwn
 
@@ -5567,6 +5567,7 @@ text-indent: -{em l.numWidth}; }\n" ++
     s!"nav.contents:not(.deck) .level-{d} .contents-number \{ width: {em l.numWidth}; }\n" ++
     s!".contents.deck .level-{d} \{ padding-left: {em (Ir.deckContentsIndent * d)}; }\n"
   ".contents-number { display: inline-block; text-indent: 0; }\n" ++
+  "ul.contents-list { list-style: none; padding: 0; }\n" ++
   "nav.contents:not(.deck) .level-0 { font-weight: bold; }\n" ++
   String.join ((List.range 5).map level) ++
   s!".contents .shaded \{ color: color-mix(in oklab, currentColor {Ir.contentsShadeShare}%, \
@@ -8698,13 +8699,14 @@ private def laidNodesInto (cfg : Config) (d : Nat) (st : LaidStack) : List Ir.La
 public def laidNodes (cfg : Config) (ls : Array Ir.LaidLine) : Array Node :=
   ((laidNodesInto cfg 0 [#[]] ls.toList).head?).getD #[]
 
-/-- A table of contents' entry: its number, then its words linked to its heading. -/
-private def contentsEntryNode (cfg : Config) (e : Ir.ContentsEntry) : Node :=
+/-- A table of contents' entry as element `tag`: its number, a space its box's line end drops, then
+its words linked to its heading. -/
+private def contentsEntryNode (cfg : Config) (tag : String) (e : Ir.ContentsEntry) : Node :=
   let number := match e.number with
-    | some n => #[Html.elem "span" #[Html.text n] #[("class", "contents-number")]]
+    | some n => #[Html.elem "span" #[Html.text (n ++ " ")] #[("class", "contents-number")]]
     | none => #[]
   let cls := s!"contents-entry level-{min e.depth 4}" ++ (if e.shaded then " shaded" else "")
-  Html.elem "p" (number ++ inlines cfg e.inline) #[("class", cls)]
+  Html.elem tag (number ++ inlines cfg e.inline) #[("class", cls)]
 
 /-- A table of contents as a landmark of its entries, a deck's spaced on its stage as its PDF page
 sets it (`Ir.deckContentsSteps`). -/
@@ -8718,11 +8720,12 @@ private def contentsNode (cfg : Config) (spec : Ir.ContentsSpec)
       | .skip g =>
         skipNode cfg.page.fontSize (exAt cfg.fonts cfg.page.fontSize) (Ir.Sourced.bare g)
           (if grows && g.fil then some Ir.fillUnit else none)
-      | .entry e => contentsEntryNode cfg e
+      | .entry e => contentsEntryNode cfg "p" e
     fillCarrier cfg (Ir.contentsFills spec entries)
       (Html.elem tag kids (#[("class", "contents deck")] ++ named))
   else if entries.isEmpty then Html.text ""
-  else Html.elem tag (entries.map (contentsEntryNode cfg)) (#[("class", "contents")] ++ named)
+  else Html.elem tag #[Html.elem "ul" (entries.map (contentsEntryNode cfg "li"))
+      #[("class", "contents-list")]] (#[("class", "contents")] ++ named)
 
 mutual
 

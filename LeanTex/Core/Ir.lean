@@ -10128,24 +10128,6 @@ public structure SectionAnchor where
   clash : Option String
   deriving Repr, BEq
 
-/-- Each top-level level-one section's anchor at its body index, and the ledger of their claims. -/
-private def sectionClaims (body : Array Block) :
-    Array (Option SectionAnchor) × NameClaim.Claims .dashed := Id.run do
-  let mut taken : NameClaim.Claims .dashed := {}
-  let mut out : Array (Option SectionAnchor) := #[]
-  for b in body do
-    if let .section 1 _ _ title := b then
-      let base := if (slug title).isEmpty then "section" else slug title
-      let (id, clash, next) := taken.claim base (firstPageText title)
-      taken := next
-      out := out.push (some { base, id, clash })
-    else out := out.push none
-  return (out, taken)
-
-/-- Each top-level level-one section's anchor, at its body index, in flow order. -/
-public def sectionAnchors (body : Array Block) : Array (Option SectionAnchor) :=
-  (sectionClaims body).1
-
 private theorem slugCharKeep_not_whitespace (k k' : Char) (h : slugCharKeep k = some k') :
     isWhiteSpaceUni k' = false := by
   unfold slugCharKeep at h
@@ -18111,13 +18093,35 @@ public def labelAnchor (key : String) : String :=
   | [] => "label"
   | l => String.ofList l
 
+/-- Each top-level level-one section's anchor at its body index, claimed after every label's, whose
+ids are their keys', and the ledger of their claims; a section yielding to a label clashes with
+no title. -/
+private def sectionClaims (body : Array Block) :
+    Array (Option SectionAnchor) × NameClaim.Claims .dashed := Id.run do
+  let labels := blockLabelKeys body
+  let held : Std.HashSet String := labels.foldl (·.insert ·) {}
+  let mut taken : NameClaim.Claims .dashed := {}
+  for key in labels do
+    taken := (taken.claim (labelAnchor key) key).2.2
+  let mut out : Array (Option SectionAnchor) := #[]
+  for b in body do
+    if let .section 1 _ _ title := b then
+      let base := if (slug title).isEmpty then "section" else slug title
+      let (id, clash, next) := taken.claim base (firstPageText title)
+      taken := next
+      out := out.push (some { base, id, clash := clash.filter (!held.contains ·) })
+    else out := out.push none
+  return (out, taken)
+
+/-- Each top-level level-one section's anchor, at its body index, in flow order. -/
+public def sectionAnchors (body : Array Block) : Array (Option SectionAnchor) :=
+  (sectionClaims body).1
+
 /-- Each top-level heading's anchor at its body index: a level-one section's its `sectionAnchors`
-one, a deeper heading's claimed after every section's and every label's, so none of theirs moves. -/
+one, a deeper heading's claimed after every label's and every section's, so none of theirs moves. -/
 public def headingAnchors (body : Array Block) : Array (Option SectionAnchor) := Id.run do
   let (sections, ledger) := sectionClaims body
   let mut taken := ledger
-  for key in blockLabelKeys body do
-    taken := (taken.claim (labelAnchor key) key).2.2
   let mut out := sections
   for h : i in [0:body.size] do
     if let .section level _ _ title := body[i] then
@@ -18332,12 +18336,18 @@ public def refResolved (loc : Locale) (key : String) (form : RefForm) (b : RefBi
   if b.num.isEmpty && !form.titled && !form.paged then .ref key form "??" none
   else refInline loc key form b
 
+/-- A reference to a label nothing numbers: a page reference still targets the label, whose page
+it prints once a setting places it, and any other form keeps `??` and no target. -/
+public def unboundRef (key : String) (form : RefForm) : Inline :=
+  .ref key form "??" (if form.paged then some (labelAnchor key) else none)
+
 public def resolveOneRefWith (loc : Locale)
     (look : String → Option (String × Option RefBinding)) (key : String)
     (form : RefForm) : Inline :=
   match look key with
   | some (_, some b) => refResolved loc key form b
-  | _ => .ref key form "??" none
+  | some (_, none) => unboundRef key form
+  | none => .ref key form "??" none
 
 /-- One reference against the table: a numbered key takes its form's text and
 the label's anchor; any other keeps `??` and no target. -/
@@ -18350,7 +18360,8 @@ public theorem resolveOneRef_scan (loc : Locale) (table : RefTable) (key : Strin
     resolveOneRef loc table key form =
       match table.find? (·.1 == key) with
       | some (_, some b) => refResolved loc key form b
-      | _ => .ref key form "??" none := by rfl
+      | some (_, none) => unboundRef key form
+      | none => .ref key form "??" none := by rfl
 
 /-- Resolution's one rewrite: every `.ref` rewritten from the lookup,
 everything else walked by the generic map. -/
@@ -18706,6 +18717,12 @@ public def labelNames (xs : Array Block) (shorts : Array ShortTitle := #[]) :
     if let .section _ _ _ title := b then
       current := titled (nameOf (listedTitleAt listed i title))
     if let .float _ _ _ body caption := b then
+      -- A subfloat's label names its own caption, as subcaption's `\nameref`.
+      let subs := foldBlocks (fun acc blk => if let .float _ _ _ sb sc := blk then acc.push (sb, sc)
+        else acc) (fun acc _ => acc) #[] body
+      for (sb, sc) in subs do
+        if let some sn := titled (nameOf sc) then
+          out := named out (foldBlocks (fun out _ => out) keyOf (foldInlines keyOf #[] sc) sb) sn
       if let some n := (titled (nameOf caption)).orElse fun _ => current then
         out := named out (foldBlocks (fun out _ => out) keyOf (foldInlines keyOf #[] caption) body) n
     else if let some n := current then
@@ -18790,7 +18807,10 @@ inside it resolved, a label nothing numbered taking a binding with its title alo
 public def withLabelNames (loc : Locale) (labels : RefTable) (xs : Array Block)
     (shorts : Array ShortTitle := #[]) : RefTable :=
   let idx := keyIndex labels
-  let names := resolvedNames loc (fun k => idx[k]?) (labelNames xs shorts)
+  let raw := idx.fold (init := labelNames xs shorts) fun m k e => match e.2.bind (·.name) with
+    | some n => m.insert k n
+    | none => m
+  let names := resolvedNames loc (fun k => idx[k]?) raw
   labels.map fun e => match e.2, names[e.1]? with
     | some b, n => (e.1, some { b with name := n })
     | none, some n => (e.1, some { kind := none, num := "", name := some n })

@@ -7,7 +7,7 @@ body impl \nolinkurl{https://example.org}
 body refuse:W0301 \hyperref[s]{x}
 body impl \hyperlink{t}{x}
 body impl \hypertarget{t}{x}
-body refuse:W0301 \phantomsection
+body inert:own-anchor \phantomsection
 body refuse:W0301 \autoref{sec}
 body refuse:W0301 \autopageref{sec}
 body impl \section{A}\label{s}\nameref{s}
@@ -16,7 +16,7 @@ body impl \section{A}\label{s}\ref*{s}
 body impl \section{A}\label{s}\pageref*{s}
 body refuse:W0301 \pdfbookmark[1]{T}{n}
 body refuse:W0301 \belowpdfbookmark{T}{n}
-body refuse:W0301 \texorpdfstring{a}{b}
+body impl \texorpdfstring{a}{b}
 pre impl \hypersetup{pdftitle=T}
 pre impl \hypersetup{colorlinks}
 pre impl \hypersetup{colorlinks, linkcolor=blue}

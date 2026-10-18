@@ -560,7 +560,7 @@ def htmlListSpacingChecks (ref : IO.Ref (List String)) : IO Unit := do
     (HtmlDoc.emit {} (elabStr (s!"\\documentclass\{article}\\usepackage\{enumitem}{pre}" ++
       s!"\\begin\{document}x\n\n{body}\\end\{document}")).1).1
   let list := "\\begin{itemize}\\item a\\item b\\end{itemize}"
-  let item := "li:not(.bibliography *):not(.algorithm *):not([role=doc-endnotes] *)"
+  let item := "li:not(.bibliography *):not(.algorithm *):not([role=doc-endnotes] *):not(.contents *)"
   let space (m : String) := s!"calc({m}rem + var(--parskip, 0rem))"
   let tight := page "\\setlist{nosep}" list
   t "html a list declaring its spacing carries its class" (hasStr tight "<ul class=\"list-set-1\">")
@@ -628,7 +628,7 @@ def htmlListGapChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let page (cls : String) : String := (HtmlDoc.emit {} (elabStr (s!"\\documentclass{cls}" ++
     "\\begin{document}x\n\n\\begin{itemize}\\item a\\item b\\end{itemize}\\end{document}")).1).1
-  let item := "li:not(.bibliography *):not(.algorithm *):not([role=doc-endnotes] *)"
+  let item := "li:not(.bibliography *):not(.algorithm *):not([role=doc-endnotes] *):not(.contents *)"
   let space (m : String) := s!"calc({m}rem + var(--parskip, 0rem))"
   let art := page "{article}"
   -- A list level's elements, each reached through one `<li>` or `<dd>` per enclosing list.

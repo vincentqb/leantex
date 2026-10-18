@@ -7798,6 +7798,7 @@ public inductive Lowering where
   | komaFont | sectionSkips | setList | sectionLines | uniMathSetup | unreadKeys | newCounter
   | ensureMath | box | beamerFont | columnRatio | useTheme | molochSet | titleGraphic | fontTheme
   | beamerOption | beamerCovered | inputEncoding | komaOptions | graphColor | blueprintSite
+  | texOrPdf
   deriving BEq, Repr
 
 /-- What a table row's control does where it stands. -/
@@ -8020,6 +8021,7 @@ overprint state; the engine knocks out every colour it paints; skipped" none⟩,
    ⟨"pagecolorspace", [.needed], .discard pageInks "pagecolorspace"⟩,
    ⟨"pagestyle", [.group],
      .lower .pageStyle { paramStands := some "the page style in force stands" }⟩,
+   nothingRow "phantomsection" 0 "every heading carries its own anchor",
    ⟨"printbibliography", [.opt], .lower .printBibliography {}⟩,
    ⟨"raggedbottom", [], .native (.page #[(.bottom, "ragged")])⟩,
    ⟨"refstepcounter", [.needed], .lower .counter { leaves := [.outsidePreamble] }⟩,
@@ -8051,6 +8053,7 @@ private def ctrlRows8 : List CtrlRow :=
   [⟨"smallskip", [], .skip "smallskipamount"⟩,
    ⟨"stepcounter", [.needed], .lower .counter { leaves := [.outsidePreamble] }⟩,
    ⟨"tcbset", [.needed], .lower .unreadKeys {}⟩,
+   ⟨"texorpdfstring", [.needed, .needed], .lower .texOrPdf {}⟩,
    ⟨"textasciitilde", [], .tokens [.word "~" {}] none⟩,
    ⟨"textbackslash", [], .tokens [.word "\\" {}] none⟩,
    ⟨"textbar", [], .tokens [.word "|" {}] none⟩,
@@ -10714,6 +10717,8 @@ native equivalent were dropped: {dropped}" c.pos
 '\\newcounter' changes nothing" c.pos (help := "use the counter where it should count, or drop it")
     return #[]
   | .ensureMath => return #[.ctrl c.name c.pos] ++ c.raws.extract c.start c.stop
+  -- hyperref's `\texorpdfstring`: the page sets its TeX string.
+  | .texOrPdf => return #[.group (c.arg 0) c.pos]
   | .box => do
     -- An hbox's geometry is not modelled, so its drop is named once and its content stays.
     if c.args.any (·.isSome) then

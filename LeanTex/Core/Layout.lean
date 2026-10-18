@@ -11691,11 +11691,12 @@ private def collectBibliography (r : Rd) (a : Acc) (items : Array Ir.BibItem) (i
       (leaf := leaf) (span := Struct.leafCountInlines item.content) (hangIndent := hang)
     if i + 1 == items.size then a.wantGap else a.addvspace sep
 
-/-- One contents entry as a paragraph of `content` at `textIndent`, its number from `markerLeft`; a
-shaded entry keeps its ink's share over the ground (`Ir.contentsShadeShare`). -/
+/-- One contents entry as a paragraph of `content` at `textIndent`, its number from `markerLeft`, its
+lines after the first `hang` further in; a shaded entry keeps its ink's share over the ground
+(`Ir.contentsShadeShare`). -/
 private def collectContentsEntry (r : Rd) (a : Acc) (e : Ir.ContentsEntry) (content : Array Inline)
     (textIndent : Sp) (style : TextStyle) (marker : Option (Array Inline))
-    (markerLeft : Option Sp) : Acc :=
+    (markerLeft : Option Sp) (hang : Sp := 0) : Acc :=
   let ground := a.ground.getD (Ir.Design.ofPalette a.pal).bg
   let style := if e.shaded then
       { style with color := r.shown (Oklab.cover Ir.contentsShadeShare ground a.fg) }
@@ -11703,7 +11704,7 @@ private def collectContentsEntry (r : Rd) (a : Acc) (e : Ir.ContentsEntry) (cont
   let span := Struct.leafCountInlines e.inline
   let (a, leaf) := a.leafRange span
   collectPara r a content textIndent false r.geom.fontSize (baseStyle := style)
-    (marker := marker) (markerLeft := markerLeft) (leaf := leaf) (span := span)
+    (marker := marker) (markerLeft := markerLeft) (leaf := leaf) (span := span) (hangIndent := hang)
 
 /-- A flow's contents entry: its words, an unbreakable fill its style may lead, then its folio
 right-aligned in `\@pnumwidth` past the `rightMargin` its lines wrap short of, as article.cls's. -/
@@ -11758,7 +11759,8 @@ private def collectContents (r : Rd) (a : Acc) (spec : Ir.ContentsSpec)
         | some n =>
           collectContentsEntry r a e content (left + milli level.numWidth) style
             (some (if isSection then #[.styled .bold #[.text n]] else #[.text n])) (some left)
-        | none => collectContentsEntry r a e content left style none none
+        -- article.cls's `\leftskip`: an unnumbered entry's lines wrap past the number's width.
+        | none => collectContentsEntry r a e content left style none none (milli level.numWidth)
       a := { a with measure := saved }
   return a
 

@@ -48,9 +48,9 @@ def elabFrameSourceChecks (ref : IO.Ref (List String)) : IO Unit := do
     #[.env "quote" #[frameAt first] {}, frameAt second]
     #[(1, ⟨ctx.file, second⟩)]
   let owned := { first with origins := [{ id := 41, name := "framepair" }] }
-  sites "frame source: a closed macro role owns its frame"
+  sites "frame source: a closed macro role's frame stands in the flow at its opening"
     #[frameAt owned, frameAt second]
-    #[(1, ⟨ctx.file, second⟩)]
+    #[(0, ⟨ctx.file, owned⟩), (1, ⟨ctx.file, second⟩)]
   let call : Pos :=
     { line := 31, col := 2, origins := [{ id := 53, name := "outer" }],
       command := some "\\framecommand" }

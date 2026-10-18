@@ -47,8 +47,9 @@ private def navEntries (body : Array Html.Node) : Array (Array (String × String
   (elemNodesList (· == "nav") #[] body.toList).filterMap fun n => match n with
     | .elem _ attrs kids =>
       if !((HtmlDoc.attrOf? attrs "class").getD "").startsWith "contents" then none else
-      some (kids.filterMap fun k => match k with
-        | .elem "p" pattrs _ =>
+      some ((elemNodesList (fun t => t == "p" || t == "li") #[] kids.toList).filterMap fun k =>
+        match k with
+        | .elem _ pattrs _ =>
           let href := ((elemNodesList (· == "a") #[] [k])[0]?).bind fun a => match a with
             | .elem _ aattrs _ => HtmlDoc.attrOf? aattrs "href"
             | _ => none
@@ -190,7 +191,7 @@ def contentsChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit
   let fnav := navEntries fbody
   t "the web page lists the same entries, each linking a heading it carries"
     (fnav.size == 1 && fnav.all fun es =>
-      es.map (·.2.1) == #["1Kettles", "1.1Spouts", "2Teapots", "2.0.1Lids"] &&
+      es.map (·.2.1) == #["1 Kettles", "1.1 Spouts", "2 Teapots", "2.0.1 Lids"] &&
         es.all fun (_, _, href) => holdsId fbody (href.drop 1).toString)
   -- A page reference prints the folio its label lands on, in a flow and in a deck.
   let (paged, pagedDiags) := elabStr ("\\documentclass{article}\n\\begin{document}\n" ++
@@ -345,7 +346,7 @@ def contentsEdgeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
     "\\section[Short kettles]{Long kettles}\\label{k}\nAs \\nameref{k} says.\n\\end{document}\n")
   let shtml := (HtmlDoc.emit {} short).1
   t "article's contents list a short title"
-    ((navEntries (HtmlDoc.emitTree {} short).2.1)[0]?.map (·.map (·.2.1)) == some #["1Short kettles"])
+    ((navEntries (HtmlDoc.emitTree {} short).2.1)[0]?.map (·.map (·.2.1)) == some #["1 Short kettles"])
   t "nameref sets the short title" (hasStr (Ir.blocksText short.body) "As Short kettles says" &&
     hasStr shtml "Short kettles</a> says")
   t "a flow's bookmark names the short title"
@@ -396,3 +397,91 @@ def contentsEdgeChecks2 (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO
     "\\section{Kettles}\n\\subsection{Spouts}\n\\begin{frame}{Pouring}Tea pours.\\end{frame}\n")
   t "a section page after a subsection is named, not set as the subsection's"
     (sds.any fun d => d.code == "W0307" && d.subject == some "sectionpage:sectionpage")
+
+open ContentsChecks in
+/-- A flow's contents read its declared names, added lines, TeX strings, macro headings and wrapped
+unnumbered entries, page references and names of unnumbered labels, as article's under lualatex. -/
+def contentsGapChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  let t := fun claim => check ref ("contents gaps / " ++ claim)
+  let src := "\\documentclass{article}\n\\renewcommand{\\contentsname}{Overview}\n" ++
+    "\\newcommand{\\mysec}[1]{\\section{#1}\\label{sec:#1}}\n\\begin{document}\n\\tableofcontents\n" ++
+    "\\section{Kettles}\nWater boils.\n\\section*{Preface}\n\\addcontentsline{toc}{section}{Preface}\n" ++
+    "Words.\n\\section*{Long unnumbered}\n\\addcontentsline{toc}{section}{Short form}\nWords.\n" ++
+    "\\mysec{Macro}\nWords.\n\\section{\\texorpdfstring{Tex form}{Plain form}}\n" ++
+    "\\renewcommand{\\refname}{Sources}\n\\clearpage\n\\phantomsection\n" ++
+    "\\addcontentsline{toc}{section}{\\refname}\n" ++
+    "\\begin{thebibliography}{9}\\bibitem{a} A. Author, Title.\\end{thebibliography}\n" ++
+    "\\end{document}\n"
+  let (doc, ds) := elabStr src
+  let (_, body, _) := HtmlDoc.emitTree {} doc
+  let words := ((navEntries body)[0]?.map (·.map (·.2.1))).getD #[]
+  t s!"the contents list a starred heading beside its entry, by the entry's words, a macro's heading, \
+the TeX string and the reference list's renamed heading ({words})"
+    (words == #["1 Kettles", "Preface", "Short form", "2 Macro", "3 Tex form", "Sources"])
+  let out := (fittedOf fonts doc).out
+  t "the contents and the reference list stand under their declared names"
+    ((lineWith out 0 "Overview").isSome && (lineWith out 0 "Contents").isNone &&
+      out.pages.any fun p => p.lines.any fun l => hasStr (lineText l) "Sources")
+  t s!"the starred heading keeps its own words, the TeX string sets alone, no unknown command \
+({ds.toList.map (·.code)})"
+    (hasStr (Ir.blocksText doc.body) "Long unnumbered" && !hasStr (Ir.blocksText doc.body) "Plain" &&
+      !ds.any fun d => d.code == "W0301")
+  t "the contents print the reference list's folio"
+    (((lineWith out 0 "Sources").map lineText).any (·.trimAscii.toString.endsWith "2"))
+  let (lone, lds) := elabStr ("\\documentclass{article}\n\\begin{document}\n\\tableofcontents\n" ++
+    "\\section{Kettles}\nWords.\n\n\\addtocontents{toc}{\\protect\\vspace{1em}}\n" ++
+    "\\addcontentsline{toc}{section}{Stray}\nMore words.\n\\end{document}\n")
+  t "material for the contents and an entry beside no starred heading are named, neither inked"
+    (lds.any (fun d => d.code == "W0104" && d.subject == some "contents:addtocontents") &&
+      lds.any (fun d => d.code == "W0104" && d.subject == some "contents:addcontentsline") &&
+      !hasStr (Ir.blocksText lone.body) "toc" && !hasStr (Ir.blocksText lone.body) "Stray")
+  -- A page reference prints the page of a label nothing numbers, as LaTeX's `\pageref` does.
+  let (paged, pds) := elabStr ("\\documentclass{article}\n\\begin{document}\n\\label{start}" ++
+    "Words.\n\\section{Kettles}\\label{kettles}\nSee page~\\pageref{start}, \\nameref{par} " ++
+    "and \\nameref{fig:l}.\n\\paragraph{Spouts}\\label{par} Tea pours.\n" ++
+    "\\begin{figure}\\begin{subfigure}{0.4\\textwidth}A\\caption{Left kettle}\\label{fig:l}" ++
+    "\\end{subfigure}\\caption{Two kettles}\\end{figure}\n\\end{document}\n")
+  let pout := (fittedOf fonts paged).out
+  t s!"a page reference to a label nothing numbers prints its page, unnamed as a loss \
+({pds.toList.map (·.code)})"
+    ((((lineWith pout 0 "See page").map fun l => letters (lineText l)).getD "").startsWith "Seepage1," &&
+      !pds.any fun d => d.code == "W0349")
+  t "a label after a run-in heading names it, a subfloat's its own caption"
+    (hasStr (Ir.blocksText paged.body) "Spouts and Left kettle.")
+  -- A section's anchor yields to a label of the same name, so no two elements share an id.
+  let (_, ibody, ids) := HtmlDoc.emitTree {} paged
+  let allIds := (elemNodesList (fun _ => true) #[] ibody.toList).filterMap fun k => match k with
+    | .elem _ attrs _ => HtmlDoc.attrOf? attrs "id"
+    | _ => none
+  t s!"a section named as a label takes its own anchor, unnamed as a clash ({allIds})"
+    (allIds.contains "kettles" && allIds.all (fun i => (allIds.filter (· == i)).size == 1) &&
+      !ids.any fun d => d.code == "W0327")
+  -- article.cls's `\leftskip`: an unnumbered entry's lines after the first stand past the number.
+  let (wrap, _) := elabStr ("\\documentclass{article}\n\\begin{document}\n\\tableofcontents\n" ++
+    "\\section*{Kettles and their long descriptive titles that run past the measure of one line}\n" ++
+    "\\addcontentsline{toc}{section}{Kettles and their long descriptive titles that run past the " ++
+    "measure of one line}\nWater boils.\n\\end{document}\n")
+  let wout := (fittedOf fonts wrap).out
+  let lines := contentsLines wout "Water boils"
+  let first := lines.find? fun l => hasStr (lineText l) "Kettles"
+  let next := lines.find? fun l => hasStr (lineText l) "line"
+  t "an unnumbered entry's wrapped line stands 1.5em in from its first"
+    (match first, next with
+      | some f, some n => f.y < n.y && n.x - f.x == wrap.page.fontSize * 3 / 2
+      | _, _ => false)
+  -- The web page's contents are a list, each entry an item reading its number apart.
+  let items := elemNodesList (· == "li") #[] body.toList |>.filter fun k => match k with
+    | .elem _ attrs _ => ((HtmlDoc.attrOf? attrs "class").getD "").startsWith "contents-entry"
+    | _ => false
+  let uls := elemNodesList (· == "ul") #[] body.toList |>.filter fun k => match k with
+    | .elem _ attrs _ => HtmlDoc.attrOf? attrs "class" == some "contents-list"
+    | _ => false
+  t s!"the web page's contents are one list of an item per entry ({items.size})"
+    (uls.size == 1 && items.size == 6)
+  -- A frame a macro with a parameter sets takes its own number.
+  let (deck, _) := elabStr ("\\documentclass{beamer}\n" ++
+    "\\newcommand{\\myframe}[1]{\\begin{frame}{#1}Body of #1.\\end{frame}}\n\\begin{document}\n" ++
+    "\\begin{frame}{One}Body.\\end{frame}\n\\myframe{Two}\n\\myframe{Three}\n" ++
+    "\\begin{frame}{Four}Body.\\end{frame}\n\\end{document}\n")
+  t s!"each frame a macro sets is numbered after the one before ({deck.frameNumbers})"
+    (deck.frameNumbers.filterMap id == #[1, 2, 3, 4])

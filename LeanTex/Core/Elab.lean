@@ -166,16 +166,42 @@ private def commonOrigins : List MacroOrigin → List MacroOrigin → Nat
   | _, _ => 0
 
 /-- Closes inner runs first; a run that owns no node wraps nothing. -/
-private def closeMacroRuns (wrap : String → Array α → α)
+private def closeMacroRuns (wrap : String → Array α → Array α)
     (acc : Array α) : List MacroRun → Array α
   | [] => acc
   | run :: rest =>
     let acc := if !run.pendingPara && run.start < acc.size then
-        (acc.extract 0 run.start).push (wrap run.origin.name (acc.extract run.start acc.size))
+        (acc.extract 0 run.start) ++ wrap run.origin.name (acc.extract run.start acc.size)
       else acc
     closeMacroRuns wrap acc rest
 
-private def moveMacroRuns (wrap : String → Array α → α)
+/-- Whether blocks hold a heading or a frame, which stand in the flow's own outline. -/
+private def holdsOutline (bs : Array Block) : Bool :=
+  bs.any fun b => b matches .section .. || b matches .frame ..
+
+/-- A block macro run's blocks under its role; a heading or a frame among them stands in the flow,
+a heading's title under the role, the blocks between them under it in runs. -/
+private def macroRunBlocks (name : String) (body : Array Block) : Array Block := Id.run do
+  if !holdsOutline body then return #[.role name body]
+  let mut out : Array Block := #[]
+  let mut run : Array Block := #[]
+  for b in body do
+    match b with
+    | .section l st num title =>
+      out := (if run.isEmpty then out else out.push (.role name run)).push
+        (.section l st num #[.role name title])
+      run := #[]
+    | .frame .. =>
+      out := (if run.isEmpty then out else out.push (.role name run)).push b
+      run := #[]
+    | _ => run := run.push b
+  return if run.isEmpty then out else out.push (.role name run)
+
+/-- An inline macro run under its role. -/
+private def macroRunInlines (name : String) (body : Array Inline) : Array Inline :=
+  #[.role name body]
+
+private def moveMacroRuns (wrap : String → Array α → Array α)
     (active : Array MacroRun) (desired : List MacroOrigin) (acc : Array α)
     (pending : Bool := false) :
     Array MacroRun × Array α :=
@@ -650,6 +676,8 @@ public structure ESt where
   headingShorts : Array Ir.ShortTitle := #[]
   /-- How many unstarred headings so far set each number and words (`Ir.shortTitlesAt`). -/
   headingCounts : Std.HashMap (Option String × String) Nat := {}
+  /-- An `\addcontentsline` entry the starred heading after it lists, by the entry's words. -/
+  contentsLine : Option (Array Inline) := none
   /-- A `\maketitle` already set the title, which LaTeX typesets once. -/
   titleDone : Bool := false
   /-- The last refused `\maketitle` redefinition's body, read again at the
@@ -1865,7 +1893,7 @@ private def inlineMacroStep (roles : MacroRoles) (raw : Option Raw)
       | some origins => relativeOrigins roles.inherited origins
   if desired == active then (roles, acc, sb)
   else
-    let (active, acc) := moveMacroRuns Inline.role roles.inlines desired (flushText acc sb)
+    let (active, acc) := moveMacroRuns macroRunInlines roles.inlines desired (flushText acc sb)
     ({ roles with inlines := active }, acc, "")
 
 /-- Steps the macro roles at `raws[i]`, reading the next token's owners past
@@ -1889,7 +1917,7 @@ private def accentOperandStep (roles : MacroRoles) (operand : Option Raw)
   if extra.isEmpty then (roles, acc, sb)
   else
     let desired := roles.inlines.toList.map (·.origin) ++ extra
-    let (active, acc) := moveMacroRuns Inline.role roles.inlines desired (flushText acc sb)
+    let (active, acc) := moveMacroRuns macroRunInlines roles.inlines desired (flushText acc sb)
     ({ roles with inlines := active }, acc, "")
 
 /-- TeX's `\unskip` at a point of an inline run: the pending text, else the
@@ -3738,14 +3766,19 @@ private def runInHead (ctx : Ctx) (name : String) (starred : Bool) (title : Arra
   -- premise: counterChecks — numbered only within secnumdepth
   let shaped (head : Inline) : Inline :=
     if ctx.listNest.shaped.isSome then .role Ir.runInHeadRole #[head] else head
+  -- hyperref's `\@currentlabelname`: a label after the head names it.
+  let name := Ir.nameOf title
   if starred || !ctx.numberHeadings || level > st.ctr.secDepth then
+    modify fun st => { st with refTarget := some (match st.refTarget with
+      | some b => { b with name := some name }
+      | none => { kind := none, num := "", name := some name }) }
     return shaped (.styled .bold title)
   let (n4, n5) := st.ctr.runNums
   let runs := if level == 4 then (n4 + 1, 0) else (n4, n5 + 1)
   let parent := renderSecLevel st.ctr.secFmts st.ctr.secNums (secBase st.ctr) secFmtFuel 3
   let num := if level == 4 then s!"{parent}.{runs.1}" else s!"{parent}.{runs.1}.{runs.2}"
   modify fun st => { st with ctr := { st.ctr with runNums := runs }
-                             refTarget := some { kind := some .heading, num := num } }
+                             refTarget := some { kind := some .heading, num := num, name := some name } }
   return shaped (.styled .bold (#[.text (num ++ "\u2003")] ++ title))
 
 /-- The number in `\footnote[num]`'s bracket, or `none` when there is none
@@ -10000,6 +10033,87 @@ private def definedOr (ctx : Ctx) (name : String) (pos : Pos) (dflt : EM (Array 
     EM (Array Inline) := do
   if (lookupUser ctx name).isSome then elabInlines ctx #[.ctrl name pos] else dflt
 
+/-- A block macro's expansion onto the flow: spliced where it takes no parameter, else under its
+role, a heading or a frame standing in the flow (`macroRunBlocks`). -/
+private def macroBlocks (name : String) (bare : Bool) (blocks expanded : Array Block) :
+    EM (Array Block) := do
+  if bare then return blocks ++ expanded
+  unless holdsOutline expanded do keepFrameSourcePrefix blocks.size
+  let spliced := macroRunBlocks name expanded
+  return blocks ++ spliced
+
+/-- A starred heading an `\addcontentsline` entry lists: unnumbered and unstarred, as the contents and
+bookmarks list a heading past `secnumdepth`, its entry's words its short title where they differ. -/
+private def listedHeading (level : Ir.HeadingLevel) (title text : Array Inline) : EM Block := do
+  let words := Ir.plainText title
+  let nth := (← get).headingCounts.getD (none, words) 0
+  modify fun st => { st with headingCounts := st.headingCounts.insert (none, words) (nth + 1) }
+  if Ir.plainText text != words then
+    modify fun st => { st with
+      headingShorts := st.headingShorts.push { number := none, words, nth, short := text } }
+  return .section level false none title
+
+/-- A starred heading as it stands, or listed where an `\addcontentsline` before it waits. -/
+private def pendingListed (b : Block) : EM Block := do
+  match b, (← get).contentsLine with
+  | .section level true none title, some text =>
+    modify fun st => { st with contentsLine := none }
+    listedHeading level title text
+  | b, _ => return b
+
+/-- Whether raw `r` sets nothing between a contents entry and its heading: a space, a paragraph
+break, a page break or hyperref's anchor. -/
+private def contentsLineGap (r : Raw) : Bool :=
+  match r with
+  | .space | .par _ => true
+  | .ctrl n _ => ["clearpage", "cleardoublepage", "newpage", "phantomsection"].contains n
+  | _ => false
+
+/-- Whether the raws from `j` on open with a starred heading or a reference list, past what sets
+nothing. -/
+private def headingAhead (raws : Array Raw) (j : Nat) : Bool :=
+  let k := j + ((raws.extract j raws.size).findIdx? (!contentsLineGap ·)).getD raws.size
+  match raws[k]?, raws[k + 1]? with
+  | some (.ctrl n _), next =>
+    ["bibliography", "printbibliography"].contains n ||
+      ((blockHeading? n).isSome && next matches some (Raw.word "*" _))
+  | some (.env n _ _), _ => n == "thebibliography"
+  | _, _ => false
+
+/-- `\addcontentsline{toc}{unit}{entry}` and `\addtocontents{toc}{material}`: an entry beside a
+starred heading lists that heading, before it once it stands; material the contents would set, and
+an entry with no heading beside it, are named. -/
+private def contentsLineArm (ctx : Ctx) (raws : Array Raw) (i : Nat) (n : String) (pos : Pos)
+    (blocks : Array Block) : EM (Array Block × { j : Nat // i < j }) := do
+  let line := n == "addcontentsline"
+  let (gs, j) := Compat.takeGroups raws (i + 1) (if line then 3 else 2)
+  let j := max (i + 1) j
+  let file := (rawSrc (gs.getD 0 #[])).trimAscii.toString
+  if file != "toc" then return (blocks, ⟨j, by omega⟩)
+  let lost (why : String) : EM Unit :=
+    warnOnce ctx ("contents:" ++ n) .W0104 s!"'\\{n}' {why}; the contents list without it" pos
+  if !line then
+    lost "material is not set in the contents"
+    return (blocks, ⟨j, by omega⟩)
+  let text ← elabInlines ctx (gs.getD 2 #[])
+  if ctx.slides then
+    lost "writes an entry beamer's contents do not read"
+    return (blocks, ⟨j, by omega⟩)
+  match blocks.back? with
+  | some (.section level true none title) =>
+    return (blocks.pop.push (← listedHeading level title text), ⟨j, by omega⟩)
+  | _ =>
+    if headingAhead raws j then
+      modify fun st => { st with contentsLine := some text }
+    else lost "stands beside no starred heading it could list"
+    return (blocks, ⟨j, by omega⟩)
+
+/-- The unnumbered heading a class sets over its reference list: `\refname`, or report.cls's
+`\bibname` where the class heads chapters, as the document declares or the language names it. -/
+private def refsHeading (ctx : Ctx) (pos : Pos) : EM Block := do
+  let name := if (← get).ctr.chapters then "bibname" else "refname"
+  pendingListed (.section 1 true none (← definedOr ctx name pos (pure #[.text ctx.locale.references])))
+
 /-- A chapter's head label, report.cls's `\@chapapp\space\thechapter`: `\chaptername`, or
 `\appendixname` after `\appendix`, as the document declares or the language names it. -/
 private def chapterHead (ctx : Ctx) (starred : Bool) (pos : Pos) : EM (Option String) := do
@@ -10037,7 +10151,7 @@ private def headingArm (ctx : Ctx) (n : String) (level : Nat) (starred : Bool)
       pure s
     | none => pure title
   if ctx.slides && !ctx.inFrame then setSectionInForce level title head
-  return blocks.push (.section ((blockHeading? n).getD .h2) starred number title)
+  return blocks.push (← pendingListed (.section ((blockHeading? n).getD .h2) starred number title))
 
 /-- The `\qedsymbol` in force; by default amsthm's box, the math face's □. -/
 private def qedMark (ctx : Ctx) (pos : Pos) : EM (Array Inline) :=
@@ -10505,16 +10619,18 @@ private def flushPara (ctx : Ctx) (blocks : Array Block) (cur : Array Raw) :
 /-- Drops the frame sources recorded from the earliest completed role that
 `desired` does not continue. -/
 private def closeBlockFrameSources (active : Array MacroRun)
-    (desired : List MacroOrigin) (size : Nat) : EM Unit := do
+    (desired : List MacroOrigin) (blocks : Array Block) : EM Unit := do
   let keep := commonOrigins (active.toList.map (·.origin)) desired
+  let size := blocks.size
   let retained := (active.toList.drop keep).foldl (init := size) fun retained run =>
-    if run.pendingPara then retained else min retained run.start
+    if run.pendingPara || holdsOutline (blocks.extract run.start size) then retained
+    else min retained run.start
   if retained < size then keepFrameSourcePrefix retained
 
 private def closeBlockMacros (ctx : Ctx) (blocks : Array Block) :
     EM (MCtx ctx × Array Block) := do
-  closeBlockFrameSources ctx.macroRoles.blocks [] blocks.size
-  let (_, blocks) := moveMacroRuns Block.role ctx.macroRoles.blocks [] blocks
+  closeBlockFrameSources ctx.macroRoles.blocks [] blocks
+  let (_, blocks) := moveMacroRuns macroRunBlocks ctx.macroRoles.blocks [] blocks
   return (⟨{ ctx with macroRoles := { ctx.macroRoles with blocks := #[] } },
     rfl, rfl, rfl, rfl⟩, blocks)
 
@@ -10571,8 +10687,8 @@ private def blockMacroStep (ctx : Ctx) (st : ESt) (gen : Nat)
   let (⟨ready, hm⟩, blocks) ← if done then flushPara fresh blocks cur
     else pure (⟨fresh, rfl, rfl, rfl, rfl⟩, blocks)
   let cur := if done then #[] else cur
-  closeBlockFrameSources ready.macroRoles.blocks desired blocks.size
-  let (active, blocks) := moveMacroRuns Block.role ready.macroRoles.blocks desired blocks
+  closeBlockFrameSources ready.macroRoles.blocks desired blocks
+  let (active, blocks) := moveMacroRuns macroRunBlocks ready.macroRoles.blocks desired blocks
     (pendingParaInput cur)
   let ctx' := { ready with macroRoles := { ready.macroRoles with
     blocks := active, blockKinds := kinds } }
@@ -11101,7 +11217,7 @@ private def ownBibList (ctx : Ctx) (body : Array Raw) : EM (Array Block) := do
     else break
   if let some (k, l, raws) := cur then
     items := items.push { key := k, marker := l, content := ← elabInlines ctx (entryRaws raws) }
-  return #[.section 1 true none #[.text ctx.locale.references], .bibliography "" none items]
+  return #[← refsHeading ctx {}, .bibliography "" none items]
 
 seal thmOf? thmEnv thmOpen thmClose descItems coverItems ownBibList
 seal enterAppendicesIf leaveAppendices wrapScopedEnv
@@ -11868,6 +11984,7 @@ private def isBlockStart (ctx' : Ctx) (n : String) (raws : Array Raw) (i : Nat)
     || (n == "nointerlineskip" && cur.isEmpty)
     || n == "bibliography" || n == Parse.markdownBibControl || n == "bibliographystyle"
     || n == Parse.citeSetupMark || n == "tableofcontents"
+    || ((n == "addcontentsline" || n == "addtocontents") && cur.isEmpty)
     || (n == "note" && cur.isEmpty)
     || isDeclBlock ctx' n raws i cur
     -- Mid-paragraph these markers stay inline: splitting there would move text.
@@ -12949,12 +13066,8 @@ private def elabCtrlArm (ctx : Ctx) (raws : Array Raw) (i : Nat)
       rw [slicePars_zero]; exact nestedParsList_le _
     have _ : sliceWeight cmd.body 0 = rawWeightList cmd.body.toList :=
       sliceWeight_zero _
-    let expanded ← splicedFrameScope (if cmd.params.isEmpty then some blocks.size else none)
-      (elabBlockScope callCtx cmd.body)
-    if cmd.params.isEmpty then
-      blocks := blocks ++ expanded
-    else
-      blocks := blocks.push (.role cmd.name expanded)
+    let expanded ← splicedFrameScope (some blocks.size) (elabBlockScope callCtx cmd.body)
+    blocks ← macroBlocks cmd.name cmd.params.isEmpty blocks expanded
     return (blocks, ⟨j, by omega⟩)
   | none =>
   if overlayCtrls.contains n || n == "alt" then
@@ -13056,6 +13169,8 @@ when it is empty — '{}'")
     | _ =>
       diag ctx .E0304 "'\\logo' needs one group of inline content" pos
       return (blocks, ⟨i + 1, by omega⟩)
+  else if n == "addcontentsline" || n == "addtocontents" then
+    contentsLineArm ctx raws i n pos blocks
   else if n == "tableofcontents" then
     -- beamer's takes options; a flow's contents stand under their heading, as article's
     -- `\section*{\contentsname}`, a bracket after it its text.
@@ -13068,7 +13183,8 @@ when it is empty — '{}'")
     let spec ← contentsSpecOf ctx (if ctx.slides then (bracketRunSrc raws j0).map rawSrc else none)
       pos
     unless ctx.slides do
-      blocks := blocks.push (.section .h2 true none #[.text ctx.locale.contents])
+      blocks := blocks.push (.section .h2 true none
+        (← definedOr ctx "contentsname" pos (pure #[.text ctx.locale.contents])))
     return (blocks.push (.contents spec #[]), ⟨j, by omega⟩)
   else if n == "maketitle" || n == "titlepage" then
     blocks ← maketitleArm ctx n pos blocks
@@ -13374,8 +13490,7 @@ a side channel, never slide content" cpos
           let src := (rawSrc body).trimAscii.toString
           let style := (← get).bibStyle
           recordBibSpan ctx' src cpos
-          let blocks := blocks.push
-            (.section 1 true none #[.text ctx'.locale.references])
+          let blocks := blocks.push (← refsHeading ctx' cpos)
           let blocks := blocks.push (.bibliography src style #[])
           have hadv := advance_measures raws h (show i < j + 1 by omega)
           elabBlocksGo ctx' raws (j + 1) blocks #[] gen'
