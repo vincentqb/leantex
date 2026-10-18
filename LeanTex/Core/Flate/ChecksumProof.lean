@@ -6,49 +6,22 @@ import LeanTex.Core.Loop
 
 namespace LeanTex.Core.Flate
 
-private def AdlerWords (s : UInt64) : Prop :=
-  (s >>> 32).toNat < 65521 ∧ (s &&& 0xFFFFFFFF).toNat < 65521
-
-private theorem packed_words (a b : UInt64) (ha : a.toNat < 65521) (hb : b.toNat < 65521) :
-    AdlerWords ((a <<< 32) ||| b) := by
-  have hpack : (((a <<< 32) ||| b) : UInt64).toNat = a.toNat * 4294967296 + b.toNat := by
-    rw [UInt64.toNat_or, UInt64.toNat_shiftLeft]
-    change ((a.toNat <<< 32) % 18446744073709551616 ||| b.toNat) = _
-    have hm : a.toNat <<< 32 < 18446744073709551616 := by
-      rw [Nat.shiftLeft_eq]
-      omega
-    rw [Nat.mod_eq_of_lt hm, ← Nat.shiftLeft_add_eq_or_of_lt (show b.toNat < 2^32 by omega)]
-    rw [Nat.shiftLeft_eq]
-  unfold AdlerWords
-  rw [UInt64.toNat_shiftRight, UInt64.toNat_and, hpack]
-  change (a.toNat * 4294967296 + b.toNat) >>> 32 < 65521 ∧
-    (a.toNat * 4294967296 + b.toNat) &&& (2^32 - 1) < 65521
-  rw [Nat.shiftRight_eq_div_pow, Nat.and_two_pow_sub_one_eq_mod]
-  omega
-
-private theorem reduced_words (s : UInt64) :
-    AdlerWords ((((s >>> 32) % 65521) <<< 32) ||| ((s &&& 0xFFFFFFFF) % 65521)) := by
-  apply packed_words
-  · exact UInt64.toNat_mod_lt _ (by decide)
-  · exact UInt64.toNat_mod_lt _ (by decide)
+private theorem adlerFrom_words (data : ByteArray) (i : Nat) (a b : UInt64) :
+    a.toNat < 65521 → b.toNat < 65521 →
+      (adlerFrom data i a b).1.toNat < 65521 ∧ (adlerFrom data i a b).2.toNat < 65521 := by
+  fun_induction adlerFrom data i a b with
+  | case1 _ _ _ _ _ ih =>
+    intro _ _
+    exact ih (UInt64.toNat_mod_lt _ (by decide)) (UInt64.toNat_mod_lt _ (by decide))
+  | case2 => intro ha hb; exact ⟨ha, hb⟩
 
 private theorem adler32_bound (data : ByteArray) : Flate.adler32 data < 256 ^ 4 := by
+  obtain ⟨ha, hb⟩ := adlerFrom_words data 0 1 0 (by decide) (by decide)
   unfold Flate.adler32
-  apply Loop.bind_of_inv (P := fun p : UInt64 × Nat => AdlerWords p.1)
-    (Q := fun n : Nat => n < 256^4)
-  · apply Loop.forIn_range_inv (P := fun p : UInt64 × Nat => AdlerWords p.1)
-    · change AdlerWords 1
-      unfold AdlerWords
-      decide
-    · intro j _ _ p _
-      exact reduced_words _
-  · intro p hp
-    change ((p.1 >>> 32) * 65536 + (p.1 &&& 0xFFFFFFFF)).toNat < 256^4
-    simp only [UInt64.toNat_add, UInt64.toNat_mul]
-    change ((((p.1 >>> 32).toNat * 65536) % 18446744073709551616 +
-      (p.1 &&& 0xFFFFFFFF).toNat) % 18446744073709551616) < 4294967296
-    rcases hp with ⟨hh, hl⟩
-    omega
+  simp only [UInt64.toNat_add, UInt64.toNat_mul]
+  change ((((adlerFrom data 0 1 0).2.toNat * 65536) % 18446744073709551616 +
+    (adlerFrom data 0 1 0).1.toNat) % 18446744073709551616) < 4294967296
+  omega
 
 private theorem byte_data (b : ByteArray) (i : Nat) : b[i]? = b.data[i]? := rfl
 

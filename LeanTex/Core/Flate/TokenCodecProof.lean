@@ -75,6 +75,9 @@ theorem readStep_grows (lit dist : Huff) (maxOut : Nat) (out out' : ByteArray) (
   unfold readStep at h
   simp only [pure, Except.pure] at h
   generalize lenBase = L at h hbase
+  generalize lenExtra = LE at h
+  generalize distBase = D at h
+  generalize distExtra = DE at h
   repeat' split at h
   all_goals first
     | (simp only [reduceCtorEq] at h; done)
@@ -84,8 +87,7 @@ theorem readStep_grows (lit dist : Huff) (maxOut : Nat) (out out' : ByteArray) (
   all_goals first
     | (simp only [ByteArray.size_push]; omega)
     | (rw [copy_size]
-       expose_names
-       have h3 := hbase _ _ heq_1
+       have h3 := hbase _ _ (by assumption)
        omega)
 
 /-- A decode that finishes in `count` steps is the block's read. -/

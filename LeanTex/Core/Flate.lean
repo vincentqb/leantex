@@ -24,18 +24,32 @@ public def inflate (data : ByteArray) (maxOut : Nat) : Except Error ByteArray :=
   else if flg.toNat / 32 % 2 == 1 then .error (.malformed "zlib: a preset dictionary")
   else BlockStream.read {data, bitPos := 16} ByteArray.empty maxOut
 
+/-- Adler-32's two sums over the bytes from `i` to `stop`, unreduced. -/
+def adlerChunk (data : ByteArray) (stop i : USize) (a b : UInt64) : UInt64 × UInt64 :=
+  if h : i < stop ∧ i.toNat < data.size then
+    let a := a + (data.uget i h.2).toUInt64
+    adlerChunk data stop (i + 1) a (b + a)
+  else (a, b)
+termination_by stop.toNat - i.toNat
+decreasing_by
+  have hlt : i.toNat < stop.toNat := h.1
+  have hs : stop.toNat < 2 ^ System.Platform.numBits := stop.toNat_lt_size
+  rw [USize.toNat_add, USize.toNat_one, Nat.mod_eq_of_lt (by omega)]
+  omega
+
+/-- Adler-32's two sums from `i` on, reduced after each run of 5552 bytes, zlib's NMAX. -/
+def adlerFrom (data : ByteArray) (i : Nat) (a b : UInt64) : UInt64 × UInt64 :=
+  if i < data.size then
+    let r := adlerChunk data (min (i + 5552) data.size).toUSize i.toUSize a b
+    adlerFrom data (i + 5552) (r.1 % 65521) (r.2 % 65521)
+  else (a, b)
+termination_by data.size - i
+decreasing_by omega
+
 /-- Adler-32 (RFC 1950 §8.2). -/
-public def adler32 (data : ByteArray) : Nat := Id.run do
-  let mut s : UInt64 := 1
-  let mut i := 0
-  for _ in [0:data.size / 5552 + 1] do
-    let stop := min data.size (i + 5552)
-    for k in [i:stop] do
-      let s1 := (s &&& 0xFFFFFFFF) + (data[k]?.getD 0).toUInt64
-      s := (((s >>> 32) + s1) <<< 32) ||| s1
-    s := (((s >>> 32) % 65521) <<< 32) ||| ((s &&& 0xFFFFFFFF) % 65521)
-    i := stop
-  return ((s >>> 32) * 65536 + (s &&& 0xFFFFFFFF)).toNat
+public def adler32 (data : ByteArray) : Nat :=
+  let r := adlerFrom data 0 1 0
+  (r.2 * 65536 + r.1).toNat
 
 /-- Pushes the low 32 bits of `v` onto `b`, most significant byte first. -/
 def pushBe32 (b : ByteArray) (v : Nat) : ByteArray :=
@@ -64,7 +78,7 @@ public def deflateStored (raw : ByteArray) : ByteArray := Id.run do
       break
   return pushBe32 out (adler32 raw)
 
-private def hash3 (raw : ByteArray) (mask i : Nat) : Nat :=
+@[inline] private def hash3 (raw : ByteArray) (mask i : Nat) : Nat :=
   if h : i + 2 < raw.size then
     (((((raw[i]'(by omega)).toUInt64 <<< 16) ^^^ ((raw[i + 1]'(by omega)).toUInt64 <<< 8) ^^^
       raw[i + 2].toUInt64) * 2654435761) >>> 17 &&& mask.toUInt64).toNat
@@ -113,7 +127,7 @@ theorem matchLen_agree (raw : ByteArray) (c i : Nat) (hci : c < i)
     · omega
 
 /-- The `prev` ring's slot for position `c`; `head` holds the table's first `mask + 1` slots. -/
-private def prevSlot (mask c : Nat) : Nat := mask + 1 + (c &&& mask)
+@[inline] private def prevSlot (mask c : Nat) : Nat := mask + 1 + (c &&& mask)
 
 private def packMatch (len dist : Nat) : UInt64 :=
   (len.toUInt64 <<< 16) ||| dist.toUInt64
@@ -221,14 +235,14 @@ private def tokGo (raw : ByteArray) (mask : Nat) :
     else
       let h := hash3 raw mask i
       let limit := min 258 (n - i)
-      let m := bestMatch raw tab mask i limit 32 (tab[h]?.getD i) 0 0
+      let cand := tab[h]?.getD i
+      let m := bestMatch raw tab mask i limit 32 cand 0 0
       let best := (m >>> 16).toNat
       if best ≥ 3 then
         let tab := insertHashes raw mask (if best ≤ 32 then best else 1) i tab
         tokGo raw mask fuel (i + best) tab (tokens.push (matchToken best (m &&& 65535).toNat))
       else
-        let old := tab[h]?.getD i
-        tokGo raw mask fuel (i + 1) ((tab.set! h i).set! (prevSlot mask i) old)
+        tokGo raw mask fuel (i + 1) ((tab.set! h i).set! (prevSlot mask i) cand)
           (tokens.push (raw[i]?.getD 0).toUInt32)
 
 /-- LZ77 tokens over a hash chain bounded at 32 candidates. -/

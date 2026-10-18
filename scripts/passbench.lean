@@ -130,8 +130,8 @@ def main (args : List String) : IO UInt32 := do
     let packed := Flate.deflate raw
     unless (match Flate.inflate packed s with | .ok b => b == raw | .error _ => false) do
       die s!"inflate did not give {s} bytes back"
-    timeRuns n "deflate" s fun u => (Flate.deflate (perRun u raw)).size == packed.size
-    timeRuns n "inflate" s fun _ => match Flate.inflate packed s with
+    timeRuns n "deflate" s fun u => Flate.deflate (perRun u raw) == packed
+    timeRuns n "inflate" s fun u => match Flate.inflate (perRun u packed) s with
       | .ok b => b == raw
       | .error _ => false
   let .ok font := Font.parse (← IO.FS.readBinFile "testdata/corpus/fonts/OpenSans-Regular.ttf")
