@@ -14977,7 +14977,7 @@ private structure TextSt where
 /-- The standing entries injected ahead of an environment's
 own options, which win. -/
 private def injectListingOpts (opts : Array String) (v : Parse.Verbatim) : Parse.Verbatim :=
-  { v with opts := opts.map .spelled ++ v.opts }
+  { v with defaults := opts ++ v.defaults }
 
 /-- The layers a listing of `env` in `lang` reads, in the order its options stack: `\lstset`'s for
 a `lstlisting` and `\lstinline`, minted's global and lexer layers for minted's display, and the
@@ -15115,7 +15115,7 @@ private def mintedRaws (raws : Array Raw) (start : Nat) :
     k := skipSpaces raws (m + 1)
   let some (.group lang _) := raws[k]? | return none
   head := head ++ "{" ++ Parse.rawSrc lang ++ "}"
-  let call (text : String) : Parse.Verbatim := ⟨opts, some (Parse.rawSrc lang), head, text⟩
+  let call (text : String) : Parse.Verbatim := ⟨#[], opts, some (Parse.rawSrc lang), head, text⟩
   let c := skipSpaces raws (k + 1)
   match raws[c]? with
   | some (.group code _) => return some (call ("{" ++ Parse.rawSrcList code.toList ++ "}"), c + 1, none)

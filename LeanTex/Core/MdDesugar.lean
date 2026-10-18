@@ -752,7 +752,7 @@ private def blkRaws (file : String) (refs : Array Raw) (dialect : Dialect) :
     | none => (#[.verb "verbatim" (.plain ("\n" ++ text)) p], #[])
     | some w =>
       match Ir.listingLang? w with
-      | some l => (#[.verb "lstlisting" ⟨#[.language l], none, "", "\n" ++ text⟩ p], #[])
+      | some l => (#[.verb "lstlisting" ⟨#[], #[.language l], none, "", "\n" ++ text⟩ p], #[])
       | none =>
         (#[.verb "verbatim" (.plain ("\n" ++ text)) p],
          #[routeDegraded file "code-info"

@@ -4883,11 +4883,11 @@ private def inlineVerbatim (ctx : Ctx) (env : String) (v : Parse.Verbatim) (pos 
 display there, or cannot set it" pos
         (help := s!"write \\mintinline\{{rawLang.trimAscii.toString}}\{…} for inline code, or put \
 '\\mint' on a line of its own for a display")
-    let o ← inlineCodeOpts ctx v.opts pos
+    let o ← inlineCodeOpts ctx v.stacked pos
     let lang ← codeLanguage ctx rawLang true pos
     return ← inlineCodeOf ctx lang #[bindCodeParams ctx (Parse.mintedCode s 0)] o
   if env == "lstinline" then
-    let (rawLang, rest) := lstInlineEntries v.opts
+    let (rawLang, rest) := lstInlineEntries v.stacked
     let o ← inlineCodeOpts ctx rest pos (listings := true)
     let lang ← match rawLang with
       | some l => codeLanguage ctx l false pos
@@ -4901,10 +4901,10 @@ display there, or cannot set it" pos
     | .language l => some l.val
     | .breakLines => none
   let (rawLang, opts) : Option String × Array Parse.ListingOpt :=
-    if env == "minted" then (v.lang, v.opts)
+    if env == "minted" then (v.lang, v.stacked)
     else if env == "lstlisting" then
-      ((v.opts.filterMap langOf).back?, v.opts.filter (langOf · |>.isNone))
-    else (none, v.opts)
+      ((v.stacked.filterMap langOf).back?, v.stacked.filter (langOf · |>.isNone))
+    else (none, v.stacked)
   warnOnce ctx ("listing-inline:" ++ env) .W0411
     s!"'\\begin\{{env}}' within a line of text or an argument does not compile under LaTeX; \
 it is set as inline code" pos
@@ -9825,7 +9825,7 @@ is set as a display listing" pos
     noteMentions item
     warnOnce ctx ("lstopt:" ++ msg ++ ":" ++ key) .W0110 msg pos (help := help)
   let langOf (raw : String) : EM (Option Ir.ListingLang) := codeLanguage ctx raw (env == "minted") pos
-  for opt in v.opts do
+  for opt in v.stacked do
     match opt with
     | .language l => language ← langOf l.val
     | .breakLines => breakLines := true

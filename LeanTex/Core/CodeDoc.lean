@@ -1245,7 +1245,7 @@ public def listingOpts (lang : Ir.CodeLang) : Array Parse.ListingOpt :=
 
 /-- A listing of code under its language's options. -/
 public def listingRaw (lang : Ir.CodeLang) (code : String) (p : Pos) : Raw :=
-  .verb "lstlisting" ⟨listingOpts lang, none, "", "\n" ++ code⟩ p
+  .verb "lstlisting" ⟨#[], listingOpts lang, none, "", "\n" ++ code⟩ p
 
 /-- The inline raws of the heading a raw opens, given the raws after it. -/
 @[expose] public def headingBody? (r : Raw) : List Raw → Option (Array Raw)
@@ -2226,7 +2226,8 @@ trailing white space aside. -/
 @[expose] public def listingAt (starts : Array Nat) (start : Nat) (code : List Char) : Array Raw :=
   let body := (code.reverse.dropWhile isWhite).reverse
   if body.isEmpty then #[] else
-    #[.verb "lstlisting" ⟨(listingOpts .lean).push .breakLines, none, "", "\n" ++ String.ofList body⟩
+    #[.verb "lstlisting" ⟨#[], (listingOpts .lean).push .breakLines, none, "",
+      "\n" ++ String.ofList body⟩
       { line := (lineCol starts start).1 - 1 }]
 
 /-- Names in backticks, the last after "or". -/

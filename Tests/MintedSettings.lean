@@ -313,11 +313,12 @@ def mintedSettingsChecks (ref : IO.Ref (List String)) : IO Unit := do
   let boxed := elabStr (dvDoc "" "\\fbox{\\begin{verbatim}[x] y\\end{verbatim}}")
   t "listing heads: an inline verbatim keeps a leading bracket as its text, an option of none"
     (hasStr ((docHtmlOf boxed.1).replace "\u00a0" " ") "[x] y" && !boxed.2.any (·.kind == .W0110))
-  let braced := docHtmlOf (elabStr (dvDoc "\\newcommand\\py{\\mintinline{{python}}}"
-    "Call \\py{x = 1} and \\mintinline{{python}}{y = 2} here.")).1 |>.replace "\u00a0" " "
+  let braced := docHtmlOf (elabStr (dvDoc
+    "\\newcommand\\py{\\mintinline{{python}}}\\newcommand\\ml[2]{\\mintinline{#1}{#2}}"
+    ("Call \\py{x = 1} and \\mintinline{{python}}{y = 2}, \\ml{{python}}{w = 1} and " ++
+      "\\mintinline{{py}thon}{v = 3} here."))).1 |>.replace "\u00a0" " "
   t "listing heads: a braced language group is the language argument whole, the code after it"
-    (hasStr braced "x = 1" && hasStr braced "y = 2" && !hasStr braced "{x = 1" &&
-      !hasStr braced "{y = 2")
+    (["x = 1", "y = 2", "w = 1", "v = 3"].all fun c => hasStr braced c && !hasStr braced ("{" ++ c))
   let unequal := Highlight.Lexer.all.flatMap fun lx => lx.aliases.toList.filterMap fun a =>
     let read (doc : Ir.Doc) := (firstListing doc).map fun s => (s.language, s.highlight)
     let md := read (elabMd ("```" ++ a ++ "\nx = 1\n```\n")).1

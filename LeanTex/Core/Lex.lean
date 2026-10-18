@@ -178,7 +178,20 @@ private def mintedCall (cs : Array Char) (j : Nat) (lang : Bool := true) :
     k := next
   if lang then
     unless cs[k]? == some '{' do return none
-    let close := scanWhile cs (k + 1) (fun c => c != '}' && c != '\n' && c != '\r')
+    -- The language is one group, the groups it holds nested in it.
+    let close : Nat := Id.run do
+      let mut depth : Nat := 0
+      let mut m := k + 1
+      for _ in [k + 1:cs.size] do
+        match cs[m]? with
+        | some '}' =>
+          if depth == 0 then return m
+          depth := depth - 1
+          m := m + 1
+        | some '{' => depth := depth + 1; m := m + 1
+        | some '\n' | some '\r' | none => return m
+        | some _ => m := m + 1
+      return m
     unless cs[close]? == some '}' do return none
     head := head ++ strFrom cs k (close + 1)
     k := close + 1

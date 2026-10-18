@@ -144,7 +144,7 @@ private def readCodeFile (dir : System.FilePath) (request : Compat.InputRequest)
     modify fun log => { log with reads := log.reads.push path.toString }
     let text := (← decodeOnce path.toString fun _ => Encoding.readMarkdown path.toString bytes).1.text
     let opts := (KeyVal.items request.options).map .spelled
-    return (#[.verb env ⟨opts, lang, "", "\n" ++ text⟩ request.pos], #[])
+    return (#[.verb env ⟨#[], opts, lang, "", "\n" ++ text⟩ request.pos], #[])
 
 /-- minted's `\inputminted[options]{lang}{file}`: the file's text as the listing a `minted`
 environment of that language and those options sets. -/

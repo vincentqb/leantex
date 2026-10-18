@@ -21,7 +21,9 @@ public inductive ListingOpt where
 
 /-- A verbatim capture: a listing's head, read once where it is captured, and the text after it. -/
 public structure Verbatim where
-  /-- The head's options in the order they stack. -/
+  /-- The defaults standing where the capture stands, which its own options override. -/
+  defaults : Array String
+  /-- The head's own options in the order they stack. -/
   opts : Array ListingOpt
   /-- minted's language argument as written. -/
   lang : Option String
@@ -31,7 +33,11 @@ public structure Verbatim where
   deriving Repr, BEq, Inhabited
 
 /-- A capture with no head. -/
-@[expose] public def Verbatim.plain (text : String) : Verbatim := ⟨#[], none, "", text⟩
+@[expose] public def Verbatim.plain (text : String) : Verbatim := ⟨#[], #[], none, "", text⟩
+
+/-- The options a listing reads, its defaults first. -/
+@[expose] public def Verbatim.stacked (v : Verbatim) : Array ListingOpt :=
+  v.defaults.map .spelled ++ v.opts
 
 /-- The capture's source: its head's and its text's. -/
 @[expose] public def Verbatim.src (v : Verbatim) : String := v.head ++ v.text
@@ -42,8 +48,8 @@ public structure Verbatim where
   | .language lang => "language=" ++ lang.val
   | .breakLines => "breaklines"
 
-/-- The capture as TeX spells it: its source, or a surface reader's head spelled from its options
-and language. -/
+/-- The capture as TeX spells it, its defaults aside: its source, or a surface reader's head spelled
+from its options and language. -/
 @[expose] public def Verbatim.spelling (v : Verbatim) : String :=
   if !v.head.isEmpty then v.src else
   (if v.opts.isEmpty then "" else "[" ++ ",".intercalate (v.opts.map (·.spelling)).toList ++ "]") ++
@@ -76,8 +82,8 @@ def listingOptHead (s : String) : Option (String × Nat) := Id.run do
     return none
   else return none
 
-/-- The mandatory `{language}` head of a `{minted}` body,
-after any option head. -/
+/-- The mandatory `{language}` head of a `{minted}` body after any option head, the groups it holds
+nested in it. -/
 def mintedLangHead (s : String) (start : Nat) : Option (String × Nat) := Id.run do
   let cs := s.toList.toArray
   let mut i := start
@@ -87,12 +93,16 @@ def mintedLangHead (s : String) (start : Nat) : Option (String × Nat) := Id.run
     else break
   if h : i < cs.size then
     if cs[i] != '{' then return none
+    let mut depth : Nat := 0
     let mut j := i + 1
     let mut out := ""
     for _ in [0:cs.size] do
       if h2 : j < cs.size then
         let c := cs[j]
-        if c == '}' then return some (out, j + 1)
+        if c == '}' then
+          if depth == 0 then return some (out, j + 1)
+          depth := depth - 1
+        else if c == '{' then depth := depth + 1
         out := out.push c
         j := j + 1
       else break
@@ -111,7 +121,8 @@ public def Verbatim.read (env s : String) : Verbatim :=
   let afterOpt := (opt.map (·.2)).getD 0
   let lang := if mintedEnv env then mintedLangHead s afterOpt else none
   let n := (lang.map (·.2)).getD afterOpt
-  { opts := ((opt.map (KeyVal.items ·.1)).getD #[]).map .spelled
+  { defaults := #[]
+    opts := ((opt.map (KeyVal.items ·.1)).getD #[]).map .spelled
     lang := lang.map (·.1)
     head := String.ofList (s.toList.take n)
     text := String.ofList (s.toList.drop n) }
