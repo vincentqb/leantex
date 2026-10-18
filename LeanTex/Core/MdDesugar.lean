@@ -872,7 +872,8 @@ private def inlSpelling : Inl → String
   | .cite items _ =>
     "[" ++ "; ".intercalate (items.toList.map fun ⟨key, _, _, _⟩ => "@" ++ key) ++ "]"
   | .math display src _ => if display then "$$" ++ src ++ "$$" else "$" ++ src ++ "$"
-  | .note label _ _ => "[^" ++ label ++ "]"
+  | .note label body _ => if label.isEmpty then inlsSpelling "^[" body.toList ++ "]"
+    else "[^" ++ label ++ "]"
 
 private def inlsSpelling (acc : String) : List Inl → String
   | [] => acc
@@ -1235,8 +1236,10 @@ mutual
 private def abbrevInls : List Inl → List Inl
   | [] => []
   | x :: rest =>
+    -- Pandoc joins before an inline note, not before a note's reference.
     let citeNext := match rest with
-      | .cite .. :: _ | .note .. :: _ => true
+      | .cite .. :: _ => true
+      | .note label _ _ :: _ => !label.isEmpty
       | _ => false
     abbrevInl citeNext x :: abbrevInls rest
 

@@ -49,7 +49,7 @@ public inductive Inl where
   | citeText (key : String) (body : Array Inl) (pos : Pos)
   /-- A docstring's formula between dollars, md4c's math span: its source as written. -/
   | math (display : Bool) (src : String) (pos : Pos)
-  /-- A footnote's reference by its label and its definition's paragraphs. -/
+  /-- A footnote by its label, empty for an inline note `^[…]`, and its paragraphs. -/
   | note (label : String) (body : Array Inl) (pos : Pos)
   deriving Repr, BEq
 
@@ -1219,6 +1219,8 @@ inductive ITok where
   | dollar (len : Nat) (canOpen canClose : Bool) (at_ : Nat) (pos : Pos)
   /-- A reference to a footnote the text defines. -/
   | noteRef (label : String) (pos : Pos)
+  /-- An inline note, its content the characters from `start` to `stop`. -/
+  | inote (start stop : Nat) (pos : Pos)
   deriving Repr
 
 instance : Inhabited ITok := ⟨.soft {}⟩
@@ -1226,7 +1228,7 @@ instance : Inhabited ITok := ⟨.soft {}⟩
 def ITok.pos : ITok → Pos
   | .txt _ p | .code _ p | .soft p | .hard p | .auto _ _ p
   | .anchor _ p | .run _ _ _ _ p | .bopen _ p | .bclose p | .ckey p | .dollar _ _ _ _ p
-  | .noteRef _ p => p
+  | .noteRef _ p | .inote _ _ p => p
 
 /-- A resolved link or image: its bracket token indices, whether it is an image,
 and its destination and title. -/
@@ -2458,6 +2460,14 @@ def scanInlines (file : String) (c : Chars) (dialect : Dialect := .document)
         else
           for _ in [0:n] do pending := pending.push '$'
         i := i + n
+      else if ch == '^' && defs.own && c.at? (i + 1) == some '[' &&
+          (bracketClose? c ticks (i + 1)).isSome then
+        -- Pandoc's inline note: its balanced bracket's content, read as the text's own.
+        let e := (bracketClose? c ticks (i + 1)).getD (i + 1)
+        toks := flush toks pending pendingPos
+        pending := ""
+        toks := toks.push (.inote (i + 2) e p)
+        i := e + 1
       else if ch == '!' && c.at? (i + 1) == some '[' &&
           !(noteLabelAt c (i + 1)).any (defs.notes.contains ·.1) then
         toks := flush toks pending pendingPos
@@ -2865,6 +2875,7 @@ def buildInlines (toks : Array ITok) (bpairs : Array BPair) (cites : Array (Nat 
     | .ckey _ => pure ()
     | .dollar n _ _ _ _ => acc := acc.push (.text (String.ofList (List.replicate n '$')) p)
     | .noteRef label _ => acc := acc.push (.note label #[] p)
+    | .inote .. => pure ()
     | .bclose _ =>
       if (bcloseAt[i]?).getD false then
         if let some f := frames.back? then
@@ -2943,11 +2954,17 @@ def trimInl (xs : Array Inl) : Array Inl :=
     | _ => ys
   ys.toArray
 
-/-- A citation's prefix or suffix: the plain reading of `c[a, b)`, its surrounding white space off;
-the main scan already raised what the range holds. -/
+mutual
+
+/-- A citation's prefix or suffix: the reading of `c[a, b)` with no citation in it, its surrounding
+white space off; the main scan already raised what the range holds. -/
 def citeNote (file : String) (c : Chars) (dialect : Dialect) (a b : Nat)
-    (defs : Defs := {}) (note : Bool := true) : Array Inl :=
-  if b ≤ a then #[] else trimInl (inlinesPlain file (c.slice a b) dialect defs note).1
+    (defs : Defs) (note : Bool) : Array Inl :=
+  if h : b ≤ a ∨ (c.slice a b).size ≥ c.size then #[] else
+    have : (c.slice a b).size < c.size := by omega
+    trimInl (inlines file (c.slice a b) dialect {} false defs note).1
+termination_by (c.size, 0)
+decreasing_by exact Prod.Lex.left _ _ this
 
 /-- W0392 for each citation group inside another group's prefix or suffix, which the IR's plain
 notes cannot hold: Pandoc reads it, here it sets as its text and its work goes uncited. -/
@@ -2972,10 +2989,11 @@ separated by ';'") (subject := some "md:cite-nested"))
     open_ := open_.push (cp, cp.spans.foldl (fun s sp => s.insert sp.preTo) {})
   return out
 
-/-- Inline structure for one stretch of text, in three passes, citations read as `cr` says. -/
+/-- Inline structure for one stretch of text, in three passes, citations read as `cr` says, each
+inline note's content read as the text's. -/
 def inlines (file : String) (c : Chars) (dialect : Dialect := .document) (cr : CiteRead := {})
-    (tex : Bool := false) (defs : Defs := {}) : Array Inl × Array Diag :=
-  let (toks, bpairs, cpairs, shownRefs, diags) := scanInlines file c dialect cr tex defs
+    (tex : Bool := false) (defs : Defs := {}) (note : Bool := false) : Array Inl × Array Diag :=
+  let (toks, bpairs, cpairs, shownRefs, diags) := scanInlines file c dialect cr tex defs note
   let grouped := (cpairs.filter fun cp => cp.openTok < cp.closeTok).map fun cp =>
     ({ openTok := cp.openTok, closeTok := cp.closeTok, image := false, dest := "", title := "" } :
       BPair)
@@ -2992,8 +3010,8 @@ def inlines (file : String) (c : Chars) (dialect : Dialect := .document) (cr : C
   let epairs := epairs.filter (keep ·.openTok)
   let built := cpairs.map fun cp =>
     let node := Inl.cite (cp.spans.map fun s =>
-      .mk s.key s.mode (citeNote file c dialect s.preFrom s.preTo defs)
-        (citeNote file c dialect s.postFrom s.postTo defs)) cp.pos
+      .mk s.key s.mode (citeNote file c dialect s.preFrom s.preTo defs true)
+        (citeNote file c dialect s.postFrom s.postTo defs true)) cp.pos
     -- An image opener no image followed sets its `!` before the citation its bracket holds.
     let lead : Array Inl := match toks[cp.openTok]? with
       | some (ITok.bopen true p) => #[.text "!" p]
@@ -3001,8 +3019,22 @@ def inlines (file : String) (c : Chars) (dialect : Dialect := .document) (cr : C
     (cp.openTok, cp.closeTok, lead.push node)
   let shown := shownRefs.map fun r =>
     (r.openTok, r.closeTok, #[Inl.citeText r.key (citeNote file c dialect r.textFrom r.textTo defs false) r.pos])
-  (buildInlines toks bpairs (built ++ shown ++ formulas) epairs leftover,
-    diags ++ nestedCites file cpairs)
+  let noted := toks.zipIdx.filterMap fun (t, k) => match t with
+    | .inote a b q =>
+      if _h : (c.slice a b).size < c.size then
+        let r := inlines file (c.slice a b) dialect cr tex defs
+        some ((k, k, #[Inl.note "" (trimInl r.1) q]), r.2)
+      else none
+    | _ => none
+  (buildInlines toks bpairs (built ++ shown ++ formulas ++ noted.map (·.1)) epairs leftover,
+    diags ++ nestedCites file cpairs ++ noted.flatMap (·.2))
+termination_by (c.size, 1)
+decreasing_by
+  all_goals first
+    | exact Prod.Lex.right _ (by omega)
+    | exact Prod.Lex.left _ _ (by assumption)
+
+end
 
 /-- The characters of a run of paragraph lines,
 newline-separated, each with its source position. -/
@@ -3366,6 +3398,50 @@ private def addDefs (m : Std.HashMap String LinkDef) (dd : Array (String × Link
     Std.HashMap String LinkDef :=
   dd.foldl (fun m (k, d) => if m.contains k then m else m.insert k d) m
 
+mutual
+
+/-- A block without the footnote definitions its containers hold, onto `kept`, and those
+definitions onto `lifted`. -/
+private def liftNoteBlk (kept lifted : Array Blk) (b : Blk) : Array Blk × Array Blk :=
+  match b with
+  | .quote body p =>
+    let (body, lifted) := liftNoteList #[] lifted body.toList
+    (kept.push (.quote body p), lifted)
+  | .disclosure sm e body p =>
+    let (body, lifted) := liftNoteList #[] lifted body.toList
+    (kept.push (.disclosure sm e body p), lifted)
+  | .list o st t items p =>
+    let (items, lifted) := liftNoteItems #[] lifted items.toList
+    (kept.push (.list o st t items p), lifted)
+  | b@(.note ..) => (kept, lifted.push b)
+  | b@(.para ..) | b@(.heading ..) | b@(.code ..) | b@(.rule _) | b@(.table ..) | b@(.lean ..)
+  | b@(.metadata ..) | b@(.refs _) => (kept.push b, lifted)
+termination_by structural b
+
+private def liftNoteList (kept lifted : Array Blk) (l : List Blk) : Array Blk × Array Blk :=
+  match l with
+  | [] => (kept, lifted)
+  | b :: rest => let (kept, lifted) := liftNoteBlk kept lifted b; liftNoteList kept lifted rest
+termination_by structural l
+
+private def liftNoteItems (items : Array (Array Blk)) (lifted : Array Blk) (l : List (Array Blk)) :
+    Array (Array Blk) × Array Blk :=
+  match l with
+  | [] => (items, lifted)
+  | it :: rest =>
+    let (it, lifted) := liftNoteList #[] lifted it.toList
+    liftNoteItems (items.push it) lifted rest
+termination_by structural l
+
+end
+
+/-- Blocks with each footnote definition a container holds after the top-level block holding it, as
+Pandoc defines a note wherever its definition stands. -/
+private def liftNotes (blocks : Array Blk) : Array Blk :=
+  blocks.foldl (init := #[]) fun out b => match b with
+    | .note .. => out.push b
+    | _ => let (kept, lifted) := liftNoteBlk #[] #[] b; out ++ kept ++ lifted
+
 /-- One pass over a markdown text: its blocks, the diagnostics the reader raised, and what it
 defines, each link label's first definition and its footnotes' labels; a collecting pass reads no
 inline content. -/
@@ -3571,9 +3647,9 @@ private def blocksPass (dialect : Dialect) (file : String) (input : String) (inc
       if opened then
         opened := false
         let (j, ind) := indentAt cs i col
-        -- A footnote's definition stands at the top level after a blank line or another definition,
-        -- past any list whose item did not match this line.
-        if readsNotes && frames.all (·.kind matches .list ..) && !leaf.isPara && ind ≤ 3 &&
+        -- A footnote's definition stands after a blank line or another definition in any container
+        -- but a note, past any list whose item did not match this line.
+        if readsNotes && !frames.any (·.kind matches .note _) && !leaf.isPara && ind ≤ 3 &&
             (noteDefAt cs j).isSome then
           let (a, ds, dd) := closePara leaf acc lpos
           defs := addDefs defs dd
@@ -3901,10 +3977,11 @@ other attributes" (some ⟨file, p⟩) (subject := some "md:refs-attrs"))
     frames := fs
     acc := a
     if let some d := d then diags := diags.push d
-  let notes := acc.foldl (init := ({} : Std.HashSet String)) fun n b => match b with
+  let lifted := liftNotes acc
+  let notes := lifted.foldl (init := ({} : Std.HashSet String)) fun n b => match b with
     | .note label _ _ => n.insert label
     | _ => n
-  return (acc, diags, { links := defs, notes })
+  return (lifted, diags, { links := defs, notes })
 
 /-- What filling footnotes has met: the labels references name, and the references standing where a
 note cannot, by label and place. -/
@@ -3946,7 +4023,9 @@ mutual
 /-- An inline node with each footnote reference holding its definition's content; one in an image's
 text alternative or a citation's note, which hold text, is met and dropped. -/
 private def fillNote (m : Std.HashMap String (Array Inl)) (st : NoteSt) : Inl → Inl × NoteSt
-  | .note label _ p => match m.get? label with
+  | .note label body p =>
+    if label.isEmpty then (.note label body p, st) else
+    match m.get? label with
     | some body => (.note label body p, { st with used := st.used.insert label })
     | none => (.text s!"[^{label}]" p, st)
   | .emph b p => let (b, st) := fillNotes m #[] st b.toList; (.emph b p, st)
@@ -3954,8 +4033,18 @@ private def fillNote (m : Std.HashMap String (Array Inl)) (st : NoteSt) : Inl �
   | .link d t b p => let (b, st) := fillNotes m #[] st b.toList; (.link d t b p, st)
   | .image d t a p => let (a, st) := dropNotes st #[] a.toList; (.image d t a p, st)
   | .citeText k b p => let (b, st) := fillNotes m #[] st b.toList; (.citeText k b p, st)
-  | .cite items p => let (items, st) := dropItemNotes st #[] items.toList; (.cite items p, st)
+  | .cite items p => let (items, st) := fillItemNotes m #[] st items.toList; (.cite items p, st)
   | x@(.text ..) | x@(.code ..) | x@(.anchor ..) | x@(.soft _) | x@(.hard _) | x@(.math ..) => (x, st)
+
+/-- A citation's works with each footnote reference in their notes holding its definition's content,
+which the citation sets after itself. -/
+private def fillItemNotes (m : Std.HashMap String (Array Inl)) (acc : Array CiteItem) (st : NoteSt) :
+    List CiteItem → Array CiteItem × NoteSt
+  | [] => (acc, st)
+  | .mk key mode pre post :: rest =>
+    let (pre, st) := fillNotes m #[] st pre.toList
+    let (post, st) := fillNotes m #[] st post.toList
+    fillItemNotes m (acc.push (.mk key mode pre post)) st rest
 
 private def fillNotes (m : Std.HashMap String (Array Inl)) (acc : Array Inl) (st : NoteSt) :
     List Inl → Array Inl × NoteSt
@@ -4109,9 +4198,11 @@ it" (placed.get? label |>.map fun p => ⟨file, p⟩) (some s!"name it where it 
         (subject := some "md:note-unused"))
   let named := dropped ++ st.dropped
   for (label, q) in named do
-    diags := diags.push (Diag.of .W0392 s!"footnote '{label}' sets nothing where it is named: an \
-image's text alternative and a citation's note hold text" (some ⟨file, q⟩)
-      (some "name the footnote outside the alternative or the citation") (subject := some "md:note-in-text"))
+    let what := if label.isEmpty then "an inline note sets nothing where it stands"
+      else s!"footnote '{label}' sets nothing where it is named"
+    diags := diags.push (Diag.of .W0392 s!"{what}: an image's text alternative holds text"
+      (some ⟨file, q⟩) (some "write the footnote outside the alternative")
+      (subject := some "md:note-in-text"))
   return (filled, diags)
 
 /-- Blocks for one markdown text in a dialect, and the diagnostics the reader raised; a first pass
@@ -4124,7 +4215,7 @@ public def blocksIn (dialect : Dialect) (file : String) (input : String) (includ
     else {}
   let refs := { refs with own := notes && dialect == .document }
   let (blocks, diags, _) := blocksPass dialect file input included known tex refs false notes
-  if refs.notes.isEmpty then (blocks, diags) else
+  if refs.notes.isEmpty && !refs.own then (blocks, diags) else
   let (blocks, noteDs) := resolveNotes file blocks
   (blocks, diags ++ noteDs)
 

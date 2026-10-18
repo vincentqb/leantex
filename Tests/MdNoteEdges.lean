@@ -131,9 +131,13 @@ def noteChecks (ref : IO.Ref (List String)) : IO Unit := do
   t s!"md notes: a definition right after a paragraph's line is that paragraph's text \
 ({repr (Ir.blocksText d.body)})"
     (hasStr (Ir.blocksText d.body) "[^a]: Not a note.")
-  let (d, _) := elabMd "- item[^a]\n\n  [^a]: Inside a list.\n"
-  t s!"md notes: a definition inside a list item is the item's text ({repr (Ir.blocksText d.body)})"
-    (hasStr (Ir.blocksText d.body) "[^a]: Inside a list.")
+  for src in ["- item[^a]\n\n  [^a]: Inside a list.\n", "> quote[^a]\n>\n> [^a]: Inside a list.\n",
+      "- outer\n\n  > quote[^a]\n  >\n  > [^a]: Inside a list.\n"] do
+    let (d, ds) := elabMd src
+    t s!"md notes: a definition inside a list item or a block quote defines its note, as Pandoc's \
+({repr src}: {repr (pageText d)})"
+      (hasStr (pageText d) "Inside a list." && !hasStr (pageText d) "[^a]" &&
+        (Ir.footnotesOf d.body).size == 1 && !ds.any (·.subject == some "md:note-unused"))
   let (_, ds) := elabMd "Text[^a].\n\n[^a]: Once.\n\n[^a]: Twice.\n\n[^b]: Never named.\n\n[^c]: ```\n"
   t s!"md notes: a second definition and one nothing names are named ({repr (ds.map (·.subject))})"
     (ds.any (·.subject == some "md:note-again") && ds.any (·.subject == some "md:note-unused"))
@@ -159,10 +163,10 @@ def noteChecks (ref : IO.Ref (List String)) : IO Unit := do
       hasStr (twinOf seams) "and ![^3](x.png)" && hasStr (twinOf seams) "[^3]: The note.")
   let inside := worksMeta ++ "Cite [see[^n] @a, p. 3] and ![a chart[^n]](chart.svg).\n\n[^n]: The note.\n"
   let (_, ds) := elabMd inside
-  t s!"md notes: a note named in a citation's note or an alternative is named, not unused \
-({repr (ds.map (·.subject))})"
-    ((ds.filter (·.subject == some "md:note-in-text")).size == 2 &&
-      !ds.any (·.subject == some "md:note-unused"))
+  t s!"md notes: a note named in an alternative is named, one in a citation's note set after it, \
+neither unused ({repr (ds.map (·.subject))})"
+    ((ds.filter (·.subject == some "md:note-in-text")).size == 1 &&
+      ds.any (·.subject == some "cite:note-footnote") && !ds.any (·.subject == some "md:note-unused"))
   let listed := "Intro[^m] text.\n\n- item one[^n]\n- item two\n\n[^n]: First note.\n[^m]: Second note.\n"
   t s!"md notes: definitions after a list are read ({repr (twinOf listed)})"
     (hasStr (twinOf listed) "[^1]: Second note." && hasStr (twinOf listed) "[^2]: First note.")
@@ -220,5 +224,69 @@ text.}. Two\\footnote{Plain.}.\n\\end{document}\n"
 ({repr twin})"
     (hasStr twin "[^1]: Outer (Inner.) text." && hasStr twin "[^2]: Plain." &&
       MarkdownDoc.emit (elabMd twin).1 == twin)
+
+/-- Pandoc's inline note `^[…]` reads its content as the text's own, citations included, and its
+twin reads back. -/
+def inlineNoteChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let src := worksMeta ++ "Text^[An inline note citing @a and *more*.] here^[Two [x] y.] end.\n"
+  let (d, ds) := mdBibBuild src #[("works.bib", worksBib)]
+  t s!"md inline note: its content is a note, its citation cited ({repr (pageText d)})"
+    (hasStr (pageText d) "An inline note citing Ash [2001] and more." && hasStr (pageText d) "Two [x] y." &&
+      !hasStr (pageText d) "^[" && (Ir.footnotesOf d.body).size == 2 && keysOf d == ["a"] &&
+      !ds.any (·.kind == .W0392))
+  let twin := MarkdownDoc.emit d
+  let (back, _) := mdBibBuild twin #[("works.bib", worksBib)]
+  t s!"md inline note: the twin reads back ({repr twin})"
+    (MarkdownDoc.emit back == twin && pageText back == pageText d)
+  t s!"md inline note: an abbreviation before one joins, as Pandoc's smart punctuation does \
+({repr (pageText (elabMd "See cf. ^[A note.] here.\n").1)})"
+    (hasStr (pageText (elabMd "See cf. ^[A note.] here.\n").1) "cf.\u00a0")
+  let (d, ds) := elabMd "An image ![a ^[note] chart](chart.svg) here.\n"
+  t s!"md inline note: one in an alternative sets nothing, named ({repr (ds.map (·.subject))})"
+    ((Ir.footnotesOf d.body).size == 0 && ds.any (·.subject == some "md:note-in-text"))
+  let (d, _) := elabMd "Unbalanced ^[open here.\n"
+  t s!"md inline note: a bracket that never closes is text ({repr (pageText d)})"
+    (hasStr (pageText d) "^[open here." && (Ir.footnotesOf d.body).size == 0)
+  let (d, _) := includedDoc "h.tex" (dvDoc "\\usepackage{markdown}\n" "\\markdownInput{p.md}")
+    [("p.md", "p.md", "Text^[A note.] here.\n")]
+  t s!"md inline note: an included file reads none, as the markdown package's default \
+({repr (pageText d)})"
+    (hasStr (pageText d) "^[A note.]")
+
+/-- A footnote in a citation's note, in either surface, sets after the citation, named once. -/
+def citeNoteChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let src := worksMeta ++ "Five [@a, see^[x]] and [see [^n] @b] end.\n\n[^n]: The note.\n"
+  let (d, ds) := mdBibBuild src #[("works.bib", worksBib)]
+  t s!"md cite note: a note in a citation's note sets after the citation ({repr (pageText d)})"
+    (hasStr (pageText d) "The note." && !hasStr (pageText d) "^[" && !hasStr (pageText d) "[^n]" &&
+      (Ir.footnotesOf d.body).size == 2 && keysOf d == ["a", "b"] &&
+      hasStr (pageText d) "[see Birch, 2002]" && ds.any (·.subject == some "cite:note-footnote"))
+  let tex := "\\documentclass{article}\n\\usepackage{natbib}\n\\begin{document}\n\
+Text \\citep[see\\footnote{An inner note.}][p.~3]{a} end.\n\\bibliographystyle{plainnat}\n\
+\\bibliography{works}\n\\end{document}\n"
+  let (d, ds) := bibBuild tex #[("works", worksBib)]
+  t s!"tex cite note: a footnote in a citation's note sets after the citation, its text once \
+({repr (pageText d)})"
+    (hasStr (pageText d) "[see Ash, 2001, p.\u00a03]" && (Ir.footnotesOf d.body).size == 1 &&
+      ((pageText d).splitOn "An inner note.").length == 2 &&
+      ds.any (·.subject == some "cite:note-footnote"))
+
+/-- A TeX figure's caption citing fills its image's alternative with the caption's citations as the
+reference list sets them. -/
+def captionAltChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let src := "\\documentclass{article}\n\\usepackage{natbib}\n\\begin{document}\n\\begin{figure}\n\
+\\includegraphics{chart.svg}\n\\caption{A chart from \\citet{a} and \\citep[p.~3]{b}.}\n\\end{figure}\n\
+Text.\n\\bibliographystyle{plainnat}\n\\bibliography{works}\n\\end{document}\n"
+  let (d, _) := bibBuild src #[("works", worksBib)]
+  t s!"tex alt: a caption's citations read in its image's alternative as the list sets them \
+({imageNames d})"
+    ((imageNames d).contains "A chart from Ash [2001] and [Birch, 2002, p.\u00a03].")
+  let (d, _) := elabStr "\\documentclass{article}\n\\begin{document}\n\\begin{figure}\n\
+\\includegraphics{chart.svg}\n\\caption{A plain chart.}\n\\end{figure}\n\\end{document}\n"
+  t s!"tex alt: a caption citing nothing fills the alternative with its words ({imageNames d})"
+    ((imageNames d).contains "A plain chart.")
 
 end Tests.MdNoteEdges

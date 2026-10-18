@@ -2867,11 +2867,11 @@ private theorem skipBracketRun_ge (raws : Array Raw) (j : Nat) :
       omega
   next => omega
 
-/-- One citation note, the `[...]` run at `j` elaborated by `el`, with the
-index past it; `none` at `j` when no bracket opens there. -/
+/-- One citation note, the `[...]` run at `j` elaborated by `el`, its footnotes apart, which the
+note's text cannot hold, with the index past it; `none` at `j` when no bracket opens there. -/
 private def citeNote (raws : Array Raw) (j w : Nat) (hw : sliceWeight raws j ≤ w)
     (el : (sub : Array Raw) → rawWeightList sub.toList < w → EM (Array Inline)) :
-    EM (Option String × { k : Nat // j ≤ k }) := do
+    EM (Option String × Array Inline × { k : Nat // j ≤ k }) := do
   match hj : raws[j]? with
   | some (.sym '[' _) =>
     have hjlt := getElem?_lt hj
@@ -2881,8 +2881,12 @@ private def citeNote (raws : Array Raw) (j w : Nat) (hw : sliceWeight raws j ≤
     let note ← el (raws.extract (j + 1) c)
       (Nat.lt_of_lt_of_le (extract_lt_slice c hjlt (Nat.lt_succ_self j)) hw)
     have hk := skipSpaces_ge raws (c + 1)
-    return (some (Ir.plainText note), ⟨skipSpaces raws (c + 1), by omega⟩)
-  | _ => return (none, ⟨j, Nat.le_refl j⟩)
+    let notes := note.filter (· matches .footnote ..)
+    let text := Ir.plainText (note.filter (!· matches .footnote ..))
+    -- A footnote set apart takes the space beside it, which would stand twice.
+    return (some (if notes.isEmpty then text else text.trimAscii.toString), notes,
+      ⟨skipSpaces raws (c + 1), by omega⟩)
+  | _ => return (none, #[], ⟨j, Nat.le_refl j⟩)
 
 /-- natbib's citation family at `i`: one node per citation group, its keys as
 written and its form beside them, and the index past what was read. -/
@@ -2894,8 +2898,13 @@ private def citeArm (ctx : Ctx) (raws : Array Raw) (i : Nat) (name : String)
   have hj0 := skipSpaces_ge raws (i + 1)
   let j1 := skipStar raws j0
   have hj1 := skipStar_ge raws j0
-  let (n1, ⟨j2, hj2⟩) ← citeNote raws j1 (sliceWeight raws i) (sliceWeight_le raws (by omega)) el
-  let (n2, ⟨j3, hj3⟩) ← citeNote raws j2 (sliceWeight raws i) (sliceWeight_le raws (by omega)) el
+  let (n1, f1, ⟨j2, hj2⟩) ← citeNote raws j1 (sliceWeight raws i) (sliceWeight_le raws (by omega)) el
+  let (n2, f2, ⟨j3, hj3⟩) ← citeNote raws j2 (sliceWeight raws i) (sliceWeight_le raws (by omega)) el
+  -- premise: Tests.MdNoteEdges.citeNoteChecks — a note's footnote sets after its citation
+  let notes := f1 ++ f2
+  unless notes.isEmpty do
+    warnOnce ctx "cite:note-footnote" .W0110 "a footnote in a citation's note sets after the \
+citation: the note holds text" pos (help := "write the footnote after the citation")
   let (pre, post) := match n1, n2 with
     | some a, some b => (a, b)
     | some a, none => ("", a)
@@ -2918,9 +2927,9 @@ private def citeArm (ctx : Ctx) (raws : Array Raw) (i : Nat) (name : String)
         -- `\@bsphack`/`\@esphack`: a space before swallows the spaces after.
         let j4 := skipSpaces raws (j3 + 1)
         have hj4 := skipSpaces_ge raws (j3 + 1)
-        return (#[.cite form keys],
+        return (#[.cite form keys] ++ notes,
           if raws[i - 1]? matches some .space then ⟨j4, by omega⟩ else ⟨j3 + 1, by omega⟩)
-      return (#[.cite form keys], ⟨j3 + 1, by omega⟩)
+      return (#[.cite form keys] ++ notes, ⟨j3 + 1, by omega⟩)
   | _ =>
     diag ctx .E0304 s!"'\\{name}' needs a \{keys} group" pos
     return (#[], ⟨j3, by omega⟩)

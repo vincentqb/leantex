@@ -2120,7 +2120,16 @@ def reports : List Report := [
       "pandoc 3.12.1 on invented probes: an abbreviation after an ellipsis or an opening bracket joins; one in a word an ellipsis runs into, before an escaped dot or a character reference keeps its space, as one before an author's key, a bracketed key or a bracket of words before a key does, whether or not a bibliography reads them; the metadata's list heading joins as the text does; an escaped space in a citation's note is a non-breaking one; an attribute value opening on a quote no later one closes reads bare and the braces hold an attribute list, one with a space in it none; this tree reads each alike",
       "md4c's label rule (doc-gen4's reader): leading whitespace skipped, each later run of space, tab, line ending, vertical tab or a Zs space one space, a trailing one kept; a defined label shows as written; this tree's docstrings match so",
       "the corpus built by main's binary at 6095f103 and by this tree's: every artifact and diagnostic byte-identical"]
-    state := .guarded "6095f103" .before .author }
+    state := .guarded "6095f103" .before .author },
+  { id := "R237", date := "2026-10-18"
+    what := "a markdown footnote's definition inside a list item or a block quote stayed its text; Pandoc's inline note was text; a note in a citation's note was dropped, and a TeX footnote in a citation's note set its text inline in the note; a TeX figure whose caption cited filled its image's alternative with a mark for each citation"
+    pins := [check% Tests.MdNoteEdges.noteChecks, check% Tests.MdNoteEdges.inlineNoteChecks,
+      check% Tests.MdNoteEdges.citeNoteChecks, check% Tests.MdNoteEdges.captionAltChecks,
+      thm% Ir.captionRuns_said]
+    accept := ["the new checks fail built against the tree before this commit and pass on it",
+      "pandoc 3.12.1 on invented probes: a definition in an item or a quote defines its note; an inline note's content, citations included, is a note, an abbreviation before it joined; a note in a citation's prefix or suffix stands inside the citation, which this tree sets after it, named",
+      "lualatex with natbib on invented probes: a footnote in a citation's note marks the note inside the brackets; this tree marks it after them, named once; a figure's caption citing sets its citations as the list does, which the image's alternative now reads"]
+    state := .guarded "dfebcc96" .before .author }
 ]
 
 /-- The reports guarded but never seen failing, a count held in both directions. -/

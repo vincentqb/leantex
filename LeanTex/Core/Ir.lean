@@ -17629,13 +17629,13 @@ public theorem Styles.linkBodyAfford_text (s : Styles) (kind : String) :
   exact mapBlocks_text (s.linkLeafAfford kind) (s.linkLeafAfford_text kind)
 
 /-- A caption fills only an undeclared alternative. -/
-private def setAltFill (alt : String) : Alt → Alt
-  | .undeclared => Alt.declare alt
+private def setAltFill (alt : Alt) : Alt → Alt
+  | .undeclared => alt
   | .decorative => .decorative
   | .described t => .described t
   | .citing runs => .citing runs
 
-private theorem setAltFill_fixed_point (alt : String) (a : Alt) (h : a ≠ .undeclared) :
+private theorem setAltFill_fixed_point (alt : Alt) (a : Alt) (h : a ≠ .undeclared) :
     setAltFill alt a = a := by
   cases a with
   | undeclared => exact absurd rfl h
@@ -17643,26 +17643,132 @@ private theorem setAltFill_fixed_point (alt : String) (a : Alt) (h : a ≠ .unde
   | described _ => rfl
   | citing _ => rfl
 
-/-- Give every non-text object with no alternative yet this text, as a
+/-- Give every non-text object with no alternative yet this one, as a
 `figure` caption names what it captions. -/
-private def setAltLeaf (alt : String) (x : Inline) : Inline :=
+private def setAltLeaf (alt : Alt) (x : Inline) : Inline :=
   match x with
   | .image src size old => .image src size (setAltFill alt old)
   | _ => x
 
-private def setAltPic (alt : String) (pic : Pic.Picture) : Pic.Picture :=
+private def setAltPic (alt : Alt) (pic : Pic.Picture) : Pic.Picture :=
   { pic with alt := setAltFill alt pic.alt }
 
-public def setAltBlocks (alt : String) (xs : Array Block) : Array Block :=
+public def setAltBlocks (alt : Alt) (xs : Array Block) : Array Block :=
   mapBlocksPic (setAltPic alt) (setAltLeaf alt) xs
 
-public theorem setAltBlocks_text (alt : String) :
+public theorem setAltBlocks_text (alt : Alt) :
     Conserves blocksText (setAltBlocks alt) :=
   mapBlocksPic_text _ _ (fun x => by cases x <;> rfl)
 
+/-- Runs with `s` joined to the words that end them. -/
+public def AltRun.pushText (acc : Array AltRun) (s : String) : Array AltRun :=
+  match acc.back? with
+  | some (.text t) => acc.pop.push (.text (t ++ s))
+  | _ => if s.isEmpty then acc else acc.push (.text s)
+
+mutual
+
+/-- A caption's first page as an alternative's runs onto `acc`: its words as `firstPageText` reads
+them, each citation a run the reference list sets. -/
+-- conserves: none — one page's reading.
+public def captionRunsOne (acc : Array AltRun) (x : Inline) : Array AltRun :=
+  match x with
+  | .cite form keys => acc.push (.cite form keys none)
+  | .altSteps spec firstPage otherPage =>
+    let blank (xs : Array Inline) : Bool := !(plainText xs).toList.any (!·.isWhitespace)
+    if spec.maxStep == 0 || (blank firstPage && !blank otherPage) then
+      captionRunsList acc otherPage.toList
+    else captionRunsList acc firstPage.toList
+  | .styled _ body | .colored _ _ body | .located _ body | .role _ body
+  | .link _ body | .decorated _ body | .boxed _ body | .onSteps _ body | .footnote _ body | .cited _ _ body =>
+    captionRunsList acc body.toList
+  | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _ | .label _
+  | .ref _ _ _ _ | .fill | .hspace _ _ | .rule _ _ _ | .strut _
+  | .italicCorr _ | .pageNumber | .pageCount | .linebreak _ =>
+    AltRun.pushText acc (plainTextOne x)
+
+public def captionRunsList (acc : Array AltRun) : List Inline → Array AltRun
+  | [] => acc
+  | x :: rest => captionRunsList (captionRunsOne acc x) rest
+
+end
+
+private theorem said_join_push (acc : Array AltRun) (r : AltRun) :
+    String.join ((acc.push r).toList.map AltRun.said) =
+      String.join (acc.toList.map AltRun.said) ++ r.said := by
+  simp [String.join_append]
+
+private theorem pushText_said (acc : Array AltRun) (s : String) :
+    String.join ((AltRun.pushText acc s).toList.map AltRun.said) =
+      String.join (acc.toList.map AltRun.said) ++ s := by
+  unfold AltRun.pushText
+  split
+  · next t h =>
+    have hne : acc ≠ #[] := by
+      intro he; simp [he] at h
+    have hacc : acc = acc.pop.push (.text t) := by
+      rw [Array.back?_eq_some_iff] at h
+      obtain ⟨ys, hys⟩ := h
+      rw [hys]; simp
+    conv => rhs; rw [hacc]
+    rw [said_join_push, said_join_push]
+    simp [AltRun.said, String.append_assoc]
+  · split
+    · next hs =>
+      have he : s = "" := by simpa [String.isEmpty_iff] using hs
+      simp [he]
+    · rw [said_join_push]; rfl
+
+mutual
+
+private theorem captionRunsOne_said (acc : Array AltRun) (x : Inline) :
+    String.join ((captionRunsOne acc x).toList.map AltRun.said) =
+      firstPageTextOne (String.join (acc.toList.map AltRun.said)) x := by
+  cases x with
+  | cite form keys =>
+    simp only [captionRunsOne, firstPageTextOne, said_join_push, AltRun.said, Option.getD_none,
+      plainTextOne]
+    rfl
+  | altSteps spec firstPage otherPage =>
+    simp only [captionRunsOne, firstPageTextOne]
+    split
+    · exact captionRunsList_said acc otherPage.toList
+    · exact captionRunsList_said acc firstPage.toList
+  | styled _ body | colored _ _ body | located _ body | role _ body | link _ body
+  | decorated _ body | boxed _ body | onSteps _ body | footnote _ body | cited _ _ body =>
+    simp only [captionRunsOne, firstPageTextOne]
+    exact captionRunsList_said acc body.toList
+  | text _ | math _ _ | formula _ _ _ | image _ _ _ | icon _ _ | label _ | ref _ _ _ _ | fill
+  | hspace _ _ | rule _ _ _ | strut _ | italicCorr _ | pageNumber | pageCount | linebreak _ =>
+    simp only [captionRunsOne, firstPageTextOne, pushText_said]
+    rfl
+
+private theorem captionRunsList_said (acc : Array AltRun) : (l : List Inline) →
+    String.join ((captionRunsList acc l).toList.map AltRun.said) =
+      firstPageTextList (String.join (acc.toList.map AltRun.said)) l
+  | [] => rfl
+  | x :: rest => by
+    simp only [captionRunsList, firstPageTextList]
+    rw [captionRunsList_said (captionRunsOne acc x) rest, captionRunsOne_said acc x]
+
+end
+
+/-- A caption's citing alternative says what its words say until its citations resolve. -/
+public theorem captionRuns_said (caption : Array Inline) :
+    String.join ((captionRunsList #[] caption.toList).toList.map AltRun.said) =
+      firstPageText caption := by
+  rw [captionRunsList_said]
+  simp [firstPageText]
+
+/-- A caption's first page as the alternative of what it captions: its words, or, where it cites,
+its runs, whose citations the reference list sets as the caption's. -/
+public def captionAlt (caption : Array Inline) : Alt :=
+  let runs := captionRunsList #[] caption.toList
+  if runs.any (· matches .cite ..) then .citing runs else Alt.declare (firstPageText caption)
+
 /-- A caption's first-page words as the alternative of what it captions. -/
 public def captionAltBlocks (caption : Array Inline) (xs : Array Block) : Array Block :=
-  setAltBlocks (firstPageText caption) xs
+  setAltBlocks (captionAlt caption) xs
 
 public theorem captionAltBlocks_text (caption : Array Inline) :
     Conserves blocksText (captionAltBlocks caption) :=

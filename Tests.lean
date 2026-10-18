@@ -426,6 +426,9 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   Tests.MdNoteEdges.altChecks ref
   Tests.MdNoteEdges.noteChecks ref
   Tests.MdNoteEdges.noteTwinChecks ref
+  Tests.MdNoteEdges.inlineNoteChecks ref
+  Tests.MdNoteEdges.citeNoteChecks ref
+  Tests.MdNoteEdges.captionAltChecks ref
   Tests.MdCiteEdges.keyDigitChecks ref
   Tests.MdCiteEdges.everyEntryChecks ref
   Tests.MdCiteEdges.bracketTailChecks ref
