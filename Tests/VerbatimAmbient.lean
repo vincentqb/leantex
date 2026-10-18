@@ -12,7 +12,7 @@ open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 /-- The first verbatim or listing block of an elaborated source. -/
 private def firstListingSpec (src : String) : Option Ir.ListingSpec :=
   (elabStr src).1.body.findSome? fun b => match b with
-    | .verbatim _ _ spec => some spec
+    | .verbatim _ _ spec | .role _ #[.verbatim _ _ spec] => some spec
     | _ => none
 
 /-- The first glyph-setting run of a shipped body line holding `needle`: its face index, size and

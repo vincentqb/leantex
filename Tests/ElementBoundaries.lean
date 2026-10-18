@@ -196,13 +196,23 @@ private def htmlPairChecks (ref : IO.Ref (List String)) : IO Unit := do
       | _ => true)
 
 /-- A listing whose class does not space its environment's frame as TeX does stands as a paragraph
-there, so the display after it opens on its empty line with or without a blank line. -/
+there, so the display after it opens on its empty line with or without a blank line; one framed
+as a trivlist leaves `\@endpe`, so a display right after it opens on none. -/
 private def unframedEndPeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let verbatim := "\\begin{verbatim}\nalpha code\n\\end{verbatim}"
   let minted := "\\begin{minted}{text}\nalpha code\n\\end{minted}"
   let display := "\\[ \\text{Omega} = z \\]"
-  let cases := [("article", verbatim), ("resume", verbatim), ("webpage", verbatim),
-    ("poster", verbatim), ("webpage", minted)]
+  for cls in ["article", "resume", "poster"] do
+    let spanOf (sep : String) : Option Dim.Sp :=
+      let src := s!"\\documentclass\{{cls}}\n\\begin\{document}\n" ++ verbatim ++ sep ++ display ++
+        "\n\\end{document}\n"
+      let (doc, _) := Elab.run s!"element-boundaries-endpe-{cls}.tex" src
+      ((Layout.run (Layout.Geom.ofPage doc.page) fonts none doc).pages[0]?).bind probeSpan
+    check ref s!"element boundaries ({cls}): a display right after a framed verbatim opens on no empty line"
+      (match spanOf "\n", spanOf "\n\n" with
+       | some tight, some blank => tight < blank
+       | _, _ => false)
+  let cases := [("webpage", verbatim), ("webpage", minted)]
   for (cls, listing) in cases do
     let spanOf (sep : String) : Option Dim.Sp :=
       let src := s!"\\documentclass\{{cls}}\n\\usepackage\{minted}\n\\begin\{document}\n" ++

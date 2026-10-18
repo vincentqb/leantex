@@ -42,9 +42,10 @@ frame
     text "Code"
   para
     text "Definition:"
-  verbatim
-    "def pages (doc : Doc) : Nat :="
-    "    (layout doc).pages.size"
+  role in-paragraph
+    verbatim
+      "def pages (doc : Doc) : Nat :="
+      "    (layout doc).pages.size"
   para
     step 2-2
       role dim

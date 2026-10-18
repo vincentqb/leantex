@@ -2095,7 +2095,14 @@ def reports : List Report := [
     accept := ["invented probes under lualatex 1.24: the nested edef call, the bare assignments scoped to their group, a declared paragraph indent read back, a footskip of 2em as 20pt, and an open dimexpr, each set as lualatex sets it, and the paragraph indent read as the flush indent this tree's paragraphs take; this tree sets the same",
       "main at d720e3cc refuses the edef, prints the assignments' values, stops at the 2em footskip and the indent's space and drops the open dimexpr; the guards fail there",
       "the corpus built by main's binary at d720e3cc and by this tree's: every artifact and diagnostic byte-identical"]
-    state := .guarded "d720e3cc" .before .author }
+    state := .guarded "d720e3cc" .before .author },
+  { id := "R235", date := "2026-10-18"
+    what := "a center, flushleft, flushright or verbatim stood off by the engine's own rhythm, one quantum over the peer gap at every list depth, and an article's verbatim by the peer gap alone, where LaTeX's trivlist spends the topsep in force (its list level's inside a list), the partopsep where it opens in vertical mode and the parskip in force on top, and nothing where it opens an item, a quotation or another trivlist; a list or quote opening such a trivlist, and a quote opening an item, took their own skips there; a heading after a center stood its peer gap further off; and the web page read a declared topsep or partopsep in CSS points, short of its own gaps"
+    pins := [check% trivlistChecks, thm% Ir.TrivIn.within_declared_exact, thm% Ir.trivIn_exact]
+    accept := ["lualatex on 1199 invented probes: center, flushleft, flushright and verbatim at the top level and in items of levels one to three, opening and closing items, quotes, quotations and verses, after headings and each other, under article at 10, 11 and 12pt, report, book, scrartcl with parskip false, half and full, scrreprt and beamer frames, with declared topsep, partopsep, parskip, enumitem's setlist and a list's own keys; this tree's PDF sets every gap of 1157 of them as lualatex does, to a hundredth of a point past the page's own baselineskip, where main's binary at 4c717497 set 108 so and stood others up to 15pt off; the rest differ only by a heading's own space below it, after which the trivlist adds none as in lualatex, an article's peer gap between paragraphs, a level-two deck list's smaller type, and a minipage's opening",
+      "in Chromium the web page sets the same gaps as shares of its line height, a declared topsep and partopsep included",
+      "the corpus built by main's binary at 4c717497 and by this tree's: seven fixtures' PDFs and web pages and one more PDF change, each only at a trivlist's boundary or a heading after one; every other artifact is visually identical"]
+    state := .guarded "4c717497" .before .author }
 ]
 
 /-- The reports guarded but never seen failing, a count held in both directions. -/

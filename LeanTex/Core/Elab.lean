@@ -9800,7 +9800,7 @@ private def verbRunsInline (env : String) (v : Parse.Verbatim) (cur raws : Array
 
 /-- A listing block from a lexically blind capture, honouring the supported
 listings and minted keys and naming every other key or value. -/
-private def listingBlock (ctx : Ctx) (env : String) (v : Parse.Verbatim) (pos : Pos) :
+private def listingBody (ctx : Ctx) (env : String) (v : Parse.Verbatim) (pos : Pos) :
     EM Block := do
   -- `\mint` is minted's one-line environment (minted.sty v3.7).
   let (env, v, opener) := if env == "mint" then
@@ -9823,7 +9823,7 @@ is set as a display listing" pos
     return .verbatim none v.text
       { base with
         fontSize := inherited, source := some (ctx.sourceSpan sourceStart)
-        frame := Ir.ListingFrame.onPage ctx.surface ctx.lists ctx.page.parskip .trivlist }
+        frame := Ir.ListingFrame.onPage ctx.surface ctx.lists .trivlist }
   let mut caption : Option String := none
   let mut label : Option String := none
   let mut numbers := false
@@ -9959,7 +9959,7 @@ is set as a display listing" pos
     -- premise: markdownCodeChecks — lstlisting wraps with its own indent
     breakIndent := if env == "lstlisting" then some Ir.listingBreakIndent else base.breakIndent
     wrapAt := base.wrapAt
-    frame := if env == "minted" then Ir.ListingFrame.onPage ctx.surface ctx.lists ctx.page.parskip .list
+    frame := if env == "minted" then Ir.ListingFrame.onPage ctx.surface ctx.lists .list
       else .none
     source := some (ctx.sourceSpan contentPos) }
   let spec ← match caption with
@@ -9990,6 +9990,11 @@ is set as a display listing" pos
 or derives a colour for every code role" pos
         (help := "\\allow{W0387} accepts the skip")
   return .verbatim none content { spec with highlight }
+
+/-- A display listing, marked opened inside a paragraph where `inPar` says so (`Ir.inParagraph`). -/
+private def listingBlock (ctx : Ctx) (env : String) (v : Parse.Verbatim) (pos : Pos) (inPar : Bool) :
+    EM Block :=
+  (fun b => if inPar then Ir.inParagraph b else b) <$> listingBody ctx env v pos
 
 /-- amsmath's `\tagform@`: the tag in parentheses, joined to its first and
 last text runs. -/
@@ -13148,9 +13153,11 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
       if verbRunsInline env s cur raws i then
         elabBlocksGo ctx' raws (i + 1) blocks (cur.push raws[i]) gen'
       else
+      let k := blocks.size
       let (⟨ctx', hm⟩, blocks) ← flushPara ctx' blocks cur
+      let opened := Ir.flushedText k blocks
       let blocks ← if cur.isEmpty then pure blocks else drainLoose ctx' blocks
-      let b ← listingBlock ctx' env s vpos
+      let b ← listingBlock ctx' env s vpos opened
       -- A display listing's environment is a trivlist, which leaves `\@endpe`.
       elabBlocksGo ctx' raws (i + 1) (parContinues ctx' raws (i + 1) true (blocks.push b)) #[] gen'
     | .math display body mpos =>

@@ -999,8 +999,8 @@ private def beamerTopsepTable : List (Nat × SymGlue) :=
 private def beamerOptionOf (size : Sp) : Nat :=
   ((displayOptions.find? fun o => Dim.pt o.1 == size || o.2 == size).map (·.1)).getD 11
 
-/-- A trivlist's space in a lineage at the list depth it stands in; outside
-beamer's lineage, `trivlistSkip`. -/
+/-- The `\topsep` in force at a list depth: outside every list the document's where declared, else
+the size file's `\@listI` or beamer's option's; inside, the level's; the web's `trivlistSkip`. -/
 public def trivlistSkipFor (l : ListLineage) (tokens : Tokens) (size : Sp) (depth : Nat) :
     SymGlue :=
   match l with
@@ -1008,7 +1008,11 @@ public def trivlistSkipFor (l : ListLineage) (tokens : Tokens) (size : Sp) (dept
     let top := (beamerTopsepTable.lookup (beamerOptionOf size)).getD (trivlistSkipDefault size)
     if depth == 0 then (tokens.find? trivlistSkipName).getD top
     else ((listSkips .beamer size depth).map (·.topsep)).getD top
-  | .sizeFile | .web => trivlistSkip tokens size
+  | .sizeFile =>
+    let level :=
+      ((listSkips .sizeFile size (max depth 1)).map (·.topsep)).getD (trivlistSkipDefault size)
+    if depth == 0 then (tokens.find? trivlistSkipName).getD level else level
+  | .web => trivlistSkip tokens size
 
 /-- A float's space against the text at its list depth, with whether the
 paragraph gap stands on top of it. -/
@@ -1154,6 +1158,66 @@ public theorem ListExtra.koma_exact (l : ListLineage) (size : Sp) (level : Nat) 
   obtain ⟨ht, hi, hp, -⟩ := listSpacing_declared_exact l size level tokens _ sk p h
   rcases declared with ⟨t, q, i, s⟩
   cases t <;> cases i <;> cases s <;> simp_all [ListSet.over]
+
+/-- The `\topsep` and `\partopsep` in force where a trivlist opens, which `\@trivlist` spends. -/
+public structure TrivIn where
+  topsep : SymGlue
+  partopsep : SymGlue
+  deriving Repr, BEq, Inhabited
+
+/-- `\@topsepadd`: the `\topsep` in force, with the `\partopsep` where the trivlist opens in
+vertical mode. -/
+public def TrivIn.add (t : TrivIn) (vertical : Bool) : SymGlue :=
+  if vertical then t.topsep.add t.partopsep else t.topsep
+
+/-- Outside every list: the document's `\topsep` and `\partopsep` where declared, else the
+class's. -/
+public def TrivIn.top (l : ListLineage) (tokens : Tokens) (size : Sp) : TrivIn :=
+  { topsep := trivlistSkipFor l tokens size 0
+    partopsep := (tokens.find? "partopsep").getD (partopsepDefault l size) }
+
+/-- Inside a list at `level` spaced `sk`, `pts` (`listSpacing`): the level's `\topsep`, which
+enumitem's `\trivlist` sets again over a declared one, KOMA-Script's the list's own, and the list's
+`\partopsep`; a lineage without levels keeps `outer`. -/
+public def TrivIn.within (l : ListLineage) (extra : ListExtra) (size : Sp) (level : Nat)
+    (sk : ListSkips) (pts : SymGlue) (outer : TrivIn) : TrivIn :=
+  match listSkips l size level with
+  | none => outer
+  | some lv => { topsep := if extra == .koma then sk.topsep else lv.topsep, partopsep := pts }
+
+/-- Where a lineage's trivlists take TeX's `\parskip` on their space; the web's take the page's
+peer gap. -/
+public def ListLineage.trivTexParskip : ListLineage → Bool
+  | .sizeFile | .beamer => true
+  | .web => false
+
+public theorem TrivIn.within_declared_exact (l : ListLineage) (size : Sp) (level : Nat)
+    (tokens : Tokens) (set : ListSet) (sk : ListSkips) (pts : SymGlue) (outer : TrivIn)
+    (lv : ListSkips) (hl : listSkips l size level = some lv)
+    (h : listSpacing l size level tokens set = some (sk, pts)) :
+    (TrivIn.within l .none size level sk pts outer).topsep = lv.topsep ∧
+      (TrivIn.within l .none size level sk pts outer).partopsep =
+        set.partopsep.getD (partopsepFor l size level tokens) := by
+  unfold listSpacing at h
+  rw [hl] at h
+  simp only [Option.some.injEq, Prod.mk.injEq] at h
+  obtain ⟨-, rfl⟩ := h
+  have hk : (ListExtra.none == ListExtra.koma) = false := rfl
+  simp [TrivIn.within, hl, hk]
+
+public theorem trivIn_exact :
+    ((TrivIn.top .sizeFile {} (Dim.pt 10)).add true).width.sp = Dim.pt 10 ∧
+    ((TrivIn.top .sizeFile {} (Dim.pt 10)).add false).width.sp = Dim.pt 8 ∧
+    ((TrivIn.top .sizeFile {} (Dim.pt 11)).add true).width.sp = Dim.pt 12 ∧
+    ((TrivIn.top .sizeFile {} (Dim.pt 12)).add true).width.sp = Dim.pt 13 ∧
+    ((TrivIn.top .beamer {} (Dim.pt 11)).add true).width.sp = Dim.pt 9 ∧
+    ((listSpacing .sizeFile (Dim.pt 10) 2 {} {}).map fun (sk, pts) =>
+      ((TrivIn.within .sizeFile .none (Dim.pt 10) 2 sk pts (TrivIn.top .sizeFile {} (Dim.pt 10))).add
+        true).width.sp) = some (Dim.pt 6) ∧
+    ((listSpacing .sizeFile (Dim.pt 10) 3 {} {}).map fun (sk, pts) =>
+      ((TrivIn.within .sizeFile .none (Dim.pt 10) 3 sk pts (TrivIn.top .sizeFile {} (Dim.pt 10))).add
+        true).width.sp) = some (Dim.pt 3) := by
+  decide
 
 /-- The four glues a size file's `\normalsize` sets around display math. -/
 public structure DisplaySkips where
@@ -4818,10 +4882,9 @@ public inductive ListingFrame where
 
 /-- The frame a listing stands in on a page: its environment's where the class
 spaces it as TeX does, else `none`. -/
-public def ListingFrame.onPage (surface : Surface) (lists : ListLineage)
-    (parskip : Option Dim.SymGlue) : ListingFrame → ListingFrame
-  | .trivlist =>
-    if surface == .tex && lists == .beamer && parskip.isSome then .trivlist else .none
+public def ListingFrame.onPage (surface : Surface) (lists : ListLineage) :
+    ListingFrame → ListingFrame
+  | .trivlist => if surface == .tex && lists != .web then .trivlist else .none
   | .list => if surface == .tex && lists != .web then .list else .none
   | .none => .none
 
@@ -5240,10 +5303,20 @@ public theorem displayParts_location_exact (span : Span) (body : Array Inline) (
   cases displayParts body.toList seen <;> simp [displayParts]
 
 /-- The environments `\@trivlist` spaces with `\partopsep` in vertical mode: a
-list, a quote, and the kernel's theorem. -/
+list, a quote, the kernel's theorem, a trivlist and a listing framed as one. -/
 public def Block.partopsepEnv : Block → Bool
   | .list .. | .quote _ _ => true
-  | .role n _ => n == thmSpaceRole .kernel
+  | .verbatim _ _ spec => spec.frame == .trivlist
+  | .role n _ => n == thmSpaceRole .kernel || n == trivlistRole
+  | _ => false
+
+/-- A block that, opening an item, a quotation or a trivlist, stands in its label, where
+`\@noparlist` sets no skip above or below it: a list, a quote, a trivlist or a listing framed as
+one. -/
+public def Block.opensInLabel : Block → Bool
+  | .list .. | .quote _ _ => true
+  | .verbatim _ _ spec => spec.frame == .trivlist
+  | .role n _ => n == trivlistRole
   | _ => false
 
 mutual
@@ -5257,8 +5330,7 @@ public def Block.leavesEndPe : Block → Bool
   | .role n body =>
     thmSpaceOf? n == some .kernel || n == trivlistRole ||
       (n == inParagraphRole && match body with
-        | #[.list ..] | #[.quote _ _] => true
-        | #[.role m _] => thmSpaceOf? m == some .kernel
+        | #[b] => b.partopsepEnv
         | _ => false)
   | .onSteps _ body | .only _ body => leavesEndPeLast body.toList
   | _ => false
@@ -9380,21 +9452,15 @@ public def quoteKindsOf (body : Array Block) : Array QuoteKind :=
       | _ => acc)
     (fun acc _ => acc) #[] body
 
-/-- The nested list or quotation an item closes on, as `\endtrivlist` reads the skip it leaves:
-its declared spacing, whether it opened inside a paragraph, and whether it is a quotation; none
-where it is the item's one block, which opening in the item's label leaves no skip. -/
-public def itemCloses? (item : Array Block) : Option (ListSet × Bool × Bool) :=
-  if item.size < 2 then none else
+/-- Whether an item closes on a nested list, quotation or trivlist, whose skip `\endtrivlist`
+re-reads; not where it is the item's one block, which opening in the item's label leaves none. -/
+public def itemClosesOnSkip (item : Array Block) : Bool :=
+  if item.size < 2 then false else
   match item.back? with
-  | some (.list _ s _) => some (s, false, false)
-  | some (.quote q _) => some (q.spacing, false, true)
-  | some (.role n body) =>
-    if n != inParagraphRole then none
-    else match body with
-      | #[.list _ s _] => some (s, true, false)
-      | #[.quote q _] => some (q.spacing, true, true)
-      | _ => none
-  | _ => none
+  | some b => b.opensInLabel || match b with
+    | .role n #[c] => n == inParagraphRole && c.opensInLabel
+    | _ => false
+  | none => false
 
 /-- The events a context-threading walk declares. -/
 public structure CtxFold (γ : Type) (α : Type) where

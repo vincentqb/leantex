@@ -492,7 +492,8 @@ def htmlRhythmChecks (ref : IO.Ref (List String)) : IO Unit := do
         let s := selSubject part
         if s == "*" || s.isEmpty then none else some s
     | .reset _ _ => []
-    | .parskip _ _ => []).eraseDups
+    | .parskip _ _ => []
+    | .trivIn _ _ _ => []).eraseDups
   let setsMargin (decls : String) : Bool := (decls.splitOn ";").any fun d =>
     match d.splitOn ":" with
     | p :: _ :: _ => ["margin", "margin-top"].contains p.trimAscii.toString
@@ -668,7 +669,7 @@ def htmlListGapChecks (ref : IO.Ref (List String)) : IO Unit := do
     (hasStr deck s!":where({parsep 0}) \{ --parskip: 0.000rem; }" &&
      hasStr deck s!":where({items 0}) \{ margin-top: {space "0.329"}; }" &&
      hasStr deck s!":where({above 0}) \{ margin-top: {space "0.329"}; }" &&
-     !hasStr deck ".u-in-paragraph")
+     !hasStr deck ":where(* + .u-in-paragraph)" && !hasStr deck ":where(.u-in-paragraph + *")
   -- beamerbaselocalstructure.sty: level two's `\itemsep` is zero and level three's `\topsep` 2pt.
   t "html a deck's level-two item after a nested list stands level three's topsep"
     (hasStr deck s!":where({lastList 1 ""}) \{ margin-top: {space "0.219"}; }")
@@ -676,7 +677,7 @@ def htmlListGapChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "html a webpage's lists keep the peer gap and its items a leading"
     (!hasStr web "li + li:" && !hasStr web "dl > *) { --parskip:" &&
      hasStr web ":where(* + ul) { margin-top: var(--parskip, 0.725rem); }" &&
-     hasStr web ":where(* + .u-trivlist-env, * + blockquote) { margin-top: ")
+     hasStr web ":where(* + .u-trivlist-env) { margin-top: ")
   t "html a reference list's entries stand the page's peer gap apart"
     (hasStr art ":where(.bibliography > li + li) { margin-top: var(--parskip, 0.725rem); }")
   -- A selector list's members: its commas outside parentheses (`:is(li, dd)` holds one).
@@ -691,6 +692,8 @@ def htmlListGapChecks (ref : IO.Ref (List String)) : IO Unit := do
     rules.foldl (fun acc r => match r with
       | .boundary sel v => if (topParts sel).contains subject then some v else acc
       | .parskip sel v => if (topParts sel).contains subject then some ("parskip " ++ v) else acc
+      | .trivIn sel t p =>
+        if (topParts sel).contains subject then some s!"trivIn {t} {p}" else acc
       | .reset _ _ => acc) none
   let descPairs : List (String × String) := [0, 1, 2].flatMap fun n =>
     [(s!"{lv n}* + dl", s!"{lv n}* + ul:not(.bibliography)"),

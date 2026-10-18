@@ -3631,66 +3631,159 @@ def classParentsList (c parent : String) (acc : Array String) : List Html.Node �
 
 end
 
-/-- A trivlist opens its `\topsep` on top of the peer gap. -/
+/-- A trivlist spends `\@trivlist`'s space as lualatex sets each probe: the `\topsep` in force, its
+`\partopsep` where it opens in vertical mode and the `\parskip` in force on top, above and below, and
+none in an item's label. -/
 def trivlistChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
-  let doc (pre body : String) : String :=
-    "\\documentclass{article}" ++ pre ++ "\\begin{document}" ++ body ++ "\n\\end{document}"
-  let ys (src : String) (words : List String) : List Dim.Sp :=
+  let doc (cls pre body : String) : String :=
+    s!"\\documentclass{cls}" ++ pre ++ "\\begin{document}" ++ body ++ "\n\\end{document}"
+  let steps (src : String) (words : List String) : List Dim.Sp :=
     let c := censusOfSrc oneFace src
-    words.filterMap (lineYOf c 0 ·)
-  let q := (Ir.trivlistSkipDefault (Layout.Geom.ofPage (elabStr (doc "" "x")).1.page).fontSize).width.sp
-  -- size10.clo's `\topsep` (8pt) and the `\partopsep` (2pt) a list after a blank line adds.
-  let lq : Dim.Sp := Dim.pt 8 + Dim.pt 2
-  let peer : Dim.Sp := match ys (doc "" "Alpha.\n\nBravo.") ["Alpha.", "Bravo."] with
-    | [a, b] => b - a
+    let v := words.filterMap (lineYOf c 0 ·)
+    (v.zip v.tail).map fun (a, b) => b - a
+  let geomOf (src : String) : Layout.Geom := Layout.Geom.ofPage (elabStr src).1.page
+  let leadOf (src : String) : Dim.Sp := Ir.leadingFor (geomOf src).fontSize (geomOf src).leading
+  let lead := leadOf (doc "{article}" "" "x")
+  let gaps (xs : List Int) : List Dim.Sp := xs.map fun x => lead + Dim.pt x
+  let abc := ["Alpha.", "Bravo.", "Charlie."]
+  let abcd := ["Alpha.", "Bravo.", "Charlie.", "Delta."]
+  let ul (body : String) : String := "\\begin{itemize}\n" ++ body ++ "\n\\end{itemize}"
+  -- size10.clo: `\topsep` 8pt and `\partopsep` 2pt; level one's `\parsep` and `\itemsep` 4pt, level
+  -- two's `\topsep` 4pt and `\parsep` 2pt, level three's `\topsep` 2pt and `\partopsep` 1pt.
+  for e in ["center", "flushleft", "flushright", "verbatim"] do
+    let b := s!"\\begin\{{e}}\nBravo.\n\\end\{{e}}"
+    let art := doc "{article}" ""
+    let cases : List (String × String × List String × List Int) :=
+      [("after a blank line", s!"Alpha.\n\n{b}\n\nCharlie.", abc, [10, 10]),
+       ("inside a paragraph", s!"Alpha.\n{b}\nCharlie.", abc, [8, 8]),
+       ("below, as it opened", s!"Alpha.\n\n{b}\nCharlie.", abc, [10, 10]),
+       ("in an item", ul s!"\\item Alpha.\n{b}\nCharlie.", abc, [12, 12]),
+       ("in an item after a blank line", ul s!"\\item Alpha.\n\n{b}\n\nCharlie.", abc, [14, 14]),
+       ("opening an item", ul s!"\\item Alpha.\n\\item {b}\nCharlie.\n\\item Delta.", abcd, [8, 4, 8]),
+       ("last in an item", ul s!"\\item Alpha.\n{b}\n\\item Charlie.", abc, [12, 12]),
+       ("last in a list", "Zulu.\n" ++ ul s!"\\item Alpha.\n{b}" ++ "\nCharlie.", abc, [12, 12]),
+       ("in a level-two item", ul ("\\item Zulu.\n" ++ ul s!"\\item Alpha.\n{b}\nCharlie."), abc, [6, 6]),
+       ("in a level-three item after a blank line",
+         ul ("\\item Zulu.\n" ++ ul ("\\item Yankee.\n" ++ ul s!"\\item Alpha.\n\n{b}\n\nCharlie.")),
+         abc, [3, 3]),
+       ("in a quote", s!"\\begin\{quote}\nAlpha.\n{b}\nCharlie.\n\\end\{quote}", abc, [12, 12]),
+       ("opening a quote", s!"Alpha.\n\\begin\{quote}\n{b}\nCharlie.\n\\end\{quote}\nDelta.", abcd,
+         [8, 4, 8]),
+       ("closing a quote", s!"Alpha.\n\\begin\{quote}\nZulu.\n{b}\n\\end\{quote}\nCharlie.",
+         ["Zulu.", "Bravo.", "Charlie."], [12, 12]),
+       ("in a quotation", s!"\\begin\{quotation}\nAlpha.\n{b}\nCharlie.\n\\end\{quotation}", abc,
+         [8, 8]),
+       ("in a verse", s!"\\begin\{verse}\nAlpha.\n{b}\nCharlie.\n\\end\{verse}", abc, [12, 12]),
+       ("after another", s!"Alpha.\n\n{b}\n\\begin\{{e}}\nCharlie.\n\\end\{{e}}\nDelta.", abcd,
+         [10, 10, 10])]
+    for (name, body, words, want) in cases do
+      t s!"{e} {name}: lualatex's distances" (steps (art body) words == gaps want)
+    t s!"{e} after a heading opens no space above it"
+      (steps (art s!"\\section\{Head}\n{b}\nCharlie.") ["Head", "Bravo."] ==
+        steps (art "\\section{Head}\nBravo.\n\nCharlie.") ["Head", "Bravo."])
+  let center := "\\begin{center}\nBravo.\n\\end{center}"
+  for (cls, top) in [("[11pt]{article}", 12), ("[12pt]{article}", 13), ("{report}", 10), ("{book}", 10),
+      ("{scrartcl}", 12)] do
+    let src := doc cls "" s!"Alpha.\n\n{center}\n\nCharlie."
+    t s!"a center in {cls} after a blank line spends its size file's topsep and partopsep"
+      (steps src abc == [leadOf src + Dim.pt top, leadOf src + Dim.pt top])
+  -- scrsize11pt.clo's level one, and level two under `\@list@extra` from level one's `\parsep`.
+  let koma := doc "{scrartcl}" ""
+    (ul ("\\item Alpha.\n" ++ center ++ "\nCharlie.\n\\item Zulu.\n" ++
+      ul ("\\item Delta.\n\\begin{center}\nEcho.\n\\end{center}\nFoxtrot.")))
+  let kl := leadOf koma
+  t "a KOMA-Script center reads level one's topsep and level two's \\@list@extra"
+    (steps koma ["Alpha.", "Bravo.", "Charlie.", "Zulu.", "Delta.", "Echo.", "Foxtrot."] ==
+      [kl + Dim.pt 27 / 2, kl + Dim.pt 27 / 2, kl + Dim.pt 9, kl + Dim.pt 9 / 2, kl + Dim.pt 9 / 2,
+       kl + Dim.pt 9 / 2])
+  let half := doc "[parskip=half]{scrartcl}" "" (ul ("\\item Alpha.\n" ++ center ++ "\nCharlie.\n\\item Delta."))
+  t "a KOMA-Script center under parskip=half takes the item's parsep alone, as its items do"
+    (match steps half abcd with
+     | [x, y, z] => x == y && y == z && z > leadOf half
+     | _ => false)
+  for (name, pre, body, want) in [
+      ("a declared topsep sets the top level's", "\\setlength{\\topsep}{3pt}",
+        s!"Alpha.\n{center}\nCharlie.", [3, 3]),
+      ("a declared topsep does not reach a list, which resets it", "\\setlength{\\topsep}{3pt}",
+        ul s!"\\item Alpha.\n{center}\nCharlie.", [12, 12]),
+      ("a declared partopsep stacks in vertical mode", "\\setlength{\\partopsep}{5pt}",
+        s!"Alpha.\n\n{center}\n\nCharlie.", [13, 13]),
+      ("a declared partopsep reaches a level-one item", "\\setlength{\\partopsep}{5pt}",
+        ul s!"\\item Alpha.\n\n{center}\n\nCharlie.", [17, 17]),
+      ("a declared parskip stands on top", "\\setlength{\\parskip}{6pt}",
+        s!"Alpha.\n{center}\nCharlie.", [14, 14]),
+      ("a \\setlist parsep and partopsep reach it, its topsep does not",
+        "\\usepackage{enumitem}\\setlist{topsep=3pt,partopsep=7pt,parsep=9pt}",
+        ul s!"\\item Alpha.\n\n{center}\n\nCharlie.", [24, 24]),
+      ("a list's own parsep reaches it", "\\usepackage{enumitem}",
+        s!"\\begin\{itemize}[topsep=2pt,parsep=1pt]\n\\item Alpha.\n{center}\nCharlie.\n\\end\{itemize}",
+        [9, 9])] do
+    t s!"{name}: lualatex's distances" (steps (doc "{article}" pre body) abc == gaps want)
+  t "a center opening a flushleft stands in its label"
+    (steps (doc "{article}" "" ("Alpha.\n\\begin{flushleft}\n" ++ center ++ "\nCharlie.\n\\end{flushleft}\nDelta."))
+      ["Alpha.", "Bravo."] == gaps [8])
+  let peer := match steps (doc "{article}" "" "Alpha.\n\nBravo.") ["Alpha.", "Bravo."] with
+    | [d] => d
     | _ => 0
-  t "trivlist fixtures lay out their peer boundary" (peer > 0)
-  let lead := Ir.leadingFor (Layout.Geom.ofPage (elabStr (doc "" "x")).1.page).fontSize
-  let gaps (src : String) : List Dim.Sp :=
-    match ys src ["Alpha.", "Bravo.", "Charlie."] with
-    | [a, b, c] => [b - a, c - b]
-    | _ => []
-  t "a center environment opens its topsep above and below, on top of the peer gap"
-    (gaps (doc "" "Alpha.\n\n\\begin{center}\nBravo.\n\\end{center}\n\nCharlie.")
-      == [peer + q, peer + q])
-  t "a flushleft environment opens the same space"
-    (gaps (doc "" "Alpha.\n\n\\begin{flushleft}\nBravo.\n\\end{flushleft}\n\nCharlie.")
-      == [peer + q, peer + q])
-  t "a quote opens its list level's topsep above and below, under TeX's own parskip"
-    (gaps (doc "" "Alpha.\n\n\\begin{quote}\nBravo.\n\\end{quote}\n\nCharlie.")
-      == [lead + lq, lead + lq])
-  t "a declared \\topsep does not reach a quote, as \\@listi resets it on entry"
-    (gaps (doc "\\setlength{\\topsep}{3pt}"
-      "Alpha.\n\n\\begin{quote}\nBravo.\n\\end{quote}\n\nCharlie.")
-      == [lead + lq, lead + lq])
-  t "two trivlists meeting pay the larger space once, not both"
-    (gaps (doc "" ("Alpha.\n\n\\begin{center}\nBravo.\n\\end{center}\n" ++
-      "\\begin{center}\nCharlie.\n\\end{center}")) == [peer + q, peer + q])
-  t "a declared \\topsep is the space, exactly"
-    (gaps (doc "\\setlength{\\topsep}{3pt}"
-      "Alpha.\n\n\\begin{center}\nBravo.\n\\end{center}\n\nCharlie.")
-      == [peer + Dim.pt 3, peer + Dim.pt 3])
-  t "the centering declaration opens no space"
-    (gaps (doc "" "Alpha.\n\n{\\centering Bravo.\\par}\n\nCharlie.") == [peer, peer])
+  t "a list opening a center stands in its label, leaving the peer gap below it"
+    (steps (doc "{article}" "" ("Alpha.\n\\begin{center}\n" ++ ul "\\item Bravo." ++
+      "\nCharlie.\n\\end{center}")) abc == [lead + Dim.pt 8, peer])
+  t "a quote opening an item stands in its label: lualatex's distances"
+    (steps (doc "{article}" "" (ul ("\\item Alpha.\n\\item \\begin{quote}\nBravo.\n\\end{quote}\n" ++
+      "Charlie.\n\\item Delta."))) abcd == gaps [8, 4, 8])
+  t "a heading after a center stands where it stands after a paragraph or a list, as lualatex sets it"
+    (let after (blk : String) : List Dim.Sp :=
+      steps (doc "{article}" "" ("Alpha.\n\n" ++ blk ++ "\n\n\\section{Bravo}\nCharlie.")) ["Delta.", "Bravo"]
+     after "\\begin{center}\nDelta.\n\\end{center}" == after "Delta." &&
+       after "\\begin{center}\nDelta.\n\\end{center}" ==
+         after "\\begin{itemize}\n\\item Delta.\n\\end{itemize}" &&
+       (after "Delta.").length == 1)
+  -- beamer's 11pt `\topsep` 9pt and level one's 3pt, no `\parsep`.
+  let deck := "\\documentclass{beamer}\\begin{document}\\begin{frame}[t]\n" ++
+    ul ("\\item Alpha.\n\\item " ++ center ++ "\nCharlie.\n\\item Delta.") ++ "\n\\end{frame}\\end{document}"
+  let dl := leadOf deck
+  t "a deck's center opening an item spends nothing of its own"
+    (steps deck abcd == [dl + Dim.pt 3, dl, dl + Dim.pt 3])
+  let flat := "\\documentclass{beamer}\\begin{document}\\begin{frame}[t]\nAlpha.\n" ++ center ++
+    "\nCharlie.\n\\end{frame}\\end{document}"
+  t "a deck's center spends beamer's top-level topsep" (steps flat abc == [leadOf flat + Dim.pt 9, leadOf flat + Dim.pt 9])
+  -- The web page reads the same values off its gap rules.
+  let rules := HtmlDoc.blockGapRules .sizeFile Ir.baseFontSize (HtmlDoc.exAt none Ir.baseFontSize) {}
+  let triv := "." ++ HtmlDoc.roleClass Ir.trivlistRole
+  t "html: a trivlist opens the top level's topsep and partopsep under the parskip in force"
+    (rules.any fun r => match r with
+      | .boundary sel v => sel == s!"* + {triv}" && hasStr v "var(--topsep, " &&
+          hasStr v "var(--partopsep, " && hasStr v "var(--parskip, 0rem)"
+      | _ => false)
+  t "html: one opened inside a paragraph spends no partopsep"
+    (rules.any fun r => match r with
+      | .boundary sel v => sel == s!"* + {triv}.{HtmlDoc.roleClass Ir.inParagraphRole}" &&
+          !hasStr v "partopsep"
+      | _ => false)
+  t "html: a list level states its topsep and partopsep for a trivlist inside"
+    (rules.any fun r => match r with
+      | .trivIn sel _ _ => hasStr sel "li:not(" && !hasStr sel ":is(li, dd"
+      | _ => false)
+  t "html: a trivlist opening an item leaves the peer gap alone below it"
+    (rules.any fun r => match r with
+      | .boundary sel v => hasStr sel s!"> {triv}:first-child + *" && hasStr v "var(--parskip, "
+      | _ => false)
+  let csrc := doc "{article}" "" "Alpha.\n\n\\begin{center}\nBravo.\n\\end{center}\n\nCharlie."
   let body (src : String) : Array Html.Node := (HtmlDoc.emitTree {} (elabStr src).1).2.1
-  let shape (src : String) : String := Html.document "en" #[] (unclassList #[] (body src).toList)
-  for (env, decl) in [("center", "\\centering"), ("flushleft", "\\raggedright"),
-      ("flushright", "\\raggedleft")] do
-    t s!"html: the {env} environment and its declaration ship one element tree"
-      (shape (doc "" s!"Alpha.\n\n\\begin\{{env}}\nBravo.\n\\end\{{env}}\n\nCharlie.") ==
-        shape (doc "" s!"Alpha.\n\n\{{decl} Bravo.\\par}\n\nCharlie."))
-  let csrc := doc "" "Alpha.\n\n\\begin{center}\nBravo.\n\\end{center}\n\nCharlie."
   let cbody := body csrc
   t "html: a center environment's element is main's own child, carrying the trivlist role"
     (classParentsList "centered" "body" #[] cbody.toList == #["main"] &&
       classParentsList (HtmlDoc.roleClass Ir.trivlistRole) "body" #[] cbody.toList == #["main"])
-  let page := (HtmlDoc.emit {} (elabStr csrc).1).1
-  t "html: the trivlist owns both its boundaries at topsep over the peer gap"
-    (hasStr page (":where(* + .u-trivlist-env, * + blockquote) { margin-top: " ++
-      "calc(var(--topsep, 0.725rem) + var(--parskip, 0.725rem)); }") &&
-     hasStr page (":where(.u-trivlist-env + *, blockquote + *) { margin-top: " ++
-      "calc(var(--topsep, 0.725rem) + var(--parskip, 0.725rem)); }"))
+  let shape (src : String) : String := Html.document "en" #[] (unclassList #[] (body src).toList)
+  for (env, decl) in [("center", "\\centering"), ("flushleft", "\\raggedright"),
+      ("flushright", "\\raggedleft")] do
+    t s!"html: the {env} environment and its declaration ship one element tree"
+      (shape (doc "{article}" "" s!"Alpha.\n\n\\begin\{{env}}\nBravo.\n\\end\{{env}}\n\nCharlie.") ==
+        shape (doc "{article}" "" s!"Alpha.\n\n\{{decl} Bravo.\\par}\n\nCharlie."))
+  t "the centering declaration opens no space"
+    (steps (doc "{article}" "" "Alpha.\n\n{\\centering Bravo.\\par}\n\nCharlie.") abc ==
+      steps (doc "{article}" "" "Alpha.\n\nBravo.\n\nCharlie.") abc)
 
 /-- A list spends LaTeX's own list spacing: `\topsep` around it with `\parskip` on top, `\itemsep +
 \parsep` between items, `\parsep` between an item's paragraphs, and a nested list its own level's. -/

@@ -9523,6 +9523,11 @@ public structure Spacing.Context where
   private inFrame : Bool := false
   /-- Where the class's list spacing comes from (`Ir.listSkips`). -/
   private lists : Ir.ListLineage := .sizeFile
+  /-- How the class's list levels read the `\parskip` in force (`Ir.ListExtra`). -/
+  private listExtra : Ir.ListExtra := .none
+  /-- The `\topsep` and `\partopsep` the innermost list or quotation leaves in force for a trivlist
+  (`Ir.TrivIn.within`); `none` outside every list, where the document's tokens stand. -/
+  private trivIn : Option Ir.TrivIn := none
   /-- A quotation's `\listparindent`, from the class (`Ir.ClassRecord.quotationIndent`). -/
   private quotationIndent : Dim.Length := {}
   /-- The deck's frame-alignment keys (`Ir.Doc.frameKeys`). -/
@@ -9659,6 +9664,9 @@ public structure Spacing.Pending where
   /-- A display heading was the last thing set, so a list's first `\item`
   spends `\@nbitem` (latex.ltx); cleared by the next line's gap. -/
   private afterHeading : Bool := false
+  /-- A trivlist opened its item and nothing has set a line since, so a list, quote or trivlist
+  here stands in its label (`Ir.Block.opensInLabel`); cleared by the next line's gap. -/
+  private labelOpen : Bool := false
   /-- A frame's body just opened (`Op.bodyOpen`), so beamer's `\vskip-\parskip`
   cancels the first paragraph's peer gap; cleared by the next line's gap. -/
   private frameTop : Bool := false
@@ -9793,6 +9801,34 @@ private theorem listOpen_beamer_adds_exact (a : Acc) (r : Rd) (g : Glue)
     (h : r.lists = .beamer) : (a.listOpen r g).owed = a.owed.push g := by
   simp [Spacing.Pending.listOpen, Spacing.Pending.vskip, h]
 
+/-- The `\@topsepadd` a trivlist opening here spends: beamer's squeezed `\topsep` in a squeezed
+frame's list, else the `\topsep` in force, with its `\partopsep` where it opens in vertical mode. -/
+private def Spacing.Context.trivAdd (r : Rd) (a : Acc) : Glue :=
+  if r.squeeze && a.itemDepth + a.enumDepth + a.quoteDepth > 0 then r.resolve Ir.squeezedTopsep
+  else r.resolve ((r.trivIn.getD (Ir.TrivIn.top r.lists a.tokens r.geom.fontSize)).add !r.inPar)
+
+/-- A trivlist's space: a list's, with TeX's `\parskip` on it, outside the web's lineage. -/
+private def Spacing.Pending.trivSkip (a : Acc) (r : Rd) (g : Glue) : Acc :=
+  if r.lists.trivTexParskip then a.listSpace g else a.trivSpace g
+
+/-- A trivlist's opening: its body's context and the space it owes below, none in an item's label
+(`\@noparlist`), and its space above unless a heading stands there (`\@nbitem`). -/
+private def Spacing.Pending.trivOpen (a : Acc) (r : Rd) : Rd × Acc × Option Glue :=
+  let ri := { r with inPar := false, inLabel := false }
+  if r.inLabel then (ri, { a with labelOpen := true }, none)
+  else
+    let g := r.trivAdd a
+    (ri, { (if a.afterHeading then a else a.trivSkip r g) with labelOpen := true }, some g)
+
+/-- The reader of a block standing where a trivlist opened its item: in its label, the label taken. -/
+private def Spacing.Context.takeLabel (r : Rd) (a : Acc) : Rd × Acc :=
+  if a.labelOpen then ({ r with inLabel := true }, { a with labelOpen := false }) else (r, a)
+
+/-- A trivlist's close, `\@endparenv`'s `\addvspace\@topsepadd` where it owes one. -/
+private def Spacing.Pending.trivClose (a : Acc) (r : Rd) : Option Glue → Acc
+  | some g => { a.trivSkip r g with labelOpen := false }
+  | none => { a with labelOpen := false }
+
 /-- `\endtrivlist`'s re-skip on owed glue: a positive last skip takes `inner` on it, less `outer`. -/
 private def reskipOwed (owed : Array Glue) (inner outer : Glue) : Array Glue :=
   match owed.back? with
@@ -9865,7 +9901,8 @@ private def Spacing.Pending.flushGap (a : Acc) (r : Rd) : Acc :=
         { a with ops := (a.ops.push (.skip par)).push (a.owedOp (a.owed.foldl Glue.add {})) }
       else { a with ops := a.ops.push (a.owedOp (a.gapGlue r)) }
   { a with wantDefault := false, owed := #[], declaredSkip := false, trivOwed := false,
-           afterHeading := false, frameTop := false, anchorAt := none, dispAlt := none }
+           afterHeading := false, labelOpen := false, frameTop := false, anchorAt := none
+           dispAlt := none }
 
 private theorem flushGap_items_exact (a : Acc) (r : Rd) (ho : a.owed.isEmpty = false)
     (hs : (a.wantDefault && a.declaredSkip) = true) (hk : a.anchorAt = none)
@@ -12395,12 +12432,10 @@ private def collectVerbatim (r : Rd) (a : Acc) (covered : Option Ir.Color) (s : 
 the class frames it as TeX does (`Ir.ListingFrame.onPage`). -/
 private def collectListing (r : Rd) (a : Acc) (covered : Option Ir.Color) (s : String)
     (spec : Ir.ListingSpec) (indent : Sp) : Acc :=
-  let trivlist (a : Acc) : Glue := r.resolve (Ir.trivlistSkipFor r.lists a.tokens r.geom.fontSize
-    (a.itemDepth + a.enumDepth + a.quoteDepth))
   match spec.frame with
   | .trivlist =>
-    let g := trivlist a
-    (collectVerbatim r (a.trivSpace g) covered s spec indent).trivSpace g
+    let (ri, a, g) := a.trivOpen r
+    (collectVerbatim ri a covered s spec indent).trivClose r g
   | .list =>
     let lv := a.itemDepth + a.enumDepth + a.quoteDepth + 1
     match Ir.listSkips r.lists r.geom.fontSize lv with
@@ -13086,22 +13121,22 @@ private def collectQuoteList (r : Rd) (a : Acc) (kind : Ir.QuoteKind) (blocks : 
     else
     let a := if first || a.frameTop || brk then a else a.wantGap
     let a := if ruleBlock blk then { a with declaredSkip := false } else a
-    let a := match kind, blk, first with
-      | _, .list .., true | _, .quote .., true => collectBlock { r with inLabel := true } a blk indent
-      | .quotation, .para content, _ =>
+    let a := if first && blk.opensInLabel then collectBlock { r with inLabel := true } a blk indent
+      else match kind, blk with
+      | .quotation, .para content =>
         let (a, leaf) := a.leafRange (Struct.leafCountInlines content)
         collectPara r a content indent false r.geom.fontSize (leaf := leaf)
           (span := Struct.leafCountInlines content)
           (firstIndent := if cont || Ir.opensRunIn content then 0
             else (r.resolve { width := r.quotationIndent }).width)
-      | .verse, .para content, _ =>
+      | .verse, .para content =>
         let (a, leaf) := a.leafRange (Struct.leafCountInlines content)
         collectPara r a content indent false r.geom.fontSize (leaf := leaf)
           (span := Struct.leafCountInlines content)
           (hangIndent := (r.resolve { width := Ir.verseHang }).width) (hangLines := true)
           (hangFirst := !(cont || Ir.opensRunIn content))
-      | .verse, _, _ => collectBlock r a blk (indent + (r.resolve { width := Ir.verseHang }).width)
-      | _, _, _ => collectBlock r a blk indent
+      | .verse, _ => collectBlock r a blk (indent + (r.resolve { width := Ir.verseHang }).width)
+      | _, _ => collectBlock r a blk indent
     let a := if prevRule then { a with declaredSkip := false } else a
     collectQuoteList r a kind rest indent false (ruleBlock blk)
       (if blk.isSkip then cont else blk.continuesPar) (blk.isSkip && brk)
@@ -13185,7 +13220,8 @@ private def collectItem (r : Rd) (a : Acc)
             { a with outerMarkers := outer.push (r.coveredMarker a marker, indent) }
             (.list ordered spacing items) indent with
           outerMarkers := #[] }
-      | b, _ => collectBlock r a b indent
+      | b, first => collectBlock (if first && b.opensInLabel then { r with inLabel := true } else r)
+          a b indent
     collectItem r a rest indent false marker hang
 
 /-- A step opening its item: its paragraph carries the marker into the step, as beamer's `\item<n>`
@@ -13310,6 +13346,7 @@ private def collectBlock (r : Rd) (a : Acc)
   | .equation num content => collectEquation r a num content indent
   | .section level _ num title => collectSection r a level num title indent
   | .list ordered spacing items =>
+    let (r, a) := r.takeLabel a
     -- Past the class's four levels, where LaTeX errors, the fourth level is reused and named.
     let depth := (if ordered then a.enumDepth else a.itemDepth) + 1
     let level := min depth 4
@@ -13340,9 +13377,12 @@ private def collectBlock (r : Rd) (a : Acc)
     let step := (st.indent.map fun g => (r.resolve g).width).getD (r.leftMargin lv a.tokens)
     let indent := indent + step
     let a := if ordered then { a with enumDepth := depth } else { a with itemDepth := depth }
-    let ri := match sk with
-      | some s => { r with inPar := false, inLabel := false,
-                           geom := { r.geom with parskip := s.parsep, texParskip := s.parsep } }
+    let ri := match sp with
+      | some (s, pts) =>
+        { r with inPar := false, inLabel := false
+                 trivIn := some (Ir.TrivIn.within r.lists r.listExtra r.geom.fontSize lv s pts
+                   (r.trivIn.getD (Ir.TrivIn.top r.lists a.tokens r.geom.fontSize)))
+                 geom := { r.geom with parskip := s.parsep, texParskip := s.parsep } }
       | none => { r with inPar := false, inLabel := false }
     -- beamer's squeeze (`\beamer@cramped`): `\itemsep0pt` in every list.
     let a := collectItems ri a items.toList indent st ordered level 1
@@ -13353,10 +13393,10 @@ private def collectBlock (r : Rd) (a : Acc)
     | some g, _ => a.addvspace (r.resolve g)
     | none, some t =>
       if r.inLabel then a else
-      -- `\endtrivlist`: a last item closing on a nested list or quotation leaves its skip with
-      -- this list's `\parsep` on it, less the `\parskip` outside (`Ir.itemCloses?`).
-      let a := match sk, items.back?.bind Ir.itemCloses? with
-        | some s, some _ => a.endReskip (r.resolve s.parsep) (r.resolve r.geom.texParskip)
+      -- `\endtrivlist`: a last item closing on a nested list, quotation or trivlist leaves its skip
+      -- with this list's `\parsep` on it, less the `\parskip` outside (`Ir.itemClosesOnSkip`).
+      let a := match sk, (items.back?.map Ir.itemClosesOnSkip).getD false with
+        | some s, true => a.endReskip (r.resolve s.parsep) (r.resolve r.geom.texParskip)
         | _, _ => a
       a.listSpace t
     | none, none => a
@@ -13379,11 +13419,9 @@ private def collectBlock (r : Rd) (a : Acc)
       collectDisplayPicture r a anchors pic indent
     else
     if n == Ir.trivlistRole then
-      -- Inside a squeezed frame's list item a trivlist takes beamer's `\topsep0.5pt`.
-      let depth := a.itemDepth + a.enumDepth + a.quoteDepth
-      let g := if r.squeeze && depth > 0 then r.resolve Ir.squeezedTopsep
-        else r.resolve (Ir.trivlistSkipFor r.lists a.tokens r.geom.fontSize depth)
-      (collectBlocks r (a.trivSpace g) body indent).trivSpace g
+      let (r, a) := r.takeLabel a
+      let (ri, a, g) := a.trivOpen r
+      (collectBlocks ri a body indent).trivClose r g
     else if n == Ir.inParagraphRole then collectBlocks { r with inPar := true } a body indent
     -- A theorem-like block (`Ir.thmSkips`): its own space above, the `\topsep` in force below.
     else if let some k := Ir.thmSpaceOf? n then
@@ -13415,6 +13453,7 @@ private def collectBlock (r : Rd) (a : Acc)
     let a := collectBlocks r a body indent
     { a with ops := a.ops.push .regionClose }
   | .quote q body =>
+    let (r, a) := r.takeLabel a
     -- A quotation is classes.dtx's `\list{}{\rightmargin\leftmargin}`, one `\@listdepth` level,
     -- spaced as a list under what its environment and its scope set (`Ir.listSpacing`).
     let saved := a.measure
@@ -13429,12 +13468,15 @@ private def collectBlock (r : Rd) (a : Acc)
       let sub := { top with measure := narrow, quoteDepth := a.quoteDepth + 1 }
       let ri := { (r.within blk) with
         inPar := false, inLabel := false
+        trivIn := some (Ir.TrivIn.within r.lists r.listExtra r.geom.fontSize lv sk pts
+          (r.trivIn.getD (Ir.TrivIn.top r.lists a.tokens r.geom.fontSize)))
         geom := { r.geom with parskip := sk.parsep, texParskip := sk.parsep } }
       let sub := collectQuoteList ri sub q.kind body.toList (indent + lm) true false false false
-      -- `\endtrivlist`: a quotation closing on a nested list or quotation re-skips as an item does.
-      let sub := match Ir.itemCloses? body with
-        | some _ => sub.endReskip (r.resolve sk.parsep) (r.resolve r.geom.texParskip)
-        | none => sub
+      -- `\endtrivlist`: a quotation closing on a nested list, quotation or trivlist re-skips as an
+      -- item does.
+      let sub := if Ir.itemClosesOnSkip body then
+          sub.endReskip (r.resolve sk.parsep) (r.resolve r.geom.texParskip)
+        else sub
       { (if r.inLabel then sub else sub.listSpace g) with measure := saved, quoteDepth := a.quoteDepth }
     | none =>
       let g := r.resolve (Ir.trivlistSkipFor r.lists a.tokens r.geom.fontSize
@@ -13589,7 +13631,9 @@ private def collectBlock (r : Rd) (a : Acc)
     -- The builder closes only pages holding something, so adjacent breaks never make a blank page.
     a.pageBreak
   | .logo content => collectLogo a content
-  | .verbatim covered s spec => collectListing r a covered s spec indent
+  | .verbatim covered s spec =>
+    let (r, a) := r.takeLabel a
+    collectListing r a covered s spec indent
   | .algorithm numbered semis lines => collectAlgorithm r a numbered semis lines indent
   | .framefoot content => collectFramefoot a content
   | .setPalette p =>
@@ -19924,6 +19968,7 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
                    abstractForm := doc.abstractForm
                    chapters := doc.chapters
                    lists := doc.docClass.record.lists
+                   listExtra := doc.docClass.record.listExtra
                    quotationIndent := doc.docClass.record.quotationIndent
                    frameKeys := doc.frameKeys
                    frameLabels := doc.frameLabels
