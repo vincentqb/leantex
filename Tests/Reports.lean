@@ -2023,8 +2023,8 @@ def reports : List Report := [
     state := .guarded "320e1b58" .before .author },
   { id := "R224", date := "2026-10-17"
     what := "a table of contents was an unknown command in decks and articles: a deck's overview and its section hook's outline listed nothing, an article's contents neither its headings nor their pages, and a subsection carried no anchor a link could open"
-    pins := [check% contentsChecks, check% contentsEdgeChecks, check% censusChecks,
-      check% compatIndexChecks]
+    pins := [check% contentsChecks, check% contentsEdgeChecks, check% contentsEdgeChecks2,
+      check% censusChecks, check% compatIndexChecks]
     accept := ["invented probes under lualatex: beamer's contents list the unstarred sections and subsections, a subsection 1.5em in, a fill before each section's entry and after the last sharing the frame's leftover, the currentsection option shading the other sections and their subsections; article's list the numbered headings to tocdepth under their heading, a section's bold after 1em with its folio right-aligned in 1.55em, a subsection's at 1.5em behind a 2.3em number with dotted leaders a stop and half an em apart from the line box's edge; this tree sets the same",
       "the corpus built by main's binary at f753a486 and by this tree's, past what the list and outline units this stacks on change: every PDF visually identical but the hooked deck's and the new contents article's, and every web page the same but theirs and the section gap rule each stylesheet carries",
       "main at 320e1b58 refuses the command and lists nothing; the guards fail there"]

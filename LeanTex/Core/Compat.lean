@@ -11250,7 +11250,8 @@ private def bracketRunsAt (raws : Array Raw) (i : Nat) : Array Raw × Nat := Id.
   return (out, j)
 
 /-- beamer's command form of a frame, `\frame<spec>[options]{text}`, at one level as the frame
-environment it abbreviates, its specification and options at its body's head. -/
+environment it abbreviates, its specification and options at its body's head before an empty title,
+so its text is all body. -/
 private def frameCommandsLevel (raws : Array Raw) : Array Raw := Id.run do
   let mut out : Array Raw := #[]
   let mut i := 0
@@ -11265,7 +11266,7 @@ private def frameCommandsLevel (raws : Array Raw) : Array Raw := Id.run do
       let k := skipSpaces raws j2
       match raws[k]? with
       | some (.group body _) =>
-        out := out.push (.env "frame" (spec ++ opts ++ body) p)
+        out := out.push (.env "frame" (spec ++ opts ++ #[.group #[] p] ++ body) p)
         i := k + 1
       | _ =>
         out := out.push (.ctrl "frame" p)
@@ -11296,13 +11297,13 @@ private def frameCommandsList : List Raw → List Raw
 
 end
 
-/-- Whether a source declares a presentation class, whose `\frame` is beamer's. -/
+/-- Whether a source declares beamer's class, whose `\frame` is its frame, not the kernel's box. -/
 private def declaresPresentation (raws : Array Raw) : Bool :=
   match raws.findIdx? (fun r => match r with | .ctrl n _ => n == "documentclass" | _ => false) with
   | some i =>
     let (_, j) := takeOpt raws (i + 1)
     let (args, _) := takeGroups raws j 1
-    presentationClasses.contains (rawSrc (args.getD 0 #[])).trimAscii.toString
+    (rawSrc (args.getD 0 #[])).trimAscii.toString == "beamer"
   | none => false
 
 /-- A presentation's frame commands as frame environments, every level's (`frameCommandsLevel`). -/

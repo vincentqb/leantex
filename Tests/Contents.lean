@@ -365,3 +365,34 @@ def contentsEdgeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
     | _ => none
   t s!"no two elements share an id ({allIds})"
     (allIds.all fun i => (allIds.filter (· == i)).size == 1)
+
+open ContentsChecks in
+/-- A table of contents' edges a second reading found: same-titled unnumbered headings keep their
+own short titles, a tie-only title links nothing, a frame command's text is all body, and a section
+page names its own level. -/
+def contentsEdgeChecks2 (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  let t := fun claim => check ref ("contents edges / " ++ claim)
+  let (dup, _) := elabStr ("\\documentclass{article}\n\\setcounter{secnumdepth}{0}\n" ++
+    "\\begin{document}\n\\tableofcontents\n\\section[Tiny]{Intro}\\label{a}\nWords.\n" ++
+    "\\section{Intro}\\label{b}\nSee \\nameref{b}.\n\\end{document}\n")
+  t "same-titled unnumbered headings keep their own short titles"
+    ((navEntries (HtmlDoc.emitTree {} dup).2.1)[0]?.map (·.map (·.2.1)) == some #["Tiny", "Intro"] &&
+      (Ir.outlineHeadings dup).map (·.title) == #["Tiny", "Intro"] &&
+      hasStr (Ir.blocksText dup.body) "See Intro.")
+  let (tie, _) := elabStr ("\\documentclass{article}\n\\begin{document}\n\\tableofcontents\n" ++
+    "\\section{~}\nWords.\n\\end{document}\n")
+  t "a tie-only title links nothing"
+    ((HtmlDoc.a11yFacts true false (HtmlDoc.emitTree {} tie).2.1).linksUnnamed == 0 &&
+      (Ir.linksSansText tie).isEmpty)
+  for (src, said) in [("\\frame{{Teapots} are there.}", "Teapots are there."),
+      ("\\frame{[Bracket] words.}", "[Bracket] words."), ("\\frame{<2> words.}", "words.")] do
+    let (fd, fds) := elabStr (edgeDeck "" (src ++ "\n"))
+    let fo := (fittedOf fonts fd).out
+    let text := String.intercalate " " (((fo.pages[0]?.map (·.lines)).getD #[]).toList.map lineText)
+    t s!"beamer's frame command keeps '{said}' as body, no title taken from it ({text})"
+      (hasStr text said && !fds.any (fun d => d.code == "W0110") &&
+        (src != "\\frame{<2> words.}" || hasStr text "2"))
+  let (_, sds) := elabStr (edgeDeck "\\AtBeginSubsection{\\frame{\\sectionpage}}\n"
+    "\\section{Kettles}\n\\subsection{Spouts}\n\\begin{frame}{Pouring}Tea pours.\\end{frame}\n")
+  t "a section page after a subsection is named, not set as the subsection's"
+    (sds.any fun d => d.code == "W0307" && d.subject == some "sectionpage:sectionpage")

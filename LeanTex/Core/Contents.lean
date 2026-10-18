@@ -40,6 +40,10 @@ private def nextStages (doc : Doc) : Array (Option String) := Id.run do
     if let some (some fa) := frames[i]? then next := some fa.frame.id
   return out.toArray
 
+/-- Whether a title has no words to list or link: only spaces, a tie's among them. -/
+private def blankTitle (title : Array Inline) : Bool :=
+  (plainText title).all fun c => c.isWhitespace || c == '\u00A0'
+
 /-- One entry, unless its options hide it. -/
 private def entryUnless (look : ContentsShow) (e : ContentsEntry) : Option ContentsEntry :=
   if look == .hidden then none else some { e with shaded := look == .shaded }
@@ -61,7 +65,7 @@ public def deckContents (doc : Doc) (spec : ContentsSpec) : Array ContentsEntry 
         else if level == .h3 then some (1, subsectionShow spec s1 s2)
         else if level == .h4 then some (2, subsubsectionShow spec s1 s2 s3) else none
       if let some (depth, look) := at? then
-        if !starred && !(metaText title).trimAscii.isEmpty && depth < spec.depth then
+        if !starred && !blankTitle title && depth < spec.depth then
           let shown := if depth == 2 then #[.styled (.size "footnotesize") (nameOf title)]
             else nameOf title
           if let some e := entryUnless look
@@ -83,14 +87,16 @@ private def contentsLevel : HeadingLevel → Option Nat
 its short title where it declared one, as article's, and opening its heading. -/
 public def flowContents (doc : Doc) (spec : ContentsSpec) : Array ContentsEntry := Id.run do
   let anchors := flowAnchors doc.body
+  let shorts := shortTitlesAt doc.shortTitles doc.body
   let mut out : Array ContentsEntry := #[]
   for h : i in [0:doc.body.size] do
     if let .section level starred num title := doc.body[i] then
       if let some rank := contentsLevel level then
         if !starred && rank ≤ spec.depth then
           let target := (anchors[i]?.join).map (·.id)
-          out := out.push { depth := rank - 1, number := num
-                            title := nameOf (doc.listedTitle num title), target, shaded := false }
+          let title := nameOf (listedTitleAt shorts i title)
+          out := out.push { depth := rank - 1, number := num, target, shaded := false
+                            title := if blankTitle title then #[] else title }
   return out
 
 mutual

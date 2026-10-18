@@ -629,6 +629,8 @@ public structure ESt where
   shortTitles : List (TitleDatum × Array Inline) := []
   /-- The short titles headings declared, in flow order (`Ir.Doc.shortTitles`). -/
   headingShorts : Array Ir.ShortTitle := #[]
+  /-- How many unstarred headings so far set each number and words (`Ir.shortTitlesAt`). -/
+  headingCounts : Std.HashMap (Option String × String) Nat := {}
   /-- A `\maketitle` already set the title, which LaTeX typesets once. -/
   titleDone : Bool := false
   /-- The last refused `\maketitle` redefinition's body, read again at the
@@ -6574,10 +6576,16 @@ private def headingArm (ctx : Ctx) (n : String) (level : Nat) (starred : Bool)
     (short : Option (Array Raw)) (title : Array Raw) (blocks : Array Block) : EM (Array Block) := do
   let title ← elabInlines ctx title
   let number ← sectionNumber ctx level starred
+  let words := Ir.plainText title
+  let nth := ((← get).headingCounts.getD (number, words) 0)
+  unless starred do
+    modify fun st => { st with headingCounts := st.headingCounts.insert (number, words) (nth + 1) }
   let head ← match short with
     | some s =>
       let s ← elabInlines ctx s
-      modify fun st => { st with headingShorts := st.headingShorts.push { number, title, short := s } }
+      unless starred do
+        modify fun st =>
+          { st with headingShorts := st.headingShorts.push { number, words, nth, short := s } }
       pure s
     | none => pure title
   if ctx.slides && !ctx.inFrame then setSectionInForce level title head
@@ -6616,6 +6624,18 @@ private def themeHookCmds (pos : Pos) : UserCmd × UserCmd :=
 `\sectionpage` or `\subsectionpage`. -/
 private def isSectionPageCtrl (n : String) : Bool :=
   n == Ir.sectionPageCtrl || n == "sectionpage" || n == "subsectionpage"
+
+/-- A section page control: the heading just set standing on its page where it is the level the
+control names, as a theme's hook's and beamer's are; one naming the other level is named, unset. -/
+private def sectionPageArm (ctx : Ctx) (n : String) (pos : Pos) (blocks : Array Block) :
+    EM (Array Block) := do
+  let sub := !(← get).scope.sectionInForce.subsectionTitle.isEmpty
+  if (n == "sectionpage" && sub) || (n == "subsectionpage" && !sub) then
+    warnOnce ctx ("sectionpage:" ++ n) .W0307
+      s!"'\\{n}' after a {if sub then "subsection" else "section"} is not set yet: it names the \
+{if sub then "section" else "subsection"} in force, not the heading just set" pos
+    return blocks
+  return blocks.push (.role Ir.sectionPageRole #[])
 
 /-- The blocks with a last frame that sets only its heading's page standing as that page; one
 setting it under a title or beside other content is named, that page not set. -/
@@ -12596,8 +12616,7 @@ when it is empty — '{}'")
     return (blocks, ⟨j, by omega⟩)
   -- premise: sectionPageChecks — outside a deck the section page is an unknown command
   else if ctx.slides && isSectionPageCtrl n then
-    -- A theme's section hook or beamer's `\sectionpage`: the heading just set stands on its page.
-    return (blocks.push (.role Ir.sectionPageRole #[]), ⟨i + 1, by omega⟩)
+    return (← sectionPageArm ctx n pos blocks, ⟨i + 1, by omega⟩)
   else if n == "logo" then
     let j := skipSpaces raws (i + 1)
     have hjge := skipSpaces_ge raws (i + 1)

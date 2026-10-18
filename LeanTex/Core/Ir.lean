@@ -7959,10 +7959,12 @@ of its own; any other names navigation alone, as beamer's `\section` does. -/
   | some (.role n body) => n == sectionPageRole && body.isEmpty
   | _ => false
 
-/-- A heading's short title, `\section[short]{long}`'s, held by the number and title it sets. -/
+/-- A heading's short title, `\section[short]{long}`'s: the heading by its number, its words and how
+many unstarred headings before it set both, and its short title. -/
 public structure ShortTitle where
   number : Option String
-  title : Array Inline
+  words : String
+  nth : Nat
   short : Array Inline
   deriving Repr, BEq, Inhabited
 
@@ -9222,18 +9224,36 @@ public def outsideUnder (next : Option Block) (b : Block) : Outside :=
 /-- What a deck sets for its top-level block `i` outside every frame (`outsideUnder`). -/
 public def Doc.outside (doc : Doc) (i : Nat) (b : Block) : Outside := outsideUnder doc.body[i + 1]? b
 
-/-- The title a heading setting `number` and `title` is listed by: its short title among `shorts`
-where it declared one, matched by number and words, else its title. -/
-public def listedTitleIn (shorts : Array ShortTitle) (number : Option String)
-    (title : Array Inline) : Array Inline :=
-  ((shorts.find? fun t => t.number == number && plainText t.title == plainText title).map
-    (·.short)).getD title
+/-- Each top-level block's short title where it is a heading that declared one, every unstarred
+heading counted in document order by its number and words, as elaboration holds them. -/
+public def shortTitlesAt (shorts : Array ShortTitle) (body : Array Block) :
+    Array (Option (Array Inline)) := Id.run do
+  if shorts.isEmpty then return body.map fun _ => none
+  let count := fun (m : Std.HashMap (Option String × String) Nat) (b : Block) =>
+    if let .section level false num title := b then
+      if level == .title then m else
+        let k := (num, plainText title)
+        m.insert k (m.getD k 0 + 1)
+    else m
+  let mut seen : Std.HashMap (Option String × String) Nat := {}
+  let mut out : Array (Option (Array Inline)) := #[]
+  for b in body do
+    let mut here : Option (Array Inline) := none
+    if let .section level false num title := b then
+      if level != .title then
+        let words := plainText title
+        let n := seen.getD (num, words) 0
+        here := (shorts.find? fun s => s.number == num && s.words == words && s.nth == n).map
+          (·.short)
+    out := out.push here
+    seen := foldBlocks count (fun m _ => m) seen #[b]
+  return out
 
-/-- The title a flow's contents and bookmarks list for a heading setting `number` and `title`
-(`listedTitleIn`). -/
-public def Doc.listedTitle (doc : Doc) (number : Option String) (title : Array Inline) :
+/-- The title a flow's contents and bookmarks list for top-level block `i`, a heading setting
+`title`: its short title where it declared one (`shortTitlesAt`), else its title. -/
+public def listedTitleAt (shorts : Array (Option (Array Inline))) (i : Nat) (title : Array Inline) :
     Array Inline :=
-  listedTitleIn doc.shortTitles number title
+  (shorts[i]?.join).getD title
 
 /-- The spacings a body's lists and quotations declare, each once, in flow order. -/
 public def listSetsOf (body : Array Block) : Array ListSet :=
@@ -18345,9 +18365,11 @@ public def labelNames (xs : Array Block) (shorts : Array ShortTitle := #[]) :
   let titled := fun (n : Array Inline) => if (metaText n).trimAscii.isEmpty then none else some n
   let mut current : Option (Array Inline) := none
   let mut out : Std.HashMap String (Array Inline) := {}
-  for b in xs do
-    if let .section _ _ num title := b then
-      current := titled (nameOf (listedTitleIn shorts num title))
+  let listed := shortTitlesAt shorts xs
+  for h : i in [0:xs.size] do
+    let b := xs[i]
+    if let .section _ _ _ title := b then
+      current := titled (nameOf (listedTitleAt listed i title))
     if let .float _ _ _ body caption := b then
       if let some n := (titled (nameOf caption)).orElse fun _ => current then
         out := named out (foldBlocks (fun out _ => out) keyOf (foldInlines keyOf #[] caption) body) n
