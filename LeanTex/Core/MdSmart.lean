@@ -59,7 +59,7 @@ word after them. -/
 public def joinsAt (cs : Array Char) (i : Nat) : Bool := abbreviations.contains (strBefore cs i)
 
 /-- Whether a citation key Pandoc's `citeKey` reads opens at `j`: `@` or `-@` before a key's first
-character or a brace holding no white space. -/
+character or a brace closing with no white space inside. -/
 def keyAt (cs : Array Char) (j : Nat) : Bool := Id.run do
   let k := if cs[j]? == some '-' then j + 1 else j
   unless cs[k]? == some '@' do return false
@@ -67,16 +67,15 @@ def keyAt (cs : Array Char) (j : Nat) : Bool := Id.run do
   | some '{' =>
     for m in [k + 2:cs.size] do
       match cs[m]? with
-      | some '}' => return m > k + 2
+      | some '}' => return true
       | some d => if d == ' ' || d == '\t' || d == '\n' then return false
       | none => return false
     return false
   | some d => return CiteKey.isAlnum d || d == '_' || d == '*'
   | none => return false
 
-/-- Whether a citation's spelling opens at `j` of written text, which Pandoc's smart punctuation
-joins nothing before: an author's key, or a bracket holding a key at its start or after white space
-before its close, an escaped character no key. -/
+/-- Whether `j` of written text opens an author's key or a bracket holding a key at its start or
+after white space before its close, an escaped character no key. -/
 public def citesAt (cs : Array Char) (j : Nat) : Bool := Id.run do
   if keyAt cs j then return true
   unless cs[j]? == some '[' do return false

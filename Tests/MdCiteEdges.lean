@@ -140,7 +140,10 @@ def abbrevEdgeChecks (ref : IO.Ref (List String)) : IO Unit := do
       ("No list: cf. [x] and cf. a@b.", "cf.\u00a0[x]"), ("No list: cf. a@b.", "cf.\u00a0a@b"),
       ("No list: cf. \\@a here.", "cf.\u00a0@a"), ("No list: cf. \\[@a] here.", "cf.\u00a0[@a]"),
       ("No list: cf. [\\@a] here.", "cf.\u00a0[@a]"), ("No list: cf. [x;@a] here.", "cf.\u00a0[x;@a]"),
-      ("No list: vol. @{a b} here.", "vol.\u00a0@{a b}")] do
+      ("No list: vol. @{a b} here.", "vol.\u00a0@{a b}"), ("See &#97;p. 3 here.", "ap.\u00a03"),
+      ("See \\.p. 3 here.", ".p.\u00a03"), ("See x\\.vs. 3 here.", "x.vs.\u00a03"),
+      ("No list: cf. [@a](https://example.org) x.", "cf.\u00a0@a"), ("No list: cf. [@a][] x.", "cf.\u00a0[@a][]"),
+      ("No list: cf. [@a][@b] x.", "cf.\u00a0[@a][@b]"), ("No list: cf. [@a]{.c} x.", "cf.\u00a0[@a]{.c}")] do
     t s!"md abbreviation: {repr src} joins as Pandoc's smart punctuation does ({repr (page src)})"
       (hasStr (page src) joined)
   for (src, plain) in [("See e.g... x.", "e.g\u2026 x"), ("See cf\\. 3 here.", "cf. 3"),
@@ -148,7 +151,9 @@ def abbrevEdgeChecks (ref : IO.Ref (List String)) : IO Unit := do
       ("See a..p. 3 here.", "p. 3"), ("No list: cf. [@a] here.", "cf. [@a]"),
       ("No list: cf. @a here.", "cf. @a"), ("No list: cf. [see @a] here.", "cf. [see @a]"),
       ("No list: cf. -@a here.", "cf. -@a"), ("No list: cf. @_a here.", "cf. @_a"),
-      ("No list: cf. [`x` @a] here.", "cf. [x @a]"), ("No list: cf. [*see* @a] here.", "cf. [see @a]")] do
+      ("No list: cf. [`x` @a] here.", "cf. [x @a]"), ("No list: cf. [*see* @a] here.", "cf. [see @a]"),
+      ("No list: cf. @{} here.", "cf. @{}"), ("No list: cf. [@a]{x} here.", "cf. [@a]{x}"),
+      ("No list: cf. [@a] [x] here.", "cf. [@a] [x]")] do
     t s!"md abbreviation: {repr src} keeps its space, as Pandoc's smart punctuation does \
 ({repr (page src)})"
       (hasStr (page src) plain)

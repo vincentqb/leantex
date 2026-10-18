@@ -1533,6 +1533,8 @@ label, and its footnotes' labels. -/
 structure Defs where
   links : Std.HashMap String LinkDef := {}
   notes : Std.HashSet String := {}
+  /-- Whether the text is a document's own, which Pandoc's smart punctuation and notes read. -/
+  own : Bool := false
   deriving Inhabited
 
 /-- Whether a character may stand in a footnote's label, Pandoc's: no space, tab, line ending,
@@ -2184,16 +2186,15 @@ def attributesEnd? (c : Chars) (i : Nat) : Option Nat := Id.run do
     | none => return none
   return none
 
-/-- Whether a bracket at `i` is Pandoc's `reference`: balanced brackets not opening `[^`, an
-escape, a code span or a backtick run stepped over whole. -/
-def referenceAt (c : Chars) (ticks : Std.HashMap Nat (Array Nat)) (i : Nat) : Bool := Id.run do
-  unless c.at? i == some '[' do return false
-  if c.at? (i + 1) == some '^' then return false
+/-- The index of the bracket closing Pandoc's balanced one at `i`, an escape, a code span or a
+backtick run stepped over whole. -/
+def bracketClose? (c : Chars) (ticks : Std.HashMap Nat (Array Nat)) (i : Nat) : Option Nat := Id.run do
+  unless c.at? i == some '[' do return none
   let mut depth := 1
   let mut j := i + 1
   for _ in [0:c.size + 1] do
     match c.at? j with
-    | none => return false
+    | none => return none
     | some '\\' => j := j + 2
     | some '`' =>
       let n := tickRun c j
@@ -2202,11 +2203,24 @@ def referenceAt (c : Chars) (ticks : Std.HashMap Nat (Array Nat)) (i : Nat) : Bo
       | none => j := j + n
     | some '[' => depth := depth + 1; j := j + 1
     | some ']' =>
-      if depth == 1 then return true
+      if depth == 1 then return some j
       depth := depth - 1
       j := j + 1
     | some _ => j := j + 1
-  return false
+  return none
+
+/-- Whether a bracket at `i` is Pandoc's `reference`: balanced brackets not opening `[^`. -/
+def referenceAt (c : Chars) (ticks : Std.HashMap Nat (Array Nat)) (i : Nat) : Bool :=
+  c.at? (i + 1) != some '^' && (bracketClose? c ticks i).isSome
+
+/-- Whether a citation's spelling Pandoc's smart punctuation joins nothing before opens at `i`: an
+author's key, or a bracket holding one that no link's tail, reference or attribute list follows. -/
+def citeSpellingAt (c : Chars) (ticks : Std.HashMap Nat (Array Nat)) (i : Nat) : Bool :=
+  MdSmart.citesAt c.cs i && match (if c.at? i == some '[' then bracketClose? c ticks i else none) with
+    | some e => (linkTailAt c (e + 1)).isNone &&
+        !(c.at? (e + 1) == some '[' && referenceAt c ticks (e + 1)) &&
+        !(c.at? (e + 1) == some '{' && (attributesEnd? c (e + 1)).isSome)
+    | none => true
 
 /-- How a text reads citations: not at all, every key where a document declares its bibliography,
 or in a Lean docstring only the keys its bibliography holds, with the keys doc-gen4's bracket rule
@@ -2263,14 +2277,14 @@ def spacesBefore (c : Chars) (i : Nat) : Nat := Id.run do
     | k + 1 => if c.at? k == some ' ' || c.at? k == some '\t' then j := k else break
   return j
 
-/-- Whether the word ending at `s` holds the character an escape or a character reference ending at
-`t` set, which Pandoc's `str` never reads. -/
-def taintedWord (c : Chars) (t : Option Nat) (s : Nat) : Bool := Id.run do
-  let some t := t | return false
-  unless t ≤ s && s - t ≤ MdSmart.longest () do return false
+/-- Where the word ending at `s` resumes after the character an escape or a character reference
+ending at `t` set, which Pandoc's `str` never reads, if that word holds one. -/
+def taintedWord (c : Chars) (t : Option Nat) (s : Nat) : Option Nat := Id.run do
+  let some t := t | return none
+  unless t ≤ s && s - t ≤ MdSmart.longest () do return none
   for k in [t:s] do
-    unless (c.at? k).any fun d => CiteKey.isAlnum d || d == '.' do return false
-  return true
+    unless (c.at? k).any fun d => CiteKey.isAlnum d || d == '.' do return none
+  return some t
 
 /-- The scan: characters to a flat token array, brackets resolved against a
 stack and refusals raised where seen. -/
@@ -2324,16 +2338,26 @@ def scanInlines (file : String) (c : Chars) (dialect : Dialect := .document)
           (toks.back? matches some (.soft _) | some (.hard _)))
         unless quiet && (ch == ' ' || ch == '\t' || ch == '\n' || ch == '[') do
           tailFor := none
-      -- premise: Tests.MdCiteEdges.abbrevEdgeChecks — a space Pandoc's smart punctuation cannot join,
-      -- before a citation's spelling or after a word an escape or a reference sets, stands apart.
-      if dialect == .document && !tex && ch != ' ' && ch != '\t' && ch != '\n' &&
-          (pending.endsWith " " || pending.endsWith "\t") &&
-          (MdSmart.citesAt c.cs i || taintedWord c taintEnd (spacesBefore c i)) then
-        let n := i - spacesBefore c i
-        toks := flush toks (String.ofList (pending.toList.take (pending.length - n))) pendingPos
-        toks := toks.push (.txt (c.str (i - n) i) (c.posAt (i - n)))
-        pending := ""
-        pendingPos := p
+      -- premise: Tests.MdCiteEdges.abbrevEdgeChecks — a space before a citation's spelling stands
+      -- apart, and one after a word an escape or a reference sets joins as the word after it reads.
+      if defs.own && !tex && ch != ' ' && ch != '\t' && ch != '\n' &&
+          (pending.endsWith " " || pending.endsWith "\t") then
+        let start := spacesBefore c i
+        let kept : Unit → String := fun _ =>
+          String.ofList (pending.toList.take (pending.length - (i - start)))
+        if citeSpellingAt c ticks i then
+          toks := flush toks (kept ()) pendingPos
+          toks := toks.push (.txt (c.str start i) (c.posAt start))
+          pending := ""
+          pendingPos := p
+        else if let some t := taintedWord c taintEnd start then
+          let word := c.cs.extract t start
+          if MdSmart.joinsAt word word.size then toks := flush toks ((kept ()).push '\u00a0') pendingPos
+          else
+            toks := flush toks (kept ()) pendingPos
+            toks := toks.push (.txt (c.str start i) (c.posAt start))
+          pending := ""
+          pendingPos := p
       if ch == '\\' then
         match escaped? c i with
         | some d =>
@@ -4098,6 +4122,7 @@ public def blocksIn (dialect : Dialect) (file : String) (input : String) (includ
   let refs := if holdsRefColon input then
       (blocksPass dialect file input included known tex {} true notes).2.2
     else {}
+  let refs := { refs with own := notes && dialect == .document }
   let (blocks, diags, _) := blocksPass dialect file input included known tex refs false notes
   if refs.notes.isEmpty then (blocks, diags) else
   let (blocks, noteDs) := resolveNotes file blocks
