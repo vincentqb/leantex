@@ -34,14 +34,15 @@ public theorem runExecuted_rewrite_exact (file : String) (executed : Compat.Exec
         executed.stripped := by rfl
 
 /-- The control table's names stand in strictly ascending byte order, so are distinct, clear of
-`\cite`, `\appendix` and `\define`, and none is spelled as a saved overlay-native name. -/
+`\cite`, `\appendix` and `\define`, none is spelled as a saved overlay-native name, and none opens or
+closes a group primitive. -/
 public theorem ctrlRows_sound : Compat.CtrlRowsSound := by
   unfold Compat.CtrlRowsSound
   decide +kernel
 
-/-- Where open scopes close at group primitives, a row no leave keeps consumes exactly what its
-signature reads and one lacking a standing argument or kept is left to elaboration; at a body cursor
-a quiet row of groups consumes exactly its group prefix. -/
+/-- At every cursor a row no leave keeps consumes exactly what its signature reads and one lacking a
+standing argument or kept is left to elaboration; at a body cursor a quiet row of groups consumes
+exactly its group prefix. -/
 public theorem ctrl_rows_consumed_contract :
     (∀ row ∈ Compat.ctrlRows, Compat.CtrlRowConsumed row) ∧
     (∀ row ∈ Compat.ctrlRows, row.quiet = true → (∀ k ∈ row.sig, k = .group ∨ k = .needed) →

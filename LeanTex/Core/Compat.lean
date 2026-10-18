@@ -653,6 +653,25 @@ public inductive TemplateDecl where
       (pos : Pos)
   | titlePage (read : TitleTemplate.Read) (file : String) (pos : Pos)
 
+/-- A TeX group primitive: `\begingroup` with `\endgroup`, or `\bgroup` with `\egroup`. -/
+public inductive GroupPrimitive where
+  | begingroup | bgroup
+  deriving DecidableEq, Repr
+
+@[expose] public def GroupPrimitive.opener : GroupPrimitive → String
+  | .begingroup => "begingroup"
+  | .bgroup => "bgroup"
+
+@[expose] public def GroupPrimitive.closer : GroupPrimitive → String
+  | .begingroup => "endgroup"
+  | .bgroup => "egroup"
+
+@[expose] public def GroupPrimitive.all : List GroupPrimitive := [.begingroup, .bgroup]
+
+/-- The primitive a control word opens, if it opens one. -/
+@[expose] public def GroupPrimitive.ofOpener? (n : String) : Option GroupPrimitive :=
+  GroupPrimitive.all.find? (·.opener == n)
+
 /-- geometry's declared vertical keys, each value beside the key that spelled it. -/
 private structure GeometryBlock where
   top : Option (String × String) := none
@@ -914,7 +933,7 @@ private structure St where
   after its font declarations. -/
   beamerFootline : Option (String × Pos × Array Raw) := none
   /-- The font and footer fields saved at each preamble group primitive. -/
-  beamerScopes : List (String × Array (String × List (String × Array Raw)) ×
+  beamerScopes : List (GroupPrimitive × Array (String × List (String × Array Raw)) ×
     Option (String × Pos × Array Raw)) := []
   /-- Successful captures, which alone justify removing an
   otherwise empty preamble group. -/
@@ -3323,7 +3342,7 @@ private def deferOne (name : String) (pt : DeferPoint) (body : Array Raw)
 
 /-- The group primitives, opener to closer. -/
 public def groupPrimitives : List (String × String) :=
-  [("begingroup", "endgroup"), ("bgroup", "egroup")]
+  GroupPrimitive.all.map fun g => (g.opener, g.closer)
 
 /-- Whether a flat preamble scope closes before the document starts. -/
 private def beamerScopeClosed (raws : Array Raw) (start : Nat) (close : String) : Bool :=
@@ -10935,31 +10954,29 @@ private def ctrlRowRun (row : CtrlRow) (c : CtrlCall) : M (Array Raw) := do
         return #[]
     lowerCall c l
 
-/-- The rewrite of the control sequence `name` given what follows it: the
-replacement and how many elements it consumed, or `none`. -/
-private def rewriteCtrl (name : String) (pos : Pos) (raws : Array Raw) (start : Nat) :
-    M (Option (Array Raw × Nat)) := fun s0 =>
-  match rewriteCtrlAt name pos raws start s0 with
-  | (none, s1) => (none, s1)
-  | (some (repl, k), s1) =>
-    (some (repl, k - start), if repl.isEmpty then (account name pos s0 s1).2 else s1)
-where
-  rewriteCtrlAt (name : String) (pos : Pos) (raws : Array Raw) (start : Nat) :
-      M (Option (Array Raw × Nat)) := do
+/-- A deck preamble's flat group scope at `name`: a group primitive opening one that closes before the
+document saves the font and footer fields, and the innermost one's closer restores them. -/
+private def deckScope (name : String) (pos : Pos) (raws : Array Raw) (start : Nat) :
+    M (Option (Array Raw × Nat)) := do
   -- premise: beamerTemplateChecks — flat preamble group pairs restore captures
-  if (← get).wholeDoc && (← get).deck && !(← get).inDoc && !(← get).inDef then
-    if let some close := groupPrimitives.lookup name then
-      if beamerScopeClosed raws start close then
-        write fun st => { st with beamerScopes :=
-          (close, st.beamerFonts, st.beamerFootline) :: st.beamerScopes }
-        became s!"\\{name}" "a local font and footer scope" pos
-        return some (#[], start)
-    if let (close, fonts, footline) :: rest := (← get).beamerScopes then
-      if name == close then
-        write fun st => { st with beamerFonts := fonts, beamerFootline := footline,
-                                  beamerScopes := rest }
-        became s!"\\{name}" "the enclosing font and footer scope" pos
-        return some (#[], start)
+  if let some g := GroupPrimitive.ofOpener? name then
+    if beamerScopeClosed raws start g.closer then
+      write fun st => { st with beamerScopes :=
+        (g, st.beamerFonts, st.beamerFootline) :: st.beamerScopes }
+      became s!"\\{name}" "a local font and footer scope" pos
+      return some (#[], start)
+  if let (g, fonts, footline) :: rest := (← get).beamerScopes then
+    if name == g.closer then
+      write fun st => { st with beamerFonts := fonts, beamerFootline := footline,
+                                beamerScopes := rest }
+      became s!"\\{name}" "the enclosing font and footer scope" pos
+      return some (#[], start)
+  return none
+
+/-- The rewrite of `name` past a deck preamble's group scopes: the cite and appendix forms, the
+control table, a length assignment, a list's settings, and the named arms. -/
+private def rewriteCtrlTable (name : String) (pos : Pos) (raws : Array Raw) (start : Nat) :
+    M (Option (Array Raw × Nat)) := do
   -- premise: biblatexChecks — authoryear `\cite` sets bare as lualatex and biber do
   if name == "cite" && (← get).bibStyle == some "plainnat" then
     return some (#[.ctrl "citealp" pos], start)
@@ -10978,6 +10995,21 @@ where
       out := out ++ (← assignLength n v s!"\\setlength\{\\{n}}" pos)
     return some (out, start)
   rewriteCtrlNamed name pos raws start
+
+/-- The rewrite of the control sequence `name` given what follows it: the
+replacement and how many elements it consumed, or `none`. -/
+private def rewriteCtrl (name : String) (pos : Pos) (raws : Array Raw) (start : Nat) :
+    M (Option (Array Raw × Nat)) := fun s0 =>
+  match rewriteCtrlAt name pos raws start s0 with
+  | (none, s1) => (none, s1)
+  | (some (repl, k), s1) =>
+    (some (repl, k - start), if repl.isEmpty then (account name pos s0 s1).2 else s1)
+where
+  rewriteCtrlAt (name : String) (pos : Pos) (raws : Array Raw) (start : Nat) :
+      M (Option (Array Raw × Nat)) := do
+  if (← get).wholeDoc && (← get).deck && !(← get).inDoc && !(← get).inDef then
+    if let some r ← deckScope name pos raws start then return some r
+  rewriteCtrlTable name pos raws start
 
 /-- A control word consumed with an empty replacement is paid for: the
 diagnostics grew or a state write happened. -/
@@ -12963,7 +12995,7 @@ private theorem rewriteCtrlAt_named_scope (name : String) (pos : Pos)
       rewriteCtrlNamed name pos raws start s := by
   have hSettings : listSettings? s name = none := by
     simp [listSettings?, hl]
-  simp only [rewriteCtrl.rewriteCtrlAt]
+  simp only [rewriteCtrl.rewriteCtrlAt, rewriteCtrlTable]
   simp [bind, StateT.bind, pure, get, getThe, MonadStateOf.get,
     StateT.get, hd, hCite, hAppendix, hAssign, hSettings, hRow]
 
@@ -12975,25 +13007,19 @@ public def bytesAscending : List String → Bool
   | a :: b :: rest => decide (nameKey a < nameKey b) && bytesAscending (b :: rest)
   | _ => true
 
+/-- Whether a control word neither opens nor closes a group primitive, so a deck preamble's group
+scopes leave it to the table. -/
+public abbrev Ungrouped (name : String) : Prop :=
+  ∀ g ∈ GroupPrimitive.all, name ≠ g.opener ∧ name ≠ g.closer
+
 /-- The table's names stand in strictly ascending byte order; none is `\cite` or `\appendix`, which
-a body's dispatch reads before the table, or the walk's own `\define` head; and none is spelled as a
-saved overlay-native name. -/
+a body's dispatch reads before the table, or the walk's own `\define` head; none is spelled as a
+saved overlay-native name; and none opens or closes a group primitive. -/
 public def CtrlRowsSound : Prop :=
   bytesAscending (ctrlRows.map (·.name)) = true ∧
     ∀ row ∈ ctrlRows, row.name ∉ ["cite", "appendix", "define"] ∧
       ¬ ("overlay native ".toByteArray.data.toList <+: row.name.toByteArray.data.toList) ∧
-      ∀ p ∈ groupPrimitives, row.name ≠ p.1 ∧ row.name ≠ p.2
-
-/-- A cursor whose deck preamble scopes leave the table its rows: off a deck preamble, or with every
-open scope closing at a group primitive. -/
-private def ScopesLeave (s : St) : Prop :=
-  (St.wholeDoc s && St.deck s && !St.inDoc s && !St.inDef s) = false ∨
-    ∀ e ∈ St.beamerScopes s, ∃ p ∈ groupPrimitives, e.1 = p.2
-
-/-- A cursor whose deck preamble scopes leave `name` to the table. -/
-private def LeavesName (s : St) (name : String) : Prop :=
-  (s.wholeDoc && s.deck && !s.inDoc && !s.inDef) = false ∨
-    (groupPrimitives.lookup name = none ∧ ∀ e ∈ s.beamerScopes, e.1 ≠ name)
+      Ungrouped row.name
 
 private theorem ascending_pairwise : ∀ names : List String, bytesAscending names = true →
     names.Pairwise (fun a b => nameKey a < nameKey b)
@@ -13052,20 +13078,45 @@ private theorem ctrlRow_names (hsound : CtrlRowsSound) (row : CtrlRow) (hrow : r
   exact ⟨find_row_exact ctrlRows row hrow (ctrlRows_nodup hsound), beq_false_of_ne hnames.1,
     beq_false_of_ne hnames.2.1, hnames.2.2, overlayName_unsaved row.name hsaved⟩
 
-/-- A table row's name is no group primitive, so a cursor whose open scopes close at primitives leaves
-it to the table. -/
-private theorem scopesLeave_name (hsound : CtrlRowsSound) (row : CtrlRow) (hrow : row ∈ ctrlRows)
-    (s : St) (h : ScopesLeave s) : LeavesName s row.name := by
-  obtain ⟨_, _, hprim⟩ := hsound.2 row hrow
-  rcases h with h | h
-  · exact .inl h
-  · refine .inr ⟨?_, fun e he heq => ?_⟩
-    · have h1 := hprim ("begingroup", "endgroup") (by simp [groupPrimitives])
-      have h2 := hprim ("bgroup", "egroup") (by simp [groupPrimitives])
-      simp only at h1 h2
-      simp [groupPrimitives, List.lookup, beq_false_of_ne h1.1, beq_false_of_ne h2.1]
-    · obtain ⟨p, hp, hpe⟩ := h e he
-      exact (hprim p hp).2 (heq ▸ hpe)
+private theorem ctrlRow_ungrouped (hsound : CtrlRowsSound) (row : CtrlRow) (hrow : row ∈ ctrlRows) :
+    Ungrouped row.name :=
+  (hsound.2 row hrow).2.2
+
+/-- A deck preamble's group scopes leave a control word no group primitive names. -/
+private theorem deckScope_ungrouped (name : String) (pos : Pos) (raws : Array Raw) (start : Nat)
+    (s : St) (hg : Ungrouped name) : deckScope name pos raws start s = (none, s) := by
+  have ho : GroupPrimitive.ofOpener? name = none := by
+    have h1 := (hg .begingroup (by simp [GroupPrimitive.all])).1
+    have h2 := (hg .bgroup (by simp [GroupPrimitive.all])).1
+    simp only [GroupPrimitive.opener] at h1 h2
+    simp [GroupPrimitive.ofOpener?, GroupPrimitive.all, GroupPrimitive.opener,
+      beq_false_of_ne h1.symm, beq_false_of_ne h2.symm]
+  unfold deckScope
+  cases hs : s.beamerScopes with
+  | nil =>
+    simp [bind, StateT.bind, pure, StateT.pure, get, getThe, MonadStateOf.get, StateT.get, ho, hs]
+  | cons e rest =>
+    have hne : (name == e.1.closer) = false :=
+      beq_false_of_ne (hg e.1 (by cases e.1 <;> simp [GroupPrimitive.all])).2
+    simp [bind, StateT.bind, pure, StateT.pure, get, getThe, MonadStateOf.get, StateT.get, ho, hs,
+      hne]
+
+/-- A control word the deck preamble's group scopes leave reads through the table. -/
+private theorem rewriteCtrlAt_table (name : String) (pos : Pos) (raws : Array Raw) (start : Nat)
+    (s : St) (h : deckScope name pos raws start s = (none, s)) :
+    rewriteCtrl.rewriteCtrlAt name pos raws start s = rewriteCtrlTable name pos raws start s := by
+  change (if (s.wholeDoc && s.deck && !s.inDoc && !s.inDef) = true then
+      (deckScope name pos raws start >>= fun r => match r with
+        | some r => pure (some r)
+        | _ => rewriteCtrlTable name pos raws start)
+    else rewriteCtrlTable name pos raws start) s = _
+  split
+  · show (match deckScope name pos raws start s with
+      | (a, s') => (match a with
+        | some r => pure (some r)
+        | _ => rewriteCtrlTable name pos raws start) s') = _
+    rw [h]
+  · rfl
 
 /-- Whether a row's action emits nothing, its report its whole effect. -/
 @[expose] public def CtrlAction.silent : CtrlAction → Bool
@@ -13140,20 +13191,28 @@ private theorem EmitsNothing.pure_empty : EmitsNothing (pure #[]) := fun _ => rf
 private theorem EmitsNothing.bind {α : Type} {x : M α} {f : α → M (Array Raw)}
     (h : ∀ a, EmitsNothing (f a)) : EmitsNothing (x >>= f) := fun _ => h _ _
 
+private theorem EmitsNothing.ite {c : Prop} [Decidable c] {a b : M (Array Raw)}
+    (ha : EmitsNothing a) (hb : EmitsNothing b) : EmitsNothing (if c then a else b) := by
+  by_cases hc : c
+  · simpa [hc] using ha
+  · simpa [hc] using hb
+
 /-- Splits a step into its binds and branches down to each `return #[]`. -/
 local macro "emits_nothing" : tactic => `(tactic| (
   try dsimp only
   repeat (first
     | exact EmitsNothing.pure_empty
     | (apply EmitsNothing.bind; intro _)
+    | apply EmitsNothing.ite
     | split)))
 
-/-- The lowerings whose every path returns no raws, their whole effect the report and state. -/
+
+/-- The lowerings proved to return no raws on every path, their whole effect the report and state. -/
 @[expose] public def Lowering.emitsNothing : Lowering → Bool
   | .passOptions | .defineColorspace | .counter | .newDimen | .runningField | .fancyField
-  | .clearPageStyles | .thisPageStyle | .addBibResource | .bibResources | .bibliographyStyle
-  | .unreadKeys | .newCounter | .box | .columnRatio | .titleGraphic | .fontTheme | .beamerOption
-  | .inputEncoding | .komaOptions | .graphColor => true
+  | .clearPageStyles | .thisPageStyle | .addBibResource | .bibResources | .natbibStyle
+  | .bibliographyStyle | .unreadKeys | .newCounter | .box | .columnRatio | .titleGraphic | .fontTheme
+  | .beamerOption | .inputEncoding | .komaOptions | .graphColor => true
   | _ => false
 
 private theorem lowerCall_nothing (c : CtrlCall) (l : Lowering) (h : l.emitsNothing = true) :
@@ -13209,7 +13268,7 @@ private def ctrlRowState (s : St) (row : CtrlRow) (c : CtrlCall) : St :=
 private theorem rewriteCtrlAt_found (row : CtrlRow) (hfind : ctrlRow? row.name = some row)
     (hCite : (row.name == "cite") = false) (hAppendix : (row.name == "appendix") = false)
     (pos : Pos) (raws : Array Raw) (start : Nat) (s : St)
-    (hd : LeavesName s row.name) :
+    (hg : Ungrouped row.name) :
     rewriteCtrl.rewriteCtrlAt row.name pos raws start s =
       match argsRead raws #[] row.sig start with
       | some (args, k) =>
@@ -13217,74 +13276,28 @@ private theorem rewriteCtrlAt_found (row : CtrlRow) (hfind : ctrlRow? row.name =
         else (some ((ctrlRowRun row ⟨row.name, pos, args, raws, start, k⟩ s).1, k),
           (ctrlRowRun row ⟨row.name, pos, args, raws, start, k⟩ s).2)
       | none => (none, s) := by
-  by_cases hd' : (s.wholeDoc && s.deck && !s.inDoc && !s.inDef) = false
-  · simp only [rewriteCtrl.rewriteCtrlAt]
-    cases hk : argsRead raws #[] row.sig start with
-    | none =>
-      simp [bind, StateT.bind, pure, get, getThe, MonadStateOf.get, StateT.get, hd', hCite,
-        hAppendix, hfind, hk]
+  rw [rewriteCtrlAt_table _ _ _ _ _ (deckScope_ungrouped _ _ _ _ _ hg)]
+  simp only [rewriteCtrlTable]
+  cases hk : argsRead raws #[] row.sig start with
+  | none =>
+    simp [bind, StateT.bind, pure, get, getThe, MonadStateOf.get, StateT.get, hCite,
+      hAppendix, hfind, hk]
+    rfl
+  | some r =>
+    obtain ⟨args, k⟩ := r
+    cases hl : ctrlLeft s row args with
+    | true =>
+      simp [bind, StateT.bind, pure, get, getThe, MonadStateOf.get, StateT.get, hCite,
+        hAppendix, hfind, hk, hl]
       rfl
-    | some r =>
-      obtain ⟨args, k⟩ := r
-      cases hl : ctrlLeft s row args with
-      | true =>
-        simp [bind, StateT.bind, pure, get, getThe, MonadStateOf.get, StateT.get, hd', hCite,
-          hAppendix, hfind, hk, hl]
-        rfl
-      | false =>
-        simp [bind, StateT.bind, pure, get, getThe, MonadStateOf.get, StateT.get, hd', hCite,
-          hAppendix, hfind, hk, hl]
-        cases ctrlRowRun row ⟨row.name, pos, args, raws, start, k⟩ s
-        rfl
-  · rcases hd with hd | ⟨hlook, hscopes⟩
-    · exact absurd hd hd'
-    simp only [Bool.not_eq_false, Bool.and_eq_true, Bool.not_eq_true'] at hd'
-    obtain ⟨⟨⟨hw, hdeck⟩, hin⟩, hdf⟩ := hd'
-    cases hs : s.beamerScopes with
-    | nil =>
-      simp only [rewriteCtrl.rewriteCtrlAt]
-      cases hk : argsRead raws #[] row.sig start with
-      | none =>
-        simp [bind, StateT.bind, pure, get, getThe, MonadStateOf.get, StateT.get, hw, hdeck, hin, hdf, hlook, hs, hCite,
-          hAppendix, hfind, hk]
-        rfl
-      | some r =>
-        obtain ⟨args, k⟩ := r
-        cases hl : ctrlLeft s row args with
-        | true =>
-          simp [bind, StateT.bind, pure, get, getThe, MonadStateOf.get, StateT.get, hw, hdeck, hin, hdf, hlook, hs, hCite,
-            hAppendix, hfind, hk, hl]
-          rfl
-        | false =>
-          simp [bind, StateT.bind, pure, get, getThe, MonadStateOf.get, StateT.get, hw, hdeck, hin, hdf, hlook, hs, hCite,
-            hAppendix, hfind, hk, hl]
-          cases ctrlRowRun row ⟨row.name, pos, args, raws, start, k⟩ s
-          rfl
-    | cons e rest =>
-      have hne : (row.name == e.1) = false :=
-        beq_false_of_ne fun h => hscopes e (by simp [hs]) h.symm
-      simp only [rewriteCtrl.rewriteCtrlAt]
-      cases hk : argsRead raws #[] row.sig start with
-      | none =>
-        simp [bind, StateT.bind, pure, get, getThe, MonadStateOf.get, StateT.get, hw, hdeck, hin, hdf, hlook, hs, hne, hCite,
-          hAppendix, hfind, hk]
-        rfl
-      | some r =>
-        obtain ⟨args, k⟩ := r
-        cases hl : ctrlLeft s row args with
-        | true =>
-          simp [bind, StateT.bind, pure, get, getThe, MonadStateOf.get, StateT.get, hw, hdeck, hin, hdf, hlook, hs, hne, hCite,
-            hAppendix, hfind, hk, hl]
-          rfl
-        | false =>
-          simp [bind, StateT.bind, pure, get, getThe, MonadStateOf.get, StateT.get, hw, hdeck, hin, hdf, hlook, hs, hne, hCite,
-            hAppendix, hfind, hk, hl]
-          cases ctrlRowRun row ⟨row.name, pos, args, raws, start, k⟩ s
-          rfl
+    | false =>
+      simp [bind, StateT.bind, pure, get, getThe, MonadStateOf.get, StateT.get, hCite,
+        hAppendix, hfind, hk, hl]
+      cases ctrlRowRun row ⟨row.name, pos, args, raws, start, k⟩ s
+      rfl
 
 private theorem rewriteCtrlAt_row (hsound : CtrlRowsSound) (row : CtrlRow) (hrow : row ∈ ctrlRows)
-    (pos : Pos) (raws : Array Raw) (start : Nat) (s : St)
-    (hd : LeavesName s row.name) :
+    (pos : Pos) (raws : Array Raw) (start : Nat) (s : St) :
     rewriteCtrl.rewriteCtrlAt row.name pos raws start s =
       match argsRead raws #[] row.sig start with
       | some (args, k) =>
@@ -13293,40 +13306,38 @@ private theorem rewriteCtrlAt_row (hsound : CtrlRowsSound) (row : CtrlRow) (hrow
           (ctrlRowRun row ⟨row.name, pos, args, raws, start, k⟩ s).2)
       | none => (none, s) := by
   obtain ⟨hfind, hCite, hAppendix, _, _⟩ := ctrlRow_names hsound row hrow
-  exact rewriteCtrlAt_found row hfind hCite hAppendix pos raws start s hd
+  exact rewriteCtrlAt_found row hfind hCite hAppendix pos raws start s (ctrlRow_ungrouped hsound row hrow)
 
 private theorem rewriteCtrl_found_exact (row : CtrlRow) (hfind : ctrlRow? row.name = some row)
     (hCite : (row.name == "cite") = false) (hAppendix : (row.name == "appendix") = false)
     (pos : Pos) (raws : Array Raw) (start k : Nat) (s : St) (args : Array (Option (Array Raw)))
-    (hd : LeavesName s row.name)
+    (hg : Ungrouped row.name)
     (hk : argsRead raws #[] row.sig start = some (args, k))
     (hl : ctrlLeft s row args = false) :
     rewriteCtrl row.name pos raws start s =
       (some ((ctrlRowRun row ⟨row.name, pos, args, raws, start, k⟩ s).1, k - start),
         ctrlRowState s row ⟨row.name, pos, args, raws, start, k⟩) := by
   unfold rewriteCtrl
-  rw [rewriteCtrlAt_found row hfind hCite hAppendix pos raws start s hd, hk]
+  rw [rewriteCtrlAt_found row hfind hCite hAppendix pos raws start s hg, hk]
   simp only [hl, Bool.false_eq_true, ↓reduceIte]
   rfl
 
 private theorem rewriteCtrl_row_exact (hsound : CtrlRowsSound) (row : CtrlRow)
     (hrow : row ∈ ctrlRows) (pos : Pos) (raws : Array Raw) (start k : Nat) (s : St)
     (args : Array (Option (Array Raw)))
-    (hd : LeavesName s row.name)
     (hk : argsRead raws #[] row.sig start = some (args, k))
     (hl : ctrlLeft s row args = false) :
     rewriteCtrl row.name pos raws start s =
       (some ((ctrlRowRun row ⟨row.name, pos, args, raws, start, k⟩ s).1, k - start),
         ctrlRowState s row ⟨row.name, pos, args, raws, start, k⟩) := by
   obtain ⟨hfind, hCite, hAppendix, _, _⟩ := ctrlRow_names hsound row hrow
-  exact rewriteCtrl_found_exact row hfind hCite hAppendix pos raws start k s args hd hk hl
+  exact rewriteCtrl_found_exact row hfind hCite hAppendix pos raws start k s args
+    (ctrlRow_ungrouped hsound row hrow) hk hl
 
-/-- At a cursor off a deck preamble, or one whose open scopes close at group primitives, a row's
-control whose signature finds an argument that must stand missing, or that a leave of its row holds
-for, is left with the state to elaboration. -/
+/-- At any cursor, a row's control whose signature finds an argument that must stand missing, or
+that a leave of its row holds for, is left with the state to elaboration. -/
 public def CtrlRowDeclines (row : CtrlRow) : Prop :=
   ∀ (pos : Pos) (raws : Array Raw) (start : Nat) (s : St),
-    ScopesLeave s →
     (argsRead raws #[] row.sig start = none ∨
       ∃ args k, argsRead raws #[] row.sig start = some (args, k) ∧
         ctrlLeft s row args = true) →
@@ -13334,9 +13345,9 @@ public def CtrlRowDeclines (row : CtrlRow) : Prop :=
 
 public theorem ctrlRow_declines_contract (hsound : CtrlRowsSound) (row : CtrlRow)
     (hrow : row ∈ ctrlRows) : CtrlRowDeclines row := by
-  intro pos raws start s hd h
+  intro pos raws start s h
   unfold rewriteCtrl
-  rw [rewriteCtrlAt_row hsound row hrow pos raws start s (scopesLeave_name hsound row hrow s hd)]
+  rw [rewriteCtrlAt_row hsound row hrow pos raws start s]
   rcases h with hk | ⟨args, k, hk, hl⟩
   · rw [hk]
   · rw [hk]
@@ -13356,7 +13367,7 @@ private theorem rewriteCtrl_package_external_exact
     (command names : String) (pos gp np : Pos) (st : St)
     (hc : command = "usepackage" ∨ command = "RequirePackage")
     (hrow : ctrlRow? command = some (packageRow command))
-    (hd : st.inDoc = false) (hdef : st.inDef = false) (hw : st.wholeDoc = false)
+    (hd : st.inDoc = false) (hdef : st.inDef = false)
     (hn : ∀ p ∈ names.trimAscii.toString.splitOn "," |>.map (·.trimAscii.toString),
       nativePackages.contains p = false)
     (hb : ∀ p ∈ names.trimAscii.toString.splitOn "," |>.map (·.trimAscii.toString),
@@ -13381,7 +13392,8 @@ private theorem rewriteCtrl_package_external_exact
     ((names.trimAscii.toString.splitOn ",").map (·.trimAscii.toString)) none #[] pos st hn hb ht
   have hstep := rewriteCtrl_found_exact (packageRow command) hrow
     (by rcases hc with rfl | rfl <;> rfl) (by rcases hc with rfl | rfl <;> rfl)
-    pos (packageCall command names pos gp np) 1 2 st _ (.inl (by simp [hw]))
+    pos (packageCall command names pos gp np) 1 2 st _
+    (by rcases hc with rfl | rfl <;> decide)
     (packageCall_args command names pos gp np)
     (by simp [ctrlLeft, packageRow, CtrlLeave.holds, hdef])
   have hname : (packageRow command).name = command := rfl
@@ -13492,7 +13504,7 @@ private theorem rewriteList_package_external_exact
     (command names : String) (pos gp np : Pos) (st : St)
     (hc : command = "usepackage" ∨ command = "RequirePackage")
     (hrow : ctrlRow? command = some (packageRow command))
-    (hd : st.inDoc = false) (hf : st.inDef = false) (hw : st.wholeDoc = false)
+    (hd : st.inDoc = false) (hf : st.inDef = false)
     (hpic : st.inPicture = false)
     (hn : ∀ p ∈ names.trimAscii.toString.splitOn "," |>.map (·.trimAscii.toString),
       nativePackages.contains p = false)
@@ -13510,7 +13522,7 @@ private theorem rewriteList_package_external_exact
   have ho : overlayName command = command := by
     rcases hc with rfl | rfl <;> simp [overlayName, String.startsWith_string_iff]
   have hstep := rewriteCtrl_package_external_exact command names pos gp np st
-    hc hrow hd hf hw hn hb ht part hp
+    hc hrow hd hf hn hb ht part hp
   have h := rewriteList_control_exact false (packageCall command names pos gp np) #[] #[]
     command pos [.group #[.word names np] gp] [] 0 st _ hdef hpic
     (by simpa only [ho, Nat.zero_add, List.length_cons, List.length_nil] using hstep)
@@ -13520,7 +13532,7 @@ private theorem rewriteList_package_external_exact
 private theorem rewriteList_row_exact (hsound : CtrlRowsSound) (inBody : Bool)
     (raws out : Array Raw) (row : CtrlRow) (hrow : row ∈ ctrlRows) (pos : Pos)
     (args : Array (Option (Array Raw))) (taken rest : List Raw) (i : Nat) (s : St)
-    (hd : LeavesName s row.name) (hp : s.inPicture = false)
+    (hp : s.inPicture = false)
     (hk : argsRead raws #[] row.sig (i + 1) = some (args, i + 1 + taken.length))
     (hl : ctrlLeft s row args = false) :
     rewriteCtrl row.name pos raws (i + 1) s =
@@ -13532,7 +13544,7 @@ private theorem rewriteList_row_exact (hsound : CtrlRowsSound) (inBody : Bool)
         rest (i + 1 + taken.length) 0
         (ctrlRowState s row ⟨row.name, pos, args, raws, i + 1, i + 1 + taken.length⟩) := by
   have hstep := rewriteCtrl_row_exact hsound row hrow pos raws (i + 1) (i + 1 + taken.length) s
-    args hd hk hl
+    args hk hl
   rw [Nat.add_sub_cancel_left] at hstep
   obtain ⟨_, _, _, hdef, hoverlay⟩ := ctrlRow_names hsound row hrow
   refine ⟨hstep, ?_⟩
@@ -13543,7 +13555,7 @@ private theorem rewriteList_row_exact (hsound : CtrlRowsSound) (inBody : Bool)
 private theorem rewriteList_row_body_exact (hsound : CtrlRowsSound) (inBody : Bool)
     (raws out : Array Raw) (row : CtrlRow) (hrow : row ∈ ctrlRows) (pos : Pos)
     (args : Array (Option (Array Raw))) (pre taken post : List Raw) (i : Nat) (s : St)
-    (hd : LeavesName s row.name) (hp : s.inPicture = false)
+    (hp : s.inPicture = false)
     (hpre : LiteralRaws pre) (hpost : LiteralRaws post)
     (hk : argsRead raws #[] row.sig (i + pre.length + 1) =
       some (args, i + pre.length + 1 + taken.length))
@@ -13555,16 +13567,15 @@ private theorem rewriteList_row_body_exact (hsound : CtrlRowsSound) (inBody : Bo
           ⟨row.name, pos, args, raws, i + pre.length + 1, i + pre.length + 1 + taken.length⟩) := by
   rw [rewriteList_literal_prefix _ _ _ _ _ _ hpre,
     (rewriteList_row_exact hsound inBody raws (out ++ pre.toArray) row hrow pos args taken post
-      (i + pre.length) s hd hp hk hl).2,
+      (i + pre.length) s hp hk hl).2,
     rewriteList_literal_exact _ _ _ _ _ _ hpost]
 
-/-- At a cursor off a deck preamble, or one whose open scopes close at group primitives, a row's
-control its leaves do not keep consumes exactly what its signature reads there: its emission takes
-its place, the walk resumes where the reading stops, and a silent row emits nothing and is paid for. -/
+/-- At any cursor, a row's control its leaves do not keep consumes exactly what its signature reads
+there: its emission takes its place, the walk resumes where the reading stops, and a silent row emits
+nothing and is paid for. -/
 public def CtrlRowConsumed (row : CtrlRow) : Prop :=
   ∀ (inBody : Bool) (raws out : Array Raw) (pos : Pos) (args : Array (Option (Array Raw)))
     (taken rest : List Raw) (i : Nat) (s : St),
-    ScopesLeave s →
     St.inPicture s = false →
     raws.toList.drop i = .ctrl row.name pos :: (taken ++ rest) →
     argsRead raws #[] row.sig (i + 1) = some (args, i + 1 + taken.length) →
@@ -13586,9 +13597,9 @@ public def CtrlRowConsumed (row : CtrlRow) : Prop :=
 
 public theorem ctrlRow_control_contract (hsound : CtrlRowsSound) (row : CtrlRow)
     (hrow : row ∈ ctrlRows) : CtrlRowConsumed row := by
-  intro inBody raws out pos args taken rest i s hd hp hsource hk hl
+  intro inBody raws out pos args taken rest i s hp hsource hk hl
   obtain ⟨hstep, hwalk⟩ := rewriteList_row_exact hsound inBody raws out row hrow pos args taken
-    rest i s (scopesLeave_name hsound row hrow s hd) hp hk hl
+    rest i s hp hk hl
   refine ⟨hstep, by rw [hsource]; exact hwalk, fun hsilent => ?_⟩
   have hempty := ctrlRowRun_silent row ⟨row.name, pos, args, raws, i + 1, i + 1 + taken.length⟩
     s hsilent
@@ -13653,7 +13664,7 @@ public theorem ctrlRow_groups_consumed (hsound : CtrlRowsSound) (row : CtrlRow)
   have hk := argsRead_groups_exact hg #[] row.sig hn.symm hsig
   have hl := ctrlLeft_quiet row s (#[] ++ (args.map some).toArray) hquiet
   obtain ⟨hstep, hwalk, _⟩ := ctrlRow_control_contract hsound row hrow inBody raws out pos _ taken
-    rest i s (.inl (by simp [hd])) hp hsource hk hl
+    rest i s hp hsource hk hl
   have hempty := ctrlRowRun_quiet row
     ⟨row.name, pos, #[] ++ (args.map some).toArray, raws, i + 1, i + 1 + taken.length⟩ s hquiet hd
   rw [hempty, Array.append_empty] at hwalk
@@ -14391,7 +14402,7 @@ public theorem executeInputs_package_refusal_contract (reader : InputReader Id)
       obtain ⟨q, hq, rfl⟩ := List.mem_map.mp hp
       exact (hnames q hq).2.2.2
     have hstep := rewriteList_package_external_exact command names pos groupPos namePos st
-      hc hrow rfl rfl rfl rfl hn hb ht part hpart
+      hc hrow rfl rfl rfl hn hb ht part hpart
     let reports := ((names.trimAscii.toString.splitOn ",").map fun p =>
       atSource st pos (packageRefusal st.file pos p.trimAscii.toString)).toArray
     let after := { st with diags := st.diags ++ reports }
@@ -14452,8 +14463,7 @@ public theorem finishRewrite_row_document_exact (hsound : CtrlRowsSound)
   unfold finishRewrite
   rw [rewriteCursor_last_document_exact cursor body docPos hp hs, hb]
   have hbody := rewriteList_row_body_exact hsound cursor.inBody body #[] row hrow pos args pre
-    taken post 0 (openDocumentBody cursor.state).2
-    (.inl (by simp [show (openDocumentBody cursor.state).2.inDoc = true from rfl])) hp hpre hpost
+    taken post 0 (openDocumentBody cursor.state).2 hp hpre hpost
     (by simpa only [Nat.zero_add] using hk) hl
   simp only [Nat.zero_add] at hbody
   rw [hbody]
