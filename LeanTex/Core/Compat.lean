@@ -6002,18 +6002,6 @@ private def flushListLevels : M (Array Raw) := do
           out := out ++ (← carry (.style (if level == 1 then kind else s!"{kind}{level}") keys) pos)
   return out
 
-/-- A TeX length from option text: `3\\gapunit` is
-`3 * gapunit`, `\\x` is `x`. -/
-private def lengthOfTeX (v : String) : String :=
-  let t := v.trimAscii.toString
-  match t.splitOn "\\" with
-  | [plain] => plain.trimAscii.toString
-  | num :: name :: _ =>
-    let n := num.trimAscii.toString
-    let name := name.trimAscii.toString
-    if n.isEmpty then name else s!"{n} * {name}"
-  | [] => t
-
 /-- An xparse argument spec, or a plain count, as native
 parameters `a1 … an`. -/
 private def signature (spec : String) : String := Id.run do
@@ -6122,15 +6110,15 @@ private def absoluteWords : List String :=
 
 /-- A key's value as the preamble's length door reads a `\dimexpr` to a literal, sums and scalings of
 lengths it holds, else the value as written. -/
-private def dimexprValue (v : Array Raw) : M String := do
+private def dimexprValue (v : Array Raw) : M (Array Raw) := do
   let src := rawSrc v
-  if !src.startsWith "\\dimexpr" then return src
+  if !src.startsWith "\\dimexpr" then return v
   let st ← get
   -- premise: strutLengthChecks — a value naming a length the page cannot resolve stays dropped
   let read := (lenValue st.lens v (preamble := !st.inDoc) (measureKnown := st.measureKnown)
     (flowPage := st.flowPage) (strut := if st.inDoc then none else st.strutSkip)).filter fun s =>
       readsAsLength s && texWordsOnly src && !s.contains '/' && (letterRuns s).all absoluteWords.contains
-  return read.getD src
+  return (read.map fun s => #[Raw.word s {}]).getD v
 
 /-- `\usepackage[opts]{geometry}`, `\geometry{...}` and
 `\newgeometry{...}` as `\page{...}`. -/
@@ -6158,32 +6146,33 @@ private def geometry (opts : Array Raw) (pos : Pos)
     | k, some v0 =>
       -- geometry's width/height size the text block, paperwidth/paperheight the page.
       let k := if k == "paperwidth" then "width" else if k == "paperheight" then "height" else k
-      let v ← dimexprValue v0
+      let vr ← dimexprValue v0
+      let v := rawSrc vr
       -- premise: driverOptionChecks — a driver option ships the page without it
       if driverOptions.contains k then
         inertParam "geometry" k spelling "the engine writes its own output" pos
       else if k == "verbose" then inertParam "geometry" k spelling "the engine writes no TeX log" pos
       else if v.startsWith "\\dimexpr" then
         droppedExpr := droppedExpr.push s!"{k} = {v}"
-      else match k, ← (if v == rawSrc v0 then (Entries.read .keyval v0).toList.mapM (dimexprValue ·.item)
-          else pure (KeyVal.items v).toList) with
+      else match k, ← (if vr == v0 then (Entries.read .keyval v0).toList.mapM (dimexprValue ·.item)
+          else pure [vr]) with
       | "margin", a :: b :: _ | "hmargin", a :: b :: _ | "vmargin", a :: b :: _ =>
-        if a.startsWith "\\dimexpr" || b.startsWith "\\dimexpr" then
+        if (rawSrc a).startsWith "\\dimexpr" || (rawSrc b).startsWith "\\dimexpr" then
           droppedExpr := droppedExpr.push s!"{k} = {v}"
         else if k == "margin" then
-          keys := keys ++ #[(.hmargin, lengthOfTeX a, #[e]), (.vmargin, lengthOfTeX b, #[e])]
-        else if lengthOfTeX a == lengthOfTeX b then
-          keys := keys.push (if k == "hmargin" then .hmargin else .vmargin, lengthOfTeX a, #[e])
+          keys := keys ++ #[(.hmargin, lengthSrc a, #[e]), (.vmargin, lengthSrc b, #[e])]
+        else if lengthSrc a == lengthSrc b then
+          keys := keys.push (if k == "hmargin" then .hmargin else .vmargin, lengthSrc a, #[e])
         else dropped := dropped.push k
       | _, _ :: _ :: _ => dropped := dropped.push k
       | _, _ =>
         if let some key := geometryPageKeys.find? (·.name == k) then
-          keys := keys.push (key, lengthOfTeX v, #[e])
+          keys := keys.push (key, lengthSrc vr, #[e])
         else if k == "headheight" then
           inertParam "geometry" k spelling
             "the running head takes its content's height, and the text block stays where the margins put it" pos
         else if geometrySideKeys.contains k then
-          sides := sides.push (k, lengthOfTeX v)
+          sides := sides.push (k, lengthSrc vr)
         else dropped := dropped.push k
   -- An equal pair of side margins is the symmetric margin; an unequal or lone side stays named.
   let side (n : String) : Option String :=
@@ -9742,7 +9731,7 @@ description scopes")) ++
         if v.contains '*' then
           unreadParam "\\setlist" key s!"'{what}' key '{key}={v}'" pos
             (help := "the widest label is not measured; give the margin a length")
-        else entries := Ir.redeclare entries native (.text (lengthOfTeX v))
+        else entries := Ir.redeclare entries native (.text (lengthSrc value))
       else if key == "label" then
         let written := (KeyVal.rawEntry e.src).2.getD ""
         if written.contains '*' then
@@ -10150,11 +10139,11 @@ and patterns stand in" c.pos
     let opt := c.optSrc 0
     let element := c.src 1
     let mut keys : Array (String × String) := #[]
-    for e in KeyVal.items (opt.getD "") do
-      match KeyVal.entry e with
-      | ("beforeskip", some v) => keys := keys.push ("before", lengthOfTeX v)
-      | ("afterskip", some v) => keys := keys.push ("after", lengthOfTeX v)
-      | _ => pure ()
+    for e in Entries.read .keyval ((c.given 0).getD #[]) do
+      match e.key, e.value with
+      | "beforeskip", some v => keys := keys.push ("before", lengthSrc v)
+      | "afterskip", some v => keys := keys.push ("after", lengthSrc v)
+      | _, _ => pure ()
     if !Ir.styleableElements.contains element then
       say .W0111 s!"'\\RedeclareSectionCommand\{{element}}' names no styleable element; \
 ignored" c.pos

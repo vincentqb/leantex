@@ -196,6 +196,9 @@ def nativeCarrierChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
   t "a geometry value standing as no single entry is that key's loss"
     ((dvE (geometry "headsep={(1pt},margin=1in")).any fun d =>
       d.code == "W0104" && d.subject == some "param:usepackage:geometry:headsep")
+  t "a geometry length spelled with an upper-case unit sets what its lower-case spelling sets"
+    (pagesOf oneFace (geometry "headsep=0.5IN, margin=2cm") ==
+      pagesOf oneFace (geometry "headsep=0.5in, margin=2cm"))
   t "a geometry load setting no key names the default layout it leaves"
     ((dvE (geometry "")).any fun d =>
       d.code == "W0104" && d.subject == some "param:usepackage:geometry:layout")
