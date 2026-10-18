@@ -403,7 +403,8 @@ private def filOrderChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
   check ref "block skips: \\vspace{1em plus 1fill} is its width and a fill, unnamed"
     (wfill.isSome && wfill == wsplit && wdiags.all (·.code != "W0104"))
   -- Every spelling TeX reads as that glue, each set by lualatex.
-  for (skip, same) in [("\\vspace{\\stretch{1}}", "\\vfill"), ("\\vspace{0pt plus 1 fill}", "\\vfill"),
+  for (skip, same) in [("\\vspace{\\stretch{1}}", "\\vfill"), ("\\vspace{\\stretch1}", "\\vfill"),
+      ("\\vspace{\\stretch 1}", "\\vfill"), ("\\vspace{0pt plus 1 fill}", "\\vfill"),
       ("\\vspace{0pt PLUS 1FILL}", "\\vfill"),
       ("\\vspace{12pt plus 1fill minus 3pt}", "\\vspace{12pt}\\vfill"),
       ("\\vspace{2\\baselineskip plus 1fill}", "\\vspace{2\\baselineskip}\\vfill"),
@@ -413,6 +414,11 @@ private def filOrderChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) :
     check ref s!"block skips: '{skip}' stands where '{same}' stands, unnamed, got {ds.map (·.code)}"
       (y.isSome && y == want && ds.all fun d => d.code != "W0104" && d.code != "W0301" &&
         d.severity != .error)
+  let (bare, bareDs) := pageOf "\\vspace"
+  let (none_, _) := pageOf ""
+  check ref s!"block skips: a bare \\vspace is named missing its length and sets nothing, got {bareDs.map (·.code)}"
+    (bare.isSome && bare == none_ &&
+      (bareDs.filter (·.severity != .note)).map (·.code) == #["E0304"])
   -- `stretch = fill` (or `fil`) is the fill; any other value is the key's wrong type.
   let (nfill, nds) := pageOf "\\block[stretch = fil]{}"
   let (vfill, _) := pageOf "\\vfill"

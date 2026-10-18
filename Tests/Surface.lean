@@ -213,6 +213,11 @@ r = w / 2.5, neg = 0pt - 3sp, negh = neg / 2 }")
     (let ds8 := (elabStr (pre
       "\\newlength{\\y}\\setlength{\\y}{4pt}\\newlength{\\z}\\setlength{\\z}{\\y/2}")).2
      ds8.all (·.code != "E0375") && ds8.all (·.severity != .error))
+  let lowered (src : String) : Option String :=
+    Compat.lengthSrcBy (fun n _ => some n) (Parse.parse "t" (Lex.lex "t" src).1).1
+  t "a factor before a register or a unit control multiplies it, as TeX reads it"
+    (lowered "\\tw@\\p@" == some "tw@ * 1pt" && lowered "\\a \\b" == some "a * b" &&
+      lowered "-\\a\\b" == some "-1 * a * b")
   let normalized := Decl.parseLengthSyntax "0.315 * (textwidth + 36mm)"
   t "raw \\dimexpr normalizes to the ordinary affine grammar"
     (Decl.parseLengthSyntax "0.315\\dimexpr \\textwidth +36mm\\relax" == normalized)
@@ -1184,6 +1189,11 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
        some { ex := 2000 })
   t "the style group's plain forms spell out; alignment is not font"
     (((secDoc.styles.find? "section").bind (·.font)).isSome)
+  let (emptyDoc, emptyDs) := elabStr ("\\documentclass{article}\\renewcommand{\\section}{" ++
+    "\\@startsection{section}{1}{\\z@}{}{1.5ex}{\\bfseries}}\\begin{document}\\section{A}\nx\\end{document}")
+  t "an empty \\@startsection beforeskip is TeX's zero"
+    (emptyDs.all (·.severity == .note) &&
+     ((emptyDoc.styles.find? "section").bind (·.before)).map (·.width) == some {})
   -- A negative afterskip is a run-in heading (ltsect.dtx); one in the built-in's own font is already rendered.
   t "a run-in paragraph redefinition in the built-in's own font is satisfied"
     (let src := "\\documentclass{article}\\renewcommand{\\paragraph}{" ++
