@@ -2158,11 +2158,11 @@ def attributesEnd? (c : Chars) (i : Nat) : Option Nat := Id.run do
     | none => return none
   return none
 
-/-- Whether a bracket at `i` is Pandoc's `reference`: balanced brackets not opening `[^` or `[@`, an
+/-- Whether a bracket at `i` is Pandoc's `reference`: balanced brackets not opening `[^`, an
 escape, a code span or a backtick run stepped over whole. -/
 def referenceAt (c : Chars) (ticks : Std.HashMap Nat (Array Nat)) (i : Nat) : Bool := Id.run do
   unless c.at? i == some '[' do return false
-  if c.at? (i + 1) == some '^' || c.at? (i + 1) == some '@' then return false
+  if c.at? (i + 1) == some '^' then return false
   let mut depth := 1
   let mut j := i + 1
   for _ in [0:c.size + 1] do

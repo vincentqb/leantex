@@ -403,17 +403,16 @@ work sets as its key, uncited" p (help := some "spell the key as its .bib entry 
     else (citeTextRaws items.toList p, diags)
   | none => (#[], diags)
 
-/-- A citation group's raws: its works', and natbib's `\nocite{*}` for a citation of every entry. -/
+/-- A citation group's raws: its works', a citation of every entry setting and listing nothing, as
+Pandoc's citation processing reads one in the text. -/
 private def citeGroupRaws (file : String) (items : Array CiteRaws) (p : Pos) :
     Array Raw × Array Diag :=
-  -- `*` is Pandoc's key for every entry, listed as natbib's `\nocite{*}` lists them, printing nothing.
-  let every := items.filter (·.key == "*")
-  let listed := if every.isEmpty then #[] else citeCmdRaws "nocite" #[] #[] #["*"] p
-  let unset := if every.all (fun c => c.pre.isEmpty && c.post.isEmpty) then #[] else
-    #[routeDegraded file "cite-every-note"
-      "the notes of a citation of every entry set nothing: it lists every entry and prints nothing" p]
+  let unset := if items.all (·.key != "*") then #[] else
+    #[routeDegraded file "cite-every"
+      "a citation of every entry in the text prints nothing and lists nothing, as Pandoc's citation \
+processing reads it" p (help := some "list every entry with nocite: '@*' in the metadata")]
   let (rs, ds) := citeWorksRaws file (items.filter (·.key != "*")) p
-  (rs ++ listed, ds ++ unset)
+  (rs, ds ++ unset)
 
 mutual
 
@@ -1247,7 +1246,7 @@ public def splitMetadata (bs : Array Blk) : Array MetaField × Array Blk :=
   | _ => (#[], bs)
 
 /-- Text with each abbreviation joined to the word after it by a non-breaking space where spaces
-follow it, as Pandoc's smart punctuation joins it, unless a citation follows the spaces. -/
+follow it, as Pandoc's smart punctuation joins it, unless a citation or a note follows the spaces. -/
 private def joinAbbreviations (s : String) (citeNext : Bool) : String := Id.run do
   let cs := s.toList.toArray
   let mut out := ""
@@ -1273,7 +1272,7 @@ private def abbrevInls : List Inl → List Inl
   | [] => []
   | x :: rest =>
     let citeNext := match rest with
-      | .cite .. :: _ => true
+      | .cite .. :: _ | .note .. :: _ => true
       | _ => false
     abbrevInl citeNext x :: abbrevInls rest
 

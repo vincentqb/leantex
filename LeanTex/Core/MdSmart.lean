@@ -18,14 +18,16 @@ public def abbreviations : List String :=
    "pt.", "q.v.", "Rep.", "Rev.", "s.v.", "s.vv.", "saec.", "sec.", "Sen.", "Sep.", "Sept.", "Sgt.",
    "Sr.", "St.", "univ.", "viz.", "vol.", "vs."]
 
-/-- The word Pandoc's `str` reads ending at `i`: letters, digits and single dots. -/
+/-- The word Pandoc's `str` reads ending at `i`, letters, digits and single dots, where it is no
+longer than an abbreviation; `""` otherwise. -/
 public def strBefore (cs : Array Char) (i : Nat) : String := Id.run do
   let mut j := i
-  for _ in [0:i] do
+  for _ in [0:8] do
     match j with
     | 0 => break
     | k + 1 =>
       if (cs[k]?.map fun c => CiteKey.isAlnum c || c == '.').getD false then j := k else break
+  if i - j ≥ 8 then return ""
   let w := String.ofList (cs.extract j i).toList
   return if (w.splitOn "..").length > 1 then "" else w
 

@@ -48,9 +48,8 @@ private def keepAbbrevSpaces (acc s : String) : String := Id.run do
   let mut out := ""
   for k in [tail.size:cs.size] do
     let c := cs[k]?.getD ' '
-    let joins := MdSmart.joinsAt cs k
-    out := if c == ' ' && joins then out ++ "&#32;"
-      else if c == '\u00a0' && joins && k + 1 < cs.size then out.push ' '
+    out := if c == ' ' && MdSmart.joinsAt cs k then out ++ "&#32;"
+      else if c == '\u00a0' && k + 1 < cs.size && MdSmart.joinsAt cs k then out.push ' '
       else out.push c
   return out
 
@@ -560,7 +559,7 @@ private inductive Site where
 
 /-- A citation note as the reader reads it back inside a citation's brackets. -/
 private def citeNote (pipes : Bool) (s : String) : String :=
-  keepAbbrevSpaces "" (String.join (s.toList.map fun c =>
+  keepAbbrevSpaces "" (String.join (s.trimAscii.toString.toList.map fun c =>
     if c == ';' || c == '@' then "\\" ++ c.toString else String.ofList (escapeChars pipes true [c])))
 
 /-- One work of a bracketed citation, `prefix -@key, suffix`; `none` where its key has no
@@ -736,7 +735,7 @@ where
       | some (spelled, n) => altSpellFrom pipes (acc ++ spelled) (rest.drop n) (rrest.drop n)
       | none =>
         let said := match r with
-          | .text t => escapeText pipes true t
+          | .text t => keepAbbrevSpaces acc (escapeText pipes true t)
           | .cite _ keys ink => unspelled ++ ink.getD (Ir.citeMarks keys)
         altSpellFrom pipes (acc ++ said) rest rrest
   termination_by xs => xs.length
@@ -758,12 +757,12 @@ private def inlineInto (site : Site) (cites : Bool) (acc : String) (after : Bool
   | .image src _ alt =>
     let shown := match alt, cites with
       | .citing runs, true => altSpelling (site != .cell) runs
-      | _, _ => escapeText (site != .cell) cites alt.text
+      | _, _ => keepAbbrevSpaces "" (escapeText (site != .cell) cites alt.text)
     let dest := linkDest src
     acc ++ "![" ++ shown ++ "](" ++ dest ++ ")"
   -- An icon's markdown spelling is its text alternative.
   | .icon _ label =>
-    let escaped := escapeText (site != .cell) cites label
+    let escaped := keepAbbrevSpaces acc (escapeText (site != .cell) cites label)
     acc ++ escaped
   -- An anchor is written as the empty target the markdown reader reads back.
   | .label key => acc ++ "<a name=\"" ++ Ir.labelAnchor key ++ "\"></a>"

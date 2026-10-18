@@ -2743,7 +2743,7 @@ private theorem skipBracketRun_ge (raws : Array Raw) (j : Nat) :
       omega
   next => omega
 
-/-- One citation note, the `[...]` run at `j` elaborated by `el`, its edge spaces off, with the
+/-- One citation note, the `[...]` run at `j` elaborated by `el`, with the
 index past it; `none` at `j` when no bracket opens there. -/
 private def citeNote (raws : Array Raw) (j w : Nat) (hw : sliceWeight raws j ≤ w)
     (el : (sub : Array Raw) → rawWeightList sub.toList < w → EM (Array Inline)) :
@@ -2757,8 +2757,7 @@ private def citeNote (raws : Array Raw) (j w : Nat) (hw : sliceWeight raws j ≤
     let note ← el (raws.extract (j + 1) c)
       (Nat.lt_of_lt_of_le (extract_lt_slice c hjlt (Nat.lt_succ_self j)) hw)
     have hk := skipSpaces_ge raws (c + 1)
-    -- natbib's own separator spaces a note: a space at its edge would set twice.
-    return (some (Ir.plainText note).trimAscii.toString, ⟨skipSpaces raws (c + 1), by omega⟩)
+    return (some (Ir.plainText note), ⟨skipSpaces raws (c + 1), by omega⟩)
   | _ => return (none, ⟨j, Nat.le_refl j⟩)
 
 /-- natbib's citation family at `i`: one node per citation group, its keys as

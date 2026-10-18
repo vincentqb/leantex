@@ -604,11 +604,7 @@ private theorem inlRaws_adm (file : String) : (x : Inl) → Adm d (inlRaws file 
     have hn := citeItemsRaws_adm file items.toList #[] #[] (by intro c hc; simp at hc)
     unfold citeGroupRaws
     dsimp only
-    refine adm_append (citeWorksRaws_adm file _ p fun c hc => ?_) ?_
-    · exact hn c (Array.mem_filter.mp hc).1
-    · split
-      · exact adm_empty
-      · exact citeCmdRaws_adm _ _ _ _ _ (by simp [citeCtrls]) adm_empty adm_empty
+    exact citeWorksRaws_adm file _ p fun c hc => hn c (Array.mem_filter.mp hc).1
 
 private theorem closeLeading_adm (rs : Array Raw) (h : Adm d rs) : Adm d (closeLeading rs) := by
   unfold closeLeading

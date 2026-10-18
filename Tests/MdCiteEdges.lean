@@ -24,19 +24,26 @@ def keyDigitChecks (ref : IO.Ref (List String)) : IO Unit := do
   t s!"md keys: a combining mark ends a key, as Pandoc's grammar reads it ({keysOf d})"
     (keysOf d == ["k"])
 
-/-- `*`, Pandoc's key for every entry, lists every entry and prints nothing. -/
+/-- `*`, Pandoc's key for every entry, prints and lists nothing in the text, named, as its citation
+processing reads it; the metadata's `nocite` lists every entry. -/
 def everyEntryChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
-  for (src, what) in [("All works [@*] listed.", "a group"), ("All works @* listed.", "in the text")] do
+  let listedOf (d : Ir.Doc) : Array String := Ir.foldBlocks (fun out b => match b with
+    | .bibliography _ _ items => out ++ items.map (·.key)
+    | _ => out) (fun out _ => out) #[] d.body
+  for (src, what) in [("All works [@*] listed.", "a group"), ("All works @* listed.", "in the text"),
+      ("All works [@*] and [@b] listed.", "beside a work")] do
     let (d, ds) := mdBibBuild (worksMeta ++ src ++ "\n") #[("works.bib", worksBib)]
-    let listed := Ir.foldBlocks (fun out b => match b with
-      | .bibliography _ _ items => out ++ items.map (·.key)
-      | _ => out) (fun out _ => out) #[] d.body
-    t s!"md every entry: '@*' {what} lists every entry ({listed})"
-      (listed.size == 3 && ["a", "b", "roe2020"].all listed.contains)
-    t s!"md every entry: '@*' {what} prints nothing and names nothing \
-({repr (inkText d.body)}, {repr (ds.map (·.code))})"
-      (hasStr (inkText d.body) "All works listed." && !ds.any (·.kind == .W0351))
+    t s!"md every entry: '@*' {what} lists nothing of its own ({listedOf d})"
+      (listedOf d == (if hasStr src "@b" then #["b"] else #[]))
+    t s!"md every entry: '@*' {what} prints nothing, named \
+({repr (inkText d.body)}, {repr (ds.map (·.subject))})"
+      (hasStr (inkText d.body) "All works " && !hasStr (inkText d.body) "@" &&
+        ds.any (·.subject == some "md:cite-every") && !ds.any (·.kind == .W0351))
+  let (d, _) := mdBibBuild ("---\nbibliography: works.bib\nnocite: '@*'\n---\n\nText.\n")
+    #[("works.bib", worksBib)]
+  t s!"md every entry: the metadata's nocite of '@*' lists every entry ({listedOf d})"
+    ((listedOf d).size == 3)
   let (d, _) := elabMd (worksMeta ++ "See @*x here.\n")
   t s!"md every entry: '@*x' is the key '*x', as Pandoc reads it ({keysOf d})"
     (keysOf d == ["*x"])
@@ -51,8 +58,9 @@ def bracketTailChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "md group: braces holding an attribute list make the bracket no citation group"
     (groups "First [@a]{.c} then" == 0 && groups "First [@a]{} then" == 0 &&
       groups "First [@a]{k=\"v w\" #i -} then" == 0)
-  t "md group: a citation group before another reads as two"
-    (groups "Both [@a][@b] here" == 2)
+  t "md group: a bracket around an in-text citation before a group reads as Pandoc's, one group"
+    (groups "Both [@a][@b] here" == 1 &&
+      keysOf (elabMd (worksMeta ++ "Both [@a][@b] here\n")).1 == ["a", "b"])
   t "md group: a bracket before a reference label is no citation group"
     (groups "No [@a][x] group" == 0 && groups "No [@a][] group" == 0)
 
@@ -123,11 +131,17 @@ A \\citep[ p.~3 ]{a} and \\citep[see ][ chap. 2 ]{roe2020}, e.g. here.\n\
 \\bibliographystyle{plainnat}\n\\bibliography{works}\n\\end{document}\n"
   let (d, _) := bibBuild src #[("works", worksBib)]
   let notes := (citesOf d).toList.map fun (f, _) => (f.pre, f.post)
-  t s!"tex notes: a note's edge spaces are off ({notes})"
-    (notes == [("", "p.\u00a03"), ("see", "chap. 2")])
+  t s!"tex notes: a note keeps its edge spaces, as natbib sets them ({notes})"
+    (notes == [("", " p.\u00a03 "), ("see ", " chap. 2 ")])
   let twin := MarkdownDoc.emit d
   let (back, _) := mdBibBuild twin #[("works.bib", worksBib)]
-  t s!"tex twin: the twin reads back to the notes and the plain spaces written ({repr twin})"
-    (MarkdownDoc.emit back == twin && hasStr twin "chap.&#32;2" && hasStr twin "e.g.&#32;here")
+  t s!"tex twin: the twin spells a note without its edge spaces, reading back to it and the plain \
+spaces written ({repr twin})"
+    (MarkdownDoc.emit back == twin && hasStr twin "[@a, p. 3]" && hasStr twin "chap.&#32;2]" &&
+      hasStr twin "e.g.&#32;here")
+  for alt in ["![Plain p.&#32;4](chart.svg)", "![A chart, cf. 2](chart.svg)"] do
+    let once := MarkdownDoc.emit (elabMd (alt ++ "\n")).1
+    t s!"md twin: an alternative's spaces after an abbreviation read back as written ({repr once})"
+      (MarkdownDoc.emit (elabMd once).1 == once)
 
 end Tests.MdCiteEdges
