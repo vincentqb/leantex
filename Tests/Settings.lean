@@ -196,9 +196,18 @@ def nativeCarrierChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
   t "a geometry value standing as no single entry is that key's loss"
     ((dvE (geometry "headsep={(1pt},margin=1in")).any fun d =>
       d.code == "W0104" && d.subject == some "param:usepackage:geometry:headsep")
-  t "a geometry length spelled with an upper-case unit sets what its lower-case spelling sets"
-    (pagesOf oneFace (geometry "headsep=0.5IN, margin=2cm") ==
-      pagesOf oneFace (geometry "headsep=0.5in, margin=2cm"))
+  -- An option length is lowered as the length door lowers it.
+  let lengthDoc (pre : String) : String :=
+    "\\documentclass{scrartcl}\n\\makeatletter\\newlength{\\gap}\\setlength{\\gap}{1cm}\n" ++ pre ++
+      "\n\\makeatother\n\\begin{document}\n\\section{Alpha}\nAlpha words.\n\\end{document}"
+  for (spelled, plain) in [("\\usepackage[margin=1IN]{geometry}", "\\usepackage[margin=1in]{geometry}"),
+      ("\\usepackage[left=2\\gap,right=2 \\gap]{geometry}", "\\usepackage[hmargin=2cm]{geometry}"),
+      ("\\RedeclareSectionCommand[beforeskip=-3.5ex\\@plus -1ex \\@minus -.2ex]{section}",
+        "\\RedeclareSectionCommand[beforeskip=-3.5ex plus -1ex minus -.2ex]{section}"),
+      ("\\usepackage[top=\\z@, bottom=12\\p@]{geometry}", "\\usepackage[top=0pt, bottom=12pt]{geometry}")] do
+    t s!"the option length {spelled.quote} sets what {plain.quote} sets"
+      (pagesOf oneFace (lengthDoc spelled) == pagesOf oneFace (lengthDoc plain) &&
+        !(dvE (lengthDoc spelled)).any (·.severity == .error))
   t "a geometry load setting no key names the default layout it leaves"
     ((dvE (geometry "")).any fun d =>
       d.code == "W0104" && d.subject == some "param:usepackage:geometry:layout")

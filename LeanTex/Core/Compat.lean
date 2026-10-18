@@ -5438,7 +5438,7 @@ public def lengthSrcBy (ref : String → Bool → Option String) (raws : Array R
       let t := s.trimAsciiEnd.toString
       let pre := if prevNumber || t.back.isDigit || t.back == '.' then " * "
         else if t == "-" || t.endsWith "(-" then "1 * " else ""
-      s := s ++ pre ++ v
+      s := (if pre.isEmpty then s else t) ++ pre ++ v
       prevNumber := false
     | .word w _ =>
       let w := w.toLower
