@@ -10379,7 +10379,7 @@ private def ctrlRowRun (row : CtrlRow) (c : CtrlCall) : M (Array Raw) := do
     -- premise: kernelLengthChecks — a declared skip amount ships at its command
     let native := match (← get).lens.find? (·.1 == amount) with
       | some (_, v) => skipNative { width := v }
-      | none => skipNative { width := (kernelSkip amount).getD "" }
+      | none => skipNative { width := amount }
     setting s!"\\{row.name}" native pos
   | .refuse code .ctrl msg help =>
     sayOnce ("ctrl:" ++ row.name) code msg pos (help := help)
@@ -13786,17 +13786,93 @@ termination_by structural r => r
 
 end
 
+/-- The tokens the document's own `\tokens` declares and the identifiers the rest of it spells. -/
+private structure TokenTally where
+  declared : Array (String × String × Pos) := #[]
+  spelled : Std.HashSet String := {}
+  run : String := ""
+  pending : Option Pos := none
+  output : Bool := false
+  stylesheet : Bool := false
+
+/-- An identifier ends, standing spelled whole and in each part a `-` or `.` divides. -/
+private def TokenTally.flush (t : TokenTally) : TokenTally :=
+  if t.run.isEmpty then t else
+  let parts := (t.run.splitOn "-").flatMap (·.splitOn ".")
+  { t with spelled := parts.foldl (·.insert ·) (t.spelled.insert t.run), run := "" }
+
+private def TokenTally.char (t : TokenTally) (c : Char) : TokenTally :=
+  if Decl.isIdentChar c || c == '-' then { t with run := t.run.push c } else t.flush
+
+/-- A raw past a control, which leaves no declaration awaiting its group. -/
+private def TokenTally.settle (t : TokenTally) : TokenTally := { t with pending := none, output := false }
+
+/-- A `\tokens` group's entries: each key the document's own site declares, and the identifiers its
+values spell. -/
+private def TokenTally.declare (t : TokenTally) (file : String) (owned : Bool) (p : Pos)
+    (body : Array Raw) : TokenTally :=
+  (Decl.splitEntries (Parse.declSrc body)).foldl (init := t) fun t e =>
+    match Decl.splitEntry e with
+    | some (key, value) =>
+      let t := if owned || !p.origins.isEmpty || Ir.engineTokenNames.contains key then t
+        else { t with declared := t.declared.push (key, file, p) }
+      (value.foldl TokenTally.char t).flush
+    | none => t
+
+mutual
+
+private def tokenTallyList (file : String) (owned : Bool) (t : TokenTally) : List Raw → TokenTally
+  | [] => t.flush
+  | r :: rest => tokenTallyList file owned (tokenTallyOne file owned t r) rest
+termination_by structural l => l
+
+private def tokenTallyOne (file : String) (owned : Bool) (t : TokenTally) : Raw → TokenTally
+  | .ctrl "tokens" p => { t.flush with pending := some p, output := false }
+  | .ctrl "output" _ => { t.flush with pending := none, output := true }
+  | .ctrl n _ => { t.flush.settle with spelled := t.flush.spelled.insert n }
+  | .space => t.flush
+  | .group body _ =>
+    match t.pending with
+    | some p => (t.flush.declare file owned p body).settle
+    | none =>
+      let sheet := t.output && (Decl.splitEntries (Parse.declSrc body)).any fun e =>
+        (Decl.splitEntry e).any (·.1 == "stylesheet")
+      let t := tokenTallyList file owned t.flush.settle body.toList
+      { t with stylesheet := t.stylesheet || sheet }
+  | .math _ body _ => tokenTallyList file owned t.flush.settle body.toList
+  | .env n body _ =>
+    match Parse.inputEnvFile? n with
+    | some f => tokenTallyList f (owned || packageFile f) t.flush.settle body.toList
+    | none => tokenTallyList file owned t.flush.settle body.toList
+  | .word s _ => s.foldl TokenTally.char t.settle
+  | .sym c _ => t.settle.char c
+  | .par _ | .verb .. => t.flush.settle
+termination_by structural r => r
+
+end
+
 /-- Each length the document assigns that neither it nor the engine reads, named at its first
-assignment. -/
+assignment, and each token its own `\tokens` declares that nothing else in it spells, named at its
+first declaration unless a declared stylesheet may read it. -/
 public def unusedLengths (file : String) (raws : Array Raw) : Array Diag :=
   let t := tallyList file {} raws.toList
-  t.first.filterMap fun (n, f, p) =>
+  let lengths := t.first.filterMap fun (n, f, p) =>
     if (paramSites.lookup n).isSome || Ir.engineTokenNames.contains n ||
         t.seen.getD n 0 > t.targets.getD n 0 then none
     else some (Diag.of .W0104
       s!"'\\{n}' is set, but nothing in the document or the engine reads it; the setting changes nothing"
       (some ⟨f, p⟩) (help := "use the length where the page should read it, or drop the setting")
       (subject := some (paramSubject "setlength" n)))
+  let k := tokenTallyList file (packageFile file) {} raws.toList
+  let tokens := if k.stylesheet then #[] else
+    (k.declared.foldl (init := (#[], (∅ : Std.HashSet String))) fun (out, seen) (n, f, p) =>
+      if seen.contains n || k.spelled.contains n then (out, seen)
+      else (out.push (Diag.of .W0104
+          s!"token '{n}' is declared, but nothing in the document reads it; the declaration \
+changes nothing" (some ⟨f, p⟩)
+          (help := s!"name it where a length is read, as \\block[before = {n}] does, or drop it")
+          (subject := some (paramSubject "\\tokens" n))), seen.insert n)).1
+  lengths ++ tokens
 
 /-- Rewrites a whole parsed document. -/
 public def rewrite (file : String) (raws : Array Raw) (provideKeeps : List String := [])

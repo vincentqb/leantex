@@ -265,6 +265,7 @@ import Tests.Redefine
 import Tests.Algorithm
 import Tests.ParamCensus
 import Tests.ParamCensusDecl
+import Tests.ParamCensusCli
 import Tests.DeclSettings
 import Tests.UnusedSettings
 import Tests.ListsKoma
@@ -501,6 +502,7 @@ stays within its elaboration budget. -/
 def declSettingSuiteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) (font : Font) :
     IO Unit := do
   Tests.ParamCensus.declCensusChecks ref oneFace
+  Tests.ParamCensus.builtCensusChecks ref
   Tests.UnusedSettings.firesChecks ref
   Tests.UnusedSettings.scopeChecks ref
   Tests.UnusedSettings.accountingChecks ref

@@ -605,8 +605,10 @@ def titleHeadingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
     (bodyLines (layoutOf oneFace d)).map fun l => (l.x, l.y, lineText l)
   let values : List (String × String) :=
     [("rule", "quiet"), ("rule-position", "baseline"), ("rule-thickness", "1pt"),
-     ("marker", "{x}"), ("indent", "2em"), ("gap", "1em"), ("body-size", "small")]
-  t "every unread title key is exercised" (values.map (·.1) == Ir.titleUnreadKeys)
+     ("marker", "{x}"), ("indent", "2em"), ("gap", "1em"), ("align", "right"),
+     ("body-size", "small"), ("color", "quiet")]
+  t "every unread title key is exercised" (values.map (·.1) == Ir.styleKeys.filter fun k =>
+    !(Ir.styleKeysRead true "titlepage").contains k && !Ir.listSetKeys.contains k)
   for (key, v) in values do
     let (d, ds) := elabStr (src ("\\style{titlepage}{ " ++ key ++ " = " ++ v ++ " }"))
     t s!"a title page's '{key}' is named by its own key"

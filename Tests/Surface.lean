@@ -3185,9 +3185,12 @@ def tokensChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let tokSrc := "\\documentclass{article}\n" ++
     "\\tokens{ rhythm = 2ex plus 0.5ex, sep = 0.75 * rhythm, slab = 18pt }\n" ++
-    "\\begin{document}\\block[before = sep]{x}\\end{document}"
+    "\\begin{document}\\block[before = sep]{x}\\block[before = slab]{y}\\end{document}"
   let (tokDoc, tokDs) := elabStr tokSrc
   t "tokens source clean" tokDs.isEmpty
+  let (_, idleDs) := elabStr (tokSrc.replace "\\block[before = slab]{y}" "")
+  t "tokens: a token nothing reads is named once, keyed by its name"
+    (idleDs.map (·.subject) == #[some "param:\\tokens:slab"] && idleDs.all (·.code == "W0104"))
   t "tokens ex is symbolic" (tokDoc.tokens.find? "rhythm" ==
     some { width := { ex := 2000 }, stretch := { ex := 500 } })
   t "tokens derived scales earlier" (tokDoc.tokens.find? "sep" ==

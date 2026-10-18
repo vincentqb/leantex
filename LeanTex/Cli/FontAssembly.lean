@@ -133,16 +133,19 @@ public def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
     | 1 => if spec.sans.isSome then 1 else 0
     | 2 => if spec.mono.isSome then 2 else 0
     | s => s
+  -- A sans or typewriter slot reading the body's family still takes the faces declared for it.
+  let ownFirst (slot : Nat) : Bool := (slot == 1 || slot == 2) && effectiveOf slot != slot
   let declaredFace (slot : Nat) (weight : Nat) (italic : Bool) : Option String :=
-    spec.faceFor (effectiveOf slot) weight italic
+    (if ownFirst slot then spec.faceFor slot weight italic else none).orElse fun _ =>
+      spec.faceFor (effectiveOf slot) weight italic
   -- Off-corner keys: the styles' weights plus every declared face's, as fontspec loads them.
   let standard : List (Nat × Bool) := FontDb.corners
   let extraKeysFor (slot : Nat) : List (Nat × Bool) :=
     ((Layout.docWeightKeys doc).toList.filterMap fun (s, w, i) =>
       if s == slot then some (w, i) else none) ++
     (spec.faces.toList.filterMap fun ((s, w, i), _) =>
-      if s == effectiveOf slot && !(standard.contains (w, i)) then some (w, i)
-      else none)
+      if (s == effectiveOf slot || (ownFirst slot && s == slot)) && !(standard.contains (w, i))
+      then some (w, i) else none)
   -- A weight off lualatex's corners sets in the nearest corner's file (W0366).
   let nearestFile (slot weight : Nat) (italic : Bool) : Option (Nat × String) :=
     if slot != 2 || weight == 400 || weight == 700 then none else

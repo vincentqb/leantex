@@ -2482,9 +2482,10 @@ the preamble's declarations, the file's name the title where no description open
       (subject := some s!"code:{k}:{v}")
   let idle := showing.idle lang ⟨file, directivePos lang src⟩
   -- premise: Tests.UnusedSettings.metadataChecks — a page citing nothing reads none of these
-  let uncited := if lang != .lean || refs.isNone || acc.cited then #[] else
-    (#["bibliography", "biblio-style"].filter showing.written.contains).map fun k =>
-      UnusedSetting.directiveDiag file k (directivePos lang src)
+  let uncited := if lang != .lean || acc.cited then #[] else
+    (#["bibliography", "biblio-style"].filter fun k => showing.written.contains k &&
+        (refs.isSome || (k == "biblio-style" && !showing.written.contains "bibliography"))).map
+      fun k => UnusedSetting.directiveDiag file k (directivePos lang src)
   (preamble.push (.env "document" body origin),
     views ++ unread ++ idle ++ uncited ++ acc.diags ++ plan.2.2 ++ stray.toArray)
 

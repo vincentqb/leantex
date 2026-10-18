@@ -13728,13 +13728,6 @@ private def applyFonts (ctx : Ctx) (spec : FontSpec) (entries : Array Decl.Entry
         evs := evs.push (.setting (.face face) pos)
   return (spec, evs)
 
-private def styleKeys : List String :=
-  ["font", "before", "after", "rule", "rule-position", "rule-thickness", "marker", "indent", "gap",
-   "align", "separator", "rule-above", "rule-above-skip", "rule-above-gap",
-   "rule-below", "rule-below-gap", "rule-below-skip", "author-font",
-   "author-strut", "body-size", "hover", "focus", "motion", "slot", "color"] ++
-    Ir.listSetKeys
-
 /-- The keys of one `slot = {...}` group in `\style{titlepage}`. -/
 private def titleSlotKeys : List String :=
   ["part", "set", "content", "font", "align", "width", "size", "anchor", "at",
@@ -13788,10 +13781,16 @@ private def styleLength (ctx : Ctx) (key src : String) (pos : Pos) (what : Strin
       (help := "lengths look like 10pt, 1.5ex, or a token name")
     return none
 
+/-- Whether a declaration at `pos` is the document's own: outside a package or class file and the
+files one inputs, and no definition's replacement text. -/
+private def ownDeclaration (ctx : Ctx) (pos : Pos) : EM Bool := do
+  let package := Compat.packageFile ctx.file || (← get).packageInputs.contains ctx.file
+  return UnusedSetting.ownSite package ctx.callSite.isSome pos
+
 /-- Applies `\style{element}{...}`, each entry read against the tokens
 declared so far. -/
 private def applyStyle (ctx : Ctx) (styles : Styles) (element : String) (body : Array Raw)
-    (pos : Pos) : EM Styles := do
+    (pos : Pos) (flow : Bool) : EM Styles := do
   unless styleableElements.contains element || ctx.user.any (·.name == element) do
     let lists := "{" ++ ",".intercalate ("list" :: Ir.listSetKinds) ++ "}{,1..4}"
     let named := styleableElements.filterMap fun e =>
@@ -13815,17 +13814,13 @@ private def applyStyle (ctx : Ctx) (styles : Styles) (element : String) (body : 
         (help := "entries look like: key = value")
     | some (key, value) =>
       let valueSrc := declSrc value
-      -- premise: titleHeadingChecks — no title-page site reads these keys
-      if element == "titlepage" && Ir.titleUnreadKeys.contains key then
-        warnOnce ctx ("style:titlepage:" ++ key) .W0104
-          s!"'{key}' has no meaning on the title page; the title is set without it" pos
-          (help := "draw rules around the title with rule-above, rule-below or separator")
-      -- premise: none — no frame-title site reads these keys, so builds with and without one agree
-      if element == "frametitle" && styleKeys.contains key && key != "font" then
-        warnOnce ctx ("style:frametitle:" ++ key) .W0104
-          s!"'{key}' has no meaning on a frame title; the title is set without it" pos
-          (help := "a frame title reads its font, under a frame-title bar")
-        continue
+      -- premise: declCensusChecks — an element's sites read only the keys its row lists
+      if Ir.styleKeys.contains key && key != "slot" &&
+          !(Ir.styleKeysRead flow element).contains key then
+        if ← ownDeclaration ctx pos then
+          warnOnce ctx ("style:" ++ element ++ ":" ++ key) .W0104
+            s!"'{key}' has no meaning on '{element}'; the element is set without it" pos
+            (help := s!"'{element}' reads {", ".intercalate (Ir.styleKeysRead flow element)}")
       if element == "frametitle" && key == "font" then
         if restatesPlainTitle valueSrc then
           modify fun st => { st with spans := { st.spans with
@@ -13833,22 +13828,6 @@ private def applyStyle (ctx : Ctx) (styles : Styles) (element : String) (body : 
         else
           modify fun st => { st with spans := { st.spans with
             frameTitleFont := st.spans.frameTitleFont <|> some (ctx.sourceSpan pos) } }
-      -- premise: listSpacingStyleChecks — no list site reads these keys there
-      if (Ir.listSetOnly.contains element && styleKeys.contains key &&
-          !Ir.listSetKeys.contains key) ||
-          (Ir.listSetKeys.contains key && !Ir.listSetElements.contains element) then
-        warnOnce ctx ("style:" ++ element ++ ":" ++ key) .W0104
-          s!"'{key}' has no meaning on '{element}'; the element is set without it" pos
-          (help := s!"a list's spacing reads {Diag.prose "and" Ir.listSetKeys} on its list, kind \
-or level, and its other keys on the kind's own element")
-        continue
-      -- premise: blockStyleKeyChecks — no block site reads these keys
-      if Ir.blockStyleElements.contains element && styleKeys.contains key &&
-          !Ir.blockStyleKeys.contains key && key != "slot" then
-        warnOnce ctx ("style:" ++ element ++ ":" ++ key) .W0104
-          s!"'{key}' has no meaning on a beamer block; the block is set without it" pos
-          (help := "a block reads its title's font and its template's shape")
-        continue
       let asInline : EM (Option (Array Inline)) := inlineOf value
       let asLength : EM (Option SymGlue) := lengthOf key valueSrc
       let asColor : EM (Option (Ir.Color × Option Ir.ColorRef)) := do
@@ -14073,7 +14052,7 @@ institute, or date, got '{vt}'" pos
             (help := "write motion = 150ms")
       | _ =>
         modify fun st' => { st' with
-          diags := st'.diags.push (Decl.unknownKey ctx.file "style" key styleKeys pos) }
+          diags := st'.diags.push (Decl.unknownKey ctx.file "style" key Ir.styleKeys pos) }
   noteDeclared ctx "style" element
   noteSetting ctx (.style element) pos
   return styles.declare element st
@@ -15314,7 +15293,7 @@ draws; skipped" pos
         return s
       let ctx := { s.ctx with
         engineTokens := engineLengthTokens s.docClass s.classOptions s.page }
-      let styles ← applyStyle ctx s.styles elem body pos
+      let styles ← applyStyle ctx s.styles elem body pos (s.docClass.record.model == .flow)
       return { s with styles := styles }
     | none =>
       diag s.ctx .E0304 "'\\style' needs {element} and a {...} block" pos

@@ -6580,15 +6580,8 @@ public def titleHeadingStyle (st : ElementStyle) : ElementStyle :=
   { st with rule := none, rulePosition := none, ruleThickness := none, indent := none,
             marker := none, gap := none, bodySize := none }
 
-/-- The `\style` keys no engine site reads on the title page. -/
-public def titleUnreadKeys : List String :=
-  ["rule", "rule-position", "rule-thickness", "marker", "indent", "gap", "body-size"]
-
 /-- beamer's three blocks, which a `\style` styles by their kind. -/
 public def blockStyleElements : List String := ["block", "alertblock", "exampleblock"]
-
-/-- The `\style` keys a beamer block reads: its title's `font`, its shape coming from its templates. -/
-public def blockStyleKeys : List String := ["font"]
 
 /-- The headings and lists a document may style, each beside its plural as the document sets it. -/
 private def styleableFlow : List (String × String) :=
@@ -6640,6 +6633,36 @@ public def listSetOnly : List String := listSetElements.filter (!drawnElements.c
 
 /-- Elements a document may style; a `\define`d name is styleable too. -/
 public def styleableElements : List String := drawnElements ++ listSetOnly
+
+/-- The keys a `\style` declaration takes. -/
+public def styleKeys : List String :=
+  ["font", "before", "after", "rule", "rule-position", "rule-thickness", "marker", "indent", "gap",
+   "align", "separator", "rule-above", "rule-above-skip", "rule-above-gap",
+   "rule-below", "rule-below-gap", "rule-below-skip", "author-font",
+   "author-strut", "body-size", "hover", "focus", "motion", "slot", "color"] ++ listSetKeys
+
+/-- The keys a heading, a list and the navigation landmark read: their spacing, rule, marker,
+indent and gap, and the web page's interaction states. -/
+private def flowStyleKeys : List String :=
+  ["before", "after", "rule", "rule-position", "rule-thickness", "marker", "indent", "gap", "hover",
+   "focus", "motion"]
+
+/-- The `\style` keys an element's sites read, a title page outside the flow model its alignment
+too; a `\define`d name takes every key but a list's spacing. -/
+public def styleKeysRead (flow : Bool) : String → List String
+  | "section" | "subsection" | "subsubsection" => "font" :: flowStyleKeys
+  | "heading1" | "heading5" | "heading6" | "nav" => flowStyleKeys
+  | "abstract" => ["font", "align", "body-size"]
+  | "titlepage" => ["font", "before", "after", "separator", "rule-above", "rule-above-skip",
+      "rule-above-gap", "rule-below", "rule-below-gap", "rule-below-skip", "author-font",
+      "author-strut", "hover", "focus", "motion", "slot"] ++ (if flow then [] else ["align"])
+  | "link" | "url" | "cite" => ["color"]
+  | "logo" => ["align"]
+  | "frametitle" | "sectionpage" | "standout" | "block" | "alertblock" | "exampleblock" => ["font"]
+  | e =>
+    if drawnElements.contains e && listSetElements.contains e then flowStyleKeys ++ listSetKeys
+    else if listSetOnly.contains e then listSetKeys
+    else styleKeys.filter (!listSetKeys.contains ·)
 
 public structure Styles where
   entries : Array (String × ElementStyle) := #[]

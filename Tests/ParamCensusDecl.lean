@@ -83,24 +83,41 @@ def listingRows : List Row :=
      docs := [fun o => article "" (pre ++ (o.map (s!"\\setmintedinline\{{·}}")).getD "")
          "Inline \\mintinline{python}{probe(x)\treturn} code."] }]
 
+/-- Lists of every kind, itemize and enumerate nested three levels deep. -/
+def setlistLists : String :=
+  let nested (env : String) : String :=
+    s!"\\begin\{{env}}\\item Alpha\\begin\{{env}}\\item Beta\\begin\{{env}}\\item Gamma" ++
+      s!"\\end\{{env}}\\end\{{env}}\\end\{{env}}"
+  nested "itemize" ++ nested "enumerate" ++
+    "\\begin{description}\\item[Term] Alpha\\item[Other] Beta\\end{description}"
+
 /-- enumitem's keys, the length and spacing keys and label the reader translates and keys it names,
 set for a kind, a kind's deeper level, a level of every kind, and every list, each before another
 preamble line, in nested lists of every kind. -/
 def setlistRow : Row :=
-  let nested (env : String) : String :=
-    s!"\\begin\{{env}}\\item Alpha\\begin\{{env}}\\item Beta\\begin\{{env}}\\item Gamma" ++
-      s!"\\end\{{env}}\\end\{{env}}\\end\{{env}}"
-  let lists := nested "itemize" ++ nested "enumerate" ++
-    "\\begin{description}\\item[Term] Alpha\\item[Other] Beta\\end{description}"
   let doc (scope : String) (o : Option String) : String :=
     article "" ("\\usepackage{enumitem}" ++ (o.map (s!"\\setlist{scope}\{{·}}")).getD "" ++
-      "\n\\newcommand{\\probeword}{x}") lists
+      "\n\\newcommand{\\probeword}{x}") setlistLists
   { reader := "\\setlist"
     settings := ((Compat.setlistLengthKeys.map (·.1)) ++ Ir.listSetKeys).map (· ++ "=3em") ++
       ["label=x", "label=(\\alph*)",
       "nosep", "noitemsep", "align=left", "font=\\bfseries", "labelsep=1em", "parsep=0pt",
       "start=3", invented]
     docs := [doc "[itemize]", doc "[enumerate,2]", doc "[2]", doc ""] }
+
+/-- A `\setlist` scope's parts, each beside a part another element styles (a kind beside itemize, a
+level beside the second) under a style key and a spacing key: a part no element styles must be
+named, though the scope's other part changes the page. -/
+def setlistScopeRow : Row :=
+  let doc (base key : String) (o : Option String) : String :=
+    article "" ("\\usepackage{enumitem}" ++ s!"\\setlist[{base}{(o.map ("," ++ ·)).getD ""}]\{{key}}")
+      setlistLists
+  { reader := "\\setlist scope"
+    settings := ["enumerate", "description", "censusprobekind", "3", "1", "5"]
+    keyOf := id
+    tries := fun s i => if s.toNat?.isSome then i % 2 == 1 else i % 2 == 0
+    docs := [doc "itemize" "label=x", doc "2" "label=x", doc "itemize" "topsep=3em",
+      doc "2" "topsep=3em"] }
 
 /-- tcolorbox's keys, each reader held apart: a box's own options, `\\tcbset` standing before a
 box, and a defined box's options; the keys the reader reads and keys it refuses. -/
@@ -225,9 +242,107 @@ def counterDeclRows : List Row :=
      keyOf := id
      docs := [fun o => article "" ((o.map (s!"\\newcounter\{{·}}")).getD "") numbered] }]
 
+/-- A value each `\style` key reads, other than the element's default. -/
+def styleSample (element key : String) : String :=
+  if key == "font" || key == "author-font" then "\\bfseries"
+  else if key == "marker" then "{x}"
+  else if key == "body-size" then "footnotesize"
+  else if ["rule", "separator", "hover", "focus", "color"].contains key then probeColor
+  else if key == "rule-position" then "baseline"
+  else if key == "align" then if element == "logo" then "center" else "right"
+  else if key == "motion" then "400ms"
+  else if key == "slot" then "{ set = date, anchor = south, at = south }"
+  else "17pt"
+
+/-- A document showing every element a `\style` may name: an article's headings at every level, its
+title, abstract, nested lists of every kind, links, addresses and citations, and a deck's frame titles,
+section page, standout frame, title page, navigation, logo and blocks. -/
+def styledArticle (pre : String) : String :=
+  s!"\\documentclass\{article}\n\\title\{Probe title}\\author\{Probe author}\n{pre}\n" ++
+    "\\begin{document}\n\\maketitle\n\\begin{abstract}Abstract words.\\end{abstract}\n" ++
+    "\\part{Part words}\\section{Section words}\\label{s:a}\\subsection{Subsection words}" ++
+    "\\subsubsection{Subsubsection words}\\paragraph{Paragraph words} Run-in words." ++
+    "\\subparagraph{Subparagraph words} More words.\n" ++ setlistLists ++
+    "\\begin{itemize}\\item One\\begin{itemize}\\item Two\\begin{itemize}\\item Three\\begin{itemize}" ++
+    "\\item Four\\end{itemize}\\end{itemize}\\end{itemize}\\end{itemize}" ++
+    "\\begin{enumerate}\\item One\\begin{enumerate}\\item Two\\begin{enumerate}\\item Three" ++
+    "\\begin{enumerate}\\item Four\\end{enumerate}\\end{enumerate}\\end{enumerate}\\end{enumerate}" ++
+    "\\begin{description}\\item[One] Words\\begin{description}\\item[Two] Words" ++
+    "\\begin{description}\\item[Three] Words\\begin{description}\\item[Four] Words" ++
+    "\\end{description}\\end{description}\\end{description}\\end{description}\n" ++
+    "See Section~\\ref{s:a}, \\href{https://example.org}{a place}, \\url{https://example.org/a} and " ++
+    "\\cite{key1}.\n" ++ bibtexList ++ "\n\\end{document}\n"
+
+/-- `\style`'s keys on every element a document styles, each in a document that shows the element:
+the flow elements in an article, a deck's furniture in a themed deck, a logo under beamer's own
+theme, a title bar's spacing beside its bars and a rule's placement and weight beside the rule. -/
+def styleRow : Row :=
+  let deckElements := ["frametitle", "sectionpage", "standout", "nav", "block", "alertblock",
+    "exampleblock"]
+  let barred := "\\style{titlepage}{ rule-above = 1pt, rule-below = 1pt }"
+  let barKeys := ["rule-above-skip", "rule-above-gap", "rule-below-gap", "rule-below-skip"]
+  let ruled := ["rule-position", "rule-thickness"]
+  let decl (o : Option String) : String :=
+    (o.map fun s => let (e, kv) := elementSplit s; s!"\\style\{{e}}\{ {kv} }").getD ""
+  let shown (e pre : String) (o : Option String) : String :=
+    if e == "logo" then paintedDeck "" ("\\theme{default}\\logo{Logo words}" ++ pre ++ decl o)
+    else if deckElements.contains e then paintedDeck "" ("\\usetheme{moloch}" ++ pre ++ decl o)
+    else styledArticle (pre ++ decl o)
+  let elements := Ir.styleableElements
+  { reader := "\\style"
+    settings := elements.flatMap fun e => Ir.styleKeys.map fun k => s!"{e}|{k} = {styleSample e k}"
+    keyOf := fun s => (KeyVal.entry (elementSplit s).2).1
+    tries := fun s i =>
+      let (e, kv) := elementSplit s
+      let k := (KeyVal.entry kv).1
+      if ruled.contains k then i == 5 + (elements.idxOf e)
+      else if e == "titlepage" && barKeys.contains k then i == 2 || i == 3
+      else if e == "titlepage" then i == 0 || i == 1
+      else if e == "logo" then i == 4
+      else (i == 1) == deckElements.contains e && i ≤ 1
+    docs := [fun o => styledArticle (decl o),
+      fun o => paintedDeck "" ("\\usetheme{moloch}" ++ decl o),
+      fun o => styledArticle (barred ++ decl o),
+      fun o => paintedDeck "" ("\\usetheme{moloch}" ++ barred ++ decl o),
+      shown "logo" ""] ++
+      elements.map fun e => shown e s!"\\style\{{e}}\{ rule = {probeColor} }" }
+
+/-- An article setting every element an engine token spaces: a running head, lists at every depth,
+floats with captions above and below, a booktabs table, displays, footnotes, skips, an algorithm and
+a natbib reference list. -/
+def tokenedArticle (pre : String) : String :=
+  s!"\\documentclass\{article}\n\\usepackage\{natbib}\\usepackage\{booktabs}\\usepackage\{algpseudocode}" ++
+    s!"\\usepackage\{subcaption}\\runninghead\{Head words}\n{pre}\n\\begin\{document}\n" ++
+    "Words before.\\footnote{Note words.}\n" ++ setlistLists ++
+    "\\begin{itemize}\\item One\\begin{itemize}\\item Two\\begin{itemize}\\item Three\\begin{itemize}" ++
+    "\\item Four\\end{itemize}\\end{itemize}\\end{itemize}\\end{itemize}\n" ++
+    "\\begin{figure}[ht]\\centering\\rule{2cm}{1cm}\\caption{Figure words}\\end{figure}\n" ++
+    "\\begin{figure}[ht]\\centering\\begin{subfigure}{0.4\\textwidth}\\rule{1cm}{1cm}" ++
+    "\\caption{Sub words}\\end{subfigure}\\caption{Outer words}\\end{figure}\n" ++
+    "\\begin{table}[ht]\\centering\\caption{Table words}\\begin{tabular}{ll}\\toprule A & B\\\\ " ++
+    "\\midrule C & D\\\\ \\cmidrule(lr){1-2} E & F\\\\ \\bottomrule\\end{tabular}\\end{table}\n" ++
+    "\\begin{tabular}{|l|l|}\\hline A & B\\\\ \\hline\\hline C & D\\\\ \\hline\\end{tabular}\n\n" ++
+    "A long line of text before a display that runs across the measure, and on.\n" ++
+    "\\begin{equation}a^2 + b^2 = c^2\\end{equation}\nshort\n\\[x\\]\n" ++
+    "Before skips.\\smallskip After small.\\medskip After medium.\\bigskip After big.\n" ++
+    "\\begin{algorithm}\\caption{Steps}\\begin{algorithmic}[1]\\State alpha\\If{beta}\\State gamma" ++
+    "\\EndIf\\end{algorithmic}\\end{algorithm}\n" ++
+    "Citing \\citep{key1,key2}.\n" ++ bibtexList ++ "\n\\end{document}\n"
+
+/-- `\tokens`' names: each engine token, set in an article or a deck setting what it spaces, and an
+invented name nothing reads. -/
+def tokensRow : Row :=
+  let decl (o : Option String) : String := (o.map (s!"\\tokens\{ {·} }")).getD ""
+  { reader := "\\tokens"
+    settings := Ir.engineTokenNames.map (· ++ " = 31pt") ++ [invented ++ " = 31pt"]
+    anyDoc := true
+    docs := [fun o => tokenedArticle (decl o),
+      fun o => paintedDeck "" ("\\usetheme{moloch}" ++ decl o)] }
+
 /-- Every declaration census row. -/
 def declRows : List Row :=
-  [paletteRow] ++ listingRows ++ [setlistRow] ++ tcolorboxRows ++ beamerRows ++ counterDeclRows
+  [paletteRow] ++ listingRows ++ [setlistRow, setlistScopeRow] ++ tcolorboxRows ++ beamerRows ++
+    counterDeclRows ++ [styleRow, tokensRow]
 
 /-- The declaration census: every setting of every row is read or named, and none read is named
 unread. -/

@@ -11,7 +11,7 @@ token sep 1200/1000ex plus 300/1000ex
 meta title "Cardamom Press"
 meta author "Pat Placeholder"
 assert fonts.all_embedded
-allow W0449
+allow W0449, W0104
 frame golden
   center
     section* 0
@@ -57,4 +57,4 @@ frame
       text "press@example.org"
     text "."
 -- diagnostics
-(none)
+warning[W0104] 20:1 token 'sep' is declared, but nothing in the document reads it; the declaration changes nothing | help: name it where a length is read, as \block[before = sep] does, or drop it

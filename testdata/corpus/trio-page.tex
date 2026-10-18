@@ -2,7 +2,8 @@
 % \tokens and \style blocks are byte-identical across trio-page.tex,
 % trio-deck.tex and trio-card.tex: the classes differ in their defaults,
 % never in their vocabulary. Everything here is invented — a fictional
-% studio, placeholder names, example.org contacts.
+% studio, placeholder names, example.org contacts. Only the card spaces by
+% `sep`, which \allow{W0104} accepts here.
 \documentclass{article}
 
 \fonts{
@@ -24,6 +25,7 @@
 
 \page{ size = a5, margin = 18mm }
 \pdfmeta{ title = "Cardamom Press", author = "Pat Placeholder" }
+\allow{W0104}
 \assert{ pages == 1 }
 \assert{ fonts.all_embedded }
 
