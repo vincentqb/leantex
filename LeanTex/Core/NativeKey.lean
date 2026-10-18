@@ -10,7 +10,7 @@ public inductive PageKey where
   | baselineskip | parskip | measure | fontsize | bleed | hyphenate | justify | protrusion
   | expansion | numbers | marks | markGap | markThickness | linenumbers | modulo | furnituregap
   | headsep | footskip | rule | frontRule | cropbox | bleedbox | trimbox | artbox | bottom | tmargin
-  | bmargin | vmarginratio | clubpenalty | widowpenalty | brokenpenalty
+  | bmargin | vmarginratio | clubpenalty | widowpenalty | brokenpenalty | hscale | vscale
   deriving DecidableEq, Repr, Inhabited
 
 public def PageKey.names : List (String × PageKey) :=
@@ -25,7 +25,8 @@ public def PageKey.names : List (String × PageKey) :=
    ("rule", .rule), ("front-rule", .frontRule), ("cropbox", .cropbox), ("bleedbox", .bleedbox),
    ("trimbox", .trimbox), ("artbox", .artbox), ("bottom", .bottom), ("tmargin", .tmargin),
    ("bmargin", .bmargin), ("vmarginratio", .vmarginratio), ("clubpenalty", .clubpenalty),
-   ("widowpenalty", .widowpenalty), ("brokenpenalty", .brokenpenalty)]
+   ("widowpenalty", .widowpenalty), ("brokenpenalty", .brokenpenalty), ("hscale", .hscale),
+   ("vscale", .vscale)]
 
 public def PageKey.name (k : PageKey) : String := ((PageKey.names.find? (·.2 == k)).map (·.1)).getD ""
 
@@ -35,13 +36,14 @@ public def PageKey.ofName? (n : String) : Option PageKey := PageKey.names.lookup
 public def PageKey.listed : PageKey → Bool
   | .headsep | .footskip | .textwidth | .textheight | .baselineskip | .markGap | .markThickness
   | .modulo | .rule | .frontRule | .cropbox | .bleedbox | .trimbox | .artbox | .bottom | .tmargin
-  | .bmargin | .vmarginratio | .clubpenalty | .widowpenalty | .brokenpenalty => false
+  | .bmargin | .vmarginratio | .clubpenalty | .widowpenalty | .brokenpenalty | .hscale | .vscale
+    => false
   | _ => true
 
 /-- Whether the key declares the page's physical extent, and so claims the page as declared. -/
 public def PageKey.claims : PageKey → Bool
   | .size | .width | .height | .margin | .vmargin | .hmargin | .textwidth | .textheight | .bleed
-  | .tmargin | .bmargin | .vmarginratio => true
+  | .tmargin | .bmargin | .vmarginratio | .hscale | .vscale => true
   | _ => false
 
 /-- The keys of `\pdfmeta`. -/

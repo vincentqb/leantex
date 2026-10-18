@@ -455,11 +455,11 @@ def posterCompatChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((dp.tokens.find? "colwidth").map (·.width.sp) == some (Dim.mm 1189 * 3 / 10))
   t "the token names the column width: E0321 closes and W0314 retires"
     (!dps.any (·.code == "E0321") && !dps.any (·.code == "W0314"))
-  let (_, da) := elabStr ("\\documentclass{article}\n\\newlength{\\x}\n" ++
+  let (xa, da) := elabStr ("\\documentclass{article}\n\\newlength{\\x}\n" ++
     "\\setlength{\\x}{0.5\\textwidth}\n\\begin{document}\nx\n\\end{document}")
-  t "a flow class's preamble textwidth is named once, never an error"
-    (!da.any (·.severity == .error) &&
-      (da.filter (·.code == "W0107")).map (·.subject) == #[some "length:x"])
+  t "a flow class's preamble textwidth reads the measure its undeclared page takes"
+    (!da.any (·.severity == .error) && !da.any (·.code == "W0107") &&
+      (xa.tokens.find? "x").map (·.width.sp) == some (Ir.articleTextBlock / 2))
   let (_, db) := elabStr ("\\documentclass{article}\n\\begin{document}\n" ++
     "\\setlength{\\y}{0.5\\textwidth}\nx\n\\end{document}")
   t "a body \\setlength resolves textwidth from the finished page"
@@ -1594,7 +1594,7 @@ def classOptionChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "the native size key names the stage the option names"
     (let p := deckOf "" "\\page{ size = 16:10 }"
      p.width == Dim.mm 160 && p.height == Dim.mm 100 &&
-       p == { deckOf "aspectratio=1610" with sized := true })
+       p == { deckOf "aspectratio=1610" with sized := true, widthSized := true, heightSized := true })
   t "beamer's bare digits name the root-two stage"
     (let p := deckOf "" "\\page{ size = 141 }"
      p.width == Dim.mm100 14850 && p.height == Dim.mm 105)
@@ -1963,9 +1963,9 @@ def compatConservationChecks (ref : IO.Ref (List String)) : IO Unit := do
     s!"\\documentclass\{article}\n{decls}\n\\begin\{document}\n{body}\n\\end\{document}"
   let pairs : List (String × String × String) := [
     ("geometry options", wrap "\\usepackage[a4paper,margin=2cm]{geometry}" "x",
-      wrap "\\page{ size = a4, margin = 2cm }" "x"),
+      wrap "\\page{ footskip = 30pt, size = a4, margin = 2cm }" "x"),
     ("geometry command", wrap "\\usepackage{geometry}\\geometry{margin=1in}" "x",
-      wrap "\\page{  }\\page{ margin = 1in }" "x"),
+      wrap "\\page{ footskip = 30pt }\\page{ footskip = 30pt, margin = 1in }" "x"),
     ("crop cam", wrap "\\usepackage[cam]{crop}" "x",
       wrap "\\page{ marks = cut }" "x"),
     ("linespread", wrap "\\linespread{1.05}" "x", wrap "\\page{ leading = 1.05 }" "x"),

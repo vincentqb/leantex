@@ -2155,7 +2155,14 @@ def reports : List Report := [
     accept := ["lualatex on invented probes: a nine-line paragraph after a 518pt rule on an article page keeps its first line alone at the page's foot with no stretch above it, and with 40pt of stretch above the rule moves whole to the next page; this tree sets the same at its own page height, a page with no stretch keeping its club or widow as TeX does",
       "the guards' documents built by main's binary at 03c2ff1d: with 40pt of stretch on the page a club stands alone at its foot, and the preamble's widow penalty of 10000 stops the build (E0313); built here, the club moves with its paragraph and the declaration is read as the page's penalty",
       "the corpus built by main's binary at 03c2ff1d and by this tree's: every artifact byte-identical; the typeset tier's centred fixture keeps its widow back, and its report fixture splits one more row of its long table, a page turn ahead of it moved (lowered, with its reason)"]
-    state := .guarded "03c2ff1d" .before .author }
+    state := .guarded "03c2ff1d" .before .author },
+  { id := "R242", date := "2026-10-18"
+    what := "TeX's parameter assignments (leftskip, hsize, tolerance and their kin) printed their values; a length set mid-paragraph split the paragraph, one in inline content was ignored and leaked an internal restore name; a table cell's settings held into the cells after it; the preamble's baselineskip, textwidth and linewidth and the body's strut box went unread; geometry's default layout and scale keys, a native page block's own em, the strut, the standard classes' footskip under a geometry page and a paper width alone on a KOMA class were lost; book's abstract was set as article's; a web page's box overflowed a narrow screen"
+    pins := [check% texStateChecks]
+    accept := ["lualatex 1.24 on invented probes: the baselineskip 12pt in the preamble, 11pt and a strut box 7.69997pt under the small size; a group's length 7pt inside and 3pt after it in one paragraph; the box separation 0pt in its cell and 3pt in the next and the next row's; geometry's default body 430.00462pt by 556.47656pt 95.39737pt from the top on letter paper, its scale keys and the a4 paper alike; the folio 30pt below the text under a 2cm top and 4cm bottom margin; this tree sets each the same",
+      "main's binary at 6095f103 prints the assignments' values, splits the paragraph, warns W0346 with a leaked restore name, carries the cell's padding on, names the preamble lengths W0107, sets geometry's class page and the folio mid-margin; the checks fail there",
+      "the corpus built by main's binary at 6095f103 and by this tree's: every PDF byte-identical, one web page differing in a box's CSS with no visible difference, every diagnostic the same"]
+    state := .guarded "6095f103" .before .author }
 ]
 
 /-- The reports guarded but never seen failing, a count held in both directions. -/

@@ -95,7 +95,7 @@
 ── E0324 (dropped) unknown page size name
 ✖ [E0324] - \page
   unknown page size 'quarto'
-  suggestion: known sizes: letter, legal, a4, a5, 4:3, 16:9, 16:10, 14:9, 141, 5:4, 3:2
+  suggestion: known sizes: letter, legal, a4, a5, b5, executive, 4:3, 16:9, 16:10, 14:9, 141, 5:4, 3:2
 ── E0325 (dropped) unreadable \assert expression
 ✖ [E0325] - \assert
   cannot read assertion: "pages =~ 1"
@@ -273,7 +273,7 @@
   suggestion: run `lake exe leantex-export Tide` in a project that requires leantex-export, or declare `facts = <path>`
 ── N0100 (info) LaTeX idiom translated to its native declaration
 ℹ [N0100] - \usepackage
-  '\usepackage{geometry}' → \page{ margin = 1in }
+  '\usepackage{geometry}' → \page{ footskip = 30pt, margin = 1in }
 ── N0102 (info) option ignored: it configures machinery the engine does not model
 ℹ [N0102] - \begin
   frame option 'plain' is not modelled; ignored

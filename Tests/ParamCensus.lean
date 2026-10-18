@@ -398,7 +398,8 @@ def packageInert (p s : String) : Bool :=
     (p == "crop" && Compat.cropInert.any (·.1 == s)) ||
     (p == "lineno" && Compat.linenoInert.contains s) ||
     (p == "biblatex" && Compat.biblatexInert.contains key) ||
-    (p == "geometry" && (Compat.driverOptions.contains key || key == "verbose" || key == "headheight"))
+    (p == "geometry" && (Compat.driverOptions.contains key || key == "verbose" || key == "headheight" ||
+      key == "letterpaper"))
 
 /-- hyperref's colour settings act only where links are coloured, the colouring itself only where
 they are not yet. -/

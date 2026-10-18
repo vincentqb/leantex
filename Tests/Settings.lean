@@ -212,9 +212,10 @@ def nativeCarrierChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
     t s!"the option length {spelled.quote} sets what {plain.quote} sets"
       (pagesOf oneFace (lengthDoc spelled) == pagesOf oneFace (lengthDoc plain) &&
         !(dvE (lengthDoc spelled)).any (·.severity == .error))
-  t "a geometry load setting no key names the default layout it leaves"
-    ((dvE (geometry "")).any fun d =>
-      d.code == "W0104" && d.subject == some "param:usepackage:geometry:layout")
+  t "a geometry load setting no key sets geometry's default layout, 0.7 of the paper each way"
+    (pagesOf oneFace (geometry "") == pagesOf oneFace (geometry "hscale=0.7, vscale=0.7") &&
+      pagesOf oneFace (geometry "") != pagesOf oneFace (geometry "margin=1in") &&
+      !(dvE (geometry "")).any (·.code == "W0104"))
   let hook := dvE ("\\documentclass{article}\n\\AddToHook{shipout/background}{}\n" ++
     "\\begin{document}\nAlpha words.\n\\end{document}")
   t "an empty shipout hook is noted as nothing, never warned"
@@ -583,7 +584,10 @@ def unreadableLengthChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
        "\\setlength{\\parskip}{7pt}\\setlength{\\topsep}{7pt}"),
      ("\\makeatletter\\setlength{\\parskip}{\\z@}\\makeatother", "\\setlength{\\parskip}{0pt}"),
      ("\\makeatletter\\newlength{\\@probegap}\\setlength{\\@probegap}{7pt}" ++
-        "\\setlength{\\parskip}{\\@probegap}\\makeatother", "\\setlength{\\parskip}{7pt}")]
+        "\\setlength{\\parskip}{\\@probegap}\\makeatother", "\\setlength{\\parskip}{7pt}"),
+     -- The preamble's `\baselineskip` is the class's `\normalsize` one, 12pt at 10pt.
+     ("\\setlength{\\parskip}{0.5\\baselineskip}", "\\setlength{\\parskip}{6pt}"),
+     ("\\tabcolsep=\\baselineskip", "\\setlength{\\tabcolsep}{12pt}")]
   for (spelled, literal) in read do
     let src := doc spelled body
     let set := pagesOf oneFace src
@@ -593,13 +597,11 @@ def unreadableLengthChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     t s!"'{spelled}' builds, and names no loss" (fine (dvE src))
   let unread : List (String × String) :=
     [("parskip", "\\setlength{\\parskip}{0pt plus 1fil}"),
-     ("parskip", "\\setlength{\\parskip}{0.5\\baselineskip}"),
      ("parskip", "\\setlength{\\parskip}{\\stretch{1}}"),
      ("labelwidth", "\\setlength{\\labelwidth}{0.5\\leftmargini}"),
      ("arraycolsep", "\\setlength{\\arraycolsep}{0.5\\tabcolsep}"),
      ("probegap", "\\newlength{\\probegap}\\setlength{\\probegap}{\\widthof{Alpha}}"),
-     ("parskip", "\\addtolength{\\parskip}{2pt}"),
-     ("tabcolsep", "\\tabcolsep=\\baselineskip")]
+     ("parskip", "\\addtolength{\\parskip}{2pt}")]
   for (n, pre) in unread do
     let src := doc pre body
     let ds := dvE src
@@ -767,19 +769,19 @@ def kernelLengthChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
   let list := "Alpha words.\n\\begin{itemize}\n\\item Bravo item.\n\\end{itemize}"
   let fails (ds : Array Diag) : Bool := ds.any (·.severity == .error)
   let line := doc "article" "\\setlength{\\leftmargini}{0.1\\linewidth}" list
-  t "a measure the page settles later builds, named once on its value"
-    (!fails (dvE line) && ((dvE line).filter (·.code == "W0107")).map (·.subject) ==
-      #[some "length:leftmargini"])
-  t "a measure the page settles later ships the page without the setting"
-    (pagesOf oneFace line == pagesOf oneFace (doc "article" "" list))
+  t "a preamble '\\linewidth' is the measure its page takes: read, never named"
+    (!fails (dvE line) && !(dvE line).any (·.code == "W0107"))
+  t "a preamble '\\linewidth' margin moves the list"
+    (pagesOf oneFace line != pagesOf oneFace (doc "article" "" list))
   let par := doc "article" "\\setlength{\\parindent}{0.05\\textwidth}" list
-  t "a paragraph indent of the unsettled measure builds, named once"
-    (!fails (dvE par) && ((dvE par).filter (·.code == "W0107")).size == 1)
+  t "a paragraph indent of the measure builds, its value read"
+    (!fails (dvE par) && !(dvE par).any (·.code == "W0107"))
   let margin := "\\usepackage[margin=2cm]{geometry}"
   let geo := doc "article" (margin ++ "\\setlength{\\leftmargini}{0.1\\linewidth}") list
-  t "a flow page's '\\linewidth' is the class's, not the engine's: named once on its value"
-    (!fails (dvE geo) && ((dvE geo).filter (·.code == "W0107")).map (·.subject) ==
-      #[some "length:leftmargini"])
+  t "a flow page's '\\linewidth' after a declared page is that page's measure"
+    (!fails (dvE geo) && !(dvE geo).any (·.code == "W0107") &&
+      pagesOf oneFace geo == pagesOf oneFace (doc "article" (margin ++
+        "\\setlength{\\leftmargini}{0.1\\textwidth}") list))
   let frame (pre : String) : String :=
     doc "beamer" pre ("\\begin{frame}{Alpha}\n" ++ list ++ "\n\\end{frame}")
   let fixed := frame "\\setlength{\\leftmargini}{0.1\\linewidth}"
@@ -788,12 +790,16 @@ def kernelLengthChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
       pagesOf oneFace fixed == pagesOf oneFace (frame "\\setlength{\\leftmargini}{0.1\\textwidth}"))
   t "a class that fixes its text block: '\\linewidth' moves the page"
     (pagesOf oneFace fixed != pagesOf oneFace (frame ""))
-  t "the gate's premise: only a declared flow page offers 'textwidth'"
-    (fails (dvE (doc "article" "\\tokens{ probe = 0.1 * textwidth }" list)) &&
+  t "the gate's premise: a flow page offers 'textwidth' whether or not a page is declared"
+    (!fails (dvE (doc "article" "\\tokens{ probe = 0.1 * textwidth }" list)) &&
       !fails (dvE (doc "article" "\\page{ hmargin = 2cm }\\tokens{ probe = 0.1 * textwidth }" list)))
   let body := doc "article" "" ("\\newlength{\\probew}\\setlength{\\probew}{0.1\\linewidth}\n" ++ list)
-  t "a body '\\linewidth', its scope's width, builds, named once on its value"
-    (!fails (dvE body) && ((dvE body).filter (·.code == "W0107")).map (·.subject) ==
+  t "a body '\\linewidth' at the top level is the measure, read"
+    (!fails (dvE body) && !(dvE body).any (·.code == "W0107"))
+  let nested := doc "article" "" ("\\newlength{\\probew}\n\\begin{minipage}{2in}" ++
+    "\\setlength{\\probew}{0.1\\linewidth}Alpha.\\end{minipage}\n" ++ list)
+  t "a '\\linewidth' inside an environment, its scope's width, builds, named once on its value"
+    (!fails (dvE nested) && ((dvE nested).filter (·.code == "W0107")).map (·.subject) ==
       #[some "length:probew"])
   let head (pre : String) : String :=
     doc "article" ("\\runninghead{Alpha head}" ++ pre) "Alpha words.\n\nBravo words."
@@ -870,3 +876,89 @@ def texEdgeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
       !(dvE printed).any (·.code == "W0357"))
   t "a length only an expanded \\edef reads is read, never named unread"
     (!(dvE printed).any (·.code == "W0104"))
+
+/-- TeX's state as lualatex sets it on invented probes: assignments, scopes, sizes and the page. -/
+def texStateChecks (ref : IO.Ref (List String)) (_oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let text (src : String) : String := (docHtmlOf (elabStr src).1).replace "\u00a0" " "
+  let codes (src : String) : List String := ((elabStr src).2.map (·.code)).toList
+  let subjects (src : String) (code : String) : List (Option String) :=
+    (((elabStr src).2.filter (·.code == code)).map (·.subject)).toList
+  let params := dvDoc "\\tolerance=1000\n"
+    ("{\\leftskip=2em \\rightskip=2em Alpha words.\\par}\n\n\\hsize=200pt Bravo words.\n\n" ++
+      "\\hbadness=10000 \\looseness=-1 \\parfillskip=0pt plus 1fil Charlie words.")
+  t "a TeX parameter's assignment sets no ink"
+    (!["=2em", "=200pt", "=1000", "=-1", "1fil", "10000"].any (hasStr (text params) ·) &&
+      !(codes params).contains "W0301")
+  t "a TeX parameter the engine does not model is named once where it changes the page"
+    ((subjects params "W0104").contains (some "ctrl:setlength:leftskip") &&
+      (subjects params "W0104").contains (some "ctrl:setlength:tolerance"))
+  t "a TeX parameter that shapes only TeX's log is a note"
+    ((subjects params "N0100").contains (some "ctrl:nothing:texparam:hbadness") &&
+      !(subjects params "W0104").contains (some "ctrl:setlength:hbadness"))
+  let paras (src : String) : Nat := (elabStr src).1.body.foldl (fun n b =>
+    if b matches .para _ then n + 1 else n) 0
+  let spaces (src : String) : Array String := Ir.foldBlocks (fun acc _ => acc) (fun acc x =>
+    match x with
+    | .hspace e _ => acc.push (toString (e.eval fun _ => {}).width.sp)
+    | _ => acc) #[] (elabStr src).1.body
+  let gap := "\\newlength\\gap\n"
+  let mid := dvDoc gap "A \\setlength{\\gap}{5pt} b\\hspace{\\gap}c d.\n\nE\\hspace{\\gap}f."
+  t s!"a mid-paragraph length holds from where it stands, the paragraph whole ({paras mid})"
+    (paras mid == 2 && spaces mid == #[toString (Dim.pt 5), toString (Dim.pt 5)])
+  let grouped := dvDoc gap
+    "\\setlength{\\gap}{3pt}A {\\setlength{\\gap}{7pt} b\\hspace{\\gap}c} d\\hspace{\\gap}e."
+  t s!"a length a group in a paragraph sets ends with the group ({spaces grouped})"
+    (paras grouped == 1 && spaces grouped == #[toString (Dim.pt 7), toString (Dim.pt 3)])
+  let boxed := dvDoc gap "A \\hbox{\\gap=2pt p\\hspace{\\gap}q} r."
+  t s!"a length assigned in inline content is read there, no restore leaking ({codes boxed})"
+    (!(codes boxed).contains "W0346" && !hasStr (text boxed) "restore" &&
+      spaces boxed == #[toString (Dim.pt 2)])
+  let pads (src : String) : Array String := Ir.foldBlocks (fun acc _ => acc) (fun acc x =>
+    match x with
+    | .boxed b _ => acc.push (toString b.pad.width.sp)
+    | _ => acc) #[] (elabStr src).1.body
+  let cells := dvDoc "" ("\\begin{tabular}{ll}\n\\setlength{\\fboxsep}{0pt}\\fbox{c} & \\fbox{d} \\\\\n" ++
+    "\\fbox{e} & f\n\\end{tabular}")
+  t s!"a table's cell is a group: what it sets ends at its '&' and its row's end ({pads cells})"
+    (pads cells == #[toString 0, toString (Dim.pt 3), toString (Dim.pt 3)])
+  let tok (src key : String) : Option Dim.Sp :=
+    ((elabStr src).1.tokens.find? key).map (·.width.sp)
+  let skips := dvDoc "\\newlength\\la\\newlength\\lb\\setlength{\\la}{\\baselineskip}\n"
+    "{\\small\\setlength{\\lb}{\\ht\\strutbox}Alpha\\hspace{\\lb}beta.}"
+  t s!"the preamble's \\baselineskip is the class's: 12pt at 10pt ({tok skips "la"})"
+    (tok skips "la" == some (Dim.pt 12))
+  -- lualatex: `\small` at 10pt sets `\baselineskip` 11pt and the strut box 7.69997pt tall.
+  t s!"a size command sets the strut box at its \\baselineskip ({spaces skips})"
+    (spaces skips == #[toString (Compat.strutDimen "ht" (Dim.pt 11))])
+  let geo (o : String) : Ir.PageSpec := (elabStr (dvDoc s!"\\usepackage[{o}]\{geometry}\n" "Alpha.")).1.page
+  -- lualatex: letter paper's default body is 430.00462pt by 556.47656pt, 95.39737pt from the top.
+  t s!"geometry's default layout: 0.7 of the paper each way, split 2:3 vertically ({(geo "").hmargin})"
+    ((geo "").hmargin == Dim.pt 612 * 3 / 20 && (geo "").vmargin == (Dim.pt 792 - Dim.pt 792 * 7 / 10) * 2 / 5)
+  t "geometry's scale keys size the text block"
+    ((geo "hscale=0.6").hmargin == Dim.pt 612 / 5 && (geo "scale=0.8").hmargin == Dim.pt 612 / 10)
+  let em := (elabStr (dvDoc "\\page{ fontsize = 12pt, hmargin = 4em }\n" "Alpha.")).1.page
+  t s!"a \\page block's em is its own font size's ({em.hmargin})" (em.hmargin == Dim.pt 48)
+  let strut := dvDoc "" "Alpha\\strut{} words."
+  let rules := Ir.foldBlocks (fun acc _ => acc) (fun acc x => match x with
+    | .rule w h _ => acc.push ((w.eval fun _ => {}).width.sp, (h.eval fun _ => {}).width.sp)
+    | _ => acc) #[] (elabStr strut).1.body
+  t s!"\\strut is a rule of no width the strut box tall ({rules})"
+    (!(codes strut).contains "W0301" && rules == #[(0, Dim.pt 12)])
+  let footOf (o : String) : Option Dim.Sp :=
+    (elabStr (dvDoc s!"\\usepackage[{o}]\{geometry}\n" "Alpha.")).1.page.footskip
+  -- lualatex: geometry's top=2cm, bottom=4cm sets the folio's baseline 30pt below the text.
+  t "a page geometry places sets its foot the standard class's \\footskip below the text"
+    (footOf "top=2cm,bottom=4cm" == some (Dim.pt 30) && footOf "footskip=1cm" == some (Dim.mm 10))
+  let paper := dvDoc "\\usepackage[letterpaper]{geometry}\n" "Alpha."
+  t "geometry's paper option naming the class's paper is noted as changing nothing"
+    ((subjects paper "N0100").contains (some "param:geometry:letterpaper") &&
+      (elabStr paper).1.page == (elabStr (dvDoc "\\usepackage{geometry}\n" "Alpha.")).1.page)
+  let koma := "\\documentclass{scrartcl}\n\\usepackage[paperwidth=20cm]{geometry}\n" ++
+    "\\begin{document}\nAlpha.\n\\end{document}"
+  t "a declared paper width alone keeps the class's paper height"
+    ((elabStr koma).1.page.height == Ir.a4Page.2 && (elabStr koma).1.page.width == Dim.mm 200)
+  let abs := "\\documentclass{book}\n\\begin{document}\n\\begin{abstract}\nShort.\n" ++
+    "\\end{abstract}\n\\end{document}"
+  t "book defines no abstract: its body is kept as text, the environment named unknown"
+    ((codes abs).contains "W0302" && !(codes abs).contains "W0110" && hasStr (text abs) "Short.")

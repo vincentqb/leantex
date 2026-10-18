@@ -6530,15 +6530,15 @@ private def boxLengthCss : Affine Ir.BoxMeasure → Affine Measure
   | .add a b => .add (boxLengthCss a) (boxLengthCss b)
   | .sub a b => .sub (boxLengthCss a) (boxLengthCss b)
 
-/-- A box's CSS: one unbreakable line on its ground, inside its frame, raised by its lift where it
-declares no extent, else claiming no line of its own (`boxExtentCss`). -/
+/-- A box's CSS: one line on its ground, inside its frame, raised by its lift where it declares no
+extent, else claiming no line of its own (`boxExtentCss`); wider than the screen, it wraps there. -/
 private def boxCss (cfg : Config) (b : Ir.InlineBox) : String :=
   let lift := boxLengthCss b.raise
   let paint (p : Ir.BoxPaint) : String := match p with
     | .ink => "currentColor"
     | .color c name => cfg.paint name c
   let decls :=
-    ["display: inline-block", "white-space: nowrap"] ++
+    ["display: inline-block", "max-width: 100%"] ++
     (if b.height.isSome || b.depth.isSome then ["line-height: 0"]
      else if lift == .lit {} then [] else [s!"vertical-align: {Ir.Track.contextCss lift}"]) ++
     (b.ground.map fun (c, name) => s!"background-color: {cfg.groundPaint name c}").toList ++

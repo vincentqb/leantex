@@ -2394,11 +2394,14 @@ def footskipChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
   t "\\setlength{\\headsep} is read, not only noted"
     (headAt ("\\documentclass{article}\\runninghead{Invented Notes}\\setlength{\\headsep}{30pt}" ++
       "\\begin{document}Alpha words.\n\\end{document}") == some (Dim.pt 30))
-  let (bare, _) := elabStr (src "\\geometry{letterpaper, textheight=9in}")
+  t "a page geometry places hangs its foot the standard class's 30pt footskip below the text"
+    (drop (src "\\geometry{letterpaper, textheight=9in}") == some (Dim.pt 30))
+  let native := "\\documentclass{article}\\page{ size = letter, textheight = 9in }" ++
+    "\\begin{document}Alpha words.\n\nBravo words.\n\\end{document}"
+  let (bare, _) := elabStr native
   let bg := Layout.Geom.ofPage bare.page
   t "kept: an undeclared footskip hangs the foot from half the margin"
-    (drop (src "\\geometry{letterpaper, textheight=9in}") ==
-      some ((furnYs oneFace.body bg).2 - (bg.pageH - bg.bottomMargin)))
+    (drop native == some ((furnYs oneFace.body bg).2 - (bg.pageH - bg.bottomMargin)))
 
 /-- The strut box a preamble length reads stands as the class set it, `.7` and `.3` of its
 `\baselineskip` in TeX's arithmetic, and where the preamble may have set it again the length is

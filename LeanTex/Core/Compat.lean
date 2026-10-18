@@ -226,11 +226,13 @@ private def oneSidedOf (cls kv : String) : Bool :=
 private def resumeClasses : List String :=
   ["moderncv", "res"]
 
-/-- A class option's `\normalsize` `\baselineskip`, its size file's decimal points as TeX scans
+/-- A class option's `\baselineskip` at a named size, its size file's decimal points as TeX scans
 them. -/
-private def classNormalSkip (pt : Nat) : Int :=
-  let milli := (Ir.sizeFileLeading (Dim.pt pt) 1000 "normalsize" * 1000 + 32768) / 65536
+private def classSizeSkip (pt : Nat) (size : String) : Int :=
+  let milli := (Ir.sizeFileLeading (Dim.pt pt) 1000 size * 1000 + 32768) / 65536
   (milli * 65536 + 500) / 1000
+
+private def classNormalSkip (pt : Nat) : Int := classSizeSkip pt "normalsize"
 
 /-- The point size a standard class's options set `\normalsize` at: its one size option of 10, 11
 or 12pt, else its record's size or 10pt; none past a size option of any other size. -/
@@ -698,6 +700,8 @@ private structure GeometryBlock where
   bottom : Option (String × String) := none
   height : Option (String × String) := none
   ratio : Option (String × String) := none
+  /-- The height as a fraction of the paper's (`vscale`), where no height is declared. -/
+  scale : Option (String × String) := none
   deriving Inhabited
 
 private structure St where
@@ -798,6 +802,9 @@ private structure St where
   /-- At the top level of a `tabular` body, where the elaborator sets a
   `\multicolumn` as a span. -/
   tableTop : Bool := false
+  /-- The lengths in force where the innermost table's body opens, which each of its cells starts
+  from, since a cell is a group. -/
+  cellLens : Array (String × String) := #[]
   /-- At the top level of a definition body, where a `\multicolumn` opens the
   cell its use stands in. -/
   defTop : Bool := false
@@ -932,6 +939,18 @@ private structure St where
   /-- The `\baselineskip` the class set the strut box at, while nothing the preamble has run since
   may have set it again. -/
   strutSkip : Option Int := none
+  /-- The point size a standard class's options set `\normalsize` at, while no stretch or size
+  declaration since has moved its `\baselineskip`. -/
+  classPt : Option Nat := none
+  /-- The paper the class sets where no declaration names one. -/
+  classPaper : String := "letter"
+  /-- The standard classes' `\footskip`, 30pt at every size option, which a page geometry places
+  stands under. -/
+  classFootskip : Option String := none
+  /-- The body's `\baselineskip` at the size in force, its group's. -/
+  bodySkip : Option Int := none
+  /-- Environments open around the walk inside the document body, each narrowing its lines. -/
+  envDepth : Nat := 0
   /-- State mutations performed through `write`, which with `diags.size` the
   dispatcher's silence guard reads. -/
   writes : Nat := 0
@@ -1130,11 +1149,19 @@ private def argGroupAt (out : Array Raw) : Bool := Id.run do
     | _ => return false
   return false
 
+/-- The `\baselineskip` in force where the walk stands: the body's size's, else the class's, at which
+its strut box stands. -/
+private def St.skipInForce (st : St) : Option Int := if st.inDoc then st.bodySkip else st.strutSkip
+
+/-- Whether the walk stands where a line is the text's full measure: in no list or environment. -/
+private def St.topLevel (st : St) : Bool := !st.inList && st.envDepth == 0
+
 /-- Enters the document body: `\normalsize` resets the size-owned lengths. -/
 private def openDocumentBody : M Unit :=
   write fun st =>
     let lens := st.lens.filter fun e => !sizeReset e.1
-    { st with inDoc := true, lens := lens, preLens := st.preLens.orElse fun _ => some lens }
+    { st with inDoc := true, lens := lens, preLens := st.preLens.orElse fun _ => some lens,
+              bodySkip := st.classPt.map classNormalSkip }
 
 private def closeDocumentBody (pos : Pos) (result : Array Raw × St) : Raw × St :=
   (.env "document" result.1 pos,
@@ -6098,8 +6125,8 @@ private def strutOperands (raws : Array Raw) : Array Raw := Id.run do
 /-- A length value as the door reads it where it stands; the strut box reads at `strut`, the
 `\baselineskip` it was set at, where that is known. -/
 private def lenValue (lens : Array (String × String)) (raws : Array Raw)
-    (deferred : Bool := false) (preamble : Bool := false) (measureKnown : Bool := true)
-    (flowPage : Bool := false) (strut : Option Int := none) : Option String :=
+    (deferred : Bool := false) (preamble : Bool := false) (topLevel : Bool := false)
+    (strut : Option Int := none) : Option String :=
   -- premise: unreadableLengthChecks — a kernel parameter in a definition body stands by name
   let kernel (n : String) : Bool := !deferred && (paramSites.lookup n).isSome
   -- `\parindent` reads the engine's flush indent, which no declaration here moves.
@@ -6109,7 +6136,9 @@ private def lenValue (lens : Array (String × String)) (raws : Array Raw)
   let raws := strutOperands raws
   let held (n : String) : Option String :=
     -- premise: columnGeometryChecks — class defaults are readable register values
-    if kernel n then (set n).orElse fun _ => kernelLength n
+    if kernel n then (set n).orElse fun _ =>
+      -- `\baselineskip` is the size in force's, which the strut box is set at.
+      if n == "baselineskip" && !deferred then strut.map (s!"{·}sp") else kernelLength n
     else if (kernelSkip n).isSome then
       match set n with
       | some v => if deferred then none else some v
@@ -6124,8 +6153,9 @@ private def lenValue (lens : Array (String × String)) (raws : Array Raw)
   let unknown (n : String) : Bool :=
     (kernel n && n != "textwidth" && n != "parindent") || n == "ht" || n == "wd" || n == "dp" ||
       n == strutOperand "ht" || n == strutOperand "dp" ||
-      (!deferred && ((line n && (!preamble || flowPage || (set "textwidth").isSome)) ||
-        (preamble && !measureKnown && n == "textwidth")))
+      -- `\linewidth` is the text's measure at the top level, the preamble's past a declared
+      -- `\textwidth` still the class's.
+      (!deferred && line n && (!topLevel || (preamble && (set "textwidth").isSome)))
   let ref (n : String) (arg : Bool) : Option String :=
     if arg then none
     else match held n with
@@ -6309,8 +6339,8 @@ the length keeps its value" pos
 /-- A length value as the native declaration spells it, a LaTeX word included. -/
 private def spelledValue? (value : Array Raw) : M (Option String) := do
   let st ← get
-  return (lenValue st.lens value st.inDef (!st.inDoc && !st.seam) st.measureKnown
-    st.flowPage (if st.inDoc then none else st.strutSkip)).filter readsAsLength
+  return (lenValue st.lens value st.inDef (!st.inDoc && !st.seam) (topLevel := st.topLevel)
+    (strut := st.skipInForce)).filter readsAsLength
 
 /-- A length value as the assignment door reads it; `none`
 for one it cannot read. -/
@@ -6450,13 +6480,10 @@ through the length door in order. -/
 private def sizeSkips (body : Array Raw) (start : Nat) (pos : Pos) :
     M (Array (String × String)) := do
   let mut lens := (← get).lens
-  let known := (← get).measureKnown
-  let flow := (← get).flowPage
   let mut out : Array (String × String) := #[]
   for a in (readAssigns body start).1 do
     if !a.add && (paramSites.lookup a.name) matches some (.sizeReset (.token _)) then
-      if let some src := (lenValue lens a.value (preamble := true) (measureKnown := known)
-          (flowPage := flow)).filter readsAsLength then
+      if let some src := (lenValue lens a.value (preamble := true)).filter readsAsLength then
         out := out.push (a.name, src)
         lens := Ir.redeclare lens a.name src
       else
@@ -6683,8 +6710,7 @@ private def listSpacingEntries (what reader : String) (e : Entries.Entry) (pos :
   | key, some v =>
     if !Ir.listSetKeys.contains key then return none
     let st ← get
-    let read := (lenValue st.lens (e.value.getD #[]) (preamble := !st.inDoc)
-      (measureKnown := st.measureKnown) (flowPage := st.flowPage)).filter fun n =>
+    let read := (lenValue st.lens (e.value.getD #[]) (preamble := !st.inDoc)).filter fun n =>
         readsAsLength n && texWordsOnly v
     match read with
     | some n => return some #[(key, n)]
@@ -6744,8 +6770,7 @@ private def dimexprValue (v : Array Raw) : M (Array Raw) := do
   if !src.startsWith "\\dimexpr" then return v
   let st ← get
   -- premise: strutLengthChecks — a value naming a length the page cannot resolve stays dropped
-  let read := (lenValue st.lens v (preamble := !st.inDoc) (measureKnown := st.measureKnown)
-    (flowPage := st.flowPage) (strut := if st.inDoc then none else st.strutSkip)).filter fun s =>
+  let read := (lenValue st.lens v (preamble := !st.inDoc) (strut := st.skipInForce)).filter fun s =>
       readsAsLength s && texWordsOnly src && !s.contains '/' && (letterRuns s).all absoluteWords.contains
   return (read.map fun s => #[Raw.word s {}]).getD v
 
@@ -6764,12 +6789,17 @@ private def geometry (opts : Array Raw) (pos : Pos)
   -- The left and right margins, read in order as geometry reads them.
   let mut hl : Option (String × String) := none
   let mut hr : Option (String × String) := none
+  -- The width as a fraction of the paper's (`hscale`).
+  let mut hs : Option (String × String) := none
   for entry in Entries.read .keyval opts do
     let e := entry.src
     match entry.key, entry.value with
     | f, none =>
       if f.endsWith "paper" then
-        keys := keys.push (.size, (f.dropEnd "paper".length).toString, #[e])
+        let paper := (f.dropEnd "paper".length).toString
+        if paper == (← get).classPaper then
+          inertParam "geometry" f spelling "the paper is the class's, as without the option" pos
+        else keys := keys.push (.size, paper, #[e])
       else if geometryNoFurniture.contains f then
         -- geometry's flags zero the head's separation, the foot's skip, or both.
         if f != "nofoot" then keys := keys.push (.headsep, "0pt", #[e])
@@ -6832,6 +6862,12 @@ private def geometry (opts : Array Raw) (pos : Pos)
         else if k == "vmarginratio" then
           vb := { vb with ratio := some (k, v) }
           spelledNow := spelledNow.push k
+        -- geometry's `scale` is both scales, a pair the horizontal and the vertical one.
+        else if k == "scale" || k == "hscale" || k == "vscale" then
+          if k != "vscale" then hs := some (k, a)
+          if k != "hscale" then
+            vb := { vb with scale := some (k, if k == "scale" then b else a) }
+            spelledNow := spelledNow.push k
         else if let some key := geometryPageKeys.find? (·.name == k) then
           keys := keys.push (key, a, #[e])
         else if k == "headheight" then
@@ -6845,9 +6881,24 @@ private def geometry (opts : Array Raw) (pos : Pos)
     else for k in [lk, rk].eraseDups do dropped := dropped.push k
   | some (k, _), none | none, some (k, _) => dropped := dropped.push k
   | none, none => pure ()
+  -- A first load placing no horizontal key sizes the text block at geometry's `hscale` of 0.7, and
+  -- one placing no vertical key at its `vscale` of 0.7 (manual §5.2).
+  let first := spelling == "\\usepackage{geometry}"
+  let horizontal := hs.isSome || keys.any fun (k, _, _) => k == .margin || k == .hmargin || k == .textwidth
+  if first && !horizontal then keys := keys.push (.hscale, "0.7", #[])
+  else if let some (k, v) := hs then keys := keys.push (.hscale, v, #[k])
+  -- A lone vertical side beside no height reads geometry's default body below it, not modelled.
+  if (vb.top.isSome != vb.bottom.isSome) && vb.height.isNone && !vb.scale.any (·.1 != "default") then
+    for x in [vb.top, vb.bottom] do
+      if let some (k, _) := x then if spelledNow.contains k then dropped := dropped.push k
+    vb := { vb with top := none, bottom := none }
+  if first && vb.top.isNone && vb.bottom.isNone && vb.height.isNone && vb.scale.isNone &&
+      !(← get).pageVertical.contains .textheight then
+    vb := { vb with scale := some ("default", "0.7") }
   -- Every call solves the vertical keys so far, as geometry re-solves its layout on each.
   let set := (← get).pageVertical
-  let vbEmpty := vb.top.isNone && vb.bottom.isNone && vb.height.isNone && vb.ratio.isNone
+  let vbEmpty := vb.top.isNone && vb.bottom.isNone && vb.height.isNone && vb.ratio.isNone &&
+    vb.scale.isNone
   if !spelledNow.isEmpty || !vbEmpty || set.contains .textheight then
     write fun st => { st with geometryBlock := vb }
     let mine (x : Option (String × String)) : Option String :=
@@ -6856,8 +6907,11 @@ private def geometry (opts : Array Raw) (pos : Pos)
     -- geometry ignores a height both margins fix, as its over-specification warning says.
     let height := if both then none else vb.height
     if both then if let some k := mine vb.height then dropped := dropped.push k
+    -- A declared height wins over a scale.
+    let scaled := if both || height.isSome then none else vb.scale
+    if both then if let some k := mine vb.scale then dropped := dropped.push k
     -- A lone side beside no height leaves the block to geometry's default body, which is not modelled.
-    let placed := height.isSome || both
+    let placed := height.isSome || scaled.isSome || both
     unless placed do
       for x in [vb.top, vb.bottom] do if let some k := mine x then dropped := dropped.push k
     -- So does a height set before a call that leaves geometry no vertical key of its own.
@@ -6865,7 +6919,7 @@ private def geometry (opts : Array Raw) (pos : Pos)
       unreadParam "usepackage:geometry" "layout"
         "geometry's default text block, which replaces the text height set before it," pos
         (help := "declare the height with geometry's keys, such as textheight=9in")
-    let alone := height.isSome && vb.top.isNone && vb.bottom.isNone
+    let alone := (height.isSome || scaled.isSome) && vb.top.isNone && vb.bottom.isNone
     -- geometry splits a lone height's leftover by `vmarginratio`, its default unless declared.
     let mut ratio : Option String := if alone then some "default" else none
     if let some (k, r) := vb.ratio then
@@ -6881,7 +6935,8 @@ private def geometry (opts : Array Raw) (pos : Pos)
         if t == m then [(.vmargin, some t), (.textheight, spelled height)]
         else [(.tmargin, some t), (.bmargin, some m), (.textheight, spelled height)]
       | t, m => [(.tmargin, t), (.bmargin, m), (.textheight, spelled height)]
-    let solved := solved ++ [(.vmarginratio, ratio)]
+    let solved := solved ++ [(.vscale, if placed then scaled.map (·.2) else none),
+      (.vmarginratio, ratio)]
     -- A key an earlier lowering set and this solve leaves is cleared, the others stand unwritten.
     for (k, v) in solved do
       match v with
@@ -6891,6 +6946,9 @@ private def geometry (opts : Array Raw) (pos : Pos)
     write fun st => { st with pageVertical := if now.contains .vmargin then
       now ++ [.tmargin, .bmargin] else now }
   -- geometry reads its keys in order, a later value of a key replacing the earlier one.
+  -- A page geometry places sets its foot the class's `\footskip` below the text.
+  if let some fs := (← get).classFootskip then
+    if spelling != "\\geometry" || !keys.isEmpty then keys := #[(.footskip, fs, #[])] ++ keys
   let read := keys.foldl (init := #[]) fun acc kv => (acc.filter (·.1 != kv.1)).push kv
   -- Equal horizontal and vertical margins are the one margin.
   let read : Array (Native.PageKey × String × Array String) :=
@@ -8897,6 +8955,87 @@ private def urlOption (v : String) : String :=
 private def blueprintSiteRaws (key : String) (url : String) (pos : Pos) : Array Raw :=
   #[.ctrl blueprintSiteMark pos, .group #[.word key pos] pos, .group #[.word url pos] pos]
 
+/-- The value a TeX parameter takes (The TeXbook, ch. 24). -/
+private inductive TexQuantity where
+  | int
+  | glue
+
+/-- What a TeX parameter no engine site models sets, read where it is assigned: the kind of its
+value and why its setting changes no page, none where it shapes only TeX's log. -/
+private def texParamOf (n : String) : Option (TexQuantity × Option String) :=
+  let lines := "sets how TeX breaks a paragraph's lines, which the engine breaks by its own measure"
+  let pages := "sets a penalty TeX's page builder weighs, where the engine keeps lines by its own rule"
+  let shape := "shapes a paragraph's lines, which the engine sets to the measure in force"
+  let boxes := "sets a box or page dimension the engine settles itself"
+  let math := "spaces math, which the engine spaces by its own rule"
+  let ints : List (String × Option String) :=
+    (["pretolerance", "tolerance", "linepenalty", "hyphenpenalty", "exhyphenpenalty", "adjdemerits",
+      "doublehyphendemerits", "finalhyphendemerits", "looseness", "uchyph", "lefthyphenmin",
+      "righthyphenmin", "binoppenalty", "relpenalty"].map (·, some lines)) ++
+    (["clubpenalty", "widowpenalty", "displaywidowpenalty", "brokenpenalty", "interlinepenalty",
+      "predisplaypenalty", "postdisplaypenalty", "floatingpenalty"].map (·, some pages)) ++
+    [("hangafter", some shape)] ++
+    (["hbadness", "vbadness", "tracingonline", "tracingmacros", "tracingstats", "tracingparagraphs",
+      "tracingpages", "tracingoutput", "tracinglostchars", "tracingcommands", "tracingrestores",
+      "tracingassigns", "tracinggroups", "tracingifs", "tracingnesting", "tracingscantokens",
+      "showboxbreadth", "showboxdepth", "errorcontextlines", "pausing"].map (·, none))
+  let glues : List (String × Option String) :=
+    [("emergencystretch", some lines)] ++
+    (["hangindent", "hsize", "leftskip", "rightskip", "parfillskip", "spaceskip", "xspaceskip"].map
+      (·, some shape)) ++
+    (["vsize", "maxdepth", "splitmaxdepth", "boxmaxdepth", "hoffset", "voffset", "lineskiplimit",
+      "lineskip", "topskip", "splittopskip", "tabskip"].map (·, some boxes)) ++
+    (["mathsurround", "delimitershortfall", "nulldelimiterspace", "scriptspace"].map (·, some math)) ++
+    [("overfullrule", some "marks an overfull line with a rule, which the engine never draws")] ++
+    (["hfuzz", "vfuzz"].map (·, none))
+  match ints.lookup n with
+  | some why => some (.int, why)
+  | none => (glues.lookup n).map (.glue, ·)
+
+/-- Where an integer TeX scans ends: optional signs, then digits or one internal quantity. -/
+private def intEnd (raws : Array Raw) (i : Nat) : Nat :=
+  let i := skipSpaces raws i
+  let i := if (raws[i]?.map isSign).getD false then skipSpaces raws (i + 1) else i
+  match raws[i]? with
+  | some (.ctrl _ _) => i + 1
+  | some (.word w _) =>
+    let ds := if w.startsWith "-" || w.startsWith "+" then w.drop 1 else w.toSlice
+    if !ds.isEmpty && ds.all Char.isDigit then i + 1 else i
+  | _ => i
+
+/-- TeX's assignment to a parameter no engine site models, read to nothing where it stands: named
+once where it changes what TeX sets, a translation note where it shapes only TeX's log. -/
+private def texParamAssign (name : String) (pos : Pos) (raws : Array Raw) (start : Nat) :
+    M (Option (Array Raw × Nat)) := do
+  let some (kind, why) := texParamOf name | return none
+  if readsOperand (rawBefore raws (start - 1)) then return none
+  let stop? : Option Nat := match kind with
+    | .glue => (plainAssign? (· == name) name raws start).map (·.2)
+    | .int =>
+      let j := skipSpaces raws start
+      let (eq, raws) := match raws[j]? with
+        | some (.sym '=' _) | some (.word "=" _) => (true, raws)
+        | some (.word w p) =>
+          if w.startsWith "=" && w.length > 1 then (true, raws.set! j (.word (w.drop 1).toString p))
+          else (false, raws)
+        | _ => (false, raws)
+      let v0 := skipEq raws start
+      let e := intEnd raws v0
+      let opens := eq || match raws[v0]? with
+        | some (.word w _) => w.front.isDigit || w.front == '-' || w.front == '+'
+        | some (.sym c _) => c == '-' || c == '+'
+        | some (.ctrl c _) => c.contains '@'
+        | _ => false
+      if opens && e > v0 then some e else none
+  let some stop := stop? | return none
+  let st ← get
+  -- A definition's assignment is named where each use is rewritten; environment code has none.
+  if st.inDef && !st.envCode then write id
+  else match why with
+    | some why => nameParam name why pos
+    | none => discard s!"\\{name}" "it shapes only TeX's log" ("texparam:" ++ name) pos
+  return some (#[], stop)
+
 private def rewriteCtrlLaterNamed (name : String) (pos : Pos) (raws : Array Raw)
     (start : Nat) : M (Option (Array Raw × Nat)) := do
   match name with
@@ -8907,9 +9046,17 @@ private def rewriteCtrlLaterNamed (name : String) (pos : Pos) (raws : Array Raw)
     if raws[skipSpaces raws start]? matches some (.ctrl "strutbox" _) then
       write fun st => { st with strutSkip := none }
     return none
+  | "strut" =>
+    -- latex.ltx's `\strut`: a rule of no width, the strut box's height above the baseline and its
+    -- depth below, at the size in force.
+    let some skip := (← get).skipInForce | return none
+    let (ht, dp) := (strutDimen "ht" skip, strutDimen "dp" skip)
+    became "\\strut" s!"\\rule[-{dp}sp]\{0pt}\{{ht + dp}sp}" pos
+    return some (#[.ctrl "rule" pos, .sym '[' pos, .word s!"-{dp}sp" pos, .sym ']' pos,
+      .group #[.word "0pt" pos] pos, .group #[.word s!"{ht + dp}sp" pos] pos], start)
   | "linespread" | "setstretch" =>
     -- setspace's parameterised form is `\linespread` by another name.
-    write fun st => { st with strutSkip := none }
+    write fun st => { st with strutSkip := none, classPt := none, bodySkip := none }
     let (args, k) := takeGroups raws start 1
     if args.isEmpty then return none
     if ← paramArgs args then
@@ -8941,7 +9088,7 @@ skipped, and the leading keeps its value" pos (help := "give a number, such as \
     biblatexMulticiteArm name pos raws start
   | "fontsize" =>
     -- NFSS records the two dimensions and `\selectfont` commits them.
-    write fun st => { st with strutSkip := none }
+    write fun st => { st with strutSkip := none, bodySkip := none }
     let (args, k) := takeGroups raws start 2
     if args.size < 2 then
       say .E0304 "'\\fontsize' needs {size} and {leading} groups" pos
@@ -9084,7 +9231,7 @@ again; here the pages number on in arabic numerals through the book" pos
     match cmd? with
     | some cmd =>
       -- A stretch the next font selection reads sets the strut box again there.
-      if cmd == "baselinestretch" then write fun st => { st with strutSkip := none }
+      if cmd == "baselinestretch" then write fun st => { st with strutSkip := none, classPt := none, bodySkip := none }
       if found && !expanding && arity == some 0 && (← docPreamble) then
         if let (some level, some (.group body _)) := (listLevelOf cmd, raws[k]?) then
           if ← listLevelDef level s!"\\{name}\{\\{cmd}}" body pos then
@@ -9552,6 +9699,14 @@ page of its own" pos (help := "\\begin{titlepage}...\\end{titlepage} sets a page
       return some (#[], j)
     | _, _ => return none
   | _ =>
+    if let some result ← texParamAssign name pos raws start then return some result
+    -- A table's row ends its last cell's group, and the next cell starts from the table's lengths.
+    if (name == "\\" || name == "tabularnewline") && (← get).tableTop then
+      write fun st => { st with lens := st.cellLens }
+    -- A size command sets `\baselineskip` and the strut box at its size, to its group's end.
+    if (Ir.sizeScale.lookup name).isSome && (← get).inDoc then
+      write fun st => { st with bodySkip := st.classPt.map (classSizeSkip · name)
+                                lens := st.lens.filter fun e => !sizeReset e.1 }
     -- `\begin{document}` runs `\normalsize`, so a preamble size command sets nothing kept.
     if (Ir.sizeScale.lookup name).isSome && (← docPreamble) then
       write fun st => { st with strutSkip := none }
@@ -9639,7 +9794,7 @@ private def packageOptions (name p : String) (opts : List String) (pos : Pos)
 in its own script's glyphs," pos
     else if let some native := (packageOptionNatives.lookup p).bind (·.lookup spelled) then
       -- setspace's spacings set the strut box again as the package loads.
-      if p == "setspace" then write fun st => { st with strutSkip := none }
+      if p == "setspace" then write fun st => { st with strutSkip := none, classPt := none, bodySkip := none }
       out := out ++ (← setting what native pos (subject := some (paramSubject s!"usepackage:{p}" key)))
     else if let some why := (packageOptionsInert.lookup p).bind fun rows =>
         (rows.lookup spelled).orElse fun _ =>
@@ -10049,7 +10204,13 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
     let keptItems := (KeyVal.items (opt.getD "")).toList.filter (!offered.contains ·)
     -- The class's `\normalsize` sets the strut box at its `\baselineskip` as the class loads.
     let strut := (classNormalPt cls keptItems).map classNormalSkip
-    write fun st => { st with strutSkip := strut }
+    let paper := (keptItems.findSome? fun o =>
+      if o.endsWith "paper" then some (o.dropEnd "paper".length).toString else none).getD
+        (if cls.startsWith "scr" then "a4" else "letter")
+    write fun st => { st with strutSkip := strut, classPt := classNormalPt cls keptItems,
+                              classPaper := paper,
+                              classFootskip := if cls == "article" || chapterClasses.contains cls
+                                then some "30pt" else none }
     let passedAll := (← get).loads.rewriteClassPassed.toList.flatMap fun (name, options) =>
       if name == cls then options.toList else []
     let given := passedAll ++ keptItems
@@ -10373,7 +10534,7 @@ skipped, and the length keeps its value" pos
     let (nameArgs, j) := takeGroups raws start 1
     let some cmd := ctrlName (nameArgs.getD 0 #[]) | return none
     -- A stretch the next font selection reads sets the strut box again there.
-    if cmd == "baselinestretch" then write fun st => { st with strutSkip := none }
+    if cmd == "baselinestretch" then write fun st => { st with strutSkip := none, classPt := none, bodySkip := none }
     let provide := Definer.provides name
     let st ← get
     -- premise: Tests.xparseProvideChecks — provision keeps existing meanings
@@ -11158,7 +11319,7 @@ and 'transparent=<n>' are understood")
   | .komaOptions => do
     let entries := (KeyVal.items (c.src 0)).toList
     if entries.any fun e => (KeyVal.entry e).1 == "fontsize" then
-      write fun st => { st with strutSkip := none }
+      write fun st => { st with strutSkip := none, classPt := none, bodySkip := none }
     let satisfied (e : String) : Bool :=
       match KeyVal.entry e with
       | (key, some v) => (key == "headsepline" || key == "footsepline")
@@ -11214,7 +11375,7 @@ private def ctrlRowRun (row : CtrlRow) (c : CtrlCall) : M (Array Raw) := do
   | .native src =>
     -- setspace's spacings set the strut box again where they stand.
     if (packageOptionNatives.lookup "setspace").any (·.any (·.1 == row.name)) then
-      write fun st => { st with strutSkip := none }
+      write fun st => { st with strutSkip := none, classPt := none, bodySkip := none }
     setting s!"\\{row.name}" src pos
   | .skip amount =>
     -- premise: kernelLengthChecks — a declared skip amount ships at its command
@@ -13162,6 +13323,7 @@ private def rewriteRaw (inBody : Bool) (arg : Bool) : Raw → M Raw
     let savedDef := (← get).inDef
     let savedGroup := (← get).inGroup
     let savedLens := (← get).lens
+    let savedSkip := (← get).bodySkip
     let savedLengths := (← get).localLengths
     let savedTop := (← get).tableTop
     let savedDefTop := (← get).defTop
@@ -13183,7 +13345,7 @@ private def rewriteRaw (inBody : Bool) (arg : Bool) : Raw → M Raw
     write fun st => { st with bodyNext := if inDefault then outer else saved - 1, inDef := savedDef,
                               inGroup := savedGroup, envCode := savedEnvCode,
                               envNext := if envBody then savedEnvNext - 1 else savedEnvNext,
-                              lens := savedLens, localLengths := savedLengths,
+                              lens := savedLens, bodySkip := savedSkip, localLengths := savedLengths,
                               tableTop := savedTop, defTop := savedDefTop,
                               bound := if saved > 0 then savedBound else st.bound }
     -- premise: beamerTemplateChecks — a consumed local font declaration leaves no preamble content
@@ -13201,6 +13363,13 @@ private def rewriteRaw (inBody : Bool) (arg : Bool) : Raw → M Raw
       write fun st => { st with file := saved }
       return .env n body' p
     | none => withScope do
+      -- book.cls and scrbook.cls define no abstract: LaTeX sets its body as plain text.
+      -- premise: texStateChecks — book's abstract is named unknown and its body kept
+      if n == "abstract" && (← get).loads.cls.any (fun c => c.1 == "book" || c.1 == "scrbook") &&
+          !(← get).definedEnvs.contains "abstract" then
+        sayOnce "env:abstract" .W0302 "unknown environment '{abstract}'; its body is kept" p
+          (help := "the class defines no abstract; '\\chapter*{Abstract}' heads one")
+        return .group (← rewriteList inBody body #[] body.toList 0 0) p
       if n == "abstract" then abstractUnderTitlePage p
       if mathEnvs.contains n then
         return .env n body p
@@ -13291,17 +13460,24 @@ steps come from its body" p
         let st0 ← get
         write fun st => { st with inList := st.inList || listEnvs.contains n,
                                   tableTop := tableEnvs.contains n, defTop := false,
+                                  cellLens := if tableEnvs.contains n then st.lens else st.cellLens,
+                                  envDepth := st.envDepth + 1,
                                   inParacol := n == "paracol", localLengths := #[] }
         let body' ← rewriteList inBody body #[] body.toList 0 0
         let body' ← if listEnvs.contains n then listOptions n body' p else pure body'
         let restores := restoreLengths (← get).localLengths p
         write fun st => { st with lens := st0.lens, localLengths := st0.localLengths,
-                                  inList := st0.inList,
+                                  inList := st0.inList, cellLens := st0.cellLens,
+                                  bodySkip := st0.bodySkip, envDepth := st0.envDepth,
                                   tableTop := st0.tableTop, defTop := st0.defTop,
                                   inParacol := st0.inParacol }
         if n == "paracol" then
           paracolEnv st0.paracolRatio body' p restores
         else return .env n (body' ++ restores) p
+  | .sym '&' p => do
+    -- A table's cell is a group: the next starts from the lengths in force where the table opens.
+    if (← get).tableTop then write fun st => { st with lens := st.cellLens }
+    pure (.sym '&' p)
   | .sym '[' p => do
     if (← get).defaultAt == .awaiting then
       write fun st => { st with defaultAt := .inside st.inDef, inDef := true }

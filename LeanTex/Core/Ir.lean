@@ -129,7 +129,15 @@ public structure TextBlockDecl where
   bottom : Option Sp := none
   height : Option Sp := none
   ratio : Option (Nat × Nat) := none
+  /-- The height as thousandths of the page's, where no height is declared (geometry's `vscale`). -/
+  scale : Option Nat := none
   deriving Repr, BEq, Inhabited
+
+/-- The declaration with its scaled height fixed on a page `page` tall. -/
+public def TextBlockDecl.scaled (b : TextBlockDecl) (page : Sp) : TextBlockDecl :=
+  match b.height, b.scale with
+  | none, some s => { b with height := some (page * (s : Int) / 1000) }
+  | _, _ => b
 
 /-- The margins a declaration leaves on a page `page` tall, else at `vm` and `bm`: a declared top, or
 one a height places above a declared bottom or by a ratio, with a declared height under it. -/
@@ -243,15 +251,21 @@ public structure PageSpec where
   boxes : Array PageBox := #[]
   /-- Whether a declaration named the page's size, which the class's default then leaves. -/
   sized : Bool := false
+  /-- Whether a declaration named the page's width, or its height, which the class's default leaves
+  on that axis alone. -/
+  widthSized : Bool := false
+  heightSized : Bool := false
   /-- The text block's declared width, which centres it on the page the class settles. -/
   blockWidth : Option Sp := none
+  /-- The text block's width as thousandths of the page's (geometry's `hscale`), centred likewise. -/
+  widthScale : Option Nat := none
   deriving Repr, BEq, Inhabited
 
 public def PageSpec.bottomMargin (spec : PageSpec) : Sp := spec.bmargin.getD spec.vmargin
 
 /-- The page with its declared text block placed on its settled height. -/
 public def PageSpec.placed (spec : PageSpec) : PageSpec :=
-  let (t, m) := spec.block.place spec.height spec.vmargin spec.bottomMargin
+  let (t, m) := (spec.block.scaled spec.height).place spec.height spec.vmargin spec.bottomMargin
   { spec with vmargin := t, bmargin := if m == t then none else some m, block := {} }
 
 /-- The medium a page spec ships on: its page and the bleed on every side. -/

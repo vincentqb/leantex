@@ -1186,7 +1186,9 @@ private def pageSizes : List (String × (Sp × Sp)) :=
   [("letter", (pt 612, pt 792)),
    ("legal", (pt 612, pt 1008)),
    ("a4", Ir.a4Page),
-   ("a5", (Dim.pt 420, Dim.pt 595))]
+   ("a5", (Dim.pt 420, Dim.pt 595)),
+   ("b5", (Dim.mm 176, Dim.mm 250)),
+   ("executive", (pt 522, pt 756))]
 
 /-- The slides stage beamer's `aspectratio=` option selects, else beamer's
 default 4:3. -/
@@ -4479,6 +4481,74 @@ private def refFormNeedsKind : Ir.RefForm → Bool
   | .plain | .paren | .labelOnly | .headed | .title | .page => false
   | .starred f => refFormNeedsKind f
 
+/-- Remembers a document-declared key, so a later `\theme` replacing it is
+named. -/
+private def noteDeclared (ctx : Ctx) (decl key : String) : EM Unit :=
+  modify fun st => applyEvent ctx st (.declared decl key)
+
+/-- Whether a declaration at `pos` is the document's own: outside a package or class file and the
+files one inputs, and no definition's replacement text. -/
+private def ownDeclaration (ctx : Ctx) (pos : Pos) : EM Bool := do
+  let package := Compat.packageCode ctx.owned ctx.file
+  return UnusedSetting.ownSite package ctx.callSite.isSome pos
+
+/-- Records a token the document's own `\tokens` declares beside the engine's. -/
+private def noteAuthorToken (ctx : Ctx) (key : String) (pos : Pos) : EM Unit := do
+  unless Ir.engineTokenNames.contains key || !(pos.command.all (· == "\\tokens")) do
+    if ← ownDeclaration ctx pos then
+      modify fun st => { st with spans := { st.spans with
+        authorTokens := st.spans.authorTokens.push (key, ctx.sourceSpan pos) } }
+
+/-- Applies a `\tokens{...}` block entry by entry, so an entry may refer to
+an earlier one. -/
+private def applyTokens (ctx : Ctx) (toks : Tokens) (src : String) (pos : Pos)
+    (engine : Array (String × Dim.SymGlue) := #[]) : EM Tokens := do
+  let mut acc : Tokens := toks
+  for entry in Decl.splitEntries src do
+    match Decl.splitEntry entry with
+    | none =>
+      diag ctx .E0320 s!"invalid entry in '\\tokens': {entry.quote}" pos
+        (help := "entries look like: name = length")
+    | some (key, valueSrc) =>
+      match Decl.parseValue valueSrc (acc.entries ++ engine) with
+      | some (.glue g) =>
+        acc := acc.declare key g
+        noteDeclared ctx "tokens" key
+        noteAuthorToken ctx key pos
+      | some (.dim d) =>
+        acc := acc.declare key { width := Dim.Length.ofSp d }
+        noteDeclared ctx "tokens" key
+        noteAuthorToken ctx key pos
+      | some v =>
+        modify fun st => { st with
+          diags := st.diags.push (Decl.wrongType ctx.file "tokens" key
+            "a length (10pt, 1.5ex, 0.6 * other)" v pos) }
+      | none =>
+        let detail := if Decl.looksLikeExpr valueSrc then
+            match Decl.parseLengthExpr (acc.entries ++ engine) valueSrc with
+            | .error e => s!": {e}"
+            | .ok _ => ""
+          else ""
+        diag ctx .E0321 s!"cannot read length for '{key}': {valueSrc.quote}{detail}" pos
+          (help := "lengths look like 10pt, 1.5ex, 2em, a + 2b, or 0.6 * other-token")
+  return acc
+
+
+/-- A `\tokens{...}` block inside inline content, in force for the rest of its group: the tokens
+it leaves and the index past it. -/
+private def inlineTokens (ctx : Ctx) (raws : Array Raw) (start : Nat) (pos : Pos) :
+    EM (Tokens × { j : Nat // start ≤ j }) := do
+  let j := skipSpaces raws start
+  have hj := skipSpaces_ge raws start
+  match raws[j]? with
+  | some (.group body _) =>
+    let tk := ctx.preamble.fixLengths Ir.leftMarginNamed
+      (← applyTokens ctx ctx.tokens (declSrc body) pos (engine := ctx.engineTokens))
+    return (tk, ⟨j + 1, by omega⟩)
+  | _ =>
+    diag ctx .E0304 "'\\tokens' needs a {...} block" pos
+    return (ctx.tokens, ⟨start, Nat.le_refl _⟩)
+
 -- Sealed so the knot's fixpoint never unfolds their string code.
 seal footnoteOverride hasParRaw footnoteWarnPar footnoteWarnFace
 seal thanksWarn footnoteStepNum noteNeedsGroup warnUnknownCmd noteSalvage recoverPackageCmd
@@ -4488,6 +4558,7 @@ seal argText skipBracketRun bracketRunSrc
 seal imageArm
 seal warnUnclosed warnDroppedArgs
 seal refCtrlForm? refFormNeedsKind
+seal inlineTokens
 
 /-- Takes latex-lab-tikz's `alt` and `artifact` keys out of a picture's
 option run, leaving the body as written without them. -/
@@ -6244,6 +6315,14 @@ a side channel, never slide content" pos
     have _ : sliceWeight raws jr.1 < sliceWeight raws i :=
       sliceWeight_lt raws h (by omega)
     elabInlinesFrom ctx raws jr.1 acc sb
+  else if name == "tokens" then
+    let (tk, ⟨k, hk⟩) ← inlineTokens ctx raws (i + 1) pos
+    have _ : sliceWeight raws k < sliceWeight raws i := sliceWeight_lt raws h (by omega)
+    elabInlinesFrom { ctx with tokens := tk } raws k acc sb
+  else if (Compat.lengthRestoreKeys? name).isSome then
+    -- A group's closing restore: the group's tokens end with it.
+    have _ : sliceWeight raws (i + 1) < sliceWeight raws i := sliceWeight_lt raws h (by omega)
+    elabInlinesFrom ctx raws (i + 1) acc sb
   else if declCtrl.contains name || runningCtrl.contains name then
     warnMisplacedDecl ctx name pos
     let jr := skipReservedArgs raws (i + 1) pos (maxGroups := 2)
@@ -6333,6 +6412,7 @@ unseal argText skipBracketRun bracketRunSrc
 unseal imageArm
 unseal warnUnclosed warnDroppedArgs
 unseal refCtrlForm? refFormNeedsKind
+unseal inlineTokens
 unseal secFmtOfBody applySecFmt applyCounter counterCtrl counterArm runInHead
 unseal splitPictureAlt subsetPicture routePicture inlinePicture
 unseal inlineVerbatim
@@ -6364,6 +6444,7 @@ public def recoversInlineName (ctx : Ctx) (name : String) : Bool :=
   !declaresScope name && !isPageGround name && (ctx.palette.resolve name).isNone &&
   !(overlayCtrls.contains name) && (Ir.raggedSideOf? name).isNone &&
   (reservedCtrl.lookup name).isNone &&
+  !(name == "tokens") && (Compat.lengthRestoreKeys? name).isNone &&
   !(declCtrl.contains name || runningCtrl.contains name) &&
   !(blockOnly.contains name || bodyDefiner name) &&
   !(Compat.nativeReadCtrls.contains name ||
@@ -6781,7 +6862,7 @@ private def classPageDefaults (record : Ir.ClassRecord) (opts : List String)
   let dflt : PageSpec := {}
   let mut page := page
   if record.model == .flow then
-    if !page.sized then
+    if !(page.widthSized && page.heightSized) then
       let sized := opts.findSome? fun o =>
         let o := match KeyVal.entry o with
           | ("paper", some v) => v ++ "paper"
@@ -6791,7 +6872,8 @@ private def classPageDefaults (record : Ir.ClassRecord) (opts : List String)
           pageSizes.lookup ((o.dropEnd "paper".length).toString)
         else none
       if let some (w, h) := sized.orElse fun _ => record.trimDefault then
-        page := { page with width := w, height := h }
+        page := { page with width := if page.widthSized then page.width else w
+                            height := if page.heightSized then page.height else h }
     -- geometry turns whatever paper it sets under the class's global `landscape`.
     if opts.contains "landscape" then
       page := { page with width := page.height, height := page.width }
@@ -6827,6 +6909,8 @@ private def classPageDefaults (record : Ir.ClassRecord) (opts : List String)
       page := { page with justify := some false }
   if let some w := page.blockWidth then
     page := { page with hmargin := (page.width - w) / 2 }
+  if let some s := page.widthScale then
+    page := { page with hmargin := page.width * (1000 - (s : Int)) / 2000 }
   return page
 
 /-- Class options leaving a page model's page as it stands, each with why. -/
@@ -6921,7 +7005,6 @@ private def bodyIsBlockOne : Raw → Bool
       || n == Parse.citeSetupMark
       -- Definitions and counter commands expand only through the block walk.
       || n == "define" || counterCtrl n
-      || (Compat.lengthRestoreKeys? n).isSome
       || (blockHeading? n).isSome
   | .par _ => true
   | .verb env _ _ => !verbAlwaysInline env
@@ -7861,24 +7944,6 @@ private def titleBlocks (ctx : Ctx) (st : ESt) : Array Block := Id.run do
       | some g => blocks.push (.spaced (Ir.Sourced.bare g) #[])
       | none => blocks
 
-/-- Remembers a document-declared key, so a later `\theme` replacing it is
-named. -/
-private def noteDeclared (ctx : Ctx) (decl key : String) : EM Unit :=
-  modify fun st => applyEvent ctx st (.declared decl key)
-
-/-- Whether a declaration at `pos` is the document's own: outside a package or class file and the
-files one inputs, and no definition's replacement text. -/
-private def ownDeclaration (ctx : Ctx) (pos : Pos) : EM Bool := do
-  let package := Compat.packageCode ctx.owned ctx.file
-  return UnusedSetting.ownSite package ctx.callSite.isSome pos
-
-/-- Records a token the document's own `\tokens` declares beside the engine's. -/
-private def noteAuthorToken (ctx : Ctx) (key : String) (pos : Pos) : EM Unit := do
-  unless Ir.engineTokenNames.contains key || !(pos.command.all (· == "\\tokens")) do
-    if ← ownDeclaration ctx pos then
-      modify fun st => { st with spans := { st.spans with
-        authorTokens := st.spans.authorTokens.push (key, ctx.sourceSpan pos) } }
-
 /-- Records a setting the document itself declares at `pos`. -/
 private def noteSetting (ctx : Ctx) (setting : UnusedSetting.Setting) (pos : Pos) : EM Unit :=
   modify fun st => applyEvent ctx st (.setting setting pos pos)
@@ -7910,7 +7975,7 @@ private def abstractFormUnder (form : Ir.AbstractForm) (opts : List String) : Ir
 /-- The engine length tokens the preamble may read: those whose value the
 declared page or the class already fixes. -/
 private def engineLengthTokens (docClass : Ir.DocClass) (classOptions : String)
-    (page : PageSpec) : Array (String × Dim.SymGlue) :=
+    (page : PageSpec) (undeclared : Option Sp := none) : Array (String × Dim.SymGlue) :=
   let record := docClass.record
   let dflt : PageSpec := {}
   let opts := (KeyVal.items classOptions).toList
@@ -7923,7 +7988,7 @@ private def engineLengthTokens (docClass : Ir.DocClass) (classOptions : String)
     (match record.model with
      | .face => record.safeMargin.isSome
      | .frame => true
-     | .flow => false)
+     | .flow => true)
   let vmKnown := page.vmargin != dflt.vmargin ||
     (match record.model with
      | .face => record.safeMargin.isSome
@@ -7938,42 +8003,14 @@ private def engineLengthTokens (docClass : Ir.DocClass) (classOptions : String)
     -- The body size and `\parskip` may still change in the preamble.
     | "baselineskip" | "parskip" => false
     | _ => false
-  (engineLengthTokensOfPage (settledPage (classPageDefaults record opts page)).1).filter
+  -- An undeclared flow page centres the text block its surface takes.
+  let classPage := classPageDefaults record opts page
+  let classPage := match undeclared with
+    | some w => if record.model == .flow then { classPage with hmargin := (classPage.width - w) / 2 }
+      else classPage
+    | none => classPage
+  (engineLengthTokensOfPage (settledPage classPage).1).filter
     (fun kv => offered kv.1) ++ classMarginTokens record.lists
-
-/-- Applies a `\tokens{...}` block entry by entry, so an entry may refer to
-an earlier one. -/
-private def applyTokens (ctx : Ctx) (toks : Tokens) (src : String) (pos : Pos)
-    (engine : Array (String × Dim.SymGlue) := #[]) : EM Tokens := do
-  let mut acc : Tokens := toks
-  for entry in Decl.splitEntries src do
-    match Decl.splitEntry entry with
-    | none =>
-      diag ctx .E0320 s!"invalid entry in '\\tokens': {entry.quote}" pos
-        (help := "entries look like: name = length")
-    | some (key, valueSrc) =>
-      match Decl.parseValue valueSrc (acc.entries ++ engine) with
-      | some (.glue g) =>
-        acc := acc.declare key g
-        noteDeclared ctx "tokens" key
-        noteAuthorToken ctx key pos
-      | some (.dim d) =>
-        acc := acc.declare key { width := Dim.Length.ofSp d }
-        noteDeclared ctx "tokens" key
-        noteAuthorToken ctx key pos
-      | some v =>
-        modify fun st => { st with
-          diags := st.diags.push (Decl.wrongType ctx.file "tokens" key
-            "a length (10pt, 1.5ex, 0.6 * other)" v pos) }
-      | none =>
-        let detail := if Decl.looksLikeExpr valueSrc then
-            match Decl.parseLengthExpr (acc.entries ++ engine) valueSrc with
-            | .error e => s!": {e}"
-            | .ok _ => ""
-          else ""
-        diag ctx .E0321 s!"cannot read length for '{key}': {valueSrc.quote}{detail}" pos
-          (help := "lengths look like 10pt, 1.5ex, 2em, a + 2b, or 0.6 * other-token")
-  return acc
 
 
 /-- Reads a `\palette` option run as (decorative, seeds, skipBlock); an
@@ -9747,6 +9784,10 @@ private def closeSpan (spans : Array Ir.ColSpan) (cells : Array (Array Inline))
     (spans.push { row := row, col := cells.size - 1, n := n, spec := spec },
       cells ++ Array.replicate (n - 1) #[])
 
+/-- One table cell's content, a group: what it declares ends with it (LaTeX's `\@array`). -/
+private def tableCell (ctx : Ctx) (cellRaws : Array Raw) : EM (Array Inline) :=
+  inlineGroup ctx.palette (elabInlines ctx (trimRawEdges cellRaws))
+
 private def tabularArm (ctx : Ctx) (n : String) (body : Array Raw)
     (pos : Pos) (blocks : Array Block) : EM (Array Block) := do
   let mut blocks := blocks
@@ -9807,7 +9848,7 @@ private def tabularArm (ctx : Ctx) (n : String) (body : Array Raw)
     if h' : j < body.size then
       match body[j] with
       | .ctrl "\\" bpos =>
-        cells := cells.push (Ir.paraAt (← get).scope.blockDecls (← elabInlines ctx (trimRawEdges cellRaws)))
+        cells := cells.push (Ir.paraAt (← get).scope.blockDecls (← tableCell ctx cellRaws))
         (spans, cells) := closeSpan spans cells rows.size spanHere
         spanHere := none
         cellRaws := #[]
@@ -9826,7 +9867,7 @@ private def tabularArm (ctx : Ctx) (n : String) (body : Array Raw)
             j := j'
         | _ => pure ()
       | .sym '&' _ =>
-        cells := cells.push (Ir.paraAt (← get).scope.blockDecls (← elabInlines ctx (trimRawEdges cellRaws)))
+        cells := cells.push (Ir.paraAt (← get).scope.blockDecls (← tableCell ctx cellRaws))
         (spans, cells) := closeSpan spans cells rows.size spanHere
         spanHere := none
         cellRaws := #[]
@@ -9903,7 +9944,7 @@ private def tabularArm (ctx : Ctx) (n : String) (body : Array Raw)
         j := j + 1
     else break
   if cellRaws.any (!isSpaceOrPar ·) || !cells.isEmpty then
-    cells := cells.push (Ir.paraAt (← get).scope.blockDecls (← elabInlines ctx (trimRawEdges cellRaws)))
+    cells := cells.push (Ir.paraAt (← get).scope.blockDecls (← tableCell ctx cellRaws))
     (spans, cells) := closeSpan spans cells rows.size spanHere
     rows := rows.push cells
   -- Every walk below trusts `cols.size`.
@@ -10767,6 +10808,11 @@ private theorem carryDecls_quiet (ctx : Ctx) (cur : Array Raw)
     carryDecls ctx cur = fun blocks => pure (blocks, ctx.palette) :=
   funext fun blocks => carryDeclsGo_quiet ctx cur 0 cur.toList blocks ctx.palette h
 
+private theorem tokens_recovers (ctx : Ctx) (name : String)
+    (hn : recoversInlineName ctx name = true) : (name != "tokens") = true := by
+  simp only [recoversInlineName, Bool.and_eq_true, Bool.not_eq_true'] at hn
+  simp [bne, hn]
+
 private theorem carriesPar_recovers (ctx : Ctx) (name : String)
     (hn : recoversInlineName ctx name = true) : carriesPar ctx name = false := by
   simp only [recoversInlineName, Bool.and_eq_true, Bool.not_eq_true',
@@ -10775,6 +10821,60 @@ private theorem carriesPar_recovers (ctx : Ctx) (name : String)
 
 private theorem carryDecls_empty (ctx : Ctx) (blocks : Array Block) :
     carryDecls ctx #[] blocks = pure (blocks, ctx.palette) := rfl
+
+/-- A paragraph's top-level `\tokens` read again in order, silently, since its inline content read
+them where they stand: the tokens they leave and whether one stood. -/
+private def carryTokensGo (ctx : Ctx) : List Raw → Tokens × Bool → EM (Tokens × Bool)
+  | [], acc => pure acc
+  | .ctrl n _ :: .group body p :: rest, (tk, set) =>
+    if n == "tokens" then do
+      let diags := (← get).diags
+      let tk := ctx.preamble.fixLengths Ir.leftMarginNamed
+        (← applyTokens { ctx with tokens := tk } tk (declSrc body) p (engine := ctx.engineTokens))
+      modify fun st => { st with diags := diags }
+      carryTokensGo ctx rest (tk, true)
+    else carryTokensGo ctx (.group body p :: rest) (tk, set)
+  | _ :: rest, acc => carryTokensGo ctx rest acc
+
+/-- Carries a paragraph's top-level `\tokens` past its end as one token epoch. -/
+private def carryTokens (ctx : Ctx) (cur : Array Raw) (blocks : Array Block) :
+    EM (Array Block × Tokens) := do
+  let (tk, set) ← carryTokensGo ctx cur.toList (ctx.tokens, false)
+  if !set then return (blocks, tk)
+  modify fun st => { st with flowTokens := some tk, flowGen := st.flowGen + 1 }
+  return (blocks.push (.setTokens tk), tk)
+
+private theorem carryTokens_empty (ctx : Ctx) (blocks : Array Block) :
+    carryTokens ctx #[] blocks = pure (blocks, ctx.tokens) := rfl
+
+private def tokensQuiet : Raw → Bool
+  | .ctrl n _ => n != "tokens"
+  | _ => true
+
+private theorem carryTokensGo_quiet (ctx : Ctx) :
+    ∀ (rs : List Raw) (acc : Tokens × Bool), rs.all tokensQuiet = true →
+      carryTokensGo ctx rs acc = pure acc
+  | [], _, _ => rfl
+  | r :: rest, acc, h => by
+    simp only [List.all_cons, Bool.and_eq_true] at h
+    have ih := carryTokensGo_quiet ctx rest acc h.2
+    cases r with
+    | ctrl n p =>
+      have hq : (n == "tokens") = false := by simpa [tokensQuiet] using h.1
+      cases rest with
+      | nil => rfl
+      | cons r2 rest2 =>
+        cases r2 with
+        | group body gp => simp only [carryTokensGo, hq]; exact ih
+        | _ => simp only [carryTokensGo]; exact ih
+    | _ => simp only [carryTokensGo]; exact ih
+
+private theorem carryTokens_quiet (ctx : Ctx) (cur : Array Raw)
+    (h : cur.toList.all tokensQuiet = true) :
+    carryTokens ctx cur = fun blocks => pure (blocks, ctx.tokens) := by
+  funext blocks
+  simp only [carryTokens, carryTokensGo_quiet ctx cur.toList _ h]
+  rfl
 
 /-- Flushes the open paragraph, carries its declarations past its end, and
 settles the owners that began inside it. -/
@@ -10787,10 +10887,12 @@ private def flushPara (ctx : Ctx) (blocks : Array Block) (cur : Array Raw) :
     | some p => blocks.push p
     | none => blocks
   let (blocks, pal) ← carryDecls ctx cur blocks
+  let (blocks, tk) ← carryTokens ctx cur blocks
   let roles := ctx.macroRoles.blocks.map fun run =>
     if run.pendingPara then { run with start := blocks.size, pendingPara := false } else run
-  return (⟨{ ctx with palette := pal, macroRoles := { ctx.macroRoles with blocks := roles } },
-    rfl, rfl, rfl, rfl⟩, blocks)
+  let ready : Ctx := { ctx with palette := pal, tokens := tk
+                                macroRoles := { ctx.macroRoles with blocks := roles } }
+  return (⟨ready, rfl, rfl, rfl, rfl⟩, blocks)
 
 /-- Drops the frame sources recorded from the earliest completed role that
 `desired` does not continue. -/
@@ -12171,7 +12273,9 @@ private def isBlockStart (ctx' : Ctx) (n : String) (raws : Array Raw) (i : Nat)
         contentWrapperTakesBlocks n raws i)
     || (n != "note" &&
       ((blockHeading? n).isSome
-        || declCtrl.contains n || runningCtrl.contains n || n == "define"
+        -- A mid-paragraph `\tokens` holds for the rest of its paragraph's group, as TeX's does.
+        || (declCtrl.contains n && (n != "tokens" || cur.isEmpty)) || runningCtrl.contains n
+        || n == "define"
         || counterCtrl n
         || (match lookupUser ctx' sourceName with
             | some (_, cmd) => bodyIsBlock cmd.body
@@ -14039,7 +14143,7 @@ private theorem blockMacroStep_idle (ctx : Ctx) (st : ESt) (raws : Array Raw)
 private theorem flushPara_empty (ctx : Ctx) (blocks : Array Block)
     (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles) :
     flushPara ctx blocks #[] = pure (⟨ctx, rfl, rfl, rfl, rfl⟩, blocks) := by
-  simp [flushPara, hm, MacroRoles.empty, carryDecls_empty]
+  simp [flushPara, hm, MacroRoles.empty, carryDecls_empty, carryTokens_empty]
   cases ctx
   cases hm
   rfl
@@ -14050,7 +14154,8 @@ private theorem flushPara_pending (ctx : Ctx) (blocks : Array Block) (cur : Arra
     flushPara ctx blocks cur = (do
       let para ← mkPara ctx cur
       let (bs, pal) ← carryDecls ctx cur (match para with | some b => blocks.push b | none => blocks)
-      pure (⟨{ ctx with palette := pal }, rfl, rfl, rfl, rfl⟩, bs)) := by
+      let (bs, tk) ← carryTokens ctx cur bs
+      pure (⟨{ ctx with palette := pal, tokens := tk }, rfl, rfl, rfl, rfl⟩, bs)) := by
   cases ctx
   cases hm
   simp only [flushPara, he, Bool.false_eq_true, ↓reduceIte, Array.filter_empty,
@@ -14165,7 +14270,8 @@ private theorem elabBlocksGo_plain_group (ctx : Ctx) (st : ESt)
   simp only [pure_bind]
   simp [hpar, hblock]
   rw [elabBlocksGo_done ctx st _ 1 blocks _ hm (by simp)]
-  rw [flushPara_pending ctx blocks _ hm rfl, carryDecls_quiet ctx _ (by simp [quietRaw])]
+  rw [flushPara_pending ctx blocks _ hm rfl, carryDecls_quiet ctx _ (by simp [quietRaw]),
+    carryTokens_quiet ctx _ (by simp [tokensQuiet])]
   simp only [bind_assoc, pure_bind]
   rfl
 
@@ -14188,6 +14294,7 @@ private theorem elabBlocksGo_recovery (ctx : Ctx) (st : ESt) (name : String)
     elabBlocksGo_done ctx st _ 2 blocks _ hm (by simp),
     flushPara_pending ctx blocks _ hm rfl,
     carryDecls_quiet ctx _ (by simp [quietRaw, carriesPar_recovers ctx name hn]),
+    carryTokens_quiet ctx _ (by simp [tokensQuiet, tokens_recovers ctx name hn]),
     mkPara_recovery_group ctx name body p gp hm hp hgp hn]
   simp only [bind_assoc, pure_bind]
 
@@ -14381,6 +14488,7 @@ private theorem elabBlocksGo_recovered_word (ctx : Ctx) (st : ESt) (name w : Str
     elabBlocksGo_done ctx st _ 2 blocks _ hm (by simp),
     flushPara_pending ctx blocks _ hm rfl,
     carryDecls_quiet ctx _ (by simp [quietRaw, carriesPar_recovers ctx name hn]),
+    carryTokens_quiet ctx _ (by simp [tokensQuiet, tokens_recovers ctx name hn]),
     mkPara_recovered_word ctx name w p gp wp hm hp hwp hn hs he hl ht hr]
   simp only [bind_assoc, pure_bind]
 
@@ -14546,11 +14654,11 @@ private def pageBoxOf (kind : BoxKind) (s : String) (span : Option Span) : Optio
 
 /-- The page field a dimension key sets. -/
 private def pageDim : Native.PageKey → Option (Sp → PageSpec → PageSpec)
-  | .width => some fun d s => { s with width := d, sized := true }
-  | .height => some fun d s => { s with height := d, sized := true }
-  | .margin => some fun d s => { s with vmargin := d, hmargin := d }
+  | .width => some fun d s => { s with width := d, sized := true, widthSized := true }
+  | .height => some fun d s => { s with height := d, sized := true, heightSized := true }
+  | .margin => some fun d s => { s with vmargin := d, hmargin := d, blockWidth := none, widthScale := none }
   | .vmargin => some fun d s => { s with vmargin := d }
-  | .hmargin => some fun d s => { s with hmargin := d }
+  | .hmargin => some fun d s => { s with hmargin := d, blockWidth := none, widthScale := none }
   | .markGap => some fun d s => { s with markGap := d }
   | .markThickness => some fun d s => { s with markThickness := d }
   -- `furnituregap` is in ink terms; `headsep` and `footskip` keep their baselines.
@@ -14581,7 +14689,18 @@ private def pageExpects (k : Native.PageKey) : String :=
   | .tmargin | .bmargin | .textheight => "a dimension, or auto"
   | .vmarginratio => "a ratio such as 2:3, or auto"
   | .clubpenalty | .widowpenalty | .brokenpenalty => "a whole number"
+  | .hscale | .vscale => "a fraction of the page between 0 and 1, or auto"
   | k => if (pageSwitch k).isSome then "on or off" else "a dimension"
+
+/-- A fraction of the page between zero and one, in thousandths. -/
+private def scaleOf (v : Decl.Value) : Option Nat :=
+  let milli : Option Int := match v with
+    | .ident f => (Decl.parseDecimal f).map fun (m, sc) => m * 1000 / (sc : Int)
+    | .int n => some (n * 1000)
+    -- A bare decimal reads as points.
+    | .dim d => some (d * 1000 / pt 1)
+    | _ => none
+  milli.bind fun t => if 0 < t && t ≤ 1000 then some t.toNat else none
 
 private def applyPage (ctx : Ctx) (spec : PageSpec) (face : Ir.PreambleFace)
     (entries : Array Decl.Entry) (pos : Pos) (tokens : Array (String × SymGlue) := #[]) :
@@ -14627,14 +14746,18 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (face : Ir.PreambleFace)
       | .size, .ident name =>
         match (pageSizes.lookup name.toLower).orElse
             (fun _ => Ir.slidesStageNamed name) with
-        | some (w, h) => spec := { spec with width := w, height := h, sized := true }
+        | some (w, h) =>
+          spec := { spec with width := w, height := h, sized := true, widthSized := true
+                              heightSized := true }
         | none =>
           evs := say evs .E0324 s!"unknown page size '{name}'"
             (help := s!"known sizes: {String.intercalate ", "
               (pageSizes.map (·.1) ++ (Ir.slidesStages.map (·.1)).toList)}")
       | .size, .int n =>
         match Ir.slidesStageNamed (toString n) with
-        | some (w, h) => spec := { spec with width := w, height := h, sized := true }
+        | some (w, h) =>
+          spec := { spec with width := w, height := h, sized := true, widthSized := true
+                              heightSized := true }
         | none =>
           evs := say evs .E0324 s!"unknown page size '{n}'"
             (help := s!"known sizes: {String.intercalate ", "
@@ -14643,7 +14766,8 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (face : Ir.PreambleFace)
       | .textwidth, v =>
         if let some d := asDim v then
           if 0 < d && d ≤ spec.width then
-            spec := { spec with hmargin := (spec.width - d) / 2, blockWidth := some d }
+            spec := { spec with hmargin := (spec.width - d) / 2, blockWidth := some d,
+                                widthScale := none }
           else
             evs := say evs .E0323
               "'textwidth' in '\\page' expects a dimension between zero and the page width"
@@ -14667,6 +14791,15 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (face : Ir.PreambleFace)
           else evs := say evs .E0323 "'bmargin' in '\\page' expects a dimension of at least zero"
         else evs := wrong key v evs
       | .vmarginratio, .ident "auto" => spec := { spec with block := { spec.block with ratio := none } }
+      -- geometry's `hscale` and `vscale` size the text block against the paper the class settles.
+      | .hscale, .ident "auto" => spec := { spec with widthScale := none }
+      | .vscale, .ident "auto" => spec := { spec with block := { spec.block with scale := none } }
+      | .hscale, v | .vscale, v =>
+        match scaleOf v with
+        | some s =>
+          if key == .hscale then spec := { spec with widthScale := some s, blockWidth := none }
+          else spec := { spec with block := { spec.block with scale := some s } }
+        | none => evs := wrong key v evs
       -- geometry's default `vmarginratio` (manual §5.2).
       | .vmarginratio, .ident "default" =>
         spec := { spec with block := { spec.block with ratio := some (2, 3) } }
@@ -14766,7 +14899,8 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (face : Ir.PreambleFace)
         !(e.value matches .ident "auto" | .ident "default") then
       evs := evs.push (.scalar "page" e.key (renderValue e.value) pos)
   -- A vertical key the declared set leaves without effect is named and set aside, as geometry does.
-  let vertical : List Native.PageKey := [.margin, .vmargin, .tmargin, .bmargin, .textheight, .vmarginratio]
+  let vertical : List Native.PageKey :=
+    [.margin, .vmargin, .tmargin, .bmargin, .textheight, .vmarginratio, .vscale]
   if entries.any fun e => (Native.PageKey.ofName? e.key).any vertical.contains then
     let lost (key why : String) (evs : Array PEvent) : Array PEvent :=
       (evs.filter fun ev => match ev with
@@ -14778,6 +14912,11 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (face : Ir.PreambleFace)
       e.key == k && !(e.value matches .ident "auto" | .ident "default")
     -- A height stands under the top, so a bottom beside both sets nothing, a later height its own.
     let b := spec.block
+    if b.top.isSome && b.bottom.isSome && b.scale.isSome then
+      if declares "vscale" then
+        evs := lost "vscale" "the margins place the text block, so a scale sizes nothing" evs
+      spec := { spec with block := { b with scale := none } }
+    let b := spec.block
     if b.top.isSome && b.bottom.isSome && b.height.isSome then
       if declares "bmargin" then
         evs := lost "bmargin" "the text height stands under the top margin, which places the bottom" evs
@@ -14787,7 +14926,7 @@ text height stands under it, which places the bottom" (some pos)
           (subject := some s!"partial:\\page:{k}")))
       spec := { spec with block := { b with bottom := none } }
     let b := spec.block
-    if b.ratio.isSome && (b.height.isNone || b.top.isSome || b.bottom.isSome) then
+    if b.ratio.isSome && ((b.height.isNone && b.scale.isNone) || b.top.isSome || b.bottom.isSome) then
       if declares "vmarginratio" then
         evs := lost "vmarginratio" "a ratio splits a text height no margin places, and none is \
 declared alone" evs
@@ -16212,6 +16351,10 @@ so this accepts nothing"
           (help := "codes look like 'E0333'; each names the one loss it accepts")))
   return (allow, evs)
 
+/-- The text block a flow page takes where no `\page` declares it, on the document's surface. -/
+private def undeclaredBlock (s : PreState) : Option Sp :=
+  if s.sawPage then none else some (Ir.Surface.ofPath s.ctx.file).textBlock
+
 /-- Emits a pure step's reporting events and returns its state. -/
 private def stepDone (ctx : Ctx) (r : PreState × Array PEvent) : EM PreState := do
   emitEvents ctx r.2
@@ -16220,7 +16363,11 @@ private def stepDone (ctx : Ctx) (r : PreState × Array PEvent) : EM PreState :=
 private def stepPage (s : PreState) (src : String) (pos : Pos) :
     PreState × Array PEvent :=
   let pb := Decl.parseBlock s.ctx.file src pos "page" s.tokens.entries
-  let pe := applyPage s.ctx s.page (Ir.PreambleFace.ofClass s.docClass.record s.page.fontSize) pb.1 pos
+  -- A block's own font size fixes its em and ex.
+  let size := (pb.1.findSome? fun e => match e.key, e.value with
+    | "fontsize", .dim d => if d ≥ Dim.pt 1 then some d else none
+    | _, _ => none).getD s.page.fontSize
+  let pe := applyPage s.ctx s.page (Ir.PreambleFace.ofClass s.docClass.record size) pb.1 pos
     s.tokens.entries
   -- Only geometry keys claim the page, so a parskip alone keeps the default margin.
   ({ s with
@@ -16280,7 +16427,7 @@ fonts set as inline content. -/
 private def applyTitlePage (s : PreState) (rd : TitleTemplate.Read) (file : String) (pos : Pos) :
     EM PreState := do
   let ctx := { s.ctx with
-    file := file, engineTokens := engineLengthTokens s.docClass s.classOptions s.page }
+    file := file, engineTokens := engineLengthTokens s.docClass s.classOptions s.page (undeclaredBlock s) }
   let len (key : String) : Option String → EM (Option SymGlue)
     | some v => styleLength ctx key v.trimAscii.toString pos (what := "the title-page template")
     | none => pure none
@@ -16478,7 +16625,7 @@ optional; the default is ignored" pos
     match body with
     | some b =>
       let ctx := { s.ctx with
-        engineTokens := engineLengthTokens s.docClass s.classOptions s.page }
+        engineTokens := engineLengthTokens s.docClass s.classOptions s.page (undeclaredBlock s) }
       let content ← elabInlines ctx b
       let v := if content.isEmpty then none else some content
       modify fun st =>
@@ -16530,7 +16677,7 @@ draws; skipped" pos
           (help := "a frame title is set by a presentation class, such as beamer")
         return s
       let ctx := { s.ctx with
-        engineTokens := engineLengthTokens s.docClass s.classOptions s.page }
+        engineTokens := engineLengthTokens s.docClass s.classOptions s.page (undeclaredBlock s) }
       let styles ← applyStyle ctx s.styles elem body pos
       return { s with styles := styles }
     | none =>
@@ -16625,7 +16772,7 @@ draws; skipped" pos
     match src with
     | some src =>
       let tk ← applyTokens s.ctx s.tokens src pos
-        (engine := engineLengthTokens s.docClass s.classOptions s.page)
+        (engine := engineLengthTokens s.docClass s.classOptions s.page (undeclaredBlock s))
       return { s with tokens := tk, ctx := { s.ctx with tokens := tk } }
     | none =>
       diag s.ctx .E0304 "'\\tokens' needs a {...} block" pos
