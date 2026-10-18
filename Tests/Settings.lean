@@ -695,7 +695,7 @@ def listBodyChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
       "\\end{document}"
   let bare := pagesOf oneFace (doc "" "")
   let fails (ds : Array Diag) : Bool := ds.any (·.severity == .error)
-  for n in Compat.listSpent do
+  for n in Compat.listSpent.filter (· != Ir.trivlistSkipName) do
     let src := doc "" s!"\\setlength\{\\{n}}\{7pt}"
     let ds := dvE src
     t s!"'\\{n}' in a list's body builds, said in a note alone"
@@ -703,6 +703,15 @@ def listBodyChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
         ds.any (·.subject == some s!"ctrl:nothing:setlength:{n}"))
     t s!"'\\{n}' in a list's body ships the page the list ships without it"
       (pagesOf oneFace src == bare)
+  -- LaTeX's trivlists after a list body's `\topsep` read it; here they read the list's level.
+  let centred (lead : String) : String :=
+    "\\documentclass{article}\n\\begin{document}\nAlpha words.\n\\begin{itemize}" ++ lead ++
+      "\\item One.\n\\begin{center}\nTwo.\n\\end{center}\nThree.\\end{itemize}\n\\end{document}"
+  let tds := dvE (centred "\\setlength{\\topsep}{7pt}")
+  t "'\\topsep' in a list's body builds, named once"
+    (!fails tds && (tds.filter (·.code == "W0104")).map (·.subject) == #[some "ctrl:setlength:topsep"])
+  t "the naming gate's premise: no trivlist in the list reads '\\topsep' set in its body"
+    (pagesOf oneFace (centred "\\setlength{\\topsep}{7pt}") == pagesOf oneFace (centred ""))
   for n in Compat.listPerItem do
     let src := doc "" s!"\\setlength\{\\{n}}\{7pt}"
     let ds := dvE src

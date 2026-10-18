@@ -29,7 +29,7 @@ private theorem elabBlocksGo_env_alone (ctx : Ctx) (st : ESt) (n : String) (body
         elabBlocksGo ctx #[.env n body pos] 1 bs #[] st.flowGen) : EM (Array Block)).run st := by
   rw [elabBlocksGo, run_get]
   rw [blockMacroStep_idle ctx st _ 0 #[] #[] hm (by simp) (by simpa [Raw.origins?] using hp)]
-  simp [hl, hb, pictureInSentence_alone, flushPara_empty ctx _ hm, Ir.flushedText_empty_exact,
+  simp [hl, hb, pictureInSentence_alone, flushPara_empty ctx _ hm, Ir.opensInParagraph_empty_exact,
     Ir.lastLeavesEndPe_empty_exact, endPeAt, parFollows, elabBlocksNext_blank, parContinues,
       textOpens, Parse.skipSpaces]
 

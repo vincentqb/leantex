@@ -5941,6 +5941,10 @@ private def setLength (n src what : String) (pos : Pos) : M (Array Raw) := do
   let named (why : String) : M (Array Raw) := do
     nameParam n why pos
     return #[]
+  -- premise: listBodyChecks — a list-body `\topsep` ships the page without it
+  if st.inList && !st.inDef && n == Ir.trivlistSkipName then
+    nameParam n "reaches the trivlists after it in this list; here they read the list's level" pos
+    return #[]
   -- premise: listBodyChecks — a list-body parameter ships the page without it
   if st.inList && !st.inDef && (listSpent.contains n || listPerItem.contains n) then
     if listSpent.contains n then

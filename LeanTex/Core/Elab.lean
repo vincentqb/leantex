@@ -13155,7 +13155,7 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
       else
       let k := blocks.size
       let (⟨ctx', hm⟩, blocks) ← flushPara ctx' blocks cur
-      let opened := Ir.flushedText k blocks
+      let opened := Ir.opensInParagraph k blocks
       let blocks ← if cur.isEmpty then pure blocks else drainLoose ctx' blocks
       let b ← listingBlock ctx' env s vpos opened
       -- A display listing's environment is a trivlist, which leaves `\@endpe`.
@@ -13200,7 +13200,7 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
         pictureInSentence ctx' n cur raws i epos
         let k := blocks.size
         let (⟨ctx', hm⟩, flushed) ← flushPara ctx' blocks cur
-        let inPar := Ir.flushedText k flushed
+        let inPar := Ir.opensInParagraph k flushed
         let afterEnv := endPeAt raws i inPar flushed
         let flushed ← if cur.isEmpty then pure flushed else drainLoose ctx' flushed
         let blocks ← envGroup n ctx'.palette inPar (parFollows raws (i + 1)) afterEnv

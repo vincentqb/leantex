@@ -1176,20 +1176,24 @@ public def TrivIn.top (l : ListLineage) (tokens : Tokens) (size : Sp) : TrivIn :
   { topsep := trivlistSkipFor l tokens size 0
     partopsep := (tokens.find? "partopsep").getD (partopsepDefault l size) }
 
-/-- Inside a list at `level` spaced `sk`, `pts` (`listSpacing`): the level's `\topsep`, which
-enumitem's `\trivlist` sets again over a declared one, KOMA-Script's the list's own, and the list's
-`\partopsep`; a lineage without levels keeps `outer`. -/
+/-- Inside a list at `level` spaced `sk`, `pts` (`listSpacing`): the level's `\topsep` or the zero
+the class's extra leaves, which enumitem's `\trivlist` sets again over a declared one, and the
+list's `\partopsep`; a lineage without levels keeps `outer`. -/
 public def TrivIn.within (l : ListLineage) (extra : ListExtra) (size : Sp) (level : Nat)
     (sk : ListSkips) (pts : SymGlue) (outer : TrivIn) : TrivIn :=
   match listSkips l size level with
   | none => outer
-  | some lv => { topsep := if extra == .koma then sk.topsep else lv.topsep, partopsep := pts }
+  | some lv =>
+    { topsep := if sk.topsep == lv.topsep then lv.topsep
+        else if extra == .koma && sk.topsep == {} then {}
+        else ((extra.over size level sk.parsep).topsep).getD lv.topsep
+      partopsep := pts }
 
-/-- Where a lineage's trivlists take TeX's `\parskip` on their space; the web's take the page's
-peer gap. -/
+/-- Where a lineage's trivlists take TeX's `\parskip` on their space; beamer's and the web's take
+the page's own, beamer's TeX's in a frame. -/
 public def ListLineage.trivTexParskip : ListLineage → Bool
-  | .sizeFile | .beamer => true
-  | .web => false
+  | .sizeFile => true
+  | .beamer | .web => false
 
 public theorem TrivIn.within_declared_exact (l : ListLineage) (size : Sp) (level : Nat)
     (tokens : Tokens) (set : ListSet) (sk : ListSkips) (pts : SymGlue) (outer : TrivIn)
@@ -1203,20 +1207,23 @@ public theorem TrivIn.within_declared_exact (l : ListLineage) (size : Sp) (level
   simp only [Option.some.injEq, Prod.mk.injEq] at h
   obtain ⟨-, rfl⟩ := h
   have hk : (ListExtra.none == ListExtra.koma) = false := rfl
-  simp [TrivIn.within, hl, hk]
+  simp only [TrivIn.within, hl, ListExtra.over, hk, Bool.false_and]
+  split <;> simp_all
+
+public theorem TrivIn.within_koma_exact (l : ListLineage) (size : Sp) (level : Nat)
+    (sk : ListSkips) (pts : SymGlue) (outer : TrivIn) (lv : ListSkips)
+    (hl : listSkips l size level = some lv) (hd : (sk.topsep == lv.topsep) = false)
+    (hz : (sk.topsep == {}) = false) (hlv : level ≤ 3)
+    (hp : 0 < sk.parsep.width.resolve size (size / 2)) :
+    (TrivIn.within l .koma size level sk pts outer).topsep = {} := by
+  simp [TrivIn.within, hl, hd, hz, ListExtra.over, hlv, hp]
 
 public theorem trivIn_exact :
     ((TrivIn.top .sizeFile {} (Dim.pt 10)).add true).width.sp = Dim.pt 10 ∧
     ((TrivIn.top .sizeFile {} (Dim.pt 10)).add false).width.sp = Dim.pt 8 ∧
     ((TrivIn.top .sizeFile {} (Dim.pt 11)).add true).width.sp = Dim.pt 12 ∧
     ((TrivIn.top .sizeFile {} (Dim.pt 12)).add true).width.sp = Dim.pt 13 ∧
-    ((TrivIn.top .beamer {} (Dim.pt 11)).add true).width.sp = Dim.pt 9 ∧
-    ((listSpacing .sizeFile (Dim.pt 10) 2 {} {}).map fun (sk, pts) =>
-      ((TrivIn.within .sizeFile .none (Dim.pt 10) 2 sk pts (TrivIn.top .sizeFile {} (Dim.pt 10))).add
-        true).width.sp) = some (Dim.pt 6) ∧
-    ((listSpacing .sizeFile (Dim.pt 10) 3 {} {}).map fun (sk, pts) =>
-      ((TrivIn.within .sizeFile .none (Dim.pt 10) 3 sk pts (TrivIn.top .sizeFile {} (Dim.pt 10))).add
-        true).width.sp) = some (Dim.pt 3) := by
+    ((TrivIn.top .beamer {} (Dim.pt 11)).add true).width.sp = Dim.pt 9 := by
   decide
 
 /-- The four glues a size file's `\normalsize` sets around display math. -/
@@ -5408,6 +5415,13 @@ public def descLabel? (content : Array Inline) : Option (Array Inline × Array I
     if n == descLabelRole then some (label, content.extract 1 content.size) else none
   | _ => none
 
+/-- A description item's first paragraph holding its label alone, whose next block opens on the
+label's line. -/
+public def descLabelOnly (content : Array Inline) : Bool :=
+  match descLabel? content with
+  | some (_, rest) => rest.all anchorInline
+  | none => false
+
 /-- A centred block's body that is one display formula and nothing else, labels aside. -/
 public def displayContent? (body : Array Block) : Option (Array Inline) :=
   match body.toList with
@@ -5473,6 +5487,13 @@ public def displayCtxOf (b : Block) : DisplayCtx × Block :=
     | some c, [d] => (c, d)
     | _, _ => ({}, b)
   | _ => ({}, b)
+
+/-- Whether an environment opening past the first `k` blocks opens inside a paragraph: text
+flushed before it, or a display whose paragraph runs on to it. -/
+public def opensInParagraph (k : Nat) (after : Array Block) : Bool :=
+  flushedText k after || (after.size == k && match lastContent? after with
+    | some b => (displayCtxOf b).2.isDisplay && !(displayCtxOf b).1.parEnd
+    | none => false)
 
 /-- Whether the paragraph after `b` takes no first-line indent: after an environment's
 `parContinuesRole` marker or a display its paragraph does not end at, as `\@endpe` sets it, or after
@@ -13016,6 +13037,10 @@ public theorem markInParagraph_false_id (k : Nat) (blocks : Array Block) :
 
 public theorem flushedText_empty_exact (k : Nat) : flushedText k #[] = false := by
   simp [flushedText, lastContentFrom?, lastContentFrom?.go]
+
+public theorem opensInParagraph_empty_exact (k : Nat) : opensInParagraph k #[] = false := by
+  simp [opensInParagraph, flushedText_empty_exact, lastContent?, lastContentFrom?,
+    lastContentFrom?.go]
 
 public theorem lastLeavesEndPe_empty_exact : lastLeavesEndPe #[] = false := by
   simp [lastLeavesEndPe, lastContent?, lastContentFrom?, lastContentFrom?.go]

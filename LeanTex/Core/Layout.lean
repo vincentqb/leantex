@@ -9790,45 +9790,6 @@ trivlist's `\addvspace` with TeX's own `\parskip` on top. -/
 private def Spacing.Pending.listSpace (a : Acc) (g : Glue) : Acc :=
   { a.addvspace g with declaredSkip := true, trivOwed := true }
 
-/-- A list's opening space: the trivlist's `\addvspace`, except under
-beamer, whose colour push makes `\addvspace` add the `\topsep`. -/
-private def Spacing.Pending.listOpen (a : Acc) (r : Rd) (g : Glue) : Acc :=
-  match r.lists with
-  | .beamer => { a.vskip g with trivOwed := true }
-  | .sizeFile | .web => a.listSpace g
-
-private theorem listOpen_beamer_adds_exact (a : Acc) (r : Rd) (g : Glue)
-    (h : r.lists = .beamer) : (a.listOpen r g).owed = a.owed.push g := by
-  simp [Spacing.Pending.listOpen, Spacing.Pending.vskip, h]
-
-/-- The `\@topsepadd` a trivlist opening here spends: beamer's squeezed `\topsep` in a squeezed
-frame's list, else the `\topsep` in force, with its `\partopsep` where it opens in vertical mode. -/
-private def Spacing.Context.trivAdd (r : Rd) (a : Acc) : Glue :=
-  if r.squeeze && a.itemDepth + a.enumDepth + a.quoteDepth > 0 then r.resolve Ir.squeezedTopsep
-  else r.resolve ((r.trivIn.getD (Ir.TrivIn.top r.lists a.tokens r.geom.fontSize)).add !r.inPar)
-
-/-- A trivlist's space: a list's, with TeX's `\parskip` on it, outside the web's lineage. -/
-private def Spacing.Pending.trivSkip (a : Acc) (r : Rd) (g : Glue) : Acc :=
-  if r.lists.trivTexParskip then a.listSpace g else a.trivSpace g
-
-/-- A trivlist's opening: its body's context and the space it owes below, none in an item's label
-(`\@noparlist`), and its space above unless a heading stands there (`\@nbitem`). -/
-private def Spacing.Pending.trivOpen (a : Acc) (r : Rd) : Rd × Acc × Option Glue :=
-  let ri := { r with inPar := false, inLabel := false }
-  if r.inLabel then (ri, { a with labelOpen := true }, none)
-  else
-    let g := r.trivAdd a
-    (ri, { (if a.afterHeading then a else a.trivSkip r g) with labelOpen := true }, some g)
-
-/-- The reader of a block standing where a trivlist opened its item: in its label, the label taken. -/
-private def Spacing.Context.takeLabel (r : Rd) (a : Acc) : Rd × Acc :=
-  if a.labelOpen then ({ r with inLabel := true }, { a with labelOpen := false }) else (r, a)
-
-/-- A trivlist's close, `\@endparenv`'s `\addvspace\@topsepadd` where it owes one. -/
-private def Spacing.Pending.trivClose (a : Acc) (r : Rd) : Option Glue → Acc
-  | some g => { a.trivSkip r g with labelOpen := false }
-  | none => { a with labelOpen := false }
-
 /-- `\endtrivlist`'s re-skip on owed glue: a positive last skip takes `inner` on it, less `outer`. -/
 private def reskipOwed (owed : Array Glue) (inner outer : Glue) : Array Glue :=
   match owed.back? with
@@ -9844,6 +9805,57 @@ private def reskipOwed (owed : Array Glue) (inner outer : Glue) : Array Glue :=
 less the one outside it. -/
 private def Spacing.Pending.endReskip (a : Acc) (inner outer : Glue) : Acc :=
   { a with owed := reskipOwed a.owed inner outer, dispAlt := a.dispAlt.map (reskipOwed · inner outer) }
+
+/-- `\@item`'s opening space, `\addvspace\@topsep` then `\addvspace{-\parskip}`: the larger of
+the owed glue and `g` with TeX's `\parskip` on it, the paragraph after it paying that again. -/
+private def Spacing.Pending.openSpace (a : Acc) (r : Rd) (g : Glue) : Acc :=
+  let p := r.resolve r.geom.texParskip
+  { (a.addvspace (g.add p)).endReskip {} p with declaredSkip := true, trivOwed := true }
+
+/-- A list's opening space (`openSpace`), except under beamer, whose colour push makes
+`\addvspace` add the `\topsep`. -/
+private def Spacing.Pending.listOpen (a : Acc) (r : Rd) (g : Glue) : Acc :=
+  match r.lists with
+  | .beamer => { a.vskip g with trivOwed := true }
+  | .sizeFile | .web => a.openSpace r g
+
+private theorem listOpen_beamer_adds_exact (a : Acc) (r : Rd) (g : Glue)
+    (h : r.lists = .beamer) : (a.listOpen r g).owed = a.owed.push g := by
+  simp [Spacing.Pending.listOpen, Spacing.Pending.vskip, h]
+
+/-- The trivlist values in force around a list opening here. -/
+private def Spacing.Context.trivOuter (r : Rd) (a : Acc) : Ir.TrivIn :=
+  r.trivIn.getD (Ir.TrivIn.top r.lists a.tokens r.geom.fontSize)
+
+/-- The `\@topsepadd` a trivlist opening here spends: beamer's squeezed `\topsep` in a squeezed
+frame's list, else the `\topsep` in force, with its `\partopsep` where it opens in vertical mode. -/
+private def Spacing.Context.trivAdd (r : Rd) (a : Acc) : Glue :=
+  if r.squeeze && a.itemDepth + a.enumDepth + a.quoteDepth > 0 then r.resolve Ir.squeezedTopsep
+  else r.resolve ((r.trivOuter a).add !r.inPar)
+
+/-- A trivlist's space above it (`openSpace`) or below it (`listSpace`), the web's and beamer's with
+the page's own `\parskip` on it. -/
+private def Spacing.Pending.trivSkip (a : Acc) (r : Rd) (g : Glue) (opens : Bool) : Acc :=
+  if !r.lists.trivTexParskip then a.trivSpace g
+  else if opens then a.openSpace r g else a.listSpace g
+
+/-- A trivlist's opening: its body's context and the space it owes below, none in an item's label
+(`\@noparlist`), and its space above unless a heading stands there (`\@nbitem`). -/
+private def Spacing.Pending.trivOpen (a : Acc) (r : Rd) : Rd × Acc × Option Glue :=
+  let ri := { r with inPar := false, inLabel := false }
+  if r.inLabel then (ri, { a with labelOpen := true }, none)
+  else
+    let g := r.trivAdd a
+    (ri, { (if a.afterHeading then a else a.trivSkip r g true) with labelOpen := true }, some g)
+
+/-- The reader of a block standing where a trivlist opened its item: in its label, the label taken. -/
+private def Spacing.Context.takeLabel (r : Rd) (a : Acc) : Rd × Acc :=
+  if a.labelOpen then ({ r with inLabel := true }, { a with labelOpen := false }) else (r, a)
+
+/-- A trivlist's close, `\@endparenv`'s `\addvspace\@topsepadd` where it owes one. -/
+private def Spacing.Pending.trivClose (a : Acc) (r : Rd) : Option Glue → Acc
+  | some g => { a.trivSkip r g false with labelOpen := false }
+  | none => { a with labelOpen := false }
 
 private theorem addvspace_after_vspace_exact (a : Acc) (v g : Glue) :
     ((a.vspace v).addvspace g).owed = (a.vspace v).owed.push g ∧
@@ -13195,16 +13207,16 @@ private def collectSlots (r : Rd) (a : Acc) (slots : Array Ir.TitleSlot)
 description list's label runs in; `hang` is the list's indent step. -/
 private def collectItem (r : Rd) (a : Acc)
     (item : List Block) (indent : Sp) (first : Bool) (marker : Array Inline)
-    (hang : Sp) : Acc :=
+    (hang : Sp) (labelled : Bool := false) : Acc :=
   match item with
   | [] => a
   | blk :: rest =>
     -- A label anchor opening an item writes no paragraph, so the marker waits for what follows it.
     if statefulBlock blk || (first && !rest.isEmpty && walkTransparent blk) then
-      collectItem r (collectBlock r a blk indent) rest indent first marker hang
-    else if emptyStep blk then collectItem r a rest indent first marker hang
+      collectItem r (collectBlock r a blk indent) rest indent first marker hang labelled
+    else if emptyStep blk then collectItem r a rest indent first marker hang labelled
     else
-    let a := if first then a else a.wantGap
+    let a := if first || (labelled && blk.opensInLabel) then a else a.wantGap
     -- The markers of the items this item's list opens in stand only on its first block's line.
     let (outer, a) := if first then a.takeOuter else (#[], a)
     let a := match blk, first with
@@ -13220,9 +13232,12 @@ private def collectItem (r : Rd) (a : Acc)
             { a with outerMarkers := outer.push (r.coveredMarker a marker, indent) }
             (.list ordered spacing items) indent with
           outerMarkers := #[] }
-      | b, first => collectBlock (if first && b.opensInLabel then { r with inLabel := true } else r)
+      | b, first =>
+        collectBlock (if (first || labelled) && b.opensInLabel then { r with inLabel := true } else r)
           a b indent
+    -- A description label alone opens the item's next block in its label.
     collectItem r a rest indent false marker hang
+      (first && match blk with | .para content => Ir.descLabelOnly content | _ => false)
 
 /-- A step opening its item: its paragraph carries the marker into the step, as beamer's `\item<n>`
 covers or hides its label with it. -/
@@ -13381,7 +13396,7 @@ private def collectBlock (r : Rd) (a : Acc)
       | some (s, pts) =>
         { r with inPar := false, inLabel := false
                  trivIn := some (Ir.TrivIn.within r.lists r.listExtra r.geom.fontSize lv s pts
-                   (r.trivIn.getD (Ir.TrivIn.top r.lists a.tokens r.geom.fontSize)))
+                   (r.trivOuter a))
                  geom := { r.geom with parskip := s.parsep, texParskip := s.parsep } }
       | none => { r with inPar := false, inLabel := false }
     -- beamer's squeeze (`\beamer@cramped`): `\itemsep0pt` in every list.
@@ -13464,12 +13479,12 @@ private def collectBlock (r : Rd) (a : Acc)
     | some (sk, pts) =>
       let g := if r.inPar then r.resolve sk.topsep else (r.resolve sk.topsep).add (r.resolve pts)
       -- In an item's label `\@noparlist` sets no skip above or below it.
-      let top := if a.afterHeading || r.inLabel then a.flushGap r else (a.listSpace g).flushGap r
+      let top := if a.afterHeading || r.inLabel then a.flushGap r else (a.openSpace r g).flushGap r
       let sub := { top with measure := narrow, quoteDepth := a.quoteDepth + 1 }
       let ri := { (r.within blk) with
         inPar := false, inLabel := false
         trivIn := some (Ir.TrivIn.within r.lists r.listExtra r.geom.fontSize lv sk pts
-          (r.trivIn.getD (Ir.TrivIn.top r.lists a.tokens r.geom.fontSize)))
+          (r.trivOuter a))
         geom := { r.geom with parskip := sk.parsep, texParskip := sk.parsep } }
       let sub := collectQuoteList ri sub q.kind body.toList (indent + lm) true false false false
       -- `\endtrivlist`: a quotation closing on a nested list, quotation or trivlist re-skips as an

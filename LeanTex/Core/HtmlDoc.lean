@@ -1246,7 +1246,7 @@ public def blockSpine (l : Ir.ListLineage) (extra : Ir.ListExtra) (size ex : Int
       let own := listSkipSp size ex (t.add !inPar)
       let step : SpineStep := { quote := false, triv := true, set := {}, inPar }
       -- the trivlist's `\parskip` is the one around it, so the skip it closes on stands as it is
-      match lastSpine l extra size ex tokens level outer t body.toList with
+      match trivSpine l extra size ex tokens level outer t body.toList with
       | some (rest, e) => some (step :: rest, max e own)
       | none => some ([step], own)
     else none
@@ -1275,6 +1275,12 @@ public def lastSpine (l : Ir.ListLineage) (extra : Ir.ListExtra) (size ex : Int)
   | [_, b] => blockSpine l extra size ex tokens level outer t false b
   | _ :: rest => lastSpine l extra size ex tokens level outer t rest
 
+/-- The spine a trivlist's centred or ragged body hangs. -/
+public def trivSpine (l : Ir.ListLineage) (extra : Ir.ListExtra) (size ex : Int) (tokens : Ir.Tokens)
+    (level : Nat) (outer : Int) (t : Ir.TrivIn) : List Block → Option (List SpineStep × Int)
+  | [.center b] | [.ragged _ b] => lastSpine l extra size ex tokens level outer t b.toList
+  | _ => none
+
 /-- The spine an in-paragraph wrapper's one block hangs. -/
 public def roleSpine (l : Ir.ListLineage) (extra : Ir.ListExtra) (size ex : Int) (tokens : Ir.Tokens)
     (level : Nat) (outer : Int) (t : Ir.TrivIn) : List Block → Option (List SpineStep × Int)
@@ -1288,6 +1294,7 @@ public inductive CloseParent where
   | list
   | quote (kind : Ir.QuoteKind)
   | abstract
+  | triv
   deriving BEq, Hashable
 
 /-- An item of a list, a quotation or an abstract closing on a spine: the `\@listdepth` level, the
@@ -1309,6 +1316,12 @@ levels' own skips meet only where it opened after a paragraph break. -/
 private def NestedClose.owed (c : NestedClose) : Bool :=
   (c.last && c.parent != .abstract) || c.spine.length > 1 ||
     c.spine.any (fun st => st.set != {} || st.triv)
+
+/-- A trivlist role's blocks inside its centred or ragged wrapper. -/
+private def trivlistInner? (body : Array Block) : Option (Array Block) :=
+  match body.toList with
+  | [.center b] | [.ragged _ b] => some b
+  | _ => none
 
 /-- The nested closes a body's lists, quotations and abstracts hold that `NestedClose.owed` keeps,
 each once, ordered so a deeper level's rule, a declared side's and a longer spine's follow the
@@ -1347,7 +1360,12 @@ public def nestedClosesOf (l : Ir.ListLineage) (size ex : Int) (tokens : Ir.Toke
         if abstractNests then
           (note (depth + 1) .abstract {} false 0 top #[body] acc, (depth + 1, false))
         else (acc, (depth, false))
-      | .role n _ => (acc, (depth, n == Ir.inParagraphRole))
+      | .role n body =>
+        if n == Ir.trivlistRole then
+          let inner := (trivlistInner? body).getD body
+          let t := if depth == 0 then top else trivAt (Ir.listSpacing l size depth tokens {}) depth
+          (note depth .triv {} inPar (parsepAt depth {}) t #[inner] acc, (depth, false))
+        else (acc, (depth, n == Ir.inParagraphRole))
       | .para _ | .lines _ | .center _ | .ragged .. | .spaced .. | .link .. | .onSteps .. | .only ..
       | .section .. | .titled .. | .disclosure .. | .equation .. | .verbatim .. | .algorithm ..
       | .columns _ | .altSteps .. | .note _ | .nav .. | .logo _ | .pagebreak | .frame ..
@@ -1389,9 +1407,21 @@ public def nestedCloseRules (l : Ir.ListLineage) (size ex : Int) (tokens : Ir.To
         | some p => if p.quote || p.triv then " > " else " > :is(li, dd):last-child > "
         | none => "") ++ stepSel st) ""
   closes.flatMap fun c =>
+    if c.parent == .triv then
+      -- a trivlist's `\endtrivlist` keeps the larger of the skip it closes on and its own
+      let pre := String.join (List.replicate c.level itemAncestor)
+      let t := if c.level == 0 then Ir.TrivIn.top l tokens size else
+        ((Ir.listSpacing l size c.level tokens {}).map fun (sk, pts) =>
+          spineTrivIn l .none size tokens c.level sk pts).getD (Ir.TrivIn.top l tokens size)
+      let own := milliRem (screenMilli size (listSkipSp size ex (t.add !c.outerInPar)))
+      let close := s!"max({milliRem (screenMilli size c.close)}, {own})"
+      let par := if l.trivTexParskip then "var(--parskip, 0rem)" else peerGap
+      ownsBelow [pre ++ s!".{roleClass Ir.trivlistRole}" ++ opened c.outerInPar ++
+          s!":has(> {chain c.spine})"] s!"calc({close} + {par})" close (some par)
+    else
     let spacing := match c.parent with
       | .quote k => Ir.quoteSpacing l size c.level tokens ⟨k, c.outer⟩
-      | .list | .abstract => Ir.listSpacing l size c.level tokens c.outer
+      | .list | .abstract | .triv => Ir.listSpacing l size c.level tokens c.outer
     match spacing with
     | some (osk, opts) =>
       let pre := String.join (List.replicate (c.level - 1) itemAncestor)
@@ -1420,7 +1450,7 @@ public def nestedCloseRules (l : Ir.ListLineage) (size ex : Int) (tokens : Ir.To
         let reskip := s!"max(calc({milliRem (close + parsep)} - var(--parskip, 0rem)), {milliRem own})"
         ownsBelow [pre ++ quoteClassed c.outer ++ opened c.outerInPar ++ held [""]]
           s!"calc({reskip} + var(--parskip, 0rem))" reskip texParskip
-      | .abstract, _ =>
+      | .abstract, _ | .triv, _ =>
         ownsBelow [pre ++ ".abstract.quoted" ++ held [""]] (listSpace close) (milliRem close)
           texParskip
     | none => []
@@ -1502,6 +1532,16 @@ public def thmRules (l : Ir.ListLineage) (size : Int) : List GapRule :=
         ownsBelow [c] (listSpace below) (milliRem below) texParskip
     | none => .boundary s!"* + {c}" trivlistGap :: ownsBelow [c] trivlistGap trivlistOwn
 
+/-- A theorem-like block opening right after a trivlist, in vertical mode, keeps its own space
+above it. -/
+public def thmAfterTrivRules (l : Ir.ListLineage) (size : Int) : List GapRule :=
+  Ir.ThmSpace.all.flatMap fun k => match Ir.thmSkips l size 1 {} k true with
+    | some sk =>
+      let above := screenMilli size sk.above.width.sp
+      [.boundary s!".{roleClass Ir.trivlistRole} + .{roleClass (Ir.thmSpaceRole k)}"
+        (if sk.parskipAbove then listSpace above else milliRem above)]
+    | none => []
+
 /-- The resets: every block element's own vertical margins. -/
 private def gapResets : List GapRule :=
   [.reset "p, ul, ol, li, dl, dd, pre, blockquote, hr" "0",
@@ -1526,6 +1566,18 @@ private def gapBeforeLists : List GapRule :=
    .boundary s!"* + blockquote" trivlistGap] ++
   ownsBelow ["blockquote"] trivlistGap trivlistOwn
 
+/-- What a block opening in its label stands in: an item, a quotation or a trivlist. -/
+private def labelHolder : String := s!":is(li, dd, blockquote, .{roleClass Ir.trivlistRole})"
+
+/-- The blocks that stand in their holder's label opening it (`Ir.Block.opensInLabel`). -/
+private def labelOpener : String :=
+  s!":is(.{roleClass Ir.trivlistRole}, {", ".intercalate listElems})"
+
+/-- A block standing in its holder's label: its first, or past a label anchor or a skip. -/
+private def labelledSels : List String :=
+  [s!"{labelHolder} > {labelOpener}:first-child",
+   s!"{labelHolder} > :is(span, .{skipClass}):first-child + {labelOpener}"]
+
 /-- A trivlist's boundaries as `Ir.TrivIn` spends them under the `\parskip` in force, and none where
 it or a list opens its holder's label (`\@noparlist`), its follower taking the peer gap. -/
 public def trivRules (l : Ir.ListLineage) (size ex : Int) : List GapRule :=
@@ -1536,13 +1588,43 @@ public def trivRules (l : Ir.ListLineage) (size ex : Int) : List GapRule :=
   let par := if l.trivTexParskip then "var(--parskip, 0rem)" else peerGap
   let triv := "." ++ roleClass Ir.trivlistRole
   let inPar := "." ++ roleClass Ir.inParagraphRole
-  let labelled := [s!":is(li, dd, blockquote, {triv}) > {triv}:first-child",
-    s!"{triv} > :is({", ".intercalate listElems}):first-child"]
-  [.boundary s!"* + {triv}" s!"calc({vertical} + {par})",
-   .boundary s!"* + {triv}{inPar}" s!"calc({topsep} + {par})"] ++
   ownsBelow [triv] s!"calc({vertical} + {par})" vertical (some par) ++
   ownsBelow [triv ++ inPar] s!"calc({topsep} + {par})" topsep (some par) ++
-  ownsBelow labelled s!"calc(0rem + {peerGap})" "0rem" (some peerGap)
+  ownsBelow labelledSels s!"calc(0rem + {peerGap})" "0rem" (some peerGap) ++
+  [.boundary s!"* + {triv}" s!"calc({vertical} + {par})",
+   .boundary s!"* + {triv}{inPar}" s!"calc({topsep} + {par})",
+   .boundary s!"{labelHolder} > :is(span, .{skipClass}):first-child + {labelOpener}" "0"]
+
+/-- `trivPairRules`' selectors and values. -/
+private def trivPairBounds (l : Ir.ListLineage) (size ex : Int) (tokens : Ir.Tokens)
+    (sets : List Ir.ListSet) : List (String × String) :=
+  if l != .sizeFile then [] else
+  let top := Ir.TrivIn.top l {} size
+  let rem (g : SymGlue) : String := milliRem (screenMilli size (listSkipSp size ex g))
+  let topsep := s!"var(--{Ir.trivlistSkipName}, {rem top.topsep})"
+  let vertical := s!"calc({topsep} + var(--partopsep, {rem top.partopsep}))"
+  let triv := "." ++ roleClass Ir.trivlistRole
+  let inPar := "." ++ roleClass Ir.inParagraphRole
+  let pairs (pre follower : String) (opened : Nat) : List (String × String) :=
+    [(s!"{pre}{triv}:not({inPar}) + {follower}", s!"max({vertical}, {listSpace opened})"),
+     (s!"{pre}{triv}{inPar} + {follower}", s!"max({topsep}, {listSpace opened})"),
+     (", ".intercalate (labelledSels.map fun s => s!"{pre}{s} + {follower}"), listSpace opened)]
+  [1, 2, 3].flatMap fun n =>
+    let pre := String.join (List.replicate (n - 1) itemAncestor)
+    (match Ir.listSkips l size n with
+     | some sk => pairs pre s!":is({", ".intercalate listElems})"
+         (listOpenGap size ex sk (Ir.partopsepFor l size n tokens))
+     | none => []) ++
+    sets.zipIdx.flatMap fun (set, i) => match Ir.listSpacing l size n tokens set with
+      | some (sk, pts) => pairs pre s!".{listSetClass i}" (listOpenGap size ex sk pts)
+      | none => []
+
+/-- The boundaries where a list or quotation opens right after a trivlist, `\@item`'s
+`\addvspace\@topsep` over the trivlist's `\@topsepadd`: the larger of the two, or the list's own
+after one standing in its label; per list level and declared spacing, in the size file's lineage. -/
+public def trivPairRules (l : Ir.ListLineage) (size ex : Int) (tokens : Ir.Tokens)
+    (sets : List Ir.ListSet) : List GapRule :=
+  (trivPairBounds l size ex tokens sets).map fun (sel, v) => .boundary sel v
 
 /-- The display's space, TeX's `\abovedisplayskip`, in the screen's quanta. -/
 private def displayGapRem : String :=
@@ -1664,7 +1746,8 @@ public def blockGapRules (l : Ir.ListLineage) (size ex : Int) (tokens : Ir.Token
     listRules l size ex tokens disc extra ++
     (if squeezed then squeezeListRules l size ex tokens disc else []) ++
     listSetRules l size ex tokens sets disc extra ++ quoteKindRules l size ex kinds ++
-    nestedCloseRules l size ex tokens sets closes disc ++ trivRules l size ex ++ gapAfterLists ++
+    trivRules l size ex ++ trivPairRules l size ex tokens sets ++ thmAfterTrivRules l size ++
+    nestedCloseRules l size ex tokens sets closes disc ++ gapAfterLists ++
     beamerPairRules l size ex tokens ++ [skipFollowerRule, headingFollowerRule]
 
 /-! ## Overlay carriers -/
@@ -2008,6 +2091,17 @@ private theorem trivRules_noReset (l : Ir.ListLineage) (size ex : Int) :
     (trivRules l size ex).all (fun r => !r.isReset) = true := by
   simp [trivRules, ownsBelow, GapRule.isReset]
 
+private theorem thmAfterTrivRules_noReset (l : Ir.ListLineage) (size : Int) :
+    (thmAfterTrivRules l size).all (fun r => !r.isReset) = true := by
+  simp only [thmAfterTrivRules, List.all_flatMap, List.all_eq_true]
+  intro k _
+  split <;> simp [GapRule.isReset]
+
+private theorem trivPairRules_noReset (l : Ir.ListLineage) (size ex : Int) (tokens : Ir.Tokens)
+    (sets : List Ir.ListSet) :
+    (trivPairRules l size ex tokens sets).all (fun r => !r.isReset) = true := by
+  simp [trivPairRules, GapRule.isReset]
+
 private theorem quoteKindRules_noReset (l : Ir.ListLineage) (size ex : Int)
     (kinds : List Ir.QuoteKind) :
     (quoteKindRules l size ex kinds).all (fun r => !r.isReset) = true := by
@@ -2028,9 +2122,11 @@ private theorem nestedCloseRules_noReset (l : Ir.ListLineage) (size ex : Int) (t
   simp only [nestedCloseRules, List.all_flatMap, List.all_eq_true]
   intro _ _
   split
-  · split <;> simp [ownsBelow, GapRule.isReset, texParskip]
-  · intro _ h
-    cases h
+  · simp [ownsBelow, GapRule.isReset]
+  · split
+    · split <;> simp [ownsBelow, GapRule.isReset, texParskip]
+    · intro _ h
+      cases h
 
 private theorem thmRules_noReset (l : Ir.ListLineage) (size : Int) :
     (thmRules l size).all (fun r => !r.isReset) = true := by
@@ -2063,12 +2159,14 @@ public theorem blockGap_owner_contract (l : Ir.ListLineage) (size ex : Int) (tok
       listRules l size ex tokens "details[open]" extra ++
       (if squeezed then squeezeListRules l size ex tokens else []) ++
       listSetRules l size ex tokens sets "details[open]" extra ++ quoteKindRules l size ex kinds ++
-      nestedCloseRules l size ex tokens sets closes ++ trivRules l size ex ++
-      gapAfterLists ++ beamerPairRules l size ex tokens ++
+      trivRules l size ex ++ trivPairRules l size ex tokens sets ++ thmAfterTrivRules l size ++
+      nestedCloseRules l size ex tokens sets closes ++ gapAfterLists ++
+      beamerPairRules l size ex tokens ++
       [skipFollowerRule, headingFollowerRule]).all (fun r => !r.isReset) = true := by
     simp only [List.all_append, hbefore, hafter, htail, hblock, thmRules_noReset,
       listRules_noReset, beamerPairRules_noReset, hsq, listSetRules_noReset,
-      quoteKindRules_noReset, nestedCloseRules_noReset, trivRules_noReset, Bool.and_self]
+      quoteKindRules_noReset, nestedCloseRules_noReset, trivRules_noReset, trivPairRules_noReset,
+      thmAfterTrivRules_noReset, Bool.and_self]
   refine ⟨?_, ?_⟩
   · simp only [blockGapRules, List.append_assoc] at hall ⊢
     rw [dropWhile_append_all _ _ _ (by decide), dropWhile_none _ _ hall]

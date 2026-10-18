@@ -389,7 +389,7 @@ private theorem elabBlocksGo_input_at (ctx : Ctx) (st : ESt) (raws : Array Raw) 
     rw [hr] at heq
     cases heq
     simp [input_ne_linkedBoxRowMark hn, hn, hb, pictureInSentence_input ctx hn,
-      flushPara_empty ctx _ hm, Ir.flushedText_empty_exact, Ir.lastLeavesEndPe_empty_exact,
+      flushPara_empty ctx _ hm, Ir.opensInParagraph_empty_exact, Ir.lastLeavesEndPe_empty_exact,
       Ir.markInParagraph_false_id, endPeAt, envGroup]
   · rename_i heq; rw [hr] at heq; cases heq
   · rename_i _ _ _ _ henv _

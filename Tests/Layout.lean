@@ -3739,6 +3739,23 @@ def trivlistChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
        after "\\begin{center}\nDelta.\n\\end{center}" ==
          after "\\begin{itemize}\n\\item Delta.\n\\end{itemize}" &&
        (after "Delta.").length == 1)
+  t "a list opening right after a trivlist in an item spends the larger of the two: lualatex's"
+    (steps (doc "{article}" "" (ul ("\\item Alpha.\n" ++ center ++ "\n" ++ ul "\\item Charlie."))) abc ==
+      gaps [12, 10])
+  t "a quote opening right after a trivlist in an item spends the larger of the two: lualatex's"
+    (steps (doc "{article}" "" (ul ("\\item Alpha.\n" ++ center ++
+      "\n\\begin{quote}\nCharlie.\n\\end{quote}"))) abc == gaps [12, 10])
+  t "a trivlist right after a display opens inside its paragraph, closing without partopsep"
+    (steps (doc "{article}" "" ("Alpha.\n\\[ x = y \\]\n" ++ center ++ "\nCharlie.")) ["Bravo.", "Charlie."]
+      == gaps [8])
+  t "a trivlist after a description label alone stands in its label"
+    (steps (doc "{article}" "" ("\\begin{description}\n\\item[Alpha] Text.\n\\item[Term] " ++ center ++
+      "\nCharlie.\n\\end{description}")) ["Term", "Bravo.", "Charlie."] == [lead, lead + Dim.pt 4])
+  -- enumitem's `\trivlist` runs `\@list@extra` again from the list's `\parsep`.
+  let kkey := doc "{scrartcl}" "\\usepackage{enumitem}"
+    ("\\begin{itemize}[topsep=20pt]\n\\item Alpha.\n" ++ center ++ "\nCharlie.\n\\end{itemize}")
+  t "a KOMA-Script list's declared topsep does not reach a trivlist in it: lualatex's distances"
+    (steps kkey abc == [leadOf kkey + Dim.pt 9 / 2, leadOf kkey + Dim.pt 9 / 2])
   -- beamer's 11pt `\topsep` 9pt and level one's 3pt, no `\parsep`.
   let deck := "\\documentclass{beamer}\\begin{document}\\begin{frame}[t]\n" ++
     ul ("\\item Alpha.\n\\item " ++ center ++ "\nCharlie.\n\\item Delta.") ++ "\n\\end{frame}\\end{document}"
@@ -3767,8 +3784,21 @@ def trivlistChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
       | _ => false)
   t "html: a trivlist opening an item leaves the peer gap alone below it"
     (rules.any fun r => match r with
-      | .boundary sel v => hasStr sel s!"> {triv}:first-child + *" && hasStr v "var(--parskip, "
+      | .boundary sel v => hasStr sel s!"{triv}, " && hasStr sel ":first-child + *" &&
+          hasStr v "var(--parskip, "
       | _ => false)
+  let order := rules.zipIdx.filterMap fun (r, i) => match r with
+    | .boundary sel _ => some (sel, i)
+    | _ => none
+  let at? (p : String → Bool) : Option Nat := (order.find? (p ·.1)).map (·.2)
+  t "html: a trivlist's own space above outranks the close of an in-paragraph one before it"
+    (match at? (· == s!"{triv}.{HtmlDoc.roleClass Ir.inParagraphRole} + *"), at? (· == s!"* + {triv}") with
+     | some c, some o => c < o
+     | _, _ => false)
+  t "html: a list after a trivlist takes the larger of the two, past the trivlist's own close"
+    (match at? (· == s!"{triv} + *"), at? (fun s => hasStr s s!"{triv}:not(" && hasStr s "+ :is(ul") with
+     | some c, some o => c < o
+     | _, _ => false)
   let csrc := doc "{article}" "" "Alpha.\n\n\\begin{center}\nBravo.\n\\end{center}\n\nCharlie."
   let body (src : String) : Array Html.Node := (HtmlDoc.emitTree {} (elabStr src).1).2.1
   let cbody := body csrc
