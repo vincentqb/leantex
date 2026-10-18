@@ -5120,8 +5120,8 @@ private def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
       sliceWeight_lt raws h (Nat.lt_succ_self i)
     match hr : raws[i] with
     | .word s pos =>
-      elabInlinesFrom ctx raws (i + 1)
-        ((flushText acc sb).push (sourceInline ctx pos (.text (wordAfter ctx acc sb s)))) ""
+      let x := sourceInline ctx pos (.text (wordAfter ctx acc sb s))
+      elabInlinesFrom ctx raws (i + 1) ((flushText acc sb).push x) ""
     | .space =>
       -- A splice sets one separator per run, and no paragraph opens with one.
       elabInlinesFrom ctx raws (i + 1) acc
@@ -7557,9 +7557,31 @@ private def trimParaList (leading : Bool) (acc : Array Inline) :
       else (acc.push x ++ tail, false)
 end
 
+/-- `trimParaList false #[]` in one pass, the kept tail a list it conses onto. -/
+private def trimParaTail (xs : List Inline) : Array Inline × Bool :=
+  let r := xs.foldr (fun x (t : List Inline × Bool) =>
+      if t.2 then ((trimParaOne false x).1.toList ++ t.1, (trimParaOne false x).2)
+      else (x :: t.1, false))
+    ([], true)
+  (r.1.toArray, r.2)
+
+private theorem trimParaTail_eq (xs : List Inline) :
+    trimParaTail xs = trimParaList false #[] xs := by
+  suffices h : xs.foldr (fun x (t : List Inline × Bool) =>
+      if t.2 then ((trimParaOne false x).1.toList ++ t.1, (trimParaOne false x).2)
+      else (x :: t.1, false)) ([], true) =
+      ((trimParaList false #[] xs).1.toList, (trimParaList false #[] xs).2) by
+    simp only [trimParaTail, h]
+  induction xs with
+  | nil => simp [trimParaList]
+  | cons x xs ih =>
+    rw [List.foldr_cons, ih, trimParaList]
+    rcases trimParaList false #[] xs with ⟨tail, more⟩
+    cases more <;> simp
+
 private def finishPara (inlines : Array Inline) : EM (Option Block) := do
   let inlines := (trimParaList true #[] inlines.toList).1
-  let inlines := (trimParaList false #[] inlines.toList).1
+  let inlines := (trimParaTail inlines.toList).1
   if inlines.isEmpty then return none
   -- LaTeX reads `\baselineskip` at `\par`: the end's declarations set it.
   return some (paraUnder (← get).scope.lang (Ir.paraAt (← get).scope.blockDecls inlines))
@@ -10373,13 +10395,15 @@ private def navSpecOf (ctx : Ctx) (inner : String) (pos : Pos) :
 
 /-- Whether the raws hold paragraph content beyond spaces, paragraph breaks
 and empty groups. -/
-private def pendingParaInput : List Raw → Bool
-  | [] => false
-  | .space :: rest | .par _ :: rest => pendingParaInput rest
-  | .group body _ :: rest => pendingParaInput body.toList || pendingParaInput rest
-  | _ :: _ => true
-termination_by raws => rawWeightList raws
-decreasing_by all_goals (simp only [rawWeightList, rawWeight]; omega)
+private def pendingParaInput (raws : Array Raw) : Bool :=
+  raws.attach.any fun
+    | ⟨.space, _⟩ | ⟨.par _, _⟩ => false
+    | ⟨.group body _, h⟩ =>
+      have := Array.sizeOf_lt_of_mem h
+      pendingParaInput body
+    | _ => true
+termination_by sizeOf raws
+decreasing_by simp_all; omega
 
 /-- Whether a declaration at a paragraph's top level stays in force after
 the paragraph, since a paragraph end closes no group (TeXbook ch. 24). -/
@@ -10525,6 +10549,13 @@ private def blockControlContext (ctx : Ctx) (n : String) (raws : Array Raw)
   if openBlockOverlay ctx n raws i then closeBlockMacros ctx blocks
   else pure (⟨ctx, rfl, rfl, rfl, rfl⟩, blocks)
 
+/-- The index past the raws from `j` on that `origin` produced. -/
+private def originSpanEnd (raws : Array Raw) (origin : MacroOrigin) (j : Nat) : Nat :=
+  if h : j < raws.size then
+    if raws[j].origins?.all (·.contains origin) then originSpanEnd raws origin (j + 1) else j
+  else j
+termination_by raws.size - j
+
 /-- Each expansion origin at `raws[i]` with whether its span is block
 content, classified once per origin. -/
 private def blockMacroKinds (roles : MacroRoles) (raws : Array Raw) (i : Nat) :
@@ -10537,10 +10568,7 @@ private def blockMacroKinds (roles : MacroRoles) (raws : Array Raw) (i : Nat) :
       (relativeOrigins roles.inherited origins).map fun origin =>
         let isBlock := match roles.blockKinds.lookup origin with
           | some isBlock => isBlock
-          | none =>
-            let span := (raws.extract i raws.size).toList.takeWhile fun raw =>
-              raw.origins?.all (·.contains origin)
-            bodyIsBlock span.toArray
+          | none => bodyIsBlock (raws.extract i (originSpanEnd raws origin i))
         (origin, isBlock)
 
 /-- Refreshes flow state and block macro ownership at `raws[i]`, flushing the
@@ -10557,7 +10585,7 @@ private def blockMacroStep (ctx : Ctx) (st : ESt) (gen : Nat)
   let cur := if done then #[] else cur
   closeBlockFrameSources ready.macroRoles.blocks desired blocks.size
   let (active, blocks) := moveMacroRuns Block.role ready.macroRoles.blocks desired blocks
-    (pendingParaInput cur.toList)
+    (pendingParaInput cur)
   let ctx' := { ready with macroRoles := { ready.macroRoles with
     blocks := active, blockKinds := kinds } }
   return (⟨ctx', hm.1.trans hf.1, hm.2.1.trans hf.2.1,
@@ -13639,9 +13667,10 @@ private theorem trimParaList_word (ctx : Ctx) (p : Pos) (w : String)
     (hl : String.ofList (w.toList.dropWhile (· == ' ')) = w)
     (ht : w.trimAscii.isEmpty = false)
     (hr : String.ofList ((w.toList.reverse.dropWhile (· == ' ')).reverse) = w) :
-    (trimParaList false #[]
+    (trimParaTail
       (trimParaList true #[] [sourceInline ctx p (.text w)]).1.toList).1 =
         #[sourceInline ctx p (.text w)] := by
+  rw [trimParaTail_eq]
   simp [trimParaList, trimParaOne, sourceInline, he, hl, ht, hr]
 
 private theorem finishPara_note (code : DiagCode) (name text : String)
@@ -13649,7 +13678,7 @@ private theorem finishPara_note (code : DiagCode) (name text : String)
     (do noteSalvage code name text; finishPara inner) =
     (do let para ← finishPara inner; noteSalvage code name text; pure para) := by
   by_cases ht : text.trimAscii.isEmpty = true <;>
-    by_cases hi : (trimParaList false #[]
+    by_cases hi : (trimParaTail
       (trimParaList true #[] inner.toList).1.toList).1.isEmpty = true <;>
     simp [noteSalvage, finishPara, ht, hi]; rfl
 

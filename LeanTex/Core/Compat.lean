@@ -1910,15 +1910,16 @@ private structure OverlaySelector where
 /-- A `<...>` overlay selector read across lexer and
 substituted-argument fragments. -/
 private def overlaySelector? (raws : Array Raw) (start : Nat)
-    (many : Bool := false) : Option OverlaySelector := Id.run do
-  let some (.word first pos) := raws[start]? | return none
+    (many : Bool := false) (head : Option Raw := none) : Option OverlaySelector := Id.run do
+  let rawAt (k : Nat) : Option Raw := if k == start then head <|> raws[k]? else raws[k]?
+  let some (.word first pos) := rawAt start | return none
   unless first.startsWith "<" do return none
   let mut text := ""
   let mut selectorPos := pos
   let mut opened := true
   let mut selected : Option OverlaySelector := none
   for k in [start:raws.size] do
-    match raws[k]? with
+    match rawAt k with
     | some (.word s p) =>
       for (c, ci) in s.toList.zipIdx do
         if !opened then
@@ -2033,11 +2034,11 @@ private def overlayInputsList (raws : Array Raw) (pending : Option OverlayWindow
   | r :: rest, i, 0 =>
     let (pending, acc, r) := overlayVariant pending acc (overlayInputsRaw r)
     let selected := pending.filter (·.accepts) |>.bind fun w =>
-      overlaySelector? (raws.set! i r) i (w.middle && w.left > 0)
+      overlaySelector? raws i (w.middle && w.left > 0) (head := some r)
     match selected, pending with
     | some s, some w =>
-      let acc := (acc.extract 0 (w.head + 1)).push s.word ++
-        acc.extract (w.head + 1 + if w.selected then 1 else 0) acc.size ++ s.tail
+      let kept := acc.extract (w.head + 1 + if w.selected then 1 else 0) acc.size
+      let acc := (acc.shrink (w.head + 1)).push s.word ++ kept ++ s.tail
       let pending := if s.tail.isEmpty then w.afterSelector else none
       overlayInputsList raws pending acc rest (i + 1) (s.stop - (i + 1))
     | _, _ =>
