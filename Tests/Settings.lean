@@ -800,3 +800,62 @@ def kernelLengthChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
     (pagesOf oneFace late == pagesOf oneFace (doc "article" "" list) &&
       !(dvE late).any (fun d => d.code == "W0340" || d.code == "W0104") &&
       (dvE late).any (·.subject == some "ctrl:nothing:setlength:textwidth"))
+
+/-- TeX's edges a document leans on, each set as lualatex sets it on an invented probe. -/
+def texEdgeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let text (src : String) : String := (docHtmlOf (elabStr src).1).replace "\u00a0" " "
+  let twice := "\\newcommand\\twice[1]{#1#1}\n"
+  let nested := dvDoc (twice ++ "\\edef\\foo{\\twice{\\twice{ab}}}\n") "Foo: \\foo."
+  t "edef: a call inside its own argument expands, as TeX expands it"
+    (hasStr (text nested) "Foo: abababab." && !(dvE nested).any (·.code == "W0357"))
+  let cyclic := dvDoc "\\def\\loop{\\loop}\n\\edef\\foo{\\loop}\n" "Foo."
+  t "edef: a cycle stays refused, named" ((dvE cyclic).any (·.code == "W0357"))
+  let reg := "\\newlength\\len\n\\setlength\\len{2in}\n"
+  let bare (assign : String) := dvDoc reg ("A\\hspace{\\len}B\n\n{" ++ assign ++ " E\\hspace{\\len}F}\n\nG\\hspace{\\len}H")
+  t "a bare assignment opening a group assigns its register there, scoped to the group"
+    (pagesOf oneFace (bare "\\len-0.5in") == pagesOf oneFace (bare "\\setlength\\len{-0.5in}") &&
+      pagesOf oneFace (bare "\\len=0.5in") == pagesOf oneFace (bare "\\setlength\\len{0.5in}") &&
+      !hasStr (text (bare "\\len=0.5in")) "0.5in")
+  let primitive := dvDoc "" "\\leftskip=1in Alpha words."
+  t "a bare assignment to a TeX parameter the engine does not read prints no value, named"
+    (!hasStr (text primitive) "1in" && (dvE primitive).any (·.code == "W0104"))
+  let twelve (w : String) := "\\documentclass[12pt]{article}\n\\begin{document}\n\\noindent\\rule{" ++
+    w ++ "}{2pt}\n\\end{document}"
+  let classRule (cls opt w : String) := pagesOf oneFace ("\\documentclass[" ++ opt ++ "]{" ++ cls ++
+    "}\n\\begin{document}\n\\noindent\\rule{" ++ w ++ "}{2pt}\n\\end{document}")
+  let rule (pre body : String) := pagesOf oneFace (dvDoc pre ("\\noindent\\rule{" ++ body ++ "}{2pt}"))
+  t "a kernel length reads as the class fixes it: an article's \\parindent is 15pt"
+    (rule "\\newlength\\lenC\n\\setlength\\lenC{\\parindent}\n" "\\lenC" == rule "" "15pt" &&
+      rule "" "\\parindent" == rule "" "15pt" &&
+      pagesOf oneFace (twelve "\\parindent") == pagesOf oneFace (twelve "1.5em") &&
+      classRule "article" "11pt" "\\parindent" == classRule "article" "11pt" "17pt" &&
+      classRule "scrartcl" "" "\\parindent" == classRule "scrartcl" "" "1em")
+  let frame (w : String) := pagesOf oneFace ("\\documentclass{beamer}\n\\begin{document}\n" ++
+    "\\begin{frame}\\rule{" ++ w ++ "}{2pt}x\\end{frame}\n\\end{document}")
+  t "beamer's \\parindent is 0pt" (frame "\\parindent" == frame "0pt" && frame "0pt" != frame "15pt")
+  t "a declared \\parindent is the one a length reads"
+    (rule "\\setlength{\\parindent}{40pt}\n" "\\parindent" == rule "\\setlength{\\parindent}{40pt}\n" "40pt")
+  let bodySkip := dvDoc "" "\\newlength\\lenG\\setlength\\lenG{\\baselineskip}\\noindent\\rule{\\lenG}{2pt}"
+  t "a body's \\baselineskip reads as its operand does"
+    (pagesOf oneFace bodySkip == rule "" "\\baselineskip" && !(dvE bodySkip).any (·.code == "W0107"))
+  let foot (v : String) := "\\usepackage[footskip=" ++ v ++ "]{geometry}\n"
+  t "a geometry key in em is fixed in the preamble's font: footskip=2em is 20pt, and the page ships"
+    (!(dvE (dvDoc (foot "2em") "Alpha.")).any (·.severity == .error) &&
+      pagesOf oneFace (dvDoc (foot "2em") "Alpha.") == pagesOf oneFace (dvDoc (foot "20pt") "Alpha."))
+  let mylen := "\\newlength\\mylen\n\\setlength\\mylen{1in}\n\\newlength\\other\n"
+  t "a \\dimexpr with no \\relax reads to its group's end"
+    (rule (mylen ++ "\\setlength\\other{\\dimexpr\\mylen+2pt}\n") "\\other" ==
+      rule (mylen ++ "\\setlength\\other{1in}\\addtolength\\other{2pt}\n") "\\other")
+  let margin (v : String) := pagesOf oneFace (dvDoc ("\\usepackage[hmargin=" ++ v ++ "]{geometry}\n") "Alpha.")
+  t "geometry's hmargin reads a \\dimexpr group" (margin "{\\dimexpr 1in+0.5in\\relax}" == margin "1.5in")
+  let deferred := dvDoc "\\newcommand\\tight{\\setlength{\\parskip}{\\ht\\strutbox}}\n" "Alpha.\n\nBravo."
+  t "a length a definition sets from the strut box is left to its use, never named at the definition"
+    (!(dvE deferred).any (·.code == "W0107"))
+  let door := "\\newlength\\lenA \\setlength\\lenA{1in}\n\\newlength\\lenB \\setlength\\lenB{2pt}\n"
+  let printed := dvDoc (door ++ "\\edef\\vals{\\the\\dimexpr\\lenA+\\lenB}\n") "\\vals."
+  t "an \\edef reads a \\dimexpr no \\relax ends to its group's end"
+    (text printed == text (dvDoc (door ++ "\\edef\\vals{\\the\\dimexpr\\lenA+\\lenB\\relax}\n") "\\vals.") &&
+      !(dvE printed).any (·.code == "W0357"))
+  t "a length only an expanded \\edef reads is read, never named unread"
+    (!(dvE printed).any (·.code == "W0104"))

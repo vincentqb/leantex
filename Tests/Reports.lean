@@ -38,6 +38,7 @@ import Tests.MarkdownPage
 import Tests.MarkdownWarnings
 import Tests.MonoDefault
 import Tests.MarkdownCode
+import Tests.Settings
 import Tests.Artifact
 import Tests.UnderlineSpacing
 import Tests.HtmlTokens
@@ -2087,7 +2088,14 @@ def reports : List Report := [
     accept := ["the 18 new checks fail built against 0c3dab52's sources and pass on this tree",
       "the reviews' cases fail on the branch's first cut (bcf981a0) and pass here: a colour in a refused listing or caption key beside a font command was named unused, a winning redefinition after a refused one of the same name lost its skipped text's warning, and a length a package sets and nothing reads was named; and on the first answer, a page colour in an unknown command's argument was named unused and a redefinition a macro makes, refused where it is called, kept the skipped text's warning",
       "this tree's binary on invented probes: a redefined bold command with a conditional draws W0361 alone, a hyperref key or package option, a dropped template body and a refused style value naming a declared colour draw their refusal alone, a dotted colour painted at half strength is read, a colour a refused command's prose spells is named, a colour a package's loading macro inputs is not, a minted environment and command a definer made read the defaults before them, a missing typewriter family under --best-effort accepts E0403 alone, and an unused typewriter face is named at its entry's line"]
-    state := .guarded "0c3dab52" .before .author }
+    state := .guarded "0c3dab52" .before .author },
+  { id := "R234", date := "2026-10-18"
+    what := "an edef calling a macro inside its own argument was refused; a bare length assignment, one opening a group too, set its value as text; the paragraph indent was never read, a body space of its width stopping the build; geometry's footskip of 2em stopped the build; an open dimexpr in an edef was dropped; and a length a definition sets from the strut box was named unreadable at the definition"
+    pins := [check% texEdgeChecks]
+    accept := ["invented probes under lualatex 1.24: the nested edef call, the bare assignments scoped to their group, the class paragraph indent (15pt, 17pt, 1.5em, beamer's 0pt, KOMA's 1em) and a declared one, a footskip of 2em as 20pt, and an open dimexpr, each set as lualatex sets it; this tree sets the same",
+      "main at d720e3cc refuses the edef, prints the assignments' values, stops at the 2em footskip and the indent's space and drops the open dimexpr; the guards fail there",
+      "the corpus built by main's binary at d720e3cc and by this tree's: every artifact byte-identical, one note more where a title bar assigns the line width"]
+    state := .guarded "d720e3cc" .before .author }
 ]
 
 /-- The reports guarded but never seen failing, a count held in both directions. -/

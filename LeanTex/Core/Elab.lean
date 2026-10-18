@@ -7748,7 +7748,7 @@ private def noteSetting (ctx : Ctx) (setting : UnusedSetting.Setting) (pos : Pos
 private def classMarginTokens (l : Ir.ListLineage) : Array (String × Dim.SymGlue) :=
   (List.range 6).toArray.map fun k => (Ir.leftMarginName (k + 1), Ir.leftMarginFor l {} (k + 1))
 
-private def engineLengthTokensOfPage (page : PageSpec) :
+private def engineLengthTokensOfPage (record : Ir.ClassRecord) (page : PageSpec) :
     Array (String × Dim.SymGlue) :=
   #[("paperwidth", { width := Dim.Length.ofSp page.width }),
     ("paperheight", { width := Dim.Length.ofSp page.height }),
@@ -7756,7 +7756,8 @@ private def engineLengthTokensOfPage (page : PageSpec) :
     ("textheight", { width := Dim.Length.ofSp page.textHeight }),
     ("columnsep", { width := Ir.columnSep }),
     ("baselineskip", { width := Dim.Length.ofSp (Ir.baselineSkipOf page) }),
-    ("parskip", Ir.texParskipOf page)]
+    ("parskip", Ir.texParskipOf page),
+    ("parindent", { width := record.parindentAt page.fontSize })]
 
 /-- A class's abstract form under its options: `titlepage` moves a quotation onto a title page,
 `notitlepage` winning as the classes declare it last. -/
@@ -7793,11 +7794,11 @@ private def engineLengthTokens (docClass : Ir.DocClass) (classOptions : String)
     | "paperwidth" | "paperheight" => whKnown
     | "textwidth" => whKnown && hmKnown
     | "textheight" => whKnown && vmKnown
-    | "columnsep" => true
+    | "columnsep" | "parindent" => true
     -- The body size and `\parskip` may still change in the preamble.
     | "baselineskip" | "parskip" => false
     | _ => false
-  (engineLengthTokensOfPage (settledPage (classPageDefaults record opts page)).1).filter
+  (engineLengthTokensOfPage record (settledPage (classPageDefaults record opts page)).1).filter
     (fun kv => offered kv.1) ++ classMarginTokens record.lists
 
 /-- Applies a `\tokens{...}` block entry by entry, so an entry may refer to
@@ -14281,13 +14282,13 @@ private def pageExpects (k : Native.PageKey) : String :=
   | .vmarginratio => "a ratio such as 2:3, or auto"
   | k => if (pageSwitch k).isSome then "on or off" else "a dimension"
 
-private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
-    (pos : Pos) (tokens : Array (String × SymGlue) := #[]) : PageSpec × Array PEvent := Id.run do
-  -- A page dimension may be glue over tokens with nothing font-relative in it.
+private def applyPage (ctx : Ctx) (spec : PageSpec) (face : Ir.PreambleFace)
+    (entries : Array Decl.Entry) (pos : Pos) (tokens : Array (String × SymGlue) := #[]) :
+    PageSpec × Array PEvent := Id.run do
+  -- A page dimension may be glue over tokens, its em and ex fixed as the preamble's font fixes them.
   let asDim : Decl.Value → Option Sp
     | .dim d => some d
-    | .glue g =>
-      if g.width.em == 0 && g.width.ex == 0 && !g.fil then some g.width.sp else none
+    | .glue g => if g.fil then none else some (face.resolve g.width)
     | _ => none
   let say (evs : Array PEvent) (code : DiagCode) (msg : String)
       (help : Option String := none) : Array PEvent :=
@@ -15912,7 +15913,8 @@ private def stepDone (ctx : Ctx) (r : PreState × Array PEvent) : EM PreState :=
 private def stepPage (s : PreState) (src : String) (pos : Pos) :
     PreState × Array PEvent :=
   let pb := Decl.parseBlock s.ctx.file src pos "page" s.tokens.entries
-  let pe := applyPage s.ctx s.page pb.1 pos s.tokens.entries
+  let pe := applyPage s.ctx s.page (Ir.PreambleFace.ofClass s.docClass.record s.page.fontSize) pb.1 pos
+    s.tokens.entries
   -- Only geometry keys claim the page, so a parskip alone keeps the default margin.
   ({ s with
       page := pe.1
@@ -17498,7 +17500,7 @@ line may run to the margin" none (subject := some s!"partial:\\documentclass:{ke
                     numberHeadings := record.numberHeadings, styles := styles
                     page := page, tokens := tokens, surface := surface, lists := record.lists
                     listExtra := record.listExtra, preamble := face
-                    engineTokens := engineLengthTokensOfPage page ++ classMarginTokens record.lists
+                    engineTokens := engineLengthTokensOfPage record page ++ classMarginTokens record.lists
                     abstractNests := s.abstractForm.getD
                       (abstractFormUnder record.abstractForm classOpts) == .quotation }
   -- A redefined itemize label is read once the preamble's colours and macros all stand.
@@ -17937,8 +17939,8 @@ public def prepareExecuted (file : String) (executed : Compat.Executed) : Prepar
   let picScan := Compat.boundaryScan file executed.raws
   let picMacros := macroScan executed.raws
   prepareRewritten file picScan picMacros executed.sourceTriggers
-    (Compat.unusedLengths file executed.raws) (Compat.rewriteExecuted executed) executed.inputAttempts
-    executed.mentions executed.stripped
+    (Compat.unusedLengths file executed.raws executed.edefReads) (Compat.rewriteExecuted executed)
+    executed.inputAttempts executed.mentions executed.stripped
 
 private theorem prepareRewritten_carried_exact (file : String)
     (scan : Compat.BoundaryScan) (macros : Array (String × String))
@@ -17975,8 +17977,8 @@ public def prepare (file : String) (raws : Array Raw) : Prepared :=
   let executed := Compat.execute file raws
     (provideKeeps := providedNames) (ignoredDefs := ignoredDefNames)
   prepareRewritten file picScan picMacros executed.sourceTriggers
-    (splitDiags ++ Compat.unusedLengths file executed.raws) (Compat.rewriteExecuted executed)
-    (mentions := executed.mentions) (stripped := executed.stripped)
+    (splitDiags ++ Compat.unusedLengths file executed.raws executed.edefReads)
+    (Compat.rewriteExecuted executed) (mentions := executed.mentions) (stripped := executed.stripped)
 
 /-- Whether the source holds a natively drawn picture, and whether one sets a
 formula. -/

@@ -7727,6 +7727,8 @@ public structure ClassRecord where
   listExtra : ListExtra := .none
   /-- A quotation's `\listparindent`, its paragraphs' first-line indent (classes.dtx's 1.5 em). -/
   quotationIndent : Dim.Length := { em := 1500 }
+  /-- The class's `\parindent`, when it fixes one; `none` reads its size file's (`parindentAt`). -/
+  parindent : Option Dim.Length := none
   /-- Whether the preamble sets text in the sans family, as beamer's
   `\familydefault` is `\sfdefault`. -/
   preambleSans : Bool := false
@@ -7836,6 +7838,8 @@ résumé's floor the fluent-reading x-height at hand-held distance. -/
       fontSize := some slidesFontSize
       parskip := some {}
       lists := .beamer
+      -- beamer.cls's `\parindent=0pt`.
+      parindent := some {}
       preambleSans := true
       chrome := true
       groundDepth := .decks
@@ -7880,6 +7884,7 @@ distance (Legge & Bigelow 2011); declare \\assert{ text.xheight >= ... } to take
       abstractForm := .inset
       fontSize := some posterFontSize
       lists := .beamer
+      parindent := some {}
       colorRow := .stage
       schemes := .own
       preambleSans := true
@@ -7907,9 +7912,17 @@ calibration reads fluently; declare \
       listExtra := .koma
       -- scrkernel-listsandtabulars.dtx's quotation.
       quotationIndent := { em := 1000 }
+      -- scrkernel-paragraphs.dtx's `parskip=false`.
+      parindent := some { em := 1000 }
       numberHeadings := true
       measureBand := true
       pageNumbers := true }
+
+/-- A class's `\parindent` at its body size: its own, else its size file's (size10.clo's 15 pt,
+size11.clo's 17 pt, size12.clo's 1.5 em). -/
+public def ClassRecord.parindentAt (rec : ClassRecord) (size : Sp) : Dim.Length :=
+  rec.parindent.getD
+    (if size == pt 11 then .ofSp (pt 17) else if size == pt 12 then { em := 1500 } else .ofSp (pt 15))
 
 /-- A document's class defaults: its class's colour row and ground depth, the
 web's row for a source that is not tex. -/

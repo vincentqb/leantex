@@ -1028,6 +1028,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   operandChecks ref oneFace
   listBodyChecks ref oneFace
   kernelLengthChecks ref oneFace
+  texEdgeChecks ref oneFace
   natbibChecks ref oneFace
   natbibListChecks ref oneFace
   bibTextChecks ref oneFace

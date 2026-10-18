@@ -282,7 +282,7 @@ def listSpacingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
     (named unread "itemsep" && unread.all (·.severity != .error) &&
       steps (doc "[10pt]{article}" "\\setlist{itemsep=.5\\baselineskip}" basic) abcd ==
         over [10, 8, 10])
-  let unreadOwn := ds "" "\\begin{itemize}[topsep=\\baselineskip]\\item Kilo.\\item Lima.\\end{itemize}"
+  let unreadOwn := ds "" "\\begin{itemize}[topsep=\\ht\\strutbox]\\item Kilo.\\item Lima.\\end{itemize}"
   t "list spacing: a list's own value the engine cannot read is that one warning"
     ((unreadOwn.filter fun d => d.span.any (·.pos.line == 5)).map (·.code) == #["W0104"])
   let mixedOwn := ds "" "\\begin{itemize}[topsep=3pt, label=x]\\item Kilo.\\item Lima.\\end{itemize}"

@@ -29,8 +29,8 @@ public theorem runExecuted_rewrite_exact (file : String) (executed : Compat.Exec
     (earlier : Array Diag) (metric : Ir.Pic.LabelMetric) :
     runExecuted file executed earlier metric =
       runRewriteFinal file (Compat.boundaryScan file executed.raws) (macroScan executed.raws)
-        executed.sourceTriggers (Compat.unusedLengths file executed.raws) earlier metric
-        (Compat.beginRewrite executed) executed.inputAttempts executed.mentions
+        executed.sourceTriggers (Compat.unusedLengths file executed.raws executed.edefReads) earlier
+        metric (Compat.beginRewrite executed) executed.inputAttempts executed.mentions
         executed.stripped := by rfl
 
 /-- The control table's names stand in strictly ascending byte order, so are distinct, clear of
@@ -422,12 +422,12 @@ public theorem runExecuted_ctrlRow_contract (file : String) (executed : Compat.E
     runExecuted file executed earlier metric =
       runPreparedFinal file
         (prepareRewritten file (Compat.boundaryScan file executed.raws) (macroScan executed.raws)
-          executed.sourceTriggers (Compat.unusedLengths file executed.raws)
+          executed.sourceTriggers (Compat.unusedLengths file executed.raws executed.edefReads)
           (Compat.finishCtrlRowDocument (Compat.beginRewrite executed)
             row input.call input.docPos input.pre.toArray input.post.toArray)
           executed.inputAttempts executed.mentions executed.stripped) earlier metric := by
   rw [runExecuted_rewrite_exact]
-  exact ctrlRow_document_exact file _ _ _ (Compat.unusedLengths file executed.raws) earlier metric
+  exact ctrlRow_document_exact file _ _ _ (Compat.unusedLengths file executed.raws executed.edefReads) earlier metric
     (Compat.beginRewrite executed) input.body row input.pos input.docPos input.args
     input.pre input.taken input.post hrow input.outsidePicture
     input.document input.source input.before input.after input.operands input.stands
@@ -443,7 +443,7 @@ public theorem control_completion_contract (file : String) (executed : Compat.Ex
         runExecuted file executed earlier metric =
           runPreparedFinal file
             (prepareRewritten file (Compat.boundaryScan file executed.raws) (macroScan executed.raws)
-              executed.sourceTriggers (Compat.unusedLengths file executed.raws)
+              executed.sourceTriggers (Compat.unusedLengths file executed.raws executed.edefReads)
               (Compat.finishCtrlRowDocument (Compat.beginRewrite executed)
                 row input.call input.docPos input.pre.toArray input.post.toArray)
               executed.inputAttempts executed.mentions executed.stripped) earlier metric) ∧

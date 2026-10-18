@@ -817,6 +817,8 @@ private structure St where
   /-- Each allocated length's exact value in inches where the conditional pass stands, scoped as
   TeX scopes it, and absent where the pass cannot follow its last assignment. -/
   exactLens : Std.HashMap String Rat := {}
+  /-- The lengths an expanded `\edef` text names, read where it is defined. -/
+  edefReads : Std.HashSet String := {}
   /-- The length registers the document allocates with `\newlength`, the only ones the conditional
   pass follows. -/
   newLengths : Std.HashSet String := {}
@@ -3601,15 +3603,30 @@ private def dimexprEnd : List Raw → Nat → Nat → Option Nat
   | .ctrl "dimexpr" _ :: rest, depth, i => dimexprEnd rest (depth + 1) (i + 1)
   | _ :: rest, depth, i => dimexprEnd rest depth (i + 1)
 
+/-- A `\dimexpr` no `\relax` ends, read as e-TeX reads it: to the last of the raws within 32 that
+still continue its expression, and one space after a unit; its scaled points and the raws it took. -/
+private def dimexprOpen (lenOf : String → Option Rat) (rest : List Raw) : Option (Rat × Nat) := Id.run do
+  let window := (rest.take 32).takeWhile fun r => match r with
+    | .space | .word .. | .sym .. => true
+    | .ctrl n _ => n != "relax"
+    | _ => false
+  let mut best : Option (Rat × Nat) := none
+  for k in [1:window.length + 1] do
+    if let some v := Decl.exactLength lenOf (rawSrc (window.take k).toArray) then
+      let unitSpace := (window[k - 1]? matches some (.word ..)) && (rest[k]? matches some .space)
+      best := some (v, if unitSpace then k + 1 else k)
+  return best
+
 /-- The dimen e-TeX reads after `\the`, `\number` or `\strip@pt`: a length register, or a
-`\dimexpr` over lengths and numbers up to its `\relax`; its exact value in inches and the raws
-it took. -/
+`\dimexpr` over lengths and numbers up to its `\relax` or as far as it reads; its exact value in
+inches and the raws it took. -/
 private def edefDimen (lenOf : String → Option Rat) (rs : List Raw) : Option (Rat × Nat) :=
   let lead := (rs.takeWhile (· matches .space)).length
   match rs.drop lead with
   | .ctrl "dimexpr" _ :: rest =>
-    (dimexprEnd rest 0 0).bind fun i =>
-      (Decl.exactLength lenOf (rawSrc (rest.take i).toArray)).map (·, lead + i + 2)
+    let closed := (dimexprEnd rest 0 0).bind fun i =>
+      (Decl.exactLength lenOf (rawSrc (rest.take i).toArray)).map (·, i + 1)
+    ((closed.orElse fun _ => dimexprOpen lenOf rest).map fun (v, used) => (v, lead + 1 + used))
   | .ctrl r _ :: _ => (lenOf r).map (·, lead + 1)
   | _ => none
 
@@ -3678,25 +3695,21 @@ decreasing_by
     | (have := sizeOf_drop_le rest used; omega)
     | raws_dec
 
-/-- An `\edef` text expanded where it is defined: a call of a definition in `defs` expands its text
-with that definition unavailable below it, so the calls form no cycle, and a control `stands` names
-is left as written. -/
+/-- An `\edef` text expanded where it is defined, as TeX expands it: a call of a definition in
+`defs` expands its text with its arguments bound, every definition still callable there, and a
+control `stands` names is left as written; a text past the budget, a cycle's, stays refused. -/
 private def edefExpand (defs : List (String × CondVal)) (stands : String → Bool)
     (lenOf : String → Option Rat) (l : List Raw) (budget : Nat) : Option (Array Raw × Nat) :=
+  if _h : budget = 0 then none else
   edefWalk (fun n p rest left =>
-    match _h : defs.find? (·.1 == n) with
+    match defs.find? (·.1 == n) with
     | some d =>
       (edefArgs d.2.arity rest 0 #[]).bind fun (args, used) =>
-        (edefExpand (defs.eraseP (·.1 == n)) stands lenOf
-          (bindRawArgsList args #[] d.2.raws.toList).toList left).map fun (text, rest) =>
-            (text, used, rest)
+        (edefExpand defs stands lenOf (bindRawArgsList args #[] d.2.raws.toList).toList
+          (min left (budget - 1))).map fun (text, rest) => (text, used, rest)
     | none => if stands n then some (#[.ctrl n p], 0, left) else Option.none) lenOf l #[] budget
-termination_by defs.length
-decreasing_by
-  have hm := List.mem_of_find?_eq_some _h
-  rw [List.length_eraseP_of_mem hm (List.find?_some _h)]
-  have := List.length_pos_of_mem hm
-  omega
+termination_by budget
+decreasing_by omega
 
 /-- The definitions an `\edef` text can call, each looked up once: every name it or a text it reaches
 mentions that is bound to a readable text with no optional argument and no `\protected` prefix;
@@ -3721,6 +3734,22 @@ private def edefReach (binds : Std.HashMap String (Option CondVal)) (body : Arra
       | .group inner _ => todo := todo.push inner
       | _ => pure ()
   return none
+
+/-- The lengths the `\edef` at `raws[i]` names in its text or the definitions it reaches, added to
+those earlier ones named. -/
+private def edefLengths (st : St) (raws : Array Raw) (i : Nat) : Std.HashSet String := Id.run do
+  let some (.group body _) := raws[skipSpaces raws (i + 1) + 1]? | return st.edefReads
+  let mut todo : Array (Array Raw) := (body :: ((edefReach st.binds body).getD []).map (·.2.raws)).toArray
+  let mut out := st.edefReads
+  for _ in [0:edefCap] do
+    let some rs := todo.back? | break
+    todo := todo.pop
+    for r in rs do
+      match r with
+      | .ctrl n _ => if st.exactLens.contains n then out := out.insert n
+      | .group inner _ => todo := todo.push inner
+      | _ => pure ()
+  return out
 
 /-- The value the definer `d` at `raws[i]` gives the name it binds: body,
 undelimited arity and prefixes. -/
@@ -4655,6 +4684,8 @@ nothing is set" site (help := s!"write \\set{kind}\{{name}}\{true} or \\set{kind
         unless provide && st.binds.contains m do
           -- Inside an undecidable frame the name is bound but its value unread.
           let value := definedValue st raws i n
+          if (n == "edef" || n == "xdef") && value.isSome then
+            write fun st => { st with edefReads := edefLengths st raws i }
           let v := if stack.any (· matches .opaque) then none else value
           let global := definesGlobally raws i n
           -- A `\let` copies the wrapper, not its target.
@@ -5808,7 +5839,8 @@ private def lenValue (lens : Array (String × String)) (raws : Array Raw)
     else none
   -- premise: kernelLengthChecks — a flow page without a measure withholds `textwidth`
   let unknown (n : String) : Bool :=
-    (kernel n && n != "textwidth") || n == "ht" || n == "wd" || n == "dp" ||
+    (kernel n && n != "textwidth" && n != "parindent" &&
+      (preamble || !(n == "baselineskip" || n == "parskip"))) || n == "ht" || n == "wd" || n == "dp" ||
       n == strutOperand "ht" || n == strutOperand "dp" ||
       (!deferred && ((line n && (!preamble || flowPage || (set "textwidth").isSome)) ||
         (preamble && !measureKnown && n == "textwidth")))
@@ -5976,6 +6008,10 @@ spaced per level, in the preamble"
   | .unmodelled why, false =>
     if n == "parindent" && Decl.parseGlue src == some {} then
       nothing "paragraphs here are set flush, as declared"
+    else if n == "parindent" then
+      -- A length that reads `\parindent` reads the declared value.
+      nameParam n why pos
+      carry own pos
     else named why
 
 /-- The one warning for a length assignment the door cannot read, the length
@@ -6146,11 +6182,25 @@ private def sizeSkips (body : Array Raw) (start : Nat) (pos : Pos) :
         pure ()
   return out
 
-/-- TeX's own assignment to a kernel parameter, when the
-control word `name` opens one. -/
-private def plainAssign? (name : String) (raws : Array Raw) (start : Nat) :
-    Option (Array Raw × Nat) :=
-  if (paramSites.lookup name).isNone then none
+/-- TeX82's dimen and glue parameters (The TeXbook, ch. 24). -/
+private def texLengthParams : List String :=
+  ["parindent", "mathsurround", "lineskiplimit", "hsize", "vsize", "maxdepth", "splitmaxdepth",
+   "boxmaxdepth", "hfuzz", "vfuzz", "delimitershortfall", "nulldelimiterspace", "scriptspace",
+   "predisplaysize", "displaywidth", "displayindent", "overfullrule", "hangindent", "hoffset",
+   "voffset", "emergencystretch", "baselineskip", "lineskip", "parskip", "abovedisplayskip",
+   "belowdisplayskip", "abovedisplayshortskip", "belowdisplayshortskip", "leftskip", "rightskip",
+   "topskip", "splittopskip", "tabskip", "spaceskip", "xspaceskip", "parfillskip"]
+
+/-- Whether a control word names a length register: a kernel parameter, TeX's, or one the
+document allocates. -/
+private def lengthRegister (st : St) (n : String) : Bool :=
+  (paramSites.lookup n).isSome || st.newLengths.contains n || texLengthParams.contains n
+
+/-- TeX's own assignment to a length register `register` names, when the control word `name`
+opens one. -/
+private def plainAssign? (register : String → Bool) (name : String) (raws : Array Raw)
+    (start : Nat) : Option (Array Raw × Nat) :=
+  if !register name then none
   else if readsOperand (rawBefore raws (start - 1)) then none
   else
     let j := skipSpaces raws start
@@ -9864,6 +9914,8 @@ arithmetic truncates toward zero as TeX's '\\divide' does" pos
           discard s!"\\setlength\{{target}}" "a register only the block templates assign and read"
             s!"setlength:{n}" pos
           return some (#[], k)
+        -- In a definition's body a value read at the use stands, for the use to read.
+        if (← get).inDef && (← doorValue? args[1]).isNone then return none
         return some (← assignLength n args[1] s!"\\setlength\{{target}}" pos (noted := true), k)
       | none => return none
     else return none
@@ -10861,7 +10913,7 @@ where
     let some (args, k) := argsRead raws #[] row.sig start | return none
     if ctrlLeft (← get) row args then return none
     return some (← ctrlRowRun row ⟨name, pos, args, raws, start, k⟩, k)
-  if let some (value, e) := plainAssign? name raws start then
+  if let some (value, e) := plainAssign? (lengthRegister (← get)) name raws start then
     return some (← assignLength name value s!"\\{name}" pos, e)
   if let some settings := listSettings? (← get) name then
     let mut out : Array Raw := #[]
@@ -12848,7 +12900,7 @@ private theorem rewriteCtrlAt_named_scope (name : String) (pos : Pos)
     (hl : St.inList s = false)
     (hCite : (name == "cite") = false)
     (hAppendix : (name == "appendix") = false)
-    (hAssign : plainAssign? name raws start = none)
+    (hAssign : plainAssign? (lengthRegister s) name raws start = none)
     (hRow : ctrlRow? name = none) :
     rewriteCtrl.rewriteCtrlAt name pos raws start s =
       rewriteCtrlNamed name pos raws start s := by
@@ -13176,11 +13228,14 @@ private theorem rewriteCtrl_package_external_exact
 
 private theorem rewriteCtrl_unknown_exact (s : St) (pos : Pos)
     (raws : Array Raw) (start : Nat) (hz : ctrlRow? "zzNotAControl" = none)
-    (hd : St.inDoc s = true) (hl : St.inList s = false) :
+    (hd : St.inDoc s = true) (hl : St.inList s = false)
+    (hn : s.newLengths.contains "zzNotAControl" = false) :
     rewriteCtrl "zzNotAControl" pos raws start s = (none, s) := by
+  have hreg : lengthRegister s "zzNotAControl" = false := by
+    simp only [lengthRegister, hn]; rfl
   have hAt : rewriteCtrl.rewriteCtrlAt "zzNotAControl" pos raws start s = (none, s) := by
     rw [rewriteCtrlAt_named_scope "zzNotAControl" pos raws start s (by simp [hd]) hl
-      rfl rfl rfl hz]
+      rfl rfl (by simp only [plainAssign?, hreg, Bool.not_false, ite_true]) hz]
     rfl
   unfold rewriteCtrl
   rw [hAt]
@@ -13235,7 +13290,8 @@ private theorem rewriteList_literal_exact (inBody : Bool) (raws out : Array Raw)
 
 private theorem rewriteList_unknown_exact (inBody : Bool) (raws out : Array Raw)
     (pos : Pos) (rest : List Raw) (i : Nat) (s : St) (hz : ctrlRow? "zzNotAControl" = none)
-    (hd : St.inDoc s = true) (hl : St.inList s = false) (hp : St.inPicture s = false) :
+    (hd : St.inDoc s = true) (hl : St.inList s = false) (hp : St.inPicture s = false)
+    (hn : s.newLengths.contains "zzNotAControl" = false) :
     rewriteList inBody raws out (.ctrl "zzNotAControl" pos :: rest) i 0 s =
       rewriteList inBody raws (out.push (.ctrl "zzNotAControl" pos)) rest (i + 1) 0 s := by
   rw [rewriteList]
@@ -13244,7 +13300,7 @@ private theorem rewriteList_unknown_exact (inBody : Bool) (raws out : Array Raw)
     pure, hp, Bool.false_eq_true, ↓reduceIte]
   have hoverlay : overlayName "zzNotAControl" = "zzNotAControl" := by
     simp [overlayName, String.startsWith_string_iff]
-  rw [hoverlay, rewriteCtrl_unknown_exact s pos raws (i + 1) hz hd hl]
+  rw [hoverlay, rewriteCtrl_unknown_exact s pos raws (i + 1) hz hd hl hn]
   rfl
 
 private theorem rewriteList_control_exact (inBody : Bool) (raws out repl : Array Raw)
@@ -13434,11 +13490,13 @@ public theorem ctrlRow_groups_consumed (hsound : CtrlRowsSound) (row : CtrlRow)
   rw [hstep]
   exact ⟨rfl, hwalk, rewriteCtrl_accounts row.name pos raws (i + 1) s _ taken.length hstep⟩
 
-/-- The dispatcher leaves a command and every following raw to elaboration. -/
+/-- The dispatcher leaves a command no length register names, and every following raw, to
+elaboration. -/
 public def UnknownControlPreserved (name : String) : Prop :=
   ∀ (inBody : Bool) (raws out : Array Raw) (pos : Pos)
     (rest : List Raw) (i : Nat) (s : St),
     St.inDoc s = true → St.inList s = false → St.inPicture s = false →
+    s.newLengths.contains name = false →
     raws.toList.drop i = .ctrl name pos :: rest →
     rewriteCtrl name pos raws (i + 1) s = (none, s) ∧
     rewriteList inBody raws out (raws.toList.drop i) i 0 s =
@@ -13446,10 +13504,10 @@ public def UnknownControlPreserved (name : String) : Prop :=
 
 public theorem unknown_control_contract (hz : ctrlRow? "zzNotAControl" = none) :
     UnknownControlPreserved "zzNotAControl" := by
-  intro inBody raws out pos rest i s hd hl hp hsource
-  refine ⟨rewriteCtrl_unknown_exact s pos raws (i + 1) hz hd hl, ?_⟩
+  intro inBody raws out pos rest i s hd hl hp hn hsource
+  refine ⟨rewriteCtrl_unknown_exact s pos raws (i + 1) hz hd hl hn, ?_⟩
   rw [hsource]
-  exact rewriteList_unknown_exact inBody raws out pos rest i s hz hd hl hp
+  exact rewriteList_unknown_exact inBody raws out pos rest i s hz hd hl hp hn
 
 /-- A checkpoint of the compatibility walk: the source array, the rewritten
 prefix `out`, and the remaining input `raws.drop index`. -/
@@ -13682,6 +13740,10 @@ public def Executed.sourceTriggers (executed : Executed) : SourceTriggers :=
 /-- The reader receipts the evaluator retained. -/
 public def Executed.inputAttempts (executed : Executed) : Array InputAttempt :=
   executed.state.inputAttempts
+
+/-- The lengths an expanded `\edef` text read. -/
+public def Executed.edefReads (executed : Executed) : Std.HashSet String :=
+  executed.state.edefReads
 
 /-- The source of each value a construct execution refused carried. -/
 public def Executed.mentions (executed : Executed) : Array String :=
@@ -14262,6 +14324,16 @@ private def literalValue : List Raw → Bool
     g.all (fun r => !(r matches .ctrl ..)) && readsAsLength src && texWordsOnly src
   | _ => false
 
+/-- Whether a control word opens TeX's own assignment of a literal value to a register the tally
+knows, read within the raws a glue spans. -/
+private def bareLiteral (t : LengthTally) (c : String) (rest : List Raw) : Bool :=
+  let window := (rest.take 16).toArray
+  match plainAssign? (fun n => texLengthParams.contains n || t.targets.contains n) c window 0 with
+  | some (value, _) =>
+    let src := (rawSrc value).trimAscii.toString
+    value.all (fun r => !(r matches .ctrl ..)) && readsAsLength src && texWordsOnly src
+  | none => false
+
 mutual
 
 private def tallyList (file : String) (owned : Bool) (t : LengthTally) : List Raw → LengthTally
@@ -14275,7 +14347,7 @@ private def tallyList (file : String) (owned : Bool) (t : LengthTally) : List Ra
             t.assign n file p
           else if lengthAssigners.contains c || c == "newlength" then t.target n
           else t
-        | none => t
+        | none => if bareLiteral t c rest then t.assign c file p else t
       | _ => t
     tallyList file owned (tallyOne file owned t r) rest
 termination_by structural l => l
@@ -14342,12 +14414,13 @@ end
 symbols, whole and in its parts, and a control word's name. -/
 public def tokenSpellings (raws : Array Raw) : Std.HashSet String := (spellingList {} raws.toList).spelled
 
-/-- Each length the document assigns that neither it nor the engine reads, named at its first
-assignment; a package's assignments are its own. -/
-public def unusedLengths (file : String) (raws : Array Raw) : Array Diag :=
+/-- Each length the document assigns that neither it, an expanded `\edef` text in `edefReads`, nor
+the engine reads, named at its first assignment; a package's assignments are its own. -/
+public def unusedLengths (file : String) (raws : Array Raw) (edefReads : Std.HashSet String) :
+    Array Diag :=
   let t := tallyList file false {} raws.toList
   t.first.filterMap fun (n, f, p) =>
-    if (paramSites.lookup n).isSome || Ir.engineTokenNames.contains n ||
+    if (paramSites.lookup n).isSome || Ir.engineTokenNames.contains n || edefReads.contains n ||
         t.seen.getD n 0 > t.targets.getD n 0 then none
     else some (Diag.of .W0104
       s!"'\\{n}' is set, but nothing in the document or the engine reads it; the setting changes nothing"
