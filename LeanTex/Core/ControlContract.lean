@@ -18,7 +18,7 @@ public def runRewriteFinal (file : String) (picScan : Compat.BoundaryScan)
     (priorDiags earlier : Array Diag) (metric : Ir.Pic.LabelMetric)
     (cursor : Compat.RewriteCursor)
     (attempts : Array Compat.InputAttempt := #[]) (mentions : Array String := #[])
-    (stripped : Array (String × Diag) := #[]) :
+    (stripped : Array Compat.Stripped := #[]) :
     Ir.Doc × Array Diag :=
   runPreparedFinal file
     (prepareRewritten file picScan picMacros triggers priorDiags
@@ -67,7 +67,7 @@ public theorem ctrlRow_document_exact (file : String) (scan : Compat.BoundarySca
       some (args, pre.length + 1 + taken.length))
     (hl : cursor.rowStandsInBody row args)
     (attempts : Array Compat.InputAttempt := #[]) (mentions : Array String := #[])
-    (stripped : Array (String × Diag) := #[]) :
+    (stripped : Array Compat.Stripped := #[]) :
     runRewriteFinal file scan macros triggers priorDiags earlier metric cursor attempts mentions
         stripped =
       runPreparedFinal file
@@ -96,7 +96,7 @@ public theorem ctrlRow_operands_agree (file : String) (scan : Compat.BoundarySca
     (hkright : Compat.argsRead right #[] row.sig (pre.length + 1) =
       some (argsRight, pre.length + 1 + takenRight.length))
     (attempts : Array Compat.InputAttempt := #[]) (mentions : Array String := #[])
-    (stripped : Array (String × Diag) := #[]) :
+    (stripped : Array Compat.Stripped := #[]) :
     runRewriteFinal file scan macros triggers priorDiags earlier metric
       (cursor.withDocument left docPos) attempts mentions stripped =
     runRewriteFinal file scan macros triggers priorDiags earlier metric

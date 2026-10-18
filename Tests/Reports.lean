@@ -2085,6 +2085,7 @@ def reports : List Report := [
     pins := [check% Tests.UnusedSettings.firesChecks, check% Tests.UnusedSettings.scopeChecks,
       check% Tests.UnusedSettings.redefinitionChecks, check% Tests.UnusedSettings.faceChecks]
     accept := ["the 18 new checks fail built against 0c3dab52's sources and pass on this tree",
+      "the reviews' cases fail on the branch's first cut (bcf981a0) and pass here: a colour in a refused listing or caption key beside a font command was named unused, a winning redefinition after a refused one of the same name lost its skipped text's warning, and a length a package sets and nothing reads was named; and on the first answer, a page colour in an unknown command's argument was named unused and a redefinition a macro makes, refused where it is called, kept the skipped text's warning",
       "this tree's binary on invented probes: a redefined bold command with a conditional draws W0361 alone, a hyperref key or package option, a dropped template body and a refused style value naming a declared colour draw their refusal alone, a dotted colour painted at half strength is read, a colour a refused command's prose spells is named, a colour a package's loading macro inputs is not, a minted environment and command a definer made read the defaults before them, a missing typewriter family under --best-effort accepts E0403 alone, and an unused typewriter face is named at its entry's line"]
     state := .guarded "0c3dab52" .before .author }
 ]

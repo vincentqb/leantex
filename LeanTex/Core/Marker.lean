@@ -7,9 +7,9 @@ space, so a document's control space and words read as text where one would spel
 
 namespace LeanTex.Core.Marker
 
-/-- What a marker declares: an ink, a BCP 47 language, an NFSS series, a font slot by number, the
-file the preamble's declarations come from (a package's own, or the document's), xcolor's page ground or its reset, `\fontsize`'s size
-and leading, environ's `\BODY` in a definition's begin code, or cleveref's range of two labels. -/
+/-- What a marker declares: an ink, a BCP 47 language, an NFSS series, a font slot, the file the
+preamble's declarations come from (a package's own or the document's), xcolor's page ground or its
+reset, `\fontsize`'s size and leading, environ's `\BODY`, or cleveref's range of two labels. -/
 public inductive Kind where
   | ink | lang | series | family | file | ownedFile | pageColor | pageColorReset | fontSize
   | environBody | crefRange | crefRangeUp
@@ -41,6 +41,12 @@ public def Reading.opensBlock (r : Reading) : Bool := r.declares || r.ground
   | .pageColor | .pageColorReset => ⟨false, true, true, false⟩
   | .file | .ownedFile | .environBody => ⟨false, false, false, false⟩
   | .crefRange | .crefRangeUp => ⟨false, false, false, true⟩
+
+/-- Whether a marker's value is a colour expression. -/
+public def Kind.carriesColor : Kind → Bool
+  | .ink | .pageColor => true
+  | .lang | .series | .family | .file | .ownedFile | .pageColorReset | .fontSize | .environBody
+  | .crefRange | .crefRangeUp => false
 
 /-- A marker's control name: a space, its kind's word, a space and the value it carries. -/
 public def name (k : Kind) (v : String) : String := " " ++ k.word ++ " " ++ v

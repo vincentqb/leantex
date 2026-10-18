@@ -131,7 +131,7 @@ public theorem prepareRewritten_diags_covers (file : String)
     (rewritten : Array Parse.Raw × Array Diag × Array String × Array Compat.TemplateDecl ×
       Array String)
     (attempts : Array Compat.InputAttempt) (mentions : Array String)
-    (stripped : Array (String × Diag)) (d : Diag) (h : d ∈ rewritten.2.1) :
+    (stripped : Array Compat.Stripped) (d : Diag) (h : d ∈ rewritten.2.1) :
     d ∈ (prepareRewritten file scan macros triggers prior rewritten attempts mentions
       stripped).compatDiags := by
   rcases rewritten with ⟨raws, diags, warned, templates, rewriteMentions⟩
@@ -220,14 +220,6 @@ private theorem inputEnvFile?_keptInputEnv (f : String) :
     ite_false, Option.some.injEq]
   apply String.ext
   simp [String.toList_append, show "kept input ".length = 11 by decide]
-
-private theorem isKeptInput_keptInputEnv (f : String) :
-    Parse.isKeptInput (Parse.keptInputEnv f) = true := by
-  simp [Parse.isKeptInput, Parse.keptInputEnv, String.toList_append]
-
-private theorem isOwnedInput_keptInputEnv (f : String) :
-    Parse.isOwnedInput (Parse.keptInputEnv f) = false := by
-  simp [Parse.isOwnedInput, Parse.keptInputEnv, String.toList_append]
 
 private theorem input_ne_scopeEnv {n f : String} (hn : Parse.inputEnvFile? n = some f) :
     n ≠ Parse.scopeEnv := by
@@ -407,8 +399,7 @@ private theorem elabEnvArm_input_scope (ctx : Ctx) (n f : String) (hn : Parse.in
     (body : Array Raw) (pos : Pos) (hlen : lengthScopeKeys? body = none) :
     elabEnvArm ctx n body pos #[] =
       splicedFrameScope (some 0) (elabBlockScope
-        { ctx with file := f, callSite := none, kept := ctx.kept || Parse.isKeptInput n
-                   owned := ctx.owned || Compat.packageFile ctx.file || Parse.isOwnedInput n }
+        (ctx.enterInput n f)
         body) := by
   rw [elabEnvArm, openLengthScope_inert ctx body hlen]
   simp [input_ne_scopeEnv hn, input_ne_linesEnv hn, hn, closeLengthScope]
@@ -531,14 +522,12 @@ private theorem elabBlockScope_input_exact (ctx : Ctx) (n f : String)
     (hpre : pre.all sourceBlank = true) (hpost : post.all sourceBlank = true) :
     (elabBlockScope ctx (pre ++ #[.env n body pos] ++ post)).run st =
       let r := (elabBlockScope
-        { ctx with file := f, callSite := none, kept := ctx.kept || Parse.isKeptInput n
-                   owned := ctx.owned || Compat.packageFile ctx.file || Parse.isOwnedInput n }
+        (ctx.enterInput n f)
         body).run st
       (Ir.markDisplay false (post.any (· matches .par _)) false 0 r.1, r.2) := by
   obtain ⟨hm, hp, hb, hl⟩ := h
   have hlen := lengthScopeKeys?_back body hl
-  have hmF : ({ ctx with file := f, callSite := none, kept := ctx.kept || Parse.isKeptInput n
-                         owned := ctx.owned || Compat.packageFile ctx.file || Parse.isOwnedInput n }
+  have hmF : ((ctx.enterInput n f)
       : Ctx).macroRoles = ({file := ""} : Ctx).macroRoles := hm
   have hsize : (pre ++ #[Raw.env n body pos] ++ post).size =
       pre.size + 1 + post.size := by simp
@@ -581,8 +570,7 @@ private theorem elabBlockScope_input_exact (ctx : Ctx) (n f : String)
       : ESt).flowGen = st.flowGen := rfl
   rw [he, hg]
   rcases hx : (elabBlocksGo
-    { ctx with file := f, callSite := none, kept := ctx.kept || Parse.isKeptInput n
-               owned := ctx.owned || Compat.packageFile ctx.file || Parse.isOwnedInput n } body 0
+    (ctx.enterInput n f) body 0
     #[] #[] st.flowGen).run (openScope st) with ⟨bs, s4⟩
   have hend := fun s b => elabBlocksGo_blanks_end
     (pre ++ #[Raw.env n body pos] ++ post) b _ (pre.size + 1) st.flowGen ctx s
@@ -600,8 +588,7 @@ public theorem elabBlocks_input_exact (ctx : Ctx) (n f : String)
     (hpre : pre.all sourceBlank = true) (hpost : post.all sourceBlank = true) :
     (elabBlocks ctx (pre ++ #[.env n body pos] ++ post)).run st =
       let r := (elabBlocks
-        { ctx with file := f, callSite := none, kept := ctx.kept || Parse.isKeptInput n
-                   owned := ctx.owned || Compat.packageFile ctx.file || Parse.isOwnedInput n }
+        (ctx.enterInput n f)
         body).run st
       (Ir.markDisplay false (post.any (· matches .par _)) false 0 r.1, r.2) := by
   rw [elabBlocks_run, elabBlocks_run]
@@ -613,9 +600,7 @@ public theorem runDocBody_input_exact (plan : DocBodyPlan) (n f : String)
     (h : InputSplice plan.ctx body pos)
     (hpre : pre.all sourceBlank = true) (hpost : post.all sourceBlank = true) :
     (runDocBody plan).run st =
-      let r := (elabBlocks { plan.ctx with
-        file := f, callSite := none, kept := plan.ctx.kept || Parse.isKeptInput n
-        owned := plan.ctx.owned || Compat.packageFile plan.ctx.file || Parse.isOwnedInput n }
+      let r := (elabBlocks (plan.ctx.enterInput n f)
         body).run st
       (finishDocBody plan
         (Ir.markDisplay false (post.any (· matches .par _)) false 0 r.1)).run r.2 := by
@@ -709,14 +694,12 @@ private theorem markdownInput_scope_exact (ctx : Ctx) (f t : String) (cites : Bo
     (hne : (Md.readIncluded f t cites).1 ≠ #[])
     (hpre : pre.all sourceBlank = true) (hpost : post.all sourceBlank = true) :
     (elabBlockScope ctx (pre ++ (Surface.fragment .markdown f t pos cites).1 ++ post)).run st =
-      let r := (elabBlockScope { ctx with file := f, callSite := none, kept := true
-                                          owned := ctx.owned || Compat.packageFile ctx.file }
+      let r := (elabBlockScope (ctx.enterInput (Parse.keptInputEnv f) f)
         (Md.readIncluded f t cites).1).run st
       (Ir.markDisplay false (post.any (· matches .par _)) false 0 r.1, r.2) := by
   rw [fragment_markdown_exact]
   have h := elabBlockScope_input_exact ctx _ f (inputEnvFile?_keptInputEnv f) _ pre post pos st
     (markdownInput_splice ctx f t cites pos hm hp hne) hpre hpost
-  rw [isKeptInput_keptInputEnv, Bool.or_true, isOwnedInput_keptInputEnv, Bool.or_false] at h
   exact h
 
 public theorem markdownInput_blocks_exact (ctx : Ctx) (f t : String) (cites : Bool)
@@ -725,8 +708,7 @@ public theorem markdownInput_blocks_exact (ctx : Ctx) (f t : String) (cites : Bo
     (hne : (Md.readIncluded f t cites).1 ≠ #[])
     (hpre : pre.all sourceBlank = true) (hpost : post.all sourceBlank = true) :
     (elabBlocks ctx (pre ++ (Surface.fragment .markdown f t pos cites).1 ++ post)).run st =
-      let r := (elabBlocks { ctx with file := f, callSite := none, kept := true
-                                      owned := ctx.owned || Compat.packageFile ctx.file }
+      let r := (elabBlocks (ctx.enterInput (Parse.keptInputEnv f) f)
         (Md.readIncluded f t cites).1).run st
       (Ir.markDisplay false (post.any (· matches .par _)) false 0 r.1, r.2) := by
   rw [elabBlocks_run, elabBlocks_run]
@@ -739,8 +721,7 @@ public theorem markdownInput_blocks_text (ctx : Ctx) (f t : String) (cites : Boo
     (hpre : pre.all sourceBlank = true) (hpost : post.all sourceBlank = true) :
     Ir.blocksText
         ((elabBlocks ctx (pre ++ (Surface.fragment .markdown f t pos cites).1 ++ post)).run st).1 =
-      Ir.blocksText ((elabBlocks { ctx with file := f, callSite := none, kept := true
-                                            owned := ctx.owned || Compat.packageFile ctx.file }
+      Ir.blocksText ((elabBlocks (ctx.enterInput (Parse.keptInputEnv f) f)
         (Md.readIncluded f t cites).1).run st).1 := by
   rw [markdownInput_blocks_exact ctx f t cites pre post pos st hm hp hne hpre hpost]
   exact Ir.markDisplay_text false _ false 0 _

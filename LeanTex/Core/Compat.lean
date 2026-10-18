@@ -387,6 +387,13 @@ standard skips translate; arbitrary template injections have no native \
 receiver. Where a refused body carries content its loss is E0111's, \
 which is a dropped body and not a style key")]
 
+/-- A definition execution skipped part of: the name it defines, whether it was met settling another
+definition's text, which only that definition's uses execute, and the loss. -/
+public structure Stripped where
+  name : String
+  inText : Bool
+  loss : Diag
+
 /-- A definition the conditional pass can read: its
 replacement text, its `\long` and `\protected` prefixes, and
 an optional command's default and inner definition. -/
@@ -885,9 +892,9 @@ private structure St where
   /-- The source of each value a construct the walk refused carried, which still names what it
   names. -/
   mentions : Array String := #[]
-  /-- Each definition execution skipped part of, by the name it defines, with that loss; the
-  elaborator reports it unless its gate refuses the definition whole. -/
-  stripped : Array (String × Diag) := #[]
+  /-- Each definition execution skipped part of; the elaborator reports it unless its gate refuses
+  the definition whole. -/
+  stripped : Array Stripped := #[]
   /-- The raws the walk leaves alone, each returning at its place after the rewrite. -/
   kept : Array (Array Raw) := #[]
 
@@ -1127,6 +1134,11 @@ public def codeInternal (name : String) : Bool :=
 document's own text. -/
 public def packageFile (file : String) : Bool :=
   file.endsWith ".sty" || file.endsWith ".cls"
+
+/-- Whether an input wrapper `name` met in `parent` holds a package's code: inside its owner's, its
+parent a package or class file, or wrapped as one its code made. -/
+public def ownsInput (owned : Bool) (parent name : String) : Bool :=
+  owned || packageFile parent || Parse.isOwnedInput name
 
 /-- A refusal of `name` at a site in `file` demotes exactly when the site is
 package code and the name a TeX internal. -/
@@ -4690,16 +4702,21 @@ nothing is set" site (help := s!"write \\set{kind}\{{name}}\{true} or \\set{kind
                 pending := st.pending.push { name := m, serial := v.serial, file := file, pos := gp } }
         if stripped && !(expands || settles || refused) then
           -- premise: Tests.macroArgumentChecks — readable undelimited calls execute after binding
-          sayOnce ("cond:body:" ++ n ++ ":" ++ (bound.getD "")) .W0104
-            (s!"'\\{n}' makes a definition whose text holds a conditional, a flag \
+          let tail := n ++ ":" ++ (bound.getD "")
+          let key := "cond:body:" ++ tail
+          let msg := s!"'\\{n}' makes a definition whose text holds a conditional, a flag \
 setting or another definition, which TeX executes where it is used; this engine cannot \
-execute this definition there, so that part of the text is skipped whole")
-            (site.getD pos)
-            (help := "use \\def with undelimited arguments or \\newcommand")
-          if let some m := bound then
-            write fun st => match st.diags.back? with
-              | some d => { st with diags := st.diags.pop, stripped := st.stripped.push (m, d) }
-              | none => st
+execute this definition there, so that part of the text is skipped whole"
+          let help := "use \\def with undelimited arguments or \\newcommand"
+          match bound with
+          | some m =>
+            -- The elaborator reports it, its first standing site a warning, unless a gate refuses it.
+            let useAt := site.getD pos
+            write fun st => { st with
+              warned := if st.warned.contains key then st.warned else st.warned.push key
+              stripped := st.stripped.push ⟨m, st.settling.isSome, atSource st useAt
+                (Diag.of .W0104 msg (some ⟨st.file, useAt⟩) help (subject := some key))⟩ }
+          | none => sayOnce ("cond:body:" ++ tail) .W0104 msg (site.getD pos) (help := help)
         -- An `\edef` the pass expanded is done: its uses expand to its text, so it goes out as nothing.
         let j := skipSpaces raws (i + 1)
         if (n == "edef" || n == "xdef") && expands then
@@ -4778,7 +4795,7 @@ private def condOne [Monad m]
         write fun st => { st with loads := st.loads.addPkg pkg none }
       let saved ← get
       write fun st => { st with file := f, useSite := none
-                                owned := st.owned || packageFile saved.file || Parse.isOwnedInput n }
+                                owned := ownsInput st.owned saved.file n }
       let top ← swapTop true
       let body' ← condList ex [] body #[] (OverlayPrefix.ofArray #[]) [] body.toList 0 0
       let _ ← swapTop top
@@ -13629,7 +13646,7 @@ public def Executed.mentions (executed : Executed) : Array String :=
   executed.state.mentions
 
 /-- Each definition execution skipped part of, by the name it defines, with that loss. -/
-public def Executed.stripped (executed : Executed) : Array (String × Diag) :=
+public def Executed.stripped (executed : Executed) : Array Stripped :=
   executed.state.stripped
 
 public theorem Executed.withRaws_contract (executed : Executed) (raws : Array Raw) :
@@ -14205,26 +14222,30 @@ private def literalValue : List Raw → Bool
 
 mutual
 
-private def tallyList (file : String) (t : LengthTally) : List Raw → LengthTally
+private def tallyList (file : String) (owned : Bool) (t : LengthTally) : List Raw → LengthTally
   | [] => t
   | r :: rest =>
     let t := match r with
       | .ctrl c p =>
         match assignedLength rest with
         | some (n, after) =>
-          if lengthAssigners.contains c && literalValue after then t.assign n file p
+          if lengthAssigners.contains c && literalValue after && !owned && !packageFile file then
+            t.assign n file p
           else if lengthAssigners.contains c || c == "newlength" then t.target n
           else t
         | none => t
       | _ => t
-    tallyList file (tallyOne file t r) rest
+    tallyList file owned (tallyOne file owned t r) rest
 termination_by structural l => l
 
-private def tallyOne (file : String) (t : LengthTally) : Raw → LengthTally
+private def tallyOne (file : String) (owned : Bool) (t : LengthTally) : Raw → LengthTally
   | .ctrl n _ => t.see n
-  | .group body _ => tallyList file t body.toList
-  | .math _ body _ => tallyList file t body.toList
-  | .env n body _ => tallyList ((Parse.inputEnvFile? n).getD file) t body.toList
+  | .group body _ => tallyList file owned t body.toList
+  | .math _ body _ => tallyList file owned t body.toList
+  | .env n body _ =>
+    match Parse.inputEnvFile? n with
+    | some f => tallyList f (ownsInput owned file n) t body.toList
+    | none => tallyList file owned t body.toList
   | _ => t
 termination_by structural r => r
 
@@ -14280,9 +14301,9 @@ symbols, whole and in its parts, and a control word's name. -/
 public def tokenSpellings (raws : Array Raw) : Std.HashSet String := (spellingList {} raws.toList).spelled
 
 /-- Each length the document assigns that neither it nor the engine reads, named at its first
-assignment. -/
+assignment; a package's assignments are its own. -/
 public def unusedLengths (file : String) (raws : Array Raw) : Array Diag :=
-  let t := tallyList file {} raws.toList
+  let t := tallyList file false {} raws.toList
   t.first.filterMap fun (n, f, p) =>
     if (paramSites.lookup n).isSome || Ir.engineTokenNames.contains n ||
         t.seen.getD n 0 > t.targets.getD n 0 then none
@@ -15291,7 +15312,7 @@ private def textRaw (loc : Locale) (st : TextSt) : Raw → M (Raw × TextSt)
       let savedFile := (← get).file
       write fun s => { s with file := file }
       let (body, inner) ← textList loc
-        { st with owned := st.owned || packageFile savedFile || Parse.isOwnedInput n } body
+        { st with owned := ownsInput st.owned savedFile n } body
         #[] body.toList 0 0
       write fun s => { s with file := savedFile }
       return (.env n body p, { inner with owned := st.owned })

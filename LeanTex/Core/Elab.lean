@@ -319,6 +319,12 @@ public structure Ctx where
 public def Ctx.sourceSpan (ctx : Ctx) (pos : Pos) : Span :=
   (ctx.callSite.map (·.1)).getD ⟨ctx.file, pos⟩
 
+/-- Enters the file input wrapper `name` holds: its own file, no written call, kept or a package's
+as the wrapper and its place say. -/
+public def Ctx.enterInput (ctx : Ctx) (name file : String) : Ctx :=
+  { ctx with file, callSite := none, kept := ctx.kept || Parse.isKeptInput name
+             owned := Compat.ownsInput ctx.owned ctx.file name }
+
 /-- Enters replacement code, keeping an enclosing written call. -/
 private def Ctx.atCall (ctx : Ctx) (name : String) (pos : Pos) : Ctx :=
   { ctx with callSite := ctx.callSite.orElse (fun _ =>
@@ -652,8 +658,8 @@ public structure ESt where
   /-- Refused size-command redefinitions' bodies, read again at the
   preamble's end for their `\@setfontsize` ladder. -/
   refusedSizeBodies : Array (String × Array Raw × Span) := #[]
-  /-- The rendered built-ins whose redefinition the gate refused, the built-in standing. -/
-  refusedRedefs : Array String := #[]
+  /-- The rendered built-ins whose redefinition the gate refused, each at its definition's site. -/
+  refusedRedefs : Array (String × Span) := #[]
   /-- Speaker-note bodies met inside inline content, which the enclosing
   frame drains to its end. -/
   pendingNotes : Array (Array Raw × Pos) := #[]
@@ -5181,9 +5187,7 @@ private def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
         elabInlinesFrom ctx raws (i + 1) (acc ++ inner) ""
       else if let some f := Parse.inputEnvFile? name then
         let acc := flushText acc sb
-        let inner ← elabInlinesCore
-          { ctx with file := f, callSite := none, kept := ctx.kept || Parse.isKeptInput name
-                     owned := ctx.owned || Compat.packageFile ctx.file || Parse.isOwnedInput name } body
+        let inner ← elabInlinesCore (ctx.enterInput name f) body
         elabInlinesFrom ctx raws (i + 1) (acc ++ inner) ""
       else if let some numbered := displayMathEnvs.lookup name then
         let acc := flushText acc sb
@@ -8260,7 +8264,7 @@ engine cannot run; the built-in stands",
     | _ => (s!"the redefinition of '\\{cmd.name}' renders nothing; the built-in stands", none)
   modify fun st => { st with
     diags := st.diags.push (Diag.of .W0361 msg (some cmd.span) (detail := detail))
-    refusedRedefs := st.refusedRedefs.push cmd.name }
+    refusedRedefs := st.refusedRedefs.push (cmd.name, cmd.span) }
 
 private theorem sliceWeight_end (raws : Array Raw) {j : Nat}
     (h : raws.size ≤ j) : sliceWeight raws j = 0 := by
@@ -12595,9 +12599,7 @@ private def elabEnvArm (ctx : Ctx) (n : String) (scope : Array Raw)
     blocks := blocks.push (.lines (← linesLaid ctx 0 body.toList #[] #[]))
   else if let some f := Parse.inputEnvFile? n then
     let ⟨fileCtx, _⟩ : MCtx ctx ←
-      pure ⟨{ ctx with file := f, callSite := none, kept := ctx.kept || Parse.isKeptInput n
-                       owned := ctx.owned || Compat.packageFile ctx.file || Parse.isOwnedInput n },
-        rfl, rfl, rfl, rfl⟩
+      pure ⟨ctx.enterInput n f, rfl, rfl, rfl, rfl⟩
     blocks := blocks ++ (← splicedFrameScope (some blocks.size) (elabBlockScope fileCtx body))
   else if let some numbered := displayMathEnvs.lookup n then
     blocks ← displayMathArm ctx numbered body pos blocks
@@ -15474,7 +15476,7 @@ public def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run d
       let r := preamble[i]
       if let .env n wrapped pos := r then
         if let some f := Parse.inputEnvFile? n then
-          let owned := curOwned || Compat.packageFile curFile || Parse.isOwnedInput n
+          let owned := Compat.ownsInput curOwned curFile n
           let mark (owned : Bool) := if owned then Marker.Kind.ownedFile else .file
           preamble := preamble.extract 0 i ++
             #[Raw.ctrl (Marker.name (mark owned) f) pos] ++ wrapped ++
@@ -17801,9 +17803,9 @@ public structure Prepared where
   inputAttempts : Array Compat.InputAttempt := #[]
   /-- The source of each value a construct execution refused carried. -/
   mentions : Array String := #[]
-  /-- Each definition execution skipped part of, by the name it defines, with that loss, which a
-  refused redefinition of a rendered built-in accounts for instead. -/
-  stripped : Array (String × Diag) := #[]
+  /-- Each definition execution skipped part of, which a refused redefinition of a rendered
+  built-in accounts for instead. -/
+  stripped : Array Compat.Stripped := #[]
   /-- The highlighter answers every elaboration of this input reads. -/
   listingReplies : Array ListingReply.Answer := #[]
   /-- The notes each bibliography list's fields set, in document order; empty
@@ -17915,7 +17917,7 @@ public def prepareRewritten (file : String) (picScan : Compat.BoundaryScan)
     (priorDiags : Array Diag)
     (rewritten : Array Raw × Array Diag × Array String × Array Compat.TemplateDecl × Array String)
     (inputAttempts : Array Compat.InputAttempt := #[]) (mentions : Array String := #[])
-    (stripped : Array (String × Diag) := #[]) :
+    (stripped : Array Compat.Stripped := #[]) :
     Prepared :=
   let (raws, compatDiags, warned, templates, rewriteMentions) := rewritten
   let (raws, textDiags, warned) := Compat.rewriteText file raws warned
@@ -17938,7 +17940,7 @@ private theorem prepareRewritten_carried_exact (file : String)
     (triggers : Compat.SourceTriggers) (prior : Array Diag)
     (rewritten : Array Raw × Array Diag × Array String × Array Compat.TemplateDecl × Array String)
     (attempts : Array Compat.InputAttempt) (mentions : Array String)
-    (stripped : Array (String × Diag)) :
+    (stripped : Array Compat.Stripped) :
     (prepareRewritten file scan macros triggers prior rewritten attempts mentions
         stripped).inputAttempts = attempts ∧
       (prepareRewritten file scan macros triggers prior rewritten attempts mentions
@@ -18138,6 +18140,23 @@ carries it, as a custom property" (some span)
         (help := s!"name it where a length is read, as \\block[before = {n}] does, or drop it")
         (subject := some (Compat.paramSubject "\\tokens" n))), seen.insert n)).1
 
+/-- The losses of the definitions execution skipped part of that no refused redefinition accounts
+for, at their site or, met in another definition's text, wherever its uses made it; each wording's
+later sites are demoted and without help. -/
+private def strippedLosses (refusedRedefs : Array (String × Span))
+    (stripped : Array Compat.Stripped) : Array Diag := Id.run do
+  let refused (s : Compat.Stripped) : Bool := refusedRedefs.any fun (m, sp) =>
+    m == s.name && (s.inText || s.loss.span.any fun e => e.file == sp.file && e.pos == sp.pos)
+  let mut out : Array Diag := #[]
+  let mut led : Std.HashSet String := {}
+  for s in stripped do
+    if refused s then continue
+    let d := s.loss
+    let key := d.subject.getD ""
+    out := out.push (if led.contains key then { d with help := none }.demote else d)
+    led := led.insert key
+  return out
+
 /-- Runs the document judges over an elaborated document and assembles its
 log and request spans. -/
 public def completePrepared (file : String) (p : Prepared) (earlier : Array Diag)
@@ -18158,7 +18177,7 @@ public def completePrepared (file : String) (p : Prepared) (earlier : Array Diag
   let unread := unread ++ unreadFrameTitleFont doc st.spans.frameTitleFont st.spans.frameTitleRestated
   let unread := unread ++ unreadTokens doc p.raws st.spans.authorTokens
   -- premise: Tests.UnusedSettings.redefinitionChecks — a refused redefinition is its one accounting
-  let stripped := p.stripped.filterMap fun (n, d) => if st.refusedRedefs.contains n then none else some d
+  let stripped := strippedLosses st.refusedRedefs p.stripped
   let said := earlier ++ p.compatDiags ++ stripped ++ st.diags ++ contrast ++ outline ++ alt ++ links ++
     sequences ++ unread ++ Ir.boxDiags doc.page
   -- A declaration a definition's replacement text makes at its call is the definition's.

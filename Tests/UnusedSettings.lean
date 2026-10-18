@@ -180,7 +180,18 @@ def refusedCases : List (String × DiagCode × String) :=
      (probeColor ++ "\\style{section}{ slot = { content = {\\color{probeink} Probe} } }")
      "\\section{Opening}Words."),
    ("a style key the element never reads", .W0104, article
-     (probeColor ++ "\\style{section}{ align = probeink }") "\\section{Opening}Words.")]
+     (probeColor ++ "\\style{section}{ align = probeink }") "\\section{Opening}Words."),
+   ("a refused listing key setting a font after the colour", .W0110, article
+     ("\\usepackage{listings}" ++ probeColor ++ "\\lstset{keywordstyle=\\color{probeink}\\bfseries}")
+     "\\begin{lstlisting}\nx = 1\n\\end{lstlisting}"),
+   ("a refused listing key setting a font before the colour", .W0110, article
+     ("\\usepackage{listings}" ++ probeColor ++ "\\lstset{keywordstyle=\\bfseries\\color{probeink}}")
+     "\\begin{lstlisting}\nx = 1\n\\end{lstlisting}"),
+   ("a refused caption key setting a font after the colour", .W0354, article
+     ("\\usepackage{caption}" ++ probeColor ++ "\\captionsetup{probefont={\\color{probeink}\\bfseries}}")
+     "\\begin{figure}Words.\\caption{A caption.}\\end{figure}"),
+   ("an unknown command's page colour", .W0301, article probeColor
+     "Words \\probeunknowncmd{\\pagecolor{probeink}} more.")]
 
 /-- Each kind of declaration nothing reads is named once at its site, keyed by what it declares;
 one something reads is not. -/
@@ -265,6 +276,17 @@ def scopeChecks (ref : IO.Ref (List String)) : IO Unit := do
       #[Parse.Raw.env (Parse.inputEnv "shared.tex") (parse "shared.tex" declared) {}] {},
       Parse.Raw.env (Parse.inputEnv "shared.tex") (parse "shared.tex" declared) {}] ++
     parse "root.tex" "\\begin{document}\nWords.\n\\end{document}"
+  let lengthIn (child : String) : Array Diag :=
+    let raws := parse "root.tex" "\\documentclass{article}\n" ++
+      #[Parse.Raw.env (Parse.inputEnv child)
+        (parse child "\\newlength{\\probelen}\n\\setlength{\\probelen}{3pt}\n") {}] ++
+      parse "root.tex" "\\begin{document}\nWords.\n\\end{document}"
+    (Elab.runRawsSpanned "root.tex" raws).2.1.filter fun d =>
+      d.subject == some "param:setlength:probelen"
+  t s!"unused settings: a length a package sets and nothing reads is the package's ({(lengthIn "probe.sty").map (·.message)})"
+    (lengthIn "probe.sty").isEmpty
+  t s!"unused settings: one the document's own input sets is named ({(lengthIn "part.tex").size})"
+    ((lengthIn "part.tex").size == 1)
   let (_, ds, spans) := Elab.runRawsSpanned "root.tex" shared
   t s!"unused settings: a file the document inputs is its own though a package inputs it too ({(ds.filter (·.kind == .W0449)).map (·.subject)})"
     ((ds.filter (·.kind == .W0449)).size == 3 && spans.faces.size == 1)
@@ -298,6 +320,17 @@ def redefinitionChecks (ref : IO.Ref (List String)) : IO Unit := do
     let (_, ds) := elabStr (article decl "Some \\textbf{bold} and \\textit{slanted} words.")
     t s!"unused settings: {what} the gate refuses is its one accounting ({ds.map (·.kind.code)})"
       (ds.any (·.kind == .W0361) && !skipped ds)
+  let (_, ds) := elabStr (article ("\\renewcommand{\\textbf}[1]{\\ifmmode #1\\else{\\bfseries #1}\\fi}\n" ++
+    "\\renewcommand{\\textbf}[1]{\\underline{#1}\\ifmmode x\\fi}") "Some \\textbf{bold} words.")
+  let skippedAt (line : Nat) := ds.any fun d => d.kind == .W0104 && d.severity == .warning &&
+    d.subject.any (·.startsWith "cond:body:") && d.span.any (·.pos.line == line)
+  t s!"unused settings: a redefinition that wins keeps its skipped text's loss beside a refused one's refusal ({ds.map (·.kind.code)})"
+    (ds.any (·.kind == .W0361) && !skippedAt 2 && skippedAt 3)
+  let (_, ds) := elabStr (article
+    "\\def\\probesetup{\\renewcommand{\\textbf}[1]{\\ifmmode ##1\\else{\\bfseries ##1}\\fi}}\n\\probesetup"
+    "Some \\textbf{bold} words.")
+  t s!"unused settings: a redefinition a macro makes, refused where it is called, is the refusal's alone ({ds.map (·.kind.code)})"
+    (ds.any (·.kind == .W0361) && !skipped ds)
   let (_, ds) := elabStr (article
     "\\NewDocumentCommand{\\probecond}{m}{\\ifx\\relax#1\\relax\\else\\underline{#1}\\fi}"
     "Some \\probecond{probe} words.")

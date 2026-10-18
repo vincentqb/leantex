@@ -20,6 +20,7 @@ public import LeanTex.Core.PaletteData
 public import LeanTex.Core.CiteDecl
 import LeanTex.Core.Loop
 import LeanTex.Core.NameClaim
+import LeanTex.Core.Marker
 import LeanTex.Core.PdfLex
 import LeanTex.Core.ContrastSolve
 import Init.Data.Nat.ToString
@@ -15103,25 +15104,55 @@ private def mentionCut (c : Char) : Bool :=
   c == '{' || c == '}' || c == '[' || c == ']' || c == '(' || c == ')' || c == ',' || c == '=' ||
     c == ';' || c == ':'
 
-/-- One unit of a source: its names where it stands as one colour expression, holding no space
-inside and no control sequence, or as the value a pass's marker carries, spelled `\ <kind> value`. -/
+/-- One unit of a source: its names where it stands as one colour expression, holding no space. -/
 private def mentionUnit (unit : String) (acc : Array String) : Array String :=
   let u := unit.trimAscii.toString
-  let u := if u.startsWith "\\ " then
-      (((u.drop 2).toString.dropWhile (· != ' ')).toString.trimAscii).toString
-    else u
-  if u.isEmpty || u.any (fun c => c.isWhitespace || c == '\\') then acc
+  if u.isEmpty || u.any Char.isWhitespace then acc
   else (colorNamesGo u.toList "" #[]).foldl (·.push ·) acc
 
-private def mentionsGo : List Char → String → Array String → Array String
-  | [], cur, acc => mentionUnit cur acc
-  | c :: rest, cur, acc =>
-    if mentionCut c then mentionsGo rest "" (mentionUnit cur acc)
-    else mentionsGo rest (cur.push c) acc
+/-- Where the mention walk stands: in text, past a backslash, in a control word, or in a marker's
+kind word or value, spelled `\ <kind> <value>`. -/
+private inductive MentionAt where
+  | text | escape | word | kind (k : String) | value (ink : Bool)
 
 /-- The colour names a source spells where a colour expression stands: each argument, option or
-key's value that is one expression, so a word of prose names no colour. -/
-public def mentionedColorNames (src : String) : Array String := mentionsGo src.toList "" #[]
+key's value that is one expression, and a colour marker's value, so a word of prose and a control
+sequence name no colour. -/
+public def mentionedColorNames (src : String) : Array String := Id.run do
+  let mut acc : Array String := #[]
+  let mut cur := ""
+  let mut mode := MentionAt.text
+  for c in src.toList do
+    match mode with
+    | .escape =>
+      mode := if c == ' ' then .kind "" else if c.isAlpha || c == '@' then .word else .text
+    | .word =>
+      unless c.isAlpha || c == '@' do
+        mode := .text
+        if mentionCut c || c == '\\' then
+          if c == '\\' then mode := .escape
+        else if !c.isWhitespace then cur := cur.push c
+    | .kind k =>
+      mode := if c == ' ' then .value ((Marker.Kind.words.lookup k).any Marker.Kind.carriesColor)
+        else .kind (k.push c)
+    | .value ink =>
+      if mentionCut c || c.isWhitespace || c == '\\' then
+        if ink then acc := mentionUnit cur acc
+        cur := ""
+        mode := if c == '\\' then .escape else .text
+      else cur := cur.push c
+    | .text =>
+      if c == '\\' then
+        acc := mentionUnit cur acc
+        cur := ""
+        mode := .escape
+      else if mentionCut c then
+        acc := mentionUnit cur acc
+        cur := ""
+      else cur := cur.push c
+  return match mode with
+    | .value false | .kind _ | .escape | .word => acc
+    | .value true | .text => mentionUnit cur acc
 
 /-- The palette roles a picture body mentions, each with the palette's value. -/
 public def paletteDecls (pal : Palette) (body : String) : Array (String × Color) :=
