@@ -13821,6 +13821,8 @@ private def applyStyle (ctx : Ctx) (styles : Styles) (element : String) (body : 
           warnOnce ctx ("style:" ++ element ++ ":" ++ key) .W0104
             s!"'{key}' has no meaning on '{element}'; the element is set without it" pos
             (help := s!"'{element}' reads {", ".intercalate (Ir.styleKeysRead flow element)}")
+        -- A title's unread keys stay in its style, which a refused title body's merge compares.
+        unless element == "titlepage" do continue
       if element == "frametitle" && key == "font" then
         if restatesPlainTitle valueSrc then
           modify fun st => { st with spans := { st.spans with
@@ -13878,8 +13880,10 @@ private def applyStyle (ctx : Ctx) (styles : Styles) (element : String) (body : 
         else if let some v ← asColor then st := { st with separator := some v }
       | "slot" =>
         if element != "titlepage" then
-          diag ctx .E0323 s!"'slot' in '\\style' belongs to the title page, not '{element}'" pos
+          modify fun st' => { st' with diags := st'.diags.push (diagOf ctx .E0323
+            s!"'slot' in '\\style' belongs to the title page, not '{element}'" (some pos)
             (help := "write \\style{titlepage}{ slot = { set = title, anchor = west, at = west } }")
+            (subject := some s!"style:{element}:slot")) }
         else
           let partOf (partRaws : Array Raw) : EM (Option Ir.TitlePart) := do
             let mut p : Ir.TitlePart := { datum := none }
@@ -16662,7 +16666,8 @@ the .bib file"
     for name in output.profiles do
       asserts := asserts.push {
         kind := .pdfProfile name
-        help := some s!"declared by \\output\{ profiles = {name} }; the rules named are the file's, judged on its bytes" }
+        help := some s!"declared by \\output\{ profiles = {name} }; the rules named are the file's, judged on its bytes"
+        subject := some "param:\\output:profiles" }
       let imp := PdfContract.Profile.implies name
       output := { output with contract := {
         alternatives := if declaredKey "alternatives" || imp.alternatives == ({} : OutputContract).alternatives

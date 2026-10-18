@@ -136,9 +136,9 @@ past the first. -/
 def keyedBy (key subject : String) : Bool :=
   subject.endsWith (":" ++ key) || hasStr subject (":" ++ key ++ ":")
 
-/-- Whether a diagnostic is a warning keyed by a setting. -/
+/-- Whether a diagnostic is a warning or an error keyed by a setting. -/
 def warnsKeyed (key : String) (d : Diag) : Bool :=
-  d.severity == .warning && d.subject.any (keyedBy key)
+  d.severity != .note && d.subject.any (keyedBy key)
 
 /-- The codes that say a setting is not read. -/
 def unreadCodes : List String :=
@@ -169,16 +169,15 @@ structure Row where
   /-- A key written before each setting in its declaration, whose own name must not stand for it. -/
   neighbour : Option String := none
 
-/-- A setting's verdict in one document: whether the artifacts changed, a fresh error refusing the
-build changing them, whether a warning keyed by it or its inert row's note names it, and whether one
-names it unread although the PDF or the page changed. -/
+/-- A setting's verdict in one document: whether the artifacts changed, whether a warning or an
+error keyed by it or its inert row's note names it, and whether one names it unread although the
+PDF or the page changed. -/
 def judge (fonts : Font.FontSet) (base : Shipped) (src key : String) (inert : Bool) :
     Bool × Bool × Bool :=
   let w := shipped fonts src
   let fresh := w.diags.filter fun d =>
     !base.diags.any fun b => b.code == d.code && b.message == d.message && b.subject == d.subject
-  let changed := w.pdf != base.pdf || w.html != base.html || w.md != base.md ||
-    fresh.any (·.severity == .error)
+  let changed := w.pdf != base.pdf || w.html != base.html || w.md != base.md
   let shows := w.pdf != base.pdf || w.body != base.body || w.css != base.css
   let warned := fresh.filter (warnsKeyed key)
   let noted := if inert then fresh.filter (notesInert key) else #[]

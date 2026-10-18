@@ -91,7 +91,7 @@ public def Shipped.ofOut (geom : Geom) (fs : Font.FontSet) (out : Out)
 private def failure (a : Assertion) (actual : String) : Diag :=
   Diag.of .E0330 s!"assertion failed: {a.kind.source} (actual: {actual})" a.span
     (help := some (a.help.getD
-      "the document shipped this; change the source or the \\assert"))
+      "the document shipped this; change the source or the \\assert")) (subject := a.subject)
 
 /-- The diagnostic codes carrying a judged WCAG 2.2 fact: the rows `accessibility = AA` reads. -/
 private def a11yCodes : List DiagCode :=

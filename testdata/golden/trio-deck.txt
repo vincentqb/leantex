@@ -57,4 +57,4 @@ frame
       text "press@example.org"
     text "."
 -- diagnostics
-warning[W0104] 20:1 token 'sep' is declared, but nothing in the document reads it; the declaration changes nothing | help: name it where a length is read, as \block[before = sep] does, or drop it
+warning[W0104] 20:1 token 'sep' is declared, but nothing in the document reads it; only the web page carries it, as a custom property | help: name it where a length is read, as \block[before = sep] does, or drop it

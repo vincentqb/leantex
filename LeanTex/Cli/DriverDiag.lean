@@ -98,7 +98,7 @@ public def noFont : Diag :=
 /-- W0008: the document's `\fonts{ dir = ... }` is not a directory. -/
 public def fontsDirMissing (decl resolved : String) : Diag :=
   Diag.of .W0008 s!"'\\fonts' dir '{decl}' is not a directory ({resolved}); looking elsewhere"
-    (subject := some s!"param:\\fonts:dir:{decl}")
+    (subject := some "param:\\fonts:dir")
 
 /-- E0403: a named family is not installed; `near` are the closest installed
 names, `installed` the family count when nothing is close. -/

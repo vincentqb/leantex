@@ -285,26 +285,30 @@ def styleRow : Row :=
   let decl (o : Option String) : String :=
     (o.map fun s => let (e, kv) := elementSplit s; s!"\\style\{{e}}\{ {kv} }").getD ""
   let shown (e pre : String) (o : Option String) : String :=
-    if e == "logo" then paintedDeck "" ("\\theme{default}\\logo{Logo words}" ++ pre ++ decl o)
+    if e == "probeentry" then
+      styledArticle ("\\define \\probeentry(word: content) {\\word}" ++ pre ++ decl o)
+        |>.replace "\\cite{key1}." "\\cite{key1}.\n\n\\probeentry{Entry words} and more words."
+    else if e == "logo" then paintedDeck "" ("\\theme{default}\\logo{Logo words}" ++ pre ++ decl o)
     else if deckElements.contains e then paintedDeck "" ("\\usetheme{moloch}" ++ pre ++ decl o)
     else styledArticle (pre ++ decl o)
-  let elements := Ir.styleableElements
+  let elements := Ir.styleableElements ++ ["probeentry"]
   { reader := "\\style"
     settings := elements.flatMap fun e => Ir.styleKeys.map fun k => s!"{e}|{k} = {styleSample e k}"
     keyOf := fun s => (KeyVal.entry (elementSplit s).2).1
     tries := fun s i =>
       let (e, kv) := elementSplit s
       let k := (KeyVal.entry kv).1
-      if ruled.contains k then i == 5 + (elements.idxOf e)
+      if ruled.contains k then i == 6 + (elements.idxOf e)
       else if e == "titlepage" && barKeys.contains k then i == 2 || i == 3
       else if e == "titlepage" then i == 0 || i == 1
       else if e == "logo" then i == 4
+      else if e == "probeentry" then i == 5
       else (i == 1) == deckElements.contains e && i ≤ 1
     docs := [fun o => styledArticle (decl o),
       fun o => paintedDeck "" ("\\usetheme{moloch}" ++ decl o),
       fun o => styledArticle (barred ++ decl o),
       fun o => paintedDeck "" ("\\usetheme{moloch}" ++ barred ++ decl o),
-      shown "logo" ""] ++
+      shown "logo" "", shown "probeentry" ""] ++
       elements.map fun e => shown e s!"\\style\{{e}}\{ rule = {probeColor} }" }
 
 /-- An article setting every element an engine token spaces: a running head, lists at every depth,
@@ -343,6 +347,38 @@ def tokensRow : Row :=
 def declRows : List Row :=
   [paletteRow] ++ listingRows ++ [setlistRow, setlistScopeRow] ++ tcolorboxRows ++ beamerRows ++
     counterDeclRows ++ [styleRow, tokensRow]
+
+/-- A `\style` key and a `\tokens` name nothing reads are named where the document declares them,
+its own file or one it inputs, and never in a package, class or theme file, a file one inputs, or a
+definition's replacement text. -/
+def declaredScopeChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let parse (file text : String) := (Parse.parse file (Lex.lex file text).1).1
+  let declared := "\n\\style{section}{ separator = #8A2BE2 }\n\\tokens{ idleprobe = 2pt }\n"
+  let subjects := [some "style:section:separator", some "param:\\tokens:idleprobe"]
+  let named (ds : Array Diag) : List (Option String) :=
+    subjects.filter fun sub => ds.any fun d => d.code == "W0104" && d.subject == sub
+  let built (raws : Array Parse.Raw) : Array Diag := (Elab.runRawsSpanned "root.tex" raws).2.1
+  let tail := parse "root.tex" "\\begin{document}\n\\section{Words}Words.\n\\end{document}"
+  let head := parse "root.tex" "\\documentclass{article}\n"
+  let own := built (head ++ parse "root.tex" declared ++ tail)
+  t s!"declared scope: the document's own unread key and token are named ({named own})"
+    (named own == subjects)
+  let spliced (child : String) : Array Diag :=
+    built (head ++ #[Parse.Raw.env (Parse.inputEnv child) (parse child declared) {}] ++ tail)
+  t "declared scope: a file the document inputs names its unread key and token"
+    (named (spliced "part.tex") == subjects)
+  for child in ["probe.sty", "probe.cls", "beamerthemeprobe.sty"] do
+    t s!"declared scope: {child}'s unread key and token are its own, never named"
+      (named (spliced child)).isEmpty
+  let nested := built (head ++ #[Parse.Raw.env (Parse.inputEnv "probe.sty")
+    #[Parse.Raw.env (Parse.inputEnv "probecolors.tex") (parse "probecolors.tex" declared) {}] {}] ++ tail)
+  t "declared scope: a file a package inputs is the package's" (named nested).isEmpty
+  for definer in ["\\newcommand{\\probesetup}", "\\def\\probesetup",
+      "\\NewDocumentCommand{\\probesetup}{}"] do
+    let defined := built (head ++ parse "root.tex" (definer ++ "{" ++ declared ++ "}\\probesetup\n") ++ tail)
+    t s!"declared scope: a definition's replacement text is the definition's ({definer}: {named defined})"
+      (named defined).isEmpty
 
 /-- The declaration census: every setting of every row is read or named, and none read is named
 unread. -/

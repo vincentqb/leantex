@@ -13794,6 +13794,8 @@ private structure TokenTally where
   pending : Option Pos := none
   output : Bool := false
   stylesheet : Bool := false
+  /-- A definer stands earlier in the paragraph, so a declaration here is its replacement text. -/
+  defining : Bool := false
 
 /-- An identifier ends, standing spelled whole and in each part a `-` or `.` divides. -/
 private def TokenTally.flush (t : TokenTally) : TokenTally :=
@@ -13829,11 +13831,13 @@ termination_by structural l => l
 private def tokenTallyOne (file : String) (owned : Bool) (t : TokenTally) : Raw → TokenTally
   | .ctrl "tokens" p => { t.flush with pending := some p, output := false }
   | .ctrl "output" _ => { t.flush with pending := none, output := true }
-  | .ctrl n _ => { t.flush.settle with spelled := t.flush.spelled.insert n }
+  | .ctrl n _ =>
+    { t.flush.settle with spelled := t.flush.spelled.insert n
+                          defining := t.defining || (Definer.names fun _ => true).contains n }
   | .space => t.flush
   | .group body _ =>
     match t.pending with
-    | some p => (t.flush.declare file owned p body).settle
+    | some p => (t.flush.declare file (owned || t.defining) p body).settle
     | none =>
       let sheet := t.output && (Decl.splitEntries (Parse.declSrc body)).any fun e =>
         (Decl.splitEntry e).any (·.1 == "stylesheet")
@@ -13846,7 +13850,8 @@ private def tokenTallyOne (file : String) (owned : Bool) (t : TokenTally) : Raw 
     | none => tokenTallyList file owned t.flush.settle body.toList
   | .word s _ => s.foldl TokenTally.char t.settle
   | .sym c _ => t.settle.char c
-  | .par _ | .verb .. => t.flush.settle
+  | .par _ => { t.flush.settle with defining := false }
+  | .verb .. => t.flush.settle
 termination_by structural r => r
 
 end
@@ -13864,12 +13869,13 @@ public def unusedLengths (file : String) (raws : Array Raw) : Array Diag :=
       (some ⟨f, p⟩) (help := "use the length where the page should read it, or drop the setting")
       (subject := some (paramSubject "setlength" n)))
   let k := tokenTallyList file (packageFile file) {} raws.toList
+  -- premise: none — a declared stylesheet may read any token's custom property, which no check reads
   let tokens := if k.stylesheet then #[] else
     (k.declared.foldl (init := (#[], (∅ : Std.HashSet String))) fun (out, seen) (n, f, p) =>
       if seen.contains n || k.spelled.contains n then (out, seen)
       else (out.push (Diag.of .W0104
-          s!"token '{n}' is declared, but nothing in the document reads it; the declaration \
-changes nothing" (some ⟨f, p⟩)
+          s!"token '{n}' is declared, but nothing in the document reads it; only the web page \
+carries it, as a custom property" (some ⟨f, p⟩)
           (help := s!"name it where a length is read, as \\block[before = {n}] does, or drop it")
           (subject := some (paramSubject "\\tokens" n))), seen.insert n)).1
   lengths ++ tokens

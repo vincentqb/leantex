@@ -1266,6 +1266,7 @@ public def unknownKey (file : String) (what key : String) (known : List String)
     (pos : Pos) : Diag :=
   Diag.of .E0322 s!"'\\{what}' has no key '{key}'" (some ⟨file, pos⟩)
     (help := s!"known keys: {String.intercalate ", " known}")
+    (subject := some s!"param:\\{what}:{key}")
 
 public def wrongType (file : String) (what key expected : String) (got : Value)
     (pos : Pos) : Diag :=

@@ -2333,6 +2333,8 @@ public structure Assertion where
   span : Option Span := none
   /-- Guidance shown when the assertion fails. -/
   help : Option String := none
+  /-- The census key of the setting that implies it. -/
+  subject : Option String := none
   deriving Repr, BEq, Inhabited
 
 /-- The weight axis: the nine NFSS series values. -/
@@ -6648,7 +6650,7 @@ private def flowStyleKeys : List String :=
    "focus", "motion"]
 
 /-- The `\style` keys an element's sites read, a title page outside the flow model its alignment
-too; a `\define`d name takes every key but a list's spacing. -/
+too, a `\define`d name a heading's. -/
 public def styleKeysRead (flow : Bool) : String → List String
   | "section" | "subsection" | "subsubsection" => "font" :: flowStyleKeys
   | "heading1" | "heading5" | "heading6" | "nav" => flowStyleKeys
@@ -6662,7 +6664,7 @@ public def styleKeysRead (flow : Bool) : String → List String
   | e =>
     if drawnElements.contains e && listSetElements.contains e then flowStyleKeys ++ listSetKeys
     else if listSetOnly.contains e then listSetKeys
-    else styleKeys.filter (!listSetKeys.contains ·)
+    else flowStyleKeys
 
 public structure Styles where
   entries : Array (String × ElementStyle) := #[]

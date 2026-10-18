@@ -503,6 +503,7 @@ def declSettingSuiteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     IO Unit := do
   Tests.ParamCensus.declCensusChecks ref oneFace
   Tests.ParamCensus.builtCensusChecks ref
+  Tests.ParamCensus.declaredScopeChecks ref
   Tests.UnusedSettings.firesChecks ref
   Tests.UnusedSettings.scopeChecks ref
   Tests.UnusedSettings.accountingChecks ref

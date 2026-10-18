@@ -54,8 +54,9 @@ def filesUnder (root : System.FilePath) : IO (Array (String × ByteArray)) := do
       out := out.push (rel, ← IO.FS.readBinFile p)
   return out.qsort (·.1 < ·.1)
 
-/-- A tree built by the binary in its own directory under `root`, hermetic but for the census's
-font directory beside it. -/
+/-- A tree built by the binary in its own directory under `root`, with the census's font directory
+beside it and no home, tools or font override; the host's system font directories stay scanned,
+the same for every build of a row. -/
 def builtIn (root : System.FilePath) (n : Nat) (tree : Tree) : IO Built := do
   let dir := root / s!"b{n}"
   IO.FS.createDirAll dir
@@ -76,14 +77,14 @@ def builtIn (root : System.FilePath) (n : Nat) (tree : Tree) : IO Built := do
 /-- Whether a subject is keyed by a setting, or is the setting's own name. -/
 def keyedOrIs (key subject : String) : Bool := subject == key || keyedBy key subject
 
-/-- A setting's verdict over two builds: whether a written file or the exit changed, whether a
-warning or an error keyed by it or its inert row's note names it, and whether one names it unread
-although a written file changed. -/
+/-- A setting's verdict over two builds: whether a written file changed under the same exit,
+whether a warning or an error keyed by it or its inert row's note names it, and whether one names
+it unread although a written file changed. -/
 def builtJudge (base trial : Built) (key : String) (inert : Bool) : Bool × Bool × Bool :=
   let fresh := trial.said.filter fun d => !base.said.contains d
   let shows := trial.files.map (·.1) != base.files.map (·.1) ||
     (trial.files.zip base.files).any fun (a, b) => a.2 != b.2
-  let changed := shows || trial.exit != base.exit
+  let changed := shows && trial.exit == base.exit
   let warned := fresh.filter fun d =>
     (d.severity == "warning" || d.severity == "error") && d.subject.any (keyedOrIs key)
   let noted := if inert then fresh.filter fun d =>
@@ -109,7 +110,7 @@ def builtRowJudged (root : System.FilePath) (start : Nat) (row : BuiltRow) :
   let mut n := start
   let mut bases : Array (Nat × (Option String → Tree) × Task (Except IO.Error Built)) := #[]
   for (d, i) in row.docs.zipIdx do
-    bases := bases.push (i, d, ← IO.asTask (builtIn root n (d none)))
+    bases := bases.push (i, d, ← IO.asTask (builtIn root n (d none)) .dedicated)
     n := n + 1
   let mut out := []
   for s in row.settings do
@@ -118,7 +119,7 @@ def builtRowJudged (root : System.FilePath) (start : Nat) (row : BuiltRow) :
       unless row.tries s i do continue
       let k := n
       n := n + 1
-      let trial ← IO.asTask (builtIn root k (d (some s)))
+      let trial ← IO.asTask (builtIn root k (d (some s))) .dedicated
       tasks := tasks ++ [base.bind fun b => trial.map fun t =>
         match b, t with
         | .ok b, .ok t => builtJudge b t (row.keyOf s) (row.inert s)
@@ -154,23 +155,21 @@ def outputRow : BuiltRow :=
   let tree (cls lead : String) (o : Option String) : Tree :=
     { main := "doc.tex", files := [("doc.tex", cliArticle (decl lead o) (cls := cls)),
         ("probe.css", "p { letter-spacing: 0.1em; }\n")] }
-  -- The defaults every class takes, which no document asks for anew.
-  let defaults := ["alternatives = judged", "color = device"]
   { reader := "\\output"
     settings := ["formats = pdf", "formats = html", "formats = md", "formats = html, md"] ++
       PdfContract.Profile.names.map ("profiles = " ++ ·) ++
       Ir.Scheme.all.map (fun s => s!"schemes = {s.name}") ++
       ["css = own", "css = bulma", "css = none", "stylesheet = \"probe.css\"", "md = \"llms.txt\"",
        "alternatives = required", "color = srgb", "fonts = embedded", "fonts = none",
-       invented ++ " = 1"] ++ defaults
+       invented ++ " = 1"]
     tries := fun s i =>
-      if defaults.contains s then false
-      else if s == "formats = pdf" then i == 1
+      if s == "formats = pdf" then i == 1
       else if (KeyVal.entry s).1 == "formats" then i == 0
       else if s == "fonts = embedded" then i == 3
+      else if s == "css = bulma" then i == 4
       else i == 2
     docs := [tree "article" "", tree "webpage" "", tree "article" all,
-      tree "article" (all ++ ", css = own")] }
+      tree "article" (all ++ ", css = own"), tree "article" (all ++ ", stylesheet = \"probe.css\"")] }
 
 /-- A body setting text in every slot and series a `\fonts` key names, and mathematics in each
 alphabet a source key names, under `fonts`. -/
@@ -189,6 +188,8 @@ def fontsRow : BuiltRow :=
   let decl (lead : String) (o : Option String) : String :=
     s!"\\fonts\{ dir = \"../fonts\"{lead}{(o.map (", " ++ ·)).getD ""} }"
   let face (k v : String) : String := s!"{k} = \"{v}\""
+  -- Every slot stands declared, so no host face is the engine's pick.
+  let slots := ", body = \"Open Sans\", sans = \"Open Sans\", mono = \"Open Sans\", math = \"Fira Math\""
   let variants := ["body.bold", "body.italic", "body.bolditalic", "body.upright", "body.sb",
     "body.b.italic"].map (face · "Source Serif Pro Bold") ++
     ["sans.bold", "sans.italic", "mono.bold", "mono.italic"].map (face · "Source Serif Pro Italic")
@@ -196,13 +197,19 @@ def fontsRow : BuiltRow :=
     settings := ["body", "rm"].map (face · "Source Serif Pro") ++ ["sans", "sf"].map (face · "Fira Sans") ++
       ["mono", "tt"].map (face · "Source Code Pro") ++ [face "math" "Fira Sans"] ++ variants ++
       [face "family.probe" "Fira Sans", face "dir" "elsewhere"] ++
-      (["mathrm", "mathit", "mathbf", "mathsf", "mathtt"].flatMap fun k => [k ++ " = text", k ++ " = sym"]) ++
-      [face invented "x"]
-    -- An alphabet's text source is its default, which no document asks for anew; the second
-    -- document's mathematics stands in the one math face the census ships, the engine's own pick.
-    tries := fun s i => !s.endsWith "= text" && (i == 1) == ((KeyVal.entry s).1 == "math")
-    docs := [fun o => { main := "doc.tex", files := [("doc.tex", slotsArticle (decl ", math = \"Fira Math\"" o))] },
-      fun o => { main := "doc.tex", files := [("doc.tex", slotsArticle (decl "" o) "$1 + 2 = 3$")] }] }
+      ["mathrm", "mathit", "mathbf", "mathsf", "mathtt"].map (· ++ " = sym") ++ [face invented "x"]
+    -- The second document's mathematics stands in the one math face the census ships, the engine's
+    -- own pick; the third's sans and typewriter slots read the body's family.
+    tries := fun s i =>
+      let k := (KeyVal.entry s).1
+      if k == "math" then i == 1
+      else if k.startsWith "sans." || k.startsWith "mono." then i == 2
+      else i == 0
+    docs := [fun o => { main := "doc.tex", files := [("doc.tex", slotsArticle (decl slots o))] },
+      fun o => { main := "doc.tex", files := [("doc.tex", slotsArticle
+        (decl ", body = \"Open Sans\", sans = \"Open Sans\", mono = \"Open Sans\"" o) "$1 + 2 = 3$")] },
+      fun o => { main := "doc.tex", files := [("doc.tex", slotsArticle
+        (decl ", body = \"Open Sans\", math = \"Fira Math\"" o))] }] }
 
 /-- A Lean page as a project holds it: the census's file of statements, `first` its first line, its
 facts beneath the project's build directory and a bibliography beside it. -/
@@ -248,7 +255,7 @@ def directiveRow (src facts : String) : BuiltRow :=
         ("notes/cites.lean", s!"{line "" o}\n/-! # Cited notes\n\nWords resting on [key1] and " ++
           "more words. -/\n\ntheorem probe_true : True := trivial\n"),
         (if listed then "notes/docs/references.bib" else "notes/refs.bib", refsBib)] }
-  let outputKeys := ["schemes = dark", "css = bulma", "md = \"llms.txt\""]
+  let outputKeys := ["schemes = dark", "css = none", "md = \"llms.txt\""]
   { reader := "-- leantex:"
     settings := ["formats = pdf, html", "theme = gemini"] ++ outputKeys ++ showSettings
     tries := fun s i =>
