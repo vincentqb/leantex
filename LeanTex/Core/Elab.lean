@@ -9919,6 +9919,16 @@ private def scopedEnvOwn (l : Ir.ListLineage) (size : Sp) (level : Nat) (n : Str
   (((Ir.QuoteKind.ofName? n).orElse fun _ => if n == "abstract" then some .quotation else none).map
     (·.ownAt l size level)).getD {}
 
+/-- The context of environment `n`'s body: a quotation's is a list level its enclosing lists'
+spacing reaches. -/
+private def quoteMCtx (ctx : Ctx) (n : String) : MCtx ctx :=
+  ⟨if n == "appendices" || (n == "abstract" && !ctx.abstractNests) then ctx
+    else { ctx with listNest := { ctx.quotedNest
+        (scopedEnvOwn ctx.lists ctx.page.fontSize (ctx.listNest.depth + 1) n) with
+      shaped := if ctx.lists == Ir.ListLineage.web || (n != "quotation" && n != "verse") then none
+        else Ir.QuoteKind.ofName? n } },
+    by split <;> rfl, by split <;> rfl, by split <;> rfl, by split <;> rfl⟩
+
 private theorem wrapScopedEnv_text (n : String) (spacing : Ir.ListSet) :
     Ir.Conserves Ir.blocksText (wrapScopedEnv n spacing #[]) := fun inner => by
   unfold wrapScopedEnv
@@ -11836,14 +11846,7 @@ the text width; the box takes the whole measure" pos
   else if n == "quote" || n == "quotation" || n == "verse" || n == "abstract"
       || n == "appendices" then
     let saved ← enterAppendicesIf (n == "appendices")
-    -- A quotation is a list level, which its enclosing lists' spacing reaches as LaTeX's does.
-    let ⟨quoteCtx, _⟩ : MCtx ctx ← pure ⟨
-      if n == "appendices" || (n == "abstract" && !ctx.abstractNests) then ctx
-      else { ctx with listNest := { ctx.quotedNest
-          (scopedEnvOwn ctx.lists ctx.page.fontSize (ctx.listNest.depth + 1) n) with
-        shaped := if ctx.lists == Ir.ListLineage.web || (n != "quotation" && n != "verse") then none
-          else Ir.QuoteKind.ofName? n } },
-      by split <;> rfl, by split <;> rfl, by split <;> rfl, by split <;> rfl⟩
+    let ⟨quoteCtx, _⟩ : MCtx ctx ← pure (quoteMCtx ctx n)
     let inner ← splicedFrameScope (if n == "appendices" then some blocks.size else none)
       (elabBlockScope quoteCtx body)
     leaveAppendices saved

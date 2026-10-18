@@ -60,7 +60,7 @@
 ── E0309 (dropped) unknown document class
 ✖ [E0309] - \documentclass
   unknown document class 'proseplate'
-  suggestion: classes: article, slides, card, resume, webpage, poster
+  suggestion: classes: article, slides, card, resume, webpage, poster, scrartcl
 ── E0310 (dropped) content before the first \item in a list
 ✖ [E0310] - \begin
   content before the first '\item'
@@ -221,7 +221,7 @@
 ── N0017 (info) no document class declared; the article page model is assumed
 ℹ [N0017]
   no '\documentclass'; the article page model is assumed
-  suggestion: declare \documentclass{article} (or slides, card, resume, webpage, poster) to choose it
+  suggestion: declare \documentclass{article} (or slides, card, resume, webpage, poster, scrartcl) to choose it
 ── N0018 (info) math alphabet unavailable in the selected face; source glyphs stand
 ℹ [N0018]
   'Fira Math' has no calligraphic alphabet for the characters used; ordinary math source glyphs stand

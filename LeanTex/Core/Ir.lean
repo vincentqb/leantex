@@ -7540,7 +7540,7 @@ public theorem DocClass.ofString?_name (c : DocClass) : ofString? c.name = some 
 
 /-- Every class, in the order a help lists them. -/
 @[expose] public def DocClass.all : List DocClass :=
-  [.article, .slides, .card, .resume, .webpage, .poster]
+  [.article, .slides, .card, .resume, .webpage, .poster, .koma]
 
 public theorem DocClass.all_complete (c : DocClass) : c ∈ DocClass.all := by
   cases c <;> simp [DocClass.all]
