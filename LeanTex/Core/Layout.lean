@@ -9311,7 +9311,7 @@ public structure Spacing.Context where
   private frameKeys : Ir.FrameKeys := .beamer
   /-- Every frame's label at its body index (`Ir.Doc.frameLabels`). -/
   private frameLabels : Array (Option String) := #[]
-  /-- Each top-level heading's claimed anchor at its body index (`Ir.headingAnchors`, in a deck
+  /-- Each top-level heading's claimed anchor at its body index (`Ir.flowAnchors`, in a deck
   `Ir.deckAnchors`). -/
   private sectionAnchors : Array (Option Ir.SectionAnchor) := #[]
   /-- Each top-level frame's claimed anchors at its body index, in a deck (`Ir.deckAnchors`). -/
@@ -11407,9 +11407,9 @@ private def collectContentsEntry (r : Rd) (a : Acc) (e : Ir.ContentsEntry) (cont
   collectPara r a content textIndent false r.geom.fontSize (baseStyle := style)
     (marker := marker) (markerLeft := markerLeft) (leaf := leaf) (span := span)
 
-/-- A flow's contents entry: its words, leaders or a fill, then its folio right-aligned in
-`\@pnumwidth` past the `rightMargin` its lines wrap short of, as article.cls sets `\rightskip`. -/
-private def contentsPageLine (a : Acc) (r : Rd) (e : Ir.ContentsEntry) (bold dotted : Bool)
+/-- A flow's contents entry: its words, an unbreakable fill its style may lead, then its folio
+right-aligned in `\@pnumwidth` past the `rightMargin` its lines wrap short of, as article.cls's. -/
+private def contentsPageLine (a : Acc) (r : Rd) (e : Ir.ContentsEntry) (bold : Bool)
     (rightMargin : Nat) : Array Inline × Acc :=
   let folio := (e.page.map toString).getD ""
   let shown : Array Inline := if bold then #[.styled .bold #[.text folio]] else #[.text folio]
@@ -11417,7 +11417,7 @@ private def contentsPageLine (a : Acc) (r : Rd) (e : Ir.ContentsEntry) (bold dot
     else a.naturalWidth r r.geom.fontSize shown r.geom.textWidth
   let box := r.geom.fontSize * (Ir.contentsPageWidth : Int) / 1000
   let kern (v : Sp) : Inline := .hspace (.lit { width := Dim.Length.ofSp v }) true
-  let reach : Inline := if dotted then .hspace (.lit { fil := true }) true else .fill
+  let reach : Inline := .hspace (.lit { fil := true }) true
   (markContent e.inline ++ #[reach, kern (box - w)] ++
     (if folio.isEmpty then #[] else #[.text folio]) ++
     #[kern (-(r.geom.fontSize * (rightMargin : Int) / 1000))], a)
@@ -11449,7 +11449,7 @@ private def collectContents (r : Rd) (a : Acc) (spec : Ir.ContentsSpec)
       else
         a := a.vskip { stretch := Dim.pt 1 / 5 } -- latex.ltx \@dottedtocline
       let rightMargin := if isSection then Ir.contentsPageWidth else Ir.contentsRightMargin
-      let (content, a1) := contentsPageLine a r e isSection (!isSection) rightMargin
+      let (content, a1) := contentsPageLine a r e isSection rightMargin
       let full := (saved.getD r.geom.textWidth) - indent
       a := { a1 with measure := some ((saved.getD r.geom.textWidth) - milli rightMargin) }
       -- The leaders end where the folio's box opens, `\@pnumwidth` before the line box's end.
@@ -11459,7 +11459,7 @@ private def collectContents (r : Rd) (a : Acc) (spec : Ir.ContentsSpec)
       a := match e.number with
         | some n =>
           collectContentsEntry r a e content (left + milli level.numWidth) style
-            (some #[Ir.Inline.text n]) (some left)
+            (some (if isSection then #[.styled .bold #[.text n]] else #[.text n])) (some left)
         | none => collectContentsEntry r a e content left style none none
       a := { a with measure := saved }
   return a
@@ -13816,7 +13816,7 @@ private def leaderDots (segs : Array Seg) : Array (Sp × Array (Sp × Sp) × Ir.
       if let some lp := d.leaders then
         if 0 < lp.box && lp.color != hiddenPaint then
           -- Box `k` spans `[k * box, (k + 1) * box)` from the line box's edge, `reach` before the gap's end.
-          let first := -((lp.reach - w) / -lp.box)
+          let first := -((w - lp.reach) / lp.box)
           let last := lp.reach / lp.box
           let edge := x + w - lp.reach
           for j in [0:(last - first).toNat] do
@@ -19635,7 +19635,7 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
                    frameKeys := doc.frameKeys
                    frameLabels := doc.frameLabels
                    sectionAnchors := if doc.docClass.record.model == .flow then
-                     Ir.headingAnchors doc.body
+                     Ir.flowAnchors doc.body
                      else if doc.docClass.record.model == .frame then deckIds.sections else #[]
                    frameAnchorIds := if doc.docClass.record.model == .frame then
                      deckIds.frames else #[]
@@ -20333,9 +20333,10 @@ public structure Fitted where
   decisions : Array (FrameOrigin × Ir.FrameFit) := #[]
   webSqueeze : Array Nat := #[]
 
-/-- The folio of the page each anchor of `out` lands on. -/
-private def folioOf (out : Out) (name : String) : Option Nat :=
-  ((anchorIndex out.pages)[name]?).bind fun (i, _) => (out.pages[i]?).map (·.pageState.folio)
+/-- The folio of the page an anchor of `out` lands on, read from its anchor index `index`. -/
+private def folioAt (out : Out) (index : Std.HashMap String (Nat × AnchorSite)) (name : String) :
+    Option Nat :=
+  (index[name]?).bind fun (i, _) => (out.pages[i]?).map (·.pageState.folio)
 
 /-- The pages pass: a document printing folios is set again with those its setting `laid` lands
 their anchors on, and once more where a folio's width moved one, else it stands as laid. -/
@@ -20345,11 +20346,13 @@ private def pagesPass (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Pattern
   let targets := Ir.pageTargets setting
   if targets.isEmpty then (setting, laid)
   else
-    let paged := Ir.fillPages (folioOf laid) setting
+    let first := folioAt laid (anchorIndex laid.pages)
+    let paged := Ir.fillPages first setting
     let again := run geom fs pats paged imgs frameSpans pictureSpans
-    if targets.all fun t => folioOf again t == folioOf laid t then (paged, again)
+    let second := folioAt again (anchorIndex again.pages)
+    if targets.all fun t => second t == first t then (paged, again)
     else
-      let repaged := Ir.fillPages (folioOf again) setting
+      let repaged := Ir.fillPages second setting
       (repaged, run geom fs pats repaged imgs frameSpans pictureSpans)
 
 private theorem pagesPass_run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)

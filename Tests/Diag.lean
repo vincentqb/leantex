@@ -282,7 +282,7 @@ def diagWitnessWith (w : WitnessRun) (one mapped withMath : Font.FontSet)
   | .E0502 => probed .E0502
   | .N0100 => dvE (w := w) (dvDoc "\\usepackage[margin=1in]{geometry}\n" "x")
   | .N0102 => dvE (w := w) (dvDeck "" "\\begin{frame}[plain]{T}\nx\n\\end{frame}")
-  | .N0103 => dvE (w := w) (dvDoc "" "\\section[short]{A long title}\nx")
+  | .N0103 => dvE (w := w) (dvDoc "" "\\paragraph[short]{A long title} x")
   | .N0104 => dvE (w := w) (dvDeck ""
       "\\begin{frame}<presentation:0>[noframenumbering]{T}\nx\n\\end{frame}")
   | .N0105 =>
@@ -1881,7 +1881,7 @@ def diagSiteCountChecks (ref : IO.Ref (List String)) : IO Unit := do
     (((of "N0102" floats).map (·.message)).toList.eraseDups.length == 2 &&
       (of "N0102" floats).all (·.sites == 1))
   let shorts := (elabStr (dvDoc ""
-    "\\section[One]{Section one}\n\n\\subsection[Two]{Subsection two}")).2
+    "\\paragraph[One]{Paragraph one} x\n\n\\subparagraph[Two]{Subparagraph two} y")).2
   t "two heading levels each name their own unused short title"
     (((of "N0103" shorts).map (·.message)).toList.eraseDups.length == 2 &&
       (of "N0103" shorts).all (·.sites == 1))

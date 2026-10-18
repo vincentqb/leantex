@@ -277,9 +277,9 @@
 ── N0102 (info) option ignored: it configures machinery the engine does not model
 ℹ [N0102] - \begin
   frame option 'plain' is not modelled; ignored
-── N0103 (info) \section short title unused: nothing consumes it yet
-ℹ [N0103] - \section
-  '\section[short]' short title is unused: nothing consumes it yet
+── N0103 (info) \paragraph short title unused: nothing consumes it yet
+ℹ [N0103] - \paragraph
+  '\paragraph[short]' short title is unused: nothing consumes it yet
 ── N0104 (info) a frame declared for another mode ships no page in this one
 ℹ [N0104] - \begin
   '<presentation:0>' declares no presentation slides; this frame ships no page

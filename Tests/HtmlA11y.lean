@@ -50,7 +50,7 @@ def pendingTabStops (head : Array Html.Node) (f : HtmlDoc.A11yFacts) : Nat :=
   if stepsFadeFromNothing css && !pendingStepsOutOfReach css then f.stepTabStops else 0
 
 /-- A page's accessibility deficits, one count per check (`contrast`, `h1`, `hidden-focus`, `img`,
-`pending-focus`, `scope-marks`, `scroll`, `svg`), sorted by check name. -/
+`landmarks`, `link`, `pending-focus`, `scope-marks`, `scroll`, `svg`), sorted by check name. -/
 def a11yDeficits (doc : Ir.Doc) (head body : Array Html.Node) :
     List (String × Nat) :=
   let f := a11yFactsOf doc body
@@ -58,6 +58,8 @@ def a11yDeficits (doc : Ir.Doc) (head body : Array Html.Node) :
    ("h1", if f.h1s == 1 then 0 else 1),
    ("hidden-focus", f.hiddenTabStops),
    ("img", f.imgsUnnamed),
+   ("landmarks", f.landmarksAlike),
+   ("link", f.linksUnnamed),
    ("pending-focus", pendingTabStops head f),
    ("scope-marks", f.laidUnmarked),
    ("scroll", f.scrollsUnreachable),
@@ -166,6 +168,10 @@ def htmlA11yChecks (ref : IO.Ref (List String)) : IO Unit := do
     summariesSeen := summariesSeen + f.summaries
     t s!"html a11y {n}: every disclosure's control is named \
 ({f.summariesUnnamed} of {f.summaries} not)" (f.summariesUnnamed == 0)
+    t s!"html a11y {n}: every link is named ({f.linksUnnamed} of {f.links} not)"
+      (f.linksUnnamed == 0)
+    t s!"html a11y {n}: no two navigation landmarks are alike ({f.landmarksAlike})"
+      (f.landmarksAlike == 0)
     -- No two stages share a name (a floor: the corpus repeats no title).
     let names := (stageMarks body).filterMap (·.2)
     t s!"html a11y {n}: no two stages share a name"

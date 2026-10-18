@@ -17,11 +17,12 @@
 # a command each section it opens calls right after its title, its starred
 # code after a starred section, a later hook opening the later sections and
 # a hook a group declares ending with it; the insert commands name the section
-# in force; a frame holding only \sectionpage is the section's page; a frame's
-# label option labels the frame. §10.5 (Adding a Table of Contents): \tableofcontents
-# lists the unstarred sections and subsections, its options showing, shading
-# or hiding them about the section in force; pausesections, which steps the
-# list, is named. These rows probe the deck's body outside the frames: the
+# in force; a frame holding only \sectionpage or \subsectionpage is its
+# heading's page; a frame's label option labels the frame; the \frame command
+# is the frame environment. §10.5 (Adding a Table of Contents): \tableofcontents
+# lists the unstarred sections, subsections and subsubsections to tocdepth, its
+# options showing, shading or hiding them about the heading in force;
+# pausesections, which steps the list, is named. These rows probe the deck's body outside the frames: the
 # `deck` place.
 frame impl \begin{columns}[T]\begin{column}{0.5\textwidth}x\end{column}\begin{column}{0.5\textwidth}y\end{column}\end{columns}
 frame impl \begin{columns}[T,onlytextwidth]\column{0.5\textwidth}x\column{0.5\textwidth}y\end{columns}
@@ -39,6 +40,10 @@ deck impl \section{Alpha}\begin{frame}{\insertsectionhead}y\end{frame}
 deck impl \section{Alpha}\begin{frame}{\insertsectionnumber}y\end{frame}
 deck impl \section{Alpha}\subsection{Beta}\begin{frame}{\insertsubsection}y\end{frame}
 deck impl \section{Alpha}\begin{frame}\sectionpage\end{frame}\begin{frame}y\end{frame}
+deck impl \section{A}\subsection{B}\begin{frame}\subsectionpage\end{frame}\begin{frame}y\end{frame}
+deck impl \frame{\frametitle{Alpha}x}
+deck impl \frame[plain]{x}
+deck impl \section{A}\subsection{B}\subsubsection{C}\begin{frame}\tableofcontents[subsubsectionstyle=show/shaded]\end{frame}\begin{frame}y\end{frame}
 deck impl \begin{frame}[label=one]x\end{frame}\begin{frame}\ref{one}\end{frame}
 deck impl \begin{frame}\tableofcontents\end{frame}\section{Alpha}\begin{frame}y\end{frame}
 deck impl \section{Alpha}\begin{frame}\tableofcontents[currentsection]\end{frame}\section{Beta}\begin{frame}y\end{frame}

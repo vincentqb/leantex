@@ -547,6 +547,7 @@ def printColourChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
 def sectionSuiteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   sectionPageChecks ref oneFace
   contentsChecks ref oneFace
+  contentsEdgeChecks ref oneFace
 
 /-- The layout, census, theme and chrome blocks over the shipped face; a missing or unparsable font
 only skips them, `fontSuiteChecks` reporting it. -/

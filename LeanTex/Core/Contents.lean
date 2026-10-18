@@ -15,8 +15,17 @@ private def sectionShow (spec : ContentsSpec) (s1 : Nat) : ContentsShow :=
 or as one of another section. -/
 private def subsectionShow (spec : ContentsSpec) (s1 s2 : Nat) : ContentsShow :=
   if s1 == spec.current.1 then
-    if s2 == spec.current.2 then spec.subsections.1 else spec.subsections.2.1
+    if s2 == spec.current.2.1 then spec.subsections.1 else spec.subsections.2.1
   else spec.subsections.2.2
+
+/-- How beamer's options set a subsubsection: as the current one, as another of the current
+subsection, as one of the current section's other subsections, or as one of another section. -/
+private def subsubsectionShow (spec : ContentsSpec) (s1 s2 s3 : Nat) : ContentsShow :=
+  if s1 == spec.current.1 then
+    if s2 == spec.current.2.1 then
+      if s3 == spec.current.2.2 then spec.subsubsections.1 else spec.subsubsections.2.1
+    else spec.subsubsections.2.2.1
+  else spec.subsubsections.2.2.2
 
 /-- The stage each top-level block opens onto: a section page's route where the block is a section
 standing on one, else the anchor of the next frame after it. -/
@@ -35,29 +44,28 @@ private def nextStages (doc : Doc) : Array (Option String) := Id.run do
 private def entryUnless (look : ContentsShow) (e : ContentsEntry) : Option ContentsEntry :=
   if look == .hidden then none else some { e with shaded := look == .shaded }
 
-/-- The entries a deck's `\tableofcontents` lists: its unstarred sections and subsections in flow
-order, unnumbered as beamer's default template sets them, each opening the stage set next, shown,
-shaded or hidden as the options set it about the section beamer counts in force. -/
+/-- The entries a deck's `\tableofcontents` lists, as beamerbasetoc.sty's: its unstarred titled
+headings to the depth, unnumbered, a subsubsection's in `\footnotesize`, each opening the stage set
+next, shown, shaded or hidden as the options set it about the heading in force. -/
 public def deckContents (doc : Doc) (spec : ContentsSpec) : Array ContentsEntry := Id.run do
   let stages := nextStages doc
   let mut out : Array ContentsEntry := #[]
-  let mut s1 := 0
-  let mut s2 := 0
+  let mut counts : Nat × Nat × Nat := (0, 0, 0)
   for h : i in [0:doc.body.size] do
     if let .section level starred _ title := doc.body[i] then
-      let target := stages[i]?.join
-      if level == .h2 then
-        s1 := s1 + 1
-        s2 := 0
-        if !starred then
-          if let some e := entryUnless (sectionShow spec s1)
-              { depth := 0, number := none, title := nameOf title, target, shaded := false } then
-            out := out.push e
-      else if level == .h3 then
-        s2 := s2 + 1
-        if !starred then
-          if let some e := entryUnless (subsectionShow spec s1 s2)
-              { depth := 1, number := none, title := nameOf title, target, shaded := false } then
+      let (s1, s2, s3) := counts
+      counts := if level == .h2 then (s1 + 1, 0, 0) else if level == .h3 then (s1, s2 + 1, 0)
+        else if level == .h4 then (s1, s2, s3 + 1) else counts
+      let (s1, s2, s3) := counts
+      let at? : Option (Nat × ContentsShow) := if level == .h2 then some (0, sectionShow spec s1)
+        else if level == .h3 then some (1, subsectionShow spec s1 s2)
+        else if level == .h4 then some (2, subsubsectionShow spec s1 s2 s3) else none
+      if let some (depth, look) := at? then
+        if !starred && !(metaText title).trimAscii.isEmpty && depth < spec.depth then
+          let shown := if depth == 2 then #[.styled (.size "footnotesize") (nameOf title)]
+            else nameOf title
+          if let some e := entryUnless look
+              { depth, number := none, title := shown, target := stages[i]?.join, shaded := false } then
             out := out.push e
   return out
 
@@ -71,17 +79,18 @@ private def contentsLevel : HeadingLevel → Option Nat
   | .h6 => some 5
   | .title | .h1 => none
 
-/-- The entries a flow's `\tableofcontents` lists: its unstarred numbered headings down to the
-depth, each opening its heading. -/
+/-- The entries a flow's `\tableofcontents` lists: its unstarred headings down to the depth, each by
+its short title where it declared one, as article's, and opening its heading. -/
 public def flowContents (doc : Doc) (spec : ContentsSpec) : Array ContentsEntry := Id.run do
-  let anchors := headingAnchors doc.body
+  let anchors := flowAnchors doc.body
   let mut out : Array ContentsEntry := #[]
   for h : i in [0:doc.body.size] do
     if let .section level starred num title := doc.body[i] then
       if let some rank := contentsLevel level then
         if !starred && rank ≤ spec.depth then
-          out := out.push { depth := rank - 1, number := num, title := nameOf title
-                            target := (anchors[i]?.join).map (·.id), shaded := false }
+          let target := (anchors[i]?.join).map (·.id)
+          out := out.push { depth := rank - 1, number := num
+                            title := nameOf (doc.listedTitle num title), target, shaded := false }
   return out
 
 mutual
@@ -96,7 +105,7 @@ private def rewriteContentsOne (f : ContentsSpec → Array ContentsEntry → Blo
   | .list o s items => .list o s (rewriteContentsItems f #[] items.toList)
   | .center body => .center (rewriteContentsList f #[] body.toList)
   | .ragged s body => .ragged s (rewriteContentsList f #[] body.toList)
-  | .quote body => .quote (rewriteContentsList f #[] body.toList)
+  | .quote q body => .quote q (rewriteContentsList f #[] body.toList)
   | .lines ls => .lines ls
   | .abstract body => .abstract (rewriteContentsList f #[] body.toList)
   | .titled kind title body => .titled kind title (rewriteContentsList f #[] body.toList)

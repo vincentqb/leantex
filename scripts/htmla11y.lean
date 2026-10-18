@@ -1,5 +1,5 @@
 /-
-The htmla11y tier: per golden fixture's HTML page, the eight deficits `HtmlDoc.a11yFacts` counts,
+The htmla11y tier: per golden fixture's HTML page, the ten deficits `HtmlDoc.a11yFacts` counts,
 as headroom; hermetic.
 Usage: lake env lean --run scripts/htmla11y.lean [--check | --selftest]
 -/
@@ -114,6 +114,28 @@ def a11ySelftest : IO UInt32 := tierSelftest "htmla11y" fun no => do
     ((facts #[a11yEl "pre" #[("tabindex", "0")]]).scrollsUnreachable == 0)
   no "scroll: under a stylesheet the engine does not own, nothing is declared"
     ((facts #[a11yEl "pre", stage #[]] (own := false)).scrolls == 0)
+  -- landmarks: past the first, a navigation landmark is named, and no two share a name.
+  let nav (attrs : Array (String × String)) := a11yEl "nav" attrs #[link]
+  no "landmarks: one unnamed landmark is told apart"
+    ((facts #[nav #[]]).landmarksAlike == 0)
+  no "landmarks: a second unnamed one is not"
+    ((facts #[nav #[], nav #[]]).landmarksAlike == 2)
+  no "landmarks: two sharing a name are alike"
+    ((facts #[nav #[("aria-label", "Contents")], nav #[("aria-label", "Contents")]]).landmarksAlike
+      == 1)
+  no "landmarks: two named apart are not"
+    ((facts (HtmlDoc.nameNavsApart #[nav #[("aria-label", "Contents")],
+      nav #[("aria-label", "Contents")]])).landmarksAlike == 0)
+  -- link: a link reads as its text, an image's alternative or its own name.
+  no "link: a link with words is named" ((facts #[link]).linksUnnamed == 0)
+  no "link: an empty link is unnamed"
+    ((facts #[a11yEl "a" #[("href", "#x")]]).linksUnnamed == 1)
+  no "link: an image's alternative names it"
+    ((facts #[a11yEl "a" #[("href", "#x")] #[img #[("alt", "a chart")]]]).linksUnnamed == 0)
+  no "link: an aria-label names it"
+    ((facts #[a11yEl "a" #[("href", "#x"), ("aria-label", "back")]]).linksUnnamed == 0)
+  no "link: words under aria-hidden do not"
+    ((facts #[a11yEl "a" #[("href", "#x")] #[hide #[.text "x"]]]).linksUnnamed == 1)
   -- scope-marks: a laid-out paragraph's hidden marks spell each scope's bounds.
   let line (kids : Array Html.Node) := a11yEl "span" #[("class", "lines-line")] kids
   let scope (kids : Array Html.Node) := a11yEl "span" #[("class", "lines-scope")] kids

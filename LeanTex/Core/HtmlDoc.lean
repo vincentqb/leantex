@@ -8395,7 +8395,8 @@ private def contentsNode (cfg : Config) (spec : Ir.ContentsSpec)
     let grows := !cfg.fillsInert
     let kids := (Ir.deckContentsSteps spec entries).map fun step => match step with
       | .skip g =>
-        skipNode cfg.page.fontSize (Ir.Sourced.bare g) (if grows && g.fil then some Ir.fillUnit else none)
+        skipNode cfg.page.fontSize (exAt cfg.fonts cfg.page.fontSize) (Ir.Sourced.bare g)
+          (if grows && g.fil then some Ir.fillUnit else none)
       | .entry e => contentsEntryNode cfg e
     fillCarrier cfg (Ir.contentsFills spec entries)
       (Html.elem tag kids (#[("class", "contents deck")] ++ named))
@@ -8993,6 +8994,37 @@ private def claimStageName (named : NameClaim.Claims .parenthesized) :
   | .style s => (.style s, named)
   | .script attrs s => (.script attrs s, named)
 
+mutual
+
+-- conserves: none — a renaming of navigation landmarks
+/-- Every navigation landmark with its name claimed against the earlier landmarks' names. -/
+private def claimNavNamesOne (named : NameClaim.Claims .parenthesized) :
+    Node → Node × NameClaim.Claims .parenthesized
+  | .elem tag attrs kids =>
+    let (attrs, named) := match tag == "nav", attrOf? attrs "aria-label" with
+      | true, some name =>
+        let (got, named) := claimName named name
+        (attrs.map fun kv => if kv.1 == "aria-label" then (kv.1, got) else kv, named)
+      | _, _ => (attrs, named)
+    let r := claimNavNamesList named #[] kids.toList
+    (.elem tag attrs r.1, r.2)
+  | .text s => (.text s, named)
+  | .style s => (.style s, named)
+  | .script a s => (.script a s, named)
+
+private def claimNavNamesList (named : NameClaim.Claims .parenthesized) (acc : Array Node) :
+    List Node → Array Node × NameClaim.Claims .parenthesized
+  | [] => (acc, named)
+  | x :: rest =>
+    let r := claimNavNamesOne named x
+    claimNavNamesList r.2 (acc.push r.1) rest
+
+end
+
+/-- A page's navigation landmarks named apart, as ARIA asks of repeated landmarks. -/
+public def nameNavsApart (body : Array Node) : Array Node :=
+  (claimNavNamesList {} #[] body.toList).1
+
 /-- A stage with the anchors that wait for it standing first, where the deck's address finds them. -/
 private def withHeld (held : Array Node) : Node → Node
   | .elem tag attrs kids => .elem tag attrs (held ++ kids)
@@ -9092,7 +9124,7 @@ private def sectionize (cfg : Config) (blocks : Array Block) :
   let mut openId : Option String := none
   let mut diags : Array Diag := #[]
   let mut cfg := cfg
-  let anchors := Ir.headingAnchors blocks
+  let anchors := Ir.flowAnchors blocks
   for (b, i) in blocks.zipIdx do
     match b with
     | .setPalette p =>
@@ -9630,8 +9662,8 @@ retitle them apart, or link to the numbered anchor")
     body := body.push (Html.elem "div" #[]
       #[("class", "deck-progress"), ("aria-hidden", "true")])
   body := body ++ deckScriptNodes (doc.docClass == .slides)
-  -- figures numbered apart before the anchors are judged
-  body := numberFigures body
+  -- figures numbered apart before the anchors are judged, and landmarks named apart
+  body := nameNavsApart (numberFigures body)
   let facts := pageFacts.list none {} body.toList
   -- premise: slideLabelChecks — these routes ship with the constant script
   let routes := if facts.deck then
@@ -9857,11 +9889,34 @@ public structure A11yFacts where
   laidParas : Nat := 0
   /-- Laid-out paragraphs whose hidden marks do not spell their scopes' bounds. -/
   laidUnmarked : Nat := 0
+  /-- Each navigation landmark's name, empty where it carries none, in reading order. -/
+  navNames : Array String := #[]
+  links : Nat := 0
+  /-- Links with no text, image alternative or name of their own. -/
+  linksUnnamed : Nat := 0
   deriving Repr, BEq, Inhabited
+
+/-- The navigation landmarks assistive technology cannot tell apart: the unnamed ones where more
+than one is, as W0325 counts them, and each repeating an earlier one's name. -/
+public def A11yFacts.landmarksAlike (f : A11yFacts) : Nat :=
+  let unnamed := (f.navNames.filter (·.isEmpty)).size
+  let named := f.navNames.filter (!·.isEmpty)
+  (if unnamed > 1 then unnamed else 0) + (named.size - named.toList.eraseDups.length)
 
 private def textHeld : Html.Walk Unit Bool where
   text _ acc s := acc || nonBlank s
   inner _ _ attrs := if (attrOf? attrs "hidden").isSome then none else some ()
+
+/-- What names the element holding a forest: text, an image's alternative or an element's own
+name, outside a hidden subtree. -/
+private def nameHeld : Html.Walk Unit Bool where
+  text _ acc s := acc || nonBlank s
+  inner _ _ attrs :=
+    if (attrOf? attrs "hidden").isSome || attrOf? attrs "aria-hidden" == some "true" then none
+    else some ()
+  enter _ acc tag attrs kids :=
+    acc || (tag == "img" && nonBlank ((attrOf? attrs "alt").getD "")) ||
+      carriesName (.elem tag attrs kids)
 
 /-- Whether a forest holds non-blank text outside a `hidden` subtree. -/
 public def holdsTextList (ns : List Node) : Bool := textHeld.list () false ns
@@ -9937,6 +9992,18 @@ private def a11yElem (own deck : Bool) (tag : String) (attrs : Array (String × 
   let acc := if tag == "p" && (classTokens attrs).contains "lines" then
       { acc with laidParas := acc.laidParas + 1
                  laidUnmarked := acc.laidUnmarked + (if scopesMarked kids then 0 else 1) }
+    else acc
+  let acc := if tag == "nav" then
+      let name := if carriesName (.elem tag attrs kids) then
+          (attrOf? attrs "aria-label").getD ((attrOf? attrs "aria-labelledby").getD "")
+        else ""
+      { acc with navNames := acc.navNames.push name }
+    else acc
+  let acc := if tag == "a" && (attrOf? attrs "href").isSome then
+      { acc with links := acc.links + 1
+                 linksUnnamed := acc.linksUnnamed +
+                   (if nameHeld.list () false kids.toList || carriesName (.elem tag attrs kids)
+                    then 0 else 1) }
     else acc
   if declaresScroll own deck tag attrs then
     { acc with scrolls := acc.scrolls + 1

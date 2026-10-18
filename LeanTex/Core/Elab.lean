@@ -515,11 +515,14 @@ public inductive GlobalWrite where
   deriving Repr, BEq, Inhabited
 
 /-- The section and subsection in force, as beamer's `\insertsection` family reads them: titles as
-`\nameref` sets them, numbers as the deck's counters print them. -/
+`\nameref` sets them, a head its short title where given, numbers as the deck's counters print
+them. -/
 public structure SectionInForce where
   sectionTitle : Array Inline := #[]
+  sectionHead : Array Inline := #[]
   sectionNum : String := ""
   subsectionTitle : Array Inline := #[]
+  subsectionHead : Array Inline := #[]
   subsectionNum : String := ""
   deriving Inhabited
 
@@ -530,11 +533,11 @@ public def SectionInForce.names : List String :=
 
 /-- What one of beamer's `\insertsection` family sets. -/
 public def SectionInForce.insert? (s : SectionInForce) (name : String) : Option (Array Inline) :=
-  if name == "insertsection" || name == "insertsectionhead" || name == "secname" then
-    some s.sectionTitle
+  if name == "insertsection" || name == "secname" then some s.sectionTitle
+  else if name == "insertsectionhead" then some s.sectionHead
   else if name == "insertsectionnumber" then some #[.text s.sectionNum]
-  else if name == "insertsubsection" || name == "insertsubsectionhead" || name == "subsecname" then
-    some s.subsectionTitle
+  else if name == "insertsubsection" || name == "subsecname" then some s.subsectionTitle
+  else if name == "insertsubsectionhead" then some s.subsectionHead
   else if name == "insertsubsectionnumber" then some #[.text s.subsectionNum]
   else none
 
@@ -624,6 +627,8 @@ public structure ESt where
   date : Option (Array Inline) := none
   /-- Beamer's optional short forms, read by its `\insertshort...` commands. -/
   shortTitles : List (TitleDatum × Array Inline) := []
+  /-- The short titles headings declared, in flow order (`Ir.Doc.shortTitles`). -/
+  headingShorts : Array Ir.ShortTitle := #[]
   /-- A `\maketitle` already set the title, which LaTeX typesets once. -/
   titleDone : Bool := false
   /-- The last refused `\maketitle` redefinition's body, read again at the
@@ -1903,6 +1908,12 @@ private def scanBracketArg (raws : Array Raw) (i : Nat) (anchor : Pos) : ArgScan
       | some c => .took (c + 1)
       | none => .unclosed bpos
   | _ => .content
+
+/-- The raws of the `[...]` argument `scanBracketArg` takes at `i`, as a heading's short title. -/
+private def shortTitleRaws (raws : Array Raw) (i : Nat) (anchor : Pos) : Option (Array Raw) :=
+  match scanBracketArg raws i anchor with
+  | .took next => some (raws.extract (skipSpaces raws i + 1) (next - 1))
+  | .unclosed _ | .content => none
 
 private theorem scanBracketArg_took_lt {raws : Array Raw} {i : Nat}
     {anchor : Pos} {n : Nat} (h : scanBracketArg raws i anchor = .took n) :
@@ -6472,8 +6483,9 @@ private def sectionNumber (ctx : Ctx) (level : Nat) (starred : Bool) :
   let st ← get
   let deck := ctx.slides
   -- premise: counterChecks — a heading numbers only where its class numbers, within secnumdepth
+  -- outside a deck, whose every heading steps its counter as beamer's `\refstepcounter` does
   if (starred && !deck) || (!ctx.numberHeadings && !deck) || level == 0 || level > 3 ||
-      (level : Int) > st.ctr.secDepth then
+      (!deck && (level : Int) > st.ctr.secDepth) then
     return none
   let (s1, s2, s3) := st.ctr.secNums
   let nums := match level with
@@ -6504,8 +6516,7 @@ an option it does not model is named. -/
 private def contentsSpecOf (ctx : Ctx) (opts : Option String) (pos : Pos) :
     EM Ir.ContentsSpec := do
   let st ← get
-  let (s1, s2, _) := st.ctr.secNums
-  let mut spec : Ir.ContentsSpec := { current := (s1, s2), depth := st.ctr.tocDepth.toNat }
+  let mut spec : Ir.ContentsSpec := { current := st.ctr.secNums, depth := st.ctr.tocDepth.toNat }
   -- premise: contentsChecks — a run-in paragraph heading is no heading block the contents list
   if !ctx.slides && st.ctr.tocDepth > 3 then
     warnOnce ctx "contents:tocdepth" .W0104
@@ -6516,34 +6527,61 @@ the contents stop at subsubsections" pos
     let parts := (value.getD "").splitOn "/"
     match key, contentsStyle parts with
     | "currentsection", _ =>
-      spec := { spec with sections := (.shown, .shaded), subsections := (.shown, .shown, .shaded) }
+      spec := { spec with sections := (.shown, .shaded), subsections := (.shown, .shown, .shaded)
+                          subsubsections := (.shown, .shown, .shaded, .shaded) }
     | "currentsubsection", _ =>
-      spec := { spec with subsections := (.shown, .shaded, .shaded) }
-    | "hideallsubsections", _ => spec := { spec with subsections := (.hidden, .hidden, .hidden) }
+      spec := { spec with subsections := (.shown, .shaded, .shaded)
+                          subsubsections := (.shown, .shaded, .shaded, .shaded) }
+    | "hideallsubsections", _ =>
+      spec := { spec with subsections := (.hidden, .hidden, .hidden)
+                          subsubsections := (.hidden, .hidden, .hidden, .hidden) }
     | "hideothersubsections", _ =>
-      spec := { spec with subsections := (.shown, .shown, .hidden) }
+      spec := { spec with subsections := (.shown, .shown, .hidden)
+                          subsubsections := (.shown, .shaded, .hidden, .hidden) }
     | "sectionstyle", some [a] => spec := { spec with sections := (a, a) }
     | "sectionstyle", some [a, b] => spec := { spec with sections := (a, b) }
     | "subsectionstyle", some [a] => spec := { spec with subsections := (a, a, a) }
     | "subsectionstyle", some [a, b] => spec := { spec with subsections := (a, b, b) }
     | "subsectionstyle", some [a, b, c] => spec := { spec with subsections := (a, b, c) }
+    | "subsubsectionstyle", some [a] => spec := { spec with subsubsections := (a, a, a, a) }
+    | "subsubsectionstyle", some [a, b] => spec := { spec with subsubsections := (a, b, b, b) }
+    | "subsubsectionstyle", some [a, b, c] => spec := { spec with subsubsections := (a, b, c, c) }
+    | "subsubsectionstyle", some [a, b, c, d] =>
+      spec := { spec with subsubsections := (a, b, c, d) }
     | _, _ =>
       warnOnce ctx ("contents:" ++ o) .W0104
         s!"'\\tableofcontents' option '{o.trimAscii}' is not read; the contents list as without it" pos
   return spec
 
-/-- Sets the deck's section in force after a section or subsection heading, as beamer's `\section`
-defines `\insertsection` and clears `\insertsubsection`. -/
-private def setSectionInForce (level : Nat) (title : Array Inline) : EM Unit :=
+/-- Sets the deck's section in force after a section or subsection heading, its head the short
+title `head`, as beamer's `\section` defines `\insertsection` and clears `\insertsubsection`. -/
+private def setSectionInForce (level : Nat) (title head : Array Inline) : EM Unit :=
   modify fun st =>
     let (s1, s2, _) := st.ctr.secNums
     let cur := st.scope.sectionInForce
     let next : SectionInForce :=
-      if level == 1 then { sectionTitle := Ir.nameOf title, sectionNum := toString s1 }
+      if level == 1 then
+        { sectionTitle := Ir.nameOf title, sectionHead := Ir.nameOf head, sectionNum := toString s1 }
       else if level == 2 then
-        { cur with subsectionTitle := Ir.nameOf title, subsectionNum := toString s2 }
+        { cur with subsectionTitle := Ir.nameOf title, subsectionHead := Ir.nameOf head
+                   subsectionNum := toString s2 }
       else cur
     { st with scope := { st.scope with sectionInForce := next } }
+
+/-- A heading's block from its title's and short title's raws: numbered, its short title held for
+the contents and bookmarks (`Ir.Doc.shortTitles`), a deck's section set in force. -/
+private def headingArm (ctx : Ctx) (n : String) (level : Nat) (starred : Bool)
+    (short : Option (Array Raw)) (title : Array Raw) (blocks : Array Block) : EM (Array Block) := do
+  let title ← elabInlines ctx title
+  let number ← sectionNumber ctx level starred
+  let head ← match short with
+    | some s =>
+      let s ← elabInlines ctx s
+      modify fun st => { st with headingShorts := st.headingShorts.push { number, title, short := s } }
+      pure s
+    | none => pure title
+  if ctx.slides && !ctx.inFrame then setSectionInForce level title head
+  return blocks.push (.section ((blockHeading? n).getD .h2) starred number title)
 
 /-- A hook's `[starred]` code, its `{code}` group and the index past them, after its control word. -/
 private def hookArgsAt (raws : Array Raw) (i : Nat) :
@@ -6574,13 +6612,24 @@ section, starred or not, opens on its section page. -/
 private def themeHookCmds (pos : Pos) : UserCmd × UserCmd :=
   hookCmds "" "AtBeginSection" none #[.ctrl Ir.sectionPageCtrl pos] pos
 
-/-- The blocks with a last frame that sets only its section's page standing as that page. -/
-private def sectionPageFrame (blocks : Array Block) : Array Block :=
+/-- Whether a control sets the page of the heading just set: a theme's hook's, beamer's
+`\sectionpage` or `\subsectionpage`. -/
+private def isSectionPageCtrl (n : String) : Bool :=
+  n == Ir.sectionPageCtrl || n == "sectionpage" || n == "subsectionpage"
+
+/-- The blocks with a last frame that sets only its heading's page standing as that page; one
+setting it under a title or beside other content is named, that page not set. -/
+private def sectionPageFrame (ctx : Ctx) (pos : Pos) (blocks : Array Block) : EM (Array Block) := do
   if let some (.frame title _ _ _ body) := blocks.back? then
     if title.isEmpty && body.size == 1 && Ir.standsOnPage body[0]? then
-      blocks.pop.push (.role Ir.sectionPageRole #[])
-    else blocks
-  else blocks
+      return blocks.pop.push (.role Ir.sectionPageRole #[])
+    else if body.any fun b => Ir.standsOnPage (some b) then
+      warnOnce ctx "sectionpage:shared" .W0307
+        "a section page sharing its frame with a title or other content is not set yet; the frame \
+shows the rest" pos
+        (help := some "beamer sets the section's name and title there; give the section page a \
+frame of its own")
+  return blocks
 
 /-- Whether a defined section hook is a theme's own section page. -/
 private def themeHook (cmd : UserCmd) : Bool :=
@@ -11367,7 +11416,7 @@ private def isBlockStart (ctx' : Ctx) (n : String) (raws : Array Raw) (i : Nat)
     || (Ir.raggedSideOf? n).isSome
     || n == "framefoot" || n == "pagebreak" || n == "appendix"
     || (ctx'.slides && (n == "AtBeginSection" || n == "AtBeginSubsection"
-      || Ir.isSectionHookName n || n == Ir.sectionPageCtrl || n == "sectionpage"))
+      || Ir.isSectionHookName n || isSectionPageCtrl n))
     || n == Compat.frameRestartMark || n == Compat.vspaceAnchorMark
     || (Ir.pageOpeningOfRole? n).isSome
     -- `\prevdepth` is vertical mode's: TeX refuses it mid-paragraph.
@@ -12160,7 +12209,7 @@ private def elabEnvArm (ctx : Ctx) (n : String) (scope : Array Raw)
     -- A frame nests no frame: an inner title frame flattens into this one.
     blocks ← closeFramePalette ctx pos blocks title opts inner aliasScope
     -- A frame setting only `\sectionpage`, as metropolis's hook writes it, is the section's page.
-    if ctx.slides && !ctx.inFrame then blocks := sectionPageFrame blocks
+    if ctx.slides && !ctx.inFrame then blocks ← sectionPageFrame ctx pos blocks
     if ctx.slides then modify fun st => { st with refTarget := outer }
   else if n == "itemize" || n == "enumerate" || n == "description" then
     let (bodyFrom, spacing, parsep) ← listOptsArm ctx n body pos
@@ -12546,8 +12595,8 @@ when it is empty — '{}'")
       blocks := blocks.push p
     return (blocks, ⟨j, by omega⟩)
   -- premise: sectionPageChecks — outside a deck the section page is an unknown command
-  else if ctx.slides && (n == Ir.sectionPageCtrl || n == "sectionpage") then
-    -- A theme's section hook or beamer's `\sectionpage`: the section just set stands on its page.
+  else if ctx.slides && isSectionPageCtrl n then
+    -- A theme's section hook or beamer's `\sectionpage`: the heading just set stands on its page.
     return (blocks.push (.role Ir.sectionPageRole #[]), ⟨i + 1, by omega⟩)
   else if n == "logo" then
     let j := skipSpaces raws (i + 1)
@@ -12584,18 +12633,13 @@ when it is empty — '{}'")
       | some (.word "*" _) => ⟨i + 2, by omega⟩
       | _ => ⟨i + 1, by omega⟩
     let i1 := i1p.1
-    if let .took _ := scanBracketArg raws i1 pos then
-      warnOnce ctx ("section:short:" ++ n) .N0103
-        s!"'\\{n}[short]' short title is unused: nothing consumes it yet" pos
+    let short := shortTitleRaws raws i1 pos
     let (⟨j, hj⟩, recovered, junk) ← skipOptArg ctx n raws i1 pos
     if let some p ← mkPara ctx junk then
       blocks := blocks.push p
     match raws[j]? with
     | some (.group title _) =>
-      let title ← elabInlines ctx title
-      blocks := blocks.push (.section ((blockHeading? n).getD .h2) starred
-        (← sectionNumber ctx level starred) title)
-      if ctx.slides && !ctx.inFrame then setSectionInForce level title
+      blocks ← headingArm ctx n level starred short title blocks
       return (blocks, ⟨j + 1, by omega⟩)
     | _ =>
       if recovered then
@@ -16942,6 +16986,7 @@ marks its level" (some pos) (help := some s!"redefine it as text, a symbol or a 
       else Ir.withLabelNames ctx.locale (Ir.withUnboundRows
         (Ir.withFloatRows stRefs.labels (Ir.floatLabelRows blocks))
         (Ir.frameLabelRows blocks (Ir.frameNumbersFrom stRefs.frameRestart blocks))) blocks
+        stRefs.headingShorts
     let mut warnedRefs : Array String := #[]
     for (key, form, rpos) in stRefs.refSites do
       unless warnedRefs.contains key do
@@ -17095,6 +17140,7 @@ the .bib file"
       pictureMacros := if (← get).pictures.isEmpty then #[] else ctx.pic.macros
       salvage := (← get).salvage
       frameRestart := (← get).frameRestart
+      shortTitles := (← get).headingShorts
       listNotes := (← get).ctr.notesAt.map (·, 0)
     }
     return { doc, table, pictureReport, locale := ctx.locale, resolve := !stRefs.refSites.isEmpty }

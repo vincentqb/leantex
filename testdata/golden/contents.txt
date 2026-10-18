@@ -9,7 +9,7 @@ center
     text "Pat Placeholder"
 section* 1
   text "Contents"
-contents depth 3 current 0.0
+contents depth 3 current 0.0.0
   entry 0 "1" "kettles"
     text "Kettles"
   entry 1 "1.1" "spouts"

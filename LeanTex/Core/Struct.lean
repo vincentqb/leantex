@@ -954,7 +954,8 @@ private theorem textSim : Sim leafTextFold textCensus := by
       plainTextList, plainText, blockTextOne, blockTextList, blockTextItems, blockTextColumns,
       blockTextTableRows, blockTextTableCells, blockTextBibItems, blockTextContentsEntries,
       ContentsEntry.inline, algLineText, laidText, ListingSpec.capText, String.append_assoc] <;>
-    first | rfl | (intro h; subst h; rfl) | (split <;> simp_all [plainTextList, plainTextOne])
+    first | rfl | (intro h; subst h; rfl) |
+      (split <;> (try split) <;> simp_all [plainTextList, plainTextOne])
 
 private theorem headingsSim : Sim headingsFold headingsCensus := by
   constructor <;> intros <;>
@@ -967,7 +968,8 @@ private theorem altsSim : Sim altsFold altsCensus := by
     simp [altsCensus, Census.region, NodeFold.node, altsFold, Leaf.altCensus, foldInline, foldInlineList,
       foldBlock, foldBlockList, foldBlockItems, foldBlockCols, foldTableRows, foldTableCells, foldBibItems,
       foldContentsEntries, ContentsEntry.inline, foldAlgLines, foldLaidLines, altPush, altPicPush] <;>
-    first | rfl | (intro h; subst h; rfl) | (split <;> simp_all [foldInlineList, foldInline, altPush])
+    first | rfl | (intro h; subst h; rfl) |
+      (split <;> (try split) <;> simp_all [foldInlineList, foldInline, altPush])
 
 public theorem number_text (k : Nat) : Conserves leafText (number k) := by
   intro ns

@@ -315,7 +315,7 @@ private def DiagCode.spec : DiagCode → String × Loss × String
   | .N0100 => ("0100", .info, "LaTeX idiom translated to its native declaration")
   | .W0101 => ("0101", .config, "preamble keys without a native equivalent dropped")
   | .N0102 => ("0102", .info, "option ignored: it configures machinery the engine does not model")
-  | .N0103 => ("0103", .info, "\\section short title unused: nothing consumes it yet")
+  | .N0103 => ("0103", .info, "\\paragraph short title unused: nothing consumes it yet")
   | .N0104 => ("0104", .info, "a frame declared for another mode ships no page in this one")
   | .N0105 => ("0105", .info, "\\allow names a retired code; its successor answers")
   | .N0114 => ("0114", .info, "a TeX conditional resolved from the document's own definitions and loads")

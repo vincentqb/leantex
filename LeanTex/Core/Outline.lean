@@ -26,29 +26,36 @@ public def outlineListed (deck tex : Bool) (level : HeadingLevel) (starred : Boo
   else if tex then !starred && level != .title && headingRank level ≤ 4
   else level != .title && headingRank level ≤ 3
 
-/-- One block of the walk: a listed heading under the open ranks below its own, which it joins. -/
-private def outlineStep (deck tex : Bool) (ranks : Array Nat) (i : Nat) (b : Block) :
-    Array Nat × Option OutlineHeading :=
+/-- One block of the walk: a listed heading under the open ranks below its own, which it joins,
+named by the title `name` lists for its number and title. -/
+private def outlineStep (deck tex : Bool) (name : Option String → Array Inline → Array Inline)
+    (ranks : Array Nat) (i : Nat) (b : Block) : Array Nat × Option OutlineHeading :=
   if let .section level starred num title := b then
     if outlineListed deck tex level starred then
       let kept := ranks.takeWhile (· < headingRank level)
       (kept.push (headingRank level),
-        some { index := i, depth := kept.size, title := (metaText (nameOf title)).trimAscii.toString
-               number := num })
+        some { index := i, depth := kept.size
+               title := (metaText (nameOf (name num title))).trimAscii.toString, number := num })
     else (ranks, none)
   else (ranks, none)
 
-private def outlineGo (deck tex : Bool) (ranks : Array Nat) (out : Array OutlineHeading)
-    (i : Nat) : List Block → Array OutlineHeading
+private def outlineGo (deck tex : Bool) (name : Option String → Array Inline → Array Inline)
+    (ranks : Array Nat) (out : Array OutlineHeading) (i : Nat) : List Block → Array OutlineHeading
   | [] => out
   | b :: rest =>
-    let (ranks', h) := outlineStep deck tex ranks i b
-    outlineGo deck tex ranks' (match h with | some h => out.push h | none => out) (i + 1) rest
+    let (ranks', h) := outlineStep deck tex name ranks i b
+    outlineGo deck tex name ranks' (match h with | some h => out.push h | none => out) (i + 1) rest
+
+/-- The title a heading is bookmarked by: a flow's its contents line's, its short title where it
+declared one, as hyperref's; a deck's its title, as beamer's. -/
+private def outlineName (doc : Doc) (num : Option String) (title : Array Inline) : Array Inline :=
+  if doc.docClass.record.model == .frame then title else doc.listedTitle num title
 
 /-- The listed headings among the top-level blocks, in flow order, each one deeper than the last
 listed heading of a higher rank before it. -/
 public def outlineHeadings (doc : Doc) : Array OutlineHeading :=
-  outlineGo (doc.docClass.record.model == .frame) (doc.surface == .tex) #[] #[] 0 doc.body.toList
+  outlineGo (doc.docClass.record.model == .frame) (doc.surface == .tex) (outlineName doc) #[] #[] 0
+    doc.body.toList
 
 private theorem takeWhile_size_le (xs : Array Nat) (p : Nat → Bool) :
     (xs.takeWhile p).size ≤ xs.size := by
@@ -64,10 +71,13 @@ private def OutlineInv (ranks : Array Nat) (out : Array OutlineHeading) : Prop :
   (∀ h ∈ out[0]?, h.depth = 0) ∧
   ∀ k (hk : k + 1 < out.size), out[k + 1].depth ≤ out[k].depth + 1
 
-private theorem outlineStep_inv (deck tex : Bool) (ranks : Array Nat)
+private theorem outlineStep_inv (deck tex : Bool)
+    (name : Option String → Array Inline → Array Inline) (ranks : Array Nat)
     (out : Array OutlineHeading) (i : Nat) (b : Block) (hinv : OutlineInv ranks out) :
-    OutlineInv (outlineStep deck tex ranks i b).1
-      (match (outlineStep deck tex ranks i b).2 with | some h => out.push h | none => out) := by
+    OutlineInv (outlineStep deck tex name ranks i b).1
+      (match (outlineStep deck tex name ranks i b).2 with
+        | some h => out.push h
+        | none => out) := by
   obtain ⟨hback, hfirst, hstep⟩ := hinv
   unfold outlineStep
   split
@@ -106,14 +116,15 @@ private theorem outlineStep_inv (deck tex : Bool) (ranks : Array Nat)
     · exact ⟨hback, hfirst, hstep⟩
   · exact ⟨hback, hfirst, hstep⟩
 
-private theorem outlineGo_inv (deck tex : Bool) (l : List Block) (ranks : Array Nat)
+private theorem outlineGo_inv (deck tex : Bool)
+    (name : Option String → Array Inline → Array Inline) (l : List Block) (ranks : Array Nat)
     (out : Array OutlineHeading) (i : Nat) (hinv : OutlineInv ranks out) :
-    ∃ ranks', OutlineInv ranks' (outlineGo deck tex ranks out i l) := by
+    ∃ ranks', OutlineInv ranks' (outlineGo deck tex name ranks out i l) := by
   induction l generalizing ranks out i with
   | nil => exact ⟨ranks, hinv⟩
   | cons b rest ih =>
     simp only [outlineGo]
-    exact ih _ _ _ (outlineStep_inv deck tex ranks out i b hinv)
+    exact ih _ _ _ (outlineStep_inv deck tex name ranks out i b hinv)
 
 /-- The outline's first heading is at the top of the tree and each later one at most one level
 deeper than the heading before it, so every nested heading has its parent before it. -/
@@ -122,7 +133,7 @@ public theorem outlineHeadings_depth_step (doc : Doc) :
       ∀ k (hk : k + 1 < (outlineHeadings doc).size),
         (outlineHeadings doc)[k + 1].depth ≤ (outlineHeadings doc)[k].depth + 1 := by
   obtain ⟨_, _, hfirst, hstep⟩ := outlineGo_inv (doc.docClass.record.model == .frame)
-    (doc.surface == .tex) doc.body.toList #[] #[] 0 ⟨by simp, by simp, by simp⟩
+    (doc.surface == .tex) (outlineName doc) doc.body.toList #[] #[] 0 ⟨by simp, by simp, by simp⟩
   exact ⟨hfirst, hstep⟩
 
 end LeanTex.Core.Ir

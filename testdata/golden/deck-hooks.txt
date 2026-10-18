@@ -13,7 +13,7 @@ frame golden
 frame
   title
     text "Overview"
-  contents depth 3 current 0.0
+  contents depth 3 current 0.0.0
     entry 0 "-" "outline"
       text "Wheels"
     entry 1 "-" "truing"
@@ -25,7 +25,7 @@ section 1
 frame
   title
     text "Outline"
-  contents depth 3 current 1.0
+  contents depth 3 current 1.0.0
     entry 0 "-" "outline"
       text "Wheels"
     entry 1 "-" "truing"
@@ -53,7 +53,7 @@ section 1
 frame
   title
     text "Outline"
-  contents depth 3 current 2.0
+  contents depth 3 current 2.0.0
     entry 0 "-" "outline" shaded
       text "Wheels"
     entry 1 "-" "truing" shaded

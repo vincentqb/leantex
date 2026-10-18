@@ -4920,13 +4920,15 @@ public inductive ContentsShow where
   | hidden
   deriving Repr, BEq, DecidableEq, Inhabited
 
-/-- What a `\tableofcontents` declares: the deck's section and subsection numbers in force where it
-stands, how its options set the current section and the others, then the current subsection, the
-others of the current section and those of the others, and the depth a flow's contents list to. -/
+/-- What a `\tableofcontents` declares: the heading numbers in force where it stands, how beamer's
+options set each heading about them, in beamerbasetoc.sty's order of its style keys' parts, and the
+depth the contents list to. -/
 public structure ContentsSpec where
-  current : Nat × Nat := (0, 0)
+  current : Nat × Nat × Nat := (0, 0, 0)
   sections : ContentsShow × ContentsShow := (.shown, .shown)
   subsections : ContentsShow × ContentsShow × ContentsShow := (.shown, .shown, .shown)
+  subsubsections : ContentsShow × ContentsShow × ContentsShow × ContentsShow :=
+    (.shown, .shown, .shown, .shown)
   depth : Nat := 3
   deriving Repr, BEq, Inhabited
 
@@ -4943,10 +4945,10 @@ public structure ContentsEntry where
   deriving Repr, BEq, Inhabited
 
 /-- An entry's words as both backends set them: its title, linked to its heading's anchor where it
-has one. -/
+has one and the title has words to link. -/
 @[expose] public def ContentsEntry.inline (e : ContentsEntry) : Array Inline :=
   match e.target with
-  | some t => #[.link ("#" ++ t) e.title]
+  | some t => if e.title.isEmpty then e.title else #[.link ("#" ++ t) e.title]
   | none => e.title
 
 /-- The share of its colour a shaded entry keeps over its ground: beamer's `sections/subsections in
@@ -7957,6 +7959,13 @@ of its own; any other names navigation alone, as beamer's `\section` does. -/
   | some (.role n body) => n == sectionPageRole && body.isEmpty
   | _ => false
 
+/-- A heading's short title, `\section[short]{long}`'s, held by the number and title it sets. -/
+public structure ShortTitle where
+  number : Option String
+  title : Array Inline
+  short : Array Inline
+  deriving Repr, BEq, Inhabited
+
 public structure Doc where
   docClass : DocClass := .article
   surface : Surface := .tex
@@ -8031,6 +8040,8 @@ public structure Doc where
   /-- Where the frame numbering starts over: the body index of the first block
   after `\appendix` under appendixnumberbeamer. -/
   frameRestart : Option Nat := none
+  /-- The short titles headings declared, which a flow's contents and bookmarks list. -/
+  shortTitles : Array ShortTitle := #[]
   /-- The roles the document's own colour declarations set, a theme's aside. -/
   ownRoles : Array Role := #[]
   /-- Where each `\bibliography` list's footnotes number from, in document
@@ -9211,6 +9222,19 @@ public def outsideUnder (next : Option Block) (b : Block) : Outside :=
 /-- What a deck sets for its top-level block `i` outside every frame (`outsideUnder`). -/
 public def Doc.outside (doc : Doc) (i : Nat) (b : Block) : Outside := outsideUnder doc.body[i + 1]? b
 
+/-- The title a heading setting `number` and `title` is listed by: its short title among `shorts`
+where it declared one, matched by number and words, else its title. -/
+public def listedTitleIn (shorts : Array ShortTitle) (number : Option String)
+    (title : Array Inline) : Array Inline :=
+  ((shorts.find? fun t => t.number == number && plainText t.title == plainText title).map
+    (·.short)).getD title
+
+/-- The title a flow's contents and bookmarks list for a heading setting `number` and `title`
+(`listedTitleIn`). -/
+public def Doc.listedTitle (doc : Doc) (number : Option String) (title : Array Inline) :
+    Array Inline :=
+  listedTitleIn doc.shortTitles number title
+
 /-- The spacings a body's lists and quotations declare, each once, in flow order. -/
 public def listSetsOf (body : Array Block) : Array ListSet :=
   (foldBlocks (fun (acc : Array ListSet × Std.HashSet ListSet) b =>
@@ -9903,21 +9927,6 @@ private def sectionClaims (body : Array Block) :
 public def sectionAnchors (body : Array Block) : Array (Option SectionAnchor) :=
   (sectionClaims body).1
 
-/-- Each top-level heading's anchor at its body index: a level-one section's its `sectionAnchors`
-one, a deeper heading's claimed after every section's, so no section's anchor moves. -/
-public def headingAnchors (body : Array Block) : Array (Option SectionAnchor) := Id.run do
-  let (sections, ledger) := sectionClaims body
-  let mut taken := ledger
-  let mut out := sections
-  for h : i in [0:body.size] do
-    if let .section level _ _ title := body[i] then
-      if level != .title && level != .h1 && level != .h2 then
-        let base := if (slug title).isEmpty then "section" else slug title
-        let (id, clash, next) := taken.claim base (firstPageText title)
-        taken := next
-        out := out.setIfInBounds i (some { base, id, clash })
-  return out
-
 private theorem slugCharKeep_not_whitespace (k k' : Char) (h : slugCharKeep k = some k') :
     isWhiteSpaceUni k' = false := by
   unfold slugCharKeep at h
@@ -10559,7 +10568,8 @@ private def dumpBlock (ind : String) (b : Block) : String :=
       s!"{ind}  {mark}{item.key.quote}\n" ++
         dumpInlines (ind ++ "    ") item.content)
   | .contents spec entries =>
-    s!"{ind}contents depth {spec.depth} current {spec.current.1}.{spec.current.2}\n" ++
+    s!"{ind}contents depth {spec.depth} current {spec.current.1}.{spec.current.2.1}.\
+{spec.current.2.2}\n" ++
     String.join (entries.toList.map fun e =>
       s!"{ind}  entry {e.depth} {(e.number.getD "-").quote} {(e.target.getD "-").quote}" ++
         (if e.shaded then " shaded\n" else "\n") ++ dumpInlines (ind ++ "    ") e.title)
@@ -15413,7 +15423,8 @@ private def sansTextBlockLinkStep (out : Array String)
   | .algorithm _ _ _ | .columns _ | .onSteps _ _ | .altSteps _ _ _ | .note _ | .only _ _
   | .nav _ _ | .logo _ | .pagebreak | .frame _ _ _ _ _ | .framefoot _ | .setPalette _
   | .setTokens _ | .rule _ _ _ | .picture _ | .table _ _ _ _ _ _ | .float _ _ _ _ _
-  | .bibliography _ _ _ | .contents _ _ => out
+  | .bibliography _ _ _ => out
+  | .contents _ entries => entries.foldl (fun out e => e.inline.foldl sansTextLinkStep out) out
 
 /-- Every link the artifacts ship with no reading, deduplicated by target, in document order. -/
 public def linksSansText (doc : Doc) : Array String :=
@@ -17746,6 +17757,32 @@ public def labelAnchor (key : String) : String :=
   | [] => "label"
   | l => String.ofList l
 
+/-- Each top-level heading's anchor at its body index: a level-one section's its `sectionAnchors`
+one, a deeper heading's claimed after every section's and every label's, so none of theirs moves. -/
+public def headingAnchors (body : Array Block) : Array (Option SectionAnchor) := Id.run do
+  let (sections, ledger) := sectionClaims body
+  let mut taken := ledger
+  for key in blockLabelKeys body do
+    taken := (taken.claim (labelAnchor key) key).2.2
+  let mut out := sections
+  for h : i in [0:body.size] do
+    if let .section level _ _ title := body[i] then
+      if level != .title && level != .h1 && level != .h2 then
+        let base := if (slug title).isEmpty then "section" else slug title
+        let (id, clash, next) := taken.claim base (firstPageText title)
+        taken := next
+        out := out.setIfInBounds i (some { base, id, clash })
+  return out
+
+/-- Whether blocks hold a table of contents anywhere. -/
+public def holdsContents (body : Array Block) : Bool :=
+  foldBlocks (fun acc b => acc || b matches .contents ..) (fun acc _ => acc) false body
+
+/-- The anchors a flow's top-level headings answer to: every heading's where a table of contents
+lists them, else the level-one sections' alone. -/
+public def flowAnchors (body : Array Block) : Array (Option SectionAnchor) :=
+  if holdsContents body then headingAnchors body else sectionAnchors body
+
 public theorem labelAnchor_fixed_point (key : String) (hne : key ≠ "")
     (hkeep : ∀ c ∈ key.toList,
       (c.toNat ≥ 0x80 || c.isAlpha || c.isDigit || c == ':' || c == '.' ||
@@ -18296,8 +18333,10 @@ public def nameOf (title : Array Inline) : Array Inline :=
   mapInlines id title (finish := fun xs => xs.filter keep)
 
 /-- The title each label names, as hyperref's `\@currentlabelname` holds it: a float's caption
-inside the float, else the last heading's title before it; a blank one names nothing. -/
-public def labelNames (xs : Array Block) : Std.HashMap String (Array Inline) := Id.run do
+inside the float, else the last heading's title before it, its short one among `shorts` where it
+declared one; a blank one names nothing. -/
+public def labelNames (xs : Array Block) (shorts : Array ShortTitle := #[]) :
+    Std.HashMap String (Array Inline) := Id.run do
   let keyOf := fun (out : Array String) (x : Inline) =>
     if let .label k := x then out.push k else out
   let named := fun (m : Std.HashMap String (Array Inline)) (keys : Array String)
@@ -18307,7 +18346,8 @@ public def labelNames (xs : Array Block) : Std.HashMap String (Array Inline) := 
   let mut current : Option (Array Inline) := none
   let mut out : Std.HashMap String (Array Inline) := {}
   for b in xs do
-    if let .section _ _ _ title := b then current := titled (nameOf title)
+    if let .section _ _ num title := b then
+      current := titled (nameOf (listedTitleIn shorts num title))
     if let .float _ _ _ body caption := b then
       if let some n := (titled (nameOf caption)).orElse fun _ => current then
         out := named out (foldBlocks (fun out _ => out) keyOf (foldInlines keyOf #[] caption) body) n
@@ -18390,9 +18430,10 @@ private def resolvedNames (loc : Locale) (base : String → Option (String × Op
 
 /-- The table with each binding carrying the title its label names (`labelNames`), the references
 inside it resolved, a label nothing numbered taking a binding with its title alone. -/
-public def withLabelNames (loc : Locale) (labels : RefTable) (xs : Array Block) : RefTable :=
+public def withLabelNames (loc : Locale) (labels : RefTable) (xs : Array Block)
+    (shorts : Array ShortTitle := #[]) : RefTable :=
   let idx := keyIndex labels
-  let names := resolvedNames loc (fun k => idx[k]?) (labelNames xs)
+  let names := resolvedNames loc (fun k => idx[k]?) (labelNames xs shorts)
   labels.map fun e => match e.2, names[e.1]? with
     | some b, n => (e.1, some { b with name := n })
     | none, some n => (e.1, some { kind := none, num := "", name := some n })

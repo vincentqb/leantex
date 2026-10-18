@@ -11236,6 +11236,80 @@ private def specWordAt (raws : Array Raw) (i : Nat) : Option String :=
 /-- The beamer modes whose overlay count decides what a presentation shows. -/
 private def presentationModes : List String := ["presentation", "beamer", "all"]
 
+/-- The bracket runs standing from `i`, each `[...]` kept whole, and the index past them. -/
+private def bracketRunsAt (raws : Array Raw) (i : Nat) : Array Raw × Nat := Id.run do
+  let mut out : Array Raw := #[]
+  let mut j := i
+  for _ in [0:raws.size] do
+    let k := skipSpaces raws j
+    match raws[k]?, takeRawOpt raws j with
+    | some (.sym '[' p), (some inner, stop) =>
+      out := out ++ #[.sym '[' p] ++ inner ++ #[.sym ']' p]
+      j := stop
+    | _, _ => break
+  return (out, j)
+
+/-- beamer's command form of a frame, `\frame<spec>[options]{text}`, at one level as the frame
+environment it abbreviates, its specification and options at its body's head. -/
+private def frameCommandsLevel (raws : Array Raw) : Array Raw := Id.run do
+  let mut out : Array Raw := #[]
+  let mut i := 0
+  for _ in [0:raws.size] do
+    match (raws[i]? : Option Raw) with
+    | some (.ctrl "frame" p) =>
+      let j0 := skipSpaces raws (i + 1)
+      let (spec, j1) := match raws[j0]?.bind specRaw? with
+        | some w => (#[w], j0 + 1)
+        | none => (#[], j0)
+      let (opts, j2) := bracketRunsAt raws j1
+      let k := skipSpaces raws j2
+      match raws[k]? with
+      | some (.group body _) =>
+        out := out.push (.env "frame" (spec ++ opts ++ body) p)
+        i := k + 1
+      | _ =>
+        out := out.push (.ctrl "frame" p)
+        i := i + 1
+    | some r =>
+      out := out.push r
+      i := i + 1
+    | none => break
+  return out
+
+mutual
+
+/-- Every level's frame commands as frame environments, whole tree, before the rewrite walk. -/
+private def frameCommandsRaw : Raw → Raw
+  | .group body p => .group (frameCommandsLevel (frameCommandsList body.toList).toArray) p
+  | .env n body p => .env n (frameCommandsLevel (frameCommandsList body.toList).toArray) p
+  | .math d body p => .math d body p
+  | .word s p => .word s p
+  | .space => .space
+  | .par p => .par p
+  | .ctrl n p => .ctrl n p
+  | .sym c p => .sym c p
+  | .verb env s p => .verb env s p
+
+private def frameCommandsList : List Raw → List Raw
+  | [] => []
+  | r :: rest => frameCommandsRaw r :: frameCommandsList rest
+
+end
+
+/-- Whether a source declares a presentation class, whose `\frame` is beamer's. -/
+private def declaresPresentation (raws : Array Raw) : Bool :=
+  match raws.findIdx? (fun r => match r with | .ctrl n _ => n == "documentclass" | _ => false) with
+  | some i =>
+    let (_, j) := takeOpt raws (i + 1)
+    let (args, _) := takeGroups raws j 1
+    presentationClasses.contains (rawSrc (args.getD 0 #[])).trimAscii.toString
+  | none => false
+
+/-- A presentation's frame commands as frame environments, every level's (`frameCommandsLevel`). -/
+private def frameCommands (raws : Array Raw) : Array Raw :=
+  if declaresPresentation raws then frameCommandsLevel (frameCommandsList raws.toList).toArray
+  else raws
+
 /-- Whether a specification declares that the presentation
 has no slides here. -/
 public def modeSilencesPresentation (w : String) : Bool :=
@@ -13438,6 +13512,7 @@ public def beginRewrite (executed : Executed) : RewriteCursor :=
     -- After the conditionals only a live pair is a group.
     let raws := pairGroupsList true #[] raws.toList
     let raws ← delimDocument raws
+    let raws := frameCommands raws
     let raws := (splitColumnsList raws.toList).toArray
     let raws ← overprintList raws.toList #[] 0
     pure (onlyAlternationsIn cx raws)
@@ -13476,8 +13551,12 @@ private theorem beginRewrite_package_exact (command names : String) (pos gp np :
       countersRead := counterReadsList {} (packageCall command names pos gp np).toList } hd
   have hcols : splitColumnsList (packageCall command names pos gp np).toList =
       (packageCall command names pos gp np).toList := by rfl
+  have hframes : frameCommands (packageCall command names pos gp np) =
+      packageCall command names pos gp np := by
+    rcases hc with rfl | rfl <;>
+      simp [frameCommands, declaresPresentation, packageCall, List.findIdx?_cons]
   simp only [hw, StateT.run, bind, StateT.bind,
-    pairGroups_package_exact, hdelim,
+    pairGroups_package_exact, hdelim, hframes,
     hcols, overprint_package_exact _ _ _ _ _ hc, onlyAlternationsIn_package_exact _ _ _ _ _ _ hc,
     pure, StateT.pure, packageRewriteState]
 

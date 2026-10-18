@@ -2108,7 +2108,8 @@ def optArgChecks (ref : IO.Ref (List String)) : IO Unit := do
     (secDs.all (·.severity == .note) && match secDoc.body with
      | #[.section 1 false (some "1") title, .para _] => Ir.plainText title == "Long Title"
      | _ => false)
-  t "an unused short title is a note" (secDs.any (·.code == "N0103"))
+  t "a section's short title is held for its contents and bookmarks, unnamed as a loss"
+    (secDoc.shortTitles.map (Ir.plainText ·.short) == #["Short"] && !secDs.any (·.code == "N0103"))
   t "section recovers its title past an unclosed bracket"
     (match (elabStr "\\section[never closes {Recovered}\nBody.").1.body with
      | #[.para _, .section 1 false (some "1") title, .para _] => Ir.plainText title == "Recovered"

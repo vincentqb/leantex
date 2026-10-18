@@ -219,3 +219,149 @@ def contentsChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit
   t "the twin lists the entries, nested as the headings are"
     (hasStr twin "- 1 Kettles\n  - 1.1 Spouts\n- 2 Teapots\n  - 2.0.1 Lids\n")
   t "the twin reads back to itself" (MarkdownDoc.emit (elabMd twin).1 == twin)
+
+namespace ContentsChecks
+
+private def edgeDeck (pre body : String) : String :=
+  "\\documentclass{beamer}\n\\usetheme{default}\n" ++ pre ++ "\\begin{document}\n" ++ body ++
+    "\\end{document}\n"
+
+private def outlineDeck (hook : String) : String :=
+  edgeDeck ("\\setcounter{secnumdepth}{0}\n\\AtBeginSection[]{" ++ hook ++ "}\n")
+    ("\\section{Kettles}\n\\begin{frame}{Boiling}Water boils.\\end{frame}\n" ++
+     "\\section{Teapots}\n\\begin{frame}{Steeping}Leaves steep.\\end{frame}\n")
+
+/-- Where each leader dot's box opens on a line's rider, from the line's origin. -/
+private def dotStarts (rider : Layout.LineOut) : Array Dim.Sp :=
+  (rider.segs.foldl (fun (acc : Dim.Sp × Array Dim.Sp) s => match s with
+    | .gap w _ => (acc.1 + w, acc.2)
+    | .poly .. => (acc.1, acc.2.push acc.1)
+    | _ => (acc.1 + s.advance, acc.2)) (0, #[])).2
+
+/-- Where a line's leader gap opens, from its origin. -/
+private def leaderGapAt (l : Layout.LineOut) : Option Dim.Sp :=
+  (l.segs.foldl (fun (acc : Dim.Sp × Option Dim.Sp) s => match s with
+    | .decoratedGap _ _ d => (acc.1 + s.advance, acc.2.orElse fun _ =>
+        if d.leaders.isSome then some acc.1 else none)
+    | _ => (acc.1 + s.advance, acc.2)) (0, none)).2
+
+/-- The size of the run on a line whose glyphs spell `word`. -/
+private def runSize (l : Layout.LineOut) (word : String) : Option Dim.Sp :=
+  l.segs.findSome? fun s => match s with
+    | .run _ _ _ _ glyphs size .. =>
+      if String.ofList (glyphs.toList.map (·.2.1)) == word then some size else none
+    | _ => none
+
+/-- The font of the run on a line whose glyphs spell `word`. -/
+private def runFont (l : Layout.LineOut) (word : String) : Option Nat :=
+  l.segs.findSome? fun s => match s with
+    | .run fontIdx _ _ _ glyphs .. =>
+      if String.ofList (glyphs.toList.map (·.2.1)) == word then some fontIdx else none
+    | _ => none
+
+end ContentsChecks
+
+open ContentsChecks in
+/-- A table of contents' edges against beamer's and article's: a deck's depth, subsubsections,
+blank and counted headings, its frame command and section pages; a flow's folio kept with its words,
+leader dots clear of the title, a section's number bold, short titles, and anchors apart. -/
+def contentsEdgeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  let t := fun claim => check ref ("contents edges / " ++ claim)
+  let deckBody := "\\begin{frame}{Overview}\\tableofcontents\\end{frame}\n" ++
+    "\\section{Kettles}\n\\subsection{Spouts}\n\\subsubsection{Lids}\n" ++
+    "\\begin{frame}{Boiling}Water boils.\\end{frame}\n\\section{}\n" ++
+    "\\begin{frame}{Blank}Cups rest.\\end{frame}\n\\section{Teapots}\n" ++
+    "\\begin{frame}{Steeping}Leaves steep.\\end{frame}\n"
+  let (deck, _) := elabStr (edgeDeck "" deckBody)
+  let out := (fittedOf fonts deck).out
+  let lw (o : Layout.Out) (i : Nat) (w : String) : Option Layout.LineOut := lineWith o i w
+  t "beamer's default depth lists a subsubsection at 3em, smaller than its section"
+    (match lw out 0 "Kettles", lw out 0 "Lids" with
+      | some k, some l => l.x - k.x == k.size * 3 &&
+        (match runSize l "Lids", runSize k "Kettles" with
+          | some a, some b => decide (a < b)
+          | _, _ => false)
+      | _, _ => false)
+  let (_, body, _) := HtmlDoc.emitTree {} deck
+  t "a blank-titled section is listed by nothing, as beamer writes no entry for it"
+    ((navEntries body)[0]?.map (·.map (·.2.1)) == some #["Kettles", "Spouts", "Lids", "Teapots"])
+  t "no contents link is empty" ((HtmlDoc.a11yFacts true true body).linksUnnamed == 0)
+  let (shallow, _) := elabStr (edgeDeck "\\setcounter{tocdepth}{1}\n" deckBody)
+  let sout := (fittedOf fonts shallow).out
+  t "a deck's tocdepth 1 lists its sections alone"
+    ((lw sout 0 "Kettles").isSome && (lw sout 0 "Teapots").isSome &&
+      (lw sout 0 "Spouts").isNone && (lw sout 0 "Lids").isNone)
+  -- secnumdepth 0 leaves beamer's counters stepping, so the outline still finds its section.
+  let design (d : Ir.Doc) := Ir.Design.ofPalette d.palette
+  let shown (d : Ir.Doc) (o : Layout.Out) (i : Nat) (w : String) : Bool :=
+    ((lw o i w).bind firstRun).map (·.1) == some (design d).fg
+  for (label, hook) in [("an environment frame",
+      "\\begin{frame}{Outline}\\tableofcontents[currentsection]\\end{frame}"),
+      ("beamer's frame command", "\\frame{\\frametitle{Outline}\\tableofcontents[currentsection]}")] do
+    let (od, ods) := elabStr (outlineDeck hook)
+    let oo := (fittedOf fonts od).out
+    t s!"{label}: each outline shows its own section past secnumdepth 0 ({oo.pages.size} pages)"
+      (oo.pages.size == 4 && shown od oo 0 "Kettles" && !shown od oo 0 "Teapots" &&
+        !shown od oo 2 "Kettles" && shown od oo 2 "Teapots" &&
+        !ods.any fun d => d.code == "W0301")
+  let (fd, fds) := elabStr (edgeDeck "" "\\frame{Words in a frame.}\n\\frame[plain]{More words.}\n")
+  t "beamer's frame command sets a frame"
+    ((fittedOf fonts fd).out.pages.size == 2 && !fds.any fun d => d.code == "W0301")
+  let (sd, sds) := elabStr (edgeDeck "\\AtBeginSubsection{\\begin{frame}\\subsectionpage\\end{frame}}\n"
+    "\\section{Kettles}\n\\subsection{Spouts}\n\\begin{frame}{Pouring}Tea pours.\\end{frame}\n")
+  let so := (fittedOf fonts sd).out
+  t "a subsection's page stands before the frame after it"
+    (!sds.any (fun d => d.code == "W0301") &&
+      so.pages.size == 2 && (lw so 0 "Spouts").isSome && (lw so 1 "Tea").isSome)
+  let (_, shds) := elabStr (edgeDeck "\\AtBeginSection{\\begin{frame}{Outline}\\sectionpage\\end{frame}}\n"
+    "\\section{Kettles}\n\\begin{frame}{Boiling}Water boils.\\end{frame}\n")
+  t "a section page sharing its frame with a title is named"
+    (shds.any fun d => d.code == "W0307" && d.subject == some "sectionpage:shared")
+  -- A flow: the folio travels with the words, the dots stand clear of the title, numbers bold.
+  let longSrc := "\\documentclass{article}\n\\begin{document}\n\\tableofcontents\n" ++
+    "\\section{Kettles}\nWater boils.\n\\subsection{Urn}\nTea pours.\n\\subsection{Ewer}\nTea pours.\n" ++
+    "\\section{Teapots and a very long title that runs on past the measure of one line onto " ++
+    "another line}\nLeaves steep.\n\\section{}\nCups rest.\n\\end{document}\n"
+  let (long, _) := elabStr longSrc
+  let lout := (fittedOf fonts long).out
+  let lines := contentsLines lout "Water boils"
+  t "no folio stands alone on a line, as article's unbreakable fill keeps the last words with it"
+    (lines.all fun l => let s := (lineText l).trimAscii.toString
+      s.isEmpty || !(s.all Char.isDigit))
+  let riders := (lout.pages[0]?.map (·.lines)).getD #[]
+  t "every leader dot's box opens past the title's end"
+    (lines.all fun l => match leaderGapAt l with
+      | some gx => riders.all fun r => r.y != l.y || r.x != l.x || (dotStarts r).all (· ≥ gx)
+      | none => true)
+  t "a section's number is set in its title's bold face"
+    (match lw lout 0 "Kettles" with
+      | some l => runFont l "1" == runFont l "Kettles" && (runFont l "1").isSome
+      | none => false)
+  let (_, lbody, _) := HtmlDoc.emitTree {} long
+  t "a blank-titled entry links nothing, so no link reads empty"
+    ((HtmlDoc.a11yFacts true false lbody).linksUnnamed == 0 && (Ir.linksSansText long).isEmpty)
+  -- Short titles: article's contents, nameref and bookmarks read them; beamer's contents the long.
+  let (short, _) := elabStr ("\\documentclass{article}\n\\begin{document}\n\\tableofcontents\n" ++
+    "\\section[Short kettles]{Long kettles}\\label{k}\nAs \\nameref{k} says.\n\\end{document}\n")
+  let shtml := (HtmlDoc.emit {} short).1
+  t "article's contents list a short title"
+    ((navEntries (HtmlDoc.emitTree {} short).2.1)[0]?.map (·.map (·.2.1)) == some #["1Short kettles"])
+  t "nameref sets the short title" (hasStr (Ir.blocksText short.body) "As Short kettles says" &&
+    hasStr shtml "Short kettles</a> says")
+  t "a flow's bookmark names the short title"
+    ((Ir.outlineHeadings short).map (·.title) == #["Short kettles"])
+  let (sdeck, _) := elabStr (edgeDeck ""
+    ("\\begin{frame}{Overview}\\tableofcontents\\end{frame}\n\\section[Short]{Long}\n" ++
+     "\\begin{frame}{\\insertsectionhead}x\\end{frame}\n"))
+  let sdo := (fittedOf fonts sdeck).out
+  t "beamer's contents list the long title, its section head the short"
+    ((lw sdo 0 "Long").isSome && (lw sdo 0 "Short").isNone && (lw sdo 1 "Short").isSome)
+  -- A deeper heading's anchor stays apart from a label's.
+  let (ids, _) := elabStr ("\\documentclass{article}\n\\begin{document}\n\\tableofcontents\n" ++
+    "\\section{Kettles}\n\\subsection{Overview}\\label{overview}\nWords.\n\\end{document}\n")
+  let (_, ibody, _) := HtmlDoc.emitTree {} ids
+  let allIds := (elemNodesList (fun _ => true) #[] ibody.toList).filterMap fun k => match k with
+    | .elem _ attrs _ => HtmlDoc.attrOf? attrs "id"
+    | _ => none
+  t s!"no two elements share an id ({allIds})"
+    (allIds.all fun i => (allIds.filter (· == i)).size == 1)
