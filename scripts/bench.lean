@@ -189,8 +189,8 @@ def benchPages (n : Nat) (leantex : String) : IO Unit := do
     (← stylesheetHtmlMs n 32000 leantex)
 
 
-/-- The elab phase of an invented document, the median of `n` builds. -/
-def elabPhaseMs (n : Nat) (leantex label file text : String) : IO Nat :=
+/-- A phase of an invented document, the median of `n` builds. -/
+def phaseRunMs (phase : String) (n : Nat) (leantex label file text : String) : IO Nat :=
   IO.FS.withTempDir fun tmp => do
     IO.FS.writeFile (tmp / file) text
     let mut times : Array Nat := #[]
@@ -198,11 +198,11 @@ def elabPhaseMs (n : Nat) (leantex label file text : String) : IO Nat :=
       let out ← IO.Process.output { cmd := leantex, args := #["-v", "build",
         (tmp / file).toString, "-o", (tmp / "out.pdf").toString] }
       if out.exitCode != 0 then die s!"benchmark command failed: {leantex} on {label}"
-      match phaseMs "elab" (out.stdout ++ out.stderr) with
+      match phaseMs phase (out.stdout ++ out.stderr) with
       | some ms => times := times.push ms
-      | none => die "no elab phase in the -v report"
+      | none => die s!"no {phase} phase in the -v report"
     let ms := median times
-    IO.println s!"{padRight s!"leantex  elab, {label}" 42} {padLeft (toString ms) 6} ms (median of {n})"
+    IO.println s!"{padRight s!"leantex  {phase}, {label}" 42} {padLeft (toString ms) 6} ms (median of {n})"
     return ms
 
 /-- Invented words, `k` of them from the `seed`th. -/
@@ -242,7 +242,8 @@ def longNote (k : Nat) : String :=
     s!"    Paragraph {i} of the note, " ++ inventedWords i 6 ++ ".\n\n")
 
 /-- Elaboration over one long paragraph, one inside a macro's argument, macro uses across sections,
-overlay selections in a frame and one long note, whose phases may grow only linearly. -/
+overlay selections in a frame and one long note, and the macro uses' execution, whose phases may
+grow only linearly. -/
 def elabGrowth (n : Nat) (leantex : String) : IO Unit := do
   let rows : List (String × String × (Nat → String) × Nat) :=
     [("words in a paragraph", "para.tex", longParagraph, 8000),
@@ -252,8 +253,11 @@ def elabGrowth (n : Nat) (leantex : String) : IO Unit := do
      ("paragraphs in a note", "note.md", longNote, 800)]
   for (label, file, doc, size) in rows do
     growthBound s!"elab, {4 * size} / {size} {label}"
-      (← elabPhaseMs n leantex s!"{size} {label}" file (doc size))
-      (← elabPhaseMs n leantex s!"{4 * size} {label}" file (doc (4 * size)))
+      (← phaseRunMs "elab" n leantex s!"{size} {label}" file (doc size))
+      (← phaseRunMs "elab" n leantex s!"{4 * size} {label}" file (doc (4 * size)))
+  growthBound "input, 32 / 8 sections of macro uses"
+    (← phaseRunMs "input" n leantex "8 sections of macro uses" "macros.tex" (macroSections 8))
+    (← phaseRunMs "input" n leantex "32 sections of macro uses" "macros.tex" (macroSections 32))
 
 /-- A facts record with each span's lines `by_` further down. -/
 def moveSpans (j : Lean.Json) (by_ : Nat) : Lean.Json :=

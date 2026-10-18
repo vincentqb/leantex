@@ -1653,26 +1653,145 @@ private def macroToken : Raw → Raw
 
 end
 
-/-- One optional `[...]` argument, its tokens kept inert; groups are opaque and
-an ungrouped `[` does not nest. -/
-private def takeRawOpt (raws : Array Raw) (i : Nat) : Option (Array Raw) × Nat := Id.run do
-  let j := skipSpaces raws i
-  match raws[j]? with
+/-- Whether `l` holds fewer than `k` elements, reading at most `k` of them. -/
+private def shorterThan {α : Type} : List α → Nat → Bool
+  | _, 0 => false
+  | [], _ + 1 => true
+  | _ :: t, k + 1 => shorterThan t k
+
+private theorem shorterThan_iff {α : Type} (l : List α) (k : Nat) :
+    shorterThan l k = decide (l.length < k) := by
+  induction l generalizing k with
+  | nil => cases k <;> simp [shorterThan]
+  | cons x t ih => cases k <;> simp [shorterThan, ih]
+
+/-- Raws read in order through segments, each from its offset: an expansion's text before the
+rest of the text it stands in, never copied. -/
+private structure RawStream where
+  segs : List (Array Raw × Nat)
+
+namespace RawStream
+
+private def empty : RawStream := ⟨[]⟩
+
+private def ofArray (a : Array Raw) : RawStream := ⟨[(a, 0)]⟩
+
+/-- `a` read before the stream. -/
+private def cons (a : Array Raw) (s : RawStream) : RawStream :=
+  if a.isEmpty then s else ⟨(a, 0) :: s.segs⟩
+
+private def getSegs : List (Array Raw × Nat) → Nat → Option Raw
+  | [], _ => none
+  | (a, o) :: rest, k => if k < a.size - o then a[o + k]? else getSegs rest (k - (a.size - o))
+
+/-- The raw at `k`. -/
+private def get? (s : RawStream) (k : Nat) : Option Raw := getSegs s.segs k
+
+private def size (s : RawStream) : Nat := s.segs.foldl (fun n (a, o) => n + (a.size - o)) 0
+
+private def dropSegs : List (Array Raw × Nat) → Nat → List (Array Raw × Nat)
+  | [], _ => []
+  | (a, o) :: rest, k =>
+    if k < a.size - o then (a, o + k) :: rest else dropSegs rest (k - (a.size - o))
+
+/-- The stream from `k` on. -/
+private def drop (s : RawStream) (k : Nat) : RawStream := ⟨dropSegs s.segs k⟩
+
+/-- The raws from `i` to `j`. -/
+private def extract (s : RawStream) (i j : Nat) : Array Raw := Id.run do
+  let mut out : Array Raw := #[]
+  for k in [i:j] do
+    match s.get? k with
+    | some r => out := out.push r
+    | none => break
+  return out
+
+private def any (s : RawStream) (p : Raw → Bool) : Bool :=
+  s.segs.any fun (a, o) => a.any p o
+
+/-- The index past the leading run of `.space` raws at `i`. -/
+private def skipSpaces (s : RawStream) (i : Nat) : Nat :=
+  if i < s.size then if s.get? i matches some .space then s.skipSpaces (i + 1) else i else i
+termination_by s.size - i
+
+/-- `Compat.takeRawOpt` over a stream. -/
+private def takeRawOpt (s : RawStream) (i : Nat) : Option (Array Raw) × Nat := Id.run do
+  let j := s.skipSpaces i
+  match s.get? j with
   | some (.sym '[' _) =>
     let mut k := j + 1
     let mut inner : Array Raw := #[]
-    for _ in [k:raws.size + 1] do
-      match raws[k]? with
+    for _ in [k:s.size + 1] do
+      match s.get? k with
       | some (.sym ']' _) => return (some inner, k + 1)
       | some r => inner := inner.push r; k := k + 1
       | none => break
     return (none, i)
   | _ => (none, i)
 
+/-- `Compat.takeOpt` over a stream. -/
+private def takeOpt (s : RawStream) (i : Nat) : Option String × Nat :=
+  let (arg, stop) := s.takeRawOpt i
+  (arg.map rawSrc, stop)
+
+/-- `Compat.takeRawArgs` over a stream. -/
+private def takeRawArgs (s : RawStream) (i count : Nat) :
+    Array (Array Raw) × Nat × Array Raw := Id.run do
+  let mut args : Array (Array Raw) := #[]
+  let mut j := i
+  let mut tail : Array Raw := #[]
+  for _ in [0:count] do
+    if args.size == count then break
+    let k := s.skipSpaces j
+    match s.get? k with
+    | some (.group body _) => args := args.push body; j := k + 1
+    | some (.word w p) =>
+      let cs := w.toList
+      let n := min (count - args.size) cs.length
+      let mut pos := p
+      for c in cs.take n do
+        args := args.push #[.word c.toString pos]
+        pos := pos.next false
+      let rest := String.ofList (cs.drop n)
+      if !rest.isEmpty then tail := #[.word rest pos]
+      j := k + 1
+    | some (r@(.ctrl _ _)) | some (r@(.sym _ _)) | some (r@(.par _)) =>
+      args := args.push #[r]; j := k + 1
+    | _ => break
+  return (args, j, tail)
+
+@[simp] private theorem get?_ofArray (a : Array Raw) (k : Nat) : (ofArray a).get? k = a[k]? := by
+  simp only [get?, ofArray, getSegs, Nat.sub_zero, Nat.zero_add]
+  split
+  · rfl
+  · rename_i h; simp [Array.getElem?_eq_none (by omega : a.size ≤ k)]
+
+@[simp] private theorem size_ofArray (a : Array Raw) : (ofArray a).size = a.size := by
+  simp [size, ofArray]
+
+@[simp] private theorem skipSpaces_ofArray (a : Array Raw) (i : Nat) :
+    (ofArray a).skipSpaces i = Parse.skipSpaces a i := by
+  fun_induction Parse.skipSpaces a i with
+  | case1 i h hs ih =>
+    rw [skipSpaces]
+    simp only [size_ofArray, h, ↓reduceIte, get?_ofArray, Array.getElem?_eq_getElem h]
+    cases hai : a[i] <;> simp_all
+  | case2 i h hs =>
+    rw [skipSpaces]
+    simp only [size_ofArray, h, ↓reduceIte, get?_ofArray, Array.getElem?_eq_getElem h]
+    cases hai : a[i] <;> simp_all
+  | case3 i h => rw [skipSpaces]; simp [h]
+
+end RawStream
+
+/-- One optional `[...]` argument, its tokens kept inert; groups are opaque and
+an ungrouped `[` does not nest. -/
+private def takeRawOpt (raws : Array Raw) (i : Nat) : Option (Array Raw) × Nat :=
+  (RawStream.ofArray raws).takeRawOpt i
+
 /-- One optional `[...]` argument, as source text for configuration keys. -/
 public def takeOpt (raws : Array Raw) (i : Nat) : Option String × Nat :=
-  let (arg, stop) := takeRawOpt raws i
-  (arg.map rawSrc, stop)
+  (RawStream.ofArray raws).takeOpt i
 
 /-- A delimited argument with the one enclosing group
 removed when that group is the whole argument. -/
@@ -1790,29 +1909,8 @@ public theorem takeGroups_stopped_exact {raws : Array Raw} {i args stop n}
 /-- Undelimited TeX arguments, a group or one token each, with the unconsumed
 tail of a lexer word. -/
 private def takeRawArgs (raws : Array Raw) (i count : Nat) :
-    Array (Array Raw) × Nat × Array Raw := Id.run do
-  let mut args : Array (Array Raw) := #[]
-  let mut j := i
-  let mut tail : Array Raw := #[]
-  for _ in [0:count] do
-    if args.size == count then break
-    let k := skipSpaces raws j
-    match raws[k]? with
-    | some (.group body _) => args := args.push body; j := k + 1
-    | some (.word s p) =>
-      let cs := s.toList
-      let n := min (count - args.size) cs.length
-      let mut pos := p
-      for c in cs.take n do
-        args := args.push #[.word c.toString pos]
-        pos := pos.next false
-      let rest := String.ofList (cs.drop n)
-      if !rest.isEmpty then tail := #[.word rest pos]
-      j := k + 1
-    | some (r@(.ctrl _ _)) | some (r@(.sym _ _)) | some (r@(.par _)) =>
-      args := args.push #[r]; j := k + 1
-    | _ => break
-  return (args, j, tail)
+    Array (Array Raw) × Nat × Array Raw :=
+  (RawStream.ofArray raws).takeRawArgs i count
 
 /-- etoolbox's `\apptocmd`'s four arguments. -/
 private def takeHookArgs (raws : Array Raw) (i : Nat) :
@@ -4387,14 +4485,14 @@ mutual
 the definition stands, as a use in the text is: the elaborator expands the code at each use, where
 the macro's own definition holds no such setting. -/
 private def condCodeList [Monad m]
-    (ex : String → Pos → Array Raw → Nat → EvalM m (Option CondRun))
+    (ex : String → Pos → RawStream → Nat → EvalM m (Option CondRun))
     (code : Array Raw) (out : Array Raw) : List Raw → Nat → Nat → EvalM m (Array Raw)
   | [], _, _ => pure out
   | _ :: rest, i, skip + 1 => condCodeList ex code out rest (i + 1) skip
   | .ctrl n p :: rest, i, 0 => do
     -- premise: templateCodeUseChecks — a use in environment code sets what a use in the text sets
     if reachesParamSetting (← get).binds n then
-      if let some run ← ex n p code (i + 1) then
+      if let some run ← ex n p (.ofArray code) (i + 1) then
         return ← condCodeList ex code (out ++ run.raws ++ run.tail) rest (i + 1)
           (run.stop - (i + 1))
     condCodeList ex code (out.push (.ctrl n p)) rest (i + 1) 0
@@ -4402,7 +4500,7 @@ private def condCodeList [Monad m]
     condCodeList ex code (out.push (← condCodeRaw ex r)) rest (i + 1) 0
 
 private def condCodeRaw [Monad m]
-    (ex : String → Pos → Array Raw → Nat → EvalM m (Option CondRun)) : Raw → EvalM m Raw
+    (ex : String → Pos → RawStream → Nat → EvalM m (Option CondRun)) : Raw → EvalM m Raw
   | .group body p => return .group (← condCodeList ex body #[] body.toList 0 0) p
   | .env n body p => return .env n (← condCodeList ex body #[] body.toList 0 0) p
   | r => pure r
@@ -4414,8 +4512,8 @@ mutual
 /-- The decidable conditionals resolved at one level; `stack` holds every open
 conditional, innermost first. -/
 private def condList [Monad m]
-    (ex : String → Pos → Array Raw → Nat → EvalM m (Option CondRun))
-    (plan : List Bool) (raws following : Array Raw)
+    (ex : String → Pos → RawStream → Nat → EvalM m (Option CondRun))
+    (plan : List Bool) (raws : Array Raw) (following : RawStream)
     (out : OverlayPrefix) (stack : List CondOpen) :
     List Raw → Nat → Nat → EvalM m CondRun
   | [], i, skip => pure { raws := out.raws, stop := i + skip }
@@ -4855,9 +4953,9 @@ execute this definition there, so that part of the text is skipped whole"
           | none => .ctrl n pos
         -- A refused fragment stays inside the selector unexecuted.
         condList ex [] raws following (out.push r) stack rest (i + 1) 0
-      else match ← ex n pos (raws ++ following) (i + 1) with
+      else match ← ex n pos (following.cons raws) (i + 1) with
         | some run =>
-          if run.stop > i + 1 + rest.length then
+          if shorterThan rest (run.stop - (i + 1)) then
             return { run with raws := out.raws ++ run.raws }
           condList ex [] raws following (out ++ run.raws ++ run.tail)
             stack rest (i + 1) (run.stop - (i + 1))
@@ -4882,14 +4980,14 @@ execute this definition there, so that part of the text is skipped whole"
 /-- Descends into a group, math or an environment body,
 restoring the definition state at its close. -/
 private def condOne [Monad m]
-    (ex : String → Pos → Array Raw → Nat → EvalM m (Option CondRun))
+    (ex : String → Pos → RawStream → Nat → EvalM m (Option CondRun))
     (groupScope : Bool) : Raw → EvalM m Raw
   | .group body p => do
     if groupScope then condStopSpaces
     let m ← condMark
     let top := (← get).fileTop
     if groupScope then write fun st => { st with fileTop := false }
-    let body' ← condList ex [] body #[] (OverlayPrefix.ofArray #[]) [] body.toList 0 0
+    let body' ← condList ex [] body RawStream.empty (OverlayPrefix.ofArray #[]) [] body.toList 0 0
     let _ ← swapTop top
     if groupScope then condClose m
     return .group body'.raws p
@@ -4897,7 +4995,7 @@ private def condOne [Monad m]
     condStopSpaces
     let m ← condMark
     let top ← swapTop false
-    let body' ← condList ex [] body #[] (OverlayPrefix.ofArray #[]) [] body.toList 0 0
+    let body' ← condList ex [] body RawStream.empty (OverlayPrefix.ofArray #[]) [] body.toList 0 0
     let _ ← swapTop top
     condClose m
     return .math d body'.raws p
@@ -4911,7 +5009,7 @@ private def condOne [Monad m]
       write fun st => { st with file := f, useSite := none
                                 owned := ownsInput st.owned saved.file n }
       let top ← swapTop true
-      let body' ← condList ex [] body #[] (OverlayPrefix.ofArray #[]) [] body.toList 0 0
+      let body' ← condList ex [] body RawStream.empty (OverlayPrefix.ofArray #[]) [] body.toList 0 0
       let _ ← swapTop top
       write fun st => { st with file := saved.file, useSite := saved.useSite, owned := saved.owned }
       return .env n body'.raws p
@@ -4928,10 +5026,10 @@ private def condOne [Monad m]
         let names := condBoundLevel #[] body.toList
         write fun st => { st with picBound := st.picBound ++ names, inPicture := true }
       let top ← swapTop false
-      let box ← ex (Tcolorbox.bindingName n) p body 0
+      let box ← ex (Tcolorbox.bindingName n) p (.ofArray body) 0
       let head := if overlayTitled n then #[Raw.ctrl "titled overlay" p] else #[]
       let front := head ++ (box.map (·.tail)).getD #[]
-      let body' ← condList ex [] body #[] (OverlayPrefix.ofArray front) [] body.toList 0
+      let body' ← condList ex [] body RawStream.empty (OverlayPrefix.ofArray front) [] body.toList 0
         ((box.map (·.stop)).getD 0)
       let result ← match box.bind (·.box) with
         | some (.ready prepared) => do
@@ -4961,17 +5059,17 @@ end
 
 /-- A readable command's optional first argument and
 remaining undelimited arguments, bound. -/
-private def takeCondArgs (raws : Array Raw) (start arity : Nat)
+private def takeCondArgs (raws : RawStream) (start arity : Nat)
     (defaultArg : Option (Array Raw)) :
     Option (Array (Array Raw) × Nat × Array Raw) := do
   match defaultArg with
-  | none => some (takeRawArgs raws start arity)
+  | none => some (raws.takeRawArgs start arity)
   | some fallback =>
     if arity == 0 then none else do
-      let (actual, stop) := takeRawOpt raws start
-      let first := skipSpaces raws start
-      if actual.isNone && (raws[first]? matches some (.sym '[' _)) then none else
-        let (args, stop, tail) := takeRawArgs raws
+      let (actual, stop) := raws.takeRawOpt start
+      let first := raws.skipSpaces start
+      if actual.isNone && (raws.get? first matches some (.sym '[' _)) then none else
+        let (args, stop, tail) := raws.takeRawArgs
           (if actual.isSome then stop else first) (arity - 1)
         some (#[(actual.map ungroupArg).getD fallback] ++ args, stop, tail)
 
@@ -4993,7 +5091,7 @@ end
 
 /-- The request of an unbound input command at its executed site. -/
 private def inputRequestAt (st : St) (n : String) (pos : Pos)
-    (raws : Array Raw) (start : Nat) : Option (InputRequest × Nat) := do
+    (raws : RawStream) (start : Nat) : Option (InputRequest × Nat) := do
   if st.settling.isSome then none else do
     let input := inputCommands.contains n
     -- premise: frontendInputRequestChecks — only live execution loads a local style
@@ -5001,13 +5099,13 @@ private def inputRequestAt (st : St) (n : String) (pos : Pos)
       (n == "usepackage" || n == "RequirePackage" || (themeAsking.lookup n).isSome)
     if !(input || style) then none else do
       let optioned := ["markdownInput", "inputminted", "inputlean", "lstinputlisting"].contains n
-      let (_, k) := if optioned || style then takeOpt raws start else (none, start)
-      let j := skipSpaces raws k
-      let some (.group _ _) := raws[j]? | none
+      let (_, k) := if optioned || style then raws.takeOpt start else (none, start)
+      let j := raws.skipSpaces k
+      let some (.group _ _) := raws.get? j | none
       -- minted's file command names its language in a group before the file's.
       let j ← if n == "inputminted" then
-          let j' := skipSpaces raws (j + 1)
-          match raws[j']? with
+          let j' := raws.skipSpaces (j + 1)
+          match raws.get? j' with
           | some (.group _ _) => some j'
           | _ => none
         else some j
@@ -5074,12 +5172,12 @@ public def InputContext.markdownFor (context : InputContext) (options : String) 
 
 /-- `\markdownSetup{options}`: the markdown package's `citations` and `hybrid` set for the rest of
 its group, every other option named. -/
-private def markdownSetupAt (n : String) (pos : Pos) (raws : Array Raw) (start : Nat) :
+private def markdownSetupAt (n : String) (pos : Pos) (raws : RawStream) (start : Nat) :
     M (Option CondRun) := do
   let st ← get
   if n != "markdownSetup" || st.settling.isSome then return none
-  let j := skipSpaces raws start
-  let some (.group body _) := raws[j]? | return none
+  let j := raws.skipSpaces start
+  let some (.group body _) := raws.get? j | return none
   let opts := MarkdownOptions.read (rawSrc body)
   setMarkdown opts
   -- premise: markdownHybridChecks — the driver reads citations and hybrid where the package does
@@ -5106,7 +5204,7 @@ private def ownInput : Raw → Raw
 
 /-- The unbound-command arm of the production evaluator. -/
 private def condReadAt [Monad m] (reader : Option (InputReader m))
-    (n : String) (pos : Pos) (raws : Array Raw) (start : Nat) :
+    (n : String) (pos : Pos) (raws : RawStream) (start : Nat) :
     EvalM m (Option CondRun) := do
   let st ← get
   let some (request, stop) := inputRequestAt st n pos raws start |
@@ -5120,7 +5218,7 @@ private def condReadAt [Monad m] (reader : Option (InputReader m))
     { raws := if owned then answer.map ownInput else answer, stop }
 
 private theorem condReadAt_refused_exact (reader : InputReader Id)
-    (st : St) (name : String) (pos : Pos) (raws : Array Raw) (start stop : Nat)
+    (st : St) (name : String) (pos : Pos) (raws : RawStream) (start stop : Nat)
     (request : InputRequest)
     (hs : inputRequestAt st name pos raws start = some (request, stop))
     (hr : reader request { state := st } = (none, { state := st })) :
@@ -5137,12 +5235,12 @@ private theorem condReadAt_refused_exact (reader : InputReader Id)
 when the use's state decides it. -/
 private def condExpandAt [Monad m] (reader : Option (InputReader m))
     (bound textBound : Nat) (prepareBox : Bool) (n : String) (pos : Pos)
-    (raws : Array Raw) (start : Nat) : EvalM m (Option CondRun) := do
+    (raws : RawStream) (start : Nat) : EvalM m (Option CondRun) := do
   let st ← get
   let site := st.useSite
   if let some name := Tcolorbox.boundName? n then
     let call := if name == "tcolorbox" then
-        let (options, stop) := takeRawOpt raws start
+        let (options, stop) := raws.takeRawOpt start
         some (options.getD #[], stop, #[])
       else do
         let v ← (condValueOf st.binds n).bind id
@@ -5169,7 +5267,7 @@ private def condExpandAt [Monad m] (reader : Option (InputReader m))
       write fun s => { s with materializeTitle := st.materializeTitle }
       let decls ← condList
         (fun n p rs k => condExpandAt reader bound textBound false n p rs k)
-        [] prepared.bodyDecls #[] (OverlayPrefix.ofArray #[]) []
+        [] prepared.bodyDecls RawStream.empty (OverlayPrefix.ofArray #[]) []
         prepared.bodyDecls.toList 0 0
       let title := match title with
         | .group body _ => body
@@ -5232,7 +5330,7 @@ the argument boundary is unread here, so its optional selection and state change
       let origin : Option MacroOrigin := if body.arity > 0 && !inPic
         then some { id := st.macroClock, name := n } else none
       let body := bindRawArgsList args #[] (rebaseList atUse false body.raws.toList)
-      let following := tail ++ raws.extract stop raws.size
+      let following := (raws.drop stop).cons tail
       let nextBound := if serial < bound then serial else bound
       write fun s => { s with
         useSite := some (site.getD pos), macroClock := st.macroClock + 1
@@ -5280,13 +5378,13 @@ decreasing_by
 /-- The expander running text uses, with every definition
 made so far visible. -/
 private def condTopExpand [Monad m] (reader : Option (InputReader m))
-    (n : String) (pos : Pos) (raws : Array Raw) (start : Nat) :
+    (n : String) (pos : Pos) (raws : RawStream) (start : Nat) :
     EvalM m (Option CondRun) := do
   let bound := (← get).serial + 1
   condExpandAt reader bound bound true n pos raws start
 
 private theorem condTopExpand_unbound_exact (reader : Option (InputReader Id))
-    (st : St) (name : String) (pos : Pos) (raws : Array Raw) (start : Nat)
+    (st : St) (name : String) (pos : Pos) (raws : RawStream) (start : Nat)
     (hb : Tcolorbox.boundName? name = none)
     (hv : condValueOf st.binds name = none) :
     condTopExpand reader name pos raws start st =
@@ -5305,7 +5403,7 @@ private theorem condStopSpaces_quiet (st : St) (h : st.ignoreSpaces = false) :
     StateT.get, pure, StateT.pure, h]
 
 private theorem condOne_word_exact
-    (ex : String → Pos → Array Raw → Nat → EvalM Id (Option CondRun))
+    (ex : String → Pos → RawStream → Nat → EvalM Id (Option CondRun))
     (scope : Bool) (word : String) (pos : Pos) (st : St)
     (h : st.ignoreSpaces = false) :
     condOne ex scope (.word word pos) st = (.word word pos, st) := by
@@ -5315,8 +5413,8 @@ private theorem condOne_word_exact
   rw [condStopSpaces_quiet st h]
 
 private theorem condList_word_exact
-    (ex : String → Pos → Array Raw → Nat → EvalM Id (Option CondRun))
-    (word : String) (pos : Pos) (raws following : Array Raw)
+    (ex : String → Pos → RawStream → Nat → EvalM Id (Option CondRun))
+    (word : String) (pos : Pos) (raws : Array Raw) (following : RawStream)
     (out : OverlayPrefix) (i : Nat) (st : St)
     (h : st.ignoreSpaces = false) :
     condList ex [] raws following out [] [.word word pos] i 0 st =
@@ -5336,7 +5434,7 @@ private theorem condClose_current_exact (st : St) :
     Array.extract_empty_of_stop_le_start, Array.shrink_eq_take]
 
 private theorem condOne_literal_group_exact
-    (ex : String → Pos → Array Raw → Nat → EvalM Id (Option CondRun))
+    (ex : String → Pos → RawStream → Nat → EvalM Id (Option CondRun))
     (word : String) (pos gp : Pos) (st : St)
     (h : st.ignoreSpaces = false) :
     condOne ex true (.group #[.word word pos] gp) st =
@@ -5348,7 +5446,7 @@ private theorem condOne_literal_group_exact
     let mark ← condMark
     let top := (← get).fileTop
     write fun s => { s with fileTop := false }
-    let body ← condList ex [] #[.word word pos] #[] (OverlayPrefix.ofArray #[])
+    let body ← condList ex [] #[.word word pos] RawStream.empty (OverlayPrefix.ofArray #[])
       [] [.word word pos] 0 0
     let _ ← swapTop top
     condClose mark
@@ -5364,8 +5462,8 @@ private theorem condOne_literal_group_exact
   simp [OverlayPrefix.push, OverlayPrefix.ofArray, Nat.add_assoc]
 
 private theorem condList_literal_group_exact
-    (ex : String → Pos → Array Raw → Nat → EvalM Id (Option CondRun))
-    (word : String) (pos gp : Pos) (raws following : Array Raw)
+    (ex : String → Pos → RawStream → Nat → EvalM Id (Option CondRun))
+    (word : String) (pos gp : Pos) (raws : Array Raw) (following : RawStream)
     (out : OverlayPrefix) (i : Nat) (st : St)
     (h : st.ignoreSpaces = false) :
     condList ex [] raws following out [] [.group #[.word word pos] gp] i 0 st =
@@ -5377,14 +5475,14 @@ private theorem condList_literal_group_exact
     condOne_literal_group_exact ex word pos gp st h, condList, Nat.add_zero]
 
 private theorem condList_package_read_step
-    (ex : String → Pos → Array Raw → Nat → EvalM Id (Option CondRun))
-    (name : String) (pos : Pos) (raws following : Array Raw)
+    (ex : String → Pos → RawStream → Nat → EvalM Id (Option CondRun))
+    (name : String) (pos : Pos) (raws : Array Raw) (following : RawStream)
     (out : OverlayPrefix) (first : Raw) (rest : List Raw) (i : Nat) (st after : St)
     (hc : name = "usepackage" ∨ name = "RequirePackage")
     (hp : st.primitiveScopes = #[]) (hd : st.condInDoc = false)
     (hflags : st.flags = {}) (hlens : st.exactLens = {})
     (ho : out.scan.opened = false)
-    (he : ex name pos (raws ++ following) (i + 1)
+    (he : ex name pos (following.cons raws) (i + 1)
       (recordLoad raws name i st).2 = (none, after))
     (hs : after.ignoreSpaces = false) :
     condList ex [] raws following out [] (.ctrl name pos :: first :: rest) i 0 st =
@@ -5479,7 +5577,8 @@ private theorem packageCall_readers (command names : String)
     rw [skipSpaces]
     simp [packageCall]
   refine ⟨hs, ?_, ?_⟩
-  · simp only [takeOpt, takeRawOpt, hs, Id.run]
+  · simp only [takeOpt, RawStream.takeOpt, RawStream.takeRawOpt, RawStream.skipSpaces_ofArray,
+      hs, Id.run]
     simp [packageCall]
   · simp [takeGroups, hs]
     simp [packageCall]
@@ -5494,21 +5593,39 @@ public theorem InputRequest.package_name_exact (file command names : String)
     (packageCall_readers command names pos groupPos namePos).2.2]
   simp [rawSrc, rawSrcList, rawSrcOne]
 
+private theorem packageCall_stream_readers (command names : String)
+    (pos groupPos namePos : Pos) :
+    (RawStream.cons (packageCall command names pos groupPos namePos) RawStream.empty).skipSpaces
+      1 = 1 ∧
+    (RawStream.cons (packageCall command names pos groupPos namePos) RawStream.empty).takeOpt
+      1 = (none, 1) := by
+  have hs : (RawStream.cons (packageCall command names pos groupPos namePos)
+      RawStream.empty).skipSpaces 1 = 1 := by
+    rw [RawStream.skipSpaces]
+    simp [packageCall, RawStream.cons, RawStream.empty, RawStream.size, RawStream.get?,
+      RawStream.getSegs]
+  refine ⟨hs, ?_⟩
+  simp only [RawStream.takeOpt, RawStream.takeRawOpt, hs, Id.run]
+  simp [packageCall, RawStream.cons, RawStream.empty, RawStream.get?, RawStream.getSegs]
+
 private theorem packageCall_request_exact (command names : String)
     (pos groupPos namePos : Pos) (st : St)
     (hc : command = "usepackage" ∨ command = "RequirePackage")
     (hd : st.condInDoc = false) (hs : st.settling = none) :
-    inputRequestAt st command pos (packageCall command names pos groupPos namePos) 1 =
+    inputRequestAt st command pos
+      (RawStream.cons (packageCall command names pos groupPos namePos) RawStream.empty) 1 =
       some (⟨command, st.file, st.useSite.getD pos, pos,
         #[.group #[.word names namePos] groupPos]⟩, 2) := by
   have hp : (command == "usepackage" || command == "RequirePackage") = true := by
     rcases hc with rfl | rfl <;> decide
   have hm : (command == "inputminted") = false := by rcases hc with rfl | rfl <;> decide
   have hm' : command ≠ "inputminted" := by rcases hc with rfl | rfl <;> decide
-  have ht := (packageCall_readers command names pos groupPos namePos).2.1
-  have hj := (packageCall_readers command names pos groupPos namePos).1
+  have ht := (packageCall_stream_readers command names pos groupPos namePos).2
+  have hj := (packageCall_stream_readers command names pos groupPos namePos).1
   simp [inputRequestAt, hs, hd, hp, ht, hj, hm, hm']
-  simp [packageCall]
+  simp [packageCall, RawStream.cons, RawStream.empty, RawStream.get?, RawStream.getSegs,
+    RawStream.extract, Id.run]
+  rfl
 
 private def packageLoaded (st : St) (names : String) : St :=
   { st with
@@ -5547,7 +5664,7 @@ private theorem condList_package_failed_exact (reader : InputReader Id)
     (hv : condValueOf st.binds command = none)
     (hr : ∀ request context, reader request context = (none, context)) :
     condList (condTopExpand (some reader)) []
-      (packageCall command names pos gp np) #[] (OverlayPrefix.ofArray #[])
+      (packageCall command names pos gp np) RawStream.empty (OverlayPrefix.ofArray #[])
       [] (packageCall command names pos gp np).toList 0 0 st =
       ({ raws := packageCall command names pos gp np, stop := 2 },
         packageFailed command names pos gp np st) := by
@@ -5565,21 +5682,21 @@ private theorem condList_package_failed_exact (reader : InputReader Id)
       ⟨packageRequest command names pos gp np loaded, false⟩
     writes := loaded.writes + 1 }
   have hex : condTopExpand (some reader) command pos
-      (packageCall command names pos gp np ++ #[]) (0 + 1)
+      (RawStream.cons (packageCall command names pos gp np) RawStream.empty) (0 + 1)
       (recordLoad (packageCall command names pos gp np) command 0 st).2 =
       (none, attempted) := by
     rw [recordLoad_package_exact command names pos gp np st hc]
-    simp only [Array.append_empty, Nat.zero_add]
+    simp only [Nat.zero_add]
     rw [condTopExpand_unbound_exact (some reader) loaded command pos _ 1 hb hv]
     exact condReadAt_refused_exact reader loaded command pos _ 1 2
       (packageRequest command names pos gp np loaded)
       (packageCall_request_exact command names pos gp np loaded hc hd hsettling)
       (hr _ _)
-  change condList _ [] _ #[] _ [] (.ctrl command pos ::
+  change condList _ [] _ RawStream.empty _ [] (.ctrl command pos ::
     [.group #[.word names np] gp]) 0 0 st = _
-  rw [condList_package_read_step _ command pos _ #[] _ _ [] 0 st attempted
+  rw [condList_package_read_step _ command pos _ RawStream.empty _ _ [] 0 st attempted
     hc hp hd hflags hlens rfl hex hi]
-  rw [condList_literal_group_exact _ names np gp _ #[] _ 1 attempted hi]
+  rw [condList_literal_group_exact _ names np gp _ RawStream.empty _ 1 attempted hi]
   simp [OverlayPrefix.push, OverlayPrefix.ofArray, packageFailed,
     attempted, loaded, packageLoaded, packageRequest, packageCall, Nat.add_assoc]
 
@@ -5588,7 +5705,7 @@ continues; the wrapper opens no TeX group. -/
 public def resumeInput [Monad m] (reader : InputReader m) (context : InputContext)
     (raws : Array Raw) (diags : Array Diag := #[]) : m (Array Raw × InputContext) := do
   let (run, state) ←
-    (condList (condTopExpand (some reader)) [] raws #[] (OverlayPrefix.ofArray #[]) [] raws.toList 0 0).run
+    (condList (condTopExpand (some reader)) [] raws RawStream.empty (OverlayPrefix.ofArray #[]) [] raws.toList 0 0).run
       { context.state with
         diags := context.state.diags ++ diags
         sourceTriggers := sourceTriggers context.state.file context.state.sourceTriggers raws.toList }
@@ -5626,7 +5743,7 @@ private def condSettle [Monad m] (reader : Option (InputReader m)) (pre : Array 
         let replacement := bindRawArgsList #[] #[] v.raws.toList
         let body ← condSandbox
           (condList (fun n q rs k => condExpandAt reader v.serial v.textSerial true n q rs k)
-            [] replacement #[] (OverlayPrefix.ofArray #[]) [] replacement.toList 0 0)
+            [] replacement RawStream.empty (OverlayPrefix.ofArray #[]) [] replacement.toList 0 0)
         write fun st => { st with file := file, settling := none
                                   diags := if quiet then st.diags.extract 0 said else st.diags
                                   warned := if quiet then warned else st.warned }
@@ -5673,7 +5790,7 @@ private def condReplay [Monad m] (reader : Option (InputReader m))
   for (pt, file, pos, body) in hooks do
     if pt == point then
       write fun st => { st with file := file }
-      let body ← condList (condTopExpand reader) [] body #[] (OverlayPrefix.ofArray #[]) [] body.toList 0 0
+      let body ← condList (condTopExpand reader) [] body RawStream.empty (OverlayPrefix.ofArray #[]) [] body.toList 0 0
       out := out.push (pt, file, pos, body.raws)
   write fun st => { st with
     file := saved.file, fileTop := saved.fileTop
@@ -5696,7 +5813,7 @@ private def condDocument [Monad m] (reader : Option (InputReader m))
   let d := seam.getD raws.size
   let pre := raws.extract 0 d
   let post := raws.extract d raws.size
-  let pre' ← condList (condTopExpand reader) [] pre #[] (OverlayPrefix.ofArray #[]) [] pre.toList 0 0
+  let pre' ← condList (condTopExpand reader) [] pre RawStream.empty (OverlayPrefix.ofArray #[]) [] pre.toList 0 0
   let hooks := (← get).deferred
   let endHooks ← condReplay reader hooks .endPreamble
   let texts ← if seam.isSome then condSettle reader pre'.raws else pure #[]
@@ -5709,14 +5826,14 @@ private def condDocument [Monad m] (reader : Option (InputReader m))
   if seam.isSome then
     write fun st => { st with templateBinds := st.binds, templateFlags := st.flags
                               templateNames := templateClosure st.binds pre'.raws }
-  let post' ← condList (condTopExpand reader) [] post #[] (OverlayPrefix.ofArray #[]) [] post.toList 0 0
+  let post' ← condList (condTopExpand reader) [] post RawStream.empty (OverlayPrefix.ofArray #[]) [] post.toList 0 0
   return patch file pre'.raws ++ post'.raws
 
 private theorem condDocument_without_seam_exact
     (reader : Option (InputReader Id)) (raws : Array Raw) (st after : St)
     (run : CondRun)
     (hseam : raws.findIdx? (· matches .env "document" _ _) = none)
-    (hpre : condList (condTopExpand reader) [] raws #[]
+    (hpre : condList (condTopExpand reader) [] raws RawStream.empty
       (OverlayPrefix.ofArray #[]) [] raws.toList 0 0 st = (run, after))
     (hdeferred : after.deferred = #[]) :
     condDocument reader raws st =
@@ -13471,7 +13588,7 @@ private theorem packageCall_args (command names : String) (pos groupPos namePos 
       some (#[none, some #[.word names namePos]], 2) := by
   have hs := (packageCall_readers command names pos groupPos namePos).1
   have hopt : takeRawOpt (packageCall command names pos groupPos namePos) 1 = (none, 1) := by
-    simp only [takeRawOpt, hs, Id.run]
+    simp only [takeRawOpt, RawStream.takeRawOpt, RawStream.skipSpaces_ofArray, hs, Id.run]
     simp [packageCall]
   simp only [argsRead, hopt, (packageCall_readers command names pos groupPos namePos).2.2]
   rfl
@@ -14957,7 +15074,8 @@ private theorem localSty_theme (cn pre nm : String) (pos : Pos)
   have hs : skipSpaces #[Raw.ctrl cn pos, Raw.group #[Raw.word nm pos] pos] 1 = 1 := by
     rw [skipSpaces]; simp
   have hopt : takeOpt #[Raw.ctrl cn pos, Raw.group #[Raw.word nm pos] pos] 1 = (none, 1) := by
-    simp [takeOpt, takeRawOpt, hs, Id.run]
+    simp [takeOpt, RawStream.takeOpt, RawStream.takeRawOpt, RawStream.skipSpaces_ofArray, hs,
+      Id.run]
   have hgrp : takeGroups #[Raw.ctrl cn pos, Raw.group #[Raw.word nm pos] pos] 1 1
       = (#[#[Raw.word nm pos]], 2) := by
     simp [takeGroups, hs]
