@@ -156,11 +156,30 @@ def noGroup (_ : List Char) : Bool := false
 def pieceText (piece : Array (List Char)) : String :=
   piece.foldl (fun t a => a.foldl String.push t) ""
 
+/-- Text's atoms cut at each atom that is `sep` alone, each piece as its text. -/
+def cutAtoms (sep : Char) (s : String) : Array String :=
+  (KeyVal.splitTopAt noGroup noGroup (· == [sep]) (atoms s)).map pieceText
+
+/-- `cutAtoms` in one pass, each atom read as `atomsGo` reads it and set onto the piece `cur`. -/
+def cutGo (sep : Char) : List Char → String → Array String → Array String
+  | [], cur, out => out.push cur
+  | '\\' :: c :: rest, cur, out => cutGo sep rest ((cur.push '\\').push c) out
+  | c :: rest, cur, out =>
+    match opening c with
+    | none => if c == sep then cutGo sep rest "" (out.push cur) else cutGo sep rest (cur.push c) out
+    | some st =>
+      match scanLen st rest 0 with
+      | some k => cutGo sep (rest.drop k) ((rest.take k).foldl String.push (cur.push c)) out
+      | none =>
+        if c == sep && rest.isEmpty then (out.push cur).push ""
+        else out.push (rest.foldl String.push (cur.push c))
+termination_by l => l.length
+decreasing_by all_goals simp only [List.length_cons, List.length_drop]; omega
+
 /-- CSS text with no comments in it (`stripComments` first) cut at each `sep` outside blocks,
 strings and escapes, each piece as written: a list's items at `,` (CSS Syntax 3 §5.4.10), a block's
-declarations at `;`. -/
-public def splitList (sep : Char) (s : String) : Array String :=
-  (KeyVal.splitTopAt noGroup noGroup (· == [sep]) (atoms s)).map pieceText
+declarations at `;`; `cutAtoms` (`splitList_eq_cutAtoms`). -/
+public def splitList (sep : Char) (s : String) : Array String := cutGo sep s.toList "" #[]
 
 /-- Whether an atom is whole: a string its quote or a line end ended, a block its mirror closed, or
 any other atom but a lone backslash. -/
@@ -171,38 +190,52 @@ public def closedAtom : List Char → Bool
     | none => !(c == '\\' && b.isEmpty)
   | [] => true
 
-/-- `s` with its comments removed: `/* … */`, an unterminated one to the end. -/
-public def stripComments (s : String) : String := Id.run do
-  let cs := s.toList.toArray
-  let mut out := ""
-  let mut i := 0
-  let mut quote : Option Char := none
-  for _ in [0:cs.size + 1] do
-    if i ≥ cs.size then break
-    let c := cs[i]?.getD ' '
-    match quote with
-    | some q =>
-      out := out.push c
-      if c == q || isLineEnd c then quote := none
-      i := i + 1
-    | none =>
-      if c == '/' && cs[i + 1]? == some '*' then
-        let mut j := i + 2
-        for _ in [0:cs.size + 1] do
-          if j + 1 ≥ cs.size then
-            j := cs.size
-            break
-          if cs[j]? == some '*' && cs[j + 1]? == some '/' then
-            j := j + 2
-            break
-          j := j + 1
-        out := out.push ' '
-        i := j
-      else
-        if c == '"' || c == '\'' then quote := some c
-        out := out.push c
-        i := i + 1
-  return out
+/-- The byte at `i` of a text's UTF-8 encoding, 0 past its end. -/
+def byteAt (s : String) (i : Nat) : UInt8 :=
+  if h : i < s.utf8ByteSize then s.getUTF8Byte ⟨i⟩ h else 0
+
+/-- Whether a byte encodes a line end. -/
+def lineEndByte (b : UInt8) : Bool := b == 10 || b == 13 || b == 12
+
+/-- Whether a byte encodes a quote. -/
+def quoteByte (b : UInt8) : Bool := b == 34 || b == 39
+
+/-- The text between two byte offsets, each before an ASCII byte or at an end. -/
+def slice (s : String) (b e : Nat) : String := String.Pos.Raw.extract s ⟨b⟩ ⟨e⟩
+
+/-- The byte offset past a comment's closing `*/` at or after `j`, or the text's end. -/
+def commentEnd (s : String) (n j : Nat) : { k : Nat // j ≤ k } :=
+  if h : j + 1 < n then
+    if byteAt s j == 42 && byteAt s (j + 1) == 47 then ⟨j + 2, by omega⟩
+    else
+      let ⟨k, hk⟩ := commentEnd s n (j + 1)
+      ⟨k, by omega⟩
+  else ⟨max n j, by omega⟩
+termination_by n - j
+
+/-- `stripComments` from byte `i` on, `out` holding the text before `start` with its comments
+removed, `quote` the open string's quote byte or 0. -/
+def stripGo (s : String) (n i start : Nat) (quote : UInt8) (out : String) (cut : Bool) : String :=
+  if h : i < n then
+    let c := byteAt s i
+    if quote != 0 then
+      stripGo s n (i + 1) start (if c == quote || lineEndByte c then 0 else quote) out cut
+    else if c == 47 && i + 1 < n && byteAt s (i + 1) == 42 then
+      let ⟨j, hj⟩ := commentEnd s n (i + 2)
+      have : n - j < n - i := by
+        have := Nat.le_max_left n (i + 2)
+        omega
+      stripGo s n j j 0 ((out ++ slice s start i).push ' ') true
+    else stripGo s n (i + 1) start (if quoteByte c then c else 0) out cut
+  else if cut then
+    let rest := slice s start n
+    out ++ rest
+  else s
+termination_by n - i
+
+/-- `s` with its comments removed: `/* … */`, an unterminated one to the end; a scan over its bytes,
+whose markers are all ASCII. -/
+public def stripComments (s : String) : String := stripGo s s.utf8ByteSize 0 0 0 "" false
 
 /-- A character a fragment identifier in `url(#…)` may hold. -/
 @[expose] public def idChar (c : Char) : Bool :=
@@ -225,59 +258,64 @@ public def admitsCall (name arg : String) : Bool :=
     !arg.isEmpty && arg.all channelChar
   else false
 
-/-- The first spelling this reader refuses: an escape or an at-sign anywhere, an unterminated
-string, or a function outside strings that is nested, unterminated or not admitted. -/
-public def refusedIn (s : String) : Option Unread := Id.run do
-  let cs := s.toList.toArray
-  let mut i := 0
-  let mut quote : Option Char := none
-  let mut ident := ""
-  for _ in [0:cs.size + 1] do
-    if i ≥ cs.size then break
-    let c := cs[i]?.getD ' '
-    if c == '\\' then return some .escape
-    if c == '@' then return some .atRule
-    match quote with
-    | some q =>
-      if c == q || isLineEnd c then quote := none
-      i := i + 1
-    | none =>
-      if c == '"' || c == '\'' then
-        quote := some c
-        ident := ""
-        i := i + 1
-      else if c == '(' then
-        let mut j := i + 1
-        let mut arg := ""
-        let mut closed := false
-        for _ in [0:cs.size + 1] do
-          if j ≥ cs.size then break
-          if cs[j]? == some ')' then
-            closed := true
-            break
-          if cs[j]? == some '(' then return some (.nestedCall ident)
-          arg := arg.push (cs[j]?.getD ' ')
-          j := j + 1
-        if !closed then return some (.openCall ident)
-        if !admitsCall ident arg then return some (.call ident)
-        ident := ""
-        i := j + 1
-      else
-        if c.isAlphanum || c == '-' || c == '_' then ident := ident.push c else ident := ""
-        i := i + 1
-  if quote.isSome then return some .openString
-  return none
+/-- The first parenthesis at or after byte `j`, and whether it opens, or the text's end. -/
+def parenAt (s : String) (n j : Nat) : { k : Nat // j ≤ k } × Option Bool :=
+  if _h : j < n then
+    let d := byteAt s j
+    if d == 41 then (⟨j, Nat.le_refl _⟩, some false)
+    else if d == 40 then (⟨j, Nat.le_refl _⟩, some true)
+    else
+      let (⟨k, hk⟩, r) := parenAt s n (j + 1)
+      (⟨k, by omega⟩, r)
+  else (⟨j, Nat.le_refl _⟩, none)
+termination_by n - j
 
-/-- Whether a string in `s` is broken by a line end (CSS Syntax 3 §4.3.5). -/
-@[expose] public def brokenString (s : String) : Bool := Id.run do
-  let mut quote : Option Char := none
-  for c in s.toList do
-    match quote with
-    | some q =>
-      if c == q then quote := none
-      else if isLineEnd c then return true
-    | none => if c == '"' || c == '\'' then quote := some c
-  return false
+/-- Whether a byte encodes an identifier character this reader names a call by. -/
+def callNameByte (c : UInt8) : Bool :=
+  (48 ≤ c && c ≤ 57) || (65 ≤ c && c ≤ 90) || (97 ≤ c && c ≤ 122) || c == 45 || c == 95
+
+/-- `refusedIn` from byte `i` on, `quote` the open string's quote byte or 0, `ident` the name a
+call opening here would have. -/
+def refusedGo (s : String) (n i : Nat) (quote : UInt8) (ident : String) : Option Unread :=
+  if h : i < n then
+    let c := byteAt s i
+    if c == 92 then some .escape
+    else if c == 64 then some .atRule
+    else if quote != 0 then
+      refusedGo s n (i + 1) (if c == quote || lineEndByte c then 0 else quote) ident
+    else if quoteByte c then refusedGo s n (i + 1) c ""
+    else if c == 40 then
+      match parenAt s n (i + 1) with
+      | (⟨j, hj⟩, some false) =>
+        if admitsCall ident (slice s (i + 1) j) then refusedGo s n (j + 1) 0 ""
+        else some (.call ident)
+      | (_, some true) => some (.nestedCall ident)
+      | (_, none) => some (.openCall ident)
+    else
+      refusedGo s n (i + 1) 0 (if callNameByte c then ident.push (Char.ofNat c.toNat) else "")
+  else if quote != 0 then some .openString
+  else none
+termination_by n - i
+
+/-- The first spelling this reader refuses: an escape or an at-sign anywhere, an unterminated
+string, or a function outside strings that is nested, unterminated or not admitted; a scan over
+its bytes, whose markers are all ASCII. -/
+public def refusedIn (s : String) : Option Unread := refusedGo s s.utf8ByteSize 0 0 ""
+
+/-- `brokenString` from byte `i` on, `quote` the open string's quote byte or 0. -/
+def brokenGo (s : String) (n i : Nat) (quote : UInt8) : Bool :=
+  if _h : i < n then
+    let c := byteAt s i
+    if quote != 0 then
+      if c == quote then brokenGo s n (i + 1) 0
+      else if lineEndByte c then true
+      else brokenGo s n (i + 1) quote
+    else brokenGo s n (i + 1) (if quoteByte c then c else 0)
+  else false
+termination_by n - i
+
+/-- Whether a string in `s` is broken by a line end (CSS Syntax 3 §4.3.5); a scan over its bytes. -/
+public def brokenString (s : String) : Bool := brokenGo s s.utf8ByteSize 0 0
 
 /-- Text on one line as a diagnostic names it: each run of white space outside strings one blank,
 a string as written, a line end that breaks one a blank. -/
@@ -323,10 +361,9 @@ public def importance (value : String) : String × Bool :=
     else (value, false)
   | none => (value, false)
 
-/-- A declaration block's declarations in order; a malformed one is unsupported, a refused spelling refused. -/
-public def parseDecls (text : String) : Except Problem (Array Decl) := do
-  let text := stripComments text
-  if let some what := refusedIn text then throw (.refused what)
+/-- A comment-free declaration block's declarations, its refused spellings already ruled out: a
+block of a sheet `refusedIn` admits, whose blocks it admits too. -/
+def declsOf (text : String) : Except Problem (Array Decl) := do
   let mut out : Array Decl := #[]
   for part in splitList ';' text do
     let p := part.trimAscii.toString
@@ -342,6 +379,12 @@ public def parseDecls (text : String) : Except Problem (Array Decl) := do
       out := out.push { prop, value, important }
     | _ => throw (.unsupported (.declaration (oneLine p) false))
   return out
+
+/-- A declaration block's declarations in order; a malformed one is unsupported, a refused spelling refused. -/
+public def parseDecls (text : String) : Except Problem (Array Decl) := do
+  let text := stripComments text
+  if let some what := refusedIn text then throw (.refused what)
+  declsOf text
 
 /-- A character of a CSS identifier: a letter, digit, `-`, `_` or non-ASCII. -/
 @[expose] public def identChar (c : Char) : Bool := c.isAlphanum || c == '-' || c == '_' || c.toNat ≥ 128
@@ -470,22 +513,22 @@ public def parseCompound (s : String) : Option Compound := do
 /-- One complex selector's text: compounds joined by white space (descendant) or `>` (child); one
 outside the subset is named whole. -/
 public def parseSelector (s : String) : Except Unread Selector := do
-  let outside := Unread.selector (oneLine s)
+  let outside : Unit → Unread := fun _ => .selector (oneLine s)
   let spaced := (s.replace ">" " > ").trimAscii.toString
   let words := (spaced.split isWs).toList.map (·.toString) |>.filter (!·.isEmpty)
   match words with
   | [] => throw .emptySelector
   | first :: more =>
-    let some head := parseCompound first | throw outside
+    let some head := parseCompound first | throw (outside ())
     let mut rest : Array (Combinator × Compound) := #[]
     let mut pending := Combinator.descendant
     for w in more do
       if w == ">" then pending := .child
       else
-        let some c := parseCompound w | throw outside
+        let some c := parseCompound w | throw (outside ())
         rest := rest.push (pending, c)
         pending := .descendant
-    if pending == .child then throw outside
+    if pending == .child then throw (outside ())
     return { head, rest }
 
 /-- How specific a selector is (Selectors 4 §16): its ids, classes, types. -/
@@ -509,7 +552,7 @@ public def parseSheet (text : String) : Except Unread (Array Rule × Array Unrea
     else
       let body := if closedAtom a then (a.drop 1).dropLast else a.drop 1
       let sels := (splitList ',' prelude).map (·.trimAscii.toString)
-      match sels.mapM parseSelector, parseDecls (String.ofList body) with
+      match sels.mapM parseSelector, declsOf (String.ofList body) with
       | .ok sels, .ok ds => rules := rules.push { selectors := sels, decls := ds }
       | .error why, _ => dropped := dropped.push why
       | _, .error (.unsupported why) => dropped := dropped.push why
@@ -1006,14 +1049,112 @@ private theorem pieceText_eq (piece : Array (List Char)) :
     | cons a rest ih => intro t; simp [ih, foldl_push]
   simp [pieceText, ← Array.foldl_toList, h]
 
+private theorem atomsGo_acc_append (acc' acc : Array (List Char)) (l : List Char) :
+    atomsGo (acc' ++ acc) l = acc' ++ atomsGo acc l := by
+  fun_induction atomsGo acc l with
+  | case1 acc => simp [atomsGo.eq_1]
+  | case2 acc c rest ih => simp only [atomsGo.eq_2, Array.push_append, ih]
+  | case3 acc c rest hesc ho ih =>
+    simp only [atomsGo.eq_3 _ _ _ hesc, ho, Array.push_append, ih]
+  | case4 acc c rest hesc st ho k hk ih =>
+    simp only [atomsGo.eq_3 _ _ _ hesc, ho, hk, Array.push_append, ih]
+  | case5 acc c rest hesc st ho hk =>
+    simp [atomsGo.eq_3 _ _ _ hesc, ho, hk]
+
+private theorem atomsGo_acc (acc : Array (List Char)) (l : List Char) :
+    atomsGo acc l = acc ++ atomsGo #[] l := by
+  simpa using atomsGo_acc_append acc #[] l
+
+private theorem pieceText_push (piece : Array (List Char)) (a : List Char) :
+    pieceText (piece.push a) = a.foldl String.push (pieceText piece) := by
+  simp [pieceText]
+
+private theorem cutGo_cut (sep : Char) (l : List Char) (cur : String) (out : Array String) :
+    ∀ curA outA, cur = pieceText curA → out = outA.map pieceText →
+      cutGo sep l cur out = (KeyVal.cutEach (· == [sep]) (atomsGo #[] l).toList curA outA).map
+        pieceText := by
+  fun_induction cutGo sep l cur out with
+  | case1 cur out =>
+    intro curA outA hc ho
+    subst hc ho
+    simp [atomsGo.eq_1, KeyVal.cutEach]
+  | case2 c rest cur out ih =>
+    intro curA outA hc ho
+    rw [atomsGo.eq_2, atomsGo_acc]
+    simp only [List.push_toArray, List.nil_append, Array.toList_append, List.cons_append,
+      KeyVal.cutEach]
+    simp only [List.cons.injEq, reduceCtorEq, and_false, beq_iff_eq, ite_false]
+    refine ih (curA.push ['\\', c]) outA ?_ ho
+    simp [pieceText_push, hc]
+  | case3 c rest cur out hesc ho hs ih =>
+    intro curA outA hc hout
+    rw [atomsGo.eq_3 _ _ _ hesc]
+    simp only [ho]
+    rw [atomsGo_acc]
+    simp only [List.push_toArray, List.nil_append, Array.toList_append, List.cons_append,
+      KeyVal.cutEach]
+    have : ([c] == [sep]) = true := by simpa using hs
+    simp only [this, ite_true]
+    exact ih #[] (outA.push curA) rfl (by simp [hc, hout])
+  | case4 c rest cur out hesc ho hs ih =>
+    intro curA outA hc hout
+    rw [atomsGo.eq_3 _ _ _ hesc]
+    simp only [ho]
+    rw [atomsGo_acc]
+    simp only [List.push_toArray, List.nil_append, Array.toList_append, List.cons_append,
+      KeyVal.cutEach]
+    have : ([c] == [sep]) = false := by simpa using hs
+    simp only [this]
+    exact ih (curA.push [c]) outA (by simp [pieceText_push, hc]) hout
+  | case5 c rest cur out hesc st ho k hk ih =>
+    intro curA outA hc hout
+    rw [atomsGo.eq_3 _ _ _ hesc]
+    simp only [ho, hk]
+    rw [atomsGo_acc]
+    simp only [List.push_toArray, List.nil_append, Array.toList_append, List.cons_append,
+      KeyVal.cutEach]
+    have hb := scanLen_bound st rest 0 k hk
+    have hne : rest.take k ≠ [] := by
+      apply List.ne_nil_of_length_pos
+      simp only [List.length_take]
+      omega
+    have : ((c :: rest.take k) == [sep]) = false := by
+      cases h : rest.take k with
+      | nil => exact absurd h hne
+      | cons x r => simp
+    simp only [this]
+    exact ih (curA.push (c :: rest.take k)) outA (by simp [pieceText_push, hc]) hout
+  | case6 c rest cur out hesc st ho hk hs =>
+    intro curA outA hc hout
+    rw [atomsGo.eq_3 _ _ _ hesc]
+    simp only [ho, hk]
+    obtain ⟨hcs, hr⟩ : c = sep ∧ rest = [] := by simpa using hs
+    subst hr hcs
+    simp [KeyVal.cutEach, hc, hout, pieceText]
+  | case7 c rest cur out hesc st ho hk hs =>
+    intro curA outA hc hout
+    rw [atomsGo.eq_3 _ _ _ hesc]
+    simp only [ho, hk]
+    have : ((c :: rest) == [sep]) = false := by
+      cases rest with
+      | nil => simpa using hs
+      | cons x r => simp
+    simp [KeyVal.cutEach, this, hc, hout, pieceText_push]
+
+/-- `splitList` cuts as `cutAtoms` does: at each atom that is the separator alone. -/
+theorem splitList_eq_cutAtoms (sep : Char) (s : String) : splitList sep s = cutAtoms sep s := by
+  unfold splitList cutAtoms atoms
+  rw [KeyVal.splitTopAt_ungrouped noGroup noGroup _ (fun _ => rfl) (fun _ => rfl)]
+  exact cutGo_cut sep s.toList "" #[] #[] #[] rfl (by simp)
+
 /-- Joined at `sep`, the pieces `splitList` cuts are the text it cut. -/
 public theorem splitList_join_id (sep : Char) (s : String) :
     [sep].intercalate ((splitList sep s).toList.map String.toList) = s.toList := by
   have h := KeyVal.splitTopAt_join_id noGroup noGroup [sep] (atoms s)
   have hf := congrArg List.flatten h
   rw [flatten_intercalate, atoms_flatten] at hf
-  simp only [splitList, pieceText_eq, Array.toList_map, List.map_map, Function.comp_def,
-    String.toList_ofList, List.flatMap_id]
+  simp only [splitList_eq_cutAtoms, cutAtoms, pieceText_eq, Array.toList_map, List.map_map,
+    Function.comp_def, String.toList_ofList, List.flatMap_id]
   simpa [List.map_map, Function.comp_def] using hf
 
 /-- Each piece's text reads back as the piece's own atoms. -/
@@ -1035,9 +1176,9 @@ itself. -/
 public theorem splitList_fixed_point (sep : Char) (s : String) :
     ∀ p ∈ (splitList sep s).toList, splitList sep p = #[p] := by
   intro p hp
-  simp only [splitList, Array.toList_map, List.mem_map] at hp
+  simp only [splitList_eq_cutAtoms, cutAtoms, Array.toList_map, List.mem_map] at hp
   obtain ⟨piece, hpiece, rfl⟩ := hp
-  simp only [splitList, piece_atoms sep s piece hpiece]
+  simp only [splitList_eq_cutAtoms, cutAtoms, piece_atoms sep s piece hpiece]
   rw [KeyVal.splitTopAt_fixed_point _ _ _ _ piece hpiece]
   simp
 
@@ -1048,7 +1189,7 @@ public theorem splitList_atoms_exact (sep : Char) (s : String) :
   have h := KeyVal.splitTopAt_join_id noGroup noGroup [sep] (atoms s)
   rw [← h]
   congr 1
-  simp only [splitList, Array.toList_map, List.map_map]
+  simp only [splitList_eq_cutAtoms, cutAtoms, Array.toList_map, List.map_map]
   exact List.map_congr_left fun piece hpiece => by
     simpa [Function.comp_def] using piece_atoms sep s piece hpiece
 

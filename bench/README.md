@@ -194,6 +194,26 @@ provisional; the ratio is the claim.
 
 The default rows moved within the host's noise.
 
+## SVG style sheets — 2026-10-18
+
+`--svg-only` also draws an invented figure natively whose style sheet holds 2,000 and 8,000
+rules (two selectors and three declarations each, over fifty shapes), and bounds its `images`
+phase's growth. The sheet's reader decoded every text it checked into a list of characters, cut
+each list through a list of atoms, and checked each rule's block for comments and refused
+spellings again after checking the whole sheet. Now comments, refusals and broken strings are
+found by scans over the UTF-8 bytes, a block is read once, `Css.splitList` cuts in one pass that
+`splitList_eq_cutAtoms` proves cuts as the atoms did, and a selector is spelled on one line only
+when it is named. Median of 5 at load 55-60, the before column with
+`LEANTEX_BENCH_COMPARE_BINARY` naming main's compiler:
+
+| Sheet | before | after |
+|---|---:|---:|
+| 2,000 rules, images phase | 192 ms | 92 ms |
+| 8,000 rules, images phase | 784 ms | 369 ms |
+
+The phase grows 4.0 times for four times the rules. Every corpus document's PDF and HTML, and
+every SVG fixture drawn natively, is byte-identical before and after.
+
 ## Talk deck — 2026-10-16
 
 `--talk-only` builds the invented deck `scripts/talkdeck.lean` writes: 60 frames with 43 minted

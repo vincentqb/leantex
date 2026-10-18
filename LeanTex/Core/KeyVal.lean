@@ -24,6 +24,12 @@ public def splitTopWith {α : Type} (opens closes : α → Bool) (sepLen : List 
     (xs : List α) : Array (Array α) :=
   splitGo opens closes sepLen xs 0 #[] #[]
 
+/-- `xs` cut at each element `isSep` holds of, onto the piece `cur` and the pieces `out` before it. -/
+@[expose] public def cutEach {α : Type} (isSep : α → Bool) : List α → Array α → Array (Array α) → Array (Array α)
+  | [], cur, out => out.push cur
+  | x :: rest, cur, out =>
+    if isSep x then cutEach isSep rest #[] (out.push cur) else cutEach isSep rest (cur.push x) out
+
 /-- `xs` cut at each element `isSep` holds of outside every group `opens` and `closes` delimit. -/
 public def splitTopAt {α : Type} (opens closes isSep : α → Bool) (xs : List α) :
     Array (Array α) :=
@@ -168,6 +174,24 @@ public theorem splitTopAt_join_id {α : Type} [BEq α] [LawfulBEq α] (opens clo
   unfold splitTopAt splitTopWith
   rw [splitGo_join]
   simp
+
+private theorem splitGo_ungrouped {α : Type} (opens closes isSep : α → Bool)
+    (ho : ∀ x, opens x = false) (hc : ∀ x, closes x = false) (xs : List α) :
+    ∀ cur out, splitGo opens closes (fun | x :: _ => if isSep x then 1 else 0 | [] => 0) xs 0 cur out =
+      cutEach isSep xs cur out := by
+  induction xs with
+  | nil => intro cur out; simp [splitGo, cutEach]
+  | cons x rest ih =>
+    intro cur out
+    rw [splitGo, cutEach]
+    cases h : isSep x <;> simp [ho, hc, h, ih]
+
+/-- With no groups, `splitTopAt` cuts at every separator. -/
+public theorem splitTopAt_ungrouped {α : Type} (opens closes isSep : α → Bool)
+    (ho : ∀ x, opens x = false) (hc : ∀ x, closes x = false) (xs : List α) :
+    splitTopAt opens closes isSep xs = cutEach isSep xs #[] #[] := by
+  unfold splitTopAt splitTopWith
+  exact splitGo_ungrouped opens closes isSep ho hc xs #[] #[]
 
 private theorem texAtoms_flatten (cs : List Char) (acc : Array (List Char)) :
     (texAtoms cs acc).toList.flatten = acc.toList.flatten ++ cs := by

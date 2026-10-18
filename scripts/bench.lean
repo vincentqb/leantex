@@ -544,6 +544,44 @@ def benchSvg (n figures : Nat) : IO Unit := do
         IO.println s!"{padRight label 42} {padLeft (toString (median wall)) 6} ms, images \
 {median phase} ms (median of {n})"
 
+/-- The images phase of an invented figure drawn natively whose style sheet holds `k` rules, each
+two selectors and three declarations, over fifty shapes, by `leantex`: the median of `n` builds. -/
+def svgSheetMs (n k : Nat) (leantex : String) : IO Nat :=
+  IO.FS.withTempDir fun tmp => do
+    let rules := String.join ((List.range k).map fun i =>
+      s!".c{i} rect, g.k{i} circle \{ fill: #{(i % 9) + 1}{(i % 7) + 2}{(i % 5) + 3}; " ++
+        "stroke: rgb(1,2,3); stroke-width: 0.5; }\n")
+    let shapes := String.join ((List.range 50).map fun i =>
+      s!"<rect class=\"c{i}\" x=\"{i % 25}\" y=\"{i % 20}\" width=\"3\" height=\"3\"/>")
+    IO.FS.writeFile (tmp / "sheet.svg") ("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"100\" " ++
+      "height=\"100\"><style>" ++ rules ++ "</style>" ++ shapes ++ "</svg>")
+    IO.FS.writeFile (tmp / "sheet.tex") ("\\documentclass{article}\n\\usepackage{graphicx}\n" ++
+      "\\figures{ convert = none }\n\\begin{document}\n\\includegraphics{sheet.svg}\n\\end{document}\n")
+    let mut times : Array Nat := #[]
+    for _ in [0:n] do
+      let spawn : IO.Process.SpawnArgs :=
+        { cmd := leantex, cwd := some tmp, args := #["-v", "build", "sheet.tex", "-o", "sheet.pdf"] }
+      let out ← IO.Process.output spawn
+      if out.exitCode != 0 then die s!"benchmark command failed: {leantex} on {k} SVG style rules"
+      match imagesPhaseMs (out.stdout ++ out.stderr) with
+      | some ms => times := times.push ms
+      | none => die "no images phase in the -v report"
+    return median times
+
+/-- A figure's style sheets of 2,000 and 8,000 rules drawn natively, beside the compared compiler's
+when one is named; their cost may grow only linearly. -/
+def benchSvgSheets (n : Nat) : IO Unit := do
+  let leantex ← IO.FS.realPath (← compiler)
+  let other ← comparedCompiler
+  let mut mine : Array Nat := #[]
+  for k in [2000, 8000] do
+    let ms ← svgSheetMs n k leantex.toString
+    mine := mine.push ms
+    IO.println s!"{padRight s!"leantex  SVG style sheet, {k} rules" 42} {padLeft (toString ms) 6} ms, images (median of {n})"
+    if let some o := other then
+      IO.println s!"{padRight s!"  compared ({o})" 42} {padLeft (toString (← svgSheetMs n k o)) 6} ms"
+  growthBound "SVG style sheet, 8000 / 2000 rules" (mine[0]?.getD 0) (mine[1]?.getD 0)
+
 /-- The real picture boundary: a private content cache per cold run, and a warm run that
 ships identical bytes with every picture cached. -/
 def benchPictures (n requests : Nat) : IO Unit := do
@@ -1516,6 +1554,7 @@ def main (args : List String) : IO UInt32 := do
     return 0
   if args == ["--svg-only"] then
     for count in [4, 16] do benchSvg n count
+    benchSvgSheets n
     return 0
   if args == ["--boundary-only"] then
     unless ← hasCmd "lualatex" do die "picture benchmark needs lualatex"

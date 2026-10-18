@@ -586,6 +586,151 @@ def cssSplitChecks (ref : IO.Ref (List String)) : IO Unit := do
       Css.importance "red ! IMPORTANT" == ("red", true) &&
       Css.importance "\"a!important\"" == ("\"a!important\"", false))
 
+/-- The character-by-character comment remover the byte scan replaced, the scan's oracle. -/
+def cssStripOracle (s : String) : String := Id.run do
+  let cs := s.toList.toArray
+  let mut out := ""
+  let mut i := 0
+  let mut quote : Option Char := none
+  for _ in [0:cs.size + 1] do
+    if i ≥ cs.size then break
+    let c := cs[i]?.getD ' '
+    match quote with
+    | some q =>
+      out := out.push c
+      if c == q || Css.isLineEnd c then quote := none
+      i := i + 1
+    | none =>
+      if c == '/' && cs[i + 1]? == some '*' then
+        let mut j := i + 2
+        for _ in [0:cs.size + 1] do
+          if j + 1 ≥ cs.size then
+            j := cs.size
+            break
+          if cs[j]? == some '*' && cs[j + 1]? == some '/' then
+            j := j + 2
+            break
+          j := j + 1
+        out := out.push ' '
+        i := j
+      else
+        if c == '"' || c == '\'' then quote := some c
+        out := out.push c
+        i := i + 1
+  return out
+
+/-- The character-by-character refusal scan the byte scan replaced, the scan's oracle. -/
+def cssRefusedOracle (s : String) : Option Css.Unread := Id.run do
+  let cs := s.toList.toArray
+  let mut i := 0
+  let mut quote : Option Char := none
+  let mut ident := ""
+  for _ in [0:cs.size + 1] do
+    if i ≥ cs.size then break
+    let c := cs[i]?.getD ' '
+    if c == '\\' then return some .escape
+    if c == '@' then return some .atRule
+    match quote with
+    | some q =>
+      if c == q || Css.isLineEnd c then quote := none
+      i := i + 1
+    | none =>
+      if c == '"' || c == '\'' then
+        quote := some c
+        ident := ""
+        i := i + 1
+      else if c == '(' then
+        let mut j := i + 1
+        let mut arg := ""
+        let mut closed := false
+        for _ in [0:cs.size + 1] do
+          if j ≥ cs.size then break
+          if cs[j]? == some ')' then
+            closed := true
+            break
+          if cs[j]? == some '(' then return some (.nestedCall ident)
+          arg := arg.push (cs[j]?.getD ' ')
+          j := j + 1
+        if !closed then return some (.openCall ident)
+        if !Css.admitsCall ident arg then return some (.call ident)
+        ident := ""
+        i := j + 1
+      else
+        if c.isAlphanum || c == '-' || c == '_' then ident := ident.push c else ident := ""
+        i := i + 1
+  if quote.isSome then return some .openString
+  return none
+
+/-- The character-by-character broken-string test the byte scan replaced, the scan's oracle. -/
+def cssBrokenOracle (s : String) : Bool := Id.run do
+  let mut quote : Option Char := none
+  for c in s.toList do
+    match quote with
+    | some q =>
+      if c == q then quote := none
+      else if Css.isLineEnd c then return true
+    | none => if c == '"' || c == '\'' then quote := some c
+  return false
+
+/-- A sheet read as before its blocks skipped the sheet's own checks, each block checked again. -/
+def cssSheetOracle (text : String) : Except Css.Unread (Array Css.Rule × Array Css.Unread) := do
+  let text := cssStripOracle text
+  if let some what := cssRefusedOracle text then throw what
+  let mut rules : Array Css.Rule := #[]
+  let mut dropped : Array Css.Unread := #[]
+  let mut prelude := ""
+  for a in Css.atoms text do
+    if a.head? != some '{' then
+      prelude := a.foldl String.push prelude
+    else
+      let body := if Css.closedAtom a then (a.drop 1).dropLast else a.drop 1
+      let sels := (Css.splitList ',' prelude).map (·.trimAscii.toString)
+      match sels.mapM Css.parseSelector, Css.parseDecls (String.ofList body) with
+      | .ok sels, .ok ds => rules := rules.push { selectors := sels, decls := ds }
+      | .error why, _ => dropped := dropped.push why
+      | _, .error (.unsupported why) => dropped := dropped.push why
+      | _, .error (.refused why) => throw why
+      prelude := ""
+  unless prelude.trimAscii.isEmpty do
+    dropped := dropped.push (.stray (Css.oneLine prelude))
+  return (rules, dropped)
+
+/-- Invented CSS texts from pieces holding every marker the scans read and characters outside
+ASCII, each the `n`th of a fixed pseudo-random sequence. -/
+def cssScanText (n : Nat) : String := Id.run do
+  let pieces := #["/*", "*/", "\"", "'", "\n", "\r", "(", ")", "{", "}", "[", "]", ";", ":", ",",
+    "@", "\\", "é", "∀", " ", "a", "-b", "_c", "url(#g)", "rgb(1,2,3)", "url(\"#é\")", "fill",
+    "red", "x9", "/", "*", ".k", "#i", ">", "!important"]
+  let mut seed := n * 2654435761 + 97
+  let mut out := ""
+  for _ in [0:(n % 23) + 1] do
+    seed := (seed * 6364136223846793005 + 1442695040888963407) % 18446744073709551616
+    out := out ++ (pieces[(seed / 65536) % pieces.size]?.getD "")
+  return out
+
+/-- The byte scans read every text as the character scans they replaced did, and a sheet's
+blocks, read without the sheet's own checks again, as each block checked again. -/
+def cssByteScanChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let texts := (List.range 6000).map cssScanText ++
+    ["", "/*", "a/*", "a/**/b", "\"/*\"*/", "rgb(", "x(é)", "url(#a))", "'a\nb'", "a { b: \"c\n }"]
+  let sameSheet (a b : Except Css.Unread (Array Css.Rule × Array Css.Unread)) : Bool :=
+    match a, b with
+    | .ok x, .ok y => x == y
+    | .error x, .error y => x == y
+    | _, _ => false
+  let strip := texts.filter fun s => Css.stripComments s != cssStripOracle s
+  check ref s!"CSS byte scan: comments removed as the character scan removed them ({strip.take 3})"
+    strip.isEmpty
+  let refused := texts.filter fun s => Css.refusedIn s != cssRefusedOracle s
+  check ref s!"CSS byte scan: refusals read as the character scan read them ({refused.take 3})"
+    refused.isEmpty
+  let broken := texts.filter fun s => Css.brokenString s != cssBrokenOracle s
+  check ref s!"CSS byte scan: broken strings found as the character scan found them ({broken.take 3})"
+    broken.isEmpty
+  let sheets := texts.filter fun s => !sameSheet (Css.parseSheet s) (cssSheetOracle s)
+  check ref s!"CSS sheet: blocks read once as when each was checked again ({sheets.take 3})"
+    sheets.isEmpty
+
 /-- A gradient stop takes its own place in the cascade, its `currentColor` its own. -/
 def svgStopStyleChecks (ref : IO.Ref (List String)) : IO Unit := do
   let stops (ms : Array Mark) : Array (Nat × Nat × Nat) :=
@@ -669,6 +814,7 @@ def svgNativeChecks (ref : IO.Ref (List String)) : IO Unit := do
   svgObjectClipChecks ref
   cssLineEndChecks ref
   cssSplitChecks ref
+  cssByteScanChecks ref
   svgStopStyleChecks ref
   svgUndrawnNamedChecks ref
   svgTextSpaceChecks ref
