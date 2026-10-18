@@ -7550,38 +7550,26 @@ private def trimParaList (leading : Bool) (acc : Array Inline) :
       if more then trimParaList leading (acc ++ head) xs
       else (acc ++ head ++ xs.toArray, false)
     else
-      let (tail, more) := trimParaList leading #[] xs
+      let (tail, more) := trimParaTail xs
       if more then
-        let (head, more) := trimParaOne leading x
-        (acc ++ head ++ tail, more)
-      else (acc.push x ++ tail, false)
+        let (head, more) := trimParaOne false x
+        (acc ++ head ++ tail.toArray, more)
+      else (acc.push x ++ tail.toArray, false)
+
+/-- A paragraph's trailing edge trimmed as a list, each kept inline consed on. -/
+private def trimParaTail : List Inline → List Inline × Bool
+  | [] => ([], true)
+  | x :: xs =>
+    let (tail, more) := trimParaTail xs
+    if more then
+      let (head, more) := trimParaOne false x
+      (head.toList ++ tail, more)
+    else (x :: tail, false)
 end
-
-/-- `trimParaList false #[]` in one pass, the kept tail a list it conses onto. -/
-private def trimParaTail (xs : List Inline) : Array Inline × Bool :=
-  let r := xs.foldr (fun x (t : List Inline × Bool) =>
-      if t.2 then ((trimParaOne false x).1.toList ++ t.1, (trimParaOne false x).2)
-      else (x :: t.1, false))
-    ([], true)
-  (r.1.toArray, r.2)
-
-private theorem trimParaTail_eq (xs : List Inline) :
-    trimParaTail xs = trimParaList false #[] xs := by
-  suffices h : xs.foldr (fun x (t : List Inline × Bool) =>
-      if t.2 then ((trimParaOne false x).1.toList ++ t.1, (trimParaOne false x).2)
-      else (x :: t.1, false)) ([], true) =
-      ((trimParaList false #[] xs).1.toList, (trimParaList false #[] xs).2) by
-    simp only [trimParaTail, h]
-  induction xs with
-  | nil => simp [trimParaList]
-  | cons x xs ih =>
-    rw [List.foldr_cons, ih, trimParaList]
-    rcases trimParaList false #[] xs with ⟨tail, more⟩
-    cases more <;> simp
 
 private def finishPara (inlines : Array Inline) : EM (Option Block) := do
   let inlines := (trimParaList true #[] inlines.toList).1
-  let inlines := (trimParaTail inlines.toList).1
+  let inlines := (trimParaList false #[] inlines.toList).1
   if inlines.isEmpty then return none
   -- LaTeX reads `\baselineskip` at `\par`: the end's declarations set it.
   return some (paraUnder (← get).scope.lang (Ir.paraAt (← get).scope.blockDecls inlines))
@@ -13667,18 +13655,17 @@ private theorem trimParaList_word (ctx : Ctx) (p : Pos) (w : String)
     (hl : String.ofList (w.toList.dropWhile (· == ' ')) = w)
     (ht : w.trimAscii.isEmpty = false)
     (hr : String.ofList ((w.toList.reverse.dropWhile (· == ' ')).reverse) = w) :
-    (trimParaTail
+    (trimParaList false #[]
       (trimParaList true #[] [sourceInline ctx p (.text w)]).1.toList).1 =
         #[sourceInline ctx p (.text w)] := by
-  rw [trimParaTail_eq]
-  simp [trimParaList, trimParaOne, sourceInline, he, hl, ht, hr]
+  simp [trimParaList, trimParaTail, trimParaOne, sourceInline, he, hl, ht, hr]
 
 private theorem finishPara_note (code : DiagCode) (name text : String)
     (inner : Array Inline) :
     (do noteSalvage code name text; finishPara inner) =
     (do let para ← finishPara inner; noteSalvage code name text; pure para) := by
   by_cases ht : text.trimAscii.isEmpty = true <;>
-    by_cases hi : (trimParaTail
+    by_cases hi : (trimParaList false #[]
       (trimParaList true #[] inner.toList).1.toList).1.isEmpty = true <;>
     simp [noteSalvage, finishPara, ht, hi]; rfl
 

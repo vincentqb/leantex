@@ -214,6 +214,11 @@ def inventedWords (seed k : Nat) : String :=
 def longParagraph (k : Nat) : String :=
   "\\documentclass{article}\n\\begin{document}\n" ++ inventedWords 0 k ++ "\n\\end{document}\n"
 
+/-- One paragraph of `k` words, the whole of it a defined macro's argument. -/
+def macroParagraph (k : Nat) : String :=
+  "\\documentclass{article}\n\\newcommand{\\lorem}[1]{#1}\n\\begin{document}\n\\lorem{" ++
+    inventedWords 0 k ++ "}\n\\end{document}\n"
+
 /-- `k` sections of ten paragraphs, one word in twenty a defined macro's use. -/
 def macroSections (k : Nat) : String := Id.run do
   let mut s := "\\documentclass{article}\n\\newcommand{\\term}[1]{\\emph{#1}}\n\\begin{document}\n"
@@ -225,23 +230,30 @@ def macroSections (k : Nat) : String := Id.run do
         if j % 20 == 0 then "\\term{" ++ w ++ "}" else w) ++ "\n\n"
   return s ++ "\\end{document}\n"
 
+/-- A frame of `k` overlay selections. -/
+def overlayFrame (k : Nat) : String :=
+  "\\documentclass{beamer}\n\\begin{document}\n\\begin{frame}\n" ++
+    " ".intercalate ((List.range k).map fun i => s!"\\only<{i % 5 + 1}>\{w{i}}") ++
+    "\n\\end{frame}\n\\end{document}\n"
+
 /-- A markdown footnote of `k` paragraphs. -/
 def longNote (k : Nat) : String :=
   "Invented text.[^a]\n\n[^a]: first\n\n" ++ String.join ((List.range k).map fun i =>
     s!"    Paragraph {i} of the note, " ++ inventedWords i 6 ++ ".\n\n")
 
-/-- Elaboration over one long paragraph, macro uses across sections and one long note, whose
-phases may grow only linearly. -/
+/-- Elaboration over one long paragraph, one inside a macro's argument, macro uses across sections,
+overlay selections in a frame and one long note, whose phases may grow only linearly. -/
 def elabGrowth (n : Nat) (leantex : String) : IO Unit := do
-  growthBound "elab, 16000 / 4000 words in a paragraph"
-    (← elabPhaseMs n leantex "a 4000-word paragraph" "para.tex" (longParagraph 4000))
-    (← elabPhaseMs n leantex "a 16000-word paragraph" "para.tex" (longParagraph 16000))
-  growthBound "elab, 32 / 8 sections of macro uses"
-    (← elabPhaseMs n leantex "8 sections of macro uses" "macros.tex" (macroSections 8))
-    (← elabPhaseMs n leantex "32 sections of macro uses" "macros.tex" (macroSections 32))
-  growthBound "elab, 3200 / 800 paragraphs in a note"
-    (← elabPhaseMs n leantex "an 800-paragraph note" "note.md" (longNote 800))
-    (← elabPhaseMs n leantex "a 3200-paragraph note" "note.md" (longNote 3200))
+  let rows : List (String × String × (Nat → String) × Nat) :=
+    [("words in a paragraph", "para.tex", longParagraph, 8000),
+     ("words in a macro's argument", "arg.tex", macroParagraph, 8000),
+     ("sections of macro uses", "macros.tex", macroSections, 8),
+     ("overlay selections in a frame", "frame.tex", overlayFrame, 1000),
+     ("paragraphs in a note", "note.md", longNote, 800)]
+  for (label, file, doc, size) in rows do
+    growthBound s!"elab, {4 * size} / {size} {label}"
+      (← elabPhaseMs n leantex s!"{size} {label}" file (doc size))
+      (← elabPhaseMs n leantex s!"{4 * size} {label}" file (doc (4 * size)))
 
 /-- A facts record with each span's lines `by_` further down. -/
 def moveSpans (j : Lean.Json) (by_ : Nat) : Lean.Json :=
