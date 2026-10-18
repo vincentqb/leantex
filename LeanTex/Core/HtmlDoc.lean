@@ -1,6 +1,7 @@
 module
 
 public import LeanTex.Core.Html
+public import LeanTex.Core.HtmlFaces
 public import LeanTex.Core.Blank
 public import LeanTex.Core.HtmlResource
 public import LeanTex.Core.MathMl
@@ -3281,11 +3282,11 @@ public structure FontFace where
   italic : Bool
   file : String
   format : String
-  deriving Repr, BEq
+  deriving Repr, DecidableEq
 
-/-- The `@font-face` list: every face of the resolved set, under every synthetic family it
-serves. -/
-public def shipFaces (fs : Font.FontSet) : Array FontFace :=
+/-- Every `@font-face` the page may ship: every face of the resolved set, under every synthetic
+family it serves. -/
+public def allFaces (fs : Font.FontSet) : Array FontFace :=
   let t := Families.of fs
   (Array.range fs.fonts.size).flatMap fun i =>
     (familiesIn t fs i).toArray.map fun fam =>
@@ -3296,8 +3297,8 @@ public def shipFaces (fs : Font.FontSet) : Array FontFace :=
         file := fontFileName i (fs.get i)
         format := if (fs.get i).isCff then "opentype" else "truetype" }
 
-public theorem shipFaces_covers (fs : Font.FontSet) {k : Nat} (hk : k < fs.fonts.size) :
-    ∃ ff ∈ shipFaces fs, ff.index = k := by
+public theorem allFaces_covers (fs : Font.FontSet) {k : Nat} (hk : k < fs.fonts.size) :
+    ∃ ff ∈ allFaces fs, ff.index = k := by
   obtain ⟨fam, rest, heq⟩ : ∃ a l, familiesIn (Families.of fs) fs k = a :: l := by
     cases h : familiesIn (Families.of fs) fs k with
     | nil => exact absurd h (familiesIn_ne_nil _ fs k)
@@ -3305,10 +3306,88 @@ public theorem shipFaces_covers (fs : Font.FontSet) {k : Nat} (hk : k < fs.fonts
   refine ⟨{ index := k, family := fam, weight := (fs.get k).weight
             italic := (fs.get k).isItalic, file := fontFileName k (fs.get k)
             format := if (fs.get k).isCff then "opentype" else "truetype" }, ?_, rfl⟩
-  simp only [shipFaces, Array.mem_flatMap]
+  simp only [allFaces, Array.mem_flatMap]
   refine ⟨k, by simpa using hk, ?_⟩
   simp only [Array.mem_map, List.mem_toArray]
   exact ⟨fam, by simp [heq], rfl⟩
+
+/-- A family's faces in the order the page declares them. -/
+public def familyFaces (faces : Array FontFace) (family : String) : List FontFace :=
+  faces.toList.filter (·.family == family)
+
+/-- The face a use selects from `faces` (CSS Fonts 4 §5.2). -/
+public def selected (faces : Array FontFace) (u : HtmlFaces.Use) : Option FontFace :=
+  HtmlFaces.select? (fun ff => (ff.weight, ff.italic)) (u.weight, u.italic)
+    (familyFaces faces u.family)
+
+/-- The `@font-face` list: the faces some use of the page selects, every face where its uses are
+unknown. -/
+public def shipFaces (fs : Font.FontSet) : Option (Array HtmlFaces.Use) → Array FontFace
+  | none => allFaces fs
+  | some us => (allFaces fs).filter fun ff => us.any fun u => selected (allFaces fs) u == some ff
+
+/-- Every face a use selects is shipped. -/
+public theorem shipFaces_covers (fs : Font.FontSet) (us : Array HtmlFaces.Use) :
+    ∀ u ∈ us, ∀ ff, selected (allFaces fs) u = some ff → ff ∈ shipFaces fs (some us) := by
+  intro u hu ff hsel
+  simp only [shipFaces, Array.mem_filter, Array.any_eq_true, beq_iff_eq]
+  refine ⟨?_, ?_⟩
+  · have := HtmlFaces.select?_mem _ _ _ ff hsel
+    simp only [familyFaces, List.mem_filter] at this
+    exact Array.mem_toList_iff.mp this.1
+  · obtain ⟨i, hi, rfl⟩ := Array.mem_iff_getElem.mp hu
+    exact ⟨i, hi, hsel⟩
+
+/-- Nothing is shipped that no use selects. -/
+public theorem shipFaces_used (fs : Font.FontSet) (us : Array HtmlFaces.Use) :
+    ∀ ff ∈ shipFaces fs (some us), ∃ u ∈ us, selected (allFaces fs) u = some ff := by
+  intro ff hff
+  simp only [shipFaces, Array.mem_filter, Array.any_eq_true, beq_iff_eq] at hff
+  obtain ⟨_, i, hi, hsel⟩ := hff
+  exact ⟨us[i], Array.getElem_mem hi, hsel⟩
+
+/-- Each use selects from the shipped faces what it selects from all of them, so the page's text
+sets in the faces it would with every face shipped. -/
+public theorem shipFaces_select_exact (fs : Font.FontSet) (us : Array HtmlFaces.Use) :
+    ∀ u ∈ us, selected (shipFaces fs (some us)) u = selected (allFaces fs) u := by
+  intro u hu
+  have hfam : familyFaces (shipFaces fs (some us)) u.family =
+      (familyFaces (allFaces fs) u.family).filter
+        (fun ff => us.any fun u => selected (allFaces fs) u == some ff) := by
+    simp only [familyFaces, shipFaces, Array.toList_filter, List.filter_filter, Bool.and_comm]
+  unfold selected
+  rw [hfam]
+  cases hsel : HtmlFaces.select? (fun ff => (ff.weight, ff.italic)) (u.weight, u.italic)
+      (familyFaces (allFaces fs) u.family) with
+  | none =>
+    rw [HtmlFaces.select?_none _ _ _ hsel]
+    simp [HtmlFaces.select?_nil]
+  | some ff =>
+    refine HtmlFaces.select?_filter _ _ _ _ ff hsel ?_
+    have := shipFaces_covers fs us u hu ff hsel
+    simp only [shipFaces, Array.mem_filter] at this
+    exact this.2
+
+public theorem shipFaces_sub (fs : Font.FontSet) (uses : Option (Array HtmlFaces.Use)) :
+    ∀ ff ∈ shipFaces fs uses, ff ∈ allFaces fs := by
+  intro ff hff
+  cases uses with
+  | none => exact hff
+  | some us => exact (Array.mem_filter.mp hff).1
+
+/-- The classes the constant deck script sets, which a selector may find on any element. -/
+public def deckScriptClasses : Array String := #["wide"]
+
+/-- What the page's text tries of the faces: each family, weight and style one of its requests
+reaches, `none` when the page loads a sheet or a script from elsewhere. -/
+public def faceUses (fs : Font.FontSet) (head body : Array Node) : Option (Array HtmlFaces.Use) :=
+  (HtmlFaces.requests head body deckScriptClasses).map fun reqs =>
+    let faces := allFaces fs
+    let byFam : Std.HashMap String (List FontFace) := faces.foldl
+      (fun m ff => m.insert ff.family ((m.getD ff.family []) ++ [ff])) {}
+    let families := (faces.toList.map (·.family)).eraseDups
+    HtmlFaces.uses families (fun g => byFam.getD g []) (fun ff => (ff.weight, ff.italic))
+      (fun ff c => ((fs.get ff.index).gid c).isSome) reqs
 
 /-- What this emitter realizes of the output contract. -/
 public def profile : Ir.Realization :=
@@ -3319,10 +3398,11 @@ public def profile : Ir.Realization :=
     math := .mathmlCore }
 
 /-- Artifact-specific. -/
-public theorem shipFaces_src_shipped (fs : Font.FontSet) :
-    ∀ ff ∈ shipFaces fs, fontResource (fs.get ff.index) ∈ fontResources fs := by
+public theorem shipFaces_src_shipped (fs : Font.FontSet) (uses : Option (Array HtmlFaces.Use)) :
+    ∀ ff ∈ shipFaces fs uses, fontResource (fs.get ff.index) ∈ fontResources fs := by
   intro ff hff
-  simp only [shipFaces, Array.mem_flatMap] at hff
+  have hff := shipFaces_sub fs uses ff hff
+  simp only [allFaces, Array.mem_flatMap] at hff
   obtain ⟨i, hi, hmem⟩ := hff
   simp only [Array.mem_map, List.mem_toArray] at hmem
   obtain ⟨fam, _, rfl⟩ := hmem
@@ -3623,14 +3703,13 @@ private def fontFaceRule (u : PageResources) (fs : Font.FontSet) (ff : FontFace)
   s!"font-style: {if ff.italic then "italic" else "normal"}; " ++
   s!"src: url(\"{u.fontHref fs ff.index}\") format(\"{ff.format}\"); }\n"
 
-private def fontFaceCss (u : PageResources) (fs : Font.FontSet) : String :=
-  String.join ((shipFaces fs).toList.map (fontFaceRule u fs))
+private def fontFaceCss (u : PageResources) (fs : Font.FontSet)
+    (uses : Option (Array HtmlFaces.Use)) : String :=
+  String.join ((shipFaces fs uses).toList.map (fontFaceRule u fs))
 
-/-- The `@font-face` rules, the body weight the document resolved, and small caps as the only
-synthesis. -/
-private def fontCss (u : PageResources) (fs : Font.FontSet) : String :=
+/-- The body weight the document resolved, and small caps as the only synthesis. -/
+private def bodyFontCss (fs : Font.FontSet) : String :=
   let w := (fs.get (fs.lookup 0 400 false)).weight
-  fontFaceCss u fs ++
   s!"body \{ font-weight: {w}; --ltx-body-weight: {w}; " ++
   "font-synthesis: small-caps; }\n"
 
@@ -9703,8 +9782,9 @@ private def emitTreeCore (cfg : Config) (doc : Doc)
   head := head.push (Html.elem "meta" #[] #[("name", "generator"), ("content", "leantex")])
   let (styled, styleDiags) := styles cfg.literal
   diags := diags ++ styleDiags
+  -- the `@font-face` rules join this sheet once the page shows which faces its text selects
   let faceRules := match cfg.fonts with
-    | some fs => fontCss cfg.captured fs
+    | some fs => bodyFontCss fs
     | none => ""
   -- the base sheet's slot is held here, filled once the body's boundary shapes are known
   let cssCfg := cfg
@@ -10089,6 +10169,11 @@ one in the article class"
         (rules := some base)
         (epochVars := { cssCfg with cssRoles := roles }.epochVarBlocks
           (used.filter (·.startsWith "--ltx--"))) ++ "\n" ++ theme ++ styled))
+  if let some fs := cfg.fonts then
+    if cssCfg.css != .none then
+      let faces := fontFaceCss cfg.captured fs (faceUses fs head shipped)
+      if let some (.style css) := head[styleAt]? then
+        head := head.modify styleAt fun _ => .style (faces ++ css)
   return (head, shipped, diags)
 
 /-- The document's typed tree, head and body, with its diagnostics, from the normalized IR, its

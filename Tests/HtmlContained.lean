@@ -235,7 +235,7 @@ def htmlContainedChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO
     ((elemAttrsList (· == "img") #[] convertedTree.toList).all fun (_, attrs) =>
       attrs.contains ("src", expectedMoving))
   let css := treeCssList "" head.toList
-  for ff in HtmlDoc.shipFaces fonts do
+  for ff in HtmlDoc.shipFaces fonts (HtmlDoc.faceUses fonts head tree) do
     let f := fonts.get ff.index
     let expected ← htmlDataOracle (if f.isCff then "font/otf" else "font/ttf") f.data
     t "contained HTML: font rule carries its resolved face byte for byte"

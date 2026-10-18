@@ -454,6 +454,7 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   interactionChecks ref
   motionSiteChecks ref
   fontShipChecks ref
+  faceUseChecks ref
   deckCssChecks ref
   deckImageChecks ref
   alphaSplitChecks ref

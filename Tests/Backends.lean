@@ -1966,7 +1966,64 @@ def linkHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "thin space escape" ((elabStr "a\\,b").1.body ==
     #[.para #[.text "a b"]])
 
-/-- The page ships the faces it names: one `@font-face` rule per face of the resolved set, every
+/-- The faces a page ships are the faces its text selects: a style no text takes ships no face, a
+style some text takes ships its face, and a sheet the page loads from elsewhere ships every face. -/
+def faceUseChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let pick (want : Nat × Bool) (faces : List (Nat × Bool)) : Option (Nat × Bool) :=
+    HtmlFaces.select? id want faces
+  t "face use: weight 600 takes 700 over 400 (CSS Fonts 4 §5.2)"
+    (pick (600, false) [(400, false), (700, false)] == some (700, false))
+  t "face use: weight 450 takes 400, below before above 500"
+    (pick (450, false) [(400, false), (700, false)] == some (400, false))
+  t "face use: weight 300 takes the lightest above when none is below"
+    (pick (300, false) [(700, false), (400, false)] == some (400, false))
+  t "face use: style outranks weight"
+    (pick (700, true) [(700, false), (400, true)] == some (400, true))
+  let load (name : String) : IO (Option Font) := do
+    try
+      match Font.parse (← IO.FS.readBinFile s!"{testFonts}/{name}") with
+      | .ok f => pure (some f)
+      | .error _ => pure none
+    catch _ => pure none
+  let names := #["OpenSans-Regular.ttf", "OpenSans-Bold.ttf", "OpenSans-Italic.ttf",
+    "OpenSans-BoldItalic.ttf", "SourceCodePro-Regular.otf"]
+  let mut fonts : Array Font := #[]
+  for n in names do
+    match ← load n with
+    | some f => fonts := fonts.push f
+    | none => t s!"face use: {n} loads" false
+  if fonts.size != names.size then return
+  let variants (slot : Nat) : Array ((Nat × Nat × Bool) × Nat) :=
+    #[((slot, 400, false), 0), ((slot, 700, false), 1), ((slot, 400, true), 2),
+      ((slot, 700, true), 3)]
+  let fs : Font.FontSet := { fonts, index := variants 0 ++ variants 1 ++
+    #[((2, 400, false), 4), ((2, 700, false), 4), ((2, 400, true), 4), ((2, 700, true), 4)] }
+  let shipped (body : String) : IO (Array Nat) := do
+    let (doc, _) ← elabFixture "face-use"
+      ("\\documentclass{article}\n\\begin{document}\n" ++ body ++ "\n\\end{document}\n")
+    let (html, _) := HtmlDoc.emit { fonts := some fs } doc
+    return (List.range fonts.size).toArray.filter fun i =>
+      (html.splitOn (HtmlDoc.fontResource (fs.get i)).uri).length ≥ 2
+  t "face use: upright prose ships the upright face alone"
+    ((← shipped "Invented words, set upright.") == #[0])
+  t "face use: an emphasis ships the italic face beside it"
+    ((← shipped "Invented words with \\emph{one} stressed.") == #[0, 2])
+  t "face use: bold emphasis ships the bold italic face, and no bold upright one"
+    ((← shipped "Invented \\textbf{\\emph{words}} here.") == #[0, 3])
+  t "face use: a heading ships the bold face its weight selects"
+    ((← shipped "\\section{Invented}\nWords.") == #[0, 1])
+  t "face use: code ships the typewriter face"
+    ((← shipped "Invented \\texttt{code}.") == #[0, 4])
+  let (doc, _) ← elabFixture "face-use" ("\\documentclass{article}\n" ++
+    "\\output{ formats = html, stylesheet = \"page.css\" }\n" ++
+    "\\begin{document}\nInvented words.\n\\end{document}\n")
+  let (head, body, _) := HtmlDoc.emitTree { fonts := some fs } doc
+  t "face use: a sheet the page loads from elsewhere leaves every face shipped"
+    ((HtmlDoc.faceUses fs head body).isNone &&
+      (HtmlDoc.shipFaces fs (HtmlDoc.faceUses fs head body)).size == (HtmlDoc.allFaces fs).size)
+
+/-- The page ships the faces it names: one `@font-face` rule per face its text selects, every
 referenced file written, the generic keyword read from the face's OS/2 class. -/
 def fontShipChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
@@ -1997,8 +2054,9 @@ def fontShipChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (doc, _) ← elabFixture "deck" src
   let cfg : HtmlDoc.Config := { fonts := some fs }
   let (html, _) := HtmlDoc.emit cfg doc
-  let faces := HtmlDoc.shipFaces fs
-  t "census deck html: one @font-face per resolved face"
+  let (deckHead, deckBody, _) := HtmlDoc.emitTree cfg doc
+  let faces := HtmlDoc.shipFaces fs (HtmlDoc.faceUses fs deckHead deckBody)
+  t "census deck html: one @font-face per face its text selects"
     ((html.splitOn "@font-face").length == faces.size + 1)
   t "census deck html: the font-family variables name the synthetic families"
     (((html.splitOn "--font-body: \"ltx-body\"").length == 2) &&
@@ -2012,7 +2070,7 @@ def fontShipChecks (ref : IO.Ref (List String)) : IO Unit := do
     (List.range set.fonts.size).filter fun i => set.index.any fun e => e.1.1 == slot && e.2 == i
   let opening := stackOpening
   let familyFaces (set : Font.FontSet) (fam : String) : List Nat :=
-    ((((HtmlDoc.shipFaces set).filter (·.family == fam)).toList.map (·.index)).eraseDups).mergeSort
+    ((((HtmlDoc.allFaces set).filter (·.family == fam)).toList.map (·.index)).eraseDups).mergeSort
       (· ≤ ·)
   let opensOnOwnFaces (set : Font.FontSet) (page : String) : Bool :=
     [("body", 0), ("sans", 1), ("mono", 2)].all fun (var, slot) =>
@@ -2037,7 +2095,7 @@ def fontShipChecks (ref : IO.Ref (List String)) : IO Unit := do
     (opening (pageOf fsPartial) "sans" == some "ltx-sans" &&
       hasStr (pageOf fsPartial) "font-family: \"ltx-sans\"")
   t "font ship: a declared family resolving to the body's faces ships under the body's family"
-    (!((HtmlDoc.shipFaces fsFamily).any (·.family == s!"ltx-{Ir.familySlotBase}")) &&
+    (!((HtmlDoc.allFaces fsFamily).any (·.family == s!"ltx-{Ir.familySlotBase}")) &&
       (HtmlDoc.familiesOf fsFamily 0).contains "ltx-body")
   let (famDoc, _) ← elabFixture "deck-family"
     (src.replace "\\begin{document}" "\\newfontfamily\\probeA{Open Sans}\n\\begin{document}")
@@ -2052,8 +2110,10 @@ def fontShipChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "font ship: a declared family resolving no face opens on the body's family, naming none undefined"
     (opening (famPage fs) declared == some "ltx-body" &&
       !hasStr (famPage fs) s!"\"ltx-{declared}\"")
-  t "font ship: every captured face is embedded in the page"
-    ((HtmlDoc.fontResources fs).all fun a => (html.splitOn a.uri).length ≥ 2)
+  t "font ship: a face is embedded exactly when the page's text selects it"
+    ((List.range fs.fonts.size).all fun i =>
+      ((html.splitOn (HtmlDoc.fontResource (fs.get i)).uri).length ≥ 2) ==
+        faces.any (·.index == i))
   t "font ship: one captured resource per face, carrying its bytes"
     ((HtmlDoc.fontResources fs).size == fs.fonts.size &&
      (HtmlDoc.fontResources fs).all fun a => !a.bytes.isEmpty)
@@ -2065,10 +2125,17 @@ def fontShipChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((html.splitOn "body { font-weight: 400; --ltx-body-weight: 400; font-synthesis: small-caps; }").length == 2)
   let fsFb : Font.FontSet := { fs with fonts := fs.fonts.push icons }
   let (htmlFb, _) := HtmlDoc.emit { cfg with fonts := some fsFb } doc
-  t "font ship: a slotless face ships under its fallback family"
-    (((htmlFb.splitOn "font-family: \"ltx-fb2\"").length == 2) &&
-     ((htmlFb.splitOn
-        "--font-body: \"ltx-body\", \"ltx-mono\", \"ltx-fb2\", sans-serif;").length == 2))
+  let iconChar := ((List.range 0x1900).map (fun k => Char.ofNat (0xE000 + k))).find? fun c =>
+    (icons.gid c).isSome && (sans.gid c).isNone && (code.gid c).isNone
+  let (iconDoc, _) ← elabFixture "deck-icon" (src.replace "\\end{document}"
+    (s!"Invented {(iconChar.map String.singleton).getD ""} mark.\n" ++ "\\end{document}"))
+  let (htmlIcon, _) := HtmlDoc.emit { cfg with fonts := some fsFb } iconDoc
+  t "font ship: a slotless face stands in every stack under its fallback family"
+    ((htmlFb.splitOn
+        "--font-body: \"ltx-body\", \"ltx-mono\", \"ltx-fb2\", sans-serif;").length == 2)
+  t "font ship: a slotless face ships only where text falls back to it"
+    (iconChar.isSome && ((htmlFb.splitOn "font-family: \"ltx-fb2\"").length == 1) &&
+      ((htmlIcon.splitOn "font-family: \"ltx-fb2\"").length == 2))
   let fsMath : Font.FontSet := { fs with math := some 1 }
   let (htmlMath, _) := HtmlDoc.emit { cfg with fonts := some fsMath } doc
   t "font ship: the resolved math face lands in --font-math"

@@ -109,7 +109,7 @@ example (error : Pdf.WriteError) : Nat :=
 example (fonts : Font.FontSet) (pages : Array Layout.PageOut)
     (h : 0 < fonts.fonts.size) :
     ∀ k ∈ Pdf.keepFaces fonts pages,
-      ∃ face ∈ HtmlDoc.shipFaces fonts, face.index = k :=
+      ∃ face ∈ HtmlDoc.allFaces fonts, face.index = k :=
   Pdf.html_fonts_cover_pdf fonts pages h
 
 example (features : Ir.Features) :

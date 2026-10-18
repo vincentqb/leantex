@@ -1420,7 +1420,7 @@ private def familyChecks (ref : IO.Ref (List String)) : IO Unit := do
   check ref "block title family HTML: a family with faces of its own opens on its own synthetic family"
     (hasStr sheet s!"--font-{slot}: \"ltx-{slot}\"")
   check ref "block title family HTML: the family ships the face the PDF sets"
-    ((HtmlDoc.shipFaces fs).any fun ff => ff.family == s!"ltx-{slot}" &&
+    ((HtmlDoc.shipFaces fs (HtmlDoc.faceUses fs head body)).any fun ff => ff.family == s!"ltx-{slot}" &&
       (fs.get ff.index).psName == titleFace)
 
 /-- A rule painted by `\usebeamercolor{element}\color{bg}` is the element's background, in each

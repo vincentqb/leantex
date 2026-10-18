@@ -17,8 +17,8 @@ public theorem pdf_default_contract_exact : ({} : Ir.OutputContract).unmet profi
 
 public theorem html_fonts_cover_pdf (fs : FontSet) (pages : Array PageOut)
     (h : 0 < fs.fonts.size) :
-    ∀ k ∈ keepFaces fs pages, ∃ ff ∈ HtmlDoc.shipFaces fs, ff.index = k :=
-  fun k hk => HtmlDoc.shipFaces_covers fs (keepFaces_lt fs pages h k hk)
+    ∀ k ∈ keepFaces fs pages, ∃ ff ∈ HtmlDoc.allFaces fs, ff.index = k :=
+  fun k hk => HtmlDoc.allFaces_covers fs (keepFaces_lt fs pages h k hk)
 
 public theorem features_agree (features : Ir.Features) :
     (!(HtmlDoc.kernCssFor features).isEmpty) = Layout.kernEnabled features := by
@@ -74,7 +74,7 @@ public theorem alt_hidden_agree (floor : String) (a : Ir.Alt) :
 public theorem fontPolicy_projects (doc : Ir.Doc) (fs : FontSet) (pages : Array PageOut)
     (h : 0 < fs.fonts.size) (hp : doc.fontPolicy == .embedded) :
     ∀ k ∈ keepFaces fs pages,
-      ∃ ff ∈ (if doc.fontPolicy == .embedded then HtmlDoc.shipFaces fs else #[]),
+      ∃ ff ∈ (if doc.fontPolicy == .embedded then HtmlDoc.allFaces fs else #[]),
         ff.index = k := by
   rw [ite_eq_left hp]
   exact html_fonts_cover_pdf fs pages h
