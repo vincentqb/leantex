@@ -39,6 +39,8 @@ public structure Geom where
   pageH : Sp := pt 792
   hmargin : Sp := inch 1
   vmargin : Sp := inch 1
+  /-- The bottom margin where the page declares one apart from the top's. -/
+  bmargin : Option Sp := none
   fontSize : Sp := Ir.baseFontSize
   /-- TeX's `\topskip` (TeXbook ch. 15); `none` on a frame page, which beamer sets as one box. -/
   topskip : Option Sp := none
@@ -82,7 +84,9 @@ public structure Geom where
 
 public def Geom.textWidth (g : Geom) : Sp := g.pageW - 2 * g.hmargin
 
-public def Geom.bodyBottom (g : Geom) : Sp := g.pageH - g.vmargin - g.footBand
+public def Geom.bottomMargin (g : Geom) : Sp := g.bmargin.getD g.vmargin
+
+public def Geom.bodyBottom (g : Geom) : Sp := g.pageH - g.bottomMargin - g.footBand
 
 public def Geom.bodyTop (g : Geom) : Sp := g.vmargin + g.headBand
 
@@ -135,28 +139,39 @@ public theorem bodyTop_clears_head (g : Geom) (ink : Sp) (gap : Option Sp)
   exact furniture_band_reserves g.vmargin ink gap
 
 public theorem bodyBottom_clears_footer (g : Geom) (ink : Sp) (gap : Option Sp)
-    (h : g.footBand = (furnitureBand g.vmargin ink gap).band) :
+    (h : g.footBand = (furnitureBand g.bottomMargin ink gap).band) :
     g.bodyBottom + ink + gap.getD inkClearance
-      ≤ g.pageH - (furnitureBand g.vmargin ink gap).edge := by
+      ≤ g.pageH - (furnitureBand g.bottomMargin ink gap).edge := by
   simp only [Geom.bodyBottom]
   rw [h]
-  exact furn_reserves_below g.pageH g.vmargin ink (gap.getD inkClearance)
-    (furnitureBand g.vmargin ink gap).edge (furnitureBand g.vmargin ink gap).band
-    (furniture_band_reserves g.vmargin ink gap)
+  exact furn_reserves_below g.pageH g.bottomMargin ink (gap.getD inkClearance)
+    (furnitureBand g.bottomMargin ink gap).edge (furnitureBand g.bottomMargin ink gap).band
+    (furniture_band_reserves g.bottomMargin ink gap)
 
-private theorem furn_symmetric (pageH vm a d edge band : Int) :
-    (edge + a) - a = pageH - ((pageH - edge - d) + d) ∧
-    (vm + band) - ((edge + a) + d) =
-      ((pageH - edge - d) - a) - (pageH - vm - band) := by
+private theorem furn_sides (pageH vm bm a d he hb fe fb : Int) :
+    (he + a) - a = he ∧ pageH - ((pageH - fe - d) + d) = fe ∧
+    (vm + hb) - ((he + a) + d) = vm + hb - he - a - d ∧
+    ((pageH - fe - d) - a) - (pageH - bm - fb) = bm + fb - fe - a - d := by
   omega
 
+/-- Each side's furniture stands in its own margin's band: the ink its edge from the page's edge,
+the gap to the body its margin and band less the edge and the ink. -/
+public theorem furniture_sides (g : Geom) (a d : Sp) (hb fb : FurnBand)
+    (hh : g.headBand = hb.band) (hf : g.footBand = fb.band) :
+    furnHeadY hb a - a = hb.edge ∧ g.pageH - (furnFootY fb g.pageH d + d) = fb.edge ∧
+    g.bodyTop - (furnHeadY hb a + d) = g.vmargin + hb.band - hb.edge - a - d ∧
+    (furnFootY fb g.pageH d - a) - g.bodyBottom = g.bottomMargin + fb.band - fb.edge - a - d := by
+  simp only [furnHeadY, furnFootY, Geom.bodyTop, Geom.bodyBottom, hh, hf]
+  exact furn_sides g.pageH g.vmargin g.bottomMargin a d hb.edge hb.band fb.edge fb.band
+
 public theorem furniture_symmetric (g : Geom) (a d : Sp) (b : FurnBand)
-    (hh : g.headBand = b.band) (hf : g.footBand = b.band) :
+    (hh : g.headBand = b.band) (hf : g.footBand = b.band) (hm : g.bottomMargin = g.vmargin) :
     furnHeadY b a - a = g.pageH - (furnFootY b g.pageH d + d) ∧
     g.bodyTop - (furnHeadY b a + d) =
       (furnFootY b g.pageH d - a) - g.bodyBottom := by
-  simp only [furnHeadY, furnFootY, Geom.bodyTop, Geom.bodyBottom, hh, hf]
-  exact furn_symmetric g.pageH g.vmargin a d b.edge b.band
+  have ⟨h1, h2, h3, h4⟩ := furniture_sides g a d b b hh hf
+  rw [hm] at h4
+  exact ⟨h1.trans h2.symm, h3.trans h4.symm⟩
 
 private theorem furn_gap_exact (vm ink g : Int) :
     (vm + max 0 (max 0 (vm - ink - g) + ink + g - vm))
@@ -187,7 +202,8 @@ public theorem geometry_roundtrip (sep descent vmargin ink : Sp)
   simp only [furnGapOfSep, furnSepOfGap, furnitureBand, furnEdge] at h ⊢
   exact furn_roundtrip sep descent vmargin ink h
 
-public def Geom.textHeight (g : Geom) : Sp := g.frameTextHeight.getD (g.pageH - 2 * g.vmargin)
+public def Geom.textHeight (g : Geom) : Sp :=
+  g.frameTextHeight.getD (g.pageH - g.vmargin - g.bottomMargin)
 
 public def bandSlotX (g : Geom) (side : Ir.BandSide) (w : Sp) : Sp :=
   match side with
@@ -263,7 +279,7 @@ public theorem slides_lines_survive_bands (a d f : Sp)
     (hh : a + d ≤ 2 * Ir.slidesFontSize) (hf : f ≤ 2 * Ir.slidesFontSize)
     (g : Geom)
     (hg : g.pageH ∈ Ir.slidesStages.map (·.2.2))
-    (hv : g.vmargin = Ir.slidesVMargin)
+    (hv : g.vmargin = Ir.slidesVMargin) (hm : g.bmargin = none)
     (hhb : g.headBand = (furnitureBand g.vmargin (a + d) none).band)
     (hfb : g.footBand = (furnitureBand g.vmargin f none).band) :
     0 < g.bodyBottom - g.bodyTop ∧
@@ -290,7 +306,7 @@ public theorem slides_lines_survive_bands (a d f : Sp)
   rw [hfs] at hh hf
   simp only [furnitureBand, furnEdge, Option.getD, hls, hv, hvm] at hhb hfb
   rw [hld]
-  simp only [Geom.bodyBottom, Geom.bodyTop]
+  simp only [Geom.bodyBottom, Geom.bodyTop, Geom.bottomMargin, hm, Option.getD_none]
   rw [hv, hvm]
   exact key a d f g.headBand g.footBand g.pageH hh hf hH.1 hH.2 hhb hfb
 
@@ -751,6 +767,7 @@ public def Geom.ofPage (spec : Ir.PageSpec) (base : Geom := {}) : Geom :=
     pageH := spec.height
     hmargin := spec.hmargin
     vmargin := spec.vmargin
+    bmargin := spec.bmargin
     fontSize := spec.fontSize
     leading := spec.leading
     parskip := spec.parskip.getD (Ir.parskipDefault spec.fontSize)
@@ -18783,7 +18800,7 @@ public def runPost (sh : Shipped) : Out := Id.run do
         | .center => (geom.pageW - w) / 2
         | .right => geom.pageW - geom.hmargin - w
       (some { x := x
-              y := geom.pageH - geom.vmargin
+              y := geom.pageH - geom.bottomMargin
               size := geom.fontSize, segs := segs, setWidth := w }, ds, c)
   let furnishPage (i : Nat) (page : PageOut)
       (st0 : Std.HashMap String (Array Nat) × Nat) :
@@ -19869,7 +19886,7 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
   let plainFoot := doc.foot.isNone && doc.pageNumbersOn
   -- The chrome footer's size is the footline's step (`Ir.footline`) and its colour a palette key.
   let footSize := Ir.footlineSize geom.scale geom.fontSize
-  -- One `furnitureBand` per side from one ink and gap (`furniture_symmetric`).
+  -- One `furnitureBand` per side from its own margin, one ink and gap (`furniture_sides`).
   let runInk := scale font.ascent + scale (-font.descent)
   let corr := scale (-font.descent)
   let xHeight := fs.xHeightAt geom.fontSize
@@ -19881,7 +19898,7 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
   let gapBot := doc.page.furnitureGap <|> footskip.map (furnGapOfSep · corr)
   let latexFoot := if doc.page.furnitureGap.isSome then none else footskip
   let headFurn := furnitureBand geom.vmargin runInk gapTop
-  let footFurn := furnitureBand geom.vmargin runInk gapBot
+  let footFurn := furnitureBand geom.bottomMargin runInk gapBot
   -- A footer reserves its band before anything is placed (`bodyBottom_clears_footer`).
   let geom := if doc.foot.isSome || plainFoot then
       { geom with footBand := if latexFoot.isSome then 0 else footFurn.band }

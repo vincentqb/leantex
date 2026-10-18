@@ -173,7 +173,8 @@ public structure Config where
 /-- The current text area: the local context, else the page's. -/
 public def Config.measureValues (cfg : Config) : MeasureValues :=
   cfg.measures.getD (MeasureValues.horizontal
-    (cfg.page.width - 2 * cfg.page.hmargin) (cfg.page.height - 2 * cfg.page.vmargin))
+    (cfg.page.width - 2 * cfg.page.hmargin)
+    (cfg.page.height - cfg.page.vmargin - cfg.page.bottomMargin))
 
 /-- One list or quotation level deeper: the level's left margin (`Ir.leftMarginAt`) off the
 measure's start, and for a quotation off its end. -/
@@ -2151,7 +2152,7 @@ public def blockShapeCss (doc : Doc)
   let len := blockShapeLength doc
   let skips (sk : Array Ir.BlockSkip) : String := len (Ir.blockSkipSum doc.tokens sk)
   let measures := Dim.MeasureValues.horizontal (doc.page.width - 2 * doc.page.hmargin)
-    (doc.page.height - 2 * doc.page.vmargin)
+    (doc.page.height - doc.page.vmargin - doc.page.bottomMargin)
   let paint (e : Ir.BlockEdge) : String := match e.name with
     | some n => s!"var({n.property}, {cssColor e.color})"
     | none => lit e.color
@@ -6263,7 +6264,7 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
         let (stage, unit) :=
           if isVertical then (cfg.page.height, "dvh") else (cfg.page.width, "vw")
         let textW := cfg.page.width - 2 * cfg.page.hmargin
-        let textH := cfg.page.height - 2 * cfg.page.vmargin
+        let textH := cfg.page.height - cfg.page.vmargin - cfg.page.bottomMargin
         some (stageShare unit (l.resolve textW textH) stage)
       else none
     let dim (l : Image.Len) (vertical : Bool) : Option String :=

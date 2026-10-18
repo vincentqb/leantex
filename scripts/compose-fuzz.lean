@@ -53,7 +53,10 @@ def unitFields (head : String) (raws : Array Parse.Raw) : Option (List String) :
   let keyFields (k : String) : List String :=
     match head, k with
     | "page", "size" => ["width", "height"]
-    | "page", "margin" => ["vmargin", "hmargin"]
+    | "page", "margin" => ["vmargin", "hmargin", "block"]
+    | "page", "vmargin" => ["vmargin", "block"]
+    | "page", "tmargin" | "page", "bmargin" | "page", "textheight" | "page", "vmarginratio" =>
+      ["block"]
     | "fonts", "rm" => ["body"]
     | "fonts", "sf" => ["sans"]
     | "fonts", "tt" => ["mono"]

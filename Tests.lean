@@ -1011,6 +1011,8 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   Tests.ParamCensus.paramCensusChecks ref oneFace
   Tests.ParamCensus.paramTruthChecks ref oneFace
   Tests.ParamCensus.paramSilenceChecks ref oneFace
+  Tests.ParamCensus.textHeightChecks ref oneFace
+  Tests.ParamCensus.textBlockChecks ref
   Tests.ParamCensus.engineTokenChecks ref
   declSettingSuiteChecks ref oneFace font
   seamChecks ref oneFace

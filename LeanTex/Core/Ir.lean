@@ -121,11 +121,52 @@ dropped. -/
 @[expose] public def PageBox.shipped (boxes : Array PageBox) (w h : Sp) : Array PageBox :=
   (boxes.map (·.clampTo w h)).filter (·.hasArea)
 
+/-- A page's declared vertical keys, which place its text block once the class settles the page. -/
+public structure TextBlockDecl where
+  top : Option Sp := none
+  bottom : Option Sp := none
+  height : Option Sp := none
+  ratio : Option (Nat × Nat) := none
+  deriving Repr, BEq, Inhabited
+
+/-- The margins a declaration leaves on a page `page` tall, else at `vm` and `bm`: a declared top, or
+one a height places above a declared bottom or by a ratio, with a declared height under it. -/
+@[expose] public def TextBlockDecl.place (b : TextBlockDecl) (page vm bm : Sp) : Sp × Sp :=
+  let top : Sp := match b.top, b.bottom, b.height, b.ratio with
+    | some t, _, _, _ => t
+    | none, some m, some h, _ => page - m - h
+    | none, none, some h, some (a, r) => (page - h) * (a : Int) / ((a + r : Nat) : Int)
+    | _, _, _, _ => vm
+  match b.height with
+  | some h => (top, page - top - h)
+  | none => (top, b.bottom.getD bm)
+
+private theorem place_under (page t h : Int) : page - t - (page - t - h) = h := by omega
+
+/-- A declared height is the text block's height. -/
+public theorem TextBlockDecl.place_height (b : TextBlockDecl) (page vm bm h : Sp)
+    (hh : b.height = some h) : page - (b.place page vm bm).1 - (b.place page vm bm).2 = h := by
+  simp only [TextBlockDecl.place, hh]
+  exact place_under _ _ _
+
+private theorem place_over (page m h : Int) : page - (page - m - h) - h = m := by omega
+
+/-- A height beside a declared bottom and no declared top stands on that bottom. -/
+public theorem TextBlockDecl.place_bottom (b : TextBlockDecl) (page vm bm h m : Sp)
+    (hh : b.height = some h) (hm : b.bottom = some m) (ht : b.top = none) :
+    (b.place page vm bm).2 = m := by
+  simp only [TextBlockDecl.place, hh, hm, ht]
+  exact place_over _ _ _
+
 /-- Page geometry, as declared by `\page`. -/
 public structure PageSpec where
   width : Sp := pt 612
   height : Sp := pt 792
   vmargin : Sp := inch 1
+  /-- The bottom margin where the page declares one apart from the top's (`vmargin`). -/
+  bmargin : Option Sp := none
+  /-- The vertical keys declared so far, placed by `PageSpec.placed`. -/
+  block : TextBlockDecl := {}
   hmargin : Sp := inch 1
   /-- The body size, from `\page{ fontsize }` or the class option. -/
   fontSize : Sp := baseFontSize
@@ -189,6 +230,13 @@ public structure PageSpec where
   /-- The page boxes the document declares, one per kind, the last declaration standing. -/
   boxes : Array PageBox := #[]
   deriving Repr, BEq, Inhabited
+
+public def PageSpec.bottomMargin (spec : PageSpec) : Sp := spec.bmargin.getD spec.vmargin
+
+/-- The page with its declared text block placed on its settled height. -/
+public def PageSpec.placed (spec : PageSpec) : PageSpec :=
+  let (t, m) := spec.block.place spec.height spec.vmargin spec.bottomMargin
+  { spec with vmargin := t, bmargin := if m == t then none else some m, block := {} }
 
 /-- The medium a page spec ships on: its page and the bleed on every side. -/
 @[expose] public def PageSpec.medium (spec : PageSpec) : Sp × Sp :=
@@ -18664,6 +18712,9 @@ public def dump (doc : Doc) (diags : Array Diag) : String :=
   let page :=
     s!"page {doc.page.width.toPtString}x{doc.page.height.toPtString} " ++
     s!"vmargin {doc.page.vmargin.toPtString} hmargin {doc.page.hmargin.toPtString}" ++
+    (match doc.page.bmargin with
+      | some m => s!" bmargin {m.toPtString}"
+      | none => "") ++
     (if doc.page.fontSize != baseFontSize
       then s!" fontsize {doc.page.fontSize.toPtString}" else "") ++
     (match doc.page.sizes with

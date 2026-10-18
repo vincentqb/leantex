@@ -354,7 +354,7 @@ def censusRows0 :
         (lineYOf c 0 "foot of page one").map fun ny => decide (sy < ny)).getD false),
     ("the note ink stands above bodyBottom, in the text block",
       ((lineYOf c 0 "foot of page one").map fun ny =>
-        decide (ny ≤ geom.pageH - geom.vmargin)).getD false),
+        decide (ny ≤ geom.pageH - geom.bottomMargin)).getD false),
     ("the mark's digit ships raised beside its word",
       pageHas c 0 "here1"),
     ("the boundary note shares its mark's page, wherever the break fell",

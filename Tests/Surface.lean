@@ -584,9 +584,13 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
     (!(warnCodes folded).contains "W0104" &&
       (elabStr folded).1.page.vmargin == (elabStr direct).1.page.vmargin &&
       (elabStr folded).1.page.hmargin == (elabStr direct).1.page.hmargin)
-  t "unequal geometry sides stay named"
-    ((warnCodes (dvDoc "\\usepackage[top=1in, bottom=0.7in]{geometry}\n" "x")).contains
-      "W0104")
+  t "unequal geometry sides are read as the page's top and bottom margins"
+    (let src := dvDoc "\\usepackage[top=1in, bottom=0.7in]{geometry}\n" "x"
+     let page := (elabStr src).1.page
+     !(warnCodes src).contains "W0104" && page.vmargin == Dim.inch 1 &&
+       page.bottomMargin == Dim.inch 7 / 10)
+  t "a lone geometry side stays named"
+    ((warnCodes (dvDoc "\\usepackage[top=1in]{geometry}\n" "x")).contains "W0104")
   let pre (decls : String) : String :=
     "\\documentclass{article}\n" ++ decls ++ "\n\\begin{document}x\\end{document}"
   let (geoDoc, geoDs) := elabStr (pre "\\usepackage[a4paper,vmargin=0.6in,hmargin=0.9in,headsep=1in]{geometry}")
@@ -602,8 +606,10 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
      pairDoc.page.footskip == some (Dim.inch 3 / 10) &&
      pairDs.all (·.code != "W0104"))
   let unequal := (elabStr (pre "\\usepackage[top=1in,bottom=0.5in]{geometry}")).2
-  t "compat geometry drops an unequal pair named"
-    (["top", "bottom"].all fun k => unequal.any fun d => d.code == "W0104" && hasStr d.message k)
+  t "compat geometry reads an unequal pair"
+    (let page := (elabStr (pre "\\usepackage[top=1in,bottom=0.5in]{geometry}")).1.page
+     unequal.all (·.code != "W0104") && page.vmargin == Dim.inch 1 &&
+       page.bottomMargin == Dim.inch 1 / 2)
   -- A `\dimexpr` value reads as the length door reads it, the strut box as the class sets it.
   let (strutDoc, strutDs) := elabStr
     (pre "\\usepackage[footskip=\\dimexpr 0.3in + \\dp\\strutbox\\relax]{geometry}")
@@ -782,10 +788,10 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
      (elabStr (pre "\\usepackage[margin=12pt]{caption}")).1.tokens.find? "captionmargin"
         == some { width := { sp := Dim.pt 12 } } &&
      (warnCodes (pre "\\captionsetup{margin={1em,2em}}")).contains "W0354")
-  -- geometry's `textwidth` and `textheight` size the body, which the engine centres (geometry manual §5.2).
-  t "compat newgeometry textwidth/textheight centre the text block"
+  -- geometry centres a declared `textwidth` and splits a declared `textheight` 2:3 (geometry manual §5.2).
+  t "compat newgeometry textwidth/textheight place the text block as geometry does"
     (let doc := (elabStr (pre "\\newgeometry{textwidth=396pt, textheight=576pt}")).1
-     doc.page.hmargin == Dim.pt 108 && doc.page.vmargin == Dim.pt 108)
+     doc.page.hmargin == Dim.pt 108 && geometrySplit doc.page (Dim.pt 576))
   -- A local `.sty` is read as `\usepackage` reads it (ltfiles.dtx `\@onefilewithoptions`).
   let parseRaws (file s : String) : Array Parse.Raw :=
     (Parse.parse file (Lex.lex file s).1).1
@@ -803,7 +809,7 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (raws2, spliced) := Compat.applyLocalSty docRaws #[("guide", parseRaws "guide.sty" sty)]
   let (doc2, elabDs) := Elab.runRaws "t" raws2
   t "a local .sty is \\input of its text: its \\geometry reaches \\page"
-    (doc2.page.hmargin == Dim.pt 108 && doc2.page.vmargin == Dim.pt 108 &&
+    (doc2.page.hmargin == Dim.pt 108 && geometrySplit doc2.page (Dim.pt 576) &&
      doc2.tokens.find? "captionsep" == some { width := { sp := Dim.pt 7 } } &&
      elabDs.all (·.code != "W0103"))
   t "what of the .sty's text is refused is named at the .sty's own file"
@@ -1640,7 +1646,7 @@ def hookChecks (ref : IO.Ref (List String)) : IO Unit := do
   let geoHook := hook "\\AtBeginDocument{\\newgeometry{textwidth=396pt, textheight=576pt}}" "x"
   t "a hook body's declaration reaches the preamble"
     ((elabStr geoHook).1.page.hmargin == Dim.pt 108 &&
-      (elabStr geoHook).1.page.vmargin == Dim.pt 108)
+      geometrySplit (elabStr geoHook).1.page (Dim.pt 576))
   t "a hook mixing a declaration and content honours both"
     (let mixed := hook
       "\\AtBeginDocument{\\newgeometry{textwidth=396pt, textheight=576pt}seen}" "x"
@@ -4311,9 +4317,13 @@ def styParityChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (docB, dsB, splicedB) ← run "requirechain"
   t "parity b: a nested RequirePackage reads the .sty beside the document"
     (dsB.all (·.code != "W0103") &&
-     docB.page.hmargin == Dim.pt 108 && docB.page.vmargin == Dim.pt 108 &&
+     docB.page.hmargin == Dim.pt 108 &&
      splicedB.toList.map (·.1) == ["venueb.sty", "venueb2.sty"] &&
-     Compat.styCounts "venueb.sty" dsB == (1, 0, 0) &&
+     Compat.styCounts "venueb2.sty" dsB == (1, 0, 0))
+  -- lualatex: the later `\newgeometry` resets the height to geometry's default body (95.40pt top).
+  t "parity b: the later newgeometry's default text block is named, the height before it cleared"
+    (docB.page.vmargin == Dim.inch 1 && docB.page.bmargin == none &&
+     Compat.styCounts "venueb.sty" dsB == (1, 1, 0) &&
      Compat.styCounts "venueb2.sty" dsB == (1, 0, 0))
   t "parity b: the nested read's N0020 names the .sty that asked, not the document"
     (splicedB.toList.map (·.2.1) == [none, some "venueb.sty"] &&

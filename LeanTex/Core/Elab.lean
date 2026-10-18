@@ -6618,7 +6618,16 @@ private def _root_.LeanTex.Core.Ir.PageSpec.textWidth (p : PageSpec) : Sp :=
   p.width - 2 * p.hmargin
 
 private def _root_.LeanTex.Core.Ir.PageSpec.textHeight (p : PageSpec) : Sp :=
-  p.height - 2 * p.vmargin
+  p.height - p.vmargin - p.bottomMargin
+
+/-- The page with its declared text block placed, or with the block set aside and what of it was
+declared where it leaves no text block. -/
+private def settledPage (page : PageSpec) : PageSpec × Option String :=
+  let placed := page.placed
+  if 0 ≤ placed.vmargin && 0 ≤ placed.bottomMargin && 0 < placed.height - placed.vmargin -
+      placed.bottomMargin then (placed, none)
+  else ({ page with block := {} }.placed,
+    some (if page.block.height.isSome then "text height" else "vertical margins"))
 
 /-- The class's page for a declared spec and options: every value the
 document declared is kept, the rest take the class's defaults. -/
@@ -7770,7 +7779,7 @@ private def engineLengthTokens (docClass : Ir.DocClass) (classOptions : String)
     -- The body size and `\parskip` may still change in the preamble.
     | "baselineskip" | "parskip" => false
     | _ => false
-  (engineLengthTokensOfPage (classPageDefaults record opts page)).filter
+  (engineLengthTokensOfPage (settledPage (classPageDefaults record opts page)).1).filter
     (fun kv => offered kv.1) ++ classMarginTokens record.lists
 
 /-- Applies a `\tokens{...}` block entry by entry, so an entry may refer to
@@ -14255,6 +14264,8 @@ private def pageExpects (k : Native.PageKey) : String :=
   | .modulo => "a count of at least 1"
   | .bottom => "'flush' or 'ragged'"
   | .rule | .frontRule => "\"x; y; width; height; colour\""
+  | .tmargin | .bmargin | .textheight => "a dimension, or auto"
+  | .vmarginratio => "a ratio such as 2:3, or auto"
   | k => if (pageSwitch k).isSome then "on or off" else "a dimension"
 
 private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
@@ -14286,7 +14297,11 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
           ((Native.PageKey.names.filter (·.2.listed)).map (·.1)) pos))
     | some key =>
       if let some set := pageDim key then
-        if let some d := asDim e.value then spec := set d spec else evs := wrong key e.value evs
+        if let some d := asDim e.value then
+          spec := set d spec
+          if key == .margin || key == .vmargin then
+            spec := { spec with block := { spec.block with top := some d, bottom := some d } }
+        else evs := wrong key e.value evs
       else if let some set := pageSwitch key then
         match e.value with
         | .ident "on" | .ident "true" => spec := set true spec
@@ -14318,14 +14333,37 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
             evs := say evs .E0323
               "'textwidth' in '\\page' expects a dimension between zero and the page width"
         else evs := wrong key v evs
+      | .textheight, .ident "auto" => spec := { spec with block := { spec.block with height := none } }
       | .textheight, v =>
         if let some d := asDim v then
-          if 0 < d && d ≤ spec.height then
-            spec := { spec with vmargin := (spec.height - d) / 2 }
-          else
-            evs := say evs .E0323
-              "'textheight' in '\\page' expects a dimension between zero and the page height"
+          if 0 < d then spec := { spec with block := { spec.block with height := some d } }
+          else evs := say evs .E0323 "'textheight' in '\\page' expects a positive dimension"
         else evs := wrong key v evs
+      | .tmargin, .ident "auto" => spec := { spec with block := { spec.block with top := none } }
+      | .tmargin, v =>
+        if let some d := asDim v then
+          if 0 ≤ d then spec := { spec with block := { spec.block with top := some d } }
+          else evs := say evs .E0323 "'tmargin' in '\\page' expects a dimension of at least zero"
+        else evs := wrong key v evs
+      | .bmargin, .ident "auto" => spec := { spec with block := { spec.block with bottom := none } }
+      | .bmargin, v =>
+        if let some d := asDim v then
+          if 0 ≤ d then spec := { spec with block := { spec.block with bottom := some d } }
+          else evs := say evs .E0323 "'bmargin' in '\\page' expects a dimension of at least zero"
+        else evs := wrong key v evs
+      | .vmarginratio, .ident "auto" => spec := { spec with block := { spec.block with ratio := none } }
+      -- geometry's default `vmarginratio` (manual §5.2).
+      | .vmarginratio, .ident "default" =>
+        spec := { spec with block := { spec.block with ratio := some (2, 3) } }
+      | .vmarginratio, v =>
+        match v with
+        | .ident r =>
+          match (r.splitOn ":").map (·.toNat?) with
+          | [some a, some b] =>
+            if 0 < a + b then spec := { spec with block := { spec.block with ratio := some (a, b) } }
+            else evs := wrong key v evs
+          | _ => evs := wrong key v evs
+        | _ => evs := wrong key v evs
       -- `leading` is `\linespread`'s stretch, composed when the block ends.
       | .leading, .int n => spec := { spec with spread := n.toNat * 1000 }
       | .leading, .dim d =>
@@ -14403,8 +14441,36 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
           evs := say evs .E0323 s!"'bottom' in '\\page' expects flush or ragged, got '{v}'"
       | key, v => evs := wrong key v evs
     -- A clean count means the entry applied; a `rule` adds, so it overwrites nothing.
-    if evs.size == before && !(Native.PageKey.ofName? e.key matches some .rule | some .frontRule) then
+    if evs.size == before && !(Native.PageKey.ofName? e.key matches some .rule | some .frontRule) &&
+        !(e.value matches .ident "auto" | .ident "default") then
       evs := evs.push (.scalar "page" e.key (renderValue e.value) pos)
+  -- A vertical key the declared set leaves without effect is named and set aside, as geometry does.
+  let vertical : List Native.PageKey := [.margin, .vmargin, .tmargin, .bmargin, .textheight, .vmarginratio]
+  if entries.any fun e => (Native.PageKey.ofName? e.key).any vertical.contains then
+    let lost (key why : String) (evs : Array PEvent) : Array PEvent :=
+      (evs.filter fun ev => match ev with
+        | .scalar "page" k _ _ => k != key
+        | _ => true).push
+        (.say (diagOf ctx .W0104 s!"'{key}' in '\\page' sets nothing: {why}" (some pos)
+          (subject := some (Compat.paramSubject "\\page" key))))
+    let declares (k : String) : Bool := entries.any fun e =>
+      e.key == k && !(e.value matches .ident "auto" | .ident "default")
+    -- A height stands under the top, so a bottom beside both sets nothing, a later height its own.
+    let b := spec.block
+    if b.top.isSome && b.bottom.isSome && b.height.isSome then
+      if declares "bmargin" then
+        evs := lost "bmargin" "the text height stands under the top margin, which places the bottom" evs
+      else if let some k := ["vmargin", "margin"].find? declares then
+        evs := evs.push (.say (diagOf ctx .W0110 s!"'{k}' in '\\page' sets the top margin only: the \
+text height stands under it, which places the bottom" (some pos)
+          (subject := some s!"partial:\\page:{k}")))
+      spec := { spec with block := { b with bottom := none } }
+    let b := spec.block
+    if b.ratio.isSome && (b.height.isNone || b.top.isSome || b.bottom.isSome) then
+      if declares "vmarginratio" then
+        evs := lost "vmarginratio" "a ratio splits a text height no margin places, and none is \
+declared alone" evs
+      spec := { spec with block := { b with ratio := none } }
   return (composeLeading spec, evs)
 
 private def fontSlot? (name : String) : Option Nat :=
@@ -17332,6 +17398,12 @@ private def prepareStyledBody (file : String) (decls : Array PDecl)
     if let some g := (classOpts.filterMap optionSkip).getLast? <|> record.parskip then
       page := { page with parskip := some g }
   page := classPageDefaults record classOpts page
+  if let some lost := (settledPage page).2 then
+    let d := diagOf ctx .W0104 s!"the declared {lost} leaves the page no text block; the class's \
+margins stand" none (subject := some (Compat.paramSubject "\\page" (if lost == "text height" then
+        "textheight" else "vmargin")))
+    modify fun st => { st with diags := st.diags.push d }
+  page := (settledPage page).1
   let classSay (code : DiagCode) (o msg : String) : EM Unit := do
     let d := diagOf ctx code msg none (subject := some (Compat.paramSubject "documentclass" o))
     modify fun st => { st with diags := st.diags.push d }

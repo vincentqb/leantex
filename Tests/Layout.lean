@@ -2269,7 +2269,7 @@ def furnitureSymmetryChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet
     (out.pages.all fun p =>
       p.lines.any (fun l => l.furniture && l.y == headY) &&
       p.lines.any (fun l => l.furniture && l.y == footY))
-  let bodyBottom := geom.pageH - geom.vmargin - band.band
+  let bodyBottom := geom.pageH - geom.bottomMargin - band.band
   t "the first page fills its body area"
     ((out.pages[0]?.map fun p => p.lines.any fun l =>
       !l.furniture && l.y + d + Ir.leadingFor geom.fontSize > bodyBottom).getD false)
@@ -2289,7 +2289,7 @@ def furnitureSymmetryChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet
   let dGap := Layout.furnGapOfSep (Dim.pt 20) d
   let dBand := Layout.furnitureBand dGeom.vmargin (a + d) (some dGap)
   let dHeadY := (furnYs font dGeom (some dGap)).1
-  let dFootY := dGeom.pageH - dGeom.vmargin + Dim.pt 20
+  let dFootY := dGeom.pageH - dGeom.bottomMargin + Dim.pt 20
   t "declared seps place the head and the foot as LaTeX reads them"
     (dOut.pages.all fun p =>
       p.lines.any (fun l => l.furniture && l.y == dHeadY) &&
@@ -2299,7 +2299,7 @@ def furnitureSymmetryChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet
     (match dFurn[0]? with
      | some y0 =>
        (dGeom.vmargin + dBand.band) - dFurn.foldl min y0 == Dim.pt 20 &&
-         dFurn.foldl max y0 - (dGeom.pageH - dGeom.vmargin) == Dim.pt 20
+         dFurn.foldl max y0 - (dGeom.pageH - dGeom.bottomMargin) == Dim.pt 20
      | none => false)
   t "equal declared seps carry no note" (!dOut.diags.any (·.code == "N0021"))
   let (nDoc, _) := elabStr (declPre "\\page{ headsep = 20pt, footskip = 30pt }")
@@ -2374,7 +2374,7 @@ def footskipChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
     let (doc, _) := elabStr s
     let g := Layout.Geom.ofPage doc.page
     let foot ← ((layoutOf oneFace doc).pages[0]?).bind (·.lines.find? (·.furniture))
-    pure (foot.y - (g.pageH - g.vmargin))
+    pure (foot.y - (g.pageH - g.bottomMargin))
   for fs in [12, 30, 60] do
     t s!"a declared footskip of {fs}pt sets the foot's baseline that far below the text area"
       (drop (src s!"\\geometry\{letterpaper, textheight=9in, footskip={fs}pt}") ==
@@ -2398,7 +2398,7 @@ def footskipChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
   let bg := Layout.Geom.ofPage bare.page
   t "kept: an undeclared footskip hangs the foot from half the margin"
     (drop (src "\\geometry{letterpaper, textheight=9in}") ==
-      some ((furnYs oneFace.body bg).2 - (bg.pageH - bg.vmargin)))
+      some ((furnYs oneFace.body bg).2 - (bg.pageH - bg.bottomMargin)))
 
 /-- The strut box a preamble length reads stands as the class set it, `.7` and `.3` of its
 `\baselineskip` in TeX's arithmetic, and where the preamble may have set it again the length is
@@ -2412,7 +2412,7 @@ def strutLengthChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
     let (doc, _) := elabStr s
     let g := Layout.Geom.ofPage doc.page
     let foot ← ((layoutOf oneFace doc).pages[0]?).bind (·.lines.find? (·.furniture))
-    pure (foot.y - (g.pageH - g.vmargin))
+    pure (foot.y - (g.pageH - g.bottomMargin))
   let lost (s : String) : Bool :=
     (elabStr s).2.any fun d => d.code == "W0101" || d.code == "W0107"
   let quarter := Dim.pt 18

@@ -237,8 +237,7 @@ name is a length of the document's own. -/
 public def paramSites : List (String × ParamSite) :=
   [("parskip", .page .parskip),
    ("textwidth", .page .textwidth),
-   ("textheight", .unmodelled "sets the text block's height under its top margin; the page here \
-keeps its top and bottom margins equal"),
+   ("textheight", .page .textheight),
    ("headsep", .page .headsep),
    ("footskip", .page .footskip),
    ("abovecaptionskip", .token "captionsep"),
@@ -601,6 +600,14 @@ public inductive TemplateDecl where
       (pos : Pos)
   | titlePage (read : TitleTemplate.Read) (file : String) (pos : Pos)
 
+/-- geometry's declared vertical keys, each value beside the key that spelled it. -/
+private structure GeometryBlock where
+  top : Option (String × String) := none
+  bottom : Option (String × String) := none
+  height : Option (String × String) := none
+  ratio : Option (String × String) := none
+  deriving Inhabited
+
 private structure St where
   file : String
   diags : Array Diag := #[]
@@ -708,6 +715,10 @@ private structure St where
   /-- The text block's measure is one the elaborator can
   read in the preamble. -/
   measureKnown : Bool := false
+  /-- geometry's vertical keys so far, which each call solves together until `\newgeometry`. -/
+  geometryBlock : GeometryBlock := {}
+  /-- The vertical page keys a lowering has set so far, which a later solve sets again or clears. -/
+  pageVertical : List Native.PageKey := []
   /-- The declared class's page model is the flow model,
   whose text block is the engine's. -/
   flowPage : Bool := true
@@ -5866,6 +5877,15 @@ moves a line" (tokens := false)
     -- premise: paramCensusChecks — a page setting in the body ships the page without it
     if st.inDoc && !st.inDef then
       return ← named "sets the page, which the body leaves as the preamble declared it"
+    if key == .textheight then
+      -- premise: textBlockChecks — beamer sets the height again at each frame from its paper
+      unless st.flowPage do
+        return ← named "is set again by the class from its own page, so the preamble's value \
+reaches no page"
+      write fun st => { st with pageVertical :=
+        if st.pageVertical.contains .textheight then st.pageVertical else st.pageVertical ++ [key] }
+      -- The kernel's height stands under the top, whatever placed the bottom before it.
+      return ← emit (.page #[(key, src), (.bmargin, "auto")])
     emit (.page #[(key, src)])
   | .token t, _ =>
     unless st.inDef do
@@ -6248,9 +6268,6 @@ public def cropInert : List (String × String) :=
 public def geometryPageKeys : List Native.PageKey :=
   [.margin, .vmargin, .hmargin, .width, .height, .textwidth, .textheight, .headsep, .footskip]
 
-/-- The geometry keys read as one side's margin, which its opposite side's equal value completes. -/
-public def geometrySideKeys : List String := ["top", "bottom", "left", "right"]
-
 /-- geometry's flags asking for a page without running furniture, the page the engine starts from. -/
 public def geometryNoFurniture : List String := ["noheadfoot", "nohead", "nofoot"]
 
@@ -6340,7 +6357,14 @@ private def geometry (opts : Array Raw) (pos : Pos)
   let mut keys : Array (Native.PageKey × String × Array String) := #[]
   let mut dropped : Array String := #[]
   let mut droppedExpr : Array String := #[]
-  let mut sides : Array (String × String) := #[]
+  -- `\newgeometry` starts from no vertical key; every other call adds to the ones before it.
+  let before := (← get).geometryBlock
+  let mut vb : GeometryBlock := if spelling == "\\newgeometry" then {} else before
+  -- The keys this call spells, the only ones its diagnostics name.
+  let mut spelledNow : Array String := #[]
+  -- The left and right margins, read in order as geometry reads them.
+  let mut hl : Option (String × String) := none
+  let mut hr : Option (String × String) := none
   for entry in Entries.read .keyval opts do
     let e := entry.src
     match entry.key, entry.value with
@@ -6355,10 +6379,15 @@ private def geometry (opts : Array Raw) (pos : Pos)
       else if driverOptions.contains f then
         inertParam "geometry" f spelling "the engine writes its own output" pos
       else if f == "verbose" then inertParam "geometry" f spelling "the engine writes no TeX log" pos
+      -- geometry's `vcentering` and `centering` are a vertical ratio of 1:1 (manual §5.2).
+      else if f == "vcentering" || f == "centering" then
+        vb := { vb with ratio := some (f, "1:1") }
+        spelledNow := spelledNow.push f
       else dropped := dropped.push f
-    | k, some v0 =>
+    | k0, some v0 =>
       -- geometry's width/height size the text block, paperwidth/paperheight the page.
-      let k := if k == "paperwidth" then "width" else if k == "paperheight" then "height" else k
+      let k := if k0 == "paperwidth" then "width" else if k0 == "paperheight" then "height"
+        else if k0 == "width" then "textwidth" else if k0 == "height" then "textheight" else k0
       let vr ← dimexprValue v0
       let v := rawSrc vr
       -- premise: driverOptionChecks — a driver option ships the page without it
@@ -6366,40 +6395,113 @@ private def geometry (opts : Array Raw) (pos : Pos)
         inertParam "geometry" k spelling "the engine writes its own output" pos
       else if k == "verbose" then inertParam "geometry" k spelling "the engine writes no TeX log" pos
       else if v.startsWith "\\dimexpr" then
-        droppedExpr := droppedExpr.push s!"{k} = {v}"
-      else match k, ← (if vr == v0 then (Entries.read .keyval v0).toList.mapM (dimexprValue ·.item)
-          else pure [vr]) with
-      | "margin", a :: b :: _ | "hmargin", a :: b :: _ | "vmargin", a :: b :: _ =>
-        if (rawSrc a).startsWith "\\dimexpr" || (rawSrc b).startsWith "\\dimexpr" then
+        droppedExpr := droppedExpr.push s!"{k0} = {v}"
+      else
+        let items ← if vr == v0 then (Entries.read .keyval v0).toList.mapM (dimexprValue ·.item)
+          else pure [vr]
+        let (ar, br) := match items with
+          | a :: b :: _ => (a, b)
+          | _ => (vr, vr)
+        let (a, b) := (lengthSrc ar, lengthSrc br)
+        if items.length > 2 || (items.length == 2 && !["margin", "hmargin", "vmargin"].contains k) then
+          dropped := dropped.push k
+        else if (rawSrc ar).startsWith "\\dimexpr" || (rawSrc br).startsWith "\\dimexpr" then
           droppedExpr := droppedExpr.push s!"{k} = {v}"
         else if k == "margin" then
-          keys := keys ++ #[(.hmargin, lengthSrc a, #[e]), (.vmargin, lengthSrc b, #[e])]
-        else if lengthSrc a == lengthSrc b then
-          keys := keys.push (if k == "hmargin" then .hmargin else .vmargin, lengthSrc a, #[e])
-        else dropped := dropped.push k
-      | _, _ :: _ :: _ => dropped := dropped.push k
-      | _, _ =>
-        if let some key := geometryPageKeys.find? (·.name == k) then
-          keys := keys.push (key, lengthSrc vr, #[e])
+          -- A pair is geometry's horizontal and vertical margin, one value both.
+          hl := some (k, a)
+          hr := some (k, a)
+          vb := { vb with top := some (k, b), bottom := some (k, b) }
+          spelledNow := spelledNow.push k
+        else if k == "hmargin" then
+          hl := some (k, a)
+          hr := some (k, b)
+        else if k == "vmargin" then
+          vb := { vb with top := some (k, a), bottom := some (k, b) }
+          spelledNow := spelledNow.push k
+        else if k == "left" || k == "lmargin" then hl := some (k, a)
+        else if k == "right" || k == "rmargin" then hr := some (k, a)
+        else if k == "top" || k == "tmargin" then
+          vb := { vb with top := some (k, a) }
+          spelledNow := spelledNow.push k
+        else if k == "bottom" || k == "bmargin" then
+          vb := { vb with bottom := some (k, a) }
+          spelledNow := spelledNow.push k
+        else if k == "textheight" then
+          vb := { vb with height := some (k0, a) }
+          spelledNow := spelledNow.push k0
+        else if k == "vmarginratio" then
+          vb := { vb with ratio := some (k, v) }
+          spelledNow := spelledNow.push k
+        else if let some key := geometryPageKeys.find? (·.name == k) then
+          keys := keys.push (key, a, #[e])
         else if k == "headheight" then
           inertParam "geometry" k spelling
             "the running head takes its content's height, and the text block stays where the margins put it" pos
-        else if geometrySideKeys.contains k then
-          sides := sides.push (k, lengthSrc vr)
         else dropped := dropped.push k
-  -- An equal pair of side margins is the symmetric margin; an unequal or lone side stays named.
-  let side (n : String) : Option String :=
-    (sides.findRev? (·.1 == n)).map (·.2)
-  for (a, b, key) in [("top", "bottom", Native.PageKey.vmargin), ("left", "right", .hmargin)] do
-    match side a, side b with
-    | some va, some vb =>
-      if va == vb then keys := keys.push (key, va, #[a, b])
-      else dropped := dropped ++ #[a, b]
-    | some _, none => dropped := dropped.push a
-    | none, some _ => dropped := dropped.push b
-    | none, none => pure ()
+  -- Equal left and right margins are the symmetric margin; an unequal or lone side stays named.
+  match hl, hr with
+  | some (lk, l), some (rk, r) =>
+    if l == r then keys := keys.push (.hmargin, l, #[lk, rk].toList.eraseDups.toArray)
+    else for k in [lk, rk].eraseDups do dropped := dropped.push k
+  | some (k, _), none | none, some (k, _) => dropped := dropped.push k
+  | none, none => pure ()
+  -- Every call solves the vertical keys so far, as geometry re-solves its layout on each.
+  let set := (← get).pageVertical
+  let vbEmpty := vb.top.isNone && vb.bottom.isNone && vb.height.isNone && vb.ratio.isNone
+  if !spelledNow.isEmpty || !vbEmpty || set.contains .textheight then
+    write fun st => { st with geometryBlock := vb }
+    let mine (x : Option (String × String)) : Option String :=
+      x.bind fun (k, _) => if spelledNow.contains k then some k else none
+    let both := vb.top.isSome && vb.bottom.isSome
+    -- geometry ignores a height both margins fix, as its over-specification warning says.
+    let height := if both then none else vb.height
+    if both then if let some k := mine vb.height then dropped := dropped.push k
+    -- A lone side beside no height leaves the block to geometry's default body, which is not modelled.
+    let placed := height.isSome || both
+    unless placed do
+      for x in [vb.top, vb.bottom] do if let some k := mine x then dropped := dropped.push k
+    -- So does a height set before a call that leaves geometry no vertical key of its own.
+    if vbEmpty && set.contains .textheight then
+      unreadParam "usepackage:geometry" "layout"
+        "geometry's default text block, which replaces the text height set before it," pos
+        (help := "declare the height with geometry's keys, such as textheight=9in")
+    let alone := height.isSome && vb.top.isNone && vb.bottom.isNone
+    -- geometry splits a lone height's leftover by `vmarginratio`, its default unless declared.
+    let mut ratio : Option String := if alone then some "default" else none
+    if let some (k, r) := vb.ratio then
+      if alone then ratio := some r
+      else if let some k := mine (some (k, r)) then
+        let why := "the margins place the text block, so a ratio splits nothing"
+        if placed then inertParam "geometry" k spelling why pos
+        else dropped := dropped.push k
+    let spelled (x : Option (String × String)) : Option String := if placed then x.map (·.2) else none
+    let solved : List (Native.PageKey × Option String) :=
+      match spelled vb.top, spelled vb.bottom with
+      | some t, some m =>
+        if t == m then [(.vmargin, some t), (.textheight, spelled height)]
+        else [(.tmargin, some t), (.bmargin, some m), (.textheight, spelled height)]
+      | t, m => [(.tmargin, t), (.bmargin, m), (.textheight, spelled height)]
+    let solved := solved ++ [(.vmarginratio, ratio)]
+    -- A key an earlier lowering set and this solve leaves is cleared, the others stand unwritten.
+    for (k, v) in solved do
+      match v with
+      | some v => keys := keys.push (k, v, #[])
+      | none => if set.contains k then keys := keys.push (k, "auto", #[])
+    let now := solved.filterMap fun (k, v) => v.map fun _ => k
+    write fun st => { st with pageVertical := if now.contains .vmargin then
+      now ++ [.tmargin, .bmargin] else now }
   -- geometry reads its keys in order, a later value of a key replacing the earlier one.
   let read := keys.foldl (init := #[]) fun acc kv => (acc.filter (·.1 != kv.1)).push kv
+  -- Equal horizontal and vertical margins are the one margin.
+  let read : Array (Native.PageKey × String × Array String) :=
+    match read.find? (·.1 == .hmargin), read.find? (·.1 == .vmargin) with
+    | some (_, h, hs), some (_, v, vs) =>
+      if h == v then
+        (read.filter (·.1 != .vmargin)).map fun kv =>
+          if kv.1 == .hmargin then (Native.PageKey.margin, h, hs ++ vs) else kv
+      else read
+    | _, _ => read
   -- A value standing as no single entry is its keys' loss, named with the others dropped.
   let (fit, unfit) := read.partition fun (k, v, _) => Native.Setting.carried (k.name, v)
   for (_, _, items) in unfit do

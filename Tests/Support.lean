@@ -1663,14 +1663,18 @@ def lineInk (l : Layout.LineOut) : String := l.segs.foldl (fun s seg => match se
   | .gap _ _ | .decoratedGap _ _ _ => s.push ' '
   | _ => s) ""
 
+/-- Does the page stand a text height alone as geometry's default `vmarginratio` 2:3 places it? -/
+def geometrySplit (p : Ir.PageSpec) (h : Dim.Sp) : Bool :=
+  p.vmargin == (p.height - h) * 2 / 5 && p.bottomMargin == p.height - h - p.vmargin
+
 /-- The head and foot furniture baselines a geometry owes under `font`'s ink and a declared gap. -/
 def furnYs (font : Font) (geom : Layout.Geom)
     (gap : Option Dim.Sp := none) : Dim.Sp × Dim.Sp :=
   let scale (u : Int) : Dim.Sp := u * geom.fontSize / (font.unitsPerEm : Int)
-  let band := Layout.furnitureBand geom.vmargin
-    (scale font.ascent + scale (-font.descent)) gap
-  (Layout.furnHeadY band (scale font.ascent),
-   Layout.furnFootY band geom.pageH (scale (-font.descent)))
+  let ink := scale font.ascent + scale (-font.descent)
+  (Layout.furnHeadY (Layout.furnitureBand geom.vmargin ink gap) (scale font.ascent),
+   Layout.furnFootY (Layout.furnitureBand geom.bottomMargin ink gap) geom.pageH
+     (scale (-font.descent)))
 
 mutual
 

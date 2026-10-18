@@ -106,7 +106,7 @@ note[N0100] 11:1 '\colorlet' → \palette{ oarblade = driftwood }
 note[N0100] 13:1 '\usepackage[english]{babel}' → \pdfmeta{ language = "en" }
 note[N0100] 14:1 '\babelfont' → \fonts{ dir = "fonts/", body = "SourceSerifPro-Regular.otf" }
 note[N0100] 15:1 '\babelfont' → \fonts{ dir = "fonts/", sans = "OpenSans-Regular.ttf" }
-note[N0100] 16:1 '\usepackage{geometry}' → \page{ size = a5, vmargin = 14mm, hmargin = 17mm, headsep = 5mm }
+note[N0100] 16:1 '\usepackage{geometry}' → \page{ size = a5, headsep = 5mm, hmargin = 17mm, vmargin = 14mm }
 note[N0100] 17:1 '\usepackage{microtype}' → nothing: the engine does this itself
 note[N0100] 19:1 '\newlength{\beat}' → \tokens{ beat = 0pt }
 note[N0100] 20:1 '\setlength{\beat}' → \tokens{ beat = 2.2ex plus 0.6ex minus 0.3ex }

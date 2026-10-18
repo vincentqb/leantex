@@ -9,7 +9,8 @@ public inductive PageKey where
   | size | width | height | margin | vmargin | hmargin | textwidth | textheight | leading
   | baselineskip | parskip | measure | fontsize | bleed | hyphenate | justify | protrusion
   | expansion | numbers | marks | markGap | markThickness | linenumbers | modulo | furnituregap
-  | headsep | footskip | rule | frontRule | cropbox | bleedbox | trimbox | artbox | bottom
+  | headsep | footskip | rule | frontRule | cropbox | bleedbox | trimbox | artbox | bottom | tmargin
+  | bmargin | vmarginratio
   deriving DecidableEq, Repr, Inhabited
 
 public def PageKey.names : List (String × PageKey) :=
@@ -22,7 +23,8 @@ public def PageKey.names : List (String × PageKey) :=
    ("mark-thickness", .markThickness), ("linenumbers", .linenumbers), ("modulo", .modulo),
    ("furnituregap", .furnituregap), ("headsep", .headsep), ("footskip", .footskip),
    ("rule", .rule), ("front-rule", .frontRule), ("cropbox", .cropbox), ("bleedbox", .bleedbox),
-   ("trimbox", .trimbox), ("artbox", .artbox), ("bottom", .bottom)]
+   ("trimbox", .trimbox), ("artbox", .artbox), ("bottom", .bottom), ("tmargin", .tmargin),
+   ("bmargin", .bmargin), ("vmarginratio", .vmarginratio)]
 
 public def PageKey.name (k : PageKey) : String := ((PageKey.names.find? (·.2 == k)).map (·.1)).getD ""
 
@@ -31,13 +33,14 @@ public def PageKey.ofName? (n : String) : Option PageKey := PageKey.names.lookup
 /-- Whether an unknown key's help lists the key; LaTeX spellings and riders stay unlisted. -/
 public def PageKey.listed : PageKey → Bool
   | .headsep | .footskip | .textwidth | .textheight | .baselineskip | .markGap | .markThickness
-  | .modulo | .rule | .frontRule | .cropbox | .bleedbox | .trimbox | .artbox | .bottom => false
+  | .modulo | .rule | .frontRule | .cropbox | .bleedbox | .trimbox | .artbox | .bottom | .tmargin
+  | .bmargin | .vmarginratio => false
   | _ => true
 
 /-- Whether the key declares the page's physical extent, and so claims the page as declared. -/
 public def PageKey.claims : PageKey → Bool
-  | .size | .width | .height | .margin | .vmargin | .hmargin | .textwidth | .textheight
-  | .bleed => true
+  | .size | .width | .height | .margin | .vmargin | .hmargin | .textwidth | .textheight | .bleed
+  | .tmargin | .bmargin | .vmarginratio => true
   | _ => false
 
 /-- The keys of `\pdfmeta`. -/

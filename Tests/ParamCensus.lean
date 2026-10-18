@@ -299,7 +299,9 @@ def biblatexSample (k : String) : String :=
 def packageSettings : String → List String
   | "geometry" =>
     Compat.geometryPageKeys.map (·.name ++ "=3cm") ++
-      ["left=3cm,right=3cm", "top=3cm,bottom=3cm", "left=3cm", "a4paper", "a5paper",
+      ["left=3cm,right=3cm", "top=3cm,bottom=3cm", "left=3cm", "top=3cm", "tmargin=3cm,bmargin=2cm",
+       "vmargin={3cm,2cm}", "textheight=20cm,vmarginratio=1:1", "vcentering,textheight=20cm",
+       "centering,textheight=20cm", "a4paper", "a5paper",
        "legalpaper", "paperwidth=10cm,paperheight=12cm", "headheight=20pt", "verbose"] ++
       Compat.geometryNoFurniture ++ Compat.driverOptions ++ geometryDocumented
   | "hyperref" => hyperrefSettings
@@ -680,10 +682,9 @@ nothing reads"
   let geo (pre : String) : String :=
     s!"\\documentclass\{article}\n\\usepackage[margin=1in]\{geometry}\n{pre}\n\\begin\{document}\n" ++
       "Alpha words.\n\\end{document}\n"
-  t "textheight: the top margin stands, and the length the page cannot carry is named"
+  t "textheight: the top margin stands under a declared text height, which names nothing"
     (firstY fonts (geo "\\setlength{\\textheight}{500pt}") == firstY fonts (geo "") &&
-      firstY fonts (geo "\\setlength{\\textheight}{120pt}") == firstY fonts (geo "") &&
-      warnsOf (geo "\\setlength{\\textheight}{500pt}") "textheight")
+      !warnsOf (geo "\\setlength{\\textheight}{500pt}") "textheight")
   let body := plain "" "" |>.replace "Probe words." "Words. \\setlength{\\textheight}{500pt} More."
   let geoKeys (o : String) : String := plain "" s!"\\usepackage[{o}]\{geometry}"
   let pageNamed (src : String) : Bool := (elabStr src).2.any fun d =>
@@ -699,6 +700,163 @@ nothing reads"
   t "an unknown class or theme accounts for its options"
     (!((elabStr (cls "nosuchclass" "draft,twocolumn" "")).2.any (·.code == "W0356")) &&
       !warnsOf (deck "" "\\usetheme[secheader]{Madrid}") "secheader")
+
+/-- A declared text height places the text block as lualatex does: under the top margin as the
+kernel's `\\textheight`, beside geometry's top or bottom margin, or split 2:3 where geometry has
+nothing else; a top and a bottom place it apart, and margins win over a height. -/
+def textHeightChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let body := String.join ((List.range 160).map fun i =>
+    s!"Paragraph {i} of invented words that run across the measure and on to a second line. ")
+  let doc (pre : String) : String :=
+    s!"\\documentclass\{article}\n{pre}\n\\begin\{document}\n{body}\n\\end\{document}\n"
+  -- The first page's body lines, its folio aside.
+  let firstPage (src : String) : Array (Dim.Sp × String) :=
+    (((pageLines fonts src)[0]?).getD #[]).filter fun (_, l) => l.trimAscii.toString.toNat?.isNone
+  let top (src : String) : Dim.Sp := ((firstPage src)[0]?.map (·.1)).getD 0
+  let last (src : String) : Dim.Sp := ((firstPage src).back?.map (·.1)).getD 0
+  let lead := Dim.pt 12
+  let geo (o : String) : String := doc s!"\\usepackage[{o}]\{geometry}"
+  let margin := geo "margin=1in"
+  let kernel := doc "\\usepackage[margin=1in]{geometry}\n\\setlength{\\textheight}{500pt}"
+  t "text height: the kernel's \\textheight keeps the top margin and ends the block 500pt below it"
+    (top kernel == top margin && last kernel ≤ Dim.inch 1 + Dim.pt 500 &&
+      last kernel + 2 * lead > Dim.inch 1 + Dim.pt 500 && last kernel < last margin)
+  let ofTop (src : String) : Dim.Sp := top src - top margin + Dim.inch 1
+  t "text height: geometry's text height alone splits the leftover 2:3"
+    (ofTop (geo "textheight=500pt") == (Dim.pt 792 - Dim.pt 500) * 2 / 5)
+  t "text height: geometry's text height beside a bottom margin stands on it"
+    (ofTop (geo "textheight=500pt,bottom=1in") == Dim.pt 792 - Dim.pt 500 - Dim.inch 1)
+  t "text height: geometry's top and bottom place the block apart, tmargin and vmargin alike"
+    (last (geo "top=1in,bottom=2in") ≤ Dim.pt 792 - 2 * Dim.inch 1 &&
+      last (geo "top=1in,bottom=2in") + 2 * lead > Dim.pt 792 - 2 * Dim.inch 1 &&
+      firstPage (geo "tmargin=1in,bmargin=2in") == firstPage (geo "top=1in,bottom=2in") &&
+      firstPage (geo "vmargin={1in,2in}") == firstPage (geo "top=1in,bottom=2in") &&
+      top (geo "top=1in,bottom=2in") == top margin)
+  t "text height: margins win over a text height, as geometry gives them"
+    (firstPage (geo "margin=1in,textheight=500pt") == firstPage margin)
+  t "text height: a placed block names nothing"
+    (["top=1in,bottom=2in", "textheight=500pt", "textheight=500pt,bottom=1in"].all fun o =>
+      (elabStr (geo o)).2.all (·.severity == .note))
+
+/-- The text block a declaration places, judged on the page the class settles: geometry's keys
+solved together across its calls and in their order, the kernel's `\textheight` under the top, and a
+key the set leaves without effect named. -/
+def textBlockChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let doc (cls pre : String) : String :=
+    s!"\\documentclass{cls}\n{pre}\n\\begin\{document}\nx\n\\end\{document}\n"
+  let art (pre : String) : String := doc "{article}" pre
+  let page (src : String) : Ir.PageSpec := (elabStr src).1.page
+  let held (src : String) (top bottom : Dim.Sp) : Bool :=
+    (page src).vmargin == top && (page src).bottomMargin == bottom
+  let tall (src : String) : Dim.Sp := let p := page src; p.height - p.vmargin - p.bottomMargin
+  let named (src key : String) : Bool :=
+    (elabStr src).2.any fun d => d.code == "W0104" && d.subject.any (·.endsWith s!":{key}")
+  let quiet (src : String) : Bool := (elabStr src).2.all (·.severity == .note)
+  let geo (o : String) : String := art s!"\\usepackage[{o}]\{geometry}"
+  let a4 := doc "[a4paper]{article}" "\\setlength{\\textheight}{500pt}"
+  t "text block: the kernel's height stands on the page the class option settles"
+    ((page a4).height == (page (doc "[a4paper]{article}" "")).height &&
+      (page a4).height != (page (art "")).height && tall a4 == Dim.pt 500 &&
+      (page a4).vmargin == (page (art "")).vmargin)
+  t "text block: geometry's lone height splits the class's page"
+    (geometrySplit (page (doc "[a4paper]{article}" "\\usepackage[textheight=500pt]{geometry}"))
+      (Dim.pt 500))
+  t "text block: a later margin replaces the sides before it, as geometry reads its keys in order"
+    (held (geo "top=1in,bottom=2in,margin=0.5in") (Dim.inch 1 / 2) (Dim.inch 1 / 2) &&
+      held (geo "margin=0.5in,top=1in,bottom=2in") (Dim.inch 1) (Dim.inch 2) &&
+      held (geo "margin=1in,top=2in") (Dim.inch 2) (Dim.inch 1) &&
+      quiet (geo "top=1in,bottom=2in,margin=0.5in"))
+  let calls (first later : String) : String :=
+    art s!"\\usepackage[{first}]\{geometry}\n{later}"
+  t "text block: a later geometry call's height beside both margins is named, the margins standing"
+    (held (calls "margin=1in" "\\geometry{textheight=500pt}") (Dim.inch 1) (Dim.inch 1) &&
+      named (calls "margin=1in" "\\geometry{textheight=500pt}") "textheight")
+  t "text block: a later geometry call's ratio splits the height declared before it"
+    (let p := page (calls "textheight=500pt" "\\geometry{vmarginratio=1:1}")
+     p.vmargin == (p.height - Dim.pt 500) / 2 && p.bottomMargin == p.vmargin)
+  t "text block: a later geometry call's top places the height declared before it"
+    ((page (calls "textheight=500pt" "\\geometry{top=1in}")).vmargin == Dim.inch 1 &&
+      tall (calls "textheight=500pt" "\\geometry{top=1in}") == Dim.pt 500 &&
+      quiet (calls "textheight=500pt" "\\geometry{top=1in}"))
+  t "text block: every geometry call solves its layout again, replacing the kernel's height"
+    (held (calls "margin=1in" "\\setlength{\\textheight}{500pt}\n\\geometry{hmargin=2in}")
+        (Dim.inch 1) (Dim.inch 1) &&
+      named (art "\\setlength{\\textheight}{500pt}\n\\usepackage[hmargin=1in]{geometry}") "layout")
+  t "text block: a key an earlier call spelled is not named again, nor geometry's own default"
+    (quiet (calls "textheight=500pt,vmarginratio=1:1" "\\geometry{top=1in}") &&
+      quiet (calls "textheight=500pt" "\\geometry{vmarginratio=1:1}") &&
+      !(elabStr (geo "textheight=0.8\\paperheight")).2.any (fun d =>
+        d.subject.any (·.endsWith ":vmarginratio")) &&
+      (elabStr (geo "centering,margin=1in")).2.all (fun d => d.code != "W0104") &&
+      (elabStr (geo "centering,margin=1in")).2.any (fun d =>
+        d.code == "N0100" && d.subject == some "param:geometry:centering"))
+  t "text block: geometry reads its horizontal margins in order too"
+    ((page (geo "left=2in,right=2in,margin=1in")).hmargin == Dim.inch 1 &&
+      (page (geo "margin=1in,left=2in,right=2in")).hmargin == Dim.inch 2)
+  t "text block: a frame class sets its text height again, so a preamble one is named"
+    (let src := doc "{beamer}" "\\setlength{\\textheight}{100pt}"
+     (page src).bmargin == none && (elabStr src).2.any fun d => d.code == "W0104")
+  t "text block: newgeometry starts from no vertical key"
+    (geometrySplit (page (calls "margin=1in" "\\newgeometry{textheight=500pt}")) (Dim.pt 500))
+  t "text block: geometry after the kernel's height places the block from its own keys"
+    (held (art "\\setlength{\\textheight}{500pt}\n\\usepackage[margin=1in]{geometry}")
+      (Dim.inch 1) (Dim.inch 1))
+  t "text block: geometry's height beside a top stands under it, its width centres the block"
+    ((page (geo "textheight=500pt,top=1in")).vmargin == Dim.inch 1 &&
+      tall (geo "textheight=500pt,top=1in") == Dim.pt 500 &&
+      geometrySplit (page (geo "height=500pt")) (Dim.pt 500) &&
+      (page (geo "width=400pt")).hmargin == ((page (geo "width=400pt")).width - Dim.pt 400) / 2)
+  t "text block: vcentering and centering split a lone height evenly"
+    (["vcentering,textheight=500pt", "centering,textheight=500pt"].all fun o =>
+      let p := page (geo o)
+      p.vmargin == (p.height - Dim.pt 500) / 2 && p.bottomMargin == p.vmargin)
+  let native (keys : String) : String := art s!"\\page\{ {keys} }"
+  t "text block: the native height stands under a declared margin's top, which it names partial"
+    ((page (native "margin = 1in, textheight = 500pt")).vmargin == Dim.inch 1 &&
+      tall (native "margin = 1in, textheight = 500pt") == Dim.pt 500 &&
+      (elabStr (native "margin = 1in, textheight = 500pt")).2.any fun d =>
+        d.code == "W0110" && d.subject == some "partial:\\page:margin")
+  t "text block: a bottom another block leaves without effect is named there"
+    (named (art "\\page{ tmargin = 1in, textheight = 500pt }\\page{ bmargin = 2in }") "bmargin" &&
+      tall (art "\\page{ tmargin = 1in, textheight = 500pt }\\page{ bmargin = 2in }") == Dim.pt 500 &&
+      (elabStr (art "\\page{ textheight = 500pt }\\page{ margin = 1in }")).2.any fun d =>
+        d.code == "W0110" && d.subject == some "partial:\\page:margin")
+  t "text block: a negative margin is refused, and margins leaving no block are named"
+    ((elabStr (native "tmargin = -10pt")).2.any (fun d => d.code == "E0323") &&
+      named (native "tmargin = 500pt, bmargin = 500pt") "vmargin" &&
+      held (native "tmargin = 500pt, bmargin = 500pt") (page (art "")).vmargin (page (art "")).vmargin)
+  t "text block: a placed page places to itself"
+    (["\\page{ tmargin = 1in, bmargin = 2in }", "\\usepackage[textheight=500pt]{geometry}",
+      "\\setlength{\\textheight}{500pt}"].all fun pre => (page (art pre)).placed == page (art pre))
+  t "text block: the native top and bottom margins stand apart"
+    (held (native "tmargin = 1in, bmargin = 2in") (Dim.inch 1) (Dim.inch 2) &&
+      quiet (native "tmargin = 1in, bmargin = 2in"))
+  t "text block: a bottom margin beside a top and a height is named, the height standing"
+    (named (native "tmargin = 1in, bmargin = 2in, textheight = 500pt") "bmargin" &&
+      tall (native "tmargin = 1in, bmargin = 2in, textheight = 500pt") == Dim.pt 500)
+  t "text block: a ratio with no lone height to split is named"
+    (named (native "vmarginratio = 1:1") "vmarginratio" &&
+      named (native "vmarginratio = 1:1, tmargin = 1in, textheight = 500pt") "vmarginratio" &&
+      (let p := page (native "textheight = 500pt, vmarginratio = 1:1")
+       p.vmargin == (p.height - Dim.pt 500) / 2 && p.bottomMargin == p.vmargin))
+  t "text block: a malformed ratio says what the key takes"
+    ((elabStr (native "vmarginratio = half")).2.any fun d => hasStr d.message "a ratio such as 2:3")
+  t "text block: a height past the page is named and the margins stand"
+    (named (native "tmargin = 1in, textheight = 900pt") "textheight" &&
+      held (native "tmargin = 1in, textheight = 900pt") (Dim.inch 1) (Dim.inch 1))
+  let img := "\\includegraphics[height=0.5\\textheight, alt={An invented box}]{a.png}"
+  let store : Image.Store := { entries := #[{ src := "a.png"
+                                              info := some { pxW := 144
+                                                             pxH := 72 } }] }
+  let html (pre : String) : String :=
+    (HtmlDoc.emit { imgs := store } (elabStr (deck169 pre
+      s!"\\begin\{frame}\{Pics}\n{img}\n\\end\{frame}")).1).1
+  -- Half of a 255.1pt stage less 80pt of margins is 34.32% of it.
+  t "text block: the deck page reads a textheight fraction of the placed block"
+    (hasStr (html "\\page{ tmargin = 20pt, bmargin = 60pt }") "height: 34.32dvh" &&
+      !hasStr (html "\\page{ vmargin = 20pt }") "height: 34.32dvh")
 
 /-- Every token name an engine site reads by literal stands in the engine's vocabulary, and the
 lengths natbib, caption and the kernel set that the engine reads are not named unread. -/

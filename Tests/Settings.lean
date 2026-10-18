@@ -59,6 +59,7 @@ def paramProbes : List (String × String × String × String) :=
    ("headsep", "\\runninghead{Alpha head}\\setlength{\\headsep}{40pt}",
      "\\runninghead{Alpha head}\\page{ headsep = 40pt }", "paras"),
    ("footskip", "\\setlength{\\footskip}{50pt}", "\\page{ footskip = 50pt }", "paras"),
+   ("textheight", "\\setlength{\\textheight}{500pt}", "\\page{ textheight = 500pt }", "paras"),
    ("floatsep", "\\setlength{\\floatsep}{30pt}", "\\tokens{ floatsep = 30pt }", "figure"),
    ("abovecaptionskip", "\\setlength{\\abovecaptionskip}{23pt}",
      "\\tokens{ captionsep = 23pt }", "figure"),
