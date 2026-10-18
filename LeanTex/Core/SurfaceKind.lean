@@ -9,7 +9,7 @@ public inductive CodeLang where
   | lean
   | python
   | bash
-  deriving Repr, BEq, DecidableEq, Inhabited
+  deriving Repr, BEq, DecidableEq, ReflBEq, LawfulBEq, Inhabited
 
 /-- The surface a document or an included file is written in. -/
 public inductive Surface where

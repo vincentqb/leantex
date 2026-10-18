@@ -129,7 +129,7 @@ public inductive View where
   | prose
   /-- An inclusion's documentation as prose, where it stands between its code's listings. -/
   | docs
-  deriving Repr, BEq, DecidableEq, Inhabited
+  deriving Repr, BEq, DecidableEq, ReflBEq, LawfulBEq, Inhabited
 
 /-- A view's name in a `show` value. -/
 public def View.name : View → String
