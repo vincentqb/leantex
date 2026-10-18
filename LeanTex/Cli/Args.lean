@@ -61,12 +61,6 @@ private def vCount (s : String) : Option Nat :=
   | '-' :: vs => if !vs.isEmpty && vs.all (· == 'v') then some vs.length else none
   | _ => none
 
-private def emitOne : String → Option Emit
-  | "pdf" => some .pdf
-  | "html" => some .html
-  | "md" => some .md
-  | _ => none
-
 private def cssChoice : String → Option CssChoice
   | "own" => some .own
   | "bulma" => some .bulma
@@ -219,7 +213,7 @@ public def Emit.extensions : String :=
 public def Config.effectiveEmit (cfg : Config) (docFormats : Array String) : Array Emit :=
   if let some e := cfg.output.bind emitOfPath then #[e]
   else
-    let ds := docFormats.filterMap emitOne
+    let ds := docFormats.filterMap fun f => Emit.all.find? (·.ext == f)
     if ds.isEmpty then #[.pdf] else ds
 
 /-- The stylesheet the document's `\output{ css = ... }` names, or the default. -/

@@ -55,8 +55,8 @@ projection corollary, never re-derived or left to a platform (`footBand_projects
 ## Typed boundaries
 
 Values cross module boundaries as typed data with spans. Nothing crosses as text the receiver
-re-lexes unless checked to read back exactly (`Md.altSource`), a control-word name it decodes or a
-string it sniffs; a closed vocabulary is an inductive, and strings are only for names the author
+re-lexes unless it reads back exactly (`Native.body_read_exact`), a control-word name it decodes or
+a string it sniffs; a closed vocabulary is an inductive, and strings are only for names the author
 chose (`Md.desugar_vocabulary_mem`, `escapeText_no_lt`; owed (U51): `toName_unforgeable`). A record
 format a producer writes and reads back round-trips its all-empty value (`scripts/Board.lean`).
 

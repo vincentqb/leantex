@@ -578,17 +578,16 @@ private theorem inlRaws_adm (file : String) : (x : Inl) → Adm d (inlRaws file 
         rcases hr with rfl | rfl
         · exact ctrl_mem _ _ (by simp [vocabulary])
         · exact adm_group _ _ (adm_text dest p))
-    · refine adm_append (adm_append (adm_lit ?_) (adm_text _ p)) (adm_lit ?_)
-      · intro r hr
+    · exact adm_lit (by
+        intro r hr
         simp only [List.mem_cons, List.not_mem_nil, or_false] at hr
-        rcases hr with rfl | rfl
+        rcases hr with rfl | rfl | rfl | rfl | rfl | rfl
         · exact ctrl_mem _ _ (by simp [vocabulary])
         · rfl
-      · intro r hr
-        simp only [List.mem_cons, List.not_mem_nil, or_false] at hr
-        rcases hr with rfl | rfl
         · rfl
-        · exact adm_group _ _ (adm_text dest p)
+        · exact adm_group _ _ (adm_text _ p)
+        · rfl
+        · exact adm_group _ _ (adm_text dest p))
   | .citeText key body p => by
     simp only [inlRaws]
     have h := inlListRaws_adm file body.toList #[] #[] (adm_empty (d := d))

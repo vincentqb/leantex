@@ -447,6 +447,23 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
     (errCodes "\\includegraphics[width=2em]{x.png}" == ["E0331"])
   t "includegraphics unknown option warns W0110"
     (warnCodes "\\includegraphics[angle=45, alt={A box}]{x.png}" == ["W0110"])
+  t "includegraphics reads a braced value as keyval does, its braces removed"
+    (errCodes "\\includegraphics[width={3cm}, height={0.5\\textheight}]{x.png}" == [] &&
+      warnCodes "\\includegraphics[width={3cm}]{x.png}" == [])
+  t "includegraphics refuses an empty size, as LaTeX does"
+    (errCodes "\\includegraphics[width=]{x.png}" == ["E0331"])
+  t "includegraphics keeps the inner groups of a braced alt"
+    (match (elabStr "\\includegraphics[alt={{x}y{z}}]{x.png}").1.body.toList with
+      | [.para xs] => xs.any fun x => match x with
+        | .image _ _ alt => alt == Ir.Alt.declare "{x}y{z}"
+        | _ => false
+      | _ => false)
+  let sample (k : String) : String := match k with
+    | "page" => "page=1" | "scale" => "scale=0.5" | "alt" => "alt={A box}"
+    | "keepaspectratio" | "artifact" => k | _ => k ++ "=2cm"
+  for k in Elab.imageKeys do
+    t s!"includegraphics key '{k}', which W0110's help lists as modelled, does not warn W0110"
+      (!(warnCodes s!"\\includegraphics[{sample k}]\{x.png}").contains "W0110")
   t "includegraphics without a file group is E0304"
     (errCodes "\\includegraphics[width=3cm]" == ["E0304"])
   -- totalheight is height plus depth and an image has no depth: one key.

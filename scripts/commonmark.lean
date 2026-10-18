@@ -459,7 +459,7 @@ def languageClass? (attrs : Array (String × String)) : Option String :=
 only to attribute an `owed` case. -/
 def gapSubjects : List String :=
   ["md:thematic-break", "md:list-start", "md:loose-list", "md:link-title",
-   "md:image-title", "md:image-alt", "md:code-info"]
+   "md:image-title", "md:code-info"]
 
 def hLevelTag? (tag : String) : Option Nat :=
   match tag with
@@ -514,7 +514,6 @@ def canonN (gaps : List String) (pre inLi inHeadRow : Bool) (n : Html.Node) : St
         (a == "start" && gaps.contains "md:list-start")
           || (a == "title" && tag == "a" && gaps.contains "md:link-title")
           || (a == "title" && tag == "img" && gaps.contains "md:image-title")
-          || (a == "alt" && gaps.contains "md:image-alt")
       let keep := attrs.filter (fun a => !dropsAttr a.1 && !costs a.1)
       let keep := match languageClass? attrs with
         | some v => if gaps.contains "md:code-info" then keep else keep.push ("class", v)

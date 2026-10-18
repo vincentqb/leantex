@@ -40,8 +40,6 @@ example : Array Block → Nat := Elab.enginePictures
 example (doc : Doc) : Elab.enginePictures (Ir.eraseLocations doc).body =
     Elab.enginePictures doc.body := Elab.eraseLocations_pictureCount_exact doc
 
-example : String → Option String := Md.altSource
-example : String → Option String := Md.altReadBack
 example : String → String → Array Parse.Raw × Array Diag := Md.desugar
 example : String → String → Array Parse.Raw × Array Diag := Md.read
 

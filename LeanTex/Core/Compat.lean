@@ -3460,7 +3460,10 @@ private def definerShape (raws : Array Raw) (i : Nat) (d : String)
   let starred (k : Nat) : Nat :=
     let j := skipSpaces raws k
     if raws[j]? matches some (.word "*" _) then skipSpaces raws (j + 1) else j
-  if d == "def" || d == "gdef" || d == "edef" || d == "xdef" || d == "define" then
+  let cmdShape (b : Nat) (stop : Nat := b + 1) : Option DefShape :=
+    if raws[b]? matches some (.group _ _) then some { stop, bodies := [b] } else none
+  match Definer.kind? d with
+  | some (_, .tex) | some (.command, .native) =>
     let j := skipSpaces raws (i + 1)
     unless (raws[j]? matches some (.ctrl _ _)) ||
         (stored && (raws[j]? matches some (.sym '#' _))) do return none
@@ -3468,52 +3471,38 @@ private def definerShape (raws : Array Raw) (i : Nat) (d : String)
     if d == "edef" || d == "xdef" then
       return some { stop := if stored then b + 1 else b, bodies := [] }
     return some { stop := b + 1, bodies := [b] }
-  if d == "let" then
+  | some (_, .letting) =>
     let j := skipSpaces raws (i + 1)
     let k0 := skipSpaces raws (j + 1)
     let k := if raws[k0]? matches some (.word "=" _) then skipSpaces raws (k0 + 1) else k0
     unless raws[j]? matches some (.ctrl _ _) do return none
     if k < raws.size then return some { stop := k + 1, bodies := [] }
     return none
-  if d == "newcommand" || d == "renewcommand" || d == "providecommand" ||
-      d == "newtcolorbox" || d == "renewtcolorbox" ||
-      d == "DeclareRobustCommand" || d == "DeclareMathOperator" then
+  | some (.command, .latex) | some (_, .tcolorbox) | some (_, .amsmath) =>
     let j := starred (i + 1)
     unless named j do return none
-    let (_, k1) := takeOpt raws (j + 1)
-    let (_, k2) := takeOpt raws k1
-    let b := skipSpaces raws k2
-    unless raws[b]? matches some (.group _ _) do return none
-    return some { stop := b + 1, bodies := [b] }
-  if d == "newenvironment" || d == "renewenvironment" || d == "defineenv" then
+    return cmdShape (skipSpaces raws (takeOpt raws (takeOpt raws (j + 1)).2).2)
+  | some (.environment, .latex) | some (.environment, .native) =>
     let j := starred (i + 1)
     unless raws[j]? matches some (.group _ _) do return none
     let some b1 := (if d == "defineenv" then groupFrom (j + 1) else
-        let (_, k1) := takeOpt raws (j + 1)
-        let (_, k2) := takeOpt raws k1
-        let b := skipSpaces raws k2
+        let b := skipSpaces raws (takeOpt raws (takeOpt raws (j + 1)).2).2
         if raws[b]? matches some (.group _ _) then some b else none) | return none
     let b2 := skipSpaces raws (b1 + 1)
     unless raws[b2]? matches some (.group _ _) do return none
     return some { stop := b2 + 1, bodies := [b1, b2] }
-  if d == "NewEnviron" || d == "RenewEnviron" then
+  | some (_, .environ) =>
     let j := starred (i + 1)
     unless raws[j]? matches some (.group _ _) do return none
-    let (_, k1) := takeOpt raws (j + 1)
-    let (_, k2) := takeOpt raws k1
-    let b := skipSpaces raws k2
-    unless raws[b]? matches some (.group _ _) do return none
-    return some { stop := (takeOpt raws (b + 1)).2, bodies := [b] }
-  if d == "NewDocumentCommand" || d == "RenewDocumentCommand" ||
-      d == "ProvideDocumentCommand" || d == "DeclareDocumentCommand" then
+    let b := skipSpaces raws (takeOpt raws (takeOpt raws (j + 1)).2).2
+    return cmdShape b (takeOpt raws (b + 1)).2
+  | some (.command, .xparse) =>
     let j := skipSpaces raws (i + 1)
     unless named j do return none
     let s := skipSpaces raws (j + 1)
     unless raws[s]? matches some (.group _ _) do return none
-    let b := skipSpaces raws (s + 1)
-    unless raws[b]? matches some (.group _ _) do return none
-    return some { stop := b + 1, bodies := [b] }
-  return none
+    return cmdShape (skipSpaces raws (s + 1))
+  | _ => return none
 
 mutual
 
@@ -4062,8 +4051,8 @@ private def definitionAt (d : String) (rest : Array Raw) : Option (String × Nat
   let j := match rest[j]? with
     | some (.word "*" _) | some (.sym '*' _) => skipSpaces rest (j + 1)
     | _ => j
-  if d == "newcommand" || d == "renewcommand" || d == "providecommand" ||
-      d == "DeclareRobustCommand" then
+  match Definer.kind? d with
+  | some (.command, .latex) =>
     let named : Option String := match (rest[j]? : Option Raw) with
       | some (.group body _) =>
         match body.toList.filter (fun r => !(r matches .space)) with
@@ -4075,13 +4064,13 @@ private def definitionAt (d : String) (rest : Array Raw) : Option (String × Nat
       let k := (takeRawOpt rest (takeOpt rest (j + 1)).2).2
       let (body, k) := takeGroups rest k 1
       if body.size == 1 then some (x, k) else none
-  else if d == "def" || d == "gdef" || d == "edef" || d == "xdef" then
+  | some (_, .tex) =>
     match (rest[j]? : Option Raw) with
     | some (.ctrl x _) =>
       (((rest.extract (j + 1) rest.size).findIdx? (· matches .group ..)).map
         fun g => (x, j + 1 + g + 1))
     | _ => none
-  else none
+  | _ => none
 
 mutual
 
@@ -10467,10 +10456,11 @@ ICC-based colour space; the engine paints each ink in its own separation; skippe
   | .mathOperator => do
     -- `\DeclareMathOperator{\f}{name}` is a definition whose body is `\operatorname{name}`.
     let cmd := (ctrlName (c.arg 1)).getD ""
-    became s!"\\DeclareMathOperator\{\\{cmd}}"
-      s!"\\define \\{cmd}() \{\\operatorname\{...}}" c.pos
+    let star := if (c.given 0).isSome then #[.word "*" c.pos] else #[]
+    became s!"\\DeclareMathOperator{rawSrc star}\{\\{cmd}}"
+      s!"\\define \\{cmd}() \{\\operatorname{rawSrc star}\{...}}" c.pos
     return (Native.Head.define cmd "").raws c.pos |>.push
-      (.group #[.ctrl "operatorname" c.pos, .group (c.arg 2) c.pos] c.pos)
+      (.group (#[.ctrl "operatorname" c.pos] ++ star ++ #[.group (c.arg 2) c.pos]) c.pos)
   | .hyperSetup => do
     hyperrefLowered "\\hypersetup" "hypersetup" (← hyperrefKeys (c.arg 0) c.pos) c.pos
   | .runningField => do
@@ -11338,7 +11328,7 @@ private def setDelimSig (sigs : Array (String × DelimShape))
 /-- The signatures in force after the definer at `i`. -/
 private def sigsAfter (st : DelimState) (xs : Array Raw) (i : Nat) (d n : String) :
     DelimState :=
-  let shape := if d == "def" || d == "gdef" then
+  let shape := if (Definer.kind? d).any (·.2 == .tex) then
       let params := ((xs.extract (i + 2) xs.size).toList.takeWhile
         fun r => !(r matches .group _ _)).toArray
       delimShape params

@@ -3121,14 +3121,6 @@ private def imageLenOf (ctx : Ctx) (v : String) : Except String Image.Len := do
   let e ← affineLength ctx (fun _ => true) v
   return ⟨e⟩
 
-/-- The text of an `alt={...}` value, braced or quoted. -/
-private def altValueText (v : String) : String :=
-  if v.startsWith "{" && v.endsWith "}" && v.length ≥ 2 then
-    String.ofList (v.toList.drop 1).dropLast
-  else if v.startsWith "\"" && v.endsWith "\"" && v.length ≥ 2 then
-    String.ofList (v.toList.drop 1).dropLast
-  else v
-
 /-- An image's settings, with its ignored and refused animation keys
 collected for one diagnostic. -/
 private structure ImageOptions where
@@ -3137,6 +3129,10 @@ private structure ImageOptions where
   ignored : Array String := #[]
   refused : Array String := #[]
   valid : Bool := true
+
+/-- The `\includegraphics` keys the reader models. -/
+public def imageKeys : List String :=
+  ["page", "width", "height", "totalheight", "scale", "keepaspectratio", "alt", "artifact"]
 
 /-- Reads graphicx's size keys and one-based `page`, and animate's zero-based
 `poster` frame. -/
@@ -3150,34 +3146,34 @@ private def readImageOpts (ctx : Ctx) (optSrc : Option (Array Raw))
   let mut pageErr : Option String := none
   let mut posterErr : Option String := none
   if let some src := optSrc then
-    for e in Decl.splitEntries (rawSrc src) do
-      if let some (key, _) := Decl.splitEntry e then
-        refused := refused.filter (·.1 != key)
-      match Decl.splitEntry e with
-      | some ("width", v) =>
+    for entry in Entries.read .keyval src do
+      let e := entry.src
+      if entry.value.isSome then refused := refused.filter (·.1 != entry.key)
+      match entry.key, entry.value.map rawSrc with
+      | "width", some v =>
         match imageLenOf ctx v with
         | .ok l => spec := { spec with width := some l }
         | .error _ =>
           diag ctx .E0331 s!"cannot read a length from '{v}'" pos
             (help := "image sizes look like 3cm or 0.8\\textwidth")
-      | some ("height", v) | some ("totalheight", v) =>
+      | "height", some v | "totalheight", some v =>
         -- An image has no depth, so totalheight is its height.
         match imageLenOf ctx v with
         | .ok l => spec := { spec with height := some l }
         | .error _ =>
           diag ctx .E0331 s!"cannot read a length from '{v}'" pos
             (help := "image sizes look like 3cm or 0.3\\textheight")
-      | some ("scale", v) =>
+      | "scale", some v =>
         match Decl.parseDecimal v with
         | some (m, sc) => spec := { spec with scaleNum := m, scaleDen := sc }
         | none => diag ctx .E0321 s!"'scale' needs a number, got {v.quote}" pos
-      | some ("keepaspectratio", v) =>
+      | "keepaspectratio", some v =>
         match listingVal v with
         | "true" => spec := { spec with keepAspect := true }
         | "false" => spec := { spec with keepAspect := false }
         | _ =>
           diag ctx .E0321 s!"'keepaspectratio' needs true or false, got {v.quote}" pos
-      | some ("page", v) =>
+      | "page", some v =>
         if animated then
           ignored := ignored.push e
         else
@@ -3186,7 +3182,7 @@ private def readImageOpts (ctx : Ctx) (optSrc : Option (Array Raw))
           | _ =>
             pageErr := some
               s!"'\\includegraphics' page needs a positive one-based integer, got {v.quote}"
-      | some ("poster", v) =>
+      | "poster", some v =>
         if animated then
           match listingVal v with
           | "first" => spec := { spec with page := .first }; posterErr := none
@@ -3202,39 +3198,36 @@ private def readImageOpts (ctx : Ctx) (optSrc : Option (Array Raw))
                 s!"'\\animategraphics' poster needs first, last, none, or a zero-based integer, got {v.quote}"
         else
           ignored := ignored.push e
-      | some ("every", v) =>
+      | "every", some v =>
         if animated then
           unless (listingVal v).toNat? == some 1 do
             refused := refused.push ("every", s!"'{e}' changes the frame sequence")
         else
           ignored := ignored.push e
-      | some ("timeline", _) =>
+      | "timeline", some _ =>
         if animated then
           refused := refused.push ("timeline", s!"'{e}' changes the frame sequence")
         else
           ignored := ignored.push e
-      | some ("type", v) =>
+      | "type", some v =>
         if animated then
           unless listingVal v == "pdf" || (listingVal v).isEmpty do
             refused := refused.push
               ("type", s!"'{e}' selects a source other than a multipage PDF")
         else
           ignored := ignored.push e
-      | some ("alt", v) =>
-        alt := Ir.Alt.declare (altValueText v)
-      | _ =>
-        if e.trimAscii.toString == "keepaspectratio" then
-          spec := { spec with keepAspect := true }
-        else if animated && e.trimAscii.toString == "poster" then
+      | "alt", some v =>
+        alt := Ir.Alt.declare v
+      | "keepaspectratio", none => spec := { spec with keepAspect := true }
+      | "poster", none =>
+        if animated then
           refused := refused.filter (·.1 != "poster")
           spec := { spec with page := .first }
           posterErr := none
-        else if e.trimAscii.toString == "artifact" ||
-            (Decl.splitEntry e).any (·.1 == "artifact") then
-          -- latex-lab-graphic's decoration key; its value is ignored.
-          alt := .decorative
-        else
-          ignored := ignored.push e
+        else ignored := ignored.push e
+      -- latex-lab-graphic's decoration key; its value is ignored.
+      | "artifact", _ => alt := .decorative
+      | _, _ => ignored := ignored.push e
   if let some msg := pageErr then diag ctx .E0321 msg pos
   if let some msg := posterErr then diag ctx .E0321 msg pos
   let valid := pageErr.isNone && posterErr.isNone
@@ -3242,7 +3235,7 @@ private def readImageOpts (ctx : Ctx) (optSrc : Option (Array Raw))
     for e in ignored do
       warnOnce ctx ("imgopt:" ++ e) .W0110
         s!"'\\includegraphics' option '{e}' is not modelled; ignored" pos
-        (help := "modelled keys: page, width, height, totalheight, scale, keepaspectratio, alt, artifact")
+        (help := s!"modelled keys: {", ".intercalate imageKeys}")
   return { spec, alt, ignored, refused := refused.map (·.2), valid }
 
 /-- Reads up to the given number of mandatory groups, stopping at the first
@@ -4424,7 +4417,7 @@ private def splitPictureAlt (body : Array Raw) (pos0 : Pos) : Ir.Alt × Array Ra
       alt := .decorative
     else if key == "alt" then
       alt := match KeyVal.rawEntry text with
-        | (_, some v) => if v.isEmpty then .undeclared else Ir.Alt.declare (altValueText v)
+        | (_, some v) => if v.isEmpty then .undeclared else Ir.Alt.declare (KeyVal.unbrace v)
         | (_, none) => .undeclared
     if key == "artifact" || key == "alt" then
       removed := true
@@ -15998,7 +15991,7 @@ private def applyTitlePage (s : PreState) (rd : TitleTemplate.Read) (file : Stri
   let st : ElementStyle := (s.styles.find? "titlepage").getD {}
   noteDeclared ctx "style" "titlepage"
   noteSetting ctx (.style "titlepage") pos
-  let st := { st with separator := none, slots := st.slots ++ slots }
+  let st := { st with separator := none, slots }
   return { s with styles := s.styles.declare "titlepage" st }
 
 /-- Applies one preamble declaration to the fold state. -/
@@ -17027,14 +17020,13 @@ private def macroScanLevel (raws : Array Raw) (out : Array (String × String)) :
   | [], _, _ => out
   | _ :: rest, i, skip + 1 => macroScanLevel raws out rest (i + 1) skip
   | .ctrl name _ :: rest, i, 0 =>
-    let read? : Option ((String × String) × Nat) :=
-      if (Definer.commandsOf .latex).contains name then latexDefiner? raws (i + 1)
-      else if (Definer.commandsOf .xparse).contains name then xparseDefiner? raws (i + 1)
-      else if (Definer.commandsOf .tex).contains name then texDefiner? name raws (i + 1)
-      else if name == "define" then nativeDefiner? raws (i + 1)
-      else if name == "DeclareMathOperator" then operatorDefiner? raws (i + 1)
-      else if name == "setlength" then lengthDefiner? raws (i + 1)
-      else none
+    let read? : Option ((String × String) × Nat) := match Definer.kind? name with
+      | some (.command, .latex) => latexDefiner? raws (i + 1)
+      | some (.command, .xparse) => xparseDefiner? raws (i + 1)
+      | some (_, .tex) => texDefiner? name raws (i + 1)
+      | some (.command, .native) => nativeDefiner? raws (i + 1)
+      | some (_, .amsmath) => operatorDefiner? raws (i + 1)
+      | _ => if name == "setlength" then lengthDefiner? raws (i + 1) else none
     match read? with
     | some (entry, k) =>
       let provide := Definer.provides name

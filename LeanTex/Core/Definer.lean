@@ -60,6 +60,10 @@ public structure Row where
    ⟨"newtcolorbox", .environment, .tcolorbox, .new⟩,
    ⟨"renewtcolorbox", .environment, .tcolorbox, .renew⟩]
 
+/-- What the definer a name spells defines, and its family. -/
+@[expose] public def kind? (name : String) : Option (Defines × Family) :=
+  (table.find? (·.name == name)).map fun r => (r.defines, r.family)
+
 /-- The names of the definers a query keeps. -/
 @[expose] public def names (keep : Row → Bool) : List String := (table.filter keep).map (·.name)
 

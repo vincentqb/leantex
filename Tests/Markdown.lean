@@ -245,10 +245,9 @@ def mdSurfaceChecks (ref : IO.Ref (List String)) : IO Unit := do
     (has "![a}, b](u.png)\n" "alt=a}, b>" && noLeak "![a}, b](u.png)\n")
   t "balanced double quotes in an alternative reach the page whole"
     (has "![say \"hi\" now](u.png)\n" "alt=say \"hi\" now>")
-  t "an alternative no option can carry is named and ships"
-    ((dvMd "![a } , \" b , c](u.png)\n").any
-        (fun d => d.kind == .W0392 && d.subject == some "md:image-alt")
-      && has "![a } , \" b , c](u.png)\n" "alt=a } , \u201d b , c>")
+  t "an alternative with a lone quote, a brace and commas reaches the page whole, unnamed"
+    ((dvMd "![a } , \" b , c](u.png)\n").all (fun d => d.subject != some "md:image-alt")
+      && has "![a } , \" b , c](u.png)\n" "alt=a } , \" b , c>")
   t "a double quote an option spelling does carry is not named"
     ((dvMd "![a } , \" b](u.png)\n").all (fun d => d.subject != some "md:image-alt")
       && has "![a } , \" b](u.png)\n" "alt=a } , \" b>")

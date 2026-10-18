@@ -70,6 +70,14 @@ def mathmlChecks (ref : IO.Ref (List String)) : IO Unit := do
       | #[.elem "munderover" _ #[base, .elem "mrow" _ #[sub], .elem "mrow" _ #[sup]]] =>
         token "mo" "∑" base && token "mi" "𝑖" sub && token "mi" "𝑛" sup
       | _ => false)
+  let opKids (pre : String) : Array Html.Node :=
+    let (_, nodes, _) := HtmlDoc.emitTree {} (elabStr (dvDoc pre "\\[ \\op_{x} \\]")).1
+    match (elemNodesList (· == "math") #[] nodes.toList)[0]? with
+    | some (Html.Node.elem _ _ kids) => kids
+    | _ => #[]
+  t "a starred declared operator's scripts are display limits, an unstarred one's beside"
+    ((opKids "\\DeclareMathOperator*{\\op}{Err}").any (· matches Html.Node.elem "munder" ..) &&
+     (opKids "\\DeclareMathOperator{\\op}{Err}").any (· matches Html.Node.elem "msub" ..))
   t "inline limits ride beside as msubsup"
     (has "$\\sum_{i}^{n}$" "<msubsup><mo stretchy=\"false\">∑</mo>")
   t "an accent is mover accent=true, non-stretching for \\hat"

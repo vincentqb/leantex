@@ -1207,11 +1207,13 @@ private def parseToks (toks : Array MTok) (top : Option GridKind) (display : Boo
       | _ => throw "\\nolimits without an operator"
       i := i + 1
     | .ctrl "text" | .ctrl "mbox" | .ctrl "textrm" | .ctrl "operatorname" =>
-      -- `\operatorname` is `\text`'s word as an Op atom (TeXbook p. 162).
-      let (s, j, notes') ← readTextGroup toks i tok notes
+      -- `\operatorname` is `\text`'s word as an Op atom (TeXbook p. 162); starred, its scripts
+      -- set as display limits (amsopn).
+      let star := tok == .ctrl "operatorname" && toks[i + 1]? == some (.ch '*')
+      let (s, j, notes') ← readTextGroup toks (if star then i + 1 else i) tok notes
       notes := notes'
       let cls : MathClass := if tok == .ctrl "operatorname" then .op else .ord
-      let atom : MItem := .atom cls (.word s) .nil .nil false
+      let atom : MItem := .atom cls (.word s) .nil .nil star
       let (acc', pending') ← joinAtom acc pending atom
       acc := acc'
       pending := pending'

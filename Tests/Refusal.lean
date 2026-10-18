@@ -222,8 +222,10 @@ def reservedNameChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO 
 def delimitedUseChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
   let t := check ref
   let pre := "\\def\\probescan#1;{\\textbf{#1}}\n\\def\\probepair#1,#2\\relax{#2}\n" ++
-    "\\def\\probewrap(#1){\\emph{#1}}\n"
+    "\\def\\probewrap(#1){\\emph{#1}}\n\\edef\\probeedef#1;{[#1]}\n"
   let rows := [
+    ("Expanded: \\probeedef Edef words; tail words.",
+     "Expanded: \\probeedef{Edef words} tail words."),
     ("Scanned: \\probescan Scanned words; tail words.",
      "Scanned: \\probescan{Scanned words} tail words."),
     ("Paired: \\probepair Left words,Right words\\relax\\ tail.",

@@ -271,6 +271,8 @@ def outputNameChecks (ref : IO.Ref (List String)) : IO Unit := do
   let extensions := LeanTex.Cli.Emit.all.map fun e => "." ++ e.ext
   check ref "output names: the help's output line lists every format's extension"
     (hasStr LeanTex.Cli.helpText ("output file (" ++ " | ".intercalate extensions ++ ")"))
+  check ref "output names: the backends a run takes are the formats a document may name"
+    (LeanTex.Cli.Emit.all.map (·.ext) == LeanTex.Core.Ir.backendNames)
   check ref "output names: a name with no format's extension names no format"
     (LeanTex.Cli.emitOfPath "notes.tex" == none && LeanTex.Cli.emitOfPath "notes" == none)
   IO.FS.withTempDir fun dir => do

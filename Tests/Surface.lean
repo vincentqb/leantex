@@ -4697,6 +4697,12 @@ def titleTemplateTextChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet
     t s!"title template {name}: its text ships on the title page" (occurs (page src) text == 1)
     t s!"title template {name}: nothing is dropped or refused ({ds.filter (·.severity != .note) |>.map (·.code)})"
       (ds.all fun d => d.code != "W0101" && d.severity != .error)
+  let twice := page (deck169 (tpl "\\node[anchor=east] at (current page.east) {First Series};" ++
+    tpl "\\node[anchor=east] at (current page.east) {Second Series};" ++ "\\title{Probe Title}")
+    "\\titlepage")
+  t "a second title-page template replaces the first, as beamer's does"
+    (occurs twice "Second Series" == 1 && occurs twice "First Series" == 0 &&
+      occurs twice "Probe Title" == 1)
   let node := "\\node[anchor=east] at (current page.east) {Invented Series};"
   let defined (use : String) : String :=
     deck169 ("\\newcommand{\\probesetup}{" ++ tpl node ++ "}" ++ use ++ "\\title{Probe Title}") "\\titlepage"

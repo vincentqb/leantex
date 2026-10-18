@@ -147,33 +147,6 @@ private def routeDegraded (file : String) (subject : String) (what : String) (po
   Diag.of .W0392 what (some ⟨file, pos⟩) help (subject := some ("md:" ++ subject))
     (output := output)
 
-/-- The value the elaborator reads back from one `\includegraphics` option
-source; `none` when it reads none. -/
-public def altReadBack (src : String) : Option String :=
-  match Decl.splitEntries src with
-  | [e] =>
-    match Decl.splitEntry e with
-    | some ("alt", v) =>
-      let v :=
-        if v.startsWith "{" && v.endsWith "}" && v.length ≥ 2 then
-          String.ofList (v.toList.drop 1).dropLast
-        else if v.startsWith "\"" && v.endsWith "\"" && v.length ≥ 2 then
-          String.ofList (v.toList.drop 1).dropLast
-        else v
-      some v.trimAscii.toString
-    | _ => none
-  | _ => none
-
-/-- An option source for a text alternative that reads back as exactly that
-text; `none` where no spelling does. -/
-public def altSource (t : String) : Option String :=
-  let want := t.trimAscii.toString
-  let quoted := "alt=\"" ++ t ++ "\""
-  let braced := "alt={" ++ t ++ "}"
-  if altReadBack quoted == some want then some quoted
-  else if altReadBack braced == some want then some braced
-  else none
-
 /-- Literal text as surface words and spaces, one `word` per
 run of non-space characters. -/
 public def textRaws (s : String) (pos : Pos) : Array Raw := Id.run do
@@ -522,7 +495,7 @@ a formula, or holds a control or a character the math model does not read" p])
         "a link's title is not carried: the link sets without it" p)
     (#[.ctrl "href" p, .group (textRaws dest p) p, .group rs p], ds)
   | .image dest title alt p =>
-    -- The alternative rides `\includegraphics`'s own `alt` key in the spelling `altSource` checks.
+    -- The alternative rides `\includegraphics`'s own `alt` key as one group, which no text cuts.
     let text := String.ofList ((inlText alt).toList.map fun c => if c == '\t' then ' ' else c)
     let ds := if title.isEmpty then #[] else
       #[routeDegraded file "image-title"
@@ -534,18 +507,8 @@ a formula, or holds a control or a character the math model does not read" p])
     else if text.isEmpty then
       (#[.ctrl "includegraphics" p, .group (textRaws dest p) p], ds)
     else
-      let (src, ds) := match altSource text with
-        | some s => (s, ds)
-        | none =>
-          let curly := String.ofList (text.toList.map fun c => if c == '"' then '\u201d' else c)
-          ((altSource curly).getD "alt=\"\"",
-           ds.push (routeDegraded file "image-alt"
-             "an image's text alternative sets with its straight double quotes as curly ones: \
-the image option cannot carry them as written" p
-             (help := some "write the alternative without straight double quotes")))
-      let altRaws := textRaws src p
-      (#[.ctrl "includegraphics" p, .sym '[' p] ++ altRaws
-         ++ #[.sym ']' p, .group (textRaws dest p) p], ds)
+      (#[.ctrl "includegraphics" p, .sym '[' p, .word "alt=" p, .group (textRaws text p) p,
+          .sym ']' p, .group (textRaws dest p) p], ds)
   -- The author's text links to the work's entry, which `\nocite` lists.
   | .citeText key body p =>
     let (rs, ds) := inlListRaws file dialect #[] #[] body.toList
