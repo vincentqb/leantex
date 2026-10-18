@@ -264,7 +264,8 @@ def nativeCarrierChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
   -- Raws read as their spelling are the lexer's reading of it, but for a control space.
   let unsited (rs : Array Parse.Raw) : Array Parse.Raw := rs.map (Compat.rebase (fun _ => {}) true)
   for src in ["\\textbullet\n\n\\textbullet", "a\n\nb", "{ \\Large } x", "\\foo{ \\bar  {y} }z",
-      "$ x $ { $ y $ }", "\\begin{center} a \\end{center}", "a \\hfill \\hfill b ", "{x\n\n} {}"] do
+      "$ x $ { $ y $ }", "\\begin{center} a \\end{center}", "a \\hfill \\hfill b ", "{x\n\n} {}",
+      "Alpha \\ldots Bravo {\\endash x}"] do
     let rs := lexedRaws src
     t s!"raws read as their spelling are the lexer's reading of it: {src.quote}"
       (unsited (Parse.trimSpace (Parse.asSpelled rs.toList #[])) == unsited (lexedRaws (Parse.rawSrc rs)))

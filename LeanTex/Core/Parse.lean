@@ -428,10 +428,6 @@ public def parse (file : String) (toks : Array Token) : Array Raw × Array Diag 
     | none => pure ()
   return (acc, diags)
 
-/-- A verbatim capture's text read as the TeX it is, where the document defines the command the
-lexer captured it for. -/
-public def verbatimRaws (file s : String) : Array Raw := (parse file (Lex.lex file s).1).1
-
 /-- The option head of a listing environment's captured body: spaces and tabs,
 then `[...]` with nested braces. -/
 public def listingOptHead (s : String) : Option (String × Nat) := Id.run do
@@ -627,11 +623,13 @@ public theorem skipSpaces_ge (raws : Array Raw) (i : Nat) : i ≤ skipSpaces raw
 public def trimSpace (rs : Array Raw) : Array Raw :=
   ((rs.toList.dropWhile (· matches .space)).reverse.dropWhile (· matches .space)).reverse.toArray
 
-/-- A run's raws with a space after `acc` as the lexer reads one: none after a control word or
-another space. -/
+/-- A run's raws with a space after `acc` as the lexer reads one: none after a control word but a
+text symbol, or after another space. -/
 private def pushSpelledSpace (acc : Array Raw) : Array Raw :=
   match acc.back? with
-  | some (.ctrl n _) => if n.length == 1 && !Lex.nameChar n.front then acc.push .space else acc
+  | some (.ctrl n _) =>
+    if (n.length == 1 && !Lex.nameChar n.front) || (Lex.textSymbols.lookup n).isSome then acc.push .space
+    else acc
   | some .space => acc
   | _ => acc.push .space
 

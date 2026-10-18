@@ -1483,6 +1483,10 @@ private def texSetting (what element : String) (entries : Array (String × Nativ
   dropUnfit (entries.toList.filterMap unfit) s!"\\style\{{element}}" pos
   return if kept.isEmpty then #[] else Native.texStyle element kept pos
 
+/-- A verbatim capture's text read as the TeX it is, where the document defines the command the
+lexer captured it for. -/
+private def verbatimRaws (file s : String) : Array Raw := (Parse.parse file (Lex.lex file s).1).1
+
 /-- Raws without the blanks at both ends, as their source trimmed reads. -/
 private def trimBlank (rs : Array Raw) : Array Raw :=
   ((rs.toList.dropWhile isBlankRaw).reverse.dropWhile isBlankRaw).reverse.toArray
@@ -14742,7 +14746,7 @@ private def textList (loc : Locale) (st : TextSt) (raws : Array Raw)
   | .verb env s vpos :: rest, i, 0 => do
     -- A document's own `\mintinline` is the command its calls run.
     if (env == "mintinline" || env == "mint") && st.defined.contains env then
-      let args := (Parse.verbatimRaws (← get).file s).map (rebase (fun _ => vpos) true)
+      let args := (verbatimRaws (← get).file s).map (rebase (fun _ => vpos) true)
       return ← textList loc st raws ((out.push (.ctrl env vpos)) ++ args) rest (i + 1) 0
     if env == "lstlisting" || env == "minted" || env == "mint" || env == "mintinline" then
       markRead (readIds st env (mintedLang s))

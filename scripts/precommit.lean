@@ -1742,7 +1742,8 @@ def surfaceDoorCalls : List String :=
 holds. -/
 def coreTexReaders : List (String × String) :=
   [("LeanTex/Core/Elab.lean", "run"), ("LeanTex/Core/Elab.lean", "templateInline"),
-   ("LeanTex/Core/Data.lean", "valParsed"), ("LeanTex/Core/Picture.lean", "readMacro"),
+   ("LeanTex/Core/Data.lean", "valParsed"), ("LeanTex/Core/Compat.lean", "verbatimRaws"),
+   ("LeanTex/Core/Picture.lean", "readMacro"),
    ("LeanTex/Core/BibText.lean", "formulaOf"),
    ("LeanTex/Core/BibElab.lean", "FieldDoor.readWith"),
    ("LeanTex/Core/MdDesugar.lean", "TexStream.flush"),
