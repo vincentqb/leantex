@@ -3604,7 +3604,8 @@ private def dimexprEnd : List Raw → Nat → Nat → Option Nat
   | _ :: rest, depth, i => dimexprEnd rest depth (i + 1)
 
 /-- A `\dimexpr` no `\relax` ends, read as e-TeX reads it: to the last of the raws within 32 that
-still continue its expression, and one space after a unit; its scaled points and the raws it took. -/
+still continue its expression, and one space after a unit; its exact value in inches and the raws it
+took. -/
 private def dimexprOpen (lenOf : String → Option Rat) (rest : List Raw) : Option (Rat × Nat) := Id.run do
   let window := (rest.take 32).takeWhile fun r => match r with
     | .space | .word .. | .sym .. => true
@@ -3705,8 +3706,12 @@ private def edefExpand (defs : List (String × CondVal)) (stands : String → Bo
     match defs.find? (·.1 == n) with
     | some d =>
       (edefArgs d.2.arity rest 0 #[]).bind fun (args, used) =>
+        -- Each argument's spelling is charged, so a text its own calls grow is refused in budget.
+        let cost := args.foldl (fun n a => n + (rawSrc a).length) 0
+        let allowed := min left (budget - 1)
+        if cost ≥ allowed then Option.none else
         (edefExpand defs stands lenOf (bindRawArgsList args #[] d.2.raws.toList).toList
-          (min left (budget - 1))).map fun (text, rest) => (text, used, rest)
+          (allowed - cost)).map fun (text, rest) => (text, used, rest)
     | none => if stands n then some (#[.ctrl n p], 0, left) else Option.none) lenOf l #[] budget
 termination_by budget
 decreasing_by omega
@@ -4146,6 +4151,7 @@ private def readsOperand : Option Raw → Bool
       "glueexpr", "numexpr", "muexpr", "raise", "lower", "moveleft", "moveright"].contains c
   | some (.word w _) =>
     ["by", "plus", "minus", "to", "spread", "width", "height", "depth", "=", "<", ">"].contains w ||
+      w.endsWith "=" ||
       (!w.isEmpty && w.toList.all fun ch => ch.isDigit || ch == '.' || ch == '-' || ch == '+')
   | some (.sym c _) => "=<>+-*/(".toList.contains c
   | _ => false
@@ -5839,8 +5845,7 @@ private def lenValue (lens : Array (String × String)) (raws : Array Raw)
     else none
   -- premise: kernelLengthChecks — a flow page without a measure withholds `textwidth`
   let unknown (n : String) : Bool :=
-    (kernel n && n != "textwidth" && n != "parindent" &&
-      (preamble || !(n == "baselineskip" || n == "parskip"))) || n == "ht" || n == "wd" || n == "dp" ||
+    (kernel n && n != "textwidth" && n != "parindent") || n == "ht" || n == "wd" || n == "dp" ||
       n == strutOperand "ht" || n == strutOperand "dp" ||
       (!deferred && ((line n && (!preamble || flowPage || (set "textwidth").isSome)) ||
         (preamble && !measureKnown && n == "textwidth")))
@@ -6217,7 +6222,9 @@ private def plainAssign? (register : String → Bool) (name : String) (raws : Ar
       | some (.ctrl c _) => valueCtrl c || (paramSites.lookup c).isSome
       | _ => false
     let e := glueEnd raws v0
-    if opens && e > v0 then some (raws.extract v0 e, e) else none
+    -- A register an argument opens and ends is read there; a free group it ends would undo it.
+    let follows := (paramSites.lookup name).isSome || (raws[skipSpaces raws e]?).isSome
+    if opens && follows && e > v0 then some (raws.extract v0 e, e) else none
 
 /-- The list depth a class's parameter macro sets up,
 `\@listi` to `\@listvi`. -/
@@ -14326,9 +14333,11 @@ private def literalValue : List Raw → Bool
 
 /-- Whether a control word opens TeX's own assignment of a literal value to a register the tally
 knows, read within the raws a glue spans. -/
-private def bareLiteral (t : LengthTally) (c : String) (rest : List Raw) : Bool :=
-  let window := (rest.take 16).toArray
-  match plainAssign? (fun n => texLengthParams.contains n || t.targets.contains n) c window 0 with
+private def bareLiteral (t : LengthTally) (prev : Option Raw) (c : String) (rest : List Raw) : Bool :=
+  let before := prev.toList ++ [Raw.ctrl c {}]
+  let window := (before ++ rest.take 16).toArray
+  match plainAssign? (fun n => texLengthParams.contains n || t.targets.contains n) c window
+      before.length with
   | some (value, _) =>
     let src := (rawSrc value).trimAscii.toString
     value.all (fun r => !(r matches .ctrl ..)) && readsAsLength src && texWordsOnly src
@@ -14336,7 +14345,8 @@ private def bareLiteral (t : LengthTally) (c : String) (rest : List Raw) : Bool 
 
 mutual
 
-private def tallyList (file : String) (owned : Bool) (t : LengthTally) : List Raw → LengthTally
+private def tallyList (file : String) (owned : Bool) (t : LengthTally) (prev : Option Raw) :
+    List Raw → LengthTally
   | [] => t
   | r :: rest =>
     let t := match r with
@@ -14347,19 +14357,20 @@ private def tallyList (file : String) (owned : Bool) (t : LengthTally) : List Ra
             t.assign n file p
           else if lengthAssigners.contains c || c == "newlength" then t.target n
           else t
-        | none => if bareLiteral t c rest then t.assign c file p else t
+        | none =>
+          if bareLiteral t prev c rest && !owned && !packageFile file then t.assign c file p else t
       | _ => t
-    tallyList file owned (tallyOne file owned t r) rest
+    tallyList file owned (tallyOne file owned t r) (if r matches .space then prev else some r) rest
 termination_by structural l => l
 
 private def tallyOne (file : String) (owned : Bool) (t : LengthTally) : Raw → LengthTally
   | .ctrl n _ => t.see n
-  | .group body _ => tallyList file owned t body.toList
-  | .math _ body _ => tallyList file owned t body.toList
+  | .group body _ => tallyList file owned t none body.toList
+  | .math _ body _ => tallyList file owned t none body.toList
   | .env n body _ =>
     match Parse.inputEnvFile? n with
-    | some f => tallyList f (ownsInput owned file n) t body.toList
-    | none => tallyList file owned t body.toList
+    | some f => tallyList f (ownsInput owned file n) t none body.toList
+    | none => tallyList file owned t none body.toList
   | _ => t
 termination_by structural r => r
 
@@ -14418,7 +14429,7 @@ public def tokenSpellings (raws : Array Raw) : Std.HashSet String := (spellingLi
 the engine reads, named at its first assignment; a package's assignments are its own. -/
 public def unusedLengths (file : String) (raws : Array Raw) (edefReads : Std.HashSet String) :
     Array Diag :=
-  let t := tallyList file false {} raws.toList
+  let t := tallyList file false {} none raws.toList
   t.first.filterMap fun (n, f, p) =>
     if (paramSites.lookup n).isSome || Ir.engineTokenNames.contains n || edefReads.contains n ||
         t.seen.getD n 0 > t.targets.getD n 0 then none

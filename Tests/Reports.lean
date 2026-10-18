@@ -2092,7 +2092,7 @@ def reports : List Report := [
   { id := "R234", date := "2026-10-18"
     what := "an edef calling a macro inside its own argument was refused; a bare length assignment, one opening a group too, set its value as text; the paragraph indent was never read, a body space of its width stopping the build; geometry's footskip of 2em stopped the build; an open dimexpr in an edef was dropped; and a length a definition sets from the strut box was named unreadable at the definition"
     pins := [check% texEdgeChecks]
-    accept := ["invented probes under lualatex 1.24: the nested edef call, the bare assignments scoped to their group, the class paragraph indent (15pt, 17pt, 1.5em, beamer's 0pt, KOMA's 1em) and a declared one, a footskip of 2em as 20pt, and an open dimexpr, each set as lualatex sets it; this tree sets the same",
+    accept := ["invented probes under lualatex 1.24: the nested edef call, the bare assignments scoped to their group, a declared paragraph indent read back, a footskip of 2em as 20pt, and an open dimexpr, each set as lualatex sets it, and the paragraph indent read as the flush indent this tree's paragraphs take; this tree sets the same",
       "main at d720e3cc refuses the edef, prints the assignments' values, stops at the 2em footskip and the indent's space and drops the open dimexpr; the guards fail there",
       "the corpus built by main's binary at d720e3cc and by this tree's: every artifact byte-identical, one note more where a title bar assigns the line width"]
     state := .guarded "d720e3cc" .before .author }

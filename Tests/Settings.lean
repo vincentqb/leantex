@@ -820,25 +820,24 @@ def texEdgeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
   let primitive := dvDoc "" "\\leftskip=1in Alpha words."
   t "a bare assignment to a TeX parameter the engine does not read prints no value, named"
     (!hasStr (text primitive) "1in" && (dvE primitive).any (·.code == "W0104"))
-  let twelve (w : String) := "\\documentclass[12pt]{article}\n\\begin{document}\n\\noindent\\rule{" ++
-    w ++ "}{2pt}\n\\end{document}"
   let classRule (cls opt w : String) := pagesOf oneFace ("\\documentclass[" ++ opt ++ "]{" ++ cls ++
     "}\n\\begin{document}\n\\noindent\\rule{" ++ w ++ "}{2pt}\n\\end{document}")
   let rule (pre body : String) := pagesOf oneFace (dvDoc pre ("\\noindent\\rule{" ++ body ++ "}{2pt}"))
-  t "a kernel length reads as the class fixes it: an article's \\parindent is 15pt"
-    (rule "\\newlength\\lenC\n\\setlength\\lenC{\\parindent}\n" "\\lenC" == rule "" "15pt" &&
-      rule "" "\\parindent" == rule "" "15pt" &&
-      pagesOf oneFace (twelve "\\parindent") == pagesOf oneFace (twelve "1.5em") &&
-      classRule "article" "11pt" "\\parindent" == classRule "article" "11pt" "17pt" &&
-      classRule "scrartcl" "" "\\parindent" == classRule "scrartcl" "" "1em")
-  let frame (w : String) := pagesOf oneFace ("\\documentclass{beamer}\n\\begin{document}\n" ++
-    "\\begin{frame}\\rule{" ++ w ++ "}{2pt}x\\end{frame}\n\\end{document}")
-  t "beamer's \\parindent is 0pt" (frame "\\parindent" == frame "0pt" && frame "0pt" != frame "15pt")
+  t "\\parindent reads the engine's indent, flush here as its paragraphs are, and never stops the build"
+    (rule "\\newlength\\lenC\n\\setlength\\lenC{\\parindent}\n" "\\lenC" == rule "" "0pt" &&
+      rule "" "\\parindent" == rule "" "0pt" &&
+      classRule "scrartcl" "" "\\parindent" == classRule "scrartcl" "" "0pt" &&
+      pagesOf oneFace (dvDoc "" "\\hspace*{-\\parindent}Alpha words.") ==
+        pagesOf oneFace (dvDoc "" "\\hspace*{0pt}Alpha words."))
   t "a declared \\parindent is the one a length reads"
     (rule "\\setlength{\\parindent}{40pt}\n" "\\parindent" == rule "\\setlength{\\parindent}{40pt}\n" "40pt")
-  let bodySkip := dvDoc "" "\\newlength\\lenG\\setlength\\lenG{\\baselineskip}\\noindent\\rule{\\lenG}{2pt}"
-  t "a body's \\baselineskip reads as its operand does"
-    (pagesOf oneFace bodySkip == rule "" "\\baselineskip" && !(dvE bodySkip).any (·.code == "W0107"))
+  let calcPre := "\\usepackage{calc}\n\\newlength\\mylen\n\\setlength\\mylen{3in}\n"
+  t "a register opening an argument is read there, never assigned"
+    (pagesOf oneFace (dvDoc calcPre "a\\hspace{\\mylen-1in}b") ==
+        pagesOf oneFace (dvDoc calcPre "a\\hspace{2in}b") &&
+      !(dvE (dvDoc calcPre "\\ifdim \\mylen=3in yes\\fi")).any (·.code == "W0104"))
+  let growing := dvDoc "\\def\\grow#1{\\grow{#1#1}}\n\\edef\\foo{\\grow{x}}\n" "Alpha."
+  t "edef: a text its own calls grow is refused within the budget" ((dvE growing).any (·.code == "W0357"))
   let foot (v : String) := "\\usepackage[footskip=" ++ v ++ "]{geometry}\n"
   t "a geometry key in em is fixed in the preamble's font: footskip=2em is 20pt, and the page ships"
     (!(dvE (dvDoc (foot "2em") "Alpha.")).any (·.severity == .error) &&
