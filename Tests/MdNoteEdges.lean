@@ -40,7 +40,7 @@ def altChecks (ref : IO.Ref (List String)) : IO Unit := do
   let src := worksMeta ++ "![A chart from @a and [@b, p. 3]](chart.svg)\n\nText cites [@roe2020].\n"
   let (d, ds) := mdBibBuild src #[("works.bib", worksBib)]
   t s!"md alt: a citation in an image's alternative reads as its style sets it ({imageNames d})"
-    ((imageNames d).contains "A chart from Ash [2001] and [Birch, 2002, p. 3]")
+    ((imageNames d).contains "A chart from Ash [2001] and [Birch, 2002, p.\u00a03]")
   let listed := Ir.foldBlocks (fun out b => match b with
     | .bibliography _ _ items => out ++ items.map (·.key)
     | _ => out) (fun out _ => out) #[] d.body

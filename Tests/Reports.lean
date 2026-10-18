@@ -157,6 +157,7 @@ import Tests.UnusedSettings
 import Tests.BibEdges
 import Tests.DocCiteEdges
 import Tests.MdNoteEdges
+import Tests.MdCiteEdges
 import Tests.LeanProseReading
 import Tests.AmsMath
 import Tests.CoveredSteps
@@ -2002,6 +2003,15 @@ def reports : List Report := [
     accept := ["main's binary at e5afdc63 on invented probes: an image's alternative with two citations set their keys as its name and named the loss, the works unlisted; a document's footnote references and definitions set as text; a TeX document citing in a footnote twinned every citation as its marks and its twin read the note back as a paragraph after the body",
       "pandoc 3.12 over the probes: an alternative's citations print as the style sets them, inside its emphasis or links or an image nested in it too, and their works are listed where the alternative alone cites; a footnote's label matches exactly, a definition after a list is read, its first paragraph takes its wrapped lines indented or not and its indented paragraphs, a definition's empty line takes the next line and, past one blank line, the one after, an empty definition is an empty note, a reference inside a definition is its text, a label's last definition stands, an unused one is warned of, a note named in an image's alternative sets nothing, and a reference after a citation, a reference link or a bang is a note; this tree reads each so, naming what Pandoc drops unsaid, but for a definition inside a list item or a block quote, which stays its container's text, a line opening a block after a note's first line, which ends the note, a lazy line inside a note's quote or list, refused as at the top level, a note's blocks other than paragraphs, which set as the note's lines, named, a note in a citation's prefix, dropped and named where Pandoc sets it, and an inline note, which stays text",
       "the mdtwin tier: Pandoc citations re-read exactly rise from 14 to 17 with an alternative's and a note's, and twins that are their round trip's fixed point from 106 to 107"]
+    state := .guarded "e5afdc63" .before .author },
+  { id := "R219", date := "2026-10-18"
+    what := "a markdown citation key holding another script's digits or numbers read only to the first, its work unfound; the citation of every entry, Pandoc's star key, set as text listing nothing; a citation group before braces holding no attribute list stayed bracket text; an in-text citation whose line ended in two spaces lost its locator on the next line to a line break; a reference-section-title heading stood over a list of no entry; the space after an abbreviation such as p. stayed breakable where Pandoc's smart punctuation joins it; and a TeX citation note's edge spaces reached the twin, spaced twice"
+    pins := [check% Tests.MdCiteEdges.keyDigitChecks, check% Tests.MdCiteEdges.everyEntryChecks,
+      check% Tests.MdCiteEdges.bracketTailChecks, check% Tests.MdCiteEdges.breakTailChecks,
+      check% Tests.MdCiteEdges.listTitleChecks, check% Tests.MdCiteEdges.abbrevChecks,
+      check% Tests.MdCiteEdges.twinChecks]
+    accept := ["main's binary at e5afdc63 on invented probes: a key with an Arabic-Indic digit named no entry, the bracketed star key set as escaped text, a group before braces holding x set as bracket text, an in-text citation before two spaces and a locator on the next line set a line break and the bracket, and p. 3 kept a plain space; this tree's binary cites each key, lists every entry for the star, cites before the braces, reads the locator and joins the space",
+      "pandoc 3.12 over the probes with citeproc: the Arabic-Indic key whole, the citation id star, the group before braces a citation, the two-space line end and the next line's bracket one in-text citation whose suffix joins p. and 3 by a no-break space, and p. 3 joined so; its natbib writer joins a locator's p. and 33 by a tie"]
     state := .guarded "e5afdc63" .before .author }
 ]
 

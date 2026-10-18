@@ -2600,6 +2600,18 @@ public def demoteRepeated (prior ds : Array Diag) : Array Diag :=
       else (out.push d, seen.insert k)
     | none => (out.push d, seen)).1
 
+/-- The document without the heading its markdown metadata sets over the list at its end, where the
+list lists nothing, as Pandoc's citation processing sets none (`CiteDecl.Word.sectionTitle`). -/
+private def untitled (doc : Ir.Doc) (items : Array Ir.BibItem) : Ir.Doc :=
+  if !items.isEmpty || !(doc.citeSetup.getD #[]).contains (.word .sectionTitle) then doc else
+  let last := doc.body.zipIdx.foldl (init := none) fun acc (b, i) =>
+    if b matches .bibliography .. then some i else acc
+  match last with
+  | some (k + 1) =>
+    if doc.body[k]? matches some (.section ..) then { doc with body := doc.body.eraseIdxIfInBounds k }
+    else doc
+  | _ => doc
+
 /-- The document's citations and reference lists resolved against its `.bib`
 sources, every field read through `rd`. -/
 public def apply (sources : Array (String × String)) (doc : Ir.Doc)
@@ -2607,7 +2619,7 @@ public def apply (sources : Array (String × String)) (doc : Ir.Doc)
     Ir.Doc × Array Diag :=
   match analyse sources doc rd sites absent with
   | (p, find, items, diags, pictures, notes) =>
-    (((resolveDoc p find items doc).addPictures pictures).withListNotes notes, diags)
+    (((resolveDoc p find items (untitled doc items)).addPictures pictures).withListNotes notes, diags)
 
 /-- The keys of the references the document's reference lists hold, each once in
 list order; `pending` keeps only those no label answered. -/
@@ -3232,7 +3244,7 @@ public theorem apply_no_cite (sources : Array (String × String)) (doc : Ir.Doc)
   unfold apply at hu
   rcases h : analyse sources doc rd sites absent with ⟨p, find, items, diags, pictures, notes⟩
   rw [h, Ir.pendingNodes_withListNotes, Ir.pendingNodes_addPictures] at hu
-  exact resolveDoc_no_cite p find items doc u hu
+  exact resolveDoc_no_cite p find items _ u hu
 
 
 end LeanTex.Core.Bib

@@ -9,6 +9,8 @@ import LeanTex.Core.Decl
 import LeanTex.Core.UnusedSetting
 import LeanTex.Core.Loop
 import LeanTex.Core.KeyVal
+import LeanTex.Core.CiteKey
+import LeanTex.Core.MdSmart
 import Std.Data.HashMap
 
 /-! # Markdown's meaning
@@ -381,10 +383,11 @@ public def natbibRaws (items : List CiteRaws) (p : Pos) : Array Raw :=
         citeTextRaws ({ first with mode := .suppressAuthor } :: rest) p
     else citeTextRaws (first :: rest) p
 
-/-- A citation group's raws: natbib's commands, or, where a key cannot cross natbib's key list,
+/-- A citation group's works as natbib's commands, or, where a key cannot cross natbib's key list,
 `\citetext` with that work as its text and the loss named; an author-in-text work's own text. -/
-private def citeGroupRaws (file : String) (items : Array CiteRaws) (p : Pos) :
+private def citeWorksRaws (file : String) (items : Array CiteRaws) (p : Pos) :
     Array Raw × Array Diag :=
+  if items.isEmpty then (#[], #[]) else
   let bad := items.filter (!keyCrosses ·.key)
   if bad.isEmpty then (natbibRaws items.toList p, #[]) else
   let diags := bad.map fun c => routeDegraded file "cite-key"
@@ -399,6 +402,18 @@ work sets as its key, uncited" p (help := some "spell the key as its .bib entry 
       else (textRaws (" ".intercalate (items.toList.map fun c => "@{" ++ c.key ++ "}")) p, diags)
     else (citeTextRaws items.toList p, diags)
   | none => (#[], diags)
+
+/-- A citation group's raws: its works', and natbib's `\nocite{*}` for a citation of every entry. -/
+private def citeGroupRaws (file : String) (items : Array CiteRaws) (p : Pos) :
+    Array Raw × Array Diag :=
+  -- `*` is Pandoc's key for every entry, listed as natbib's `\nocite{*}` lists them, printing nothing.
+  let every := items.filter (·.key == "*")
+  let listed := if every.isEmpty then #[] else citeCmdRaws "nocite" #[] #[] #["*"] p
+  let unset := if every.all (fun c => c.pre.isEmpty && c.post.isEmpty) then #[] else
+    #[routeDegraded file "cite-every-note"
+      "the notes of a citation of every entry set nothing: it lists every entry and prints nothing" p]
+  let (rs, ds) := citeWorksRaws file (items.filter (·.key != "*")) p
+  (rs ++ listed, ds ++ unset)
 
 mutual
 
@@ -1231,6 +1246,81 @@ public def splitMetadata (bs : Array Blk) : Array MetaField × Array Blk :=
   | some (Blk.metadata fs _) => (fs, bs.extract 1 bs.size)
   | _ => (#[], bs)
 
+/-- Text with each abbreviation joined to the word after it by a non-breaking space where spaces
+follow it, as Pandoc's smart punctuation joins it, unless a citation follows the spaces. -/
+private def joinAbbreviations (s : String) (citeNext : Bool) : String := Id.run do
+  let cs := s.toList.toArray
+  let mut out := ""
+  let mut i := 0
+  for _ in [0:cs.size + 1] do
+    let some c := cs[i]? | break
+    if c == ' ' || c == '\t' then
+      let mut j := i
+      for _ in [i:cs.size] do
+        if (cs[j]?.map fun d => d == ' ' || d == '\t').getD false then j := j + 1 else break
+      let joined := MdSmart.joinsAt cs i && !(j ≥ cs.size && citeNext)
+      out := if joined then out.push '\u00a0' else out ++ String.ofList (cs.extract i j).toList
+      i := j
+    else
+      out := out.push c
+      i := i + 1
+  return out
+
+mutual
+
+/-- Inline content with Pandoc's abbreviations joined to the words after them. -/
+private def abbrevInls : List Inl → List Inl
+  | [] => []
+  | x :: rest =>
+    let citeNext := match rest with
+      | .cite .. :: _ => true
+      | _ => false
+    abbrevInl citeNext x :: abbrevInls rest
+
+private def abbrevInl (citeNext : Bool) : Inl → Inl
+  | .text s p => .text (joinAbbreviations s citeNext) p
+  | .emph body p => .emph (abbrevInls body.toList).toArray p
+  | .strong body p => .strong (abbrevInls body.toList).toArray p
+  | .link dest title body p => .link dest title (abbrevInls body.toList).toArray p
+  | .image dest title alt p => .image dest title (abbrevInls alt.toList).toArray p
+  | .cite items p => .cite (abbrevItems items.toList).toArray p
+  | .citeText key body p => .citeText key (abbrevInls body.toList).toArray p
+  | .note label body p => .note label (abbrevInls body.toList).toArray p
+  | x@(.code ..) | x@(.anchor ..) | x@(.soft _) | x@(.hard _) | x@(.math ..) => x
+
+private def abbrevItems : List CiteItem → List CiteItem
+  | [] => []
+  | .mk key mode pre post :: rest =>
+    .mk key mode (abbrevInls pre.toList).toArray (abbrevInls post.toList).toArray :: abbrevItems rest
+
+end
+
+mutual
+
+/-- A block with Pandoc's abbreviations joined in its inline content. -/
+private def abbrevBlk : Blk → Blk
+  | .para body p => .para (abbrevInls body.toList).toArray p
+  | .heading l body p => .heading l (abbrevInls body.toList).toArray p
+  | .quote body p => .quote (abbrevBlks body.toList).toArray p
+  | .disclosure summary e body p =>
+    .disclosure (abbrevInls summary.toList).toArray e (abbrevBlks body.toList).toArray p
+  | .list o st t items p => .list o st t (abbrevItemBlks items.toList).toArray p
+  | .table a header rows p =>
+    .table a (header.map fun c => (abbrevInls c.toList).toArray)
+      (rows.map fun r => r.map fun c => (abbrevInls c.toList).toArray) p
+  | .note l body p => .note l (abbrevBlks body.toList).toArray p
+  | b@(.code ..) | b@(.rule _) | b@(.lean ..) | b@(.metadata ..) | b@(.refs _) => b
+
+private def abbrevBlks : List Blk → List Blk
+  | [] => []
+  | b :: rest => abbrevBlk b :: abbrevBlks rest
+
+private def abbrevItemBlks : List (Array Blk) → List (Array Blk)
+  | [] => []
+  | item :: rest => (abbrevBlks item.toList).toArray :: abbrevItemBlks rest
+
+end
+
 /-- The whole document: markdown source to the surface AST, with the reader's
 own diagnostics carrying `.md` spans; its metadata opens it, and its reference list stands in
 its first `::: {#refs}` division, else at its end, as Pandoc places it. -/
@@ -1242,14 +1332,20 @@ public def desugar (file : String) (input : String) (dialect : Dialect := .docum
     (notes := role == .document)
   let split := splitMetadata read.1
   let m := metaRead file role split.1
-  let blocks := split.2.toList
+  -- Pandoc's smart punctuation reads a markdown document's text, not an included file's.
+  let blocks := if dialect == .document && role == .document && !tex then abbrevBlks split.2.toList
+    else split.2.toList
   let cited := citesBlks citesInls blocks
+  let placed := refsAt blocks
+  -- The heading the metadata sets over the list at the file's end, which the list drops where it
+  -- lists nothing, as Pandoc's citation processing sets none.
+  let m := if m.title.isSome && placed.isNone then { m with decls := m.decls.push (.word .sectionTitle) }
+    else m
   -- premise: Tests.UnusedSettings.metadataChecks — a document spelling no citation reads none
   let unused := if role != .document || m.sources.isEmpty || m.nocite.isSome ||
       citesBlks spellsCiteInls blocks then #[]
     else m.taken.map fun (key, pos) => UnusedSetting.metaDiag file key pos
   let body := bodyRaws file (m.list cited) dialect tex blocks
-  let placed := refsAt blocks
   -- premise: mdMetadataChecks — a division with no bibliography to place is named
   let unplaced := match placed with
     | some p => if m.sources.isEmpty then

@@ -18,10 +18,11 @@ public def CiteDecl.sortingTemplates : List String := ["nty", "nyt", "nyvt", "yn
 public def CiteDecl.sortingSchemes : List String := CiteDecl.sortingTemplates ++ ["none"]
 
 /-- natbib's bare citation-setup words: `\setcitestyle`'s keywords, its `\bibstyle` door, sorting
-and compression, and biblatex's citations. -/
+and compression, biblatex's citations, and the heading a markdown document's metadata sets over a
+list that lists an entry. -/
 public inductive CiteDecl.Word where
   | round | square | angle | curly | semicolon | colon | comma | authoryear | numbers
-  | bibstyle | nobibstyle | sort | compress | biblatex
+  | bibstyle | nobibstyle | sort | compress | biblatex | sectionTitle
   deriving DecidableEq, Repr, Inhabited
 
 /-- The keys a declaration gives a value: natbib's punctuation and `\citestyle`, biblatex's two
@@ -55,7 +56,7 @@ public def Word.names : List (String × Word) :=
   [("round", .round), ("square", .square), ("angle", .angle), ("curly", .curly),
    ("semicolon", .semicolon), ("colon", .colon), ("comma", .comma), ("authoryear", .authoryear),
    ("numbers", .numbers), ("bibstyle", .bibstyle), ("nobibstyle", .nobibstyle), ("sort", .sort),
-   ("compress", .compress), ("biblatex", .biblatex)]
+   ("compress", .compress), ("biblatex", .biblatex), ("sectiontitle", .sectionTitle)]
 
 public def Word.name (w : Word) : String := ((Word.names.find? (·.2 == w)).map (·.1)).getD ""
 
@@ -138,9 +139,9 @@ public def last? (ds : Array CiteDecl) (k : Key) : Option String :=
 /-- Whether a setup is biblatex's, whose files are the resources its list prints. -/
 public def biblatex (ds : Array CiteDecl) : Bool := ds.contains (.word .biblatex)
 
-/-- The natbib package options `ds` declares, where it declares nothing else. -/
+/-- The natbib package options `ds` declares, where it declares nothing else but a list heading. -/
 public def options? (ds : Array CiteDecl) : Option (Array String) :=
-  ds.mapM fun
+  (ds.filter (· != .word .sectionTitle)).mapM fun
     | .option o => some o.name
     | _ => none
 
@@ -166,7 +167,7 @@ punctuation key and its value. -/
 public def ofItem? (item : String) : Option CiteDecl :=
   (ofSpelling? item).bind fun
     | .word w =>
-      if [.sort, .compress, .biblatex, .bibstyle, .nobibstyle].contains w then none
+      if [.sort, .compress, .biblatex, .bibstyle, .nobibstyle, .sectionTitle].contains w then none
       else some (.word w)
     | .set k v =>
       if [.open, .close, .citesep, .aysep, .yysep, .notesep].contains k then some (punct k v)

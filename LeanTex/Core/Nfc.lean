@@ -25,6 +25,8 @@ private structure Tables where
   puncts : Array (UInt32 × UInt32)
   /-- Merged codepoint ranges of general category Zs, sorted. -/
   spaces : Array (UInt32 × UInt32)
+  /-- Merged codepoint ranges of general category N*, sorted. -/
+  numbers : Array (UInt32 × UInt32)
 
 private def load (_ : Unit) : Tables := Id.run do
   let field := Hex.field
@@ -64,7 +66,7 @@ private def load (_ : Unit) : Tables := Id.run do
     lower := lower.insert (UInt32.ofNat (field wb (i * 12) 6)) lc
     lowered := lowered.insert lc.val
   return { ccc, decomp, comp, letters, lower, lowered, puncts := ranges NfcData.puncts.toUTF8,
-           spaces := ranges NfcData.spaces.toUTF8 }
+           spaces := ranges NfcData.spaces.toUTF8, numbers := ranges NfcData.numbers.toUTF8 }
 
 /-- The tables, built once per process on first use; `load` takes `Unit` to defer the cost. -/
 private def tables : Thunk Tables := Thunk.mk load
@@ -211,6 +213,11 @@ public def isPunctuation (c : Char) : Bool :=
 /-- A space separator by Unicode's general category (Zs). -/
 public def isSpaceSeparator (c : Char) : Bool :=
   if c.toNat < 0x80 then c == ' ' else inRanges tables.get.spaces c
+
+/-- A number by Unicode's general category (N*: digits, letter numbers and other numbers);
+`Char.isDigit` is ASCII-only. -/
+public def isNumber (c : Char) : Bool :=
+  if c.toNat < 0x80 then c.isDigit else inRanges tables.get.numbers c
 
 /-- Unicode simple lowercase (UnicodeData field 13); `Char.toLower` is ASCII-only. -/
 public def toLower (c : Char) : Char :=

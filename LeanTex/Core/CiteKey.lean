@@ -6,9 +6,10 @@ import LeanTex.Core.Nfc
 
 namespace LeanTex.Core.CiteKey
 
-/-- A letter or a digit, beyond ASCII by Unicode's letter category: what a citation key is spelled
-in, and what keeps an `@` inside a word text. -/
-public def isAlnum (c : Char) : Bool := c.isAlphanum || (c.toNat > 127 && Nfc.isLetter c)
+/-- A letter or a number, beyond ASCII by Unicode's letter and number categories as Haskell's
+`isAlphaNum` reads them: what a citation key is spelled in, and what keeps an `@` inside a word text. -/
+public def isAlnum (c : Char) : Bool :=
+  c.isAlphanum || (c.toNat > 127 && (Nfc.isLetter c || Nfc.isNumber c))
 
 /-- A key's regular character: a letter, a digit or `_`. -/
 public def regular (c : Char) : Bool := isAlnum c || c == '_'
@@ -17,10 +18,10 @@ public def regular (c : Char) : Bool := isAlnum c || c == '_'
 public def internal (c : Char) : Bool := ":.#$%&-+?<>~/".any (· == c)
 
 /-- The length of the bare key Pandoc's `simpleCiteIdentifier` reads at the head of `cs`, zero
-where none starts there. -/
+where none starts there; `*` opens one, the citation of every entry. -/
 public def bareLen : List Char → Nat
   | [] => 0
-  | c :: rest => if regular c then 1 + restLen rest else 0
+  | c :: rest => if regular c || c == '*' then 1 + restLen rest else 0
 where
   restLen : List Char → Nat
     | [] => 0

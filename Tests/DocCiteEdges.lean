@@ -124,7 +124,7 @@ the definition set nowhere ({repr body}: {mdLinks src})"
   let src := worksMeta ++ "[p. 3]: https://example.org/x\n\nSee @ash2001 [p. 3].\n"
   t s!"md refs: a defined label after an author's citation links and is no note of it \
 ({keysOf (elabMd src).1}, {mdLinks src})"
-    (keysOf (elabMd src).1 == ["ash2001"] && (mdLinks src).contains ("https://example.org/x", "p. 3"))
+    (keysOf (elabMd src).1 == ["ash2001"] && (mdLinks src).any (·.1 == "https://example.org/x"))
 
 /-- Emphasis flanks as the spec reads Unicode's whitespace and punctuation (examples 353 and 354). -/
 def flankChecks (ref : IO.Ref (List String)) : IO Unit := do

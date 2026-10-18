@@ -3,6 +3,7 @@ module
 public import LeanTex.Core.Ir
 import LeanTex.Core.CiteKey
 import LeanTex.Core.Nfc
+import LeanTex.Core.MdSmart
 import Std.Data.HashSet
 
 /-! The markdown backend: the llms.txt twin of the IR the HTML and PDF backends
@@ -37,6 +38,21 @@ private def escapeChars (pipes ats : Bool) (l : List Char) : List Char :=
 
 private def escapeText (pipes ats : Bool) (s : String) : String :=
   String.ofList (escapeChars pipes ats s.toList)
+
+/-- Written text `s` after `acc` as Pandoc's smart punctuation reads it back after an abbreviation:
+a space a reference to it, a no-break space with a word after it a plain space it joins again. -/
+private def keepAbbrevSpaces (acc s : String) : String := Id.run do
+  if !s.contains ' ' && !s.contains '\u00a0' then return s
+  let tail := (acc.takeEndWhile fun c => CiteKey.isAlnum c || c == '.').toString.toList.toArray
+  let cs := tail ++ s.toList.toArray
+  let mut out := ""
+  for k in [tail.size:cs.size] do
+    let c := cs[k]?.getD ' '
+    let joins := MdSmart.joinsAt cs k
+    out := if c == ' ' && joins then out ++ "&#32;"
+      else if c == '\u00a0' && joins && k + 1 < cs.size then out.push ' '
+      else out.push c
+  return out
 
 private theorem escapeCharsFrom_line (pipes ats : Bool) :
     (prev : Option Char) → (l : List Char) →
@@ -544,8 +560,8 @@ private inductive Site where
 
 /-- A citation note as the reader reads it back inside a citation's brackets. -/
 private def citeNote (pipes : Bool) (s : String) : String :=
-  String.join (s.toList.map fun c =>
-    if c == ';' || c == '@' then "\\" ++ c.toString else String.ofList (escapeChars pipes true [c]))
+  keepAbbrevSpaces "" (String.join (s.toList.map fun c =>
+    if c == ';' || c == '@' then "\\" ++ c.toString else String.ofList (escapeChars pipes true [c])))
 
 /-- One work of a bracketed citation, `prefix -@key, suffix`; `none` where its key has no
 spelling. -/
@@ -732,7 +748,7 @@ mutual
 private def inlineInto (site : Site) (cites : Bool) (acc : String) (after : Bool := true) :
     Inline → String
   | .text s =>
-    let escaped := escapeText (site != .cell) cites s
+    let escaped := keepAbbrevSpaces acc (escapeText (site != .cell) cites s)
     acc ++ escaped
   | .math display src =>
     if display then acc ++ s!"$${src}$$" else acc ++ s!"${src}$"

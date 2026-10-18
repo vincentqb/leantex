@@ -23,9 +23,11 @@ non-starter exclusions are derived from the data). Hangul is algorithmic
 categories' letter ranges (L*) and the simple lowercase mappings —
 `Char.isAlpha`/`Char.toLower` are ASCII-only, and a word boundary that
 excludes é neither hyphenates an accented word nor keeps it one box. The
-last two are the ranges of the punctuation and symbol categories (P*, S*)
-and of the space separators (Zs), CommonMark's Unicode punctuation and
-whitespace, which decide where emphasis and a formula's dollars flank.
+last three are the ranges of the punctuation and symbol categories (P*,
+S*), of the space separators (Zs) and of the numbers (N*): CommonMark's
+Unicode punctuation and whitespace, which decide where emphasis and a
+formula's dollars flank, and the numbers a citation key holds beside its
+letters, as Haskell's `isAlphaNum` reads them.
 
 Every table is fixed-width lowercase hex with no separators, so the loader
 addresses a field by byte offset instead of splitting and re-parsing text:
@@ -117,6 +119,7 @@ def main (args : List String) : IO UInt32 := do
   let mut letters : Array (Nat × Nat) := #[]   -- merged L* ranges
   let mut puncts : Array (Nat × Nat) := #[]   -- merged P* and S* ranges
   let mut spaces : Array (Nat × Nat) := #[]   -- merged Zs ranges
+  let mut numbers : Array (Nat × Nat) := #[]   -- merged N* ranges
   let mut lower : Array (Nat × Nat) := #[]
   let mut rangeFirst : Option Nat := none
   for line in text.splitOn "\n" do
@@ -138,6 +141,7 @@ def main (args : List String) : IO UInt32 := do
           | none => letters := letters.push (lo, cp)
       if cat.startsWith "P" || cat.startsWith "S" then puncts := extend puncts cp
       if cat == "Zs" then spaces := extend spaces cp
+      if cat.startsWith "N" then numbers := extend numbers cp
       if let some lc := tailFields[7]? then  -- field 13: simple lowercase
         let lc := lc.trimAscii.toString
         if !lc.isEmpty then
@@ -187,6 +191,9 @@ def main (args : List String) : IO UInt32 := do
   let mut spacesStr := ""
   for (a, b) in spaces do
     spacesStr := spacesStr ++ (← hexOf 6 a) ++ (← hexOf 6 b)
+  let mut numbersStr := ""
+  for (a, b) in numbers do
+    numbersStr := numbersStr ++ (← hexOf 6 a) ++ (← hexOf 6 b)
   let content := "module\n\n" ++ notice
     ++ "namespace LeanTex.Core.NfcData\n\n"
     ++ "/-- Nonzero canonical combining classes, 8 hex digits per entry:\n"
@@ -211,9 +218,12 @@ def main (args : List String) : IO UInt32 := do
     ++ "/-- The merged codepoint ranges of general category Zs, 12 hex digits\n"
     ++ "per entry: low then high, inclusive. Ascending. -/\n"
     ++ s!"public def spaces : String := \"{spacesStr}\"\n\n"
+    ++ "/-- The merged codepoint ranges of general category N*, 12 hex digits\n"
+    ++ "per entry: low then high, inclusive. Ascending. -/\n"
+    ++ s!"public def numbers : String := \"{numbersStr}\"\n\n"
     ++ "end LeanTex.Core.NfcData\n"
   IO.FS.writeFile output content
   IO.println s!"wrote {output}: {ccc.size} ccc, {decompEntries.size} decomps, \
 {compEntries.size} composites, {letters.size} letter ranges, {lower.size} lowercase, \
-{puncts.size} punctuation ranges, {spaces.size} space ranges"
+{puncts.size} punctuation ranges, {spaces.size} space ranges, {numbers.size} number ranges"
   return 0

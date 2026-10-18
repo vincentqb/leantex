@@ -104,10 +104,11 @@ def censusMdRows :
     List (String × (Layout.Geom → Array CensusPage → List (String × Bool))) := [
   ("md-cite", fun _ c => [
     ("one page", c.size == 1),
-    ("each citation ships in plainnat's author-year marks, its notes inside them",
+    ("each citation ships in plainnat's author-year marks, its notes inside them, a tie after an \
+abbreviation an unbreakable glue",
       ["A first claim [Roe, 2020]", "by name: Doe and Hale [2024]",
-        "[see Poe, 2022, pp. 101-110; Roe, 2020]", "Roe [2020] wrote",
-        "Doe and Hale [2024, p. 46]", "[Doe and Hale, 2024, chap. 2]", "key [?] shows"].all
+        "[see Poe, 2022, pp.101-110; Roe, 2020]", "Roe [2020] wrote",
+        "Doe and Hale [2024, p.46]", "[Doe and Hale, 2024, chap.2]", "key [?] shows"].all
         (hasStr (censusProse c) ·)),
     ("what is not a citation ships as written",
       ["someone@example.org", "@roe2020 and an escaped @roe2020"].all (hasStr (censusProse c) ·)),

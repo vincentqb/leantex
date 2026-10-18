@@ -29,24 +29,24 @@ def webText (doc : Ir.Doc) : String := Id.run do
 /-- Markdown citations beside what Pandoc 3.12.1's LaTeX writer sets for them under `--natbib`
 (`citationsToNatbib`), its smart non-breaking space after `p.` written as a space. -/
 def pandocNatbib : List (String × String) :=
-  [("[@a]", "\\citep{a}"), ("[@a, p. 33]", "\\citep[p. 33]{a}"), ("[see @a]", "\\citep[see][]{a}"),
-   ("[see @a, p. 33]", "\\citep[see][p. 33]{a}"), ("[@a; @b]", "\\citep{a, b}"),
-   ("[see @a; @b, p. 2]", "\\citep[see][p. 2]{a, b}"),
-   ("[see @a, pp. 1-3; @b]", "\\citetext{\\citealp[see][pp. 1-3]{a}; \\citealp{b}}"),
-   ("[@a, p. 1; @b]", "\\citetext{\\citealp[p. 1]{a}; \\citealp{b}}"),
+  [("[@a]", "\\citep{a}"), ("[@a, p. 33]", "\\citep[p.~33]{a}"), ("[see @a]", "\\citep[see][]{a}"),
+   ("[see @a, p. 33]", "\\citep[see][p.~33]{a}"), ("[@a; @b]", "\\citep{a, b}"),
+   ("[see @a; @b, p. 2]", "\\citep[see][p.~2]{a, b}"),
+   ("[see @a, pp. 1-3; @b]", "\\citetext{\\citealp[see][pp.~1-3]{a}; \\citealp{b}}"),
+   ("[@a, p. 1; @b]", "\\citetext{\\citealp[p.~1]{a}; \\citealp{b}}"),
    ("[@a; see @b]", "\\citetext{\\citealp{a}; \\citealp[see][]{b}}"),
-   ("@a says", "\\citet{a} says"), ("@a [p. 4] says", "\\citet[p. 4]{a} says"),
-   ("@a [p. 4; @b] says", "\\citeauthor{a} \\citetext{\\citeyear[p. 4]{a}; \\citealp{b}} says"),
+   ("@a says", "\\citet{a} says"), ("@a [p. 4] says", "\\citet[p.~4]{a} says"),
+   ("@a [p. 4; @b] says", "\\citeauthor{a} \\citetext{\\citeyear[p.~4]{a}; \\citealp{b}} says"),
    ("@a [@b] says", "\\citeauthor{a} \\citetext{\\citeyear{a}; \\citealp{b}} says"),
-   ("[-@a]", "\\citeyearpar{a}"), ("[-@a, p. 3]", "\\citeyearpar[p. 3]{a}"),
+   ("[-@a]", "\\citeyearpar{a}"), ("[-@a, p. 3]", "\\citeyearpar[p.~3]{a}"),
    ("[see -@a]", "\\citeyearpar[see][]{a}"), ("[@a; -@b]", "\\citetext{\\citealp{a}; \\citeyear{b}}"),
    ("-@a says", "\\citeyearpar{a} says"),
    ("[@smith{ii, A, D-Z}, with a suffix]", "\\citep[ii, A, D-Z, with a suffix]{smith}"),
    ("[@smith{}, 99 years later]", "\\citep[, 99 years later]{smith}"),
    ("[*see* @a]", "\\citep[\\emph{see}][]{a}"), ("[@a, and *passim*]", "\\citep[and \\emph{passim}]{a}"),
-   ("[@a,p. 33]", "\\citep[p. 33]{a}"), ("[@a: p. 33]", "\\citep[p. 33]{a}"),
+   ("[@a,p. 33]", "\\citep[p.~33]{a}"), ("[@a: p. 33]", "\\citep[p.~33]{a}"),
    ("x @a-@b ends", "x \\citet{a}\\citeyearpar{b} ends"), ("[@a.]", "\\citep{a}"),
-   ("[@a. p. 3]", "\\citep[p. 3]{a}"), ("[@a! p. 3]", "\\citep[p. 3]{a}"), ("x...@a ends", "x...\\citet{a} ends"),
+   ("[@a. p. 3]", "\\citep[p.~3]{a}"), ("[@a! p. 3]", "\\citep[p.~3]{a}"), ("x...@a ends", "x...\\citet{a} ends"),
    ("x --@a ends", "x --\\citet{a} ends"), ("[--@a]", "\\citep[--][]{a}")]
 
 /-- Keys as Pandoc's `citeKey` reads them, with what stands after the key. -/
@@ -61,20 +61,19 @@ def keyCases : List (String × String × String) :=
    ("(*@a*) ends", "a", ") ends"), ("@{a{b}c} ends", "a{b}c", " ends")]
 
 /-- Text with an `@` that reads as no citation, and what the page keeps of it: Pandoc's readings,
-after a word, a closing emphasis or a backslash, and `@*`, `nocite`'s wildcard, which cites nothing
-in the body. -/
+after a word, a closing emphasis or a backslash. -/
 def notCites : List (String × String) :=
   [("mail x@example.org here", "x@example.org"), ("code `@a` here", "@a"),
    ("escaped \\@a here", "@a"), ("bracketed [x@y.org] here", "[x@y.org]"),
    ("joined [see@a] here", "[see@a]"), ("after a dot a.@b here", "a.@b"),
    ("closing *x*@a here", "@a"), ("closing _x_@a here", "@a"), ("closing **x**@a here", "@a"),
-   ("no key @-a here", "@-a"), ("no key @:a here", "@:a"), ("a wildcard @* here", "@*"),
+   ("no key @-a here", "@-a"), ("no key @:a here", "@:a"),
    ("an open brace @{a here", "@{a"), ("a spaced brace @{a b} here", "@{a b}")]
 
 /-- The citation forms a tex document writes that the twin spells, and how. -/
 def texTwinCases : List (String × String) :=
-  [("\\citep{a}", "[@a]"), ("\\citep[see][p. 3]{a,b}", "[see @a; @b, p. 3]"),
-   ("\\citet{a}", "@a"), ("\\citet[p. 4]{a}", "@a [p. 4]"), ("\\citeyearpar{a}", "[-@a]"),
+  [("\\citep{a}", "[@a]"), ("\\citep[see][p. 3]{a,b}", "[see @a; @b, p.&#32;3]"),
+   ("\\citet{a}", "@a"), ("\\citet[p. 4]{a}", "@a [p.&#32;4]"), ("\\citeyearpar{a}", "[-@a]"),
    ("\\citet{a} \\citep{b}", "@a&#32;[@b]"), ("x -\\citet{a}", "x -<!-- -->@a"),
    ("\\citet{a}\\citep{b}", "@a<!-- -->[@b]"), ("\\citep{a}\\citep{b}", "[@a]<!-- -->[@b]"),
    ("word\\citet{a}", "word<!-- -->@a"), ("x-\\citet{a}", "x-@a")]
@@ -100,9 +99,9 @@ def mdCiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- its comma.
   for md in ["[@a , p. 33]", "[@a\n, p. 33]"] do
     t s!"cite: {repr md}, its comma after white space, sets without the comma"
-      (citesOf (elabCited md).1 == citesOf (elabStr (dvDoc "" "\\citep[p. 33]{a}")).1)
+      (citesOf (elabCited md).1 == citesOf (elabStr (dvDoc "" "\\citep[p.~33]{a}")).1)
   t "cite: a suffix keeps a balanced bracket, which natbib's optional argument cannot hold"
-    ((citesOf (elabCited "[@a, p. 3 [note]]").1).map (·.1.post) == #["p. 3 [note]"])
+    ((citesOf (elabCited "[@a, p. 3 [note]]").1).map (·.1.post) == #["p.\u00a03 [note]"])
   for (md, key, after) in keyCases do
     let (d, _) := elabCited md
     t s!"cite: {repr md} cites {repr key}, then {repr after} as text"

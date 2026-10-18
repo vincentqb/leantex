@@ -400,6 +400,30 @@ private theorem natbibRaws_adm (items : List CiteRaws) (p : Pos) (h : NotesAdm d
         · exact h c (List.mem_cons_of_mem _ hc)
       · exact citeTextRaws_adm _ p h
 
+private theorem citeWorksRaws_adm (file : String) (items : Array CiteRaws) (p : Pos)
+    (hn : ∀ c ∈ items, Adm d c.pre ∧ Adm d c.post) : Adm d (citeWorksRaws file items p).1 := by
+  have hl : NotesAdm d items.toList := fun c hc => hn c (Array.mem_toList_iff.mp hc)
+  unfold citeWorksRaws
+  split
+  · exact adm_empty
+  · dsimp only
+    split
+    · exact natbibRaws_adm _ p hl
+    · split
+      · next first hfirst =>
+        have h1 : Adm d first.pre ∧ Adm d first.post := hn first (Array.mem_of_getElem? hfirst)
+        split
+        · split
+          · refine adm_append (adm_append (citeCmdRaws_adm _ _ _ _ _ (by simp [citeCtrls])
+              adm_empty adm_empty) (adm_lit (by simp [Vocab.admits]))) (citeTextRaws_adm _ p ?_)
+            intro c hc
+            rcases List.mem_cons.mp hc with rfl | hc
+            · exact h1
+            · exact hl c (List.mem_of_mem_drop hc)
+          · exact adm_text _ p
+        · exact citeTextRaws_adm _ p hl
+      · exact adm_empty
+
 private theorem dropSpaces_adm (l : List Raw) (h : ∀ r ∈ l, (vocabularyFor d).admits r = true) :
     ∀ r ∈ dropSpaces l, (vocabularyFor d).admits r = true :=
   fun r hr => h r ((List.dropWhile_sublist _).subset hr)
@@ -578,27 +602,13 @@ private theorem inlRaws_adm (file : String) : (x : Inl) → Adm d (inlRaws file 
   | .cite items p => by
     simp only [inlRaws]
     have hn := citeItemsRaws_adm file items.toList #[] #[] (by intro c hc; simp at hc)
-    have hl : NotesAdm d (citeItemsRaws file d #[] #[] items.toList).1.toList :=
-      fun c hc => hn c (Array.mem_toList_iff.mp hc)
     unfold citeGroupRaws
     dsimp only
-    split
-    · exact natbibRaws_adm _ p hl
+    refine adm_append (citeWorksRaws_adm file _ p fun c hc => ?_) ?_
+    · exact hn c (Array.mem_filter.mp hc).1
     · split
-      · next first hfirst =>
-        have h1 : Adm d first.pre ∧ Adm d first.post :=
-          hn first (Array.mem_of_getElem? hfirst)
-        split
-        · split
-          · refine adm_append (adm_append (citeCmdRaws_adm _ _ _ _ _ (by simp [citeCtrls])
-              adm_empty adm_empty) (adm_lit (by simp [Vocab.admits]))) (citeTextRaws_adm _ p ?_)
-            intro c hc
-            rcases List.mem_cons.mp hc with rfl | hc
-            · exact h1
-            · exact hl c (List.mem_of_mem_drop hc)
-          · exact adm_text _ p
-        · exact citeTextRaws_adm _ p hl
       · exact adm_empty
+      · exact citeCmdRaws_adm _ _ _ _ _ (by simp [citeCtrls]) adm_empty adm_empty
 
 private theorem closeLeading_adm (rs : Array Raw) (h : Adm d rs) : Adm d (closeLeading rs) := by
   unfold closeLeading

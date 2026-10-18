@@ -69,6 +69,7 @@ private def CitePunct.word (st : CitePunct × Bool) : CiteDecl.Word → CitePunc
   | .comma => ({ st.1 with sep := "," }, st.2)
   | .authoryear => ({ st.1 with numbers := false }, st.2)
   | .numbers => ({ st.1 with numbers := true }, st.2)
+  | .sectionTitle => st
 
 /-- One declaration over the punctuation and natbib's `\bibstyle` door, a package option as the
 words natbib executes for it. -/

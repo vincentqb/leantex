@@ -1763,7 +1763,8 @@ def citeKeyAt (c : Chars) (s : CiteScan) (i : Nat) : Option (Bool × String × N
     if m ≤ k + 1 then return none
     return some (dash, String.ofList (c.cs.extract (k + 1) m).toList, m + 1)
   let some first := c.at? k | return none
-  unless CiteKey.isAlnum first || first == '_' do return none
+  -- `*` opens a key too, Pandoc's citation of every entry.
+  unless CiteKey.isAlnum first || first == '_' || first == '*' do return none
   let mut key := String.singleton first
   let mut m := k + 1
   let reg (d : Option Char) : Bool := d.any fun d => CiteKey.isAlnum d || d == '_'
@@ -2088,6 +2089,99 @@ theorem htmlInlineAt_covers {file : String} {cs : Array Char} {i next : Nat} {p 
       · exact Or.inr ⟨key, Option.some.inj h2⟩
       · simp at h2
 
+/-- The index past the run from `i` of the characters `ok` admits. -/
+def takeWhileEnd (c : Chars) (i : Nat) (ok : Char → Bool) : Nat := Id.run do
+  let mut j := i
+  for _ in [0:c.size + 1] do
+    match c.at? j with
+    | some ch => if ok ch then j := j + 1 else break
+    | none => break
+  return j
+
+/-- A letter, Unicode's as Pandoc's `letter` reads it. -/
+def isLetterU (ch : Char) : Bool := ch.isAlpha || (ch.toNat > 127 && Nfc.isLetter ch)
+
+/-- The index past Pandoc's identifier at `i`: a letter, then letters, digits and `-_:.`. -/
+def identifierEnd? (c : Chars) (i : Nat) : Option Nat := do
+  let ch ← c.at? i
+  guard (isLetterU ch)
+  pure (takeWhileEnd c (i + 1) fun d => CiteKey.isAlnum d || "-_:.".contains d)
+
+/-- The index past one attribute value at `i`: quoted with escapes, or bare up to a space or `}`. -/
+def attrValueEnd? (c : Chars) (i : Nat) : Option Nat := Id.run do
+  match c.at? i with
+  | some q =>
+    if q == '"' || q == '\'' then
+      let mut j := i + 1
+      for _ in [0:c.size + 1] do
+        match c.at? j with
+        | some '\\' => j := j + 2
+        | some d => if d == q then return some (j + 1) else j := j + 1
+        | none => return none
+      return none
+    else
+      let mut j := i
+      for _ in [0:c.size + 1] do
+        match c.at? j with
+        | some '\\' => j := j + 2
+        | some d => if d == ' ' || d == '\t' || d == '\n' || d == '\r' || d == '}' then break
+                    else j := j + 1
+        | none => break
+      return some j
+  | none => some i
+
+/-- The index past Pandoc's attribute list at `i`, `{` then identifiers `#x`, classes `.x`, pairs
+`k=v` and `-` apart by `spnl`, then `}`; `none` where the braces hold no such list. -/
+def attributesEnd? (c : Chars) (i : Nat) : Option Nat := Id.run do
+  unless c.at? i == some '{' do return none
+  let mut j := spnlEnd c (i + 1)
+  for _ in [0:c.size + 1] do
+    match c.at? j with
+    | some '}' => return some (j + 1)
+    | some '#' =>
+      let k := takeWhileEnd c (j + 1) fun d => CiteKey.isAlnum d || "-_:.".contains d
+      if k == j + 1 then return none
+      j := spnlEnd c k
+    | some '.' =>
+      match identifierEnd? c (j + 1) with
+      | some k => j := spnlEnd c k
+      | none => return none
+    | some '-' => j := spnlEnd c (j + 1)
+    | some _ =>
+      match identifierEnd? c j with
+      | some k =>
+        unless c.at? k == some '=' do return none
+        match attrValueEnd? c (k + 1) with
+        | some m => j := spnlEnd c m
+        | none => return none
+      | none => return none
+    | none => return none
+  return none
+
+/-- Whether a bracket at `i` is Pandoc's `reference`: balanced brackets not opening `[^` or `[@`, an
+escape, a code span or a backtick run stepped over whole. -/
+def referenceAt (c : Chars) (ticks : Std.HashMap Nat (Array Nat)) (i : Nat) : Bool := Id.run do
+  unless c.at? i == some '[' do return false
+  if c.at? (i + 1) == some '^' || c.at? (i + 1) == some '@' then return false
+  let mut depth := 1
+  let mut j := i + 1
+  for _ in [0:c.size + 1] do
+    match c.at? j with
+    | none => return false
+    | some '\\' => j := j + 2
+    | some '`' =>
+      let n := tickRun c j
+      match codeSpanAt c ticks j n with
+      | some (_, next) => j := next
+      | none => j := j + n
+    | some '[' => depth := depth + 1; j := j + 1
+    | some ']' =>
+      if depth == 1 then return true
+      depth := depth - 1
+      j := j + 1
+    | some _ => j := j + 1
+  return false
+
 /-- How a text reads citations: not at all, every key where a document declares its bibliography,
 or in a Lean docstring only the keys its bibliography holds, with the keys doc-gen4's bracket rule
 cites (`docGenKeys`). -/
@@ -2175,7 +2269,9 @@ def scanInlines (file : String) (c : Chars) (dialect : Dialect := .document)
     | some ch =>
       -- An in-text citation's bracket follows it after spaces and one line ending at most.
       if let some (_, n) := tailFor then
-        let quiet := toks.size == n || (toks.size == n + 1 && toks.back? matches some (.soft _))
+        -- Two spaces ending the line are Pandoc's spaces there, its line break no break.
+        let quiet := toks.size == n || (toks.size == n + 1 &&
+          (toks.back? matches some (.soft _) | some (.hard _)))
         unless quiet && (ch == ' ' || ch == '\t' || ch == '\n' || ch == '[') do
           tailFor := none
       if ch == '\\' then
@@ -2212,7 +2308,8 @@ def scanInlines (file : String) (c : Chars) (dialect : Dialect := .document)
       else if ch == '&' then
         match entityAt c i with
         | some (v, next) =>
-          if tex then
+          -- A reference to a space is the text it names, never the spaces smart punctuation joins.
+          if tex || v == " " || v == "\t" then
             toks := flush toks pending pendingPos
             pending := ""
             toks := toks.push (.txt v p)
@@ -2314,12 +2411,14 @@ def scanInlines (file : String) (c : Chars) (dialect : Dialect := .document)
             unless image do inactiveBelow := stack.size
             i := next
           | none =>
-            -- premise: mdCiteChecks — a bracket is a citation group only where Pandoc reads one
+            -- premise: mdCiteChecks — a bracket is a citation group only where Pandoc reads one,
+            -- before no reference and no attribute list a span reads
             let after := c.at? (i + 1)
             -- A footnote's reference after the bracket is no label of it.
             let noteNext := (noteLabelAt c (i + 1)).any (defs.notes.contains ·.1)
-            let free := noteNext || !(after == some '[' || after == some '{')
-            let tailFree := free && after != some '('
+            let free := noteNext || (!(after == some '[' && referenceAt c ticks (i + 1)) &&
+              !(after == some '{' && (attributesEnd? c (i + 1)).isSome))
+            let tailFree := noteNext || (after != some '[' && after != some '{' && after != some '(')
             let scan : CiteScan := { closers, keyEnds, braces }
             -- A reference (§6.3): `[text][label]`, `[label][]`, or `[label]` before no label, the
             -- label's source and the index past the reference.
@@ -3930,11 +4029,7 @@ public def citeKeys (s : String) : Array String := Id.run do
   for _ in [0:c.size + 1] do
     if i ≥ c.size then break
     let scan : CiteScan := { closers := {}, keyEnds, braces }
-    if c.at? i == some '@' && c.at? (i + 1) == some '*' && citeMayOpen c scan i then
-      out := out.push "*"
-      i := i + 2
-      keyEnds := keyEnds.insert i
-    else if c.at? i == some '@' then
+    if c.at? i == some '@' then
       match citeKeyAt c scan i with
       | some (_, key, next) =>
         out := out.push key
