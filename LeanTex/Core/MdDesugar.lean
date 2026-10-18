@@ -749,12 +749,12 @@ private def blkRaws (file : String) (refs : Array Raw) (dialect : Dialect) :
     let word := ((info.split (fun c => c == ' ' || c == '\t')).find? (!·.isEmpty)).map
       (·.toString)
     match word with
-    | none => (#[.verb "verbatim" ("\n" ++ text) p], #[])
+    | none => (#[.verb "verbatim" (.plain ("\n" ++ text)) p], #[])
     | some w =>
       match Ir.listingLang? w with
-      | some l => (#[.verb "lstlisting" ("[language=" ++ l.val ++ "]\n" ++ text) p], #[])
+      | some l => (#[.verb "lstlisting" ⟨#[.language l], none, "", "\n" ++ text⟩ p], #[])
       | none =>
-        (#[.verb "verbatim" ("\n" ++ text) p],
+        (#[.verb "verbatim" (.plain ("\n" ++ text)) p],
          #[routeDegraded file "code-info"
             s!"the info word '{w}' is not a language a listing can carry: the code sets \
 without a language" p

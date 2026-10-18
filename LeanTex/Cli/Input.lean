@@ -132,9 +132,9 @@ public def readInput (dir : System.FilePath) (file name : String) (pos : Pos) :
   return (raws, log.diags ++ ds)
 
 /-- A listing command's file `name` beside the document, as the captured `env` its request's options
-and `head` open. -/
+and minted's `lang` open. -/
 private def readCodeFile (dir : System.FilePath) (request : Compat.InputRequest) (name env : String)
-    (head : String) : ReadM (Array Parse.Raw × Array Diag) := do
+    (lang : Option String) : ReadM (Array Parse.Raw × Array Diag) := do
   let path := dir / name
   unless ← path.pathExists do
     return (#[], #[DriverDiag.inputMissing name (some ⟨request.file, request.pos⟩) request.command])
@@ -143,21 +143,21 @@ private def readCodeFile (dir : System.FilePath) (request : Compat.InputRequest)
   | .ok bytes =>
     modify fun log => { log with reads := log.reads.push path.toString }
     let text := (← decodeOnce path.toString fun _ => Encoding.readMarkdown path.toString bytes).1.text
-    let opts := if request.options.isEmpty then "" else "[" ++ request.options ++ "]"
-    return (#[.verb env (opts ++ head ++ "\n" ++ text) request.pos], #[])
+    let opts := (KeyVal.items request.options).map .spelled
+    return (#[.verb env ⟨opts, lang, "", "\n" ++ text⟩ request.pos], #[])
 
 /-- minted's `\inputminted[options]{lang}{file}`: the file's text as the listing a `minted`
 environment of that language and those options sets. -/
 private def readMinted (dir : System.FilePath) (request : Compat.InputRequest) :
     ReadM (Array Parse.Raw × Array Diag) :=
   readCodeFile dir request request.second.trimAscii.toString "minted"
-    ("{" ++ request.name.trimAscii.toString ++ "}")
+    (some request.name.trimAscii.toString)
 
 /-- listings' `\lstinputlisting[options]{file}`: the file's text as the listing a `lstlisting`
 environment of those options sets. -/
 private def readListing (dir : System.FilePath) (request : Compat.InputRequest) :
     ReadM (Array Parse.Raw × Array Diag) :=
-  readCodeFile dir request request.name.trimAscii.toString "lstlisting" ""
+  readCodeFile dir request request.name.trimAscii.toString "lstlisting" none
 
 /-- The bibliography a Lean page or inclusion cites into: its files as the document names them, and
 their entries' keys. -/

@@ -749,14 +749,6 @@ public def ESt.freshReport (e : ESt) : ESt :=
     warnedUnknown := #[]
     runShapes := #[]
     spans := { e.spans with recoveryDiags := #[] } }
-/-- Where a listing body's content starts: past the option head and, for
-`{minted}`, its language argument. -/
-private def listingContentStart (env s : String) : Nat :=
-  let afterOpt := ((Parse.listingOptHead s).map (·.2)).getD 0
-  if env == "minted" then
-    ((Parse.mintedLangHead s afterOpt).map (·.2)).getD afterOpt
-  else afterOpt
-
 /-- A keyval value without its one surrounding brace group, as listings
 reads it. -/
 private def listingVal (v : String) : String := (KeyVal.unbrace v).trimAscii.toString
@@ -1499,7 +1491,7 @@ private def referencesParamCode (name : String) : List Raw → Bool
   | [] => false
   | .verb e s _ :: rest =>
     ((e == "mintinline" || e == "mint" || e == "lstinline") && name.startsWith "a" &&
-      (s.splitOn ("#" ++ (name.drop 1).toString)).length > 1) || referencesParamCode name rest
+      (s.src.splitOn ("#" ++ (name.drop 1).toString)).length > 1) || referencesParamCode name rest
   | .group body _ :: rest => referencesParamCode name body.toList || referencesParamCode name rest
   | .env _ body _ :: rest => referencesParamCode name body.toList || referencesParamCode name rest
   | .math _ body _ :: rest => referencesParamCode name body.toList || referencesParamCode name rest
@@ -4693,22 +4685,30 @@ private def keepsSize (bare : String) : Bool :=
 
 /-- A `\lstinline`'s options as inline code reads them: its language apart, a display's keys dropped,
 and a `basicstyle` of `\ttfamily` and size commands as the size its code sets in. -/
-private def lstInlineEntries (opts : String) : Option String × String :=
-  let entries := (KeyVal.items opts).toList.filter fun e =>
-    !Compat.listingDisplayKeys.contains (((KeyVal.pair? e).map (·.1)).getD e)
-  let lang := entries.foldl (fun l e => match KeyVal.pair? e with
-    | some ("language", v) => some (listingVal v)
-    | _ => l) none
-  let kept := entries.filterMap fun e => match KeyVal.pair? e with
-    | some ("language", _) => none
-    | some ("basicstyle", v) =>
-      let names := ((listingVal v).splitOn "\\").map (·.trimAscii.toString)
-      let sizes := names.tail.filter (· != "ttfamily")
-      if (names.headD "").isEmpty && sizes.all (fun n => Ir.sizeScale.any (·.1 == n)) then
-        sizes.getLast?.map ("fontsize=\\" ++ ·)
-      else some e
-    | _ => some e
-  (lang, ",".intercalate kept)
+private def lstInlineEntries (opts : Array Parse.ListingOpt) :
+    Option String × Array Parse.ListingOpt :=
+  let entries := opts.filter fun o => match o with
+    | .spelled e => !Compat.listingDisplayKeys.contains (((KeyVal.pair? e).map (·.1)).getD e)
+    | .language _ | .breakLines => true
+  let lang := entries.foldl (fun l o => match o with
+    | .spelled e => match KeyVal.pair? e with
+      | some ("language", v) => some (listingVal v)
+      | _ => l
+    | .language g => some g.val
+    | .breakLines => l) none
+  let kept := entries.filterMap fun o => match o with
+    | .spelled e => match KeyVal.pair? e with
+      | some ("language", _) => none
+      | some ("basicstyle", v) =>
+        let names := ((listingVal v).splitOn "\\").map (·.trimAscii.toString)
+        let sizes := names.tail.filter (· != "ttfamily")
+        if (names.headD "").isEmpty && sizes.all (fun n => Ir.sizeScale.any (·.1 == n)) then
+          sizes.getLast?.map fun n => .spelled ("fontsize=\\" ++ n)
+        else some o
+      | _ => some o
+    | .language _ => none
+    | .breakLines => some o
+  (lang, kept)
 
 private def noteFormatcom (ctx : Ctx) (pos : Pos) : EM Unit :=
   warnOnce ctx "lstopt:formatcom" .N0102
@@ -4756,64 +4756,68 @@ private structure InlineCodeOpts where
 
 /-- Inline code's options as minted reads them there; a key inline code does
 not honour is named. -/
-private def inlineCodeOpts (ctx : Ctx) (opts : String) (pos : Pos) (listings : Bool := false) :
-    EM InlineCodeOpts := do
+private def inlineCodeOpts (ctx : Ctx) (opts : Array Parse.ListingOpt) (pos : Pos)
+    (listings : Bool := false) : EM InlineCodeOpts := do
   let unhonoured (item key msg : String) (help : Option String) : EM Unit := do
     noteMentions item
     warnOnce ctx ("lstopt:" ++ msg ++ ":" ++ key) .W0110 msg pos (help := help)
   let mut o : InlineCodeOpts := {}
-  for bare in KeyVal.items opts do
-    let key := ((KeyVal.pair? bare).map (·.1)).getD bare
-    if key == "formatcom" || bare.startsWith "formatcom=" then
-      noteMentions bare
-      noteFormatcom ctx pos
-      continue
-    -- premise: inlineCodeChecks — display keys leave inline code unchanged
-    if Compat.mintedDisplayKeys.contains key then
-      continue
-    if keepsSize bare then
-      o := { o with size := none }
-      continue
-    match KeyVal.pair? bare with
-    | some ("fontsize", v) =>
-      let v := listingVal v
-      match sizeCommand? v with
-        | some name => o := { o with size := some (.size name) }
+  for opt in opts do
+    match opt with
+    | .breakLines => o := { o with breakLines := true }
+    | .language _ => pure ()
+    | .spelled bare =>
+      let key := ((KeyVal.pair? bare).map (·.1)).getD bare
+      if key == "formatcom" || bare.startsWith "formatcom=" then
+        noteMentions bare
+        noteFormatcom ctx pos
+        continue
+      -- premise: inlineCodeChecks — display keys leave inline code unchanged
+      if Compat.mintedDisplayKeys.contains key then
+        continue
+      if keepsSize bare then
+        o := { o with size := none }
+        continue
+      match KeyVal.pair? bare with
+      | some ("fontsize", v) =>
+        let v := listingVal v
+        match sizeCommand? v with
+          | some name => o := { o with size := some (.size name) }
+          | none =>
+            unhonoured bare key s!"inline code fontsize '{v}' is not a supported size command; the size \
+  around it stands" "use a named size command such as fontsize=\\small, or fontsize=\\relax"
+      | some ("style", v) =>
+        let v := listingVal v
+        -- listings' `style` names an `\lstdefinestyle` style, minted's a highlighting style.
+        match Ir.ListingStyle.ofName? v, listings with
+        | some selected, false => o := { o with style := some selected }
+        | _, true =>
+          unhonoured bare key s!"listing named style '{v}' is not supported; the current style stands"
+            none
+        | none, false =>
+          unhonoured bare key s!"listing style '{v}' is not supported; the current style stands"
+            "use style=default or style=friendly"
+      | some ("tabsize", v) =>
+        let v := listingVal v
+        -- FancyVerb's upper bound (fancyvrb.sty, the FV/tabsize key).
+        match v.toNat? with
+        | some n =>
+          if 0 < n && n ≤ 100 then o := { o with tabSize := n }
+          else unhonoured bare key s!"listing tabsize '{v}' is outside 1..100; \
+  the current tab stops stand" none
         | none =>
-          unhonoured bare key s!"inline code fontsize '{v}' is not a supported size command; the size \
-around it stands" "use a named size command such as fontsize=\\small, or fontsize=\\relax"
-    | some ("style", v) =>
-      let v := listingVal v
-      -- listings' `style` names an `\lstdefinestyle` style, minted's a highlighting style.
-      match Ir.ListingStyle.ofName? v, listings with
-      | some selected, false => o := { o with style := some selected }
-      | _, true =>
-        unhonoured bare key s!"listing named style '{v}' is not supported; the current style stands"
-          none
-      | none, false =>
-        unhonoured bare key s!"listing style '{v}' is not supported; the current style stands"
-          "use style=default or style=friendly"
-    | some ("tabsize", v) =>
-      let v := listingVal v
-      -- FancyVerb's upper bound (fancyvrb.sty, the FV/tabsize key).
-      match v.toNat? with
-      | some n =>
-        if 0 < n && n ≤ 100 then o := { o with tabSize := n }
-        else unhonoured bare key s!"listing tabsize '{v}' is outside 1..100; \
-the current tab stops stand" none
+          unhonoured bare key s!"listing tabsize '{v}' is not an integer; \
+  the current tab stops stand" none
+      | some ("breaklines", v) =>
+        let v := listingVal v
+        if v == "true" then o := { o with breakLines := true }
+        else if v == "false" then o := { o with breakLines := false }
+        else unhonoured bare key s!"listing breaklines '{v}' is not true or false; \
+  the current wrapping stands" none
+      | some (k, _) => unhonoured bare key s!"inline code key '{k}' is not honoured; ignored" none
       | none =>
-        unhonoured bare key s!"listing tabsize '{v}' is not an integer; \
-the current tab stops stand" none
-    | some ("breaklines", v) =>
-      let v := listingVal v
-      if v == "true" then o := { o with breakLines := true }
-      else if v == "false" then o := { o with breakLines := false }
-      else unhonoured bare key s!"listing breaklines '{v}' is not true or false; \
-the current wrapping stands" none
-    | some (k, _) => unhonoured bare key s!"inline code key '{k}' is not honoured; ignored" none
-    | none =>
-      if bare == "breaklines" then o := { o with breakLines := true }
-      else unhonoured bare key s!"inline code key '{bare}' is not honoured; ignored" none
+        if bare == "breaklines" then o := { o with breakLines := true }
+        else unhonoured bare key s!"inline code key '{bare}' is not honoured; ignored" none
   -- premise: codeRoleChecks — the style is inert under a full palette
   if let some declared := o.style then
     let pal := (← get).scope.palette.current.getD ctx.palette
@@ -4860,7 +4864,9 @@ private def inlineCodeOf (ctx : Ctx) (lang : Option Ir.ListingLang) (lines : Arr
 /-- Verbatim inside inline content: `\verb` in the mono face, `\mintinline`
 as inline code, url.sty's delimited commands as their braced forms, and a display listing named
 and set as inline code. -/
-private def inlineVerbatim (ctx : Ctx) (env s : String) (pos : Pos) : EM (Array Inline) := do
+private def inlineVerbatim (ctx : Ctx) (env : String) (v : Parse.Verbatim) (pos : Pos) :
+    EM (Array Inline) := do
+  let s := v.text
   if Lex.urlCommands.contains env then
     -- url.sty's delimited argument: the text between its delimiter's two copies.
     let inner := (s.drop 1).toString
@@ -4869,34 +4875,36 @@ private def inlineVerbatim (ctx : Ctx) (env s : String) (pos : Pos) : EM (Array 
   if env == "verb" then
     let kept := s.map fun c => if c == ' ' then '\u00a0' else c
     return if kept.isEmpty then #[] else #[.styled .mono #[.text kept]]
-  let (opts, afterOpt) := (Parse.listingOptHead s).getD ("", 0)
   if env == "mintinline" || env == "mint" then
-    let some (rawLang, afterLang) := Parse.mintedLangHead s afterOpt | return #[]
+    let some rawLang := v.lang | return #[]
     if env == "mint" then
       warnOnce ctx "listing-inline:mint" .W0413
         "'\\mint' within a line of text or an argument is set as inline code; LaTeX sets a \
 display there, or cannot set it" pos
         (help := s!"write \\mintinline\{{rawLang.trimAscii.toString}}\{…} for inline code, or put \
 '\\mint' on a line of its own for a display")
-    let o ← inlineCodeOpts ctx opts pos
+    let o ← inlineCodeOpts ctx v.opts pos
     let lang ← codeLanguage ctx rawLang true pos
-    return ← inlineCodeOf ctx lang #[bindCodeParams ctx (Parse.mintedCode s afterLang)] o
+    return ← inlineCodeOf ctx lang #[bindCodeParams ctx (Parse.mintedCode s 0)] o
   if env == "lstinline" then
-    let (rawLang, rest) := lstInlineEntries opts
+    let (rawLang, rest) := lstInlineEntries v.opts
     let o ← inlineCodeOpts ctx rest pos (listings := true)
     let lang ← match rawLang with
       | some l => codeLanguage ctx l false pos
       | none => pure none
-    return ← inlineCodeOf ctx lang #[bindCodeParams ctx (Parse.mintedCode s afterOpt)] o
-  let lines := Ir.verbatimLines (s.drop (listingContentStart env s)).toString
-  let (rawLang, opts) : Option String × String :=
-    if env == "minted" then (((Parse.mintedLangHead s afterOpt).map (·.1)), opts)
+    return ← inlineCodeOf ctx lang #[bindCodeParams ctx (Parse.mintedCode s 0)] o
+  let lines := Ir.verbatimLines s
+  let langOf : Parse.ListingOpt → Option String
+    | .spelled e => match KeyVal.pair? e with
+      | some ("language", l) => some (listingVal l)
+      | _ => none
+    | .language l => some l.val
+    | .breakLines => none
+  let (rawLang, opts) : Option String × Array Parse.ListingOpt :=
+    if env == "minted" then (v.lang, v.opts)
     else if env == "lstlisting" then
-      let entries := (KeyVal.items opts).toList
-      let isLang (e : String) := ((KeyVal.pair? e).map (·.1)) == some "language"
-      ((entries.find? isLang).bind fun e => (KeyVal.pair? e).map (listingVal ·.2),
-        ",".intercalate (entries.filter (!isLang ·)))
-    else (none, opts)
+      ((v.opts.filterMap langOf).back?, v.opts.filter (langOf · |>.isNone))
+    else (none, v.opts)
   warnOnce ctx ("listing-inline:" ++ env) .W0411
     s!"'\\begin\{{env}}' within a line of text or an argument does not compile under LaTeX; \
 it is set as inline code" pos
@@ -9761,7 +9769,8 @@ private def tabularArm (ctx : Ctx) (n : String) (body : Array Raw)
 
 /-- Whether a verbatim runs inline: `\verb` and `\mintinline` always, and a
 one-line listing environment when text shares its paragraph. -/
-private def verbRunsInline (env s : String) (cur raws : Array Raw) (i : Nat) : Bool :=
+private def verbRunsInline (env : String) (v : Parse.Verbatim) (cur raws : Array Raw) (i : Nat) :
+    Bool :=
   let text (r : Raw) : Bool := match r with
     | .word .. => true
     | .math display _ _ => !display
@@ -9774,23 +9783,18 @@ private def verbRunsInline (env s : String) (cur raws : Array Raw) (i : Nat) : B
       if bodyIsBlockOne r then return false
     return false
   verbAlwaysInline env ||
-    ((env == "minted" || env == "lstlisting") && !s.contains '\n' && (cur.any text || after))
+    ((env == "minted" || env == "lstlisting") && !v.src.contains '\n' && (cur.any text || after))
 
 /-- A listing block from a lexically blind capture, honouring the supported
 listings and minted keys and naming every other key or value. -/
-private def listingBlock (ctx : Ctx) (env s : String) (pos : Pos) : EM Block := do
+private def listingBlock (ctx : Ctx) (env : String) (v : Parse.Verbatim) (pos : Pos) :
+    EM Block := do
   -- `\mint` is minted's one-line environment (minted.sty v3.7).
-  let (env, s, opener) := if env == "mint" then
-      let afterOpt := ((Parse.listingOptHead s).map (·.2)).getD 0
-      let afterLang := ((Parse.mintedLangHead s afterOpt).map (·.2)).getD afterOpt
-      ("minted", (s.take afterLang).toString ++ bindCodeParams ctx (Parse.mintedCode s afterLang) ++
-        "\n", "\\mint")
-    else (env, s, "\\begin{" ++ env ++ "}")
-  if (env == "minted" || env == "lstlisting") && !s.contains '\n' then
-    let lang := if env == "minted" then
-        (((Parse.mintedLangHead s ((Parse.listingOptHead s).map (·.2) |>.getD 0)).map
-          (·.1.trimAscii.toString)).getD "")
-      else ""
+  let (env, v, opener) := if env == "mint" then
+      ("minted", { v with text := bindCodeParams ctx (Parse.mintedCode v.text 0) ++ "\n" }, "\\mint")
+    else (env, v, "\\begin{" ++ env ++ "}")
+  if (env == "minted" || env == "lstlisting") && !v.src.contains '\n' then
+    let lang := if env == "minted" then (v.lang.map (·.trimAscii.toString)).getD "" else ""
     warnOnce ctx ("listing-oneline:" ++ env) .W0411
       s!"'\\begin\{{env}}' with its code on the same line does not compile under LaTeX; it \
 is set as a display listing" pos
@@ -9803,12 +9807,10 @@ is set as a display listing" pos
     | _ => size) base.fontSize
   let sourceStart := opener.foldl (fun p c => p.next (c == '\n')) pos
   if env == "verbatim" then
-    return .verbatim none s
+    return .verbatim none v.text
       { base with
         fontSize := inherited, source := some (ctx.sourceSpan sourceStart)
         frame := Ir.ListingFrame.onPage ctx.surface ctx.lists ctx.page.parskip .trivlist }
-  let (opts, afterOpt) := (Parse.listingOptHead s).getD ("", 0)
-  let mut content := s
   let mut caption : Option String := none
   let mut label : Option String := none
   let mut numbers := false
@@ -9823,112 +9825,113 @@ is set as a display listing" pos
     noteMentions item
     warnOnce ctx ("lstopt:" ++ msg ++ ":" ++ key) .W0110 msg pos (help := help)
   let langOf (raw : String) : EM (Option Ir.ListingLang) := codeLanguage ctx raw (env == "minted") pos
-  for bare in KeyVal.items opts do
-    let key := ((KeyVal.pair? bare).map (·.1)).getD bare
-    if env == "minted" && ((KeyVal.pair? bare).map (·.1) == some "formatcom" ||
-        bare == "formatcom" || bare.startsWith "formatcom=") then
-      noteMentions bare
-      noteFormatcom ctx pos
-      continue
-    if env == "minted" && keepsSize bare then
-      fontSize := inherited
-      continue
-    match KeyVal.pair? bare with
-    | some ("caption", v) =>
-      let v := listingVal v
-      caption := if v.isEmpty then none else some v
-    | some ("label", v) => label := some (listingVal v)
-    | some ("numbers", v) =>
-      let v := v.trimAscii.toString
-      if v == "left" then numbers := true
-      else if v == "none" then numbers := false
-      else
-        unhonoured bare key s!"'numbers={v}' asks for a numbering the engine \
-does not draw; lines keep no numbers" "numbers=left draws them"
-    | some ("linenos", v) =>
-      numbers := v.trimAscii.toString != "false"
-    | some ("language", v) =>
-      if env == "minted" then
-        unhonoured bare key "minted has no key 'language'; the language argument names the lexer"
-          s!"name the language in \\begin\{minted}\{{(listingVal v).trimAscii.toString}}"
-      else language ← langOf (listingVal v)
-    | some ("style", v) =>
-      let v := listingVal v
-      if env == "minted" then
-        match Ir.ListingStyle.ofName? v with
-        | some selected => style := some selected
-        | none =>
+  for opt in v.opts do
+    match opt with
+    | .language l => language ← langOf l.val
+    | .breakLines => breakLines := true
+    | .spelled bare =>
+      let key := ((KeyVal.pair? bare).map (·.1)).getD bare
+      if env == "minted" && ((KeyVal.pair? bare).map (·.1) == some "formatcom" ||
+          bare == "formatcom" || bare.startsWith "formatcom=") then
+        noteMentions bare
+        noteFormatcom ctx pos
+        continue
+      if env == "minted" && keepsSize bare then
+        fontSize := inherited
+        continue
+      match KeyVal.pair? bare with
+      | some ("caption", v) =>
+        let v := listingVal v
+        caption := if v.isEmpty then none else some v
+      | some ("label", v) => label := some (listingVal v)
+      | some ("numbers", v) =>
+        let v := v.trimAscii.toString
+        if v == "left" then numbers := true
+        else if v == "none" then numbers := false
+        else
+          unhonoured bare key s!"'numbers={v}' asks for a numbering the engine \
+  does not draw; lines keep no numbers" "numbers=left draws them"
+      | some ("linenos", v) =>
+        numbers := v.trimAscii.toString != "false"
+      | some ("language", v) =>
+        if env == "minted" then
+          unhonoured bare key "minted has no key 'language'; the language argument names the lexer"
+            s!"name the language in \\begin\{minted}\{{(listingVal v).trimAscii.toString}}"
+        else language ← langOf (listingVal v)
+      | some ("style", v) =>
+        let v := listingVal v
+        if env == "minted" then
+          match Ir.ListingStyle.ofName? v with
+          | some selected => style := some selected
+          | none =>
+            unhonoured bare key
+              s!"listing style '{v}' is not supported; the current style stands"
+              "use style=default or style=friendly"
+        else
           unhonoured bare key
-            s!"listing style '{v}' is not supported; the current style stands"
-            "use style=default or style=friendly"
-      else
-        unhonoured bare key
-          s!"listing named style '{v}' is not supported; the current style stands" none
-    | some ("fontsize", v) =>
-      let v := listingVal v
-      if env == "minted" && (sizeCommand? v).isSome then
-        fontSize := .size ((sizeCommand? v).getD "normalsize")
-      else
-        unhonoured bare key s!"listing fontsize '{v}' is not a supported size command; \
-the current size stands" "use a named size command such as fontsize=\\small, or fontsize=auto"
-    | some ("tabsize", v) =>
-      let v := listingVal v
-      -- FancyVerb's upper bound (fancyvrb.sty, the FV/tabsize key).
-      match v.toNat? with
-      | some n =>
-        if 0 < n && n ≤ 100 then tabSize := n
-        else unhonoured bare key s!"listing tabsize '{v}' is outside 1..100; \
-the current tab stops stand" none
+            s!"listing named style '{v}' is not supported; the current style stands" none
+      | some ("fontsize", v) =>
+        let v := listingVal v
+        if env == "minted" && (sizeCommand? v).isSome then
+          fontSize := .size ((sizeCommand? v).getD "normalsize")
+        else
+          unhonoured bare key s!"listing fontsize '{v}' is not a supported size command; \
+  the current size stands" "use a named size command such as fontsize=\\small, or fontsize=auto"
+      | some ("tabsize", v) =>
+        let v := listingVal v
+        -- FancyVerb's upper bound (fancyvrb.sty, the FV/tabsize key).
+        match v.toNat? with
+        | some n =>
+          if 0 < n && n ≤ 100 then tabSize := n
+          else unhonoured bare key s!"listing tabsize '{v}' is outside 1..100; \
+  the current tab stops stand" none
+        | none =>
+          unhonoured bare key s!"listing tabsize '{v}' is not an integer; \
+  the current tab stops stand" none
+      | some ("bgcolor", v) =>
+        let v := listingVal v
+        if env != "minted" then
+          unhonoured bare key "listing key 'bgcolor' is not honoured; ignored" none
+        else if v == "none" || v.isEmpty then ground := none
+        else
+          noteColorReads v
+          match ctx.palette.resolveSource none v with
+          | .ok (some c) => ground := some (c, ctx.palette.refOf? v)
+          | _ =>
+            unhonoured bare key s!"listing bgcolor '{v}' names no colour; the listing keeps the \
+  ground it stands on" none
+      | some ("breaklines", v) =>
+        let v := listingVal v
+        if v == "true" then breakLines := true
+        else if v == "false" then breakLines := false
+        else unhonoured bare key s!"listing breaklines '{v}' is not true or false; \
+  the current wrapping stands" none
+      | some ("basicstyle", v) =>
+        let v := listingVal v
+        let names := v.splitOn "\\"
+        let valid := env == "lstlisting" && (names.headD "").trimAscii.isEmpty &&
+          names.tail.all (fun name => let name := name.trimAscii.toString
+            name == "ttfamily" || Ir.sizeScale.any (·.1 == name))
+        if valid then
+          fontSize := names.tail.foldl (fun size name =>
+            let name := name.trimAscii.toString
+            if name == "ttfamily" then size else .size name) inherited
+        else
+          unhonoured bare key "listing basicstyle supports only \\ttfamily and named \
+  size commands; the current style stands" none
+      | some (k, _) =>
+        unhonoured bare key s!"listing key '{k}' is not honoured; ignored" none
       | none =>
-        unhonoured bare key s!"listing tabsize '{v}' is not an integer; \
-the current tab stops stand" none
-    | some ("bgcolor", v) =>
-      let v := listingVal v
-      if env != "minted" then
-        unhonoured bare key "listing key 'bgcolor' is not honoured; ignored" none
-      else if v == "none" || v.isEmpty then ground := none
-      else
-        noteColorReads v
-        match ctx.palette.resolveSource none v with
-        | .ok (some c) => ground := some (c, ctx.palette.refOf? v)
-        | _ =>
-          unhonoured bare key s!"listing bgcolor '{v}' names no colour; the listing keeps the \
-ground it stands on" none
-    | some ("breaklines", v) =>
-      let v := listingVal v
-      if v == "true" then breakLines := true
-      else if v == "false" then breakLines := false
-      else unhonoured bare key s!"listing breaklines '{v}' is not true or false; \
-the current wrapping stands" none
-    | some ("basicstyle", v) =>
-      let v := listingVal v
-      let names := v.splitOn "\\"
-      let valid := env == "lstlisting" && (names.headD "").trimAscii.isEmpty &&
-        names.tail.all (fun name => let name := name.trimAscii.toString
-          name == "ttfamily" || Ir.sizeScale.any (·.1 == name))
-      if valid then
-        fontSize := names.tail.foldl (fun size name =>
-          let name := name.trimAscii.toString
-          if name == "ttfamily" then size else .size name) inherited
-      else
-        unhonoured bare key "listing basicstyle supports only \\ttfamily and named \
-size commands; the current style stands" none
-    | some (k, _) =>
-      unhonoured bare key s!"listing key '{k}' is not honoured; ignored" none
-    | none =>
-      if bare == "linenos" then numbers := true
-      else if bare == "breaklines" then breakLines := true
-      else unhonoured bare key s!"listing key '{bare}' is not honoured; ignored" none
+        if bare == "linenos" then numbers := true
+        else if bare == "breaklines" then breakLines := true
+        else unhonoured bare key s!"listing key '{bare}' is not honoured; ignored" none
   if env == "minted" then
-    match Parse.mintedLangHead s afterOpt with
-    | some (lang, _) => language ← langOf lang
+    match v.lang with
+    | some lang => language ← langOf lang
     | none =>
       diag ctx .E0304 s!"'\\begin\{minted}' needs its \{language} argument" (some pos)
-    content := (s.drop (listingContentStart env s)).toString
-  else
-    content := (s.drop afterOpt).toString
-  let sourcePrefix := if env == "minted" then listingContentStart env s else afterOpt
-  let contentPos := (s.take sourcePrefix).toString.foldl (fun p c => p.next (c == '\n')) sourceStart
+  let content := v.text
+  let contentPos := v.head.foldl (fun p c => p.next (c == '\n')) sourceStart
   let spec : Ir.ListingSpec := {
     numbers := numbers
     language := language

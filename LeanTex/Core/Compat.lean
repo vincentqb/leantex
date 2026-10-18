@@ -1803,10 +1803,10 @@ private def bindRawArgsRaw (args : Array (Array Raw)) : Raw → Raw
   | .par p => .par p
   | .ctrl n p => .ctrl n p
   | .sym c p => .sym c p
-  | .verb e s p =>
+  | .verb e v p =>
     if e == "mintinline" || e == "mint" || e == "lstinline" || Lex.urlCommands.contains e then
-      .verb e (bindMintedParams args s) p
-    else .verb e s p
+      .verb e (.read e (bindMintedParams args v.src)) p
+    else .verb e v p
 
 end
 
@@ -13122,7 +13122,7 @@ public inductive LiteralRaws : List Raw → Prop where
       LiteralRaws (.word text pos :: rest)
   | space : LiteralRaws rest → LiteralRaws (.space :: rest)
   | par (pos : Pos) : LiteralRaws rest → LiteralRaws (.par pos :: rest)
-  | verb (env text : String) (pos : Pos) : LiteralRaws rest →
+  | verb (env : String) (text : Parse.Verbatim) (pos : Pos) : LiteralRaws rest →
       LiteralRaws (.verb env text pos :: rest)
 
 private theorem rewriteList_literal_prefix (inBody : Bool) (raws out : Array Raw)
@@ -14976,12 +14976,8 @@ private structure TextSt where
 
 /-- The standing entries injected ahead of an environment's
 own options, which win. -/
-private def injectListingOpts (opts : Array String) (s : String) : String :=
-  if opts.isEmpty then s else
-  let joined := String.intercalate "," opts.toList
-  match Parse.listingOptHead s with
-  | some (o, past) => "[" ++ joined ++ "," ++ o ++ "]" ++ (s.drop past).toString
-  | none => "[" ++ joined ++ "]" ++ s
+private def injectListingOpts (opts : Array String) (v : Parse.Verbatim) : Parse.Verbatim :=
+  { v with opts := opts.map .spelled ++ v.opts }
 
 /-- The layers a listing of `env` in `lang` reads, in the order its options stack: `\lstset`'s for
 a `lstlisting` and `\lstinline`, minted's global and lexer layers for minted's display, and the
@@ -15007,10 +15003,9 @@ private def markRead (ids : Array Nat) : M Unit :=
     write fun s => { s with listingDefaults := ids.foldl (fun ds i =>
       ds.modify i fun d => { d with read := true }) s.listingDefaults }
 
-/-- The lexer a minted call names, its options aside. -/
-private def mintedLang (s : String) : String :=
-  let afterOpt := ((Parse.listingOptHead s).map (·.2)).getD 0
-  ((Parse.mintedLangHead s afterOpt).map (·.1.trimAscii.toString)).getD ""
+/-- The lexer a minted call names. -/
+private def mintedLang (v : Parse.Verbatim) : String :=
+  (v.lang.map (·.trimAscii.toString)).getD ""
 
 /-- Records a listing default the document itself declares at the pass's top level, and its
 index; a definition's body or a group's is no standing declaration. -/
@@ -15078,8 +15073,8 @@ private def siCtrls : List String :=
 
 /-- A minted call with the standing defaults injected ahead
 of its own options. -/
-private def injectMinted (st : TextSt) (env s : String) : String :=
-  injectListingOpts (readEntries st env (mintedLang s)) s
+private def injectMinted (st : TextSt) (env : String) (v : Parse.Verbatim) : Parse.Verbatim :=
+  injectListingOpts (readEntries st env (mintedLang v)) v
 
 /-- The head of a minted call a definition's text is, alone, or `none`. -/
 private def shortcutHead (raws : Array Raw) (j : Nat) : Option (Array Raw) := do
@@ -15098,9 +15093,11 @@ private def shortcutHead (raws : Array Raw) (j : Nat) : Option (Array Raw) := do
 
 /-- minted's command met as a control word, its call
 assembled by a definition's text. -/
-private def mintedRaws (raws : Array Raw) (start : Nat) : Option (String × Nat × Option Raw) := Id.run do
+private def mintedRaws (raws : Array Raw) (start : Nat) :
+    Option (Parse.Verbatim × Nat × Option Raw) := Id.run do
   let mut k := skipSpaces raws start
   let mut head := ""
+  let mut opts := #[]
   if raws[k]? matches some (.sym '[' _) then
     let mut m := k + 1
     let mut shut := false
@@ -15112,13 +15109,16 @@ private def mintedRaws (raws : Array Raw) (start : Nat) : Option (String × Nat 
       | some _ => m := m + 1
       | none => break
     unless shut do return none
-    head := "[" ++ Parse.rawSrcList (raws.extract (k + 1) m).toList ++ "]"
+    let spelled := Parse.rawSrcList (raws.extract (k + 1) m).toList
+    opts := (KeyVal.items spelled).map .spelled
+    head := "[" ++ spelled ++ "]"
     k := skipSpaces raws (m + 1)
   let some (.group lang _) := raws[k]? | return none
   head := head ++ "{" ++ Parse.rawSrc lang ++ "}"
+  let call (text : String) : Parse.Verbatim := ⟨opts, some (Parse.rawSrc lang), head, text⟩
   let c := skipSpaces raws (k + 1)
   match raws[c]? with
-  | some (.group code _) => return some (head ++ "{" ++ Parse.rawSrcList code.toList ++ "}", c + 1, none)
+  | some (.group code _) => return some (call ("{" ++ Parse.rawSrcList code.toList ++ "}"), c + 1, none)
   | some (.word w p) =>
     let some d := w.toList.head? | return none
     let mut text := ""
@@ -15128,7 +15128,7 @@ private def mintedRaws (raws : Array Raw) (start : Nat) : Option (String × Nat 
       match rest.splitOn (String.singleton d) with
       | before :: after :: more =>
         let tail := String.intercalate (String.singleton d) (after :: more)
-        return some (head ++ String.singleton d ++ text ++ before ++ String.singleton d, m + 1,
+        return some (call (String.singleton d ++ text ++ before ++ String.singleton d), m + 1,
           if tail.isEmpty then none else some (.word tail p))
       | _ =>
         text := text ++ rest
@@ -15197,7 +15197,7 @@ private def textList (loc : Locale) (st : TextSt) (raws : Array Raw)
       textList loc st raws out rest (i + 1) (k - (i + 1))
     else if (n == "mintinline" || n == "mint") && !st.defined.contains n &&
         (mintedRaws raws (i + 1)).isSome then
-      let (call, k, tail) := (mintedRaws raws (i + 1)).getD ("", i + 1, none)
+      let (call, k, tail) := (mintedRaws raws (i + 1)).getD (.plain "", i + 1, none)
       markRead (readIds st n (mintedLang call))
       let out := out.push (.verb n (injectMinted st n call) pos)
       textList loc st raws (match tail with | some r => out.push r | none => out) rest (i + 1)
@@ -15214,7 +15214,7 @@ private def textList (loc : Locale) (st : TextSt) (raws : Array Raw)
     -- A document's own `\mintinline` is the command its calls run.
     if (env == "mintinline" || env == "mint" || env == "lstinline" || Lex.urlCommands.contains env) &&
         st.defined.contains env then
-      let args := (verbatimRaws (← get).file s).map (rebase (fun _ => vpos) true)
+      let args := (verbatimRaws (← get).file s.src).map (rebase (fun _ => vpos) true)
       return ← textList loc st raws ((out.push (.ctrl env vpos)) ++ args) rest (i + 1) 0
     if env == "lstlisting" || env == "lstinline" then markRead (readIds st env "")
     else if env == "minted" || env == "mint" || env == "mintinline" then

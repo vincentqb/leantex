@@ -1237,15 +1237,15 @@ public def Prose.place (pr : Prose) (p : Pos) : Pos :=
 
 /-! ## The document -/
 
-/-- The option head of a code language's listings, its language crossing as the IR's own value. -/
-public def listingHead (lang : Ir.CodeLang) : String :=
+/-- The options of a code language's listings, its language crossing as the IR's own value. -/
+public def listingOpts (lang : Ir.CodeLang) : Array Parse.ListingOpt :=
   match Ir.listingLang? lang.listing with
-  | some l => "[language=" ++ l.val ++ "]"
-  | none => ""
+  | some l => #[.language l]
+  | none => #[]
 
-/-- A listing of code under its language's head. -/
+/-- A listing of code under its language's options. -/
 public def listingRaw (lang : Ir.CodeLang) (code : String) (p : Pos) : Raw :=
-  .verb "lstlisting" (listingHead lang ++ "\n" ++ code) p
+  .verb "lstlisting" ⟨listingOpts lang, none, "", "\n" ++ code⟩ p
 
 /-- The inline raws of the heading a raw opens, given the raws after it. -/
 @[expose] public def headingBody? (r : Raw) : List Raw → Option (Array Raw)
@@ -2225,9 +2225,9 @@ code. -/
 trailing white space aside. -/
 @[expose] public def listingAt (starts : Array Nat) (start : Nat) (code : List Char) : Array Raw :=
   let body := (code.reverse.dropWhile isWhite).reverse
-  let head := ((listingHead .lean).dropEnd 1).toString ++ ",breaklines]"
   if body.isEmpty then #[] else
-    #[.verb "lstlisting" (head ++ "\n" ++ String.ofList body) { line := (lineCol starts start).1 - 1 }]
+    #[.verb "lstlisting" ⟨(listingOpts .lean).push .breakLines, none, "", "\n" ++ String.ofList body⟩
+      { line := (lineCol starts start).1 - 1 }]
 
 /-- Names in backticks, the last after "or". -/
 public def namesOr (names : List String) : String :=

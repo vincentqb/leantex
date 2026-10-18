@@ -17,7 +17,7 @@ example : Repr Raw := inferInstance
 example (p : Pos) (body : Array Raw) : Array Raw :=
   #[.word "alpha" p, .space, .par p, .ctrl "beta" p, .sym '+' p,
     .group body p, .math false body p, .env "gamma" body p,
-    .verb "verbatim" "delta" p]
+    .verb "verbatim" (.plain "delta") p]
 
 example (raw : Raw) : Option Pos :=
   match raw with
@@ -36,8 +36,8 @@ example : String → Option String := splitOpen?
 example : String → Option String := splitClose?
 example : String → String → Array Raw → Pos → Array Raw × Diag := settleOpenHalf
 example : String → String → Pos → Diag := closeHalfDiag
-example : String → Option (String × Nat) := listingOptHead
-example : String → Nat → Option (String × Nat) := mintedLangHead
+example : String → String → Verbatim := Verbatim.read
+example : Verbatim → String := Verbatim.src
 example : String → String := inputEnv
 example : String → Option String := inputEnvFile?
 example : String := scopeEnv

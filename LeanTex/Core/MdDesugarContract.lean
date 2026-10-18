@@ -965,7 +965,7 @@ private theorem starts_append {a b : Array Raw} (ha : Starts a) (hb : Starts b) 
 private theorem starts_single {r : Raw} (h : BlockStart r) : Starts #[r] :=
   Or.inr ⟨r, by simp, h⟩
 
-private theorem verb_start (e s : String) (p : Pos) (h : e ∈ vocabulary.verbs) :
+private theorem verb_start (e : String) (s : Parse.Verbatim) (p : Pos) (h : e ∈ vocabulary.verbs) :
     BlockStart (.verb e s p) :=
   Or.inr (Or.inr (Or.inl ⟨e, s, p, rfl, h⟩))
 

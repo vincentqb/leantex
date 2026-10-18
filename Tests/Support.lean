@@ -296,6 +296,12 @@ def firstFormula (d : Ir.Doc) : Option Math.MList :=
     | .center bs => bs.findSome? blockFormula
     | b => blockFormula b
 
+/-- The first listing a document's top-level body holds. -/
+def firstListing (doc : Ir.Doc) : Option Ir.ListingSpec :=
+  doc.body.findSome? fun b => match b with
+    | .verbatim _ _ spec => some spec
+    | _ => none
+
 /-- A markdown source through the markdown door and the one elaborator, as `leantex doc.md` runs
 it. -/
 def elabMd (s : String) : Ir.Doc × Array Diag :=

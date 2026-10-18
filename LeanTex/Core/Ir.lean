@@ -2,6 +2,7 @@ module
 
 public import LeanTex.Core.Diag
 public import LeanTex.Core.Heading
+public import LeanTex.Core.ListingLang
 public import LeanTex.Core.SurfaceKind
 public import LeanTex.Core.Dim
 public import LeanTex.Core.Gfx
@@ -4782,24 +4783,6 @@ public structure BibItem where
   flush left in the label column. -/
   labelFlush : Bool := false
   deriving Repr, BEq, Inhabited
-
-/-- The token grammar a listing's declared language must fit: an ASCII
-lowercase letter, then lowercase letters, digits, `+`, `#`, `-`, `.`. -/
-public def listingLangOk (s : String) : Bool :=
-  match s.toList with
-  | [] => false
-  | c :: rest =>
-    c.isLower && rest.all fun d =>
-      d.isLower || d.isDigit || d == '+' || d == '#' || d == '-' || d == '.'
-
-/-- A listing language the grammar admits. -/
-public abbrev ListingLang := { s : String // listingLangOk s = true }
-
-/-- An author's language spelling, trimmed and ASCII-lowercased, admitted only
-when the grammar does. -/
-public def listingLang? (raw : String) : Option ListingLang :=
-  let s := raw.trimAscii.toString.toLower
-  if h : listingLangOk s = true then some ⟨s, h⟩ else none
 
 /-- The Pygments styles a listing may select, each painted from its own table. -/
 public inductive ListingStyle where

@@ -2,12 +2,110 @@ module
 
 public import LeanTex.Core.Lex
 public import LeanTex.Core.Heading
+public import LeanTex.Core.ListingLang
 public import LeanTex.Core.CiteDecl
 import LeanTex.Core.Definer
+public import LeanTex.Core.KeyVal
 
 namespace LeanTex.Core.Parse
 
 open LeanTex.Core LeanTex.Core.Lex
+
+/-- One option a listing's head carries: an item as the document spells it, or a value a surface
+reader sets. -/
+public inductive ListingOpt where
+  | spelled (item : String)
+  | language (lang : Ir.ListingLang)
+  | breakLines
+  deriving Repr, BEq, Inhabited
+
+/-- A verbatim capture: a listing's head, read once where it is captured, and the text after it. -/
+public structure Verbatim where
+  /-- The head's options in the order they stack. -/
+  opts : Array ListingOpt
+  /-- minted's language argument as written. -/
+  lang : Option String
+  /-- The spelling the head took in the source. -/
+  head : String
+  text : String
+  deriving Repr, BEq, Inhabited
+
+/-- A capture with no head. -/
+@[expose] public def Verbatim.plain (text : String) : Verbatim := ⟨#[], none, "", text⟩
+
+/-- The capture as its source spells it. -/
+@[expose] public def Verbatim.src (v : Verbatim) : String := v.head ++ v.text
+
+/-- The option head of a listing environment's captured body: spaces and tabs,
+then `[...]` with nested braces. -/
+def listingOptHead (s : String) : Option (String × Nat) := Id.run do
+  let cs := s.toList.toArray
+  let mut i := 0
+  for _ in [0:cs.size] do
+    if h : i < cs.size then
+      if cs[i] == ' ' || cs[i] == '\t' then i := i + 1 else break
+    else break
+  if h : i < cs.size then
+    if cs[i] != '[' then return none
+    let mut depth : Nat := 0
+    let mut j := i + 1
+    let mut out := ""
+    for _ in [0:cs.size] do
+      if h2 : j < cs.size then
+        let c := cs[j]
+        if c == '{' then depth := depth + 1
+        else if c == '}' then depth := depth - 1
+        if c == ']' && depth == 0 then
+          return some (out, j + 1)
+        out := out.push c
+        j := j + 1
+      else break
+    return none
+  else return none
+
+/-- The mandatory `{language}` head of a `{minted}` body,
+after any option head. -/
+def mintedLangHead (s : String) (start : Nat) : Option (String × Nat) := Id.run do
+  let cs := s.toList.toArray
+  let mut i := start
+  for _ in [0:cs.size] do
+    if h : i < cs.size then
+      if cs[i] == ' ' || cs[i] == '\t' then i := i + 1 else break
+    else break
+  if h : i < cs.size then
+    if cs[i] != '{' then return none
+    let mut j := i + 1
+    let mut out := ""
+    for _ in [0:cs.size] do
+      if h2 : j < cs.size then
+        let c := cs[j]
+        if c == '}' then return some (out, j + 1)
+        out := out.push c
+        j := j + 1
+      else break
+    return none
+  else return none
+
+/-- Whether a capture of `env` opens on minted's `{language}` argument. -/
+@[expose] public def mintedEnv (env : String) : Bool :=
+  env == "minted" || env == "mint" || env == "mintinline"
+
+/-- A capture of `env` read into its head and the text after it: a listing's `[options]`, split
+into items, and minted's `{language}` after them. -/
+public def Verbatim.read (env s : String) : Verbatim :=
+  let opt := if env == "lstlisting" || env == "lstinline" || mintedEnv env then listingOptHead s
+    else none
+  let afterOpt := (opt.map (·.2)).getD 0
+  let lang := if mintedEnv env then mintedLangHead s afterOpt else none
+  let n := (lang.map (·.2)).getD afterOpt
+  { opts := ((opt.map (KeyVal.items ·.1)).getD #[]).map .spelled
+    lang := lang.map (·.1)
+    head := String.ofList (s.toList.take n)
+    text := String.ofList (s.toList.drop n) }
+
+public theorem Verbatim.read_src (env s : String) : (Verbatim.read env s).src = s := by
+  simp only [Verbatim.read, Verbatim.src, ← String.ofList_append, List.take_append_drop,
+    String.ofList_toList]
 
 public inductive Raw where
   | word (s : String) (pos : Pos)
@@ -18,7 +116,7 @@ public inductive Raw where
   | group (body : Array Raw) (pos : Pos)
   | math (display : Bool) (body : Array Raw) (pos : Pos)
   | env (name : String) (body : Array Raw) (pos : Pos)
-  | verb (env : String) (s : String) (pos : Pos)
+  | verb (env : String) (v : Verbatim) (pos : Pos)
   deriving Repr, BEq, Inhabited
 
 /-- Discharges a walk's termination goals: an array a constructor holds is smaller than it. -/
@@ -420,7 +518,7 @@ public def parse (file : String) (toks : Array Token) : Array Raw × Array Diag 
       | .space => acc := acc.push .space
       | .par => acc := acc.push (.par pos)
       | .sym c => acc := acc.push (.sym c pos)
-      | .verb env s => acc := acc.push (.verb env s pos)
+      | .verb env s => acc := acc.push (.verb env (Verbatim.read env s) pos)
   -- End of input: close what is still open, innermost first.
   for _ in [0:frames.size] do
     match frames.back? with
@@ -431,56 +529,6 @@ public def parse (file : String) (toks : Array Token) : Array Raw × Array Diag 
       acc := f.close acc
     | none => pure ()
   return (acc, diags)
-
-/-- The option head of a listing environment's captured body: spaces and tabs,
-then `[...]` with nested braces. -/
-public def listingOptHead (s : String) : Option (String × Nat) := Id.run do
-  let cs := s.toList.toArray
-  let mut i := 0
-  for _ in [0:cs.size] do
-    if h : i < cs.size then
-      if cs[i] == ' ' || cs[i] == '\t' then i := i + 1 else break
-    else break
-  if h : i < cs.size then
-    if cs[i] != '[' then return none
-    let mut depth : Nat := 0
-    let mut j := i + 1
-    let mut out := ""
-    for _ in [0:cs.size] do
-      if h2 : j < cs.size then
-        let c := cs[j]
-        if c == '{' then depth := depth + 1
-        else if c == '}' then depth := depth - 1
-        if c == ']' && depth == 0 then
-          return some (out, j + 1)
-        out := out.push c
-        j := j + 1
-      else break
-    return none
-  else return none
-
-/-- The mandatory `{language}` head of a `{minted}` body,
-after any option head. -/
-public def mintedLangHead (s : String) (start : Nat) : Option (String × Nat) := Id.run do
-  let cs := s.toList.toArray
-  let mut i := start
-  for _ in [0:cs.size] do
-    if h : i < cs.size then
-      if cs[i] == ' ' || cs[i] == '\t' then i := i + 1 else break
-    else break
-  if h : i < cs.size then
-    if cs[i] != '{' then return none
-    let mut j := i + 1
-    let mut out := ""
-    for _ in [0:cs.size] do
-      if h2 : j < cs.size then
-        let c := cs[j]
-        if c == '}' then return some (out, j + 1)
-        out := out.push c
-        j := j + 1
-      else break
-    return none
-  else return none
 
 /-- The code of a captured `\mintinline` or `\mint` call
 from just past its `{language}`. -/
@@ -583,7 +631,7 @@ unforgeable because its name holds a space. -/
 public def keptEnv : String := "kept raws"
 
 /-- Where the `k`th raws the compatibility pass leaves alone return. -/
-@[expose] public def keptRaw (k : Nat) (p : Pos) : Raw := .verb keptEnv (toString k) p
+@[expose] public def keptRaw (k : Nat) (p : Pos) : Raw := .verb keptEnv (.plain (toString k)) p
 
 /-- A raw under the macro invocations `os`, outermost first, before its own. -/
 @[expose] public def withOrigins (os : List MacroOrigin) (r : Raw) : Raw := os.foldr markMacro r
@@ -594,7 +642,7 @@ mutual
 the invocations enclosing the place. -/
 @[expose] public def spliceKept (kept : Array (Array Raw)) : Raw → Array Raw
   | .verb e s p =>
-    match if e == keptEnv then s.toNat?.bind (kept[·]?) else none with
+    match if e == keptEnv then s.text.toNat?.bind (kept[·]?) else none with
     | some rs => rs.map (withOrigins p.origins)
     | none => #[.verb e s p]
   | .group body p => #[.group (spliceKeptList kept #[] body.toList) p]
@@ -713,7 +761,8 @@ mutual
   | .env n body _ =>
     if n == scopeEnv then "{" ++ rawSrc body ++ (if endsCtrlSpace body.toList then " " else "") ++ "}"
     else s!"\\begin\{{n}}" ++ rawSrc body ++ s!"\\end\{{n}}"
-  | .verb env s _ =>
+  | .verb env v _ =>
+    let s := v.src
     if env == "verb" then
       let d := (['|', '!', '+', '=', '/', '"', '@'].find? (fun c => !s.contains c)).getD '|'
       s!"\\verb{d}{s}{d}"

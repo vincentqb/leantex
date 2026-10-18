@@ -295,4 +295,20 @@ def mintedSettingsChecks (ref : IO.Ref (List String)) : IO Unit := do
     t s!"minted honesty: invalid option {bad} is named"
       ((warnCodes (dvDoc ("\\setminted{" ++ bad ++ "}") (code "" "text" simple))).contains "W0110")
 
+  let headed := Parse.Verbatim.read "minted" "[tabsize=3, label={a,b}]{python}\nx = 1"
+  t "listing heads: a captured head splits into its items, language and text, every character kept"
+    (headed.opts == #[.spelled "tabsize=3", .spelled "label={a,b}"] && headed.lang == some "python"
+      && headed.text == "\nx = 1" && headed.src == "[tabsize=3, label={a,b}]{python}\nx = 1")
+  t "listing heads: a verbatim capture reads no head"
+    ((Parse.Verbatim.read "verbatim" "[x]\ny").head.isEmpty)
+  let bracketed := dvDoc "\\setminted{label=a]b,tabsize=3}" (code "" "text" simple)
+  t "listing heads: a default holding a bracket stands as one entry ahead of the listing's own"
+    (same bracketed (dvDoc "" (code "tabsize=3" "text" simple)) &&
+      !(elabStr bracketed).2.any (·.kind == .E0304))
+  let mdFence := firstListing (elabMd "```python\nx = 1\n```\n").1
+  let texFence := firstListing (elabStr (dvDoc "" "\\begin{lstlisting}[language=python]\nx = 1\n\\end{lstlisting}")).1
+  t "listing heads: a markdown fence's typed language is the language its spelled head names"
+    (mdFence.bind (·.language) == Ir.listingLang? "python" && (Ir.listingLang? "python").isSome &&
+      mdFence.bind (·.language) == texFence.bind (·.language))
+
 end Tests

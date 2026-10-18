@@ -11,12 +11,6 @@ a tex listing at listings' units. -/
 
 namespace Tests.MarkdownCode
 
-/-- The first listing a document's top-level body holds. -/
-def firstListing (doc : Ir.Doc) : Option Ir.ListingSpec :=
-  doc.body.findSome? fun b => match b with
-    | .verbatim _ _ spec => some spec
-    | _ => none
-
 /-- Where a shipped line's first non-space glyph stands. -/
 def firstGlyphX (l : Layout.LineOut) : Option Dim.Sp := Id.run do
   let mut x := l.x
