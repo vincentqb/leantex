@@ -421,7 +421,7 @@ public structure SpanRecords where
   bib : Array (String × Span) := #[]
   images : Array (String × Span) := #[]
   cites : Array Ir.CiteSite := #[]
-  /-- Each colour expression's and source value's first use in its palette. -/
+  /-- Each colour expression's and source value's first use as an ink in its palette. -/
   colors : Array (Palette × String × Color × Bool × Span) := #[]
   /-- The declaration sites furniture and implicit foregrounds report. -/
   colorDeclarations : Array (String × Color × Bool × Span) := #[]
@@ -646,6 +646,10 @@ public theorem GroupScope.restore_id (base : Palette) (saved closed : GroupScope
   rw [hnone]
   simp
 
+/-- What a paragraph's text sets that a block after the paragraph places: a page ground. -/
+public structure AfterPara where
+  ground : Option Palette := none
+
 public structure ESt where
   diags : Array Diag := #[]
   /-- Warn-once keys already fired. -/
@@ -682,6 +686,7 @@ public structure ESt where
   /-- Speaker-note bodies met inside inline content, which the enclosing
   frame drains to its end. -/
   pendingNotes : Array (Array Raw × Pos) := #[]
+  afterPara : AfterPara := {}
   logos : Logos := {}
   /-- Boundary picture requests by content hash, one per distinct source. -/
   pictures : Array (String × Ir.PicSrc) := #[]
@@ -881,7 +886,7 @@ private def applyEvent (ctx : Ctx) (st : ESt) : PEvent → ESt
       if st.declaredKeys.contains (decl, key) then st.declaredKeys
       else st.declaredKeys.push (decl, key) }
   | .setting setting pos site =>
-    let package := Compat.packageFile ctx.file || ctx.owned
+    let package := Compat.packageCode ctx.owned ctx.file
     if UnusedSetting.ownSite package ctx.callSite.isSome pos then
       let st := { st with settings := st.settings.push ⟨setting, ctx.sourceSpan pos, ctx.sourceSpan site⟩ }
       match setting with
@@ -3955,8 +3960,8 @@ private theorem bumpRunShape_size_exact (name key : String) (optionRun : Bool) (
   · dsimp only
     split <;> simp [runShapeReword_size_exact]
 
-/-- Records an unknown command's refusal and its site shape. -/
-private def warnUnknownCmd (ctx : Ctx) (name : String) (optionRun : Bool)
+/-- Records an unknown command's refusal, its site shape and what its dropped options `opts` name. -/
+private def warnUnknownCmd (ctx : Ctx) (name : String) (optionRun : Bool) (opts : String)
     (pos : Pos) : EM Unit :=
   let key := "ctrl:" ++ name
   let (code, msg, help) := unknownCmdDiag name (RunShape.one optionRun)
@@ -3964,12 +3969,13 @@ private def warnUnknownCmd (ctx : Ctx) (name : String) (optionRun : Bool)
     let emitted := warnOnceState ctx key code msg pos help
       (code == .W0301 && Compat.styInternal ctx.file name)
       (bumpRunShape name key optionRun st)
-    { emitted with spans := { emitted.spans with recoveryDiags := emitted.diags } }
+    { emitted with spans := { emitted.spans with recoveryDiags := emitted.diags }
+                   mentions := (Ir.mentionedColorNames opts).foldl (·.insert ·) emitted.mentions }
 
 private theorem warnUnknownCmd_recovery_exact (ctx : Ctx) (name : String) (optionRun : Bool)
-    (pos : Pos) (st : ESt) :
-    ((warnUnknownCmd ctx name optionRun pos).run st).2.spans.recoveryDiags =
-      ((warnUnknownCmd ctx name optionRun pos).run st).2.diags := by rfl
+    (opts : String) (pos : Pos) (st : ESt) :
+    ((warnUnknownCmd ctx name optionRun opts pos).run st).2.spans.recoveryDiags =
+      ((warnUnknownCmd ctx name optionRun opts pos).run st).2.diags := by rfl
 
 /-- The index past up to `n` `{...}` groups, each after any spaces; spaces
 after the last group stay. -/
@@ -4371,8 +4377,7 @@ measure; there it reads it as zero" pos
     let source := argText ctx g
     match ← readColor ctx ctx.palette model source pos with
     | .resolved c ref =>
-      recordColorSpan ctx (match model with | some m => s!"{m}({source})" | none => source) c
-        ref.isSome pos
+      noteColorReads (match model with | some m => s!"{m}({source})" | none => source)
       return some (c, ref)
     | .missing =>
       warnPaletteMiss ctx source pos
@@ -5075,6 +5080,60 @@ private def inlineBlockOnly (ctx : Ctx) (raws : Array Raw) (name : String) (i : 
   if bodyDefiner name then
     return ⟨max (i + 1) (definerEnd raws name (i + 1)), Nat.le_max_left _ _⟩
   return ⟨i + 1, Nat.le_refl _⟩
+
+private def warnPageColorMiss (ctx : Ctx) (source : String) (pos : Pos) : EM Unit :=
+  warnOnce ctx ("pagecolor:" ++ source) .W0304
+    s!"'{source}' is not in the palette; the page ground is unchanged" pos
+    (help := "declare the colour before using it as a page ground")
+
+/-- `\pagecolor`'s page ground, set globally as xcolor sets it, whatever
+group it stands in. -/
+private def pageGroundDecl (ctx : Ctx) (source : String) (pos : Pos) :
+    EM (Option Ir.Palette) := do
+  match ← readColor ctx ctx.palette none source pos with
+  | .resolved c _ =>
+    logGlobal (.entry (.role .page) (some c) false false)
+    noteDocRoles [.page]
+    let docRoles := (← get).spans.docRoles
+    return some ((ctx.palette.declare (.role .page) c).reseed docRoles.contains)
+  | .missing =>
+    warnPageColorMiss ctx source pos
+    return none
+  | .rejected => return none
+
+/-- `\nopagecolor`: the opening page ground back, set globally. -/
+private def pageGroundReset (ctx : Ctx) : EM Ir.Palette := do
+  logGlobal (.entry (.role .page) (Ir.Design.declared? ctx.basePalette .page)
+    (ctx.basePalette.decorative.contains (.role .page)) false)
+  return ctx.palette.restore ctx.basePalette (.role .page)
+
+/-- Whether a control is `\pagecolor`'s or `\nopagecolor`'s marker. -/
+private def isPageGround (n : String) : Bool := (Marker.readingOf? n).any (·.ground)
+
+/-- The page ground a page-ground marker sets, globally. -/
+private def pageGround (ctx : Ctx) (n : String) (pos : Pos) : EM (Option Ir.Palette) :=
+  match Marker.value? .pageColor n with
+  | some source => pageGroundDecl ctx source pos
+  | none => some <$> pageGroundReset ctx
+
+/-- A page-ground marker inside text: the page ground it sets globally, placed before its paragraph. -/
+private def inlinePageGround (ctx : Ctx) (n : String) (pos : Pos) : EM Unit := do
+  if let some pal ← pageGround ctx n pos then
+    modify fun st => { st with
+      scope := { st.scope with palette := { st.scope.palette with current := some pal } }
+      flowGen := st.flowGen + 1
+      afterPara := { st.afterPara with ground := some pal } }
+
+/-- The page ground a paragraph's text set, standing before that paragraph, whose pages ship after
+the text set it. -/
+private def drainGround (blocks : Array Block) : EM (Array Block) := do
+  match (← get).afterPara.ground with
+  | some pal =>
+    modify fun st => { st with afterPara := { st.afterPara with ground := none } }
+    let slot := ((List.range blocks.size).reverse.find? fun i =>
+      blocks[i]? matches some (.para ..)).getD blocks.size
+    return (blocks.extract 0 slot).push (.setPalette pal) ++ blocks.extract slot blocks.size
+  | none => return blocks
 
 mutual
 
@@ -5934,6 +5993,9 @@ private def elabInlinesCtrl2 (ctx : Ctx) (raws : Array Raw) (i : Nat)
     | .missing => warnPaletteMiss ctx source pos
     | _ => pure ()
     elabInlinesFrom ctx raws (i + 1) acc sb
+  else if isPageGround name then
+    inlinePageGround ctx name pos
+    elabInlinesFrom ctx raws (i + 1) acc sb
   else if let some spec := Marker.value? .fontSize name then
     let style ← readFontSizeStyle ctx spec pos
     have _ : rawWeightList (raws.extract (i + 1) raws.size).toList
@@ -6239,7 +6301,7 @@ private def elabUnknownCtrl (ctx : Ctx) (raws : Array Raw) (i : Nat)
   have hj1 := skipStar_ge raws j0
   let jr := skipOptionRuns raws j1 pos
   have hjr : j1 ≤ jr.1 := skipOptionRuns_ge raws j1 pos
-  warnUnknownCmd ctx name (jr.1 > j1) pos
+  warnUnknownCmd ctx name (jr.1 > j1) (if jr.1 > j1 then Parse.rawSrc (raws.extract j1 jr.1) else "") pos
   if let some bpos := jr.2 then
     warnUnclosed ctx s!"'\\{name}'" bpos
   let j2 := skipSpaces raws jr.1
@@ -6299,7 +6361,7 @@ public def recoversInlineName (ctx : Ctx) (name : String) : Bool :=
       TitleDatum.ofName? (name.drop "insert".length).copy
     else none).isNone &&
   !(SectionInForce.names.contains name) &&
-  !declaresScope name && (ctx.palette.resolve name).isNone &&
+  !declaresScope name && !isPageGround name && (ctx.palette.resolve name).isNone &&
   !(overlayCtrls.contains name) && (Ir.raggedSideOf? name).isNone &&
   (reservedCtrl.lookup name).isNone &&
   !(declCtrl.contains name || runningCtrl.contains name) &&
@@ -6596,13 +6658,13 @@ private theorem unknownCmdDiag_shape_id (name : String) (shape : RunShape) :
   rw [unknownCmdDiag_code_exact, unknownCmdDiag_code_exact]
 
 private theorem warnUnknownCmd_push_exact (ctx : Ctx) (name : String) (optionRun : Bool)
-    (pos : Pos) (st : ESt) :
-    ∃ d, ((warnUnknownCmd ctx name optionRun pos).run st).2.diags.size
+    (opts : String) (pos : Pos) (st : ESt) :
+    ∃ d, ((warnUnknownCmd ctx name optionRun opts pos).run st).2.diags.size
           = st.diags.size + 1 ∧
-      ((warnUnknownCmd ctx name optionRun pos).run st).2.diags.back? = some d ∧
+      ((warnUnknownCmd ctx name optionRun opts pos).run st).2.diags.back? = some d ∧
       d.kind = (unknownCmdDiag name (RunShape.one optionRun)).1 ∧
       d.subject = some ("ctrl:" ++ name) := by
-  have hrun : ((warnUnknownCmd ctx name optionRun pos).run st).2.diags =
+  have hrun : ((warnUnknownCmd ctx name optionRun opts pos).run st).2.diags =
       (warnOnceState ctx ("ctrl:" ++ name)
         (unknownCmdDiag name (RunShape.one optionRun)).1
         (unknownCmdDiag name (RunShape.one optionRun)).2.1 pos
@@ -6950,18 +7012,25 @@ private def chapterNumber (ctx : Ctx) (starred : Bool) : EM (Option (String × B
   modify fun st => { st with ctr := ctr, refTarget := some { kind := some .chapter, num := num } }
   return some (num, ctr.inAppendix)
 
-/-- Whether a captioned float or listing stands after a numbered chapter, its number one a chapter
-would restart. -/
-private def chapterFloats (blocks : Array Block) : Bool := Id.run do
+/-- The first source span a caption's text carries. -/
+private def captionSite (caption : Array Inline) : Option Span :=
+  Ir.foldInlines (fun acc x => acc.orElse fun _ => match x with
+    | .located sp _ => some sp
+    | _ => none) none caption
+
+/-- The first captioned float or listing after a numbered chapter, its number one a chapter would
+restart, with its caption's site. -/
+private def chapterFloat (blocks : Array Block) : Option (Option Span) := Id.run do
   let mut chaptered := false
   for b in blocks do
     if b matches .section .h1 _ (some _) _ then chaptered := true
-    else if chaptered && Ir.foldBlocks (fun acc x => acc || match x with
-        | .float _ _ _ _ caption => !caption.isEmpty
-        | .verbatim _ _ spec => spec.caption.isSome
-        | _ => false) (fun acc _ => acc) false #[b] then
-      return true
-  return false
+    else if chaptered then
+      let found := Ir.foldBlocks (fun acc x => acc.orElse fun _ => match x with
+        | .float _ _ _ _ caption => if caption.isEmpty then none else some (captionSite caption)
+        | .verbatim _ _ spec => spec.caption.map (captionSite ·.2)
+        | _ => none) (fun acc _ => acc) none #[b]
+      if found.isSome then return found
+  return none
 
 
 /-- beamer's `sections=` value: section numbers and ranges (`2`, `2-3`, `3-`), braced or in angle
@@ -7307,40 +7376,6 @@ private def inkFlowDecl (ctx : Ctx) (source : String) (pos : Pos) :
     return none
   | .rejected => return none
 
-private def warnPageColorMiss (ctx : Ctx) (source : String) (pos : Pos) : EM Unit :=
-  warnOnce ctx ("pagecolor:" ++ source) .W0304
-    s!"'{source}' is not in the palette; the page ground is unchanged" pos
-    (help := "declare the colour before using it as a page ground")
-
-/-- `\pagecolor`'s page ground, set globally as xcolor sets it, whatever
-group it stands in. -/
-private def pageGroundDecl (ctx : Ctx) (source : String) (pos : Pos) :
-    EM (Option Ir.Palette) := do
-  match ← readColor ctx ctx.palette none source pos with
-  | .resolved c _ =>
-    logGlobal (.entry (.role .page) (some c) false false)
-    noteDocRoles [.page]
-    let docRoles := (← get).spans.docRoles
-    return some ((ctx.palette.declare (.role .page) c).reseed docRoles.contains)
-  | .missing =>
-    warnPageColorMiss ctx source pos
-    return none
-  | .rejected => return none
-
-/-- `\nopagecolor`: the opening page ground back, set globally. -/
-private def pageGroundReset (ctx : Ctx) : EM Ir.Palette := do
-  logGlobal (.entry (.role .page) (Ir.Design.declared? ctx.basePalette .page)
-    (ctx.basePalette.decorative.contains (.role .page)) false)
-  return ctx.palette.restore ctx.basePalette (.role .page)
-
-/-- Whether a control is `\pagecolor`'s or `\nopagecolor`'s marker. -/
-private def isPageGround (n : String) : Bool := (Marker.readingOf? n).any (·.ground)
-
-/-- The page ground a page-ground marker sets, globally. -/
-private def pageGround (ctx : Ctx) (n : String) (pos : Pos) : EM (Option Ir.Palette) :=
-  match Marker.value? .pageColor n with
-  | some source => pageGroundDecl ctx source pos
-  | none => some <$> pageGroundReset ctx
 
 public def isParRaw : Raw → Bool
   | .par _ => true
@@ -7834,7 +7869,7 @@ private def noteDeclared (ctx : Ctx) (decl key : String) : EM Unit :=
 /-- Whether a declaration at `pos` is the document's own: outside a package or class file and the
 files one inputs, and no definition's replacement text. -/
 private def ownDeclaration (ctx : Ctx) (pos : Pos) : EM Bool := do
-  let package := Compat.packageFile ctx.file || ctx.owned
+  let package := Compat.packageCode ctx.owned ctx.file
   return UnusedSetting.ownSite package ctx.callSite.isSome pos
 
 /-- Records a token the document's own `\tokens` declares beside the engine's. -/
@@ -8361,16 +8396,20 @@ private inductive RedefVerdict where
   | empty
   | refused (d : Diag)
 
-private def refuseRedef (cmd : UserCmd) (verdict : RedefVerdict) : EM Unit := do
+private def refuseRedef (cmd : UserCmd) (verdict : RedefVerdict) (earlier : Option Span) :
+    EM Unit := do
+  let stands := match earlier with
+    | some sp => s!"the definition at {sp.file}:{sp.pos.line} stands"
+    | none => "the built-in stands"
   let (msg, detail) : String × Option String := match verdict with
     | .refused d =>
       let construct := match d.message.splitOn "'" with
         | _ :: q :: _ => s!"'{q}'"
         | _ => "a construct"
       (s!"the redefinition of '\\{cmd.name}' uses {construct}, which the \
-engine cannot run; the built-in stands",
+engine cannot run; {stands}",
         d.span.map fun (sp : Span) => s!"{construct} at {sp.file}:{sp.pos.line}")
-    | _ => (s!"the redefinition of '\\{cmd.name}' renders nothing; the built-in stands", none)
+    | _ => (s!"the redefinition of '\\{cmd.name}' renders nothing; {stands}", none)
   modify fun st => { st with
     diags := st.diags.push (Diag.of .W0361 msg (some cmd.span) (detail := detail))
     refusedRedefs := st.refusedRedefs.push (cmd.name, cmd.span) }
@@ -12590,7 +12629,7 @@ private def gateRedefB (ctx : Ctx) (cmd : UserCmd) : EM Bool := do
     | none => false
   match checkDiags.find? lossy with
   | some d =>
-    refuseRedef cmd (.refused d)
+    refuseRedef cmd (.refused d) ((lookupUser ctx cmd.name).map (·.2.span))
     if cmd.name == "maketitle" then
       modify fun st => { st with refusedTitleBody := some cmd.body }
     if sizeCtrlNames.contains cmd.name && cmd.name != "normalsize" then
@@ -12600,7 +12639,7 @@ private def gateRedefB (ctx : Ctx) (cmd : UserCmd) : EM Bool := do
   | none =>
     if nonEmpty then return true
     else
-      refuseRedef cmd .empty
+      refuseRedef cmd .empty ((lookupUser ctx cmd.name).map (·.2.span))
       if cmd.name == "maketitle" then
         modify fun st => { st with refusedTitleBody := some cmd.body }
       return false
@@ -12626,6 +12665,7 @@ decreasing_by all_goals blocks_dec
 /-- Outside a frame, the notes stashed so far stand after `blocks`; inside one they wait for its
 end. -/
 private def drainLoose (ctx : Ctx) (blocks : Array Block) : EM (Array Block) := do
+  let blocks ← drainGround blocks
   if hnb : ctx.noteBody then return blocks
   else if ctx.inFrame then return blocks
   else
@@ -13819,7 +13859,7 @@ private theorem elabInlines_recovered_args (ctx : Ctx) (name : String) (body : A
     (p gp : Pos) (hm : ctx.macroRoles = ({file := ""} : Ctx).macroRoles)
     (hp : p.origins = []) (hn : recoversInlineName ctx name = true) :
     elabInlines ctx #[.ctrl name p, .group body gp] = (do
-      warnUnknownCmd ctx name false p
+      warnUnknownCmd ctx name false "" p
       let inner ← inlineGroup ctx.palette (elabInlines ctx body)
       noteSalvage (unknownCmdDiag name (RunShape.one false)).1 name (rawSrc #[.group body gp])
       pure (if ctx.literalText then mergeTexts inner
@@ -13866,7 +13906,7 @@ private theorem elabInlines_recovery_group (ctx : Ctx) (name : String)
     (hp : p.origins = []) (hgp : gp.origins = [])
     (hn : recoversInlineName ctx name = true) :
     elabInlines ctx #[.ctrl name p, .group body gp] = (do
-      warnUnknownCmd ctx name false p
+      warnUnknownCmd ctx name false "" p
       let inner ← elabInlines ctx #[.group body gp]
       noteSalvage (unknownCmdDiag name {}).1 name (rawSrc #[.group body gp])
       pure inner) := by
@@ -13878,7 +13918,7 @@ private theorem elabInlines_recovered_group (ctx : Ctx) (name w : String) (p gp 
     (hp : p.origins = []) (hwp : wp.origins = [])
     (hn : recoversInlineName ctx name = true) :
     elabInlines ctx #[.ctrl name p, .group #[.word w wp] gp] = (do
-      warnUnknownCmd ctx name false p
+      warnUnknownCmd ctx name false "" p
       noteSalvage (unknownCmdDiag name {}).1 name (rawSrc #[.group #[.word w wp] gp])
       let inner := if ctx.literalText then #[sourceInline ctx wp (.text w)]
         else #[sourceInline ctx wp (.text w)].map (mapSmartText ctx.literalWhen)
@@ -13900,7 +13940,7 @@ private theorem elabInlines_recovered_word (ctx : Ctx) (name w : String) (p gp w
     (hp : p.origins = []) (hwp : wp.origins = [])
     (hn : recoversInlineName ctx name = true) (hs : smartPunct w = w) :
     elabInlines ctx #[.ctrl name p, .group #[.word w wp] gp] = (do
-      warnUnknownCmd ctx name false p
+      warnUnknownCmd ctx name false "" p
       noteSalvage (unknownCmdDiag name {}).1 name (rawSrc #[.group #[.word w wp] gp])
       pure #[sourceInline ctx wp (.text w)]) := by
   rw [elabInlines_recovered_group ctx name w p gp wp hm hp hwp hn]
@@ -13940,7 +13980,7 @@ private theorem mkPara_recovery_group (ctx : Ctx) (name : String)
     (hp : p.origins = []) (hgp : gp.origins = [])
     (hn : recoversInlineName ctx name = true) :
     mkPara ctx #[.ctrl name p, .group body gp] = (do
-      warnUnknownCmd ctx name false p
+      warnUnknownCmd ctx name false "" p
       let para ← mkPara ctx #[.group body gp]
       noteSalvage (unknownCmdDiag name {}).1 name (rawSrc #[.group body gp])
       pure para) := by
@@ -13964,7 +14004,7 @@ private theorem mkPara_recovered_word (ctx : Ctx) (name w : String) (p gp wp : P
     (ht : w.trimAscii.isEmpty = false)
     (hr : String.ofList ((w.toList.reverse.dropWhile (· == ' ')).reverse) = w) :
     mkPara ctx #[.ctrl name p, .group #[.word w wp] gp] = (do
-      warnUnknownCmd ctx name false p
+      warnUnknownCmd ctx name false "" p
       noteSalvage (unknownCmdDiag name {}).1 name (rawSrc #[.group #[.word w wp] gp])
       return some (paraUnder (← get).scope.lang
         (Ir.paraAt (← get).scope.blockDecls #[sourceInline ctx wp (.text w)]))) := by
@@ -14138,7 +14178,7 @@ private theorem elabBlocksGo_recovery (ctx : Ctx) (st : ESt) (name : String)
     (elabBlocksGo ctx #[.ctrl name p, .group body gp]
       0 blocks #[] st.flowGen).run st =
       ((do
-        warnUnknownCmd ctx name false p
+        warnUnknownCmd ctx name false "" p
         let para ← mkPara ctx #[.group body gp]
         noteSalvage (unknownCmdDiag name {}).1 name (rawSrc #[.group body gp])
         pure (match para with | some b => blocks.push b | none => blocks)) :
@@ -14173,8 +14213,8 @@ private theorem elabBlocks_scope (ctx : Ctx) (st : ESt) (raws : Array Raw)
   rfl
 
 private theorem warnUnknownCmd_scope (ctx : Ctx) (name : String) (p : Pos) (st : ESt) :
-    ((warnUnknownCmd ctx name false p).run (enterBodyScope st)).2 =
-      enterBodyScope ((warnUnknownCmd ctx name false p).run st).2 := by
+    ((warnUnknownCmd ctx name false "" p).run (enterBodyScope st)).2 =
+      enterBodyScope ((warnUnknownCmd ctx name false "" p).run st).2 := by
   cases he : st.runShapes.find? (·.1 == "ctrl:" ++ name) with
   | none =>
     simp [warnUnknownCmd, enterBodyScope, bumpRunShape, warnOnceState, he]
@@ -14185,7 +14225,7 @@ private theorem warnUnknownCmd_scope (ctx : Ctx) (name : String) (p : Pos) (st :
     rfl
 
 private theorem warnUnknownCmd_flowGen (ctx : Ctx) (name : String) (p : Pos) (st : ESt) :
-    ((warnUnknownCmd ctx name false p).run st).2.flowGen = st.flowGen := by
+    ((warnUnknownCmd ctx name false "" p).run st).2.flowGen = st.flowGen := by
   change (warnOnceState ctx ("ctrl:" ++ name) (unknownCmdDiag name (RunShape.one false)).1
     (unknownCmdDiag name (RunShape.one false)).2.1 p
     (unknownCmdDiag name (RunShape.one false)).2.2
@@ -14196,7 +14236,7 @@ private theorem warnUnknownCmd_flowGen (ctx : Ctx) (name : String) (p : Pos) (st
   split <;> rfl
 
 private theorem warnUnknownCmd_frameBase (ctx : Ctx) (name : String) (p : Pos) (st : ESt) :
-    ((warnUnknownCmd ctx name false p).run st).2.spans.frames.base = st.spans.frames.base := by
+    ((warnUnknownCmd ctx name false "" p).run st).2.spans.frames.base = st.spans.frames.base := by
   change (warnOnceState ctx ("ctrl:" ++ name) (unknownCmdDiag name (RunShape.one false)).1
     (unknownCmdDiag name (RunShape.one false)).2.1 p
     (unknownCmdDiag name (RunShape.one false)).2.2
@@ -14217,7 +14257,7 @@ private theorem closeBlockScope_note (ctx : Ctx) (base : Option Nat) (blocks : A
 record. -/
 public def withControlRecovery (ctx : Ctx) (name : String) (pos : Pos) (operands : Array Raw)
     (content : EM α) : EM α := do
-  warnUnknownCmd ctx name false pos
+  warnUnknownCmd ctx name false "" pos
   let value ← content
   noteSalvage (unknownCmdDiag name {}).1 name (rawSrc operands)
   pure value
@@ -14252,7 +14292,7 @@ private theorem elabBlocks_recovery_group_exact (ctx : Ctx) (name : String)
         ((elabBlocksGo ctx _ 0 #[] #[] (enterBodyScope st).flowGen).run (enterBodyScope st)).2 = _
   rw [elabBlocksGo_recovery ctx (enterBodyScope st) name body pos groupPos #[] hm hp hgp hn hb]
   change ((do
-    warnUnknownCmd ctx name false pos
+    warnUnknownCmd ctx name false "" pos
     let para ← mkPara ctx #[.group body groupPos]
     noteSalvage (unknownCmdDiag name {}).1 name (rawSrc #[.group body groupPos])
     closeBlockScope ctx #[] st.spans.frames.base
@@ -14263,25 +14303,25 @@ private theorem elabBlocks_recovery_group_exact (ctx : Ctx) (name : String)
   change _ = ((do
     let bs ← elabBlocks ctx #[.group body groupPos]
     noteSalvage (unknownCmdDiag name {}).1 name (rawSrc #[.group body groupPos])
-    pure bs) : EM (Array Block)).run ((warnUnknownCmd ctx name false pos).run st).2
+    pure bs) : EM (Array Block)).run ((warnUnknownCmd ctx name false "" pos).run st).2
   change _ = ((do
     noteSalvage (unknownCmdDiag name {}).1 name (rawSrc #[.group body groupPos])
     pure ((elabBlocks ctx #[.group body groupPos]).run
-      ((warnUnknownCmd ctx name false pos).run st).2).1) : EM (Array Block)).run
+      ((warnUnknownCmd ctx name false "" pos).run st).2).1) : EM (Array Block)).run
       ((elabBlocks ctx #[.group body groupPos]).run
-        ((warnUnknownCmd ctx name false pos).run st).2).2
+        ((warnUnknownCmd ctx name false "" pos).run st).2).2
   rw [elabBlocks_scope ctx _ _ hm hplain, warnUnknownCmd_flowGen,
     warnUnknownCmd_frameBase]
   change _ = ((do
     let bs ← closeBlockScope ctx #[] st.spans.frames.base
       ((elabBlocksGo ctx #[.group body groupPos] 0 #[] #[]
-        st.flowGen).run (enterBodyScope ((warnUnknownCmd ctx name false pos).run st).2)).1
+        st.flowGen).run (enterBodyScope ((warnUnknownCmd ctx name false "" pos).run st).2)).1
     noteSalvage (unknownCmdDiag name {}).1 name (rawSrc #[.group body groupPos])
     pure bs) : EM (Array Block)).run
       ((elabBlocksGo ctx #[.group body groupPos] 0 #[] #[]
-        st.flowGen).run (enterBodyScope ((warnUnknownCmd ctx name false pos).run st).2)).2
+        st.flowGen).run (enterBodyScope ((warnUnknownCmd ctx name false "" pos).run st).2)).2
   rw [← warnUnknownCmd_scope]
-  have hflow : ((warnUnknownCmd ctx name false pos).run (enterBodyScope st)).2.flowGen =
+  have hflow : ((warnUnknownCmd ctx name false "" pos).run (enterBodyScope st)).2.flowGen =
       st.flowGen := warnUnknownCmd_flowGen ctx name pos (enterBodyScope st)
   rw [← hflow]
   rw [elabBlocksGo_plain_group ctx _ body groupPos #[] hm hgp hpar hblock]
@@ -14331,7 +14371,7 @@ private theorem elabBlocksGo_recovered_word (ctx : Ctx) (st : ESt) (name w : Str
     (elabBlocksGo ctx #[.ctrl name p, .group #[.word w wp] gp]
       0 blocks #[] st.flowGen).run st =
     ((do
-      warnUnknownCmd ctx name false p
+      warnUnknownCmd ctx name false "" p
       noteSalvage (unknownCmdDiag name {}).1 name (rawSrc #[.group #[.word w wp] gp])
       return blocks.push (paraUnder (← get).scope.lang
         (Ir.paraAt (← get).scope.blockDecls #[sourceInline ctx wp (.text w)]))) :
@@ -17805,10 +17845,10 @@ marks its level" (some pos) (help := some s!"redefine it as text, a symbol or a 
     let mut output := output
     let mut info := info
     finishBeamerColors ctx
-    if (← get).ctr.chapters && chapterFloats blocks then
-      modify fun st => { st with diags := st.diags.push (diagOf ctx .W0110
+    if let some site := if (← get).ctr.chapters then chapterFloat blocks else none then
+      modify fun st => { st with diags := st.diags.push (Diag.of .W0110
         "figure, table, algorithm and listing numbers run through the document, where the class \
-and listings number them within each chapter" none (subject := some "chapters:floats")
+and listings number them within each chapter" site (subject := some "chapters:floats")
         (help := "\\ref names each by the number it carries here")) }
     let pictureReport : PictureReportContext := { ctx, offset := (← get).diags.size }
     let stRefs ← get
@@ -18350,17 +18390,17 @@ public theorem accountRecoveredItem_replay_exact (diags observed : Array Diag)
   simp only [accountRecoveredItem, hmissing, hevidence, Bool.false_eq_true, ↓reduceIte]
 
 private theorem warnUnknownCmd_replay_exact (ctx : Ctx) (name text : String)
-    (optionRun : Bool) (pos : Pos) (st : ESt) (diags : Array Diag)
+    (optionRun : Bool) (opts : String) (pos : Pos) (st : ESt) (diags : Array Diag)
     (hmissing : diags.any (recoveryMatches
       { code := (unknownCmdDiag name {}).1, command := name, text }) = false) :
     let item : Ir.Recovered :=
       { code := (unknownCmdDiag name {}).1, command := name, text }
-    let observed := ((warnUnknownCmd ctx name optionRun pos).run st).2.spans.recoveryDiags
+    let observed := ((warnUnknownCmd ctx name optionRun opts pos).run st).2.spans.recoveryDiags
     accountRecoveredItem diags item observed =
       diags ++ observed.filter (recoveryMatches item) := by
   apply accountRecoveredItem_replay_exact _ _ _ hmissing
   rw [warnUnknownCmd_recovery_exact]
-  rcases warnUnknownCmd_push_exact ctx name optionRun pos st with ⟨d, _, hd, hk, hs⟩
+  rcases warnUnknownCmd_push_exact ctx name optionRun opts pos st with ⟨d, _, hd, hk, hs⟩
   apply Array.isEmpty_eq_false_iff_exists_mem.mpr
   refine ⟨d, Array.mem_filter.mpr ⟨Array.mem_of_back? hd, ?_⟩⟩
   have hc := hk.trans (unknownCmdDiag_shape_id name (RunShape.one optionRun))

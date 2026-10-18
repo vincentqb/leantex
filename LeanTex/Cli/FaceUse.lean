@@ -45,6 +45,11 @@ private def familyOf (spec : Ir.FontSpec) : String → Option String
       (spec.families.find? (·.1 == (k.drop "family.".length).toString)).map (·.2)
     else none
 
+/-- The site of the first declared face naming `family`. -/
+public def familySite (faces : Array (String × Span)) (spec : Ir.FontSpec) (family : String) :
+    Option Span :=
+  (faces.find? fun (k, _) => familyOf spec k == some family).map (·.2)
+
 /-- The W0449 of each declared face no content slot of the finished document resolves to and no
 fallback glyph reads; a math face the build refused, and a family no installed face answers, is
 named where it is refused. -/

@@ -9,6 +9,7 @@ import LeanTex.Core.Math
 import LeanTex.Cli.FontDiscovery
 import LeanTex.Cli.DriverDiag
 import LeanTex.Cli.SlotLoss
+import LeanTex.Cli.FaceUse
 import LeanTex.Core.Layout
 
 /-! Font assembly shared by the driver and its artifact checks, resolving the document
@@ -78,7 +79,8 @@ public def monoDefaultOf (doc : Ir.Doc) (faces : Array FontDb.Face) (docDirs : L
 loaded once and deduplicated by path, with per-glyph fallback precomputed over the
 document's scalars. -/
 public def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
-    (cache : FontEnv.Cache) (purpose : Purpose) (figureScalars : Array Char := #[]) :
+    (cache : FontEnv.Cache) (purpose : Purpose) (figureScalars : Array Char := #[])
+    (sites : Array (String × Span) := #[]) :
     IO (Except Diag (Font.FontSet × Ir.Doc × Array Diag × Array String)) := do
   let spec := doc.fonts
   let bare := spec.body.isNone && spec.sans.isNone && spec.mono.isNone
@@ -174,7 +176,7 @@ public def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
           -- Name only the families resembling the request; a host may hold thousands.
           let all := FontDb.families faces
           diags := diags.push (DriverDiag.familyMissing family
-            (FontDb.nearest all family).toList all.size)
+            (FontDb.nearest all family).toList all.size (FaceUse.familySite sites doc.fonts family))
       | some (face, sub) =>
         -- premise: monoDefaultChecks — a declared typewriter family names each italic substitution
         let upright := slot == 2 && pick.isSome && italic && !face.italic
@@ -206,7 +208,8 @@ public def buildFontSet (doc : Ir.Doc) (scan : FaceScan)
     | .settled => !(Layout.docMathScalars doc).isEmpty
   let mathSource := (Ir.mathFaceRequest doc).bind (·.source)
   let math ← FontEnv.resolveMath faces spec.math spec.body
-    wantsMath fonts paths missing (some cache) mathSource
+    wantsMath fonts paths missing (some cache) (source := mathSource)
+    (declaredAt := spec.math.bind (FaceUse.familySite sites doc.fonts ·))
   fonts := math.fonts
   paths := math.paths
   missing := math.missing

@@ -159,5 +159,9 @@ equations ({lines roman}, {said})"
     "\\chapter{Alpha}\n\\begin{lstlisting}[caption={A probe}]\nx = 1\n\\end{lstlisting}"
   t "chapter declarations: a listing numbered through the document is named"
     ((elabStr listing).2.any fun d => d.subject == some "chapters:floats")
+  let figure := report "" "\\chapter{Alpha}\nWords.\n\\begin{figure}\n\\caption{A probe}\n\\end{figure}"
+  t s!"chapter declarations: the float numbered through the document is named at its caption"
+    ((elabStr figure).2.any fun d => d.subject == some "chapters:floats" &&
+      d.span.any (·.pos.line == 6))
 
 end Tests.Chapters

@@ -53,6 +53,15 @@ def dropChecks (ref : IO.Ref (List String)) : IO Unit := do
     "x")
   t "an alert the page never paints is never named"
     (!((Contrast.schemeJudge unpainted).diags.any fun d => d.subject.any (hasStr · "alert")))
+  let (boxed, _) := elabStr (dvDoc "\\palette{ alert = #FFFFFF }\n" "x \\colorbox{black}{\\textcolor{alert}{y}}")
+  let boxedKeys := (Contrast.schemeJudge boxed).diags.filterMap (·.subject)
+  t s!"a palette colour only a box's literal ground carries is judged on that ground ({boxedKeys})"
+    (boxedKeys.any (·.endsWith "alert@#000000") &&
+      !boxedKeys.any fun k => hasStr k "alert@bg" || hasStr k "alert@fg")
+  let (unpaintedGround, _) := elabStr (dvDoc "\\palette{ bg = #767676, fg = #000000, alert = #FFFFFF }\n"
+    "x \\colorbox{black}{\\textcolor{alert}{y}}")
+  t s!"a palette colour is never judged on a ground no text it colours stands on ({(Contrast.schemeJudge unpaintedGround).diags.filterMap (·.subject)})"
+    (!((Contrast.schemeJudge unpaintedGround).diags.any fun d => d.subject.any (hasStr · "alert@bg")))
   let (plain, _) := elabStr (dvDoc "" "x")
   t "an undeclared document ships every scheme"
     ((Contrast.schemeJudge plain).shipped == Ir.Scheme.all)

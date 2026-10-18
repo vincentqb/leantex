@@ -191,7 +191,14 @@ def refusedCases : List (String × DiagCode × String) :=
      ("\\usepackage{caption}" ++ probeColor ++ "\\captionsetup{probefont={\\color{probeink}\\bfseries}}")
      "\\begin{figure}Words.\\caption{A caption.}\\end{figure}"),
    ("an unknown command's page colour", .W0301, article probeColor
-     "Words \\probeunknowncmd{\\pagecolor{probeink}} more.")]
+     "Words \\probeunknowncmd{\\pagecolor{probeink}} more."),
+   ("an unknown command's dropped options", .W0301, article probeColor
+     "Words \\probeunknowncmd[color=probeink]{more}."),
+   ("an unsupported package's options", .W0103, article
+     (probeColor ++ "\\usepackage[linkcolor=probeink]{probenopackage}") "Words."),
+   ("a beamer sub-theme package's options", .W0104, deck
+     (probeColor ++ "\\usepackage[accent=probeink]{beamercolorthemeprobe}")
+     "\\begin{frame}{Title}Words.\\end{frame}")]
 
 /-- Each kind of declaration nothing reads is named once at its site, keyed by what it declares;
 one something reads is not. -/
@@ -326,6 +333,11 @@ def redefinitionChecks (ref : IO.Ref (List String)) : IO Unit := do
     d.subject.any (·.startsWith "cond:body:") && d.span.any (·.pos.line == line)
   t s!"unused settings: a redefinition that wins keeps its skipped text's loss beside a refused one's refusal ({ds.map (·.kind.code)})"
     (ds.any (·.kind == .W0361) && !skippedAt 2 && skippedAt 3)
+  let (_, ds) := elabStr (article ("\\renewcommand{\\textbf}[1]{\\underline{#1}\\ifmmode x\\fi}\n" ++
+    "\\renewcommand{\\textbf}[1]{\\ifmmode #1\\else{\\bfseries #1}\\fi}") "Some \\textbf{bold} words.")
+  t s!"unused settings: a refusal after an earlier definition names that definition as the one standing, which keeps its loss ({ds.map (·.message)})"
+    (ds.any (fun d => d.kind == .W0361 && hasStr d.message ":2 stands") && ds.any fun d =>
+      d.kind == .W0104 && d.subject.any (·.startsWith "cond:body:") && d.span.any (·.pos.line == 2))
   let (_, ds) := elabStr (article
     "\\def\\probesetup{\\renewcommand{\\textbf}[1]{\\ifmmode ##1\\else{\\bfseries ##1}\\fi}}\n\\probesetup"
     "Some \\textbf{bold} words.")
@@ -631,10 +643,12 @@ def faceChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\begin{document}\nPlain words.\n\\end{document}\n"
   let (missingDoc, _, missingSpans) := Elab.runRawsSpanned "t"
     (Parse.parse "t" (Lex.lex "t" missingSrc).1).1
-  match ← FontAssembly.buildFontSet missingDoc scan cache .settled with
+  match ← FontAssembly.buildFontSet missingDoc scan cache .settled (sites := missingSpans.faces) with
   | .ok (fs, doc, ds, _) =>
     t s!"unused faces: a family no installed face answers is named by its refusal alone ({(FaceUse.diags missingSpans.faces fs doc).map (·.subject)})"
       (ds.any (·.kind == .E0403) && (FaceUse.diags missingSpans.faces fs doc).isEmpty)
+    t s!"unused faces: a family no installed face answers is refused at the entry naming it ({(ds.filter (·.kind == .E0403)).map (·.span.map (·.pos.line))})"
+      ((ds.filter (·.kind == .E0403)).map (·.span.map (·.pos.line)) == #[some 2])
   | .error _ => t "unused faces: a document missing one family still settles its face set" false
   let deckFaces := serif ++ ", sans = \"Open Sans\", mono = \"Source Code Pro\""
   let deckBody := "\\begin{frame}{Title}Words.\\end{frame}"

@@ -100,12 +100,13 @@ public def fontsDirMissing (decl resolved : String) : Diag :=
   Diag.of .W0008 s!"'\\fonts' dir '{decl}' is not a directory ({resolved}); looking elsewhere"
     (subject := some "param:\\fonts:dir")
 
-/-- E0403: a named family is not installed; `near` are the closest installed
-names, `installed` the family count when nothing is close. -/
-public def familyMissing (family : String) (near : List String) (installed : Nat) : Diag :=
+/-- E0403: a named family is not installed, at the declaration naming it; `near` are the closest
+installed names, `installed` the family count when nothing is close. -/
+public def familyMissing (family : String) (near : List String) (installed : Nat)
+    (span : Option Span := none) : Diag :=
   let hint := if near.isEmpty then s!"{installed} families are installed"
     else s!"did you mean: {String.intercalate ", " near}?"
-  Diag.of .E0403 s!"no installed font family named '{family}'"
+  Diag.of .E0403 s!"no installed font family named '{family}'" span
     (help := s!"{hint} — `leantex fonts` lists every family")
 
 /-- E0404: a font file that exists but does not parse. -/

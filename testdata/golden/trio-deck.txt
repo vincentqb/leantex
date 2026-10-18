@@ -11,7 +11,7 @@ token sep 1200/1000ex plus 300/1000ex
 meta title "Cardamom Press"
 meta author "Pat Placeholder"
 assert fonts.all_embedded
-allow W0449, W0104
+allow W0449
 frame golden
   center
     section* 0
@@ -51,10 +51,13 @@ frame
       italicCorr maybe
       text "64"
     italicCorr maybe
-    text " or fewer, numbered by hand. Enquiries: "
-    styled mono
-      italicCorr maybe
-      text "press@example.org"
-    text "."
+    text " or fewer, numbered by hand."
+  block before 1200/1000ex plus 300/1000ex
+    para
+      text "Enquiries: "
+      styled mono
+        italicCorr maybe
+        text "press@example.org"
+      text "."
 -- diagnostics
-warning[W0104] 20:1 token 'sep' is declared, but nothing in the document reads it; only the web page carries it, as a custom property | help: name it where a length is read, as \block[before = sep] does, or drop it
+(none)

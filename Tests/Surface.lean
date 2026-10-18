@@ -3285,6 +3285,16 @@ def tokensChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (_, idleDs) := elabStr (tokSrc.replace "\\block[before = slab]{y}" "")
   t "tokens: a token nothing reads is named once, keyed by its name"
     (idleDs.map (·.subject) == #[some "param:\\tokens:slab"] && idleDs.all (·.code == "W0104"))
+  let (_, proseDs) := elabStr (tokSrc.replace "\\block[before = slab]{y}" "A slab of prose.")
+  t s!"tokens: a token only running prose spells is named ({proseDs.map (·.subject)})"
+    (proseDs.map (·.subject) == #[some "param:\\tokens:slab"])
+  let (_, bracketDs) := elabStr
+    (tokSrc.replace "\\block[before = slab]{y}" "The interval [0, 1) is open. A slab of prose.")
+  t s!"tokens: a bracket in running prose opens no option for the prose after it ({bracketDs.map (·.subject)})"
+    (bracketDs.map (·.subject) == #[some "param:\\tokens:slab"])
+  let (_, argDs) := elabStr (tokSrc.replace "\\block[before = slab]{y}" "Words\\hspace{slab}more.")
+  t s!"tokens: a token a length argument spells is read ({argDs.map (·.subject)})"
+    argDs.isEmpty
   t "tokens ex is symbolic" (tokDoc.tokens.find? "rhythm" ==
     some { width := { ex := 2000 }, stretch := { ex := 500 } })
   t "tokens derived scales earlier" (tokDoc.tokens.find? "sep" ==

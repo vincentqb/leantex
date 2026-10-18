@@ -2,8 +2,7 @@
 % \tokens and \style blocks are byte-identical across trio-page.tex,
 % trio-deck.tex and trio-card.tex: the classes differ in their defaults,
 % never in their vocabulary. Everything here is invented — a fictional
-% studio, placeholder names, example.org contacts. Only the card spaces by
-% `sep`, which \allow{W0104} accepts here.
+% studio, placeholder names, example.org contacts.
 \documentclass{article}
 
 \fonts{
@@ -25,7 +24,6 @@
 
 \page{ size = a5, margin = 18mm }
 \pdfmeta{ title = "Cardamom Press", author = "Pat Placeholder" }
-\allow{W0104}
 \assert{ pages == 1 }
 \assert{ fonts.all_embedded }
 
@@ -43,7 +41,8 @@ that all read the same declarations.
 \begin{itemize}
   \item Wood type and photopolymer plates; \primary{amber} is the one accent.
   \item Editions of \texttt{64} or fewer, numbered by hand.
-  \item Enquiries: \texttt{press@example.org}.
 \end{itemize}
+
+\block[before = sep]{Enquiries: \texttt{press@example.org}.}
 
 \end{document}

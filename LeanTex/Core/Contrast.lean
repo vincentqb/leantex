@@ -655,20 +655,36 @@ private def schemeLosses (s : Scheme) (f : SchemeFrame) (stage : Bool)
   for (p, (v, un)) in views do
     let used := (uses.lookup p).getD #[]
     for u in un do
-      let paints := used.any (·.name == some u.name) || match u.name with
+      let site := match u.name with
         | .role r => sites.any (· == (r, p))
         | .color _ => false
-      if !paints then continue
+      let painted := used.filter (·.name == some u.name)
+      if painted.isEmpty && !site then continue
       let need := match u.name with
         | .role r => r.row.need
         | .color _ => .text
       let ink := match u.name with
         | .role r => Design.at v s r
         | .color n => v.lookup (.color n)
-      let (ratio, gate) := u.measured.getD ((match ink, Design.at v s u.on with
-        | some a, some b => contrastMilli a b
-        | _, _ => 0), requiredIn s (need.atStage stage))
-      out := push out { name := u.name, on := .role u.on, ratio, gate }
+      if site then
+        let (ratio, gate) := u.measured.getD ((match ink, Design.at v s u.on with
+          | some a, some b => contrastMilli a b
+          | _, _ => 0), requiredIn s (need.atStage stage))
+        out := push out { name := u.name, on := .role u.on, ratio, gate }
+      else
+        -- A colour only text paints is judged on the grounds that text stands on.
+        let fails := painted.filterMap fun w =>
+          let marked := w.surfaceRole == some .alertMark && (Design.at v s .alertMark).isNone
+          let (surface, role) := if marked then w.under.getD (w.surface, w.surfaceRole)
+            else (w.surface, w.surfaceRole)
+          let (g, on) := p.useGround v f surface role
+          let gate := requiredIn s ((if w.large then Need.largeText else .text).atStage stage)
+          let ratio := (ink.map (contrastMilli · g)).getD 0
+          if ratio < gate then
+            some ({ name := u.name, on := if w.onLiteral && !marked then .color surface.hex
+                      else .role on, ratio, gate } : SchemeLoss)
+          else none
+        if let some l := fails[0]? then out := push out l
     for u in used do
       if u.name.isSome then continue
       let (surface, role) := if u.surfaceRole == some .alertMark && (Design.at v s .alertMark).isNone

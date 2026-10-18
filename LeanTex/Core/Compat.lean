@@ -1200,10 +1200,14 @@ document's own text. -/
 public def packageFile (file : String) : Bool :=
   file.endsWith ".sty" || file.endsWith ".cls"
 
+/-- Whether a site in `file` is package code: the file a package's or class's, or reached as its own. -/
+public def packageCode (owned : Bool) (file : String) : Bool :=
+  owned || packageFile file
+
 /-- Whether an input wrapper `name` met in `parent` holds a package's code: inside its owner's, its
 parent a package or class file, or wrapped as one its code made. -/
 public def ownsInput (owned : Bool) (parent name : String) : Bool :=
-  owned || packageFile parent || Parse.isOwnedInput name
+  packageCode owned parent || Parse.isOwnedInput name
 
 /-- A refusal of `name` at a site in `file` demotes exactly when the site is
 package code and the name a TeX internal. -/
@@ -3588,7 +3592,7 @@ private def recordValue (n : String) (v : Option CondVal) (global : Bool)
   let v := v.map fun c =>
     { c with
       live := global || c.live || c.arity > 0 || c.optional.isSome || condLiveList st.flags st.binds c.raws.toList
-      owned := c.owned || st.owned || packageFile st.file
+      owned := c.owned || packageCode st.owned st.file
       serial := s
       -- premise: Tests.macroHookScopeChecks — a local let executes before scope closes
       textSerial := if copied then c.textSerial else s }
@@ -3599,7 +3603,7 @@ private def recordValue (n : String) (v : Option CondVal) (global : Bool)
 private def withSpaceBinding (st : St) : St :=
   let value : CondVal :=
     { raws := #[.space], long := false, prot := false, live := true,
-      serial := st.serial + 1, textSerial := st.serial + 1, owned := st.owned || packageFile st.file }
+      serial := st.serial + 1, textSerial := st.serial + 1, owned := packageCode st.owned st.file }
   { st with
     serial := st.serial + 1
     binds := st.binds.insert "space" (some value)
@@ -5091,7 +5095,7 @@ private def condReadAt [Monad m] (reader : Option (InputReader m))
   let (answer, context) ← dispatchInput (m := m) reader request { state := st }
   write fun _ => context.state
   -- A file a package's code inputs, from its own file or a macro it defines, is the package's.
-  let owned := st.owned || packageFile st.file
+  let owned := packageCode st.owned st.file
   return answer.map fun answer =>
     { raws := if owned then answer.map ownInput else answer, stop }
 
@@ -9560,6 +9564,7 @@ the Markdown document dialect reads only 'citations' and 'hybrid'" pos
       say .W0103 "package 'ulem' without only the 'normalem' option changes \\emph; skipped"
         pos (help := "use \\usepackage[normalem]{ulem} for native \\sout")
         (refused := some p)
+      mention (opt.getD "")
   -- premise: tableFaceOrderChecks — the face before or after the load ships identical pages
   else if p == "booktabs" && (← get).facesDeclared.contains
       (if (← get).deck then "sans" else "body") then
@@ -9624,9 +9629,11 @@ rendered subset is drawn whole at the boundary" pos
         (help := (beamerNative.lookup slot).getD
           "a theme is a token bundle here: \\theme selects one, and \\palette \
 and \\tokens declare the design directly")
+      mention (opt.getD "")
   else
     say .W0103 s!"package '{p}' is not supported; skipped" pos
       (refused := some p)
+    mention (opt.getD "")
   return out
 
 /-- Admits a native package before installing its defaults. -/
@@ -9678,7 +9685,10 @@ private theorem rewritePackage_external_exact (name p : String)
     (hb : (boundaryPkgs.contains p && st.boundaryOpen) = false)
     (ht : themeSlotOfPackage? p = none) :
     rewritePackage name p opt optRaws pos st =
-      (#[], { st with diags := st.diags.push (atSource st pos (packageRefusal st.file pos p)) }) := by
+      (#[], if (opt.getD "").isEmpty then
+          { st with diags := st.diags.push (atSource st pos (packageRefusal st.file pos p)) }
+        else { st with diags := st.diags.push (atSource st pos (packageRefusal st.file pos p))
+                       mentions := st.mentions.push (opt.getD ""), writes := st.writes + 1 }) := by
   have hn' := hn
   simp only [nativePackages, List.contains_cons, List.contains_nil,
     Bool.or_eq_false_iff] at hn'
@@ -9686,11 +9696,15 @@ private theorem rewritePackage_external_exact (name p : String)
     simp_all [List.lookup_eq_none_iff, fontPackages]
   have hnmem : p ∉ nativePackages := by simpa using hn
   have hbmem : ¬(p ∈ boundaryPkgs ∧ st.boundaryOpen = true) := by simpa using hb
-  simp [rewritePackage, rewritePackageBody, hf, hnmem, ht, hn']
+  simp [rewritePackage, rewritePackageBody, hf, hnmem, ht, hn', mention]
   dsimp only [bind, StateT.bind, get, getThe, MonadStateOf.get, StateT.get,
     pure]
   simp only [hbmem, ↓reduceIte]
-  rfl
+  by_cases he : opt.getD "" = ""
+  · simp only [he, ↓reduceIte]
+    rfl
+  · simp only [he, ↓reduceIte]
+    rfl
 
 /-- The package-loading arm's loop, judging each name of one
 operand in order. -/
@@ -9707,8 +9721,11 @@ private theorem rewritePackages_external_exact (name : String)
     (hb : ∀ p ∈ pkgs, (boundaryPkgs.contains p && st.boundaryOpen) = false)
     (ht : ∀ p ∈ pkgs, themeSlotOfPackage? p = none) :
     rewritePackages name pkgs opt optRaws pos st =
-      (#[], { st with diags := st.diags ++
-        (pkgs.map fun p => atSource st pos (packageRefusal st.file pos p)).toArray }) := by
+      (#[], { st with
+        diags := st.diags ++ (pkgs.map fun p => atSource st pos (packageRefusal st.file pos p)).toArray,
+        mentions := if opt.getD "" = "" then st.mentions
+          else st.mentions ++ (pkgs.map fun _ => opt.getD "").toArray,
+        writes := if opt.getD "" = "" then st.writes else st.writes + pkgs.length }) := by
   have loop :
       ∀ (xs : List String) (out : Array Raw) (s : St),
         (∀ p ∈ xs, nativePackages.contains p = false) →
@@ -9717,14 +9734,17 @@ private theorem rewritePackages_external_exact (name : String)
         ((forIn xs out fun p acc => do
           let repl ← rewritePackage name p opt optRaws pos
           pure (.yield (acc ++ repl))) : M (Array Raw)) s =
-          (out, { s with diags := s.diags ++
-            (xs.map fun p => atSource s pos (packageRefusal s.file pos p)).toArray }) := by
+          (out, { s with
+            diags := s.diags ++ (xs.map fun p => atSource s pos (packageRefusal s.file pos p)).toArray,
+            mentions := if opt.getD "" = "" then s.mentions
+              else s.mentions ++ (xs.map fun _ => opt.getD "").toArray,
+            writes := if opt.getD "" = "" then s.writes else s.writes + xs.length }) := by
     intro xs
     induction xs with
     | nil =>
       intro out s _ _ _
       simp only [List.forIn_nil, pure, StateT.pure, List.map_nil,
-        List.toArray, Array.append_empty]
+        List.toArray, Array.append_empty, List.length_nil, Nat.add_zero, ite_self]
     | cons p ps ih =>
       intro out s hn hb ht
       rw [List.forIn_cons]
@@ -9732,20 +9752,47 @@ private theorem rewritePackages_external_exact (name : String)
         rewritePackage_external_exact name p opt optRaws pos s
           (hn p List.mem_cons_self) (hb p List.mem_cons_self) (ht p List.mem_cons_self),
         Array.append_empty]
-      let next : St :=
-        { s with diags := s.diags.push (atSource s pos (packageRefusal s.file pos p)) }
-      have tail := ih out next (fun q hq => hn q (List.mem_cons_of_mem _ hq))
-        (fun q hq => hb q (List.mem_cons_of_mem _ hq))
-        (fun q hq => ht q (List.mem_cons_of_mem _ hq))
-      calc
-        _ = (out, { next with diags := next.diags ++
-            (ps.map fun q => atSource next pos (packageRefusal next.file pos q)).toArray }) :=
-          tail
-        _ = _ := by
-          change (out, { s with diags := (
-            s.diags.push (atSource s pos (packageRefusal s.file pos p)) ++
-              (ps.map fun q => atSource s pos (packageRefusal s.file pos q)).toArray) }) = _
-          rw [List.push_append_toArray, List.map_cons]
+      by_cases he : opt.getD "" = ""
+      · have hb' : (opt.getD "").isEmpty = true := by simpa using he
+        simp only [hb', ↓reduceIte]
+        let next : St :=
+          { s with diags := s.diags.push (atSource s pos (packageRefusal s.file pos p)) }
+        have tail := ih out next (fun q hq => hn q (List.mem_cons_of_mem _ hq))
+          (fun q hq => hb q (List.mem_cons_of_mem _ hq))
+          (fun q hq => ht q (List.mem_cons_of_mem _ hq))
+        simp only [he, ↓reduceIte] at tail ⊢
+        calc
+          _ = (out, { next with diags := next.diags ++
+              (ps.map fun q => atSource next pos (packageRefusal next.file pos q)).toArray }) :=
+            tail
+          _ = _ := by
+            change (out, { s with diags := (
+              s.diags.push (atSource s pos (packageRefusal s.file pos p)) ++
+                (ps.map fun q => atSource s pos (packageRefusal s.file pos q)).toArray) }) = _
+            rw [List.push_append_toArray, List.map_cons]
+      · have hb' : (opt.getD "").isEmpty = false := by simpa using he
+        simp only [hb', Bool.false_eq_true, ↓reduceIte]
+        let next : St :=
+          { s with diags := s.diags.push (atSource s pos (packageRefusal s.file pos p)),
+                   mentions := s.mentions.push (opt.getD ""), writes := s.writes + 1 }
+        have tail := ih out next (fun q hq => hn q (List.mem_cons_of_mem _ hq))
+          (fun q hq => hb q (List.mem_cons_of_mem _ hq))
+          (fun q hq => ht q (List.mem_cons_of_mem _ hq))
+        simp only [he, ↓reduceIte] at tail ⊢
+        calc
+          _ = (out, { next with
+                diags := next.diags ++
+                  (ps.map fun q => atSource next pos (packageRefusal next.file pos q)).toArray,
+                mentions := next.mentions ++ (ps.map fun _ => opt.getD "").toArray,
+                writes := next.writes + ps.length }) := tail
+          _ = _ := by
+            change (out, { s with
+              diags := s.diags.push (atSource s pos (packageRefusal s.file pos p)) ++
+                (ps.map fun q => atSource s pos (packageRefusal s.file pos q)).toArray,
+              mentions := s.mentions.push (opt.getD "") ++ (ps.map fun _ => opt.getD "").toArray,
+              writes := s.writes + 1 + ps.length }) = _
+            rw [List.push_append_toArray, List.push_append_toArray, List.map_cons, List.map_cons,
+              List.length_cons, Nat.add_assoc, Nat.add_comm 1 ps.length]
   have h := loop pkgs #[] st hn hb ht
   unfold rewritePackages
   simp only [bind, StateT.bind, pure, StateT.pure]
@@ -13436,6 +13483,7 @@ private theorem rewriteCtrl_package_external_exact
     simp [rawSrc, rawSrcList, rawSrcOne]
   have hpkgs := rewritePackages_external_exact command
     ((names.trimAscii.toString.splitOn ",").map (·.trimAscii.toString)) none #[] pos st hn hb ht
+  simp only [Option.getD_none, ↓reduceIte] at hpkgs
   have hstep := rewriteCtrl_found_exact (packageRow command) hrow
     (by rcases hc with rfl | rfl <;> rfl) (by rcases hc with rfl | rfl <;> rfl)
     pos (packageCall command names pos gp np) 1 2 st _
@@ -14574,12 +14622,12 @@ private def tallyList (file : String) (owned : Bool) (t : LengthTally) (prev : O
       | .ctrl c p =>
         match assignedLength rest with
         | some (n, after) =>
-          if lengthAssigners.contains c && literalValue after && !owned && !packageFile file then
+          if lengthAssigners.contains c && literalValue after && !packageCode owned file then
             t.assign n file p
           else if lengthAssigners.contains c || c == "newlength" then t.target n
           else t
         | none =>
-          if bareLiteral t prev c rest && !owned && !packageFile file then t.assign c file p else t
+          if bareLiteral t prev c rest && !packageCode owned file then t.assign c file p else t
       | _ => t
     tallyList file owned (tallyOne file owned t r) (if r matches .space then prev else some r) rest
 termination_by structural l => l
@@ -14597,12 +14645,16 @@ termination_by structural r => r
 
 end
 
-/-- The identifiers a walk has spelled outside a `\tokens` group's keys, the run being spelled, and
-a `\tokens` awaiting its group. -/
+/-- A spelling walk's state: the identifiers spelled outside a `\tokens` group's keys, the run being
+spelled, a `\tokens` awaiting its group, whether a value could stand here (in a group, formula or a
+control's option run, never running prose), the option runs open, and whether a `[` opens one. -/
 private structure Spelling where
   spelled : Std.HashSet String := {}
   run : String := ""
   pending : Bool := false
+  inArg : Bool := false
+  brackets : Nat := 0
+  opens : Bool := false
 
 /-- An identifier ends, standing spelled whole and in each part a `-` or `.` divides. -/
 private def Spelling.flush (t : Spelling) : Spelling :=
@@ -14611,14 +14663,19 @@ private def Spelling.flush (t : Spelling) : Spelling :=
   { t with spelled := parts.foldl (·.insert ·) (t.spelled.insert t.run), run := "" }
 
 private def Spelling.char (t : Spelling) (c : Char) : Spelling :=
-  if Decl.isIdentChar c || c == '-' then { t with run := t.run.push c } else t.flush
+  if (t.inArg || t.brackets > 0) && (Decl.isIdentChar c || c == '-') then { t with run := t.run.push c }
+  else t.flush
 
 /-- A `\tokens` group's values, each spelled; its keys declare, and spell nothing. -/
 private def Spelling.values (t : Spelling) (body : Array Raw) : Spelling :=
   (Decl.splitEntries (Parse.declSrc body)).foldl (init := t) fun t e =>
     match Decl.splitEntry e with
-    | some (_, value) => (value.foldl Spelling.char t).flush
+    | some (_, value) => (value.foldl Spelling.char { t with inArg := true }).flush
     | none => t
+
+/-- The walk past a nested body, its own argument state restored. -/
+private def Spelling.after (t inner : Spelling) : Spelling :=
+  { inner with inArg := t.inArg, brackets := t.brackets }
 
 mutual
 
@@ -14628,22 +14685,34 @@ private def spellingList (t : Spelling) : List Raw → Spelling
 termination_by structural l => l
 
 private def spellingOne (t : Spelling) : Raw → Spelling
-  | .ctrl "tokens" _ => { t.flush with pending := true }
-  | .ctrl n _ => { t.flush with spelled := t.flush.spelled.insert n, pending := false }
+  | .ctrl "tokens" _ => { t.flush with pending := true, opens := true }
+  | .ctrl n _ => { t.flush with spelled := t.flush.spelled.insert n, pending := false, opens := true }
   | .space => t.flush
   | .group body _ =>
-    if t.pending then { t.flush.values body with pending := false }
-    else spellingList t.flush body.toList
-  | .math _ body _ | .env _ body _ => spellingList { t.flush with pending := false } body.toList
-  | .word s _ => s.foldl Spelling.char { t with pending := false }
-  | .sym c _ => { t with pending := false }.char c
-  | .par _ | .verb .. => { t.flush with pending := false }
+    if t.pending then { t.after { t.flush.values body with pending := false } with opens := t.opens }
+    else { t.after (spellingList { t.flush with inArg := true } body.toList) with opens := t.opens }
+  | .math _ body _ =>
+    { t.after (spellingList { t.flush with pending := false, inArg := true } body.toList) with
+      opens := false }
+  | .env _ body _ =>
+    { t.after (spellingList { t.flush with pending := false, opens := true } body.toList) with
+      opens := false }
+  | .word s _ => s.foldl Spelling.char { t with pending := false, opens := false }
+  | .sym '[' _ =>
+    if t.opens then { t.flush with pending := false, brackets := t.brackets + 1, opens := false }
+    else { t.flush with pending := false, opens := false }
+  | .sym ']' _ =>
+    if t.brackets > 0 then { t.flush with pending := false, brackets := t.brackets - 1, opens := true }
+    else { t.flush with pending := false, opens := false }
+  | .sym c _ => { t with pending := false, opens := false }.char c
+  | .par _ | .verb .. => { t.flush with pending := false, opens := false }
 termination_by structural r => r
 
 end
 
-/-- Every identifier a document spells but a `\tokens` group's keys: a word run through adjacent
-symbols, whole and in its parts, and a control word's name. -/
+/-- Every identifier a document spells where a value could read it but a `\tokens` group's keys: a
+word run through adjacent symbols in a group, formula or option, whole and in its parts, and a
+control word's name. -/
 public def tokenSpellings (raws : Array Raw) : Std.HashSet String := (spellingList {} raws.toList).spelled
 
 /-- Each length the document assigns that neither it, an expanded `\edef` text in `edefReads`, nor
@@ -15425,7 +15494,7 @@ private def declareDefault (st : TextSt) (reader : String) (lang : Option String
   let file := (← get).file
   -- A declaration a definition's replacement text makes at its call is the definition's.
   let written := pos.command.isSome && (← get).sourceTriggers.writtenAt file pos == pos.command
-  if st.depth != 0 || !written || !UnusedSetting.ownSite (packageFile file || st.owned) false pos then
+  if st.depth != 0 || !written || !UnusedSetting.ownSite (packageCode st.owned file) false pos then
     return none
   let i := (← get).listingDefaults.size
   write fun s => { s with listingDefaults := s.listingDefaults.push { reader, lang, pos, file } }

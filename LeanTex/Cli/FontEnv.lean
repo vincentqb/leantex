@@ -104,7 +104,7 @@ public def resolveMath (faces : Array FontDb.Face) (declared : Option String)
     (body : Option String) (wantsMath : Bool)
     (fonts : Array Font) (paths : Array String)
     (missing : Array String) (cache : Option Cache := none)
-    (source : Option Span := none) : IO MathFace := do
+    (source : Option Span := none) (declaredAt : Option Span := none) : IO MathFace := do
   let mut fonts := fonts
   let mut paths := paths
   let mut missing := missing
@@ -130,7 +130,7 @@ public def resolveMath (faces : Array FontDb.Face) (declared : Option String)
         missing := missing.push family
         let all := FontDb.families faces
         diags := diags.push (DriverDiag.familyMissing family
-          (FontDb.nearest all family).toList all.size)
+          (FontDb.nearest all family).toList all.size declaredAt)
     | some (face, _) =>
       let (loaded, fonts', paths', diag?) ← loadFace fonts paths face.path
       fonts := fonts'

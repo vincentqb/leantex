@@ -254,6 +254,10 @@ def boxScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit
     (said dark |>.contains "W0315")
   t "box scope: legible ink on a box's ground is not named"
     (!(said (doc "" "Alpha \\colorbox{yellow}{fine} end.") |>.contains "W0315"))
+  let grounds := doc "" "Alpha \\colorbox{white}{fine} and\n\\colorbox{yellow}{\\color{white} pale} end."
+  let pale := (elabStr grounds).2.filter (·.kind == .W0315)
+  t s!"box scope: a pale ink is named where its colour is written, never at a box ground of that colour ({pale.map (·.span.map (·.pos.col))})"
+    (pale.size == 1 && pale.all fun d => d.span.any fun sp => sp.pos.line == 5 && sp.pos.col == 19)
   let envTight := doc "\\newenvironment{tight}{\\setlength{\\fboxsep}{0pt}}{}\n"
     "Foxtrot \\begin{tight}\\colorbox{yellow}{six}\\end{tight} words \\colorbox{yellow}{seven}.\n\n\\colorbox{yellow}{eight}"
   t s!"box scope: an environment's begin code sets its content's boxes and ends with it ({(pads envTight).map (·.sp.toPtString)})"

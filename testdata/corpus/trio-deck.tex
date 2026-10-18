@@ -2,8 +2,7 @@
 % trio-page.tex and trio-card.tex; only the class and the content differ.
 % Invented content throughout. The deck opts out of the default bundle
 % (\theme{default}): its whole point is the trio's own shared design, whose
-% body face a deck's sans text never reads, which \allow{W0449} accepts, and
-% `sep`, which only the card spaces by, which \allow{W0104} accepts.
+% body face a deck's sans text never reads, which \allow{W0449} accepts.
 \documentclass[aspectratio=169]{slides}
 \theme{default}
 
@@ -29,7 +28,7 @@
 \date{}
 
 \assert{ fonts.all_embedded }
-\allow{W0449, W0104}
+\allow{W0449}
 
 \begin{document}
 
@@ -47,7 +46,7 @@
 
 \begin{frame}{Editions}
   Editions of \texttt{64} or fewer, numbered by hand.
-  Enquiries: \texttt{press@example.org}.
+  \block[before = sep]{Enquiries: \texttt{press@example.org}.}
 \end{frame}
 
 \end{document}

@@ -345,6 +345,17 @@ def groupScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
     (grounds (dvDoc "\\usepackage{xcolor}\n"
       "\\pagecolor{yellow}\nAaa\n\\clearpage\n{\\nopagecolor}\nBbb") ==
       (#[some yellow, none], true))
+  t "group scope/a page colour inside text grounds its page and outlives its group, naming nothing unknown"
+    (grounds (dvDoc "\\usepackage{xcolor}\n"
+      "Aaa \\textbf{bold \\pagecolor{yellow} x} more.\n\\clearpage\nBbb \\emph{\\nopagecolor} c.\n\\clearpage\nCcc") ==
+      (#[some yellow, none, none], true))
+  let crossing := grounds (dvDoc "\\usepackage{xcolor}\n"
+    ("Aaa \\textbf{\\pagecolor{yellow}bold} " ++ String.join (List.replicate 700 "words run on ")))
+  t s!"group scope/a page colour inside text grounds every page its paragraph sets ({crossing.1.size} pages)"
+    (crossing.1.size ≥ 2 && crossing.1.all (· == some yellow))
+  t "group scope/a page colour in an unknown command's argument grounds its page"
+    ((grounds (dvDoc "\\usepackage{xcolor}\n" "Aaa \\probeunknown{\\pagecolor{yellow}} more.")).1 ==
+      #[some yellow])
   -- Small caps is its own axis since LaTeX 2020: `\scshape` after `\itshape` keeps the slant.
   let (shdoc, _) := Elab.run "group-scope.tex"
     (dvDoc "" "\\begin{minipage}{5cm} Aaa \\itshape Bbb \\scshape Ccc\\par Ddd\\end{minipage}\n\nEee")

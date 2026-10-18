@@ -925,7 +925,7 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
     let scan ← match reuse with
       | some s => pure s
       | none => scanFaces ui file doc.fonts
-    match ← buildFontSet doc scan front.cache .settled (Layout.storeScalars imgs0) with
+    match ← buildFontSet doc scan front.cache .settled (Layout.storeScalars imgs0) reqSpans.faces with
     | .error d =>
       -- No usable font set: fatal whatever the document accepts.
       ui.diag (sourceDiag d)

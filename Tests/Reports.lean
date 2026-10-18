@@ -168,6 +168,7 @@ import Tests.FlagCommands
 import Tests.InlineBoxes
 import Tests.EnvCode
 import Tests.Chapters
+import Tests.Schemes
 import Tests.SvgHtml
 
 /-! Every breakage the user reported, as a row whose pins hold it closed; a report closes only as
@@ -2136,7 +2137,17 @@ def reports : List Report := [
     pins := [check% contentsDeckChecks, check% frameSpecChecks]
     accept := ["invented probes under lualatex with beamer: pausesections sets a page per section with one more entry each, sections= lists the named sections, firstsection changes no page of the default templates, an article frame ships no page, a handout:0 frame stands, noframenumbering takes no number, and the default section page sets Section N over the title, both centred; this tree sets the same, the article frame taking no number where beamer leaves a gap",
       "main at 03c2ff1d sets one overview page, lists every section, ships the article frame, names the handout specification, counts the unnumbered frame and sets the title alone; the guards fail there"]
-    state := .guarded "03c2ff1d" .before .author }
+    state := .guarded "03c2ff1d" .before .author },
+  { id := "R240", date := "2026-10-18"
+    what := "a colour only an unknown command's dropped options, an unsupported package's options or a beamer sub-theme package's options named was named unused; a refused redefinition after an earlier one said the built-in stands where the earlier definition did; a token only running prose spelled was taken as read; E0403 and the chapter-numbered floats' W0110 stood at no source site, and a pale ink in a box was named at an earlier box ground of its colour; a page colour inside a paragraph's text was refused as an unknown command spelled with its marker's name and left the page unchanged; and a scheme a palette colour painted on a box's own ground could not carry was blamed on the page, or dropped for a ground no text it coloured stood on"
+    pins := [check% Tests.UnusedSettings.firesChecks, check% Tests.UnusedSettings.redefinitionChecks,
+      check% Tests.UnusedSettings.faceChecks, check% tokensChecks,
+      check% Tests.Chapters.chapterDeclarationChecks, check% Tests.InlineBoxes.boxScopeChecks,
+      check% Tests.Schemes.dropChecks, check% Tests.GroupScope.groupScopeChecks]
+    accept := ["main's binary at 6095f103 on invented probes: a declared colour in an unknown command's option, an unsupported package's option and a colour theme package's option each drew W0449, a refused bold redefinition after a conditional one said the built-in stands while the page set the conditional one's underline, E0403 and the floats' W0110 printed no site, a white ink in a yellow box was placed at an earlier white box ground, a page colour inside bold text drew W0301 naming ' pagecolor yellow' and left page 1 white, and a palette alert on a black box was dropped from the more-contrast light scheme on 'bg'; this tree answers each",
+      "lualatex 1.24 on invented articles: a page colour inside bold text grounds page 1 yellow, a reset inside emphasis leaves page 2 white, one inside a framed box grounds page 3 blue, and one inside bold text at the head of a paragraph running over three pages grounds all three; this tree sets the same grounds",
+      "the corpus built by main's binary at 03c2ff1d and by this tree's: every PDF and web page byte-identical but the trio page's and deck's, whose enquiries line now stands sep below what precedes it so that neither accepts W0104 whole; the diagnostics differ only in theme-modern, whose token 'large' only a bullet's prose spells, now named"]
+    state := .guarded "6095f103" .before .author }
 ]
 
 /-- The reports guarded but never seen failing, a count held in both directions. -/
