@@ -418,7 +418,7 @@ mutual
 
 /-- Whether inline content holds a citation of a work natbib's key list carries. -/
 private def citesInl : Inl → Bool
-  | .cite items _ => items.any (keyCrosses ·.key)
+  | .cite items _ => items.any fun c => c.key != "*" && keyCrosses c.key
   | .citeText key _ _ => keyCrosses key
   | .emph body _ => citesInls body.toList
   | .strong body _ => citesInls body.toList

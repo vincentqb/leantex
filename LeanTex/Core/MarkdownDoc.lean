@@ -49,7 +49,8 @@ private def keepAbbrevSpaces (acc s : String) : String := Id.run do
   for k in [tail.size:cs.size] do
     let c := cs[k]?.getD ' '
     out := if c == ' ' && MdSmart.joinsAt cs k then out ++ "&#32;"
-      else if c == '\u00a0' && k + 1 < cs.size && MdSmart.joinsAt cs k then out.push ' '
+      else if c == '\u00a0' && (cs[k + 1]?.any fun d => d != ' ' && d != '\t' && d != '\u00a0') &&
+          MdSmart.joinsAt cs k then out.push ' '
       else out.push c
   return out
 
@@ -569,8 +570,8 @@ private def bracketWork (pipes : Bool) (pre post : String) (suppress : Bool) (ke
   let k ← CiteKey.spelling? key none
   let preNote := citeNote pipes pre
   let postNote := citeNote pipes post
-  let pre := if pre.isEmpty then "" else preNote ++ " "
-  let post := if post.isEmpty then "" else ", " ++ postNote
+  let pre := if preNote.isEmpty then "" else preNote ++ " "
+  let post := if postNote.isEmpty then "" else ", " ++ postNote
   return pre ++ (if suppress then "-" else "") ++ k ++ post
 
 /-- Whether an author-in-text citation may open after what the twin wrote: not inside a word, after

@@ -61,6 +61,10 @@ def bracketTailChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "md group: a bracket around an in-text citation before a group reads as Pandoc's, one group"
     (groups "Both [@a][@b] here" == 1 &&
       keysOf (elabMd (worksMeta ++ "Both [@a][@b] here\n")).1 == ["a", "b"])
+  for (src, n) in [("X [q][@a][@b] y", 2), ("X [@a][@b][@roe2020] y", 2), ("X [@a][@b]{.c} y", 1)] do
+    t s!"md group: a label an undefined reference leaves reads on its own, as Pandoc's ({repr src})"
+      (groups src == n && (citesOf (elabMd (worksMeta ++ src ++ "\n")).1).toList.countP
+        (fun (f, _) => f.cmd == .textual) == (if hasStr src "[q]" then 0 else 1))
   t "md group: a bracket before a reference label is no citation group"
     (groups "No [@a][x] group" == 0 && groups "No [@a][] group" == 0)
 
@@ -139,9 +143,17 @@ A \\citep[ p.~3 ]{a} and \\citep[see ][ chap. 2 ]{roe2020}, e.g. here.\n\
 spaces written ({repr twin})"
     (MarkdownDoc.emit back == twin && hasStr twin "[@a, p. 3]" && hasStr twin "chap.&#32;2]" &&
       hasStr twin "e.g.&#32;here")
-  for alt in ["![Plain p.&#32;4](chart.svg)", "![A chart, cf. 2](chart.svg)"] do
+  for alt in ["![Plain p.&#32;4](chart.svg)", "![A chart, cf. 2](chart.svg)", "L p.&nbsp; 3"] do
     let once := MarkdownDoc.emit (elabMd (alt ++ "\n")).1
     t s!"md twin: an alternative's spaces after an abbreviation read back as written ({repr once})"
       (MarkdownDoc.emit (elabMd once).1 == once)
+  let (d, _) := bibBuild "\\documentclass{article}\n\\usepackage{natbib}\n\\begin{document}\n\
+A \\citep[ ]{a} and \\citep[ ][ ]{b}.\n\\bibliographystyle{plainnat}\n\\bibliography{works}\n\
+\\end{document}\n" #[("works", worksBib)]
+  let twin := MarkdownDoc.emit d
+  let (back, _) := mdBibBuild twin #[("works.bib", worksBib)]
+  t s!"tex twin: a note of spaces alone spells no note, the twin its round trip's fixed point \
+({repr twin})"
+    (hasStr twin "A [@a] and [@b]." && MarkdownDoc.emit back == twin)
 
 end Tests.MdCiteEdges

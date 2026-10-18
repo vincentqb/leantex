@@ -2246,6 +2246,8 @@ def scanInlines (file : String) (c : Chars) (dialect : Dialect := .document)
   let ticks := tickIndex c
   -- Each bracket the scan matched, by its opening character's index.
   let mut closeOf : Std.HashMap Nat Nat := {}
+  -- The openers of labels an undefined reference left, a citation group whatever follows them.
+  let mut standalone : Std.HashSet Nat := {}
   -- The in-text citation whose bracket may follow, and the token count after its key.
   let mut tailFor : Option (Nat × Nat) := none
   let braces := if cites then braceMatches c else {}
@@ -2397,6 +2399,7 @@ def scanInlines (file : String) (c : Chars) (dialect : Dialect := .document)
           stack := stack.pop
           inactiveBelow := min inactiveBelow stack.size
           closeOf := closeOf.insert openAt i
+          let alone := standalone.contains openAt
           match (if active then linkTailAt c (i + 1) else none) with
           | some (dest, title, next) =>
             toks := flush toks pending pendingPos
@@ -2416,9 +2419,10 @@ def scanInlines (file : String) (c : Chars) (dialect : Dialect := .document)
             let after := c.at? (i + 1)
             -- A footnote's reference after the bracket is no label of it.
             let noteNext := (noteLabelAt c (i + 1)).any (defs.notes.contains ·.1)
-            let free := noteNext || (!(after == some '[' && referenceAt c ticks (i + 1)) &&
+            let free := alone || noteNext || (!(after == some '[' && referenceAt c ticks (i + 1)) &&
               !(after == some '{' && (attributesEnd? c (i + 1)).isSome))
-            let tailFree := noteNext || (after != some '[' && after != some '{' && after != some '(')
+            let tailFree := alone || noteNext ||
+              (after != some '[' && after != some '{' && after != some '(')
             let scan : CiteScan := { closers, keyEnds, braces }
             -- A reference (§6.3): `[text][label]`, `[label][]`, or `[label]` before no label, the
             -- label's source and the index past the reference.
@@ -2438,6 +2442,8 @@ def scanInlines (file : String) (c : Chars) (dialect : Dialect := .document)
               let (l, n) ← reference
               let d ← defs.links.get? (normLabel l)
               pure (d, n)
+            if after == some '[' && !noteNext && defined.isNone && referenceAt c ticks (i + 1) then
+              standalone := standalone.insert (i + 1)
             -- doc-gen4's rule: a label matching a key it cites links to the key's entry.
             let docGen : Option (String × Nat) := do
               guard (cites && !image && active && defined.isNone)
