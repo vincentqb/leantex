@@ -1697,6 +1697,9 @@ def nodeTextList (acc : String) : List Html.Node → String
 
 end
 
+/-- The text a document's page shows. -/
+def pageText (d : Ir.Doc) : String := nodeTextList "" (docNodesOf d).toList
+
 mutual
 
 /-- The first attribute `key` an emitted tree declares, in document order. -/

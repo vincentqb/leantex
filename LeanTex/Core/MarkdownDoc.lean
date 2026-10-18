@@ -41,7 +41,8 @@ private def escapeText (pipes ats : Bool) (s : String) : String :=
   String.ofList (escapeChars pipes ats s.toList)
 
 /-- Written text `s` after `acc` as Pandoc's smart punctuation reads it back after an abbreviation:
-a space a reference to it, a no-break space with a word after it a plain space it joins again. -/
+a space a reference to it, a no-break space with a word but no citation's spelling after it a plain
+space it joins again. -/
 private def keepAbbrevSpaces (acc s : String) : String := Id.run do
   if !s.contains ' ' && !s.contains '\u00a0' then return s
   let tail := (acc.takeEndWhile fun c => CiteKey.isAlnum c || c == '.').toString.toList.toArray
@@ -51,7 +52,7 @@ private def keepAbbrevSpaces (acc s : String) : String := Id.run do
     let c := cs[k]?.getD ' '
     out := if c == ' ' && MdSmart.joinsAt cs k then out ++ "&#32;"
       else if c == '\u00a0' && (cs[k + 1]?.any fun d => d != ' ' && d != '\t' && d != '\u00a0') &&
-          MdSmart.joinsAt cs k then out.push ' '
+          !MdSmart.citesAt cs (k + 1) && MdSmart.joinsAt cs k then out.push ' '
       else out.push c
   return out
 

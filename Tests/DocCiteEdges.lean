@@ -165,11 +165,34 @@ def docstringChecks (ref : IO.Ref (List String)) : IO Unit := do
     t s!"lean refs: a docstring's definition of a key's label links it there, no citation \
 ({repr doc}: {keysOf d}, {linksOf d})"
       (keysOf d == [] && linksOf d == #[("https://example.org/a", "ash2001")])
-  let (d, _) := Tests.LeanCite.page "See [@ash2001].\n\n[@ash2001]: https://example.org/x"
-  t s!"lean refs: a docstring's defined label spelling a citation links to the definition's \
-destination, as md4c links it, its text read as a link's text, which cites where md4c shows the \
-label, the definition set nowhere ({linksOf d})"
-    ((linksOf d).any (·.1 == "https://example.org/x") && !hasStr (Ir.blocksText d.body) "example.org")
+  for doc in ["See [@ash2001].\n\n[@ash2001]: https://example.org/x",
+      "See [@ash2001][].\n\n[@ASH2001]: https://example.org/x"] do
+    let (d, _) := Tests.LeanCite.page doc
+    t s!"lean refs: a docstring's defined label spelling a citation links to the definition's \
+destination under the label as written, as md4c shows it, citing nothing ({repr doc}: {linksOf d}, \
+{keysOf d})"
+      (linksOf d == #[("https://example.org/x", "@ash2001")] && keysOf d == [] &&
+        !hasStr (pageText d) "example.org")
+  let (d, _) := Tests.LeanCite.page "See [text @ash2001][@ash2001].\n\n[@ash2001]: https://example.org/x"
+  t s!"lean refs: a full reference's own text still cites ({linksOf d}, {keysOf d})"
+    (keysOf d == ["ash2001"] && (linksOf d).any (·.1 == "https://example.org/x"))
+  for (doc, linked) in [("See [ash2001\u000b x].\n\n[ash2001 x]: https://example.org/y", true),
+      ("See [ash2001\u2003x].\n\n[ash2001 \u00a0 x]: https://example.org/y", true),
+      ("See [\u3000ash2001 x].\n\n[ash2001 x]: https://example.org/y", true),
+      ("See [ash2001 x ].\n\n[ash2001 x]: https://example.org/y", false),
+      ("See [ash2001 x\n].\n\n[ash2001 x]: https://example.org/y", false)] do
+    let (d, _) := Tests.LeanCite.page doc
+    t s!"lean refs: a docstring's label matches as md4c matches it, its leading whitespace skipped \
+and each later run of whitespace, vertical tab and Unicode's spaces included, one space \
+({repr doc}: {linksOf d})"
+      ((linksOf d).any (·.1 == "https://example.org/y") == linked)
+  t "md refs: a document's label matches as CommonMark's, its trailing whitespace trimmed"
+    (mdLinks "See [foo bar ].\n\n[foo bar]: /url\n" == #[("/url", "foo bar ")])
+  let (d, _) := Tests.LeanCite.page "Cites [ash2001] and [ ASH2001] but not [ash2001 ]."
+  t s!"lean cite: a label alike to a cited key links to its entry as md4c matches the label \
+({linksOf d}, {repr (pageText d)})"
+    ((linksOf d).any (fun (h, x) => h == "#ref-ash2001" && x.trimAscii.toString == "ASH2001") &&
+      hasStr (pageText d) "[ash2001 ]")
   let (d, _) := Tests.LeanCite.page "See [the notes][docs] and [ash2001].\n\n[docs]: https://example.org/d"
   t s!"lean refs: a full reference to a docstring's definition is a link beside a citation \
 ({keysOf d}, {linksOf d})"

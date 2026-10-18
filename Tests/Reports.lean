@@ -2111,6 +2111,15 @@ def reports : List Report := [
     accept := ["invented probes under lualatex: the renamed headings print, a starred heading with an added contents line is listed by that line's words, also before a reference list, the TeX string alone sets, a macro's heading is listed and its frames numbered in turn, a page reference prints the label's page, a run-in heading's and a subfloat's label name their own titles, and an unnumbered entry's wrapped line stands past the number's width; this tree sets the same",
       "main at 6095f103 ignores the renamed headings, prints the added line and both strings as text, lists no macro heading, repeats the frame number, prints question marks for the page, names the section and the float, duplicates the anchor and wraps flush left; the guards fail there",
       "the corpus built by main's binary at 6095f103 and by this tree's: every PDF and diagnostic byte-identical, every web page visually identical but the contents article's, whose entries now stand at the leading as its PDF's do rather than a paragraph's gap apart"]
+    state := .guarded "6095f103" .before .author },
+  { id := "R237", date := "2026-10-18"
+    what := "a markdown abbreviation after an ellipsis kept its breakable space, one ending in an escaped dot or a character reference joined, and one before a citation's spelling joined where no bibliography reads citations; the metadata's list heading joined none; an escaped space in a citation's note set its backslash; an attribute value whose quote no later one closed read no attribute list; a Lean docstring's defined label spelling a citation cited in its link's text, and its labels matched under CommonMark's spaces rather than md4c's"
+    pins := [check% Tests.MdCiteEdges.abbrevEdgeChecks, check% Tests.MdCiteEdges.escapedSpaceChecks,
+      check% Tests.MdCiteEdges.bracketTailChecks, check% Tests.DocCiteEdges.docstringChecks]
+    accept := ["the new checks fail built against 6095f103's markdown reader and pass on this tree",
+      "pandoc 3.12.1 on invented probes: an abbreviation after an ellipsis or an opening bracket joins; one in a word an ellipsis runs into, before an escaped dot or a character reference keeps its space, as one before an author's key, a bracketed key or a bracket of words before a key does, whether or not a bibliography reads them; the metadata's list heading joins as the text does; an escaped space in a citation's note is a non-breaking one; an attribute value opening on a quote no later one closes reads bare and the braces hold an attribute list, one with a space in it none; this tree reads each alike",
+      "md4c's label rule (doc-gen4's reader): leading whitespace skipped, each later run of space, tab, line ending, vertical tab or a Zs space one space, a trailing one kept; a defined label shows as written; this tree's docstrings match so",
+      "the corpus built by main's binary at 6095f103 and by this tree's: every artifact and diagnostic byte-identical"]
     state := .guarded "6095f103" .before .author }
 ]
 

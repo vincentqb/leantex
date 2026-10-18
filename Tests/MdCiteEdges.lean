@@ -1,6 +1,7 @@
 module
 
 public import Tests.Support
+import LeanTex.Core.MdSmart
 
 public section
 
@@ -58,6 +59,9 @@ def bracketTailChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "md group: braces holding an attribute list make the bracket no citation group"
     (groups "First [@a]{.c} then" == 0 && groups "First [@a]{} then" == 0 &&
       groups "First [@a]{k=\"v w\" #i -} then" == 0)
+  t "md group: a quote no later one closes opens a bare value, as Pandoc's attribute list reads it"
+    (groups "First [@a]{k=\"v} then" == 0 && groups "First [@a]{k='v .c} then" == 0 &&
+      groups "First [@a]{#i k=\"v w} then" == 1)
   t "md group: a bracket around an in-text citation before a group reads as Pandoc's, one group"
     (groups "Both [@a][@b] here" == 1 &&
       keysOf (elabMd (worksMeta ++ "Both [@a][@b] here\n")).1 == ["a", "b"])
@@ -125,6 +129,46 @@ def abbrevChecks (ref : IO.Ref (List String)) : IO Unit := do
   let lean := Ir.blocksText (elabCode "M.lean" "/-! See p. 3. -/\ndef x := 1\n").1.body
   t s!"md abbreviation: a Lean docstring keeps the space, as doc-gen4 sets it ({repr lean})"
     (hasStr lean "p. 3")
+
+/-- An abbreviation is the word Pandoc's `str` reads: after an ellipsis, never through an escape or
+a character reference, and never before a citation's spelling, read or not. -/
+def abbrevEdgeChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let page (src : String) : String := pageText (elabMd (src ++ "\n")).1
+  for (src, joined) in [("See ...p. 3 here.", "p.\u00a03"), ("See (cf. 3) here.", "cf.\u00a03"),
+      ("See cf. \\* here.", "cf.\u00a0*"), ("See ......p. 3 here.", "p.\u00a03"),
+      ("No list: cf. [x] and cf. a@b.", "cf.\u00a0[x]"), ("No list: cf. a@b.", "cf.\u00a0a@b")] do
+    t s!"md abbreviation: {repr src} joins as Pandoc's smart punctuation does ({repr (page src)})"
+      (hasStr (page src) joined)
+  for (src, plain) in [("See e.g... x.", "e.g\u2026 x"), ("See cf\\. 3 here.", "cf. 3"),
+      ("See c&#102;. 3 here.", "cf. 3"), ("See cf&#46; 3 here.", "cf. 3"),
+      ("See a..p. 3 here.", "p. 3"), ("No list: cf. [@a] here.", "cf. [@a]"),
+      ("No list: cf. @a here.", "cf. @a"), ("No list: cf. [see @a] here.", "cf. [see @a]"),
+      ("No list: cf. -@a here.", "cf. -@a")] do
+    t s!"md abbreviation: {repr src} keeps its space, as Pandoc's smart punctuation does \
+({repr (page src)})"
+      (hasStr (page src) plain)
+  let (d, _) := mdBibBuild "---\nbibliography: works.bib\nreference-section-title: Works cf. 2001\n---\n\n\
+Cites [@a].\n" #[("works.bib", worksBib)]
+  t s!"md abbreviation: the metadata's list heading joins as the text does ({repr (pageText d)})"
+    (hasStr (pageText d) "Works cf.\u00a02001")
+  t s!"md abbreviation: no abbreviation is longer than the bound the reader walks \
+({MdSmart.longest})"
+    (MdSmart.abbreviations.all (·.length ≤ MdSmart.longest) && MdSmart.longest == 6)
+
+/-- A citation's note reads Pandoc's escaped space as a non-breaking one, the text CommonMark's
+backslash. -/
+def escapedSpaceChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let (d, _) := mdBibBuild (worksMeta ++ "Two [see @a, p.\\ 3], @b [p.\\ 4] and x.\\ y.\n")
+    #[("works.bib", worksBib)]
+  t s!"md note: an escaped space in a citation's note is non-breaking ({repr (pageText d)})"
+    (hasStr (pageText d) "p.\u00a03" && hasStr (pageText d) "p.\u00a04" &&
+      !hasStr (pageText d) "p.\\" && hasStr (pageText d) "x.\\ y")
+  let twin := MarkdownDoc.emit d
+  let (back, _) := mdBibBuild twin #[("works.bib", worksBib)]
+  t s!"md twin: a note's escaped space reads back ({repr twin})"
+    (MarkdownDoc.emit back == twin)
 
 /-- A TeX citation's notes set without their edge spaces, so the twin carries them exactly, and a
 plain space after an abbreviation reads back as written. -/

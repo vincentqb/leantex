@@ -1565,6 +1565,27 @@ def normLabel (s : String) : String := Id.run do
       out := out.push ch
   return out
 
+/-- md4c's whitespace, which its labels collapse: CommonMark's, vertical tab, and Zs. -/
+def isMd4cSpace (c : Char) : Bool := isMdSpace c || c == '\x0b' || Nfc.isSpaceSeparator c
+
+/-- A label as md4c matches it, which doc-gen4 reads a docstring with: case-folded, its leading
+whitespace skipped and each later run of it, a trailing one too, one space. -/
+def md4cLabel (s : String) : String := Id.run do
+  let mut out := ""
+  let mut gap := false
+  for ch in (CaseFold.fold s).toList do
+    if isMd4cSpace ch then gap := true
+    else
+      if gap && !out.isEmpty then out := out.push ' '
+      gap := false
+      out := out.push ch
+  return if gap && !out.isEmpty then out.push ' ' else out
+
+/-- A label's matching form in a dialect: CommonMark's in a document, md4c's in documentation. -/
+def Dialect.labelKey : Dialect → String → String
+  | .document => normLabel
+  | .docstring | .lean => md4cLabel
+
 /-- A link label at `i` (§4.7): its source between the brackets, at most 999 characters, not
 blank and holding no unescaped bracket, and the index past its `]`. -/
 def labelAt (c : Chars) (i : Nat) : Option (String × Nat) := Id.run do
@@ -2107,7 +2128,19 @@ def identifierEnd? (c : Chars) (i : Nat) : Option Nat := do
   guard (isLetterU ch)
   pure (takeWhileEnd c (i + 1) fun d => CiteKey.isAlnum d || "-_:.".contains d)
 
-/-- The index past one attribute value at `i`: quoted with escapes, or bare up to a space or `}`. -/
+/-- The index past a bare attribute value at `i`, up to a space or `}`. -/
+def bareValueEnd (c : Chars) (i : Nat) : Nat := Id.run do
+  let mut j := i
+  for _ in [0:c.size + 1] do
+    match c.at? j with
+    | some '\\' => j := j + 2
+    | some d => if d == ' ' || d == '\t' || d == '\n' || d == '\r' || d == '}' then break
+                else j := j + 1
+    | none => break
+  return j
+
+/-- The index past one attribute value at `i`: quoted with escapes, else bare up to a space or `}`,
+as Pandoc reads a quote no later one closes. -/
 def attrValueEnd? (c : Chars) (i : Nat) : Option Nat := Id.run do
   match c.at? i with
   | some q =>
@@ -2117,17 +2150,9 @@ def attrValueEnd? (c : Chars) (i : Nat) : Option Nat := Id.run do
         match c.at? j with
         | some '\\' => j := j + 2
         | some d => if d == q then return some (j + 1) else j := j + 1
-        | none => return none
-      return none
-    else
-      let mut j := i
-      for _ in [0:c.size + 1] do
-        match c.at? j with
-        | some '\\' => j := j + 2
-        | some d => if d == ' ' || d == '\t' || d == '\n' || d == '\r' || d == '}' then break
-                    else j := j + 1
-        | none => break
-      return some j
+        | none => return some (bareValueEnd c i)
+      return some (bareValueEnd c i)
+    else return some (bareValueEnd c i)
   | none => some i
 
 /-- The index past Pandoc's attribute list at `i`, `{` then identifiers `#x`, classes `.x`, pairs
@@ -2200,7 +2225,7 @@ def CiteRead.takes (cr : CiteRead) (key : String) : Bool := cr.known.all (·.con
 /-- The key a docstring's label links to under doc-gen4's appended definitions, matched as links
 match labels: the bracketed key it is, else the one whose matching form it shares. -/
 def CiteRead.keyFor? (cr : CiteRead) (label : String) : Option String :=
-  if cr.bracketed.contains label then some label else cr.folded.get? (normLabel label)
+  if cr.bracketed.contains label then some label else cr.folded.get? (md4cLabel label)
 
 /-- The keys doc-gen4 cites a docstring by (`findAllReferences`), in the order they first stand:
 the text from each `[` to the next `]`, the scan going on past that `]`, where the bibliography
@@ -2226,12 +2251,12 @@ alone, and doc-gen4's bracketed ones. -/
 public def docGenRead (text : String) (known : Std.HashSet String) : CiteRead :=
   let keys := docGenKeys text known
   { on := true, known := some known, bracketed := keys.foldl (·.insert ·) {}
-    folded := keys.foldl (fun m k => if m.contains (normLabel k) then m else m.insert (normLabel k) k) {} }
+    folded := keys.foldl (fun m k => if m.contains (md4cLabel k) then m else m.insert (md4cLabel k) k) {} }
 
 /-- The scan: characters to a flat token array, brackets resolved against a
 stack and refusals raised where seen. -/
 def scanInlines (file : String) (c : Chars) (dialect : Dialect := .document)
-    (cr : CiteRead := {}) (tex : Bool := false) (defs : Defs := {}) :
+    (cr : CiteRead := {}) (tex : Bool := false) (defs : Defs := {}) (note : Bool := false) :
     Array ITok × Array BPair × Array CPair × Array ShownRef × Array Diag := Id.run do
   let cites := cr.on
   let mut toks : Array ITok := #[]
@@ -2248,6 +2273,8 @@ def scanInlines (file : String) (c : Chars) (dialect : Dialect := .document)
   let mut closeOf : Std.HashMap Nat Nat := {}
   -- The openers of labels an undefined reference left, a citation group whatever follows them.
   let mut standalone : Std.HashSet Nat := {}
+  -- The in-text citations a defined label's text shows as written.
+  let mut dead : Std.HashSet Nat := {}
   -- The in-text citation whose bracket may follow, and the token count after its key.
   let mut tailFor : Option (Nat × Nat) := none
   let braces := if cites then braceMatches c else {}
@@ -2284,6 +2311,11 @@ def scanInlines (file : String) (c : Chars) (dialect : Dialect := .document)
             toks := flush toks pending pendingPos
             pending := ""
             toks := toks.push (.txt (if texSpecial d then "\\" ++ d.toString else d.toString) p)
+          else if d == '.' && dialect == .document then
+            -- An escaped dot is no word's, as Pandoc's smart punctuation reads abbreviations.
+            toks := flush toks pending pendingPos
+            pending := ""
+            toks := toks.push (.txt "." p)
           else pending := pending.push d
           i := i + 2
         | none =>
@@ -2292,6 +2324,10 @@ def scanInlines (file : String) (c : Chars) (dialect : Dialect := .document)
             toks := flush toks pending pendingPos
             pending := ""
             toks := toks.push (.hard p)
+            i := i + 2
+          -- A citation's note is Pandoc's syntax, where an escaped space is a non-breaking one.
+          else if note && !tex && c.at? (i + 1) == some ' ' then
+            pending := pending.push '\u00a0'
             i := i + 2
           else
             pending := pending.push '\\'
@@ -2311,7 +2347,9 @@ def scanInlines (file : String) (c : Chars) (dialect : Dialect := .document)
         match entityAt c i with
         | some (v, next) =>
           -- A reference to a space is the text it names, never the spaces smart punctuation joins.
-          if tex || v == " " || v == "\t" then
+          -- nor a reference to a word's character, as Pandoc's smart punctuation reads abbreviations.
+          if tex || v == " " || v == "\t" ||
+              (dialect == .document && v.any fun d => CiteKey.isAlnum d || d == '.') then
             toks := flush toks pending pendingPos
             pending := ""
             toks := toks.push (.txt v p)
@@ -2440,7 +2478,7 @@ def scanInlines (file : String) (c : Chars) (dialect : Dialect := .document)
             let defined : Option (LinkDef × Nat) := do
               guard active
               let (l, n) ← reference
-              let d ← defs.links.get? (normLabel l)
+              let d ← defs.links.get? (dialect.labelKey l)
               pure (d, n)
             if after == some '[' && !noteNext && defined.isNone && referenceAt c ticks (i + 1) then
               standalone := standalone.insert (i + 1)
@@ -2487,6 +2525,20 @@ def scanInlines (file : String) (c : Chars) (dialect : Dialect := .document)
               | some (d, n), _ =>
                 toks := flush toks pending pendingPos
                 pending := ""
+                -- md4c shows a defined label as written, so documentation cites in no such text.
+                let selfLabel := collapsed || !(after == some '[' && !noteNext &&
+                  (labelAt c (i + 1)).isSome)
+                if dialect != .document && selfLabel then
+                  for j in [0:cpairs.size] do
+                    let k := cpairs.size - 1 - j
+                    let some cp := cpairs[k]? | break
+                    if cp.openTok ≤ openTok then break
+                    if let some sp := cp.spans[0]? then
+                      if cp.openTok == cp.closeTok then
+                        toks := toks.modify cp.openTok fun _ =>
+                          .txt (c.str sp.preFrom sp.postFrom) cp.pos
+                        dead := dead.insert k
+                  tailFor := none
                 toks := toks.push (.bclose p)
                 pairs := pairs.push { openTok, closeTok, image, dest := d.dest, title := d.title }
                 closeOf := closeOf.insert openAt (n - 1)
@@ -2553,7 +2605,9 @@ def scanInlines (file : String) (c : Chars) (dialect : Dialect := .document)
         pending := pending.push ch
         i := i + 1
   toks := flush toks pending pendingPos
-  return (toks, pairs, cpairs, shownRefs, diags)
+  let live := if dead.isEmpty then cpairs else
+    (cpairs.zipIdx.filter fun (_, k) => !dead.contains k).map (·.1)
+  return (toks, pairs, live, shownRefs, diags)
 
 /-- The innermost resolved link or image region of each token, `0` outside every
 one, and the region count. -/
@@ -2813,8 +2867,8 @@ def mathNodes (c : Chars) (toks : Array ITok) (maths : Array (Nat × Nat)) :
 
 /-- Inline structure for one stretch of text, in three passes, every `@` read as text. -/
 def inlinesPlain (file : String) (c : Chars) (dialect : Dialect := .document)
-    (defs : Defs := {}) : Array Inl × Array Diag :=
-  let (toks, bpairs, _, _, diags) := scanInlines file c dialect (defs := defs)
+    (defs : Defs := {}) (note : Bool := false) : Array Inl × Array Diag :=
+  let (toks, bpairs, _, _, diags) := scanInlines file c dialect (defs := defs) (note := note)
   let (reg, nRegions) := regions toks bpairs
   let (epairs, leftover, maths) := matchEmphasis toks reg nRegions
   let (formulas, inside) := mathNodes c toks maths
@@ -2840,8 +2894,8 @@ def trimInl (xs : Array Inl) : Array Inl :=
 /-- A citation's prefix or suffix: the plain reading of `c[a, b)`, its surrounding white space off;
 the main scan already raised what the range holds. -/
 def citeNote (file : String) (c : Chars) (dialect : Dialect) (a b : Nat)
-    (defs : Defs := {}) : Array Inl :=
-  if b ≤ a then #[] else trimInl (inlinesPlain file (c.slice a b) dialect defs).1
+    (defs : Defs := {}) (note : Bool := true) : Array Inl :=
+  if b ≤ a then #[] else trimInl (inlinesPlain file (c.slice a b) dialect defs note).1
 
 /-- W0392 for each citation group inside another group's prefix or suffix, which the IR's plain
 notes cannot hold: Pandoc reads it, here it sets as its text and its work goes uncited. -/
@@ -2894,7 +2948,7 @@ def inlines (file : String) (c : Chars) (dialect : Dialect := .document) (cr : C
       | _ => #[]
     (cp.openTok, cp.closeTok, lead.push node)
   let shown := shownRefs.map fun r =>
-    (r.openTok, r.closeTok, #[Inl.citeText r.key (citeNote file c dialect r.textFrom r.textTo defs) r.pos])
+    (r.openTok, r.closeTok, #[Inl.citeText r.key (citeNote file c dialect r.textFrom r.textTo defs false) r.pos])
   (buildInlines toks bpairs (built ++ shown ++ formulas) epairs leftover,
     diags ++ nestedCites file cpairs)
 
@@ -2926,7 +2980,8 @@ def holdsRefColon (s : String) : Bool := Id.run do
 
 /-- The link reference definitions a paragraph's lines open with (§4.7), each label in its
 matching form, and the lines after them. -/
-def paraDefs (pls : Array (String × Pos)) : Array (String × LinkDef) × Array (String × Pos) :=
+def paraDefs (dialect : Dialect) (pls : Array (String × Pos)) :
+    Array (String × LinkDef) × Array (String × Pos) :=
   Id.run do
   unless pls.any (holdsRefColon ·.1) do return (#[], pls)
   let c := charsOf pls
@@ -2936,7 +2991,7 @@ def paraDefs (pls : Array (String × Pos)) : Array (String × LinkDef) × Array 
     match linkDefAt c i with
     | some (label, d, next) =>
       if next ≤ i then break
-      defs := defs.push (normLabel label, d)
+      defs := defs.push (dialect.labelKey label, d)
       i := next
     | none => break
   if defs.isEmpty then return (#[], pls)
@@ -3414,7 +3469,7 @@ private def blocksPass (dialect : Dialect) (file : String) (input : String) (inc
       fun l a fallback =>
         match l with
         | .para pls =>
-          let (dd, rest) := paraDefs pls
+          let (dd, rest) := paraDefs dialect pls
           if rest.isEmpty then (a, #[], dd) else
           let (inl, ds) := readInl (charsOf rest)
           (a.push (.para inl ((rest[0]?.map (·.2)).getD fallback)), ds, dd)
@@ -3682,7 +3737,7 @@ private def blocksPass (dialect : Dialect) (file : String) (input : String) (inc
       let level := (setextAt cs j).getD 1
       match leaf with
       | .para pls =>
-        let (dd, rest) := paraDefs pls
+        let (dd, rest) := paraDefs dialect pls
         if rest.isEmpty && thematicAt cs j then
           defs := addDefs defs dd
           leaf := .none
@@ -3776,7 +3831,7 @@ other attributes" (some ⟨file, p⟩) (subject := some "md:refs-attrs"))
     blankAfterSummary := none
   match leaf with
   | .para pls =>
-    let (dd, rest) := paraDefs pls
+    let (dd, rest) := paraDefs dialect pls
     defs := addDefs defs dd
     unless rest.isEmpty do
       let (inl, ds) := readInl (charsOf rest)
