@@ -361,30 +361,32 @@ public def importance (value : String) : String × Bool :=
     else (value, false)
   | none => (value, false)
 
-/-- A comment-free declaration block's declarations, its refused spellings already ruled out: a
-block of a sheet `refusedIn` admits, whose blocks it admits too. -/
-def declsOf (text : String) : Except Problem (Array Decl) := do
+/-- A declaration block's declarations, read as written: the caller strips its comments and rules
+out its refused spellings. -/
+def declsOf (text : String) : Except Unread (Array Decl) := do
   let mut out : Array Decl := #[]
   for part in splitList ';' text do
     let p := part.trimAscii.toString
     if p.isEmpty then continue
     if brokenString part then
-      throw (.unsupported (.declaration (oneLine p) true))
+      throw (.declaration (oneLine p) true)
     match p.splitOn ":" with
     | prop :: rest@(_ :: _) =>
       let prop := prop.trimAscii.toString.toLower
       let (value, important) := importance (":".intercalate rest).trimAscii.toString
       if prop.isEmpty || !prop.all (fun c => c.isAlphanum || c == '-') then
-        throw (.unsupported (.declaration (oneLine p) false))
+        throw (.declaration (oneLine p) false)
       out := out.push { prop, value, important }
-    | _ => throw (.unsupported (.declaration (oneLine p) false))
+    | _ => throw (.declaration (oneLine p) false)
   return out
 
 /-- A declaration block's declarations in order; a malformed one is unsupported, a refused spelling refused. -/
 public def parseDecls (text : String) : Except Problem (Array Decl) := do
   let text := stripComments text
   if let some what := refusedIn text then throw (.refused what)
-  declsOf text
+  match declsOf text with
+  | .ok ds => pure ds
+  | .error what => throw (.unsupported what)
 
 /-- A character of a CSS identifier: a letter, digit, `-`, `_` or non-ASCII. -/
 @[expose] public def identChar (c : Char) : Bool := c.isAlphanum || c == '-' || c == '_' || c.toNat ≥ 128
@@ -554,9 +556,7 @@ public def parseSheet (text : String) : Except Unread (Array Rule × Array Unrea
       let sels := (splitList ',' prelude).map (·.trimAscii.toString)
       match sels.mapM parseSelector, declsOf (String.ofList body) with
       | .ok sels, .ok ds => rules := rules.push { selectors := sels, decls := ds }
-      | .error why, _ => dropped := dropped.push why
-      | _, .error (.unsupported why) => dropped := dropped.push why
-      | _, .error (.refused why) => throw why
+      | .error why, _ | _, .error why => dropped := dropped.push why
       prelude := ""
   unless prelude.trimAscii.isEmpty do
     dropped := dropped.push (.stray (oneLine prelude))
