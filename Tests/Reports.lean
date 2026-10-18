@@ -2021,7 +2021,7 @@ def reports : List Report := [
       "the corpus built by main's binary at f753a486 and by this tree's, past what the list and outline units this stacks on change: every PDF visually identical but the hooked deck's, whose hook frames stand where its section title pages stood and whose stand-in warning is gone, and the contents article's",
       "main at 320e1b58 sets a page showing the title for each hooked section, ignores a hook after a section and drops a frame's label option; the guards fail there"]
     state := .guarded "320e1b58" .before .author },
-  { id := "R224", date := "2026-10-17"
+  { id := "R225", date := "2026-10-18"
     what := "a table of contents was an unknown command in decks and articles: a deck's overview and its section hook's outline listed nothing, an article's contents neither its headings nor their pages, and a subsection carried no anchor a link could open"
     pins := [check% contentsChecks, check% contentsEdgeChecks, check% contentsEdgeChecks2,
       check% censusChecks, check% compatIndexChecks]
