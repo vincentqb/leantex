@@ -2094,7 +2094,7 @@ def reports : List Report := [
     pins := [check% texEdgeChecks]
     accept := ["invented probes under lualatex 1.24: the nested edef call, the bare assignments scoped to their group, a declared paragraph indent read back, a footskip of 2em as 20pt, and an open dimexpr, each set as lualatex sets it, and the paragraph indent read as the flush indent this tree's paragraphs take; this tree sets the same",
       "main at d720e3cc refuses the edef, prints the assignments' values, stops at the 2em footskip and the indent's space and drops the open dimexpr; the guards fail there",
-      "the corpus built by main's binary at d720e3cc and by this tree's: every artifact byte-identical, one note more where a title bar assigns the line width"]
+      "the corpus built by main's binary at d720e3cc and by this tree's: every artifact and diagnostic byte-identical"]
     state := .guarded "d720e3cc" .before .author }
 ]
 

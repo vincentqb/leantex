@@ -817,9 +817,6 @@ def texEdgeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
     (pagesOf oneFace (bare "\\len-0.5in") == pagesOf oneFace (bare "\\setlength\\len{-0.5in}") &&
       pagesOf oneFace (bare "\\len=0.5in") == pagesOf oneFace (bare "\\setlength\\len{0.5in}") &&
       !hasStr (text (bare "\\len=0.5in")) "0.5in")
-  let primitive := dvDoc "" "\\leftskip=1in Alpha words."
-  t "a bare assignment to a TeX parameter the engine does not read prints no value, named"
-    (!hasStr (text primitive) "1in" && (dvE primitive).any (·.code == "W0104"))
   let classRule (cls opt w : String) := pagesOf oneFace ("\\documentclass[" ++ opt ++ "]{" ++ cls ++
     "}\n\\begin{document}\n\\noindent\\rule{" ++ w ++ "}{2pt}\n\\end{document}")
   let rule (pre body : String) := pagesOf oneFace (dvDoc pre ("\\noindent\\rule{" ++ body ++ "}{2pt}"))
@@ -829,8 +826,14 @@ def texEdgeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
       classRule "scrartcl" "" "\\parindent" == classRule "scrartcl" "" "0pt" &&
       pagesOf oneFace (dvDoc "" "\\hspace*{-\\parindent}Alpha words.") ==
         pagesOf oneFace (dvDoc "" "\\hspace*{0pt}Alpha words."))
-  t "a declared \\parindent is the one a length reads"
-    (rule "\\setlength{\\parindent}{40pt}\n" "\\parindent" == rule "\\setlength{\\parindent}{40pt}\n" "40pt")
+  t "a declared \\parindent, which the flush page does not take, reads as the page's"
+    (rule "\\setlength{\\parindent}{40pt}\n" "\\parindent" == rule "\\setlength{\\parindent}{40pt}\n" "0pt")
+  let wrapped := dvDoc "\\newlength\\mylen\n\\newcommand\\setw{\\mylen=2in}\n"
+    "\\setw\\noindent\\rule{\\mylen}{2pt}\n\n{\\mylen=1in}\\noindent\\rule{\\mylen}{2pt}"
+  t "an assignment with = ending its group or a definition's body still assigns"
+    (!hasStr (text wrapped) "=2in" && !hasStr (text wrapped) "=1in" && !(dvE wrapped).any (·.code == "W0301"))
+  t "a kernel register opening a calc argument is read there"
+    (!(dvE (dvDoc "\\usepackage{calc}\n" "a\\hspace{\\columnsep-5pt}b")).any (·.severity == .error))
   let calcPre := "\\usepackage{calc}\n\\newlength\\mylen\n\\setlength\\mylen{3in}\n"
   t "a register opening an argument is read there, never assigned"
     (pagesOf oneFace (dvDoc calcPre "a\\hspace{\\mylen-1in}b") ==

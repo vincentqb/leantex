@@ -5827,7 +5827,9 @@ private def lenValue (lens : Array (String × String)) (raws : Array Raw)
     (flowPage : Bool := false) (strut : Option Int := none) : Option String :=
   -- premise: unreadableLengthChecks — a kernel parameter in a definition body stands by name
   let kernel (n : String) : Bool := !deferred && (paramSites.lookup n).isSome
-  let set (n : String) : Option String := (lens.find? (·.1 == n)).map (·.2)
+  -- `\parindent` reads the engine's flush indent, which no declaration here moves.
+  let set (n : String) : Option String :=
+    if n == "parindent" then none else (lens.find? (·.1 == n)).map (·.2)
   let line (n : String) : Bool := n == "linewidth" || n == "columnwidth"
   let raws := strutOperands raws
   let held (n : String) : Option String :=
@@ -6013,10 +6015,6 @@ spaced per level, in the preamble"
   | .unmodelled why, false =>
     if n == "parindent" && Decl.parseGlue src == some {} then
       nothing "paragraphs here are set flush, as declared"
-    else if n == "parindent" then
-      -- A length that reads `\parindent` reads the declared value.
-      nameParam n why pos
-      carry own pos
     else named why
 
 /-- The one warning for a length assignment the door cannot read, the length
@@ -6187,19 +6185,10 @@ private def sizeSkips (body : Array Raw) (start : Nat) (pos : Pos) :
         pure ()
   return out
 
-/-- TeX82's dimen and glue parameters (The TeXbook, ch. 24). -/
-private def texLengthParams : List String :=
-  ["parindent", "mathsurround", "lineskiplimit", "hsize", "vsize", "maxdepth", "splitmaxdepth",
-   "boxmaxdepth", "hfuzz", "vfuzz", "delimitershortfall", "nulldelimiterspace", "scriptspace",
-   "predisplaysize", "displaywidth", "displayindent", "overfullrule", "hangindent", "hoffset",
-   "voffset", "emergencystretch", "baselineskip", "lineskip", "parskip", "abovedisplayskip",
-   "belowdisplayskip", "abovedisplayshortskip", "belowdisplayshortskip", "leftskip", "rightskip",
-   "topskip", "splittopskip", "tabskip", "spaceskip", "xspaceskip", "parfillskip"]
-
-/-- Whether a control word names a length register: a kernel parameter, TeX's, or one the
-document allocates. -/
+/-- Whether a control word names a length register: a kernel parameter or one the document
+allocates. -/
 private def lengthRegister (st : St) (n : String) : Bool :=
-  (paramSites.lookup n).isSome || st.newLengths.contains n || texLengthParams.contains n
+  (paramSites.lookup n).isSome || st.newLengths.contains n
 
 /-- TeX's own assignment to a length register `register` names, when the control word `name`
 opens one. -/
@@ -6222,9 +6211,11 @@ private def plainAssign? (register : String → Bool) (name : String) (raws : Ar
       | some (.ctrl c _) => valueCtrl c || (paramSites.lookup c).isSome
       | _ => false
     let e := glueEnd raws v0
-    -- A register an argument opens and ends is read there; a free group it ends would undo it.
-    let follows := (paramSites.lookup name).isSome || (raws[skipSpaces raws e]?).isSome
-    if opens && follows && e > v0 then some (raws.extract v0 e, e) else none
+    -- A signed value ending its raws is a calc argument's operand, read there, never assigned.
+    let assigns := eq || (raws[skipSpaces raws e]?).isSome || match raws[v0]? with
+      | some (.word w _) => w.front.isDigit || w.front == '.'
+      | _ => false
+    if opens && assigns && e > v0 then some (raws.extract v0 e, e) else none
 
 /-- The list depth a class's parameter macro sets up,
 `\@listi` to `\@listvi`. -/
@@ -14336,7 +14327,7 @@ knows, read within the raws a glue spans. -/
 private def bareLiteral (t : LengthTally) (prev : Option Raw) (c : String) (rest : List Raw) : Bool :=
   let before := prev.toList ++ [Raw.ctrl c {}]
   let window := (before ++ rest.take 16).toArray
-  match plainAssign? (fun n => texLengthParams.contains n || t.targets.contains n) c window
+  match plainAssign? t.targets.contains c window
       before.length with
   | some (value, _) =>
     let src := (rawSrc value).trimAscii.toString
