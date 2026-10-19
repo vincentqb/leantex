@@ -30,14 +30,21 @@ def prelude : String :=
 
 /-- TeX log lines naming a defect TeX repaired and shipped. -/
 def recoveryMarks : List String :=
-  ["\\end occurred inside a group", "\\end occurred when", "LaTeX Warning: Reference",
-   "LaTeX Warning: Citation", "Missing character:"]
+  ["\\end occurred inside a group", "\\end occurred when"]
 
 def sentinel : String := "Kqzv"
+
+/-- Codes reporting an unclosed construct, judged at the opener line TeX's message names. -/
+def unclosedCodes : List String := ["E0201", "E0205"]
 
 def contains (s needle : String) : Bool := (s.splitOn needle).length > 1
 
 def lines (s : String) : List String := (s.replace "\r\n" "\n").splitOn "\n"
+
+/-- Does `src` write `spelling` as a whole control word, not the start of a longer one? -/
+def writes (src spelling : String) : Bool :=
+  ((src.splitOn spelling).drop 1).any fun after =>
+    !spelling.startsWith "\\" || !(after.toList.head?.map Char.isAlpha).getD false
 
 def codeOf? (s : String) : Option DiagCode := DiagCode.all.find? (·.code == s)
 
@@ -106,7 +113,7 @@ def witnessCases (fonts : Font.FontSet) (only : List String) : Array Case := Id.
       let why? : Option String :=
         if surface == "md" then some "markdown surface"
         else if endOfInput.contains c then some "end-of-input cause"
-        else if nativeSpellings.any (contains raw ·) then some "native surface"
+        else if nativeSpellings.any (writes raw ·) then some "native surface"
         else if (texTwin src).isNone then some "no mapped class"
         else none
       out := out.push { id, kind := "witness", code := c, lean := src,
@@ -218,6 +225,7 @@ structure Env where
   leantex : System.FilePath
   lualatex : Option System.FilePath
   texVersion : String := ""
+  cacheKey : String := ""
   budgetMs : Nat := 30000
   keep : Bool := false
 
@@ -292,10 +300,11 @@ def decodeT (s : String) : Option TRun :=
       text := if has == "1" then some ("\n".intercalate text) else none }
   | _ => none
 
-def runTex (e : Env) (dir : System.FilePath) (src : String) : IO (Obs TRun) := do
+def runTex (e : Env) (dir : System.FilePath) (src : String) (cached : Bool := true) :
+    IO (Obs TRun) := do
   let some lualatex := e.lualatex | return .untested
-  let cache := e.root / "cache" / s!"{hash (src ++ "\x00" ++ e.texVersion)}.tex"
-  if ← cache.pathExists then
+  let cache := e.root / "cache" / s!"{hash (src ++ "\x00" ++ e.cacheKey)}.tex"
+  if cached && (← cache.pathExists) then
     if let some t := decodeT (← IO.FS.readFile cache) then return .ran t
   let d := dir / "lualatex"
   writeCase d src e.repo
@@ -307,8 +316,9 @@ def runTex (e : Env) (dir : System.FilePath) (src : String) : IO (Obs TRun) := d
   let t := parseLog o.exitCode log
   let text ← if t.accepted then pdfText (d / "t.pdf") d else pure none
   let t := { t with text }
-  IO.FS.createDirAll (e.root / "cache")
-  IO.FS.writeFile cache (encodeT t)
+  if cached then
+    IO.FS.createDirAll (e.root / "cache")
+    IO.FS.writeFile cache (encodeT t)
   return .ran t
 
 structure Row where
@@ -352,7 +362,8 @@ def judge (c : Case) (l : Obs LRun) (t : Obs TRun) (seed : Option (Obs LRun × O
       | some _ => return #[row codeName "inconclusive"]
       | none => pure ()
     let spur := considered.filter (spurious c.lean)
-    let rest := (considered.filter (!spurious c.lean ·)).qsort (·.line < ·.line)
+    let key (d : LDiag) : Nat := if d.line == 0 then 1000000000 else d.line
+    let rest := (considered.filter (!spurious c.lean ·)).qsort (key · < key ·)
     let first := (rest[0]?.map (·.line)).getD 0
     let texLine := (tr.errLine.getD 0)
     let mut rows := #[]
@@ -360,7 +371,8 @@ def judge (c : Case) (l : Obs LRun) (t : Obs TRun) (seed : Option (Obs LRun × O
       let verdict :=
         if d.line != first then "cascade"
         else if tr.accepted then (if tr.recovery.isSome then "tex-ships" else "false-cause")
-        else if some d.line == tr.errLine || some d.line == tr.opener then "confirmed"
+        else if some d.line == tr.errLine then "confirmed"
+        else if some d.line == tr.opener && unclosedCodes.contains d.code then "confirmed"
         else if tr.errLine.isNone && tr.opener.isNone then "unlocated"
         else "elsewhere"
       let texError := (if tr.accepted then tr.recovery else tr.error).getD ""
@@ -378,7 +390,9 @@ def judge (c : Case) (l : Obs LRun) (t : Obs TRun) (seed : Option (Obs LRun × O
       if c.sentinel then
         let inTex := (tr.text.map (contains · sentinel)).getD false
         let inLean := (lr.text.map (contains · sentinel)).getD false
-        if inTex != inLean then
+        if tr.text.isNone || lr.text.isNone then
+          rows := rows.push { row "-" "sentinel" with message := "a PDF's text was not read" }
+        else if inTex != inLean then
           rows := rows.push { row "-" "sentinel" with
             message := s!"lualatex shows it: {inTex}; leantex shows it: {inLean}" }
     if c.kind == "witness" && rows.isEmpty then rows := rows.push (row codeName "not-fired")
@@ -399,9 +413,12 @@ def parMap (jobs : Nat) (xs : Array α) (f : α → IO β) : IO (Array β) := do
 def observe (e : Env) (c : Case) : IO (Obs LRun × Obs TRun) := do
   if c.excluded.isSome then return (.untested, .untested)
   let dir := e.root / "run" / c.id
-  let l ← runLeantex e dir c.lean
-  let t ← runTex e dir c.tex
-  return (l, t)
+  try
+    if ← dir.pathExists then IO.FS.removeDirAll dir
+    let l ← runLeantex e dir c.lean
+    let t ← runTex e dir c.tex
+    return (l, t)
+  catch err => return (.inconclusive s!"observation failed: {err}", .untested)
 
 /-- Every case observed and judged, a mutant against its seed's observations. -/
 def judgeAll (e : Env) (jobs : Nat) (cases : Array Case) : IO (Array Row × Array LDiag) := do
@@ -429,7 +446,8 @@ def resolve (cmd : String) : IO (Option System.FilePath) := do
     if ← p.pathExists then return some p
   return none
 
-/-- The premises the verdicts read: TeX meets a closed stdin, and starts with the reduced PATH. -/
+/-- The premises the verdicts read: TeX starts with the reduced PATH, meets a closed stdin, builds
+a clean document under each mapped class with the prelude, and pdftotext reads a PDF. -/
 def premises (e : Env) : IO (Array String) := do
   let some lualatex := e.lualatex | return #[]
   let mut failed := #[]
@@ -439,8 +457,19 @@ def premises (e : Env) : IO (Array String) := do
   writeCase dir "\\documentclass{article}\n\\begin{document}\nx\n" e.repo
   let o ← run lualatex.toString #["-interaction=nonstopmode", "t.tex"] dir (texEnv e lualatex)
     e.budgetMs
-  unless o.exitCode != 0 && o.exitCode < 124 do
+  let log ← if ← (dir / "t.log").pathExists then IO.FS.readFile (dir / "t.log") else pure ""
+  unless o.exitCode != 0 && o.exitCode < 124 && contains log "job aborted, no legal \\end" do
     failed := failed.push s!"stdinClosed: an unfinished body exited {o.exitCode}"
+  for cls in (classMap.map (·.2)).eraseDups do
+    let body := if cls == "beamer" then "\\begin{frame}{T}\nx\n\\end{frame}" else "x"
+    let clean :=
+      s!"\\documentclass\{{cls}}{prelude}\n\\begin\{document}\n{body}\n\\end\{document}\n"
+    match ← runTex e (dir / cls) clean (cached := false) with
+    | .ran t =>
+      unless t.accepted && (t.text.map (contains · "x")).getD false do
+        failed := failed.push s!"preludeClean: {cls} with the prelude: {t.error.getD "no text"}"
+    | .inconclusive why => failed := failed.push s!"preludeClean: {cls}: {why}"
+    | .untested => failed := failed.push s!"preludeClean: {cls} untested"
   IO.FS.removeDirAll dir
   return failed
 
@@ -458,7 +487,11 @@ def setup (repo : System.FilePath) (lualatex? : Option String) (keep : Bool) : I
   | none => return e
   | some p =>
     let v ← run p.toString #["--version"] root (texEnv e p) 30000
-    return { e with texVersion := ((lines v.stdout).headD "").trimAscii.toString }
+    let kernel ← run "kpsewhich" #["latex.ltx"] root (texEnv e p) 30000
+    let path := kernel.stdout.trimAscii.toString
+    let kernelHash ← if path.isEmpty then pure 0 else pure (hash (← IO.FS.readFile path))
+    let version := ((lines v.stdout).headD "").trimAscii.toString
+    return { e with texVersion := version, cacheKey := s!"{version}; latex.ltx {kernelHash}" }
 
 def summary (rows : Array Row) (emitted : Array LDiag) : Array String := Id.run do
   let mut out := #[]
@@ -525,6 +558,8 @@ def selftest (repo : System.FilePath) (lualatex? : Option String) : IO UInt32 :=
       { code := "E0201", line := 3, message := "unclosed: expected '}'" }),
     ("cache: a run round-trips", decodeT (encodeT { exit := 0, text := some "a\nb" }) ==
       some { exit := 0, text := some "a\nb" }),
+    ("a native spelling is a whole control word",
+      writes "\\page{ a = 1 }" "\\page" && !writes "\\pagestyle{empty}" "\\page"),
     ("class map keeps every line",
       (texTwin "\\documentclass{slides}\nx").map (lines · |>.length) == some 2)]
   for (name, ok) in pure' do unless ok do fails := fails.push name
