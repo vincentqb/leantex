@@ -2016,6 +2016,9 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "operatorname binds like a named function"
     (widthOf "$\\operatorname{foo} x$" ==
       adv mbase 'f' + adv mbase 'o' + adv mbase 'o' + mu mbase 3 + adv mbase '𝑥')
+  t "an explicit space inside operatorname sets its width between the word's runs"
+    (widthOf "$\\operatorname{ab\\,c} x$" ==
+      adv mbase 'a' + adv mbase 'b' + mu mbase 3 + adv mbase 'c' + mu mbase 3 + adv mbase '𝑥')
   t "setmathfont fills the math slot"
     ((Elab.run "t" ("\\documentclass{article}\\setmathfont{Fira Math}" ++
       "\\begin{document}x\\end{document}")).1.fonts.math == some "Fira Math")

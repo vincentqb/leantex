@@ -818,10 +818,16 @@ private theorem parserNotes_append (a b : Array Note)
   · exact ha w hw
   · exact hb w hw
 
+/-- An upright word broken by explicit spaces: the word alone, or its runs as Ord words between
+the spaces. -/
+private def spacedWord (parts : Array MItem) (s : String) : MNucleus :=
+  if parts.isEmpty then .word s
+  else .list (MList.ofList (if s.isEmpty then parts else parts.push (.atom .ord (.word s) .nil .nil false)).toList)
+
 /-- Read an upright-text alias's group: symbols contribute their scalar, a text symbol its TU
-scalar as in text, styling a loss note. -/
+scalar as in text, an explicit space its width, styling a loss note. -/
 private def readTextGroup (toks : Array MTok) (i : Nat) (tok : MTok)
-    (notes0 : Array Note) : Except String (String × Nat × Array Note) := do
+    (notes0 : Array Note) : Except String (MNucleus × Nat × Array Note) := do
   let mut j := i + 1
   if let some .ws := toks[j]? then j := j + 1
   let some .openGrp := toks[j]? | throw s!"{tokName tok} without its group"
@@ -829,6 +835,7 @@ private def readTextGroup (toks : Array MTok) (i : Nat) (tok : MTok)
   let mut s := ""
   let mut depth := 0
   let mut notes := notes0
+  let mut parts : Array MItem := #[]
   for _ in [j:toks.size + 1] do
     match toks[j]? with
     | some (.ch c) =>
@@ -856,6 +863,11 @@ private def readTextGroup (toks : Array MTok) (i : Nat) (tok : MTok)
         j := afterCmd (j + 1)
       else if textNeutralCtrl.contains n then
         j := afterCmd (j + 1)
+      else if let some mu := ctrlSpace.lookup n then
+        if !s.isEmpty then parts := parts.push (.atom .ord (.word s) .nil .nil false)
+        parts := parts.push (.space mu)
+        s := ""
+        j := j + 1
       else
         match ctrlAtom.lookup n with
         | some (_, c) =>
@@ -875,7 +887,7 @@ private def readTextGroup (toks : Array MTok) (i : Nat) (tok : MTok)
     | some t => throw s!"{tokName t} inside {tokName tok}"
     | none => throw "an unbalanced group"
   let some .closeGrp := toks[j]? | throw "an unbalanced group"
-  return (s, j + 1, notes)
+  return (spacedWord parts s, j + 1, notes)
 
 private theorem readTextGroup_notes (toks : Array MTok) (i : Nat) (tok : MTok)
     (notes : Array Note) (hn : ParserNotes notes) :
@@ -886,7 +898,7 @@ private theorem readTextGroup_notes (toks : Array MTok) (i : Nat) (tok : MTok)
   all_goals first
     | trivial
     | refine Loop.except_bind_of_inv
-        (fun (st : Nat × String × Nat × Array Note) => ParserNotes st.2.2.2)
+        (fun (st : Nat × String × Nat × Array Note × Array MItem) => ParserNotes st.2.2.2.1)
         _ _ _ (Loop.except_forIn_range_inv _ _ _ _ _ hn ?_) ?_
   all_goals try
     intro st hst
@@ -1210,10 +1222,10 @@ private def parseToks (toks : Array MTok) (top : Option GridKind) (display : Boo
       -- `\operatorname` is `\text`'s word as an Op atom (TeXbook p. 162); starred, its scripts
       -- set as display limits (amsopn).
       let star := tok == .ctrl "operatorname" && toks[i + 1]? == some (.ch '*')
-      let (s, j, notes') ← readTextGroup toks (if star then i + 1 else i) tok notes
+      let (nuc, j, notes') ← readTextGroup toks (if star then i + 1 else i) tok notes
       notes := notes'
       let cls : MathClass := if tok == .ctrl "operatorname" then .op else .ord
-      let atom : MItem := .atom cls (.word s) .nil .nil star
+      let atom : MItem := .atom cls nuc .nil .nil star
       let (acc', pending') ← joinAtom acc pending atom
       acc := acc'
       pending := pending'
