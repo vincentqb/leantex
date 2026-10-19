@@ -425,8 +425,7 @@ private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
       else acc.groundedEpochs
     { acc with pal := p, epochs := acc.epochs.push p, groundedEpochs := grounded }
   | .setTokens _ => acc
-  | .table _ _ _ rows _ _ =>
-    rows.foldl (fun o row => row.foldl (fun o cell => usesInlines cx o cell.toList) o) acc
+  | .table _ _ _ rows _ _ => usesRows cx acc rows.toList
   | .algorithm _ _ lines =>
     lines.foldl (fun o l =>
       let o := usesInlines cx o l.content.toList
@@ -483,6 +482,11 @@ private def usesColumns (cx : UseCx) (acc : UseAcc) :
   | [] => acc
   | (w, body) :: rest =>
     usesColumns cx (usesBlocks (w.box.elim cx (cx.onBox acc · (blocks := true))) acc body.toList) rest
+
+private def usesRows (cx : UseCx) (acc : UseAcc) :
+    List (Array (Array Block)) → UseAcc
+  | [] => acc
+  | row :: rest => usesRows cx (usesItems cx acc row.toList) rest
 
 end
 

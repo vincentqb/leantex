@@ -3006,7 +3006,7 @@ private def scalarTextOne (out : ScalarAcc) (itemD enumD : Nat) :
   | .frame title _ _ _ body =>
     scalarTextList (textAndMath out title) itemD enumD body.toList
   | .framefoot content => textAndMath out content
-  | .table _ _ _ rows _ _ => scalarTextTableRows out rows.toList
+  | .table _ _ _ rows _ _ => scalarTextTableRows out itemD enumD rows.toList
   | .algorithm numbered semis lines =>
     let out := if numbered then { out with texts := out.texts.push "0123456789" } else out
     scalarTextAlgLines (Ir.algWords out.locale.tag) semis out lines.toList
@@ -3021,15 +3021,11 @@ private def scalarTextAlgLines (words : Ir.AlgWords) (semis : Bool) (out : Scala
     scalarTextAlgLines words semis
       (textAndMath out (Ir.AlgLine.rendered words semis Ir.Color.black l)) rest
 
-private def scalarTextTableRows (out : ScalarAcc) :
-    List (Array (Array Inline)) → ScalarAcc
+private def scalarTextTableRows (out : ScalarAcc) (itemD enumD : Nat) :
+    List (Array (Array Block)) → ScalarAcc
   | [] => out
-  | row :: rest => scalarTextTableRows (scalarTextTableCells out row.toList) rest
-
-private def scalarTextTableCells (out : ScalarAcc) :
-    List (Array Inline) → ScalarAcc
-  | [] => out
-  | cell :: rest => scalarTextTableCells (textAndMath out cell) rest
+  | row :: rest =>
+    scalarTextTableRows (scalarTextItems out itemD enumD row.toList) itemD enumD rest
 
 private def scalarTextCols (out : ScalarAcc) (itemD enumD : Nat) :
     List (BoxWidth × Array Block) → ScalarAcc
@@ -3238,7 +3234,7 @@ private def weightKeysBlock (corners : Bool) (styles : Ir.Styles) (slides : Bool
   | .float _ _ _ body caption =>
     weightKeysBlockList corners styles slides (weightKeysInlineList corners acc {} caption.toList)
       body.toList
-  | .table _ _ _ rows _ _ => weightKeysTableRows corners acc rows.toList
+  | .table _ _ _ rows _ _ => weightKeysTableRows corners styles slides acc rows.toList
   -- The generated keyword bold is a corner face, not an off-corner key.
   | .algorithm _ _ lines =>
     lines.foldl (fun a l =>
@@ -3304,12 +3300,12 @@ private def weightKeysBlockCols (corners : Bool) (styles : Ir.Styles) (slides : 
     weightKeysBlockCols corners styles slides
       (weightKeysBlockList corners styles slides acc body.toList) rest
 
-private def weightKeysTableRows (corners : Bool) (acc : Array (Nat × Nat × Bool)) :
-    List (Array (Array Ir.Inline)) → Array (Nat × Nat × Bool)
+private def weightKeysTableRows (corners : Bool) (styles : Ir.Styles) (slides : Bool)
+    (acc : Array (Nat × Nat × Bool)) : List (Array (Array Ir.Block)) → Array (Nat × Nat × Bool)
   | [] => acc
   | row :: rest =>
-    weightKeysTableRows corners (row.foldl
-      (fun a cell => weightKeysInlineList corners a {} cell.toList) acc) rest
+    weightKeysTableRows corners styles slides
+      (weightKeysBlockItems corners styles slides acc row.toList) rest
 end
 
 /-- The face keys the document's runs ask: every key,
@@ -9872,6 +9868,9 @@ public structure Spacing.Pending where
   /-- A frame's body just opened (`Op.bodyOpen`), so beamer's `\vskip-\parskip`
   cancels the first paragraph's peer gap; cleared by the next line's gap. -/
   private frameTop : Bool := false
+  /-- A box opened and nothing has set a line since, so a trivlist here spends no `\topsep`
+  (latex.ltx `\@minipagetrue`); cleared by the next line's gap. -/
+  private boxTop : Bool := false
   /-- Where `\vspace*`'s rule stands in the owed glue, before `owed[k]` (`Ir.pageAnchorRole`). -/
   private anchorAt : Option Nat := none
   private owed : Array Glue := #[]
@@ -10053,7 +10052,8 @@ private def Spacing.Pending.trivOpen (a : Acc) (r : Rd) : Rd × Acc × Option Gl
   if r.inLabel then (ri, { a with labelOpen := true }, none)
   else
     let g := r.trivAdd a
-    (ri, { (if a.afterHeading then a else a.trivSkip r g true) with labelOpen := true }, some g)
+    (ri, { (if a.afterHeading || a.boxTop then a else a.trivSkip r g true) with labelOpen := true },
+      some g)
 
 /-- The reader of a block standing where a trivlist opened its item: in its label, the label taken. -/
 private def Spacing.Context.takeLabel (r : Rd) (a : Acc) : Rd × Acc :=
@@ -10121,8 +10121,8 @@ private def Spacing.Pending.flushGap (a : Acc) (r : Rd) : Acc :=
         { a with ops := (a.ops.push (.skip par)).push (a.owedOp (a.owed.foldl Glue.add {})) }
       else { a with ops := a.ops.push (a.owedOp (a.gapGlue r)) }
   { a with wantDefault := false, owed := #[], declaredSkip := false, trivOwed := false,
-           afterHeading := false, labelOpen := false, frameTop := false, anchorAt := none
-           dispAlt := none }
+           afterHeading := false, labelOpen := false, frameTop := false, boxTop := false
+           anchorAt := none, dispAlt := none }
 
 private theorem flushGap_items_exact (a : Acc) (r : Rd) (ho : a.owed.isEmpty = false)
     (hs : (a.wantDefault && a.declaredSkip) = true) (hk : a.anchorAt = none)
@@ -10890,7 +10890,7 @@ public structure TableFit where
 /-- What a table's narrowing columns need at a size: each column's
 widest unbreakable run, unhyphenated, with the gaps and pads. -/
 private def tableNeed (fs : FontSet) (geom : Geom) (xHeight : Length) (imgs : Image.Store)
-    (cols : Array Ir.ColSpec) (padL padR : Bool) (rows : Array (Array (Array Ir.Inline)))
+    (cols : Array Ir.ColSpec) (padL padR : Bool) (rows : Array (Array (Array Ir.Block)))
     (spans : Array Ir.ColSpan) (colsep size : Length) : Length := Id.run do
   let mut widths : Array Length := cols.map fun _ => 0
   let mut cache : Std.HashMap String (Array Nat) := {}
@@ -10898,8 +10898,8 @@ private def tableNeed (fs : FontSet) (geom : Geom) (xHeight : Length) (imgs : Im
     for (cell, j) in row.zipIdx do
       unless inSpan spans i j do
         let (items, _, c, _) :=
-          itemsOfInlines none size xHeight fs { cellCode := true } cell cache (.fixed .unattributed)
-            imgs geom.textWidth geom.textHeight (ladder := geom.scale)
+          itemsOfInlines none size xHeight fs { cellCode := true } (Ir.cellLine cell) cache
+            (.fixed .unattributed) imgs geom.textWidth geom.textHeight (ladder := geom.scale)
         cache := c
         let narrows := (cols[j]?.map (·.narrows)).getD false
         let w := if narrows then itemsMinWidth items else itemsLinesWidth items
@@ -10909,7 +10909,7 @@ private def tableNeed (fs : FontSet) (geom : Geom) (xHeight : Length) (imgs : Im
 /-- The size a markdown table sets at: its body size when its narrowing columns fit
 `avail`, else the largest of `tableSteps` that fits, else the floor or `tableLastStep`. -/
 public def tableFit (geom : Geom) (fs : FontSet) (imgs : Image.Store) (colsep avail : Length)
-    (cols : Array Ir.ColSpec) (padL padR : Bool) (rows : Array (Array (Array Ir.Inline)))
+    (cols : Array Ir.ColSpec) (padL padR : Bool) (rows : Array (Array (Array Ir.Block)))
     (spans : Array Ir.ColSpan) : TableFit := Id.run do
   unless cols.any (·.narrows) do return {}
   let xHeight := xHeightOf fs geom.fontSize
@@ -10943,7 +10943,7 @@ private structure TableMeasure where
 
 /-- The measuring pass of a table `total` wide at most; its diagnostics are the setting pass's. -/
 private def measureTable (r : Rd) (a : Acc) (cols : Array Ir.ColSpec) (padL padR : Bool)
-    (rows : Array (Array (Array Inline))) (spans : Array Ir.ColSpan) (total : Length) :
+    (rows : Array (Array (Array Block))) (spans : Array Ir.ColSpan) (total : Length) :
     TableMeasure := Id.run do
   let tok (name : String) : Length :=
     tableLength ((a.tokens.find? name).map fun g => (r.resolve g).width) r.preamble name
@@ -10965,7 +10965,7 @@ private def measureTable (r : Rd) (a : Acc) (cols : Array Ir.ColSpec) (padL padR
     for (cell, j) in row.zipIdx do
       let (items, _, c, _) :=
         itemsOfInlines cellPats size r.xHeight r.fs
-          { color := a.fg, ground := a.ground, cellCode := web } cell cache
+          { color := a.fg, ground := a.ground, cellCode := web } (Ir.cellLine cell) cache
           (.fixed .unattributed) r.imgs r.geom.textWidth r.geom.textHeight
           (ladder := r.geom.scale) (step := r.step) (steps := r.steps)
       cache := c
@@ -10989,8 +10989,9 @@ private def measureTable (r : Rd) (a : Acc) (cols : Array Ir.ColSpec) (padL padR
 or widest cell, `2·tabcolsep` apart, rules padded by their declared seps. -/
 private def collectTable (r : Rd) (a0 : Acc)
     (cols : Array Ir.ColSpec) (padL padR : Bool)
-    (rows : Array (Array (Array Inline))) (rules : Array (Nat × Ir.TableRule))
-    (spans : Array Ir.ColSpan) (indent : Length) (center : Bool) : Acc := Id.run do
+    (rows : Array (Array (Array Block))) (rules : Array (Nat × Ir.TableRule))
+    (spans : Array Ir.ColSpan) (bodies : Array (Array (Option (Rd → Acc → Length → Acc))))
+    (indent : Length) (center : Bool) : Acc := Id.run do
   if cols.isEmpty then
     return a0
   let mut a := a0.flushGap r
@@ -11021,7 +11022,7 @@ private def collectTable (r : Rd) (a0 : Acc)
       (detail := some s!"{(tableW - total).toPtString}pt wider")
       -- a flow's web page sets a table of natural columns at its natural width past the measure
       (output := if !r.slides && cols.all (·.width matches .natural) then some .pdf else none)
-      (span := rows.findSome? fun row => row.findSome? Ir.inlineSource)
+      (span := rows.findSome? fun row => row.findSome? fun c => Ir.inlineSource (Ir.cellLine c))
       (help := if web then
           "shorten the longest word in each column, or split the table into narrower ones"
         else "narrow the p{...} column widths, or widen the text block")) }
@@ -11138,9 +11139,13 @@ private def collectTable (r : Rd) (a0 : Acc)
           | some s, .sized _ => spanNeed total nats s
           | _, _ => wj
         let x := colX j
-        let cell := row[j]!
+        let cell := Ir.cellLine row[j]!
         let strut := some (cellStrut r.geom.skips r.geom.scale size r.geom.leading cell)
-        unless cell.isEmpty do
+        if let some setBody := (bodies[i]?.bind (·[j]?)).join then
+          -- `\@arrayparboxrestore` (latex.ltx): a cell's paragraphs open unindented, no skip apart.
+          let rb := { rc with geom := { rc.geom with parskip := {}, texParskip := {} } }
+          a := a.absorb (setBody rb { a.nested (x + measureW) with boxTop := true } x)
+        else unless cell.isEmpty do
           let (sub, leaf) := (a.nested (x + measureW)).leafRange (Struct.leafCountInlines cell)
           let span := Struct.leafCountInlines cell
           -- A natural cell its narrowed column cannot hold wraps as a browser's does.
@@ -12760,7 +12765,7 @@ private def collectListing (r : Rd) (a : Acc) (covered : Option Ir.Color) (s : S
     match Ir.listSkips r.lists r.geom.fontSize lv with
     | some sk =>
       let g := (r.resolve sk.topsep).add (r.resolve (Ir.partopsepFor r.lists r.geom.fontSize lv a.tokens))
-      let top := if a.afterHeading then a.flushGap r else (a.listSpace g).flushGap r
+      let top := if a.afterHeading || a.boxTop then a.flushGap r else (a.listSpace g).flushGap r
       (collectVerbatim r top covered s spec indent).listSpace g
     | none => collectVerbatim r a covered s spec indent
   | .none => collectVerbatim r a covered s spec indent
@@ -13805,7 +13810,7 @@ private def collectCentered (r : Rd) (a : Acc)
       | .picture pic => collectPicture r a pic indent true
       -- A table under `\centering` centres as one box; its cells keep their own alignment.
       | .table cols pl pr rows rules spans =>
-        collectTable r a cols pl pr rows rules spans indent true
+        collectTable r a cols pl pr rows rules spans (tableBodiesOf blk) indent true
       | .columns _ => collectBlock { r with centreBoxes := true } a blk indent
       | _ => collectBlock r a blk indent
     let a := if prevRule then { a with declaredSkip := false } else a
@@ -13823,7 +13828,7 @@ private def collectColumns (r : Rd) (a : Acc)
   | [] => a
   | (w, body) :: rest =>
     let wi := (w.resolve total).getD shareW + innerPaint r a (w, body) total
-    let sub := { a.nested (x0 + wi) with depthAt := a.listDepth + a.depthAt }
+    let sub := { a.nested (x0 + wi) with depthAt := a.listDepth + a.depthAt, boxTop := true }
     let a := a.absorb (collectBlocks r sub body x0)
     let a := if rest.isEmpty then a else a.pushOp .colNext
     collectColumns { r with labels := #[] } a rest (x0 + wi + gutter) shareW gutter total
@@ -13894,7 +13899,8 @@ private def collectBlock (r : Rd) (a : Acc)
     let a := match st.before, top with
       | some g, _ => a.addvspace (r.resolve g)
       | none, some t =>
-        if a.afterHeading || r.inLabel then a.flushGap r else (a.listOpen r t).flushGap r
+        if a.afterHeading || a.boxTop || r.inLabel then a.flushGap r
+        else (a.listOpen r t).flushGap r
       | none, none => a
     let step := (st.indent.map fun g => (r.resolve g).width).getD (r.leftMargin lv a.tokens)
     let indent := indent + step
@@ -13987,7 +13993,8 @@ private def collectBlock (r : Rd) (a : Acc)
     | some (sk, pts) =>
       let g := if r.inPar then r.resolve sk.topsep else (r.resolve sk.topsep).add (r.resolve pts)
       -- In an item's label `\@noparlist` sets no skip above or below it.
-      let top := if a.afterHeading || r.inLabel then a.flushGap r else (a.openSpace r g).flushGap r
+      let top := if a.afterHeading || a.boxTop || r.inLabel then a.flushGap r
+        else (a.openSpace r g).flushGap r
       let sub := { top with measure := narrow, quoteDepth := a.quoteDepth + 1 }
       let ri := { (r.within blk) with
         inPar := false, inLabel := false
@@ -14190,7 +14197,7 @@ private def collectBlock (r : Rd) (a : Acc)
     -- Left on the current indent, as LaTeX places the box where it stands.
     collectPicture r a pic indent false
   | .table cols padL padR rows rules spans =>
-    collectTable r a cols padL padR rows rules spans indent false
+    collectTable r a cols padL padR rows rules spans (tableBodies #[] rows.toList) indent false
   | .float kind num capAbove body caption =>
     -- A float is one unbreakable box (`runFloat`); its caption's leaves come first.
     -- Its box leaves TeX's `\@nobreak` as it stood (latex.ltx `\@floatboxreset`).
@@ -14282,6 +14289,25 @@ private def collectBlock (r : Rd) (a : Acc)
         else collectSlots rd a slots body.toList indent
       else collectBlocks r a body indent
     close a pageGround.isSome
+
+/-- A table's cell setters (`tableBodies`); none for another block. -/
+private def tableBodiesOf : Block → Array (Array (Option (Rd → Acc → Length → Acc)))
+  | .table _ _ _ rows _ _ => tableBodies #[] rows.toList
+  | _ => #[]
+
+/-- The setters of a table's cells holding blocks, row by row; an inline cell has none. -/
+private def tableBodies (out : Array (Array (Option (Rd → Acc → Length → Acc)))) :
+    List (Array (Array Block)) → Array (Array (Option (Rd → Acc → Length → Acc)))
+  | [] => out
+  | row :: rest => tableBodies (out.push (cellBodies #[] row.toList)) rest
+
+private def cellBodies (out : Array (Option (Rd → Acc → Length → Acc))) :
+    List (Array Block) → Array (Option (Rd → Acc → Length → Acc))
+  | [] => out
+  | cell :: rest =>
+    cellBodies (out.push (match Ir.cellLine? cell with
+      | some _ => none
+      | none => some fun r a x => collectBlocks r a cell x)) rest
 
 end
 

@@ -216,7 +216,7 @@ def twinLineStartChecks (ref : IO.Ref (List String)) : IO Unit := do
 /-- The tables of a document, every row of each, in document order. -/
 def tableRows (d : Ir.Doc) : Array (Array (Array Ir.Inline)) :=
   Ir.foldBlocks (fun acc b => match b with
-    | .table _ _ _ rows _ _ => acc ++ rows
+    | .table _ _ _ rows _ _ => acc ++ rows.map (·.map Ir.cellLine)
     | _ => acc) (fun acc _ => acc) #[] d.body
 
 /-- A pipe table's rows as the twin writes them, delimiter row left out. -/
@@ -237,7 +237,7 @@ def twinTableChecks (ref : IO.Ref (List String)) : IO Unit := do
   let doc := { (elabStr (dvDoc "" src)).1 with
     body := (elabStr (dvDoc "" src)).1.body.map fun b => match b with
       | .table cols pl pr rows rules spans =>
-        .table cols pl pr (rows.modify 2 (·.set! 1 broken)) rules spans
+        .table cols pl pr (rows.modify 2 (·.set! 1 (Ir.cellOf broken))) rules spans
       | b => b }
   let tw := MarkdownDoc.emit doc
   let rows := tableRows doc

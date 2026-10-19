@@ -1050,6 +1050,24 @@ public def headingText (xs : Array Inline) (cites : Bool := false) : String :=
 public def cellText (xs : Array Inline) (cites : Bool := false) : String :=
   oneLine (inlinesInto .cell cites "" none true 0 xs.toList)
 
+/-- A pipe table cell's lines when it holds blocks: a paragraph's text, an item's after its mark,
+any other block's characters. -/
+private def cellBlockLines (cites : Bool) (b : Ir.Block) : List String :=
+  let plain (b : Ir.Block) : String := match b with
+    | .para xs => cellText xs cites
+    | b => oneLine (Ir.blocksText #[b])
+  match b with
+  | .list ordered _ items =>
+    items.toList.zipIdx.map fun (it, i) =>
+      (if ordered then s!"{i + 1}." else "\u2022") ++ " " ++ " ".intercalate (it.toList.map plain)
+  | b => [plain b]
+
+/-- A pipe table cell's text: an inline cell's line, a cell of blocks its lines over hard breaks. -/
+private def cellBlocksText (cites : Bool) (cell : Array Ir.Block) : String :=
+  match Ir.cellLine? cell with
+  | some xs => cellText xs cites
+  | none => "<br>".intercalate (cell.toList.flatMap (cellBlockLines cites))
+
 /-- A laid-out paragraph's indent in the twin for a line `depth` steps in: `Ir.linesStep` in em and
 en spaces for each step. -/
 private def linesIndent (depth : Nat) : String :=
@@ -1399,7 +1417,7 @@ private def blockInto (tw : Twin) (summary ind acc : String) : Block → String
     blocksInto tw summary ind (acc ++ head) none body.toList
   -- The GFM pipe table: one line per row, the separator after the first.
   | .table cols _ _ rows _ _ =>
-    let line (row : Array (Array Inline)) : String := rowLine (row.toList.map (cellText · tw.cites))
+    let line (row : Array (Array Block)) : String := rowLine (row.toList.map (cellBlocksText tw.cites))
     let sep := "|" ++ String.join (cols.toList.map fun c =>
       match c.align with
       | .left => " --- |"
@@ -1978,7 +1996,7 @@ private theorem headingLevelOne_mem (x : Ir.HeadingLevel) :
   | .logo _, _, h => h
   | .rule _ _ _, _, h => h
   | .picture _, _, h => h
-  | .table _ _ _ _ _ _, _, h => h
+  | .table _ _ _ rows _ _, out, h => headingLevelRows_mem x rows.toList out h
   | .float _ _ _ body _, out, h => headingLevelList_mem x body.toList out h
 
 private theorem headingLevelItems_mem (x : Ir.HeadingLevel) :
@@ -1996,6 +2014,14 @@ private theorem headingLevelColumns_mem (x : Ir.HeadingLevel) :
   | (_, body) :: rest, out, h =>
     headingLevelColumns_mem x rest (Ir.headingLevelList out body.toList)
       (headingLevelList_mem x body.toList out h)
+
+private theorem headingLevelRows_mem (x : Ir.HeadingLevel) :
+    (rows : List (Array (Array Block))) → (out : Array Ir.HeadingLevel) → x ∈ out →
+      x ∈ Ir.headingLevelRows out rows
+  | [], _, h => h
+  | row :: rest, out, h =>
+    headingLevelRows_mem x rest (Ir.headingLevelItems out row.toList)
+      (headingLevelItems_mem x row.toList out h)
 
 end
 

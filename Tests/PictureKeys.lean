@@ -469,7 +469,7 @@ def pictureInlineLineChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet
   let cell := dvDoc "" ("\\begin{tabular}{ll} Alpha & " ++ mark ++ " \\\\ Beta & words \\end{tabular}")
   let group := dvDoc "" ("\\textbf{Gamma " ++ mark ++ " delta.}")
   let cellImages (d : Ir.Doc) : Array String := d.body.foldl (fun acc b => match b with
-    | .table _ _ _ rows _ _ => rows.foldl (fun acc r => r.foldl (fun acc c => c.foldl
+    | .table _ _ _ rows _ _ => rows.foldl (fun acc r => r.foldl (fun acc c => (Ir.cellLine c).foldl
         (fun acc i => match i with
           | .image s _ _ => if s.startsWith Ir.picSrcPrefix then acc.push s else acc
           | _ => acc) acc) acc) acc

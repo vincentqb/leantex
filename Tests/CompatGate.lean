@@ -199,14 +199,14 @@ def compatFragmentChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (oneDoc, _) := elabStr (dvDoc "" "\\begin{tabular}{lll}\n\\multicolumn{1}{r}{Right} & b & c \\\\\n\\end{tabular}")
   t "fragment arm, one column: the row's cells stay in their columns"
     (match oneDoc.body with
-     | #[.table _ _ _ rows _ _] => rows.map (·.map Ir.plainText) == #[#["Right", "b", "c"]]
+     | #[.table _ _ _ rows _ _] => rows.map (·.map Ir.blocksText) == #[#["Right", "b", "c"]]
      | _ => false)
   let (defDoc, defDs) := elabStr (dvDoc "\\newcommand{\\zzhead}[1]{\\multicolumn{2}{c}{#1}}\n"
     "\\begin{tabular}{lll}\n\\zzhead{Heading} & z \\\\\na & b & c \\\\\n\\end{tabular}")
   t "fragment arm: a parameter in the kept text is the definition's parameter"
     (!defDs.any (·.code == "E0311") &&
       match defDoc.body with
-      | #[.table _ _ _ rows _ _] => (rows[0]?.bind (·[0]?)).map Ir.plainText == some "Heading"
+      | #[.table _ _ _ rows _ _] => (rows[0]?.bind (·[0]?)).map Ir.blocksText == some "Heading"
       | _ => false)
   let (grpDoc, grpDs) := elabStr (dvDoc "\\newcommand{\\zzg}[1]{{\\multicolumn{2}{c}{#1}}}\n"
     "\\begin{tabular}{lll}\n\\zzg{Grp} & d & e \\\\\n\\end{tabular}")
@@ -222,7 +222,7 @@ def compatFragmentChecks (ref : IO.Ref (List String)) : IO Unit := do
     let (spanDoc, _) := elabStr (dvDoc "" s!"\\begin\{tabular}\{lll}\n{row} \\\\\n\\end\{tabular}")
     t s!"a {what}: the text fills its head cell, and a later cell keeps its column"
       (match spanDoc.body with
-       | #[.table _ _ _ rows _ _] => rows.map (·.map Ir.plainText) == #[want]
+       | #[.table _ _ _ rows _ _] => rows.map (·.map Ir.blocksText) == #[want]
        | _ => false)
 
 /-- Span probes, as (what, preamble, body). -/

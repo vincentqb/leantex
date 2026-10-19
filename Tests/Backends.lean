@@ -948,7 +948,7 @@ def mdPreambleChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((MarkdownDoc.emit sc) == "NaCl\n")
   let pipe : Ir.Doc := {
     body := #[.table #[default, default] false false
-      #[#[#[.text "a|b"], #[.text "c"]]] #[] #[]] }
+      #[#[Ir.cellOf #[.text "a|b"], Ir.cellOf #[.text "c"]]] #[] #[]] }
   t "a cell containing a pipe keeps its row"
     (((MarkdownDoc.emit pipe).splitOn "| a\\|b | c |").length == 2)
 
@@ -2520,7 +2520,7 @@ def tableHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a midrule index past the rows clamps to the row count"
     (hdr #[(7, .mid)] == 3)
   t "an empty table has zero header rows whatever its rules"
-    (Ir.tableHeaderRows #[] #[(0, .mid), (1, .mid)] == 0)
+    (Ir.tableHeaderRows (#[] : Array (Array (Array Ir.Block))) #[(0, .mid), (1, .mid)] == 0)
   let tree (src : String) : Html.Node :=
     HtmlDoc.blockNode {} (elabStr (dvDoc "" src)).1.body[0]!
   let one := tree ("\\begin{tabular}{lcr}\\toprule Left & Centre & Right \\\\ " ++

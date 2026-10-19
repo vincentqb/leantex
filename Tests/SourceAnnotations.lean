@@ -33,7 +33,7 @@ private def annotationDoc (xs : Array Inline) (source : Option Span) : Doc :=
       .list false {} #[#[.para xs]],
       .frame xs false .top false #[.para xs, .framefoot xs],
       .float .figure (some ⟨"", 1⟩) false #[.para xs] xs,
-      .table #[{ width := .natural, align := .left }] true true #[#[xs]] #[] #[],
+      .table #[{ width := .natural, align := .left }] true true #[#[Ir.cellOf xs]] #[] #[],
       .algorithm false false #[{
         depth := 0, kind := .statement, content := xs, comment := some xs }],
       .bibliography "invented" none #[{ key := "entry", marker := none, content := xs }],

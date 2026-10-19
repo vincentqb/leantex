@@ -4655,7 +4655,7 @@ public def firstMidRow : List (Nat × TableRule) → Option Nat
   | _ :: rest => firstMidRow rest
 
 /-- booktabs' head: the rows before the first `\midrule`; no mid rule, no header. -/
-public def tableHeaderRows (rows : Array (Array (Array Inline)))
+public def tableHeaderRows {β : Type} (rows : Array (Array (Array β)))
     (rules : Array (Nat × TableRule)) : Nat :=
   ((firstMidRow rules.toList).map fun k => min k rows.size).getD 0
 
@@ -4674,7 +4674,7 @@ public theorem firstMidRow_eq_none_of_no_mid (rules : List (Nat × TableRule))
     | cmid a b l rt => exact ih hrest
     | gap s => exact ih hrest
 
-public theorem tableHeaderRows_between (rows : Array (Array (Array Inline)))
+public theorem tableHeaderRows_between {β : Type} (rows : Array (Array (Array β)))
     (rules : Array (Nat × TableRule)) :
     0 ≤ tableHeaderRows rows rules ∧ tableHeaderRows rows rules ≤ rows.size := by
   refine ⟨Nat.zero_le _, ?_⟩
@@ -4683,7 +4683,7 @@ public theorem tableHeaderRows_between (rows : Array (Array (Array Inline)))
   | none => exact Nat.zero_le _
   | some k => exact Nat.min_le_right _ _
 
-public theorem tableHeaderRows_zero_of_no_mid (rows : Array (Array (Array Inline)))
+public theorem tableHeaderRows_zero_of_no_mid {β : Type} (rows : Array (Array (Array β)))
     (rules : Array (Nat × TableRule)) (h : ∀ p ∈ rules, p.2 ≠ .mid) :
     tableHeaderRows rows rules = 0 := by
   unfold tableHeaderRows
@@ -4919,11 +4919,11 @@ public def AlgLine.rendered (w : AlgWords) (semis : Bool) (muted : Color)
   return l.close semis muted semi out
 
 /-- Pad each table row to `n` cells with empty cells. -/
-public def padTableRows (rows : Array (Array (Array Inline))) (n : Nat) :
-    Array (Array (Array Inline)) :=
+public def padTableRows {β : Type} (rows : Array (Array (Array β))) (n : Nat) :
+    Array (Array (Array β)) :=
   rows.map fun r => r ++ Array.replicate (n - r.size) #[]
 
-public theorem padTableRows_rectangular (rows : Array (Array (Array Inline))) (n : Nat)
+public theorem padTableRows_rectangular {β : Type} (rows : Array (Array (Array β))) (n : Nat)
     (h : ∀ r ∈ rows, r.size ≤ n) :
     ∀ r ∈ padTableRows rows n, r.size = n := by
   intro r hr
@@ -5358,10 +5358,10 @@ public inductive Block where
   coordinates, everything evaluated at elaboration. -/
   | picture (pic : Pic.Picture)
   /-- `{tabular}`: a formal table with booktabs' rules and no vertical rules;
-  `rows` is rectangular and `padLeft`/`padRight` are the outer pads `@{}`
-  deletes. -/
+  `rows` is rectangular, each cell its blocks (`cellOf`), and `padLeft`/`padRight` are the outer
+  pads `@{}` deletes. -/
   | table (cols : Array ColSpec) (padLeft : Bool) (padRight : Bool)
-      (rows : Array (Array (Array Inline))) (rules : Array (Nat × TableRule))
+      (rows : Array (Array (Array Block))) (rules : Array (Nat × TableRule))
       (spans : Array ColSpan)
   /-- `{figure}`/`{table}`: a captioned object standing where written;
   `capAbove` is source order, `num` its number among captioned floats of its
@@ -5375,6 +5375,21 @@ public inductive Block where
   entries fill once the document's headings are known. -/
   | contents (spec : ContentsSpec) (entries : Array ContentsEntry)
   deriving Repr, BEq, Inhabited
+
+/-- A table cell holding inline content alone: one paragraph, or nothing when empty. -/
+@[expose] public def cellOf (xs : Array Inline) : Array Block :=
+  if xs.isEmpty then #[] else #[.para xs]
+
+/-- A cell's content when it is one paragraph or empty, as every inline cell is. -/
+@[expose] public def cellLine? (cell : Array Block) : Option (Array Inline) :=
+  match cell.toList with
+  | [] => some #[]
+  | [.para xs] => some xs
+  | _ => none
+
+/-- A cell's inline content, empty for a cell holding blocks. -/
+@[expose] public def cellLine (cell : Array Block) : Array Inline :=
+  (cellLine? cell).getD #[]
 
 /-- Single-interval construction; union nodes use `onSteps` directly. -/
 @[match_pattern, expose] public def Block.step (n : Nat) (last : Option Nat) (body : Array Block) : Block :=
@@ -9636,10 +9651,6 @@ public def inlineSource (content : Array Inline) : Option Span :=
       | .image _ _ _ | .icon _ _ | .cite _ _ | .cited _ _ _ | .footnote _ _ => source)
     none content
 
-@[expose] public def foldTableCells (fi : α → Inline → α) (acc : α) : List (Array Inline) → α
-  | [] => acc
-  | cell :: rest => foldTableCells fi (foldInlineList fi acc cell.toList) rest
-
 /-- `foldInline` over algorithm lines: each line's content, then its comment, in reading order. -/
 @[expose] public def foldAlgLines (fi : α → Inline → α) (acc : α) : List AlgLine → α
   | [] => acc
@@ -9652,11 +9663,6 @@ public def inlineSource (content : Array Inline) : Option Span :=
 @[expose] public def foldLaidLines (fi : α → Inline → α) (acc : α) : List LaidLine → α
   | [] => acc
   | l :: rest => foldLaidLines fi (foldInlineList fi acc l.content.toList) rest
-
-@[expose] public def foldTableRows (fi : α → Inline → α) (acc : α) :
-    List (Array (Array Inline)) → α
-  | [] => acc
-  | row :: rest => foldTableRows fi (foldTableCells fi acc row.toList) rest
 
 /-- `foldInline` over a reference list's items: each entry's content, in list order. -/
 @[expose] public def foldBibItems (fi : α → Inline → α) (acc : α) : List BibItem → α
@@ -9704,7 +9710,7 @@ node first, a frame's title and a float's caption before their bodies. -/
   | .framefoot content => foldInlineList fi (fb acc b) content.toList
   | .float _ _ _ body caption =>
     foldBlockList fb fi (foldInlineList fi (fb acc b) caption.toList) body.toList
-  | .table _ _ _ rows _ _ => foldTableRows fi (fb acc b) rows.toList
+  | .table _ _ _ rows _ _ => foldTableRows fb fi (fb acc b) rows.toList
   | .algorithm _ _ lines => foldAlgLines fi (fb acc b) lines.toList
   | .logo content => foldInlineList fi (fb acc b) content.toList
   | .bibliography _ _ items => foldBibItems fi (fb acc b) items.toList
@@ -9726,6 +9732,12 @@ node first, a frame's title and a float's caption before their bodies. -/
     List (BoxWidth × Array Block) → α
   | [] => acc
   | (_, body) :: rest => foldBlockCols fb fi (foldBlockList fb fi acc body.toList) rest
+
+/-- `foldBlock` over a table's rows: each row's cells in order, each cell's blocks. -/
+@[expose] public def foldTableRows (fb : α → Block → α) (fi : α → Inline → α) (acc : α) :
+    List (Array (Array Block)) → α
+  | [] => acc
+  | row :: rest => foldTableRows fb fi (foldBlockItems fb fi acc row.toList) rest
 
 end
 
@@ -9926,15 +9938,6 @@ end
 public def foldCtxInlines (w : CtxFold γ α) (ctx : γ) (acc : α) (xs : Array Inline) : α :=
   foldCtxInlineList w ctx acc xs.toList
 
-public def foldCtxTableCells (w : CtxFold γ α) (ctx : γ) (acc : α) : List (Array Inline) → α
-  | [] => acc
-  | cell :: rest => foldCtxTableCells w ctx (foldCtxInlineList w ctx acc cell.toList) rest
-
-public def foldCtxTableRows (w : CtxFold γ α) (ctx : γ) (acc : α) :
-    List (Array (Array Inline)) → α
-  | [] => acc
-  | row :: rest => foldCtxTableRows w ctx (foldCtxTableCells w ctx acc row.toList) rest
-
 /-- `foldCtxInline` over algorithm lines: content then comment. -/
 public def foldCtxAlgLines (w : CtxFold γ α) (ctx : γ) (acc : α) : List AlgLine → α
   | [] => acc
@@ -10073,6 +10076,11 @@ public def foldCtxBlockCols (w : CtxFold γ α) (ctx : γ) (acc : α) :
   | [] => acc
   | (_, body) :: rest => foldCtxBlockCols w ctx (foldCtxBlockList w ctx acc body.toList) rest
 
+public def foldCtxTableRows (w : CtxFold γ α) (ctx : γ) (acc : α) :
+    List (Array (Array Block)) → α
+  | [] => acc
+  | row :: rest => foldCtxTableRows w ctx (foldCtxBlockItems w ctx acc row.toList) rest
+
 end
 
 public def foldCtxBlocks (w : CtxFold γ α) (ctx : γ) (acc : α) (xs : Array Block) : α :=
@@ -10167,22 +10175,6 @@ public theorem foldCtxInlineList_covers (fb : α → Block → α) (fi : α → 
       foldCtxInlineList_covers fb fi _ rest]
 
 end
-
-public theorem foldCtxTableCells_covers (fb : α → Block → α) (fi : α → Inline → α) (acc : α)
-    (cells : List (Array Inline)) :
-    foldCtxTableCells (CtxFold.ofFold fb fi) () acc cells = foldTableCells fi acc cells := by
-  induction cells generalizing acc with
-  | nil => rfl
-  | cons cell rest ih =>
-    rw [foldCtxTableCells, foldTableCells, foldCtxInlineList_covers, ih]
-
-public theorem foldCtxTableRows_covers (fb : α → Block → α) (fi : α → Inline → α) (acc : α)
-    (rows : List (Array (Array Inline))) :
-    foldCtxTableRows (CtxFold.ofFold fb fi) () acc rows = foldTableRows fi acc rows := by
-  induction rows generalizing acc with
-  | nil => rfl
-  | cons row rest ih =>
-    rw [foldCtxTableRows, foldTableRows, foldCtxTableCells_covers, ih]
 
 public theorem foldCtxBibItems_covers (fb : α → Block → α) (fi : α → Inline → α) (acc : α)
     (items : List BibItem) :
@@ -10371,6 +10363,15 @@ public theorem foldCtxBlockCols_covers (fb : α → Block → α) (fi : α → I
   | (_, body) :: rest =>
     rw [foldCtxBlockCols, foldBlockCols, foldCtxBlockList_covers,
       foldCtxBlockCols_covers fb fi _ rest]
+
+public theorem foldCtxTableRows_covers (fb : α → Block → α) (fi : α → Inline → α) (acc : α)
+    (rows : List (Array (Array Block))) :
+    foldCtxTableRows (CtxFold.ofFold fb fi) () acc rows = foldTableRows fb fi acc rows := by
+  match rows with
+  | [] => rfl
+  | row :: rest =>
+    rw [foldCtxTableRows, foldTableRows, foldCtxBlockItems_covers,
+      foldCtxTableRows_covers fb fi _ rest]
 
 end
 
@@ -10616,14 +10617,9 @@ private def navLinkBibItems (out : Array (String × String)) :
   | item :: rest => navLinkBibItems (navLinkInlineList out item.content.toList) rest
 
 private def navLinkRows (out : Array (String × String)) :
-    List (Array (Array Inline)) → Array (String × String)
+    List (Array (Array Block)) → Array (String × String)
   | [] => out
-  | row :: rest => navLinkRows (navLinkCells out row.toList) rest
-
-private def navLinkCells (out : Array (String × String)) :
-    List (Array Inline) → Array (String × String)
-  | [] => out
-  | cell :: rest => navLinkCells (navLinkInlineList out cell.toList) rest
+  | row :: rest => navLinkRows (navLinkItems out row.toList) rest
 
 private def navLinkItems (out : Array (String × String)) :
     List (Array Block) → Array (String × String)
@@ -10952,17 +10948,6 @@ private def dumpTableRule (r : TableRule) : String :=
     s!"cmid {a}-{b}{if trim.isEmpty then "" else s!"({trim})"}"
   | .gap g => s!"gap {dumpGlue g}"
 
-private def dumpTableCells (ind : String) (acc : String) : List (Array Inline) -> String
-  | [] => acc
-  | cell :: rest =>
-    let inner := dumpInlines (ind ++ "  ") cell
-    dumpTableCells ind (acc ++ s!"{ind}cell\n" ++ inner) rest
-
-private def dumpTableRows (ind : String) (acc : String) : List (Array (Array Inline)) -> String
-  | [] => acc
-  | row :: rest =>
-    dumpTableRows ind (dumpTableCells (ind ++ "  ") (acc ++ s!"{ind}row\n") row.toList) rest
-
 mutual
 
 public def dumpBlocks (ind : String) (xs : Array Block) : String :=
@@ -11000,6 +10985,20 @@ private def dumpColumns (ind : String) (cols : List (BoxWidth × Array Block)) :
       | .share => s!"{ind}column{pos}\n") ++ dumpBlocks (ind ++ "  ") body
     let tail := dumpColumns ind rest
     self ++ tail
+
+private def dumpTableCells (ind : String) (acc : String) : List (Array Block) -> String
+  | [] => acc
+  | cell :: rest =>
+    let inner := match cellLine? cell with
+      | some xs => dumpInlines (ind ++ "  ") xs
+      | none => dumpBlocks (ind ++ "  ") cell
+    dumpTableCells ind (acc ++ s!"{ind}cell\n" ++ inner) rest
+
+private def dumpTableRows (ind : String) (acc : String) :
+    List (Array (Array Block)) -> String
+  | [] => acc
+  | row :: rest =>
+    dumpTableRows ind (dumpTableCells (ind ++ "  ") (acc ++ s!"{ind}row\n") row.toList) rest
 
 private def dumpBlock (ind : String) (b : Block) : String :=
   match b with
@@ -12819,13 +12818,9 @@ private def maxStepBlock : Block → Nat
   | .bibliography _ _ _ => 1
   | .contents _ entries => entries.foldl (fun n e => max n (maxStepInlines e.title)) 1
 
-private def maxStepTableRows : List (Array (Array Inline)) → Nat
+private def maxStepTableRows : List (Array (Array Block)) → Nat
   | [] => 1
-  | row :: rest => max (maxStepTableCells row.toList) (maxStepTableRows rest)
-
-private def maxStepTableCells : List (Array Inline) → Nat
-  | [] => 1
-  | cell :: rest => max (maxStepInlines cell) (maxStepTableCells rest)
+  | row :: rest => max (maxStepItems row.toList) (maxStepTableRows rest)
 
 private def maxStepItems : List (Array Block) → Nat
   | [] => 1
@@ -13025,13 +13020,6 @@ private def dimFilled (k : Nat) (pend : Option DimHere) (here : DimHere) (xs : A
     Array Inline :=
   if pend.isSome && xs.isEmpty then xs else dimContent k pend here xs
 
-private def dimTableRows (k : Nat) (pend : Option DimHere) (here : DimHere)
-    (out : Array (Array (Array Inline))) :
-    List (Array (Array Inline)) → Array (Array (Array Inline))
-  | [] => out
-  | row :: rest =>
-    dimTableRows k pend here (out.push (row.map (dimFilled k pend here))) rest
-
 private def dimAlgLines (k : Nat) (pend : Option DimHere) (here : DimHere) (out : Array AlgLine) :
     List AlgLine → Array AlgLine
   | [] => out
@@ -13059,6 +13047,7 @@ private def dimBlockList (k : Nat) (pend : Option DimHere) (here : DimHere) (out
   | b :: rest =>
     let r := dimBlock k pend here b
     dimBlockList k pend r.2 (out.push r.1) rest
+termination_by structural bs => bs
 
 private def dimBlock (k : Nat) (pend : Option DimHere) (here : DimHere) : Block → Block × DimHere
   | .para content => (.para (dimContent k pend here content), here)
@@ -13141,6 +13130,7 @@ private def dimBlock (k : Nat) (pend : Option DimHere) (here : DimHere) : Block 
   | .bibliography src style items => (.bibliography src style items, here)
   | .contents spec entries =>
     (.contents spec (entries.map fun e => { e with title := dimFilled k pend here e.title }), here)
+termination_by structural b => b
 
 private def dimItems (k : Nat) (pend : Option DimHere) (here : DimHere) (out : Array (Array Block)) :
     List (Array Block) → Array (Array Block) × DimHere
@@ -13148,6 +13138,7 @@ private def dimItems (k : Nat) (pend : Option DimHere) (here : DimHere) (out : A
   | item :: rest =>
     let r := dimBlockList k pend here #[] item.toList
     dimItems k pend r.2 (out.push r.1) rest
+termination_by structural items => items
 
 private def dimColumns (k : Nat) (pend : Option DimHere) (here : DimHere)
     (out : Array (BoxWidth × Array Block)) :
@@ -13156,6 +13147,15 @@ private def dimColumns (k : Nat) (pend : Option DimHere) (here : DimHere)
   | (w, body) :: rest =>
     let r := dimBlockList k pend here #[] body.toList
     dimColumns k pend r.2 (out.push ({ w with box := w.box.map (·.dimmed pend) }, r.1)) rest
+termination_by structural cols => cols
+
+private def dimTableRows (k : Nat) (pend : Option DimHere) (here : DimHere)
+    (out : Array (Array (Array Block))) :
+    List (Array (Array Block)) → Array (Array (Array Block))
+  | [] => out
+  | row :: rest =>
+    dimTableRows k pend here (out.push (dimItems k pend here #[] row.toList).1) rest
+termination_by structural rows => rows
 
 end
 
@@ -13310,13 +13310,6 @@ mutual
   | [] => acc
   | e :: rest => blockTextContentsEntries (acc ++ plainText e.title) rest
 
-@[expose] public def blockTextTableRows (acc : String) : List (Array (Array Inline)) → String
-  | [] => acc
-  | row :: rest => blockTextTableRows (blockTextTableCells acc row.toList) rest
-
-@[expose] public def blockTextTableCells (acc : String) : List (Array Inline) → String
-  | [] => acc
-  | cell :: rest => blockTextTableCells (acc ++ plainText cell) rest
 
 @[expose] public def blockTextItems (acc : String) : List (Array Block) → String
   | [] => acc
@@ -13325,6 +13318,10 @@ mutual
 @[expose] public def blockTextColumns (acc : String) : List (BoxWidth × Array Block) → String
   | [] => acc
   | (_, body) :: rest => blockTextColumns (blockTextList acc body.toList) rest
+
+@[expose] public def blockTextTableRows (acc : String) : List (Array (Array Block)) → String
+  | [] => acc
+  | row :: rest => blockTextTableRows (blockTextItems acc row.toList) rest
 
 end
 
@@ -13623,7 +13620,7 @@ frame bodies are walked, notes are not. -/
   | .logo _ => out
   | .rule _ _ _ => out
   | .picture _ => out
-  | .table _ _ _ _ _ _ => out
+  | .table _ _ _ rows _ _ => headingLevelRows out rows.toList
   | .float _ _ _ body _ => headingLevelList out body.toList
   | .bibliography _ _ _ | .contents _ _ => out
 
@@ -13634,6 +13631,11 @@ frame bodies are walked, notes are not. -/
 @[expose] public def headingLevelColumns (out : Array HeadingLevel) : List (BoxWidth × Array Block) → Array HeadingLevel
   | [] => out
   | (_, body) :: rest => headingLevelColumns (headingLevelList out body.toList) rest
+
+@[expose] public def headingLevelRows (out : Array HeadingLevel) :
+    List (Array (Array Block)) → Array HeadingLevel
+  | [] => out
+  | row :: rest => headingLevelRows (headingLevelItems out row.toList) rest
 
 end
 
@@ -13727,14 +13729,9 @@ private def footnoteContentsEntries (out : Array (Option Nat × Array Inline)) :
   | e :: rest => footnoteContentsEntries (footnoteInlineList out e.title.toList) rest
 
 private def footnoteTableRows (out : Array (Option Nat × Array Inline)) :
-    List (Array (Array Inline)) → Array (Option Nat × Array Inline)
+    List (Array (Array Block)) → Array (Option Nat × Array Inline)
   | [] => out
-  | row :: rest => footnoteTableRows (footnoteTableCells out row.toList) rest
-
-private def footnoteTableCells (out : Array (Option Nat × Array Inline)) :
-    List (Array Inline) → Array (Option Nat × Array Inline)
-  | [] => out
-  | cell :: rest => footnoteTableCells (footnoteInlineList out cell.toList) rest
+  | row :: rest => footnoteTableRows (footnoteItems out row.toList) rest
 
 private def footnoteItems (out : Array (Option Nat × Array Inline)) :
     List (Array Block) → Array (Option Nat × Array Inline)
@@ -14069,21 +14066,13 @@ private theorem blockTextColumns_chain (l1 l2 : List (BoxWidth × Array Block))
   | nil => simp [blockTextColumns]
   | cons col rest ih => simp [blockTextColumns, ih]
 
-private theorem blockTextTableRows_chain (l1 l2 : List (Array (Array Inline)))
+private theorem blockTextTableRows_chain (l1 l2 : List (Array (Array Block)))
     (acc : String) :
     blockTextTableRows acc (l1 ++ l2)
       = blockTextTableRows (blockTextTableRows acc l1) l2 := by
   induction l1 generalizing acc with
   | nil => simp [blockTextTableRows]
   | cons row rest ih => simp [blockTextTableRows, ih]
-
-private theorem blockTextTableCells_chain (l1 l2 : List (Array Inline))
-    (acc : String) :
-    blockTextTableCells acc (l1 ++ l2)
-      = blockTextTableCells (blockTextTableCells acc l1) l2 := by
-  induction l1 generalizing acc with
-  | nil => simp [blockTextTableCells]
-  | cons cell rest ih => simp [blockTextTableCells, ih]
 
 mutual
 
@@ -14213,13 +14202,6 @@ private theorem dimFilled_text (k : Nat) (pend : Option DimHere) (here : DimHere
   · rfl
   · exact dimContent_text k pend here xs
 
-private theorem blockTextTableCells_map (f : Array Inline → Array Inline)
-    (hf : ∀ x, plainText (f x) = plainText x) (cells : List (Array Inline)) (acc : String) :
-    blockTextTableCells acc (cells.map f) = blockTextTableCells acc cells := by
-  induction cells generalizing acc with
-  | nil => rfl
-  | cons c rest ih => simp [blockTextTableCells, hf, ih]
-
 private theorem blockTextContentsEntries_map (f : Array Inline → Array Inline)
     (hf : ∀ x, plainText (f x) = plainText x) (es : List ContentsEntry) (acc : String) :
     blockTextContentsEntries acc (es.map fun e => { e with title := f e.title }) =
@@ -14249,18 +14231,6 @@ private theorem dimLaid_text (k : Nat) (pend : Option DimHere) (here : DimHere)
     rw [Array.toList_push, laidText_chain]
     simp [laidText, dimFilled_text]
 
-private theorem dimTableRows_text (k : Nat) (pend : Option DimHere) (here : DimHere)
-    (rows : List (Array (Array Inline)))
-    (out : Array (Array (Array Inline))) (acc : String) :
-    blockTextTableRows acc (dimTableRows k pend here out rows).toList
-      = blockTextTableRows (blockTextTableRows acc out.toList) rows := by
-  match rows with
-  | [] => simp [dimTableRows, blockTextTableRows]
-  | row :: rest =>
-    rw [dimTableRows, dimTableRows_text k pend here rest _ acc]
-    simp [blockTextTableRows, blockTextTableRows_chain, Array.toList_map,
-      blockTextTableCells_map _ (dimFilled_text k pend here)]
-
 mutual
 
 private theorem dimBlockList_text (k : Nat) (pend : Option DimHere) (here : DimHere)
@@ -14272,6 +14242,7 @@ private theorem dimBlockList_text (k : Nat) (pend : Option DimHere) (here : DimH
   | b :: rest =>
     rw [dimBlockList, dimBlockList_text k pend (dimBlock k pend here b).2 rest]
     simp [blockTextList, blockTextList_chain, dimBlock_text k pend here b]
+termination_by structural xs
 
 private theorem dimBlock_text (k : Nat) (pend : Option DimHere) (here : DimHere) (b : Block)
     (acc : String) :
@@ -14346,6 +14317,7 @@ private theorem dimBlock_text (k : Nat) (pend : Option DimHere) (here : DimHere)
   | .float fk num ca body caption =>
     simp [dimBlock, blockTextOne, dimFilled_text,
       dimBlockList_text k pend here body.toList #[] _, blockTextList]
+termination_by structural b
 
 private theorem dimItems_text (k : Nat) (pend : Option DimHere) (here : DimHere)
     (items : List (Array Block))
@@ -14358,6 +14330,7 @@ private theorem dimItems_text (k : Nat) (pend : Option DimHere) (here : DimHere)
     rw [dimItems, dimItems_text k pend (dimBlockList k pend here #[] item.toList).2 rest]
     simp [blockTextItems, blockTextItems_chain,
       dimBlockList_text k pend here item.toList #[], blockTextList]
+termination_by structural items
 
 private theorem dimColumns_text (k : Nat) (pend : Option DimHere) (here : DimHere)
     (cols : List (BoxWidth × Array Block))
@@ -14370,6 +14343,20 @@ private theorem dimColumns_text (k : Nat) (pend : Option DimHere) (here : DimHer
     rw [dimColumns, dimColumns_text k pend (dimBlockList k pend here #[] body.toList).2 rest]
     simp [blockTextColumns, blockTextColumns_chain,
       dimBlockList_text k pend here body.toList #[], blockTextList]
+termination_by structural cols
+
+private theorem dimTableRows_text (k : Nat) (pend : Option DimHere) (here : DimHere)
+    (rows : List (Array (Array Block)))
+    (out : Array (Array (Array Block))) (acc : String) :
+    blockTextTableRows acc (dimTableRows k pend here out rows).toList
+      = blockTextTableRows (blockTextTableRows acc out.toList) rows := by
+  match rows with
+  | [] => simp [dimTableRows, blockTextTableRows]
+  | row :: rest =>
+    rw [dimTableRows, dimTableRows_text k pend here rest _ acc]
+    simp [blockTextTableRows, blockTextTableRows_chain,
+      dimItems_text k pend here row.toList #[], blockTextItems]
+termination_by structural rows
 
 end
 
@@ -14604,6 +14591,10 @@ private def algTextLeaves (acc : List String) : List AlgLine → List String
       | some c => plainText c :: plainText l.content :: acc
       | none => plainText l.content :: acc) rest
 
+private def textLeavesLaid (acc : List String) : List LaidLine → List String
+  | [] => acc
+  | l :: rest => textLeavesLaid (plainText l.content :: acc) rest
+
 mutual
 
 /-- Every text leaf of the blocks, most recent first: each paragraph's,
@@ -14629,7 +14620,7 @@ private def textLeavesOne (acc : List String) : Block → List String
   | .center body => textLeavesList acc body.toList
   | .ragged _ body => textLeavesList acc body.toList
   | .quote _ body => textLeavesList acc body.toList
-  | .lines ls => textLeavesTableCells acc (ls.toList.map (·.content))
+  | .lines ls => textLeavesLaid acc ls.toList
   | .abstract body => textLeavesList acc body.toList
   | .titled _ title body => textLeavesList (plainText title :: acc) body.toList
   | .disclosure title _ body => textLeavesList (plainText title :: acc) body.toList
@@ -14661,13 +14652,9 @@ private def textLeavesContentsEntries (acc : List String) : List ContentsEntry �
   | e :: rest => textLeavesContentsEntries (plainText e.title :: acc) rest
 
 private def textLeavesTableRows (acc : List String) :
-    List (Array (Array Inline)) → List String
+    List (Array (Array Block)) → List String
   | [] => acc
-  | row :: rest => textLeavesTableRows (textLeavesTableCells acc row.toList) rest
-
-private def textLeavesTableCells (acc : List String) : List (Array Inline) → List String
-  | [] => acc
-  | cell :: rest => textLeavesTableCells (plainText cell :: acc) rest
+  | row :: rest => textLeavesTableRows (textLeavesItems acc row.toList) rest
 
 private def textLeavesItems (acc : List String) : List (Array Block) → List String
   | [] => acc
@@ -14749,26 +14736,14 @@ private theorem algTextLeaves_acc (acc : List String) (ls : List AlgLine) :
         ih [plainText c, plainText l.content]]
       simp
 
-private theorem textLeavesTableCells_acc (acc : List String)
-    (cells : List (Array Inline)) :
-    textLeavesTableCells acc cells = textLeavesTableCells [] cells ++ acc := by
-  induction cells generalizing acc with
-  | nil => simp [textLeavesTableCells]
-  | cons cell rest ih =>
-    rw [textLeavesTableCells, textLeavesTableCells, ih (plainText cell :: acc),
-      ih [plainText cell]]
-    simp
-
-private theorem textLeavesTableRows_acc (acc : List String)
-    (rows : List (Array (Array Inline))) :
-    textLeavesTableRows acc rows = textLeavesTableRows [] rows ++ acc := by
-  induction rows generalizing acc with
-  | nil => simp [textLeavesTableRows]
-  | cons row rest ih =>
-    rw [textLeavesTableRows, textLeavesTableRows,
-      ih (textLeavesTableCells acc row.toList),
-      ih (textLeavesTableCells [] row.toList),
-      textLeavesTableCells_acc acc row.toList]
+private theorem textLeavesLaid_acc (acc : List String)
+    (ls : List LaidLine) :
+    textLeavesLaid acc ls = textLeavesLaid [] ls ++ acc := by
+  induction ls generalizing acc with
+  | nil => simp [textLeavesLaid]
+  | cons l rest ih =>
+    rw [textLeavesLaid, textLeavesLaid, ih (plainText l.content :: acc),
+      ih [plainText l.content]]
     simp
 
 mutual
@@ -14815,7 +14790,7 @@ private theorem textLeavesOne_acc (acc : List String) (b : Block) :
     exact textLeavesList_acc acc body.toList
   | .lines ls =>
     rw [textLeavesOne, textLeavesOne]
-    exact textLeavesTableCells_acc acc _
+    exact textLeavesLaid_acc acc _
   | .abstract body =>
     rw [textLeavesOne, textLeavesOne]
     exact textLeavesList_acc acc body.toList
@@ -14919,6 +14894,18 @@ private theorem textLeavesColumns_acc (acc : List String)
       textLeavesColumns_acc (textLeavesList acc body.toList) rest,
       textLeavesColumns_acc (textLeavesList [] body.toList) rest,
       textLeavesList_acc acc body.toList]
+    simp [List.append_assoc]
+
+private theorem textLeavesTableRows_acc (acc : List String)
+    (rows : List (Array (Array Block))) :
+    textLeavesTableRows acc rows = textLeavesTableRows [] rows ++ acc := by
+  match rows with
+  | [] => simp [textLeavesTableRows]
+  | row :: rest =>
+    rw [textLeavesTableRows, textLeavesTableRows,
+      textLeavesTableRows_acc (textLeavesItems acc row.toList) rest,
+      textLeavesTableRows_acc (textLeavesItems [] row.toList) rest,
+      textLeavesItems_acc acc row.toList]
     simp [List.append_assoc]
 
 end
@@ -15524,6 +15511,13 @@ public theorem foldBlockItems_append (fb : α → Block → α) (fi : α → Inl
   induction l₁ generalizing acc with
   | nil => rfl
   | cons b rest ih => rw [List.cons_append, foldBlockItems, foldBlockItems, ih]
+
+public theorem foldTableRows_append (fb : α → Block → α) (fi : α → Inline → α) (acc : α)
+    (l₁ l₂ : List (Array (Array Block))) :
+    foldTableRows fb fi acc (l₁ ++ l₂) = foldTableRows fb fi (foldTableRows fb fi acc l₁) l₂ := by
+  induction l₁ generalizing acc with
+  | nil => rfl
+  | cons b rest ih => rw [List.cons_append, foldTableRows, foldTableRows, ih]
 
 public theorem foldBlockCols_append (fb : α → Block → α) (fi : α → Inline → α) (acc : α)
     (l₁ l₂ : List (BoxWidth × Array Block)) :
@@ -16236,22 +16230,6 @@ nodes, `finish` combines each completed sibling array. -/
 
 end
 
-@[expose] public def mapTableCells (f : Inline → Inline) (out : Array (Array Inline))
-    (cells : List (Array Inline)) (finish : Array Inline → Array Inline := id) :
-    Array (Array Inline) :=
-  match cells with
-  | [] => out
-  | cell :: rest =>
-    mapTableCells f (out.push (mapInlines f cell finish)) rest finish
-
-@[expose] public def mapTableRows (f : Inline → Inline) (out : Array (Array (Array Inline)))
-    (rows : List (Array (Array Inline))) (finish : Array Inline → Array Inline := id) :
-    Array (Array (Array Inline)) :=
-  match rows with
-  | [] => out
-  | row :: rest =>
-    mapTableRows f (out.push (mapTableCells f #[] row.toList finish)) rest finish
-
 @[expose] public def mapBibItems (f : Inline → Inline) (out : Array BibItem) (items : List BibItem)
     (finish : Array Inline → Array Inline := id) : Array BibItem :=
   match items with
@@ -16309,6 +16287,7 @@ that must reach label text uses `mapBlocksPic`. -/
   | [] => out
   | b :: rest =>
     mapBlockList gp f (out.push (mapBlock gp f b finish listing)) rest finish listing
+termination_by structural bs
 
 @[expose] public def mapBlock (gp : Pic.Picture → Pic.Picture) (f : Inline → Inline) (b : Block)
     (finish : Array Inline → Array Inline := id)
@@ -16346,7 +16325,7 @@ that must reach label text uses `mapBlocksPic`. -/
     .float k num ca (mapBlockList gp f #[] body.toList finish listing)
       (mapInlines f caption finish)
   | .table c pl pr rows rules spans =>
-    .table c pl pr (mapTableRows f #[] rows.toList finish) rules spans
+    .table c pl pr (mapTableRows gp f #[] rows.toList finish listing) rules spans
   | .algorithm n sm ls => .algorithm n sm (mapAlgLines f #[] ls.toList finish)
   | .logo content => .logo (mapInlines f content finish)
   | .bibliography src style items =>
@@ -16360,6 +16339,7 @@ that must reach label text uses `mapBlocksPic`. -/
   | .pagebreak => .pagebreak
   | .rule c n th => .rule c n th
   | .picture pic => .picture (gp pic)
+termination_by structural b
 
 public def mapBlockItems (gp : Pic.Picture → Pic.Picture) (f : Inline → Inline)
     (out : Array (Array Block)) (items : List (Array Block))
@@ -16370,6 +16350,7 @@ public def mapBlockItems (gp : Pic.Picture → Pic.Picture) (f : Inline → Inli
   | item :: rest =>
     mapBlockItems gp f (out.push (mapBlockList gp f #[] item.toList finish listing))
       rest finish listing
+termination_by structural items
 
 public def mapBlockCols (gp : Pic.Picture → Pic.Picture) (f : Inline → Inline)
     (out : Array (BoxWidth × Array Block)) (cols : List (BoxWidth × Array Block))
@@ -16380,6 +16361,18 @@ public def mapBlockCols (gp : Pic.Picture → Pic.Picture) (f : Inline → Inlin
   | (w, body) :: rest =>
     mapBlockCols gp f (out.push (w, mapBlockList gp f #[] body.toList finish listing))
       rest finish listing
+termination_by structural cols
+
+public def mapTableRows (gp : Pic.Picture → Pic.Picture) (f : Inline → Inline)
+    (out : Array (Array (Array Block))) (rows : List (Array (Array Block)))
+    (finish : Array Inline → Array Inline := id)
+    (listing : ListingSpec → ListingSpec := id) : Array (Array (Array Block)) :=
+  match rows with
+  | [] => out
+  | row :: rest =>
+    mapTableRows gp f (out.push (mapBlockItems gp f #[] row.toList finish listing))
+      rest finish listing
+termination_by structural rows
 
 end
 
@@ -16657,21 +16650,13 @@ public theorem mapBlockCols_toList (gp : Pic.Picture → Pic.Picture) (f : Inlin
       mapBlockCols_toList gp f (out.push (w, mapBlockList gp f #[] body.toList)) rest]
     simp [Array.toList_push, List.append_assoc]
 
-public theorem mapTableCells_toList (f : Inline → Inline) :
-    ∀ (out : Array (Array Inline)) (cells : List (Array Inline)),
-      (mapTableCells f out cells).toList = out.toList ++ cells.map (mapInlines f)
-  | _, [] => by simp [mapTableCells]
-  | out, cell :: rest => by
-    rw [mapTableCells, mapTableCells_toList f (out.push (mapInlines f cell)) rest]
-    simp [Array.toList_push, List.append_assoc]
-
-public theorem mapTableRows_toList (f : Inline → Inline) :
-    ∀ (out : Array (Array (Array Inline))) (rows : List (Array (Array Inline))),
-      (mapTableRows f out rows).toList
-        = out.toList ++ rows.map (fun row => mapTableCells f #[] row.toList)
+public theorem mapTableRows_toList (gp : Pic.Picture → Pic.Picture) (f : Inline → Inline) :
+    ∀ (out : Array (Array (Array Block))) (rows : List (Array (Array Block))),
+      (mapTableRows gp f out rows).toList
+        = out.toList ++ rows.map (fun row => mapBlockItems gp f #[] row.toList)
   | _, [] => by simp [mapTableRows]
   | out, row :: rest => by
-    rw [mapTableRows, mapTableRows_toList f (out.push (mapTableCells f #[] row.toList)) rest]
+    rw [mapTableRows, mapTableRows_toList gp f (out.push (mapBlockItems gp f #[] row.toList)) rest]
     simp [Array.toList_push, List.append_assoc]
 
 public theorem mapAlgLines_toList (f : Inline → Inline) :
@@ -16718,26 +16703,6 @@ private theorem resolveMathAlphaPicture_fixed_point (coverage : Math.MathAlphabe
   simp only [resolveMathAlphaPicture, Pic.Picture.mapLabels_comp]
   congr 1
   exact funext (mapMathInlines_fixed_point coverage)
-
-private theorem mapMathTableCells_fixed_point (coverage : Math.MathAlphabetCoverage)
-    (cells : List (Array Inline)) :
-    mapTableCells (resolveMathAlphaInline coverage) #[]
-        (mapTableCells (resolveMathAlphaInline coverage) #[] cells).toList
-      = mapTableCells (resolveMathAlphaInline coverage) #[] cells := by
-  apply Array.toList_inj.mp
-  simp only [mapTableCells_toList, List.nil_append]
-  exact map_map_fixed_point (mapInlines (resolveMathAlphaInline coverage)) (mapMathInlines_fixed_point coverage) _
-
-private theorem mapMathTableRows_fixed_point (coverage : Math.MathAlphabetCoverage)
-    (rows : List (Array (Array Inline))) :
-    mapTableRows (resolveMathAlphaInline coverage) #[]
-        (mapTableRows (resolveMathAlphaInline coverage) #[] rows).toList
-      = mapTableRows (resolveMathAlphaInline coverage) #[] rows := by
-  apply Array.toList_inj.mp
-  simp only [mapTableRows_toList, List.nil_append]
-  refine map_map_fixed_point (fun row => mapTableCells (resolveMathAlphaInline coverage) #[] row.toList)
-    (fun row => ?_) _
-  exact mapMathTableCells_fixed_point coverage row.toList
 
 private theorem mapMathAlgLines_fixed_point (coverage : Math.MathAlphabetCoverage) (ls : List AlgLine) :
     mapAlgLines (resolveMathAlphaInline coverage) #[]
@@ -16845,8 +16810,9 @@ private theorem mapMathBlock_fixed_point (coverage : Math.MathAlphabetCoverage) 
           | exact mapMathBlockElems_fixed_point coverage firstPage.toList
           | exact mapMathBlockElems_fixed_point coverage otherPage.toList
   | .table c pl pr rows rules spans =>
-    simp only [mapBlock]
-    rw [mapMathTableRows_fixed_point coverage rows.toList]
+    simp only [mapBlock]; congr 1; apply Array.toList_inj.mp
+    simp only [mapTableRows_toList, List.nil_append]
+    exact mapMathTableRowsElems_fixed_point coverage rows.toList
   | .algorithm n sm lines =>
     simp only [mapBlock]
     rw [mapMathAlgLines_fixed_point coverage lines.toList]
@@ -16908,6 +16874,22 @@ private theorem mapMathBlockColsElems_fixed_point (coverage : Math.MathAlphabetC
       exact mapMathBlockElems_fixed_point coverage c.2.toList
     simp only [List.map_cons]
     rw [h, mapMathBlockColsElems_fixed_point coverage rest]
+
+private theorem mapMathTableRowsElems_fixed_point (coverage : Math.MathAlphabetCoverage) :
+    ∀ rows : List (Array (Array Block)),
+      ((rows.map (fun row => mapBlockItems (resolveMathAlphaPicture coverage) (resolveMathAlphaInline coverage) #[] row.toList)).map
+        (fun row => mapBlockItems (resolveMathAlphaPicture coverage) (resolveMathAlphaInline coverage) #[] row.toList))
+        = rows.map (fun row => mapBlockItems (resolveMathAlphaPicture coverage) (resolveMathAlphaInline coverage) #[] row.toList)
+  | [] => rfl
+  | row :: rest => by
+    have h : mapBlockItems (resolveMathAlphaPicture coverage) (resolveMathAlphaInline coverage) #[]
+        (mapBlockItems (resolveMathAlphaPicture coverage) (resolveMathAlphaInline coverage) #[] row.toList).toList
+        = mapBlockItems (resolveMathAlphaPicture coverage) (resolveMathAlphaInline coverage) #[] row.toList := by
+      apply Array.toList_inj.mp
+      simp only [mapBlockItems_toList, List.nil_append]
+      exact mapMathBlockItemsElems_fixed_point coverage row.toList
+    simp only [List.map_cons]
+    rw [h, mapMathTableRowsElems_fixed_point coverage rest]
 
 end
 
@@ -17033,28 +17015,6 @@ private theorem requestsRegions_resolve_covers (coverage : Math.MathAlphabetCove
     exact requestsInlineList_resolve_covers coverage _ (fun _ _ _ => rfl) (fun _ _ _ => rfl)
       ctx out xs.toList h
 
-private theorem requestsCells_resolve_covers (scope : MathRequestScope)
-    (coverage : Math.MathAlphabetCoverage) (ctx : Option Span × Bool) :
-    ∀ (cells : List (Array Inline)) (out : Array MathRequest), RequestsFree out →
-      RequestsFree (foldCtxTableCells (mathRequestFold scope) ctx out
-        (cells.map (mapInlines (resolveMathAlphaInline coverage))))
-  | [], _, h => h
-  | cell :: rest, out, h => by
-    rw [List.map_cons, foldCtxTableCells]
-    exact requestsCells_resolve_covers scope coverage ctx rest _
-      (requestsFoldInlines_resolve_covers scope coverage ctx out cell h)
-
-private theorem requestsRows_resolve_covers (scope : MathRequestScope)
-    (coverage : Math.MathAlphabetCoverage) (ctx : Option Span × Bool) :
-    ∀ (rows : List (Array (Array Inline))) (out : Array MathRequest), RequestsFree out →
-      RequestsFree (foldCtxTableRows (mathRequestFold scope) ctx out
-        (rows.map fun row => mapTableCells (resolveMathAlphaInline coverage) #[] row.toList))
-  | [], _, h => h
-  | row :: rest, out, h => by
-    rw [List.map_cons, foldCtxTableRows, mapTableCells_toList, List.nil_append]
-    exact requestsRows_resolve_covers scope coverage ctx rest _
-      (requestsCells_resolve_covers scope coverage ctx row.toList out h)
-
 private theorem requestsAlgLines_resolve_covers (scope : MathRequestScope)
     (coverage : Math.MathAlphabetCoverage) (ctx : Option Span × Bool) :
     ∀ (lines : List AlgLine) (out : Array MathRequest), RequestsFree out →
@@ -17156,7 +17116,7 @@ private theorem requestsBlock_resolve_covers (scope : MathRequestScope)
   | .table _ _ _ rows _ _ =>
     simp only [mapBlock, foldCtxBlock, mathRequestFold_openBlock, mathRequestOpen,
       mathRequestFold_closeBlock, mapTableRows_toList, List.nil_append]
-    exact requestsRows_resolve_covers scope coverage ctx rows.toList out h
+    exact requestsRows_resolve_covers scope coverage ctx out rows.toList h
   | .algorithm _ _ lines =>
     simp only [mapBlock, foldCtxBlock, mathRequestFold_openBlock, mathRequestOpen,
       mathRequestFold_closeBlock]
@@ -17228,6 +17188,19 @@ private theorem requestsCols_resolve_covers (scope : MathRequestScope)
     rw [List.map_cons, foldCtxBlockCols, mapBlockList_toList, List.nil_append]
     exact requestsCols_resolve_covers scope coverage ctx _ rest
       (requestsBlockList_resolve_covers scope coverage ctx out body.toList h)
+
+private theorem requestsRows_resolve_covers (scope : MathRequestScope)
+    (coverage : Math.MathAlphabetCoverage) (ctx : Option Span × Bool)
+    (out : Array MathRequest) :
+    ∀ rows : List (Array (Array Block)), RequestsFree out →
+      RequestsFree (foldCtxTableRows (mathRequestFold scope) ctx out
+        (rows.map fun row => mapBlockItems (resolveMathAlphaPicture coverage)
+          (resolveMathAlphaInline coverage) #[] row.toList))
+  | [], h => h
+  | row :: rest, h => by
+    rw [List.map_cons, foldCtxTableRows, mapBlockItems_toList, List.nil_append]
+    exact requestsRows_resolve_covers scope coverage ctx _ rest
+      (requestsItems_resolve_covers scope coverage ctx out row.toList h)
 
 end
 
@@ -17586,33 +17559,6 @@ public theorem mapInlines_id (f : Inline → Inline) (p : Inline → Bool)
   rw [mapInlines, mapInlineList_id f p hf xs.toList #[] h]
   simp
 
-private theorem mapTableCells_text (f : Inline → Inline)
-    (hf : ∀ x, plainTextOne (f x) = plainTextOne x)
-    (finish : Array Inline → Array Inline) (hfinish : Conserves plainText finish) (cells : List (Array Inline))
-    (out : Array (Array Inline)) (acc : String) :
-    blockTextTableCells acc (mapTableCells (finish := finish) f out cells).toList
-      = blockTextTableCells (blockTextTableCells acc out.toList) cells := by
-  match cells with
-  | [] => simp [mapTableCells, blockTextTableCells]
-  | cell :: rest =>
-    rw [mapTableCells, mapTableCells_text f hf finish hfinish rest]
-    rw [Array.toList_push, blockTextTableCells_chain]
-    simp [blockTextTableCells, mapInlinesFinish_text f hf finish hfinish cell]
-
-private theorem mapTableRows_text (f : Inline → Inline)
-    (hf : ∀ x, plainTextOne (f x) = plainTextOne x)
-    (finish : Array Inline → Array Inline) (hfinish : Conserves plainText finish)
-    (rows : List (Array (Array Inline)))
-    (out : Array (Array (Array Inline))) (acc : String) :
-    blockTextTableRows acc (mapTableRows (finish := finish) f out rows).toList
-      = blockTextTableRows (blockTextTableRows acc out.toList) rows := by
-  match rows with
-  | [] => simp [mapTableRows, blockTextTableRows]
-  | row :: rest =>
-    rw [mapTableRows, mapTableRows_text f hf finish hfinish rest]
-    rw [Array.toList_push, blockTextTableRows_chain]
-    simp [blockTextTableRows, blockTextTableCells, mapTableCells_text f hf finish hfinish row.toList #[]]
-
 private theorem mapBibItems_text (f : Inline → Inline)
     (hf : ∀ x, plainTextOne (f x) = plainTextOne x)
     (finish : Array Inline → Array Inline) (hfinish : Conserves plainText finish) (items : List BibItem)
@@ -17739,8 +17685,9 @@ public theorem mapBlockWith_text (gp : Pic.Picture → Pic.Picture) (f : Inline 
     rw [mapInlinesFinish_text f hf finish hfinish caption, mapBlockListWith_text gp f hf finish hfinish listing hlisting body.toList #[]]
     rfl
   | .table c pl pr rows rules spans =>
-    show blockTextTableRows acc (mapTableRows (finish := finish) f #[] rows.toList).toList = _
-    rw [mapTableRows_text f hf finish hfinish rows.toList #[]]
+    show blockTextTableRows acc
+      (mapTableRows (finish := finish) (listing := listing) gp f #[] rows.toList).toList = _
+    rw [mapTableRowsWith_text gp f hf finish hfinish listing hlisting rows.toList #[]]
     rfl
   | .algorithm n sm lines =>
     show algLineText acc (mapAlgLines (finish := finish) f #[] lines.toList).toList = _
@@ -17765,6 +17712,7 @@ public theorem mapBlockWith_text (gp : Pic.Picture → Pic.Picture) (f : Inline 
         mapInlinesFinish_text f hf finish hfinish p.2]
   | .setPalette _ | .setTokens _ | .pagebreak
   | .rule _ _ _ | .picture _ => rfl
+termination_by structural b
 
 public theorem mapBlockListWith_text (gp : Pic.Picture → Pic.Picture) (f : Inline → Inline)
     (hf : ∀ x, plainTextOne (f x) = plainTextOne x)
@@ -17780,6 +17728,7 @@ public theorem mapBlockListWith_text (gp : Pic.Picture → Pic.Picture) (f : Inl
     rw [mapBlockList, mapBlockListWith_text gp f hf finish hfinish listing hlisting rest]
     rw [Array.toList_push, blockTextList_chain]
     simp [blockTextList, mapBlockWith_text gp f hf finish hfinish listing hlisting]
+termination_by structural bs
 
 public theorem mapBlockItemsWith_text (gp : Pic.Picture → Pic.Picture) (f : Inline → Inline)
     (hf : ∀ x, plainTextOne (f x) = plainTextOne x)
@@ -17796,6 +17745,7 @@ public theorem mapBlockItemsWith_text (gp : Pic.Picture → Pic.Picture) (f : In
     rw [Array.toList_push, blockTextItems_chain]
     simp [blockTextItems, blockTextList,
       mapBlockListWith_text gp f hf finish hfinish listing hlisting item.toList #[]]
+termination_by structural items
 
 public theorem mapBlockColsWith_text (gp : Pic.Picture → Pic.Picture) (f : Inline → Inline)
     (hf : ∀ x, plainTextOne (f x) = plainTextOne x)
@@ -17813,6 +17763,25 @@ public theorem mapBlockColsWith_text (gp : Pic.Picture → Pic.Picture) (f : Inl
     rw [Array.toList_push, blockTextColumns_chain]
     simp [blockTextColumns, blockTextList,
       mapBlockListWith_text gp f hf finish hfinish listing hlisting body.toList #[]]
+termination_by structural cols
+
+public theorem mapTableRowsWith_text (gp : Pic.Picture → Pic.Picture) (f : Inline → Inline)
+    (hf : ∀ x, plainTextOne (f x) = plainTextOne x)
+    (finish : Array Inline → Array Inline) (hfinish : Conserves plainText finish)
+    (listing : ListingSpec → ListingSpec)
+    (hlisting : ∀ spec, (listing spec).capText = spec.capText)
+    (rows : List (Array (Array Block)))
+    (out : Array (Array (Array Block))) (acc : String) :
+    blockTextTableRows acc (mapTableRows (finish := finish) (listing := listing) gp f out rows).toList
+      = blockTextTableRows (blockTextTableRows acc out.toList) rows := by
+  match rows with
+  | [] => simp [mapTableRows, blockTextTableRows]
+  | row :: rest =>
+    rw [mapTableRows, mapTableRowsWith_text gp f hf finish hfinish listing hlisting rest]
+    rw [Array.toList_push, blockTextTableRows_chain]
+    simp [blockTextTableRows, blockTextItems,
+      mapBlockItemsWith_text gp f hf finish hfinish listing hlisting row.toList #[]]
+termination_by structural rows
 
 end
 

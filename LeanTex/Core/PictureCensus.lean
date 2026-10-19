@@ -38,18 +38,6 @@ private theorem inlineListPictureCount_id (n : Nat) (xs : List Inline) :
 
 end
 
-private theorem cellsPictureCount_id (n : Nat) (xs : List (Array Inline)) :
-    foldTableCells (fun n _ => n) n xs = n := by
-  induction xs with
-  | nil => rfl
-  | cons _ _ ih => simpa only [foldTableCells, inlineListPictureCount_id] using ih
-
-private theorem rowsPictureCount_id (n : Nat) (xs : List (Array (Array Inline))) :
-    foldTableRows (fun n _ => n) n xs = n := by
-  induction xs with
-  | nil => rfl
-  | cons _ _ ih => simpa only [foldTableRows, cellsPictureCount_id] using ih
-
 private theorem bibPictureCount_id (n : Nat) (xs : List BibItem) :
     foldBibItems (fun n _ => n) n xs = n := by
   induction xs with
@@ -105,6 +93,16 @@ private theorem mapBlockColsWith_toList (gp : Pic.Picture → Pic.Picture)
   | nil => simp [mapBlockCols]
   | cons x _ ih => cases x; simp [mapBlockCols, ih, List.append_assoc]
 
+private theorem mapTableRowsWith_toList (gp : Pic.Picture → Pic.Picture)
+    (f : Inline → Inline) (finish : Array Inline → Array Inline)
+    (listing : ListingSpec → ListingSpec) (out : Array (Array (Array Block)))
+    (xs : List (Array (Array Block))) :
+    (mapTableRows gp f out xs finish listing).toList =
+      out.toList ++ xs.map (fun row => mapBlockItems gp f #[] row.toList finish listing) := by
+  induction xs generalizing out with
+  | nil => simp [mapTableRows]
+  | cons _ _ ih => simp [mapTableRows, ih, List.append_assoc]
+
 mutual
 
 private theorem mapBlock_pictureCount (gp : Pic.Picture → Pic.Picture)
@@ -132,8 +130,9 @@ private theorem mapBlock_pictureCount (gp : Pic.Picture → Pic.Picture)
     simp only [mapBlock, foldBlock, pictureCountStep, mapBlockListWith_toList, List.nil_append]
     rw [mapList_pictureCount gp f finish listing n active.toList,
       mapList_pictureCount gp f finish listing _ other.toList]
-  | .table _ _ _ _ _ _ =>
-    simp only [mapBlock, foldBlock, pictureCountStep, rowsPictureCount_id]
+  | .table _ _ _ rows _ _ =>
+    simp only [mapBlock, foldBlock, pictureCountStep, mapTableRowsWith_toList, List.nil_append]
+    exact mapRows_pictureCount gp f finish listing n rows.toList
   | .algorithm _ _ _ =>
     simp only [mapBlock, foldBlock, pictureCountStep, algPictureCount_id]
   | .lines _ =>
@@ -182,6 +181,19 @@ private theorem mapCols_pictureCount (gp : Pic.Picture → Pic.Picture)
     simp only [List.map_cons, foldBlockCols, mapBlockListWith_toList, List.nil_append]
     rw [mapList_pictureCount gp f finish listing n body.toList,
       mapCols_pictureCount gp f finish listing _ rest]
+
+private theorem mapRows_pictureCount (gp : Pic.Picture → Pic.Picture)
+    (f : Inline → Inline) (finish : Array Inline → Array Inline)
+    (listing : ListingSpec → ListingSpec) (n : Nat) (xs : List (Array (Array Block))) :
+    foldTableRows pictureCountStep (fun n _ => n) n
+      (xs.map (fun row => mapBlockItems gp f #[] row.toList finish listing)) =
+      foldTableRows pictureCountStep (fun n _ => n) n xs := by
+  match xs with
+  | [] => rfl
+  | row :: rest =>
+    simp only [List.map_cons, foldTableRows, mapBlockItemsWith_toList, List.nil_append]
+    rw [mapItems_pictureCount gp f finish listing n row.toList,
+      mapRows_pictureCount gp f finish listing _ rest]
 
 end
 

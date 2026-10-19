@@ -92,7 +92,6 @@ example : True := by
   fail_if_success have := LeanTex.Core.ListMark.romanTable
   fail_if_success have := LeanTex.Core.ListMark.romanCharVal
   fail_if_success have := LeanTex.Core.ListMark.itemGlyph
-  fail_if_success have := LeanTex.Core.Struct.cellsRaw
   fail_if_success have := LeanTex.Core.Struct.numberOne
   fail_if_success have := LeanTex.Core.Struct.leafTextFold
   fail_if_success have := LeanTex.Core.Struct.headingsFold

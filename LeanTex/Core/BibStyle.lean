@@ -1900,8 +1900,7 @@ private def resolveBlock (p : CitePunct) (find : Resolver)
     out.push (.float k n ca (resolveBlocks p find items #[] body.toList)
       (resolveArr p find caption))
   | .table cols pl pr rows rules spans =>
-    out.push (.table cols pl pr
-      (rows.map fun row => row.map (resolveArr p find)) rules spans)
+    out.push (.table cols pl pr (resolveRows p find items #[] rows.toList) rules spans)
   | .algorithm n sm lines =>
     out.push (.algorithm n sm (lines.map fun l =>
       { l with
@@ -1944,6 +1943,15 @@ private def resolveCols (p : CitePunct) (find : Resolver)
     resolveCols p find items
       (out.push (w, resolveBlocks p find items #[] body.toList)) rest
 termination_by structural cs
+
+private def resolveRows (p : CitePunct) (find : Resolver)
+    (items : Array Ir.BibItem) (out : Array (Array (Array Ir.Block)))
+    (rows : List (Array (Array Ir.Block))) : Array (Array (Array Ir.Block)) :=
+  match rows with
+  | [] => out
+  | row :: rest =>
+    resolveRows p find items (out.push (resolveItems p find items #[] row.toList)) rest
+termination_by structural rows
 
 end
 
@@ -3001,35 +3009,6 @@ private theorem resolveInlines_pending (p : CitePunct) (find : Resolver) (xs : L
 
 end
 
-private theorem tableCells_pending (p : CitePunct) (find : Resolver) :
-    ∀ (cells : List (Array Ir.Inline)) (acc : Array Ir.Unresolved) (q : Ir.Unresolved),
-      q ∈ Ir.foldTableCells Ir.pendingStep acc (cells.map (resolveArr p find)) →
-      q ∈ acc ∨ q.isCite = false := by
-  intro cells
-  induction cells with
-  | nil => intro acc q h; exact .inl h
-  | cons c rest ih =>
-    intro acc q h
-    rw [List.map_cons, Ir.foldTableCells] at h
-    rcases ih _ q h with h' | hc
-    · exact resolveInlines_pending p find c.toList acc q h'
-    · exact .inr hc
-
-private theorem tableRows_pending (p : CitePunct) (find : Resolver) :
-    ∀ (rows : List (Array (Array Ir.Inline))) (acc : Array Ir.Unresolved) (q : Ir.Unresolved),
-      q ∈ Ir.foldTableRows Ir.pendingStep acc
-        (rows.map fun row => row.map (resolveArr p find)) →
-      q ∈ acc ∨ q.isCite = false := by
-  intro rows
-  induction rows with
-  | nil => intro acc q h; exact .inl h
-  | cons row rest ih =>
-    intro acc q h
-    rw [List.map_cons, Ir.foldTableRows, Array.toList_map] at h
-    rcases ih _ q h with h' | hc
-    · exact tableCells_pending p find row.toList acc q h'
-    · exact .inr hc
-
 private theorem algLines_pending (p : CitePunct) (find : Resolver) :
     ∀ (lines : List Ir.AlgLine) (acc : Array Ir.Unresolved) (q : Ir.Unresolved),
       q ∈ Ir.foldAlgLines Ir.pendingStep acc (lines.map fun l =>
@@ -3163,8 +3142,8 @@ private theorem resolveBlock_pending (p : CitePunct) (find : Resolver) (items : 
     exact resolveCols_pending p find items cols.toList #[] _ q h
   | .table _ _ _ rows _ _ =>
     intro out acc q h
-    simp only [resolveBlock, Ir.foldBlockList_push, Ir.foldBlock, Array.toList_map] at h
-    exact tableRows_pending p find rows.toList _ q h
+    simp only [resolveBlock, Ir.foldBlockList_push, Ir.foldBlock] at h
+    exact resolveRows_pending p find items rows.toList #[] _ q h
   | .algorithm _ _ lines =>
     intro out acc q h
     simp only [resolveBlock, Ir.foldBlockList_push, Ir.foldBlock, Array.toList_map] at h
@@ -3232,6 +3211,22 @@ private theorem resolveCols_pending (p : CitePunct) (find : Resolver) (items : A
     rcases resolveCols_pending p find items rest _ acc q h with h' | hc
     · simp only [Array.toList_push, Ir.foldBlockCols_append, Ir.foldBlockCols] at h'
       exact resolveBlocks_pending p find items body.toList #[] _ q h'
+    · exact .inr hc
+
+private theorem resolveRows_pending (p : CitePunct) (find : Resolver) (items : Array Ir.BibItem)
+    (rows : List (Array (Array Ir.Block))) :
+    ∀ (out : Array (Array (Array Ir.Block))) (acc : Array Ir.Unresolved) (q : Ir.Unresolved),
+      q ∈ Ir.foldTableRows (fun a _ => a) Ir.pendingStep acc
+        (resolveRows p find items out rows).toList →
+      q ∈ Ir.foldTableRows (fun a _ => a) Ir.pendingStep acc out.toList ∨ q.isCite = false := by
+  match rows with
+  | [] => intro out acc q h; exact .inl h
+  | row :: rest =>
+    intro out acc q h
+    rw [resolveRows] at h
+    rcases resolveRows_pending p find items rest _ acc q h with h' | hc
+    · simp only [Array.toList_push, Ir.foldTableRows_append, Ir.foldTableRows] at h'
+      exact resolveItems_pending p find items row.toList #[] _ q h'
     · exact .inr hc
 
 end

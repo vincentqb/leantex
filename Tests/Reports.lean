@@ -2246,7 +2246,14 @@ def reports : List Report := [
     accept := ["lualatex on invented probes: report lists its chapter bold at the margin with its bare number, its section 1.5em in and its subsection 3.8em in, no subsubsection, under a chapter head reading Contents, and heads its reference list Bibliography as a chapter on a page of its own, Literaturverzeichnis in German; article sets an empty numberline's words 1.5em in for a section and 3.8em in for a subsection, a written one's number in the box there; this tree sets the same",
       "main's binary at 70096387 on the same probes: no chapter entry, the section's number running into its title, a section head reading References, and the numberline entries flush at their level's indent; the guards fail there",
       "the corpus and the private decks built by main's binary at 70096387 and by this tree's: every artifact byte-identical"]
-    state := .guarded "70096387" .before .author }
+    state := .guarded "70096387" .before .author },
+  { id := "R999", date := "2026-10-19"
+    what := "a list in a paragraph column's cell stopped the build (E0312) with no artifact, and the cell's paragraphs ran into one line; a list opening a minipage spent its topsep above its first line"
+    pins := [check% Tests.ItemLabels.cellChecks]
+    accept := ["lualatex 1.24 on invented probes: an itemize after text in a p{5cm} cell sets its items a leftmargin in, wrapped lines hanging at the item's text, a topsep of 8pt above and below; a paragraph break in the cell opens a line one baselineskip down; a list opening a minipage stands a baselineskip below the line before it, its topsep spent nowhere; this tree sets the same, but a list opening a cell, where LaTeX spends its topsep below the row's baseline, stands on that baseline as a minipage's list does",
+      "main's binary at 730c0b54 on the same probes: the cell stops the build with E0312 and no artifact, the paragraphs share a line, and the minipage's list stands its topsep lower; the guards fail there",
+      "the corpus and the private references built by main's binary at 730c0b54 and by this tree's: every PDF and web page byte-identical"]
+    state := .guarded "730c0b54" .before .author }
 ]
 
 /-- The reports guarded but never seen failing, a count held in both directions. -/

@@ -209,4 +209,51 @@ def openerChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit
       | some c, some d => d + Dim.pt 8 ≤ c
       | _, _ => false)
 
+/-- The first shipped line holding `w`. -/
+private def lineOf (ls : Array Layout.LineOut) (w : String) : Option Layout.LineOut :=
+  ls.find? fun l => hasStr (lineText l) w
+
+/-- A paragraph column's cell sets its paragraphs and lists as blocks, a list's lines hanging a
+leftmargin in, and the first list in a cell spends no `\topsep`, as a minipage's does (latex.ltx
+`\@minipagetrue`). -/
+def cellChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let src := article ("\\begin{tabular}{p{4cm}l}\nLead words.\n\\begin{itemize}\n" ++
+    "\\item Alpha words long enough to wrap onto a second line in the cell\n\\item Beta\n" ++
+    "\\end{itemize}\nTail words. & Xray \\\\\n\\begin{enumerate}\n\\item Yankee\n" ++
+    "\\end{enumerate} & Zulu \\\\\nFirst para.\n\nSecond para. & Quebec \\\\\n\\end{tabular}")
+  let (doc, ds) := elabStr src
+  t "cells: a list in a paragraph column's cell ships with no error"
+    (ds.all (·.severity != .error))
+  let ls := bodyLines (layoutOf oneFace doc)
+  let at? (w : String) : Option Dim.Length := (lineOf ls w).map (·.y)
+  let wrapped := (ls.findIdx? fun l => hasStr (lineText l) "Alpha").bind fun i => ls[i + 1]?
+  t s!"cells: an item marks its first line and its wrapped lines hang at its text: {ls.map lineText}"
+    (match lineOf ls "Alpha", lineOf ls "Lead", wrapped with
+      | some a, some lead, some w =>
+        (lineText a).startsWith "•" && !(lineText w).startsWith "•" &&
+        (match glyphX a 'A', glyphX lead 'L', (lineText w).toList.head?.bind (glyphX w ·) with
+          | some ax, some lx, some wx => lx + Dim.pt 20 ≤ ax && (ax - wx).abs ≤ Dim.pt 1
+          | _, _, _ => false)
+      | _, _, _ => false)
+  t "cells: a list after text in its paragraph spends its topsep alone, above and below"
+    (match at? "Lead", at? "Alpha", at? "Beta", at? "Tail" with
+      | some l, some a, some b, some tl => a - l == tl - b
+      | _, _, _, _ => false)
+  t "cells: a list opening a cell stands on its row's baseline"
+    (at? "Yankee" == at? "Zulu" && (at? "Yankee").isSome)
+  t "cells: a paragraph break in a cell opens a line of its own"
+    (match at? "First", at? "Second", at? "Quebec" with
+      | some f, some s, some q => f < s && f == q
+      | _, _, _ => false)
+  let html := (HtmlDoc.emit {} doc).1
+  let cellsHtml := (html.splitOn "<td").drop 1 |>.map fun c => (c.splitOn "</td>").headD ""
+  t "cells: the web page sets the list inside its cell"
+    (cellsHtml.any (hasStr · "<ul") && cellsHtml.any (hasStr · "<ol"))
+  let box (body : String) : Option Dim.Length :=
+    yOf oneFace (article ("Lead words.\n\n\\noindent\\begin{minipage}{4cm}\n" ++ body ++
+      "\n\\end{minipage}")) "Kilo"
+  t "lists: a list opening a minipage spends no topsep"
+    (box "\\begin{itemize}\n\\item Kilo\n\\end{itemize}" == box "Kilo" && (box "Kilo").isSome)
+
 end Tests.ItemLabels

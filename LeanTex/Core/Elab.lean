@@ -10014,8 +10014,8 @@ private def expandSpanHead (ctx : Ctx) (raws : Array Raw) (j : Nat) (name : Stri
 
 /-- Records a `\multicolumn` span at the cell just pushed and pushes the
 `n − 1` empty cells it covers, keeping the grid rectangular. -/
-private def closeSpan (spans : Array Ir.ColSpan) (cells : Array (Array Inline))
-    (row : Nat) : Option (Nat × Ir.ColSpec) → Array Ir.ColSpan × Array (Array Inline)
+private def closeSpan (spans : Array Ir.ColSpan) (cells : Array (Array Block))
+    (row : Nat) : Option (Nat × Ir.ColSpec) → Array Ir.ColSpan × Array (Array Block)
   | none => (spans, cells)
   | some (n, spec) =>
     (spans.push { row := row, col := cells.size - 1, n := n, spec := spec },
@@ -10025,8 +10025,40 @@ private def closeSpan (spans : Array Ir.ColSpan) (cells : Array (Array Inline))
 private def tableCell (ctx : Ctx) (cellRaws : Array Raw) : EM (Array Inline) :=
   inlineGroup ctx.palette (elabInlines ctx (trimRawEdges cellRaws))
 
+/-- The environments a paragraph column's cell sets as blocks of its own. -/
+private def cellBlockEnv (n : String) : Bool :=
+  n == "itemize" || n == "enumerate" || n == "description" || n == "trivlist" ||
+    n == "center" || (Ir.raggedSideOf? n).isSome || n == "quote" || n == "quotation" ||
+    n == "verse"
+
+/-- A cell's content: in a paragraph column, its paragraphs and the environments it sets as
+blocks (`envs`, each at its index in `cellRaws`) one after another, else one inline group. -/
+private def tableCellBlocks (ctx : Ctx) (spec : Option Ir.ColSpec) (cellRaws : Array Raw)
+    (envs : Array (Nat × EM (Array Block))) : EM (Array Block) := do
+  let decls := (← get).scope.blockDecls
+  let paraCol := spec.any fun c => !(c.width matches .natural)
+  unless paraCol && (!envs.isEmpty || cellRaws.any (· matches .par _)) do
+    return Ir.cellOf (Ir.paraAt decls (← tableCell ctx cellRaws))
+  let mut out : Array Block := #[]
+  let mut seg : Array Raw := #[]
+  for (r, k) in cellRaws.zipIdx do
+    let act := envs.find? (·.1 == k)
+    if act.isSome || r matches .par _ then
+      let xs ← tableCell ctx seg
+      unless xs.isEmpty do out := out.push (.para (Ir.paraAt decls xs))
+      seg := #[]
+      -- An environment after text in its paragraph opens inside it, taking no `\partopsep`.
+      if let some (_, a) := act then
+        let bs ← a
+        out := out ++ (if xs.isEmpty then bs else bs.map Ir.inParagraph)
+    else seg := seg.push r
+  let xs ← tableCell ctx seg
+  unless xs.isEmpty do out := out.push (.para (Ir.paraAt decls xs))
+  return out
+
 private def tabularArm (ctx : Ctx) (n : String) (body : Array Raw)
-    (pos : Pos) (blocks : Array Block) : EM (Array Block) := do
+    (pos : Pos) (blocks : Array Block) (envActs : Array (Nat × EM (Array Block))) :
+    EM (Array Block) := do
   let mut blocks := blocks
   let mut k := skipSpaces body 0
   let mut flexTarget : Option Ir.TableTarget := none
@@ -10072,11 +10104,12 @@ private def tabularArm (ctx : Ctx) (n : String) (body : Array Raw)
         (help := if help.isEmpty then none else some help)
     k := k + 1
   | _ => diag ctx .E0304 s!"'\{{n}}' needs a \{column spec} group" pos
-  let mut rows : Array (Array (Array Inline)) := #[]
+  let mut rows : Array (Array (Array Block)) := #[]
   let mut rules : Array (Nat × Ir.TableRule) := #[]
   let mut spans : Array Ir.ColSpan := #[]
-  let mut cells : Array (Array Inline) := #[]
+  let mut cells : Array (Array Block) := #[]
   let mut cellRaws : Array Raw := #[]
+  let mut cellEnvs : Array (Nat × EM (Array Block)) := #[]
   let mut spanHere : Option (Nat × Ir.ColSpec) := none
   let mut j := k
   let ruleNames := ["toprule", "midrule", "bottomrule", "hline",
@@ -10085,10 +10118,12 @@ private def tabularArm (ctx : Ctx) (n : String) (body : Array Raw)
     if h' : j < body.size then
       match body[j] with
       | .ctrl "\\" bpos =>
-        cells := cells.push (Ir.paraAt (← get).scope.blockDecls (← tableCell ctx cellRaws))
+        cells := cells.push (← tableCellBlocks ctx ((spanHere.map (·.2)).orElse fun _ => cols[cells.size]?)
+          cellRaws cellEnvs)
         (spans, cells) := closeSpan spans cells rows.size spanHere
         spanHere := none
         cellRaws := #[]
+        cellEnvs := #[]
         rows := rows.push cells
         cells := #[]
         j := j + 1
@@ -10104,10 +10139,12 @@ private def tabularArm (ctx : Ctx) (n : String) (body : Array Raw)
             j := j'
         | _ => pure ()
       | .sym '&' _ =>
-        cells := cells.push (Ir.paraAt (← get).scope.blockDecls (← tableCell ctx cellRaws))
+        cells := cells.push (← tableCellBlocks ctx ((spanHere.map (·.2)).orElse fun _ => cols[cells.size]?)
+          cellRaws cellEnvs)
         (spans, cells) := closeSpan spans cells rows.size spanHere
         spanHere := none
         cellRaws := #[]
+        cellEnvs := #[]
         j := j + 1
       | .ctrl "multicolumn" rpos =>
         match readMulticolumn ctx body j with
@@ -10177,11 +10214,14 @@ private def tabularArm (ctx : Ctx) (n : String) (body : Array Raw)
             cellRaws := cellRaws.push body[j]
             j := j + 1
       | r' =>
+        if let some (_, act) := envActs.find? (·.1 == j) then
+          cellEnvs := cellEnvs.push (cellRaws.size, act)
         cellRaws := cellRaws.push r'
         j := j + 1
     else break
   if cellRaws.any (!isSpaceOrPar ·) || !cells.isEmpty then
-    cells := cells.push (Ir.paraAt (← get).scope.blockDecls (← tableCell ctx cellRaws))
+    cells := cells.push (← tableCellBlocks ctx ((spanHere.map (·.2)).orElse fun _ => cols[cells.size]?)
+      cellRaws cellEnvs)
     (spans, cells) := closeSpan spans cells rows.size spanHere
     rows := rows.push cells
   -- Every walk below trusts `cols.size`.
@@ -13462,7 +13502,19 @@ private def elabEnvArm (ctx : Ctx) (n : String) (scope : Array Raw)
   else if let some (kind, numbered) := alignEnvs.lookup n then
     blocks ← alignEnvArm ctx n kind numbered body pos blocks
   else if Compat.tableEnvs.contains n || n == Parse.markdownTableEnv then
-    blocks ← tabularArm ctx n body pos blocks
+    -- A paragraph column's cell sets these environments as blocks, in source order.
+    let acts := (Array.range body.size).filterMap fun (k : Nat) =>
+      match he : body[k]? with
+      | some (Raw.env m b p) =>
+        have _ := env_measures he
+        have _ := sliceWeight_le body (Nat.zero_le k)
+        have _ := slicePars_le body (Nat.zero_le k)
+        have _ := sliceWeight_zero body
+        have _ := slicePars_zero body
+        have _ := nestedParsList_le body.toList
+        if cellBlockEnv m then some (k, elabEnvArm ctx m b p #[]) else none
+      | _ => none
+    blocks ← tabularArm ctx n body pos blocks acts
   else if n == "thebibliography" then
     blocks := blocks ++ (← pendingListedHead ctx pos (← ownBibList ctx body))
   else if n == "frame" then

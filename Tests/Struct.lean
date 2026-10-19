@@ -97,7 +97,8 @@ def structChecks (ref : IO.Ref (List String)) : IO Unit := do
   let pic := Struct.ofBlocks #[.picture {}]
   t "picture is its own leaf carrying its alternative, as an image is"
     (structKinds pic == #[] && (Struct.leaves pic).map (·.2) == #[.picture .undeclared])
-  let tbl := Struct.ofBlocks #[.table #[] true true #[#[#[.text "a"], #[.text "b"]]] #[] #[]]
+  let tbl := Struct.ofBlocks
+    #[.table #[] true true #[#[Ir.cellOf #[.text "a"], Ir.cellOf #[.text "b"]]] #[] #[]]
   t "table is table/row/cell"
     (structKinds tbl == #[.table] && structKinds (structKids tbl) == #[.row]
       && structKinds (structKids (structKids tbl)) == #[.cell, .cell]

@@ -1264,7 +1264,7 @@ def slideChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
      | #[.table cols true true rows #[] #[]] =>
        cols == #[{ width := .natural, align := .left },
                  { width := .natural, align := .left }] &&
-       rows.map (·.map Ir.plainText) == #[#["a", "b"], #["c", "d"]]
+       rows.map (·.map Ir.blocksText) == #[#["a", "b"], #["c", "d"]]
      | _ => false)
   let classicTab := "\\begin{tabular}{ll}\\hline\n" ++
     "\\multicolumn{2}{X}{Head} \\\\ \\cline{1-2}\na & b \\\\ \\hline\\end{tabular}"
@@ -1279,7 +1279,7 @@ def slideChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
     (match ctDoc.body with
      | #[.table cols _ _ rows _ spans] =>
        let s := String.join (rows.toList.map fun r =>
-         String.join (r.toList.map Ir.plainText))
+         String.join (r.toList.map Ir.blocksText))
        (s.splitOn "Head").length == 2 && !s.toList.contains '2' &&
          !s.toList.contains 'X' &&
          rows.all (·.size == cols.size) && !ctDs.any (·.code == "W0337") &&

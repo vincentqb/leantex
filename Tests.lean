@@ -553,6 +553,7 @@ def declSettingSuiteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   Tests.WebMeasure.checks ref
   Tests.WebMeasure.paperLossChecks ref oneFace
   Tests.LabelLines.checks ref oneFace
+  Tests.ItemLabels.cellChecks ref oneFace
   nativeCarrierChecks ref oneFace
 
 /-- Print colour: inks, page boxes, the PDF/X-4 claim, the output profile's transforms, and what a

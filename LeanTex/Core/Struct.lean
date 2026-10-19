@@ -173,15 +173,6 @@ public def titleRaw (title : Array Inline) : Array Node :=
 public def captionRaw (caption : Array Inline) : Array Node :=
   if caption.isEmpty then #[] else #[.node .caption (inlinesRaw #[] caption.toList)]
 
-/-- Table cells, each its own `.cell` over its inline content. -/
-def cellsRaw (out : Array Node) : List (Array Inline) → Array Node
-  | [] => out
-  | cell :: rest => cellsRaw (out.push (.node .cell (inlinesRaw #[] cell.toList))) rest
-
-public def rowsRaw (out : Array Node) : List (Array (Array Inline)) → Array Node
-  | [] => out
-  | row :: rest => rowsRaw (out.push (.node .row (cellsRaw #[] row.toList))) rest
-
 /-- Reference-list entries, each its own `.bibEntry` over its inline content. -/
 public def bibRaw (out : Array Node) : List BibItem → Array Node
   | [] => out
@@ -277,6 +268,22 @@ public def colsRaw (out : Array Node) : List (BoxWidth × Array Block) → Array
   | [] => out
   | (_, body) :: rest => colsRaw (blocksRaw out body.toList) rest
 
+/-- A table cell's nodes: a lone paragraph's content directly, as an inline cell sets, else its
+blocks. -/
+public def cellRaw (cell : Array Block) : Array Node :=
+  match cell.toList with
+  | [.para xs] => inlinesRaw #[] xs.toList
+  | _ => blocksRaw #[] cell.toList
+
+/-- Table cells, each its own `.cell`. -/
+public def cellsRaw (out : Array Node) : List (Array Block) → Array Node
+  | [] => out
+  | cell :: rest => cellsRaw (out.push (.node .cell (cellRaw cell))) rest
+
+public def rowsRaw (out : Array Node) : List (Array (Array Block)) → Array Node
+  | [] => out
+  | row :: rest => rowsRaw (out.push (.node .row (cellsRaw #[] row.toList))) rest
+
 end
 
 mutual
@@ -342,8 +349,9 @@ private structure Census (α : Type) where
   blocks : α → List Block → α
   items : α → List (Array Block) → α
   cols : α → List (BoxWidth × Array Block) → α
-  rows : α → List (Array (Array Inline)) → α
-  cells : α → List (Array Inline) → α
+  rows : α → List (Array (Array Block)) → α
+  cells : α → List (Array Block) → α
+  cell : α → Array Block → α
   bib : α → List BibItem → α
   contents : α → List ContentsEntry → α
   alg : α → List AlgLine → α
@@ -390,7 +398,10 @@ private structure Sim (F : NodeFold α) (G : Census α) : Prop where
   iCited : ∀ a tx keys ink, G.inline a (.cited tx keys ink) = G.inlines a ink.toList
   iFootnote : ∀ a n body, G.inline a (.footnote n body) = F.node a .note (G.inlines · body.toList)
   cellsNil : ∀ a, G.cells a [] = a
-  cellsCons : ∀ a c rest, G.cells a (c :: rest) = G.cells (F.node a .cell (G.inlines · c.toList)) rest
+  cellsCons : ∀ a c rest, G.cells a (c :: rest) = G.cells (F.node a .cell (G.cell · c)) rest
+  cellEq : ∀ a c, G.cell a c = match c.toList with
+    | [.para xs] => G.inlines a xs.toList
+    | _ => G.blocks a c.toList
   rowsNil : ∀ a, G.rows a [] = a
   rowsCons : ∀ a r rest, G.rows a (r :: rest) = G.rows (F.node a .row (G.cells · r.toList)) rest
   bibNil : ∀ a, G.bib a [] = a
@@ -720,22 +731,6 @@ private theorem regionRaw_fold_exact (h : Sim F G) (a : α) (kind : Kind) (xs : 
   · rfl
   · exact inlinesNode_fold_exact h a kind xs
 
-private theorem cellsRaw_fold_exact (h : Sim F G) (a : α) (out : Array Node) (cells : List (Array Inline)) :
-    foldNodeList F a (cellsRaw out cells).toList = G.cells (foldNodeList F a out.toList) cells := by
-  induction cells generalizing out with
-  | nil => exact (h.cellsNil _).symm
-  | cons c rest ih => rw [cellsRaw, ih, foldNodeList_push, inlinesNode_fold_exact h, h.cellsCons]
-
-private theorem rowsRaw_fold_exact (h : Sim F G) (a : α) (out : Array Node)
-    (rows : List (Array (Array Inline))) :
-    foldNodeList F a (rowsRaw out rows).toList = G.rows (foldNodeList F a out.toList) rows := by
-  induction rows generalizing out with
-  | nil => exact (h.rowsNil _).symm
-  | cons r rest ih =>
-    rw [rowsRaw, ih, foldNodeList_push, foldNode_node, h.rowsCons]
-    exact congrArg (G.rows · rest)
-      (congrArg (F.node _ _) (funext fun a' => cellsRaw_fold_exact h a' #[] r.toList))
-
 private theorem bibRaw_fold_exact (h : Sim F G) (a : α) (out : Array Node) (items : List BibItem) :
     foldNodeList F a (bibRaw out items).toList = G.bib (foldNodeList F a out.toList) items := by
   induction items generalizing out with
@@ -875,6 +870,39 @@ private theorem colsRaw_fold_exact (h : Sim F G) (a : α) (out : Array Node)
   | [] => exact (h.colsNil _).symm
   | (w, body) :: rest => rw [colsRaw, colsRaw_fold_exact h a _ rest, blocksRaw_fold_exact h, h.colsCons]
 
+private theorem cellRaw_fold_exact (h : Sim F G) (a : α) (c : Array Block) :
+    foldNodeList F a (cellRaw c).toList = G.cell a c := by
+  rw [h.cellEq]
+  unfold cellRaw
+  split
+  · next xs hc =>
+    simp only [hc]
+    exact inlinesRaw_fold_exact h a #[] xs.toList
+  · next hc =>
+    split
+    · next xs hc' => exact absurd hc' (hc xs)
+    · exact blocksRaw_fold_exact h a #[] c.toList
+
+private theorem cellsRaw_fold_exact (h : Sim F G) (a : α) (out : Array Node)
+    (cells : List (Array Block)) :
+    foldNodeList F a (cellsRaw out cells).toList = G.cells (foldNodeList F a out.toList) cells := by
+  match cells with
+  | [] => exact (h.cellsNil _).symm
+  | c :: rest =>
+    rw [cellsRaw, cellsRaw_fold_exact h a _ rest, foldNodeList_push, foldNode_node, h.cellsCons]
+    exact congrArg (G.cells · rest)
+      (congrArg (F.node _ _) (funext fun a' => cellRaw_fold_exact h a' c))
+
+private theorem rowsRaw_fold_exact (h : Sim F G) (a : α) (out : Array Node)
+    (rows : List (Array (Array Block))) :
+    foldNodeList F a (rowsRaw out rows).toList = G.rows (foldNodeList F a out.toList) rows := by
+  match rows with
+  | [] => exact (h.rowsNil _).symm
+  | r :: rest =>
+    rw [rowsRaw, rowsRaw_fold_exact h a _ rest, foldNodeList_push, foldNode_node, h.rowsCons]
+    exact congrArg (G.rows · rest)
+      (congrArg (F.node _ _) (funext fun a' => cellsRaw_fold_exact h a' #[] r.toList))
+
 end
 
 mutual
@@ -916,7 +944,8 @@ private def textCensus : Census String where
   items := blockTextItems
   cols := blockTextColumns
   rows := blockTextTableRows
-  cells := blockTextTableCells
+  cells := blockTextItems
+  cell a c := blockTextList a c.toList
   bib := blockTextBibItems
   contents := blockTextContentsEntries
   alg := algLineText
@@ -929,8 +958,9 @@ private def headingsCensus : Census (Array Ir.HeadingLevel) where
   blocks := headingLevelList
   items := headingLevelItems
   cols := headingLevelColumns
-  rows a _ := a
-  cells a _ := a
+  rows := headingLevelRows
+  cells := headingLevelItems
+  cell a c := headingLevelList a c.toList
   bib a _ := a
   contents a _ := a
   alg a _ := a
@@ -943,8 +973,9 @@ private def altsCensus : Census (Array (Option String × Alt)) where
   blocks := foldBlockList altPicPush altPush
   items := foldBlockItems altPicPush altPush
   cols := foldBlockCols altPicPush altPush
-  rows := foldTableRows altPush
-  cells := foldTableCells altPush
+  rows := foldTableRows altPicPush altPush
+  cells := foldBlockItems altPicPush altPush
+  cell a c := foldBlockList altPicPush altPush a c.toList
   bib := foldBibItems altPush
   contents := foldContentsEntries altPush
   alg := foldAlgLines altPush
@@ -954,24 +985,27 @@ private theorem textSim : Sim leafTextFold textCensus := by
   constructor <;> intros <;>
     simp [textCensus, Census.region, NodeFold.node, leafTextFold, Leaf.census, plainTextOne,
       plainTextList, plainText, blockTextOne, blockTextList, blockTextItems, blockTextColumns,
-      blockTextTableRows, blockTextTableCells, blockTextBibItems, blockTextContentsEntries,
+      blockTextTableRows, blockTextBibItems, blockTextContentsEntries,
       ContentsEntry.inline, algLineText, laidText, ListingSpec.capText, String.append_assoc] <;>
     first | rfl | (intro h; subst h; rfl) |
-      (split <;> (try split) <;> simp_all [plainTextList, plainTextOne])
+      (split <;> (try split) <;> simp_all [plainTextList, plainTextOne, blockTextList, blockTextOne,
+        plainText])
 
 private theorem headingsSim : Sim headingsFold headingsCensus := by
   constructor <;> intros <;>
     simp [headingsCensus, Census.region, NodeFold.node, headingsFold, Kind.outlineDescends,
-      Kind.outlineEmit, headingLevelOne, headingLevelList, headingLevelItems, headingLevelColumns] <;>
-    first | rfl | (split <;> simp_all)
+      Kind.outlineEmit, headingLevelOne, headingLevelList, headingLevelItems, headingLevelColumns,
+      headingLevelRows] <;>
+    first | rfl | (split <;> simp_all [headingLevelList, headingLevelOne])
 
 private theorem altsSim : Sim altsFold altsCensus := by
   constructor <;> intros <;>
     simp [altsCensus, Census.region, NodeFold.node, altsFold, Leaf.altCensus, foldInline, foldInlineList,
-      foldBlock, foldBlockList, foldBlockItems, foldBlockCols, foldTableRows, foldTableCells, foldBibItems,
+      foldBlock, foldBlockList, foldBlockItems, foldBlockCols, foldTableRows, foldBibItems,
       foldContentsEntries, ContentsEntry.inline, foldAlgLines, foldLaidLines, altPush, altPicPush] <;>
     first | rfl | (intro h; subst h; rfl) |
-      (split <;> (try split) <;> simp_all [foldInlineList, foldInline, altPush])
+      (split <;> (try split) <;> simp_all [foldInlineList, foldInline, altPush, foldBlockList,
+        foldBlock, altPicPush])
 
 public theorem number_text (k : Nat) : Conserves leafText (number k) := by
   intro ns

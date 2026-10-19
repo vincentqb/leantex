@@ -122,7 +122,7 @@ public structure Config where
   page : Ir.PageSpec := {}
   lengthBasis : LengthBasis := .classSize Ir.baseFontSize
   /-- The step a narrowing table sets at and whether it overhangs, by the page's decision. -/
-  tableFit : Length → Array Ir.ColSpec → Bool → Bool → Array (Array (Array Inline)) →
+  tableFit : Length → Array Ir.ColSpec → Bool → Bool → Array (Array (Array Block)) →
     Array Ir.ColSpan → Option String × Bool := fun _ _ _ _ _ _ => (none, false)
   /-- The document's list lineage, which list and quotation levels indent by. -/
   lists : Ir.ListLineage := .sizeFile
@@ -7146,23 +7146,29 @@ public def cellStepClasses (deck : Bool) (cell : Array Inline) : List String :=
   | some "normalsize" | none => []
   | some n => stepClasses deck n
 
-/-- One table cell: its classes, `scope=col` on a header cell, and `colspan` for a spanning head. -/
+/-- The configuration a cell's content sets in: its column's declared measure, if any. -/
+public def cellConfig (cfg : Config) (cols : Array Ir.ColSpec) (spans : Array Ir.ColSpan)
+    (i j : Nat) : Config :=
+  match (Ir.cellSpec cols spans i j).width with
+  | .sized e => cfg.atMeasure
+    (e.resolveWidth (MeasureValues.horizontal cfg.measureValues.lineWidth 0))
+  | .natural | .flex _ => cfg
+
+/-- One table cell: its classes, `scope=col` on a header cell, and `colspan` for a spanning head;
+`body` is the nodes of a cell holding blocks. -/
 public def tableCellNode (cfg : Config) (cols : Array Ir.ColSpec) (cmids : Array (Nat × Nat))
-    (spans : Array Ir.ColSpan) (headerRows i j : Nat) (cell : Array Inline) : Node :=
-  let spec := Ir.cellSpec cols spans i j
+    (spans : Array Ir.ColSpan) (headerRows i j : Nat) (cell : Array Inline)
+    (body : Option (Array Node)) : Node :=
   let span : Array (String × String) := match Ir.cellSpan? spans i j with
     | some s => if 2 ≤ s.n then #[("colspan", toString s.n)] else #[]
     | none => #[]
   let scope : Array (String × String) := if i < headerRows then #[("scope", "col")] else #[]
   let attrs := #[("class", " ".intercalate (cellClasses cols cmids spans i j ++
     cellStepClasses cfg.deck cell))] ++ (span ++ scope)
-  let child := match spec.width with
-    | .sized e => cfg.atMeasure
-      (e.resolveWidth (MeasureValues.horizontal cfg.measureValues.lineWidth 0))
-    | .natural | .flex _ => cfg
+  let child := cellConfig cfg cols spans i j
   -- the cell's class states its step, so the scope is lifted out of the content
   let cell := if (Ir.paraStep? cell).isSome then Ir.liftParaStep cell else cell
-  let content := inlines child cell
+  let content := body.getD (inlines child cell)
   -- Chromium resolves no query units against a table cell, so a block inside it is the container
   let content := if usesContextUnit cell then
       #[Html.elem "div" content
@@ -7176,16 +7182,17 @@ private def coveredBySpan (spans : Array Ir.ColSpan) (i j : Nat) : Bool :=
 
 /-- The cells of row `i`, in column order, the span-covered ones left out. -/
 public def tableRowCells (cfg : Config) (cols : Array Ir.ColSpec) (cmids : Array (Nat × Nat))
-    (spans : Array Ir.ColSpan) (headerRows i : Nat) (row : Array (Array Inline)) :
-    Array Node :=
+    (spans : Array Ir.ColSpan) (headerRows i : Nat) (row : Array (Array Block))
+    (bodies : Array (Option (Array Node))) : Array Node :=
   (Array.range row.size).filterMap fun j =>
     if coveredBySpan spans i j then none
-    else some (tableCellNode cfg cols cmids spans headerRows i j (row[j]?.getD #[]))
+    else some (tableCellNode cfg cols cmids spans headerRows i j (Ir.cellLine (row[j]?.getD #[]))
+      (bodies[j]?.getD none))
 
 public theorem th_iff_header_row (cfg : Config) (cols : Array Ir.ColSpec)
     (cmids : Array (Nat × Nat)) (spans : Array Ir.ColSpan) (headerRows i : Nat)
-    (row : Array (Array Inline)) (nd : Node)
-    (h : nd ∈ tableRowCells cfg cols cmids spans headerRows i row) :
+    (row : Array (Array Block)) (bodies : Array (Option (Array Node))) (nd : Node)
+    (h : nd ∈ tableRowCells cfg cols cmids spans headerRows i row bodies) :
     nd.tag? = some "th" ↔ i < headerRows := by
   simp only [tableRowCells, Array.mem_filterMap] at h
   obtain ⟨j, _, hj⟩ := h
@@ -7198,8 +7205,8 @@ public theorem th_iff_header_row (cfg : Config) (cols : Array Ir.ColSpec)
 
 public theorem tableCellNode_align_projects (cfg : Config) (cols : Array Ir.ColSpec)
     (cmids : Array (Nat × Nat)) (spans : Array Ir.ColSpan) (headerRows i j : Nat)
-    (cell : Array Inline) :
-    ∃ attrs kids, tableCellNode cfg cols cmids spans headerRows i j cell =
+    (cell : Array Inline) (body : Option (Array Node)) :
+    ∃ attrs kids, tableCellNode cfg cols cmids spans headerRows i j cell body =
       .elem (tableCellTag headerRows i) attrs kids ∧
       attrs[0]? = some ("class", " ".intercalate (cellClasses cols cmids spans i j ++
         cellStepClasses cfg.deck cell)) ∧
@@ -7234,8 +7241,8 @@ public theorem tableColEls_natural_projects (shares : Array (Option Nat)) (j : N
 /-- booktabs' formal table: rules as border classes on the rows they precede, head rows under
 `<thead>`. -/
 private def tableNode (cfg : Config) (cols : Array Ir.ColSpec) (padL padR : Bool)
-    (rows : Array (Array (Array Inline))) (rules : Array (Nat × Ir.TableRule))
-    (spans : Array Ir.ColSpan) : Node :=
+    (rows : Array (Array (Array Block))) (rules : Array (Nat × Ir.TableRule))
+    (spans : Array Ir.ColSpan) (bodies : Array (Array (Option (Array Node)))) : Node :=
   let headerRows := Ir.tableHeaderRows rows rules
   let ruleAt (i : Nat) : Array Ir.TableRule :=
     rules.foldl (fun out (k, r) => if k == i then out.push r else out) #[]
@@ -7266,7 +7273,7 @@ private def tableNode (cfg : Config) (cols : Array Ir.ColSpec) (padL padR : Bool
     let cmids := (ruleAt i).foldl (fun out r => match r with
       | .cmid a b _ _ => out.push (a, b)
       | .top | .mid | .bottom | .gap _ => out) (#[] : Array (Nat × Nat))
-    Html.elem "tr" (tableRowCells cfg cols cmids spans headerRows i row)
+    Html.elem "tr" (tableRowCells cfg cols cmids spans headerRows i row (bodies[i]?.getD #[]))
       (if cls.isEmpty then #[] else #[("class", cls)])
   -- a markdown table too wide sets at the page's step, and overhangs on paper if still too wide
   let (step, overhang) :=
@@ -9546,7 +9553,8 @@ public def blockNode (cfg : Config) (b : Block) : Node :=
     -- a state change the deck's top-level walk reads
     Html.text ""
   | .picture pic => pictureSvg cfg pic
-  | .table cols padL padR rows rules spans => tableNode cfg cols padL padR rows rules spans
+  | .table cols padL padR rows rules spans =>
+    tableNode cfg cols padL padR rows rules spans (rowBodiesInto cfg cols spans 0 #[] rows.toList)
   | .float kind num capAbove body caption =>
     let capNode : Array Node :=
       if caption.isEmpty then #[]
@@ -9641,6 +9649,24 @@ private def descItemsInto (cfg : Config) (acc : Array Node) : List (Array Block)
         (fillCarrier cfg (Ir.frameFills cfg.lists cfg.styles .deck item)
           (listItem cfg "dd" item.toList)))
       rest
+
+/-- The nodes of the cells of the rows from `i` that hold blocks, each at its column's measure. -/
+private def rowBodiesInto (cfg : Config) (cols : Array Ir.ColSpec) (spans : Array Ir.ColSpan)
+    (i : Nat) (acc : Array (Array (Option (Array Node)))) :
+    List (Array (Array Block)) → Array (Array (Option (Array Node)))
+  | [] => acc
+  | row :: rest =>
+    rowBodiesInto cfg cols spans (i + 1) (acc.push (cellBodiesInto cfg cols spans i 0 #[] row.toList))
+      rest
+
+private def cellBodiesInto (cfg : Config) (cols : Array Ir.ColSpec) (spans : Array Ir.ColSpan)
+    (i j : Nat) (acc : Array (Option (Array Node))) : List (Array Block) → Array (Option (Array Node))
+  | [] => acc
+  | cell :: rest =>
+    let body := match Ir.cellLine? cell with
+      | some _ => none
+      | none => some (blockNodesInto (cellConfig cfg cols spans i j).into #[] cell.toList)
+    cellBodiesInto cfg cols spans i (j + 1) (acc.push body) rest
 
 -- a one-paragraph item keeps its epoch on the `li` or `dd` it elides the `p` into
 private def listItem (cfg : Config) (tag : String) : List Block → Node
