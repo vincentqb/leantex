@@ -120,10 +120,13 @@ def boundaryFidelityChecks (ref : IO.Ref (List String)) : IO Unit := do
     (Ir.pictureSwitch { fontSize := Dim.pt 9 } none ==
       some s!"\\fontsize\{{(Dim.pt 9).toBpString}pt}\{{(Ir.leadingFor (Dim.pt 9)).toBpString}pt}\\selectfont")
   let ops := reqOf (dvDoc (pre ++ "\\DeclareMathOperator{\\gradient}{grad}\n" ++
+      "\\DeclareMathOperator*{\\zzlim}{zzlim}\n" ++
       "\\newlength{\\thumbside}\\setlength{\\thumbside}{.5in}\n")
-    (display "\\begin{tikzcd} A \\arrow[r, \"\\gradient\", hook] & \\parbox{\\thumbside}{B} \\end{tikzcd}"))
+    (display "\\begin{tikzcd} A \\arrow[r, \"\\gradient \\zzlim\", hook] & \\parbox{\\thumbside}{B} \\end{tikzcd}"))
   t "an operator the document declared is the standalone's"
     (hasStr ops "\\renewcommand{\\gradient}{\\operatorname {grad}}")
+  t "a starred operator the document declared is the standalone's, starred"
+    (hasStr ops "\\renewcommand{\\zzlim}{\\operatorname *{zzlim}}")
   t "a length the document declared and set is the standalone's, guarded"
     (hasStr ops "\\ifdefined\\thumbside\\else\\newlength{\\thumbside}\\fi\\setlength{\\thumbside}{.5in}")
   let alerted := reqOf ("\\documentclass{beamer}\n" ++ pre ++ "\\begin{document}\n\\begin{frame}\n" ++

@@ -4042,7 +4042,7 @@ private def definedValue (st : St) (raws : Array Raw) (i : Nat) (d : String) :
   let long := pre.contains "long"
   let prot := pre.contains "protected"
   let some r := Definer.row? d | return none
-  if r.family == .tex && !r.expands then
+  if r.plainTex then
     let j := skipSpaces raws (i + 1)
     let some sh := definerShape raws i d | return none
     let b := sh.stop - 1
@@ -4079,7 +4079,7 @@ private def definedValue (st : St) (raws : Array Raw) (i : Nat) (d : String) :
           return some { raws := #[.ctrl (overlayNativeName m) p], long := false, prot := false, live := true }
         return none
     | _, _ => return none
-  if r.defines == .command && r.family == .latex && r.mode != .declare then
+  if r.defines == .command && r.family == .latex && !r.robust then
     let j0 := skipSpaces raws (i + 1)
     let star := raws[j0]? matches some (.word "*" _)
     let j := if star then skipSpaces raws (j0 + 1) else j0
@@ -5007,7 +5007,7 @@ nothing is set" site (help := s!"write \\set{kind}\{{name}}\{true} or \\set{kind
             (st.useSite.getD pos) (subject := some (bound.getD n))
           return ← condList ex [] raws following out stack rest (i + 1) (sh.stop - (i + 1))
         let settles := liveVal.any (·.arity == 0) && !st.condInDoc
-        let refused := Definer.kind? n == some (.command, .tex) && !Definer.expands n &&
+        let refused := (Definer.row? n).any (·.plainTex) &&
           (undelimitedArity
             (raws.extract (skipSpaces raws (i + 1) + 1) (sh.stop - 1))).isNone
         let flags := st.flags
@@ -5608,8 +5608,7 @@ private theorem condList_package_read_step
         (i + 1) 0 after := by
   have hn : name ≠ "newif" ∧ name ≠ "else" ∧ name ≠ "or" ∧
       name ≠ "fi" ∧ name ≠ "endinput" ∧ name ≠ "unless" ∧
-      name ≠ "ifstrequal" ∧ name ≠ "apptocmd" ∧
-      name ≠ "newtcolorbox" ∧ name ≠ "renewtcolorbox" := by
+      name ≠ "ifstrequal" ∧ name ≠ "apptocmd" := by
     rcases hc with rfl | rfl <;> decide
   have hcond : isCondHead st.flags name = false := by
     have heads : condHeads.contains name = false := by
@@ -5666,7 +5665,7 @@ private theorem condList_package_read_step
     Option.getD_none, hcond, List.all_nil,
     Bool.not_true, Bool.false_eq_true, hg, hp, Array.back?_empty,
     Option.any_none, hh, hn.2.2.2.2.2.2.1, hflag, hl, Option.bind_none,
-    hn.2.2.2.2.2.2.2.1, ht, hf,
+    hn.2.2.2.2.2.2.2, ht, hf,
     hbox, htcb, hdef, hno, hd, Bool.not_false, ho, htpl, hlen, hxp]
   cases hload : recordLoad raws name i st with
   | mk tick loaded =>
@@ -8252,11 +8251,6 @@ private def ctrlRows0 : List CtrlRow :=
    nothingRow "ClassWarningNoLine" 2 classLog,
    ⟨"Crefrange", [.star, .needed, .needed], .lower .crefRange {}⟩]
 
-/-- What `\DeclareMathOperator{\f}{name}` defines `\f` to be: `\operatorname{name}`, starred
-where it is. -/
-public def operatorBody (star : Bool) (name : Array Raw) (pos : Pos) : Array Raw :=
-  #[.ctrl "operatorname" pos] ++ (if star then #[.word "*" pos] else #[]) ++ #[.group name pos]
-
 private def ctrlRows1 : List CtrlRow :=
   [⟨"DocumentMetadata", [.needed], .lower .documentMetadata {}⟩,
    ⟨"GenericError", List.replicate 4 .group, .inert⟩,
@@ -9263,13 +9257,6 @@ is skipped" pos
 
 private def rewriteCtrlLaterNamed (name : String) (pos : Pos) (raws : Array Raw)
     (start : Nat) : M (Option (Array Raw × Nat)) := do
-  match Definer.row? name with
-  | some ⟨_, .command, .tex, _, _, _⟩ => return ← texDefinerArm name pos raws start
-  | some ⟨_, .environment, .latex, mode, _, _⟩ =>
-    if mode != .provide then return ← latexEnvArm name pos raws start
-  | some ⟨_, .environment, .native, _, _, _⟩ => return ← nativeEnvArm name pos raws start
-  | some ⟨_, .environment, .environ, _, _, _⟩ => return ← environArm name pos raws start
-  | _ => pure ()
   match name with
   | "addtobeamertemplate" => blockHookArm pos raws start
   | "apptocmd" => standoutFootHookArm pos raws start
@@ -10315,15 +10302,20 @@ private theorem rewritePackages_external_exact (name : String)
   simp only [bind, pure] at h
   rw [h]
 
+/-- What `\DeclareMathOperator{\f}{name}` defines `\f` to be: `\operatorname{name}`, starred
+where it is. -/
+public def operatorBody (star : Bool) (name : Array Raw) (pos : Pos) : Array Raw :=
+  #[.ctrl "operatorname" pos] ++ (if star then #[.word "*" pos] else #[]) ++ #[.group name pos]
+
 /-- `\DeclareMathOperator{\f}{name}`, as the native `\define` of `\f` with no parameters and
 `\operatorname{name}` its body. -/
-private def operatorArm (pos : Pos) (raws : Array Raw) (start : Nat) :
+private def operatorArm (name : String) (pos : Pos) (raws : Array Raw) (start : Nat) :
     M (Option (Array Raw × Nat)) := do
   let star := raws[start]? matches some (.word "*" _)
   let (args, k) := takeGroups raws (skipStar raws start) 2
   let (some cmd, some body) := ((args[0]?).bind ctrlName, args[1]?) | return none
   let mark := if star then "*" else ""
-  became s!"\\DeclareMathOperator{mark}\{\\{cmd}}"
+  became s!"\\{name}{mark}\{\\{cmd}}"
     s!"\\define \\{cmd}() \{\\operatorname{mark}\{...}}" pos
   return some ((Native.Head.define cmd "").raws pos |>.push (.group (operatorBody star body pos) pos), k)
 
@@ -10414,7 +10406,12 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
     (start : Nat) : M (Option (Array Raw × Nat)) := do
   match Definer.kind? name with
   | some (.command, .latex) | some (.command, .xparse) => return ← commandDefinerArm name pos raws start
-  | some (.command, .amsmath) => return ← operatorArm pos raws start
+  | some (.command, .amsmath) => return ← operatorArm name pos raws start
+  | some (.command, .tex) => return ← texDefinerArm name pos raws start
+  | some (.environment, .latex) =>
+    if !Definer.is name .environment .latex .provide then return ← latexEnvArm name pos raws start
+  | some (.environment, .native) => return ← nativeEnvArm name pos raws start
+  | some (.environment, .environ) => return ← environArm name pos raws start
   | _ => pure ()
   match name with
   | "documentclass" =>

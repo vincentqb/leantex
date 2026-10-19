@@ -23,7 +23,8 @@ public inductive Mode where
   | new | renew | provide | declare
   deriving @[expose] BEq, DecidableEq, Repr
 
-/-- One definer, and whether it expands its body where it stands and assigns globally. -/
+/-- One definer, and whether it expands its body where it stands, assigns globally, and defines a
+robust command, whose meaning is a wrapper around its body. -/
 public structure Row where
   name : String
   defines : Defines
@@ -31,20 +32,22 @@ public structure Row where
   mode : Mode
   expands : Bool
   global : Bool
+  robust : Bool
   deriving Repr
 
-/-- A definer that keeps its body as written and assigns locally. -/
+/-- A definer that keeps its body as written, assigns locally and defines the body itself. -/
 @[expose] public def row (name : String) (defines : Defines) (family : Family) (mode : Mode) : Row :=
-  ⟨name, defines, family, mode, false, false⟩
+  ⟨name, defines, family, mode, false, false, false⟩
 
 /-- The macro and environment definers the surfaces read, `\newtheorem` read apart. -/
 @[expose] public def table : List Row :=
-  [row "def" .command .tex .declare, ⟨"gdef", .command, .tex, .declare, false, true⟩,
-   ⟨"edef", .command, .tex, .declare, true, false⟩, ⟨"xdef", .command, .tex, .declare, true, true⟩,
+  [row "def" .command .tex .declare, { row "gdef" .command .tex .declare with global := true },
+   { row "edef" .command .tex .declare with expands := true },
+   { row "xdef" .command .tex .declare with expands := true, global := true },
    row "let" .command .letting .declare,
    row "newcommand" .command .latex .new, row "renewcommand" .command .latex .renew,
    row "providecommand" .command .latex .provide,
-   row "DeclareRobustCommand" .command .latex .declare,
+   { row "DeclareRobustCommand" .command .latex .declare with robust := true },
    row "NewDocumentCommand" .command .xparse .new,
    row "RenewDocumentCommand" .command .xparse .renew,
    row "ProvideDocumentCommand" .command .xparse .provide,
@@ -65,6 +68,9 @@ public structure Row where
    row "NewEnviron" .environment .environ .new, row "RenewEnviron" .environment .environ .renew,
    row "newtcolorbox" .environment .tcolorbox .new,
    row "renewtcolorbox" .environment .tcolorbox .renew]
+
+/-- Whether a row is a TeX definer keeping its body as written. -/
+@[expose] public def Row.plainTex (r : Row) : Bool := r.family == .tex && !r.expands
 
 /-- The definer a name spells. -/
 @[expose] public def row? (name : String) : Option Row := table.find? (·.name == name)

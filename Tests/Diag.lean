@@ -1967,8 +1967,10 @@ def mirrorChecks (ref : IO.Ref (List String)) : IO Unit := do
         "macroDefiners", "tex", "expands", "global"]),
      (["let"], ["namedNext", "bindsNext", "readAsDefinition", "redefiners", "nameDefiners",
         "macroDefiners"]),
-     (["newcommand", "renewcommand", "DeclareRobustCommand"], ["namedNext", "bindsNext",
-        "readAsDefinition", "redefiners", "nameDefiners", "macroDefiners", "latex"]),
+     (["newcommand", "renewcommand"], ["namedNext", "bindsNext", "readAsDefinition", "redefiners",
+        "nameDefiners", "macroDefiners", "latex"]),
+     (["DeclareRobustCommand"], ["namedNext", "bindsNext", "readAsDefinition", "redefiners",
+        "nameDefiners", "macroDefiners", "latex", "robust"]),
      (["providecommand"], ["namedNext", "bindsNext", "readAsDefinition", "nameDefiners",
         "macroDefiners", "latex", "provides"]),
      (["NewDocumentCommand", "RenewDocumentCommand", "DeclareDocumentCommand"], ["namedNext",
@@ -2003,7 +2005,8 @@ def mirrorChecks (ref : IO.Ref (List String)) : IO Unit := do
      ("tex", Definer.commandsOf .tex), ("latex", Definer.commandsOf .latex),
      ("xparse", Definer.commandsOf .xparse), ("provides", named.filter Definer.provides),
      ("codeEnvs", Definer.codeEnvs), ("expands", named.filter Definer.expands),
-     ("global", named.filter Definer.global)]
+     ("global", named.filter Definer.global),
+     ("robust", named.filter fun n => (Definer.row? n).any (·.robust))]
   for (q, got) in queries do
     t s!"definer table: '{q}' holds the definers written out for it" (same got (readers q))
   t "definer table: 'macroDefiners' writes the definers written out for it"
@@ -2013,6 +2016,14 @@ def mirrorChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "definer table: a name no row holds provides nothing" (!Definer.provides "zznotadefiner")
   t "definer table: no definer is also a control row, read through a second registry"
     (Definer.table.all fun r => (Compat.ctrlRow? r.name).isNone)
+  -- A math operator whose name is no control word, or whose name stands alone, is left as written.
+  let rewrittenCtrls (src : String) : Array String :=
+    (Compat.rewrite "t" (Parse.parse "t" (Lex.lex "t" src).1).1).1.filterMap fun r =>
+      match r with | .ctrl n _ => some n | _ => none
+  t "definer table: a math operator's definition naming no control word stays as written"
+    ((rewrittenCtrls "\\DeclareMathOperator{zz}{x}").contains "DeclareMathOperator" &&
+      (rewrittenCtrls "\\DeclareMathOperator{\\zz}").contains "DeclareMathOperator" &&
+      !(rewrittenCtrls "\\DeclareMathOperator{\\zz}{x}").contains "DeclareMathOperator")
   -- The lexer reads the token after a 'namedNext' definer as the name it defines, never a call.
   let verbatimAfter (d : String) : Bool :=
     (Lex.lex "t" ("\\" ++ d ++ "\\mintinline{x}")).1.any (·.tok matches .verb "mintinline" _)
