@@ -61,5 +61,5 @@ note[N0100] 6:1 '\RequirePackage{amsmath}' → nothing: the engine does this its
 note[N0100] 6:1 '\usepackage{amsthm}' → \theoremstyle{plain}
 note[N0100] 8:1 '\usetheme' → \theme{moloch}
 note[N0100] 18:1 '\newenvironment{framefooter}' → \defineenv{framefooter}(a1: content) {begin} {end}
-note[N0100] 18:71 '\setbeamertemplate{frame footer}' → \framefoot{...}
 note[N0100] 18:33 '\setbeamertemplate{frame footer}' → \framefoot{...}
+note[N0100] 18:71 '\setbeamertemplate{frame footer}' → \framefoot{...}

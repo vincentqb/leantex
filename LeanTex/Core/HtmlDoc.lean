@@ -7438,6 +7438,7 @@ private def compactStyle (style : String) : String :=
     let d := d.trimAscii.toString
     if d.isEmpty then none else some (((d.splitOn ":").headD "").trimAscii.toString, d)
   let kept := decls.foldr (fun (k, d) acc => if acc.any (·.1 == k) then acc else (k, d) :: acc) []
+  let kept := kept.filter fun (_, d) => !(d.endsWith ":")
   String.intercalate "; " (kept.map (·.2))
 
 /-- A body palette epoch as semantic changes; `none` removes a property. -/
@@ -7488,10 +7489,17 @@ public def epochPaletteDiff (roles : List Ir.Role) (before after : Ir.Palette) :
       (r, Ir.Design.cssDecl after .light r)).toArray }
 
 /-- The redefinitions a body `\tokens` makes, same diff. -/
-public def epochTokenStyle (basis : LengthBasis) (ex : Length) (before after : Ir.Tokens) : String :=
-  String.intercalate "; " ((after.entries.filter fun (n, g) =>
+public def epochTokenStyle (basis : LengthBasis) (ex : Length) (before after : Ir.Tokens)
+    (page : Ir.PageSpec) : String :=
+  -- A token the epoch no longer declares is an empty declaration, which `compactStyle` drops.
+  let gone := (before.entries.filter fun (n, _) => (after.find? n).isNone).toList.filterMap
+    fun (n, _) => (tokenVar? n).map (· ++ ":")
+  String.intercalate "; " (((after.entries.filter fun (n, g) =>
     before.find? n != some g).toList.filterMap fun (n, g) =>
-      (tokenVar? n).map fun v => s!"{v}: {gapTokenCss basis ex n g.width}")
+      (tokenVar? n).map fun v =>
+        -- A body `\parskip` is the screen gap the page's own declares (`parskipVar`).
+        if n == "parskip" then s!"{v}: {milliRem (screenMilli page.fontSize (parskipSp page ex g))}"
+        else s!"{v}: {gapTokenCss basis ex n g.width}") ++ gone)
 
 /-- The colours a listing's box may name by role, page, ink and code ground, per shipped scheme. -/
 public def boxRoleTexts (frames : List Ir.SchemeFrame) (views : List Ir.Palette) :
@@ -7598,7 +7606,7 @@ private def Config.advanceTokens (cfg : Config) (tk : Ir.Tokens) : Config :=
              epochStyle := compactStyle (joinStyles cfg.epochStyle
                (epochTokenStyle cfg.lengthBasis (match cfg.lengthBasis with
                  | .classSize size => exAt cfg.fonts size
-                 | .stage _ => 0) cfg.tokens tk)) }
+                 | .stage _ => 0) cfg.tokens tk cfg.page)) }
 
 /-- The side an alternation shows on every step of an `n`-step frame, if it shows one. -/
 private def uniformSide? (n : Nat) (spec : Ir.OverlaySpec) : Option Bool :=

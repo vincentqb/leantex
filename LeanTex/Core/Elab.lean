@@ -13193,26 +13193,26 @@ private def lengthScopeKeys? (raws : Array Raw) : Option (Array String) :=
 /-- Saves the resolved opening values of a scope's restored lengths and strips
 the closing mark. -/
 private def openLengthScope (ctx : Ctx) (raws : Array Raw) :
-    Array (String × SymGlue) × { body : Array Raw //
+    Array (String × Option SymGlue) × { body : Array Raw //
       rawWeightList body.toList ≤ rawWeightList raws.toList ∧
       rawParsList body.toList ≤ rawParsList raws.toList ∧
       nestedParsList body.toList ≤ nestedParsList raws.toList } :=
   if let some keys := lengthScopeKeys? raws then
-    let saved := keys.filterMap fun key =>
-      ((ctx.tokens.find? key).orElse fun _ =>
-        (ctx.engineTokens.find? (·.1 == key)).map (·.2)).map (key, ·)
+    -- A length no token declared at the opening stands undeclared again at the close.
+    let saved := keys.map fun key => (key, ctx.tokens.find? key)
     (saved, ⟨raws.extract 0 (raws.size - 1),
       extract_weight_le .., extract_pars_le .., extract_nested_le ..⟩)
   else
     (#[], ⟨raws, Nat.le_refl _, Nat.le_refl _, Nat.le_refl _⟩)
 
 /-- Restores a scope's saved lengths as one token epoch. -/
-private def closeLengthScope (ctx : Ctx) (saved : Array (String × SymGlue))
+private def closeLengthScope (ctx : Ctx) (saved : Array (String × Option SymGlue))
     (blocks : Array Block) : EM (Array Block) := do
   if saved.isEmpty then return blocks
   let st ← get
-  let tk := saved.foldl (fun tk (key, value) => tk.declare key value)
-    (st.flowTokens.getD ctx.tokens)
+  let tk := saved.foldl (fun tk (key, value) => match value with
+    | some g => tk.declare key g
+    | none => tk.erase key) (st.flowTokens.getD ctx.tokens)
   modify fun st => { st with flowTokens := some tk, flowGen := st.flowGen + 1 }
   return blocks.push (.setTokens tk)
 
@@ -13267,7 +13267,7 @@ private def closeFramePalette (ctx : Ctx) (pos : Pos) (blocks : Array Block)
 /-- Opens a block scope: its frame-source base, flow epoch and saved
 lengths. -/
 private def openBlockScope (ctx : Ctx) (raws : Array Raw) :
-    EM ((Option Nat × Nat) × Array (String × SymGlue) × { body : Array Raw //
+    EM ((Option Nat × Nat) × Array (String × Option SymGlue) × { body : Array Raw //
       rawWeightList body.toList ≤ rawWeightList raws.toList ∧
       rawParsList body.toList ≤ rawParsList raws.toList ∧
       nestedParsList body.toList ≤ nestedParsList raws.toList }) := do
@@ -13276,7 +13276,7 @@ private def openBlockScope (ctx : Ctx) (raws : Array Raw) :
     { st.spans.frames with base := st.spans.frames.nextBase, nextBase := none } } }
   return ((st.spans.frames.base, st.flowGen), openLengthScope ctx raws)
 
-private def closeBlockScope (ctx : Ctx) (savedLengths : Array (String × SymGlue))
+private def closeBlockScope (ctx : Ctx) (savedLengths : Array (String × Option SymGlue))
     (savedBase : Option Nat) (blocks : Array Block) : EM (Array Block) := do
   let blocks ← closeLengthScope ctx savedLengths blocks
   setFrameSourceBase savedBase

@@ -9708,6 +9708,8 @@ public structure Spacing.Context where
   private pats : Option Hyphen.Patterns := none
   private fs : FontSet
   private styles : Ir.Styles := {}
+  /-- The body `\parskip` token this context's gaps already read, and the gaps it replaced. -/
+  private bodyParskip : Option Dim.SymGlue × Option (Dim.SymGlue × Dim.SymGlue) := (none, none)
   /-- The caption positions the document declares. -/
   private captionPos : Array (String × Ir.CaptionPos) := #[]
   /-- The itemize levels' redefined class labels (`Ir.Doc.itemLabels`). -/
@@ -9946,6 +9948,34 @@ private def Spacing.Context.resolve (r : Rd) (g : SymGlue) : Glue :=
   g.resolve r.geom.fontSize r.xHeight
 
 private def Spacing.Context.parskip (r : Rd) : Glue := r.resolve r.geom.parskip
+
+/-- The context under the `\parskip` a body declaration put in force, both peer paragraphs and
+TeX's own reading it, where it changed since the context read it: a context a list or a box derives
+keeps the gaps it set until a later declaration. -/
+private def Spacing.Context.underParskip (r : Rd) (tk : Ir.Tokens) : Rd :=
+  let now := tk.find? "parskip"
+  if now == r.bodyParskip.1 then r else
+  let base := r.bodyParskip.2.getD (r.geom.parskip, r.geom.texParskip)
+  let (p, q) := match now with
+    | some g => (g, g)
+    | none => base
+  { r with geom := { r.geom with parskip := p, texParskip := q }, bodyParskip := (now, some base) }
+
+private theorem Spacing.Context.underParskip_labels (r : Rd) (tk : Ir.Tokens) :
+    (r.underParskip tk).labels = r.labels := by
+  unfold Spacing.Context.underParskip; dsimp only; split <;> rfl
+
+private theorem Spacing.Context.underParskip_styles (r : Rd) (tk : Ir.Tokens) :
+    (r.underParskip tk).styles = r.styles := by
+  unfold Spacing.Context.underParskip; dsimp only; split <;> rfl
+
+private theorem Spacing.Context.underParskip_pats (r : Rd) (tk : Ir.Tokens) :
+    (r.underParskip tk).pats = r.pats := by
+  unfold Spacing.Context.underParskip; dsimp only; split <;> rfl
+
+private theorem Spacing.Context.underParskip_inFloat (r : Rd) (tk : Ir.Tokens) :
+    (r.underParskip tk).inFloat = r.inFloat := by
+  unfold Spacing.Context.underParskip; dsimp only; split <;> rfl
 
 /-- A colour resolved at layout, as the step being collected shows it. -/
 private def Spacing.Context.shown (r : Rd) (c : Ir.Color) : Ir.Color :=
@@ -13825,6 +13855,7 @@ private def collectCentered (r : Rd) (a : Acc)
       else collectCentered r (a.leafRange (Struct.leafCountBlocks firstPage)).1 otherPage.toList indent false
     collectCentered r (if rest.isEmpty then a else a.wantGap) rest indent false
   | blk :: rest =>
+    let r := r.underParskip a.tokens
     let a := if ruleBlock blk then { a with declaredSkip := false } else a
     let (r, a) := r.meetLabels a blk indent
     let a := match blk with
@@ -13895,6 +13926,7 @@ private def collectLaid (r : Rd) (a : Acc) (lines : List LaidLine) (indent : Len
 
 private def collectBlock (r : Rd) (a : Acc)
     (blk : Block) (indent : Length) : Acc :=
+  let r := r.underParskip a.tokens
   match blk with
   | .para content => collectParaBlock r a content indent
   | .lines ls => collectLaid r a ls.toList indent
@@ -14351,7 +14383,8 @@ private theorem role_transparent_collect (r : Rd) (a : Acc) (n : String)
     (htl : n ≠ Ir.trivlistRole) (hip : n ≠ Ir.inParagraphRole)
     (hth : Ir.thmSpaceOf? n = none) (hpm : Ir.pageMarkerRole n = false)
     (hdc : Ir.DisplayCtx.ofRole? n = none) (hdp : n ≠ Ir.displayPictureRole) :
-    collectBlock r a (.role n body) indent = collectBlocks r a body indent := by
+    collectBlock r a (.role n body) indent =
+      collectBlocks (r.underParskip a.tokens) a body indent := by
   have hpic := Ir.displayPicture?_role_exact n body hdp
   have h : (n == Ir.trivlistRole) = false := by simpa using htl
   have h' : (n == Ir.inParagraphRole) = false := by simpa using hip
@@ -14359,7 +14392,9 @@ private theorem role_transparent_collect (r : Rd) (a : Acc) (n : String)
   obtain ⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨hpa, hni⟩, hps⟩, hos⟩, -⟩, -⟩, -⟩, -⟩, -⟩, -⟩, -⟩ := hpm
   have hop : Ir.pageOpeningOfRole? n = none :=
     Option.isNone_iff_eq_none.mp (Option.isSome_eq_false_iff.mp hos)
-  simp only [collectBlock, Spacing.Context.style, hst, Option.getD, h, h', hth, hpa, hni, hps,
+  have hst' : (r.underParskip a.tokens).styles.find? n = none := by
+    rw [Spacing.Context.underParskip_styles]; exact hst
+  simp only [collectBlock, Spacing.Context.style, hst', Option.getD, h, h', hth, hpa, hni, hps,
     hdc, hop, hpic, Bool.false_eq_true, ite_false]
 
 private theorem pageOpening_collect_projects (r : Rd) (a : Acc) (n : String)
@@ -20187,7 +20222,7 @@ private def collectDocBlock (rd : Rd) (doc : Doc)
     let routed := if rd.outlineMarks.contains i then
         { routed with ops := routed.ops.push (.anchor (Ir.outlineMark i)) }
       else routed
-    acc := collectSection rd routed level num title 0 (top := true)
+    acc := collectSection (rd.underParskip routed.tokens) routed level num title 0 (top := true)
       (page := Ir.standsOnPage doc.body[i + 1]?) (pageNext := doc.body[i + 1]?)
       (anchor := (rd.sectionAnchors[i]?.join).map (·.id))
   | other => acc := collectBlock rd acc other 0
@@ -20437,7 +20472,8 @@ private theorem collectDocBlock_leafNext (rd : Rd) (doc : Doc)
   simp only [collectDocBlock, hb, statefulBlock, Ir.pageMarkerBlock,
     Bool.or_false, Bool.and_false, Id.run]
   dsimp only [pure, Id]
-  rw [collectBlock, collectParaBlock_leafNext _ _ _ _ hp hl]
+  rw [collectBlock, collectParaBlock_leafNext _ _ _ _ hp
+    (by rw [Spacing.Context.underParskip_labels]; exact hl)]
   simp only [sourceLeafSum_para, plainInlines_leafCount xs hp]
   split <;> rfl
 
@@ -20456,7 +20492,7 @@ private theorem sourceBound_collectDocBlock {n : Nat} (rd : Rd) (doc : Doc)
   · split <;> exact ha
   · exact hp
   · split <;> simpa only [hb, sourceLeafSum_para, plainInlines_leafCount xs hp, Spacing.Pending.wantGap] using hn
-  · exact hl
+  · rw [Spacing.Context.underParskip_labels]; exact hl
 
 private theorem sourceRange_progress {β : Type}
     (P : Nat → β → Prop) (lo len : Nat)
@@ -20746,7 +20782,17 @@ private theorem collectDocBlock_census (rd : Rd) (doc : Doc)
     Bool.or_false, Bool.and_false, Id.run]
   dsimp only [pure, Id]
   rw [collectBlock]
-  split <;> refine collectParaBlock_census rd _ xs 0 hp hr ?_ pick hl <;> exact ha
+  have hr' : ∀ tk, (rd.underParskip tk).pats = none := fun tk => by
+    rw [Spacing.Context.underParskip_pats]; exact hr
+  have hl' : ∀ tk, (rd.underParskip tk).labels = #[] := fun tk => by
+    rw [Spacing.Context.underParskip_labels]; exact hl
+  split
+  · rw [← Spacing.Context.underParskip_inFloat rd st.1.tokens]
+    refine collectParaBlock_census _ _ xs 0 hp (hr' _) ?_ pick (hl' _)
+    exact ha
+  · rw [← Spacing.Context.underParskip_inFloat rd (Spacing.Pending.wantGap st.1).tokens]
+    refine collectParaBlock_census _ _ xs 0 hp (hr' _) ?_ pick (hl' _)
+    exact ha
 
 private def sourceInkAt (pick : Option Nat → Bool → Bool) (body : Array Block)
     (start : Nat) (counted : Bool) (i : Nat) : List Char :=

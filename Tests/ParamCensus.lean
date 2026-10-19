@@ -819,6 +819,81 @@ def textHeightChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
     (["top=1in,bottom=2in", "textheight=500pt", "textheight=500pt,bottom=1in"].all fun o =>
       (elabStr (geo o)).2.all (·.severity == .note))
 
+/-- A body `\\parskip` spaces the paragraphs that start after it, to the end of its group, on the page
+as the preamble's value does and on the web page as the same screen gap. -/
+def bodyParskipChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let doc (pre body : String) : String :=
+    s!"\\documentclass\{article}\n{pre}\n\\begin\{document}\n{body}\n\\end\{document}\n"
+  let gaps (src : String) : Array Dim.Length :=
+    let ys := ((((pageLines fonts src)[0]?).getD #[]).filter fun (_, l) =>
+      l.trimAscii.toString.toNat?.isNone).map (·.1)
+    (ys.zip (ys.extract 1 ys.size)).map fun (a, b) => b - a
+  let paras := "Alpha.\n\nBravo.\n\nCharlie."
+  let under (v : String) : Array Dim.Length := gaps (doc s!"\\setlength\{\\parskip}\{{v}}" paras)
+  let body := "Alpha.\n\nBravo.\\setlength{\\parskip}{20pt}\n\nCharlie.\n\nDelta.\n\n" ++
+    "{\\setlength{\\parskip}{40pt}Echo.\n\nFoxtrot.\\par}\n\nGolf."
+  let g := gaps (doc "" body)
+  t s!"body parskip: the paragraphs after it take its gap, a group's to the group's end ({reprStr g})"
+    (g.size == 6 && g[0]? == (gaps (doc "" paras))[0]? && g[1]? == (under "20pt")[0]? &&
+      g[2]? == (under "20pt")[0]? && g[3]? == (under "40pt")[0]? && g[4]? == (under "40pt")[0]? &&
+      g[5]? == (under "20pt")[0]?)
+  t "body parskip: a group's value alone ends with the group, the page's gap after it"
+    (let g := gaps (doc "" "Alpha.\n\n{\\setlength{\\parskip}{40pt}Bravo.\\par}\n\nCharlie.")
+     g[0]? == (under "40pt")[0]? && g[1]? == (gaps (doc "" paras))[0]?)
+  t "body parskip: unnamed"
+    ((elabStr (doc "" body)).2.all fun d => !(d.subject.any (·.endsWith "parskip")) || d.severity == .note)
+  let html (src : String) : String := (HtmlDoc.emit {} (elabStr src).1).1
+  let root := html (doc "\\setlength{\\parskip}{20pt}" paras)
+  let value := String.ofList ((((root.splitOn "--parskip: ")[1]?).getD "").toList.takeWhile (· != ';'))
+  let shown := html (doc "" body)
+  t s!"body parskip: the web page's paragraphs after it carry the page's screen gap ({value})"
+    (!value.isEmpty && hasStr shown s!"<p style=\"--parskip: {value}\">Charlie" &&
+      hasStr shown "<p>Bravo" && hasStr shown s!"<p style=\"--parskip: {value}\">Golf")
+  -- What the body's value spaces is what the preamble's spaces: headings, lists, quotes, centred
+  -- and theorem text, each with the list and box gaps the classes set inside them.
+  let rest := "\n\n\\section{Heading}\nCharlie.\n\nDelta.\n\\begin{itemize}\n\\item India.\n\n" ++
+    "Juliet.\n\\end{itemize}\nEcho.\n\\begin{quote}\nKilo.\n\nLima.\n\\end{quote}\n" ++
+    "\\begin{center}\nMike.\n\nNovember.\n\\end{center}\n\\begin{minipage}{5cm}\nOscar.\n\n" ++
+    "Papa.\n\\end{minipage}\n\nGolf."
+  let viaBody := gaps (doc "" ("Alpha.\\setlength{\\parskip}{20pt}\n\nBravo." ++ rest))
+  let viaPreamble := gaps (doc "\\setlength{\\parskip}{20pt}" ("Alpha.\n\nBravo." ++ rest))
+  t s!"body parskip: every block after it spaced as by the preamble's ({reprStr viaBody})"
+    (viaBody.size > 10 && viaBody == viaPreamble)
+  let inner := "Alpha.\n\n\\begin{center}\nBravo.\\setlength{\\parskip}{20pt}\n\nCharlie.\n" ++
+    "\\end{center}\n\n\\begin{flushleft}\nDelta.\\setlength{\\parskip}{20pt}\n\nEcho.\n" ++
+    "\\end{flushleft}"
+  let gi := gaps (doc "" inner)
+  t s!"body parskip: one set inside a centred or ragged scope spaces its paragraphs after it ({reprStr gi})"
+    (gi[1]? == (under "20pt")[0]? && gi[3]? == (under "20pt")[0]?)
+  let own := doc "" "Alpha.\n\n{\\setlength{\\parskip}{30pt}Bravo.}\n\nCharlie."
+  t "body parskip: one set inside a paragraph's own group is named, the page's gap standing"
+    (gaps own == gaps (doc "" paras) &&
+      (elabStr own).2.any fun d => d.code == "W0104" && d.subject.any (·.endsWith "parskip"))
+  let deck (body : String) : String :=
+    s!"\\documentclass\{beamer}\n\\begin\{document}\n{body}\n\\end\{document}\n"
+  let frames := "\\begin{frame}\nAlpha.\\setlength{\\parskip}{20pt}\n\nBravo.\n\\end{frame}\n" ++
+    "\\begin{frame}\nCharlie.\n\nDelta.\n\\end{frame}"
+  let plain := "\\begin{frame}\nAlpha.\n\nBravo.\n\\end{frame}\n" ++
+    "\\begin{frame}\nCharlie.\n\nDelta.\n\\end{frame}"
+  let ys (src : String) (k : Nat) : Array Dim.Length :=
+    (((pageLines fonts src)[k]?).getD #[]).map (·.1)
+  t "body parskip: a frame's value ends with the frame"
+    (ys (deck frames) 1 == ys (deck plain) 1 && ys (deck frames) 0 != ys (deck plain) 0)
+  let deckRoot := html (s!"\\documentclass\{beamer}\n\\setlength\{\\parskip}\{20pt}\n" ++
+    "\\begin{document}\n\\begin{frame}\nAlpha.\n\nBravo.\n\\end{frame}\n\\end{document}\n")
+  let deckValue := String.ofList ((((deckRoot.splitOn "--parskip: ")[1]?).getD "").toList.takeWhile (· != ';'))
+  t s!"body parskip: a frame's paragraphs carry the deck's screen gap ({deckValue})"
+    (!deckValue.isEmpty && hasStr (html (deck frames)) s!"--parskip: {deckValue}")
+  -- A group's close leaves a length no token declared at its opening undeclared again.
+  let table := "\\begin{tabular}{ll}x&y\\\\\\end{tabular}"
+  t "length scope: a table after a group setting its column gap takes the page's"
+    (let after := doc "" s!"\{\\setlength\{\\tabcolsep}\{20pt}{table}\\par}\n\n{table}"
+     let alone := doc "" s!"{table}\n\n{table}"
+     let last (src : String) := ((shippedLines fonts src).filter fun (_, _, _, l) =>
+       l.trimAscii.toString.toNat?.isNone).back?.map fun (x, _, _, l) => (x, l)
+     last after == last alone && (last after).isSome)
+
 /-- The text block a declaration places, judged on the page the class settles: geometry's keys
 solved together across its calls and in their order, the kernel's `\textheight` under the top, and a
 key the set leaves without effect named. -/

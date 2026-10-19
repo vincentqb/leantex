@@ -520,6 +520,7 @@ def declSettingSuiteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     IO Unit := do
   texEdgeChecks ref oneFace
   texStateChecks ref oneFace
+  Tests.ParamCensus.bodyParskipChecks ref oneFace
   Tests.ParamCensus.declCensusChecks ref oneFace
   Tests.ParamCensus.builtCensusChecks ref
   Tests.ParamCensus.declaredScopeChecks ref

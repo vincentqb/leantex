@@ -2260,7 +2260,14 @@ def reports : List Report := [
     accept := ["lualatex 1.24 on invented probes: two-line paragraphs in article, report and book turn every page between paragraphs, its page builder's trace costing the break before a paragraph 53 against 150 and more inside one; around a display the trace offers the break after it at 0 and before the line ahead of it at displaywidowpenalty's 50, never one between them; this tree sets each so, markdown pages taking the same stretch",
       "main's binary at 6714141d on the checks' documents: two of three page turns split a paragraph in an article and a report, and seven of 150 pages open with a display; the checks fail there",
       "the corpus built by main's binary at bbdd0223 and by this tree's: every artifact byte-identical"]
-    state := .guarded "6714141d" .before .author }
+    state := .guarded "6714141d" .before .author },
+  { id := "R999", date := "2026-10-19"
+    what := "a setting in an environment's begin code reading the environment's arguments (a length, a colour, a language, a font face and the other settings a macro's argument can give) was skipped and named W0104, and a parskip length set in the body was named W0104 and left the paragraphs' gaps as the preamble declared them"
+    pins := [check% Tests.EnvCode.templateCodeUseChecks, check% Tests.ParamCensus.bodyParskipChecks]
+    accept := ["lualatex on invented probes: an environment's argument sets its box separation, colour and bold label at each use, an optional one defaulted, its end code under the begin code's declarations; after the body sets the parskip to 12pt the next paragraphs stand 24pt apart, in a group setting it to 30pt 42pt apart, and after the group 24pt again; under a body parskip of 20pt a heading, a list item's second paragraph, a quote, centred text and a minipage space as under the preamble's; a frame's value ends with the frame; a table after a group setting its column gap takes the page's; this tree sets the same",
+      "main's binary at bbdd0223 names both W0104, sets the paragraphs at the page's gap and carries a group's column gap on; the checks fail there",
+      "the corpus built by main's binary at bbdd0223 and by this tree's: every PDF, web page and diagnostic byte-identical"]
+    state := .guarded "bbdd0223" .before .author }
 ]
 
 /-- The reports guarded but never seen failing, a count held in both directions. -/

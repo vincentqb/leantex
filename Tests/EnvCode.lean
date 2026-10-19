@@ -131,6 +131,25 @@ def templateCodeUseChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : 
       "Alpha \\begin{probe}{8pt}Bravo \\fbox{words}\\end{probe} Delta.")
     (dvDoc "\\newenvironment{probe}[1]{\\setlength{\\fboxsep}{#1}}{}\n"
       "Alpha \\begin{probe}{8pt}Bravo \\fbox{words}\\end{probe} Delta.")
+  sameShip ref fonts "environment code: the end code stands under the begin code's declarations"
+    (dvDoc (colour ++ "\\newenvironment{probe}[1]{\\setlength{\\fboxsep}{#1}\\color{blue}}{\\fbox{end}}\n")
+      "Alpha \\begin{probe}{12pt}Bravo \\fbox{x}.\\end{probe} After \\fbox{z}.")
+    (dvDoc (colour ++ "\\newenvironment{probe}[1]{}{}\n")
+      "Alpha \\begin{probe}{12pt}\\setlength{\\fboxsep}{12pt}\\color{blue}Bravo \\fbox{x}.\\fbox{end}\\end{probe} After \\fbox{z}.")
+  sameShip ref fonts "environment code: an argument no setting reads leaves the code where it is defined"
+    (dvDoc (colour ++ "\\newenvironment{probe}[1]{\\color{blue}\\textbf{#1}}{ tail}\n")
+      "Alpha \\begin{probe}{L}inner\\end{probe} after.")
+    (dvDoc colour "Alpha {\\color{blue}\\textbf{L}inner tail} after.")
+  let renewed := dvDoc "\\newenvironment{probe}[1]{OLDBEGIN \\setlength{\\fboxsep}{#1}}{ OLDEND}\n"
+    "\\renewenvironment{probe}[1]{NEWBEGIN \\setlength{\\fboxsep}{#1}}{ NEWEND}\n\\begin{probe}{9pt}Bravo.\\end{probe}"
+  let renewedPage := pageTextOf fonts renewed
+  t s!"environment code: a body redefinition the elaborator does not apply sets the preamble's ({renewedPage})"
+    (hasStr renewedPage "OLDBEGIN" && hasStr renewedPage "OLDEND" && !hasStr renewedPage "NEW")
+  sameShip ref fonts "environment code: a body parskip in begin code without arguments sets as with one"
+    (dvDoc "\\newenvironment{probe}{\\setlength{\\parskip}{20pt}}{}\n"
+      "Alpha.\n\\begin{probe}\nBravo.\n\nCharlie.\n\\end{probe}\n\nDelta.")
+    (dvDoc "\\newenvironment{probe}[1]{\\setlength{\\parskip}{#1}}{}\n"
+      "Alpha.\n\\begin{probe}{20pt}\nBravo.\n\nCharlie.\n\\end{probe}\n\nDelta.")
   sameShip ref fonts "environment code: an optional argument given or defaulted"
     (dvDoc (colour ++ "\\newenvironment{probe}[2][teal]{\\color{#1}\\textbf{#2:} }{}\n")
       "Alpha \\begin{probe}{Note}Bravo\\end{probe} and \\begin{probe}[blue]{Tip}Charlie\\end{probe}.")

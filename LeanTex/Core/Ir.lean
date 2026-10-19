@@ -644,6 +644,10 @@ public theorem findSourced?_names (t : Tokens) (name : String) :
     cases h : t.find? name <;> simp [Tokens.findSourced?, h] at hs
     exact hs ▸ rfl
 
+/-- The tokens without a declaration of `key`. -/
+public def Tokens.erase (t : Tokens) (key : String) : Tokens :=
+  { entries := t.entries.filter (·.1 != key) }
+
 /-- A later declaration of a name overrides, keeping one entry per name. -/
 public def Tokens.declare (t : Tokens) (key : String) (g : SymGlue) : Tokens :=
   { entries := redeclare t.entries key g }

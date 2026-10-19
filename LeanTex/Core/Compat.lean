@@ -876,6 +876,8 @@ private structure St where
   /-- Inside a brace group of the walk, where a declaration
   ends with the group. -/
   inGroup : Bool := false
+  /-- Inside a brace group holding no paragraph break: a paragraph's own text. -/
+  parGroup : Bool := false
   /-- Inside a list environment's body, where a list
   parameter spaces that one list. -/
   inList : Bool := false
@@ -6371,6 +6373,15 @@ private def setLength (n src what : String) (pos : Pos) : M (Array Raw) := do
     if st.inDoc && !st.inDef && key == .textwidth then
       return ← nothing "'\\begin{document}' set the lines' measure from it, and no later value \
 moves a line" (tokens := false)
+    -- premise: bodyParskipChecks — a parskip in a paragraph's own group ships the page without it
+    if st.inDoc && !st.inDef && key == .parskip && st.parGroup then
+      return ← named "set inside a paragraph's own group, it ends before any paragraph starts; \
+the paragraph's gap stands"
+    -- A body `\parskip` spaces the paragraphs after it, to the end of its group.
+    if st.inDoc && !st.inDef && key == .parskip then
+      write fun st => { st with localLengths :=
+        if st.localLengths.contains n then st.localLengths else st.localLengths.push n }
+      return ← emit (.tokens #[(n, src)])
     -- premise: paramCensusChecks — a page setting in the body ships the page without it
     if st.inDoc && !st.inDef then
       return ← named "sets the page, which the body leaves as the preamble declared it"
@@ -13626,6 +13637,15 @@ public def InputContext.markdownHeadings (context : InputContext) (raws : Array 
     latexHeadings raws
   else raws
 
+/-- A frame's body rewritten as the group a frame is: a length it sets ends with it. -/
+private def frameBodyScoped (body : M (Array Raw)) (p : Pos) : M (Array Raw) := do
+  let saved := (← get).localLengths
+  write fun st => { st with localLengths := #[] }
+  let body ← body
+  let restores := restoreLengths (← get).localLengths p
+  write fun st => { st with localLengths := saved }
+  return body ++ restores
+
 /-- Names an abstract an article's titlepage would set on a page of its own. -/
 private def abstractUnderTitlePage (pos : Pos) : M Unit := do
   -- premise: titlePageChecks — under an article's titlepage the abstract stands in the text
@@ -13711,6 +13731,8 @@ private def rewriteRaw (inBody : Bool) (arg : Bool) : Raw → M Raw
     -- premise: templateCodeChecks — a template macro names its losses at its use
     let quiet := saved > 0 && (← get).quietNext
     let (said, warned) := ((← get).diags.size, (← get).warned)
+    let savedParGroup := (← get).parGroup
+    write fun st => { st with parGroup := !body.any fun r => r matches .par _ || r matches .ctrl "par" _ }
     write fun st => { st with bodyNext := 0, inDef := st.inDef || saved > 0, inGroup := true,
                               tableTop := false, defTop := saved > 0, localLengths := #[]
                               quietNext := false, envCode := st.envCode || envBody, envNext := 0 }
@@ -13725,7 +13747,8 @@ private def rewriteRaw (inBody : Bool) (arg : Bool) : Raw → M Raw
     let restores := restoreLengths (← get).localLengths p
     -- A group's assignments end with it.
     write fun st => { st with bodyNext := if inDefault then outer else saved - 1, inDef := savedDef,
-                              inGroup := savedGroup, envCode := savedEnvCode,
+                              inGroup := savedGroup, parGroup := savedParGroup,
+                              envCode := savedEnvCode,
                               envNext := if envBody then savedEnvNext - 1 else savedEnvNext,
                               lens := savedLens, bodySkip := savedSkip, localLengths := savedLengths,
                               tableTop := savedTop, defTop := savedDefTop,
@@ -13792,7 +13815,7 @@ and patterns stand in" p
               s!"'{w}' declares no presentation slides; this frame ships no page" p
             return .group #[] p
           else if modeLeavesPresentation w then
-            let body' ← rewriteList inBody body #[] body.toList 0 0
+            let body' ← frameBodyScoped (rewriteList inBody body #[] body.toList 0 0) p
             let i := skipSpaces body' 0
             match specWordAt body' i with
             | some _ => return .env n (body'.extract (i + 1) body'.size) p
@@ -13802,12 +13825,12 @@ and patterns stand in" p
               s!"'\\begin\{frame}{w}' specification is not honoured; a frame's \
 steps come from its body" p
               (help := "\\pause and \\uncover step a frame's own content")
-            let body' ← rewriteList inBody body #[] body.toList 0 0
+            let body' ← frameBodyScoped (rewriteList inBody body #[] body.toList 0 0) p
             let i := skipSpaces body' 0
             match specWordAt body' i with
             | some _ => return .env n (body'.extract (i + 1) body'.size) p
             | none => return .env n body' p
-        | none => return .env n (← rewriteList inBody body #[] body.toList 0 0) p
+        | none => return .env n (← frameBodyScoped (rewriteList inBody body #[] body.toList 0 0) p) p
       else if n == "titlepage" then
         -- article.cls's `titlepage` opens a fresh unstyled page and resets the page to one.
         let st0 ← get
@@ -13840,7 +13863,7 @@ steps come from its body" p
       else
         -- An environment is a group, so a length set inside it ends with it.
         let st0 ← get
-        write fun st => { st with inList := st.inList || listEnvs.contains n,
+        write fun st => { st with inList := st.inList || listEnvs.contains n, parGroup := false,
                                   tableTop := tableEnvs.contains n, defTop := false,
                                   cellLens := if tableEnvs.contains n then st.lens else st.cellLens,
                                   envDepth := st.envDepth + 1, bodySkip := envSkip st n,
@@ -13852,7 +13875,7 @@ steps come from its body" p
                                   inList := st0.inList, cellLens := st0.cellLens,
                                   bodySkip := st0.bodySkip, envDepth := st0.envDepth,
                                   tableTop := st0.tableTop, defTop := st0.defTop,
-                                  inParacol := st0.inParacol }
+                                  inParacol := st0.inParacol, parGroup := st0.parGroup }
         if n == "paracol" then
           paracolEnv st0.paracolRatio body' p restores
         else return .env n (body' ++ restores) p
@@ -15116,74 +15139,138 @@ termination_by structural r => r
 
 end
 
-/-- Whether environment begin code holds a parameter and a setting an argument can give its value. -/
-private def readsArgSetting (code : Array Raw) : Bool :=
-  holdsParam code.toList && (settingNamesIn #[] code.toList).any paramSettings.contains
+mutual
+
+-- conserves: none — a setting's arguments read for a parameter, or the parskip they set
+/-- Whether a setting in begin code reads a parameter in its arguments, or sets `\parskip`, which
+only the body reads: code the elaborator cannot set where the environment is defined. -/
+private def atUseList : List Raw → Bool
+  | [] => false
+  | .ctrl s _ :: rest =>
+    (paramSettings.contains s && (settingArgsHold rest 4 ||
+      ((s == "setlength" || s == "addtolength") && settingSetsParskip rest))) || atUseList rest
+  | r :: rest => atUseRaw r || atUseList rest
+
+private def atUseRaw : Raw → Bool
+  | .env n body _ => (paramSettings.contains n && holdsParam body.toList) || atUseList body.toList
+  | .group body _ | .math _ body _ => atUseList body.toList
+  | _ => false
+
+/-- Whether the next `n` arguments after a setting hold a parameter: groups, a bracketed option, or
+a control word as the first, and `#` spelled bare where an argument stands. -/
+private def settingArgsHold : List Raw → Nat → Bool
+  | _, 0 => false
+  | [], _ => false
+  | .space :: rest, n => settingArgsHold rest n
+  | .sym '#' _ :: _, _ => true
+  | .group body _ :: rest, n + 1 => holdsParam body.toList || settingArgsHold rest n
+  | .ctrl _ _ :: rest, 4 => settingArgsHold rest 3
+  | .sym '[' _ :: rest, n + 1 => optionHolds rest n
+  | _, _ => false
+
+/-- Whether a bracketed option holds a parameter, then the arguments after it. -/
+private def optionHolds : List Raw → Nat → Bool
+  | [], _ => false
+  | .sym ']' _ :: rest, n => settingArgsHold rest n
+  | .sym '#' _ :: _, _ => true
+  | .group body _ :: rest, n => holdsParam body.toList || optionHolds rest n
+  | _ :: rest, n => optionHolds rest n
+
+/-- Whether a length setting's first argument names `\parskip`. -/
+private def settingSetsParskip : List Raw → Bool
+  | .space :: rest => settingSetsParskip rest
+  | .group body _ :: _ => body.toList.any (· matches .ctrl "parskip" _)
+  | .ctrl "parskip" _ :: _ => true
+  | _ => false
+
+end
 
 /-- The environment a `\newenvironment` whose name group follows `j` defines: its name, default,
-arity, its begin code's index and that code. -/
+arity, its begin code's index, its end code's index, and the two codes. -/
 private def envDefAt (raws : Array Raw) (j : Nat) :
-    Option (String × Option (Array Raw) × Nat × Nat × Array Raw) := do
+    Option (String × Option (Array Raw) × Nat × Nat × Nat × Array Raw × Array Raw) := do
   let (args, j) := takeGroups raws (skipStar raws j) 1
   let name ← args[0]?.map fun a => (rawSrc a).trimAscii.toString
   let (count, j) := takeOpt raws j
   let (dflt, j) := takeRawOpt raws j
   let b := skipSpaces raws j
   let some (.group code _) := raws[b]? | none
-  return (name, dflt, (count.bind String.toNat?).getD 0, b, code)
+  let e := skipSpaces raws (b + 1)
+  let some (.group close _) := raws[e]? | none
+  return (name, dflt, (count.bind String.toNat?).getD 0, b, e, code, close)
 
-/-- An environment's body with the begin code a use's arguments give their values set after them,
-or none where the use spells too few arguments. -/
-private def envCodeAtUse (dflt : Option (Array Raw)) (n : Nat) (code body : Array Raw) :
+/-- An environment's body with its begin code, the arguments a use spells given their values,
+before it and its end code after it, or none where the use spells too few arguments; an unbraced
+argument is one control word or character, as TeX reads it. -/
+private def envCodeAtUse (dflt : Option (Array Raw)) (n : Nat) (code close body : Array Raw) :
     Option (Array Raw) := Id.run do
   let (first, k) := match dflt with
     | some d => match takeRawOpt body (skipSpaces body 0) with
       | (some o, k) => (#[o], k)
       | (none, _) => (#[d], 0)
     | none => (#[], 0)
-  let (rest, k) := takeGroups body k (n - first.size)
-  let args := first ++ rest
-  if args.size != n then return none
-  return some (body.extract 0 k ++ bindRawArgsList args #[] code.toList ++ body.extract k body.size)
+  let mut args := first
+  let mut k := k
+  let mut body := body
+  for _ in [first.size:n] do
+    let i := skipSpaces body k
+    match body[i]? with
+    | some (.group a _) => args := args.push a; k := i + 1
+    | some (.ctrl c p) => args := args.push #[.ctrl c p]; k := i + 1
+    | some (.word w p) =>
+      match w.toList with
+      | [c] => args := args.push #[.word (String.singleton c) p]; k := i + 1
+      | c :: cs =>
+        args := args.push #[.word (String.singleton c) p]
+        body := (body.extract 0 i).push (.word (String.ofList cs) p) ++ body.extract (i + 1) body.size
+        k := i
+      | [] => return none
+    | _ => return none
+  return some (body.extract 0 k ++ bindRawArgsList args #[] code.toList ++
+    body.extract k body.size ++ close)
 
-/-- The environments whose begin code a setting reads an argument in, with their default, arity
-and that code. -/
-private abbrev EnvCodes := Array (String × Option (Array Raw) × Nat × Array Raw)
+/-- The environments whose code the pass sets at each use, with their default, arity, begin code
+and end code. -/
+private abbrev EnvCodes := Array (String × Option (Array Raw) × Nat × Array Raw × Array Raw)
 
 mutual
 
--- conserves: none — a definition's begin code moves to each use, its arguments substituted
-/-- Every environment whose begin code a setting reads an argument in with that code set at each
-use, where the arguments hold their values, as LaTeX's `\begin` expands it. -/
-private def envCodesList (codes : EnvCodes) (raws : Array Raw) (out : Array Raw) :
+-- conserves: none — a definition's code moves to each use, its arguments substituted
+/-- Every preamble environment whose begin code holds a setting the elaborator cannot set where it
+is defined, its begin and end code set at each use where the arguments hold their values, as
+LaTeX's `\begin` and `\end` expand them. -/
+private def envCodesList (codes : EnvCodes) (inDoc : Bool) (raws : Array Raw) (out : Array Raw) :
     List Raw → Nat → Nat → Array Raw × EnvCodes
   | [], _, _ => (out, codes)
-  | _ :: rest, i, skip + 1 => envCodesList codes raws out rest (i + 1) skip
+  | _ :: rest, i, skip + 1 => envCodesList codes inDoc raws out rest (i + 1) skip
   | .ctrl c p :: rest, i, 0 =>
-    if c == "newenvironment" || c == "renewenvironment" then
+    if !inDoc && (c == "newenvironment" || c == "renewenvironment") then
       match envDefAt raws (i + 1) with
-      | some (name, dflt, n, b, code) =>
+      | some (name, dflt, n, b, e, code, close) =>
         let codes := codes.filter (·.1 != name)
         -- A definition a macro body makes, spelled with its parameters, stands for the elaborator.
-        if readsArgSetting code && !name.contains '#' && ((rawSrc code).splitOn "##").length == 1 then
-          let out := (out.push (.ctrl c p) ++ raws.extract (i + 1) b).push (.group #[] p)
-          envCodesList (codes.push (name, dflt, n, code)) raws out rest (i + 1) (b - i)
-        else envCodesList codes raws (out.push (.ctrl c p)) rest (i + 1) 0
-      | none => envCodesList codes raws (out.push (.ctrl c p)) rest (i + 1) 0
-    else envCodesList codes raws (out.push (.ctrl c p)) rest (i + 1) 0
+        if atUseList code.toList && !name.contains '#' &&
+            ((rawSrc code ++ rawSrc close).splitOn "##").length == 1 then
+          let out := ((out.push (.ctrl c p) ++ raws.extract (i + 1) b).push (.group #[] p)).push
+            (.group #[] p)
+          envCodesList (codes.push (name, dflt, n, code, close)) inDoc raws out rest (i + 1) (e - i)
+        else envCodesList codes inDoc raws (out.push (.ctrl c p)) rest (i + 1) 0
+      | none => envCodesList codes inDoc raws (out.push (.ctrl c p)) rest (i + 1) 0
+    else envCodesList codes inDoc raws (out.push (.ctrl c p)) rest (i + 1) 0
   | r :: rest, i, 0 =>
-    let (r', codes) := envCodesRaw codes r
-    envCodesList codes raws (out.push r') rest (i + 1) 0
+    let (r', codes) := envCodesRaw codes inDoc r
+    envCodesList codes inDoc raws (out.push r') rest (i + 1) 0
 termination_by structural l => l
 
-private def envCodesRaw (codes : EnvCodes) : Raw → Raw × EnvCodes
+private def envCodesRaw (codes : EnvCodes) (inDoc : Bool) : Raw → Raw × EnvCodes
   | .group body p =>
-    let (b, codes) := envCodesList codes body #[] body.toList 0 0
+    let (b, codes) := envCodesList codes inDoc body #[] body.toList 0 0
     (.group b p, codes)
   | .env n body p =>
-    let (b, codes) := envCodesList codes body #[] body.toList 0 0
-    let b := match codes.find? (·.1 == n) with
-      | some (_, dflt, arity, code) => (envCodeAtUse dflt arity code b).getD b
+    let found := codes.find? (·.1 == n)
+    let (b, codes) := envCodesList codes (inDoc || n == "document") body #[] body.toList 0 0
+    let b := match found with
+      | some (_, dflt, arity, code, close) => (envCodeAtUse dflt arity code close b).getD b
       | none => b
     (.env n b p, codes)
   | r => (r, codes)
@@ -15203,7 +15290,7 @@ public def beginRewrite (executed : Executed) : RewriteCursor :=
     let raws := frameCommands raws
     let raws := (splitColumnsList raws.toList).toArray
     let raws := trivlistEnvsList raws.toList #[]
-    let raws := (envCodesList #[] raws #[] raws.toList 0 0).1
+    let raws := (envCodesList #[] false raws #[] raws.toList 0 0).1
     let raws ← overprintList raws.toList #[] 0
     pure (onlyAlternationsIn cx raws)
   let st0 : St :=
@@ -15244,7 +15331,7 @@ private theorem beginRewrite_package_exact (command names : String) (pos gp np :
   have htriv : trivlistEnvsList (packageCall command names pos gp np).toList #[] =
       packageCall command names pos gp np := by
     simp [packageCall, trivlistEnvsList, trivlistEnvsRaw]
-  have hcodes : (envCodesList #[] (packageCall command names pos gp np) #[]
+  have hcodes : (envCodesList #[] false (packageCall command names pos gp np) #[]
       (packageCall command names pos gp np).toList 0 0).1 = packageCall command names pos gp np := by
     rcases hc with rfl | rfl <;> simp [packageCall, envCodesList, envCodesRaw]
   have hframes : frameCommands (packageCall command names pos gp np) =
