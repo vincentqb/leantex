@@ -42,7 +42,7 @@
 ✖ [E0202]
   unexpected '}'
 ── E0205 (dropped) malformed or mismatched environment name
-✖ [E0205] - \begin
+✖ [E0205]
   expected an environment name
 ── E0303 (dropped) malformed \define signature
 ✖ [E0303] - \define
@@ -62,7 +62,7 @@
   unknown document class 'proseplate'
   suggestion: classes: article, slides, card, resume, webpage, poster, scrartcl
 ── E0310 (dropped) content before the first \item in a list
-✖ [E0310] - \begin
+✖ [E0310]
   content before the first '\item'
 ── E0311 (dropped) reserved character in text
 ✖ [E0311] - &

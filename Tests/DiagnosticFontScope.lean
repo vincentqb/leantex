@@ -99,8 +99,8 @@ def diagnosticFontScopeChecks (ref : IO.Ref (List String))
           for format in formats do
             let artifact := outDir / (stem ++ "." ++ format)
             let written ← artifact.pathExists
-            t s!"{format} publication precedes werror but follows error refusal" (written == !blocked)
-            if written && !blocked then
+            t s!"{format} ships beside its errors and before werror" written
+            if written then
               if format == "pdf" then
                 match readArtifact (← IO.FS.readBinFile artifact) with
                 | .error err => t s!"PDF painted-text reader: {err}" false

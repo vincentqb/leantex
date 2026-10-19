@@ -2666,6 +2666,26 @@ def parseChecks (ref : IO.Ref (List String)) : IO Unit := do
       | .word w _ => w
       | _ => "?") == #["group/1", "b"]) &&
       ((praw "{\\begin{tabular}a}b").2.map (·.code)) == #["E0201"])
+  -- An `\end` an enclosing environment answers closes what is open inside it, each named once.
+  let doc := "\\begin{document}\n{a\n\\end{document}"
+  t s!"parse: an open group an enclosing end closes is one loss ({(praw doc).2.map (·.message)})"
+    (((praw doc).2.map (·.message)) == #["unclosed: expected '}'"] &&
+      ((praw doc).1.map fun r => match r with
+        | .env n _ _ => n
+        | _ => "?") == #["document"])
+  let list := "\\begin{document}\n\\begin{itemize}\n\\item a\n\\end{document}"
+  t s!"parse: an open list an enclosing end closes is one loss ({(praw list).2.map (·.message)})"
+    (((praw list).2.map (·.message)) == #["'\\end{document}' closes '\\begin{itemize}'"])
+  let nameless := "\\begin{document}\n\\begin{ x\n\\end{document}"
+  t s!"parse: a begin naming nothing opens nothing ({(praw nameless).2.map (·.message)})"
+    (((praw nameless).2.map (·.message)) == #["expected an environment name"])
+  -- A misplaced text's loss stands at that text.
+  let lineOf (code : String) (src : String) : Option Nat :=
+    ((elabStr src).2.find? (·.code == code)).bind fun d => d.span.map (·.pos.line)
+  t "elab: text before the first item is named at that text"
+    (lineOf "E0310" (dvDoc "" "\\begin{itemize}\nKqzv\n\\item a\n\\end{itemize}") == some 4)
+  t "elab: text before the document is named at that text"
+    (lineOf "E0313" (dvDoc "\\usepackage{xcolor}\nKqzv words.\n" "x") == some 3)
   t "parse display math" (((praw "\\[x\\]").1.map fun r =>
     match r with
     | .math true _ _ => "display"

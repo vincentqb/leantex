@@ -61,7 +61,9 @@ private def pictureAssetInstall (root : System.FilePath) (label : String) :
   IO.setAccessRights tool { user := ⟨true, true, true⟩ }
   IO.FS.writeBinFile (root / (label ++ ".pdf")) (pictureAssetPdf label)
   let stamp ← ToolProbe.witness tool.toString
-  let .present version ← ToolProbe.probeVersion tool.toString |
+  -- The engine's own probe budget is not under test here: a hang guard holds this probe.
+  let .present version ←
+      Host.runIO (World.ToolPath.version tool.toString (budgetMs := hangGuardMs 100)) |
     throw <| IO.userError "the synthetic picture tool did not report its version"
   if stamp.isEmpty then
     throw <| IO.userError "the synthetic picture tool has no identity witness"

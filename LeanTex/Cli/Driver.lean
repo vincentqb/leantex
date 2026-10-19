@@ -884,7 +884,8 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
     let tool := front.doc.pictureTool.getD "lualatex"
     let declined := Boundary.linesOf tool {} front.spans.declined
     let front := { front with diags := Boundary.foldLines front.doc.allow allowAll declined front.diags }
-    let failing := (Diag.resolveAll front.doc.allow allowAll (Diag.forOutputs outputs front.diags)).errors > 0
+    -- Only a cause that stops the writer withholds the artifact; any other error ships it.
+    let failing := (Diag.resolveAll front.doc.allow allowAll (Diag.forOutputs outputs front.diags)).stops > 0
     let (faces, front) ← boundaryFaces ui file front
     let (pics, undrawn, staged) ← if failing then pure (#[], #[], #[])
       else resolvePictures ui file front.doc front.spans.images faces
@@ -904,7 +905,7 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
     let diags := front.diags.map sourceDiag
     let reqSpans := front.spans
     -- Images load before the faces settle (SVG scalars join the fallback) and before diagnostics.
-    let failingNow := (Diag.resolveAll doc.allow allowAll (Diag.forOutputs outputs diags)).errors > 0
+    let failingNow := (Diag.resolveAll doc.allow allowAll (Diag.forOutputs outputs diags)).stops > 0
     let cache ← Engine.cache (← FontDiscovery.cacheDir)
     let convert ← svgConverter Image.PlanParams.default doc.figureConvert
     let tImg ← IO.monoMsNow
@@ -916,7 +917,7 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
     -- premise: svgTitleAltChecks — a figure's title answers N0376
     let diags := FigureAlt.unanswered titles doc diags
     let mut resolved ← ui.resolve doc.allow allowAll (outputs := outputs) diags
-    if resolved.errors > 0 then
+    if resolved.stops > 0 then
       ui.accepted resolved.accepted
       ui.summary file resolved.errors (← since t0)
       return 1
@@ -935,7 +936,7 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
     | .ok (fs, doc, fontDiags, paths) =>
       resolved := resolved.append
         (← ui.resolve doc.allow allowAll (outputs := outputs) (fontDiags.map sourceDiag))
-      if resolved.errors > 0 then
+      if resolved.stops > 0 then
         ui.accepted resolved.accepted
         ui.summary file resolved.errors (← since t0)
         return 1
@@ -994,8 +995,8 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
       let layoutDiags := out.diags.map sourceDiag
       resolved := resolved.append (← ui.resolve doc.allow allowAll (outputs := outputs) layoutDiags)
       if setsPages then ui.phase "layout" s!"{out.pages.size} pages" (← since t)
-      -- An unaccepted error before the writers means no output.
-      if resolved.errors > 0 then
+      -- An unaccepted error whose cause stops the writer means no output.
+      if resolved.stops > 0 then
         ui.accepted resolved.accepted
         ui.summary file resolved.errors (← since t0)
         return 1
@@ -1194,12 +1195,16 @@ in the HTML" (← since t)
         for d in unwritten do
           ui.diag d
         ui.accepted resolved.accepted
-        ui.summary file unwritten.size (← since t0) written
-        return exitFor unwritten.size 0 resolved.warnings ui.cfg.werror
+        ui.summary file (unwritten.size + resolved.errors) (← since t0) written
+        return exitFor (unwritten.size + resolved.errors) 0 resolved.warnings ui.cfg.werror
       -- An `\allow` that never fired warns.
       resolved := resolved.append (← ui.resolve doc.allow allowAll (outputs := outputs)
         ((Diag.unfired doc.allow resolved.fired).map DriverDiag.allowUnfired))
       ui.accepted resolved.accepted
+      -- The artifact ships beside its errors, which still decide the exit status.
+      if resolved.errors > 0 then
+        ui.summary file resolved.errors (← since t0) written
+        return exitFor resolved.errors 0 resolved.warnings ui.cfg.werror
       ui.done file (String.intercalate ", " written.toList)
         (if setsPages then some out.pages.size else none) (← since t0)
         resolved.notes

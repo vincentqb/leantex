@@ -665,6 +665,12 @@ public theorem DiagCode.censused_iff_ships (c : DiagCode) :
   cases h : c.loss <;>
     simp only [DiagCode.censused, DiagCode.floor, h, Loss.censused, Loss.floor, Floor.ships]
 
+/-- Whether a code's cause stops the writer: unreadable input, a missing or too deep `\input`, no
+usable font, an unwritable output or the document's own failed `\assert`. -/
+public def DiagCode.stopsWriter : DiagCode → Bool
+  | .E0001 | .E0501 | .E0502 | .E0401 | .E0402 | .E0004 | .E0330 => true
+  | _ => false
+
 /-- Is this a loss about a place, whose header names no written token? -/
 public def DiagCode.namesPlace : DiagCode → Bool
   | .W0005 | .W0386 | .W0338 | .N0200 => true
@@ -1620,6 +1626,8 @@ public structure Resolution where
   fired : Array String := #[]
   accepted : Array Diag.Accepted := #[]
   errors : Nat := 0
+  /-- The errors among them whose cause stops the writer. -/
+  stops : Nat := 0
   warnings : Nat := 0
   notes : Nat := 0
   deriving Repr, BEq
@@ -1629,6 +1637,7 @@ public def Resolution.append (a b : Resolution) : Resolution :=
     fired := a.fired ++ b.fired
     accepted := a.accepted ++ b.accepted
     errors := a.errors + b.errors
+    stops := a.stops + b.stops
     warnings := a.warnings + b.warnings
     notes := a.notes + b.notes }
 
@@ -1647,6 +1656,7 @@ private def Resolution.record (r : Resolution) (d : Diag) (accepted : Bool) : Re
     fired := r.fired.push d.code ++ (d.carries.map (·.code)).toArray
     accepted := if accepted then r.accepted.push (Diag.Accepted.of d) else r.accepted
     errors := r.errors + (if d.severity == .error then 1 else 0)
+    stops := r.stops + (if d.severity == .error && d.kind.stopsWriter then 1 else 0)
     warnings := r.warnings + (if d.severity == .warning then 1 else 0)
     notes := r.notes + (if d.severity == .note && !accepted then 1 else 0) }
 

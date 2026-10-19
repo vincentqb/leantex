@@ -1494,6 +1494,12 @@ private theorem lookupUserEnv_lt {ctx : Ctx} {name : String} {k : Nat}
   · exact absurd h (by simp)
   · exact latestNamed_lt h
 
+/-- Where a raw stands, if it carries a place. -/
+private def rawPos? : Raw → Option Pos
+  | .word _ p | .par p | .ctrl _ p | .sym _ p | .group _ p | .math _ _ p | .env _ _ p
+  | .verb _ _ p => some p
+  | .space => none
+
 private def isSpace : Raw → Bool
   | .space => true
   | _ => false
@@ -10039,7 +10045,7 @@ private def itemSplitGo (ctx : Ctx) (body : Array Raw) (pos : Pos) (scope : List
               awaitSpec inOpt seen strayDiagged bound pbound
               (hfit.skip h .refl)
         if !isSpaceOrPar item && !strayDiagged then
-          diag ctx .E0310 s!"content before the first '\\item'" pos
+          diag ctx .E0310 s!"content before the first '\\item'" ((rawPos? item).getD pos)
         itemSplitGo ctx body pos scope (j + 1) items steps curItem
           curStep awaitSpec inOpt seen
           (strayDiagged || !isSpaceOrPar item) bound pbound
@@ -16593,8 +16599,8 @@ public inductive PDecl where
   | cancelOpts (src : String) (pos : Pos)
   /-- A blueprint's site declaration: its package load, `\github`, `\dochome` or `link`. -/
   | blueprintSite (key : Blueprint.SiteKey) (url : String) (pos : Pos)
-  /-- Text before `\begin{document}`, as written. -/
-  | stray (src : String)
+  /-- Text before `\begin{document}`, as written, where it stands. -/
+  | stray (src : String) (pos : Option Pos)
 
 /-- The preamble fold's state. -/
 public structure PreState where
@@ -17069,7 +17075,7 @@ public def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run d
             i := j
       | _ =>
         i := i + 1
-        out := out.push (.stray (rawSrc #[r]))
+        out := out.push (.stray (rawSrc #[r]) (rawPos? r))
     else
       break
   return out
@@ -17899,12 +17905,12 @@ a heading; its numbers stand as the class numbers them" pos
     if let some bpos := unclosed then
       warnUnclosed s.ctx s!"'\\{name}'" bpos
     return s
-  | .stray src =>
+  | .stray src pos =>
     noteMentions src
     if s.textDiagged then
       return s
     else
-      diag s.ctx .E0313 "only declarations may appear before '\\begin{document}'" none
+      diag s.ctx .E0313 "only declarations may appear before '\\begin{document}'" pos
       return { s with textDiagged := true }
 
 /-- The elaboration state with the stores only diagnostics read erased. -/

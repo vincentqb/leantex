@@ -3825,9 +3825,9 @@ def pdfContractChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
          hasStr log "/Info dictionary present" && hasStr log "no output intent" &&
          !(← outDir.pathExists))
       let (code, log, outDir) ← run "z" "\\output{ formats = pdf, profiles = pdf/z }\n"
-      t s!"driver: pdf/z is E0321 naming the registered profiles: {log}"
-        (code != 0 && hasStr log "E0321" && hasStr log "pdf/a-4, pdf/ua-2, pdf/x-6" &&
-         !(← outDir.pathExists))
+      t s!"driver: pdf/z is E0321 naming the registered profiles, its PDF shipped unclaimed: {log}"
+        (code == 1 && hasStr log "E0321" && hasStr log "pdf/a-4, pdf/ua-2, pdf/x-6" &&
+         (← (outDir / "z.pdf").pathExists))
       let (code, log, outDir) ← run "ua2" "\\output{ formats = pdf, profiles = pdf/ua-2 }\n"
       t s!"driver: pdf/ua-2 fails honestly on language and title, the tree and the mark present: {log}"
         (code == 2 && hasStr log "pdf.profile = pdf/ua-2" && !hasStr log "no structure tree" &&
@@ -4147,6 +4147,23 @@ def htmlAssetChecks (ref : IO.Ref (List String)) : IO Unit := do
       t "driver: a failing assertion publishes no page, no -o directory, and no .assets/ anywhere"
         (r2.exitCode != 0 && !(← (dir / "out2").pathExists) &&
          assetDirs.isEmpty)
+      -- An error whose cause stops no writer ships the page beside it; a missing input does not.
+      IO.FS.writeFile (dir / "lossy.tex") (pre ++ "\\begin{document}\n\\begin{itemize}\n" ++
+        "Kqzv stray\n\\item one\n\\end{itemize}\n\\end{document}\n")
+      IO.FS.writeFile (dir / "unread.tex")
+        (pre ++ "\\begin{document}\n\\input{nowhere-invented}\n\\end{document}\n")
+      let built (name : String) : IO (IO.Process.Output × Bool) := do
+        let r ← IO.Process.output {
+          cmd := ".lake/build/bin/leantex"
+          args := #[(dir / s!"{name}.tex").toString, "-o", (dir / s!"{name}.html").toString] }
+        return (r, ← (dir / s!"{name}.html").pathExists)
+      let (lossy, lossyShips) ← built "lossy"
+      t s!"driver: an error that stops no writer ships the page and exits 1: {lossy.stderr}"
+        (lossy.exitCode == 1 && lossyShips && hasStr lossy.stderr "E0310" &&
+          hasStr lossy.stderr "lossy.html")
+      let (unread, unreadShips) ← built "unread"
+      t s!"driver: a missing input still ships nothing: {unread.stderr}"
+        (unread.exitCode == 1 && !unreadShips && hasStr unread.stderr "E0502")
 
 /-- Assigned anchor ids are unique and numbered by the documented ladder. -/
 def anchorIdChecks (ref : IO.Ref (List String)) : IO Unit := do

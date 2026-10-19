@@ -622,6 +622,22 @@ public def modeChoices (raws : Array Raw) : Array Raw :=
   let (conds, spelled) := newifsIn ({}, false) raws.toList
   if spelled then modeLevel conds (modeList conds #[] raws.toList) else raws
 
+/-- The index of the innermost frame an `\end{name}` closes past others still open: an environment
+of that name below the top, with no definition body's group between. -/
+private def outerEnvAt (frames : Array Frame) (name : String) : Option Nat := Id.run do
+  let mut k := frames.size
+  for _ in [0:frames.size] do
+    if k == 0 then return none
+    k := k - 1
+    match frames[k]? with
+    | some f =>
+      match f.stop with
+      | .env n => if n == name then return (if k + 1 == frames.size then none else some k)
+      | .brace => if f.body then return none
+      | _ => pure ()
+    | none => return none
+  return none
+
 /-- Parses tokens into a `Raw` forest in one pass with an explicit frame stack;
 strays are reported and skipped, unclosed delimiters close at end of input. -/
 public def parse (file : String) (toks : Array Token) : Array Raw × Array Diag := Id.run do
@@ -718,8 +734,10 @@ public def parse (file : String) (toks : Array Token) : Array Raw × Array Diag 
         let (name, j, ds) := envName toks file i pos
         diags := diags ++ ds
         i := j
-        frames := frames.push ⟨.env name, pos, acc, false, false⟩
-        acc := #[]
+        -- A `\begin` naming nothing opens nothing, so no later close is spent on it.
+        unless name.isEmpty do
+          frames := frames.push ⟨.env name, pos, acc, false, false⟩
+          acc := #[]
       | .ctrl "end" =>
         let (name, j, ds) := envName toks file i pos
         diags := diags ++ ds
@@ -735,6 +753,27 @@ public def parse (file : String) (toks : Array Token) : Array Raw × Array Diag 
               acc := f.outer.push (.ctrl f.stop.halfName f.openPos) ++ acc
             else break
           | none => break
+        if name.isEmpty then continue
+        -- An `\end` an enclosing environment answers closes what is open inside it, as TeX does.
+        match outerEnvAt frames name with
+        | some k =>
+          for _ in [0:frames.size] do
+            if frames.size ≤ k + 1 then break
+            match frames.back? with
+            | some f =>
+              diags := diags.push (match f.stop with
+                | .env inner => err file .E0205 s!"'\\end\{{name}}' closes '\\begin\{{inner}}'" pos
+                | _ => err file .E0201 s!"unclosed: expected {f.stop.name}" f.openPos)
+              frames := frames.pop
+              acc := f.close acc
+            | none => break
+          match frames.back? with
+          | some f =>
+            frames := frames.pop
+            acc := f.close acc
+          | none => pure ()
+          continue
+        | none => pure ()
         match frames.back? with
         | some f =>
           match f.stop with

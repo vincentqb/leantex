@@ -2316,7 +2316,14 @@ def reports : List Report := [
     accept := ["lualatex 1.24 on invented articles: a colour in a section title after a page break grounds the pages from the heading's on, one in a figure's caption the figure's page on, one in a footnote the page its mark stands on; a command reading ifmmode sets its text branch in text and its math branch in a formula, the bold redefinition setting bold text and bold math, where this tree sets a bold redefinition inside a formula's text argument in the formula's regular style, named W0385; this tree sets the rest the same",
       "main's binary at 730c0b54 on the same probes: the parbox's colour and date draw W0301, the heading's colour grounds page 1, the unused definition draws W0104, the bold redefinition draws W0361 and the command reading ifmmode sets both branches with three W0301; the guards fail there",
       "the corpus built by main's binary at 70096387 and by this tree's: every PDF and web page byte-identical, and the diagnostics the same"]
-    state := .guarded "730c0b54" .before .author }
+    state := .guarded "730c0b54" .before .author },
+  { id := "R248", date := "2026-10-19"
+    what := "any error stopped the writer, so a document lualatex builds whole shipped nothing for a loss in one construct, where only unreadable input, a missing or too deep input, no usable font, an unwritable output or a failed assertion stops it; an end an enclosing environment answers, met while a group or a list stood open, was refused as matching nothing and left the document open, three errors for one loss; a begin naming no environment opened one that swallowed the document's end; the text before a document's start was named at no line, and text before a list's first item at the list's start"
+    pins := [check% htmlAssetChecks, check% diagnosticFontScopeChecks, check% parseChecks]
+    accept := ["main's binary at 70096387 on invented probes: text before a list's first item, a heading inside bold text and a page profile no registry names each stop the build with no artifact; an open group before the document's end draws three errors, an open list two and a begin naming nothing three with an unknown environment beside them; the text before the document's start is named at no line and the list's stray text at the list's begin. This tree ships each page beside its one error, exiting 1, names the open group, the open list and the nameless begin once each, and names both texts at their own lines; a missing input still ships nothing",
+      "lualatex 1.24 on the same probes: the open group and the heading inside bold text build cleanly, and the list's stray text is reported at the first item's line",
+      "the corpus built by main's binary at 70096387 and by this tree's: every artifact and diagnostic byte-identical but the theme sketch's, which reports its unreadable paper size as before and now ships its deck, three slides, its declared faces' use judged (three W0449 lines)"]
+    state := .guarded "70096387" .before .author }
 ]
 
 /-- The reports guarded but never seen failing, a count held in both directions. -/
