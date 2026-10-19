@@ -2154,7 +2154,7 @@ def reports : List Report := [
     pins := [check% Tests.PageTurns.checks]
     accept := ["lualatex on invented probes: a nine-line paragraph after a 518pt rule on an article page keeps its first line alone at the page's foot with no stretch above it, and with 40pt of stretch above the rule moves whole to the next page; this tree sets the same at its own page height, a page with no stretch keeping its club or widow as TeX does",
       "the guards' documents built by main's binary at 03c2ff1d: with 40pt of stretch on the page a club stands alone at its foot, and the preamble's widow penalty of 10000 stops the build (E0313); built here, the club moves with its paragraph and the declaration is read as the page's penalty",
-      "the corpus built by the trivlist-spacing tip's binary at 5c49de7c, this branch's parent, and by this tree's: every artifact byte-identical"]
+      "the corpus built by main's binary at 03c2ff1d and by this tree's: every artifact byte-identical; the typeset tier's centred fixture keeps its widow back, and its report fixture splits one more row of its long table, a page turn ahead of it moved (lowered, with its reason)"]
     state := .guarded "03c2ff1d" .before .author }
 ]
 
