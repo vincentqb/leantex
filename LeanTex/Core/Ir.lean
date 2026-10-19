@@ -9233,6 +9233,78 @@ end
 
 mutual
 
+/-- `plainTextList` onto `acc`, in time linear in the characters it reads. -/
+public def plainTextOntoList (acc : String) : List Inline → String
+  | [] => acc
+  | x :: rest => plainTextOntoList (plainTextOntoOne acc x) rest
+
+public def plainTextOntoOne (acc : String) (x : Inline) : String :=
+  match x with
+  | .text s => acc ++ s
+  | .math _ src => acc.append (mathFloor src)
+  | .formula _ _ body => acc.append (formulaFloor body)
+  | .styled _ body => plainTextOntoList acc body.toList
+  | .colored _ _ body => plainTextOntoList acc body.toList
+  | .located _ body => plainTextOntoList acc body.toList
+  | .role _ body => plainTextOntoList acc body.toList
+  | .link _ body => plainTextOntoList acc body.toList
+  | .decorated _ body | .boxed _ body => plainTextOntoList acc body.toList
+  | .onSteps _ body => plainTextOntoList acc body.toList
+  | .altSteps _ firstPage otherPage =>
+    plainTextOntoList (plainTextOntoList acc firstPage.toList) otherPage.toList
+  | .fill | .hspace _ _ | .rule _ _ _ | .strut _ | .italicCorr _ | .pageNumber | .pageCount => acc
+  | .image _ _ _ => acc
+  | .icon _ label => acc ++ label
+  | .label _ => acc
+  | .ref _ _ text _ => acc ++ text
+  | .cite _ keys => acc.append (citeMarks keys)
+  | .cited _ _ ink => plainTextOntoList acc ink.toList
+  | .footnote _ body => plainTextOntoList acc body.toList
+  | .linebreak _ => acc ++ " "
+
+end
+
+mutual
+
+private theorem plainTextOntoList_eq (acc : String) :
+    ∀ xs, acc ++ plainTextList xs = plainTextOntoList acc xs
+  | [] => by simp [plainTextOntoList, plainTextList]
+  | x :: rest => by
+    rw [plainTextOntoList, ← plainTextOntoList_eq _ rest, ← plainTextOntoOne_eq acc x, plainTextList,
+      String.append_assoc]
+
+private theorem plainTextOntoOne_eq (acc : String) (x : Inline) :
+    acc ++ plainTextOne x = plainTextOntoOne acc x := by
+  cases x <;> first
+    | rfl
+    | simp only [plainTextOntoOne, plainTextOne, ← plainTextOntoList_eq, String.append_assoc,
+        String.append_empty]
+
+end
+
+/-- `plainTextList` as the compiled program runs it. -/
+public def plainTextListOnto (xs : List Inline) : String := plainTextOntoList "" xs
+
+/-- `plainTextOne` as the compiled program runs it. -/
+public def plainTextOneOnto (x : Inline) : String := plainTextOntoOne "" x
+
+/-- `plainText` as the compiled program runs it. -/
+public def plainTextOnto (xs : Array Inline) : String := plainTextOntoList "" xs.toList
+
+@[csimp] public theorem plainTextList_onto : @plainTextList = @plainTextListOnto := by
+  funext xs
+  simp [plainTextListOnto, ← plainTextOntoList_eq]
+
+@[csimp] public theorem plainTextOne_onto : @plainTextOne = @plainTextOneOnto := by
+  funext x
+  simp [plainTextOneOnto, ← plainTextOntoOne_eq]
+
+@[csimp] public theorem plainText_onto : @plainText = @plainTextOnto := by
+  funext xs
+  simp [plainText, plainTextOnto, ← plainTextOntoList_eq]
+
+mutual
+
 /-- The text an overlay sequence shows with no snap state, onto `acc`, an alternation giving the
 floor's group (`HtmlDoc.altPairNodes`), where the generic fold visits both. -/
 -- conserves: none — one page's reading.

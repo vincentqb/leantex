@@ -6,7 +6,7 @@ import LeanTex.Core.PngEncode
 /-
 Benchmark leantex against lualatex on the bench corpus, median of `N` runs (default 5), or the
 measurement a flag selects; never a gate. `LEANTEX_BENCH_BINARY` names a saved compiler.
-Usage: lake build && lake env lean --run scripts/bench.lean [--boundary-only | --concurrency-only | --slides-only | --slides-compressed-only | --slides-selftest | --talk-only | --rasters-only | --families-only | --decode-only | --pages-only | --elab-only | --startup-only | --facts-only | --listings-only | --bib-only | --passes-only | --svg-only | --pdf-pages-only <f.pdf> | --faces-only <f.pdf>... | --doc-cost [--record] [--history <path>]]
+Usage: lake build && lake env lean --run scripts/bench.lean [--boundary-only | --concurrency-only | --slides-only | --slides-compressed-only | --slides-selftest | --talk-only | --rasters-only | --families-only | --decode-only | --pages-only | --elab-only | --md-only | --startup-only | --facts-only | --listings-only | --bib-only | --passes-only | --svg-only | --pdf-pages-only <f.pdf> | --faces-only <f.pdf>... | --doc-cost [--record] [--history <path>]]
 -/
 
 def compiler : IO String := do
@@ -190,13 +190,14 @@ def benchPages (n : Nat) (leantex : String) : IO Unit := do
 
 
 /-- A phase of an invented document, the median of `n` builds. -/
-def phaseRunMs (phase : String) (n : Nat) (leantex label file text : String) : IO Nat :=
+def phaseRunMs (phase : String) (n : Nat) (leantex label file text : String)
+    (output : String := "out.pdf") : IO Nat :=
   IO.FS.withTempDir fun tmp => do
     IO.FS.writeFile (tmp / file) text
     let mut times : Array Nat := #[]
     for _ in [0:n] do
       let out ← IO.Process.output { cmd := leantex, args := #["-v", "build",
-        (tmp / file).toString, "-o", (tmp / "out.pdf").toString] }
+        (tmp / file).toString, "-o", (tmp / output).toString] }
       if out.exitCode != 0 then die s!"benchmark command failed: {leantex} on {label}"
       match phaseMs phase (out.stdout ++ out.stderr) with
       | some ms => times := times.push ms
@@ -258,6 +259,25 @@ def elabGrowth (n : Nat) (leantex : String) : IO Unit := do
   growthBound "input, 32 / 8 sections of macro uses"
     (← phaseRunMs "input" n leantex "8 sections of macro uses" "macros.tex" (macroSections 8))
     (← phaseRunMs "input" n leantex "32 sections of macro uses" "macros.tex" (macroSections 32))
+
+/-- One markdown paragraph of `k` words, each `every`th carrying an inline note. -/
+def mdParagraph (every k : Nat) : String :=
+  " ".intercalate ((inventedWords 0 k).splitOn " " |>.zipIdx.map fun (w, i) =>
+    if every != 0 && i % every == 0 then w ++ s!"^[Note {i}.]" else w) ++ "\n"
+
+/-- A markdown paragraph's text phases, whose cost may grow only linearly: the font phase reading
+its characters, and the web page resolving its notes' links. -/
+def mdGrowth (n : Nat) (leantex : String) : IO Unit := do
+  growthBound "font, 256000 / 64000 words in a markdown paragraph"
+    (← phaseRunMs "font" n leantex "64000 words in a markdown paragraph" "para.md"
+      (mdParagraph 0 64000))
+    (← phaseRunMs "font" n leantex "256000 words in a markdown paragraph" "para.md"
+      (mdParagraph 0 256000))
+  growthBound "html, 32000 / 8000 notes in one paragraph"
+    (← phaseRunMs "html" n leantex "8000 notes in one paragraph" "notes.md" (mdParagraph 1 8000)
+      "out.html")
+    (← phaseRunMs "html" n leantex "32000 notes in one paragraph" "notes.md" (mdParagraph 1 32000)
+      "out.html")
 
 /-- A facts record with each span's lines `by_` further down. -/
 def moveSpans (j : Lean.Json) (by_ : Nat) : Lean.Json :=
@@ -1575,6 +1595,9 @@ def main (args : List String) : IO UInt32 := do
   if args == ["--elab-only"] then
     elabGrowth n leantex
     return 0
+  if args == ["--md-only"] then
+    mdGrowth n leantex
+    return 0
   if args == ["--startup-only"] then
     benchStart n leantex
     return 0
@@ -1623,6 +1646,7 @@ def main (args : List String) : IO UInt32 := do
   benchListings n 8
   listingGrowth n
   elabGrowth n leantex
+  mdGrowth n leantex
   benchBibGrowth n
   benchPasses n
   return 0

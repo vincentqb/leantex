@@ -10198,12 +10198,13 @@ Regions): give each one a name, \\begin{nav}[label = Site]")
   if facts.reveals > 0 then
     head := head.push (Node.style revealCss)
   -- every in-page link resolves or is named; `#` and `top` in any ASCII case always resolve
-  let mut checked : Array String := #[]
+  let anchors : Std.HashSet String := facts.ids.foldl (fun s kv => s.insert kv.1) {}
+  let mut checked : Std.HashSet String := {}
   for fref in facts.fragmentRefs do
     let frag := (fref.drop 1).toString
-    unless Ir.fragmentTop frag || facts.ids.any (·.1 == frag) || routes.contains frag ||
+    unless Ir.fragmentTop frag || anchors.contains frag || routes.contains frag ||
         checked.contains fref do
-      checked := checked.push fref
+      checked := checked.insert fref
       diags := diags.push (Diag.of .W0326
         s!"in-page link '{fref}' has no target anchor on this page"
         (help := some (if facts.ids.isEmpty then
