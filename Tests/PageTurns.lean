@@ -51,24 +51,28 @@ def checks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let fromFirst := loose.filter fun s => 0 < s.headD 0 && 1 < (s.filter (0 < ·)).length
   t "page turns: a page with room to stretch keeps no club or widow line"
     (!fromFirst.isEmpty && !fromFirst.any lone)
+  let forbidden := splits oneFace "\\clubpenalty=10000\n\\widowpenalty 10000\\relax\n" 0
   t "page turns: a declared club and widow penalty of 10000 leaves no lone line on a tight page"
-    (!(splits oneFace "\\clubpenalty=10000\n\\widowpenalty 10000\\relax\n" 0).any lone)
+    (forbidden.any (fun s => 1 < (s.filter (0 < ·)).length) && !forbidden.any lone)
   let headed := splits oneFace "" 40 (head := true)
   t "page turns: a paragraph after a heading leaves the heading its first two lines"
     (headed.all fun s => match s.dropWhile (· == 0) with
       | 0 :: _ | 1 :: _ => false
       | _ => true)
-  -- LaTeX's `\parskip` stretch at each paragraph boundary is the page's to spend.
-  let many := (List.range 100).map fun i => split oneFace (prose 30 (4 * i))
-  t "page turns: a page of thirty paragraphs keeps no club or widow line, as LaTeX's stretch lets it"
-    (many.any (fun s => 1 < (s.filter (0 < ·)).length) && !many.any lone)
+  -- An equation between a heading and its paragraph sets a paragraph, which frees the one after it.
+  let shown := (List.range 120).map fun i => split oneFace ("\\documentclass{article}\n" ++
+    s!"\\begin\{document}\n\\section\{Lima}\n\\vspace\{{360 + 3 * i}pt plus 40pt}\n" ++
+    "\\begin{equation} x = y \\end{equation}\n\n" ++ String.join (List.replicate 60 "Kilo ") ++
+    "Kilo.\n\nMike words.\n\\end{document}\n")
+  t "page turns: an equation after a heading frees the paragraph after it to keep no club"
+    (shown.any (fun s => 1 < (s.filter (0 < ·)).length) && !shown.any lone)
   -- A table between a heading and its paragraph frees the paragraph, as its cell's paragraph does.
-  let headed (between : String) : List (Option Nat × Option Nat) := (List.range 100).map fun i =>
+  let meets (between : String) : List (Option Nat × Option Nat) := (List.range 100).map fun i =>
     let out := (fittedOf oneFace (elabStr (prose 20 (4 * i) ("\\section{Lima}\n" ++ between))).1).out
     let pageOf (w : String) := out.pages.findIdx? fun p => p.lines.any fun l => hasStr (lineText l) w
     (pageOf "Lima", pageOf "Kilo")
   t "page turns: a table after a heading frees the paragraph after it to move whole"
-    ((headed "\\begin{center}\n\\begin{tabular}{l}Oscar\\end{tabular}\n\\end{center}\n").any
+    ((meets "\\begin{center}\n\\begin{tabular}{l}Oscar\\end{tabular}\n\\end{center}\n").any
       fun (h, k) => h.isSome && k.isSome && h != k)
   let src := turned "\\widowpenalty=10000\n" 0 400
   let (doc, ds) := elabStr src

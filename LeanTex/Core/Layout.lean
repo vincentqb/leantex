@@ -11392,6 +11392,8 @@ public theorem pictureBox_projects (geom : Geom) (fs : FontSet)
 when it cannot fit, with W0335 naming the overrun. -/
 private def collectPicture (r : Rd) (a : Acc) (pic : Ir.Pic.Picture)
     (indent : Sp) (center : Bool) (display : Option DisplayJob := none) : Acc :=
+  -- A picture sets a paragraph of its own, which clears TeX's `\@nobreak`.
+  let a := { a with noBreakNext := false }
   let metric := picMetric r.fs r.imgs r.geom r.xHeight
   let boxes := pic.inkBoxes metric
   let bb := pictureBox r.geom r.fs r.imgs r.xHeight pic
@@ -11505,6 +11507,8 @@ private def collectParaBlock (r : Rd) (a : Acc) (content : Array Inline) (indent
       (leaf := leaf) (span := Struct.leafCountInlines content)
 
 private def collectEquation (r : Rd) (a : Acc) (num : Array Inline) (content : Array Inline) (indent : Sp) : Acc := Id.run do
+  -- A display sets its paragraph, which clears TeX's `\@nobreak`.
+  let a := { a with noBreakNext := false }
   -- A numbered display sets [mirror box, fil, formula, fil, tag], amsmath's equation shape.
   let dj := a.displayJob r (lead := 2)
   let a := a.openDisplay r dj
@@ -15042,24 +15046,10 @@ private structure TurnRoom where
   fils : Nat
   shipped : Nat
 
-/-- How many paragraph boundaries the open page holds: changes of block between its counted lines. -/
-private def Spacing.Page.boundaries (b : B) : Nat := Id.run do
-  let mut n := 0
-  let mut last : Option Nat := none
-  for l in b.cur.lines do
-    if l.counted && l.leaf.isSome then
-      if last.isSome && l.leaf != last then n := n + 1
-      last := l.leaf
-  return n
-
-/-- The page's room and glue where it could end here, LaTeX's `\parskip` stretch at each paragraph
-boundary on it counted where the engine's peer gap carries less. -/
 private def Spacing.Page.turnRoom (b : B) : TurnRoom :=
-  let par := (b.geom.texParskip.resolve b.geom.fontSize b.xHeight).stretch -
-    (b.geom.parskip.resolve b.geom.fontSize b.xHeight).stretch
   { room := noteFloor b.bottom b.noteGap b.notesH b.noteHang - (b.y + b.prevDepth)
-    stretch := b.pageStretch + (b.boundaries : Int) * max 0 par, shrink := b.pageShrink
-    fils := b.pageFils, shipped := b.pages.size }
+    stretch := b.pageStretch, shrink := b.pageShrink, fils := b.pageFils
+    shipped := b.pages.size }
 
 /-- TeX's cost of a page ending with this room at penalty `pen` (tex.web §1005): its badness and the
 penalty, the deplorable cost past infinite badness, and `none` where no break stands. -/

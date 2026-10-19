@@ -216,13 +216,12 @@ def breakableTitleChecks (ref : IO.Ref (List String)) : IO Unit := do
         s!"Kilo {i + 1} words in an invented paragraph long enough to fill a line of the " ++
           "article's measure, more or less.") ++
       "\n\n\\begin{block}{Alpha}\nLima words.\\\\\nMike words.\n\\end{block}\n\\end{document}\n"
-  -- lualatex keeps the two lines together over thirty paragraphs' stretch, moving them whole.
   let splits := (List.range 30).filter fun k =>
     let out := (fittedOf fira (elabStr (article (30 + k))).1).out
-    match pageOf out "Lima", pageOf out "Mike" with
-    | some l, some m => m != l
-    | _, _ => true
-  t "breakable title: in flow a block's two-line body moves whole rather than split, as LaTeX's does"
-    splits.isEmpty
+    match pageOf out "Alpha", pageOf out "Lima", pageOf out "Mike" with
+    | some a, some l, some m => a == l && m == l + 1
+    | _, _, _ => false
+  t "breakable title: in flow a block's body breaks after its first line, as LaTeX's may"
+    (!splits.isEmpty)
 
 end Tests.FrameFit
