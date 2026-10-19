@@ -2282,7 +2282,13 @@ def reports : List Report := [
     accept := ["lualatex 1.24 on invented probes: a small list's items 14.94pt apart, a trivlist's 15.94pt, the abstract's lines 11pt; lists under tightlist, one after another and nested, 11.95pt apart and 19.93pt below their lead; a topsep set in a list's body spaces its center 22.91pt from the item, and a center after the list as far as without it; the trivlist scope's topsep of 20pt sets a center in a list 35.87pt below its item; under the parskip package every line of a list, a quote, a center and the text around them 17.93pt below the one before; a caption inside a center 35.8pt above the text after the float; this tree sets each the same to the point, but the caption's 34pt",
       "main's binary at 6714141d0 on the same probes: the small list 20.2pt apart, the trivlist's items 18pt, the abstract led at 10.8pt, tightlist named and dropped with its items 20pt apart, the trivlist scope named and dropped, the parskip package's lists 28pt below the text and their items 20pt apart, the caption inside a center 24pt above the text after; the guards fail there",
       "the corpus and the private references built by main's binary at 6714141d0 and by this tree's: every web page visually the same, and every PDF byte-identical but the abstract fixture, whose abstract leads at 11pt, and the float-center fixture, whose captions inside a center stand 10pt more above what follows them"]
-    state := .guarded "6714141d0" .before .author }
+    state := .guarded "6714141d0" .before .author },
+  { id := "R999", date := "2026-10-19"
+    what := "memoir's floats before its first chapter were numbered 1 where memoir prints 0.1, KOMA-Script's equations there 1 where it prints 0.1, and a heading KOMA-Script leaves unnumbered, an added chapter or section or a front-matter chapter, left the counts within it running where it restarts them"
+    pins := [check% Tests.Chapters.numberingStateChecks]
+    accept := ["lualatex on invented probes: memoir's Figure 0.1 and Table 0.1 and equation (1) before the first chapter, Figure 1.1 in it; scrbook's and scrreprt's Figure 1, Table 1 and equation (0.1) there; after an added chapter Figure 1.1, equation (1.1) and footnote 1 again, the starred forms continuing with 1.2 and 3, an added chapter before any numbered one restarting the floats at 1; memoir's and scrbook's front matter numbering floats and equations alone, scrbook's unstarred front-matter chapters restarting them; an added section restarting its subsections at 1.1; book and report as before; this tree sets each the same",
+      "the numbering train's binary at e5f31fb4 on the same probes: memoir's Figure 1, KOMA-Script's equation (1), and Figure 1.2 after the added chapter; the guards fail there"]
+    state := .guarded "e5f31fb4" .before .author }
 ]
 
 /-- The reports guarded but never seen failing, a count held in both directions. -/

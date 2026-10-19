@@ -10657,7 +10657,9 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
         if name == cls then options.toList.filter titleOpts.contains else []
       let given := (KeyVal.items (opt.getD "")).any titleOpts.contains || !passed.isEmpty
       let extra := passed ++ (if titlepageClasses.contains cls && !given then ["titlepage"] else []) ++
-        (if chapterClasses.contains cls then ["chapters"] else [])
+        (if chapterClasses.contains cls then
+          -- memoir's `\thefigure` and `\thetable` carry the chapter through the main matter.
+          [if cls == "memoir" then "chapters=floats" else "chapters"] else [])
       let opt := if extra.isEmpty then opt else some (",".intercalate (opt.toList ++ extra))
       -- premise: none — lualatex sets memoir alike under either option, as scripts/inert-diff.lean probes
       let memoirTitle (kv : String) : Bool := cls == "memoir" && ["titlepage", "notitlepage"].contains kv

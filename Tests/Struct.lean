@@ -103,7 +103,7 @@ def structChecks (ref : IO.Ref (List String)) : IO Unit := do
     (structKinds tbl == #[.table] && structKinds (structKids tbl) == #[.row]
       && structKinds (structKids (structKids tbl)) == #[.cell, .cell]
       && structTexts tbl == #["a", "b"])
-  let fl := Struct.ofBlocks #[.float .figure (some ⟨"", 1⟩) false #[para] #[.text "Cap"]]
+  let fl := Struct.ofBlocks #[.float .figure (some ⟨"", 1, 0⟩) false #[para] #[.text "Cap"]]
   t "float is a figure, its caption first whatever capAbove says"
     (structKinds fl == #[.figure] && structKinds (structKids fl) == #[.caption, .paragraph]
       && structTexts fl == #["Cap", "one"])

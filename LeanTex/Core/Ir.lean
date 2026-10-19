@@ -4769,6 +4769,8 @@ the class numbers floats by chapter. -/
 public structure FloatNum where
   within : String := ""
   n : Nat
+  /-- The chapter begun last, whose start restarts the count where it keeps its number. -/
+  scope : Nat := 0
   deriving Repr, BEq, DecidableEq, Inhabited
 
 /-- A literal number is a float's count outside any chapter. -/
@@ -6074,8 +6076,9 @@ private structure FloatCtr where
   tab : Nat := 0
   sub : Nat := 0
   alg : Nat := 0
-  /-- The chapter the counters stand in, numbering by chapter. -/
+  /-- The chapter the counters stand in, numbering by chapter, and the chapter begun last. -/
   within : String := ""
+  scope : Nat := 0
   deriving Repr, BEq
 
 private def FloatCtr.get : FloatCtr → FloatKind → Nat
@@ -6172,13 +6175,16 @@ private def numberFloatOne (within : Bool) (c : FloatCtr) : Block → FloatCtr �
   | .float kind num capAbove body caption =>
     -- By chapter, a float of a chapter the counters have not stood in starts its kinds from one.
     let lab := (num.map (·.within)).getD ""
+    let scope := (num.map (·.scope)).getD 0
     let byChapter := within && (kind == .figure || kind == .table)
-    let c := if byChapter && lab != c.within then { c with fig := 0, tab := 0, within := lab } else c
+    let c := if byChapter && (lab != c.within || scope != c.scope) then
+      { c with fig := 0, tab := 0, within := lab, scope } else c
     let cAfter := if caption.isEmpty then c else c.bump kind
     let num := if caption.isEmpty then none
-      else some { within := if byChapter then lab else "", n := c.get kind + 1 }
+      else some ⟨if byChapter then lab else "", c.get kind + 1, if byChapter then scope else 0⟩
     let (cBody, body2) := numberFloatList within { cAfter with sub := 0 } #[] body.toList
-    (⟨cBody.fig, cBody.tab, cAfter.sub, cBody.alg, cBody.within⟩, .float kind num capAbove body2 caption)
+    (⟨cBody.fig, cBody.tab, cAfter.sub, cBody.alg, cBody.within, cBody.scope⟩,
+      .float kind num capAbove body2 caption)
 
 private def numberFloatItems (within : Bool) (c : FloatCtr) (out : Array (Array Block)) :
     List (Array Block) → FloatCtr × Array (Array Block)
@@ -6195,6 +6201,21 @@ private def numberFloatCols (within : Bool) (c : FloatCtr) (out : Array (BoxWidt
     numberFloatCols within c2 (out.push (w, body2)) rest
 
 end
+
+/-- By chapter, a captioned figure or table takes one past its kind's count in the chapter the
+counters stand in, and one where its chapter began after them, a chapter keeping its number
+included. -/
+private theorem numberFloatOne_chapter_exact (c : FloatCtr) (kind : FloatKind) (f : FloatNum)
+    (capAbove : Bool) (body : Array Block) (caption : Array Inline)
+    (hk : kind = .figure ∨ kind = .table) (hcap : caption.isEmpty = false) :
+    ∃ body2, (numberFloatOne true c (.float kind (some f) capAbove body caption)).2 =
+      .float kind (some ⟨f.within,
+        if f.within != c.within || f.scope != c.scope then 1 else c.get kind + 1, f.scope⟩)
+        capAbove body2 caption := by
+  rcases hk with rfl | rfl <;>
+  · simp only [numberFloatOne, hcap]
+    by_cases hw : f.within = c.within <;> by_cases hs : f.scope = c.scope <;>
+      simp +decide [hw, hs, FloatCtr.get]
 
 /-- The body's captioned floats numbered, by chapter where `within`, as a class with chapters
 numbers them (`\@addtoreset`). -/

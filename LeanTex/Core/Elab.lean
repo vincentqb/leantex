@@ -512,6 +512,15 @@ public structure Counters where
   chapterInline : Bool := false
   /-- The chapter counter. -/
   chapNum : Nat := 0
+  /-- The chapters begun, numbered or KOMA-Script's `\addchap`, each restarting the counters
+  numbered within a chapter. -/
+  chapScope : Nat := 0
+  /-- Floats carry the chapter's number before the first chapter too, as memoir's `\thefigure`. -/
+  floatsZero : Bool := false
+  /-- Equations carry the chapter's number before the first chapter too, as KOMA-Script's. -/
+  eqZero : Bool := false
+  /-- An unstarred heading left unnumbered restarts the counters within it, as KOMA-Script's do. -/
+  restartsUnnumbered : Bool := false
   /-- Chapters number here: book.cls's main matter, or a class without its divisions. -/
   mainMatter : Bool := true
   /-- The equation counter, restarting under the `\numberwithin` level
@@ -3724,8 +3733,11 @@ private def chapterLabel (c : Counters) : String :=
 /-- The chapter a float stands in where the class numbers floats by chapter, for the numbering
 walk (`Ir.numberFloats`). -/
 private def floatChapter (c : Counters) : Option Ir.FloatNum :=
-  -- report.cls's `\thefigure` sets the chapter only once one has been numbered.
-  if c.chapters && c.chapNum > 0 then some { within := chapterLabel c, n := 0 } else none
+  -- report.cls's `\thefigure` sets the chapter once one is numbered, memoir's in the main matter.
+  let shown := if c.floatsZero then c.mainMatter else c.chapNum > 0
+  if c.chapters then
+    some { within := if shown then chapterLabel c else "", n := 0, scope := c.chapScope }
+  else none
 
 /-- The first heading level's reading the counters stand in. -/
 private def secBase (c : Counters) : SecBase :=
@@ -3736,7 +3748,10 @@ numbered within a heading counter. -/
 private def withinNumber (c : Counters) (within : Option Nat) (v : Nat) : String :=
   match within with
   -- report.cls's `\theequation`: `\thechapter.` only once a chapter is numbered.
-  | some 0 => if c.chapNum > 0 then s!"{chapterLabel c}.{v}" else toString v
+  | some 0 =>
+    -- KOMA-Script's `\theequation` sets the chapter in the main matter.
+    if (if c.eqZero then c.mainMatter else c.chapNum > 0) then s!"{chapterLabel c}.{v}"
+    else toString v
   | some lvl => s!"{renderSecLevel c.secFmts c.secNums (secBase c) secFmtFuel lvl}.{v}"
   | none => toString v
 
@@ -7195,7 +7210,8 @@ public def classOptionRead (model : Ir.PageModel) (o : String) : Bool :=
     sized k || (k.endsWith "paper" && paper (k.dropEnd "paper".length).toString) ||
       (classOptionFlags.lookup .flow).any (·.contains k) || abstractFormOptions.contains k
   | (k, none), m => sized k || (classOptionFlags.lookup m).any (·.contains k)
-  | (k, some v), .flow => (k == "paper" && paper v) || (k == "twoside" && v == "true")
+  | (k, some v), .flow =>
+    (k == "paper" && paper v) || (k == "twoside" && v == "true") || (k == "chapters" && v == "floats")
   | (k, some v), .frame => k == "aspectratio" && (Ir.slidesStageNamed v).isSome
   | (_, some _), .face => false
 
@@ -7297,6 +7313,10 @@ private def sectionNumber (ctx : Ctx) (level : Nat) (starred : Bool) :
   -- outside a deck, whose every heading steps its counter as beamer's `\refstepcounter` does
   if (starred && !deck) || (!ctx.numberHeadings && !deck) || level == 0 || level > 3 ||
       (!deck && (level : Int) > st.ctr.secDepth) then
+    if !starred && st.ctr.restartsUnnumbered then
+      let (s1, s2, s3) := st.ctr.secNums
+      let nums := if level == 1 then (s1, 0, 0) else if level == 2 then (s1, s2, 0) else (s1, s2, s3)
+      modify fun st => { st with ctr := { st.ctr with secNums := nums, runNums := (0, 0) } }
     return none
   let (s1, s2, s3) := st.ctr.secNums
   let nums := match level with
@@ -7324,9 +7344,15 @@ private def contentsStyle (parts : List String) : Option (List Ir.ContentsShow) 
 restarting within it (report.cls's `\@addtoreset`); the number it ships, and whether lettered. -/
 private def chapterNumber (ctx : Ctx) (starred : Bool) : EM (Option (String × Bool)) := do
   let st ← get
-  if starred || !ctx.numberHeadings || st.ctr.secDepth < 0 || !st.ctr.mainMatter then return none
-  let ctr := { st.ctr with chapNum := st.ctr.chapNum + 1, secNums := (0, 0, 0), runNums := (0, 0),
-                           fnNum := 0 }
+  if starred || !ctx.numberHeadings || st.ctr.secDepth < 0 || !st.ctr.mainMatter then
+    if !starred && st.ctr.restartsUnnumbered then
+      modify fun st =>
+        let c := st.ctr
+        { st with ctr := { c with chapScope := c.chapScope + 1, secNums := (0, 0, 0),
+                                  runNums := (0, 0), fnNum := 0 } }
+    return none
+  let ctr := { st.ctr with chapNum := st.ctr.chapNum + 1, chapScope := st.ctr.chapScope + 1,
+                           secNums := (0, 0, 0), runNums := (0, 0), fnNum := 0 }
   let num := chapterLabel ctr
   modify fun st => { st with ctr := ctr, refTarget := some { kind := some .chapter, num := num } }
   return some (num, ctr.inAppendix)
@@ -10579,7 +10605,7 @@ private def withinSnap (c : Counters) : Option Nat → String
       | 1 => s!"{s1}"
       | 2 => s!"{s1}.{s2}"
       | _ => s!"{s1}.{s2}.{s3}"
-    (if c.inAppendix then "A" else "") ++ (if c.chapters then s!"{c.chapNum}:" else "") ++ levels
+    (if c.inAppendix then "A" else "") ++ (if c.chapters then s!"{c.chapScope}:" else "") ++ levels
 
 /-- Steps the equation counter and renders `\theequation`, restarting within
 its heading as amsmath's `\numberwithin` does. -/
@@ -17152,10 +17178,15 @@ public def applyDecl (s : PreState) (d : PDecl) : EM PreState := do
       | some o => { s with classOptions := o }
       | none => s
     -- report.cls: chapters, `secnumdepth` and `tocdepth` 2, and equations numbered within each chapter.
-    if (KeyVal.items (options.getD "")).contains "chapters" then
+    let items := KeyVal.items (options.getD "")
+    if (cls.bind Ir.DocClass.ofString?) == some .koma then
+      modify fun st => { st with ctr := { st.ctr with restartsUnnumbered := true } }
+    if items.contains "chapters" || items.contains "chapters=floats" then
       let inline := (cls.bind Ir.DocClass.ofString?) == some .koma
+      let floatsZero := items.contains "chapters=floats"
       modify fun st => { st with ctr := { st.ctr with chapters := true, secDepth := 2, tocDepth := 2,
-                                                       eqWithin := some 0, chapterInline := inline } }
+                                                       eqWithin := some 0, chapterInline := inline,
+                                                       eqZero := inline, floatsZero } }
     match cls with
     | some named =>
       match Ir.DocClass.ofString? named with

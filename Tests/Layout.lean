@@ -2752,11 +2752,11 @@ def tableChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
     "\\caption{The parent}\\end{figure}")
   t "subfigures elaborate to lettered sub floats in one columns row"
     (match (elabStr subSrc).1.body with
-     | #[.float .figure (some ⟨"", 1⟩) false inner cap] =>
+     | #[.float .figure (some ⟨"", 1, 0⟩) false inner cap] =>
        Ir.plainText cap == "The parent" &&
        (match inner with
-        | #[.columns #[(w1, #[.float .sub (some ⟨"", 1⟩) false _ c1]),
-                       (w2, #[.float .sub (some ⟨"", 2⟩) false _ c2])]] =>
+        | #[.columns #[(w1, #[.float .sub (some ⟨"", 1, 0⟩) false _ c1]),
+                       (w2, #[.float .sub (some ⟨"", 2, 0⟩) false _ c2])]] =>
           w1.pos == .first && w2.pos == .first &&
           w1.resolve (1000 * Dim.Length.quantum) == some (400 * Dim.Length.quantum) &&
           w2.resolve (1000 * Dim.Length.quantum) == some (400 * Dim.Length.quantum) &&
@@ -2773,10 +2773,10 @@ def tableChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
       "\\begin{figure}\n" ++
       "\\begin{subfigure}{0.9\\textwidth}b\\caption{two}\\end{subfigure}\n" ++
       "\\caption{P2}\\end{figure}"))).1.body with
-     | #[.float .figure (some ⟨"", 1⟩) false i1 _, .float .figure (some ⟨"", 2⟩) false i2 _] =>
+     | #[.float .figure (some ⟨"", 1, 0⟩) false i1 _, .float .figure (some ⟨"", 2, 0⟩) false i2 _] =>
        (match i1, i2 with
-        | #[.columns #[(_, #[.float .sub (some ⟨_, n1⟩) _ _ _])]],
-          #[.columns #[(_, #[.float .sub (some ⟨_, n2⟩) _ _ _])]] =>
+        | #[.columns #[(_, #[.float .sub (some ⟨_, n1, _⟩) _ _ _])]],
+          #[.columns #[(_, #[.float .sub (some ⟨_, n2, _⟩) _ _ _])]] =>
           n1 == 1 && n2 == 1
         | _, _ => false)
      | _ => false)

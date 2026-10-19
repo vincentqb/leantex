@@ -266,6 +266,58 @@ line below ({head - ktop}, {body - head}, {bare - ktop})"
   t s!"a float before the first chapter has no chapter, and algorithms number through ({fitted early})"
     ((fitted early).any (hasStr · "Figure1:Early") && (fitted early).any (hasStr · "Figure1.1:Late") &&
       (fitted early).any (hasStr · "Algorithm1:Algo") && (fitted early).any (hasStr · "Algorithm2:Algb"))
+  -- lualatex: memoir's floats before the first chapter are 0.1 and its equations 1; KOMA-Script's
+  -- floats 1 and its equations 0.1.
+  let zero (cls : String) : String := doc cls ("\\begin{figure}x\\caption{Early}\\end{figure}\n" ++
+    "\\begin{table}x\\caption{Tab}\\end{table}\n\\begin{equation}a = b\\end{equation}\n" ++
+    "\\chapter{Alpha}\n\\begin{figure}y\\caption{Late}\\end{figure}")
+  t s!"memoir numbers floats before the first chapter within chapter 0 ({fitted (zero "{memoir}")})"
+    ((fitted (zero "{memoir}")).any (hasStr · "Figure0.1:Early") &&
+      (fitted (zero "{memoir}")).any (hasStr · "Table0.1:Tab") &&
+      (fitted (zero "{memoir}")).any (hasStr · "(1)") &&
+      (fitted (zero "{memoir}")).any (hasStr · "Figure1.1:Late"))
+  t s!"KOMA-Script numbers equations before the first chapter within chapter 0 ({fitted (zero "{scrbook}")})"
+    ((fitted (zero "{scrbook}")).any (hasStr · "Figure1:Early") &&
+      (fitted (zero "{scrbook}")).any (hasStr · "(0.1)") &&
+      (fitted (zero "{scrbook}")).any (hasStr · "Figure1.1:Late"))
+  -- lualatex: \addchap restarts the figures, equations and footnotes, the chapter's number standing;
+  -- \addchap* and \chapter* restart nothing.
+  let restart (cmd : String) : String := doc "{scrbook}" ("\\chapter{Alpha}\n" ++
+    "\\begin{figure}x\\caption{One}\\end{figure}\n\\begin{equation}a = b\\end{equation}\n" ++
+    "Text\\footnote{first} more\\footnote{second}.\n" ++ cmd ++ "{Extra}\n" ++
+    "\\begin{figure}y\\caption{Two}\\end{figure}\n\\begin{equation}c = d\\end{equation}\n" ++
+    "Text\\footnote{third}.")
+  let added := fitted (restart "\\addchap")
+  t s!"KOMA-Script's \\addchap restarts a chapter's counters ({added})"
+    (added.any (hasStr · "Figure1.1:Two") && (added.filter (hasStr · "(1.1)")).length == 2 &&
+      added.any (hasStr · "1third"))
+  t s!"\\addchap* and \\chapter* restart nothing ({fitted (restart "\\addchap*")})"
+    (["\\addchap*", "\\chapter*"].all fun c =>
+      (fitted (restart c)).any (hasStr · "Figure1.2:Two") && (fitted (restart c)).any (hasStr · "(1.2)") &&
+        (fitted (restart c)).any (hasStr · "3third"))
+  -- lualatex: memoir's and scrbook's front matter number floats and equations alone; an unstarred
+  -- chapter KOMA-Script leaves unnumbered restarts them, before any numbered chapter too, and an
+  -- added section restarts its subsections.
+  let front (cls : String) : List String := fitted (doc cls ("\\frontmatter\n\\chapter{FA}\n" ++
+    "\\begin{figure}x\\caption{FAone}\\end{figure}\n\\begin{figure}x\\caption{FAtwo}\\end{figure}\n" ++
+    "\\begin{equation}a = b\\end{equation}\n\\chapter{FB}\n\\begin{figure}x\\caption{FBone}\\end{figure}\n" ++
+    "\\mainmatter\n\\chapter{Main}\n\\begin{figure}x\\caption{Mone}\\end{figure}"))
+  t s!"the front matter numbers floats and equations alone, KOMA-Script restarting them ({front "{scrbook}"})"
+    ((front "{scrbook}").any (hasStr · "Figure1:FAone") && (front "{scrbook}").any (hasStr · "Figure2:FAtwo") &&
+      (front "{scrbook}").any (hasStr · "(1)") && (front "{scrbook}").any (hasStr · "Figure1:FBone") &&
+      (front "{scrbook}").any (hasStr · "Figure1.1:Mone") &&
+      (front "{memoir}").any (hasStr · "Figure1:FAone") && (front "{memoir}").any (hasStr · "Figure1.1:Mone"))
+  let early := fitted (doc "{scrreprt}" ("\\begin{figure}x\\caption{Ea}\\end{figure}\n" ++
+    "\\addchap{Intro}\n\\begin{figure}x\\caption{Eb}\\end{figure}"))
+  t s!"KOMA-Script's \\addchap before any numbered chapter restarts the floats ({early})"
+    (early.any (hasStr · "Figure1:Ea") && early.any (hasStr · "Figure1:Eb"))
+  let sec := fitted (doc "{scrartcl}" ("\\section{Alpha}\n\\subsection{One}\n\\subsection{Two}\n" ++
+    "\\addsec{Bravo}\n\\subsection{Three}"))
+  t s!"KOMA-Script's \\addsec restarts its subsections ({sec})"
+    (sec.any (hasStr · "1.2Two") && sec.any (hasStr · "1.1Three"))
+  t "a chapters option with another value leaves the article's sections as they number"
+    ((fitted (doc "[chapters=false]{article}" "\\section{Alpha}\n\\subsection{Bravo}")).any
+      (hasStr · "1.1Bravo"))
   let declared := doc "{report}" "\\chapter{Alpha}\n\\begin{figure}x\\caption{One}\\end{figure}"
     "\\renewcommand{\\thefigure}{\\arabic{figure}}\n"
   t "a declared \\thefigure under chapters is named, not read"
