@@ -2024,6 +2024,10 @@ def faceUseChecks (ref : IO.Ref (List String)) : IO Unit := do
       !reads "@property --w { syntax: '*'; inherits: true; initial-value: bold }" &&
       !reads "em { font-style: revert }" &&
       !reads "@page { @top-center { content: \"x\" } }" && reads "@page { margin: 1cm }")
+  t "face use: a quote keyword in content may set any quotation mark"
+    ((HtmlFaces.contentChars #[] "open-quote").contains '“' &&
+      (HtmlFaces.contentChars #[] "close-quote").contains '»' &&
+      (HtmlFaces.contentChars #[] "\"x\"") == "x")
   t "face use: a content string's escapes read as CSS Syntax reads them"
     (HtmlFaces.unescape "\\3c x\\\"y\\\n".toList == "<x\"y" &&
       HtmlFaces.unescape "\\1D44E".toList == "𝑎" && HtmlFaces.unescape "\\".toList == "")

@@ -605,9 +605,9 @@ public def unescape (cs : List Char) : String := Id.run do
     unless h.isEmpty do out := out.push (Char.ofNat (value h))
   return out
 
-/-- The characters a `content` value may print: its strings, a counter's digits and letters, and
-the attributes it reads. -/
-def contentChars (attrs : Array (String × String)) (v : String) : String := Id.run do
+/-- The characters a `content` value may print: its strings, a counter's digits and letters, the
+attributes it reads, and the quotation marks a quote keyword may set. -/
+public def contentChars (attrs : Array (String × String)) (v : String) : String := Id.run do
   let mut out := ""
   for a in Css.atoms v do
     match a with
@@ -616,6 +616,8 @@ def contentChars (attrs : Array (String × String)) (v : String) : String := Id.
         out := out ++ unescape (if rest.getLast? == some q then rest.dropLast else rest)
     | [] => pure ()
   if (v.splitOn "counter").length > 1 then out := out ++ counterChars
+  if (v.splitOn "open-quote").length > 1 || (v.splitOn "close-quote").length > 1 then
+    out := out ++ "\"'“”‘’«»‹›„‚"
   for part in (v.splitOn "attr(").drop 1 do
     let name := (part.takeWhile (fun c => c != ')' && c != ',' && !Css.isWs c)).toString
     out := out ++ ((attrs.find? (·.1 == name)).map (·.2)).getD ""
@@ -688,7 +690,8 @@ def candsFor (env : Env) (e : Subject) (up : List Subject) (attrs : Array (Strin
       let pes : List (Option String) := match s.pe with
         | some "*" => [none, some "before", some "after", some "marker"]
         | some "first-line" | some "first-letter" => [none]
-        | pe => [pe]
+        | none | some "before" | some "after" | some "marker" => [s.pe]
+        | some _ => [none, some "before", some "after", some "marker"]
       for pe in pes do
         for (p, v, imp) in r.decls do
           out := out.push (pe, p, { value := v, key := keyOf imp 2 s.spec r.order,
@@ -743,7 +746,7 @@ def walk (env : Env) : Walk Ctx Requests where
           v.trimAscii.toString != "none" && v.trimAscii.toString != "normal"
         let chars := shown.foldl (fun s v => s ++ contentChars attrs v) ""
         let chars := if pe == "marker" && listItem then chars.append markerChars else chars
-        unless chars.isEmpty do
+        unless chars.isEmpty && shown.isEmpty do
           let w := (stateFor env ctx.state (some pe) ctx.cands).want
           acc := addBox (addChars acc w chars) w
       return acc
