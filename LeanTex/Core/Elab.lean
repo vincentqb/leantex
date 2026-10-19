@@ -5429,14 +5429,21 @@ private def inlinePageGround (ctx : Ctx) (n : String) (pos : Pos) : EM Unit := d
       flowGen := st.flowGen + 1
       afterPara := { st.afterPara with ground := some pal } }
 
-/-- The page ground a paragraph's text set, standing before that paragraph, whose pages ship after
+/-- Where a ground the last construct's text set stands: before that construct's block, the last
+past the declarations a paragraph's end carries, or at the end where that block is a page break. -/
+private def groundSlot (blocks : Array Block) : Nat :=
+  match (List.range blocks.size).reverse.find? (fun i =>
+      !(blocks[i]? matches some (.setPalette _) | some (.setTokens _))) with
+  | some i => if blocks[i]? matches some .pagebreak then blocks.size else i
+  | none => blocks.size
+
+/-- The page ground a construct's text set, standing before that construct, whose pages ship after
 the text set it. -/
 private def drainGround (blocks : Array Block) : EM (Array Block) := do
   match (← get).afterPara.ground with
   | some pal =>
     modify fun st => { st with afterPara := { st.afterPara with ground := none } }
-    let slot := ((List.range blocks.size).reverse.find? fun i =>
-      blocks[i]? matches some (.para ..)).getD blocks.size
+    let slot := groundSlot blocks
     return (blocks.extract 0 slot).push (.setPalette pal) ++ blocks.extract slot blocks.size
   | none => return blocks
 

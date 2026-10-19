@@ -353,6 +353,23 @@ def groupScopeChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Un
     ("Aaa \\textbf{\\pagecolor{yellow}bold} " ++ String.join (List.replicate 700 "words run on ")))
   t s!"group scope/a page colour inside text grounds every page its paragraph sets ({crossing.1.size} pages)"
     (crossing.1.size ≥ 2 && crossing.1.all (· == some yellow))
+  t "group scope/a parbox's text is rewritten as a minipage's: its page colour grounds the page, naming nothing unknown"
+    (grounds (dvDoc "\\usepackage{xcolor}\n"
+      "Aaa \\parbox[t]{4cm}{Bbb \\pagecolor{yellow} ccc} ddd.\n\\clearpage\nEee.") ==
+      (#[some yellow, some yellow], true))
+  t "group scope/a page colour in a heading grounds the heading's page, not the paragraph's before it"
+    ((grounds (dvDoc "\\usepackage{xcolor}\n"
+      "Aaa words.\n\\clearpage\n\\section{Bbb \\pagecolor{yellow}head}\nCcc.")).1 ==
+      #[none, some yellow])
+  t "group scope/a page colour in a caption grounds the figure's page"
+    ((grounds (dvDoc "\\usepackage{xcolor}\n"
+      ("Aaa words.\n\\clearpage\nBbb.\n\\begin{figure}[h]\\centering\\rule{2cm}{1cm}" ++
+        "\\caption{Ccc \\pagecolor{yellow}}\\end{figure}\nDdd.\n\\clearpage\nEee."))).1 ==
+      #[none, some yellow, some yellow])
+  t "group scope/a page colour reset in a footnote grounds the page its mark stands on"
+    ((grounds (dvDoc "\\usepackage{xcolor}\n"
+      "\\pagecolor{yellow}Aaa.\n\\clearpage\nBbb\\footnote{Ccc \\nopagecolor} words.\n\\clearpage\nDdd.")).1 ==
+      #[some yellow, none, none])
   t "group scope/a page colour in an unknown command's argument grounds its page"
     ((grounds (dvDoc "\\usepackage{xcolor}\n" "Aaa \\probeunknown{\\pagecolor{yellow}} more.")).1 ==
       #[some yellow])

@@ -1236,6 +1236,9 @@ private def withGroupScope (arg : Bool) (act : Bool → Nat → M α) : M α := 
   (if arg then closeArgScope else closeScope) st
     (act (st.defaultAt matches .inside _) st.bodyNext { st with defaultAt := .none })
 
+/-- The environment a `\parbox` arm opens until the walk rewrites its body group. -/
+private def parboxPending : String := "parbox "
+
 /-- Whether a group the walk reaches after `out` may be an argument, whose braces TeX does not
 scope: past blanks and at most nine groups, an optional argument or a control word, neither `\:`,
 a marker taking none, nor one of TeX's grouping primitives. -/
@@ -9953,6 +9956,10 @@ page of its own" pos (help := "\\begin{titlepage}...\\end{titlepage} sets a page
     let (args, k) := takeGroups raws j 2
     became "\\parbox" "\\begin{minipage}{<width>}...\\end{minipage}" pos
     let widthGroup : Array Raw := #[.group (args[0]?.getD #[]) pos]
+    -- The body group stays in the walk, which rewrites it before it joins the box.
+    let body := skipSpaces raws (takeGroups raws j 1).2
+    if args.size == 2 && raws[body]? matches some (.group ..) then
+      return some (#[.env parboxPending (raws.extract start j ++ widthGroup) pos], body)
     return some (#[.env "minipage" (raws.extract start j ++ widthGroup ++ (args[1]?.getD #[])) pos], k)
   | "multicolumn" =>
     -- premise: multicolumnSpanChecks — the tabular arm sets what this keeps
@@ -13701,12 +13708,17 @@ private def abstractUnderTitlePage (pos : Pos) : M Unit := do
 mutual
 
 /-- Pushes one raw's rewrite, keeping a rewritten environment's group apart from
-the output before it. -/
+the output before it, and joining a `\parbox`'s rewritten body to the box its arm opened. -/
 private def pushRewritten (out : Array Raw) (r r' : Raw) : Array Raw :=
   match r, r' with
   | .env _ _ p, .group _ _ =>
     if Parse.endsInArgument out then (out.push (.env Parse.scopeEnv #[] p)).push r'
     else out.push r'
+  | .group _ _, .group body _ =>
+    match out.back? with
+    | some (.env n head p) =>
+      if n == parboxPending then out.pop.push (.env "minipage" (head ++ body) p) else out.push r'
+    | _ => out.push r'
   | _, _ => out.push r'
 
 /-- The rewrite walk over `raws` from index `i`; `skip` counts elements a
