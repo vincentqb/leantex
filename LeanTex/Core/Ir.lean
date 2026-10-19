@@ -249,8 +249,6 @@ public structure PageSpec where
   drawn : Array DrawnRule := #[]
   /-- The page boxes the document declares, one per kind, the last declaration standing. -/
   boxes : Array PageBox := #[]
-  /-- Whether a declaration named the page's size, which the class's default then leaves. -/
-  sized : Bool := false
   /-- Whether a declaration named the page's width, or its height, which the class's default leaves
   on that axis alone. -/
   widthSized : Bool := false
@@ -262,6 +260,9 @@ public structure PageSpec where
   deriving Repr, BEq, Inhabited
 
 public def PageSpec.bottomMargin (spec : PageSpec) : Sp := spec.bmargin.getD spec.vmargin
+
+/-- Whether a declaration named the page's size on either axis. -/
+public def PageSpec.sized (spec : PageSpec) : Bool := spec.widthSized || spec.heightSized
 
 /-- The page with its declared text block placed on its settled height. -/
 public def PageSpec.placed (spec : PageSpec) : PageSpec :=
@@ -7842,6 +7843,16 @@ public def abstractInset : Dim.Length := { em := 2000 }
 
 /-- ISO 216's A4 in PDF points, 210 × 297 mm. -/
 public def a4Page : Sp × Sp := (Dim.pt 595, Dim.pt 842)
+
+/-- Named page sizes: ISO 216's A4 and A5 at TeX's big-point rounding, ISO B5, and US letter,
+legal and executive. -/
+public def pageSizes : List (String × (Sp × Sp)) :=
+  [("letter", (Dim.pt 612, Dim.pt 792)),
+   ("legal", (Dim.pt 612, Dim.pt 1008)),
+   ("a4", a4Page),
+   ("a5", (Dim.pt 420, Dim.pt 595)),
+   ("b5", (Dim.mm 176, Dim.mm 250)),
+   ("executive", (Dim.pt 522, Dim.pt 756))]
 
 /-- A document class as a record over one of the kernel's page models:
 defaults, furniture flags, implied assertions, build intent. -/

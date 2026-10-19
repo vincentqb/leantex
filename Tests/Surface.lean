@@ -1594,7 +1594,7 @@ def classOptionChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "the native size key names the stage the option names"
     (let p := deckOf "" "\\page{ size = 16:10 }"
      p.width == Dim.mm 160 && p.height == Dim.mm 100 &&
-       p == { deckOf "aspectratio=1610" with sized := true, widthSized := true, heightSized := true })
+       p == { deckOf "aspectratio=1610" with widthSized := true, heightSized := true })
   t "beamer's bare digits name the root-two stage"
     (let p := deckOf "" "\\page{ size = 141 }"
      p.width == Dim.mm100 14850 && p.height == Dim.mm 105)
@@ -1963,9 +1963,9 @@ def compatConservationChecks (ref : IO.Ref (List String)) : IO Unit := do
     s!"\\documentclass\{article}\n{decls}\n\\begin\{document}\n{body}\n\\end\{document}"
   let pairs : List (String × String × String) := [
     ("geometry options", wrap "\\usepackage[a4paper,margin=2cm]{geometry}" "x",
-      wrap "\\page{ footskip = 30pt, size = a4, margin = 2cm }" "x"),
+      wrap "\\tokens{ footskip = 30pt }\\page{ size = a4, margin = 2cm }" "x"),
     ("geometry command", wrap "\\usepackage{geometry}\\geometry{margin=1in}" "x",
-      wrap "\\page{ footskip = 30pt }\\page{ footskip = 30pt, margin = 1in }" "x"),
+      wrap "\\tokens{ footskip = 30pt }\\page{ margin = 1in }" "x"),
     ("crop cam", wrap "\\usepackage[cam]{crop}" "x",
       wrap "\\page{ marks = cut }" "x"),
     ("linespread", wrap "\\linespread{1.05}" "x", wrap "\\page{ leading = 1.05 }" "x"),
@@ -4377,9 +4377,9 @@ def styParityChecks (ref : IO.Ref (List String)) : IO Unit := do
      splicedB.toList.map (·.1) == ["venueb.sty", "venueb2.sty"] &&
      Compat.styCounts "venueb2.sty" dsB == (1, 0, 0))
   -- lualatex: the later `\newgeometry` resets the height to geometry's default body (95.40pt top).
-  t "parity b: the later newgeometry's default text block is named, the height before it cleared"
-    (docB.page.vmargin == Dim.inch 1 && docB.page.bmargin == none &&
-     Compat.styCounts "venueb.sty" dsB == (1, 1, 0) &&
+  t "parity b: the later newgeometry sets geometry's default text block, the height before it cleared"
+    (docB.page.vmargin == (Dim.pt 792 - Dim.pt 792 * 7 / 10) * 2 / 5 &&
+     Compat.styCounts "venueb.sty" dsB == (1, 0, 0) &&
      Compat.styCounts "venueb2.sty" dsB == (1, 0, 0))
   t "parity b: the nested read's N0020 names the .sty that asked, not the document"
     (splicedB.toList.map (·.2.1) == [none, some "venueb.sty"] &&

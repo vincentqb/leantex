@@ -490,8 +490,9 @@ def witnessExplained : Array Explanation := #[
   { name := "fill", side := .probe, usage := ⟨false, "\\vspace{\\fill}"⟩,
     why := "answered as glue, \\vspace{\\fill}; the fixture's is TikZ's path command, and no \
 probe token is a glue value" },
-  { name := "hsize", side := .corpus, usage := ⟨false, "\\hsize=10pt x"⟩,
-    why := "inside a \\renewcommand{\\@maketitle} body elaboration never reaches" },
+  { name := "hsize", side := .probe, usage := ⟨false, "\\hsize=10pt x"⟩,
+    why := "answered as a TeX parameter's assignment; the fixture's sits in a \
+\\renewcommand{\\@maketitle} body elaboration never reaches" },
   { name := "hspace", side := .probe, usage := ⟨false, "a\\hspace{1pt}b"⟩,
     why := "a native dimensioned command whose probe operand is not a readable length" },
   { name := "left", side := .probe, usage := ⟨false, "$\\left( x \\right)$"⟩,

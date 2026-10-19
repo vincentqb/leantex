@@ -6538,7 +6538,7 @@ private def boxCss (cfg : Config) (b : Ir.InlineBox) : String :=
     | .ink => "currentColor"
     | .color c name => cfg.paint name c
   let decls :=
-    ["display: inline-block", "max-width: 100%"] ++
+    ["display: inline-block", "max-width: 100%", "box-sizing: border-box"] ++
     (if b.height.isSome || b.depth.isSome then ["line-height: 0"]
      else if lift == .lit {} then [] else [s!"vertical-align: {Ir.Track.contextCss lift}"]) ++
     (b.ground.map fun (c, name) => s!"background-color: {cfg.groundPaint name c}").toList ++

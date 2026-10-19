@@ -1180,16 +1180,6 @@ private def fontKeys : List String :=
   ["body", "sans", "mono", "math", "rm", "sf", "tt", "dir",
    "mathrm", "mathit", "mathbf", "mathsf", "mathtt"]
 
-/-- Named page sizes: ISO 216's A4 and A5 at TeX's big-point rounding, and
-US letter and legal. -/
-private def pageSizes : List (String × (Sp × Sp)) :=
-  [("letter", (pt 612, pt 792)),
-   ("legal", (pt 612, pt 1008)),
-   ("a4", Ir.a4Page),
-   ("a5", (Dim.pt 420, Dim.pt 595)),
-   ("b5", (Dim.mm 176, Dim.mm 250)),
-   ("executive", (pt 522, pt 756))]
-
 /-- The slides stage beamer's `aspectratio=` option selects, else beamer's
 default 4:3. -/
 private def slidesStageOf (opts : List String) : Sp × Sp :=
@@ -4533,6 +4523,11 @@ private def applyTokens (ctx : Ctx) (toks : Tokens) (src : String) (pos : Pos)
           (help := "lengths look like 10pt, 1.5ex, 2em, a + 2b, or 0.6 * other-token")
   return acc
 
+/-- A `\tokens{...}` block's entries applied over `tk`, a list margin fixed as the preamble's are,
+one value per backend. -/
+private def tokensBlock (ctx : Ctx) (tk : Tokens) (body : Array Raw) (pos : Pos) : EM Tokens := do
+  return ctx.preamble.fixLengths Ir.leftMarginNamed
+    (← applyTokens { ctx with tokens := tk } tk (declSrc body) pos (engine := ctx.engineTokens))
 
 /-- A `\tokens{...}` block inside inline content, in force for the rest of its group: the tokens
 it leaves and the index past it. -/
@@ -4542,9 +4537,7 @@ private def inlineTokens (ctx : Ctx) (raws : Array Raw) (start : Nat) (pos : Pos
   have hj := skipSpaces_ge raws start
   match raws[j]? with
   | some (.group body _) =>
-    let tk := ctx.preamble.fixLengths Ir.leftMarginNamed
-      (← applyTokens ctx ctx.tokens (declSrc body) pos (engine := ctx.engineTokens))
-    return (tk, ⟨j + 1, by omega⟩)
+    return (← tokensBlock ctx ctx.tokens body pos, ⟨j + 1, by omega⟩)
   | _ =>
     diag ctx .E0304 "'\\tokens' needs a {...} block" pos
     return (ctx.tokens, ⟨start, Nat.le_refl _⟩)
@@ -6869,7 +6862,7 @@ private def classPageDefaults (record : Ir.ClassRecord) (opts : List String)
           | (k, none) => k
           | _ => o
         if o.endsWith "paper" then
-          pageSizes.lookup ((o.dropEnd "paper".length).toString)
+          Ir.pageSizes.lookup ((o.dropEnd "paper".length).toString)
         else none
       if let some (w, h) := sized.orElse fun _ => record.trimDefault then
         page := { page with width := if page.widthSized then page.width else w
@@ -6945,14 +6938,14 @@ public def classOptionFlags : List (Ir.PageModel × List String) :=
 public def abstractFormOptions : List String := ["titlepage", "notitlepage"]
 
 /-- The paper sizes a class option names, each as `<size>paper`. -/
-public def classPaperOptions : List String := pageSizes.map (·.1 ++ "paper")
+public def classPaperOptions : List String := Ir.pageSizes.map (·.1 ++ "paper")
 
 /-- Whether a reader here reads a class option under a page model: a body size; in the flow model
 a paper size, `landscape`, `twoside` and the abstract's title-page options; in the frame model the
 slide stage, its alignment and `noamsthm`; in the face model a card standard. -/
 public def classOptionRead (model : Ir.PageModel) (o : String) : Bool :=
   let sized (v : String) : Bool := v.endsWith "pt" && ((v.dropEnd 2).toString.toNat?.any (0 < ·))
-  let paper (v : String) : Bool := (pageSizes.lookup v).isSome
+  let paper (v : String) : Bool := (Ir.pageSizes.lookup v).isSome
   match KeyVal.entry o, model with
   | ("fontsize", some v), _ => sized v
   | (k, none), .flow =>
@@ -10829,11 +10822,18 @@ private def carryTokensGo (ctx : Ctx) : List Raw → Tokens × Bool → EM (Toke
   | .ctrl n _ :: .group body p :: rest, (tk, set) =>
     if n == "tokens" then do
       let diags := (← get).diags
-      let tk := ctx.preamble.fixLengths Ir.leftMarginNamed
-        (← applyTokens { ctx with tokens := tk } tk (declSrc body) p (engine := ctx.engineTokens))
+      let tk ← tokensBlock ctx tk body p
       modify fun st => { st with diags := diags }
       carryTokensGo ctx rest (tk, true)
     else carryTokensGo ctx (.group body p :: rest) (tk, set)
+  -- A native `\tokens {...}` may stand apart from its block.
+  | .ctrl n _ :: .space :: .group body p :: rest, (tk, set) =>
+    if n == "tokens" then do
+      let diags := (← get).diags
+      let tk ← tokensBlock ctx tk body p
+      modify fun st => { st with diags := diags }
+      carryTokensGo ctx rest (tk, true)
+    else carryTokensGo ctx (.space :: .group body p :: rest) (tk, set)
   | _ :: rest, acc => carryTokensGo ctx rest acc
 
 /-- Carries a paragraph's top-level `\tokens` past its end as one token epoch. -/
@@ -10861,12 +10861,26 @@ private theorem carryTokensGo_quiet (ctx : Ctx) :
     cases r with
     | ctrl n p =>
       have hq : (n == "tokens") = false := by simpa [tokensQuiet] using h.1
-      cases rest with
-      | nil => rfl
-      | cons r2 rest2 =>
-        cases r2 with
-        | group body gp => simp only [carryTokensGo, hq]; exact ih
-        | _ => simp only [carryTokensGo]; exact ih
+      match rest, ih with
+      | [], ih => exact ih
+      | .group _ _ :: _, ih => simp only [carryTokensGo, hq]; exact ih
+      | .space :: .group _ _ :: _, ih => simp only [carryTokensGo, hq]; exact ih
+      | .space :: [], ih => exact ih
+      | .space :: .space :: _, ih => exact ih
+      | .space :: .word _ _ :: _, ih => exact ih
+      | .space :: .sym _ _ :: _, ih => exact ih
+      | .space :: .ctrl _ _ :: _, ih => exact ih
+      | .space :: .par _ :: _, ih => exact ih
+      | .space :: .math _ _ _ :: _, ih => exact ih
+      | .space :: .env _ _ _ :: _, ih => exact ih
+      | .space :: .verb _ _ _ :: _, ih => exact ih
+      | .word _ _ :: _, ih => exact ih
+      | .sym _ _ :: _, ih => exact ih
+      | .ctrl _ _ :: _, ih => exact ih
+      | .par _ :: _, ih => exact ih
+      | .math _ _ _ :: _, ih => exact ih
+      | .env _ _ _ :: _, ih => exact ih
+      | .verb _ _ _ :: _, ih => exact ih
     | _ => simp only [carryTokensGo]; exact ih
 
 private theorem carryTokens_quiet (ctx : Ctx) (cur : Array Raw)
@@ -10989,9 +11003,7 @@ private def flowStyleArm (ctx : Ctx) (n : String) (raws : Array Raw)
     have hj := skipSpaces_ge raws start
     match raws[j]? with
     | some (.group body _) =>
-      -- A list margin stays fixed as the preamble's are, one value per backend.
-      let tk := ctx.preamble.fixLengths Ir.leftMarginNamed
-        (← applyTokens ctx ctx.tokens (declSrc body) pos (engine := ctx.engineTokens))
+      let tk ← tokensBlock ctx ctx.tokens body pos
       modify fun st => { st with flowTokens := some tk, flowGen := st.flowGen + 1 }
       return (⟨{ ctx with tokens := tk }, rfl, rfl, rfl, rfl⟩,
         ⟨j + 1, by omega⟩, blocks.push (.setTokens tk), (← get).flowGen)
@@ -14654,8 +14666,8 @@ private def pageBoxOf (kind : BoxKind) (s : String) (span : Option Span) : Optio
 
 /-- The page field a dimension key sets. -/
 private def pageDim : Native.PageKey → Option (Sp → PageSpec → PageSpec)
-  | .width => some fun d s => { s with width := d, sized := true, widthSized := true }
-  | .height => some fun d s => { s with height := d, sized := true, heightSized := true }
+  | .width => some fun d s => { s with width := d, widthSized := true }
+  | .height => some fun d s => { s with height := d, heightSized := true }
   | .margin => some fun d s => { s with vmargin := d, hmargin := d, blockWidth := none, widthScale := none }
   | .vmargin => some fun d s => { s with vmargin := d }
   | .hmargin => some fun d s => { s with hmargin := d, blockWidth := none, widthScale := none }
@@ -14744,24 +14756,22 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (face : Ir.PreambleFace)
         | v => evs := wrong key v evs
       else match key, e.value with
       | .size, .ident name =>
-        match (pageSizes.lookup name.toLower).orElse
+        match (Ir.pageSizes.lookup name.toLower).orElse
             (fun _ => Ir.slidesStageNamed name) with
         | some (w, h) =>
-          spec := { spec with width := w, height := h, sized := true, widthSized := true
-                              heightSized := true }
+          spec := { spec with width := w, height := h, widthSized := true, heightSized := true }
         | none =>
           evs := say evs .E0324 s!"unknown page size '{name}'"
             (help := s!"known sizes: {String.intercalate ", "
-              (pageSizes.map (·.1) ++ (Ir.slidesStages.map (·.1)).toList)}")
+              (Ir.pageSizes.map (·.1) ++ (Ir.slidesStages.map (·.1)).toList)}")
       | .size, .int n =>
         match Ir.slidesStageNamed (toString n) with
         | some (w, h) =>
-          spec := { spec with width := w, height := h, sized := true, widthSized := true
-                              heightSized := true }
+          spec := { spec with width := w, height := h, widthSized := true, heightSized := true }
         | none =>
           evs := say evs .E0324 s!"unknown page size '{n}'"
             (help := s!"known sizes: {String.intercalate ", "
-              (pageSizes.map (·.1) ++ (Ir.slidesStages.map (·.1)).toList)}")
+              (Ir.pageSizes.map (·.1) ++ (Ir.slidesStages.map (·.1)).toList)}")
       -- geometry's `textwidth` and `textheight` centre the block (§5.2).
       | .textwidth, v =>
         if let some d := asDim v then

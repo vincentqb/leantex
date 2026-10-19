@@ -126,7 +126,7 @@ def inlineBoxChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Uni
   let (_, _, html, _) := sourceArtifacts fonts
     (doc "" "A \\raisebox{0.5ex}{B} \\fcolorbox{red}{yellow}{C} \\raisebox{0pt}[0pt][0pt]{D}")
   t "box HTML: a raised box is an inline block lifted as the PDF's"
-    (hasStr html "display: inline-block; max-width: 100%; vertical-align: 0.5ex\">B")
+    (hasStr html "display: inline-block; max-width: 100%; box-sizing: border-box; vertical-align: 0.5ex\">B")
   t "box HTML: a framed ground pads its content by fboxsep inside fboxrule"
     (hasStr html "border: 0.4pt solid" && hasStr html "padding: 3pt\">C")
   t "box HTML: a declared zero extent claims no line height" (hasStr html "line-height: 0\">D")
@@ -137,7 +137,7 @@ def inlineBoxChecks (ref : IO.Ref (List String)) (fonts : Font.FontSet) : IO Uni
   t "box HTML: a lift beside a declared extent moves the content in place"
     (hasStr sized "position: relative; top: -2pt\">Q")
   t "box HTML: a lift by the content's own depth reads it as zero"
-    (hasStr sized "max-width: 100%\">R")
+    (hasStr sized "box-sizing: border-box\">R")
   t "box HTML: a lift by the content's own depth, which the page cannot measure, is named for it"
     (hds.any fun d => d.code == "W0110" && d.subject == some "raisebox:content" &&
       d.output == some .html)

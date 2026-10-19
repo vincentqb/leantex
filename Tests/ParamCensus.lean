@@ -863,7 +863,8 @@ def textBlockChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "text block: every geometry call solves its layout again, replacing the kernel's height"
     (held (calls "margin=1in" "\\setlength{\\textheight}{500pt}\n\\geometry{hmargin=2in}")
         (Dim.inch 1) (Dim.inch 1) &&
-      named (art "\\setlength{\\textheight}{500pt}\n\\usepackage[hmargin=1in]{geometry}") "layout")
+      tall (art "\\setlength{\\textheight}{500pt}\n\\usepackage[hmargin=1in]{geometry}") ==
+        Dim.pt 792 * 7 / 10)
   t "text block: a key an earlier call spelled is not named again, nor geometry's own default"
     (quiet (calls "textheight=500pt,vmarginratio=1:1" "\\geometry{top=1in}") &&
       quiet (calls "textheight=500pt" "\\geometry{vmarginratio=1:1}") &&

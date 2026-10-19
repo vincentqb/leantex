@@ -945,8 +945,12 @@ def texStateChecks (ref : IO.Ref (List String)) (_oneFace : Font.FontSet) : IO U
     | _ => acc) #[] (elabStr strut).1.body
   t s!"\\strut is a rule of no width the strut box tall ({rules})"
     (!(codes strut).contains "W0301" && rules == #[(0, Dim.pt 12)])
+  -- The foot's skip as the page reads it: the declared key, else the engine length.
+  let footOfDoc (src : String) : Option Dim.Sp :=
+    let d := (elabStr src).1
+    d.page.footskip <|> (d.tokens.find? "footskip").map (·.width.sp)
   let footOf (o : String) : Option Dim.Sp :=
-    (elabStr (dvDoc s!"\\usepackage[{o}]\{geometry}\n" "Alpha.")).1.page.footskip
+    footOfDoc (dvDoc s!"\\usepackage[{o}]\{geometry}\n" "Alpha.")
   -- lualatex: geometry's top=2cm, bottom=4cm sets the folio's baseline 30pt below the text.
   t "a page geometry places sets its foot the standard class's \\footskip below the text"
     (footOf "top=2cm,bottom=4cm" == some (Dim.pt 30) && footOf "footskip=1cm" == some (Dim.mm 10))
@@ -962,3 +966,77 @@ def texStateChecks (ref : IO.Ref (List String)) (_oneFace : Font.FontSet) : IO U
     "\\end{abstract}\n\\end{document}"
   t "book defines no abstract: its body is kept as text, the environment named unknown"
     ((codes abs).contains "W0302" && !(codes abs).contains "W0110" && hasStr (text abs) "Short.")
+  t "geometry: margins or a width place the block, a scale beside them sizing nothing"
+    ((geo "hscale=0.8,margin=1in").hmargin == Dim.inch 1 &&
+      (geo "textwidth=5in,hscale=0.5").hmargin == (Dim.pt 612 - Dim.inch 5) / 2 &&
+      (geo "margin=1in,hscale=0.5").hmargin == Dim.inch 1)
+  let paperDoc (cls pre : String) : Ir.PageSpec :=
+    (elabStr (cls ++ pre ++ "\\begin{document}\nAlpha.\n\\end{document}")).1.page
+  let paperFoot (cls pre : String) : Option Dim.Sp :=
+    footOfDoc (cls ++ pre ++ "\\begin{document}\nAlpha.\n\\end{document}")
+  t "geometry: a paper option is the paper in force's, a later call's and KOMA-Script's paper= alike"
+    ((paperDoc "\\documentclass{article}\n" "\\usepackage[a4paper]{geometry}\n\\geometry{letterpaper}\n").width ==
+        Dim.pt 612 &&
+      (paperDoc "\\documentclass[paper=letter]{scrartcl}\n" "\\usepackage[a4paper]{geometry}\n").width ==
+        Ir.a4Page.1)
+  -- lualatex: book.cls's \footskip is .35in, 25.29494pt; a footskip set before geometry stands.
+  t "geometry: book's footskip is .35in, and a footskip declared before the page stands"
+    (paperFoot "\\documentclass{book}\n" "\\usepackage[margin=1in]{geometry}\n" ==
+        paperFoot "\\documentclass{book}\n" "\\usepackage[margin=1in,footskip=0.35in]{geometry}\n" &&
+      paperFoot "\\documentclass{article}\n"
+        "\\setlength{\\footskip}{20pt}\n\\usepackage[margin=1in]{geometry}\n" == some (Dim.pt 20))
+  let redefined := dvDoc "\\renewcommand{\\strut}{STRUTWORD}\n" "Alpha\\strut{} words."
+  t "\\strut: a document's own definition stands" (hasStr (text redefined) "STRUTWORD")
+  let boxStrut := dvDoc "\\newlength\\lh\n" "\\setbox\\strutbox\\hbox{\\vrule height 20pt}\\setlength{\\lh}{\\ht\\strutbox}Alpha."
+  t "\\strut: a body \\setbox of the strut box leaves its height unread, named"
+    ((subjects boxStrut "W0107").contains (some "length:lh"))
+  let defined := dvDoc "\\newcommand{\\tight}{\\leftskip=2em }\n" "\\tight Alpha words."
+  t "a TeX parameter's assignment in a definition is named"
+    ((subjects defined "W0104").contains (some "ctrl:setlength:leftskip") && !hasStr (text defined) "=2em")
+  let chain := dvDoc "\\clubpenalty10000 \\widowpenalty10000 \\displaywidowpenalty=10000\n"
+    "\\linepenalty10 \\looseness=-1 Charlie words."
+  t s!"TeX parameter assignments in a row are each read ({codes chain})"
+    (!(codes chain).contains "W0301" && !hasStr (text chain) "=-1" && !hasStr (text chain) "10000")
+  let noteSkip := dvDoc gap "Alpha\\footnote{\\setlength{\\gap}{\\baselineskip}a\\hspace{\\gap}b} words."
+  -- lualatex: \footnotesize at 10pt sets \baselineskip 9.5pt.
+  t s!"a footnote's text reads its own size's \\baselineskip ({spaces noteSkip})"
+    (spaces noteSkip == #[toString (Dim.pt 19 / 2)])
+  let headSkip := dvDoc gap "\\section{Alpha\\setlength{\\gap}{\\baselineskip}}Words."
+  t "a heading's \\baselineskip, its class's size, stays unread, named"
+    ((subjects headSkip "W0107").contains (some "length:gap"))
+  let absSkip := dvDoc gap "\\begin{abstract}\\setlength{\\gap}{\\baselineskip}a\\hspace{\\gap}b\\end{abstract}"
+  -- lualatex: article's abstract is \small, 11pt at 10pt.
+  t s!"an article's abstract reads \\small's \\baselineskip ({spaces absSkip})"
+    (spaces absSkip == #[toString (Dim.pt 11)])
+  let setTex := dvDoc "\\setlength{\\leftskip}{2em}\n" "Alpha."
+  t "\\setlength of a TeX parameter is named as its assignment is"
+    ((subjects setTex "W0104").contains (some "ctrl:setlength:leftskip"))
+  t "\\setlength of a TeX parameter is named once, never also as a setting nothing reads"
+    ((subjects setTex "W0104").length == 1)
+  let footLater := dvDoc "\\usepackage[margin=1in]{geometry}\n\\setlength{\\footskip}{20pt}\n" "Alpha."
+  t "a footskip declared after the page replaces the class's with no second value named"
+    (!(codes footLater).contains "W0343" && footOfDoc footLater == some (Dim.pt 20))
+  let footKey := dvDoc "\\usepackage[margin=1in]{geometry}\n\\geometry{footskip=25pt}\n" "Alpha."
+  t "a later geometry footskip replaces the class's with no second value named"
+    (!(codes footKey).contains "W0343" && footOfDoc footKey == some (Dim.pt 25))
+  -- The paper in force follows a declared paper size and a class paper the page has no size for.
+  t "geometry: a paper option after a declared paper size, or beside an unsized class paper, sets it"
+    ((paperDoc "\\documentclass{article}\n" "\\usepackage[paperwidth=20cm,paperheight=20cm]{geometry}\n\\geometry{letterpaper}\n").width ==
+        Dim.pt 612 &&
+      (paperDoc "\\documentclass[a6paper]{article}\n" "\\usepackage[letterpaper]{geometry}\n").width ==
+        Dim.pt 612 &&
+      !(subjects (dvDoc "\\usepackage[paperwidth=20cm]{geometry}\n\\geometry{letterpaper}\n" "Alpha.")
+        "N0100").contains (some "param:geometry:letterpaper"))
+  -- lualatex: article's abstract is \normalsize on a title page and in two columns, 12pt at 10pt.
+  let absIn (cls : String) (pre : String := "") : Array String := spaces
+    (s!"\\documentclass{cls}\n" ++ gap ++ pre ++ "\\begin{document}\n\\begin{abstract}" ++
+      "\\setlength{\\gap}{\\baselineskip}a\\hspace{\\gap}b\\end{abstract}\n\\end{document}")
+  t s!"an abstract on its own title page, in two columns or redefined reads no \\small ({absIn "[titlepage]{article}"})"
+    (absIn "[titlepage]{article}" != #[toString (Dim.pt 11)] && absIn "[twocolumn]{article}" != #[toString (Dim.pt 11)] &&
+      absIn "{report}" != #[toString (Dim.pt 11)] &&
+      absIn "{article}" "\\renewenvironment{abstract}{}{}\n" != #[toString (Dim.pt 11)] &&
+      absIn "[notitlepage]{report}" == #[toString (Dim.pt 11)])
+  let noteRedef := dvDoc (gap ++ "\\renewcommand{\\footnotesize}{\\large}\n")
+    "Alpha\\footnote{\\setlength{\\gap}{\\baselineskip}a\\hspace{\\gap}b} words."
+  t s!"a footnote under a redefined \\footnotesize reads no class size ({spaces noteRedef})"
+    (spaces noteRedef != #[toString (Dim.pt 19 / 2)])
