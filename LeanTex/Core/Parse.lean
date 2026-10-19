@@ -631,18 +631,33 @@ public def modeChoices (raws : Array Raw) : Array Raw :=
 private def bodyDefiners (_ : Unit) : Std.HashSet String :=
   Std.HashSet.ofList Definer.readAsDefinition
 
-/-- Whether a group opening after `acc` may be a definition's body: a definer among the last items
-of its line before it. -/
+/-- Whether the group opening after `acc` is a command definer's body, read off its head: the
+definer, a star, the name braced or bare, an xparse signature, optional arguments and TeX's
+parameters. -/
 private def defBodyNext (defs : Std.HashSet String) (acc : Array Raw) : Bool := Id.run do
-  let mut k := acc.size
-  for _ in [0:12] do
-    if k == 0 then return false
-    k := k - 1
-    match acc[k]? with
-    | some (.ctrl d _) => if defs.contains d then return true
-    | some (.par _) => return false
-    | _ => pure ()
-  return false
+  let w := definerWindow acc
+  let mut k := backSkip w w.size
+  for _ in [0:w.size] do
+    match before w k, before w (k - 1) with
+    | some (.word d _), some (.sym '#' _) =>
+      if d.all Char.isDigit then k := backSkip w (k - 2) else break
+    | _, _ => break
+  for _ in [0:w.size] do
+    unless isSym ']' (before w k) do break
+    let mut j := k - 1
+    for _ in [0:k] do
+      if j == 0 || isSym '[' (before w j) then break
+      j := j - 1
+    unless isSym '[' (before w j) do return false
+    k := backSkip w (j - 1)
+  match before w k with
+  | some (.group _ _) | some (.ctrl _ _) => k := backSkip w (k - 1)
+  | _ => return false
+  if before w k matches some (.group _ _) then k := backSkip w (k - 1)
+  if isSym '*' (before w k) || before w k matches some (.word "*" _) then k := backSkip w (k - 1)
+  match before w k with
+  | some (.ctrl d _) => return defs.contains d
+  | _ => return false
 
 /-- A frame opened on `frames`, counting the definition bodies' groups at or below it. -/
 private def Frame.atop (frames : Array Frame) (stop : Stop) (pos : Pos) (acc : Array Raw)
@@ -752,7 +767,8 @@ public def parse (file : String) (toks : Array Token) : Array Raw × Array Diag 
         i := j
         -- A `\begin` naming nothing opens nothing, so no later close is spent on it.
         unless name.isEmpty do
-          envAt := envAt.insert name ((envAt.getD name #[]).push frames.size)
+          let named := envAt.getD name #[]
+          envAt := (envAt.erase name).insert name (named.push frames.size)
           frames := frames.push (Frame.atop frames (.env name) pos acc false false)
           acc := #[]
       | .ctrl "end" =>
@@ -773,6 +789,7 @@ public def parse (file : String) (toks : Array Token) : Array Raw × Array Diag 
         if name.isEmpty then continue
         -- An `\end` an enclosing environment answers closes what is open inside it, as TeX does.
         let mut standing := envAt.getD name #[]
+        envAt := envAt.erase name
         let mut at? : Option Nat := none
         for _ in [0:standing.size] do
           let some k := standing.back? | break
@@ -780,7 +797,6 @@ public def parse (file : String) (toks : Array Token) : Array Raw × Array Diag 
             at? := some k
             break
           standing := standing.pop
-        envAt := envAt.insert name standing
         let crossed := at?.filter fun k => k + 1 < frames.size &&
           (frames.back?.map (·.guards)).getD 0 == (frames[k]?.map (·.guards)).getD 0
         match crossed with
@@ -803,8 +819,12 @@ public def parse (file : String) (toks : Array Token) : Array Raw × Array Diag 
             frames := frames.pop
             acc := f.close acc
           | none => pure ()
+          envAt := envAt.insert name standing.pop
           continue
         | none => pure ()
+        -- The innermost frame of this name closes here, and leaves the index stack with it.
+        envAt := envAt.insert name
+          (if at? == some (frames.size - 1) then standing.pop else standing)
         match frames.back? with
         | some f =>
           match f.stop with

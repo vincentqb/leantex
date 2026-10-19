@@ -2680,6 +2680,10 @@ def parseChecks (ref : IO.Ref (List String)) : IO Unit := do
   t s!"parse: a begin naming nothing opens nothing ({(praw nameless).2.map (·.message)})"
     (((praw nameless).2.map (·.message)) == #["expected an environment name"])
   let defined := "\\begin{document}\nA \\newcommand{\\fin}{\\end{document}} Kqzv.\n\\end{document}"
+  let optioned := "\\begin{document}\nA \\newcommand{\\fin}[2][default text with many words in it]" ++
+    "{#1 \\end{document}} Kqzv.\n\\end{document}"
+  t s!"parse: an end in an optioned definition's body closes nothing outside it ({(praw optioned).2.size})"
+    (((praw optioned).2.map (·.code)) == #["E0205"])
   t s!"parse: an end in a definition's body closes nothing outside it ({(praw defined).2.size})"
     (((praw defined).2.map (·.code)) == #["E0205"] &&
       ((praw defined).1.map fun r => match r with
