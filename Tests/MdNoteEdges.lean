@@ -163,10 +163,10 @@ def noteChecks (ref : IO.Ref (List String)) : IO Unit := do
       hasStr (twinOf seams) "and ![^3](x.png)" && hasStr (twinOf seams) "[^3]: The note.")
   let inside := worksMeta ++ "Cite [see[^n] @a, p. 3] and ![a chart[^n]](chart.svg).\n\n[^n]: The note.\n"
   let (_, ds) := elabMd inside
-  t s!"md notes: a note named in an alternative is named, one in a citation's note set after it, \
-neither unused ({repr (ds.map (·.subject))})"
+  t s!"md notes: a note named in an alternative is named, one in a citation's note set where it is \
+written, neither unused ({repr (ds.map (·.subject))})"
     ((ds.filter (·.subject == some "md:note-in-text")).size == 1 &&
-      ds.any (·.subject == some "cite:note-footnote") && !ds.any (·.subject == some "md:note-unused"))
+      !ds.any (·.subject == some "cite:note-footnote") && !ds.any (·.subject == some "md:note-unused"))
   let listed := "Intro[^m] text.\n\n- item one[^n]\n- item two\n\n[^n]: First note.\n[^m]: Second note.\n"
   t s!"md notes: definitions after a list are read ({repr (twinOf listed)})"
     (hasStr (twinOf listed) "[^1]: Second note." && hasStr (twinOf listed) "[^2]: First note.")
@@ -254,48 +254,73 @@ def inlineNoteChecks (ref : IO.Ref (List String)) : IO Unit := do
 ({repr (pageText d)})"
     (hasStr (pageText d) "^[A note.]")
 
-/-- A footnote in a citation's note, in either surface, sets after the citation, named once. -/
+/-- A footnote in a citation's note, in either surface, sets inside its brackets where it is
+written; an author-in-text citation's sets after it, named once. -/
 def citeNoteChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let src := worksMeta ++ "Five [@a, see^[x]] and [see [^n] @b] end.\n\n[^n]: The note.\n"
   let (d, ds) := mdBibBuild src #[("works.bib", worksBib)]
-  t s!"md cite note: a note in a citation's note sets after the citation ({repr (pageText d)})"
+  t s!"md cite note: a note in a citation's note sets inside its brackets where it is written \
+({repr (pageText d)})"
     (hasStr (pageText d) "The note." && !hasStr (pageText d) "^[" && !hasStr (pageText d) "[^n]" &&
       (Ir.footnotesOf d.body).size == 2 && keysOf d == ["a", "b"] &&
-      hasStr (pageText d) "[see Birch, 2002]" && ds.any (·.subject == some "cite:note-footnote"))
+      hasStr (pageText d) "[Ash, 2001, see1]" && hasStr (pageText d) "[see 2 Birch, 2002]" &&
+      !ds.any (·.subject == some "cite:note-footnote"))
   let tex := "\\documentclass{article}\n\\usepackage{natbib}\n\\begin{document}\n\
 Text \\citep[see\\footnote{An inner note.}][p.~3]{a} end.\n\\bibliographystyle{plainnat}\n\
 \\bibliography{works}\n\\end{document}\n"
   let (d, ds) := bibBuild tex #[("works", worksBib)]
-  t s!"tex cite note: a footnote in a citation's note sets after the citation, its text once \
-({repr (pageText d)})"
-    (hasStr (pageText d) "[see Ash, 2001, p.\u00a03]" && (Ir.footnotesOf d.body).size == 1 &&
+  t s!"tex cite note: a footnote in a citation's note sets inside its brackets, as natbib sets it, \
+its text once ({repr (pageText d)})"
+    (hasStr (pageText d) "[see1 Ash, 2001, p.\u00a03]" && (Ir.footnotesOf d.body).size == 1 &&
       ((pageText d).splitOn "An inner note.").length == 2 &&
-      ds.any (·.subject == some "cite:note-footnote"))
+      !ds.any (·.subject == some "cite:note-footnote"))
+  let tex := "\\documentclass{article}\n\\usepackage{natbib}\n\\begin{document}\n\
+Text \\citet[p.~3\\footnote{An inner note.}]{a} end.\n\\bibliographystyle{plainnat}\n\
+\\bibliography{works}\n\\end{document}\n"
+  let (d, ds) := bibBuild tex #[("works", worksBib)]
+  t s!"tex cite note: a footnote in an author-in-text citation's note sets after it \
+({repr (pageText d)})"
+    (hasStr (pageText d) "Ash [2001, p.\u00a03]1" && ds.any (·.subject == some "cite:note-footnote"))
 
 /-- A note anywhere in a citation's note, nested in emphasis or holding a citation or a note's
-reference, sets after the citation once, its text and the note's spaces as written. -/
+reference, sets where it is written, with the note's emphasis and spaces. -/
 def citeNoteEdgeChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let src := worksMeta ++ "One [@a, *em^[in em]*] and [see^[x] @a, p. 3] two.\n\n\
 Three [see ^[cf. @b] @a] and [see ^[one] and ^[two] @b] end.\n\n\
 Four [@a, p. ^[r] 4] and a caret link ^[x](https://example.org) end.\n"
   let (d, ds) := mdBibBuild src #[("works.bib", worksBib)]
-  t s!"md cite note: notes in emphasis, holding a citation, or two, set after the citation \
+  t s!"md cite note: notes in emphasis, holding a citation, or two, set where they are written \
 ({repr (pageText d)}, {repr (ds.map (·.subject))})"
-    (hasStr (pageText d) "[see Ash, 2001]" && hasStr (pageText d) "[see and Birch, 2002]" &&
+    (hasStr (pageText d) "[Ash, 2001, em1]" && hasStr (pageText d) "[see2 Ash, 2001, p." &&
+      hasStr (pageText d) "[see 3 Ash, 2001]" && hasStr (pageText d) "[see 4 and 5 Birch, 2002]" &&
       hasStr (pageText d) "cf. Birch [2002]" && (Ir.footnotesOf d.body).size == 6 &&
-      hasStr (pageText d) "p.\u00a04]" && hasStr (pageText d) "caret link ^x end" &&
+      hasStr (pageText d) "6 4]" && hasStr (pageText d) "caret link ^x end" &&
       !hasStr (pageText d) "^[" && !hasStr (pageText d) "@" &&
-      ((ds.filter (·.subject == some "md:cite-note")).size == 1) && !ds.any (·.subject == some "md:cite-nested"))
+      !ds.any (·.subject == some "md:cite-note") && !ds.any (·.subject == some "md:cite-nested"))
   let tex := "\\documentclass{article}\n\\usepackage{natbib}\n\\begin{document}\n\
 A\\footnote{five} \\citep[\\emph{see\\footnote{x6}}][]{a} and \\citep[see \\footnote{x3} also][]{b} \
 B\\footnote{seven}.\n\\bibliographystyle{plainnat}\n\\bibliography{works}\n\\end{document}\n"
   let (d, _) := bibBuild tex #[("works", worksBib)]
-  t s!"tex cite note: a footnote in emphasis in a note sets after the citation, the note's spaces \
-once ({repr (pageText d)})"
-    (hasStr (pageText d) "[see Ash, 2001]" && hasStr (pageText d) "[see also Birch, 2002]" &&
-      !hasStr (pageText d) "seex6" && (Ir.footnotesOf d.body).size == 4)
+  t s!"tex cite note: a footnote in emphasis in a note sets where it is written, the note's spaces \
+as written ({repr (pageText d)})"
+    (hasStr (pageText d) "[see2 Ash, 2001]" && hasStr (pageText d) "[see 3 also Birch, 2002]" &&
+      (Ir.footnotesOf d.body).size == 4)
+  let tex := "\\documentclass{article}\n\\usepackage{natbib}\n\\begin{document}\n\
+A \\citealt[see][\\emph{x}]{a} and \\citeyear[see][\\emph{y}]{b} and \\citealp[see][\\emph{z}]{a}.\n\
+\\bibliographystyle{plainnat}\n\\bibliography{works}\n\\end{document}\n"
+  let (d, _) := bibBuild tex #[("works", worksBib)]
+  t s!"tex cite note: citealt's and citeyear's notes stand where natbib sets them, citealp's apart \
+({repr (pageText d)})"
+    (hasStr (pageText d) "A Ash see 2001, x and 2002, y and see Ash, 2001, z.")
+  let tex := "\\documentclass{article}\n\\usepackage[style=authoryear]{biblatex}\n\
+\\addbibresource{works.bib}\n\\begin{document}\nA \\parencite[\\emph{see}][3]{a} end.\n\
+\\printbibliography\n\\end{document}\n"
+  let (d, _) := bibBuild tex #[("works", worksBib)]
+  t s!"tex cite note: a text post-note beside a rich pre-note keeps biblatex's page prefix \
+({repr (pageText d)})"
+    (hasStr (pageText d) "(see Ash 2001, p.\u00a03) end.")
   for src in [worksMeta ++ "Ref^[see [^r]] nine and ^[outer ^[inner] tail].\n\n[^r]: The ref.\n",
       "Empty ^[] seven.\n\nSp ^[   ] eight and A[^d].\n\n[^d]: Top.\n\n    [^e]: Nested.\n\nThen B[^e].\n"] do
     let (d, ds) := mdBibBuild src #[("works.bib", worksBib)]

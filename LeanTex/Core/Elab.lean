@@ -3015,7 +3015,7 @@ private def oneSpace (s : String) : String := Id.run do
 note's text cannot hold, with the index past it; `none` at `j` when no bracket opens there. -/
 private def citeNote (raws : Array Raw) (j w : Nat) (hw : sliceWeight raws j ≤ w)
     (el : (sub : Array Raw) → rawWeightList sub.toList < w → EM (Array Inline)) :
-    EM (Option String × Array Inline × { k : Nat // j ≤ k }) := do
+    EM (Option (String × Array Inline) × Array Inline × { k : Nat // j ≤ k }) := do
   match hj : raws[j]? with
   | some (.sym '[' _) =>
     have hjlt := getElem?_lt hj
@@ -3028,9 +3028,34 @@ private def citeNote (raws : Array Raw) (j w : Nat) (hw : sliceWeight raws j ≤
     let notes := outerFootnotesList #[] note.toList
     let text := Ir.plainText (Ir.mapInlines id note (finish := (·.filter (!· matches .footnote ..))))
     -- A footnote set apart takes the space beside it, which would stand twice.
-    return (some (if notes.isEmpty then text else oneSpace text), notes,
+    return (some (if notes.isEmpty then text else oneSpace text, note), notes,
       ⟨skipSpaces raws (c + 1), by omega⟩)
   | _ => return (none, #[], ⟨j, Nat.le_refl j⟩)
+
+/-- The works and whether brackets stand around them, for a citation form whose notes natbib sets
+apart from its works; `none` for a form whose works and brackets do not part so. -/
+private def apartWorks : Ir.CiteCmd → Option (Ir.CiteCmd × Bool)
+  | .paren => some (.alp, true)
+  | .yearPar => some (.year, true)
+  | .alp => some (.alp, false)
+  | .textual | .auto | .alt | .author | .year | .num | .text | .nocite | .bracket _ | .noteSep
+  | .field _ => none
+
+/-- A citation as natbib defines the command: its brackets, a pre-note holding more than text, the
+works with their text notes, `\NAT@cmt` and a post-note holding more than text. -/
+private def citeNotesApart (form : Ir.CiteForm) (works : Ir.CiteCmd × Bool) (keys : Array String)
+    (pre post : Option (Array Inline)) : Array Inline :=
+  let mark (o : Bool) : Array Inline := if works.2 then #[.cite { cmd := .bracket o } #[]] else #[]
+  let work : Inline := .cite { form with cmd := works.1, pre := if pre.isSome then "" else form.pre
+                                         post := if post.isSome then "" else form.post } keys
+  let close := mark false
+  mark true ++ (match pre with | some ink => ink.push (.text " ") | none => #[]) ++ #[work] ++
+    (match post with | some ink => #[.cite { cmd := .noteSep } #[]] ++ ink | none => #[]) ++ close
+
+/-- Whether a citation note holds anything but text. -/
+private def richNote : Option (String × Array Inline) → Bool
+  | some (_, note) => Ir.anyInline (!· matches .text _ | .located ..) note
+  | none => false
 
 /-- natbib's citation family at `i`: one node per citation group, its keys as
 written and its form beside them, and the index past what was read. -/
@@ -3044,18 +3069,23 @@ private def citeArm (ctx : Ctx) (raws : Array Raw) (i : Nat) (name : String)
   have hj1 := skipStar_ge raws j0
   let (n1, f1, ⟨j2, hj2⟩) ← citeNote raws j1 (sliceWeight raws i) (sliceWeight_le raws (by omega)) el
   let (n2, f2, ⟨j3, hj3⟩) ← citeNote raws j2 (sliceWeight raws i) (sliceWeight_le raws (by omega)) el
-  -- premise: Tests.MdNoteEdges.citeNoteChecks — a note's footnote sets after its citation
-  let notes := f1 ++ f2
-  unless notes.isEmpty do
-    warnOnce ctx "cite:note-footnote" .W0110 "a footnote in a citation's note sets after the work \
-it notes: the note holds text" pos (help := "write the footnote after the citation")
-  let (pre, post) := match n1, n2 with
+  let ((pre, preInk), (post, postInk)) := match n1, n2 with
     | some a, some b => (a, b)
-    | some a, none => ("", a)
-    | none, _ => ("", "")
+    | some a, none => (("", #[]), a)
+    | none, _ => (("", #[]), ("", #[]))
   let form := { base with
     cmd := if base.cmd == .auto && n1.isSome then .paren else base.cmd
     full := base.full || j1 != j0, pre, post }
+  let (richPre, richPost) := match n1, n2 with
+    | some _, some _ => (richNote n1, richNote n2)
+    | some _, none => (false, richNote n1)
+    | none, _ => (false, false)
+  let apart := if richPre || richPost then apartWorks form.cmd else none
+  -- premise: Tests.MdNoteEdges.citeNoteChecks — a textual citation's note footnote sets after it
+  let notes := if apart.isSome then #[] else f1 ++ f2
+  unless notes.isEmpty do
+    warnOnce ctx "cite:note-footnote" .W0110 "a footnote in a citation's note sets after the work \
+it notes: the note holds text" pos (help := "write the footnote after the citation")
   match hk : raws[j3]? with
   | some (.group body _) =>
     have hklt := getElem?_lt hk
@@ -3073,7 +3103,11 @@ it notes: the note holds text" pos (help := "write the footnote after the citati
         have hj4 := skipSpaces_ge raws (j3 + 1)
         return (#[.cite form keys] ++ notes,
           if raws[i - 1]? matches some .space then ⟨j4, by omega⟩ else ⟨j3 + 1, by omega⟩)
-      return (#[.cite form keys] ++ notes, ⟨j3 + 1, by omega⟩)
+      let set := match apart with
+        | some works => citeNotesApart form works keys (if richPre then some preInk else none)
+            (if richPost then some postInk else none)
+        | none => #[.cite form keys] ++ notes
+      return (set, ⟨j3 + 1, by omega⟩)
   | _ =>
     diag ctx .E0304 s!"'\\{name}' needs a \{keys} group" pos
     return (#[], ⟨j3, by omega⟩)

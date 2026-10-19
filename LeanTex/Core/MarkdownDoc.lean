@@ -713,6 +713,46 @@ private def citeRun (pipes : Bool) (acc : String) (x : Inline) (rest : List Inli
     else citeSpelling pipes f ks acc (afterOf rest) rest
   | _ => none
 
+/-- A work inside a citation's brackets whose notes stand apart from it: its keys' Pandoc spellings
+joined by `; `, the form's own text notes on its first and last; `none` for any other node. -/
+private def apartWork (pipes : Bool) (x : Inline) : Option String := do
+  let (f, ks) ← citeOf? x
+  if f.full || f.up || ks.isEmpty || !(f.cmd == .alp || f.cmd == .year) then none
+  let n := ks.size
+  let ws ← ks.toList.zipIdx.mapM fun (k, i) =>
+    bracketWork pipes (if i == 0 then f.pre else "") (if i + 1 == n then f.post else "")
+      (f.cmd == .year) k
+  return "; ".intercalate ws
+
+/-- Where a citation group's walk stands: before a work, after one, or in its post-note. -/
+private inductive ApartAt where
+  | pre
+  | work
+  | post
+
+/-- Whether the siblings after a citation's opening bracket close it as `citeNotesApart` and
+`\citetext` set it: works separated by `; `, each with content before it and after a `\NAT@cmt`
+holding no citation, one work at least. -/
+private def apartGroup (pipes : Bool) (seen : Bool) (at_ : ApartAt) : List Inline → Bool
+  | [] => false
+  | x :: rest =>
+    match citeOf? x, at_ with
+    | some _, .pre =>
+      (apartWork pipes x).isSome && apartGroup pipes true .work rest
+    | some (f, _), .work | some (f, _), .post =>
+      if f.cmd == .bracket false then seen
+      else if f.cmd == .noteSep && at_ matches .work then apartGroup pipes seen .post rest
+      else false
+    | none, .pre => apartGroup pipes seen .pre rest
+    | none, .work => x matches .text "; " && apartGroup pipes seen .pre rest
+    | none, .post =>
+      if x matches .text "; " then apartGroup pipes seen .pre rest else apartGroup pipes seen .post rest
+
+/-- A note's text inside a citation's brackets, its `;` and `@` escaped, which would part or cite. -/
+private def apartText (pipes : Bool) (s : String) : String :=
+  String.join (s.toList.map fun c =>
+    if c == ';' || c == '@' then "\\" ++ c.toString else String.ofList (escapeChars pipes true [c]))
+
 /-- Whether content opens on an inline formula, under any source location. -/
 private def opensInlineMath : List Inline → Bool
   | .math false _ :: _ => true
@@ -844,6 +884,9 @@ private def inlinesInto (site : Site) (cites : Bool) (acc : String) (prev : Opti
     match (if cites then citeRun (site != .cell) acc x rest else none) with
     | some (spelled, n) => inlinesInto site cites (acc ++ spelled) none after n rest
     | none =>
+    if cites && (citeOf? x).any (·.1.cmd == .bracket true) &&
+        apartGroup (site != .cell) false .pre rest
+    then apartInto site cites (acc ++ "[") after rest else
     match x with
     | .hspace e keep =>
       let zero := Dim.MeasureValues.horizontal 0 0
@@ -888,6 +931,28 @@ private def inlinesInto (site : Site) (cites : Bool) (acc : String) (prev : Opti
       let next := inlineInto site cites acc (closesAfterTag after rest) x
       inlinesInto site cites next (if next.utf8ByteSize == acc.utf8ByteSize then prev else none) after 0
         rest
+
+/-- The siblings inside a citation's brackets whose notes stand apart from its works, Pandoc's
+`[see *a* @k, p. 3]`: each work its keys, the separator a comma, the notes as content; the walk
+resumes after the closing bracket. -/
+private def apartInto (site : Site) (cites : Bool) (acc : String) (after : Bool) :
+    List Inline → String
+  | [] => acc
+  | x :: rest =>
+    match citeOf? x with
+    | some (f, _) =>
+      if f.cmd == .bracket false then
+        let close := if opensOn ((rest.head?.map Ir.plainTextOne).getD "") ||
+          rest.head?.any bracketCite then apart else ""
+        inlinesInto site cites (acc ++ "]" ++ close) none after 0 rest
+      else if f.cmd == .noteSep then apartInto site cites (acc ++ ", ") after rest
+      else apartInto site cites (acc ++ (apartWork (site != .cell) x).getD "") after rest
+    | none =>
+      match x with
+      | .text s =>
+        let said := keepAbbrevSpaces acc (apartText (site != .cell) s)
+        apartInto site cites (acc ++ said) after rest
+      | _ => apartInto site cites (inlineInto site cites acc false x) after rest
 
 end
 

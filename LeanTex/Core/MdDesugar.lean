@@ -518,9 +518,13 @@ a formula, or holds a control or a character the math model does not read" p])
     let cs := citeItemsRaws file dialect #[] #[] items.toList
     let g := citeGroupRaws file cs.1 p
     let plain (xs : Array Inl) : Bool := xs.all fun x => x matches .text .. | .soft _ | .note ..
-    let styled := if items.all (fun it => plain it.pre && plain it.post) then #[] else
+    -- `\citep`, `\citeyearpar` and `\citealp` set their notes as content, the others as text.
+    let lowers (it : CiteItem) : Bool :=
+      if items.size == 1 then it.mode != .authorInText else it.mode == .normal
+    let styled := if items.all (fun it => lowers it || (plain it.pre && plain it.post)) then #[] else
       #[routeDegraded file "cite-note"
-        "a citation's prefix or suffix sets as plain text: its emphasis, code or links are dropped" p]
+        "an author-in-text or year-only citation's note sets as plain text: its emphasis, code or \
+links are dropped" p]
     (g.1, cs.2 ++ g.2 ++ styled)
 
 /-- Each citation of a group with its notes as raws, accumulating. -/

@@ -2999,6 +2999,8 @@ public inductive CiteCmd where
   | nocite
   /-- One citation bracket: natbib's `\NAT@open` when `opening`, else `\NAT@close`. -/
   | bracket (opening : Bool)
+  /-- natbib's `\NAT@cmt`: the separator before a post-note set apart from its works. -/
+  | noteSep
   | field (f : CiteField)
   deriving Repr, BEq, Inhabited
 
@@ -3040,6 +3042,7 @@ public def natbibCites : List (String × CiteForm) :=
 is. -/
 public def CiteForm.command (f : CiteForm) : String :=
   if let .bracket o := f.cmd then (if o then "NAT@open" else "NAT@close")
+  else if f.cmd == .noteSep then "NAT@cmt"
   else ((natbibCites.find? fun (_, g) => g.cmd == f.cmd && g.up == f.up).map (·.1)).getD "cite"
 
 /-- The weight a style selects, when it touches the axis. -/

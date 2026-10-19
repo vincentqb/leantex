@@ -202,6 +202,31 @@ A \\citep[ p.~3 ]{a} and \\citep[see ][ chap. 2 ]{roe2020}, e.g. here.\n\
 spaces written ({repr twin})"
     (MarkdownDoc.emit back == twin && hasStr twin "[@a, p. 3]" && hasStr twin "chap.&#32;2]" &&
       hasStr twin "e.g.&#32;here")
+  let (d, _) := bibBuild "\\documentclass{article}\n\\usepackage{natbib}\n\\begin{document}\n\
+A \\citep[see \\emph{also}][p.~3\\footnote{An invented note.}]{a,b} end.\n\
+\\bibliographystyle{plainnat}\n\\bibliography{works}\n\\end{document}\n" #[("works", worksBib)]
+  let twin := MarkdownDoc.emit d
+  let (back, _) := mdBibBuild twin #[("works.bib", worksBib)]
+  t s!"tex twin: a citation's notes set as content spell as Pandoc's, the twin its round trip's \
+fixed point ({repr twin})"
+    (hasStr twin "[see *also* @a; @b, p. 3[^1]]" && MarkdownDoc.emit back == twin &&
+      pageText back == pageText d)
+  for (body, spelled) in [("\\citep[see; \\emph{a}][]{a}", "[see\\; *a* @a]"),
+      ("\\citep[][\\emph{a}; b]{a}", "[@a, *a*\\; b]")] do
+    let (d, _) := bibBuild ("\\documentclass{article}\n\\usepackage{natbib}\n\\begin{document}\n\
+A " ++ body ++ " end.\n\\bibliographystyle{plainnat}\n\\bibliography{works}\n\\end{document}\n")
+      #[("works", worksBib)]
+    let twin := MarkdownDoc.emit d
+    let (back, _) := mdBibBuild twin #[("works.bib", worksBib)]
+    t s!"tex twin: {repr body} spells its brackets' content once, reading back to its page \
+({repr twin})"
+      (hasStr twin spelled && pageText back == pageText d)
+  let (d, _) := bibBuild ("\\documentclass{article}\n\\usepackage{natbib}\n\\begin{document}\n\
+A \\citetext{\\citealp{a} and \\citealp{b}} end.\n\\bibliographystyle{plainnat}\n\
+\\bibliography{works}\n\\end{document}\n") #[("works", worksBib)]
+  t s!"tex twin: a citetext group of other text spells no citation group \
+({repr (MarkdownDoc.emit d)})"
+    (!hasStr (MarkdownDoc.emit d) "@a and")
   for alt in ["![Plain p.&#32;4](chart.svg)", "![A chart, cf. 2](chart.svg)", "L p.&nbsp; 3"] do
     let once := MarkdownDoc.emit (elabMd (alt ++ "\n")).1
     t s!"md twin: an alternative's spaces after an abbreviation read back as written ({repr once})"

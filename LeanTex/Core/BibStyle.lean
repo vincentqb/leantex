@@ -358,16 +358,16 @@ private structure Switches where
 private def switches (p : CitePunct) (f : Ir.CiteForm) : Switches :=
   let brackets := match f.cmd with
     | .textual | .paren | .auto | .yearPar | .text => true
-    | .alt | .alp | .author | .year | .num | .nocite | .bracket _ | .field _ => false
+    | .alt | .alp | .author | .year | .num | .nocite | .bracket _ | .noteSep | .field _ => false
   { numeric := p.numbers || f.cmd == .num
     wrap := match f.cmd with
       | .paren | .alp | .yearPar | .num | .text => true
       | .auto => p.numbers
-      | .textual | .alt | .author | .year | .nocite | .bracket _ | .field _ => false
+      | .textual | .alt | .author | .year | .nocite | .bracket _ | .noteSep | .field _ => false
     part := match f.cmd with
       | .author => .names
       | .year | .yearPar => .year
-      | .textual | .paren | .auto | .alt | .alp | .num | .text | .nocite | .bracket _
+      | .textual | .paren | .auto | .alt | .alp | .num | .text | .nocite | .bracket _ | .noteSep
       | .field _ => .both
     op := if brackets then p.open else ""
     cl := if brackets then p.close else "" }
@@ -544,6 +544,7 @@ private def fieldStep (p : CitePunct) (w : Ir.CiteField) (full : Bool) (acc : Ar
 public def renderCite (p : CitePunct) (f : Ir.CiteForm) (parts : Array (Option Resolved)) :
     Array Ir.Inline :=
   if let .bracket o := f.cmd then emit #[] (if o then p.open else p.close)
+  else if f.cmd == .noteSep then emit #[] p.notesep
   else if let .field w := f.cmd then
     let body := parts.foldl (fieldStep p w f.full) #[]
     let pre := if f.pre.isEmpty then "" else f.pre ++ " "
@@ -2902,6 +2903,8 @@ private theorem renderCite_citeFree (p : CitePunct) (f : Ir.CiteForm)
     (parts : Array (Option Resolved)) :
     citeFreeList (renderCite p f parts).toList = true := by
   unfold renderCite
+  split
+  · exact citeFree_of_plain _ (emit_plain _ _ (by simp))
   split
   · exact citeFree_of_plain _ (emit_plain _ _ (by simp))
   split

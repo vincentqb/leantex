@@ -128,11 +128,14 @@ def mdCiteChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((citesOf d).map (·.1.cmd) == #[.paren] && hasStr (Ir.blocksText d.body) "Wow!")
   let (d, _) := elabCited "[@a, see [here](https://example.org/a;b)] end"
   t "cite: a link in a note, its destination's ';' included, stays in its citation"
-    ((citesOf d).map (·.2) == #[#["a"]])
-  -- Every note the IR's plain notes cannot carry is named, once per citation.
-  let (_, ds) := elabCited "[*see* @a] and [@a, `code`]"
-  t "cite: a formatted prefix or suffix is named, once per citation"
-    ((ds.filter (·.subject == some "md:cite-note")).size == 2)
+    (keysOf d == ["a"] && Ir.anyInline (· matches .link "https://example.org/a;b" _)
+      (d.body.flatMap fun b => match b with | .para xs => xs | _ => #[]))
+  -- A bracketed citation sets its notes as content; an author-in-text one's suffix stays text.
+  let (d, ds) := elabCited "[*see* @a] and [@a, `code`] and @a [*p.* 3]"
+  t "cite: a formatted note sets as content, and only an author-in-text suffix is named"
+    ((ds.filter (·.subject == some "md:cite-note")).size == 1 &&
+      Ir.anyInline (· matches .styled .emph _)
+        (d.body.flatMap fun b => match b with | .para xs => xs | _ => #[]))
   for md in ["[see @a and @b] end", "[@a, see @b] end", "[see [@a] and @b] end", "[@a [@b]] end",
       "[see @a [p. 3; @b]] end", "[x @a [@b]] end"] do
     let (_, ds) := elabCited md
