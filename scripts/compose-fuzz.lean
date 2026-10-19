@@ -49,7 +49,7 @@ def unitFields (head : String) (raws : Array Parse.Raw) : Option (List String) :
   let body ← raws.findSome? fun r => match r with
     | .group b _ => some b
     | _ => none
-  let src := Parse.rawSrc body
+  let entries := (Entries.read .native body).toList
   let keyFields (k : String) : List String :=
     match head, k with
     | "page", "size" => ["width", "height"]
@@ -63,28 +63,26 @@ def unitFields (head : String) (raws : Array Parse.Raw) : Option (List String) :
     | _, _ => [k]
   match head with
   | "page" | "pdfmeta" | "fonts" =>
-    some ((Decl.splitEntries src).flatMap fun e =>
-      match Decl.splitEntry e with
+    some (entries.flatMap fun e =>
+      match e.pair? with
       | some (k, _) => keyFields k
       | none => ["<malformed>"])
   | "output" =>
     -- A bare entry continues the last opened list (`formats`, `profiles`).
-    some (((Decl.splitEntries src).foldl (fun (acc : List String × String) e =>
-      match Decl.splitEntry e with
+    some ((entries.foldl (fun (acc : List String × String) e =>
+      match e.pair? with
       | some (k, _) => (acc.1 ++ [k], if k == "profiles" then k else "formats")
       | none => (acc.1 ++ [acc.2], acc.2)) ([], "formats")).1)
   | "chrome" =>
-    some ((Decl.splitEntries src).flatMap fun e =>
-      match Decl.splitEntry e with
-      | some (k, v) =>
-        let inner := v.trimAscii.toString
-        if inner.startsWith "{" && inner.endsWith "}" && inner.length ≥ 2 then
-          (Decl.splitEntries (String.ofList (inner.toList.drop 1).dropLast)).map fun se =>
-            match Decl.splitEntry se with
-            | some (sk, _) => k ++ "." ++ sk
-            | none => k ++ ".<malformed>"
-        else [k]
-      | none => ["<malformed>"])
+    some (entries.flatMap fun e =>
+      match e.pair?, (e.value.map Array.toList : Option (List Parse.Raw)) with
+      | some (k, _), some [.group g _] =>
+        (Entries.read .native g).toList.map fun se =>
+          match se.pair? with
+          | some (sk, _) => k ++ "." ++ sk
+          | none => k ++ ".<malformed>"
+      | some (k, _), _ => [k]
+      | none, _ => ["<malformed>"])
   | _ => none
 
 /-- Elaborate raws to the comparison key: the document, and the diagnostic codes as a

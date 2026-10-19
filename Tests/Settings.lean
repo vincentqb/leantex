@@ -254,13 +254,13 @@ def nativeCarrierChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
      .fonts #[("body", "\"Example Serif\"")], .pdfmeta #[(.language, "\"fr\"")],
      .chrome #[("standout-note", "true")]]
   let declOf : Elab.PDecl → String
-    | .page src _ => s!"page {src}"
-    | .tokens src _ => s!"tokens {src}"
-    | .palette _ body _ => s!"palette {body}"
+    | .page b _ => s!"page {b.map Parse.declSrc}"
+    | .tokens b _ => s!"tokens {b.map Parse.declSrc}"
+    | .palette _ b _ => s!"palette {b.map Parse.declSrc}"
     | .style args _ => s!"style {args.map fun (e, b) => (e, Parse.declSrc b)}"
-    | .fonts src _ => s!"fonts {src.map (·.1)}"
-    | .pdfmeta src _ => s!"pdfmeta {src}"
-    | .chrome src _ => s!"chrome {src}"
+    | .fonts b _ => s!"fonts {b.map Parse.declSrc}"
+    | .pdfmeta b _ => s!"pdfmeta {b.map Parse.declSrc}"
+    | .chrome b _ => s!"chrome {b.map Parse.declSrc}"
     | _ => "another declaration"
   for s in settings do
     let scanned := (Elab.scanDecls "setting.tex" (s.raws {})).map declOf
@@ -304,6 +304,17 @@ def nativeCarrierChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
         (k, if (KeyVal.cutAt '=' e.toList).2.isSome then some v else none)))
   t "a comma in a formula or a control symbol cuts no keyval entry"
     (kvOf "x=$a,b$, y=c\\,d" == [("x", some "$a,b$"), ("y", some "c\\,d")])
+  -- A native declaration's reader keeps a formula whole, as its raws hold it.
+  let declDiags (decl : String) : Array Diag :=
+    (elabStr ("\\documentclass{article}\n" ++ decl ++ "\n\\begin{document}\nAlpha.\n\\end{document}")).2
+  for decl in ["\\palette{ accent = #123456, ink = $a,b$ }", "\\pdfmeta{ subject = $a,b$ }",
+      "\\tokens{ gap = 1em, zzwide = $a,b$ }", "\\output{ formats = pdf, css = $a,b$ }",
+      "\\chrome{ footer = { left = $a,b$ } }"] do
+    t s!"a formula's comma cuts no entry of {decl.quote}"
+      (!(declDiags decl).any fun d => d.kind == .E0320)
+  t "a native declaration's value holding a formula reads whole"
+    ((Entries.read .native (lexedRaws "accent = #123456, ink = $a,b$")).toList.map (·.text) ==
+      [("accent", "#123456"), ("ink", "$a,b$")])
   -- A passed option's spaces reach the package as the load's own option's do.
   let parskipped (pre : String) : String :=
     "\\documentclass{article}\n" ++ pre ++ "\n\\begin{document}\nAlpha words.\n\nBravo words.\n\\end{document}"

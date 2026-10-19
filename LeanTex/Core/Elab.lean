@@ -4642,13 +4642,13 @@ private def noteAuthorToken (ctx : Ctx) (key : String) (pos : Pos) : EM Unit := 
 
 /-- Applies a `\tokens{...}` block entry by entry, so an entry may refer to
 an earlier one. -/
-private def applyTokens (ctx : Ctx) (toks : Tokens) (src : String) (pos : Pos)
+private def applyTokens (ctx : Ctx) (toks : Tokens) (body : Array Raw) (pos : Pos)
     (engine : Array (String × Dim.SymGlue) := #[]) : EM Tokens := do
   let mut acc : Tokens := toks
-  for entry in Decl.splitEntries src do
-    match Decl.splitEntry entry with
+  for entry in Entries.read .native body do
+    match entry.pair? with
     | none =>
-      diag ctx .E0320 s!"invalid entry in '\\tokens': {entry.quote}" pos
+      diag ctx .E0320 s!"invalid entry in '\\tokens': {entry.src.quote}" pos
         (help := "entries look like: name = length")
     | some (key, valueSrc) =>
       match Decl.parseValue valueSrc (acc.entries ++ engine) with
@@ -4678,7 +4678,7 @@ private def applyTokens (ctx : Ctx) (toks : Tokens) (src : String) (pos : Pos)
 one value per backend. -/
 private def tokensBlock (ctx : Ctx) (tk : Tokens) (body : Array Raw) (pos : Pos) : EM Tokens := do
   return ctx.preamble.fixLengths Ir.leftMarginNamed
-    (← applyTokens { ctx with tokens := tk } tk (declSrc body) pos (engine := ctx.engineTokens))
+    (← applyTokens { ctx with tokens := tk } tk body pos (engine := ctx.engineTokens))
 
 /-- A `\tokens{...}` block inside inline content, in force for the rest of its group: the tokens
 it leaves and the index past it. -/
@@ -8210,18 +8210,18 @@ private def engineLengthTokens (docClass : Ir.DocClass) (classOptions : String)
 
 /-- Reads a `\palette` option run as (decorative, seeds, skipBlock); an
 unknown option skips the block. -/
-private def parsePaletteOpts (ctx : Ctx) (src : String) (pos : Pos) :
+private def parsePaletteOpts (ctx : Ctx) (opts : Array Raw) (pos : Pos) :
     EM (Bool × Bool × Bool) := do
   let mut decorative := false
   let mut seeds := false
   let mut skipBlock := false
-  for e in Decl.splitEntries src do
-    if e == "decorative" then
+  for e in Entries.read .native opts do
+    if e.src == "decorative" then
       decorative := true
-    else if e == "seeds" then
+    else if e.src == "seeds" then
       seeds := true
     else
-      diag ctx .W0316 s!"unknown option in '\\palette': {e.quote}; block skipped" pos
+      diag ctx .W0316 s!"unknown option in '\\palette': {e.src.quote}; block skipped" pos
         (help := "options: decorative, seeds")
       skipBlock := true
   -- premise: seedRoleChecks — decorative and plain seeded builds agree
@@ -8509,14 +8509,14 @@ private def seedKeys : List String := ["ink", "paper", "accent", "alert", "examp
 
 /-- Installs the palette generated from `\palette[seeds]{…}`; seeds that
 generate none stand as the page's text, ground and accent. -/
-private def applySeeds (ctx : Ctx) (pal : Palette) (src : String) (pos : Pos)
+private def applySeeds (ctx : Ctx) (pal : Palette) (body : Array Raw) (pos : Pos)
     (depth : GroundDepth) : EM Palette := do
   let mut found : Array (String × Color) := #[]
   let mut blocks := SeedPalette.Blocks.tonal
-  for entry in Decl.splitEntries src do
-    match Decl.splitEntry entry with
+  for entry in Entries.read .native body do
+    match entry.pair? with
     | none =>
-      diag ctx .E0320 s!"invalid entry in '\\palette[seeds]': {entry.quote}" pos
+      diag ctx .E0320 s!"invalid entry in '\\palette[seeds]': {entry.src.quote}" pos
         (help := "entries look like: ink = #RRGGBB")
     | some (key, valueSrc) =>
       if key == "blocks" then
@@ -8566,18 +8566,19 @@ where
     return pal
 
 
-private def applyPalette (ctx : Ctx) (pal : Palette) (src : String)
+private def applyPalette (ctx : Ctx) (pal : Palette) (body : Array Raw)
     (pos : Pos) (decorative : Bool := false) (seeds : Bool := false)
     (depth : GroundDepth := .documents) (inBody : Bool := false) : EM Palette := do
-  if seeds then return ← applySeeds ctx pal src pos depth
+  if seeds then return ← applySeeds ctx pal body pos depth
   let mut pal := pal
-  for entry in Decl.splitEntries src do
-    match Decl.splitEntry entry with
+  for entry in Entries.read .native body do
+    match entry.pair? with
     | none =>
-      diag ctx .E0320 s!"invalid entry in '\\palette': {entry.quote}" pos
+      diag ctx .E0320 s!"invalid entry in '\\palette': {entry.src.quote}" pos
         (help := "entries look like: name = #RRGGBB")
     | some (key, valueSrc) =>
-      pal ← applyPaletteEntry ctx pal key valueSrc entry pos decorative (inBody := inBody) (depth := depth)
+      pal ← applyPaletteEntry ctx pal key valueSrc entry.src pos decorative (inBody := inBody)
+        (depth := depth)
   resolveBeamerColors ctx pal
 
 
@@ -10932,15 +10933,15 @@ private def flattenFrame (title : Array Inline) (standout : Bool)
     else .frame title standout valign breakable inner
   | _ => .frame title standout valign breakable inner
 
-private def navSpecOf (ctx : Ctx) (inner : String) (pos : Pos) :
+private def navSpecOf (ctx : Ctx) (inner : Array Raw) (pos : Pos) :
     EM Ir.NavSpec := do
   let mut spec : Ir.NavSpec := {}
   let mut pinned : Option (Bool × Bool) := none
   let mut offset : Option Dim.SymGlue := none
   let mut reveal := false
   let mut revealBy : Option Dim.SymGlue := none
-  for e in Decl.splitEntries inner do
-    match Decl.splitEntry e with
+  for e in Entries.read .native inner do
+    match e.pair? with
     | some ("label", v) =>
       spec := { spec with label := some v }
     | some ("pin", v) =>
@@ -11363,7 +11364,7 @@ private def flowStyleArm (ctx : Ctx) (n : String) (raws : Array Raw)
             | some c => ⟨(raws.extract (j0 + 1) c, c + 1), by
                 have := closeBracketFrom_ge hc; omega⟩
             | none => ⟨(raws.extract (j0 + 1) raws.size, raws.size), by omega⟩
-          let (decorative, seeds, skipBlock) ← parsePaletteOpts ctx (rawSrc opt) pos
+          let (decorative, seeds, skipBlock) ← parsePaletteOpts ctx opt pos
           pure ⟨((decorative, seeds), skipBlock, skipSpaces raws k), by
             have := skipSpaces_ge raws k
             show start ≤ skipSpaces raws k
@@ -11373,7 +11374,7 @@ private def flowStyleArm (ctx : Ctx) (n : String) (raws : Array Raw)
       match raws[jf]? with
       | some (.group body _) =>
         let pal? ← if skipBlock then pure none else
-          some <$> applyPalette ctx ctx.palette (declSrc body) pos (decorative := decorative)
+          some <$> applyPalette ctx ctx.palette body pos (decorative := decorative)
             (seeds := seeds) (depth := ctx.groundDepth) (inBody := true)
         pure ⟨(pal?, jf + 1), by omega⟩
       | _ =>
@@ -12914,7 +12915,8 @@ private def blockSkipTokens (ctx : Ctx) : Array (String × Dim.SymGlue) :=
 /-- A `\block`'s option: its `before` skip, whether it stretches as `\fill`,
 and whether it is a primitive `\vskip`. -/
 private def blockOptions (ctx : Ctx) (optSrc : Array Raw) (pos : Pos) : EM (SymGlue × Bool) := do
-  let (opts, ds) := Decl.parseBlock ctx.file (declSrc optSrc) pos "block" (blockSkipTokens ctx)
+  let (opts, ds) := Decl.parseBlock ctx.file (Entries.texts .native optSrc) pos "block"
+    (blockSkipTokens ctx)
   modify fun st => { st with diags := st.diags ++ ds }
   let mut before : SymGlue := {}
   let mut primitive := false
@@ -13566,7 +13568,7 @@ the text width; the box takes the whole measure" pos
         "content addressed per backend encodes a per-medium decision by hand" pos
         (help := "a construct carries its own medium answer (a nav, a note); \
 prefer the construct or the class, and keep '\\begin{ifbackend}' for the true remainder")
-      let names := Decl.splitEntries (rawSrc g)
+      let names := (Entries.read .native g).map (·.src)
       let mut targets : Array String := #[]
       for name in names do
         if Ir.backendNames.contains name then
@@ -13595,8 +13597,7 @@ prefer the construct or the class, and keep '\\begin{ifbackend}' for the true re
   else if n == "nav" then
     match scanBracketArg body 0 pos with
     | .took k =>
-      let inner := bracketSrc body 0 k
-      let spec ← navSpecOf ctx inner pos
+      let spec ← navSpecOf ctx (bracketInner body 0 k) pos
       have _ := tail_measures body k
       blocks := blocks.push (.nav spec (← elabBlockScope ctx (body.extract k body.size)))
     | _ =>
@@ -15787,7 +15788,7 @@ institute, or date, got '{vt}'" pos
 
 /-- Applies `\chrome{...}`, merging each declared footer slot onto the chrome
 already declared. -/
-private def applyChrome (ctx : Ctx) (c0 : Chrome) (src : String) (pos : Pos) :
+private def applyChrome (ctx : Ctx) (c0 : Chrome) (body : Array Raw) (pos : Pos) :
     Chrome × Array PEvent := Id.run do
   let mut chrome : Chrome := c0
   let mut evs : Array PEvent := #[]
@@ -15795,19 +15796,25 @@ private def applyChrome (ctx : Ctx) (c0 : Chrome) (src : String) (pos : Pos) :
   let say (evs : Array PEvent) (code : DiagCode) (msg : String)
       (help : Option String := none) : Array PEvent :=
     evs.push (.say (diagOf ctx code msg (some pos) help))
-  for entry in Decl.splitEntries src do
-    match Decl.splitEntry entry with
+  for entry in Entries.read .native body do
+    match entry.pair? with
     | none =>
-      evs := say evs .E0320 s!"invalid entry in '\\chrome': {entry.quote}"
+      evs := say evs .E0320 s!"invalid entry in '\\chrome': {entry.src.quote}"
         (help := "entries look like: footer = { left = \\sectiontitle, right = \\framenumber }")
     | some (key, valueSrc) =>
       if key == "footer" then
-        match Decl.parseValue valueSrc with
-        | some (.block inner) =>
-          for slotEntry in Decl.splitEntries inner do
-            match Decl.splitEntry slotEntry with
+        -- A written block is read as its raws; a translation carries its block as text.
+        let written : Option (List Raw) := entry.value.map Array.toList
+        let slots? : Option (Array Raw) := match written, Decl.parseValue valueSrc with
+          | some [.group g _], _ => some g
+          | _, some (.block inner) => some #[.word inner pos]
+          | _, _ => none
+        match slots?, Decl.parseValue valueSrc with
+        | some slots, _ =>
+          for slotEntry in Entries.read .native slots do
+            match slotEntry.pair? with
             | none =>
-              evs := say evs .E0320 s!"invalid entry in '\\chrome' footer: {slotEntry.quote}"
+              evs := say evs .E0320 s!"invalid entry in '\\chrome' footer: {slotEntry.src.quote}"
                 (help := s!"entries look like: left = \\sectiontitle; {slotHelp}")
             | some (slotKey, slotVal) =>
               let v := slotVal.trimAscii.toString
@@ -15836,11 +15843,11 @@ private def applyChrome (ctx : Ctx) (c0 : Chrome) (src : String) (pos : Pos) :
                 | _ =>
                   evs := evs.push (.say (Decl.unknownKey
                     ctx.file "chrome footer" slotKey ["left", "right"] pos))
-        | some v =>
+        | none, some v =>
           evs := evs.push (.say (Decl.wrongType
             ctx.file "chrome" key
             "a block like { left = \\sectiontitle, right = \\framenumber }" v pos))
-        | none =>
+        | none, none =>
           evs := say evs .E0321 s!"cannot read value for 'footer' in '\\chrome': {valueSrc.quote}"
             (help := "footer = { left = \\sectiontitle, right = \\framenumber }")
       else if key == "standout-note" then
@@ -15866,7 +15873,7 @@ private inductive OutputList where
 
 /-- Applies `\output{...}`; an entry without `=` continues the list last
 opened. -/
-private def applyOutput (ctx : Ctx) (o0 : OutputSpec) (src : String) (pos : Pos) :
+private def applyOutput (ctx : Ctx) (o0 : OutputSpec) (body : Array Raw) (pos : Pos) :
     OutputSpec × Array PEvent := Id.run do
   let mut o := o0
   let mut evs : Array PEvent := #[]
@@ -15903,8 +15910,8 @@ private def applyOutput (ctx : Ctx) (o0 : OutputSpec) (src : String) (pos : Pos)
     | .formats => addFormat o evs v
     | .profiles => addProfile o evs v
     | .schemes => addScheme o evs v
-  for entry in Decl.splitEntries src do
-    match Decl.splitEntry entry with
+  for entry in Entries.read .native body do
+    match entry.pair? with
     | some ("formats", v) =>
       inList := some .formats
       let (o', evs') := addFormat o evs v
@@ -15976,11 +15983,11 @@ private def applyOutput (ctx : Ctx) (o0 : OutputSpec) (src : String) (pos : Pos)
     | none =>
       match inList with
       | some l =>
-        let (o', evs') := addListed o evs l entry
+        let (o', evs') := addListed o evs l entry.src
         o := o'
         evs := evs'
       | none =>
-        evs := say evs .E0320 s!"invalid entry in '\\output': {entry.quote}"
+        evs := say evs .E0320 s!"invalid entry in '\\output': {entry.src.quote}"
           (help := some "entries look like: formats = pdf, html")
   return (o, evs)
 
@@ -16136,8 +16143,8 @@ private def parseAssert (ctx : Ctx) (src : String) (pos : Pos) :
 elaborates it in order. -/
 public inductive PDecl where
   | docclass (options : Option String) (cls : Option String) (pos : Pos)
-  | pictures (src : Option String) (pos : Pos)
-  | figures (src : Option String) (pos : Pos)
+  | pictures (body : Option (Array Raw)) (pos : Pos)
+  | figures (body : Option (Array Raw)) (pos : Pos)
   | defineCmd (decl : Array Raw) (pos : Pos)
   | defineEnv (name : Option (String × Pos)) (sig : String) (dflt : Option (Array Raw))
       (beginB : Option (Array Raw)) (endB : Option (Array Raw)) (pos : Pos)
@@ -16147,7 +16154,7 @@ public inductive PDecl where
   | logo (body : Option (Array Raw)) (pos : Pos)
   /-- `\logoleft`/`\logoright`: a headline band's corner slot. -/
   | logoSlot (left : Bool) (body : Option (Array Raw)) (pos : Pos)
-  | palette (opts : Option (Array Raw)) (body : Option String) (pos : Pos)
+  | palette (opts : Option (Array Raw)) (body : Option (Array Raw)) (pos : Pos)
   | beamerColor (name : String) (star : Bool) (source : String) (pos : Pos)
   | standoutColor (name source : String) (pos : Pos)
   /-- A block template's paint site: the beamer element chain, latest first,
@@ -16158,19 +16165,19 @@ public inductive PDecl where
   | style (args : Option (String × Array Raw)) (pos : Pos)
   /-- A read title-page template standing here, by its index in the rewrite's templates. -/
   | titlePage (index : Nat) (pos : Pos)
-  | allow (body : Option String) (pos : Pos)
+  | allow (body : Option (Array Raw)) (pos : Pos)
   | theme (src : Option String) (pos : Pos)
   | assert (src : Option String) (pos : Pos)
-  | output (src : Option String) (pos : Pos)
-  | tokens (src : Option String) (pos : Pos)
-  | chrome (src : Option String) (pos : Pos)
-  | page (src : Option String) (pos : Pos)
-  /-- The block's text, with each entry's key at its site. -/
-  | fonts (src : Option (String × Array (String × Pos))) (pos : Pos)
-  | pdfmeta (src : Option String) (pos : Pos)
+  | output (body : Option (Array Raw)) (pos : Pos)
+  | tokens (body : Option (Array Raw)) (pos : Pos)
+  | chrome (body : Option (Array Raw)) (pos : Pos)
+  | page (body : Option (Array Raw)) (pos : Pos)
+  | fonts (body : Option (Array Raw)) (pos : Pos)
+  | pdfmeta (body : Option (Array Raw)) (pos : Pos)
   /-- hyperref's metadata lowered by Compat: the construct, its link styles, its dates and trapping
   as `\pdfmeta` entries, each key's TeX. -/
-  | pdfmetaText (what links words : String) (pairs : Array (Native.TextMetaKey × Array Raw)) (pos : Pos)
+  | pdfmetaText (what links : String) (words : Array Raw) (pairs : Array (Native.TextMetaKey × Array Raw))
+      (pos : Pos)
   | captionsetup (scope : Option String) (unclosed : Option Pos) (body : Option String) (pos : Pos)
   /-- url.sty's `\urlstyle`: the family `\url` and `\nolinkurl` set in. -/
   | urlstyle (v : Option String) (pos : Pos)
@@ -16269,13 +16276,13 @@ private def metaTextPairs : List Raw → Array (Native.TextMetaKey × Array Raw)
 
 /-- The `\pdfmeta` group at `j` when Compat lowered it from TeX values (`Compat.metaTextMark`). -/
 private def metaTextAt (raws : Array Raw) (j : Nat) :
-    Option (String × String × String × Array (Native.TextMetaKey × Array Raw) × Nat) :=
+    Option (String × String × Array Raw × Array (Native.TextMetaKey × Array Raw) × Nat) :=
   match raws[j]? with
   | some (.group body _) =>
     match body.toList with
     | .ctrl m _ :: .group what _ :: .group links _ :: .group words _ :: rest =>
       if m == Compat.metaTextMark then
-        some (declSrc what, declSrc links, declSrc words, metaTextPairs rest #[], j + 1)
+        some (declSrc what, declSrc links, words, metaTextPairs rest #[], j + 1)
       else none
     | _ => none
   | _ => none
@@ -16286,7 +16293,7 @@ private def entrySites (body : Array Raw) : Array (String × Pos) :=
     (e.item.findSome? fun r => match r with
       | .word _ p | .ctrl _ p | .sym _ p | .group _ p | .math _ _ p | .env _ _ p | .verb _ _ p
       | .par p => some p
-      | .space => none).map (e.key.trimAscii.toString, ·)
+      | .space => none).map (e.key, ·)
 
 /-- Segments the preamble into declaration values, `\input` wrappers
 spliced open between file markers. -/
@@ -16483,7 +16490,7 @@ public def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run d
           match preamble[j]? with
           | some (.group body _) =>
             i := j + 1
-            out := out.push (.palette opts (some (declSrc body)) pos)
+            out := out.push (.palette opts (some body) pos)
           | _ =>
             out := out.push (.palette opts none pos)
         else if name == "style" then
@@ -16500,13 +16507,13 @@ public def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run d
           match preamble[j]? with
           | some (.group body _) =>
             i := j + 1
-            out := out.push (.allow (some (declSrc body)) pos)
+            out := out.push (.allow (some body) pos)
           | _ =>
             out := out.push (.allow none pos)
         else if name == "tikzexternalize" then
           let (_, k) := takeOptRun preamble (skipSpaces preamble i)
           i := k
-          out := out.push (.pictures (some "tool = lualatex") pos)
+          out := out.push (.pictures (some #[.word "tool = lualatex" pos]) pos)
         else if name == Compat.cancelOptionsMark then
           match preamble[i]? with
           | some (.group body _) =>
@@ -16526,26 +16533,22 @@ public def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run d
           out := out.push (.pdfmetaText what links words pairs pos)
         else if declCtrl.contains name then
           let j := skipSpaces preamble i
-          let src : Option String := match preamble[j]? with
-            | some (.group body _) => some (declSrc body)
+          let body : Option (Array Raw) := match preamble[j]? with
+            | some (.group body _) => some body
             | _ => none
-          if src.isSome then
+          if body.isSome then
             i := j + 1
           match name with
-          | "theme" => out := out.push (.theme src pos)
-          | "assert" => out := out.push (.assert src pos)
-          | "output" => out := out.push (.output src pos)
-          | "tokens" => out := out.push (.tokens src pos)
-          | "chrome" => out := out.push (.chrome src pos)
-          | "page" => out := out.push (.page src pos)
-          | "fonts" =>
-            let sites := match preamble[j]? with
-              | some (.group body _) => entrySites body
-              | _ => #[]
-            out := out.push (.fonts (src.map (·, sites)) pos)
-          | "pictures" => out := out.push (.pictures src pos)
-          | "figures" => out := out.push (.figures src pos)
-          | _ => out := out.push (.pdfmeta src pos)
+          | "theme" => out := out.push (.theme (body.map declSrc) pos)
+          | "assert" => out := out.push (.assert (body.map declSrc) pos)
+          | "output" => out := out.push (.output body pos)
+          | "tokens" => out := out.push (.tokens body pos)
+          | "chrome" => out := out.push (.chrome body pos)
+          | "page" => out := out.push (.page body pos)
+          | "fonts" => out := out.push (.fonts body pos)
+          | "pictures" => out := out.push (.pictures body pos)
+          | "figures" => out := out.push (.figures body pos)
+          | _ => out := out.push (.pdfmeta body pos)
         else if name == "urlstyle" then
           let j := skipSpaces preamble i
           match preamble[j]? with
@@ -16691,11 +16694,11 @@ public def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run d
 
 /-- Applies `\allow{...}`: each named code accepts its loss, a renumbered or
 retired code is noted, and an unknown one is refused. -/
-private def applyAllow (ctx : Ctx) (allow : Array String) (src : String) (pos : Pos) :
+private def applyAllow (ctx : Ctx) (allow : Array String) (body : Array Raw) (pos : Pos) :
     Array String × Array PEvent := Id.run do
   let mut allow := allow
   let mut evs : Array PEvent := #[]
-  for code in Decl.splitEntries src do
+  for code in (Entries.read .native body).map (·.src) do
     match DiagCode.ofString? code with
     | some c =>
       unless allow.contains c.code do
@@ -16735,9 +16738,9 @@ private def stepDone (ctx : Ctx) (r : PreState × Array PEvent) : EM PreState :=
   emitEvents ctx r.2
   return r.1
 
-private def stepPage (s : PreState) (src : String) (pos : Pos) :
+private def stepPage (s : PreState) (body : Array Raw) (pos : Pos) :
     PreState × Array PEvent :=
-  let pb := Decl.parseBlock s.ctx.file src pos "page" s.tokens.entries
+  let pb := Decl.parseBlock s.ctx.file (Entries.texts .native body) pos "page" s.tokens.entries
   -- A block's own font size fixes its em and ex.
   let size := (pb.1.findSome? fun e => match e.key, e.value with
     | "fontsize", .dim d => if d ≥ Dim.pt 1 then some d else none
@@ -16750,27 +16753,28 @@ private def stepPage (s : PreState) (src : String) (pos : Pos) :
       sawPage := pb.1.any (fun e => (Native.PageKey.ofName? e.key).any (·.claims)) || s.sawPage },
    pb.2.map .say ++ pe.2)
 
-private def stepFonts (s : PreState) (src : String) (sites : Array (String × Pos)) (pos : Pos) :
+private def stepFonts (s : PreState) (body : Array Raw) (pos : Pos) :
     PreState × Array PEvent :=
-  let pb := Decl.parseBlock s.ctx.file src pos "fonts" s.tokens.entries
+  let pb := Decl.parseBlock s.ctx.file (Entries.texts .native body) pos "fonts" s.tokens.entries
+  let sites := entrySites body
   let fe := applyFonts s.ctx s.fonts pb.1 sites pos
   ({ s with fonts := fe.1 }, pb.2.map .say ++ fe.2)
 
-private def stepPdfmeta (s : PreState) (src : String) (pos : Pos) :
+private def stepPdfmeta (s : PreState) (body : Array Raw) (pos : Pos) :
     PreState × Array PEvent :=
-  let pb := Decl.parseBlock s.ctx.file src pos "pdfmeta" s.tokens.entries
+  let pb := Decl.parseBlock s.ctx.file (Entries.texts .native body) pos "pdfmeta" s.tokens.entries
   let me := applyMeta s.ctx s.info pb.1 pos
   ({ s with info := me.1 }, pb.2.map .say ++ me.2)
 
-private def stepOutput (s : PreState) (src : String) (pos : Pos) :
+private def stepOutput (s : PreState) (body : Array Raw) (pos : Pos) :
     PreState × Array PEvent :=
-  let oe := applyOutput s.ctx s.output src pos
+  let oe := applyOutput s.ctx s.output body pos
   ({ s with output := oe.1 }, oe.2)
 
 /-- Applies `\chrome`, warning under a class that never draws it. -/
-private def stepChrome (s : PreState) (src : String) (pos : Pos) :
+private def stepChrome (s : PreState) (body : Array Raw) (pos : Pos) :
     PreState × Array PEvent :=
-  let ce := applyChrome s.ctx s.chrome src pos
+  let ce := applyChrome s.ctx s.chrome body pos
   ({ s with chrome := ce.1, chromeDeclared := true },
    ce.2 ++ (if !s.docClass.record.chrome then
      #[.say (diagOf s.ctx .W0318
@@ -16787,9 +16791,9 @@ private def stepAssert (s : PreState) (src : String) (pos : Pos) :
       | none => s.asserts },
    pa.2)
 
-private def stepAllow (s : PreState) (src : String) (pos : Pos) :
+private def stepAllow (s : PreState) (body : Array Raw) (pos : Pos) :
     PreState × Array PEvent :=
-  let ae := applyAllow s.ctx s.allow src pos
+  let ae := applyAllow s.ctx s.allow body pos
   ({ s with allow := ae.1 }, ae.2)
 
 /-- A keyed head missing its `{...}` block, as a step. -/
@@ -16952,14 +16956,14 @@ optional; the default is ignored" pos
     -- `from` gates only this head or foot; a redeclaration without it resets.
     let mut fromPage : Nat := 1
     if let some opt := opts then
-      for e in Decl.splitEntries (rawSrc opt) do
-        match Decl.splitEntry e with
+      for e in Entries.read .native opt do
+        match e.pair? with
         | some ("from", v) =>
           match v.trimAscii.toString.toNat? with
           | some n => fromPage := n
           | none => diag s.ctx .E0321 s!"'from' needs a page number, got {v.quote}" pos
         | _ =>
-          diag s.ctx .E0320 s!"unknown option in \\{name}: {e.quote}" pos
+          diag s.ctx .E0320 s!"unknown option in \\{name}: {e.src.quote}" pos
             (help := "options: from = <page>")
     match body with
     | some b =>
@@ -17025,14 +17029,14 @@ optional; the default is ignored" pos
     return s
   | .palette opts body pos =>
     let (decorative, seeds, skipBlock) ← match opts with
-      | some opt => parsePaletteOpts s.ctx (rawSrc opt) pos
+      | some opt => parsePaletteOpts s.ctx opt pos
       | none => pure (false, false, false)
     match body with
-    | some src =>
+    | some body =>
       if skipBlock then
         return s
       else
-        let pal ← applyPalette s.ctx s.palette src pos (decorative := decorative) (seeds := seeds)
+        let pal ← applyPalette s.ctx s.palette body pos (decorative := decorative) (seeds := seeds)
           (depth := s.docClass.record.groundDepth)
         return { s with palette := pal, ctx := { s.ctx with palette := pal } }
     | none =>
@@ -17144,10 +17148,10 @@ draws; skipped" pos
   | .assert none pos => stepDone s.ctx (stepMissing s "assert" "a {...} block" pos)
   | .output (some src) pos => stepDone s.ctx (stepOutput s src pos)
   | .output none pos => stepDone s.ctx (stepMissing s "output" "a {...} block" pos)
-  | .tokens src pos =>
-    match src with
-    | some src =>
-      let tk ← applyTokens s.ctx s.tokens src pos
+  | .tokens body pos =>
+    match body with
+    | some body =>
+      let tk ← applyTokens s.ctx s.tokens body pos
         (engine := engineLengthTokens s.docClass s.classOptions s.page (undeclaredBlock s))
       return { s with tokens := tk, ctx := { s.ctx with tokens := tk } }
     | none =>
@@ -17157,14 +17161,14 @@ draws; skipped" pos
   | .chrome none pos => stepDone s.ctx (stepMissing s "chrome" "a {...} block" pos)
   | .page (some src) pos => stepDone s.ctx (stepPage s src pos)
   | .page none pos => stepDone s.ctx (stepMissing s "page" "a {...} block" pos)
-  | .fonts (some block) pos => stepDone s.ctx (stepFonts s block.1 block.2 pos)
+  | .fonts (some body) pos => stepDone s.ctx (stepFonts s body pos)
   | .fonts none pos => stepDone s.ctx (stepMissing s "fonts" "a {...} block" pos)
   | .pictures body pos =>
     match body with
-    | some src =>
+    | some body =>
       let mut s := s
-      for e in Decl.splitEntries src do
-        match Decl.splitEntry e with
+      for e in Entries.read .native body do
+        match e.pair? with
         | some ("tool", v) =>
           let v := v.trimAscii.toString
           if v == "none" then
@@ -17186,10 +17190,10 @@ tool = none refuses the boundary")
       return s
   | .figures body pos =>
     match body with
-    | some src =>
+    | some body =>
       let mut s := s
-      for e in Decl.splitEntries src do
-        match Decl.splitEntry e with
+      for e in Entries.read .native body do
+        match e.pair? with
         | some ("convert", v) =>
           let v := v.trimAscii.toString
           if v == "none" then
@@ -17245,7 +17249,7 @@ numbers it; set as '??' or '?'" (some pos)
       evs := evs.push (.scalar "pdfmeta" key.key.name text pos)
       said := said.push s!"{key.key.name} = {Decl.quote text}"
     let (worded, wordEvs) := stepPdfmeta { s with info } words pos
-    unless words.isEmpty do said := said.push words
+    unless words.isEmpty do said := said.push (declSrc words)
     let native := (if said.isEmpty then "" else
       s!"\\pdfmeta\{ {String.intercalate ", " said.toList} }") ++ links
     diag s.ctx .N0100 s!"'{what}' → {if native.isEmpty then "nothing: its values are empty" else native}" pos
@@ -17578,30 +17582,28 @@ private theorem EM.run_stepDone_fst (ctx : Ctx) (r : PreState × Array PEvent) (
 private theorem EM.run_stepDone_snd (ctx : Ctx) (r : PreState × Array PEvent) (e : ESt) :
     ((stepDone ctx r).run e).2 = r.2.foldl (applyEvent ctx) e := by rfl
 
-private theorem applyDecl_page_some (s : PreState) (src : String) (pos : Pos) :
-    applyDecl s (.page (some src) pos) = stepDone s.ctx (stepPage s src pos) := by rfl
+private theorem applyDecl_page_some (s : PreState) (body : Array Raw) (pos : Pos) :
+    applyDecl s (.page (some body) pos) = stepDone s.ctx (stepPage s body pos) := by rfl
 private theorem applyDecl_page_none (s : PreState) (pos : Pos) :
     applyDecl s (.page none pos)
       = stepDone s.ctx (stepMissing s "page" "a {...} block" pos) := by rfl
-private theorem applyDecl_fonts_some (s : PreState) (block : String × Array (String × Pos))
-    (pos : Pos) :
-    applyDecl s (.fonts (some block) pos) = stepDone s.ctx (stepFonts s block.1 block.2 pos) := by
-  rfl
+private theorem applyDecl_fonts_some (s : PreState) (body : Array Raw) (pos : Pos) :
+    applyDecl s (.fonts (some body) pos) = stepDone s.ctx (stepFonts s body pos) := by rfl
 private theorem applyDecl_fonts_none (s : PreState) (pos : Pos) :
     applyDecl s (.fonts none pos)
       = stepDone s.ctx (stepMissing s "fonts" "a {...} block" pos) := by rfl
-private theorem applyDecl_pdfmeta_some (s : PreState) (src : String) (pos : Pos) :
-    applyDecl s (.pdfmeta (some src) pos) = stepDone s.ctx (stepPdfmeta s src pos) := by rfl
+private theorem applyDecl_pdfmeta_some (s : PreState) (body : Array Raw) (pos : Pos) :
+    applyDecl s (.pdfmeta (some body) pos) = stepDone s.ctx (stepPdfmeta s body pos) := by rfl
 private theorem applyDecl_pdfmeta_none (s : PreState) (pos : Pos) :
     applyDecl s (.pdfmeta none pos)
       = stepDone s.ctx (stepMissing s "pdfmeta" "a {...} block" pos) := by rfl
-private theorem applyDecl_output_some (s : PreState) (src : String) (pos : Pos) :
-    applyDecl s (.output (some src) pos) = stepDone s.ctx (stepOutput s src pos) := by rfl
+private theorem applyDecl_output_some (s : PreState) (body : Array Raw) (pos : Pos) :
+    applyDecl s (.output (some body) pos) = stepDone s.ctx (stepOutput s body pos) := by rfl
 private theorem applyDecl_output_none (s : PreState) (pos : Pos) :
     applyDecl s (.output none pos)
       = stepDone s.ctx (stepMissing s "output" "a {...} block" pos) := by rfl
-private theorem applyDecl_chrome_some (s : PreState) (src : String) (pos : Pos) :
-    applyDecl s (.chrome (some src) pos) = stepDone s.ctx (stepChrome s src pos) := by rfl
+private theorem applyDecl_chrome_some (s : PreState) (body : Array Raw) (pos : Pos) :
+    applyDecl s (.chrome (some body) pos) = stepDone s.ctx (stepChrome s body pos) := by rfl
 private theorem applyDecl_chrome_none (s : PreState) (pos : Pos) :
     applyDecl s (.chrome none pos)
       = stepDone s.ctx (stepMissing s "chrome" "a {...} block" pos) := by rfl
@@ -17610,8 +17612,8 @@ private theorem applyDecl_assert_some (s : PreState) (src : String) (pos : Pos) 
 private theorem applyDecl_assert_none (s : PreState) (pos : Pos) :
     applyDecl s (.assert none pos)
       = stepDone s.ctx (stepMissing s "assert" "a {...} block" pos) := by rfl
-private theorem applyDecl_allow_some (s : PreState) (src : String) (pos : Pos) :
-    applyDecl s (.allow (some src) pos) = stepDone s.ctx (stepAllow s src pos) := by rfl
+private theorem applyDecl_allow_some (s : PreState) (body : Array Raw) (pos : Pos) :
+    applyDecl s (.allow (some body) pos) = stepDone s.ctx (stepAllow s body pos) := by rfl
 private theorem applyDecl_allow_none (s : PreState) (pos : Pos) :
     applyDecl s (.allow none pos)
       = stepDone s.ctx (stepMissing s "allow" "a {...} block of diagnostic codes" pos) := by rfl
@@ -18173,9 +18175,9 @@ private def beginDoc (file : String) (raws : Array Raw) (picPre : String)
   let picTool0 : Option String :=
     (decls.findSome? fun d =>
       match d with
-      | .pictures (some src) _ =>
-        (Decl.splitEntries src).findSome? fun e =>
-          match Decl.splitEntry e with
+      | .pictures (some body) _ =>
+        (Entries.read .native body).findSome? fun e =>
+          match e.pair? with
           | some ("tool", v) =>
             let v := v.trimAscii.toString
             if v == "none" then some none

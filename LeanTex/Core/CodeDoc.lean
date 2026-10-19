@@ -7,6 +7,7 @@ public import LeanTex.Core.LeanStatement
 public import LeanTex.Core.LeanProse
 public import LeanTex.Core.CodeLink
 import LeanTex.Core.Decl
+import LeanTex.Core.Entries
 import LeanTex.Core.Hex
 public import LeanTex.Core.UnusedSetting
 
@@ -1268,10 +1269,10 @@ public def listingRaw (lang : Ir.CodeLang) (code : String) (p : Pos) : Raw :=
     | .ctrl _ p, some _ => .ctrl (Parse.headingControl .title) p :: rest
     | _, _ => r :: rest
 
-/-- The text of a `\output` body that `Decl.splitEntries` reads back as exactly these entries. -/
+/-- The text of a `\output` body that the declaration reader reads back as exactly these entries. -/
 public def outputSource? (entries : List String) : Option String :=
   let s := String.intercalate ", " entries
-  if Decl.splitEntries s == entries then some s else none
+  if (Entries.read .native #[.word s {}]).toList.map (·.src) == entries then some s else none
 
 /-- The directive's entries as the declarations that take them: `theme` as `\theme`, the rest as
 one `\output`. -/

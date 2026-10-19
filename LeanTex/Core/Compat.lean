@@ -2426,8 +2426,8 @@ private def boundaryRefused (raws0 : Array Raw) : Bool := Id.run do
           i := i + 1
       | .ctrl "pictures" _ =>
         let (args, k) := takeGroups raws (i + 1) 1
-        let refused := (Decl.splitEntries (rawSrc (args.getD 0 #[]))).any fun e =>
-          match Decl.splitEntry e with
+        let refused := (Entries.read .native (args.getD 0 #[])).any fun e =>
+          match e.pair? with
           | some ("tool", v) => v.trimAscii.toString == "none"
           | _ => false
         if refused then return true
@@ -9496,8 +9496,8 @@ fall on a left; the pages here are one-sided, so each opens the next page" pos
   | "fonts" =>
     -- Counted so a later `\newfontfamily` takes the next slot.
     let (args, _) := takeGroups raws start 1
-    for entry in Decl.splitEntries (rawSrc (args.getD 0 #[])) do
-      if let some (key, _) := Decl.splitEntry entry then
+    for entry in Entries.read .native (args.getD 0 #[]) do
+      if let some (key, _) := entry.pair? then
         if let ["family", n] := key.splitOn "." then
           unless (← get).fontFamilies.contains n do
             write fun st => { st with fontFamilies := st.fontFamilies.push n }
@@ -15341,8 +15341,8 @@ private def Spelling.char (t : Spelling) (c : Char) : Spelling :=
 
 /-- A `\tokens` group's values, each spelled; its keys declare, and spell nothing. -/
 private def Spelling.values (t : Spelling) (body : Array Raw) : Spelling :=
-  (Decl.splitEntries (Parse.declSrc body)).foldl (init := t) fun t e =>
-    match Decl.splitEntry e with
+  (Entries.read .native body).foldl (init := t) fun t e =>
+    match e.pair? with
     | some (_, value) => (value.foldl Spelling.char { t with inArg := true }).flush
     | none => t
 
@@ -16424,8 +16424,8 @@ private def declaredTagList : List Raw → Option String
   | .ctrl "pdfmeta" _ :: rest =>
     match (rest.dropWhile (· matches .space)).head? with
     | some (.group g _) =>
-      match (Decl.splitEntries (rawSrc g)).findSome? (fun e =>
-          match Decl.splitEntry e with
+      match (Entries.read .native g).findSome? (fun e =>
+          match e.pair? with
           | some ("language", v) =>
             match Decl.parseValue v with
             | some (.str tag) => some tag

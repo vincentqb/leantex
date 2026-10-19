@@ -2,10 +2,12 @@ module
 
 public import LeanTex.Core.Native
 public import LeanTex.Core.Decl
+public import LeanTex.Core.Entries
 import all LeanTex.Core.NativeKey
 import all LeanTex.Core.Native
 import all LeanTex.Core.Decl
 import all LeanTex.Core.KeyVal
+import all LeanTex.Core.Entries
 
 /-! Kernel checks of the native settings' carrier: the block a surface writes, the elaborator's entry
 reader reads back as exactly its entries. -/
@@ -469,6 +471,200 @@ public theorem body_read_exact (s : Setting) :
     obtain ⟨⟨k, v⟩, hkv, rfl⟩ := List.mem_map.mp he
     exact (hfacts (k, v) hkv).2.1
 
+end LeanTex.Core.Native
+
+namespace LeanTex.Core.Entries
+
+open LeanTex.Core.Parse LeanTex.Core.KeyVal
+
+private theorem itemsOf_word (s : String) (p : Pos) :
+    itemsOf [.word s p] #[] = (s.toList.map (Item.char · p)).toArray := by
+  simp [itemsOf]
+
+private theorem is_char (c d : Char) (p : Pos) : (Item.char c p).is d = (c == d) := rfl
+
+private theorem quote_next (rest : List Char) :
+    (rest.drop (rest.takeWhile (· != '"')).length).take 1 =
+      if (rest.takeWhile (· != '"')).length < rest.length then ['"'] else [] := by
+  split
+  · next h =>
+    have hr := Native.quote_closed rest h
+    generalize rest.takeWhile (· != '"') = t at hr ⊢
+    rw [hr]
+    simp
+  · next h =>
+    rw [List.drop_eq_nil_of_le (by omega)]
+    rfl
+
+private theorem atomsOf_chars (p : Pos) :
+    ∀ (cs : List Char) (acc : Array (List Item)),
+      atomsOf .native (cs.map (Item.char · p)) acc =
+        acc ++ (Decl.quoteAtoms cs #[]).map (·.map (Item.char · p))
+  | [], acc => by simp [atomsOf, Decl.quoteAtoms]
+  | c :: rest, acc => by
+    by_cases hc : c = '"'
+    · subst hc
+      have htw : (rest.map (Item.char · p)).takeWhile (fun i => !i.is '"') =
+          (rest.takeWhile (· != '"')).map (Item.char · p) := by
+        rw [List.takeWhile_map]; rfl
+      rw [List.map_cons, atomsOf, ite_eq_left (by rw [is_char]; decide), htw, Decl.quoteAtoms,
+        Native.quoteAtoms_acc _ (#[].push _)]
+      simp only [List.length_map, ← List.map_drop, ← List.map_take, quote_next]
+      rw [atomsOf_chars p (rest.drop _) _]
+      simp
+    · rw [List.map_cons, atomsOf, ite_eq_right (by rw [is_char]; simp [hc]),
+        Native.quoteAtoms_cons _ _ _ hc, Native.quoteAtoms_acc _ (#[].push _), atomsOf_chars p rest]
+      simp
+termination_by cs => cs.length
+
+private theorem splitGo_map {α β : Type} (f : α → β) (opens closes isSep : β → Bool) :
+    ∀ (xs : List α) (d : Nat) (cur : Array α) (out : Array (Array α)),
+      splitGo opens closes (Native.sepOne isSep) (xs.map f) d (cur.map f) (out.map (·.map f)) =
+        (splitGo (opens ∘ f) (closes ∘ f) (Native.sepOne (isSep ∘ f)) xs d cur out).map (·.map f)
+  | [], d, cur, out => by simp [splitGo]
+  | x :: rest, d, cur, out => by
+    rw [List.map_cons, splitGo, splitGo]
+    by_cases ho : opens (f x) = true
+    · simp only [Function.comp_apply, ho, ↓reduceIte, ← Array.map_push]
+      exact splitGo_map f opens closes isSep rest _ _ _
+    · by_cases hc : closes (f x) = true
+      · simp only [Function.comp_apply, ho, hc, ↓reduceIte, Bool.false_eq_true, ← Array.map_push]
+        exact splitGo_map f opens closes isSep rest _ _ _
+      · by_cases hs : (d == 0 && isSep (f x)) = true
+        · have hs' : (d == 0 && Native.sepOne isSep (f x :: rest.map f) > 0) = true := by
+            cases hx : isSep (f x) <;> simp_all [Native.sepOne]
+          have hs'' : (d == 0 && Native.sepOne (isSep ∘ f) (x :: rest) > 0) = true := by
+            cases hx : isSep (f x) <;> simp_all [Native.sepOne]
+          simp only [Function.comp_apply, ho, hc, Bool.false_eq_true, ↓reduceIte, hs', hs'']
+          have h1 : Native.sepOne isSep (f x :: rest.map f) - 1 = 0 := by
+            cases hx : isSep (f x) <;> simp_all [Native.sepOne]
+          have h2 : Native.sepOne (isSep ∘ f) (x :: rest) - 1 = 0 := by
+            cases hx : isSep (f x) <;> simp_all [Native.sepOne]
+          rw [h1, h2, List.drop_zero, List.drop_zero, ← Array.map_push,
+            show (#[] : Array β) = (#[] : Array α).map f by simp]
+          exact splitGo_map f opens closes isSep rest _ _ _
+        · have hs' : ¬ (d == 0 && Native.sepOne isSep (f x :: rest.map f) > 0) = true := by
+            intro h; apply hs
+            cases hx : isSep (f x) <;> simp_all [Native.sepOne]
+          have hs'' : ¬ (d == 0 && Native.sepOne (isSep ∘ f) (x :: rest) > 0) = true := by
+            intro h; apply hs
+            cases hx : isSep (f x) <;> simp_all [Native.sepOne]
+          simp only [Function.comp_apply, ho, hc, Bool.false_eq_true, ↓reduceIte, hs', hs'',
+            ← Array.map_push]
+          exact splitGo_map f opens closes isSep rest _ _ _
+
+private theorem trimItems_chars (p : Pos) (cs : List Char) :
+    trimItems (cs.map (Item.char · p)) = (Decl.trimChars cs).map (Item.char · p) := by
+  have hb : (Item.blank ∘ fun c => Item.char c p) = Char.isWhitespace := rfl
+  simp only [trimItems, Decl.trimChars, List.dropWhile_map, hb, ← List.map_reverse]
+
+private theorem cutItems_chars (p : Pos) :
+    ∀ (cs : List Char) (d : Nat) (acc : Array Item),
+      cutItems .native (cs.map (Item.char · p)) d acc =
+        (acc.toList ++ (KeyVal.cutAt '=' cs).1.map (Item.char · p),
+          (KeyVal.cutAt '=' cs).2.map (·.map (Item.char · p)))
+  | [], d, acc => by simp [cutItems, KeyVal.cutAt]
+  | c :: rest, d, acc => by
+    rw [List.map_cons, cutItems, KeyVal.cutAt]
+    by_cases hc : c = '='
+    · subst hc
+      have hn : (Grammar.native == Grammar.native) = true := by decide
+      simp [is_char, hn]
+    · rw [ite_eq_right (by simp [is_char, hc]), cutItems_chars p rest _ _]
+      simp [hc]
+
+private theorem rawsOf_chars (p : Pos) :
+    ∀ (cs : List Char) (w : String) (q : Pos) (out : Array Raw),
+      ∃ w', rawsOf (cs.map (Item.char · p)) (some (w, q)) out = out.push (.word w' q) ∧
+        w'.toList = w.toList ++ cs
+  | [], w, q, out => ⟨w, by simp [rawsOf]⟩
+  | c :: rest, w, q, out => by
+    obtain ⟨w', h, hw⟩ := rawsOf_chars p rest (w.push c) q out
+    exact ⟨w', by rw [List.map_cons, rawsOf, h], by simp [hw]⟩
+
+private theorem declSrc_rawsOf (p : Pos) (cs : List Char) :
+    declSrc (rawsOf (cs.map (Item.char · p)) none #[]) = String.ofList cs := by
+  cases cs with
+  | nil => rfl
+  | cons c rest =>
+    obtain ⟨w', h, hw⟩ := rawsOf_chars p rest (String.singleton c) p #[]
+    rw [List.map_cons, rawsOf, h]
+    simp only [declSrc, List.push_toArray, List.nil_append]
+    apply String.toList_inj.mp
+    simp [hw]
+
+private theorem valueOf_native (l : List Item) :
+    valueOf .native l = rawsOf (trimItems l) none #[] := by
+  unfold valueOf
+  split <;> simp_all
+
+private theorem opens_chars (p : Pos) :
+    (opens .native ∘ List.map (Item.char · p)) = Decl.entryOpens := by
+  funext a
+  match a with
+  | [] => rfl
+  | [c] => simp [opens, Decl.entryOpens, is_char]
+  | _ :: _ :: _ => simp [opens, Decl.entryOpens]
+
+private theorem closes_chars (p : Pos) :
+    (closes .native ∘ List.map (Item.char · p)) = Decl.entryCloses := by
+  funext a
+  match a with
+  | [] => rfl
+  | [c] => simp [closes, Decl.entryCloses, is_char]
+  | _ :: _ :: _ => simp [closes, Decl.entryCloses]
+
+private theorem comma_chars (p : Pos) :
+    (comma ∘ List.map (Item.char · p)) = (· == [',']) := by
+  funext a
+  match a with
+  | [] => rfl
+  | [c] => simp [comma, is_char]
+  | _ :: _ :: _ => simp [comma]
+
+/-- A word's entries read by the native grammar are the entries the declaration splitter cuts its
+text into, each key and value's text as the splitter's entry reader reads it. -/
+public theorem read_word (s : String) (p : Pos) :
+    (read .native #[.word s p]).toList.map Entry.text = (Decl.splitEntries s).map Decl.entryOf := by
+  have hmap : ∀ (xs : List (List Char)),
+      KeyVal.splitTopAt (opens .native) (closes .native) comma (xs.map (List.map (Item.char · p))) =
+        (KeyVal.splitTopAt Decl.entryOpens Decl.entryCloses (· == [',']) xs).map
+          (·.map (List.map (Item.char · p))) := by
+    intro xs
+    rw [Native.splitTopAt_sepOne, Native.splitTopAt_sepOne,
+      show (#[] : Array (List Item)) = (#[] : Array (List Char)).map (List.map (Item.char · p)) by simp,
+      show (#[] : Array (Array (List Item))) = (#[] : Array (Array (List Char))).map
+        (·.map (List.map (Item.char · p))) by simp,
+      splitGo_map, opens_chars, closes_chars, comma_chars]
+  unfold read Decl.splitEntries
+  rw [show (#[Raw.word s p]).toList = [.word s p] from rfl, itemsOf_word]
+  simp only [atomsOf_chars, Array.empty_append, Array.toList_map, hmap]
+  rw [Array.toList_filterMap, List.map_filterMap, List.map_filterMap, Array.toList_map,
+    List.filterMap_map]
+  congr 1
+  funext pc
+  have hflat : (pc.map (List.map (Item.char · p))).toList.flatMap id =
+      (pc.toList.flatMap id).map (Item.char · p) := by
+    simp [List.flatMap_id, List.map_flatten]
+  simp only [Function.comp_apply, hflat, trimItems_chars, List.isEmpty_map]
+  split
+  · rfl
+  · rw [cutItems_chars]
+    simp only [List.nil_append, Option.map_some, Entry.text,
+      Decl.entryOf, String.toList_ofList, valueOf_native, trimItems_chars, declSrc_rawsOf]
+    cases (KeyVal.cutAt '=' (Decl.trimChars (List.flatMap id pc.toList))).2 with
+    | none => rfl
+    | some v => simp [valueOf_native, trimItems_chars, declSrc_rawsOf]
+
+private theorem read_empty (g : Grammar) : read g #[] = #[] := by
+  simp [read, itemsOf, atomsOf, KeyVal.splitTopAt, KeyVal.splitTopWith, KeyVal.splitGo, trimItems]
+
+end LeanTex.Core.Entries
+
+namespace LeanTex.Core.Native
+
+open LeanTex.Core.Decl LeanTex.Core.KeyVal LeanTex.Core.Parse
+
 private theorem kept_spell (s : Setting) (b : String) : s.kept.spell b = s.spell b := by
   cases s <;> rfl
 
@@ -476,14 +672,21 @@ private theorem kept_spell (s : Setting) (b : String) : s.kept.spell b = s.spell
 names, that the declaration reader reads back entry by entry as exactly the setting's kept entries. -/
 public theorem render_parse_exact (s : Setting) (pos : Pos) :
     ∃ body, s.raws pos = s.frame body pos ∧ s.kept.render = s.spell (declSrc body) ∧
-      (splitEntries (declSrc body)).map entryOf = s.kept.pairs :=
+      (Entries.read .native body).toList.map Entries.Entry.text = s.kept.pairs :=
   ⟨if s.kept.body.isEmpty then #[] else #[.word s.kept.body pos], rfl, by
     have hsrc : declSrc (if s.kept.body.isEmpty then #[] else #[.word s.kept.body pos]) =
         s.kept.body := by
       split
       · next h => simp [declSrc, String.isEmpty_iff.mp h]
       · rfl
-    exact ⟨by rw [hsrc]; simp [Setting.render, kept_spell], by rw [hsrc]; exact body_read_exact s⟩⟩
+    refine ⟨by rw [hsrc]; simp [Setting.render, kept_spell], ?_⟩
+    split
+    · next h =>
+      rw [Entries.read_empty, ← body_read_exact s, String.isEmpty_iff.mp h]
+      unfold splitEntries
+      rw [splitTopAt_sepOne]
+      simp [quoteAtoms, splitGo, trimChars]
+    · rw [Entries.read_word, body_read_exact s]⟩
 
 /-- Every page key reads back from its name. -/
 public theorem PageKey.ofName_name (k : PageKey) : PageKey.ofName? k.name = some k := by

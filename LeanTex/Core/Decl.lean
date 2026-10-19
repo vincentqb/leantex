@@ -1225,13 +1225,13 @@ public theorem parseValue_quote (s : String) (tokens : Array (String × SymGlue)
     parseValue (quote s) tokens = some (.str s) := by
   simp only [parseValue, stringBody?_quote, String.ofList_toList]
 
-/-- Parses a `key = value, ...` block, reporting malformed entries. -/
-public def parseBlock (file : String) (src : String) (pos : Pos) (what : String)
-    (tokens : Array (String × SymGlue) := #[]) : Array Entry × Array Diag := Id.run do
+/-- Parses a `key = value, ...` block's entries, each as written with its key and value's text,
+reporting malformed ones. -/
+public def parseBlock (file : String) (block : Array (String × String × String)) (pos : Pos)
+    (what : String) (tokens : Array (String × SymGlue) := #[]) : Array Entry × Array Diag := Id.run do
   let mut entries : Array Entry := #[]
   let mut diags : Array Diag := #[]
-  for entry in splitEntries src do
-    let (key, valueSrc) := entryOf entry
+  for (entry, key, valueSrc) in block do
     -- Keys admit `-`; in values it is subtraction.
     if key.isEmpty || !key.toList.all (fun c => isIdentChar c || c == '-') then
       diags := diags.push (Diag.of .E0320

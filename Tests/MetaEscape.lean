@@ -160,8 +160,9 @@ def metaEscapeChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   let t := check ref
   t "decl: a quoted value reads back as one entry holding exactly the value"
     (hostileValues.all fun v =>
-      Decl.parseBlock "t" ("title = " ++ Decl.quote v ++ ", author = " ++ Decl.quote "A") {}
-        "pdfmeta" == (#[⟨"title", .str v⟩, ⟨"author", .str "A"⟩], #[]))
+      Decl.parseBlock "t" (Entries.texts .native
+          #[.word ("title = " ++ Decl.quote v ++ ", author = " ++ Decl.quote "A") {}])
+        {} "pdfmeta" == (#[⟨"title", .str v⟩, ⟨"author", .str "A"⟩], #[]))
   let base := (elabStr (dvDoc "" "Words.")).1
   let xmlAdmitted (v : String) : String := String.ofList (v.toList.filter (Xml.xmlChar ·.toNat))
   let withMeta (v : String) : Ir.Doc :=

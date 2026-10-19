@@ -123,6 +123,14 @@ public structure Entry where
 /-- The entry's text as written. -/
 public def Entry.src (e : Entry) : String := rawSrc e.item
 
+/-- The entry's key and its value's text, empty where it holds no `=`. -/
+public def Entry.text (e : Entry) : String × String := (e.key, (e.value.map declSrc).getD "")
+
+/-- The entry's key and value's text where both are written. -/
+public def Entry.pair? (e : Entry) : Option (String × String) :=
+  let (k, v) := e.text
+  if k.isEmpty || v.isEmpty then none else some (k, v)
+
 /-- A list's entries read from its raws by a grammar: cut at the commas outside its groups, each at
 its first `=` outside them, the blank ones dropped. -/
 public def read (g : Grammar) (body : Array Raw) : Array Entry :=
@@ -136,7 +144,11 @@ public def read (g : Grammar) (body : Array Raw) : Array Entry :=
       | .keyval, [.raw (.group body _)] => trimItems (itemsOf body.toList #[]).toList
       | _, _ => flat
     let (k, v) := cutItems g inner 0 #[]
-    some { item := rawsOf flat none #[], key := rawSrc (valueOf g k), value := v.map (valueOf g)
+    some { item := rawsOf flat none #[], key := declSrc (valueOf g k), value := v.map (valueOf g)
            written := v.map fun l => rawsOf (trimItems l) none #[] }
+
+/-- A list's entries read by a grammar, each as written with its key and value's text. -/
+public def texts (g : Grammar) (body : Array Raw) : Array (String × String × String) :=
+  (read g body).map fun e => (e.src, e.text)
 
 end LeanTex.Core.Entries
