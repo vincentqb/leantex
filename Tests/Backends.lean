@@ -4161,6 +4161,11 @@ def htmlAssetChecks (ref : IO.Ref (List String)) : IO Unit := do
       t s!"driver: an error that stops no writer ships the page and exits 1: {lossy.stderr}"
         (lossy.exitCode == 1 && lossyShips && hasStr lossy.stderr "E0310" &&
           hasStr lossy.stderr "lossy.html")
+      IO.FS.writeFile (dir / "asserted.tex") (pre ++ "\\assert{ pages == 3 }\n\\begin{document}\n" ++
+        "\\begin{itemize}\nKqzv stray\n\\item one\n\\end{itemize}\n\\end{document}\n")
+      let (asserted, _) ← built "asserted"
+      t s!"driver: an error beside a failed assertion exits 1, both counted: {asserted.stderr}"
+        (asserted.exitCode == 1 && hasStr asserted.stderr "2 errors")
       let (unread, unreadShips) ← built "unread"
       t s!"driver: a missing input still ships nothing: {unread.stderr}"
         (unread.exitCode == 1 && !unreadShips && hasStr unread.stderr "E0502")

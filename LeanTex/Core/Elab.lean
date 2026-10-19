@@ -16281,7 +16281,7 @@ private def applyOutput (ctx : Ctx) (o0 : OutputSpec) (body : Array Raw) (pos : 
     if PdfContract.Profile.names.contains p then
       (o.addProfile p, evs)
     else
-      (o, say evs .E0321 s!"'{p}' is not a conformance profile"
+      (o, say evs .E0321 s!"'{p}' is not a conformance profile; the PDF does not claim it"
         (help := s!"profiles: {String.intercalate ", " PdfContract.Profile.names}"))
   let addScheme (o : OutputSpec) (evs : Array PEvent) (v : String) :
       OutputSpec × Array PEvent :=

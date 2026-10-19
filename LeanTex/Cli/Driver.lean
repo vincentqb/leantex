@@ -884,7 +884,7 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
     let tool := front.doc.pictureTool.getD "lualatex"
     let declined := Boundary.linesOf tool {} front.spans.declined
     let front := { front with diags := Boundary.foldLines front.doc.allow allowAll declined front.diags }
-    -- Only a cause that stops the writer withholds the artifact; any other error ships it.
+    -- premise: htmlAssetChecks — an error whose cause stops no writer ships the page beside it
     let failing := (Diag.resolveAll front.doc.allow allowAll (Diag.forOutputs outputs front.diags)).stops > 0
     let (faces, front) ← boundaryFaces ui file front
     let (pics, undrawn, staged) ← if failing then pure (#[], #[], #[])
@@ -1017,12 +1017,12 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
       if let some clash ← Host.runIO (PublicationPaths.overwrite destinations
           (buildInputs file front doc scan (← front.cache.readPaths) imgReads staged paths)) then
         ui.diag (DriverDiag.outputOverwritesInput clash)
-        ui.summary file 1 (← since t0)
+        ui.summary file (1 + resolved.errors) (← since t0)
         return 1
       -- premise: publicationPathChecks — colliding destinations leave all outputs untouched
       if let some detail ← PublicationPaths.conflict destinations then
         ui.diag (DriverDiag.outputPathsConflict detail)
-        ui.summary file 1 (← since t0)
+        ui.summary file (1 + resolved.errors) (← since t0)
         return 1
       -- Phase 2, the build in memory: every artifact's bytes exist before any is judged.
       let shipFonts := doc.fontPolicy == .embedded
@@ -1090,7 +1090,7 @@ in the HTML" (← since t)
         | .error detail =>
           ui.diag (DriverDiag.htmlResourceUnavailable detail)
           ui.accepted resolved.accepted
-          ui.summary file 1 (← since t0)
+          ui.summary file (1 + resolved.errors) (← since t0)
           return 1
         | .ok page =>
           ui.phase "html" s!"{page.render.utf8ByteSize} bytes" (← since t)
@@ -1130,7 +1130,7 @@ in the HTML" (← since t)
         | .error error =>
           ui.diag (DriverDiag.pdfWriteRefused error)
           ui.accepted resolved.accepted
-          ui.summary file 1 (← since t0)
+          ui.summary file (1 + resolved.errors) (← since t0)
           return 1
         | .ok (pdf, claimDiags) =>
           resolved := resolved.append
@@ -1187,8 +1187,8 @@ in the HTML" (← since t)
         for d in failures do
           ui.diag d
         ui.accepted resolved.accepted
-        ui.summary file failures.size (← since t0)
-        return exitFor 0 failures.size resolved.warnings ui.cfg.werror
+        ui.summary file (failures.size + resolved.errors) (← since t0)
+        return exitFor resolved.errors failures.size resolved.warnings ui.cfg.werror
       let (written, unwritten) ← publish outDir (htmlBuilt.map (htmlPath, ·))
         (mdBuilt.map (mdPath, ·)) (pdfBuilt.map (pdfPath, ·))
       unless unwritten.isEmpty do

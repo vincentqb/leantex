@@ -119,6 +119,10 @@ def main (args : List String) : IO UInt32 := do
       Diag.of .W0301 s!"unknown command '\\probe{i / 2}'; its arguments were kept as text"
     timeRuns n "repeats" s fun _ =>
       ((Diag.foldRepeats ds).filter (·.severity == .warning)).size == s / 2
+  for s in [20000, 80000] do
+    let toks := (Lex.lex "t" (String.join (List.replicate s "{") ++
+      String.join (List.replicate s "\\end{zz}"))).1
+    timeRuns n "unmatched" s fun _ => (Parse.parse "t" toks).2.size == s + s
   for s in [100000, 400000] do
     let arr := ("[" ++ String.join (List.replicate s "1 ") ++ "]").toUTF8
     let dict := ("<<" ++ String.join ((List.range s).map fun i => s!"/K{i} 1 ") ++ ">>").toUTF8

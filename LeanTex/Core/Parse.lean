@@ -6,6 +6,7 @@ public import LeanTex.Core.ListingLang
 public import LeanTex.Core.CiteDecl
 import LeanTex.Core.Definer
 import LeanTex.Core.KeyVal
+import Std.Data.HashMap
 import Std.Data.HashSet
 
 namespace LeanTex.Core.Parse
@@ -286,6 +287,8 @@ private structure Frame where
   body : Bool := false
   /-- The environment opened by its command, `\center` for `\begin{center}`. -/
   cmd : Bool := false
+  /-- The definition bodies' groups open at or below this frame, which no `\end` crosses. -/
+  guards : Nat := 0
 
 /-- The environments whose commands open and close them in the flow, as `\center` and `\endcenter`
 do. -/
@@ -325,6 +328,8 @@ private def operandNext (acc : Array Raw) : Bool :=
   match rs with
   | r :: rest => reads r || ((r matches .ctrl ..) && (rest.head?.map reads).getD false)
   | [] => false
+  /-- The definition bodies' groups open at or below this frame, which no `\end` crosses. -/
+  guards : Nat := 0
 
 /-- The definers whose two body groups are token lists. -/
 public def envDefiners : List String := Definer.tokenListEnvs
@@ -450,7 +455,7 @@ private def err (file : String) (code : DiagCode) (msg : String) (pos : Pos) : D
 with that parse's diagnostic. -/
 public def settleOpenHalf (file name : String) (body : Array Raw) (pos : Pos) : Array Raw × Diag :=
   let stop := halfStop name
-  ((⟨stop, pos, #[], false, false⟩ : Frame).close body, unclosedAtBrace file stop pos)
+  ((⟨stop, pos, #[], false, false, 0⟩ : Frame).close body, unclosedAtBrace file stop pos)
 
 /-- The diagnostic a plain parse raises at a close half. -/
 public def closeHalfDiag (file name : String) (pos : Pos) : Diag :=
@@ -622,21 +627,27 @@ public def modeChoices (raws : Array Raw) : Array Raw :=
   let (conds, spelled) := newifsIn ({}, false) raws.toList
   if spelled then modeLevel conds (modeList conds #[] raws.toList) else raws
 
-/-- The index of the innermost frame an `\end{name}` closes past others still open: an environment
-of that name below the top, with no definition body's group between. -/
-private def outerEnvAt (frames : Array Frame) (name : String) : Option Nat := Id.run do
-  let mut k := frames.size
-  for _ in [0:frames.size] do
-    if k == 0 then return none
+/-- The definers whose bodies the parser reads unexecuted. -/
+private def bodyDefiners (_ : Unit) : Std.HashSet String :=
+  Std.HashSet.ofList Definer.readAsDefinition
+
+/-- Whether a group opening after `acc` may be a definition's body: a definer among the last items
+of its line before it. -/
+private def defBodyNext (defs : Std.HashSet String) (acc : Array Raw) : Bool := Id.run do
+  let mut k := acc.size
+  for _ in [0:12] do
+    if k == 0 then return false
     k := k - 1
-    match frames[k]? with
-    | some f =>
-      match f.stop with
-      | .env n => if n == name then return (if k + 1 == frames.size then none else some k)
-      | .brace => if f.body then return none
-      | _ => pure ()
-    | none => return none
-  return none
+    match acc[k]? with
+    | some (.ctrl d _) => if defs.contains d then return true
+    | some (.par _) => return false
+    | _ => pure ()
+  return false
+
+/-- A frame opened on `frames`, counting the definition bodies' groups at or below it. -/
+private def Frame.atop (frames : Array Frame) (stop : Stop) (pos : Pos) (acc : Array Raw)
+    (body guard : Bool) : Frame :=
+  ⟨stop, pos, acc, body, false, (frames.back?.map (·.guards)).getD 0 + (if guard then 1 else 0)⟩
 
 /-- Parses tokens into a `Raw` forest in one pass with an explicit frame stack;
 strays are reported and skipped, unclosed delimiters close at end of input. -/
@@ -645,6 +656,9 @@ public def parse (file : String) (toks : Array Token) : Array Raw × Array Diag 
   let mut acc : Array Raw := #[]
   let mut diags : Array Diag := #[]
   let mut i := 0
+  let defs := bodyDefiners ()
+  -- Each environment name's frame indices, latest last, an entry its frame left dropped when met.
+  let mut envAt : Std.HashMap String (Array Nat) := {}
   -- Every branch advances `i`, so the `i < toks.size` guard ends the loop.
   for _ in [0:toks.size + 1] do
     if h : i < toks.size then
@@ -652,7 +666,8 @@ public def parse (file : String) (toks : Array Token) : Array Raw × Array Diag 
       i := i + 1
       match tok with
       | .lbrace =>
-        frames := frames.push ⟨.brace, pos, acc, envBodyNext acc, false⟩
+        let body := envBodyNext acc
+        frames := frames.push (Frame.atop frames .brace pos acc body (body || defBodyNext defs acc))
         acc := #[]
       | .rbrace =>
         -- The group boundary wins: a delimiter still open at the `}` closes there, diagnosed.
@@ -698,10 +713,11 @@ public def parse (file : String) (toks : Array Token) : Array Raw × Array Diag 
         -- Pair shifts only when opening display math.
         let display := toks[i]?.any (·.tok == .math)
         if display then i := i + 1
-        frames := frames.push ⟨if display then .dollarDisplay else .math, pos, acc, false, false⟩
+        frames := frames.push
+          (Frame.atop frames (if display then .dollarDisplay else .math) pos acc false false)
         acc := #[]
       | .ctrl "(" =>
-        frames := frames.push ⟨.parenMath, pos, acc, false, false⟩
+        frames := frames.push (Frame.atop frames .parenMath pos acc false false)
         acc := #[]
       | .ctrl ")" =>
         match frames.back? with
@@ -716,7 +732,7 @@ public def parse (file : String) (toks : Array Token) : Array Raw × Array Diag 
         | none =>
           diags := diags.push (err file .E0202 "unexpected '\\)'" pos)
       | .ctrl "[" =>
-        frames := frames.push ⟨.displayMath, pos, acc, false, false⟩
+        frames := frames.push (Frame.atop frames .displayMath pos acc false false)
         acc := #[]
       | .ctrl "]" =>
         match frames.back? with
@@ -736,7 +752,8 @@ public def parse (file : String) (toks : Array Token) : Array Raw × Array Diag 
         i := j
         -- A `\begin` naming nothing opens nothing, so no later close is spent on it.
         unless name.isEmpty do
-          frames := frames.push ⟨.env name, pos, acc, false, false⟩
+          envAt := envAt.insert name ((envAt.getD name #[]).push frames.size)
+          frames := frames.push (Frame.atop frames (.env name) pos acc false false)
           acc := #[]
       | .ctrl "end" =>
         let (name, j, ds) := envName toks file i pos
@@ -755,16 +772,30 @@ public def parse (file : String) (toks : Array Token) : Array Raw × Array Diag 
           | none => break
         if name.isEmpty then continue
         -- An `\end` an enclosing environment answers closes what is open inside it, as TeX does.
-        match outerEnvAt frames name with
+        let mut standing := envAt.getD name #[]
+        let mut at? : Option Nat := none
+        for _ in [0:standing.size] do
+          let some k := standing.back? | break
+          if frames[k]?.any (·.stop == .env name) then
+            at? := some k
+            break
+          standing := standing.pop
+        envAt := envAt.insert name standing
+        let crossed := at?.filter fun k => k + 1 < frames.size &&
+          (frames.back?.map (·.guards)).getD 0 == (frames[k]?.map (·.guards)).getD 0
+        match crossed with
         | some k =>
           for _ in [0:frames.size] do
             if frames.size ≤ k + 1 then break
             match frames.back? with
             | some f =>
+              frames := frames.pop
+              if f.cmd then
+                acc := f.outer.push (.ctrl f.stop.halfName f.openPos) ++ acc
+                continue
               diags := diags.push (match f.stop with
                 | .env inner => err file .E0205 s!"'\\end\{{name}}' closes '\\begin\{{inner}}'" pos
                 | _ => err file .E0201 s!"unclosed: expected {f.stop.name}" f.openPos)
-              frames := frames.pop
               acc := f.close acc
             | none => break
           match frames.back? with
@@ -792,7 +823,8 @@ public def parse (file : String) (toks : Array Token) : Array Raw × Array Diag 
           diags := diags.push (unmatchedEnd file name pos)
       | .ctrl name =>
         if cmdEnvs.contains name && !operandNext acc then
-          frames := frames.push { stop := .env name, openPos := pos, outer := acc, cmd := true }
+          frames := frames.push { stop := .env name, openPos := pos, outer := acc, cmd := true,
+                                  guards := (frames.back?.map (·.guards)).getD 0 }
           acc := #[]
         else match cmdEnvClose? name, frames.back? with
           | some e, some f =>

@@ -2679,6 +2679,12 @@ def parseChecks (ref : IO.Ref (List String)) : IO Unit := do
   let nameless := "\\begin{document}\n\\begin{ x\n\\end{document}"
   t s!"parse: a begin naming nothing opens nothing ({(praw nameless).2.map (·.message)})"
     (((praw nameless).2.map (·.message)) == #["expected an environment name"])
+  let defined := "\\begin{document}\nA \\newcommand{\\fin}{\\end{document}} Kqzv.\n\\end{document}"
+  t s!"parse: an end in a definition's body closes nothing outside it ({(praw defined).2.size})"
+    (((praw defined).2.map (·.code)) == #["E0205"] &&
+      ((praw defined).1.map fun r => match r with
+        | .env n _ _ => n
+        | _ => "?") == #["document"])
   -- A misplaced text's loss stands at that text.
   let lineOf (code : String) (src : String) : Option Nat :=
     ((elabStr src).2.find? (·.code == code)).bind fun d => d.span.map (·.pos.line)
