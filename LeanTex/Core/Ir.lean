@@ -5562,12 +5562,8 @@ public def itemLabelOf? (item : Array Block) : Option (Array Inline × Array Inl
     | _ => none
   | _ => none
 
-/-- A description item's first paragraph holding its label alone, whose next block opens on the
-label's line. -/
-public def descLabelOnly (content : Array Inline) : Bool :=
-  match descLabel? content with
-  | some (_, rest) => rest.all anchorInline
-  | none => false
+/-- `\labelsep`: half an em (classes.dtx `\setlength\labelsep{.5em}`). -/
+public def labelSepAt (size : Length) : Length := size / 2
 
 /-- A centred block's body that is one display formula and nothing else, labels aside. -/
 public def displayContent? (body : Array Block) : Option (Array Inline) :=

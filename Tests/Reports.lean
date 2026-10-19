@@ -4,6 +4,7 @@ import Tests.Icc
 import Tests.PrintColour
 import Tests.TexFontTrees
 import Tests.ItemLabels
+import Tests.LabelLines
 import Tests.WebMeasure
 import Tests.EngineCache
 import Tests.BuildGraph
@@ -2216,7 +2217,14 @@ def reports : List Report := [
     accept := ["lualatex 1.24 on invented probes: a wrapper of itemize, of a trivlist opening its item, of center by its commands with a size declared, and of center reading an argument each set what the environment written in place sets, 20pt below the line before it as a list opening in a paragraph does; the command form of trivlist sets as its environment; a wrapper of a wrapper sets as the environment inside; a footnote's list sets each item after its mark; this tree sets the same, but a footnote's items stand at the note's margin, where LaTeX hangs them a leftmargin in, and with the list's options unread, both named as the footnote's loss; a bold list's item sets bold, where LaTeX's bold command leaves vertical mode first and sets an empty line above the list, about 10pt, which this tree does not",
       "main's binary at 700963877 on the same probes: every one stops the build with no artifact; the guards fail there",
       "the corpus and the private references built by main's binary at 6714141d0 and by this tree's: every PDF and web page byte-identical"]
-    state := .guarded "700963877" .before .author }
+    state := .guarded "700963877" .before .author },
+  { id := "R250", date := "2026-10-19"
+    what := "a description label alone before a list, a quote, a verbatim or a box set on a line of its own; a table, a minipage, a parbox or a listing opening an item followed the label's own line; a declared label set alone shipped its ink as a generated marker's; the twin numbered an ordered list's labelled items in sequence; the web page broke a line at an empty box and ran in a label by its character count; and KOMA-Script's fontsize set after the class was unread"
+    pins := [check% Tests.LabelLines.checks]
+    accept := ["lualatex on invented probes: a description label alone sets on its list's first line at the outer margin, the line after it moved by the label's width and labelsep less the 25pt indent (10.2pt for a five-letter label, -12.3pt for one letter), an inner description's label a labelsep past the outer's end; a tabular opening an item centred on its bullet, a top-aligned minipage on its first line, a parbox centred, a listing's first code line holding the bullet; a five-character label hanging in its margin and a wide one running in; the 12pt body after KOMAoptions fontsize 12pt, its lines 24.4pt apart in a list; this tree sets each the same",
+      "main's binary at 6714141d on the same probes sets every such label on a line of its own, numbers the twin's items one to four, writes an inline-block for the empty box, runs in the five-character label and sets the 11pt body; the checks fail there",
+      "the corpus built by main's binary at 6714141d and by this tree's: every artifact and twin byte-identical"]
+    state := .guarded "6714141d" .before .author }
 ]
 
 /-- The reports guarded but never seen failing, a count held in both directions. -/

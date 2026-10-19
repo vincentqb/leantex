@@ -99,6 +99,7 @@ import Tests.Icc
 import Tests.PrintColour
 import Tests.ItemLabels
 import Tests.WebMeasure
+import Tests.LabelLines
 import Tests.DeclaredColors
 import Tests.BlockBody
 import Tests.BlockRegionFit
@@ -551,6 +552,7 @@ def declSettingSuiteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   Tests.ItemLabels.openerChecks ref oneFace
   Tests.WebMeasure.checks ref
   Tests.WebMeasure.paperLossChecks ref oneFace
+  Tests.LabelLines.checks ref oneFace
   nativeCarrierChecks ref oneFace
 
 /-- Print colour: inks, page boxes, the PDF/X-4 claim, the output profile's transforms, and what a

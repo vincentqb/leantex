@@ -3756,9 +3756,9 @@ def trivlistChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
   t "a trivlist right after a display opens inside its paragraph, closing without partopsep"
     (steps (doc "{article}" "" ("Alpha.\n\\[ x = y \\]\n" ++ center ++ "\nCharlie.")) ["Bravo.", "Charlie."]
       == gaps [8])
-  t "a trivlist after a description label alone stands in its label, on the line below the label"
+  t "a trivlist after a description label alone stands in its label, the label on its line"
     (steps (doc "{article}" "" ("\\begin{description}\n\\item[Alpha] Text.\n\\item[Term] " ++ center ++
-      "\nCharlie.\n\\end{description}")) ["Term", "Bravo.", "Charlie."] == [lead, lead + Dim.pt 4])
+      "\nCharlie.\n\\end{description}")) ["Term", "Bravo.", "Charlie."] == [0, lead + Dim.pt 4])
   -- enumitem's `\trivlist` runs `\@list@extra` again from the list's `\parsep`.
   let kkey := doc "{scrartcl}" "\\usepackage{enumitem}"
     ("\\begin{itemize}[topsep=20pt]\n\\item Alpha.\n" ++ center ++ "\nCharlie.\n\\end{itemize}")

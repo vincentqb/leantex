@@ -7072,6 +7072,12 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
 
 private def inlineNodesInto (cfg : Config) (acc : Array Node) : List Inline → Array Node
   | [] => acc
+  -- An empty box beside other content only joins it, where a browser would wrap at its box.
+  | .hspace e true :: rest =>
+    let zero := MeasureValues.horizontal 0 0
+    if !e.hasFil && !e.anyRef (fun _ => true) && e.eval zero.find == {} &&
+        (!acc.isEmpty || !rest.isEmpty) then inlineNodesInto cfg acc rest
+    else inlineNodesInto cfg (inlineNodeInto cfg acc (.hspace e true)) rest
   | x :: rest => inlineNodesInto cfg (inlineNodeInto cfg acc x) rest
 
 end
@@ -7315,7 +7321,7 @@ private theorem linkLeafAfford_projects (cfg : Config) (acc : Array Node)
          | none => acc.push (Html.elem "u" (inlineNodesInto cfg #[] [x]))) := by
   rw [Ir.Styles.linkLeafAfford_afford s kind x h]
   cases hc : (s.find? kind).bind (·.color) with
-  | none => simp [inlineNodeInto, inlineNodesInto]
+  | none => simp [inlineNodeInto]
   | some p => obtain ⟨c, n⟩ := p; simp [inlineNodeInto, inlineNodesInto]
 
 /-- Whether a paragraph uses `\hfill`, which makes it a flex row. -/
@@ -9131,6 +9137,19 @@ private def contentsNode (cfg : Config) (spec : Ir.ContentsSpec)
   else Html.elem tag #[Html.elem "ul" (entries.map (contentsEntryNode cfg "li"))
       #[("class", "contents-list")]] (#[("class", "contents")] ++ named)
 
+/-- Whether an item's label fits the room its list's margin leaves it, a `\labelsep` short of the
+text, as latex.ltx's `\@item` boxes it to `\labelwidth`: measured in the shipped body face, else
+counted at four characters. -/
+private def labelFits (cfg : Config) (label : Array Inline) : Bool :=
+  let text := Ir.plainText label
+  match cfg.fonts with
+  | some fs =>
+    let size := cfg.page.fontSize
+    let face := fs.body
+    let w : Length := text.foldl (fun w c => w + face.advance c * max 0 size / face.unitsPerEm) 0
+    w ≤ Ir.leftMarginAt cfg.lists cfg.tokens cfg.preamble (max 1 cfg.listDepth) - Ir.labelSepAt size
+  | none => text.length ≤ 4
+
 mutual
 
 public def blockNode (cfg : Config) (b : Block) : Node :=
@@ -9598,8 +9617,7 @@ private def listItemsInto (cfg : Config) (acc : Array Node) : List (Array Block)
     let node := listItem { cfg with fillsInert := true } "li" item.toList
     -- a label wider than its margin's room runs in rather than leave a narrow screen
     let node := match Ir.itemLabelOf? item with
-      | some (label, _) =>
-        withClass (if (Ir.plainText label).length ≤ 4 then "labelled" else "labelled run-in") node
+      | some (label, _) => withClass (if labelFits cfg label then "labelled" else "labelled run-in") node
       | none => node
     listItemsInto (cfg.afterBlocks item)
       (acc.push (fillCarrier cfg (Ir.itemTrailingFills item) node (item := true)))

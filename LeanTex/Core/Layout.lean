@@ -9667,6 +9667,15 @@ private inductive Op where
 /-- A paragraph's op, its breaks computed in parallel from collection on. -/
 private def Op.ofPara (j : ParaJob) : Op := .para j (Task.spawn fun _ => j.breaks)
 
+/-- An item's label waiting for a line: its ink, its item's indent, the leaf its declared text
+starts at, and how far a label set at its natural width moves what follows it on that line. -/
+public structure Spacing.Mark where
+  ink : Array Ir.Inline
+  indent : Length
+  leaf : Option Nat
+  shift : Length
+  deriving Inhabited
+
 /-- The block walk's read-only context: geometry, faces,
 styles, and the class and deck settings in force. -/
 public structure Spacing.Context where
@@ -9735,7 +9744,7 @@ public structure Spacing.Context where
   private inLabel : Bool := false
   /-- The labels of the item whose block this walk opens on, outermost first, each with its item's
   indent, until that block's first paragraph line takes them (`\@donoparitem`). -/
-  private labels : Array (Array Ir.Inline × Length) := #[]
+  private labels : Array Spacing.Mark := #[]
   /-- The page's TeX `\parskip`, which a minipage restores over the list it stands in. -/
   private pageParskip : SymGlue := Ir.texParskipDefault
   /-- The document's loaded images, which layout measures and places. -/
@@ -9824,7 +9833,7 @@ public structure Spacing.Pending where
   private itemMarker : Option (Array Ir.Inline) := none
   /-- The markers of the items a list opens in, each with its item's indent, until that list's first
   item's line takes them (`labelRow`). -/
-  private outerMarkers : Array (Array Ir.Inline × Length) := #[]
+  private outerMarkers : Array Spacing.Mark := #[]
   /-- Quotations open around the walk, which LaTeX's `\@listdepth` counts beside the lists. -/
   private quoteDepth : Nat := 0
   /-- Diagnostics the block walk itself raises, joined into the placement diagnostics by `run`. -/
@@ -9900,7 +9909,7 @@ private def Spacing.Pending.leafRange (a : Acc) (n : Nat) : Acc × Option Nat :=
   ({ a with leafNext := a.leafNext + n }, if n == 0 then none else some a.leafNext)
 
 /-- The markers waiting for a list's first line (`labelRow`), taken out of the walk. -/
-private def Spacing.Pending.takeOuter (a : Acc) : Array (Array Ir.Inline × Length) × Acc :=
+private def Spacing.Pending.takeOuter (a : Acc) : Array Spacing.Mark × Acc :=
   (a.outerMarkers, { a with outerMarkers := #[] })
 
 /-- LaTeX's `\@listdepth` around the walk: every list and quotation open. -/
@@ -10266,8 +10275,7 @@ private def withKerns (items : Array Item) (first box : Item) (restart : Bool) :
       out := out.push box
   return (out, shift)
 
-/-- `\labelsep`: half an em (classes.dtx `\setlength\labelsep{.5em}`). -/
-private def labelSep (g : Geom) : Length := g.fontSize / 2
+private def labelSep (g : Geom) : Length := Ir.labelSepAt g.fontSize
 
 /-- The markers of the items a list opens in, then its first item's own, on one line as
 `\@donoparitem` sets them, each `\llap`ped to end a label separation short of its item's indent. -/
@@ -10287,7 +10295,7 @@ private def collectPara (r : Rd) (a : Acc)
     (markerLeaf : Option Nat := none)
     (markerIndent : Option Length := none)
     (markerLeft : Option Length := none)
-    (outerMarkers : Array (Array Inline × Length) := #[])
+    (outerMarkers : Array Spacing.Mark := #[]) (markerShift : Length := 0)
     (rule : Option HeadingRule := none)
     (display : Bool := false)
     (leaf : Option Nat := none) (span : Nat := 0) (keepNext : Length := 0)
@@ -10399,6 +10407,9 @@ private def collectPara (r : Rd) (a : Acc)
         (step := r.step) (steps := r.steps)
     let (segs, w, _, _) := setLine mi (lineStart mi 0) (mi.size - 1) r.geom.textWidth false
     ((segs, w), mds, cache)
+  -- A label set at its natural width moves the markers and the text after it on its line.
+  let outerShift := outerMarkers.foldl (· + ·.shift) 0
+  let shift := outerShift + markerShift
   let (markerSegs, ds, cache) := match marker with
     | some m =>
       -- A marker the source declares sets its own leaves.
@@ -10409,13 +10420,16 @@ private def collectPara (r : Rd) (a : Acc)
         let mut row : Array (Array Seg × Length × Length) := #[]
         let mut ds := ds ++ mds
         let mut cache := cache
-        for (m, i) in outerMarkers do
-          let ((segs, w), mds, c) := shape m cache
-          row := row.push (segs, w, i)
+        for m in outerMarkers do
+          let ((segs, w), mds, c) := shape m.ink cache (match m.leaf with
+            | some k => LeafCtr.of (some k) (Struct.leafCountInlines m.ink) m.ink
+            | none => .fixed .label)
+          row := row.push (segs, w, m.indent)
           ds := ds ++ mds
           cache := c
         return (row, ds, cache)
-      (some (labelRow outer.toList inner (markerIndent.getD indent) (labelSep r.geom)), ds, cache)
+      (some (labelRow outer.toList inner ((markerIndent.getD indent) + outerShift) (labelSep r.geom)), ds,
+        cache)
     | none => (none, ds, cache)
   -- A hanging or first-line indent opens the items with its kern, and a restarting hang stands
   -- after each forced break but the last; item-indexed data moves with them.
@@ -10424,7 +10438,10 @@ private def collectPara (r : Rd) (a : Acc)
   let strutSize := match step with
     | some n => Ir.scaleStepIn r.geom.scale size n
     | none => size
-  let kern := if hangIndent == 0 then firstIndent else -hangIndent
+  let kern := match marker with
+    | some _ => (if hangIndent == 0 then firstIndent else -hangIndent) + shift
+    | none => if hangIndent == 0 then firstIndent else -hangIndent
+  let restartKern := if hangIndent == 0 then firstIndent else -hangIndent
   let restart := hangLines && hangIndent != 0
   let (items, extras, noteBlocks, wordOffsets, anchors, itemSources) :=
     if kern == 0 then (items, extras, noteBlocks, wordOffsets, anchors, itemSources)
@@ -10432,7 +10449,7 @@ private def collectPara (r : Rd) (a : Acc)
       let kernBox (w : Length) : Item :=
         Item.box w 0 a.fg none #[] strutSize {} {} 0 a.ground .unattributed
       let (items, shift) :=
-        withKerns items (kernBox (if hangFirst then kern else 0)) (kernBox kern) restart
+        withKerns items (kernBox (if hangFirst then kern else 0)) (kernBox restartKern) restart
       let move (k : Nat) : Nat := k + shift.getD k (shift.back?.getD 1)
       (items, extras.fold (fun m k v => m.insert (move k) v) {},
         noteBlocks.map (fun (i, nb) => (move i, nb)),
@@ -10456,7 +10473,7 @@ private def collectPara (r : Rd) (a : Acc)
       rightFil := rightFil
       protrude := r.geom.protrude
       expand := r.geom.expand
-      markerSegs := markerSegs, markerIndent := markerIndent, markerLeft := markerLeft
+      markerSegs := markerSegs, markerIndent := if outerShift == 0 then markerIndent else some ((markerIndent.getD indent) + outerShift), markerLeft := markerLeft
       hangIndent := hangIndent
       hangLines := restart
       hangFirst := hangFirst
@@ -11725,10 +11742,11 @@ private def collectParaBlock (r : Rd) (a : Acc) (content : Array Inline) (indent
   else
     let (a, leaf) := a.leafRange (Struct.leafCountInlines content)
     match r.labels.back? with
-    | some (m, i) =>
+    | some m =>
       -- Beside a flushed line the labels stand at its start, as the centred ones do.
-      collectPara { r with labels := #[] } a content indent false r.geom.fontSize (marker := some m)
-        (markerIndent := if r.geom.flushRight then none else some i) (outerMarkers := r.labels.pop)
+      collectPara { r with labels := #[] } a content indent false r.geom.fontSize (marker := some m.ink)
+        (markerLeaf := m.leaf) (markerShift := m.shift)
+        (markerIndent := if r.geom.flushRight then none else some m.indent) (outerMarkers := r.labels.pop)
         (leaf := leaf) (span := Struct.leafCountInlines content)
     | none =>
       collectPara r a content indent false r.geom.fontSize
@@ -12715,7 +12733,8 @@ private def collectVerbatim (r : Rd) (a : Acc) (covered : Option Ir.Color) (s : 
     | none => a
   let done := collectPara { r with pats := none, geom := { r.geom with justify := false }, labels := #[] }
     a inner indent false size
-    (marker := r.labels.back?.map (·.1)) (markerIndent := r.labels.back?.map (·.2))
+    (marker := r.labels.back?.map (·.ink)) (markerIndent := r.labels.back?.map (·.indent))
+    (markerLeaf := r.labels.back?.bind (·.leaf)) (markerShift := (r.labels.back?.map (·.shift)).getD 0)
     (outerMarkers := r.labels.pop)
     (baseStyle := { leading := some (.lit { width := .ofLength leading }) })
     (leaf := leaf) (span := 1) (literalLines := true)
@@ -13309,7 +13328,8 @@ private def labelOnly : Array Inline := #[.hspace (.lit {}) true]
 /-- An item's leading paragraph: a description's label runs in at the outer margin, as latex.ltx's
 `description` sets it, else the marker opens it. -/
 private def collectItemLead (r : Rd) (a : Acc) (content : Array Inline) (indent : Length)
-    (marker : Array Inline) (hang : Length) (outer : Array (Array Inline × Length)) : Acc :=
+    (marker : Array Inline) (hang : Length) (outer : Array Spacing.Mark)
+    (own : Option Spacing.Mark := none) : Acc :=
   let (a', leaf) := a.leafRange (Struct.leafCountInlines content)
   -- An `\item[label]`'s label sets in the marker's place, its leaves first.
   if let some (label, rest) := Ir.itemLabel? content then
@@ -13320,12 +13340,15 @@ private def collectItemLead (r : Rd) (a : Acc) (content : Array Inline) (indent 
       (outerMarkers := outer) (leaf := if m == 0 then none else leaf.map (· + n)) (span := m)
   else if (Ir.descLabel? content).isSome then
     collectPara r a' content (indent - hang) false r.geom.fontSize
-      (marker := outer.back?.map (·.1)) (markerIndent := outer.back?.map (·.2))
+      (marker := outer.back?.map (·.ink)) (markerIndent := outer.back?.map (·.indent))
+      (markerLeaf := outer.back?.bind (·.leaf)) (markerShift := (outer.back?.map (·.shift)).getD 0)
       (outerMarkers := outer.pop)
       (leaf := leaf) (span := Struct.leafCountInlines content) (hangIndent := hang)
   else
     collectPara r a' content indent false r.geom.fontSize
-      (marker := some (r.coveredMarker a marker)) (outerMarkers := outer) (leaf := leaf)
+      (marker := some (r.coveredMarker a ((own.map (·.ink)).getD marker)))
+      (markerLeaf := own.bind (·.leaf)) (markerIndent := own.map (·.indent))
+      (markerShift := (own.map (·.shift)).getD 0) (outerMarkers := outer) (leaf := leaf)
       (span := Struct.leafCountInlines content)
 
 /-- How a block meets an item's labels waiting for its first line: it sets them on its own first
@@ -13346,9 +13369,10 @@ private def labelMeet : Block → LabelMeet
 /-- The line an item's waiting labels set alone, before a block that sets none of its own. -/
 private def Spacing.Context.settleLabels (r : Rd) (a : Acc) (indent : Length) : Acc :=
   match r.labels.back? with
-  | some (m, i) =>
-    (collectPara { r with labels := #[] } a labelOnly indent false r.geom.fontSize (marker := some m)
-      (markerIndent := some i) (outerMarkers := r.labels.pop)).wantGap
+  | some m =>
+    (collectPara { r with labels := #[] } a labelOnly indent false r.geom.fontSize (marker := some m.ink)
+      (markerLeaf := m.leaf) (markerShift := m.shift) (markerIndent := some m.indent)
+      (outerMarkers := r.labels.pop)).wantGap
   | none => a
 
 /-- The reader and walk where `blk` meets an item's waiting labels: a list takes them as the markers
@@ -13426,6 +13450,48 @@ private def naturalWidth? (r : Rd) (a : Acc) (body : Array Block) (total : Lengt
           (naturalOne r a inner (total - paint)).map (· + paint)
       else none
     else none
+
+/-- The point a box opening an item stands on its label's line by: its own, an unpositioned one
+centred as latex.ltx's default `c` sets it; `none` for any block but a table or a lone box. -/
+private def boxItemPos? : Block → Option Ir.BoxPos
+  | .table .. => some .center
+  | .columns cols => match cols.toList with
+    | [(w, _)] => some (if w.pos == .top then .center else w.pos)
+    | _ => none
+  | _ => none
+
+/-- The line an item's label sets alone. -/
+private def Spacing.Pending.markLine (a : Acc) (r : Rd) (m : Spacing.Mark) (indent : Length)
+    (outer : Array Spacing.Mark) : Acc :=
+  collectPara r a labelOnly indent false r.geom.fontSize (marker := some m.ink)
+    (markerLeaf := m.leaf) (markerIndent := some m.indent) (markerShift := m.shift)
+    (outerMarkers := outer)
+
+/-- An `\item[label]` alone before its item's next block, as the label that block's first line
+takes: a description's at its natural width from the outer margin, as latex.ltx's `description`
+boxes it, moving what follows on the line by its excess over the list's indent. -/
+private def Spacing.Context.loneLabel (r : Rd) (a : Acc) (blk : Block) (rest : List Block)
+    (indent hang : Length) : Option (Spacing.Mark × Array Inline × Acc) :=
+  match blk, rest.dropWhile fun b => statefulBlock b || emptyStep b with
+  | .para content, next :: _ =>
+    match (Ir.itemLabel? content).filter (·.2.all Ir.anchorInline), Ir.descLabel? content with
+    | some (label, more), _ =>
+      let (a, leaf) := a.leafRange (Struct.leafCountInlines label)
+      some (⟨label, indent, leaf, 0⟩, more, a)
+    | none, some (label, more) =>
+      if more.all Ir.anchorInline && (next matches .list .. || next.opensInLabel ||
+          next matches .verbatim .. || (boxItemPos? next).isSome) then
+        let ink := content.extract 0 1
+        let (a, leaf) := a.leafRange (Struct.leafCountInlines ink)
+        -- The label's run-in `\labelsep` is the gap after it, not its width.
+        let (w, a) := a.naturalWidth r r.geom.fontSize (label.popWhile (· matches .text _))
+          r.geom.textWidth
+        let sep := labelSep r.geom
+        -- Its ink ends in that gap, so it ends a gap further on than the label does.
+        some (⟨ink, indent - hang + w + sep + sep, leaf, w + sep - hang⟩, more, a)
+      else none
+    | none, none => none
+  | _, _ => none
 
 mutual
 
@@ -13535,15 +13601,17 @@ private def collectQuoteList (r : Rd) (a : Acc) (kind : Ir.QuoteKind) (blocks : 
       | .quotation, .para content =>
         let (a, leaf) := a.leafRange (Struct.leafCountInlines content)
         collectPara { rb with labels := #[] } a content indent false r.geom.fontSize (leaf := leaf)
-          (marker := rb.labels.back?.map (·.1)) (markerIndent := rb.labels.back?.map (·.2))
-          (outerMarkers := rb.labels.pop) (span := Struct.leafCountInlines content)
+          (marker := rb.labels.back?.map (·.ink)) (markerIndent := rb.labels.back?.map (·.indent))
+          (markerLeaf := rb.labels.back?.bind (·.leaf))
+          (markerShift := (rb.labels.back?.map (·.shift)).getD 0) (outerMarkers := rb.labels.pop) (span := Struct.leafCountInlines content)
           (firstIndent := if cont || Ir.opensRunIn content then 0
             else (r.resolve { width := r.quotationIndent }).width)
       | .verse, .para content =>
         let (a, leaf) := a.leafRange (Struct.leafCountInlines content)
         collectPara { rb with labels := #[] } a content indent false r.geom.fontSize (leaf := leaf)
-          (marker := rb.labels.back?.map (·.1)) (markerIndent := rb.labels.back?.map (·.2))
-          (outerMarkers := rb.labels.pop) (span := Struct.leafCountInlines content)
+          (marker := rb.labels.back?.map (·.ink)) (markerIndent := rb.labels.back?.map (·.indent))
+          (markerLeaf := rb.labels.back?.bind (·.leaf))
+          (markerShift := (rb.labels.back?.map (·.shift)).getD 0) (outerMarkers := rb.labels.pop) (span := Struct.leafCountInlines content)
           (hangIndent := (r.resolve { width := Ir.verseHang }).width) (hangLines := true)
           (hangFirst := !(cont || Ir.opensRunIn content))
       | .verse, _ => collectBlock rb a blk (indent + (r.resolve { width := Ir.verseHang }).width)
@@ -13609,59 +13677,61 @@ private def collectSlots (r : Rd) (a : Acc) (slots : Array Ir.TitleSlot)
 description list's label runs in; `hang` is the list's indent step. -/
 private def collectItem (r : Rd) (a : Acc)
     (item : List Block) (indent : Length) (first : Bool) (marker : Array Inline)
-    (hang : Length) (labelled : Bool := false) : Acc :=
+    (hang : Length) (own : Option Spacing.Mark := none) : Acc :=
   match item with
   -- An empty item sets its label on a line of its own, as `\item\item` does.
-  | [] => if first then collectItemLead r a.takeOuter.2 labelOnly indent marker hang a.takeOuter.1 else a
+  | [] =>
+    if first then collectItemLead r a.takeOuter.2 labelOnly indent marker hang a.takeOuter.1 own
+    else a
   | blk :: rest =>
     -- A label anchor opening an item writes no paragraph, so the marker waits for what follows it.
     if statefulBlock blk || (first && !rest.isEmpty && walkTransparent blk) then
-      collectItem r (collectBlock r a blk indent) rest indent first marker hang labelled
-    else if emptyStep blk then collectItem r a rest indent first marker hang labelled
+      collectItem r (collectBlock r a blk indent) rest indent first marker hang own
+    else if emptyStep blk then collectItem r a rest indent first marker hang own
     else
-    -- An `\item[label]` alone before the item's first block is that block's marker.
-    let lone : Option (Array Inline × Array Inline) := match first, blk, rest with
-      | true, .para content, _ :: _ => (Ir.itemLabel? content).filter (·.2.all Ir.anchorInline)
-      | _, _, _ => none
-    if let some (label, more) := lone then
-      let (a, _) := a.leafRange (Struct.leafCountInlines label)
+    -- An `\item[label]` alone before the item's first block is that block's label.
+    match (if first then r.loneLabel a blk rest indent hang else none) with
+    | some (m, more, a) =>
       let a := { a with ops := a.ops ++ (Ir.labelKeys more).map (Op.anchor ∘ Ir.labelAnchor) }
-      collectItem r a rest indent true label hang labelled
-    else
-    let a := if first || (labelled && blk.opensInLabel) then a else a.wantGap
+      collectItem r a rest indent true m.ink hang (some m)
+    | none =>
+    let a := if first then a else a.wantGap
     -- The markers of the items this item's list opens in stand only on its first block's line.
     let (outer, a) := if first then a.takeOuter else (#[], a)
+    let mark : Spacing.Mark := match own with
+      | some m => { m with ink := r.coveredMarker a m.ink }
+      | none => ⟨r.coveredMarker a marker, indent, none, 0⟩
     let a := match blk, first with
-      | .para content, true => collectItemLead r a content indent marker hang outer
+      | .para content, true => collectItemLead r a content indent marker hang outer own
       | .onSteps spec body, true => collectItemStep r a spec body indent marker hang outer
       -- A disclosure opening its item sets its summary as the first paragraph, by the marker.
       | .disclosure summary expanded body, true =>
-        collectBlock r { a with itemMarker := some (r.coveredMarker a marker) }
+        collectBlock r { a with itemMarker := some mark.ink }
           (.disclosure summary expanded body) indent
       -- A block opening its item in its label hands the item's marker, with the markers of the
       -- items its list opens in, to its first paragraph line (`\@donoparitem`).
       | .list ordered spacing items, true =>
-        { collectBlock { r with inLabel := true }
-            { a with outerMarkers := outer.push (r.coveredMarker a marker, indent) }
+        { collectBlock { r with inLabel := true } { a with outerMarkers := outer.push mark }
             (.list ordered spacing items) indent with
           outerMarkers := #[] }
       | b, true =>
-        if b.opensInLabel then
-          collectBlock { r with inLabel := true, labels := outer.push (r.coveredMarker a marker, indent) }
-            a b indent
+        -- A listing's first code line is the item's first line, as its `\everypar` sets the label.
+        if b.opensInLabel || b matches .verbatim .. then
+          collectBlock { r with inLabel := true, labels := outer.push mark } a b indent
+        -- A box stands on the label's line, the two aligned as the box's position says.
+        else if let some pos := boxItemPos? b then
+          let a := ((a.flushGap r).pushOp (.colOpen #[pos, pos])).markLine r mark indent outer
+          let shift := outer.foldl (· + ·.shift) mark.shift
+          (collectBlock r (a.pushOp .colNext) b (indent + shift)).pushOp .colClose
         -- Any other block follows the line the label sets on its own, as `\@item`'s paragraph.
-        else collectBlock r (collectItemLead r a labelOnly indent marker hang outer).wantGap b indent
-      | b, false =>
-        collectBlock (if labelled && b.opensInLabel then { r with inLabel := true } else r)
-          a b indent
-    -- A description label alone opens the item's next block in its label.
+        else collectBlock r (a.markLine r mark indent outer).wantGap b indent
+      | b, false => collectBlock r a b indent
     collectItem r a rest indent false marker hang
-      (first && match blk with | .para content => Ir.descLabelOnly content | _ => false)
 
 /-- A step opening its item: its paragraph carries the marker into the step, as beamer's `\item<n>`
 covers or hides its label with it. -/
 private def collectItemStep (r : Rd) (a : Acc) (spec : Ir.OverlaySpec) (body : Array Block)
-    (indent : Length) (marker : Array Inline) (hang : Length) (outer : Array (Array Inline × Length)) : Acc :=
+    (indent : Length) (marker : Array Inline) (hang : Length) (outer : Array Spacing.Mark) : Acc :=
   let hides := r.hides spec
   let r' := if hides then r else r.pendingStep spec a.dimHere.cover
   let a' := if hides then a.openHidden else a
@@ -13724,7 +13794,8 @@ private def collectCentered (r : Rd) (a : Acc)
         let (a, leaf) := a.leafRange (Struct.leafCountInlines content)
         -- A label a centred line takes stands beside its start, as the centred `\@labels` box does.
         collectPara { r with labels := #[] } a content indent true r.geom.fontSize
-          (marker := r.labels.back?.map (·.1)) (outerMarkers := r.labels.pop) (leaf := leaf)
+          (marker := r.labels.back?.map (·.ink)) (markerLeaf := r.labels.back?.bind (·.leaf))
+          (outerMarkers := r.labels.pop) (leaf := leaf)
           (span := Struct.leafCountInlines content)
       | .section 0 _ _ title => collectTitle r a title indent true
       | .picture pic => collectPicture r a pic indent true
@@ -15076,6 +15147,16 @@ private def Spacing.Paragraph.restarts (j : ParaJob) (first : Bool) (prev : Nat)
     | some (.pen _ cost _ _ _ _) => cost ≤ forcedCost
     | _ => false)
 
+/-- How far a line hangs past its measure's start: a hanging first line by its kern, which a
+label at its natural width shortens (`Spacing.Mark.shift`), a restarting line by the hang. -/
+private def Spacing.Paragraph.hungBy (j : ParaJob) (first : Bool) (prev : Nat) : Length :=
+  if !j.restarts first prev then 0
+  else if first && j.hangIndent != 0 then
+    match j.items[0]? with
+    | some (Item.box w ..) => -w
+    | _ => j.hangIndent
+  else j.hangIndent
+
 private def Spacing.Paragraph.lineStart (j : ParaJob) (first : Bool) (prev : Nat) : Nat :=
   if first then Layout.lineStart j.items (if j.hangIndent == 0 then 0 else 1)
   else if j.restarts first prev then prev + 2
@@ -15086,7 +15167,7 @@ width, overfull flag, protrusion hang and expansion factor. -/
 private def paraLineGeom (fs : FontSet) (j : ParaJob) (b : B) (first : Bool)
     (prev brk : Nat) : Array Seg × Length × Length × Bool × Length × Int :=
   -- A hanging first line starts past its kern, as the breaker priced it.
-  let lead := if j.restarts first prev then j.hangIndent else 0
+  let lead := j.hungBy first prev
   let width := j.target + lead
   let a := j.lineStart first prev
   -- A `\@flushglue` line wider than the measure takes its glue's shrink, as TeX's does.
@@ -15219,7 +15300,7 @@ private def texBoxBaseline (fs : FontSet) (b : B) (j : ParaJob) (tb : TexBox) (s
 /-- How far a paragraph's line sets past its measure, where its overrun flag is set: past the
 target its protrusion widens, as TeX measures its margin kerns inside the box. -/
 private def lineOverrunBy (j : ParaJob) (first : Bool) (prev brk : Nat) : Option Length :=
-  let lead := if j.restarts first prev then j.hangIndent else 0
+  let lead := j.hungBy first prev
   let width := j.target + lead
   let a := j.lineStart first prev
   let shrinks := j.rightFil && width < (measure j.items a brk).natural

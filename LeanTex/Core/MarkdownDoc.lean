@@ -1452,14 +1452,23 @@ private def itemsInto (tw : Twin) (summary ind : String) (ordered alt : Bool) (k
     (acc : String) : List (Array Block) → String
   | [] => acc
   | item :: rest =>
-    let marker := if ordered then s!"{k}{if alt then ")" else "."} " else if alt then "+ " else "- "
+    -- An ordered list's `\item[label]` counts nothing, so it stands as a bullet list of its own,
+    -- its marker no neighbour's, that the next numbered item resumes the numbering after.
+    let labelled := ordered && (Ir.itemLabelOf? item).isSome
+    let marker := if labelled then (if alt then "+ " else "* ")
+      else if ordered then s!"{k}{if alt then ")" else "."} "
+      else if alt then "+ " else "- "
     let cont := ind ++ String.ofList (List.replicate marker.length ' ')
     let pen := itemSeq tw summary cont { acc, first := some (ind ++ marker), prev := none }
       item.toList
     let acc := match pen.first with
       | some m => pen.acc ++ m ++ "\n"
       | none => pen.acc
-    itemsInto tw summary ind ordered alt (k + 1) acc rest
+    let resumes := labelled && match rest with
+      | next :: _ => (Ir.itemLabelOf? next).isNone
+      | [] => false
+    itemsInto tw summary ind ordered alt (if labelled then k else k + 1)
+      (if resumes then acc ++ ind ++ apart ++ "\n" else acc) rest
 termination_by structural items => items
 
 /-- An item's blocks, in order, from where the pen stands. -/

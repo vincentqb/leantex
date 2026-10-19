@@ -8244,7 +8244,7 @@ public inductive Lowering where
   | printBibliography | crefRange | fontSeries | lineNumbers | selectLanguage | vspace | pageBreak
   | komaFont | sectionSkips | setList | sectionLines | uniMathSetup | unreadKeys | newCounter
   | ensureMath | box | beamerFont | columnRatio | useTheme | molochSet | titleGraphic | fontTheme
-  | beamerOption | beamerCovered | inputEncoding | komaOptions | graphColor | blueprintSite
+  | beamerOption | beamerCovered | inputEncoding | komaOptions | komaOption | graphColor | blueprintSite
   | texOrPdf
   deriving BEq, Repr
 
@@ -8354,6 +8354,7 @@ private def ctrlRows1 : List CtrlRow :=
    nothingRow "GenericWarning" 2 packageLog,
    ⟨"IfValueT", [], .tokens [.ctrl "ifgiven" {}] none⟩,
    ⟨"IfValueTF", [], .tokens [.ctrl "ifgiven" {}] none⟩,
+   ⟨"KOMAoption", [.group, .group], .lower .komaOption {}⟩,
    ⟨"KOMAoptions", [.group], .lower .komaOptions {}⟩,
    nothingRow "MessageBreak" 0 "a line break in a log message, not in the document",
    ⟨"PackageError", List.replicate 3 .group, .inert⟩,
@@ -11082,6 +11083,26 @@ description scopes")) ++
     let style := Native.texStyle el es pos
     out ++ style
 
+
+/-- KOMA-Script's options set after the class: a preamble's `fontsize` sets the body size as the
+class option does, the separation rules it draws none of are noted, and the rest named. -/
+private def komaEntries (reader : String) (entries : List String) (pos : Pos) : M (Array Raw) := do
+  let preamble ← docPreamble
+  let mut out := #[]
+  for e in entries do
+    match KeyVal.entry e with
+    | ("fontsize", some v) =>
+      write fun st => { st with strutSkip := none, classPt := none, bodySkip := none }
+      if preamble then out := out ++ (← setting s!"\\{reader}\{{e}}" (.page #[(.fontsize, v)]) pos)
+      else unreadParam reader "fontsize" s!"'\\{reader}' entry '{e}'" pos
+    | (key, some v) =>
+      -- premise: komaOptionsRow — KOMA-Script draws neither separation rule unless asked
+      if (key == "headsepline" || key == "footsepline") && (v == "false" || v == "off" || v == "no")
+      then inertParam reader key s!"\\{reader}\{{e}}" InertSite.komaSepRule.inert pos
+      else unreadParam reader key s!"'\\{reader}' entry '{e}'" pos
+    | (key, none) => unreadParam reader key s!"'\\{reader}' entry '{e}'" pos
+  return out
+
 /-- A registered control's lowering over its arguments. -/
 private def lowerCall (c : CtrlCall) : Lowering → M (Array Raw)
   | .packages =>
@@ -11583,22 +11604,10 @@ and 'transparent=<n>' are understood")
         c.pos (help := s!"save the file in one encoding, UTF-8 best, and delete \
 '\\inputencoding\{{arg}}'")
     return #[]
-  | .komaOptions => do
-    let entries := (KeyVal.items (c.src 0)).toList
-    if entries.any fun e => (KeyVal.entry e).1 == "fontsize" then
-      write fun st => { st with strutSkip := none, classPt := none, bodySkip := none }
-    let satisfied (e : String) : Bool :=
-      match KeyVal.entry e with
-      | (key, some v) => (key == "headsepline" || key == "footsepline")
-          && (v == "false" || v == "off" || v == "no")
-      | _ => false
-    for e in entries do
-      -- premise: komaOptionsRow — KOMA-Script draws neither separation rule unless asked
-      if satisfied e then
-        inertParam "KOMAoptions" (KeyVal.entry e).1 s!"\\KOMAoptions\{{e}}"
-          InertSite.komaSepRule.inert c.pos
-      else unreadParam "KOMAoptions" (KeyVal.entry e).1 s!"'\\KOMAoptions' entry '{e}'" c.pos
-    return #[]
+  | .komaOptions => komaEntries "KOMAoptions" (KeyVal.items (c.src 0)).toList c.pos
+  | .komaOption =>
+    let key := (c.src 0).trimAscii.toString
+    komaEntries "KOMAoption" ((KeyVal.items (c.src 1)).toList.map (key ++ "=" ++ ·)) c.pos
   | .graphColor => do
     -- leanblueprint's `\graphcolor{type}{colour}{description}` colours the dependency graph.
     blueprintGraph c.pos (some s!"'\\graphcolor\{{(c.src 0).trimAscii.toString}}' colours \
@@ -14048,7 +14057,7 @@ local macro "emits_nothing" : tactic => `(tactic| (
   | .passOptions | .defineColorspace | .counter | .newDimen | .runningField | .fancyField
   | .clearPageStyles | .thisPageStyle | .addBibResource | .bibResources | .natbibStyle
   | .bibliographyStyle | .unreadKeys | .newCounter | .columnRatio | .titleGraphic | .fontTheme
-  | .beamerOption | .inputEncoding | .komaOptions | .graphColor => true
+  | .beamerOption | .inputEncoding | .graphColor => true
   | _ => false
 
 private theorem lowerCall_nothing (c : CtrlCall) (l : Lowering) (h : l.emitsNothing = true) :
