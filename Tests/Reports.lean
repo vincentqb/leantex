@@ -2175,7 +2175,7 @@ def reports : List Report := [
     pins := [check% Tests.Chapters.numberingStateChecks, check% Tests.Chapters.chapterDeclarationChecks]
     accept := ["lualatex 1.24 on invented probes: roman, Alph and gobble folios counting from 1 where pagenumbering stands, mid-paragraph and in the preamble alike; front matter i and main matter 1 in book, scrbook and memoir; Section 1.1 of chapter 1 on page 1, equation 1.1, (1-1) under a declared theequation and (1.1) once numberwithin follows it; KOMA-Script's chapter head 67.28pt below the text's top and the text 37.07pt below it, addchap and addsec unnumbered, addsec listed by its short title; memoir numbering down to the section, its subsection unnumbered and thesubsection printing 1.1.0; Figure 1 before the first chapter, Figure 1.1, 1.2, then 2.1 and Table 2.1 in report, A.1 in the appendix, algorithms 1 and 2 through the document; a listing's lines two and three; a fragment's # a numbered chapter in report; this tree sets each the same",
       "main's binary at 1e1685cb names pagenumbering and the counters unknown, numbers book's front matter in arabic, sets KOMA-Script's chapters as sections and numbers figures 1, 2, 3; the checks fail there",
-      "the corpus built by the parameter-state change's binary over main 1e1685cb and by this tree's: every artifact and diagnostic byte-identical; against main's binary at 2b5f7c62, with the train under this tree, every PDF byte-identical, every web page without visible difference, and diagnostics differing only in the two documents the parameter-state change names"]
+      "the corpus built by main's binary at 70096387 and by this tree's: every artifact and diagnostic byte-identical"]
     state := .guarded "1e1685cb" .before .author }
 ]
 
