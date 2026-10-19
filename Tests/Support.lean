@@ -319,10 +319,19 @@ def elabCode (file src : String) : Ir.Doc × Array Diag :=
 structure WitnessRun where
   rep : String → String := id
   located : Bool := false
+  /-- Elaborate nothing and return the source as one `witnessSource` diagnostic's message. -/
+  sourceOnly : Bool := false
+
+/-- The subject marking a `sourceOnly` run's diagnostic, by the surface its source is read in. -/
+def witnessSource (surface : String) : String := "witness-source:" ++ surface
+
+def WitnessRun.captured (w : WitnessRun) (surface src : String) : Ir.Doc × Array Diag :=
+  (default, #[{ kind := .N0017, message := w.rep src, subject := some (witnessSource surface) }])
 
 /-- A tex source elaborated as `w` runs it. -/
 def WitnessRun.elab (w : WitnessRun) (src : String) : Ir.Doc × Array Diag :=
-  if w.located then
+  if w.sourceOnly then w.captured "tex" src
+  else if w.located then
     let (toks, lexDs) := Lex.lex "t" (w.rep src)
     let (raws, parseDs) := Parse.parse "t" toks
     let (doc, ds, _) := Elab.runRawsSpanned "t" raws (lexDs ++ parseDs)
@@ -331,7 +340,8 @@ def WitnessRun.elab (w : WitnessRun) (src : String) : Ir.Doc × Array Diag :=
 
 /-- A markdown source elaborated as `w` runs it. -/
 def WitnessRun.elabMarkdown (w : WitnessRun) (src : String) : Ir.Doc × Array Diag :=
-  if w.located then
+  if w.sourceOnly then w.captured "md" src
+  else if w.located then
     let (raws, ds) := Md.read "t.md" (w.rep src)
     let (doc, ds, _) := Elab.runRawsSpanned "t.md" raws ds
     (doc, ds)
@@ -2482,17 +2492,17 @@ def inTitleBlock (doc : Ir.Doc) (p : Ir.Block → Bool) : Bool :=
 /-- Diagnostics after layout too, through the same alphabet resolution. -/
 def dvL (fonts : Font.FontSet) (src : String) (w : WitnessRun := {}) : Array Diag :=
   let (doc, ds) := w.elab src
-  ds ++ (layoutOf fonts doc).diags
+  if w.sourceOnly then ds else ds ++ (layoutOf fonts doc).diags
 
 /-- Diagnostics after layout through the overflow ladder (`fittedOf`). -/
 def dvF (fonts : Font.FontSet) (src : String) (w : WitnessRun := {}) : Array Diag :=
   let (doc, ds) := w.elab src
-  ds ++ (fittedOf fonts doc).out.diags
+  if w.sourceOnly then ds else ds ++ (fittedOf fonts doc).out.diags
 
 /-- Diagnostics after the HTML backend. -/
 def dvH (src : String) (w : WitnessRun := {}) : Array Diag :=
   let (doc, ds) := w.elab src
-  ds ++ (HtmlDoc.emit {} doc).2
+  if w.sourceOnly then ds else ds ++ (HtmlDoc.emit {} doc).2
 
 /-- A one-face set: every slot and variant maps to index 0. -/
 def oneFaceOf (font : Font) : Font.FontSet := Font.FontSet.ofFace font
