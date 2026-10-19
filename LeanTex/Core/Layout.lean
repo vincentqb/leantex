@@ -14237,7 +14237,10 @@ private def collectBlock (r : Rd) (a : Acc)
           if floatTriv && (i == 0 || i + 1 == plan.length) then a.trivSpace g
           else if !capAbove && i == 2 && !caption.isEmpty then a.vskip g else a.addvspace g
         | .caption => collectFloatCaption r rf a kind caption capLeaf capSpan indent
-        | .object => collectCentered rf { a with boxTop := true } body.toList indent false) a
+        -- The float's box opens as a minipage does, unless its caption above set a line first.
+        | .object =>
+          collectCentered rf { a with boxTop := !capAbove || caption.isEmpty } body.toList indent
+            false) a
     { a.pushOp .floatClose with noBreakNext := held }
   | .frame title standout valign breakable body =>
     let marks := Ir.frameMarks body

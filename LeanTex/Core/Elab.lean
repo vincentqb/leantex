@@ -10075,246 +10075,6 @@ private def closeSpan (spans : Array Ir.ColSpan) (cells : Array (Array Block))
 private def tableCell (ctx : Ctx) (cellRaws : Array Raw) : EM (Array Inline) :=
   inlineGroup ctx.palette (elabInlines ctx (trimRawEdges cellRaws))
 
-/-- A cell's raws with each group holding an environment the cell sets as blocks opened in place,
-and those environments' elaborations at their indices in the result. -/
-private def cellBlockRaws (cellRaws : Array Raw) (envs : Array (Nat × Option Nat × EM (Array Block))) :
-    Array Raw × Array (Nat × EM (Array Block)) := Id.run do
-  let mut raws : Array Raw := #[]
-  let mut acts : Array (Nat × EM (Array Block)) := #[]
-  for (r, k) in cellRaws.zipIdx do
-    let inner := envs.filterMap fun (c, i, a) => if c == k then i.map (·, a) else none
-    match r with
-    | .group g _ =>
-      if inner.isEmpty then raws := raws.push r
-      else
-        acts := acts ++ inner.map fun (i, a) => (raws.size + i, a)
-        raws := raws ++ g
-    | _ =>
-      if let some (_, _, a) := envs.find? fun (c, i, _) => c == k && i.isNone then
-        acts := acts.push (raws.size, a)
-      raws := raws.push r
-  return (raws, acts)
-
-/-- A cell's content: in a paragraph column, one group of its paragraphs and the environments it
-sets as blocks (`envs`, each at its index in `cellRaws` and, in a group, the group's), its
-declarations reaching the end of the cell; else one inline group. -/
-private def tableCellBlocks (ctx : Ctx) (spec : Option Ir.ColSpec) (cellRaws : Array Raw)
-    (envs : Array (Nat × Option Nat × EM (Array Block))) : EM (Array Block) := do
-  let saved := (← get).scope.blockDecls
-  let paraCol := spec.any fun c => !(c.width matches .natural)
-  let isPar (r : Raw) : Bool := r matches .par _ || r matches .ctrl "par" _
-  unless paraCol && (!envs.isEmpty || cellRaws.any isPar) do
-    return Ir.cellOf (Ir.paraAt saved (← tableCell ctx cellRaws))
-  let (raws, acts) := cellBlockRaws cellRaws envs
-  let mut out : Array Block := #[]
-  let mut seg : Array Raw := #[]
-  for (r, k) in raws.zipIdx do
-    let act := acts.find? (·.1 == k)
-    if act.isSome || isPar r then
-      let xs ← tableCell ctx seg
-      unless xs.isEmpty do out := out.push (.para (Ir.paraAt (← get).scope.blockDecls xs))
-      seg := #[]
-      -- An environment after text in its paragraph opens inside it, taking no `\partopsep`.
-      if let some (_, a) := act then
-        let bs ← a
-        out := out ++ (if xs.isEmpty then bs else bs.map Ir.inParagraph)
-    else match r with
-      | .ctrl n p =>
-        if isDeclBlock ctx n raws k seg then discard (enterBlockDecl ctx n raws k seg p)
-        else seg := seg.push r
-      | _ => seg := seg.push r
-  let xs ← tableCell ctx seg
-  unless xs.isEmpty do out := out.push (.para (Ir.paraAt (← get).scope.blockDecls xs))
-  leaveBlockDecl saved
-  return out
-
-private def tabularArm (ctx : Ctx) (n : String) (body : Array Raw)
-    (pos : Pos) (blocks : Array Block)
-    (envActs : Array ((Nat × Option Nat) × EM (Array Block))) : EM (Array Block) := do
-  let mut blocks := blocks
-  let mut k := skipSpaces body 0
-  let mut flexTarget : Option Ir.TableTarget := none
-  if n == "tabularx" then
-    match body[k]? with
-    | some (.group targetRaw _) =>
-      let src := rawSrc targetRaw
-      match tableTarget ctx src with
-      | .ok target => flexTarget := some target
-      | .error why =>
-        diag ctx .E0331 s!"cannot read tabularx target width from '{src}': {why}" pos
-          (help := "use sums, differences, scalar products, local horizontal measures, or absolute lengths")
-        flexTarget := some (.frac 1000)
-      k := skipSpaces body (k + 1)
-    | _ =>
-      diag ctx .E0304 "'tabularx' needs a {target width} before its {column spec}" pos
-  if n == "tabular*" then
-    if let some (.group _ _) := body[k]? then
-      warnOnce ctx "tabular:starwidth" .N0102
-        "'tabular*' total width is ignored: columns take their \
-  declared widths" pos
-      k := skipSpaces body (k + 1)
-  if let .took k' := scanBracketArg body k pos then
-    warnOnce ctx "tabular:valign" .N0102
-      "'tabular' [t]/[b] alignment is ignored: the table stands \
-  where written" pos
-    k := skipSpaces body k'
-  let mut cols : Array Ir.ColSpec := #[]
-  let mut padL := true
-  let mut padR := true
-  match body[k]? with
-  | some (.group spec _) =>
-    let (cs, pl, pr, warns) := parseColSpec ctx spec flexTarget
-    -- A markdown table declares no widths, so its natural columns narrow.
-    cols := if n == Parse.markdownTableEnv then
-        cs.map fun c => { c with narrows := c.width matches .natural }
-      else cs
-    padL := pl
-    padR := pr
-    unless warns.isEmpty do noteMentions (Parse.rawSrc spec)
-    for (key, msg, help) in warns do
-      warnOnce ctx ("tabular:" ++ key) .W0104 msg pos
-        (help := if help.isEmpty then none else some help)
-    k := k + 1
-  | _ => diag ctx .E0304 s!"'\{{n}}' needs a \{column spec} group" pos
-  let mut rows : Array (Array (Array Block)) := #[]
-  let mut rules : Array (Nat × Ir.TableRule) := #[]
-  let mut spans : Array Ir.ColSpan := #[]
-  let mut cells : Array (Array Block) := #[]
-  let mut cellRaws : Array Raw := #[]
-  let mut cellEnvs : Array (Nat × Option Nat × EM (Array Block)) := #[]
-  let mut spanHere : Option (Nat × Ir.ColSpec) := none
-  let mut j := k
-  let ruleNames := ["toprule", "midrule", "bottomrule", "hline",
-    "cmidrule", "cline", "addlinespace"]
-  for _ in [k:body.size] do
-    if h' : j < body.size then
-      match body[j] with
-      | .ctrl "\\" bpos =>
-        cells := cells.push (← tableCellBlocks ctx ((spanHere.map (·.2)).orElse fun _ => cols[cells.size]?)
-          cellRaws cellEnvs)
-        (spans, cells) := closeSpan spans cells rows.size spanHere
-        spanHere := none
-        cellRaws := #[]
-        cellEnvs := #[]
-        rows := rows.push cells
-        cells := #[]
-        j := j + 1
-        match scanBracketArg body j bpos with
-        | .took j' =>
-          let src := bracketSrc body j j'
-          match Decl.parseLength src with
-          | some l => do
-            rules := rules.push (rows.size, .gap { width := l })
-            j := j'
-          | none =>
-            diag ctx .E0331 s!"unreadable length '{src}' in '\\\\[...]'" (some bpos)
-            j := j'
-        | _ => pure ()
-      | .sym '&' _ =>
-        cells := cells.push (← tableCellBlocks ctx ((spanHere.map (·.2)).orElse fun _ => cols[cells.size]?)
-          cellRaws cellEnvs)
-        (spans, cells) := closeSpan spans cells rows.size spanHere
-        spanHere := none
-        cellRaws := #[]
-        cellEnvs := #[]
-        j := j + 1
-      | .ctrl "multicolumn" rpos =>
-        match readMulticolumn ctx body j with
-        | some (count, spec, warns, text, next) =>
-          if cellRaws.all isSpaceOrPar && spanHere.isNone then
-            spanHere ← spanOf ctx count spec warns rpos
-          else
-            warnOnce ctx "ctrl:multicolumn:misplaced" .W0337 Compat.multicolumnMisplaced rpos
-              (help := Compat.multicolumnMisplacedHelp)
-          for ((c, i), act) in envActs do
-            if c + 1 == next then cellEnvs := cellEnvs.push (cellRaws.size, i, act)
-          cellRaws := cellRaws.push (.group text rpos)
-          j := next
-        | none =>
-          cellRaws := cellRaws.push body[j]
-          j := j + 1
-      | .ctrl name rpos =>
-        if ruleNames.contains name &&
-            cellRaws.all isSpaceOrPar && cells.isEmpty then
-          j := j + 1
-          cellRaws := #[]
-          if let .took j' := scanBracketArg body j rpos then
-            warnOnce ctx ("tabular:rulewidth:" ++ name) .N0102
-              s!"'\\{name}' [width] is ignored: rule weights come \
-  from the design tokens" rpos
-            j := j'
-          match name with
-          | "toprule" => rules := rules.push (rows.size, .top)
-          | "midrule" | "hline" => rules := rules.push (rows.size, .mid)
-          | "bottomrule" => rules := rules.push (rows.size, .bottom)
-          | "addlinespace" =>
-            rules := rules.push (rows.size,
-              .gap { width := Ir.defaultAddSpace })
-          | _ =>
-            -- The `(lr)` trim spec lexes as one word.
-            let mut trimL := false
-            let mut trimR := false
-            if let some (.word w _) := body[j]? then
-              if w.startsWith "(" then
-                trimL := w.contains 'l'
-                trimR := w.contains 'r'
-                j := j + 1
-            match body[skipSpaces body j]? with
-            | some (.group g _) =>
-              j := skipSpaces body j + 1
-              match cmidRange (Parse.rawSrc g) with
-              | some (a, b) =>
-                rules := rules.push (rows.size, .cmid a b trimL trimR)
-              | none =>
-                diag ctx .E0304
-                  s!"'\\{name}' needs a \{from-to} column range" (some rpos)
-            | _ =>
-              diag ctx .E0304
-                s!"'\\{name}' needs a \{from-to} column range" (some rpos)
-        else
-          let head := if cellRaws.all isSpaceOrPar && spanHere.isNone then
-              (expandSpanHead ctx body j name).bind fun (exp, took) =>
-                (readMulticolumn ctx exp 0).bind fun (count, spec, warns, text, next) =>
-                  let tail := exp.extract next exp.size
-                  if tail.any (fun r => r matches .sym '&' _ | .ctrl "\\" _) then none
-                  else some (count, spec, warns, text, tail, took)
-            else none
-          match head with
-          | some (count, spec, warns, text, tail, took) =>
-            spanHere ← spanOf ctx count spec warns rpos
-            cellRaws := (cellRaws.push (.group text rpos)) ++ tail
-            j := j + took
-          | none =>
-            cellRaws := cellRaws.push body[j]
-            j := j + 1
-      | r' =>
-        for ((c, i), act) in envActs do
-          if c == j then cellEnvs := cellEnvs.push (cellRaws.size, i, act)
-        cellRaws := cellRaws.push r'
-        j := j + 1
-    else break
-  if cellRaws.any (!isSpaceOrPar ·) || !cells.isEmpty then
-    cells := cells.push (← tableCellBlocks ctx ((spanHere.map (·.2)).orElse fun _ => cols[cells.size]?)
-      cellRaws cellEnvs)
-    (spans, cells) := closeSpan spans cells rows.size spanHere
-    rows := rows.push cells
-  -- Every walk below trusts `cols.size`.
-  let widest := rows.foldl (fun m r => max m r.size) cols.size
-  if cols.size < widest then
-    warnOnce ctx "tabular:wide" .W0337
-      "a row carries more cells than the column spec declares; the grid widens" pos
-      (help := "declare one column type per cell: l, c, r, or p{width}")
-      (detail := some s!"{widest} cells where the spec declares {cols.size}")
-    for _ in [cols.size:widest] do
-      cols := cols.push { width := .natural, align := .left }
-  if rows.any (·.size < cols.size) then
-    warnOnce ctx "tabular:ragged" .W0337
-      "a row carries fewer cells than the column spec; it is \
-  padded with empty cells" pos
-  rows := Ir.padTableRows rows cols.size
-  blocks := blocks.push (.table cols padL padR rows rules spans)
-  return blocks
-
 /-- Whether a verbatim runs inline: `\verb` and `\mintinline` always, and a
 one-line listing environment when text shares its paragraph. -/
 private def verbRunsInline (env : String) (v : Parse.Verbatim) (cur raws : Array Raw) (i : Nat) :
@@ -11410,6 +11170,294 @@ private def flushPara (ctx : Ctx) (blocks : Array Block) (cur : Array Raw) :
   let ready : Ctx := { ctx with palette := pal, tokens := tk
                                 macroRoles := { ctx.macroRoles with blocks := roles } }
   return (⟨ready, rfl, rfl, rfl, rfl⟩, blocks)
+
+/-- The marks a cell's opened group stands between: its declarations end at the second. -/
+private def cellGroupOpen : String := "cell group open"
+private def cellGroupClose : String := "cell group close"
+
+/-- Whether a raw breaks a paragraph column's cell into paragraphs. -/
+private def cellPar (r : Raw) : Bool := r matches .par _ || r matches .ctrl "par" _
+
+/-- A cell's raws with each group that is no command's argument and holds a paragraph break or an
+environment the cell sets as blocks opened in place between marks, and those environments'
+elaborations at their indices in the result. -/
+private def cellBlockRaws (cellRaws : Array Raw)
+    (envs : Std.HashMap Nat (Array (Option Nat × EM (Array Block)))) :
+    Array Raw × Std.HashMap Nat (EM (Array Block)) := Id.run do
+  let mut raws : Array Raw := #[]
+  let mut acts : Std.HashMap Nat (EM (Array Block)) := {}
+  let mut afterCtrl := false
+  for (r, k) in cellRaws.zipIdx do
+    let here := envs.getD k #[]
+    match r with
+    | .group g p =>
+      let inner := here.filterMap fun (i, a) => i.map (·, a)
+      if !afterCtrl && (!inner.isEmpty || g.any cellPar) then
+        raws := raws.push (.ctrl cellGroupOpen p)
+        for (i, a) in inner do acts := acts.insert (raws.size + i) a
+        raws := raws ++ g
+        raws := raws.push (.ctrl cellGroupClose p)
+      else raws := raws.push r
+    | _ =>
+      if let some (_, a) := here.find? (·.1.isNone) then acts := acts.insert raws.size a
+      raws := raws.push r
+    unless r matches .space do afterCtrl := r matches .ctrl _ _
+  return (raws, acts)
+
+/-- A cell's content: in a paragraph column, one group of its paragraphs and the environments it
+sets as blocks (`envs`, at their indices in `cellRaws` and, in a group, the group's), each
+paragraph's declarations carried past its end as the body carries them; else one inline group. -/
+private def tableCellBlocks (ctx : Ctx) (spec : Option Ir.ColSpec) (cellRaws : Array Raw)
+    (envs : Std.HashMap Nat (Array (Option Nat × EM (Array Block)))) : EM (Array Block) := do
+  let saved := (← get).scope.blockDecls
+  let paraCol := spec.any fun c => !(c.width matches .natural)
+  let grouped (r : Raw) : Bool := match r with
+    | .group g _ => g.any cellPar
+    | _ => false
+  unless paraCol && (!envs.isEmpty || cellRaws.any cellPar || cellRaws.any grouped) do
+    return Ir.cellOf (Ir.paraAt saved (← tableCell ctx cellRaws))
+  let (raws, acts) := cellBlockRaws cellRaws envs
+  -- A segment after a closed group's text runs on from it, its leading space kept.
+  let runOn (c : Ctx) (seg : Array Raw) (pending : Array Inline) : EM (Array Inline) :=
+    if pending.isEmpty then tableCell c seg
+    else inlineGroup c.palette (elabInlines c
+      (seg.toList.reverse.dropWhile isSpaceOrPar).reverse.toArray)
+  let mut out : Array Block := #[]
+  let mut seg : Array Raw := #[]
+  -- A closed group's text after its last break, set under the group's declarations.
+  let mut pending : Array Inline := #[]
+  let mut pal := ctx.palette
+  let mut opened : Array (List Ir.Decl × Ir.Palette) := #[]
+  for (r, k) in raws.zipIdx do
+    let act := acts.get? k
+    let mark := match r with
+      | .ctrl n _ => if n == cellGroupOpen then some true
+        else if n == cellGroupClose then some false else none
+      | _ => none
+    if act.isSome || cellPar r then
+      let cctx := { ctx with palette := pal }
+      let xs := pending ++ (← runOn cctx seg pending)
+      unless xs.isEmpty do out := out.push (.para (Ir.paraAt (← get).scope.blockDecls xs))
+      let (carried, p) ← carryDecls cctx seg out
+      out := carried
+      pal := p
+      seg := #[]
+      pending := #[]
+      -- An environment after text in its paragraph opens inside it, taking no `\partopsep`.
+      if let some a := act then
+        let bs ← a
+        out := out ++ (if xs.isEmpty then bs else bs.map Ir.inParagraph)
+    else if mark == some false then
+      -- The group's text after its last break ends with it, its paragraph running on.
+      if let some (ds, p) := opened.back? then
+        let cur := (← get).scope.blockDecls
+        let xs ← inlineGroup ctx.palette (elabInlines { ctx with palette := pal }
+          (if pending.isEmpty then (seg.toList.dropWhile isSpaceOrPar).toArray else seg))
+        pending := pending ++ Ir.wrapDecls (cur.filter (!ds.contains ·)) xs
+        seg := #[]
+        leaveBlockDecl ds
+        pal := p
+        opened := opened.pop
+    else if mark == some true then opened := opened.push ((← get).scope.blockDecls, pal)
+    else match r with
+      -- A declaration opening a paragraph scopes the paragraph, as one between blocks does.
+      | .ctrl n p =>
+        if pending.isEmpty && isDeclBlock { ctx with palette := pal } n raws k seg then
+          discard (enterBlockDecl { ctx with palette := pal } n raws k seg p)
+        else seg := seg.push r
+      | _ => seg := seg.push r
+  let cctx := { ctx with palette := pal }
+  let xs := pending ++ (← runOn cctx seg pending)
+  unless xs.isEmpty do out := out.push (.para (Ir.paraAt (← get).scope.blockDecls xs))
+  leaveBlockDecl saved
+  return out
+
+private def tabularArm (ctx : Ctx) (n : String) (body : Array Raw)
+    (pos : Pos) (blocks : Array Block)
+    (envActs : Array ((Nat × Option Nat) × EM (Array Block))) : EM (Array Block) := do
+  let mut blocks := blocks
+  let mut k := skipSpaces body 0
+  let mut flexTarget : Option Ir.TableTarget := none
+  if n == "tabularx" then
+    match body[k]? with
+    | some (.group targetRaw _) =>
+      let src := rawSrc targetRaw
+      match tableTarget ctx src with
+      | .ok target => flexTarget := some target
+      | .error why =>
+        diag ctx .E0331 s!"cannot read tabularx target width from '{src}': {why}" pos
+          (help := "use sums, differences, scalar products, local horizontal measures, or absolute lengths")
+        flexTarget := some (.frac 1000)
+      k := skipSpaces body (k + 1)
+    | _ =>
+      diag ctx .E0304 "'tabularx' needs a {target width} before its {column spec}" pos
+  if n == "tabular*" then
+    if let some (.group _ _) := body[k]? then
+      warnOnce ctx "tabular:starwidth" .N0102
+        "'tabular*' total width is ignored: columns take their \
+  declared widths" pos
+      k := skipSpaces body (k + 1)
+  if let .took k' := scanBracketArg body k pos then
+    warnOnce ctx "tabular:valign" .N0102
+      "'tabular' [t]/[b] alignment is ignored: the table stands \
+  where written" pos
+    k := skipSpaces body k'
+  let mut cols : Array Ir.ColSpec := #[]
+  let mut padL := true
+  let mut padR := true
+  match body[k]? with
+  | some (.group spec _) =>
+    let (cs, pl, pr, warns) := parseColSpec ctx spec flexTarget
+    -- A markdown table declares no widths, so its natural columns narrow.
+    cols := if n == Parse.markdownTableEnv then
+        cs.map fun c => { c with narrows := c.width matches .natural }
+      else cs
+    padL := pl
+    padR := pr
+    unless warns.isEmpty do noteMentions (Parse.rawSrc spec)
+    for (key, msg, help) in warns do
+      warnOnce ctx ("tabular:" ++ key) .W0104 msg pos
+        (help := if help.isEmpty then none else some help)
+    k := k + 1
+  | _ => diag ctx .E0304 s!"'\{{n}}' needs a \{column spec} group" pos
+  let mut rows : Array (Array (Array Block)) := #[]
+  let mut rules : Array (Nat × Ir.TableRule) := #[]
+  let mut spans : Array Ir.ColSpan := #[]
+  let mut cells : Array (Array Block) := #[]
+  let mut cellRaws : Array Raw := #[]
+  let mut cellEnvs : Std.HashMap Nat (Array (Option Nat × EM (Array Block))) := {}
+  let actsAt : Std.HashMap Nat (Array (Option Nat × EM (Array Block))) :=
+    envActs.foldl (fun m ((c, i), act) => m.insert c ((m.getD c #[]).push (i, act))) {}
+  let mut spanHere : Option (Nat × Ir.ColSpec) := none
+  let mut j := k
+  let ruleNames := ["toprule", "midrule", "bottomrule", "hline",
+    "cmidrule", "cline", "addlinespace"]
+  for _ in [k:body.size] do
+    if h' : j < body.size then
+      match body[j] with
+      | .ctrl "\\" bpos =>
+        cells := cells.push (← tableCellBlocks ctx ((spanHere.map (·.2)).orElse fun _ => cols[cells.size]?)
+          cellRaws cellEnvs)
+        (spans, cells) := closeSpan spans cells rows.size spanHere
+        spanHere := none
+        cellRaws := #[]
+        cellEnvs := {}
+        rows := rows.push cells
+        cells := #[]
+        j := j + 1
+        match scanBracketArg body j bpos with
+        | .took j' =>
+          let src := bracketSrc body j j'
+          match Decl.parseLength src with
+          | some l => do
+            rules := rules.push (rows.size, .gap { width := l })
+            j := j'
+          | none =>
+            diag ctx .E0331 s!"unreadable length '{src}' in '\\\\[...]'" (some bpos)
+            j := j'
+        | _ => pure ()
+      | .sym '&' _ =>
+        cells := cells.push (← tableCellBlocks ctx ((spanHere.map (·.2)).orElse fun _ => cols[cells.size]?)
+          cellRaws cellEnvs)
+        (spans, cells) := closeSpan spans cells rows.size spanHere
+        spanHere := none
+        cellRaws := #[]
+        cellEnvs := {}
+        j := j + 1
+      | .ctrl "multicolumn" rpos =>
+        match readMulticolumn ctx body j with
+        | some (count, spec, warns, text, next) =>
+          if cellRaws.all isSpaceOrPar && spanHere.isNone then
+            spanHere ← spanOf ctx count spec warns rpos
+          else
+            warnOnce ctx "ctrl:multicolumn:misplaced" .W0337 Compat.multicolumnMisplaced rpos
+              (help := Compat.multicolumnMisplacedHelp)
+          if let some here := actsAt.get? (next - 1) then cellEnvs := cellEnvs.insert cellRaws.size here
+          cellRaws := cellRaws.push (.group text rpos)
+          j := next
+        | none =>
+          cellRaws := cellRaws.push body[j]
+          j := j + 1
+      | .ctrl name rpos =>
+        if ruleNames.contains name &&
+            cellRaws.all isSpaceOrPar && cells.isEmpty then
+          j := j + 1
+          cellRaws := #[]
+          if let .took j' := scanBracketArg body j rpos then
+            warnOnce ctx ("tabular:rulewidth:" ++ name) .N0102
+              s!"'\\{name}' [width] is ignored: rule weights come \
+  from the design tokens" rpos
+            j := j'
+          match name with
+          | "toprule" => rules := rules.push (rows.size, .top)
+          | "midrule" | "hline" => rules := rules.push (rows.size, .mid)
+          | "bottomrule" => rules := rules.push (rows.size, .bottom)
+          | "addlinespace" =>
+            rules := rules.push (rows.size,
+              .gap { width := Ir.defaultAddSpace })
+          | _ =>
+            -- The `(lr)` trim spec lexes as one word.
+            let mut trimL := false
+            let mut trimR := false
+            if let some (.word w _) := body[j]? then
+              if w.startsWith "(" then
+                trimL := w.contains 'l'
+                trimR := w.contains 'r'
+                j := j + 1
+            match body[skipSpaces body j]? with
+            | some (.group g _) =>
+              j := skipSpaces body j + 1
+              match cmidRange (Parse.rawSrc g) with
+              | some (a, b) =>
+                rules := rules.push (rows.size, .cmid a b trimL trimR)
+              | none =>
+                diag ctx .E0304
+                  s!"'\\{name}' needs a \{from-to} column range" (some rpos)
+            | _ =>
+              diag ctx .E0304
+                s!"'\\{name}' needs a \{from-to} column range" (some rpos)
+        else
+          let head := if cellRaws.all isSpaceOrPar && spanHere.isNone then
+              (expandSpanHead ctx body j name).bind fun (exp, took) =>
+                (readMulticolumn ctx exp 0).bind fun (count, spec, warns, text, next) =>
+                  let tail := exp.extract next exp.size
+                  if tail.any (fun r => r matches .sym '&' _ | .ctrl "\\" _) then none
+                  else some (count, spec, warns, text, tail, took)
+            else none
+          match head with
+          | some (count, spec, warns, text, tail, took) =>
+            spanHere ← spanOf ctx count spec warns rpos
+            cellRaws := (cellRaws.push (.group text rpos)) ++ tail
+            j := j + took
+          | none =>
+            cellRaws := cellRaws.push body[j]
+            j := j + 1
+      | r' =>
+        if let some here := actsAt.get? j then cellEnvs := cellEnvs.insert cellRaws.size here
+        cellRaws := cellRaws.push r'
+        j := j + 1
+    else break
+  if cellRaws.any (!isSpaceOrPar ·) || !cells.isEmpty then
+    cells := cells.push (← tableCellBlocks ctx ((spanHere.map (·.2)).orElse fun _ => cols[cells.size]?)
+      cellRaws cellEnvs)
+    (spans, cells) := closeSpan spans cells rows.size spanHere
+    rows := rows.push cells
+  -- Every walk below trusts `cols.size`.
+  let widest := rows.foldl (fun m r => max m r.size) cols.size
+  if cols.size < widest then
+    warnOnce ctx "tabular:wide" .W0337
+      "a row carries more cells than the column spec declares; the grid widens" pos
+      (help := "declare one column type per cell: l, c, r, or p{width}")
+      (detail := some s!"{widest} cells where the spec declares {cols.size}")
+    for _ in [cols.size:widest] do
+      cols := cols.push { width := .natural, align := .left }
+  if rows.any (·.size < cols.size) then
+    warnOnce ctx "tabular:ragged" .W0337
+      "a row carries fewer cells than the column spec; it is \
+  padded with empty cells" pos
+  rows := Ir.padTableRows rows cols.size
+  blocks := blocks.push (.table cols padL padR rows rules spans)
+  return blocks
 
 /-- Drops the frame sources recorded from the earliest completed role that
 `desired` does not continue. -/

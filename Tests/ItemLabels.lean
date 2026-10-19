@@ -253,9 +253,29 @@ def cellChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit :
   let box (body : String) : Option Dim.Length :=
     yOf oneFace (article ("Lead words.\n\n\\noindent\\begin{minipage}{4cm}\n" ++ body ++
       "\n\\end{minipage}")) "Kilo"
-  t "lists: a list opening a minipage spends no topsep, a label before it none either"
-    (box "\\begin{itemize}\n\\item Kilo\n\\end{itemize}" == box "Kilo" && (box "Kilo").isSome &&
-      box "\\label{x}\n\\begin{itemize}\n\\item Kilo\n\\end{itemize}" == box "Kilo")
+  t "lists: a list opening a minipage spends no topsep"
+    (box "\\begin{itemize}\n\\item Kilo\n\\end{itemize}" == box "Kilo" && (box "Kilo").isSome)
+  -- A label moves no ink: one before the list leaves the box's top where it is, where LaTeX's
+  -- `\label` ends `\@minipagetrue` (alignment: the first line stands at the box's top).
+  t "lists: a label before a minipage's first list leaves its top as it is"
+    (box "\\label{x}\n\\begin{itemize}\n\\item Kilo\n\\end{itemize}" == box "Kilo")
+  -- A parbox's list opens at its top as a minipage's does, where LaTeX's `\@iiiparbox` spends the
+  -- topsep (alignment: the first line stands at the box's top).
+  let parbox (body : String) : Option Dim.Length :=
+    yOf oneFace (article ("Lead words.\n\n\\noindent\\parbox[t]{4cm}{" ++ body ++ "}")) "Kilo"
+  t "lists: a list opening a parbox stands at its top, as a minipage's does"
+    (parbox "\\begin{itemize}\\item Kilo\\end{itemize}" == parbox "Kilo" && (parbox "Kilo").isSome)
+  let captioned (object : String) : Option Dim.Length :=
+    let src := article ("Lead words.\n\n\\begin{table}[h]\n\\caption{Sierra.}\n" ++ object ++
+      "\n\\end{table}\n\nTango words.")
+    match yOf oneFace src "Sierra", yOf oneFace src "Kilo" with
+    | some c, some k => some (k - c)
+    | _, _ => none
+  -- lualatex sets the item 21.9pt below the caption's baseline.
+  t "floats: a list after a caption above its object spends its topsep"
+    (match captioned "\\begin{itemize}\\item Kilo\\end{itemize}" with
+      | some l => Dim.pt 21 ≤ l
+      | none => false)
   let deck := "\\documentclass{beamer}\n\\begin{document}\n\\begin{frame}\n" ++
     "\\begin{columns}[T]\n\\begin{column}{0.4\\textwidth}\n\\begin{itemize}\\item Kilo\n" ++
     "\\end{itemize}\n\\end{column}\n\\begin{column}{0.4\\textwidth}\nMike words.\n" ++
@@ -273,6 +293,17 @@ def cellChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit :
   t "cells: a declaration reaches the end of its cell, across a paragraph break"
     (hasStr sh "<p><strong>Kilo one.</strong></p><p><strong>Kilo two.</strong></p>" &&
       !hasStr sh "<strong>Plain")
+  let grouped := (HtmlDoc.emit {} (elabStr (article ("\\begin{tabular}{p{5cm}l}\n" ++
+    "{\\bfseries Mike \\begin{itemize}\\item Oscar\\end{itemize} more} after & x\\\\\n" ++
+    "plain \\bfseries mid\\par next & y\\\\\n\\multicolumn{2}{p{5cm}}{Papa\\par Quebec}\\\\\n" ++
+    "\\end{tabular}"))).1).1
+  t "cells: a group's declarations end with the group, its text running on after it"
+    (hasStr grouped "<li><strong>Oscar</strong></li>" &&
+      hasStr grouped "<p><strong>more</strong> after</p>")
+  t "cells: a declaration inside a paragraph reaches the paragraphs after it"
+    (hasStr grouped "<p><strong>next</strong></p>")
+  t "cells: a paragraph break in a spanning cell's text opens a paragraph"
+    (hasStr grouped "<p>Papa</p><p>Quebec</p>")
   t "cells: a list in a spanning paragraph cell ships, its item marked"
     (sds.all (·.severity != .error) &&
       (lineOf sl "Mike item").any fun l => (lineText l).startsWith "•")
