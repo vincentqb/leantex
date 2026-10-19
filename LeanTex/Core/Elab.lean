@@ -2890,9 +2890,19 @@ private def outerFootnotesList (acc : Array Ir.Inline) : List Ir.Inline → Arra
 
 end
 
-/-- Text with each run of spaces one space, as TeX reads a note its footnotes left. -/
-private def oneSpace (s : String) : String :=
-  (s.splitOn " ").filter (!·.isEmpty) |> " ".intercalate
+/-- Text with each inner run of spaces and no-break spaces one, a no-break one where the run holds
+one, and none at its edges, as a note its footnotes left reads. -/
+private def oneSpace (s : String) : String := Id.run do
+  let mut out := ""
+  let mut run : Option Char := none
+  for ch in s.toList do
+    if ch == ' ' || ch == '\u00a0' then
+      run := some (if ch == '\u00a0' || run == some '\u00a0' then '\u00a0' else ' ')
+    else
+      if let some r := run then unless out.isEmpty do out := out.push r
+      run := none
+      out := out.push ch
+  return out
 
 /-- One citation note, the `[...]` run at `j` elaborated by `el`, its footnotes apart, which the
 note's text cannot hold, with the index past it; `none` at `j` when no bracket opens there. -/
@@ -2930,8 +2940,8 @@ private def citeArm (ctx : Ctx) (raws : Array Raw) (i : Nat) (name : String)
   -- premise: Tests.MdNoteEdges.citeNoteChecks — a note's footnote sets after its citation
   let notes := f1 ++ f2
   unless notes.isEmpty do
-    warnOnce ctx "cite:note-footnote" .W0110 "a footnote in a citation's note sets after the \
-citation: the note holds text" pos (help := "write the footnote after the citation")
+    warnOnce ctx "cite:note-footnote" .W0110 "a footnote in a citation's note sets after the work \
+it notes: the note holds text" pos (help := "write the footnote after the citation")
   let (pre, post) := match n1, n2 with
     | some a, some b => (a, b)
     | some a, none => ("", a)

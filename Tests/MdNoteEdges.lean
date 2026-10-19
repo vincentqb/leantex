@@ -278,12 +278,14 @@ reference, sets after the citation once, its text and the note's spaces as writt
 def citeNoteEdgeChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let src := worksMeta ++ "One [@a, *em^[in em]*] and [see^[x] @a, p. 3] two.\n\n\
-Three [see ^[cf. @b] @a] and [see ^[one] and ^[two] @b] end.\n"
+Three [see ^[cf. @b] @a] and [see ^[one] and ^[two] @b] end.\n\n\
+Four [@a, p. ^[r] 4] and a caret link ^[x](https://example.org) end.\n"
   let (d, ds) := mdBibBuild src #[("works.bib", worksBib)]
   t s!"md cite note: notes in emphasis, holding a citation, or two, set after the citation \
 ({repr (pageText d)}, {repr (ds.map (·.subject))})"
     (hasStr (pageText d) "[see Ash, 2001]" && hasStr (pageText d) "[see and Birch, 2002]" &&
-      hasStr (pageText d) "cf. Birch [2002]" && (Ir.footnotesOf d.body).size == 5 &&
+      hasStr (pageText d) "cf. Birch [2002]" && (Ir.footnotesOf d.body).size == 6 &&
+      hasStr (pageText d) "p.\u00a04]" && hasStr (pageText d) "caret link ^x end" &&
       !hasStr (pageText d) "^[" && !hasStr (pageText d) "@" &&
       ((ds.filter (·.subject == some "md:cite-note")).size == 1) && !ds.any (·.subject == some "md:cite-nested"))
   let tex := "\\documentclass{article}\n\\usepackage{natbib}\n\\begin{document}\n\

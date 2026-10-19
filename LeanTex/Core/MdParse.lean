@@ -2215,6 +2215,15 @@ def bracketClose? (c : Chars) (ticks : Std.HashMap Nat (Array Nat)) (i : Nat) : 
 def referenceAt (c : Chars) (ticks : Std.HashMap Nat (Array Nat)) (i : Nat) : Bool :=
   c.at? (i + 1) != some '^' && (bracketClose? c ticks i).isSome
 
+/-- Whether the bracket from `i` to `e` opens a link, its tail inline or a label the text defines,
+which Pandoc reads before an inline note there. -/
+def linkFollows (c : Chars) (dialect : Dialect) (defs : Defs) (i e : Nat) : Bool :=
+  (linkTailAt c (e + 1)).isSome ||
+    (c.at? (e + 1) == some '[' && c.at? (e + 2) == some ']' &&
+      defs.links.contains (dialect.labelKey (c.str (i + 1) e))) ||
+    (c.at? (e + 1) == some '[' &&
+      (labelAt c (e + 1)).any fun (l, _) => defs.links.contains (dialect.labelKey l))
+
 /-- Whether a citation's spelling Pandoc's smart punctuation joins nothing before opens at `i`: an
 author's key, or a bracket holding one that no link's tail, reference or attribute list follows. -/
 def citeSpellingAt (c : Chars) (ticks : Std.HashMap Nat (Array Nat)) (i : Nat) : Bool :=
@@ -2461,7 +2470,7 @@ def scanInlines (file : String) (c : Chars) (dialect : Dialect := .document)
           for _ in [0:n] do pending := pending.push '$'
         i := i + n
       else if ch == '^' && defs.own && c.at? (i + 1) == some '[' &&
-          (bracketClose? c ticks (i + 1)).isSome then
+          (bracketClose? c ticks (i + 1)).any (!linkFollows c dialect defs (i + 1) ·) then
         -- Pandoc's inline note: its balanced bracket's content, read as the text's own.
         let e := (bracketClose? c ticks (i + 1)).getD (i + 1)
         toks := flush toks pending pendingPos
