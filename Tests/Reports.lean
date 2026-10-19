@@ -2302,6 +2302,13 @@ def reports : List Report := [
     accept := ["lualatex on invented probes: the baselineskip 12pt, 13.6pt and 14.5pt under the 10pt, 11pt and 12pt options of article, report and KOMA-Script's classes, KOMA-Script's default 11pt; the huge size 25pt under size11.clo; KOMA-Script's 11pt chapter head's baseline 67.28pt below the text's top and the text 37.07pt below it; this tree sets each within a quarter point, setspace's spacings 1.5 and 2 of the size, a redefined size leaving the others as the size file sets them, the native resume class keeping the six-fifths rule",
       "main's binary at 730c0b54: 13.2pt and 14.4pt; the guard fails there",
       "the corpus built by main's binary at 730c0b54 and by this tree's: one PDF differs visibly, an 11pt KOMA-Script article whose line pitch moves from 14.78bp to 15.23bp beside lualatex's 15.18bp, its web page invisibly; every other artifact byte-identical"]
+    state := .guarded "730c0b54" .before .author },
+  { id := "R251", date := "2026-10-19"
+    what := "url's lowtilde option set a URL's tilde as a raised similar sign, which the markdown twin wrote into the URL's text, as U+223C in a code span or as TeX math in roman type, so the twin's link no longer read the address the document wrote"
+    pins := [check% Tests.InlineBoxes.inlineBoxChecks]
+    accept := ["lualatex on an invented probe: the url package's lowtilde sets the tilde as a script-size similar sign raised 0.2ex, as this tree's PDF and web page do, byte-identical to main's",
+      "main's binary at 730c0b54: the twin writes U+223C in the link's code span for the typewriter and hyperref spellings and TeX math for the roman one; this tree's twin with the option equals its twin without it in all three; the guard fails there",
+      "the corpus built by main's binary at 700963877 and by this tree's: every PDF and web page byte-identical, one twin's link text now the address as written"]
     state := .guarded "730c0b54" .before .author }
 ]
 

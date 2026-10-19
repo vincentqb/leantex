@@ -526,22 +526,28 @@ private def spaceSplit (s : String) : String × String × String :=
   let (trail, core) := trailWhite false rest.reverse
   (String.ofList lead, String.ofList core.reverse, String.ofList trail.reverse)
 
+-- conserves: none — a URL's low tilde reads as the `~` its address holds
+/-- Inline content's characters with each low tilde a URL sets spelled as the address's `~`. -/
+private def twinPlain (xs : Array Inline) : String :=
+  Ir.plainText (Ir.mapInlines id xs (finish := fun ys => ys.map fun y =>
+    if let .role n _ := y then (if n == Ir.urlTildeRole then .text "~" else y) else y))
+
 /-- Code-set content: one code span per run between links, each link a link
 whose text is a code span. -/
 private def monoInto (acc : String) (run : Array Inline) : List Inline → String
   | [] =>
-    let span := codeSpan (Ir.plainText run)
+    let span := codeSpan (twinPlain run)
     acc ++ span
   | .link url body :: rest =>
-    let span := codeSpan (Ir.plainText run)
-    let text := codeSpan (Ir.plainText body)
+    let span := codeSpan (twinPlain run)
+    let text := codeSpan (twinPlain body)
     let dest := linkDest url
     monoInto (bangApart (acc ++ span) ++ "[" ++ text ++ "](" ++ dest ++ ")") #[] rest
   | .footnote num _ :: rest =>
-    let span := codeSpan (Ir.plainText run)
+    let span := codeSpan (twinPlain run)
     monoInto (acc ++ span ++ s!"[^{num.getD 0}]") #[] rest
   | .label key :: rest =>
-    let span := codeSpan (Ir.plainText run)
+    let span := codeSpan (twinPlain run)
     monoInto (acc ++ span ++ "<a name=\"" ++ Ir.labelAnchor key ++ "\"></a>") #[] rest
   | x :: rest => monoInto acc (run.push x) rest
 
@@ -889,6 +895,7 @@ private def inlineInto (site : Site) (cites : Bool) (acc : String) (after : Bool
   | .located _ body => inlinesInto site cites acc none after 0 body.toList
   -- An `\item[label]`'s label stands apart from the text after it, as its marker's place does.
   | .role n body =>
+    if n == Ir.urlTildeRole then acc ++ "~" else
     let out := inlinesInto site cites acc none after 0 body.toList
     if n == Ir.itemLabelRole && out != acc then out ++ " " else out
   | .link url body =>

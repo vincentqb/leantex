@@ -160,6 +160,14 @@ vertical-align: -{(Dim.pt 10).toBpString}pt")
     (Ir.foldBlocks (fun acc _ => acc) (fun acc x => match x with
       | .link url _ => acc || url == "https://example.org/~probe"
       | _ => acc) false low.1.body)
+  let twinOf (opt pre : String) : String :=
+    MarkdownDoc.emit (elabStr (doc ("\\usepackage" ++ opt ++ "{url}\n" ++ pre) urlSrc)).1
+  let spellings := ["", "\\urlstyle{rm}\n", "\\usepackage{hyperref}\n"]
+  t s!"lowtilde: the twin writes the URL as without the option ({spellings.map (twinOf "[lowtilde]")})"
+    (spellings.all fun pre => twinOf "[lowtilde]" pre == twinOf "" pre &&
+      (hasStr (twinOf "[lowtilde]" pre) "example.org/~probe`](" ||
+        hasStr (twinOf "[lowtilde]" pre) "example.org/~probe](" ||
+        hasStr (twinOf "[lowtilde]" pre) "<https://example.org/~probe>"))
   t "lowtilde: without the option the URL ships its face's tilde"
     ((bodyLines (layoutOf fonts plainUrl.1)).any fun l => hasStr (lineText l) "~probe")
 

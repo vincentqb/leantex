@@ -24,10 +24,11 @@ para
   link "https://example.org/~probe"
     styled mono
       text "https://example.org/"
-      box raise 200/1000ex
-        styled size:scriptsize
-          formula inline "\\sim"
-            rel:∼
+      role url-tilde
+        box raise 200/1000ex
+          styled size:scriptsize
+            formula inline "\\sim"
+              rel:∼
       text "probe"
   text " keeps its tilde low."
 columns

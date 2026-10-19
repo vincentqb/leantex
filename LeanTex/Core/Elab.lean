@@ -4412,9 +4412,9 @@ private def urlInk (ctx : Ctx) (url : String) (fam : Option Ir.Style) (pos : Pos
   let low := (ctx.styles.find? "url").bind (·.tilde) == some .low
   let parts ← if !low || !url.contains '~' then pure #[Inline.text url] else do
     let sim ← elabMathInline ctx false #[.ctrl "sim" pos] pos
-    let tilde : Inline := .boxed
+    let tilde : Inline := .role Ir.urlTildeRole #[.boxed
       { raise := .lit { width := { ex := 200 } }, height := none, depth := none, ground := none,
-        frame := none, pad := {}, rule := {} } #[.styled (.size "scriptsize") #[sim]]
+        frame := none, pad := {}, rule := {} } #[.styled (.size "scriptsize") #[sim]]]
     pure ((url.splitOn "~").zipIdx.foldl (fun (acc : Array Inline) (piece, i) =>
       let acc := if i == 0 then acc else acc.push tilde
       if piece.isEmpty then acc else acc.push (.text piece)) #[])

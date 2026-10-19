@@ -1000,6 +1000,9 @@ public theorem pageOpening_marker_exact (n : String) (opening : PageOpening)
 /-- The inline role a description item's label rides in, first in the item's first paragraph. -/
 public def descLabelRole : String := "description-label"
 
+/-- The inline role url.sty's low tilde rides in, which a text reading spells as the address's `~`. -/
+public def urlTildeRole : String := "url-tilde"
+
 /-- The inline role an `\item[label]` of an itemize or enumerate rides in, first in the item's first
 paragraph, which sets in the place of the level's marker. -/
 public def itemLabelRole : String := "item-label"
