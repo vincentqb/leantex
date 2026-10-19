@@ -123,7 +123,7 @@ def boundaryFidelityChecks (ref : IO.Ref (List String)) : IO Unit := do
       "\\newlength{\\thumbside}\\setlength{\\thumbside}{.5in}\n")
     (display "\\begin{tikzcd} A \\arrow[r, \"\\gradient\", hook] & \\parbox{\\thumbside}{B} \\end{tikzcd}"))
   t "an operator the document declared is the standalone's"
-    (hasStr ops "\\renewcommand{\\gradient}{\\operatorname{grad}}")
+    (hasStr ops "\\renewcommand{\\gradient}{\\operatorname {grad}}")
   t "a length the document declared and set is the standalone's, guarded"
     (hasStr ops "\\ifdefined\\thumbside\\else\\newlength{\\thumbside}\\fi\\setlength{\\thumbside}{.5in}")
   let alerted := reqOf ("\\documentclass{beamer}\n" ++ pre ++ "\\begin{document}\n\\begin{frame}\n" ++

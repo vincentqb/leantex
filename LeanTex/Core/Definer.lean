@@ -23,46 +23,65 @@ public inductive Mode where
   | new | renew | provide | declare
   deriving @[expose] BEq, DecidableEq, Repr
 
-/-- One definer. -/
+/-- One definer, and whether it expands its body where it stands and assigns globally. -/
 public structure Row where
   name : String
   defines : Defines
   family : Family
   mode : Mode
+  expands : Bool
+  global : Bool
   deriving Repr
+
+/-- A definer that keeps its body as written and assigns locally. -/
+@[expose] public def row (name : String) (defines : Defines) (family : Family) (mode : Mode) : Row :=
+  ⟨name, defines, family, mode, false, false⟩
 
 /-- The macro and environment definers the surfaces read, `\newtheorem` read apart. -/
 @[expose] public def table : List Row :=
-  [⟨"def", .command, .tex, .declare⟩, ⟨"gdef", .command, .tex, .declare⟩,
-   ⟨"edef", .command, .tex, .declare⟩, ⟨"xdef", .command, .tex, .declare⟩,
-   ⟨"let", .command, .letting, .declare⟩,
-   ⟨"newcommand", .command, .latex, .new⟩, ⟨"renewcommand", .command, .latex, .renew⟩,
-   ⟨"providecommand", .command, .latex, .provide⟩,
-   ⟨"DeclareRobustCommand", .command, .latex, .declare⟩,
-   ⟨"NewDocumentCommand", .command, .xparse, .new⟩,
-   ⟨"RenewDocumentCommand", .command, .xparse, .renew⟩,
-   ⟨"ProvideDocumentCommand", .command, .xparse, .provide⟩,
-   ⟨"DeclareDocumentCommand", .command, .xparse, .declare⟩,
-   ⟨"newrobustcmd", .command, .etoolbox, .new⟩, ⟨"renewrobustcmd", .command, .etoolbox, .renew⟩,
-   ⟨"providerobustcmd", .command, .etoolbox, .provide⟩,
-   ⟨"NewCommandCopy", .command, .copy, .new⟩, ⟨"RenewCommandCopy", .command, .copy, .renew⟩,
-   ⟨"DeclareCommandCopy", .command, .copy, .declare⟩, ⟨"LetLtxMacro", .command, .copy, .declare⟩,
-   ⟨"define", .command, .native, .declare⟩, ⟨"defineenv", .environment, .native, .declare⟩,
-   ⟨"DeclareMathOperator", .command, .amsmath, .new⟩,
-   ⟨"newenvironment", .environment, .latex, .new⟩,
-   ⟨"renewenvironment", .environment, .latex, .renew⟩,
-   ⟨"provideenvironment", .environment, .latex, .provide⟩,
-   ⟨"NewDocumentEnvironment", .environment, .xparse, .new⟩,
-   ⟨"RenewDocumentEnvironment", .environment, .xparse, .renew⟩,
-   ⟨"ProvideDocumentEnvironment", .environment, .xparse, .provide⟩,
-   ⟨"DeclareDocumentEnvironment", .environment, .xparse, .declare⟩,
-   ⟨"NewEnviron", .environment, .environ, .new⟩, ⟨"RenewEnviron", .environment, .environ, .renew⟩,
-   ⟨"newtcolorbox", .environment, .tcolorbox, .new⟩,
-   ⟨"renewtcolorbox", .environment, .tcolorbox, .renew⟩]
+  [row "def" .command .tex .declare, ⟨"gdef", .command, .tex, .declare, false, true⟩,
+   ⟨"edef", .command, .tex, .declare, true, false⟩, ⟨"xdef", .command, .tex, .declare, true, true⟩,
+   row "let" .command .letting .declare,
+   row "newcommand" .command .latex .new, row "renewcommand" .command .latex .renew,
+   row "providecommand" .command .latex .provide,
+   row "DeclareRobustCommand" .command .latex .declare,
+   row "NewDocumentCommand" .command .xparse .new,
+   row "RenewDocumentCommand" .command .xparse .renew,
+   row "ProvideDocumentCommand" .command .xparse .provide,
+   row "DeclareDocumentCommand" .command .xparse .declare,
+   row "newrobustcmd" .command .etoolbox .new, row "renewrobustcmd" .command .etoolbox .renew,
+   row "providerobustcmd" .command .etoolbox .provide,
+   row "NewCommandCopy" .command .copy .new, row "RenewCommandCopy" .command .copy .renew,
+   row "DeclareCommandCopy" .command .copy .declare, row "LetLtxMacro" .command .copy .declare,
+   row "define" .command .native .declare, row "defineenv" .environment .native .declare,
+   row "DeclareMathOperator" .command .amsmath .new,
+   row "newenvironment" .environment .latex .new,
+   row "renewenvironment" .environment .latex .renew,
+   row "provideenvironment" .environment .latex .provide,
+   row "NewDocumentEnvironment" .environment .xparse .new,
+   row "RenewDocumentEnvironment" .environment .xparse .renew,
+   row "ProvideDocumentEnvironment" .environment .xparse .provide,
+   row "DeclareDocumentEnvironment" .environment .xparse .declare,
+   row "NewEnviron" .environment .environ .new, row "RenewEnviron" .environment .environ .renew,
+   row "newtcolorbox" .environment .tcolorbox .new,
+   row "renewtcolorbox" .environment .tcolorbox .renew]
+
+/-- The definer a name spells. -/
+@[expose] public def row? (name : String) : Option Row := table.find? (·.name == name)
 
 /-- What the definer a name spells defines, and its family. -/
 @[expose] public def kind? (name : String) : Option (Defines × Family) :=
-  (table.find? (·.name == name)).map fun r => (r.defines, r.family)
+  (row? name).map fun r => (r.defines, r.family)
+
+/-- Whether a name spells a definer of `d` in the family `f` under the mode `m`. -/
+@[expose] public def is (name : String) (d : Defines) (f : Family) (m : Mode) : Bool :=
+  (row? name).any fun r => r.defines == d && r.family == f && r.mode == m
+
+/-- Whether the definer a name spells expands its body where it stands. -/
+@[expose] public def expands (name : String) : Bool := (row? name).any (·.expands)
+
+/-- Whether the definer a name spells assigns globally. -/
+@[expose] public def global (name : String) : Bool := (row? name).any (·.global)
 
 /-- The names of the definers a query keeps. -/
 @[expose] public def names (keep : Row → Bool) : List String := (table.filter keep).map (·.name)
@@ -81,10 +100,15 @@ as the name bound. -/
 @[expose] public def bindsNext : List String :=
   names fun r => r.commandOf [.tex, .letting, .latex, .xparse, .amsmath] || r.family == .native
 
+/-- The environment definers whose begin and end code a pass reads as TeX: LaTeX's but the
+providing one, and environ's. -/
+@[expose] public def codeEnvs : List String :=
+  names fun r => r.defines == .environment &&
+    ((r.family == .latex && r.mode != .provide) || r.family == .environ)
+
 /-- The definers whose operands a pass reads as a definition rather than as content. -/
 @[expose] public def readAsDefinition : List String :=
-  bindsNext ++ names fun r => r.defines == .environment &&
-    ((r.family == .latex && r.mode != .provide) || r.family == .environ || r.family == .tcolorbox)
+  bindsNext ++ codeEnvs ++ names fun r => r.defines == .environment && r.family == .tcolorbox
 
 /-- The xparse environment definers but the providing one. -/
 @[expose] public def xparseEnvs : List String :=

@@ -3669,7 +3669,7 @@ public def floatRedefEnvs : List String := ["table", "figure"]
 /-- Whether a float's redefinition at `raws[i]` is the kernel-core idiom `floatRedef?` reads: a
 `\renewenvironment` without arguments, `\@float` with caption skips before it, `\end@float` after. -/
 private def floatCoreAt (env : String) (raws : Array Raw) (i : Nat) (d : String) : Bool := Id.run do
-  if d != "renewenvironment" then return false
+  unless Definer.is d .environment .latex .renew do return false
   let (_, j) := takeGroups raws (skipStar raws (i + 1)) 1
   let (count, j) := takeOpt raws j
   let (dflt, jd) := takeRawOpt raws j
@@ -3726,7 +3726,7 @@ private def definerShape (raws : Array Raw) (i : Nat) (d : String)
     unless (raws[j]? matches some (.ctrl _ _)) ||
         (stored && (raws[j]? matches some (.sym '#' _))) do return none
     let some b := groupFrom (j + 1) | return none
-    if d == "edef" || d == "xdef" then
+    if Definer.expands d then
       return some { stop := if stored then b + 1 else b, bodies := [] }
     return some { stop := b + 1, bodies := [b] }
   | some (_, .letting) =>
@@ -3743,7 +3743,7 @@ private def definerShape (raws : Array Raw) (i : Nat) (d : String)
   | some (.environment, .latex) | some (.environment, .native) =>
     let j := starred (i + 1)
     unless raws[j]? matches some (.group _ _) do return none
-    let some b1 := (if d == "defineenv" then groupFrom (j + 1) else
+    let some b1 := (if Definer.kind? d == some (.environment, .native) then groupFrom (j + 1) else
         let b := skipSpaces raws (takeOpt raws (takeOpt raws (j + 1)).2).2
         if raws[b]? matches some (.group _ _) then some b else none) | return none
     let b2 := skipSpaces raws (b1 + 1)
@@ -4041,7 +4041,8 @@ private def definedValue (st : St) (raws : Array Raw) (i : Nat) (d : String) :
   if pre.contains "outer" then return none
   let long := pre.contains "long"
   let prot := pre.contains "protected"
-  if d == "def" || d == "gdef" then
+  let some r := Definer.row? d | return none
+  if r.family == .tex && !r.expands then
     let j := skipSpaces raws (i + 1)
     let some sh := definerShape raws i d | return none
     let b := sh.stop - 1
@@ -4050,7 +4051,7 @@ private def definedValue (st : St) (raws : Array Raw) (i : Nat) (d : String) :
     | some (.group body gp) =>
       return some { raws := body, arity, long, prot, edges := (gp.openEol, gp.closeEol) }
     | _ => return none
-  if d == "edef" || d == "xdef" then
+  if r.expands then
     let j := skipSpaces raws (i + 1)
     match raws[j]?, raws[j + 1]? with
     | some (.ctrl _ _), some (.group body gp) =>
@@ -4065,7 +4066,7 @@ private def definedValue (st : St) (raws : Array Raw) (i : Nat) (d : String) :
       return text.map fun (text, _) =>
         { raws := text, long, prot, live := true, edges := (gp.openEol, gp.closeEol) }
     | _, _ => return none
-  if d == "let" then
+  if r.family == .letting then
     let j := skipSpaces raws (i + 1)
     let k0 := skipSpaces raws (j + 1)
     let k := if raws[k0]? matches some (.word "=" _) then skipSpaces raws (k0 + 1) else k0
@@ -4078,7 +4079,7 @@ private def definedValue (st : St) (raws : Array Raw) (i : Nat) (d : String) :
           return some { raws := #[.ctrl (overlayNativeName m) p], long := false, prot := false, live := true }
         return none
     | _, _ => return none
-  if d == "newcommand" || d == "renewcommand" || d == "providecommand" then
+  if r.defines == .command && r.family == .latex && r.mode != .declare then
     let j0 := skipSpaces raws (i + 1)
     let star := raws[j0]? matches some (.word "*" _)
     let j := if star then skipSpaces raws (j0 + 1) else j0
@@ -4102,7 +4103,7 @@ private def definedValue (st : St) (raws : Array Raw) (i : Nat) (d : String) :
 
 /-- Whether the definer `d` at `raws[i]` defines globally. -/
 private def definesGlobally (raws : Array Raw) (i : Nat) (d : String) : Bool :=
-  d == "gdef" || d == "xdef" || (definerPrefixes raws i).contains "global"
+  Definer.global d || (definerPrefixes raws i).contains "global"
 
 /-- The documented `\newtcolorbox{name}[arity][default]{keys}`
 head, read for its shape only. -/
@@ -4480,7 +4481,7 @@ private def assignedIn (regs : String → Bool) (rs : Array Raw) : Option (Array
     for k in [0:cur.size] do
       match cur[k]? with
       | some (.ctrl n _) =>
-        if n == "global" || n == "gdef" || n == "xdef" then out := out.push "global"
+        if n == "global" || Definer.global n then out := out.push "global"
         else if lengthAssigns.contains n || lengthArith.contains n then
           if let some t := lengthTarget cur k then out := out.push t
         else if regs n && assignsAt regs cur k then out := out.push n
@@ -4887,7 +4888,7 @@ nothing is set" site (help := s!"write \\set{kind}\{{name}}\{true} or \\set{kind
         sayOnce ("cond:set:" ++ n) .N0114 s!"'\\{n}': '\\if{x}' is false from here on"
           (st.useSite.getD pos)
       condList ex [] raws following out stack rest (i + 1) 0
-    else if n == "newtcolorbox" || n == "renewtcolorbox" then
+    else if Definer.kind? n == some (.environment, .tcolorbox) then
       condStopSpaces
       match definerShape raws i n with
       | none =>
@@ -4903,8 +4904,8 @@ nothing is set" site (help := s!"write \\set{kind}\{{name}}\{true} or \\set{kind
           let key := Tcolorbox.bindingName name
           let known := st.binds.contains key
           -- premise: TcolorboxChecks.tcolorboxScopeChecks — refused definitions change nothing
-          if st.provideKeeps.contains key || (n == "newtcolorbox" && known) ||
-              (n == "renewtcolorbox" && !known) then
+          if st.provideKeeps.contains key ||
+              (if Definer.is n .environment .tcolorbox .new then known else !known) then
             sayOnce ("tcolorbox:definition:" ++ name) .W0104
               s!"'\\{n}\{{name}}' cannot replace this environment; its definition is skipped"
               (st.useSite.getD pos)
@@ -4934,6 +4935,7 @@ nothing is set" site (help := s!"write \\set{kind}\{{name}}\{true} or \\set{kind
       else condList ex [] raws following (out.push (.ctrl n pos)) stack rest (i + 1) 0
     else if Definer.readAsDefinition.contains n then
       condStopSpaces
+      let letting := Definer.kind? n == some (.command, .letting)
       let bound := if Definer.bindsNext.contains n then
           (rest.dropWhile isSpaceOrStar).head?.bind boundName
         else none
@@ -4945,7 +4947,7 @@ nothing is set" site (help := s!"write \\set{kind}\{{name}}\{true} or \\set{kind
       if ignored && !provide then
         if let some sh := definerShape raws i n then
           -- `\let` defines the name too, spelled here as the definer the rewrite reads.
-          let (head, ops) : String × List Raw := if n == "let" then
+          let (head, ops) : String × List Raw := if letting then
               ("def", (raws[skipSpaces raws (i + 1)]?).toList ++ [Raw.group #[] pos])
             else (n, (List.range' (i + 1) (sh.stop - (i + 1))).filterMap fun k =>
               raws[k]?.map fun (r : Raw) => match r with
@@ -4967,15 +4969,15 @@ nothing is set" site (help := s!"write \\set{kind}\{{name}}\{true} or \\set{kind
         unless provide && st.binds.contains m do
           -- Inside an undecidable frame the name is bound but its value unread.
           let value := definedValue st raws i n
-          if (n == "edef" || n == "xdef") && value.isSome then
+          if Definer.expands n && value.isSome then
             write fun st => { st with edefReads := edefLengths st raws i }
           let v := if stack.any (· matches .opaque) then none else value
           let global := definesGlobally raws i n
           -- A `\let` copies the wrapper, not its target.
-          if n != "let" then
+          if !letting then
             if let some (key, _) := value.bind (·.optional) then
               recordValue key (v.map fun c => { c with optional := none }) global
-          recordValue m v global (copied := n == "let")
+          recordValue m v global (copied := letting)
       match definerShape raws i n with
       | none => condList ex [] raws following (out.push (.ctrl n pos)) stack rest (i + 1) 0
       | some sh =>
@@ -5000,12 +5002,12 @@ nothing is set" site (help := s!"write \\set{kind}\{{name}}\{true} or \\set{kind
         -- A built-in the pass never expands is settled at the preamble's end.
         let expands := liveVal.isSome && !(bound.any st.provideKeeps.contains)
         -- premise: Tests.macroDefaultChecks — copied readable meanings execute at their uses
-        if n == "let" && expands then
+        if letting && expands then
           became s!"\\let\\{bound.getD n}" "a copied command definition"
             (st.useSite.getD pos) (subject := some (bound.getD n))
           return ← condList ex [] raws following out stack rest (i + 1) (sh.stop - (i + 1))
         let settles := liveVal.any (·.arity == 0) && !st.condInDoc
-        let refused := (n == "def" || n == "gdef") &&
+        let refused := Definer.kind? n == some (.command, .tex) && !Definer.expands n &&
           (undelimitedArity
             (raws.extract (skipSpaces raws (i + 1) + 1) (sh.stop - 1))).isNone
         let flags := st.flags
@@ -5014,7 +5016,7 @@ nothing is set" site (help := s!"write \\set{kind}\{{name}}\{true} or \\set{kind
         let mut ops : Array Raw := #[]
         let mut stripped := false
         let mut texts : Array Pos := #[]
-        let code := ["newenvironment", "renewenvironment", "NewEnviron", "RenewEnviron"].contains n
+        let code := Definer.codeEnvs.contains n
         for k in [i + 1:sh.stop] do
           if let some r := raws[k]? then
             if sh.bodies.contains k then
@@ -5047,7 +5049,7 @@ execute this definition there, so that part of the text is skipped whole"
           | none => sayOnce ("cond:body:" ++ tail) .W0104 msg (site.getD pos) (help := help)
         -- An `\edef` the pass expanded is done: its uses expand to its text, so it goes out as nothing.
         let j := skipSpaces raws (i + 1)
-        if (n == "edef" || n == "xdef") && expands then
+        if Definer.expands n && expands then
           became s!"\\{n}\\{bound.getD n}" "its text, expanded where it stands and used at each call"
             (site.getD pos) (subject := bound)
           return ← condList ex [] raws following out stack rest (i + 1) (j + 1 - i)
@@ -5640,7 +5642,7 @@ private theorem condList_package_read_step
     rcases hc with rfl | rfl <;> decide
   have hno : condNoExpand.contains name = false := by
     rcases hc with rfl | rfl <;> decide
-  have hbox : (name == "newtcolorbox" || name == "renewtcolorbox") = false := by
+  have hbox : (Definer.kind? name == some (.environment, .tcolorbox)) = false := by
     rcases hc with rfl | rfl <;> decide
   have htcb : name ≠ "tcbuselibrary" := by
     rcases hc with rfl | rfl <;> decide
@@ -8142,7 +8144,7 @@ public inductive RefusalKey where
 public inductive Lowering where
   | packages | passOptions | defineColor | colorLet | pageColor | geometry | crop | microtypeSetup
   | documentMetadata | defineColorspace | addToHook | counter | newLength | newDimen
-  | mathOperator | hyperSetup | runningField | fancyField | clearPageStyles | pageStyle
+  | hyperSetup | runningField | fancyField | clearPageStyles | pageStyle
   | thisPageStyle | addBibResource | bibResources | natbibStyle | bibliographyStyle
   | printBibliography | crefRange | fontSeries | lineNumbers | selectLanguage | vspace | pageBreak
   | komaFont | sectionSkips | setList | sectionLines | uniMathSetup | unreadKeys | newCounter
@@ -8250,10 +8252,13 @@ private def ctrlRows0 : List CtrlRow :=
    nothingRow "ClassWarningNoLine" 2 classLog,
    ⟨"Crefrange", [.star, .needed, .needed], .lower .crefRange {}⟩]
 
+/-- What `\DeclareMathOperator{\f}{name}` defines `\f` to be: `\operatorname{name}`, starred
+where it is. -/
+public def operatorBody (star : Bool) (name : Array Raw) (pos : Pos) : Array Raw :=
+  #[.ctrl "operatorname" pos] ++ (if star then #[.word "*" pos] else #[]) ++ #[.group name pos]
+
 private def ctrlRows1 : List CtrlRow :=
-  [⟨"DeclareMathOperator", [.star, .needed, .needed],
-     .lower .mathOperator { leaves := [.notCtrl 1] }⟩,
-   ⟨"DocumentMetadata", [.needed], .lower .documentMetadata {}⟩,
+  [⟨"DocumentMetadata", [.needed], .lower .documentMetadata {}⟩,
    ⟨"GenericError", List.replicate 4 .group, .inert⟩,
    nothingRow "GenericInfo" 2 packageLog,
    nothingRow "GenericWarning" 2 packageLog,
@@ -9096,8 +9101,175 @@ private def texParamAssign (name : String) (pos : Pos) (raws : Array Raw) (start
   | none => discard s!"\\{name}" "it shapes only TeX's log" ("texparam:" ++ name) pos
   return some (#[], stop)
 
+/-- The argument specification a LaTeX definer's `[n][default]` declares: `n` mandatory
+arguments, the first optional where a default stands. -/
+private def latexSpec (count : Option String) (dflt : Bool) : String :=
+  let n := (count.bind String.toNat?).getD 0
+  (if dflt then "o" else "") ++ String.ofList (List.replicate (if dflt then n - 1 else n) 'm')
+
+/-- A TeX definer: a plain `\def` with undelimited parameters declares what `\define` declares. -/
+private def texDefinerArm (name : String) (pos : Pos) (raws : Array Raw) (start : Nat) :
+    M (Option (Array Raw × Nat)) := do
+  let expanding := Definer.expands name
+  let j := skipSpaces raws start
+  let cmd? := match raws[j]? with
+    | some (.ctrl c _) => some c
+    | _ => none
+  let mut k := j + 1
+  let mut params : Array Raw := #[]
+  let mut found := false
+  if cmd?.isSome then
+    for j2 in [k:raws.size] do
+      match raws[j2]? with
+      | some (.group _ _) => found := true; k := j2; break
+      | some r => params := params.push r; k := j2 + 1
+      | none => break
+  let arity := undelimitedArity params
+  match cmd? with
+  | some cmd =>
+    -- A stretch the next font selection reads sets the strut box again there.
+    if cmd == "baselinestretch" then write fun st => { st with strutSkip := none, classPt := none, bodySkip := none }
+    if found && !expanding && arity == some 0 && (← docPreamble) then
+      if let (some level, some (.group body _)) := (listLevelOf cmd, raws[k]?) then
+        if ← listLevelDef level s!"\\{name}\{\\{cmd}}" body pos then
+          return some (#[], k + 1)
+    if let some why := macroParams.lookup cmd then
+      if found && arity == some 0 then
+        nameParam cmd why pos
+        return some (#[], k + 1)
+    if found && !expanding && arity.isSome then
+      let n := arity.getD 0
+      let spec := String.ofList (List.replicate n 'm')
+      let native := Native.Head.define cmd (signature spec)
+      -- premise: ignoredDefinitionChecks — an ignored built-in's refusal is its one accounting
+      unless (← get).ignoredDefs.contains cmd do
+        write fun st => { st with
+          bound := if st.bound.contains cmd then st.bound else st.bound.push cmd }
+        became s!"\\{name}\{\\{cmd}}" (native.render ++ " {...}") pos
+      write fun st => { st with bodyNext := 1, quietNext := st.templateCode.contains cmd }
+      return some (native.raws pos, k)
+    else
+      let k2 := if found then k + 1 else k
+      let demote := styInternal (← get).file name
+      if expanding then
+        sayOnce ("ctrl:" ++ name) .W0357
+          s!"'\\{name}' expands its text where it is defined; this text reaches past what the \
+engine expands, so it is skipped" pos
+          (help := "an edef expands text, lengths, '\\the', '\\number', '\\strip@pt', \
+'\\dimexpr' and the document's macros; \\define \\name(...) {body} declares the rest") demote
+      else
+        sayOnce "ctrl:def-delimited" .W0357
+          s!"'\\{name}' with a delimited parameter text is a TeX scanning program; \
+the definition is skipped" pos
+          (help := "\\define \\name(...) {body} declares typed commands") demote
+      return some (#[], k2)
+  | none =>
+    sayOnce "ctrl:def" .W0357 s!"TeX '\\{name}' is not supported; skipped" pos
+      (help := "\\define \\name(...) {body} declares typed commands")
+      (demote := styInternal (← get).file name)
+    return some (#[], start)
+
+/-- A LaTeX environment definer, as the native `\defineenv`. -/
+private def latexEnvArm (name : String) (pos : Pos) (raws : Array Raw) (start : Nat) :
+    M (Option (Array Raw × Nat)) := do
+  let (args, j) := takeGroups raws (skipStar raws start) 1
+  let envName := rawSrc (args.getD 0 #[])
+  let (count, j) := takeOpt raws j
+  let (dflt, jd) := takeRawOpt raws j
+  let spec := latexSpec count dflt.isSome
+  if ← refusedEnvDef name envName spec false pos then
+    return some (#[.group #[] pos], (takeGroups raws jd 2).2)
+  if Definer.is name .environment .latex .renew && count.isNone && dflt.isNone then
+    -- premise: captionScopeChecks — the float-core idiom reads as its native kind
+    if let some (out, k) ← floatRedef? envName.trimAscii.toString raws jd pos then
+      return some (out, k)
+  let native := Native.Head.defineEnv envName (signature spec)
+  let env := envName.trimAscii.toString
+  -- premise: ignoredDefinitionChecks — a refused built-in's refusal is its one accounting
+  unless (← get).ignoredDefs.contains (Tcolorbox.bindingName env) ||
+      floatRedefEnvs.contains env || env == "abstract" do
+    became s!"\\{name}\{{envName}}"
+      (native.render ++ (if dflt.isSome then " [default]" else "") ++ " {begin} {end}") pos
+  -- The default stays in the walk, rewritten where it stands, its groups no body.
+  write fun st => { st with
+    bodyNext := 2, envNext := 2, defaultAt := if dflt.isSome then .awaiting else .none }
+  unless (← get).inDef do
+    write fun st => { st with
+      discardEnvs := st.discardEnvs.filter (·.1 != envName.trimAscii.toString) }
+  return some (native.raws pos, j)
+
+/-- The native `\defineenv`, refused where it redefines a built-in the engine ignores. -/
+private def nativeEnvArm (name : String) (pos : Pos) (raws : Array Raw) (start : Nat) :
+    M (Option (Array Raw × Nat)) := do
+  let j := skipSpaces raws start
+  let some (.group env _) := raws[j]? | return none
+  let stop := defineEnvEnd raws start
+  unless ← refusedEnvDef name (rawSrc env) (nativeEnvSpec (rawSrc (raws.extract (j + 1) stop)))
+      false pos do
+    return none
+  return some (#[.group #[] pos], stop)
+
+/-- An environ definer, its code around `\BODY` as the native environment's begin and end code. -/
+private def environArm (name : String) (pos : Pos) (raws : Array Raw) (start : Nat) :
+    M (Option (Array Raw × Nat)) := do
+  let (args, j) := takeGroups raws (skipStar raws start) 1
+  let envName := rawSrc (args.getD 0 #[])
+  let (count, j0) := takeOpt raws j
+  let (dflt, j) := takeRawOpt raws j0
+  let b := skipSpaces raws j
+  let spec := latexSpec count dflt.isSome
+  let discards := match raws[b]? with
+    | some (.group code _) => (bodySlot? code).isNone && !mentionsBody code.toList
+    | _ => false
+  if ← refusedEnvDef name envName spec discards pos then
+    -- environ's test for a final code reads past the spaces after a definition without one.
+    let k := if raws[b]? matches some (.group _ _) then
+        match takeRawOpt raws (b + 1) with
+        | (some _, k) => k
+        | (none, _) => skipSpaces raws (b + 1)
+      else j
+    return some (#[.group #[] pos], k)
+  let native := Native.Head.defineEnv envName (signature spec)
+  match raws[b]? with
+  | some (.group code _) =>
+    let slot := (bodySlot? code).isSome
+    if slot || !mentionsBody code.toList then
+      let env := envName.trimAscii.toString
+      -- environ's definition of a float is never the kernel-core idiom, so it is ignored whole.
+      let ignored := (← get).ignoredDefs.contains (Tcolorbox.bindingName env) ||
+        floatRedefEnvs.contains env
+      unless ignored do
+        became s!"\\{name}\{{envName}}" (native.render ++ (if dflt.isSome then " [default]" else "") ++
+          (if slot then " {code before \\BODY} {code after it}"
+            else " {} {code}, its body discarded")) pos
+      write fun st => { st with
+        bodyNext := 1, envNext := 1, defaultAt := if dflt.isSome then .awaiting else .none }
+      -- premise: ignoredDefinitionChecks — an ignored built-in's definition discards no use
+      unless (← get).inDef || ignored do
+        write fun st => { st with
+          discardEnvs := if slot then st.discardEnvs.filter (·.1 != env)
+            else Ir.redeclare st.discardEnvs env spec }
+      let mark := if (← get).inDoc then #[] else #[Raw.ctrl (Marker.name .environBody "") pos]
+      return some (native.raws pos ++ mark, j0)
+    else
+      let (_, k) := takeOpt raws (b + 1)
+      sayOnce ("ctrl:" ++ name) .W0104
+        s!"'\\{name}\{{envName}}' places \\BODY inside a group or more than once; an \
+environment's body stands between its begin and its end code here, so the definition \
+is skipped" pos
+        (help := "write the code around \\BODY at the definition's top level")
+      return some (#[], k)
+  | _ => return none
+
 private def rewriteCtrlLaterNamed (name : String) (pos : Pos) (raws : Array Raw)
     (start : Nat) : M (Option (Array Raw × Nat)) := do
+  match Definer.row? name with
+  | some ⟨_, .command, .tex, _, _, _⟩ => return ← texDefinerArm name pos raws start
+  | some ⟨_, .environment, .latex, mode, _, _⟩ =>
+    if mode != .provide then return ← latexEnvArm name pos raws start
+  | some ⟨_, .environment, .native, _, _, _⟩ => return ← nativeEnvArm name pos raws start
+  | some ⟨_, .environment, .environ, _, _, _⟩ => return ← environArm name pos raws start
+  | _ => pure ()
   match name with
   | "addtobeamertemplate" => blockHookArm pos raws start
   | "apptocmd" => standoutFootHookArm pos raws start
@@ -9301,157 +9473,10 @@ fall on a left; the pages here are one-sided, so each opens the next page" pos
       write fun st => { st with preOpenings := st.preOpenings.push (Ir.pageNumberingRole style) }
       return some (#[], k)
     return some (#[.ctrl (Ir.pageNumberingRole style) pos], k)
-  | "def" | "edef" | "gdef" | "xdef" =>
-    -- A plain `\def` with undelimited parameters declares exactly what `\define` declares.
-    let expanding := name == "edef" || name == "xdef"
-    let j := skipSpaces raws start
-    let cmd? := match raws[j]? with
-      | some (.ctrl c _) => some c
-      | _ => none
-    let mut k := j + 1
-    let mut params : Array Raw := #[]
-    let mut found := false
-    if cmd?.isSome then
-      for j2 in [k:raws.size] do
-        match raws[j2]? with
-        | some (.group _ _) => found := true; k := j2; break
-        | some r => params := params.push r; k := j2 + 1
-        | none => break
-    let arity := undelimitedArity params
-    match cmd? with
-    | some cmd =>
-      -- A stretch the next font selection reads sets the strut box again there.
-      if cmd == "baselinestretch" then write fun st => { st with strutSkip := none, classPt := none, bodySkip := none }
-      if found && !expanding && arity == some 0 && (← docPreamble) then
-        if let (some level, some (.group body _)) := (listLevelOf cmd, raws[k]?) then
-          if ← listLevelDef level s!"\\{name}\{\\{cmd}}" body pos then
-            return some (#[], k + 1)
-      if let some why := macroParams.lookup cmd then
-        if found && arity == some 0 then
-          nameParam cmd why pos
-          return some (#[], k + 1)
-      if found && !expanding && arity.isSome then
-        let n := arity.getD 0
-        let spec := String.ofList (List.replicate n 'm')
-        let native := Native.Head.define cmd (signature spec)
-        -- premise: ignoredDefinitionChecks — an ignored built-in's refusal is its one accounting
-        unless (← get).ignoredDefs.contains cmd do
-          write fun st => { st with
-            bound := if st.bound.contains cmd then st.bound else st.bound.push cmd }
-          became s!"\\{name}\{\\{cmd}}" (native.render ++ " {...}") pos
-        write fun st => { st with bodyNext := 1, quietNext := st.templateCode.contains cmd }
-        return some (native.raws pos, k)
-      else
-        let k2 := if found then k + 1 else k
-        let demote := styInternal (← get).file name
-        if expanding then
-          sayOnce ("ctrl:" ++ name) .W0357
-            s!"'\\{name}' expands its text where it is defined; this text reaches past what the \
-engine expands, so it is skipped" pos
-            (help := "an edef expands text, lengths, '\\the', '\\number', '\\strip@pt', \
-'\\dimexpr' and the document's macros; \\define \\name(...) {body} declares the rest") demote
-        else
-          sayOnce "ctrl:def-delimited" .W0357
-            s!"'\\{name}' with a delimited parameter text is a TeX scanning program; \
-the definition is skipped" pos
-            (help := "\\define \\name(...) {body} declares typed commands") demote
-        return some (#[], k2)
-    | none =>
-      sayOnce "ctrl:def" .W0357 s!"TeX '\\{name}' is not supported; skipped" pos
-        (help := "\\define \\name(...) {body} declares typed commands")
-        (demote := styInternal (← get).file name)
-      return some (#[], start)
-  | "newenvironment" | "renewenvironment" =>
-    let (args, j) := takeGroups raws (skipStar raws start) 1
-    let envName := rawSrc (args.getD 0 #[])
-    let (count, j) := takeOpt raws j
-    let (dflt, jd) := takeRawOpt raws j
-    let n := (count.bind String.toNat?).getD 0
-    let spec := if dflt.isSome then "o" ++ String.ofList (List.replicate (n - 1) 'm')
-      else String.ofList (List.replicate n 'm')
-    if ← refusedEnvDef name envName spec false pos then
-      return some (#[.group #[] pos], (takeGroups raws jd 2).2)
-    if name == "renewenvironment" && count.isNone && dflt.isNone then
-      -- premise: captionScopeChecks — the float-core idiom reads as its native kind
-      if let some (out, k) ← floatRedef? envName.trimAscii.toString raws jd pos then
-        return some (out, k)
-    let native := Native.Head.defineEnv envName (signature spec)
-    let env := envName.trimAscii.toString
-    -- premise: ignoredDefinitionChecks — a refused built-in's refusal is its one accounting
-    unless (← get).ignoredDefs.contains (Tcolorbox.bindingName env) ||
-        floatRedefEnvs.contains env || env == "abstract" do
-      became s!"\\{name}\{{envName}}"
-        (native.render ++ (if dflt.isSome then " [default]" else "") ++ " {begin} {end}") pos
-    -- The default stays in the walk, rewritten where it stands, its groups no body.
-    write fun st => { st with
-      bodyNext := 2, envNext := 2, defaultAt := if dflt.isSome then .awaiting else .none }
-    unless (← get).inDef do
-      write fun st => { st with
-        discardEnvs := st.discardEnvs.filter (·.1 != envName.trimAscii.toString) }
-    return some (native.raws pos, j)
   | "newtheorem" =>
     let (env, _) := takeGroups raws (skipStar raws start) 1
     unless ← refusedEnvDef name (rawSrc (env.getD 0 #[])) "o" false pos do return none
     return some (#[.group #[] pos], theoremDeclEnd raws name start)
-  | "defineenv" =>
-    let j := skipSpaces raws start
-    let some (.group env _) := raws[j]? | return none
-    let stop := defineEnvEnd raws start
-    unless ← refusedEnvDef name (rawSrc env) (nativeEnvSpec (rawSrc (raws.extract (j + 1) stop)))
-        false pos do
-      return none
-    return some (#[.group #[] pos], stop)
-  | "NewEnviron" | "RenewEnviron" =>
-    let (args, j) := takeGroups raws (skipStar raws start) 1
-    let envName := rawSrc (args.getD 0 #[])
-    let (count, j0) := takeOpt raws j
-    let (dflt, j) := takeRawOpt raws j0
-    let b := skipSpaces raws j
-    let n := (count.bind String.toNat?).getD 0
-    let spec := if dflt.isSome then "o" ++ String.ofList (List.replicate (n - 1) 'm')
-      else String.ofList (List.replicate n 'm')
-    let discards := match raws[b]? with
-      | some (.group code _) => (bodySlot? code).isNone && !mentionsBody code.toList
-      | _ => false
-    if ← refusedEnvDef name envName spec discards pos then
-      -- environ's test for a final code reads past the spaces after a definition without one.
-      let k := if raws[b]? matches some (.group _ _) then
-          match takeRawOpt raws (b + 1) with
-          | (some _, k) => k
-          | (none, _) => skipSpaces raws (b + 1)
-        else j
-      return some (#[.group #[] pos], k)
-    let native := Native.Head.defineEnv envName (signature spec)
-    match raws[b]? with
-    | some (.group code _) =>
-      let slot := (bodySlot? code).isSome
-      if slot || !mentionsBody code.toList then
-        let env := envName.trimAscii.toString
-        -- environ's definition of a float is never the kernel-core idiom, so it is ignored whole.
-        let ignored := (← get).ignoredDefs.contains (Tcolorbox.bindingName env) ||
-          floatRedefEnvs.contains env
-        unless ignored do
-          became s!"\\{name}\{{envName}}" (native.render ++ (if dflt.isSome then " [default]" else "") ++
-            (if slot then " {code before \\BODY} {code after it}"
-              else " {} {code}, its body discarded")) pos
-        write fun st => { st with
-          bodyNext := 1, envNext := 1, defaultAt := if dflt.isSome then .awaiting else .none }
-        -- premise: ignoredDefinitionChecks — an ignored built-in's definition discards no use
-        unless (← get).inDef || ignored do
-          write fun st => { st with
-            discardEnvs := if slot then st.discardEnvs.filter (·.1 != env)
-              else Ir.redeclare st.discardEnvs env spec }
-        let mark := if (← get).inDoc then #[] else #[Raw.ctrl (Marker.name .environBody "") pos]
-        return some (native.raws pos ++ mark, j0)
-      else
-        let (_, k) := takeOpt raws (b + 1)
-        sayOnce ("ctrl:" ++ name) .W0104
-          s!"'\\{name}\{{envName}}' places \\BODY inside a group or more than once; an \
-environment's body stands between its begin and its end code here, so the definition \
-is skipped" pos
-          (help := "write the code around \\BODY at the definition's top level")
-        return some (#[], k)
-    | _ => return none
   | "ifdefined" | "ifcsname" | "ifx" =>
     -- A TeX conditional left here configures absent machinery and is skipped whole.
     let mut k := start
@@ -10290,9 +10315,107 @@ private theorem rewritePackages_external_exact (name : String)
   simp only [bind, pure] at h
   rw [h]
 
+/-- `\DeclareMathOperator{\f}{name}`, as the native `\define` of `\f` with no parameters and
+`\operatorname{name}` its body. -/
+private def operatorArm (pos : Pos) (raws : Array Raw) (start : Nat) :
+    M (Option (Array Raw × Nat)) := do
+  let star := raws[start]? matches some (.word "*" _)
+  let (args, k) := takeGroups raws (skipStar raws start) 2
+  let (some cmd, some body) := ((args[0]?).bind ctrlName, args[1]?) | return none
+  let mark := if star then "*" else ""
+  became s!"\\DeclareMathOperator{mark}\{\\{cmd}}"
+    s!"\\define \\{cmd}() \{\\operatorname{mark}\{...}}" pos
+  return some ((Native.Head.define cmd "").raws pos |>.push (.group (operatorBody star body pos) pos), k)
+
+/-- A LaTeX or xparse command definer, as the native `\define`; only a providing one keeps an
+existing definition. -/
+private def commandDefinerArm (name : String) (pos : Pos) (raws : Array Raw) (start : Nat) :
+    M (Option (Array Raw × Nat)) := do
+  let xparse := Definer.kind? name == some (.command, .xparse)
+  let start := skipStar raws start
+  let (nameArgs, j) := takeGroups raws start 1
+  let some cmd := ctrlName (nameArgs.getD 0 #[]) | return none
+  -- A stretch the next font selection reads sets the strut box again there.
+  if cmd == "baselinestretch" then write fun st => { st with strutSkip := none, classPt := none, bodySkip := none }
+  let provide := Definer.provides name
+  let st ← get
+  -- premise: Tests.xparseProvideChecks — provision keeps existing meanings
+  if provide && (st.bound.contains cmd || st.provideKeeps.contains cmd) then
+    let j := if xparse then (takeGroups raws j 1).2 else
+      let (_, j) := takeOpt raws j
+      (takeOpt raws j).2
+    let (_, k) := takeGroups raws j 1
+    let why := if st.bound.contains cmd then
+        s!"'\\{cmd}' is already defined and the existing definition is kept"
+      else s!"'\\{cmd}' is built in and the built-in stands"
+    discard s!"\\{name}\{\\{cmd}}" why s!"{name}:{cmd}" pos
+    return some (#[], k)
+  if let some why := macroParams.lookup cmd then
+    if !xparse then
+      let (_, j) := takeOpt raws j
+      let (_, j) := takeOpt raws j
+      let (_, k) := takeGroups raws j 1
+      nameParam cmd why pos
+      return some (#[], k)
+  -- premise: biblatexPunctChecks — the delimiters read set the citations biber sets
+  if !xparse && st.biblatexLoaded && biblatexMacros.contains cmd then
+    let (_, j) := takeOpt raws j
+    let (_, j) := takeOpt raws j
+    let (args, k) := takeGroups raws j 1
+    return some (← biblatexMacroDef name cmd (args.getD 0 #[]) pos, k)
+  if !xparse && cmd == "sectionlinesformat" then
+    let (_, j) := takeOpt raws j
+    let (args, k) := takeGroups raws j 1
+    return some (← sectionRule (rawSrc (args.getD 0 #[])) pos, k)
+  let (spec, j) ← if xparse then
+      let (a, j) := takeGroups raws j 1
+      pure (signature (rawSrc (a.getD 0 #[])), j)
+    else
+      let (n, j) := takeOpt raws j
+      let (dflt, j) := takeOpt raws j
+      pure (signature (latexSpec n dflt.isSome), j)
+  -- A body that is one `\@startsection` call is read as `\style` over the heading.
+  let js := skipSpaces raws j
+  if let some (.group sbody _) := raws[js]? then
+    if let some out ← startSection? cmd sbody pos then
+      return some (out, js + 1)
+    if let some level := listLevelOf cmd then
+      if !xparse && (← docPreamble) then
+        if ← listLevelDef level s!"\\{name}\{\\{cmd}}" sbody pos then
+          return some (#[], js + 1)
+  -- A `\renewcommand\normalsize` opening with `\@setfontsize` declares the body size and leading.
+  if !xparse && cmd == "normalsize" then
+    if let some (.group sbody _) := raws[js]? then
+      let b := skipSpaces sbody 0
+      if let some (.ctrl "@setfontsize" _) := sbody[b]? then
+        let (fsArgs, afterFs) := takeGroups sbody (b + 1) 3
+        if h : fsArgs.size ≥ 3 then
+          if let (some sz, some ld) := (ptMacroArg fsArgs[1], ptMacroArg fsArgs[2]) then
+            if sz > 0 && ld > 0 then
+              let skips ← sizeSkips sbody afterFs pos
+              let page : Native.Setting :=
+                .page #[(.fontsize, s!"{milliStr sz}pt"), (.baselineskip, s!"{milliStr ld}pt")]
+              let tokens : Native.Setting := .tokens skips
+              write fun st => { st with listiKept := !resetsListi sbody }
+              became "\\renewcommand{\\normalsize}"
+                ((page.note?.getD "") ++ (tokens.note?.getD "")) pos
+              return some ((← carry page pos) ++ (← carry tokens pos), js + 1)
+  let native := Native.Head.define cmd spec
+  -- premise: ignoredDefinitionChecks — an ignored built-in's refusal is its one accounting
+  unless st.ignoredDefs.contains cmd do
+    write fun st => { st with
+      bound := if st.bound.contains cmd then st.bound else st.bound.push cmd }
+    became s!"\\{name}\{\\{cmd}}" (native.render ++ " {...}") pos
+  write fun st => { st with bodyNext := 1, quietNext := st.templateCode.contains cmd }
+  return some (native.raws pos, j)
+
 /-- Named arms after the dispatcher's state-dependent guards. -/
 private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
     (start : Nat) : M (Option (Array Raw × Nat)) := do
+  match Definer.kind? name with
+  | some (.command, .latex) | some (.command, .xparse) => return ← commandDefinerArm name pos raws start
+  | some (.command, .amsmath) => return ← operatorArm pos raws start
+  | _ => pure ()
   match name with
   | "documentclass" =>
     let (opt, j) := takeOpt raws start
@@ -10650,90 +10773,6 @@ skipped, and the length keeps its value" pos
           (demote := styInternal (← get).file name)
         return some (#[], k)
     | _ => return none
-  | "NewDocumentCommand" | "ProvideDocumentCommand"
-  | "newcommand" | "providecommand" | "renewcommand"
-  | "DeclareDocumentCommand" | "RenewDocumentCommand" | "DeclareRobustCommand" =>
-    -- One arm for the whole definer family; only `provide` keeps an existing definition.
-    let xparse := name.endsWith "DocumentCommand"
-    let start := skipStar raws start
-    let (nameArgs, j) := takeGroups raws start 1
-    let some cmd := ctrlName (nameArgs.getD 0 #[]) | return none
-    -- A stretch the next font selection reads sets the strut box again there.
-    if cmd == "baselinestretch" then write fun st => { st with strutSkip := none, classPt := none, bodySkip := none }
-    let provide := Definer.provides name
-    let st ← get
-    -- premise: Tests.xparseProvideChecks — provision keeps existing meanings
-    if provide && (st.bound.contains cmd || st.provideKeeps.contains cmd) then
-      let j := if xparse then (takeGroups raws j 1).2 else
-        let (_, j) := takeOpt raws j
-        (takeOpt raws j).2
-      let (_, k) := takeGroups raws j 1
-      let why := if st.bound.contains cmd then
-          s!"'\\{cmd}' is already defined and the existing definition is kept"
-        else s!"'\\{cmd}' is built in and the built-in stands"
-      discard s!"\\{name}\{\\{cmd}}" why s!"{name}:{cmd}" pos
-      return some (#[], k)
-    if let some why := macroParams.lookup cmd then
-      if !xparse then
-        let (_, j) := takeOpt raws j
-        let (_, j) := takeOpt raws j
-        let (_, k) := takeGroups raws j 1
-        nameParam cmd why pos
-        return some (#[], k)
-    -- premise: biblatexPunctChecks — the delimiters read set the citations biber sets
-    if !xparse && st.biblatexLoaded && biblatexMacros.contains cmd then
-      let (_, j) := takeOpt raws j
-      let (_, j) := takeOpt raws j
-      let (args, k) := takeGroups raws j 1
-      return some (← biblatexMacroDef name cmd (args.getD 0 #[]) pos, k)
-    if !xparse && cmd == "sectionlinesformat" then
-      let (_, j) := takeOpt raws j
-      let (args, k) := takeGroups raws j 1
-      return some (← sectionRule (rawSrc (args.getD 0 #[])) pos, k)
-    let (spec, j) ← if xparse then
-        let (a, j) := takeGroups raws j 1
-        pure (signature (rawSrc (a.getD 0 #[])), j)
-      else
-        let (n, j) := takeOpt raws j
-        let count := (n.bind String.toNat?).getD 0
-        let (dflt, j) := takeOpt raws j
-        let spec := if dflt.isSome then "o" ++ String.ofList (List.replicate (count - 1) 'm')
-          else String.ofList (List.replicate count 'm')
-        pure (signature spec, j)
-    -- A body that is one `\@startsection` call is read as `\style` over the heading.
-    let js := skipSpaces raws j
-    if let some (.group sbody _) := raws[js]? then
-      if let some out ← startSection? cmd sbody pos then
-        return some (out, js + 1)
-      if let some level := listLevelOf cmd then
-        if !xparse && (← docPreamble) then
-          if ← listLevelDef level s!"\\{name}\{\\{cmd}}" sbody pos then
-            return some (#[], js + 1)
-    -- A `\renewcommand\normalsize` opening with `\@setfontsize` declares the body size and leading.
-    if !xparse && cmd == "normalsize" then
-      if let some (.group sbody _) := raws[js]? then
-        let b := skipSpaces sbody 0
-        if let some (.ctrl "@setfontsize" _) := sbody[b]? then
-          let (fsArgs, afterFs) := takeGroups sbody (b + 1) 3
-          if h : fsArgs.size ≥ 3 then
-            if let (some sz, some ld) := (ptMacroArg fsArgs[1], ptMacroArg fsArgs[2]) then
-              if sz > 0 && ld > 0 then
-                let skips ← sizeSkips sbody afterFs pos
-                let page : Native.Setting :=
-                  .page #[(.fontsize, s!"{milliStr sz}pt"), (.baselineskip, s!"{milliStr ld}pt")]
-                let tokens : Native.Setting := .tokens skips
-                write fun st => { st with listiKept := !resetsListi sbody }
-                became "\\renewcommand{\\normalsize}"
-                  ((page.note?.getD "") ++ (tokens.note?.getD "")) pos
-                return some ((← carry page pos) ++ (← carry tokens pos), js + 1)
-    let native := Native.Head.define cmd spec
-    -- premise: ignoredDefinitionChecks — an ignored built-in's refusal is its one accounting
-    unless st.ignoredDefs.contains cmd do
-      write fun st => { st with
-        bound := if st.bound.contains cmd then st.bound else st.bound.push cmd }
-      became s!"\\{name}\{\\{cmd}}" (native.render ++ " {...}") pos
-    write fun st => { st with bodyNext := 1, quietNext := st.templateCode.contains cmd }
-    return some (native.raws pos, j)
   | _ => rewriteCtrlLater name pos raws start
 
 private def lowerBeamerFont (c : CtrlCall) : M (Array Raw) := do
@@ -11056,14 +11095,6 @@ ICC-based colour space; the engine paints each ink in its own separation; skippe
       allocated := if st.allocated.contains n then st.allocated else st.allocated.push n }
     discard s!"\\newdimen\\{n}" "a register only the block templates assign and read" "newdimen" c.pos
     return #[]
-  | .mathOperator => do
-    -- `\DeclareMathOperator{\f}{name}` is a definition whose body is `\operatorname{name}`.
-    let cmd := (ctrlName (c.arg 1)).getD ""
-    let star := if (c.given 0).isSome then #[.word "*" c.pos] else #[]
-    became s!"\\DeclareMathOperator{rawSrc star}\{\\{cmd}}"
-      s!"\\define \\{cmd}() \{\\operatorname{rawSrc star}\{...}}" c.pos
-    return (Native.Head.define cmd "").raws c.pos |>.push
-      (.group (#[.ctrl "operatorname" c.pos] ++ star ++ #[.group (c.arg 2) c.pos]) c.pos)
   | .hyperSetup => do
     hyperrefLowered "\\hypersetup" "hypersetup" (← hyperrefKeys (c.arg 0) c.pos) c.pos
   | .runningField => do

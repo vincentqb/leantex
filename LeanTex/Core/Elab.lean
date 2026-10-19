@@ -17583,8 +17583,8 @@ private def texDefiner? (head : String) (raws : Array Raw) (i : Nat) :
   let (name, params, body, next) ← definerHead? raws i 17
   return ((name, s!"\\{head}\\{name}{rawSrc params}\{{rawSrc body}}"), next)
 
-/-- `\DeclareMathOperator` and its starred form, re-emitted through
-`\operatorname` and guarded as a LaTeX definer is. -/
+/-- `\DeclareMathOperator` and its starred form, re-emitted as the command it defines and guarded
+as a LaTeX definer is. -/
 private def operatorDefiner? (raws : Array Raw) (i : Nat) :
     Option ((String × String) × Nat) := do
   let star := raws[i]? matches some (.word "*" _)
@@ -17592,10 +17592,9 @@ private def operatorDefiner? (raws : Array Raw) (i : Nat) :
   let name ← definerName? raws i
   let j := skipSpaces raws (i + 1)
   match raws[j]? with
-  | some (.group body _) =>
-    let op := if star then "\\operatorname*" else "\\operatorname"
+  | some (.group body p) =>
     some ((name, s!"\\providecommand\{\\{name}}\{}\
-\\renewcommand\{\\{name}}\{{op}\{{rawSrc body}}}"), j + 1)
+\\renewcommand\{\\{name}}\{{rawSrc (Compat.operatorBody star body p)}}"), j + 1)
   | _ => none
 
 /-- `\setlength{\name}{value}`, re-emitted with a `\newlength` only where the

@@ -1957,8 +1957,14 @@ def mirrorChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "definer table: each definer is one row" (named.eraseDups.length == named.length)
   -- Each definer's readings written out by hand, as the Definer queries holding it.
   let readings : List (List String × List String) :=
-    [(["def", "gdef", "edef", "xdef"], ["namedNext", "bindsNext", "readAsDefinition",
-        "redefiners", "nameDefiners", "macroDefiners", "tex"]),
+    [(["def"], ["namedNext", "bindsNext", "readAsDefinition", "redefiners", "nameDefiners",
+        "macroDefiners", "tex"]),
+     (["gdef"], ["namedNext", "bindsNext", "readAsDefinition", "redefiners", "nameDefiners",
+        "macroDefiners", "tex", "global"]),
+     (["edef"], ["namedNext", "bindsNext", "readAsDefinition", "redefiners", "nameDefiners",
+        "macroDefiners", "tex", "expands"]),
+     (["xdef"], ["namedNext", "bindsNext", "readAsDefinition", "redefiners", "nameDefiners",
+        "macroDefiners", "tex", "expands", "global"]),
      (["let"], ["namedNext", "bindsNext", "readAsDefinition", "redefiners", "nameDefiners",
         "macroDefiners"]),
      (["newcommand", "renewcommand", "DeclareRobustCommand"], ["namedNext", "bindsNext",
@@ -1975,12 +1981,14 @@ def mirrorChecks (ref : IO.Ref (List String)) : IO Unit := do
      (["define"], ["namedNext", "bindsNext", "readAsDefinition", "redefiners"]),
      (["defineenv"], ["bindsNext", "readAsDefinition", "tokenListEnvs"]),
      (["DeclareMathOperator"], ["bindsNext", "readAsDefinition"]),
-     (["newenvironment", "renewenvironment"], ["readAsDefinition", "envs", "tokenListEnvs"]),
+     (["newenvironment", "renewenvironment"], ["readAsDefinition", "envs", "tokenListEnvs",
+        "codeEnvs"]),
      (["provideenvironment"], ["envs", "tokenListEnvs"]),
      (["NewDocumentEnvironment", "RenewDocumentEnvironment", "DeclareDocumentEnvironment"],
         ["xparseEnvs", "envs"]),
      (["ProvideDocumentEnvironment"], ["envs"]),
-     (["NewEnviron", "RenewEnviron", "newtcolorbox", "renewtcolorbox"], ["readAsDefinition"])]
+     (["NewEnviron", "RenewEnviron"], ["readAsDefinition", "codeEnvs"]),
+     (["newtcolorbox", "renewtcolorbox"], ["readAsDefinition"])]
   let written := readings.flatMap (·.1)
   let readers (q : String) : List String :=
     readings.flatMap fun (ds, qs) => if qs.contains q then ds else []
@@ -1993,7 +2001,9 @@ def mirrorChecks (ref : IO.Ref (List String)) : IO Unit := do
      ("envs", Definer.envs), ("tokenListEnvs", Definer.tokenListEnvs),
      ("redefiners", Definer.redefiners), ("nameDefiners", Definer.nameDefiners),
      ("tex", Definer.commandsOf .tex), ("latex", Definer.commandsOf .latex),
-     ("xparse", Definer.commandsOf .xparse), ("provides", named.filter Definer.provides)]
+     ("xparse", Definer.commandsOf .xparse), ("provides", named.filter Definer.provides),
+     ("codeEnvs", Definer.codeEnvs), ("expands", named.filter Definer.expands),
+     ("global", named.filter Definer.global)]
   for (q, got) in queries do
     t s!"definer table: '{q}' holds the definers written out for it" (same got (readers q))
   t "definer table: 'macroDefiners' writes the definers written out for it"
@@ -2001,6 +2011,8 @@ def mirrorChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "definer table: each reading written out is a query's" (readings.all fun (_, qs) =>
     qs.all fun q => q == "macroDefiners" || queries.any (·.1 == q))
   t "definer table: a name no row holds provides nothing" (!Definer.provides "zznotadefiner")
+  t "definer table: no definer is also a control row, read through a second registry"
+    (Definer.table.all fun r => (Compat.ctrlRow? r.name).isNone)
   -- The lexer reads the token after a 'namedNext' definer as the name it defines, never a call.
   let verbatimAfter (d : String) : Bool :=
     (Lex.lex "t" ("\\" ++ d ++ "\\mintinline{x}")).1.any (·.tok matches .verb "mintinline" _)
