@@ -1775,7 +1775,7 @@ private def elabMathInline (ctx : Ctx) (display : Bool) (body : Array Parse.Raw)
     noteLostInks ctx (Parse.rawSrc expanded) pos
     return sourceInline ctx pos (.formula display (Parse.rawSrc body) l)
   | .error what =>
-    let src := Parse.rawSrc body
+    let src := Parse.rawSrc (Parse.mathReading body)
     noteMentions src
     warnOnce ctx ("math:" ++ what) .W0012
       s!"math with {what} is not rendered yet; the formula {floorWording src}" pos
@@ -1800,7 +1800,7 @@ private def elabMathEnv (ctx : Ctx) (name : String) (kind : Math.GridKind)
           else none)
     return sourceInline ctx pos (.formula true (Parse.rawSrc body) l)
   | .error what =>
-    let src := Parse.rawSrc body
+    let src := Parse.rawSrc (Parse.mathReading body)
     noteMentions src
     warnOnce ctx ("math:" ++ what) .W0012
       s!"math with {what} is not rendered yet; '\{{name}}' {floorWording src}" pos
@@ -14330,6 +14330,9 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
       if n == Parse.modeEnv then
         -- Text reads an `\ifmmode`'s text branch in place, as TeX expands it, ungrouped.
         modeNote ctx' epos
+        let branch := body.extract 1 body.size
+        if !branch.any isParRaw && !bodyIsBlock branch then
+          return ← elabBlocksGo ctx' raws (i + 1) blocks (cur ++ branch) gen'
         have _ := modeBranch_splice h hr
         return ← elabBlocksGo ctx'
           (raws.extract 0 i ++ body.extract 1 body.size ++ raws.extract (i + 1) raws.size)

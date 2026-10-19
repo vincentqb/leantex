@@ -327,6 +327,14 @@ def redefinitionChecks (ref : IO.Ref (List String)) : IO Unit := do
     let (_, ds) := elabStr (article decl "Some \\textbf{bold} and \\textit{slanted} words.")
     t s!"unused settings: {what} the gate refuses is its one accounting ({ds.map (·.kind.code)})"
       (ds.any (·.kind == .W0361) && !skipped ds)
+  let hooked := "\\DeclareRobustCommand{\\viahook}[1]{\\ifx\\relax#1\\relax H\\else I\\fi}\n" ++
+    "\\DeclareRobustCommand{\\viacs}[1]{\\ifx\\relax#1\\relax W\\else X\\fi}\n" ++
+    "\\AtBeginDocument{Hello \\viahook{h}}"
+  let (_, viaHook) := elabStr (article hooked "Some \\csname viacs\\endcsname{q} words.")
+  let skippedOf (ds : Array Diag) (n : String) : Bool := ds.any fun d =>
+    d.kind == .W0104 && d.subject.any fun k => k.startsWith "cond:body:" && k.endsWith n
+  t s!"unused settings: a definition called only from a hook or through csname keeps its skipped text's loss ({viaHook.map (·.subject)})"
+    (skippedOf viaHook "viahook" && skippedOf viaHook "viacs")
   let (_, moded) := elabStr (article
     "\\renewcommand{\\textbf}[1]{\\ifmmode\\mathbf{#1}\\else{\\bfseries #1}\\fi}"
     "Some \\textbf{bold} words.")

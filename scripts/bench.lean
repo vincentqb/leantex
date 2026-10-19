@@ -237,6 +237,11 @@ def overlayFrame (k : Nat) : String :=
     " ".intercalate ((List.range k).map fun i => s!"\\only<{i % 5 + 1}>\{w{i}}") ++
     "\n\\end{frame}\n\\end{document}\n"
 
+/-- `k` paragraphs, each reading an `\ifmmode` in text. -/
+def modeParagraphs (k : Nat) : String :=
+  "\\documentclass{article}\n\\begin{document}\n" ++
+    String.join (List.replicate k "x \\ifmmode a\\else b\\fi\n\n") ++ "\\end{document}\n"
+
 /-- A markdown footnote of `k` paragraphs. -/
 def longNote (k : Nat) : String :=
   "Invented text.[^a]\n\n[^a]: first\n\n" ++ String.join ((List.range k).map fun i =>
@@ -249,8 +254,8 @@ def pictureLines (k : Nat) : String :=
     "\\end{tikzpicture}\n\\end{document}\n"
 
 /-- Elaboration over one long paragraph, one inside a macro's argument, macro uses across sections,
-overlay selections in a frame, one long note and one long picture, the macro uses' execution and
-the parse of unclosed conditionals, whose phases may grow only linearly. -/
+overlay selections in a frame, one long note, one long picture and paragraphs reading ifmmode, the
+macro uses' execution and the parse of unclosed conditionals, whose phases may grow only linearly. -/
 def elabGrowth (n : Nat) (leantex : String) : IO Unit := do
   let rows : List (String × String × (Nat → String) × Nat) :=
     [("words in a paragraph", "para.tex", longParagraph, 8000),
@@ -258,7 +263,8 @@ def elabGrowth (n : Nat) (leantex : String) : IO Unit := do
      ("sections of macro uses", "macros.tex", macroSections, 8),
      ("overlay selections in a frame", "frame.tex", overlayFrame, 1000),
      ("paragraphs in a note", "note.md", longNote, 800),
-     ("lines in a picture", "pic.tex", pictureLines, 4000)]
+     ("lines in a picture", "pic.tex", pictureLines, 4000)],
+     ("paragraphs reading ifmmode", "mode.tex", modeParagraphs, 4000)]
   for (label, file, doc, size) in rows do
     growthBound s!"elab, {4 * size} / {size} {label}"
       (← phaseRunMs "elab" n leantex s!"{size} {label}" file (doc size))

@@ -477,11 +477,12 @@ its mode, unforgeable because its name holds a space. -/
 `\ifmmode <math>\else <text>\fi`, the conditional TeX reads the same. -/
 @[expose] public def modeBranch : String := "\\ifmmode"
 
-/-- TeX's conditional heads, TeX82's and e-TeX's, each closed by its own `\fi`. -/
+/-- TeX's conditional heads, TeX82's, e-TeX's and pdfTeX's and LuaTeX's, each closed by its own
+`\fi`. -/
 public def condPrimitives : List String :=
   ["if", "ifcat", "ifnum", "ifdim", "ifodd", "ifvmode", "ifhmode", "ifmmode", "ifinner",
    "ifvoid", "ifhbox", "ifvbox", "ifx", "ifeof", "iftrue", "iffalse", "ifcase",
-   "ifdefined", "ifcsname", "iffontchar"]
+   "ifdefined", "ifcsname", "iffontchar", "ifincsname", "ifabsnum", "ifabsdim", "ifpdfprimitive"]
 
 mutual
 
@@ -577,6 +578,44 @@ private def modeRaw (conds : Std.HashSet String) : Raw → Raw
   | .verb e v p => .verb e v p
 
 end
+
+mutual
+
+-- conserves: none — a formula's text with each `\ifmmode` read as math
+private def mathReadingList (acc : Array Raw) : List Raw → Array Raw
+  | [] => acc
+  | r :: rest => mathReadingList (mathReadingRaw acc r) rest
+termination_by structural l => l
+
+private def mathReadingRaw (acc : Array Raw) : Raw → Array Raw
+  | .env n body p =>
+    if n == modeEnv then mathReadingFirst acc body.toList
+    else acc.push (.env n (mathReadingList #[] body.toList) p)
+  | .group body p => acc.push (.group (mathReadingList #[] body.toList) p)
+  | .math d body p => acc.push (.math d (mathReadingList #[] body.toList) p)
+  | .word w p => acc.push (.word w p)
+  | .space => acc.push .space
+  | .par p => acc.push (.par p)
+  | .ctrl n p => acc.push (.ctrl n p)
+  | .sym c p => acc.push (.sym c p)
+  | .verb e v p => acc.push (.verb e v p)
+termination_by structural r => r
+
+private def mathReadingFirst (acc : Array Raw) : List Raw → Array Raw
+  | first :: _ => mathReadingOf acc first
+  | [] => acc
+termination_by structural l => l
+
+private def mathReadingOf (acc : Array Raw) : Raw → Array Raw
+  | .math _ m _ => mathReadingList acc m.toList
+  | .group .. | .env .. | .word .. | .space | .par _ | .ctrl .. | .sym .. | .verb .. => acc
+termination_by structural r => r
+
+end
+
+/-- A formula's raws with each `\ifmmode` read by its math branch, the text a formula the math
+reader declines keeps. -/
+public def mathReading (raws : Array Raw) : Array Raw := mathReadingList #[] raws.toList
 
 /-- A parsed text with each `\ifmmode` it closes at one list level read as a `modeEnv`. -/
 public def modeChoices (raws : Array Raw) : Array Raw :=

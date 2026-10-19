@@ -306,6 +306,7 @@ public def knownCtrl (n : String) : Bool :=
 private def modeIf : String := " ifmmode"
 private def modeElse : String := " else"
 private def modeFi : String := " fi"
+private def modeUnread : String := "ifmmode's text branch"
 
 /-- The flat token stream a formula parses from, group and alignment edges as markers. -/
 private inductive MTok where
@@ -381,7 +382,10 @@ private def flattenOne (out : Array MTok) : Parse.Raw →
 private def flattenModeHead (out : Array MTok) : List Parse.Raw → Except String (Array MTok)
   | first :: rest => do
     let o ← flattenModeMath (out.push (.ctrl modeIf)) first
-    flattenList (o.push (.ctrl modeElse)) rest
+    -- A text branch a formula cannot read stands as a mark, so only a text reading of it fails.
+    match flattenList #[] rest with
+    | .ok text => .ok ((o.push (.ctrl modeElse)) ++ text)
+    | .error _ => .ok ((o.push (.ctrl modeElse)).push (.ctrl modeUnread))
   | [] => .ok ((out.push (.ctrl modeIf)).push (.ctrl modeElse))
 
 private def flattenModeMath (out : Array MTok) : Parse.Raw → Except String (Array MTok)
@@ -391,17 +395,19 @@ private def flattenModeMath (out : Array MTok) : Parse.Raw → Except String (Ar
 
 end
 
-/-- The controls whose group a formula reads as text, where `\ifmmode` is false. -/
-private def textArgCtrl : List String :=
-  ["text", "mbox", "hbox", "textrm", "textup", "textnormal", "textbf", "textit", "textsf", "texttt",
-   "textsc", "textsl", "textmd", "emph", "intertext"]
+/-- The controls whose groups a formula reads as text, with how many groups follow. -/
+private def textArgCtrl : List (String × Nat) :=
+  ["text", "mbox", "hbox", "vbox", "textrm", "textup", "textnormal", "textbf", "textit", "textsf",
+   "texttt", "textsc", "textsl", "textmd", "emph", "intertext", "fbox", "framebox", "makebox",
+   "tag"].map (·, 1) ++ [("colorbox", 2), ("raisebox", 2), ("parbox", 2), ("fcolorbox", 3)]
 
 /-- The tokens an `\ifmmode` leaves where it stands: its math branch in math, its text branch in a
 group a formula reads as text, each marker dropped. -/
 private def chooseModes (toks : Array MTok) : Array MTok := Id.run do
   let mut out : Array MTok := #[]
   let mut groups : Array Bool := #[]
-  let mut textNext := false
+  -- The groups a text command's arguments still owe, at the group depth it stands at.
+  let mut textNext : Nat × Nat := (0, 0)
   -- While skipping a branch: the marker depth inside it, and whether `\else` ends it.
   let mut skip : Option (Nat × Bool) := none
   for t in toks do
@@ -421,10 +427,12 @@ private def chooseModes (toks : Array MTok) : Array MTok := Id.run do
       else
         match t with
         | .openGrp =>
-          groups := groups.push (textNext || inText)
-          textNext := false
+          let owed := textNext.1 > 0 && textNext.2 == groups.size
+          groups := groups.push (owed || inText)
+          if owed then textNext := (textNext.1 - 1, textNext.2)
         | .closeGrp => groups := groups.pop
-        | .ctrl n => if textArgCtrl.contains n then textNext := true
+        | .ctrl n =>
+          if let some k := textArgCtrl.lookup n then textNext := (k, groups.size)
         | _ => pure ()
         out := out.push t
   return out
