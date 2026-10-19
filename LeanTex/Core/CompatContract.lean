@@ -9,7 +9,7 @@ open LeanTex.Core.Parse
 /-- The operand the style-file scanner reads from an expanded loading call. -/
 @[expose] public def loadArgument (command : String) (pos : Pos) (tail : Array Raw) : String :=
   let call := #[Raw.ctrl command pos] ++ tail
-  rawSrc ((Compat.takeGroups call (Compat.takeOpt call 1).2 1).1.getD 0 #[])
+  rawSrc ((Compat.takeGroups call (Compat.takeRawOpt call 1).2 1).1.getD 0 #[])
 
 /-- Every nonempty non-native name in an expanded
 package-loading operand is asked for, and every nonempty

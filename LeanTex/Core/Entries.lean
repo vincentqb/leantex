@@ -151,4 +151,7 @@ public def read (g : Grammar) (body : Array Raw) : Array Entry :=
 public def texts (g : Grammar) (body : Array Raw) : Array (String × String × String) :=
   (read g body).map fun e => (e.src, e.text)
 
+/-- A list's items as written, read by a grammar, the blank ones dropped. -/
+public def items (g : Grammar) (body : Array Raw) : Array String := (read g body).map (·.src)
+
 end LeanTex.Core.Entries

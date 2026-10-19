@@ -3594,7 +3594,7 @@ private def readIconLabel (ctx : Ctx) (labelSrc : Option (Array Raw))
     (pos : Pos) : EM (Option String) := do
   let mut label : Option String := none
   if let some optSrc := labelSrc then
-    for e in KeyVal.items (rawSrc optSrc) do
+    for e in Entries.items .keyval optSrc do
       match KeyVal.pair? e with
       | some ("label", v) =>
         if v.trimAscii.isEmpty then
@@ -3603,7 +3603,7 @@ private def readIconLabel (ctx : Ctx) (labelSrc : Option (Array Raw))
         else label := some v
       | _ =>
         warnOnce ctx ("faopt:" ++ e) .W0110
-          s!"'\\faIcon' option '{e.trimAscii.toString}' is not modelled; ignored" pos
+          s!"'\\faIcon' option '{e}' is not modelled; ignored" pos
           (help := "the face that renders an icon is whichever declared or installed face covers its scalar; 'label = ...' overrides the icon's text alternative")
   return label
 

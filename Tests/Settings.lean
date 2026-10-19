@@ -302,6 +302,9 @@ def nativeCarrierChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
       (nativeOf src == ((Decl.splitEntries (Parse.rawSrc (lexedRaws src))).map fun e =>
         let (k, v) := Decl.entryOf e
         (k, if (KeyVal.cutAt '=' e.toList).2.isSome then some v else none)))
+  t "an option list read from raws keeps a formula's comma in its item"
+    (Entries.items .keyval (lexedRaws "label=$x,y$,z") == #["label=$x,y$", "z"] &&
+      KeyVal.items (Parse.rawSrc (lexedRaws "label=$x,y$,z")) != #["label=$x,y$", "z"])
   t "a comma in a formula or a control symbol cuts no keyval entry"
     (kvOf "x=$a,b$, y=c\\,d" == [("x", some "$a,b$"), ("y", some "c\\,d")])
   -- A native declaration's reader keeps a formula whole, as its raws hold it.

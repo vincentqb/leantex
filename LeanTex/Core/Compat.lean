@@ -1872,11 +1872,6 @@ private def takeRawOpt (s : RawStream) (i : Nat) : Option (Array Raw) × Nat := 
     return (none, i)
   | _ => (none, i)
 
-/-- `Compat.takeOpt` over a stream. -/
-private def takeOpt (s : RawStream) (i : Nat) : Option String × Nat :=
-  let (arg, stop) := s.takeRawOpt i
-  (arg.map rawSrc, stop)
-
 /-- `Compat.takeRawArgs` over a stream. -/
 private def takeRawArgs (s : RawStream) (i count : Nat) :
     Array (Array Raw) × Nat × Array Raw := Id.run do
@@ -1998,12 +1993,8 @@ end RawStream
 
 /-- One optional `[...]` argument, its tokens kept inert; groups are opaque and
 an ungrouped `[` does not nest. -/
-private def takeRawOpt (raws : Array Raw) (i : Nat) : Option (Array Raw) × Nat :=
+public def takeRawOpt (raws : Array Raw) (i : Nat) : Option (Array Raw) × Nat :=
   (RawStream.ofArray raws).takeRawOpt i
-
-/-- One optional `[...]` argument, as source text for configuration keys. -/
-public def takeOpt (raws : Array Raw) (i : Nat) : Option String × Nat :=
-  (RawStream.ofArray raws).takeOpt i
 
 /-- A delimited argument with the one enclosing group
 removed when that group is the whole argument. -/
@@ -2017,7 +2008,7 @@ private def takeOpts (raws : Array Raw) (i n : Nat) : Bool × Nat := Id.run do
   let mut j := i
   let mut any := false
   for _ in [0:n] do
-    let (o, j') := takeOpt raws j
+    let (o, j') := takeRawOpt raws j
     if o.isSome then any := true
     j := j'
   return (any, j)
@@ -2058,22 +2049,22 @@ public def takeGroups (raws : Array Raw) (i n : Nat) : Array (Array Raw) × Nat 
 
 /-- The filename, read from the executed call the local-style reader sees. -/
 @[expose] public def InputRequest.name (request : InputRequest) : String :=
-  rawSrc ((takeGroups request.call (takeOpt request.call 1).2 1).1.getD 0 #[])
+  rawSrc ((takeGroups request.call (takeRawOpt request.call 1).2 1).1.getD 0 #[])
 
 /-- A request's second group, the file of minted's `\inputminted{lang}{file}`. -/
 @[expose] public def InputRequest.second (request : InputRequest) : String :=
-  rawSrc ((takeGroups request.call (takeOpt request.call 1).2 2).1.getD 1 #[])
+  rawSrc ((takeGroups request.call (takeRawOpt request.call 1).2 2).1.getD 1 #[])
 
 /-- The options, read from the executed call the filename is read from. -/
 @[expose] public def InputRequest.options (request : InputRequest) : String :=
-  ((takeOpt request.call 1).1.getD "").trimAscii.toString
+  ((takeRawOpt request.call 1).1.map rawSrc).getD ""
 
 /-- The scalar loading calls in one executed request, in
 source order, duplicates retained. -/
 public def InputRequest.packageCalls (request : InputRequest) :
     Array (String × Array Raw) :=
   if request.command == "usepackage" || request.command == "RequirePackage" then
-    let head := request.call.extract 0 (takeOpt request.call 1).2
+    let head := request.call.extract 0 (takeRawOpt request.call 1).2
     ((request.name.splitOn ",").map (·.trimAscii.toString)).toArray.map fun name =>
       (name, head.push (.group #[.word name request.pos] request.pos))
   else if let some pre := themeAsking.lookup request.command then
@@ -2572,13 +2563,13 @@ private def boundaryLevel (file : String) (raws : Array Raw) (out : BoundaryScan
   | _ :: rest, i, skip + 1 => boundaryLevel file raws out rest (i + 1) skip
   | .ctrl name p :: rest, i, 0 =>
     if name == "usepackage" || name == "RequirePackage" then
-      let (opt, j) := takeOpt raws (i + 1)
+      let (opt, j) := takeRawOpt raws (i + 1)
       let (args, k) := takeGroups raws j 1
-      let pkgs := (KeyVal.items (rawSrc (args.getD 0 #[]))).toList.filter boundaryRides
+      let pkgs := (Entries.items .keyval (args.getD 0 #[])).toList.filter boundaryRides
       let out :=
         if pkgs.isEmpty then out
         else
-          let o := match opt with | some o => s!"[{o}]" | none => ""
+          let o := match opt with | some o => s!"[{rawSrc o}]" | none => ""
           let line := s!"\\usepackage{o}\{{String.intercalate "," pkgs}}\n"
           { out with pre := out.pre ++ line }
       boundaryLevel file raws out rest (i + 1) (k - (i + 1))
@@ -3639,17 +3630,17 @@ private def recordLoad (raws : Array Raw) (name : String) (i : Nat) : M Unit := 
   let names (g : Array Raw) : Array String := optionItems (rawSrc g)
   if name == "usepackage" || name == "RequirePackage" ||
       name == "RequirePackageWithOptions" then
-    let (opt, j) := takeOpt raws (i + 1)
+    let (opt, j) := takeRawOpt raws (i + 1)
     let (args, _) := takeGroups raws j 1
     let os := if name == "RequirePackageWithOptions" then none
-      else some (PackageImports.literalOptions (opt.getD "")).toArray
+      else some (PackageImports.literalOptions ((opt.map rawSrc).getD "")).toArray
     write fun st => { st with loads :=
       (names (args.getD 0 #[])).foldl (fun s p => s.addPkg p os) st.loads }
   else if name == "documentclass" then
-    let (opt, j) := takeOpt raws (i + 1)
+    let (opt, j) := takeRawOpt raws (i + 1)
     let (args, _) := takeGroups raws j 1
     let c := rawSrc (args.getD 0 #[])
-    let os := (PackageImports.literalOptions (opt.getD "")).toArray
+    let os := (PackageImports.literalOptions ((opt.map rawSrc).getD "")).toArray
     unless c.isEmpty do
       write fun st => { st with loads := st.loads.setCls c os }
   else if name == "PassOptionsToPackage" || name == "PassOptionsToClass" then
@@ -3658,7 +3649,7 @@ private def recordLoad (raws : Array Raw) (name : String) (i : Nat) : M Unit := 
     let ps := (names (args.getD 1 #[])).map (·, os)
     write fun st => { st with loads := st.loads.pass (name == "PassOptionsToClass") ps }
   else if let some pre := themeAsking.lookup name then
-    let (_, j) := takeOpt raws (i + 1)
+    let (_, j) := takeRawOpt raws (i + 1)
     let (args, _) := takeGroups raws j 1
     let nm := rawSrc (args.getD 0 #[])
     unless nm.isEmpty do
@@ -3767,7 +3758,7 @@ public def floatRedefEnvs : List String := ["table", "figure"]
 private def floatCoreAt (env : String) (raws : Array Raw) (i : Nat) (d : String) : Bool := Id.run do
   unless Definer.is d .environment .latex .renew do return false
   let (_, j) := takeGroups raws (skipStar raws (i + 1)) 1
-  let (count, j) := takeOpt raws j
+  let (count, j) := takeRawOpt raws j
   let (dflt, jd) := takeRawOpt raws j
   if count.isSome || dflt.isSome then return false
   let items (xs : Array Raw) : List Raw := xs.toList.filter fun r =>
@@ -3835,12 +3826,12 @@ private def definerShape (raws : Array Raw) (i : Nat) (d : String)
   | some (.command, .latex) | some (_, .tcolorbox) | some (_, .amsmath) =>
     let j := starred (i + 1)
     unless named j do return none
-    return cmdShape (skipSpaces raws (takeOpt raws (takeOpt raws (j + 1)).2).2)
+    return cmdShape (skipSpaces raws (takeRawOpt raws (takeRawOpt raws (j + 1)).2).2)
   | some (.environment, fam@.latex) | some (.environment, fam@.native) =>
     let j := starred (i + 1)
     unless raws[j]? matches some (.group _ _) do return none
     let some b1 := (if fam == .native then groupFrom (j + 1) else
-        let b := skipSpaces raws (takeOpt raws (takeOpt raws (j + 1)).2).2
+        let b := skipSpaces raws (takeRawOpt raws (takeRawOpt raws (j + 1)).2).2
         if raws[b]? matches some (.group _ _) then some b else none) | return none
     let b2 := skipSpaces raws (b1 + 1)
     unless raws[b2]? matches some (.group _ _) do return none
@@ -3848,8 +3839,8 @@ private def definerShape (raws : Array Raw) (i : Nat) (d : String)
   | some (_, .environ) =>
     let j := starred (i + 1)
     unless raws[j]? matches some (.group _ _) do return none
-    let b := skipSpaces raws (takeOpt raws (takeOpt raws (j + 1)).2).2
-    return cmdShape b (takeOpt raws (b + 1)).2
+    let b := skipSpaces raws (takeRawOpt raws (takeRawOpt raws (j + 1)).2).2
+    return cmdShape b (takeRawOpt raws (b + 1)).2
   | some (.command, .xparse) =>
     let j := skipSpaces raws (i + 1)
     unless named j do return none
@@ -4179,10 +4170,10 @@ private def definedValue (st : St) (raws : Array Raw) (i : Nat) (d : String) :
     let j0 := skipSpaces raws (i + 1)
     let star := raws[j0]? matches some (.word "*" _)
     let j := if star then skipSpaces raws (j0 + 1) else j0
-    let (count, k) := takeOpt raws (j + 1)
+    let (count, k) := takeRawOpt raws (j + 1)
     let arity? := match count with
       | none => some 0
-      | some s => s.trimAscii.toString.toNat?
+      | some s => (rawSrc s).toNat?
     let some arity := arity? | return none
     if arity > 9 then return none
     let (defaultArg, k) := takeRawOpt raws k
@@ -4207,10 +4198,10 @@ private def tcolorboxValue (raws : Array Raw) (i : Nat) :
     Option (String × CondVal) := do
   let j := skipSpaces raws (i + 1)
   let some (.group #[.word name _] _) := raws[j]? | none
-  let (count, k) := takeOpt raws (j + 1)
+  let (count, k) := takeRawOpt raws (j + 1)
   let arity ← match count with
     | none => some 0
-    | some s => s.trimAscii.toString.toNat?
+    | some s => (rawSrc s).toNat?
   if arity > 9 then none else do
     let (defaultArg, k) := takeRawOpt raws k
     if defaultArg.isSome && arity == 0 then none else do
@@ -4376,7 +4367,7 @@ private def templateBodyAt (definer : String) (rest : Array Raw) : Option (Array
   let element := (rawSrc (head.getD 0 #[])).trimAscii.toString
   if head.size != (if definer == "defbeamertemplate" then 2 else 1) || !blockTemplateElement element
   then none else
-  let j := if definer == "defbeamertemplate" then (takeRawOpt rest (takeOpt rest j).2).2 else j
+  let j := if definer == "defbeamertemplate" then (takeRawOpt rest (takeRawOpt rest j).2).2 else j
   let (body, k) := takeGroups rest j 1
   body[0]?.map (·, k)
 
@@ -4416,7 +4407,7 @@ private def definitionAt (d : String) (rest : Array Raw) : Option (String × Nat
       | some (.ctrl x _) => some x
       | _ => none
     named.bind fun x =>
-      let k := (takeRawOpt rest (takeOpt rest (j + 1)).2).2
+      let k := (takeRawOpt rest (takeRawOpt rest (j + 1)).2).2
       let (body, k) := takeGroups rest k 1
       if body.size == 1 then some (x, k) else none
   | some (_, .tex) =>
@@ -4622,8 +4613,8 @@ private def forgetLengths (names : Array String) : M Unit := do
 which runs where the environment opens. -/
 private def condNoteEnv (raws : Array Raw) (i : Nat) : M Unit := do
   let j := skipSpaces raws (skipStar raws (i + 1))
-  let (_, k) := takeOpt raws (j + 1)
-  let (_, k) := takeOpt raws k
+  let (_, k) := takeRawOpt raws (j + 1)
+  let (_, k) := takeRawOpt raws k
   let (codes, _) := takeGroups raws k 2
   let some name := definedEnv raws i | return
   let assigned := (codes.toList.filterMap (assignedIn (fun _ => true))).foldl (· ++ ·) #[]
@@ -5313,7 +5304,7 @@ private def inputRequestAt (st : St) (n : String) (pos : Pos)
       (n == "usepackage" || n == "RequirePackage" || (themeAsking.lookup n).isSome)
     if !(input || style) then none else do
       let optioned := ["markdownInput", "inputminted", "inputlean", "lstinputlisting"].contains n
-      let (_, k) := if optioned || style then raws.takeOpt start else (none, start)
+      let (_, k) := if optioned || style then raws.takeRawOpt start else (none, start)
       let j := raws.skipSpaces k
       let some (.group _ _) := raws.get? j | none
       -- minted's file command names its language in a group before the file's.
@@ -5783,14 +5774,14 @@ public theorem packageCall_exact (command names : String)
 private theorem packageCall_readers (command names : String)
     (pos groupPos namePos : Pos) :
     skipSpaces (packageCall command names pos groupPos namePos) 1 = 1 ∧
-    takeOpt (packageCall command names pos groupPos namePos) 1 = (none, 1) ∧
+    takeRawOpt (packageCall command names pos groupPos namePos) 1 = (none, 1) ∧
     takeGroups (packageCall command names pos groupPos namePos) 1 1 =
       (#[#[.word names namePos]], 2) := by
   have hs : skipSpaces (packageCall command names pos groupPos namePos) 1 = 1 := by
     rw [skipSpaces]
     simp [packageCall]
   refine ⟨hs, ?_, ?_⟩
-  · simp only [takeOpt, RawStream.takeOpt, RawStream.takeRawOpt, RawStream.skipSpaces_ofArray,
+  · simp only [takeRawOpt, RawStream.takeRawOpt, RawStream.skipSpaces_ofArray,
       hs, Id.run]
     simp [packageCall]
   · simp [takeGroups, hs]
@@ -5801,7 +5792,7 @@ public theorem InputRequest.package_name_exact (file command names : String)
     (InputRequest.mk command file pos pos
       #[.group #[.word names namePos] groupPos]).name = names.trimAscii.toString := by
   change rawSrc ((takeGroups (packageCall command names pos groupPos namePos)
-    (takeOpt (packageCall command names pos groupPos namePos) 1).2 1).1.getD 0 #[]) = _
+    (takeRawOpt (packageCall command names pos groupPos namePos) 1).2 1).1.getD 0 #[]) = _
   rw [(packageCall_readers command names pos groupPos namePos).2.1,
     (packageCall_readers command names pos groupPos namePos).2.2]
   simp [rawSrc, rawSrcList, rawSrcOne]
@@ -5810,7 +5801,7 @@ private theorem packageCall_stream_readers (command names : String)
     (pos groupPos namePos : Pos) :
     (RawStream.cons (packageCall command names pos groupPos namePos) RawStream.empty).skipSpaces
       1 = 1 ∧
-    (RawStream.cons (packageCall command names pos groupPos namePos) RawStream.empty).takeOpt
+    (RawStream.cons (packageCall command names pos groupPos namePos) RawStream.empty).takeRawOpt
       1 = (none, 1) := by
   have hs : (RawStream.cons (packageCall command names pos groupPos namePos)
       RawStream.empty).skipSpaces 1 = 1 := by
@@ -5818,7 +5809,7 @@ private theorem packageCall_stream_readers (command names : String)
     simp [packageCall, RawStream.cons, RawStream.empty, RawStream.size, RawStream.get?,
       RawStream.getSegs]
   refine ⟨hs, ?_⟩
-  simp only [RawStream.takeOpt, RawStream.takeRawOpt, hs, Id.run]
+  simp only [RawStream.takeRawOpt, hs, Id.run]
   simp [packageCall, RawStream.cons, RawStream.empty, RawStream.get?, RawStream.getSegs]
 
 private theorem packageCall_request_exact (command names : String)
@@ -5855,8 +5846,7 @@ private theorem recordLoad_package_exact (command names : String)
     rcases hc with rfl | rfl <;> decide
   simp only [recordLoad, ↓reduceIte, Nat.zero_add,
     (packageCall_readers command names pos gp np).2.1,
-    (packageCall_readers command names pos gp np).2.2, hw, Bool.false_eq_true,
-    Option.getD_none]
+    (packageCall_readers command names pos gp np).2.2, hw, Bool.false_eq_true]
   simp [hc, rawSrc, rawSrcList, rawSrcOne, optionItems, packageLoaded, write_eq]
 
 private def packageRequest (command names : String) (pos gp np : Pos)
@@ -8041,11 +8031,11 @@ public def theoremDeclEnd (raws : Array Raw) (name : String) (i : Nat) : Nat :=
   if name == "theoremstyle" then (takeGroups raws i 1).2 else
     let i0 := skipStar raws i
     let (_, j) := takeGroups raws i0 1
-    let (shared, j) := takeOpt raws j
+    let (shared, j) := takeRawOpt raws j
     let (_, j) := takeGroups raws j 1
     -- A numbered definition without a shared counter tests for a numbering-within argument,
     -- reading past spaces.
-    if i0 != i || shared.isSome then j else match takeOpt raws j with
+    if i0 != i || shared.isSome then j else match takeRawOpt raws j with
       | (some _, k) => k
       | (none, _) => skipSpaces raws j
 
@@ -8654,7 +8644,7 @@ additions with an empty before-body and standard skips after 'block begin' are s
 /-- Whether a footline body reads exactly the standout foreground and the
 current canvas background. -/
 private def standoutFootColors (body : Array Raw) : Bool :=
-  let fields := (KeyVal.items (rawSrc body)).toList
+  let fields := (Entries.items .keyval body).toList
   let entries := fields.filterMap fun e => match KeyVal.entry e with
     | (k, some v) => some (k, v)
     | (_, none) => none
@@ -8790,7 +8780,7 @@ private def numberedFootline? (body : Array Raw) :
     Option (Array Raw × String × Bool × Option String × String) := do
   let (options, font, content) ← match body.toList.filter (· != .space) with
     | [Raw.env "beamercolorbox" box _] =>
-      let (options, j) := takeOpt box 0
+      let (options, j) := takeRawOpt box 0
       let (args, j) := takeGroups box j 1
       if args.size != 1 || (rawSrc (args.getD 0 #[])).trimAscii.toString != "footline" then none
       else
@@ -8806,10 +8796,10 @@ private def numberedFootline? (body : Array Raw) :
   match content.findIdx? (fun r => r matches .ctrl "hfill" _) with
   | some split =>
     let counter ← footlineCounter? (content.extract (split + 1) content.size)
-    some (content.extract 0 split, counter, true, font, options.getD "")
+    some (content.extract 0 split, counter, true, font, (options.map rawSrc).getD "")
   | none =>
     let counter ← footlineCounter? content
-    some (#[], counter, false, font, options.getD "")
+    some (#[], counter, false, font, (options.map rawSrc).getD "")
 
 /-- A template body with `#1` replaced by the declared default. -/
 private def substArg (default : Array Raw) : List Raw → Array Raw → Array Raw
@@ -9232,8 +9222,8 @@ private def texParamAssign (name : String) (pos : Pos) (raws : Array Raw) (start
 
 /-- The argument specification a LaTeX definer's `[n][default]` declares: `n` mandatory
 arguments, the first optional where a default stands. -/
-private def latexSpec (count : Option String) (dflt : Bool) : String :=
-  let n := (count.bind String.toNat?).getD 0
+private def latexSpec (count : Option (Array Raw)) (dflt : Bool) : String :=
+  let n := (count.bind (rawSrc · |>.toNat?)).getD 0
   (if dflt then "o" else "") ++ String.ofList (List.replicate (if dflt then n - 1 else n) 'm')
 
 /-- A TeX definer: a plain `\def` with undelimited parameters declares what `\define` declares. -/
@@ -9303,7 +9293,7 @@ private def latexEnvArm (name : String) (pos : Pos) (raws : Array Raw) (start : 
     M (Option (Array Raw × Nat)) := do
   let (args, j) := takeGroups raws (skipStar raws start) 1
   let envName := rawSrc (args.getD 0 #[])
-  let (count, j) := takeOpt raws j
+  let (count, j) := takeRawOpt raws j
   let (dflt, jd) := takeRawOpt raws j
   let spec := latexSpec count dflt.isSome
   if ← refusedEnvDef name envName spec false pos then
@@ -9343,7 +9333,7 @@ private def environArm (name : String) (pos : Pos) (raws : Array Raw) (start : N
     M (Option (Array Raw × Nat)) := do
   let (args, j) := takeGroups raws (skipStar raws start) 1
   let envName := rawSrc (args.getD 0 #[])
-  let (count, j0) := takeOpt raws j
+  let (count, j0) := takeRawOpt raws j
   let (dflt, j) := takeRawOpt raws j0
   let b := skipSpaces raws j
   let spec := latexSpec count dflt.isSome
@@ -9381,7 +9371,7 @@ private def environArm (name : String) (pos : Pos) (raws : Array Raw) (start : N
       let mark := if (← get).inDoc then #[] else #[Raw.ctrl (Marker.name .environBody "") pos]
       return some (native.raws pos ++ mark, j0)
     else
-      let (_, k) := takeOpt raws (b + 1)
+      let (_, k) := takeRawOpt raws (b + 1)
       sayOnce ("ctrl:" ++ name) .W0104
         s!"'\\{name}\{{envName}}' places \\BODY inside a group or more than once; an \
 environment's body stands between its begin and its end code here, so the definition \
@@ -9454,7 +9444,7 @@ skipped, and the leading keeps its value" pos (help := "give a number, such as \
     became "\\fontsize" "an affine font size and baseline skip" pos
     return some (#[.ctrl (Marker.fontSizeName size leading) pos], k)
   | "foreignlanguage" =>
-    let (_, j) := takeOpt raws start
+    let (_, j) := takeRawOpt raws start
     let (args, k) := takeGroups raws j 2
     if h : args.size = 2 then
       if ← paramArgs #[args[0]] then
@@ -9508,8 +9498,8 @@ and patterns stand in" pos
     if let some (.word w _) := raws[j]? then
       if w.startsWith "<" && w.endsWith ">" then
         j := j + 1
-    let (_, j1) := takeOpt raws j
-    let (_, j2) := takeOpt raws j1
+    let (_, j1) := takeRawOpt raws j
+    let (_, j2) := takeRawOpt raws j1
     became "\\varul" "\\underline" pos
     return some (#[.ctrl "underline" pos], j2)
   | "ExplSyntaxOn" =>
@@ -9644,12 +9634,12 @@ fall on a left; the pages here are one-sided, so each opens the next page" pos
     let element := (rawSrc (args.getD 0 #[])).trimAscii.toString
     if args.size != 2 || !blockTemplateElement element then return none
     let name := (rawSrc (args.getD 1 #[])).trimAscii.toString
-    let (arity, j) := takeOpt raws j
+    let (arity, j) := takeRawOpt raws j
     let (default, j) := takeRawOpt raws j
     let (bodyArgs, k) := takeGroups raws j 1
     if bodyArgs.size != 1 then return none
     let body := BlockTemplate.edged (bodyEdges raws j) (bodyArgs.getD 0 #[])
-    let body := match arity.map (·.trimAscii.toString) with
+    let body := match arity.map rawSrc with
       | some "1" => substArg (default.getD #[]) body.toList #[]
       | _ => body
     if (← get).inDoc then
@@ -9675,7 +9665,7 @@ only preamble block templates are read" pos
     let (args, j) := takeGroups raws start 1
     let element := (rawSrc (args.getD 0 #[])).trimAscii.toString
     if blockTemplateElement element then
-      let (opt, j') := takeOpt raws j
+      let (opt, j') := takeRawOpt raws j
       let (bodyArgs, k) := if opt.isSome then (#[], j') else takeGroups raws j' 1
       if (← get).inDoc then
         sayOnce ("beamer:template:" ++ element) .W0104
@@ -9683,7 +9673,7 @@ only preamble block templates are read" pos
 only preamble block templates are read" pos
           (help := "set block templates in the preamble")
         return some (#[], k)
-      match opt.map (·.trimAscii.toString), bodyArgs[0]? with
+      match opt.map rawSrc, bodyArgs[0]? with
       | some name, _ =>
         match (← get).beamerTemplateDefs.find? (·.1 == (element, name)) with
         | some (_, body) =>
@@ -9710,10 +9700,10 @@ defines; those blocks keep beamer's default template" pos
       became "\\setbeamertemplate{frame footer}" "\\framefoot{...}" pos
       return some (Native.Head.framefoot.raws pos, j)
     else if let some native := beamerMarkerElement element then
-      let (predefined, past) := takeOpt raws j
-      if let some name := predefined then
+      let (predefined, past) := takeRawOpt raws j
+      if let some name := predefined.map rawSrc then
         unreadParam "\\setbeamertemplate" element
-          s!"'\\setbeamertemplate\{{element}}[{name.trimAscii.toString}]' predefined template" pos
+          s!"'\\setbeamertemplate\{{element}}[{name}]' predefined template" pos
         return some (#[], predefinedEnd raws past)
       let (bodyArgs, k) := takeGroups raws j 1
       if bodyArgs.size != 1 then return none
@@ -9723,14 +9713,14 @@ defines; those blocks keep beamer's default template" pos
     -- premise: beamerTemplateChecks — footer content reaches the frame furniture
     else if element == "footline" &&
         (← get).wholeDoc && !(← get).inDoc && !(← get).inDef then
-      let (rawVariant, _) := takeRawOpt raws j
-      let (variant, k) := takeOpt raws j
+      let (rawVariant, k) := takeRawOpt raws j
+      let variant := rawVariant.map rawSrc
       if let some name := variant then
         if ← paramArgs #[] #[rawVariant] then
           unappliedParam "setbeamertemplate" "beamer's template stands" pos
           return some (#[], predefinedEnd raws k)
         -- premise: defaultTemplateChecks — an unthemed deck draws each such default already
-        if name.trimAscii.toString == "default" && (← get).beamerTheme.isEmpty then
+        if name == "default" && (← get).beamerTheme.isEmpty then
           inertParam "\\setbeamertemplate" element s!"\\setbeamertemplate\{{element}}[default]"
             InertSite.defaultTemplate.inert pos
           return some (#[], predefinedEnd raws k)
@@ -9744,7 +9734,7 @@ defines; those blocks keep beamer's default template" pos
           became "\\setbeamertemplate{footline}[frame number]" "a frame counter over the total" pos
           return some (#[], predefinedEnd raws k)
         unreadParam "\\setbeamertemplate" element
-          s!"'\\setbeamertemplate\{{element}}[{name.trimAscii.toString}]' predefined template" pos
+          s!"'\\setbeamertemplate\{{element}}[{name}]' predefined template" pos
         return some (#[], predefinedEnd raws k)
       let (bodyArgs, k) := takeGroups raws k 1
       if bodyArgs.size != 1 then return none
@@ -9766,14 +9756,13 @@ defines; those blocks keep beamer's default template" pos
         mention (rawSrc body)
       return some (#[], k)
     else if element == "title page" then
-      let (rawPredefined, _) := takeRawOpt raws j
-      let (predefined, j) := takeOpt raws j
-      if let some name := predefined then
+      let (rawPredefined, j) := takeRawOpt raws j
+      if let some name := rawPredefined.map rawSrc then
         if ← paramArgs #[] #[rawPredefined] then
           unappliedParam "setbeamertemplate" "beamer's template stands" pos
           return some (#[], predefinedEnd raws j)
         -- premise: defaultTemplateChecks — an unthemed deck draws each such default already
-        if name.trimAscii.toString == "default" && (← get).beamerTheme.isEmpty &&
+        if name == "default" && (← get).beamerTheme.isEmpty &&
             defaultTemplates.contains element then
           inertParam "\\setbeamertemplate" element s!"\\setbeamertemplate\{{element}}[default]"
             InertSite.defaultTemplate.inert pos
@@ -9839,14 +9828,13 @@ the built-in title page stands" pos
       write fun st => { st with bodyNext := 1 }
       return some (head.raws pos, j)
     else
-      let (rawPredefined, _) := takeRawOpt raws j
-      let (predefined, j) := takeOpt raws j
-      if let some name := predefined then
+      let (rawPredefined, j) := takeRawOpt raws j
+      if let some name := rawPredefined.map rawSrc then
         if ← paramArgs #[] #[rawPredefined] then
           unappliedParam "setbeamertemplate" "beamer's template stands" pos
           return some (#[], predefinedEnd raws j)
         -- premise: defaultTemplateChecks — an unthemed deck draws each such default already
-        if name.trimAscii.toString == "default" && (← get).beamerTheme.isEmpty &&
+        if name == "default" && (← get).beamerTheme.isEmpty &&
             defaultTemplates.contains element then
           inertParam "\\setbeamertemplate" element s!"\\setbeamertemplate\{{element}}[default]"
             InertSite.defaultTemplate.inert pos
@@ -9923,10 +9911,10 @@ page of its own" pos (help := "\\begin{titlepage}...\\end{titlepage} sets a page
   | "switchcolumn" =>
     -- premise: columnGeometryChecks — the flow consumes the switch as a column boundary
     if (← get).inParacol then return none
-    let (_, j) := takeOpt raws start
+    let (_, j) := takeRawOpt raws start
     let js := skipSpaces raws j
     let starred := raws[js]? matches some (.word "*" _)
-    let (_, k) := if starred then takeOpt raws (skipSpaces raws (js + 1)) else (none, j)
+    let (_, k) := if starred then takeRawOpt raws (skipSpaces raws (js + 1)) else (none, j)
     sayOnce "paracol:switch-outside" .W0104
       "'\\switchcolumn' stands outside a supported two-column paracol flow; ignored" pos
     return some (#[], k)
@@ -10038,7 +10026,7 @@ private def preamblePackages (raws : Array Raw) (start : Nat) : Array String := 
   for i in [start:raws.size] do
     match raws[i]? with
     | some (.ctrl "usepackage" _) | some (.ctrl "RequirePackage" _) =>
-      let (_, j) := takeOpt raws (i + 1)
+      let (_, j) := takeRawOpt raws (i + 1)
       let (args, _) := takeGroups raws j 1
       for p in (rawSrc (args.getD 0 #[])).splitOn "," do
         let p := p.trimAscii.toString
@@ -10496,8 +10484,8 @@ private def commandDefinerArm (name : String) (pos : Pos) (raws : Array Raw) (st
   -- premise: Tests.xparseProvideChecks — provision keeps existing meanings
   if provide && (st.bound.contains cmd || st.provideKeeps.contains cmd) then
     let j := if xparse then (takeGroups raws j 1).2 else
-      let (_, j) := takeOpt raws j
-      (takeOpt raws j).2
+      let (_, j) := takeRawOpt raws j
+      (takeRawOpt raws j).2
     let (_, k) := takeGroups raws j 1
     let why := if st.bound.contains cmd then
         s!"'\\{cmd}' is already defined and the existing definition is kept"
@@ -10506,27 +10494,27 @@ private def commandDefinerArm (name : String) (pos : Pos) (raws : Array Raw) (st
     return some (#[], k)
   if let some why := macroParams.lookup cmd then
     if !xparse then
-      let (_, j) := takeOpt raws j
-      let (_, j) := takeOpt raws j
+      let (_, j) := takeRawOpt raws j
+      let (_, j) := takeRawOpt raws j
       let (_, k) := takeGroups raws j 1
       nameParam cmd why pos
       return some (#[], k)
   -- premise: biblatexPunctChecks — the delimiters read set the citations biber sets
   if !xparse && st.biblatexLoaded && biblatexMacros.contains cmd then
-    let (_, j) := takeOpt raws j
-    let (_, j) := takeOpt raws j
+    let (_, j) := takeRawOpt raws j
+    let (_, j) := takeRawOpt raws j
     let (args, k) := takeGroups raws j 1
     return some (← biblatexMacroDef name cmd (args.getD 0 #[]) pos, k)
   if !xparse && cmd == "sectionlinesformat" then
-    let (_, j) := takeOpt raws j
+    let (_, j) := takeRawOpt raws j
     let (args, k) := takeGroups raws j 1
     return some (← sectionRule (rawSrc (args.getD 0 #[])) pos, k)
   let (spec, j) ← if xparse then
       let (a, j) := takeGroups raws j 1
       pure (signature (rawSrc (a.getD 0 #[])), j)
     else
-      let (n, j) := takeOpt raws j
-      let (dflt, j) := takeOpt raws j
+      let (n, j) := takeRawOpt raws j
+      let (dflt, j) := takeRawOpt raws j
       pure (signature (latexSpec n dflt.isSome), j)
   -- A body that is one `\@startsection` call is read as `\style` over the heading.
   let js := skipSpaces raws j
@@ -10577,7 +10565,8 @@ private def rewriteCtrlNamed (name : String) (pos : Pos) (raws : Array Raw)
     | _, _ => pure ()
   match name with
   | "documentclass" =>
-    let (opt, j) := takeOpt raws start
+    let (opt, j) := takeRawOpt raws start
+    let opt := opt.map rawSrc
     let (args, k) := takeGroups raws j 1
     let cls := rawSrc (args.getD 0 #[])
     -- A package takes the class options it declares, and the class reads the rest.
@@ -11201,7 +11190,7 @@ spells; the colour is not defined" c.pos (help := "name the colour with ASCII le
     -- microtype's `protrusion`, `expansion` and `activate` reach the native gates.
     let mut keys : Array (Native.PageKey × String) := #[]
     let mut dropped : Array String := #[]
-    for e in KeyVal.items (c.src 0) do
+    for e in Entries.items .keyval (c.arg 0) do
       let (key, v) := KeyVal.entry e
       let v := v.getD ""
       let native : List Native.PageKey := if key == "activate" then [.protrusion, .expansion]
@@ -11371,7 +11360,7 @@ declare the furniture directly")
     return #[]
   | .bibResources => do
     -- Under biblatex a preamble `\bibliography{refs}` adds the resource `refs.bib`.
-    for src in KeyVal.items (c.src 0) do
+    for src in Entries.items .keyval (c.arg 0) do
       let src := if src.endsWith ".bib" then (src.dropEnd 4).toString else src
       unless src.isEmpty || (← get).bibResources.contains src do
         write fun st => { st with bibResources := st.bibResources.push src }
@@ -11508,7 +11497,7 @@ native equivalent were dropped: {dropped}" c.pos
   | .sectionLines => sectionRule (c.src 1) c.pos
   | .uniMathSetup => unicodeMathOptions s!"\\unimathsetup\{{c.src 0}}" (c.src 0) c.pos
   | .unreadKeys => do
-    for e in KeyVal.items (c.src 0) do
+    for e in Entries.items .keyval (c.arg 0) do
       let key := (KeyVal.entry e).1
       unless key.isEmpty do
         unreadParam s!"\\{c.name}" key s!"'\\{c.name}' key '{key}'" c.pos
@@ -11656,10 +11645,10 @@ and 'transparent=<n>' are understood")
         c.pos (help := s!"save the file in one encoding, UTF-8 best, and delete \
 '\\inputencoding\{{arg}}'")
     return #[]
-  | .komaOptions => komaEntries "KOMAoptions" (KeyVal.items (c.src 0)).toList c.pos
+  | .komaOptions => komaEntries "KOMAoptions" (Entries.items .keyval (c.arg 0)).toList c.pos
   | .komaOption =>
     let key := (c.src 0).trimAscii.toString
-    komaEntries "KOMAoption" ((KeyVal.items (c.src 1)).toList.map (key ++ "=" ++ ·)) c.pos
+    komaEntries "KOMAoption" ((Entries.items .keyval (c.arg 1)).toList.map (key ++ "=" ++ ·)) c.pos
   | .graphColor => do
     -- leanblueprint's `\graphcolor{type}{colour}{description}` colours the dependency graph.
     blueprintGraph c.pos (some s!"'\\graphcolor\{{(c.src 0).trimAscii.toString}}' colours \
@@ -11838,7 +11827,7 @@ private def splitParacol (body : Array Raw) (start : Nat) :
     match body[i]? with
     | none => break
     | some (.ctrl "switchcolumn" spos) =>
-      let (selected, k0) := takeOpt body (i + 1)
+      let (selected, k0) := takeRawOpt body (i + 1)
       let ks := skipSpaces body k0
       let starred := body[ks]? matches some (.word "*" _)
       let afterStar := if starred then skipSpaces body (ks + 1) else k0
@@ -11849,7 +11838,7 @@ private def splitParacol (body : Array Raw) (start : Nat) :
             if spanning.isSome then "; its spanning content stays in the selected column"
             else "; the independent column flow stands") spos
       let fallback := if current == 0 then 1 else 0
-      let next ← match selected.bind (·.trimAscii.toString.toNat?) with
+      let next ← match selected.bind (rawSrc · |>.toNat?) with
         | some n =>
           if n < 2 then pure n
           else do
@@ -11875,7 +11864,7 @@ private def splitParacol (body : Array Raw) (start : Nat) :
 content in order under one refusal. -/
 private def paracolEnv (ratio : Nat) (body : Array Raw) (pos : Pos)
     (restores : Array Raw := #[]) : M Raw := do
-  let (leftCount, j) := takeOpt body 0
+  let (leftCount, j) := takeRawOpt body 0
   let (args, k) := takeGroups body j 1
   let count := (rawSrc (args.getD 0 #[])).trimAscii.toString.toNat?
   if leftCount.isSome then
@@ -12414,9 +12403,9 @@ box is as tall as its content" p
 /-- beamer's `\begin{columns}[t]` alignment carried onto
 every column that declares none. -/
 private def columnsRowPos (body : Array Raw) : Array Raw := Id.run do
-  let (o, _) := takeOpt body 0
+  let (o, _) := takeRawOpt body 0
   let some opts := o | return body
-  let some letter := (KeyVal.items opts).find? (["t", "c", "b", "T"].contains ·) | return body
+  let some letter := (Entries.items .keyval opts).find? (["t", "c", "b", "T"].contains ·) | return body
   let withPos (r : Raw) : Raw :=
     if let .env "column" cb cp := r then
       if cb[skipSpaces cb 0]? matches some (.sym '[' _) then r
@@ -12677,7 +12666,7 @@ end
 private def declaresPresentation (raws : Array Raw) : Bool :=
   match raws.findIdx? (fun r => match r with | .ctrl n _ => n == "documentclass" | _ => false) with
   | some i =>
-    let (_, j) := takeOpt raws (i + 1)
+    let (_, j) := takeRawOpt raws (i + 1)
     let (args, _) := takeGroups raws j 1
     (rawSrc (args.getD 0 #[])).trimAscii.toString == "beamer"
   | none => false
@@ -13842,7 +13831,7 @@ steps come from its body" p
       else if let some spec := ((← get).discardEnvs.find? (·.1 == n)).map (·.2) then
         -- environ's discarding environment keeps only the arguments its signature reads.
         let k := spec.foldl (fun k c =>
-          if c == 'o' then (takeOpt body k).2 else (takeGroups body k 1).2) 0
+          if c == 'o' then (takeRawOpt body k).2 else (takeGroups body k 1).2) 0
         return .env n (body.extract 0 k) p
       else
         -- An environment is a group, so a length set inside it ends with it.
@@ -14754,7 +14743,7 @@ private def seamSplit (raws : Array Raw) : List Raw → Nat → Nat →
   | _ :: rest, i, skip + 1, acc => seamSplit raws rest (i + 1) skip acc
   | .ctrl name pos :: rest, i, 0, (pre, body) =>
     if hookPreambleSide.contains name then
-      let (_, j) := takeOpt raws (i + 1)
+      let (_, j) := takeRawOpt raws (i + 1)
       let (_, k) := takeGroups raws j (if name == "style" then 2 else 1)
       seamSplit raws rest (i + 1) (k - (i + 1))
         (pre ++ raws.extract i k, body)
@@ -15598,7 +15587,7 @@ private def styCandList (raws : Array Raw) (out : Array String) :
   | _ :: rest, i, skip + 1 => styCandList raws out rest (i + 1) skip
   | .ctrl "usepackage" _ :: rest, i, 0
   | .ctrl "RequirePackage" _ :: rest, i, 0 =>
-    let (_, j) := takeOpt raws (i + 1)
+    let (_, j) := takeRawOpt raws (i + 1)
     let (args, k) := takeGroups raws j 1
     let out := ((rawSrc (args.getD 0 #[])).splitOn ",").foldl (init := out) fun out p =>
       let p := p.trimAscii.toString
@@ -15609,7 +15598,7 @@ private def styCandList (raws : Array Raw) (out : Array String) :
     -- A theme-family command asks for its prefixed file name.
     match themeAsking.lookup cn with
     | some pre =>
-      let (_, j) := takeOpt raws (i + 1)
+      let (_, j) := takeRawOpt raws (i + 1)
       let (args, k) := takeGroups raws j 1
       let nm := (rawSrc (args.getD 0 #[])).trimAscii.toString
       let out := if nm.isEmpty then out else
@@ -15746,7 +15735,7 @@ public theorem localStyCandidates_package_covers (cn : String) (pos : Pos)
     (tail : Array Raw) (nm : String)
     (hcn : cn = "usepackage" ∨ cn = "RequirePackage")
     (hname : ∃ p ∈ (rawSrc ((takeGroups (#[.ctrl cn pos] ++ tail)
-        (takeOpt (#[.ctrl cn pos] ++ tail) 1).2 1).1.getD 0 #[])).splitOn ",",
+        (takeRawOpt (#[.ctrl cn pos] ++ tail) 1).2 1).1.getD 0 #[])).splitOn ",",
       p.trimAscii.toString = nm)
     (hne : nm.isEmpty = false) (hnative : nativePackages.contains nm = false) :
     nm ∈ localStyCandidates (#[.ctrl cn pos] ++ tail) := by
@@ -15764,7 +15753,7 @@ public theorem localStyCandidates_theme_covers (cn pre : String) (pos : Pos)
     (hup : cn ≠ "usepackage") (hrp : cn ≠ "RequirePackage")
     (hpre : themeAsking.lookup cn = some pre)
     (hname : (rawSrc ((takeGroups (#[.ctrl cn pos] ++ tail)
-      (takeOpt (#[.ctrl cn pos] ++ tail) 1).2 1).1.getD 0 #[])).trimAscii.toString = nm)
+      (takeRawOpt (#[.ctrl cn pos] ++ tail) 1).2 1).1.getD 0 #[])).trimAscii.toString = nm)
     (hne : nm.isEmpty = false) :
     pre ++ nm ∈ localStyCandidates (#[.ctrl cn pos] ++ tail) := by
   simp only [localStyCandidates, Array.toList_append, List.singleton_append]
@@ -15787,8 +15776,8 @@ private theorem localSty_theme (cn pre nm : String) (pos : Pos)
     simp
   have hs : skipSpaces #[Raw.ctrl cn pos, Raw.group #[Raw.word nm pos] pos] 1 = 1 := by
     rw [skipSpaces]; simp
-  have hopt : takeOpt #[Raw.ctrl cn pos, Raw.group #[Raw.word nm pos] pos] 1 = (none, 1) := by
-    simp [takeOpt, RawStream.takeOpt, RawStream.takeRawOpt, RawStream.skipSpaces_ofArray, hs,
+  have hopt : takeRawOpt #[Raw.ctrl cn pos, Raw.group #[Raw.word nm pos] pos] 1 = (none, 1) := by
+    simp [takeRawOpt, RawStream.takeRawOpt, RawStream.skipSpaces_ofArray, hs,
       Id.run]
   have hgrp : takeGroups #[Raw.ctrl cn pos, Raw.group #[Raw.word nm pos] pos] 1 1
       = (#[#[Raw.word nm pos]], 2) := by
@@ -15888,7 +15877,7 @@ private def resolveStyOptions (passed : List String) (raws : Array Raw) : Array 
           | _ => k
       | .ctrl "ProvidesPackage" _ | .ctrl "NeedsTeXFormat" _ =>
         let (_, k) := takeGroups raws (i + 1) 1
-        let (_, k2) := takeOpt raws k
+        let (_, k2) := takeRawOpt raws k
         i := max k2 (i + 1)
       | r =>
         out := out.push (.raw r)
@@ -15936,11 +15925,11 @@ private def spliceUse (stys : Array (String × Array Raw)) (raws : Array Raw)
     (cn : String) (pos : Pos) (i : Nat) :
     Option (Array Raw × Array (String × Option String × Pos) × Nat) := Id.run do
   if stys.isEmpty then return none
-  let (opt, j) := takeOpt raws (i + 1)
+  let (opt, j) := takeRawOpt raws (i + 1)
   let (args, k) := takeGroups raws j 1
   if args.isEmpty then return none
   let pkgs := (rawSrc (args.getD 0 #[])).splitOn "," |>.map (·.trimAscii.toString)
-  let passed := PackageImports.literalOptions (opt.getD "")
+  let passed := PackageImports.literalOptions ((opt.map rawSrc).getD "")
   let mut keep : Array String := #[]
   let mut splice : Array Raw := #[]
   let mut recs : Array (String × Option String × Pos) := #[]
@@ -15965,14 +15954,14 @@ private def spliceTheme (stys : Array (String × Array Raw)) (raws : Array Raw)
     (pre : String) (pos : Pos) (i : Nat) :
     Option (Array Raw × Array (String × Option String × Pos) × Nat) := Id.run do
   if stys.isEmpty then return none
-  let (opt, j) := takeOpt raws (i + 1)
+  let (opt, j) := takeRawOpt raws (i + 1)
   let (args, k) := takeGroups raws j 1
   if args.isEmpty then return none
   let nm := (rawSrc (args.getD 0 #[])).trimAscii.toString
   let p := pre ++ nm
   match stys.find? (·.1 == p) with
   | some (_, sraws) =>
-    let passed := PackageImports.literalOptions (opt.getD "")
+    let passed := PackageImports.literalOptions ((opt.map rawSrc).getD "")
     return some (spliceLocalPackage p passed sraws pos,
       #[(p ++ ".sty", none, pos)], k)
   | none => return none
@@ -16324,10 +16313,10 @@ private def mintedDefiners : List (String × String × String) :=
 /-- The name a minted definer's call defines, with the minted call it stands for and its lexer. -/
 private def mintedDefinition (raws : Array Raw) (start : Nat) (call suffix : String) :
     Option (String × String × String) := do
-  let (name, j) := takeOpt raws start
-  let lang := (rawSrc (← (takeGroups raws j 1).1[0]?)).trimAscii.toString
+  let (name, j) := takeRawOpt raws start
+  let lang := rawSrc (← (takeGroups raws j 1).1[0]?)
   guard !lang.isEmpty
-  return ((name.map (·.trimAscii.toString)).getD (lang ++ suffix), call, lang)
+  return ((name.map rawSrc).getD (lang ++ suffix), call, lang)
 
 /-- Marks the defaults a listing reads as read. -/
 private def markRead (ids : Array Nat) : M Unit :=
@@ -16368,7 +16357,7 @@ private def siCtrl (loc : Locale) (n : String) (pos : Pos) (raws : Array Raw)
     (start : Nat) : M (Array Raw × Nat) := do
   sayOnce ("si:" ++ n) .N0100
     s!"'\\{n}' spells its text natively: locale digits and unit symbols (siunitx)" pos
-  let (opt, j) := takeOpt raws start
+  let (opt, j) := takeRawOpt raws start
   if opt.isSome then
     sayOnce ("siopt:" ++ n) .W0110 s!"'\\{n}' options are not honoured; ignored" pos
   let word (s : String) : Raw := .word s pos
@@ -16504,9 +16493,9 @@ private def textList (loc : Locale) (st : TextSt) (raws : Array Raw)
       | _, _ => textList loc st raws (out.push (.ctrl n pos)) rest (i + 1) 0
     else if (n == "lstset" || n == "setminted" || n == "setmintedinline") &&
         !st.defined.contains n then
-      let (lang, j) := if n == "lstset" then (none, i + 1) else takeOpt raws (i + 1)
+      let (lang, j) := if n == "lstset" then (none, i + 1) else takeRawOpt raws (i + 1)
       let (args, k) := takeGroups raws j 1
-      let entries := KeyVal.items (rawSrc (args.getD 0 #[]))
+      let entries := Entries.items .keyval (args.getD 0 #[])
       if n == "setmintedinline" then
         for e in entries do
           let key := (KeyVal.entry e).1
@@ -16514,7 +16503,7 @@ private def textList (loc : Locale) (st : TextSt) (raws : Array Raw)
           if mintedDisplayKeys.contains key then
             inertParam "\\setmintedinline" key s!"\\setmintedinline\{{e}}"
               InertSite.mintedInline.inert pos
-      let lang := lang.map (·.trimAscii.toString)
+      let lang := lang.map rawSrc
       let decl := (← declareDefault st n lang pos, entries)
       let layered (layer : Array (String × DefaultLayer)) (lang : String) :=
         let old := ((layer.find? (·.1 == lang)).map (·.2)).getD #[]
