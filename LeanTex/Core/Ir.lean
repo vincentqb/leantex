@@ -925,6 +925,10 @@ public theorem pageOpening_marker_exact (n : String) (opening : PageOpening)
 /-- The inline role a description item's label rides in, first in the item's first paragraph. -/
 public def descLabelRole : String := "description-label"
 
+/-- The inline role an `\item[label]` of an itemize or enumerate rides in, first in the item's first
+paragraph, which sets in the place of the level's marker. -/
+public def itemLabelRole : String := "item-label"
+
 /-- The inline role a run-in heading rides in at its paragraph's start in a quotation or a verse,
 whose first line it opens with no indent, as `\@afterindentfalse` sets it. -/
 public def runInHeadRole : String := "run-in-head"
@@ -5452,6 +5456,23 @@ public def descLabel? (content : Array Inline) : Option (Array Inline × Array I
   match content[0]? with
   | some (Inline.role n label) =>
     if n == descLabelRole then some (label, content.extract 1 content.size) else none
+  | _ => none
+
+/-- An item's first paragraph split at the label its `\item[label]` declares: the label and the text
+after it; `none` for any other paragraph. -/
+public def itemLabel? (content : Array Inline) : Option (Array Inline × Array Inline) :=
+  match content[0]? with
+  | some (Inline.role n label) =>
+    if n == itemLabelRole then some (label, content.extract 1 content.size) else none
+  | _ => none
+
+/-- The label an item's `\item[label]` declares, read through the overlay step covering the item. -/
+public def itemLabelOf? (item : Array Block) : Option (Array Inline × Array Inline) :=
+  match item[0]? with
+  | some (Block.para c) => itemLabel? c
+  | some (Block.onSteps _ body) => match body[0]? with
+    | some (Block.para c) => itemLabel? c
+    | _ => none
   | _ => none
 
 /-- A description item's first paragraph holding its label alone, whose next block opens on the

@@ -546,6 +546,7 @@ def declSettingSuiteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   Tests.DeclSettings.titlePageChecks ref oneFace
   Tests.DeclSettings.inlineDisplayChecks ref
   Tests.ItemLabels.checks ref oneFace
+  Tests.ItemLabels.openerChecks ref oneFace
   nativeCarrierChecks ref oneFace
 
 /-- Print colour: inks, page boxes, the PDF/X-4 claim, the output profile's transforms, and what a

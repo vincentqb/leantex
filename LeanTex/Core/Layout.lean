@@ -9568,6 +9568,11 @@ public structure Spacing.Context where
   /-- The list being collected opens an item, in its label, where LaTeX's `\@noparlist` sets no
   skip above or below it. -/
   private inLabel : Bool := false
+  /-- The labels of the item whose block this walk opens on, outermost first, each with its item's
+  indent, until that block's first paragraph line takes them (`\@donoparitem`). -/
+  private labels : Array (Array Ir.Inline × Sp) := #[]
+  /-- The page's TeX `\parskip`, which a minipage restores over the list it stands in. -/
+  private pageParskip : SymGlue := Ir.texParskipDefault
   /-- The document's loaded images, which layout measures and places. -/
   private imgs : Image.Store := {}
   /-- Native-picture source openings, on the structure leaves the collector allocates. -/
@@ -9645,6 +9650,11 @@ public structure Spacing.Pending where
   kind as LaTeX counts them (`\@itemdepth`, `\@enumdepth`). -/
   private itemDepth : Nat := 0
   private enumDepth : Nat := 0
+  /-- Description lists open around the walk, which `\@listdepth` counts and `\@itemdepth` does not. -/
+  private descDepth : Nat := 0
+  /-- The lists and quotations open where the innermost minipage opened, which sets `\@listdepth`
+  back to zero (latex.ltx `\@iiiminipage`'s `\@mplistdepth`). -/
+  private depthAt : Nat := 0
   /-- The marker of the list item a disclosure opens, until its summary line takes it. -/
   private itemMarker : Option (Array Ir.Inline) := none
   /-- The markers of the items a list opens in, each with its item's indent, until that list's first
@@ -9727,6 +9737,10 @@ private def Spacing.Pending.leafRange (a : Acc) (n : Nat) : Acc × Option Nat :=
 /-- The markers waiting for a list's first line (`labelRow`), taken out of the walk. -/
 private def Spacing.Pending.takeOuter (a : Acc) : Array (Array Ir.Inline × Sp) × Acc :=
   (a.outerMarkers, { a with outerMarkers := #[] })
+
+/-- LaTeX's `\@listdepth` around the walk: every list and quotation open. -/
+private def Spacing.Pending.listDepth (a : Acc) : Nat :=
+  a.itemDepth + a.enumDepth + a.descDepth + a.quoteDepth - a.depthAt
 
 /-- A declared length with its rubber, all three parts kept. -/
 private def Spacing.Context.resolve (r : Rd) (g : SymGlue) : Glue :=
@@ -9847,7 +9861,7 @@ private def Spacing.Context.trivOuter (r : Rd) (a : Acc) : Ir.TrivIn :=
 /-- The `\@topsepadd` a trivlist opening here spends: beamer's squeezed `\topsep` in a squeezed
 frame's list, else the `\topsep` in force, with its `\partopsep` where it opens in vertical mode. -/
 private def Spacing.Context.trivAdd (r : Rd) (a : Acc) : Glue :=
-  if r.squeeze && a.itemDepth + a.enumDepth + a.quoteDepth > 0 then r.resolve Ir.squeezedTopsep
+  if r.squeeze && a.listDepth > 0 then r.resolve Ir.squeezedTopsep
   else r.resolve ((r.trivOuter a).add !r.inPar)
 
 /-- A trivlist's space above it (`openSpace`) or below it (`listSpace`), the web's and beamer's with
@@ -10103,6 +10117,7 @@ private def collectPara (r : Rd) (a : Acc)
     (inlines : Array Inline) (indent : Sp) (center : Bool) (size : Sp)
     (baseStyle : TextStyle := {})
     (marker : Option (Array Inline) := none)
+    (markerLeaf : Option Nat := none)
     (markerIndent : Option Sp := none)
     (markerLeft : Option Sp := none)
     (outerMarkers : Array (Array Inline × Sp) := #[])
@@ -10209,16 +10224,20 @@ private def collectPara (r : Rd) (a : Acc)
       out := out.push (markIdx, { lines := lines, height := hgt, depth := depth })
     return (out, ds, cache)
   -- A marker is content set as its own unjustified line; its diagnostics ride with the paragraph's.
-  let shape (m : Array Inline) (cache : Std.HashMap String (Array Nat)) :=
+  let shape (m : Array Inline) (cache : Std.HashMap String (Array Nat))
+      (ctr : LeafCtr := .fixed .label) :=
     let (mi, mds, cache, _, _) :=
       itemsOfInlines r.pats size r.xHeight r.fs { color := a.fg, ground := a.ground } m cache
-        (.fixed .label) r.imgs measure r.geom.textHeight (ladder := r.geom.scale)
+        ctr r.imgs measure r.geom.textHeight (ladder := r.geom.scale)
         (step := r.step) (steps := r.steps)
     let (segs, w, _, _) := setLine mi (lineStart mi 0) (mi.size - 1) r.geom.textWidth false
     ((segs, w), mds, cache)
   let (markerSegs, ds, cache) := match marker with
     | some m =>
-      let (inner, mds, cache) := shape m cache
+      -- A marker the source declares sets its own leaves.
+      let (inner, mds, cache) := shape m cache (match markerLeaf with
+        | some k => LeafCtr.of (some k) (Struct.leafCountInlines m) m
+        | none => .fixed .label)
       let (outer, ds, cache) := Id.run do
         let mut row : Array (Array Seg × Sp × Sp) := #[]
         let mut ds := ds ++ mds
@@ -10229,7 +10248,7 @@ private def collectPara (r : Rd) (a : Acc)
           ds := ds ++ mds
           cache := c
         return (row, ds, cache)
-      (some (labelRow outer.toList inner indent (labelSep r.geom)), ds, cache)
+      (some (labelRow outer.toList inner (markerIndent.getD indent) (labelSep r.geom)), ds, cache)
     | none => (none, ds, cache)
   -- A hanging or first-line indent opens the items with its kern, and a restarting hang stands
   -- after each forced break but the last; item-indexed data moves with them.
@@ -11503,8 +11522,15 @@ private def collectParaBlock (r : Rd) (a : Acc) (content : Array Inline) (indent
     { a with ops := a.ops ++ (Ir.labelKeys content).map (Op.anchor ∘ Ir.labelAnchor) }
   else
     let (a, leaf) := a.leafRange (Struct.leafCountInlines content)
-    collectPara r a content indent false r.geom.fontSize
-      (leaf := leaf) (span := Struct.leafCountInlines content)
+    match r.labels.back? with
+    | some (m, i) =>
+      -- Beside a flushed line the labels stand at its start, as the centred ones do.
+      collectPara { r with labels := #[] } a content indent false r.geom.fontSize (marker := some m)
+        (markerIndent := if r.geom.flushRight then none else some i) (outerMarkers := r.labels.pop)
+        (leaf := leaf) (span := Struct.leafCountInlines content)
+    | none =>
+      collectPara r a content indent false r.geom.fontSize
+        (leaf := leaf) (span := Struct.leafCountInlines content)
 
 private def collectEquation (r : Rd) (a : Acc) (num : Array Inline) (content : Array Inline) (indent : Sp) : Acc := Id.run do
   -- A display sets its paragraph, which clears TeX's `\@nobreak`.
@@ -12463,8 +12489,10 @@ private def collectVerbatim (r : Rd) (a : Acc) (covered : Option Ir.Color) (s : 
       { a.pushOp (.regionOpen (.surface (r.shown g) 0 (r.geom.hmargin + indent) avail false))
         with ground := some g, fg := Listing.groundInk a.pal g a.fg }
     | none => a
-  let done := collectPara { r with pats := none, geom := { r.geom with justify := false } }
+  let done := collectPara { r with pats := none, geom := { r.geom with justify := false }, labels := #[] }
     a inner indent false size
+    (marker := r.labels.back?.map (·.1)) (markerIndent := r.labels.back?.map (·.2))
+    (outerMarkers := r.labels.pop)
     (baseStyle := { leading := some (.lit { width := .ofSp leading }) })
     (leaf := leaf) (span := 1) (literalLines := true)
     (strut := if spec.lineStrut then some leading else none)
@@ -12481,7 +12509,7 @@ private def collectListing (r : Rd) (a : Acc) (covered : Option Ir.Color) (s : S
     let (ri, a, g) := a.trivOpen r
     (collectVerbatim ri a covered s spec indent).trivClose r g
   | .list =>
-    let lv := a.itemDepth + a.enumDepth + a.quoteDepth + 1
+    let lv := a.listDepth + 1
     match Ir.listSkips r.lists r.geom.fontSize lv with
     | some sk =>
       let g := (r.resolve sk.topsep).add (r.resolve (Ir.partopsepFor r.lists r.geom.fontSize lv a.tokens))
@@ -13049,18 +13077,63 @@ private def Spacing.Context.coveredMarker (r : Rd) (a : Acc) (marker : Array Inl
   | some cover => Ir.coverInlines cover a.fg marker
   | none => marker
 
+/-- The content of a line an item's label sets alone: an empty box, as `\@item`'s `\everypar`
+starts a paragraph for nothing but its labels. -/
+private def labelOnly : Array Inline := #[.hspace (.lit {}) true]
+
 /-- An item's leading paragraph: a description's label runs in at the outer margin, as latex.ltx's
 `description` sets it, else the marker opens it. -/
 private def collectItemLead (r : Rd) (a : Acc) (content : Array Inline) (indent : Sp)
     (marker : Array Inline) (hang : Sp) (outer : Array (Array Inline × Sp)) : Acc :=
   let (a', leaf) := a.leafRange (Struct.leafCountInlines content)
-  if (Ir.descLabel? content).isSome then
+  -- An `\item[label]`'s label sets in the marker's place, its leaves first.
+  if let some (label, rest) := Ir.itemLabel? content then
+    let n := Struct.leafCountInlines label
+    let m := Struct.leafCountInlines rest
+    collectPara r a' (if rest.isEmpty then labelOnly else rest) indent false r.geom.fontSize
+      (marker := some (r.coveredMarker a label)) (markerLeaf := if n == 0 then none else leaf)
+      (outerMarkers := outer) (leaf := if m == 0 then none else leaf.map (· + n)) (span := m)
+  else if (Ir.descLabel? content).isSome then
     collectPara r a' content (indent - hang) false r.geom.fontSize
+      (marker := outer.back?.map (·.1)) (markerIndent := outer.back?.map (·.2))
+      (outerMarkers := outer.pop)
       (leaf := leaf) (span := Struct.leafCountInlines content) (hangIndent := hang)
   else
     collectPara r a' content indent false r.geom.fontSize
       (marker := some (r.coveredMarker a marker)) (outerMarkers := outer) (leaf := leaf)
       (span := Struct.leafCountInlines content)
+
+/-- How a block meets an item's labels waiting for its first line: it sets them on its own first
+line or passes them in, it lets them wait for the next block, or they first set a line of their own. -/
+private inductive LabelMeet where
+  | carries
+  | waits
+  | settles
+
+private def labelMeet : Block → LabelMeet
+  | .para c => if Ir.anchorsOnly c then .waits else .carries
+  | .spaced _ body => if body.isEmpty then .waits else .carries
+  | .center body => if (Ir.displayContent? body).isSome then .settles else .carries
+  | .verbatim .. | .ragged .. | .quote .. | .link .. | .list .. | .columns .. => .carries
+  | b@(.role ..) => if (Ir.displayPicture? b).isSome then .settles else .carries
+  | _ => .settles
+
+/-- The line an item's waiting labels set alone, before a block that sets none of its own. -/
+private def Spacing.Context.settleLabels (r : Rd) (a : Acc) (indent : Sp) : Acc :=
+  match r.labels.back? with
+  | some (m, i) =>
+    (collectPara { r with labels := #[] } a labelOnly indent false r.geom.fontSize (marker := some m)
+      (markerIndent := some i) (outerMarkers := r.labels.pop)).wantGap
+  | none => a
+
+/-- The reader and walk where `blk` meets an item's waiting labels: a list takes them as the markers
+of the items it opens in. -/
+private def Spacing.Context.meetLabels (r : Rd) (a : Acc) (blk : Block) (indent : Sp) : Rd × Acc :=
+  if r.labels.isEmpty then (r, a) else
+  match blk, labelMeet blk with
+  | .list .., _ => ({ r with labels := #[] }, { a with outerMarkers := r.labels })
+  | _, .settles => ({ r with labels := #[] }, r.settleLabels a indent)
+  | _, _ => (r, a)
 
 /-- The reader inside `blk`: boxed where the block is a box (`Ir.Block.listScope`). -/
 private def Spacing.Context.within (r : Rd) (blk : Block) : Rd :=
@@ -13099,9 +13172,13 @@ private def collectBlockList (r : Rd) (a : Acc)
     -- Until a frame's body sets its first line no peer gap is owed (`Spacing.Pending.frameTop`).
     let a := if first || a.frameTop then a else a.wantGap
     let a := if ruleBlock blk then { a with declaredSkip := false } else a
-    let a := collectBlock r a blk indent
+    let (rb, a) := r.meetLabels a blk indent
+    let a := collectBlock rb a blk indent
     let a := if prevRule then { a with declaredSkip := false } else a
-    collectBlockList r a rest indent false (ruleBlock blk)
+    let waits := match labelMeet blk with
+      | .waits => true
+      | _ => false
+    collectBlockList (if waits then r else { r with labels := #[] }) a rest indent false (ruleBlock blk)
 
 /-- An inset abstract's body as `collectBlockList` walks it: its paragraphs `inset` from both
 sides through `ri`, and every other block at its own margins, as `\@trivlist` resets `\leftskip`. -/
@@ -13165,25 +13242,31 @@ private def collectQuoteList (r : Rd) (a : Acc) (kind : Ir.QuoteKind) (blocks : 
     else
     let a := if first || a.frameTop || brk then a else a.wantGap
     let a := if ruleBlock blk then { a with declaredSkip := false } else a
-    let a := if first && blk.opensInLabel then collectBlock { r with inLabel := true } a blk indent
+    let (rb, a) := r.meetLabels a blk indent
+    let a := if first && blk.opensInLabel then collectBlock { rb with inLabel := true } a blk indent
       else match kind, blk with
       | .quotation, .para content =>
         let (a, leaf) := a.leafRange (Struct.leafCountInlines content)
-        collectPara r a content indent false r.geom.fontSize (leaf := leaf)
-          (span := Struct.leafCountInlines content)
+        collectPara { rb with labels := #[] } a content indent false r.geom.fontSize (leaf := leaf)
+          (marker := rb.labels.back?.map (·.1)) (markerIndent := rb.labels.back?.map (·.2))
+          (outerMarkers := rb.labels.pop) (span := Struct.leafCountInlines content)
           (firstIndent := if cont || Ir.opensRunIn content then 0
             else (r.resolve { width := r.quotationIndent }).width)
       | .verse, .para content =>
         let (a, leaf) := a.leafRange (Struct.leafCountInlines content)
-        collectPara r a content indent false r.geom.fontSize (leaf := leaf)
-          (span := Struct.leafCountInlines content)
+        collectPara { rb with labels := #[] } a content indent false r.geom.fontSize (leaf := leaf)
+          (marker := rb.labels.back?.map (·.1)) (markerIndent := rb.labels.back?.map (·.2))
+          (outerMarkers := rb.labels.pop) (span := Struct.leafCountInlines content)
           (hangIndent := (r.resolve { width := Ir.verseHang }).width) (hangLines := true)
           (hangFirst := !(cont || Ir.opensRunIn content))
-      | .verse, _ => collectBlock r a blk (indent + (r.resolve { width := Ir.verseHang }).width)
-      | _, _ => collectBlock r a blk indent
+      | .verse, _ => collectBlock rb a blk (indent + (r.resolve { width := Ir.verseHang }).width)
+      | _, _ => collectBlock rb a blk indent
     let a := if prevRule then { a with declaredSkip := false } else a
-    collectQuoteList r a kind rest indent false (ruleBlock blk)
-      (if blk.isSkip then cont else blk.continuesPar) (blk.isSkip && brk)
+    let waits := match labelMeet blk with
+      | .waits => true
+      | _ => false
+    collectQuoteList (if waits then r else { r with labels := #[] }) a kind rest indent false
+      (ruleBlock blk) (if blk.isSkip then cont else blk.continuesPar) (blk.isSkip && brk)
 
 /-- The title frame's body when the title page declares slots: each
 slot set as one box from the shared start and pinned where declared. -/
@@ -13241,12 +13324,22 @@ private def collectItem (r : Rd) (a : Acc)
     (item : List Block) (indent : Sp) (first : Bool) (marker : Array Inline)
     (hang : Sp) (labelled : Bool := false) : Acc :=
   match item with
-  | [] => a
+  -- An empty item sets its label on a line of its own, as `\item\item` does.
+  | [] => if first then collectItemLead r a.takeOuter.2 labelOnly indent marker hang a.takeOuter.1 else a
   | blk :: rest =>
     -- A label anchor opening an item writes no paragraph, so the marker waits for what follows it.
     if statefulBlock blk || (first && !rest.isEmpty && walkTransparent blk) then
       collectItem r (collectBlock r a blk indent) rest indent first marker hang labelled
     else if emptyStep blk then collectItem r a rest indent first marker hang labelled
+    else
+    -- An `\item[label]` alone before the item's first block is that block's marker.
+    let lone : Option (Array Inline × Array Inline) := match first, blk, rest with
+      | true, .para content, _ :: _ => (Ir.itemLabel? content).filter (·.2.all Ir.anchorInline)
+      | _, _, _ => none
+    if let some (label, more) := lone then
+      let (a, _) := a.leafRange (Struct.leafCountInlines label)
+      let a := { a with ops := a.ops ++ (Ir.labelKeys more).map (Op.anchor ∘ Ir.labelAnchor) }
+      collectItem r a rest indent true label hang labelled
     else
     let a := if first || (labelled && blk.opensInLabel) then a else a.wantGap
     -- The markers of the items this item's list opens in stand only on its first block's line.
@@ -13258,14 +13351,21 @@ private def collectItem (r : Rd) (a : Acc)
       | .disclosure summary expanded body, true =>
         collectBlock r { a with itemMarker := some (r.coveredMarker a marker) }
           (.disclosure summary expanded body) indent
-      -- A list opening its item stands in its label, which keeps this item's marker on its line.
+      -- A block opening its item in its label hands the item's marker, with the markers of the
+      -- items its list opens in, to its first paragraph line (`\@donoparitem`).
       | .list ordered spacing items, true =>
         { collectBlock { r with inLabel := true }
             { a with outerMarkers := outer.push (r.coveredMarker a marker, indent) }
             (.list ordered spacing items) indent with
           outerMarkers := #[] }
-      | b, first =>
-        collectBlock (if (first || labelled) && b.opensInLabel then { r with inLabel := true } else r)
+      | b, true =>
+        if b.opensInLabel then
+          collectBlock { r with inLabel := true, labels := outer.push (r.coveredMarker a marker, indent) }
+            a b indent
+        -- Any other block follows the line the label sets on its own, as `\@item`'s paragraph.
+        else collectBlock r (collectItemLead r a labelOnly indent marker hang outer).wantGap b indent
+      | b, false =>
+        collectBlock (if labelled && b.opensInLabel then { r with inLabel := true } else r)
           a b indent
     -- A description label alone opens the item's next block in its label.
     collectItem r a rest indent false marker hang
@@ -13287,7 +13387,8 @@ private def collectItemStep (r : Rd) (a : Acc) (spec : Ir.OverlaySpec) (body : A
 
 private def collectItems (r : Rd) (a : Acc)
     (items : List (Array Block)) (indent : Sp) (st : Ir.ElementStyle)
-    (ordered : Bool) (level : Nat) (idx : Nat) (itemsep : Option Glue) (hang : Sp) : Acc :=
+    (ordered : Bool) (level : Nat) (idx : Nat) (itemsep : Option Glue) (hang : Sp)
+    (num : Nat := idx) : Acc :=
   match items with
   | [] => a
   | item :: rest =>
@@ -13302,10 +13403,13 @@ private def collectItems (r : Rd) (a : Acc)
       (r.fs.body.gid c).isSome || (r.fs.fallbackFor c).isSome
     -- A level's declared style marks it, else its redefined class label, else the class's own.
     let label := if ordered then none else (r.itemLabels.find? (·.1 == level)).map (·.2)
-    let marker := st.marker.getD (label.getD (ListMark.marker ordered level idx covered))
+    let marker := st.marker.getD (label.getD (ListMark.marker ordered level num covered))
     -- The markers of the items this list opens in stand on its first item's line, or on none.
     let a := { collectItem r a item.toList indent true marker hang with outerMarkers := #[] }
+    -- An `\item[label]` steps no counter (latex.ltx `\@item`'s `\if@noitemarg`).
+    let labelled := (Ir.itemLabelOf? item).isSome
     collectItems r a rest indent st ordered level (idx + 1) itemsep hang
+      (if labelled then num else num + 1)
 
 /-- Centered content: paragraphs center, anything else nests unchanged. -/
 private def collectCentered (r : Rd) (a : Acc)
@@ -13326,12 +13430,15 @@ private def collectCentered (r : Rd) (a : Acc)
     collectCentered r (if rest.isEmpty then a else a.wantGap) rest indent false
   | blk :: rest =>
     let a := if ruleBlock blk then { a with declaredSkip := false } else a
+    let (r, a) := r.meetLabels a blk indent
     let a := match blk with
       | .para content =>
         if Ir.anchorsOnly content then collectParaBlock r a content indent else
         let (a, leaf) := a.leafRange (Struct.leafCountInlines content)
-        collectPara r a content indent true r.geom.fontSize
-          (leaf := leaf) (span := Struct.leafCountInlines content)
+        -- A label a centred line takes stands beside its start, as the centred `\@labels` box does.
+        collectPara { r with labels := #[] } a content indent true r.geom.fontSize
+          (marker := r.labels.back?.map (·.1)) (outerMarkers := r.labels.pop) (leaf := leaf)
+          (span := Struct.leafCountInlines content)
       | .section 0 _ _ title => collectTitle r a title indent true
       | .picture pic => collectPicture r a pic indent true
       -- A table under `\centering` centres as one box; its cells keep their own alignment.
@@ -13340,8 +13447,11 @@ private def collectCentered (r : Rd) (a : Acc)
       | .columns _ => collectBlock { r with centreBoxes := true } a blk indent
       | _ => collectBlock r a blk indent
     let a := if prevRule then { a with declaredSkip := false } else a
-    collectCentered r (if rest.isEmpty || statefulBlock blk then a else a.wantGap)
-      rest indent (ruleBlock blk)
+    let waits := match labelMeet blk with
+      | .waits => true
+      | _ => false
+    collectCentered (if statefulBlock blk || waits then r else { r with labels := #[] })
+      (if rest.isEmpty || statefulBlock blk then a else a.wantGap) rest indent (ruleBlock blk)
 
 /-- One column after another, each against its own measure
 at its own offset, a `colNext` marker between two. -/
@@ -13351,9 +13461,10 @@ private def collectColumns (r : Rd) (a : Acc)
   | [] => a
   | (w, body) :: rest =>
     let wi := (w.resolve total).getD shareW
-    let a := a.absorb (collectBlocks r (a.nested (x0 + wi)) body x0)
+    let sub := { a.nested (x0 + wi) with depthAt := a.listDepth + a.depthAt }
+    let a := a.absorb (collectBlocks r sub body x0)
     let a := if rest.isEmpty then a else a.pushOp .colNext
-    collectColumns r a rest (x0 + wi + gutter) shareW gutter total
+    collectColumns { r with labels := #[] } a rest (x0 + wi + gutter) shareW gutter total
 
 /-- A standout frame's content: paragraphs centre and
 set Large bold in the page's inverted text colour. -/
@@ -13394,8 +13505,10 @@ private def collectBlock (r : Rd) (a : Acc)
   | .section level _ num title => collectSection r a level num title indent
   | .list ordered spacing items =>
     let (r, a) := r.takeLabel a
+    -- A description is a list `\@listdepth` counts and `\@itemdepth` does not.
+    let desc := Ir.listIsDesc ordered items
     -- Past the class's four levels, where LaTeX errors, the fourth level is reused and named.
-    let depth := (if ordered then a.enumDepth else a.itemDepth) + 1
+    let depth := (if ordered then a.enumDepth else if desc then a.descDepth else a.itemDepth) + 1
     let level := min depth 4
     let a := if depth > 4 then { a with diags := a.diags.push (
         Diag.of .W0010
@@ -13408,7 +13521,7 @@ private def collectBlock (r : Rd) (a : Acc)
       else (r.styles.find? s!"{element}{level}").getD (r.style element)
     -- The level's spacing, LaTeX's `\@list⟨n⟩`, at the depth `\@listdepth` counts, under what the
     -- list declares (`Ir.listSpacing`).
-    let lv := a.itemDepth + a.enumDepth + a.quoteDepth + 1
+    let lv := a.listDepth + 1
     let sp := Ir.listSpacing r.lists r.geom.fontSize lv a.tokens spacing
     let sk := sp.map (·.1)
     -- `\@trivlist`'s `\@topsepadd`: `\topsep`, plus `\partopsep` where the list opens a paragraph.
@@ -13423,7 +13536,8 @@ private def collectBlock (r : Rd) (a : Acc)
       | none, none => a
     let step := (st.indent.map fun g => (r.resolve g).width).getD (r.leftMargin lv a.tokens)
     let indent := indent + step
-    let a := if ordered then { a with enumDepth := depth } else { a with itemDepth := depth }
+    let a := if ordered then { a with enumDepth := depth }
+      else if desc then { a with descDepth := depth } else { a with itemDepth := depth }
     let ri := match sp with
       | some (s, pts) =>
         { r with inPar := false, inLabel := false
@@ -13435,7 +13549,7 @@ private def collectBlock (r : Rd) (a : Acc)
     let a := collectItems ri a items.toList indent st ordered level 1
       (sk.map fun s => if r.squeeze then {} else r.resolve s.itemsep) step
     let a := if ordered then { a with enumDepth := depth - 1 }
-      else { a with itemDepth := depth - 1 }
+      else if desc then { a with descDepth := depth - 1 } else { a with itemDepth := depth - 1 }
     match st.before, top with
     | some g, _ => a.addvspace (r.resolve g)
     | none, some t =>
@@ -13472,7 +13586,7 @@ private def collectBlock (r : Rd) (a : Acc)
     else if n == Ir.inParagraphRole then collectBlocks { r with inPar := true } a body indent
     -- A theorem-like block (`Ir.thmSkips`): its own space above, the `\topsep` in force below.
     else if let some k := Ir.thmSpaceOf? n then
-      match Ir.thmSkips r.lists r.geom.fontSize (max 1 (a.itemDepth + a.enumDepth)) a.tokens k
+      match Ir.thmSkips r.lists r.geom.fontSize (max 1 (a.itemDepth + a.enumDepth + a.descDepth)) a.tokens k
           (!r.inPar) with
       | some sk =>
         let above := r.resolve sk.above
@@ -13481,7 +13595,7 @@ private def collectBlock (r : Rd) (a : Acc)
         (collectBlocks { r with inPar := false } a body indent).listSpace (r.resolve sk.below)
       | none =>
         let g := r.resolve (Ir.trivlistSkipFor r.lists a.tokens r.geom.fontSize
-            (a.itemDepth + a.enumDepth + a.quoteDepth))
+            (a.listDepth))
         (collectBlocks r (a.trivSpace g) body indent).trivSpace g
     else if n == Ir.pageAnchorRole then { a with anchorAt := some a.owed.size }
     else if n == Ir.noInterlineRole then { a with ops := a.ops.push .noInterline }
@@ -13504,7 +13618,7 @@ private def collectBlock (r : Rd) (a : Acc)
     -- A quotation is classes.dtx's `\list{}{\rightmargin\leftmargin}`, one `\@listdepth` level,
     -- spaced as a list under what its environment and its scope set (`Ir.listSpacing`).
     let saved := a.measure
-    let lv := a.itemDepth + a.enumDepth + a.quoteDepth + 1
+    let lv := a.listDepth + 1
     let lm := r.leftMargin lv a.tokens
     let narrow := some ((a.measure.getD r.geom.textWidth) - lm)
     match Ir.quoteSpacing r.lists r.geom.fontSize lv a.tokens q with
@@ -13527,7 +13641,7 @@ private def collectBlock (r : Rd) (a : Acc)
       { (if r.inLabel then sub else sub.listSpace g) with measure := saved, quoteDepth := a.quoteDepth }
     | none =>
       let g := r.resolve (Ir.trivlistSkipFor r.lists a.tokens r.geom.fontSize
-          (a.itemDepth + a.enumDepth + a.quoteDepth))
+          (a.listDepth))
       let sub := collectBlocks { r with inPar := false }
         { a.trivSpace g with measure := narrow, quoteDepth := a.quoteDepth + 1 } body (indent + lm)
       { sub.trivSpace g with measure := saved, quoteDepth := a.quoteDepth }
@@ -13615,7 +13729,7 @@ private def collectBlock (r : Rd) (a : Acc)
     match r.abstractForm with
     | .quotation =>
       let saved := a.measure
-      let lm := r.leftMargin (a.itemDepth + a.enumDepth + a.quoteDepth + 1) a.tokens
+      let lm := r.leftMargin (a.listDepth + 1) a.tokens
       let sub := { a with
         measure := some ((a.measure.getD r.geom.textWidth) - lm), quoteDepth := a.quoteDepth + 1 }
       { collectBlocks rs sub body (indent + lm) with measure := saved, quoteDepth := a.quoteDepth }
@@ -13643,9 +13757,10 @@ private def collectBlock (r : Rd) (a : Acc)
       else if r.geom.flushRight then .right else .left
     let off := if cols.size == 1 && unspecified == 0 then side.boxOffset rem else 0
     let a := { a with ops := a.ops.push (.colOpen (cols.map (·.1.pos))) }
-    -- `\@parboxrestore` (latex.ltx) zeroes the side skips inside every minipage and `\parbox`.
+    -- `\@parboxrestore` (latex.ltx) zeroes the side skips inside every minipage, and the page's own
+    -- `\parskip` stands there over a list's `\parsep`.
     let inner := { (r.within blk) with
-      centreBoxes := false, geom := { r.geom with flushRight := false } }
+      centreBoxes := false, geom := { r.geom with flushRight := false, texParskip := r.pageParskip } }
     let a := collectColumns inner a cols.toList (indent + off) shareW gutter total
     { a with ops := a.ops.push .colClose }
   | .bibliography _ _ items => collectBibliography r a items indent
@@ -13705,7 +13820,7 @@ private def collectBlock (r : Rd) (a : Acc)
     -- The declared caption is marked as content, so the number prefix is the caption's `.block`.
     let caption := Ir.numberedCaption r.locale kind num (markContent caption)
     let (floatSep, floatTriv) := Ir.floatSpaceFor r.lists a.tokens r.geom.fontSize
-      (a.itemDepth + a.enumDepth + a.quoteDepth)
+      (a.listDepth)
     let floatSep := r.resolve floatSep
     let skip (s : Ir.CaptionSkip) : Glue :=
       r.resolve ((s.find? a.tokens kind).getD (s.defaultFor r.lists r.geom.fontSize))
@@ -13716,10 +13831,13 @@ private def collectBlock (r : Rd) (a : Acc)
     let rf := { (r.within blk) with inFloat := true }
     -- In beamer's lineage the text-side gaps are the trivlist's (`Ir.floatSpaceFor`).
     let plan := floatPlan capAbove (!caption.isEmpty) floatSep capSep farSep
+    -- The caption's skip after the object adds to a trivlist's close there, as `\@makecaption`'s
+    -- `\vskip\abovecaptionskip` does.
     let a := plan.zipIdx.foldl
       (fun a (slot, i) => match slot with
         | .gap g =>
-          if floatTriv && (i == 0 || i + 1 == plan.length) then a.trivSpace g else a.addvspace g
+          if floatTriv && (i == 0 || i + 1 == plan.length) then a.trivSpace g
+          else if !capAbove && i == 2 && !caption.isEmpty then a.vskip g else a.addvspace g
         | .caption => collectFloatCaption r rf a kind caption capLeaf capSpan indent
         | .object => collectCentered rf a body.toList indent false) a
     { a.pushOp .floatClose with noBreakNext := held }
@@ -19689,7 +19807,7 @@ private theorem sourceLeafSum_ofDoc (doc : Doc) :
     blocksRaw_leafCount doc.body.toList #[]
 
 private theorem collectParaBlock_plain (r : Rd) (a : Acc) (xs : Array Inline)
-    (indent : Sp) (hp : PlainInlines xs) :
+    (indent : Sp) (hp : PlainInlines xs) (hl : r.labels = #[]) :
     collectParaBlock r a xs indent =
       collectPara r (a.leafRange (Struct.leafCountInlines xs)).1 xs indent false r.geom.fontSize
         (leaf := (a.leafRange (Struct.leafCountInlines xs)).2) (span := Struct.leafCountInlines xs) := by
@@ -19703,21 +19821,21 @@ private theorem collectParaBlock_plain (r : Rd) (a : Acc) (xs : Array Inline)
       obtain ⟨s, rfl⟩ := hp x hx
       have hh := (Array.all_eq_true_iff_forall_mem.mp hall) (.text s) hx
       simp [anchorInline] at hh
-  · rfl
+  · simp [hl]
 
 private theorem collectParaBlock_leafNext (r : Rd) (a : Acc) (xs : Array Inline)
-    (indent : Sp) (hp : PlainInlines xs) :
+    (indent : Sp) (hp : PlainInlines xs) (hl : r.labels = #[]) :
     (collectParaBlock r a xs indent).leafNext = a.leafNext + xs.size := by
-  rw [collectParaBlock_plain r a xs indent hp]
+  rw [collectParaBlock_plain r a xs indent hp hl]
   simp only [Spacing.Pending.leafRange]
   rw [collectPara_leafNext]
   rw [plainInlines_leafCount xs hp]
 
 private theorem sourceBound_collectParaBlock {n : Nat} (r : Rd) (a : Acc)
     (xs : Array Inline) (indent : Sp) (ha : a.SourceBound n) (hp : PlainInlines xs)
-    (hn : a.leafNext + xs.size ≤ n) :
+    (hn : a.leafNext + xs.size ≤ n) (hl : r.labels = #[]) :
     (collectParaBlock r a xs indent).SourceBound n := by
-  rw [collectParaBlock_plain r a xs indent hp]
+  rw [collectParaBlock_plain r a xs indent hp hl]
   simp only [Spacing.Pending.leafRange]
   apply sourceBound_collectPara
   · exact ha
@@ -19732,13 +19850,13 @@ private theorem sourceBound_collectParaBlock {n : Nat} (r : Rd) (a : Acc)
 private theorem collectDocBlock_leafNext (rd : Rd) (doc : Doc)
     (frameSpans : Array (Nat × Span)) (nums : Array (Option Nat))
     (i : Nat) (hi : i < doc.body.size) (st : Acc × Bool) (xs : Array Inline)
-    (hb : doc.body[i] = .para xs) (hp : PlainInlines xs) :
+    (hb : doc.body[i] = .para xs) (hp : PlainInlines xs) (hl : rd.labels = #[]) :
     (collectDocBlock rd doc frameSpans nums i hi st).1.leafNext =
       st.1.leafNext + Struct.leafCountBlocks #[doc.body[i]] := by
   simp only [collectDocBlock, hb, statefulBlock, Ir.pageMarkerBlock,
     Bool.or_false, Bool.and_false, Id.run]
   dsimp only [pure, Id]
-  rw [collectBlock, collectParaBlock_leafNext _ _ _ _ hp]
+  rw [collectBlock, collectParaBlock_leafNext _ _ _ _ hp hl]
   simp only [sourceLeafSum_para, plainInlines_leafCount xs hp]
   split <;> rfl
 
@@ -19747,7 +19865,7 @@ private theorem sourceBound_collectDocBlock {n : Nat} (rd : Rd) (doc : Doc)
     (i : Nat) (hi : i < doc.body.size) (st : Acc × Bool) (xs : Array Inline)
     (hb : doc.body[i] = .para xs) (hp : PlainInlines xs)
     (ha : st.1.SourceBound n)
-    (hn : st.1.leafNext + Struct.leafCountBlocks #[doc.body[i]] ≤ n) :
+    (hn : st.1.leafNext + Struct.leafCountBlocks #[doc.body[i]] ≤ n) (hl : rd.labels = #[]) :
     (collectDocBlock rd doc frameSpans nums i hi st).1.SourceBound n := by
   simp only [collectDocBlock, hb, statefulBlock, Ir.pageMarkerBlock,
     Bool.or_false, Bool.and_false, Id.run]
@@ -19757,6 +19875,7 @@ private theorem sourceBound_collectDocBlock {n : Nat} (rd : Rd) (doc : Doc)
   · split <;> exact ha
   · exact hp
   · split <;> simpa only [hb, sourceLeafSum_para, plainInlines_leafCount xs hp, Spacing.Pending.wantGap] using hn
+  · exact hl
 
 private theorem sourceRange_progress {β : Type}
     (P : Nat → β → Prop) (lo len : Nat)
@@ -19781,7 +19900,7 @@ private theorem collectDocBody_source {n : Nat} (rd : Rd) (doc : Doc)
     (frameSpans : Array (Nat × Span)) (acc0 : Acc)
     (hp : ∀ b ∈ doc.body, ∃ xs, b = .para xs ∧ PlainInlines xs)
     (ha : acc0.SourceBound n)
-    (hn : acc0.leafNext + sourceLeafSum doc.body.toList ≤ n) :
+    (hn : acc0.leafNext + sourceLeafSum doc.body.toList ≤ n) (hl : rd.labels = #[]) :
     (collectDocBody rd doc frameSpans acc0).SourceBound n ∧
       (collectDocBody rd doc frameSpans acc0).leafNext =
         acc0.leafNext + sourceLeafSum doc.body.toList := by
@@ -19803,8 +19922,8 @@ private theorem collectDocBody_source {n : Nat} (rd : Rd) (doc : Doc)
       omega
     constructor
     · exact sourceBound_collectDocBlock rd doc frameSpans doc.frameNumbers i hi st
-        xs hb hx hs.1 hbnd
-    · rw [collectDocBlock_leafNext _ _ _ _ _ _ _ _ hb hx, hs.2, hprefix]
+        xs hb hx hs.1 hbnd hl
+    · rw [collectDocBlock_leafNext _ _ _ _ _ _ _ _ hb hx hl, hs.2, hprefix]
       omega
   unfold collectDocBody
   simp only [Std.Legacy.Range.forIn'_eq_forIn'_range', Std.Legacy.Range.size,
@@ -20018,14 +20137,14 @@ private theorem collectPara_census (r : Rd) (a : Acc)
 
 private theorem collectParaBlock_census (r : Rd) (a : Acc) (xs : Array Inline)
     (indent : Sp) (hp : PlainInlines xs) (hr : (Spacing.Context.pats r) = none) (ha : a.Prose)
-    (pick : Option Nat → Bool → Bool) :
+    (pick : Option Nat → Bool → Bool) (hl : r.labels = #[]) :
     let out := collectParaBlock r a xs indent
     out.Prose ∧ (out.Clean → a.Clean ∧
       inkCensus (out.census pick) = inkCensus (a.census pick) ++
         if pick (if xs.size == 0 then none else some (Spacing.Pending.leafNext a)) (!(Spacing.Context.inFloat r))
         then inkCensus (Ir.plainText xs).toList else []) := by
   dsimp only
-  rw [collectParaBlock_plain r a xs indent hp]
+  rw [collectParaBlock_plain r a xs indent hp hl]
   simpa only [Spacing.Pending.leafRange, plainInlines_leafCount xs hp,
     Spacing.Pending.Prose, Spacing.Pending.Clean, Spacing.Pending.census] using
     collectPara_census r (a.leafRange (Struct.leafCountInlines xs)).1 xs indent
@@ -20035,7 +20154,8 @@ private theorem collectDocBlock_census (rd : Rd) (doc : Doc)
     (frameSpans : Array (Nat × Span)) (nums : Array (Option Nat))
     (i : Nat) (hi : i < doc.body.size) (st : Acc × Bool) (xs : Array Inline)
     (hb : doc.body[i] = .para xs) (hp : PlainInlines xs)
-    (hr : (Spacing.Context.pats rd) = none) (ha : st.1.Prose) (pick : Option Nat → Bool → Bool) :
+    (hr : (Spacing.Context.pats rd) = none) (ha : st.1.Prose) (pick : Option Nat → Bool → Bool)
+    (hl : rd.labels = #[]) :
     let out := (collectDocBlock rd doc frameSpans nums i hi st).1
     out.Prose ∧ (out.Clean → st.1.Clean ∧
       inkCensus (out.census pick) = inkCensus (st.1.census pick) ++
@@ -20045,7 +20165,7 @@ private theorem collectDocBlock_census (rd : Rd) (doc : Doc)
     Bool.or_false, Bool.and_false, Id.run]
   dsimp only [pure, Id]
   rw [collectBlock]
-  split <;> refine collectParaBlock_census rd _ xs 0 hp hr ?_ pick <;> exact ha
+  split <;> refine collectParaBlock_census rd _ xs 0 hp hr ?_ pick hl <;> exact ha
 
 private def sourceInkAt (pick : Option Nat → Bool → Bool) (body : Array Block)
     (start : Nat) (counted : Bool) (i : Nat) : List Char :=
@@ -20083,7 +20203,7 @@ private theorem collectDocBody_census (rd : Rd) (doc : Doc)
     (frameSpans : Array (Nat × Span)) (acc0 : Acc)
     (hp : ∀ b ∈ doc.body, ∃ xs, b = .para xs ∧ PlainInlines xs)
     (hr : (Spacing.Context.pats rd) = none) (ha : acc0.Prose)
-    (pick : Option Nat → Bool → Bool) :
+    (pick : Option Nat → Bool → Bool) (hl : rd.labels = #[]) :
     let out := collectDocBody rd doc frameSpans acc0
     out.Prose ∧ (out.Clean → acc0.Clean ∧
       inkCensus (out.census pick) = inkCensus (acc0.census pick) ++
@@ -20104,9 +20224,9 @@ private theorem collectDocBody_census (rd : Rd) (doc : Doc)
       simp only [sourceLeafSum, List.map_singleton, List.sum_cons, List.sum_nil, Nat.add_zero,
         Array.getElem_toList]
     have hc := collectDocBlock_census rd doc frameSpans doc.frameNumbers i hi st
-      xs hb hx hr hs.1 pick
+      xs hb hx hr hs.1 pick hl
     refine ⟨hc.1, ?_, ?_⟩
-    · rw [collectDocBlock_leafNext _ _ _ _ _ _ _ _ hb hx, hs.2.1, hprefix]
+    · rw [collectDocBlock_leafNext _ _ _ _ _ _ _ _ hb hx hl, hs.2.1, hprefix]
       omega
     · intro hd
       obtain ⟨hprev, hstep⟩ := hc.2 hd
@@ -20227,6 +20347,7 @@ private def withLayoutOps {α : Type} (geom : Geom) (fs : FontSet)
   let footGap := doc.page.furnitureGap.getD Ir.footline.sep
   let deckIds := Ir.deckAnchors doc.body
   let rd : Rd := { geom := geom, xHeight := xHeight, pats := pats, fs := fs
+                   pageParskip := geom.texParskip
                    preamble := doc.preambleFace
                    styles := doc.styles
                    captionPos := doc.captionPos
@@ -20378,9 +20499,9 @@ private theorem sourceBound_collected {n : Nat} (rd : Rd) (doc : Doc)
     (frameSpans : Array (Nat × Span)) (acc0 : Acc)
     (hp : ∀ b ∈ doc.body, ∃ xs, b = .para xs ∧ PlainInlines xs)
     (ha : acc0.ops = #[]) (hk : acc0.leafNext = 0)
-    (hn : (Struct.ofDoc doc).leaves.size ≤ n) :
+    (hn : (Struct.ofDoc doc).leaves.size ≤ n) (hl : rd.labels = #[]) :
     (collectDocBody rd doc frameSpans acc0).SourceBound n := by
-  apply (collectDocBody_source rd doc frameSpans acc0 hp ?_ ?_).1
+  apply (collectDocBody_source rd doc frameSpans acc0 hp ?_ ?_ hl).1
   · simp [Spacing.Pending.SourceBound, ha]
   · simpa [hk, sourceLeafSum_ofDoc] using hn
 
@@ -20412,7 +20533,7 @@ private theorem shipCore_source (geom : Geom) (fs : FontSet)
   apply (close _ _ _ ?_).pages
   apply sourceBound_placeFrom
   · exact sourceBound_trailing (n := (Struct.ofDoc (pdfView doc)).leaves.size)
-      _ (sourceBound_collected _ _ _ _ hp rfl rfl (Nat.le_refl _))
+      _ (sourceBound_collected _ _ _ _ hp rfl rfl (Nat.le_refl _) rfl)
   · exact ⟨by simp, by simp, rfl, rfl, rfl⟩
 
 private theorem census_keepHeading {n : Nat} (pick : Option Nat → Bool → Bool)
@@ -20636,7 +20757,7 @@ private theorem shipCore_census (geom : Geom) (fs : FontSet)
   have hacc := collectDocBody_census rd d frameSpans acc0 hp
     (by rcases hh with hh | hh <;>
       simp only [rd, ps, hh, Bool.false_eq_true, ↓reduceIte, ite_self])
-    (by intro op ho; simp [acc0] at ho) pick
+    (by intro op ho; simp [acc0] at ho) pick rfl
   have htrail : acc.GapAppend accF := by
     dsimp only [accF]
     split
@@ -20645,7 +20766,7 @@ private theorem shipCore_census (geom : Geom) (fs : FontSet)
   have hprose : ∀ op ∈ accF.ops, op.Prose := htrail.prose hacc.1
   have hbound : ∀ op ∈ accF.ops, op.SourceBound (Struct.ofDoc d).leaves.size :=
     sourceBound_trailing acc
-      (sourceBound_collected rd d frameSpans acc0 hp rfl rfl (Nat.le_refl _))
+      (sourceBound_collected rd d frameSpans acc0 hp rfl rfl (Nat.le_refl _) rfl)
   have hb0 : b0.SourceBound (Struct.ofDoc d).leaves.size :=
     Spacing.Page.SourceBound.mk (by simp [b0]) (by simp [b0]) rfl rfl rfl
   have hplaced := census_placeFrom pick fs imgs accF.ops { b := b0 } hbound hprose hb0

@@ -11281,6 +11281,11 @@ native equivalent were dropped: {dropped}" c.pos
       sayOnce ("ctrl:" ++ c.name) .W0104
         s!"'\\{c.name}' width and alignment are dropped; its content is kept" c.pos
         (help := "\\hfill spaces content apart; \\allow{W0104} accepts the drop")
+    -- An empty box is still a box: it starts a paragraph, as `\item \mbox{}` sets a label's line.
+    if let some (.group body _) := c.raws[skipSpaces c.raws c.stop]? then
+      if body.all (· matches .space) then
+        became s!"\\{c.name}" "an empty box" c.pos
+        return #[.ctrl "hspace" c.pos, .word "*" c.pos, .group #[.word "0pt" c.pos] c.pos]
     became s!"\\{c.name}" "its content" c.pos
     return #[]
   | .beamerFont => lowerBeamerFont c
@@ -13804,7 +13809,7 @@ local macro "emits_nothing" : tactic => `(tactic| (
 @[expose] public def Lowering.emitsNothing : Lowering → Bool
   | .passOptions | .defineColorspace | .counter | .newDimen | .runningField | .fancyField
   | .clearPageStyles | .thisPageStyle | .addBibResource | .bibResources | .natbibStyle
-  | .bibliographyStyle | .unreadKeys | .newCounter | .box | .columnRatio | .titleGraphic | .fontTheme
+  | .bibliographyStyle | .unreadKeys | .newCounter | .columnRatio | .titleGraphic | .fontTheme
   | .beamerOption | .inputEncoding | .komaOptions | .graphColor => true
   | _ => false
 
@@ -14777,6 +14782,48 @@ termination_by structural r => r
 
 end
 
+/-- A `{trivlist}`'s items as flush paragraphs, a label run in classes.dtx's `.5em` `\labelsep`
+past it and hung that far into the margin, as `\trivlist` zeroes `\leftmargin` (latex.ltx). -/
+private def trivlistItems (body : Array Raw) : Array Raw := Id.run do
+  let mut out : Array Raw := #[]
+  let mut skipTo := 0
+  for i in [0:body.size] do
+    if i < skipTo then continue
+    match body[i]? with
+    | some (.ctrl "item" p) =>
+      out := out.push (.par p) |>.push (.ctrl "noindent" p)
+      let j := skipSpaces body (i + 1)
+      if body[j]? matches some (.sym '[' _) then
+        let close := ((List.range (body.size - j)).find? fun d =>
+          body[j + 1 + d]? matches some (.sym ']' _)).map (j + 1 + ·)
+        if let some c := close then
+          let kept (w : String) : Array Raw :=
+            #[.ctrl "hspace" p, .word "*" p, .group #[.word w p] p]
+          out := out ++ kept "-0.5em" ++ body.extract (j + 1) c ++ kept "0.5em"
+          -- `\@item` ends in `\ignorespaces`.
+          skipTo := skipSpaces body (c + 1)
+    | some r => out := out.push r
+    | none => pure ()
+  return out
+
+mutual
+
+/-- Every `{trivlist}` in a raw sequence with its items set as paragraphs (`trivlistItems`). -/
+private def trivlistEnvsList : List Raw → Array Raw → Array Raw
+  | [], out => out
+  | r :: rest, out => trivlistEnvsList rest (out ++ trivlistEnvsRaw r)
+termination_by structural l => l
+
+private def trivlistEnvsRaw : Raw → Array Raw
+  | .group body p => #[.group (trivlistEnvsList body.toList #[]) p]
+  | .env n body p =>
+    let inner := trivlistEnvsList body.toList #[]
+    #[.env n (if n == "trivlist" then trivlistItems inner else inner) p]
+  | r => #[r]
+termination_by structural r => r
+
+end
+
 /-- The passes before the compatibility walk: overlay inputs, live groups,
 delimiters, columns, overprints and `\only`'s alternations. -/
 public def beginRewrite (executed : Executed) : RewriteCursor :=
@@ -14788,6 +14835,7 @@ public def beginRewrite (executed : Executed) : RewriteCursor :=
     let raws ← delimDocument raws
     let raws := frameCommands raws
     let raws := (splitColumnsList raws.toList).toArray
+    let raws := trivlistEnvsList raws.toList #[]
     let raws ← overprintList raws.toList #[] 0
     pure (onlyAlternationsIn cx raws)
   let st0 : St :=
@@ -14825,13 +14873,16 @@ private theorem beginRewrite_package_exact (command names : String) (pos gp np :
       countersRead := counterReadsList {} (packageCall command names pos gp np).toList } hd
   have hcols : splitColumnsList (packageCall command names pos gp np).toList =
       (packageCall command names pos gp np).toList := by rfl
+  have htriv : trivlistEnvsList (packageCall command names pos gp np).toList #[] =
+      packageCall command names pos gp np := by
+    simp [packageCall, trivlistEnvsList, trivlistEnvsRaw]
   have hframes : frameCommands (packageCall command names pos gp np) =
       packageCall command names pos gp np := by
     rcases hc with rfl | rfl <;>
       simp [frameCommands, declaresPresentation, packageCall, List.findIdx?_cons]
   simp only [hw, StateT.run, bind, StateT.bind,
     pairGroups_package_exact, hdelim, hframes,
-    hcols, overprint_package_exact _ _ _ _ _ hc, onlyAlternationsIn_package_exact _ _ _ _ _ _ hc,
+    hcols, htriv, overprint_package_exact _ _ _ _ _ hc, onlyAlternationsIn_package_exact _ _ _ _ _ _ hc,
     pure, StateT.pure, packageRewriteState]
 
 /-- The gathered declarations and deferred bodies

@@ -5858,6 +5858,12 @@ public def baseRules (doc : Doc) (ex : Int) (pairs : List (Nat × Nat) := []) : 
   (if doc.abstractForm == .inset then abstractInsetCss (lengthBasisOf doc) doc.preambleFace
    else "") ++
   s!"li::marker \{ color: {roleRef .marker}; }\n" ++
+  -- an `\item[label]` sets its label where the marker stands, stepping no counter (latex.ltx)
+  "li.labelled { position: relative; counter-increment: list-item 0; }\n" ++
+  "li.labelled::marker { content: none; }\n" ++
+  ".u-item-label { position: absolute; inset-inline-end: 100%; margin-inline-end: 0.5em; \
+white-space: nowrap; }\n" ++
+  "li.run-in .u-item-label { position: static; margin-inline-end: 0; }\n" ++
   -- the class-default list marks per nesting level, as classes.dtx sets them
   "ul { list-style-type: disc; }\n" ++
   "ul ul > li::marker { content: \"\u2013  \"; font-weight: 600; }\n" ++
@@ -6727,7 +6733,9 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
           { cfg with mathStyles := cfg.mathStyles.push st }
         | none => cfg
       | none => cfg
-    acc.push (Html.elem "span" (inlineNodesInto inner #[] body.toList) attrs)
+    let acc := acc.push (Html.elem "span" (inlineNodesInto inner #[] body.toList) attrs)
+    -- an item's label reads apart from its text; the space collapses at the line's start
+    if n == Ir.itemLabelRole then acc.push (Html.text " ") else acc
   | .colored c name body =>
     acc.push (Html.elem "span" (inlineNodesInto cfg #[] body.toList)
       #[("style", "color: " ++ cfg.paint name c)])
@@ -6782,10 +6790,12 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
       #[("class", "icon"), ("role", "img"), ("aria-label", label)])
   | .fill => acc.push (Html.elem "span" #[] #[("class", "fill")])
   -- infinite stretch keeps the fill carrier; a finite part stays an inline offset
-  | .hspace e _ =>
+  -- a kept space is a box, which sets a line even alone, as `\mbox{}` starts a paragraph
+  | .hspace e keep =>
     let finite := e.withoutFil
     let room := Ir.Track.css (.affine finite)
-    let node := Html.elem "span" #[] #[("style", s!"margin-inline-start:{room}")]
+    let node := Html.elem "span" #[] #[("style",
+      (if keep then "display:inline-block;" else "") ++ s!"margin-inline-start:{room}")]
     if e.hasFil then
       (acc.push node).push (Html.elem "span" #[] #[("class", "fill")])
     else acc.push node
@@ -9305,7 +9315,8 @@ private def columnNodesInto (cfg : Config) (total share : Sp) (acc : Array Node)
     -- every box is the query container its content's `cqi` reads
     let style := if align.isEmpty then "container-type: inline-size"
       else "container-type: inline-size; " ++ align
-    let child := cfg.atMeasure ((w.resolve total).getD share)
+    -- a minipage sets `\@listdepth` back to zero, as the page counts its lists
+    let child := { cfg.atMeasure ((w.resolve total).getD share) with listDepth := 0 }
     columnNodesInto cfg total share
       (acc.push (Html.elem "div" (blockNodesInto child #[] body.toList)
         #[("class", "column"), ("style", style)])) rest
@@ -9313,9 +9324,14 @@ private def columnNodesInto (cfg : Config) (total share : Sp) (acc : Array Node)
 private def listItemsInto (cfg : Config) (acc : Array Node) : List (Array Block) → Array Node
   | [] => acc
   | item :: rest =>
+    let node := listItem { cfg with fillsInert := true } "li" item.toList
+    -- a label wider than its margin's room runs in rather than leave a narrow screen
+    let node := match Ir.itemLabelOf? item with
+      | some (label, _) =>
+        withClass (if (Ir.plainText label).length ≤ 4 then "labelled" else "labelled run-in") node
+      | none => node
     listItemsInto (cfg.afterBlocks item)
-      (acc.push (fillCarrier cfg (Ir.itemTrailingFills item)
-        (listItem { cfg with fillsInert := true } "li" item.toList) (item := true)))
+      (acc.push (fillCarrier cfg (Ir.itemTrailingFills item) node (item := true)))
       rest
 
 /-- A description list's items: each label a `<dt>`, the text after it and further blocks a

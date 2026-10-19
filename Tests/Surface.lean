@@ -1377,12 +1377,13 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
     (let src := "\\documentclass{article}\\begin{document}\\begin{itemize}[leftmargin=2em]" ++
       "\\item a\\end{itemize}\\end{document}"
      errCodes src == [] && (elabStr src).2.any (fun d => d.code == "W0104" && hasStr d.message "leftmargin"))
-  t "item marker override is consumed and named"
+  t "item marker override is read as the item's label"
     (let (doc, ds) := elabStr ("\\documentclass{article}\\begin{document}\\begin{itemize}" ++
       "\\item[--] a\\end{itemize}\\end{document}")
      warnCodes ("\\documentclass{article}\\begin{document}\\begin{itemize}" ++
-       "\\item[--] a\\end{itemize}\\end{document}") == ["W0110"] &&
-     doc.body == #[.list false {} #[#[.para #[.text "a"]]]] && ds.all (·.code != "E0310"))
+       "\\item[--] a\\end{itemize}\\end{document}") == [] &&
+     doc.body == #[.list false {} #[#[.para #[.role Ir.itemLabelRole #[.text "–"], .text "a"]]]] &&
+     ds.all (·.code != "E0310"))
   t "every alignment declaration is implemented, not refused"
     (let ds := (elabStr "{\\flushleft a} {\\raggedleft b} {\\flushright c}").2
      ds.all fun d => d.code != "W0301" && d.code != "W0104")

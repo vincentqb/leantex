@@ -6803,7 +6803,7 @@ private theorem take_args_consumes_forward
 
 /-- Environments whose content is a block sequence. -/
 private def blockEnvs : List String :=
-  ["itemize", "enumerate", "center", "flushleft", "flushright", "document", "frame",
+  ["itemize", "enumerate", "center", "flushleft", "flushright", "trivlist", "document", "frame",
    "columns", "tabularx", "figure",
    "figure*", "table", "table*", "quote", "quotation", "verse", "description",
    "thebibliography", "abstract", "ifbackend",
@@ -9452,15 +9452,19 @@ private def spliceCenterGo (l : List Raw) (acc : Array Raw)
       by simp [nestedParsList] at hp; omega⟩
   | .env en ebody epos :: rest =>
     if en == "center" || en == "centering" then
-      spliceCenterGo (ebody.toList ++ rest) acc bound pbound
+      -- The center's close stays a trivlist's, whose space below stands in the float's box.
+      let ⟨inner, hi⟩ := spliceCenterGo ebody.toList acc
+        (rawWeightList acc.toList + rawWeightList ebody.toList)
+        (nestedParsList acc.toList + nestedParsList ebody.toList) (Nat.le_refl _) (Nat.le_refl _)
+      spliceCenterGo rest (inner.push (.env "trivlist" #[] epos)) bound pbound
         (by
-          rw [rawWeightList_append]
-          simp only [rawWeightList, rawWeight] at hw
+          rw [rawWeightList_push]
+          simp only [rawWeightList, rawWeight] at hw hi ⊢
           omega)
         (by
-          rw [nestedParsList_append]
+          rw [nestedParsList_push]
           have hle := nestedParsList_le ebody.toList
-          simp only [nestedParsList, nestedPars] at hp
+          simp only [nestedParsList, nestedPars, rawParsList] at hp hi ⊢
           omega)
     else
       spliceCenterGo rest (acc.push (.env en ebody epos)) bound pbound
@@ -9484,7 +9488,8 @@ private def spliceCenterGo (l : List Raw) (acc : Array Raw)
         omega)
 termination_by rawWeightList l
 decreasing_by
-  · simp only [rawWeightList, rawWeight, rawWeightList_append]; omega
+  · simp only [rawWeightList, rawWeight]; omega
+  · simp only [rawWeightList, rawWeight]; omega
   · simp only [rawWeightList, rawWeight]; omega
   · simp only [rawWeightList]; have := rawWeight_pos r; omega
 
@@ -9579,7 +9584,7 @@ private def pausesKept (act : EM α) : EM α := do
 
 /-- Splits a list body at its `\item`s, each item with its overlay step; a `\pause` before the
 first item is the frame's, which every item stands after. -/
-private def itemSplitGo (ctx : Ctx) (body : Array Raw) (pos : Pos) (desc : Bool) (scope : ListScope) (j : Nat)
+private def itemSplitGo (ctx : Ctx) (body : Array Raw) (pos : Pos) (scope : ListScope) (j : Nat)
     (items : Array (Array Raw)) (steps : Array (Option Ir.OverlaySpec))
     (curItem : Array Raw) (curStep : Option Ir.OverlaySpec)
     (awaitSpec inOpt seen strayDiagged : Bool) (bound pbound : Nat)
@@ -9591,41 +9596,37 @@ private def itemSplitGo (ctx : Ctx) (body : Array Raw) (pos : Pos) (desc : Bool)
     match body[j] with
     | .ctrl "item" _ =>
       if seen then
-        itemSplitGo ctx body pos desc scope (j + 1) (items.push curItem)
+        itemSplitGo ctx body pos scope (j + 1) (items.push curItem)
           (steps.push curStep) #[]
           none true inOpt true strayDiagged bound pbound
           (hfit.close h)
       else
-        itemSplitGo ctx body pos desc scope (j + 1) items steps #[]
+        itemSplitGo ctx body pos scope (j + 1) items steps #[]
           none true inOpt true strayDiagged bound pbound
           (hfit.restart h)
     | .ctrl "pause" _ =>
       -- Kept in the item, so a mid-item pause steps the rest of the frame from there.
       if seen then
-        itemSplitGo ctx body pos desc scope (j + 1) items steps
+        itemSplitGo ctx body pos scope (j + 1) items steps
           (curItem.push body[j]) curStep awaitSpec inOpt seen
           strayDiagged bound pbound
           (hfit.keep h)
       else
         notePause ctx
-        itemSplitGo ctx body pos desc scope (j + 1) items steps
+        itemSplitGo ctx body pos scope (j + 1) items steps
           curItem curStep awaitSpec inOpt seen strayDiagged bound pbound
           (hfit.skip h .refl)
     | item =>
       if inOpt then
         let inOpt := !(item matches .sym ']' _)
-        itemSplitGo ctx body pos desc scope (j + 1) items steps curItem
+        itemSplitGo ctx body pos scope (j + 1) items steps curItem
           curStep awaitSpec inOpt seen strayDiagged bound pbound
           (hfit.skip h .refl)
       else
       if seen && awaitSpec && !isSpace item then
         if item matches .sym '[' _ then
-          -- A description item's label is content, not a marker override.
-          unless desc do
-            warnOnce ctx "item:marker" .W0110
-              "'\\item' [marker] override is not modelled; the level's marker stands" pos
-              (help := "\\style{itemize}{ marker = {...} } declares a level's marker")
-          itemSplitGo ctx body pos desc scope (j + 1) items steps curItem
+          -- The label is read with the item (`descItems`, `labelledItems`).
+          itemSplitGo ctx body pos scope (j + 1) items steps curItem
             curStep false true seen strayDiagged bound pbound
             (hfit.skip h .refl)
         else if let some w := specWord? item then
@@ -9634,16 +9635,16 @@ private def itemSplitGo (ctx : Ctx) (body : Array Raw) (pos : Pos) (desc : Bool)
             | none => do
               warnOverlaySpec ctx w pos
               pure curStep
-          itemSplitGo ctx body pos desc scope (j + 1) items steps curItem
+          itemSplitGo ctx body pos scope (j + 1) items steps curItem
             curStep awaitSpec inOpt seen strayDiagged bound pbound
             (hfit.skip h .refl)
         else
-          itemSplitGo ctx body pos desc scope (j + 1) items steps
+          itemSplitGo ctx body pos scope (j + 1) items steps
             (curItem.push body[j]) curStep false inOpt seen strayDiagged
             bound pbound
             (hfit.keep h)
       else if seen then
-        itemSplitGo ctx body pos desc scope (j + 1) items steps
+        itemSplitGo ctx body pos scope (j + 1) items steps
           (curItem.push body[j]) curStep awaitSpec inOpt seen strayDiagged
           bound pbound
           (hfit.keep h)
@@ -9652,17 +9653,17 @@ private def itemSplitGo (ctx : Ctx) (body : Array Raw) (pos : Pos) (desc : Bool)
           if counterCtrl c then
             -- ltlists.dtx: a counter set before the first `\item` declares.
             let ⟨k, hk⟩ ← counterArm ctx body (j + 1) c pos
-            return ← itemSplitGo ctx body pos desc scope k items steps curItem
+            return ← itemSplitGo ctx body pos scope k items steps curItem
               curStep awaitSpec inOpt seen strayDiagged bound pbound
               (hfit.skip h hk)
           if let some scope' ← listScopeCtrl ctx body j c cpos scope then
-            return ← itemSplitGo ctx body pos desc scope' (j + 1)
+            return ← itemSplitGo ctx body pos scope' (j + 1)
               items steps curItem curStep
               awaitSpec inOpt seen strayDiagged bound pbound
               (hfit.skip h .refl)
         if !isSpaceOrPar item && !strayDiagged then
           diag ctx .E0310 s!"content before the first '\\item'" pos
-        itemSplitGo ctx body pos desc scope (j + 1) items steps curItem
+        itemSplitGo ctx body pos scope (j + 1) items steps curItem
           curStep awaitSpec inOpt seen
           (strayDiagged || !isSpaceOrPar item) bound pbound
           (hfit.skip h .refl)
@@ -11449,6 +11450,22 @@ private def descItems (ctx : Ctx) (body : Array Raw) (items : Array (Array Block
       | _ => #[Block.para head] ++ item)
   return out
 
+/-- An itemize's or enumerate's items, each `\item[label]`'s label first in its first paragraph, which
+sets in the place of the level's marker as latex.ltx's `\@item` sets `\makelabel{label}`. -/
+private def labelledItems (ctx : Ctx) (body : Array Raw) (items : Array (Array Block)) :
+    EM (Array (Array Block)) := do
+  let labels := descLabelRaws body
+  let mut out := #[]
+  for (item, i) in items.zipIdx do
+    match labels[i]?.join with
+    | some raws =>
+      let head : Array Inline := #[.role Ir.itemLabelRole (← elabInlines ctx raws)]
+      out := out.push (match item[0]? with
+        | some (Block.para c) => item.modify 0 fun _ => .para (head ++ c)
+        | _ => #[Block.para head] ++ item)
+    | none => out := out.push item
+  return out
+
 /-- Applies each item's overlay selector to the whole item, label included, as beamer's
 `beamer@parseitem` does, from the step after the `\pause`s its frame met before it. -/
 private def coverItems (ctx : Ctx) (steps : Array (Option OverlaySpec))
@@ -12907,6 +12924,11 @@ text width; the box shares the leftover" spos
         figureGo ctx n kind body (j + 1) innerBlocks
           (cols.push ({ width with pos := subPos }, #[.float .sub none sCapAbove sInner sCaption]))
           #[] caption capAbove blocks (hf.flush (by omega))
+      -- A spliced center's close after its caption stands below the caption, where the float
+      -- sets the caption last: the close has no place of its own.
+      else if sn == "trivlist" && sbody.isEmpty && !caption.isEmpty && !capAbove then
+        figureGo ctx n kind body (j + 1) innerBlocks cols rest caption capAbove blocks
+          (hf.skip (by omega))
       else
         figureGo ctx n kind body (j + 1) innerBlocks cols
           (rest.push body[j]) caption capAbove blocks (hf.keep h rfl)
@@ -13082,8 +13104,7 @@ private def elabEnvArm (ctx : Ctx) (n : String) (scope : Array Raw)
       pure ⟨body.extract bodyFrom body.size, extract_weight_le ..,
         extract_nested_le ..⟩
     -- `\pause` between items steps the rest of the frame, not only the item.
-    let ⟨(items, steps, scope), hsplit⟩ ← itemSplitGo ctx lbody pos
-      (n == "description") {} 0
+    let ⟨(items, steps, scope), hsplit⟩ ← itemSplitGo ctx lbody pos {} 0
       #[] #[] #[] none false false false false
       (sliceWeight lbody 0) (slicePars lbody 0)
       (ItemSplitFits.start lbody 0)
@@ -13102,18 +13123,18 @@ private def elabEnvArm (ctx : Ctx) (n : String) (scope : Array Raw)
       let elabItems ← elabItemsGo itemCtx items 0 #[]
         (rawWeightList lbody.toList + 1) (nestedParsList lbody.toList)
         (by omega) (by omega)
-      if n == "description" then
-        let labelled ← descItems itemCtx lbody (elabItems.map (·.2))
-        pure ((elabItems.zip labelled).map fun ((past, _), item) => (past, item))
-      else pure elabItems
+      let labelled ← (if n == "description" then descItems else labelledItems) itemCtx lbody
+        (elabItems.map (·.2))
+      pure ((elabItems.zip labelled).map fun ((past, _), item) => (past, item))
     blocks := blocks ++ wrapDeclAlign scope.align
       #[.list (n == "enumerate") spacing (coverItems ctx steps elabItems)]
-  else if n == "center" || (Ir.raggedSideOf? n).isSome then
+  else if n == "center" || n == "trivlist" || (Ir.raggedSideOf? n).isSome then
     let inner ← elabBlockScope ctx body
     -- The environment is a trivlist and opens `\topsep`; the declaration does not.
-    blocks := blocks.push (.role Ir.trivlistRole #[match Ir.raggedSideOf? n with
-      | some side => .ragged side inner
-      | none => .center inner])
+    blocks := blocks.push (.role Ir.trivlistRole (if n == "trivlist" then inner else
+      #[match Ir.raggedSideOf? n with
+        | some side => .ragged side inner
+        | none => .center inner]))
   else if n == "minipage" then
     let (boxPos, k) ← boxOptsArm ctx body pos "minipage"
     let m := skipSpaces body k

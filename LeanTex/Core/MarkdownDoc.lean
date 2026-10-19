@@ -788,7 +788,10 @@ private def inlineInto (site : Site) (cites : Bool) (acc : String) (after : Bool
       | none => acc ++ inner
   | .colored _ _ body => inlinesInto site cites acc none after 0 body.toList
   | .located _ body => inlinesInto site cites acc none after 0 body.toList
-  | .role _ body => inlinesInto site cites acc none after 0 body.toList
+  -- An `\item[label]`'s label stands apart from the text after it, as its marker's place does.
+  | .role n body =>
+    let out := inlinesInto site cites acc none after 0 body.toList
+    if n == Ir.itemLabelRole && out != acc then out ++ " " else out
   | .link url body =>
     if bareLink url body && autolinkable url then acc ++ "<" ++ url ++ ">"
     else
